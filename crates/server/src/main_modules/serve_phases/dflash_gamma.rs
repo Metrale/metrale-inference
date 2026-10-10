@@ -60,7 +60,8 @@ pub(crate) fn apply_dflash_gamma(
     let block = match args.dflash_gamma {
         Some(_) => None,
         None => Some(
-            read_dflash_config(&dflash_drafter_dir(args, model_default)?)?.effective_block_size(),
+            read_dflash_config(&dflash_drafter_dir(args, model_default.clone())?)?
+                .effective_block_size(),
         ),
     };
     let gamma =
@@ -88,9 +89,16 @@ pub(crate) fn apply_dflash_gamma(
         );
         args.dflash_draft_ladder_resolved = Some(ladder);
     }
+    // 2026-10-10: `--draft-tp-size`, against the world size and the drafter's heads.
+    let draft_tp = resolve_draft_tp_size(
+        args.dflash_args.draft_tp_size,
+        super::topology::serve_world_size(args),
+        || read_dflash_config(&dflash_drafter_dir(args, model_default.clone())?),
+    )?;
+    args.dflash_args.draft_tp_size_resolved = Some(draft_tp);
     // 2026-10-10: The adaptive-K cost table, parsed here and refused when it prices more
     // drafts than γ - 1.
-    if let Some(spec) = &args.dflash_adaptive_k {
+    if let Some(spec) = &args.dflash_args.dflash_adaptive_k {
         let costs = metrale_speculative::dflash_adaptive_k::CostModel::parse(spec)
             .with_context(|| format!("--dflash-adaptive-k {spec:?}"))?;
         anyhow::ensure!(
@@ -100,9 +108,44 @@ pub(crate) fn apply_dflash_gamma(
             costs.max_drafts(),
             gamma - 1
         );
-        args.dflash_adaptive_k_resolved = Some(costs);
+        args.dflash_args.dflash_adaptive_k_resolved = Some(costs);
     }
     Ok(())
+}
+
+/// 2026-10-10: The drafter's tensor-parallel degree: 1 when `flag` is unset; otherwise its
+/// rank count on `world` ranks, which must be 1 or `world` (the drafter's collectives span the
+/// whole communicator) and, above 1, must split the drafter (`config()`) by
+/// `dflash_head::tp::plan` on every rank.
+pub(crate) fn resolve_draft_tp_size(
+    flag: Option<cli::serve_args_dflash::DraftTpSize>,
+    world: usize,
+    config: impl FnOnce() -> Result<DflashConfig>,
+) -> Result<usize> {
+    let Some(flag) = flag else {
+        return Ok(1);
+    };
+    let n = flag.ranks(world);
+    anyhow::ensure!(
+        n == 1 || n == world,
+        "--draft-tp-size {n}: the drafter's collectives span the whole communicator, so it \
+         must be 1 or the world size {world}"
+    );
+    if n > 1 {
+        let c = config()?;
+        for rank in 0..n {
+            metrale_model_arch::dflash_head::tp::plan(
+                c.num_attention_heads,
+                c.num_key_value_heads,
+                c.intermediate_size,
+                c.vocab_size,
+                n,
+                rank,
+            )
+            .with_context(|| format!("--draft-tp-size {n} cannot split this drafter"))?;
+        }
+    }
+    Ok(n)
 }
 
 #[cfg(test)]

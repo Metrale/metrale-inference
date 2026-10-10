@@ -88,7 +88,8 @@ pub(super) fn resolve_speculation(
         );
         dflash_rung.set_ladder(args.dflash_draft_ladder_resolved.clone());
         dflash_rung.set_adaptive_k(
-            args.dflash_adaptive_k_resolved
+            args.dflash_args
+                .dflash_adaptive_k_resolved
                 .clone()
                 .map(metrale_speculative::dflash_adaptive_k::AdaptiveK::new),
         );

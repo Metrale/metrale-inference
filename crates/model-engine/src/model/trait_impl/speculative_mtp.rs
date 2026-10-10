@@ -64,9 +64,23 @@ impl TransformerModel {
         // The command and its words go on the wire before this rank enters the drafter
         // forward, or the worker is still waiting for a command when rank 0 reaches its
         // first all-reduce.
-        if self.multi_rank_protocol_active()
-            && self.proposer.as_ref().is_some_and(|p| p.needs_comm())
-        {
+        // 2026-10-10: A collective propose (the tensor-parallel DFlash drafter) sends its code
+        // alone; the drafter sends the rest itself (`DraftProposer::collective_propose`).
+        let protocol_active = self.multi_rank_protocol_active();
+        let collective_propose = protocol_active
+            && self
+                .proposer
+                .as_ref()
+                .is_some_and(|p| p.collective_propose());
+        if collective_propose {
+            self.ep_broadcast_cmd_for_seq(
+                seq.slot_idx as u32,
+                metrale_model_layers::speculative::EP_CMD_DFLASH_PROPOSE,
+            )?;
+            // 2026-10-10: The drafter's own exchange carries every rank's readiness
+            // (`dflash_head/tp_propose.rs`).
+            return self.run_mtp_propose_inner(token, position, num_drafts, seq, grammar_bitmask);
+        } else if protocol_active && self.proposer.as_ref().is_some_and(|p| p.needs_comm()) {
             self.ep_broadcast_cmd_for_seq(
                 seq.slot_idx as u32,
                 metrale_model_layers::speculative::EP_CMD_MTP_PROPOSE,
@@ -139,6 +153,28 @@ impl TransformerModel {
     }
 
     /// 2026-09-25: The `ForwardContext` of the batched MTP propose and the batched catch-up.
+    /// 2026-10-10: Worker side of `EP_CMD_DFLASH_PROPOSE` on the command slot's proposer state
+    /// (`None` when the slot has none): the proposer's collective propose with the
+    /// communicator (`DraftProposer::propose_follower`). An error is returned: the collective
+    /// could not complete on this rank.
+    pub(in crate::model) fn ep_worker_dflash_propose(
+        &self,
+        state: Option<&mut Box<dyn metrale_model_layers::speculative::ProposerState>>,
+    ) -> Result<()> {
+        let Some(proposer) = self.proposer.as_ref() else {
+            anyhow::bail!("EP_CMD_DFLASH_PROPOSE on a rank without a proposer");
+        };
+        let ctx = ForwardContext {
+            comm: self.comm_ref(),
+            ..self.mtp_propose_ctx()
+        };
+        let stream = self.gpu.default_stream();
+        match state {
+            Some(st) => proposer.propose_follower(Some(st.as_mut()), &ctx, stream),
+            None => proposer.propose_follower(None, &ctx, stream),
+        }
+    }
+
     fn mtp_propose_ctx(&self) -> ForwardContext<'_> {
         ForwardContext {
             buffers: &self.buffers,

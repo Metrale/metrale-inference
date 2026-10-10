@@ -21,6 +21,32 @@ use metrale_model_layers::layer::ForwardContext;
 use metrale_model_layers::weight_map::DenseWeight;
 
 impl BlockDiffusionDraftHead {
+    /// 2026-10-10: `METRALE_DFLASH_PRECOMPUTE_DUMP=1`: when `dump`, sync `stream` and write
+    /// `bytes` at `ptr` to `/tmp/metrale_precompute_<label>.bin`; a write failure is logged.
+    pub(super) fn precompute_dump_buf(
+        &self,
+        dump: bool,
+        ctx: &ForwardContext,
+        stream: u64,
+        label: &str,
+        ptr: DevicePtr,
+        bytes: usize,
+    ) -> Result<()> {
+        if !dump {
+            return Ok(());
+        }
+        let mut buf = vec![0u8; bytes];
+        ctx.gpu.synchronize(stream)?;
+        ctx.gpu.copy_d2h(ptr, &mut buf)?;
+        let path = format!("/tmp/metrale_precompute_{label}.bin");
+        if let Err(e) = std::fs::write(&path, &buf) {
+            tracing::warn!("precompute dump {label} write failed: {e}");
+        } else {
+            tracing::info!("precompute dump {label}: {} bytes → {}", bytes, path);
+        }
+        Ok(())
+    }
+
     /// 2026-09-25: Project ctx rows through `fc` and `hidden_norm`, derive K/V for
     /// every drafter layer, apply per-layer `k_norm` and RoPE to K, and with
     /// `commit` write K/V into each layer's paged cache.
@@ -44,8 +70,6 @@ impl BlockDiffusionDraftHead {
         stream: u64,
         commit: bool,
     ) -> Result<()> {
-        use metrale_model_layers::layers::ops;
-
         if new_ctx_count == 0 {
             return Ok(());
         }
@@ -57,44 +81,50 @@ impl BlockDiffusionDraftHead {
             self.ctx_window
         );
 
-        let Some(fused_kv) = self.fused_kv_weight else {
-            anyhow::bail!(
-                "DFlash precompute_ctx_kv called without fused_kv_weight — build-order bug"
-            );
-        };
-
-        let gpu = ctx.gpu;
-        let bf16 = 2usize;
-        let h = self.hidden_size as u32;
-        let kv_dim = (self.num_kv_heads * self.head_dim) as u32;
-        let n = new_ctx_count as u32;
-        let l_total = self.num_layers;
-        let target_hidden_dim = self.target_layer_ids.len() * self.target_hidden_size;
-        let ctx_slot_bytes = target_hidden_dim * bf16;
-        let kv_slab_bytes = (kv_dim as usize) * bf16;
-        let row_stride = l_total * 2 * kv_slab_bytes;
+        let ctx_slot_bytes = self.target_layer_ids.len() * self.target_hidden_size * 2;
 
         // 2026-09-25: `METRALE_DFLASH_PRECOMPUTE_DUMP=1`, one-shot per
         // `ctx.stats` (`ModelStats::dumped`).
         let dump = self.levers.precompute_dump && ctx.stats.dumped.keyed("dflash_precompute");
+
+        let src = ctx_base_ptr.offset(start_slot * ctx_slot_bytes);
+        self.ctx_fc_rows(src, new_ctx_count, ctx, stream, dump)?;
+
+        // 2026-10-10: Steps 3-8 (`ctx_kv_from_fc`) read the `fc_proj` rows left here.
+        self.ctx_kv_from_fc(
+            new_ctx_count,
+            slot_positions,
+            slot_mapping_dev,
+            ctx,
+            stream,
+            commit,
+            dump,
+        )
+    }
+
+    /// 2026-10-10: Steps 1-2 of [`Self::precompute_ctx_kv`]: `new_ctx_count` captured-tap rows
+    /// at `src` through `fc` and `hidden_norm` into `scratch.fc_proj`. The tensor-parallel
+    /// propose runs it on rank 0 alone and broadcasts the rows (`tp_propose.rs`).
+    pub(super) fn ctx_fc_rows(
+        &self,
+        src: DevicePtr,
+        new_ctx_count: usize,
+        ctx: &ForwardContext,
+        stream: u64,
+        dump: bool,
+    ) -> Result<()> {
+        use metrale_model_layers::layers::ops;
+
+        let gpu = ctx.gpu;
+        let bf16 = 2usize;
+        let h = self.hidden_size as u32;
+        let n = new_ctx_count as u32;
+        let target_hidden_dim = self.target_layer_ids.len() * self.target_hidden_size;
         let dump_buf = |label: &str, ptr: DevicePtr, bytes: usize| -> Result<()> {
-            if !dump {
-                return Ok(());
-            }
-            let mut buf = vec![0u8; bytes];
-            gpu.synchronize(stream)?;
-            gpu.copy_d2h(ptr, &mut buf)?;
-            let path = format!("/tmp/metrale_precompute_{label}.bin");
-            if let Err(e) = std::fs::write(&path, &buf) {
-                tracing::warn!("precompute dump {label} write failed: {e}");
-            } else {
-                tracing::info!("precompute dump {label}: {} bytes → {}", bytes, path);
-            }
-            Ok(())
+            self.precompute_dump_buf(dump, ctx, stream, label, ptr, bytes)
         };
 
         // 2026-09-25: Step 1: `fc` maps `[n, L_t * h_t]` to `[n, h]`.
-        let src = ctx_base_ptr.offset(start_slot * ctx_slot_bytes);
         // 2026-10-10: On the FP8 copy under `METRALE_DFLASH_AUX_FP8=1` (`aux_fp8.rs`).
         self.aux_gemm(
             gpu,
@@ -130,6 +160,44 @@ impl BlockDiffusionDraftHead {
             self.scratch.fc_proj,
             new_ctx_count * self.hidden_size * bf16,
         )?;
+        Ok(())
+    }
+
+    /// 2026-10-10: Steps 3-8 of [`Self::precompute_ctx_kv`] on the `new_ctx_count` rows of
+    /// `scratch.fc_proj` (`fc` and `hidden_norm` already applied): this rank's K/V for every
+    /// drafter layer, `k_norm` and RoPE at `slot_positions` on K, and with `commit` the paged
+    /// cache writes at `slot_mapping_dev`. `dump` arms the `METRALE_DFLASH_PRECOMPUTE_DUMP`
+    /// files of these steps. The tensor-parallel propose runs it on every rank after rank 0's
+    /// `fc` rows arrive (`tp_propose.rs`).
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn ctx_kv_from_fc(
+        &self,
+        new_ctx_count: usize,
+        slot_positions: &[i32],
+        slot_mapping_dev: DevicePtr,
+        ctx: &ForwardContext,
+        stream: u64,
+        commit: bool,
+        dump: bool,
+    ) -> Result<()> {
+        use metrale_model_layers::layers::ops;
+
+        let Some(fused_kv) = self.fused_kv_weight else {
+            anyhow::bail!(
+                "DFlash precompute_ctx_kv called without fused_kv_weight — build-order bug"
+            );
+        };
+        let gpu = ctx.gpu;
+        let bf16 = 2usize;
+        let h = self.hidden_size as u32;
+        let kv_dim = (self.num_kv_heads * self.head_dim) as u32;
+        let n = new_ctx_count as u32;
+        let l_total = self.num_layers;
+        let kv_slab_bytes = (kv_dim as usize) * bf16;
+        let row_stride = l_total * 2 * kv_slab_bytes;
+        let dump_buf = |label: &str, ptr: DevicePtr, bytes: usize| -> Result<()> {
+            self.precompute_dump_buf(dump, ctx, stream, label, ptr, bytes)
+        };
 
         // 2026-09-25: Step 3: one KV GEMM for all layers,
         // `[n, h] × [h, L * 2 * kv_dim]`. Each output row is

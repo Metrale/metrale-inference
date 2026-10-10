@@ -37,7 +37,7 @@ use metrale_model_layers::speculative::DraftProposer;
 use metrale_model_layers::weight_map::{DenseWeight, MtpWeights, QuantizedWeight};
 
 impl TransformerModel {
-    pub(super) fn comm_ref(&self) -> Option<&dyn metrale_comm::CommBackend> {
+    pub(crate) fn comm_ref(&self) -> Option<&dyn metrale_comm::CommBackend> {
         self.comm.as_deref()
     }
 
@@ -196,6 +196,20 @@ impl TransformerModel {
         // 2026-10-09: Multi-sequence prefill: the slots travel in its payload, as above.
         if cmd == crate::model::trait_impl::prefill_b::spans_wire::EP_CMD_PREFILL_SPANS {
             return self.ep_worker_prefill_spans(slots);
+        }
+
+        // 2026-10-10: The tensor-parallel DFlash propose, before the generic slot checks: a
+        // rank without a valid slot or state must still join the propose's exchange (it
+        // reports itself not ready there), or rank 0 would wait for it.
+        if cmd == metrale_model_layers::speculative::EP_CMD_DFLASH_PROPOSE {
+            let slot_idx = seq_id as usize;
+            let state = slots
+                .get_mut(slot_idx)
+                .and_then(Option::as_mut)
+                .filter(|seq| !self.ep_protocol_v2 || seq.slot_idx == slot_idx)
+                .and_then(|seq| seq.proposer_state.as_mut());
+            self.ep_worker_dflash_propose(state)?;
+            return Ok(true);
         }
 
         let slot_idx = seq_id as usize;

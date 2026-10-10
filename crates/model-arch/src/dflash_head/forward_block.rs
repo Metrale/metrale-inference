@@ -182,6 +182,9 @@ impl BlockDiffusionDraftHead {
         // and no debug dump or graph-suppressing lever; `levers.propose_warmup_n` eager
         // passes per width come first.
         let graph_eligible = option_b_on
+            // 2026-10-10: A tensor-parallel drafter captures its collectives only under
+            // `METRALE_DFLASH_TP_GRAPHS=1` (opt-in until a multi-rank serve has run them).
+            && (self.tp.is_none() || levers.tp_graphs)
             // 2026-09-25: A capture fixes the row count, so a batch runs eagerly.
             && n_seq == 1
             && !self

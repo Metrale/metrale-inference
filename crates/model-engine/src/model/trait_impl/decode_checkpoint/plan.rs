@@ -111,6 +111,40 @@ const _: () = {
     }
 };
 
+// 2026-10-10: FB, the tensor-parallel DFlash propose, against every code above and FA.
+const _: () = {
+    use crate::model::trait_impl::prefill_b::spans_wire::EP_CMD_PREFILL_SPANS;
+    use metrale_model_layers::speculative as sp;
+    let d = sp::EP_CMD_DFLASH_PROPOSE;
+    assert!(
+        d > 0xFFFF_FFEF,
+        "EP_CMD_DFLASH_PROPOSE would be a decode token id"
+    );
+    let others = [
+        0xFFFF_FFE0,
+        0xFFFF_FFF0,
+        0xFFFF_FFF1,
+        0xFFFF_FFF2,
+        0xFFFF_FFF3,
+        0xFFFF_FFF4,
+        sp::EP_CMD_MTP_PROPOSE,
+        sp::EP_CMD_VERIFY_KGAMMA,
+        0xFFFF_FFF7,
+        EP_CMD_DECODE_CKPT,
+        sp::EP_CMD_VERIFY_BATCH,
+        EP_CMD_PREFILL_SPANS,
+        0xFFFF_FFFF,
+    ];
+    let mut i = 0;
+    while i < others.len() {
+        assert!(
+            d != others[i],
+            "EP_CMD_DFLASH_PROPOSE collides with another worker opcode"
+        );
+        i += 1;
+    }
+};
+
 /// 2026-09-25: Payload width of [`EP_CMD_DECODE_CKPT`], in u32 words.
 pub(in crate::model) const EP_CKPT_WORDS: usize = 6;
 

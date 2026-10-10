@@ -95,6 +95,11 @@ pub fn hidden_fingerprint(gpu: &dyn GpuBackend, p: DevicePtr, h: usize) -> u64 {
 /// code is followed by `last_token`, `position` and `num_drafts`, each a u32.
 pub const EP_CMD_MTP_PROPOSE: u32 = 0xFFFF_FFF5;
 
+/// 2026-10-10: EP worker command: run one tensor-parallel DFlash propose alongside rank 0
+/// (`DraftProposer::collective_propose`). The preamble's seq id is the sequence's slot; the
+/// drafter sends its own header and data after the code.
+pub const EP_CMD_DFLASH_PROPOSE: u32 = 0xFFFF_FFFB;
+
 /// 2026-09-25: Run the sharded drafter on every rank with the communicator.
 /// On unless `METRALE_NO_MTP_EP_PROPOSE=1`; read once per process. It is the
 /// GLM-5.3 MTP head's [`DraftProposer::needs_comm`], and a proposer that needs
