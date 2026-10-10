@@ -110,3 +110,36 @@ fn routed_expert_projections_inherit_the_fused_experts_module() {
         "only a routed expert's projection inherits"
     );
 }
+
+/// 2026-10-10: A ModelOpt export over an FP8 base: the exported layers take the export's NVFP4,
+/// the modules it ignores keep the base's block-scaled FP8, and with no base they would be 16-bit.
+#[test]
+fn an_export_over_a_base_answers_its_ignored_modules_from_the_base() {
+    let export = plan(serde_json::json!({
+        "producer": {"name": "modelopt"},
+        "quant_algo": "MIXED_PRECISION",
+        "quantized_layers": {"layers.3.ffn.experts": {"quant_algo": "NVFP4", "group_size": 16}},
+        "ignore": ["*.attn.*", "head"],
+    }));
+    let base = plan(serde_json::json!({
+        "quant_method": "fp8", "activation_scheme": "dynamic", "weight_block_size": [128, 128],
+    }));
+    let block = Format::Fp8E4m3 {
+        scale: Scale::Block(128, 128),
+    };
+    let g128 = Format::Fp8E4m3 {
+        scale: Scale::Group(128),
+    };
+    let fp4 = Format::Nvfp4 { group: 16 };
+    let d = DeclaredPrecision::over_base(&export, &base);
+    let f = d.linear("layers.3.ffn.experts.0.w1");
+    assert_eq!((f.weight, f.activation), (fp4, fp4));
+    let f = d.linear("layers.3.attn.wq_a");
+    assert_eq!((f.weight, f.activation), (block, g128));
+    let alone = DeclaredPrecision::new(&export).linear("layers.3.attn.wq_a");
+    assert_eq!(
+        (alone.weight, alone.activation),
+        (Format::Bf16, Format::Bf16)
+    );
+    assert!(d.refusals().is_empty());
+}

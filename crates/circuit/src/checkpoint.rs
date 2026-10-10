@@ -13,6 +13,10 @@
 //!   map serves is refused, never approximated by a neighbour.
 //! - Precision comes from config.json's own `quantization_config` when it has one, else from
 //!   the sidecar `hf_quant_config.json` (the serve rule, `merge_sidecar_quant_config`).
+//! - 2026-10-10: A ModelOpt export of an HF `fp8` checkpoint keeps the base's `fp8` method and
+//!   adds ModelOpt's fields (`quant_algo = MIXED_PRECISION`, `quantized_layers`, its `ignore`):
+//!   the declared formats are ModelOpt's for the layers it quantized and the base method's for
+//!   the modules it ignored ([`DeclaredPrecision::over_base`]).
 
 use std::collections::BTreeMap;
 
@@ -197,11 +201,15 @@ pub fn resolve_checkpoint(
                 .collect::<String>()
         )));
     }
+    let export = qc.as_ref().map(modelopt_export_plan).transpose()?.flatten();
     let kv_cache = kv_cache_format(qc.as_ref())?;
     let text = ARCHES[i].circuit;
     let circuit = match serve {
         ServePrecision::Declared => {
-            let precision = DeclaredPrecision::new(&plan);
+            let precision = match &export {
+                Some(export) => DeclaredPrecision::over_base(export, &plan),
+                None => DeclaredPrecision::new(&plan),
+            };
             let circuit = instantiate(text, &BLOCKS, &mapped.shape, &precision)?;
             let refused = precision.refusals();
             if !refused.is_empty() {
@@ -286,6 +294,31 @@ fn quantization_config(
             })
         })
         .transpose()
+}
+
+/// 2026-10-10: The ModelOpt export's own plan, when `qc` is a ModelOpt `MIXED_PRECISION`
+/// export of an HF `fp8` checkpoint (nvidia/DeepSeek-V4-Flash-NVFP4: the base's `quant_method =
+/// fp8` and `weight_block_size`, and ModelOpt's `producer`, `quant_algo`, `quantized_layers`
+/// and `ignore`); `None` for any other block. The plan `qc` parses to is then the base's.
+fn modelopt_export_plan(qc: &Value) -> Result<Option<DeclaredPrecisionPlan>, CheckpointError> {
+    let modelopt = qc
+        .get("producer")
+        .and_then(|p| p.get("name"))
+        .and_then(Value::as_str)
+        .is_some_and(|n| n.eq_ignore_ascii_case("modelopt"));
+    let is_export = qc.get("quant_method").and_then(Value::as_str) == Some("fp8")
+        && modelopt
+        && qc.get("quant_algo").and_then(Value::as_str) == Some("MIXED_PRECISION");
+    if !is_export {
+        return Ok(None);
+    }
+    let mut export = qc.clone();
+    if let Some(o) = export.as_object_mut() {
+        o.remove("quant_method");
+    }
+    DeclaredPrecisionPlan::from_quantization_config(&export)
+        .map(Some)
+        .map_err(|e| CheckpointError::Quant(format!("{e:#}")))
 }
 
 /// 2026-09-30: The KV-cache format a quantization block declares: compressed-tensors
