@@ -1848,6 +1848,7 @@ dependencies = [
  "metrale-config",
  "metrale-core",
  "metrale-gpu-runtime",
+ "metrale-gpu-sys",
  "metrale-grammar",
  "metrale-kernel-tree",
  "metrale-kernels",
