@@ -219,7 +219,7 @@ fn site_of(c: &Circuit, n: NodeIdx) -> String {
 
 /// 2026-09-30: `block.local`, prefixed `draft.` in the draft head, whose blocks may reuse a
 /// main-stack template (the Nemotron-H draft MoE is the `moe` block at `mtp.layers.1`).
-fn site(node: &crate::ir::Node) -> String {
+pub(crate) fn site(node: &crate::ir::Node) -> String {
     let draft = if node.id.starts_with("draft.") {
         "draft."
     } else {
