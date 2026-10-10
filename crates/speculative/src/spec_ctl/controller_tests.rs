@@ -231,7 +231,7 @@ fn a_re_probe_lasts_its_window() {
 #[test]
 fn an_online_source_probes_each_depth_and_a_plain_probe_does_not_suspend() {
     let mut c = ctl("0:32,1:44");
-    c.cost.source = CostSource::Online(super::super::online::OnlineTable::new(0.3, 64));
+    c.cost.source = CostSource::Online(super::super::online::OnlineTable::new(0.3, 64, 1, 2.0));
     let mut s = stream_at(&[0.9]);
     let mut ks = Vec::new();
     for ms in [32.0, 44.0, 0.0] {

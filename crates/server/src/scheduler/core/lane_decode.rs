@@ -220,9 +220,7 @@ impl SchedulerCore {
                         * 1e3;
                     if let Some(h) = spec_host.as_mut() {
                         h.settle(active.iter_mut().map(|a| &mut a.spec_ctl), 0);
-                        for a in active.iter_mut() {
-                            h.observe_plain(&mut a.spec_ctl);
-                        }
+                        h.observe_plain(active.iter_mut().map(|a| &mut a.spec_ctl));
                         h.observe_step(active.len(), 0, ms, None, active.len());
                     }
                     for a in active.iter_mut() {

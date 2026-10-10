@@ -14,6 +14,10 @@
 //! - The decision is always one of the allowed depths.
 //! - `entered_plain` is reported exactly once per transition from a speculative step to a
 //!   chosen (not probing) plain-decode step, so the host drops pending drafts once.
+//! - Leaving speculation needs `suspend_dwell` consecutive plain-decode choices, and a
+//!   suspended batch re-probes after `resume_after_tokens` plain tokens across the batch (the
+//!   MTP gate's dwell and token count; 2026-10-10 dgx1 A/B: a per-stream count and no dwell
+//!   kept wide batches on plain decode 62% of the time).
 
 use super::controller::{SeqState, SpecController};
 use super::reprobe::ExploreState;
@@ -39,10 +43,15 @@ pub struct BatchSpec {
     probes: u64,
     last_probe: bool,
     delivered_tps: Option<f64>,
+    suspend_dwell: u32,
+    plain_votes: u32,
+    plain_tokens: u32,
 }
 
 impl BatchSpec {
-    pub fn new(ctl: SpecController) -> Self {
+    /// 2026-10-10: `suspend_dwell` (at least 1) consecutive plain-decode choices end
+    /// speculation.
+    pub fn new(ctl: SpecController, suspend_dwell: u32) -> Self {
         Self {
             ctl,
             explore: ExploreState::default(),
@@ -50,15 +59,32 @@ impl BatchSpec {
             probes: 0,
             last_probe: false,
             delivered_tps: None,
+            suspend_dwell: suspend_dwell.max(1),
+            plain_votes: 0,
+            plain_tokens: 0,
         }
     }
 
     /// 2026-10-10: The depth for the next step of `streams` among `allowed` (ascending).
     pub fn decide(&mut self, streams: &[&SeqState], allowed: &[usize]) -> Decision {
-        let k = self
+        let mut k = self
             .ctl
             .batch_drafts_in(streams, &mut self.explore, allowed);
         let probe = self.explore.probing;
+        let speculating = self.last_k.is_some_and(|l| l > 0);
+        if k == 0 && !probe && speculating {
+            self.plain_votes += 1;
+            if self.plain_votes < self.suspend_dwell {
+                // 2026-10-10: Not yet: keep the depth the batch runs (or the deepest allowed).
+                k = self
+                    .last_k
+                    .filter(|l| allowed.contains(l))
+                    .or_else(|| allowed.last().copied())
+                    .unwrap_or(0);
+            }
+        } else if k > 0 {
+            self.plain_votes = 0;
+        }
         self.last_probe = probe;
         if probe {
             self.probes += 1;
@@ -85,9 +111,25 @@ impl BatchSpec {
         }
     }
 
-    /// 2026-10-10: One plain-decoded token of `seq` (counts towards its re-probe).
-    pub fn observe_plain(&self, seq: &mut SeqState) {
-        self.ctl.note_plain_token(seq);
+    /// 2026-10-10: One plain-decode step of `streams`: while all of them are suspended, their
+    /// tokens count towards the batch's re-probe, which resumes every stream at once.
+    pub fn observe_plain<'a>(&mut self, streams: impl IntoIterator<Item = &'a mut SeqState>) {
+        let mut streams: Vec<&mut SeqState> = streams.into_iter().collect();
+        if streams.is_empty() || !streams.iter().all(|s| s.suspended()) {
+            self.plain_tokens = 0;
+            return;
+        }
+        self.plain_tokens = self.plain_tokens.saturating_add(streams.len() as u32);
+        let Some(limit) = self.ctl.cfg.reprobe.resume_after_tokens else {
+            return;
+        };
+        if self.plain_tokens >= limit {
+            self.plain_tokens = 0;
+            self.plain_votes = 0;
+            for s in streams.iter_mut() {
+                self.ctl.resume(s);
+            }
+        }
     }
 
     /// 2026-10-10: The step's measured wall `ms` (and `j`) at depth `k` over `n` streams, and

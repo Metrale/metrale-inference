@@ -48,10 +48,10 @@ fn host(max_k: usize) -> BatchSpec {
         },
     };
     let cost = CostModel {
-        source: CostSource::Online(OnlineTable::new(0.3, 256)),
+        source: CostSource::Online(OnlineTable::new(0.3, 256, 3, 2.0)),
         calib: Calibration::new(0.0),
     };
-    BatchSpec::new(SpecController::new(cfg, cost, ColdPrior::Chained))
+    BatchSpec::new(SpecController::new(cfg, cost, ColdPrior::Chained), 4)
 }
 
 /// 2026-10-10: Runs `steps` steps of `streams` among `allowed`, each verified stream accepting
@@ -70,9 +70,11 @@ fn drive(
         let d = h.decide(&refs, allowed);
         h.settle(streams.iter_mut(), d.k);
         let mut emitted = 0;
+        if d.k == 0 {
+            h.observe_plain(streams.iter_mut());
+        }
         for s in streams.iter_mut() {
             if d.k == 0 {
-                h.observe_plain(s);
                 emitted += 1;
             } else {
                 let a = accept(d.k);
@@ -86,8 +88,8 @@ fn drive(
     ran
 }
 
-/// 2026-10-10: Both depths are measured first (plain decode, then speculation); with drafts
-/// that pay, the batch speculates.
+/// 2026-10-10: Both depths are measured first (three warm-up steps each, plain decode first);
+/// with drafts that pay, the batch speculates.
 #[test]
 fn both_depths_are_measured_then_the_paying_one_runs() {
     let mut h = host(3);
@@ -101,12 +103,12 @@ fn both_depths_are_measured_then_the_paying_one_runs() {
         |k| 30.0 + 4.0 * k as f64,
     );
     assert_eq!(
-        &ran[..2],
-        &[0, 3],
-        "probe plain, then the speculative depth"
+        &ran[..6],
+        &[0, 0, 0, 3, 3, 3],
+        "warm up plain, then the speculative depth"
     );
-    assert!(ran[2..].iter().all(|&k| k == 3), "{ran:?}");
-    assert_eq!(h.probes(), 2);
+    assert!(ran[6..].iter().all(|&k| k == 3), "{ran:?}");
+    assert_eq!(h.probes(), 6);
 }
 
 /// 2026-10-10: Drafts that never pay: plain decode wins, the switch is reported once, and
@@ -123,7 +125,7 @@ fn plain_decode_wins_when_drafts_do_not_pay_and_is_re_probed() {
         entered += usize::from(d.entered_plain);
         h.settle(s.iter_mut(), d.k);
         if d.k == 0 {
-            h.observe_plain(&mut s[0]);
+            h.observe_plain(s.iter_mut());
         } else {
             h.observe_stream(&mut s[0], 3, 0);
         }
@@ -140,7 +142,7 @@ fn plain_decode_wins_when_drafts_do_not_pay_and_is_re_probed() {
         entered >= 2,
         "each return to plain decode is reported: {entered}"
     );
-    let first_plain = ran.iter().skip(2).position(|&k| k == 0).unwrap() + 2;
+    let first_plain = ran.iter().skip(6).position(|&k| k == 0).unwrap() + 6;
     let window: Vec<usize> = ran[first_plain..first_plain + 64].to_vec();
     assert!(
         window.iter().all(|&k| k == 0),
@@ -180,9 +182,9 @@ fn a_new_width_bucket_is_measured_again() {
     drive(&mut h, &mut s, &[0, 3], 10, |_| 2, |k| 30.0 + k as f64);
     let before = h.probes();
     let mut s4 = vec![SeqState::default(); 4];
-    let ran = drive(&mut h, &mut s4, &[0, 3], 3, |_| 2, |k| 30.0 + k as f64);
-    assert_eq!(h.probes() - before, 2, "{ran:?}");
-    assert_eq!(&ran[..2], &[0, 3]);
+    let ran = drive(&mut h, &mut s4, &[0, 3], 6, |_| 2, |k| 30.0 + k as f64);
+    assert_eq!(h.probes() - before, 6, "{ran:?}");
+    assert_eq!(&ran[..6], &[0, 0, 0, 3, 3, 3]);
 }
 
 /// 2026-10-10: The resolver's case: one stream, depths 0..=7. Drafts that are all accepted
@@ -215,9 +217,10 @@ fn a_single_stream_goes_deep_on_code_and_shallow_on_prose() {
         },
         ms,
     );
+    let deep = ran[100..].iter().filter(|&&k| k >= 2).count();
     assert!(
-        ran[100..].iter().all(|&k| k <= 1),
-        "prose: {:?}",
+        deep <= 5,
+        "prose (cost re-measures aside, shallow): {:?}",
         &ran[100..]
     );
 }
@@ -241,4 +244,54 @@ fn paying_speculation_keeps_plain_decode_a_small_share() {
         "plain {plain} of {}",
         ran.len()
     );
+}
+
+/// 2026-10-10: Leaving speculation takes `suspend_dwell` consecutive plain-decode choices, and
+/// a suspended batch of 16 re-probes after 64 plain tokens across the batch: 4 steps, not 64
+/// (the dgx1 A/B regression: a per-stream count held wide batches on plain decode).
+#[test]
+fn leaving_speculation_dwells_and_a_wide_batch_re_probes_by_batch_tokens() {
+    let mut h = host(1);
+    let mut s = vec![SeqState::default(); 16];
+    let ran = drive(
+        &mut h,
+        &mut s,
+        &[0, 1],
+        60,
+        |_| 0,
+        |k| if k == 0 { 30.0 } else { 45.0 },
+    );
+    let first_plain = ran.iter().skip(6).position(|&k| k == 0).unwrap() + 6;
+    assert_eq!(
+        first_plain,
+        6 + 3,
+        "three outvoted choices, then plain decode: {ran:?}"
+    );
+    let run = ran[first_plain..].iter().take_while(|&&k| k == 0).count();
+    assert_eq!(run, 4, "64 plain tokens across 16 streams: {ran:?}");
+}
+
+/// 2026-10-10: The dgx1 A/B regression as a test: at width 16 the first speculative step is a
+/// CUDA graph capture (10x its wall) and steps jitter; speculation pays (one draft accepted 3
+/// times in 4, 75 ms vs 60 ms plain), so plain decode stays a small share.
+#[test]
+fn a_capture_spike_and_jitter_do_not_send_a_wide_batch_to_plain_decode() {
+    use std::cell::Cell;
+    let mut h = host(1);
+    let mut s = vec![SeqState::default(); 16];
+    let (n, first) = (Cell::new(0usize), Cell::new(true));
+    let accept = |_| {
+        n.set(n.get() + 1);
+        usize::from(n.get() % 4 != 0)
+    };
+    let ms = |k: usize| {
+        let base = if k == 0 { 60.0 } else { 75.0 };
+        if k == 1 && first.replace(false) {
+            return 10.0 * base;
+        }
+        base * if n.get() % 7 == 0 { 1.6 } else { 1.0 }
+    };
+    let ran = drive(&mut h, &mut s, &[0, 1], 400, accept, ms);
+    let plain = ran.iter().filter(|&&k| k == 0).count();
+    assert!(plain <= 20, "plain {plain} of 400: {ran:?}");
 }

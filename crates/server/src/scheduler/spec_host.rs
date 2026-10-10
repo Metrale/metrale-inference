@@ -31,10 +31,19 @@ const ONLINE_ALPHA: f64 = 0.3;
 /// 2026-10-10: Observations after which an online cost cell is measured again: the gate's
 /// plain-decode re-probe interval (256 tokens at one stream).
 const ONLINE_STALE_STEPS: u64 = 256;
+/// 2026-10-10: A cold online cell is priced after this many steps (its fastest one), and a
+/// later step moves it at most to twice its value: the first step at a new width often
+/// carries a CUDA graph capture.
+const ONLINE_WARMUP: u32 = 3;
+const ONLINE_CLIP: f64 = 2.0;
 /// 2026-10-10: Plain decode must beat speculation by this fraction: the gate's switch margin.
 const SUSPEND_MARGIN: f64 = 0.05;
-/// 2026-10-10: Plain-decoded tokens after which a suspended batch re-probes speculation (the
-/// gate's re-probe interval), for a window of 16 speculative steps (its probe window).
+/// 2026-10-10: Consecutive plain-decode choices that end speculation: the gate's dwell (two
+/// 16-step windows).
+const SUSPEND_DWELL: u32 = 32;
+/// 2026-10-10: Plain-decoded tokens, across the batch, after which a suspended batch re-probes
+/// speculation (the gate's re-probe interval), for a window of 16 speculative steps (its probe
+/// window).
 const RESUME_AFTER_TOKENS: u32 = 256;
 const PROBE_STEPS: u32 = 16;
 /// 2026-10-10: Acceptance memory (about 20 observations), the serve-wide prior's weight, and
@@ -75,7 +84,12 @@ pub(crate) fn build(
             Calibration::new(MEASURED_CALIBRATION_ALPHA),
         ),
         None => (
-            CostSource::Online(OnlineTable::new(ONLINE_ALPHA, ONLINE_STALE_STEPS)),
+            CostSource::Online(OnlineTable::new(
+                ONLINE_ALPHA,
+                ONLINE_STALE_STEPS,
+                ONLINE_WARMUP,
+                ONLINE_CLIP,
+            )),
             Calibration::new(0.0),
         ),
     };
@@ -113,11 +127,10 @@ pub(crate) fn build(
             "plain or the step's depth".to_string()
         }
     );
-    BatchSpec::new(SpecController::new(
-        cfg,
-        CostModel { source, calib },
-        ColdPrior::Chained,
-    ))
+    BatchSpec::new(
+        SpecController::new(cfg, CostModel { source, calib }, ColdPrior::Chained),
+        SUSPEND_DWELL,
+    )
 }
 
 /// 2026-10-10: The depths a step may run: plain decode and `spec_k` (the depth the

@@ -184,7 +184,8 @@ impl SpecController {
     }
 
     /// 2026-10-10: The next step's draft count for one stream at width `n` under `cap` (0:
-    /// plain decode; `cap` while nothing is measured). A suspended stream gets 0 until [`Self::note_plain_token`] resumes it.
+    /// plain decode; `cap` while nothing is measured). A suspended stream gets 0 until
+    /// [`Self::note_plain_token`] resumes it.
     /// Advances the stream's exploration schedule when it explores.
     pub fn drafts(&self, seq: &mut SeqState, n: usize, cap: usize) -> usize {
         if seq.suspended.is_some() {
@@ -278,12 +279,18 @@ impl SpecController {
             seq.suspended = Some(t + 1);
             return false;
         }
+        self.resume(seq);
+        true
+    }
+
+    /// 2026-10-10: Lift `seq`'s suspension now: its re-probe window starts and its counts are
+    /// softened. A host that counts plain tokens across a batch (`batch::BatchSpec`) calls it.
+    pub fn resume(&self, seq: &mut SeqState) {
         seq.suspended = None;
         seq.incumbent = None;
         seq.probe_left = self.cfg.reprobe.probe_steps;
         seq.explore = ExploreState::default();
         seq.rates.soften(self.cfg.reprobe.soften);
-        true
     }
 }
 

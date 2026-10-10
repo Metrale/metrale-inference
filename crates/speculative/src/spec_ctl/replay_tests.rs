@@ -311,7 +311,7 @@ fn qwen_mtp_traces_the_controller_is_at_least_as_good_as_every_old_mechanism() {
                 n,
                 cold.clone(),
             ));
-            let online = CostSource::Online(OnlineTable::new(0.3, 256));
+            let online = CostSource::Online(OnlineTable::new(0.3, 256, 3, 2.0));
             let mut onl_ctl = mtp_controller(online, Objective::Throughput, n, ColdPrior::Chained);
             let onl = run_p(&mut onl_ctl);
             let energy = Objective::Energy {
@@ -378,7 +378,7 @@ fn glm_dflash_traces_the_controller_is_at_least_as_good_as_every_old_mechanism()
         let ctl = run_p(&mut dflash_controller(&f.step_ms[..=k], k));
         let adaptive_k = run_p(&mut adaptive_k_exact_port(&f.step_ms[..=k], k));
         let mut online = dflash_controller(&f.step_ms[..=k], k);
-        online.ctl.cost.source = CostSource::Online(OnlineTable::new(0.3, 256));
+        online.ctl.cost.source = CostSource::Online(OnlineTable::new(0.3, 256, 3, 2.0));
         online.ctl.cold = ColdPrior::Chained;
         let onl = run_p(&mut online);
         let noise = sampling_noise(&trace);
