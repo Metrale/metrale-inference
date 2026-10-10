@@ -72,4 +72,7 @@ pub struct Glm5NextLayer {
     pub is_first: bool,
     /// 2026-09-25: Collapse the highway in this layer; true for the last text layer only.
     pub is_last: bool,
+    /// 2026-10-10: The stack's L2 warm (`METRALE_GLM_AR_L2_PREFETCH`), shared by every text
+    /// layer; `None` when the lever is off and for the MTP block.
+    pub l2_warm: Option<Arc<l2_warm::L2Warm>>,
 }

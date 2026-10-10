@@ -131,6 +131,8 @@ pub fn load_glm5next_mtp_module(
             // 2026-09-25: No mHC highway to expand or collapse.
             is_first: false,
             is_last: false,
+            // 2026-10-10: The MTP block has no mHC reduce to hide a warm under.
+            l2_warm: None,
         },
         eh_proj: DenseWeight {
             weight: store.get(&format!("{prefix}eh_proj.weight"))?.ptr,
