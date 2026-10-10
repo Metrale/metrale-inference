@@ -37,7 +37,10 @@ pub enum AccuracyAction {
 
 #[path = "envelope_args.rs"]
 mod envelope_args;
-pub use envelope_args::{EnvelopeAction, EnvelopeArgs, EnvelopeGridArgs, EnvelopeSweepArgs};
+pub use envelope_args::{
+    EnvelopeAction, EnvelopeArgs, EnvelopeFusionsArgs, EnvelopeGridArgs, EnvelopeSchedulesArgs,
+    EnvelopeSweepArgs,
+};
 
 /// `met accuracy model` options.
 #[derive(clap::Args, Debug, Clone)]

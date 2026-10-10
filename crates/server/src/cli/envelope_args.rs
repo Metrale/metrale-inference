@@ -22,6 +22,46 @@ pub enum EnvelopeAction {
     /// Time and judge every candidate of this shard's cells on this box's GPU; appends one JSON
     /// record per (cell, candidate) to --out and skips records already there (resumable).
     Sweep(EnvelopeSweepArgs),
+    /// Select the winners from the sweep's records and write SCHEDULES.toml and its report
+    /// (byte-identical winners enabled by default, numerics-changing ones opt-in only). CPU only.
+    Schedules(EnvelopeSchedulesArgs),
+    /// Check FUSIONS.toml's row ranges against SCHEDULES.toml and print the report. CPU only.
+    Fusions(EnvelopeFusionsArgs),
+}
+
+/// `met accuracy envelope schedules` options.
+#[derive(clap::Args, Debug, Clone)]
+pub struct EnvelopeSchedulesArgs {
+    /// Hardware class (`kernels/<class>/`).
+    #[arg(long)]
+    pub hardware: String,
+    /// The sweep's record files (comma-separated; every box's).
+    #[arg(long, value_delimiter = ',', required = true)]
+    pub records: Vec<std::path::PathBuf>,
+    /// Where to write SCHEDULES.toml (normally kernels/<hw>/common/SCHEDULES.toml).
+    #[arg(long)]
+    pub out: std::path::PathBuf,
+    /// Where to write the selection report (Markdown).
+    #[arg(long)]
+    pub report: std::path::PathBuf,
+    /// Repository root; default: the first ancestor of the working directory holding
+    /// kernels/circuits/INSTANCES.toml.
+    #[arg(long)]
+    pub root: Option<std::path::PathBuf>,
+}
+
+/// `met accuracy envelope fusions` options.
+#[derive(clap::Args, Debug, Clone)]
+pub struct EnvelopeFusionsArgs {
+    /// Hardware class (`kernels/<class>/`).
+    #[arg(long)]
+    pub hardware: String,
+    /// The SCHEDULES.toml to check against.
+    #[arg(long)]
+    pub schedules: std::path::PathBuf,
+    /// Repository root; default as for `schedules`.
+    #[arg(long)]
+    pub root: Option<std::path::PathBuf>,
 }
 
 /// What the grid covers.

@@ -38,6 +38,9 @@ use crate::cli::accuracy_args::{
 use crate::cli::accuracy_gpu::GpuRunner;
 use crate::cli::circuit_venn::{FsRepo, find_root};
 
+#[path = "envelope_schedules.rs"]
+mod envelope_schedules;
+
 /// 2026-10-10: The input classes every candidate's output bytes are digested on (each in every
 /// projection contract): the selection compares a winner's digests with the default's.
 const DIGEST_CLASSES: [InputClass; 2] = [InputClass::Gaussian, InputClass::Outliers];
@@ -50,6 +53,8 @@ pub(crate) fn dispatch(a: EnvelopeArgs) -> Result<i32> {
     match a.action {
         EnvelopeAction::Grid(g) => print_grid(&g),
         EnvelopeAction::Sweep(s) => sweep_gpu(&s),
+        EnvelopeAction::Schedules(s) => envelope_schedules::schedules(&s),
+        EnvelopeAction::Fusions(f) => envelope_schedules::fusions(&f),
     }
 }
 
