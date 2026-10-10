@@ -70,17 +70,16 @@ pub fn w4a16_gemv_seg_blocks(tiles: u64, max_blocks: u32) -> u32 {
     need.min(u64::from(max_blocks)).max(1) as u32
 }
 
-/// 2026-10-10: The tile height and block cap of a launch over `k` on `sms` SMs: one row per warp
-/// and one warp per tile (no striding) up to K 4096, four rows per warp above. GB10 (48 SMs),
-/// interleaved A/B of 5 rounds, 2026-10-10: see the policy table in
-/// `glm5next_w4a16_gemv_seg_bench` (model-arch examples).
+/// 2026-10-10: The tile height and block cap of a launch over `k` on `sms` SMs: one output row
+/// per warp, one tile per warp (no grid striding), at every K. GB10 (48 SMs), interleaved A/B of
+/// 5 rounds on an idle GPU (`glm5next_w4a16_gemv_seg_bench --sweep`), medians: R = 1 uncapped is
+/// fastest or within 1% on every GLM-5.3 shape and group (KDA six-group 88.2 us vs 90.0 at R = 2,
+/// 90.8 at R = 4; shared down 9.72 vs 9.98 / 10.31; o_absorb K 11264 114.5 vs 116.7 / 118.5);
+/// caps of 2 or 4 blocks per SM never won. `k` and `sms` stay arguments so a measured
+/// device- or shape-specific tile can enter here without touching callers.
 pub fn w4a16_gemv_seg_policy(k: u32, sms: u32) -> (u32, u32) {
-    let _ = sms;
-    if k <= 4096 {
-        (1, u32::MAX)
-    } else {
-        (4, u32::MAX)
-    }
+    let _ = (k, sms);
+    (1, u32::MAX)
 }
 
 /// 2026-10-10: One launch of `segs` (1..=6) over one row of `input` with tile height `r` on at
