@@ -32,6 +32,10 @@
 //! against `kept_pools` in `tests`), so the launcher uses the full arrays in place and
 //! `dsa_compact_pools` is not launched. A left-padded batch would need the compaction;
 //! [`DsaSelectGeometry::plan`] handles contiguous caches only.
+//!
+//! 2026-10-09: Scratch region 6 is the radix top-k work buffer ([`radix`],
+//! `METRALE_GLM_DSA_TOPK_RADIX=1`), planned only with the lever on: lever-off sizes and
+//! allocations are unchanged.
 
 use anyhow::{Result, bail};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
@@ -235,7 +239,9 @@ pub struct DsaSelectScratch {
     /// 2026-09-25: `[q_rows, out_width]` i32 token ids, `-1` where nothing was selected. The
     /// result of the pass; `dsa_expand_selection` writes every slot of each row.
     tokens: DevicePtr,
-    capacity: [usize; 6],
+    /// 2026-10-09: Radix top-k work buffer (region 6), NULL when none was planned.
+    radix: DevicePtr,
+    capacity: [usize; 7],
     tokens_bytes: usize,
 }
 
@@ -247,7 +253,18 @@ impl DsaSelectScratch {
         cfg: &Glm5NextDsaConfig,
         geom: &DsaSelectGeometry,
     ) -> Result<Self> {
-        let capacity = geom.scratch_bytes();
+        Self::alloc_for(gpu, cfg, geom, radix::dsa_topk_radix())
+    }
+
+    /// 2026-10-09: [`Self::alloc`] for an explicit `METRALE_GLM_DSA_TOPK_RADIX` state. With
+    /// `radix_lever` off it makes exactly the allocations [`Self::alloc`] always made.
+    pub fn alloc_for(
+        gpu: &dyn GpuBackend,
+        cfg: &Glm5NextDsaConfig,
+        geom: &DsaSelectGeometry,
+        radix_lever: bool,
+    ) -> Result<Self> {
+        let capacity = radix::regions(geom, cfg, radix_lever);
         let tokens_bytes = geom.q_rows * cfg.out_width() * 4;
         Ok(Self {
             pool_keys: gpu.alloc(capacity[0])?,
@@ -257,6 +274,7 @@ impl DsaSelectScratch {
             valid_cand: gpu.alloc(capacity[4])?,
             selected: gpu.alloc(capacity[5])?,
             tokens: gpu.alloc(tokens_bytes)?,
+            radix: radix::alloc_region(gpu, capacity[6])?,
             capacity,
             tokens_bytes,
         })
@@ -283,6 +301,8 @@ impl DsaSelectScratch {
     /// 2026-09-25: Whether `geom` fits what was allocated. `select_tokens` checks it on every
     /// pass, so a pass larger than the allocation is an error rather than an overrun.
     pub fn fits(&self, cfg: &Glm5NextDsaConfig, geom: &DsaSelectGeometry) -> Result<()> {
+        // 2026-10-09: Regions 0 to 5 only. Region 6 (radix) is optional: `select_tokens`
+        // checks it before taking the radix path and keeps `dsa_topk_pools` without it.
         let want = geom.scratch_bytes();
         for (i, (w, c)) in want.iter().zip(self.capacity.iter()).enumerate() {
             if w > c {
@@ -315,6 +335,7 @@ impl DsaSelectScratch {
             self.valid_cand,
             self.selected,
             self.tokens,
+            self.radix,
         ] {
             gpu.free(p)?;
         }
@@ -324,6 +345,7 @@ impl DsaSelectScratch {
 
 mod launch;
 pub use launch::select_tokens;
+pub mod radix;
 
 #[cfg(test)]
 mod tests;
