@@ -312,8 +312,8 @@ fn qwen_mtp_traces_the_controller_is_at_least_as_good_as_every_old_mechanism() {
                 cold.clone(),
             ));
             let online = CostSource::Online(OnlineTable::new(0.3, 256, 3, 2.0));
-            let mut onl_ctl = mtp_controller(online, Objective::Throughput, n, ColdPrior::Chained);
-            let onl = run_p(&mut onl_ctl);
+            let mut online_ctl = mtp_controller(online, Objective::Throughput, n, ColdPrior::Chained);
+            let online_out = run_p(&mut online_ctl);
             let energy = Objective::Energy {
                 slack: 0.0,
                 floor: FloorRef::Depth(1),
@@ -324,7 +324,7 @@ fn qwen_mtp_traces_the_controller_is_at_least_as_good_as_every_old_mechanism() {
                 ("measured planner", &planned),
                 ("ctl throughput", &thr),
                 ("ctl energy", &en),
-                ("ctl online", &onl),
+                ("ctl online", &online_out),
             ] {
                 row(&run.name, n, name, o);
             }
@@ -343,10 +343,10 @@ fn qwen_mtp_traces_the_controller_is_at_least_as_good_as_every_old_mechanism() {
             }
             for (name, old) in &olds[..2] {
                 assert!(
-                    onl.tok_per_ms() >= old * (1.0 - noise),
+                    online_out.tok_per_ms() >= old * (1.0 - noise),
                     "{} n={n}: online controller {:.5} tok/ms < {name} {old:.5}",
                     run.name,
-                    onl.tok_per_ms(),
+                    online_out.tok_per_ms(),
                 );
             }
             assert!(
@@ -380,13 +380,13 @@ fn glm_dflash_traces_the_controller_is_at_least_as_good_as_every_old_mechanism()
         let mut online = dflash_controller(&f.step_ms[..=k], k);
         online.ctl.cost.source = CostSource::Online(OnlineTable::new(0.3, 256, 3, 2.0));
         online.ctl.cold = ColdPrior::Chained;
-        let onl = run_p(&mut online);
+        let online_out = run_p(&mut online);
         let noise = sampling_noise(&trace);
         for (name, o) in [
             ("fixed (logged)", &fixed),
             ("adaptive-K port", &adaptive_k),
             ("ctl latency", &ctl),
-            ("ctl online", &onl),
+            ("ctl online", &online_out),
         ] {
             row(&tr.name, 1, name, o);
         }
@@ -408,10 +408,10 @@ fn glm_dflash_traces_the_controller_is_at_least_as_good_as_every_old_mechanism()
         ];
         for (name, old) in olds {
             assert!(
-                onl.tok_per_ms() >= old * (1.0 - noise),
+                online_out.tok_per_ms() >= old * (1.0 - noise),
                 "{}: online controller {:.5} tok/ms < {name} {old:.5}",
                 tr.name,
-                onl.tok_per_ms(),
+                online_out.tok_per_ms(),
             );
             assert!(
                 ctl.tok_per_ms() >= old,

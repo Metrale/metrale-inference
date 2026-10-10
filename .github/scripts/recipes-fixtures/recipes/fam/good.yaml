@@ -6,7 +6,8 @@ min_nodes: 2
 metadata:
   description: |
     Fixture for recipes-selftest.py. Every key maps to a flag the engine
-    has had since the recipe format existed.
+    has had since the recipe format existed, except spec_objective
+    (2026-10-10), which speculation without --mtp-gate force requires.
 defaults:
   port: 8888
   host: 0.0.0.0
