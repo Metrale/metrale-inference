@@ -37,7 +37,7 @@ pub const CIRCUITS: [(&str, &str); 4] = [
 ];
 
 /// 2026-09-28: Every precision table an instance can name.
-pub const PRECISION: [(&str, &str); 4] = [
+pub const PRECISION: [(&str, &str); 6] = [
     (
         "qwen3.6-35b-a3b-fp8-bf16head",
         include_str!("../../../../kernels/circuits/precision/qwen3.6-35b-a3b-fp8-bf16head.toml"),
@@ -55,6 +55,17 @@ pub const PRECISION: [(&str, &str); 4] = [
     (
         "glm-5.3-flash-nvfp4",
         include_str!("../../../../kernels/circuits/precision/glm-5.3-flash-nvfp4.toml"),
+    ),
+    // 2026-10-10: Nemotron-3 Nano and Super at their declared formats (not executor targets).
+    (
+        "nemotron-3-nano-30b-a3b-nvfp4",
+        include_str!("../../../../kernels/circuits/precision/nemotron-3-nano-30b-a3b-nvfp4.toml"),
+    ),
+    (
+        "nemotron-3-super-120b-a12b-nvfp4",
+        include_str!(
+            "../../../../kernels/circuits/precision/nemotron-3-super-120b-a12b-nvfp4.toml"
+        ),
     ),
 ];
 

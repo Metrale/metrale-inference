@@ -197,3 +197,58 @@ plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], 
 [instance.policy]
 opt_in_levers = []
 settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive" }
+
+# 2026-10-10: NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4 (`nemotron_h`; Lightning without the MTP head and
+# with the `hybrid_override_pattern` config format), at its declared formats. Not an executor target
+# (`golden = false`: FUSIONS.toml has no Nemotron-H rules); `met circuit venn` and the union Venn
+# read it.
+# - Shape: config.json through kernels/circuits/nemotron_h.config.toml (crates/circuit/tests/
+#   nemotron_h.rs asserts the equality): `hybrid_override_pattern` (M = mamba, E = moe,
+#   * = full_attention), the Mamba2, MoE and attention dims; no MTP layer.
+# - Precision: the declared table (precision/nemotron-3-nano-30b-a3b-nvfp4.toml). The recipe pins
+#   `weight_quantization: nvfp4`; the declared tier is the engine default and the comparison basis.
+# - kv_cache_dtype: fp8, the recipe's and the checkpoint's (`kv_cache_quant_algo = FP8`).
+#   lm_head_dtype: bf16, declared (lm_head is excluded from quantization).
+# - row_tiers: by_rows, the default for a checkpoint that is not an FP8 MoE (ml/row_tiers.rs:64-78).
+#   The other settings are the flag defaults cited for the entries above.
+[[instance]]
+recipe = "nemotron-3-nano/nemotron-3-nano-30b-a3b-nvfp4"
+checkpoint = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4"
+arch = "nemotron_h"
+precision = "nemotron-3-nano-30b-a3b-nvfp4"
+target = "gb10/nemotron-3-nano-30b-a3b/nvfp4"
+golden = false
+layer_kinds = "MEME MAEM EMEM AEME MEMA EMEM EMAE MEME MAEM EMEM EMAE MEME MEME"
+dims = { hidden = 2688, vocab = 131072, q_heads = 32, kv_heads = 2, head_dim = 128, mamba_heads = 64, mamba_head_dim = 64, ssm_state = 128, ssm_groups = 8, conv_kernel = 4, experts = 128, top_k = 6, moe_inter = 1856, shared_inter = 3712, mtp = 0, moe_latent = 0, moe_io = 2688 }
+plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128] }
+
+[instance.policy]
+opt_in_levers = []
+settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive" }
+
+# 2026-10-10: NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4 (`nemotron_h` with the latent MoE block:
+# `moe_latent_size` 1024, 512 experts top-22, and one MTP layer), at its declared formats. Not an
+# executor target (`golden = false`); `met circuit venn` and the union Venn read it.
+# - Shape: config.json through kernels/circuits/nemotron_h.config.toml (crates/circuit/tests/
+#   nemotron_h.rs asserts the equality).
+# - Precision: the declared table (precision/nemotron-3-super-120b-a12b-nvfp4.toml): per-module
+#   ModelOpt MIXED_PRECISION. The recipe pins `weight_quantization: nvfp4`; the declared tier is the
+#   engine default and the comparison basis.
+# - plans: verify and draft are listed because the circuit carries the checkpoint's MTP layer; the
+#   engine refuses every speculative proposer on a Mamba-2 model today (the recipe's note).
+# - kv_cache_dtype: fp8, the recipe's and the checkpoint's. lm_head_dtype: bf16, declared.
+# - row_tiers: by_rows (ml/row_tiers.rs:64-78). The other settings are the flag defaults above.
+[[instance]]
+recipe = "nemotron-3-super/nemotron-3-super-120b-a12b-nvfp4"
+checkpoint = "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4"
+arch = "nemotron_h"
+precision = "nemotron-3-super-120b-a12b-nvfp4"
+target = "gb10/nemotron-super-120b-a12b/nvfp4"
+golden = false
+layer_kinds = "MEME MEMA EMEM EMEM AEME MEME MAEM EMEM EMEM AEME MEME MEMA EMEM EMEM EMAE MEME MEME MAEM EMEM EMAE MEME MEME"
+dims = { hidden = 4096, vocab = 131072, q_heads = 32, kv_heads = 2, head_dim = 128, mamba_heads = 128, mamba_head_dim = 64, ssm_state = 128, ssm_groups = 8, conv_kernel = 4, experts = 512, top_k = 22, moe_inter = 2688, shared_inter = 5376, mtp = 1, moe_latent = 1, moe_io = 1024 }
+plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], verify = [2, 3, 4], draft = [1] }
+
+[instance.policy]
+opt_in_levers = []
+settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive" }

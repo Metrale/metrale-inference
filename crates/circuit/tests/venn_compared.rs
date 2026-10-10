@@ -44,7 +44,8 @@ fn a_non_golden_compared_model_is_planned_with_placeholders_and_its_gaps_are_lis
     // 2026-10-10: Sites a rule does cover are not listed: Lightning's NVFP4 head is planned on
     // the W4A16 tensor-core rows kernel.
     assert!(!gaps.sites.iter().any(|s| s == "head.lm_head"), "{gaps:?}");
-    let text = venn::render(&r);
+    // 2026-10-10: The whole CLI path (manifest drift check, measurements, render) builds too.
+    let text = venn::report_text(&Tree, &glm_against_lightning(), None).expect("report");
     assert!(
         text.contains("## Compared models without full rules"),
         "the report must disclose the placeholder sites"
