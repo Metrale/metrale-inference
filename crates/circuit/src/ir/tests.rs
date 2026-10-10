@@ -146,3 +146,52 @@ fn latent_attention_weighs_kv_b_proj_and_a_projection_its_edges() {
     assert_eq!(short.weight_shape(&attend), None);
     assert_eq!(short.weight_shape(&proj), Some((4096, 16384)));
 }
+
+/// 2026-10-10: The DeepSeek-V4 vocabulary: its spellings round-trip, its shared-KV attention is
+/// opaque and reads no linear weight, and a grouped output projection weighs one block per
+/// group.
+#[test]
+fn the_deepseek_v4_vocabulary_parses_and_the_grouped_projection_weighs_its_blocks() {
+    for (name, kind) in [
+        ("sliding_attention", LayerKind::SlidingAttention),
+        (
+            "compressed_sparse_attention",
+            LayerKind::CompressedSparseAttention,
+        ),
+        (
+            "heavily_compressed_attention",
+            LayerKind::HeavilyCompressedAttention,
+        ),
+    ] {
+        assert_eq!(LayerKind::parse(name), Some(kind));
+        assert_eq!(kind.name(), name);
+    }
+    for name in ["o_group", "compress_kv", "compress_gate"] {
+        assert_eq!(LinearRole::parse(name).map(LinearRole::name), Some(name));
+    }
+    let op = OpKind::parse("compressed_attention", None, None).unwrap();
+    assert_eq!(op, OpKind::CompressedAttention);
+    assert_eq!(op.name(), "compressed_attention");
+    assert!(op.is_heavy() && !op.reads_linear_weight());
+
+    let dims: BTreeMap<String, u64> = [("o_groups".to_string(), 8)].into_iter().collect();
+    let c = Circuit {
+        arch: "t".into(),
+        description: String::new(),
+        nodes: Vec::new(),
+        edges: vec![edge(32768), edge(8192)],
+        blocks: Vec::new(),
+        layer_kinds: vec![LayerKind::SlidingAttention],
+        dims,
+        states: Vec::new(),
+    };
+    let grouped = node(OpKind::Linear(LinearRole::OGroup), vec![0], vec![1]);
+    assert_eq!(c.weight_shape(&grouped), Some((8192, 4096)));
+    let plain = node(OpKind::Linear(LinearRole::O), vec![0], vec![1]);
+    assert_eq!(c.weight_shape(&plain), Some((8192, 32768)));
+    let mut uneven = c.clone();
+    uneven.dims.insert("o_groups".into(), 3);
+    assert_eq!(uneven.weight_shape(&grouped), None);
+    uneven.dims.remove("o_groups");
+    assert_eq!(uneven.weight_shape(&grouped), None);
+}

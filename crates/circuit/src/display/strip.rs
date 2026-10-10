@@ -27,6 +27,9 @@ fn kind_name(k: LayerKind) -> &'static str {
         LayerKind::Mamba => "Mamba2",
         LayerKind::Moe => "MoE",
         LayerKind::SparseAttention => "DSA",
+        LayerKind::SlidingAttention => "SWA",
+        LayerKind::CompressedSparseAttention => "CSA",
+        LayerKind::HeavilyCompressedAttention => "HCA",
     }
 }
 
@@ -91,9 +94,11 @@ pub(super) fn strip(
                 // 2026-09-29: A Mamba2 mixer draws as the recurrent-mixer glyph; a MoE-only
                 // layer has no mixer, so its mixer cell draws as its FFN.
                 LayerKind::LinearAttention | LayerKind::Mamba => (g.layer[0], Style::LayerGdn),
-                LayerKind::FullAttention | LayerKind::SparseAttention => {
-                    (g.layer[1], Style::LayerAttn)
-                }
+                LayerKind::FullAttention
+                | LayerKind::SparseAttention
+                | LayerKind::SlidingAttention
+                | LayerKind::CompressedSparseAttention
+                | LayerKind::HeavilyCompressedAttention => (g.layer[1], Style::LayerAttn),
                 LayerKind::Moe => (g.layer[3], Style::LayerMoe),
             };
             mixer.push(glyph.to_string(), style);

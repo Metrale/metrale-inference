@@ -76,11 +76,21 @@ pub enum LinearRole {
     /// 2026-10-08: Indexer `index_kpool_compress_gate`: the per-channel pool gate scores.
     IndexGate,
     /// 2026-10-08: Hyper-connection `hc_*_fn`: the flattened residual streams into the
-    /// `(2 + hc) * hc` pre, post and combination mixes.
+    /// `(2 + hc) * hc` pre, post and combination mixes. 2026-10-10: Or, for DeepSeek-V4's
+    /// `hc_head`, into the `hc` pre mixes alone.
     HcMix,
+    /// 2026-10-10: DeepSeek-V4 `wo_a`: the grouped low-rank output projection, each of
+    /// `o_groups` head groups projected on its own to `o_lora_rank` (a block-diagonal weight,
+    /// [`super::Circuit::weight_shape`]).
+    OGroup,
+    /// 2026-10-10: DeepSeek-V4 compressor `wkv`: the hidden row into the per-token KV the
+    /// compressor pools (two series where the windows overlap).
+    CompressKv,
+    /// 2026-10-10: DeepSeek-V4 compressor `wgate`: the per-channel pool gate scores.
+    CompressGate,
 }
 
-const ROLES: [(LinearRole, &str); 31] = [
+const ROLES: [(LinearRole, &str); 34] = [
     (LinearRole::Q, "q"),
     (LinearRole::K, "k"),
     (LinearRole::V, "v"),
@@ -112,6 +122,9 @@ const ROLES: [(LinearRole, &str); 31] = [
     (LinearRole::IndexWeights, "index_weights"),
     (LinearRole::IndexGate, "index_gate"),
     (LinearRole::HcMix, "hc_mix"),
+    (LinearRole::OGroup, "o_group"),
+    (LinearRole::CompressKv, "compress_kv"),
+    (LinearRole::CompressGate, "compress_gate"),
 ];
 
 impl LinearRole {

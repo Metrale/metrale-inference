@@ -11,7 +11,8 @@
 //!   GatedDeltaNet and Mamba2 recurrent states (FP32, read and written once per sequence).
 //!   2026-10-08: Latent attention reads `kv_b_proj` and the latent rows it attends (the selected
 //!   ones under an indexer), the indexer's selection every pool key; both at the declared state
-//!   format.
+//!   format. 2026-10-10: DeepSeek-V4 shared-KV attention reads its window's rows and the
+//!   compressed rows its layer attends, once per sequence, at the window state's format.
 //! - Routed experts read `E * (1 - (1 - k/E)^T)` distinct experts' weights for `T` tokens
 //!   (uniform routing).
 //! - The peak is the MMA class of the node's input activation: FP8 or NVFP4 activations run the
@@ -160,6 +161,39 @@ pub fn node_cost(
                 * dim("index_heads")?
                 * dim("index_head_dim")?;
         }
+        OpKind::CompressedAttention => {
+            // 2026-10-10: The window's rows (at most `window`) and the compressed rows the layer
+            // attends: none, every complete pool (one per `ratio` tokens), or the indexer's
+            // top `top` of them. Each row is `head_dim` wide and read once per sequence as both
+            // key and value; every query head scores and accumulates it.
+            let ctx = r.context_tokens as f64;
+            let param = |k: &str| {
+                n.params
+                    .get(k)
+                    .and_then(|v| v.parse::<f64>().ok())
+                    .filter(|v| *v > 0.0)
+                    .ok_or_else(|| CostError::Node {
+                        node: n.id.clone(),
+                        detail: format!("param `{k}` is not a positive number"),
+                    })
+            };
+            let compressed = match n.params.get("compressed").map(String::as_str) {
+                Some("none") => 0.0,
+                Some("all") => (ctx / param("ratio")?).floor(),
+                Some("selected") => (ctx / param("ratio")?).floor().min(param("top")?),
+                other => {
+                    return Err(CostError::Node {
+                        node: n.id.clone(),
+                        detail: format!("compressed {other:?} is not none, all or selected"),
+                    });
+                }
+            };
+            let attended = ctx.min(dim("window")?) + compressed;
+            let (hd, qh) = (dim("head_dim")?, dim("q_heads")?);
+            let elem = read_state_dtype(c, n, settings)?.size() as f64;
+            bytes += seqs * attended * hd * elem;
+            flops = 4.0 * t * attended * qh * hd;
+        }
         OpKind::GdnRecurrence | OpKind::SsmUpdate => {
             let elems = if n.op == OpKind::GdnRecurrence {
                 dim("lin_v_heads")? * dim("lin_k_dim")? * dim("lin_v_dim")?
@@ -193,26 +227,48 @@ pub(crate) fn read_unit_bytes(
     n: &Node,
     settings: &BTreeMap<String, String>,
 ) -> Result<f64, CostError> {
-    let fail = |detail: String| CostError::Node {
-        node: n.id.clone(),
-        detail,
-    };
-    let (idx, _) = n
-        .state
+    let idx = first_read(n)?;
+    Ok((c.states[idx].elements * state_dtype(c, n, idx, settings)?.size()) as f64)
+}
+
+/// 2026-10-10: The element format of the first state `n` reads.
+fn read_state_dtype(
+    c: &Circuit,
+    n: &Node,
+    settings: &BTreeMap<String, String>,
+) -> Result<StateDtype, CostError> {
+    state_dtype(c, n, first_read(n)?, settings)
+}
+
+fn first_read(n: &Node) -> Result<usize, CostError> {
+    n.state
         .iter()
         .find(|(_, a)| *a == StateAccess::Read)
-        .ok_or_else(|| fail("the estimate needs the state it reads".into()))?;
-    let decl = &c.states[*idx];
-    let dtype = match &decl.format {
-        StateFormat::Fixed(d) => *d,
+        .map(|(i, _)| *i)
+        .ok_or_else(|| CostError::Node {
+            node: n.id.clone(),
+            detail: "the estimate needs the state it reads".into(),
+        })
+}
+
+/// 2026-10-10: The element format of state `idx` (one `n` touches), a keyed format read from
+/// `settings`.
+pub(crate) fn state_dtype(
+    c: &Circuit,
+    n: &Node,
+    idx: usize,
+    settings: &BTreeMap<String, String>,
+) -> Result<StateDtype, CostError> {
+    match &c.states[idx].format {
+        StateFormat::Fixed(d) => Ok(*d),
         StateFormat::Keyed(key) => {
-            let v = settings
-                .get(key)
-                .ok_or_else(|| fail(format!("the policy states no `{key}`")))?;
-            StateDtype::parse(v).ok_or_else(|| CostError::KvDtype(v.clone()))?
+            let v = settings.get(key).ok_or_else(|| CostError::Node {
+                node: n.id.clone(),
+                detail: format!("the policy states no `{key}`"),
+            })?;
+            StateDtype::parse(v).ok_or_else(|| CostError::KvDtype(v.clone()))
         }
-    };
-    Ok((decl.elements * dtype.size()) as f64)
+    }
 }
 
 /// 2026-10-01: `n` multiplies an NVFP4 activation by a linear weight: the node the NVFP4 peak
