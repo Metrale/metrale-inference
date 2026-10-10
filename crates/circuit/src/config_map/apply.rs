@@ -174,8 +174,13 @@ fn from_source(src: &LayerSource, key: &str, v: &Value) -> Result<Vec<String>, C
     if let Some(list) = v.as_array() {
         list.iter()
             .map(|e| {
-                let s = e.as_str().unwrap_or_default();
-                src.values.get(s).cloned().ok_or_else(|| {
+                // 2026-10-10: An integer entry is looked up by its decimal text (MiniMax-M2's
+                // `attn_type_list`: 1 = full attention); any other non-string matches nothing.
+                let s = match e {
+                    Value::Number(n) => n.to_string(),
+                    other => other.as_str().unwrap_or_default().to_string(),
+                };
+                src.values.get(&s).cloned().ok_or_else(|| {
                     refuse(
                         json(e),
                         format!(
