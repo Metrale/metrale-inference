@@ -58,7 +58,7 @@ pub enum ServePrecision {
 #[derive(Debug, Clone)]
 pub struct ResolvedCheckpoint {
     /// 2026-09-30: The circuit arch (`qwen3_5`, `qwen3_6_moe`, `nemotron_h`, `dense_gqa`,
-    /// 2026-10-08: `glm5_next`).
+    /// 2026-10-08: `glm5_next`; 2026-10-10: `mla_moe`).
     pub arch: String,
     /// 2026-09-30: The config's top-level `model_type`.
     pub model_type: String,
@@ -122,7 +122,7 @@ macro_rules! circuits_file {
     };
 }
 
-const ARCHES: [Arch; 5] = [
+const ARCHES: [Arch; 6] = [
     Arch {
         circuit: circuits_file!("qwen3_5.toml"),
         config_map: circuits_file!("qwen3_5.config.toml"),
@@ -142,6 +142,10 @@ const ARCHES: [Arch; 5] = [
     Arch {
         circuit: circuits_file!("glm5_next.toml"),
         config_map: circuits_file!("glm5_next.config.toml"),
+    },
+    Arch {
+        circuit: circuits_file!("mla_moe.toml"),
+        config_map: circuits_file!("mla_moe.config.toml"),
     },
 ];
 

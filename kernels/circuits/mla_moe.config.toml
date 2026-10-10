@@ -1,0 +1,92 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-10: config.json -> the `mla_moe` circuit's arch shape: Mistral-Small-4 (`mistral3`
+# wrapping a `mistral4` text config), dense latent attention with a decoupled RoPE part and a
+# softmax-routed MoE with one shared expert on every layer.
+#
+# Owner: metrale-circuit (schema: crates/circuit/src/config_map.rs).
+# Invariants:
+# - Every key the checkpoint carries is classified: a dim, a param, a required value, a nested
+#   object, or ignorable with its reason. Any other key is refused.
+# - The model reads `text_config` (Mistral3Config nests the text stack); the top level holds the
+#   vision tower, the projector and the quantization block. The text config must be `mistral4`:
+#   a `mistral3` wrapper around a dense `mistral` text stack (Mistral-Small-3.1) is refused here,
+#   since the circuit is chosen by the top-level `model_type` alone.
+# - The architecture is mapped from the HF config.json of mistralai/Mistral-Small-4-119B-2603.
+#   The NVFP4 checkpoint ships only the Mistral-native params.json, which this map does not read
+#   (crates/circuit/tests/mla_moe.rs checks that its values equal the mapped ones).
+# - Refused until modelled: a dense-FFN prefix (`first_k_dense_replace` > 0), grouped routing,
+#   a plain query projection (`q_lora_rank` null), non-interleaved RoPE, RoPE types other than
+#   YaRN, tied embeddings, biases, sliding windows, an `rms_norm_eps` other than the latent
+#   norms' fixed 1e-6.
+
+schema = 1
+arch = "mla_moe"
+model_types = ["mistral3"]
+nest = "text_config"
+
+[root]
+model_type = "ignore"
+architectures = { ignore = "the HF class name; model_type selects the circuit" }
+transformers_version = "ignore"
+dtype = { ignore = "the storage dtype of unquantized tensors; the load plan reads each tensor's own" }
+quantization_config = { ignore = "read by the precision plan (DeclaredPrecisionPlan)" }
+vision_config = { ignore = "the vision tower is outside the text circuit (LIFECYCLE-DESIGN.md 13)" }
+vision_feature_layer = { ignore = "which vision-tower layer feeds the projector; outside the text circuit" }
+multimodal_projector_bias = { ignore = "the multimodal projector is outside the text circuit" }
+projector_hidden_act = { ignore = "the multimodal projector is outside the text circuit" }
+spatial_merge_size = { ignore = "the vision patch merger; outside the text circuit" }
+image_token_index = { ignore = "multimodal token ids; outside the text circuit" }
+tie_word_embeddings = { require = false, why = "the head is not tied to the embedding" }
+
+[layers]
+count = "num_hidden_layers"
+uniform = "full_attention"
+
+[dims]
+hidden = "hidden_size"
+vocab = "vocab_size"
+q_heads = "num_attention_heads"
+q_lora = "q_lora_rank"
+kv_lora = "kv_lora_rank"
+mla_qk = "qk_nope_head_dim"
+mla_rope = "qk_rope_head_dim"
+mla_v = "v_head_dim"
+experts = "n_routed_experts"
+top_k = "num_experts_per_tok"
+moe_inter = "moe_intermediate_size"
+# 2026-10-10: One shared expert of the routed width (`n_shared_experts` is required to be 1;
+# the reference sizes it moe_intermediate_size * n_shared_experts).
+shared_inter = "moe_intermediate_size"
+
+[keys]
+model_type = { require = "mistral4", why = "the circuit is the Mistral-4 MLA + MoE text stack" }
+bos_token_id = { ignore = "tokenizer ids" }
+eos_token_id = { ignore = "tokenizer ids; the serving metadata reads them" }
+pad_token_id = { ignore = "tokenizer ids" }
+initializer_range = { ignore = "training initialisation" }
+attention_dropout = { ignore = "training only" }
+use_cache = { ignore = "an HF generate flag" }
+max_position_embeddings = { ignore = "the context limit; YaRN reads its own factor and original_max_position_embeddings" }
+head_dim = { ignore = "overwritten by the reference config class with qk_nope_head_dim + qk_rope_head_dim, both mapped" }
+qk_head_dim = { ignore = "overwritten by the reference config class with qk_nope_head_dim + qk_rope_head_dim, both mapped" }
+num_key_value_heads = { ignore = "the latent attention has no KV heads: kv_b_proj expands the one latent row per token to every query head. The reference reads it only for repeat_kv groups (num_attention_heads / num_key_value_heads), which are 1 when they are equal and break its shapes otherwise" }
+output_router_logits = { ignore = "an HF output flag" }
+intermediate_size = { ignore = "the dense MLP width of the first_k_dense_replace layers, of which there are none (required 0)" }
+mlp_bias = { ignore = "not read by the reference: Mistral4MLP (the shared expert) has no bias" }
+# 2026-10-10: The latent norms (q_a_layernorm, kv_a_layernorm) use Mistral4RMSNorm's fixed
+# eps 1e-6, not this key; the circuit's norms share one eps, so another value is refused.
+rms_norm_eps = { param = true, require = 1e-6, why = "the reference's latent norms use a fixed eps 1e-6; the circuit's norms share one eps" }
+routed_scaling_factor = { param = true }
+norm_topk_prob = { param = true, require = true, why = "the circuit's top-k renormalises the selected weights" }
+hidden_act = { require = "silu", why = "the circuit's experts are SiLU-gated" }
+attention_bias = { require = false, why = "the circuit's projections have no bias" }
+tie_word_embeddings = { require = false, why = "the head is not tied to the embedding" }
+pretraining_tp = { require = 1, why = "tensor-parallel pretraining slices change the math" }
+first_k_dense_replace = { require = 0, why = "the circuit has no dense-FFN prefix layers (a [layout.prefix] the family still lacks)" }
+n_group = { require = 1, why = "grouped (n_group) routing is not modelled" }
+topk_group = { require = 1, why = "grouped (topk_group) routing is not modelled" }
+n_shared_experts = { require = 1, why = "the circuit has one shared expert of moe_intermediate_size" }
+rope_interleave = { param = true, require = true, why = "the circuit's RoPE rotates interleaved pairs" }
+sliding_window = { refuse = "sliding-window attention is not modelled by this circuit" }
+rope_parameters = { param = "rope", object = { rope_type = { param = true, require = "yarn", why = "the circuit's RoPE and softmax scale are YaRN's" }, type = { param = "rope.rope_type", require = "yarn", why = "the circuit's RoPE and softmax scale are YaRN's" }, rope_theta = "param", factor = "param", original_max_position_embeddings = "param", beta_fast = "param", beta_slow = "param", mscale = "param", mscale_all_dim = "param", llama_4_scaling_beta = "param" } }

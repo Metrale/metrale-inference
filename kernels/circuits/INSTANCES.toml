@@ -197,3 +197,36 @@ plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], 
 [instance.policy]
 opt_in_levers = []
 settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive" }
+
+# 2026-10-10: mistralai/Mistral-Small-4-119B-2603-NVFP4 (`mla_moe`), the MLA + MoE decoder's first
+# parameter point. The recipe serves it (recipes/mistral-small-4/mistral-small-4-119b-nvfp4.yaml),
+# but the circuit is not an executor target (`golden = false`: the engine runs it through its MLA
+# layer code, and FUSIONS.toml has no rule for its decoupled-RoPE latent attention; `met circuit
+# venn` reads it). No MTP head, so no verify or draft plans.
+# - Shape: the HF config.json `text_config` of the base repo mistralai/Mistral-Small-4-119B-2603
+#   (verified 2026-10-10; the NVFP4 checkpoint ships only params.json, whose values
+#   crates/circuit/tests/mla_moe.rs checks against these): 36 `full_attention` layers, the MLA
+#   ranks and head widths, the MoE dims (kernels/circuits/mla_moe.config.toml maps each).
+# - kv_cache_dtype: bf16, pinned by the recipe (`kv_cache_dtype: bf16`; the checkpoint declares
+#   no `kv_cache_scheme`).
+# - lm_head_dtype: bf16, the checkpoint's stored `output.weight` under the recipe's default
+#   `--lm-head-dtype default` (crates/server/src/cli/serve_args.rs `lm_head_dtype`).
+# - row_tiers: by_rows, the default for a checkpoint that is not an FP8 MoE
+#   (crates/model-layers/src/layers/row_tiers.rs `resolve_row_tiers`).
+# - activation_quantization: adaptive, pinned by the recipe. The other settings are the flag
+#   defaults cited for the entries above; this model has no recurrent layer that reads the
+#   `ssm_*` ones.
+[[instance]]
+recipe = "mistral-small-4/mistral-small-4-119b-nvfp4"
+checkpoint = "mistralai/Mistral-Small-4-119B-2603-NVFP4"
+arch = "mla_moe"
+precision = "mistral-small-4-119b-nvfp4"
+target = "gb10/mistral-small-4/nvfp4"
+golden = false
+layer_kinds = "AAAA AAAA AAAA AAAA AAAA AAAA AAAA AAAA AAAA"
+dims = { hidden = 4096, vocab = 131072, q_heads = 32, q_lora = 1024, kv_lora = 256, mla_qk = 64, mla_rope = 64, mla_v = 128, experts = 128, top_k = 4, moe_inter = 2048, shared_inter = 2048 }
+plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128] }
+
+[instance.policy]
+opt_in_levers = []
+settings = { row_tiers = "by_rows", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive" }
