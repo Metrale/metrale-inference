@@ -245,6 +245,20 @@ pub fn registered() -> (usize, usize, usize) {
     })
 }
 
+/// 2026-10-10: The device bytes the tier's launches read for the projection registered under
+/// `b`: its packed E2M1 codes (`n * k / 2`) and its FP8 group scales (`n * k / 16`), the sizes
+/// [`registered`] counts. `None` when `b` is not registered. For a cache warm-up only
+/// (`glm5next_layer::l2_warm`); nothing writes through these ranges.
+pub fn footprint(b: DevicePtr) -> Option<[(DevicePtr, usize); 2]> {
+    let g = state().lock().unwrap_or_else(|e| e.into_inner());
+    g.get(&b.0).map(|e| {
+        [
+            (e.w.weight, e.n * e.k / 2),
+            (e.w.weight_scale, e.n * e.k / 16),
+        ]
+    })
+}
+
 /// 2026-10-09: Point the one slot holding `from` at `to`. Errors unless exactly one slot holds
 /// `from`: none means the loader's projection list and the layer disagree, two that one buffer
 /// backs two projections, and freeing it would leave the other dangling.
