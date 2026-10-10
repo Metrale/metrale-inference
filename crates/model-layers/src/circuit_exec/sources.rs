@@ -16,7 +16,7 @@ use metrale_circuit::{ArchShape, Instance, PrecisionSpec, Sources};
 pub const INSTANCES: &str = include_str!("../../../../kernels/circuits/INSTANCES.toml");
 
 /// 2026-09-28: Every circuit an instance can name, by arch.
-pub const CIRCUITS: [(&str, &str); 6] = [
+pub const CIRCUITS: [(&str, &str); 7] = [
     (
         "qwen3_5",
         include_str!("../../../../kernels/circuits/qwen3_5.toml"),
@@ -44,10 +44,15 @@ pub const CIRCUITS: [(&str, &str); 6] = [
         "gemma4",
         include_str!("../../../../kernels/circuits/gemma4.toml"),
     ),
+    // 2026-10-10: GQA + routed MoE, MiniMax-M2.7 (not an executor target; the Venn reads it).
+    (
+        "gqa_moe",
+        include_str!("../../../../kernels/circuits/gqa_moe.toml"),
+    ),
 ];
 
 /// 2026-09-28: Every precision table an instance can name.
-pub const PRECISION: [(&str, &str); 9] = [
+pub const PRECISION: [(&str, &str); 10] = [
     (
         "qwen3.6-35b-a3b-fp8-bf16head",
         include_str!("../../../../kernels/circuits/precision/qwen3.6-35b-a3b-fp8-bf16head.toml"),
@@ -88,6 +93,10 @@ pub const PRECISION: [(&str, &str); 9] = [
     (
         "gemma-4-26b-a4b-nvfp4",
         include_str!("../../../../kernels/circuits/precision/gemma-4-26b-a4b-nvfp4.toml"),
+    ),
+    (
+        "minimax-m2.7-nvfp4-ep2",
+        include_str!("../../../../kernels/circuits/precision/minimax-m2.7-nvfp4-ep2.toml"),
     ),
 ];
 

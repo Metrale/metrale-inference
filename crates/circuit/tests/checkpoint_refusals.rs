@@ -53,7 +53,7 @@ fn path_b_golden_instances_restate_the_config_derived_shape() {
 /// 2026-09-30: Every other fixture is refused, for the reason named.
 #[test]
 fn path_c_every_other_checkpoint_is_refused_with_its_reason() {
-    let cases: [(&str, &str); 10] = [
+    let cases: [(&str, &str); 9] = [
         (
             "Inferact--Qwen3.8-Flash-Next-NVFP4",
             "model_type `qwen4_exp`",
@@ -78,7 +78,6 @@ fn path_c_every_other_checkpoint_is_refused_with_its_reason() {
             "RedHatAI--diffusiongemma-26B-A4B-it-FP8-dynamic",
             "model_type `diffusion_gemma` has no circuit: block diffusion",
         ),
-        ("lukealonso--MiniMax-M2.7-NVFP4", "model_type `minimax_m2`"),
         ("stepfun-ai--Step-3.7-Flash-NVFP4", "model_type `step3p7`"),
         // 2026-09-30: DFlash drafts reuse `qwen3`; their extra keys refuse them.
         (

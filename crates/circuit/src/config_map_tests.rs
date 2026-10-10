@@ -139,3 +139,26 @@ fn a_presence_switch_leaves_its_value_to_be_classified() {
         matches!(run(&switch, &capped), Err(ConfigMapError::UnmappedKey { key, .. }) if key == "final_logit_softcapping")
     );
 }
+
+/// 2026-10-10: A per-layer list of integer codes (MiniMax-M2's `attn_type_list`) maps each code
+/// by its decimal text; a code the map does not list is refused.
+#[test]
+fn an_integer_layer_list_maps_by_decimal_text() {
+    let map = ConfigMap::parse(&MAP.replace(
+        "uniform = \"full_attention\"",
+        "sources = [{ key = \"attn_type_list\", values = { \"1\" = \"full_attention\" } }]",
+    ))
+    .unwrap();
+    let base = json!({"model_type": "toy", "num_hidden_layers": 2, "hidden_size": 8});
+    let mut ok = base.clone();
+    ok["attn_type_list"] = json!([1, 1]);
+    assert_eq!(map_config(&map, &ok).unwrap().shape.layer_kinds.len(), 2);
+    for bad in [json!([1, 0]), json!([1, 1.0])] {
+        let mut v = base.clone();
+        v["attn_type_list"] = bad.clone();
+        assert!(
+            matches!(map_config(&map, &v), Err(ConfigMapError::Refused { key, .. }) if key == "attn_type_list"),
+            "{bad}"
+        );
+    }
+}

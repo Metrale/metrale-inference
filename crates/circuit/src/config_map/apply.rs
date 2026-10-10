@@ -191,6 +191,9 @@ fn from_source(src: &LayerSource, key: &str, v: &Value) -> Result<Vec<String>, C
     if let Some(list) = v.as_array() {
         list.iter()
             .map(|e| {
+                // 2026-10-10: An integer entry is looked up by its decimal text (DeepSeek-V4's
+                // `compress_ratios`, MiniMax-M2's `attn_type_list`: 1 = full attention); any
+                // other non-string (a float) matches nothing.
                 let s = match e {
                     Value::Number(n) => n.to_string(),
                     _ => e.as_str().unwrap_or_default().to_string(),

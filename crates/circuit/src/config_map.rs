@@ -177,7 +177,8 @@ pub(crate) struct LayersFile {
 #[serde(deny_unknown_fields)]
 pub(crate) struct LayerSource {
     pub key: String,
-    /// 2026-09-30: List entries to layer kinds.
+    /// 2026-09-30: List entries to layer kinds (2026-10-10: an integer entry by its decimal
+    /// text, `"1" = "full_attention"`).
     #[serde(default)]
     pub values: BTreeMap<String, String>,
     /// 2026-09-30: Pattern letters to layer kinds.

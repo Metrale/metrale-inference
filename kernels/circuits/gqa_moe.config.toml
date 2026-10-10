@@ -1,0 +1,95 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-10: config.json -> the `gqa_moe` circuit's arch shape: dense GQA attention and a routed
+# MoE FFN on every layer. Served: MiniMax-M2 (`minimax_m2`, MiniMax-M2.7) as a variant.
+#
+# Owner: metrale-circuit (schema: crates/circuit/src/config_map.rs).
+# Invariants:
+# - Every key is classified; any other key is refused (LIFECYCLE-DESIGN.md 6).
+# - The base rules are the Mixtral-convention keys a GQA + routed-MoE config shares
+#   (`num_local_experts`, `intermediate_size` as the expert width, `num_experts_per_tok`); each
+#   model type's own switches are its `[variant]`. Another model type joins by a variant whose
+#   math the circuit already draws (its routing, Q/K norm and bindings).
+# - A default is the reference's behaviour where a checkpoint may omit the key (the
+#   transformers MiniMaxM2 code applies the Q/K norm, the sigmoid scores and the correction
+#   bias unconditionally).
+# - Refused until modelled: a sliding window, a RoPE scaling type, softmax routing, a shared
+#   expert, per-head Q/K norm, any layer kind but full attention (`attn_type_list` 0, the
+#   lightning attention of MiniMax-Text-01), tied embeddings, an encoder-decoder.
+
+schema = 1
+arch = "gqa_moe"
+model_types = ["minimax_m2"]
+
+# 2026-10-10: MiniMax-M2 lists one integer per layer: 1 = full (softmax) attention.
+[layers]
+count = "num_hidden_layers"
+sources = [{ key = "attn_type_list", values = { "1" = "full_attention" } }]
+
+[dims]
+hidden = "hidden_size"
+vocab = "vocab_size"
+q_heads = "num_attention_heads"
+kv_heads = "num_key_value_heads"
+# 2026-10-10: Required: MiniMaxM2Config's class default is 128, not hidden / heads (64 here).
+head_dim = "head_dim"
+experts = "num_local_experts"
+top_k = "num_experts_per_tok"
+# 2026-10-10: The routed experts' width (MiniMaxM2Experts reads `intermediate_size`); there is
+# no dense FFN.
+moe_inter = "intermediate_size"
+
+[keys]
+model_type = "ignore"
+architectures = { ignore = "the HF class name; model_type selects the circuit" }
+transformers_version = "ignore"
+dtype = { ignore = "the storage dtype of unquantized tensors; the load plan reads each tensor's own" }
+torch_dtype = { ignore = "the storage dtype of unquantized tensors" }
+quantization_config = { ignore = "read by the precision plan (DeclaredPrecisionPlan)" }
+_name_or_path = { ignore = "the exporter's source path" }
+bos_token_id = { ignore = "tokenizer ids" }
+eos_token_id = { ignore = "tokenizer ids; the serving metadata reads them" }
+pad_token_id = { ignore = "tokenizer ids" }
+id2label = { ignore = "sequence-classification labels; no classification head" }
+label2id = { ignore = "sequence-classification labels; no classification head" }
+problem_type = { ignore = "sequence-classification loss type; no classification head" }
+initializer_range = { ignore = "training initialisation" }
+attention_dropout = { ignore = "training only" }
+router_aux_loss_coef = { ignore = "a training loss weight" }
+router_jitter_noise = { ignore = "training only: the reference applies it only while training" }
+output_router_logits = { ignore = "an HF output flag" }
+output_hidden_states = { ignore = "an HF output flag" }
+output_attentions = { ignore = "an HF output flag" }
+return_dict = { ignore = "an HF output flag" }
+use_cache = { ignore = "an HF generate flag" }
+chunk_size_feed_forward = { ignore = "HF chunked feed-forward evaluation; the same math" }
+max_position_embeddings = { ignore = "the context limit; the default RoPE reads no original length" }
+is_encoder_decoder = { require = false, why = "the circuit is a decoder-only stack" }
+tie_word_embeddings = { require = false, why = "the head is not tied to the embedding", default = false }
+hidden_act = { require = "silu", why = "the circuit's experts are SiLU-gated", default = "silu" }
+sliding_window = { refuse = "sliding-window attention is not modelled by this circuit" }
+rms_norm_eps = { param = true, default = 1e-6 }
+rope_theta = { param = true }
+rope_parameters = { param = "rope", object = { rope_type = { param = true, require = "default", why = "no RoPE scaling is modelled here" }, rope_theta = "param", partial_rotary_factor = "param" } }
+
+# 2026-10-10: MiniMax-M2 (transformers models/minimax_m2; the checkpoint's `auto_map` remote code
+# is the same model, which transformers now ships natively).
+[variant.minimax_m2.keys]
+auto_map = { ignore = "the checkpoint's remote-code classes; the circuit follows transformers' native minimax_m2 model" }
+use_qk_norm = { require = true, why = "the circuit's attention normalises Q and K (the reference always does)", default = true }
+qk_norm_type = { param = true, require = "per_layer", why = "the circuit's Q/K norm spans all heads of the layer (`scope = \"layer\"`); a per-head norm is not modelled for this model type", default = "per_layer" }
+scoring_func = { require = "sigmoid", why = "the circuit's routing scores with a sigmoid and a correction bias", default = "sigmoid" }
+use_routing_bias = { require = true, why = "the circuit's top-k ranks score + e_score_correction_bias", default = true }
+shared_intermediate_size = { require = 0, why = "the circuit's MoE has no shared expert", default = 0 }
+# 2026-10-10: Partial RoPE. The reference rotates int(head_dim * partial_rotary_factor) channels
+# of each head (`rope_parameters`, which transformers fills from the legacy `rotary_dim` when it
+# lacks the factor); both spellings are carried, and tests/gqa_moe.rs checks they agree.
+rotary_dim = { param = true }
+partial_rotary_factor = { param = true }
+# 2026-10-10: The MTP draft modules (3 chained one-layer modules on MiniMax-M2.7). They do not
+# change the target's logits, the reference builds none, and lukealonso/MiniMax-M2.7-NVFP4
+# ships no `model.layers.62*` tensors, so the circuit has no draft head; the keys are carried as
+# params so a consumer sees what the config claims. Drawing them is LAB residual (gqa_moe.toml).
+use_mtp = { param = true }
+num_mtp_modules = { param = true }
+mtp_transformer_layers = { param = true }
