@@ -6,7 +6,8 @@
 //!
 //! Rank 0 (`ep_send_fed_step`, after `feed_resolve` wrote its feed ids) submits the step's
 //! announcement on its compute stream without waiting: on the v3 wire one block
-//! `[slot, EP_CMD_DECODE_FED, token]` with the token copied in on the device, otherwise three
+//! `[slot, EP_CMD_DECODE_FED, token, flags, m0, m1]` (`ep_wire`), the token copied over `arg`
+//! on the device and the flags set when the step ends in the device argmax, otherwise three
 //! broadcasts (slot word, [`EP_CMD_DECODE_FED`], then the 4-byte token from its feed ids). A
 //! worker reads the preamble with `ep_recv_seq_and_cmd`, moves the token into its feed ids on
 //! the device, and runs the same fed decode (`ep_worker_decode_fed`). Neither side reads the
