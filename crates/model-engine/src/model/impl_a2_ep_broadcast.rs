@@ -27,6 +27,7 @@ use super::ssm_pool::SsmStatePool;
 use super::ssm_snapshot::SsmSnapshotPool;
 use super::types::{PinnedMetaStaging, TransformerModel};
 use crate::traits::{ChunkedPrefillPageMetadata, Model, SequenceState};
+use metrale_model_layers::ep_wire::{self, EpWire};
 use metrale_model_layers::layer::{
     AttnMetadataDev, ForwardContext, GdnPrefillBuffers, LayerState, SsmLayerState, TransformerLayer,
 };
@@ -110,7 +111,7 @@ impl TransformerModel {
     }
 
     /// 2026-09-25: Broadcast a `(seq_id, cmd)` pair from rank 0: the `seq_id`
-    /// preamble only when `v2`, then `cmd`. Workers read it with
+    /// preamble only when `v2`, then `cmd`; under the v3 wire, one block. Workers read it with
     /// [`Self::ep_recv_seq_and_cmd`]. A no-op unless
     /// `multi_rank_protocol_active()`, so single-GPU callers may call it
     /// unconditionally (`ep_broadcast_u32` panics without a comm backend).
@@ -120,6 +121,16 @@ impl TransformerModel {
     pub(super) fn ep_broadcast_seq_and_cmd(&self, seq_id: u32, cmd: u32, v2: bool) -> Result<()> {
         if !self.multi_rank_protocol_active() {
             return Ok(());
+        }
+        // 2026-10-10: v3 sends the pair as one block (`ep_wire`).
+        if v2 && EpWire::get().one_block() {
+            let comm = self
+                .comm
+                .as_ref()
+                .expect("multi-rank protocol without comm");
+            self.gpu
+                .copy_h2d(&ep_wire::host_block(seq_id, cmd), self.ep_cmd_buf)?;
+            return comm.broadcast(self.ep_cmd_buf.0, ep_wire::CMD_BLOCK_BYTES, 0);
         }
         if v2 {
             self.ep_broadcast_u32(seq_id)?;
@@ -179,6 +190,14 @@ impl TransformerModel {
             .comm
             .as_ref()
             .expect("worker command receive without comm");
+        // 2026-10-10: v3: the whole block in one receive; its `arg` stays on the device.
+        if v2 && EpWire::get().one_block() {
+            comm.recv_command_block(self.ep_cmd_buf.0, ep_wire::CMD_BLOCK_BYTES, 0)?;
+            self.gpu.synchronize(self.gpu.default_stream())?;
+            let mut block = [0u8; ep_wire::CMD_BLOCK_BYTES];
+            self.gpu.copy_d2h(self.ep_cmd_buf, &mut block)?;
+            return Ok(ep_wire::block_preamble(&block));
+        }
         comm.recv_command_u32(self.ep_cmd_buf.0, 0)?;
         self.gpu.synchronize(self.gpu.default_stream())?;
         let mut buf = [0u8; 4];

@@ -94,6 +94,10 @@ pub struct BufferArena {
     /// metrale-model-engine) takes its offsets from it.
     decode_meta: DecodeMetaLayout,
     sizes: BufferSizes,
+    /// 2026-10-10: `zero_all_rows`'s memsets for one row count, captured once and replayed as
+    /// one graph launch (`(tokens, graph)`); `None` until the first call, and on a backend
+    /// without graphs.
+    zero_rows_graph: parking_lot::Mutex<Option<(usize, crate::gpu::GraphHandle)>>,
 }
 
 impl BufferArena {
@@ -304,6 +308,7 @@ impl BufferArena {
             max_batch_tokens,
             decode_meta,
             sizes,
+            zero_rows_graph: parking_lot::Mutex::new(None),
         })
     }
 }

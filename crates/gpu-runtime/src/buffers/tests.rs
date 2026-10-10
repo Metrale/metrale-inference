@@ -406,3 +406,56 @@ fn zero_all_rows_zeroes_only_the_read_logits_rows() {
     read(&mut host);
     assert!(host.iter().all(|&b| b == 0), "full-width call left rows");
 }
+
+/// 2026-10-10: On CUDA, `zero_all_rows` captures its memsets on the first call and replays
+/// the graph after. Each of three calls, the first included, must leave every zeroed range at
+/// 0 and the logits rows past `tokens` as they were. Fails if the first call only records (the
+/// capture is not launched), if a replay zeroes nothing, or if the graph covers other bytes.
+#[cfg(feature = "cuda")]
+#[test]
+#[ignore = "requires a free CUDA device"]
+fn zero_all_rows_replays_its_captured_memsets_on_cuda() {
+    use crate::cuda_backend::MetraleCudaBackend;
+    let cfg = ModelConfig::qwen3_next_80b_nvfp4();
+    let gpu = MetraleCudaBackend::new(0, &[]).expect("CUDA device 0");
+    let arena = BufferArena::new(&cfg, 4, 4096, 16, 32, &gpu).unwrap();
+    let s = arena.sizes();
+    let row = s.logits / s.logits_rows;
+    let stream = gpu.default_stream();
+    let watched = [
+        (arena.hidden_states(), s.hidden_states / 4),
+        (arena.splitk_workspace(), s.splitk_workspace),
+        (arena.scratch(), s.scratch),
+    ];
+    for call in 0..3 {
+        for (p, n) in watched {
+            gpu.memset(p, 0xAB, n).unwrap();
+        }
+        gpu.memset(arena.logits(), 0xAB, s.logits).unwrap();
+        gpu.synchronize(stream).unwrap();
+        arena.zero_all_rows(&gpu, stream, 1).unwrap();
+        gpu.synchronize(stream).unwrap();
+        for (p, n) in watched {
+            let mut host = vec![1u8; n];
+            gpu.copy_d2h(p, &mut host).unwrap();
+            assert!(
+                host.iter().all(|&b| b == 0),
+                "call {call}: a range was not zeroed"
+            );
+        }
+        let mut logits = vec![0u8; s.logits];
+        gpu.copy_d2h(arena.logits(), &mut logits).unwrap();
+        assert!(
+            logits[..row].iter().all(|&b| b == 0),
+            "call {call}: logits row 0"
+        );
+        assert!(
+            logits[row..].iter().all(|&b| b == 0xAB),
+            "call {call}: logits rows 1.."
+        );
+    }
+    assert!(
+        arena.zero_rows_graph.lock().is_some(),
+        "the memsets were not captured"
+    );
+}

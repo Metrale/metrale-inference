@@ -24,6 +24,7 @@
 use std::time::Instant;
 
 use super::*;
+use metrale_model_engine::traits::FedAheadPolicy;
 use metrale_scheduler::{FeedSource, RowMask, Ticket};
 
 /// 2026-09-25: Fault injection for the pipeline's tests; serving passes
@@ -132,9 +133,12 @@ pub(super) fn ahead_allowed(
     sched.io.dev.max_depth() >= 2
         && model.supports_device_token_feed()
         && n > 0
-        // 2026-09-25: Models with SSM layers and EP models stay at depth 1.
-        && !model.has_ssm_layers()
-        && !model.is_ep()
+        // 2026-09-25: Models with SSM layers and EP models stay at depth 1, unless
+        // (2026-10-10) the model runs ahead without re-running a step, for at most its row cap.
+        && match model.fed_ahead_policy() {
+            FedAheadPolicy::Redo => !model.has_ssm_layers() && !model.is_ep(),
+            FedAheadPolicy::RepickOnly { max_rows } => n <= max_rows,
+        }
         // 2026-09-25: Every row takes the device argmax, and its masked re-pick is exact.
         && super::super::decode_logits_step::argmax_readback_eligible(active.iter(), sched)
         && active

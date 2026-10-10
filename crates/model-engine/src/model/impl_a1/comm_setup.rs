@@ -36,13 +36,10 @@ pub(super) fn assert_rank_levers_agree(
                 metrale_model_arch::glm5next_mlp::forward::row_batch_max() as u64,
             ),
             // 2026-09-25: The EP command protocol (`ep_protocol_v2`), which
-            // both ranks must share.
+            // both ranks must share. 2026-10-10: the whole wire (v1, v2 or v3).
             (
-                "METRALE_EP_PROTOCOL(v2)",
-                u64::from(matches!(
-                    std::env::var("METRALE_EP_PROTOCOL").as_deref(),
-                    Ok("v2")
-                )),
+                "METRALE_EP_PROTOCOL",
+                metrale_model_layers::ep_wire::EpWire::get().agreement_value(),
             ),
             // 2026-10-10: The resolved context window determines DFlash context-broadcast
             // chunking, so every rank must use the same value.
