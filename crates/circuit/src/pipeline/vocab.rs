@@ -72,7 +72,10 @@ pub fn steps_of(op: &OpKind) -> &'static [StepKind] {
         | OpKind::LayerNorm
         | OpKind::HcPre
         | OpKind::HcPost
-        | OpKind::HcContract => COMPUTE,
+        | OpKind::HcContract
+        | OpKind::GeluTanhMul
+        | OpKind::ScalarMul
+        | OpKind::LogitSoftcap => COMPUTE,
         OpKind::Copy | OpKind::Concat | OpKind::Split | OpKind::HcExpand => &[StepKind::Move],
         OpKind::KvWrite => &[StepKind::Cache],
         // 2026-10-10: DeepSeek-V4's shared-KV attention: the window and compressed rows read

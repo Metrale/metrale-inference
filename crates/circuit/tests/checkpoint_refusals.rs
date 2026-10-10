@@ -53,7 +53,7 @@ fn path_b_golden_instances_restate_the_config_derived_shape() {
 /// 2026-09-30: Every other fixture is refused, for the reason named.
 #[test]
 fn path_c_every_other_checkpoint_is_refused_with_its_reason() {
-    let cases: [(&str, &str); 11] = [
+    let cases: [(&str, &str); 10] = [
         (
             "Inferact--Qwen3.8-Flash-Next-NVFP4",
             "model_type `qwen4_exp`",
@@ -67,14 +67,16 @@ fn path_c_every_other_checkpoint_is_refused_with_its_reason() {
             "ig1--Qwen3-VL-30B-A3B-Instruct-NVFP4",
             "model_type `qwen3_vl_moe`",
         ),
-        (
-            "bg-digitalservices--Gemma-4-26B-A4B-it-NVFP4A16",
-            "model_type `gemma4`",
-        ),
-        ("nvidia--Gemma-4-31B-IT-NVFP4", "model_type `gemma4`"),
+        // 2026-10-10: Block diffusion is refused by what the circuit model lacks (a canvas mode,
+        // non-causal read-only attention, the self-conditioning state, the denoising loop), not
+        // by a missing map; the FP8 checkpoint's quantization is never reached.
         (
             "google--diffusiongemma-26B-A4B-it",
-            "model_type `diffusion_gemma`",
+            "model_type `diffusion_gemma` has no circuit: block diffusion",
+        ),
+        (
+            "RedHatAI--diffusiongemma-26B-A4B-it-FP8-dynamic",
+            "model_type `diffusion_gemma` has no circuit: block diffusion",
         ),
         ("lukealonso--MiniMax-M2.7-NVFP4", "model_type `minimax_m2`"),
         ("stepfun-ai--Step-3.7-Flash-NVFP4", "model_type `step3p7`"),

@@ -137,9 +137,19 @@ pub enum OpKind {
     /// paged cache) and [`OpKind::MlaAttention`] (absorbed through `kv_b_proj`), it reads two
     /// caches, the per-sequence window and the per-token compressed rows.
     CompressedAttention,
+    /// 2026-10-10: `gelu_tanh(gate) * up` over a packed gate|up input: the GeGLU of Gemma-4's
+    /// MLP and experts (`gelu_pytorch_tanh`, the tanh approximation of GELU).
+    GeluTanhMul,
+    /// 2026-10-10: Every element of a row times one scalar: a constant of the arch (`by`, e.g.
+    /// Gemma-4's embedding scale `sqrt(hidden)`) or a learned scalar the node binds (Gemma-4's
+    /// per-layer `layer_scalar`).
+    ScalarMul,
+    /// 2026-10-10: `cap * tanh(x / cap)` of every logit (Gemma-4 `final_logit_softcapping`; the
+    /// cap is a runtime argument from the config).
+    LogitSoftcap,
 }
 
-const PLAIN_OPS: [(OpKind, &str); 39] = [
+const PLAIN_OPS: [(OpKind, &str); 42] = [
     (OpKind::Embed, "embed"),
     (OpKind::RmsNorm, "rms_norm"),
     (OpKind::GatedRmsNorm, "gated_rms_norm"),
@@ -179,6 +189,9 @@ const PLAIN_OPS: [(OpKind, &str); 39] = [
     (OpKind::HcPost, "hc_post"),
     (OpKind::HcContract, "hc_contract"),
     (OpKind::CompressedAttention, "compressed_attention"),
+    (OpKind::GeluTanhMul, "gelu_tanh_mul"),
+    (OpKind::ScalarMul, "scalar_mul"),
+    (OpKind::LogitSoftcap, "logit_softcap"),
 ];
 
 impl OpKind {
@@ -362,8 +375,11 @@ pub enum LayerKind {
     /// 2026-10-08: A sparse-attention layer: latent attention over the tokens an indexer
     /// selects (`deepseek_sparse_attention`, GLM-5).
     SparseAttention,
-    /// 2026-10-10: A DeepSeek-V4 layer whose attention reads only its sliding window
-    /// (`sliding_attention`, compress ratio 0): no compressor, no indexer.
+    /// 2026-10-10: A sliding-window softmax attention layer: each query attends the last
+    /// `window` tokens (`sliding_attention`). Gemma-4: the full layer's paged attention with a
+    /// `window` param, a kind of its own because its head geometry differs from the full
+    /// layers' (head_dim 256 here, 512 there). DeepSeek-V4: compress ratio 0, the window only
+    /// (no compressor, no indexer).
     SlidingAttention,
     /// 2026-10-10: A DeepSeek-V4 layer whose attention also reads the indexer-selected rows of
     /// a 4x compressed KV (`compressed_sparse_attention`, CSA): an overlapping-window

@@ -142,7 +142,10 @@ fn a_checkpoint_directory_target_is_checked_against_its_declarations() {
 #[test]
 fn target_specs_resolve_by_recipe_checkpoint_or_unique_arch() {
     let all = common::instances();
-    for spec in [LIGHTNING, "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4"] {
+    for spec in [
+        LIGHTNING,
+        "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
+    ] {
         assert_eq!(
             venn::resolve(&all, spec).unwrap().recipe,
             LIGHTNING,
@@ -156,7 +159,10 @@ fn target_specs_resolve_by_recipe_checkpoint_or_unique_arch() {
         "glm-5.3/glm-5.3-flash-nvfp4"
     );
     let e = venn::resolve(&all, "nemotron_h").unwrap_err().to_string();
-    assert!(e.contains("has several instances") && e.contains(LIGHTNING), "{e}");
+    assert!(
+        e.contains("has several instances") && e.contains(LIGHTNING),
+        "{e}"
+    );
     assert!(venn::resolve(&all, "llama").is_err());
     assert_eq!(
         venn::checkpoint_id_of(

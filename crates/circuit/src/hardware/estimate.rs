@@ -126,11 +126,12 @@ pub fn footprint(c: &Circuit, settings: &BTreeMap<String, String>) -> Result<Foo
             .map(|v| *v as f64)
             .ok_or_else(|| format!("the footprint needs dim `{d}`"))
     };
-    let kv = match settings.get("kv_cache_dtype").map(String::as_str) {
-        Some("bf16") => 2.0,
-        Some("fp8") => 1.0,
+    // 2026-10-10: The KV element size is read per state (`read_units_bytes`); the policy must
+    // still state one this estimate sizes.
+    match settings.get("kv_cache_dtype").map(String::as_str) {
+        Some("bf16" | "fp8") => {}
         other => return Err(format!("kv_cache_dtype {other:?} has no element size")),
-    };
+    }
     let h = match settings.get("ssm_h_dtype").map(String::as_str) {
         Some("f32") => 4.0,
         Some("f16" | "f16-pool" | "bf16") => 2.0,
@@ -165,8 +166,13 @@ pub fn footprint(c: &Circuit, settings: &BTreeMap<String, String>) -> Result<Foo
             weights += one * copies;
         }
         match n.op {
+            // 2026-10-10: One token of each KV side the node reads, at their declared formats, so
+            // a layer kind with its own head geometry (Gemma-4's global layers) counts its own. A
+            // sliding-window layer keeps every token too: the engine's paged pool does not drop
+            // the tokens behind the window.
             OpKind::PagedAttention => {
-                kv_per_token += 2.0 * dim("kv_heads")? * dim("head_dim")? * kv
+                kv_per_token += crate::venn::roofline::read_units_bytes(c, n, settings)
+                    .map_err(|e| e.to_string())?;
             }
             OpKind::GdnRecurrence => {
                 state += dim("lin_v_heads")? * dim("lin_k_dim")? * dim("lin_v_dim")? * h;

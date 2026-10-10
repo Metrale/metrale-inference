@@ -13,8 +13,8 @@
 //! - `layer_kinds` spells one letter per layer: `G` a GatedDeltaNet (linear attention) layer,
 //!   `A` a full-attention layer, `M` a Mamba2 layer, `E` a MoE-only layer (the Nemotron-H
 //!   hybrid-pattern letters); 2026-10-08: `S` a sparse-attention layer (GLM-5 DSA); 2026-10-10:
-//!   `W` a sliding-window, `C` a compressed-sparse and `H` a heavily-compressed attention layer
-//!   (DeepSeek-V4); whitespace is ignored.
+//!   `W` a sliding-window attention layer (DeepSeek-V4, Gemma-4), `C` a compressed-sparse and
+//!   `H` a heavily-compressed attention layer (DeepSeek-V4); whitespace is ignored.
 
 use std::collections::{BTreeMap, BTreeSet};
 

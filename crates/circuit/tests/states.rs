@@ -52,7 +52,13 @@ fn every_recurrent_and_attention_layer_names_the_state_it_touches() {
                     (OpKind::StateSnapshot, "h", StateAccess::Snapshot),
                     (OpKind::SsmUpdate, "h", StateAccess::Update),
                 ],
-                LayerKind::FullAttention => vec![
+                // 2026-10-10: A sliding-window layer keeps the same paged KV cache in Gemma-4;
+                // DeepSeek-V4's (below) keeps its shared-KV window rows.
+                LayerKind::SlidingAttention if inst.arch == "deepseek_v4" => vec![
+                    (OpKind::KvWrite, "window", StateAccess::Write),
+                    (OpKind::CompressedAttention, "window", StateAccess::Read),
+                ],
+                LayerKind::FullAttention | LayerKind::SlidingAttention => vec![
                     (OpKind::KvWrite, "k", StateAccess::Write),
                     (OpKind::KvWrite, "v", StateAccess::Write),
                     (OpKind::PagedAttention, "k", StateAccess::Read),
@@ -68,13 +74,10 @@ fn every_recurrent_and_attention_layer_names_the_state_it_touches() {
                     (OpKind::KpoolCompress, "tail", StateAccess::Update),
                     (OpKind::IndexSelect, "index", StateAccess::Read),
                 ],
-                // 2026-10-10: DeepSeek-V4: every layer writes and attends its window rows; a
+                // 2026-10-10: DeepSeek-V4: every layer writes and attends its window rows (its
+                // sliding layers above); a
                 // compressing layer pools into its tail and writes and attends the compressed
                 // rows; a CSA layer's indexer pools, writes and selects its own keys.
-                LayerKind::SlidingAttention => vec![
-                    (OpKind::KvWrite, "window", StateAccess::Write),
-                    (OpKind::CompressedAttention, "window", StateAccess::Read),
-                ],
                 LayerKind::HeavilyCompressedAttention => vec![
                     (OpKind::KvWrite, "window", StateAccess::Write),
                     (OpKind::CompressedAttention, "window", StateAccess::Read),

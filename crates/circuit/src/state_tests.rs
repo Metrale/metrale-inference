@@ -178,7 +178,15 @@ fn recurrent_states_follow_the_engine_model_type() {
         crate::recurrent_states("llama", &dims).unwrap(),
         Some(Vec::new())
     );
-    assert_eq!(crate::recurrent_states("gemma4", &dims).unwrap(), None);
+    // 2026-10-10: Gemma-4 has a circuit now (attention only); block diffusion has none.
+    assert_eq!(
+        crate::recurrent_states("gemma4", &dims).unwrap(),
+        Some(Vec::new())
+    );
+    assert_eq!(
+        crate::recurrent_states("diffusion_gemma", &dims).unwrap(),
+        None
+    );
     // 2026-09-30: A dim the declaration reads and the caller does not give is an error.
     assert!(crate::recurrent_states("nemotron_h", &dims).is_err());
 }

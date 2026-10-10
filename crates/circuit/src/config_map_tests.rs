@@ -2,7 +2,8 @@
 
 //! 2026-09-30: The config-map schema's own refusals, and the rules the checkpoint tests do not
 //! reach: a dim outside its `allowed` values, a nested-object key with no rule, and a map
-//! whose `variant` or `[root]` does not fit its `model_types` or `nest`.
+//! whose `variant` or `[root]` does not fit its `model_types` or `nest`. 2026-10-10: A presence
+//! switch whose value no rule classifies.
 
 use serde_json::json;
 
@@ -108,5 +109,33 @@ fn integer_entries_map_and_trailing_entries_are_checked_then_dropped() {
         .remove("num_nextn_predict_layers");
     assert!(
         matches!(m(absent), Err(ConfigMapError::MissingKey { key, .. }) if key == "num_nextn_predict_layers")
+    );
+}
+
+/// 2026-10-10: A presence switch leaves its key to be classified: with a param rule the switch
+/// is set and the value carried; with none the key is refused as unmapped, never dropped.
+#[test]
+fn a_presence_switch_leaves_its_value_to_be_classified() {
+    let switch = MAP.replace(
+        "[keys]",
+        "cap = { key = \"final_logit_softcapping\", bool_present = true }\n[keys]",
+    );
+    let with_param = switch.replace(
+        "model_type = \"ignore\"",
+        "model_type = \"ignore\"\nfinal_logit_softcapping = { param = true }",
+    );
+    let base = json!({"model_type": "toy", "num_hidden_layers": 2, "hidden_size": 8});
+    let run =
+        |map: &str, config: &serde_json::Value| map_config(&ConfigMap::parse(map).unwrap(), config);
+    let mut capped = base.clone();
+    capped["final_logit_softcapping"] = 30.0.into();
+    let m = run(&with_param, &capped).unwrap();
+    assert_eq!(m.shape.dims["cap"], 1);
+    assert_eq!(m.params["final_logit_softcapping"], "30.0");
+    let m = run(&with_param, &base).unwrap();
+    assert_eq!(m.shape.dims["cap"], 0);
+    assert!(!m.params.contains_key("final_logit_softcapping"));
+    assert!(
+        matches!(run(&switch, &capped), Err(ConfigMapError::UnmappedKey { key, .. }) if key == "final_logit_softcapping")
     );
 }

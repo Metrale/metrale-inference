@@ -257,12 +257,10 @@ fn dims<'a>(
             .key
             .as_deref()
             .ok_or_else(|| ConfigMapError::Schema(format!("dim `{name}` has no key or const")))?;
+        // 2026-10-10: A presence switch does not consume its key: the value is classified by
+        // another dim (`moe_latent_size`) or a key rule (`final_logit_softcapping`, a param).
         if full.bool_present {
-            let present = fields.get_key_value(key);
-            if let Some((k, _)) = present {
-                consumed.insert(k);
-            }
-            out.insert(name.clone(), u64::from(present.is_some()));
+            out.insert(name.clone(), u64::from(fields.contains_key(key)));
             continue;
         }
         if let Some((k, v)) = fields.get_key_value(key) {
