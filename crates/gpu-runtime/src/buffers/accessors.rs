@@ -320,6 +320,42 @@ impl BufferArena {
         stream: u64,
         tokens: usize,
     ) -> anyhow::Result<()> {
+        let mut cached = self.zero_rows_graph.lock();
+        if let Some((rows, graph)) = *cached
+            && rows == tokens
+        {
+            return gpu.launch_graph(graph, stream);
+        }
+        // 2026-10-10: Capture the memsets once and replay them as one graph: one launch instead
+        // of eighteen memset calls per decode step (85 us of host time per step on one GB10
+        // rank, 117 us on another). If capture cannot begin (the stream is already capturing,
+        // or the backend has none) they are issued directly, as before. A backend that runs
+        // captured work at once returns a null graph; then nothing is replayed or cached.
+        if let Err(e) = gpu.begin_capture(stream) {
+            tracing::debug!("zero_all_rows: no capture ({e:#}); issuing the memsets");
+            return self.zero_all_rows_ops(gpu, stream, tokens);
+        }
+        if let Err(e) = self.zero_all_rows_ops(gpu, stream, tokens) {
+            gpu.abort_capture_if_active(stream);
+            return Err(e);
+        }
+        let graph = gpu.end_capture(stream)?;
+        if graph.0 == 0 {
+            return Ok(());
+        }
+        if let Some((_, stale)) = cached.replace((tokens, graph)) {
+            gpu.destroy_graph(stale)?;
+        }
+        gpu.launch_graph(graph, stream)
+    }
+
+    /// 2026-10-10: The memsets of [`Self::zero_all_rows`].
+    fn zero_all_rows_ops(
+        &self,
+        gpu: &dyn GpuBackend,
+        stream: u64,
+        tokens: usize,
+    ) -> anyhow::Result<()> {
         let m = self.max_batch_tokens.max(1);
         let head = |n: usize| {
             if tokens >= m || m == 0 || !n.is_multiple_of(m) {
