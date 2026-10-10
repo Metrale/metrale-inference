@@ -104,6 +104,11 @@ impl ConcurrencySweep {
             // otherwise go to reasoning.
             "reasoning_effort": "none",
             "messages": [{"role": "user", "content": self.cell_prompt(isl, prefix_tag)}],
+            // 2026-10-10: Usage on the stream, which vLLM sends only when asked: without it
+            // every request reads 0 prompt tokens (so a warmed cell is judged cache-
+            // uncontrolled) and completion tokens are counted per delta, which undercounts a
+            // speculating engine that emits several tokens in one delta.
+            "stream_options": {"include_usage": true},
         });
         if self.fixture == Fixture::Essay {
             // 2026-09-26: Only for the essay fixture (see `Fixture::Essay`); the

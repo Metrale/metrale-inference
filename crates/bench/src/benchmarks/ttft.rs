@@ -30,16 +30,21 @@ use crate::benchmarks::stats::{self, PromptMode};
 use crate::benchmarks::{baseline, one_line};
 use crate::http;
 use crate::metadata::PluginMetadata;
-use crate::params::{ParamKind, ParamSpec, ParamValue, ParamValues};
+use crate::params::{ParamSpec, ParamValues};
 use crate::plugin::{Plugin, PluginHandle};
 use crate::result::{BenchmarkResult, Cell, CellStyle, Column, LogLine, ResultTable, RunStatus};
 
 mod descriptors;
 mod long_prompt;
+mod params;
+mod token_prompt;
 pub use descriptors::{
     COLD_DESCRIPTOR, COLD_METADATA, HIGH_ISL_COLD_DESCRIPTOR, HIGH_ISL_COLD_MOE_DESCRIPTOR,
     HIGH_ISL_WARM_DESCRIPTOR, HIGH_ISL_WARM_MOE_DESCRIPTOR, WARM_DESCRIPTOR, WARM_METADATA,
 };
+pub use token_prompt::tokenizer_file;
+#[cfg(test)]
+mod test_support;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -100,6 +105,9 @@ pub struct TtftGate {
     /// (`long_prompt.rs`) in place of `prompt_lengths` of synthetic filler.
     fixture: bool,
     long: Option<long_prompt::LongPrompt>,
+    /// 2026-10-10: Token-exact prompts, when the `tokenizer` parameter names
+    /// the served model's tokenizer (`ttft/token_prompt.rs`).
+    exact: Option<token_prompt::ExactPrompts<tokenizers::Tokenizer>>,
     handle: Option<PluginHandle>,
     lengths: Vec<usize>,
     repeats: usize,
@@ -135,6 +143,7 @@ impl TtftGate {
             metadata,
             fixture,
             long: None,
+            exact: None,
             handle: None,
             lengths: Vec::new(),
             repeats: 0,
@@ -174,7 +183,7 @@ impl TtftGate {
             "temperature": 0.0,
             "messages": [{"role": "user", "content": content}],
         });
-        if self.long.is_some() {
+        if self.long.is_some() || self.exact.is_some() {
             long_prompt::extend_request(&mut body);
         }
         http::chat_stream(target, &body, self.timeout).await
@@ -192,9 +201,10 @@ impl TtftGate {
                 i + 1,
                 self.repeats
             ));
-            let content = match &self.long {
-                Some(long) => long.prompt(self.mode, i),
-                None => {
+            let content = match (&mut self.exact, &self.long) {
+                (Some(exact), _) => exact.prompt(self.mode, tokens, i)?,
+                (None, Some(long)) => long.prompt(self.mode, i),
+                (None, None) => {
                     let prefix_tag = sample_prefix_tag(self.mode, tokens, i, handle.run_id());
                     stats::make_prompt(tokens, PromptMode::Natural, &prefix_tag)
                 }
@@ -206,7 +216,9 @@ impl TtftGate {
                 handle.check_cancelled()?;
             }
             let outcome = self.measure(&content).await?;
-            if let Some(long) = &mut self.long {
+            if let Some(exact) = &mut self.exact {
+                exact.admit(tokens, i, outcome.prompt_tokens)?;
+            } else if let Some(long) = &mut self.long {
                 long.admit(i, outcome.prompt_tokens)?;
             }
             cached_tokens = cached_tokens.max(outcome.cached_prompt_tokens);
@@ -220,7 +232,10 @@ impl TtftGate {
         }
         Ok(LengthRow {
             // 2026-09-27: A long prompt's row shows the server's count.
-            prompt_tokens: self.observed_prompt_tokens().unwrap_or(tokens),
+            prompt_tokens: match &self.exact {
+                Some(exact) => exact.reported(tokens).unwrap_or(tokens),
+                None => self.observed_prompt_tokens().unwrap_or(tokens),
+            },
             samples,
             cached_tokens,
         })
@@ -281,69 +296,7 @@ impl Benchmark for TtftGate {
     }
 
     fn parameters(&self) -> Vec<ParamSpec> {
-        let (repeats, median_limit, p90_limit) = if self.fixture {
-            long_prompt::one_shot_defaults(self.mode)
-        } else {
-            (12, 3.0, 5.0)
-        };
-        let source = if self.fixture {
-            long_prompt::source_parameters()
-        } else {
-            vec![ParamSpec::new(
-                "prompt_lengths",
-                "Prompt lengths",
-                "Prompt sizes in tokens; one table row each.",
-                ParamKind::IntList {
-                    min: 16,
-                    max: 131_072,
-                },
-                ParamValue::IntList(vec![256, 1024, 4096]),
-            )]
-        };
-        source.into_iter().chain([
-            ParamSpec::new(
-                "repeats",
-                "Samples per length",
-                "More samples narrow the median; each costs one request (two in warm mode).",
-                ParamKind::Int { min: 1, max: 200 },
-                ParamValue::Int(repeats),
-            ),
-            ParamSpec::new(
-                "median_limit_pct",
-                "Median limit",
-                "Percent the median may rise over the baseline before this gate fails.",
-                ParamKind::Float {
-                    min: 0.0,
-                    max: 100.0,
-                },
-                ParamValue::Float(median_limit),
-            ),
-            ParamSpec::new(
-                "p90_limit_pct",
-                "p90 limit",
-                "Percent p90 may rise over the baseline before this gate fails.",
-                ParamKind::Float {
-                    min: 0.0,
-                    max: 100.0,
-                },
-                ParamValue::Float(p90_limit),
-            ),
-            ParamSpec::new(
-                "update_baseline",
-                "Record as baseline",
-                "Store this run's numbers as the new baseline. Turn off to compare without moving the bar.",
-                ParamKind::Bool,
-                ParamValue::Bool(true),
-            ),
-            ParamSpec::new(
-                "request_timeout_s",
-                "Request timeout",
-                "Seconds before a single request is abandoned.",
-                ParamKind::Int { min: 10, max: 3600 },
-                ParamValue::Int(300),
-            ),
-        ])
-        .collect()
+        params::parameters(self.fixture, self.mode)
     }
 
     fn configure(&mut self, values: &ParamValues) -> Result<()> {
@@ -361,6 +314,17 @@ impl Benchmark for TtftGate {
         self.p90_limit_pct = values.float("p90_limit_pct")?;
         self.update_baseline = values.bool("update_baseline")?;
         self.timeout = Duration::from_secs(values.usize("request_timeout_s")? as u64);
+        let max_target = self.lengths.iter().copied().max().unwrap_or(0);
+        let (text, salt) = match &self.long {
+            Some(long) => (long.text.to_string(), long.salt),
+            // 2026-10-10: Every filler word is at least one token, so this
+            // many words cover the largest length.
+            None => (
+                stats::make_prompt(max_target + 128, PromptMode::Natural, ""),
+                long_prompt::fresh_salt(),
+            ),
+        };
+        self.exact = token_prompt::configure(values.text("tokenizer")?, &text, max_target, salt)?;
         self.probed = false;
         self.cursor = 0;
         self.rows.clear();
@@ -409,6 +373,14 @@ impl Benchmark for TtftGate {
             if let Some(v) = p90 {
                 metrics.insert("p90_ms".to_string(), v);
             }
+            // 2026-10-10: The fastest sample, and the most prompt tokens any
+            // sample reported as served from the prefix cache (0 when the
+            // server does not report them).
+            if let Some(v) = samples.iter().copied().reduce(f64::min) {
+                metrics.insert("min_ms".to_string(), v);
+            }
+            let cached = self.rows.iter().map(|r| r.cached_tokens).max().unwrap_or(0);
+            metrics.insert("cached_prompt_tokens".to_string(), cached as f64);
             // 2026-09-27: The server's count, so a record shows the prompt size
             // it was measured at rather than the size the gate asked for.
             if let Some(n) = self.observed_prompt_tokens() {

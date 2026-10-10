@@ -23,13 +23,14 @@ use super::ml_utils_io::{FsSink, OpenedSource, open_source};
 use super::{ExtrapolateArgs, InspectArgs, MlUtilsAction, MlUtilsArgs, MockifyArgs};
 
 /// 2026-10-03: Run one `met ml-utils` command.
-pub(crate) fn dispatch(args: MlUtilsArgs) -> Result<()> {
+pub(crate) async fn dispatch(args: MlUtilsArgs) -> Result<()> {
     match args.action {
         MlUtilsAction::Inspect(a) => inspect(a),
         MlUtilsAction::Mockify(a) => mockify(a),
         MlUtilsAction::Extrapolate(a) => extrapolate_cmd(a),
         MlUtilsAction::ValueStats(a) => super::ml_utils_calib::value_stats(a),
         MlUtilsAction::CalibrateRouting(a) => super::ml_utils_calib::calibrate_routing(a),
+        MlUtilsAction::ModelBringUpBench(a) => super::bring_up::dispatch(a).await,
     }
 }
 

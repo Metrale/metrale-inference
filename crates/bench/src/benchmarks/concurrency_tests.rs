@@ -73,6 +73,7 @@ pub(super) fn row(
         cache_uncontrolled: false,
         gaps: None,
         energy: None,
+        window_unix: (0.0, 1.0),
     }
 }
 

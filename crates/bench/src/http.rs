@@ -304,8 +304,12 @@ fn apply_chunk(chunk: &Value, out: &mut ChatOutcome) -> bool {
     let mut carried = false;
     // 2026-09-26: A reasoning delta is a token: it counts and it can start the
     // TTFT clock, or a thinking model's TTFT would include its whole
-    // reasoning block.
-    if let Some(reasoning) = delta.get("reasoning_content").and_then(Value::as_str)
+    // reasoning block. 2026-10-10: Newer vLLM names the field `reasoning`; one
+    // delta carrying both is read once, from `reasoning_content`.
+    if let Some(reasoning) = delta
+        .get("reasoning_content")
+        .or_else(|| delta.get("reasoning"))
+        .and_then(Value::as_str)
         && !reasoning.is_empty()
     {
         out.reasoning.push_str(reasoning);

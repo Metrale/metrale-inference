@@ -138,6 +138,11 @@ impl ConcurrencySweep {
             if let Some(a) = r.accept_len() {
                 m.insert(format!("c{c}_accept_len"), a);
             }
+            // 2026-10-10: The cell's measured window and output tokens, the numerator and
+            // window of its tok/s, for an energy reading taken outside this process.
+            m.insert(format!("c{c}_completion_tokens"), r.tokens as f64);
+            m.insert(format!("c{c}_window_start_unix"), r.window_unix.0);
+            m.insert(format!("c{c}_window_end_unix"), r.window_unix.1);
             r.instrument_metrics(&format!("c{c}_"), self.energy.idle(), &mut m);
         }
         self.energy.metrics(&mut m);

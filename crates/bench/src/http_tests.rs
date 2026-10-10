@@ -136,6 +136,22 @@ fn a_reasoning_delta_is_a_token_and_starts_the_clock() {
 }
 
 #[test]
+fn a_reasoning_field_starts_the_clock_once_whichever_name_carries_it() {
+    let mut out = ChatOutcome::default();
+    assert!(apply_chunk(
+        &sse(r#"{"choices":[{"delta":{"reasoning":"Let me"}}]}"#),
+        &mut out
+    ));
+    assert!(apply_chunk(
+        &sse(r#"{"choices":[{"delta":{"reasoning_content":" think","reasoning":" think"}}]}"#),
+        &mut out
+    ));
+    assert_eq!(out.reasoning, "Let me think");
+    assert_eq!(out.completion_tokens, 2);
+    assert_eq!(out.text, "");
+}
+
+#[test]
 fn an_empty_reasoning_delta_carries_nothing() {
     let mut out = ChatOutcome::default();
     assert!(!apply_chunk(

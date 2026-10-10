@@ -86,6 +86,7 @@ impl ConcurrencySweep {
         handle.status(format!("isl {isl} · conc {conc} · {conc} in flight"));
 
         let batch_start = Instant::now();
+        let unix_start = super::unix_now();
         let futures: Vec<_> = plan
             .measured
             .into_iter()
@@ -93,6 +94,7 @@ impl ConcurrencySweep {
             .collect();
         let outcomes = futures::future::join_all(futures).await;
         let batch_end = Instant::now();
+        let unix_end = super::unix_now();
         let wall = batch_end
             .duration_since(batch_start)
             .as_secs_f64()
@@ -197,6 +199,7 @@ impl ConcurrencySweep {
             cache_uncontrolled,
             gaps: gaps.stats(),
             energy,
+            window_unix: (unix_start, unix_end),
         })
     }
 }
