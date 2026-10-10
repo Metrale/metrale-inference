@@ -31,13 +31,15 @@ use metrale_config::TpSlice;
 use super::build_w4a4::{slice_nvfp4_cols, slice_nvfp4_rows};
 
 /// 2026-10-09: The unit every expert's intermediate width splits in under the `tp` layout. The
-/// width is N of gate/up and K of down on every routed route, and the strictest reader is the
-/// W4A4 down projection (`w4a4_gemv_mx8_moe_slots` / `_moe_union`): K a multiple of 128, whole
-/// k128 chunks, 16-byte weight rows and 8-byte scale groups (`build_w4a4::check_w4a4_k`). The
-/// W4A16 GEMVs need K % 16 and the grouped prefill GEMM's default tile steps K by 128 (its tails
-/// are guarded), so 128 satisfies every kernel the routed experts reach. GLM-5.3's 2048 splits
-/// over three ranks as 768 / 640 / 640.
-pub const EXPERT_TP_UNIT: usize = 128;
+/// width is N of gate/up and K of down on every routed route. 2026-10-10: 64, down from 128: the
+/// strictest reader, the W4A4 down projection, has `_k64` twins (`w4a4_gemv_mx_moe.cu`, chosen
+/// by `forward::w4a4` when K % 128 == 64) that read a half k128 chunk with 4-byte scale loads;
+/// the W4A16 GEMVs need K % 16 and the grouped prefill GEMM guards its K and N tails. 2048 over
+/// three ranks splits 704 / 704 / 640 (128 gave 768 / 640 / 640: rank 0 read 20% more expert
+/// bytes than the others, and every rank waits for it at the MLP all-reduce). No smaller unit
+/// helps at 2048: a weight row of K / 2 bytes must stay 16-byte aligned (K % 32), and 2048 / 3
+/// rounds up to 704 on a 32 grid as well.
+pub const EXPERT_TP_UNIT: usize = 64;
 
 /// 2026-10-09: One rank's slice of every routed expert's intermediate width.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

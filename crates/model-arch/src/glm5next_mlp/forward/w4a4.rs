@@ -7,6 +7,9 @@
 //! over the rows' union (`w4a4_gemv_mx{8,16}_moe_union_sweep`, each union expert read once); the
 //! slot GEMV (`w4a4_gemv_mx8_moe_slots`) where those kernels did not resolve;
 //! the dense MLP the mx GEMVs in chunks of [`DENSE_W4A4_CHUNK_ROWS`] rows.
+//! 2026-10-10: A routed down projection whose K (the expert width) is a multiple of 64 but not
+//! of 128, a 64-unit expert slice of the `tp` layout, runs the `_k64` twins of the quantizer,
+//! the slot GEMV and the sweep ([`down_kernels`]).
 //!
 //! Owner: model-arch (GLM-5.3).
 //! Invariants:
@@ -24,7 +27,7 @@ use super::MOE_ROW_UNION_MAX_IDS;
 use super::launch::swiglu;
 use super::moe_experts::MoeSite;
 use crate::glm5next_layer::profile;
-use crate::glm5next_mlp::build_w4a4::check_w4a4_k;
+use crate::glm5next_mlp::build_w4a4::{check_w4a4_k, check_w4a4_k64};
 use crate::glm5next_mlp::weights::{
     Glm5NextDenseNvfp4Weights, Glm5NextExpertPtrTable, Nvfp4Proj, W4a4ActScales,
 };
@@ -35,7 +38,8 @@ const W4A4_ROWS_PER_CTA: u32 = 16;
 const W4A4_BLOCK: u32 = 256;
 
 /// 2026-10-08: Quantize `rows` BF16 rows of width `k` at `input` into the W4A4 scratch under the
-/// static global scale `gs`.
+/// static global scale `gs`. 2026-10-10: `k_store` is the row width `kern` writes: `k`, or
+/// `k.next_multiple_of(128)` for the `_k64` quantizer.
 #[allow(clippy::too_many_arguments)]
 fn quant_static(
     gpu: &dyn GpuBackend,
@@ -44,12 +48,14 @@ fn quant_static(
     input: DevicePtr,
     rows: usize,
     k: usize,
+    k_store: usize,
     gs: f32,
     stream: u64,
 ) -> Result<()> {
     ensure!(
-        rows >= 1 && rows <= ws.w4a4_rows && k <= ws.w4a4_k,
-        "GLM W4A4: {rows} rows of {k} do not fit the activation scratch of {} x {}",
+        rows >= 1 && rows <= ws.w4a4_rows && k <= k_store && k_store <= ws.w4a4_k,
+        "GLM W4A4: {rows} rows of {k} (stored {k_store} wide) do not fit the activation scratch \
+         of {} x {}",
         ws.w4a4_rows,
         ws.w4a4_k
     );
@@ -108,18 +114,64 @@ enum SweepEntries {
     Union,
 }
 
+/// 2026-10-10: The kernels of one routed W4A4 projection's input: its quantizer, the row width
+/// that quantizer writes, the slot GEMV, the one-row own-slots sweep and the 8- and 16-token
+/// union sweeps.
+#[derive(Clone, Copy)]
+struct ProjKernels {
+    quant: KernelHandle,
+    k_store: usize,
+    slots: KernelHandle,
+    own: KernelHandle,
+    sweep: [KernelHandle; 2],
+}
+
+/// 2026-10-10: The routed down projection's kernels for expert width `mi`: the plain entries at
+/// `mi % 128 == 0`, the `_k64` twins at `mi % 128 == 64`; an error for any other width, or when
+/// the twins' quantizer or slot GEMV is absent from the target's PTX (an absent sweep runs the
+/// slot GEMV).
+fn down_kernels(k: &Glm5NextMlpKernels, mi: usize) -> Result<ProjKernels> {
+    if mi.is_multiple_of(128) {
+        check_w4a4_k(mi, "routed down")?;
+        return Ok(ProjKernels {
+            quant: k.w4a4_quant_static,
+            k_store: mi,
+            slots: k.w4a4_moe_slots,
+            own: k.w4a4_moe_slots_sweep,
+            sweep: k.w4a4_moe_sweep,
+        });
+    }
+    check_w4a4_k64(mi, "routed down")?;
+    let t = k.w4a4_moe_k64;
+    ensure!(
+        t.quant.0 != 0 && t.slots.0 != 0,
+        "GLM routed W4A4: the expert width {mi} needs the _k64 quantizer and slot GEMV \
+         (w4a4_gemv_mx_moe.cu), which this target's PTX lacks"
+    );
+    Ok(ProjKernels {
+        quant: t.quant,
+        k_store: mi.next_multiple_of(128),
+        slots: t.slots,
+        own: t.own,
+        sweep: t.sweep,
+    })
+}
+
 /// 2026-10-09: The persistent sweep for `rows` routed rows, when its kernels resolved: at one
-/// row over the row's own slots; at 2..=16 rows (the 8- or 16-token entry) over the union of
-/// rows whose `rows * top_k` ids the union builder covers. `None` runs the slot GEMV.
+/// row over the row's own slots (`own`); at 2..=16 rows (the 8- or 16-token entry of `sweep`)
+/// over the union of rows whose `rows * top_k` ids the union builder covers. `None` runs the
+/// slot GEMV. 2026-10-10: `own` and `sweep` are the projection's (plain or `_k64`).
 fn sweep_kernel(
     k: &Glm5NextMlpKernels,
+    own: KernelHandle,
+    sweep: [KernelHandle; 2],
     rows: usize,
     top_k: usize,
 ) -> Option<(KernelHandle, SweepEntries)> {
     let (h, entries) = match rows {
-        1 => (k.w4a4_moe_slots_sweep, SweepEntries::OwnSlots),
-        2..=8 => (k.w4a4_moe_sweep[0], SweepEntries::Union),
-        9..=16 => (k.w4a4_moe_sweep[1], SweepEntries::Union),
+        1 => (own, SweepEntries::OwnSlots),
+        2..=8 => (sweep[0], SweepEntries::Union),
+        9..=16 => (sweep[1], SweepEntries::Union),
         _ => return None,
     };
     let union_ok = match entries {
@@ -235,7 +287,7 @@ pub(super) fn w4a4_experts(site: &MoeSite<'_>, scales: W4a4ActScales) -> Result<
     } = *site;
     let (mi, h) = (cfg.moe_intermediate, cfg.hidden);
     check_w4a4_k(h, "routed gate/up")?;
-    check_w4a4_k(mi, "routed down")?;
+    let down = down_kernels(k, mi)?;
     let slots = rows * cfg.top_k;
     // 2026-10-08: Checked before the first launch: the down input holds one row per slot.
     ensure!(
@@ -245,7 +297,8 @@ pub(super) fn w4a4_experts(site: &MoeSite<'_>, scales: W4a4ActScales) -> Result<
         cfg.top_k,
         ws.w4a4_rows
     );
-    let sweep = sweep_kernel(k, rows, cfg.top_k);
+    let sweep = sweep_kernel(k, k.w4a4_moe_slots_sweep, k.w4a4_moe_sweep, rows, cfg.top_k);
+    let down_sweep = sweep_kernel(k, down.own, down.sweep, rows, cfg.top_k);
     let t = profile::start();
     quant_static(
         gpu,
@@ -254,10 +307,13 @@ pub(super) fn w4a4_experts(site: &MoeSite<'_>, scales: W4a4ActScales) -> Result<
         x,
         rows,
         h,
+        h,
         scales.gate_up,
         stream,
     )?;
-    if let Some((_, SweepEntries::Union)) = sweep {
+    let union =
+        |s: Option<(KernelHandle, SweepEntries)>| matches!(s, Some((_, SweepEntries::Union)));
+    if union(sweep) || union(down_sweep) {
         // 2026-10-09: The union of the rows' experts, which every union launch below reads.
         KernelLaunch::new(gpu, k.moe_row_union)
             .grid([1, 1, 1])
@@ -269,10 +325,10 @@ pub(super) fn w4a4_experts(site: &MoeSite<'_>, scales: W4a4ActScales) -> Result<
             .arg_u32(cfg.top_k as u32)
             .launch(stream)?;
     }
-    let slots_gemv = |table: &Glm5NextExpertPtrTable, out, n, kk, act_div| {
+    let slots_gemv = |kern, table: &Glm5NextExpertPtrTable, out, n, kk, act_div| {
         moe_slots(
             gpu,
-            k.w4a4_moe_slots,
+            kern,
             ws,
             table,
             out,
@@ -294,8 +350,9 @@ pub(super) fn w4a4_experts(site: &MoeSite<'_>, scales: W4a4ActScales) -> Result<
             cfg.top_k,
         )?,
         None => {
-            slots_gemv(&w.ptrs.gate, ws.a_gate, mi, h, cfg.top_k)?;
-            slots_gemv(&w.ptrs.up, ws.a_up, mi, h, cfg.top_k)?;
+            let kern = k.w4a4_moe_slots;
+            slots_gemv(kern, &w.ptrs.gate, ws.a_gate, mi, h, cfg.top_k)?;
+            slots_gemv(kern, &w.ptrs.up, ws.a_up, mi, h, cfg.top_k)?;
         }
     }
     swiglu(
@@ -310,17 +367,18 @@ pub(super) fn w4a4_experts(site: &MoeSite<'_>, scales: W4a4ActScales) -> Result<
     )?;
     quant_static(
         gpu,
-        k.w4a4_quant_static,
+        down.quant,
         ws,
         ws.a_act,
         slots,
         mi,
+        down.k_store,
         scales.down,
         stream,
     )?;
-    match sweep {
+    match down_sweep {
         Some(kern) => moe_sweep(site, kern, &[(&w.ptrs.down, ws.expert_out)], h, mi, 1)?,
-        None => slots_gemv(&w.ptrs.down, ws.expert_out, h, mi, 1)?,
+        None => slots_gemv(down.slots, &w.ptrs.down, ws.expert_out, h, mi, 1)?,
     }
     profile::end(profile::MOE_EXPERTS, t, gpu, stream);
     Ok(())
@@ -360,6 +418,7 @@ pub fn forward_dense_w4a4(
             ws,
             x.offset(r0 * h * 2),
             n,
+            h,
             h,
             scales.gate_up,
             stream,
@@ -404,6 +463,7 @@ pub fn forward_dense_w4a4(
             ws,
             ws.a_act.offset(r0 * inter * 2),
             n,
+            inter,
             inter,
             scales.down,
             stream,

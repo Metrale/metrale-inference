@@ -44,9 +44,9 @@ fn time_routes(gpu: &dyn GpuBackend, s: &Setup, label: &str, rs: &[Route], st: u
     };
     let slots = || -> Result<()> {
         let r = next();
-        slots_on(gpu, s, xa, r, &s.gate, o0, GU, st)?;
-        slots_on(gpu, s, xa, r, &s.upt, o1, GU, st)?;
-        slots_on(gpu, s, da, r, &s.down, o0, DN, st)
+        slots_on(gpu, s.kn.slots, xa, r, &s.gate, o0, GU, st)?;
+        slots_on(gpu, s.kn.slots, xa, r, &s.upt, o1, GU, st)?;
+        slots_on(gpu, s.kn.slots, da, r, &s.down, o0, DN, st)
     };
     let union = || -> Result<()> {
         let r = next();
@@ -65,8 +65,18 @@ fn time_routes(gpu: &dyn GpuBackend, s: &Setup, label: &str, rs: &[Route], st: u
     };
     let own = || -> Result<()> {
         let r = next();
-        own_sweep(gpu, s, xa, r, &[&s.gate, &s.upt], &[o0, o1], GU, st)?;
-        own_sweep(gpu, s, da, r, &[&s.down], &[o0], DN, st)
+        own_sweep(
+            gpu,
+            s.own,
+            s.kn.ctas,
+            xa,
+            r,
+            &[&s.gate, &s.upt],
+            &[o0, o1],
+            GU,
+            st,
+        )?;
+        own_sweep(gpu, s.own, s.kn.ctas, da, r, &[&s.down], &[o0], DN, st)
     };
     // 2026-10-09: The union tables the union-only candidates read are built once per routing.
     for r in rs {

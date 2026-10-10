@@ -30,7 +30,12 @@ const SWIGLU: u64 = 0x5E;
 const SWEEP8: u64 = 0x60;
 const SWEEP16: u64 = 0x62;
 const ROW_UNION: u64 = 0x64;
-const OWN_SWEEP: u64 = 0x66;
+const QUANT_K64: u64 = 0x66;
+const SLOTS_K64: u64 = 0x68;
+const SWEEP8_K64: u64 = 0x6A;
+const SWEEP16_K64: u64 = 0x6C;
+const OWN_SWEEP: u64 = 0x6E;
+const OWN_SWEEP_K64: u64 = 0x70;
 
 /// 2026-10-08: GLM-5.3-Flash at TP=3, EP=3, rank 0.
 fn cfg() -> Glm5NextMlpConfig {
@@ -64,7 +69,26 @@ fn kernels(gpu: &MockGpuBackend) -> Glm5NextMlpKernels {
     k.w4a4_moe_sweep = [KernelHandle(SWEEP8), KernelHandle(SWEEP16)];
     k.moe_row_union = KernelHandle(ROW_UNION);
     k.w4a4_moe_slots_sweep = KernelHandle(OWN_SWEEP);
+    k.w4a4_moe_k64 = crate::glm5next_mlp::W4a4MoeK64Kernels {
+        quant: KernelHandle(QUANT_K64),
+        slots: KernelHandle(SLOTS_K64),
+        own: KernelHandle(OWN_SWEEP_K64),
+        sweep: [KernelHandle(SWEEP8_K64), KernelHandle(SWEEP16_K64)],
+    };
     k
+}
+
+/// 2026-10-10: Rank 0 of GLM-5.3's tp expert layout at TP=3: every expert, 704 columns of each.
+fn cfg_tp() -> Glm5NextMlpConfig {
+    Glm5NextMlpConfig {
+        moe_intermediate: 704,
+        local_experts: 288,
+        ep_world_size: 1,
+        expert_shard: crate::glm5next_mlp::ExpertShard::Sliced(
+            crate::glm5next_mlp::expert_tp::expert_slice(2048, 3, 0).unwrap(),
+        ),
+        ..cfg()
+    }
 }
 
 fn u32_arg(l: &MockLaunch, i: usize) -> u32 {
@@ -193,15 +217,15 @@ fn moe_weights() -> Glm5NextMoeWeights {
 }
 
 fn run_experts(rows: usize) -> (MockGpuBackend, Vec<MockLaunch>, Glm5NextMlpWorkspace) {
-    run_experts_with(rows, |_| {})
+    run_experts_on(cfg(), rows, |_| {})
 }
 
-fn run_experts_with(
+fn run_experts_on(
+    c: Glm5NextMlpConfig,
     rows: usize,
     edit: impl FnOnce(&mut Glm5NextMlpKernels),
 ) -> (MockGpuBackend, Vec<MockLaunch>, Glm5NextMlpWorkspace) {
     let gpu = MockGpuBackend::new();
-    let c = cfg();
     let mut k = kernels(&gpu);
     edit(&mut k);
     let ws = Glm5NextMlpWorkspace::new(&gpu, &c, 16).unwrap();
@@ -302,7 +326,7 @@ fn one_routed_row_sweeps_its_own_slots() {
 /// `expert_out`.
 #[test]
 fn one_routed_row_without_the_own_sweep_runs_the_slot_gemv() {
-    let (_gpu, l, ws) = run_experts_with(1, |k| k.w4a4_moe_slots_sweep = KernelHandle(0));
+    let (_gpu, l, ws) = run_experts_on(cfg(), 1, |k| k.w4a4_moe_slots_sweep = KernelHandle(0));
     let funcs: Vec<u64> = l.iter().map(|l| l.func).collect();
     assert_eq!(funcs, vec![QUANT, SLOTS, SLOTS, SWIGLU, QUANT, SLOTS]);
     assert_eq!((l[0].grid[0], u32_arg(&l[0], 4)), (1, 4096));
@@ -372,5 +396,74 @@ fn rows_past_the_scratch_are_refused_before_launching() {
         stream: 0,
     };
     assert!(w4a4_experts(&site, SCALES).is_err());
+    assert!(gpu.launches_snapshot().is_empty());
+}
+
+/// 2026-10-10: A 704-wide expert slice (K % 128 == 64): gate and up run the plain entries (their
+/// K is the hidden size), the SwiGLU product is quantized by the `_k64` quantizer at K 704 into
+/// rows the 128-padded scratch holds, and down runs the `_k64` own-slots sweep (1 row) or the
+/// `_k64` union sweep (3 and 12 rows) at K 704.
+#[test]
+fn a_k64_expert_slice_runs_the_k64_down_twins() {
+    for (rows, gate_up, down) in [
+        (1usize, OWN_SWEEP, OWN_SWEEP_K64),
+        (3, SWEEP8, SWEEP8_K64),
+        (12, SWEEP16, SWEEP16_K64),
+    ] {
+        let (_gpu, l, ws) = run_experts_on(cfg_tp(), rows, |_| {});
+        let funcs: Vec<u64> = l.iter().map(|l| l.func).collect();
+        let want = if rows == 1 {
+            vec![QUANT, gate_up, SWIGLU, QUANT_K64, down]
+        } else {
+            vec![QUANT, ROW_UNION, gate_up, SWIGLU, QUANT_K64, down]
+        };
+        assert_eq!(funcs, want, "{rows} rows");
+        // 2026-10-10: One row builds no union, so its launches sit one earlier.
+        let at = |i: usize| if rows == 1 { i - 1 } else { i };
+        let q = &l[at(4)];
+        assert_eq!((q.grid[0], u32_arg(q, 4)), ((rows * 8) as u32, 704));
+        assert_eq!(ptr_arg(q, 0), ws.a_act);
+        assert_eq!(f32_arg(q, 5), SCALES.down);
+        let d = &l[at(5)];
+        assert_eq!((u32_arg(d, 14), u32_arg(d, 15)), (4096, 704), "{rows} rows");
+        let g = &l[at(2)];
+        assert_eq!((u32_arg(g, 14), u32_arg(g, 15)), (704, 4096), "{rows} rows");
+        // 2026-10-10: The scratch holds the down input at the padded width 768.
+        assert!(ws.w4a4_k >= 768);
+    }
+}
+
+/// 2026-10-10: One row of a 704-wide slice where the `_k64` own-slots sweep did not resolve:
+/// gate and up still sweep (plain, K 4096), down runs the `_k64` slot GEMV at K 704.
+#[test]
+fn a_k64_row_without_the_k64_own_sweep_runs_the_k64_slot_gemv() {
+    let (_gpu, l, _ws) = run_experts_on(cfg_tp(), 1, |k| k.w4a4_moe_k64.own = KernelHandle(0));
+    let funcs: Vec<u64> = l.iter().map(|l| l.func).collect();
+    assert_eq!(funcs, vec![QUANT, OWN_SWEEP, SWIGLU, QUANT_K64, SLOTS_K64]);
+    assert_eq!((u32_arg(&l[4], 8), u32_arg(&l[4], 9)), (4096, 704));
+}
+
+/// 2026-10-10: Without the `_k64` twins in the target's PTX, a 704-wide slice is refused before
+/// any launch, never run on the plain entries (which would drop the half chunk).
+#[test]
+fn a_k64_slice_without_the_twins_is_refused_before_launching() {
+    let gpu = MockGpuBackend::new();
+    let c = cfg_tp();
+    let mut k = kernels(&gpu);
+    k.w4a4_moe_k64.quant = KernelHandle(0);
+    let ws = Glm5NextMlpWorkspace::new(&gpu, &c, 16).unwrap();
+    let w = moe_weights();
+    let site = MoeSite {
+        gpu: &gpu,
+        k: &k,
+        cfg: &c,
+        w: &w,
+        x: X,
+        rows: 1,
+        ws: &ws,
+        stream: 0,
+    };
+    let e = w4a4_experts(&site, SCALES).unwrap_err().to_string();
+    assert!(e.contains("_k64"), "{e}");
     assert!(gpu.launches_snapshot().is_empty());
 }

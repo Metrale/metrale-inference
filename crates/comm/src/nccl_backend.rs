@@ -10,7 +10,8 @@
 //! its bound is exchanged with every peer and summed in rank order
 //! (`sendrecv.rs`); otherwise it is `ncclAllReduce`. After each collective the backend
 //! queries `ncclCommGetAsyncError`; a broadcast waits for completion for at
-//! most `COLLECTIVE_TIMEOUT_SECS`, an idle command receive without a deadline,
+//! most `COLLECTIVE_TIMEOUT_SECS` (a rendezvous broadcast `RENDEZVOUS_TIMEOUT_SECS`),
+//! an idle command receive without a deadline,
 //! and a failure in either marks the communicator unhealthy. `attempt_reconnect`
 //! aborts the communicator and bootstraps again. `METRALE_COMM_DIAGNOSTICS=1`
 //! logs every host submission.
@@ -64,6 +65,12 @@ pub use recv_buffer::{ALL_REDUCE_DTYPE_BYTES, required_model_recv_bytes, require
 /// only the completion polling, not an NCCL or driver call that hangs.
 pub(super) const COLLECTIVE_TIMEOUT_SECS: u64 = 30;
 
+/// 2026-10-10: Deadline, in seconds, for a rendezvous broadcast
+/// (`CommBackend::broadcast_rendezvous`): long enough for the spread of weight-load times
+/// between ranks (minutes when one rank reads cold storage), short enough that a rank that never
+/// arrives still fails the start rather than hanging it.
+pub(super) const RENDEZVOUS_TIMEOUT_SECS: u64 = 1800;
+
 /// 2026-09-26: NCCL communicator plus the streams, events and receive buffer
 /// its operations use.
 pub struct NcclBackend {
@@ -72,6 +79,8 @@ pub struct NcclBackend {
     /// holds the lock while it replaces the handle.
     comm: Mutex<NcclComm>,
     diagnostics: crate::collective_diagnostics::Diagnostics,
+    /// 2026-10-09: The pause between broadcast completion polls (`METRALE_COMM_POLL`).
+    poll: crate::collective_wait::PollPause,
     rank: usize,
     world_size: usize,
     /// 2026-09-26: Stream this backend creates for `all_reduce_async`.
@@ -125,10 +134,10 @@ impl NcclBackend {
     /// when `world_size == 2`.
     ///
     /// # Errors
-    /// An invalid `METRALE_COMM_DIAGNOSTICS` value or rank/world pair, a failed
-    /// bootstrap or NCCL init, a failed stream or event creation, a zero
-    /// `recv_capacity` at `world_size == 2`, or a failed receive-buffer
-    /// allocation. A failed registration of the receive buffer is only logged.
+    /// An invalid `METRALE_COMM_DIAGNOSTICS` or `METRALE_COMM_POLL` value or
+    /// rank/world pair, a failed bootstrap or NCCL init, a failed stream or event
+    /// creation, a zero `recv_capacity` at `world_size == 2`, or a failed
+    /// receive-buffer allocation. A failed registration of the receive buffer is only logged.
     pub fn new(
         rank: usize,
         world_size: usize,
@@ -144,6 +153,8 @@ impl NcclBackend {
             rank,
             world_size,
         )?;
+        let poll_env = std::env::var(crate::collective_wait::POLL_ENV).ok();
+        let poll = crate::collective_wait::PollPause::parse(poll_env.as_deref())?;
         Self::log_nccl_env_vars();
 
         let unique_id = if rank == 0 {
@@ -197,6 +208,7 @@ impl NcclBackend {
         Ok(Self {
             comm: Mutex::new(comm),
             diagnostics,
+            poll,
             rank,
             world_size,
             comm_stream,

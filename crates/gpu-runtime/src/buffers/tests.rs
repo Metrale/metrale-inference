@@ -378,3 +378,31 @@ fn ssm_ba_and_gates_hold_a_full_width_propose() {
     assert!(small.ssm_ba >= 16 * 2 * h * 2);
     assert!(small.ssm_ba < super::DECODE_META_MAX_ROWS * 2 * h * 2);
 }
+
+/// 2026-10-09: A decode step zeroes the logits rows it reads and leaves the rest: the
+/// whole-buffer zero cost 355 us per GLM-5.3 decode step. Fails if row 0 is left stale,
+/// if the zero spills past the rows asked for, or if a full-width call stops covering
+/// the whole buffer.
+#[test]
+fn zero_all_rows_zeroes_only_the_read_logits_rows() {
+    let cfg = ModelConfig::qwen3_next_80b_nvfp4();
+    let gpu = MockGpuBackend::new();
+    let arena = BufferArena::new(&cfg, 4, 4096, 16, 32, &gpu).unwrap();
+    let s = arena.sizes();
+    assert_eq!(s.logits_rows, 4);
+    let row = s.logits / s.logits_rows;
+    assert_eq!(row, cfg.vocab_size * 2);
+    let read = |bytes: &mut Vec<u8>| gpu.copy_d2h(arena.logits(), bytes).unwrap();
+    let mut host = vec![0u8; s.logits];
+
+    gpu.memset(arena.logits(), 0xAB, s.logits).unwrap();
+    arena.zero_all_rows(&gpu, 0, 1).unwrap();
+    read(&mut host);
+    assert!(host[..row].iter().all(|&b| b == 0), "row 0 not zeroed");
+    assert!(host[row..].iter().all(|&b| b == 0xAB), "rows past 0 zeroed");
+
+    gpu.memset(arena.logits(), 0xAB, s.logits).unwrap();
+    arena.zero_all_rows(&gpu, 0, s.logits_rows).unwrap();
+    read(&mut host);
+    assert!(host.iter().all(|&b| b == 0), "full-width call left rows");
+}

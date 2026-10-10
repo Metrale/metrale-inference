@@ -13,6 +13,8 @@
 //! 2. Timing (CUDA-graph replay, `timing.rs`): one row per local-expert count and on the
 //!    fixture's rows, slot GEMV vs union sweep vs own-slots sweep; 2, 4 and 8 rows of one
 //!    sequence at a local union of 3, 5 and 8 experts and on fixture windows.
+//! 1b. The same at a 704-wide expert slice (the 64-unit `tp` layout, `k64.rs`): gate and up on
+//!    the plain own-slots sweep, down on its `_k64` twin against the `_k64` slot GEMV.
 //! 3. With a fixture: `forward_moe` at one row under the fixture's router on its router inputs,
 //!    the own-slots sweep against the slot GEMV (the kernel table with the sweep unresolved),
 //!    byte for byte on every token, and both timed.
@@ -43,6 +45,7 @@ mod device;
 use device::*;
 
 mod forward;
+mod k64;
 mod timing;
 
 pub struct Setup {
@@ -132,12 +135,13 @@ pub fn route_of(gpu: &dyn GpuBackend, host: Vec<i32>) -> Result<Route> {
     })
 }
 
-/// 2026-10-09: The own-slots sweep over one or two projections: the ids row is the entry list
+/// 2026-10-09: The own-slots sweep `kern` (plain or `_k64`) over one or two projections: the ids row is the entry list
 /// (u_slot is passed and not read).
 #[allow(clippy::too_many_arguments)]
 pub fn own_sweep(
     gpu: &dyn GpuBackend,
-    s: &Setup,
+    kern: KernelHandle,
+    ctas: u32,
     a: &Act,
     r: &Route,
     ts: &[&Table],
@@ -145,8 +149,8 @@ pub fn own_sweep(
     (n, k, act_div): (usize, usize, usize),
     st: u64,
 ) -> Result<()> {
-    let mut l = KernelLaunch::new(gpu, s.own)
-        .grid([s.kn.ctas, 1, 1])
+    let mut l = KernelLaunch::new(gpu, kern)
+        .grid([ctas, 1, 1])
         .block([256, 1, 1])
         .arg_ptr(a.aq)
         .arg_ptr(a.as_)
@@ -171,11 +175,12 @@ pub fn own_sweep(
         .launch(st)
 }
 
-/// 2026-10-09: `device::slots_gemv` on stream `st` (that one launches on stream 0).
+/// 2026-10-09: `device::slots_gemv` with kernel `kern` (plain or `_k64`) on stream `st` (that one
+/// launches the plain kernel on stream 0).
 #[allow(clippy::too_many_arguments)]
 pub fn slots_on(
     gpu: &dyn GpuBackend,
-    s: &Setup,
+    kern: KernelHandle,
     a: &Act,
     r: &Route,
     t: &Table,
@@ -183,7 +188,7 @@ pub fn slots_on(
     (n, k, act_div): (usize, usize, usize),
     st: u64,
 ) -> Result<()> {
-    KernelLaunch::new(gpu, s.kn.slots)
+    KernelLaunch::new(gpu, kern)
         .grid([div_ceil(n as u32, 16), (r.rows * TOP_K) as u32, 1])
         .block([256, 1, 1])
         .arg_ptr(a.aq)
@@ -212,7 +217,17 @@ fn gate_row(gpu: &dyn GpuBackend, s: &Setup, r: &Route) -> Result<bool> {
     for o in s.out {
         gpu.memset(o, 0, n)?;
     }
-    own_sweep(gpu, s, &s.x_act, r, &[&s.gate, &s.upt], &[o0, o1], GU, 0)?;
+    own_sweep(
+        gpu,
+        s.own,
+        s.kn.ctas,
+        &s.x_act,
+        r,
+        &[&s.gate, &s.upt],
+        &[o0, o1],
+        GU,
+        0,
+    )?;
     let ng = TOP_K * MI * 2;
     let (g, u) = (read(gpu, o0, ng)?, read(gpu, o1, ng)?);
     let mut wrote = false;
@@ -228,7 +243,7 @@ fn gate_row(gpu: &dyn GpuBackend, s: &Setup, r: &Route) -> Result<bool> {
     }
     gpu.memset(o0, 0, n)?;
     gpu.memset(o2, 0, n)?;
-    own_sweep(gpu, s, &s.d_act, r, &[&s.down], &[o0], DN, 0)?;
+    own_sweep(gpu, s.own, s.kn.ctas, &s.d_act, r, &[&s.down], &[o0], DN, 0)?;
     slots_gemv(gpu, &s.kn, &s.d_act, r, &s.down, o2, DN)?;
     let d = read(gpu, o0, n)?;
     ensure!(
@@ -240,7 +255,13 @@ fn gate_row(gpu: &dyn GpuBackend, s: &Setup, r: &Route) -> Result<bool> {
 }
 
 /// 2026-10-09: Part 1.
-fn byte_gate(gpu: &dyn GpuBackend, s: &Setup, rng: &mut Rng, fx: Option<&Fixture>) -> Result<()> {
+/// 2026-10-10: Returns the rows it gated, which the width-704 gate (`k64.rs`) reuses.
+fn byte_gate(
+    gpu: &dyn GpuBackend,
+    s: &Setup,
+    rng: &mut Rng,
+    fx: Option<&Fixture>,
+) -> Result<Vec<Vec<i32>>> {
     let mut rows: Vec<(String, Vec<i32>)> = Vec::new();
     for local in 0..=TOP_K {
         for i in 0..4 {
@@ -291,14 +312,24 @@ fn byte_gate(gpu: &dyn GpuBackend, s: &Setup, rng: &mut Rng, fx: Option<&Fixture
     for o in s.out {
         gpu.memset(o, 0, ng)?;
     }
-    own_sweep(gpu, s, &s.x_act, &m, &[&s.gate], &[s.out[0]], GU, 0)?;
+    own_sweep(
+        gpu,
+        s.own,
+        s.kn.ctas,
+        &s.x_act,
+        &m,
+        &[&s.gate],
+        &[s.out[0]],
+        GU,
+        0,
+    )?;
     slots_gemv(gpu, &s.kn, &s.x_act, &r, &s.gate, s.out[1], GU)?;
     ensure!(
         read(gpu, s.out[0], ng)? != read(gpu, s.out[1], ng)?,
         "negative control: a swapped expert left the bytes equal"
     );
     println!("negative control: a swapped expert changes the bytes");
-    Ok(())
+    Ok(rows.into_iter().map(|(_, r)| r).collect())
 }
 
 fn main() -> Result<()> {
@@ -358,7 +389,8 @@ fn main() -> Result<()> {
     // 2026-10-09: GLM_BENCH_TIMING_ONLY=1 runs part 2 alone (repeat timing runs).
     let timing_only = std::env::var("GLM_BENCH_TIMING_ONLY").as_deref() == Ok("1");
     if !timing_only {
-        byte_gate(g, &s, &mut rng, fx.as_ref())?;
+        let rows = byte_gate(g, &s, &mut rng, fx.as_ref())?;
+        k64::run(g, &s, &mut rng, &rows)?;
     }
     timing::run(g, &s, &mut rng, fx.as_ref(), stream)?;
     match &fx {
