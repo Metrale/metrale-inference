@@ -174,8 +174,11 @@ pub fn node_cost(
             };
             bytes += seqs * attended * read_unit_bytes(c, n, settings)?;
             let (qh, lat) = (dim("q_heads")?, dim("kv_lora")?);
+            // 2026-10-10: Scores over the whole cached row (the latent, plus the shared rotary
+            // key of a decoupled-RoPE cache), values over the latent.
+            let key = c.states[first_read(n)?].elements as f64;
             flops = 2.0 * t * qh * lat * (dim("mla_qk")? + dim("mla_v")?)
-                + 4.0 * t * attended * qh * lat;
+                + 2.0 * t * attended * qh * (key + lat);
         }
         OpKind::IndexSelect => {
             // 2026-10-08: Every pool key of the context once per sequence (the cache holds one

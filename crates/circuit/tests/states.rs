@@ -58,6 +58,18 @@ fn every_recurrent_and_attention_layer_names_the_state_it_touches() {
                     (OpKind::KvWrite, "window", StateAccess::Write),
                     (OpKind::CompressedAttention, "window", StateAccess::Read),
                 ],
+                // 2026-10-10: Dense latent attention (`mla_moe`): one latent cache, written and
+                // read, where a GQA layer keeps its K and V sides.
+                LayerKind::FullAttention
+                    if c.nodes
+                        .iter()
+                        .any(|n| n.layer == Some(layer) && n.op == OpKind::MlaAttention) =>
+                {
+                    vec![
+                        (OpKind::KvWrite, "latent", StateAccess::Write),
+                        (OpKind::MlaAttention, "latent", StateAccess::Read),
+                    ]
+                }
                 LayerKind::FullAttention | LayerKind::SlidingAttention => vec![
                     (OpKind::KvWrite, "k", StateAccess::Write),
                     (OpKind::KvWrite, "v", StateAccess::Write),
