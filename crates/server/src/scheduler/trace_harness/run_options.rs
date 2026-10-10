@@ -30,6 +30,8 @@ pub(super) struct RunOptions {
     pub boundary_tokens: Vec<u32>,
     pub think_end_token: Option<u32>,
     pub think_start_token: Option<u32>,
+    /// 2026-10-10: The `METRALE_DFLASH_SEAM_SERIAL` lever (on in a serve, off in the goldens).
+    pub dflash_seam_serial: bool,
     /// 2026-09-25: A LoRA rotation queued before the loop starts; the scheduler applies it
     /// once nothing is in flight.
     pub lora_rotation: Option<String>,
@@ -71,6 +73,7 @@ impl Default for RunOptions {
             boundary_tokens: Vec::new(),
             think_end_token: None,
             think_start_token: None,
+            dflash_seam_serial: false,
             lora_rotation: None,
             close_inbox_at: None,
             telemetry: &TELEMETRY_OFF,
