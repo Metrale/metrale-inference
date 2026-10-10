@@ -146,3 +146,60 @@ fn every_multi_rank_verify_width_commits_its_accepted_rows() {
         );
     }
 }
+
+/// 2026-10-10: One DFlash request whose first token opens a thinking span and whose fourth
+/// closes it, so the serial decode of the span hands over to speculation at the seam; with
+/// `seam_serial` the seam token is decoded by the bootstrap before the first propose.
+fn dflash_think_trace(seam_serial: bool) -> Vec<String> {
+    let mut sc = scenarios::dflash("dflash_think", 1);
+    sc.opts.think_start_token = Some(10);
+    sc.opts.think_end_token = Some(13);
+    sc.opts.dflash_seam_serial = seam_serial;
+    let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    run_scenario(&sc)
+}
+
+/// 2026-10-10: Every propose at position `p` finds the drafter context holding exactly one row
+/// for each position below `p`: the prompt's rows from the prefill and the scheduler's
+/// `commit_ctx` rows. Returns how many proposes it checked.
+fn check_every_propose_sees_every_row(trace: &[String]) -> usize {
+    let mut rows: Vec<usize> = Vec::new();
+    let mut proposes = 0;
+    for line in trace {
+        if let Some(r) = line.strip_prefix("prefill(n=") {
+            let n: usize = r.split(',').next().unwrap().parse().unwrap();
+            rows.extend(0..n);
+        } else if line.starts_with("commit_ctx(") {
+            let base = field(line, "base");
+            rows.extend(base..base + field(line, "n"));
+        } else if line.starts_with("run_mtp_propose_multi(") {
+            let pos = field(line, "pos");
+            let mut seen: Vec<usize> = rows.iter().copied().filter(|&r| r < pos).collect();
+            seen.sort_unstable();
+            assert_eq!(
+                seen,
+                (0..pos).collect::<Vec<_>>(),
+                "{line}: the drafter context does not hold one row per position below {pos}"
+            );
+            proposes += 1;
+        }
+    }
+    proposes
+}
+
+/// 2026-10-10: The thinking seam keeps the context whole, whether the seam token is decoded by
+/// the bootstrap (`seam_serial`, the serve default) or verified directly. The bootstrap used to
+/// leave that row to the propose's own append, which a stale skip flag from the span's serial
+/// commits suppressed: the `</think>` row went missing.
+#[test]
+fn the_thinking_seam_keeps_one_ctx_row_per_position() {
+    for seam_serial in [true, false] {
+        let trace = dflash_think_trace(seam_serial);
+        assert!(
+            trace.iter().any(|l| l.starts_with("decode_batch(")),
+            "seam_serial={seam_serial}: the thinking span ran no serial decode"
+        );
+        let n = check_every_propose_sees_every_row(&trace);
+        assert!(n >= 2, "seam_serial={seam_serial}: only {n} proposes ran");
+    }
+}

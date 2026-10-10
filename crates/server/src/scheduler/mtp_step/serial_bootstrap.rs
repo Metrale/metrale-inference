@@ -161,24 +161,32 @@ pub(super) fn bootstrap_seq(
     // re-probe window.
     crate::scheduler::adaptive_spec::tick_serial(a, sched);
 
-    // 2026-09-25: Drafter context for this token (the unified ctx
-    // commit when `dflash_unified_ctx`, else the serial append under
-    // `METRALE_DFLASH_SERIAL_APPEND`) is added here only when the propose
-    // below will not run, or on the step that resumes speculation after
-    // an adaptive suspension (`reprobe_resume`). `spec_allowed` mutates
+    // 2026-09-25: Drafter context for this token: the unified ctx commit when
+    // `dflash_unified_ctx` (always, see below), else the serial append under
+    // `METRALE_DFLASH_SERIAL_APPEND`, added here only when the propose below
+    // will not run, or on the step that resumes speculation after an
+    // adaptive suspension (`reprobe_resume`). `spec_allowed` mutates
     // re-probe state, so it is evaluated once here and its verdict is
     // reused for the propose gate.
     let was_suspended = crate::scheduler::adaptive_spec::is_suspended(a, sched);
     let will_propose = crate::scheduler::adaptive_spec::spec_allowed(a, sched);
     let reprobe_resume = was_suspended && will_propose;
-    if sched.levers.dflash_unified_ctx {
-        if !will_propose || reprobe_resume {
-            let base_pos = a.seq.seq_len.saturating_sub(1);
-            if let Err(e) = model.commit_ctx(&mut a.seq, 1, base_pos, 0) {
-                tracing::error!(target: "met::scheduler::mtp_step", "commit_ctx (mtp serial): {e:#}");
-            }
+    // 2026-10-10: On a DFlash serve the unified ctx row is committed here whether or not the
+    // propose runs. Leaving it to the propose's own decode-append dropped it whenever the serial
+    // decode steps before this bootstrap (a thinking span, the throughput gate's K=0 steps) had
+    // left `skip_next_decode_append` set by their commits: the propose consumed that stale flag
+    // and skipped the append, so the `</think>` row was missing from every thinking request's
+    // drafter context. The commit sets the flag itself, so the propose does not append twice,
+    // and it copies the same capture row (row 0 of the DFlash hidden save) at the same position.
+    if sched.levers.dflash_unified_ctx
+        && (dflash_verify_raw_argmax || !will_propose || reprobe_resume)
+    {
+        let base_pos = a.seq.seq_len.saturating_sub(1);
+        if let Err(e) = model.commit_ctx(&mut a.seq, 1, base_pos, 0) {
+            tracing::error!(target: "met::scheduler::mtp_step", "commit_ctx (mtp serial): {e:#}");
         }
-    } else if sched.levers.dflash_serial_append
+    } else if !sched.levers.dflash_unified_ctx
+        && sched.levers.dflash_serial_append
         && (!will_propose || reprobe_resume)
         && let Err(e) = model.dflash_serial_ctx_append(&mut a.seq)
     {
