@@ -94,8 +94,11 @@ A worked example of the whole method's first half is checked in:
   the experts and routing, a dense model for the W4A16 GEMV and the head.
 - Prefer models with microbench evidence on the hardware. An optimized kernel is one with
   records at that parameter point.
-- A compared model must be a golden instance in `kernels/circuits/INSTANCES.toml` (its
-  `FUSIONS.toml` rules cover every node), so the Venn sees the kernels it really runs.
+- Prefer golden compared models (`kernels/circuits/INSTANCES.toml`: their `FUSIONS.toml`
+  rules cover every node), so the Venn sees every kernel they really run. A compared model that
+  is not golden is planned with a placeholder for each node no rule covers, as
+  `met circuit plan` does; those nodes count as no usage, and the report lists them under
+  "Compared models without full rules".
 
 ## Step 3: write the circuit, then build the kernel Venn diagram
 
