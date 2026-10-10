@@ -324,7 +324,8 @@ impl Glm5NextKdaLayer {
             (w.g_a.weight, ws.lowrank_g, hd),
         ];
         // 2026-10-10: One row under `METRALE_GLM_W4A16_GEMV_SEG`: all six in one launch.
-        let front = t == 1 && {
+        // 2026-10-11: Also 2..=4 GEMV-tier rows (`glm5next_w4a16_dense::group_of_six`).
+        let front = crate::glm5next_w4a16_dense::group_of_six(t)? && {
             let all: Vec<_> = qkv_group.iter().chain(&low_group).copied().collect();
             crate::glm5next_w4a16_dense::proj_group(gpu, &all, hidden, t, hid, stream)?
         };

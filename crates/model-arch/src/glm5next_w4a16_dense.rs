@@ -46,8 +46,8 @@ use std::sync::{Mutex, OnceLock};
 use anyhow::{Context, Result, bail, ensure};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_model_layers::layers::ops::{
-    W4A16_TC_ROWS_MAX_M, W4A16_TC_ROWS_MODULE, W4a16Seg, w4a16_tc_rows, w4a16_tc_rows_entry,
-    w4a16_tc_rows_shape_ok,
+    W4A16_TC_ROWS_MAX_M, W4A16_TC_ROWS_MODULE, W4a16Seg, w4a16_gemv_seg_lone, w4a16_tc_rows,
+    w4a16_tc_rows_entry, w4a16_tc_rows_shape_ok,
 };
 use metrale_model_layers::weight_map::{DenseWeight, QuantizedWeight, quantize_to_nvfp4};
 
@@ -335,7 +335,9 @@ fn proj_registered(
         return Ok(false);
     };
     let (n32, k32) = (n as u32, k as u32);
-    if m == 1 && plan.one_row {
+    // 2026-10-11: A lone projection takes the segmented GEMV only below K 2048 (KDA o, K 2816,
+    // is faster on `w4a16_gemv`; `ops::w4a16_gemv_seg_lone`).
+    if m == 1 && plan.one_row && w4a16_gemv_seg_lone(k32) {
         let segs = [W4a16Seg {
             weight: e.w,
             output: c,
@@ -361,7 +363,18 @@ fn proj_registered(
         return Ok(true);
     }
     if plan.gemv_tier(m) {
-        seg::launch_gemv_rows(gpu, a, &e.w, c, m, n32, k32, stream)?;
+        // 2026-10-11: Under `METRALE_GLM_W4A16_GEMV_SEG`, 2..=4 rows take the M-row segmented
+        // GEMV, whose rows are these tiers' bytes (each the one-row GEMV's).
+        if plan.seg_gemv(m) {
+            let segs = [W4a16Seg {
+                weight: e.w,
+                output: c,
+                n: n32,
+            }];
+            seg::launch_seg_gemv(gpu, a, &segs, m, k32, plan.sms, stream)?;
+        } else {
+            seg::launch_gemv_rows(gpu, a, &e.w, c, m, n32, k32, stream)?;
+        }
         return Ok(true);
     }
     if plan.mode != SegMode::Off {
@@ -415,6 +428,22 @@ pub fn proj_group(
     proj_group_registered(gpu, seg::plan()?, members, a, m, k, stream)
 }
 
+/// 2026-10-11: Whether a group of `m` rows runs as one `w4a16_gemv_seg` launch under `plan`
+/// (`SegPlan::seg_gemv`, unless the dequantize + cuBLASLt path takes the rows); then up to six
+/// members, else at most the row tiles' three.
+fn seg_gemv_group(plan: SegPlan, m: usize) -> Result<bool> {
+    Ok(plan.seg_gemv(m)
+        && (m == 1
+            || !crate::glm5next_w4a16_wide::takes(crate::glm5next_w4a16_wide::min_rows()?, m)))
+}
+
+/// 2026-10-11: Whether a group of `m` rows would run as one launch of up to six members (the KDA
+/// front end then groups q/k/v/f_a/b/g_a): the tier is on and [`seg_gemv_group`] holds under the
+/// published plan.
+pub fn group_of_six(m: usize) -> Result<bool> {
+    Ok(enabled() && seg_gemv_group(seg::plan()?, m)?)
+}
+
 /// 2026-10-09: [`proj_group`] whatever the published tier, under `plan`.
 fn proj_group_registered(
     gpu: &dyn GpuBackend,
@@ -429,8 +458,10 @@ fn proj_group_registered(
     // on them (`proj`). One row runs as a group only under `METRALE_GLM_W4A16_GEMV_SEG`.
     // 2026-10-10: A launch the dequantize + cuBLASLt path takes declines too: its members then
     // run one by one there (`proj`).
-    let one_row = m == 1 && plan.one_row;
-    if !one_row
+    // 2026-10-11: Under `METRALE_GLM_W4A16_GEMV_SEG` a group of 1..=4 GEMV-tier rows is one
+    // `w4a16_gemv_seg` launch ([`seg_gemv_group`]).
+    let seg_gemv = seg_gemv_group(plan, m)?;
+    if !seg_gemv
         && (plan.mode == SegMode::Off
             || m < 2
             || plan.gemv_tier(m)
@@ -450,8 +481,8 @@ fn proj_group_registered(
         });
     }
     let k32 = k as u32;
-    if one_row {
-        seg::launch_one_row(gpu, a, &segs, k32, plan.sms, stream)?;
+    if seg_gemv {
+        seg::launch_seg_gemv(gpu, a, &segs, m, k32, plan.sms, stream)?;
         return Ok(true);
     }
     let ns: Vec<u32> = segs.iter().map(|g| g.n).collect();
