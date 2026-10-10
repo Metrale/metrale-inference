@@ -92,16 +92,40 @@ pub fn select_tokens(
         .launch(stream)?;
 
     if has_pools {
-        KernelLaunch::new(gpu, kernels.index_scores)
-            .grid([
-                ceiling.unwrap_or(geom.n_pools) as u32,
-                geom.q_rows as u32,
-                1,
-            ])
-            .block([SCORES_BLOCK, 1, 1])
+        // 2026-10-08: `METRALE_GLM_DSA_SCORES_DECODE=1` swaps `dsa_index_scores_decode` (same
+        // arguments, same bytes) in for `dsa_index_scores` on a ceiling launch; see
+        // `scores_decode_for`. Its grid is fixed by the ceiling and the SM count, so a captured
+        // graph still replays at any live context. Lever off: the plain launch, unchanged.
+        let dec_requested = scores_decode::dsa_scores_decode();
+        let dec_on = scores_decode::scores_decode_for(
+            dec_requested,
+            kernels.index_scores_decode.0 != 0,
+            ceiling.is_some(),
+            d,
+            geom.index_heads,
+            scratch.pool_keys.0.is_multiple_of(16),
+        );
+        scores_decode::log_scores_decode(dec_requested, dec_on, ceiling.is_some(), kernels, geom);
+        let (handle, grid_x, block, smem) = match ceiling {
+            Some(m) if dec_on => (
+                kernels.index_scores_decode,
+                scores_decode::scores_decode_grid_x(m, scores_decode::device_sms(gpu)),
+                scores_decode::SCORES_DECODE_BLOCK,
+                scores_decode::scores_decode_smem(geom.index_heads) as u32,
+            ),
             // 2026-09-25: `dsa_index_scores` keeps one f32 per index head in shared memory and
             // sums them in head order.
-            .shared_mem(SCORES_BLOCK.max((geom.index_heads * 4) as u32))
+            _ => (
+                kernels.index_scores,
+                ceiling.unwrap_or(geom.n_pools),
+                SCORES_BLOCK,
+                SCORES_BLOCK.max((geom.index_heads * 4) as u32),
+            ),
+        };
+        KernelLaunch::new(gpu, handle)
+            .grid([grid_x as u32, geom.q_rows as u32, 1])
+            .block([block, 1, 1])
+            .shared_mem(smem)
             .arg_ptr(inputs.q)
             .arg_ptr(scratch.pool_keys)
             .arg_ptr(inputs.weights)

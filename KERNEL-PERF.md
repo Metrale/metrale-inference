@@ -293,7 +293,7 @@ notes = ""
 ## Inventory at a glance
 
 - **1395 kernel entry points** in **353 source files** across 7 hardware trees (b200, b300, gb10, hopper, metal, strix, strix-hip), compiled into 58 (hardware, model, quant) targets.
-- **1134** have at least one engine call site; **261** are compiled but launched only from tests, examples or not at all (see [Compiled but not launched](#compiled-but-not-launched)).
+- **1135** have at least one engine call site; **260** are compiled but launched only from tests, examples or not at all (see [Compiled but not launched](#compiled-but-not-launched)).
 - **15 architecture families**, **29 components**.
 - **61** entry points have a measured % of floor; every other row reads “not measured”.
 
@@ -309,7 +309,7 @@ notes = ""
 | Nemotron-H | Nemotron-H (Mamba2 hybrid + MoE) | `nemotron-3-nano-30b-a3b` → nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4<br>`nemotron-super-120b-a12b` → nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4<br>`nemotron-labs-3-puzzle-75b-a9b` → nvidia/NVIDIA-Nemotron-Labs-3-Puzzle-75B-A9B-NVFP4 | Mamba2, Causal conv1d, MoE, Dense FFN | 436 |
 | DeepSeek-V4 | DeepSeek-V4 (MLA + CSA/HCA + mHC + MoE + Engram) | `deepseek-v4-flash` → RedHatAI/DeepSeek-V4-Flash-NVFP4-FP8<br>`deepseek-v4.1-flash` → deepseek-ai/DeepSeek-V4.1-Flash | MLA, Sparse / compressed attention, Hyper-connections, N-gram and memory embeddings, MoE, Dense FFN | 474 |
 | Mistral4 | Mistral Small 4 (MLA + MoE) | `mistral-small-4` → mistralai/Mistral-Small-4-119B-2603-NVFP4 | MLA, MoE, Dense FFN | 383 |
-| GLM-5.3 | GLM-5.3-Flash (KDA + DSA sparse MLA + mHC + MoE) | `glm-5.3-flash` → LibertAIDAI/GLM-5.3-Flash-NVFP4 | KDA, Causal conv1d, MLA, Sparse / compressed attention, Hyper-connections, MoE, Dense FFN, Vision encoder | 430 |
+| GLM-5.3 | GLM-5.3-Flash (KDA + DSA sparse MLA + mHC + MoE) | `glm-5.3-flash` → LibertAIDAI/GLM-5.3-Flash-NVFP4 | KDA, Causal conv1d, MLA, Sparse / compressed attention, Hyper-connections, MoE, Dense FFN, Vision encoder | 431 |
 | Kimi-K3 | Kimi K3 (KDA + gated MLA + LatentMoE) | `kimi-k3` → inference-optimization/Kimi-K3-0.40B | KDA, Causal conv1d, MLA, MoE, Dense FFN | 389 |
 | Laguna | Laguna (full/sliding attention + MoE) | `laguna-s-2.1` → poolside/Laguna-S-2.1-NVFP4<br>`laguna-xs-2.1` → poolside/Laguna-XS-2.1-NVFP4 | MoE, Dense FFN | 377 |
 | MiniMax-M2 | MiniMax-M2 (full attention + sigmoid MoE) | `minimax-m2-229b` → MiniMaxAI/MiniMax-M2.7 | MoE, Dense FFN | 376 |
@@ -323,7 +323,7 @@ notes = ""
 |---|---|---|---|---|---|---|
 | Attention (GQA/MHA: paged decode, split-K, prefill/flash) | every family | 104 | 336 | 180 | 36 | 20 |
 | MLA (multi-head latent attention) | families listing it | 34 | 34 | 0 | 7 | 0 |
-| Sparse / compressed attention (DSA, CSA/HCA, QSA) | families listing it | 43 | 61 | 44 | 1 | 3 |
+| Sparse / compressed attention (DSA, CSA/HCA, QSA) | families listing it | 44 | 62 | 45 | 0 | 3 |
 | GDN (gated delta rule linear attention) | families listing it | 214 | 362 | 227 | 11 | 27 |
 | KDA (Kimi delta attention, linear attention) | families listing it | 11 | 24 | 10 | 3 | 5 |
 | Mamba2 (selective state-space scan) | families listing it | 6 | 63 | 7 | 1 | 8 |
@@ -570,12 +570,12 @@ Also launched here: [Activations and elementwise](#activations-and-elementwise-s
 
 ### Sparse / compressed attention (DSA, CSA/HCA, QSA)
 
-61 entry points: 43 primary here (full rows), 18 of other components launched from this component's code (listed after the table; their full rows are under their primary component).
+62 entry points: 44 primary here (full rows), 18 of other components launched from this component's code (listed after the table; their full rows are under their primary component).
 
 | Kernel (module::function) | File | Kind | HW | LLMs | Trade-offs · PRs | % of floor |
 |---|---|---|---|---|---|---|
 | dsa_indexer::`dsa_{compact_pools, expand_selection, index_scores, indexer_store, kpool_compress, mla_masked_attn, topk_pools, topk_to_mask, write_geom}` (9) | [b300/common/dsa_indexer.cu:74][f2] | DSA indexer / sparse MLA | b300 | none — its callers' targets compile another copy | [1 note][t2] | not measured |
-| dsa_indexer::`dsa_{compact_pools, expand_selection, index_scores, indexer_store, kpool_compress, mla_masked_attn, topk_pools, topk_to_mask, write_geom}` (9) | [gb10/common/dsa_indexer.cu:76][f27] | DSA indexer / sparse MLA | b200 gb10 hop | GLM-5.3 (1 ckpts) | [5 notes][t27] | not measured |
+| dsa_indexer::`dsa_{compact_pools, expand_selection, index_scores, index_scores_decode, indexer_store, kpool_compress, mla_masked_attn, topk_pools, topk_to_mask, write_geom}` (10) | [gb10/common/dsa_indexer.cu:76][f27] | DSA indexer / sparse MLA | b200 gb10 hop | GLM-5.3 (1 ckpts) | [5 notes][t27] | not measured |
 | attn_v41::`attn_v41_{act_quant_fp8, fp4_quant, gemm_f32, gemv_f32_staged, index_score, pool, ring_put, rmsnorm_bf16, rmsnorm_f32, rope, scale_bf16, scatter_cols, slice_cols, sparse_attn}` (14) | [gb10/deepseek-v4-flash/nvfp4/attn_v41.cu:100][f199] | CSA/HCA compressed attention | b200 gb10 hop | DeepSeek-V4 (2 ckpts) | [6 notes][t199] | not measured |
 | csa_compress::`csa_compress` | [gb10/deepseek-v4-flash/nvfp4/csa_compress.cu:20][f200] | CSA/HCA compressed attention | b200 gb10 hop | DeepSeek-V4 (2 ckpts) | [1 note][t200] | not measured |
 | prefill_attn_compressed::`prefill_attn_compressed` | [gb10/deepseek-v4-flash/nvfp4/prefill_attn_compressed.cu:23][f219] | CSA/HCA compressed attention | b200 gb10 hop | DeepSeek-V4 (2 ckpts) | [1 note][t219] | not measured |
@@ -1239,12 +1239,12 @@ Entry points whose every engine call site belongs to one component.
 
 ### Unique to Sparse / compressed attention (DSA, CSA/HCA, QSA)
 
-44 entry points.
+45 entry points.
 
 | Kernel (module::function) | File | Kind | HW | LLMs | Trade-offs · PRs | % of floor |
 |---|---|---|---|---|---|---|
 | dsa_indexer::`dsa_{compact_pools, expand_selection, index_scores, indexer_store, kpool_compress, mla_masked_attn, topk_pools, topk_to_mask, write_geom}` (9) | [b300/common/dsa_indexer.cu:74][f2] | DSA indexer / sparse MLA | b300 | none — its callers' targets compile another copy | [1 note][t2] | not measured |
-| dsa_indexer::`dsa_{compact_pools, expand_selection, index_scores, indexer_store, kpool_compress, mla_masked_attn, topk_pools, topk_to_mask, write_geom}` (9) | [gb10/common/dsa_indexer.cu:76][f27] | DSA indexer / sparse MLA | b200 gb10 hop | GLM-5.3 (1 ckpts) | [5 notes][t27] | not measured |
+| dsa_indexer::`dsa_{compact_pools, expand_selection, index_scores, index_scores_decode, indexer_store, kpool_compress, mla_masked_attn, topk_pools, topk_to_mask, write_geom}` (10) | [gb10/common/dsa_indexer.cu:76][f27] | DSA indexer / sparse MLA | b200 gb10 hop | GLM-5.3 (1 ckpts) | [5 notes][t27] | not measured |
 | attn_v41::`attn_v41_{act_quant_fp8, fp4_quant, gemm_f32, gemv_f32_staged, index_score, pool, ring_put, rmsnorm_bf16, rmsnorm_f32, rope, scale_bf16, scatter_cols, slice_cols, sparse_attn}` (14) | [gb10/deepseek-v4-flash/nvfp4/attn_v41.cu:100][f199] | CSA/HCA compressed attention | b200 gb10 hop | DeepSeek-V4 (2 ckpts) | [6 notes][t199] | not measured |
 | kquant_moe::`kquant_mmvq_q2_k_{groups_w, pair_w}` (2) | [gb10/deepseek-v4-flash/nvfp4/kquant_moe.cu:321][f205] | expert GEMM/GEMV | b200 gb10 hop | DeepSeek-V4 (2 ckpts) | [5 notes][t205] | not measured |
 | glm5next_dsa_mla_decode::`glm5next_dsa_mla_decode_fp8` | [gb10/glm-5.3-flash/nvfp4/glm5next_dsa_mla_decode.cu:94][f237] | DSA indexer / sparse MLA | gb10 | GLM-5.3 (1 ckpts) | [1 note][t237] | not measured |
@@ -1679,7 +1679,6 @@ No engine call site names these entry points: they are reached only from tests o
 | attn_prefill_v47::`attn_prefill_v47` | [gb10/common/attn_prefill_v47.cu:30][f11] | Attention · prefill (flash) | b200 b300 gb10 hop strix | — | [1 note][t11] | not measured |
 | causal_conv1d::`causal_conv1d_{fwd, update_f32}` (2) | [gb10/common/causal_conv1d.cu:30][f13] | Causal conv1d · causal conv1d | b200 b300 gb10 hop strix hip | — | [1 note][t13] | not measured |
 | gemm::`fused_silu_mul` | [gb10/common/dense_gemm_bf16.cu:590][f14] | Activations and elementwise · activation / gate / residual | b200 b300 gb10 hop strix | — | — | not measured |
-| dsa_indexer::`dsa_index_scores_decode` | [gb10/common/dsa_indexer.cu:367][f27] | Sparse / compressed attention · DSA indexer / sparse MLA | b200 gb10 hop | — | [1 note][t27] | not measured |
 | e2m1::`e2m1_quantize` | [gb10/common/e2m1_branchless.cu:48][f28] | Quantization and format conversion · activation quantize | b200 b300 gb10 hop strix hip | — | [1 note][t28] | not measured |
 | embed_from_argmax::`batched_embed_f32`, `embed_from_argmax_f32` | [gb10/common/embed_from_argmax.cu:57][f29] | Embedding and LM head · embedding / LM head | b200 b300 gb10 hop strix hip | — | [1 note][t29] | not measured |
 | fused_k_norm_rope_cache::`fused_k_norm_rope_cache_write_fp8` | [gb10/common/fused_k_norm_rope_cache.cu:252][f34] | KV cache · cache write | b200 b300 gb10 hop | — | [1 note][t34] | not measured |
