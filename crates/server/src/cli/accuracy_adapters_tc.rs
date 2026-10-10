@@ -187,7 +187,7 @@ fn w4a16_tc_direct(
     need(rows <= sweep_max_rows(&case.launcher).unwrap_or(0), || {
         format!("{} holds fewer than {rows} rows", case.launcher)
     })?;
-    need(k % 128 == 0, || {
+    need(k.is_multiple_of(128), || {
         format!("the tensor-core GEMV needs K % 128 == 0, not {k}")
     })?;
     let cols = if case.launcher.ends_with("tc8") {
