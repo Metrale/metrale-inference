@@ -12,6 +12,8 @@
 //! ```text
 //! k_normed, gate, valid, ape  -> dsa_kpool_compress   -> pool keys / indices / valid
 //! q, weights, q_pos           -> dsa_index_scores     -> [Q, P] scores + candidacy
+//!                                (dsa_index_scores_decode on a ceiling launch under
+//!                                 METRALE_GLM_DSA_SCORES_DECODE=1; same bytes)
 //!                             -> dsa_topk_pools       -> [Q, select_k] pool ids
 //!                             -> dsa_expand_selection -> [Q, out_width] token ids
 //! ```
@@ -324,6 +326,7 @@ impl DsaSelectScratch {
 
 mod launch;
 pub use launch::select_tokens;
+pub mod scores_decode;
 
 #[cfg(test)]
 mod tests;
