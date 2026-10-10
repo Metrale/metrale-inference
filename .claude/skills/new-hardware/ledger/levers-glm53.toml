@@ -893,3 +893,75 @@ effort_hours = 0.0
 transferability = "multi-rank MoE serving on GB10"
 links = { pr = "", commit = "", evidence = "exclusive same-box A/B (C1 x3, C8 x2, C16 x1, chat prose OSL 512) + accuracy microtest (per-lever pin and fixed declared anchor)" }
 notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-mhc-fused"
+date = "2026-10-10"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_MHC_FUSED=1 (hc_mix + hc_finish + norm in one last-block-done kernel)"
+symptom = "mHC ~2.7 ms/step at C1, Sinkhorn serial latency"
+diagnosis_tool = "nsys"
+root_cause_class = "latency-bound"
+lever_type = "kernel"
+lkb_effect = "new entry in glm_mhc family"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 6.6, j_tok_pct = 0.0, n = 3 }, { rung = "C8", tok_s_pct = 2.2, j_tok_pct = 0.0, n = 3 }, { rung = "C16", tok_s_pct = -1.2, j_tok_pct = 0.0, n = 3 }]
+verdict = "kept"
+verdict_reason = "tf+dec1 exact; C16 single run within noise"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "GLM mHC; multi-rank heads; MoE speculation economics"
+links = { pr = "", commit = "", evidence = "exclusive same-box A/B + accuracy microtest (pin + fixed anchor)" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-lmhead-fp8-sharded"
+date = "2026-10-10"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "--lm-head-dtype fp8 vocab-parallel (ldc-strided FP8 GEMV) + rank-local prompt-logprob head fix"
+symptom = "BF16 head 1.8 ms/step C1"
+diagnosis_tool = "nsys"
+root_cause_class = "bandwidth-bound"
+lever_type = "kernel"
+lkb_effect = "ldc parameter on existing FP8 GEMV family"
+parity_tier_kept = "accuracy-gated"
+per_rung = [{ rung = "C1", tok_s_pct = -0.6, j_tok_pct = 0.0, n = 3 }, { rung = "C8", tok_s_pct = -1.2, j_tok_pct = 0.0, n = 3 }, { rung = "C16", tok_s_pct = -5.6, j_tok_pct = 0.0, n = 3 }]
+verdict = "discarded"
+verdict_reason = "no gain on the fused-mHC base (accuracy PASS, tf KL 0.00076); the fix of a latent prompt-logprob all-reduce hang (BF16 head too) is kept"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "GLM mHC; multi-rank heads; MoE speculation economics"
+links = { pr = "", commit = "", evidence = "exclusive same-box A/B + accuracy microtest (pin + fixed anchor)" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-dflash-econ"
+date = "2026-10-10"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "GEMV_ROWS=4 + two-stage top-16 + AUX_FP8 drafter + adaptive K"
+symptom = "speculation loses to K=0 at C1-C4"
+diagnosis_tool = "nsys"
+root_cause_class = "speculation-economics"
+lever_type = "code"
+lkb_effect = "existing GEMV tiers"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = -5.9, j_tok_pct = 0.0, n = 3 }, { rung = "C2", tok_s_pct = -10.0, j_tok_pct = 0.0, n = 3 }, { rung = "C4", tok_s_pct = -5.8, j_tok_pct = 0.0, n = 3 }]
+verdict = "discarded"
+verdict_reason = "each extra verify row costs ~4.4 ms of expert reads plus ~9-12 ms drafter on rank 0; acceptance 0.47-0.56 at 2-draft ladders; top-16 split (395 -> 55 us) kept as default"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "GLM mHC; multi-rank heads; MoE speculation economics"
+links = { pr = "", commit = "", evidence = "exclusive same-box A/B + accuracy microtest (pin + fixed anchor)" }
+notes = ""
