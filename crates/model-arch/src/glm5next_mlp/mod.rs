@@ -168,6 +168,10 @@ pub struct Glm5NextMlpKernels {
     /// [`Self::w4a4_sweep_ctas`] CTAs over the rank's live union entries; one launch covers gate
     /// and up.
     pub w4a4_moe_sweep: [KernelHandle; 2],
+    /// 2026-10-09: `w4a4_gemv_mx8_moe_slots_sweep`: the sweep at one row over the row's own
+    /// slots (the router's ids row, no union build), gate and up in one launch; each output
+    /// bit-identical to [`Self::w4a4_moe_slots`]'.
+    pub w4a4_moe_slots_sweep: KernelHandle,
     /// 2026-10-09: The sweep's grid: [`W4A4_SWEEP_CTAS_PER_SM`] per SM of this device.
     pub w4a4_sweep_ctas: u32,
     /// 2026-10-08: The dense W4A4 GEMVs `w4a4_gemv_mx8`, `_mx16`, `_mx32` (`w4a4_gemv_mx.cu`),
@@ -313,6 +317,11 @@ impl Glm5NextMlpKernels {
                 "w4a4_gemv_mx16_moe_union_sweep",
             ]
             .map(|e| metrale_model_layers::layers::try_kernel(gpu, W4A4_MOE_MODULE, e)),
+            w4a4_moe_slots_sweep: metrale_model_layers::layers::try_kernel(
+                gpu,
+                W4A4_MOE_MODULE,
+                "w4a4_gemv_mx8_moe_slots_sweep",
+            ),
             w4a4_sweep_ctas: gpu.sm_count()? * W4A4_SWEEP_CTAS_PER_SM,
             w4a4_mx: ["w4a4_gemv_mx8", "w4a4_gemv_mx16", "w4a4_gemv_mx32"]
                 .map(|e| metrale_model_layers::layers::try_kernel(gpu, W4A4_MX_MODULE, e)),

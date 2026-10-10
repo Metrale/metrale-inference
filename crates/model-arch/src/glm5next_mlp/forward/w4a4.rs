@@ -2,9 +2,10 @@
 
 //! 2026-10-08: The W4A4 MLP forward of GLM-5.3, at the checkpoint's declared precision: NVFP4
 //! weights times NVFP4 activations quantized under the static `input_scale`s, on the FP4
-//! block-scale MMA. The routed experts run the slot GEMV (`w4a4_gemv_mx8_moe_slots`) at one row
-//! and the persistent union sweep (`w4a4_gemv_mx{8,16}_moe_union_sweep`, each union expert read
-//! once, gate and up in one launch) at 2..=16;
+//! block-scale MMA. The routed experts run the persistent sweep, gate and up in one launch: at
+//! one row over the row's own slots (`w4a4_gemv_mx8_moe_slots_sweep`, 2026-10-09), at 2..=16
+//! over the rows' union (`w4a4_gemv_mx{8,16}_moe_union_sweep`, each union expert read once); the
+//! slot GEMV (`w4a4_gemv_mx8_moe_slots`) where those kernels did not resolve;
 //! the dense MLP the mx GEMVs in chunks of [`DENSE_W4A4_CHUNK_ROWS`] rows.
 //!
 //! Owner: model-arch (GLM-5.3).
@@ -98,28 +99,43 @@ fn moe_slots(
         .launch(stream)
 }
 
-/// 2026-10-09: The union sweep for `rows` routed rows: the 8- or 16-token entry for 2..=16 rows
-/// whose `rows * top_k` ids the union builder covers, when those kernels resolved; `None` (the
-/// slot GEMV) for one row, where the union is the row's own slots, or otherwise.
-fn sweep_kernel(k: &Glm5NextMlpKernels, rows: usize, top_k: usize) -> Option<KernelHandle> {
-    let h = match rows {
-        2..=8 => k.w4a4_moe_sweep[0],
-        9..=16 => k.w4a4_moe_sweep[1],
+/// 2026-10-09: Which entry list the persistent sweep reads.
+#[derive(Clone, Copy)]
+enum SweepEntries {
+    /// 2026-10-09: One row's own slots: the router's ids row (`w4a4_gemv_mx8_moe_slots_sweep`).
+    OwnSlots,
+    /// 2026-10-09: The rows' union, which `glm5next_moe_row_union` builds first.
+    Union,
+}
+
+/// 2026-10-09: The persistent sweep for `rows` routed rows, when its kernels resolved: at one
+/// row over the row's own slots; at 2..=16 rows (the 8- or 16-token entry) over the union of
+/// rows whose `rows * top_k` ids the union builder covers. `None` runs the slot GEMV.
+fn sweep_kernel(
+    k: &Glm5NextMlpKernels,
+    rows: usize,
+    top_k: usize,
+) -> Option<(KernelHandle, SweepEntries)> {
+    let (h, entries) = match rows {
+        1 => (k.w4a4_moe_slots_sweep, SweepEntries::OwnSlots),
+        2..=8 => (k.w4a4_moe_sweep[0], SweepEntries::Union),
+        9..=16 => (k.w4a4_moe_sweep[1], SweepEntries::Union),
         _ => return None,
     };
-    (h.0 != 0
-        && k.moe_row_union.0 != 0
-        && k.w4a4_sweep_ctas != 0
-        && rows * top_k <= MOE_ROW_UNION_MAX_IDS)
-        .then_some(h)
+    let union_ok = match entries {
+        SweepEntries::OwnSlots => true,
+        SweepEntries::Union => k.moe_row_union.0 != 0 && rows * top_k <= MOE_ROW_UNION_MAX_IDS,
+    };
+    (h.0 != 0 && k.w4a4_sweep_ctas != 0 && union_ok).then_some((h, entries))
 }
 
 /// 2026-10-09: `out[r * top_k + s, n]` of every projection in `projs` (one or two, which read the
 /// same activations) for every (row, slot) through the union tables (`glm5next_moe_row_union`),
-/// each live union expert's weights read once, in one launch of the persistent sweep.
+/// each live union expert's weights read once, or at one row through the ids row itself, in one
+/// launch of the persistent sweep.
 fn moe_sweep(
     site: &MoeSite<'_>,
-    kern: KernelHandle,
+    (kern, entries): (KernelHandle, SweepEntries),
     projs: &[(&Glm5NextExpertPtrTable, DevicePtr)],
     n: usize,
     k: usize,
@@ -131,13 +147,18 @@ fn moe_sweep(
         projs.len()
     );
     let (ws, cfg) = (site.ws, site.cfg);
+    // 2026-10-09: The own-slots entry reads the ids row as its entry list and not u_slot.
+    let u_eid = match entries {
+        SweepEntries::OwnSlots => ws.ids,
+        SweepEntries::Union => ws.u_eid,
+    };
     let mut launch = KernelLaunch::new(site.gpu, kern)
         .grid([site.k.w4a4_sweep_ctas, 1, 1])
         .block([W4A4_BLOCK, 1, 1])
         .arg_ptr(ws.w4a4_aq)
         .arg_ptr(ws.w4a4_as)
         .arg_ptr(ws.w4a4_ag)
-        .arg_ptr(ws.u_eid)
+        .arg_ptr(u_eid)
         .arg_ptr(ws.u_slot);
     // 2026-10-09: The kernel reads the second table only when nproj is 2; a single projection
     // passes its own table twice.
@@ -224,7 +245,7 @@ pub(super) fn w4a4_experts(site: &MoeSite<'_>, scales: W4a4ActScales) -> Result<
         cfg.top_k,
         ws.w4a4_rows
     );
-    let union = sweep_kernel(k, rows, cfg.top_k);
+    let sweep = sweep_kernel(k, rows, cfg.top_k);
     let t = profile::start();
     quant_static(
         gpu,
@@ -236,7 +257,7 @@ pub(super) fn w4a4_experts(site: &MoeSite<'_>, scales: W4a4ActScales) -> Result<
         scales.gate_up,
         stream,
     )?;
-    if union.is_some() {
+    if let Some((_, SweepEntries::Union)) = sweep {
         // 2026-10-09: The union of the rows' experts, which every union launch below reads.
         KernelLaunch::new(gpu, k.moe_row_union)
             .grid([1, 1, 1])
@@ -263,7 +284,7 @@ pub(super) fn w4a4_experts(site: &MoeSite<'_>, scales: W4a4ActScales) -> Result<
             stream,
         )
     };
-    match union {
+    match sweep {
         Some(kern) => moe_sweep(
             site,
             kern,
@@ -297,7 +318,7 @@ pub(super) fn w4a4_experts(site: &MoeSite<'_>, scales: W4a4ActScales) -> Result<
         scales.down,
         stream,
     )?;
-    match union {
+    match sweep {
         Some(kern) => moe_sweep(site, kern, &[(&w.ptrs.down, ws.expert_out)], h, mi, 1)?,
         None => slots_gemv(&w.ptrs.down, ws.expert_out, h, mi, 1)?,
     }

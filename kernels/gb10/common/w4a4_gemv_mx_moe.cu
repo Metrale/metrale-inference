@@ -19,6 +19,9 @@
 //   rows' union swept once for all the rows that chose it (below). Since 2026-10-09 the forward
 //   runs its persistent form w4a4_gemv_mx{8,16}_moe_union_sweep (gate and up in one launch); the
 //   grid form stays as the reference the model-arch example glm5next_moe_wide_bench compares to.
+// - w4a4_gemv_mx8_moe_slots_sweep (2026-10-09): the sweep at one row over the row's own slots
+//   (no union build), which the forward runs at one row; the slot GEMV stays as its reference
+//   (model-arch example glm5next_moe_narrow_bench).
 //
 // Owner: gb10 kernels.
 // Invariants:
@@ -166,7 +169,10 @@ __device__ __forceinline__ void w4a4_sweep_prefetch(const unsigned char* bq,
         asm volatile("cp.async.bulk.prefetch.L2.global [%0], %1;" ::"l"(sc), "r"(sn) : "memory");
 }
 
-template <int MB, int PF>
+// 2026-10-09: OWN: one row (rows == 1) whose entries are its own slots: u_eid is the router's ids
+// row and entry u is slot u (u_slot is not read). Every slot of a local expert runs, a repeated id
+// included, as in the slot GEMV; the union tables would keep one slot of a repeated id.
+template <int MB, int PF, bool OWN>
 __device__ __forceinline__ void w4a4_moe_union_sweep(
     const unsigned char* __restrict__ Aq, const unsigned char* __restrict__ As,
     const float* __restrict__ Ag, const int* __restrict__ u_eid, const int* __restrict__ u_slot,
@@ -181,7 +187,7 @@ __device__ __forceinline__ void w4a4_moe_union_sweep(
     // 2026-10-09: Block-uniform refusals before any barrier.
     // s_live packs (entry << 16) | expert, so an expert id must fit 16 bits.
     if (T > W4A4_WARPS * 32u || rows > 8u * MB || nproj == 0u || nproj > 2u ||
-        num_experts > 0x10000u)
+        num_experts > 0x10000u || (OWN && rows != 1u))
         return;
     __shared__ int s_live[W4A4_WARPS * 32];
     __shared__ unsigned int s_wcnt[W4A4_WARPS];
@@ -233,7 +239,7 @@ __device__ __forceinline__ void w4a4_moe_union_sweep(
         // 2026-10-09: The previous item's reduction and token tables are done with.
         __syncthreads();
         if (u != cur) {
-            if (tid < rows) s_sl[tid] = u_slot[u * rows + tid];
+            if (tid < rows) s_sl[tid] = OWN ? (int)u : u_slot[u * rows + tid];
             __syncthreads();
             if (tid == 0u) {
                 unsigned int m = 0;
@@ -260,7 +266,7 @@ __device__ __forceinline__ void w4a4_moe_union_sweep(
     }
 }
 
-#define W4A4_SWEEP_ENTRY(NAME, MB, PF, MINB)                                                            \
+#define W4A4_SWEEP_ENTRY(NAME, MB, PF, MINB, OWN)                                                          \
     extern "C" __global__ __launch_bounds__(W4A4_WARPS * 32, MINB) void NAME( \
         const unsigned char* __restrict__ Aq, const unsigned char* __restrict__ As,             \
         const float* __restrict__ Ag, const int* __restrict__ u_eid,                            \
@@ -270,12 +276,15 @@ __device__ __forceinline__ void w4a4_moe_union_sweep(
         const unsigned long long* __restrict__ scale1, const float* __restrict__ s2_1,          \
         __nv_bfloat16* __restrict__ C1, unsigned int nproj, unsigned int N, unsigned int K,     \
         unsigned int rows, unsigned int top_k, unsigned int act_div, unsigned int num_experts) { \
-        w4a4_moe_union_sweep<MB, PF>(Aq, As, Ag, u_eid, u_slot, packed0, scale0, s2_0, C0, packed1,  \
+        w4a4_moe_union_sweep<MB, PF, OWN>(Aq, As, Ag, u_eid, u_slot, packed0, scale0, s2_0, C0, packed1,  \
                                  scale1, s2_1, C1, nproj, N, K, rows, top_k, act_div,            \
                                  num_experts);                                                   \
     }
 
-W4A4_SWEEP_ENTRY(w4a4_gemv_mx8_moe_union_sweep, 1, W4A4_SWEEP_PF, W4A4_SWEEP_MIN_CTAS_PER_SM)
-W4A4_SWEEP_ENTRY(w4a4_gemv_mx16_moe_union_sweep, 2, W4A4_SWEEP_PF, W4A4_SWEEP_MIN_CTAS_PER_SM)
+W4A4_SWEEP_ENTRY(w4a4_gemv_mx8_moe_union_sweep, 1, W4A4_SWEEP_PF, W4A4_SWEEP_MIN_CTAS_PER_SM, false)
+W4A4_SWEEP_ENTRY(w4a4_gemv_mx16_moe_union_sweep, 2, W4A4_SWEEP_PF, W4A4_SWEEP_MIN_CTAS_PER_SM, false)
+// 2026-10-09: One row over its own slots (OWN above): the slot GEMV's outputs on the persistent
+// grid, gate and up in one launch, with no union build. u_eid is the ids row; rows must be 1.
+W4A4_SWEEP_ENTRY(w4a4_gemv_mx8_moe_slots_sweep, 1, W4A4_SWEEP_PF, W4A4_SWEEP_MIN_CTAS_PER_SM, true)
 
 #endif

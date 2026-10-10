@@ -1237,6 +1237,8 @@ files = ["kernels/gb10/common/w4a4_gemv_mx.cu"]
 # one block row per (token, slot), weights and weight_scale_2 from global-id pointer tables).
 # GLM-5.3-Flash's declared W4A4 routed experts at 1..=16 rows; its dense MLP pairs the quantizer
 # with the w4a4_mx GEMVs (glm5next_mlp/forward/w4a4.rs).
+# 2026-10-09: The persistent sweeps over the same body: the union sweeps (2..=16 rows) and the
+# one-row own-slots sweep, gate and up in one launch.
 [[family]]
 id = "w4a4_mx_static"
 description = "W4A4 MX with static NVFP4 activation scales: static row quantize and the routed-expert slot GEMV"
@@ -1246,6 +1248,8 @@ kernel_compute."w4a4_gemv_mx_moe::w4a4_quant_rows_static" = { compute = "memory"
 kernels = [
   "w4a4_gemv_mx_moe::w4a4_quant_rows_static", "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_slots",
   "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union", "w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union",
+  "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep", "w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep",
+  "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_slots_sweep",
 ]
 rows = [1, 16]
 pipeline.expert_gate_up = { in = ["nvfp4/g16", "i32"], gather = "nvfp4/g16", act = "nvfp4/g16", weight = "nvfp4/g16->e2m1", mma = "e2m1*e2m1", accumulate = "f32", scale = "f32", out = ["bf16"] }
