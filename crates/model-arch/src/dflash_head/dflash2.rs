@@ -30,12 +30,25 @@
 //! Invariants: none beyond the types.
 
 use anyhow::Result;
-use metrale_gpu_runtime::gpu::DevicePtr;
+use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 use super::{BlockDiffusionDraftHead, DflashLayer};
 use metrale_model_layers::layer::ForwardContext;
-use metrale_model_layers::layers::ops;
+use metrale_model_layers::weight_map::Fp8DenseWeight;
+
+/// 2026-10-10: `TOPK16_PART_THREADS` of `dflash2.cu`: the block of both top-16 stages.
+const TOPK16_THREADS: u32 = 256;
+/// 2026-10-10: Vocabulary entries one `dflash2_topk16_part` block covers
+/// (`TOPK16_PART_SPAN`: 256 threads x 8 entries).
+const TOPK16_PART_SPAN: usize = 2048;
+/// 2026-10-10: Candidates one `dflash2_topk16_merge` block holds (256 threads x 8).
+const TOPK16_MERGE_CAPACITY: u32 = 2048;
+
+/// 2026-10-10: The `dflash2_topk16_part` blocks per row for a `vocab`-entry row.
+pub(super) fn topk16_parts(vocab: usize) -> usize {
+    vocab.div_ceil(TOPK16_PART_SPAN).max(1)
+}
 
 /// 2026-09-25: Which sublayer a conv application wraps.
 #[derive(Clone, Copy)]
@@ -64,15 +77,23 @@ impl BlockDiffusionDraftHead {
             && self.levers.dflash2
     }
 
-    fn conv_weights(&self, layer: &DflashLayer, site: ConvSite) -> Option<(DevicePtr, DevicePtr)> {
+    /// 2026-09-25: The site's base kernel and kernel projection. 2026-10-10: and the
+    /// projection's FP8 copy under `METRALE_DFLASH_AUX_FP8=1`.
+    fn conv_weights(
+        &self,
+        layer: &DflashLayer,
+        site: ConvSite,
+    ) -> Option<(DevicePtr, DevicePtr, Option<Fp8DenseWeight>)> {
         match site {
             ConvSite::Attention => Some((
                 layer.attention_conv_base.as_ref()?.weight,
                 layer.attention_conv_proj.as_ref()?.weight,
+                layer.attention_conv_proj_fp8,
             )),
             ConvSite::Mlp => Some((
                 layer.mlp_conv_base.as_ref()?.weight,
                 layer.mlp_conv_proj.as_ref()?.weight,
+                layer.mlp_conv_proj_fp8,
             )),
         }
     }
@@ -134,7 +155,7 @@ impl BlockDiffusionDraftHead {
         if !self.dflash2_active() {
             return Ok(hidden_in);
         }
-        let Some((base, proj)) = self.conv_weights(layer, site) else {
+        let Some((base, proj, proj_fp8)) = self.conv_weights(layer, site) else {
             return Ok(hidden_in);
         };
         let g = self.block_g() as u32 * n_seq.max(1);
@@ -142,11 +163,11 @@ impl BlockDiffusionDraftHead {
         let groups = h / self.conv_group_size as u32;
         let dyn_cols = 2 * self.conv_kernel_size as u32 * groups;
         // 2026-09-25: Dynamic kernels for both applications, from the pre-conv hidden.
-        ops::dense_gemm_bf16_pipelined(
+        self.aux_gemm(
             ctx.gpu,
-            self.kernels.dense_gemm_pipelined,
             hidden_in,
             &metrale_model_layers::weight_map::DenseWeight { weight: proj },
+            proj_fp8.as_ref(),
             self.scratch.conv_dyn,
             g,
             dyn_cols,
@@ -180,7 +201,7 @@ impl BlockDiffusionDraftHead {
         if !self.dflash2_active() {
             return Ok(sublayer_out);
         }
-        let Some((base, _proj)) = self.conv_weights(layer, site) else {
+        let Some((base, _proj, _)) = self.conv_weights(layer, site) else {
             return Ok(sublayer_out);
         };
         self.conv_apply(
@@ -193,6 +214,47 @@ impl BlockDiffusionDraftHead {
             stream,
         )?;
         Ok(self.scratch.conv_tmp)
+    }
+
+    /// 2026-10-10: Top-16 of each of `rows` logit rows into `sel_vals` / `sel_idx`, the
+    /// selected logits overwritten: the two-stage kernels when they resolved, the lever
+    /// is on and the vocabulary fits the merge ([`topk16_parts`]), else `dflash2_topk16`.
+    /// Both write the same bytes (`kernels/gb10/common/dflash2.cu`).
+    fn topk16(&self, gpu: &dyn GpuBackend, rows: u32, vocab: u32, stream: u64) -> Result<()> {
+        let parts = topk16_parts(vocab as usize) as u32;
+        if self.levers.topk16_split
+            && self.kernels.dflash2_topk16_part.0 != 0
+            && self.kernels.dflash2_topk16_merge.0 != 0
+            && parts * 16 <= TOPK16_MERGE_CAPACITY
+        {
+            KernelLaunch::new(gpu, self.kernels.dflash2_topk16_part)
+                .grid([rows, parts, 1])
+                .block([TOPK16_THREADS, 1, 1])
+                .arg_ptr(self.scratch.logits)
+                .arg_ptr(self.scratch.sel_cand_vals)
+                .arg_ptr(self.scratch.sel_cand_idx)
+                .arg_u32(vocab)
+                .launch(stream)?;
+            return KernelLaunch::new(gpu, self.kernels.dflash2_topk16_merge)
+                .grid([rows, 1, 1])
+                .block([TOPK16_THREADS, 1, 1])
+                .arg_ptr(self.scratch.logits)
+                .arg_ptr(self.scratch.sel_cand_vals)
+                .arg_ptr(self.scratch.sel_cand_idx)
+                .arg_ptr(self.scratch.sel_vals)
+                .arg_ptr(self.scratch.sel_idx)
+                .arg_u32(vocab)
+                .arg_u32(parts)
+                .launch(stream);
+        }
+        KernelLaunch::new(gpu, self.kernels.dflash2_topk16)
+            .grid([rows, 1, 1])
+            .block([1024, 1, 1])
+            .arg_ptr(self.scratch.logits)
+            .arg_ptr(self.scratch.sel_vals)
+            .arg_ptr(self.scratch.sel_idx)
+            .arg_u32(vocab)
+            .launch(stream)
     }
 
     /// 2026-09-25: Selector tail over `n_seq` bands: top-16 per row (overwriting the
@@ -227,21 +289,16 @@ impl BlockDiffusionDraftHead {
 
         // 2026-09-25: Order: top-16 (writes sel_vals and sel_idx, leaves
         // draft_tokens_dev alone), the H(h_t) GEMM, then the walk.
-        KernelLaunch::new(gpu, self.kernels.dflash2_topk16)
-            .grid([rows, 1, 1])
-            .block([1024, 1, 1])
-            .arg_ptr(self.scratch.logits)
-            .arg_ptr(self.scratch.sel_vals)
-            .arg_ptr(self.scratch.sel_idx)
-            .arg_u32(vocab)
-            .launch(stream)?;
+        self.topk16(gpu, rows, vocab, stream)?;
 
         // 2026-09-25: H(h_t): [rows, hidden] → [rows, rank].
-        ops::dense_gemm_bf16_pipelined(
+        self.aux_gemm(
             gpu,
-            self.kernels.dense_gemm_pipelined,
             norm_noise,
             hproj,
+            self.aux_fp8
+                .as_ref()
+                .and_then(|a| a.selector_hidden_proj.as_ref()),
             self.scratch.sel_hproj,
             rows,
             rank,

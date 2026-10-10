@@ -82,6 +82,10 @@ pub struct DflashLayer {
     pub attention_conv_proj: Option<DenseWeight>,
     pub mlp_conv_base: Option<DenseWeight>,
     pub mlp_conv_proj: Option<DenseWeight>,
+    /// 2026-10-10: FP8 copies of the conv kernel projections under
+    /// `METRALE_DFLASH_AUX_FP8=1` (`aux_fp8.rs`), else `None`.
+    pub attention_conv_proj_fp8: Option<metrale_model_layers::weight_map::Fp8DenseWeight>,
+    pub mlp_conv_proj_fp8: Option<metrale_model_layers::weight_map::Fp8DenseWeight>,
 }
 
 #[allow(dead_code)]
@@ -241,8 +245,12 @@ pub struct BlockDiffusionDraftHead {
     pub selector_pred: Option<DenseWeight>,
     pub selector_succ: Option<DenseWeight>,
     pub selector_hidden_proj: Option<DenseWeight>,
+    /// 2026-10-10: FP8 copies of the ctx and selector GEMMs under `METRALE_DFLASH_AUX_FP8=1`
+    /// (`aux_fp8.rs`), else `None`.
+    pub aux_fp8: Option<aux_fp8::DflashAuxFp8>,
 }
 
+mod aux_fp8;
 mod dflash2;
 /// 2026-09-25: Rows the batched ctx precompute staging holds per step.
 pub(super) const PRECOMPUTE_BATCH_ROWS: usize = 256;

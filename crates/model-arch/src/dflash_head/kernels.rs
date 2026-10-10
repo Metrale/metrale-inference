@@ -78,6 +78,10 @@ pub struct DflashKernels {
     /// 2026-09-25: DFlash2 per-row top-16 over the drafter logits; overwrites each
     /// selected logit.
     pub dflash2_topk16: KernelHandle,
+    /// 2026-10-10: `dflash2_topk16` in two stages (`dflash2_topk16_part`, then
+    /// `dflash2_topk16_merge`), with the same outputs and writes; `.0 == 0` when absent.
+    pub dflash2_topk16_part: KernelHandle,
+    pub dflash2_topk16_merge: KernelHandle,
     /// 2026-09-25: DFlash2 candidate-selector chain walk, one launch, one block per
     /// sequence.
     pub dflash2_selector_walk: KernelHandle,
