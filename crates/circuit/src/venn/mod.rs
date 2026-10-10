@@ -36,6 +36,7 @@ pub mod report;
 pub mod roofline;
 pub mod union;
 mod union_render;
+pub mod union_repo;
 mod union_tables;
 
 use std::collections::BTreeMap;
@@ -48,7 +49,7 @@ pub use cli_args::VennArgs;
 pub use families::{Families, FamilyError, ParamKind, parse_families};
 pub use measurements::{Measurements, parse_measurements};
 pub use render::render;
-pub use repo::{Repo, checkpoint_id_of, report_text, resolve};
+pub use repo::{Repo, checkpoint_id_of, load_instance, report_text, resolve};
 pub use report::{VennInputs, VennReport, build};
 pub use union_render::render_union;
 

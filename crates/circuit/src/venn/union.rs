@@ -41,6 +41,9 @@ pub struct UnionInput<'a> {
 pub enum Envelope {
     /// 2026-10-10: Shared, with a record at the node's shape (or on this model's own target).
     Shape,
+    /// 2026-10-10: The envelope sweep measured this projection cell (formats, N x K, rows):
+    /// SCHEDULES.toml holds its decision.
+    Swept,
     /// 2026-10-10: Shared at the family point and row count, records at other shapes only.
     Point,
     /// 2026-10-10: Not Shared.
@@ -110,8 +113,17 @@ pub struct UnionReport {
     pub against: Vec<String>,
 }
 
-/// 2026-10-10: Fold the reports. Every report must cover the same runs.
-pub fn build_union(inputs: &[UnionInput<'_>]) -> Result<UnionReport, String> {
+/// 2026-10-10: A projection cell the envelope sweep measured: (op base name, weight format,
+/// activation format, K, N, rows).
+pub type SweptCell<'a> = (&'a str, &'a str, &'a str, u64, u64, u64);
+
+/// 2026-10-10: Fold the reports. Every report must cover the same runs. `swept` answers whether
+/// the envelope sweep measured a projection cell (the caller reads SCHEDULES.toml; `|_| false`
+/// before any sweep).
+pub fn build_union(
+    inputs: &[UnionInput<'_>],
+    swept: &dyn Fn(SweptCell<'_>) -> bool,
+) -> Result<UnionReport, String> {
     let first = inputs.first().ok_or("the union needs at least one model")?;
     let runs: Vec<Run> = first.report.tables.iter().map(|t| t.run).collect();
     let against: BTreeSet<String> = inputs
@@ -147,7 +159,14 @@ pub fn build_union(inputs: &[UnionInput<'_>]) -> Result<UnionReport, String> {
                         Envelope::Outside,
                     ),
                     Some(f) => {
-                        let envelope = if f.class != Class::Shared {
+                        let cell = shape.zip(r.weight.as_deref()).zip(r.activation.as_deref());
+                        let is_swept = cell.is_some_and(|(((n, k), w), a)| {
+                            let op = r.op.split(':').next().unwrap_or(&r.op);
+                            swept((op, w, a, k, n, t.run.rows))
+                        });
+                        let envelope = if is_swept {
+                            Envelope::Swept
+                        } else if f.class != Class::Shared {
                             Envelope::Outside
                         } else if f.evidence.iter().any(|e| covers(e, shape, target_dir)) {
                             Envelope::Shape
