@@ -211,6 +211,16 @@ impl BlockDiffusionDraftHead {
             } else {
                 DevicePtr(0)
             },
+            sel_cand_vals: if weights.selector_pred.is_some() {
+                gpu.alloc(nb * g * super::dflash2::topk16_parts(vocab_size) * 16 * 4)?
+            } else {
+                DevicePtr(0)
+            },
+            sel_cand_idx: if weights.selector_pred.is_some() {
+                gpu.alloc(nb * g * super::dflash2::topk16_parts(vocab_size) * 16 * 4)?
+            } else {
+                DevicePtr(0)
+            },
             sel_hproj: if weights.selector_pred.is_some() {
                 let rank = weights
                     .config
@@ -325,6 +335,8 @@ impl BlockDiffusionDraftHead {
                     attention_conv_proj: l.attention_conv_proj,
                     mlp_conv_base: l.mlp_conv_base,
                     mlp_conv_proj: l.mlp_conv_proj,
+                    attention_conv_proj_fp8: None,
+                    mlp_conv_proj_fp8: None,
                 })
                 .collect(),
             fused_kv_weight: Some(fused_kv_weight),
@@ -388,6 +400,7 @@ impl BlockDiffusionDraftHead {
             selector_pred: weights.selector_pred,
             selector_succ: weights.selector_succ,
             selector_hidden_proj: weights.selector_hidden_proj,
+            aux_fp8: None,
         };
         if head.selector_pred.is_some() {
             tracing::info!(
@@ -442,6 +455,12 @@ impl BlockDiffusionDraftHead {
         }
         if fp8_requested && fp8_kernels_present {
             fp8_weights::quantize_drafter_fp8(&mut head, gpu, q_dim, kv_dim, lm_head_native_fp8)?;
+        }
+        // 2026-10-10: `METRALE_DFLASH_AUX_FP8=1` (`aux_fp8.rs`) on top of the FP8 drafter;
+        // `quantize_aux_fp8` refuses a BF16 head.
+        if head.levers.aux_fp8 {
+            let quant_k = head.kernels.quantize_bf16_to_fp8;
+            head.aux_fp8 = Some(head.quantize_aux_fp8(gpu, quant_k, 0)?);
         }
 
         Ok(head)

@@ -118,6 +118,10 @@ pub fn step_verify_dflash(
     // 2026-09-25: the gamma resolver's accept signal: was the first draft
     // accepted.
     sched.dflash_rung.observe_step(num_accepted >= 1);
+    // 2026-10-10: The single-stream adaptive draft count's rates (`--dflash-adaptive-k`).
+    sched
+        .dflash_rung
+        .adaptive_observe(&mut a.spec_adapt.k, drafts.len(), num_accepted);
 
     // 2026-09-25: the verify forward advanced `seq_len` and `seq.tokens` by
     // `tokens.len()`. Keep the pre-verify prefix, the accepted drafts and the
@@ -206,11 +210,26 @@ pub fn step_verify_dflash(
     // sequence; with no drafts, `step_mtp` bootstraps it next step.
     let _mtp_grammar_mask = mtp_grammar_mask_for(a);
     let t_propose = sched.io.clock.now();
-    if crate::scheduler::adaptive_spec::spec_allowed(a, sched) {
+    // 2026-10-10: The next step's drafts: the adaptive draft count's choice on a single
+    // stream (0 suspends speculation until the re-probe), else this step's count.
+    let next_drafts = match sched
+        .dflash_rung
+        .adaptive_drafts(&a.spec_adapt.k, num_drafts)
+    {
+        Some(0) => {
+            crate::scheduler::adaptive_spec::suspend(a, sched);
+            0
+        }
+        Some(k) => k,
+        None => num_drafts,
+    };
+    let mut proposed = false;
+    if next_drafts > 0 && crate::scheduler::adaptive_spec::spec_allowed(a, sched) {
+        proposed = true;
         match model.run_mtp_propose_multi(
             a.last_token,
             a.seq.seq_len,
-            num_drafts,
+            next_drafts,
             &mut a.seq,
             0,
             _mtp_grammar_mask.as_deref(),
@@ -219,6 +238,19 @@ pub fn step_verify_dflash(
             Ok(_) => {}
             Err(e) => tracing::error!("run_mtp_propose_multi (dflash): {e:#}"),
         }
+    }
+    // 2026-10-10: A step that proposed is a whole speculative step (verify, then propose):
+    // its wall feeds the adaptive cost scale. The clock is read only when the controller is
+    // installed.
+    if proposed && sched.dflash_rung.adaptive_k_on() {
+        let step_ms = sched
+            .io
+            .clock
+            .now()
+            .saturating_duration_since(t_verify)
+            .as_secs_f64()
+            * 1000.0;
+        sched.dflash_rung.adaptive_step_ms(drafts.len(), step_ms);
     }
     if step_timing {
         let propose_ms = sched

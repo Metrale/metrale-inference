@@ -88,6 +88,20 @@ pub(crate) fn apply_dflash_gamma(
         );
         args.dflash_draft_ladder_resolved = Some(ladder);
     }
+    // 2026-10-10: The adaptive-K cost table, parsed here and refused when it prices more
+    // drafts than γ - 1.
+    if let Some(spec) = &args.dflash_adaptive_k {
+        let costs = metrale_speculative::dflash_adaptive_k::CostModel::parse(spec)
+            .with_context(|| format!("--dflash-adaptive-k {spec:?}"))?;
+        anyhow::ensure!(
+            costs.max_drafts() < gamma,
+            "--dflash-adaptive-k {spec:?} prices {} drafts per step, but γ = {gamma} drafts at \
+             most {}",
+            costs.max_drafts(),
+            gamma - 1
+        );
+        args.dflash_adaptive_k_resolved = Some(costs);
+    }
     Ok(())
 }
 

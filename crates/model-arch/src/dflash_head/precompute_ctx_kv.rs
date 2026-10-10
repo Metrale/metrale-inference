@@ -95,11 +95,12 @@ impl BlockDiffusionDraftHead {
 
         // 2026-09-25: Step 1: `fc` maps `[n, L_t * h_t]` to `[n, h]`.
         let src = ctx_base_ptr.offset(start_slot * ctx_slot_bytes);
-        ops::dense_gemm_bf16_pipelined(
+        // 2026-10-10: On the FP8 copy under `METRALE_DFLASH_AUX_FP8=1` (`aux_fp8.rs`).
+        self.aux_gemm(
             gpu,
-            self.kernels.dense_gemm_pipelined,
             src,
             &self.fc,
+            self.aux_fp8.as_ref().map(|a| &a.fc),
             self.scratch.fc_proj,
             n,
             h,
@@ -135,11 +136,11 @@ impl BlockDiffusionDraftHead {
         // `[K_0 | V_0 | K_1 | V_1 | … | K_{L-1} | V_{L-1}]`.
         let fused_w = DenseWeight { weight: fused_kv };
         let fused_n_cols = (l_total as u32) * 2 * kv_dim;
-        ops::dense_gemm_bf16_pipelined(
+        self.aux_gemm(
             gpu,
-            self.kernels.dense_gemm_pipelined,
             self.scratch.fc_proj,
             &fused_w,
+            self.aux_fp8.as_ref().map(|a| &a.fused_kv),
             self.scratch.fused_kv_out,
             n,
             fused_n_cols,

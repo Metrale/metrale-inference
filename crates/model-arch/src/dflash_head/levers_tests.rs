@@ -36,6 +36,7 @@ fn defaults_are_spelled_out_not_derived() {
     assert!(d.dspark_anchor_bias);
     assert!(d.option_b);
     assert!(d.dflash2);
+    assert!(d.topk16_split);
     assert!(d.dspark_markov);
     assert!(!d.any_diagnostic_armed);
 }
@@ -44,7 +45,8 @@ fn defaults_are_spelled_out_not_derived() {
 fn every_opt_in_is_off_until_it_is_exactly_one() {
     // 2026-09-25: `=1` arms and no other spelling does. One row per field, so
     // a field read from the wrong variable fails its own row.
-    let cases: [(&str, fn(&DFlashLevers) -> bool); 14] = [
+    let cases: [(&str, fn(&DFlashLevers) -> bool); 15] = [
+        ("METRALE_DFLASH_AUX_FP8", |l| l.aux_fp8),
         ("METRALE_DFLASH_DEBUG_DUMP", |l| l.debug_dump),
         ("METRALE_DFLASH_DEBUG_DUMP_FULL", |l| l.debug_dump_full),
         ("METRALE_DFLASH_LOG_DRAFTS", |l| l.log_drafts),
@@ -77,10 +79,11 @@ fn every_opt_in_is_off_until_it_is_exactly_one() {
 /// turns it off.
 #[test]
 fn every_opt_out_ships_on_and_only_zero_disables_it() {
-    let cases: [(&str, fn(&DFlashLevers) -> bool); 4] = [
+    let cases: [(&str, fn(&DFlashLevers) -> bool); 5] = [
         ("METRALE_DSPARK_ANCHOR_BIAS", |l| l.dspark_anchor_bias),
         ("METRALE_DFLASH_OPTION_B", |l| l.option_b),
         ("METRALE_DFLASH2", |l| l.dflash2),
+        ("METRALE_DFLASH2_TOPK_SPLIT", |l| l.topk16_split),
         ("METRALE_DSPARK_MARKOV", |l| l.dspark_markov),
     ];
     for (var, read) in cases {

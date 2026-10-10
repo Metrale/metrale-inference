@@ -15,14 +15,17 @@ use super::*;
 const OFF: SegPlan = SegPlan {
     mode: SegMode::Off,
     sms: 0,
+    gemv_rows: 0,
 };
 const FUSE: SegPlan = SegPlan {
     mode: SegMode::Fuse,
     sms: 48,
+    gemv_rows: 0,
 };
 const SPLIT: SegPlan = SegPlan {
     mode: SegMode::Split,
     sms: 48,
+    gemv_rows: 0,
 };
 
 /// 2026-10-09: The KDA q/k/v, f_a, b, g_a, o and the shared expert go W4A16; KDA f_b/g_b and
@@ -381,5 +384,101 @@ fn a_group_is_one_launch_or_declines_whole() {
     assert!(
         !proj_group(&gpu, &members, a, 16, k, 0).unwrap(),
         "the published tier (declared in tests) declines"
+    );
+}
+
+/// 2026-10-10: `METRALE_GLM_W4A16_GEMV_ROWS` parses 0 or 2..=8 under the tier; anything else,
+/// or a row count without the tier, is refused.
+#[test]
+fn gemv_rows_lever_parses_and_refuses() {
+    use crate::glm5next_w4a16_seg::parse_gemv_rows;
+    assert_eq!(parse_gemv_rows(None, true), Ok(0));
+    assert_eq!(parse_gemv_rows(Some("0"), false), Ok(0));
+    for r in 2..=8u32 {
+        assert_eq!(parse_gemv_rows(Some(&r.to_string()), true), Ok(r));
+    }
+    for bad in ["1", "9", "", "four", "-2"] {
+        assert!(
+            parse_gemv_rows(Some(bad), true).is_err(),
+            "{bad:?} accepted"
+        );
+    }
+    assert!(parse_gemv_rows(Some("4"), false).is_err());
+}
+
+/// 2026-10-10: With GEMV rows 4, launches of 2, 3 and 4 rows take `w4a16_gemv_batch{m}` (one
+/// launch over every row, grid ceil(n / 4), the row argument only from 4 up), 5 rows keep the
+/// row tile, one row keeps `w4a16_gemv`, and a group declines at 2..=4 rows and runs above.
+#[test]
+fn gemv_rows_take_the_gemv_tiers_up_to_their_edge() {
+    let _serial = crate::glm5next_fp8_dense::lock_registries_for_test();
+    let gpu = MockGpuBackend::new();
+    let (n, k) = (768usize, 4096usize);
+    let key = register_all(&gpu, &[(n, k)])[0];
+    let (a, c) = (DevicePtr(0x1000_0000), DevicePtr(0x2000_0000));
+    let plan = SegPlan {
+        gemv_rows: 4,
+        ..FUSE
+    };
+    for m in 2..=4usize {
+        let start = gpu.launches_snapshot().len();
+        assert!(proj_registered(&gpu, plan, key, a, c, m, n, k, 3).unwrap());
+        let l = gpu.launches_snapshot();
+        let ours = &l[start..];
+        assert_eq!(ours.len(), 1, "{m} rows: one launch");
+        assert_eq!(ours[0].grid, [(n as u32).div_ceil(4), 1, 1]);
+        assert_eq!(ptr_arg(&ours[0].args[0]), a);
+        assert_eq!(ptr_arg(&ours[0].args[1]), key);
+        assert_eq!(ptr_arg(&ours[0].args[4]), c);
+        let ints: Vec<u32> = ours[0].args[5..].iter().map(u32_arg).collect();
+        let want = if m <= 3 {
+            vec![n as u32, k as u32]
+        } else {
+            vec![m as u32, n as u32, k as u32]
+        };
+        assert_eq!(ints, want, "{m} rows");
+        let name = format!("w4a16_gemv_batch{m}");
+        assert!(
+            gpu.kernel_lookups_snapshot()
+                .iter()
+                .any(|(md, f)| md == "w4a16_gemv" && *f == name),
+            "{name} was not resolved"
+        );
+    }
+    let start = gpu.launches_snapshot().len();
+    assert!(proj_registered(&gpu, plan, key, a, c, 5, n, k, 3).unwrap());
+    let l = gpu.launches_snapshot();
+    assert_eq!(l[start..].len(), 1);
+    assert_eq!(l[start].args.len(), 19, "5 rows: the segmented row tile");
+    let start = gpu.launches_snapshot().len();
+    assert!(proj_registered(&gpu, plan, key, a, c, 1, n, k, 3).unwrap());
+    assert_eq!(
+        gpu.launches_snapshot()[start].args.len(),
+        7,
+        "one row: the GEMV"
+    );
+
+    let members = [(key, c, n)];
+    let start = gpu.launches_snapshot().len();
+    assert!(!proj_group_registered(&gpu, plan, &members, a, 4, k, 0).unwrap());
+    assert_eq!(
+        gpu.launches_snapshot().len(),
+        start,
+        "declined without a launch"
+    );
+    assert!(proj_group_registered(&gpu, plan, &members, a, 5, k, 0).unwrap());
+    assert_eq!(gpu.launches_snapshot().len(), start + 1);
+    assert!(
+        crate::glm5next_w4a16_seg::launch_gemv_rows(
+            &gpu,
+            a,
+            &metrale_model_layers::weight_map::QuantizedWeight::null(),
+            c,
+            9,
+            n as u32,
+            k as u32,
+            0
+        )
+        .is_err()
     );
 }

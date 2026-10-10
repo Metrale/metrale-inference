@@ -87,6 +87,18 @@ name = "w4a16_tc_rows_seg_microtest"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "dflash2_topk16_parity"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "dflash_aux_fp8_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_w4a16_rows_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "fp8_moe_grouped_routing_microtest"
 required-features = ["cuda", "gpu-examples"]
 

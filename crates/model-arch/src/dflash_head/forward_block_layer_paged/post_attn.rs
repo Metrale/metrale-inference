@@ -47,51 +47,7 @@ impl BlockDiffusionDraftHead {
                          k_in: u32|
          -> Result<()> {
             if use_fp8 && let Some(fp8) = w_fp8 {
-                if self.kernels.fp8_gemv_rt2.0 != 0
-                    && g <= 8
-                    && k_in.is_multiple_of(16)
-                    && crate::dflash_head::fp8_rt_enabled()
-                {
-                    return ops::fp8_gemv_rowscale_batch8_rt2(
-                        gpu,
-                        self.kernels.fp8_gemv_rt2,
-                        src,
-                        fp8,
-                        dst,
-                        g,
-                        n_out,
-                        k_in,
-                        stream,
-                    );
-                }
-                if self.kernels.fp8_gemv_rt2_16.0 != 0
-                    && g <= 16
-                    && k_in.is_multiple_of(16)
-                    && crate::dflash_head::fp8_rt_enabled()
-                {
-                    return ops::fp8_gemv_rowscale_batch16_rt2(
-                        gpu,
-                        self.kernels.fp8_gemv_rt2_16,
-                        src,
-                        fp8,
-                        dst,
-                        g,
-                        n_out,
-                        k_in,
-                        stream,
-                    );
-                }
-                return ops::fp8_gemm_n128_row_scaled(
-                    gpu,
-                    self.kernels.fp8_gemm_n128_row_scaled,
-                    src,
-                    fp8,
-                    dst,
-                    g,
-                    n_out,
-                    k_in,
-                    stream,
-                );
+                return self.fp8_rows(gpu, src, fp8, dst, g, n_out, k_in, stream);
             }
             ops::dense_gemm_bf16_pipelined(
                 gpu,

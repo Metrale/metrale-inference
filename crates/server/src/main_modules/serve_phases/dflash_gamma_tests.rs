@@ -102,3 +102,29 @@ fn a_draft_ladder_is_held_to_the_serves_gamma() {
     ]);
     assert!(apply_dflash_gamma(&mut wide, None).is_err());
 }
+
+/// 2026-10-10: An adaptive-K cost table within γ - 1 is installed; one that prices more drafts
+/// than γ - 1, or that does not parse, is refused at startup; without `--dflash` the flag is
+/// refused by the parser.
+#[test]
+fn an_adaptive_k_table_is_held_to_the_serves_gamma() {
+    let dir = tempfile::tempdir().unwrap();
+    drafter(dir.path());
+    let d = dir.path().to_str().unwrap();
+    let table = "0:32,1:44,2:50,3:56";
+    let base = ["--dflash", "--draft-model", d, "--dflash-gamma"];
+    let mut ok = args(&[&base[..], &["4", "--dflash-adaptive-k", table]].concat());
+    apply_dflash_gamma(&mut ok, None).unwrap();
+    assert_eq!(
+        ok.dflash_adaptive_k_resolved,
+        Some(metrale_speculative::dflash_adaptive_k::CostModel::parse(table).unwrap())
+    );
+    let mut wide = args(&[&base[..], &["3", "--dflash-adaptive-k", table]].concat());
+    assert!(apply_dflash_gamma(&mut wide, None).is_err());
+    let mut bad = args(&[&base[..], &["4", "--dflash-adaptive-k", "0:32,2:50"]].concat());
+    assert!(apply_dflash_gamma(&mut bad, None).is_err());
+    assert!(
+        cli::ServeArgs::try_parse_from(["serve", "some/model", "--dflash-adaptive-k", table])
+            .is_err()
+    );
+}

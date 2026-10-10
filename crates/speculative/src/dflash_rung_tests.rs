@@ -278,3 +278,40 @@ fn an_explicit_ladder_decides_and_is_capped_at_num_drafts() {
     r.set_ladder(None);
     assert_eq!(r.drafts_for(3, 7), 7);
 }
+
+/// 2026-10-10: The adaptive draft count applies only when installed and the last dispatched
+/// step had one active sequence; a batch step neither reads nor records it.
+#[test]
+fn the_adaptive_count_applies_to_a_single_stream_only() {
+    use crate::dflash_adaptive_k::{AdaptiveK, CostModel, SeqAdaptiveK};
+    let r = DflashRung::new();
+    let mut seq = SeqAdaptiveK::default();
+    assert_eq!(r.drafts_for(1, 7), 7);
+    assert_eq!(r.adaptive_drafts(&seq, 7), None, "not installed");
+    r.set_adaptive_k(Some(AdaptiveK::new(
+        CostModel::parse("0:32,1:44,2:50,3:56").unwrap(),
+    )));
+    assert!(r.adaptive_k_on());
+    assert_eq!(
+        r.adaptive_drafts(&seq, 7),
+        Some(7),
+        "nothing measured: the cap"
+    );
+    r.adaptive_observe(&mut seq, 3, 0);
+    assert_eq!(seq.steps, 1);
+    assert_eq!(
+        r.adaptive_drafts(&seq, 7),
+        Some(0),
+        "one draft rejected: plain decode pays"
+    );
+    assert_eq!(r.drafts_for(2, 7), 7);
+    assert_eq!(
+        r.adaptive_drafts(&seq, 7),
+        None,
+        "a batch step keeps its width"
+    );
+    r.adaptive_observe(&mut seq, 3, 3);
+    assert_eq!(seq.steps, 1, "a batch step records nothing");
+    r.set_adaptive_k(None);
+    assert!(!r.adaptive_k_on());
+}
