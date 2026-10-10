@@ -53,7 +53,7 @@ fn path_b_golden_instances_restate_the_config_derived_shape() {
 /// 2026-09-30: Every other fixture is refused, for the reason named.
 #[test]
 fn path_c_every_other_checkpoint_is_refused_with_its_reason() {
-    let cases: [(&str, &str); 12] = [
+    let cases: [(&str, &str); 11] = [
         (
             "Inferact--Qwen3.8-Flash-Next-NVFP4",
             "model_type `qwen4_exp`",
@@ -76,7 +76,6 @@ fn path_c_every_other_checkpoint_is_refused_with_its_reason() {
             "google--diffusiongemma-26B-A4B-it",
             "model_type `diffusion_gemma`",
         ),
-        ("lukealonso--MiniMax-M2.7-NVFP4", "model_type `minimax_m2`"),
         (
             "nvidia--DeepSeek-V4-Flash-NVFP4",
             "model_type `deepseek_v4`",

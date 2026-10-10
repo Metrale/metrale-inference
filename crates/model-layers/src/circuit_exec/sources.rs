@@ -16,7 +16,7 @@ use metrale_circuit::{ArchShape, Instance, PrecisionSpec, Sources};
 pub const INSTANCES: &str = include_str!("../../../../kernels/circuits/INSTANCES.toml");
 
 /// 2026-09-28: Every circuit an instance can name, by arch.
-pub const CIRCUITS: [(&str, &str); 4] = [
+pub const CIRCUITS: [(&str, &str); 5] = [
     (
         "qwen3_5",
         include_str!("../../../../kernels/circuits/qwen3_5.toml"),
@@ -34,10 +34,15 @@ pub const CIRCUITS: [(&str, &str); 4] = [
         "glm5_next",
         include_str!("../../../../kernels/circuits/glm5_next.toml"),
     ),
+    // 2026-10-10: GQA + routed MoE, MiniMax-M2.7 (not an executor target; the Venn reads it).
+    (
+        "gqa_moe",
+        include_str!("../../../../kernels/circuits/gqa_moe.toml"),
+    ),
 ];
 
 /// 2026-09-28: Every precision table an instance can name.
-pub const PRECISION: [(&str, &str); 4] = [
+pub const PRECISION: [(&str, &str); 5] = [
     (
         "qwen3.6-35b-a3b-fp8-bf16head",
         include_str!("../../../../kernels/circuits/precision/qwen3.6-35b-a3b-fp8-bf16head.toml"),
@@ -55,6 +60,10 @@ pub const PRECISION: [(&str, &str); 4] = [
     (
         "glm-5.3-flash-nvfp4",
         include_str!("../../../../kernels/circuits/precision/glm-5.3-flash-nvfp4.toml"),
+    ),
+    (
+        "minimax-m2.7-nvfp4-ep2",
+        include_str!("../../../../kernels/circuits/precision/minimax-m2.7-nvfp4-ep2.toml"),
     ),
 ];
 

@@ -1,0 +1,290 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-10: The generic GQA + routed-MoE transformer (`gqa_moe`): pre-norm decoder layers of
+# grouped-query attention with RoPE and a routed mixture-of-experts FFN with no shared expert,
+# then the final norm and lm_head. Served today: MiniMax-M2 (`minimax_m2`, MiniMax-M2.7): 62
+# full-attention layers, Q/K RMSNorm over all heads of the layer, partial RoPE, 256 SiLU-gated
+# experts top-8 under sigmoid routing with a correction bias.
+#
+# Owner: metrale-circuit (crates/circuit/src/circuit_toml.rs is the schema).
+# Invariants:
+# - Follows the reference modelling code (transformers 5.x `modeling_minimax_m2.py`), not the
+#   engine: every RMSNorm scales by its weight as stored (`weight_form = "plain"`, x * w); Q and
+#   K are normalised after their projections and before RoPE, each by ONE RMSNorm over the
+#   whole projection row (`q_heads*head_dim`, `kv_heads*head_dim`: `qk_norm_type =
+#   "per_layer"`), the `qk_norm` op with `scope = "layer"`, where Qwen3's is per head; RoPE
+#   rotates the first `rotary_dim` channels of each head (the rope params of the config map).
+# - Routing (MiniMaxM2TopKRouter): sigmoid of the router logits, the top-k chosen on score +
+#   `e_score_correction_bias`, the chosen sigmoid scores renormalised to sum 1, no scaling
+#   factor. The router weight is excluded from the quantization (BF16 in the checkpoint); the
+#   reference computes its logits at that dtype (`F.linear` on BF16, so BF16 logits) and only
+#   the sigmoid runs in FP32, so the logits edge is BF16, not the FP32 of the GLM-5 and
+#   Nemotron-H routers (whose references widen before the GEMM).
+# - The bindings are the checkpoint's own tensor names (the Mixtral convention transformers
+#   renames on load, conversion_mapping.py `minimax_m2`): `block_sparse_moe.gate`,
+#   `block_sparse_moe.e_score_correction_bias` (beside the gate, not under it), and the experts'
+#   `w1` (gate), `w3` (up), `w2` (down); the engine's loader reads the same names
+#   (model-layers weight_map/ssm_qwen35_more.rs `load_moe_minimax`).
+# - No draft head. MiniMax-M2's config declares 3 MTP modules (`use_mtp`, `num_mtp_modules`),
+#   but the reference builds none and lukealonso/MiniMax-M2.7-NVFP4 ships no MTP tensors (its
+#   safetensors index, read 2026-10-10: 191069 tensors, the highest layer 61, nothing outside
+#   `model.layers.*` but `model.embed_tokens`, `model.norm`, `lm_head`; the engine's loader finds
+#   none either, model-arch weight_loader/minimax.rs `load_mtp_weights_multi`). The config map
+#   carries those keys as params only. LAB residual: the MTP modules, whose structure neither
+#   the reference nor the checkpoint defines.
+# - The circuit is the unsharded math of one model replica: the recipe's expert parallelism
+#   (EP=2) shards the experts across nodes, and its `ep_reduce` is not drawn here.
+# - Not an executor target: FUSIONS.toml has no rules for the layer-wide Q/K norm, the
+#   sigmoid-bias routing at this width, or the partial RoPE at head_dim 128 (`golden = false`).
+#   `met circuit venn` and `met circuit plan` read it.
+
+schema = 1
+arch = "gqa_moe"
+description = "GQA + routed MoE transformer: RoPE attention with Q/K norm, sigmoid-bias routed SiLU experts, no shared expert"
+layer_module = "model.layers.{i}"
+include = []
+dims = ["hidden", "vocab", "q_heads", "kv_heads", "head_dim", "experts", "top_k", "moe_inter"]
+prologue = ["embed"]
+epilogue = ["head"]
+draft = []
+
+[layout]
+kind = "list"
+
+[layout.blocks]
+full_attention = ["attn", "moe"]
+
+[block.embed]
+stream_out = "h"
+
+# 2026-10-10: The speculative caches over tokens (crates/circuit/src/memory/caches.rs; as in
+# dense_gqa.toml): the prompt-lookup index (host), a token tree's mask, the drafted ids.
+[[block.embed.state]]
+id = "lookup_index"
+kind = "prompt_lookup_index"
+lifetime = "sequence"
+format = "u64"
+shape = "2"
+
+[[block.embed.state]]
+id = "tree_mask"
+kind = "token_tree_mask"
+lifetime = "verify"
+format = "u8"
+shape = "1"
+
+[[block.embed.state]]
+id = "draft_ids"
+kind = "draft_tokens"
+lifetime = "verify"
+format = "i32"
+shape = "1"
+
+[[block.embed.node]]
+id = "embed"
+op = "embed"
+out = [{ edge = "h", format = "bf16", shape = "n x hidden" }]
+binding = ["model.embed_tokens"]
+
+# 2026-10-10: The attention site: the dense_gqa block's shape (input norm, Q/K/V, Q/K norm,
+# RoPE, paged KV, O, residual add) at the reference's norm weight form and Q/K norm scope.
+[block.attn]
+stream_in = "x"
+stream_out = "y"
+
+# 2026-10-10: The paged KV cache, one unit per token and side (crates/circuit/src/state.rs).
+[[block.attn.state]]
+id = "k"
+kind = "paged_kv"
+lifetime = "model"
+format = "{kv_cache_dtype}"
+shape = "kv_heads x head_dim"
+
+[[block.attn.state]]
+id = "v"
+kind = "paged_kv"
+lifetime = "model"
+format = "{kv_cache_dtype}"
+shape = "kv_heads x head_dim"
+
+[[block.attn.node]]
+id = "input_norm"
+op = "rms_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.input_layernorm"]
+params = { weight_form = "plain" }
+
+[[block.attn.node]]
+id = "q"
+op = "linear"
+role = "q"
+in = ["xn"]
+out = [{ edge = "q", format = "bf16", shape = "n x q_heads*head_dim" }]
+binding = ["{L}.self_attn.q_proj"]
+
+[[block.attn.node]]
+id = "k"
+op = "linear"
+role = "k"
+in = ["xn"]
+out = [{ edge = "k", format = "bf16", shape = "n x kv_heads*head_dim" }]
+binding = ["{L}.self_attn.k_proj"]
+
+[[block.attn.node]]
+id = "v"
+op = "linear"
+role = "v"
+in = ["xn"]
+out = [{ edge = "v", format = "bf16", shape = "n x kv_heads*head_dim" }]
+binding = ["{L}.self_attn.v_proj"]
+
+# 2026-10-10: One RMSNorm over the whole Q row and one over the whole K row (MiniMaxM2Attention
+# `q_norm` = RMSNorm(q_heads*head_dim), `k_norm` = RMSNorm(kv_heads*head_dim)): the variance is
+# taken across every head of the layer, not per head (`scope = "layer"`).
+[[block.attn.node]]
+id = "q_norm"
+op = "qk_norm"
+in = ["q"]
+out = [{ edge = "qn", format = "bf16", shape = "n x q_heads*head_dim" }]
+binding = ["{L}.self_attn.q_norm"]
+params = { scope = "layer", weight_form = "plain" }
+
+[[block.attn.node]]
+id = "k_norm"
+op = "qk_norm"
+in = ["k"]
+out = [{ edge = "kn", format = "bf16", shape = "n x kv_heads*head_dim" }]
+binding = ["{L}.self_attn.k_norm"]
+params = { scope = "layer", weight_form = "plain" }
+
+[[block.attn.node]]
+id = "rope"
+op = "rope"
+in = ["qn", "kn"]
+out = [
+  { edge = "qr", format = "bf16", shape = "n x q_heads*head_dim" },
+  { edge = "kr", format = "bf16", shape = "n x kv_heads*head_dim" },
+]
+
+[[block.attn.node]]
+id = "kv_write"
+op = "kv_write"
+state = { k = "write", v = "write" }
+in = ["kr", "v"]
+out = []
+
+[[block.attn.node]]
+id = "attend"
+op = "paged_attention"
+state = { k = "read", v = "read" }
+in = ["qr", "kr", "v"]
+out = [{ edge = "a", format = "bf16", shape = "n x q_heads*head_dim" }]
+
+[[block.attn.node]]
+id = "o"
+op = "linear"
+role = "o"
+in = ["a"]
+out = [{ edge = "o", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.self_attn.o_proj"]
+
+[[block.attn.node]]
+id = "add"
+op = "residual_add"
+in = ["x", "o"]
+out = [{ edge = "y", format = "bf16", shape = "n x hidden" }]
+
+# 2026-10-10: The MoE site (MiniMaxM2SparseMoeBlock): the router, sigmoid-bias top-k, the
+# routed SiLU-gated experts and their weighted sum; no shared expert, so `blend` sums only the
+# routed rows (`shared = "none"`, as Nemotron-3 Super's latent experts).
+[block.moe]
+stream_in = "x"
+stream_out = "y"
+
+[[block.moe.node]]
+id = "post_norm"
+op = "rms_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.post_attention_layernorm"]
+params = { weight_form = "plain" }
+
+# 2026-10-10: BF16 logits (MiniMaxM2TopKRouter: `F.linear(hidden.to(weight.dtype), weight)`;
+# the checkpoint's `block_sparse_moe.gate.weight` is BF16 [256, 3072], safetensors header read
+# 2026-10-10). The sigmoid of the top_k node widens them to FP32.
+[[block.moe.node]]
+id = "gate"
+op = "router"
+in = ["xn"]
+out = [{ edge = "logits", format = "bf16", shape = "n x experts" }]
+binding = ["{L}.block_sparse_moe.gate"]
+
+[[block.moe.node]]
+id = "top_k"
+op = "top_k"
+in = ["logits"]
+out = [
+  { edge = "topk_w", format = "f32", shape = "n x top_k" },
+  { edge = "topk_id", format = "i32", shape = "n x top_k" },
+]
+binding = ["{L}.block_sparse_moe.e_score_correction_bias"]
+params = { top_k = "{top_k}", scoring = "sigmoid_bias", renormalize = "true" }
+
+[[block.moe.node]]
+id = "experts_gate_up"
+op = "expert_gate_up"
+in = ["xn", "topk_id"]
+out = [{ edge = "egu", format = "bf16", shape = "n*top_k x moe_inter*2" }]
+binding = ["{L}.block_sparse_moe.experts.*.w1", "{L}.block_sparse_moe.experts.*.w3"]
+
+[[block.moe.node]]
+id = "experts_act"
+op = "silu_mul"
+in = ["egu"]
+out = [{ edge = "eact", format = "bf16", shape = "n*top_k x moe_inter" }]
+
+[[block.moe.node]]
+id = "experts_down"
+op = "expert_down"
+in = ["eact", "topk_id"]
+out = [{ edge = "edown", format = "bf16", shape = "n*top_k x hidden" }]
+binding = ["{L}.block_sparse_moe.experts.*.w2"]
+
+[[block.moe.node]]
+id = "blend"
+op = "blend"
+in = ["edown", "topk_w"]
+out = [{ edge = "f", format = "bf16", shape = "n x hidden" }]
+params = { shared = "none" }
+
+[[block.moe.node]]
+id = "add"
+op = "residual_add"
+in = ["x", "f"]
+out = [{ edge = "y", format = "bf16", shape = "n x hidden" }]
+
+[block.head]
+stream_in = "x"
+outputs = [{ edge = "logits", buffer = "logits" }, { edge = "token", buffer = "tokens" }]
+
+[[block.head.node]]
+id = "final_norm"
+op = "final_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["model.norm"]
+params = { weight_form = "plain" }
+
+[[block.head.node]]
+id = "lm_head"
+op = "lm_head"
+in = ["xn"]
+out = [{ edge = "logits", format = "bf16", shape = "n x vocab" }]
+binding = ["lm_head"]
+
+[[block.head.node]]
+id = "argmax"
+op = "argmax"
+in = ["logits"]
+out = [{ edge = "token", format = "i32", shape = "n x 1" }]
