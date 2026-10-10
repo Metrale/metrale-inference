@@ -47,12 +47,12 @@ fn energy_is_interpolated_per_host_and_summed() {
     let j = energy_j(&[a.clone(), b], 12.0, 18.0).unwrap();
     assert!((j - 12.0).abs() < 1e-9, "{j}");
     assert_eq!(
-        energy_j(&[a.clone()], 5.0, 18.0),
+        energy_j(std::slice::from_ref(&a), 5.0, 18.0),
         None,
         "starts before the series"
     );
     assert_eq!(
-        energy_j(&[a.clone()], 12.0, 25.0),
+        energy_j(std::slice::from_ref(&a), 12.0, 25.0),
         None,
         "ends after the series"
     );

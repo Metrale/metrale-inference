@@ -181,7 +181,10 @@ fn asymmetries(a: &Record, b: &Record) -> Vec<String> {
             out.push(format!("{} ran only on {}", bench_name(ra), a.engine.label));
             continue;
         };
-        if ra.prompt_tokens != rb.prompt_tokens {
+        if ra.prompt_tokens.is_some()
+            && rb.prompt_tokens.is_some()
+            && ra.prompt_tokens != rb.prompt_tokens
+        {
             out.push(format!(
                 "{}: server prompt tokens {} vs {} (the chat templates render the same message \
                  differently)",

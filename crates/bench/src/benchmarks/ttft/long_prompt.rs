@@ -258,4 +258,4 @@ pub(crate) fn source_parameters() -> Vec<ParamSpec> {
 
 #[cfg(test)]
 #[path = "long_prompt_tests.rs"]
-pub(super) mod tests;
+mod tests;

@@ -43,6 +43,8 @@ pub use descriptors::{
     HIGH_ISL_WARM_DESCRIPTOR, HIGH_ISL_WARM_MOE_DESCRIPTOR, WARM_DESCRIPTOR, WARM_METADATA,
 };
 pub use token_prompt::tokenizer_file;
+#[cfg(test)]
+mod test_support;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
