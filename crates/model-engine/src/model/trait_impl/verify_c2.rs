@@ -12,6 +12,7 @@
 
 #![allow(unused_imports, dead_code, clippy::too_many_arguments)]
 
+use super::super::lm_head_vocab_tp::HeadRanks;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -362,7 +363,13 @@ impl TransformerModel {
                     anyhow::bail!("K4_DIAG: CUDA error after final norm: {e:#}");
                 }
 
-                self.lm_head_batched(normed, k as u32, self.buffers.logits(), stream)?;
+                self.lm_head_batched(
+                    normed,
+                    k as u32,
+                    self.buffers.logits(),
+                    HeadRanks::Every,
+                    stream,
+                )?;
 
                 if k4_diag && let Err(e) = self.gpu.synchronize(stream) {
                     anyhow::bail!("K4_DIAG: CUDA error after lm_head_batched: {e:#}");

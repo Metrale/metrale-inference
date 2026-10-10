@@ -11,6 +11,7 @@
 
 #![allow(unused_imports, dead_code, clippy::too_many_arguments)]
 
+use super::super::lm_head_vocab_tp::HeadRanks;
 use anyhow::Result;
 use metrale_config::LayerType;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
@@ -445,7 +446,7 @@ impl TransformerModel {
                 // mixed co-dispatch head `decode_b2::mixed_final_norm_lm_head` calls the
                 // same function. The returned pointer is dropped: the function ends
                 // with `decode_logits_ptr()`, the same buffer.
-                self.lm_head_project_batched(normed, padded_n, h, bf16, stream)?;
+                self.lm_head_project_batched(normed, padded_n, h, bf16, HeadRanks::Every, stream)?;
                 if let Some(t0) = lmhead_t0 {
                     self.gpu.synchronize(stream).ok();
                     let head_us = t0.elapsed().as_micros();

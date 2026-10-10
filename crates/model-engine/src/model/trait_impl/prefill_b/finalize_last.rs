@@ -9,6 +9,7 @@
 
 #![allow(unused_imports, dead_code, clippy::too_many_arguments)]
 
+use super::super::super::lm_head_vocab_tp::HeadRanks;
 use anyhow::Result;
 use metrale_cache::kv_cache::PagedKvCache;
 use metrale_gpu_runtime::gpu::DevicePtr;
@@ -179,12 +180,12 @@ impl TransformerModel {
         // logits row: row 0 through `lm_head` (returning `decode_logits_ptr()`), other
         // rows through `lm_head_batched` at `logits_row * vocab_size` BF16 elements.
         let logits_ptr = if logits_row == 0 {
-            self.lm_head(normed, stream)?;
+            self.lm_head(normed, HeadRanks::Every, stream)?;
             self.decode_logits_ptr()
         } else {
             let v = self.config.vocab_size;
             let dst = self.buffers.logits().offset(logits_row * v * 2);
-            self.lm_head_batched(normed, 1, dst, stream)?;
+            self.lm_head_batched(normed, 1, dst, HeadRanks::Every, stream)?;
             dst
         };
 

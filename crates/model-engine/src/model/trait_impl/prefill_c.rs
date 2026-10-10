@@ -9,6 +9,7 @@
 
 #![allow(unused_imports, dead_code, clippy::too_many_arguments)]
 
+use super::super::lm_head_vocab_tp::HeadRanks;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -476,7 +477,7 @@ impl TransformerModel {
         let eps = self.config.rms_norm_eps as f32;
         self.final_norm_apply(last_hidden, normed, 1, h as u32, eps, stream)?;
 
-        self.lm_head(normed, stream)?;
+        self.lm_head(normed, HeadRanks::Every, stream)?;
 
         self.prefill_save_snapshot_and_insert(tokens, seq, &mut kv_cache, bs, stream);
 

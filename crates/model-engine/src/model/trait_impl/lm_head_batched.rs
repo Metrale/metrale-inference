@@ -15,6 +15,7 @@ use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_model_layers::weight_map::DenseWeight;
 
+use super::super::lm_head_vocab_tp::HeadRanks;
 use super::super::types::TransformerModel;
 use metrale_model_layers::layers::ops;
 
@@ -246,7 +247,12 @@ impl TransformerModel {
     /// 2026-10-09: This rank's `(begin, len)` vocab rows when the BF16 head at `padded_n`
     /// rows would take the batched GEMV (`project_bf16_lm_head`'s last arm) and the head is
     /// vocab-parallel; `None` sends the call to the whole-vocab dispatch unchanged.
-    fn bf16_head_batched_vocab_shard(&self, padded_n: usize, h: usize) -> Option<(usize, usize)> {
+    fn bf16_head_batched_vocab_shard(
+        &self,
+        padded_n: usize,
+        h: usize,
+        ranks: HeadRanks,
+    ) -> Option<(usize, usize)> {
         let m = padded_n as u32;
         // 2026-10-09: Under a fixed head format `project_bf16_lm_head` takes the batched GEMV
         // at every row count up to its widest launch; otherwise only inside the decode band and
@@ -268,25 +274,26 @@ impl TransformerModel {
         {
             return None;
         }
-        self.lmhead_vocab_shard(self.config.vocab_size as u32)
+        self.lmhead_vocab_shard(self.config.vocab_size as u32, ranks)
     }
 
     /// 2026-09-25: Project `normed` [padded_n, H] into `logits` [padded_n, V].
     ///
     /// `v` is read from `self.config.vocab_size` rather than passed: it is the
     /// same number at both call sites and a parameter would be a second place
-    /// for it to be wrong.
+    /// for it to be wrong. 2026-10-10: `ranks` as for `lm_head_batched`.
     pub(in crate::model) fn lm_head_project_batched(
         &self,
         normed: DevicePtr,
         padded_n: usize,
         h: usize,
         _bf16: usize,
+        ranks: HeadRanks,
         stream: u64,
     ) -> Result<DevicePtr> {
         let logits = self.buffers.logits();
         let v = self.config.vocab_size;
-        if self.lm_head_fp8_run(normed, padded_n, logits, stream)? {
+        if self.lm_head_fp8_run(normed, padded_n, logits, ranks, stream)? {
             // 2026-09-28: FP8 E4M3 head, one weight pass per launch (`lm_head_fp8_rows.rs`).
         } else if self.lm_head_nvfp4_rows_run(normed, padded_n, logits, stream)? {
             // 2026-10-02: Declared W4A16 NVFP4 head (`lm_head_nvfp4_rows.rs`).
@@ -372,15 +379,14 @@ impl TransformerModel {
                     )?;
                 }
             }
-        } else if let Some((begin, len)) = self.bf16_head_batched_vocab_shard(padded_n, h) {
+        } else if let Some((begin, len)) = self.bf16_head_batched_vocab_shard(padded_n, h, ranks) {
             // 2026-10-09: Vocab-parallel BF16 head on the batched-GEMV route, as `lm_head` does
             // for one row: this rank projects its row range into a zeroed buffer and the
             // all-reduce sums the ranks' pieces. Each logit is the same kernel's dot product
             // whatever the range, and adding the other ranks' zeros is exact, so the bits
             // match the whole-vocab launch. GLM-5.3 at C1 (154,880 rows over 3 ranks): the
             // whole-vocab launch was 5.8 ms of a 46.7 ms step (nsys).
-            self.gpu
-                .memset_async(logits, 0, padded_n * v * 2, stream)?;
+            self.gpu.memset_async(logits, 0, padded_n * v * 2, stream)?;
             ops::dense_gemv_batchm(
                 self.gpu.as_ref(),
                 self.dense_gemv_batchm_kernel,

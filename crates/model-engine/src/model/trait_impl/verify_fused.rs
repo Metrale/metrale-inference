@@ -19,6 +19,7 @@
 
 #![allow(unused_imports, dead_code, clippy::too_many_arguments)]
 
+use super::super::lm_head_vocab_tp::HeadRanks;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -348,7 +349,13 @@ impl TransformerModel {
                 stream,
             )?;
 
-            self.lm_head_batched(normed, m as u32, self.buffers.logits(), stream)?;
+            self.lm_head_batched(
+                normed,
+                m as u32,
+                self.buffers.logits(),
+                HeadRanks::Every,
+                stream,
+            )?;
 
             // 2026-09-25: Argmax of each row into scratch, a fixed address, so a
             // replay writes the same place.

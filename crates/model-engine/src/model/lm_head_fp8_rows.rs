@@ -25,6 +25,7 @@ use metrale_model_layers::layers::ops::W8a8Weight;
 use metrale_model_layers::layers::{Fp8RowHeadKernels, HeadWindow, W8a8Ctx, fp8_row_head};
 use metrale_model_layers::weight_map::{Fp8Weight, WeightQuantFormat};
 
+use super::lm_head_vocab_tp::HeadRanks;
 use super::types::TransformerModel;
 
 /// 2026-09-28: The multi-row FP8 head kernels, and the W8A8 head when installed. 2026-10-02:
@@ -93,19 +94,21 @@ impl TransformerModel {
 
     /// 2026-09-28: `logits[rows, vocab]` from `hidden[rows, hidden]` through the FP8 head;
     /// `Ok(false)`, launching nothing, when the model has no FP8 head. 2026-10-09: Vocab-parallel
-    /// when `lmhead_vocab_shard` gives this rank a range, as the BF16 head is.
+    /// when `lmhead_vocab_shard` gives this rank a range, as the BF16 head is: on a
+    /// [`HeadRanks::Every`] call only (2026-10-10).
     pub(super) fn lm_head_fp8_run(
         &self,
         hidden: DevicePtr,
         rows: usize,
         logits: DevicePtr,
+        ranks: HeadRanks,
         stream: u64,
     ) -> Result<bool> {
         let Some(ref fp8) = self.lm_head_fp8 else {
             return Ok(false);
         };
         let (h, v) = (self.config.hidden_size, self.config.vocab_size);
-        let shard = self.lmhead_vocab_shard(v as u32);
+        let shard = self.lmhead_vocab_shard(v as u32, ranks);
         let win = match shard {
             Some((begin, len)) => {
                 // 2026-10-09: The other ranks' columns stay zero, so the all-reduce below adds

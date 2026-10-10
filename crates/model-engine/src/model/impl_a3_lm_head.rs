@@ -26,6 +26,7 @@ use super::block_mgmt::{
     apply_evicted_blocks, ensure_blocks_through_decode, ensure_blocks_through_prefill,
     extract_layer_refs, reuse_prefix_match_disk_ids,
 };
+use super::lm_head_vocab_tp::HeadRanks;
 use super::ssm_pool::SsmStatePool;
 use super::ssm_snapshot::SsmSnapshotPool;
 use super::types::{PinnedMetaStaging, TransformerModel};
@@ -120,12 +121,14 @@ impl TransformerModel {
     }
 
     /// 2026-09-25: LM head for K rows: `hidden[K, H]` → `logits_dst[K, V]`,
-    /// which it returns.
+    /// which it returns. 2026-10-10: `ranks` says whether every rank makes this call
+    /// (`lm_head_vocab_tp.rs`); only then may the head shard by vocab.
     pub(super) fn lm_head_batched(
         &self,
         hidden: DevicePtr,
         num_tokens: u32,
         logits_dst: DevicePtr,
+        ranks: HeadRanks,
         stream: u64,
     ) -> Result<DevicePtr> {
         let h = self.config.hidden_size as u32;
@@ -147,7 +150,7 @@ impl TransformerModel {
         {
             return Ok(logits);
         }
-        if self.lm_head_fp8_run(hidden, num_tokens as usize, logits, stream)? {
+        if self.lm_head_fp8_run(hidden, num_tokens as usize, logits, ranks, stream)? {
             // 2026-09-28: FP8 E4M3 head, one weight pass per launch (`lm_head_fp8_rows.rs`).
         } else if self.lm_head_nvfp4.is_none()
             && (2..=ops::DENSE_GEMV_BATCHM_DECODE_MAX_M).contains(&num_tokens)
@@ -156,7 +159,7 @@ impl TransformerModel {
             // 2026-09-25: BF16 head, 2..=`DENSE_GEMV_BATCHM_DECODE_MAX_M` rows: one
             // batched GEMV for every row, since the NVFP4 tiers below do not
             // cover a BF16 head.
-            let (w, n, dst) = match self.lmhead_vocab_shard(v) {
+            let (w, n, dst) = match self.lmhead_vocab_shard(v, ranks) {
                 // 2026-09-25: Vocab-parallel, as in `lm_head`: this rank computes its
                 // row range into a zeroed buffer, and the all-reduce below sums the
                 // ranks' pieces.
@@ -313,26 +316,13 @@ impl TransformerModel {
         Ok(logits)
     }
 
-    /// 2026-09-25: `(begin, len)` rows of the BF16 LM head this rank computes,
-    /// or `None` for the whole-vocab projection.
-    ///
-    /// `None` unless there is a communicator with at least 2 ranks, or when
-    /// `METRALE_NO_LMHEAD_VOCAB_TP=1` (read once per process). The BF16 dense-head paths and
-    /// (2026-10-09) the FP8 head (`lm_head_fp8_run`) call it. 2026-10-08: the rows split with `tp_split` in
-    /// [`LMHEAD_VOCAB_SPLIT_ALIGN`]-row units, so a vocab that does not divide by the world
-    /// size (154,880 rows over 3 ranks) still shards; an evenly dividing vocab gets the same
-    /// ranges as before. The pieces meet in a zeroed buffer summed by an all-reduce, so
-    /// uneven lengths need nothing else, and adding the other ranks' zeros is exact.
-    pub(super) fn lmhead_vocab_shard(&self, v: u32) -> Option<(usize, usize)> {
-        static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if *OFF.get_or_init(|| std::env::var("METRALE_NO_LMHEAD_VOCAB_TP").as_deref() == Ok("1")) {
-            return None;
-        }
-        let comm = self.comm_ref()?;
-        lmhead_vocab_split(v as usize, comm.world_size(), comm.rank())
-    }
-
-    pub(super) fn lm_head(&self, hidden: DevicePtr, stream: u64) -> Result<DevicePtr> {
+    /// 2026-10-10: `ranks` as for `lm_head_batched`.
+    pub(super) fn lm_head(
+        &self,
+        hidden: DevicePtr,
+        ranks: HeadRanks,
+        stream: u64,
+    ) -> Result<DevicePtr> {
         let h = self.config.hidden_size as u32;
         let v = self.config.vocab_size as u32;
         // 2026-09-25: The FP32 scratch when `use_fp32_logits`, else the shared
@@ -357,9 +347,9 @@ impl TransformerModel {
         if !fp32
             && metrale_model_layers::layers::fixed_act(metrale_config::ProjFamily::LmHead, 1)
                 .is_some()
-            && self.lmhead_vocab_shard(v).is_none()
+            && self.lmhead_vocab_shard(v, ranks).is_none()
         {
-            self.lm_head_project_batched(hidden, 1, h as usize, 2, stream)?;
+            self.lm_head_project_batched(hidden, 1, h as usize, 2, ranks, stream)?;
         } else if !fp32 && self.lm_head_nvfp4_rows_run(hidden, 1, logits, stream)? {
             // 2026-10-02: Declared W4A16 NVFP4 head (`lm_head_nvfp4_rows.rs`).
             return Ok(logits);
@@ -367,7 +357,7 @@ impl TransformerModel {
             // 2026-09-25: FP8 E4M3 head (`--lm-head-dtype fp8`). It has no
             // FP32-output variant; with `use_fp32_logits` false, `logits` is the
             // BF16 buffer. 2026-09-28: W8A8 when declared (`lm_head_fp8_rows.rs`).
-            self.lm_head_fp8_run(hidden, 1, logits, stream)?;
+            self.lm_head_fp8_run(hidden, 1, logits, ranks, stream)?;
         } else if let Some(ref nvfp4) = self.lm_head_nvfp4 {
             // 2026-09-25: The FP32-output variant when the destination is the
             // FP32 buffer, which does not happen while `use_fp32_logits` is false.
@@ -399,7 +389,7 @@ impl TransformerModel {
                 h,
                 stream,
             )?;
-        } else if let Some((begin, len)) = self.lmhead_vocab_shard(v) {
+        } else if let Some((begin, len)) = self.lmhead_vocab_shard(v, ranks) {
             // 2026-09-25: Vocab-parallel BF16 head. Each rank holds the whole head
             // but computes only its row range (`lmhead_vocab_shard`) into a zeroed
             // buffer, and the all-reduce sums the ranks' pieces into full logits.
@@ -439,74 +429,5 @@ impl TransformerModel {
             self.apply_logit_softcap_dtype(logits, v, cap, fp32, stream)?;
         }
         Ok(logits)
-    }
-}
-
-/// 2026-10-08: Row granularity of the vocab-parallel LM head split: the shard starts stay
-/// 64-row aligned, as the even splits of every vocab served so far already were.
-const LMHEAD_VOCAB_SPLIT_ALIGN: usize = 64;
-
-/// 2026-10-08: `(begin, len)` of `rank`'s rows of a `v`-row head over `world` ranks, or `None`
-/// at one rank or when the vocab is not a whole number of split units (then every rank
-/// computes the whole head, as before).
-fn lmhead_vocab_split(v: usize, world: usize, rank: usize) -> Option<(usize, usize)> {
-    if world < 2 {
-        return None;
-    }
-    if v.is_multiple_of(world) {
-        // 2026-10-08: The previous rule, byte for byte.
-        return Some((rank * (v / world), v / world));
-    }
-    // 2026-10-09: A vocab that is not a whole number of units (the tokenizer caps GLM-5.3's
-    // 154,880-row head to 154,856) splits as if padded to the next unit; the last range stops
-    // at `v`. Without this the cap silently sent every rank back to the whole head.
-    let padded = v.div_ceil(LMHEAD_VOCAB_SPLIT_ALIGN) * LMHEAD_VOCAB_SPLIT_ALIGN;
-    let s = metrale_config::tp_split(padded, world, rank, LMHEAD_VOCAB_SPLIT_ALIGN).ok()?;
-    (s.start < v).then(|| (s.start, s.len.min(v - s.start)))
-}
-
-#[cfg(test)]
-mod vocab_split_tests {
-    use super::lmhead_vocab_split;
-
-    #[test]
-    fn an_even_vocab_keeps_the_even_split() {
-        assert_eq!(lmhead_vocab_split(248_320, 2, 1), Some((124_160, 124_160)));
-        assert_eq!(lmhead_vocab_split(154_880, 2, 0), Some((0, 77_440)));
-        assert_eq!(lmhead_vocab_split(154_880, 1, 0), None);
-    }
-
-    #[test]
-    fn glm_vocab_over_three_ranks_partitions_in_aligned_pieces() {
-        let parts: Vec<_> = (0..3)
-            .map(|r| lmhead_vocab_split(154_880, 3, r).unwrap())
-            .collect();
-        let mut next = 0;
-        for (b, l) in &parts {
-            assert_eq!(*b, next);
-            assert_eq!(b % 64, 0);
-            next = b + l;
-        }
-        assert_eq!(next, 154_880);
-        assert_eq!(
-            parts,
-            vec![(0, 51_648), (51_648, 51_648), (103_296, 51_584)]
-        );
-    }
-
-    #[test]
-    fn a_tokenizer_capped_vocab_still_shards_and_covers_every_row() {
-        let parts: Vec<_> = (0..3)
-            .map(|r| lmhead_vocab_split(154_856, 3, r).unwrap())
-            .collect();
-        assert_eq!(
-            parts,
-            vec![(0, 51_648), (51_648, 51_648), (103_296, 51_560)]
-        );
-        assert_eq!(lmhead_vocab_split(100, 2, 1), Some((50, 50)));
-        let tail: Vec<_> = (0..2)
-            .map(|r| lmhead_vocab_split(129, 2, r).unwrap())
-            .collect();
-        assert_eq!(tail, vec![(0, 128), (128, 1)]);
     }
 }
