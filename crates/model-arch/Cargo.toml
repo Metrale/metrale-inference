@@ -267,6 +267,10 @@ name = "glm5next_dsa_scores_tiled_bench"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "glm5next_mhc_slice_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "glm5next_expert_tp_bench"
 required-features = ["cuda", "gpu-examples"]
 

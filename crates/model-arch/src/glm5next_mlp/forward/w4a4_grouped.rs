@@ -275,7 +275,7 @@ pub(super) fn w4a4_grouped_experts(site: &MoeSite<'_>, scales: W4a4ActScales) ->
     grouped_mx(
         site,
         down,
-        mt,
+        ti,
         &w.ptrs.down,
         ws.expert_out,
         DevicePtr::NULL,
