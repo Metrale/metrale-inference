@@ -317,8 +317,8 @@ impl TransformerModel {
     /// or `None` for the whole-vocab projection.
     ///
     /// `None` unless there is a communicator with at least 2 ranks, or when
-    /// `METRALE_NO_LMHEAD_VOCAB_TP=1` (read once per process). Only the BF16 dense-head
-    /// paths call it. 2026-10-08: the rows split with `tp_split` in
+    /// `METRALE_NO_LMHEAD_VOCAB_TP=1` (read once per process). The BF16 dense-head paths and
+    /// (2026-10-09) the FP8 head (`lm_head_fp8_run`) call it. 2026-10-08: the rows split with `tp_split` in
     /// [`LMHEAD_VOCAB_SPLIT_ALIGN`]-row units, so a vocab that does not divide by the world
     /// size (154,880 rows over 3 ranks) still shards; an evenly dividing vocab gets the same
     /// ranges as before. The pieces meet in a zeroed buffer summed by an all-reduce, so
@@ -504,7 +504,9 @@ mod vocab_split_tests {
             vec![(0, 51_648), (51_648, 51_648), (103_296, 51_560)]
         );
         assert_eq!(lmhead_vocab_split(100, 2, 1), Some((50, 50)));
-        let tail: Vec<_> = (0..2).map(|r| lmhead_vocab_split(129, 2, r).unwrap()).collect();
+        let tail: Vec<_> = (0..2)
+            .map(|r| lmhead_vocab_split(129, 2, r).unwrap())
+            .collect();
         assert_eq!(tail, vec![(0, 128), (128, 1)]);
     }
 }
