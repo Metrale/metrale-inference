@@ -45,13 +45,14 @@ impl BlockDiffusionDraftHead {
             self.rms_norm_eps,
             stream,
         )?;
-        let lm_head_fp8 = matches!(
-            self.quant,
-            crate::dflash_head::DflashQuantization::Fp8Weights
-        );
+        let lm_head_copy = match self.lm_head_q.as_ref() {
+            Some(w) if self.quant != crate::dflash_head::DflashQuantization::Bf16 => Some(w),
+            _ => None,
+        };
         // 2026-09-25: lm_head: NVFP4 when the target's lm_head is NVFP4
-        // (`lm_head_shared` is valid only for a BF16 lm_head), else FP8 with
-        // `Fp8Weights` and an FP8 copy present, else BF16.
+        // (`lm_head_shared` is valid only for a BF16 lm_head), else the head's quantized copy
+        // when it has one (2026-10-10: NVFP4 through `quant_rows`, FP8 in the order below),
+        // else BF16.
         if let Some(q) = self.lm_head_nvfp4.as_ref() {
             ops::w4a16_gemm(
                 gpu,
@@ -64,79 +65,74 @@ impl BlockDiffusionDraftHead {
                 h_local,
                 stream,
             )?;
-        } else if lm_head_fp8 {
-            if let Some(fp8) = self.lm_head_shared_fp8.as_ref() {
-                // 2026-09-25: FP8 kernel order: `fp8_gemv_rt2` up to 8 rows,
-                // `fp8_gemv_rt2_16` up to 16, then a row-scaled GEMM.
-                if self.kernels.fp8_gemv_rt2.0 != 0
-                    && g <= 8
-                    && h_local.is_multiple_of(16)
-                    && crate::dflash_head::fp8_rt_enabled()
-                {
-                    ops::fp8_gemv_rowscale_batch8_rt2(
-                        gpu,
-                        self.kernels.fp8_gemv_rt2,
-                        norm_noise_local,
-                        fp8,
-                        self.scratch.logits,
-                        g,
-                        self.vocab_size as u32,
-                        h_local,
-                        stream,
-                    )?;
-                } else if self.kernels.fp8_gemv_rt2_16.0 != 0
-                    && rt2_16_covers_the_batch(g)
-                    && h_local.is_multiple_of(16)
-                    && crate::dflash_head::fp8_rt_enabled()
-                {
-                    ops::fp8_gemv_rowscale_batch16_rt2(
-                        gpu,
-                        self.kernels.fp8_gemv_rt2_16,
-                        norm_noise_local,
-                        fp8,
-                        self.scratch.logits,
-                        g,
-                        self.vocab_size as u32,
-                        h_local,
-                        stream,
-                    )?;
-                } else {
-                    // 2026-09-25: `fp8_gemm_t_row_scaled_m16` computes at most 16 rows
-                    // (`ops::fp8_gemm_n128_row_scaled_m16`), so above 16 rows take
-                    // the general row-scaled GEMM.
-                    let (k_lm, h_lm) = if g <= 16 {
-                        (
-                            self.kernels.fp8_gemm_n128_row_scaled_m16,
-                            ops::fp8_gemm_n128_row_scaled_m16
-                                as fn(_, _, _, _, _, _, _, _, _) -> Result<()>,
-                        )
-                    } else {
-                        (
-                            self.kernels.fp8_gemm_n128_row_scaled,
-                            ops::fp8_gemm_n128_row_scaled
-                                as fn(_, _, _, _, _, _, _, _, _) -> Result<()>,
-                        )
-                    };
-                    h_lm(
-                        gpu,
-                        k_lm,
-                        norm_noise_local,
-                        fp8,
-                        self.scratch.logits,
-                        g,
-                        self.vocab_size as u32,
-                        h_local,
-                        stream,
-                    )?;
-                }
-            } else {
-                ops::dense_gemm_bf16_pipelined(
+        } else if let Some(w @ crate::dflash_head::DraftWeight::Nvfp4(_)) = lm_head_copy {
+            self.quant_rows(
+                gpu,
+                norm_noise_local,
+                w,
+                self.scratch.logits,
+                g,
+                self.vocab_size as u32,
+                h_local,
+                stream,
+            )?;
+        } else if let Some(crate::dflash_head::DraftWeight::Fp8(fp8)) = lm_head_copy {
+            // 2026-09-25: FP8 kernel order: `fp8_gemv_rt2` up to 8 rows,
+            // `fp8_gemv_rt2_16` up to 16, then a row-scaled GEMM.
+            if self.kernels.fp8_gemv_rt2.0 != 0
+                && g <= 8
+                && h_local.is_multiple_of(16)
+                && crate::dflash_head::fp8_rt_enabled()
+            {
+                ops::fp8_gemv_rowscale_batch8_rt2(
                     gpu,
-                    self.kernels.dense_gemm_pipelined,
+                    self.kernels.fp8_gemv_rt2,
                     norm_noise_local,
-                    &metrale_model_layers::weight_map::DenseWeight {
-                        weight: self.lm_head_shared,
-                    },
+                    fp8,
+                    self.scratch.logits,
+                    g,
+                    self.vocab_size as u32,
+                    h_local,
+                    stream,
+                )?;
+            } else if self.kernels.fp8_gemv_rt2_16.0 != 0
+                && rt2_16_covers_the_batch(g)
+                && h_local.is_multiple_of(16)
+                && crate::dflash_head::fp8_rt_enabled()
+            {
+                ops::fp8_gemv_rowscale_batch16_rt2(
+                    gpu,
+                    self.kernels.fp8_gemv_rt2_16,
+                    norm_noise_local,
+                    fp8,
+                    self.scratch.logits,
+                    g,
+                    self.vocab_size as u32,
+                    h_local,
+                    stream,
+                )?;
+            } else {
+                // 2026-09-25: `fp8_gemm_t_row_scaled_m16` computes at most 16 rows
+                // (`ops::fp8_gemm_n128_row_scaled_m16`), so above 16 rows take
+                // the general row-scaled GEMM.
+                let (k_lm, h_lm) = if g <= 16 {
+                    (
+                        self.kernels.fp8_gemm_n128_row_scaled_m16,
+                        ops::fp8_gemm_n128_row_scaled_m16
+                            as fn(_, _, _, _, _, _, _, _, _) -> Result<()>,
+                    )
+                } else {
+                    (
+                        self.kernels.fp8_gemm_n128_row_scaled,
+                        ops::fp8_gemm_n128_row_scaled
+                            as fn(_, _, _, _, _, _, _, _, _) -> Result<()>,
+                    )
+                };
+                h_lm(
+                    gpu,
+                    k_lm,
+                    norm_noise_local,
+                    fp8,
                     self.scratch.logits,
                     g,
                     self.vocab_size as u32,

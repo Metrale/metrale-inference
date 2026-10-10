@@ -274,7 +274,7 @@ fn case(rng: &mut Rng, kind: usize, rows: u32, n: u32) -> Vec<f32> {
                 _ => {
                     if col % (n / 5) == 7 {
                         rng.unit()
-                    } else if rng.next() % 2 == 0 {
+                    } else if rng.next().is_multiple_of(2) {
                         -1e30
                     } else {
                         f32::NEG_INFINITY

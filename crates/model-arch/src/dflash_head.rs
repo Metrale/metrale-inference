@@ -22,6 +22,9 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_model_layers::speculative::{DraftProposer, ProposerState};
 use metrale_model_layers::weight_map::{DenseWeight, QuantizedWeight};
 
+pub use draft_weight::DraftWeight;
+pub use precision::DraftWeightQuantization;
+
 pub use kernels::DflashKernels;
 pub use state::{DflashProposerState, DflashScratch};
 
@@ -40,16 +43,20 @@ pub(super) struct DflashBatch<'a> {
     pub ctx_counts: Vec<u32>,
 }
 
-/// 2026-09-25: Drafter weight precision. `from_weights` builds the head as
-/// `Bf16` and switches it to `Fp8Weights` unless `METRALE_DFLASH_DRAFTER_FP8=0`
-/// or the `fp8_gemm_n128_row_scaled` kernels are missing.
+/// 2026-09-25: The drafter's weight precision in effect. `from_weights` builds the head as
+/// `Bf16` and switches it per `--draft-weight-quantization` (`DraftWeightQuantization`): to
+/// `Fp8Weights` on the FP8 tiers when the `fp8_gemm_n128_row_scaled` kernels are present (else it
+/// stays `Bf16` with a warning), to `Nvfp4Weights` on the NVFP4 tier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DflashQuantization {
     Bf16,
     /// 2026-09-25: Weight-only FP8: the q/k/v/o/gate/up/down weights get FP8
     /// E4M3 copies with per-row f32 scales at load, and the LM head is FP8
-    /// (`lm_head_shared_fp8`). The KV cache stays bf16.
+    /// (`lm_head_q`). The KV cache stays bf16.
     Fp8Weights,
+    /// 2026-10-10: Weight-only NVFP4 (W4A16): the same weights, the LM head and the auxiliary
+    /// GEMMs get NVFP4 copies (`draft_weight.rs`). The KV cache stays bf16.
+    Nvfp4Weights,
 }
 
 /// 2026-09-25: One drafter layer's weights: the bf16 norms (with per-head Q/K
@@ -70,25 +77,27 @@ pub struct DflashLayer {
     pub up_proj: DenseWeight,
     pub down_proj: DenseWeight,
 
-    pub q_proj_fp8: Option<metrale_model_layers::weight_map::Fp8DenseWeight>,
-    pub k_proj_fp8: Option<metrale_model_layers::weight_map::Fp8DenseWeight>,
-    pub v_proj_fp8: Option<metrale_model_layers::weight_map::Fp8DenseWeight>,
-    pub o_proj_fp8: Option<metrale_model_layers::weight_map::Fp8DenseWeight>,
-    pub gate_proj_fp8: Option<metrale_model_layers::weight_map::Fp8DenseWeight>,
-    pub up_proj_fp8: Option<metrale_model_layers::weight_map::Fp8DenseWeight>,
-    pub down_proj_fp8: Option<metrale_model_layers::weight_map::Fp8DenseWeight>,
+    /// 2026-10-10: The quantized copies of the seven GEMM weights
+    /// (`--draft-weight-quantization`, `draft_weight.rs`), `None` on the declared tier.
+    pub q_proj_q: Option<DraftWeight>,
+    pub k_proj_q: Option<DraftWeight>,
+    pub v_proj_q: Option<DraftWeight>,
+    pub o_proj_q: Option<DraftWeight>,
+    pub gate_proj_q: Option<DraftWeight>,
+    pub up_proj_q: Option<DraftWeight>,
+    pub down_proj_q: Option<DraftWeight>,
 
     pub attention_conv_base: Option<DenseWeight>,
     pub attention_conv_proj: Option<DenseWeight>,
     pub mlp_conv_base: Option<DenseWeight>,
     pub mlp_conv_proj: Option<DenseWeight>,
-    /// 2026-10-10: FP8 copies of the conv kernel projections under
-    /// `METRALE_DFLASH_AUX_FP8=1` (`aux_fp8.rs`), else `None`.
-    pub attention_conv_proj_fp8: Option<metrale_model_layers::weight_map::Fp8DenseWeight>,
-    pub mlp_conv_proj_fp8: Option<metrale_model_layers::weight_map::Fp8DenseWeight>,
-    /// 2026-10-10: The tensor-parallel column sources of o_proj / down_proj (`tp::ColSlice`).
-    pub o_proj_cols: Option<tp::ColSlice>,
-    pub down_proj_cols: Option<tp::ColSlice>,
+    /// 2026-10-10: Quantized copies of the conv kernel projections on the tiers that copy the
+    /// auxiliary GEMMs (`aux_quant.rs`), else `None`.
+    pub attention_conv_proj_q: Option<DraftWeight>,
+    pub mlp_conv_proj_q: Option<DraftWeight>,
+    /// 2026-10-10: The whole weights a tensor-parallel layer's slices were cut from
+    /// (`tp::LayerSources`); `None` on one rank.
+    pub tp_src: Option<tp::LayerSources>,
 }
 
 #[allow(dead_code)]
@@ -152,10 +161,11 @@ pub struct BlockDiffusionDraftHead {
     /// 2026-09-25: The target's NVFP4 LM head, when it ships one; the final
     /// logits GEMM then uses it instead of `lm_head_shared`.
     pub lm_head_nvfp4: Option<QuantizedWeight>,
-    /// 2026-09-25: The FP8 LM head for `Fp8Weights`: the target checkpoint's
+    /// 2026-09-25: The quantized LM head: on the FP8 tiers the target checkpoint's
     /// native FP8 head when the loader passes one, else an FP8 copy of
-    /// `lm_head_shared`. `None` on the bf16 path.
-    pub lm_head_shared_fp8: Option<metrale_model_layers::weight_map::Fp8DenseWeight>,
+    /// `lm_head_shared`; 2026-10-10: on the NVFP4 tier an NVFP4 copy of it. `None` on the
+    /// declared tier.
+    pub lm_head_q: Option<DraftWeight>,
 
     // 2026-09-25: From the drafter checkpoint: `hidden_norm` (applied to the
     // projected target context), the final `norm`, and `fc`, which projects
@@ -248,17 +258,19 @@ pub struct BlockDiffusionDraftHead {
     pub selector_pred: Option<DenseWeight>,
     pub selector_succ: Option<DenseWeight>,
     pub selector_hidden_proj: Option<DenseWeight>,
-    /// 2026-10-10: FP8 copies of the ctx and selector GEMMs under `METRALE_DFLASH_AUX_FP8=1`
-    /// (`aux_fp8.rs`), else `None`.
-    pub aux_fp8: Option<aux_fp8::DflashAuxFp8>,
+    /// 2026-10-10: Quantized copies of the ctx and selector GEMMs on the tiers that copy the
+    /// auxiliary GEMMs (`aux_quant.rs`), else `None`.
+    pub aux_q: Option<aux_quant::DflashAuxQuant>,
     /// 2026-10-10: This rank's part of the tensor-parallel drafter (`--draft-tp-size`,
     /// `tp.rs`); `None` on one rank or with the lever off. Under it the head's head counts,
     /// intermediate size and vocab are this rank's.
     pub tp: Option<tp::DflashTp>,
 }
 
-mod aux_fp8;
+mod aux_quant;
 mod dflash2;
+pub mod draft_weight;
+pub mod precision;
 pub mod tp;
 mod tp_propose;
 /// 2026-09-25: Rows the batched ctx precompute staging holds per step.

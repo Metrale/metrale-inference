@@ -14,8 +14,8 @@ use half::bf16;
 use metrale_comm::CommBackend;
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
-use metrale_model_arch::dflash_head::BlockDiffusionDraftHead;
 use metrale_model_arch::dflash_head::tp::{self, DflashTp};
+use metrale_model_arch::dflash_head::{BlockDiffusionDraftHead, DraftWeightQuantization};
 use metrale_model_arch::weight_loader::dflash_loader::{
     DflashLayerWeights, DflashWeights, parse_dflash_config,
 };
@@ -168,8 +168,7 @@ impl Tensors {
                 attention_conv_proj: Some(w(l[12])),
                 mlp_conv_base: Some(w(l[11])),
                 mlp_conv_proj: Some(w(l[12].offset(1024 * HIDDEN * 2))),
-                o_proj_cols: None,
-                down_proj_cols: None,
+                tp_src: None,
             })
             .collect();
         Ok(DflashWeights {
@@ -186,16 +185,18 @@ impl Tensors {
             selector_pred: Some(w(self.pred)),
             selector_succ: Some(w(self.succ)),
             selector_hidden_proj: Some(w(self.hproj)),
+            tp_lm_head: None,
         })
     }
 
-    /// 2026-10-10: A drafter: whole (`split` `None`), or rank `r` of `world` cut from these
-    /// whole tensors (`tp::plan` + `tp::shard_weights`).
+    /// 2026-10-10: A drafter with `quant`'s weight copies: whole (`split` `None`), or rank `r`
+    /// of `world` cut from these whole tensors (`tp::plan` + `tp::shard_weights`).
     pub fn head(
         &self,
         gpu: &dyn GpuBackend,
         split: Option<(usize, usize)>,
         max_seq: usize,
+        quant: DraftWeightQuantization,
     ) -> Result<BlockDiffusionDraftHead> {
         let weights = self.weights()?;
         let d = self.dims;
@@ -203,9 +204,10 @@ impl Tensors {
             None => (weights, self.lm_head, None),
             Some((rank, world)) => {
                 let p = tp::plan(d.q_heads, d.kv_heads, d.inter, d.vocab, world, rank)?;
+                let (weights, lm_head) = tp::shard_weights(weights, &p, self.lm_head, gpu)?;
                 (
-                    tp::shard_weights(weights, &p, gpu)?,
-                    self.lm_head.offset(p.vocab.0 * HIDDEN * 2),
+                    weights,
+                    lm_head,
                     Some(DflashTp {
                         rank,
                         world,
@@ -214,18 +216,20 @@ impl Tensors {
                 )
             }
         };
-        self.build(gpu, weights, lm_head, tp, max_seq)
+        self.build(gpu, weights, lm_head, tp, max_seq, quant)
     }
 
     /// 2026-10-10: A drafter whose tensors already are one rank's part (`tp`): for timing a
-    /// rank of a drafter too large to hold whole.
+    /// rank of a drafter too large to hold whole. Its NVFP4 copies take their scales from the
+    /// rank's own tensors (it has no whole ones), which moves no byte count.
     pub fn head_local(
         &self,
         gpu: &dyn GpuBackend,
         tp: DflashTp,
         max_seq: usize,
+        quant: DraftWeightQuantization,
     ) -> Result<BlockDiffusionDraftHead> {
-        self.build(gpu, self.weights()?, self.lm_head, Some(tp), max_seq)
+        self.build(gpu, self.weights()?, self.lm_head, Some(tp), max_seq, quant)
     }
 
     fn build(
@@ -235,6 +239,7 @@ impl Tensors {
         lm_head: DevicePtr,
         tp: Option<DflashTp>,
         max_seq: usize,
+        quant: DraftWeightQuantization,
     ) -> Result<BlockDiffusionDraftHead> {
         BlockDiffusionDraftHead::from_weights(
             weights,
@@ -249,6 +254,7 @@ impl Tensors {
             max_seq,
             1,
             tp,
+            quant,
         )
     }
 }

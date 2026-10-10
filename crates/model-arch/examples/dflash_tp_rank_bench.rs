@@ -14,16 +14,16 @@
 //! - Times are host walls of `propose` (it ends on the drafts' device-to-host copy), median
 //!   and range over 50 proposes per draft count.
 //!
-//! The caller's environment picks the variant, read when the drafter is built:
-//! `METRALE_DFLASH_TP_GRAPHS=1` (CUDA graphs), `METRALE_DFLASH_DRAFTER_FP8=0` (BF16 weights),
-//! `METRALE_DFLASH_AUX_FP8=1`.
+//! The first argument is the `--draft-weight-quantization` tier (`declared`, `fp8`, `fp8-aux`
+//! or `nvfp4`; required); `METRALE_DFLASH_TP_GRAPHS=1` in the environment runs the propose on
+//! CUDA graphs. The rank's NVFP4 copies take their scales from its own tensors (the bench holds
+//! no whole ones), which moves no byte count.
 //!
 //! Run (GB10, < 3 GB of device memory):
 //!   cargo run --release -p metrale-model-arch --features cuda,gpu-examples \
-//!     --example dflash_tp_rank_bench
+//!     --example dflash_tp_rank_bench -- nvfp4
 
 #[path = "common/glm5next_rows_fixture.rs"]
-#[allow(dead_code)]
 mod fixture;
 #[path = "common/dflash_tp_fixture.rs"]
 #[allow(dead_code)]
@@ -34,6 +34,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
+use metrale_model_arch::dflash_head::DraftWeightQuantization;
 use metrale_model_arch::dflash_head::tp::DflashTp;
 use metrale_model_layers::layer::ForwardContext;
 use metrale_model_layers::speculative::DraftProposer;
@@ -55,6 +56,10 @@ fn main() -> Result<()> {
     unsafe {
         std::env::set_var("METRALE_DFLASH_CTX_WINDOW", "256");
     }
+    let quant = std::env::args()
+        .nth(1)
+        .ok_or_else(|| anyhow::anyhow!("usage: dflash_tp_rank_bench <declared|fp8|fp8-aux|nvfp4>"))
+        .and_then(|a| DraftWeightQuantization::parse(&a).map_err(anyhow::Error::msg))?;
     let gpu = Arc::new(MetraleCudaBackend::new(0, &metrale_kernels::ptx_modules())?);
     let mut rng = Rng(0x7270_6265_6e63_6831);
     let t = Tensors::new(gpu.as_ref(), &mut rng, RANK0, 154_880)?;
@@ -63,7 +68,7 @@ fn main() -> Result<()> {
         world: 3,
         vocab_base: 0,
     };
-    let head = t.head_local(gpu.as_ref(), tp, MAX_SEQ)?;
+    let head = t.head_local(gpu.as_ref(), tp, MAX_SEQ, quant)?;
     let comm = AloneComm {
         world: 3,
         gpu: gpu.clone(),
@@ -75,10 +80,9 @@ fn main() -> Result<()> {
     };
     let stream = gpu.default_stream();
     println!(
-        "levers: graphs {} drafter fp8 {} aux fp8 {}",
+        "--draft-weight-quantization {}, METRALE_DFLASH_TP_GRAPHS={:?}",
+        quant.name(),
         std::env::var("METRALE_DFLASH_TP_GRAPHS").unwrap_or_default(),
-        std::env::var("METRALE_DFLASH_DRAFTER_FP8").unwrap_or_default(),
-        std::env::var("METRALE_DFLASH_AUX_FP8").unwrap_or_default(),
     );
     for drafts in [3usize, 7] {
         let mut state = head.alloc_state(gpu.as_ref())?;

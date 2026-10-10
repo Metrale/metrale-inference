@@ -79,24 +79,21 @@ impl BlockDiffusionDraftHead {
             stream,
         )?;
 
-        // 2026-09-25: With `Fp8Weights` and the weight's FP8 mirror present, a projection
-        // runs on the FP8 weight: `fp8_gemv_rt2` up to 8 rows, `fp8_gemv_rt2_16` up to
-        // 16 (either only when present, K is a multiple of 16 and
-        // `METRALE_NO_DFLASH_FP8_RT` is not `1`), else the row-scaled GEMM. Otherwise
-        // the BF16 GEMM runs.
-        let use_fp8 = matches!(
-            self.quant,
-            crate::dflash_head::DflashQuantization::Fp8Weights
-        );
+        // 2026-09-25: With a quantized head and the weight's copy present, a projection
+        // runs on the copy (`quant_rows`): FP8 on `fp8_gemv_rt2` up to 8 rows,
+        // `fp8_gemv_rt2_16` up to 16 (either only when present, K is a multiple of 16 and
+        // `METRALE_NO_DFLASH_FP8_RT` is not `1`), else the row-scaled GEMM; 2026-10-10:
+        // NVFP4 on `w4a16_tc_rows`. Otherwise the BF16 GEMM runs.
+        let use_copy = self.quant != crate::dflash_head::DflashQuantization::Bf16;
         let gemm_swap = |w_bf16: &metrale_model_layers::weight_map::DenseWeight,
-                         w_fp8: &Option<metrale_model_layers::weight_map::Fp8DenseWeight>,
+                         w_q: &Option<crate::dflash_head::DraftWeight>,
                          src: metrale_gpu_runtime::gpu::DevicePtr,
                          dst: metrale_gpu_runtime::gpu::DevicePtr,
                          n_out: u32,
                          k_in: u32|
          -> Result<()> {
-            if use_fp8 && let Some(fp8) = w_fp8 {
-                return self.fp8_rows(gpu, src, fp8, dst, g, n_out, k_in, stream);
+            if use_copy && let Some(w) = w_q {
+                return self.quant_rows(gpu, src, w, dst, g, n_out, k_in, stream);
             }
             ops::dense_gemm_bf16_pipelined(
                 gpu,
@@ -115,7 +112,7 @@ impl BlockDiffusionDraftHead {
         // `[g * num_q_heads, head_dim]`.
         gemm_swap(
             &layer.q_proj,
-            &layer.q_proj_fp8,
+            &layer.q_proj_q,
             qkv_src,
             self.scratch.q_buf,
             q_dim,
@@ -160,7 +157,7 @@ impl BlockDiffusionDraftHead {
         // norming them together.
         gemm_swap(
             &layer.k_proj,
-            &layer.k_proj_fp8,
+            &layer.k_proj_q,
             qkv_src,
             self.scratch.k_buf,
             kv_dim,
@@ -203,7 +200,7 @@ impl BlockDiffusionDraftHead {
         // 2026-09-25: V has no norm.
         gemm_swap(
             &layer.v_proj,
-            &layer.v_proj_fp8,
+            &layer.v_proj_q,
             qkv_src,
             self.scratch.v_buf,
             kv_dim,

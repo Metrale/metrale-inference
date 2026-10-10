@@ -34,20 +34,17 @@ impl BlockDiffusionDraftHead {
         // sequence in the batch.
         let g = self.block_g() as u32 * args.n_seq.max(1);
 
-        // 2026-09-25: The same FP8/BF16 GEMM choice as `forward_block_layer_pre_attn`.
-        let use_fp8 = matches!(
-            self.quant,
-            crate::dflash_head::DflashQuantization::Fp8Weights
-        );
+        // 2026-09-25: The same quantized/BF16 GEMM choice as `forward_block_layer_pre_attn`.
+        let use_copy = self.quant != crate::dflash_head::DflashQuantization::Bf16;
         let gemm_swap = |w_bf16: &metrale_model_layers::weight_map::DenseWeight,
-                         w_fp8: &Option<metrale_model_layers::weight_map::Fp8DenseWeight>,
+                         w_q: &Option<crate::dflash_head::DraftWeight>,
                          src: metrale_gpu_runtime::gpu::DevicePtr,
                          dst: metrale_gpu_runtime::gpu::DevicePtr,
                          n_out: u32,
                          k_in: u32|
          -> Result<()> {
-            if use_fp8 && let Some(fp8) = w_fp8 {
-                return self.fp8_rows(gpu, src, fp8, dst, g, n_out, k_in, stream);
+            if use_copy && let Some(w) = w_q {
+                return self.quant_rows(gpu, src, w, dst, g, n_out, k_in, stream);
             }
             ops::dense_gemm_bf16_pipelined(
                 gpu,
@@ -66,7 +63,7 @@ impl BlockDiffusionDraftHead {
         // input: pre_attn read it into norm_buf and did not write it.
         gemm_swap(
             &layer.o_proj,
-            &layer.o_proj_fp8,
+            &layer.o_proj_q,
             self.scratch.attn_out,
             self.scratch.stream_acc,
             h,
@@ -127,7 +124,7 @@ impl BlockDiffusionDraftHead {
         // into mlp_intermediate, down_proj into stream_acc.
         gemm_swap(
             &layer.gate_proj,
-            &layer.gate_proj_fp8,
+            &layer.gate_proj_q,
             mlp_src,
             self.scratch.mlp_intermediate,
             inter,
@@ -135,7 +132,7 @@ impl BlockDiffusionDraftHead {
         )?;
         gemm_swap(
             &layer.up_proj,
-            &layer.up_proj_fp8,
+            &layer.up_proj_q,
             mlp_src,
             self.scratch.mlp_up,
             inter,
@@ -152,7 +149,7 @@ impl BlockDiffusionDraftHead {
         )?;
         gemm_swap(
             &layer.down_proj,
-            &layer.down_proj_fp8,
+            &layer.down_proj_q,
             self.scratch.mlp_intermediate,
             self.scratch.stream_acc,
             h,

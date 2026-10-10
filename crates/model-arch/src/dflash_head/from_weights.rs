@@ -7,8 +7,8 @@
 //! Owner: model-arch (DFlash drafter).
 //! Invariants: none beyond the types.
 
-mod fp8_weights;
 mod kernel_handles;
+mod quant_weights;
 mod rope_table;
 mod scratch;
 mod startup_validation;
@@ -40,6 +40,8 @@ impl BlockDiffusionDraftHead {
         // 2026-10-10: This rank's part of a tensor-parallel drafter: `weights` and
         // `lm_head_shared` are already cut to it (`tp::shard_weights`).
         tp: Option<super::tp::DflashTp>,
+        // 2026-10-10: `--draft-weight-quantization`: the copies of the GEMM weights to build.
+        weight_quant: super::DraftWeightQuantization,
     ) -> Result<Self> {
         let nb = max_batch_size.max(1);
         let target_layer_ids = weights
@@ -72,8 +74,6 @@ impl BlockDiffusionDraftHead {
         let head_dim = weights.config.head_dim;
         let vocab_size = weights.config.vocab_size;
         let levers = super::levers::DFlashLevers::from_env();
-        let fp8_requested =
-            std::env::var("METRALE_DFLASH_DRAFTER_FP8").ok().as_deref() != Some("0");
         // Resolve handles and reject unsupported TP combinations before allocating the KV pool
         // or the head's scratch buffers.
         let kernels = kernel_handles::load_kernels(gpu)?;
@@ -93,7 +93,6 @@ impl BlockDiffusionDraftHead {
             && kernels.dflash2_selector_walk.0 != 0;
         startup_validation::validate_tp_startup(
             tp.is_some(),
-            fp8_requested,
             levers.topk16_split,
             dflash2_selector_active,
             kernels.dflash2_topk16_part.0 != 0,
@@ -231,6 +230,7 @@ impl BlockDiffusionDraftHead {
             num_layers,
         );
 
+        let lm_head_whole = weights.tp_lm_head;
         let mut head = Self {
             // 2026-09-25: The drafter's `DFlashLevers`, resolved from the environment once,
             // here.
@@ -254,7 +254,7 @@ impl BlockDiffusionDraftHead {
             embed_tokens_shared,
             lm_head_shared,
             lm_head_nvfp4,
-            lm_head_shared_fp8: None,
+            lm_head_q: None,
             hidden_norm: weights.hidden_norm,
             norm: weights.norm,
             fc: weights.fc,
@@ -275,21 +275,20 @@ impl BlockDiffusionDraftHead {
                     up_proj: l.up_proj,
                     down_proj: l.down_proj,
                     // 2026-09-25: Filled below when the FP8 drafter path is on.
-                    q_proj_fp8: None,
-                    k_proj_fp8: None,
-                    v_proj_fp8: None,
-                    o_proj_fp8: None,
-                    gate_proj_fp8: None,
-                    up_proj_fp8: None,
-                    down_proj_fp8: None,
+                    q_proj_q: None,
+                    k_proj_q: None,
+                    v_proj_q: None,
+                    o_proj_q: None,
+                    gate_proj_q: None,
+                    up_proj_q: None,
+                    down_proj_q: None,
                     attention_conv_base: l.attention_conv_base,
                     attention_conv_proj: l.attention_conv_proj,
                     mlp_conv_base: l.mlp_conv_base,
                     mlp_conv_proj: l.mlp_conv_proj,
-                    attention_conv_proj_fp8: None,
-                    mlp_conv_proj_fp8: None,
-                    o_proj_cols: l.o_proj_cols,
-                    down_proj_cols: l.down_proj_cols,
+                    attention_conv_proj_q: None,
+                    mlp_conv_proj_q: None,
+                    tp_src: l.tp_src,
                 })
                 .collect(),
             fused_kv_weight: Some(fused_kv_weight),
@@ -353,7 +352,7 @@ impl BlockDiffusionDraftHead {
             selector_pred: weights.selector_pred,
             selector_succ: weights.selector_succ,
             selector_hidden_proj: weights.selector_hidden_proj,
-            aux_fp8: None,
+            aux_q: None,
             tp,
         };
         if head.selector_pred.is_some() {
@@ -391,28 +390,53 @@ impl BlockDiffusionDraftHead {
             head.target_layer_ids,
         );
 
-        // 2026-09-25: FP8 drafter weights, on unless METRALE_DFLASH_DRAFTER_FP8=0:
-        // quantize each layer's seven dense GEMM weights (q/k/v/o/gate/up/down) to FP8
-        // E4M3 with one f32 scale per row, give the lm_head an FP8 copy, and set
-        // `quant = Fp8Weights`. Needs the row-scaled FP8 GEMM and its m16 variant;
-        // without them the drafter stays on BF16 with a warning.
+        // 2026-09-25: The quantized drafter weights (`--draft-weight-quantization`): each
+        // layer's seven dense GEMM weights (q/k/v/o/gate/up/down) and the lm_head, in FP8 E4M3
+        // with one f32 scale per row, or (2026-10-10) NVFP4; `quant` follows. The FP8 tiers need
+        // the row-scaled FP8 GEMM and its m16 variant; without them the drafter stays on BF16
+        // with a warning, as before the flag. The NVFP4 tier needs its quantizers and fails
+        // without them.
         let fp8_kernels_present = head.kernels.fp8_gemm_n128_row_scaled.0 != 0
             && head.kernels.fp8_gemm_n128_row_scaled_m16.0 != 0;
-        if fp8_requested && !fp8_kernels_present {
+        let nvfp4 = weight_quant == super::DraftWeightQuantization::Nvfp4;
+        anyhow::ensure!(
+            !nvfp4
+                || (head.kernels.nvfp4_global_absmax.0 != 0
+                    && head.kernels.quantize_bf16_to_nvfp4.0 != 0),
+            "--draft-weight-quantization nvfp4: this target's kernels have no \
+             quantize_bf16_to_nvfp4 module"
+        );
+        let quantize = weight_quant.quantizes_layers() && (nvfp4 || fp8_kernels_present);
+        if weight_quant.quantizes_layers() && !quantize {
             tracing::warn!(
-                "FP8 drafter requested (METRALE_DFLASH_DRAFTER_FP8 is not 0) but the \
-                 fp8_gemm_t_row_scaled(_m16) kernels are in neither this target's w4a16 nor its \
-                 dflash_fp8_gemm PTX module — staying on the BF16 drafter path."
+                "--draft-weight-quantization {} but the fp8_gemm_t_row_scaled(_m16) kernels are \
+                 in neither this target's w4a16 nor its dflash_fp8_gemm PTX module — staying on \
+                 the BF16 drafter path.",
+                weight_quant.name()
             );
         }
-        if fp8_requested && fp8_kernels_present {
-            fp8_weights::quantize_drafter_fp8(&mut head, gpu, q_dim, kv_dim, lm_head_native_fp8)?;
+        let qz = super::draft_weight::DraftQuantizer {
+            gpu,
+            nvfp4,
+            fp8_k: head.kernels.quantize_bf16_to_fp8,
+            absmax_k: head.kernels.nvfp4_global_absmax,
+            nvfp4_k: head.kernels.quantize_bf16_to_nvfp4,
+            stream: 0,
+        };
+        if quantize {
+            quant_weights::quantize_drafter(
+                &mut head,
+                &qz,
+                q_dim,
+                kv_dim,
+                lm_head_native_fp8,
+                lm_head_whole,
+            )?;
         }
-        // 2026-10-10: `METRALE_DFLASH_AUX_FP8=1` (`aux_fp8.rs`) on top of the FP8 drafter;
-        // `quantize_aux_fp8` refuses a BF16 head.
-        if head.levers.aux_fp8 {
-            let quant_k = head.kernels.quantize_bf16_to_fp8;
-            head.aux_fp8 = Some(head.quantize_aux_fp8(gpu, quant_k, 0)?);
+        // 2026-10-10: The auxiliary GEMMs' copies, in the layer copies' format;
+        // `quantize_aux` refuses a head whose layers are not.
+        if weight_quant.quantizes_aux() {
+            head.aux_q = Some(head.quantize_aux(&qz)?);
         }
 
         Ok(head)
