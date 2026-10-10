@@ -19,6 +19,7 @@ pub mod check;
 pub mod compare;
 pub mod contract;
 pub mod elem;
+pub mod envelope;
 pub mod emulate;
 pub mod inputs;
 pub mod jobs;
