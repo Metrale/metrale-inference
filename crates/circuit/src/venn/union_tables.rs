@@ -87,7 +87,7 @@ struct Cell {
 }
 
 fn order(l: &str) -> u8 {
-    ["E", "M", "U", "O", "V", "N"]
+    ["E", "S", "M", "U", "O", "V", "N"]
         .iter()
         .position(|x| *x == l)
         .unwrap_or(6) as u8
