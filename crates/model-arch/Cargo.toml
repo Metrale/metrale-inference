@@ -263,6 +263,10 @@ name = "glm5next_hc_fused_gate"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "glm5next_hc_post_sum_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "glm5next_rowbatch_microtest"
 required-features = ["cuda", "gpu-examples"]
 

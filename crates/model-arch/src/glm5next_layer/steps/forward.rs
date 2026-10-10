@@ -8,6 +8,9 @@
 //! - `forward_one` uses highway slot `slot`; `forward_k` uses slots `slot_base..slot_base + k`.
 //! - `forward_rows_with` launches what `forward_k` launched inline before 2026-10-08, in the
 //!   same order; only the mixer call moved into the caller's closure.
+//! - 2026-10-10: With `METRALE_GLM_AR_FUSED_POST=1` an all-reduce that takes the one-shot path
+//!   in one piece is the exchange alone, and its sum runs inside the post-mix after it
+//!   (`hc_post_reduced`); off, every launch is as before.
 
 use super::*;
 
@@ -116,28 +119,18 @@ impl Glm5NextLayer {
             ctx,
             stream,
         )?;
+        let fused = self.fused_post(mhc)?;
+        let mut partials = None;
         if self.mixer_all_reduce {
             self.reduce_probe(profile::REDUCE_ATTN_BAR, "attn", ctx, stream);
             let t = profile::start_hot();
-            self.reduce_partial(attn_out, 1, ctx, stream)?;
+            partials = self.reduce_or_exchange(attn_out, &[1], fused, ctx, stream)?;
             profile::end_nosync(profile::REDUCE_ATTN_ENQ, t);
             let t = profile::start_hot();
             profile::end(profile::REDUCE_ATTN, t, ctx.gpu, stream);
         }
         let t_mhc_post = profile::start();
-        glm_hc_post(
-            gpu,
-            mhc.kernels.hc_post,
-            attn_out,
-            streams,
-            post,
-            comb,
-            streams,
-            1,
-            h as u32,
-            hc as u32,
-            stream,
-        )?;
+        self.hc_post_reduced(gpu, mhc, attn_out, partials, streams, post, comb, 1, stream)?;
         profile::end(profile::MHC_POST, t_mhc_post, gpu, stream);
 
         let t_mhc = profile::start();
@@ -155,21 +148,9 @@ impl Glm5NextLayer {
             t_mhc,
             stream,
         )?;
-        self.mlp_forward(normed, ffn_out, 1, &[1], ctx, stream)?;
+        let partials = self.mlp_forward(normed, ffn_out, 1, &[1], fused, ctx, stream)?;
         let t_mhc_post = profile::start();
-        glm_hc_post(
-            gpu,
-            mhc.kernels.hc_post,
-            ffn_out,
-            streams,
-            post,
-            comb,
-            streams,
-            1,
-            h as u32,
-            hc as u32,
-            stream,
-        )?;
+        self.hc_post_reduced(gpu, mhc, ffn_out, partials, streams, post, comb, 1, stream)?;
 
         if self.is_last {
             hc_head_mean(
@@ -354,28 +335,18 @@ impl Glm5NextLayer {
         let t = profile::start();
         let attn_out = mixer(normed)?;
         profile::end(profile::KDA, t, gpu, stream);
+        let fused = self.fused_post(mhc)?;
+        let mut partials = None;
         if self.mixer_all_reduce {
             self.reduce_probe(profile::REDUCE_ATTN_BAR, "attn", ctx, stream);
             let t = profile::start_hot();
-            self.reduce_pieces(attn_out, row_pieces, ctx, stream)?;
+            partials = self.reduce_or_exchange(attn_out, row_pieces, fused, ctx, stream)?;
             profile::end_nosync(profile::REDUCE_ATTN_ENQ, t);
             let t = profile::start_hot();
             profile::end(profile::REDUCE_ATTN, t, ctx.gpu, stream);
         }
         let t_mhc_post = profile::start();
-        glm_hc_post(
-            gpu,
-            mhc.kernels.hc_post,
-            attn_out,
-            streams,
-            post,
-            comb,
-            streams,
-            kt,
-            ht,
-            hct,
-            stream,
-        )?;
+        self.hc_post_reduced(gpu, mhc, attn_out, partials, streams, post, comb, k, stream)?;
         profile::end(profile::MHC_POST, t_mhc_post, gpu, stream);
 
         let t_mhc = profile::start();
@@ -393,21 +364,9 @@ impl Glm5NextLayer {
             t_mhc,
             stream,
         )?;
-        self.mlp_forward(normed, ffn_out, k, row_pieces, ctx, stream)?;
+        let partials = self.mlp_forward(normed, ffn_out, k, row_pieces, fused, ctx, stream)?;
         let t_mhc_post = profile::start();
-        glm_hc_post(
-            gpu,
-            mhc.kernels.hc_post,
-            ffn_out,
-            streams,
-            post,
-            comb,
-            streams,
-            kt,
-            ht,
-            hct,
-            stream,
-        )?;
+        self.hc_post_reduced(gpu, mhc, ffn_out, partials, streams, post, comb, k, stream)?;
         if self.is_last {
             hc_head_mean(
                 gpu,

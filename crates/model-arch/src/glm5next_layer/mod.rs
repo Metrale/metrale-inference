@@ -51,6 +51,7 @@ use crate::glm5next_mhc::{
     Glm5NextMhcKernels, Glm5NextMhcSiteWeights, glm_hc_expand, glm_hc_post, glm_hc_pre,
     hc_head_mean,
 };
+use crate::glm5next_mhc_fused::glm_hc_post_rank_sum;
 
 pub mod state;
 
@@ -63,7 +64,7 @@ mod types;
 pub(crate) mod wide_gemv;
 pub use levers::prefill_rows;
 pub(crate) use levers::{
-    PREFILL_ROWS, cublas_wide_proj, dsa_batch_qidx, dsa_indexer_rows, mhc_fused,
+    PREFILL_ROWS, ar_fused_post, cublas_wide_proj, dsa_batch_qidx, dsa_indexer_rows, mhc_fused,
     moe_combine_split, multi_seq_chunk_rows, multi_seq_chunks, router_rows, router_topk_rank,
 };
 pub use steps::{GroupSpan, SpanPiece, group_spans, prefill_span_groups};

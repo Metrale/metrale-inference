@@ -22,6 +22,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use metrale_gpu_sys::nccl::{self, NcclComm, NcclDataType, NcclResult};
 
+use crate::PeerPartials;
+
 use super::{
     ALL_REDUCE_DTYPE_BYTES, NcclBackend, cuLaunchKernel, cuMemAlloc_v2, cuMemFree_v2,
     ensure_payload_fits,
@@ -128,7 +130,9 @@ impl NcclBackend {
     }
 
     /// 2026-10-08: One-shot all-reduce of `bytes` at `ptr` on `stream` (see the module header).
-    /// Every rank must call it with the same `bytes`.
+    /// Every rank must call it with the same `bytes`. 2026-10-10: The exchange is
+    /// `exchange_oneshot`; this adds the `bf16_add_rank_sum` launch after it, the calls in the
+    /// order they were made before.
     ///
     /// # Errors
     /// A payload over the bound, an NCCL failure, the sum kernel not set, or a failed launch.
@@ -138,6 +142,60 @@ impl NcclBackend {
         if kernel == 0 {
             anyhow::bail!("bf16_add_rank_sum kernel not set — call set_rank_sum_kernel() first");
         }
+        let partials = self.exchange_oneshot(ptr, bytes, stream)?;
+        let count = bytes / ALL_REDUCE_DTYPE_BYTES;
+        let threads: u32 = 256;
+        let blocks: u32 = (count as u32).div_ceil(threads);
+        let mut p_dst = ptr;
+        let mut p_peers = partials.recv;
+        let mut p_slot = partials.slot_elems as i64;
+        let mut p_ranks = self.world_size as i32;
+        let mut p_rank = self.rank as i32;
+        let mut p_n = count as i32;
+        let mut params: [*mut c_void; 6] = [
+            &mut p_dst as *mut u64 as *mut c_void,
+            &mut p_peers as *mut u64 as *mut c_void,
+            &mut p_slot as *mut i64 as *mut c_void,
+            &mut p_ranks as *mut i32 as *mut c_void,
+            &mut p_rank as *mut i32 as *mut c_void,
+            &mut p_n as *mut i32 as *mut c_void,
+        ];
+        let status = unsafe {
+            cuLaunchKernel(
+                kernel,
+                blocks,
+                1,
+                1,
+                threads,
+                1,
+                1,
+                0,
+                stream,
+                params.as_mut_ptr(),
+                ptr::null_mut(),
+            )
+        };
+        if status != 0 {
+            anyhow::bail!("cuLaunchKernel (bf16_add_rank_sum) failed: status {status}");
+        }
+        Ok(())
+    }
+
+    /// 2026-10-10: The exchange half of the one-shot all-reduce: send the `bytes` at `ptr` to every
+    /// peer and receive every peer's partial into its slot, one grouped NCCL call on `stream`.
+    /// Returns where the partials land; the caller sums them in rank order (`bf16_add_rank_sum`,
+    /// or a consumer kernel with the same arithmetic). Every rank must call it with the same
+    /// `bytes`.
+    ///
+    /// # Errors
+    /// A payload over the bound or an NCCL failure.
+    pub(super) fn exchange_oneshot(
+        &self,
+        ptr: u64,
+        bytes: usize,
+        stream: u64,
+    ) -> Result<PeerPartials> {
+        ensure_payload_fits(bytes, self.oneshot.max_bytes, self.rank, self.world_size)?;
         let count = bytes / ALL_REDUCE_DTYPE_BYTES;
         let comm = *self.comm.lock();
         let result = unsafe { nccl::ncclGroupStart() };
@@ -173,42 +231,12 @@ impl NcclBackend {
         let result = unsafe { nccl::ncclGroupEnd() };
         nccl::check_nccl(result, "ncclGroupEnd")?;
         self.check_async_error(comm);
-
-        let threads: u32 = 256;
-        let blocks: u32 = (count as u32).div_ceil(threads);
-        let mut p_dst = ptr;
-        let mut p_peers = self.oneshot.recv;
-        let mut p_slot = (self.oneshot.max_bytes / ALL_REDUCE_DTYPE_BYTES) as i64;
-        let mut p_ranks = self.world_size as i32;
-        let mut p_rank = self.rank as i32;
-        let mut p_n = count as i32;
-        let mut params: [*mut c_void; 6] = [
-            &mut p_dst as *mut u64 as *mut c_void,
-            &mut p_peers as *mut u64 as *mut c_void,
-            &mut p_slot as *mut i64 as *mut c_void,
-            &mut p_ranks as *mut i32 as *mut c_void,
-            &mut p_rank as *mut i32 as *mut c_void,
-            &mut p_n as *mut i32 as *mut c_void,
-        ];
-        let status = unsafe {
-            cuLaunchKernel(
-                kernel,
-                blocks,
-                1,
-                1,
-                threads,
-                1,
-                1,
-                0,
-                stream,
-                params.as_mut_ptr(),
-                ptr::null_mut(),
-            )
-        };
-        if status != 0 {
-            anyhow::bail!("cuLaunchKernel (bf16_add_rank_sum) failed: status {status}");
-        }
-        Ok(())
+        Ok(PeerPartials {
+            recv: self.oneshot.recv,
+            slot_elems: self.oneshot.max_bytes / ALL_REDUCE_DTYPE_BYTES,
+            world_size: self.world_size,
+            rank: self.rank,
+        })
     }
 
     /// 2026-09-26: 2-rank all-reduce: refuse a payload larger than

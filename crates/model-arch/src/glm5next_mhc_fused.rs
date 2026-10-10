@@ -14,13 +14,16 @@
 //!   grid is chosen for speed alone: per row below `HC_PRE_NORM_ROWS_MIN_TOKENS`.
 //! - It refuses every shape the kernel's shared memory and per-`hc_mult` instantiations do not
 //!   cover, and an FP32 `hc_fn`.
+//! - 2026-10-10: `glm_hc_post_rank_sum` (`glm5next_hc_post_sum.cu`) writes what
+//!   `bf16_add_rank_sum` followed by `glm_hc_post` writes, byte for byte
+//!   (`examples/glm5next_hc_post_sum_gate.rs`).
 
 use anyhow::{Result, bail};
-use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
+use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 use crate::glm5next_mhc::{
-    Glm5NextMhcKernels, Glm5NextMhcSiteWeights, HC_MIX_ROWS, MHC_MIX_MAX_TOKENS,
+    Glm5NextMhcKernels, Glm5NextMhcSiteWeights, HC_MIX_ROWS, MHC_MIX_MAX_TOKENS, collapse_blocks,
     mhc_mix_max_tokens, mix_hc,
 };
 
@@ -134,6 +137,53 @@ pub fn glm_hc_pre_norm(
         .launch(stream)
 }
 
+/// 2026-10-10: The one-shot all-reduce's sum and `glm_hc_post` in one launch
+/// (`glm5next_hc_post_rank_sum`): `block_out` holds this rank's partial and `partials` says where
+/// the other ranks' landed (`CommBackend::exchange_partials`). Writes the reduced row back to
+/// `block_out` and the post-mix to `out`, both byte-identical to `bf16_add_rank_sum` followed by
+/// `glm_hc_post`. Errors when the kernel is not loaded or the rows exceed a peer slot.
+#[allow(clippy::too_many_arguments)]
+pub fn glm_hc_post_rank_sum(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    block_out: DevicePtr,
+    partials: &metrale_comm::PeerPartials,
+    residual: DevicePtr,
+    post: DevicePtr,
+    comb: DevicePtr,
+    out: DevicePtr,
+    num_tokens: u32,
+    hidden_size: u32,
+    hc_mult: u32,
+    stream: u64,
+) -> Result<()> {
+    anyhow::ensure!(
+        kernel.0 != 0,
+        "glm5next_hc_post_rank_sum is not loaded on this target"
+    );
+    let elems = num_tokens as usize * hidden_size as usize;
+    anyhow::ensure!(
+        elems <= partials.slot_elems,
+        "{elems} elements exceed the one-shot peer slot of {}",
+        partials.slot_elems
+    );
+    KernelLaunch::new(gpu, kernel)
+        .grid([num_tokens, collapse_blocks(hidden_size), 1])
+        .block([256, 1, 1])
+        .arg_ptr(block_out)
+        .arg_ptr(DevicePtr(partials.recv))
+        .arg_u64(partials.slot_elems as u64)
+        .arg_i32(partials.world_size as i32)
+        .arg_i32(partials.rank as i32)
+        .arg_ptr(residual)
+        .arg_ptr(post)
+        .arg_ptr(comb)
+        .arg_ptr(out)
+        .arg_u32(hidden_size)
+        .arg_u32(hc_mult)
+        .launch(stream)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -152,6 +202,7 @@ mod tests {
             hc_pre_norm: k(if fused { 9 } else { 0 }),
             hc_pre_norm_rows: k(if fused { 10 } else { 0 }),
             hc_post: k(7),
+            hc_post_rank_sum: k(11),
             hc_head: k(8),
         }
     }
@@ -229,5 +280,105 @@ mod tests {
         }
         assert!(launch(&gpu, &on, &site(true), cap, 8192, 4).is_ok());
         assert!(launch(&gpu, &on, &site(true), 1, 256, 1).is_ok());
+    }
+
+    /// 2026-10-10: `glm_hc_post_rank_sum` passes its arguments in the kernel's parameter order
+    /// (`glm5next_hc_post_sum.cu`: block_out, peers, slot_elems, n_ranks, my_rank, residual,
+    /// post, comb, out, H, hc) on `hc_post`'s grid, and refuses a missing kernel or rows past a
+    /// peer slot.
+    #[test]
+    fn post_rank_sum_launches_in_the_kernels_argument_order() {
+        use metrale_gpu_runtime::gpu::mock::MockArg;
+        let gpu = MockGpuBackend::new();
+        let p = metrale_comm::PeerPartials {
+            recv: 0x9000,
+            slot_elems: 8192,
+            world_size: 3,
+            rank: 2,
+        };
+        let (x, res, post, comb) = (
+            DevicePtr(0x10),
+            DevicePtr(0x20),
+            DevicePtr(0x30),
+            DevicePtr(0x40),
+        );
+        glm_hc_post_rank_sum(
+            &gpu,
+            KernelHandle(11),
+            x,
+            &p,
+            res,
+            post,
+            comb,
+            res,
+            2,
+            4096,
+            4,
+            7,
+        )
+        .unwrap();
+        let l = gpu.launches_snapshot();
+        assert_eq!(l.len(), 1);
+        assert_eq!(
+            (l[0].func, l[0].grid, l[0].block, l[0].stream),
+            (11, [2, 16, 1], [256, 1, 1], 7)
+        );
+        let b = |v: &[u8]| MockArg::Bytes(v.to_vec());
+        assert_eq!(
+            l[0].args,
+            vec![
+                MockArg::Buffer(x),
+                MockArg::Buffer(DevicePtr(0x9000)),
+                b(&8192u64.to_le_bytes()),
+                b(&3i32.to_le_bytes()),
+                b(&2i32.to_le_bytes()),
+                MockArg::Buffer(res),
+                MockArg::Buffer(post),
+                MockArg::Buffer(comb),
+                MockArg::Buffer(res),
+                b(&4096u32.to_le_bytes()),
+                b(&4u32.to_le_bytes()),
+            ]
+        );
+        assert!(
+            glm_hc_post_rank_sum(
+                &gpu,
+                KernelHandle(0),
+                x,
+                &p,
+                res,
+                post,
+                comb,
+                res,
+                1,
+                4096,
+                4,
+                0
+            )
+            .is_err()
+        );
+        assert!(
+            glm_hc_post_rank_sum(
+                &gpu,
+                KernelHandle(11),
+                x,
+                &p,
+                res,
+                post,
+                comb,
+                res,
+                3,
+                4096,
+                4,
+                0
+            )
+            .is_err(),
+            "3 x 4096 elements exceed an 8192-element slot"
+        );
+        assert_eq!(
+            gpu.launches_snapshot().len(),
+            1,
+            "a refused launch enqueues nothing"
+        );
     }
 }

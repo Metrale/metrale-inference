@@ -48,6 +48,10 @@ pub struct Glm5NextMhcKernels {
     /// Optional (`try_kernel`, 0 when absent).
     pub hc_pre_norm_rows: KernelHandle,
     pub hc_post: KernelHandle,
+    /// 2026-10-10: `glm5next_hc_post_rank_sum` (module [`GLM5NEXT_HC_POST_SUM_MODULE`]): the
+    /// one-shot all-reduce's sum fused into `hc_post`, same bits. Optional (`try_kernel`, 0 when
+    /// absent); taken under `METRALE_GLM_AR_FUSED_POST=1`.
+    pub hc_post_rank_sum: KernelHandle,
     pub hc_head: KernelHandle,
 }
 
@@ -56,6 +60,9 @@ pub const GLM5NEXT_MHC_MODULE: &str = "glm5next_mhc";
 
 /// 2026-10-09: The kernel module of the fused pre-mix + norm (`glm5next_mhc_fused.cu`).
 pub const GLM5NEXT_MHC_FUSED_MODULE: &str = "glm5next_mhc_fused";
+
+/// 2026-10-10: The kernel module of the fused all-reduce sum + post-mix (`glm5next_hc_post_sum.cu`).
+pub const GLM5NEXT_HC_POST_SUM_MODULE: &str = "glm5next_hc_post_sum";
 
 impl Glm5NextMhcKernels {
     /// 2026-09-25: Resolve the kernels. A missing one is an error, except `hc_mix_bf16`, which is
@@ -87,6 +94,11 @@ impl Glm5NextMhcKernels {
                 "glm5next_hc_pre_norm_rows",
             ),
             hc_post: gpu.kernel(GLM5NEXT_MHC_MODULE, "glm5next_hc_post")?,
+            hc_post_rank_sum: metrale_model_layers::layers::try_kernel(
+                gpu,
+                GLM5NEXT_HC_POST_SUM_MODULE,
+                "glm5next_hc_post_rank_sum",
+            ),
             hc_head: gpu.kernel(GLM5NEXT_MHC_MODULE, "glm5next_hc_head")?,
         })
     }
@@ -300,7 +312,7 @@ pub fn glm_hc_post(
 /// 2026-09-25: Blocks along grid y for `hc_finish`'s collapse and for `hc_post`: `ceil(H / 256)`,
 /// at least 1, where 256 is the block width both launch at. Each output element is computed on
 /// its own, so the block count does not change the result.
-const fn collapse_blocks(hidden_size: u32) -> u32 {
+pub(crate) const fn collapse_blocks(hidden_size: u32) -> u32 {
     if hidden_size < 256 {
         1
     } else {
@@ -375,6 +387,7 @@ mod mhc_shape_tests {
             hc_pre_norm: k(9),
             hc_pre_norm_rows: k(10),
             hc_post: k(7),
+            hc_post_rank_sum: k(11),
             hc_head: k(8),
         };
         let site = |bf16| Glm5NextMhcSiteWeights {
