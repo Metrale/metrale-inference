@@ -34,6 +34,11 @@ pub(crate) const NO_TOKENIZER: &str = "none";
 /// before it gives up: the counts of neighbouring cuts differ by one token
 /// except where a merge across the cut moves two at once.
 const NEIGHBOURHOOD: usize = 16;
+/// 2026-10-10: Words appended to the tag when no cut hits the target: a tokenizer can merge
+/// the end of a cut with the newline after it so that neighbouring cuts skip the target by
+/// two (seen with GLM-5.3's tokenizer on the synthetic filler at 4096), and a suffix that adds
+/// one token shifts every count by one. The first entry is no suffix.
+const TAG_SUFFIXES: &[&str] = &["", " a", " a b", " a b c"];
 /// 2026-10-10: Spare body tokens beyond the largest target, so the tag and
 /// the task line never leave the search without room.
 const SPARE: usize = 64;
@@ -110,8 +115,8 @@ pub(crate) struct ExactPrompts<C: Codec> {
     /// target plus [`SPARE`].
     body: Vec<u32>,
     pub(crate) salt: u64,
-    /// 2026-10-10: The body cut that last hit each target, tried first next time.
-    hints: BTreeMap<usize, usize>,
+    /// 2026-10-10: The tag suffix and body cut that last hit each target, tried first next time.
+    hints: BTreeMap<usize, (usize, usize)>,
     /// 2026-10-10: The smallest server-reported prompt size per target.
     reported: BTreeMap<usize, usize>,
 }
@@ -148,44 +153,60 @@ impl<C: Codec> ExactPrompts<C> {
 
     /// 2026-10-10: The user message of one sample, exactly `target` tokens.
     pub(crate) fn prompt(&mut self, mode: Mode, target: usize, sample: usize) -> Result<String> {
-        let tag = tag(mode, self.salt, target, sample);
-        if let Some(&hint) = self.hints.get(&target) {
-            let (n, text) = self.count(hint, &tag)?;
+        let base = tag(mode, self.salt, target, sample);
+        if let Some(&(suffix, cut)) = self.hints.get(&target) {
+            let (n, text) = self.count(cut, &format!("{base}{}", TAG_SUFFIXES[suffix]))?;
             if n == target {
                 return Ok(text);
             }
         }
-        // 2026-10-10: The smallest cut whose message reaches the target.
-        let (mut lo, mut hi) = (0usize, self.body.len());
-        while lo < hi {
-            let mid = lo + (hi - lo) / 2;
-            if self.count(mid, &tag)?.0 >= target {
-                hi = mid;
-            } else {
-                lo = mid + 1;
-            }
-        }
         let mut closest = Vec::new();
-        for d in 0..=NEIGHBOURHOOD {
-            for cut in [lo.checked_sub(d), lo.checked_add(d)].into_iter().flatten() {
-                if cut > self.body.len() {
-                    continue;
-                }
-                let (n, text) = self.count(cut, &tag)?;
-                if n == target {
-                    self.hints.insert(target, cut);
-                    return Ok(text);
-                }
-                closest.push(n);
+        for (suffix, pad) in TAG_SUFFIXES.iter().enumerate() {
+            let tag = format!("{base}{pad}");
+            if let Some((cut, text)) = self.search(&tag, target, &mut closest)? {
+                self.hints.insert(target, (suffix, cut));
+                return Ok(text);
             }
         }
         closest.sort_unstable();
         closest.dedup();
         bail!(
-            "no cut of the prompt body encodes to exactly {target} tokens with tag {tag:?} \
-             (counts near the cut: {closest:?}); the target is below the tag and task line, or \
-             the tokenizer merges across every nearby cut"
+            "no cut of the prompt body encodes to exactly {target} tokens with tag {base:?} and \
+             any of its suffixes {TAG_SUFFIXES:?} (counts near the cut: {closest:?}); the target \
+             is below the tag and task line, or the tokenizer merges across every nearby cut"
         )
+    }
+
+    /// 2026-10-10: The cut, near the smallest one whose message reaches `target`, that encodes
+    /// to exactly `target` with `tag`; the counts it saw go to `closest`.
+    fn search(
+        &self,
+        tag: &str,
+        target: usize,
+        closest: &mut Vec<usize>,
+    ) -> Result<Option<(usize, String)>> {
+        let (mut lo, mut hi) = (0usize, self.body.len());
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if self.count(mid, tag)?.0 >= target {
+                hi = mid;
+            } else {
+                lo = mid + 1;
+            }
+        }
+        for d in 0..=NEIGHBOURHOOD {
+            for cut in [lo.checked_sub(d), lo.checked_add(d)].into_iter().flatten() {
+                if cut > self.body.len() {
+                    continue;
+                }
+                let (n, text) = self.count(cut, tag)?;
+                if n == target {
+                    return Ok(Some((cut, text)));
+                }
+                closest.push(n);
+            }
+        }
+        Ok(None)
     }
 
     /// 2026-10-10: Accept one measured sample's server-reported prompt size:

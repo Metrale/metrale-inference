@@ -70,10 +70,67 @@ fn every_target_is_met_exactly_and_keeps_the_layout() {
         for mode in [Mode::Cold, Mode::Warm] {
             let text = p.prompt(mode, target, 3).expect("exact");
             assert_eq!(count(&text), target, "{target} tokens, {}", &text[..40]);
-            assert!(text.starts_with(&format!("[{}] ", tag(mode, 7, target, 3))));
+            assert!(text.starts_with(&format!("[{}", tag(mode, 7, target, 3))));
             assert!(text.ends_with(TASK_LINE));
         }
     }
+}
+
+/// 2026-10-10: A character codec with two merges: `y` + newline and space + `a` are one token
+/// each. On a body of `xy` pairs, cuts ending in `y` merge with the newline after the body, so
+/// neighbouring cuts skip every other count, as GLM-5.3's tokenizer did on the filler at 4096.
+struct Skipping;
+
+const Y_NL: u32 = 0x11_0000;
+const SP_A: u32 = 0x11_0001;
+
+impl Codec for Skipping {
+    fn encode(&self, text: &str) -> Result<Vec<u32>> {
+        let chars: Vec<char> = text.chars().collect();
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < chars.len() {
+            match (chars[i], chars.get(i + 1)) {
+                ('y', Some('\n')) => (out.push(Y_NL), i += 2),
+                (' ', Some('a')) => (out.push(SP_A), i += 2),
+                (c, _) => (out.push(c as u32), i += 1),
+            };
+        }
+        Ok(out)
+    }
+
+    fn decode(&self, ids: &[u32]) -> Result<String> {
+        Ok(ids
+            .iter()
+            .map(|&id| match id {
+                Y_NL => "y\n".to_string(),
+                SP_A => " a".to_string(),
+                c => char::from_u32(c).expect("char").to_string(),
+            })
+            .collect())
+    }
+}
+
+#[test]
+fn a_count_every_cut_skips_is_reached_through_a_tag_suffix() {
+    let body = "xy".repeat(400);
+    let mut p = ExactPrompts::new(Skipping, &body, 600, 3).expect("source");
+    let count = |cut: usize, target: usize| {
+        let text = content(&body[..cut], &tag(Mode::Warm, 3, target, 0));
+        Skipping.encode(&text).expect("encode").len()
+    };
+    let skipped = (200..400)
+        .find(|&t| !(0..=600).any(|cut| count(cut, t) == t))
+        .expect("the codec makes every cut skip some count");
+    let text = p
+        .prompt(Mode::Warm, skipped, 0)
+        .expect("reached via a suffix");
+    assert_eq!(Skipping.encode(&text).expect("encode").len(), skipped);
+    assert!(
+        text.starts_with(&format!("[{} a", tag(Mode::Warm, 3, skipped, 0))),
+        "{}",
+        &text[..40]
+    );
 }
 
 #[test]

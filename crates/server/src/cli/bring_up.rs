@@ -46,6 +46,10 @@ pub(crate) async fn dispatch(a: BringUpArgs) -> Result<()> {
         return Ok(());
     }
     let out = a.out.clone().context("--out is required when measuring")?;
+    let concs = conc::parse_concs(&a.concs)?;
+    if a.skip_ttft && a.skip_concurrency {
+        bail!("--skip-ttft and --skip-concurrency together leave nothing to measure");
+    }
     let (url, discovered) = match &a.url {
         Some(u) => (u.clone(), None),
         None => {
@@ -65,10 +69,6 @@ pub(crate) async fn dispatch(a: BringUpArgs) -> Result<()> {
     } else {
         Some(tokenizer(a.tokenizer.as_deref(), discovered.as_ref())?)
     };
-    let concs = conc::parse_concs(&a.concs)?;
-    if a.skip_ttft && a.skip_concurrency {
-        bail!("--skip-ttft and --skip-concurrency together leave nothing to measure");
-    }
     let engine = identify(&target, &models, &model, a.label.clone()).await;
     let steps = if a.skip_ttft {
         Vec::new()
