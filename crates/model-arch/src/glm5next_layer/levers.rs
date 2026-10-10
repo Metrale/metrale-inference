@@ -74,6 +74,23 @@ pub(crate) fn router_rows() -> bool {
     *E.get_or_init(|| std::env::var("METRALE_GLM_ROUTER_ROWS").as_deref() == Ok("1"))
 }
 
+/// 2026-10-10: `METRALE_GLM_ROUTER_TOPK_RANK=1` selects the routed experts with
+/// `glm5next_router_topk_rank` (one rank count per expert) instead of `glm5next_router_topk`
+/// (one block-wide argmax per slot); same ids and weights byte for byte
+/// (`glm5next_mlp::forward::topk_combine`). Off until measured end to end. Read once.
+pub(crate) fn router_topk_rank() -> bool {
+    static E: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *E.get_or_init(|| std::env::var("METRALE_GLM_ROUTER_TOPK_RANK").as_deref() == Ok("1"))
+}
+
+/// 2026-10-10: `METRALE_GLM_MOE_COMBINE_SPLIT=1` spreads each row of the MoE combine over
+/// `hidden / 256` blocks instead of one; every element's arithmetic is unchanged
+/// (`glm5next_mlp::forward::topk_combine`). Off until measured end to end. Read once.
+pub(crate) fn moe_combine_split() -> bool {
+    static E: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *E.get_or_init(|| std::env::var("METRALE_GLM_MOE_COMBINE_SPLIT").as_deref() == Ok("1"))
+}
+
 /// 2026-10-09: `METRALE_GLM_DSA_INDEXER_ROWS=1` runs the DSA indexer's key and gate
 /// projections and the key norm of a batched decode or verify group once over all its rows
 /// (`Glm5NextDsaLayer::indexer_project_rows`) instead of once per row; each row is then placed

@@ -116,6 +116,11 @@ impl Glm5NextDsaLayer {
         let w = &self.workspace;
         let t_proj = crate::glm5next_layer::profile::start();
 
+        // 2026-10-10: `hidden` is not written until `project_out`, so under the fp8 and w4a16
+        // tiers the indexer's `wk` and compress gate of a one-row step reuse the activation
+        // quantization `kv_a_proj` made of it instead of quantizing it twice more (same bytes:
+        // the same kernel on the same input).
+        let stable = crate::glm5next_fp8_dense::stable_input(hidden);
         self.project_in(gpu, hidden, k, stream)?;
         let mut attend_bt = DevicePtr::NULL;
         let mut attend_sl = DevicePtr::NULL;
@@ -289,6 +294,7 @@ impl Glm5NextDsaLayer {
             gpu.free(attend_sl)?;
         }
 
+        drop(stable);
         self.project_out(gpu, hidden, k, stream)
     }
 }

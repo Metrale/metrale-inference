@@ -12,7 +12,6 @@
 
 use anyhow::{Result, bail};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
-use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 use super::forward_prefill_gemm;
 use super::weights::Glm5NextMoeWeights;
@@ -24,6 +23,7 @@ mod moe_experts;
 mod pieces;
 mod route;
 mod router;
+mod topk_combine;
 mod w4a4;
 mod workspace;
 
@@ -368,21 +368,8 @@ pub fn forward_moe_pieces(
 
     let t = profile::start();
     pieces::router_logits(gpu, k, cfg, w, x, ws, row_pieces, stream)?;
-    // 2026-09-25: One top-k launch for all rows: `glm5next_router_topk` handles row `blockIdx.x`.
-    KernelLaunch::new(gpu, k.router)
-        .grid([rows as u32, 1, 1])
-        .block([ACT_BLOCK, 1, 1])
-        .arg_ptr(ws.logits)
-        .arg_ptr(w.router_bias)
-        .arg_ptr(ws.ids)
-        .arg_ptr(ws.wts)
-        .arg_u32(cfg.num_experts as u32)
-        .arg_u32(cfg.top_k as u32)
-        .arg_u32(1)
-        .arg_f32(cfg.routed_scale)
-        .arg_u32(u32::from(cfg.renormalize))
-        .arg_u32(u32::from(cfg.router_bf16_ladder))
-        .launch(stream)?;
+    // 2026-09-25: One top-k launch for all rows, one block per row (`topk_combine`).
+    topk_combine::router_topk(gpu, k, cfg, w, ws, rows, stream)?;
     profile::end(profile::MOE_ROUTER, t, gpu, stream);
 
     // 2026-09-25: Zero every routed output first: an expert this rank does not own writes
@@ -426,33 +413,9 @@ pub fn forward_moe_pieces(
     // all-reduce, so one collective reduces both partial sums.
     profile::end(profile::MOE_SHARED, t, gpu, stream);
     let t = profile::start();
-    // 2026-09-25: One combine launch for all rows (row = `blockIdx.x`). After the grouped GEMM
-    // the routed rows are in expert-sorted order, so that path uses
-    // `glm5next_moe_combine_indexed`, which finds each slot's row through `token_to_perm`.
-    if grouped_prefill {
-        KernelLaunch::new(gpu, k.combine_indexed)
-            .grid([rows as u32, 1, 1])
-            .block([ACT_BLOCK, 1, 1])
-            .arg_ptr(ws.expert_out)
-            .arg_ptr(ws.token_to_perm)
-            .arg_ptr(ws.wts)
-            .arg_ptr(ws.shared_out)
-            .arg_ptr(out)
-            .arg_u32(cfg.hidden as u32)
-            .arg_u32(cfg.top_k as u32)
-            .launch(stream)?;
-    } else {
-        KernelLaunch::new(gpu, k.combine)
-            .grid([rows as u32, 1, 1])
-            .block([ACT_BLOCK, 1, 1])
-            .arg_ptr(ws.expert_out)
-            .arg_ptr(ws.wts)
-            .arg_ptr(ws.shared_out)
-            .arg_ptr(out)
-            .arg_u32(cfg.hidden as u32)
-            .arg_u32(cfg.top_k as u32)
-            .launch(stream)?;
-    }
+    // 2026-09-25: One combine launch for all rows (row = `blockIdx.x`), reading the routed rows
+    // in expert-sorted order after the grouped GEMM (`topk_combine`).
+    topk_combine::combine(gpu, k, cfg, ws, out, rows, grouped_prefill, stream)?;
     profile::end(profile::MOE_COMBINE, t, gpu, stream);
     Ok(())
 }
