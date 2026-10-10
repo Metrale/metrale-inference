@@ -58,6 +58,17 @@ pub trait CommBackend: Send + Sync {
         self.broadcast(ptr, 4, root)
     }
 
+    /// 2026-10-10: `broadcast` for a rendezvous whose ranks may arrive far apart: the first
+    /// collective after each rank has built its model, whose ranks load different weight bytes
+    /// at different speeds (a three-rank GLM-5.3 serve measured 24 s between its first and last
+    /// rank, with the communicator's lazy connection setup on top, past `broadcast`'s 30 s
+    /// deadline: the workers gave up while rank 0 went on to serve). `NcclBackend` waits up to
+    /// its rendezvous deadline and keeps checking for transport errors meanwhile. The default
+    /// calls `broadcast`.
+    fn broadcast_rendezvous(&self, ptr: u64, bytes: usize, root: usize) -> Result<()> {
+        self.broadcast(ptr, bytes, root)
+    }
+
     /// 2026-09-26: A barrier across ranks. `NcclBackend` enqueues a zero-count
     /// all-reduce on its stream and returns without waiting for it.
     fn barrier(&self) -> Result<()>;
@@ -103,6 +114,10 @@ pub trait CommBackend: Send + Sync {
     fn set_add_kernel(&self, _handle: u64) {
         // 2026-09-26: The default keeps no kernel.
     }
+
+    /// 2026-10-08: Give the backend the `bf16_add_rank_sum` kernel handle, which the one-shot
+    /// all-reduce at `world_size >= 3` needs. A no-op on backends without that path.
+    fn set_rank_sum_kernel(&self, _handle: u64) {}
 
     /// 2026-09-26: Send `bytes` at `ptr` to `dest_rank`, enqueued on `stream`.
     /// Pairs with a `recv_from` of the same size on `dest_rank`.

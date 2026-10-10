@@ -19,85 +19,8 @@ use std::collections::BTreeMap;
 use crate::dims::DimExpr;
 use crate::format::Format;
 
-/// 2026-09-28: What a linear (GEMV/GEMM) node projects. Closed, like [`OpKind`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum LinearRole {
-    /// 2026-09-28: Attention Q with its output gate, interleaved per head.
-    Q,
-    /// 2026-09-28: Attention K.
-    K,
-    /// 2026-09-28: Attention V.
-    V,
-    /// 2026-09-28: Attention output projection.
-    O,
-    /// 2026-09-28: GatedDeltaNet `in_proj_qkv` and `in_proj_z` in one projection.
-    Qkvz,
-    /// 2026-09-28: GatedDeltaNet `in_proj_b` and `in_proj_a` (the beta and decay inputs).
-    Ba,
-    /// 2026-09-28: GatedDeltaNet `out_proj`.
-    GdnOut,
-    /// 2026-09-28: MLP gate and up projections.
-    GateUp,
-    /// 2026-09-28: MLP down projection.
-    Down,
-    /// 2026-09-28: MoE shared-expert gate and up projections.
-    SharedGateUp,
-    /// 2026-09-28: MoE shared-expert down projection.
-    SharedDown,
-    /// 2026-09-28: MoE shared-expert scalar gate (`shared_expert_gate`).
-    SharedGate,
-    /// 2026-09-28: MTP head input projection (`fc`, embedding and hidden concatenated).
-    MtpFc,
-    /// 2026-09-29: Mamba2 `in_proj`: z, x, B, C and dt in one projection.
-    MambaIn,
-    /// 2026-09-29: Mamba2 `out_proj`.
-    MambaOut,
-    /// 2026-09-29: An ungated MoE shared expert's up projection.
-    SharedUp,
-    /// 2026-09-30: A latent MoE's projection from the hidden width into the experts' latent
-    /// width (`fc1_latent_proj`, Nemotron-3 Super).
-    MoeLatentIn,
-    /// 2026-09-30: A latent MoE's projection of the routed sum back to the hidden width
-    /// (`fc2_latent_proj`).
-    MoeLatentOut,
-}
-
-const ROLES: [(LinearRole, &str); 18] = [
-    (LinearRole::Q, "q"),
-    (LinearRole::K, "k"),
-    (LinearRole::V, "v"),
-    (LinearRole::O, "o"),
-    (LinearRole::Qkvz, "qkvz"),
-    (LinearRole::Ba, "ba"),
-    (LinearRole::GdnOut, "gdn_out"),
-    (LinearRole::GateUp, "gate_up"),
-    (LinearRole::Down, "down"),
-    (LinearRole::SharedGateUp, "shared_gate_up"),
-    (LinearRole::SharedDown, "shared_down"),
-    (LinearRole::SharedGate, "shared_gate"),
-    (LinearRole::MtpFc, "mtp_fc"),
-    (LinearRole::MambaIn, "mamba_in"),
-    (LinearRole::MambaOut, "mamba_out"),
-    (LinearRole::SharedUp, "shared_up"),
-    (LinearRole::MoeLatentIn, "moe_latent_in"),
-    (LinearRole::MoeLatentOut, "moe_latent_out"),
-];
-
-impl LinearRole {
-    /// 2026-09-28: The role spelled in templates and rules.
-    pub fn parse(s: &str) -> Option<Self> {
-        ROLES.iter().find(|(_, n)| *n == s).map(|(r, _)| *r)
-    }
-
-    /// 2026-09-28: The canonical spelling.
-    pub fn name(self) -> &'static str {
-        ROLES
-            .iter()
-            .find(|(r, _)| *r == self)
-            .map(|(_, n)| *n)
-            .unwrap_or("?")
-    }
-}
+mod roles;
+pub use roles::LinearRole;
 
 /// 2026-09-28: The closed op vocabulary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -167,9 +90,38 @@ pub enum OpKind {
     /// each row but the last into the step's checkpoint slots (the verify's rollback points).
     /// It has no output.
     StateSnapshot,
+    /// 2026-10-08: Clamp a packed gate|up row before `silu_mul`: the gate to at most the limit,
+    /// the up half to [-limit, limit] (GLM-5 `swiglu_limit`; the limit is a runtime argument).
+    SwigluClamp,
+    /// 2026-10-08: LayerNorm with a learned weight and bias (mean-centred, unlike RMSNorm).
+    LayerNorm,
+    /// 2026-10-08: The sparse-attention indexer's key pooling: each completed run of
+    /// `index_kpool` tokens becomes one pool key, a per-channel softmax over the run's gate
+    /// scores plus the learned position embedding weighting its keys. The incomplete run
+    /// waits in a per-sequence tail. It has no output.
+    KpoolCompress,
+    /// 2026-10-08: The sparse-attention indexer's selection: per row, the head-weighted ReLU
+    /// scores of the indexer query against every pool key, and the top `index_topk /
+    /// index_kpool` pools. The pool ids are its output; the incomplete tail is always attended.
+    IndexSelect,
+    /// 2026-10-08: Multi-head latent attention: per-head queries absorbed into the shared KV
+    /// latent through `kv_b_proj`'s key half, softmax over the latent cache rows the selection
+    /// names, and the result taken back to `v_head_dim` per head through its value half.
+    MlaAttention,
+    /// 2026-10-08: Broadcast a hidden row into `hc` hyper-connection residual streams.
+    HcExpand,
+    /// 2026-10-08: The hyper-connection pre-mix: from the streams and their `hc_mix`
+    /// projection, the pre weights (sigmoid), the post weights and the Sinkhorn-normalised
+    /// combination matrix; the sublayer input is the pre-weighted sum of the streams.
+    HcPre,
+    /// 2026-10-08: The hyper-connection post-mix: every new stream is its post weight times the
+    /// sublayer output plus the combination of the old streams.
+    HcPost,
+    /// 2026-10-08: The streams' mean: one hidden row per token again (before the final norm).
+    HcContract,
 }
 
-const PLAIN_OPS: [(OpKind, &str); 29] = [
+const PLAIN_OPS: [(OpKind, &str); 38] = [
     (OpKind::Embed, "embed"),
     (OpKind::RmsNorm, "rms_norm"),
     (OpKind::GatedRmsNorm, "gated_rms_norm"),
@@ -199,6 +151,15 @@ const PLAIN_OPS: [(OpKind, &str); 29] = [
     (OpKind::LmHead, "lm_head"),
     (OpKind::Argmax, "argmax"),
     (OpKind::StateSnapshot, "state_snapshot"),
+    (OpKind::SwigluClamp, "swiglu_clamp"),
+    (OpKind::LayerNorm, "layer_norm"),
+    (OpKind::KpoolCompress, "kpool_compress"),
+    (OpKind::IndexSelect, "index_select"),
+    (OpKind::MlaAttention, "mla_attention"),
+    (OpKind::HcExpand, "hc_expand"),
+    (OpKind::HcPre, "hc_pre"),
+    (OpKind::HcPost, "hc_post"),
+    (OpKind::HcContract, "hc_contract"),
 ];
 
 impl OpKind {
@@ -254,7 +215,9 @@ impl OpKind {
     }
 
     /// 2026-09-28: An op that is never generated: projections, attention, the recurrence,
-    /// the experts and the vocabulary projection. Fusion happens at its edges.
+    /// the experts and the vocabulary projection. Fusion happens at its edges. 2026-10-08: Also
+    /// the indexer's selection, latent attention and the hyper-connection pre-mix (an iterative
+    /// Sinkhorn normalisation).
     pub fn is_heavy(&self) -> bool {
         matches!(
             self,
@@ -266,10 +229,14 @@ impl OpKind {
                 | OpKind::ExpertGateUp
                 | OpKind::ExpertDown
                 | OpKind::LmHead
+                | OpKind::IndexSelect
+                | OpKind::MlaAttention
+                | OpKind::HcPre
         )
     }
 
     /// 2026-09-28: Ops that read a weight whose format the precision resolver answers.
+    /// 2026-10-08: Latent attention reads `kv_b_proj` ([`Circuit::weight_shape`]).
     pub fn reads_linear_weight(&self) -> bool {
         matches!(
             self,
@@ -278,6 +245,7 @@ impl OpKind {
                 | OpKind::ExpertDown
                 | OpKind::LmHead
                 | OpKind::Router
+                | OpKind::MlaAttention
         )
     }
 }
@@ -362,7 +330,8 @@ pub struct Node {
 /// 2026-09-28: A decoder layer's kind, as `ModelConfig::layer_type` reports it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LayerKind {
-    /// 2026-09-28: A GatedDeltaNet layer.
+    /// 2026-09-28: A GatedDeltaNet layer. 2026-10-08: Or a KDA layer (`glm5_next`): the HF
+    /// spelling is the same, and the circuit's layout picks the mixer.
     LinearAttention,
     /// 2026-09-28: A softmax attention layer.
     FullAttention,
@@ -370,6 +339,9 @@ pub enum LayerKind {
     Mamba,
     /// 2026-09-29: A layer whose only mixer is a MoE FFN (Nemotron-H `moe`).
     Moe,
+    /// 2026-10-08: A sparse-attention layer: latent attention over the tokens an indexer
+    /// selects (`deepseek_sparse_attention`, GLM-5).
+    SparseAttention,
 }
 
 impl LayerKind {
@@ -380,6 +352,7 @@ impl LayerKind {
             LayerKind::FullAttention => "full_attention",
             LayerKind::Mamba => "mamba",
             LayerKind::Moe => "moe",
+            LayerKind::SparseAttention => "deepseek_sparse_attention",
         }
     }
 
@@ -390,6 +363,7 @@ impl LayerKind {
             "full_attention" => Some(LayerKind::FullAttention),
             "mamba" => Some(LayerKind::Mamba),
             "moe" => Some(LayerKind::Moe),
+            "deepseek_sparse_attention" => Some(LayerKind::SparseAttention),
             _ => None,
         }
     }
@@ -465,4 +439,23 @@ impl Circuit {
     pub fn node(&self, id: &str) -> Option<NodeIdx> {
         self.nodes.iter().position(|n| n.id == id)
     }
+
+    /// 2026-10-08: `(out, k)` of the weight matrix node `n` reads: `k` its first input's width
+    /// and `out` the sum of its output widths, except for latent attention, whose weight is
+    /// `kv_b_proj`, `[q_heads * (mla_qk + mla_v), kv_lora]`. One definition for the roofline,
+    /// the footprint and the memory model. `None` when a dim latent attention needs is
+    /// missing or the product overflows.
+    pub fn weight_shape(&self, n: &Node) -> Option<(u64, u64)> {
+        if n.op == OpKind::MlaAttention {
+            let d = |k: &str| self.dims.get(k).copied();
+            let per_head = d("mla_qk")?.checked_add(d("mla_v")?)?;
+            return Some((d("q_heads")?.checked_mul(per_head)?, d("kv_lora")?));
+        }
+        let k = n.inputs.first().map_or(0, |&e| self.edges[e].dim_value);
+        let out = n.outputs.iter().map(|&e| self.edges[e].dim_value).sum();
+        Some((out, k))
+    }
 }
+
+#[cfg(test)]
+mod tests;

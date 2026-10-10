@@ -21,7 +21,8 @@ impl TransformerModel {
     /// for the fused mixed forward, `padded_n` rows long. Real decode sequences contribute their
     /// own seq_len / block_table / moved-out layer_states; padding slots get
     /// `seq_len=0`, the dummy KV block, and freshly-built dummy layer states
-    /// (SSM layers point at the pool's `dummy_slot`).
+    /// (SSM layers point at the pool's `dummy_slot`; 2026-10-08: every other layer's comes
+    /// from `alloc_pad_state`).
     pub(super) fn mixed_build_decode_layer_states(
         &self,
         decode_seqs: &mut [&mut SequenceState],
@@ -67,6 +68,7 @@ impl TransformerModel {
                         conv_state_checkpoint: None,
                         h_state_intermediates: Vec::new(),
                         conv_state_intermediates: Vec::new(),
+                        replay_ring: None,
                         // 2026-09-25: Tagged with the active h dtype: under FP16 h-state the
                         // batched decode refuses any row whose state is not tagged FP16.
                         h_is_f16: metrale_model_layers::layers::qwen3_ssm::ssm_h_fp16_enabled(),
@@ -77,7 +79,7 @@ impl TransformerModel {
                     }));
                     ssm_idx += 1;
                 } else {
-                    dummy.push(layer.alloc_state(self.gpu.as_ref())?);
+                    dummy.push(layer.alloc_pad_state(self.gpu.as_ref())?);
                 }
             }
             all_layer_states.push(dummy);

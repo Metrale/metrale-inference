@@ -5,8 +5,10 @@
 //!
 //! Owner: model-arch (GLM-5.3 DSA).
 //! Invariants:
-//! - [`DsaTpPlan::new`] refuses `tp_rank >= tp_size` and a config that fails
-//!   `Glm5NextDsaConfig::validate`.
+//! - [`DsaTpPlan::new`] refuses `tp_rank >= tp_size`, a config that fails
+//!   `Glm5NextDsaConfig::validate`, and a `cfg.local_heads` that is not this rank's share.
+//! - 2026-10-08: This rank's heads are `metrale_config::tp_split(full_heads, tp_size, tp_rank, 1)`
+//!   (64 over three ranks: 22/21/21); every head-sharded tensor slices whole heads of that range.
 //! - Every indexer tensor, `kv_a_proj_with_mqa`, and the low-rank down-projections and their
 //!   norms are replicated; `q_b_proj` and `kv_b_proj` shard by head; `o_proj` is row-parallel.
 //!
@@ -32,6 +34,7 @@
 //! * `o_proj` is row-parallel on `heads * v_head_dim`.
 
 use anyhow::{Result, bail};
+use metrale_config::ModelConfig;
 
 use super::Glm5NextDsaConfig;
 
@@ -79,35 +82,70 @@ pub struct DsaTpPlan {
     pub tp_size: usize,
     pub full_heads: usize,
     pub local_heads: usize,
+    /// 2026-10-08: The first head this rank owns.
+    pub head_start: usize,
     pub tensors: Vec<DsaTensorPlan>,
 }
 
 impl DsaTpPlan {
-    /// 2026-09-25: `cfg.local_heads` is already per rank, so the full head count is
-    /// `local_heads * tp_size`, as in `TpGdnDims::from_config`.
-    pub fn new(tp_rank: usize, tp_size: usize, cfg: &Glm5NextDsaConfig) -> Result<Self> {
+    /// 2026-10-08: The plan for `config`'s rank: the full head count is the recorded pre-shard
+    /// one (`ModelConfig::pre_shard_heads`), and `cfg` is `Glm5NextDsaConfig::from_config` of
+    /// the same config.
+    pub fn from_config(config: &ModelConfig, cfg: &Glm5NextDsaConfig) -> Result<Self> {
+        Self::new(
+            config.tp_rank,
+            config.tp_world_size.max(1),
+            config.pre_shard_heads()?.num_attention_heads,
+            cfg,
+        )
+    }
+
+    /// 2026-09-25: `cfg.local_heads` is already per rank. 2026-10-08: The full head count is
+    /// passed in rather than rebuilt as `local_heads * tp_size`, which an uneven split breaks;
+    /// `cfg.local_heads` must equal this rank's share of it.
+    pub fn new(
+        tp_rank: usize,
+        tp_size: usize,
+        full_heads: usize,
+        cfg: &Glm5NextDsaConfig,
+    ) -> Result<Self> {
         if tp_rank >= tp_size {
             bail!("tp_rank {tp_rank} >= tp_size {tp_size}");
         }
         cfg.validate()?;
-        let local_heads = cfg.local_heads;
-        let full_heads = local_heads * tp_size;
+        let heads = metrale_config::tp_split(full_heads, tp_size, tp_rank, 1)?;
+        if heads.len != cfg.local_heads {
+            bail!(
+                "DSA TP: rank {tp_rank} of {tp_size} owns {} of {full_heads} heads, but the \
+                 layer config holds {}",
+                heads.len,
+                cfg.local_heads
+            );
+        }
+        let (local_heads, head_start) = (heads.len, heads.start);
 
         let h = cfg.hidden;
         let qk = cfg.qk_head_dim();
         let kvb_per_head = cfg.qk_nope_head_dim + cfg.v_head_dim;
         let ihd = cfg.index_head_dim;
 
+        // 2026-10-08: The sharded axis holds `full_heads` heads of equal width, so a rank's
+        // slice is its head range scaled by that width.
         let mk = |name, kind, full_rows: usize, full_row_elems: usize| {
             let (local_rows, local_row_elems, src_row_offset, src_col_offset) = match kind {
                 DsaShard::Replicated => (full_rows, full_row_elems, 0, 0),
                 DsaShard::HeadRows => {
-                    let per = full_rows / tp_size;
-                    (per, full_row_elems, tp_rank * per, 0)
+                    let per_head = full_rows / full_heads;
+                    (
+                        local_heads * per_head,
+                        full_row_elems,
+                        head_start * per_head,
+                        0,
+                    )
                 }
                 DsaShard::HeadCols => {
-                    let per = full_row_elems / tp_size;
-                    (full_rows, per, 0, tp_rank * per)
+                    let per_head = full_row_elems / full_heads;
+                    (full_rows, local_heads * per_head, 0, head_start * per_head)
                 }
             };
             DsaTensorPlan {
@@ -183,6 +221,7 @@ impl DsaTpPlan {
             tp_size,
             full_heads,
             local_heads,
+            head_start,
             tensors,
         })
     }

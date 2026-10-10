@@ -272,6 +272,12 @@ pub(crate) fn resolve_tokenizer_runtime(
         limits: crate::scheduler::limits::SchedLimits {
             im_start_hard_stop: im_start_id,
             tool_response_hard_stop: tool_response_id,
+            // 2026-10-09: The opener closes thinking only under a format that says so.
+            thinking_closed_by: tool_call_start_token.filter(|_| {
+                reasoning_parser_box
+                    .as_ref()
+                    .is_some_and(|p| p.tool_call_closes_reasoning())
+            }),
             max_seq_len: 0,
         },
         vocab_masks,

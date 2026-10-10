@@ -150,6 +150,12 @@ impl TransformerModel {
     /// - 0xFFFFFFF2/3/4: verify K=2/3/4 → K tokens, then the accept count
     /// - 0xFFFFFFF5 (`EP_CMD_MTP_PROPOSE`): last_token, position, num_drafts,
     ///   hidden_idx
+    /// - 0xFFFFFFF6 (`EP_CMD_VERIFY_KGAMMA`): DFlash K=γ verify → K, `tokens[K]`,
+    ///   then the committed row count
+    /// - 0xFFFFFFF9 (`EP_CMD_VERIFY_BATCH`, seq_id 0): batched DFlash verify → `n`, `k`,
+    ///   `slots[n]`, `tokens[n * k]`, then `committed[n]`
+    /// - 0xFFFFFFFA (`EP_CMD_PREFILL_SPANS`, seq_id 0): one chunk of each of `n` sequences in
+    ///   one multi-sequence prefill → `n`, the header, the prompts (`prefill_b/spans_wire.rs`)
     /// - 0xFFFFFFF8 (`EP_CMD_DECODE_CKPT`): decode-time Marconi checkpoint →
     ///   `EP_CKPT_WORDS` words in one bulk broadcast
     /// - 0xFFFFFFFF: shutdown (seq_id is ignored)
@@ -182,6 +188,14 @@ impl TransformerModel {
         // reads.
         if cmd == 0xFFFFFFE0 {
             return self.ep_worker_decode_batch(slots);
+        }
+        // 2026-10-09: Batched DFlash verify: the slots travel in its payload, as above.
+        if cmd == metrale_model_layers::speculative::EP_CMD_VERIFY_BATCH {
+            return self.ep_worker_verify_batch(slots);
+        }
+        // 2026-10-09: Multi-sequence prefill: the slots travel in its payload, as above.
+        if cmd == crate::model::trait_impl::prefill_b::spans_wire::EP_CMD_PREFILL_SPANS {
+            return self.ep_worker_prefill_spans(slots);
         }
 
         let slot_idx = seq_id as usize;
@@ -369,6 +383,11 @@ impl TransformerModel {
                     }
                 }
             }
+            metrale_model_layers::speculative::EP_CMD_VERIFY_KGAMMA => {
+                // 2026-10-08: DFlash K=γ verify: K, the K tokens, the verify, then the committed
+                // row count (`verify_kgamma_ep.rs`).
+                self.ep_worker_verify_kgamma(seq, stream)?;
+            }
             token => {
                 self.decode(token, seq, stream)?;
             }
@@ -390,45 +409,11 @@ impl TransformerModel {
         let seq_ids = self.ep_broadcast_tokens(&vec![0u32; n])?;
         let tokens = self.ep_broadcast_tokens(&vec![0u32; n])?;
 
-        let mut seen = std::collections::HashSet::new();
-        for &id in &seq_ids {
-            let idx = id as usize;
-            if idx >= slots.len() {
-                anyhow::bail!(
-                    "ep_worker_decode_batch: seq_id {} exceeds slot capacity {}",
-                    id,
-                    slots.len(),
-                );
-            }
-            if !seen.insert(id) {
-                anyhow::bail!("ep_worker_decode_batch: duplicate seq_id {} in batch", id);
-            }
-        }
-
-        // 2026-09-25: Collect `(idx, &mut)` for the populated slots and take
-        // them out with `swap_remove`: indexing `slots[seq_ids[i]]` mutably in
-        // a loop does not borrow-check, since the compiler cannot prove the
-        // indices distinct.
-        let mut slot_refs: Vec<(usize, &mut SequenceState)> = slots
-            .iter_mut()
-            .enumerate()
-            .filter_map(|(i, opt)| opt.as_mut().map(|s| (i, s)))
-            .collect();
-
-        // 2026-09-25: Order the refs as the head's seq_ids, so batch row `i` is
-        // the same sequence on both ranks.
-        let mut refs: Vec<&mut SequenceState> = Vec::with_capacity(n);
-        for &id in &seq_ids {
-            let idx = id as usize;
-            let pos = slot_refs
-                .iter()
-                .position(|(i, _)| *i == idx)
-                .ok_or_else(|| {
-                    anyhow::anyhow!("ep_worker_decode_batch: slot {} not allocated", idx)
-                })?;
-            let (_, seq) = slot_refs.swap_remove(pos);
-            refs.push(seq);
-        }
+        let mut refs = crate::model::trait_impl::verify_batch_ep::ordered_slot_refs(
+            slots,
+            &seq_ids,
+            "ep_worker_decode_batch",
+        )?;
 
         let stream = self.gpu.default_stream();
         self.decode_batch_compute_main(&tokens, &mut refs, stream)?;

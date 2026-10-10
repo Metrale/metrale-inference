@@ -351,6 +351,12 @@ pub struct TransformerModel {
     /// 2026-09-25: CUDA graphs for the DFlash K=γ verify, keyed by
     /// `(seq.slot_idx, tokens.len())`.
     pub(super) verify_kgamma_graph: Mutex<std::collections::HashMap<(usize, usize), GraphHandle>>,
+    /// 2026-10-09: CUDA graphs for the replay-mode commit (`ssm_replay.rs`), keyed by
+    /// `(SSM slot, accepted rows, k)`. Everything such a commit reads and writes is
+    /// slot-addressed (the pool state, its checkpoint and verify record) or the layers' fixed
+    /// workspace, so a key's graph stays valid across the slot's sequences.
+    pub(super) replay_commit_graphs:
+        Mutex<std::collections::HashMap<(usize, usize, usize), GraphHandle>>,
     /// 2026-09-25: CUDA graphs for the DFlash decode+verify fused pass
     /// (`verify_fused.rs`), keyed by `(seq.slot_idx, M)` with
     /// `M = tokens.len()`.

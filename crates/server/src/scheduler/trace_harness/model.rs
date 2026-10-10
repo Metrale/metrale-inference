@@ -58,6 +58,10 @@ pub(super) struct ModelCfg {
     pub dflash_gamma: Option<usize>,
     pub twophase_ok: bool,
     pub can_batch_verify: bool,
+    /// 2026-10-09: The `is_ep` fact: a multi-rank serve, whose steps announce their work.
+    pub ep: bool,
+    /// 2026-10-09: The `ep_prefill_batch_rows` fact.
+    pub ep_prefill_batch: Option<usize>,
     pub slot_draft_capacity: usize,
     /// 2026-09-25: Indexes of `decode_batch` / `decode_batch_fed` calls (0-based, counted
     /// per model) that fail with "KV cache exhausted" instead of running.
@@ -94,6 +98,8 @@ impl Default for ModelCfg {
             dflash_gamma: None,
             twophase_ok: false,
             can_batch_verify: true,
+            ep: false,
+            ep_prefill_batch: None,
             slot_draft_capacity: 8,
             kv_exhaust_at: Vec::new(),
             reclaimable: 0,

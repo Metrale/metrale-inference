@@ -25,11 +25,11 @@ mod loader_b;
 pub struct Gemma4WeightLoader;
 
 impl ModelWeightLoader for Gemma4WeightLoader {
-    fn supports_tp(&self) -> bool {
+    fn tp_support(&self) -> metrale_config::TpSupport {
         // 2026-09-25: Under TP the loader shards the attention projections
         // (see `loader_a::load_layers_impl`); the dense FFN weights are loaded
         // whole on every rank.
-        true
+        metrale_config::TpSupport::Even
     }
 
     fn load_layers(

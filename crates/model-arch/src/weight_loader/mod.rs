@@ -160,9 +160,11 @@ pub trait ModelWeightLoader {
     /// loader declares it.
     ///
     /// With `--tp-size > 1`, startup (`serve_phases/topology.rs`) refuses a
-    /// loader that returns `false`. `weight_loader/minimax.rs` is a loader
-    /// that returns `true`.
-    fn supports_tp(&self) -> bool;
+    /// loader that returns `Unsupported`. `weight_loader/minimax.rs` is a loader
+    /// that returns `Even`. 2026-10-08: `Uneven` lets head counts that do not
+    /// divide over TP split by `metrale_config::tp_split`; the GLM-5.3 loader
+    /// is the one that declares it.
+    fn tp_support(&self) -> metrale_config::TpSupport;
 
     /// 2026-09-25: Load all transformer layers from the weight store.
     ///
@@ -312,6 +314,14 @@ pub trait ModelWeightLoader {
     /// peak memory.
     fn binds_vision_encoder(&self) -> bool {
         true
+    }
+
+    /// 2026-10-09: Does this loader honour `ModelConfig::moe_expert_layout`'s `tp` value,
+    /// slicing every routed expert over the TP ranks? Startup refuses
+    /// `--moe-expert-layout tp` for a loader that returns `false`, which every loader that
+    /// does not override this does.
+    fn slices_experts_over_tp(&self) -> bool {
+        false
     }
 
     /// 2026-10-02: Does this loader read the serve's MoE expert-table decision

@@ -424,6 +424,21 @@ pub(super) fn resolve_behavior(
     b
 }
 
+/// 2026-10-08: The chat-template source the flags select: `--chat-template FILE`, else
+/// `--disable-template-overrides`, else the override directory. clap refuses the two
+/// flags together.
+pub(super) fn template_source(args: &cli::ServeArgs) -> crate::tokenizer::TemplateSource<'_> {
+    use crate::tokenizer::TemplateSource;
+    match (
+        &args.chat_surface.chat_template,
+        args.disable_template_overrides,
+    ) {
+        (Some(path), _) => TemplateSource::File(path),
+        (None, true) => TemplateSource::Checkpoint,
+        (None, false) => TemplateSource::OverrideDir,
+    }
+}
+
 pub(super) fn load_tokenizer(
     args: &cli::ServeArgs,
     config: &ModelConfig,
@@ -440,7 +455,7 @@ pub(super) fn load_tokenizer(
         supports_thinking,
         &config.model_type,
         Some(std::path::Path::new(".")),
-        args.disable_template_overrides,
+        template_source(args),
     )?;
     Ok((tokenizer, supports_thinking))
 }
@@ -460,3 +475,7 @@ pub(super) fn parse_default_kwargs(args: &cli::ServeArgs) -> Result<DefaultChatT
 #[cfg(test)]
 #[path = "model_setup_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "template_source_tests.rs"]
+mod template_source_tests;

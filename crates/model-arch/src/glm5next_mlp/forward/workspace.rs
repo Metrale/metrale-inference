@@ -11,13 +11,33 @@ use anyhow::Result;
 use metrale_gpu_runtime::gpu::GpuBackend;
 
 use super::Glm5NextMlpWorkspace;
-use crate::glm5next_mlp::Glm5NextMlpConfig;
+use crate::glm5next_mlp::{DENSE_W4A4_CHUNK_ROWS, Glm5NextMlpConfig, MOE_W4A4_MAX_ROWS};
+
+/// 2026-10-08: The NVFP4 activation scratch of the W4A4 paths: `(rows, k)`, the most rows one
+/// quantization holds (a routed down input of `MOE_W4A4_MAX_ROWS * top_k` slots, or one dense
+/// chunk) and the widest K it quantizes. 2026-10-10: The routed down input is stored at its
+/// 128-padded width (the `_k64` quantizer's rows when the expert width is not a k128 multiple).
+pub fn w4a4_scratch_dims(cfg: &Glm5NextMlpConfig, max_rows: usize) -> (usize, usize) {
+    let rows = max_rows.max(1);
+    let q_rows = (MOE_W4A4_MAX_ROWS.min(rows) * cfg.top_k)
+        .max(DENSE_W4A4_CHUNK_ROWS.min(rows))
+        .max(1);
+    let k = cfg
+        .hidden
+        .max(cfg.moe_intermediate.next_multiple_of(128))
+        .max(cfg.local_dense_intermediate)
+        .max(1);
+    (q_rows, k)
+}
 
 /// 2026-09-25: Byte size of each `Glm5NextMlpWorkspace` buffer, in the order `new` allocates
 /// them: a_gate, a_up, a_act, logits, ids, wts, expert_out, shared_out, u_eid, u_slot,
 /// sorted_token_ids, sorted_expert_ids, expert_offsets, token_to_perm. The loader logs their
 /// sum. `new` computes the same sizes on its own, so the two must change together.
-pub fn mlp_ws_bytes(cfg: &Glm5NextMlpConfig, max_rows: usize) -> [usize; 14] {
+/// 2026-10-08: Then the W4A4 activation scratch, codes, scales and globals
+/// ([`w4a4_scratch_dims`]); `new` takes those three sizes from here.
+pub fn mlp_ws_bytes(cfg: &Glm5NextMlpConfig, max_rows: usize) -> [usize; 17] {
+    let (q_rows, q_k) = w4a4_scratch_dims(cfg, max_rows);
     let rows = max_rows.max(1);
     let max_inter = cfg
         .local_dense_intermediate
@@ -42,6 +62,9 @@ pub fn mlp_ws_bytes(cfg: &Glm5NextMlpConfig, max_rows: usize) -> [usize; 14] {
         rows * cfg.top_k * 4,
         (cfg.num_experts + 1) * 4,
         rows * cfg.top_k * 4,
+        q_rows * q_k / 2,
+        q_rows * q_k / 16,
+        q_rows * 4,
     ]
 }
 
@@ -53,6 +76,7 @@ pub fn mlp_ws_total_bytes(cfg: &Glm5NextMlpConfig, max_rows: usize) -> usize {
 impl Glm5NextMlpWorkspace {
     pub fn new(gpu: &dyn GpuBackend, cfg: &Glm5NextMlpConfig, max_rows: usize) -> Result<Self> {
         let rows = max_rows.max(1);
+        let sizes = mlp_ws_bytes(cfg, rows);
         let max_inter = cfg
             .local_dense_intermediate
             .max(cfg.moe_intermediate)
@@ -81,6 +105,11 @@ impl Glm5NextMlpWorkspace {
             sorted_expert_ids: gpu.alloc(rows * cfg.top_k * 4)?,
             expert_offsets: gpu.alloc((cfg.num_experts + 1) * 4)?,
             token_to_perm: gpu.alloc(rows * cfg.top_k * 4)?,
+            w4a4_aq: gpu.alloc(sizes[14])?,
+            w4a4_as: gpu.alloc(sizes[15])?,
+            w4a4_ag: gpu.alloc(sizes[16])?,
+            w4a4_rows: w4a4_scratch_dims(cfg, rows).0,
+            w4a4_k: w4a4_scratch_dims(cfg, rows).1,
             max_inter,
             max_rows: rows,
             max_total_expanded: rows * cfg.top_k,

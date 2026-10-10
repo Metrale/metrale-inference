@@ -9,7 +9,7 @@ use super::{GdnPlan, KernelFlagPlan};
 use crate::cli::{Cli, Command, validate_serve_args};
 use clap::Parser;
 use metrale_config::{W4a4Downcast, WeightQuantTier, WeightQuantization};
-use metrale_model_layers::layers::ExpertQuantization;
+use metrale_model_layers::layers::{DenseQuantization, ExpertQuantization};
 
 fn plan(flags: &[&str]) -> KernelFlagPlan {
     let mut argv = vec![
@@ -37,6 +37,7 @@ fn an_empty_command_line_publishes_nothing_the_environment_owns() {
             gdn: None,
             weight_quant: WeightQuantTier::default(),
             expert_quantization: ExpertQuantization::Fp8,
+            dense_quantization: DenseQuantization::Declared,
             prefill_codispatch: None,
             prefill_varlen: None,
             ssm_tail_midchunk: None,
@@ -189,5 +190,24 @@ fn a_bad_expert_quantization_value_is_refused() {
         vec!["met", "serve", "org/model", "--moe-nvfp4-experts"],
     ] {
         assert!(Cli::try_parse_from(&argv).is_err(), "{argv:?} parsed");
+    }
+}
+
+/// 2026-10-09: `--dense-quantization fp8` and `w4a16` reach the plan; nothing else changes.
+#[test]
+fn the_dense_tier_reaches_the_plan() {
+    for (value, tier) in [
+        ("fp8", DenseQuantization::Fp8),
+        ("w4a16", DenseQuantization::W4a16),
+    ] {
+        let p = plan(&["--dense-quantization", value]);
+        assert_eq!(p.dense_quantization, tier);
+        assert_eq!(
+            KernelFlagPlan {
+                dense_quantization: DenseQuantization::Declared,
+                ..p
+            },
+            plan(&[])
+        );
     }
 }

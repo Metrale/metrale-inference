@@ -262,6 +262,7 @@ impl TransformerModel {
                     conv_state_checkpoint: None,
                     h_state_intermediates: Vec::new(),
                     conv_state_intermediates: Vec::new(),
+                    replay_ring: None,
                     // 2026-09-25: The slot was just zeroed, and zero is zero in both formats.
                     // The pool width decides the format: an f16-sized pool (a staging blob
                     // exists) holds FP16 from here on, and prefill stages its FP32 work in the
@@ -278,6 +279,8 @@ impl TransformerModel {
                         Some(self.ssm_pool.h_checkpoint(ssm_layer_idx, slot));
                     ssm_state.conv_state_checkpoint =
                         Some(self.ssm_pool.conv_checkpoint(ssm_layer_idx, slot));
+                    // 2026-10-08: The slot's replay record region; `None` in snapshot mode.
+                    ssm_state.replay_ring = self.ssm_pool.replay_ring(ssm_layer_idx, slot);
 
                     // 2026-09-25: Tiered pools: the h intermediate count is per slot
                     // (`h_inter_count`); the conv count is the same for every slot.
@@ -286,7 +289,8 @@ impl TransformerModel {
                             .h_state_intermediates
                             .push(self.ssm_pool.h_intermediate(ssm_layer_idx, slot, t));
                     }
-                    for t in 0..self.ssm_pool.num_intermediates {
+                    // 2026-10-09: None under replay (`conv_inter_count`).
+                    for t in 0..self.ssm_pool.conv_inter_count() {
                         ssm_state
                             .conv_state_intermediates
                             .push(self.ssm_pool.conv_intermediate(ssm_layer_idx, slot, t));

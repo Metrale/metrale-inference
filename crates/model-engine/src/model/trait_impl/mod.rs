@@ -38,6 +38,7 @@ mod decode_graph_key;
 mod slot_graph_key;
 pub(crate) use slot_graph_key::SlotGraphKey;
 mod decode_multi_seq_gate;
+mod dflash_verify_capture;
 mod drafter_prefill;
 mod ep_misc;
 mod feed;
@@ -62,7 +63,7 @@ mod mamba2_state_guard;
 mod meta;
 mod meta_argmax;
 mod prefill_a;
-mod prefill_b;
+pub(in crate::model) mod prefill_b;
 mod prefill_c;
 mod prefill_d;
 mod prefix_reuse;
@@ -71,15 +72,18 @@ mod sequence_compact;
 mod speculative;
 mod speculative_mtp;
 pub(in crate::model) mod ssm_fault_in;
+mod ssm_replay;
 mod verify_a;
 mod verify_a_ssm;
 mod verify_b;
+pub(in crate::model) mod verify_batch_ep;
 mod verify_c;
 mod verify_c2;
 mod verify_d;
 mod verify_e;
 pub(in crate::model) mod verify_e2;
 mod verify_fused;
+mod verify_kgamma_ep;
 
 impl Model for TransformerModel {}
 

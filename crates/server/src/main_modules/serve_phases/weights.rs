@@ -391,15 +391,17 @@ pub(crate) fn load_lora_adapters(
 }
 
 /// 2026-09-26: Whether the loaders skip the `*.input_scale` activation scales
-/// for this model: `qwen4_exp` and `glm5_next`.
+/// for this model: `qwen4_exp`.
 ///
 /// Both loaders skip exactly the names ending in `.input_scale`
 /// (`SafetensorsLoader`, `fast_weights::skip`), so `.weight_scale` and
 /// `.weight_scale_2` still load. The skip is listed per model because some
 /// loaders read `input_scale`: `step3p7` on its own path, and
-/// `weight_map/model_a.rs` whenever the tensor is present.
+/// `weight_map/model_a.rs` whenever the tensor is present. 2026-10-08:
+/// `glm5_next` reads them for its declared W4A4 path; its defer hook keeps
+/// them off the device instead (`glm5_next_load/act_scale.rs`).
 fn skip_activation_scales(config: &ModelConfig) -> bool {
-    matches!(config.model_type.as_str(), "qwen4_exp" | "glm5_next")
+    matches!(config.model_type.as_str(), "qwen4_exp")
 }
 
 /// 2026-09-26: Whether `mtp.*` is left unloaded: `qwen4_exp`, whose

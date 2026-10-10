@@ -42,6 +42,8 @@ mod save_checkpoint;
 mod snap_agree;
 #[cfg(test)]
 mod snap_agree_tests;
+mod spans;
+pub(in crate::model) mod spans_wire;
 mod stage_batched;
 mod upload_meta;
 mod upload_paged;

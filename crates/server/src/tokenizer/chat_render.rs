@@ -12,6 +12,17 @@ use anyhow::{Context, Result};
 
 use super::chat_impl::preprocess_for_render;
 
+/// 2026-10-08: The request's thinking-related template variables other than the
+/// effort: each `None` leaves its variable undefined, so the template's own default
+/// applies.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ThinkingVars {
+    /// 2026-10-08: `preserve_thinking` (`RenderFlags::preserve_thinking`).
+    pub preserve_thinking: Option<bool>,
+    /// 2026-10-08: `thinking` (`RenderFlags::thinking`).
+    pub thinking: Option<bool>,
+}
+
 /// 2026-09-26: Render-time flags for [`render_chat`].
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct RenderFlags<'a> {
@@ -29,6 +40,9 @@ pub(crate) struct RenderFlags<'a> {
     /// template keeps it unless it is defined and not true. A Jinja `none` would therefore
     /// flip the Qwen3.8 default, which is why `None` is not passed as `none`.
     pub preserve_thinking: Option<bool>,
+    /// 2026-10-08: The client's `chat_template_kwargs.thinking`. `Some(_)` sets the
+    /// template's `thinking` variable; `None` leaves it undefined.
+    pub thinking: Option<bool>,
     /// 2026-09-26: "Continue final message": when true and the last message is an assistant
     /// turn, render without a generation prompt and strip trailing whitespace and then a
     /// trailing `<|im_end|>`, so the prompt ends with the assistant content. The Jinja apply
@@ -84,6 +98,10 @@ pub(crate) fn render_chat(
         enable_thinking => enable_thinking,
         reasoning_effort => reasoning_effort,
         preserve_thinking => preserve_thinking,
+        thinking => flags
+            .thinking
+            .map(minijinja::Value::from)
+            .unwrap_or(minijinja::Value::UNDEFINED),
         disable_tool_steering => flags.disable_tool_steering,
         add_vision_id => false,
     };

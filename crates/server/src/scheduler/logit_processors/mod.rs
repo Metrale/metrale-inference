@@ -70,6 +70,9 @@ pub struct LogitsContext<'a> {
     pub think_start_token: Option<u32>,
     pub tool_call_start_token: Option<u32>,
     pub tool_call_end_token: Option<u32>,
+    /// 2026-10-09: `SchedLimits::thinking_closed_by`: the tool-call opener that also
+    /// closes the thinking block, which `ToolCallDuringThinkingMask` then leaves alone.
+    pub thinking_closed_by: Option<u32>,
     /// 2026-09-25: This position's index in the verify window (0 on the decode path).
     /// The `min_tokens` checks count `output_tokens.len() + verify_pos`.
     pub verify_pos: usize,

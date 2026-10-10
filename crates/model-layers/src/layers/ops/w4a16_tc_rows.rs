@@ -37,6 +37,18 @@ pub fn w4a16_tc_rows_shape_ok(m: u32, n: u32, k: u32, lda: u32, ldc: u32) -> boo
         && ldc >= n
 }
 
+/// 2026-10-09: The entry point [`w4a16_tc_rows`] launches for `m` rows: the narrowest of the
+/// 16-, 32- and 64-row entries that covers `m`.
+pub fn w4a16_tc_rows_entry(m: u32) -> &'static str {
+    if m <= 16 {
+        "w4a16_tc_rows_16"
+    } else if m <= 32 {
+        "w4a16_tc_rows_32"
+    } else {
+        "w4a16_tc_rows_64"
+    }
+}
+
 /// 2026-10-02: `output [m, ldc] = input [m, lda] x W^T` for the row-major NVFP4 `weight` `[n, k]`
 /// (packed E2M1, E4M3 scales of 16, `weight_scale_2`). Refuses a shape
 /// [`w4a16_tc_rows_shape_ok`] refuses.
@@ -57,14 +69,9 @@ pub fn w4a16_tc_rows(
         w4a16_tc_rows_shape_ok(m, n, k, lda, ldc),
         "w4a16_tc_rows: m={m} n={n} k={k} lda={lda} ldc={ldc} outside the kernel's contract"
     );
-    let entry = if m <= 16 {
-        "w4a16_tc_rows_16"
-    } else if m <= 32 {
-        "w4a16_tc_rows_32"
-    } else {
-        "w4a16_tc_rows_64"
-    };
-    let kernel = gpu.op_cache().kernel(gpu, W4A16_TC_ROWS_MODULE, entry)?;
+    let kernel = gpu
+        .op_cache()
+        .kernel(gpu, W4A16_TC_ROWS_MODULE, w4a16_tc_rows_entry(m))?;
     KernelLaunch::new(gpu, kernel)
         .grid([n.div_ceil(W4A16_TC_ROWS_COLS), 1, 1])
         .block([128, 1, 1])

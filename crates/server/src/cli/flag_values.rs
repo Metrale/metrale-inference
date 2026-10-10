@@ -18,8 +18,8 @@
 //! Owner: server CLI (`met serve`).
 //! Invariants: none beyond the types.
 
-use metrale_config::WeightQuantization;
-use metrale_model_layers::layers::ExpertQuantization;
+use metrale_config::{MoeExpertLayout, WeightQuantization};
+use metrale_model_layers::layers::{DenseQuantization, ExpertQuantization};
 
 /// 2026-09-26: What `--kv-high-precision-layers auto` resolves to. The flag's
 /// help text states the same number as "recommended".
@@ -107,6 +107,18 @@ impl Tristate {
     }
 }
 
+/// 2026-10-08: `--kv-cache-dtype` parser: the canonical name for a value that has a
+/// second spelling, so every consumer of the flag sees one spelling. `fp8_e4m3` is the
+/// format `fp8` stores (E4M3, `metrale_cache::kv_cache::KvCacheDtype::Fp8`). Any other
+/// value passes through unchanged and is checked by `validate_serve_args`.
+pub(crate) fn canonical_kv_cache_dtype(raw: &str) -> Result<String, String> {
+    let canonical = match raw {
+        "fp8_e4m3" => "fp8",
+        other => other,
+    };
+    Ok(canonical.to_string())
+}
+
 pub(crate) const LM_HEAD_DTYPES: &[&str] = &["default", "bf16", "nvfp4", "fp8"];
 pub(crate) const MTP_QUANTS: &[&str] = &["bf16", "fp8", "nvfp4"];
 pub(crate) const SCHEDULERS: &[&str] = &["fifo", "slai"];
@@ -128,6 +140,7 @@ pub(crate) const TOOL_CALL_PARSERS: &[&str] = &[
     "minimax_xml",
     "bare_json",
     "poolside_v1",
+    "glm47",
 ];
 
 /// 2026-09-27: `--expert-quantization`: a clap value enum over the model layer's tiers
@@ -165,6 +178,66 @@ impl clap::ValueEnum for ExpertQuantizationArg {
                 "lowers every routed-expert projection to NVFP4 in decode; the shared expert and \
                  prefill stay FP8 (dangerous but fast). BFCL 85.46/86.57; agentic-webserver \
                  FAILS its 700 s ceiling (168 turns, 774 s); C16 383.1 tok/s, 0.201 J/tok"
+            }
+        };
+        Some(clap::builder::PossibleValue::new(self.0.name()).help(help))
+    }
+}
+
+/// 2026-10-09: `--dense-quantization`: a clap value enum over the model layer's tiers
+/// (`metrale_model_layers::layers::DenseQuantization`), which own the names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DenseQuantizationArg(pub DenseQuantization);
+
+impl clap::ValueEnum for DenseQuantizationArg {
+    fn value_variants<'a>() -> &'a [Self] {
+        const VARIANTS: [DenseQuantizationArg; 3] = [
+            DenseQuantizationArg(DenseQuantization::ALL[0]),
+            DenseQuantizationArg(DenseQuantization::ALL[1]),
+            DenseQuantizationArg(DenseQuantization::ALL[2]),
+        ];
+        &VARIANTS
+    }
+
+    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
+        let help = match self.0 {
+            DenseQuantization::Declared => "16-bit dense projections at the checkpoint's width",
+            DenseQuantization::Fp8 => {
+                "16-bit dense projections quantized at load to FP8 per-channel and decoded \
+                 W8A8 with per-token FP8 activations: below the checkpoint's declared \
+                 precision (glm5_next only; unmeasured)"
+            }
+            DenseQuantization::W4a16 => {
+                "FURTHER BELOW the checkpoint's declared precision than fp8: the KDA q/k/v, \
+                 f_a, b, g_a and o projections and the shared expert quantized at load to \
+                 NVFP4 (4-bit weights) and decoded W4A16 with 16-bit activations; the rest of \
+                 fp8's set stays fp8 (glm5_next only; unmeasured)"
+            }
+        };
+        Some(clap::builder::PossibleValue::new(self.0.name()).help(help))
+    }
+}
+
+/// 2026-10-09: `--moe-expert-layout`: a clap value enum over the config crate's layouts
+/// (`metrale_config::MoeExpertLayout`), which own the names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MoeExpertLayoutArg(pub MoeExpertLayout);
+
+impl clap::ValueEnum for MoeExpertLayoutArg {
+    fn value_variants<'a>() -> &'a [Self] {
+        const VARIANTS: [MoeExpertLayoutArg; 2] = [
+            MoeExpertLayoutArg(MoeExpertLayout::ALL[0]),
+            MoeExpertLayoutArg(MoeExpertLayout::ALL[1]),
+        ];
+        &VARIANTS
+    }
+
+    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
+        let help = match self.0 {
+            MoeExpertLayout::Ep => "each routed expert owned whole by one --ep-size rank",
+            MoeExpertLayout::Tp => {
+                "every routed expert's intermediate width split over the --tp-size ranks, all \
+                 slots local on every rank; needs --ep-size 1 (glm5_next only; unmeasured)"
             }
         };
         Some(clap::builder::PossibleValue::new(self.0.name()).help(help))
@@ -228,6 +301,18 @@ pub(crate) fn options_for_flag(flag: &str) -> Option<Vec<String>> {
             WeightQuantization::ALL
                 .iter()
                 .map(|q| q.name().to_string())
+                .collect(),
+        ),
+        "dense-quantization" => Some(
+            DenseQuantization::ALL
+                .iter()
+                .map(|q| q.name().to_string())
+                .collect(),
+        ),
+        "moe-expert-layout" => Some(
+            MoeExpertLayout::ALL
+                .iter()
+                .map(|l| l.name().to_string())
                 .collect(),
         ),
         "expert-quantization" => Some(

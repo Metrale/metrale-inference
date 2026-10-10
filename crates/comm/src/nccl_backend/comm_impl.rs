@@ -13,7 +13,9 @@ use std::ptr;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-use super::{ALL_REDUCE_DTYPE_BYTES, COLLECTIVE_TIMEOUT_SECS, NcclBackend};
+use super::{
+    ALL_REDUCE_DTYPE_BYTES, COLLECTIVE_TIMEOUT_SECS, NcclBackend, RENDEZVOUS_TIMEOUT_SECS,
+};
 use crate::CommBackend;
 use crate::collective_diagnostics::Dtype;
 use metrale_gpu_sys::nccl::{self, NcclDataType, NcclRedOp};
@@ -23,6 +25,9 @@ impl CommBackend for NcclBackend {
         self.begin_submission("all_reduce", Dtype::Bf16, bytes, self.legacy_stream, None)?;
         if self.world_size == 2 && self.add_kernel.load(Ordering::Relaxed) != 0 {
             return self.all_reduce_2rank(ptr, bytes, self.legacy_stream);
+        }
+        if self.oneshot_applies(bytes) {
+            return self.all_reduce_oneshot(ptr, bytes, self.legacy_stream);
         }
         // 2026-09-26: In place on `ptr`; `recv_buffer` is not used, so its
         // capacity does not bound this path.
@@ -58,6 +63,14 @@ impl CommBackend for NcclBackend {
 
             self.all_reduce_2rank(ptr, bytes, self.comm_stream)?;
 
+            nccl::record_event(self.comm_done_event, self.comm_stream)?;
+            nccl::stream_wait_event(compute_stream, self.comm_done_event)?;
+            return Ok(());
+        }
+        if self.oneshot_applies(bytes) {
+            nccl::record_event(self.compute_done_event, compute_stream)?;
+            nccl::stream_wait_event(self.comm_stream, self.compute_done_event)?;
+            self.all_reduce_oneshot(ptr, bytes, self.comm_stream)?;
             nccl::record_event(self.comm_done_event, self.comm_stream)?;
             nccl::stream_wait_event(compute_stream, self.comm_done_event)?;
             return Ok(());
@@ -130,6 +143,10 @@ impl CommBackend for NcclBackend {
         );
     }
 
+    fn set_rank_sum_kernel(&self, handle: u64) {
+        self.set_oneshot_sum_kernel(handle);
+    }
+
     fn all_gather(&self, send_ptr: u64, recv_ptr: u64, bytes: usize) -> Result<()> {
         self.begin_submission("all_gather", Dtype::U8, bytes, self.legacy_stream, None)?;
         let comm = *self.comm.lock();
@@ -168,7 +185,13 @@ impl CommBackend for NcclBackend {
     }
 
     fn broadcast(&self, ptr: u64, bytes: usize, root: usize) -> Result<()> {
-        self.broadcast_with_wait(ptr, bytes, root, false)
+        let deadline = Duration::from_secs(COLLECTIVE_TIMEOUT_SECS);
+        self.broadcast_with_wait(ptr, bytes, root, BroadcastWait::Deadline(deadline))
+    }
+
+    fn broadcast_rendezvous(&self, ptr: u64, bytes: usize, root: usize) -> Result<()> {
+        let deadline = Duration::from_secs(RENDEZVOUS_TIMEOUT_SECS);
+        self.broadcast_with_wait(ptr, bytes, root, BroadcastWait::Deadline(deadline))
     }
 
     fn recv_command_u32(&self, ptr: u64, root: usize) -> Result<()> {
@@ -176,7 +199,7 @@ impl CommBackend for NcclBackend {
             self.rank != root,
             "idle command receive requires non-root rank"
         );
-        self.broadcast_with_wait(ptr, 4, root, true)
+        self.broadcast_with_wait(ptr, 4, root, BroadcastWait::Idle)
     }
 
     fn barrier(&self) -> Result<()> {
@@ -261,13 +284,21 @@ impl CommBackend for NcclBackend {
     }
 }
 
+/// 2026-10-10: How long a broadcast's completion is polled: up to a deadline, or with none (the
+/// first word of a worker command, `recv_command_u32`).
+#[derive(Clone, Copy)]
+enum BroadcastWait {
+    Deadline(Duration),
+    Idle,
+}
+
 impl NcclBackend {
     fn broadcast_with_wait(
         &self,
         ptr: u64,
         bytes: usize,
         root: usize,
-        idle_command: bool,
+        wait: BroadcastWait,
     ) -> Result<()> {
         self.begin_submission(
             "broadcast",
@@ -292,22 +323,22 @@ impl NcclBackend {
         };
         nccl::check_nccl(result, "ncclBroadcast")?;
 
-        // 2026-09-26: Poll `cuStreamQuery` with a 1 ms pause, so the deadline
-        // applies while waiting, not after an unbounded synchronise.
+        // 2026-09-26: Poll `cuStreamQuery`, so the deadline applies while waiting,
+        // not after an unbounded synchronise. 2026-10-09: The pause between polls is
+        // `self.poll` (yield, then short sleeps), no longer a fixed 1 ms sleep.
         let ready = || {
             ensure!(self.check_async_error(comm), "NCCL asynchronous failure");
             nccl::stream_ready(self.legacy_stream)
         };
-        let pause = || std::thread::sleep(Duration::from_millis(1));
-        let completion = if idle_command {
-            crate::collective_wait::poll_idle_command(ready, pause)
-        } else {
-            crate::collective_wait::poll_completion(
-                Duration::from_secs(COLLECTIVE_TIMEOUT_SECS),
-                || start.elapsed(),
-                ready,
-                pause,
-            )
+        let pause = || match self.poll.action(start.elapsed()) {
+            crate::collective_wait::PauseAction::Yield => std::thread::yield_now(),
+            crate::collective_wait::PauseAction::Sleep(d) => std::thread::sleep(d),
+        };
+        let completion = match wait {
+            BroadcastWait::Idle => crate::collective_wait::poll_idle_command(ready, pause),
+            BroadcastWait::Deadline(d) => {
+                crate::collective_wait::poll_completion(d, || start.elapsed(), ready, pause)
+            }
         };
         crate::collective_wait::poison_on_error(completion, &self.unhealthy).with_context(
             || {
@@ -344,5 +375,9 @@ mod tests {
     fn test_collective_timeout_constant() {
         assert!(COLLECTIVE_TIMEOUT_SECS >= 10);
         assert!(COLLECTIVE_TIMEOUT_SECS <= 300);
+        // 2026-10-10: The rendezvous outlasts a load-time spread of several minutes and still
+        // ends within an hour.
+        assert!(RENDEZVOUS_TIMEOUT_SECS >= 10 * COLLECTIVE_TIMEOUT_SECS);
+        assert!(RENDEZVOUS_TIMEOUT_SECS <= 3600);
     }
 }

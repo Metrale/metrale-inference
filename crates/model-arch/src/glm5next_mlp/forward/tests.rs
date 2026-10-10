@@ -35,6 +35,19 @@ fn row_groups_at_the_shipping_widths() {
     assert_eq!(moe_row_groups(16, 8), vec![(0, 8), (8, 8)]);
     assert_eq!(moe_row_groups(8, 8), vec![(0, 8)]);
     assert_eq!(moe_row_groups(9, 8), vec![(0, 5), (5, 4)]);
+    // 2026-10-09: At the default cap a 16-row decode group is one sweep.
+    assert_eq!(moe_row_groups(16, MOE_ROW_BATCH_MAX_ROWS), vec![(0, 16)]);
+    assert_eq!(
+        moe_row_groups(17, MOE_ROW_BATCH_MAX_ROWS),
+        vec![(0, 9), (9, 8)]
+    );
+}
+
+/// 2026-10-09: The widest group fits the union kernel's id bound at GLM-5.3's top-8, so the
+/// default cap never falls back to per-row sweeps for want of union ids.
+#[test]
+fn the_widest_group_fits_the_union() {
+    const { assert!(MOE_ROW_BATCH_MAX_ROWS * 8 <= super::MOE_ROW_UNION_MAX_IDS) };
 }
 
 mod ws_sizing {
@@ -47,8 +60,10 @@ mod ws_sizing {
         Glm5NextMlpConfig {
             hidden: 4096,
             local_dense_intermediate: 12288 / 2,
+            dense_start: 0,
             moe_intermediate: 2048,
             local_shared_intermediate: 2048 / 2,
+            shared_start: 0,
             num_experts: 288,
             local_experts: 144,
             ep_rank: 0,
@@ -59,6 +74,7 @@ mod ws_sizing {
             router_bf16_ladder: false,
             tp_world_size: 2,
             ep_world_size: 2,
+            expert_shard: crate::glm5next_mlp::ExpertShard::Whole,
         }
     }
 
@@ -77,9 +93,14 @@ mod ws_sizing {
             assert_eq!(b[7], rows * 4096 * 2, "shared_out at {rows}");
             assert_eq!(b[9], rows * 8 * rows * 4, "u_slot at {rows}");
             assert_eq!(b[12], 289 * 4, "expert_offsets is row-independent");
+            // 2026-10-08: The W4A4 scratch: 16 routed rows x top_k 8 = 128 quantized rows of
+            // the widest K, the 6144-wide TP=2 dense share; row-independent from 16 rows up.
+            assert_eq!(b[14], 128 * 6144 / 2, "w4a4 codes at {rows}");
+            assert_eq!(b[15], 128 * 6144 / 16, "w4a4 scales at {rows}");
+            assert_eq!(b[16], 128 * 4, "w4a4 globals at {rows}");
             assert_eq!(
                 mlp_ws_total_bytes(&c, rows),
-                rows * 173_376 + 32 * rows * rows + 1156
+                rows * 173_376 + 32 * rows * rows + 1156 + 442_880
             );
         }
     }
@@ -92,9 +113,9 @@ mod ws_sizing {
         // 2026-09-25: Decimal units, as the loader's log prints them.
         let mb = |n: usize| n as f64 / 1e6;
         for (rows, per_layer_mb, stack_gb) in [
-            (256usize, 46.48, 2.092),
-            (512, 97.16, 4.372),
-            (1024, 211.09, 9.499),
+            (256usize, 46.93, 2.112),
+            (512, 97.60, 4.392),
+            (1024, 211.54, 9.519),
         ] {
             let one = mlp_ws_total_bytes(&c, rows);
             assert!(

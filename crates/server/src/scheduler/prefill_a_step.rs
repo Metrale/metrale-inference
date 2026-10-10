@@ -298,7 +298,13 @@ pub fn start_chunked_prefill(
             image_pixels.is_empty(),
             "vision must be excluded from co-dispatch"
         );
+        // 2026-10-09: On a multi-rank serve a deferred chunk 0 sends nothing here: the
+        // batched step announces it (`EP_CMD_PREFILL_SPANS`), and the worker would run a
+        // `0xFFFFFFF0` at once. On one GPU every send below is a no-op.
         if let Err(e) = (|| -> Result<()> {
+            if model.is_ep() {
+                return Ok(());
+            }
             model.ep_broadcast_cmd_for_seq(seq.slot_idx as u32, 0xFFFFFFF0)?;
             model.ep_broadcast_cmd(chunk_len as u32)?;
             model.ep_broadcast_cmd(0)?;

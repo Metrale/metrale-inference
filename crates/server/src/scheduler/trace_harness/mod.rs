@@ -17,6 +17,9 @@
 //! deadlines have already passed when the scheduler checks them, and
 //! cancel flags are flipped by the model at a scripted point.
 
+mod dflash_ctx_tests;
+mod ep_prefill_tests;
+mod ep_verify_tests;
 mod model;
 mod model_feed;
 mod model_forward;
@@ -24,6 +27,7 @@ mod model_impl;
 mod park;
 mod pipeline_tests;
 mod prompt_lookup_tests;
+mod run_options;
 mod runner;
 mod scenarios;
 mod scripted_tests;

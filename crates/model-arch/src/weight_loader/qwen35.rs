@@ -59,11 +59,11 @@ impl ModelWeightLoader for Qwen35WeightLoader {
         true
     }
 
-    fn supports_tp(&self) -> bool {
+    fn tp_support(&self) -> metrale_config::TpSupport {
         // 2026-09-25: The native-FP8 and NVFP4 attention arms shard Q/K/V/O, and the BF16
         // dense and NVFP4 linear-attention builders shard by head. The BF16-dequant attention
         // arm and the native-FP8 linear-attention builder refuse TP > 1.
-        true
+        metrale_config::TpSupport::Even
     }
 
     fn load_layers(

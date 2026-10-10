@@ -271,6 +271,22 @@ impl TransformerModel {
                 h,
                 stream,
             )?;
+        } else if self.config.model_type == "glm5_next"
+            && num_tokens > ops::DENSE_GEMV_BATCHM_DECODE_MAX_M
+        {
+            // 2026-10-09: GLM-5.3's BF16 head over a wide verify (up to 128 rows) on the
+            // tile GEMM took 118 ms per step (nsys, C16 DFlash2, 154,880-row vocab); cuBLASLt's
+            // tensor-core GEMM reads the head once. Rows above the batched-GEMV width already
+            // depend on their batch-mates on this path, so no row-invariance is lost.
+            ops::cublas_bf16_proj_dense(
+                hidden,
+                self.lm_head_weight.weight,
+                logits,
+                num_tokens,
+                v,
+                h,
+                stream,
+            )?;
         } else {
             ops::dense_gemm(
                 self.gpu.as_ref(),
@@ -300,21 +316,20 @@ impl TransformerModel {
     /// 2026-09-25: `(begin, len)` rows of the BF16 LM head this rank computes,
     /// or `None` for the whole-vocab projection.
     ///
-    /// `None` unless there is a communicator with at least 2 ranks and the vocab
-    /// divides evenly by the world size, or when `METRALE_NO_LMHEAD_VOCAB_TP=1`
-    /// (read once per process). Only the BF16 dense-head paths call it.
-    fn lmhead_vocab_shard(&self, v: u32) -> Option<(usize, usize)> {
+    /// `None` unless there is a communicator with at least 2 ranks, or when
+    /// `METRALE_NO_LMHEAD_VOCAB_TP=1` (read once per process). Only the BF16 dense-head
+    /// paths call it. 2026-10-08: the rows split with `tp_split` in
+    /// [`LMHEAD_VOCAB_SPLIT_ALIGN`]-row units, so a vocab that does not divide by the world
+    /// size (154,880 rows over 3 ranks) still shards; an evenly dividing vocab gets the same
+    /// ranges as before. The pieces meet in a zeroed buffer summed by an all-reduce, so
+    /// uneven lengths need nothing else, and adding the other ranks' zeros is exact.
+    pub(super) fn lmhead_vocab_shard(&self, v: u32) -> Option<(usize, usize)> {
         static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         if *OFF.get_or_init(|| std::env::var("METRALE_NO_LMHEAD_VOCAB_TP").as_deref() == Ok("1")) {
             return None;
         }
         let comm = self.comm_ref()?;
-        let ws = comm.world_size();
-        if ws < 2 || !(v as usize).is_multiple_of(ws) {
-            return None;
-        }
-        let len = v as usize / ws;
-        Some((comm.rank() * len, len))
+        lmhead_vocab_split(v as usize, comm.world_size(), comm.rank())
     }
 
     pub(super) fn lm_head(&self, hidden: DevicePtr, stream: u64) -> Result<DevicePtr> {
@@ -424,5 +439,72 @@ impl TransformerModel {
             self.apply_logit_softcap_dtype(logits, v, cap, fp32, stream)?;
         }
         Ok(logits)
+    }
+}
+
+/// 2026-10-08: Row granularity of the vocab-parallel LM head split: the shard starts stay
+/// 64-row aligned, as the even splits of every vocab served so far already were.
+const LMHEAD_VOCAB_SPLIT_ALIGN: usize = 64;
+
+/// 2026-10-08: `(begin, len)` of `rank`'s rows of a `v`-row head over `world` ranks, or `None`
+/// at one rank or when the vocab is not a whole number of split units (then every rank
+/// computes the whole head, as before).
+fn lmhead_vocab_split(v: usize, world: usize, rank: usize) -> Option<(usize, usize)> {
+    if world < 2 {
+        return None;
+    }
+    if v.is_multiple_of(world) {
+        // 2026-10-08: The previous rule, byte for byte.
+        return Some((rank * (v / world), v / world));
+    }
+    // 2026-10-09: A vocab that is not a whole number of units (the tokenizer caps GLM-5.3's
+    // 154,880-row head to 154,856) splits as if padded to the next unit; the last range stops
+    // at `v`. Without this the cap silently sent every rank back to the whole head.
+    let padded = v.div_ceil(LMHEAD_VOCAB_SPLIT_ALIGN) * LMHEAD_VOCAB_SPLIT_ALIGN;
+    let s = metrale_config::tp_split(padded, world, rank, LMHEAD_VOCAB_SPLIT_ALIGN).ok()?;
+    (s.start < v).then(|| (s.start, s.len.min(v - s.start)))
+}
+
+#[cfg(test)]
+mod vocab_split_tests {
+    use super::lmhead_vocab_split;
+
+    #[test]
+    fn an_even_vocab_keeps_the_even_split() {
+        assert_eq!(lmhead_vocab_split(248_320, 2, 1), Some((124_160, 124_160)));
+        assert_eq!(lmhead_vocab_split(154_880, 2, 0), Some((0, 77_440)));
+        assert_eq!(lmhead_vocab_split(154_880, 1, 0), None);
+    }
+
+    #[test]
+    fn glm_vocab_over_three_ranks_partitions_in_aligned_pieces() {
+        let parts: Vec<_> = (0..3)
+            .map(|r| lmhead_vocab_split(154_880, 3, r).unwrap())
+            .collect();
+        let mut next = 0;
+        for (b, l) in &parts {
+            assert_eq!(*b, next);
+            assert_eq!(b % 64, 0);
+            next = b + l;
+        }
+        assert_eq!(next, 154_880);
+        assert_eq!(
+            parts,
+            vec![(0, 51_648), (51_648, 51_648), (103_296, 51_584)]
+        );
+    }
+
+    #[test]
+    fn a_tokenizer_capped_vocab_still_shards_and_covers_every_row() {
+        let parts: Vec<_> = (0..3)
+            .map(|r| lmhead_vocab_split(154_856, 3, r).unwrap())
+            .collect();
+        assert_eq!(
+            parts,
+            vec![(0, 51_648), (51_648, 51_648), (103_296, 51_560)]
+        );
+        assert_eq!(lmhead_vocab_split(100, 2, 1), Some((50, 50)));
+        let tail: Vec<_> = (0..2).map(|r| lmhead_vocab_split(129, 2, r).unwrap()).collect();
+        assert_eq!(tail, vec![(0, 128), (128, 1)]);
     }
 }

@@ -4,8 +4,9 @@
 //!
 //! Owner: model-arch (GLM-5.3-Flash KDA).
 //! Invariants:
-//! - `resolve` fails if any entry point other than `dense_gemv_bf16_batchm` and
-//!   `kda_recurrent_decode_bf16_smem` is missing; those two resolve to handle 0 when absent.
+//! - `resolve` fails if any entry point other than `dense_gemv_bf16_batchm`,
+//!   `kda_recurrent_decode_bf16_smem` and (2026-10-09) `kda_recurrent_decode_bf16_smem_rows`
+//!   is missing; those resolve to handle 0 when absent.
 
 use super::*;
 
@@ -19,7 +20,14 @@ pub struct Glm5NextKdaKernels {
     /// weight, so a K-row `decode_k` reads each projection weight once. `0` on a target without
     /// it; [`ops::dense_mm_bf16`] then sends those rows to the tile GEMM.
     pub gemv_batchm: KernelHandle,
+    /// 2026-10-09: `dense_gemv_bf16_batchm_wide` (9..=16 rows, accumulators in registers);
+    /// `0` when absent (`glm5next_layer::wide_gemv`).
+    pub gemv_batchm_wide: KernelHandle,
     pub conv_decode: KernelHandle,
+    /// 2026-10-09: `causal_conv1d_update_l2norm_rows`: `conv_decode` for up to
+    /// [`KDA_ROWS_MAX`] rows of different sequences, each row's window and workspace row a kernel
+    /// argument. Resolved with `try_kernel`; `0` keeps one launch per row.
+    pub conv_decode_rows: KernelHandle,
     pub conv_prefill: KernelHandle,
     pub l2: KernelHandle,
     pub gate: KernelHandle,
@@ -29,6 +37,17 @@ pub struct Glm5NextKdaKernels {
     /// 2026-09-25: 1R+1W sibling of `recurrent`: the decayed state column stays in shared memory
     /// between the two passes. Resolved with `try_kernel`; `0` selects the 2R+2W kernel.
     pub recurrent_smem: KernelHandle,
+    /// 2026-10-09: `kda_recurrent_decode_bf16_smem_rows`: the 1R+1W step for up to
+    /// [`KDA_ROWS_MAX`] rows of different sequences in one launch, each row's state a kernel
+    /// argument. Resolved with `try_kernel`; `0` keeps one launch per row.
+    pub recurrent_smem_rows: KernelHandle,
+    /// 2026-10-09: `kda_recurrent_decode_bf16_rows_reg`: the rows step with the decayed column
+    /// in registers (head_dim [`KDA_REG_D`] only). Taken instead of `recurrent_smem_rows` under
+    /// `METRALE_GLM_KDA_ROWS_REG=1` until measured; `0` when absent.
+    pub recurrent_rows_reg: KernelHandle,
+    /// 2026-10-09: The one-launch-per-layer stateful step of several tokens of one sequence
+    /// (`seq_tokens.rs`); all `0` on a target without them.
+    pub seq: KdaSeqKernels,
     pub o_norm: KernelHandle,
     pub split_widen: KernelHandle,
     pub sigmoid: KernelHandle,
@@ -48,7 +67,17 @@ impl Glm5NextKdaKernels {
                 "dense_gemv_bf16_batchm",
                 "dense_gemv_bf16_batchm",
             ),
+            gemv_batchm_wide: metrale_model_layers::layers::try_kernel(
+                gpu,
+                "dense_gemv_bf16_batchm",
+                "dense_gemv_bf16_batchm_wide",
+            ),
             conv_decode: gpu.kernel("causal_conv1d", "causal_conv1d_update_l2norm")?,
+            conv_decode_rows: metrale_model_layers::layers::try_kernel(
+                gpu,
+                "causal_conv1d",
+                "causal_conv1d_update_l2norm_rows",
+            ),
             conv_prefill: gpu.kernel("causal_conv1d", "causal_conv1d_update_prefill")?,
             l2: gpu.kernel("norm", "l2_norm_bf16")?,
             gate: gpu.kernel("kda_gate", "kda_gate_bf16")?,
@@ -60,11 +89,57 @@ impl Glm5NextKdaKernels {
                 "kda_recurrent",
                 "kda_recurrent_decode_bf16_smem",
             ),
+            recurrent_smem_rows: metrale_model_layers::layers::try_kernel(
+                gpu,
+                "kda_recurrent",
+                "kda_recurrent_decode_bf16_smem_rows",
+            ),
+            recurrent_rows_reg: metrale_model_layers::layers::try_kernel(
+                gpu,
+                "kda_recurrent",
+                "kda_recurrent_decode_bf16_rows_reg",
+            ),
+            seq: KdaSeqKernels::resolve(gpu),
             o_norm: gpu.kernel("kda_layer_ops", "kda_o_norm_gated_bf16")?,
             split_widen: gpu.kernel("kda_layer_ops", "kda_split_widen")?,
             sigmoid: gpu.kernel("kda_layer_ops", "kda_sigmoid_bf16_f32")?,
             fill: gpu.kernel("kda_layer_ops", "kda_fill_f32")?,
             pack: gpu.kernel("kda_layer_ops", "kda_pack_qkv_bf16")?,
         })
+    }
+}
+
+/// 2026-10-09: `#define KDA_ROWS_MAX` in `kernels/gb10/common/kda_recurrent.cu`: the state
+/// arguments `kda_recurrent_decode_bf16_smem_rows` takes. Wider groups keep one launch per
+/// row.
+pub const KDA_ROWS_MAX: usize = 16;
+
+/// 2026-10-09: `#define KDA_REG_D` in `kda_recurrent.cu`: the head_dim
+/// `kda_recurrent_decode_bf16_rows_reg` is compiled for.
+pub const KDA_REG_D: usize = 128;
+
+/// 2026-10-09: `causal_conv1d_update_l2norm_tokens`, `causal_conv1d_window_advance` and
+/// `kda_recurrent_decode_bf16_seq_reg` (the first two in `kda_conv_tokens.cu`), resolved
+/// with `try_kernel`.
+#[derive(Clone, Copy, Debug)]
+pub struct KdaSeqKernels {
+    pub conv_tokens: KernelHandle,
+    pub conv_window: KernelHandle,
+    pub recurrent: KernelHandle,
+}
+
+impl KdaSeqKernels {
+    pub fn resolve(gpu: &dyn GpuBackend) -> Self {
+        let k = metrale_model_layers::layers::try_kernel;
+        Self {
+            conv_tokens: k(gpu, "kda_conv_tokens", "causal_conv1d_update_l2norm_tokens"),
+            conv_window: k(gpu, "kda_conv_tokens", "causal_conv1d_window_advance"),
+            recurrent: k(gpu, "kda_recurrent", "kda_recurrent_decode_bf16_seq_reg"),
+        }
+    }
+
+    /// 2026-10-09: Whether all three resolved.
+    pub fn ready(&self) -> bool {
+        self.conv_tokens.0 != 0 && self.conv_window.0 != 0 && self.recurrent.0 != 0
     }
 }

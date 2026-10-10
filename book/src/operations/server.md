@@ -230,7 +230,7 @@ anything is released.
 
 ## Chat templating
 
-Tokenization uses the HF `tokenizers` crate plus `minijinja` for chat templates. Metrale Engine ships its own template overrides for a handful of models in `jinja-templates/<model_type>.jinja` when the upstream template has known issues (e.g. template-forced `<think>` seeding). The filename is the checkpoint's `config.json` `model_type`; `--disable-template-overrides` ignores it.
+Tokenization uses the HF `tokenizers` crate plus `minijinja` for chat templates. Metrale Engine ships its own template overrides for a handful of models in `jinja-templates/<model_type>.jinja` when the upstream template has known issues (e.g. template-forced `<think>` seeding). The filename is the checkpoint's `config.json` `model_type`; `--disable-template-overrides` ignores it. `--chat-template FILE` renders every request with that file instead, ahead of both the override directory and the checkpoint's own template (precedence in `jinja-templates/README.md`).
 
 ## Observability
 

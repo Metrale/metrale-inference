@@ -2195,8 +2195,15 @@ extern "C" __global__ void w4a16_gemv_dual_batch3(
 // unused), and u_slot[u * rows + r] the slot row r gave it (-1 when row r did not select
 // it). Entries follow the first appearance of each id in row-major order. It needs one
 // block of at least rows * top_k threads; glm5next_mlp/forward/moe_experts.rs launches exactly
-// that, and forward.rs takes this path only while rows * top_k <= MOE_ROW_UNION_MAX_IDS (64).
-
+// that, and forward.rs takes this path only while rows * top_k <= MOE_ROW_UNION_MAX_IDS (128 since
+// 2026-10-09; 64 before).
+// 2026-10-09: Parallel over the ids (was: each first occurrence counted the first occurrences
+// before it serially, O(T^2) dependent loads in one thread, ~200 us at T = 128). The ids are
+// staged in shared memory; every thread finds its id's first occurrence (O(T)), each first
+// occurrence counts the first occurrences before it for its entry index (O(T)), and each
+// (row, slot) writes its own slot unless a later slot of the same row holds the same id, which
+// is the serial loop's last write. The tables are the same, entry for entry.
+#define MOE_ROW_UNION_MAX_THREADS 1024
 
 extern "C" __global__ void glm5next_moe_row_union(
     const int* __restrict__ ids,
@@ -2205,44 +2212,56 @@ extern "C" __global__ void glm5next_moe_row_union(
     unsigned int rows,
     unsigned int top_k
 ) {
+    // 2026-10-09: T <= blockDim.x <= MOE_ROW_UNION_MAX_THREADS (the launch contract above).
+    __shared__ int s_ids[MOE_ROW_UNION_MAX_THREADS];
+    __shared__ int s_first[MOE_ROW_UNION_MAX_THREADS];
+    __shared__ int s_entry[MOE_ROW_UNION_MAX_THREADS];
     const unsigned int T = rows * top_k;
     const unsigned int t = threadIdx.x;
+    const bool live = t < T;
 
     // 2026-09-25: Clear the tables before the barrier. Every thread must reach it, so the range
     // check is a predicate here and the early return comes after.
+    // 2026-10-09: Every thread reaches all three barriers; `live` predicates the work.
 
-    if (t < T) {
+    if (live) {
         u_eid[t] = -1;
         for (unsigned int r = 0; r < rows; r++) u_slot[t * rows + r] = -1;
+        s_ids[t] = ids[t];
     }
     __syncthreads();
-    if (t >= T) return;
 
-    const int eid = ids[t];
-    if (eid < 0) return;
-
-    // 2026-09-25: Only the thread of an id's first occurrence writes its entry.
-    for (unsigned int tp = 0; tp < t; tp++) {
-        if (ids[tp] == eid) return;
-    }
-
-    // 2026-09-25: Its union index is the number of first occurrences before t.
-    int uidx = 0;
-    for (unsigned int tp = 0; tp < t; tp++) {
-        const int e2 = ids[tp];
-        if (e2 < 0) continue;
-        bool owner2 = true;
-        for (unsigned int tq = 0; tq < tp; tq++) {
-            if (ids[tq] == e2) { owner2 = false; break; }
+    // 2026-10-09: s_first[t]: the first index holding ids[t], or -1 for a negative id.
+    const int eid = live ? s_ids[t] : -1;
+    if (live) {
+        int first = -1;
+        if (eid >= 0) {
+            first = (int)t;
+            for (unsigned int tp = 0; tp < t; tp++) {
+                if (s_ids[tp] == eid) { first = (int)tp; break; }
+            }
         }
-        if (owner2) uidx++;
+        s_first[t] = first;
     }
+    __syncthreads();
 
-    u_eid[uidx] = eid;
-
-    for (unsigned int tp = t; tp < T; tp++) {
-        if (ids[tp] == eid) u_slot[uidx * rows + tp / top_k] = (int)(tp % top_k);
+    // 2026-10-09: A first occurrence's entry is the number of first occurrences before it.
+    if (live && s_first[t] == (int)t) {
+        int uidx = 0;
+        for (unsigned int tp = 0; tp < t; tp++) {
+            if (s_first[tp] == (int)tp) uidx++;
+        }
+        s_entry[t] = uidx;
+        u_eid[uidx] = eid;
     }
+    __syncthreads();
+    if (!live || eid < 0) return;
+
+    const unsigned int row = t / top_k;
+    for (unsigned int tp = t + 1; tp < (row + 1) * top_k; tp++) {
+        if (s_ids[tp] == eid) return;
+    }
+    u_slot[s_entry[s_first[t]] * rows + row] = (int)(t % top_k);
 }
 
 // 2026-09-25: w4a16_gemv_partial for R rows over one weight read. Aptr[r] == nullptr skips
@@ -2413,3 +2432,13 @@ METRALE_MOE_BATCHM_ENTRY(5)
 METRALE_MOE_BATCHM_ENTRY(6)
 METRALE_MOE_BATCHM_ENTRY(7)
 METRALE_MOE_BATCHM_ENTRY(8)
+// 2026-10-09: Tiers 9..16, so a 16-row decode group reads each union expert once. The body
+// is the template above; each (row, slot) keeps w4a16_gemv_sw_moe's arithmetic.
+METRALE_MOE_BATCHM_ENTRY(9)
+METRALE_MOE_BATCHM_ENTRY(10)
+METRALE_MOE_BATCHM_ENTRY(11)
+METRALE_MOE_BATCHM_ENTRY(12)
+METRALE_MOE_BATCHM_ENTRY(13)
+METRALE_MOE_BATCHM_ENTRY(14)
+METRALE_MOE_BATCHM_ENTRY(15)
+METRALE_MOE_BATCHM_ENTRY(16)

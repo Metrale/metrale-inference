@@ -127,8 +127,8 @@ pub fn step_verify_k2(
     // the workers run `decode_verify_graphed` for the command above, so the
     // master runs it too and the collectives stay matched.
     let result_vec: Vec<u32> = if dflash_verify_raw_argmax && !model.is_ep() {
-        // 2026-09-25: one M=2 forward; it captures the DFlash hidden at
-        // row 0 (`Model::decode_and_verify_fused`).
+        // 2026-09-25: one M=2 forward; it captures the DFlash hidden of
+        // every row (`Model::decode_and_verify_fused`).
         match model.decode_and_verify_fused(&tokens_k2, &mut a.seq, 0) {
             Ok(r) => r,
             Err(e) => {
@@ -209,6 +209,20 @@ pub fn step_verify_k2(
         return;
     }
 
+    // 2026-10-09: On a DFlash serve the drafter context gets the verified rows `0..=accepted`
+    // (the anchor, and the draft when it was accepted) at their own positions, on accept and on
+    // reject, as after a K=γ verify. The verify forward ran 2 rows past the pre-verify length.
+    if dflash_verify_raw_argmax {
+        let pre_verify_len = a.seq.seq_len.saturating_sub(2);
+        commit_verified_ctx(
+            model,
+            &mut a.seq,
+            usize::from(accepted),
+            pre_verify_len,
+            sched,
+        );
+    }
+
     sched
         .io
         .tel
@@ -243,7 +257,8 @@ pub fn step_verify_k2(
         // conditions on row 1, the hidden that produced the bonus token. It
         // also sets `skip_next_decode_append` so row 0 is not appended
         // twice. A no-op for models without a DFlash drafter.
-        let eagle_fix = sched.levers.dflash_eagle_fix;
+        // 2026-10-09: A DFlash serve committed its rows after the verdict above.
+        let eagle_fix = sched.levers.dflash_eagle_fix && !dflash_verify_raw_argmax;
         if eagle_fix && let Err(e) = model.dflash_eagle_accept_append(&mut a.seq) {
             tracing::error!("dflash_eagle_accept_append: {e:#}");
         }

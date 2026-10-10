@@ -30,15 +30,29 @@ pub struct DflashConfig {
     pub block_size: usize,
     #[serde(default)]
     pub dflash_config: Option<DflashSubConfig>,
-    /// 2026-09-25: Drafter RoPE θ; 10,000,000 when absent.
-    #[serde(default = "default_rope_theta")]
-    pub rope_theta: f32,
+    /// 2026-09-25: Drafter RoPE θ as a top-level key. 2026-10-08: optional, because
+    /// transformers 5 configs state θ only inside `rope_parameters`; read it through
+    /// [`DflashConfig::effective_rope_theta`].
+    #[serde(default)]
+    pub rope_theta: Option<f32>,
     /// 2026-09-25: The `rope_scaling` block, also read under the key
     /// `rope_parameters`. `None` means plain RoPE. With `rope_type == "yarn"`
     /// the head builds a YaRN inv_freq table; any other block falls back to
     /// plain RoPE with a warning.
     #[serde(default, alias = "rope_parameters")]
     pub rope_scaling: Option<DflashRopeScaling>,
+    /// 2026-10-08: The drafter's RMSNorm epsilon. Every drafter shipped so far states it (the
+    /// Qwen drafters 1e-6, the GLM-5.3 Flash DFlash2 drafter 1e-5); read it through
+    /// [`DflashConfig::effective_rms_norm_eps`], which refuses a config without it.
+    #[serde(default)]
+    pub rms_norm_eps: Option<f32>,
+    /// 2026-10-09: The sliding window the drafter's attention was trained with, and whether
+    /// it is on (`use_sliding_window`, read as on when absent). Read them through
+    /// [`DflashConfig::trained_window`]; the serve's window is `--dflash-window-size`.
+    #[serde(default)]
+    pub sliding_window: Option<usize>,
+    #[serde(default)]
+    pub use_sliding_window: Option<bool>,
     /// 2026-09-25: DSpark Markov head rank, a top-level key; 0 when absent,
     /// which loads no Markov head.
     #[serde(default)]
@@ -73,6 +87,9 @@ pub struct DflashRopeScaling {
     /// back to plain RoPE with a warning when the head is built.
     #[serde(default)]
     pub rope_type: Option<String>,
+    /// 2026-10-08: θ as transformers 5 writes it, inside `rope_parameters`.
+    #[serde(default)]
+    pub rope_theta: Option<f32>,
     #[serde(default)]
     pub factor: Option<f32>,
     #[serde(default)]
@@ -123,6 +140,63 @@ pub struct DflashSubConfig {
 }
 
 impl DflashConfig {
+    /// 2026-10-08: Resolved RoPE θ: the top-level `rope_theta`, else `rope_parameters.rope_theta`,
+    /// else 10,000,000 (the value every drafter loaded before this field was read). A drafter
+    /// that states θ in both places with different values is refused.
+    pub fn effective_rope_theta(&self) -> Result<f32, String> {
+        let nested = self.rope_scaling.as_ref().and_then(|r| r.rope_theta);
+        match (self.rope_theta, nested) {
+            (Some(top), Some(inner)) if top != inner => Err(format!(
+                "drafter config states rope_theta {top} at top level and {inner} in rope_parameters"
+            )),
+            (Some(top), _) => Ok(top),
+            (None, Some(inner)) => Ok(inner),
+            (None, None) => Ok(default_rope_theta()),
+        }
+    }
+
+    /// 2026-10-08: The RMSNorm epsilon the drafter was trained with. The head used 1e-6 for
+    /// every drafter before this was read; a config that does not state it is refused rather
+    /// than given a guess.
+    pub fn effective_rms_norm_eps(&self) -> Result<f32, String> {
+        self.rms_norm_eps
+            .ok_or_else(|| "drafter config.json has no rms_norm_eps".to_string())
+    }
+
+    /// 2026-10-09: The window the drafter was trained at: `sliding_window` unless
+    /// `use_sliding_window` is false; `None` when the config states no window.
+    pub fn trained_window(&self) -> Option<usize> {
+        match self.use_sliding_window {
+            Some(false) => None,
+            _ => self.sliding_window,
+        }
+    }
+
+    /// 2026-10-09: The window the drafter's attention applies on a serve whose
+    /// `--dflash-window-size` is `serve_window` (`None`: 0, no window): the trained window when
+    /// the flag states it, else `None` (every ctx row attended, as before this was read). A
+    /// flag that differs from the trained window draws [`Self::window_mismatch`]'s warning.
+    pub fn attention_window(&self, serve_window: Option<usize>) -> Option<usize> {
+        let trained = self.trained_window()?;
+        (serve_window == Some(trained)).then_some(trained)
+    }
+
+    /// 2026-10-09: A warning when the serve's drafter window `serve_window` (0: none) differs
+    /// from the window the drafter was trained at; `None` when they agree or the drafter
+    /// states none. The serve keeps the flag either way: the GLM-5.3 Flash DFlash2 drafter is
+    /// trained at 2048 and its serve passes `--dflash-window-size 2048`, while the flag's
+    /// default stays as it is for the drafters already served with it.
+    pub fn window_mismatch(&self, serve_window: usize) -> Option<String> {
+        let trained = self.trained_window()?;
+        (trained != serve_window).then(|| {
+            format!(
+                "DFlash drafter trained with a {trained}-token sliding window, served with \
+                 --dflash-window-size {serve_window}, so its attention applies no window; pass \
+                 --dflash-window-size {trained} to serve it as trained"
+            )
+        })
+    }
+
     /// 2026-09-25: Resolved block size γ: `dflash_config.block_size` when set,
     /// else the top-level field. The sub-config comes first because serde
     /// fills the top-level default of 16 for a checkpoint that never states

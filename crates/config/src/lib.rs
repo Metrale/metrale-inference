@@ -268,18 +268,22 @@ mod kv_completeness_tests;
 pub mod levers;
 mod methods;
 mod model_config;
+pub mod moe_expert_layout;
 mod parsers;
 mod position_encoding;
 pub mod precision_plan;
 pub mod recipe_yaml;
 #[cfg(test)]
 mod tests;
+mod tp_split;
 pub mod weight_quantization;
 
 pub use activation_quantization::{ActQuantFormat, ActivationQuantization, ProjFamily};
 pub use dispatch::parse_config;
 pub use gguf::{GgufConfigInputs, GgufMeta, config_from_gguf};
+pub use kv_completeness::glm_dsa_indexer_paged;
 pub use model_config::ModelConfig;
+pub use moe_expert_layout::MoeExpertLayout;
 pub use parsers::{
     PEFT_SUPPORTED_TARGET_MODULES, PeftAdapterConfig, allow_partial_targets,
     glm5_next_mtp_layer_index, parse_mistral_params, parse_peft_adapter_config,
@@ -293,6 +297,7 @@ pub(crate) use parsers::{
 pub use position_encoding::AttnPositionEncoding;
 pub(crate) use position_encoding::resolve_attn_position_encoding;
 pub use precision_plan::{DeclaredPrecisionPlan, LayerPrecision};
+pub use tp_split::{TpPreShardHeads, TpSlice, TpSupport, linear_head_unit, tp_split};
 pub use weight_quantization::{
     Nvfp4Act, W4a4Downcast, WeightQuantPolicy, WeightQuantTier, WeightQuantization,
 };

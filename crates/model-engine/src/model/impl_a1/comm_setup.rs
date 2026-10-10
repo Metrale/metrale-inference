@@ -92,4 +92,11 @@ pub(super) fn register_reduce_buffers(
             tracing::warn!(target: "metrale_model_engine::model::impl_a1", "bf16_add_inplace kernel not found (send/recv disabled): {e}")
         }
     }
+    // 2026-10-08: The one-shot all-reduce (world >= 3) refuses to run without this kernel, so a
+    // missing kernel surfaces as an error at the first collective, never as a silent NCCL fallback.
+    if comm.world_size() >= 3
+        && let Ok(k) = gpu.kernel("bf16_add", "bf16_add_rank_sum")
+    {
+        comm.set_rank_sum_kernel(k.0);
+    }
 }

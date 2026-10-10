@@ -15,6 +15,11 @@
 //   order is fixed by K alone and its MMA column reads only its own activations, so a row's
 //   output bits do not depend on M, on the other rows, on NT or on G.
 // - Grid (N / TR_COLS, 1, 1), block TR_THREADS, static shared memory only.
+// - 2026-10-09: tr_block_split sums split s of S of K (S > 1: K's TR_SPLIT_K-wide units
+//   [s * u / S, (s + 1) * u / S), u = K / TR_SPLIT_K, chunk by chunk in the same order) and its
+//   Red policy merges the splits' FP32 partial sums before the store. tr_block is S = 1 with
+//   nothing to merge. A split's K range depends on K, S and s alone, never on M, NT or G, so the
+//   row bits of a split launch do not depend on them either.
 
 #pragma once
 
@@ -25,6 +30,8 @@
 #define TR_WARPS 4
 #define TR_THREADS (TR_WARPS * 32)
 #define TR_COLS (TR_WARPS * 16)
+// 2026-10-09: The K unit a K-split divides (a multiple of every entry's P::CHUNK_K * G).
+#define TR_SPLIT_K 256
 
 __device__ __forceinline__ void tr_mma_bf16(float* c, const unsigned int* a, unsigned int b0, unsigned int b1) {
     asm volatile(
@@ -33,16 +40,28 @@ __device__ __forceinline__ void tr_mma_bf16(float* c, const unsigned int* a, uns
         : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b0), "r"(b1));
 }
 
+// 2026-10-09: The merge step of tr_block_split for an unsplit K: nothing to merge, every block
+// stores. A K-split's policy has the same shape: merge(acc, nt_live, scratch) runs after the
+// main loop, with `scratch` (the block's shared activation buffers, now free, at least
+// TR_THREADS * NT * 16 bytes) at its disposal, merges the other splits' partial sums into acc
+// and returns whether this block stores.
+struct TrWhole {
+    template <int NT>
+    static __device__ __forceinline__ bool merge(float (&)[NT][4], unsigned int, unsigned char*) { return true; }
+};
+
 // 2026-09-28: One block: TR_COLS output columns, one m-tile (16 columns) per warp, NT row tiles
 // of 8. The weights stream in load groups of G chunks of P::CHUNK_K (a weight row in 16 * G-byte
 // lane runs), one group ahead; each group's activations are loaded one group ahead into
 // registers and stored (times P::ACT_LIFT) into the other shared buffer after the current
 // group's MMAs. G changes only how loads are batched, never the arithmetic.
-template <class P, int NT, int G, bool RAGGED = false>
-__device__ __forceinline__ void tr_block(
+// 2026-10-09: Split s < S of K (S > 1 needs K a multiple of TR_SPLIT_K and S <= K / TR_SPLIT_K,
+// so no split is empty), then Red.
+template <class P, int NT, int G, bool RAGGED, int S, class Red>
+__device__ __forceinline__ void tr_block_split(
     const __nv_bfloat16* __restrict__ A, const typename P::Mat& W, __nv_bfloat16* __restrict__ C,
     unsigned int M, unsigned int N, unsigned int K, unsigned int lda, unsigned int ldc,
-    unsigned int col_block
+    unsigned int col_block, unsigned int s
 ) {
     constexpr int GK = P::CHUNK_K * G;
     constexpr int MMAS = P::CHUNK_K / 16;
@@ -54,9 +73,17 @@ __device__ __forceinline__ void tr_block(
     constexpr int U4 = ROWS * GK * 2 / 16;
     constexpr int PER = (U4 + TR_THREADS - 1) / TR_THREADS;
     __shared__ __align__(16) unsigned char xs[2][ROWS * RS];
+    static_assert(2 * ROWS * RS >= TR_THREADS * NT * 16, "a K-split's merge scratch is the activation buffers");
     const unsigned int warp = threadIdx.x >> 5, lane = threadIdx.x & 31, g = lane >> 2, t = lane & 3;
     const unsigned int f0 = col_block * TR_COLS + warp * 16;
     const unsigned int ngroups = K / GK;
+    static_assert(S == 1 || TR_SPLIT_K % GK == 0, "a split unit is whole load groups");
+    unsigned int g0 = 0, g1 = ngroups;
+    if constexpr (S > 1) {
+        const unsigned int units = K / TR_SPLIT_K;
+        g0 = s * units / S * (TR_SPLIT_K / GK);
+        g1 = (s + 1) * units / S * (TR_SPLIT_K / GK);
+    }
     const unsigned int nt_live = (M + 7) / 8;
     const __nv_bfloat162 liftx2 = __floats2bfloat162_rn(P::ACT_LIFT, P::ACT_LIFT);
 
@@ -101,23 +128,23 @@ __device__ __forceinline__ void tr_block(
         #pragma unroll
         for (int e = 0; e < 4; e++) acc[n][e] = tmp[n][e] = 0.f;
 
-    group_load(0);
+    group_load(g0);
     group_store(0);
     uint4 wn[G][2];
     typename P::Sc sn[G][2];
     #pragma unroll
     for (int c = 0; c < G; c++) {
-        wn[c][0] = wload(0, c); wn[c][1] = wload(1, c);
-        sn[c][0] = sload(0, c); sn[c][1] = sload(1, c);
+        wn[c][0] = wload(0, g0 * G + c); wn[c][1] = wload(1, g0 * G + c);
+        sn[c][0] = sload(0, g0 * G + c); sn[c][1] = sload(1, g0 * G + c);
     }
     __syncthreads();
-    for (unsigned int gi = 0; gi < ngroups; gi++) {
-        const unsigned int buf = gi & 1;
+    for (unsigned int gi = g0; gi < g1; gi++) {
+        const unsigned int buf = (gi - g0) & 1;
         uint4 w[G][2];
         typename P::Sc s[G][2];
         #pragma unroll
         for (int c = 0; c < G; c++) { w[c][0] = wn[c][0]; w[c][1] = wn[c][1]; s[c][0] = sn[c][0]; s[c][1] = sn[c][1]; }
-        if (gi + 1 < ngroups) {
+        if (gi + 1 < g1) {
             #pragma unroll
             for (int c = 0; c < G; c++) {
                 wn[c][0] = wload(0, (gi + 1) * G + c);
@@ -157,9 +184,10 @@ __device__ __forceinline__ void tr_block(
                 }
             }
         }
-        if (gi + 1 < ngroups) group_store(buf ^ 1);
+        if (gi + 1 < g1) group_store(buf ^ 1);
         __syncthreads();
     }
+    if (!Red::template merge<NT>(acc, nt_live, &xs[0][0])) return;
     // 2026-09-28: acc[n][e]: column f0 + g (+ 8 for e >= 2) of row 8n + 2t + (e & 1).
     #pragma unroll
     for (int n = 0; n < NT; n++) {
@@ -174,3 +202,13 @@ __device__ __forceinline__ void tr_block(
 }
 #undef wload
 #undef sload
+
+// 2026-09-28: The whole K of one block of TR_COLS output columns.
+template <class P, int NT, int G, bool RAGGED = false>
+__device__ __forceinline__ void tr_block(
+    const __nv_bfloat16* __restrict__ A, const typename P::Mat& W, __nv_bfloat16* __restrict__ C,
+    unsigned int M, unsigned int N, unsigned int K, unsigned int lda, unsigned int ldc,
+    unsigned int col_block
+) {
+    tr_block_split<P, NT, G, RAGGED, 1, TrWhole>(A, W, C, M, N, K, lda, ldc, col_block, 0u);
+}

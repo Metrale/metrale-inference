@@ -153,12 +153,39 @@ fn replay_pool_has_checkpoints_and_ring_but_no_intermediates() {
     assert_eq!(p.h_checkpoint_pools.len(), p.num_ssm_layers);
     assert_eq!(p.replay_input_rings.len(), p.num_ssm_layers);
     assert_eq!(p.verify_draft_capacity(0), usize::MAX);
-    let err = p.require_verify_rollback_supported().unwrap_err();
+    let err = p.require_verify_rollback_supported(false).unwrap_err();
     assert!(err.to_string().contains("EXPERIMENTAL"), "{err}");
+    assert!(p.require_verify_rollback_supported(true).is_ok());
     let snap = pool(false);
-    assert!(snap.require_verify_rollback_supported().is_ok());
+    assert!(snap.require_verify_rollback_supported(false).is_ok());
     assert!(snap.replay_input_rings.is_empty());
     assert!(!snap.h_intermediate_pools.is_empty());
+}
+
+/// 2026-10-09: A replay pool reports no conv intermediates, so slot reset and slot copy (and
+/// sequence setup, which loops over the same count) touch none; before, they looped over the
+/// conv stride and indexed the empty intermediate pools on the first request.
+#[test]
+fn a_replay_pool_has_no_conv_intermediates_to_walk() {
+    let config = ModelConfig::qwen3_next_80b_nvfp4();
+    let gpu = MockGpuBackend::new();
+    let p = SsmStatePool::new(
+        &config,
+        4,
+        true,
+        4,
+        3,
+        false,
+        metrale_model_layers::ssm_reserve::SsmRollbackMode::Replay,
+        &gpu,
+    )
+    .unwrap();
+    assert!(p.num_intermediates > 0, "the stride stays the verify width");
+    assert_eq!(p.conv_inter_count(), 0);
+    p.reset_slot(0, &gpu).unwrap();
+    p.copy_slot(0, 1, &gpu, 0).unwrap();
+    let snap = pool(false);
+    assert_eq!(snap.conv_inter_count(), snap.num_intermediates);
 }
 
 /// 2026-09-25: Every h family (base slots, intermediates, checkpoints) strides by

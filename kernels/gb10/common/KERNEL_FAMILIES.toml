@@ -122,6 +122,7 @@ compute = "memory"
 kernels = [
   "norm::rms_norm", "norm::rms_norm_residual", "norm::residual_add_rms_norm",
   "norm::rms_norm_strided", "residual_add_rms_norm_exact::residual_add_rms_norm_exact",
+  "rms_norm_vanilla::rms_norm_vanilla",
 ]
 rows = [1, 65536]
 # 2026-10-02: residual_add_rms_norm takes its sum of squares from the FP32 sum before its BF16
@@ -145,10 +146,12 @@ absent = "one_plus"
 values = { weight_form = "one_plus" }
 how = "instantiation"
 files = ["kernels/gb10/common/rms_norm.cu", "kernels/gb10/common/residual_add_rms_norm_exact.cu"]
+# 2026-10-08: `rms_norm_vanilla.cu` is a third copy of the plain point (the GLM-5 norms,
+# glm5next_layer/steps.rs:16-36).
 [[family.point]]
 values = { weight_form = "plain" }
 how = "copy"
-files = ["kernels/gb10/common/rms_norm.cu"]
+files = ["kernels/gb10/common/rms_norm.cu", "kernels/gb10/common/rms_norm_vanilla.cu"]
 [[family.evidence]]
 point = { weight_form = "one_plus" }
 rows = [2]
@@ -166,14 +169,16 @@ measurement = "qwen3.8-27b::residual_add_rms_norm @ decode C=1 (R=4, MTP k=3)"
 id = "residual_add"
 description = "BF16 residual add"
 compute = "memory"
-kernels = ["residual_add::bf16_residual_add"]
+# 2026-10-08: `bf16_add_inplace` (bf16_add.cu) is the in-place twin the GLM-5 MTP block's plain
+# residual adds with (glm5next_layer/steps.rs:183-206).
+kernels = ["residual_add::bf16_residual_add", "bf16_add::bf16_add_inplace"]
 rows = [1, 65536]
 pipeline.residual_add = { in = ["bf16", "bf16"], compute = "f32", out = ["bf16"] }
 op = [{ op = "residual_add" }]
 [[family.point]]
 values = {}
 how = "instantiation"
-files = ["kernels/gb10/common/residual_add.cu"]
+files = ["kernels/gb10/common/residual_add.cu", "kernels/gb10/common/bf16_add.cu"]
 
 [[family]]
 id = "sigmoid_gate_mul"
@@ -298,8 +303,21 @@ rows = [1, 1]
 pipeline.linear = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["f32"] }
 pipeline.gdn_gates = { in = ["f32"], compute = "f32", out = ["f32", "f32"] }
 op = [{ op = "linear", roles = ["ba"] }, { op = "gdn_gates" }]
+[[family.param]]
+name = "gate"
+kind = "policy"
+from = { gdn_gates = "param:gate" }
+# 2026-10-08: GatedDeltaNet's decay -exp(A_log) * softplus(a + dt_bias); the Qwen3.5 circuits do
+# not state it. KDA's is a bounded sigmoid (`sigmoid_bounded`).
+absent = "softplus"
+[[family.param]]
+name = "decay"
+kind = "policy"
+from = { gdn_gates = "param:decay" }
+# 2026-10-08: One decay per head; KDA's is per channel.
+absent = "head"
 [[family.point]]
-values = {}
+values = { gate = "softplus", decay = "head" }
 how = "instantiation"
 files = ["kernels/gb10/common/ssm_preprocess.cu"]
 
@@ -317,20 +335,33 @@ rows = [1, 65536]
 pipeline.linear = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["f32"] }
 pipeline.gdn_gates = { in = ["f32"], compute = "f32", out = ["f32", "f32"] }
 op = [{ op = "linear", roles = ["ba"] }, { op = "gdn_gates" }]
+[[family.param]]
+name = "gate"
+kind = "policy"
+from = { gdn_gates = "param:gate" }
+# 2026-10-08: GatedDeltaNet's decay -exp(A_log) * softplus(a + dt_bias); the Qwen3.5 circuits do
+# not state it. KDA's is a bounded sigmoid (`sigmoid_bounded`).
+absent = "softplus"
+[[family.param]]
+name = "decay"
+kind = "policy"
+from = { gdn_gates = "param:decay" }
+# 2026-10-08: One decay per head; KDA's is per channel.
+absent = "head"
 [[family.point]]
-values = {}
+values = { gate = "softplus", decay = "head" }
 how = "instantiation"
 files = ["kernels/gb10/common/ssm_preprocess.cu", "kernels/gb10/common/ssm_ba_gates_hopper.cu"]
 [[family.evidence]]
-point = {}
+point = { gate = "softplus", decay = "head" }
 rows = [2]
 measurement = "qwen3.6-35b-a3b::dense_gemm_ba_gates_prefill @ decode C=1 (R=2, MTP k=1)"
 [[family.evidence]]
-point = {}
+point = { gate = "softplus", decay = "head" }
 rows = [4]
 measurement = "qwen3.8-27b::dense_gemm_ba_gates_prefill @ decode C=1 (R=4, MTP k=3)"
 [[family.evidence]]
-point = {}
+point = { gate = "softplus", decay = "head" }
 rows = [32]
 measurement = "qwen3.8-27b::dense_gemm_ba_gates_prefill @ decode C=16 (R=32, MTP k=1)"
 
@@ -416,19 +447,32 @@ kernel_pipeline."gated_delta_rule_wy::gated_delta_rule_wy2".gdn_recurrence = { i
 kernel_pipeline."gated_delta_rule_wy3::gated_delta_rule_wy3".gdn_recurrence = { in = ["bf16", "f32", "f32"], state = "f32", compute = "f32", out = ["bf16"] }
 kernel_pipeline."gated_delta_rule_wy4::gated_delta_rule_wy4".gdn_recurrence = { in = ["bf16", "f32", "f32"], state = "f32", compute = "f32", out = ["bf16"] }
 op = [{ op = "gdn_recurrence" }, { op = "gated_rms_norm", after = ["gdn_recurrence"] }]
+[[family.param]]
+name = "decay"
+kind = "policy"
+from = { gdn_recurrence = "param:decay" }
+# 2026-10-08: One decay per head (GatedDeltaNet); KDA's is per key channel. The Qwen3.5 circuits
+# do not state it.
+absent = "head"
+[[family.param]]
+name = "gate_act"
+kind = "policy"
+from = { gated_rms_norm = "param:gate_act" }
+# 2026-10-08: The GDN output norm gates with SiLU; KDA's with a sigmoid.
+absent = "silu"
 [[family.point]]
-values = {}
+values = { decay = "head", gate_act = "silu" }
 how = "instantiation"
 files = [
   "kernels/gb10/common/gated_delta_rule.cu", "kernels/gb10/common/gated_delta_rule_wy.cu",
   "kernels/gb10/common/gated_delta_rule_wy3.cu", "kernels/gb10/common/gated_delta_rule_wy4.cu",
 ]
 [[family.evidence]]
-point = {}
+point = { decay = "head", gate_act = "silu" }
 rows = [2]
 measurement = "qwen3.6-35b-a3b::gated_delta_rule_wy2 @ decode C=1 (R=2, MTP k=1)"
 [[family.evidence]]
-point = {}
+point = { decay = "head", gate_act = "silu" }
 rows = [4]
 measurement = "qwen3.8-27b::gated_delta_rule_wy4 @ decode C=1 (R=4, MTP k=3)"
 
@@ -444,8 +488,15 @@ kernels = ["gated_delta_rule::gated_delta_rule_decode_f32_strided"]
 rows = [1, 128]
 pipeline.gdn_recurrence = { in = ["f32", "f32", "f32"], state = "f32", compute = "f32", out = ["f32"] }
 op = [{ op = "gdn_recurrence" }]
+[[family.param]]
+name = "decay"
+kind = "policy"
+from = { gdn_recurrence = "param:decay" }
+# 2026-10-08: One decay per head (GatedDeltaNet); KDA's is per key channel. The Qwen3.5 circuits
+# do not state it.
+absent = "head"
 [[family.point]]
-values = {}
+values = { decay = "head" }
 how = "instantiation"
 files = ["kernels/gb10/common/gated_delta_rule.cu"]
 
@@ -468,8 +519,21 @@ op = [
   { op = "gated_rms_norm", after = ["gdn_recurrence"] },
   { op = "state_snapshot", after = ["conv1d_update"], beside = ["l2_norm"] },
 ]
+[[family.param]]
+name = "decay"
+kind = "policy"
+from = { gdn_recurrence = "param:decay" }
+# 2026-10-08: One decay per head (GatedDeltaNet); KDA's is per key channel. The Qwen3.5 circuits
+# do not state it.
+absent = "head"
+[[family.param]]
+name = "gate_act"
+kind = "policy"
+from = { gated_rms_norm = "param:gate_act" }
+# 2026-10-08: The GDN output norm gates with SiLU; KDA's with a sigmoid.
+absent = "silu"
 [[family.point]]
-values = {}
+values = { decay = "head", gate_act = "silu" }
 how = "instantiation"
 files = ["kernels/gb10/common/gdn_verify_fused_k2.cu"]
 
@@ -495,8 +559,15 @@ op = [
   { op = "conv1d_update", feeds = ["l2_norm"] }, { op = "l2_norm" }, { op = "gdn_recurrence" },
   { op = "state_snapshot", after = ["conv1d_update"], beside = ["l2_norm"] },
 ]
+[[family.param]]
+name = "decay"
+kind = "policy"
+from = { gdn_recurrence = "param:decay" }
+# 2026-10-08: One decay per head (GatedDeltaNet); KDA's is per key channel. The Qwen3.5 circuits
+# do not state it.
+absent = "head"
 [[family.point]]
-values = {}
+values = { decay = "head" }
 how = "instantiation"
 files = ["kernels/gb10/common/gated_delta_rule_carry.cu"]
 
@@ -547,19 +618,25 @@ kind = "policy"
 from = "param:norm_order"
 # 2026-09-29: The GDN output norm normalises before it gates; the Qwen3.5 circuits do not state it.
 absent = "norm_first"
+[[family.param]]
+name = "gate_act"
+kind = "policy"
+from = { gated_rms_norm = "param:gate_act" }
+# 2026-10-08: The GDN output norm gates with SiLU; KDA's with a sigmoid.
+absent = "silu"
 [[family.point]]
-values = { norm_order = "norm_first" }
+values = { norm_order = "norm_first", gate_act = "silu" }
 how = "instantiation"
 files = ["kernels/gb10/common/rms_norm.cu"]
 [[family.point]]
-values = { norm_order = "gate_first" }
+values = { norm_order = "gate_first", gate_act = "silu" }
 how = "copy"
 files = [
   "kernels/gb10/minimax-m2-229b/nvfp4/rms_norm.cu",
   "kernels/gb10/nemotron-labs-3-puzzle-75b-a9b/nvfp4/rms_norm.cu",
 ]
 [[family.evidence]]
-point = { norm_order = "norm_first" }
+point = { norm_order = "norm_first", gate_act = "silu" }
 rows = [32]
 measurement = "qwen3.8-27b::gated_rms_norm_prefill @ decode C=16 (R=32, MTP k=1)"
 
@@ -823,12 +900,19 @@ op = [{ op = "kv_write" }]
 name = "kv_dtype"
 kind = "policy"
 from = "setting:kv_cache_dtype"
+[[family.param]]
+name = "layout"
+kind = "policy"
+from = { kv_write = "param:layout" }
+# 2026-10-08: A K side and a V side per token; MLA writes one latent row (`latent`). The other
+# circuits do not state it.
+absent = "kv"
 [[family.point]]
-values = { kv_dtype = "bf16" }
+values = { kv_dtype = "bf16", layout = "kv" }
 how = "instantiation"
 files = ["kernels/gb10/common/reshape_and_cache.cu"]
 [[family.point]]
-values = { kv_dtype = "fp8" }
+values = { kv_dtype = "fp8", layout = "kv" }
 how = "copy"
 files = ["kernels/gb10/common/reshape_and_cache.cu"]
 
@@ -845,14 +929,21 @@ compute = "cuda_core"
 kernels = [
   "gemv::dense_gemv_bf16", "dense_gemv_bf16_batchm::dense_gemv_bf16_batchm",
   "gemm::dense_gemm_bf16", "gemm::dense_gemm_bf16_router",
+  "gemv::dense_gemv_bf16_fp32out", "gemm::dense_gemm_bf16_f32out",
 ]
 rows = [1, 65536]
 # 2026-10-02: Every kernel widens BF16 exactly and sums in FP32 (no 16-bit partials), one BF16
 # rounding; the router GEMV and GEMM write BF16 logits (dense_gemv_bf16.cu:105,
-# dense_gemm_bf16.cu:281).
+# dense_gemm_bf16.cu:281). 2026-10-08: The `fp32out` / `f32out` twins write the FP32 sums
+# unrounded (dense_gemv_bf16.cu:120, dense_gemm_bf16.cu:85): the GLM-5 router logits and DSA
+# indexer query and head weights.
 pipeline.linear = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["bf16"] }
 pipeline.lm_head = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["bf16"] }
 pipeline.router = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["bf16"] }
+kernel_pipeline."gemv::dense_gemv_bf16_fp32out".linear = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["f32"] }
+kernel_pipeline."gemv::dense_gemv_bf16_fp32out".router = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["f32"] }
+kernel_pipeline."gemm::dense_gemm_bf16_f32out".linear = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["f32"] }
+kernel_pipeline."gemm::dense_gemm_bf16_f32out".router = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["f32"] }
 op = [
   { op = "linear", weight = ["bf16"], activation = ["bf16"] },
   { op = "lm_head", weight = ["bf16"], activation = ["bf16"] },
@@ -1119,7 +1210,8 @@ kernels = [
 ]
 rows = [1, 32]
 # 2026-10-02: Per-row F32 global, E4M3 group scale, E2M1 round to nearest even
-# (w4a4_gemv_mx.cu:401-460); FP32 sums, scales applied to the FP32 sum (:189, :344). With
+# (2026-10-08: now w4a4_mx_core.cuh, w4a4_quant_rows_impl<false>); FP32 sums, scales applied to
+# the FP32 sum (w4a4_mx_core.cuh w4a4_gemv_mx_impl, w4a4_gemv_mx.cu nt impl). With
 # `w4a4_quant_rows` in its group a projection reads BF16 and quantizes it (the downcast).
 pipeline.linear = { in = ["nvfp4/g16"], act = "nvfp4/g16", weight = "nvfp4/g16->e2m1", mma = "e2m1*e2m1", accumulate = "f32", scale = "f32", out = ["bf16"] }
 pipeline."act_quant:nvfp4/g16" = { in = ["bf16"], compute = "f32", out = ["nvfp4/g16"] }
@@ -1138,6 +1230,47 @@ why = "w4a4_proj.rs:162-166 at max_m = 64"
 values = {}
 how = "instantiation"
 files = ["kernels/gb10/common/w4a4_gemv_mx.cu"]
+
+# 2026-10-08: W4A4 under a checkpoint's STATIC activation scale (ModelOpt `input_scale`, declared
+# `dynamic: false`), over the w4a4_mx core (w4a4_mx_core.cuh, no new MMA code): the static-scale row
+# quantizer (w4a4_quant_rows_impl<true>) and the routed-expert slot GEMV (the mx8 body with M = 1,
+# one block row per (token, slot), weights and weight_scale_2 from global-id pointer tables).
+# GLM-5.3-Flash's declared W4A4 routed experts at 1..=16 rows; its dense MLP pairs the quantizer
+# with the w4a4_mx GEMVs (glm5next_mlp/forward/w4a4.rs).
+# 2026-10-09: The persistent sweeps over the same body: the union sweeps (2..=16 rows) and the
+# one-row own-slots sweep, gate and up in one launch.
+[[family]]
+id = "w4a4_mx_static"
+description = "W4A4 MX with static NVFP4 activation scales: static row quantize and the routed-expert slot GEMV"
+compute = "tensor_core"
+mma = "mma.sync.m16n8k64.mxf4nvf4.block_scale"
+kernel_compute."w4a4_gemv_mx_moe::w4a4_quant_rows_static" = { compute = "memory" }
+# 2026-10-10: The `_k64` twins (K % 64 for a routed down projection of a 64-unit expert slice,
+# activations at the 128-padded width) are the KH / PAD128 instantiations of the same bodies.
+kernel_compute."w4a4_gemv_mx_moe::w4a4_quant_rows_static_k64" = { compute = "memory" }
+kernels = [
+  "w4a4_gemv_mx_moe::w4a4_quant_rows_static", "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_slots",
+  "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union", "w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union",
+  "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep", "w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep",
+  "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_slots_sweep",
+  "w4a4_gemv_mx_moe::w4a4_quant_rows_static_k64", "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_slots_k64",
+  "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep_k64",
+  "w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep_k64",
+  "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_slots_sweep_k64",
+]
+rows = [1, 16]
+pipeline.expert_gate_up = { in = ["nvfp4/g16", "i32"], gather = "nvfp4/g16", act = "nvfp4/g16", weight = "nvfp4/g16->e2m1", mma = "e2m1*e2m1", accumulate = "f32", scale = "f32", out = ["bf16"] }
+pipeline.expert_down = { in = ["nvfp4/g16", "i32"], act = "nvfp4/g16", weight = "nvfp4/g16->e2m1", mma = "e2m1*e2m1", accumulate = "f32", scale = "f32", out = ["bf16"] }
+pipeline."act_quant:nvfp4/g16" = { in = ["bf16"], compute = "f32", out = ["nvfp4/g16"] }
+op = [
+  { op = "expert_gate_up", weight = ["nvfp4/g16"], activation = ["nvfp4/g16"] },
+  { op = "expert_down", weight = ["nvfp4/g16"], activation = ["nvfp4/g16"] },
+  { op = "act_quant:nvfp4/g16" },
+]
+[[family.point]]
+values = {}
+how = "instantiation"
+files = ["kernels/gb10/common/w4a4_gemv_mx_moe.cu"]
 
 [[family]]
 id = "w8a16_gemm"
@@ -1634,6 +1767,11 @@ microbench = "same bench, W8A8 twin, 2026-09-28: 270 us at M=2, 823 us at M=8, 2
 # activations staged in shared memory), one template over the weight-format policy
 # (kernels/gb10/common/tc_rows.cuh): FP8 block-128 W8A16 (w8a16_tc_rows.cu, the canonical-tier
 # W8A16 projections) and NVFP4 g16 W4A16 (w4a16_tc_rows.cu, the declared NVFP4 lm_head).
+# 2026-10-09: w4a16_tc_rows_seg.cu instantiates the NVFP4 point's row tiles again over up to three
+# weight segments sharing the input and a K-split S in {1, 2, 4} (tr_block_split, the S blocks
+# of a column tile merging FP32 partial sums in one thread-block cluster). S = 1 writes
+# w4a16_tc_rows' bytes; S > 1 changes the FP32 summation order (accuracy-gated, opt-in through
+# METRALE_GLM_W4A16_SEG). Neither axis changes the pipeline below, so neither is a point here.
 [[family]]
 id = "tc_rows"
 description = "Tensor-core row-tile dense projection (FP8 block-128 W8A16, NVFP4 g16 W4A16)"
@@ -1647,6 +1785,15 @@ kernels = [
   "w4a16_tc_rows::w4a16_tc_rows_16",
   "w4a16_tc_rows::w4a16_tc_rows_32",
   "w4a16_tc_rows::w4a16_tc_rows_64",
+  "w4a16_tc_rows_seg::w4a16_tc_rows_seg_16_k1",
+  "w4a16_tc_rows_seg::w4a16_tc_rows_seg_16_k2",
+  "w4a16_tc_rows_seg::w4a16_tc_rows_seg_16_k4",
+  "w4a16_tc_rows_seg::w4a16_tc_rows_seg_32_k1",
+  "w4a16_tc_rows_seg::w4a16_tc_rows_seg_32_k2",
+  "w4a16_tc_rows_seg::w4a16_tc_rows_seg_32_k4",
+  "w4a16_tc_rows_seg::w4a16_tc_rows_seg_64_k1",
+  "w4a16_tc_rows_seg::w4a16_tc_rows_seg_64_k2",
+  "w4a16_tc_rows_seg::w4a16_tc_rows_seg_64_k4",
 ]
 rows = [1, 64]
 # 2026-10-02: The FP8 point's pipeline (the NVFP4 point overrides it below): an E4M3 byte becomes
@@ -1667,7 +1814,7 @@ files = ["kernels/gb10/common/tc_rows.cuh", "kernels/gb10/common/w8a16_tc_rows.c
 [[family.point]]
 values = { weight = "nvfp4/g16" }
 how = "instantiation"
-files = ["kernels/gb10/common/tc_rows.cuh", "kernels/gb10/common/w4a16_tc_rows.cu"]
+files = ["kernels/gb10/common/tc_rows.cuh", "kernels/gb10/common/w4a16_tc_rows.cu", "kernels/gb10/common/w4a16_tc_rows_seg.cu"]
 # 2026-10-02: BF16(E2M1 x E4M3) exactly per weight, the FP32 sum times s2 once per output
 # (Nvfp4G16 `out`), BF16 logits; only the declared NVFP4 head uses it.
 pipeline.lm_head = { in = ["bf16"], act = "bf16", weight = "nvfp4/g16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "f32", out = ["bf16"] }
@@ -1856,6 +2003,322 @@ values = { shared_gate = "none" }
 how = "instantiation"
 files = ["kernels/gb10/common/relu_squared.cu"]
 
+# 2026-10-08: GLM-5 (`glm5_next`) kernels: the hyper-connection, KDA, the DSA indexer and latent
+# attention, the clamped SwiGLU and the sigmoid router. Each family states the policy point the
+# GLM-5 circuit gives its nodes, so the GatedDeltaNet and attention families above show as policy
+# variants of the same ops.
+
+# 2026-10-08: The engine keeps the highway FP32 ([T, hc, H]) where the reference keeps the model
+# dtype: every kernel reads and writes the streams as f32 (glm5next_mhc.cu:207-215, :353-365,
+# :546-554, :608-616, :642-657). hc_mix reads the BF16 `hc_fn` widened exactly and sums in FP32;
+# the RMS over the hc*H stream values scales the mix (glm5next_mhc.cu:53-63). `hc_pre` (the fused
+# oracle) and `hc_post_ref` are not dispatched (glm5next_mhc.rs:25-28).
+[[family]]
+id = "glm_mhc"
+description = "GLM-5 hyper-connection: mix GEMV, Sinkhorn pre-mix and collapse, post-mix, expand, mean"
+compute = "memory"
+kernels = [
+  "glm5next_mhc::glm5next_hc_mix", "glm5next_mhc::glm5next_hc_mix_bf16",
+  "glm5next_mhc::glm5next_hc_finish", "glm5next_mhc::glm5next_hc_post",
+  "glm5next_mhc::glm5next_hc_head", "glm5next_mhc::glm5next_hc_expand",
+]
+kernel_compute."glm5next_mhc::glm5next_hc_mix" = { compute = "cuda_core" }
+kernel_compute."glm5next_mhc::glm5next_hc_mix_bf16" = { compute = "cuda_core" }
+rows = [1, 256]
+pipeline."linear:hc_mix" = { in = ["f32"], act = "f32", weight = "bf16->f32", mma = "f32*f32", accumulate = "f32", scale = "none", out = ["f32"] }
+pipeline.hc_pre = { in = ["f32", "f32"], compute = "f32", out = ["bf16", "f32", "f32"] }
+pipeline.hc_post = { in = ["bf16", "f32", "f32", "f32"], compute = "f32", out = ["f32"] }
+pipeline.hc_contract = { in = ["f32"], compute = "f32", out = ["bf16"] }
+pipeline.hc_expand = { in = ["bf16"], move = "f32", out = ["f32"] }
+op = [
+  { op = "linear", roles = ["hc_mix"] }, { op = "hc_pre" }, { op = "hc_post" },
+  { op = "hc_contract" }, { op = "hc_expand" },
+]
+[[family.point]]
+values = {}
+how = "instantiation"
+files = ["kernels/gb10/common/glm5next_mhc.cu"]
+
+# 2026-10-08: The KDA gates: the decay
+# `linear_lower_bound * sigmoid(exp(A_log[h]) * (g + dt_bias))` per channel from the BF16 `f_b`
+# output, FP32 out (kda_gate.cu:3-17, :74-97), and beta, an FP32 sigmoid of the BF16 `b_proj`
+# output (kda_layer_ops.cu:114-125). One launch covers every row.
+[[family]]
+id = "kda_gates"
+description = "KDA per-channel bounded-sigmoid decay and beta sigmoid"
+compute = "memory"
+kernels = ["kda_gate::kda_gate_bf16", "kda_layer_ops::kda_sigmoid_bf16_f32"]
+rows = [1, 65536]
+pipeline.gdn_gates = { in = ["bf16", "bf16"], compute = "f32", out = ["f32", "f32"] }
+op = [{ op = "gdn_gates" }]
+[[family.param]]
+name = "gate"
+kind = "policy"
+from = { gdn_gates = "param:gate" }
+absent = "softplus"
+[[family.param]]
+name = "decay"
+kind = "policy"
+from = { gdn_gates = "param:decay" }
+absent = "head"
+[[family.point]]
+values = { gate = "sigmoid_bounded", decay = "channel" }
+how = "instantiation"
+files = ["kernels/gb10/common/kda_gate.cu", "kernels/gb10/common/kda_layer_ops.cu"]
+
+# 2026-10-08: The KDA recurrence for one token of one sequence (grid = heads): BF16 q/k/v from the
+# decode conv, FP32 log-decay and beta, the FP32 [H, D, D] state updated in place, FP32 out
+# (kda_recurrent.cu:3-22). The `_smem` twin keeps the decayed column in shared memory.
+[[family]]
+id = "kda_recurrent"
+description = "KDA gated delta rule with per-channel decay, one token per launch"
+compute = "cuda_core"
+kernels = ["kda_recurrent::kda_recurrent_decode_bf16", "kda_recurrent::kda_recurrent_decode_bf16_smem"]
+rows = [1, 1]
+pipeline.gdn_recurrence = { in = ["bf16", "f32", "f32"], state = "f32", compute = "f32", out = ["f32"] }
+op = [{ op = "gdn_recurrence" }]
+[[family.param]]
+name = "decay"
+kind = "policy"
+from = { gdn_recurrence = "param:decay" }
+absent = "head"
+[[family.point]]
+values = { decay = "channel" }
+how = "instantiation"
+files = ["kernels/gb10/common/kda_recurrent.cu"]
+
+# 2026-10-08: The KDA output norm: RMSNorm over each head of the FP32 core, times the BF16 weight,
+# times sigmoid of the BF16 gate, BF16 out (kda_layer_ops.cu:40-63). One block per (row, head).
+[[family]]
+id = "kda_o_norm"
+description = "KDA output norm: per-head RMSNorm gated by a sigmoid"
+compute = "memory"
+kernels = ["kda_layer_ops::kda_o_norm_gated_bf16"]
+rows = [1, 65536]
+pipeline.gated_rms_norm = { in = ["f32", "bf16"], compute = "f32", out = ["bf16"] }
+op = [{ op = "gated_rms_norm" }]
+[[family.param]]
+name = "gate_act"
+kind = "policy"
+from = { gated_rms_norm = "param:gate_act" }
+absent = "silu"
+[[family.point]]
+values = { gate_act = "sigmoid" }
+how = "instantiation"
+files = ["kernels/gb10/common/kda_layer_ops.cu"]
+
+# 2026-10-08: Interleaves the three BF16 q, k, v projections into one q|k|v row
+# (kda_layer_ops.cu:127-149).
+[[family]]
+id = "kda_pack"
+description = "KDA q|k|v pack of three projections"
+compute = "memory"
+kernels = ["kda_layer_ops::kda_pack_qkv_bf16"]
+rows = [1, 65536]
+pipeline.concat = { in = ["bf16", "bf16", "bf16"], move = "bf16", out = ["bf16"] }
+op = [{ op = "concat" }]
+[[family.point]]
+values = {}
+how = "instantiation"
+files = ["kernels/gb10/common/kda_layer_ops.cu"]
+
+# 2026-10-08: LayerNorm with a bias, FP32 statistics, BF16 in and out (the DSA indexer's k_norm,
+# glm5next_dsa/mod.rs:53-55; written for the NLLB encoder).
+[[family]]
+id = "layer_norm"
+description = "BF16 LayerNorm with weight and bias"
+compute = "memory"
+kernels = ["nllb_encoder::nllb_layernorm_bf16"]
+rows = [1, 65536]
+pipeline.layer_norm = { in = ["bf16"], compute = "f32", out = ["bf16"] }
+op = [{ op = "layer_norm" }]
+[[family.point]]
+values = {}
+how = "instantiation"
+files = ["kernels/gb10/common/nllb_encoder.cu"]
+
+# 2026-10-08: The DSA indexer on the engine's layout: every token's raw normed key and gate score
+# are stored (BF16, a flat per-sequence cache) and the pools are compressed at selection time,
+# not at write time (glm5next_dsa/mod.rs:18-25): `dsa_kpool_compress` then the scores, the top
+# pools and their token expansion, one query row per launch (glm5next_dsa/select/launch.rs).
+# The selector query and head weights arrive FP32 (the f32-out GEMVs).
+[[family]]
+id = "dsa_indexer"
+description = "DSA lightning indexer: key store, pool compression, scores, top pools, token expansion"
+compute = "cuda_core"
+kernels = [
+  "dsa_indexer::dsa_indexer_store", "dsa_indexer::dsa_write_geom",
+  "dsa_indexer::dsa_kpool_compress", "dsa_indexer::dsa_index_scores",
+  "dsa_indexer::dsa_topk_pools", "dsa_indexer::dsa_expand_selection",
+  "dsa_indexer_rows::dsa_indexer_store_rows", "dsa_indexer_rows::dsa_write_geom_rows",
+  "dsa_indexer_rows::dsa_pool_scores_rows", "dsa_indexer_rows::dsa_topk_pools_rows",
+  "dsa_indexer_rows::dsa_expand_selection_rows",
+]
+kernel_compute."dsa_indexer::dsa_indexer_store" = { compute = "memory" }
+kernel_compute."dsa_indexer::dsa_write_geom" = { compute = "memory" }
+kernel_compute."dsa_indexer_rows::dsa_indexer_store_rows" = { compute = "memory" }
+kernel_compute."dsa_indexer_rows::dsa_write_geom_rows" = { compute = "memory" }
+rows = [1, 1]
+pipeline.kpool_compress = { in = ["bf16", "bf16"], state = "bf16", compute = "f32", out = [] }
+pipeline.index_select = { in = ["f32", "f32"], scores = "f32", score = "f32", out = ["i32"] }
+op = [{ op = "kpool_compress" }, { op = "index_select" }]
+[[family.point]]
+values = {}
+how = "instantiation"
+# 2026-10-09: The bodies live in dsa_indexer_body.cuh; dsa_indexer_rows.cu runs them for one
+# sequence per grid row (the batched decode's paged rows, METRALE_GLM_DSA_INDEXER_ROWS).
+files = ["kernels/gb10/common/dsa_indexer.cu", "kernels/gb10/common/dsa_indexer_body.cuh", "kernels/gb10/common/dsa_indexer_rows.cu"]
+
+# 2026-10-08: NoPE latent decode attention over the selected tokens of an FP8 latent cache, one
+# CTA per (head, row). Its query is already in latent space and its output stays there: the
+# engine folds kv_b_proj's key half into q_b_proj and its value half into o_proj at load
+# (glm5next_dsa/layer.rs:111-122), so the absorption runs in those GEMVs, not here.
+[[family]]
+id = "glm_mla_decode"
+description = "GLM-5 sparse NoPE MLA decode over an FP8 latent cache (latent 512)"
+compute = "cuda_core"
+kernels = ["glm5next_dsa_mla_decode::glm5next_dsa_mla_decode_fp8"]
+rows = [1, 4096]
+pipeline.mla_attention = { in = ["bf16", "i32"], act = "bf16", weight = "bf16->bf16", cache = "fp8", scores = "f32", softmax = "f32", accumulate = "f32", out = ["bf16"] }
+op = [{ op = "mla_attention" }]
+[[family.param]]
+name = "kv_lora"
+kind = "compile"
+from = "dim:kv_lora"
+[[family.param]]
+name = "kv_dtype"
+kind = "policy"
+from = "setting:kv_cache_dtype"
+[[family.point]]
+values = { kv_lora = "512", kv_dtype = "fp8" }
+how = "instantiation"
+files = ["kernels/gb10/glm-5.3-flash/nvfp4/glm5next_dsa_mla_decode.cu"]
+
+# 2026-10-09: glm_mla_decode's contract on tensor cores, head-batched: one CTA per (split, row,
+# group of 24 heads) stages each selected latent token once for all its heads (absorbed NoPE
+# MLA: every head reads the same tokens), scores them with an m16n8k16 bf16 MMA (FP8 is exact
+# in bf16),
+# and accumulates P V with P split into bf16 hi + lo; a merge kernel combines the splits. Opt-in
+# through METRALE_GLM_DSA_DECODE_HB (glm5next_dsa/attend.rs); it differs from glm_mla_decode in
+# summation order only.
+[[family]]
+id = "glm_mla_decode_hb"
+description = "GLM-5 sparse NoPE MLA decode, head-batched on tensor cores, split + merge (latent 512)"
+compute = "tensor_core"
+mma = "mma.sync.m16n8k16.bf16"
+kernels = [
+  "glm5next_dsa_mla_decode_hb::glm5next_dsa_mla_decode_hb_fp8",
+  "glm5next_dsa_mla_decode_hb::glm5next_dsa_mla_merge",
+]
+rows = [1, 4096]
+pipeline.mla_attention = { in = ["bf16", "i32"], act = "bf16", weight = "bf16->bf16", cache = "fp8", scores = "f32", softmax = "f32", accumulate = "f32", out = ["bf16"] }
+op = [{ op = "mla_attention" }]
+[[family.param]]
+name = "kv_lora"
+kind = "compile"
+from = "dim:kv_lora"
+[[family.param]]
+name = "kv_dtype"
+kind = "policy"
+from = "setting:kv_cache_dtype"
+[[family.point]]
+values = { kv_lora = "512", kv_dtype = "fp8" }
+how = "instantiation"
+files = ["kernels/gb10/glm-5.3-flash/nvfp4/glm5next_dsa_mla_decode_hb.cu"]
+
+# 2026-10-08: RMSNorm (plain weight) of the kv_a row, FP8-quantised into its paged slot, one token
+# per launch (glm5next_mla_latent_write.cu:1-14).
+[[family]]
+id = "glm_mla_latent_write"
+description = "GLM-5 latent cache write: RMSNorm + FP8 quantisation + paged store"
+compute = "memory"
+kernels = ["glm5next_mla_latent_write::glm5next_mla_latent_write_fp8"]
+rows = [1, 1]
+pipeline.rms_norm = { in = ["bf16"], compute = "f32", out = ["f32"] }
+pipeline.kv_write = { in = ["f32"], cache = "fp8", out = [] }
+op = [{ op = "rms_norm", feeds = ["kv_write"] }, { op = "kv_write" }]
+[[family.param]]
+name = "weight_form"
+kind = "policy"
+from = { rms_norm = "param:weight_form" }
+absent = "one_plus"
+[[family.param]]
+name = "layout"
+kind = "policy"
+from = { kv_write = "param:layout" }
+absent = "kv"
+[[family.param]]
+name = "kv_dtype"
+kind = "policy"
+from = { kv_write = "setting:kv_cache_dtype" }
+[[family.point]]
+values = { weight_form = "plain", layout = "latent", kv_dtype = "fp8" }
+how = "instantiation"
+files = ["kernels/gb10/glm-5.3-flash/nvfp4/glm5next_mla_latent_write.cu"]
+
+# 2026-10-08: `silu(min(gate, limit)) * clamp(up, -limit, limit)` over separate gate and up rows,
+# FP32 arithmetic, BF16 out (glm5next_ffn.cu:29-47); the limit is a runtime argument.
+[[family]]
+id = "glm_swiglu_clamp"
+description = "Clamped SwiGLU (swiglu_limit): clamp, SiLU and multiply in one pass"
+compute = "memory"
+kernels = ["glm5next_ffn::glm5next_swiglu_clamp", "glm5next_ffn::glm5next_swiglu_clamp_f32out"]
+rows = [1, 65536]
+pipeline.swiglu_clamp = { in = ["bf16"], compute = "f32", out = ["f32"] }
+pipeline.silu_mul = { in = ["f32"], compute = "f32", out = ["bf16"] }
+kernel_pipeline."glm5next_ffn::glm5next_swiglu_clamp_f32out".silu_mul = { in = ["f32"], compute = "f32", out = ["f32"] }
+op = [{ op = "swiglu_clamp" }, { op = "silu_mul", after = ["swiglu_clamp"] }]
+[[family.point]]
+values = {}
+how = "instantiation"
+files = ["kernels/gb10/common/glm5next_ffn.cu"]
+
+# 2026-10-08: Sigmoid scores, top-k on score + e_score_correction_bias, the selected scores
+# renormalised and scaled by `routed_scaling_factor`, from FP32 logits, every row in one launch
+# (glm5next_ffn.cu:86-208); top_k and the scale are runtime arguments.
+[[family]]
+id = "glm_router_topk"
+description = "Sigmoid + correction-bias top-k routing over FP32 logits"
+compute = "memory"
+kernels = ["glm5next_ffn::glm5next_router_topk"]
+rows = [1, 65536]
+pipeline.top_k = { in = ["f32"], score = "f32", out = ["f32", "i32"] }
+# 2026-10-08: The kernel reads FP32 logits (glm5next_ffn.cu:102-118), so it claims only an FP32
+# router's top-k; a BF16-logit top-k is moe_topk's.
+op = [{ op = "top_k", activation = ["f32"] }]
+[[family.param]]
+name = "scoring"
+kind = "policy"
+from = "param:scoring"
+[[family.param]]
+name = "top_k"
+kind = "runtime"
+from = "param:top_k"
+[[family.point]]
+values = { scoring = "sigmoid_bias" }
+how = "instantiation"
+files = ["kernels/gb10/common/glm5next_ffn.cu"]
+
+# 2026-10-08: The routed outputs weighted and summed with the ungated shared expert, BF16 out,
+# from slot order or the expert-sorted order (glm5next_ffn.cu:209-263).
+[[family]]
+id = "glm_moe_combine"
+description = "Weighted routed sum plus the ungated shared expert"
+compute = "memory"
+kernels = ["glm5next_ffn::glm5next_moe_combine", "glm5next_ffn::glm5next_moe_combine_indexed"]
+rows = [1, 65536]
+pipeline.blend = { in = ["bf16", "f32", "bf16"], scatter = "f32", combine = "f32", out = ["bf16"] }
+op = [{ op = "blend" }]
+[[family.param]]
+name = "shared_gate"
+kind = "policy"
+from = { blend = "param:shared_gate" }
+absent = "sigmoid"
+[[family.point]]
+values = { shared_gate = "none" }
+how = "instantiation"
+files = ["kernels/gb10/common/glm5next_ffn.cu"]
+
 # 2026-09-29: Legacy layers that loop per sequence (facts the circuit cannot show; checked by
 # crates/circuit/tests/venn.rs against the cited line).
 
@@ -1892,3 +2355,50 @@ rows_above = 8
 cite = "crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/qkv.rs:119"
 holds = "for i in 0..n {"
 note = "BF16 q/k/v projections batch 2-8 rows (dense_gemv_bf16_batchm); above 8 they run one GEMV per row"
+
+# 2026-10-09: The GLM-5 text layers batch a multi-sequence decode (`forward_multi`, groups of
+# up to 16 rows): the projections, the latent write and the attend take every row of a group in
+# one launch, and the KDA recurrence one launch for up to 16 rows. Each row's KDA conv and each
+# row's DSA indexer write and selection still launch once per row.
+[[legacy_path]]
+arch = "glm5_next"
+layer_kind = "linear_attention"
+per_sequence = ["multi_seq"]
+sites = ["kda.short_conv", "kda.conv_ckpt", "kda.l2"]
+rows_above = 1
+cite = "crates/model-arch/src/glm5next_kda/rows.rs:134"
+holds = "return self.decode_rows_then(gpu, hidden, &states, ws, stream, after_row);"
+note = "KDA batched decode: conv and recurrence one row per launch unless METRALE_GLM_KDA_SEQ_ROWS (2026-10-09: the rows kernels, one launch per 16 rows)"
+
+[[legacy_path]]
+arch = "glm5_next"
+layer_kind = "deepseek_sparse_attention"
+per_sequence = ["multi_seq"]
+sites = ["dsa.idx_k", "dsa.idx_k_norm", "dsa.idx_gate", "dsa.pool", "dsa.select"]
+rows_above = 1
+cite = "crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:341"
+holds = "for r in paged_rows..n {"
+note = "DSA batched decode: indexer key, pool store and selection one row per launch unless METRALE_GLM_DSA_INDEXER_ROWS (2026-10-09: staged projections; captured paged rows store and select one launch per stage)"
+
+# 2026-10-08: A K-row verify batches the KDA projections but walks the conv and the recurrence
+# one row at a time; the DSA latent write, indexer write and selection also run per row (the
+# attend is one launch).
+[[legacy_path]]
+arch = "glm5_next"
+layer_kind = "linear_attention"
+per_sequence = ["verify"]
+sites = ["kda.short_conv", "kda.conv_ckpt", "kda.l2", "kda.recur"]
+rows_above = 1
+cite = "crates/model-arch/src/glm5next_kda/decode.rs:353"
+holds = "for row in 0..k {"
+note = "KDA verify: conv and recurrence one row per launch (stateful_row); 2026-10-09: without per-row snapshots, one conv and one recurrent launch under METRALE_GLM_KDA_SEQ_TOKENS"
+
+[[legacy_path]]
+arch = "glm5_next"
+layer_kind = "deepseek_sparse_attention"
+per_sequence = ["verify"]
+sites = ["dsa.kv_norm", "dsa.kv_write", "dsa.idx_k", "dsa.idx_k_norm", "dsa.idx_gate", "dsa.pool", "dsa.idx_w", "dsa.idx_q", "dsa.select"]
+rows_above = 1
+cite = "crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:169"
+holds = "for row in 0..k {"
+note = "DSA verify: latent write, indexer projections, store and selection one row per launch"

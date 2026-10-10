@@ -39,6 +39,7 @@ pub(crate) mod flag_values;
 pub(crate) mod hermetic;
 pub(crate) mod manifest;
 mod serve_args;
+mod serve_args_chat_surface;
 mod serve_args_mtp;
 mod serve_args_mtp_draft;
 mod serve_args_prompt_lookup;

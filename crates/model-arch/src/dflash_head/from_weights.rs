@@ -229,7 +229,10 @@ impl BlockDiffusionDraftHead {
         // `rope_scaling`: absent gives plain RoPE (`1 / theta^(2j / dim)`),
         // `rope_type = "yarn"` the YaRN-blended table, and any other value plain RoPE
         // with a warning. RoPE rotates the whole head (`rotary_dim = head_dim`).
-        let rope_theta = weights.config.rope_theta;
+        let rope_theta = weights
+            .config
+            .effective_rope_theta()
+            .map_err(|e| anyhow::anyhow!(e))?;
         let rotary_dim = head_dim;
         let inv_freq_table = rope_table::rope_inv_freq_table(&weights, rope_theta, rotary_dim);
 
@@ -332,7 +335,10 @@ impl BlockDiffusionDraftHead {
             yarn_inv_freq,
             rope_theta,
             rotary_dim,
-            rms_norm_eps: 1e-6,
+            rms_norm_eps: weights
+                .config
+                .effective_rms_norm_eps()
+                .map_err(|e| anyhow::anyhow!(e))?,
             ctx_window,
             propose_graphs: parking_lot::Mutex::new(super::ProposeGraphs::default()),
             suppress_graphs: std::sync::atomic::AtomicBool::new(false),
@@ -429,9 +435,9 @@ impl BlockDiffusionDraftHead {
             && head.kernels.fp8_gemm_n128_row_scaled_m16.0 != 0;
         if fp8_requested && !fp8_kernels_present {
             tracing::warn!(
-                "METRALE_DFLASH_DRAFTER_FP8=1 but fp8_gemm_t_row_scaled(_m16) kernels are \
-                 not in this target's w4a16 PTX module — staying on the BF16 drafter path. \
-                 Port the Phase G kernels from kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu."
+                "FP8 drafter requested (METRALE_DFLASH_DRAFTER_FP8 is not 0) but the \
+                 fp8_gemm_t_row_scaled(_m16) kernels are in neither this target's w4a16 nor its \
+                 dflash_fp8_gemm PTX module — staying on the BF16 drafter path."
             );
         }
         if fp8_requested && fp8_kernels_present {

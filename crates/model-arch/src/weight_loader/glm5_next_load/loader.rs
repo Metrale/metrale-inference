@@ -6,6 +6,9 @@
 //! Invariants: none beyond the types.
 
 use super::*;
+use crate::glm5next_mlp::Glm5NextDenseSite;
+use crate::glm5next_mlp::build_w4a4::{act_scales_of, build_dense_nvfp4};
+use crate::glm5next_mlp::precision::{MlpGroup, MlpKernel};
 
 impl ModelWeightLoader for Glm5NextWeightLoader {
     /// 2026-09-25: True only when `metrale_config::glm_vision_enabled()`
@@ -30,21 +33,42 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
     /// 2026-09-25: Keep the MTP layer's BF16 routed-expert weights off the
     /// device (`is_full_width_mtp_expert`); `bind_expert` quantises them from
     /// disk. The layer is `num_hidden_layers`. A checkpoint whose MTP experts
-    /// are U8 defers nothing.
+    /// are U8 defers nothing. 2026-10-08: Also every text layer's F32
+    /// `*.input_scale` (`is_activation_scale`): one scalar per projection, read
+    /// on the host by `act_scale::input_scale` rather than given an allocation
+    /// granule each. 2026-10-09: Under `--moe-expert-layout tp`, also every
+    /// routed-expert tensor of every layer (`expert_tp::is_routed_expert_tensor`):
+    /// each rank uploads only its slices of them.
     fn defer_predicate(
         &self,
         config: &ModelConfig,
     ) -> Option<metrale_model_weights::weights::DeferHook> {
         let num_layers = config.num_hidden_layers;
+        let sliced = config.moe_expert_layout == metrale_config::MoeExpertLayout::Tp;
         Some(std::sync::Arc::new(
-            move |name: &str, dtype: WeightDtype| is_full_width_mtp_expert(name, dtype, num_layers),
+            move |name: &str, dtype: WeightDtype| {
+                is_full_width_mtp_expert(name, dtype, num_layers)
+                    || is_activation_scale(name, dtype)
+                    || (sliced && expert_tp::is_routed_expert_tensor(name))
+            },
         ))
     }
 
-    /// 2026-09-25: DSA, KDA and the MLP all shard under TP (see `glm5_next_load.rs`);
-    /// routed experts are also split by EP (`local_expert_range`).
-    fn supports_tp(&self) -> bool {
+    /// 2026-10-09: The MLP plan slices every routed expert over TP under
+    /// `--moe-expert-layout tp` (`glm5next_mlp::expert_tp`).
+    fn slices_experts_over_tp(&self) -> bool {
         true
+    }
+
+    /// 2026-09-25: DSA, KDA and the MLP all shard under TP (see `glm5_next_load.rs`);
+    /// routed experts are also split by EP (`local_expert_range`). 2026-10-08: The head and
+    /// width splits come from `metrale_config::tp_split`, so they need not divide evenly.
+    /// 2026-10-09: The KDA heads split in the published dense tier's channel unit
+    /// (`glm5next_w4a16_dense::kda_channel_unit`), the one `KdaTpPlan::from_config` gets.
+    fn tp_support(&self) -> metrale_config::TpSupport {
+        metrale_config::TpSupport::Uneven {
+            linear_channel_unit: crate::glm5next_w4a16_dense::kda_channel_unit(),
+        }
     }
 
     fn load_layers(
@@ -55,18 +79,7 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
         _layer_kv_dtypes: &[KvCacheDtype],
     ) -> Result<Vec<Box<dyn TransformerLayer>>> {
         let skeleton = Glm5NextTextSkeleton::from_config(config)?;
-        // 2026-09-25: `l2_eps` and `chunk` are fixed here; every other field is
-        // read from the config.
-        let kda_cfg = Glm5NextKdaConfig {
-            hidden: config.hidden_size,
-            heads: config.linear_num_value_heads,
-            head_dim: config.linear_value_head_dim,
-            conv_kernel: config.linear_conv_kernel_dim,
-            gate_lower_bound: config.linear_gate_lower_bound,
-            rms_norm_eps: config.rms_norm_eps as f32,
-            l2_eps: 1e-6,
-            chunk: 32,
-        };
+        let kda_cfg = Glm5NextKdaConfig::from_model_config(config);
         kda_cfg.validate()?;
         // 2026-09-25: `gate_rank` is the row count of layer 0's `f_a_proj`; the
         // config has no such key.
@@ -77,7 +90,11 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
             })?;
             *t.shape.first().context("f_a_proj has no rows")?
         };
-        let kda_plan = KdaTpPlan::from_config(config, gate_rank)?;
+        let kda_plan = KdaTpPlan::from_config(
+            config,
+            gate_rank,
+            crate::glm5next_w4a16_dense::kda_channel_unit(),
+        )?;
         let dsa_cfg = Glm5NextDsaConfig::from_config(config)?;
         let mlp_cfg = Glm5NextMlpConfig::from_config(config)?;
 
@@ -98,7 +115,9 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
         // (`METRALE_GLM_PREFILL_ROWS`).
         let verify_k = (metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M as usize)
             .max(crate::glm5next_layer::PREFILL_ROWS)
-            .max(crate::glm5next_layer::prefill_rows());
+            .max(crate::glm5next_layer::prefill_rows())
+            // 2026-10-09: `METRALE_GLM_ROW_GROUP`, the batched decode/verify group width.
+            .max(crate::glm5next_layer::multi_seq_chunk_rows());
         let kda_ws = std::sync::Arc::new(crate::glm5next_kda::Glm5NextKdaWorkspace::new(
             gpu, &kda_cfg, verify_k,
         )?);
@@ -127,11 +146,7 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
             None
         };
 
-        let dsa_plan = crate::glm5next_dsa::tp::DsaTpPlan::new(
-            config.tp_rank,
-            config.tp_world_size.max(1),
-            &dsa_cfg,
-        )?;
+        let dsa_plan = crate::glm5next_dsa::tp::DsaTpPlan::from_config(config, &dsa_cfg)?;
         let last = skeleton.layers.len() - 1;
         let mut out: Vec<Box<dyn TransformerLayer>> = Vec::with_capacity(skeleton.layers.len());
 
@@ -147,7 +162,7 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                 .with_context(|| format!("glm5_next: collecting layer {idx}"))?;
             let t_collect = t_layer.elapsed();
 
-            let mixer = match sl.mixer {
+            let mut mixer = match sl.mixer {
                 Mixer::Kda => {
                     let sharded = KdaShardedSource::new(&src, &kda_plan)?;
                     let (w, _report) = bind_kda_weights(gpu, &kda_cfg, idx, &sharded)?;
@@ -180,6 +195,7 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                         },
                         rms_eps: config.rms_norm_eps as f32,
                         kv_scale: 1.0,
+                        indexer_cache: crate::glm5next_dsa::paged::text_stack_indexer_cache(),
                     }))
                 }
             };
@@ -187,27 +203,48 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
             let t_mixer = t_layer.elapsed();
 
             let load = |n: &str| src.f32(n);
-            let mlp = match sl.mlp {
-                Mlp::Dense => Glm5NextMlpSite::Dense(mlp_build::build_dense_mlp(
+            let mut mlp = match sl.mlp {
+                Mlp::Dense => Glm5NextMlpSite::Dense(Box::new(build_dense_site(
                     gpu,
+                    store,
+                    config,
                     &mlp_cfg,
-                    config.tp_rank,
-                    config.intermediate_size,
-                    "mlp",
-                    &load,
-                )?),
+                    &mlp_kernels,
+                    &src,
+                    idx,
+                    verify_k,
+                )?)),
                 Mlp::RoutedMoe => {
-                    let expert = |id: usize| bind_expert(gpu, store, idx, id);
-                    Glm5NextMlpSite::Moe(Box::new(mlp_build::build_moe(
+                    let expert = |id: usize| {
+                        expert_tp::bind_routed_expert(gpu, store, idx, id, mlp_cfg.expert_shard)
+                    };
+                    let precision = |has_scales: bool| {
+                        mlp_precision::group_precision(
+                            config,
+                            &mlp_kernels,
+                            idx,
+                            MlpGroup::RoutedExperts,
+                            mlp_cfg.local_expert_range().start,
+                            has_scales,
+                        )
+                    };
+                    let moe = mlp_build::build_moe(
                         gpu,
                         &mlp_cfg,
-                        config.tp_rank,
                         config.shared_expert_intermediate_size,
                         &load,
                         &expert,
-                    )?))
+                        &precision,
+                        verify_k,
+                    )?;
+                    mlp_precision::announce(&moe.precision, verify_k);
+                    Glm5NextMlpSite::Moe(Box::new(moe))
                 }
             };
+
+            if crate::glm5next_fp8_dense::enabled() {
+                dense_tiers::register_dense_tiers(gpu, &mut mixer, &mut mlp, &mlp_cfg, idx)?;
+            }
 
             let t_mlp = t_layer.elapsed();
             tracing::info!(
@@ -264,6 +301,26 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                 is_first: idx == 0,
                 is_last: idx == last,
             }));
+        }
+        if crate::glm5next_fp8_dense::enabled() {
+            let (count, bytes) = crate::glm5next_fp8_dense::registered();
+            tracing::warn!(
+                "glm5_next --dense-quantization {}: {count} BF16 dense projections also held as \
+                 FP8 per-channel ({:.2} GB) and decoded W8A8, BELOW the checkpoint's declared \
+                 BF16; the router, the indexer's wq_b and weights_proj stay BF16",
+                metrale_model_layers::layers::dense_quantization().name(),
+                bytes as f64 / 1e9
+            );
+        }
+        if crate::glm5next_w4a16_dense::enabled() {
+            let (count, nvfp4, bf16) = crate::glm5next_w4a16_dense::registered();
+            tracing::warn!(
+                "glm5_next --dense-quantization w4a16: {count} BF16 dense projections replaced by \
+                 NVFP4 ({:.2} GB; {:.2} GB of BF16 freed) and decoded W4A16, FURTHER BELOW the \
+                 checkpoint's declared BF16",
+                nvfp4 as f64 / 1e9,
+                bf16 as f64 / 1e9
+            );
         }
         Ok(out)
     }
@@ -340,4 +397,68 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
         }
         Ok(())
     }
+}
+
+/// 2026-10-08: One dense MLP site: its precision plan, then the weight forms the plan reaches
+/// within `max_rows`: the checkpoint's packed NVFP4, TP-sliced, for W4A4, and the BF16
+/// dequantization for the 16-bit path (both when a ladder mixes them).
+#[allow(clippy::too_many_arguments)]
+fn build_dense_site(
+    gpu: &dyn GpuBackend,
+    store: &WeightStore,
+    config: &ModelConfig,
+    mlp_cfg: &Glm5NextMlpConfig,
+    kernels: &Glm5NextMlpKernels,
+    src: &LayerSource,
+    idx: usize,
+    max_rows: usize,
+) -> Result<Glm5NextDenseSite> {
+    let act = ["gate_proj", "up_proj", "down_proj"]
+        .map(|p| input_scale(gpu, store, idx, &format!("mlp.{p}")))
+        .into_iter()
+        .collect::<Result<Vec<_>>>()?;
+    let act = [act[0], act[1], act[2]];
+    let precision = mlp_precision::group_precision(
+        config,
+        kernels,
+        idx,
+        MlpGroup::DenseMlp,
+        0,
+        act.iter().all(Option::is_some),
+    )?;
+    mlp_precision::announce(&precision, max_rows);
+    let nvfp4 = if precision.reaches(MlpKernel::W4a4Static, max_rows) {
+        let scales = act_scales_of(act, &format!("layer {idx} dense MLP"))?;
+        let raw = |n: &str| src.raw(n);
+        let w = build_dense_nvfp4(
+            gpu,
+            mlp_cfg.hidden,
+            config.intermediate_size,
+            mlp_cfg.dense_slice(),
+            "mlp",
+            &raw,
+            scales,
+        )?;
+        Some((w, scales))
+    } else {
+        None
+    };
+    let bf16 = if precision.reaches(MlpKernel::Bf16, max_rows) {
+        let load = |n: &str| src.f32(n);
+        Some(mlp_build::build_dense_mlp(
+            gpu,
+            mlp_cfg,
+            config.intermediate_size,
+            mlp_cfg.dense_slice(),
+            "mlp",
+            &load,
+        )?)
+    } else {
+        None
+    };
+    Ok(Glm5NextDenseSite {
+        bf16,
+        nvfp4,
+        precision,
+    })
 }

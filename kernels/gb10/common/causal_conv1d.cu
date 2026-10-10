@@ -324,6 +324,8 @@ extern "C" __global__ void causal_conv1d_update_chunk2(
 
 
 
+#include "causal_conv1d_l2norm_body.cuh"
+
 extern "C" __global__ void causal_conv1d_update_l2norm(
     float* __restrict__ conv_state,
     const __nv_bfloat16* __restrict__ new_input,
@@ -337,73 +339,47 @@ extern "C" __global__ void causal_conv1d_update_l2norm(
     unsigned int head_dim,
     float l2_eps
 ) {
-    const unsigned int ch = blockIdx.x * blockDim.x + threadIdx.x;
     const unsigned int b = blockIdx.y;
-    const unsigned int tid = threadIdx.x;
+    causal_conv1d_update_l2norm_body(conv_state, new_input, weight, bias, output, b, b,
+                                     b < batch, dim, d_conv, qk_channels, head_dim, l2_eps,
+                                     nullptr);
+}
 
+#include "rows_pick.cuh"
 
-    const unsigned int block_start = blockIdx.x * blockDim.x;
-    const bool block_needs_l2 = (block_start < qk_channels);
-
-    const bool valid = (ch < dim && b < batch);
-    float silu = 0.0f;
-
-
-    if (valid) {
-        float* state = conv_state + (b * dim + ch) * d_conv;
-
-        for (unsigned int i = 0; i < d_conv - 1; i++)
-            state[i] = state[i + 1];
-        state[d_conv - 1] = (float)new_input[b * dim + ch];
-
-        const __nv_bfloat16* w = weight + ch * d_conv;
-        float acc = (bias != nullptr) ? bias[ch] : 0.0f;
-        for (unsigned int k = 0; k < d_conv; k++)
-            acc += state[k] * (float)w[k];
-
-        float sigmoid_acc = 1.0f / (1.0f + __expf(-acc));
-        silu = acc * sigmoid_acc;
-    }
-
-
-
-
-    if (block_needs_l2) {
-        float sq = valid ? (silu * silu) : 0.0f;
-
-
-        const unsigned int warp_id = tid / 32;
-        const unsigned int lane = tid % 32;
-        for (int offset = 16; offset >= 1; offset >>= 1)
-            sq += __shfl_down_sync(0xFFFFFFFF, sq, offset);
-
-
-        __shared__ float warp_sums[8];
-        if (lane == 0) warp_sums[warp_id] = sq;
-        __syncthreads();
-
-
-
-        const unsigned int head_in_block = tid / head_dim;
-        const unsigned int base_warp = head_in_block * (head_dim / 32);
-
-
-        if (tid == 0 || tid == head_dim) {
-            float total = warp_sums[base_warp] + warp_sums[base_warp + 1]
-                        + warp_sums[base_warp + 2] + warp_sums[base_warp + 3];
-            warp_sums[base_warp] = rsqrtf(total + l2_eps);
-        }
-        __syncthreads();
-
-
-        if (valid) {
-            silu *= warp_sums[base_warp];
-        }
-    }
-
-    if (valid) {
-        output[b * dim + ch] = __float2bfloat16(silu);
-    }
+// 2026-10-09: causal_conv1d_update_l2norm for up to 16 rows of different sequences in one
+// launch: grid y is the row r, which reads and writes input/output row w<r> and updates the
+// window at state pointer s<r> (each a kernel argument, so a captured graph keeps them). Block
+// (x, r) is causal_conv1d_update_l2norm's block (x, 0) on that row's input, output and window.
+// A null state pointer skips the row. The launcher must pass all 16 states and 16 rows.
+extern "C" __global__ void causal_conv1d_update_l2norm_rows(
+    const __nv_bfloat16* __restrict__ new_input,
+    const __nv_bfloat16* __restrict__ weight,
+    const float* __restrict__ bias,
+    __nv_bfloat16* __restrict__ output,
+    unsigned int dim,
+    unsigned int d_conv,
+    unsigned int qk_channels,
+    unsigned int head_dim,
+    float l2_eps,
+    unsigned long long s0, unsigned long long s1, unsigned long long s2, unsigned long long s3,
+    unsigned long long s4, unsigned long long s5, unsigned long long s6, unsigned long long s7,
+    unsigned long long s8, unsigned long long s9, unsigned long long s10, unsigned long long s11,
+    unsigned long long s12, unsigned long long s13, unsigned long long s14, unsigned long long s15,
+    unsigned int w0, unsigned int w1, unsigned int w2, unsigned int w3,
+    unsigned int w4, unsigned int w5, unsigned int w6, unsigned int w7,
+    unsigned int w8, unsigned int w9, unsigned int w10, unsigned int w11,
+    unsigned int w12, unsigned int w13, unsigned int w14, unsigned int w15
+) {
+    const unsigned int r = blockIdx.y;
+    if (r >= 16) return;
+    float* state = (float*)rows_pick16(r, s0, s1, s2, s3, s4, s5, s6, s7,
+                                       s8, s9, s10, s11, s12, s13, s14, s15);
+    if (state == nullptr) return;
+    const unsigned int w = rows_pick16(r, w0, w1, w2, w3, w4, w5, w6, w7,
+                                       w8, w9, w10, w11, w12, w13, w14, w15);
+    causal_conv1d_update_l2norm_body(state, new_input, weight, bias, output, 0u, w, true,
+                                     dim, d_conv, qk_channels, head_dim, l2_eps, nullptr);
 }
 
 // 2026-09-25: causal_conv1d_update_l2norm with an FP32 output.

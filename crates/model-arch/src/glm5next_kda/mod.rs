@@ -34,10 +34,16 @@ pub mod tp_bind;
 
 mod config;
 mod decode;
+#[cfg(test)]
+mod decode_rows_tests;
 mod kernels;
 mod prefill;
+mod replay;
+mod rows;
+mod seq_tokens;
 pub use config::{Glm5NextKdaConfig, Glm5NextKdaWeights};
-pub use kernels::Glm5NextKdaKernels;
+pub use kernels::{Glm5NextKdaKernels, KDA_REG_D, KDA_ROWS_MAX, KdaSeqKernels};
+pub use replay::KdaVerifyRecord;
 
 use anyhow::{Result, bail};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
@@ -58,6 +64,46 @@ const KDA_V_PER_BLOCK: usize = 32;
 /// 2026-09-25: Largest shared memory `stateful_row` requests for the 1R+1W kernel; a larger need
 /// launches the 2R+2W kernel instead.
 const KDA_SMEM_BUDGET: usize = 48 * 1024;
+
+/// 2026-10-09: `METRALE_GLM_KDA_ROWS_REG=1` runs the batched decode's KDA recurrence on the
+/// register-resident rows kernel; off until a measurement shows it faster. Read once.
+fn kda_rows_reg() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| std::env::var("METRALE_GLM_KDA_ROWS_REG").as_deref() == Ok("1"))
+}
+
+/// 2026-10-09: `METRALE_GLM_KDA_SEQ_TOKENS=1` steps the rows of one sequence that need no
+/// per-row snapshot (a prefill sub-chunk, a replay-mode verify) in one conv and one recurrent
+/// launch for all of them (`seq_tokens.rs`) instead of two launches per row; same bits. Off
+/// until measured end to end. Read once.
+fn kda_seq_tokens() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| std::env::var("METRALE_GLM_KDA_SEQ_TOKENS").as_deref() == Ok("1"))
+}
+
+/// 2026-10-09: `METRALE_GLM_KDA_SEQ_ROWS`: `1` steps the batched decode and verify through the
+/// rows kernels (`rows.rs`), `decode` only the batched decode; unset (the default) steps row by
+/// row. On GB10 at C16 the verify arm measured ~24 us a row against ~8.6 us for the
+/// single-row launches: row by row, a verify steps one sequence's 1.4 MB state through its
+/// rows back to back, while L2 still holds it; row `t` of sixteen sequences (~23 MB) does not
+/// stay resident. A decode has one row per sequence and no such reuse. Read once.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum KdaSeqRows {
+    Off,
+    DecodeOnly,
+    All,
+}
+
+pub(crate) fn kda_seq_rows() -> KdaSeqRows {
+    static F: std::sync::OnceLock<KdaSeqRows> = std::sync::OnceLock::new();
+    *F.get_or_init(
+        || match std::env::var("METRALE_GLM_KDA_SEQ_ROWS").as_deref() {
+            Ok("1") => KdaSeqRows::All,
+            Ok("decode") => KdaSeqRows::DecodeOnly,
+            _ => KdaSeqRows::Off,
+        },
+    )
+}
 
 /// 2026-09-25: `METRALE_GLM_KDA_NO_SMEM=1` selects the 2R+2W recurrent kernel. Read once per
 /// process; it is checked on every decode row.
@@ -113,6 +159,9 @@ pub struct Glm5NextKdaWorkspace {
     /// 2026-09-25: `[T, hidden]` BF16: the block output.
     pub final_out: DevicePtr,
     lowrank: DevicePtr,
+    /// 2026-10-09: `[T, head_dim]` BF16: `g_a(h)` when f_a, g_a and b_proj run as one group
+    /// (`glm5next_w4a16_dense::proj_group`), so it does not overwrite `f_a(h)` in `lowrank`.
+    lowrank_g: DevicePtr,
     beta_bf16: DevicePtr,
     chunk_gc: DevicePtr,
     chunk_u: DevicePtr,
@@ -146,6 +195,7 @@ impl Glm5NextKdaWorkspace {
             o_norm_out: gpu.alloc(t * qkv * 2)?,
             final_out: gpu.alloc(t * cfg.hidden * 2)?,
             lowrank: gpu.alloc(t * hd * 2)?,
+            lowrank_g: gpu.alloc(t * hd * 2)?,
             beta_bf16: gpu.alloc(t * h * 2)?,
             chunk_gc: gpu.alloc(n * 4)?,
             chunk_u: gpu.alloc(n * 4)?,
@@ -200,26 +250,19 @@ impl Glm5NextKdaLayer {
         k: usize,
         stream: u64,
     ) -> Result<()> {
+        // 2026-10-09: `--dense-quantization fp8` (registered weights, W8A8) is checked first in
+        // `glm_mm`, as for every GLM projection.
         // 2026-09-25: Only M above `DENSE_GEMV_BATCHM_MAX_M` goes to cuBLASLt. Below it
         // `dense_mm_bf16` runs the M = 1 GEMV or the batched GEMV, whose rows carry the same
-        // bits, so the cuBLASLt switch never changes those widths.
-        if m > ops::DENSE_GEMV_BATCHM_MAX_M as usize && crate::glm5next_layer::cublas_wide_proj() {
-            return ops::cublas_bf16_proj_dense(
-                input,
-                weight.weight,
-                out,
-                m as u32,
-                n as u32,
-                k as u32,
-                stream,
-            );
-        }
-        ops::dense_mm_bf16(
+        // bits, so the cuBLASLt switch never changes those widths. 2026-10-09: the dispatch is
+        // `glm_mm`'s, with the register-resident batched GEMV at 9..=16 rows.
+        crate::glm5next_layer::wide_gemv::glm_mm(
             gpu,
-            &ops::DenseMmKernels {
-                gemm: self.kernels.gemm,
-                gemv: self.kernels.gemv,
-                batchm: self.kernels.gemv_batchm,
+            self.kernels.gemm,
+            self.kernels.gemv,
+            crate::glm5next_layer::wide_gemv::Batchm {
+                narrow: self.kernels.gemv_batchm,
+                wide: self.kernels.gemv_batchm_wide,
             },
             input,
             weight.weight,
@@ -229,6 +272,25 @@ impl Glm5NextKdaLayer {
             k,
             stream,
         )
+    }
+
+    /// 2026-10-09: Every BF16 projection this layer launches through `gemm`, as
+    /// `(weight, n, k, name)` with the shapes the forward passes, for `--dense-quantization fp8`.
+    pub fn dense_projections(&self) -> Vec<(DevicePtr, usize, usize, &'static str)> {
+        let c = &self.cfg;
+        let w = &self.weights;
+        let (hid, qkv, hd) = (c.hidden, c.qkv_dim(), c.head_dim);
+        vec![
+            (w.q_proj.weight, qkv, hid, "kda.q_proj"),
+            (w.k_proj.weight, qkv, hid, "kda.k_proj"),
+            (w.v_proj.weight, qkv, hid, "kda.v_proj"),
+            (w.f_a.weight, hd, hid, "kda.f_a_proj"),
+            (w.f_b.weight, qkv, hd, "kda.f_b_proj"),
+            (w.b_proj.weight, c.heads, hid, "kda.b_proj"),
+            (w.g_a.weight, hd, hid, "kda.g_a_proj"),
+            (w.g_b.weight, qkv, hd, "kda.g_b_proj"),
+            (w.o_proj.weight, hid, qkv, "kda.o_proj"),
+        ]
     }
 
     /// 2026-09-25: Projections, forget gate, beta and output gate, shared by decode and prefill.
@@ -243,8 +305,20 @@ impl Glm5NextKdaLayer {
     ) -> Result<()> {
         let c = &self.cfg;
         let (hid, qkv, hd) = (c.hidden, c.qkv_dim(), c.head_dim);
+        // 2026-10-09: `hidden` is read, never written, by every projection below, so under
+        // `--dense-quantization fp8` its FP8 quantization is reused across them.
+        let _stable = crate::glm5next_fp8_dense::stable_input(hidden);
 
         // 2026-09-25: Three separate `[T, qkv]` projections, then one pack (see the module doc).
+        // 2026-10-09: One launch under `METRALE_GLM_W4A16_SEG` (`proj_group`), else one each.
+        let w = &self.weights;
+        let qkv_group: Vec<_> = [&w.q_proj, &w.k_proj, &w.v_proj]
+            .into_iter()
+            .enumerate()
+            .map(|(i, p)| (p.weight, ws.qkv_parts.offset(i * t * qkv * 2), qkv))
+            .collect();
+        let grouped =
+            crate::glm5next_w4a16_dense::proj_group(gpu, &qkv_group, hidden, t, hid, stream)?;
         for (i, w) in [
             &self.weights.q_proj,
             &self.weights.k_proj,
@@ -252,6 +326,7 @@ impl Glm5NextKdaLayer {
         ]
         .into_iter()
         .enumerate()
+        .filter(|_| !grouped)
         {
             self.gemm(
                 gpu,
@@ -278,16 +353,26 @@ impl Glm5NextKdaLayer {
         // 2026-09-25: Low-rank forget gate, hidden -> head_dim -> heads * head_dim, then
         // `lower_bound * sigmoid(exp(A_log[h]) * (g[c] + dt_bias[c]))` in `kda_gate_bf16`.
         // `A_log` is per head and `dt_bias` per channel.
-        self.gemm(
-            gpu,
-            hidden,
-            &self.weights.f_a,
-            ws.lowrank,
-            t,
-            hd,
-            hid,
-            stream,
-        )?;
+        // 2026-10-09: f_a, b_proj and g_a read `hidden` too: one launch under
+        // `METRALE_GLM_W4A16_SEG`, with g_a(h) in its own buffer; else one each, as below.
+        let low_group = [
+            (w.f_a.weight, ws.lowrank, hd),
+            (w.b_proj.weight, ws.beta_bf16, c.heads),
+            (w.g_a.weight, ws.lowrank_g, hd),
+        ];
+        let low = crate::glm5next_w4a16_dense::proj_group(gpu, &low_group, hidden, t, hid, stream)?;
+        if !low {
+            self.gemm(
+                gpu,
+                hidden,
+                &self.weights.f_a,
+                ws.lowrank,
+                t,
+                hd,
+                hid,
+                stream,
+            )?;
+        }
         self.gemm(
             gpu,
             ws.lowrank,
@@ -312,16 +397,18 @@ impl Glm5NextKdaLayer {
             .launch(stream)?;
 
         // 2026-09-25: beta = sigmoid(b_proj(hidden)); the KDA kernels read it after the sigmoid.
-        self.gemm(
-            gpu,
-            hidden,
-            &self.weights.b_proj,
-            ws.beta_bf16,
-            t,
-            c.heads,
-            hid,
-            stream,
-        )?;
+        if !low {
+            self.gemm(
+                gpu,
+                hidden,
+                &self.weights.b_proj,
+                ws.beta_bf16,
+                t,
+                c.heads,
+                hid,
+                stream,
+            )?;
+        }
         let n = t * c.heads;
         KernelLaunch::new(gpu, self.kernels.sigmoid)
             .grid([div_ceil(n as u32, 256), 1, 1])
@@ -332,19 +419,22 @@ impl Glm5NextKdaLayer {
             .launch(stream)?;
 
         // 2026-09-25: Low-rank output gate; a KDA block has no `Z` tensor (`KDA_TENSORS`).
+        let g_low = if low { ws.lowrank_g } else { ws.lowrank };
+        if !low {
+            self.gemm(
+                gpu,
+                hidden,
+                &self.weights.g_a,
+                ws.lowrank,
+                t,
+                hd,
+                hid,
+                stream,
+            )?;
+        }
         self.gemm(
             gpu,
-            hidden,
-            &self.weights.g_a,
-            ws.lowrank,
-            t,
-            hd,
-            hid,
-            stream,
-        )?;
-        self.gemm(
-            gpu,
-            ws.lowrank,
+            g_low,
             &self.weights.g_b,
             ws.out_gate,
             t,

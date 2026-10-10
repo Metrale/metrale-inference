@@ -249,22 +249,37 @@ impl SsmStatePool {
         self.h_inter_counts[slot]
     }
 
-    /// 2026-09-25: Error under the replay rollback mode on a model with SSM layers:
-    /// that mode allocates no per-token H intermediates and has no replay device
-    /// path. Every `decode_verify*` entry in `trait_impl/mod.rs` calls it.
-    pub(crate) fn require_verify_rollback_supported(&self) -> Result<()> {
+    /// 2026-09-25: Error under the replay rollback mode on a model with SSM layers
+    /// unless `replay_wired`: that mode allocates no per-token H intermediates, so a
+    /// verify can roll back only when every pool-backed recurrent layer records and
+    /// replays (`LayerCapabilities::supports_ssm_replay`, which the model ORs into
+    /// `replay_wired`). Every `decode_verify*` entry in `trait_impl/impl_verify.rs`
+    /// calls it.
+    pub(crate) fn require_verify_rollback_supported(&self, replay_wired: bool) -> Result<()> {
         if self.rollback_mode == metrale_model_layers::ssm_reserve::SsmRollbackMode::Replay
             && self.num_ssm_layers > 0
+            && !replay_wired
         {
             bail!(
-                "--ssm-rollback-mode replay is an EXPERIMENTAL scaffold: the verify-window \
-                 input capture and checkpoint-replay reconstruction are not wired yet, so \
-                 speculative verify cannot run. The serve boots (reserve sizing shows the \
-                 replay capacity win) but --speculative traffic must use \
-                 --ssm-rollback-mode snapshot."
+                "--ssm-rollback-mode replay is EXPERIMENTAL and wired only for recurrent \
+                 layers that record and replay their verify inputs (GLM-5.3's KDA); this \
+                 model has a pool-backed recurrent layer without it, so speculative verify \
+                 cannot run. The serve boots (reserve sizing shows the replay capacity win) \
+                 but --speculative traffic must use --ssm-rollback-mode snapshot."
             );
         }
         Ok(())
+    }
+
+    /// 2026-10-09: The conv intermediates a slot has: `num_intermediates` (the conv stride)
+    /// in snapshot mode, none under replay, which allocates no intermediate pools. Every loop
+    /// over a slot's conv intermediates is bounded by this, not by the stride.
+    pub(crate) fn conv_inter_count(&self) -> usize {
+        if self.conv_intermediate_pools.is_empty() {
+            0
+        } else {
+            self.num_intermediates
+        }
     }
 
     pub(super) fn conv_intermediate(
@@ -277,6 +292,21 @@ impl SsmStatePool {
         let slot = self.mtp_slot(slot);
         self.conv_intermediate_pools[ssm_layer_idx]
             .offset((slot * ni + token_idx) * self.conv_bytes)
+    }
+
+    /// 2026-10-08: Slot `slot`'s replay record region in SSM layer `ssm_layer_idx`; `None`
+    /// in snapshot mode. A slot past `mtp_slots` shares the dummy's region, as its
+    /// checkpoint does.
+    pub(super) fn replay_ring(
+        &self,
+        ssm_layer_idx: usize,
+        slot: usize,
+    ) -> Option<metrale_model_layers::layer::SsmReplayRing> {
+        let base = *self.replay_input_rings.get(ssm_layer_idx)?;
+        Some(metrale_model_layers::layer::SsmReplayRing {
+            base: base.offset(self.mtp_slot(slot) * self.replay_slot_bytes),
+            bytes: self.replay_slot_bytes,
+        })
     }
 
     pub(super) fn h_checkpoint(&self, ssm_layer_idx: usize, slot: usize) -> DevicePtr {
@@ -298,7 +328,7 @@ impl SsmStatePool {
                 for t in 0..self.h_inter_count(slot) {
                     gpu.memset(self.h_intermediate(i, slot, t), 0, self.h_stored_bytes)?;
                 }
-                for t in 0..self.num_intermediates {
+                for t in 0..self.conv_inter_count() {
                     gpu.memset(self.conv_intermediate(i, slot, t), 0, self.conv_bytes)?;
                 }
                 gpu.memset(self.h_checkpoint(i, slot), 0, self.h_stored_bytes)?;
@@ -341,7 +371,7 @@ impl SsmStatePool {
                         stream,
                     )?;
                 }
-                for t in 0..self.num_intermediates {
+                for t in 0..self.conv_inter_count() {
                     gpu.copy_d2d_async(
                         self.conv_intermediate(i, from, t),
                         self.conv_intermediate(i, to, t),

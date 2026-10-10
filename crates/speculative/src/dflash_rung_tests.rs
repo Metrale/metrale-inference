@@ -263,3 +263,18 @@ fn pinned_returns_num_drafts_unchanged() {
     assert_eq!(rung.drafts_for(16, 9), 3);
     assert_eq!(rung.drafts_for(1, 9), 9);
 }
+
+/// 2026-10-09: An installed ladder decides the drafts even on an unarmed (pinned) rung, capped
+/// at `num_drafts`; clearing it gives the pinned count back.
+#[test]
+fn an_explicit_ladder_decides_and_is_capped_at_num_drafts() {
+    let r = DflashRung::new();
+    r.set_ladder(Some(
+        crate::dflash_ladder::DraftLadder::parse("1:7,2:5,3:4,4:3,5:2,6:7").unwrap(),
+    ));
+    assert_eq!(r.drafts_for(3, 7), 4);
+    assert_eq!(r.drafts_for(16, 7), 7);
+    assert_eq!(r.drafts_for(1, 5), 5, "capped at num_drafts");
+    r.set_ladder(None);
+    assert_eq!(r.drafts_for(3, 7), 7);
+}

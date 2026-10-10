@@ -174,7 +174,7 @@ impl DraftProposer for BlockDiffusionDraftHead {
 
         // 2026-09-25: Split the bands. As in `propose_drafts`, a drafter with a
         // mask token drops each band's row 0 (the anchor).
-        let cap = self.levers.draft_cap.unwrap_or(g);
+        let cap = self.drafts_to_return(num_drafts);
         let mut out: Vec<Vec<u32>> = Vec::with_capacity(n);
         for (i, st) in states.iter_mut().enumerate() {
             let band = &all[i * g..(i + 1) * g];

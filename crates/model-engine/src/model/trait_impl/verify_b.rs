@@ -359,9 +359,10 @@ impl TransformerModel {
                             stream,
                         )?;
                     }
-                    // 2026-09-25: DFlash: capture this layer's hidden at the last row (K-1) into
-                    // `dflash_hidden_save` for the next propose. A no-op without DFlash.
-                    self.try_dflash_capture(layer_idx, k - 1, stream)?;
+                    // 2026-09-25: DFlash: capture this layer's hidden for the next propose. A
+                    // no-op without DFlash. 2026-10-09: Every row, as the K=γ verify does
+                    // (`dflash_verify_capture.rs`): the verdict commits rows 0..=num_accepted.
+                    self.dflash_capture_verify_rows(layer_idx, k, k - 1, stream)?;
                 }
 
                 let normed = self.buffers.norm_output();

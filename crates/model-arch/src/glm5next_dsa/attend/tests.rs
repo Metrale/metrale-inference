@@ -108,3 +108,19 @@ fn the_score_scale_is_the_latent_width_not_the_v4_cache_width() {
         "the two scales must not be interchangeable by accident"
     );
 }
+
+/// 2026-10-09: The lever is a split count in 1..=HB_MAX_SPLITS or unset; anything else is an
+/// error rather than a silent fallback to the per-head kernel.
+#[test]
+fn the_head_batched_lever_takes_a_split_count_or_nothing() {
+    assert_eq!(parse_hb_splits(None), Ok(None));
+    assert_eq!(parse_hb_splits(Some("8")), Ok(Some(8)));
+    assert_eq!(parse_hb_splits(Some("1")), Ok(Some(1)));
+    assert_eq!(parse_hb_splits(Some("64")), Ok(Some(HB_MAX_SPLITS)));
+    for bad in ["0", "65", "", "on", "-1", "8x"] {
+        assert!(
+            parse_hb_splits(Some(bad)).is_err(),
+            "{bad:?} must be refused"
+        );
+    }
+}

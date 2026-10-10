@@ -15,7 +15,9 @@
 //! cap (`.github/workflows/file-size-cap.yml`):
 //!
 //!  - `run_batched_prefill` — two or more streams prefilling, no active
-//!                            decode.
+//!                            decode (2026-10-09: on a multi-rank serve with
+//!                            `METRALE_EP_PREFILL_BATCH`, decodes active or
+//!                            not, before the tick's decode step).
 //!  - `run_batched_mixed`   — two or more streams prefilling, with active
 //!                            decode.
 //!  - `run_standard`        — one chunk of the head of `prefilling`, fused
@@ -162,21 +164,27 @@ pub(super) fn continue_in_progress_prefills(
     // 2026-09-25: Batched paths, for two or more prefilling streams: with no
     // active decode, `run_batched_prefill_step` (`prefill_batch_chunk`);
     // with active decode, `run_batched_mixed_step` (`mixed_forward_batch`).
-    // Neither runs under EP, while a stream collects prompt logprobs, or
-    // with `METRALE_BISECT_Q12_DISABLE=1`, which leaves the single-stream
-    // path below. The mixed one also needs `always_mixed` off and no
-    // speculative step this tick (`spec_mixing`).
+    // Neither runs while a stream collects prompt logprobs, or with
+    // `METRALE_BISECT_Q12_DISABLE=1`, which leaves the single-stream path
+    // below. Under EP the mixed one never runs, and the prefill-only one only
+    // as `batched_prefill_allowed` permits (2026-10-09). The mixed one also
+    // needs `always_mixed` off and no speculative step this tick
+    // (`spec_mixing`).
     let q12_dispatch_disabled = sched.levers.bisect_q12_disable;
     // 2026-09-25: Prompt-logprob collection runs only on the single-stream
     // path, so a collecting stream keeps both batched paths off.
     let any_collecting = prefilling
         .iter()
         .any(|p| p.seq.collect_prompt_logprobs.is_some());
+    // 2026-10-09: On a multi-rank serve with `METRALE_EP_PREFILL_BATCH`, the prefill-only step
+    // also runs with decodes active, before this tick's decode, over the leading streams that fit
+    // the model's batched-step rows (`budget_prefix`).
+    let ep_rows = super::phase_start_prefills::ep_prefill_batch_rows(model, &sched.levers);
     let can_batch_prefill_only = !q12_dispatch_disabled
         && !any_collecting
         && prefilling.len() >= 2
-        && active.is_empty()
-        && !model.is_ep();
+        && (active.is_empty() || ep_rows.is_some())
+        && super::phase_start_prefills::batched_prefill_allowed(model, &sched.levers);
     // 2026-09-25: With `always_mixed`, several prefills plus active decode
     // take the single-stream path below instead: the head of `prefilling`
     // is fused with the active decode through `mixed_forward`, sized by the
@@ -190,10 +198,20 @@ pub(super) fn continue_in_progress_prefills(
         && !model.is_ep();
 
     if can_batch_prefill_only {
+        let take = match ep_rows {
+            Some(budget) => {
+                let lens: Vec<usize> = prefilling
+                    .iter()
+                    .map(|p| run_batched_prefill::stream_chunk_len(model, p, max_prefill_tokens))
+                    .collect();
+                prefill_waves::budget_prefix(&lens, budget)
+            }
+            None => prefilling.len(),
+        };
         run_batched_prefill_step(
             model,
             sched,
-            prefilling,
+            &mut prefilling[..take],
             &mut completed_indices,
             max_prefill_tokens,
             max_batch_tokens,

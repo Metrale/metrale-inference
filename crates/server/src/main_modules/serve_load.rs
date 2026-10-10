@@ -315,6 +315,10 @@ pub(crate) fn load_model(
         vision_config: config.vision.clone(),
         vision_max_pixels,
         remote_image_policy,
+        media_limits: crate::api::chat::media_limits::MediaLimits {
+            images: args.chat_surface.limit_images_per_prompt,
+            videos: args.chat_surface.limit_videos_per_prompt,
+        },
         video_ffmpeg,
         video_fps: args.video_fps,
         default_temperature,
@@ -346,6 +350,7 @@ pub(crate) fn load_model(
         // the CLI overrides below.
         behavior: model_setup::resolve_behavior(&ptx_set, &args, &default_kwargs),
         disable_thinking: args.disable_thinking,
+        uncapped_thinking: args.chat_surface.uncapped_thinking,
         default_thinking: default_kwargs.thinking,
         default_reasoning_effort: default_kwargs.reasoning_effort,
         response_store,

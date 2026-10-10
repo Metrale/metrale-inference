@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-09-25: GLM-5.3-Flash layer launch levers: the prefill sub-chunk width, cuBLASLt for
-//! wide projections, and the batched DSA indexer query.
+//! wide projections, the batched DSA indexer query, and (2026-10-08) the row group of the
+//! batched multi-sequence decode.
 //!
 //! Owner: model-arch (GLM-5.3).
 //! Invariants:
@@ -64,6 +65,28 @@ pub(crate) fn dsa_batch_qidx() -> bool {
     })
 }
 
+/// 2026-10-09: `METRALE_GLM_ROUTER_ROWS=1` computes the router logits of a 2..=16-row group
+/// (the batched decode and verify) in one batched FP32-out GEMV instead of one M = 1 GEMV per
+/// row; each row's logits keep their bits (`glm5next_mlp::forward::router::router_logits`).
+/// Off until measured end to end. Read once.
+pub(crate) fn router_rows() -> bool {
+    static E: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *E.get_or_init(|| std::env::var("METRALE_GLM_ROUTER_ROWS").as_deref() == Ok("1"))
+}
+
+/// 2026-10-09: `METRALE_GLM_DSA_INDEXER_ROWS=1` runs the DSA indexer's key and gate
+/// projections and the key norm of a batched decode or verify group once over all its rows
+/// (`Glm5NextDsaLayer::indexer_project_rows`) instead of once per row; each row is then placed
+/// from its staging row. On a captured decode the paged rows also store and select in one
+/// launch per stage (`select_paged_rows`) instead of seven launches per row; a paged prefill
+/// sub-chunk writes its latents, places its indexer rows and computes its head weights and
+/// selector query once per group of up to 16 rows (`Glm5NextDsaLayer::decode_k_with`). Each
+/// row keeps its bits. Off until measured end to end. Read once.
+pub(crate) fn dsa_indexer_rows() -> bool {
+    static E: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *E.get_or_init(|| std::env::var("METRALE_GLM_DSA_INDEXER_ROWS").as_deref() == Ok("1"))
+}
+
 /// 2026-09-25: `PREFILL_ROWS`, overridable at launch with `METRALE_GLM_PREFILL_ROWS` (values
 /// below 1 or unparsable are ignored). `1` selects the per-token walk: `Glm5NextLayer::prefill`
 /// takes the batched sub-chunk path only when `rows > 1`. A width above
@@ -81,4 +104,50 @@ pub fn prefill_rows() -> usize {
         }
         r
     })
+}
+
+/// 2026-10-08: Widest row group `Glm5NextLayer::forward_multi` runs through a layer:
+/// `DENSE_GEMV_BATCHM_MAX_M`, the widest M `ops::dense_mm_bf16` sends to the batched GEMV, whose
+/// rows carry the M = 1 GEMV's bits. A wider group would move every projection to cuBLASLt,
+/// whose rows depend on their batch-mates. The loader sizes every workspace for at least this
+/// many rows (`verify_k` in `glm5_next_load/loader.rs`).
+///
+/// 2026-10-09: `METRALE_GLM_ROW_GROUP=N` (opt-in, 1..=`MAX_ROW_GROUP`) widens the group, so a
+/// batched decode or verify of more than 16 rows reads each weight once per N rows instead of
+/// once per 16. Above 16 rows the BF16 projections run on cuBLASLt and a row's bits then
+/// depend on its batch-mates: the default stays 16 until transcripts and accuracy clear a
+/// wider group. Read once.
+pub(crate) fn multi_seq_chunk_rows() -> usize {
+    static ROWS: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *ROWS.get_or_init(|| {
+        let default = metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M as usize;
+        let rows = std::env::var("METRALE_GLM_ROW_GROUP")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|r| (1..=MAX_ROW_GROUP).contains(r))
+            .unwrap_or(default);
+        if rows != default {
+            tracing::warn!(
+                "METRALE_GLM_ROW_GROUP={rows}: batched GLM decode/verify groups of {rows} rows \
+                 (default {default}); above {default} rows the projections leave the \
+                 bit-identical batched GEMV"
+            );
+        }
+        rows
+    })
+}
+
+/// 2026-10-09: The widest `METRALE_GLM_ROW_GROUP` accepted: the GLM mHC `mix` scratch floor
+/// (`MHC_MIX_MAX_TOKENS`), so every group fits `glm_hc_pre`.
+pub(crate) const MAX_ROW_GROUP: usize = crate::glm5next_mhc::MHC_MIX_MAX_TOKENS;
+
+/// 2026-10-08: `rows` split into consecutive `(start, width)` groups of `cap` rows, the last one
+/// shorter when `cap` does not divide `rows`. A `cap` of 0 is treated as 1. No group is empty,
+/// and `rows == 0` gives none.
+pub(crate) fn multi_seq_chunks(rows: usize, cap: usize) -> Vec<(usize, usize)> {
+    let cap = cap.max(1);
+    (0..rows)
+        .step_by(cap)
+        .map(|start| (start, cap.min(rows - start)))
+        .collect()
 }

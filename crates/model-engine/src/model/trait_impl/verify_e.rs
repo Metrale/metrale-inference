@@ -62,7 +62,8 @@ impl TransformerModel {
     /// one at a time when it returns false.
     ///
     /// It requires `2 <= n <= VERIFY_WY_TABLE_SEQS`, `Σ ks <= VERIFY_ROW_CAP`,
-    /// no EP comm backend, a verify hidden stash (allocated only with a
+    /// no EP comm backend unless every layer answers `batch_verify_across_ranks`
+    /// (2026-10-09), a verify hidden stash (allocated only with a
     /// proposer), no layer that declines `decode_verify_multi`, no HSS
     /// (`cache_blocks_per_seq`), and, with an adapter loaded, no
     /// `METRALE_LORA_NO_BATCH_VERIFY=1`. Without DFlash every `ks[i]` must be
@@ -84,7 +85,12 @@ impl TransformerModel {
         (2..=metrale_model_layers::layer::VERIFY_WY_TABLE_SEQS).contains(&n)
             && shape_ok
             && ks.iter().sum::<usize>() <= super::verify_e2::VERIFY_ROW_CAP
-            && self.comm.is_none()
+            // 2026-10-09: Multi-rank only under the slot-addressed worker protocol (v2) and
+            // when every layer runs its batched verify the same way on every rank; the
+            // scheduler then announces the batch to the workers (`EP_CMD_VERIFY_BATCH`).
+            && (self.comm.is_none()
+                || (self.ep_protocol_v2
+                    && self.layers.iter().all(|l| l.batch_verify_across_ranks())))
             // 2026-09-30: Under `--forward circuit` only when the executor compiles batched
             // verifies (`CircuitExec::verify_batch`).
             && self
@@ -235,7 +241,11 @@ impl TransformerModel {
         // WY entries. Each ghost slot must be free and, with WY tables, its
         // intermediate pool must cover the ghost's depth (the closure in
         // `pick_verify_graph`).
-        let graphs_on = super::verify_e2::verify_graphs_enabled() && !k4_diag;
+        // 2026-10-09: With a comm backend under the decode graphs' rule (`verify_d.rs`):
+        // every rank runs this verify, so every rank captures and replays the same collectives.
+        let graphs_on = super::verify_e2::verify_graphs_enabled()
+            && !k4_diag
+            && (self.comm.is_none() || self.levers.ep_graphs || self.layers_capture_with_comm());
         let graph_key = if graphs_on {
             self.verify_batched_graph_key(
                 &*seqs,
@@ -283,8 +293,26 @@ impl TransformerModel {
         if let Some(graph) = replay {
             // 2026-09-25: The graph reads this step's metadata and WY tables
             // from the fixed addresses refreshed above.
+            // 2026-10-09: As around the single-sequence verify replays (`verify_d.rs`): refuse
+            // a replay whose GLM-5.3 DSA indexer rows would pass their buffer, and after it
+            // bring each sequence's host-side indexer length to `seq_len + k`, which a replay
+            // does not advance. Every other layer's hooks do nothing.
             if graph.0 != 0 {
+                for (i, seq) in seqs.iter().enumerate() {
+                    for (l, layer) in self.layers.iter().enumerate() {
+                        layer.check_replay_room(&*seq.layer_states[l], seq.seq_len, ks[i])?;
+                    }
+                }
                 self.gpu.launch_graph(graph, stream)?;
+                for (i, seq) in seqs.iter_mut().enumerate() {
+                    for (l, layer) in self.layers.iter().enumerate() {
+                        layer.sync_replayed_step(
+                            seq.layer_states[l].as_mut(),
+                            seq.seq_len,
+                            ks[i],
+                        )?;
+                    }
+                }
             }
         } else {
             // 2026-09-25: No graph to replay: run the forward, under capture
@@ -351,6 +379,9 @@ impl TransformerModel {
                     midchunk_capture: None,
                 };
 
+                // 2026-10-09: Each sequence's length before this verify, for the layers that
+                // place rows by position themselves (`decode_verify_multi`).
+                let seq_lens_pre: Vec<usize> = seqs.iter().map(|s| s.seq_len).collect();
                 let mut seq_lens_vec: Vec<usize> = Vec::with_capacity(r_total);
                 let mut block_tables_vec: Vec<Vec<u32>> = Vec::with_capacity(r_total);
                 for (i, seq) in seqs.iter().enumerate() {
@@ -388,6 +419,7 @@ impl TransformerModel {
                     r_total,
                     n,
                     ks,
+                    &seq_lens_pre,
                     &off,
                     wy_tables_base,
                     k4_diag,

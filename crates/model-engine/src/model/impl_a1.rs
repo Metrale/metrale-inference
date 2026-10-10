@@ -275,9 +275,11 @@ impl TransformerModel {
         // (`moe_output`, `norm_output`, and `logits` for the vocab-parallel
         // lm_head) with the comm backend and give it the `bf16_add_inplace`
         // kernel for its send/recv path. Each step is best-effort: a failure is
-        // logged and construction continues.
+        // logged and construction continues. 2026-10-08: also at world size 3 and
+        // above, where it hands over `bf16_add_rank_sum` for the one-shot all-reduce
+        // (which refuses to run without it).
         if let Some(ref comm) = comm
-            && comm.world_size() == 2
+            && comm.world_size() >= 2
         {
             comm_setup::register_reduce_buffers(comm, &buffers, gpu.as_ref());
         }
@@ -453,6 +455,7 @@ impl TransformerModel {
             // uploads the tables.
             verify_wy_cache: Mutex::new(None),
             verify_kgamma_graph: Mutex::new(std::collections::HashMap::new()),
+            replay_commit_graphs: Mutex::new(std::collections::HashMap::new()),
             fused_graph: Mutex::new(std::collections::HashMap::new()),
             prefix_cache,
             secondary_stream,

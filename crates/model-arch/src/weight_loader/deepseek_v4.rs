@@ -4,7 +4,7 @@
 //!
 //! Owner: model-arch weight loader.
 //! Invariants:
-//! - `supports_tp` is false: V4 layers shard experts by EP only.
+//! - `tp_support` is `Unsupported`: V4 layers shard experts by EP only.
 //! - `load_mtp_weights` returns `None`; the V4 MTP module is loaded separately
 //!   by `mtp::load_v4_mtp_module`.
 
@@ -30,8 +30,8 @@ use metrale_model_layers::weight_map::{DenseWeight, MtpWeights, dense};
 pub struct DeepSeekV4WeightLoader;
 
 impl ModelWeightLoader for DeepSeekV4WeightLoader {
-    fn supports_tp(&self) -> bool {
-        false
+    fn tp_support(&self) -> metrale_config::TpSupport {
+        metrale_config::TpSupport::Unsupported
     }
 
     fn load_layers(

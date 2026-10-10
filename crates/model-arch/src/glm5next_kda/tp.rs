@@ -5,9 +5,13 @@
 //!
 //! Owner: model-arch (GLM-5.3-Flash KDA).
 //! Invariants:
-//! - [`KdaTpPlan::new`] refuses `tp_rank >= tp_size`, a head count not divisible by `tp_size`,
-//!   and a local q|k width that is not a multiple of 256.
-//! - Sharded tensors split into equal, contiguous per-rank ranges ordered by rank.
+//! - [`KdaTpPlan::new`] refuses `tp_rank >= tp_size`, fewer heads than ranks, and a local q|k
+//!   width that is not a multiple of 256.
+//! - Sharded tensors split into contiguous per-rank ranges ordered by rank, whole heads each:
+//!   2026-10-08: the head range is `metrale_config::tp_split(heads, tp_size, tp_rank, 1)`, so
+//!   64 heads over three ranks are 22/21/21 and an even split is unchanged. 2026-10-09: under
+//!   `--dense-quantization w4a16` the unit is a pair of heads (`KdaTpPlan::from_config`'s
+//!   `linear_channel_unit`), so 22/22/20, and every rank's o_proj K is whole 256-wide units.
 //!
 //! The plan is pure data, so the per-rank row arithmetic is tested without a GPU; `tp_bind`
 //! applies it. Each rank owns a contiguous head range, `o_proj` is row-parallel, and one
@@ -85,6 +89,8 @@ pub struct KdaTpPlan {
     pub full_heads: usize,
     /// 2026-09-25: Heads this rank owns.
     pub local_heads: usize,
+    /// 2026-10-08: The first head this rank owns.
+    pub head_start: usize,
     pub conv_kernel: usize,
     /// 2026-09-25: Low-rank width of the `f`/`g` gate bottleneck.
     pub gate_rank: usize,
@@ -93,23 +99,40 @@ pub struct KdaTpPlan {
 
 impl KdaTpPlan {
     /// 2026-09-25: Build from a `ModelConfig` whose linear-head counts are already per rank
-    /// (`serve_phases::topology` divides them), so the full count is `local * tp_size`, as in
-    /// `TpGdnDims::from_config`.
+    /// (`serve_phases::topology` divides them). 2026-10-08: The full count is the recorded
+    /// pre-shard one (`ModelConfig::pre_shard_heads`), not `local * tp_size`, which is wrong
+    /// for an uneven split; a plan whose local count disagrees with the config's is refused.
     ///
     /// `gate_rank` is not a config key; the loader reads it as the `f_a_proj` row count.
-    pub fn from_config(config: &ModelConfig, gate_rank: usize) -> Result<Self> {
-        let tp_size = config.tp_world_size.max(1);
-        Self::new(
+    /// 2026-10-09: `linear_channel_unit` is the one the loader's `TpSupport::Uneven` gave the
+    /// head division: the heads split in units of `metrale_config::linear_head_unit` of it.
+    pub fn from_config(
+        config: &ModelConfig,
+        gate_rank: usize,
+        linear_channel_unit: usize,
+    ) -> Result<Self> {
+        let plan = Self::new_in_units(
             config.tp_rank,
-            tp_size,
+            config.tp_world_size.max(1),
             config.hidden_size,
             config.linear_key_head_dim,
-            config.linear_num_key_heads * tp_size,
+            config.pre_shard_heads()?.linear_num_key_heads,
             config.linear_conv_kernel_dim,
             gate_rank,
-        )
+            metrale_config::linear_head_unit(config.linear_key_head_dim, linear_channel_unit)?,
+        )?;
+        if plan.local_heads != config.linear_num_key_heads {
+            bail!(
+                "KDA TP: the plan gives rank {} {} heads but the config holds {}",
+                plan.tp_rank,
+                plan.local_heads,
+                config.linear_num_key_heads
+            );
+        }
+        Ok(plan)
     }
 
+    /// 2026-10-09: [`Self::new_in_units`] head by head.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         tp_rank: usize,
@@ -120,19 +143,44 @@ impl KdaTpPlan {
         conv_kernel: usize,
         gate_rank: usize,
     ) -> Result<Self> {
+        Self::new_in_units(
+            tp_rank,
+            tp_size,
+            hidden,
+            head_dim,
+            full_heads,
+            conv_kernel,
+            gate_rank,
+            1,
+        )
+    }
+
+    /// 2026-10-09: The plan with the heads split in units of `head_unit` whole heads
+    /// (`metrale_config::tp_split(full_heads, tp_size, tp_rank, head_unit)`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_in_units(
+        tp_rank: usize,
+        tp_size: usize,
+        hidden: usize,
+        head_dim: usize,
+        full_heads: usize,
+        conv_kernel: usize,
+        gate_rank: usize,
+        head_unit: usize,
+    ) -> Result<Self> {
         if tp_rank >= tp_size {
             bail!("tp_rank {tp_rank} >= tp_size {tp_size}");
         }
         if tp_size == 0 || head_dim == 0 || full_heads == 0 {
             bail!("degenerate KDA TP geometry: heads={full_heads} head_dim={head_dim}");
         }
-        if !full_heads.is_multiple_of(tp_size) {
-            bail!("KDA TP requires heads ({full_heads}) divisible by tp_size ({tp_size})");
-        }
-        let local_heads = full_heads / tp_size;
+        let heads = metrale_config::tp_split(full_heads, tp_size, tp_rank, head_unit)?;
+        let (local_heads, head_off) = (heads.len, heads.start);
 
         // 2026-09-25: `Glm5NextKdaConfig::validate`'s 256-channel rule, re-checked on the local
-        // q|k width.
+        // q|k width. 2026-10-08: at `head_dim` 128 it holds for any head count (`2 * h * 128`
+        // is `h * 256`), so 22 and 21 heads both pass; the kernel's L2 reduction is per
+        // 128-channel head, and a 256-thread block covers two whole heads.
         let local_qk_channels = 2 * local_heads * head_dim;
         if !local_qk_channels.is_multiple_of(256) {
             bail!(
@@ -144,16 +192,15 @@ impl KdaTpPlan {
 
         let full_ch = full_heads * head_dim;
         let local_ch = local_heads * head_dim;
-        let ch_off = tp_rank * local_ch;
-        let head_off = tp_rank * local_heads;
+        let ch_off = head_off * head_dim;
 
         let rows = |name, kind, elem_bytes, full_rows, full_row_elems| {
             let (local_rows, local_row_elems, src_row_offset, src_col_offset) = match kind {
                 KdaShard::Replicated => (full_rows, full_row_elems, 0, 0),
-                KdaShard::HeadRows => (full_rows / tp_size, full_row_elems, head_off, 0),
-                KdaShard::ChannelRows => (full_rows / tp_size, full_row_elems, ch_off, 0),
+                KdaShard::HeadRows => (local_heads, full_row_elems, head_off, 0),
+                KdaShard::ChannelRows => (local_ch, full_row_elems, ch_off, 0),
                 // 2026-09-25: Row-parallel: slice the input (column) dim, keep every row.
-                KdaShard::ChannelCols => (full_rows, full_row_elems / tp_size, 0, ch_off),
+                KdaShard::ChannelCols => (full_rows, local_ch, 0, ch_off),
             };
             KdaTensorPlan {
                 name,
@@ -218,6 +265,7 @@ impl KdaTpPlan {
             head_dim,
             full_heads,
             local_heads,
+            head_start: head_off,
             conv_kernel,
             gate_rank,
             tensors,

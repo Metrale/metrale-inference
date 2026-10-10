@@ -41,6 +41,7 @@ fn logits_ctx<'a>(
         think_start_token,
         tool_call_start_token,
         tool_call_end_token,
+        thinking_closed_by: sched.limits.thinking_closed_by,
         verify_pos: 0,
         watchdog: sched.watchdog,
         scratch,

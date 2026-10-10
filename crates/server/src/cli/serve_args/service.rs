@@ -3,7 +3,8 @@
 //! 2026-09-26: The last `met serve` flags, from `--request-timeout` to
 //! `--lora-stageable-disk`: the request deadline, profiling, FP8 KV calibration,
 //! weight loading, the dashboard, vision and video input, the listener, auth and
-//! LoRA adapters. `ServeSchedulingArgs` flattens this struct last.
+//! LoRA adapters, then the chat-surface flags (`serve_args_chat_surface.rs`).
+//! `ServeSchedulingArgs` flattens this struct last.
 //!
 //! Owner: server CLI.
 //! Invariants: the `///` text on the struct's fields is the `--help` output and
@@ -11,7 +12,9 @@
 //! struct's fields sit where its `#[command(flatten)]` field is: last.
 
 use clap::Args;
+use metrale_model_layers::layers::DenseQuantization;
 
+use super::super::flag_values::{DenseQuantizationArg, MoeExpertLayoutArg};
 use super::{DEFAULT_REQUEST_TIMEOUT_SECS, parse_lora_adapter_spec, parse_lora_stageable_spec};
 
 /// 2026-09-30: `--activation-quantization`, parsed by the config crate's one grammar.
@@ -107,6 +110,38 @@ pub struct ServeServiceArgs {
     /// row-invariant path for a family, that family runs `adaptive` and the load log says so.
     #[arg(long, value_name = "SPEC", default_value = "declared", value_parser = parse_activation_quantization)]
     pub activation_quantization: metrale_config::ActivationQuantization,
+
+    /// Precision of the checkpoint's 16-bit (unquantized) dense projections.
+    ///
+    /// `declared` (the default) serves them at the checkpoint's width. `fp8` quantizes them at
+    /// load to FP8 E4M3 with one scale per output channel and decodes them W8A8 with dynamic
+    /// per-token FP8 activations: BELOW the checkpoint's declared precision, so the model's
+    /// answers change; the boot log and benchmark records say so. GLM-5.3 (`glm5_next`) only:
+    /// its attention (KDA, DSA latent, indexer) and shared-expert projections; pair it with
+    /// `--lm-head-dtype fp8` for the head. The FP8 copies sit beside the 16-bit weights. Any
+    /// other model refuses it. Unmeasured.
+    ///
+    /// `w4a16` is FURTHER below declared than `fp8`, so the answers change more: the KDA q/k/v,
+    /// f_a, b, g_a and o projections and the shared expert's gate/up/down are quantized at load
+    /// to NVFP4 (E2M1 weights, one E4M3 scale per 16, one F32 scale per tensor) and decoded
+    /// W4A16 with 16-bit activations; the 16-bit copies of those are freed. The rest of `fp8`'s
+    /// set (DSA latent and indexer projections, KDA f_b and g_b) runs as under `fp8`. At TP>1
+    /// it splits the KDA heads in pairs and the shared expert in 256-wide units. GLM-5.3 only.
+    /// Unmeasured.
+    #[arg(long, value_enum, default_value_t = DenseQuantizationArg(DenseQuantization::Declared))]
+    pub dense_quantization: DenseQuantizationArg,
+
+    /// How a routed MoE's experts are laid out over the ranks.
+    ///
+    /// `ep` (the default) gives each expert whole to one of the `--ep-size` ranks, so a token's
+    /// routed experts land unevenly on the ranks and the MoE all-reduce waits for the busiest.
+    /// `tp` splits every expert's intermediate width over the `--tp-size` ranks the way the
+    /// shared expert is split, so every routed slot is local on every rank and each rank reads
+    /// the same bytes per token; each rank holds about the same expert bytes as under `ep`. It
+    /// needs `--ep-size 1` and `--tp-size` of 2 or more. GLM-5.3 (`glm5_next`) only; any other
+    /// model refuses it. Unmeasured.
+    #[arg(long, value_enum, default_value_t = MoeExpertLayoutArg(metrale_config::MoeExpertLayout::Ep))]
+    pub moe_expert_layout: MoeExpertLayoutArg,
 
     /// Vision input area bound in pixels, applied before patching. A non-zero
     /// value overrides the checkpoint in both directions: it may raise the bound
@@ -294,4 +329,17 @@ pub struct ServeServiceArgs {
     /// not exceed `--max-lora-rank` (64 when unset).
     #[arg(long, value_name = "NAME=PATH_OR_HF_ID", value_parser = parse_lora_adapter_spec)]
     pub lora_stageable_disk: Vec<(String, String)>,
+
+    /// One-shot all-reduce bound, in KiB, at `--world-size` 3 or more: a BF16
+    /// all-reduce of at most this size is exchanged with every peer in one
+    /// grouped send/recv and summed in rank order (FP32, rounded once, the
+    /// same bytes on every rank); larger payloads use NCCL's all-reduce. `0`
+    /// (the default) sends every all-reduce to NCCL. Refused at world size 2,
+    /// which has its own exchange.
+    #[arg(long, default_value_t = 0)]
+    pub all_reduce_oneshot_max_kb: usize,
+
+    /// 2026-10-08: `--chat-template` and the other chat-surface flags, listed last.
+    #[command(flatten)]
+    pub chat_surface: crate::cli::serve_args_chat_surface::ServeChatSurfaceArgs,
 }

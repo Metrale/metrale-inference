@@ -6,15 +6,19 @@
 //! Owner: model-arch (GLM-5.3).
 //! Invariants:
 //! - TP: `gate_proj`/`up_proj` (`[inter, hidden]`) are split by row and `down_proj`
-//!   (`[hidden, inter]`) by column, so the dense output is a partial sum.
+//!   (`[hidden, inter]`) by column, over the same `TpSlice` of `inter`, so the dense output is
+//!   a partial sum.
 //! - EP: an expert is owned whole by one rank. In each pointer table, an id another rank owns
-//!   keeps a null `packed` pointer.
+//!   keeps a null `packed` pointer. 2026-10-09: Under the `tp` expert layout every id is local
+//!   (each a `moe_intermediate`-wide slice), so no entry is null.
 //! - The router weight and bias are loaded unsliced on every rank.
 
 use anyhow::{Result, bail};
+use metrale_config::TpSlice;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
 use super::Glm5NextMlpConfig;
+use super::precision::{GroupPrecision, MlpKernel};
 use super::weights::{
     Glm5NextDenseMlpWeights, Glm5NextExpertPtrTable, Glm5NextExpertWeights, Glm5NextMoePtrTables,
     Glm5NextMoeWeights, Nvfp4Proj,
@@ -24,6 +28,8 @@ use super::weights::{
 pub type LoadFn<'a> = &'a dyn Fn(&str) -> Result<Vec<f32>>;
 /// 2026-09-25: One routed expert's weights, by GLOBAL id. Experts are not sliced, so the
 /// loader's closure (`bind_expert`) can return NVFP4 pointers straight from the weight store.
+/// 2026-10-09: Under the `tp` expert layout the closure returns this rank's slice, uploaded by
+/// the loader (`glm5_next_load::expert_tp`), `moe_intermediate` wide.
 pub type ExpertFn<'a> = &'a dyn Fn(usize) -> Result<Glm5NextExpertWeights>;
 
 /// 2026-09-25: Rows `[start, end)` of a `[rows, row_elems]` row-major tensor, for a
@@ -56,47 +62,64 @@ fn up_f32(gpu: &dyn GpuBackend, v: &[f32]) -> Result<DevicePtr> {
     Ok(p)
 }
 
+/// 2026-10-08: This rank's `[gate, up, down]` host values of one SwiGLU MLP of width
+/// `full_inter` with `hidden` rows: `gate_proj`/`up_proj` (`[inter, hidden]`) keep the rows of
+/// `cols` and `down_proj` (`[hidden, inter]`) its columns. `load` returns a projection by its
+/// leaf name. Errors when `cols` is empty or runs past `full_inter`, or a tensor has the wrong
+/// element count.
+pub fn slice_dense_mlp(
+    hidden: usize,
+    full_inter: usize,
+    cols: TpSlice,
+    prefix: &str,
+    load: LoadFn<'_>,
+) -> Result<[Vec<f32>; 3]> {
+    if cols.len == 0 || cols.end() > full_inter {
+        bail!(
+            "GLM MLP {prefix}: columns {:?} do not fit intermediate {full_inter}",
+            cols.range()
+        );
+    }
+    let get = |n: &str| -> Result<Vec<f32>> {
+        let v = load(&format!("{prefix}.{n}"))?;
+        if v.len() != full_inter * hidden {
+            bail!(
+                "GLM MLP {prefix}.{n}: {} elements, expected {}",
+                v.len(),
+                full_inter * hidden
+            );
+        }
+        Ok(v)
+    };
+    let (gate, up, down) = (
+        get("gate_proj.weight")?,
+        get("up_proj.weight")?,
+        get("down_proj.weight")?,
+    );
+    Ok([
+        row_slice(&gate, hidden, cols.start, cols.end()),
+        row_slice(&up, hidden, cols.start, cols.end()),
+        col_slice(&down, full_inter, cols.start, cols.end()),
+    ])
+}
+
 /// 2026-09-25: TP-slice and upload one BF16 SwiGLU MLP, a dense layer or a routed layer's
-/// shared expert. `full_inter` is the unsliced width; the rank keeps `full_inter / tp`. Errors
-/// when `full_inter` does not divide over TP or a tensor has the wrong element count.
+/// shared expert. `full_inter` is the unsliced width. 2026-10-08: The rank keeps columns
+/// `cols` (`Glm5NextMlpConfig::dense_slice` or `shared_slice`), which need not be
+/// `full_inter / tp` wide; [`slice_dense_mlp`] does the slicing and states the refusals.
 pub fn build_dense_mlp(
     gpu: &dyn GpuBackend,
     cfg: &Glm5NextMlpConfig,
-    tp_rank: usize,
     full_inter: usize,
+    cols: TpSlice,
     prefix: &str,
     load: LoadFn<'_>,
 ) -> Result<Glm5NextDenseMlpWeights> {
-    let tp = cfg.tp_world_size;
-    if !full_inter.is_multiple_of(tp) {
-        bail!("GLM MLP {prefix}: intermediate {full_inter} does not divide over tp {tp}");
-    }
-    let local = full_inter / tp;
-    let lo = tp_rank * local;
-
-    let get = |n: &str| -> Result<Vec<f32>> { load(&format!("{prefix}.{n}")) };
-
-    let expect = |name: &str, v: &[f32], want: usize| -> Result<()> {
-        if v.len() != want {
-            bail!(
-                "GLM MLP {prefix}.{name}: {} elements, expected {want}",
-                v.len()
-            );
-        }
-        Ok(())
-    };
-
-    let gate = get("gate_proj.weight")?;
-    expect("gate_proj.weight", &gate, full_inter * cfg.hidden)?;
-    let up = get("up_proj.weight")?;
-    expect("up_proj.weight", &up, full_inter * cfg.hidden)?;
-    let down = get("down_proj.weight")?;
-    expect("down_proj.weight", &down, cfg.hidden * full_inter)?;
-
+    let [gate, up, down] = slice_dense_mlp(cfg.hidden, full_inter, cols, prefix, load)?;
     Ok(Glm5NextDenseMlpWeights {
-        gate_proj: up_bf16(gpu, &row_slice(&gate, cfg.hidden, lo, lo + local))?,
-        up_proj: up_bf16(gpu, &row_slice(&up, cfg.hidden, lo, lo + local))?,
-        down_proj: up_bf16(gpu, &col_slice(&down, full_inter, lo, lo + local))?,
+        gate_proj: up_bf16(gpu, &gate)?,
+        up_proj: up_bf16(gpu, &up)?,
+        down_proj: up_bf16(gpu, &down)?,
     })
 }
 
@@ -134,15 +157,22 @@ fn build_expert_ptr_table(
     })
 }
 
+/// 2026-10-08: The routed experts' precision plan, given whether every bound projection carries
+/// a static activation scale (`precision::GroupPrecision::resolve`).
+pub type PrecisionFn<'a> = &'a dyn Fn(bool) -> Result<GroupPrecision>;
+
 /// 2026-09-25: Bind one routed MoE site for this rank: the router and bias unsliced, the shared
-/// expert TP-sliced, and the `local_experts` routed experts this EP rank owns.
+/// expert TP-sliced (`cfg.shared_slice()`), and the `local_experts` routed experts this EP rank
+/// owns. 2026-10-08: Then the experts' precision plan, and their uniform activation scales when
+/// the plan reaches W4A4 at some row count up to `max_rows`.
 pub fn build_moe(
     gpu: &dyn GpuBackend,
     cfg: &Glm5NextMlpConfig,
-    tp_rank: usize,
     full_shared_inter: usize,
     load: LoadFn<'_>,
     expert: ExpertFn<'_>,
+    precision: PrecisionFn<'_>,
+    max_rows: usize,
 ) -> Result<Glm5NextMoeWeights> {
     // 2026-09-25: The router weight and bias are loaded whole on every rank, so every rank
     // selects the same experts.
@@ -168,8 +198,8 @@ pub fn build_moe(
     let shared = build_dense_mlp(
         gpu,
         cfg,
-        tp_rank,
         full_shared_inter,
+        cfg.shared_slice(),
         "mlp.shared_experts",
         load,
     )?;
@@ -180,6 +210,13 @@ pub fn build_moe(
     for id in cfg.local_expert_range() {
         experts.push(expert(id)?);
     }
+
+    let precision = precision(super::build_w4a4::experts_have_scales(&experts))?;
+    let act_scales = if precision.reaches(MlpKernel::W4a4Static, max_rows) {
+        Some(super::build_w4a4::expert_act_scales(&experts)?)
+    } else {
+        None
+    };
 
     let ptrs = Glm5NextMoePtrTables {
         gate: build_expert_ptr_table(gpu, cfg, &experts, |e| e.gate_proj)?,
@@ -194,6 +231,8 @@ pub fn build_moe(
         shared,
         experts,
         ptrs,
+        precision,
+        act_scales,
     })
 }
 
@@ -224,5 +263,70 @@ mod tests {
         let by_col = col_slice(&sq, 4, 2, 4);
         assert_eq!(by_row.len(), by_col.len());
         assert_ne!(by_row, by_col);
+    }
+
+    /// 2026-10-08: The 2048-wide shared expert at TP=3 (688/680/680 columns): every rank's
+    /// `gate`/`up` rows and `down` columns rejoin, in rank order, to the full tensors, and each
+    /// rank's three tensors cover the same intermediate indices.
+    #[test]
+    fn three_uneven_ranks_partition_the_dense_mlp() {
+        let (hidden, inter) = (4usize, 2048usize);
+        // 2026-10-08: `[inter, hidden]` values `i * hidden + h` and `[hidden, inter]` values
+        // `-(h * inter + i)`, so every element names its own position.
+        let gate: Vec<f32> = (0..inter * hidden).map(|x| x as f32).collect();
+        let down: Vec<f32> = (0..hidden * inter).map(|x| -(x as f32)).collect();
+        let load = |n: &str| -> Result<Vec<f32>> {
+            Ok(if n.ends_with("down_proj.weight") {
+                down.clone()
+            } else {
+                gate.clone()
+            })
+        };
+        let ranks: Vec<[Vec<f32>; 3]> = (0..3)
+            .map(|r| {
+                let cols = metrale_config::tp_split(inter, 3, r, 8).unwrap();
+                slice_dense_mlp(hidden, inter, cols, "mlp.shared_experts", &load).unwrap()
+            })
+            .collect();
+        assert_eq!(
+            ranks
+                .iter()
+                .map(|t| t[0].len() / hidden)
+                .collect::<Vec<_>>(),
+            vec![688, 680, 680]
+        );
+        let rows: Vec<f32> = ranks.iter().flat_map(|t| t[0].clone()).collect();
+        assert_eq!(rows, gate, "gate rows rejoin in rank order");
+        for h in 0..hidden {
+            let row: Vec<f32> = ranks
+                .iter()
+                .flat_map(|t| t[2].chunks(t[2].len() / hidden).nth(h).unwrap().to_vec())
+                .collect();
+            assert_eq!(
+                row,
+                down[h * inter..(h + 1) * inter],
+                "down row {h} rejoins"
+            );
+        }
+        // 2026-10-08: Rank 1's first gate row and first down column are intermediate index
+        // 688: the gate-up output and the down input meet on the same columns.
+        assert_eq!(ranks[1][0][0], (688 * hidden) as f32);
+        assert_eq!(ranks[1][2][0], -688.0);
+    }
+
+    /// 2026-10-08: A column range past the width, an empty one, or a tensor of the wrong size is
+    /// refused.
+    #[test]
+    fn bad_columns_and_sizes_are_refused() {
+        let ok = |_: &str| -> Result<Vec<f32>> { Ok(vec![0.0; 16 * 2]) };
+        let short = |_: &str| -> Result<Vec<f32>> { Ok(vec![0.0; 16 * 2 - 1]) };
+        let s = |start, len| TpSlice { start, len };
+        assert!(slice_dense_mlp(2, 16, s(8, 8), "m", &ok).is_ok());
+        for bad in [s(8, 9), s(0, 0)] {
+            let e = slice_dense_mlp(2, 16, bad, "m", &ok).unwrap_err();
+            assert!(e.to_string().contains("do not fit"), "{e}");
+        }
+        let e = slice_dense_mlp(2, 16, s(0, 8), "m", &short).unwrap_err();
+        assert!(e.to_string().contains("elements, expected 32"), "{e}");
     }
 }

@@ -38,18 +38,26 @@ use crate::glm5next_skeleton::{Glm5NextTextSkeleton, Mixer, Mlp};
 use metrale_model_layers::layer::TransformerLayer;
 use metrale_model_layers::weight_map::DenseWeight;
 
+mod act_scale;
 #[cfg(test)]
 mod defer_hook_tests;
+mod dense_tiers;
 mod expert_quant;
+mod expert_tp;
 #[cfg(test)]
 mod export_layout_tests;
 mod loader;
+mod mlp_precision;
 mod nvfp4_dequant;
 mod nvfp4_quant;
 #[cfg(test)]
 mod plan_cast_tests;
 mod plan_dtype;
+#[cfg(test)]
+mod tp_shapes_tests;
 
+use act_scale::input_scale;
+use act_scale::is_activation_scale;
 use expert_quant::{quantize_deferred_expert_proj, quantize_expert_proj};
 
 pub struct Glm5NextWeightLoader;
@@ -192,6 +200,16 @@ impl LayerSource {
         })
     }
 
+    /// 2026-10-08: A tensor's stored dtype, shape and bytes, copied (the packed NVFP4 dense MLP
+    /// the W4A4 path slices).
+    pub(super) fn raw(&self, name: &str) -> Result<(WeightDtype, Vec<usize>, Vec<u8>)> {
+        let (dtype, shape, bytes) = self
+            .tensors
+            .get(name)
+            .with_context(|| format!("missing tensor {name}"))?;
+        Ok((*dtype, shape.clone(), bytes.clone()))
+    }
+
     pub(super) fn f32(&self, name: &str) -> Result<Vec<f32>> {
         let (dtype, shape, bytes) = self
             .tensors
@@ -314,7 +332,8 @@ fn bind_mhc_site(
 /// 1. deferred by [`Glm5NextWeightLoader::defer_predicate`]: read from disk,
 ///    quantised, uploaded;
 /// 2. resident U8: bound zero-copy with its `weight_scale` and scalar
-///    `weight_scale_2`;
+///    `weight_scale_2`, and its static activation scale when the checkpoint has one
+///    (2026-10-08, [`act_scale::input_scale`]);
 /// 3. resident BF16: read back and quantised; `prune_after_load` frees the
 ///    source.
 ///
@@ -345,6 +364,7 @@ pub(super) fn bind_expert(
                     packed: w.ptr,
                     scale: scale.ptr,
                     scale_2: s2,
+                    input_scale: input_scale(gpu, store, layer, &base)?,
                 })
             }
             WeightDtype::BF16 => quantize_expert_proj(gpu, store, w, &base),
@@ -386,14 +406,34 @@ pub(super) fn layer_source(
     LayerSource::collect(gpu, store, layer)
 }
 
-/// 2026-09-25: [`bind_expert`], for the MTP loader.
+/// 2026-09-25: [`bind_expert`], for the MTP loader. 2026-10-09: Under the MLP config's
+/// `shard` (`expert_tp::bind_routed_expert`).
 pub(super) fn bind_expert_at(
     gpu: &dyn GpuBackend,
     store: &WeightStore,
     layer: usize,
     id: usize,
+    shard: crate::glm5next_mlp::ExpertShard,
 ) -> Result<Glm5NextExpertWeights> {
-    bind_expert(gpu, store, layer, id)
+    expert_tp::bind_routed_expert(gpu, store, layer, id, shard)
+}
+
+/// 2026-10-08: The routed-expert precision plan of the MTP layer `layer`, for the MTP loader.
+pub(super) fn mtp_expert_precision(
+    config: &ModelConfig,
+    kernels: &Glm5NextMlpKernels,
+    layer: usize,
+    cfg: &Glm5NextMlpConfig,
+    has_scales: bool,
+) -> Result<crate::glm5next_mlp::precision::GroupPrecision> {
+    mlp_precision::group_precision(
+        config,
+        kernels,
+        layer,
+        crate::glm5next_mlp::precision::MlpGroup::RoutedExperts,
+        cfg.local_expert_range().start,
+        has_scales,
+    )
 }
 
 /// 2026-09-25: `upload_f32_as_bf16`, for the MTP loader.
