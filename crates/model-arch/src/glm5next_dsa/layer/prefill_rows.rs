@@ -7,7 +7,8 @@
 //!
 //! Owner: model-arch (GLM-5.3 DSA).
 //! Invariants:
-//! - Each row's results carry the per-row path's bits: the projections run the batched GEMV
+//! - Unless `METRALE_GLM_DSA_BATCH_QIDX=1` (2026-10-10: which also moves the head weights to one
+//!   cuBLASLt FP32-out GEMM), each row's results carry the per-row path's bits: the projections run the batched GEMV
 //!   (or the row-invariant W8A8 family) in groups of at most `DENSE_GEMV_BATCHM_MAX_M` rows,
 //!   never the cuBLASLt arm `glm_mm` takes above that, and the store copies staging row `r` to
 //!   row `r`'s position as the per-row store does.
@@ -86,16 +87,31 @@ impl Glm5NextDsaLayer {
         st.ensure_room(k)?;
         let c = &self.cfg;
         self.indexer_project_rows(gpu, hidden, k, stream)?;
-        self.f32_proj_rows(
-            gpu,
-            hidden,
-            self.weights.weights_proj,
-            w.head_weights_rows,
-            k,
-            c.index_heads,
-            c.hidden,
-            stream,
-        )?;
+        // 2026-10-10: Under `METRALE_GLM_DSA_BATCH_QIDX=1` the head weights of the sub-chunk take
+        // one cuBLASLt FP32-out GEMM too, as the selector query does (`select_rows_batched`);
+        // another summation order than the per-row GEMV, so it rides on that opt-in lever.
+        if crate::glm5next_layer::dsa_batch_qidx() {
+            metrale_model_layers::layers::ops::cublas_bf16_proj_dense_f32_out(
+                hidden,
+                self.weights.weights_proj,
+                w.head_weights_rows,
+                k as u32,
+                c.index_heads as u32,
+                c.hidden as u32,
+                stream,
+            )?;
+        } else {
+            self.f32_proj_rows(
+                gpu,
+                hidden,
+                self.weights.weights_proj,
+                w.head_weights_rows,
+                k,
+                c.index_heads,
+                c.hidden,
+                stream,
+            )?;
+        }
         let rows = self.indexer_rows(st, kv_cache, bt0)?;
         if rows.valid.0 != 0 || rows.bt.0 == 0 {
             bail!(
