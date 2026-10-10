@@ -104,6 +104,16 @@ pub(crate) fn dsa_indexer_rows() -> bool {
     *E.get_or_init(|| std::env::var("METRALE_GLM_DSA_INDEXER_ROWS").as_deref() == Ok("1"))
 }
 
+/// 2026-10-10: `METRALE_GLM_AR_FUSED_POST=1`: where an mHC site's all-reduce takes the one-shot
+/// path in one piece, the exchange runs alone (`CommBackend::exchange_partials`) and
+/// `glm5next_hc_post_rank_sum` sums the partials and post-mixes in one launch instead of
+/// `bf16_add_rank_sum` then `glm5next_hc_post`; every output keeps its bits. Off until measured
+/// end to end. Read once.
+pub(crate) fn ar_fused_post() -> bool {
+    static E: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *E.get_or_init(|| std::env::var("METRALE_GLM_AR_FUSED_POST").as_deref() == Ok("1"))
+}
+
 /// 2026-10-09: `METRALE_GLM_MHC_FUSED=1` runs each mHC site's pre-mix and the RMS norm after
 /// it as one `glm5next_hc_pre_norm` launch (`glm5next_mhc_fused::glm_hc_pre_norm`) instead of
 /// `hc_mix_bf16`, `hc_finish` and `rms_norm_vanilla`; every output keeps its bits. Off until

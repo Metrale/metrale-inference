@@ -217,21 +217,113 @@ impl Glm5NextLayer {
         Ok(())
     }
 
+    /// 2026-10-10: Whether this mHC site sums its all-reduce inside the post-mix
+    /// (`METRALE_GLM_AR_FUSED_POST=1`). Errors when the lever is on and the target lacks
+    /// `glm5next_hc_post_rank_sum`, rather than silently running the unfused pair.
+    pub(in crate::glm5next_layer) fn fused_post(&self, mhc: &Glm5NextMhc) -> Result<bool> {
+        if !ar_fused_post() {
+            return Ok(false);
+        }
+        if mhc.kernels.hc_post_rank_sum.0 == 0 {
+            bail!(
+                "GLM layer {}: METRALE_GLM_AR_FUSED_POST=1 but glm5next_hc_post_rank_sum is not \
+                 loaded on this target",
+                self.layer_idx
+            );
+        }
+        Ok(true)
+    }
+
+    /// 2026-10-10: The all-reduce before an mHC post-mix. With `fused` and one piece, asks the
+    /// communicator for the exchange alone and returns where the partials landed, for
+    /// [`Self::hc_post_reduced`] to sum; otherwise (or when the payload does not take the one-shot
+    /// path) runs [`Self::reduce_pieces`] and returns `None`.
+    pub(in crate::glm5next_layer) fn reduce_or_exchange(
+        &self,
+        p: DevicePtr,
+        row_pieces: &[usize],
+        fused: bool,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<Option<metrale_comm::PeerPartials>> {
+        if let (true, [rows], Some(comm)) = (fused, row_pieces, ctx.comm) {
+            let bytes = rows * self.hidden * 2;
+            let order = (!ctx.graph_capture).then_some(stream);
+            if let Some(partials) = comm.exchange_partials(p.0, bytes, order)? {
+                return Ok(Some(partials));
+            }
+        }
+        self.reduce_pieces(p, row_pieces, ctx, stream)?;
+        Ok(None)
+    }
+
+    /// 2026-10-10: `glm_hc_post` of `k` rows of `x` into the highway at `streams`, or, when
+    /// `partials` is set, `glm_hc_post_rank_sum`, which first sums `x` with the peers' partials
+    /// (writing the sum back to `x`), with the same bits as the all-reduce sum then `glm_hc_post`.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::glm5next_layer) fn hc_post_reduced(
+        &self,
+        gpu: &dyn GpuBackend,
+        mhc: &Glm5NextMhc,
+        x: DevicePtr,
+        partials: Option<metrale_comm::PeerPartials>,
+        streams: DevicePtr,
+        post: DevicePtr,
+        comb: DevicePtr,
+        k: usize,
+        stream: u64,
+    ) -> Result<()> {
+        let (kt, ht, hct) = (k as u32, self.hidden as u32, mhc.hc_mult as u32);
+        match partials {
+            Some(p) => glm_hc_post_rank_sum(
+                gpu,
+                mhc.kernels.hc_post_rank_sum,
+                x,
+                &p,
+                streams,
+                post,
+                comb,
+                streams,
+                kt,
+                ht,
+                hct,
+                stream,
+            ),
+            None => glm_hc_post(
+                gpu,
+                mhc.kernels.hc_post,
+                x,
+                streams,
+                post,
+                comb,
+                streams,
+                kt,
+                ht,
+                hct,
+                stream,
+            ),
+        }
+    }
+
     /// 2026-09-25: The MLP over `rows` rows of `normed` into `out`, then one all-reduce of all
     /// rows when `Glm5NextMlpConfig::needs_all_reduce`. 2026-10-09: `row_pieces` splits the rows
     /// into consecutive pieces (`[rows]`: one) whose launches must not depend on each other: a
     /// dense site runs once per piece, a routed site launches its router and shared expert once
     /// per piece (`forward_moe_pieces`) and shares the rest, and the all-reduce runs per piece
     /// (`reduce_pieces`).
+    /// 2026-10-10: `fused` hands the all-reduce's sum to the caller's post-mix
+    /// ([`Self::reduce_or_exchange`]); the returned partials are then `Some`.
+    #[allow(clippy::too_many_arguments)]
     fn mlp_forward(
         &self,
         normed: DevicePtr,
         out: DevicePtr,
         rows: usize,
         row_pieces: &[usize],
+        fused: bool,
         ctx: &ForwardContext,
         stream: u64,
-    ) -> Result<()> {
+    ) -> Result<Option<metrale_comm::PeerPartials>> {
         crate::glm5next_mlp::forward::check_pieces(rows, row_pieces)?;
         let t_dense = matches!(self.mlp, Glm5NextMlpSite::Dense(_))
             .then(profile::start)
@@ -273,16 +365,17 @@ impl Glm5NextLayer {
         profile::end(profile::MLP_DENSE, t_dense, ctx.gpu, stream);
         // 2026-09-25: One all-reduce covers both partial sums, the EP-split routed experts and
         // the TP-split shared expert: `forward_moe` adds them together before returning.
+        let mut partials = None;
         if self.mlp_cfg.needs_all_reduce() {
             self.reduce_probe(profile::REDUCE_MLP_BAR, "mlp", ctx, stream);
             let t = profile::start_hot();
-            self.reduce_pieces(out, row_pieces, ctx, stream)?;
+            partials = self.reduce_or_exchange(out, row_pieces, fused, ctx, stream)?;
             profile::end_nosync(profile::REDUCE_MLP_ENQ, t);
             // 2026-09-25: This span times only the `synchronize` in `profile::end`.
             let t = profile::start_hot();
             profile::end(profile::REDUCE_MLP, t, ctx.gpu, stream);
         }
-        Ok(())
+        Ok(partials)
     }
 
     /// 2026-09-25: `dst += src` over `n` BF16 elements (`bf16_add_inplace`); errors when the
@@ -351,7 +444,8 @@ impl Glm5NextLayer {
         self.add_inplace(gpu, hidden, attn_out, h, stream)?;
 
         self.norm(gpu, hidden, self.post_attn_norm, normed, 1, stream)?;
-        self.mlp_forward(normed, ffn_out, 1, &[1], ctx, stream)?;
+        // 2026-10-10: No post-mix here to take the sum, so the all-reduce stays whole.
+        self.mlp_forward(normed, ffn_out, 1, &[1], false, ctx, stream)?;
         self.add_inplace(gpu, hidden, ffn_out, h, stream)
     }
 

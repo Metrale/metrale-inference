@@ -16,8 +16,8 @@ use std::time::{Duration, Instant};
 use super::{
     ALL_REDUCE_DTYPE_BYTES, COLLECTIVE_TIMEOUT_SECS, NcclBackend, RENDEZVOUS_TIMEOUT_SECS,
 };
-use crate::CommBackend;
 use crate::collective_diagnostics::Dtype;
+use crate::{CommBackend, PeerPartials};
 use metrale_gpu_sys::nccl::{self, NcclDataType, NcclRedOp};
 
 impl CommBackend for NcclBackend {
@@ -104,6 +104,42 @@ impl CommBackend for NcclBackend {
         self.check_async_error(comm);
 
         Ok(())
+    }
+
+    fn exchange_partials(
+        &self,
+        ptr: u64,
+        bytes: usize,
+        compute_stream: Option<u64>,
+    ) -> Result<Option<PeerPartials>> {
+        if !self.oneshot_applies(bytes) {
+            return Ok(None);
+        }
+        let Some(compute_stream) = compute_stream else {
+            self.begin_submission(
+                "exchange_partials",
+                Dtype::Bf16,
+                bytes,
+                self.legacy_stream,
+                None,
+            )?;
+            return self
+                .exchange_oneshot(ptr, bytes, self.legacy_stream)
+                .map(Some);
+        };
+        self.begin_submission(
+            "exchange_partials_async",
+            Dtype::Bf16,
+            bytes,
+            self.comm_stream,
+            None,
+        )?;
+        nccl::record_event(self.compute_done_event, compute_stream)?;
+        nccl::stream_wait_event(self.comm_stream, self.compute_done_event)?;
+        let partials = self.exchange_oneshot(ptr, bytes, self.comm_stream)?;
+        nccl::record_event(self.comm_done_event, self.comm_stream)?;
+        nccl::stream_wait_event(compute_stream, self.comm_done_event)?;
+        Ok(Some(partials))
     }
 
     fn register_buffer(&self, ptr: u64, bytes: usize) -> Result<u64> {

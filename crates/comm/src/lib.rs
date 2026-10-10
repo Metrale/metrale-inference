@@ -24,6 +24,20 @@ pub mod nccl_backend;
 #[cfg(feature = "nccl")]
 pub use nccl_backend::NcclBackend;
 
+/// 2026-10-10: Where a one-shot exchange left the other ranks' BF16 partials
+/// ([`CommBackend::exchange_partials`]): rank `r != rank` at
+/// `recv + 2 * slot_elems * (r < rank ? r : r - 1)`, as many elements as were sent. The
+/// all-reduce result is the FP32 sum of all ranks' partials in rank order 0..world_size,
+/// rounded to BF16 once (the caller's own partial stands in for `rank`), which is what
+/// `bf16_add_rank_sum` computes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PeerPartials {
+    pub recv: u64,
+    pub slot_elems: usize,
+    pub world_size: usize,
+    pub rank: usize,
+}
+
 /// 2026-09-26: Collective and point-to-point operations on raw device
 /// pointers and byte counts. A pointer is a `u64` (a CUDA `CUdeviceptr`), so
 /// this crate does not depend on metrale-gpu-runtime.
@@ -101,6 +115,22 @@ pub trait CommBackend: Send + Sync {
     fn all_reduce_async(&self, ptr: u64, bytes: usize, compute_stream: u64) -> Result<()> {
         let _ = compute_stream;
         self.all_reduce(ptr, bytes)
+    }
+
+    /// 2026-10-10: The exchange of an all-reduce without its sum, so the caller's next kernel can
+    /// sum: send the BF16 partial of `bytes` at `ptr` to every peer and receive theirs, ordered
+    /// like `all_reduce_async` against `compute_stream` (`Some`) or like `all_reduce` on the
+    /// backend's own stream (`None`, the graph-capture path). Returns where the partials are;
+    /// `ptr` still holds this rank's partial. `Ok(None)` when the backend has no such path for
+    /// this payload: nothing was enqueued, and the caller all-reduces instead. The default
+    /// returns `Ok(None)`.
+    fn exchange_partials(
+        &self,
+        _ptr: u64,
+        _bytes: usize,
+        _compute_stream: Option<u64>,
+    ) -> Result<Option<PeerPartials>> {
+        Ok(None)
     }
 
     /// 2026-09-26: Register a device buffer with the backend and return an
