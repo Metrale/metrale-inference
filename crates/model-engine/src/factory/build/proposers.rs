@@ -100,12 +100,19 @@ pub(super) fn install_dflash_drafter(
             1,
         )?;
         if let Some(weights) = weights {
-            let head = metrale_model_arch::dflash_head::BlockDiffusionDraftHead::from_weights(
+            let (weights, lm_head, lm_nvfp4, lm_fp8, tp) = dflash_tp_split(
+                model,
                 weights,
-                target_embed_for_dflash,
                 target_lm_head_for_dflash,
                 target_lm_head_nvfp4_for_dflash,
                 target_lm_head_native_fp8_for_dflash,
+            )?;
+            let head = metrale_model_arch::dflash_head::BlockDiffusionDraftHead::from_weights(
+                weights,
+                target_embed_for_dflash,
+                lm_head,
+                lm_nvfp4,
+                lm_fp8,
                 target_hidden_for_dflash,
                 args.gamma,
                 // 2026-10-09: The trained window when the flag states it, else none
@@ -114,7 +121,14 @@ pub(super) fn install_dflash_drafter(
                 model.gpu_backend(),
                 max_seq_len,
                 max_batch_size,
+                tp,
             )?;
+            // 2026-10-10: The tensor-parallel propose runs the paged DFlash2 path only.
+            anyhow::ensure!(
+                tp.is_none() || (head.dflash2_active() && head.levers.option_b),
+                "METRALE_DFLASH_TP=1 needs a DFlash2 drafter (conv + selector) on the paged \
+                 cache (METRALE_DFLASH_OPTION_B not 0)"
+            );
             model.set_dflash_proposer(std::sync::Arc::new(head));
             model.ensure_verify_hidden_stash()?;
             tracing::info!(target: "metrale_model_engine::factory::build", "DFlash drafter installed as the active proposer");
@@ -125,6 +139,66 @@ pub(super) fn install_dflash_drafter(
         }
     }
     Ok(())
+}
+
+/// 2026-10-10: The drafter inputs of this rank: under `METRALE_DFLASH_TP=1` on two or more
+/// ranks, the weights cut to this rank's part (`dflash_head::tp`), the LM head pointer at its
+/// first vocab row and no NVFP4 or native FP8 head share (the FP8 head is quantized from those
+/// rows); otherwise everything unchanged. A target whose LM head is NVFP4 is refused under the
+/// lever: the row offset assumes BF16 rows.
+#[allow(clippy::type_complexity)]
+fn dflash_tp_split(
+    model: &TransformerModel,
+    weights: metrale_model_arch::weight_loader::DflashWeights,
+    lm_head: DevicePtr,
+    lm_nvfp4: Option<QuantizedWeight>,
+    lm_fp8: Option<(Fp8DenseWeight, usize)>,
+) -> Result<(
+    metrale_model_arch::weight_loader::DflashWeights,
+    DevicePtr,
+    Option<QuantizedWeight>,
+    Option<(Fp8DenseWeight, usize)>,
+    Option<metrale_model_arch::dflash_head::tp::DflashTp>,
+)> {
+    let on = metrale_config::levers::var("METRALE_DFLASH_TP").as_deref() == Some("1");
+    let Some((rank, world)) = model.comm_rank_world().filter(|&(_, w)| on && w > 1) else {
+        return Ok((weights, lm_head, lm_nvfp4, lm_fp8, None));
+    };
+    anyhow::ensure!(
+        lm_nvfp4.is_none(),
+        "METRALE_DFLASH_TP=1 needs the target's BF16 LM head; this target's is NVFP4"
+    );
+    let c = &weights.config;
+    let plan = metrale_model_arch::dflash_head::tp::plan(
+        c.num_attention_heads,
+        c.num_key_value_heads,
+        c.intermediate_size,
+        c.vocab_size,
+        world,
+        rank,
+    )?;
+    let hidden = c.hidden_size;
+    tracing::info!(
+        target: "metrale_model_engine::factory::build",
+        "DFlash TP: rank {rank}/{world}: q heads {:?}, KV heads {:?}, MLP {:?}, vocab {:?}",
+        plan.q_heads,
+        plan.kv_heads,
+        plan.inter,
+        plan.vocab
+    );
+    let weights =
+        metrale_model_arch::dflash_head::tp::shard_weights(weights, &plan, model.gpu_backend())?;
+    Ok((
+        weights,
+        lm_head.offset(plan.vocab.0 * hidden * 2),
+        None,
+        None,
+        Some(metrale_model_arch::dflash_head::tp::DflashTp {
+            rank,
+            world,
+            vocab_base: plan.vocab.0,
+        }),
+    ))
 }
 
 /// 2026-09-26: Logs the backend's allocation report and whether tracked-live

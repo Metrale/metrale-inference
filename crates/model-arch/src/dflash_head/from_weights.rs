@@ -10,6 +10,7 @@
 mod fp8_weights;
 mod kernel_handles;
 mod rope_table;
+mod startup_validation;
 
 use anyhow::Result;
 use metrale_cache::kv_cache::{KvCacheConfig, KvCacheDtype, PagedKvCache};
@@ -35,6 +36,9 @@ impl BlockDiffusionDraftHead {
         // gamma-sized scratch holds this many bands of gamma rows, and the drafter KV
         // pool holds this many sequences' blocks.
         max_batch_size: usize,
+        // 2026-10-10: This rank's part of a tensor-parallel drafter: `weights` and
+        // `lm_head_shared` are already cut to it (`tp::shard_weights`).
+        tp: Option<super::tp::DflashTp>,
     ) -> Result<Self> {
         let nb = max_batch_size.max(1);
         let target_layer_ids = weights
@@ -66,6 +70,35 @@ impl BlockDiffusionDraftHead {
         let num_kv_heads = weights.config.num_key_value_heads;
         let head_dim = weights.config.head_dim;
         let vocab_size = weights.config.vocab_size;
+        let levers = super::levers::DFlashLevers::from_env();
+        let fp8_requested =
+            std::env::var("METRALE_DFLASH_DRAFTER_FP8").ok().as_deref() != Some("0");
+        // Resolve handles and reject unsupported TP combinations before allocating the KV pool
+        // or the head's scratch buffers.
+        let kernels = kernel_handles::load_kernels(gpu)?;
+        let dflash2_cfg = weights.config.dflash_config.as_ref();
+        let dflash2_selector_active = weights.selector_pred.is_some()
+            && weights.selector_succ.is_some()
+            && weights.selector_hidden_proj.is_some()
+            && dflash2_cfg.is_some_and(|c| {
+                c.selector_top_k == 16
+                    && c.selector_rank > 0
+                    && c.conv_kernel_size == 2
+                    && c.conv_group_size > 0
+            })
+            && levers.dflash2
+            && kernels.dflash2_conv2.0 != 0
+            && kernels.dflash2_topk16.0 != 0
+            && kernels.dflash2_selector_walk.0 != 0;
+        startup_validation::validate_tp_startup(
+            tp.is_some(),
+            fp8_requested,
+            levers.topk16_split,
+            dflash2_selector_active,
+            kernels.dflash2_topk16_part.0 != 0,
+            kernels.dflash2_topk16_merge.0 != 0,
+            vocab_size,
+        )?;
         // 2026-09-25: `gamma` is `--dflash-gamma` when given, else `default_dflash_gamma`
         // of the drafter's `effective_block_size()` (`dflash_config.block_size`, else the
         // top-level `block_size`, which defaults to 16). 2026-09-30: one resolver
@@ -105,10 +138,6 @@ impl BlockDiffusionDraftHead {
             max_batch_size.max(1)
         );
         let kv_cache = PagedKvCache::new(kv_config, num_blocks, gpu)?;
-
-        // 2026-09-25: A `gpu.kernel(..)?` handle is required and fails construction
-        // when absent; a `try_kernel` handle is `KernelHandle(0)` when absent.
-        let kernels = kernel_handles::load_kernels(gpu)?;
 
         // 2026-09-25: Scratch, allocated once. The row buffers hold `rows_max` rows: the
         // non-paged path's `ctx_window` ctx rows plus `gamma` block rows, or `nb` bands of
@@ -221,6 +250,18 @@ impl BlockDiffusionDraftHead {
             } else {
                 DevicePtr(0)
             },
+            tp_header: match tp {
+                Some(_) => gpu.alloc((super::tp::HEADER_WORDS + max_seq_len) * 4)?,
+                None => DevicePtr(0),
+            },
+            tp_send: match tp {
+                Some(_) => gpu.alloc(nb * g * 32 * 4)?,
+                None => DevicePtr(0),
+            },
+            tp_recv: match tp {
+                Some(t) => gpu.alloc(t.world * nb * g * 32 * 4)?,
+                None => DevicePtr(0),
+            },
             sel_hproj: if weights.selector_pred.is_some() {
                 let rank = weights
                     .config
@@ -283,7 +324,7 @@ impl BlockDiffusionDraftHead {
         let mut head = Self {
             // 2026-09-25: The drafter's `DFlashLevers`, resolved from the environment once,
             // here.
-            levers: super::levers::DFlashLevers::from_env(),
+            levers,
             num_layers,
             hidden_size,
             intermediate_size,
@@ -401,6 +442,7 @@ impl BlockDiffusionDraftHead {
             selector_succ: weights.selector_succ,
             selector_hidden_proj: weights.selector_hidden_proj,
             aux_fp8: None,
+            tp,
         };
         if head.selector_pred.is_some() {
             tracing::info!(
@@ -442,8 +484,6 @@ impl BlockDiffusionDraftHead {
         // E4M3 with one f32 scale per row, give the lm_head an FP8 copy, and set
         // `quant = Fp8Weights`. Needs the row-scaled FP8 GEMM and its m16 variant;
         // without them the drafter stays on BF16 with a warning.
-        let fp8_requested =
-            std::env::var("METRALE_DFLASH_DRAFTER_FP8").ok().as_deref() != Some("0");
         let fp8_kernels_present = head.kernels.fp8_gemm_n128_row_scaled.0 != 0
             && head.kernels.fp8_gemm_n128_row_scaled_m16.0 != 0;
         if fp8_requested && !fp8_kernels_present {

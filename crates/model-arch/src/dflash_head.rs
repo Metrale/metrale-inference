@@ -248,10 +248,16 @@ pub struct BlockDiffusionDraftHead {
     /// 2026-10-10: FP8 copies of the ctx and selector GEMMs under `METRALE_DFLASH_AUX_FP8=1`
     /// (`aux_fp8.rs`), else `None`.
     pub aux_fp8: Option<aux_fp8::DflashAuxFp8>,
+    /// 2026-10-10: This rank's part of the tensor-parallel drafter (`METRALE_DFLASH_TP=1`,
+    /// `tp.rs`); `None` on one rank or with the lever off. Under it the head's head counts,
+    /// intermediate size and vocab are this rank's.
+    pub tp: Option<tp::DflashTp>,
 }
 
 mod aux_fp8;
 mod dflash2;
+pub mod tp;
+mod tp_propose;
 /// 2026-09-25: Rows the batched ctx precompute staging holds per step.
 pub(super) const PRECOMPUTE_BATCH_ROWS: usize = 256;
 

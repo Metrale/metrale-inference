@@ -36,8 +36,15 @@ fn every_disagreement_is_reported_not_just_the_first() {
 /// 2026-10-10: Rank `r` runs the check with `vals[r]` as the value of one lever; returns each
 /// rank's error text (`None` for `Ok`) and its broadcasts.
 fn handshake(vals: [u64; 2]) -> [(Option<String>, Vec<(bool, usize)>); 2] {
+    handshake_named("METRALE_GLM_PREFILL_ROWS", vals)
+}
+
+fn handshake_named(
+    name: &'static str,
+    vals: [u64; 2],
+) -> [(Option<String>, Vec<(bool, usize)>); 2] {
     run_pair(move |rank, gpu, comm| {
-        assert_ranks_agree(gpu, comm, &[("METRALE_GLM_PREFILL_ROWS", vals[rank])])
+        assert_ranks_agree(gpu, comm, &[(name, vals[rank])])
             .err()
             .map(|e| e.to_string())
     })
@@ -62,6 +69,20 @@ fn a_disagreeing_worker_fails_every_rank() {
     let r1 = r1.expect("the disagreeing worker fails");
     assert!(
         r1.contains("METRALE_GLM_PREFILL_ROWS: rank 1 has 16, rank 0 has 512"),
+        "{r1}"
+    );
+    let r0 = r0.expect("rank 0 fails too");
+    assert!(r0.contains("rank(s) [1] disagree"), "{r0}");
+}
+
+/// 2026-10-10: TP DFlash is a collective protocol, so a rank-level lever mismatch must fail
+/// model construction on both ranks instead of deadlocking at the first propose.
+#[test]
+fn dflash_tp_mismatch_fails_every_rank_at_startup() {
+    let [(r0, _), (r1, _)] = handshake_named("METRALE_DFLASH_TP", [1, 0]);
+    let r1 = r1.expect("the disagreeing worker fails");
+    assert!(
+        r1.contains("METRALE_DFLASH_TP: rank 1 has 0, rank 0 has 1"),
         "{r1}"
     );
     let r0 = r0.expect("rank 0 fails too");

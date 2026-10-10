@@ -22,9 +22,9 @@ mod knobs;
 mod verify_batch_wire;
 pub use kgamma_wire::{EP_CMD_VERIFY_KGAMMA, KGAMMA_MAX_ROWS, kgamma_committed_len, kgamma_width};
 pub use knobs::{
-    EP_CMD_MTP_PROPOSE, hidden_fingerprint, mtp_accept_debug, mtp_catchup_enabled,
-    mtp_ep_propose_enabled, mtp_multi_seq_mode, mtp_refeed_accepted_enabled, mtp_refeed_debug,
-    mtp_refeed_shift, shadow_topk,
+    EP_CMD_DFLASH_PROPOSE, EP_CMD_MTP_PROPOSE, hidden_fingerprint, mtp_accept_debug,
+    mtp_catchup_enabled, mtp_ep_propose_enabled, mtp_multi_seq_mode, mtp_refeed_accepted_enabled,
+    mtp_refeed_debug, mtp_refeed_shift, shadow_topk,
 };
 pub use verify_batch_wire::{
     EP_CMD_VERIFY_BATCH, VERIFY_BATCH_MAX_SEQS, verify_batch_failed_verdict, verify_batch_shape,
@@ -94,6 +94,27 @@ pub trait DraftProposer: Send + Sync {
     /// collectives.
     fn needs_comm(&self) -> bool {
         false
+    }
+
+    /// 2026-10-10: Whether this proposer's propose is one collective step the other ranks run
+    /// from [`EP_CMD_DFLASH_PROPOSE`] alone (the tensor-parallel DFlash drafter): the model
+    /// then sends that code, not [`EP_CMD_MTP_PROPOSE`] and its words, and the proposer itself
+    /// sends everything else the other ranks need. Implies [`Self::needs_comm`]. Default false.
+    fn collective_propose(&self) -> bool {
+        false
+    }
+
+    /// 2026-10-10: The non-root side of a [`Self::collective_propose`] propose on `state`: the
+    /// same collectives as rank 0's, in the same order, with its drafts discarded. Errors for
+    /// a proposer without one.
+    fn propose_follower(
+        &self,
+        state: &mut dyn ProposerState,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        let _ = (state, ctx, stream);
+        anyhow::bail!("this proposer has no collective propose")
     }
 
     /// 2026-09-25: Whether this proposer's context prefill uses the shared

@@ -72,6 +72,9 @@ impl BlockDiffusionDraftHead {
             h,
             q_dim,
         )?;
+        // 2026-10-10: Tensor-parallel: each rank's o_proj covers its heads; sum the partials
+        // (the conv finish below is linear in its input).
+        self.tp_all_reduce(ctx, self.scratch.stream_acc, (g * h) as usize * 2, stream)?;
 
         // 2026-09-25: DFlash2 attention conv finish on the o_proj output, with the
         // dynamic slice computed in pre_attn.
@@ -155,6 +158,8 @@ impl BlockDiffusionDraftHead {
             h,
             inter,
         )?;
+        // 2026-10-10: Tensor-parallel: each rank's down covers its slice of the intermediate.
+        self.tp_all_reduce(ctx, self.scratch.stream_acc, (g * h) as usize * 2, stream)?;
 
         // 2026-09-25: DFlash2 MLP conv finish on the down_proj output.
         let mlp_res_src = self.conv_finish(

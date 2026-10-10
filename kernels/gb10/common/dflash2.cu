@@ -131,6 +131,15 @@ extern "C" __global__ void dflash2_topk16(
 // dflash2_topk16_merge: grid (rows), block TOPK16_PART_THREADS; the 16 best of a row's
 // parts * 16 candidates, written as dflash2_topk16 writes them. parts * 16 must be at most
 // TOPK16_PART_THREADS * TOPK16_PER_THREAD (the host checks it).
+//
+// 2026-10-10: For a vocab split across ranks (tensor-parallel drafter), a row of `n` logits
+// holds global entries [base, base + n): the part kernel ranks and records global indices
+// (the same order, the same ties). The merge reads candidate c of a row at
+// row * row_stride + (c / 16) * part_stride + c % 16 (16 and parts * 16 for the part kernel's
+// layout; a rank-major all-gather has its own), and with pad = 0 writes the 16 best raw,
+// (-inf, 0xFFFFFFFF) where none is left, so ranks' lists merge again; pad = 1 writes
+// dflash2_topk16's output and its -1e30 overwrites of the selected entries this row holds
+// (none when logits is null).
 
 #define TOPK16_PART_THREADS 256u
 #define TOPK16_PER_THREAD 8u
@@ -212,7 +221,8 @@ extern "C" __global__ void __launch_bounds__(TOPK16_PART_THREADS) dflash2_topk16
     const __nv_bfloat16* __restrict__ logits,
     float* __restrict__ cand_vals,
     unsigned int* __restrict__ cand_idx,
-    unsigned int n
+    unsigned int n,
+    unsigned int base
 ) {
     const unsigned int row = blockIdx.x;
     const unsigned int part = blockIdx.y;
@@ -227,8 +237,8 @@ extern "C" __global__ void __launch_bounds__(TOPK16_PART_THREADS) dflash2_topk16
         const float x = i < n ? __bfloat162float(lrow[i]) : TOPK16_NEG_INF;
         const bool ok = i < n && x > -1e30f;
         v[j] = ok ? x : TOPK16_NEG_INF;
-        t[j] = ok ? topk16_tie(i) : 0xFFFFFFFFu;
-        ix[j] = ok ? i : 0xFFFFFFFFu;
+        t[j] = ok ? topk16_tie(base + i) : 0xFFFFFFFFu;
+        ix[j] = ok ? base + i : 0xFFFFFFFFu;
     }
     __shared__ float o_v[16];
     __shared__ unsigned int o_i[16];
@@ -247,20 +257,25 @@ extern "C" __global__ void __launch_bounds__(TOPK16_PART_THREADS) dflash2_topk16
     float* __restrict__ top_vals,
     unsigned int* __restrict__ top_idx,
     unsigned int n,
-    unsigned int parts
+    unsigned int parts,
+    unsigned int base,
+    unsigned int part_stride,
+    unsigned int row_stride,
+    unsigned int pad
 ) {
     const unsigned int row = blockIdx.x;
     const unsigned int m = parts * 16u;
-    const float* cv = cand_vals + (size_t)row * m;
-    const unsigned int* ci = cand_idx + (size_t)row * m;
+    const float* cv = cand_vals + (size_t)row * row_stride;
+    const unsigned int* ci = cand_idx + (size_t)row * row_stride;
     float v[TOPK16_PER_THREAD];
     unsigned int t[TOPK16_PER_THREAD], ix[TOPK16_PER_THREAD];
     #pragma unroll
     for (unsigned int j = 0; j < TOPK16_PER_THREAD; ++j) {
         const unsigned int c = j * TOPK16_PART_THREADS + threadIdx.x;
-        const unsigned int i = c < m ? ci[c] : 0xFFFFFFFFu;
+        const size_t at = (size_t)(c / 16u) * part_stride + (c % 16u);
+        const unsigned int i = c < m ? ci[at] : 0xFFFFFFFFu;
         const bool ok = i != 0xFFFFFFFFu;
-        v[j] = ok ? cv[c] : TOPK16_NEG_INF;
+        v[j] = ok ? cv[at] : TOPK16_NEG_INF;
         t[j] = ok ? topk16_tie(i) : 0xFFFFFFFFu;
         ix[j] = i;
     }
@@ -268,11 +283,19 @@ extern "C" __global__ void __launch_bounds__(TOPK16_PART_THREADS) dflash2_topk16
     __shared__ unsigned int o_i[16];
     topk16_block_select(v, t, ix, o_v, o_i);
     if (threadIdx.x < 16u) {
+        const size_t o = (size_t)row * 16u + threadIdx.x;
+        if (pad == 0u) {
+            top_vals[o] = o_v[threadIdx.x];
+            top_idx[o] = o_i[threadIdx.x];
+            return;
+        }
         const bool ok = o_i[threadIdx.x] != 0xFFFFFFFFu;
         const unsigned int i = ok ? o_i[threadIdx.x] : 0u;
-        top_vals[(size_t)row * 16u + threadIdx.x] = ok ? o_v[threadIdx.x] : -1e30f;
-        top_idx[(size_t)row * 16u + threadIdx.x] = i;
-        logits[(size_t)row * n + i] = __float2bfloat16(-1e30f);
+        top_vals[o] = ok ? o_v[threadIdx.x] : -1e30f;
+        top_idx[o] = i;
+        if (logits != nullptr && i >= base && i - base < n) {
+            logits[(size_t)row * n + (i - base)] = __float2bfloat16(-1e30f);
+        }
     }
 }
 

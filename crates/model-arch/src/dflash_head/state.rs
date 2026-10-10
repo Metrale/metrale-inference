@@ -79,6 +79,12 @@ pub struct DflashScratch {
     /// candidates of the two-stage top-16 (`dflash2::topk16_parts`).
     pub sel_cand_vals: DevicePtr,
     pub sel_cand_idx: DevicePtr,
+    /// 2026-10-10: Tensor-parallel scratch (`tp.rs`), `DevicePtr(0)` otherwise: the propose
+    /// header and its position overflow (`HEADER_WORDS + max_seq_len` u32), this rank's
+    /// top-16 lists (`[vals nb*gamma*16 | idx nb*gamma*16]`) and every rank's, gathered.
+    pub tp_header: DevicePtr,
+    pub tp_send: DevicePtr,
+    pub tp_recv: DevicePtr,
     /// 2026-09-25: `[nb * γ, selector_rank]` BF16: the selector's hidden
     /// projection.
     pub sel_hproj: DevicePtr,

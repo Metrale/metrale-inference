@@ -15,6 +15,11 @@ use super::types::TransformerModel;
 use metrale_model_layers::speculative::DraftProposer;
 
 impl TransformerModel {
+    /// 2026-10-10: `(rank, world)` of the communicator, `None` without one.
+    pub(crate) fn comm_rank_world(&self) -> Option<(usize, usize)> {
+        self.comm_ref().map(|c| (c.rank(), c.world_size()))
+    }
+
     /// 2026-09-25: Borrow the GPU backend. The factory uses it to build the
     /// proposers installed after construction and to read allocation reports.
     pub fn gpu_backend(&self) -> &dyn GpuBackend {

@@ -44,6 +44,23 @@ pub(super) fn assert_rank_levers_agree(
                     Ok("v2")
                 )),
             ),
+            // 2026-10-10: TP DFlash makes the workers enter its propose collectives; if only
+            // some ranks enable it, rank 0's all-reduces have no matching participants.
+            (
+                "METRALE_DFLASH_TP",
+                u64::from(
+                    metrale_config::levers::var("METRALE_DFLASH_TP").as_deref() == Some("1"),
+                ),
+            ),
+            // 2026-10-10: The resolved context window determines DFlash context-broadcast
+            // chunking, so every rank must use the same value.
+            (
+                "METRALE_DFLASH_CTX_WINDOW",
+                std::env::var("METRALE_DFLASH_CTX_WINDOW")
+                    .ok()
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .unwrap_or(4096) as u64,
+            ),
         ],
     )?;
     Ok(())

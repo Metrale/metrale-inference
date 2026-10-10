@@ -182,6 +182,8 @@ impl BlockDiffusionDraftHead {
         // and no debug dump or graph-suppressing lever; `levers.propose_warmup_n` eager
         // passes per width come first.
         let graph_eligible = option_b_on
+            // 2026-10-10: Keep TP eager until distributed NCCL capture/replay is proven.
+            && self.tp.is_none()
             // 2026-09-25: A capture fixes the row count, so a batch runs eagerly.
             && n_seq == 1
             && !self

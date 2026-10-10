@@ -6,7 +6,9 @@
 //! Owner: model-arch examples.
 //! Invariants:
 //! - Returns an error unless, on every case, the two-stage kernels write the same `top_vals`,
-//!   `top_idx` and logits bytes (the selected entries overwritten) as `dflash2_topk16`.
+//!   `top_idx` and logits bytes (the selected entries overwritten) as `dflash2_topk16`, and the
+//!   3-shard emulation of the tensor-parallel drafter's top-16 the same `top_vals` and
+//!   `top_idx` (2026-10-10).
 //! - The negative control (one top logit raised by one BF16 ulp in the two-stage input only)
 //!   must change the bytes, so the comparison can fail.
 //!
@@ -30,6 +32,8 @@ const VOCAB: u32 = 154_880;
 /// 2026-10-10: `TOPK16_PART_SPAN` and `TOPK16_PART_THREADS` of `dflash2.cu`.
 const SPAN: u32 = 2048;
 const THREADS: u32 = 256;
+/// 2026-10-10: Ranks of the emulated vocab split (`launch_sharded`).
+const SHARDS: u32 = 3;
 
 struct Rng(u64);
 impl Rng {
@@ -52,6 +56,9 @@ struct Kernels {
 }
 
 struct Bufs {
+    /// 2026-10-10: One shard's rows (`launch_sharded`), and the shards' gathered lists.
+    shard: DevicePtr,
+    gather: DevicePtr,
     logits: DevicePtr,
     vals: DevicePtr,
     idx: DevicePtr,
@@ -83,28 +90,141 @@ fn launch_one(gpu: &dyn GpuBackend, k: &Kernels, b: &Bufs, rows: u32, n: u32) ->
         .launch(0)
 }
 
-fn launch_split(gpu: &dyn GpuBackend, k: &Kernels, b: &Bufs, rows: u32, n: u32) -> Result<()> {
-    let parts = n.div_ceil(SPAN);
-    ensure!(parts * 16 <= THREADS * 8, "vocab {n} exceeds the merge");
+#[allow(clippy::too_many_arguments)]
+fn part(
+    gpu: &dyn GpuBackend,
+    k: &Kernels,
+    logits: DevicePtr,
+    cands: (DevicePtr, DevicePtr),
+    rows: u32,
+    n: u32,
+    base: u32,
+) -> Result<()> {
     KernelLaunch::new(gpu, k.part)
-        .grid([rows, parts, 1])
+        .grid([rows, n.div_ceil(SPAN), 1])
         .block([THREADS, 1, 1])
-        .arg_ptr(b.logits)
-        .arg_ptr(b.cand_vals)
-        .arg_ptr(b.cand_idx)
+        .arg_ptr(logits)
+        .arg_ptr(cands.0)
+        .arg_ptr(cands.1)
         .arg_u32(n)
-        .launch(0)?;
+        .arg_u32(base)
+        .launch(0)
+}
+
+/// 2026-10-10: `dflash2_topk16_merge` with its layout `(parts, part_stride, row_stride)`.
+#[allow(clippy::too_many_arguments)]
+fn merge(
+    gpu: &dyn GpuBackend,
+    k: &Kernels,
+    logits: DevicePtr,
+    cands: (DevicePtr, DevicePtr),
+    out: (DevicePtr, DevicePtr),
+    rows: u32,
+    n: u32,
+    base: u32,
+    layout: (u32, u32, u32),
+    pad: bool,
+) -> Result<()> {
+    ensure!(
+        layout.0 * 16 <= THREADS * 8,
+        "{} candidates exceed the merge",
+        layout.0 * 16
+    );
     KernelLaunch::new(gpu, k.merge)
         .grid([rows, 1, 1])
         .block([THREADS, 1, 1])
-        .arg_ptr(b.logits)
-        .arg_ptr(b.cand_vals)
-        .arg_ptr(b.cand_idx)
-        .arg_ptr(b.vals)
-        .arg_ptr(b.idx)
+        .arg_ptr(logits)
+        .arg_ptr(cands.0)
+        .arg_ptr(cands.1)
+        .arg_ptr(out.0)
+        .arg_ptr(out.1)
         .arg_u32(n)
-        .arg_u32(parts)
+        .arg_u32(layout.0)
+        .arg_u32(base)
+        .arg_u32(layout.1)
+        .arg_u32(layout.2)
+        .arg_u32(u32::from(pad))
         .launch(0)
+}
+
+fn launch_split(gpu: &dyn GpuBackend, k: &Kernels, b: &Bufs, rows: u32, n: u32) -> Result<()> {
+    let parts = n.div_ceil(SPAN);
+    let cands = (b.cand_vals, b.cand_idx);
+    part(gpu, k, b.logits, cands, rows, n, 0)?;
+    let out = (b.vals, b.idx);
+    merge(
+        gpu,
+        k,
+        b.logits,
+        cands,
+        out,
+        rows,
+        n,
+        0,
+        (parts, 16, parts * 16),
+        true,
+    )
+}
+
+/// 2026-10-10: The vocab-sharded top-16 of a tensor-parallel drafter, emulated on one GPU:
+/// the rows split into `SHARDS` 64-aligned column ranges, each copied to its own buffer, its
+/// part kernel at its base and an unpadded merge into a rank-major gather buffer
+/// `[shard][vals rows*16 | idx rows*16]`, then one padded merge of the shards' lists.
+fn launch_sharded(gpu: &dyn GpuBackend, k: &Kernels, b: &Bufs, rows: u32, n: u32) -> Result<()> {
+    let span = (n.div_ceil(64) * 64).div_ceil(SHARDS).div_ceil(64) * 64;
+    let block = rows * 32;
+    for s in 0..SHARDS {
+        let lo = (s * span).min(n);
+        let len = ((s + 1) * span).min(n) - lo;
+        gpu.copy_d2d_2d_async(
+            b.logits.offset(lo as usize * 2),
+            n as usize * 2,
+            b.shard,
+            len as usize * 2,
+            len as usize * 2,
+            rows as usize,
+            0,
+        )?;
+        let cands = (b.cand_vals, b.cand_idx);
+        part(gpu, k, b.shard, cands, rows, len, lo)?;
+        let parts = len.div_ceil(SPAN);
+        let g = b.gather.offset((s * block) as usize * 4);
+        let out = (g, g.offset(rows as usize * 64));
+        let layout = (parts, 16, parts * 16);
+        merge(
+            gpu,
+            k,
+            DevicePtr::NULL,
+            cands,
+            out,
+            rows,
+            len,
+            lo,
+            layout,
+            false,
+        )?;
+    }
+    let cands = (b.gather, b.gather.offset(rows as usize * 64));
+    let out = (b.vals, b.idx);
+    merge(
+        gpu,
+        k,
+        DevicePtr::NULL,
+        cands,
+        out,
+        rows,
+        n,
+        0,
+        (SHARDS, block, 16),
+        true,
+    )
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Mode {
+    One,
+    Split,
+    Sharded,
 }
 
 /// 2026-10-10: Run one kernel pair on `logits` (`rows` x `n` f32 values, BF16 on device) and
@@ -116,15 +236,15 @@ fn run(
     logits: &[f32],
     rows: u32,
     n: u32,
-    split: bool,
+    mode: Mode,
 ) -> Result<[Vec<u8>; 3]> {
     gpu.copy_h2d(&bf16_bytes(logits), b.logits)?;
     gpu.copy_h2d(&vec![0xa5u8; rows as usize * 64], b.vals)?;
     gpu.copy_h2d(&vec![0xa5u8; rows as usize * 64], b.idx)?;
-    if split {
-        launch_split(gpu, k, b, rows, n)?;
-    } else {
-        launch_one(gpu, k, b, rows, n)?;
+    match mode {
+        Mode::One => launch_one(gpu, k, b, rows, n)?,
+        Mode::Split => launch_split(gpu, k, b, rows, n)?,
+        Mode::Sharded => launch_sharded(gpu, k, b, rows, n)?,
     }
     Ok([
         read(gpu, b.vals, rows as usize * 64)?,
@@ -174,6 +294,8 @@ fn main() -> Result<()> {
     };
     let max_rows = 16usize;
     let b = Bufs {
+        shard: gpu.alloc(max_rows * VOCAB as usize * 2)?,
+        gather: gpu.alloc(SHARDS as usize * max_rows * 128)?,
         logits: gpu.alloc(max_rows * VOCAB as usize * 2)?,
         vals: gpu.alloc(max_rows * 64)?,
         idx: gpu.alloc(max_rows * 64)?,
@@ -185,40 +307,50 @@ fn main() -> Result<()> {
     for (rows, n) in [(1u32, VOCAB), (8, VOCAB), (16, VOCAB), (3, 151_937)] {
         for kind in 0..5 {
             let logits = case(&mut rng, kind, rows, n);
-            let want = run(&gpu, &k, &b, &logits, rows, n, false)?;
-            let got = run(&gpu, &k, &b, &logits, rows, n, true)?;
-            for (what, (w, g)) in ["top_vals", "top_idx", "logits"]
-                .iter()
-                .zip(want.iter().zip(got.iter()))
-            {
-                let first = w.chunks(4).zip(g.chunks(4)).position(|(a, b)| a != b);
-                ensure!(
-                    first.is_none(),
-                    "rows {rows} vocab {n} case {kind}: {what} differs from dflash2_topk16 at \
-                     word {first:?}: {:?} vs {:?}",
-                    first.map(|i| &w[i * 4..i * 4 + 4]),
-                    first.map(|i| &g[i * 4..i * 4 + 4])
-                );
+            let want = run(&gpu, &k, &b, &logits, rows, n, Mode::One)?;
+            // 2026-10-10: The sharded top-16 writes no logits (each rank's are its own), so
+            // only its lists are compared.
+            for (mode, what_n) in [(Mode::Split, 3usize), (Mode::Sharded, 2)] {
+                let got = run(&gpu, &k, &b, &logits, rows, n, mode)?;
+                for (what, (w, g)) in ["top_vals", "top_idx", "logits"]
+                    .iter()
+                    .zip(want.iter().zip(got.iter()))
+                    .take(what_n)
+                {
+                    let first = w.chunks(4).zip(g.chunks(4)).position(|(a, b)| a != b);
+                    ensure!(
+                        first.is_none(),
+                        "rows {rows} vocab {n} case {kind} {mode:?}: {what} differs from \
+                         dflash2_topk16 at word {first:?}: {:?} vs {:?}",
+                        first.map(|i| &w[i * 4..i * 4 + 4]),
+                        first.map(|i| &g[i * 4..i * 4 + 4])
+                    );
+                }
+                checked += 1;
             }
-            checked += 1;
         }
     }
-    println!("byte gate: {checked} cases equal (top_vals, top_idx, logits after)");
+    println!(
+        "byte gate: {checked} case runs equal (two-stage: top_vals, top_idx, logits after; \
+         {SHARDS}-shard: top_vals, top_idx)"
+    );
 
     // 2026-10-10: Negative control: raise row 0's best entry by one BF16 ulp in the
     // two-stage input only; its top_vals must differ.
     let logits = case(&mut rng, 1, 8, VOCAB);
-    let want = run(&gpu, &k, &b, &logits, 8, VOCAB, false)?;
+    let want = run(&gpu, &k, &b, &logits, 8, VOCAB, Mode::One)?;
     let best = (0..VOCAB as usize)
         .max_by(|&a, &c| logits[a].total_cmp(&logits[c]))
         .unwrap_or(0);
     let mut bumped = logits.clone();
     bumped[best] = bf16::from_bits(bf16::from_f32(logits[best]).to_bits() + 1).to_f32();
-    let got = run(&gpu, &k, &b, &bumped, 8, VOCAB, true)?;
-    ensure!(
-        want[0] != got[0],
-        "negative control: a one-ulp change left top_vals equal; the comparison cannot fail"
-    );
+    for mode in [Mode::Split, Mode::Sharded] {
+        let got = run(&gpu, &k, &b, &bumped, 8, VOCAB, mode)?;
+        ensure!(
+            want[0] != got[0],
+            "negative control ({mode:?}): a one-ulp change left top_vals equal"
+        );
+    }
     println!("negative control: a one-ulp bump changes top_vals (comparison can fail)");
 
     let logits = case(&mut rng, 0, 8, VOCAB);
