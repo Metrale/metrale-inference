@@ -11,9 +11,16 @@
 //! - Returns an error unless the TP=1 drafter's drafts equal the one-rank drafter's on every
 //!   propose (the split plumbing, the header, the context shipping and the gathered top-16
 //!   are then exact), and the TP=3 drafter completes every propose with every rank in step.
+//! - On a tier with weight copies, returns an error unless every TP=3 rank's copies (the seven
+//!   layer GEMMs, the LM head, and on `fp8-aux` / `nvfp4` the auxiliary GEMMs) equal, codes
+//!   and scales, their rows or columns of the one-rank drafter's copies. Negative control: rank
+//!   1's q_proj copy must differ from rank 0's rows, so the comparison can fail.
 //! - Prints the TP=3 draft agreement with the one-rank drafter (position by position): the
 //!   ranks sum BF16 partials of o_proj and down, so a draft can differ where two candidates
 //!   are within that rounding; nothing else differs.
+//!
+//! The first argument is the `--draft-weight-quantization` tier every drafter builds with
+//! (`declared`, `fp8`, `fp8-aux` or `nvfp4`); it is required.
 //!
 //! Shapes: the GLM-5.3 DFlash2 drafter's (hidden 4096, 32 query / 8 KV heads of 128, block 8,
 //! DFlash2 conv and selector), with 2 layers, a 6144-wide MLP and a 16384-row vocab so the
@@ -23,10 +30,11 @@
 //!
 //! Run (GB10, < 3 GB of device memory):
 //!   cargo run --release -p metrale-model-arch --features cuda,gpu-examples \
-//!     --example dflash_tp_parity
+//!     --example dflash_tp_parity -- nvfp4
 
+#[path = "common/dflash_copy_check.rs"]
+mod copy_check;
 #[path = "common/glm5next_rows_fixture.rs"]
-#[allow(dead_code)]
 mod fixture;
 #[path = "common/dflash_tp_fixture.rs"]
 #[allow(dead_code)]
@@ -37,7 +45,8 @@ use std::sync::Arc;
 use anyhow::{Result, ensure};
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
-use metrale_model_arch::dflash_head::BlockDiffusionDraftHead;
+use metrale_model_arch::dflash_head::tp;
+use metrale_model_arch::dflash_head::{BlockDiffusionDraftHead, DraftWeightQuantization};
 use metrale_model_layers::layer::ForwardContext;
 use metrale_model_layers::speculative::{DraftProposer, ProposerState};
 use tpf::{Dims, GAMMA, HIDDEN, LocalComm, Rng, TAPS, Tensors, append_ctx};
@@ -113,33 +122,93 @@ fn tp_propose(
     })
 }
 
-fn build_ranks(gpu: &Arc<MetraleCudaBackend>, t: &Tensors, world: usize) -> Result<Vec<Rank>> {
+fn build_ranks(
+    gpu: &Arc<MetraleCudaBackend>,
+    t: &Tensors,
+    world: usize,
+    quant: DraftWeightQuantization,
+) -> Result<Vec<Rank>> {
     LocalComm::group(gpu, world)
         .into_iter()
         .map(|comm| {
-            let head = t.head(gpu.as_ref(), Some((comm.rank, world)), MAX_SEQ)?;
+            let head = t.head(gpu.as_ref(), Some((comm.rank, world)), MAX_SEQ, quant)?;
             let state = head.alloc_state(gpu.as_ref())?;
             Ok(Rank { head, state, comm })
         })
         .collect()
 }
 
+/// 2026-10-10: Every TP=3 rank's weight copies against the one-rank drafter's
+/// (`copy_check::check_rank_copies`), then the negative control.
+fn check_copies(
+    gpu: &dyn GpuBackend,
+    whole: &BlockDiffusionDraftHead,
+    ranks: &[Rank],
+) -> Result<()> {
+    let d = DIMS;
+    let mut blocks = 0;
+    for r in ranks {
+        let p = tp::plan(
+            d.q_heads,
+            d.kv_heads,
+            d.inter,
+            d.vocab,
+            ranks.len(),
+            r.comm.rank,
+        )?;
+        blocks += copy_check::check_rank_copies(gpu, whole, &r.head, &p, whole.head_dim)?;
+    }
+    let (Some(rank0_rows), Some(rank1)) = (
+        whole.layers[0].q_proj_q.as_ref(),
+        ranks[1].head.layers[0].q_proj_q.as_ref(),
+    ) else {
+        anyhow::bail!("no q_proj copy for the negative control");
+    };
+    let lq = ranks[1].head.num_q_heads * whole.head_dim;
+    let h = whole.hidden_size;
+    let copy = |w, rows| copy_check::WeightCopy { w, rows, cols: h };
+    ensure!(
+        !copy_check::same_block(
+            gpu,
+            copy(rank0_rows, d.q_heads * whole.head_dim),
+            (0, 0),
+            copy(rank1, lq),
+            (0, 0),
+            (lq, h)
+        )?,
+        "negative control: rank 1's q_proj copy equals rank 0's rows; the comparison cannot fail"
+    );
+    println!(
+        "weight copies: {blocks} blocks over {} ranks equal to the one-rank drafter's (codes and \
+         scales); negative control differs",
+        ranks.len()
+    );
+    Ok(())
+}
+
 fn main() -> Result<()> {
     // 2026-10-10: SAFETY: single-threaded here, before any thread or lever read. Every drafter
     // runs without CUDA graphs (the in-process collectives are host copies); a 256-row
-    // ctx_window makes the longest context take two chunks. `METRALE_DFLASH_DRAFTER_FP8=0`
-    // from the caller's environment selects the BF16 weights for every drafter alike.
+    // ctx_window makes the longest context take two chunks.
     unsafe {
         std::env::set_var("METRALE_DFLASH_PROPOSE_NO_GRAPH", "1");
         std::env::set_var("METRALE_DFLASH_CTX_WINDOW", "256");
     }
+    let quant = std::env::args()
+        .nth(1)
+        .ok_or_else(|| anyhow::anyhow!("usage: dflash_tp_parity <declared|fp8|fp8-aux|nvfp4>"))
+        .and_then(|a| DraftWeightQuantization::parse(&a).map_err(anyhow::Error::msg))?;
+    println!("--draft-weight-quantization {}", quant.name());
     let gpu = Arc::new(MetraleCudaBackend::new(0, &metrale_kernels::ptx_modules())?);
     let mut rng = Rng(0x6466_6c61_7368_7470);
     let t = Tensors::new(gpu.as_ref(), &mut rng, DIMS, DIMS.vocab)?;
-    let reference = t.head(gpu.as_ref(), None, MAX_SEQ)?;
+    let reference = t.head(gpu.as_ref(), None, MAX_SEQ, quant)?;
     let mut ref_state = reference.alloc_state(gpu.as_ref())?;
-    let mut tp1 = build_ranks(&gpu, &t, 1)?;
-    let mut tp3 = build_ranks(&gpu, &t, 3)?;
+    let mut tp1 = build_ranks(&gpu, &t, 1, quant)?;
+    let mut tp3 = build_ranks(&gpu, &t, 3, quant)?;
+    if quant.quantizes_layers() {
+        check_copies(gpu.as_ref(), &reference, &tp3)?;
+    }
 
     // 2026-10-10: Context growth per propose: 40 rows (inline header), +3, +100 (overflow),
     // +300 (two ctx_window chunks), then +1 for the rest.

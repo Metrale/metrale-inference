@@ -103,7 +103,15 @@ name = "dflash_aux_fp8_bench"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "dflash_nvfp4_rows_check"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "glm5next_w4a16_rows_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_w4a16_gemv_seg_bench"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
@@ -288,6 +296,10 @@ required-features = ["cuda", "gpu-examples"]
 
 [[example]]
 name = "glm5next_hc_post_sum_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_l2_warm_bench"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]

@@ -367,6 +367,10 @@ impl Glm5NextLayer {
         // the TP-split shared expert: `forward_moe` adds them together before returning.
         let mut partials = None;
         if self.mlp_cfg.needs_all_reduce() {
+            // 2026-10-10: Forked before the reduce is enqueued, so the warm runs beside it.
+            if let Some(l2) = &self.l2_warm {
+                l2.fork(ctx.gpu, self.layer_idx, rows, stream)?;
+            }
             self.reduce_probe(profile::REDUCE_MLP_BAR, "mlp", ctx, stream);
             let t = profile::start_hot();
             partials = self.reduce_or_exchange(out, row_pieces, fused, ctx, stream)?;

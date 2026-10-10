@@ -24,6 +24,11 @@
 //!   of every mode: each row's bytes are the one-row `w4a16_gemv`'s (the kernels' invariant,
 //!   `w4a16_gemv.cu`), so a verify or a batched decode of up to r rows computes the dense
 //!   projections bit for bit as the single-row decode. Opt-in; wider launches are unchanged.
+//! - 2026-10-10: `METRALE_GLM_W4A16_GEMV_SEG=1` runs one-row launches on `w4a16_gemv_seg`
+//!   ([`launch_one_row`]) in every mode: a group of projections that share the input row is one
+//!   persistent launch, a lone projection a one-segment launch. Every output byte is
+//!   `w4a16_gemv`'s (the kernel's invariant), so the lever changes no bits; unset or `0` keeps
+//!   `w4a16_gemv`.
 
 use std::sync::OnceLock;
 
@@ -31,7 +36,8 @@ use anyhow::{Context, Result};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_gpu_runtime::kernel_args::{KernelLaunch, div_ceil};
 use metrale_model_layers::layers::ops::{
-    W4A16_TC_ROWS_MAX_M, W4A16_TC_ROWS_SEG_MODULE, W4a16Seg, w4a16_tc_rows_seg,
+    W4A16_GEMV_SEG_MODULE, W4A16_GEMV_SEG_TILES, W4A16_TC_ROWS_MAX_M, W4A16_TC_ROWS_SEG_MODULE,
+    W4a16Seg, w4a16_gemv_seg, w4a16_gemv_seg_entry, w4a16_gemv_seg_policy, w4a16_tc_rows_seg,
     w4a16_tc_rows_seg_entries, w4a16_tc_rows_seg_tiles, w4a16_tc_rows_split_for,
 };
 use metrale_model_layers::weight_map::QuantizedWeight;
@@ -171,6 +177,46 @@ pub(crate) fn launch_gemv_rows(
     }
 }
 
+/// 2026-10-10: `METRALE_GLM_W4A16_GEMV_SEG`, read once: unset or `0` is off, `1` on; another
+/// value, or `1` without `--dense-quantization w4a16`, is an error.
+pub fn gemv_seg() -> Result<bool> {
+    static V: OnceLock<Result<bool, String>> = OnceLock::new();
+    V.get_or_init(|| {
+        parse_gemv_seg(
+            std::env::var("METRALE_GLM_W4A16_GEMV_SEG").ok().as_deref(),
+            crate::glm5next_w4a16_dense::enabled(),
+        )
+    })
+    .clone()
+    .map_err(anyhow::Error::msg)
+}
+
+/// 2026-10-10: [`gemv_seg`]'s parse, pure: the value and whether the tier is on.
+pub(crate) fn parse_gemv_seg(v: Option<&str>, tier_on: bool) -> Result<bool, String> {
+    match v {
+        None | Some("0") => Ok(false),
+        Some("1") if tier_on => Ok(true),
+        Some("1") => Err("METRALE_GLM_W4A16_GEMV_SEG=1 needs --dense-quantization w4a16".into()),
+        Some(other) => Err(format!(
+            "METRALE_GLM_W4A16_GEMV_SEG={other:?}: expected 0 or 1"
+        )),
+    }
+}
+
+/// 2026-10-10: `segs[i].output [n_i] = a [k] @ W_i^T` for one row, in one `w4a16_gemv_seg`
+/// launch (1..=6 segments) with the tile height and block cap of `w4a16_gemv_seg_policy`.
+pub(crate) fn launch_one_row(
+    gpu: &dyn GpuBackend,
+    a: DevicePtr,
+    segs: &[W4a16Seg],
+    k: u32,
+    sms: u32,
+    stream: u64,
+) -> Result<()> {
+    let (r, max_blocks) = w4a16_gemv_seg_policy(k, sms);
+    w4a16_gemv_seg(gpu, a, segs, k, r, max_blocks, stream)
+}
+
 /// 2026-10-09: The SM count the split rule reads, recorded by [`prepare`].
 static SMS: OnceLock<u32> = OnceLock::new();
 
@@ -188,6 +234,21 @@ pub(crate) fn prepare(gpu: &dyn GpuBackend) -> Result<()> {
             .kernel(gpu, "w4a16_gemv", name)
             .with_context(|| format!("METRALE_GLM_W4A16_GEMV_ROWS: w4a16_gemv::{name}"))?;
     }
+    // 2026-10-10: Every one-row entry `METRALE_GLM_W4A16_GEMV_SEG` may reach.
+    if gemv_seg()? {
+        for r in W4A16_GEMV_SEG_TILES {
+            let entry = w4a16_gemv_seg_entry(r)
+                .with_context(|| format!("METRALE_GLM_W4A16_GEMV_SEG: tile height {r}"))?;
+            gpu.op_cache()
+                .kernel(gpu, W4A16_GEMV_SEG_MODULE, entry)
+                .with_context(|| {
+                    format!("METRALE_GLM_W4A16_GEMV_SEG: {W4A16_GEMV_SEG_MODULE}::{entry}")
+                })?;
+        }
+    }
+    if SMS.get().is_none() && (gemv_seg()? || seg_mode()? != SegMode::Off) {
+        let _ = SMS.set(gpu.sm_count()?);
+    }
     if seg_mode()? == SegMode::Off {
         return Ok(());
     }
@@ -198,19 +259,18 @@ pub(crate) fn prepare(gpu: &dyn GpuBackend) -> Result<()> {
                 format!("METRALE_GLM_W4A16_SEG: {W4A16_TC_ROWS_SEG_MODULE}::{entry}")
             })?;
     }
-    if SMS.get().is_none() {
-        let _ = SMS.set(gpu.sm_count()?);
-    }
     Ok(())
 }
 
 /// 2026-10-09: The mode and the SM count its split rule reads. 2026-10-10: `gemv_rows`, the
-/// widest launch on the GEMV tiers ([`gemv_rows`]; 0 = none).
+/// widest launch on the GEMV tiers ([`gemv_rows`]; 0 = none). 2026-10-10: `one_row`, whether
+/// one-row launches take `w4a16_gemv_seg` ([`gemv_seg`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SegPlan {
     pub mode: SegMode,
     pub sms: u32,
     pub gemv_rows: u32,
+    pub one_row: bool,
 }
 
 impl SegPlan {
@@ -232,16 +292,18 @@ impl SegPlan {
 /// [`prepare`] recorded (an error when it did not run).
 pub(crate) fn plan() -> Result<SegPlan> {
     let mode = seg_mode()?;
-    let sms = match mode {
-        SegMode::Off => 0,
-        _ => *SMS
-            .get()
-            .context("METRALE_GLM_W4A16_SEG: the SM count was not recorded at load")?,
+    let one_row = gemv_seg()?;
+    let sms = if mode == SegMode::Off && !one_row {
+        0
+    } else {
+        *SMS.get()
+            .context("METRALE_GLM_W4A16_SEG / _GEMV_SEG: the SM count was not recorded at load")?
     };
     Ok(SegPlan {
         mode,
         sms,
         gemv_rows: gemv_rows()?,
+        one_row,
     })
 }
 

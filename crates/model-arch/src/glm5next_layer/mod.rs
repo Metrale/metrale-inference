@@ -58,6 +58,7 @@ pub mod state;
 pub mod profile;
 pub use state::alloc_kda_ssm_state;
 
+pub mod l2_warm;
 mod levers;
 mod steps;
 mod types;

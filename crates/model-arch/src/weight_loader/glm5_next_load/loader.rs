@@ -6,6 +6,7 @@
 //! Invariants: none beyond the types.
 
 use super::*;
+use crate::glm5next_layer::l2_warm;
 use crate::glm5next_mlp::Glm5NextDenseSite;
 use crate::glm5next_mlp::build_w4a4::{act_scales_of, build_dense_nvfp4};
 use crate::glm5next_mlp::precision::{MlpGroup, MlpKernel};
@@ -158,6 +159,12 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
         // the sparse-attention layers only, so a DSA layer addresses it by its
         // ordinal among DSA layers, not by its model index.
         let mut attn_layer_idx = 0usize;
+        // 2026-10-10: `METRALE_GLM_AR_L2_PREFETCH`: each layer's warmable ranges, planned after
+        // the loop (`l2_warm::plan_next`).
+        let l2 = l2_warm::budget_from_env()?
+            .map(|b| l2_warm::L2Warm::new(gpu, b).map(std::sync::Arc::new))
+            .transpose()?;
+        let mut l2_ranges: Vec<Vec<l2_warm::Range>> = Vec::new();
 
         for sl in &skeleton.layers {
             let idx = sl.index;
@@ -274,6 +281,10 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                 None
             };
 
+            if l2.is_some() {
+                anyhow::ensure!(idx == l2_ranges.len(), "layer {idx} out of order");
+                l2_ranges.push(l2_warm::mixer_ranges(&mixer));
+            }
             out.push(Box::new(Glm5NextLayer {
                 layer_idx: idx,
                 mixer,
@@ -304,7 +315,19 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                 },
                 is_first: idx == 0,
                 is_last: idx == last,
+                l2_warm: l2.clone(),
             }));
+        }
+        if let Some(l2) = &l2 {
+            let plan = l2_warm::plan_next(&l2_ranges, l2.budget());
+            l2_warm::check_plan(&plan, out.len())?;
+            let warmed: usize = plan.iter().flatten().map(|r| r.1).sum();
+            tracing::warn!(
+                "glm5_next {}: {:.1} MB of next-layer W4A16 weights warmed into L2 per step",
+                l2_warm::L2_WARM_ENV,
+                warmed as f64 / 1e6
+            );
+            l2.set_plan(plan)?;
         }
         if crate::glm5next_fp8_dense::enabled() {
             let (count, bytes) = crate::glm5next_fp8_dense::registered();

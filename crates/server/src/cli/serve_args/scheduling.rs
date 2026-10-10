@@ -176,8 +176,8 @@ pub struct ServeSchedulingArgs {
     #[arg(skip)]
     pub dflash_draft_ladder_resolved: Option<metrale_speculative::dflash_ladder::DraftLadder>,
 
-    /// 2026-10-10: `--dflash-adaptive-k` and `--draft-tp-size`, listed here after
-    /// `--dflash-draft-ladder`.
+    /// 2026-10-10: `--dflash-adaptive-k`, `--draft-tp-size` and `--draft-weight-quantization`,
+    /// listed here after `--dflash-draft-ladder`.
     #[command(flatten)]
     pub dflash_args: crate::cli::serve_args_dflash::ServeDflashArgs,
 

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-10-10: The drafter GEMMs `METRALE_DFLASH_AUX_FP8=1` moves to FP8, at the GLM-5.3
-//! DFlash2 drafter's shapes: the BF16 prefill GEMM they ran on (`dense_gemm_bf16_pipelined`)
-//! against the FP8 row GEMV they run on (`fp8_gemv_rowscale_batch8_rt2`, 1..=8 rows).
+//! 2026-10-10: The drafter GEMMs the `fp8-aux` tier of `--draft-weight-quantization` moves to
+//! FP8, at the GLM-5.3 DFlash2 drafter's shapes: the BF16 prefill GEMM they ran on
+//! (`dense_gemm_bf16_pipelined`) against the FP8 row GEMV they run on
+//! (`fp8_gemv_rowscale_batch8_rt2`, 1..=8 rows).
 //!
 //! Owner: model-arch examples.
 //! Invariants:

@@ -25,7 +25,7 @@
 
 use anyhow::{Result, bail, ensure};
 use metrale_config::tp_split;
-use metrale_gpu_runtime::gpu::GpuBackend;
+use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_model_layers::weight_map::DenseWeight;
 
 use crate::weight_loader::DflashWeights;
@@ -175,9 +175,18 @@ impl Header {
     }
 }
 
+/// 2026-10-10: A whole, unsharded BF16 weight of `elems` elements that a rank's slice was cut
+/// from. An NVFP4 copy takes its per-tensor scale from it (`draft_weight.rs`), so a rank's
+/// bytes are the one-rank drafter's.
+#[derive(Clone, Copy, Debug)]
+pub struct FullWeight {
+    pub weight: DenseWeight,
+    pub elems: usize,
+}
+
 /// 2026-10-10: A column-sliced weight's source: the whole `[rows, full_k]` BF16 weight and the
 /// first of this rank's columns. The FP8 copy quantizes the whole rows and keeps this rank's
-/// columns with the whole rows' scales (`from_weights/fp8_weights.rs`), so every FP8 byte and
+/// columns with the whole rows' scales (`from_weights/quant_weights.rs`), so every FP8 byte and
 /// scale equals the one-rank drafter's.
 #[derive(Clone, Copy, Debug)]
 pub struct ColSlice {
@@ -186,24 +195,47 @@ pub struct ColSlice {
     pub start: usize,
 }
 
-/// 2026-10-10: `weights` cut to this rank's part under `plan`: the config's head counts,
-/// intermediate size and vocab become the local ones; q/k/v/gate/up point at their row slice;
-/// o_proj and down are repacked into new `[hidden, local]` buffers (2D copies on stream 0,
-/// synchronised before return). Everything else is unchanged.
+/// 2026-10-10: The whole weights one layer's slices were cut from (`shard_weights`): the row
+/// slices' (q/k/v/gate/up) and the column slices' (o_proj, down) with their first column.
+#[derive(Clone, Copy, Debug)]
+pub struct LayerSources {
+    pub q: FullWeight,
+    pub k: FullWeight,
+    pub v: FullWeight,
+    pub gate: FullWeight,
+    pub up: FullWeight,
+    pub o: ColSlice,
+    pub down: ColSlice,
+}
+
+/// 2026-10-10: `weights` and the LM head `lm_head` (BF16 `[config.vocab_size, hidden]`) cut to
+/// this rank's part under `plan`: the config's head counts, intermediate size and vocab become
+/// the local ones; q/k/v/gate/up point at their row slice; o_proj and down are repacked into
+/// new `[hidden, local]` buffers (2D copies on stream 0, synchronised before return); each
+/// layer records its whole weights (`tp_src`) and `weights.tp_lm_head` the whole LM head.
+/// Returns the weights and the pointer to this rank's first LM-head row. Everything else is
+/// unchanged.
 pub fn shard_weights(
     mut weights: DflashWeights,
     plan: &TpPlan,
+    lm_head: DevicePtr,
     gpu: &dyn GpuBackend,
-) -> Result<DflashWeights> {
+) -> Result<(DflashWeights, DevicePtr)> {
     let c = &weights.config;
-    let (h, hd, nq, inter) = (
+    let (h, hd, nq, nkv, inter, vocab) = (
         c.hidden_size,
         c.head_dim,
         c.num_attention_heads,
+        c.num_key_value_heads,
         c.intermediate_size,
+        c.vocab_size,
     );
     let rows = |w: &DenseWeight, first_row: usize| DenseWeight {
         weight: w.weight.offset(first_row * h * 2),
+    };
+    let full = |w: &DenseWeight, n: usize| FullWeight {
+        weight: *w,
+        elems: n * h,
     };
     let cols = |w: &DenseWeight, full: usize, (start, len): (usize, usize)| -> Result<_> {
         let dst = gpu.alloc(h * len * 2)?;
@@ -220,30 +252,39 @@ pub fn shard_weights(
     };
     let q_cols = (plan.q_heads.0 * hd, plan.q_heads.1 * hd);
     for l in weights.layers.iter_mut() {
+        l.tp_src = Some(LayerSources {
+            q: full(&l.q_proj, nq * hd),
+            k: full(&l.k_proj, nkv * hd),
+            v: full(&l.v_proj, nkv * hd),
+            gate: full(&l.gate_proj, inter),
+            up: full(&l.up_proj, inter),
+            o: ColSlice {
+                full: l.o_proj,
+                full_k: nq * hd,
+                start: q_cols.0,
+            },
+            down: ColSlice {
+                full: l.down_proj,
+                full_k: inter,
+                start: plan.inter.0,
+            },
+        });
         l.q_proj = rows(&l.q_proj, plan.q_heads.0 * hd);
         l.k_proj = rows(&l.k_proj, plan.kv_heads.0 * hd);
         l.v_proj = rows(&l.v_proj, plan.kv_heads.0 * hd);
         l.gate_proj = rows(&l.gate_proj, plan.inter.0);
         l.up_proj = rows(&l.up_proj, plan.inter.0);
-        l.o_proj_cols = Some(ColSlice {
-            full: l.o_proj,
-            full_k: nq * hd,
-            start: q_cols.0,
-        });
-        l.down_proj_cols = Some(ColSlice {
-            full: l.down_proj,
-            full_k: inter,
-            start: plan.inter.0,
-        });
         l.o_proj = cols(&l.o_proj, nq * hd, q_cols)?;
         l.down_proj = cols(&l.down_proj, inter, plan.inter)?;
     }
     gpu.synchronize(0)?;
+    let lm_full = DenseWeight { weight: lm_head };
+    weights.tp_lm_head = Some(full(&lm_full, vocab));
     weights.config.num_attention_heads = plan.q_heads.1;
     weights.config.num_key_value_heads = plan.kv_heads.1;
     weights.config.intermediate_size = plan.inter.1;
     weights.config.vocab_size = plan.vocab.1;
-    Ok(weights)
+    Ok((weights, rows(&lm_full, plan.vocab.0).weight))
 }
 
 #[cfg(test)]

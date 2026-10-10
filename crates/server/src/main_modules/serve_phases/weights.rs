@@ -179,9 +179,10 @@ pub(crate) fn load_dflash_drafter(
     // 2026-09-26: The drafter allocates outside the KV budget, so its whole
     // footprint is estimated from the checkpoint before anything is allocated:
     // safetensors bytes on disk, the drafter KV cache, `fused_kv`, the
-    // DFlash2 selector's host copies, the FP8 mirrors (half the store plus
-    // twice `vocab x hidden`) unless `METRALE_DFLASH_DRAFTER_FP8=0`, and
-    // 300 MiB of scratch.
+    // DFlash2 selector's host copies, the weight copies (in FP8, half the store
+    // plus twice `vocab x hidden`; 2026-10-10: scaled to the
+    // `--draft-weight-quantization` tier, none on `declared`), and 300 MiB of
+    // scratch.
     let store_bytes: u64 = std::fs::read_dir(&drafter_dir)
         .ok()
         .into_iter()
@@ -207,16 +208,14 @@ pub(crate) fn load_dflash_drafter(
             2 * (c.vocab_size as u64) * (r as u64) * 2 + (r as u64) * (c.hidden_size as u64) * 2
         })
         .unwrap_or(0);
-    // 2026-09-26: The predicate `dflash_head/from_weights.rs` allocates the
-    // mirrors on: anything but `METRALE_DFLASH_DRAFTER_FP8=0`.
-    let fp8_mirrors = if std::env::var("METRALE_DFLASH_DRAFTER_FP8").ok().as_deref() != Some("0") {
-        let lm_head = (c.vocab_size as u64) * (c.hidden_size as u64);
-        store_bytes / 2 + 2 * lm_head
-    } else {
-        0
-    };
+    let lm_head = (c.vocab_size as u64) * (c.hidden_size as u64);
+    let weight_copies = args
+        .dflash_args
+        .draft_weight_quantization
+        .copy_bytes_from_fp8(store_bytes / 2 + 2 * lm_head);
     let scratch_est: u64 = 300 << 20;
-    let estimate = store_bytes + drafter_kv + fused_kv + selector_host + fp8_mirrors + scratch_est;
+    let estimate =
+        store_bytes + drafter_kv + fused_kv + selector_host + weight_copies + scratch_est;
 
     let free = gpu.free_memory().unwrap_or(0) as u64;
     let total = gpu.total_memory().unwrap_or(0) as u64;
@@ -225,13 +224,13 @@ pub(crate) fn load_dflash_drafter(
     let headroom = (total as f64 * (1.0 - args.gpu_memory_utilization)) as u64;
     if free < estimate + headroom {
         anyhow::bail!(
-            "DFlash drafter would over-commit unified memory: estimated footprint {:.2} GB              (weights {:.2} + drafter-KV {:.2} + fused_kv {:.2} + selector-host {:.2} +              fp8-mirrors {:.2} + scratch {:.2}) but only {:.2} GB free with {:.2} GB              headroom pledged by --gpu-memory-utilization {:.2}. On GB10 this would SWAP              the host, not error. Lower --max-seq-len, lower --gpu-memory-utilization              pressure elsewhere, or drop METRALE_DFLASH_DRAFTER_FP8.",
+            "DFlash drafter would over-commit unified memory: estimated footprint {:.2} GB              (weights {:.2} + drafter-KV {:.2} + fused_kv {:.2} + selector-host {:.2} +              weight-copies {:.2} + scratch {:.2}) but only {:.2} GB free with {:.2} GB              headroom pledged by --gpu-memory-utilization {:.2}. On GB10 this would SWAP              the host, not error. Lower --max-seq-len, lower --gpu-memory-utilization              pressure elsewhere, or a --draft-weight-quantization tier with smaller copies (nvfp4, or declared for none).",
             estimate as f64 / 1e9,
             store_bytes as f64 / 1e9,
             drafter_kv as f64 / 1e9,
             fused_kv as f64 / 1e9,
             selector_host as f64 / 1e9,
-            fp8_mirrors as f64 / 1e9,
+            weight_copies as f64 / 1e9,
             scratch_est as f64 / 1e9,
             free as f64 / 1e9,
             headroom as f64 / 1e9,
@@ -239,11 +238,11 @@ pub(crate) fn load_dflash_drafter(
         );
     }
     tracing::info!(
-        "DFlash footprint pre-flight: estimate {:.2} GB (weights {:.2}, drafter-KV {:.2},          fp8-mirrors {:.2}, selector-host {:.2}) vs {:.2} GB free, {:.2} GB headroom — OK",
+        "DFlash footprint pre-flight: estimate {:.2} GB (weights {:.2}, drafter-KV {:.2},          weight-copies {:.2}, selector-host {:.2}) vs {:.2} GB free, {:.2} GB headroom — OK",
         estimate as f64 / 1e9,
         store_bytes as f64 / 1e9,
         drafter_kv as f64 / 1e9,
-        fp8_mirrors as f64 / 1e9,
+        weight_copies as f64 / 1e9,
         selector_host as f64 / 1e9,
         free as f64 / 1e9,
         headroom as f64 / 1e9,

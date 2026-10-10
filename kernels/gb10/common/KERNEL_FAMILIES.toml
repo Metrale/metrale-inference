@@ -1017,10 +1017,15 @@ kernels = [
   "w4a16_gemv::w4a16_gemv_dual_batch3", "w4a16_gemv::w4a16_gemv_qg_batch2",
   "w4a16_gemv::w4a16_gemv_qg_batch3", "w4a16_gemv_fused::w4a16_gemv_dual",
   "w4a16_gemv_fused::w4a16_gemv_dual_sw", "w4a16_gemv_fused::w4a16_gemv_silu_input_sw",
+  "w4a16_gemv_seg::w4a16_gemv_seg_r1", "w4a16_gemv_seg::w4a16_gemv_seg_r2",
+  "w4a16_gemv_seg::w4a16_gemv_seg_r4",
 ]
 rows = [1, 3]
 # 2026-10-02: E2M1 through an FP32 table, the E4M3 x global scale in FP32, FP32 sums, one BF16
-# rounding (w4a16_gemv.cu:150-160, 212). The SiLU-input kernel keeps the SiLU product in FP32
+# rounding (w4a16_gemv.cu:150-160, 212). 2026-10-10: w4a16_gemv_seg.cu runs w4a16_gemv's per-output
+# arithmetic (byte-identical) over up to six weight segments sharing one input row, persistent
+# warps over R-row tiles; R and the segment count change no pipeline stage, so neither is a point.
+# The SiLU-input kernel keeps the SiLU product in FP32
 # registers and multiplies it at FP32 (w4a16_gemv_fused.cu:395-407).
 pipeline.linear = { in = ["bf16"], act = "bf16", weight = "nvfp4/g16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "f32", out = ["bf16"] }
 pipeline.lm_head = { in = ["bf16"], act = "bf16", weight = "nvfp4/g16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "f32", out = ["bf16"] }
@@ -1036,7 +1041,7 @@ op = [
 [[family.point]]
 values = {}
 how = "instantiation"
-files = ["kernels/gb10/common/w4a16_gemv.cu", "kernels/gb10/common/w4a16_gemv_fused.cu"]
+files = ["kernels/gb10/common/w4a16_gemv.cu", "kernels/gb10/common/w4a16_gemv_fused.cu", "kernels/gb10/common/w4a16_gemv_seg.cu"]
 [[family.evidence]]
 point = {}
 rows = [1]

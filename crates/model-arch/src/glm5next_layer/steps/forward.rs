@@ -11,6 +11,8 @@
 //! - 2026-10-10: With `METRALE_GLM_AR_FUSED_POST=1` an all-reduce that takes the one-shot path
 //!   in one piece is the exchange alone, and its sum runs inside the post-mix after it
 //!   (`hc_post_reduced`); off, every launch is as before.
+//! - 2026-10-10: With `METRALE_GLM_AR_L2_PREFETCH` the first layer drops a stale warm fork and
+//!   the last joins the pending one (`l2_warm`).
 
 use super::*;
 
@@ -80,6 +82,11 @@ impl Glm5NextLayer {
         let ffn_out = ctx.buffers.moe_output();
 
         let t_mhc = profile::start();
+        if self.is_first
+            && let Some(l2) = &self.l2_warm
+        {
+            l2.reset();
+        }
         if self.is_first {
             glm_hc_expand(
                 gpu,
@@ -166,6 +173,9 @@ impl Glm5NextLayer {
         }
         profile::end(profile::MHC_POST, t_mhc_post, gpu, stream);
         if self.is_last {
+            if let Some(l2) = &self.l2_warm {
+                l2.join(gpu, stream)?;
+            }
             profile::step();
         }
         Ok(())
@@ -305,6 +315,11 @@ impl Glm5NextLayer {
         let (kt, ht, hct) = (k as u32, h as u32, hc as u32);
 
         let t_mhc = profile::start();
+        if self.is_first
+            && let Some(l2) = &self.l2_warm
+        {
+            l2.reset();
+        }
         if self.is_first {
             glm_hc_expand(
                 gpu,
@@ -381,6 +396,9 @@ impl Glm5NextLayer {
         }
         profile::end(profile::MHC_POST, t_mhc_post, gpu, stream);
         if self.is_last {
+            if let Some(l2) = &self.l2_warm {
+                l2.join(gpu, stream)?;
+            }
             profile::step();
         }
         Ok(())
