@@ -55,6 +55,18 @@ impl MetraleCudaBackend {
         if status != 0 {
             bail!("cuStreamEndCapture failed: status {status}");
         }
+        // 2026-10-10: `METRALE_NCCL_HOST_HOIST=1`: rewire the NCCL host-callback nodes ahead of
+        // their producers before instantiating (`graph_hoist_cu.rs`).
+        #[cfg(not(metrale_scale))]
+        if super::graph_hoist_cu::enabled() {
+            match super::graph_hoist_cu::hoist(graph) {
+                Ok(n) => tracing::debug!("NCCL host-node hoist: {n} host nodes chained"),
+                Err(e) => {
+                    unsafe { cuGraphDestroy(graph) };
+                    return Err(e.context("NCCL host-node hoist"));
+                }
+            }
+        }
         // 2026-09-25: Which instantiate symbol is declared depends on
         // `metrale_scale`; see `cuda_backend.rs`.
         let mut graph_exec: u64 = 0;
