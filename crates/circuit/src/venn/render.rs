@@ -206,6 +206,25 @@ pub fn render(r: &VennReport) -> String {
             set.join(" ")
         );
     }
+    if !r.uncovered.is_empty() {
+        s.push_str(
+            "\n## Compared models without full rules\n\nThese compared models are not golden: no \
+             FUSIONS.toml rule covers the sites below, so they are planned by placeholders and run \
+             no family here (a target op they share is not reported as theirs).\n\n| Recipe | Mode | \
+             Rows | Sites |\n|---|---|---|---|\n",
+        );
+        for u in &r.uncovered {
+            let sites: Vec<String> = u.sites.iter().map(|x| format!("`{x}`")).collect();
+            let _ = writeln!(
+                s,
+                "| `{}` | {} | {} | {} |",
+                u.recipe,
+                u.run.mode.name(),
+                u.run.rows,
+                sites.join(", ")
+            );
+        }
+    }
     let rf = &r.roofline;
     let _ = writeln!(
         s,

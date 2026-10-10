@@ -167,3 +167,249 @@ plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], 
 [instance.policy]
 opt_in_levers = []
 settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "nvfp4", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive" }
+
+# 2026-10-08: nvidia/GLM-5.3-Flash-NVFP4 (`glm5_next`), the GLM campaign's model, built by the
+# `new-model` method. The recipe id is the planned one: no recipe serves this checkpoint yet, and
+# the circuit is not an executor target (`golden = false`: FUSIONS.toml covers the GLM kernels'
+# single-sequence decode only; `met circuit venn` reads it).
+# - Shape: config.json `text_config` (verified 2026-10-08): `layer_types` (G = linear_attention,
+#   the KDA layers; S = deepseek_sparse_attention, the DSA layers 3, 7, ..., 43),
+#   `first_k_dense_replace`, `hc_mult`, the `linear_*` KDA dims, the MLA ranks and head widths,
+#   the `index_*` indexer dims, the MoE dims, `num_nextn_predict_layers` (kernels/circuits/
+#   glm5_next.config.toml maps each).
+# - kv_cache_dtype: fp8, as the checkpoint declares (`kv_cache_scheme`, static, no scale
+#   tensors); the engine's latent cache is FP8 at scale 1.0. lm_head_dtype: bf16, declared.
+# - ssm_h_dtype: f32, the only KDA state the engine runs (glm5next_layer/steps.rs refuses f16).
+# - row_tiers: by_rows, the default for a checkpoint that is not an FP8 MoE (ml/row_tiers.rs:64-78).
+#   The other settings are the flag defaults cited for the entries above; the GLM layer code
+#   reads none of them.
+[[instance]]
+recipe = "glm-5.3/glm-5.3-flash-nvfp4"
+checkpoint = "nvidia/GLM-5.3-Flash-NVFP4"
+arch = "glm5_next"
+precision = "glm-5.3-flash-nvfp4"
+target = "gb10/glm-5.3-flash/nvfp4"
+golden = false
+layer_kinds = "GGGS GGGS GGGS GGGS GGGS GGGS GGGS GGGS GGGS GGGS GGGS G"
+dims = { hidden = 4096, vocab = 154880, inter = 12288, first_dense = 3, hc = 4, lin_k_heads = 64, lin_k_dim = 128, lin_v_heads = 64, lin_v_dim = 128, conv_kernel = 4, q_heads = 64, q_lora = 1536, kv_lora = 512, mla_qk = 256, mla_v = 256, index_heads = 32, index_head_dim = 128, index_kpool = 4, index_topk = 2048, experts = 288, top_k = 8, moe_inter = 2048, shared_inter = 2048, mtp = 1 }
+plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], verify = [2, 3, 4, 8], draft = [1] }
+
+[instance.policy]
+opt_in_levers = []
+settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive" }
+
+# 2026-10-10: NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4 (`nemotron_h`; Lightning without the MTP head and
+# with the `hybrid_override_pattern` config format), at its declared formats. Not an executor target
+# (`golden = false`: FUSIONS.toml has no Nemotron-H rules); `met circuit venn` and the union Venn
+# read it.
+# - Shape: config.json through kernels/circuits/nemotron_h.config.toml (crates/circuit/tests/
+#   nemotron_h.rs asserts the equality): `hybrid_override_pattern` (M = mamba, E = moe,
+#   * = full_attention), the Mamba2, MoE and attention dims; no MTP layer.
+# - Precision: the declared table (precision/nemotron-3-nano-30b-a3b-nvfp4.toml). The recipe pins
+#   `weight_quantization: nvfp4`; the declared tier is the engine default and the comparison basis.
+# - kv_cache_dtype: fp8, the recipe's and the checkpoint's (`kv_cache_quant_algo = FP8`).
+#   lm_head_dtype: bf16, declared (lm_head is excluded from quantization).
+# - row_tiers: by_rows, the default for a checkpoint that is not an FP8 MoE (ml/row_tiers.rs:64-78).
+#   The other settings are the flag defaults cited for the entries above.
+[[instance]]
+recipe = "nemotron-3-nano/nemotron-3-nano-30b-a3b-nvfp4"
+checkpoint = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4"
+arch = "nemotron_h"
+precision = "nemotron-3-nano-30b-a3b-nvfp4"
+target = "gb10/nemotron-3-nano-30b-a3b/nvfp4"
+golden = false
+layer_kinds = "MEME MAEM EMEM AEME MEMA EMEM EMAE MEME MAEM EMEM EMAE MEME MEME"
+dims = { hidden = 2688, vocab = 131072, q_heads = 32, kv_heads = 2, head_dim = 128, mamba_heads = 64, mamba_head_dim = 64, ssm_state = 128, ssm_groups = 8, conv_kernel = 4, experts = 128, top_k = 6, moe_inter = 1856, shared_inter = 3712, mtp = 0, moe_latent = 0, moe_io = 2688 }
+plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128] }
+
+[instance.policy]
+opt_in_levers = []
+settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive" }
+
+# 2026-10-10: NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4 (`nemotron_h` with the latent MoE block:
+# `moe_latent_size` 1024, 512 experts top-22, and one MTP layer), at its declared formats. Not an
+# executor target (`golden = false`); `met circuit venn` and the union Venn read it.
+# - Shape: config.json through kernels/circuits/nemotron_h.config.toml (crates/circuit/tests/
+#   nemotron_h.rs asserts the equality).
+# - Precision: the declared table (precision/nemotron-3-super-120b-a12b-nvfp4.toml): per-module
+#   ModelOpt MIXED_PRECISION. The recipe pins `weight_quantization: nvfp4`; the declared tier is the
+#   engine default and the comparison basis.
+# - plans: verify and draft are listed because the circuit carries the checkpoint's MTP layer; the
+#   engine refuses every speculative proposer on a Mamba-2 model today (the recipe's note).
+# - kv_cache_dtype: fp8, the recipe's and the checkpoint's. lm_head_dtype: bf16, declared.
+# - row_tiers: by_rows (ml/row_tiers.rs:64-78). The other settings are the flag defaults above.
+[[instance]]
+recipe = "nemotron-3-super/nemotron-3-super-120b-a12b-nvfp4"
+checkpoint = "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4"
+arch = "nemotron_h"
+precision = "nemotron-3-super-120b-a12b-nvfp4"
+target = "gb10/nemotron-super-120b-a12b/nvfp4"
+golden = false
+layer_kinds = "MEME MEMA EMEM EMEM AEME MEME MAEM EMEM EMEM AEME MEME MEMA EMEM EMEM EMAE MEME MEME MAEM EMEM EMAE MEME MEME"
+dims = { hidden = 4096, vocab = 131072, q_heads = 32, kv_heads = 2, head_dim = 128, mamba_heads = 128, mamba_head_dim = 64, ssm_state = 128, ssm_groups = 8, conv_kernel = 4, experts = 512, top_k = 22, moe_inter = 2688, shared_inter = 5376, mtp = 1, moe_latent = 1, moe_io = 1024 }
+plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], verify = [2, 3, 4], draft = [1] }
+
+[instance.policy]
+opt_in_levers = []
+settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive" }
+
+# 2026-10-10: nvidia/DeepSeek-V4-Flash-NVFP4 (`deepseek_v4`), served by the two-node EP recipe.
+# Built by the `new-model` method; the circuit is not an executor target (`golden = false`: the
+# engine runs DeepSeek-V4 through its own layer code; `met circuit venn` reads it).
+# - Shape: config.json (verified 2026-10-10 against the checked-in fixture): `compress_ratios`
+#   (W = 0, sliding_attention, layers 0, 1; C = 4, compressed_sparse_attention, the even layers
+#   from 2; H = 128, heavily_compressed_attention, the odd ones from 3; its 44th entry is the MTP
+#   layer's, dropped), `num_hash_layers`, `hc_mult`, the attention widths, `sliding_window`, the
+#   `index_*` indexer dims, the MoE dims (kernels/circuits/deepseek_v4.config.toml maps each).
+# - No verify or draft plans: the MTP layer is not modelled (kernels/circuits/deepseek_v4.toml),
+#   and the recipe serves without speculation.
+# - kv_cache_dtype: fp8, pinned by the recipe (recipes/deepseek-v4/deepseek-v4-flash-nvfp4-ep2
+#   .yaml `kv_cache_dtype`); the checkpoint declares none. lm_head_dtype: bf16, declared (`head`
+#   is BF16 and excluded from the export). activation_quantization: adaptive, pinned by the
+#   recipe.
+# - row_tiers: by_rows: the checkpoint's canonical quant is nvfp4 (`quant_algo =
+#   MIXED_PRECISION`, crates/server/src/main_modules/serve_quant.rs:23) and it has no
+#   `self_attn.q_proj` the policy reads as FP8, so it is no FP8 MoE checkpoint
+#   (crates/server/src/main_modules/serve_load/model_setup.rs:339-355, ml/row_tiers.rs:64-78).
+#   The other settings are the flag defaults cited for the entries above; the DeepSeek-V4 layer
+#   code reads none of them.
+[[instance]]
+recipe = "deepseek-v4/deepseek-v4-flash-nvfp4-ep2"
+checkpoint = "nvidia/DeepSeek-V4-Flash-NVFP4"
+arch = "deepseek_v4"
+precision = "deepseek-v4-flash-nvfp4-ep2"
+target = "gb10/deepseek-v4-flash/nvfp4"
+golden = false
+layer_kinds = "WWCH CHCH CHCH CHCH CHCH CHCH CHCH CHCH CHCH CHCH CHC"
+dims = { hidden = 4096, vocab = 129280, hc = 4, q_heads = 64, head_dim = 512, rope_dim = 64, q_lora = 1024, o_groups = 8, o_lora = 1024, window = 128, index_heads = 64, index_head_dim = 128, index_topk = 512, index_kpool = 4, hca_ratio = 128, experts = 256, top_k = 6, moe_inter = 2048, shared_inter = 2048, hash_layers = 3 }
+plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128] }
+
+[instance.policy]
+opt_in_levers = []
+settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive" }
+
+# 2026-10-10: nvidia/Gemma-4-31B-IT-NVFP4 (`gemma4`, dense), recipe gemma4/gemma-4-31b-nvfp4. The
+# circuit is not an executor target (`golden = false`: FUSIONS.toml has no rules for its sliding
+# layers, GeGLU, softcap or scalar ops; `met circuit venn` reads it). No MTP head, so no verify or
+# draft plans.
+# - Shape: config.json `text_config` (verified 2026-10-10): `layer_types` (W = sliding_attention,
+#   A = full_attention), hidden_size, vocab_size, intermediate_size, num_attention_heads, the
+#   sliding geometry (num_key_value_heads, head_dim, sliding_window), the global geometry
+#   (num_global_key_value_heads, global_head_dim), enable_moe_block (off: the MoE dims are 0),
+#   final_logit_softcapping (on). kernels/circuits/gemma4.config.toml maps each.
+# - Precision: the declared table precision/gemma-4-31b-nvfp4.toml (W4A4 MLP, BF16 attention).
+#   The recipe pins `weight_quantization: nvfp4`, which changes nothing here: the checkpoint
+#   declares no FP8 layer for that tier to requantize.
+# - kv_cache_dtype: fp8, pinned by the recipe and declared by the checkpoint (`kv_cache_scheme`).
+# - lm_head_dtype: bf16: the recipe sets none (`--lm-head-dtype default`, the model decides) and
+#   the head is the tied BF16 embedding (weight_loader/gemma4/loader_b.rs `load_lm_head_impl`).
+# - row_tiers: by_rows, the default for a checkpoint that is not an FP8 MoE (ml/row_tiers.rs:64-78).
+# - activation_quantization: adaptive, pinned by the recipe. The other settings are the flag
+#   defaults cited for the entries above; the Gemma-4 layer code reads none of them.
+[[instance]]
+recipe = "gemma4/gemma-4-31b-nvfp4"
+checkpoint = "nvidia/Gemma-4-31B-IT-NVFP4"
+arch = "gemma4"
+precision = "gemma-4-31b-nvfp4"
+target = "gb10/gemma-4-31b/nvfp4"
+golden = false
+layer_kinds = "WWWWWA WWWWWA WWWWWA WWWWWA WWWWWA WWWWWA WWWWWA WWWWWA WWWWWA WWWWWA"
+dims = { hidden = 5376, vocab = 262144, inter = 21504, q_heads = 32, kv_heads = 16, head_dim = 256, window = 1024, g_kv_heads = 4, g_head_dim = 512, moe = 0, experts = 0, top_k = 0, moe_inter = 0, softcap = 1 }
+plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128] }
+
+[instance.policy]
+opt_in_levers = []
+settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive" }
+
+# 2026-10-10: bg-digitalservices/Gemma-4-26B-A4B-it-NVFP4A16 (`gemma4`, `moe` on), recipe
+# gemma4/gemma-4-26b-a4b-nvfp4: the same circuit with the MoE FFN site (128 experts, top-8,
+# moe_intermediate_size 704, beside the dense MLP of intermediate_size 2112). As the 31B above,
+# except:
+# - Precision: precision/gemma-4-26b-a4b-nvfp4.toml (W4A4 attention, MLP and experts; BF16
+#   router).
+# - kv_cache_dtype: fp8, pinned by the recipe; the checkpoint declares no KV-cache format.
+# - row_tiers: by_rows: a MoE, but not an FP8 one and with no FP8 projection
+#   (serve_load/model_setup.rs `publish_row_tiers`).
+[[instance]]
+recipe = "gemma4/gemma-4-26b-a4b-nvfp4"
+checkpoint = "bg-digitalservices/Gemma-4-26B-A4B-it-NVFP4A16"
+arch = "gemma4"
+precision = "gemma-4-26b-a4b-nvfp4"
+target = "gb10/gemma-4-26b-a4b/nvfp4"
+golden = false
+layer_kinds = "WWWWWA WWWWWA WWWWWA WWWWWA WWWWWA"
+dims = { hidden = 2816, vocab = 262144, inter = 2112, q_heads = 16, kv_heads = 8, head_dim = 256, window = 1024, g_kv_heads = 2, g_head_dim = 512, moe = 1, experts = 128, top_k = 8, moe_inter = 704, softcap = 1 }
+plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128] }
+
+[instance.policy]
+opt_in_levers = []
+settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive" }
+
+# 2026-10-10: lukealonso/MiniMax-M2.7-NVFP4 (`minimax_m2`) on the generic GQA + routed-MoE
+# circuit (`gqa_moe`). The recipe serves it with expert parallelism over two GB10 nodes; the
+# circuit is one replica's unsharded math and not an executor target (`golden = false`: no
+# FUSIONS.toml rules cover its layer-wide Q/K norm; `met circuit venn` reads it).
+# - Shape: config.json (verified 2026-10-10): `attn_type_list` (A = 1, full attention, on all 62
+#   layers), hidden_size, vocab_size, num_attention_heads, num_key_value_heads, head_dim,
+#   num_local_experts, num_experts_per_tok, intermediate_size (the experts' width); kernels/
+#   circuits/gqa_moe.config.toml maps each.
+# - Plans: decode and multi_seq only. No draft head: the checkpoint ships no MTP tensors (its
+#   safetensors index stops at layer 61, read 2026-10-10) although config.json declares 3 MTP
+#   modules, and the recipe runs without `--speculative`, so there are no verify or draft rows.
+# - Precision: the declared tier (precision/minimax-m2.7-nvfp4-ep2.toml: W4A4 NVFP4 experts,
+#   BF16 attention, router and head). The recipe pins `weight_quantization: nvfp4`, under which
+#   the engine also requantizes the attention projections and the router to NVFP4 at load
+#   (model-arch weight_loader/minimax.rs); an instance under that policy is not written here.
+# - kv_cache_dtype: bf16, pinned by the recipe, and the checkpoint declares no KV scheme.
+#   lm_head_dtype: bf16, the declared head (the precision table's tier).
+# - row_tiers: by_rows, the default for a checkpoint that is not an FP8 MoE (ml/row_tiers.rs:64-78).
+# - activation_quantization: adaptive, pinned by the recipe. The other settings are the flag
+#   defaults cited for the entries above; this model has no recurrent layers that read the ssm_*
+#   settings.
+[[instance]]
+recipe = "minimax-m2.7/minimax-m2.7-nvfp4-ep2"
+checkpoint = "lukealonso/MiniMax-M2.7-NVFP4"
+arch = "gqa_moe"
+precision = "minimax-m2.7-nvfp4-ep2"
+target = "gb10/minimax-m2-229b/nvfp4"
+golden = false
+layer_kinds = "AAAA AAAA AAAA AAAA AAAA AAAA AAAA AAAA AAAA AAAA AAAA AAAA AAAA AAAA AAAA AA"
+dims = { hidden = 3072, vocab = 200064, q_heads = 48, kv_heads = 8, head_dim = 128, experts = 256, top_k = 8, moe_inter = 1536 }
+plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128] }
+
+[instance.policy]
+opt_in_levers = []
+settings = { row_tiers = "by_rows", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive" }
+
+# 2026-10-10: mistralai/Mistral-Small-4-119B-2603-NVFP4 (`mla_moe`), the MLA + MoE decoder's first
+# parameter point. The recipe serves it (recipes/mistral-small-4/mistral-small-4-119b-nvfp4.yaml),
+# but the circuit is not an executor target (`golden = false`: the engine runs it through its MLA
+# layer code, and FUSIONS.toml has no rule for its decoupled-RoPE latent attention; `met circuit
+# venn` reads it). No MTP head, so no verify or draft plans.
+# - Shape: the HF config.json `text_config` of the base repo mistralai/Mistral-Small-4-119B-2603
+#   (verified 2026-10-10; the NVFP4 checkpoint ships only params.json, whose values
+#   crates/circuit/tests/mla_moe.rs checks against these): 36 `full_attention` layers, the MLA
+#   ranks and head widths, the MoE dims (kernels/circuits/mla_moe.config.toml maps each).
+# - kv_cache_dtype: bf16, pinned by the recipe (`kv_cache_dtype: bf16`; the checkpoint declares
+#   no `kv_cache_scheme`).
+# - lm_head_dtype: bf16, the checkpoint's stored `output.weight` under the recipe's default
+#   `--lm-head-dtype default` (crates/server/src/cli/serve_args.rs `lm_head_dtype`).
+# - row_tiers: by_rows, the default for a checkpoint that is not an FP8 MoE
+#   (crates/model-layers/src/layers/row_tiers.rs `resolve_row_tiers`).
+# - activation_quantization: adaptive, pinned by the recipe. The other settings are the flag
+#   defaults cited for the entries above; this model has no recurrent layer that reads the
+#   `ssm_*` ones.
+[[instance]]
+recipe = "mistral-small-4/mistral-small-4-119b-nvfp4"
+checkpoint = "mistralai/Mistral-Small-4-119B-2603-NVFP4"
+arch = "mla_moe"
+precision = "mistral-small-4-119b-nvfp4"
+target = "gb10/mistral-small-4/nvfp4"
+golden = false
+layer_kinds = "AAAA AAAA AAAA AAAA AAAA AAAA AAAA AAAA AAAA"
+dims = { hidden = 4096, vocab = 131072, q_heads = 32, q_lora = 1024, kv_lora = 256, mla_qk = 64, mla_rope = 64, mla_v = 128, experts = 128, top_k = 4, moe_inter = 2048, shared_inter = 2048 }
+plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128] }
+
+[instance.policy]
+opt_in_levers = []
+settings = { row_tiers = "by_rows", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive" }

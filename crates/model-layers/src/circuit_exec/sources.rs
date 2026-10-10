@@ -16,7 +16,7 @@ use metrale_circuit::{ArchShape, Instance, PrecisionSpec, Sources};
 pub const INSTANCES: &str = include_str!("../../../../kernels/circuits/INSTANCES.toml");
 
 /// 2026-09-28: Every circuit an instance can name, by arch.
-pub const CIRCUITS: [(&str, &str); 3] = [
+pub const CIRCUITS: [(&str, &str); 8] = [
     (
         "qwen3_5",
         include_str!("../../../../kernels/circuits/qwen3_5.toml"),
@@ -29,10 +29,35 @@ pub const CIRCUITS: [(&str, &str); 3] = [
         "nemotron_h",
         include_str!("../../../../kernels/circuits/nemotron_h.toml"),
     ),
+    // 2026-10-08: GLM-5 (not an executor target; `met circuit` plans and the Venn read it).
+    (
+        "glm5_next",
+        include_str!("../../../../kernels/circuits/glm5_next.toml"),
+    ),
+    // 2026-10-10: DeepSeek-V4 (not an executor target; `met circuit` plans and the Venn read it).
+    (
+        "deepseek_v4",
+        include_str!("../../../../kernels/circuits/deepseek_v4.toml"),
+    ),
+    // 2026-10-10: Gemma-4 (not an executor target; `met circuit` plans and the Venn read it).
+    (
+        "gemma4",
+        include_str!("../../../../kernels/circuits/gemma4.toml"),
+    ),
+    // 2026-10-10: GQA + routed MoE, MiniMax-M2.7 (not an executor target; the Venn reads it).
+    (
+        "gqa_moe",
+        include_str!("../../../../kernels/circuits/gqa_moe.toml"),
+    ),
+    // 2026-10-10: The MLA + MoE decoder, Mistral-Small-4 (not an executor target).
+    (
+        "mla_moe",
+        include_str!("../../../../kernels/circuits/mla_moe.toml"),
+    ),
 ];
 
 /// 2026-09-28: Every precision table an instance can name.
-pub const PRECISION: [(&str, &str); 3] = [
+pub const PRECISION: [(&str, &str); 11] = [
     (
         "qwen3.6-35b-a3b-fp8-bf16head",
         include_str!("../../../../kernels/circuits/precision/qwen3.6-35b-a3b-fp8-bf16head.toml"),
@@ -47,6 +72,41 @@ pub const PRECISION: [(&str, &str); 3] = [
             "../../../../kernels/circuits/precision/nemotron-3.5-lightning-30b-a3b-nvfp4.toml"
         ),
     ),
+    (
+        "glm-5.3-flash-nvfp4",
+        include_str!("../../../../kernels/circuits/precision/glm-5.3-flash-nvfp4.toml"),
+    ),
+    // 2026-10-10: Nemotron-3 Nano and Super at their declared formats (not executor targets).
+    (
+        "nemotron-3-nano-30b-a3b-nvfp4",
+        include_str!("../../../../kernels/circuits/precision/nemotron-3-nano-30b-a3b-nvfp4.toml"),
+    ),
+    (
+        "nemotron-3-super-120b-a12b-nvfp4",
+        include_str!(
+            "../../../../kernels/circuits/precision/nemotron-3-super-120b-a12b-nvfp4.toml"
+        ),
+    ),
+    (
+        "deepseek-v4-flash-nvfp4-ep2",
+        include_str!("../../../../kernels/circuits/precision/deepseek-v4-flash-nvfp4-ep2.toml"),
+    ),
+    (
+        "gemma-4-31b-nvfp4",
+        include_str!("../../../../kernels/circuits/precision/gemma-4-31b-nvfp4.toml"),
+    ),
+    (
+        "gemma-4-26b-a4b-nvfp4",
+        include_str!("../../../../kernels/circuits/precision/gemma-4-26b-a4b-nvfp4.toml"),
+    ),
+    (
+        "minimax-m2.7-nvfp4-ep2",
+        include_str!("../../../../kernels/circuits/precision/minimax-m2.7-nvfp4-ep2.toml"),
+    ),
+    (
+        "mistral-small-4-119b-nvfp4",
+        include_str!("../../../../kernels/circuits/precision/mistral-small-4-119b-nvfp4.toml"),
+    ),
 ];
 
 /// 2026-09-28: Every checkpoint plan fixture an instance can name.
@@ -56,10 +116,48 @@ pub const CHECKPOINTS: [(&str, &str); 1] = [(
 )];
 
 /// 2026-09-28: Every block library a circuit can include.
-pub const BLOCKS: [(&str, &str); 1] = [(
-    "qwen3_hybrid",
-    include_str!("../../../../kernels/circuits/blocks/qwen3_hybrid.toml"),
-)];
+pub const BLOCKS: [(&str, &str); 9] = [
+    (
+        "qwen3_hybrid",
+        include_str!("../../../../kernels/circuits/blocks/qwen3_hybrid.toml"),
+    ),
+    // 2026-10-08: The GLM-5 block libraries (kernels/circuits/glm5_next.toml includes them).
+    (
+        "glm5_next_kda",
+        include_str!("../../../../kernels/circuits/blocks/glm5_next_kda.toml"),
+    ),
+    (
+        "glm5_next_dsa",
+        include_str!("../../../../kernels/circuits/blocks/glm5_next_dsa.toml"),
+    ),
+    (
+        "glm5_next_ffn",
+        include_str!("../../../../kernels/circuits/blocks/glm5_next_ffn.toml"),
+    ),
+    // 2026-10-10: The DeepSeek-V4 block libraries (kernels/circuits/deepseek_v4.toml
+    // includes them).
+    (
+        "deepseek_v4_swa",
+        include_str!("../../../../kernels/circuits/blocks/deepseek_v4_swa.toml"),
+    ),
+    (
+        "deepseek_v4_hca",
+        include_str!("../../../../kernels/circuits/blocks/deepseek_v4_hca.toml"),
+    ),
+    (
+        "deepseek_v4_csa",
+        include_str!("../../../../kernels/circuits/blocks/deepseek_v4_csa.toml"),
+    ),
+    (
+        "deepseek_v4_ffn",
+        include_str!("../../../../kernels/circuits/blocks/deepseek_v4_ffn.toml"),
+    ),
+    // 2026-10-10: The Gemma-4 FFN sites (kernels/circuits/gemma4.toml includes them).
+    (
+        "gemma4_ffn",
+        include_str!("../../../../kernels/circuits/blocks/gemma4_ffn.toml"),
+    ),
+];
 
 /// 2026-09-28: FUSIONS.toml per hardware.
 pub const FUSIONS: [(&str, &str); 1] = [(

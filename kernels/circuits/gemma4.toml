@@ -1,0 +1,382 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-10: The Gemma-4 circuit (`gemma4`; Gemma-4-31B dense and Gemma-4-26B-A4B MoE): the
+# scaled embedding, then per layer a sliding-window (`sliding_attention`) or a global
+# (`full_attention`) attention site and an FFN site, each norm-sandwiched, then the final norm, the
+# tied lm_head and the logit softcap. The FFN is a tanh-GELU gated MLP; with `enable_moe_block`
+# (the `moe` switch) every layer adds a 128-expert top-8 MoE beside it (blocks/gemma4_ffn.toml).
+#
+# Owner: metrale-circuit (crates/circuit/src/circuit_toml.rs is the schema).
+# Invariants:
+# - Follows the reference modelling code (transformers 5.19 `modeling_gemma4`,
+#   Gemma4TextDecoderLayer / Gemma4TextAttention), not the engine's nearest path:
+#   - every RMSNorm scales by its weight as stored (`weight_form = "plain"`: Gemma4RMSNorm is
+#     `x * w`, unlike Gemma 2/3's `x * (1 + w)`); V is RMS-normalised per head with no weight;
+#   - each sublayer's output is normed (`post_attention_layernorm`, `post_feedforward_layernorm`)
+#     before its residual add, and the whole stream is then scaled by the layer's learned
+#     `layer_scalar`;
+#   - the softmax scale is 1 (`scaling = 1.0`: Q and K are RMS-normalised per head instead);
+#   - the embedding is multiplied by sqrt(hidden_size) rounded to BF16 (the reference's
+#     `embed_scale` buffer is cast to the weight dtype), and the logits are softcapped,
+#     `cap * tanh(logits / cap)` (`final_logit_softcapping`), before the argmax.
+# - The two layer kinds differ in head geometry, so each has its own block over the same ops:
+#   sliding layers `head_dim` x `kv_heads` with a 1024-token window (`sliding_window`; a query at
+#   position p attends p - window + 1 ..= p, the reference's `0 <= p - kv < window`) and RoPE
+#   theta 10000 over the whole head; full layers `g_head_dim` x `g_kv_heads` with no window,
+#   K = V (`attention_k_eq_v`: no `v_proj`, V is the K projection before k_norm and RoPE), and
+#   proportional RoPE (theta 1e6, the first `partial_rotary_factor * g_head_dim / 2` frequency
+#   pairs rotated, the rest identity; pairs (i, i + g_head_dim / 2) as in rotate_half).
+# - The sliding window is a param of the existing paged attention (`window`), not a new op: the
+#   math is the same causal softmax attention over the paged cache, masked to the window. The
+#   KV pool still holds every token (the engine does not drop tokens behind the window).
+# - Text only: the vision and audio towers (and `use_bidirectional_attention = "vision"`, which
+#   only relaxes the mask among vision tokens) are outside the circuit.
+# - No draft head: the checkpoints ship no MTP layer.
+# - It is not an executor target: the engine runs Gemma-4 through its own layer code
+#   (crates/model-arch/src/weight_loader/gemma4/), and FUSIONS.toml has no rules for its
+#   sliding-window layers, GeGLU, softcap or scalar ops (`golden = false` in INSTANCES.toml).
+#   `met circuit venn` and `met circuit plan` read it.
+
+schema = 1
+arch = "gemma4"
+description = "Gemma-4: sliding-window and global attention (K=V, proportional RoPE), sandwich norms, GeGLU MLP plus an optional 128-expert MoE, softcapped tied head"
+layer_module = "model.language_model.layers.{i}"
+include = ["gemma4_ffn"]
+dims = [
+  "hidden", "vocab", "inter", "q_heads",
+  "kv_heads", "head_dim", "window", "g_kv_heads", "g_head_dim",
+  "moe", "experts", "top_k", "moe_inter", "softcap",
+]
+prologue = ["embed"]
+epilogue = ["head"]
+draft = []
+
+[layout]
+kind = "list"
+
+[layout.blocks]
+sliding_attention = ["swa", "ffn"]
+full_attention = ["fa", "ffn"]
+
+# 2026-10-10: `enable_moe_block`: the FFN site runs the dense MLP and the routed experts side by
+# side (Gemma-4-26B-A4B).
+[layout.when]
+moe = { sliding_attention = ["swa", "ffn_moe"], full_attention = ["fa", "ffn_moe"] }
+
+[block.embed]
+stream_out = "h"
+
+# 2026-10-10: The speculative caches over tokens (crates/circuit/src/memory/caches.rs; as in
+# dense_gqa.toml): the prompt-lookup index (host), a token tree's mask, the drafted ids.
+[[block.embed.state]]
+id = "lookup_index"
+kind = "prompt_lookup_index"
+lifetime = "sequence"
+format = "u64"
+shape = "2"
+
+[[block.embed.state]]
+id = "tree_mask"
+kind = "token_tree_mask"
+lifetime = "verify"
+format = "u8"
+shape = "1"
+
+[[block.embed.state]]
+id = "draft_ids"
+kind = "draft_tokens"
+lifetime = "verify"
+format = "i32"
+shape = "1"
+
+[[block.embed.node]]
+id = "embed"
+op = "embed"
+out = [{ edge = "e", format = "bf16", shape = "n x hidden" }]
+binding = ["model.language_model.embed_tokens"]
+
+# 2026-10-10: Gemma4TextScaledWordEmbedding: times sqrt(hidden_size), the factor rounded to BF16
+# (sqrt(5376) = 73.32 -> 73.5, sqrt(2816) = 53.07 -> 53.0).
+[[block.embed.node]]
+id = "scale"
+op = "scalar_mul"
+in = ["e"]
+out = [{ edge = "h", format = "bf16", shape = "n x hidden" }]
+params = { by = "sqrt_hidden", rounded = "bf16" }
+
+# 2026-10-10: A sliding-window attention layer.
+[block.swa]
+stream_in = "x"
+stream_out = "y"
+
+# 2026-10-10: The paged KV cache, one unit per token and side, at the sliding geometry.
+[[block.swa.state]]
+id = "k"
+kind = "paged_kv"
+lifetime = "model"
+format = "{kv_cache_dtype}"
+shape = "kv_heads x head_dim"
+
+[[block.swa.state]]
+id = "v"
+kind = "paged_kv"
+lifetime = "model"
+format = "{kv_cache_dtype}"
+shape = "kv_heads x head_dim"
+
+[[block.swa.node]]
+id = "input_norm"
+op = "rms_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.input_layernorm"]
+params = { weight_form = "plain" }
+
+[[block.swa.node]]
+id = "q"
+op = "linear"
+role = "q"
+in = ["xn"]
+out = [{ edge = "q", format = "bf16", shape = "n x q_heads*head_dim" }]
+binding = ["{L}.self_attn.q_proj"]
+
+[[block.swa.node]]
+id = "k"
+op = "linear"
+role = "k"
+in = ["xn"]
+out = [{ edge = "k", format = "bf16", shape = "n x kv_heads*head_dim" }]
+binding = ["{L}.self_attn.k_proj"]
+
+[[block.swa.node]]
+id = "v"
+op = "linear"
+role = "v"
+in = ["xn"]
+out = [{ edge = "v", format = "bf16", shape = "n x kv_heads*head_dim" }]
+binding = ["{L}.self_attn.v_proj"]
+
+[[block.swa.node]]
+id = "q_norm"
+op = "qk_norm"
+in = ["q"]
+out = [{ edge = "qn", format = "bf16", shape = "n x q_heads*head_dim" }]
+binding = ["{L}.self_attn.q_norm"]
+params = { weight_form = "plain" }
+
+[[block.swa.node]]
+id = "k_norm"
+op = "qk_norm"
+in = ["k"]
+out = [{ edge = "kn", format = "bf16", shape = "n x kv_heads*head_dim" }]
+binding = ["{L}.self_attn.k_norm"]
+params = { weight_form = "plain" }
+
+# 2026-10-10: Gemma4RMSNorm(with_scale=False): the per-head RMS normalisation of V, no weight.
+[[block.swa.node]]
+id = "v_norm"
+op = "qk_norm"
+in = ["v"]
+out = [{ edge = "vn", format = "bf16", shape = "n x kv_heads*head_dim" }]
+params = { weight_form = "none" }
+
+# 2026-10-10: Plain RoPE over the whole head; theta from `rope_parameters.sliding_attention`.
+[[block.swa.node]]
+id = "rope"
+op = "rope"
+in = ["qn", "kn"]
+out = [
+  { edge = "qr", format = "bf16", shape = "n x q_heads*head_dim" },
+  { edge = "kr", format = "bf16", shape = "n x kv_heads*head_dim" },
+]
+params = { rope_type = "default", rope_params = "rope.sliding_attention" }
+
+[[block.swa.node]]
+id = "kv_write"
+op = "kv_write"
+state = { k = "write", v = "write" }
+in = ["kr", "vn"]
+out = []
+
+[[block.swa.node]]
+id = "attend"
+op = "paged_attention"
+state = { k = "read", v = "read" }
+in = ["qr", "kr", "vn"]
+out = [{ edge = "a", format = "bf16", shape = "n x q_heads*head_dim" }]
+params = { window = "{window}", softmax_scale = "1" }
+
+[[block.swa.node]]
+id = "o"
+op = "linear"
+role = "o"
+in = ["a"]
+out = [{ edge = "o", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.self_attn.o_proj"]
+
+[[block.swa.node]]
+id = "post_norm"
+op = "rms_norm"
+in = ["o"]
+out = [{ edge = "on", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.post_attention_layernorm"]
+params = { weight_form = "plain" }
+
+[[block.swa.node]]
+id = "add"
+op = "residual_add"
+in = ["x", "on"]
+out = [{ edge = "y", format = "bf16", shape = "n x hidden" }]
+
+# 2026-10-10: A global (full-attention) layer: the global head geometry, K = V, no window.
+[block.fa]
+stream_in = "x"
+stream_out = "y"
+
+[[block.fa.state]]
+id = "k"
+kind = "paged_kv"
+lifetime = "model"
+format = "{kv_cache_dtype}"
+shape = "g_kv_heads x g_head_dim"
+
+[[block.fa.state]]
+id = "v"
+kind = "paged_kv"
+lifetime = "model"
+format = "{kv_cache_dtype}"
+shape = "g_kv_heads x g_head_dim"
+
+[[block.fa.node]]
+id = "input_norm"
+op = "rms_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.input_layernorm"]
+params = { weight_form = "plain" }
+
+[[block.fa.node]]
+id = "q"
+op = "linear"
+role = "q"
+in = ["xn"]
+out = [{ edge = "q", format = "bf16", shape = "n x q_heads*g_head_dim" }]
+binding = ["{L}.self_attn.q_proj"]
+
+[[block.fa.node]]
+id = "k"
+op = "linear"
+role = "k"
+in = ["xn"]
+out = [{ edge = "k", format = "bf16", shape = "n x g_kv_heads*g_head_dim" }]
+binding = ["{L}.self_attn.k_proj"]
+
+[[block.fa.node]]
+id = "q_norm"
+op = "qk_norm"
+in = ["q"]
+out = [{ edge = "qn", format = "bf16", shape = "n x q_heads*g_head_dim" }]
+binding = ["{L}.self_attn.q_norm"]
+params = { weight_form = "plain" }
+
+[[block.fa.node]]
+id = "k_norm"
+op = "qk_norm"
+in = ["k"]
+out = [{ edge = "kn", format = "bf16", shape = "n x g_kv_heads*g_head_dim" }]
+binding = ["{L}.self_attn.k_norm"]
+params = { weight_form = "plain" }
+
+# 2026-10-10: K = V: V is the K projection's output, before k_norm and RoPE, RMS-normalised per
+# head with no weight.
+[[block.fa.node]]
+id = "v_norm"
+op = "qk_norm"
+in = ["k"]
+out = [{ edge = "vn", format = "bf16", shape = "n x g_kv_heads*g_head_dim" }]
+params = { weight_form = "none" }
+
+# 2026-10-10: Proportional RoPE: theta and partial_rotary_factor from
+# `rope_parameters.full_attention`.
+[[block.fa.node]]
+id = "rope"
+op = "rope"
+in = ["qn", "kn"]
+out = [
+  { edge = "qr", format = "bf16", shape = "n x q_heads*g_head_dim" },
+  { edge = "kr", format = "bf16", shape = "n x g_kv_heads*g_head_dim" },
+]
+params = { rope_type = "proportional", rope_params = "rope.full_attention" }
+
+[[block.fa.node]]
+id = "kv_write"
+op = "kv_write"
+state = { k = "write", v = "write" }
+in = ["kr", "vn"]
+out = []
+
+[[block.fa.node]]
+id = "attend"
+op = "paged_attention"
+state = { k = "read", v = "read" }
+in = ["qr", "kr", "vn"]
+out = [{ edge = "a", format = "bf16", shape = "n x q_heads*g_head_dim" }]
+params = { softmax_scale = "1" }
+
+[[block.fa.node]]
+id = "o"
+op = "linear"
+role = "o"
+in = ["a"]
+out = [{ edge = "o", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.self_attn.o_proj"]
+
+[[block.fa.node]]
+id = "post_norm"
+op = "rms_norm"
+in = ["o"]
+out = [{ edge = "on", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.post_attention_layernorm"]
+params = { weight_form = "plain" }
+
+[[block.fa.node]]
+id = "add"
+op = "residual_add"
+in = ["x", "on"]
+out = [{ edge = "y", format = "bf16", shape = "n x hidden" }]
+
+[block.head]
+stream_in = "x"
+outputs = [{ edge = "logits", buffer = "logits" }, { edge = "token", buffer = "tokens" }]
+
+[[block.head.node]]
+id = "final_norm"
+op = "final_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["model.language_model.norm"]
+params = { weight_form = "plain" }
+
+# 2026-10-10: The head is tied to the embedding (`tie_word_embeddings`, required): the checkpoint
+# ships no `lm_head` tensor; `lm_head` names the module its quantization config excludes.
+[[block.head.node]]
+id = "lm_head"
+op = "lm_head"
+in = ["xn"]
+out = [{ edge = "raw", format = "bf16", shape = "n x vocab" }]
+binding = ["lm_head"]
+params = { tied = "model.language_model.embed_tokens" }
+
+# 2026-10-10: `final_logit_softcapping` (the `softcap` switch: absent or null, no cap).
+[[block.head.node]]
+id = "softcap"
+op = "logit_softcap"
+in = ["raw"]
+out = [{ edge = "logits", format = "bf16", shape = "n x vocab" }]
+when = "softcap"
+
+[[block.head.node]]
+id = "argmax"
+op = "argmax"
+in = ["logits"]
+out = [{ edge = "token", format = "i32", shape = "n x 1" }]

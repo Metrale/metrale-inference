@@ -13,6 +13,10 @@
 //!   map serves is refused, never approximated by a neighbour.
 //! - Precision comes from config.json's own `quantization_config` when it has one, else from
 //!   the sidecar `hf_quant_config.json` (the serve rule, `merge_sidecar_quant_config`).
+//! - 2026-10-10: A ModelOpt export of an HF `fp8` checkpoint keeps the base's `fp8` method and
+//!   adds ModelOpt's fields (`quant_algo = MIXED_PRECISION`, `quantized_layers`, its `ignore`):
+//!   the declared formats are ModelOpt's for the layers it quantized and the base method's for
+//!   the modules it ignored ([`DeclaredPrecision::over_base`]).
 
 use std::collections::BTreeMap;
 
@@ -57,7 +61,8 @@ pub enum ServePrecision {
 /// 2026-09-30: A checkpoint resolved to its circuit.
 #[derive(Debug, Clone)]
 pub struct ResolvedCheckpoint {
-    /// 2026-09-30: The circuit arch (`qwen3_5`, `qwen3_6_moe`, `nemotron_h`, `dense_gqa`).
+    /// 2026-09-30: The circuit arch (`qwen3_5`, `qwen3_6_moe`, `nemotron_h`, `dense_gqa`,
+    /// 2026-10-08: `glm5_next`, 2026-10-10: `deepseek_v4`, `gemma4`, `gqa_moe`, `mla_moe`).
     pub arch: String,
     /// 2026-09-30: The config's top-level `model_type`.
     pub model_type: String,
@@ -91,6 +96,15 @@ pub enum CheckpointError {
         /// 2026-09-30: The model types the embedded maps serve.
         served: String,
     },
+    /// 2026-10-10: A model type the circuit model cannot express at all (not a missing map but
+    /// a missing mode or state), with what it lacks.
+    #[error("model_type `{model_type}` has no circuit: {why}")]
+    Inexpressible {
+        /// 2026-10-10: The config's `model_type`.
+        model_type: String,
+        /// 2026-10-10: What the circuit model lacks.
+        why: &'static str,
+    },
     /// 2026-09-30: The config does not map.
     #[error(transparent)]
     Map(#[from] ConfigMapError),
@@ -121,7 +135,7 @@ macro_rules! circuits_file {
     };
 }
 
-const ARCHES: [Arch; 4] = [
+const ARCHES: [Arch; 9] = [
     Arch {
         circuit: circuits_file!("qwen3_5.toml"),
         config_map: circuits_file!("qwen3_5.config.toml"),
@@ -138,10 +152,66 @@ const ARCHES: [Arch; 4] = [
         circuit: circuits_file!("dense_gqa.toml"),
         config_map: circuits_file!("dense_gqa.config.toml"),
     },
+    Arch {
+        circuit: circuits_file!("glm5_next.toml"),
+        config_map: circuits_file!("glm5_next.config.toml"),
+    },
+    Arch {
+        circuit: circuits_file!("deepseek_v4.toml"),
+        config_map: circuits_file!("deepseek_v4.config.toml"),
+    },
+    Arch {
+        circuit: circuits_file!("gemma4.toml"),
+        config_map: circuits_file!("gemma4.config.toml"),
+    },
+    Arch {
+        circuit: circuits_file!("gqa_moe.toml"),
+        config_map: circuits_file!("gqa_moe.config.toml"),
+    },
+    Arch {
+        circuit: circuits_file!("mla_moe.toml"),
+        config_map: circuits_file!("mla_moe.config.toml"),
+    },
 ];
 
 /// 2026-09-30: The block libraries the embedded circuits include.
-const BLOCKS: [(&str, &str); 1] = [("qwen3_hybrid", circuits_file!("blocks/qwen3_hybrid.toml"))];
+const BLOCKS: [(&str, &str); 9] = [
+    ("qwen3_hybrid", circuits_file!("blocks/qwen3_hybrid.toml")),
+    ("glm5_next_kda", circuits_file!("blocks/glm5_next_kda.toml")),
+    ("glm5_next_dsa", circuits_file!("blocks/glm5_next_dsa.toml")),
+    ("glm5_next_ffn", circuits_file!("blocks/glm5_next_ffn.toml")),
+    (
+        "deepseek_v4_swa",
+        circuits_file!("blocks/deepseek_v4_swa.toml"),
+    ),
+    (
+        "deepseek_v4_hca",
+        circuits_file!("blocks/deepseek_v4_hca.toml"),
+    ),
+    (
+        "deepseek_v4_csa",
+        circuits_file!("blocks/deepseek_v4_csa.toml"),
+    ),
+    (
+        "deepseek_v4_ffn",
+        circuits_file!("blocks/deepseek_v4_ffn.toml"),
+    ),
+    ("gemma4_ffn", circuits_file!("blocks/gemma4_ffn.toml")),
+];
+
+/// 2026-10-10: Model types refused before any map is consulted, because the circuit model
+/// (autoregressive decode, multi-sequence, verify and draft steps over a paged KV cache) has no
+/// mode, state or op for what they do.
+const INEXPRESSIBLE: [(&str, &str); 1] = [(
+    "diffusion_gemma",
+    "block diffusion (DiffusionGemmaForBlockDiffusion) denoises a canvas of `canvas_length` tokens \
+     over up to `max_denoising_steps` passes: each pass attends bidirectionally over the cached \
+     prefix and the whole canvas, reads the KV cache without writing it, and conditions on the \
+     previous pass's logits (softmax times the embedding table through a self-conditioning \
+     MLP), and the sampler accepts, renoises and stops by token entropy. The circuit model has \
+     no canvas mode, no read-only or non-causal attention, no per-canvas logits state and no \
+     denoising loop",
+)];
 
 /// 2026-09-30: The embedded config maps, parsed.
 pub fn config_maps() -> Result<Vec<ConfigMap>, ConfigMapError> {
@@ -187,11 +257,15 @@ pub fn resolve_checkpoint(
                 .collect::<String>()
         )));
     }
+    let export = qc.as_ref().map(modelopt_export_plan).transpose()?.flatten();
     let kv_cache = kv_cache_format(qc.as_ref())?;
     let text = ARCHES[i].circuit;
     let circuit = match serve {
         ServePrecision::Declared => {
-            let precision = DeclaredPrecision::new(&plan);
+            let precision = match &export {
+                Some(export) => DeclaredPrecision::over_base(export, &plan),
+                None => DeclaredPrecision::new(&plan),
+            };
             let circuit = instantiate(text, &BLOCKS, &mapped.shape, &precision)?;
             let refused = precision.refusals();
             if !refused.is_empty() {
@@ -240,6 +314,9 @@ fn map_checkpoint_value(config: &Value) -> Result<(usize, MappedConfig), Checkpo
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
+    if let Some((_, why)) = INEXPRESSIBLE.iter().find(|(t, _)| *t == model_type) {
+        return Err(CheckpointError::Inexpressible { model_type, why });
+    }
     let maps = config_maps()?;
     let Some((i, map)) = maps
         .iter()
@@ -276,6 +353,31 @@ fn quantization_config(
             })
         })
         .transpose()
+}
+
+/// 2026-10-10: The ModelOpt export's own plan, when `qc` is a ModelOpt `MIXED_PRECISION`
+/// export of an HF `fp8` checkpoint (nvidia/DeepSeek-V4-Flash-NVFP4: the base's `quant_method =
+/// fp8` and `weight_block_size`, and ModelOpt's `producer`, `quant_algo`, `quantized_layers`
+/// and `ignore`); `None` for any other block. The plan `qc` parses to is then the base's.
+fn modelopt_export_plan(qc: &Value) -> Result<Option<DeclaredPrecisionPlan>, CheckpointError> {
+    let modelopt = qc
+        .get("producer")
+        .and_then(|p| p.get("name"))
+        .and_then(Value::as_str)
+        .is_some_and(|n| n.eq_ignore_ascii_case("modelopt"));
+    let is_export = qc.get("quant_method").and_then(Value::as_str) == Some("fp8")
+        && modelopt
+        && qc.get("quant_algo").and_then(Value::as_str) == Some("MIXED_PRECISION");
+    if !is_export {
+        return Ok(None);
+    }
+    let mut export = qc.clone();
+    if let Some(o) = export.as_object_mut() {
+        o.remove("quant_method");
+    }
+    DeclaredPrecisionPlan::from_quantization_config(&export)
+        .map(Some)
+        .map_err(|e| CheckpointError::Quant(format!("{e:#}")))
 }
 
 /// 2026-09-30: The KV-cache format a quantization block declares: compressed-tensors

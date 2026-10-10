@@ -1,0 +1,115 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-10: The formats each linear module of nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4 runs at
+# under the declared tier: the checkpoint's own quantization (ModelOpt NVFP4, hf_quant_config.json
+# `quantization`), module by module.
+#
+# Owner: metrale-circuit (schema: crates/circuit/src/precision.rs).
+# Invariants:
+# - First match wins; the last entry is the catch-all.
+# - `quant_algo = NVFP4` (group 16): W4A4 for every Linear not in `exclude_modules`, which lists
+#   lm_head, the four attention projections of the 6 attention layers, the conv1d of every Mamba2
+#   layer, and in_proj/out_proj of the 6 Mamba2 layers named below; those stay BF16, as does the
+#   router (`mixer.gate`, not a Linear). The KV cache is FP8 (`kv_cache_quant_algo`).
+# - crates/circuit/tests/nemotron_h.rs checks every node against the checkpoint's declared plan.
+# - The recipe pins `weight_quantization: nvfp4` and `activation_quantization: adaptive`; this
+#   table is the declared tier (the engine default), the basis every model is compared on.
+
+schema = 1
+checkpoint = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4"
+tier = "declared"
+
+[[linear]]
+match = "backbone.layers.4.mixer.in_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "backbone.layers.11.mixer.in_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "backbone.layers.18.mixer.in_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "backbone.layers.25.mixer.in_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "backbone.layers.32.mixer.in_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "backbone.layers.41.mixer.in_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "backbone.layers.4.mixer.out_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "backbone.layers.11.mixer.out_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "backbone.layers.18.mixer.out_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "backbone.layers.25.mixer.out_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "backbone.layers.32.mixer.out_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "backbone.layers.41.mixer.out_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "*.mixer.gate"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "*.mixer.q_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "*.mixer.k_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "*.mixer.v_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "*.mixer.o_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "lm_head"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "*"
+weight = "nvfp4/g16"
+activation = "nvfp4/g16"

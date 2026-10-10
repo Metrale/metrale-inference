@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-10: The formats each linear module of lukealonso/MiniMax-M2.7-NVFP4 runs at under the
+# declared tier: the checkpoint's own quantization (ModelOpt 0.39 NVFP4; config.json
+# `quantization_config`, the same block as hf_quant_config.json), module by module.
+#
+# Owner: metrale-circuit (schema: crates/circuit/src/precision.rs).
+# Invariants:
+# - First match wins; the last entry is the catch-all.
+# - `config_groups.group_0` declares NVFP4 (group 16) weights AND input activations (FP4, group
+#   16, `dynamic: false`: a static global `input_scale` per projection) for every `Linear` not
+#   excluded. `ignore` excludes `lm_head` and, on each of the 62 layers, `self_attn*` (Q, K, V,
+#   O) and the router `block_sparse_moe.gate`. So the routed experts (w1, w3, w2) are W4A4 and
+#   everything else is BF16: the catch-all is the group's `Linear` target.
+# - The embeddings and the norms are no `Linear`; the correction bias is a buffer.
+# - KV cache: the quantization declares none (no `kv_cache_quant_algo`), so it is 16-bit (the
+#   instance's `kv_cache_dtype = bf16`).
+
+schema = 1
+checkpoint = "lukealonso/MiniMax-M2.7-NVFP4"
+tier = "declared"
+
+[[linear]]
+match = "model.layers.*.self_attn.*"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "model.layers.*.block_sparse_moe.gate"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "lm_head"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "*"
+weight = "nvfp4/g16"
+activation = "nvfp4/g16"

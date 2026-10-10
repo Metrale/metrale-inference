@@ -136,16 +136,26 @@ fn layers<'a>(
     for (_, k, _) in &present {
         consumed.insert(k);
     }
-    let kinds = match (present.as_slice(), &l.uniform) {
+    let mut extra = 0;
+    let mut kinds: Vec<LayerKind> = match (present.as_slice(), &l.uniform) {
         ([], Some(u)) => vec![kind(u, "uniform")?; count],
         ([], None) => {
             let keys: Vec<&str> = l.sources.iter().map(|s| s.key.as_str()).collect();
             return Err(missing(map, &keys.join(" | ")));
         }
-        ([(src, key, v)], None) => from_source(src, key, v)?
-            .into_iter()
-            .map(|n| kind(&n, key))
-            .collect::<Result<_, _>>()?,
+        ([(src, key, v)], None) => {
+            if let Some(t) = &src.trailing {
+                let (tk, tv) = fields
+                    .get_key_value(t.as_str())
+                    .ok_or_else(|| missing(map, t))?;
+                consumed.insert(tk);
+                extra = uint(t, tv)? as usize;
+            }
+            from_source(src, key, v)?
+                .into_iter()
+                .map(|n| kind(&n, key))
+                .collect::<Result<_, _>>()?
+        }
         _ => {
             let keys: Vec<&str> = present.iter().map(|(_, k, _)| *k).collect();
             return Err(ConfigMapError::Refused {
@@ -155,13 +165,20 @@ fn layers<'a>(
             });
         }
     };
-    if kinds.len() != count {
+    if kinds.len() != count + extra {
         return Err(ConfigMapError::Refused {
             key: l.count.clone(),
             value: count.to_string(),
-            why: format!("the layer-kind source lists {} layers", kinds.len()),
+            why: match extra {
+                0 => format!("the layer-kind source lists {} layers", kinds.len()),
+                _ => format!(
+                    "the layer-kind source lists {} layers, not {count} plus {extra} trailing",
+                    kinds.len()
+                ),
+            },
         });
     }
+    kinds.truncate(count);
     Ok(kinds)
 }
 
@@ -174,8 +191,14 @@ fn from_source(src: &LayerSource, key: &str, v: &Value) -> Result<Vec<String>, C
     if let Some(list) = v.as_array() {
         list.iter()
             .map(|e| {
-                let s = e.as_str().unwrap_or_default();
-                src.values.get(s).cloned().ok_or_else(|| {
+                // 2026-10-10: An integer entry is looked up by its decimal text (DeepSeek-V4's
+                // `compress_ratios`, MiniMax-M2's `attn_type_list`: 1 = full attention); any
+                // other non-string (a float) matches nothing.
+                let s = match e {
+                    Value::Number(n) => n.to_string(),
+                    _ => e.as_str().unwrap_or_default().to_string(),
+                };
+                src.values.get(&s).cloned().ok_or_else(|| {
                     refuse(
                         json(e),
                         format!(
@@ -237,12 +260,10 @@ fn dims<'a>(
             .key
             .as_deref()
             .ok_or_else(|| ConfigMapError::Schema(format!("dim `{name}` has no key or const")))?;
+        // 2026-10-10: A presence switch does not consume its key: the value is classified by
+        // another dim (`moe_latent_size`) or a key rule (`final_logit_softcapping`, a param).
         if full.bool_present {
-            let present = fields.get_key_value(key);
-            if let Some((k, _)) = present {
-                consumed.insert(k);
-            }
-            out.insert(name.clone(), u64::from(present.is_some()));
+            out.insert(name.clone(), u64::from(fields.contains_key(key)));
             continue;
         }
         if let Some((k, v)) = fields.get_key_value(key) {

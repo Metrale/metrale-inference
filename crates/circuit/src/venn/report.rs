@@ -10,6 +10,10 @@
 //! - The compared models are fused with every kernel their rules name counted as built (the
 //!   offline view `met circuit show` takes). The target is fused only when it is a golden
 //!   instance, whose rules cover it; otherwise its nodes are matched to families by op.
+//! - 2026-10-10: A compared model that is not golden is planned with a placeholder for each
+//!   node no rule covers (`crate::fuser_cover`, as `met circuit plan` does); those nodes run no
+//!   family, so they are no usage, and the report lists their sites ([`Uncovered`]). A golden
+//!   compared model is still fused strictly: a gap in its rules is an error.
 //! - A flag's cost is the estimate of running the flagged nodes once per row minus running them
 //!   once for all rows, so flags rank by the time the missing multi-row path costs.
 
@@ -22,6 +26,7 @@ use super::roofline::node_cost;
 use super::{Finding, Run, Subject, VennError};
 use crate::Loaded;
 use crate::fuser::{AvailableKernels, FusionPlan, fuse, section_of};
+use crate::fuser_cover::{NOVEL_EMITTER, fuse_covering};
 use crate::instances::Instance;
 use crate::ir::{Circuit, LayerKind, NodeIdx};
 use crate::rules::Mode;
@@ -124,8 +129,23 @@ pub struct VennReport {
     pub tables: Vec<Table>,
     /// 2026-09-29: Measured rows cited by the tables' evidence (`key` to % of floor).
     pub cited: BTreeMap<String, f64>,
+    /// 2026-10-10: Per compared model that is not golden and run, the sites no rule covers
+    /// (planned by placeholders, so they count as no usage); empty when every compared model is
+    /// golden.
+    pub uncovered: Vec<Uncovered>,
     /// 2026-09-29: The regenerating command.
     pub command: String,
+}
+
+/// 2026-10-10: The sites of one compared model that no rule covers in one run.
+#[derive(Debug, Clone)]
+pub struct Uncovered {
+    /// 2026-10-10: The compared recipe.
+    pub recipe: String,
+    /// 2026-10-10: Mode and rows.
+    pub run: Run,
+    /// 2026-10-10: `block.node` sites, sorted.
+    pub sites: Vec<String>,
 }
 
 fn fused(side: &Side<'_>, run: Run) -> Result<FusionPlan, VennError> {
@@ -138,14 +158,50 @@ fn fused(side: &Side<'_>, run: Run) -> Result<FusionPlan, VennError> {
         run.mode,
         run.rows,
     )
-    .map_err(|e| {
-        VennError::Load(format!(
-            "{} {} n={}: {e}",
-            side.instance.recipe,
-            run.mode.name(),
-            run.rows
-        ))
-    })
+    .map_err(|e| run_error(side, run, e.to_string()))
+}
+
+/// 2026-10-10: A compared model's plan. A golden instance is fused strictly (its rules cover
+/// every node); any other is planned the way `met circuit plan` plans a checkpoint, with a
+/// placeholder for each node no rule covers, and those nodes' sites are returned.
+fn fused_compared(side: &Side<'_>, run: Run) -> Result<(FusionPlan, Option<Uncovered>), VennError> {
+    if side.instance.golden {
+        return Ok((fused(side, run)?, None));
+    }
+    let l = side.loaded;
+    let mut rules = l.rules.clone();
+    let mut refused = Vec::new();
+    let plan = fuse_covering(
+        &l.circuit,
+        &mut rules,
+        &AvailableKernels::all_named_by(&l.rules),
+        &side.instance.policy,
+        run.mode,
+        run.rows,
+        &mut refused,
+    )
+    .map_err(|e| run_error(side, run, e.to_string()))?;
+    let sites: std::collections::BTreeSet<String> = plan
+        .groups
+        .iter()
+        .filter(|g| g.emitter == NOVEL_EMITTER)
+        .flat_map(|g| g.nodes.iter().map(|&n| site_of(&l.circuit, n)))
+        .collect();
+    let uncovered = (!sites.is_empty()).then(|| Uncovered {
+        recipe: side.instance.recipe.clone(),
+        run,
+        sites: sites.into_iter().collect(),
+    });
+    Ok((plan, uncovered))
+}
+
+fn run_error(side: &Side<'_>, run: Run, e: String) -> VennError {
+    VennError::Load(format!(
+        "{} {} n={}: {e}",
+        side.instance.recipe,
+        run.mode.name(),
+        run.rows
+    ))
 }
 
 fn in_section(c: &Circuit, mode: Mode) -> Vec<NodeIdx> {
@@ -163,7 +219,7 @@ fn site_of(c: &Circuit, n: NodeIdx) -> String {
 
 /// 2026-09-30: `block.local`, prefixed `draft.` in the draft head, whose blocks may reuse a
 /// main-stack template (the Nemotron-H draft MoE is the `moe` block at `mtp.layers.1`).
-fn site(node: &crate::ir::Node) -> String {
+pub(crate) fn site(node: &crate::ir::Node) -> String {
     let draft = if node.id.starts_with("draft.") {
         "draft."
     } else {
@@ -193,6 +249,7 @@ pub fn build(inp: &VennInputs<'_>) -> Result<VennReport, VennError> {
     let settings = &inp.target.instance.policy.settings;
     let mut tables = Vec::with_capacity(inp.runs.len());
     let mut flags = Vec::new();
+    let mut uncovered = Vec::new();
     for &run in &inp.runs {
         let scope = in_section(tc, run.mode);
         if scope.is_empty() {
@@ -201,11 +258,12 @@ pub fn build(inp: &VennInputs<'_>) -> Result<VennReport, VennError> {
                 run.mode.name()
             )));
         }
-        let plans: Vec<FusionPlan> = inp
-            .against
-            .iter()
-            .map(|s| fused(s, run))
-            .collect::<Result<_, _>>()?;
+        let mut plans: Vec<FusionPlan> = Vec::with_capacity(inp.against.len());
+        for s in &inp.against {
+            let (plan, gaps) = fused_compared(s, run)?;
+            plans.push(plan);
+            uncovered.extend(gaps);
+        }
         let target_plan = if inp.target.instance.golden {
             Some(fused(&inp.target, run)?)
         } else {
@@ -317,6 +375,7 @@ pub fn build(inp: &VennInputs<'_>) -> Result<VennReport, VennError> {
         flags,
         tables,
         cited,
+        uncovered,
         command: inp.command.clone(),
     })
 }

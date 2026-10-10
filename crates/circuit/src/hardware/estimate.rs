@@ -126,11 +126,12 @@ pub fn footprint(c: &Circuit, settings: &BTreeMap<String, String>) -> Result<Foo
             .map(|v| *v as f64)
             .ok_or_else(|| format!("the footprint needs dim `{d}`"))
     };
-    let kv = match settings.get("kv_cache_dtype").map(String::as_str) {
-        Some("bf16") => 2.0,
-        Some("fp8") => 1.0,
+    // 2026-10-10: The KV element size is read per state (`read_units_bytes`); the policy must
+    // still state one this estimate sizes.
+    match settings.get("kv_cache_dtype").map(String::as_str) {
+        Some("bf16" | "fp8") => {}
         other => return Err(format!("kv_cache_dtype {other:?} has no element size")),
-    };
+    }
     let h = match settings.get("ssm_h_dtype").map(String::as_str) {
         Some("f32") => 4.0,
         Some("f16" | "f16-pool" | "bf16") => 2.0,
@@ -151,8 +152,9 @@ pub fn footprint(c: &Circuit, settings: &BTreeMap<String, String>) -> Result<Foo
             weights += dim("vocab")? * dim("hidden")? * 2.0;
         }
         if let Some(w) = n.weight {
-            let k = n.inputs.first().map_or(0, |&e| c.edges[e].dim_value);
-            let out: u64 = n.outputs.iter().map(|&e| c.edges[e].dim_value).sum();
+            let (out, k) = c
+                .weight_shape(n)
+                .ok_or_else(|| format!("node `{}`: its weight has no shape", n.id))?;
             let one = w
                 .weight_bytes(out, k)
                 .ok_or_else(|| format!("node `{}`: weight {} has no size", n.id, w.name()))?
@@ -164,11 +166,35 @@ pub fn footprint(c: &Circuit, settings: &BTreeMap<String, String>) -> Result<Foo
             weights += one * copies;
         }
         match n.op {
+            // 2026-10-10: One token of each KV side the node reads, at their declared formats, so
+            // a layer kind with its own head geometry (Gemma-4's global layers) counts its own. A
+            // sliding-window layer keeps every token too: the engine's paged pool does not drop
+            // the tokens behind the window.
             OpKind::PagedAttention => {
-                kv_per_token += 2.0 * dim("kv_heads")? * dim("head_dim")? * kv
+                kv_per_token += crate::venn::roofline::read_units_bytes(c, n, settings)
+                    .map_err(|e| e.to_string())?;
             }
             OpKind::GdnRecurrence => {
                 state += dim("lin_v_heads")? * dim("lin_k_dim")? * dim("lin_v_dim")? * h;
+            }
+            // 2026-10-08: The latent cache and the indexer's pooled keys, per token, at their
+            // declared formats.
+            OpKind::MlaAttention | OpKind::IndexSelect => {
+                kv_per_token += crate::venn::roofline::read_unit_bytes(c, n, settings)
+                    .map_err(|e| e.to_string())?;
+            }
+            // 2026-10-10: DeepSeek-V4: every KV side its attention reads (the window rows and
+            // the compressed rows), per token at their declared formats.
+            OpKind::CompressedAttention => {
+                for &(idx, access) in &n.state {
+                    if access == crate::state::StateAccess::Read {
+                        let unit = c.states[idx].elements
+                            * crate::venn::roofline::state_dtype(c, n, idx, settings)
+                                .map_err(|e| e.to_string())?
+                                .size();
+                        kv_per_token += unit as f64;
+                    }
+                }
             }
             OpKind::SsmUpdate => {
                 state += dim("mamba_heads")? * dim("mamba_head_dim")? * dim("ssm_state")? * 4.0;
@@ -190,8 +216,9 @@ pub fn weight_floor_bytes(c: &Circuit) -> Result<f64, String> {
     for b in c.blocks.iter().filter(|b| b.section == Section::Main) {
         for n in &c.nodes[b.first..b.end] {
             let Some(w) = n.weight else { continue };
-            let k = n.inputs.first().map_or(0, |&e| c.edges[e].dim_value);
-            let out: u64 = n.outputs.iter().map(|&e| c.edges[e].dim_value).sum();
+            let (out, k) = c
+                .weight_shape(n)
+                .ok_or_else(|| format!("node `{}`: its weight has no shape", n.id))?;
             let copies = match n.op {
                 OpKind::ExpertGateUp | OpKind::ExpertDown => {
                     *c.dims.get("top_k").ok_or_else(|| {

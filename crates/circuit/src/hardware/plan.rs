@@ -26,16 +26,16 @@ use super::estimate::{DeviceRoofline, device_roofline};
 use super::exec::{Exec, fp4_fallback, node_exec};
 use super::sources::{ClassSources, KernelTree};
 use super::{HwError, ModelUnderPlan};
-use crate::fuser::{FuseError, FusionPlan, fuse};
+use crate::fuser::FusionPlan;
+use crate::fuser_cover::fuse_covering;
 use crate::ir::{Circuit, NodeIdx};
-use crate::rules::{KernelId, Mode, Numerics, PatternOp, Repeat, Rule};
+use crate::rules::{KernelId, Mode, Rule};
 use crate::runtime::RuntimeRoute;
 use crate::venn::Run;
 use crate::venn::families::{Families, Roofline};
 use crate::venn::roofline::nvfp4_mma;
 
-/// 2026-09-30: The emitter of a placeholder group.
-pub const NOVEL_EMITTER: &str = "novel";
+pub use crate::fuser_cover::NOVEL_EMITTER;
 
 /// 2026-09-30: One fused plan and the nodes only a placeholder covers.
 #[derive(Debug, Clone)]
@@ -275,44 +275,6 @@ fn families_class(repo: &dyn crate::venn::repo::Repo, class: &str) -> Result<boo
     Ok(f.hardware == class)
 }
 
-/// 2026-09-30: The placeholder for `op` reading `input`: a quantized read is stated, since the
-/// fuser matches a pattern's quantized input format exactly (`fuser_match.rs`).
-fn placeholder(op: &crate::ir::OpKind, input: Option<crate::format::Format>) -> Rule {
-    let input = input.filter(|f| !f.is_plain());
-    Rule {
-        id: match input {
-            Some(f) => format!("novel.{}.{}", op.name(), f.name()),
-            None => format!("novel.{}", op.name()),
-        },
-        pattern: vec![PatternOp {
-            op: *op,
-            roles: BTreeSet::new(),
-            layer_kind: None,
-            local: None,
-            weight: None,
-            input,
-            writes: None,
-            keep: false,
-            stored: false,
-            sibling: false,
-            holds: None,
-            steps: BTreeMap::new(),
-        }],
-        kernels: Vec::new(),
-        repeat: Repeat::Once,
-        copies: None,
-        emitter: NOVEL_EMITTER.to_string(),
-        rows: (1, u64::MAX),
-        modes: Mode::ALL.into_iter().collect(),
-        requires: BTreeSet::new(),
-        when: Default::default(),
-        numerics: Numerics::Reference,
-        runs: Vec::new(),
-        priority: i64::MIN,
-        cite: "no rule of this class covers the op on this device".into(),
-    }
-}
-
 /// 2026-09-30: Fuse `circuit` at `run` with the rules and kernels of `r`, covering what no rule
 /// covers with placeholders; each runtime route that applies is planned beside it.
 pub fn fuse_on(
@@ -347,75 +309,51 @@ fn fuse_arm(
     let mut rules: Vec<Rule> = r.rule_list().to_vec();
     let mut refused = Vec::new();
     loop {
-        match fuse(
+        let plan = fuse_covering(
             circuit,
-            &rules,
+            &mut rules,
             &r.availability.kernels,
             policy,
             run.mode,
             run.rows,
+            &mut refused,
+        )
+        .map_err(|e| HwError::Plan(e.to_string()))?;
+        let pipelines = match crate::pipeline::check_plan(
+            circuit,
+            &plan,
+            &rules,
+            &r.families,
+            &policy.settings,
         ) {
-            Ok(plan) => {
-                let pipelines = match crate::pipeline::check_plan(
-                    circuit,
-                    &plan,
-                    &rules,
-                    &r.families,
-                    &policy.settings,
-                ) {
-                    Ok(p) => p,
-                    Err(crate::pipeline::PipelineError::Mismatch(ms)) => {
-                        // 2026-10-02: Refuse each rule whose kernels run another precision than
-                        // the node requires, and plan again without it.
-                        for m in ms {
-                            if rules.iter().any(|x| x.id == m.rule) {
-                                rules.retain(|x| x.id != m.rule);
-                                refused.push((m.rule.clone(), m.describe()));
-                            }
-                        }
-                        continue;
+            Ok(p) => p,
+            Err(crate::pipeline::PipelineError::Mismatch(ms)) => {
+                // 2026-10-02: Refuse each rule whose kernels run another precision than the node
+                // requires, and plan again without it.
+                for m in ms {
+                    if rules.iter().any(|x| x.id == m.rule) {
+                        rules.retain(|x| x.id != m.rule);
+                        refused.push((m.rule.clone(), m.describe()));
                     }
-                    Err(e) => return Err(HwError::Plan(e.to_string())),
-                };
-                let novel = plan
-                    .groups
-                    .iter()
-                    .filter(|g| g.emitter == NOVEL_EMITTER)
-                    .flat_map(|g| g.nodes.iter().copied())
-                    .collect();
-                return Ok(Planned {
-                    run,
-                    plan,
-                    novel,
-                    refused,
-                    routes: Vec::new(),
-                    pipelines,
-                });
-            }
-            Err(FuseError::Uncovered { node, .. }) => {
-                let idx = circuit
-                    .node(&node)
-                    .ok_or_else(|| HwError::Plan(format!("uncovered node `{node}` not found")))?;
-                let n = &circuit.nodes[idx];
-                let p = placeholder(&n.op, n.inputs.first().map(|&e| circuit.edges[e].format));
-                if rules.iter().any(|x| x.id == p.id) {
-                    return Err(HwError::Plan(format!(
-                        "node `{node}` stays uncovered with its placeholder `{}`",
-                        p.id
-                    )));
                 }
-                rules.push(p);
-            }
-            Err(e @ FuseError::FormatConflict { .. }) => {
-                let FuseError::FormatConflict { rule, .. } = &e else {
-                    unreachable!("matched above")
-                };
-                let id = rule.clone();
-                rules.retain(|x| x.id != id);
-                refused.push((id, e.to_string()));
+                continue;
             }
             Err(e) => return Err(HwError::Plan(e.to_string())),
-        }
+        };
+        let novel = plan
+            .groups
+            .iter()
+            .filter(|g| g.emitter == NOVEL_EMITTER)
+            .flat_map(|g| g.nodes.iter().copied())
+            .collect();
+        return Ok(Planned {
+            run,
+            plan,
+            novel,
+            refused,
+            routes: Vec::new(),
+            pipelines,
+        });
     }
 }
 

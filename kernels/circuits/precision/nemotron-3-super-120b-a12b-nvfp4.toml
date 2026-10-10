@@ -1,0 +1,226 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-10: The formats each linear module of nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4 runs
+# at under the declared tier: the checkpoint's own quantization (ModelOpt MIXED_PRECISION,
+# config.json `quantization_config` = hf_quant_config.json `quantization`), module by module.
+#
+# Owner: metrale-circuit (schema: crates/circuit/src/precision.rs).
+# Invariants:
+# - First match wins; the last entry is the catch-all.
+# - `quantized_layers` is per module: NVFP4 W4A4 (group 16) for every routed expert, FP8 W8A8
+#   (static per-tensor scales) for most Mamba2 in_proj/out_proj, shared-expert projections and a
+#   few latent projections and attention o_proj, and one NVFP4 shared-expert down_proj; a module it
+#   does not list is BF16 (the exact exceptions are the per-layer entries below). The MTP layer,
+#   the routers, lm_head and the other attention projections are BF16. The KV cache is FP8.
+# - crates/circuit/tests/nemotron_h.rs checks every node against the checkpoint's declared plan.
+# - The recipe pins `weight_quantization: nvfp4` and `activation_quantization: adaptive`; this
+#   table is the declared tier (the engine default), the basis every model is compared on.
+
+schema = 1
+checkpoint = "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4"
+tier = "declared"
+
+[[linear]]
+match = "mtp.*"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "backbone.layers.22.mixer.in_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "backbone.layers.24.mixer.in_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "backbone.layers.33.mixer.in_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "backbone.layers.35.mixer.in_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "backbone.layers.38.mixer.in_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "backbone.layers.42.mixer.in_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "backbone.layers.44.mixer.in_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "backbone.layers.46.mixer.in_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "backbone.layers.64.mixer.in_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "backbone.layers.75.mixer.in_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "backbone.layers.77.mixer.in_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "backbone.layers.80.mixer.in_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "*.mixer.in_proj"
+weight = "fp8/tensor"
+activation = "fp8/tensor"
+
+[[linear]]
+match = "backbone.layers.6.mixer.out_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "backbone.layers.15.mixer.out_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "backbone.layers.20.mixer.out_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "backbone.layers.22.mixer.out_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "backbone.layers.24.mixer.out_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "backbone.layers.27.mixer.out_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "backbone.layers.29.mixer.out_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "backbone.layers.31.mixer.out_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "backbone.layers.33.mixer.out_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "backbone.layers.35.mixer.out_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "backbone.layers.46.mixer.out_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "*.mixer.out_proj"
+weight = "fp8/tensor"
+activation = "fp8/tensor"
+
+[[linear]]
+match = "backbone.layers.1.mixer.fc1_latent_proj"
+weight = "fp8/tensor"
+activation = "fp8/tensor"
+
+[[linear]]
+match = "backbone.layers.3.mixer.fc1_latent_proj"
+weight = "fp8/tensor"
+activation = "fp8/tensor"
+
+[[linear]]
+match = "backbone.layers.5.mixer.fc1_latent_proj"
+weight = "fp8/tensor"
+activation = "fp8/tensor"
+
+[[linear]]
+match = "*.mixer.experts.*.up_proj"
+weight = "nvfp4/g16"
+activation = "nvfp4/g16"
+
+[[linear]]
+match = "*.mixer.experts.*.down_proj"
+weight = "nvfp4/g16"
+activation = "nvfp4/g16"
+
+[[linear]]
+match = "backbone.layers.3.mixer.fc2_latent_proj"
+weight = "fp8/tensor"
+activation = "fp8/tensor"
+
+[[linear]]
+match = "backbone.layers.41.mixer.shared_experts.up_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "*.mixer.shared_experts.up_proj"
+weight = "fp8/tensor"
+activation = "fp8/tensor"
+
+[[linear]]
+match = "backbone.layers.1.mixer.shared_experts.down_proj"
+weight = "nvfp4/g16"
+activation = "nvfp4/g16"
+
+[[linear]]
+match = "backbone.layers.8.mixer.shared_experts.down_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "backbone.layers.76.mixer.shared_experts.down_proj"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "*.mixer.shared_experts.down_proj"
+weight = "fp8/tensor"
+activation = "fp8/tensor"
+
+[[linear]]
+match = "backbone.layers.69.mixer.o_proj"
+weight = "fp8/tensor"
+activation = "fp8/tensor"
+
+[[linear]]
+match = "backbone.layers.78.mixer.o_proj"
+weight = "fp8/tensor"
+activation = "fp8/tensor"
+
+[[linear]]
+match = "*"
+weight = "bf16"
+activation = "bf16"

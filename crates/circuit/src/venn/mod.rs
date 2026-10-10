@@ -34,6 +34,9 @@ mod render_summary;
 pub mod repo;
 pub mod report;
 pub mod roofline;
+pub mod union;
+mod union_render;
+mod union_tables;
 
 use std::collections::BTreeMap;
 
@@ -47,6 +50,7 @@ pub use measurements::{Measurements, parse_measurements};
 pub use render::render;
 pub use repo::{Repo, checkpoint_id_of, report_text, resolve};
 pub use report::{VennInputs, VennReport, build};
+pub use union_render::render_union;
 
 /// 2026-09-29: One model on either side of the diagram, at one mode and row count.
 #[derive(Debug, Clone, Copy)]
