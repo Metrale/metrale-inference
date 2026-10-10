@@ -198,34 +198,18 @@ impl TransformerModel {
             return self.ep_worker_prefill_spans(slots);
         }
 
-        // 2026-10-10: DFlash must rendezvous before the generic slot and
-        // proposer checks below. A local early return here would strand rank 0
-        // in the TP preflight; vote the failure first so every rank rejects.
+        // 2026-10-10: The tensor-parallel DFlash propose, before the generic slot checks: a
+        // rank without a valid slot or state must still join the propose's exchange (it
+        // reports itself not ready there), or rank 0 would wait for it.
         if cmd == metrale_model_layers::speculative::EP_CMD_DFLASH_PROPOSE {
             let slot_idx = seq_id as usize;
-            let seq = slots.get(slot_idx).and_then(Option::as_ref);
-            let proposer_collective = self
-                .proposer
-                .as_ref()
-                .is_some_and(|proposer| proposer.collective_propose());
-            let proposer_state = seq.is_some_and(|seq| seq.proposer_state.is_some());
-            let (slot_valid, proposer_collective, proposer_state) = Self::dflash_worker_readiness(
-                slot_idx,
-                slots.len(),
-                seq.map(|seq| seq.slot_idx),
-                self.ep_protocol_v2,
-                proposer_collective,
-                proposer_state,
-            );
-            // 2026-10-10: On success, continue through the ordinary slot lookup
-            // and dispatch below; on failure, every rank returns here before
-            // any local early return can strand a peer.
-            self.ep_dflash_propose_readiness(
-                slot_valid,
-                proposer_collective,
-                proposer_state,
-                || Ok(()),
-            )?;
+            let state = slots
+                .get_mut(slot_idx)
+                .and_then(Option::as_mut)
+                .filter(|seq| !self.ep_protocol_v2 || seq.slot_idx == slot_idx)
+                .and_then(|seq| seq.proposer_state.as_mut());
+            self.ep_worker_dflash_propose(state)?;
+            return Ok(true);
         }
 
         let slot_idx = seq_id as usize;
@@ -327,10 +311,6 @@ impl TransformerModel {
                     &[0u32; crate::model::trait_impl::decode_checkpoint::EP_CKPT_WORDS],
                 )?;
                 self.decode_marconi_checkpoint_worker(seq, &words)?;
-            }
-            // 2026-10-10: The tensor-parallel DFlash propose: this rank's half of the collective.
-            metrale_model_layers::speculative::EP_CMD_DFLASH_PROPOSE => {
-                self.ep_worker_dflash_propose(seq)?;
             }
             metrale_model_layers::speculative::EP_CMD_MTP_PROPOSE => {
                 // 2026-09-25: Run the same drafter forward as rank 0, so its

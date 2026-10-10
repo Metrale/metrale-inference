@@ -175,6 +175,17 @@ impl Header {
     }
 }
 
+/// 2026-10-10: A column-sliced weight's source: the whole `[rows, full_k]` BF16 weight and the
+/// first of this rank's columns. The FP8 copy quantizes the whole rows and keeps this rank's
+/// columns with the whole rows' scales (`from_weights/fp8_weights.rs`), so every FP8 byte and
+/// scale equals the one-rank drafter's.
+#[derive(Clone, Copy, Debug)]
+pub struct ColSlice {
+    pub full: DenseWeight,
+    pub full_k: usize,
+    pub start: usize,
+}
+
 /// 2026-10-10: `weights` cut to this rank's part under `plan`: the config's head counts,
 /// intermediate size and vocab become the local ones; q/k/v/gate/up point at their row slice;
 /// o_proj and down are repacked into new `[hidden, local]` buffers (2D copies on stream 0,
@@ -214,6 +225,16 @@ pub fn shard_weights(
         l.v_proj = rows(&l.v_proj, plan.kv_heads.0 * hd);
         l.gate_proj = rows(&l.gate_proj, plan.inter.0);
         l.up_proj = rows(&l.up_proj, plan.inter.0);
+        l.o_proj_cols = Some(ColSlice {
+            full: l.o_proj,
+            full_k: nq * hd,
+            start: q_cols.0,
+        });
+        l.down_proj_cols = Some(ColSlice {
+            full: l.down_proj,
+            full_k: inter,
+            start: plan.inter.0,
+        });
         l.o_proj = cols(&l.o_proj, nq * hd, q_cols)?;
         l.down_proj = cols(&l.down_proj, inter, plan.inter)?;
     }

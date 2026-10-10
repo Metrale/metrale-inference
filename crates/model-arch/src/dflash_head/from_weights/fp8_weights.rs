@@ -50,12 +50,15 @@ pub(super) fn quantize_drafter_fp8(
                     .v_proj
                     .quantize_to_fp8(gpu, quant_k, kv_dim_local, h, stream)?,
             );
-        layer.o_proj_fp8 =
-            Some(
-                layer
-                    .o_proj
-                    .quantize_to_fp8(gpu, quant_k, h, q_dim_local, stream)?,
-            );
+        layer.o_proj_fp8 = Some(quantize_cols(
+            gpu,
+            quant_k,
+            &layer.o_proj,
+            layer.o_proj_cols,
+            h,
+            q_dim_local,
+            stream,
+        )?);
         layer.gate_proj_fp8 = Some(
             layer
                 .gate_proj
@@ -66,11 +69,15 @@ pub(super) fn quantize_drafter_fp8(
                 .up_proj
                 .quantize_to_fp8(gpu, quant_k, inter, h, stream)?,
         );
-        layer.down_proj_fp8 = Some(
-            layer
-                .down_proj
-                .quantize_to_fp8(gpu, quant_k, h, inter, stream)?,
-        );
+        layer.down_proj_fp8 = Some(quantize_cols(
+            gpu,
+            quant_k,
+            &layer.down_proj,
+            layer.down_proj_cols,
+            h,
+            inter,
+            stream,
+        )?);
         tracing::debug!(
             target: "metrale_model_arch::dflash_head::from_weights",
             "DFlash Phase G: layer {} quantized", layer_idx
@@ -121,4 +128,46 @@ pub(super) fn quantize_drafter_fp8(
          Set METRALE_DFLASH_DRAFTER_FP8=0 to revert to BF16."
     );
     Ok(())
+}
+
+/// 2026-10-10: The FP8 copy of an `[n, k]` weight. A tensor-parallel column slice (`cols`)
+/// quantizes the whole rows (`[n, cols.full_k]`), keeps this rank's `k` columns from
+/// `cols.start` and the whole rows' scales, and frees the rest, so its bytes and scales are
+/// the one-rank drafter's.
+fn quantize_cols(
+    gpu: &dyn GpuBackend,
+    quant_k: metrale_gpu_runtime::gpu::KernelHandle,
+    local: &metrale_model_layers::weight_map::DenseWeight,
+    cols: Option<crate::dflash_head::tp::ColSlice>,
+    n: usize,
+    k: usize,
+    stream: u64,
+) -> Result<metrale_model_layers::weight_map::Fp8DenseWeight> {
+    let Some(c) = cols else {
+        return local.quantize_to_fp8(gpu, quant_k, n, k, stream);
+    };
+    anyhow::ensure!(
+        c.start + k <= c.full_k,
+        "DFlash TP FP8: columns {}..{} past the whole row of {}",
+        c.start,
+        c.start + k,
+        c.full_k
+    );
+    let full = c.full.quantize_to_fp8(gpu, quant_k, n, c.full_k, stream)?;
+    let weight = gpu.alloc(n * k)?;
+    gpu.copy_d2d_2d_async(
+        full.weight.offset(c.start),
+        c.full_k,
+        weight,
+        k,
+        k,
+        n,
+        stream,
+    )?;
+    gpu.synchronize(stream)?;
+    gpu.free(full.weight)?;
+    Ok(metrale_model_layers::weight_map::Fp8DenseWeight {
+        weight,
+        row_scale: full.row_scale,
+    })
 }

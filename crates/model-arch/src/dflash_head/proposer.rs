@@ -27,7 +27,7 @@ impl DraftProposer for BlockDiffusionDraftHead {
 
     fn propose_follower(
         &self,
-        state: &mut dyn ProposerState,
+        state: Option<&mut dyn ProposerState>,
         ctx: &metrale_model_layers::layer::ForwardContext,
         stream: u64,
     ) -> Result<()> {

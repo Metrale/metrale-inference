@@ -135,6 +135,9 @@ pub struct DFlashLevers {
     /// 2026-10-10: `METRALE_DFLASH_AUX_FP8=1`: FP8 copies of the ctx `fc` and K/V, conv kernel
     /// and selector projections (`aux_fp8.rs`). Opt-in: it moves the draft numerics.
     pub aux_fp8: bool,
+    /// 2026-10-10: `METRALE_DFLASH_TP_GRAPHS=1`: a tensor-parallel drafter's propose runs on its
+    /// CUDA graphs, collectives captured (`tp.rs`). Opt-in; otherwise it runs eagerly.
+    pub tp_graphs: bool,
 }
 
 /// 2026-09-25: Variables whose presence, at any value, sets `any_diagnostic_armed`
@@ -188,6 +191,7 @@ fn from_values(
         dflash2: value("METRALE_DFLASH2").as_deref() != Some("0"),
         topk16_split: value("METRALE_DFLASH2_TOPK_SPLIT").as_deref() != Some("0"),
         aux_fp8: opt_in(value("METRALE_DFLASH_AUX_FP8").as_deref()),
+        tp_graphs: opt_in(value("METRALE_DFLASH_TP_GRAPHS").as_deref()),
         batch_propose_width: parsed(value("METRALE_DFLASH_BATCH_PROPOSE").as_deref())
             .unwrap_or(usize::MAX),
         draft_cap: parsed(value("METRALE_DFLASH_DRAFT_CAP").as_deref()),

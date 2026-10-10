@@ -43,35 +43,21 @@ impl BlockDiffusionDraftHead {
         self.set_block_g(num_drafts);
 
         if self.tp.is_some() {
-            // 2026-10-10: Complete root-local work before agreeing with followers.
-            // In particular, an append/readback or state/table setup error must
-            // not let rank 0 enter a different DFlash collective from workers.
-            let local = (|| -> Result<DevicePtr> {
-                anyhow::ensure!(
-                    collect_prep.is_none(),
-                    "DFlash TP: the batched propose is declined, not prepared"
-                );
-                let dstate = state
-                    .as_any_mut()
-                    .downcast_mut::<DflashProposerState>()
-                    .ok_or_else(|| anyhow::anyhow!("Invalid DFlash proposer state"))?;
-                self.append_decode_ctx(
-                    dstate,
-                    last_token,
-                    position,
-                    ctx,
-                    _stream,
-                    target_hidden_stack,
-                )?;
-                self.ensure_block_table(dstate, ctx)
-            })();
-            let bt = self.tp_agree_preflight(ctx, local, "root setup")?;
-            let dstate = state
-                .as_any_mut()
-                .downcast_mut::<DflashProposerState>()
-                .expect("successful DFlash TP setup validated proposer state");
-            return self
-                .propose_tp_root(last_token, position, num_drafts, dstate, bt, ctx, _stream);
+            // 2026-10-10: The tensor-parallel propose is one collective step on every rank
+            // (`tp_propose.rs`); it serves no batched prep.
+            anyhow::ensure!(
+                collect_prep.is_none(),
+                "DFlash TP: the batched propose is declined, not prepared"
+            );
+            return self.propose_tp_root(
+                last_token,
+                position,
+                num_drafts,
+                state,
+                ctx,
+                _stream,
+                target_hidden_stack,
+            );
         }
 
         let dstate = state
@@ -225,7 +211,7 @@ impl BlockDiffusionDraftHead {
     /// 2026-10-10: Append the current target capture and run the optional one-shot
     /// ctx parity diagnostic. Tensor-parallel callers include every fallible
     /// operation here in the root preflight agreement before sending a header.
-    fn append_decode_ctx(
+    pub(super) fn append_decode_ctx(
         &self,
         dstate: &mut DflashProposerState,
         last_token: u32,

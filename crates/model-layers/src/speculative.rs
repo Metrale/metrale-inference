@@ -104,12 +104,13 @@ pub trait DraftProposer: Send + Sync {
         false
     }
 
-    /// 2026-10-10: The non-root side of a [`Self::collective_propose`] propose on `state`: the
-    /// same collectives as rank 0's, in the same order, with its drafts discarded. Errors for
-    /// a proposer without one.
+    /// 2026-10-10: The non-root side of a [`Self::collective_propose`] propose on `state` (the
+    /// command's slot; `None` when this rank has no state there, which the proposer reports
+    /// to every rank inside its collectives): the same collectives as rank 0's, in the same
+    /// order, with its drafts discarded. Errors for a proposer without one.
     fn propose_follower(
         &self,
-        state: &mut dyn ProposerState,
+        state: Option<&mut dyn ProposerState>,
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<()> {

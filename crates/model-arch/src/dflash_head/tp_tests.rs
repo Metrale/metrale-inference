@@ -115,62 +115,6 @@ fn the_header_round_trips_and_spills_long_tails() {
     assert!(Header::decode(&empty).is_err());
 }
 
-/// 2026-10-10: A root-local setup error is contributed to the status gather, and the same
-/// gathered failure makes a worker stop before entering header/ctx-row collectives.
-#[test]
-fn root_preflight_failure_is_shared_with_workers() {
-    let statuses = [1, 0];
-    let root = super::super::tp_propose::agree_preflight::<()>(
-        Err(anyhow::anyhow!("root ctx append failed")),
-        0,
-        "root setup",
-        |local| {
-            assert_eq!(
-                local, 1,
-                "the failing root must still enter the status gather"
-            );
-            Ok(statuses.to_vec())
-        },
-    )
-    .unwrap_err();
-    assert!(format!("{root:#}").contains("root ctx append failed"));
-
-    let worker = super::super::tp_propose::agree_preflight(Ok(()), 1, "root setup", |local| {
-        assert_eq!(local, 0);
-        Ok(statuses.to_vec())
-    })
-    .unwrap_err();
-    assert!(format!("{worker:#}").contains("rank 0 failed local setup"));
-}
-
-/// 2026-10-10: A worker state/block-table setup error likewise makes the root stop before
-/// broadcasting a header; the worker retains its concrete local error.
-#[test]
-fn worker_preflight_failure_is_shared_with_root() {
-    let statuses = [0, 1];
-    let root = super::super::tp_propose::agree_preflight(Ok(()), 0, "worker setup", |local| {
-        assert_eq!(local, 0);
-        Ok(statuses.to_vec())
-    })
-    .unwrap_err();
-    assert!(format!("{root:#}").contains("rank 1 failed local setup"));
-
-    let worker = super::super::tp_propose::agree_preflight::<()>(
-        Err(anyhow::anyhow!("worker block-table allocation failed")),
-        1,
-        "worker setup",
-        |local| {
-            assert_eq!(
-                local, 1,
-                "the failing worker must still enter the status gather"
-            );
-            Ok(statuses.to_vec())
-        },
-    )
-    .unwrap_err();
-    assert!(format!("{worker:#}").contains("worker block-table allocation failed"));
-}
-
 /// 2026-10-10: Validation rejects a decoded width or context span before that rank can reach
 /// the overflow/context-row broadcast sequence.
 #[test]

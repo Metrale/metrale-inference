@@ -48,9 +48,7 @@ pub(super) fn assert_rank_levers_agree(
             // some ranks enable it, rank 0's all-reduces have no matching participants.
             (
                 "METRALE_DFLASH_TP",
-                u64::from(
-                    metrale_config::levers::var("METRALE_DFLASH_TP").as_deref() == Some("1"),
-                ),
+                u64::from(metrale_config::levers::var("METRALE_DFLASH_TP").as_deref() == Some("1")),
             ),
             // 2026-10-10: The resolved context window determines DFlash context-broadcast
             // chunking, so every rank must use the same value.

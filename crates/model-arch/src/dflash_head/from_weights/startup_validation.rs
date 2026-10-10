@@ -18,10 +18,9 @@ pub(super) fn validate_tp_startup(
         return Ok(());
     }
 
-    anyhow::ensure!(
-        !fp8_requested,
-        "DFlash TP does not support drafter FP8 yet: row scales must be preserved over the full unsharded rows; set METRALE_DFLASH_DRAFTER_FP8=0"
-    );
+    // 2026-10-10: FP8 is supported: the column-sliced o_proj / down keep the whole rows'
+    // scales (`fp8_weights::quantize_cols`), the row slices' scales are their own rows'.
+    let _ = fp8_requested;
     anyhow::ensure!(
         topk16_split,
         "DFlash TP requires the split top-16 path; METRALE_DFLASH2_TOPK_SPLIT=0 is unsupported"
@@ -57,10 +56,8 @@ mod tests {
     }
 
     #[test]
-    fn tp_refuses_requested_drafter_fp8() {
-        let err = validate_tp_startup(true, true, true, false, true, true, 51_648).unwrap_err();
-        assert!(err.to_string().contains("does not support drafter FP8"));
-        assert!(err.to_string().contains("METRALE_DFLASH_DRAFTER_FP8=0"));
+    fn tp_accepts_the_fp8_drafter() {
+        assert!(validate_tp_startup(true, true, true, true, true, true, 51_648).is_ok());
     }
 
     #[test]
@@ -72,17 +69,13 @@ mod tests {
     #[test]
     fn active_tp_selector_requires_both_distributed_topk_kernels() {
         for (part_present, merge_present) in [(false, false), (false, true), (true, false)] {
-            let err = validate_tp_startup(
-                true,
-                false,
-                true,
-                true,
-                part_present,
-                merge_present,
-                51_648,
-            )
-            .unwrap_err();
-            assert!(err.to_string().contains("requires both dflash2_topk16_part"));
+            let err =
+                validate_tp_startup(true, false, true, true, part_present, merge_present, 51_648)
+                    .unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains("requires both dflash2_topk16_part")
+            );
         }
     }
 

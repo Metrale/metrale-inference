@@ -86,6 +86,9 @@ pub struct DflashLayer {
     /// `METRALE_DFLASH_AUX_FP8=1` (`aux_fp8.rs`), else `None`.
     pub attention_conv_proj_fp8: Option<metrale_model_layers::weight_map::Fp8DenseWeight>,
     pub mlp_conv_proj_fp8: Option<metrale_model_layers::weight_map::Fp8DenseWeight>,
+    /// 2026-10-10: The tensor-parallel column sources of o_proj / down_proj (`tp::ColSlice`).
+    pub o_proj_cols: Option<tp::ColSlice>,
+    pub down_proj_cols: Option<tp::ColSlice>,
 }
 
 #[allow(dead_code)]

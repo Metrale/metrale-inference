@@ -4,23 +4,25 @@
 //! 0 starts from `propose_drafts` (after the model sent `EP_CMD_DFLASH_PROPOSE`) and the
 //! other ranks run from that command (`propose_tp_follower`).
 //!
-//! Collectives, in order, on every rank: a setup-status all-gather; a header-staging status
-//! all-gather; the fixed [`Header`] broadcast; a decode-status all-gather; the optional overflow
-//! positions broadcast; an overflow-read status all-gather; per `ctx_window` chunk, the
-//! broadcast of rank 0's `fc` rows and status exchanges around local K/V writes; in the block
-//! forward, the all-reduce after o_proj and after down of each layer and one all-gather of the
-//! top-16 lists.
+//! Collectives, in order, on every rank: one all-gather of `[status, header]` blocks (rank 0's
+//! block carries the [`Header`]); the header's overflow positions, broadcast when it has any;
+//! per `ctx_window` chunk of the context rows to add, the broadcast of rank 0's `fc` rows; in
+//! the block forward, the all-reduce after o_proj and after down of each layer and one
+//! all-gather of the top-16 lists.
+//!
+//! The exchange costs one host round trip where a status and a header broadcast cost two, and
+//! it carries every rank's readiness, so a rank that cannot propose (no state for the slot, no
+//! block table, a bad header on rank 0) stops every rank at the same point.
 //!
 //! Owner: model-arch (DFlash drafter).
 //! Invariants:
-//! - After the command, every local setup failure is reported by the phase's common status
-//!   all-gather before ranks enter the next protocol phase; context-chunk failures are agreed
-//!   after the aligned payload broadcast and before K/V consumption, the next chunk or forward.
+//! - Every rank takes part in the exchange on every path, ready or not, and returns an error on
+//!   every rank when any rank is not ready, before any later collective.
 //! - The other ranks read no context state of their own: the header carries the block, the
 //!   attention's context length and the new rows' positions, and the rows' `fc` comes from
 //!   rank 0; each rank writes its K/V heads at those context rows through its own block table.
-//! - A rank-local failure inside `forward_block` itself is not agreed before that block's next
-//!   TP all-reduce; layer-forward error coordination remains outside this propose-level fix.
+//! - After the exchange a rank-local failure (a failed launch) is not agreed: it surfaces as an
+//!   error on that rank and the others wait in their next collective.
 
 use anyhow::{Context, Result};
 use metrale_comm::CommBackend;
@@ -29,83 +31,49 @@ use metrale_model_layers::layer::ForwardContext;
 use metrale_model_layers::speculative::ProposerState;
 
 use super::dflash2::{Topk16Merge, topk16_parts};
-use super::tp::{HEADER_INLINE, HEADER_WORDS, Header};
+use super::tp::{HEADER_WORDS, Header};
 use super::{BlockDiffusionDraftHead, DflashProposerState};
 
 /// 2026-10-10: The drafter cache's block size (`from_weights.rs`).
 const BLOCK_SIZE: u32 = 16;
+/// 2026-10-10: Words of one rank's exchange block: its status, then the header words.
+pub(super) const EXCHANGE_WORDS: usize = 1 + HEADER_WORDS;
+const STATUS_READY: u32 = 0x5244_5931;
+const STATUS_FAILED: u32 = 0x4641_494c;
 
-/// Resolve one rank's local preflight result against the rank-ordered statuses returned by an
-/// all-gather. Kept separate from device I/O so the root/worker failure behavior is testable.
-fn resolve_preflight<T>(local: Result<T>, statuses: &[u32], rank: usize, phase: &str) -> Result<T> {
-    anyhow::ensure!(
-        rank < statuses.len(),
-        "DFlash TP {phase}: invalid rank {rank}"
-    );
-    anyhow::ensure!(
-        statuses.iter().all(|&s| s <= 1),
-        "DFlash TP {phase}: invalid preflight status"
-    );
-    anyhow::ensure!(
-        statuses[rank] == u32::from(local.is_err()),
-        "DFlash TP {phase}: gathered local status disagrees with local result"
-    );
-    if let Some(failed_rank) = statuses.iter().position(|&s| s != 0) {
-        return match local {
-            Err(e) => Err(e).with_context(|| format!("DFlash TP {phase}: local setup failed")),
-            Ok(_) => anyhow::bail!(
-                "DFlash TP {phase}: rank {failed_rank} failed local setup; propose cancelled"
-            ),
-        };
+/// 2026-10-10: One rank's exchange block: its status and, on rank 0 when ready, the header.
+pub(super) fn exchange_block(ready: bool, header: Option<&Header>) -> [u32; EXCHANGE_WORDS] {
+    let mut w = [0u32; EXCHANGE_WORDS];
+    w[0] = if ready { STATUS_READY } else { STATUS_FAILED };
+    if let Some(h) = header {
+        w[1..].copy_from_slice(&h.encode());
     }
-    local
+    w
 }
 
-/// Always execute the status exchange before resolving a local error. This ordering is the
-/// safety property: no rank returns from setup while another advances to a different collective.
-pub(super) fn agree_preflight<T>(
-    local: Result<T>,
-    rank: usize,
-    phase: &str,
-    gather: impl FnOnce(u32) -> Result<Vec<u32>>,
-) -> Result<T> {
-    let statuses = gather(u32::from(local.is_err()))?;
-    resolve_preflight(local, &statuses, rank, phase)
+/// 2026-10-10: Every rank's gathered blocks (rank-major) resolved the same way on every rank:
+/// an error naming the ranks that are not ready (or sent a malformed status), else rank 0's
+/// header and how many of its positions come in the overflow broadcast.
+pub(super) fn resolve_exchange(blocks: &[u32], world: usize) -> Result<(Header, usize)> {
+    anyhow::ensure!(
+        blocks.len() == world * EXCHANGE_WORDS,
+        "DFlash TP exchange: {} words for {world} ranks",
+        blocks.len()
+    );
+    let failed: Vec<usize> = (0..world)
+        .filter(|&r| blocks[r * EXCHANGE_WORDS] != STATUS_READY)
+        .collect();
+    anyhow::ensure!(
+        failed.is_empty(),
+        "DFlash TP propose cancelled on every rank: rank(s) {failed:?} not ready"
+    );
+    let mut words = [0u32; HEADER_WORDS];
+    words.copy_from_slice(&blocks[1..EXCHANGE_WORDS]);
+    let header = Header::decode(&words)?.context("DFlash TP exchange: rank 0 sent no header")?;
+    Ok((header, Header::overflow_len(&words)))
 }
 
-/// Run both independent pre-broadcast operations, retaining the first local error. In
-/// particular, an unsuccessful slot fill must not prevent rank 0 from producing the payload
-/// that all ranks are about to broadcast.
-fn run_context_prepare(
-    fill_slots: impl FnOnce() -> Result<()>,
-    project_fc: impl FnOnce() -> Result<()>,
-) -> Result<()> {
-    let slots = fill_slots();
-    let projection = project_fc();
-    match slots {
-        Err(error) => Err(error),
-        Ok(()) => projection,
-    }
-}
-
-/// Keep every rank on the same per-chunk collective path. Payload broadcast is attempted even
-/// when local preparation failed; agreement then prevents any rank from consuming that payload
-/// or entering the next chunk. A broadcast/collective error propagates immediately, so no later
-/// collective is attempted on a failed communicator.
-fn run_context_chunk(
-    prepare: impl FnOnce() -> Result<()>,
-    broadcast: impl FnOnce() -> Result<()>,
-    mut agree: impl FnMut(Result<()>, &str) -> Result<()>,
-    write_kv: impl FnOnce() -> Result<()>,
-) -> Result<()> {
-    let prepared = prepare();
-    broadcast()?;
-    agree(prepared, "context payload")?;
-
-    let written = write_kv();
-    agree(written, "context K/V write")
-}
-
+/// 2026-10-10: Refuse a header whose sizes would address past this rank's buffers.
 pub(super) fn validate_tp_header(
     header: &Header,
     total_positions: usize,
@@ -119,10 +87,6 @@ pub(super) fn validate_tp_header(
         gamma.max(2)
     );
     anyhow::ensure!(
-        total_positions <= max_seq_len,
-        "DFlash TP header: {total_positions} context positions exceed max_seq_len {max_seq_len}"
-    );
-    anyhow::ensure!(
         header.ctx_count <= max_seq_len,
         "DFlash TP header: context count {} exceeds max_seq_len {max_seq_len}",
         header.ctx_count
@@ -133,7 +97,7 @@ pub(super) fn validate_tp_header(
         .context("DFlash TP header: context position range overflow")?;
     anyhow::ensure!(
         ship_end <= max_seq_len,
-        "DFlash TP header: context position range ends at {ship_end}, max_seq_len is {max_seq_len}"
+        "DFlash TP header: context rows end at {ship_end}, max_seq_len is {max_seq_len}"
     );
     Ok(())
 }
@@ -146,33 +110,10 @@ impl BlockDiffusionDraftHead {
             .context("DFlash TP: the drafter forward has no communicator")
     }
 
-    /// 2026-10-10: Exchange one status word on every rank even when local setup failed. The
-    /// caller must invoke this at the same protocol boundary on every rank.
-    pub(super) fn tp_agree_preflight<T>(
-        &self,
-        ctx: &ForwardContext,
-        local: Result<T>,
-        phase: &str,
-    ) -> Result<T> {
-        let comm = self.tp_comm(ctx)?;
-        let tp = self
-            .tp
-            .context("DFlash TP preflight without tensor parallelism")?;
-        agree_preflight(local, tp.rank, phase, |status| {
-            ctx.gpu
-                .copy_h2d(&status.to_le_bytes(), self.scratch.tp_send)?;
-            comm.all_gather(self.scratch.tp_send.0, self.scratch.tp_recv.0, 4)?;
-            let mut gathered = vec![0u8; comm.world_size() * 4];
-            ctx.gpu.copy_d2h(self.scratch.tp_recv, &mut gathered)?;
-            Ok(gathered
-                .chunks_exact(4)
-                .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-                .collect())
-        })
-    }
-
-    /// 2026-10-10: Sum `bytes` of BF16 at `ptr` over the ranks, in place, on the forward's
-    /// stream (capturable); nothing without tensor parallelism.
+    /// 2026-10-10: Sum `bytes` of BF16 at `ptr` over the ranks, in place; nothing without
+    /// tensor parallelism. It is enqueued on the communicator's stream, the model's default
+    /// stream the drafter runs on (`stream` must be it), with no event and no host wait, so a
+    /// captured block graph holds it as the target's decode graphs hold theirs.
     pub(super) fn tp_all_reduce(
         &self,
         ctx: &ForwardContext,
@@ -183,7 +124,12 @@ impl BlockDiffusionDraftHead {
         if self.tp.is_none() {
             return Ok(());
         }
-        self.tp_comm(ctx)?.all_reduce_async(ptr.0, bytes, stream)
+        anyhow::ensure!(
+            stream == ctx.gpu.default_stream(),
+            "DFlash TP: the drafter forward runs on stream {stream:#x}, not the default stream \
+             its collectives use"
+        );
+        self.tp_comm(ctx)?.all_reduce(ptr.0, bytes)
     }
 
     /// 2026-10-10: The top-16 of `rows` rows over the whole vocab from this rank's slice of
@@ -239,20 +185,34 @@ impl BlockDiffusionDraftHead {
     }
 
     /// 2026-10-10: Rank 0's tensor-parallel propose of `num_drafts` drafts after `last_token`
-    /// at `position`, from `propose_drafts` (block width set, decode append done): the block
-    /// table, the header, the new context rows' K/V on every rank, the block forward.
+    /// at `position`, from `propose_drafts` (block width set): its local setup (the decode
+    /// append, the block table, the header), the exchange, the new context rows' K/V on every
+    /// rank, the block forward.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn propose_tp_root(
         &self,
         last_token: u32,
         position: usize,
         num_drafts: usize,
-        dstate: &mut DflashProposerState,
-        bt: DevicePtr,
+        state: &mut dyn ProposerState,
         ctx: &ForwardContext,
         stream: u64,
+        target_hidden_stack: Option<DevicePtr>,
     ) -> Result<Vec<u32>> {
-        let comm = self.tp_comm(ctx)?;
-        let header = (|| -> Result<Option<Header>> {
+        let local = (|| -> Result<(DevicePtr, Header)> {
+            let dstate = state
+                .as_any_mut()
+                .downcast_mut::<DflashProposerState>()
+                .context("DFlash TP root: invalid proposer state")?;
+            self.append_decode_ctx(
+                dstate,
+                last_token,
+                position,
+                ctx,
+                stream,
+                target_hidden_stack,
+            )?;
+            let bt = self.ensure_block_table(dstate, ctx)?;
             anyhow::ensure!(
                 dstate.ctx_positions.len() == dstate.ctx_len,
                 "DFlash TP root: {} ctx positions for {} ctx rows",
@@ -264,23 +224,42 @@ impl BlockDiffusionDraftHead {
             } else {
                 dstate.ctx_committed.min(dstate.ctx_len)
             };
-            let ctx_count = if self.levers.option_b_no_ctx {
-                0
-            } else {
-                dstate.ctx_len
-            };
-            Ok(Some(Header {
+            let header = Header {
                 width: self.block_g(),
                 anchor: last_token,
                 position,
-                ctx_count,
+                ctx_count: if self.levers.option_b_no_ctx {
+                    0
+                } else {
+                    dstate.ctx_len
+                },
                 ship_start: committed,
                 positions: dstate.ctx_positions[committed..dstate.ctx_len].to_vec(),
-            }))
+            };
+            validate_tp_header(
+                &header,
+                header.positions.len(),
+                self.gamma,
+                self.max_seq_len,
+            )?;
+            Ok((bt, header))
         })();
-        let Some(header) = self.tp_exchange_header(ctx, comm, header)? else {
-            anyhow::bail!("DFlash TP root: unexpected abort header");
+        let (bt, header) = match local {
+            Ok((bt, header)) => {
+                self.tp_exchange(ctx, true, Some(&header))?;
+                (bt, header)
+            }
+            Err(e) => {
+                // 2026-10-10: The exchange then fails on every rank; this rank's own error
+                // is the one to report.
+                let _ = self.tp_exchange(ctx, false, None);
+                return Err(e.context("DFlash TP root setup failed; propose cancelled"));
+            }
         };
+        let dstate = state
+            .as_any_mut()
+            .downcast_mut::<DflashProposerState>()
+            .context("DFlash TP root: invalid proposer state")?;
         self.tp_ctx_rows(&header, Some(dstate.ctx_hidden_acc), bt, ctx, stream)?;
         dstate.ctx_committed = dstate.ctx_len;
         dstate.ctx_count_drafter = dstate.ctx_len;
@@ -296,26 +275,31 @@ impl BlockDiffusionDraftHead {
         Ok(self.finish_drafts(drafts, last_token, position, num_drafts, dstate))
     }
 
-    /// 2026-10-10: A non-root rank's half of a propose on `state` (the command's slot): read
-    /// the header (an abort returns at once), set the block width, write this rank's K/V of
-    /// the new context rows, run the block forward. Its drafts are discarded.
+    /// 2026-10-10: A non-root rank's half of a propose on `state`, the command's slot (`None`
+    /// when this rank has none, which it reports in the exchange): its block table, the
+    /// exchange, this rank's K/V of the new context rows, the block forward. Its drafts are
+    /// discarded.
     pub(super) fn propose_tp_follower(
         &self,
-        state: &mut dyn ProposerState,
+        state: Option<&mut dyn ProposerState>,
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<()> {
-        let comm = self.tp_comm(ctx)?;
         let local = (|| -> Result<DevicePtr> {
             let dstate = state
+                .context("DFlash TP follower: no proposer state for the slot")?
                 .as_any_mut()
                 .downcast_mut::<DflashProposerState>()
                 .context("DFlash TP follower: invalid proposer state")?;
             self.ensure_block_table(dstate, ctx)
         })();
-        let bt = self.tp_agree_preflight(ctx, local, "worker setup")?;
-        let Some(header) = self.tp_exchange_header(ctx, comm, Ok(None))? else {
-            return Ok(());
+        let header = self.tp_exchange(ctx, local.is_ok(), None);
+        let (bt, header) = match (local, header) {
+            (Ok(bt), Ok(header)) => (bt, header),
+            (Err(e), _) => {
+                return Err(e.context("DFlash TP follower setup failed; propose cancelled"));
+            }
+            (Ok(_), Err(e)) => return Err(e),
         };
         self.block_gamma
             .store(header.width, std::sync::atomic::Ordering::Relaxed);
@@ -332,113 +316,51 @@ impl BlockDiffusionDraftHead {
         Ok(())
     }
 
-    /// 2026-10-10: Every rank calls this with `Some(header)` on rank 0 and `None` elsewhere.
-    /// The root stages both header buffers before the stage-status gather. After the fixed
-    /// broadcast, all ranks agree that decode/validation succeeded before any optional overflow
-    /// broadcast; a second agreement follows overflow readback before context rows can begin.
-    fn tp_exchange_header(
+    /// 2026-10-10: The exchange: all-gather every rank's `[status, header]` block (rank 0's
+    /// header when `header` is given), resolve it the same way on every rank, then broadcast
+    /// the header's overflow positions when it has any. Every rank's header is rank 0's.
+    fn tp_exchange(
         &self,
         ctx: &ForwardContext,
-        comm: &dyn CommBackend,
-        root_header: Result<Option<Header>>,
-    ) -> Result<Option<Header>> {
-        let tp = self
-            .tp
-            .context("DFlash TP header exchange without tensor parallelism")?;
-        let buf = self.scratch.tp_header;
-        let staged = if tp.rank == 0 {
-            root_header.and_then(|header| {
-                let header = header.context("DFlash TP root did not provide its header")?;
-                self.validate_header(&header, header.positions.len())?;
-                let words = header.encode();
-                let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
-                ctx.gpu.copy_h2d(&bytes, buf)?;
-                if !header.overflow().is_empty() {
-                    let more: Vec<u8> = header
-                        .overflow()
-                        .iter()
-                        .flat_map(|p| p.to_le_bytes())
-                        .collect();
-                    ctx.gpu.copy_h2d(&more, buf.offset(HEADER_WORDS * 4))?;
-                }
-                Ok(Some(header))
-            })
-        } else {
-            Ok(None)
-        };
-        let staged = self.tp_agree_preflight(ctx, staged, "header staging")?;
-
-        comm.broadcast(buf.0, HEADER_WORDS * 4, 0)?;
-        let decoded = (|| -> Result<(Option<Header>, usize)> {
-            let mut raw = vec![0u8; HEADER_WORDS * 4];
-            ctx.gpu.copy_d2h(buf, &mut raw)?;
-            let mut words = [0u32; HEADER_WORDS];
-            for (w, c) in words.iter_mut().zip(raw.chunks_exact(4)) {
-                *w = u32::from_le_bytes([c[0], c[1], c[2], c[3]]);
+        ready: bool,
+        header: Option<&Header>,
+    ) -> Result<Header> {
+        let comm = self.tp_comm(ctx)?;
+        let world = comm.world_size();
+        let mine: Vec<u8> = exchange_block(ready, header)
+            .iter()
+            .flat_map(|w| w.to_le_bytes())
+            .collect();
+        ctx.gpu.copy_h2d(&mine, self.scratch.tp_send)?;
+        comm.all_gather(self.scratch.tp_send.0, self.scratch.tp_recv.0, mine.len())?;
+        let mut raw = vec![0u8; world * mine.len()];
+        ctx.gpu.copy_d2h(self.scratch.tp_recv, &mut raw)?;
+        let blocks: Vec<u32> = raw
+            .chunks_exact(4)
+            .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect();
+        let (mut got, overflow) = resolve_exchange(&blocks, world)?;
+        validate_tp_header(
+            &got,
+            got.positions.len() + overflow,
+            self.gamma,
+            self.max_seq_len,
+        )?;
+        if overflow > 0 {
+            let at = self.scratch.tp_header;
+            if let Some(h) = header {
+                let more: Vec<u8> = h.overflow().iter().flat_map(|p| p.to_le_bytes()).collect();
+                ctx.gpu.copy_h2d(&more, at)?;
             }
-            let overflow_len = Header::overflow_len(&words);
-            let Some(header) = Header::decode(&words)? else {
-                anyhow::ensure!(
-                    overflow_len == 0,
-                    "DFlash TP abort header has overflow rows"
-                );
-                return Ok((None, 0));
-            };
-            let total = words[6] as usize;
-            self.validate_header(&header, total)?;
-            let full = if tp.rank == 0 {
-                let full = staged
-                    .as_ref()
-                    .context("DFlash TP root lost its staged header")?;
-                anyhow::ensure!(
-                    header.width == full.width
-                        && header.anchor == full.anchor
-                        && header.position == full.position
-                        && header.ctx_count == full.ctx_count
-                        && header.ship_start == full.ship_start
-                        && header.positions
-                            == full.positions[..full.positions.len().min(HEADER_INLINE)],
-                    "DFlash TP staged header did not match its encoded words"
-                );
-                full.clone()
-            } else {
-                header
-            };
-            Ok((Some(full), overflow_len))
-        })();
-        let (header, overflow_len) = self.tp_agree_preflight(ctx, decoded, "header decode")?;
-        let Some(mut header) = header else {
-            return Ok(None);
-        };
-
-        let overflow = (|| -> Result<Header> {
-            if overflow_len > 0 {
-                let at = buf.offset(HEADER_WORDS * 4);
-                comm.broadcast(at.0, overflow_len * 4, 0)?;
-                if tp.rank != 0 {
-                    let mut raw = vec![0u8; overflow_len * 4];
-                    ctx.gpu.copy_d2h(at, &mut raw)?;
-                    header.positions.extend(
-                        raw.chunks_exact(4)
-                            .map(|c| i32::from_le_bytes([c[0], c[1], c[2], c[3]])),
-                    );
-                }
-            }
-            anyhow::ensure!(
-                header.positions.len() == overflow_len + header.positions.len().min(HEADER_INLINE),
-                "DFlash TP header position count does not match its overflow"
+            comm.broadcast(at.0, overflow * 4, 0)?;
+            let mut raw = vec![0u8; overflow * 4];
+            ctx.gpu.copy_d2h(at, &mut raw)?;
+            got.positions.extend(
+                raw.chunks_exact(4)
+                    .map(|c| i32::from_le_bytes([c[0], c[1], c[2], c[3]])),
             );
-            Ok(header)
-        })();
-        self.tp_agree_preflight(ctx, overflow, "header overflow")
-            .map(Some)
-    }
-
-    /// Validate fields used to size or address local buffers before their values reach a later
-    /// collective or device operation. `total_positions` comes from the fixed words, before
-    /// overflow storage is read.
-    fn validate_header(&self, header: &Header, total_positions: usize) -> Result<()> {
-        validate_tp_header(header, total_positions, self.gamma, self.max_seq_len)
+        }
+        Ok(got)
     }
 
     /// 2026-10-10: The header's new context rows on every rank, in `ctx_window` chunks: rank 0
@@ -464,52 +386,28 @@ impl BlockDiffusionDraftHead {
         while done < total {
             let count = (total - done).min(self.ctx_window);
             let start = header.ship_start + done;
-            run_context_chunk(
-                || {
-                    run_context_prepare(
-                        || {
-                            metrale_model_layers::layers::ops::fill_slots_from_block_table(
-                                ctx.gpu,
-                                self.kernels.fill_slots,
-                                self.scratch.slot_mapping_dev,
-                                bt,
-                                start as u32,
-                                count as u32,
-                                BLOCK_SIZE,
-                                stream,
-                            )
-                            .context("DFlash TP context slot fill failed")
-                        },
-                        || {
-                            if let Some(acc) = taps {
-                                self.ctx_fc_rows(
-                                    acc.offset(start * slot_bytes),
-                                    count,
-                                    ctx,
-                                    stream,
-                                    false,
-                                )
-                                .context("DFlash TP context fc projection failed")
-                            } else {
-                                Ok(())
-                            }
-                        },
-                    )
-                },
-                || comm.broadcast(self.scratch.fc_proj.0, count * self.hidden_size * 2, 0),
-                |local, phase| self.tp_agree_preflight(ctx, local, phase),
-                || {
-                    self.ctx_kv_from_fc(
-                        count,
-                        &header.positions[done..done + count],
-                        self.scratch.slot_mapping_dev,
-                        ctx,
-                        stream,
-                        true,
-                        false,
-                    )
-                    .context("DFlash TP context K/V write failed")
-                },
+            metrale_model_layers::layers::ops::fill_slots_from_block_table(
+                ctx.gpu,
+                self.kernels.fill_slots,
+                self.scratch.slot_mapping_dev,
+                bt,
+                start as u32,
+                count as u32,
+                BLOCK_SIZE,
+                stream,
+            )?;
+            if let Some(acc) = taps {
+                self.ctx_fc_rows(acc.offset(start * slot_bytes), count, ctx, stream, false)?;
+            }
+            comm.broadcast(self.scratch.fc_proj.0, count * self.hidden_size * 2, 0)?;
+            self.ctx_kv_from_fc(
+                count,
+                &header.positions[done..done + count],
+                self.scratch.slot_mapping_dev,
+                ctx,
+                stream,
+                true,
+                false,
             )?;
             done += count;
         }
@@ -518,217 +416,5 @@ impl BlockDiffusionDraftHead {
 }
 
 #[cfg(test)]
-mod context_chunk_tests {
-    use std::cell::RefCell;
-    use std::collections::VecDeque;
-
-    use anyhow::{Result, anyhow};
-
-    use super::{agree_preflight, run_context_chunk, run_context_prepare};
-
-    /// GPU-free scripted stand-in for the per-chunk collectives. Status vectors are ordered by
-    /// rank, just like `CommBackend::all_gather` results.
-    struct ScriptedCollectives {
-        rank: usize,
-        statuses: VecDeque<Vec<u32>>,
-        events: Vec<&'static str>,
-    }
-
-    impl ScriptedCollectives {
-        fn new(rank: usize, statuses: impl IntoIterator<Item = Vec<u32>>) -> Self {
-            Self {
-                rank,
-                statuses: statuses.into_iter().collect(),
-                events: Vec::new(),
-            }
-        }
-
-        fn agree(&mut self, local: Result<()>, phase: &str) -> Result<()> {
-            self.events.push(match phase {
-                "context payload" => "status:payload",
-                "context K/V write" => "status:kv",
-                _ => "status:unexpected",
-            });
-            let statuses = self
-                .statuses
-                .pop_front()
-                .ok_or_else(|| anyhow!("script ran out of status exchanges"))?;
-            agree_preflight(local, self.rank, phase, move |_| Ok(statuses))
-        }
-    }
-
-    #[test]
-    fn context_chunk_success_orders_broadcast_and_both_statuses() {
-        let script = RefCell::new(ScriptedCollectives::new(
-            1,
-            [vec![0, 0], vec![0, 0]],
-        ));
-        let result = run_context_chunk(
-            || {
-                script.borrow_mut().events.push("prepare");
-                Ok(())
-            },
-            || {
-                script.borrow_mut().events.push("broadcast");
-                Ok(())
-            },
-            |local, phase| script.borrow_mut().agree(local, phase),
-            || {
-                script.borrow_mut().events.push("write-kv");
-                Ok(())
-            },
-        );
-
-        assert!(result.is_ok());
-        assert_eq!(
-            script.borrow().events.as_slice(),
-            &["prepare", "broadcast", "status:payload", "write-kv", "status:kv"]
-        );
-        assert!(script.borrow().statuses.is_empty());
-    }
-
-    #[test]
-    fn pre_broadcast_error_still_broadcasts_then_stops_before_kv() {
-        let script = RefCell::new(ScriptedCollectives::new(0, [vec![1, 0]]));
-        let result = run_context_chunk(
-            || {
-                run_context_prepare(
-                    || {
-                        script.borrow_mut().events.push("prepare");
-                        Ok(())
-                    },
-                    || {
-                        script.borrow_mut().events.push("fc-projection");
-                        Err(anyhow!("fc projection failed"))
-                    },
-                )
-            },
-            || {
-                script.borrow_mut().events.push("broadcast");
-                Ok(())
-            },
-            |local, phase| script.borrow_mut().agree(local, phase),
-            || {
-                script.borrow_mut().events.push("write-kv");
-                Ok(())
-            },
-        );
-
-        assert!(format!("{:#}", result.unwrap_err()).contains("fc projection failed"));
-        assert_eq!(
-            script.borrow().events.as_slice(),
-            &["prepare", "fc-projection", "broadcast", "status:payload"]
-        );
-        assert!(script.borrow().statuses.is_empty());
-    }
-
-    #[test]
-    fn post_broadcast_kv_error_is_agreed_before_returning() {
-        let script = RefCell::new(ScriptedCollectives::new(
-            1,
-            [vec![0, 0], vec![0, 1]],
-        ));
-        let result = run_context_chunk(
-            || {
-                script.borrow_mut().events.push("prepare");
-                Ok(())
-            },
-            || {
-                script.borrow_mut().events.push("broadcast");
-                Ok(())
-            },
-            |local, phase| script.borrow_mut().agree(local, phase),
-            || {
-                script.borrow_mut().events.push("write-kv");
-                Err(anyhow!("K/V write failed"))
-            },
-        );
-
-        assert!(format!("{:#}", result.unwrap_err()).contains("K/V write failed"));
-        assert_eq!(
-            script.borrow().events.as_slice(),
-            &["prepare", "broadcast", "status:payload", "write-kv", "status:kv"]
-        );
-        assert!(script.borrow().statuses.is_empty());
-    }
-
-    #[test]
-    fn broadcast_transport_error_does_not_attempt_status_or_another_collective() {
-        let script = RefCell::new(ScriptedCollectives::new(
-            1,
-            std::iter::empty::<Vec<u32>>(),
-        ));
-        let result = run_context_chunk(
-            || {
-                script.borrow_mut().events.push("prepare");
-                Ok(())
-            },
-            || {
-                script.borrow_mut().events.push("broadcast");
-                Err(anyhow!("broadcast transport failed"))
-            },
-            |local, phase| script.borrow_mut().agree(local, phase),
-            || {
-                script.borrow_mut().events.push("write-kv");
-                Ok(())
-            },
-        );
-
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("broadcast transport failed"));
-        assert_eq!(script.borrow().events.as_slice(), &["prepare", "broadcast"]);
-        assert!(script.borrow().statuses.is_empty());
-    }
-
-    #[test]
-    fn status_transport_error_does_not_attempt_kv_or_another_collective() {
-        let script = RefCell::new(ScriptedCollectives::new(
-            1,
-            std::iter::empty::<Vec<u32>>(),
-        ));
-        let result = run_context_chunk(
-            || {
-                script.borrow_mut().events.push("prepare");
-                Ok(())
-            },
-            || {
-                script.borrow_mut().events.push("broadcast");
-                Ok(())
-            },
-            |local, phase| script.borrow_mut().agree(local, phase),
-            || {
-                script.borrow_mut().events.push("write-kv");
-                Ok(())
-            },
-        );
-
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("script ran out of status exchanges"));
-        assert_eq!(
-            script.borrow().events.as_slice(),
-            &["prepare", "broadcast", "status:payload"]
-        );
-    }
-
-    #[test]
-    fn slot_fill_error_does_not_skip_independent_fc_projection() {
-        let events = RefCell::new(Vec::new());
-        let result = run_context_prepare(
-            || {
-                events.borrow_mut().push("slot-fill");
-                Err(anyhow!("slot fill failed"))
-            },
-            || {
-                events.borrow_mut().push("fc-projection");
-                Ok(())
-            },
-        );
-
-        assert!(result.unwrap_err().to_string().contains("slot fill failed"));
-        assert_eq!(events.borrow().as_slice(), &["slot-fill", "fc-projection"]);
-    }
-}
+#[path = "tp_propose_tests.rs"]
+mod tests;

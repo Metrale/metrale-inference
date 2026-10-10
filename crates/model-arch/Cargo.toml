@@ -91,6 +91,10 @@ name = "dflash2_topk16_parity"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "dflash_tp_parity"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "dflash_aux_fp8_bench"
 required-features = ["cuda", "gpu-examples"]
 

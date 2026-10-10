@@ -34,91 +34,7 @@ use metrale_model_layers::layers::ops;
 use metrale_model_layers::speculative::DraftProposer;
 use metrale_model_layers::weight_map::{DenseWeight, MtpWeights, QuantizedWeight};
 
-/// 2026-10-10: The local gates for entering the TP DFlash propose. Keep the
-/// three conditions separate on the wire so every rank can name the failed
-/// readiness check in its shared rejection.
-#[derive(Debug, Clone, Copy)]
-pub(in crate::model) struct DFlashProposeReadiness {
-    pub(in crate::model) slot_valid: bool,
-    pub(in crate::model) proposer_collective: bool,
-    pub(in crate::model) proposer_state: bool,
-}
-
-const DFLASH_READY_SLOT: u32 = 1 << 0;
-const DFLASH_READY_COLLECTIVE_PROPOSER: u32 = 1 << 1;
-const DFLASH_READY_PROPOSER_STATE: u32 = 1 << 2;
-const DFLASH_READY_ALL: u32 =
-    DFLASH_READY_SLOT | DFLASH_READY_COLLECTIVE_PROPOSER | DFLASH_READY_PROPOSER_STATE;
-
-/// 2026-10-10: Gather a readiness bitset before running `after_ready`. Using
-/// the caller's gather closure keeps this decision CPU-testable while runtime
-/// calls use `ep_gather_u32` and its existing EP command buffer.
-fn dflash_propose_readiness_gate<T>(
-    local: DFlashProposeReadiness,
-    gather: impl FnOnce(u32) -> Result<Vec<u32>>,
-    after_ready: impl FnOnce() -> Result<T>,
-) -> Result<T> {
-    let mut vote = 0;
-    if local.slot_valid {
-        vote |= DFLASH_READY_SLOT;
-    }
-    if local.proposer_collective {
-        vote |= DFLASH_READY_COLLECTIVE_PROPOSER;
-    }
-    if local.proposer_state {
-        vote |= DFLASH_READY_PROPOSER_STATE;
-    }
-
-    let votes = gather(vote)?;
-    let rejected: Vec<String> = votes
-        .iter()
-        .enumerate()
-        .filter(|(_, vote)| **vote != DFLASH_READY_ALL)
-        .map(|(rank, vote)| {
-            format!(
-                "rank {rank} (slot_valid={}, proposer_collective={}, proposer_state={}, vote={vote:#x})",
-                *vote & DFLASH_READY_SLOT != 0,
-                *vote & DFLASH_READY_COLLECTIVE_PROPOSER != 0,
-                *vote & DFLASH_READY_PROPOSER_STATE != 0,
-            )
-        })
-        .collect();
-    if votes.is_empty() || !rejected.is_empty() {
-        let rejected = if votes.is_empty() {
-            "no rank readiness votes received".to_owned()
-        } else {
-            rejected.join("; ")
-        };
-        anyhow::bail!(
-            "EP_CMD_DFLASH_PROPOSE readiness rejected on every rank before TP preflight: {}",
-            rejected
-        );
-    }
-
-    after_ready()
-}
-
 impl TransformerModel {
-    /// 2026-10-10: Build a worker's local DFlash vote before the worker's
-    /// generic slot lookup can return early. An absent/out-of-range sequence
-    /// is an invalid slot; v2 also requires the routed slot to match the
-    /// sequence's allocated slot.
-    pub(in crate::model) fn dflash_worker_readiness(
-        slot_idx: usize,
-        slot_capacity: usize,
-        sequence_slot_idx: Option<usize>,
-        ep_protocol_v2: bool,
-        proposer_collective: bool,
-        proposer_state: bool,
-    ) -> (bool, bool, bool) {
-        let slot_valid = slot_idx < slot_capacity
-            && sequence_slot_idx.is_some_and(|sequence_slot_idx| {
-                sequence_slot_idx != usize::MAX
-                    && (!ep_protocol_v2 || sequence_slot_idx == slot_idx)
-            });
-        (slot_valid, proposer_collective, proposer_state)
-    }
-
     pub(super) fn run_mtp_propose_dispatch(
         &self,
         token: u32,
@@ -161,16 +77,9 @@ impl TransformerModel {
                 seq.slot_idx as u32,
                 metrale_model_layers::speculative::EP_CMD_DFLASH_PROPOSE,
             )?;
-            // 2026-10-10: The command wakes workers before any rank enters
-            // DFlash's TP preflight. Include rank 0 in the same readiness
-            // rendezvous so a worker-local failure also stops the proposer on
-            // the head.
-            return self.ep_dflash_propose_readiness(
-                seq.slot_idx != usize::MAX && seq.slot_idx <= u32::MAX as usize,
-                collective_propose,
-                seq.proposer_state.is_some(),
-                || self.run_mtp_propose_inner(token, position, num_drafts, seq, grammar_bitmask),
-            );
+            // 2026-10-10: The drafter's own exchange carries every rank's readiness
+            // (`dflash_head/tp_propose.rs`).
+            return self.run_mtp_propose_inner(token, position, num_drafts, seq, grammar_bitmask);
         } else if protocol_active && self.proposer.as_ref().is_some_and(|p| p.needs_comm()) {
             self.ep_broadcast_cmd_for_seq(
                 seq.slot_idx as u32,
@@ -244,46 +153,26 @@ impl TransformerModel {
     }
 
     /// 2026-09-25: The `ForwardContext` of the batched MTP propose and the batched catch-up.
-    /// 2026-10-10: Worker side of `EP_CMD_DFLASH_PROPOSE` on `seq`: the proposer's collective
-    /// propose with the communicator (`DraftProposer::propose_follower`). An error is
-    /// returned: the collective could not complete on this rank.
-    pub(in crate::model) fn ep_worker_dflash_propose(&self, seq: &mut SequenceState) -> Result<()> {
+    /// 2026-10-10: Worker side of `EP_CMD_DFLASH_PROPOSE` on the command slot's proposer state
+    /// (`None` when the slot has none): the proposer's collective propose with the
+    /// communicator (`DraftProposer::propose_follower`). An error is returned: the collective
+    /// could not complete on this rank.
+    pub(in crate::model) fn ep_worker_dflash_propose(
+        &self,
+        state: Option<&mut Box<dyn metrale_model_layers::speculative::ProposerState>>,
+    ) -> Result<()> {
         let Some(proposer) = self.proposer.as_ref() else {
             anyhow::bail!("EP_CMD_DFLASH_PROPOSE on a rank without a proposer");
-        };
-        let Some(state) = seq.proposer_state.as_mut() else {
-            anyhow::bail!(
-                "EP_CMD_DFLASH_PROPOSE for slot {} without proposer state",
-                seq.slot_idx
-            );
         };
         let ctx = ForwardContext {
             comm: self.comm_ref(),
             ..self.mtp_propose_ctx()
         };
-        proposer.propose_follower(state.as_mut(), &ctx, self.gpu.default_stream())
-    }
-
-    /// 2026-10-10: Join the shared readiness vote before either side starts
-    /// the model-arch DFlash TP path. `ep_gather_u32` uses the existing 4-byte
-    /// `ep_cmd_buf`; the command has already been consumed, so this ordered
-    /// reuse cannot overwrite an in-flight command.
-    pub(in crate::model) fn ep_dflash_propose_readiness<T>(
-        &self,
-        slot_valid: bool,
-        proposer_collective: bool,
-        proposer_state: bool,
-        after_ready: impl FnOnce() -> Result<T>,
-    ) -> Result<T> {
-        dflash_propose_readiness_gate(
-            DFlashProposeReadiness {
-                slot_valid,
-                proposer_collective,
-                proposer_state,
-            },
-            |vote| self.ep_gather_u32(vote),
-            after_ready,
-        )
+        let stream = self.gpu.default_stream();
+        match state {
+            Some(st) => proposer.propose_follower(Some(st.as_mut()), &ctx, stream),
+            None => proposer.propose_follower(None, &ctx, stream),
+        }
     }
 
     fn mtp_propose_ctx(&self) -> ForwardContext<'_> {
@@ -376,7 +265,3 @@ impl TransformerModel {
         proposer.catchup_batch(tokens, &hiddens, first_pos, &mut states, &ctx, stream)
     }
 }
-
-#[cfg(test)]
-#[path = "speculative_mtp_dflash_tests.rs"]
-mod dflash_rendezvous_tests;
