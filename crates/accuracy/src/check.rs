@@ -165,7 +165,36 @@ pub fn run(job: &Job<'_>, runner: &mut dyn KernelRunner) -> Outcome {
         output_sha256: String::new(),
         verdict: Verdict::Pass,
     };
-    if let Err(e) = arms(job, runner, &mut o) {
+    if let Err(e) = prepare(job).and_then(|p| arms(job, p, runner, &mut o)) {
+        o.verdict = e;
+    }
+    o
+}
+
+/// 2026-10-10: Run one check on operands built elsewhere: `case` (from [`case_of`] of a job at
+/// the same shape, formats and input class) with its entry point set to `job.kernel`. The
+/// envelope sweep builds one case per cell and input class and judges every candidate on it, so
+/// a large weight is generated once, not once per candidate.
+pub fn run_on(job: &Job<'_>, case: &Case, runner: &mut dyn KernelRunner) -> Outcome {
+    let mut o = Outcome {
+        family: job.family.id.clone(),
+        kernel: job.kernel.to_string(),
+        key: job.key(),
+        input: job.input,
+        good: None,
+        floor: None,
+        mutations: Vec::new(),
+        output_sha256: String::new(),
+        verdict: Verdict::Pass,
+    };
+    let prepared = prepare_plan(job).map(|(reference, plan)| {
+        let mut c = case.clone();
+        c.family = job.family.id.clone();
+        c.kernel = job.kernel.to_string();
+        c.launcher = job.kernel.to_string();
+        (reference, plan, c)
+    });
+    if let Err(e) = prepared.and_then(|p| arms(job, p, runner, &mut o)) {
         o.verdict = e;
     }
     o
@@ -177,7 +206,7 @@ pub fn case_of(job: &Job<'_>) -> Result<Case, String> {
     prepare(job).map(|(_, _, c)| c).map_err(|v| v.name())
 }
 
-fn prepare(job: &Job<'_>) -> Result<(Reference, Plan, Case), Verdict> {
+fn prepare_plan(job: &Job<'_>) -> Result<(Reference, Plan), Verdict> {
     let c = job.contract;
     let err = |e: String| Verdict::Error(e);
     let reference = Reference::parse(&c.reference)
@@ -185,6 +214,13 @@ fn prepare(job: &Job<'_>) -> Result<(Reference, Plan, Case), Verdict> {
     let pipeline = plan::declared(job.family, job.kernel, &c.op, job.point).map_err(err)?;
     let lens = reference.lens(job.shape, &pipeline);
     let plan = plan::plan(c, pipeline, &lens, job.point).map_err(err)?;
+    Ok((reference, plan))
+}
+
+fn prepare(job: &Job<'_>) -> Result<(Reference, Plan, Case), Verdict> {
+    let c = job.contract;
+    let err = |e: String| Verdict::Error(e);
+    let (reference, plan) = prepare_plan(job)?;
     let mut case = Case {
         family: job.family.id.clone(),
         kernel: job.kernel.to_string(),
@@ -208,8 +244,12 @@ pub(crate) fn vacuous(e: Vacuous) -> Verdict {
     Verdict::FailVacuous(e.to_string())
 }
 
-fn arms(job: &Job<'_>, runner: &mut dyn KernelRunner, o: &mut Outcome) -> Result<(), Verdict> {
-    let (reference, plan, case) = prepare(job)?;
+fn arms(
+    job: &Job<'_>,
+    (reference, plan, case): (Reference, Plan, Case),
+    runner: &mut dyn KernelRunner,
+    o: &mut Outcome,
+) -> Result<(), Verdict> {
     let err = |e: String| Verdict::Error(e);
     let mut rng = SplitMix64::keyed(
         job.seed,

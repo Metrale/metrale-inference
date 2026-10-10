@@ -21,7 +21,7 @@ use std::io::Write as _;
 
 use anyhow::{Context, Result, bail};
 use metrale_accuracy::case::Case;
-use metrale_accuracy::check::{Job, Verdict as CheckVerdict, case_of, run};
+use metrale_accuracy::check::{Job, Verdict as CheckVerdict, case_of, run_on};
 use metrale_accuracy::contract::{Contract, Contracts, parse_contracts};
 use metrale_accuracy::envelope::grid::{GridCell, LADDER, grid, point_for, shard, uncovered};
 use metrale_accuracy::envelope::record::{Cell, Measurement, SCHEMA, Verdict, parse_records};
@@ -274,13 +274,17 @@ fn sweep_gpu(a: &EnvelopeSweepArgs) -> Result<i32> {
         if todo.is_empty() {
             continue;
         }
-        let shared = shared_cases(&i, gc)?;
+        let mut shared = Shared {
+            i: &i,
+            gc,
+            cases: Vec::new(),
+        };
         for cand in todo {
             if now_unix() >= a.deadline_unix {
                 stopped = true;
                 break 'cells;
             }
-            let m = measure(&i, gc, cand, &shared, &mut runner, &gpu, a, &host);
+            let m = measure(&i, gc, cand, &mut shared, &mut runner, &gpu, a, &host);
             let line = serde_json::to_string(&m)?;
             writeln!(file, "{line}")?;
             file.flush()?;
@@ -314,10 +318,28 @@ fn sweep_gpu(a: &EnvelopeSweepArgs) -> Result<i32> {
     Ok(0)
 }
 
-/// 2026-10-10: One case per digest class, built from the default's job when the cell has a
-/// default among its candidates, else from the first candidate's: every candidate then runs the
-/// same operands (the canonical layouts of the weight format).
-fn shared_cases(i: &Inputs, gc: &GridCell) -> Result<Vec<(InputClass, Case)>> {
+/// 2026-10-10: The cell's operands per input class, built once from the lead candidate's job (the
+/// default when it is a candidate, else the first) and shared by every candidate: one large
+/// weight per class and cell, and every candidate reads the same bytes (the canonical layouts of
+/// the weight format), so digests compare.
+struct Shared<'a> {
+    i: &'a Inputs,
+    gc: &'a GridCell,
+    cases: Vec<(InputClass, Case)>,
+}
+
+impl Shared<'_> {
+    fn get(&mut self, input: InputClass) -> Result<&Case> {
+        if let Some(p) = self.cases.iter().position(|(c, _)| *c == input) {
+            return Ok(&self.cases[p].1);
+        }
+        let case = lead_case(self.i, self.gc, input)?;
+        self.cases.push((input, case));
+        Ok(&self.cases.last().expect("just pushed").1)
+    }
+}
+
+fn lead_case(i: &Inputs, gc: &GridCell, input: InputClass) -> Result<Case> {
     let lead = gc
         .default
         .as_ref()
@@ -333,20 +355,16 @@ fn shared_cases(i: &Inputs, gc: &GridCell) -> Result<Vec<(InputClass, Case)>> {
     let point = point_for(&i.sweep, &i.fams, &lead.family, &gc.cell)
         .with_context(|| format!("no point of {} at {:?}", lead.family, gc.cell))?;
     let shape = shape_of(&gc.cell);
-    let mut out = Vec::new();
-    for input in DIGEST_CLASSES {
-        let job = Job {
-            contract,
-            family,
-            kernel: &lead.kernel,
-            point: &point,
-            shape: &shape,
-            input,
-            seed: i.contracts.seed,
-        };
-        out.push((input, case_of(&job).map_err(anyhow::Error::msg)?));
-    }
-    Ok(out)
+    let job = Job {
+        contract,
+        family,
+        kernel: &lead.kernel,
+        point: &point,
+        shape: &shape,
+        input,
+        seed: i.contracts.seed,
+    };
+    case_of(&job).map_err(anyhow::Error::msg)
 }
 
 /// 2026-10-10: The rows at which a candidate is judged on every input class of its contract:
@@ -367,7 +385,7 @@ fn measure(
     i: &Inputs,
     gc: &GridCell,
     cand: &metrale_accuracy::envelope::grid::Candidate,
-    shared: &[(InputClass, Case)],
+    shared: &mut Shared<'_>,
     runner: &mut GpuRunner,
     gpu: &Gpu0,
     a: &EnvelopeSweepArgs,
@@ -396,7 +414,14 @@ fn measure(
         m.detail = why;
     };
     // 2026-10-10: The digests on the shared operands.
-    for (input, case) in shared {
+    for input in DIGEST_CLASSES {
+        let case = match shared.get(input) {
+            Ok(c) => c,
+            Err(e) => {
+                fail(&mut m, Verdict::Unavailable, format!("operands: {e:#}"));
+                return m;
+            }
+        };
         let mut c = case.clone();
         c.kernel = cand.kernel.clone();
         c.launcher = cand.kernel.clone();
@@ -449,7 +474,14 @@ fn measure(
             input,
             seed: i.contracts.seed,
         };
-        let o = run(&job, runner);
+        let case = match shared.get(input) {
+            Ok(c) => c.clone(),
+            Err(e) => {
+                fail(&mut m, Verdict::Unavailable, format!("operands: {e:#}"));
+                return m;
+            }
+        };
+        let o = run_on(&job, &case, runner);
         if o.verdict != CheckVerdict::Pass {
             fail(
                 &mut m,
@@ -460,7 +492,11 @@ fn measure(
         }
     }
     // 2026-10-10: Timing on the shared gaussian operands.
-    let mut c = shared[0].1.clone();
+    let Ok(gauss) = shared.get(InputClass::Gaussian) else {
+        fail(&mut m, Verdict::Unavailable, "no gaussian operands".into());
+        return m;
+    };
+    let mut c = gauss.clone();
     c.kernel = cand.kernel.clone();
     c.launcher = cand.kernel.clone();
     let before = gpu.reasons();
