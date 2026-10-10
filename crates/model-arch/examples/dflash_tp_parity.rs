@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-10-10: The tensor-parallel DFlash2 drafter (`dflash_head::tp`, `METRALE_DFLASH_TP=1`)
+//! 2026-10-10: The tensor-parallel DFlash2 drafter (`dflash_head::tp`, `--draft-tp-size`)
 //! against the one-rank drafter, on one GPU: every rank of a TP=1 and a TP=3 drafter runs in
 //! its own thread with an in-process communicator ([`LocalComm`]: the collectives as host
 //! copies, the all-reduce summing the ranks' BF16 values in rank order in f32 and rounding
@@ -28,297 +28,28 @@
 #[path = "common/glm5next_rows_fixture.rs"]
 #[allow(dead_code)]
 mod fixture;
+#[path = "common/dflash_tp_fixture.rs"]
+#[allow(dead_code)]
+mod tpf;
 
-use std::sync::{Arc, Barrier, Mutex};
+use std::sync::Arc;
 
-use anyhow::{Result, bail, ensure};
-use half::bf16;
-use metrale_comm::CommBackend;
+use anyhow::{Result, ensure};
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_model_arch::dflash_head::BlockDiffusionDraftHead;
-use metrale_model_arch::dflash_head::tp::{self, DflashTp};
-use metrale_model_arch::weight_loader::dflash_loader::{
-    DflashLayerWeights, DflashWeights, parse_dflash_config,
-};
 use metrale_model_layers::layer::ForwardContext;
 use metrale_model_layers::speculative::{DraftProposer, ProposerState};
-use metrale_model_layers::weight_map::DenseWeight;
+use tpf::{Dims, GAMMA, HIDDEN, LocalComm, Rng, TAPS, Tensors, append_ctx};
 
-const HIDDEN: usize = 4096;
-const LAYERS: usize = 2;
-const INTER: usize = 6144;
-const VOCAB: usize = 16384;
-const TAPS: usize = 5;
 const MAX_SEQ: usize = 1024;
-const GAMMA: usize = 8;
-const CONFIG: &str = r#"{
-  "hidden_size": 4096, "num_hidden_layers": 2, "intermediate_size": 6144,
-  "num_attention_heads": 32, "num_key_value_heads": 8, "head_dim": 128,
-  "vocab_size": 16384, "rms_norm_eps": 1e-5, "rope_theta": 10000.0, "sliding_window": 2048,
-  "dflash_config": {"block_size": 8, "mask_token_id": 16300,
-    "target_layer_ids": [5, 14, 24, 33, 42], "selector_rank": 256, "selector_top_k": 16,
-    "conv_kernel_size": 2, "conv_group_size": 16}
-}"#;
-
-struct Rng(u64);
-impl Rng {
-    fn unit(&mut self) -> f32 {
-        self.0 = self
-            .0
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        ((self.0 >> 40) as f32 / (1u64 << 24) as f32) * 2.0 - 1.0
-    }
-}
-
-fn upload(gpu: &dyn GpuBackend, rng: &mut Rng, n: usize, amp: f32) -> Result<DevicePtr> {
-    let bytes: Vec<u8> = (0..n)
-        .flat_map(|_| bf16::from_f32(rng.unit() * amp).to_bits().to_le_bytes())
-        .collect();
-    let p = gpu.alloc(bytes.len())?;
-    gpu.copy_h2d(&bytes, p)?;
-    Ok(p)
-}
-
-fn ones(gpu: &dyn GpuBackend, n: usize) -> Result<DevicePtr> {
-    let bytes: Vec<u8> = (0..n)
-        .flat_map(|_| bf16::ONE.to_bits().to_le_bytes())
-        .collect();
-    let p = gpu.alloc(bytes.len())?;
-    gpu.copy_h2d(&bytes, p)?;
-    Ok(p)
-}
-
-/// 2026-10-10: The drafter's device tensors, shared by every drafter built from them.
-#[derive(Clone, Copy)]
-struct Tensors {
-    fc: DevicePtr,
-    norm: DevicePtr,
-    head_norm: DevicePtr,
-    layers: [[DevicePtr; 13]; LAYERS],
-    pred: DevicePtr,
-    succ: DevicePtr,
-    hproj: DevicePtr,
-    embed: DevicePtr,
-    lm_head: DevicePtr,
-}
-
-impl Tensors {
-    fn new(gpu: &dyn GpuBackend, rng: &mut Rng) -> Result<Self> {
-        let amp = |k: usize| (3.0 / k as f32).sqrt();
-        let (q, kv) = (32 * 128, 8 * 128);
-        let mut layers = [[DevicePtr(0); 13]; LAYERS];
-        for l in layers.iter_mut() {
-            *l = [
-                ones(gpu, HIDDEN)?,                                      // input_layernorm
-                ones(gpu, HIDDEN)?,                                      // post_attention_layernorm
-                upload(gpu, rng, q * HIDDEN, amp(HIDDEN))?,              // q_proj
-                upload(gpu, rng, kv * HIDDEN, amp(HIDDEN))?,             // k_proj
-                upload(gpu, rng, kv * HIDDEN, amp(HIDDEN))?,             // v_proj
-                upload(gpu, rng, HIDDEN * q, amp(q))?,                   // o_proj
-                ones(gpu, 128)?,                                         // q_norm
-                ones(gpu, 128)?,                                         // k_norm
-                upload(gpu, rng, INTER * HIDDEN, amp(HIDDEN))?,          // gate_proj
-                upload(gpu, rng, INTER * HIDDEN, amp(HIDDEN))?,          // up_proj
-                upload(gpu, rng, HIDDEN * INTER, amp(INTER))?,           // down_proj
-                upload(gpu, rng, 2 * 2 * HIDDEN, 0.5)?,                  // conv base kernels (both)
-                upload(gpu, rng, 2 * 1024 * HIDDEN, amp(HIDDEN) * 0.1)?, // conv projections
-            ];
-        }
-        Ok(Self {
-            fc: upload(gpu, rng, HIDDEN * TAPS * HIDDEN, amp(TAPS * HIDDEN))?,
-            norm: ones(gpu, HIDDEN)?,
-            head_norm: ones(gpu, HIDDEN)?,
-            layers,
-            pred: upload(gpu, rng, VOCAB * 256, 1.0)?,
-            succ: upload(gpu, rng, VOCAB * 256, 1.0)?,
-            hproj: upload(gpu, rng, 256 * HIDDEN, amp(HIDDEN))?,
-            embed: upload(gpu, rng, VOCAB * HIDDEN, 1.0)?,
-            lm_head: upload(gpu, rng, VOCAB * HIDDEN, amp(HIDDEN) * 4.0)?,
-        })
-    }
-
-    fn weights(&self) -> Result<DflashWeights> {
-        let w = |p: DevicePtr| DenseWeight { weight: p };
-        let layers = self
-            .layers
-            .iter()
-            .map(|l| DflashLayerWeights {
-                input_layernorm: w(l[0]),
-                post_attention_layernorm: w(l[1]),
-                q_proj: w(l[2]),
-                k_proj: w(l[3]),
-                v_proj: w(l[4]),
-                o_proj: w(l[5]),
-                q_norm: w(l[6]),
-                k_norm: w(l[7]),
-                gate_proj: w(l[8]),
-                up_proj: w(l[9]),
-                down_proj: w(l[10]),
-                attention_conv_base: Some(w(l[11])),
-                attention_conv_proj: Some(w(l[12])),
-                mlp_conv_base: Some(w(l[11])),
-                mlp_conv_proj: Some(w(l[12].offset(1024 * HIDDEN * 2))),
-                o_proj_cols: None,
-                down_proj_cols: None,
-            })
-            .collect();
-        Ok(DflashWeights {
-            config: parse_dflash_config(CONFIG)?,
-            fc: w(self.fc),
-            hidden_norm: w(self.head_norm),
-            norm: w(self.norm),
-            layers,
-            draft_id_to_target_id: None,
-            markov_w1: None,
-            markov_w2: None,
-            confidence_proj: None,
-            confidence_bias: None,
-            selector_pred: Some(w(self.pred)),
-            selector_succ: Some(w(self.succ)),
-            selector_hidden_proj: Some(w(self.hproj)),
-        })
-    }
-
-    /// 2026-10-10: A drafter for `tp` (`None`: the one-rank drafter).
-    fn head(
-        &self,
-        gpu: &dyn GpuBackend,
-        tp: Option<(usize, usize)>,
-    ) -> Result<BlockDiffusionDraftHead> {
-        let weights = self.weights()?;
-        let (weights, lm_head, tp) = match tp {
-            None => (weights, self.lm_head, None),
-            Some((rank, world)) => {
-                let p = tp::plan(32, 8, INTER, VOCAB, world, rank)?;
-                (
-                    tp::shard_weights(weights, &p, gpu)?,
-                    self.lm_head.offset(p.vocab.0 * HIDDEN * 2),
-                    Some(DflashTp {
-                        rank,
-                        world,
-                        vocab_base: p.vocab.0,
-                    }),
-                )
-            }
-        };
-        BlockDiffusionDraftHead::from_weights(
-            weights,
-            self.embed,
-            lm_head,
-            None,
-            None,
-            HIDDEN,
-            Some(GAMMA),
-            Some(2048),
-            gpu,
-            MAX_SEQ,
-            1,
-            tp,
-        )
-    }
-}
-
-/// 2026-10-10: Collectives between in-process ranks on one GPU: each operation copies the
-/// ranks' buffers through the host behind a barrier.
-struct LocalComm {
-    rank: usize,
-    world: usize,
-    gpu: Arc<MetraleCudaBackend>,
-    shared: Arc<(Barrier, Mutex<Vec<Vec<u8>>>)>,
-}
-
-impl LocalComm {
-    fn read(&self, ptr: u64, bytes: usize) -> Result<Vec<u8>> {
-        self.gpu.synchronize(self.gpu.default_stream())?;
-        let mut b = vec![0u8; bytes];
-        self.gpu.copy_d2h(DevicePtr(ptr), &mut b)?;
-        Ok(b)
-    }
-
-    /// 2026-10-10: Deposit `mine`, wait for every rank, read every deposit, wait again.
-    fn exchange(&self, mine: Vec<u8>) -> Vec<Vec<u8>> {
-        self.shared.1.lock().unwrap()[self.rank] = mine;
-        self.shared.0.wait();
-        let all = self.shared.1.lock().unwrap().clone();
-        self.shared.0.wait();
-        all
-    }
-}
-
-impl CommBackend for LocalComm {
-    fn all_reduce(&self, ptr: u64, bytes: usize) -> Result<()> {
-        let all = self.exchange(self.read(ptr, bytes)?);
-        let out: Vec<u8> = (0..bytes / 2)
-            .flat_map(|i| {
-                let s: f32 = all
-                    .iter()
-                    .map(|b| bf16::from_le_bytes([b[2 * i], b[2 * i + 1]]).to_f32())
-                    .sum();
-                bf16::from_f32(s).to_le_bytes()
-            })
-            .collect();
-        self.gpu.copy_h2d(&out, DevicePtr(ptr))
-    }
-    fn all_gather(&self, send: u64, recv: u64, bytes: usize) -> Result<()> {
-        let all = self.exchange(self.read(send, bytes)?);
-        self.gpu.copy_h2d(&all.concat(), DevicePtr(recv))
-    }
-    fn broadcast(&self, ptr: u64, bytes: usize, root: usize) -> Result<()> {
-        let mine = if self.rank == root {
-            self.read(ptr, bytes)?
-        } else {
-            Vec::new()
-        };
-        let all = self.exchange(mine);
-        if self.rank != root {
-            self.gpu.copy_h2d(&all[root], DevicePtr(ptr))?;
-        }
-        Ok(())
-    }
-    fn reduce_scatter(&self, _: u64, _: u64, _: usize) -> Result<()> {
-        bail!("LocalComm: reduce_scatter is not used by the drafter")
-    }
-    fn barrier(&self) -> Result<()> {
-        self.shared.0.wait();
-        Ok(())
-    }
-    fn send_to(&self, _: u64, _: usize, _: usize, _: u64) -> Result<()> {
-        bail!("LocalComm: send_to is not used by the drafter")
-    }
-    fn recv_from(&self, _: u64, _: usize, _: usize, _: u64) -> Result<()> {
-        bail!("LocalComm: recv_from is not used by the drafter")
-    }
-    fn rank(&self) -> usize {
-        self.rank
-    }
-    fn world_size(&self) -> usize {
-        self.world
-    }
-}
-
-/// 2026-10-10: Append `taps` rows (host BF16 bytes) at positions `pos0..` to a drafter state
-/// that holds a context accumulator.
-fn append_ctx(
-    gpu: &dyn GpuBackend,
-    st: &mut dyn ProposerState,
-    taps: &[u8],
-    pos0: usize,
-) -> Result<()> {
-    let d = st
-        .as_any_mut()
-        .downcast_mut::<metrale_model_arch::dflash_head::DflashProposerState>()
-        .ok_or_else(|| anyhow::anyhow!("not a DFlash state"))?;
-    let row = TAPS * HIDDEN * 2;
-    let n = taps.len() / row;
-    gpu.copy_h2d(taps, d.ctx_hidden_acc.offset(d.ctx_len * row))?;
-    for i in 0..n {
-        d.ctx_positions.push((pos0 + i) as i32);
-    }
-    d.ctx_len += n;
-    Ok(())
-}
+const DIMS: Dims = Dims {
+    layers: 2,
+    q_heads: 32,
+    kv_heads: 8,
+    inter: 6144,
+    vocab: 16384,
+};
 
 /// 2026-10-10: One rank's drafter, its state and its communicator.
 struct Rank {
@@ -362,7 +93,8 @@ fn tp_propose(
                             None,
                         )
                     } else {
-                        r.head.propose_follower(r.state.as_mut(), &ctx, stream)?;
+                        r.head
+                            .propose_follower(Some(r.state.as_mut()), &ctx, stream)?;
                         Ok(Vec::new())
                     }
                 })
@@ -382,21 +114,12 @@ fn tp_propose(
 }
 
 fn build_ranks(gpu: &Arc<MetraleCudaBackend>, t: &Tensors, world: usize) -> Result<Vec<Rank>> {
-    let shared = Arc::new((Barrier::new(world), Mutex::new(vec![Vec::new(); world])));
-    (0..world)
-        .map(|rank| {
-            let head = t.head(gpu.as_ref(), Some((rank, world)))?;
+    LocalComm::group(gpu, world)
+        .into_iter()
+        .map(|comm| {
+            let head = t.head(gpu.as_ref(), Some((comm.rank, world)), MAX_SEQ)?;
             let state = head.alloc_state(gpu.as_ref())?;
-            Ok(Rank {
-                head,
-                state,
-                comm: LocalComm {
-                    rank,
-                    world,
-                    gpu: gpu.clone(),
-                    shared: shared.clone(),
-                },
-            })
+            Ok(Rank { head, state, comm })
         })
         .collect()
 }
@@ -412,8 +135,8 @@ fn main() -> Result<()> {
     }
     let gpu = Arc::new(MetraleCudaBackend::new(0, &metrale_kernels::ptx_modules())?);
     let mut rng = Rng(0x6466_6c61_7368_7470);
-    let t = Tensors::new(gpu.as_ref(), &mut rng)?;
-    let reference = t.head(gpu.as_ref(), None)?;
+    let t = Tensors::new(gpu.as_ref(), &mut rng, DIMS, DIMS.vocab)?;
+    let reference = t.head(gpu.as_ref(), None, MAX_SEQ)?;
     let mut ref_state = reference.alloc_state(gpu.as_ref())?;
     let mut tp1 = build_ranks(&gpu, &t, 1)?;
     let mut tp3 = build_ranks(&gpu, &t, 3)?;
@@ -425,9 +148,7 @@ fn main() -> Result<()> {
     let (mut pos, mut agree, mut total, mut exact_tp1) = (0usize, 0usize, 0usize, 0usize);
     let row = TAPS * HIDDEN * 2;
     for (step, &n) in grow.iter().enumerate() {
-        let taps: Vec<u8> = (0..n * TAPS * HIDDEN)
-            .flat_map(|_| bf16::from_f32(rng.unit()).to_bits().to_le_bytes())
-            .collect();
+        let taps = rng.bf16_bytes(n * TAPS * HIDDEN, 1.0);
         ensure!(taps.len() == n * row);
         append_ctx(gpu.as_ref(), ref_state.as_mut(), &taps, pos)?;
         append_ctx(gpu.as_ref(), tp1[0].state.as_mut(), &taps, pos)?;

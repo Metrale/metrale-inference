@@ -36,6 +36,9 @@ pub struct DflashBuildArgs<'a> {
     pub drafter_config: DflashConfig,
     pub gamma: Option<usize>,
     pub window_size: Option<usize>,
+    /// 2026-10-10: The drafter's tensor-parallel degree (`--draft-tp-size`): 1, or the world
+    /// size to split the drafter over every rank (`dflash_head::tp`).
+    pub tp_size: usize,
 }
 
 /// 2026-09-25: LoRA inputs for [`build_model`] (`--lora-adapter NAME=PATH`):

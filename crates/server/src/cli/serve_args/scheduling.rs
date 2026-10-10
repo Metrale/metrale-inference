@@ -176,19 +176,10 @@ pub struct ServeSchedulingArgs {
     #[arg(skip)]
     pub dflash_draft_ladder_resolved: Option<metrale_speculative::dflash_ladder::DraftLadder>,
 
-    /// 2026-10-10: Adaptive DFlash draft count for a single stream: the measured step cost in
-    /// ms by draft count, `drafts:ms` pairs over consecutive counts from 0 (the plain decode
-    /// step) or 1, e.g. `0:32,1:44,2:50,3:56`. Each C = 1 step then verifies the count with the
-    /// most expected tokens per ms at the sequence's measured acceptance, capped by the ladder
-    /// rung (or γ - 1), and with a `0:` entry suspends speculation (until the re-probe) where
-    /// plain decode pays more. Unset (the default): the ladder or the γ resolver decides.
-    #[arg(long, requires = "dflash")]
-    pub dflash_adaptive_k: Option<String>,
-
-    /// 2026-10-10: `dflash_adaptive_k` parsed and checked against the resolved γ by
-    /// `serve_phases::apply_dflash_gamma`.
-    #[arg(skip)]
-    pub dflash_adaptive_k_resolved: Option<metrale_speculative::dflash_adaptive_k::CostModel>,
+    /// 2026-10-10: `--dflash-adaptive-k` and `--draft-tp-size`, listed here after
+    /// `--dflash-draft-ladder`.
+    #[command(flatten)]
+    pub dflash_args: crate::cli::serve_args_dflash::ServeDflashArgs,
 
     /// Number of draft tokens per speculative step (1=K=2, 2=K=3, 3=K=4 verify).
     /// Precedence (highest wins): this flag → MODEL.toml

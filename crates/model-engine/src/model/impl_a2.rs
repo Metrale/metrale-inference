@@ -37,7 +37,7 @@ use metrale_model_layers::speculative::DraftProposer;
 use metrale_model_layers::weight_map::{DenseWeight, MtpWeights, QuantizedWeight};
 
 impl TransformerModel {
-    pub(super) fn comm_ref(&self) -> Option<&dyn metrale_comm::CommBackend> {
+    pub(crate) fn comm_ref(&self) -> Option<&dyn metrale_comm::CommBackend> {
         self.comm.as_deref()
     }
 

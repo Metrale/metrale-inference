@@ -75,14 +75,14 @@ fn a_disagreeing_worker_fails_every_rank() {
     assert!(r0.contains("rank(s) [1] disagree"), "{r0}");
 }
 
-/// 2026-10-10: TP DFlash is a collective protocol, so a rank-level lever mismatch must fail
-/// model construction on both ranks instead of deadlocking at the first propose.
+/// 2026-10-10: TP DFlash is a collective protocol, so a rank-level `--draft-tp-size` mismatch
+/// must fail model construction on both ranks instead of deadlocking at the first propose.
 #[test]
 fn dflash_tp_mismatch_fails_every_rank_at_startup() {
-    let [(r0, _), (r1, _)] = handshake_named("METRALE_DFLASH_TP", [1, 0]);
+    let [(r0, _), (r1, _)] = handshake_named("--draft-tp-size", [3, 1]);
     let r1 = r1.expect("the disagreeing worker fails");
     assert!(
-        r1.contains("METRALE_DFLASH_TP: rank 1 has 0, rank 0 has 1"),
+        r1.contains("--draft-tp-size: rank 1 has 1, rank 0 has 3"),
         "{r1}"
     );
     let r0 = r0.expect("rank 0 fails too");

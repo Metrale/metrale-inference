@@ -333,6 +333,8 @@ impl BlockDiffusionDraftHead {
             .collect();
         ctx.gpu.copy_h2d(&mine, self.scratch.tp_send)?;
         comm.all_gather(self.scratch.tp_send.0, self.scratch.tp_recv.0, mine.len())?;
+        // 2026-10-10: The gather is enqueued on the default stream; the host reads its result.
+        ctx.gpu.synchronize(ctx.gpu.default_stream())?;
         let mut raw = vec![0u8; world * mine.len()];
         ctx.gpu.copy_d2h(self.scratch.tp_recv, &mut raw)?;
         let blocks: Vec<u32> = raw

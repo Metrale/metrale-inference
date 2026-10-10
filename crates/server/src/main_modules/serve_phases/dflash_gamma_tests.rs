@@ -116,7 +116,7 @@ fn an_adaptive_k_table_is_held_to_the_serves_gamma() {
     let mut ok = args(&[&base[..], &["4", "--dflash-adaptive-k", table]].concat());
     apply_dflash_gamma(&mut ok, None).unwrap();
     assert_eq!(
-        ok.dflash_adaptive_k_resolved,
+        ok.dflash_args.dflash_adaptive_k_resolved,
         Some(metrale_speculative::dflash_adaptive_k::CostModel::parse(table).unwrap())
     );
     let mut wide = args(&[&base[..], &["3", "--dflash-adaptive-k", table]].concat());
@@ -125,6 +125,52 @@ fn an_adaptive_k_table_is_held_to_the_serves_gamma() {
     assert!(apply_dflash_gamma(&mut bad, None).is_err());
     assert!(
         cli::ServeArgs::try_parse_from(["serve", "some/model", "--dflash-adaptive-k", table])
+            .is_err()
+    );
+}
+
+/// 2026-10-10: `--draft-tp-size`: unset is 1; `auto` is the world size; 1 and the world size
+/// pass; any other count, a rank count past the world, or a split the drafter's heads cannot
+/// cover is refused; 0 and junk are refused by the parser; the flag needs `--dflash`.
+#[test]
+fn draft_tp_size_resolves_and_refuses() {
+    use cli::serve_args_dflash::{DraftTpSize, parse_draft_tp_size};
+    let glm = || {
+        metrale_model_arch::weight_loader::dflash_loader::parse_dflash_config(
+            r#"{"hidden_size": 4096, "num_hidden_layers": 5, "num_attention_heads": 32,
+                "num_key_value_heads": 8, "intermediate_size": 12288, "vocab_size": 154880,
+                "head_dim": 128}"#,
+        )
+    };
+    assert_eq!(resolve_draft_tp_size(None, 3, glm).unwrap(), 1);
+    assert_eq!(
+        resolve_draft_tp_size(Some(DraftTpSize::Auto), 3, glm).unwrap(),
+        3
+    );
+    assert_eq!(
+        resolve_draft_tp_size(Some(DraftTpSize::Ranks(3)), 3, glm).unwrap(),
+        3
+    );
+    assert_eq!(
+        resolve_draft_tp_size(Some(DraftTpSize::Ranks(1)), 3, glm).unwrap(),
+        1
+    );
+    for n in [2, 4] {
+        assert!(resolve_draft_tp_size(Some(DraftTpSize::Ranks(n)), 3, glm).is_err());
+    }
+    // 2026-10-10: Nine ranks cannot split 8 KV heads.
+    assert!(resolve_draft_tp_size(Some(DraftTpSize::Auto), 9, glm).is_err());
+    assert_eq!(parse_draft_tp_size("auto"), Ok(DraftTpSize::Auto));
+    assert_eq!(parse_draft_tp_size("3"), Ok(DraftTpSize::Ranks(3)));
+    for bad in ["0", "-1", "", "two", "3.0"] {
+        assert!(parse_draft_tp_size(bad).is_err(), "{bad:?} accepted");
+    }
+    assert!(
+        cli::ServeArgs::try_parse_from(["serve", "some/model", "--draft-tp-size", "3"]).is_err(),
+        "--draft-tp-size without --dflash"
+    );
+    assert!(
+        cli::ServeArgs::try_parse_from(["serve", "some/model", "--dflash", "--draft-tp-size", "0"])
             .is_err()
     );
 }

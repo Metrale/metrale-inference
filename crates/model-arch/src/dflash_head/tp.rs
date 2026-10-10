@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-10-10: `METRALE_DFLASH_TP=1`: the DFlash drafter split across the tensor-parallel ranks,
+//! 2026-10-10: `--draft-tp-size`: the DFlash drafter split across the tensor-parallel ranks,
 //! so the propose runs on every rank in step instead of on rank 0 while the others wait.
 //!
 //! Split (`plan`): the KV heads by `tp_split` (8 over 3 ranks: 3/3/2), the query heads with

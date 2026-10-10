@@ -26,10 +26,10 @@ pub(crate) struct Topology {
     pub(crate) ep_rank: usize,
 }
 
-pub(crate) fn resolve_topology(
-    args: &cli::ServeArgs,
-    config: &mut ModelConfig,
-) -> Result<Topology> {
+/// 2026-10-10: `(tp_size, ep_size, derived_world)` from the flags: the parallel sizes as
+/// `resolve_topology` uses them, and the world size they imply when `--world-size` is left at
+/// 1. Moved out of `resolve_topology` unchanged, so `serve_world_size` derives the same world.
+fn parallel_sizes(args: &cli::ServeArgs) -> (usize, usize, usize) {
     let (tp_size, ep_size) = if args.tp_size == 1 && args.ep_size == 1 && args.world_size > 1 {
         (1usize, args.world_size)
     } else {
@@ -40,6 +40,24 @@ pub(crate) fn resolve_topology(
     } else {
         tp_size * ep_size
     };
+    (tp_size, ep_size, derived_world)
+}
+
+/// 2026-10-10: The serve's world size, as `resolve_topology` resolves it.
+pub(crate) fn serve_world_size(args: &cli::ServeArgs) -> usize {
+    let (tp_size, ep_size, derived_world) = parallel_sizes(args);
+    if args.world_size <= 1 && (tp_size > 1 || ep_size > 1) {
+        derived_world
+    } else {
+        args.world_size
+    }
+}
+
+pub(crate) fn resolve_topology(
+    args: &cli::ServeArgs,
+    config: &mut ModelConfig,
+) -> Result<Topology> {
+    let (tp_size, ep_size, derived_world) = parallel_sizes(args);
     let world_size = if args.world_size <= 1 && (tp_size > 1 || ep_size > 1) {
         tracing::info!(
             "Auto-derived world_size={} from --tp-size {} --ep-size {} (rule: \

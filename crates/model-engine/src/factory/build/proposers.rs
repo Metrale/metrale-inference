@@ -9,7 +9,7 @@
 //! - A DeepSeek-V4 or GLM-5.3 proposer build error is logged and not returned;
 //!   a DFlash drafter error is returned.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use metrale_gpu_runtime::gpu::DevicePtr;
 use metrale_model_arch::weight_loader::deepseek_v4::mtp::DeepseekV4MtpModule;
 use metrale_model_arch::weight_loader::glm5_next_mtp::Glm5NextMtpModule;
@@ -102,6 +102,7 @@ pub(super) fn install_dflash_drafter(
         if let Some(weights) = weights {
             let (weights, lm_head, lm_nvfp4, lm_fp8, tp) = dflash_tp_split(
                 model,
+                args.tp_size,
                 weights,
                 target_lm_head_for_dflash,
                 target_lm_head_nvfp4_for_dflash,
@@ -126,7 +127,7 @@ pub(super) fn install_dflash_drafter(
             // 2026-10-10: The tensor-parallel propose runs the paged DFlash2 path only.
             anyhow::ensure!(
                 tp.is_none() || (head.dflash2_active() && head.levers.option_b),
-                "METRALE_DFLASH_TP=1 needs a DFlash2 drafter (conv + selector) on the paged \
+                "--draft-tp-size above 1 needs a DFlash2 drafter (conv + selector) on the paged \
                  cache (METRALE_DFLASH_OPTION_B not 0)"
             );
             model.set_dflash_proposer(std::sync::Arc::new(head));
@@ -141,14 +142,15 @@ pub(super) fn install_dflash_drafter(
     Ok(())
 }
 
-/// 2026-10-10: The drafter inputs of this rank: under `METRALE_DFLASH_TP=1` on two or more
-/// ranks, the weights cut to this rank's part (`dflash_head::tp`), the LM head pointer at its
+/// 2026-10-10: The drafter inputs of this rank: with `--draft-tp-size` above 1 (`tp_size`, the
+/// world size), the weights cut to this rank's part (`dflash_head::tp`), the LM head pointer at its
 /// first vocab row and no NVFP4 or native FP8 head share (the FP8 head is quantized from those
 /// rows); otherwise everything unchanged. A target whose LM head is NVFP4 is refused under the
 /// lever: the row offset assumes BF16 rows.
 #[allow(clippy::type_complexity)]
 fn dflash_tp_split(
     model: &TransformerModel,
+    tp_size: usize,
     weights: metrale_model_arch::weight_loader::DflashWeights,
     lm_head: DevicePtr,
     lm_nvfp4: Option<QuantizedWeight>,
@@ -160,13 +162,28 @@ fn dflash_tp_split(
     Option<(Fp8DenseWeight, usize)>,
     Option<metrale_model_arch::dflash_head::tp::DflashTp>,
 )> {
-    let on = metrale_config::levers::var("METRALE_DFLASH_TP").as_deref() == Some("1");
-    let Some((rank, world)) = model.comm_rank_world().filter(|&(_, w)| on && w > 1) else {
+    // 2026-10-10: Every rank must split the same way, or rank 0's collectives would have no
+    // partner: the ranks agree on the size before anything is cut.
+    if let Some(comm) = model.comm_ref() {
+        crate::rank_agree::assert_ranks_agree(
+            model.gpu_backend(),
+            comm,
+            &[("--draft-tp-size", tp_size as u64)],
+        )?;
+    }
+    if tp_size <= 1 {
         return Ok((weights, lm_head, lm_nvfp4, lm_fp8, None));
-    };
+    }
+    let (rank, world) = model
+        .comm_rank_world()
+        .context("--draft-tp-size above 1 needs a multi-rank serve")?;
+    anyhow::ensure!(
+        world == tp_size,
+        "--draft-tp-size {tp_size} on a {world}-rank communicator: it must be the world size"
+    );
     anyhow::ensure!(
         lm_nvfp4.is_none(),
-        "METRALE_DFLASH_TP=1 needs the target's BF16 LM head; this target's is NVFP4"
+        "--draft-tp-size {tp_size} needs the target's BF16 LM head; this target's is NVFP4"
     );
     let c = &weights.config;
     let plan = metrale_model_arch::dflash_head::tp::plan(
