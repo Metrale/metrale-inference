@@ -90,26 +90,20 @@ impl Glm5NextLayer {
             )?;
         }
 
-        glm_hc_pre(
+        self.mhc_pre_norm(
             gpu,
-            &mhc.kernels,
-            streams,
+            mhc,
             &mhc.attn,
+            self.input_norm,
+            streams,
             hidden,
             post,
             comb,
+            normed,
             1,
-            h as u32,
-            hc as u32,
-            mhc.sinkhorn_iters as u32,
-            self.rms_eps,
-            mhc.hc_eps,
+            t_mhc,
             stream,
         )?;
-        profile::end(profile::MHC, t_mhc, gpu, stream);
-        let t_norm = profile::start();
-        self.norm(gpu, hidden, self.input_norm, normed, 1, stream)?;
-        profile::end(profile::NORM, t_norm, gpu, stream);
         let attn_out = self.mixer_forward(
             normed,
             residual,
@@ -147,26 +141,20 @@ impl Glm5NextLayer {
         profile::end(profile::MHC_POST, t_mhc_post, gpu, stream);
 
         let t_mhc = profile::start();
-        glm_hc_pre(
+        self.mhc_pre_norm(
             gpu,
-            &mhc.kernels,
-            streams,
+            mhc,
             &mhc.ffn,
+            self.post_attn_norm,
+            streams,
             hidden,
             post,
             comb,
+            normed,
             1,
-            h as u32,
-            hc as u32,
-            mhc.sinkhorn_iters as u32,
-            self.rms_eps,
-            mhc.hc_eps,
+            t_mhc,
             stream,
         )?;
-        profile::end(profile::MHC, t_mhc, gpu, stream);
-        let t_norm = profile::start();
-        self.norm(gpu, hidden, self.post_attn_norm, normed, 1, stream)?;
-        profile::end(profile::NORM, t_norm, gpu, stream);
         self.mlp_forward(normed, ffn_out, 1, &[1], ctx, stream)?;
         let t_mhc_post = profile::start();
         glm_hc_post(
@@ -349,26 +337,20 @@ impl Glm5NextLayer {
             )?;
         }
 
-        glm_hc_pre(
+        self.mhc_pre_norm(
             gpu,
-            &mhc.kernels,
-            streams,
+            mhc,
             &mhc.attn,
+            self.input_norm,
+            streams,
             hidden,
             post,
             comb,
-            kt,
-            ht,
-            hct,
-            mhc.sinkhorn_iters as u32,
-            self.rms_eps,
-            mhc.hc_eps,
+            normed,
+            k,
+            t_mhc,
             stream,
         )?;
-        profile::end(profile::MHC, t_mhc, gpu, stream);
-        let t_norm = profile::start();
-        self.norm(gpu, hidden, self.input_norm, normed, k, stream)?;
-        profile::end(profile::NORM, t_norm, gpu, stream);
         let t = profile::start();
         let attn_out = mixer(normed)?;
         profile::end(profile::KDA, t, gpu, stream);
@@ -397,26 +379,20 @@ impl Glm5NextLayer {
         profile::end(profile::MHC_POST, t_mhc_post, gpu, stream);
 
         let t_mhc = profile::start();
-        glm_hc_pre(
+        self.mhc_pre_norm(
             gpu,
-            &mhc.kernels,
-            streams,
+            mhc,
             &mhc.ffn,
+            self.post_attn_norm,
+            streams,
             hidden,
             post,
             comb,
-            kt,
-            ht,
-            hct,
-            mhc.sinkhorn_iters as u32,
-            self.rms_eps,
-            mhc.hc_eps,
+            normed,
+            k,
+            t_mhc,
             stream,
         )?;
-        profile::end(profile::MHC, t_mhc, gpu, stream);
-        let t_norm = profile::start();
-        self.norm(gpu, hidden, self.post_attn_norm, normed, k, stream)?;
-        profile::end(profile::NORM, t_norm, gpu, stream);
         self.mlp_forward(normed, ffn_out, k, row_pieces, ctx, stream)?;
         let t_mhc_post = profile::start();
         glm_hc_post(

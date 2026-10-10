@@ -87,6 +87,15 @@ pub(crate) fn dsa_indexer_rows() -> bool {
     *E.get_or_init(|| std::env::var("METRALE_GLM_DSA_INDEXER_ROWS").as_deref() == Ok("1"))
 }
 
+/// 2026-10-09: `METRALE_GLM_MHC_FUSED=1` runs each mHC site's pre-mix and the RMS norm after
+/// it as one `glm5next_hc_pre_norm` launch (`glm5next_mhc_fused::glm_hc_pre_norm`) instead of
+/// `hc_mix_bf16`, `hc_finish` and `rms_norm_vanilla`; every output keeps its bits. Off until
+/// measured end to end. Read once.
+pub(crate) fn mhc_fused() -> bool {
+    static E: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *E.get_or_init(|| std::env::var("METRALE_GLM_MHC_FUSED").as_deref() == Ok("1"))
+}
+
 /// 2026-09-25: `PREFILL_ROWS`, overridable at launch with `METRALE_GLM_PREFILL_ROWS` (values
 /// below 1 or unparsable are ignored). `1` selects the per-token walk: `Glm5NextLayer::prefill`
 /// takes the batched sub-chunk path only when `rows > 1`. A width above

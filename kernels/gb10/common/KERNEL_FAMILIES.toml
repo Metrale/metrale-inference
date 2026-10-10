@@ -2021,9 +2021,14 @@ kernels = [
   "glm5next_mhc::glm5next_hc_mix", "glm5next_mhc::glm5next_hc_mix_bf16",
   "glm5next_mhc::glm5next_hc_finish", "glm5next_mhc::glm5next_hc_post",
   "glm5next_mhc::glm5next_hc_head", "glm5next_mhc::glm5next_hc_expand",
+  "glm5next_mhc_fused::glm5next_hc_pre_norm", "glm5next_mhc_fused::glm5next_hc_pre_norm_rows",
 ]
 kernel_compute."glm5next_mhc::glm5next_hc_mix" = { compute = "cuda_core" }
 kernel_compute."glm5next_mhc::glm5next_hc_mix_bf16" = { compute = "cuda_core" }
+# 2026-10-09: The fused pre-mix + norm (opt-in METRALE_GLM_MHC_FUSED): the same mix GEMV and
+# hc_pre arithmetic as hc_mix_bf16 + hc_finish, plus rms_norm_vanilla's on the collapsed row.
+kernel_compute."glm5next_mhc_fused::glm5next_hc_pre_norm" = { compute = "cuda_core" }
+kernel_compute."glm5next_mhc_fused::glm5next_hc_pre_norm_rows" = { compute = "cuda_core" }
 rows = [1, 256]
 pipeline."linear:hc_mix" = { in = ["f32"], act = "f32", weight = "bf16->f32", mma = "f32*f32", accumulate = "f32", scale = "none", out = ["f32"] }
 pipeline.hc_pre = { in = ["f32", "f32"], compute = "f32", out = ["bf16", "f32", "f32"] }
@@ -2037,7 +2042,7 @@ op = [
 [[family.point]]
 values = {}
 how = "instantiation"
-files = ["kernels/gb10/common/glm5next_mhc.cu"]
+files = ["kernels/gb10/common/glm5next_mhc.cu", "kernels/gb10/common/glm5next_mhc_fused.cu"]
 
 # 2026-10-08: The KDA gates: the decay
 # `linear_lower_bound * sigmoid(exp(A_log[h]) * (g + dt_bias))` per channel from the BF16 `f_b`

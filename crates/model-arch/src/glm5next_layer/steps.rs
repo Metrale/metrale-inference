@@ -42,6 +42,74 @@ impl Glm5NextLayer {
         Ok(())
     }
 
+    /// 2026-10-09: One mHC site's pre-mix of `k` rows into `y` (with `post` and `comb`), then
+    /// the RMS norm of `y` with `norm_w` into `normed`: `glm_hc_pre` and `norm`, or with
+    /// `mhc_fused()` the single `glm_hc_pre_norm` launch that writes the same bytes. Ends the
+    /// caller's `profile::MHC` span `t_mhc`; the unfused norm keeps its `profile::NORM` span.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::glm5next_layer) fn mhc_pre_norm(
+        &self,
+        gpu: &dyn GpuBackend,
+        mhc: &Glm5NextMhc,
+        site: &Glm5NextMhcSiteWeights,
+        norm_w: DevicePtr,
+        streams: DevicePtr,
+        y: DevicePtr,
+        post: DevicePtr,
+        comb: DevicePtr,
+        normed: DevicePtr,
+        k: usize,
+        t_mhc: Option<std::time::Instant>,
+        stream: u64,
+    ) -> Result<()> {
+        let (kt, ht, hct) = (k as u32, self.hidden as u32, mhc.hc_mult as u32);
+        let iters = mhc.sinkhorn_iters as u32;
+        if mhc_fused() {
+            crate::glm5next_mhc_fused::glm_hc_pre_norm(
+                gpu,
+                &mhc.kernels,
+                streams,
+                site,
+                norm_w,
+                y,
+                normed,
+                post,
+                comb,
+                kt,
+                ht,
+                hct,
+                iters,
+                self.rms_eps,
+                mhc.hc_eps,
+                self.rms_eps,
+                stream,
+            )?;
+            profile::end(profile::MHC, t_mhc, gpu, stream);
+            return Ok(());
+        }
+        glm_hc_pre(
+            gpu,
+            &mhc.kernels,
+            streams,
+            site,
+            y,
+            post,
+            comb,
+            kt,
+            ht,
+            hct,
+            iters,
+            self.rms_eps,
+            mhc.hc_eps,
+            stream,
+        )?;
+        profile::end(profile::MHC, t_mhc, gpu, stream);
+        let t_norm = profile::start();
+        self.norm(gpu, y, norm_w, normed, k, stream)?;
+        profile::end(profile::NORM, t_norm, gpu, stream);
+        Ok(())
+    }
+
     /// 2026-09-25: Run the mixer on `normed`; returns the pointer that holds its output.
     #[allow(clippy::too_many_arguments)]
     fn mixer_forward(
