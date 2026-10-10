@@ -7,6 +7,7 @@
 //! Invariants: none beyond the types.
 
 mod build;
+mod comm_watch;
 pub(crate) mod config;
 mod dflash_gamma;
 pub(crate) mod expert_tables;
@@ -24,6 +25,7 @@ pub(super) use build::{
     build_high_speed_swap_config, build_model, build_prefix_cache, maybe_run_ep_worker,
     resolve_swap_space_gb, validate_head_high_speed_swap,
 };
+pub(super) use comm_watch::spawn as spawn_comm_watch;
 pub(super) use config::{
     apply_model_default_num_drafts, cap_vocab_size_to_tokenizer, load_model_config,
     merge_sidecar_quant_config, publish_copy_tier, publish_draft_confidence_stop,
