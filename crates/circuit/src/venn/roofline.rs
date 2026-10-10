@@ -25,7 +25,7 @@ use super::families::Roofline;
 use crate::format::Format;
 use crate::ir::{Circuit, Node, OpKind};
 use crate::rules::Mode;
-use crate::state::{StateAccess, StateDtype, StateFormat};
+use crate::state::{StateAccess, StateDecl, StateDtype, StateFormat};
 
 /// 2026-09-29: One node's estimate.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -146,8 +146,11 @@ pub fn node_cost(
             };
             bytes += seqs * attended * read_unit_bytes(c, n, settings)?;
             let (qh, lat) = (dim("q_heads")?, dim("kv_lora")?);
+            // 2026-10-10: Scores over the whole cached row (the latent, plus the shared rotary
+            // key of a decoupled-RoPE cache), values over the latent.
+            let key = read_unit(c, n)?.elements as f64;
             flops = 2.0 * t * qh * lat * (dim("mla_qk")? + dim("mla_v")?)
-                + 4.0 * t * attended * qh * lat;
+                + 2.0 * t * attended * qh * (key + lat);
         }
         OpKind::IndexSelect => {
             // 2026-10-08: Every pool key of the context once per sequence (the cache holds one
@@ -186,6 +189,18 @@ pub fn node_cost(
     })
 }
 
+/// 2026-10-10: The first state `n` reads.
+fn read_unit<'c>(c: &'c Circuit, n: &Node) -> Result<&'c StateDecl, CostError> {
+    n.state
+        .iter()
+        .find(|(_, a)| *a == StateAccess::Read)
+        .map(|(idx, _)| &c.states[*idx])
+        .ok_or_else(|| CostError::Node {
+            node: n.id.clone(),
+            detail: "the estimate needs the state it reads".into(),
+        })
+}
+
 /// 2026-10-08: Bytes of one unit (one token) of the first state `n` reads: its elements times
 /// its element size, a keyed format read from `settings`.
 pub(crate) fn read_unit_bytes(
@@ -197,12 +212,7 @@ pub(crate) fn read_unit_bytes(
         node: n.id.clone(),
         detail,
     };
-    let (idx, _) = n
-        .state
-        .iter()
-        .find(|(_, a)| *a == StateAccess::Read)
-        .ok_or_else(|| fail("the estimate needs the state it reads".into()))?;
-    let decl = &c.states[*idx];
+    let decl = read_unit(c, n)?;
     let dtype = match &decl.format {
         StateFormat::Fixed(d) => *d,
         StateFormat::Keyed(key) => {
