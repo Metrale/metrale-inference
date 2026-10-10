@@ -125,7 +125,11 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
         // 2026-09-25: Unless `METRALE_GLM_MLP_WS_SHARED=0`, one MLP workspace serves
         // every layer; otherwise each layer allocates its own. Either way it is
         // allocated here, at load, before the KV pool is sized.
-        let mlp_ws_bytes = crate::glm5next_mlp::forward::mlp_ws_total_bytes(&mlp_cfg, verify_k);
+        let mlp_ws_bytes = crate::glm5next_mlp::forward::mlp_ws_total_bytes(
+            &mlp_cfg,
+            verify_k,
+            crate::glm5next_mlp::forward::moe_w4a4_grouped()?,
+        );
         let shared_mlp_ws = if crate::glm5next_mlp::forward::mlp_ws_shared() {
             tracing::info!(
                 "GLM MLP workspace: SHARED, 1 x {:.1} MB for {} layers at {verify_k} rows \

@@ -25,6 +25,7 @@ mod route;
 mod router;
 mod topk_combine;
 mod w4a4;
+mod w4a4_grouped;
 mod workspace;
 
 pub use dense::{forward_dense, forward_dense_site};
@@ -32,6 +33,7 @@ use launch::swiglu;
 pub(crate) use pieces::check_pieces;
 pub use route::{ExpertRoute, expert_route};
 pub use w4a4::forward_dense_w4a4;
+pub use w4a4_grouped::{moe_w4a4_grouped, smem_bytes as w4a4_grouped_smem_bytes};
 pub use workspace::{mlp_ws_bytes, mlp_ws_total_bytes};
 
 const ACT_BLOCK: u32 = 256;
@@ -90,6 +92,9 @@ pub struct Glm5NextMlpWorkspace {
     w4a4_aq: DevicePtr,
     w4a4_as: DevicePtr,
     w4a4_ag: DevicePtr,
+    /// 2026-10-10: `[num_experts + 1]` I32: the first 32- or 64-slot tile of each expert in the
+    /// grouped W4A4 GEMM (`w4a4_grouped_tiles`), the last entry the tile count.
+    w4a4_tile_off: DevicePtr,
     /// 2026-10-08: Rows, and the widest K, the W4A4 scratch holds.
     w4a4_rows: usize,
     w4a4_k: usize,
@@ -360,6 +365,10 @@ pub fn forward_moe_pieces(
         _ => None,
     };
     let grouped_prefill = path == route::ExpertRoute::Grouped;
+    // 2026-10-10: A W4A4 launch wider than the slot GEMV serves runs the grouped W4A4 GEMM,
+    // which leaves `expert_out` in expert-sorted order as the grouped W4A16 GEMM does.
+    let grouped_w4a4 = w4a4.is_some() && w4a4_grouped::takes_grouped(rows);
+    let sorted_out = grouped_prefill || grouped_w4a4;
     let batched = path == route::ExpertRoute::RowBatched;
     if w4a4.is_none() {
         announce_row_batch(batched, rows);
@@ -373,8 +382,11 @@ pub fn forward_moe_pieces(
     profile::end(profile::MOE_ROUTER, t, gpu, stream);
 
     // 2026-09-25: Zero every routed output first: an expert this rank does not own writes
-    // nothing, and its slots must add zero to the sum.
-    gpu.memset_async(ws.expert_out, 0, rows * cfg.top_k * cfg.hidden * 2, stream)?;
+    // nothing, and its slots must add zero to the sum. 2026-10-10: Not before the grouped W4A4
+    // GEMM when this rank holds every expert: its down launch writes every sorted row.
+    if w4a4_grouped::zeroes_expert_out(grouped_w4a4, cfg) {
+        gpu.memset_async(ws.expert_out, 0, rows * cfg.top_k * cfg.hidden * 2, stream)?;
+    }
 
     let site = moe_experts::MoeSite {
         gpu,
@@ -415,7 +427,7 @@ pub fn forward_moe_pieces(
     let t = profile::start();
     // 2026-09-25: One combine launch for all rows (row = `blockIdx.x`), reading the routed rows
     // in expert-sorted order after the grouped GEMM (`topk_combine`).
-    topk_combine::combine(gpu, k, cfg, ws, out, rows, grouped_prefill, stream)?;
+    topk_combine::combine(gpu, k, cfg, ws, out, rows, sorted_out, stream)?;
     profile::end(profile::MOE_COMBINE, t, gpu, stream);
     Ok(())
 }

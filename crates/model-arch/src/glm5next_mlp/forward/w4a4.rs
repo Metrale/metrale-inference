@@ -41,7 +41,7 @@ const W4A4_BLOCK: u32 = 256;
 /// static global scale `gs`. 2026-10-10: `k_store` is the row width `kern` writes: `k`, or
 /// `k.next_multiple_of(128)` for the `_k64` quantizer.
 #[allow(clippy::too_many_arguments)]
-fn quant_static(
+pub(super) fn quant_static(
     gpu: &dyn GpuBackend,
     kern: KernelHandle,
     ws: &Glm5NextMlpWorkspace,
@@ -285,6 +285,10 @@ pub(super) fn w4a4_experts(site: &MoeSite<'_>, scales: W4a4ActScales) -> Result<
         ws,
         stream,
     } = *site;
+    // 2026-10-10: Wider than the slot GEMV serves: the grouped W4A4 GEMM.
+    if super::w4a4_grouped::takes_grouped(rows) {
+        return super::w4a4_grouped::w4a4_grouped_experts(site, scales);
+    }
     let (mi, h) = (cfg.moe_intermediate, cfg.hidden);
     check_w4a4_k(h, "routed gate/up")?;
     let down = down_kernels(k, mi)?;

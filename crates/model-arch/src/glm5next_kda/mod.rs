@@ -29,6 +29,7 @@
 //!   q|k channels. V is never normalised.
 
 pub mod binding;
+pub mod chunk16;
 pub mod tp;
 pub mod tp_bind;
 

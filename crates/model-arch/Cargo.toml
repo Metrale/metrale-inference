@@ -243,6 +243,22 @@ name = "glm5next_moe_wide_bench"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "glm5next_moe_prefill_w4a4_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_w4a16_wide_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_kda_chunk16_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_dsa_scores_tiled_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "glm5next_expert_tp_bench"
 required-features = ["cuda", "gpu-examples"]
 

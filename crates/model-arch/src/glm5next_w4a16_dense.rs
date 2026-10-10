@@ -31,6 +31,9 @@
 //! - 2026-10-09: `METRALE_GLM_W4A16_SEG` (`glm5next_w4a16_seg`) moves the launches of 2 rows
 //!   and up to the segmented row tiles; [`proj_group`] runs projections that share their input
 //!   in one launch there and declines otherwise. Unset, every launch is as before.
+//! - 2026-10-10: `METRALE_GLM_W4A16_DEQUANT_GEMM_MIN_ROWS` (`glm5next_w4a16_wide`) moves launches
+//!   of at least that many rows (prefill) to a dequantize + cuBLASLt GEMM, ahead of every other
+//!   mode; unset, every launch is as before.
 //! - Every registered K is a multiple of [`W4A16_K_UNIT`]; the TP splits are chosen so that it
 //!   holds ([`kda_channel_unit`], `glm5next_fp8_dense::shared_split_unit`), and a width that
 //!   breaks it is refused at load.
@@ -233,6 +236,8 @@ pub fn register(
         w.weight.0
     );
     g.insert(w.weight.0, Entry { w, n, k });
+    drop(g);
+    crate::glm5next_w4a16_wide::reserve(gpu, n, k)?;
     Ok(w.weight)
 }
 
@@ -314,6 +319,10 @@ fn proj_registered(
         return Ok(false);
     };
     let (n32, k32) = (n as u32, k as u32);
+    if crate::glm5next_w4a16_wide::takes(crate::glm5next_w4a16_wide::min_rows()?, m) {
+        crate::glm5next_w4a16_wide::proj(gpu, &e.w, a, c, m, n, k, stream)?;
+        return Ok(true);
+    }
     if m == 1 {
         // 2026-10-09: One row takes the NVFP4 GEMV, which streams the weight across every SM;
         // the 64-column row tile left the KDA projections at 44 CTAs (C1 nsys: 34.6 us for a
@@ -391,7 +400,13 @@ fn proj_group_registered(
 ) -> Result<bool> {
     // 2026-10-10: A launch the GEMV tiers take declines too: its members then run one by one
     // on them (`proj`).
-    if plan.mode == SegMode::Off || m < 2 || plan.gemv_tier(m) {
+    // 2026-10-10: A launch the dequantize + cuBLASLt path takes declines too: its members then
+    // run one by one there (`proj`).
+    if plan.mode == SegMode::Off
+        || m < 2
+        || plan.gemv_tier(m)
+        || crate::glm5next_w4a16_wide::takes(crate::glm5next_w4a16_wide::min_rows()?, m)
+    {
         return Ok(false);
     }
     let mut segs = Vec::with_capacity(members.len());

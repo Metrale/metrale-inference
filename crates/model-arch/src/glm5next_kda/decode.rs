@@ -225,7 +225,39 @@ impl Glm5NextKdaLayer {
         stream: u64,
         tokens: bool,
     ) -> Result<()> {
-        let tokens = tokens && k > 1 && snapshots.is_empty() && self.seq_tokens_ready();
+        self.decode_k_modes(
+            gpu,
+            hidden,
+            k,
+            state,
+            ws,
+            snapshots,
+            stream,
+            tokens,
+            super::chunk16::kda_chunk_scan_min_rows()?,
+        )
+    }
+
+    /// 2026-10-10: [`Self::decode_k_with`] with the chunked scan's floor
+    /// (`METRALE_GLM_KDA_CHUNK_SCAN`) explicit: rows that take no snapshot, at least
+    /// `chunk_min` of them, run the conv and the chunked recurrence (`chunk16.rs`); otherwise as
+    /// `decode_k_with`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn decode_k_modes(
+        &self,
+        gpu: &dyn GpuBackend,
+        hidden: DevicePtr,
+        k: usize,
+        state: &KdaSeqState,
+        ws: &Glm5NextKdaWorkspace,
+        snapshots: &[(DevicePtr, DevicePtr)],
+        stream: u64,
+        tokens: bool,
+        chunk_min: Option<usize>,
+    ) -> Result<()> {
+        let chunked =
+            chunk_min.is_some_and(|r| k >= r) && snapshots.is_empty() && self.chunk16_ready();
+        let tokens = !chunked && tokens && k > 1 && snapshots.is_empty() && self.seq_tokens_ready();
         self.rows_with(
             gpu,
             hidden,
@@ -233,7 +265,7 @@ impl Glm5NextKdaLayer {
             ws,
             stream,
             |row| {
-                if tokens {
+                if tokens || chunked {
                     return Ok(());
                 }
                 self.stateful_row(gpu, RowIo::workspace(&self.cfg, ws, row), state, stream)?;
@@ -243,7 +275,9 @@ impl Glm5NextKdaLayer {
                 }
             },
             || {
-                if tokens {
+                if chunked {
+                    self.stateful_chunk16(gpu, k, state, ws, stream)
+                } else if tokens {
                     self.stateful_tokens(gpu, k, state, ws, stream)
                 } else {
                     Ok(())

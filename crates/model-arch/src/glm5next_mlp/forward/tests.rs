@@ -84,24 +84,63 @@ mod ws_sizing {
     fn matches_the_hand_computed_campaign_footprint() {
         let c = cfg();
         for rows in [16usize, 64, 128, 256, 512, 1024] {
-            let b = mlp_ws_bytes(&c, rows);
+            let b = mlp_ws_bytes(&c, rows, false);
             assert_eq!(b[0], rows * 16384 * 2, "a_gate at {rows}");
             assert_eq!(b[1], b[0], "a_up at {rows}");
             assert_eq!(b[2], b[0], "a_act at {rows}");
             assert_eq!(b[3], rows * 288 * 4, "logits at {rows}");
             assert_eq!(b[6], rows * 8 * 4096 * 2, "expert_out at {rows}");
             assert_eq!(b[7], rows * 4096 * 2, "shared_out at {rows}");
-            assert_eq!(b[9], rows * 8 * rows * 4, "u_slot at {rows}");
+            // 2026-10-10: u_slot holds the widest union group (16 rows), not every row.
+            assert_eq!(b[9], 16 * 8 * 16 * 4, "u_slot at {rows}");
             assert_eq!(b[12], 289 * 4, "expert_offsets is row-independent");
             // 2026-10-08: The W4A4 scratch: 16 routed rows x top_k 8 = 128 quantized rows of
             // the widest K, the 6144-wide TP=2 dense share; row-independent from 16 rows up.
             assert_eq!(b[14], 128 * 6144 / 2, "w4a4 codes at {rows}");
             assert_eq!(b[15], 128 * 6144 / 16, "w4a4 scales at {rows}");
             assert_eq!(b[16], 128 * 4, "w4a4 globals at {rows}");
+            assert_eq!(b[17], 289 * 4, "w4a4 tile offsets are row-independent");
             assert_eq!(
-                mlp_ws_total_bytes(&c, rows),
-                rows * 173_376 + 32 * rows * rows + 1156 + 442_880
+                mlp_ws_total_bytes(&c, rows, false),
+                rows * 173_376 + 8192 + 1156 + 1156 + 442_880
             );
+        }
+    }
+
+    /// 2026-10-10: Below 16 rows u_slot is `rows * top_k * rows` as before; from 16 rows it stops
+    /// growing (it was 32 * rows^2 bytes: 134 MB at 2048 rows).
+    #[test]
+    fn u_slot_is_capped_at_the_widest_union_group() {
+        let c = cfg();
+        for (rows, want) in [
+            (1usize, 32usize),
+            (4, 512),
+            (16, 8192),
+            (17, 8192),
+            (2048, 8192),
+        ] {
+            assert_eq!(mlp_ws_bytes(&c, rows, false)[9], want, "u_slot at {rows}");
+        }
+    }
+
+    /// 2026-10-10: `grouped` sizes the W4A4 scratch for every routed slot (the grouped GEMM's down
+    /// input) at the same widest K; off, it stays at 16 routed rows.
+    #[test]
+    fn grouped_w4a4_scratch_holds_every_routed_slot() {
+        let c = cfg();
+        for rows in [64usize, 512, 2048] {
+            let on = mlp_ws_bytes(&c, rows, true);
+            let off = mlp_ws_bytes(&c, rows, false);
+            assert_eq!(on[14], rows * 8 * 6144 / 2, "codes at {rows}");
+            assert_eq!(on[15], rows * 8 * 6144 / 16, "scales at {rows}");
+            assert_eq!(on[16], rows * 8 * 4, "globals at {rows}");
+            assert_eq!(off[14], 128 * 6144 / 2, "off: codes at {rows}");
+            for i in (0..14).chain([17]) {
+                assert_eq!(
+                    on[i], off[i],
+                    "buffer {i} at {rows} does not depend on grouped"
+                );
+            }
         }
     }
 
@@ -113,11 +152,11 @@ mod ws_sizing {
         // 2026-09-25: Decimal units, as the loader's log prints them.
         let mb = |n: usize| n as f64 / 1e6;
         for (rows, per_layer_mb, stack_gb) in [
-            (256usize, 46.93, 2.112),
-            (512, 97.60, 4.392),
-            (1024, 211.54, 9.519),
+            (256usize, 44.84, 2.018),
+            (512, 89.22, 4.015),
+            (1024, 177.99, 8.010),
         ] {
-            let one = mlp_ws_total_bytes(&c, rows);
+            let one = mlp_ws_total_bytes(&c, rows, false);
             assert!(
                 (mb(one) - per_layer_mb).abs() < 0.05,
                 "rows={rows}: {:.2} MB per workspace, expected ≈{per_layer_mb}",
@@ -135,7 +174,10 @@ mod ws_sizing {
     #[test]
     fn zero_rows_clamps_to_one() {
         let c = cfg();
-        assert_eq!(mlp_ws_total_bytes(&c, 0), mlp_ws_total_bytes(&c, 1));
-        assert!(mlp_ws_bytes(&c, 0).iter().all(|&b| b > 0));
+        assert_eq!(
+            mlp_ws_total_bytes(&c, 0, false),
+            mlp_ws_total_bytes(&c, 1, false)
+        );
+        assert!(mlp_ws_bytes(&c, 0, false).iter().all(|&b| b > 0));
     }
 }

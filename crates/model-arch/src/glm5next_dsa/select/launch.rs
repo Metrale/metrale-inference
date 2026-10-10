@@ -95,17 +95,23 @@ pub fn select_tokens(
         .arg_u32(inputs.rows.blk_elems)
         .launch(stream)?;
 
-    if has_pools {
-        KernelLaunch::new(gpu, kernels.index_scores)
+    // 2026-10-10: `METRALE_GLM_DSA_SCORES_TILED=1`: the same scores, bit for bit, in query x
+    // pool tiles for an exact launch of several query rows (`scores_tiled_for`).
+    let tiled = scores_tiled_for(
+        ceiling.is_some(),
+        geom,
+        kernels.rows.scores_tiled,
+        scores_tiled(),
+    );
+    if has_pools && tiled {
+        KernelLaunch::new(gpu, kernels.rows.scores_tiled)
             .grid([
-                ceiling.unwrap_or(geom.n_pools) as u32,
-                geom.q_rows as u32,
+                geom.n_pools.div_ceil(SCORES_TILE_POOLS) as u32,
+                geom.q_rows.div_ceil(SCORES_TILE_ROWS) as u32,
                 1,
             ])
-            .block([SCORES_BLOCK, 1, 1])
-            // 2026-09-25: `dsa_index_scores` keeps one f32 per index head in shared memory and
-            // sums them in head order.
-            .shared_mem(SCORES_BLOCK.max((geom.index_heads * 4) as u32))
+            .block([256, 1, 1])
+            .shared_mem(SCORES_TILE_SMEM)
             .arg_ptr(inputs.q)
             .arg_ptr(scratch.pool_keys)
             .arg_ptr(inputs.weights)
@@ -122,8 +128,39 @@ pub fn select_tokens(
             .arg_u32(kp as u32)
             .arg_u32(seq_a as u32)
             .arg_f32((d as f32).powf(-0.5))
-            .arg_ptr(gd)
             .launch(stream)?;
+    }
+    if has_pools {
+        if !tiled {
+            KernelLaunch::new(gpu, kernels.index_scores)
+                .grid([
+                    ceiling.unwrap_or(geom.n_pools) as u32,
+                    geom.q_rows as u32,
+                    1,
+                ])
+                .block([SCORES_BLOCK, 1, 1])
+                // 2026-09-25: `dsa_index_scores` keeps one f32 per index head in shared memory and
+                // sums them in head order.
+                .shared_mem(SCORES_BLOCK.max((geom.index_heads * 4) as u32))
+                .arg_ptr(inputs.q)
+                .arg_ptr(scratch.pool_keys)
+                .arg_ptr(inputs.weights)
+                .arg_ptr(scratch.pool_indices)
+                .arg_ptr(scratch.pool_valid)
+                .arg_ptr(inputs.rows.valid)
+                .arg_ptr(inputs.q_pos)
+                .arg_ptr(scratch.scores)
+                .arg_ptr(scratch.valid_cand)
+                .arg_u32(geom.q_rows as u32)
+                .arg_u32(npools_a as u32)
+                .arg_u32(geom.index_heads as u32)
+                .arg_u32(d as u32)
+                .arg_u32(kp as u32)
+                .arg_u32(seq_a as u32)
+                .arg_f32((d as f32).powf(-0.5))
+                .arg_ptr(gd)
+                .launch(stream)?;
+        }
 
         // 2026-09-25: `np2_a` is at most `topk_tile()`, so the request is at most
         // `topk_smem_for_tile(topk_tile())`, within `TOPK_SMEM_CEILING`.

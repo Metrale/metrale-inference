@@ -120,12 +120,15 @@ pub const KDA_REG_D: usize = 128;
 
 /// 2026-10-09: `causal_conv1d_update_l2norm_tokens`, `causal_conv1d_window_advance` and
 /// `kda_recurrent_decode_bf16_seq_reg` (the first two in `kda_conv_tokens.cu`), resolved
-/// with `try_kernel`.
+/// with `try_kernel`. 2026-10-10: and the 16-token chunked scan `kda_chunk16_prepare` /
+/// `kda_chunk16_scan` (`kda_chunk16.cu`, `chunk16.rs`).
 #[derive(Clone, Copy, Debug)]
 pub struct KdaSeqKernels {
     pub conv_tokens: KernelHandle,
     pub conv_window: KernelHandle,
     pub recurrent: KernelHandle,
+    pub chunk16_prepare: KernelHandle,
+    pub chunk16_scan: KernelHandle,
 }
 
 impl KdaSeqKernels {
@@ -135,6 +138,8 @@ impl KdaSeqKernels {
             conv_tokens: k(gpu, "kda_conv_tokens", "causal_conv1d_update_l2norm_tokens"),
             conv_window: k(gpu, "kda_conv_tokens", "causal_conv1d_window_advance"),
             recurrent: k(gpu, "kda_recurrent", "kda_recurrent_decode_bf16_seq_reg"),
+            chunk16_prepare: k(gpu, "kda_chunk16", "kda_chunk16_prepare"),
+            chunk16_scan: k(gpu, "kda_chunk16", "kda_chunk16_scan"),
         }
     }
 

@@ -43,6 +43,7 @@ pub(super) const GEOM_ROWS: u64 = 0x20C;
 pub(super) const SCORES_ROWS: u64 = 0x20D;
 pub(super) const TOPK_ROWS: u64 = 0x20E;
 pub(super) const EXPAND_ROWS: u64 = 0x20F;
+pub(super) const SCORES_TILED: u64 = 0x210;
 /// 2026-10-08: Block-table entries per metadata row.
 pub(super) const MB: usize = 4;
 pub(super) const HIDDEN: usize = 64;
@@ -175,6 +176,7 @@ impl Rig {
                     pool_scores: k(SCORES_ROWS),
                     topk_pools: k(TOPK_ROWS),
                     expand_selection: k(EXPAND_ROWS),
+                    scores_tiled: k(SCORES_TILED),
                 },
             },
             decode_kernel: Glm5NextDsaDecodeKernel::resolve(&self.gpu).unwrap(),

@@ -29,10 +29,16 @@ pub(super) fn group_precision(
         metrale_model_layers::layers::kernel_caps(),
     );
     let (base, family, w4a4_rows) = match group {
+        // 2026-10-10: `METRALE_GLM_MOE_W4A4_GROUPED=1` lifts the routed W4A4 row cap with
+        // the grouped W4A4 GEMM (`glm5next_mlp::forward::w4a4_grouped`).
         MlpGroup::RoutedExperts => (
             format!("mlp.experts.{expert0}"),
             ProjFamily::Moe,
-            kernels.w4a4_expert_rows(),
+            if crate::glm5next_mlp::forward::moe_w4a4_grouped()? {
+                kernels.w4a4_expert_rows_grouped()
+            } else {
+                kernels.w4a4_expert_rows()
+            },
         ),
         MlpGroup::DenseMlp => (
             "mlp".to_string(),

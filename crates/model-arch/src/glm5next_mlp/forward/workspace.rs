@@ -13,13 +13,37 @@ use metrale_gpu_runtime::gpu::GpuBackend;
 use super::Glm5NextMlpWorkspace;
 use crate::glm5next_mlp::{DENSE_W4A4_CHUNK_ROWS, Glm5NextMlpConfig, MOE_W4A4_MAX_ROWS};
 
+use super::MOE_ROW_BATCH_MAX_ROWS;
+
+/// 2026-10-10: The widest row group a union table (`u_eid`, `u_slot`) is built for: the
+/// row-batched W4A16 sub-groups (at most `MOE_ROW_BATCH_MAX_ROWS`) and the W4A4 union sweeps
+/// (at most `MOE_W4A4_MAX_ROWS`). Each group rebuilds the tables from row 0, so `u_slot` holds
+/// `(UNION_MAX_ROWS * top_k) x UNION_MAX_ROWS` entries whatever the workspace's row count (it
+/// held `rows * top_k * rows`, 134 MB at 2048 rows).
+pub const UNION_MAX_ROWS: usize = if MOE_ROW_BATCH_MAX_ROWS > MOE_W4A4_MAX_ROWS {
+    MOE_ROW_BATCH_MAX_ROWS
+} else {
+    MOE_W4A4_MAX_ROWS
+};
+
 /// 2026-10-08: The NVFP4 activation scratch of the W4A4 paths: `(rows, k)`, the most rows one
 /// quantization holds (a routed down input of `MOE_W4A4_MAX_ROWS * top_k` slots, or one dense
 /// chunk) and the widest K it quantizes. 2026-10-10: The routed down input is stored at its
 /// 128-padded width (the `_k64` quantizer's rows when the expert width is not a k128 multiple).
-pub fn w4a4_scratch_dims(cfg: &Glm5NextMlpConfig, max_rows: usize) -> (usize, usize) {
+/// 2026-10-10: With `grouped` (`METRALE_GLM_MOE_W4A4_GROUPED=1`) every routed slot of
+/// `max_rows` rows, the grouped W4A4 GEMM's down input.
+pub fn w4a4_scratch_dims(
+    cfg: &Glm5NextMlpConfig,
+    max_rows: usize,
+    grouped: bool,
+) -> (usize, usize) {
     let rows = max_rows.max(1);
-    let q_rows = (MOE_W4A4_MAX_ROWS.min(rows) * cfg.top_k)
+    let routed_rows = if grouped {
+        rows
+    } else {
+        MOE_W4A4_MAX_ROWS.min(rows)
+    };
+    let q_rows = (routed_rows * cfg.top_k)
         .max(DENSE_W4A4_CHUNK_ROWS.min(rows))
         .max(1);
     let k = cfg
@@ -35,10 +59,12 @@ pub fn w4a4_scratch_dims(cfg: &Glm5NextMlpConfig, max_rows: usize) -> (usize, us
 /// sorted_token_ids, sorted_expert_ids, expert_offsets, token_to_perm. The loader logs their
 /// sum. `new` computes the same sizes on its own, so the two must change together.
 /// 2026-10-08: Then the W4A4 activation scratch, codes, scales and globals
-/// ([`w4a4_scratch_dims`]); `new` takes those three sizes from here.
-pub fn mlp_ws_bytes(cfg: &Glm5NextMlpConfig, max_rows: usize) -> [usize; 17] {
-    let (q_rows, q_k) = w4a4_scratch_dims(cfg, max_rows);
+/// ([`w4a4_scratch_dims`]); `new` takes those three sizes from here. 2026-10-10: Then the
+/// grouped W4A4 tile offsets; `grouped` is `METRALE_GLM_MOE_W4A4_GROUPED`.
+pub fn mlp_ws_bytes(cfg: &Glm5NextMlpConfig, max_rows: usize, grouped: bool) -> [usize; 18] {
+    let (q_rows, q_k) = w4a4_scratch_dims(cfg, max_rows, grouped);
     let rows = max_rows.max(1);
+    let urows = UNION_MAX_ROWS.min(rows);
     let max_inter = cfg
         .local_dense_intermediate
         .max(cfg.moe_intermediate)
@@ -57,7 +83,7 @@ pub fn mlp_ws_bytes(cfg: &Glm5NextMlpConfig, max_rows: usize) -> [usize; 17] {
         rows * cfg.top_k * cfg.hidden * 2,
         rows * cfg.hidden * 2,
         rows * cfg.top_k * 4,
-        rows * cfg.top_k * rows * 4,
+        urows * cfg.top_k * urows * 4,
         rows * cfg.top_k * 4,
         rows * cfg.top_k * 4,
         (cfg.num_experts + 1) * 4,
@@ -65,18 +91,31 @@ pub fn mlp_ws_bytes(cfg: &Glm5NextMlpConfig, max_rows: usize) -> [usize; 17] {
         q_rows * q_k / 2,
         q_rows * q_k / 16,
         q_rows * 4,
+        (cfg.num_experts + 1) * 4,
     ]
 }
 
 /// 2026-09-25: Total device bytes of one MLP workspace of `max_rows` rows.
-pub fn mlp_ws_total_bytes(cfg: &Glm5NextMlpConfig, max_rows: usize) -> usize {
-    mlp_ws_bytes(cfg, max_rows).iter().sum()
+pub fn mlp_ws_total_bytes(cfg: &Glm5NextMlpConfig, max_rows: usize, grouped: bool) -> usize {
+    mlp_ws_bytes(cfg, max_rows, grouped).iter().sum()
 }
 
 impl Glm5NextMlpWorkspace {
+    /// 2026-10-10: [`Self::new_with`] under `METRALE_GLM_MOE_W4A4_GROUPED`.
     pub fn new(gpu: &dyn GpuBackend, cfg: &Glm5NextMlpConfig, max_rows: usize) -> Result<Self> {
+        Self::new_with(gpu, cfg, max_rows, super::moe_w4a4_grouped()?)
+    }
+
+    /// 2026-10-10: The workspace of `max_rows` rows; `grouped` sizes the W4A4 scratch for every
+    /// routed slot (the grouped W4A4 GEMM).
+    pub fn new_with(
+        gpu: &dyn GpuBackend,
+        cfg: &Glm5NextMlpConfig,
+        max_rows: usize,
+        grouped: bool,
+    ) -> Result<Self> {
         let rows = max_rows.max(1);
-        let sizes = mlp_ws_bytes(cfg, rows);
+        let sizes = mlp_ws_bytes(cfg, rows, grouped);
         let max_inter = cfg
             .local_dense_intermediate
             .max(cfg.moe_intermediate)
@@ -98,7 +137,7 @@ impl Glm5NextMlpWorkspace {
             expert_out: gpu.alloc(rows * cfg.top_k * cfg.hidden * 2)?,
             shared_out: gpu.alloc(rows * cfg.hidden * 2)?,
             u_eid: gpu.alloc(rows * cfg.top_k * 4)?,
-            u_slot: gpu.alloc(rows * cfg.top_k * rows * 4)?,
+            u_slot: gpu.alloc(sizes[9])?,
             // 2026-09-25: The grouped-GEMM routing tables are allocated whatever the grouped
             // levers say.
             sorted_token_ids: gpu.alloc(rows * cfg.top_k * 4)?,
@@ -108,8 +147,9 @@ impl Glm5NextMlpWorkspace {
             w4a4_aq: gpu.alloc(sizes[14])?,
             w4a4_as: gpu.alloc(sizes[15])?,
             w4a4_ag: gpu.alloc(sizes[16])?,
-            w4a4_rows: w4a4_scratch_dims(cfg, rows).0,
-            w4a4_k: w4a4_scratch_dims(cfg, rows).1,
+            w4a4_tile_off: gpu.alloc(sizes[17])?,
+            w4a4_rows: w4a4_scratch_dims(cfg, rows, grouped).0,
+            w4a4_k: w4a4_scratch_dims(cfg, rows, grouped).1,
             max_inter,
             max_rows: rows,
             max_total_expanded: rows * cfg.top_k,
