@@ -88,8 +88,7 @@ pub(super) struct RunOptions {
     pub swap_space_gb: usize,
     pub slai_policy: bool,
     pub mtp_gate_force: bool,
-    /// 2026-10-10: `SchedLevers::spec_entry_pin_tokens` (`METRALE_SPEC_ENTRY_PIN`): the
-    /// goldens run the shipped 8; a controller test sets 0 so the pin never masks a decision.
+    /// 2026-10-10: `METRALE_SPEC_ENTRY_PIN`: goldens 8 (shipped), the controller test 0.
     pub spec_entry_pin_tokens: u32,
     pub loop_watchdog: bool,
     /// 2026-09-25: Token ids the watchdog rollback treats as boundaries.
@@ -356,8 +355,7 @@ fn run_scenario_inner(sc: &Scenario, build: DeviceBuilder) -> Vec<String> {
         Box::new(FifoPolicy)
     };
     let mut levers = SchedLevers::defaults();
-    levers.mtp_gate_force = opts.mtp_gate_force;
-    levers.spec_entry_pin_tokens = opts.spec_entry_pin_tokens;
+    opts.apply_spec_levers(&mut levers);
     let levers = Arc::new(levers);
     levers.set_loop_watchdog(opts.loop_watchdog);
     let masks = VocabMasks {
@@ -416,13 +414,7 @@ fn run_scenario_inner(sc: &Scenario, build: DeviceBuilder) -> Vec<String> {
                 watchdog: WatchdogParams::default(),
                 levers,
                 snapshot,
-                // 2026-10-10: Throughput when a scenario arms the controller: the harness has no
-                // recipe to name one, and its clock makes every objective rank the same.
-                spec: crate::scheduler::config::SpecPolicy {
-                    objective: (!opts.mtp_gate_force)
-                        .then_some(metrale_speculative::spec_ctl::decide::Objective::Throughput),
-                    dflash_depth_pinned: false,
-                },
+                spec: opts.spec_policy(),
                 telemetry: opts.telemetry,
                 pipeline_faults: opts.pipeline_faults,
             },

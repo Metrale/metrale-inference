@@ -24,6 +24,7 @@ mod model_impl;
 mod park;
 mod pipeline_tests;
 mod prompt_lookup_tests;
+mod run_spec;
 mod runner;
 mod scenarios;
 mod scripted_tests;
