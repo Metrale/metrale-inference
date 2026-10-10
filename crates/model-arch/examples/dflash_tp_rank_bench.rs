@@ -121,6 +121,7 @@ fn main() -> Result<()> {
             t_us[t_us.len() - 1],
             t_us.len()
         );
+        head.free_state(gpu.as_ref(), state.as_mut())?;
     }
     Ok(())
 }
