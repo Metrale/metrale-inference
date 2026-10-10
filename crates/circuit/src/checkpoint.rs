@@ -62,7 +62,7 @@ pub enum ServePrecision {
 #[derive(Debug, Clone)]
 pub struct ResolvedCheckpoint {
     /// 2026-09-30: The circuit arch (`qwen3_5`, `qwen3_6_moe`, `nemotron_h`, `dense_gqa`,
-    /// 2026-10-08: `glm5_next`).
+    /// 2026-10-08: `glm5_next`, 2026-10-10: `deepseek_v4`).
     pub arch: String,
     /// 2026-09-30: The config's top-level `model_type`.
     pub model_type: String,
@@ -126,7 +126,7 @@ macro_rules! circuits_file {
     };
 }
 
-const ARCHES: [Arch; 5] = [
+const ARCHES: [Arch; 6] = [
     Arch {
         circuit: circuits_file!("qwen3_5.toml"),
         config_map: circuits_file!("qwen3_5.config.toml"),
@@ -147,14 +147,34 @@ const ARCHES: [Arch; 5] = [
         circuit: circuits_file!("glm5_next.toml"),
         config_map: circuits_file!("glm5_next.config.toml"),
     },
+    Arch {
+        circuit: circuits_file!("deepseek_v4.toml"),
+        config_map: circuits_file!("deepseek_v4.config.toml"),
+    },
 ];
 
 /// 2026-09-30: The block libraries the embedded circuits include.
-const BLOCKS: [(&str, &str); 4] = [
+const BLOCKS: [(&str, &str); 8] = [
     ("qwen3_hybrid", circuits_file!("blocks/qwen3_hybrid.toml")),
     ("glm5_next_kda", circuits_file!("blocks/glm5_next_kda.toml")),
     ("glm5_next_dsa", circuits_file!("blocks/glm5_next_dsa.toml")),
     ("glm5_next_ffn", circuits_file!("blocks/glm5_next_ffn.toml")),
+    (
+        "deepseek_v4_swa",
+        circuits_file!("blocks/deepseek_v4_swa.toml"),
+    ),
+    (
+        "deepseek_v4_hca",
+        circuits_file!("blocks/deepseek_v4_hca.toml"),
+    ),
+    (
+        "deepseek_v4_csa",
+        circuits_file!("blocks/deepseek_v4_csa.toml"),
+    ),
+    (
+        "deepseek_v4_ffn",
+        circuits_file!("blocks/deepseek_v4_ffn.toml"),
+    ),
 ];
 
 /// 2026-09-30: The embedded config maps, parsed.

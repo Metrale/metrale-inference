@@ -1,0 +1,97 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-10: config.json -> the `deepseek_v4` circuit's arch shape (DeepSeek-V4-Flash):
+# shared-KV attention whose per-layer compression (`compress_ratios`) picks the layer kind,
+# under manifold-constrained hyper-connections, and a hash-routed prefix then a learned-router
+# 256-expert MoE.
+#
+# Owner: metrale-circuit (schema: crates/circuit/src/config_map.rs).
+# Invariants:
+# - Every key the checkpoint carries is classified: a dim, a param, a required value, the layer
+#   source, or ignorable with its reason. Any other key is refused.
+# - The checkpoint ships DeepSeek's legacy config (what transformers' `DeepseekV4Config` folds in
+#   at `__post_init__`): the layer kinds come from `compress_ratios` (0 -> sliding_attention,
+#   4 -> compressed_sparse_attention, 128 -> heavily_compressed_attention, the reference's
+#   `_COMPRESS_RATIO_TO_LAYER_TYPE`); any other ratio is refused. The list also carries the MTP
+#   layer's entry after the text layers (`trailing`), which must map and is then dropped.
+# - The two compression ratios have no key of their own (transformers' `compress_rates`
+#   default; a checkpoint carrying `compress_rates` / `compress_rate_csa` / `compress_rate_hca`
+#   is refused as unmapped): `index_kpool` and `hca_ratio` restate the values the layer source
+#   maps, not defaults.
+# - The hash-routed prefix is `num_hash_layers` (the circuit's `[layout.prefix]`).
+# - Refused until modelled: a scoring function other than sqrt-softplus, routing without the
+#   noaux_tc correction, more than one shared expert, more than one KV head, a RoPE scaling
+#   other than YaRN, tied embeddings, biases.
+# - Not modelled, by reason, not refused: the MTP layer (`num_nextn_predict_layers`); see
+#   kernels/circuits/deepseek_v4.toml.
+
+schema = 1
+arch = "deepseek_v4"
+model_types = ["deepseek_v4"]
+
+[layers]
+count = "num_hidden_layers"
+sources = [
+  { key = "compress_ratios", values = { "0" = "sliding_attention", "4" = "compressed_sparse_attention", "128" = "heavily_compressed_attention" }, trailing = "num_nextn_predict_layers" },
+]
+
+[dims]
+hidden = "hidden_size"
+vocab = "vocab_size"
+hc = "hc_mult"
+q_heads = "num_attention_heads"
+head_dim = "head_dim"
+rope_dim = "qk_rope_head_dim"
+q_lora = "q_lora_rank"
+o_groups = "o_groups"
+o_lora = "o_lora_rank"
+window = "sliding_window"
+index_heads = "index_n_heads"
+index_head_dim = "index_head_dim"
+index_topk = "index_topk"
+# 2026-10-10: The CSA compression ratio (the compressor's and the indexer's run length; GLM-5's
+# indexer pool width under its name) and the HCA one: the `compress_ratios` values the layer
+# source maps to those kinds.
+index_kpool = { const = 4 }
+hca_ratio = { const = 128 }
+experts = "n_routed_experts"
+top_k = "num_experts_per_tok"
+moe_inter = "moe_intermediate_size"
+# 2026-10-10: One shared expert of the routed width (`n_shared_experts` is required to be 1;
+# transformers reads its width through `intermediate_size` -> `moe_intermediate_size`).
+shared_inter = "moe_intermediate_size"
+hash_layers = "num_hash_layers"
+
+[keys]
+model_type = "ignore"
+architectures = { ignore = "the HF class name; model_type selects the circuit" }
+transformers_version = "ignore"
+torch_dtype = { ignore = "the storage dtype of unquantized tensors; the load plan reads each tensor's own" }
+quantization_config = { ignore = "read by the precision plan (DeclaredPrecisionPlan)" }
+bos_token_id = { ignore = "tokenizer ids" }
+eos_token_id = { ignore = "tokenizer ids; the serving metadata reads them" }
+initializer_range = { ignore = "training initialisation" }
+attention_dropout = { ignore = "training only" }
+use_cache = { ignore = "an HF generate flag" }
+max_position_embeddings = { ignore = "the context limit; the YaRN table reads rope_scaling.original_max_position_embeddings" }
+# 2026-10-10: The base checkpoint's routed-expert storage (FP4 E2M1, one E8M0 scale per 32
+# weights, `inference/model.py`). The export re-quantized the text layers' experts (its
+# `quantized_layers`); only the MTP layer's keep it, and that layer is not modelled.
+expert_dtype = { ignore = "the base checkpoint's routed-expert storage; the precision plan declares the exported experts, and the MTP layer that keeps it is not modelled" }
+num_nextn_predict_layers = { ignore = "the MTP draft layer is not modelled: its routed experts keep the base FP4/E8M0-32 format, which the circuit has no format for (kernels/circuits/deepseek_v4.toml); the target's math does not read it" }
+rms_norm_eps = { param = true }
+hc_eps = { param = true }
+hc_sinkhorn_iters = { param = true }
+routed_scaling_factor = { param = true }
+swiglu_limit = { param = true }
+rope_theta = { param = true }
+compress_rope_theta = { param = true }
+rope_scaling = { param = "rope_scaling", object = { type = { require = "yarn", why = "the compressed layers' RoPE is YaRN (attention factor 1.0, as the reference forces)" }, factor = "param", beta_fast = "param", beta_slow = "param", original_max_position_embeddings = "param" } }
+norm_topk_prob = { param = true, require = true, why = "the circuit's top-k renormalises the selected weights" }
+scoring_func = { require = "sqrtsoftplus", why = "the circuit's routing scores with sqrt(softplus(logits))" }
+topk_method = { require = "noaux_tc", why = "the circuit's top-k ranks score + the correction bias" }
+n_shared_experts = { require = 1, why = "the circuit has one shared expert of moe_intermediate_size" }
+num_key_value_heads = { require = 1, why = "the circuit's attention has one shared KV row per token" }
+hidden_act = { require = "silu", why = "the circuit's FFNs are SiLU-gated" }
+attention_bias = { require = false, why = "the circuit's projections have no bias" }
+tie_word_embeddings = { require = false, why = "the head is not tied to the embedding" }

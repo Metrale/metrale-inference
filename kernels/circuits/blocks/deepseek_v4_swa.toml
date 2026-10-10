@@ -1,0 +1,170 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-10: The DeepSeek-V4 (`deepseek_v4`) sliding-window attention site (`swa`,
+# `sliding_attention`, compress ratio 0) under the attention-site hyper-connection: the window's
+# rows only, RoPE from the `main` table (`rope_theta`, no YaRN). Split out of
+# kernels/circuits/deepseek_v4.toml to keep each file short; only that circuit includes it.
+#
+# Owner: metrale-circuit (schema: crates/circuit/src/circuit_toml.rs).
+# Invariants:
+# - Attention (`DeepseekV4Attention`): q = q_b_norm(wq_b(q_norm(wq_a(x)))), `q_b_norm` an
+#   unweighted per-head RMSNorm; one KV row kv = kv_norm(wkv(x)), `head_dim` wide, both key and
+#   value of the one KV head (MQA). Partial interleaved RoPE on the trailing `qk_rope_head_dim`
+#   channels of q and kv; the attention output's trailing channels are rotated back (the
+#   conjugate, at the query's position) before the grouped output projection: `wo_a` maps each
+#   of `o_groups` head groups to `o_lora_rank` on its own, `wo_b` mixes the groups to `hidden`.
+#   Softmax at `head_dim^-0.5` with one learned sink logit per head (`attn_sink`).
+# - Declared precision (precision/deepseek-v4-flash-nvfp4-ep2.toml): `*.attn.*` is excluded
+#   from the NVFP4 export, so the attention projections stay as the base checkpoint stores them:
+#   `wq_a`, `wq_b`, `wkv`, `wo_a`, `wo_b` FP8 E4M3 with 128x128 block scales, read by dynamic
+#   FP8 inputs per 128 (this site has no compressor or indexer). The checkpoint declares no
+#   KV-cache format (16-bit); the instance's `kv_cache_dtype` holds the window's rows.
+
+schema = 1
+description = "DeepSeek-V4 sliding-window shared-KV attention under the hyper-connection"
+
+[block.swa]
+stream_in = "x"
+stream_out = "y"
+
+# 2026-10-10: The sliding window's rows, one `head_dim` row per token (key and value both).
+# The reference keeps only the last `sliding_window` rows of a sequence; the state vocabulary
+# has no windowed KV kind, so it is declared per token like any KV side and the memory model
+# counts every token's row (an upper bound). The attention reads at most `window` of them.
+[[block.swa.state]]
+id = "window"
+kind = "paged_kv"
+lifetime = "model"
+format = "{kv_cache_dtype}"
+shape = "head_dim"
+
+[[block.swa.node]]
+id = "mix"
+op = "linear"
+role = "hc_mix"
+in = ["x"]
+out = [{ edge = "mix", format = "f32", shape = "n x hc*hc+hc*2" }]
+binding = ["{L}.hc_attn_fn"]
+unquantized = true
+
+[[block.swa.node]]
+id = "pre"
+op = "hc_pre"
+in = ["x", "mix"]
+out = [
+  { edge = "u", format = "bf16", shape = "n x hidden" },
+  { edge = "post", format = "f32", shape = "n x hc" },
+  { edge = "comb", format = "f32", shape = "n x hc*hc" },
+]
+binding = ["{L}.hc_attn_scale", "{L}.hc_attn_base"]
+
+[[block.swa.node]]
+id = "attn_norm"
+op = "rms_norm"
+in = ["u"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.attn_norm"]
+params = { weight_form = "plain" }
+
+[[block.swa.node]]
+id = "q_a"
+op = "linear"
+role = "mla_q_a"
+in = ["xn"]
+out = [{ edge = "qa", format = "bf16", shape = "n x q_lora" }]
+binding = ["{L}.attn.wq_a"]
+
+[[block.swa.node]]
+id = "q_a_norm"
+op = "rms_norm"
+in = ["qa"]
+out = [{ edge = "qr", format = "bf16", shape = "n x q_lora" }]
+binding = ["{L}.attn.q_norm"]
+params = { weight_form = "plain" }
+
+[[block.swa.node]]
+id = "q_b"
+op = "linear"
+role = "mla_q_b"
+in = ["qr"]
+out = [{ edge = "q", format = "bf16", shape = "n x q_heads*head_dim" }]
+binding = ["{L}.attn.wq_b"]
+
+[[block.swa.node]]
+id = "q_norm"
+op = "qk_norm"
+in = ["q"]
+out = [{ edge = "qn", format = "bf16", shape = "n x q_heads*head_dim" }]
+params = { weight_form = "none" }
+
+[[block.swa.node]]
+id = "kv"
+op = "linear"
+role = "mla_kv_a"
+in = ["xn"]
+out = [{ edge = "kv", format = "bf16", shape = "n x head_dim" }]
+binding = ["{L}.attn.wkv"]
+
+[[block.swa.node]]
+id = "kv_norm"
+op = "rms_norm"
+in = ["kv"]
+out = [{ edge = "kvn", format = "bf16", shape = "n x head_dim" }]
+binding = ["{L}.attn.kv_norm"]
+params = { weight_form = "plain" }
+
+[[block.swa.node]]
+id = "rope"
+op = "rope"
+in = ["qn", "kvn"]
+out = [
+  { edge = "qp", format = "bf16", shape = "n x q_heads*head_dim" },
+  { edge = "kvp", format = "bf16", shape = "n x head_dim" },
+]
+params = { table = "main", rotary = "{rope_dim}", pairs = "interleaved" }
+
+[[block.swa.node]]
+id = "kv_write"
+op = "kv_write"
+state = { window = "write" }
+in = ["kvp"]
+out = []
+params = { layout = "window" }
+
+[[block.swa.node]]
+id = "attend"
+op = "compressed_attention"
+state = { window = "read" }
+in = ["qp"]
+out = [{ edge = "a", format = "bf16", shape = "n x q_heads*head_dim" }]
+binding = ["{L}.attn.attn_sink"]
+params = { compressed = "none" }
+
+[[block.swa.node]]
+id = "o_rope"
+op = "rope"
+in = ["a"]
+out = [{ edge = "ar", format = "bf16", shape = "n x q_heads*head_dim" }]
+params = { table = "main", rotary = "{rope_dim}", pairs = "interleaved", inverse = "true" }
+
+[[block.swa.node]]
+id = "o_a"
+op = "linear"
+role = "o_group"
+in = ["ar"]
+out = [{ edge = "oa", format = "bf16", shape = "n x o_groups*o_lora" }]
+binding = ["{L}.attn.wo_a"]
+
+[[block.swa.node]]
+id = "o_b"
+op = "linear"
+role = "o"
+in = ["oa"]
+out = [{ edge = "o", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.attn.wo_b"]
+
+[[block.swa.node]]
+id = "post"
+op = "hc_post"
+in = ["o", "x", "post", "comb"]
+out = [{ edge = "y", format = "bf16", shape = "n x hc*hidden" }]
