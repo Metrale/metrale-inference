@@ -46,7 +46,18 @@ static HOST: OnceLock<std::result::Result<Arc<CudaHost>, String>> = OnceLock::ne
 pub fn host(ordinal: usize) -> Result<Arc<CudaHost>> {
     let result = HOST.get_or_init(|| {
         let ctx = CudaContext::new(ordinal).map_err(|e| format!("{e}"))?;
-        let stream = ctx.new_stream().map_err(|e| format!("{e}"))?;
+        let stream = if main_stream_high_priority() {
+            let (least, greatest) =
+                cudarc::driver::result::ctx::stream_priority_range().map_err(|e| format!("{e}"))?;
+            tracing::info!(
+                "METRALE_MAIN_STREAM_HIGH_PRIORITY: process stream at priority {greatest} \
+                 (range {least}..={greatest}; side streams stay at {least})"
+            );
+            ctx.new_stream_with_priority(greatest)
+                .map_err(|e| format!("{e}"))?
+        } else {
+            ctx.new_stream().map_err(|e| format!("{e}"))?
+        };
         Ok(Arc::new(CudaHost {
             ctx,
             stream,
@@ -61,6 +72,15 @@ pub fn host(ordinal: usize) -> Result<Arc<CudaHost>> {
         ))),
         Err(msg) => Err(MetraleError::ModuleLoad(msg.clone())),
     }
+}
+
+/// 2026-10-11: `METRALE_MAIN_STREAM_HIGH_PRIORITY=1` creates the process stream at the
+/// context's greatest priority; every other stream (`create_stream`) keeps the default, the
+/// least. Graphs launched on it run at its priority. On GB10 a large device-to-device copy on a
+/// side stream (the SSM rollback, 49 MB) holds every kernel launched after it until it ends; at
+/// a higher priority the process stream's kernels are dispatched ahead of the copy's.
+fn main_stream_high_priority() -> bool {
+    std::env::var("METRALE_MAIN_STREAM_HIGH_PRIORITY").as_deref() == Ok("1")
 }
 
 /// 2026-09-25: Unload a model's kernel modules. Errors, unloading nothing, while
