@@ -152,11 +152,10 @@ pub(super) fn resolve_model_kernels(
     })
 }
 
-/// 2026-09-26: The SSM-norm, h-dtype, softcap and embed-scale kernels, the FP32
-/// logits scratch and the SSM-norm pointer table.
+/// 2026-09-26: The SSM-state guard, h-dtype, softcap and embed-scale kernels, the FP32
+/// logits scratch and the SSM-state pointer table.
 pub(super) struct AuxKernels {
-    pub(super) ssm_norm_k: KernelHandle,
-    pub(super) ssm_norm_f16_k: KernelHandle,
+    pub(super) ssm_nonfinite_k: KernelHandle,
     pub(super) ssm_h_f32_to_f16_k: KernelHandle,
     pub(super) ssm_h_f16_to_f32_k: KernelHandle,
     pub(super) logit_softcap_kernel: KernelHandle,
@@ -173,11 +172,8 @@ pub(super) fn resolve_aux_kernels(
     ssm_pool: &SsmStatePool,
     gpu: &dyn GpuBackend,
 ) -> Result<AuxKernels> {
-    let ssm_norm_k = gpu
-        .kernel("ssm_state_norm", "ssm_state_clamp_norm_fused")
-        .unwrap_or(KernelHandle(0));
-    let ssm_norm_f16_k = gpu
-        .kernel("ssm_state_norm", "ssm_state_clamp_norm_fused_f16")
+    let ssm_nonfinite_k = gpu
+        .kernel("ssm_state_norm", "ssm_state_nonfinite_count")
         .unwrap_or(KernelHandle(0));
     let ssm_h_f32_to_f16_k =
         metrale_model_layers::layers::try_kernel(gpu, "ssm_h_dtype", "ssm_h_state_f32_to_f16");
@@ -234,8 +230,7 @@ pub(super) fn resolve_aux_kernels(
         DevicePtr::NULL
     };
     Ok(AuxKernels {
-        ssm_norm_k,
-        ssm_norm_f16_k,
+        ssm_nonfinite_k,
         ssm_h_f32_to_f16_k,
         ssm_h_f16_to_f32_k,
         logit_softcap_kernel,

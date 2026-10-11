@@ -232,10 +232,10 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/common/gated_delta_rule.cu](../../kernels/gb10/common/gated_delta_rule.cu)
 
-- *whole file*: Only the single-token decode kernels apply the SSM_STATE_MAX_NORM (1000) Frobenius clamp and the [1e-6, 1-1e-6] decay clamp; chunk2, chunk3 and prefill apply neither, and the clamped step's output uses the pre-clamp state. Decode and multi-token paths therefore diverge once a head exceeds the norm. — source: kernels/gb10/common/gated_delta_rule.cu:53
+- *whole file*: Only the single-token decode kernels apply the [1e-6, 1-1e-6] decay clamp; chunk2, chunk3 and prefill do not, so decode and multi-token paths diverge once a decay leaves that range. No kernel bounds the state norm (the reference does not). — source: kernels/gb10/common/gated_delta_rule.cu:106
 - *whole file*: Needs k_dim &lt;= 128 and k_dim % 4 == 0 (shared q/k arrays hold 128 floats; loops step j by 4) and v_dim &lt;= blockDim.x. Thread tid owns state column tid so every FP32 state access is coalesced across the warp. — source: kernels/gb10/common/gated_delta_rule.cu:12
-- *gated_delta_rule_chunk2*: Two-token step stores H_1 to h_state_intermediate so a rejected draft can roll back; three passes over H (the WY kernels do two) and no decay or state-norm clamp, unlike decode. — source: kernels/gb10/common/gated_delta_rule.cu:998
-- *gated_delta_rule_decode_f32_conv_norm*: Fuses conv1d+SiLU+L2, recurrence, state clamp and gated RMS norm in one launch, but only for k_dim == v_dim == 128 and head_repeat == 2 (256 threads, eight-warp warp_sums); a block owns a k-head so it is the sole conv_state writer. Other shapes take the unfused path. — source: kernels/gb10/common/gated_delta_rule.cu:522
+- *gated_delta_rule_chunk2*: Two-token step stores H_1 to h_state_intermediate so a rejected draft can roll back; three passes over H (the WY kernels do two) and no decay clamp, unlike decode. — source: kernels/gb10/common/gated_delta_rule.cu:785
+- *gated_delta_rule_decode_f32_conv_norm*: Fuses conv1d+SiLU+L2, recurrence and gated RMS norm in one launch, but only for k_dim == v_dim == 128 and head_repeat == 2 (256 threads, eight-warp warp_sums); a block owns a k-head so it is the sole conv_state writer. Other shapes take the unfused path. — source: kernels/gb10/common/gated_delta_rule.cu:410
 - *gated_delta_rule_decode_f32_norm*: Fuses the gated RMS norm without an FP32 row in global memory, but z_gate and output are indexed by head only, so it is correct only at batch_size 1 (every caller passes 1). — source: kernels/gb10/common/gated_delta_rule.cu:348
 - *gated_delta_rule_decode_f32_strided_norm*: One strided launch for all decode sequences only when ssm_batched_recurrent is on (target default: on for hopper, off for gb10, b200, b300) and the sequences' pool slots are contiguous in slice order; otherwise a per-sequence loop. — source: crates/model-layers/src/layers/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:21
 
@@ -290,7 +290,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/common/gated_delta_rule_regresident.cu](../../kernels/gb10/common/gated_delta_rule_regresident.cu)
 
-- *whole file*: One warp per value column (4 rows per lane), all tokens on registers with warp-butterfly sums: no smem, no block barrier. Sum order differs from gated_delta_rule_decode (not bit-identical) and there is no state-norm clamp since no block sees a whole head. k_dim == 128, batch_size 1 only. — source: kernels/gb10/common/gated_delta_rule_regresident.cu:6
+- *whole file*: One warp per value column (4 rows per lane), all tokens on registers with warp-butterfly sums: no smem, no block barrier. Sum order differs from gated_delta_rule_decode (not bit-identical). k_dim == 128, batch_size 1 only. — source: kernels/gb10/common/gated_delta_rule_regresident.cu:6
 
 <a id="to-kernels-gb10-common-gated-delta-rule-wy-cu"></a>
 
@@ -1123,7 +1123,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/common/ssm_state_norm.cu](../../kernels/gb10/common/ssm_state_norm.cu)
 
-- *whole file*: Clamps every SSM layer's heads in one launch; the block reduction assumes v_dim == 128 (4 warp slots). The FP16 variant widens, computes the norm and scale in FP32, and rounds each scaled value back to FP16. — source: kernels/gb10/common/ssm_state_norm.cu:9
+- *whole file*: Only the Mamba-2 non-finite count remains (one launch over every SSM layer, an atomic add per column with a non-finite value); the per-head norm clamp it replaced, also run on GDN states after every prefill chunk, was removed so no state is rescaled. FP32 states only. — source: kernels/gb10/common/ssm_state_norm.cu:3
 
 <a id="to-kernels-gb10-common-token-overlay-cu"></a>
 
@@ -1452,7 +1452,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/gemma-4-26b-a4b/nvfp4/gated_delta_rule.cu](../../kernels/gb10/gemma-4-26b-a4b/nvfp4/gated_delta_rule.cu)
 
-- *whole file*: State clamps differ by kernel: single-stream prefill scales to norm 50 when seq_len &lt;= 1, the four fused/strided FP32 decodes clamp at SSM_STATE_MAX_NORM (1000), the rest not at all. chunk2/chunk3 write no intermediates. Also compiled for qwen3.5-35b-a3b and qwen3.5-397b-a17b. — source: kernels/gb10/gemma-4-26b-a4b/nvfp4/gated_delta_rule.cu:10
+- *whole file*: chunk2/chunk3 write no intermediates. Also compiled for qwen3.5-35b-a3b and qwen3.5-397b-a17b. — source: kernels/gb10/gemma-4-26b-a4b/nvfp4/gated_delta_rule.cu:10
 
 <a id="to-kernels-gb10-gemma-4-26b-a4b-nvfp4-gelu-cu"></a>
 
@@ -1667,7 +1667,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/qwen3-next-80b-a3b/nvfp4/gated_delta_rule.cu](../../kernels/gb10/qwen3-next-80b-a3b/nvfp4/gated_delta_rule.cu)
 
-- *whole file*: Differs from common in numerics: decode and decode_f32 take FP32 q/k/v and have no state-norm clamp, chunk2/chunk3 clamp the gate, and the prefill clamps to norm 100 only at seq_len &lt;= 1. Also compiled for qwen3.5-27b. — source: kernels/gb10/qwen3-next-80b-a3b/nvfp4/gated_delta_rule.cu:595
+- *whole file*: Differs from common in numerics: decode and decode_f32 take FP32 q/k/v, and chunk2/chunk3 clamp the gate. Also compiled for qwen3.5-27b. — source: kernels/gb10/qwen3-next-80b-a3b/nvfp4/gated_delta_rule.cu:595
 
 <a id="to-kernels-gb10-qwen3-vl-30b-a3b-nvfp4-rms-norm-cu"></a>
 
@@ -1686,24 +1686,24 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/qwen3.5-122b-a10b/nvfp4/gated_delta_rule.cu](../../kernels/gb10/qwen3.5-122b-a10b/nvfp4/gated_delta_rule.cu)
 
-- *whole file*: decode and decode_f32 apply their own state-norm clamp at MAX_NORM 50, not SSM_STATE_MAX_NORM (1000) as the fused kernels do; chunk2/chunk3 clamp the gate to [1e-6, 1-1e-6]. — source: kernels/gb10/qwen3.5-122b-a10b/nvfp4/gated_delta_rule.cu:596
+- *whole file*: decode and decode_f32 take FP32 q/k/v; chunk2/chunk3 clamp the gate to [1e-6, 1-1e-6]. — source: kernels/gb10/qwen3.5-122b-a10b/nvfp4/gated_delta_rule.cu:596
 
 <a id="to-kernels-gb10-qwen3-6-27b-nvfp4-gated-delta-rule-cu"></a>
 
 ### [kernels/gb10/qwen3.6-27b/nvfp4/gated_delta_rule.cu](../../kernels/gb10/qwen3.6-27b/nvfp4/gated_delta_rule.cu)
 
-- *whole file*: Shadows gb10/common/gated_delta_rule.cu by stem, so a kernel defined only in common does not exist for this target. Assumes k_dim &lt;= 128 unchecked; the single-stream prefill clamps H to Frobenius norm 100 only when seq_len &lt;= 1, while decode uses SSM_STATE_MAX_NORM 1000. — source: kernels/gb10/qwen3.6-27b/nvfp4/gated_delta_rule.cu:12
+- *whole file*: Shadows gb10/common/gated_delta_rule.cu by stem, so a kernel defined only in common does not exist for this target. Assumes k_dim &lt;= 128 unchecked. — source: kernels/gb10/qwen3.6-27b/nvfp4/gated_delta_rule.cu:12
 - *gated_delta_rule_decode_f16_strided_norm_half*: FP16 rather than BF16 h-state: g\*h rounds back to h when 1-g is below half an ulp, and FP16's 10 mantissa bits put that threshold 3 bits lower. Stores saturate to +-65504 so an overflow cannot become inf and poison the next hk_dot. — source: kernels/gb10/qwen3.6-27b/nvfp4/gated_delta_rule.cu:2081
 - *gated_delta_rule_decode_f16_strided_norm_half*: Under --ssm-h-dtype f16 the pool stays FP32-sized and each slot holds its FP16 state in the first half, so the slot pitch is twice the dense FP16 size: FP16 halves state traffic but not pool memory unless f16-pool is used. — source: kernels/gb10/qwen3.6-27b/nvfp4/gated_delta_rule.cu:2154
 - *gated_delta_rule_decode_f32_strided_norm_half*: Keeps rows 0..63 (GDN_HALF_KD = 64) of each H column in registers so the update pass re-reads only rows 64..127; every hreg index must be compile-time or hreg falls into local memory. j ascends across both loops so sums match the non-half kernel's order. — source: kernels/gb10/qwen3.6-27b/nvfp4/gated_delta_rule.cu:1645
 - *gated_delta_rule_decode_f32_strided_norm_smem*: Stages rows 64..127 in 32 KB of shared memory instead of re-reading H; bit-identical to the _half kernel (gdn_strided_norm_microtest). Opt-in METRALE_GDN_SMEM_STAGE (presence check, 0 turns it on); k_dim == v_dim == 128. — source: crates/model-layers/src/layers/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:231
-- *gated_delta_rule_prefill_split4*: Splits v_dim over four 32-thread blocks per head (4x the CTAs of the plain prefill), each thread still holding all 128 rows of its column and loading 4 of the k/q values; drops the plain prefill's seq_len &lt;= 1 norm clamp. — source: kernels/gb10/qwen3.6-27b/nvfp4/gated_delta_rule.cu:319
+- *gated_delta_rule_prefill_split4*: Splits v_dim over four 32-thread blocks per head (4x the CTAs of the plain prefill), each thread still holding all 128 rows of its column and loading 4 of the k/q values. — source: kernels/gb10/qwen3.6-27b/nvfp4/gated_delta_rule.cu:283
 
 <a id="to-kernels-gb10-qwen3-6-27b-nvfp4-gated-delta-rule-snap-cu"></a>
 
 ### [kernels/gb10/qwen3.6-27b/nvfp4/gated_delta_rule_snap.cu](../../kernels/gb10/qwen3.6-27b/nvfp4/gated_delta_rule_snap.cu)
 
-- *whole file*: Parent fused-norm decode plus per-token h_inter snapshot stores (including the clamp rescale) for exact verify; byte-identical to the sequential parent chain under --fmad=false. SSM_STATE_MAX_NORM must equal the parent's or the bit match breaks. — source: kernels/gb10/qwen3.6-27b/nvfp4/gated_delta_rule_snap.cu:3
+- *whole file*: Parent fused-norm decode plus per-token h_inter snapshot stores for exact verify; byte-identical to the sequential parent chain under --fmad=false. — source: kernels/gb10/qwen3.6-27b/nvfp4/gated_delta_rule_snap.cu:3
 - *whole file*: The exact chain runs only with --exact-verify and an FP32 h-state (FP16 forces the WY arms). The WY arms feed BF16 conv rows where single-token decode uses the FP32 conv, so they are not bitwise equal to sequential decode. — source: crates/model-layers/src/layers/qwen3_ssm/trait_decode_batched_conv_gdn.rs:106
 
 <a id="to-kernels-gb10-qwen3-6-27b-nvfp4-gdn-verify-fused-conv-kn-f32-cu"></a>
@@ -1781,7 +1781,6 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 ### [kernels/gb10/qwen3.6-35b-a3b/nvfp4/gated_delta_rule.cu](../../kernels/gb10/qwen3.6-35b-a3b/nvfp4/gated_delta_rule.cu)
 
 - *whole file*: chunk2 and chunk3 keep the state in registers across tokens and store only the final state: h_state_intermediate/h_state_inter0/1 are neither read nor written, so unlike common chunk2/chunk3 they give no rollback point. — source: kernels/gb10/qwen3.6-35b-a3b/nvfp4/gated_delta_rule.cu:1069
-- *whole file*: Only decode_f32_strided_norm and decode_f32_conv_norm apply the SSM_STATE_MAX_NORM (1000) clamp; plain decode does not (unlike common), and the single-stream prefill clamps to 50 only when seq_len &lt;= 1. — source: kernels/gb10/qwen3.6-35b-a3b/nvfp4/gated_delta_rule.cu:24
 - *gated_delta_rule_decode*: Loads each thread's state column into H_reg once, runs both passes from registers and stores once, instead of reading H from global memory in each pass. — source: kernels/gb10/qwen3.6-35b-a3b/nvfp4/gated_delta_rule.cu:633
 
 <a id="to-kernels-gb10-qwen3-6-35b-a3b-nvfp4-gated-delta-rule-wy17-cu"></a>
@@ -2067,7 +2066,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/metal/common/gated_delta_rule_decode.metal](../../kernels/metal/common/gated_delta_rule_decode.metal)
 
-- *whole file*: Same update, gate clamp and state-norm clamp as the gb10 decode (output taken before the clamp); requires threadgroup size == v_dim &lt;= 128 and k_dim &lt;= 128 with k_dim a multiple of 4. — source: kernels/metal/common/gated_delta_rule_decode.metal:12
+- *whole file*: Same update and gate clamp as the gb10 decode; requires threadgroup size == v_dim &lt;= 128 and k_dim &lt;= 128 with k_dim a multiple of 4. — source: kernels/metal/common/gated_delta_rule_decode.metal:12
 
 <a id="to-kernels-metal-common-kv-cache-append-bf16k-turbov-metal"></a>
 

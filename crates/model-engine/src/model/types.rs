@@ -408,13 +408,11 @@ pub struct TransformerModel {
     /// 2026-09-25: Save an SSM snapshot every N blocks during chunked prefill;
     /// 0 disables the intermediate checkpoints (`prefill_b/save_checkpoint.rs`).
     pub(super) ssm_checkpoint_interval: usize,
-    /// 2026-09-25: `ssm_state_clamp_norm_fused`, 0 when the target lacks it.
-    pub(super) ssm_state_norm_kernel: KernelHandle,
-    /// 2026-09-25: The FP16 h-state variant (`ssm_state_clamp_norm_fused_f16`),
-    /// for sequences whose `SsmLayerState::h_is_f16` is set.
-    pub(super) ssm_state_norm_f16_kernel: KernelHandle,
+    /// 2026-10-10: `ssm_state_nonfinite_count` (the Mamba-2 state guard), 0 when the target
+    /// lacks it.
+    pub(super) ssm_nonfinite_kernel: KernelHandle,
     /// 2026-09-25: Device pointer table `[num_ssm_layers]` for
-    /// `ssm_state_clamp_norm_fused`.
+    /// `ssm_state_nonfinite_count`.
     pub(super) ssm_norm_ptrs_buf: DevicePtr,
     /// 2026-09-25: FP32 → FP16 h-state converter (`METRALE_SSM_H_FP16`).
     pub(super) ssm_h_f32_to_f16_kernel: KernelHandle,

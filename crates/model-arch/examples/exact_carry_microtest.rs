@@ -162,8 +162,8 @@ fn gdn_check(
     let flags = g.alloc(SLAB_ENTRIES * 4)?;
     for kk in 2..=4usize {
         let rows = seqs * kk;
-        // 2026-10-01: Sequence 0 starts with a head norm near 1500, above the 27B decode's clamp
-        // threshold (1000), so the clamp path is exercised where the decode has one.
+        // 2026-10-01: Sequence 0 starts with a head norm near 1500, past 1000 (2026-10-10: no
+        // path rescales it; the chain and the decode must agree on the unbounded state).
         let h_init: Vec<f32> = (0..seqs * h_numel)
             .map(|i| rng.next_f32() * if i < h_numel { 20.0 } else { 0.1 })
             .collect();

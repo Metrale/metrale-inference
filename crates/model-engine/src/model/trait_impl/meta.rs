@@ -160,60 +160,21 @@ impl TransformerModel {
         Ok(())
     }
 
+    /// 2026-10-10: Checks a Mamba-2 model's h states for non-finite values; any other SSM
+    /// state (GDN) is left as it is. No state is rescaled: the references bound nothing, and the
+    /// per-head norm clamp this once applied after every prefill chunk is gone.
     pub(super) fn normalize_ssm_states_dispatch(
         &self,
         seq: &SequenceState,
         stream: u64,
     ) -> Result<()> {
-        use metrale_gpu_runtime::kernel_args::KernelLaunch;
-
-        let num_ssm = self.ssm_pool.num_ssm_layers;
-        if num_ssm == 0 || self.ssm_state_norm_kernel.0 == 0 {
+        if self.ssm_pool.num_ssm_layers == 0
+            || self.ssm_nonfinite_kernel.0 == 0
+            || !self.config.has_mamba2_layers()
+        {
             return Ok(());
         }
-        // 2026-09-29: Mamba-2 states are not clamped (the reference bounds nothing); they are
-        // checked for non-finite values instead.
-        if self.config.has_mamba2_layers() {
-            return self.mamba2_state_finite_guard(seq, stream);
-        }
-        // 2026-09-25: The kernel follows the slot's storage dtype (`seq_ssm_h_is_f16`): FP16
-        // under the f16-sized pool or after the decode conversion, FP32 otherwise.
-        let norm_k = if self.seq_ssm_h_is_f16(seq) {
-            if self.ssm_state_norm_f16_kernel.0 == 0 {
-                anyhow::bail!(
-                    "METRALE_SSM_H_FP16: ssm_state_norm::ssm_state_clamp_norm_fused_f16 did not                      resolve, refusing to clamp an FP16 state through the FP32 kernel"
-                );
-            }
-            self.ssm_state_norm_f16_kernel
-        } else {
-            self.ssm_state_norm_kernel
-        };
-        let slot = seq.slot_idx;
-
-        let ptrs: Vec<u64> = (0..num_ssm)
-            .map(|i| self.ssm_pool.h_state(i, slot).0)
-            .collect();
-        // 2026-09-25: SAFETY: the length is derived from `ptrs` itself,
-        // `ptrs.len() * size_of::<u64>()`, over the `Vec<u64>` the `collect`
-        // above just materialised (`len == num_ssm`, every element written by
-        // the map, no `with_capacity` gap).
-        let ptr_bytes: &[u8] =
-            unsafe { std::slice::from_raw_parts(ptrs.as_ptr() as *const u8, ptrs.len() * 8) };
-        self.gpu
-            .copy_h2d_async(ptr_bytes, self.ssm_norm_ptrs_buf, stream)?;
-
-        let (num_heads, k_dim, v_dim) = self.config.ssm_state_norm_dims();
-
-        KernelLaunch::new(self.gpu.as_ref(), norm_k)
-            .grid([num_heads as u32, num_ssm as u32, 1])
-            .block([v_dim as u32, 1, 1])
-            .arg_ptr(self.ssm_norm_ptrs_buf)
-            .arg_u32(num_heads as u32)
-            .arg_u32(k_dim as u32)
-            .arg_u32(v_dim as u32)
-            .launch(stream)?;
-
-        Ok(())
+        self.mamba2_state_finite_guard(seq, stream)
     }
 
     pub(super) fn bind_gpu_to_thread_dispatch(&self) -> Result<()> {

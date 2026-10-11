@@ -136,42 +136,6 @@ gated_delta_rule_prefill(
     }
 
 store_h:
-    // 2026-09-25: When seq_len <= 1, scale this head's H down to Frobenius norm 100 if it is larger.
-    if (seq_len <= 1) {
-        float local_sq = 0.0f;
-        #pragma unroll
-        for (int j = 0; j < K_DIM; j++) {
-            local_sq += H_reg[j] * H_reg[j];
-        }
-        unsigned int mask = __activemask();
-        float ws = local_sq;
-        ws += __shfl_down_sync(mask, ws, 16);
-        ws += __shfl_down_sync(mask, ws, 8);
-        ws += __shfl_down_sync(mask, ws, 4);
-        ws += __shfl_down_sync(mask, ws, 2);
-        ws += __shfl_down_sync(mask, ws, 1);
-        __shared__ float ns[4];
-        if (tid % 32 == 0) ns[tid / 32] = ws;
-        __syncthreads();
-        if (tid < 4) {
-            float s = ns[tid];
-            s += __shfl_down_sync(0xf, s, 2);
-            s += __shfl_down_sync(0xf, s, 1);
-            ns[0] = s;
-        }
-        __syncthreads();
-        const float MAX_NORM = 100.0f;
-        float norm_sq = ns[0];
-        if (norm_sq > MAX_NORM * MAX_NORM) {
-            float scale = MAX_NORM * rsqrtf(norm_sq);
-            #pragma unroll
-            for (int j = 0; j < K_DIM; j++) {
-                H_reg[j] *= scale;
-            }
-        }
-    }
-
-
     #pragma unroll
     for (int j = 0; j < K_DIM; j++) {
         H_global[j * v_dim + tid] = H_reg[j];
@@ -180,7 +144,7 @@ store_h:
 
 // 2026-09-25: `gated_delta_rule_prefill_split`: `gated_delta_rule_prefill` with v_dim split across 2 blocks of 64
 // threads per v-head. Block `split` owns columns split * 64 + tid_local, and each thread loads 2 of the 128 k and q
-// values. It has no seq_len <= 1 norm clamp. Grid (num_v_heads * 2, batch, 1), Block (64, 1, 1).
+// values. Grid (num_v_heads * 2, batch, 1), Block (64, 1, 1).
 
 
 
@@ -317,7 +281,7 @@ store_h_split:
 }
 
 // 2026-09-25: `gated_delta_rule_prefill_split4`: the same with 4 blocks of 32 threads per v-head; each thread loads
-// 4 of the 128 k and q values. No seq_len <= 1 norm clamp. Grid (num_v_heads * 4, batch, 1), Block (32, 1, 1).
+// 4 of the 128 k and q values. Grid (num_v_heads * 4, batch, 1), Block (32, 1, 1).
 
 
 
@@ -929,18 +893,12 @@ __device__ __forceinline__ float gdn_warp_reduce_sum(float val) {
     return val;
 }
 
-// 2026-09-25: Per-head Frobenius clamp used by the decode kernels below: after the update, a head whose ||H||_F
-// exceeds SSM_STATE_MAX_NORM is scaled down to that norm.
 
 
 
 
 
 
-#ifndef SSM_STATE_NORM_ENABLED
-#define SSM_STATE_NORM_ENABLED
-#define SSM_STATE_MAX_NORM 1000.0f
-#endif
 #endif
 
 extern "C" __global__ void gated_delta_rule_decode_f32_norm(
@@ -1002,9 +960,6 @@ extern "C" __global__ void gated_delta_rule_decode_f32_norm(
     float v_new_i = (v_i - g * hk_dot) * bt;
 
     float q_dot = 0.0f;
-#ifdef SSM_STATE_NORM_ENABLED
-    float norm_acc = 0.0f;
-#endif
     #pragma unroll 4
     for (unsigned int j = 0; j < k_dim; j += 4) {
         float h0 = H[(j + 0) * v_dim + tid];
@@ -1020,42 +975,7 @@ extern "C" __global__ void gated_delta_rule_decode_f32_norm(
         H[(j + 2) * v_dim + tid] = h2;
         H[(j + 3) * v_dim + tid] = h3;
         q_dot += h0 * smem_q[j] + h1 * smem_q[j+1] + h2 * smem_q[j+2] + h3 * smem_q[j+3];
-#ifdef SSM_STATE_NORM_ENABLED
-        // 2026-09-25: The squared Frobenius norm for the clamp below, accumulated from the values just stored.
-
-
-
-
-        norm_acc += h0 * h0;
-        norm_acc += h1 * h1;
-        norm_acc += h2 * h2;
-        norm_acc += h3 * h3;
-#endif
     }
-
-    #ifdef SSM_STATE_NORM_ENABLED
-    {
-        float local_sq = norm_acc;
-        for (int offset = 16; offset >= 1; offset >>= 1)
-            local_sq += __shfl_down_sync(0xFFFFFFFF, local_sq, offset);
-        __shared__ float norm_sums[4];
-        if (tid % 32 == 0) norm_sums[tid / 32] = local_sq;
-        __syncthreads();
-        if (tid == 0) {
-            float total = 0.0f;
-            for (int w = 0; w < 4; w++) total += norm_sums[w];
-            norm_sums[0] = total;
-        }
-        __syncthreads();
-        float head_norm_sq = norm_sums[0];
-        if (head_norm_sq > SSM_STATE_MAX_NORM * SSM_STATE_MAX_NORM) {
-            float scale = SSM_STATE_MAX_NORM * rsqrtf(head_norm_sq);
-            for (unsigned int j = 0; j < k_dim; j++) {
-                H[j * v_dim + tid] *= scale;
-            }
-        }
-    }
-    #endif
 
     const float inv_sqrt_d = rsqrtf((float)k_dim);
     const float x = q_dot * inv_sqrt_d;
@@ -1237,29 +1157,6 @@ extern "C" __global__ void gated_delta_rule_decode_f32_conv_norm(
         q_dot += h0 * smem_q[j] + h1 * smem_q[j+1] + h2 * smem_q[j+2] + h3 * smem_q[j+3];
     }
 
-    // 2026-09-25: Frobenius clamp per v-head, reduced over that v-head's 128 threads.
-    #ifdef SSM_STATE_NORM_ENABLED
-    {
-        float local_sq = 0.0f;
-        for (unsigned int j = 0; j < k_dim; j++) {
-            float hv = H[j * v_dim + vlocal];
-            local_sq += hv * hv;
-        }
-        for (int off = 16; off >= 1; off >>= 1)
-            local_sq += __shfl_down_sync(0xFFFFFFFF, local_sq, off);
-        __syncthreads();
-        if ((tid & 31) == 0) warp_sums[tid >> 5] = local_sq;
-        __syncthreads();
-        const unsigned int grp = tid >> 7;
-        float head_norm_sq = warp_sums[grp*4+0] + warp_sums[grp*4+1]
-                           + warp_sums[grp*4+2] + warp_sums[grp*4+3];
-        if (head_norm_sq > SSM_STATE_MAX_NORM * SSM_STATE_MAX_NORM) {
-            float scale = SSM_STATE_MAX_NORM * rsqrtf(head_norm_sq);
-            for (unsigned int j = 0; j < k_dim; j++) H[j * v_dim + vlocal] *= scale;
-        }
-    }
-    #endif
-
     // 2026-09-25: Step 3: gated RMS norm per v-head, x * rms * norm_weight * silu(z), to output.
     const float x = q_dot * rsqrtf((float)k_dim);
     float sum_sq = x * x;
@@ -1280,7 +1177,7 @@ extern "C" __global__ void gated_delta_rule_decode_f32_conv_norm(
     }
 }
 
-// 2026-09-25: `gated_delta_rule_decode_f32_strided`: `gated_delta_rule_decode_f32` plus the Frobenius clamp, for
+// 2026-09-25: `gated_delta_rule_decode_f32_strided`: `gated_delta_rule_decode_f32` for
 // `batch_size` sequences whose q/k, v, gate/beta and output rows are qk_stride, v_stride, gb_stride and out_stride
 // elements apart, so the rows can sit inside a wider per-sequence buffer.
 
@@ -1345,9 +1242,6 @@ extern "C" __global__ void gated_delta_rule_decode_f32_strided(
     float v_new_i = (v_i - g * hk_dot) * bt;
 
     float q_dot = 0.0f;
-#ifdef SSM_STATE_NORM_ENABLED
-    float norm_acc = 0.0f;
-#endif
     #pragma unroll 4
     for (unsigned int j = 0; j < k_dim; j += 4) {
         float h0 = H[(j + 0) * v_dim + tid];
@@ -1363,42 +1257,7 @@ extern "C" __global__ void gated_delta_rule_decode_f32_strided(
         H[(j + 2) * v_dim + tid] = h2;
         H[(j + 3) * v_dim + tid] = h3;
         q_dot += h0 * smem_q[j] + h1 * smem_q[j+1] + h2 * smem_q[j+2] + h3 * smem_q[j+3];
-#ifdef SSM_STATE_NORM_ENABLED
-        // 2026-09-25: The squared Frobenius norm for the clamp below, accumulated from the values just stored.
-
-
-
-
-        norm_acc += h0 * h0;
-        norm_acc += h1 * h1;
-        norm_acc += h2 * h2;
-        norm_acc += h3 * h3;
-#endif
     }
-
-    #ifdef SSM_STATE_NORM_ENABLED
-    {
-        float local_sq = norm_acc;
-        for (int offset = 16; offset >= 1; offset >>= 1)
-            local_sq += __shfl_down_sync(0xFFFFFFFF, local_sq, offset);
-        __shared__ float norm_sums[4];
-        if (tid % 32 == 0) norm_sums[tid / 32] = local_sq;
-        __syncthreads();
-        if (tid == 0) {
-            float total = 0.0f;
-            for (int w = 0; w < 4; w++) total += norm_sums[w];
-            norm_sums[0] = total;
-        }
-        __syncthreads();
-        float head_norm_sq = norm_sums[0];
-        if (head_norm_sq > SSM_STATE_MAX_NORM * SSM_STATE_MAX_NORM) {
-            float scale = SSM_STATE_MAX_NORM * rsqrtf(head_norm_sq);
-            for (unsigned int j = 0; j < k_dim; j++) {
-                H[j * v_dim + tid] *= scale;
-            }
-        }
-    }
-    #endif
 
     float inv_sqrt_d = rsqrtf((float)k_dim);
     output[(unsigned long long)b * out_stride + vh * v_dim + tid] = q_dot * inv_sqrt_d;
@@ -1474,9 +1333,6 @@ extern "C" __global__ void gated_delta_rule_decode_f32_strided_norm(
     float v_new_i = (v_i - g * hk_dot) * bt;
 
     float q_dot = 0.0f;
-#ifdef SSM_STATE_NORM_ENABLED
-    float norm_acc = 0.0f;
-#endif
     #pragma unroll 4
     for (unsigned int j = 0; j < k_dim; j += 4) {
         float h0 = H[(j + 0) * v_dim + tid];
@@ -1492,42 +1348,7 @@ extern "C" __global__ void gated_delta_rule_decode_f32_strided_norm(
         H[(j + 2) * v_dim + tid] = h2;
         H[(j + 3) * v_dim + tid] = h3;
         q_dot += h0 * smem_q[j] + h1 * smem_q[j+1] + h2 * smem_q[j+2] + h3 * smem_q[j+3];
-#ifdef SSM_STATE_NORM_ENABLED
-        // 2026-09-25: The squared Frobenius norm for the clamp below, accumulated from the values just stored.
-
-
-
-
-        norm_acc += h0 * h0;
-        norm_acc += h1 * h1;
-        norm_acc += h2 * h2;
-        norm_acc += h3 * h3;
-#endif
     }
-
-    #ifdef SSM_STATE_NORM_ENABLED
-    {
-        float local_sq = norm_acc;
-        for (int offset = 16; offset >= 1; offset >>= 1)
-            local_sq += __shfl_down_sync(0xFFFFFFFF, local_sq, offset);
-        __shared__ float norm_sums[4];
-        if (tid % 32 == 0) norm_sums[tid / 32] = local_sq;
-        __syncthreads();
-        if (tid == 0) {
-            float total = 0.0f;
-            for (int w = 0; w < 4; w++) total += norm_sums[w];
-            norm_sums[0] = total;
-        }
-        __syncthreads();
-        float head_norm_sq = norm_sums[0];
-        if (head_norm_sq > SSM_STATE_MAX_NORM * SSM_STATE_MAX_NORM) {
-            float scale = SSM_STATE_MAX_NORM * rsqrtf(head_norm_sq);
-            for (unsigned int j = 0; j < k_dim; j++) {
-                H[j * v_dim + tid] *= scale;
-            }
-        }
-    }
-    #endif
 
     const float inv_sqrt_d = rsqrtf((float)k_dim);
     const float x = q_dot * inv_sqrt_d;
@@ -1671,9 +1492,6 @@ extern "C" __global__ void gated_delta_rule_decode_f32_strided_norm_half(
     float v_new_i = (v_i - g * hk_dot) * bt;
 
     float q_dot = 0.0f;
-#ifdef SSM_STATE_NORM_ENABLED
-    float norm_acc = 0.0f;
-#endif
     // 2026-09-25: Update the retained rows from registers.
     #pragma unroll
     for (unsigned int j = 0; j < GDN_HALF_KD; j += 4) {
@@ -1690,20 +1508,9 @@ extern "C" __global__ void gated_delta_rule_decode_f32_strided_norm_half(
         H[(j + 2) * v_dim + tid] = h2;
         H[(j + 3) * v_dim + tid] = h3;
         q_dot += h0 * smem_q[j] + h1 * smem_q[j+1] + h2 * smem_q[j+2] + h3 * smem_q[j+3];
-#ifdef SSM_STATE_NORM_ENABLED
-        // 2026-09-25: The squared Frobenius norm for the clamp below, accumulated from the values just stored.
-
-
-
-
-        norm_acc += h0 * h0;
-        norm_acc += h1 * h1;
-        norm_acc += h2 * h2;
-        norm_acc += h3 * h3;
-#endif
     }
-    // 2026-09-25: Update the remaining rows, re-read from H. j ascends across both loops, so q_dot and norm_acc add
-    // in the same order as in `gated_delta_rule_decode_f32_strided_norm`.
+    // 2026-09-25: Update the remaining rows, re-read from H. j ascends across both loops, so q_dot adds in the
+    // same order as in `gated_delta_rule_decode_f32_strided_norm`.
 
     #pragma unroll 4
     for (unsigned int j = GDN_HALF_KD; j < k_dim; j += 4) {
@@ -1720,42 +1527,7 @@ extern "C" __global__ void gated_delta_rule_decode_f32_strided_norm_half(
         H[(j + 2) * v_dim + tid] = h2;
         H[(j + 3) * v_dim + tid] = h3;
         q_dot += h0 * smem_q[j] + h1 * smem_q[j+1] + h2 * smem_q[j+2] + h3 * smem_q[j+3];
-#ifdef SSM_STATE_NORM_ENABLED
-        // 2026-09-25: The squared Frobenius norm for the clamp below, accumulated from the values just stored.
-
-
-
-
-        norm_acc += h0 * h0;
-        norm_acc += h1 * h1;
-        norm_acc += h2 * h2;
-        norm_acc += h3 * h3;
-#endif
     }
-
-    #ifdef SSM_STATE_NORM_ENABLED
-    {
-        float local_sq = norm_acc;
-        for (int offset = 16; offset >= 1; offset >>= 1)
-            local_sq += __shfl_down_sync(0xFFFFFFFF, local_sq, offset);
-        __shared__ float norm_sums[4];
-        if (tid % 32 == 0) norm_sums[tid / 32] = local_sq;
-        __syncthreads();
-        if (tid == 0) {
-            float total = 0.0f;
-            for (int w = 0; w < 4; w++) total += norm_sums[w];
-            norm_sums[0] = total;
-        }
-        __syncthreads();
-        float head_norm_sq = norm_sums[0];
-        if (head_norm_sq > SSM_STATE_MAX_NORM * SSM_STATE_MAX_NORM) {
-            float scale = SSM_STATE_MAX_NORM * rsqrtf(head_norm_sq);
-            for (unsigned int j = 0; j < k_dim; j++) {
-                H[j * v_dim + tid] *= scale;
-            }
-        }
-    }
-    #endif
 
     const float inv_sqrt_d = rsqrtf((float)k_dim);
     const float x = q_dot * inv_sqrt_d;
@@ -1930,9 +1702,6 @@ extern "C" __global__ void gated_delta_rule_decode_f32_strided_norm_smem(
     float v_new_i = (v_i - g * hk_dot) * bt;
 
     float q_dot = 0.0f;
-#ifdef SSM_STATE_NORM_ENABLED
-    float norm_acc = 0.0f;
-#endif
     // 2026-09-25: Update the retained rows from registers.
     #pragma unroll
     for (unsigned int j = 0; j < GDN_HALF_KD; j += 4) {
@@ -1949,20 +1718,9 @@ extern "C" __global__ void gated_delta_rule_decode_f32_strided_norm_smem(
         H[(j + 2) * v_dim + tid] = h2;
         H[(j + 3) * v_dim + tid] = h3;
         q_dot += h0 * smem_q[j] + h1 * smem_q[j+1] + h2 * smem_q[j+2] + h3 * smem_q[j+3];
-#ifdef SSM_STATE_NORM_ENABLED
-        // 2026-09-25: The squared Frobenius norm for the clamp below, accumulated from the values just stored.
-
-
-
-
-        norm_acc += h0 * h0;
-        norm_acc += h1 * h1;
-        norm_acc += h2 * h2;
-        norm_acc += h3 * h3;
-#endif
     }
-    // 2026-09-25: Update the remaining rows, re-read from H. j ascends across both loops, so q_dot and norm_acc add
-    // in the same order as in `gated_delta_rule_decode_f32_strided_norm`.
+    // 2026-09-25: Update the remaining rows, re-read from H. j ascends across both loops, so q_dot adds in the
+    // same order as in `gated_delta_rule_decode_f32_strided_norm`.
 
     #pragma unroll 4
     for (unsigned int j = GDN_HALF_KD; j < k_dim; j += 4) {
@@ -1979,42 +1737,7 @@ extern "C" __global__ void gated_delta_rule_decode_f32_strided_norm_smem(
         H[(j + 2) * v_dim + tid] = h2;
         H[(j + 3) * v_dim + tid] = h3;
         q_dot += h0 * smem_q[j] + h1 * smem_q[j+1] + h2 * smem_q[j+2] + h3 * smem_q[j+3];
-#ifdef SSM_STATE_NORM_ENABLED
-        // 2026-09-25: The squared Frobenius norm for the clamp below, accumulated from the values just stored.
-
-
-
-
-        norm_acc += h0 * h0;
-        norm_acc += h1 * h1;
-        norm_acc += h2 * h2;
-        norm_acc += h3 * h3;
-#endif
     }
-
-    #ifdef SSM_STATE_NORM_ENABLED
-    {
-        float local_sq = norm_acc;
-        for (int offset = 16; offset >= 1; offset >>= 1)
-            local_sq += __shfl_down_sync(0xFFFFFFFF, local_sq, offset);
-        __shared__ float norm_sums[4];
-        if (tid % 32 == 0) norm_sums[tid / 32] = local_sq;
-        __syncthreads();
-        if (tid == 0) {
-            float total = 0.0f;
-            for (int w = 0; w < 4; w++) total += norm_sums[w];
-            norm_sums[0] = total;
-        }
-        __syncthreads();
-        float head_norm_sq = norm_sums[0];
-        if (head_norm_sq > SSM_STATE_MAX_NORM * SSM_STATE_MAX_NORM) {
-            float scale = SSM_STATE_MAX_NORM * rsqrtf(head_norm_sq);
-            for (unsigned int j = 0; j < k_dim; j++) {
-                H[j * v_dim + tid] *= scale;
-            }
-        }
-    }
-    #endif
 
     const float inv_sqrt_d = rsqrtf((float)k_dim);
     const float x = q_dot * inv_sqrt_d;
@@ -2075,7 +1798,7 @@ extern "C" __global__ void gated_delta_rule_decode_f32_strided_norm_smem(
 }
 
 // 2026-09-25: FP16 h-state twins, selected by --ssm-h-dtype f16 (METRALE_SSM_H_FP16). H is stored as __half and
-// widened on load. All arithmetic is FP32, and q_dot and norm_acc use the values before narrowing; stores go
+// widened on load. All arithmetic is FP32, and q_dot uses the values before narrowing; stores go
 // through gdn_f16_store (saturate, then round to nearest even).
 //
 // FP16 rather than BF16: g * h rounds back to h when 1 - g is below half an ulp of h, and FP16's 10 mantissa bits
@@ -2106,10 +1829,10 @@ extern "C" __global__ void gated_delta_rule_decode_f32_strided_norm_smem(
 
 
 
-// 2026-09-25: Saturating FP16 store. The per-head clamp runs after the update, so it cannot bring back an element
-// that overflowed to inf on store (inf * scale is inf), and an inf in H makes that head's next hk_dot inf. Clamping
-// to +-65504 keeps H finite; such an element means the head's pre-narrowing norm exceeds SSM_STATE_MAX_NORM, so the
-// clamp scales the head on the same step. For |v| <= 65504 the result equals __float2half(v).
+// 2026-09-25: Saturating FP16 store. An element that overflowed to inf on store would make that head's next hk_dot
+// inf; saturating to +-65504 keeps H finite. 2026-10-10: nothing rescales the state (the reference has no norm
+// bound), so an element at the bound stays there until the update brings it back into range. For |v| <= 65504 the
+// result equals __float2half(v).
 
 
 
@@ -2216,9 +1939,6 @@ extern "C" __global__ void gated_delta_rule_decode_f16_strided_norm_half(
     float v_new_i = (v_i - g * hk_dot) * bt;
 
     float q_dot = 0.0f;
-#ifdef SSM_STATE_NORM_ENABLED
-    float norm_acc = 0.0f;
-#endif
     #pragma unroll
     for (unsigned int j = 0; j < GDN_F16_HALF_KD; j += 4) {
         float h0 = (hreg[j + 0]);
@@ -2234,12 +1954,6 @@ extern "C" __global__ void gated_delta_rule_decode_f16_strided_norm_half(
         H[(j + 2) * v_dim + tid] = gdn_f16_store(h2);
         H[(j + 3) * v_dim + tid] = gdn_f16_store(h3);
         q_dot += h0 * smem_q[j] + h1 * smem_q[j+1] + h2 * smem_q[j+2] + h3 * smem_q[j+3];
-#ifdef SSM_STATE_NORM_ENABLED
-        norm_acc += h0 * h0;
-        norm_acc += h1 * h1;
-        norm_acc += h2 * h2;
-        norm_acc += h3 * h3;
-#endif
     }
     #pragma unroll 4
     for (unsigned int j = GDN_F16_HALF_KD; j < k_dim; j += 4) {
@@ -2256,37 +1970,7 @@ extern "C" __global__ void gated_delta_rule_decode_f16_strided_norm_half(
         H[(j + 2) * v_dim + tid] = gdn_f16_store(h2);
         H[(j + 3) * v_dim + tid] = gdn_f16_store(h3);
         q_dot += h0 * smem_q[j] + h1 * smem_q[j+1] + h2 * smem_q[j+2] + h3 * smem_q[j+3];
-#ifdef SSM_STATE_NORM_ENABLED
-        norm_acc += h0 * h0;
-        norm_acc += h1 * h1;
-        norm_acc += h2 * h2;
-        norm_acc += h3 * h3;
-#endif
     }
-
-    #ifdef SSM_STATE_NORM_ENABLED
-    {
-        float local_sq = norm_acc;
-        for (int offset = 16; offset >= 1; offset >>= 1)
-            local_sq += __shfl_down_sync(0xFFFFFFFF, local_sq, offset);
-        __shared__ float norm_sums[4];
-        if (tid % 32 == 0) norm_sums[tid / 32] = local_sq;
-        __syncthreads();
-        if (tid == 0) {
-            float total = 0.0f;
-            for (int w = 0; w < 4; w++) total += norm_sums[w];
-            norm_sums[0] = total;
-        }
-        __syncthreads();
-        float head_norm_sq = norm_sums[0];
-        if (head_norm_sq > SSM_STATE_MAX_NORM * SSM_STATE_MAX_NORM) {
-            float scale = SSM_STATE_MAX_NORM * rsqrtf(head_norm_sq);
-            for (unsigned int j = 0; j < k_dim; j++) {
-                H[j * v_dim + tid] = gdn_f16_store(__half2float(H[j * v_dim + tid]) * scale);
-            }
-        }
-    }
-    #endif
 
     const float inv_sqrt_d = rsqrtf((float)k_dim);
     const float x = q_dot * inv_sqrt_d;
@@ -2409,9 +2093,6 @@ extern "C" __global__ void gated_delta_rule_decode_f16_norm(
     float v_new_i = (v_i - g * hk_dot) * bt;
 
     float q_dot = 0.0f;
-#ifdef SSM_STATE_NORM_ENABLED
-    float norm_acc = 0.0f;
-#endif
     #pragma unroll 4
     for (unsigned int j = 0; j < k_dim; j += 4) {
         float h0 = __half2float(H[(j + 0) * v_dim + tid]);
@@ -2427,37 +2108,7 @@ extern "C" __global__ void gated_delta_rule_decode_f16_norm(
         H[(j + 2) * v_dim + tid] = gdn_f16_store(h2);
         H[(j + 3) * v_dim + tid] = gdn_f16_store(h3);
         q_dot += h0 * smem_q[j] + h1 * smem_q[j+1] + h2 * smem_q[j+2] + h3 * smem_q[j+3];
-#ifdef SSM_STATE_NORM_ENABLED
-        norm_acc += h0 * h0;
-        norm_acc += h1 * h1;
-        norm_acc += h2 * h2;
-        norm_acc += h3 * h3;
-#endif
     }
-
-    #ifdef SSM_STATE_NORM_ENABLED
-    {
-        float local_sq = norm_acc;
-        for (int offset = 16; offset >= 1; offset >>= 1)
-            local_sq += __shfl_down_sync(0xFFFFFFFF, local_sq, offset);
-        __shared__ float norm_sums[4];
-        if (tid % 32 == 0) norm_sums[tid / 32] = local_sq;
-        __syncthreads();
-        if (tid == 0) {
-            float total = 0.0f;
-            for (int w = 0; w < 4; w++) total += norm_sums[w];
-            norm_sums[0] = total;
-        }
-        __syncthreads();
-        float head_norm_sq = norm_sums[0];
-        if (head_norm_sq > SSM_STATE_MAX_NORM * SSM_STATE_MAX_NORM) {
-            float scale = SSM_STATE_MAX_NORM * rsqrtf(head_norm_sq);
-            for (unsigned int j = 0; j < k_dim; j++) {
-                H[j * v_dim + tid] = gdn_f16_store(__half2float(H[j * v_dim + tid]) * scale);
-            }
-        }
-    }
-    #endif
 
     const float inv_sqrt_d = rsqrtf((float)k_dim);
     const float x = q_dot * inv_sqrt_d;

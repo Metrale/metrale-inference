@@ -156,8 +156,9 @@ pub trait ModelForward: ModelStreams {
         })
     }
 
-    /// 2026-09-25: Normalise the sequence's SSM `h_state`. The scheduler calls it between
-    /// prefill chunks. Default: no-op.
+    /// 2026-09-25: The per-chunk pass over the sequence's SSM `h_state`. The scheduler calls it
+    /// between prefill chunks. 2026-10-10: it rescales nothing (a Mamba-2 model's states are
+    /// checked for non-finite values). Default: no-op.
     fn normalize_ssm_states(&self, _seq: &SequenceState, _stream: u64) -> Result<()> {
         Ok(())
     }

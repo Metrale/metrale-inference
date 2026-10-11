@@ -306,8 +306,7 @@ impl TransformerModel {
         });
 
         let AuxKernels {
-            ssm_norm_k,
-            ssm_norm_f16_k,
+            ssm_nonfinite_k,
             ssm_h_f32_to_f16_k,
             ssm_h_f16_to_f32_k,
             logit_softcap_kernel,
@@ -471,8 +470,7 @@ impl TransformerModel {
             vision_owned_images: Mutex::new(0),
             pinned_staging,
             ssm_checkpoint_interval,
-            ssm_state_norm_kernel: ssm_norm_k,
-            ssm_state_norm_f16_kernel: ssm_norm_f16_k,
+            ssm_nonfinite_kernel: ssm_nonfinite_k,
             ssm_h_f32_to_f16_kernel: ssm_h_f32_to_f16_k,
             ssm_h_f16_to_f32_kernel: ssm_h_f16_to_f32_k,
             ssm_h_f16_scratch: std::sync::OnceLock::new(),

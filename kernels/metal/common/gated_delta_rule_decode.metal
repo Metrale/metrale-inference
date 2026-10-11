@@ -9,10 +9,10 @@
 //   H[j, c]  = g * H[j, c] + k[j] * v_new[c]
 //   y[c]     = (sum_j H[j, c] * q[j]) / sqrt(k_dim)
 //
-// g is the gate clamped to [1e-6, 1 - 1e-6]. After the update, a head whose
-// state Frobenius norm exceeds SSM_STATE_MAX_NORM is scaled down to it; y is
-// computed before that scaling. The arguments, update and gate clamp match
-// gated_delta_rule_decode in kernels/gb10/common/gated_delta_rule.cu.
+// g is the gate clamped to [1e-6, 1 - 1e-6]. The state norm is not bounded,
+// as the reference recurrence does not bound it. The arguments, update and
+// gate clamp match gated_delta_rule_decode in
+// kernels/gb10/common/gated_delta_rule.cu.
 //
 // Layout:
 //   h_state : float  [batch, num_v_heads, k_dim, v_dim]   (in/out)
@@ -25,15 +25,10 @@
 //
 // Owner: metal kernels.
 // Invariants: assumes threadgroup size == v_dim <= 128 and k_dim <= 128, a
-// multiple of 4 (`smem_k`, `smem_q`, `norm_sums`).
+// multiple of 4 (`smem_k`, `smem_q`).
 
 #include <metal_stdlib>
 using namespace metal;
-
-
-
-
-constant float SSM_STATE_MAX_NORM = 1000.0f;
 
 kernel void gated_delta_rule_decode(
     device float        *h_state    [[buffer(0)]],
@@ -49,9 +44,7 @@ kernel void gated_delta_rule_decode(
     constant uint &k_dim            [[buffer(10)]],
     constant uint &v_dim            [[buffer(11)]],
     uint  tg_idx    [[threadgroup_position_in_grid]],
-    uint  tid       [[thread_position_in_threadgroup]],
-    uint  simd_lane [[thread_index_in_simdgroup]],
-    uint  simd_grp  [[simdgroup_index_in_threadgroup]])
+    uint  tid       [[thread_position_in_threadgroup]])
 {
 
 
@@ -123,42 +116,6 @@ kernel void gated_delta_rule_decode(
         q_dot += h0 * smem_q[j] + h1 * smem_q[j + 1]
                + h2 * smem_q[j + 2] + h3 * smem_q[j + 3];
     }
-
-
-
-
-    {
-        float local_sq = 0.0f;
-        for (uint j = 0; j < k_dim; ++j) {
-            float hv = H[j * v_dim + tid];
-            local_sq += hv * hv;
-        }
-
-        float warp_sum = simd_sum(local_sq);
-        threadgroup float norm_sums[4];
-        if (simd_lane == 0) {
-            norm_sums[simd_grp] = warp_sum;
-        }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-        threadgroup float head_norm_sq_storage;
-        if (simd_grp == 0) {
-
-            float s = (tid < 4u) ? norm_sums[tid] : 0.0f;
-            s = simd_sum(s);
-            if (tid == 0) {
-                head_norm_sq_storage = s;
-            }
-        }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-        float head_norm_sq = head_norm_sq_storage;
-        if (head_norm_sq > SSM_STATE_MAX_NORM * SSM_STATE_MAX_NORM) {
-            float scale = SSM_STATE_MAX_NORM * rsqrt(head_norm_sq);
-            for (uint j = 0; j < k_dim; ++j) {
-                H[j * v_dim + tid] *= scale;
-            }
-        }
-    }
-
 
     float inv_sqrt_d = rsqrt(float(k_dim));
     output[(b * num_v_heads + vh) * v_dim + tid] = bfloat(q_dot * inv_sqrt_d);

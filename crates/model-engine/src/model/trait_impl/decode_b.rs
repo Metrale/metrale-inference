@@ -434,8 +434,8 @@ impl TransformerModel {
                 )?;
             }
 
-            // 2026-09-25: Normalise the prefill sequence's SSM state on `stream`, where
-            // the layer loop just wrote it, for every chunk including the last.
+            // 2026-09-25: The SSM state pass (`normalize_ssm_states_dispatch`) on `stream`,
+            // where the layer loop just wrote it, for every chunk including the last.
             self.normalize_ssm_states_dispatch(prefill_seq, stream)?;
 
             // 2026-09-25: Drafter prefill capture of this chunk's final-layer hidden

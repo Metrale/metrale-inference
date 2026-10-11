@@ -19,7 +19,7 @@ use crate::weight_map::DenseWeight;
 
 /// 2026-09-25: [`super::gdn_decode_f32_norm`] plus an inline h-state snapshot.
 ///
-/// `h_inter` receives the updated H after the state-norm clamp, the same
+/// `h_inter` receives the updated H, the same
 /// values left in `h_state`; NULL skips the snapshot. Same grid, block and
 /// argument order as the parent, with `h_inter` appended.
 #[allow(clippy::too_many_arguments)]

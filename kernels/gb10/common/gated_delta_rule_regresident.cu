@@ -14,9 +14,6 @@
 // The sums are warp butterflies, so their order differs from gated_delta_rule_decode's per-thread
 // loops.
 //
-// There is no SSM_STATE_NORM_ENABLED clamp: a head's columns are spread over grid.z blocks, and no
-// block sees the whole head's norm.
-//
 // The Qwen3 SSM prefill recurrence launches it when the gdn_regresident lever is on, kd == vd == 128
 // and the FLA chunked path was not taken, ahead of gated_delta_rule_prefill_persistent_wy4.
 //
