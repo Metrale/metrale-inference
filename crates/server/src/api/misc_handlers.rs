@@ -133,6 +133,17 @@ pub async fn metrics_handler() -> impl IntoResponse {
         metrale_low_entropy_ratio {low_ratio:.4}\n"
     );
 
+    // 2026-10-11: Build, start time and startup phase, at every telemetry level.
+    let commit = crate::request_accounting::runtime_commit().map(|c| c.to_hex());
+    text.push_str(&metrale_telemetry::export::process::render(
+        &metrale_telemetry::export::process::ProcessFacts {
+            version: crate::cli::METRALE_VERSION,
+            commit: commit.as_deref(),
+            start_unix_s: crate::metrics::PROCESS_START_UNIX_S.get().copied(),
+            phase: metrale_telemetry::progress::current_phase(),
+        },
+    ));
+
     // 2026-09-26: The telemetry section; empty at `--telemetry off`
     // (`metrale_telemetry::export::prometheus::render`).
     text.push_str(&metrale_telemetry::export::prometheus::render(

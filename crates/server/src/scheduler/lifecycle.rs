@@ -119,6 +119,7 @@ pub fn finish_sequence(io: &SchedIo, a: &mut ActiveSeq, max_seq_len: usize) {
                 cached_prompt_tokens: a.cached_prompt_tokens,
                 accepted_prediction_tokens: a.mtp_acct.accepted_total() as usize,
                 guard_stop: a.guard_stop,
+                prefill_started_at: a.request_start,
                 logprobs: &mut a.logprobs_data,
                 prompt_logprobs: &mut a.seq.prompt_logprobs,
             },

@@ -54,6 +54,7 @@ use super::sanitizer::*;
 pub(super) async fn responses_endpoint_stream(
     CurrentModel(state): CurrentModel,
     tenant: Option<crate::auth::LookupTenant>,
+    stamp: crate::request_stamp::RequestStamp,
     mut chat_req: ChatCompletionRequest,
     metadata: Option<std::collections::HashMap<String, String>>,
     store_flag: bool,
@@ -91,18 +92,19 @@ pub(super) async fn responses_endpoint_stream(
         Vec::new()
     };
 
-    let deltas = match chat_completions_inner(state, None, tenant, chat_req.into(), None).await {
-        super::chat::ChatOutcome::Streaming(d) => d,
-        super::chat::ChatOutcome::Http(r) => return r,
-        // 2026-09-26: Not reached: `chat_req.stream` is true, so a success is
-        // `Streaming` (`chat/mod.rs` dispatch).
-        super::chat::ChatOutcome::Blocking(_) => {
-            return openai_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal: expected streaming outcome".to_string(),
-            );
-        }
-    };
+    let deltas =
+        match chat_completions_inner(state, None, tenant, stamp, chat_req.into(), None).await {
+            super::chat::ChatOutcome::Streaming(d) => d,
+            super::chat::ChatOutcome::Http(r) => return r,
+            // 2026-09-26: Not reached: `chat_req.stream` is true, so a success is
+            // `Streaming` (`chat/mod.rs` dispatch).
+            super::chat::ChatOutcome::Blocking(_) => {
+                return openai_error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal: expected streaming outcome".to_string(),
+                );
+            }
+        };
 
     // 2026-09-26: Same capacity as the chat stream's channel (`chat_stream/mod.rs`).
     let (tx, rx) = mpsc::channel::<Result<Event, std::convert::Infallible>>(1024);

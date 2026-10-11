@@ -11,30 +11,32 @@ use std::sync::Arc;
 use crate::rate_limiter;
 
 /// 2026-09-26: Add OpenAI-style headers to every `/v1/*` response:
-/// `x-request-id` (the client's, else a new `req_<uuid>`),
 /// `openai-processing-ms` (milliseconds until the inner layers returned a
-/// response), and the fallbacks of [`apply_compat_stubs`].
+/// response) and the fallbacks of [`apply_compat_stubs`].
+/// 2026-10-11: It also stamps the request (`trace_layer::stamp`: request and trace ids,
+/// receive time) into the extensions before every inner layer, answers with
+/// `x-request-id`, `traceresponse` and `x-metrale-id-source`, and adds both ids to a JSON
+/// error body (`trace_layer::annotate_error`). A client `x-request-id` is kept only when it
+/// is a 16-byte id (32 hex digits or a UUID); any other value is replaced and the
+/// replacement is labelled `generated-invalid`.
 pub(crate) async fn openai_observability_middleware(
-    req: axum::extract::Request,
+    mut req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
+    use super::trace_layer;
     use axum::http::{HeaderName, HeaderValue};
     let start = std::time::Instant::now();
-    let is_v1 = req.uri().path().starts_with("/v1/");
-    let incoming_req_id = req
-        .headers()
-        .get("x-request-id")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string());
-    let mut resp = next.run(req).await;
-    if !is_v1 {
-        return resp;
+    if !req.uri().path().starts_with("/v1/") {
+        return next.run(req).await;
     }
+    let Ok(stamp) = trace_layer::stamp(req.headers(), start) else {
+        return trace_layer::entropy_unavailable();
+    };
+    req.extensions_mut().insert(stamp);
+    let resp = next.run(req).await;
+    let mut resp = trace_layer::annotate_error(resp, &stamp.trace).await;
     let headers = resp.headers_mut();
-    let rid = incoming_req_id.unwrap_or_else(|| format!("req_{}", crate::ids::uuid_v4()));
-    if let Ok(v) = HeaderValue::from_str(&rid) {
-        headers.insert(HeaderName::from_static("x-request-id"), v);
-    }
+    trace_layer::set_headers(headers, &stamp.trace);
     let elapsed_ms = start.elapsed().as_millis();
     if let Ok(v) = HeaderValue::from_str(&elapsed_ms.to_string()) {
         headers.insert(HeaderName::from_static("openai-processing-ms"), v);

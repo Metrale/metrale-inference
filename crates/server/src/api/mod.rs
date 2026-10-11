@@ -9,6 +9,7 @@
 pub mod chat;
 pub mod chat_blocking;
 mod chat_blocking_choice;
+mod chat_blocking_finalize;
 pub mod chat_phases;
 pub mod chat_stream;
 pub mod chat_stream_dispatch;

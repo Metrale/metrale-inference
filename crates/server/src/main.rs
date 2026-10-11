@@ -51,7 +51,9 @@ mod rate_limiter;
 pub mod reasoning_parser;
 pub mod recipe;
 mod refusal;
+mod request_accounting;
 mod request_dumper;
+mod request_stamp;
 mod response_store;
 mod retrieval_heads;
 mod scheduler;
@@ -77,6 +79,10 @@ pub(crate) use crate::main_modules::AppState;
 pub type ModelBehavior = metrale_kernels::ModelBehavior;
 
 fn main() -> Result<()> {
+    // 2026-10-11: Before anything else, so uptime counts the whole process.
+    if let Ok(since) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        let _ = metrics::PROCESS_START_UNIX_S.set(since.as_secs_f64());
+    }
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?

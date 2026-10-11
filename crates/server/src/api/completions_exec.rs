@@ -51,13 +51,28 @@ pub(super) struct CompletionParams {
     pub early_stopping: bool,
 }
 
-/// 2026-09-26: Run every (prompt, `n`) choice in turn and assemble the
-/// response; the first failed choice returns its error response alone.
+/// 2026-10-11: [`run_choices`], then an error status answered after dispatch settles the
+/// request's usage record as an engine error.
 pub(super) async fn run_blocking(
     state: Arc<AppState>,
     req: &CompletionRequest,
     prompts: Vec<Vec<u32>>,
     p: CompletionParams,
+    pending: crate::request_accounting::Pending,
+) -> Response {
+    let resp = run_choices(state, req, prompts, p, &pending).await;
+    pending.fail_status(resp.status());
+    resp
+}
+
+/// 2026-09-26: Run every (prompt, `n`) choice in turn and assemble the
+/// response; the first failed choice returns its error response alone.
+async fn run_choices(
+    state: Arc<AppState>,
+    req: &CompletionRequest,
+    prompts: Vec<Vec<u32>>,
+    p: CompletionParams,
+    pending: &crate::request_accounting::Pending,
 ) -> Response {
     // 2026-09-26: `completions` limits `n` to 1..=128. The capacity is capped
     // at 1024 whatever the request says, and the vec grows past it if needed.
@@ -72,6 +87,8 @@ pub(super) async fn run_blocking(
     let mut last_ttft = 0.0f64;
     let mut last_decode_time_ms = 0.0f64;
     let mut last_tps = 0.0f64;
+    let mut first: Option<(std::time::Instant, f64)> = None;
+    let mut outcome = metrale_qci_dump::contract::usage::Outcome::Completed;
 
     for (prompt_i, prompt_tokens) in prompts.iter().enumerate() {
         for n_i in 0..n {
@@ -130,6 +147,7 @@ pub(super) async fn run_blocking(
                     "Scheduler queue full".to_string(),
                 );
             }
+            pending.dispatched();
             let response = match rx.await {
                 Ok(Ok(r)) => r,
                 Ok(Err(e)) => {
@@ -186,6 +204,13 @@ pub(super) async fn run_blocking(
             sum_cached += response.cached_prompt_tokens as usize;
             sum_reasoning += response.reasoning_tokens as usize;
             sum_accepted += response.accepted_prediction_tokens;
+            if first.is_none() {
+                first = Some((response.prefill_started_at, response.time_to_first_token_ms));
+            }
+            let choice_outcome = crate::request_accounting::outcome_of(&response.finish_reason);
+            if choice_outcome == metrale_qci_dump::contract::usage::Outcome::Timeout {
+                outcome = choice_outcome;
+            }
             last_ttft = response.time_to_first_token_ms;
             last_decode_time_ms = response.decode_time_ms;
             last_tps = crate::ir::Usage::decode_rate_tok_s(
@@ -202,6 +227,19 @@ pub(super) async fn run_blocking(
         }
     }
 
+    // 2026-10-11: The record takes the first choice's prefill instant and TTFT, the last
+    // choice's decode window, and the summed counts.
+    let inference_usage = first.and_then(|(prefill_started_at, ttft_ms)| {
+        pending.complete(crate::request_accounting::Finish {
+            outcome,
+            completion: sum_completion,
+            cached_prompt: sum_cached,
+            reasoning: sum_reasoning,
+            prefill_started_at,
+            ttft_ms,
+            decode_ms: last_decode_time_ms,
+        })
+    });
     let usage = Usage {
         prompt_tokens: sum_prompt,
         completion_tokens: sum_completion,
@@ -220,6 +258,7 @@ pub(super) async fn run_blocking(
         response_tokens_per_second: last_tps,
         decode_time_ms: last_decode_time_ms,
         total_time_ms: last_ttft + last_decode_time_ms,
+        inference_usage,
     };
 
     Json(CompletionResponse::from_choices(

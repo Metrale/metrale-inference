@@ -25,6 +25,7 @@ mod serve_router;
 pub(crate) mod telemetry_boot;
 #[cfg(feature = "otlp")]
 mod telemetry_otlp;
+pub(crate) mod trace_layer;
 
 #[cfg(test)]
 mod tests;

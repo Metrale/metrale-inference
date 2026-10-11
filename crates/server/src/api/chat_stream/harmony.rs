@@ -52,6 +52,7 @@ pub(super) fn adapt(
                     cached_prompt_tokens,
                     accepted_prediction_tokens,
                     guard_stop,
+                    prefill_started_at,
                     ..
                 } => {
                     let text =
@@ -75,8 +76,15 @@ pub(super) fn adapt(
                             decode_time_ms,
                         ),
                     };
-                    crate::metrics::PROMPT_TOKENS_TOTAL.inc_by(ctx.prompt_len as u64);
-                    crate::metrics::GENERATION_TOKENS_TOTAL.inc_by(completion_tokens as u64);
+                    let inference_usage = ctx.pending.complete(crate::request_accounting::Finish {
+                        outcome: crate::request_accounting::outcome_of(&finish_reason),
+                        completion: completion_tokens,
+                        cached_prompt: cached_prompt_tokens as usize,
+                        reasoning: parser.reasoning_tokens() as usize,
+                        prefill_started_at,
+                        ttft_ms: time_to_first_token_ms,
+                        decode_ms: decode_time_ms,
+                    });
                     if let Some(ref rctx) = ctx.req_ctx {
                         ctx.state.rate_limiter.refund_tokens(
                             &rctx.identity,
@@ -103,6 +111,7 @@ pub(super) fn adapt(
                         reason,
                         usage,
                         token_ids: vec![],
+                        inference_usage: inference_usage.map(Box::new),
                     });
                 }
             }

@@ -80,8 +80,10 @@ fn delta_to_payloads(d: &StreamDelta, model: &str, id: &str, include_usage: bool
             reason,
             usage,
             token_ids,
+            inference_usage,
         } => {
-            let wire_usage = wire_usage(usage);
+            let mut wire_usage = wire_usage(usage);
+            wire_usage.inference_usage = inference_usage.as_deref().cloned();
             if include_usage {
                 // 2026-09-26: The usage-only chunk (`choices: []`) comes
                 // first, then the finish chunk without usage. The residual
@@ -275,6 +277,7 @@ mod tests {
             reason: FinishReason::Stop,
             usage,
             token_ids: Vec::new(),
+            inference_usage: None,
         };
         let p = delta_to_payloads(&d, "m", "id-1", true);
         let v: serde_json::Value = serde_json::from_str(&p[0]).unwrap();
@@ -300,6 +303,7 @@ mod tests {
             reason: FinishReason::Stop,
             usage,
             token_ids: vec![7],
+            inference_usage: None,
         };
 
         let p = delta_to_payloads(&d, "m", "id-1", true);

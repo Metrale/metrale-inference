@@ -333,6 +333,7 @@ fn ir_response(choice: crate::ir::Choice) -> crate::ir::ChatResponse {
             decode_time_ms: 0.0,
             response_tokens_per_second: 0.0,
         },
+        inference_usage: None,
     }
 }
 

@@ -36,6 +36,7 @@ fn with_token_ids_stamps_first_choice() {
         response_tokens_per_second: 0.0,
         decode_time_ms: 0.0,
         total_time_ms: 0.0,
+        inference_usage: None,
     };
     let chunk = ChatCompletionChunk::usage_only_chunk("m", "id", usage).with_token_ids(vec![1, 2]);
     assert!(chunk.choices.is_empty());
@@ -87,6 +88,7 @@ fn test_usage() -> Usage {
         response_tokens_per_second: 0.0,
         decode_time_ms: 0.0,
         total_time_ms: 0.0,
+        inference_usage: None,
     }
 }
 

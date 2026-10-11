@@ -7,8 +7,8 @@
 
 use lazy_static::lazy_static;
 use prometheus::{
-    HistogramVec, IntCounter, IntCounterVec, IntGauge, register_histogram_vec,
-    register_int_counter, register_int_counter_vec, register_int_gauge,
+    Counter, HistogramVec, IntCounter, IntCounterVec, IntGauge, register_counter,
+    register_histogram_vec, register_int_counter, register_int_counter_vec, register_int_gauge,
 };
 
 lazy_static! {
@@ -73,6 +73,47 @@ lazy_static! {
             &["k", "outcome"]
         ).unwrap();
 
+    // 2026-10-11: The series below are written only by `request_accounting.rs`, once per
+    // request the scheduler accepted (chat, Responses, Messages and completions alike).
+    /// 2026-10-11: HTTP receipt → the scheduler's first prefill of the request, by model.
+    /// Measured against the middleware's receive instant (`request_stamp.rs`).
+    pub static ref QUEUE_SECONDS: HistogramVec = register_histogram_vec!(
+        "metrale_queue_time_seconds",
+        "Time from HTTP receipt to the first scheduled prefill",
+        &["model"],
+        vec![0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0]
+    )
+    .unwrap();
+    /// 2026-10-11: Accepted requests by how they ended: `completed`, `timeout`,
+    /// `cancelled` or `engine_error` (four series, never more).
+    pub static ref REQUEST_OUTCOMES: IntCounterVec = register_int_counter_vec!(
+        "metrale_request_outcomes_total",
+        "Requests the scheduler accepted, by outcome",
+        &["outcome"]
+    )
+    .unwrap();
+    /// 2026-10-11: Prompt tokens actually computed (prompt minus prefix-cache hits).
+    pub static ref PREFILL_TOKENS_TOTAL: IntCounter = register_int_counter!(
+        "metrale_prefill_tokens_total",
+        "Prompt tokens computed by prefill (prompt tokens minus prefix-cache hits)"
+    )
+    .unwrap();
+    /// 2026-10-11: Sum of per-request prefill windows (first prefill → first token).
+    /// Concurrent requests overlap, so `prefill_tokens / prefill_seconds` is the mean
+    /// per-request prefill rate, not the device's throughput.
+    pub static ref PREFILL_SECONDS_TOTAL: Counter = register_counter!(
+        "metrale_request_prefill_seconds_total",
+        "Sum of per-request prefill windows, first prefill to first token"
+    )
+    .unwrap();
+    /// 2026-10-11: Sum of per-request decode windows (first token → finish frame); the
+    /// per-request decode rate is `(generation_tokens − completed) / decode_seconds`.
+    pub static ref DECODE_SECONDS_TOTAL: Counter = register_counter!(
+        "metrale_request_decode_seconds_total",
+        "Sum of per-request decode windows, first token to finish"
+    )
+    .unwrap();
+
     // 2026-09-26: Tool calls emitted by the streaming and blocking chat paths.
     // No tool-name label, to keep the series count bounded.
     pub static ref TOOL_CALLS_TOTAL: IntCounter =
@@ -81,6 +122,10 @@ lazy_static! {
             "Total successful tool calls emitted by the server"
         ).unwrap();
 }
+
+/// 2026-10-11: Unix seconds at which `main` started, set once there; `/metrics` exports it
+/// as `metrale_process_start_time_seconds` (uptime = scrape time − start).
+pub static PROCESS_START_UNIX_S: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
 
 /// 2026-09-26: Holds one count of `metrale_requests_active`: increments on
 /// construction and decrements once on drop, so a handler future dropped on

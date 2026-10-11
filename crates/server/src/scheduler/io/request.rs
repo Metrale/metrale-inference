@@ -50,6 +50,9 @@ pub struct FinishFrame<'a> {
     pub cached_prompt_tokens: u32,
     pub accepted_prediction_tokens: usize,
     pub guard_stop: Option<&'static str>,
+    /// 2026-10-11: When the scheduler first picked the request up for prefill
+    /// (`ActiveSeq::request_start`); the API layer measures queue time against it.
+    pub prefill_started_at: std::time::Instant,
     /// 2026-09-25: Taken by the blocking arm, left alone by the streaming one.
     pub logprobs: &'a mut Vec<crate::api::TokenLogprobs>,
     pub prompt_logprobs: &'a mut Vec<metrale_model_engine::traits::PromptTokenLogprob>,
@@ -180,6 +183,7 @@ impl RequestIo for TokioRequestIo {
                         cached_prompt_tokens: f.cached_prompt_tokens,
                         accepted_prediction_tokens: f.accepted_prediction_tokens,
                         guard_stop: f.guard_stop,
+                        prefill_started_at: f.prefill_started_at,
                     },
                     "done frame",
                 );
@@ -196,6 +200,7 @@ impl RequestIo for TokioRequestIo {
                             reasoning_tokens: f.reasoning_tokens,
                             cached_prompt_tokens: f.cached_prompt_tokens,
                             accepted_prediction_tokens: f.accepted_prediction_tokens,
+                            prefill_started_at: f.prefill_started_at,
                             prompt_logprobs: std::mem::take(f.prompt_logprobs)
                                 .into_iter()
                                 .map(|p| crate::api::TokenLogprobs {
