@@ -146,6 +146,13 @@ impl TransformerModel {
     /// slot is free. The replay-tail point (`replay_tail`, the attention split and the
     /// exact GDN arm) is the deeper of the two captures, so the rows a warm repeat
     /// replays get its bits; `cut` stays for a next turn whose match lands a block lower.
+    /// 2026-10-11: Not when the layers split their whole pass at a capture
+    /// (`splits_whole_pass_at_capture`, GLM-5.3): there each point is a pass boundary of its
+    /// own, so `tb` would add a third pass over `[cut, tb)` and `[tb, total)` whose rows,
+    /// below 17, take other kernels than the two-pass split's `[cut, total)`. Measured on the
+    /// 3-rank GLM-5.3 serve: with the `tb` point the first sampled token differed from
+    /// `--no-ssm-tail-midchunk` on 3 of 3 prompts (1k, 4k, 32k). With `cut` alone the pass
+    /// is the two-pass split's, and a warm repeat restores at `cut` as it does there.
     ///
     /// `None` when the pass does not strictly span `cut`, or no slot can be reserved
     /// even after a reclaim: the prefill then keeps no checkpoint at `cut`, as
@@ -185,6 +192,7 @@ impl TransformerModel {
         };
         let bs = kv_cache.block_size();
         let deep = metrale_gpu_runtime::ssm_tail_boundary(total, bs)
+            .filter(|_| !self.splits_whole_pass_at_capture())
             .filter(|&tb| tb > cut && tb < end && total - tb >= 2)
             .and_then(|tb| {
                 match self.reserve_snapshot_slot(seq.session_hash, kv_cache) {
