@@ -65,6 +65,7 @@ pub(super) fn compile_optimized_grammar(
         return CompiledGrammar::from_impl(Arc::new(CompiledGrammarImpl {
             prewarm_max_threads: max_threads,
             grammar: Arc::new(grammar),
+            // shared Arc handle, not a deep copy.
             tokenizer_info: tokenizer_info.clone(),
             mask_cache: Mutex::new(AHashMap::new()),
             tag_slice: Arc::new(AHashMap::new()),
@@ -103,6 +104,7 @@ pub(super) fn compile_optimized_grammar(
     CompiledGrammar::from_impl(Arc::new(CompiledGrammarImpl {
         prewarm_max_threads: max_threads,
         grammar: Arc::new(grammar),
+        // shared Arc handle, not a deep copy.
         tokenizer_info: tokenizer_info.clone(),
         mask_cache: Mutex::new(AHashMap::new()),
         tag_slice,

@@ -268,6 +268,17 @@ impl GrammarCompiler {
         grammar_bytes + rule_bytes
     }
 
+    /// Number of compiled grammars resident in the cache.
+    pub fn cache_len(&self) -> usize {
+        self.cache.cache_len()
+    }
+
+    /// Approximate bytes of the vocabulary shared by every
+    /// compiled grammar (not in [`Self::cache_size_bytes`]).
+    pub fn vocab_shared_bytes(&self) -> usize {
+        self.tokenizer_info.approx_vocab_bytes()
+    }
+
     /// The configured cache memory limit; `-1` means unlimited. Port of
     /// `GrammarCompiler::CacheLimitBytes`.
     pub fn cache_limit_bytes(&self) -> i64 {
