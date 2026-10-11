@@ -68,6 +68,7 @@ pub(in crate::model) mod prefill_b;
 mod prefill_c;
 mod prefill_d;
 mod prefix_reuse;
+mod propose_batch_ep;
 mod sequence;
 mod sequence_compact;
 mod speculative;

@@ -90,6 +90,8 @@ impl Glm5NextMtpHead {
         config: &metrale_config::ModelConfig,
         gpu: &dyn GpuBackend,
         max_seq_len: usize,
+        // 2026-10-11: Live proposer states the KV pool holds a region for (`--max-batch-size`).
+        max_seqs: usize,
     ) -> Result<Self> {
         let dsa = match &module.layer.mixer {
             crate::glm5next_layer::Glm5NextMixer::Dsa(l) => l,
@@ -102,20 +104,14 @@ impl Glm5NextMtpHead {
         // the bounds checks in `forward_one` and `rows_impl`, and, through
         // `prefill_hidden_rows`, the model's `mtp_prefill_hidden` capture.
         let max_seq_len = drafter_context_rows(max_seq_len, &dsa.cfg);
-        // 2026-09-25: One KV head of `kv_lora_rank` per token, the absorbed-MLA latent that
-        // the block's `latent_write` and paged gather address.
-        let kv_config = KvCacheConfig {
-            block_size: 16,
-            num_kv_heads: 1,
-            head_dim: dsa.cfg.kv_lora_rank,
-            num_layers: 1,
-            dtype: KvCacheDtype::Fp8,
-            layer_dtypes: vec![],
-            layer_dims: vec![],
-            cache_blocks_per_seq: None,
-        };
-        let blocks = max_seq_len / kv_config.block_size + 2;
-        let kv_cache = PagedKvCache::new(kv_config, blocks, gpu)?;
+        // 2026-10-11: One region of `blocks_per_seq` blocks per live state (`kv_pool`).
+        let per_seq = super::kv_pool::blocks_per_seq(max_seq_len);
+        let regions = max_seqs.max(1);
+        let kv_cache = PagedKvCache::new(
+            super::kv_pool::drafter_kv_config(dsa.cfg.kv_lora_rank),
+            per_seq * regions,
+            gpu,
+        )?;
         // 2026-09-25: The draft `lm_head` sweep is most of the drafter's time. Measured
         // 2026-08-29 with `METRALE_GLM_MTP_SKIP=head`: propose 8.84 ms -> 1.52 ms. It reads
         // `[vocab, hidden]` BF16, 1.27 GB at GLM-5.3's 154,880 x 4,096.
@@ -175,6 +171,13 @@ impl Glm5NextMtpHead {
             embed_tokens,
             lm_head,
             kv_cache: Mutex::new(kv_cache),
+            kv_regions: super::kv_pool::DrafterKvRegions::new(regions, per_seq),
+            batch: super::batch::ProposeBatch::new(
+                gpu,
+                config.hidden_size,
+                config.vocab_size,
+                per_seq,
+            )?,
             rms_norm_k: gpu.kernel("rms_norm_vanilla", "rms_norm_vanilla")?,
             gemv_k: gpu.kernel("gemv", "dense_gemv_bf16")?,
             argmax_k: gpu.kernel("argmax", "argmax_bf16")?,

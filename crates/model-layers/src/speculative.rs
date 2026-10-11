@@ -20,6 +20,7 @@ pub use ladder::{
 mod k2_wire;
 mod kgamma_wire;
 mod knobs;
+mod propose_batch_wire;
 mod verify_batch_wire;
 pub use k2_wire::{
     EP_CMD_VERIFY_K2_FUSED, K2_FUSED_ENV, K2_VERDICT_WORDS, K2Verdict,
@@ -32,6 +33,11 @@ pub use knobs::{
     mtp_accept_debug, mtp_catchup_enabled, mtp_ep_batch_verify_enabled, mtp_ep_propose_enabled,
     mtp_multi_seq_mode, mtp_refeed_accepted_enabled, mtp_refeed_debug, mtp_refeed_shift,
     shadow_topk,
+};
+pub use propose_batch_wire::{
+    EP_CMD_MTP_PROPOSE_BATCH, PROPOSE_BATCH_MAX_DRAFTS, PROPOSE_BATCH_MAX_SEQS,
+    ProposeBatchColumns, propose_batch_columns, propose_batch_header, propose_batch_payload,
+    propose_batch_shape,
 };
 pub use verify_batch_wire::{
     EP_CMD_VERIFY_BATCH, VERIFY_BATCH_MAX_SEQS, verify_batch_failed_verdict, verify_batch_shape,

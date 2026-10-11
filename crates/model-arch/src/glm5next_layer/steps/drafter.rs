@@ -7,6 +7,8 @@
 //! Invariants: none beyond the types.
 
 use super::*;
+use crate::glm5next_dsa::layer::DsaRowSpan;
+use metrale_model_layers::layer::AttnMetadataDev;
 
 impl Glm5NextLayer {
     /// 2026-09-25: One token through this block for the MTP drafter; errors on a block with a
@@ -43,6 +45,63 @@ impl Glm5NextLayer {
             ctx,
             stream,
         )
+    }
+
+    /// 2026-10-11: One drafter token for each of `states.len()` sequences in one pass: row `r`
+    /// of `hidden` (`[rows, hidden]`, input and residual, updated in place) is sequence `r` at
+    /// drafter row `positions[r]`, its KV slot and block table in row `r` of `meta`. The same
+    /// steps as [`Self::decode_one_for_drafter`] over all rows: input norm, the DSA rows
+    /// (`decode_spans`, one one-row span per sequence), the row-parallel `o_proj` reduce, the
+    /// residual, the post-attention norm, the routed MoE over all rows, the residual. Errors on
+    /// a block with a hyper-connection or whose mixer is not DSA.
+    #[allow(clippy::too_many_arguments)]
+    pub fn decode_rows_for_drafter(
+        &self,
+        hidden: DevicePtr,
+        states: &mut [&mut (dyn LayerState + 'static)],
+        kv_cache: &mut PagedKvCache,
+        positions: &[usize],
+        meta: &AttnMetadataDev,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        let layer = match (&self.mixer, &self.mhc) {
+            (Glm5NextMixer::Dsa(l), None) => l,
+            _ => bail!(
+                "GLM layer {}: decode_rows_for_drafter is the MTP block's path (DSA, no \
+                 hyper-connection)",
+                self.layer_idx
+            ),
+        };
+        let rows = states.len();
+        if rows == 0 || positions.len() != rows {
+            bail!(
+                "GLM layer {}: {rows} drafter states with {} positions",
+                self.layer_idx,
+                positions.len()
+            );
+        }
+        let gpu = ctx.gpu;
+        let normed = ctx.buffers.norm_output();
+        let ffn_out = ctx.buffers.moe_output();
+        self.norm(gpu, hidden, self.input_norm, normed, rows, stream)?;
+        let spans: Vec<DsaRowSpan> = positions
+            .iter()
+            .map(|&p| DsaRowSpan {
+                first_pos: p,
+                rows: 1,
+            })
+            .collect();
+        // 2026-10-11: Writes its output projection over its input buffer, as `decode` does.
+        layer.decode_spans(normed, states, &spans, kv_cache, meta, 0, ctx, stream)?;
+        if self.mixer_all_reduce {
+            self.reduce_partial(normed, rows, ctx, stream)?;
+        }
+        self.add_inplace(gpu, hidden, normed, rows * self.hidden, stream)?;
+        self.norm(gpu, hidden, self.post_attn_norm, normed, rows, stream)?;
+        // 2026-10-11: No post-mix here to take the sum, so the all-reduce stays whole.
+        self.mlp_forward(normed, ffn_out, rows, &[rows], false, ctx, stream)?;
+        self.add_inplace(gpu, hidden, ffn_out, rows * self.hidden, stream)
     }
 
     /// 2026-09-25: One drafter context row: `input_norm`, then `Glm5NextDsaLayer::write_kv_row`,

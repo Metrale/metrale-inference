@@ -41,7 +41,7 @@ pub fn state_bytes(hidden: usize, max_seq_len: usize) -> usize {
 /// 2026-10-11: A proposer state's graph and the device metadata it reads.
 pub(super) struct DrafterGraph {
     /// 2026-10-11: `[1]` u32 position, `[1]` i64 KV slot, `[1]` i32 length, `[blocks]` i32
-    /// block table (the state's identity table, written once at allocation).
+    /// block table (the state's region table, written once at allocation).
     positions: DevicePtr,
     slot: DevicePtr,
     seq_len: DevicePtr,
@@ -54,9 +54,13 @@ pub(super) struct DrafterGraph {
 }
 
 impl DrafterGraph {
-    /// 2026-10-11: Allocate the metadata and write the identity block table `0..blocks`.
-    pub(super) fn alloc(gpu: &dyn GpuBackend, hidden: usize, blocks: usize) -> Result<Self> {
-        let bt: Vec<u8> = (0..blocks as i32).flat_map(i32::to_le_bytes).collect();
+    /// 2026-10-11: Allocate the metadata and write the state's block table.
+    pub(super) fn alloc(gpu: &dyn GpuBackend, hidden: usize, table: &[u32]) -> Result<Self> {
+        let blocks = table.len();
+        let bt: Vec<u8> = table
+            .iter()
+            .flat_map(|&b| (b as i32).to_le_bytes())
+            .collect();
         let g = Self {
             positions: gpu.alloc(4)?,
             slot: gpu.alloc(8)?,
@@ -105,17 +109,19 @@ impl DrafterGraph {
     }
 
     /// 2026-10-11: Stream-ordered writes for the draft at row `row` (the state's `seq_len`): its
-    /// position and KV slot are the row (`rows_impl`: the row space is dense, slot == key ==
-    /// RoPE position, the block table the identity), its length `row + 1`; and the embedding row.
+    /// position is the row (`rows_impl`: the row space is dense, key == RoPE position), its KV
+    /// slot the row's place in the state's block table, its length `row + 1`; and the
+    /// embedding row.
     fn stage(
         &self,
         gpu: &dyn GpuBackend,
         row: usize,
+        table: &[u32],
         embed_row: DevicePtr,
         hidden: usize,
         stream: u64,
     ) -> Result<()> {
-        let w = staged_words(row);
+        let w = staged_words(row, table)?;
         gpu.copy_h2d_async(&w.position.to_le_bytes(), self.positions, stream)?;
         gpu.copy_h2d_async(&w.slot.to_le_bytes(), self.slot, stream)?;
         gpu.copy_h2d_async(&w.seq_len.to_le_bytes(), self.seq_len, stream)?;
@@ -131,12 +137,19 @@ pub(super) struct StagedWords {
     pub seq_len: i32,
 }
 
-pub(super) fn staged_words(row: usize) -> StagedWords {
-    StagedWords {
+pub(super) fn staged_words(row: usize, table: &[u32]) -> Result<StagedWords> {
+    let block = super::kv_pool::DRAFTER_KV_BLOCK;
+    let physical = *table.get(row / block).ok_or_else(|| {
+        anyhow::anyhow!(
+            "GLM MTP graph: drafter row {row} is past the state's {}-block table",
+            table.len()
+        )
+    })? as usize;
+    Ok(StagedWords {
         position: row as u32,
-        slot: row as i64,
+        slot: (physical * block + row % block) as i64,
         seq_len: row as i32 + 1,
-    }
+    })
 }
 
 /// 2026-10-11: Whether this draft runs through the graph: the first draft of a propose (later
@@ -176,7 +189,14 @@ impl Glm5NextMtpHead {
                 .graph
                 .as_mut()
                 .ok_or_else(|| anyhow::anyhow!("GLM MTP graph: state has no graph metadata"))?;
-            g.stage(gpu, st.seq_len, embed_row, self.hidden, stream)?;
+            g.stage(
+                gpu,
+                st.seq_len,
+                &st.block_table,
+                embed_row,
+                self.hidden,
+                stream,
+            )?;
             let cached = match g.graph {
                 Some((graph, h)) if h == hidden_in => Some(graph),
                 Some((graph, _)) => {
@@ -196,28 +216,7 @@ impl Glm5NextMtpHead {
             st.seq_len += 1;
             return Ok(());
         }
-        let gctx = ForwardContext {
-            buffers: ctx.buffers,
-            hc_row_offset: ctx.hc_row_offset,
-            gpu: ctx.gpu,
-            config: ctx.config,
-            dispatch: ctx.dispatch,
-            derived: ctx.derived,
-            levers: ctx.levers,
-            stats: ctx.stats,
-            attn_metadata: Some(meta),
-            profile: false,
-            comm: ctx.comm,
-            graph_capture: true,
-            decode_step: true,
-            gdn_exact_replay: false,
-            gdn_write_on_accept: false,
-            token_ids: None,
-            host_token_ids: None,
-            routed_lora_layers: None,
-            midchunk_capture: None,
-            moe_lora_route: ctx.moe_lora_route,
-        };
+        let gctx = super::batch::drafter_ctx(ctx, meta, true);
         gpu.begin_capture(stream)?;
         let body = self.forward_body(embed_in, hidden_in, st, &gctx, stream);
         let graph = gpu.end_capture(stream);
@@ -244,14 +243,16 @@ impl Glm5NextMtpHead {
 mod tests {
     use super::*;
 
-    /// 2026-10-11: The metadata of dense row `r`: position and KV slot `r` (the identity block
-    /// table maps slot `r` to block `r / 16`, offset `r % 16`), length `r + 1`, as the host path
-    /// computes them (`row_slots`, `stage_host_rows`) for the drafter's row space.
+    /// 2026-10-11: The metadata of dense row `r`: position `r`, length `r + 1`, and the KV slot
+    /// the state's block table gives row `r` (block `table[r / 16]`, offset `r % 16`), as the
+    /// host path computes it (`write_kv_row`). Region 0 is the identity; region 2 of 3-block
+    /// regions starts at block 6.
     #[test]
     fn a_draft_row_stages_its_own_position_slot_and_length() {
+        let identity: Vec<u32> = (0..520).collect();
         for r in [0usize, 1, 15, 16, 75, 8191] {
             assert_eq!(
-                staged_words(r),
+                staged_words(r, &identity).unwrap(),
                 StagedWords {
                     position: r as u32,
                     slot: r as i64,
@@ -259,5 +260,9 @@ mod tests {
                 }
             );
         }
+        let region = super::super::kv_pool::region_table(2, 3);
+        assert_eq!(staged_words(0, &region).unwrap().slot, 6 * 16);
+        assert_eq!(staged_words(17, &region).unwrap().slot, 7 * 16 + 1);
+        assert!(staged_words(48, &region).is_err());
     }
 }

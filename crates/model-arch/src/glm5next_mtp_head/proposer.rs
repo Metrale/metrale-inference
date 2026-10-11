@@ -22,13 +22,26 @@ impl DraftProposer for Glm5NextMtpHead {
             _ => bail!("GLM MTP block is not a DSA layer"),
         };
         let h = self.hidden;
-        // 2026-09-25: Claims every block of the private pool, which `new` sizes for one
-        // sequence of `max_seq_len` rows.
-        let blocks = (self.max_seq_len / 16 + 2) as u32;
+        // 2026-10-11: A region of the pool of its own (`kv_pool`); before, every state claimed
+        // the same single-sequence pool and live sequences overwrote each other's rows. The
+        // pool holds one region per `--max-batch-size` sequence, so a miss means a state was
+        // not freed; the sequence then drafts nothing instead of failing.
+        let (kv_region, block_table) = match self.kv_regions.claim() {
+            Ok((r, t)) => (Some(r), t),
+            Err(e) => {
+                tracing::warn!("{e:#}; this sequence proposes no drafts");
+                (None, Vec::new())
+            }
+        };
+        let graph = if super::graph::graph_enabled() {
+            Some(super::graph::DrafterGraph::alloc(gpu, h, &block_table)?)
+        } else {
+            None
+        };
         Ok(Box::new(Glm5NextMtpProposerState {
             dsa,
             seq_len: 0,
-            block_table: (0..blocks).collect(),
+            block_table,
             last_drafted: 0,
             concat: gpu.alloc(2 * h * 2)?,
             x: gpu.alloc(h * 2)?,
@@ -36,11 +49,8 @@ impl DraftProposer for Glm5NextMtpHead {
             arg: gpu.alloc(4)?,
             head_xchg: gpu.alloc(super::head_xchg::BUFFER_BYTES)?,
             released: false,
-            graph: if super::graph::graph_enabled() {
-                Some(super::graph::DrafterGraph::alloc(gpu, h, blocks as usize)?)
-            } else {
-                None
-            },
+            kv_region,
+            graph,
         }))
     }
 
@@ -63,9 +73,11 @@ impl DraftProposer for Glm5NextMtpHead {
         if let Some(mut g) = st.graph.take() {
             g.free(gpu)?;
         }
-        // 2026-09-25: The drafter's private pool is claimed whole by `alloc_state`
-        // (`(0..blocks).collect()`), not drawn from an allocator, so there is
-        // nothing to hand back; clearing it stops a freed state from looking live.
+        // 2026-10-11: The region goes back to the pool; clearing the table stops a freed state
+        // from looking live.
+        if let Some(r) = st.kv_region.take() {
+            self.kv_regions.release(r)?;
+        }
         st.block_table.clear();
         st.seq_len = 0;
         Ok(())
@@ -153,6 +165,10 @@ impl DraftProposer for Glm5NextMtpHead {
             .as_any_mut()
             .downcast_mut::<Glm5NextMtpProposerState>()
             .ok_or_else(|| anyhow::anyhow!("not a GLM MTP proposer state"))?;
+        // 2026-10-11: No KV region (`alloc_state`): no drafts.
+        if st.kv_region.is_none() {
+            return Ok(Vec::new());
+        }
         // 2026-09-25: A drafter ahead of the target's `position` is rewound to it, so its
         // indexer does not select over rows past the target's context.
         if st.seq_len > position {
@@ -184,6 +200,38 @@ impl DraftProposer for Glm5NextMtpHead {
         }
         st.last_drafted = drafts.len();
         Ok(drafts)
+    }
+
+    /// 2026-10-11: The batched propose (`batch.rs`); `Ok(None)` without it. No confidences.
+    #[allow(clippy::too_many_arguments)]
+    fn propose_batch(
+        &self,
+        last_tokens: &[u32],
+        target_hiddens: &[DevicePtr],
+        positions: &[usize],
+        num_drafts: usize,
+        states: &mut [&mut dyn ProposerState],
+        ctx: &ForwardContext,
+        stream: u64,
+        _out_conf: Option<&mut Vec<Vec<f32>>>,
+    ) -> Result<Option<Vec<Vec<u32>>>> {
+        self.propose_rows(
+            last_tokens,
+            target_hiddens,
+            positions,
+            num_drafts,
+            states,
+            ctx,
+            stream,
+        )
+    }
+
+    fn propose_batch_max(
+        &self,
+        _buffers: &metrale_gpu_runtime::buffers::BufferArena,
+        _config: &metrale_config::ModelConfig,
+    ) -> usize {
+        self.batch_max()
     }
 
     fn after_verify(
