@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-10: The formats each linear module of nvidia/DeepSeek-V4-Flash-NVFP4 runs at under the
+# declared tier: the checkpoint's own quantization, module by module. config.json's
+# `quantization_config` is a ModelOpt export (`producer` modelopt, `quant_algo =
+# MIXED_PRECISION`) over the base checkpoint's HF `fp8` method (`quant_method = fp8`,
+# `weight_block_size = [128, 128]`, `activation_scheme = dynamic`, UE8M0 scales); the circuit's
+# declared plan reads it that way (crates/circuit/src/checkpoint.rs, `modelopt_export_plan`).
+#
+# Owner: metrale-circuit (schema: crates/circuit/src/precision.rs).
+# Invariants:
+# - First match wins; the last entry is the catch-all.
+# - The export quantized only the routed experts of layers 0-42 (`quantized_layers`
+#   `layers.{i}.ffn.experts`: NVFP4, group 16; `config_groups.group_0`: FP4 weights AND input
+#   activations, group 16, `dynamic: false`, a static global `input_scale`): W4A4.
+# - Everything it excludes (`ignore` / `exclude_modules`: `*.attn.*`, `*.ffn.shared_experts.*`,
+#   `head`, `mtp.*`) is stored as the base checkpoint stores it: the attention projections
+#   (`wq_a`, `wq_b`, `wkv`, `wo_a`, `wo_b`, the indexer's `wq_b`) and the shared expert are FP8
+#   E4M3 with 128x128 block scales, read by dynamic FP8 inputs per 128 (W8A8).
+# - BF16 and outside any quantization: the head, the routers, the compressors' `wkv`/`wgate`,
+#   the indexer's `weights_proj` and the hyper-connection mixes (FP32 in the checkpoint), which
+#   the circuit marks `unquantized`; no entry here is asked for them. The MTP layer is not in the
+#   circuit.
+# - KV cache: none declared (`kv_cache_quant_algo` null, 16-bit); the instance's
+#   `kv_cache_dtype = fp8` is the recipe's.
+
+schema = 1
+checkpoint = "nvidia/DeepSeek-V4-Flash-NVFP4"
+tier = "declared"
+
+[[linear]]
+match = "*.ffn.experts.*"
+weight = "nvfp4/g16"
+activation = "nvfp4/g16"
+
+[[linear]]
+match = "*.ffn.shared_experts.*"
+weight = "fp8/block128x128"
+activation = "fp8/g128"
+
+[[linear]]
+match = "*.attn.*"
+weight = "fp8/block128x128"
+activation = "fp8/g128"
+
+[[linear]]
+match = "*"
+weight = "bf16"
+activation = "bf16"

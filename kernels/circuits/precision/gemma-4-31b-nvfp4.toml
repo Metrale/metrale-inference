@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-10: The formats each linear module of nvidia/Gemma-4-31B-IT-NVFP4 runs at under the
+# declared tier: the checkpoint's own quantization (ModelOpt 0.37 NVFP4; config.json
+# `quantization_config` and hf_quant_config.json `quantization`), module by module.
+#
+# Owner: metrale-circuit (schema: crates/circuit/src/precision.rs).
+# Invariants:
+# - First match wins; the last entry is the catch-all.
+# - `config_groups.group_0` declares NVFP4 (group 16) weights AND input activations (FP4, group
+#   16, `dynamic: false`: a static global `input_scale` per projection) for every `Linear` not
+#   excluded. Excluded (`ignore` / `exclude_modules`): `lm_head` (tied to the BF16 embedding),
+#   the vision embedder and tower, and every layer's `self_attn*`. So the MLP of all 60 layers
+#   is W4A4 and the attention projections are BF16.
+# - The norms, `layer_scalar` and the embedding are not `Linear`s; no circuit node asks the
+#   precision for them.
+# - KV cache: `kv_cache_scheme` FP8 E4M3, static (`kv_cache_quant_algo = FP8` in the sidecar).
+# - The engine serves this checkpoint as declared apart from the row-count routing of the MLP's
+#   activations (`--activation-quantization adaptive`): BF16 attention is its default
+#   (crates/model-arch/src/weight_loader/gemma4/loader_a.rs, `METRALE_GEMMA4_BF16_ATTN`).
+
+schema = 1
+checkpoint = "nvidia/Gemma-4-31B-IT-NVFP4"
+tier = "declared"
+
+[[linear]]
+match = "*.self_attn.*"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "lm_head"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "*"
+weight = "nvfp4/g16"
+activation = "nvfp4/g16"

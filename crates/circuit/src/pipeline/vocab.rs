@@ -39,6 +39,16 @@ const ATTENTION: &[StepKind] = &[
     StepKind::Softmax,
     StepKind::Accumulate,
 ];
+/// 2026-10-08: Latent attention: the query absorbed through `kv_b_proj` (a projection's act and
+/// weight), then attention over the latent cache.
+const LATENT_ATTENTION: &[StepKind] = &[
+    StepKind::Act,
+    StepKind::Weight,
+    StepKind::Cache,
+    StepKind::Scores,
+    StepKind::Softmax,
+    StepKind::Accumulate,
+];
 
 /// 2026-10-02: The steps of `op`'s pipeline, in order.
 pub fn steps_of(op: &OpKind) -> &'static [StepKind] {
@@ -57,10 +67,25 @@ pub fn steps_of(op: &OpKind) -> &'static [StepKind] {
         | OpKind::SigmoidGateMul
         | OpKind::GdnGates
         | OpKind::Rope
-        | OpKind::ActQuant(_) => COMPUTE,
-        OpKind::Copy | OpKind::Concat | OpKind::Split => &[StepKind::Move],
+        | OpKind::ActQuant(_)
+        | OpKind::SwigluClamp
+        | OpKind::LayerNorm
+        | OpKind::HcPre
+        | OpKind::HcPost
+        | OpKind::HcContract
+        | OpKind::GeluTanhMul
+        | OpKind::ScalarMul
+        | OpKind::LogitSoftcap => COMPUTE,
+        OpKind::Copy | OpKind::Concat | OpKind::Split | OpKind::HcExpand => &[StepKind::Move],
         OpKind::KvWrite => &[StepKind::Cache],
-        OpKind::PagedAttention => ATTENTION,
+        // 2026-10-10: DeepSeek-V4's shared-KV attention: the window and compressed rows read
+        // from their caches, scored, softmaxed with the sink and accumulated.
+        OpKind::PagedAttention | OpKind::CompressedAttention => ATTENTION,
+        OpKind::MlaAttention => LATENT_ATTENTION,
+        // 2026-10-08: The pool tail is the state the compression updates; the selection's
+        // scores and top-k run at the reference FP32.
+        OpKind::KpoolCompress => RECURRENT,
+        OpKind::IndexSelect => &[StepKind::Scores, StepKind::Score],
         OpKind::Conv1dUpdate | OpKind::GdnRecurrence | OpKind::SsmUpdate => RECURRENT,
         OpKind::StateSnapshot => &[StepKind::State],
         OpKind::TopK => &[StepKind::Score],

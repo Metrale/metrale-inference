@@ -1,0 +1,246 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-10: The DeepSeek-V4 (`deepseek_v4`) heavily compressed attention site (`hca`,
+# `heavily_compressed_attention`, compress ratio 128) under the attention-site
+# hyper-connection: the window's rows and every causally complete row of a 128x compressed KV,
+# RoPE from the `compress` table (`compress_rope_theta`, YaRN). Split out of
+# kernels/circuits/deepseek_v4.toml to keep each file short; only that circuit includes it.
+#
+# Owner: metrale-circuit (schema: crates/circuit/src/circuit_toml.rs).
+# Invariants:
+# - Attention (`DeepseekV4Attention`): q = q_b_norm(wq_b(q_norm(wq_a(x)))), `q_b_norm` an
+#   unweighted per-head RMSNorm; one KV row kv = kv_norm(wkv(x)), `head_dim` wide, both key and
+#   value of the one KV head (MQA). Partial interleaved RoPE on the trailing `qk_rope_head_dim`
+#   channels of q and kv; the attention output's trailing channels are rotated back (the
+#   conjugate, at the query's position) before the grouped output projection: `wo_a` maps each
+#   of `o_groups` head groups to `o_lora_rank` on its own, `wo_b` mixes the groups to `hidden`.
+#   Softmax at `head_dim^-0.5` with one learned sink logit per head (`attn_sink`).
+# - Declared precision (precision/deepseek-v4-flash-nvfp4-ep2.toml): `*.attn.*` is excluded
+#   from the NVFP4 export, so the attention projections stay as the base checkpoint stores them:
+#   `wq_a`, `wq_b`, `wkv`, `wo_a`, `wo_b` (and the indexer's `wq_b`) FP8 E4M3 with 128x128
+#   block scales, read by dynamic FP8 inputs per 128; the compressors' `wkv`/`wgate` and the
+#   indexer's `weights_proj` are BF16, kept out of the FP8 conversion by the reference model
+#   code (`_keep_in_fp32_modules`), so the circuit marks them `unquantized`. The checkpoint
+#   declares no KV-cache format (16-bit); the instance's `kv_cache_dtype` holds the window and
+#   compressed rows.
+# - The compressor (`DeepseekV4HCACompressor`): kv = wkv(x) and gate = wgate(x), `head_dim`
+#   wide; each complete run of `hca_ratio` tokens becomes one row, the per-channel softmax over
+#   the run of gate + `ape` weighting its kv (non-overlapping runs); the row is RMS-normed
+#   (`compressor.norm`) and rotated at its run's first position. The incomplete run waits in
+#   the tail (raw kv and gate scores, FP32 as the reference compresses).
+
+schema = 1
+description = "DeepSeek-V4 heavily compressed (128x) shared-KV attention under the hyper-connection"
+
+[block.hca]
+stream_in = "x"
+stream_out = "y"
+
+# 2026-10-10: The sliding window's rows, one `head_dim` row per token (key and value both).
+# The reference keeps only the last `sliding_window` rows of a sequence; the state vocabulary
+# has no windowed KV kind, so it is declared per token like any KV side and the memory model
+# counts every token's row (an upper bound). The attention reads at most `window` of them.
+[[block.hca.state]]
+id = "window"
+kind = "paged_kv"
+lifetime = "model"
+format = "{kv_cache_dtype}"
+shape = "head_dim"
+
+# 2026-10-10: The incomplete run: its kv rows and gate scores.
+[[block.hca.state]]
+id = "ctail"
+kind = "recurrent"
+lifetime = "sequence"
+format = "f32"
+shape = "hca_ratio x head_dim*2"
+verify = "conv_steps"
+
+# 2026-10-10: The compressed rows: one `head_dim` row per `hca_ratio` tokens, declared per token.
+[[block.hca.state]]
+id = "ckv"
+kind = "paged_kv"
+lifetime = "model"
+format = "{kv_cache_dtype}"
+shape = "head_dim/hca_ratio"
+
+[[block.hca.node]]
+id = "mix"
+op = "linear"
+role = "hc_mix"
+in = ["x"]
+out = [{ edge = "mix", format = "f32", shape = "n x hc*hc+hc*2" }]
+binding = ["{L}.hc_attn_fn"]
+unquantized = true
+
+[[block.hca.node]]
+id = "pre"
+op = "hc_pre"
+in = ["x", "mix"]
+out = [
+  { edge = "u", format = "bf16", shape = "n x hidden" },
+  { edge = "post", format = "f32", shape = "n x hc" },
+  { edge = "comb", format = "f32", shape = "n x hc*hc" },
+]
+binding = ["{L}.hc_attn_scale", "{L}.hc_attn_base"]
+
+[[block.hca.node]]
+id = "attn_norm"
+op = "rms_norm"
+in = ["u"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.attn_norm"]
+params = { weight_form = "plain" }
+
+[[block.hca.node]]
+id = "q_a"
+op = "linear"
+role = "mla_q_a"
+in = ["xn"]
+out = [{ edge = "qa", format = "bf16", shape = "n x q_lora" }]
+binding = ["{L}.attn.wq_a"]
+
+[[block.hca.node]]
+id = "q_a_norm"
+op = "rms_norm"
+in = ["qa"]
+out = [{ edge = "qr", format = "bf16", shape = "n x q_lora" }]
+binding = ["{L}.attn.q_norm"]
+params = { weight_form = "plain" }
+
+[[block.hca.node]]
+id = "q_b"
+op = "linear"
+role = "mla_q_b"
+in = ["qr"]
+out = [{ edge = "q", format = "bf16", shape = "n x q_heads*head_dim" }]
+binding = ["{L}.attn.wq_b"]
+
+[[block.hca.node]]
+id = "q_norm"
+op = "qk_norm"
+in = ["q"]
+out = [{ edge = "qn", format = "bf16", shape = "n x q_heads*head_dim" }]
+params = { weight_form = "none" }
+
+[[block.hca.node]]
+id = "kv"
+op = "linear"
+role = "mla_kv_a"
+in = ["xn"]
+out = [{ edge = "kv", format = "bf16", shape = "n x head_dim" }]
+binding = ["{L}.attn.wkv"]
+
+[[block.hca.node]]
+id = "kv_norm"
+op = "rms_norm"
+in = ["kv"]
+out = [{ edge = "kvn", format = "bf16", shape = "n x head_dim" }]
+binding = ["{L}.attn.kv_norm"]
+params = { weight_form = "plain" }
+
+[[block.hca.node]]
+id = "rope"
+op = "rope"
+in = ["qn", "kvn"]
+out = [
+  { edge = "qp", format = "bf16", shape = "n x q_heads*head_dim" },
+  { edge = "kvp", format = "bf16", shape = "n x head_dim" },
+]
+params = { table = "compress", rotary = "{rope_dim}", pairs = "interleaved" }
+
+[[block.hca.node]]
+id = "kv_write"
+op = "kv_write"
+state = { window = "write" }
+in = ["kvp"]
+out = []
+params = { layout = "window" }
+
+[[block.hca.node]]
+id = "c_kv"
+op = "linear"
+role = "compress_kv"
+in = ["xn"]
+out = [{ edge = "ck", format = "bf16", shape = "n x head_dim" }]
+binding = ["{L}.attn.compressor.wkv"]
+unquantized = true
+
+[[block.hca.node]]
+id = "c_gate"
+op = "linear"
+role = "compress_gate"
+in = ["xn"]
+out = [{ edge = "cg", format = "bf16", shape = "n x head_dim" }]
+binding = ["{L}.attn.compressor.wgate"]
+unquantized = true
+
+[[block.hca.node]]
+id = "c_pool"
+op = "kpool_compress"
+state = { ctail = "update" }
+in = ["ck", "cg"]
+out = [{ edge = "cpool", format = "bf16", shape = "n/hca_ratio x head_dim" }]
+binding = ["{L}.attn.compressor.ape"]
+params = { ratio = "{hca_ratio}", overlap = "false" }
+
+[[block.hca.node]]
+id = "c_norm"
+op = "rms_norm"
+in = ["cpool"]
+out = [{ edge = "cn", format = "bf16", shape = "n/hca_ratio x head_dim" }]
+binding = ["{L}.attn.compressor.norm"]
+params = { weight_form = "plain" }
+
+[[block.hca.node]]
+id = "c_rope"
+op = "rope"
+in = ["cn"]
+out = [{ edge = "cr", format = "bf16", shape = "n/hca_ratio x head_dim" }]
+params = { table = "compress", rotary = "{rope_dim}", pairs = "interleaved", position = "pool" }
+
+[[block.hca.node]]
+id = "c_write"
+op = "kv_write"
+state = { ckv = "write" }
+in = ["cr"]
+out = []
+params = { layout = "compressed" }
+
+[[block.hca.node]]
+id = "attend"
+op = "compressed_attention"
+state = { window = "read", ckv = "read" }
+in = ["qp"]
+out = [{ edge = "a", format = "bf16", shape = "n x q_heads*head_dim" }]
+binding = ["{L}.attn.attn_sink"]
+params = { compressed = "all", ratio = "{hca_ratio}" }
+
+[[block.hca.node]]
+id = "o_rope"
+op = "rope"
+in = ["a"]
+out = [{ edge = "ar", format = "bf16", shape = "n x q_heads*head_dim" }]
+params = { table = "compress", rotary = "{rope_dim}", pairs = "interleaved", inverse = "true" }
+
+[[block.hca.node]]
+id = "o_a"
+op = "linear"
+role = "o_group"
+in = ["ar"]
+out = [{ edge = "oa", format = "bf16", shape = "n x o_groups*o_lora" }]
+binding = ["{L}.attn.wo_a"]
+
+[[block.hca.node]]
+id = "o_b"
+op = "linear"
+role = "o"
+in = ["oa"]
+out = [{ edge = "o", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.attn.wo_b"]
+
+[[block.hca.node]]
+id = "post"
+op = "hc_post"
+in = ["o", "x", "post", "comb"]
+out = [{ edge = "y", format = "bf16", shape = "n x hc*hidden" }]

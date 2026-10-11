@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-10: The formats each linear module of bg-digitalservices/Gemma-4-26B-A4B-it-NVFP4A16
+# runs at under the declared tier: the checkpoint's own quantization (ModelOpt 0.43 NVFP4;
+# config.json `quantization_config` and hf_quant_config.json `quantization`), module by module.
+#
+# Owner: metrale-circuit (schema: crates/circuit/src/precision.rs).
+# Invariants:
+# - First match wins; the last entry is the catch-all.
+# - Despite the "A16" in its name, `config_groups.group_0` declares NVFP4 (group 16) weights AND
+#   input activations (FP4, group 16, `dynamic: false`, static global input scales) for every
+#   `Linear` not excluded, and the sidecar's `quant_algo` is NVFP4 (W4A4). Excluded (`ignore` /
+#   `exclude_modules`): `lm_head` (tied to the BF16 embedding), the vision embedder and tower,
+#   and every layer's `router*`. So attention, the dense MLP and every routed expert are W4A4;
+#   the router projection is BF16.
+# - `router.scale` and `router.per_expert_scale`, the norms, `layer_scalar` and the embedding are
+#   parameters, not `Linear`s; no circuit node asks the precision for them.
+# - KV cache: none declared (16-bit); the recipe serves FP8 (`kv_cache_dtype: fp8`, the instance
+#   policy).
+# - The engine serves the attention projections above the declared format: it dequantizes the
+#   NVFP4 q/k/v/o to BF16 when it loads them (crates/model-arch/src/weight_loader/gemma4/
+#   loader_a.rs); the declared plan is this table.
+
+schema = 1
+checkpoint = "bg-digitalservices/Gemma-4-26B-A4B-it-NVFP4A16"
+tier = "declared"
+
+[[linear]]
+match = "*.router.*"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "lm_head"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "*"
+weight = "nvfp4/g16"
+activation = "nvfp4/g16"

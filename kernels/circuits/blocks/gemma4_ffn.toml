@@ -1,0 +1,224 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-10: The Gemma-4 (`gemma4`) FFN sites: the tanh-GELU gated MLP alone (`ffn`, Gemma-4-31B)
+# and the MLP beside the routed experts (`ffn_moe`, `enable_moe_block`, Gemma-4-26B-A4B). Split
+# out of kernels/circuits/gemma4.toml to keep each file short; only that circuit includes it.
+#
+# Owner: metrale-circuit (schema: crates/circuit/src/circuit_toml.rs).
+# Invariants:
+# - Follows Gemma4TextDecoderLayer.forward (transformers 5.19): the MLP reads
+#   `pre_feedforward_layernorm(x)`; with the MoE block its output is normed by
+#   `post_feedforward_layernorm_1`, the router reads the UN-normed residual `x` (its own
+#   weightless RMSNorm, times `router.scale` and hidden_size^-0.5), the experts read
+#   `pre_feedforward_layernorm_2(x)` and their weighted sum is normed by
+#   `post_feedforward_layernorm_2`; the two branches are summed, normed by
+#   `post_feedforward_layernorm`, added to `x`, and the stream is scaled by `layer_scalar`.
+# - Routing (Gemma4TextRouter): softmax over all experts in FP32, top-k, the selected weights
+#   renormalised to sum 1, then each multiplied by its expert's `router.per_expert_scale`. No
+#   shared expert: the dense MLP is a separate branch, not part of the blend.
+# - The experts are stored per expert (`moe.experts.<e>.{gate,up,down}_proj`) in these NVFP4
+#   checkpoints (the engine's loader, `load_moe_gemma4`); the reference module holds them fused
+#   as `experts.gate_up_proj` / `experts.down_proj`, the same math.
+# - Every activation is `gelu_pytorch_tanh` (the `gelu_tanh_mul` op); a projection whose declared
+#   activation is NVFP4 (W4A4) gets its quantizer from the precision.
+
+schema = 1
+description = "Gemma-4 FFN sites: GeGLU MLP, and the MLP beside a softmax-routed 128-expert MoE"
+
+[block.ffn]
+stream_in = "x"
+stream_out = "y"
+
+[[block.ffn.node]]
+id = "pre_norm"
+op = "rms_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.pre_feedforward_layernorm"]
+params = { weight_form = "plain" }
+
+[[block.ffn.node]]
+id = "gate_up"
+op = "linear"
+role = "gate_up"
+in = ["xn"]
+out = [{ edge = "gu", format = "bf16", shape = "n x inter*2" }]
+binding = ["{L}.mlp.gate_proj", "{L}.mlp.up_proj"]
+
+[[block.ffn.node]]
+id = "act"
+op = "gelu_tanh_mul"
+in = ["gu"]
+out = [{ edge = "a", format = "bf16", shape = "n x inter" }]
+
+[[block.ffn.node]]
+id = "down"
+op = "linear"
+role = "down"
+in = ["a"]
+out = [{ edge = "d", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.mlp.down_proj"]
+
+[[block.ffn.node]]
+id = "post_norm"
+op = "rms_norm"
+in = ["d"]
+out = [{ edge = "dn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.post_feedforward_layernorm"]
+params = { weight_form = "plain" }
+
+[[block.ffn.node]]
+id = "add"
+op = "residual_add"
+in = ["x", "dn"]
+out = [{ edge = "r", format = "bf16", shape = "n x hidden" }]
+
+# 2026-10-10: `hidden_states *= self.layer_scalar`: the whole stream, residual included.
+[[block.ffn.node]]
+id = "layer_scale"
+op = "scalar_mul"
+in = ["r"]
+out = [{ edge = "y", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.layer_scalar"]
+params = { by = "weight" }
+
+[block.ffn_moe]
+stream_in = "x"
+stream_out = "y"
+
+[[block.ffn_moe.node]]
+id = "pre_norm"
+op = "rms_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.pre_feedforward_layernorm"]
+params = { weight_form = "plain" }
+
+[[block.ffn_moe.node]]
+id = "gate_up"
+op = "linear"
+role = "gate_up"
+in = ["xn"]
+out = [{ edge = "gu", format = "bf16", shape = "n x inter*2" }]
+binding = ["{L}.mlp.gate_proj", "{L}.mlp.up_proj"]
+
+[[block.ffn_moe.node]]
+id = "act"
+op = "gelu_tanh_mul"
+in = ["gu"]
+out = [{ edge = "a", format = "bf16", shape = "n x inter" }]
+
+[[block.ffn_moe.node]]
+id = "down"
+op = "linear"
+role = "down"
+in = ["a"]
+out = [{ edge = "d", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.mlp.down_proj"]
+
+[[block.ffn_moe.node]]
+id = "post_norm_1"
+op = "rms_norm"
+in = ["d"]
+out = [{ edge = "d1", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.post_feedforward_layernorm_1"]
+params = { weight_form = "plain" }
+
+# 2026-10-10: The router's own input: the weightless RMSNorm of the residual, times
+# `router.scale` and hidden_size^-0.5 (the engine folds the constant into the weight).
+[[block.ffn_moe.node]]
+id = "router_norm"
+op = "rms_norm"
+in = ["x"]
+out = [{ edge = "xr", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.router.scale"]
+params = { weight_form = "plain", scale = "rsqrt_hidden" }
+
+[[block.ffn_moe.node]]
+id = "router"
+op = "router"
+in = ["xr"]
+out = [{ edge = "logits", format = "bf16", shape = "n x experts" }]
+binding = ["{L}.router.proj"]
+
+[[block.ffn_moe.node]]
+id = "top_k"
+op = "top_k"
+in = ["logits"]
+out = [
+  { edge = "topk_w", format = "f32", shape = "n x top_k" },
+  { edge = "topk_id", format = "i32", shape = "n x top_k" },
+]
+binding = ["{L}.router.per_expert_scale"]
+params = { top_k = "{top_k}", scoring = "softmax", renormalize = "true", expert_scale = "per_expert" }
+
+[[block.ffn_moe.node]]
+id = "pre_norm_2"
+op = "rms_norm"
+in = ["x"]
+out = [{ edge = "xe", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.pre_feedforward_layernorm_2"]
+params = { weight_form = "plain" }
+
+[[block.ffn_moe.node]]
+id = "experts_gate_up"
+op = "expert_gate_up"
+in = ["xe", "topk_id"]
+out = [{ edge = "egu", format = "bf16", shape = "n*top_k x moe_inter*2" }]
+binding = ["{L}.moe.experts.*.gate_proj", "{L}.moe.experts.*.up_proj"]
+
+[[block.ffn_moe.node]]
+id = "experts_act"
+op = "gelu_tanh_mul"
+in = ["egu"]
+out = [{ edge = "eact", format = "bf16", shape = "n*top_k x moe_inter" }]
+
+[[block.ffn_moe.node]]
+id = "experts_down"
+op = "expert_down"
+in = ["eact", "topk_id"]
+out = [{ edge = "edown", format = "bf16", shape = "n*top_k x hidden" }]
+binding = ["{L}.moe.experts.*.down_proj"]
+
+[[block.ffn_moe.node]]
+id = "blend"
+op = "blend"
+in = ["edown", "topk_w"]
+out = [{ edge = "e", format = "bf16", shape = "n x hidden" }]
+params = { shared = "none" }
+
+[[block.ffn_moe.node]]
+id = "post_norm_2"
+op = "rms_norm"
+in = ["e"]
+out = [{ edge = "e2", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.post_feedforward_layernorm_2"]
+params = { weight_form = "plain" }
+
+[[block.ffn_moe.node]]
+id = "combine"
+op = "residual_add"
+in = ["d1", "e2"]
+out = [{ edge = "f", format = "bf16", shape = "n x hidden" }]
+
+[[block.ffn_moe.node]]
+id = "post_norm"
+op = "rms_norm"
+in = ["f"]
+out = [{ edge = "fn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.post_feedforward_layernorm"]
+params = { weight_form = "plain" }
+
+[[block.ffn_moe.node]]
+id = "add"
+op = "residual_add"
+in = ["x", "fn"]
+out = [{ edge = "r", format = "bf16", shape = "n x hidden" }]
+
+[[block.ffn_moe.node]]
+id = "layer_scale"
+op = "scalar_mul"
+in = ["r"]
+out = [{ edge = "y", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.layer_scalar"]
+params = { by = "weight" }

@@ -50,7 +50,13 @@ pub fn usages<'a>(
                 s.recipe
             )));
         };
-        for g in &plan.groups {
+        // 2026-10-10: A placeholder group (a compared model that is not golden) runs no kernel:
+        // it is no usage of any family.
+        for g in plan
+            .groups
+            .iter()
+            .filter(|g| g.emitter != crate::fuser_cover::NOVEL_EMITTER)
+        {
             let kernels = if g.kernels.is_empty() {
                 format!("({} emitter)", g.emitter)
             } else {

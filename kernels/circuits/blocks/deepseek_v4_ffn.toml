@@ -1,0 +1,266 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-10: The DeepSeek-V4 (`deepseek_v4`) MoE sites under the FFN-site hyper-connection: the
+# learned-router MoE (`moe`) and the hash-routed MoE of the first `num_hash_layers` layers
+# (`hash_moe`). Split out of kernels/circuits/deepseek_v4.toml to keep each file short; only
+# that circuit includes it.
+#
+# Owner: metrale-circuit (schema: crates/circuit/src/circuit_toml.rs).
+# Invariants:
+# - The same ops, roles and edges as GLM-5's `moe` (blocks/glm5_next_ffn.toml); only the
+#   bindings (DeepSeek's tensor names) and the routing params differ, so the two share every
+#   kernel whose params agree.
+# - Routing (`DeepseekV4TopKRouter`): FP32 logits of the BF16 router weight, scores
+#   `sqrt(softplus(logits))`, the top-6 chosen on score + `ffn.gate.bias` (the noaux_tc
+#   correction), the selected scores renormalised and scaled by `routed_scaling_factor` (1.5).
+#   Hash routing (`DeepseekV4HashRouter`): the same scores, but the six experts are the row
+#   `ffn.gate.tid2eid[token id]` (the token id is read as `embed` reads it); no correction bias.
+# - Every SwiGLU, the shared expert's included, is clamped first (`swiglu_limit`): the gate to at
+#   most the limit, the up half to [-limit, limit]. One ungated shared expert, added unscaled.
+# - Declared precision (precision/deepseek-v4-flash-nvfp4-ep2.toml): the routed experts are
+#   NVFP4 W4A4 (ModelOpt `quantized_layers`; FP4 weights and static-scale FP4 inputs, 16-wide
+#   groups); the shared expert is FP8 with 128x128 block scales and dynamic FP8 inputs per 128
+#   (excluded from the export, so stored as the base checkpoint); the router is a BF16
+#   parameter (`unquantized`), as are the hyper-connection mixes.
+
+schema = 1
+description = "DeepSeek-V4 MoE sites under the hyper-connection: learned sqrt-softplus routing, and token-hash routing"
+
+[block.moe]
+stream_in = "x"
+stream_out = "y"
+
+[[block.moe.node]]
+id = "mix"
+op = "linear"
+role = "hc_mix"
+in = ["x"]
+out = [{ edge = "mix", format = "f32", shape = "n x hc*hc+hc*2" }]
+binding = ["{L}.hc_ffn_fn"]
+unquantized = true
+
+[[block.moe.node]]
+id = "pre"
+op = "hc_pre"
+in = ["x", "mix"]
+out = [
+  { edge = "u", format = "bf16", shape = "n x hidden" },
+  { edge = "post", format = "f32", shape = "n x hc" },
+  { edge = "comb", format = "f32", shape = "n x hc*hc" },
+]
+binding = ["{L}.hc_ffn_scale", "{L}.hc_ffn_base"]
+
+[[block.moe.node]]
+id = "ffn_norm"
+op = "rms_norm"
+in = ["u"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.ffn_norm"]
+params = { weight_form = "plain" }
+
+[[block.moe.node]]
+id = "gate"
+op = "router"
+in = ["xn"]
+out = [{ edge = "logits", format = "f32", shape = "n x experts" }]
+binding = ["{L}.ffn.gate"]
+unquantized = true
+
+[[block.moe.node]]
+id = "top_k"
+op = "top_k"
+in = ["logits"]
+out = [
+  { edge = "topk_w", format = "f32", shape = "n x top_k" },
+  { edge = "topk_id", format = "i32", shape = "n x top_k" },
+]
+binding = ["{L}.ffn.gate.bias"]
+params = { top_k = "{top_k}", scoring = "sqrtsoftplus_bias", renormalize = "true" }
+
+[[block.moe.node]]
+id = "experts_gate_up"
+op = "expert_gate_up"
+in = ["xn", "topk_id"]
+out = [{ edge = "egu", format = "bf16", shape = "n*top_k x moe_inter*2" }]
+binding = ["{L}.ffn.experts.*.w1", "{L}.ffn.experts.*.w3"]
+
+[[block.moe.node]]
+id = "experts_clamp"
+op = "swiglu_clamp"
+in = ["egu"]
+out = [{ edge = "egc", format = "bf16", shape = "n*top_k x moe_inter*2" }]
+
+[[block.moe.node]]
+id = "experts_act"
+op = "silu_mul"
+in = ["egc"]
+out = [{ edge = "eact", format = "bf16", shape = "n*top_k x moe_inter" }]
+
+[[block.moe.node]]
+id = "experts_down"
+op = "expert_down"
+in = ["eact", "topk_id"]
+out = [{ edge = "edown", format = "bf16", shape = "n*top_k x hidden" }]
+binding = ["{L}.ffn.experts.*.w2"]
+
+[[block.moe.node]]
+id = "shared_gate_up"
+op = "linear"
+role = "shared_gate_up"
+in = ["xn"]
+out = [{ edge = "sgu", format = "bf16", shape = "n x shared_inter*2" }]
+binding = ["{L}.ffn.shared_experts.w1", "{L}.ffn.shared_experts.w3"]
+
+[[block.moe.node]]
+id = "shared_clamp"
+op = "swiglu_clamp"
+in = ["sgu"]
+out = [{ edge = "sgc", format = "bf16", shape = "n x shared_inter*2" }]
+
+[[block.moe.node]]
+id = "shared_act"
+op = "silu_mul"
+in = ["sgc"]
+out = [{ edge = "sact", format = "bf16", shape = "n x shared_inter" }]
+
+[[block.moe.node]]
+id = "shared_down"
+op = "linear"
+role = "shared_down"
+in = ["sact"]
+out = [{ edge = "sdown", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.ffn.shared_experts.w2"]
+
+[[block.moe.node]]
+id = "blend"
+op = "blend"
+in = ["edown", "topk_w", "sdown"]
+out = [{ edge = "f", format = "bf16", shape = "n x hidden" }]
+params = { shared_gate = "none" }
+
+[[block.moe.node]]
+id = "post"
+op = "hc_post"
+in = ["f", "x", "post", "comb"]
+out = [{ edge = "y", format = "bf16", shape = "n x hc*hidden" }]
+
+# 2026-10-10: The first `num_hash_layers` layers: the same site, the experts chosen by the token
+# id's row of `tid2eid` (a frozen `[vocab, top_k]` table) instead of the scores' top-k.
+
+[block.hash_moe]
+stream_in = "x"
+stream_out = "y"
+
+[[block.hash_moe.node]]
+id = "mix"
+op = "linear"
+role = "hc_mix"
+in = ["x"]
+out = [{ edge = "mix", format = "f32", shape = "n x hc*hc+hc*2" }]
+binding = ["{L}.hc_ffn_fn"]
+unquantized = true
+
+[[block.hash_moe.node]]
+id = "pre"
+op = "hc_pre"
+in = ["x", "mix"]
+out = [
+  { edge = "u", format = "bf16", shape = "n x hidden" },
+  { edge = "post", format = "f32", shape = "n x hc" },
+  { edge = "comb", format = "f32", shape = "n x hc*hc" },
+]
+binding = ["{L}.hc_ffn_scale", "{L}.hc_ffn_base"]
+
+[[block.hash_moe.node]]
+id = "ffn_norm"
+op = "rms_norm"
+in = ["u"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.ffn_norm"]
+params = { weight_form = "plain" }
+
+[[block.hash_moe.node]]
+id = "gate"
+op = "router"
+in = ["xn"]
+out = [{ edge = "logits", format = "f32", shape = "n x experts" }]
+binding = ["{L}.ffn.gate"]
+unquantized = true
+
+[[block.hash_moe.node]]
+id = "top_k"
+op = "top_k"
+in = ["logits"]
+out = [
+  { edge = "topk_w", format = "f32", shape = "n x top_k" },
+  { edge = "topk_id", format = "i32", shape = "n x top_k" },
+]
+binding = ["{L}.ffn.gate.tid2eid"]
+params = { top_k = "{top_k}", scoring = "sqrtsoftplus", selection = "token_hash", renormalize = "true" }
+
+[[block.hash_moe.node]]
+id = "experts_gate_up"
+op = "expert_gate_up"
+in = ["xn", "topk_id"]
+out = [{ edge = "egu", format = "bf16", shape = "n*top_k x moe_inter*2" }]
+binding = ["{L}.ffn.experts.*.w1", "{L}.ffn.experts.*.w3"]
+
+[[block.hash_moe.node]]
+id = "experts_clamp"
+op = "swiglu_clamp"
+in = ["egu"]
+out = [{ edge = "egc", format = "bf16", shape = "n*top_k x moe_inter*2" }]
+
+[[block.hash_moe.node]]
+id = "experts_act"
+op = "silu_mul"
+in = ["egc"]
+out = [{ edge = "eact", format = "bf16", shape = "n*top_k x moe_inter" }]
+
+[[block.hash_moe.node]]
+id = "experts_down"
+op = "expert_down"
+in = ["eact", "topk_id"]
+out = [{ edge = "edown", format = "bf16", shape = "n*top_k x hidden" }]
+binding = ["{L}.ffn.experts.*.w2"]
+
+[[block.hash_moe.node]]
+id = "shared_gate_up"
+op = "linear"
+role = "shared_gate_up"
+in = ["xn"]
+out = [{ edge = "sgu", format = "bf16", shape = "n x shared_inter*2" }]
+binding = ["{L}.ffn.shared_experts.w1", "{L}.ffn.shared_experts.w3"]
+
+[[block.hash_moe.node]]
+id = "shared_clamp"
+op = "swiglu_clamp"
+in = ["sgu"]
+out = [{ edge = "sgc", format = "bf16", shape = "n x shared_inter*2" }]
+
+[[block.hash_moe.node]]
+id = "shared_act"
+op = "silu_mul"
+in = ["sgc"]
+out = [{ edge = "sact", format = "bf16", shape = "n x shared_inter" }]
+
+[[block.hash_moe.node]]
+id = "shared_down"
+op = "linear"
+role = "shared_down"
+in = ["sact"]
+out = [{ edge = "sdown", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.ffn.shared_experts.w2"]
+
+[[block.hash_moe.node]]
+id = "blend"
+op = "blend"
+in = ["edown", "topk_w", "sdown"]
+out = [{ edge = "f", format = "bf16", shape = "n x hidden" }]
+params = { shared_gate = "none" }
+
+[[block.hash_moe.node]]
+id = "post"
+op = "hc_post"
+in = ["f", "x", "post", "comb"]
+out = [{ edge = "y", format = "bf16", shape = "n x hc*hidden" }]

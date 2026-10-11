@@ -1,0 +1,130 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-10: The DeepSeek-V4 circuit (`deepseek_v4`, DeepSeek-V4-Flash): 43 layers, each an
+# attention site and an MoE site under manifold-constrained hyper-connections (mHC, `hc_mult`
+# residual streams). Every attention is shared-KV multi-query attention (one 512-wide row per
+# token is both key and value) with partial RoPE, per-head sinks, a sliding window and a grouped
+# low-rank output projection; per layer (`compress_ratios`) it reads its window only
+# (`sliding_attention`, ratio 0), also the indexer-selected rows of a 4x compressed KV
+# (`compressed_sparse_attention`, CSA), or also every row of a 128x compressed KV
+# (`heavily_compressed_attention`, HCA). The MoE is 256 experts top-6 with one shared expert,
+# routed by the token id's hash table on the first `num_hash_layers` layers and by the learned
+# router (sqrt-softplus scores, correction bias) after. Then a learned collapse of the streams
+# (`hc_head`), the final norm and the head.
+#
+# Owner: metrale-circuit (crates/circuit/src/circuit_toml.rs is the schema).
+# Invariants:
+# - Follows the reference modelling code (transformers `modeling_deepseek_v4`; the DeepSeek
+#   inference `model.py` shipped with deepseek-ai/DeepSeek-V4-Flash for what it leaves out):
+#   every learned RMSNorm scales by its weight as stored (`weight_form = "plain"`); the
+#   embedding is broadcast into the streams before layer 0; each site is hc_mix -> hc_pre ->
+#   norm -> sublayer -> hc_post, so no layer has a residual add; the streams are collapsed by
+#   `hc_head` (sigmoid weights of their own mix), not averaged.
+# - The block templates are in blocks/deepseek_v4_{swa,hca,csa,ffn}.toml, split for length;
+#   their headers state the math and the declared precision of each site.
+# - Bindings are the checkpoint's own tensor names (DeepSeek's layout: `layers.{i}.attn.wq_a`,
+#   `layers.{i}.ffn.experts.{e}.w1`, `embed`, `head`, `hc_head_fn`), as the engine's loader
+#   reads them (crates/model-arch/src/weight_loader/deepseek_v4/).
+# - No draft head. The checkpoint ships one MTP layer (`mtp.0`, `num_nextn_predict_layers`),
+#   but its routed experts keep the base checkpoint's FP4 format (E2M1, one E8M0 scale per 32
+#   weights; `mtp.*` is excluded from the NVFP4 export), which the circuit has no format for;
+#   the recipe serves without speculation. For whoever adds that format: the reference MTP
+#   block reads the last layer's STREAMS (not a collapsed row), adds `e_proj(enorm(embed))` to
+#   `h_proj(hnorm(stream))` on every stream, runs one sliding-attention layer with the learned
+#   router under its own `hc_attn`/`hc_ffn` sites, collapses with its own `hc_head_*`, norms
+#   (`mtp.0.norm`) and shares the head.
+# - Not an executor target: the engine runs DeepSeek-V4 through its own layer code
+#   (`golden = false` in INSTANCES.toml). `met circuit venn` and `met circuit plan` read it.
+
+schema = 1
+arch = "deepseek_v4"
+description = "DeepSeek-V4: shared-KV sliding-window attention with 4x indexed and 128x compressed KV under 4-stream hyper-connections, hash-routed then learned 256-expert MoE"
+layer_module = "layers.{i}"
+include = ["deepseek_v4_swa", "deepseek_v4_hca", "deepseek_v4_csa", "deepseek_v4_ffn"]
+dims = [
+  "hidden", "vocab", "hc", "q_heads", "head_dim", "rope_dim", "q_lora", "o_groups", "o_lora",
+  "window", "index_heads", "index_head_dim", "index_topk", "index_kpool", "hca_ratio",
+  "experts", "top_k", "moe_inter", "shared_inter", "hash_layers",
+]
+prologue = ["embed"]
+epilogue = ["head"]
+draft = []
+
+[layout]
+kind = "list"
+
+[layout.blocks]
+sliding_attention = ["swa", "moe"]
+compressed_sparse_attention = ["csa", "moe"]
+heavily_compressed_attention = ["hca", "moe"]
+
+# 2026-10-10: `num_hash_layers` (3): those layers route by the token id's hash table
+# (`hash_moe`). On DeepSeek-V4-Flash they are two sliding layers and one CSA layer.
+[layout.prefix]
+count = "hash_layers"
+blocks = { sliding_attention = ["swa", "hash_moe"], compressed_sparse_attention = ["csa", "hash_moe"], heavily_compressed_attention = ["hca", "hash_moe"] }
+
+# 2026-10-10: No speculative caches over tokens (dense_gqa.toml has them): the recipe serves
+# without speculation, and the reference marks the compressors' running state as not
+# rewindable across drafts (`_is_stateful`).
+[block.embed]
+stream_out = "streams"
+
+[[block.embed.node]]
+id = "embed"
+op = "embed"
+out = [{ edge = "h", format = "bf16", shape = "n x hidden" }]
+binding = ["embed"]
+
+[[block.embed.node]]
+id = "expand"
+op = "hc_expand"
+in = ["h"]
+out = [{ edge = "streams", format = "bf16", shape = "n x hc*hidden" }]
+
+# 2026-10-10: `hc_head`: the streams' own `hc` mixes (FP32, of the RMS-normed flattened
+# streams), `sigmoid(mix * scale + base) + hc_eps` per stream, the weighted sum of the streams;
+# then the final norm and the BF16 head (`head` is excluded from the export, and the reference
+# keeps it out of the FP8 conversion: a parameter, not a quantized linear).
+[block.head]
+stream_in = "x"
+outputs = [{ edge = "logits", buffer = "logits" }, { edge = "token", buffer = "tokens" }]
+
+[[block.head.node]]
+id = "mix"
+op = "linear"
+role = "hc_mix"
+in = ["x"]
+out = [{ edge = "mix", format = "f32", shape = "n x hc" }]
+binding = ["hc_head_fn"]
+unquantized = true
+
+[[block.head.node]]
+id = "contract"
+op = "hc_contract"
+in = ["x", "mix"]
+out = [{ edge = "h", format = "bf16", shape = "n x hidden" }]
+binding = ["hc_head_scale", "hc_head_base"]
+params = { weights = "sigmoid_mix" }
+
+[[block.head.node]]
+id = "final_norm"
+op = "final_norm"
+in = ["h"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["norm"]
+params = { weight_form = "plain" }
+
+[[block.head.node]]
+id = "lm_head"
+op = "lm_head"
+in = ["xn"]
+out = [{ edge = "logits", format = "bf16", shape = "n x vocab" }]
+binding = ["head"]
+unquantized = true
+
+[[block.head.node]]
+id = "argmax"
+op = "argmax"
+in = ["logits"]
+out = [{ edge = "token", format = "i32", shape = "n x 1" }]

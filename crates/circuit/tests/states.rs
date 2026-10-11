@@ -52,13 +52,61 @@ fn every_recurrent_and_attention_layer_names_the_state_it_touches() {
                     (OpKind::StateSnapshot, "h", StateAccess::Snapshot),
                     (OpKind::SsmUpdate, "h", StateAccess::Update),
                 ],
-                LayerKind::FullAttention => vec![
+                // 2026-10-10: A sliding-window layer keeps the same paged KV cache in Gemma-4;
+                // DeepSeek-V4's (below) keeps its shared-KV window rows.
+                LayerKind::SlidingAttention if inst.arch == "deepseek_v4" => vec![
+                    (OpKind::KvWrite, "window", StateAccess::Write),
+                    (OpKind::CompressedAttention, "window", StateAccess::Read),
+                ],
+                // 2026-10-10: Dense latent attention (`mla_moe`): one latent cache, written and
+                // read, where a GQA layer keeps its K and V sides.
+                LayerKind::FullAttention
+                    if c.nodes
+                        .iter()
+                        .any(|n| n.layer == Some(layer) && n.op == OpKind::MlaAttention) =>
+                {
+                    vec![
+                        (OpKind::KvWrite, "latent", StateAccess::Write),
+                        (OpKind::MlaAttention, "latent", StateAccess::Read),
+                    ]
+                }
+                LayerKind::FullAttention | LayerKind::SlidingAttention => vec![
                     (OpKind::KvWrite, "k", StateAccess::Write),
                     (OpKind::KvWrite, "v", StateAccess::Write),
                     (OpKind::PagedAttention, "k", StateAccess::Read),
                     (OpKind::PagedAttention, "v", StateAccess::Read),
                 ],
                 LayerKind::Moe => vec![],
+                // 2026-10-08: GLM-5 DSA: the latent cache written and read, the pooled index
+                // keys written by the pooling and read by the selection, the pool tail updated.
+                LayerKind::SparseAttention => vec![
+                    (OpKind::KvWrite, "latent", StateAccess::Write),
+                    (OpKind::MlaAttention, "latent", StateAccess::Read),
+                    (OpKind::KpoolCompress, "index", StateAccess::Write),
+                    (OpKind::KpoolCompress, "tail", StateAccess::Update),
+                    (OpKind::IndexSelect, "index", StateAccess::Read),
+                ],
+                // 2026-10-10: DeepSeek-V4: every layer writes and attends its window rows (its
+                // sliding layers above); a
+                // compressing layer pools into its tail and writes and attends the compressed
+                // rows; a CSA layer's indexer pools, writes and selects its own keys.
+                LayerKind::HeavilyCompressedAttention => vec![
+                    (OpKind::KvWrite, "window", StateAccess::Write),
+                    (OpKind::CompressedAttention, "window", StateAccess::Read),
+                    (OpKind::KpoolCompress, "ctail", StateAccess::Update),
+                    (OpKind::KvWrite, "ckv", StateAccess::Write),
+                    (OpKind::CompressedAttention, "ckv", StateAccess::Read),
+                ],
+                LayerKind::CompressedSparseAttention => vec![
+                    (OpKind::KvWrite, "window", StateAccess::Write),
+                    (OpKind::CompressedAttention, "window", StateAccess::Read),
+                    (OpKind::KpoolCompress, "ctail", StateAccess::Update),
+                    (OpKind::KvWrite, "ckv", StateAccess::Write),
+                    (OpKind::CompressedAttention, "ckv", StateAccess::Read),
+                    (OpKind::KpoolCompress, "itail", StateAccess::Update),
+                    (OpKind::KvWrite, "ikeys", StateAccess::Write),
+                    (OpKind::IndexSelect, "ikeys", StateAccess::Read),
+                ],
             };
             let mut want: Vec<_> = want
                 .into_iter()
@@ -67,7 +115,8 @@ fn every_recurrent_and_attention_layer_names_the_state_it_touches() {
             want.sort();
             assert_eq!(r, want, "{} layer {layer} ({kind:?})", inst.recipe);
         }
-        // 2026-09-30: The draft head's attention keeps its own KV cache.
+        // 2026-09-30: The draft head's attention keeps its own KV cache. 2026-10-08: A sparse
+        // attention draft (GLM-5's MTP layer) also keeps its own indexer pool tail.
         let draft: Vec<_> = c
             .states
             .iter()
@@ -75,7 +124,8 @@ fn every_recurrent_and_attention_layer_names_the_state_it_touches() {
             .collect();
         if !draft.is_empty() {
             assert!(
-                draft.iter().all(|s| s.kind == StateKind::PagedKv),
+                draft.iter().all(|s| s.kind == StateKind::PagedKv
+                    || (s.kind == StateKind::Recurrent && s.local == "tail")),
                 "{}",
                 inst.recipe
             );

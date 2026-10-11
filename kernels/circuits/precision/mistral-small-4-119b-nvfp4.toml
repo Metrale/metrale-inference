@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-10: The formats each linear module of mistralai/Mistral-Small-4-119B-2603-NVFP4 runs at
+# under the declared tier: the checkpoint's own quantization (compressed-tensors 0.13.0,
+# `params.json` `quantization_config`; the checkpoint has no config.json), module by module, in
+# the Mistral-native tensor names the checkpoint ships.
+#
+# Owner: metrale-circuit (schema: crates/circuit/src/precision.rs).
+# Invariants:
+# - First match wins; the last entry is the catch-all.
+# - The one group (`config_groups.NVFP4A16`, named for the preset but declaring more) targets
+#   every `Linear` with NVFP4 weights (FP4 E2M1, group 16, FP8 E4M3 group scales under a global
+#   scale) AND NVFP4 input activations (FP4, group 16, `strategy: tensor_group`,
+#   `dynamic: "local"`: the group scales computed at run time under the stored static
+#   `input_global_scale`). That is W4A4, the compressed-tensors `NVFP4` scheme; the preset
+#   `NVFP4A16` would have no `input_activations`. The checkpoint stores `weight_packed`,
+#   `weight_scale`, `weight_global_scale` and `input_global_scale` for exactly the routed experts
+#   `layers.*.experts.*.w{1,2,3}` and the shared experts `layers.*.shared_experts.w{1,2,3}`.
+# - Ignored (BF16, no scales): `re:.*attention.*` (all of MLA: wq_a, wq_b, wkv_a_with_mqa,
+#   wkv_b, wo), `re:.*gate$` (the router `layers.*.gate`), the embeddings, the vision tower,
+#   the projector, and `lm_head`, which is `output` in the native names. The ignore list is
+#   written in HF module names, so the declared plan alone does not reach `output`: it would read
+#   it as a `Linear` target (W4A4) although `output.weight` is stored BF16 with no scales.
+#   The table states the stored format (crates/circuit/tests/mla_moe.rs pins the discrepancy).
+# - KV cache: `kv_cache_scheme` is null, so the declared cache is 16-bit; the recipe pins
+#   `kv_cache_dtype: bf16` (an FP8 latent cache at the default scale breaks this model).
+
+schema = 1
+checkpoint = "mistralai/Mistral-Small-4-119B-2603-NVFP4"
+tier = "declared"
+
+[[linear]]
+match = "*.shared_experts.*"
+weight = "nvfp4/g16"
+activation = "nvfp4/g16"
+
+[[linear]]
+match = "*.experts.*"
+weight = "nvfp4/g16"
+activation = "nvfp4/g16"
+
+[[linear]]
+match = "*"
+weight = "bf16"
+activation = "bf16"

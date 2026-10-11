@@ -1,0 +1,323 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-10: The MLA + MoE decoder (`mla_moe`), the DeepSeek-V3-style family: pre-norm layers of
+# dense multi-head latent attention with a decoupled RoPE part (a low-rank query, one shared KV
+# latent per token plus one shared rotary key) and a routed MoE FFN with an ungated shared expert,
+# then the final norm and lm_head. Its first parameter point is Mistral-Small-4-119B (`mistral3`
+# wrapping `mistral4`): 36 layers, all MoE (128 experts, top-4, softmax routing), no MTP head.
+# Named for the family, not the model: DeepSeek-V3 / R1 and Kimi-K2 (`deepseek_v3`) are the same
+# attention and FFN blocks at another parameter point (a dense-FFN prefix, sigmoid-with-bias
+# grouped routing, an MTP layer), which their config map refuses today (mla_moe.config.toml).
+#
+# Owner: metrale-circuit (crates/circuit/src/circuit_toml.rs is the schema).
+# Invariants:
+# - Follows the reference modelling code (transformers 5.x `modeling_mistral4`): every RMSNorm
+#   scales by its weight as stored (`weight_form = "plain"`), q = q_b(rmsnorm(q_a(x))) per head
+#   as [nope | rope], kv_a(x) = [latent | rotary key], the latent RMS-normed, the rotary parts of
+#   q and the shared key rotated (interleaved pairs, YaRN frequencies), and the latent row plus
+#   the rotated key are what the cache holds (`kv_lora + mla_rope` per token).
+# - The attention is the GLM-5 latent attention (`mla_attention`, roles `mla_q_a` / `mla_q_b` /
+#   `mla_kv_a`, kernels/circuits/blocks/glm5_next_dsa.toml) at another policy: dense
+#   (`selection = "all"`, no indexer) with a decoupled RoPE part (`rope = "decoupled"`: each
+#   head's score adds q_rope . k_rope to the absorbed latent score), the YaRN softmax scale
+#   (`(mla_qk + mla_rope)^-1/2 * mscale(factor, mscale_all_dim)^2`) and the per-position query
+#   temperature (`query_scale = "llama_4"`: q times 1 + beta * ln(1 + floor(pos / original
+#   max positions)), a scalar per row that the attention applies to its logits).
+# - Routing: softmax over all experts, the top `top_k`, their softmax weights renormalised and
+#   scaled by `routed_scaling_factor`; one ungated shared expert, added unscaled.
+# - Bindings are the Mistral-native tensor names the NVFP4 checkpoint ships
+#   (`consolidated.safetensors`: `layers.{i}.attention.wq_a`, `layers.{i}.experts.{e}.w1`, ...)
+#   and the engine's loader reads (crates/model-arch/src/mistral_loader/,
+#   crates/model-layers/src/weight_map/loaders_moe.rs `load_moe_mistral`). The base repo's
+#   HF-format shards (`language_model.model.layers.{i}.self_attn.q_a_proj`, fused experts) are
+#   not bound: no instance serves them.
+# - Not an executor target: the engine runs this model through its MLA layer code
+#   (`Qwen3AttentionLayer` with `MlaWeights`); `golden = false` in INSTANCES.toml.
+
+schema = 1
+arch = "mla_moe"
+description = "MLA + MoE decoder: dense latent attention with a decoupled RoPE part, softmax-routed MoE with a shared expert"
+layer_module = "layers.{i}"
+include = []
+dims = [
+  "hidden", "vocab", "q_heads", "q_lora", "kv_lora", "mla_qk", "mla_rope", "mla_v",
+  "experts", "top_k", "moe_inter", "shared_inter",
+]
+prologue = ["embed"]
+epilogue = ["head"]
+draft = []
+
+[layout]
+kind = "list"
+
+[layout.blocks]
+full_attention = ["mla", "moe"]
+
+[block.embed]
+stream_out = "h"
+
+# 2026-10-10: The speculative caches over tokens (crates/circuit/src/memory/caches.rs; as in
+# blocks/qwen3_hybrid.toml): the prompt-lookup index (host), a token tree's mask, the drafted ids.
+[[block.embed.state]]
+id = "lookup_index"
+kind = "prompt_lookup_index"
+lifetime = "sequence"
+format = "u64"
+shape = "2"
+
+[[block.embed.state]]
+id = "tree_mask"
+kind = "token_tree_mask"
+lifetime = "verify"
+format = "u8"
+shape = "1"
+
+[[block.embed.state]]
+id = "draft_ids"
+kind = "draft_tokens"
+lifetime = "verify"
+format = "i32"
+shape = "1"
+
+[[block.embed.node]]
+id = "embed"
+op = "embed"
+out = [{ edge = "h", format = "bf16", shape = "n x hidden" }]
+binding = ["tok_embeddings"]
+
+# 2026-10-10: Dense latent attention with a decoupled RoPE part (Mistral4Attention).
+# Declared precision (precision/mistral-small-4-119b-nvfp4.toml): every attention tensor is BF16
+# (`re:.*attention.*` is in the quantization's ignore list).
+[block.mla]
+stream_in = "x"
+stream_out = "y"
+
+# 2026-10-10: The latent cache: per token, the normed latent row and the rotated shared key.
+[[block.mla.state]]
+id = "latent"
+kind = "paged_kv"
+lifetime = "model"
+format = "{kv_cache_dtype}"
+shape = "kv_lora+mla_rope"
+
+[[block.mla.node]]
+id = "input_norm"
+op = "rms_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.attention_norm"]
+params = { weight_form = "plain" }
+
+[[block.mla.node]]
+id = "q_a"
+op = "linear"
+role = "mla_q_a"
+in = ["xn"]
+out = [{ edge = "qa", format = "bf16", shape = "n x q_lora" }]
+binding = ["{L}.attention.wq_a"]
+
+# 2026-10-10: The two latent norms (`q_a_norm`, `kv_a_norm`) use the reference's fixed eps 1e-6
+# (Mistral4RMSNorm's default), not `rms_norm_eps`, which the config map requires to be 1e-6.
+[[block.mla.node]]
+id = "q_a_norm"
+op = "rms_norm"
+in = ["qa"]
+out = [{ edge = "qan", format = "bf16", shape = "n x q_lora" }]
+binding = ["{L}.attention.q_a_norm"]
+params = { weight_form = "plain" }
+
+# 2026-10-10: Each head's query is [mla_qk NoPE | mla_rope rotary] (`qk_head_dim`).
+[[block.mla.node]]
+id = "q_b"
+op = "linear"
+role = "mla_q_b"
+in = ["qan"]
+out = [{ edge = "q", format = "bf16", shape = "n x q_heads*mla_qk+q_heads*mla_rope" }]
+binding = ["{L}.attention.wq_b"]
+
+[[block.mla.node]]
+id = "kv_a"
+op = "linear"
+role = "mla_kv_a"
+in = ["xn"]
+out = [{ edge = "kva", format = "bf16", shape = "n x kv_lora+mla_rope" }]
+binding = ["{L}.attention.wkv_a_with_mqa"]
+
+[[block.mla.node]]
+id = "kv_split"
+op = "split"
+in = ["kva"]
+out = [
+  { edge = "ckv", format = "bf16", shape = "n x kv_lora" },
+  { edge = "kpe", format = "bf16", shape = "n x mla_rope" },
+]
+params = { layout = "contiguous" }
+
+[[block.mla.node]]
+id = "kv_norm"
+op = "rms_norm"
+in = ["ckv"]
+out = [{ edge = "c", format = "bf16", shape = "n x kv_lora" }]
+binding = ["{L}.attention.kv_a_norm"]
+params = { weight_form = "plain" }
+
+# 2026-10-10: RoPE on the last `mla_rope` channels of each query head and on the one shared key,
+# in interleaved pairs (`rope_interleave`), at the YaRN frequencies; the NoPE channels pass
+# through. The cos/sin magnitude factor is 1 (`mscale == mscale_all_dim`).
+[[block.mla.node]]
+id = "rope"
+op = "rope"
+in = ["q", "kpe"]
+out = [
+  { edge = "qr", format = "bf16", shape = "n x q_heads*mla_qk+q_heads*mla_rope" },
+  { edge = "kr", format = "bf16", shape = "n x mla_rope" },
+]
+params = { span = "head_tail", rotary_dim = "{mla_rope}", pairs = "interleaved", scaling = "yarn" }
+
+[[block.mla.node]]
+id = "kv_write"
+op = "kv_write"
+state = { latent = "write" }
+in = ["c", "kr"]
+out = []
+params = { layout = "latent" }
+
+[[block.mla.node]]
+id = "attend"
+op = "mla_attention"
+state = { latent = "read" }
+in = ["qr"]
+out = [{ edge = "a", format = "bf16", shape = "n x q_heads*mla_v" }]
+binding = ["{L}.attention.wkv_b"]
+params = { selection = "all", rope = "decoupled", softmax_scale = "yarn_mscale_all_dim", query_scale = "llama_4" }
+
+[[block.mla.node]]
+id = "o"
+op = "linear"
+role = "o"
+in = ["a"]
+out = [{ edge = "o", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.attention.wo"]
+
+[[block.mla.node]]
+id = "add"
+op = "residual_add"
+in = ["x", "o"]
+out = [{ edge = "y", format = "bf16", shape = "n x hidden" }]
+
+# 2026-10-10: The routed MoE with one shared expert (Mistral4MoE). Declared precision: the routed
+# and shared experts are NVFP4 W4A4 (weights and input activations FP4 in 16-wide groups under a
+# global scale; the activations' group scales computed at run time, `dynamic: "local"`), so the
+# precision inserts the NVFP4 quantizers of their 16-bit inputs; the router (`re:.*gate$`) is
+# BF16 and computes its logits in BF16, as the reference does.
+[block.moe]
+stream_in = "x"
+stream_out = "y"
+
+[[block.moe.node]]
+id = "post_norm"
+op = "rms_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.ffn_norm"]
+params = { weight_form = "plain" }
+
+[[block.moe.node]]
+id = "gate"
+op = "router"
+in = ["xn"]
+out = [{ edge = "logits", format = "bf16", shape = "n x experts" }]
+binding = ["{L}.gate"]
+
+[[block.moe.node]]
+id = "top_k"
+op = "top_k"
+in = ["logits"]
+out = [
+  { edge = "topk_w", format = "f32", shape = "n x top_k" },
+  { edge = "topk_id", format = "i32", shape = "n x top_k" },
+]
+params = { top_k = "{top_k}", scoring = "softmax", renormalize = "true" }
+
+# 2026-10-10: Mistral-native expert names: w1 = gate_proj, w3 = up_proj, w2 = down_proj.
+[[block.moe.node]]
+id = "experts_gate_up"
+op = "expert_gate_up"
+in = ["xn", "topk_id"]
+out = [{ edge = "egu", format = "bf16", shape = "n*top_k x moe_inter*2" }]
+binding = ["{L}.experts.*.w1", "{L}.experts.*.w3"]
+
+[[block.moe.node]]
+id = "experts_act"
+op = "silu_mul"
+in = ["egu"]
+out = [{ edge = "eact", format = "bf16", shape = "n*top_k x moe_inter" }]
+
+[[block.moe.node]]
+id = "experts_down"
+op = "expert_down"
+in = ["eact", "topk_id"]
+out = [{ edge = "edown", format = "bf16", shape = "n*top_k x hidden" }]
+binding = ["{L}.experts.*.w2"]
+
+[[block.moe.node]]
+id = "shared_gate_up"
+op = "linear"
+role = "shared_gate_up"
+in = ["xn"]
+out = [{ edge = "sgu", format = "bf16", shape = "n x shared_inter*2" }]
+binding = ["{L}.shared_experts.w1", "{L}.shared_experts.w3"]
+
+[[block.moe.node]]
+id = "shared_act"
+op = "silu_mul"
+in = ["sgu"]
+out = [{ edge = "sact", format = "bf16", shape = "n x shared_inter" }]
+
+[[block.moe.node]]
+id = "shared_down"
+op = "linear"
+role = "shared_down"
+in = ["sact"]
+out = [{ edge = "sdown", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.shared_experts.w2"]
+
+[[block.moe.node]]
+id = "blend"
+op = "blend"
+in = ["edown", "topk_w", "sdown"]
+out = [{ edge = "f", format = "bf16", shape = "n x hidden" }]
+params = { shared_gate = "none" }
+
+[[block.moe.node]]
+id = "add"
+op = "residual_add"
+in = ["x", "f"]
+out = [{ edge = "y", format = "bf16", shape = "n x hidden" }]
+
+# 2026-10-10: The head is `output` in the Mistral-native names: stored BF16 (no scales), the
+# quantization's `lm_head` ignore entry under its HF name.
+[block.head]
+stream_in = "x"
+outputs = [{ edge = "logits", buffer = "logits" }, { edge = "token", buffer = "tokens" }]
+
+[[block.head.node]]
+id = "final_norm"
+op = "final_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["norm"]
+params = { weight_form = "plain" }
+
+[[block.head.node]]
+id = "lm_head"
+op = "lm_head"
+in = ["xn"]
+out = [{ edge = "logits", format = "bf16", shape = "n x vocab" }]
+binding = ["output"]
+
+[[block.head.node]]
+id = "argmax"
+op = "argmax"
+in = ["logits"]
+out = [{ edge = "token", format = "i32", shape = "n x 1" }]
