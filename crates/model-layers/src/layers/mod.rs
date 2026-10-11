@@ -184,11 +184,13 @@ mod moe_grouped_decode;
 pub use moe_grouped_decode::*;
 
 mod dense_quantization;
+mod dsa_quantization;
 mod expert_quantization;
 mod moe_expert_tables;
 pub use dense_quantization::{
     DenseQuantization, dense_quantization, set_dense_quantization_from_cli,
 };
+pub use dsa_quantization::{DsaQuantization, dsa_quantization, set_dsa_quantization_from_cli};
 pub use expert_quantization::{
     ExpertQuantization, expert_quantization, set_expert_quantization_from_cli,
 };

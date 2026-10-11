@@ -201,3 +201,22 @@ fn dense_fp8_is_refused_off_glm() {
         );
     }
 }
+
+/// 2026-10-11: `--dsa-quantization` below `declared` is refused by name on every model but
+/// glm5_next, and `declared` is accepted everywhere.
+#[test]
+fn the_dsa_tier_is_refused_off_glm() {
+    use metrale_model_layers::layers::DsaQuantization;
+    for tier in [DsaQuantization::W8a8, DsaQuantization::W4a16] {
+        assert!(dsa_quant_refusal("glm5_next", tier).is_none());
+        let why = dsa_quant_refusal("deepseek_v4", tier).expect("refused");
+        assert!(why.contains("only glm5_next"), "{why}");
+        assert!(why.contains(tier.name()), "{why}");
+    }
+    for m in ["glm5_next", "qwen3_5_moe", "llama"] {
+        assert!(
+            dsa_quant_refusal(m, DsaQuantization::Declared).is_none(),
+            "{m}"
+        );
+    }
+}

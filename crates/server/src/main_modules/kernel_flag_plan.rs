@@ -40,6 +40,8 @@ pub(crate) struct KernelFlagPlan {
     pub expert_quantization: metrale_model_layers::layers::ExpertQuantization,
     /// 2026-10-09: `--dense-quantization`. Always published: no environment fallback exists.
     pub dense_quantization: metrale_model_layers::layers::DenseQuantization,
+    /// 2026-10-11: `--dsa-quantization`. Always published: no environment fallback exists.
+    pub dsa_quantization: metrale_model_layers::layers::DsaQuantization,
     pub prefill_codispatch: Option<bool>,
     pub prefill_varlen: Option<bool>,
     pub ssm_tail_midchunk: Option<bool>,
@@ -76,12 +78,26 @@ impl KernelFlagPlan {
                 .expect("validated by validate_serve_args"),
             expert_quantization: args.expert_quantization.0,
             dense_quantization: args.dense_quantization.0,
+            dsa_quantization: args.dsa_quantization.0,
             prefill_codispatch: args.prefill_codispatch.then_some(true),
             prefill_varlen: args.prefill_varlen_batch.then_some(true),
             ssm_tail_midchunk: args.no_ssm_tail_midchunk.then_some(false),
             hermetic: args.hermetic,
         }
     }
+}
+
+/// 2026-10-11: The boot log's dense-precision disclosure: both dense tiers as served.
+pub(crate) fn precision_line(
+    dense: metrale_model_layers::layers::DenseQuantization,
+    dsa: metrale_model_layers::layers::DsaQuantization,
+) -> String {
+    format!(
+        "dense precision: --dense-quantization {} --dsa-quantization {} (DSA q_a/q_absorb/o_absorb: {})",
+        dense.name(),
+        dsa.name(),
+        dsa.describe()
+    )
 }
 
 #[cfg(test)]

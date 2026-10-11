@@ -19,7 +19,7 @@
 //! Invariants: none beyond the types.
 
 use metrale_config::{MoeExpertLayout, WeightQuantization};
-use metrale_model_layers::layers::{DenseQuantization, ExpertQuantization};
+use metrale_model_layers::layers::{DenseQuantization, DsaQuantization, ExpertQuantization};
 
 /// 2026-09-26: What `--kv-high-precision-layers auto` resolves to. The flag's
 /// help text states the same number as "recommended".
@@ -212,6 +212,40 @@ impl clap::ValueEnum for DenseQuantizationArg {
                  f_a, b, g_a and o projections and the shared expert quantized at load to \
                  NVFP4 (4-bit weights) and decoded W4A16 with 16-bit activations; the rest of \
                  fp8's set stays fp8 (glm5_next only; unmeasured)"
+            }
+        };
+        Some(clap::builder::PossibleValue::new(self.0.name()).help(help))
+    }
+}
+
+/// 2026-10-11: `--dsa-quantization`: a clap value enum over the model layer's DSA tiers
+/// (`metrale_model_layers::layers::DsaQuantization`), which own the names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DsaQuantizationArg(pub DsaQuantization);
+
+impl clap::ValueEnum for DsaQuantizationArg {
+    fn value_variants<'a>() -> &'a [Self] {
+        const VARIANTS: [DsaQuantizationArg; 3] = [
+            DsaQuantizationArg(DsaQuantization::ALL[0]),
+            DsaQuantizationArg(DsaQuantization::ALL[1]),
+            DsaQuantizationArg(DsaQuantization::ALL[2]),
+        ];
+        &VARIANTS
+    }
+
+    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
+        let help = match self.0 {
+            DsaQuantization::Declared => {
+                "the DSA q_a, absorbed q and absorbed o projections at the checkpoint's BF16"
+            }
+            DsaQuantization::W8a8 => {
+                "those three quantized at load to FP8 per-channel and decoded W8A8 with \
+                 per-token FP8 activations, as the reference engine runs them: below the \
+                 checkpoint's declared precision (glm5_next only)"
+            }
+            DsaQuantization::W4a16 => {
+                "FURTHER BELOW declared than w8a8: those three quantized at load to NVFP4 \
+                 (4-bit weights) and decoded W4A16 with 16-bit activations (glm5_next only)"
             }
         };
         Some(clap::builder::PossibleValue::new(self.0.name()).help(help))

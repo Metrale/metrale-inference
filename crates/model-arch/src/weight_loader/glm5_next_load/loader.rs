@@ -253,7 +253,10 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                 }
             };
 
-            if crate::glm5next_fp8_dense::enabled() {
+            if dense_tiers::any_below_declared(
+                metrale_model_layers::layers::dense_quantization(),
+                metrale_model_layers::layers::dsa_quantization(),
+            ) {
                 dense_tiers::register_dense_tiers(gpu, &mut mixer, &mut mlp, &mlp_cfg, idx)?;
             }
 
@@ -337,19 +340,23 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
         if crate::glm5next_fp8_dense::enabled() {
             let (count, bytes) = crate::glm5next_fp8_dense::registered();
             tracing::warn!(
-                "glm5_next --dense-quantization {}: {count} BF16 dense projections also held as \
-                 FP8 per-channel ({:.2} GB) and decoded W8A8, BELOW the checkpoint's declared \
-                 BF16; the router, the indexer's wq_b and weights_proj stay BF16",
+                "glm5_next --dense-quantization {} --dsa-quantization {}: {count} BF16 dense \
+                 projections also held as FP8 per-channel ({:.2} GB) and decoded W8A8, BELOW the \
+                 checkpoint's declared BF16; the router, the indexer's wq_b and weights_proj \
+                 stay BF16",
                 metrale_model_layers::layers::dense_quantization().name(),
+                metrale_model_layers::layers::dsa_quantization().name(),
                 bytes as f64 / 1e9
             );
         }
-        if crate::glm5next_w4a16_dense::enabled() {
+        if crate::glm5next_w4a16_dense::registry_in_use() {
             let (count, nvfp4, bf16) = crate::glm5next_w4a16_dense::registered();
             tracing::warn!(
-                "glm5_next --dense-quantization w4a16: {count} BF16 dense projections replaced by \
-                 NVFP4 ({:.2} GB; {:.2} GB of BF16 freed) and decoded W4A16, FURTHER BELOW the \
-                 checkpoint's declared BF16",
+                "glm5_next --dense-quantization {} --dsa-quantization {}: {count} BF16 dense \
+                 projections replaced by NVFP4 ({:.2} GB; {:.2} GB of BF16 freed) and decoded \
+                 W4A16, FURTHER BELOW the checkpoint's declared BF16",
+                metrale_model_layers::layers::dense_quantization().name(),
+                metrale_model_layers::layers::dsa_quantization().name(),
                 nvfp4 as f64 / 1e9,
                 bf16 as f64 / 1e9
             );
