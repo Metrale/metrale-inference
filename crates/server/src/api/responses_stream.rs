@@ -381,25 +381,17 @@ pub(super) async fn responses_endpoint_stream(
                     }
                 }
                 StreamDelta::ToolCallArgs { .. } => {}
-                StreamDelta::Finish { reason, usage, .. } => {
+                StreamDelta::Finish {
+                    reason,
+                    usage,
+                    inference_usage,
+                    ..
+                } => {
                     finish_reason = reason.as_wire().to_string();
-                    // 2026-09-26: Usage in the chat wire shape, which
-                    // `build_responses_usage` reads.
-                    final_usage = Some(serde_json::json!({
-                        "prompt_tokens": usage.prompt_tokens,
-                        "completion_tokens": usage.completion_tokens,
-                        "total_tokens": usage.prompt_tokens + usage.completion_tokens,
-                        "prompt_tokens_details": {
-                            "cached_tokens": usage.cached_prompt_tokens,
-                            "audio_tokens": 0,
-                        },
-                        "completion_tokens_details": {
-                            "reasoning_tokens": usage.reasoning_tokens,
-                            "audio_tokens": 0,
-                            "accepted_prediction_tokens": usage.accepted_prediction_tokens,
-                            "rejected_prediction_tokens": 0,
-                        },
-                    }));
+                    final_usage = Some(super::responses_translate::chat_wire_usage(
+                        &usage,
+                        inference_usage.as_deref(),
+                    ));
                 }
                 // 2026-09-26: An error delta is only logged; the finalizer
                 // still closes the response when the deltas end.

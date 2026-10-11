@@ -69,21 +69,32 @@ pub struct AnthropicTranslator {
     completion_tokens: usize,
     prompt_tokens: usize,
     cached_prompt_tokens: usize,
+    /// 2026-10-11: The usage record the Finish delta carried, if any.
+    inference_usage: Option<Box<metrale_qci_dump::contract::usage::InferenceUsage>>,
     finished: bool,
 }
 
-/// 2026-09-26: The message text inside the error payload of a
+/// 2026-09-26: The `error` object of the Anthropic `error` event for the payload of a
 /// `StreamDelta::Error`.
 ///
 /// The payload is an OpenAI error body (`{"error":{"message":..}}`), which the
 /// OpenAI surface sends as SSE data unchanged. Anthropic's `error` event has
-/// its own envelope, so only the message is taken. A payload of any other
-/// shape is passed through whole.
-fn error_detail(payload: &str) -> String {
-    serde_json::from_str::<serde_json::Value>(payload)
-        .ok()
-        .and_then(|v| v["error"]["message"].as_str().map(str::to_string))
-        .unwrap_or_else(|| payload.to_string())
+/// its own envelope, so the message is taken, and (2026-10-11) the request and
+/// trace ids the payload carries, as every error body does. A payload of any
+/// other shape is passed through whole as the message.
+fn error_object(payload: &str) -> serde_json::Value {
+    let parsed = serde_json::from_str::<serde_json::Value>(payload).ok();
+    let core = parsed.as_ref().map(|v| &v["error"]);
+    let message = core
+        .and_then(|e| e["message"].as_str())
+        .map_or_else(|| payload.to_string(), str::to_string);
+    let mut object = serde_json::json!({"type": "api_error", "message": message});
+    for id in ["request_id", "trace_id"] {
+        if let Some(v) = core.and_then(|e| e.get(id)).filter(|v| v.is_string()) {
+            object[id] = v.clone();
+        }
+    }
+    object
 }
 
 impl AnthropicTranslator {
@@ -98,6 +109,7 @@ impl AnthropicTranslator {
             completion_tokens: 0,
             prompt_tokens: 0,
             cached_prompt_tokens: 0,
+            inference_usage: None,
             finished: false,
         }
     }
@@ -107,11 +119,16 @@ impl AnthropicTranslator {
     /// `message_start` is normally sent before it with `input_tokens: 0`, so
     /// the input count is reported here.
     fn final_usage(&self) -> serde_json::Value {
-        serde_json::json!({
+        let mut usage = serde_json::json!({
             "input_tokens": self.prompt_tokens,
             "cache_read_input_tokens": self.cached_prompt_tokens,
             "output_tokens": self.completion_tokens,
-        })
+        });
+        // 2026-10-11: The usage record, only when the Finish delta carried one.
+        if let Some(record) = &self.inference_usage {
+            usage["inference_usage"] = serde_json::json!(record);
+        }
+        usage
     }
 
     fn make_event(ev_type: &str, data: serde_json::Value) -> SseEvent {
@@ -296,10 +313,16 @@ impl AnthropicTranslator {
                     }),
                 ));
             }
-            StreamDelta::Finish { reason, usage, .. } => {
+            StreamDelta::Finish {
+                reason,
+                usage,
+                inference_usage,
+                ..
+            } => {
                 if self.finished {
                     return;
                 }
+                self.inference_usage = inference_usage.clone();
                 self.prompt_tokens = usage.prompt_tokens;
                 self.completion_tokens = usage.completion_tokens;
                 self.cached_prompt_tokens = usage.cached_prompt_tokens;
@@ -339,7 +362,7 @@ impl AnthropicTranslator {
                     "error",
                     serde_json::json!({
                         "type": "error",
-                        "error": {"type": "api_error", "message": error_detail(message)},
+                        "error": error_object(message),
                     }),
                 ));
                 self.finished = true;

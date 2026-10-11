@@ -209,4 +209,8 @@ pub struct AnthropicUsage {
     /// 2026-09-26: Prompt tokens served from the prefix cache
     /// (`ir::Usage::cached_prompt_tokens`). Always serialized; 0 on a miss.
     pub cache_read_input_tokens: usize,
+    /// 2026-10-11: The runtime's `InferenceUsage` record (`request_accounting`), as the
+    /// OpenAI surfaces write it; omitted when the record is withheld.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inference_usage: Option<metrale_qci_dump::contract::usage::InferenceUsage>,
 }

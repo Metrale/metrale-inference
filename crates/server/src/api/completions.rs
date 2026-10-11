@@ -449,9 +449,9 @@ pub(super) async fn completions_stream(
             }
             StreamEvent::Error(msg) => {
                 pending.fail(metrale_qci_dump::contract::usage::EngineErrorKind::Internal);
-                vec![Ok(
-                    Event::default().data(super::compact::completion_error_frame(&msg))
-                )]
+                vec![Ok(Event::default().data(
+                    super::compact::stream_error_frame(&msg, pending.trace()),
+                ))]
             }
         };
         futures::stream::iter(events)

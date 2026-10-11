@@ -335,6 +335,7 @@ pub(super) async fn finalize_responses_stream(
                 output_tokens: 0,
                 output_tokens_details: None,
                 total_tokens: 0,
+                inference_usage: None,
             });
     let final_status: &'static str = if finish_reason == "error" {
         "failed"

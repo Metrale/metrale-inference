@@ -53,9 +53,12 @@ header, or one that is not visible ASCII, counts as invalid.
 
 Every JSON error body under `/v1/*` gets `error.request_id` and `error.trace_id`. That
 covers the handler's errors, 401 auth, 429 rate limit, 503 GPU fault and the
-chat-completions SSE error frame. A body is rewritten only when it is JSON, at most 64 KiB, and has an
-`error` object. Other bodies are sent byte for byte. The `/v1/completions` SSE error frame
-is `{"error": "<text>"}` with no object, so for that frame the ids are in the headers only.
+SSE error frames of the chat and `/v1/completions` streams, which share one envelope
+(`compact::stream_error_frame`): `{"error": {"message", "type": "server_error", "code": 500,
+"request_id", "trace_id"}}`. The completions frame was `{"error": "<text>"}` until
+2026-10-11; the clients in this repository read both shapes. The Messages stream's `error`
+event carries the same two ids in its `error` object. A body is rewritten only when it is
+JSON, at most 64 KiB, and has an `error` object. Other bodies are sent byte for byte.
 
 The ids are never metric labels.
 
@@ -64,8 +67,10 @@ The ids are never metric labels.
 There is one `InferenceUsage` v1 record for each request the scheduler accepted. It is
 written in two places:
 
-- in the response, as `usage.inference_usage`: the blocking body, or the final SSE
-  usage chunk. Only the OpenAI chat and completions surfaces write it in the response.
+- in the response, as `usage.inference_usage`, on every surface: chat and completions
+  (the blocking body, or the final SSE usage chunk), Responses (the body, the
+  `response.completed` event and the stored response) and Messages (the body, or the
+  final `message_delta`). It is omitted, not `null`, when the record is withheld.
 - in the log, as one JSON line under target `metrale::inference_usage`. Every surface
   writes it: chat, Responses, Messages and completions.
 
