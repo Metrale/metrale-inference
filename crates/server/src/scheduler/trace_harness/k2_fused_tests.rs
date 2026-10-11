@@ -62,15 +62,32 @@ fn the_fused_wire_leaves_every_stream_unchanged() {
 }
 
 /// 2026-10-11: Every fused K=2 step sends exactly two things: the announcement right before
-/// the verify, naming its tokens, and one verdict after it. The unfused control sends at
-/// least five, so the count tells the two apart.
+/// the verify, naming its tokens, and one verdict after it. The unfused control sends four on
+/// this trace (the command, two tokens, the accept word; its propose's five more go out inside
+/// `run_mtp_propose_multi`, which the fake does not expand), so the count tells the two apart.
 #[test]
 fn a_fused_k2_step_sends_one_announcement_and_one_verdict() {
     let ticks = verify_ticks(&sync_run(&k2_ep(true)));
     assert!(ticks.len() >= 4, "too few K=2 steps: {}", ticks.len());
     for t in &ticks {
-        let ep = ep_lines(t);
+        // 2026-10-11: The step's own sends lie from its announcement to its verdict; a tick
+        // that finishes a request may go on to admit the next one (alloc, prefill), which is not
+        // the K=2 wire. No unfused K=2 or propose command appears anywhere in the tick.
+        let a = t
+            .iter()
+            .position(|l| l.starts_with("ep_announce_k2_fused("))
+            .unwrap();
+        let v = t
+            .iter()
+            .position(|l| l.starts_with("ep_send_k2_verdict("))
+            .unwrap();
+        let ep = ep_lines(&t[a..=v]);
         assert_eq!(ep.len(), 2, "tick sends {ep:?}");
+        assert!(
+            !t.iter()
+                .any(|l| l.contains("cmd=0xfffffff2") || l.contains("cmd=0xfffffff5")),
+            "an unfused K=2 or propose command in {t:?}"
+        );
         assert!(ep[0].starts_with("ep_announce_k2_fused("));
         assert!(ep[1].starts_with("ep_send_k2_verdict("));
         let v = t
@@ -85,7 +102,7 @@ fn a_fused_k2_step_sends_one_announcement_and_one_verdict() {
         );
     }
     for t in verify_ticks(&sync_run(&k2_ep(false))) {
-        assert!(ep_lines(&t).len() >= 5, "unfused control: {t:?}");
+        assert!(ep_lines(&t).len() >= 4, "unfused control: {t:?}");
         assert!(!t.iter().any(|l| l.starts_with("ep_announce_k2_fused(")));
     }
 }
