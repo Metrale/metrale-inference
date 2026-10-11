@@ -126,6 +126,16 @@ pub fn step_verify_k3(
     // 2026-09-25: per-position draft match, scored at both positions even
     // when draft 1 was rejected (see `stats.rs`).
     k3_record_positional(sched, drafts[0] == v0, drafts[1] == v1, a.seq.seq_len);
+    // 2026-10-11: Width-1 accept telemetry, as `verify_k4_step` records: the per-width
+    // `MTP accept n= k_drafts=` line and the rung's p1 see every serial arm, not only K=4.
+    sched.accept.record(
+        &sched.rung,
+        sched.levers.mtp_accept_debug,
+        1,
+        2,
+        drafts[0] == v0,
+        num_accepted,
+    );
 
     // 2026-09-25: `METRALE_MTP_REFEED_ACCEPTED`: ring the target's hidden for
     // each verify row `t` in `0..=num_accepted` under label `L+t+1`, where

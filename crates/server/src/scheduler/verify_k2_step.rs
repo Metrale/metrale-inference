@@ -242,6 +242,16 @@ pub fn step_verify_k2(
         .tel
         .count_spec_verify("2", if accepted { "accept" } else { "reject" });
     sched.io.tel.spec_verified(1, usize::from(accepted));
+    // 2026-10-11: Width-1 accept telemetry, as `verify_k4_step` records: the per-width
+    // `MTP accept n= k_drafts=` line and the rung's p1 see every serial arm, not only K=4.
+    sched.accept.record(
+        &sched.rung,
+        sched.levers.mtp_accept_debug,
+        1,
+        1,
+        accepted,
+        usize::from(accepted),
+    );
 
     if accepted {
         emit_token(a, drafts[0], verify_lps.first().cloned(), sched);
