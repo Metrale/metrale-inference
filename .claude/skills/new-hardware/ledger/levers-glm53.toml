@@ -1253,3 +1253,27 @@ effort_hours = 2.0
 transferability = "low"
 links = { pr = "", commit = "", evidence = "standalone harness, 90 distinct sites in a graph" }
 notes = "Folding hc_post + rank-sum into the next pre needs ping-pong streams (post writes in place); not attempted"
+
+[[lever]]
+id = "gb10x3-glm53-mhc-post-fold"
+date = "2026-10-11"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_MHC_POST_FOLD=1 with METRALE_GLM_MHC_FUSED=1 (one-token decode)"
+symptom = "between the attention all-reduce and the FFN pre-norm the decode runs bf16_add_rank_sum (1.3 us) and hc_post (1.2-1.9 us) per layer, plus their graph gaps"
+diagnosis_tool = "nsys"
+root_cause_class = "latency-bound"
+lever_type = "new-kernel"
+lkb_effect = "glm5next_hc_post_pre_norm: the fused pre-norm with a post-mix prologue; the pre-norm's device parts shared through glm5next_mhc_fused_parts.cuh (old entries PTX-identical)"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "held"
+verdict_reason = "GPU gate (glm5next_hc_post_fold_gate) and A/B pending"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 3.0
+transferability = "any residual-stream architecture whose post-mix feeds the next pre-mix"
+links = { pr = "", commit = "", evidence = "glm5next_hc_post_fold_gate" }
+notes = "Intra-layer only (attention post into the FFN pre): a cross-layer fold would leave the highway slot without the layer's output when the DFlash taps read it"
