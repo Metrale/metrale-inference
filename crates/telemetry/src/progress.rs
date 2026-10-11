@@ -21,9 +21,24 @@
 /// filters on. The `debug!` calls below repeat it as a literal.
 pub const TARGET: &str = "metrale::tui::progress";
 
+/// 2026-10-11: No phase has been entered yet.
+const NO_PHASE: u8 = u8::MAX;
+
+/// 2026-10-11: The index of the last phase entered, for `/metrics`.
+static CURRENT_PHASE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(NO_PHASE);
+
 /// 2026-09-26: A named startup phase has begun; `phase` is its index.
+/// 2026-10-11: Also records it as the current phase ([`current_phase`]).
 pub fn phase(phase: u8, name: &str) {
+    CURRENT_PHASE.store(phase, std::sync::atomic::Ordering::Relaxed);
     tracing::debug!(target: "metrale::tui::progress", ev = "phase", phase, name);
+}
+
+/// 2026-10-11: The index of the last startup phase entered (`11` = listening), or `None`
+/// before the first.
+pub fn current_phase() -> Option<u8> {
+    let p = CURRENT_PHASE.load(std::sync::atomic::Ordering::Relaxed);
+    (p != NO_PHASE).then_some(p)
 }
 
 /// 2026-09-26: Weight-load preflight: estimated on-disk weight GB and free GPU GB.
@@ -56,4 +71,15 @@ pub fn layer(layer: usize, total: usize) {
 /// 2026-09-26: The server is listening.
 pub fn ready(port: u16) {
     tracing::debug!(target: "metrale::tui::progress", ev = "ready", port);
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_current_phase_is_the_last_one_entered() {
+        super::phase(3, "weights");
+        assert_eq!(super::current_phase(), Some(3));
+        super::phase(11, "listening");
+        assert_eq!(super::current_phase(), Some(11));
+    }
 }
