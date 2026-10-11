@@ -428,6 +428,7 @@ impl TransformerModel {
                 capture_rows
             },
             mtp_prefill_capture_len: std::sync::atomic::AtomicUsize::new(0),
+            wave_ffn_staging: parking_lot::Mutex::new(None),
             mtp_prefill_capture_gen: std::sync::atomic::AtomicU64::new(0),
             mtp_store_gen_seq: std::sync::atomic::AtomicU64::new(0),
             mtp_carry: parking_lot::Mutex::new(None),

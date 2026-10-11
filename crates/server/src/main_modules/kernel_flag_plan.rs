@@ -40,6 +40,8 @@ pub(crate) struct KernelFlagPlan {
     pub expert_quantization: metrale_model_layers::layers::ExpertQuantization,
     pub prefill_codispatch: Option<bool>,
     pub prefill_varlen: Option<bool>,
+    /// 2026-10-05: `--prefill-wave-exact`, `Some(true)` only when given.
+    pub prefill_wave_exact: Option<bool>,
     pub ssm_tail_midchunk: Option<bool>,
     pub hermetic: bool,
 }
@@ -75,6 +77,7 @@ impl KernelFlagPlan {
             expert_quantization: args.expert_quantization.0,
             prefill_codispatch: args.prefill_codispatch.then_some(true),
             prefill_varlen: args.prefill_varlen_batch.then_some(true),
+            prefill_wave_exact: args.prefill_wave_exact.then_some(true),
             ssm_tail_midchunk: args.no_ssm_tail_midchunk.then_some(false),
             hermetic: args.hermetic,
         }

@@ -22,23 +22,34 @@ metadata:
   kv_dtype: bf16
 
 defaults:
-  # The --activation-quantization routing this recipe was measured under: the engine default,
-  # each projection picking its activation precision by row count (the row-invariant modes are
-  # opt-in until evaluated).
-  activation_quantization: adaptive
+  # 2026-10-05: The serve the declared NVFP4 A/B measured (PR #120, dgx3, C1-C128, n=3), flag for
+  # flag; recipe_nvfp4_declared_tests.rs pins the rendered argv to it.
+  # The checkpoint's declared activation per projection (owner's follow-the-checkpoint rule).
+  activation_quantization: declared
   # The checkpoint's own precision per layer (no requantization).
   weight_quantization: declared
   port: 8888
   host: 0.0.0.0
-  max_model_len: 32768
+  # ISL 128 plus the chat template and OSL 1024, as the measured serve and the vLLM baseline.
+  max_model_len: 2048
+  # Above the widest rung (C=128), so no rung is limited by the batch cap (the CLI default is 8).
+  max_batch_size: 128
   kv_cache_dtype: bf16
   gpu_memory_utilization: 0.85
-  scheduler: slai
+  scheduler: fifo
   speculative: true
   num_drafts: 1
   mtp_quantization: bf16
-  mtp_gate: force
   enable_prefix_caching: true
+  # Marconi snapshot slots: an exact prefill wave runs in sub-waves of free / 3 streams.
+  ssm_cache_slots: 32
+  # No server-side deadline: the 300 s default cuts the wide rungs short.
+  request_timeout: 0
+  # Exact prefill waves: concurrently arriving prompts prefill together with each prompt keeping
+  # its single-stream bits (allowed beside a fixed --activation-quantization).
+  prefill_varlen_batch: true
+  prefill_codispatch: true
+  prefill_wave_exact: true
   # The checkpoint declares an NVFP4 (W4A16) head.
   lm_head_dtype: nvfp4
   kv_high_precision_layers: auto

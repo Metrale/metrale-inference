@@ -63,7 +63,7 @@ impl TransformerModel {
     ///
     /// `meta_region_bytes` is the room the caller gives this block at `meta_base`: both
     /// callers pass the rest of `scratch()` from `meta_base` (`batch_kernel.rs` then
-    /// advances its cursor by `per_stream_meta_bytes`). `meta_base` carries no size, so
+    /// advances its cursor by `q12_per_stream_meta_bytes`). `meta_base` carries no size, so
     /// the packer bounds every write by this value as well as by the host staging buffer
     /// (`packer_for`).
     pub(in crate::model) fn prefill_b_upload_meta_at(
@@ -83,11 +83,8 @@ impl TransformerModel {
         // 2026-09-25: MRoPE-interleaved packs three u32 position streams (T, H, W).
         let use_mrope = self.config.mrope_interleaved;
         let pos_stream_bytes = proc_count * 4;
-        let slot_offset = if use_mrope {
-            (pos_stream_bytes * 3 + 7) & !7
-        } else {
-            (pos_stream_bytes + 7) & !7
-        };
+        let slot_offset =
+            metrale_gpu_runtime::buffers::prefill_meta_slot_offset(proc_count, use_mrope);
         let needs_paged = effective_seq_len_start > 0;
 
         // 2026-09-25: Build positions and, when not paged, slots in the pinned staging
