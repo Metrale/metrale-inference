@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-06: The dump entry. Same functions the chat handler calls.
+//! 2026-10-11: `--receipt` turns a finished run's spec into a CompatibilityReceipt.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::ExitCode;
 
 use clap::Parser;
-use metrale_qci_dump::{DumpInput, gate, model_for_case, render_dump};
+use metrale_qci_dump::contract::canonical::sha256;
+use metrale_qci_dump::contract::hardware::SoftwareVersion;
+use metrale_qci_dump::{DumpInput, gate, model_for_case, receipt_spec, render_dump};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -32,10 +36,25 @@ struct Args {
     /// Chat-completions JSON file. Runs the admission path instead of the receipt.
     #[arg(long)]
     request: Option<String>,
+    /// Run-spec JSON of a finished qualification run. Prints a CompatibilityReceipt.
+    #[arg(long, conflicts_with = "request")]
+    receipt: Option<String>,
 }
 
 fn main() -> ExitCode {
     let args = Args::parse();
+    if let Some(path) = &args.receipt {
+        return match receipt(&args.case, path) {
+            Ok(json) => {
+                println!("{json}");
+                ExitCode::SUCCESS
+            }
+            Err(err) => {
+                eprintln!("{err}");
+                ExitCode::from(2)
+            }
+        };
+    }
     if let Some(path) = &args.request {
         let model = match model_for_case(&args.case) {
             Some(model) => model,
@@ -79,6 +98,23 @@ fn main() -> ExitCode {
     });
     print!("{text}");
     ExitCode::SUCCESS
+}
+
+/// 2026-10-11: Read the spec, the fingerprint and every artifact it names, then build.
+fn receipt(case: &str, spec_path: &str) -> Result<String, String> {
+    let read = |path: &str| std::fs::read(path).map_err(|e| format!("could not read {path}: {e}"));
+    let spec = receipt_spec::parse(&read(spec_path)?)?;
+    let fingerprint = read(&spec.hardware_fingerprint)?;
+    let mut artifacts = BTreeMap::new();
+    for check in &spec.checks {
+        artifacts.insert(check.artifact.clone(), sha256(&read(&check.artifact)?));
+    }
+    let runner = SoftwareVersion {
+        name: "qci-dump".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+    };
+    let receipt = receipt_spec::build(case, spec, &fingerprint, &artifacts, runner)?;
+    serde_json::to_string(&receipt).map_err(|e| format!("receipt JSON: {e}"))
 }
 
 fn probe(path: Option<&str>) -> (bool, Option<u64>) {

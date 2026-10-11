@@ -1800,7 +1800,9 @@ name = "metrale-qci-dump"
 version = "1.0.0-beta-preview"
 dependencies = [
  "clap",
+ "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]

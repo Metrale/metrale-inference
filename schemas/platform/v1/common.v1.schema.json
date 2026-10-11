@@ -1,0 +1,754 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://metrale.ai/schemas/platform/v1/common.v1.schema.json",
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "title": "Common definitions",
+  "description": "Definitions every platform document of version 1 shares.",
+  "$defs": {
+    "version": {
+      "description": "The document's schema version; a reader refuses one it does not implement.",
+      "type": "integer",
+      "const": 1
+    },
+    "u16": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 65535
+    },
+    "u32": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "u64": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 18446744073709551615
+    },
+    "i32": {
+      "type": "integer",
+      "minimum": -2147483648,
+      "maximum": 2147483647
+    },
+    "count": {
+      "description": "A count of at least one.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4294967295
+    },
+    "permille": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000
+    },
+    "timestamp_ms": {
+      "description": "UTC Unix time in milliseconds, never before the epoch.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9223372036854775807
+    },
+    "generation": {
+      "description": "A desired generation: 1 when created, +1 per change.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 18446744073709551615
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "value": {
+      "type": "string",
+      "maxLength": 1024
+    },
+    "long_text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "dns_label": {
+      "type": "string",
+      "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+    },
+    "repository": {
+      "description": "A model repository `owner/name`.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}/[A-Za-z0-9][A-Za-z0-9._-]{0,95}$"
+    },
+    "recipe_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}(/[a-z0-9][a-z0-9._-]{0,63})?$"
+    },
+    "image_repository": {
+      "description": "Lower-case path segments; no tag, digest or port.",
+      "type": "string",
+      "maxLength": 255,
+      "pattern": "^[a-z0-9]+([._-][a-z0-9]+)*(/[a-z0-9]+([._-][a-z0-9]+)*)*$"
+    },
+    "flag_key": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,63}$"
+    },
+    "env_key": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]{0,127}$"
+    },
+    "id16": {
+      "description": "16 bytes as hex (writers emit lower case).",
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{32}$"
+    },
+    "id32": {
+      "description": "32 bytes as hex (writers emit lower case).",
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
+    },
+    "trace_id": {
+      "description": "W3C trace-id width; all zero is invalid.",
+      "allOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{32}$"
+        },
+        {
+          "not": {
+            "pattern": "^0{32}$"
+          }
+        }
+      ]
+    },
+    "sha256": {
+      "description": "A SHA-256 digest as hex.",
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
+    },
+    "git_commit": {
+      "description": "A full git commit; never a branch or tag.",
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{40}$"
+    },
+    "oci_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "hardware_class": {
+      "$ref": "#/$defs/dns_label"
+    },
+    "model_name": {
+      "$ref": "#/$defs/text"
+    },
+    "absent_reason": {
+      "enum": [
+        "unsupported",
+        "unavailable",
+        "not_applicable",
+        "lost",
+        "not_yet"
+      ]
+    },
+    "field_u16": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "measured": {
+              "$ref": "#/$defs/u16"
+            }
+          },
+          "required": [
+            "measured"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "derived": {
+              "$ref": "#/$defs/u16"
+            }
+          },
+          "required": [
+            "derived"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "absent": {
+              "$ref": "common.v1.schema.json#/$defs/absent_reason"
+            }
+          },
+          "required": [
+            "absent"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "field_u32": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "measured": {
+              "$ref": "#/$defs/u32"
+            }
+          },
+          "required": [
+            "measured"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "derived": {
+              "$ref": "#/$defs/u32"
+            }
+          },
+          "required": [
+            "derived"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "absent": {
+              "$ref": "common.v1.schema.json#/$defs/absent_reason"
+            }
+          },
+          "required": [
+            "absent"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "field_u64": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "measured": {
+              "$ref": "#/$defs/u64"
+            }
+          },
+          "required": [
+            "measured"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "derived": {
+              "$ref": "#/$defs/u64"
+            }
+          },
+          "required": [
+            "derived"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "absent": {
+              "$ref": "common.v1.schema.json#/$defs/absent_reason"
+            }
+          },
+          "required": [
+            "absent"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "field_i32": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "measured": {
+              "$ref": "#/$defs/i32"
+            }
+          },
+          "required": [
+            "measured"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "derived": {
+              "$ref": "#/$defs/i32"
+            }
+          },
+          "required": [
+            "derived"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "absent": {
+              "$ref": "common.v1.schema.json#/$defs/absent_reason"
+            }
+          },
+          "required": [
+            "absent"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "field_permille": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "measured": {
+              "$ref": "#/$defs/permille"
+            }
+          },
+          "required": [
+            "measured"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "derived": {
+              "$ref": "#/$defs/permille"
+            }
+          },
+          "required": [
+            "derived"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "absent": {
+              "$ref": "common.v1.schema.json#/$defs/absent_reason"
+            }
+          },
+          "required": [
+            "absent"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "field_text": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "measured": {
+              "$ref": "#/$defs/text"
+            }
+          },
+          "required": [
+            "measured"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "derived": {
+              "$ref": "#/$defs/text"
+            }
+          },
+          "required": [
+            "derived"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "absent": {
+              "$ref": "common.v1.schema.json#/$defs/absent_reason"
+            }
+          },
+          "required": [
+            "absent"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "field_window": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "measured": {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "$ref": "#/$defs/u64"
+                },
+                {
+                  "$ref": "#/$defs/u64"
+                }
+              ],
+              "items": false,
+              "minItems": 2
+            }
+          },
+          "required": [
+            "measured"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "derived": {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "$ref": "#/$defs/u64"
+                },
+                {
+                  "$ref": "#/$defs/u64"
+                }
+              ],
+              "items": false,
+              "minItems": 2
+            }
+          },
+          "required": [
+            "derived"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "absent": {
+              "$ref": "common.v1.schema.json#/$defs/absent_reason"
+            }
+          },
+          "required": [
+            "absent"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "scope": {
+      "type": "object",
+      "properties": {
+        "tenant": {
+          "$ref": "#/$defs/dns_label"
+        },
+        "project": {
+          "$ref": "#/$defs/dns_label"
+        }
+      },
+      "required": [
+        "tenant",
+        "project"
+      ],
+      "additionalProperties": false
+    },
+    "artifact_ref": {
+      "type": "object",
+      "properties": {
+        "uri": {
+          "$ref": "#/$defs/text"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      },
+      "required": [
+        "uri",
+        "sha256"
+      ],
+      "additionalProperties": false
+    },
+    "software_version": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/text"
+        },
+        "version": {
+          "$ref": "#/$defs/text"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "oci_image": {
+      "type": "object",
+      "properties": {
+        "repository": {
+          "$ref": "#/$defs/image_repository"
+        },
+        "digest": {
+          "$ref": "#/$defs/oci_digest"
+        }
+      },
+      "required": [
+        "repository",
+        "digest"
+      ],
+      "additionalProperties": false
+    },
+    "model_revision": {
+      "type": "object",
+      "properties": {
+        "repository": {
+          "$ref": "#/$defs/repository"
+        },
+        "revision": {
+          "$ref": "#/$defs/git_commit"
+        }
+      },
+      "required": [
+        "repository",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    "precision": {
+      "enum": [
+        "bf16",
+        "fp16",
+        "fp8",
+        "nvfp4",
+        "mxfp4",
+        "int8",
+        "int4",
+        "adaptive"
+      ]
+    },
+    "storage_precision": {
+      "description": "A precision for stored values: never `adaptive`.",
+      "enum": [
+        "bf16",
+        "fp16",
+        "fp8",
+        "nvfp4",
+        "mxfp4",
+        "int8",
+        "int4"
+      ]
+    },
+    "quantization": {
+      "type": "object",
+      "properties": {
+        "weights": {
+          "$ref": "#/$defs/storage_precision"
+        },
+        "activations": {
+          "$ref": "#/$defs/precision"
+        },
+        "kv_cache": {
+          "$ref": "#/$defs/storage_precision"
+        }
+      },
+      "required": [
+        "weights",
+        "activations",
+        "kv_cache"
+      ],
+      "additionalProperties": false
+    },
+    "topology": {
+      "type": "object",
+      "properties": {
+        "nodes": {
+          "$ref": "#/$defs/count"
+        },
+        "accelerators_per_node": {
+          "$ref": "#/$defs/count"
+        },
+        "tensor_parallel": {
+          "$ref": "#/$defs/count"
+        },
+        "pipeline_parallel": {
+          "$ref": "#/$defs/count"
+        },
+        "expert_parallel": {
+          "$ref": "#/$defs/count"
+        }
+      },
+      "required": [
+        "nodes",
+        "accelerators_per_node",
+        "tensor_parallel",
+        "pipeline_parallel",
+        "expert_parallel"
+      ],
+      "additionalProperties": false
+    },
+    "health_state": {
+      "enum": [
+        "starting",
+        "ready",
+        "degraded",
+        "draining",
+        "stopped"
+      ]
+    },
+    "gpu_sample": {
+      "type": "object",
+      "properties": {
+        "device": {
+          "$ref": "#/$defs/text"
+        },
+        "product": {
+          "$ref": "#/$defs/field_text"
+        },
+        "energy_cumulative_mj": {
+          "$ref": "#/$defs/field_u64"
+        },
+        "power_mw": {
+          "$ref": "#/$defs/field_u64"
+        },
+        "temperature_mc": {
+          "$ref": "#/$defs/field_i32"
+        },
+        "gpu_util_permille": {
+          "$ref": "#/$defs/field_permille"
+        },
+        "memory_used_bytes": {
+          "$ref": "#/$defs/field_u64"
+        },
+        "memory_total_bytes": {
+          "$ref": "#/$defs/field_u64"
+        },
+        "mono_ns": {
+          "$ref": "#/$defs/u64"
+        }
+      },
+      "required": [
+        "device",
+        "product",
+        "energy_cumulative_mj",
+        "power_mw",
+        "temperature_mc",
+        "gpu_util_permille",
+        "memory_used_bytes",
+        "memory_total_bytes",
+        "mono_ns"
+      ],
+      "additionalProperties": false
+    },
+    "tokens": {
+      "type": "object",
+      "properties": {
+        "prompt": {
+          "$ref": "#/$defs/field_u32"
+        },
+        "completion": {
+          "$ref": "#/$defs/field_u32"
+        },
+        "cached_prompt": {
+          "$ref": "#/$defs/field_u32"
+        },
+        "reasoning": {
+          "$ref": "#/$defs/field_u32"
+        }
+      },
+      "required": [
+        "prompt",
+        "completion",
+        "cached_prompt",
+        "reasoning"
+      ],
+      "additionalProperties": false
+    },
+    "energy": {
+      "type": "object",
+      "properties": {
+        "millijoules": {
+          "$ref": "#/$defs/field_u64"
+        },
+        "rail": {
+          "enum": [
+            "gpu_rail",
+            "accelerator_rail",
+            "board"
+          ]
+        },
+        "window_mono_ns": {
+          "$ref": "#/$defs/field_window"
+        }
+      },
+      "required": [
+        "millijoules",
+        "rail",
+        "window_mono_ns"
+      ],
+      "additionalProperties": false
+    },
+    "engine_error_kind": {
+      "enum": [
+        "bad_request",
+        "context_too_long",
+        "model_not_loaded",
+        "overloaded",
+        "unavailable",
+        "internal"
+      ]
+    },
+    "outcome": {
+      "oneOf": [
+        {
+          "const": "completed"
+        },
+        {
+          "const": "cancelled"
+        },
+        {
+          "const": "channel_lost"
+        },
+        {
+          "const": "timeout"
+        },
+        {
+          "const": "unknown"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "engine_error": {
+              "type": "object",
+              "properties": {
+                "error": {
+                  "$ref": "#/$defs/engine_error_kind"
+                }
+              },
+              "required": [
+                "error"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "engine_error"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

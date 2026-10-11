@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://metrale.ai/schemas/platform/v1/runtime-health.v1.schema.json",
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "title": "RuntimeHealth",
+  "description": "What an inference runtime process reports about itself.",
+  "type": "object",
+  "properties": {
+    "version": {
+      "$ref": "common.v1.schema.json#/$defs/version"
+    },
+    "runtime": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "$ref": "common.v1.schema.json#/$defs/text"
+        },
+        "version": {
+          "$ref": "common.v1.schema.json#/$defs/text"
+        },
+        "git_commit": {
+          "$ref": "common.v1.schema.json#/$defs/git_commit"
+        }
+      },
+      "required": [
+        "name",
+        "version",
+        "git_commit"
+      ],
+      "additionalProperties": false
+    },
+    "boot_id": {
+      "$ref": "common.v1.schema.json#/$defs/id16"
+    },
+    "state": {
+      "$ref": "common.v1.schema.json#/$defs/health_state"
+    },
+    "reason": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "enum": [
+            "kv_cache_exhausted",
+            "accelerator_error",
+            "overloaded",
+            "model_loading"
+          ]
+        }
+      ]
+    },
+    "models": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "served_model": {
+            "$ref": "common.v1.schema.json#/$defs/model_name"
+          },
+          "recipe": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "common.v1.schema.json#/$defs/sha256"
+              }
+            ]
+          }
+        },
+        "required": [
+          "served_model",
+          "recipe"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "observed_at_unix_ms": {
+      "$ref": "common.v1.schema.json#/$defs/timestamp_ms"
+    },
+    "uptime_ms": {
+      "$ref": "common.v1.schema.json#/$defs/u64"
+    },
+    "queue_depth": {
+      "$ref": "common.v1.schema.json#/$defs/field_u32"
+    },
+    "active_requests": {
+      "$ref": "common.v1.schema.json#/$defs/field_u32"
+    },
+    "kv_occupancy_permille": {
+      "$ref": "common.v1.schema.json#/$defs/field_permille"
+    },
+    "accelerators": {
+      "type": "array",
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/gpu_sample"
+      }
+    }
+  },
+  "required": [
+    "version",
+    "runtime",
+    "boot_id",
+    "state",
+    "reason",
+    "models",
+    "observed_at_unix_ms",
+    "uptime_ms",
+    "queue_depth",
+    "active_requests",
+    "kv_occupancy_permille",
+    "accelerators"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "degraded"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "reason": {
+            "not": {
+              "type": "null"
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "reason": {
+            "type": "null"
+          }
+        }
+      }
+    }
+  ]
+}

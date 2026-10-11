@@ -1,0 +1,485 @@
+{
+  "bundle": "metrale-platform-contracts",
+  "version": 1,
+  "schemas": {
+    "audit-event": "audit-event.v1.schema.json",
+    "compatibility-receipt": "compatibility-receipt.v1.schema.json",
+    "deployment-action-result": "deployment-action-result.v1.schema.json",
+    "deployment-action": "deployment-action.v1.schema.json",
+    "error": "error.v1.schema.json",
+    "hardware-fingerprint": "hardware-fingerprint.v1.schema.json",
+    "inference-usage": "inference-usage.v1.schema.json",
+    "model-deployment": "model-deployment.v1.schema.json",
+    "model-recipe": "model-recipe.v1.schema.json",
+    "release-manifest": "release-manifest.v1.schema.json",
+    "runtime-health": "runtime-health.v1.schema.json"
+  },
+  "valid": [
+    {
+      "file": "fixtures/audit-event/valid/intent.json",
+      "schema": "audit-event",
+      "jcs_sha256": "e81ff6b3aad37f4ccbe67cb23b084dfb9ebd46ff573b99309b0fba30dc99c7c4"
+    },
+    {
+      "file": "fixtures/audit-event/valid/outcome.json",
+      "schema": "audit-event",
+      "jcs_sha256": "b05fe208e697f27f146d9ee70e2993252de5b5d2470138524f8548f884461ff3"
+    },
+    {
+      "file": "fixtures/compatibility-receipt/valid/fail-below-floor.json",
+      "schema": "compatibility-receipt",
+      "jcs_sha256": "889961a374ed6431a5706747597a76496bb77a534ebe5364bbd74115934a95b0"
+    },
+    {
+      "file": "fixtures/compatibility-receipt/valid/pass.json",
+      "schema": "compatibility-receipt",
+      "jcs_sha256": "306327cad46249761189a9f5d0667b8ce46909b9b498df301e787a0b8d68873d"
+    },
+    {
+      "file": "fixtures/deployment-action-result/valid/applied.json",
+      "schema": "deployment-action-result",
+      "jcs_sha256": "f0d7d5b8c9dd26d81742eaca6bf28d6a0784baad8f81fa8dbc92c0ef58d5174b"
+    },
+    {
+      "file": "fixtures/deployment-action-result/valid/nothing-running.json",
+      "schema": "deployment-action-result",
+      "jcs_sha256": "e5f76ca6100957e67f1709ad7d512d6c56b33e098912393d33378efca9780ed9"
+    },
+    {
+      "file": "fixtures/deployment-action-result/valid/refused-stale.json",
+      "schema": "deployment-action-result",
+      "jcs_sha256": "4a4b179e96b692419f3702f4f34de97bd3fd993d64426b5b8bc00624a5f9dc38"
+    },
+    {
+      "file": "fixtures/deployment-action/valid/apply.json",
+      "schema": "deployment-action",
+      "jcs_sha256": "0db0b02572dbceab30a34c5f08557b24c797cd0644ac83865102d551ead8657a"
+    },
+    {
+      "file": "fixtures/error/valid/idempotency-conflict.json",
+      "schema": "error",
+      "jcs_sha256": "4eac3c428ef21d9cb9773b10fdd3d7f6002ad6063e52668295e5057c2e3b6e74"
+    },
+    {
+      "file": "fixtures/hardware-fingerprint/valid/gb10.json",
+      "schema": "hardware-fingerprint",
+      "jcs_sha256": "5800b934be1a61b4c581a7293599375b83b1dab3d01b3177a2e36c6ba1c42e5c"
+    },
+    {
+      "file": "fixtures/hardware-fingerprint/valid/strix-halo.json",
+      "schema": "hardware-fingerprint",
+      "jcs_sha256": "90973e468d7f9c406c3ff67c5705d34af3ad0120ba27c39e44861db1a5465e2f"
+    },
+    {
+      "file": "fixtures/inference-usage/valid/completed.json",
+      "schema": "inference-usage",
+      "jcs_sha256": "76066a7857f46cf19353c7acded7dcac3ed2795fae9d34b40f406b0092bb7286"
+    },
+    {
+      "file": "fixtures/inference-usage/valid/engine-error.json",
+      "schema": "inference-usage",
+      "jcs_sha256": "a790fd9829e03a64f95d0a50d48c09a9849a09d0ba4b53f5f00604bb4a8917aa"
+    },
+    {
+      "file": "fixtures/model-deployment/valid/created.json",
+      "schema": "model-deployment",
+      "jcs_sha256": "8b49e0a50636f3dc17c68922cc382a937c9d5015a63fe52addad00f3a8ecec0f"
+    },
+    {
+      "file": "fixtures/model-deployment/valid/observed.json",
+      "schema": "model-deployment",
+      "jcs_sha256": "56b27c54dc64f22810e0ad9c070988d0b639d5eea40150d5798892dda1c2e1aa"
+    },
+    {
+      "file": "fixtures/model-recipe/valid/gemma-4-26b-a4b-unqualified.json",
+      "schema": "model-recipe",
+      "jcs_sha256": "cf4c5848a9263bbffe719cdada5b743f53eac6e8d55c67ce0f8e56a71e8455f9"
+    },
+    {
+      "file": "fixtures/model-recipe/valid/gpt-oss-20b-mxfp4.json",
+      "schema": "model-recipe",
+      "jcs_sha256": "aa300677f2cae98a41f71552f0f7781272251d3ab0d9b0684f116f6d8cacd9e7"
+    },
+    {
+      "file": "fixtures/release-manifest/valid/gpt-oss-20b-gb10.json",
+      "schema": "release-manifest",
+      "jcs_sha256": "a78cf072e759fb43522f696d040a436025ef7f0e5f1eb37018df163cb8fb4e28"
+    },
+    {
+      "file": "fixtures/runtime-health/valid/degraded-unmeasured.json",
+      "schema": "runtime-health",
+      "jcs_sha256": "5b8642cd445927ce70d1ae840c0add6bf09c0a27efae5517bc629f90213991c9"
+    },
+    {
+      "file": "fixtures/runtime-health/valid/ready.json",
+      "schema": "runtime-health",
+      "jcs_sha256": "9a241b81a4d7fb15e8980c5126a823e0fe17296a031501524f8a40568a85f072"
+    }
+  ],
+  "invalid": [
+    {
+      "file": "fixtures/model-recipe/invalid/unknown-limit.json",
+      "schema": "model-recipe",
+      "rule": "closed-object",
+      "base": "fixtures/model-recipe/valid/gpt-oss-20b-mxfp4.json",
+      "op": "add",
+      "pointer": "/limits/max_batch",
+      "value": 8
+    },
+    {
+      "file": "fixtures/model-deployment/invalid/status-omitted.json",
+      "schema": "model-deployment",
+      "rule": "field-present",
+      "base": "fixtures/model-deployment/valid/observed.json",
+      "op": "remove",
+      "pointer": "/status",
+      "value": null
+    },
+    {
+      "file": "fixtures/inference-usage/invalid/recipe-omitted.json",
+      "schema": "inference-usage",
+      "rule": "field-present",
+      "base": "fixtures/inference-usage/valid/completed.json",
+      "op": "remove",
+      "pointer": "/recipe",
+      "value": null
+    },
+    {
+      "file": "fixtures/runtime-health/invalid/state-healthy.json",
+      "schema": "runtime-health",
+      "rule": "closed-enum",
+      "base": "fixtures/runtime-health/valid/ready.json",
+      "op": "replace",
+      "pointer": "/state",
+      "value": "healthy"
+    },
+    {
+      "file": "fixtures/error/invalid/code-teapot.json",
+      "schema": "error",
+      "rule": "closed-enum",
+      "base": "fixtures/error/valid/idempotency-conflict.json",
+      "op": "replace",
+      "pointer": "/code",
+      "value": "teapot"
+    },
+    {
+      "file": "fixtures/inference-usage/invalid/ttft-bare-zero.json",
+      "schema": "inference-usage",
+      "rule": "absent-is-not-zero",
+      "base": "fixtures/inference-usage/valid/completed.json",
+      "op": "replace",
+      "pointer": "/timings/ttft_ms",
+      "value": 0
+    },
+    {
+      "file": "fixtures/runtime-health/invalid/queue-bare-zero.json",
+      "schema": "runtime-health",
+      "rule": "absent-is-not-zero",
+      "base": "fixtures/runtime-health/valid/ready.json",
+      "op": "replace",
+      "pointer": "/queue_depth",
+      "value": 0
+    },
+    {
+      "file": "fixtures/model-recipe/invalid/memory-as-fraction.json",
+      "schema": "model-recipe",
+      "rule": "integer-units",
+      "base": "fixtures/model-recipe/valid/gpt-oss-20b-mxfp4.json",
+      "op": "replace",
+      "pointer": "/limits/gpu_memory_permille",
+      "value": 0.85
+    },
+    {
+      "file": "fixtures/inference-usage/invalid/trace-id-short.json",
+      "schema": "inference-usage",
+      "rule": "hex-width",
+      "base": "fixtures/inference-usage/valid/completed.json",
+      "op": "replace",
+      "pointer": "/trace_id",
+      "value": "4bf92f3577b34da6a3ce929d0e0e47"
+    },
+    {
+      "file": "fixtures/deployment-action/invalid/idempotency-key-short.json",
+      "schema": "deployment-action",
+      "rule": "hex-width",
+      "base": "fixtures/deployment-action/valid/apply.json",
+      "op": "replace",
+      "pointer": "/idempotency_key",
+      "value": "abc"
+    },
+    {
+      "file": "fixtures/model-recipe/invalid/revision-is-branch.json",
+      "schema": "model-recipe",
+      "rule": "immutable-revision",
+      "base": "fixtures/model-recipe/valid/gpt-oss-20b-mxfp4.json",
+      "op": "replace",
+      "pointer": "/model/source/revision",
+      "value": "main"
+    },
+    {
+      "file": "fixtures/compatibility-receipt/invalid/runtime-is-tag.json",
+      "schema": "compatibility-receipt",
+      "rule": "immutable-revision",
+      "base": "fixtures/compatibility-receipt/valid/pass.json",
+      "op": "replace",
+      "pointer": "/key/runtime_commit",
+      "value": "v0.9.0"
+    },
+    {
+      "file": "fixtures/model-recipe/invalid/image-by-tag.json",
+      "schema": "model-recipe",
+      "rule": "no-mutable-tag",
+      "base": "fixtures/model-recipe/valid/gpt-oss-20b-mxfp4.json",
+      "op": "replace",
+      "pointer": "/runtime/image/digest",
+      "value": "latest"
+    },
+    {
+      "file": "fixtures/release-manifest/invalid/image-by-tag.json",
+      "schema": "release-manifest",
+      "rule": "no-mutable-tag",
+      "base": "fixtures/release-manifest/valid/gpt-oss-20b-gb10.json",
+      "op": "replace",
+      "pointer": "/runtime/image/digest",
+      "value": "latest"
+    },
+    {
+      "file": "fixtures/compatibility-receipt/invalid/version-2.json",
+      "schema": "compatibility-receipt",
+      "rule": "explicit-version",
+      "base": "fixtures/compatibility-receipt/valid/pass.json",
+      "op": "replace",
+      "pointer": "/version",
+      "value": 2
+    },
+    {
+      "file": "fixtures/audit-event/invalid/version-2.json",
+      "schema": "audit-event",
+      "rule": "explicit-version",
+      "base": "fixtures/audit-event/valid/outcome.json",
+      "op": "replace",
+      "pointer": "/version",
+      "value": 2
+    },
+    {
+      "file": "fixtures/inference-usage/invalid/trace-id-zero.json",
+      "schema": "inference-usage",
+      "rule": "trace-id-nonzero",
+      "base": "fixtures/inference-usage/valid/completed.json",
+      "op": "replace",
+      "pointer": "/trace_id",
+      "value": "00000000000000000000000000000000"
+    },
+    {
+      "file": "fixtures/deployment-action/invalid/trace-id-zero.json",
+      "schema": "deployment-action",
+      "rule": "trace-id-nonzero",
+      "base": "fixtures/deployment-action/valid/apply.json",
+      "op": "replace",
+      "pointer": "/trace_id",
+      "value": "00000000000000000000000000000000"
+    },
+    {
+      "file": "fixtures/model-deployment/invalid/tenant-not-a-label.json",
+      "schema": "model-deployment",
+      "rule": "name-format",
+      "base": "fixtures/model-deployment/valid/observed.json",
+      "op": "replace",
+      "pointer": "/scope/tenant",
+      "value": "Acme Corp"
+    },
+    {
+      "file": "fixtures/model-deployment/invalid/name-leading-dash.json",
+      "schema": "model-deployment",
+      "rule": "name-format",
+      "base": "fixtures/model-deployment/valid/observed.json",
+      "op": "replace",
+      "pointer": "/name",
+      "value": "-gpt"
+    },
+    {
+      "file": "fixtures/model-recipe/invalid/repository-without-owner.json",
+      "schema": "model-recipe",
+      "rule": "repository-format",
+      "base": "fixtures/model-recipe/valid/gpt-oss-20b-mxfp4.json",
+      "op": "replace",
+      "pointer": "/model/source/repository",
+      "value": "gpt-oss-20b"
+    },
+    {
+      "file": "fixtures/model-recipe/invalid/recipe-id-upper.json",
+      "schema": "model-recipe",
+      "rule": "recipe-id-format",
+      "base": "fixtures/model-recipe/valid/gpt-oss-20b-mxfp4.json",
+      "op": "replace",
+      "pointer": "/recipe_id",
+      "value": "GPT/OSS"
+    },
+    {
+      "file": "fixtures/release-manifest/invalid/repository-with-tag.json",
+      "schema": "release-manifest",
+      "rule": "image-repository-format",
+      "base": "fixtures/release-manifest/valid/gpt-oss-20b-gb10.json",
+      "op": "replace",
+      "pointer": "/runtime/image/repository",
+      "value": "metrale/metrale-inference-gb10:latest"
+    },
+    {
+      "file": "fixtures/error/invalid/message-empty.json",
+      "schema": "error",
+      "rule": "text-length",
+      "base": "fixtures/error/valid/idempotency-conflict.json",
+      "op": "replace",
+      "pointer": "/message",
+      "value": ""
+    },
+    {
+      "file": "fixtures/hardware-fingerprint/invalid/product-empty.json",
+      "schema": "hardware-fingerprint",
+      "rule": "text-length",
+      "base": "fixtures/hardware-fingerprint/valid/gb10.json",
+      "op": "replace",
+      "pointer": "/accelerators/0/product",
+      "value": ""
+    },
+    {
+      "file": "fixtures/deployment-action/invalid/issued-before-epoch.json",
+      "schema": "deployment-action",
+      "rule": "timestamp-range",
+      "base": "fixtures/deployment-action/valid/apply.json",
+      "op": "replace",
+      "pointer": "/issued_at_unix_ms",
+      "value": -1
+    },
+    {
+      "file": "fixtures/model-deployment/invalid/zero-replicas.json",
+      "schema": "model-deployment",
+      "rule": "count-range",
+      "base": "fixtures/model-deployment/valid/observed.json",
+      "op": "replace",
+      "pointer": "/spec/replicas",
+      "value": 0
+    },
+    {
+      "file": "fixtures/runtime-health/invalid/kv-over-1000.json",
+      "schema": "runtime-health",
+      "rule": "count-range",
+      "base": "fixtures/runtime-health/valid/ready.json",
+      "op": "replace",
+      "pointer": "/kv_occupancy_permille",
+      "value": {
+        "measured": 1001
+      }
+    },
+    {
+      "file": "fixtures/model-deployment/invalid/generation-zero.json",
+      "schema": "model-deployment",
+      "rule": "count-range",
+      "base": "fixtures/model-deployment/valid/observed.json",
+      "op": "replace",
+      "pointer": "/generation",
+      "value": 0
+    },
+    {
+      "file": "fixtures/release-manifest/invalid/no-receipts.json",
+      "schema": "release-manifest",
+      "rule": "non-empty-list",
+      "base": "fixtures/release-manifest/valid/gpt-oss-20b-gb10.json",
+      "op": "replace",
+      "pointer": "/receipts",
+      "value": []
+    },
+    {
+      "file": "fixtures/model-recipe/invalid/no-weights.json",
+      "schema": "model-recipe",
+      "rule": "non-empty-list",
+      "base": "fixtures/model-recipe/valid/gpt-oss-20b-mxfp4.json",
+      "op": "replace",
+      "pointer": "/model/weights",
+      "value": []
+    },
+    {
+      "file": "fixtures/model-recipe/invalid/env-key-lower.json",
+      "schema": "model-recipe",
+      "rule": "key-format",
+      "base": "fixtures/model-recipe/valid/gpt-oss-20b-mxfp4.json",
+      "op": "replace",
+      "pointer": "/runtime/env",
+      "value": {
+        "metrale_x": "1"
+      }
+    },
+    {
+      "file": "fixtures/runtime-health/invalid/degraded-without-reason.json",
+      "schema": "runtime-health",
+      "rule": "degraded-needs-reason",
+      "base": "fixtures/runtime-health/valid/degraded-unmeasured.json",
+      "op": "replace",
+      "pointer": "/reason",
+      "value": null
+    },
+    {
+      "file": "fixtures/compatibility-receipt/invalid/pass-with-failed-check.json",
+      "schema": "compatibility-receipt",
+      "rule": "verdict-consistent",
+      "base": "fixtures/compatibility-receipt/valid/pass.json",
+      "op": "replace",
+      "pointer": "/checks/1/passed",
+      "value": false
+    },
+    {
+      "file": "fixtures/inference-usage/invalid/channel-lost.json",
+      "schema": "inference-usage",
+      "rule": "runtime-outcome",
+      "base": "fixtures/inference-usage/valid/completed.json",
+      "op": "replace",
+      "pointer": "/outcome",
+      "value": "channel_lost"
+    },
+    {
+      "file": "fixtures/model-recipe/invalid/weights-adaptive.json",
+      "schema": "model-recipe",
+      "rule": "precision-role",
+      "base": "fixtures/model-recipe/valid/gpt-oss-20b-mxfp4.json",
+      "op": "replace",
+      "pointer": "/quantization/weights",
+      "value": "adaptive"
+    },
+    {
+      "file": "fixtures/audit-event/invalid/outcome-without-outcome.json",
+      "schema": "audit-event",
+      "rule": "audit-phase",
+      "base": "fixtures/audit-event/valid/outcome.json",
+      "op": "replace",
+      "pointer": "/outcome",
+      "value": null
+    },
+    {
+      "file": "fixtures/inference-usage/invalid/engine-error-with-text.json",
+      "schema": "inference-usage",
+      "rule": "closed-object",
+      "base": "fixtures/inference-usage/valid/engine-error.json",
+      "op": "add",
+      "pointer": "/outcome/engine_error/detail",
+      "value": "the engine's own message"
+    },
+    {
+      "file": "fixtures/deployment-action-result/invalid/running-generation-zero.json",
+      "schema": "deployment-action-result",
+      "rule": "count-range",
+      "base": "fixtures/deployment-action-result/valid/applied.json",
+      "op": "replace",
+      "pointer": "/running_generation",
+      "value": 0
+    },
+    {
+      "file": "fixtures/deployment-action-result/invalid/refusal-unlisted.json",
+      "schema": "deployment-action-result",
+      "rule": "closed-enum",
+      "base": "fixtures/deployment-action-result/valid/refused-stale.json",
+      "op": "replace",
+      "pointer": "/outcome/refused/reason",
+      "value": "quota"
+    }
+  ]
+}

@@ -1,0 +1,80 @@
+{
+  "version": 2,
+  "key": {
+    "runtime_commit": "f2e18ffc17e2595362b5468aac34221e09934bf8",
+    "model": {
+      "repository": "openai/gpt-oss-20b",
+      "revision": "ad31ec163396d5cb44d8deb87c596cecb0f55bf8"
+    },
+    "quantization": {
+      "weights": "mxfp4",
+      "activations": "adaptive",
+      "kv_cache": "fp8"
+    },
+    "hardware_fingerprint": "16aa107c22f3c1363152acc19412989bc49eba78d080562af2264e11ff4b84e7",
+    "topology": {
+      "nodes": 1,
+      "accelerators_per_node": 1,
+      "tensor_parallel": 1,
+      "pipeline_parallel": 1,
+      "expert_parallel": 1
+    }
+  },
+  "recipe": "17699781ee35bdc0af168e4a85fab0bc0a6e420fc18aaf4e04c74fd25905a50b",
+  "verdict": "pass",
+  "checks": [
+    {
+      "name": "coherence-fixed-prompts",
+      "kind": "coherence",
+      "passed": true,
+      "parameters": {
+        "prompt_set": "coherence-v3",
+        "seed": "42",
+        "temperature": "0"
+      },
+      "artifact": {
+        "uri": "artifacts/coherence-gpt-oss-20b.json",
+        "sha256": "7ca709f72ce3c8f8aac99c2e5f2f2048ad54f6d986fa7e5167187cb09ac7a001"
+      },
+      "metrics": [
+        {
+          "name": "coherent",
+          "unit": "count",
+          "value": 10
+        }
+      ]
+    },
+    {
+      "name": "decode-c1",
+      "kind": "benchmark",
+      "passed": true,
+      "parameters": {
+        "concurrency": "1",
+        "osl": "512"
+      },
+      "artifact": {
+        "uri": "artifacts/bench-gpt-oss-20b.json",
+        "sha256": "0166fb16e5cefad20c7af94fb5b72e6a4dfa0bb7dd4a72f587596242be4b10b8"
+      },
+      "metrics": [
+        {
+          "name": "decode_rate",
+          "unit": "milli_tokens_per_second",
+          "value": 48250
+        },
+        {
+          "name": "ttft_median",
+          "unit": "milliseconds",
+          "value": 95
+        }
+      ]
+    }
+  ],
+  "started_at_unix_ms": 1791000000000,
+  "finished_at_unix_ms": 1791000900000,
+  "runner": {
+    "name": "metrale-bench",
+    "version": "0.9.0"
+  },
+  "synthetic": false
+}

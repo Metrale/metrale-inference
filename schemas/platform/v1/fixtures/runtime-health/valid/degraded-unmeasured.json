@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "runtime": {
+    "name": "metrale-inference",
+    "version": "0.9.0",
+    "git_commit": "f2e18ffc17e2595362b5468aac34221e09934bf8"
+  },
+  "boot_id": "32323232323232323232323232323232",
+  "state": "degraded",
+  "reason": "kv_cache_exhausted",
+  "models": [
+    {
+      "served_model": "gpt-oss-20b",
+      "recipe": null
+    }
+  ],
+  "observed_at_unix_ms": 1791000000000,
+  "uptime_ms": 60000,
+  "queue_depth": {
+    "measured": 17
+  },
+  "active_requests": {
+    "derived": 16
+  },
+  "kv_occupancy_permille": {
+    "absent": "unsupported"
+  },
+  "accelerators": []
+}

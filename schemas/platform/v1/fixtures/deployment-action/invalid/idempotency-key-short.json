@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "idempotency_key": "abc",
+  "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+  "scope": {
+    "tenant": "acme",
+    "project": "assistants"
+  },
+  "deployment": "gpt-oss-20b",
+  "generation": 3,
+  "node_id": "66570ff05a2074043084d4aca94293ef067530dde94ff4e92b8d8459253eb779",
+  "action": "apply",
+  "issued_at_unix_ms": 1791000000000
+}

@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "name": "gemma-4-26b",
+  "scope": {
+    "tenant": "acme",
+    "project": "assistants"
+  },
+  "generation": 1,
+  "spec": {
+    "release": "531b558955c406282d9d5f098d25d21deb8bf814fd5861566d365749f05ea875",
+    "served_model": "gemma-4-26b",
+    "topology": {
+      "nodes": 1,
+      "accelerators_per_node": 1,
+      "tensor_parallel": 1,
+      "pipeline_parallel": 1,
+      "expert_parallel": 1
+    },
+    "replicas": 1,
+    "placement": {
+      "nodes": [
+        "66570ff05a2074043084d4aca94293ef067530dde94ff4e92b8d8459253eb779"
+      ]
+    }
+  },
+  "status": null
+}

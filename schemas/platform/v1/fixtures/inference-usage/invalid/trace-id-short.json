@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "request_id": "41414141414141414141414141414141",
+  "trace_id": "4bf92f3577b34da6a3ce929d0e0e47",
+  "served_model": "gpt-oss-20b",
+  "recipe": "17699781ee35bdc0af168e4a85fab0bc0a6e420fc18aaf4e04c74fd25905a50b",
+  "runtime_commit": "f2e18ffc17e2595362b5468aac34221e09934bf8",
+  "outcome": "completed",
+  "tokens": {
+    "prompt": {
+      "measured": 812
+    },
+    "completion": {
+      "measured": 164
+    },
+    "cached_prompt": {
+      "measured": 512
+    },
+    "reasoning": {
+      "measured": 40
+    }
+  },
+  "timings": {
+    "received_at_unix_ms": 1791000000000,
+    "queue_ms": {
+      "measured": 2
+    },
+    "ttft_ms": {
+      "measured": 95
+    },
+    "total_ms": {
+      "measured": 3120
+    },
+    "tpot_us": {
+      "derived": 18400
+    }
+  },
+  "energy": {
+    "millijoules": {
+      "derived": 190000
+    },
+    "rail": "gpu_rail",
+    "window_mono_ns": {
+      "derived": [
+        100,
+        3120000100
+      ]
+    }
+  },
+  "finished_at_unix_ms": 1791000003120
+}

@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "hardware_class": "gb10",
+  "accelerators": [
+    {
+      "vendor": "nvidia",
+      "product": "",
+      "architecture": "sm_121",
+      "memory_bytes": 128849018880,
+      "count": 1
+    }
+  ],
+  "host": {
+    "cpu_arch": "aarch64",
+    "cpu_model": "Grace 20-core",
+    "memory_bytes": 128849018880,
+    "unified_memory": true,
+    "os_kernel": "6.17.0"
+  },
+  "driver": {
+    "name": "nvidia",
+    "version": "580.95.05"
+  },
+  "toolkit": {
+    "name": "cuda",
+    "version": "13.0"
+  }
+}

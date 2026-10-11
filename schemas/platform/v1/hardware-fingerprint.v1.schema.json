@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://metrale.ai/schemas/platform/v1/hardware-fingerprint.v1.schema.json",
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "title": "HardwareFingerprint",
+  "description": "What a receipt's hardware key means: accelerators, host, driver and toolkit; no time, serial or hostname, so its canonical digest is stable.",
+  "type": "object",
+  "properties": {
+    "version": {
+      "$ref": "common.v1.schema.json#/$defs/version"
+    },
+    "hardware_class": {
+      "$ref": "common.v1.schema.json#/$defs/hardware_class"
+    },
+    "accelerators": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "vendor": {
+            "enum": [
+              "nvidia",
+              "amd",
+              "intel",
+              "apple"
+            ]
+          },
+          "product": {
+            "$ref": "common.v1.schema.json#/$defs/text"
+          },
+          "architecture": {
+            "$ref": "common.v1.schema.json#/$defs/text"
+          },
+          "memory_bytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 18446744073709551615
+          },
+          "count": {
+            "$ref": "common.v1.schema.json#/$defs/count"
+          }
+        },
+        "required": [
+          "vendor",
+          "product",
+          "architecture",
+          "memory_bytes",
+          "count"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1
+    },
+    "host": {
+      "type": "object",
+      "properties": {
+        "cpu_arch": {
+          "enum": [
+            "aarch64",
+            "x86_64"
+          ]
+        },
+        "cpu_model": {
+          "$ref": "common.v1.schema.json#/$defs/text"
+        },
+        "memory_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 18446744073709551615
+        },
+        "unified_memory": {
+          "type": "boolean"
+        },
+        "os_kernel": {
+          "$ref": "common.v1.schema.json#/$defs/text"
+        }
+      },
+      "required": [
+        "cpu_arch",
+        "cpu_model",
+        "memory_bytes",
+        "unified_memory",
+        "os_kernel"
+      ],
+      "additionalProperties": false
+    },
+    "driver": {
+      "$ref": "common.v1.schema.json#/$defs/software_version"
+    },
+    "toolkit": {
+      "$ref": "common.v1.schema.json#/$defs/software_version"
+    }
+  },
+  "required": [
+    "version",
+    "hardware_class",
+    "accelerators",
+    "host",
+    "driver",
+    "toolkit"
+  ],
+  "additionalProperties": false
+}

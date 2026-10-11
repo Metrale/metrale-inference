@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "name": "gpt-oss-20b",
+  "scope": {
+    "tenant": "acme",
+    "project": "assistants"
+  },
+  "generation": 3,
+  "spec": {
+    "release": "a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829",
+    "served_model": "gpt-oss-20b",
+    "topology": {
+      "nodes": 1,
+      "accelerators_per_node": 1,
+      "tensor_parallel": 1,
+      "pipeline_parallel": 1,
+      "expert_parallel": 1
+    },
+    "replicas": 2,
+    "placement": {
+      "hardware_class": "gb10"
+    }
+  }
+}
