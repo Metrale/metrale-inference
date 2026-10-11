@@ -39,6 +39,8 @@ mod proposer;
 
 /// 2026-10-11: Bytes of the draft head's exchange buffer, one per sequence state.
 pub use head_xchg::BUFFER_BYTES as HEAD_XCHG_BUFFER_BYTES;
+/// 2026-10-11: The `METRALE_GLM_MTP_EH_TP` lever, for the ranks' agreement check.
+pub use init::eh_tp_enabled;
 
 /// 2026-09-25: Per-sequence drafter state: the block's own indexer cache and KV block table.
 pub struct Glm5NextMtpProposerState {
@@ -90,6 +92,9 @@ pub struct Glm5NextMtpHead {
     /// `init::draft_head_shard` splits the vocab across the `head_world` ranks.
     head_world: usize,
     head_rank: usize,
+    /// 2026-10-11: This rank's `eh_proj` output rows `(r0, n)` under `METRALE_GLM_MTP_EH_TP`
+    /// (`init::eh_shard`); `None` computes them all.
+    eh_shard: Option<(usize, usize)>,
     head_v0: usize,
     head_n: usize,
     /// 2026-09-25: FP8 E4M3 copy of this rank's vocab shard of `lm_head`, for drafting only.
@@ -129,6 +134,46 @@ impl Glm5NextMtpHead {
             .launch(stream)
     }
 
+    /// 2026-09-25: `x = eh_proj(concat)`. 2026-10-11: under `METRALE_GLM_MTP_EH_TP` with a
+    /// communicator, this rank computes its output rows into a zeroed `x` and one all-reduce of
+    /// the row assembles them; each row is the same GEMV over the same input either way (a block
+    /// computes four rows independently), so `x` keeps its bits.
+    fn eh_proj(
+        &self,
+        gpu: &dyn GpuBackend,
+        st: &Glm5NextMtpProposerState,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        let h = self.hidden;
+        if let (Some(comm), Some((r0, n))) = (ctx.comm, self.eh_shard) {
+            gpu.memset_async(st.x, 0, h * 2, stream)?;
+            ops::dense_gemv(
+                gpu,
+                self.gemv_k,
+                st.concat,
+                &DenseWeight {
+                    weight: self.module.eh_proj.weight.offset(r0 * 2 * h * 2),
+                },
+                st.x.offset(r0 * 2),
+                n as u32,
+                (2 * h) as u32,
+                stream,
+            )?;
+            return comm.all_reduce_async(st.x.0, h * 2, stream);
+        }
+        ops::dense_gemv(
+            gpu,
+            self.gemv_k,
+            st.concat,
+            &self.module.eh_proj,
+            st.x,
+            h as u32,
+            (2 * h) as u32,
+            stream,
+        )
+    }
+
     /// 2026-09-25: One draft token. Advances `seq_len` by one.
     fn forward_one(
         &self,
@@ -159,16 +204,7 @@ impl Glm5NextMtpHead {
             h,
             stream,
         )?;
-        ops::dense_gemv(
-            gpu,
-            self.gemv_k,
-            st.concat,
-            &self.module.eh_proj,
-            st.x,
-            h as u32,
-            (2 * h) as u32,
-            stream,
-        )?;
+        self.eh_proj(gpu, st, ctx, stream)?;
 
         // 2026-09-25: The block writes its output back over `st.x` (plain residual, in place).
         if skip_block() {

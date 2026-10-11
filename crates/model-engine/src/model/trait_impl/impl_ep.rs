@@ -42,4 +42,19 @@ impl ModelEp for TransformerModel {
     fn ep_broadcast_tokens(&self, tokens: &[u32]) -> Result<Vec<u32>> {
         self.ep_broadcast_tokens_dispatch(tokens)
     }
+
+    fn k2_fused_wire(&self) -> bool {
+        self.k2_fused_wire_impl()
+    }
+
+    fn ep_announce_k2_fused(&self, seq_id: u32, tokens: [u32; 2]) -> Result<()> {
+        self.ep_announce_k2_fused_impl(seq_id, tokens)
+    }
+
+    fn ep_send_k2_verdict(
+        &self,
+        verdict: metrale_model_layers::speculative::K2Verdict,
+    ) -> Result<()> {
+        self.ep_send_k2_verdict_impl(verdict)
+    }
 }

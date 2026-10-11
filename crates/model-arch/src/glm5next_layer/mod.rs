@@ -65,7 +65,7 @@ mod types;
 pub(crate) mod wide_gemv;
 pub use levers::prefill_rows;
 pub(crate) use levers::{
-    PREFILL_ROWS, ar_fused_post, cublas_wide_proj, dsa_batch_qidx, dsa_indexer_rows, mhc_fused,
+    PREFILL_ROWS, ar_fused_post, cublas_wide_proj, dsa_batch_qidx, dsa_indexer_rows, dsa_verify_rows, mhc_fused,
     mhc_post_fold, moe_combine_split, multi_seq_chunk_rows, multi_seq_chunks, router_rows,
     router_topk_rank,
 };

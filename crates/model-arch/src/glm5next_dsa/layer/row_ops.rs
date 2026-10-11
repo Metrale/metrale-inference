@@ -151,6 +151,84 @@ impl Glm5NextDsaLayer {
         Ok(())
     }
 
+    /// 2026-10-09: The selector query (`wq_b` over `q_resid`) into `q_idx_rows` and the head
+    /// weights (`weights_proj` over the layer input `hidden`) into `head_weights_rows` of `n`
+    /// rows, one launch each, so `wq_b` is read once per group instead of once per row. Each
+    /// row of `dense_gemv_bf16_batchm_fp32out` is the M = 1 `gemv_f32`'s result for that row.
+    /// `wide` (more rows than `DENSE_GEMV_BATCHM_MAX_M`, `cublas_wide_proj`) takes the FP32-out
+    /// cuBLASLt call instead, which sums in another order. 2026-10-11: moved here from
+    /// `decode_rows` so the k-row verify (`decode_k_with`) shares it.
+    pub(super) fn selector_query_rows(
+        &self,
+        gpu: &dyn GpuBackend,
+        hidden: DevicePtr,
+        n: usize,
+        wide: bool,
+        stream: u64,
+    ) -> Result<()> {
+        let w = &self.workspace;
+        let (heads, idx_row) = (
+            self.cfg.index_heads,
+            self.cfg.index_heads * self.cfg.index_head_dim,
+        );
+        let k = &self.kernels;
+        for (a, wt, out, n_out, kk) in [
+            (
+                w.q_resid,
+                self.weights.wq_b,
+                w.q_idx_rows,
+                idx_row,
+                self.cfg.q_lora_rank,
+            ),
+            (
+                hidden,
+                self.weights.weights_proj,
+                w.head_weights_rows,
+                heads,
+                self.cfg.hidden,
+            ),
+        ] {
+            if wide {
+                metrale_model_layers::layers::ops::cublas_bf16_proj_dense_f32_out(
+                    a,
+                    wt,
+                    out,
+                    n as u32,
+                    n_out as u32,
+                    kk as u32,
+                    stream,
+                )?;
+            } else {
+                gemm(
+                    gpu,
+                    k.gemm_f32,
+                    k.gemv_f32,
+                    k.batchm_f32(),
+                    a,
+                    wt,
+                    out,
+                    n,
+                    n_out,
+                    kk,
+                    stream,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    /// 2026-10-09: Whether `selector_query_rows` can run for `n` rows: two rows or more (one
+    /// row keeps the single-sequence launches), the batched FP32-out GEMV and the M = 1
+    /// `gemv_f32` resolved, and the row buffers allocated.
+    pub(super) fn selector_query_rows_ready(&self, n: usize) -> bool {
+        let w = &self.workspace;
+        n > 1
+            && self.kernels.gemv_batchm_f32.0 != 0
+            && self.kernels.gemv_f32.0 != 0
+            && w.q_idx_rows.0 != 0
+            && w.head_weights_rows.0 != 0
+    }
+
     /// 2026-10-09: The indexer key projection (`wk`), its LayerNorm (`k_norm`) and the
     /// compress-gate projection of all `n` rows of `hidden`, into staging rows `0..n`
     /// (`stage_k`, `stage_gate`), for `store_indexer_row` to place row by row. Per row these are

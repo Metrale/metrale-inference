@@ -22,6 +22,7 @@ mod dflash_ctx_tests;
 mod ep_prefill_tests;
 mod ep_verify_tests;
 mod gate;
+mod k2_fused_tests;
 mod model;
 mod model_feed;
 mod model_forward;

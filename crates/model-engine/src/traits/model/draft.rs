@@ -201,6 +201,20 @@ pub trait ModelDraft {
         grammar_bitmask: Option<&[i32]>,
     ) -> Result<Vec<u32>>;
 
+    /// 2026-10-11: [`Self::run_mtp_propose_multi`] for a propose the workers were already told
+    /// to run (the fused K=2 verdict, `ModelEp::k2_fused_wire`): it sends nothing. Default: an
+    /// error, since only a model whose `k2_fused_wire` is true is asked.
+    fn run_mtp_propose_announced(
+        &self,
+        _token: u32,
+        _position: usize,
+        _num_drafts: usize,
+        _seq: &mut SequenceState,
+        _grammar_bitmask: Option<&[i32]>,
+    ) -> Result<Vec<u32>> {
+        anyhow::bail!("this model has no fused K=2 wire")
+    }
+
     /// 2026-09-25: The draft id the proposer left on the device. Default `0`.
     fn read_deferred_draft_token(&self) -> Result<u32> {
         Ok(0)

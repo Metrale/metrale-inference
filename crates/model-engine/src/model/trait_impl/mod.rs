@@ -84,6 +84,7 @@ mod verify_d;
 mod verify_e;
 pub(in crate::model) mod verify_e2;
 mod verify_fused;
+mod verify_k2_fused_ep;
 mod verify_kgamma_ep;
 
 impl Model for TransformerModel {}

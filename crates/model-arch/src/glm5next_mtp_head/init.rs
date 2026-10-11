@@ -32,6 +32,38 @@ pub(super) fn draft_head_shard(vocab: usize, world: usize, rank: usize) -> (usiz
     }
 }
 
+/// 2026-10-11: `METRALE_GLM_MTP_EH_TP=1`: each rank of a tensor-parallel propose computes its
+/// slice of the drafter's `eh_proj` output rows and one all-reduce of the hidden row assembles
+/// them (the other ranks' rows are zero, so the sum is exact). The `[hidden, 2 * hidden]` BF16
+/// projection (67 MB on GLM-5.3) was read whole on every rank. Every rank must agree (it adds a
+/// collective); `comm_setup` checks it. Read once.
+pub fn eh_tp_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("METRALE_GLM_MTP_EH_TP").as_deref() == Ok("1"))
+}
+
+/// 2026-10-11: Output rows of `eh_proj` per shard unit: a rank's first row and row count are
+/// multiples of it, so its output slice and weight rows start aligned for the GEMV's vector
+/// stores (a block computes four rows).
+const EH_SHARD_ROWS: usize = 64;
+
+/// 2026-10-11: `(r0, n)`, the `eh_proj` output rows rank `rank` of `world` computes: whole
+/// [`EH_SHARD_ROWS`] units split as evenly as they go (the first ranks one unit more), the last
+/// rank taking any remainder rows. `None` for one rank or a world past the unit count.
+pub(super) fn eh_shard(hidden: usize, world: usize, rank: usize) -> Option<(usize, usize)> {
+    let units = hidden / EH_SHARD_ROWS;
+    if world < 2 || rank >= world || units < world {
+        return None;
+    }
+    let (base, extra) = (units / world, units % world);
+    let r0 = (rank * base + rank.min(extra)) * EH_SHARD_ROWS;
+    let mut n = (base + usize::from(rank < extra)) * EH_SHARD_ROWS;
+    if rank == world - 1 {
+        n = hidden - r0;
+    }
+    Some((r0, n))
+}
+
 impl Glm5NextMtpHead {
     pub fn new(
         module: Glm5NextMtpModule,
@@ -133,6 +165,11 @@ impl Glm5NextMtpHead {
             max_seq_len,
             head_world,
             head_rank,
+            eh_shard: if eh_tp_enabled() {
+                eh_shard(config.hidden_size, head_world, head_rank)
+            } else {
+                None
+            },
             head_v0,
             head_n,
             head_fp8,
@@ -147,6 +184,36 @@ mod tests {
 
     /// 2026-10-08: GLM-5.3's vocab.
     const VOCAB: usize = 154_880;
+
+    /// 2026-10-11: The `eh_proj` shards partition the hidden rows, start on whole units, and
+    /// are refused for one rank or more ranks than units.
+    #[test]
+    fn eh_shards_partition_the_hidden_rows() {
+        use super::eh_shard;
+        for hidden in [4096usize, 4096 + 7, 6144, 128] {
+            for world in 2..=4 {
+                let Some(_) = eh_shard(hidden, world, 0) else {
+                    assert!(hidden / 64 < world);
+                    continue;
+                };
+                let mut next = 0;
+                for r in 0..world {
+                    let (r0, n) = eh_shard(hidden, world, r).unwrap();
+                    assert_eq!(r0, next, "hidden {hidden} world {world} rank {r}");
+                    assert_eq!(r0 % 64, 0);
+                    assert!(n > 0);
+                    next = r0 + n;
+                }
+                assert_eq!(next, hidden);
+            }
+        }
+        assert_eq!(eh_shard(4096, 3, 0), Some((0, 1408)));
+        assert_eq!(eh_shard(4096, 3, 1), Some((1408, 1344)));
+        assert_eq!(eh_shard(4096, 3, 2), Some((2752, 1344)));
+        assert_eq!(eh_shard(4096, 1, 0), None);
+        assert_eq!(eh_shard(4096, 3, 3), None);
+        assert_eq!(eh_shard(128, 3, 0), None);
+    }
 
     /// 2026-10-08: Two ranks halve the vocab, as before.
     #[test]

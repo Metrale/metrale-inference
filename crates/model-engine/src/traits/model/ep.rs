@@ -12,6 +12,9 @@ use anyhow::Result;
 // 2026-09-26: Only the `ep_worker_step` doc link names it.
 #[cfg(doc)]
 use super::EpCommandFailed;
+// 2026-10-11: Only the `k2_fused_wire` doc link names it.
+#[cfg(doc)]
+use super::ModelDraft;
 
 /// 2026-09-26: The multi-rank (EP) command protocol.
 pub trait ModelEp {
@@ -62,5 +65,27 @@ pub trait ModelEp {
     /// empty `Vec`.
     fn ep_broadcast_tokens(&self, _tokens: &[u32]) -> Result<Vec<u32>> {
         Ok(Vec::new())
+    }
+
+    /// 2026-10-11: Whether a K=2 MTP step runs the fused wire (`speculative::k2_wire`): one
+    /// announcement block, one verdict that also starts the workers' propose, and a propose
+    /// that sends nothing ([`ModelDraft::run_mtp_propose_announced`]). Default `false`.
+    fn k2_fused_wire(&self) -> bool {
+        false
+    }
+
+    /// 2026-10-11: Rank 0, fused wire: announce the 2-row verify of `tokens` in slot `seq_id`.
+    /// Default: an error, since only a model whose [`Self::k2_fused_wire`] is true is asked.
+    fn ep_announce_k2_fused(&self, _seq_id: u32, _tokens: [u32; 2]) -> Result<()> {
+        anyhow::bail!("this model has no fused K=2 wire")
+    }
+
+    /// 2026-10-11: Rank 0, fused wire: send the verdict of the verify just announced. Default:
+    /// an error, as above.
+    fn ep_send_k2_verdict(
+        &self,
+        _verdict: metrale_model_layers::speculative::K2Verdict,
+    ) -> Result<()> {
+        anyhow::bail!("this model has no fused K=2 wire")
     }
 }
