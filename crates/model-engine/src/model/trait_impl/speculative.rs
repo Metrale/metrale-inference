@@ -362,6 +362,13 @@ impl TransformerModel {
         let src = self.verify_hidden_stash.offset(idx * h * bf16);
         self.gpu
             .copy_d2d_async(src, self.mtp_hidden_save, h * bf16, stream)?;
+        // 2026-10-11: Latch the stash slot, flagged, so a multi-rank propose
+        // (`EP_CMD_MTP_PROPOSE`) has its workers copy the same slot of their own stash
+        // (`ep_worker_mtp_propose`) instead of a `hidden_states` row.
+        self.last_mtp_hidden_idx.store(
+            idx | metrale_model_layers::speculative::MTP_HIDDEN_FROM_STASH as usize,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         Ok(())
     }
 

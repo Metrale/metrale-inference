@@ -130,8 +130,16 @@ impl TransformerModel {
         hidden_idx: usize,
     ) {
         let stream = self.gpu.default_stream();
-        if let Err(e) = self.save_hidden_for_mtp(hidden_idx, stream) {
-            tracing::warn!("EP worker save_hidden_for_mtp({hidden_idx}) failed: {e:#}");
+        let flag = metrale_model_layers::speculative::MTP_HIDDEN_FROM_STASH as usize;
+        // 2026-10-11: A flagged word names a batched-verify stash slot (rank 0 copied it with
+        // `save_hidden_for_mtp_from_stash`); otherwise a `hidden_states` row.
+        let saved = if hidden_idx & flag != 0 {
+            self.save_hidden_for_mtp_from_stash(hidden_idx & !flag, stream)
+        } else {
+            self.save_hidden_for_mtp(hidden_idx, stream)
+        };
+        if let Err(e) = saved {
+            tracing::warn!("EP worker save_hidden_for_mtp({hidden_idx:#x}) failed: {e:#}");
         }
         if let Err(e) = self.run_mtp_propose_inner(last_token, position, num_drafts, seq, None) {
             tracing::warn!("EP worker MTP propose failed (continuing): {e:#}");

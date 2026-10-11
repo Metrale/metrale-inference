@@ -17,7 +17,7 @@ use anyhow::{Result, bail};
 
 /// 2026-10-11: The most ranks the exchange buffer is allocated for. [`super::init`] shards the
 /// draft head only for worlds of `2..=MAX_RANKS`.
-pub(crate) const MAX_RANKS: usize = 4;
+pub const MAX_RANKS: usize = 4;
 
 /// 2026-10-11: Bytes of the exchange buffer `alloc_state` allocates (and the per-sequence
 /// reserve charges): room for [`MAX_RANKS`] ranks.
@@ -30,7 +30,7 @@ const DIGITS: usize = 3;
 const MAX_ID: usize = (1 << (8 * DIGITS)) - 1;
 
 /// 2026-10-11: Bytes of the exchange at `world` ranks: what the all-reduce sums.
-pub(crate) fn xchg_bytes(world: usize) -> usize {
+pub fn xchg_bytes(world: usize) -> usize {
     2 * (1 + DIGITS) * world
 }
 
@@ -45,12 +45,7 @@ fn f32_of(lane: [u8; 2]) -> f32 {
 /// 2026-10-11: Rank `rank`'s contribution: its max logit (the BF16 bytes the head wrote) in
 /// lane `rank`, the digits of its global argmax `global_idx` in lanes
 /// `world + 3 * rank ..`, and zeros elsewhere.
-pub(crate) fn pack(
-    world: usize,
-    rank: usize,
-    logit: [u8; 2],
-    global_idx: usize,
-) -> Result<Vec<u8>> {
+pub fn pack(world: usize, rank: usize, logit: [u8; 2], global_idx: usize) -> Result<Vec<u8>> {
     if world == 0 || world > MAX_RANKS || rank >= world {
         bail!("draft head exchange: rank {rank} of {world} (at most {MAX_RANKS} ranks)");
     }
@@ -68,7 +63,7 @@ pub(crate) fn pack(
 }
 
 /// 2026-10-11: The winning global token id from the summed buffer.
-pub(crate) fn pick(world: usize, summed: &[u8]) -> Result<u32> {
+pub fn pick(world: usize, summed: &[u8]) -> Result<u32> {
     if world == 0 || world > MAX_RANKS || summed.len() < xchg_bytes(world) {
         bail!(
             "draft head exchange: {} bytes for {world} ranks (need {})",

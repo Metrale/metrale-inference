@@ -21,7 +21,7 @@ use metrale_model_layers::speculative::{
 };
 
 use super::super::types::TransformerModel;
-use crate::traits::{ModelSsmState, ModelVerify, SequenceState, VerifyBatchedOpts};
+use crate::traits::{ModelDraft, ModelSsmState, ModelVerify, SequenceState, VerifyBatchedOpts};
 
 /// 2026-10-09: The sequences of `slots` named by `seq_ids`, in that order. Errors, before any
 /// sequence is touched, on an id past the slots, a repeated id or an empty slot; `what` names
@@ -117,6 +117,26 @@ impl TransformerModel {
         self.gdn_fold_accepted(&slot_idx, &rows, k)?;
         for (seq, &c) in refs.iter_mut().zip(&committed) {
             self.commit_accepted_prefix(seq, c, k)?;
+        }
+        // 2026-10-11: An MTP batch (the MTP proposer every rank runs; the collective DFlash
+        // drafter keeps its own context): trim the drafter as rank 0's verdict does
+        // (`k4_apply_verdict`, `num_accepted` = committed - 1), and stash each sequence's
+        // accepted hidden row (`i * k + committed - 1`) in slot i, as rank 0's step does before
+        // its per-sequence proposes read it (`EP_CMD_MTP_PROPOSE` with the stash flag).
+        if self
+            .proposer
+            .as_ref()
+            .is_some_and(|p| p.needs_comm() && !p.collective_propose())
+        {
+            for (seq, &c) in refs.iter_mut().zip(&committed) {
+                self.trim_proposer_state(seq, c - 1, 0)?;
+            }
+            let stash: Vec<usize> = committed
+                .iter()
+                .enumerate()
+                .map(|(i, &c)| i * k + c - 1)
+                .collect();
+            self.stash_verify_hidden_rows(&stash, 0)?;
         }
         Ok(true)
     }

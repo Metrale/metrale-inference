@@ -437,6 +437,12 @@ pub(super) fn register_mtp_dense_tiers(
     mlp_cfg: &crate::glm5next_mlp::Glm5NextMlpConfig,
     idx: usize,
 ) -> Result<()> {
+    // 2026-10-11: Opt-in (`METRALE_GLM_MTP_DRAFTER_TIERS=1`): the first measurement with the
+    // drafter on the serve's tiers saw p1 fall (0.64-0.70 -> 0.53-0.61), not yet separated from
+    // the device exchange; the drafter stays BF16 until it is.
+    if std::env::var("METRALE_GLM_MTP_DRAFTER_TIERS").as_deref() != Ok("1") {
+        return Ok(());
+    }
     if !dense_tiers::any_below_declared(
         metrale_model_layers::layers::dense_quantization(),
         metrale_model_layers::layers::dsa_quantization(),

@@ -70,6 +70,12 @@ pub(super) fn install_glm_mtp_proposer(
             Ok(head) => {
                 model.set_dflash_proposer(std::sync::Arc::new(head));
                 tracing::info!(target: "metrale_model_engine::factory::build", "GLM-5.3 MTP speculative decoding: ENABLED");
+                // 2026-10-11: The proposer is installed after construction, which built no
+                // batched-verify stash, so `can_batch_verify` refused every MTP batch and each
+                // sequence verified alone at C>=2. A failure keeps the per-sequence verify.
+                if let Err(e) = model.ensure_verify_hidden_stash() {
+                    tracing::warn!(target: "metrale_model_engine::factory::build", "GLM-5.3 MTP: no batched-verify stash ({e:#}); MTP sequences verify one at a time");
+                }
             }
             Err(e) => {
                 tracing::warn!(target: "metrale_model_engine::factory::build", "Failed to build GLM-5.3 MTP proposer: {e:#}. Speculative decoding disabled."

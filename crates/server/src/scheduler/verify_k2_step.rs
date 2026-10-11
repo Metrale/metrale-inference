@@ -242,6 +242,16 @@ pub fn step_verify_k2(
         .tel
         .count_spec_verify("2", if accepted { "accept" } else { "reject" });
     sched.io.tel.spec_verified(1, usize::from(accepted));
+    // 2026-10-11: Width-1 accept telemetry, as `verify_k4_step` records: the per-width
+    // `MTP accept n= k_drafts=` line and the rung's p1 see every serial arm, not only K=4.
+    sched.accept.record(
+        &sched.rung,
+        sched.levers.mtp_accept_debug,
+        1,
+        1,
+        accepted,
+        usize::from(accepted),
+    );
 
     if accepted {
         emit_token(a, drafts[0], verify_lps.first().cloned(), sched);
@@ -350,21 +360,10 @@ pub fn step_verify_k2(
             tracing::error!("trim_proposer_state: {e:#}");
         }
         sched.io.tel.mark(Phase::TrimProposer, t_trim);
-        // 2026-09-25: reject: commit row 0 only (the state after
-        // `last_token`); the draft row is discarded.
-        let t_commit = sched.io.clock.now();
-        if let Err(e) = model.commit_accepted_prefix(&mut a.seq, 1, 2) {
-            tracing::error!("commit_accepted_prefix (reject): {e:#}");
-            super::lifecycle::fail_sequence(a, format!("commit_accepted_prefix (reject): {e:#}"));
-            // 2026-10-11: The fused workers wait for a verdict; the failed sequence's says no
-            // propose.
-            if fused {
-                let _ = send_fused_verdict(model, a, false, v0, num_drafts);
-            }
-            return;
-        }
-        sched.io.tel.mark(Phase::Commit, t_commit);
 
+        // 2026-10-11: The fused verdict goes out before the commit below. The commit's SSM
+        // rollback is a 49 MB device copy on GB10 (TP=2), and no kernel starts while it runs, so
+        // a verdict sent after it reached the workers ~0.43 ms late on every reject (spec1011b).
         emit_token(a, v0, verify_lps.first().cloned(), sched);
         let fused_drafts = if fused {
             match send_fused_verdict(model, a, false, v0, num_drafts) {
@@ -374,6 +373,18 @@ pub fn step_verify_k2(
         } else {
             0
         };
+
+        // 2026-09-25: reject: commit row 0 only (the state after
+        // `last_token`); the draft row is discarded.
+        let t_commit = sched.io.clock.now();
+        if let Err(e) = model.commit_accepted_prefix(&mut a.seq, 1, 2) {
+            tracing::error!("commit_accepted_prefix (reject): {e:#}");
+            super::lifecycle::fail_sequence(a, format!("commit_accepted_prefix (reject): {e:#}"));
+            // 2026-10-11: The workers were told to propose; pair their drafter collectives.
+            pair_fused_propose(model, v0, a, fused_drafts);
+            return;
+        }
+        sched.io.tel.mark(Phase::Commit, t_commit);
         if a.finished {
             return;
         }

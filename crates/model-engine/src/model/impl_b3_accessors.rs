@@ -56,7 +56,7 @@ impl TransformerModel {
         self.verify_hidden_stash = self.gpu.alloc(
             metrale_model_layers::layer::VERIFY_WY_TABLE_SEQS * self.config.hidden_size * 2,
         )?;
-        tracing::info!("DFlash: batched-verify hidden stash allocated for the installed drafter");
+        tracing::info!("batched-verify hidden stash allocated for the installed drafter");
         Ok(())
     }
 

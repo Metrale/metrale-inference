@@ -28,9 +28,10 @@ pub use k2_wire::{
 };
 pub use kgamma_wire::{EP_CMD_VERIFY_KGAMMA, KGAMMA_MAX_ROWS, kgamma_committed_len, kgamma_width};
 pub use knobs::{
-    EP_CMD_DFLASH_PROPOSE, EP_CMD_MTP_PROPOSE, hidden_fingerprint, mtp_accept_debug,
-    mtp_catchup_enabled, mtp_ep_propose_enabled, mtp_multi_seq_mode, mtp_refeed_accepted_enabled,
-    mtp_refeed_debug, mtp_refeed_shift, shadow_topk,
+    EP_CMD_DFLASH_PROPOSE, EP_CMD_MTP_PROPOSE, MTP_HIDDEN_FROM_STASH, hidden_fingerprint,
+    mtp_accept_debug, mtp_catchup_enabled, mtp_ep_batch_verify_enabled, mtp_ep_propose_enabled,
+    mtp_multi_seq_mode, mtp_refeed_accepted_enabled, mtp_refeed_debug, mtp_refeed_shift,
+    shadow_topk,
 };
 pub use verify_batch_wire::{
     EP_CMD_VERIFY_BATCH, VERIFY_BATCH_MAX_SEQS, verify_batch_failed_verdict, verify_batch_shape,

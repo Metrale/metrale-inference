@@ -390,7 +390,7 @@ fn accepted_prefix(drafts: &[u32], verified: &[u32]) -> usize {
 /// 2026-10-09: Announce a batched verify to the worker ranks: the `(0, cmd)` preamble, `n` and
 /// `k`, the slots, then the sequence-major tokens. Refuses a shape the worker would refuse,
 /// before sending anything.
-fn ep_send_verify_batch(
+pub(super) fn ep_send_verify_batch(
     model: &dyn Model,
     slots: &[u32],
     k: usize,
@@ -413,7 +413,12 @@ fn ep_send_verify_batch(
 
 /// 2026-10-09: After a failed multi-rank batched forward: send the all-zero verdict the
 /// workers wait for, then finish every sequence of the batch with `why`.
-fn ep_fail_verify_batch(model: &dyn Model, batch: &mut [&mut ActiveSeq], n: usize, why: &str) {
+pub(super) fn ep_fail_verify_batch(
+    model: &dyn Model,
+    batch: &mut [&mut ActiveSeq],
+    n: usize,
+    why: &str,
+) {
     let words = metrale_model_layers::speculative::verify_batch_failed_verdict(n);
     if let Err(e) = model.ep_broadcast_tokens(&words) {
         tracing::error!("EP broadcast verify_batch failed verdict: {e:#}");
