@@ -40,6 +40,16 @@ pub fn text(s: &str) -> bool {
     (1..=256).contains(&s.chars().count())
 }
 
+/// 2026-10-11: `model_name`: `^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$`, the route a client
+/// names (mfs DECISIONS PC-R).
+pub fn model_name(s: &str) -> bool {
+    let b = s.as_bytes();
+    (1..=128).contains(&b.len())
+        && b[0].is_ascii_alphanumeric()
+        && b.iter()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b':' | b'/' | b'-'))
+}
+
 /// 2026-10-11: `value`: at most 1024 characters.
 pub fn value(s: &str) -> bool {
     s.chars().count() <= 1024
@@ -117,6 +127,17 @@ mod tests {
         assert!(repository("openai/gpt-oss-20b") && repository("unsloth/gemma-4-26B-A4B-it-GGUF"));
         for bad in ["gemma", "a/b/c", "/b", "a/", "-a/b", "a b/c"] {
             assert!(!repository(bad), "{bad}");
+        }
+        for ok in [
+            "gpt-oss-20b",
+            "nvidia/Qwen3-Next-80B-A3B-Instruct-NVFP4",
+            "m:v1.2_x",
+            &"a".repeat(128),
+        ] {
+            assert!(model_name(ok), "{ok}");
+        }
+        for bad in ["", "gpt oss", "-m", "/m", "m\n", "é", &"a".repeat(129)] {
+            assert!(!model_name(bad), "{bad:?}");
         }
         assert!(timestamp(0) && !timestamp(-1));
         assert_eq!(version(1), Ok(()));

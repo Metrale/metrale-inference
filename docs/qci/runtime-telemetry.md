@@ -68,7 +68,7 @@ written in two places:
 | field | unit / form | provenance |
 |---|---|---|
 | `request_id`, `trace_id` | 32 lower-case hex | from the stamp |
-| `served_model` | the served model name | — |
+| `served_model` | the served model name, a route token `[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}` | a name outside it withholds the record (logged) |
 | `recipe` | SHA-256 hex or `null` | `null`: no launcher passes a recipe digest yet |
 | `runtime_commit` | 40 hex | build-time `METRALE_BUILD_COMMIT` |
 | `outcome` | `completed`, `timeout`, `cancelled`, `{"engine_error": {"error": <kind>}}` | — |
@@ -79,7 +79,7 @@ written in two places:
 | `timings.ttft_ms` | ms | derived: queue + scheduler TTFT |
 | `timings.total_ms` | ms | derived: queue + TTFT + decode, up to the finish frame (serialization after it is not counted) |
 | `timings.tpot_us` | µs | derived: decode / (completion − 1); `absent: not_applicable` below 2 tokens |
-| `energy.millijoules` | mJ | `absent: unsupported`. The response path does not attribute energy to one request; the device-level energy is in `/metrics`. |
+| `energy` | `{millijoules, rail, window_mono_ns}` | `{"absent": "unsupported"}` with no rail. The response path does not attribute energy to one request; the device-level energy is in `/metrics`. |
 | `finished_at_unix_ms` | Unix ms | when the record was written |
 
 When a record is written:

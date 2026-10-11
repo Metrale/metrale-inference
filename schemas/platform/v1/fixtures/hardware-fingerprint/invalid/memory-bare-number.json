@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "hardware_class": "gb10",
+  "accelerators": [
+    {
+      "vendor": "nvidia",
+      "product": "NVIDIA GB10",
+      "architecture": "sm_121",
+      "memory_bytes": {
+        "measured": 128849018880
+      },
+      "count": 1
+    }
+  ],
+  "host": {
+    "cpu_arch": "aarch64",
+    "cpu_model": {
+      "measured": "Grace 20-core"
+    },
+    "memory_bytes": 0,
+    "unified_memory": true,
+    "os_kernel": {
+      "measured": "6.17.0"
+    }
+  },
+  "driver": {
+    "measured": {
+      "name": "nvidia",
+      "version": "580.95.05"
+    }
+  },
+  "toolkit": {
+    "measured": {
+      "name": "cuda",
+      "version": "13.0"
+    }
+  }
+}

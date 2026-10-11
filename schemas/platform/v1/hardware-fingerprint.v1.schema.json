@@ -3,7 +3,7 @@
   "$id": "https://metrale.ai/schemas/platform/v1/hardware-fingerprint.v1.schema.json",
   "$comment": "SPDX-License-Identifier: Apache-2.0",
   "title": "HardwareFingerprint",
-  "description": "What a receipt's hardware key means: accelerators, host, driver and toolkit; no time, serial or hostname, so its canonical digest is stable.",
+  "description": "What a receipt's hardware key means: accelerators, host, driver and toolkit; no time, serial or hostname, so its canonical digest is stable. A quantity the probe could not read is absent with its reason, never zero; what identifies the hardware is required.",
   "type": "object",
   "properties": {
     "version": {
@@ -32,9 +32,7 @@
             "$ref": "common.v1.schema.json#/$defs/text"
           },
           "memory_bytes": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 18446744073709551615
+            "$ref": "common.v1.schema.json#/$defs/field_bytes"
           },
           "count": {
             "$ref": "common.v1.schema.json#/$defs/count"
@@ -61,18 +59,16 @@
           ]
         },
         "cpu_model": {
-          "$ref": "common.v1.schema.json#/$defs/text"
+          "$ref": "common.v1.schema.json#/$defs/field_text"
         },
         "memory_bytes": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 18446744073709551615
+          "$ref": "common.v1.schema.json#/$defs/field_bytes"
         },
         "unified_memory": {
           "type": "boolean"
         },
         "os_kernel": {
-          "$ref": "common.v1.schema.json#/$defs/text"
+          "$ref": "common.v1.schema.json#/$defs/field_text"
         }
       },
       "required": [
@@ -85,10 +81,10 @@
       "additionalProperties": false
     },
     "driver": {
-      "$ref": "common.v1.schema.json#/$defs/software_version"
+      "$ref": "common.v1.schema.json#/$defs/field_software_version"
     },
     "toolkit": {
-      "$ref": "common.v1.schema.json#/$defs/software_version"
+      "$ref": "common.v1.schema.json#/$defs/field_software_version"
     }
   },
   "required": [

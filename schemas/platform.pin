@@ -1,6 +1,7 @@
 # 2026-10-11: Pin of the vendored platform-contract bundle in `schemas/platform/` (investor-mvp #41).
 # The copy is Metrale/mfs `schemas/platform/` at `mfs_commit`, unchanged. `sha256sums` is the
 # SHA-256 of its `SHA256SUMS`. `crates/qci-dump/tests/platform_contracts.rs` checks both, and
-# runs the runtime's binding over the bundle's fixtures. Update the copy and this pin together.
-mfs_commit = "9fa8a0bee2c512f1dd9ed34f99f04541bc1c6b8f"
-sha256sums = "6de004818098035e1f3854c111c2b325734cc303e03e5cdad6aa315034f9fa16"
+# runs the runtime's binding over the bundle's fixtures. Refresh both with
+# `bash scripts/vendor-platform-schemas.sh <mfs-clone> <commit>`; never edit the copy by hand.
+mfs_commit = "3d9eb413739de1dff27bdea632f915058c778899"
+sha256sums = "b1e190c9854f1a4a7947efcb167667a45664775260dd9b9b16180e2a183d15b3"

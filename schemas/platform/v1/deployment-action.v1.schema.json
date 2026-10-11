@@ -30,8 +30,7 @@
     "action": {
       "enum": [
         "apply",
-        "stop",
-        "drain"
+        "stop"
       ]
     },
     "issued_at_unix_ms": {

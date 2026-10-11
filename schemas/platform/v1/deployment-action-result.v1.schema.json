@@ -37,7 +37,9 @@
                     "receipt_missing",
                     "hardware_incompatible",
                     "not_here",
-                    "busy"
+                    "busy",
+                    "cordoned",
+                    "draining"
                   ]
                 }
               },
@@ -49,6 +51,32 @@
           },
           "required": [
             "refused"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "failed": {
+              "type": "object",
+              "properties": {
+                "reason": {
+                  "enum": [
+                    "image_unavailable",
+                    "launch_failed",
+                    "not_ready",
+                    "exited"
+                  ]
+                }
+              },
+              "required": [
+                "reason"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "failed"
           ],
           "additionalProperties": false
         }

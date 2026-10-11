@@ -153,7 +153,8 @@ fn the_wire_record_has_every_field_and_writes_null_for_no_recipe() {
     assert_eq!(v["outcome"], "completed");
     assert_eq!(v["tokens"]["reasoning"]["absent"], "unsupported");
     assert_eq!(v["timings"]["queue_ms"]["measured"], 1);
-    assert_eq!(v["energy"]["millijoules"]["absent"], "unsupported");
+    // 2026-10-11: An absent figure names no rail (mfs DECISIONS PC-S).
+    assert_eq!(v["energy"], serde_json::json!({"absent": "unsupported"}));
     let back: InferenceUsage = serde_json::from_value(v).unwrap();
     assert_eq!(back, record(Outcome::Completed));
 }
@@ -168,6 +169,26 @@ fn an_engine_error_is_tagged_with_its_closed_kind() {
 }
 
 #[test]
+fn a_figure_carries_its_rail_and_window_and_a_rail_without_one_is_refused() {
+    let mut r = record(Outcome::Completed);
+    r.energy = Field::Derived(RequestEnergy {
+        millijoules: 190,
+        rail: EnergyRail::GpuRail,
+        window_mono_ns: Field::Derived((100, 300)),
+    });
+    let v = serde_json::to_value(&r).unwrap();
+    assert_eq!(
+        v["energy"],
+        serde_json::json!({"derived": {"millijoules": 190, "rail": "gpu_rail",
+                                       "window_mono_ns": {"derived": [100, 300]}}})
+    );
+    assert_eq!(serde_json::from_value::<InferenceUsage>(v).unwrap(), r);
+    let mut v = serde_json::to_value(record(Outcome::Completed)).unwrap();
+    v["energy"]["rail"] = serde_json::json!("gpu_rail");
+    assert!(serde_json::from_value::<InferenceUsage>(v).is_err());
+}
+
+#[test]
 fn the_record_rules_refuse_a_zero_trace_and_an_empty_model() {
     assert_eq!(record(Outcome::Completed).validate(), Ok(()));
     let mut r = record(Outcome::Completed);
@@ -175,6 +196,10 @@ fn the_record_rules_refuse_a_zero_trace_and_an_empty_model() {
     assert_eq!(r.validate(), Err(Violation("/trace_id".into())));
     let mut r = record(Outcome::Completed);
     r.served_model.clear();
+    assert_eq!(r.validate(), Err(Violation("/served_model".into())));
+    // 2026-10-11: A served model name is a route token, not free text (PC-R).
+    let mut r = record(Outcome::Completed);
+    r.served_model = "my model".into();
     assert_eq!(r.validate(), Err(Violation("/served_model".into())));
 }
 

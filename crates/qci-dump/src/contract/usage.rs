@@ -134,26 +134,15 @@ pub enum EnergyRail {
     Board,
 }
 
-/// 2026-10-11: Energy attributed to one request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// 2026-10-11: Energy attributed to one request: the figure, the rail it was read on and
+/// the window it covers. A record carries it as `Field<RequestEnergy>`, so an absent figure
+/// names no rail (mfs DECISIONS PC-S).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Energy {
-    pub millijoules: Field<u64>,
+pub struct RequestEnergy {
+    pub millijoules: u64,
     pub rail: EnergyRail,
     pub window_mono_ns: Field<(u64, u64)>,
-}
-
-impl Energy {
-    /// 2026-10-11: The runtime does not attribute energy to one request on its response
-    /// path. The schema requires a rail even when the figure is absent; `gpu_rail` names
-    /// the rail the device layer would read.
-    pub fn not_attributed() -> Self {
-        Self {
-            millijoules: Field::Absent(AbsentReason::Unsupported),
-            rail: EnergyRail::GpuRail,
-            window_mono_ns: Field::Absent(AbsentReason::Unsupported),
-        }
-    }
 }
 
 /// 2026-10-11: Timings on the runtime's clock, anchored at receipt.
@@ -242,7 +231,7 @@ pub struct InferenceUsage {
     pub outcome: Outcome,
     pub tokens: Tokens,
     pub timings: RuntimeTimings,
-    pub energy: Energy,
+    pub energy: Field<RequestEnergy>,
     pub finished_at_unix_ms: i64,
 }
 
@@ -258,7 +247,7 @@ impl InferenceUsage {
     pub fn validate(&self) -> Result<(), Violation> {
         rules::version(self.version)?;
         require(!self.trace_id.is_zero(), "/trace_id")?;
-        require(rules::text(&self.served_model), "/served_model")?;
+        require(rules::model_name(&self.served_model), "/served_model")?;
         require(
             rules::timestamp(self.timings.received_at_unix_ms),
             "/timings/received_at_unix_ms",
@@ -289,7 +278,7 @@ impl InferenceUsage {
             outcome,
             tokens,
             timings,
-            energy: Energy::not_attributed(),
+            energy: Field::Absent(AbsentReason::Unsupported),
             finished_at_unix_ms,
         }
     }

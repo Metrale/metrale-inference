@@ -136,7 +136,9 @@
       "$ref": "#/$defs/dns_label"
     },
     "model_name": {
-      "$ref": "#/$defs/text"
+      "description": "A served model name: the `model` string a client sends and the Gateway routes on. A route, never an identity (the release, recipe and model-revision digests identify what is served).",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$"
     },
     "absent_reason": {
       "enum": [
@@ -387,6 +389,52 @@
         }
       ]
     },
+    "field_bytes": {
+      "description": "A byte count of at least one, with its provenance.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "measured": {
+              "$ref": "#/$defs/bytes"
+            }
+          },
+          "required": [
+            "measured"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "derived": {
+              "$ref": "#/$defs/bytes"
+            }
+          },
+          "required": [
+            "derived"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "absent": {
+              "$ref": "common.v1.schema.json#/$defs/absent_reason"
+            }
+          },
+          "required": [
+            "absent"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "bytes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 18446744073709551615
+    },
     "field_window": {
       "oneOf": [
         {
@@ -494,6 +542,46 @@
         "version"
       ],
       "additionalProperties": false
+    },
+    "field_software_version": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "measured": {
+              "$ref": "#/$defs/software_version"
+            }
+          },
+          "required": [
+            "measured"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "derived": {
+              "$ref": "#/$defs/software_version"
+            }
+          },
+          "required": [
+            "derived"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "absent": {
+              "$ref": "common.v1.schema.json#/$defs/absent_reason"
+            }
+          },
+          "required": [
+            "absent"
+          ],
+          "additionalProperties": false
+        }
+      ]
     },
     "oci_image": {
       "type": "object",
@@ -676,11 +764,12 @@
       ],
       "additionalProperties": false
     },
-    "energy": {
+    "rail_energy": {
+      "description": "Energy attributed to one request: the figure, the rail it was read on and the integration window. Present only with a figure.",
       "type": "object",
       "properties": {
         "millijoules": {
-          "$ref": "#/$defs/field_u64"
+          "$ref": "#/$defs/u64"
         },
         "rail": {
           "enum": [
@@ -699,6 +788,47 @@
         "window_mono_ns"
       ],
       "additionalProperties": false
+    },
+    "energy": {
+      "description": "A request's energy: `measured` or `derived` with its rail, or `absent` with a reason and no rail.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "measured": {
+              "$ref": "#/$defs/rail_energy"
+            }
+          },
+          "required": [
+            "measured"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "derived": {
+              "$ref": "#/$defs/rail_energy"
+            }
+          },
+          "required": [
+            "derived"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "absent": {
+              "$ref": "common.v1.schema.json#/$defs/absent_reason"
+            }
+          },
+          "required": [
+            "absent"
+          ],
+          "additionalProperties": false
+        }
+      ]
     },
     "engine_error_kind": {
       "enum": [
@@ -749,6 +879,25 @@
           "additionalProperties": false
         }
       ]
+    },
+    "hybrid_signature": {
+      "description": "A hybrid signature: Ed25519 (64 bytes) and ML-DSA-65 (3309 bytes), both over the same signed string, as lower- or upper-case hex.",
+      "type": "object",
+      "properties": {
+        "ed25519": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{128}$"
+        },
+        "ml_dsa_65": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{6618}$"
+        }
+      },
+      "required": [
+        "ed25519",
+        "ml_dsa_65"
+      ],
+      "additionalProperties": false
     }
   }
 }

@@ -10,11 +10,12 @@ use crate::contract::receipt::Verdict;
 const FINGERPRINT: &str = r#"{
   "version": 1, "hardware_class": "strix-halo",
   "accelerators": [{"vendor": "amd", "product": "Radeon 8060S", "architecture": "gfx1151",
-                    "memory_bytes": 103079215104, "count": 1}],
-  "host": {"cpu_arch": "x86_64", "cpu_model": "Ryzen AI Max+ 395", "memory_bytes": 137438953472,
-           "unified_memory": true, "os_kernel": "6.17.0"},
-  "driver": {"name": "amdgpu", "version": "6.17.0"},
-  "toolkit": {"name": "rocm", "version": "7.0"}
+                    "memory_bytes": {"measured": 103079215104}, "count": 1}],
+  "host": {"cpu_arch": "x86_64", "cpu_model": {"measured": "Ryzen AI Max+ 395"},
+           "memory_bytes": {"measured": 137438953472}, "unified_memory": true,
+           "os_kernel": {"measured": "6.17.0"}},
+  "driver": {"measured": {"name": "amdgpu", "version": "6.17.0"}},
+  "toolkit": {"measured": {"name": "rocm", "version": "7.0"}}
 }"#;
 
 fn spec() -> Value {
