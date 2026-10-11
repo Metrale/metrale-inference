@@ -306,6 +306,8 @@ impl TransformerModel {
             .copy_d2d_async(src, self.mtp_hidden_save, h * fp32, stream)?;
         self.last_mtp_hidden_idx
             .store(token_idx, std::sync::atomic::Ordering::Relaxed);
+        self.mtp_hidden_live
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
@@ -369,6 +371,8 @@ impl TransformerModel {
             idx | metrale_model_layers::speculative::MTP_HIDDEN_FROM_STASH as usize,
             std::sync::atomic::Ordering::Relaxed,
         );
+        self.mtp_hidden_live
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
