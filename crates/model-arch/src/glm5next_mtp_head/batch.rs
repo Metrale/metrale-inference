@@ -292,14 +292,10 @@ impl Glm5NextMtpHead {
                 };
                 let row = sc.concat.offset(i * 2 * h * 2);
                 self.norm(gpu, embed_row, self.module.enorm, row, h, stream)?;
-                self.norm(
-                    gpu,
-                    hidden_in,
-                    self.module.hnorm,
-                    row.offset(h * 2),
-                    h,
-                    stream,
-                )?;
+                // 2026-10-11: As `propose`: draft 0 reads a target row (the target's final norm
+                // under `METRALE_MTP_TARGET_POSTNORM`, staged in row i of `x`, which `eh_proj`
+                // writes next), later drafts the drafter's own output.
+                self.hidden_half(ctx, hidden_in, d == 0, sc.x.offset(i * h * 2), row, stream)?;
             }
             // 2026-10-11: Every rank computes all of `eh_proj`'s rows here (no
             // `METRALE_GLM_MTP_EH_TP` slice): the same rows either way.

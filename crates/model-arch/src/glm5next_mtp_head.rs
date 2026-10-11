@@ -9,6 +9,8 @@
 //!
 //! ```text
 //! x = eh_proj( concat( enorm(embed[token]), hnorm(target_hidden) ) )   [1, 2H] -> [1, H]
+//!     target_hidden: hc_mean(streams), or under `METRALE_MTP_TARGET_POSTNORM=1` its target
+//!     final norm, model.norm(hc_mean(streams)), the row vLLM's GLM MTP layer is fed
 //! x = layers.{num_hidden_layers}(x)      DSA + routed MoE, plain residual (no mHC)
 //! logits = lm_head( shared_head.norm(x) )              the target's own head
 //! draft  = argmax(logits)
@@ -37,6 +39,7 @@ mod batch;
 mod batch_check;
 mod graph;
 mod head_xchg;
+mod hidden_half;
 mod init;
 mod kv_pool;
 mod proposer;
@@ -135,6 +138,10 @@ pub struct Glm5NextMtpHead {
     /// `METRALE_GLM_MTP_XCHG_DEVICE=1` and the build has them: the vocab-sharded head's exchange
     /// on the device (`exchange_on_device`). `None` keeps the host exchange.
     xchg_k: Option<(KernelHandle, KernelHandle)>,
+    /// 2026-10-11: The target's own final norm (`model.language_model.norm.weight`, BF16
+    /// `[hidden]`, the pointer its `final_norm_apply` reads), applied to target-hidden rows
+    /// under `ModelLevers::mtp_target_postnorm` (`hidden_half`).
+    target_final_norm: DevicePtr,
 }
 
 /// 2026-09-25: Rows the GLM drafter can ever be asked for: the served context, clamped to
@@ -241,6 +248,9 @@ impl Glm5NextMtpHead {
         &self,
         embed_src: DevicePtr,
         hidden_in: DevicePtr,
+        // 2026-10-11: `hidden_in` is a target row (the first draft), not the drafter's own
+        // chain output (`hidden_half`).
+        target_row: bool,
         st: &mut Glm5NextMtpProposerState,
         ctx: &ForwardContext,
         stream: u64,
@@ -248,14 +258,8 @@ impl Glm5NextMtpHead {
         let gpu = ctx.gpu;
         let h = self.hidden;
         self.norm(gpu, embed_src, self.module.enorm, st.concat, h, stream)?;
-        self.norm(
-            gpu,
-            hidden_in,
-            self.module.hnorm,
-            st.concat.offset(h * 2),
-            h,
-            stream,
-        )?;
+        // 2026-10-11: `st.x` is free until `eh_proj` writes it, so it stages the target norm.
+        self.hidden_half(ctx, hidden_in, target_row, st.x, st.concat, stream)?;
         self.eh_proj(gpu, st, ctx, stream)?;
 
         // 2026-09-25: The block writes its output back over `st.x` (plain residual, in place).
@@ -409,7 +413,7 @@ impl Glm5NextMtpHead {
         if graph::eligible(self, st, first) {
             self.forward_graphed(embed_row, hidden_in, st, ctx, stream)?;
         } else {
-            self.forward_body(embed_row, hidden_in, st, ctx, stream)?;
+            self.forward_body(embed_row, hidden_in, first, st, ctx, stream)?;
         }
         // 2026-09-25: Timing arm `METRALE_GLM_MTP_SKIP=head`: the head is skipped and the
         // draft is token 0, so `propose` times the block alone. `=block` skips the block instead.

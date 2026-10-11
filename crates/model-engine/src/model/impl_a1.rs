@@ -458,6 +458,7 @@ impl TransformerModel {
             device_argmax,
             self_speculative,
             last_mtp_hidden_idx: std::sync::atomic::AtomicUsize::new(0),
+            mtp_hidden_live: std::sync::atomic::AtomicBool::new(false),
             vision_encoder,
             vision_embed_patches: Mutex::new(0),
             vision_image_grids: Mutex::new(Vec::new()),

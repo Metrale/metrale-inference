@@ -87,6 +87,8 @@ impl Glm5NextMtpHead {
         module: Glm5NextMtpModule,
         embed_tokens: DenseWeight,
         lm_head: DenseWeight,
+        // 2026-10-11: The target's final norm weight (`hidden_half`).
+        target_final_norm: DenseWeight,
         config: &metrale_config::ModelConfig,
         gpu: &dyn GpuBackend,
         max_seq_len: usize,
@@ -196,6 +198,7 @@ impl Glm5NextMtpHead {
             head_fp8,
             gemv_fp8w_k,
             xchg_k: xchg_kernels(gpu),
+            target_final_norm: target_final_norm.weight,
         })
     }
 }

@@ -70,14 +70,9 @@ impl Glm5NextMtpHead {
                 .weight
                 .offset(tokens[r + 1] as usize * h * 2);
             self.norm(gpu, embed_row, self.module.enorm, *concat, h, stream)?;
-            self.norm(
-                gpu,
-                hiddens.offset(r * h * 2),
-                self.module.hnorm,
-                concat.offset(h * 2),
-                h,
-                stream,
-            )?;
+            // 2026-10-11: A context row is always a target row; `x` stages its target norm
+            // before the `eh_proj` below writes it.
+            self.hidden_half(ctx, hiddens.offset(r * h * 2), true, *x, *concat, stream)?;
             ops::dense_gemv(
                 gpu,
                 self.gemv_k,
