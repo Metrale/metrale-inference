@@ -79,7 +79,14 @@ impl TransformerModel {
             )?;
             // 2026-10-10: The drafter's own exchange carries every rank's readiness
             // (`dflash_head/tp_propose.rs`).
-            return self.run_mtp_propose_inner(token, position, num_drafts, seq, grammar_bitmask);
+            return self.run_mtp_propose_inner(
+                token,
+                position,
+                num_drafts,
+                seq,
+                grammar_bitmask,
+                false,
+            );
         } else if protocol_active && self.proposer.as_ref().is_some_and(|p| p.needs_comm()) {
             self.ep_broadcast_cmd_for_seq(
                 seq.slot_idx as u32,
@@ -98,7 +105,7 @@ impl TransformerModel {
                     .load(std::sync::atomic::Ordering::Relaxed) as u32,
             )?;
         }
-        self.run_mtp_propose_inner(token, position, num_drafts, seq, grammar_bitmask)
+        self.run_mtp_propose_inner(token, position, num_drafts, seq, grammar_bitmask, false)
     }
 
     /// 2026-09-25: The `ForwardContext` of the batched MTP propose and the batched catch-up.

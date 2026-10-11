@@ -42,6 +42,7 @@ pub mod limits;
 mod mtp_accept_debug;
 mod mtp_bootstrap_step;
 mod mtp_dcut;
+mod mtp_device_draft;
 mod mtp_step;
 pub(crate) mod mtp_timing;
 mod phase_continue_prefills;

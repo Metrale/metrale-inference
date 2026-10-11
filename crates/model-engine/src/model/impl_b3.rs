@@ -43,6 +43,8 @@ impl TransformerModel {
         num_drafts: usize,
         seq: &mut SequenceState,
         grammar_bitmask: Option<&[i32]>,
+        // 2026-10-11: Leave a lone draft on the device (`device_step.rs`).
+        device: bool,
     ) -> Result<Vec<u32>> {
         let proposer = match &self.proposer {
             Some(p) => p.as_ref(),
@@ -75,7 +77,6 @@ impl TransformerModel {
             }
         }
         let stream = self.gpu.default_stream();
-        let draft_embed_target = None;
         // 2026-09-25: The drafter gets the communicator only when its
         // `needs_comm()` reports a block sharded across ranks. See
         // `DraftProposer::needs_comm` for which drafters that is, and why the
@@ -230,29 +231,17 @@ impl TransformerModel {
                 }
             }
         }
-        // 2026-10-11: `METRALE_MTP_ACCEPTED_ROWS`: the rows of accepted drafts, from the verify
-        // forward's live rows, before this propose writes its own (`accepted_rows.rs`).
-        if self.levers.mtp_accepted_rows {
-            self.feed_accepted_rows(
-                proposer,
-                &seq.tokens,
-                position,
-                prop_state.as_mut(),
-                &ctx,
-                stream,
-            );
-        }
-        proposer.propose(
+        self.finish_mtp_propose(
+            proposer,
             token,
-            self.mtp_hidden_save,
             position,
             num_drafts,
+            grammar_bitmask,
+            device,
+            &seq.tokens,
             prop_state.as_mut(),
             &ctx,
             stream,
-            draft_embed_target,
-            grammar_bitmask,
-            self.dflash_hidden_save,
         )
     }
 

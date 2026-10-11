@@ -215,6 +215,27 @@ pub trait ModelDraft {
         anyhow::bail!("this model has no fused K=2 wire")
     }
 
+    /// 2026-10-11: [`Self::run_mtp_propose_announced`] that may leave a lone draft on the device
+    /// (`METRALE_GLM_MTP_DEVICE_STEP`): the drafts are then `[DEVICE_DRAFT]`, and the next
+    /// verify of `seq` reads row 1 from the device, or the draft is read back first with
+    /// [`Self::read_device_draft`]. Default: the plain announced propose.
+    fn run_mtp_propose_announced_device(
+        &self,
+        token: u32,
+        position: usize,
+        num_drafts: usize,
+        seq: &mut SequenceState,
+        grammar_bitmask: Option<&[i32]>,
+    ) -> Result<Vec<u32>> {
+        self.run_mtp_propose_announced(token, position, num_drafts, seq, grammar_bitmask)
+    }
+
+    /// 2026-10-11: Read back the draft a device propose left for `seq`. Default: an error, since
+    /// only a model whose device propose returns `DEVICE_DRAFT` is asked.
+    fn read_device_draft(&self, _seq: &mut SequenceState) -> Result<u32> {
+        anyhow::bail!("this model leaves no draft on the device")
+    }
+
     /// 2026-09-25: The draft id the proposer left on the device. Default `0`.
     fn read_deferred_draft_token(&self) -> Result<u32> {
         Ok(0)

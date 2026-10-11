@@ -29,6 +29,7 @@ use super::super::block_mgmt::{
 use super::super::ssm_pool::SsmStatePool;
 use super::super::ssm_snapshot::SsmSnapshotPool;
 use super::super::types::{PinnedMetaStaging, TransformerModel};
+use super::device_step::Stage;
 use crate::traits::{ChunkedPrefillPageMetadata, Model, SequenceState};
 use metrale_model_layers::layer::{
     AttnMetadataDev, ForwardContext, GdnPrefillBuffers, LayerState, SsmLayerState, TransformerLayer,
@@ -61,7 +62,12 @@ impl TransformerModel {
 
         // 2026-09-25: Everything up to the graph varies per step and is not captured.
         self.embed(tokens[0], hidden, stream)?;
-        self.embed(tokens[1], hidden.offset(h * fp32), stream)?;
+        // 2026-10-11: `METRALE_GLM_MTP_DEVICE_STEP`: a draft still on the device is gathered after
+        // the token upload below (`verify_device_row`).
+        let device_draft = tokens[1] == metrale_model_layers::speculative::DEVICE_DRAFT;
+        if !device_draft {
+            self.embed(tokens[1], hidden.offset(h * fp32), stream)?;
+        }
 
         let bs = kv_cache.block_size();
         for t in 0..k {
@@ -90,7 +96,7 @@ impl TransformerModel {
         // valid), so the `&[u8]` view is sound, and `positions` is live for
         // the whole function so the borrow outlives the H2D enqueue below.
         let pos_bytes = unsafe { std::slice::from_raw_parts(positions.as_ptr() as *const u8, 8) };
-        self.gpu.copy_h2d_async(pos_bytes, meta_base, stream)?;
+        self.k2_upload(device_draft, Stage::Positions, pos_bytes, meta_base, stream)?;
 
         let mut slots = [0i64; 2];
         for t in 0..k {
@@ -113,16 +119,26 @@ impl TransformerModel {
         // declaration and then overwritten by the `for t in 0..k` loop (`k == 2`). Its size
         // is 2 * 8 = 16, exactly the byte length requested; `i64` is POD.
         let slot_bytes = unsafe { std::slice::from_raw_parts(slots.as_ptr() as *const u8, 16) };
-        self.gpu
-            .copy_h2d_async(slot_bytes, meta_base.offset(256), stream)?;
+        self.k2_upload(
+            device_draft,
+            Stage::Slots,
+            slot_bytes,
+            meta_base.offset(256),
+            stream,
+        )?;
 
         let seq_lens = [(seq.seq_len + 1) as i32, (seq.seq_len + 2) as i32];
         // 2026-09-25: SAFETY: `seq_lens` is the `[i32; 2]` literal on the line above, so
         // its size is 2 * 4 = 8, exactly the byte length requested. `i32` is
         // POD and the local outlives this borrow.
         let sl_bytes = unsafe { std::slice::from_raw_parts(seq_lens.as_ptr() as *const u8, 8) };
-        self.gpu
-            .copy_h2d_async(sl_bytes, meta_base.offset(512), stream)?;
+        self.k2_upload(
+            device_draft,
+            Stage::SeqLens,
+            sl_bytes,
+            meta_base.offset(512),
+            stream,
+        )?;
 
         // 2026-09-25: The block table repeats the sequence's table once per row.
         let mb = max_blocks as usize;
@@ -149,8 +165,13 @@ impl TransformerModel {
         // every byte read is initialised even when `block_table.len() < mb`.
         let bt_bytes =
             unsafe { std::slice::from_raw_parts(bt_buf.as_ptr() as *const u8, needed * 4) };
-        self.gpu
-            .copy_h2d_async(bt_bytes, meta_base.offset(768), stream)?;
+        self.k2_upload(
+            device_draft,
+            Stage::BlockTable,
+            bt_bytes,
+            meta_base.offset(768),
+            stream,
+        )?;
 
         // 2026-09-25: Request-scoped LoRA routing: one adapter for all K rows, as a [K]
         // buffer at +128, which fits below the slots at +256 for K <= 32. It is uploaded
@@ -215,8 +236,16 @@ impl TransformerModel {
         // 2026-09-25: Hash-routed MoE layers pick experts by token id (`tid2eid`), so the
         // verify tokens go to the fixed `token_ids` buffer before capture, as in `decode`.
         let tid_bytes: Vec<u8> = tokens.iter().flat_map(|t| t.to_le_bytes()).collect();
-        self.gpu
-            .copy_h2d_async(&tid_bytes, self.buffers.token_ids(), stream)?;
+        self.k2_upload(
+            device_draft,
+            Stage::TokenIds,
+            &tid_bytes,
+            self.buffers.token_ids(),
+            stream,
+        )?;
+        if device_draft {
+            self.verify_device_row(seq, hidden.offset(h * fp32), stream)?;
+        }
 
         let ctx = ForwardContext {
             buffers: &self.buffers,
@@ -431,8 +460,13 @@ impl TransformerModel {
 
         // 2026-09-25: All K tokens, including `tokens[0]`, are appended and `seq_len` advances
         // by K: the scheduler passes `[last_token, draft]`, and `last_token` is not yet in
-        // `seq.tokens`.
-        for &t in tokens {
+        // `seq.tokens`. 2026-10-11: A device draft is recorded as the id row 1 verified.
+        let row1 = if device_draft {
+            self.verified_device_draft()?
+        } else {
+            tokens[1]
+        };
+        for t in [tokens[0], row1] {
             seq.tokens.push(t);
         }
         seq.seq_len += k;

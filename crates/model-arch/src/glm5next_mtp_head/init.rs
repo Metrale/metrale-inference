@@ -168,6 +168,17 @@ impl Glm5NextMtpHead {
             }
         };
 
+        // 2026-10-11: The feed levers this drafter reads, and every path that applies them; each
+        // path logs its first application (`hidden_half::note_applied`).
+        let lv = metrale_model_layers::layers::ops::ModelLevers::get();
+        tracing::info!(
+            "GLM MTP feed: target_postnorm={} accepted_rows={} zero_pos0={} (applied in: propose \
+             eager + drafter graph, batched propose eager + graph, context and catch-up rows; \
+             accepted rows: single-sequence propose and batched-verify catch-up)",
+            lv.mtp_target_postnorm,
+            lv.mtp_accepted_rows,
+            lv.mtp_zero_pos0,
+        );
         Ok(Self {
             module,
             embed_tokens,

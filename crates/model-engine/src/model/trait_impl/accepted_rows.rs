@@ -104,7 +104,16 @@ impl TransformerModel {
             ctx,
             stream,
         ) {
-            Ok(w) if w == plan.rows => {}
+            Ok(w) if w == plan.rows => {
+                static LOGGED: std::sync::Once = std::sync::Once::new();
+                LOGGED.call_once(|| {
+                    tracing::info!(
+                        "GLM MTP feed: ACCEPTED_ROWS applied (single-sequence propose, first at \
+                         key {})",
+                        plan.first_key
+                    )
+                });
+            }
             Ok(w) => tracing::debug!("MTP accepted rows: wrote {w}/{} ({plan:?})", plan.rows),
             Err(e) => tracing::warn!("MTP accepted rows: feed failed ({e:#}); drafter unchanged"),
         }

@@ -37,6 +37,7 @@ mod decode_b2;
 pub(in crate::model) mod decode_checkpoint;
 pub(in crate::model) mod decode_fed_ep;
 mod decode_graph_key;
+pub(crate) mod device_step;
 mod slot_graph_key;
 pub(crate) use slot_graph_key::SlotGraphKey;
 mod decode_multi_seq_gate;

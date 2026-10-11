@@ -41,6 +41,14 @@ pub fn step_mtp(
     } else {
         num_drafts
     };
+    // 2026-10-11: A draft left on the device is read back unless this step verifies it from
+    // there (`mtp_device_draft`).
+    super::mtp_device_draft::resolve_device_drafts(
+        model,
+        active,
+        sched.prompt_lookup.is_some(),
+        dflash_verify_raw_argmax,
+    );
     let mut bootstrap_idxs: Vec<usize> = Vec::new();
     let mut verify_idxs: Vec<usize> = Vec::new();
     for (i, a) in active.iter().enumerate() {

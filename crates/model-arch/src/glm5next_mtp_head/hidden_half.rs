@@ -22,6 +22,25 @@
 
 use super::*;
 
+/// 2026-10-11: Log, once per call site, that a feed lever changed a row there: the proof that the
+/// lever reached that path (eager propose, graph capture, batched propose, context rows). A
+/// graph replays what its capture logged.
+#[track_caller]
+pub(super) fn note_applied(lever: &'static str) {
+    static SEEN: parking_lot::Mutex<Vec<(&'static str, u32)>> = parking_lot::Mutex::new(Vec::new());
+    let at = std::panic::Location::caller();
+    let key = (at.file(), at.line());
+    let mut seen = SEEN.lock();
+    if !seen.contains(&key) {
+        seen.push(key);
+        tracing::info!(
+            "GLM MTP feed: {lever} applied at {}:{}",
+            at.file(),
+            at.line()
+        );
+    }
+}
+
 /// 2026-10-11: Whether pair key `key`'s embedding half is zero instead of `enorm(embed)`
 /// (`ModelLevers::mtp_zero_pos0`). vLLM's GLM MTP layer always zeroes the embedding of the row at
 /// position 0 (`fused_eh_norm`: `where(pos == 0, 0, embeds)`), and that row is pair key 0:
@@ -87,6 +106,7 @@ pub(crate) fn launch_hidden_half(
 
 impl Glm5NextMtpHead {
     /// 2026-10-11: `concat[0..h] = enorm(embed)`, or zero for `None` (`zeroes_embedding`).
+    #[track_caller]
     pub(super) fn embed_half(
         &self,
         gpu: &dyn GpuBackend,
@@ -96,12 +116,16 @@ impl Glm5NextMtpHead {
     ) -> Result<()> {
         match embed {
             Some(e) => self.norm(gpu, e, self.module.enorm, concat, self.hidden, stream),
-            None => gpu.memset_async(concat, 0, self.hidden * 2, stream),
+            None => {
+                note_applied("ZERO_POS0");
+                gpu.memset_async(concat, 0, self.hidden * 2, stream)
+            }
         }
     }
 
     /// 2026-10-11: `concat[h..2h] = hnorm(row)`, or `hnorm(target_final_norm(row))` for a target
     /// row under `ModelLevers::mtp_target_postnorm` (`METRALE_MTP_TARGET_POSTNORM=1`).
+    #[track_caller]
     pub(super) fn hidden_half(
         &self,
         ctx: &ForwardContext,
@@ -113,6 +137,9 @@ impl Glm5NextMtpHead {
     ) -> Result<()> {
         let target_norm = takes_target_norm(ctx.levers.mtp_target_postnorm, target_row)
             .then_some(self.target_final_norm);
+        if target_norm.is_some() {
+            note_applied("TARGET_POSTNORM");
+        }
         launch_hidden_half(
             ctx.gpu,
             self.rms_norm_k,

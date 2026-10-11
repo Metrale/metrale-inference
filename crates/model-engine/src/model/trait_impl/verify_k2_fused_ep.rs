@@ -41,7 +41,13 @@ impl TransformerModel {
         seq_id: u32,
         tokens: [u32; 2],
     ) -> Result<()> {
-        self.ep_broadcast_block(&k2_announce_block(seq_id, tokens))
+        let block = k2_announce_block(seq_id, tokens);
+        // 2026-10-11: A device-step verify (its draft on the device) is announced without a
+        // host wait, so the host queues the verify behind the propose in flight.
+        if tokens[1] == metrale_model_layers::speculative::DEVICE_DRAFT {
+            return self.ep_announce_device_step(&block);
+        }
+        self.ep_broadcast_block(&block)
     }
 
     /// 2026-10-11: Rank 0: the verdict, in one broadcast.
@@ -141,7 +147,9 @@ impl TransformerModel {
         if let Err(e) = saved {
             tracing::warn!("EP worker save_hidden_for_mtp({hidden_idx:#x}) failed: {e:#}");
         }
-        if let Err(e) = self.run_mtp_propose_inner(last_token, position, num_drafts, seq, None) {
+        if let Err(e) =
+            self.run_mtp_propose_inner(last_token, position, num_drafts, seq, None, false)
+        {
             tracing::warn!("EP worker MTP propose failed (continuing): {e:#}");
         }
     }
