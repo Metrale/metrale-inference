@@ -72,13 +72,21 @@ pub const KERNEL_MAX_KPOOL: usize = 8;
 
 /// 2026-09-25: The DSA selection kernels, the indexer LayerNorm and the two oracle kernels.
 ///
-/// All but `write_geom` and `indexer_store` are resolved with `kernel()`, so a missing
-/// entry point fails `resolve`; those two use `try_kernel` and may be `KernelHandle(0)`.
+/// All but `write_geom`, `indexer_store` and `index_scores_decode` are resolved with
+/// `kernel()`, so a missing entry point fails `resolve`; those three use `try_kernel` and may
+/// be `KernelHandle(0)`.
 #[derive(Clone, Copy)]
 pub struct Glm5NextDsaKernels {
     pub kpool_compress: KernelHandle,
     pub compact_pools: KernelHandle,
     pub index_scores: KernelHandle,
+    /// 2026-10-08: `dsa_index_scores_decode`: the bytes of `index_scores` for the ceiling
+    /// (graph-replay decode) launch, q staged once per block and one pool per lane.
+    /// `select_tokens` launches it in place of `index_scores` on a ceiling launch under
+    /// `METRALE_GLM_DSA_SCORES_DECODE=1` (`select::scores_decode::scores_decode_for`);
+    /// `KernelHandle(0)` when the target lacks it (the b300 fork of `dsa_indexer.cu`), and
+    /// `index_scores` runs.
+    pub index_scores_decode: KernelHandle,
     pub topk_pools: KernelHandle,
     pub expand_selection: KernelHandle,
     /// 2026-09-25: `indexer.k_norm`, a LayerNorm with a bias: `nllb_layernorm_bf16`, in place,
@@ -113,6 +121,11 @@ impl Glm5NextDsaKernels {
             kpool_compress: gpu.kernel(DSA_MODULE, "dsa_kpool_compress")?,
             compact_pools: gpu.kernel(DSA_MODULE, "dsa_compact_pools")?,
             index_scores: gpu.kernel(DSA_MODULE, "dsa_index_scores")?,
+            index_scores_decode: metrale_model_layers::layers::try_kernel(
+                gpu,
+                DSA_MODULE,
+                "dsa_index_scores_decode",
+            ),
             topk_pools: gpu.kernel(DSA_MODULE, "dsa_topk_pools")?,
             expand_selection: gpu.kernel(DSA_MODULE, "dsa_expand_selection")?,
             k_norm: gpu.kernel(LAYERNORM_MODULE, "nllb_layernorm_bf16")?,
