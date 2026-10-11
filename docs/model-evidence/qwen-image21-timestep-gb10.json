@@ -1,0 +1,44 @@
+{
+  "source_sha256": "cfd96f1700577f560798f032172311b382eb8d26f6a29a92d7a1f165cade124b",
+  "reference_source_sha256": "0eb0555e21ca93195e1fe9389113cafbf0e8822f6454c3001cebb3d21521ebd7",
+  "native_frequency_sha256": "f64c565b201fd19b31af106dbfdb681b6787d5aabfec7c1515580c189681e088",
+  "torch": "2.13.0+cu130",
+  "command": [
+    "nvcc",
+    "-shared",
+    "-Xcompiler",
+    "-fPIC",
+    "-O3",
+    "--fmad=false",
+    "-arch=sm_121",
+    "/home/pidtom/metrale-integration-20261006/qwen-modulation-stage/timestep-probe-2/wrapper.cu",
+    "-o",
+    "/home/pidtom/metrale-integration-20261006/qwen-modulation-stage/timestep-probe-2/probe.so"
+  ],
+  "frequency_bit_mismatches": 15,
+  "criterion": "exact BF16 bits; failures retained separately from controls",
+  "results": {
+    "native_frequency": {
+      "elements": 4161792,
+      "bit_mismatches": 30,
+      "max_abs_error": 0.00390625
+    },
+    "reference_frequency": {
+      "elements": 4161792,
+      "bit_mismatches": 0,
+      "max_abs_error": 0.0
+    },
+    "unary": {
+      "elements": 65280,
+      "bit_mismatches": 0
+    },
+    "product": {
+      "elements": 65280,
+      "bit_mismatches": 0
+    }
+  },
+  "known_bad_controls": {
+    "missing_time_factor": 2201809,
+    "swapped_halves": 4161386
+  }
+}

@@ -1,0 +1,127 @@
+{
+  "kind": "native_diagnostic_block_prelude",
+  "checkpoint_revision": "d26bb61231c349cf6b7896fa83353113880e1ba3",
+  "reference_source_sha256": "0eb0555e21ca93195e1fe9389113cafbf0e8822f6454c3001cebb3d21521ebd7",
+  "source_hashes": {
+    "nllb_encoder.cu": "c0a43f2dfa9af46d85257eb4f72e1a9e3b08d89b16c6cec0dfe8114a6048165a",
+    "image_modulation.cu": "c866371ebed46df2b93099d833db5e993ec62e1d80fa862409d93119c0dd3361",
+    "dense_gemm_bf16.cu": "a1d6b9fa47260286f146b7efd2291fd323da9914fb7b3887afea88b5fef3a70c"
+  },
+  "compile_command": [
+    "nvcc",
+    "-shared",
+    "-Xcompiler",
+    "-fPIC",
+    "-O3",
+    "--fmad=false",
+    "-arch=sm_121",
+    "/home/pidtom/metrale-integration-20261006/qwen-modulation-stage/prelude-1/wrapper.cu",
+    "-o",
+    "/home/pidtom/metrale-integration-20261006/qwen-modulation-stage/prelude-1/prelude.so"
+  ],
+  "torch": "2.13.0+cu130",
+  "cuda": "13.0",
+  "seed": 2123,
+  "results": [
+    {
+      "projection": "q",
+      "weight": "transformer_blocks.0.attn.to_q.weight",
+      "shard": "diffusion_pytorch_model-00001-of-00002.safetensors",
+      "weight_sha256": "85e6a209b9f8ae553f4cf569fe12a6a3eb319a285691aa61951583879379ab89",
+      "shape": [
+        2,
+        3,
+        4096
+      ],
+      "norm": {
+        "bf16_bit_mismatches": 0,
+        "max_abs_error": 0.0,
+        "relative_l2": 0.0
+      },
+      "modulation": {
+        "bf16_bit_mismatches": 0,
+        "max_abs_error": 0.0,
+        "relative_l2": 0.0
+      },
+      "projection_error": {
+        "bf16_bit_mismatches": 0,
+        "max_abs_error": 0.0,
+        "relative_l2": 0.0
+      },
+      "transposed_weight_control": {
+        "bf16_bit_mismatches": 24555,
+        "max_abs_error": 34.6015625,
+        "relative_l2": 1.461241602897644
+      }
+    },
+    {
+      "projection": "k",
+      "weight": "transformer_blocks.0.attn.to_k.weight",
+      "shard": "diffusion_pytorch_model-00001-of-00002.safetensors",
+      "weight_sha256": "778f605c4bda4725b00be4bc29ad0efdab564197fa14c73d6bf406e68168f276",
+      "shape": [
+        2,
+        3,
+        4096
+      ],
+      "norm": {
+        "bf16_bit_mismatches": 0,
+        "max_abs_error": 0.0,
+        "relative_l2": 0.0
+      },
+      "modulation": {
+        "bf16_bit_mismatches": 0,
+        "max_abs_error": 0.0,
+        "relative_l2": 0.0
+      },
+      "projection_error": {
+        "bf16_bit_mismatches": 0,
+        "max_abs_error": 0.0,
+        "relative_l2": 0.0
+      },
+      "transposed_weight_control": {
+        "bf16_bit_mismatches": 24547,
+        "max_abs_error": 27.1875,
+        "relative_l2": 1.4189298152923584
+      }
+    },
+    {
+      "projection": "v",
+      "weight": "transformer_blocks.0.attn.to_v.weight",
+      "shard": "diffusion_pytorch_model-00001-of-00002.safetensors",
+      "weight_sha256": "4a3bd26615db1eb1fbf9de97c8a87516e3a8e967a038add9e2935a5cbaf56fa8",
+      "shape": [
+        2,
+        3,
+        4096
+      ],
+      "norm": {
+        "bf16_bit_mismatches": 0,
+        "max_abs_error": 0.0,
+        "relative_l2": 0.0
+      },
+      "modulation": {
+        "bf16_bit_mismatches": 0,
+        "max_abs_error": 0.0,
+        "relative_l2": 0.0
+      },
+      "projection_error": {
+        "bf16_bit_mismatches": 0,
+        "max_abs_error": 0.0,
+        "relative_l2": 0.0
+      },
+      "transposed_weight_control": {
+        "bf16_bit_mismatches": 24553,
+        "max_abs_error": 20.375,
+        "relative_l2": 1.4148778915405273
+      }
+    }
+  ],
+  "qualified": false,
+  "limitations": [
+    "known non-exact LayerNorm policy",
+    "raw QKV only; no QK normalization, RoPE, attention or block residual",
+    "no model or image qualification",
+    "no speed acceptance criterion"
+  ]
+}

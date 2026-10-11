@@ -1,0 +1,248 @@
+{
+  "schema_version": 1,
+  "architecture": "qwen_image21",
+  "checkpoint": "Qwen/Qwen-Image-2.1",
+  "revision": "d26bb61231c349cf6b7896fa83353113880e1ba3",
+  "status": "unlowered",
+  "executable": false,
+  "source_manifest": "docs/model-manifests/qwen-image-2.1.json",
+  "dimensions": {
+    "layers": 32,
+    "hidden": 4096,
+    "heads": 32,
+    "head_dim": 128,
+    "mlp_hidden": 12288,
+    "latent_channels": 64,
+    "rgba_channels": 4
+  },
+  "component_flow": [
+    {
+      "id": "processor",
+      "inputs": [
+        "prompt",
+        "reference_images"
+      ],
+      "outputs": [
+        "encoder_inputs"
+      ],
+      "residual": "qwen3_vl_image_slot_preprocess"
+    },
+    {
+      "id": "encoder",
+      "inputs": [
+        "encoder_inputs"
+      ],
+      "outputs": [
+        "joint_embeddings"
+      ],
+      "residual": "qwen3_vl_joint_embedding_export"
+    },
+    {
+      "id": "condition_vae",
+      "inputs": [
+        "reference_images"
+      ],
+      "outputs": [
+        "condition_latents"
+      ],
+      "residual": "rgba_vae_encode"
+    },
+    {
+      "id": "denoise",
+      "inputs": [
+        "joint_embeddings",
+        "condition_latents",
+        "noise",
+        "timesteps"
+      ],
+      "outputs": [
+        "final_latents"
+      ],
+      "residual": "flow_euler_iteration"
+    },
+    {
+      "id": "decode",
+      "inputs": [
+        "final_latents"
+      ],
+      "outputs": [
+        "rgba"
+      ],
+      "residual": "rgba_vae_decode"
+    }
+  ],
+  "block_inputs": [
+    "hidden",
+    "modulation",
+    "rope_positions",
+    "key_valid",
+    "prefix_cache"
+  ],
+  "block_outputs": [
+    "result"
+  ],
+  "block_nodes": [
+    {
+      "id": "norm1",
+      "op": "layer_norm_no_affine",
+      "inputs": [
+        "hidden"
+      ]
+    },
+    {
+      "id": "mod1",
+      "op": "condition_timestep_modulation",
+      "inputs": [
+        "norm1",
+        "modulation"
+      ]
+    },
+    {
+      "id": "qkv",
+      "op": "image_qkv",
+      "inputs": [
+        "mod1"
+      ]
+    },
+    {
+      "id": "qknorm",
+      "op": "qk_norm",
+      "inputs": [
+        "qkv"
+      ]
+    },
+    {
+      "id": "positions",
+      "op": "image_three_axis_rope",
+      "inputs": [
+        "qknorm",
+        "rope_positions"
+      ]
+    },
+    {
+      "id": "attention",
+      "op": "image_block_causal_attention",
+      "inputs": [
+        "positions",
+        "key_valid",
+        "prefix_cache"
+      ]
+    },
+    {
+      "id": "out",
+      "op": "image_output_projection",
+      "inputs": [
+        "attention"
+      ]
+    },
+    {
+      "id": "gated",
+      "op": "tanh_modulation_gate",
+      "inputs": [
+        "out",
+        "modulation"
+      ]
+    },
+    {
+      "id": "residual1",
+      "op": "residual_add",
+      "inputs": [
+        "hidden",
+        "gated"
+      ]
+    },
+    {
+      "id": "norm2",
+      "op": "layer_norm_no_affine",
+      "inputs": [
+        "residual1"
+      ]
+    },
+    {
+      "id": "mod2",
+      "op": "condition_timestep_modulation",
+      "inputs": [
+        "norm2",
+        "modulation"
+      ]
+    },
+    {
+      "id": "gate_up",
+      "op": "image_ffn_gate_up",
+      "inputs": [
+        "mod2"
+      ]
+    },
+    {
+      "id": "activation",
+      "op": "silu_mul",
+      "inputs": [
+        "gate_up"
+      ]
+    },
+    {
+      "id": "down",
+      "op": "image_ffn_down",
+      "inputs": [
+        "activation"
+      ]
+    },
+    {
+      "id": "gated2",
+      "op": "tanh_modulation_gate",
+      "inputs": [
+        "down",
+        "modulation"
+      ]
+    },
+    {
+      "id": "result",
+      "op": "residual_add",
+      "inputs": [
+        "residual1",
+        "gated2"
+      ]
+    }
+  ],
+  "residuals": {
+    "layer_norm_no_affine": "Mean-subtracting LayerNorm eps=1e-6; RMSNorm is not equivalent.",
+    "condition_timestep_modulation": "Shared scale and gate rows select timestep zero for prefix, actual timestep for target; scale uses 1+s.",
+    "image_qkv": "Three bias-free 4096x4096 projections; existing linear roles are candidates, weight bindings remain unimplemented.",
+    "image_three_axis_rope": "Interleaved complex rotation, axes 16/56/56, centered spatial grid, theta=10000; not text RoPE.",
+    "image_block_causal_attention": "Text causal, image blocks bidirectional, invalid prompt keys excluded; fixed prefix KV reused across denoising, not autoregressive append.",
+    "image_output_projection": "Bias-free 4096x4096 projection with image module binding, not registered.",
+    "tanh_modulation_gate": "Multiply by tanh(gate), not sigmoid(gate).",
+    "image_ffn_gate_up": "Separate gate_layer and proj weights, each 12288x4096; concatenate only after proving packing parity.",
+    "image_ffn_down": "Bias-free 4096x12288 output projection, native binding and precision path unimplemented.",
+    "qwen3_vl_image_slot_preprocess": "Tokenizer/image slots and condition-image alignment; not plain text tokenization.",
+    "qwen3_vl_joint_embedding_export": "Encoder text and vision features exported before LM head, with image-slot alignment.",
+    "rgba_vae_encode": "Four-channel residual spatial/temporal VAE, normalization by 64 latent means/stds.",
+    "flow_euler_iteration": "Explicit timestep/sigma schedule, latent updates and request-owned prefix cache lifecycle.",
+    "rgba_vae_decode": "Inverse latent normalization, residual convolutions/upsampling and RGBA output.",
+    "text_projection_zero_center_norm": "FP32 RMSNorm with effective weight 1+w then linear/GELU-tanh/linear.",
+    "timestep_sinusoidal_embedding": "256-wide sinusoid at 1000*t with learned projection; shared 4*4096 modulation.",
+    "final_adaptive_layer_norm": "Scale-only LayerNorm and target timestep selection before 4096-to-64 latent projection."
+  },
+  "reuse_candidates": [
+    {
+      "op": "qk_norm",
+      "source": "crates/model-layers/src/layers/qwen3_attention",
+      "evidence": "semantic_candidate_only_unmeasured_at_image_shapes"
+    },
+    {
+      "op": "silu_mul",
+      "source": "crates/model-layers/src/layers/dense_ffn.rs",
+      "evidence": "semantic_candidate_only_unmeasured_at_image_shapes"
+    },
+    {
+      "op": "residual_add",
+      "source": "kernels/circuits/blocks",
+      "evidence": "semantic_candidate_only_unmeasured_at_image_shapes"
+    },
+    {
+      "op": "linear",
+      "source": "crates/model-layers/src/layers/dense_ffn.rs",
+      "evidence": "semantic_candidate_only_unmeasured_at_image_shapes"
+    }
+  ]
+}

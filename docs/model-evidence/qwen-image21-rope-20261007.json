@@ -1,0 +1,81 @@
+{
+  "reference_source_sha256": "0eb0555e21ca93195e1fe9389113cafbf0e8822f6454c3001cebb3d21521ebd7",
+  "source_sha256": "4bce8e6ab5d9a452575ca626b75a141502b17829d93464af3d3de4b49520962f",
+  "torch": "2.13.0+cu130",
+  "cuda": "13.0",
+  "compile_command": [
+    "nvcc",
+    "-shared",
+    "-Xcompiler",
+    "-fPIC",
+    "-O3",
+    "--fmad=false",
+    "-arch=sm_121",
+    "/home/pidtom/metrale-integration-20261006/qwen-modulation-stage/rope-3/wrapper.cu",
+    "-o",
+    "/home/pidtom/metrale-integration-20261006/qwen-modulation-stage/rope-3/rope.so"
+  ],
+  "criterion": "exact BF16 outputs",
+  "results": [
+    {
+      "layout": "saved",
+      "case": "q",
+      "elements": 24576,
+      "bf16_bit_mismatches": 0,
+      "max_abs_error": 0.0,
+      "frequency_bit_mismatches": 4,
+      "frequency_max_abs_error": 3.725290298461914e-09,
+      "table_sha256": "4a2efc4840447916a176c9f5e21e3e34e350db4509ea656d89bcedb925e7b9d0",
+      "same_frequency_bf16_mismatches": 0
+    },
+    {
+      "layout": "saved",
+      "case": "k",
+      "elements": 24576,
+      "bf16_bit_mismatches": 0,
+      "max_abs_error": 0.0,
+      "frequency_bit_mismatches": 4,
+      "frequency_max_abs_error": 3.725290298461914e-09,
+      "table_sha256": "4a2efc4840447916a176c9f5e21e3e34e350db4509ea656d89bcedb925e7b9d0",
+      "same_frequency_bf16_mismatches": 0
+    },
+    {
+      "layout": "mixed",
+      "case": "random",
+      "elements": 98304,
+      "bf16_bit_mismatches": 0,
+      "max_abs_error": 0.0,
+      "frequency_bit_mismatches": 14,
+      "frequency_max_abs_error": 1.4901161193847656e-08,
+      "table_sha256": "c8e7ccdb2662d610471c6824ccfc9d636922c8b948f9eaed0b605b55e494b6b1",
+      "same_frequency_bf16_mismatches": 0
+    },
+    {
+      "layout": "mixed",
+      "case": "tiny",
+      "elements": 98304,
+      "bf16_bit_mismatches": 0,
+      "max_abs_error": 0.0,
+      "frequency_bit_mismatches": 14,
+      "frequency_max_abs_error": 1.4901161193847656e-08,
+      "table_sha256": "c8e7ccdb2662d610471c6824ccfc9d636922c8b948f9eaed0b605b55e494b6b1",
+      "same_frequency_bf16_mismatches": 0
+    },
+    {
+      "layout": "mixed",
+      "case": "large",
+      "elements": 98304,
+      "bf16_bit_mismatches": 0,
+      "max_abs_error": 0.0,
+      "frequency_bit_mismatches": 14,
+      "frequency_max_abs_error": 1.4901161193847656e-08,
+      "table_sha256": "c8e7ccdb2662d610471c6824ccfc9d636922c8b948f9eaed0b605b55e494b6b1",
+      "same_frequency_bf16_mismatches": 0
+    }
+  ],
+  "known_bad_controls": {
+    "conjugate_frequency": 173070,
+    "split_half_pairing": 222430
+  },
+  "scope": "three-axis rotation only; no attention/block qualification"
+}

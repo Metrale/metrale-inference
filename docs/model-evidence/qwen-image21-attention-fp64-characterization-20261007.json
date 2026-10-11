@@ -1,0 +1,69 @@
+{
+  "source_receipt_sha256": "fbeb5f1e17bfb5caf738affb9e2e4500aac1efb04b46535b5e4bf8cefcbbdd13",
+  "torch": "2.13.0+cu130",
+  "device": "CPU only",
+  "precision": "FP64 dot/scale/softmax/value sum then BF16 rounding",
+  "results": [
+    {
+      "layout": "saved",
+      "case": "real_projection",
+      "elements": 24576,
+      "native": {
+        "bf16_differences_from_rounded_fp64": 1,
+        "max_abs_error_from_fp64": 0.03024985933203439,
+        "relative_l2_from_fp64": 0.0012172789661352775
+      },
+      "sdpa_reference": {
+        "bf16_differences_from_rounded_fp64": 2450,
+        "max_abs_error_from_fp64": 0.03024985933203439,
+        "relative_l2_from_fp64": 0.0012804119476654621
+      }
+    },
+    {
+      "layout": "mixed",
+      "case": "random",
+      "elements": 57344,
+      "native": {
+        "bf16_differences_from_rounded_fp64": 4,
+        "max_abs_error_from_fp64": 0.007776704940271717,
+        "relative_l2_from_fp64": 0.0015384449749436876
+      },
+      "sdpa_reference": {
+        "bf16_differences_from_rounded_fp64": 10844,
+        "max_abs_error_from_fp64": 0.00943723762331583,
+        "relative_l2_from_fp64": 0.0016750865639554116
+      }
+    },
+    {
+      "layout": "mixed",
+      "case": "high_logits",
+      "elements": 57344,
+      "native": {
+        "bf16_differences_from_rounded_fp64": 1,
+        "max_abs_error_from_fp64": 0.0077936163426768346,
+        "relative_l2_from_fp64": 0.00044829550317411303
+      },
+      "sdpa_reference": {
+        "bf16_differences_from_rounded_fp64": 226,
+        "max_abs_error_from_fp64": 0.0077936163426768346,
+        "relative_l2_from_fp64": 0.0004547048430219587
+      }
+    },
+    {
+      "layout": "mixed",
+      "case": "uniform",
+      "elements": 57344,
+      "native": {
+        "bf16_differences_from_rounded_fp64": 60,
+        "max_abs_error_from_fp64": 0.0078125,
+        "relative_l2_from_fp64": 0.0015820259638864454
+      },
+      "sdpa_reference": {
+        "bf16_differences_from_rounded_fp64": 0,
+        "max_abs_error_from_fp64": 0.0078125,
+        "relative_l2_from_fp64": 0.0015820259638864454
+      }
+    }
+  ],
+  "scope": "independent error characterization; original exact SDPA gate remains failed"
+}

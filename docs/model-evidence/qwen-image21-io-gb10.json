@@ -1,0 +1,177 @@
+{
+  "seed": 2140,
+  "source_hashes": {
+    "image_modulation.cu": "cfd96f1700577f560798f032172311b382eb8d26f6a29a92d7a1f165cade124b",
+    "rms_norm.cu": "a1058a9a219054f4cc47220e7c0bbc866d5192d5b6fda38ecf05c6d5c085d7d9",
+    "nllb_encoder.cu": "c0a43f2dfa9af46d85257eb4f72e1a9e3b08d89b16c6cec0dfe8114a6048165a",
+    "dense_gemm_bf16.cu": "a1d6b9fa47260286f146b7efd2291fd323da9914fb7b3887afea88b5fef3a70c",
+    "gelu.cu": "9413de2f47a4acc5e65fdabaed7d1fe8852c4a355556976473ef14b771ec5937"
+  },
+  "reference_source_sha256": "0eb0555e21ca93195e1fe9389113cafbf0e8822f6454c3001cebb3d21521ebd7",
+  "weight_sha256": {
+    "img_in": "34310ebf0edb66ef00944eb6fd46e7ce70e7df7928d03283df0a28dd8fab2c68",
+    "modulation.1": "4360117d34f9659f36d154af517f54dc7f521ea914a1894a837d660eb8048e0f",
+    "norm_out.linear": "e9bcf4457d9deb7a0fd874fdfa7c950efcf36f7442b4e34878e3933524514ad3",
+    "proj_out": "36cc3c201fbe549b207588243e4ed9995582fa506db8313b3c6b30f0e26d7e9d",
+    "time_text_embed.timestep_embedder.linear_1": "c15dc973e402662d4dc7d2b8a5d256080f10d39e5aeec563723c327d22a3a712",
+    "time_text_embed.timestep_embedder.linear_2": "c96b67bbcb7c19d2a31a517959c3090adfa420bc16735810abf0367f20a71615",
+    "txt_in.in_layer": "2afeaaac182536117eb984cd878e94b3d5447fd1e0989f1c925b55f5b2aba828",
+    "txt_in.out_layer": "e4c37943834c699fc4e101b3141bee53839b78c096e00cfbd836b8b061162672",
+    "txt_in.text_norm": "b496795d142460d2f72d13b560d7cf54fba3081cc895c2d41b8e00b2470f9efe"
+  },
+  "command": [
+    "nvcc",
+    "-shared",
+    "-Xcompiler",
+    "-fPIC",
+    "-O3",
+    "--fmad=false",
+    "-arch=sm_121",
+    "/home/pidtom/metrale-integration-20261006/qwen-modulation-stage/io-probe-1/wrapper.cu",
+    "-o",
+    "/home/pidtom/metrale-integration-20261006/qwen-modulation-stage/io-probe-1/io.so"
+  ],
+  "results": [
+    {
+      "stage": "temporal",
+      "elements": 768,
+      "bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "nonfinite_bit_mismatches": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    },
+    {
+      "stage": "time_in",
+      "elements": 12288,
+      "bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "nonfinite_bit_mismatches": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    },
+    {
+      "stage": "time_silu",
+      "elements": 12288,
+      "bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "nonfinite_bit_mismatches": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    },
+    {
+      "stage": "time_out",
+      "elements": 12288,
+      "bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "nonfinite_bit_mismatches": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    },
+    {
+      "stage": "temb_silu",
+      "elements": 12288,
+      "bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "nonfinite_bit_mismatches": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    },
+    {
+      "stage": "modulation",
+      "elements": 49152,
+      "bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "nonfinite_bit_mismatches": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    },
+    {
+      "stage": "final_scale",
+      "elements": 12288,
+      "bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "nonfinite_bit_mismatches": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    },
+    {
+      "stage": "text_norm",
+      "elements": 24576,
+      "bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "nonfinite_bit_mismatches": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    },
+    {
+      "stage": "text_in",
+      "elements": 24576,
+      "bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "nonfinite_bit_mismatches": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    },
+    {
+      "stage": "text_gelu",
+      "elements": 24576,
+      "bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "nonfinite_bit_mismatches": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    },
+    {
+      "stage": "text_out",
+      "elements": 24576,
+      "bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "nonfinite_bit_mismatches": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    },
+    {
+      "stage": "image_in",
+      "elements": 65536,
+      "bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "nonfinite_bit_mismatches": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    },
+    {
+      "stage": "output_norm",
+      "elements": 81920,
+      "bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "nonfinite_bit_mismatches": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    },
+    {
+      "stage": "output_scale",
+      "elements": 81920,
+      "bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "nonfinite_bit_mismatches": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    },
+    {
+      "stage": "image_out",
+      "elements": 1280,
+      "bit_mismatches": 4,
+      "nonfinite_pairs": 0,
+      "nonfinite_bit_mismatches": 0,
+      "max_abs_error_finite": 0.015625,
+      "relative_l2_finite": 8.353360576288116e-05
+    }
+  ],
+  "known_bad_controls": {
+    "missing_zero_center": 24576,
+    "gelu_exact_instead_tanh": 1385
+  },
+  "scope": "same-input actual-weight conditioning and IO only; no native image claim",
+  "criterion": "exact BF16 bits; all discrepancies retained"
+}

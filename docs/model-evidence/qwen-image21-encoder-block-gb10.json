@@ -1,0 +1,187 @@
+{
+  "seed": 2150,
+  "reference_source_sha256": "1a02b852d3b113c1664ff5e7ba6f7600e28da2ddf9d479e873de723ff1dc2e60",
+  "weight_sha256": {
+    "model.language_model.layers.0.input_layernorm.weight": "da14da9264fcb45df7b76ff86c2cc6947639c162a96edb0e5459c9d2d87eec19",
+    "model.language_model.layers.0.self_attn.q_proj.weight": "196ea55e2ad0ab4967155588a5b549beade1ddf65d793931b17f74edc73993e4",
+    "model.language_model.layers.0.self_attn.k_proj.weight": "9c56b3b01d2e88690fdb1bc424ae4e967462af4a7098982a2f76751c143cf149",
+    "model.language_model.layers.0.self_attn.v_proj.weight": "935e78eb863f7a986ab5db1de2602e447f34305a2f614221e487b61d7ab7b61c",
+    "model.language_model.layers.0.self_attn.o_proj.weight": "75fff9ea773b5a029cda9275f303edd52b7f97ebb92b17efed90d00f3a4341de",
+    "model.language_model.layers.0.self_attn.q_norm.weight": "67f20b455b84de4912c8fbbc8cc10a86a9d6d1db8d9bb5e374ad9ca14f5f2087",
+    "model.language_model.layers.0.self_attn.k_norm.weight": "a6a4d148e39c4703670c187ef3f7e3c3f1a6d738c770a29df3537ff3f891937a",
+    "model.language_model.layers.0.post_attention_layernorm.weight": "319a12d3aaaef4161136170e0ae622936e02cf21a279624b69bf35d362dc5e47",
+    "model.language_model.layers.0.mlp.gate_proj.weight": "ad3a973424ce02beca863f880d6be4b59a3e9002b93cbbde3619cdc4fdc3c57b",
+    "model.language_model.layers.0.mlp.up_proj.weight": "a96b272fda02984b900061d69045b94387e57f19f8a8f6df14aa4f33cfd9e29b",
+    "model.language_model.layers.0.mlp.down_proj.weight": "b02a7008533f273efc0aac03c494a4109ee0c907fe69e404bbc1d93fb838af06"
+  },
+  "source_sha256": {
+    "rms_norm_vanilla.cu": "f609fbea84429efbf8b1cb95ce7eb3f8cb9ccec3050ceb8589341f6e62433501",
+    "image_modulation.cu": "a423e3553f4b2b3cc291b75a83782b53216b20378cf34f17636b16068c341bfa",
+    "dense_gemm_bf16.cu": "a1d6b9fa47260286f146b7efd2291fd323da9914fb7b3887afea88b5fef3a70c",
+    "attn_prefill_h128.cu": "73aab8c1de96f824eb6ab0c799700141065af0662e7fc05ff76f7ebe24717f08",
+    "residual_add.cu": "93e6af93dc56a3d0819edb65e669b02b98fe9eee97bad441b79aceacbab2bd53"
+  },
+  "command": [
+    "nvcc",
+    "-shared",
+    "-Xcompiler",
+    "-fPIC",
+    "-O3",
+    "--fmad=false",
+    "-arch=sm_121",
+    "/home/pidtom/metrale-integration-20261006/qwen-modulation-stage/encoder-block-2/wrapper.cu",
+    "-o",
+    "/home/pidtom/metrale-integration-20261006/qwen-modulation-stage/encoder-block-2/encoder.so"
+  ],
+  "results": [
+    {
+      "stage": "input_norm",
+      "elements": 135168,
+      "bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "relative_l2_finite": 0.0,
+      "max_abs_error_finite": 0.0
+    },
+    {
+      "stage": "q",
+      "elements": 135168,
+      "bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "relative_l2_finite": 0.0,
+      "max_abs_error_finite": 0.0
+    },
+    {
+      "stage": "k",
+      "elements": 33792,
+      "bit_mismatches": 52,
+      "nonfinite_pairs": 0,
+      "relative_l2_finite": 9.21528872028247e-05,
+      "max_abs_error_finite": 0.00048828125
+    },
+    {
+      "stage": "v",
+      "elements": 33792,
+      "bit_mismatches": 50,
+      "nonfinite_pairs": 0,
+      "relative_l2_finite": 0.00015026892669768292,
+      "max_abs_error_finite": 0.000244140625
+    },
+    {
+      "stage": "q_norm",
+      "elements": 135168,
+      "bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "relative_l2_finite": 0.0,
+      "max_abs_error_finite": 0.0
+    },
+    {
+      "stage": "k_norm",
+      "elements": 33792,
+      "bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "relative_l2_finite": 0.0,
+      "max_abs_error_finite": 0.0
+    },
+    {
+      "stage": "q_rope",
+      "elements": 135168,
+      "bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "relative_l2_finite": 0.0,
+      "max_abs_error_finite": 0.0
+    },
+    {
+      "stage": "k_rope",
+      "elements": 33792,
+      "bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "relative_l2_finite": 0.0,
+      "max_abs_error_finite": 0.0
+    },
+    {
+      "stage": "attention",
+      "elements": 135168,
+      "bit_mismatches": 112,
+      "nonfinite_pairs": 0,
+      "relative_l2_finite": 5.8963197295807334e-05,
+      "max_abs_error_finite": 0.0001220703125
+    },
+    {
+      "stage": "o",
+      "elements": 135168,
+      "bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "relative_l2_finite": 0.0,
+      "max_abs_error_finite": 0.0
+    },
+    {
+      "stage": "residual1",
+      "elements": 135168,
+      "bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "relative_l2_finite": 0.0,
+      "max_abs_error_finite": 0.0
+    },
+    {
+      "stage": "post_norm",
+      "elements": 135168,
+      "bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "relative_l2_finite": 0.0,
+      "max_abs_error_finite": 0.0
+    },
+    {
+      "stage": "gate",
+      "elements": 405504,
+      "bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "relative_l2_finite": 0.0,
+      "max_abs_error_finite": 0.0
+    },
+    {
+      "stage": "up",
+      "elements": 405504,
+      "bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "relative_l2_finite": 0.0,
+      "max_abs_error_finite": 0.0
+    },
+    {
+      "stage": "activation",
+      "elements": 405504,
+      "bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "relative_l2_finite": 0.0,
+      "max_abs_error_finite": 0.0
+    },
+    {
+      "stage": "down",
+      "elements": 135168,
+      "bit_mismatches": 78186,
+      "nonfinite_pairs": 0,
+      "relative_l2_finite": 0.004337728720119327,
+      "max_abs_error_finite": 0.0625
+    },
+    {
+      "stage": "residual2",
+      "elements": 135168,
+      "bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "relative_l2_finite": 0.0,
+      "max_abs_error_finite": 0.0
+    },
+    {
+      "stage": "complete_block",
+      "elements": 135168,
+      "bit_mismatches": 76687,
+      "nonfinite_pairs": 0,
+      "relative_l2_finite": 0.004550713525824743,
+      "max_abs_error_finite": 0.0625
+    }
+  ],
+  "known_bad_controls": {
+    "missing_product_rounding": 16227
+  },
+  "scope": "one native dense text block, actual embeddings/weights; supplied reference RoPE coefficients; no encoder/pipeline admission",
+  "criterion": "exact BF16 bits retained separately from finite error characterization"
+}

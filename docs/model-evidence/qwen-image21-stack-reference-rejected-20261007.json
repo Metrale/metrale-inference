@@ -1,0 +1,586 @@
+{
+  "checkpoint_revision": "d26bb61231c349cf6b7896fa83353113880e1ba3",
+  "native_receipt_sha256": "00904ff1c45e7a1021da288e523ca5559dc18499574103d08fe0fb7f739199b2",
+  "reference_source_sha256": "0eb0555e21ca93195e1fe9389113cafbf0e8822f6454c3001cebb3d21521ebd7",
+  "torch": "2.13.0+cu130",
+  "results": [
+    {
+      "layer": 0,
+      "cumulative": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 9916,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 16.0,
+        "relative_l2_finite": 0.0031924771509037842
+      },
+      "same_input": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 9916,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 16.0,
+        "relative_l2_finite": 0.0031924771509037842
+      },
+      "reference_forward_seconds": 0.3424881990067661
+    },
+    {
+      "layer": 1,
+      "cumulative": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 11353,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 16.0,
+        "relative_l2_finite": 0.004201980056694086
+      },
+      "same_input": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 3941,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 16.0,
+        "relative_l2_finite": 0.001616069964944114
+      },
+      "reference_forward_seconds": 0.0026250790106132627
+    },
+    {
+      "layer": 2,
+      "cumulative": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 12432,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 32.0,
+        "relative_l2_finite": 0.005023456187120819
+      },
+      "same_input": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 3104,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 4.0,
+        "relative_l2_finite": 0.0009401106067513551
+      },
+      "reference_forward_seconds": 0.002617110963910818
+    },
+    {
+      "layer": 3,
+      "cumulative": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 12633,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 32.0,
+        "relative_l2_finite": 0.00585175239586404
+      },
+      "same_input": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 2704,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 4.0,
+        "relative_l2_finite": 0.0009283322948872533
+      },
+      "reference_forward_seconds": 0.002646902925334871
+    },
+    {
+      "layer": 4,
+      "cumulative": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 12990,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 32.0,
+        "relative_l2_finite": 0.0072790759861118565
+      },
+      "same_input": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 2427,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 4.0,
+        "relative_l2_finite": 0.0009276942345820418
+      },
+      "reference_forward_seconds": 0.002630406990647316
+    },
+    {
+      "layer": 5,
+      "cumulative": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 13320,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 64.0,
+        "relative_l2_finite": 0.007627005325498318
+      },
+      "same_input": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 2409,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 8.0,
+        "relative_l2_finite": 0.0009572454850503493
+      },
+      "reference_forward_seconds": 0.002649111091159284
+    },
+    {
+      "layer": 6,
+      "cumulative": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 13490,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 96.0,
+        "relative_l2_finite": 0.008702507582386736
+      },
+      "same_input": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 2057,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 32.0,
+        "relative_l2_finite": 0.00107891775004673
+      },
+      "reference_forward_seconds": 0.0026187910698354244
+    },
+    {
+      "layer": 7,
+      "cumulative": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 13710,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 128.0,
+        "relative_l2_finite": 0.009254371354075301
+      },
+      "same_input": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 2062,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 16.0,
+        "relative_l2_finite": 0.0008642048092409801
+      },
+      "reference_forward_seconds": 0.0026002470403909683
+    },
+    {
+      "layer": 8,
+      "cumulative": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 14344,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 128.0,
+        "relative_l2_finite": 0.00964138548640331
+      },
+      "same_input": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 1972,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 8.0,
+        "relative_l2_finite": 0.0006451703239109592
+      },
+      "reference_forward_seconds": 0.0026155590312555432
+    },
+    {
+      "layer": 9,
+      "cumulative": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 15080,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 128.0,
+        "relative_l2_finite": 0.010430952498990877
+      },
+      "same_input": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 1350,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 8.0,
+        "relative_l2_finite": 0.00064133141990423
+      },
+      "reference_forward_seconds": 0.0026203430024906993
+    },
+    {
+      "layer": 10,
+      "cumulative": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 15817,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 128.0,
+        "relative_l2_finite": 0.010822698668628264
+      },
+      "same_input": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 1166,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 8.0,
+        "relative_l2_finite": 0.0006051878615298522
+      },
+      "reference_forward_seconds": 0.00260336697101593
+    },
+    {
+      "layer": 11,
+      "cumulative": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 16097,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 192.0,
+        "relative_l2_finite": 0.011344512385858773
+      },
+      "same_input": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 989,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 16.0,
+        "relative_l2_finite": 0.000570556253649008
+      },
+      "reference_forward_seconds": 0.002614406985230744
+    },
+    {
+      "layer": 12,
+      "cumulative": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 16485,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 192.0,
+        "relative_l2_finite": 0.011749768971284408
+      },
+      "same_input": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 1094,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 16.0,
+        "relative_l2_finite": 0.0006079627442777553
+      },
+      "reference_forward_seconds": 0.0026063109980896115
+    },
+    {
+      "layer": 13,
+      "cumulative": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 16757,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 192.0,
+        "relative_l2_finite": 0.012101306288240072
+      },
+      "same_input": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 808,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 16.0,
+        "relative_l2_finite": 0.00046172999419465214
+      },
+      "reference_forward_seconds": 0.002698343014344573
+    },
+    {
+      "layer": 14,
+      "cumulative": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 16944,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 192.0,
+        "relative_l2_finite": 0.012178457392396957
+      },
+      "same_input": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 637,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 16.0,
+        "relative_l2_finite": 0.00042195391187071867
+      },
+      "reference_forward_seconds": 0.0026084869168698788
+    },
+    {
+      "layer": 15,
+      "cumulative": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 17080,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 192.0,
+        "relative_l2_finite": 0.012110670318266828
+      },
+      "same_input": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 452,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 8.0,
+        "relative_l2_finite": 0.0002849923515227115
+      },
+      "reference_forward_seconds": 0.0026013199239969254
+    },
+    {
+      "layer": 16,
+      "cumulative": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 17271,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 192.0,
+        "relative_l2_finite": 0.01211248230134191
+      },
+      "same_input": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 872,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 16.0,
+        "relative_l2_finite": 0.0004844056338970826
+      },
+      "reference_forward_seconds": 0.0026236549019813538
+    },
+    {
+      "layer": 17,
+      "cumulative": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 17379,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 192.0,
+        "relative_l2_finite": 0.012164502979993734
+      },
+      "same_input": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 854,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 8.0,
+        "relative_l2_finite": 0.00042078213808345577
+      },
+      "reference_forward_seconds": 0.0026293989503756166
+    },
+    {
+      "layer": 18,
+      "cumulative": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 17534,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 192.0,
+        "relative_l2_finite": 0.012204363323844258
+      },
+      "same_input": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 622,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 8.0,
+        "relative_l2_finite": 0.0003426308649268111
+      },
+      "reference_forward_seconds": 0.002603558939881623
+    },
+    {
+      "layer": 19,
+      "cumulative": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 17598,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 192.0,
+        "relative_l2_finite": 0.01212599680792509
+      },
+      "same_input": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 495,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 8.0,
+        "relative_l2_finite": 0.0002622555315737868
+      },
+      "reference_forward_seconds": 0.0026131909107789397
+    },
+    {
+      "layer": 20,
+      "cumulative": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 17637,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 192.0,
+        "relative_l2_finite": 0.012219190466817374
+      },
+      "same_input": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 677,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 8.0,
+        "relative_l2_finite": 0.000315412952746917
+      },
+      "reference_forward_seconds": 0.0026808560360223055
+    },
+    {
+      "layer": 21,
+      "cumulative": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 17751,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 192.0,
+        "relative_l2_finite": 0.012303117037773209
+      },
+      "same_input": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 630,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 8.0,
+        "relative_l2_finite": 0.0003612749545045405
+      },
+      "reference_forward_seconds": 0.0026367909740656614
+    },
+    {
+      "layer": 22,
+      "cumulative": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 17813,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 192.0,
+        "relative_l2_finite": 0.01240329655722211
+      },
+      "same_input": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 486,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 8.0,
+        "relative_l2_finite": 0.0002970434189635427
+      },
+      "reference_forward_seconds": 0.0026325989747419953
+    },
+    {
+      "layer": 23,
+      "cumulative": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 17889,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 192.0,
+        "relative_l2_finite": 0.012525982071508316
+      },
+      "same_input": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 419,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 16.0,
+        "relative_l2_finite": 0.0003086569665367563
+      },
+      "reference_forward_seconds": 0.0026281989412382245
+    },
+    {
+      "layer": 24,
+      "cumulative": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 17929,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 192.0,
+        "relative_l2_finite": 0.012641440170514563
+      },
+      "same_input": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 518,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 16.0,
+        "relative_l2_finite": 0.0003665241785445089
+      },
+      "reference_forward_seconds": 0.002610678900964558
+    },
+    {
+      "layer": 25,
+      "cumulative": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 17966,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 192.0,
+        "relative_l2_finite": 0.012731380007592748
+      },
+      "same_input": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 867,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 16.0,
+        "relative_l2_finite": 0.0005373057842193522
+      },
+      "reference_forward_seconds": 0.002631095005199313
+    },
+    {
+      "layer": 26,
+      "cumulative": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 17964,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 192.0,
+        "relative_l2_finite": 0.012811553385340953
+      },
+      "same_input": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 653,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 16.0,
+        "relative_l2_finite": 0.0004064562671272936
+      },
+      "reference_forward_seconds": 0.0026652069063857198
+    },
+    {
+      "layer": 27,
+      "cumulative": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 18018,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 192.0,
+        "relative_l2_finite": 0.012800225693130012
+      },
+      "same_input": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 592,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 16.0,
+        "relative_l2_finite": 0.000435064815062731
+      },
+      "reference_forward_seconds": 0.0026176399551331997
+    },
+    {
+      "layer": 28,
+      "cumulative": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 18047,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 192.0,
+        "relative_l2_finite": 0.012828578153852563
+      },
+      "same_input": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 467,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 4.0,
+        "relative_l2_finite": 0.0002268825285029801
+      },
+      "reference_forward_seconds": 0.002611638978123665
+    },
+    {
+      "layer": 29,
+      "cumulative": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 18052,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 192.0,
+        "relative_l2_finite": 0.012908305023796477
+      },
+      "same_input": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 367,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 8.0,
+        "relative_l2_finite": 0.0002597273868812436
+      },
+      "reference_forward_seconds": 0.002610438968986273
+    },
+    {
+      "layer": 30,
+      "cumulative": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 18054,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 192.0,
+        "relative_l2_finite": 0.012854582060433445
+      },
+      "same_input": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 335,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 8.0,
+        "relative_l2_finite": 0.0003073513317458538
+      },
+      "reference_forward_seconds": 0.0026112389750778675
+    },
+    {
+      "layer": 31,
+      "cumulative": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 18062,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 192.0,
+        "relative_l2_finite": 0.01287850703204185
+      },
+      "same_input": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 247,
+        "nonfinite_pairs": 0,
+        "max_abs_error_finite": 8.0,
+        "relative_l2_finite": 0.00020246686431468674
+      },
+      "reference_forward_seconds": 0.00262437597848475
+    }
+  ],
+  "qualified": false,
+  "scope": "32 visual blocks over fixed2x3 BF16 fixture; no embeddings/encoder/VAE/denoising/image or throughput qualification"
+}

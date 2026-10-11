@@ -1,0 +1,255 @@
+{
+  "scope": "native single-frame FP32 VAE decoder; diagnostic, not qualified image generation",
+  "precision": "original checkpoint FP32",
+  "input_sha256": "d7ec78c0cf19992570cc7318d2bdd3c0cc2f7a69484c9aadd6afe50a789a5645",
+  "modules_sha256": "90ca75e6160195a3bbad56211047a56a0e26b5fe648ce6ae3a983e706d24c5cf",
+  "weight_sha256": {
+    "decoder.conv_in.bias": "be806af216eaf03407ddf9e1eec3fa5fcf5e51aa545200bceb4c6f85272238a9",
+    "decoder.conv_in.weight": "afbc8fd669fa0961b341b844b2ba5627b6afede0235cff61c7a5a73e7fc477c1",
+    "decoder.conv_out.bias": "b1996663b68da9945f841f626e190d47a02bc2fd5531533090b0c8a8867eea9a",
+    "decoder.conv_out.weight": "ba0fb719b3fd4a98e88c56f89d8bbbf4993ccb569960023b2582d469c7ac10aa",
+    "decoder.mid_block.attentions.0.norm.gamma": "e9729557b5c86166f08fdeab1ab6cd249e88fed90abb027242e54a89420e57d9",
+    "decoder.mid_block.attentions.0.proj.bias": "0d129b7c8459b1b840e339e8191ee44eae478aa0ec5711297136474d4db56b7e",
+    "decoder.mid_block.attentions.0.proj.weight": "748be870612ea733de83e0346d592a39044f11d9746dec2a4a5d3b145b7993f1",
+    "decoder.mid_block.attentions.0.to_qkv.bias": "78ee34b2a294faccf5b5eafa679d998d0616232aa0ba3906bedda6cbbaa380b8",
+    "decoder.mid_block.attentions.0.to_qkv.weight": "f673281eeebe15175c59ae2ddda5c943cb33d48a491a59ec5e35d92f32aadf39",
+    "decoder.mid_block.resnets.0.conv1.bias": "6672e50832518c53b405f1df7b1c1a24a2d0b07c726a712d73baa94f6bd7b361",
+    "decoder.mid_block.resnets.0.conv1.weight": "4be3803caae3cdaab3c58d9dcc4b8b43cb46943926475f731a557fb37a60ec97",
+    "decoder.mid_block.resnets.0.conv2.bias": "91613460e31c1cb110df442d4d06d64b4847db008b230745666e9fda755c2aad",
+    "decoder.mid_block.resnets.0.conv2.weight": "eeddecea4fafff592e90a6ff2e376da3d69e73474f351db8ba834f61df1605a3",
+    "decoder.mid_block.resnets.0.norm1.gamma": "291ad70f0662b1a7e1f9cbadf6f74104389d12d9469e5a49334f6ff6d3e09f44",
+    "decoder.mid_block.resnets.0.norm2.gamma": "9fce7771de3432cfa9aa90b0aae5ddc03bbb3c646229571957eb0a59dae16a11",
+    "decoder.mid_block.resnets.1.conv1.bias": "2910572f37b5526f578c4368dd81844c791dc6b15273c1fed0486b42a3120998",
+    "decoder.mid_block.resnets.1.conv1.weight": "c0d1a460db1a3c251a6f71a7bb379036467d0368d0d5f7d79a97f6e645801079",
+    "decoder.mid_block.resnets.1.conv2.bias": "4903d6c9498dea3cbf630b41584f5ed7cfea53606bb3199e666332d413fd0b44",
+    "decoder.mid_block.resnets.1.conv2.weight": "76abd293392e57ea9b60c3b00c095ceccd4e381b273095863edf7dea871584e2",
+    "decoder.mid_block.resnets.1.norm1.gamma": "4a3fdc53ec2194220186dba549aeabc69e62a86bf205a976c397590409d2fe24",
+    "decoder.mid_block.resnets.1.norm2.gamma": "94dedc4ba35ef1107ad2971ccefdcccbee5dfbc2780493f37ef65ec3e9878510",
+    "decoder.norm_out.gamma": "36fa538d8bd7cdd6ce760f941c6d83e6f474321f684b7e3bfcea5a168a9842b9",
+    "decoder.up_blocks.0.resnets.0.conv1.bias": "e8a4d03c6d5d0def1d8e0f7aa72503f3f432eae060a1157c3ae1611e5e5a32b7",
+    "decoder.up_blocks.0.resnets.0.conv1.weight": "3085c6007547521603ec03fc1c1f8618678283e11121ab08a5a29f45093a2ba5",
+    "decoder.up_blocks.0.resnets.0.conv2.bias": "384667b77ebd49863b460b159c5cad96a3a93b2106f2d69772e157152191058d",
+    "decoder.up_blocks.0.resnets.0.conv2.weight": "d07d4a2e50e066933af7d413ee2b6cf009c4d3e86ffd533ff708bc3835777808",
+    "decoder.up_blocks.0.resnets.0.norm1.gamma": "60233a2eabf1f684435a87cec48684451a816e1b978f2f509c2df0e7a9e5deca",
+    "decoder.up_blocks.0.resnets.0.norm2.gamma": "58ccbab9f3b101c068486d4d116086fe310984023719474548a84b5bc6f87246",
+    "decoder.up_blocks.0.resnets.1.conv1.bias": "873e446e5d911e20b545399c2040829f43eda99362ed9423b3fc9dac306c6037",
+    "decoder.up_blocks.0.resnets.1.conv1.weight": "025d8c6bc5af5bc9b693dd840349b86b98e7631f55d87593bbf094226c4c883d",
+    "decoder.up_blocks.0.resnets.1.conv2.bias": "142e3a11b2e9a91be7f2fc8385fd13c2674c38a5446e2204bd002f6a6edcec0c",
+    "decoder.up_blocks.0.resnets.1.conv2.weight": "13833d520ee06a425f44f69e6814191d4b61745c353454e59a43a2f151a7c07a",
+    "decoder.up_blocks.0.resnets.1.norm1.gamma": "1ce4c17d95deec95e9e4b0489b86516a9ad18eff1554d77ab84a2c1bfc368afa",
+    "decoder.up_blocks.0.resnets.1.norm2.gamma": "6e506055ca0844acf2223e5bf86c0c3a06b05239a9897a3244b460d6cae80e6b",
+    "decoder.up_blocks.0.resnets.2.conv1.bias": "1626e420ec5fb3582c0237d955211e732d9922395e56a6c03acc9bd00cecde75",
+    "decoder.up_blocks.0.resnets.2.conv1.weight": "2b34c64da93e3b5898f1b40189e1bf0f61b777a453789f6eadac25844051983f",
+    "decoder.up_blocks.0.resnets.2.conv2.bias": "f49fbffc6f25d84ac8b8644b3f6c719416c65e2e4f6678ee25e43c8a3b2ea6b9",
+    "decoder.up_blocks.0.resnets.2.conv2.weight": "659979c51f58be26c49536ac1e53a407544033124cec28e4ef894f74fdb9078e",
+    "decoder.up_blocks.0.resnets.2.norm1.gamma": "1eab2d33b95958391770ce12c7ea944516b830d774720fbea8da3c36cb7b7b56",
+    "decoder.up_blocks.0.resnets.2.norm2.gamma": "6c6cd82d334781425bd67a1b5614809810903bc5e7720da78ca6e292e8619365",
+    "decoder.up_blocks.0.upsampler.resample.1.bias": "f8a553ad8ed1f6d10cce990497e111bc4f6ac2a4c4c928e8f65b14f037c7cbb2",
+    "decoder.up_blocks.0.upsampler.resample.1.weight": "565d749d83583052d28ab9d09c837b66653499a354ec5ba72fe60939a0255147",
+    "decoder.up_blocks.0.upsampler.time_conv.bias": "f5c17a4f19408038dd19d25f00da27c998ce59f554e3371606562b17bbf330b2",
+    "decoder.up_blocks.0.upsampler.time_conv.weight": "5f5e8bb98a240106935637fbc9bfbbac234f2c17d62b8045d06fbe59712ef40b",
+    "decoder.up_blocks.1.resnets.0.conv1.bias": "9af995acd57b98170c15eef2590d22372f227b2f4414a62ebb0be89eac3279cc",
+    "decoder.up_blocks.1.resnets.0.conv1.weight": "2a61a4ca74f937b1e628d53520d0266077813fae4056040e2c0420c09b977e73",
+    "decoder.up_blocks.1.resnets.0.conv2.bias": "2ad540c0de2d8e82342670162bcde1b3882e0bfd9097e84682668506544afdc7",
+    "decoder.up_blocks.1.resnets.0.conv2.weight": "b7de1f276f28a7638bd6643eec96eb3d334e93c295ae0135c160e0e91b1e5551",
+    "decoder.up_blocks.1.resnets.0.norm1.gamma": "af2db29dc6b1fe1e7e22459ee674b51c96c8572b87211f829adde5efdfa8ac3e",
+    "decoder.up_blocks.1.resnets.0.norm2.gamma": "b4e3b380d0b91a0181785df3261c79abba790465c1abdaf79d4c8d45c8e15f72",
+    "decoder.up_blocks.1.resnets.1.conv1.bias": "d418e0abb0ca5bd9b9ee29643e94c2762eb59c547fad542913a786b15706d5f0",
+    "decoder.up_blocks.1.resnets.1.conv1.weight": "963d9ea04a17b28c8d2f004edfda67f986288e5b34de1f8c0b0aa855d02f97fd",
+    "decoder.up_blocks.1.resnets.1.conv2.bias": "dc95badb23e770a472486e16c721c3352cdc2ae5c25ac987066603e7c9843abc",
+    "decoder.up_blocks.1.resnets.1.conv2.weight": "839c22a213782ade4f43e79ec799303c5ccfe91d5684f2660c7abc841b28a5cb",
+    "decoder.up_blocks.1.resnets.1.norm1.gamma": "41f762d263b362e9474b98c32d2e1968e48e41ecdebb45d7763852f325ea0ce0",
+    "decoder.up_blocks.1.resnets.1.norm2.gamma": "adb8f4cdcddce792c2230479c4ed8a9fd52fd209da985e42c2b2465cd2d5d134",
+    "decoder.up_blocks.1.resnets.2.conv1.bias": "4744cddd059f956e3e88339ab14fc9c6dbf039508702074dd276db7e88bf4018",
+    "decoder.up_blocks.1.resnets.2.conv1.weight": "8938f8051bc1f3c9fb4b4b41acb8192ab70abc48379a1bd09dab91f403f279b2",
+    "decoder.up_blocks.1.resnets.2.conv2.bias": "4763f418587c15e18510035251b5b31c233304aaed07ae49cddb3af5bd2f676a",
+    "decoder.up_blocks.1.resnets.2.conv2.weight": "cbbae758db8045dc8169646748a327db7bb91e7222535c7924063c2a64afc00e",
+    "decoder.up_blocks.1.resnets.2.norm1.gamma": "cb3f8cb6d4ac61ba25337efef83d716b5847d392bee716703e261a5cb892ad21",
+    "decoder.up_blocks.1.resnets.2.norm2.gamma": "baf03a8ea6a719ebb235c23a82bb2583cc7ceb2252c9d98b413210a28869e088",
+    "decoder.up_blocks.1.upsampler.resample.1.bias": "51c17cf4fadcb0bea5634103a55a3952834b4479be54e7a3370c6e07182f3c34",
+    "decoder.up_blocks.1.upsampler.resample.1.weight": "96bb897a58179fe8d28a622c5ec556d3bc787248dc2cc80fff3fd304feefc2bb",
+    "decoder.up_blocks.1.upsampler.time_conv.bias": "39d147f533863fbfa2caed70dc8cb34558c9fe54c21fdf7eb16af761eb6312bb",
+    "decoder.up_blocks.1.upsampler.time_conv.weight": "757ec728a962363d4c685b872ada885d68ebfb518590d7df3a20b87055e2031a",
+    "decoder.up_blocks.2.resnets.0.conv1.bias": "ec98689a503d7bfff954f792346cec368473b8767ecdd01e218c2d3e5d4a8ca8",
+    "decoder.up_blocks.2.resnets.0.conv1.weight": "00b9912e169036d4af852a5ce22e7b1f03a651fa6f05525308bbc21c3a58d186",
+    "decoder.up_blocks.2.resnets.0.conv2.bias": "877092132b5d4875fb62497a1b8523914d5da15df45c1f9efc812dd3a63e9afb",
+    "decoder.up_blocks.2.resnets.0.conv2.weight": "d48ac2c925269cfae8535fde883a02b9fb403a7e5feb748bc1024cad58549cb2",
+    "decoder.up_blocks.2.resnets.0.conv_shortcut.bias": "bf01e89e83db51bbac27174b706104053e815440a3a32a770308e1147fabd5a4",
+    "decoder.up_blocks.2.resnets.0.conv_shortcut.weight": "81ade1f1c88649d8fae79f7e6cb76049ba9193ecd5dd6d81855e8ea660a6f45f",
+    "decoder.up_blocks.2.resnets.0.norm1.gamma": "7f8018f74bd99acb3cb1579381c26af2e4abd6bcaac40595521b728447a573a7",
+    "decoder.up_blocks.2.resnets.0.norm2.gamma": "489a0b6f61ae8d21488553ccbfaadb3bce7c158fcbf4b73880a5b1c38fb4f3cf",
+    "decoder.up_blocks.2.resnets.1.conv1.bias": "39b67b0bdbee43ba82440fdafaca30e908188894328c4844739cb8f7dd4f7994",
+    "decoder.up_blocks.2.resnets.1.conv1.weight": "5527cad788b4027f317662c2e8cc720b3b94e8710cdf3a4f6f9bd3a18b5cfba2",
+    "decoder.up_blocks.2.resnets.1.conv2.bias": "bc087358550d9dee20d1e21b6ac5130c068b1255a66531da9a209d580856a4dc",
+    "decoder.up_blocks.2.resnets.1.conv2.weight": "53a91d6dece2626a75f1cc3ed4234a0d355a95964c8f2c6a531a43ff10322986",
+    "decoder.up_blocks.2.resnets.1.norm1.gamma": "8cb844bc8f0c61ff5bec46aa0b0f106bab8a96b7dff70c4af3ba2326070cf11b",
+    "decoder.up_blocks.2.resnets.1.norm2.gamma": "0c61557032fa789029516ab59de428a3052a34f2f23bee92df009611c0920ba0",
+    "decoder.up_blocks.2.resnets.2.conv1.bias": "e197e87505b5cf02d5c1711801332d09f44b58afd5ca8c036558e46c37f63238",
+    "decoder.up_blocks.2.resnets.2.conv1.weight": "3ec80eb2d0c6b6649ae1316ad5d94325f7fafc1df043daf65dca5ea1e4b560d9",
+    "decoder.up_blocks.2.resnets.2.conv2.bias": "492028c3bd615b05b30d9345bf9e8463ba4b4fe749a36a057952a95b6d75472c",
+    "decoder.up_blocks.2.resnets.2.conv2.weight": "2767b50e46301c1f425ffd7e9e07923d7eb451193ded8220db3fc60d2bda8bb6",
+    "decoder.up_blocks.2.resnets.2.norm1.gamma": "1ee8ba3d4a37923e441574e657aa19683fc1c20741e2b503cc34cf65fb73b351",
+    "decoder.up_blocks.2.resnets.2.norm2.gamma": "ec557fa9e492acc129a46b6fa6b85170571d25688407dc7638cb8dbc8d3eaa69",
+    "decoder.up_blocks.2.upsampler.resample.1.bias": "e9c5d913521a7862e0755bcd4a1b5f2094496b9ca465c870129fb91502fd90ba",
+    "decoder.up_blocks.2.upsampler.resample.1.weight": "db0db291e15d3cb743d20f5db7c7b9c02a39bebc40f80082ae6c6c9f48a6854b",
+    "decoder.up_blocks.2.upsampler.time_conv.bias": "98a213538f646e61b951986158748434ba2368b1c0da0921114b497d917d1f57",
+    "decoder.up_blocks.2.upsampler.time_conv.weight": "3aa116f74825f16820b12ddb25647bf0f586bb5e4c7eae611e12dfc0a18e6d10",
+    "decoder.up_blocks.3.resnets.0.conv1.bias": "a8ab2b1e235cc4fff1e00545b79e41df5354fbdea84e8cd6ec82f6ae31a0cc36",
+    "decoder.up_blocks.3.resnets.0.conv1.weight": "3c64b1087400bb9158415b87e701f65e721b429b9298ac881f3a2f36a7fab4be",
+    "decoder.up_blocks.3.resnets.0.conv2.bias": "d850ecef90c9b9cfe53d2cf03411f9d25636bbb5a5604093d46b5bbf6a1c8345",
+    "decoder.up_blocks.3.resnets.0.conv2.weight": "c709e997e6b6e562686c984d8789f6ce506df8690c807bfd5d57f42a2696ecdf",
+    "decoder.up_blocks.3.resnets.0.conv_shortcut.bias": "efd1a563d2ca11a2ba7f640886769e42a1dff35c05d022a323a6ad3c6190df85",
+    "decoder.up_blocks.3.resnets.0.conv_shortcut.weight": "df6e114ec28ecd60223075d9ac2b8eb32bf25d770693ec3471b8f53a1bbc4e95",
+    "decoder.up_blocks.3.resnets.0.norm1.gamma": "03fb02dbda2a18f6bf52e917eec855d153109435067415ab54ebb23a118130c4",
+    "decoder.up_blocks.3.resnets.0.norm2.gamma": "19a93870bb3f71d8a0697c642a71213036d89ae7bb2d853a258775b14831124e",
+    "decoder.up_blocks.3.resnets.1.conv1.bias": "fd7c7536d1e1838c17907c41d92fde590f9748d166bbd510cf6497779619d8a4",
+    "decoder.up_blocks.3.resnets.1.conv1.weight": "4563a1cb58d18c13ea85ab097789e31d271d0d5a8f649cd50be781e618a10a77",
+    "decoder.up_blocks.3.resnets.1.conv2.bias": "d139774f361e81933890af6b95b8305beebf879d9f76a83abc74581593587e83",
+    "decoder.up_blocks.3.resnets.1.conv2.weight": "b918324d496dd081183907815405f5225089fd064a6d16e2920f3d2c103201d6",
+    "decoder.up_blocks.3.resnets.1.norm1.gamma": "7aaf5bc072568dbcba49f370f0cbf4244ba346b6413e6f86a2dd412912c1191b",
+    "decoder.up_blocks.3.resnets.1.norm2.gamma": "632fb3c8ccd9e83bc6df27580cc89a146511ed9804604c220a2f66d22cd45d8f",
+    "decoder.up_blocks.3.resnets.2.conv1.bias": "874b070dfbcecf9d260f037d541d39bad7caad8b62207391a27ca05fc1e196e5",
+    "decoder.up_blocks.3.resnets.2.conv1.weight": "3089b0e8f1a72edaa1e61db025288ea1e2f13b9862305f5e524899f134442e9f",
+    "decoder.up_blocks.3.resnets.2.conv2.bias": "fcb60a3bffd105940374533c8e9a58b9cbb5a5111757c3eb1a2960be7d967ecc",
+    "decoder.up_blocks.3.resnets.2.conv2.weight": "a57e1174b8136b1951e785ae89c928f2a6c7f45e7b1ff26a575d642cdb2b205a",
+    "decoder.up_blocks.3.resnets.2.norm1.gamma": "ff9e64bbffafc578ceca712033ee9273ca9efaca38f8f041dc49c7922a7efaf1",
+    "decoder.up_blocks.3.resnets.2.norm2.gamma": "dc2ddaa823eef9b736627fa9a67d837c3901d6d7fb1f05ad41fb50921d1c5de1",
+    "decoder.up_blocks.3.upsampler.resample.1.bias": "2928f75eb5b324305f8176f26d280171ec00867548129199a32a8519a10c1cf4",
+    "decoder.up_blocks.3.upsampler.resample.1.weight": "4a413f05c36cd699db430efc665e9ad576f21b44b3dae187c31f5c2d7b6feb68",
+    "decoder.up_blocks.4.resnets.0.conv1.bias": "2417bfc9c1733246b54120954a51e009b666ee6f5bd583a4b649eef60964db4c",
+    "decoder.up_blocks.4.resnets.0.conv1.weight": "646cbe84f1b1d9dbd6e2dbe0361632f7eedde7177254beb7ef3515d075de17e6",
+    "decoder.up_blocks.4.resnets.0.conv2.bias": "339313d2a936b4196a4fa1468e7698b8a2f5c8fe426491923bc9baddea94b740",
+    "decoder.up_blocks.4.resnets.0.conv2.weight": "4a09703dfa5924ac0adfb832c53c6e37d77c27b88c447ce22fae31c350c23a99",
+    "decoder.up_blocks.4.resnets.0.conv_shortcut.bias": "89455db047698ae0145e2a823ebb68dfc090d040cbca550f11f9256491cdf18e",
+    "decoder.up_blocks.4.resnets.0.conv_shortcut.weight": "100f22f1fd92e820cdc0065e8fc28c6a95de01fcc68f0e1f92be790912589e3a",
+    "decoder.up_blocks.4.resnets.0.norm1.gamma": "89cdcced3c5d8a73f3b3d2a1015ba503234aaa958366918d4b895705f0a1ea89",
+    "decoder.up_blocks.4.resnets.0.norm2.gamma": "42ba1174953138e7538c9ca66e83caf67026da6a2b0703d7f605a38fd16ed821",
+    "decoder.up_blocks.4.resnets.1.conv1.bias": "ee35d2da1f976124c9b580c3cc545f2ecf5cfc0b732d6260eecbcfbbcd283c9d",
+    "decoder.up_blocks.4.resnets.1.conv1.weight": "4ada1ae93cd87183501a55b521cb070091684f913829f5573f0b1aa191b8ae15",
+    "decoder.up_blocks.4.resnets.1.conv2.bias": "80a8dbb2d163c711913cdbe1bffe68a697d68dca4b16725eb7e6106baf1a3eea",
+    "decoder.up_blocks.4.resnets.1.conv2.weight": "6dade424eef78358f39cec2f9b91e1e1b4b8e64cffcd42ce00cbac49f9fe8d2d",
+    "decoder.up_blocks.4.resnets.1.norm1.gamma": "7788d584e67861fbedefb0455cbc7cf894699544ccd3269702d2fbf8c721c228",
+    "decoder.up_blocks.4.resnets.1.norm2.gamma": "da65b6c195080745623dd84fc910ca291f0916f3a5d309191d7940620adb0cf1",
+    "decoder.up_blocks.4.resnets.2.conv1.bias": "f0c92b548751dcced3429385895656a846f958e3e538088d3cd6986ce278cbda",
+    "decoder.up_blocks.4.resnets.2.conv1.weight": "0a8d743471e4db821bad9f813a928ab321c1fc0e7a9b2a5b26dd88080bd0e73e",
+    "decoder.up_blocks.4.resnets.2.conv2.bias": "345d846d1bc1f31c9a23febd94ebcfed9afa2d092437f071eb42f5c45eb26426",
+    "decoder.up_blocks.4.resnets.2.conv2.weight": "617cb2d7e90a1f51afe4d17e9dc48ee712bdc85c15239dd3841e9394ce938412",
+    "decoder.up_blocks.4.resnets.2.norm1.gamma": "bc443a3325ef876e14ba8327e63072fcd0e82ee90ff8387355e77371b3e8a5ed",
+    "decoder.up_blocks.4.resnets.2.norm2.gamma": "8866392ae626b9a6192c6d457fe5388664798cd23ce0faea2cc4b78d0c053b68",
+    "post_quant_conv.bias": "39767c993fc4c04f9108ebdd776e19720644111d4e6464b4059eec006c28485a",
+    "post_quant_conv.weight": "199d45b1bd11867c7007b4f938682dc0da385cd73669180fa8d5fddedffeb843"
+  },
+  "stages": [
+    {
+      "name": "post_quant",
+      "shape": [
+        64,
+        2,
+        2
+      ],
+      "sha256": "5bf8edde268eeb555acade92111f0d47c7480bc37687a4cd5727b730f7a49e28",
+      "all_finite": true
+    },
+    {
+      "name": "conv_in",
+      "shape": [
+        1152,
+        2,
+        2
+      ],
+      "sha256": "01fbdcb7e0d125df553d31965bfed963828316e4eaba1b1b9bce67d5866bfee2",
+      "all_finite": true
+    },
+    {
+      "name": "mid_res0",
+      "shape": [
+        1152,
+        2,
+        2
+      ],
+      "sha256": "9a256a92601fbf86d504db160551b47418aff1649c5163bc24a7523c51581a5d",
+      "all_finite": true
+    },
+    {
+      "name": "mid_attn",
+      "shape": [
+        1152,
+        2,
+        2
+      ],
+      "sha256": "a201ce25a2e6278a3130c5b0d314460420c11063fff6a820702d1a6f313ca5f6",
+      "all_finite": true
+    },
+    {
+      "name": "mid_res1",
+      "shape": [
+        1152,
+        2,
+        2
+      ],
+      "sha256": "7d08137af3c66028d270ba19d17ed88e7c54357a75f1957f5fb9b8bd515d46e4",
+      "all_finite": true
+    },
+    {
+      "name": "up0",
+      "shape": [
+        1152,
+        4,
+        4
+      ],
+      "sha256": "c5792e909d379620464a24db855c82a66ad9bce6c7a8a0cc7dd4222b274f453c",
+      "all_finite": true
+    },
+    {
+      "name": "up1",
+      "shape": [
+        1152,
+        8,
+        8
+      ],
+      "sha256": "d4507e88195f04951c6efe02cd77b6deb6522e064036f0e5fc34046dac492b7c",
+      "all_finite": true
+    },
+    {
+      "name": "up2",
+      "shape": [
+        576,
+        16,
+        16
+      ],
+      "sha256": "e6bdc5162523ed1428cf3bc2e20cfb28d95879188e76ac90bb6751dd79d2ba03",
+      "all_finite": true
+    },
+    {
+      "name": "up3",
+      "shape": [
+        288,
+        32,
+        32
+      ],
+      "sha256": "8342389150fc8bcd8cf3e2e244e7738ad51efaf1be34c9b2eb1c6003ac1c126e",
+      "all_finite": true
+    },
+    {
+      "name": "up4",
+      "shape": [
+        144,
+        32,
+        32
+      ],
+      "sha256": "995260c859d53d06c8960094010198770dfbe6625308a12ede90288092121cff",
+      "all_finite": true
+    },
+    {
+      "name": "decoded",
+      "shape": [
+        4,
+        32,
+        32
+      ],
+      "sha256": "e4412758df718a2ac6f28cdb25be92fda24d5df2503949be76b4a59296bd3b2e",
+      "all_finite": true
+    }
+  ],
+  "clamped_sha256": "b191393e085ae306217adaf4273c668b21ca6bf1aee4e0c3c5ea4784287288c6"
+}

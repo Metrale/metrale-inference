@@ -1,0 +1,82 @@
+{
+  "seed": 2160,
+  "checkpoint_precision": "FP32 retained",
+  "reference_precision": "FP32; cuDNN and matmul TF32 disabled",
+  "reference_source_sha256": "1e29f252dbddd044b84c8b794589001ce94bb125a8f13eb5b226ef30c1e2ea11",
+  "source_sha256": "fa4616858f658eda419997e40d22fb31e75519d85e691cac9139704f2b979b8c",
+  "weight_sha256": {
+    "post_quant_conv.weight": "199d45b1bd11867c7007b4f938682dc0da385cd73669180fa8d5fddedffeb843",
+    "post_quant_conv.bias": "39767c993fc4c04f9108ebdd776e19720644111d4e6464b4059eec006c28485a",
+    "decoder.conv_in.weight": "afbc8fd669fa0961b341b844b2ba5627b6afede0235cff61c7a5a73e7fc477c1",
+    "decoder.conv_in.bias": "be806af216eaf03407ddf9e1eec3fa5fcf5e51aa545200bceb4c6f85272238a9",
+    "decoder.mid_block.resnets.0.norm1.gamma": "291ad70f0662b1a7e1f9cbadf6f74104389d12d9469e5a49334f6ff6d3e09f44"
+  },
+  "command": [
+    "nvcc",
+    "-shared",
+    "-Xcompiler",
+    "-fPIC",
+    "-O3",
+    "--fmad=false",
+    "-arch=sm_121",
+    "/home/pidtom/metrale-integration-20261006/qwen-modulation-stage/vae-prelude-2/wrapper.cu",
+    "-o",
+    "/home/pidtom/metrale-integration-20261006/qwen-modulation-stage/vae-prelude-2/vae.so"
+  ],
+  "results": [
+    {
+      "stage": "post_quant",
+      "elements": 2240,
+      "f32_bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    },
+    {
+      "stage": "conv_in",
+      "elements": 40320,
+      "f32_bit_mismatches": 38193,
+      "nonfinite_pairs": 0,
+      "max_abs_error_finite": 3.6954879760742188e-06,
+      "relative_l2_finite": 9.62005230908682e-07
+    },
+    {
+      "stage": "norm",
+      "elements": 40320,
+      "f32_bit_mismatches": 4770,
+      "nonfinite_pairs": 0,
+      "max_abs_error_finite": 9.5367431640625e-07,
+      "relative_l2_finite": 4.2256119328542606e-08
+    },
+    {
+      "stage": "silu",
+      "elements": 40320,
+      "f32_bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    },
+    {
+      "stage": "integer_padding",
+      "elements": 45,
+      "f32_bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    },
+    {
+      "stage": "tiny_clamp",
+      "elements": 60,
+      "f32_bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    }
+  ],
+  "known_bad_controls": {
+    "flipped_kernel": 45,
+    "rms_epsilon_substitution": 60
+  },
+  "criterion": "exact F32 bits reported; numerical failures retained",
+  "scope": "VAE decoder prelude only; no image-generation support"
+}

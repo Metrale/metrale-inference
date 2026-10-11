@@ -1,0 +1,25 @@
+{
+  "repository": "Qwen/Qwen-Image-2.1",
+  "revision": "d26bb61231c349cf6b7896fa83353113880e1ba3",
+  "capture": "CPU reads of safetensors length prefix and header only; no payload decoded",
+  "shards": [
+    {
+      "file": "diffusion_pytorch_model-00001-of-00002.safetensors",
+      "bytes": 9968332504,
+      "header_sha256": "f74e521f55710f05c7f492cc1e54686923d25439e22241af107d1a11d20a6546",
+      "upstream_sha256": "9e6bc2d641e67bf277895ea8777141044a38f3edb7101bc469b2961dd7c36b4b",
+      "header_bytes": 24784
+    },
+    {
+      "file": "diffusion_pytorch_model-00002-of-00002.safetensors",
+      "bytes": 4261951904,
+      "header_sha256": "49cb9bb6a7774dd266f5b19a0a645ecd63d25ae4b580774aa88d0e47d1c67799",
+      "upstream_sha256": "3aaf234dcbe128530479735854a346b5e3e66283b7c11db56f836bbd1c13ebaa",
+      "header_bytes": 10136
+    }
+  ],
+  "files": {
+    "config.json": "56ae3281c4e6c2d1aa3658252d187488071815fd79bef15808bb0205fc1a2241",
+    "headers.json": "649500320fb04346c93e04cd5339cff855377ad64bcbecee9dae30ea2ad98233"
+  }
+}

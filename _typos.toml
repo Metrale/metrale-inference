@@ -12,6 +12,8 @@
 
 [default]
 extend-ignore-identifiers-re = [
+    # Exact spelling in the pinned Qwen Image VAE config schema.
+    "temperal_downsample",
     # `in_proj_ba` is the bias projection in NVIDIA's NV-FP4 Mamba/SSM
     # checkpoints (`in_proj_ba` = b + a parameters); not a typo of `by`/`be`.
     "in_proj_ba",

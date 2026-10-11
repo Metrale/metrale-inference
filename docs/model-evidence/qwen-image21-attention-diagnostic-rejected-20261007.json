@@ -1,0 +1,155 @@
+{
+  "seed": 2129,
+  "checkpoint_revision": "d26bb61231c349cf6b7896fa83353113880e1ba3",
+  "reference_source_sha256": "0eb0555e21ca93195e1fe9389113cafbf0e8822f6454c3001cebb3d21521ebd7",
+  "torch": "2.13.0+cu130",
+  "cuda": "13.0",
+  "source_hashes": {
+    "nllb_encoder.cu": "c0a43f2dfa9af46d85257eb4f72e1a9e3b08d89b16c6cec0dfe8114a6048165a",
+    "embed_from_argmax.cu": "e19dd954624331a375db17d2a3c039fcae1f039712a577e73fadbb4182d71d59",
+    "dense_gemm_bf16.cu": "a1d6b9fa47260286f146b7efd2291fd323da9914fb7b3887afea88b5fef3a70c"
+  },
+  "weight": "transformer_blocks.0.attn.to_out.0.weight",
+  "weight_sha256": "9f1fae2da843d19d222cb5e542fa78097d3605411d9a08f258565dbd5b8d009a",
+  "compile_command": [
+    "nvcc",
+    "-shared",
+    "-Xcompiler",
+    "-fPIC",
+    "-O3",
+    "--fmad=false",
+    "-arch=sm_121",
+    "/home/pidtom/metrale-integration-20261006/qwen-modulation-stage/attention-1/wrapper.cu",
+    "-o",
+    "/home/pidtom/metrale-integration-20261006/qwen-modulation-stage/attention-1/attention.so"
+  ],
+  "criterion": "exact BF16 diagnostic gate",
+  "results": [
+    {
+      "layout": "saved",
+      "case": "real_projection",
+      "attention": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 2450,
+        "max_abs_error": 0.03125,
+        "relative_l2": 0.0008686509681865573
+      },
+      "projection_same_input": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 0,
+        "max_abs_error": 0.0,
+        "relative_l2": 0.0
+      },
+      "composed_projection": {
+        "elements": 24576,
+        "bf16_bit_mismatches": 5085,
+        "max_abs_error": 0.5,
+        "relative_l2": 0.0013917447067797184
+      },
+      "fully_masked_nonzero": 0
+    },
+    {
+      "layout": "mixed",
+      "case": "random",
+      "attention": {
+        "elements": 57344,
+        "bf16_bit_mismatches": 10844,
+        "max_abs_error": 0.015625,
+        "relative_l2": 0.0014497512020170689
+      },
+      "projection_same_input": {
+        "elements": 57344,
+        "bf16_bit_mismatches": 0,
+        "max_abs_error": 0.0,
+        "relative_l2": 0.0
+      },
+      "composed_projection": {
+        "elements": 57344,
+        "bf16_bit_mismatches": 20397,
+        "max_abs_error": 0.25,
+        "relative_l2": 0.00207242532633245
+      },
+      "fully_masked_nonzero": 0
+    },
+    {
+      "layout": "mixed",
+      "case": "high_logits",
+      "attention": {
+        "elements": 57344,
+        "bf16_bit_mismatches": 227,
+        "max_abs_error": 0.0078125,
+        "relative_l2": 0.00016836897702887654
+      },
+      "projection_same_input": {
+        "elements": 57344,
+        "bf16_bit_mismatches": 0,
+        "max_abs_error": 0.0,
+        "relative_l2": 0.0
+      },
+      "composed_projection": {
+        "elements": 57344,
+        "bf16_bit_mismatches": 3048,
+        "max_abs_error": 0.0625,
+        "relative_l2": 0.0005740927299484611
+      },
+      "fully_masked_nonzero": 0
+    },
+    {
+      "layout": "mixed",
+      "case": "uniform",
+      "attention": {
+        "elements": 57344,
+        "bf16_bit_mismatches": 60,
+        "max_abs_error": 0.0078125,
+        "relative_l2": 0.0001527718995930627
+      },
+      "projection_same_input": {
+        "elements": 57344,
+        "bf16_bit_mismatches": 0,
+        "max_abs_error": 0.0,
+        "relative_l2": 0.0
+      },
+      "composed_projection": {
+        "elements": 57344,
+        "bf16_bit_mismatches": 2133,
+        "max_abs_error": 0.0625,
+        "relative_l2": 0.0004173952038399875
+      },
+      "fully_masked_nonzero": 0
+    }
+  ],
+  "known_bad_controls": {
+    "causal_only": 19888,
+    "dense": 138907,
+    "drop_query_padding": 36861,
+    "transposed_output_weight": 184170
+  },
+  "isolation": [
+    {
+      "layout": "saved",
+      "case": "real_projection",
+      "padded_key_changes": 0,
+      "sample0_changes": 0
+    },
+    {
+      "layout": "mixed",
+      "case": "random",
+      "padded_key_changes": 0,
+      "sample0_changes": 0
+    },
+    {
+      "layout": "mixed",
+      "case": "high_logits",
+      "padded_key_changes": 0,
+      "sample0_changes": 0
+    },
+    {
+      "layout": "mixed",
+      "case": "uniform",
+      "padded_key_changes": 0,
+      "sample0_changes": 0
+    }
+  ],
+  "qualified": false,
+  "scope": "unchanged scalar attention/gather and real output projection; no speed or full-block qualification"
+}

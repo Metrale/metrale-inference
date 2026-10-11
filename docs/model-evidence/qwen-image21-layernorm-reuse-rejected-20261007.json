@@ -1,0 +1,96 @@
+{
+  "kind": "candidate_unchanged_layernorm_reuse",
+  "source_sha256": "c0a43f2dfa9af46d85257eb4f72e1a9e3b08d89b16c6cec0dfe8114a6048165a",
+  "compile_command": [
+    "nvcc",
+    "-shared",
+    "-Xcompiler",
+    "-fPIC",
+    "-O3",
+    "--fmad=false",
+    "-arch=sm_121",
+    "/home/pidtom/metrale-integration-20261006/qwen-modulation-stage/norm-reuse-2/wrapper.cu",
+    "-o",
+    "/home/pidtom/metrale-integration-20261006/qwen-modulation-stage/norm-reuse-2/norm.so"
+  ],
+  "torch": "2.13.0+cu130",
+  "cuda": "13.0",
+  "criterion": "exact BF16 bits",
+  "results": [
+    {
+      "case": "random",
+      "rows": 65,
+      "width": 4096,
+      "elements": 266240,
+      "bf16_bit_mismatches": 0,
+      "max_abs_error": 0.0
+    },
+    {
+      "case": "constant",
+      "rows": 65,
+      "width": 4096,
+      "elements": 266240,
+      "bf16_bit_mismatches": 0,
+      "max_abs_error": 0.0
+    },
+    {
+      "case": "tiny",
+      "rows": 65,
+      "width": 4096,
+      "elements": 266240,
+      "bf16_bit_mismatches": 1,
+      "max_abs_error": 3.725290298461914e-09,
+      "first_differences": [
+        {
+          "row": 42,
+          "col": 619,
+          "native": 7.003545761108398e-07,
+          "reference": 6.966292858123779e-07
+        }
+      ]
+    },
+    {
+      "case": "large_offset",
+      "rows": 65,
+      "width": 4096,
+      "elements": 266240,
+      "bf16_bit_mismatches": 0,
+      "max_abs_error": 0.0
+    },
+    {
+      "case": "small_variance",
+      "rows": 65,
+      "width": 4096,
+      "elements": 266240,
+      "bf16_bit_mismatches": 0,
+      "max_abs_error": 0.0
+    },
+    {
+      "case": "large_magnitude",
+      "rows": 65,
+      "width": 4096,
+      "elements": 266240,
+      "bf16_bit_mismatches": 2,
+      "max_abs_error": 4.76837158203125e-07,
+      "first_differences": [
+        {
+          "row": 30,
+          "col": 1774,
+          "native": 0.00011157989501953125,
+          "reference": 0.00011205673217773438
+        },
+        {
+          "row": 56,
+          "col": 153,
+          "native": 7.599592208862305e-07,
+          "reference": 7.636845111846924e-07
+        }
+      ]
+    }
+  ],
+  "known_bad_controls": {
+    "rmsnorm_substitution": 1508329,
+    "epsilon_1e5": 532685
+  },
+  "scope": "native norm candidate only; no modulation or model qualification"
+}

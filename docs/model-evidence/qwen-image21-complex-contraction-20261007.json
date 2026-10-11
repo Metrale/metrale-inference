@@ -1,0 +1,136 @@
+{
+  "seed": 2127,
+  "torch": "2.13.0+cu130",
+  "criterion": "exact BF16 with identical reference cis",
+  "scope": "contraction isolation only; no native table qualification",
+  "source_sha256": "48c20fe5c187371c838644e48aff36016e67dcec2c8c53aa8d43f322f647accc",
+  "mode_semantics": {
+    "0": "fma(x,c,-y*s), fma(x,s,y*c)",
+    "1": "fma(-y,s,x*c), fma(x,s,y*c)",
+    "2": "fma(x,c,-y*s), fma(y,c,x*s)",
+    "3": "fma(-y,s,x*c), fma(y,c,x*s)",
+    "4": "split products and add/subtract"
+  },
+  "results": [
+    {
+      "scale": 1,
+      "mode": 0,
+      "bad_real_imag": [
+        0,
+        16
+      ]
+    },
+    {
+      "scale": 1,
+      "mode": 1,
+      "bad_real_imag": [
+        19,
+        16
+      ]
+    },
+    {
+      "scale": 1,
+      "mode": 2,
+      "bad_real_imag": [
+        0,
+        0
+      ]
+    },
+    {
+      "scale": 1,
+      "mode": 3,
+      "bad_real_imag": [
+        19,
+        0
+      ]
+    },
+    {
+      "scale": 1,
+      "mode": 4,
+      "bad_real_imag": [
+        22,
+        16
+      ]
+    },
+    {
+      "scale": 0.0001,
+      "mode": 0,
+      "bad_real_imag": [
+        0,
+        12
+      ]
+    },
+    {
+      "scale": 0.0001,
+      "mode": 1,
+      "bad_real_imag": [
+        15,
+        12
+      ]
+    },
+    {
+      "scale": 0.0001,
+      "mode": 2,
+      "bad_real_imag": [
+        0,
+        0
+      ]
+    },
+    {
+      "scale": 0.0001,
+      "mode": 3,
+      "bad_real_imag": [
+        15,
+        0
+      ]
+    },
+    {
+      "scale": 0.0001,
+      "mode": 4,
+      "bad_real_imag": [
+        10,
+        6
+      ]
+    },
+    {
+      "scale": 10000.0,
+      "mode": 0,
+      "bad_real_imag": [
+        0,
+        19
+      ]
+    },
+    {
+      "scale": 10000.0,
+      "mode": 1,
+      "bad_real_imag": [
+        21,
+        19
+      ]
+    },
+    {
+      "scale": 10000.0,
+      "mode": 2,
+      "bad_real_imag": [
+        0,
+        0
+      ]
+    },
+    {
+      "scale": 10000.0,
+      "mode": 3,
+      "bad_real_imag": [
+        21,
+        0
+      ]
+    },
+    {
+      "scale": 10000.0,
+      "mode": 4,
+      "bad_real_imag": [
+        15,
+        15
+      ]
+    }
+  ]
+}
