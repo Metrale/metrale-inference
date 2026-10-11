@@ -22,7 +22,7 @@ serde_json = { workspace = true }
 tracing = "0.1"
 rand = "0.9"
 rand_chacha = "0.9"
-rand_distr = "0.5"
+rand_distr = "0.6"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
