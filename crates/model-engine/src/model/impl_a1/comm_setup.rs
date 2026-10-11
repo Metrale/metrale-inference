@@ -51,6 +51,12 @@ pub(super) fn assert_rank_levers_agree(
                 metrale_model_layers::speculative::K2_FUSED_ENV,
                 u64::from(metrale_model_layers::speculative::k2_fused_requested()),
             ),
+            // 2026-10-11: The tensor-parallel drafter `eh_proj` adds an all-reduce to every
+            // propose.
+            (
+                "METRALE_GLM_MTP_EH_TP",
+                u64::from(metrale_model_arch::glm5next_mtp_head::eh_tp_enabled()),
+            ),
             // 2026-10-10: The resolved context window determines DFlash context-broadcast
             // chunking, so every rank must use the same value.
             (
