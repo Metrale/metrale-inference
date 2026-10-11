@@ -1784,6 +1784,8 @@ microbench = "same bench, W8A8 twin, 2026-09-28: 270 us at M=2, 823 us at M=8, 2
 # of a column tile merging FP32 partial sums in one thread-block cluster). S = 1 writes
 # w4a16_tc_rows' bytes; S > 1 changes the FP32 summation order (accuracy-gated, opt-in through
 # METRALE_GLM_W4A16_SEG). Neither axis changes the pipeline below, so neither is a point here.
+# 2026-10-11: The warps per block (NW, default 4) is a third such axis: w4a16_tc_rows_8_w1/_w2 run
+# 1..=8 rows on 1- or 2-warp blocks (16 or 32 columns), each output's MMA sequence unchanged.
 [[family]]
 id = "tc_rows"
 description = "Tensor-core row-tile dense projection (FP8 block-128 W8A16, NVFP4 g16 W4A16)"
@@ -1797,6 +1799,8 @@ kernels = [
   "w4a16_tc_rows::w4a16_tc_rows_16",
   "w4a16_tc_rows::w4a16_tc_rows_32",
   "w4a16_tc_rows::w4a16_tc_rows_64",
+  "w4a16_tc_rows::w4a16_tc_rows_8_w1",
+  "w4a16_tc_rows::w4a16_tc_rows_8_w2",
   "w4a16_tc_rows_seg::w4a16_tc_rows_seg_16_k1",
   "w4a16_tc_rows_seg::w4a16_tc_rows_seg_16_k2",
   "w4a16_tc_rows_seg::w4a16_tc_rows_seg_16_k4",

@@ -69,12 +69,86 @@ pub fn w4a16_tc_rows(
         w4a16_tc_rows_shape_ok(m, n, k, lda, ldc),
         "w4a16_tc_rows: m={m} n={n} k={k} lda={lda} ldc={ldc} outside the kernel's contract"
     );
-    let kernel = gpu
-        .op_cache()
-        .kernel(gpu, W4A16_TC_ROWS_MODULE, w4a16_tc_rows_entry(m))?;
+    launch_rows(
+        gpu,
+        w4a16_tc_rows_entry(m),
+        W4A16_TC_ROWS_COLS,
+        input,
+        weight,
+        output,
+        [m, n, k, lda, ldc],
+        stream,
+    )
+}
+
+/// 2026-10-11: The widest row count of the narrow entry points (`w4a16_tc_rows_8_w<W>`).
+pub const W4A16_TC_ROWS_NARROW_MAX_M: u32 = 8;
+
+/// 2026-10-11: The narrow entry point with `warps` warps (16 columns each) per block, 1..=8 rows.
+pub fn w4a16_tc_rows_narrow_entry(warps: u32) -> Option<&'static str> {
+    match warps {
+        1 => Some("w4a16_tc_rows_8_w1"),
+        2 => Some("w4a16_tc_rows_8_w2"),
+        _ => None,
+    }
+}
+
+/// 2026-10-11: [`w4a16_tc_rows`] for 1..=8 rows on blocks of `warps` (1 or 2) warps: more blocks
+/// for a narrow launch, every row's bytes those of [`w4a16_tc_rows`] (`tc_rows.cuh`: the warps
+/// per block change no output's MMA sequence). Refuses more rows, another warp count, or a shape
+/// [`w4a16_tc_rows_shape_ok`] refuses.
+#[allow(clippy::too_many_arguments)]
+pub fn w4a16_tc_rows_narrow(
+    gpu: &dyn GpuBackend,
+    input: DevicePtr,
+    weight: &QuantizedWeight,
+    output: DevicePtr,
+    m: u32,
+    n: u32,
+    k: u32,
+    lda: u32,
+    ldc: u32,
+    warps: u32,
+    stream: u64,
+) -> Result<()> {
+    let entry = w4a16_tc_rows_narrow_entry(warps)
+        .filter(|_| m <= W4A16_TC_ROWS_NARROW_MAX_M && w4a16_tc_rows_shape_ok(m, n, k, lda, ldc));
+    let Some(entry) = entry else {
+        anyhow::bail!(
+            "w4a16_tc_rows_narrow: m={m} n={n} k={k} lda={lda} ldc={ldc} warps={warps} outside \
+             the kernel's contract"
+        );
+    };
+    launch_rows(
+        gpu,
+        entry,
+        16 * warps,
+        input,
+        weight,
+        output,
+        [m, n, k, lda, ldc],
+        stream,
+    )
+}
+
+/// 2026-10-11: One launch of `entry` over blocks of `cols` columns (`cols / 16` warps); `dims` is
+/// `[m, n, k, lda, ldc]`.
+#[allow(clippy::too_many_arguments)]
+fn launch_rows(
+    gpu: &dyn GpuBackend,
+    entry: &'static str,
+    cols: u32,
+    input: DevicePtr,
+    weight: &QuantizedWeight,
+    output: DevicePtr,
+    dims: [u32; 5],
+    stream: u64,
+) -> Result<()> {
+    let [m, n, k, lda, ldc] = dims;
+    let kernel = gpu.op_cache().kernel(gpu, W4A16_TC_ROWS_MODULE, entry)?;
     KernelLaunch::new(gpu, kernel)
-        .grid([n.div_ceil(W4A16_TC_ROWS_COLS), 1, 1])
-        .block([128, 1, 1])
+        .grid([n.div_ceil(cols), 1, 1])
+        .block([cols * 2, 1, 1])
         .arg_ptr(input)
         .arg_ptr(weight.weight)
         .arg_ptr(weight.weight_scale)
@@ -97,6 +171,26 @@ mod tests {
 
     /// 2026-10-02: The grid and the widest entry point match the kernel (`TR_WARPS` warps of 16
     /// columns, `tr_block<Nvfp4G16, 8, ...>` row tiles of 8), or columns or rows go unwritten.
+    /// 2026-10-11: The narrow entries are 8-row (NT = 1) points with 1 and 2 warps, launched with
+    /// 32 threads and 16 columns per warp; a third warp count has no entry.
+    #[test]
+    fn narrow_entries_match_the_kernel() {
+        for w in [1u32, 2] {
+            let name = w4a16_tc_rows_narrow_entry(w).unwrap();
+            assert!(
+                CU.contains(&format!("__launch_bounds__({}) {name}(", 32 * w)),
+                "{name}"
+            );
+            assert!(CU.contains(&format!(
+                "tr_block<Nvfp4G16, 1, 2, true, {w}>(A, {{packed, scale, s2}}, C, M, N, K, lda, ldc, blockIdx.x);"
+            )));
+        }
+        assert_eq!(w4a16_tc_rows_narrow_entry(4), None);
+        assert_eq!(W4A16_TC_ROWS_NARROW_MAX_M, 8);
+        assert!(ROWS.contains("constexpr int THREADS = NW * 32;"));
+        assert!(ROWS.contains("col_block * (NW * 16) + warp * 16"));
+    }
+
     #[test]
     fn launch_matches_the_kernel() {
         assert!(
