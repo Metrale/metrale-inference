@@ -236,7 +236,10 @@ fn fused_arm(
 
 /// 2026-10-11: Whether the prefetching kernel runs at this case (`pre_norm_kernel` picks it).
 fn pf_case(k: &Glm5NextMhcKernels, t: usize, hid: usize, hc: usize) -> bool {
-    pre_norm_kernel(k, t as u32, hid as u32, hc as u32, true).0 == k.hc_pre_norm_pf
+    pre_norm_kernel(k, t as u32, hid as u32, hc as u32, true)
+        .0
+        .0
+        == k.hc_pre_norm_pf.0
         && k.hc_pre_norm_pf.0 != 0
 }
 

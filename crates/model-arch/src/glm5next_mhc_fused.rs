@@ -293,28 +293,20 @@ mod tests {
     fn the_prefetching_pre_norm_needs_the_lever_the_shape_and_the_kernel() {
         let k = kernels(true);
         let mix = mix_hc(4) as u32;
-        assert_eq!(
-            pre_norm_kernel(&k, 1, 4096, 4, true),
-            (k.hc_pre_norm_pf, mix)
-        );
-        assert_eq!(
-            pre_norm_kernel(&k, 16, 4096, 4, true),
-            (k.hc_pre_norm_pf, mix)
-        );
-        assert_eq!(pre_norm_kernel(&k, 1, 4096, 4, false), (k.hc_pre_norm, mix));
-        assert_eq!(pre_norm_kernel(&k, 1, 5120, 4, true), (k.hc_pre_norm, mix));
-        assert_eq!(pre_norm_kernel(&k, 1, 4096, 3, true).0, k.hc_pre_norm);
+        let pick = |k: &Glm5NextMhcKernels, t, h, hc, pf| {
+            let (kernel, y) = pre_norm_kernel(k, t, h, hc, pf);
+            (kernel.0, y)
+        };
+        assert_eq!(pick(&k, 1, 4096, 4, true), (k.hc_pre_norm_pf.0, mix));
+        assert_eq!(pick(&k, 16, 4096, 4, true), (k.hc_pre_norm_pf.0, mix));
+        assert_eq!(pick(&k, 1, 4096, 4, false), (k.hc_pre_norm.0, mix));
+        assert_eq!(pick(&k, 1, 5120, 4, true), (k.hc_pre_norm.0, mix));
+        assert_eq!(pick(&k, 1, 4096, 3, true).0, k.hc_pre_norm.0);
         let rows = HC_PRE_NORM_ROWS_MIN_TOKENS as u32;
-        assert_eq!(
-            pre_norm_kernel(&k, rows, 4096, 4, true).0,
-            k.hc_pre_norm_rows
-        );
+        assert_eq!(pick(&k, rows, 4096, 4, true).0, k.hc_pre_norm_rows.0);
         let mut absent = kernels(true);
         absent.hc_pre_norm_pf = KernelHandle(0);
-        assert_eq!(
-            pre_norm_kernel(&absent, 1, 4096, 4, true).0,
-            absent.hc_pre_norm
-        );
+        assert_eq!(pick(&absent, 1, 4096, 4, true).0, absent.hc_pre_norm.0);
     }
 
     fn site(bf16: bool) -> Glm5NextMhcSiteWeights {
