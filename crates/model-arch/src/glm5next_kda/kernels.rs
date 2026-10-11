@@ -136,6 +136,9 @@ pub struct KdaSeqKernels {
     pub conv_tokens: KernelHandle,
     pub conv_window: KernelHandle,
     pub recurrent: KernelHandle,
+    /// 2026-10-11: `kda_recurrent_decode_bf16_seq_reg_snap`: `recurrent` that also stores the
+    /// state after each of the first rows (a verify's intermediates, `stateful_tokens_snap`).
+    pub recurrent_snap: KernelHandle,
     pub chunk16_prepare: KernelHandle,
     pub chunk16_scan: KernelHandle,
 }
@@ -147,6 +150,11 @@ impl KdaSeqKernels {
             conv_tokens: k(gpu, "kda_conv_tokens", "causal_conv1d_update_l2norm_tokens"),
             conv_window: k(gpu, "kda_conv_tokens", "causal_conv1d_window_advance"),
             recurrent: k(gpu, "kda_recurrent", "kda_recurrent_decode_bf16_seq_reg"),
+            recurrent_snap: k(
+                gpu,
+                "kda_recurrent",
+                "kda_recurrent_decode_bf16_seq_reg_snap",
+            ),
             chunk16_prepare: k(gpu, "kda_chunk16", "kda_chunk16_prepare"),
             chunk16_scan: k(gpu, "kda_chunk16", "kda_chunk16_scan"),
         }

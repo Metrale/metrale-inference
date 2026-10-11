@@ -83,6 +83,18 @@ fn kda_seq_tokens() -> bool {
     *F.get_or_init(|| std::env::var("METRALE_GLM_KDA_SEQ_TOKENS").as_deref() == Ok("1"))
 }
 
+/// 2026-10-11: `METRALE_GLM_KDA_VERIFY_TOKENS=1`: a K-row verify (2..=4 rows, one intermediate
+/// state per row but the last) steps its rows through the per-sequence token kernels too
+/// (`stateful_tokens_snap`): one conv launch and one recurrent launch that stores each
+/// intermediate as it passes, instead of a conv, a recurrent step and a state copy per row.
+/// The recurrent state is read once instead of once per row and never copied; at K=2 that is
+/// ~4.3 MB less traffic per KDA layer per rank at TP=3 (34 layers). Same bits. Off until
+/// measured end to end. Read once.
+fn kda_verify_tokens() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| std::env::var("METRALE_GLM_KDA_VERIFY_TOKENS").as_deref() == Ok("1"))
+}
+
 /// 2026-10-09: `METRALE_GLM_KDA_SEQ_ROWS`: `1` steps the batched decode and verify through the
 /// rows kernels (`rows.rs`), `decode` only the batched decode; unset (the default) steps row by
 /// row. On GB10 at C16 the verify arm measured ~24 us a row against ~8.6 us for the
