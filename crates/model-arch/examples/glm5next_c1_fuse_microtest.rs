@@ -16,6 +16,9 @@
 //!    `kda_recurrent_decode_bf16_seq_reg` at T = 1 (`METRALE_GLM_KDA_ROW_REG=1`) for several
 //!    block widths, sixteen consecutive tokens on one state. Every output and the final state must
 //!    be byte-identical (`common/glm5next_c1_kda.rs`).
+//! 4. KDA gate chain of one token: act-quant + f_b + kda_gate + beta sigmoid + act-quant + g_b
+//!    against `kda_gates_w8a8_k128` (`METRALE_GLM_KDA_GATES_FUSED=1`), byte for byte
+//!    (`common/glm5next_c1_kda_gates.rs`).
 //!
 //! Owner: model-arch examples (GLM-5.3).
 //! Invariants:
@@ -28,6 +31,8 @@
 
 #[path = "common/glm5next_c1_kda.rs"]
 mod c1_kda;
+#[path = "common/glm5next_c1_kda_gates.rs"]
+mod c1_kda_gates;
 #[path = "common/glm5next_rows_fixture.rs"]
 mod fixture;
 #[path = "common/graph_timing.rs"]
@@ -318,6 +323,9 @@ fn main() -> Result<()> {
     }
     if only.is_empty() || only == "kda" {
         c1_kda::kda_one_row(g, s, &mut rng)?;
+    }
+    if only.is_empty() || only == "gates" {
+        c1_kda_gates::kda_gates(g, s, &mut rng)?;
     }
     println!("PASS: every new launch is byte-identical to the current kernel");
     Ok(())

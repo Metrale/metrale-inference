@@ -14,6 +14,8 @@
 use anyhow::{Result, ensure};
 use metrale_gpu_runtime::gpu::{DevicePtr, KernelHandle};
 
+use crate::weight_map::Fp8Weight;
+
 use super::{W8A8_LAUNCH_ROWS, W8a8Kernels, W8a8Scale, W8a8Scratch, W8a8Weight, entry_index};
 
 impl W8a8Weight {
@@ -28,6 +30,12 @@ impl W8a8Weight {
     /// 2026-09-30: Stacked segments.
     pub fn segments(&self) -> usize {
         self.count
+    }
+
+    /// 2026-10-10: The stacked segments' FP8 rows and scales in output order, for a fused launch
+    /// that reads them directly.
+    pub fn segment_weights(&self) -> &[Fp8Weight] {
+        &self.segs[..self.count]
     }
 }
 

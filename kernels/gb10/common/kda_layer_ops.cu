@@ -18,6 +18,7 @@
 
 
 #include <cuda_bf16.h>
+#include "kda_gate_scalar.cuh"
 
 
 
@@ -118,8 +119,7 @@ extern "C" __global__ void kda_sigmoid_bf16_f32(
 ) {
     unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n) {
-        float x = __bfloat162float(src[i]);
-        dst[i] = 1.0f / (1.0f + __expf(-x));
+        dst[i] = kda_beta_scalar(__bfloat162float(src[i]));
     }
 }
 

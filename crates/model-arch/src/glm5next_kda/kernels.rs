@@ -53,6 +53,10 @@ pub struct Glm5NextKdaKernels {
     pub sigmoid: KernelHandle,
     pub fill: KernelHandle,
     pub pack: KernelHandle,
+    /// 2026-10-10: `kda_gates_w8a8_k128`: one token's f_b / g_b W8A8 projections with their
+    /// activation quantization, the gate and the beta sigmoid in one launch
+    /// (`METRALE_GLM_KDA_GATES_FUSED=1`, `gates_fused.rs`). `0` when absent.
+    pub gates_fused: KernelHandle,
 }
 
 impl Glm5NextKdaKernels {
@@ -105,6 +109,11 @@ impl Glm5NextKdaKernels {
             sigmoid: gpu.kernel("kda_layer_ops", "kda_sigmoid_bf16_f32")?,
             fill: gpu.kernel("kda_layer_ops", "kda_fill_f32")?,
             pack: gpu.kernel("kda_layer_ops", "kda_pack_qkv_bf16")?,
+            gates_fused: metrale_model_layers::layers::try_kernel(
+                gpu,
+                "kda_gates_w8a8",
+                "kda_gates_w8a8_k128",
+            ),
         })
     }
 }
