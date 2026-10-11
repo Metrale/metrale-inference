@@ -272,7 +272,8 @@ pub fn validate_serve_args(args: &ServeArgs) -> Result<(), String> {
 
     // 2026-10-02: The confidence stop shapes MTP draft chains, so it needs MTP;
     // DFlash drafts a whole block in one pass and has no chain to stop.
-    if let Some(tau) = args.mtp_draft.draft_confidence_stop {
+    if let Some(spec) = args.mtp_draft.draft_confidence_stop {
+        let tau = spec.tau;
         if !(tau > 0.0 && tau < 1.0) {
             v.push(Violation::new(
                 format!("--draft-confidence-stop {tau} is outside (0, 1)."),

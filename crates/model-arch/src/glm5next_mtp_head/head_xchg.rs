@@ -20,8 +20,9 @@ use anyhow::{Result, bail};
 pub const MAX_RANKS: usize = 4;
 
 /// 2026-10-11: Bytes of the exchange buffer `alloc_state` allocates (and the per-sequence
-/// reserve charges): room for [`MAX_RANKS`] ranks.
-pub const BUFFER_BYTES: usize = 8 * MAX_RANKS;
+/// reserve charges): room for [`MAX_RANKS`] ranks of the log-probability layout
+/// ([`xchg_lp_bytes`]), the larger one.
+pub const BUFFER_BYTES: usize = 12 * MAX_RANKS;
 
 /// 2026-10-11: Base-256 digits per token id: 24 bits, enough for any vocab below 16,777,216.
 const DIGITS: usize = 3;
@@ -32,6 +33,12 @@ const MAX_ID: usize = (1 << (8 * DIGITS)) - 1;
 /// 2026-10-11: Bytes of the exchange at `world` ranks: what the all-reduce sums.
 pub fn xchg_bytes(world: usize) -> usize {
     2 * (1 + DIGITS) * world
+}
+
+/// 2026-10-11: Bytes of the exchange with the draft's log-probability: the [`xchg_bytes`] lanes,
+/// then two lanes per rank for its log-sum-exp (high part, then remainder).
+pub fn xchg_lp_bytes(world: usize) -> usize {
+    xchg_bytes(world) + 4 * world
 }
 
 fn bf16_of(x: f32) -> [u8; 2] {
@@ -84,6 +91,52 @@ pub fn pick(world: usize, summed: &[u8]) -> Result<u32> {
         a + ((lane(world + win * DIGITS + d) as usize) << (8 * d))
     });
     Ok(idx as u32)
+}
+
+/// 2026-10-11: [`pack`] plus this rank's log-sum-exp over its vocab shard, `lse`, as two BF16
+/// lanes: its top 16 bits, then the top 16 bits of the remainder (the device's
+/// `glm5next_mtp_xchg_pack_lp`).
+pub fn pack_lp(
+    world: usize,
+    rank: usize,
+    logit: [u8; 2],
+    global_idx: usize,
+    lse: f32,
+) -> Result<Vec<u8>> {
+    let mut buf = pack(world, rank, logit, global_idx)?;
+    buf.resize(xchg_lp_bytes(world), 0);
+    let hi = bf16_of(lse);
+    let lo = bf16_of(lse - f32_of(hi));
+    let lane = 4 * world + 2 * rank;
+    buf[lane * 2..][..2].copy_from_slice(&hi);
+    buf[(lane + 1) * 2..][..2].copy_from_slice(&lo);
+    Ok(buf)
+}
+
+/// 2026-10-11: [`pick`]'s winner and its global log-probability: the winner's logit minus the
+/// log-sum-exp of every rank's (the device's `glm5next_mtp_xchg_pick_lp`).
+pub fn pick_lp(world: usize, summed: &[u8]) -> Result<(u32, f32)> {
+    if summed.len() < xchg_lp_bytes(world) {
+        bail!(
+            "draft head exchange: {} bytes for {world} ranks with log-probabilities (need {})",
+            summed.len(),
+            xchg_lp_bytes(world)
+        );
+    }
+    let id = pick(world, summed)?;
+    let lane = |i: usize| f32_of([summed[i * 2], summed[i * 2 + 1]]);
+    let mut win = 0;
+    for r in 1..world {
+        if lane(r) > lane(win) {
+            win = r;
+        }
+    }
+    let lses: Vec<f32> = (0..world)
+        .map(|r| lane(4 * world + 2 * r) + lane(4 * world + 2 * r + 1))
+        .collect();
+    let m = lses.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    let s: f32 = lses.iter().map(|l| (l - m).exp()).sum();
+    Ok((id, lane(win) - (m + s.ln())))
 }
 
 #[cfg(test)]
@@ -184,12 +237,59 @@ mod tests {
         assert!(p[..2].iter().chain(&p[4..10]).all(|&b| b == 0));
     }
 
+    /// 2026-10-11: The log-probability of the winner over the whole vocab, from each rank's
+    /// shard log-sum-exp, matches a direct log-softmax over the concatenated shards; the id is
+    /// the plain exchange's.
+    #[test]
+    fn the_log_probability_is_the_whole_vocab_log_softmax() {
+        let shards: [&[f32]; 3] = [&[1.0, 3.5, -2.0], &[0.25, 4.0, 2.0], &[-1.0, 0.0, 3.75]];
+        let lse = |xs: &[f32]| {
+            let m = xs.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+            m + xs.iter().map(|x| (x - m).exp()).sum::<f32>().ln()
+        };
+        let packs: Vec<Vec<u8>> = shards
+            .iter()
+            .enumerate()
+            .map(|(r, xs)| {
+                let (j, &v) = xs
+                    .iter()
+                    .enumerate()
+                    .max_by(|a, b| a.1.total_cmp(b.1))
+                    .unwrap();
+                pack_lp(3, r, bf16_of(v), 3 * r + j, lse(xs)).unwrap()
+            })
+            .collect();
+        let (id, lp) = pick_lp(3, &all_reduce(&packs)).unwrap();
+        let all: Vec<f32> = shards.iter().flat_map(|s| s.iter().copied()).collect();
+        assert_eq!(id, 4);
+        assert!((lp - (4.0 - lse(&all))).abs() < 1e-3, "lp {lp}");
+        // 2026-10-11: The plain exchange of the same lanes picks the same id.
+        assert_eq!(pick(3, &all_reduce(&packs)).unwrap(), 4);
+    }
+
+    /// 2026-10-11: The high and low lanes keep the log-sum-exp to 16 mantissa bits, where one
+    /// BF16 lane keeps 8.
+    #[test]
+    fn the_split_lanes_keep_the_log_sum_exp() {
+        for lse in [12.345_678f32, -0.003_21, 31.0, 1.0e-3] {
+            let p = pack_lp(2, 1, bf16_of(0.0), 9, lse).unwrap();
+            let got = f32_of([p[10 * 2], p[10 * 2 + 1]]) + f32_of([p[11 * 2], p[11 * 2 + 1]]);
+            assert!(
+                (got - lse).abs() <= lse.abs() * 2.0f32.powi(-15),
+                "{lse} -> {got}"
+            );
+        }
+        assert_eq!(xchg_lp_bytes(2), 24);
+        assert!(pick_lp(2, &[0u8; 16]).is_err());
+    }
+
     /// 2026-10-11: The buffer `alloc_state` allocates holds every world the shard admits, and a
     /// rank or world outside it is refused.
     #[test]
     fn the_buffer_holds_every_admitted_world_and_refuses_others() {
         for world in 1..=MAX_RANKS {
             assert!(xchg_bytes(world) <= BUFFER_BYTES);
+            assert!(xchg_lp_bytes(world) <= BUFFER_BYTES);
         }
         assert!(pack(MAX_RANKS + 1, 0, [0, 0], 1).is_err());
         assert!(pack(3, 3, [0, 0], 1).is_err());
