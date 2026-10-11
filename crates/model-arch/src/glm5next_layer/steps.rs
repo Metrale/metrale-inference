@@ -222,6 +222,23 @@ impl Glm5NextLayer {
     /// 2026-10-10: Whether this mHC site sums its all-reduce inside the post-mix
     /// (`METRALE_GLM_AR_FUSED_POST=1`). Errors when the lever is on and the target lacks
     /// `glm5next_hc_post_rank_sum`, rather than silently running the unfused pair.
+    /// 2026-10-10: Whether the one-token decode folds the attention site's post-mix into the FFN
+    /// site's pre-norm (`METRALE_GLM_MHC_POST_FOLD=1`); an error when the lever is on without the
+    /// fused pre-norm, the kernel or the layer's `fold_streams`.
+    pub(in crate::glm5next_layer) fn post_fold(&self, mhc: &Glm5NextMhc) -> Result<bool> {
+        if !mhc_post_fold() {
+            return Ok(false);
+        }
+        if !mhc_fused() || mhc.kernels.hc_post_pre_norm.0 == 0 || mhc.fold_streams.0 == 0 {
+            bail!(
+                "GLM layer {}: METRALE_GLM_MHC_POST_FOLD=1 needs METRALE_GLM_MHC_FUSED=1, \
+                 glm5next_hc_post_pre_norm and the layer's fold streams",
+                self.layer_idx
+            );
+        }
+        Ok(true)
+    }
+
     pub(in crate::glm5next_layer) fn fused_post(&self, mhc: &Glm5NextMhc) -> Result<bool> {
         if !ar_fused_post() {
             return Ok(false);
@@ -259,7 +276,8 @@ impl Glm5NextLayer {
         Ok(None)
     }
 
-    /// 2026-10-10: `glm_hc_post` of `k` rows of `x` into the highway at `streams`, or, when
+    /// 2026-10-10: `glm_hc_post` of `k` rows of `x` and the streams at `residual` into the
+    /// highway at `streams` (the same buffer except after a folded post, `forward_one`), or, when
     /// `partials` is set, `glm_hc_post_rank_sum`, which first sums `x` with the peers' partials
     /// (writing the sum back to `x`), with the same bits as the all-reduce sum then `glm_hc_post`.
     #[allow(clippy::too_many_arguments)]
@@ -269,6 +287,7 @@ impl Glm5NextLayer {
         mhc: &Glm5NextMhc,
         x: DevicePtr,
         partials: Option<metrale_comm::PeerPartials>,
+        residual: DevicePtr,
         streams: DevicePtr,
         post: DevicePtr,
         comb: DevicePtr,
@@ -282,7 +301,7 @@ impl Glm5NextLayer {
                 mhc.kernels.hc_post_rank_sum,
                 x,
                 &p,
-                streams,
+                residual,
                 post,
                 comb,
                 streams,
@@ -295,7 +314,7 @@ impl Glm5NextLayer {
                 gpu,
                 mhc.kernels.hc_post,
                 x,
-                streams,
+                residual,
                 post,
                 comb,
                 streams,

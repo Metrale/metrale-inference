@@ -114,6 +114,16 @@ pub(crate) fn ar_fused_post() -> bool {
     *E.get_or_init(|| std::env::var("METRALE_GLM_AR_FUSED_POST").as_deref() == Ok("1"))
 }
 
+/// 2026-10-10: `METRALE_GLM_MHC_POST_FOLD=1`: in the one-token decode (`forward_one`), with
+/// `METRALE_GLM_MHC_FUSED=1`, the attention site's all-reduce sum and post-mix run inside the FFN
+/// site's pre-norm launch (`glm5next_hc_post_pre_norm`), the post-mixed streams written to the
+/// layer's `fold_streams` and post-mixed back into the highway by the FFN site's post; every
+/// output keeps its bits. Off until measured end to end. Read once.
+pub(crate) fn mhc_post_fold() -> bool {
+    static E: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *E.get_or_init(|| std::env::var("METRALE_GLM_MHC_POST_FOLD").as_deref() == Ok("1"))
+}
+
 /// 2026-10-09: `METRALE_GLM_MHC_FUSED=1` runs each mHC site's pre-mix and the RMS norm after
 /// it as one `glm5next_hc_pre_norm` launch (`glm5next_mhc_fused::glm_hc_pre_norm`) instead of
 /// `hc_mix_bf16`, `hc_finish` and `rms_norm_vanilla`; every output keeps its bits. Off until

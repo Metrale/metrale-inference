@@ -19,6 +19,7 @@ pub mod glm5next_kda_ref;
 pub mod glm5next_layer;
 pub mod glm5next_mhc;
 pub mod glm5next_mhc_fused;
+pub mod glm5next_mhc_post_fold;
 pub mod glm5next_mlp;
 pub mod glm5next_mtp_head;
 pub mod glm5next_skeleton;
