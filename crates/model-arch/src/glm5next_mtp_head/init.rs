@@ -5,25 +5,28 @@
 //! Owner: model-arch (GLM-5.3 MTP drafter).
 //! Invariants:
 //! - A constructed head's `max_seq_len` is at most `max_dsa_context` of its DSA block.
-//! - `head_n` is `vocab_size / 2` at `tp_world_size == 2` with an even `vocab_size`, and
-//!   `vocab_size` otherwise (2026-10-08: [`draft_head_shard`]); `[head_v0, head_v0 + head_n)`
-//!   always lies inside the vocab.
+//! - At `tp_world_size` in `2..=head_xchg::MAX_RANKS` the ranks' `[head_v0, head_v0 + head_n)`
+//!   partition the vocab (2026-10-11: any such world, uneven splits included); otherwise
+//!   `head_n` is `vocab_size` from row 0 ([`draft_head_shard`]). The range always lies inside
+//!   the vocab.
 
 use super::*;
 
-/// 2026-10-08: Ranks the draft head's `(max, argmax)` exchange in `forward_one` packs into its
-/// 16-byte buffer: two logit lanes, then three index digits per rank.
-const HEAD_XCHG_RANKS: usize = 2;
-
 /// 2026-10-08: `(head_v0, head_n)`, the vocab rows rank `rank` of `world` sweeps. The sweep
-/// splits only where the exchange can combine the ranks' results: `HEAD_XCHG_RANKS` ranks and a
-/// vocab that halves. Elsewhere every rank sweeps the whole vocab from row 0. Before this,
-/// TP=3 kept `head_n = vocab` but offset rank `r` by `r * vocab` rows, past the end of
-/// `lm_head`; and a world of 4 over a divisible vocab overran the two-rank exchange.
+/// splits only where the exchange can combine the ranks' results. Elsewhere every rank sweeps
+/// the whole vocab from row 0. Before 2026-10-08, TP=3 kept `head_n = vocab` but offset rank
+/// `r` by `r * vocab` rows, past the end of `lm_head`.
+///
+/// 2026-10-11: Any world of `2..=head_xchg::MAX_RANKS` splits, not only two ranks over an even
+/// vocab: the first `vocab % world` ranks take one row more. Until then TP=3 swept all 154,856
+/// BF16 rows (1.27 GB) on every rank per draft, and the FP8 copy was built but never read.
 pub(super) fn draft_head_shard(vocab: usize, world: usize, rank: usize) -> (usize, usize) {
-    if world == HEAD_XCHG_RANKS && vocab.is_multiple_of(HEAD_XCHG_RANKS) {
-        let n = vocab / HEAD_XCHG_RANKS;
-        (rank * n, n)
+    if (2..=super::head_xchg::MAX_RANKS).contains(&world) && rank < world && vocab >= world {
+        let (base, extra) = (vocab / world, vocab % world);
+        (
+            rank * base + rank.min(extra),
+            base + usize::from(rank < extra),
+        )
     } else {
         (0, vocab)
     }
@@ -128,6 +131,7 @@ impl Glm5NextMtpHead {
             hidden: config.hidden_size,
             vocab: config.vocab_size,
             max_seq_len,
+            head_world,
             head_rank,
             head_v0,
             head_n,
@@ -151,23 +155,43 @@ mod tests {
         assert_eq!(draft_head_shard(VOCAB, 2, 1), (VOCAB / 2, VOCAB / 2));
     }
 
-    /// 2026-10-08: Any other world sweeps the whole vocab from row 0 on every rank, and the
-    /// range never leaves the vocab. TP=3 is the case that used to offset past the end.
+    /// 2026-10-11: Every admitted world partitions the vocab exactly: contiguous, in rank order,
+    /// no row twice or missing, shards differing by at most one row, never past the end.
+    /// TP=3 over GLM-5.3's served vocab (154,856, which 3 does not divide) is the case that
+    /// used to sweep the whole head on every rank.
+    #[test]
+    fn admitted_worlds_partition_the_vocab() {
+        for vocab in [VOCAB, 154_856, 154_881, 7, 4] {
+            for world in 2..=super::super::head_xchg::MAX_RANKS {
+                let shards: Vec<(usize, usize)> = (0..world)
+                    .map(|r| draft_head_shard(vocab, world, r))
+                    .collect();
+                let mut next = 0;
+                for (r, &(v0, n)) in shards.iter().enumerate() {
+                    assert_eq!(v0, next, "vocab {vocab} world {world} rank {r}");
+                    assert!(n >= vocab / world && n <= vocab / world + 1);
+                    next = v0 + n;
+                }
+                assert_eq!(next, vocab, "vocab {vocab} world {world}");
+            }
+        }
+        assert_eq!(draft_head_shard(154_856, 3, 0), (0, 51_619));
+        assert_eq!(draft_head_shard(154_856, 3, 1), (51_619, 51_619));
+        assert_eq!(draft_head_shard(154_856, 3, 2), (103_238, 51_618));
+    }
+
+    /// 2026-10-08: One rank, or more ranks than the exchange holds, sweeps the whole vocab from
+    /// row 0 on every rank, and the range never leaves the vocab.
     #[test]
     fn other_worlds_sweep_the_whole_vocab_inside_it() {
-        for (world, vocab) in [
-            (1, VOCAB),
-            (3, VOCAB),
-            (4, VOCAB),
-            (3, 154_881),
-            (2, 154_881),
-        ] {
+        let over = super::super::head_xchg::MAX_RANKS + 1;
+        for (world, vocab) in [(1, VOCAB), (over, VOCAB), (over, 154_881), (3, 2)] {
             for rank in 0..world {
-                let (v0, n) = draft_head_shard(vocab, world, rank);
-                assert!(v0 + n <= vocab, "world {world} rank {rank}: [{v0}, +{n})");
-                if (world, vocab % 2) != (2, 0) {
-                    assert_eq!((v0, n), (0, vocab), "world {world} rank {rank}");
-                }
+                assert_eq!(
+                    draft_head_shard(vocab, world, rank),
+                    (0, vocab),
+                    "world {world} rank {rank}"
+                );
             }
         }
     }

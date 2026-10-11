@@ -115,7 +115,7 @@ pub fn per_sequence_state_bytes_for(
             + config.hidden_size * 2
             + config.vocab_size * 2
             + 4
-            + 16
+            + crate::glm5next_mtp_head::HEAD_XCHG_BUFFER_BYTES
     } else {
         0
     };

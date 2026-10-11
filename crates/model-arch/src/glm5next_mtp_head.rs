@@ -33,8 +33,12 @@ use metrale_model_layers::layers::ops;
 use metrale_model_layers::speculative::{DraftProposer, ProposerState};
 use metrale_model_layers::weight_map::DenseWeight;
 
+mod head_xchg;
 mod init;
 mod proposer;
+
+/// 2026-10-11: Bytes of the draft head's exchange buffer, one per sequence state.
+pub use head_xchg::BUFFER_BYTES as HEAD_XCHG_BUFFER_BYTES;
 
 /// 2026-09-25: Per-sequence drafter state: the block's own indexer cache and KV block table.
 pub struct Glm5NextMtpProposerState {
@@ -51,8 +55,9 @@ pub struct Glm5NextMtpProposerState {
     x: DevicePtr,
     logits: DevicePtr,
     arg: DevicePtr,
-    /// 2026-09-25: 8 BF16 lanes for the vocab-sharded head's cross-rank pick: each rank's
-    /// max logit, then three base-256 digits of each rank's token id.
+    /// 2026-09-25: BF16 lanes for the vocab-sharded head's cross-rank pick: each rank's
+    /// max logit, then three base-256 digits of each rank's token id (2026-10-11:
+    /// `head_xchg`, sized for its `MAX_RANKS`).
     head_xchg: DevicePtr,
     /// 2026-09-25: Set by `free_state`, which is a no-op once it is set.
     released: bool,
@@ -81,8 +86,9 @@ pub struct Glm5NextMtpHead {
     vocab: usize,
     max_seq_len: usize,
     /// 2026-09-25: Vocab shard of the shared `lm_head` this rank sweeps:
-    /// `[head_v0, head_v0 + head_n)`. `head_n == vocab` (and `head_v0 == 0`) except at two ranks
-    /// over an even vocab (2026-10-08: `init::draft_head_shard`).
+    /// `[head_v0, head_v0 + head_n)`. `head_n == vocab` (and `head_v0 == 0`) unless
+    /// `init::draft_head_shard` splits the vocab across the `head_world` ranks.
+    head_world: usize,
     head_rank: usize,
     head_v0: usize,
     head_n: usize,
@@ -237,41 +243,20 @@ impl Glm5NextMtpHead {
         let Some(comm) = ctx.comm.filter(|_| sharded) else {
             return Ok((v0 + local) as u32);
         };
-        // 2026-09-25: Exchange (max, argmax) in 8 BF16 lanes: `[val_r0, val_r1, then 3 base-256
-        // digits of each rank's global index]`. Each rank writes only its own lanes and leaves
-        // the others zero, so a SUM all-reduce delivers both ranks' values untouched (`x + 0.0`
-        // is exact).
-        //
-        // The all-reduce sums its bytes as BF16 elements (`NcclDataType::Bfloat16`), so an f32
-        // packed here would be summed as two BF16 halves. A token id needs 18 bits and BF16
-        // holds integers exactly only through 256, hence the digits; the logit lane is already
-        // BF16, so it round-trips bit for bit.
+        // 2026-09-25: Exchange (max, argmax) through one all-reduce of BF16 lanes: each rank's
+        // max logit, then three base-256 digits of each rank's global index (`head_xchg` has
+        // the layout and why a SUM all-reduce delivers it untouched). The logit lane is the
+        // head's own BF16 output, so it round-trips bit for bit.
         let mut lb = [0u8; 2];
         gpu.copy_d2h(st.logits.offset(local * 2), &mut lb)?;
-        let g = v0 + local;
-        let bf = |x: f32| ((x.to_bits() >> 16) as u16).to_le_bytes();
-        let mut pack = [0u8; 16];
-        pack[self.head_rank * 2..][..2].copy_from_slice(&lb);
-        for d in 0..3 {
-            let digit = ((g >> (8 * d)) & 0xFF) as f32;
-            pack[4 + (self.head_rank * 3 + d) * 2..][..2].copy_from_slice(&bf(digit));
-        }
+        let mut pack = head_xchg::pack(self.head_world, self.head_rank, lb, v0 + local)?;
         gpu.copy_h2d(&pack, st.head_xchg)?;
-        comm.all_reduce_async(st.head_xchg.0, 16, stream)?;
+        comm.all_reduce_async(st.head_xchg.0, pack.len(), stream)?;
         gpu.synchronize(stream)?;
         gpu.copy_d2h(st.head_xchg, &mut pack)?;
-        let lane = |i: usize| {
-            f32::from_bits(
-                (u16::from_le_bytes(pack[i * 2..][..2].try_into().unwrap()) as u32) << 16,
-            )
-        };
-        // 2026-09-25: `>=` makes the lower rank win a tie, identically on both ranks, so the
-        // two ranks' drafter KV streams cannot diverge on a tie.
-        let win = if lane(0) >= lane(1) { 0 } else { 1 };
-        let idx = (0..3).fold(0usize, |a, d| {
-            a + ((lane(2 + win * 3 + d) as usize) << (8 * d))
-        });
-        Ok(idx as u32)
+        // 2026-09-25: A tie goes to the lower rank, identically on every rank, so the ranks'
+        // drafter KV streams cannot diverge on a tie.
+        head_xchg::pick(self.head_world, &pack)
     }
 
     /// 2026-09-25: Append `tokens.len() - 1` drafter context rows: row `r` is pair key
