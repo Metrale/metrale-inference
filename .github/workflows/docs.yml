@@ -155,9 +155,17 @@ jobs:
              book/brand/og-image.png book/output/
           cmp book/brand/og-image.png book/output/og-image.png
 
-      # book/theme/metrale.js is generated from the brand kit's geometry.
-      - name: The menu-bar wordmark is current with the brand kit
-        run: node assets/brand/lockup.mjs --check
+      # 2026-10-08: The brand kit (Metrale/metrale-assets) is vendored in
+      # assets/brand/metrale-assets at a signed release, pinned by blob id in
+      # assets/brand/metrale-assets.pin. take-assets.sh --check fails on a hand
+      # edit there, offline; derive.mjs --check fails when anything derived from
+      # it (README banners, the book's icons, fonts, menu-bar logo and colour
+      # file, head.hbs theme-color) is not what the pinned kit gives, or when a
+      # public file names cyan or the retired typeface.
+      - name: The brand kit is the pinned release, and everything derived from it is current
+        run: |
+          bash assets/brand/take-assets.sh --check
+          node assets/brand/derive.mjs --check
 
       # theme/head.hbs emits everything handlebars can. This adds what it
       # cannot: a canonical URL derived from the file path, and a description
@@ -181,14 +189,20 @@ jobs:
         run: |
           test -f book/theme/css/metrale-tokens.css
           cmp book/theme/css/metrale-tokens.css book/output/theme/css/metrale-tokens.css
-          grep -q 'content="#0E1318"' book/theme/head.hbs
-          grep -q -- '--bg: #0E1318' book/output/theme/css/metrale-tokens.css
+          cmp book/theme/css/metrale-brand.css book/output/theme/css/metrale-brand.css
+          # 2026-10-08: The served theme-color and the book's ground are the kit's.
+          ground=$(node -p "require('./assets/brand/metrale-assets/tokens/brand.json').color.ground")
+          grep -q "<meta name=\"theme-color\" content=\"$ground\">" book/output/index.html
+          grep -q -- "--brand-ground: $ground;" book/output/theme/css/metrale-brand.css
+          grep -q -- '--bg: var(--brand-ground);' book/output/theme/css/metrale-tokens.css
           grep -q 'property="og:image" content="https://book.dev.metrale.ai/og-image.png"' \
             book/output/index.html
           grep -q 'rel="canonical"' book/output/getting-started/quickstart.html
           test -s book/output/og-image.png
-          # The retired orange skin must not come back with a theme bump.
+          # The retired orange skin must not come back with a theme bump, nor
+          # the retired brand's cyans and typeface (2026-10-08).
           ! grep -rq 'ff6600' book/output/
+          ! grep -rqiE '#(61ACCC|6FD9EC|5A96BD)\b|Urbanist' book/output/
 
       # A check, not a publication: rustdoc must keep building (broken
       # intra-doc links, doc-comment syntax). The API reference is published

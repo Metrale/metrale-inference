@@ -1,9 +1,9 @@
 {{!-- Metrale brand head, applied to every generated page.
 
       Colours live in css/metrale-tokens.css. The one literal here is
-      theme-color, because a meta tag cannot read a custom property — the same
-      documented exception the marketing site and the blog both carry, and CI
-      compares the two.
+      theme-color, because a meta tag cannot read a custom property: it is the
+      brand kit's ground, and assets/brand/derive.mjs --check (run by the Docs
+      workflow) fails when it is not.
 
       What handlebars CANNOT do is here; what it cannot do is done afterwards by
       scripts-inject-meta.mjs. mdBook's template has no string helpers, so
@@ -20,7 +20,7 @@
 {{!-- The same icon set as metrale.ai and the blog: one brand, one tab
       treatment. The files are copied in from book/brand by the Docs workflow. --}}
 <link rel="icon" type="image/svg+xml" href="{{ path_to_root }}favicon.svg">
-<link rel="icon" href="{{ path_to_root }}favicon.ico" sizes="32x32">
+<link rel="icon" href="{{ path_to_root }}favicon.ico" sizes="48x48">
 <link rel="icon" type="image/png" sizes="32x32" href="{{ path_to_root }}favicon-32.png">
 <link rel="icon" type="image/png" sizes="16x16" href="{{ path_to_root }}favicon-16.png">
 <link rel="apple-touch-icon" sizes="180x180" href="{{ path_to_root }}apple-touch-icon.png">
@@ -32,11 +32,22 @@
 <meta property="og:image" content="https://book.dev.metrale.ai/og-image.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="The Metrale wordmark">
+<meta property="og:image:alt" content="The Metrale logo">
 
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="{{ title }}">
 <meta name="twitter:image" content="https://book.dev.metrale.ai/og-image.png">
-<meta name="twitter:image:alt" content="The Metrale wordmark">
+<meta name="twitter:image:alt" content="The Metrale logo">
 
 <link rel="alternate" type="text/plain" href="{{ path_to_root }}llms.txt" title="llms.txt">
+
+{{!-- The faces (Manrope, IBM Plex Mono). Not fonts/fonts.css: /fonts/* is cached as
+      immutable, so a new brand's faces take a new file name (assets/brand/derive.mjs).
+      Manrope sets the text and IBM Plex Mono 400 the code every page paints first (a code
+      block is the largest thing the quickstart paints), so both are fetched with the
+      stylesheets rather than after them: the first layout already has them, and text is
+      not laid out a second time when a face arrives, which moved the lines below inline
+      code. derive.mjs --check holds the file names to fonts-v2.css's. --}}
+<link rel="preload" href="{{ path_to_root }}fonts/manrope-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="{{ path_to_root }}fonts/ibm-plex-mono-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="{{ path_to_root }}fonts/fonts-v2.css">
