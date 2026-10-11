@@ -426,6 +426,26 @@ pub(super) fn bind_expert_at(
 }
 
 /// 2026-10-08: The routed-expert precision plan of the MTP layer `layer`, for the MTP loader.
+/// 2026-10-11: Register the MTP block's mixer and shared-expert projections under the published
+/// `--dense-quantization` and `--dsa-quantization`, as `loader.rs` registers a text layer's, so
+/// the drafter's DSA q_a / absorbed q / absorbed o follow the DSA tier and the rest of its dense
+/// projections the dense tier. Nothing to do when both are `declared`.
+pub(super) fn register_mtp_dense_tiers(
+    gpu: &dyn GpuBackend,
+    mixer: &mut crate::glm5next_layer::Glm5NextMixer,
+    mlp: &mut crate::glm5next_layer::Glm5NextMlpSite,
+    mlp_cfg: &crate::glm5next_mlp::Glm5NextMlpConfig,
+    idx: usize,
+) -> Result<()> {
+    if !dense_tiers::any_below_declared(
+        metrale_model_layers::layers::dense_quantization(),
+        metrale_model_layers::layers::dsa_quantization(),
+    ) {
+        return Ok(());
+    }
+    dense_tiers::register_dense_tiers(gpu, mixer, mlp, mlp_cfg, idx)
+}
+
 pub(super) fn mtp_expert_precision(
     config: &ModelConfig,
     kernels: &Glm5NextMlpKernels,

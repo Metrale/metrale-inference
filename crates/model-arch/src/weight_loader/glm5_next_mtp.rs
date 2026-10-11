@@ -66,7 +66,7 @@ pub fn load_glm5next_mtp_module(
     let dsa_kernels = Glm5NextDsaKernels::resolve(gpu)?;
     let mlp_kernels = Glm5NextMlpKernels::resolve(gpu)?;
 
-    let mixer = Glm5NextMixer::Dsa(Box::new(Glm5NextDsaLayer {
+    let mut mixer = Glm5NextMixer::Dsa(Box::new(Glm5NextDsaLayer {
         persist_bt: std::env::var("METRALE_GLM_DSA_ALLOC_PER_STEP").as_deref() != Ok("1"),
         cfg: dsa_cfg,
         weights: build_dsa_weights(gpu, &dsa_cfg, &dsa_plan, &load)?,
@@ -93,7 +93,7 @@ pub fn load_glm5next_mtp_module(
     let precision = |has_scales: bool| {
         super::glm5_next_load::mtp_expert_precision(config, &mlp_kernels, idx, &mlp_cfg, has_scales)
     };
-    let mlp = Glm5NextMlpSite::Moe(Box::new(mlp_build::build_moe(
+    let mut mlp = Glm5NextMlpSite::Moe(Box::new(mlp_build::build_moe(
         gpu,
         &mlp_cfg,
         config.shared_expert_intermediate_size,
@@ -102,6 +102,11 @@ pub fn load_glm5next_mtp_module(
         &precision,
         1,
     )?));
+    // 2026-10-11: The drafter's dense projections at the serve's tiers, as a text layer's. They
+    // were left BF16: at TP=3 the drafter's DSA q_absorb and o_absorb alone read ~0.54 ms per
+    // propose in BF16. Draft tokens only; the target verifies every draft.
+    super::glm5_next_load::register_mtp_dense_tiers(gpu, &mut mixer, &mut mlp, &mlp_cfg, idx)
+        .with_context(|| format!("glm5_next MTP: dense tiers of layer {idx}"))?;
 
     let up =
         |n: &str| -> Result<DevicePtr> { super::glm5_next_load::upload_bf16(gpu, &src.f32(n)?) };

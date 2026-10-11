@@ -64,6 +64,24 @@ pub(super) fn eh_shard(hidden: usize, world: usize, rank: usize) -> Option<(usiz
     Some((r0, n))
 }
 
+/// 2026-10-11: `METRALE_GLM_MTP_XCHG_DEVICE=1`: run the vocab-sharded draft head's exchange on
+/// the device (`glm5next_mtp_xchg.cu`) instead of through the host (two reads, a write and four
+/// syncs per draft); same draft (the kernels compute `head_xchg::pack` / `pick`). Read once.
+fn xchg_device_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("METRALE_GLM_MTP_XCHG_DEVICE").as_deref() == Ok("1"))
+}
+
+/// 2026-10-11: The device exchange's kernels when the lever asks for them and the build has both.
+fn xchg_kernels(gpu: &dyn GpuBackend) -> Option<(KernelHandle, KernelHandle)> {
+    if !xchg_device_enabled() {
+        return None;
+    }
+    let k = |f| metrale_model_layers::layers::try_kernel(gpu, "glm5next_mtp_xchg", f);
+    let (pack, pick) = (k("glm5next_mtp_xchg_pack"), k("glm5next_mtp_xchg_pick"));
+    (pack.0 != 0 && pick.0 != 0).then_some((pack, pick))
+}
+
 impl Glm5NextMtpHead {
     pub fn new(
         module: Glm5NextMtpModule,
@@ -174,6 +192,7 @@ impl Glm5NextMtpHead {
             head_n,
             head_fp8,
             gemv_fp8w_k,
+            xchg_k: xchg_kernels(gpu),
         })
     }
 }

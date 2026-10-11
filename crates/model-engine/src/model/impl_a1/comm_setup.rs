@@ -57,6 +57,11 @@ pub(super) fn assert_rank_levers_agree(
                 "METRALE_GLM_MTP_EH_TP",
                 u64::from(metrale_model_arch::glm5next_mtp_head::eh_tp_enabled()),
             ),
+            // 2026-10-11: The device draft exchange moves an all-reduce into the drafter graph.
+            (
+                "METRALE_GLM_MTP_XCHG_DEVICE",
+                u64::from(std::env::var("METRALE_GLM_MTP_XCHG_DEVICE").as_deref() == Ok("1")),
+            ),
             // 2026-10-10: The resolved context window determines DFlash context-broadcast
             // chunking, so every rank must use the same value.
             (
