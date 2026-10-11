@@ -325,12 +325,14 @@ fn forward_k_has_two_callers_and_the_verify_one_is_not_prefill() {
     let src = include_str!("../../glm5next_layer/mod.rs");
     let module = concat!(
         include_str!("../../glm5next_layer/mod.rs"),
+        include_str!("../../glm5next_layer/l2_warm.rs"),
         include_str!("../../glm5next_layer/levers.rs"),
         include_str!("../../glm5next_layer/profile.rs"),
         include_str!("../../glm5next_layer/state.rs"),
         include_str!("../../glm5next_layer/steps.rs"),
         include_str!("../../glm5next_layer/steps/drafter.rs"),
         include_str!("../../glm5next_layer/steps/forward.rs"),
+        include_str!("../../glm5next_layer/steps/mhc_slice.rs"),
         include_str!("../../glm5next_layer/steps/multi_seq.rs"),
         include_str!("../../glm5next_layer/steps/prefill_spans.rs"),
         include_str!("../../glm5next_layer/steps/replay.rs"),
@@ -341,6 +343,7 @@ fn forward_k_has_two_callers_and_the_verify_one_is_not_prefill() {
     assert_eq!(
         glm5next_layer_files(),
         [
+            "l2_warm.rs",
             "levers.rs",
             "mod.rs",
             "profile.rs",
@@ -348,6 +351,7 @@ fn forward_k_has_two_callers_and_the_verify_one_is_not_prefill() {
             "steps.rs",
             "steps/drafter.rs",
             "steps/forward.rs",
+            "steps/mhc_slice.rs",
             "steps/multi_seq.rs",
             "steps/prefill_spans.rs",
             "steps/replay.rs",
