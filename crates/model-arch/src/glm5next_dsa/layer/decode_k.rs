@@ -162,6 +162,22 @@ impl Glm5NextDsaLayer {
             && batch_select
             && st.cache() == super::super::paged::IndexerCache::Paged
             && self.select_kernels.rows.store.0 != 0;
+        // 2026-10-11: `METRALE_GLM_DSA_VERIFY_ROWS`: a captured k-row verify with row metadata
+        // (every row placed on the device) computes the selector query and head weights of all
+        // rows in one launch each, and the indexer key, gate and key norm in one pass; each row
+        // is then placed from its staging row and selected with its precomputed query.
+        let verify_rows = verify_rows_apply(
+            crate::glm5next_layer::dsa_verify_rows(),
+            is_prefill,
+            k,
+            ctx.graph_capture && meta.is_some(),
+            self.select_kernels.indexer_store.0 != 0 && self.select_kernels.write_geom.0 != 0,
+            self.selector_query_rows_ready(k),
+        );
+        if verify_rows {
+            self.selector_query_rows(gpu, hidden, k, false, stream)?;
+            self.indexer_project_rows(gpu, hidden, k, stream)?;
+        }
         if staged {
             let (slot0, pos0, bt0, bt_rows) = match (meta, &host) {
                 (Some(m), _) => (m.slot, m.positions, m.block_table, m.max_blocks_per_seq),
@@ -204,7 +220,20 @@ impl Glm5NextDsaLayer {
                     block_table: block_table.as_slice(),
                 },
             };
-            if !staged {
+            if verify_rows {
+                st.ensure_room(1)?;
+                let pos = st.len();
+                self.store_indexer_row(
+                    gpu,
+                    st,
+                    kv_cache,
+                    place,
+                    pos,
+                    self.cfg.index_head_dim,
+                    row,
+                    stream,
+                )?;
+            } else if !staged {
                 self.indexer_forward(
                     gpu,
                     hidden.offset(row * self.cfg.hidden * 2),
@@ -264,7 +293,14 @@ impl Glm5NextDsaLayer {
                 batch_q_pos.push(pos as i32);
             } else {
                 let rows = self.indexer_rows(st, kv_cache, d_bt)?;
-                self.select_row(gpu, row, st, rows, q_pos_dev, replay_safe, None, stream)?;
+                let pre = verify_rows.then(|| {
+                    let idx_row = self.cfg.index_heads * self.cfg.index_head_dim;
+                    (
+                        w.q_idx_rows.offset(row * idx_row * 4),
+                        w.head_weights_rows.offset(row * self.cfg.index_heads * 4),
+                    )
+                });
+                self.select_row(gpu, row, st, rows, q_pos_dev, replay_safe, pre, stream)?;
             }
             // 2026-09-25: The attend takes row 0's pointers, the base of the per-row arrays,
             // and indexes rows itself on grid y.
@@ -307,4 +343,46 @@ impl Glm5NextDsaLayer {
 /// of 0 is treated as 1.
 pub(super) fn bt_entries_needed(seq_len: usize, k: usize, block_size: usize) -> usize {
     (seq_len + k) / block_size.max(1) + 2
+}
+
+/// 2026-10-11: Whether a `decode_k` call takes the batched verify rows
+/// (`METRALE_GLM_DSA_VERIFY_ROWS`): the lever on, not a prefill sub-chunk, 2..=16 rows (one
+/// group of the batched FP32-out GEMV), every row placed on the device (`device_rows`: a capture
+/// with row metadata, so each row's `replay_safe` holds; `device_kernels`: the indexer store and
+/// geometry kernels), and the selector-query kernels and buffers ready.
+pub(super) fn verify_rows_apply(
+    lever: bool,
+    is_prefill: bool,
+    k: usize,
+    device_rows: bool,
+    device_kernels: bool,
+    query_ready: bool,
+) -> bool {
+    lever
+        && !is_prefill
+        && (2..=metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M as usize).contains(&k)
+        && device_rows
+        && device_kernels
+        && query_ready
+}
+
+#[cfg(test)]
+mod verify_rows_tests {
+    use super::verify_rows_apply;
+
+    /// 2026-10-11: The batched verify rows apply only with every condition: one false input
+    /// (lever off, a prefill, one row, more rows than one batched group, host-placed rows,
+    /// missing kernels or buffers) keeps the per-row path.
+    #[test]
+    fn every_condition_is_required() {
+        assert!(verify_rows_apply(true, false, 2, true, true, true));
+        assert!(verify_rows_apply(true, false, 16, true, true, true));
+        assert!(!verify_rows_apply(false, false, 2, true, true, true));
+        assert!(!verify_rows_apply(true, true, 2, true, true, true));
+        assert!(!verify_rows_apply(true, false, 1, true, true, true));
+        assert!(!verify_rows_apply(true, false, 17, true, true, true));
+        assert!(!verify_rows_apply(true, false, 2, false, true, true));
+        assert!(!verify_rows_apply(true, false, 2, true, false, true));
+        assert!(!verify_rows_apply(true, false, 2, true, true, false));
+    }
 }

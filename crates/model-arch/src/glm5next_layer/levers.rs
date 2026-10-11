@@ -104,6 +104,18 @@ pub(crate) fn dsa_indexer_rows() -> bool {
     *E.get_or_init(|| std::env::var("METRALE_GLM_DSA_INDEXER_ROWS").as_deref() == Ok("1"))
 }
 
+/// 2026-10-11: `METRALE_GLM_DSA_VERIFY_ROWS=1`: a captured k-row speculative verify of one
+/// sequence (`Glm5NextDsaLayer::decode_k_with`, k in 2..=16) computes the selector query (`wq_b`,
+/// 12.6 MB BF16 on GLM-5.3) and head weights of all rows in one launch each, and the indexer
+/// key, gate and key norm of all rows in one pass, as the batched decode does
+/// (`selector_query_rows`, `indexer_project_rows`); each row is then placed and selected as
+/// before. The per-row path read `wq_b` once per row. Each row keeps its bits (the batched
+/// FP32-out GEMV's rows are the M = 1 GEMV's). Off until measured end to end. Read once.
+pub(crate) fn dsa_verify_rows() -> bool {
+    static E: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *E.get_or_init(|| std::env::var("METRALE_GLM_DSA_VERIFY_ROWS").as_deref() == Ok("1"))
+}
+
 /// 2026-10-10: `METRALE_GLM_AR_FUSED_POST=1`: where an mHC site's all-reduce takes the one-shot
 /// path in one piece, the exchange runs alone (`CommBackend::exchange_partials`) and
 /// `glm5next_hc_post_rank_sum` sums the partials and post-mixes in one launch instead of

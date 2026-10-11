@@ -241,60 +241,14 @@ impl Glm5NextDsaLayer {
             self.cfg.index_heads,
             self.cfg.index_heads * self.cfg.index_head_dim,
         );
-        let batched_idx = n > 1
-            && self.kernels.gemv_batchm_f32.0 != 0
-            && self.kernels.gemv_f32.0 != 0
-            && w.q_idx_rows.0 != 0
-            && w.head_weights_rows.0 != 0;
+        let batched_idx = self.selector_query_rows_ready(n);
         if batched_idx {
             // 2026-10-09: Above `DENSE_GEMV_BATCHM_MAX_M` rows (a `METRALE_GLM_ROW_GROUP` wider
             // than 16) `glm_mm`'s cuBLASLt arm writes BF16, so these FP32-out projections take
             // the FP32-out cuBLASLt call instead.
             let wide = n > metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M as usize
                 && crate::glm5next_layer::cublas_wide_proj();
-            let k = &self.kernels;
-            for (a, wt, out, n_out, kk) in [
-                (
-                    w.q_resid,
-                    self.weights.wq_b,
-                    w.q_idx_rows,
-                    idx_row,
-                    self.cfg.q_lora_rank,
-                ),
-                (
-                    hidden,
-                    self.weights.weights_proj,
-                    w.head_weights_rows,
-                    heads,
-                    self.cfg.hidden,
-                ),
-            ] {
-                if wide {
-                    metrale_model_layers::layers::ops::cublas_bf16_proj_dense_f32_out(
-                        a,
-                        wt,
-                        out,
-                        n as u32,
-                        n_out as u32,
-                        kk as u32,
-                        stream,
-                    )?;
-                } else {
-                    gemm(
-                        gpu,
-                        k.gemm_f32,
-                        k.gemv_f32,
-                        k.batchm_f32(),
-                        a,
-                        wt,
-                        out,
-                        n,
-                        n_out,
-                        kk,
-                        stream,
-                    )?;
-                }
-            }
+            self.selector_query_rows(gpu, hidden, n, wide, stream)?;
         }
         // 2026-10-09: `indexer_rows` (`METRALE_GLM_DSA_INDEXER_ROWS=1`): the indexer key and
         // gate projections and the key norm of every row in one pass (`indexer_project_rows`),
