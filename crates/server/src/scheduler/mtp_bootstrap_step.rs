@@ -35,9 +35,9 @@ pub(super) fn log_propose_batched_err(prefix: &str, e: &anyhow::Error) {
 
 /// 2026-09-25: Whether [`step_mtp_bootstrap_batched`] can run for `n` sequences:
 /// at least two, not a DFlash serve, `mtp_batch_bootstrap` on (unless
-/// `METRALE_NO_MTP_BATCH_BOOTSTRAP` is set), an MTP dispatch cap above 1, the
-/// DFlash unified-ctx and serial-append modes off, BF16 decode logits, and the
-/// model's batched-verify envelope.
+/// `METRALE_NO_MTP_BATCH_BOOTSTRAP` is set), an MTP dispatch cap above 1, for a
+/// DFlash drafter the unified-ctx and serial-append modes off, BF16 decode logits,
+/// and the model's batched-verify envelope.
 pub(super) fn can_batch_bootstrap(
     model: &dyn Model,
     sched: &crate::scheduler::sched_ctx::SchedCtx,
@@ -48,8 +48,11 @@ pub(super) fn can_batch_bootstrap(
         && !dflash_verify_raw_argmax
         && sched.levers.mtp_batch_bootstrap
         && sched.levers.mtp_max_seqs > 1
-        && !sched.levers.dflash_unified_ctx
-        && !sched.levers.dflash_serial_append
+        // 2026-10-11: The DFlash context modes matter only to a DFlash drafter. They are on by
+        // default (`METRALE_DFLASH_UNIFIED_CTX`), so as a plain condition they kept every MTP
+        // serve's bootstrap per sequence.
+        && !(model.dflash_gamma().is_some()
+            && (sched.levers.dflash_unified_ctx || sched.levers.dflash_serial_append))
         // 2026-09-25: FP32 decode logits are excluded: `logits_ptr_is_fp32`
         // compares the pointer with the FP32 scratch buffer's start, so a
         // per-row offset pointer would be read as BF16.

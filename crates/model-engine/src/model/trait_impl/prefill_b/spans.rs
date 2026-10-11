@@ -49,7 +49,6 @@ impl TransformerModel {
             && (!self.prefix_cache.is_active()
                 || (self.splits_whole_pass_at_capture() && self.inpass_cut_capture_serve_ok()))
             && self.dflash_capture_layers.is_empty()
-            && self.mtp_prefill_hidden.is_null()
             && self.lora.is_none()
             && self.overlays.is_none()
             && self.kv_cache.lock().config().cache_blocks_per_seq.is_none();
@@ -329,6 +328,20 @@ impl TransformerModel {
         for (i, s) in streams.iter_mut().enumerate() {
             let (tokens, seq) = (s.prompt_tokens, &mut *s.seq);
             let end = s.chunk_start + s.chunk_len;
+            // 2026-10-11: The MTP drafter's whole-prompt capture, as the single-sequence pass
+            // takes it after its layers (`prefill_b/forward_layers.rs`), stream by stream in batch
+            // order: a chunk 0 claims the shared capture, a later chunk appends while it still
+            // owns it, so the batch leaves it as the same prefills one after another would.
+            // Before, a serve with an MTP drafter could not batch prefills at all.
+            if let Some((proc_start, proc_count)) = ranges[i] {
+                self.try_mtp_prefill_capture_from(
+                    seq,
+                    proc_start,
+                    proc_count,
+                    hidden.offset(offs[i] * h * 2),
+                    stream,
+                )?;
+            }
             if let Some(plan) = plans[i].as_ref() {
                 self.register_cut_capture(tokens, seq, &mut kv_cache, plan, stream)?;
             }
@@ -336,6 +349,11 @@ impl TransformerModel {
             seq.seq_len = end;
             // 2026-10-09: Prime the decode-checkpoint gate, as `prefill_chunk_pass` does.
             seq.last_decode_ckpt_block = seq.tokens.len() / bs;
+            // 2026-10-11: The eager drafter prefill while this stream still owns the capture,
+            // before the next stream's capture replaces it (the single-sequence wrappers run it
+            // after their pass, `impl_forward.rs`). It writes no buffer the other streams' rows
+            // are in (`DraftProposer::prefill_uses_shared_buffers`).
+            self.try_eager_drafter_prefill(seq, s.is_last_chunk, stream);
             let Some((_, proc_count)) = ranges[i] else {
                 // 2026-10-11: A fully cached non-last chunk, as `prefill_chunk_pass` returns it.
                 out.push(DevicePtr::NULL);

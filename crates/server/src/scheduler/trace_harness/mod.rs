@@ -18,6 +18,7 @@
 //! cancel flags are flipped by the model at a scripted point.
 
 mod adaptive_k_tests;
+mod bootstrap_stash_tests;
 mod dflash_ctx_tests;
 mod ep_prefill_tests;
 mod ep_verify_tests;
