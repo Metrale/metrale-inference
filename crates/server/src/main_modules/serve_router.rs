@@ -109,6 +109,7 @@ pub(crate) async fn build_and_serve(
         .route("/memory", get(api::memory))
         .route("/health", get(api::health))
         .route("/health/live", get(api::health_live))
+        .route("/health/runtime", get(api::runtime_health))
         .route("/metrics", get(api::metrics_handler))
         .route("/v1/events", get(api::telemetry_events))
         // 2026-09-26: Request body limit: 32 MiB, or `METRALE_MAX_BODY_BYTES`

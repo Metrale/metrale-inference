@@ -12,14 +12,16 @@ use std::path::{Path, PathBuf};
 
 use metrale_qci_dump::contract::canonical::{digest, sha256};
 use metrale_qci_dump::contract::hardware::HardwareFingerprint;
+use metrale_qci_dump::contract::health::RuntimeHealth;
 use metrale_qci_dump::contract::receipt::CompatibilityReceipt;
 use metrale_qci_dump::contract::recipe::LaunchRecipe;
 use metrale_qci_dump::contract::usage::InferenceUsage;
 use serde_json::Value;
 
 /// 2026-10-11: The kinds this repository binds to its own types.
-const BOUND: [&str; 3] = [
+const BOUND: [&str; 4] = [
     "inference-usage",
+    "runtime-health",
     "hardware-fingerprint",
     "compatibility-receipt",
 ];
@@ -94,6 +96,9 @@ fn bind(kind: &str, doc: &Value) -> Result<String, String> {
     }
     match kind {
         "inference-usage" => take(doc, |d: &InferenceUsage| {
+            d.validate().map_err(|v| v.to_string())
+        }),
+        "runtime-health" => take(doc, |d: &RuntimeHealth| {
             d.validate().map_err(|v| v.to_string())
         }),
         "hardware-fingerprint" => take(doc, |d: &HardwareFingerprint| {

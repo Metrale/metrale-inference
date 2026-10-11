@@ -9,8 +9,9 @@ contracts v1 (#41). The runtime's binding of them is one module:
 
 `schemas/platform/` is Metrale/mfs `schemas/platform/` copied unchanged (Apache-2.0, its
 own `LICENSE`). `schemas/platform.pin` records the mfs commit and the SHA-256 of the copy's
-`SHA256SUMS`. Never edit the copy by hand. To take a newer bundle, copy it again and update
-the pin in the same commit.
+`SHA256SUMS`. Never edit the copy by hand. To take a newer bundle, run
+`bash scripts/vendor-platform-schemas.sh <mfs-clone> <commit>`, which replaces the copy and the
+pin together, then commit both.
 
 `crates/qci-dump/tests/platform_contracts.rs` runs in `cargo test` and checks three things:
 
@@ -18,9 +19,12 @@ the pin in the same commit.
    `SHA256SUMS`.
 2. Every valid fixture of every kind reproduces its `jcs_sha256`. This holds the runtime's
    canonical JSON to the platform's.
-3. For the three kinds the runtime writes or reads (`inference-usage`,
+3. For the four kinds the runtime writes or reads (`inference-usage`, `runtime-health`,
    `hardware-fingerprint`, `compatibility-receipt`), every valid fixture parses, validates
    and round-trips to the same canonical digest, and every invalid fixture is refused.
+4. The launch-recipe reader (`--model-recipe`) reproduces every valid `model-recipe`
+   fixture's digest and refuses the invalid fixtures for the rules it reads (revision,
+   repository, recipe id, integer units). The other `model-recipe` rules are Control's.
 
 The other kinds have no runtime type, so the runtime checks only their digests.
 
@@ -133,6 +137,23 @@ Added with the device layer, so also only at `--telemetry basic|kernel` and abse
 
 A `--model-recipe` that pins a source revision other than the loaded Hub snapshot's is
 refused at startup: the records would otherwise name a recipe that is not what is served.
+
+## Runtime health (#41, #28)
+
+`GET /health/runtime` answers one `RuntimeHealth` v1 document. It sits outside `/v1`, like
+`/health` and `/metrics`: no key, no rate limit, and it still answers under a GPU fault.
+
+| field | source | when absent |
+|---|---|---|
+| `runtime` | `metrale-inference`, the package version, the stamped commit | an unstamped build answers 503 `unstamped_build` instead of a document |
+| `boot_id` | 16 random bytes, minted once per process | — |
+| `state`, `reason` | GPU fault latch → `degraded` / `accelerator_error`; no model while a swap runs → `degraded` / `model_loading`; no model otherwise → `starting`; else `ready` | KV exhaustion, overload, `draining` and `stopped` are never reported: nothing here detects them |
+| `models` | the served name and the `--model-recipe` digest (`null` without one) | `[]` with no model loaded |
+| `uptime_ms` | now − process start | — |
+| `queue_depth` | scheduler pending queue, `measured` | `unsupported` at `--telemetry off`; `not_yet` before the scheduler's first tick |
+| `active_requests` | `metrale_requests_active`, `measured` | — |
+| `kv_occupancy_permille` | `(total − free) × 1000 / total` KV blocks, `derived` | as `queue_depth` |
+| `accelerators` | one sample of the NVML device layer: `device` is `nvml:<--gpu-ordinal>`; energy counter, power, temperature (×1000), utilization (×10), memory; `mono_ns` is the sample's time on the telemetry clock | `[]` at `--telemetry off` or when NVML is not readable; `product` is `unsupported` (the device layer does not read the name) |
 
 ## Compatibility receipt (#46)
 

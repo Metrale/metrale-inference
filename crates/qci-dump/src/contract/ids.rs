@@ -132,6 +132,11 @@ hex_id!(
     16
 );
 hex_id!(
+    /// 2026-10-11: Random per process start; a new one means the runtime restarted.
+    BootId,
+    16
+);
+hex_id!(
     /// 2026-10-11: A W3C span (parent) id.
     SpanId,
     8
