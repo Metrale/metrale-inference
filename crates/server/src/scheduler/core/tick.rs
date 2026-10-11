@@ -69,7 +69,7 @@ impl SchedulerCore {
             pending,
             active,
             prefilling,
-            mtp_gate,
+            spec_host,
             session_manager,
             snapshot_steps,
             swapped,
@@ -80,8 +80,8 @@ impl SchedulerCore {
         *snapshot_steps += 1;
         let t_loop = sched.io.clock.now();
         {
-            let (mtp_mode, delivered_tps) = match mtp_gate.as_ref() {
-                Some(g) => g.observe(),
+            let (mtp_mode, delivered_tps) = match spec_host.as_ref() {
+                Some(h) => crate::scheduler::spec_host::snapshot(h),
                 None => (metrale_speculative::snapshot::MtpModeSnap::Off, 0.0),
             };
             sched

@@ -62,7 +62,7 @@ impl TuiServeHost {
     }
 
     /// 2026-09-26: Build the argv for one round: the model, this server's port, `--max-seq-len`,
-    /// `--speculative` when asked and the cache override. Everything else is what
+    /// `--speculative --spec-objective throughput` when asked and the cache override. Everything else is what
     /// `met serve <model>` would use.
     fn argv_for(&self, model: &str, opts: ServeOptions) -> Result<crate::cli::ServeArgs> {
         use clap::Parser as _;
@@ -80,7 +80,9 @@ impl TuiServeHost {
             opts.max_seq_len.to_string(),
         ];
         if opts.speculative {
-            argv.push("--speculative".to_string());
+            // 2026-10-10: The dashboard's speculative round names the objective the MTP gate
+            // used to maximise; the controller has no default.
+            argv.extend(["--speculative", "--spec-objective", "throughput"].map(String::from));
         }
         if let Some(dir) = &self.cache_dir {
             argv.push("--cache-dir".to_string());

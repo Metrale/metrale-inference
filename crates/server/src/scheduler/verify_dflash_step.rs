@@ -90,13 +90,6 @@ pub fn step_verify_dflash(
         }
     }
 
-    // 2026-09-25: with `METRALE_DFLASH_ADAPTIVE=1`, a low mean over the
-    // accept window suspends this sequence's speculation (`adaptive_spec`).
-    crate::scheduler::adaptive_spec::record_verify(a, num_accepted, sched);
-    // 2026-09-25: the gamma resolver's accept signal: was the first draft
-    // accepted.
-    sched.dflash_rung.observe_step(num_accepted >= 1);
-
     // 2026-09-25: the verify forward advanced `seq_len` and `seq.tokens` by
     // `tokens.len()`. Keep the pre-verify prefix, the accepted drafts and the
     // bonus position (`pre_verify_len + num_accepted + 1`) and drop the rest.
@@ -198,11 +191,9 @@ pub fn step_verify_dflash(
         tracing::error!("trim_proposer_state: {e:#}");
     }
 
-    // 2026-09-25: no propose while adaptive speculation has suspended this
-    // sequence; with no drafts, `step_mtp` bootstraps it next step.
     let _mtp_grammar_mask = mtp_grammar_mask_for(a);
     let t_propose = sched.io.clock.now();
-    if crate::scheduler::adaptive_spec::spec_allowed(a, sched) {
+    {
         match model.run_mtp_propose_multi(
             a.last_token,
             a.seq.seq_len,

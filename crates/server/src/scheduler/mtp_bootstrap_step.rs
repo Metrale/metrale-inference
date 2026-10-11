@@ -64,7 +64,7 @@ pub(super) fn can_batch_bootstrap(
 ///
 /// Per sequence it uses what the per-sequence loop in `mtp_step.rs` uses:
 /// `penalty_params_for` penalties, `penalty_history_scope` history,
-/// `sample_token_with_grammar`, `emit_token`, the `adaptive_spec` calls and the
+/// `sample_token_with_grammar`, `emit_token` and the
 /// `effective_drafts_under_grammar` clamp. One difference: when saving the
 /// hidden state fails, the per-sequence loop's `continue` also skips
 /// `start_checkpoint_async`; here the checkpoint still runs.
@@ -215,11 +215,7 @@ pub(super) fn step_mtp_bootstrap_batched(
             continue;
         }
         a.last_token = tok;
-        crate::scheduler::adaptive_spec::tick_serial(a, sched);
-        // 2026-09-25: `spec_allowed` can change re-probe state: call it once.
-        if crate::scheduler::adaptive_spec::spec_allowed(a, sched) {
-            propose_rows[j] = Some(j);
-        }
+        propose_rows[j] = Some(j);
     }
 
     // 2026-09-25: Stash every proposing row before any propose: a propose

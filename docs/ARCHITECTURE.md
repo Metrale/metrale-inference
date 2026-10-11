@@ -15,7 +15,7 @@ Metrale Engine is a single Cargo workspace with 23 crates (the root `Cargo.toml`
                                metrale-model-arch    (per-family architectures + weight loaders)
                                metrale-model-layers  (generic layers, LoRA, weight map, kernel launches)
                                metrale-model-weights (weight store, fast loader, preflight)
-                               metrale-speculative   (MTP gate, DFlash, n-gram)
+                               metrale-speculative   (spec controller, DFlash, n-gram)
                                metrale-sampling, metrale-grammar
                                      │
    runtime                     metrale-gpu-runtime (GpuBackend: CUDA + Metal, buffers, registry)

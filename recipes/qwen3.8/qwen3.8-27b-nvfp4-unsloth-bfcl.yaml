@@ -76,6 +76,9 @@ defaults:
   ssm_cache_slots: 128
   ssm_checkpoint_interval: 32
   speculative: true
+  # 2026-10-10: the speculation controller's objective (no default); throughput is what
+  # the MTP gate it replaced maximised (delivered tokens per second).
+  spec_objective: throughput
   num_drafts: 1
   mtp_quantization: bf16
   tool_call_parser: qwen3_coder

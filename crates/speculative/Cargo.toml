@@ -5,7 +5,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Metrale Engine: speculative-decoding policy — MTP gate, adaptive and DFlash rungs, n-gram proposer, spec capacity and stats, scheduler snapshots."
+description = "Metrale Engine: speculative-decoding policy — the speculation controller (draft depth and plain decode), adaptive MTP rung, n-gram proposer, spec capacity and stats, scheduler snapshots."
 
 [dependencies]
 metrale-model-layers = { path = "../model-layers", default-features = false }

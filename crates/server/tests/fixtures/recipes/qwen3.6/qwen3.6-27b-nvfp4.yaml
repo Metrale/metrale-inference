@@ -70,6 +70,7 @@ defaults:
   ssm_cache_slots: 128
   ssm_checkpoint_interval: 32
   speculative: true
+  spec_objective: throughput
   # Measured optimum for the 27B dense NVFP4 family (see description).
   # `speculative: true` alone does not pick this — pin it.
   num_drafts: 1

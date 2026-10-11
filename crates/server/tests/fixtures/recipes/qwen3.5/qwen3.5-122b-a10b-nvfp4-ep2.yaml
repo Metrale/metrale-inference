@@ -29,4 +29,5 @@ defaults:
   gpu_memory_utilization: 0.70
   scheduler: slai
   speculative: true
+  spec_objective: throughput
   mtp_quantization: bf16

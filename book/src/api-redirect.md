@@ -27,6 +27,6 @@ The API reference is generated from the crate source with `cargo doc --workspace
 - [`metrale_model_layers`](https://docs.metrale.ai/api/metrale_model_layers/) — generic layers (attention, SSM, MoE, FFN, norm, MTP heads, vision, ops), LoRA, weight map, the draft-proposer contract
 - [`metrale_model_arch`](https://docs.metrale.ai/api/metrale_model_arch/) — per-family architectures (GLM-5 Next, DeepSeek V4.1, Nemotron, Kimi K3, DFlash/MTP heads) and their weight loaders
 - [`metrale_model_engine`](https://docs.metrale.ai/api/metrale_model_engine/) — the Model trait, the transformer model (prefill, decode, verify, SSM state), the generate engine and the model factory
-- [`metrale_speculative`](https://docs.metrale.ai/api/metrale_speculative/) — speculative-decoding policy — MTP gate, adaptive and DFlash rungs, n-gram proposer, spec capacity and stats, scheduler snapshots
+- [`metrale_speculative`](https://docs.metrale.ai/api/metrale_speculative/) — speculative-decoding policy — the speculation controller (draft depth and plain decode), adaptive MTP rung, n-gram proposer, spec capacity and stats, scheduler snapshots
 - [`metrale_bench`](https://docs.metrale.ai/api/metrale_bench/) — plugin + benchmark abstraction and registry driven by the metrale-server TUI
 - [`metrale_server`](https://docs.metrale.ai/api/metrale_server/) — pure Rust LLM inference server (HTTP API, scheduler, TUI, CLI)

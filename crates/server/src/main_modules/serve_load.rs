@@ -122,7 +122,7 @@ pub(crate) fn load_model(
     };
     let max_batch_size =
         scheduler_setup::resolve_max_batch_size(&args, world_size, scheduler_model.as_ref())?;
-    let (use_speculative, use_self_spec, use_ngram_spec, num_drafts, dflash_rung) =
+    let (use_speculative, use_self_spec, use_ngram_spec, num_drafts, dflash_depth_pinned) =
         scheduler_setup::resolve_speculation(&args, scheduler_model.as_ref());
     let prompt_lookup = args.prompt_lookup_config();
     // 2026-10-04: The cross-request cache is keyed by the model and the
@@ -186,6 +186,8 @@ pub(crate) fn load_model(
     // on|off` toggles this run's flag. Its starting value is
     // `--content-loop-watchdog`, else `METRALE_CONTENT_LOOP_WATCHDOG`, else
     // MODEL.toml `[behavior].enable_loop_watchdog`.
+    // 2026-10-10: `--spec-objective`, read before `args` moves into the scheduler thread.
+    let spec_objective = args.spec_cost.objective();
     let sched_levers = std::sync::Arc::new(crate::scheduler::levers::SchedLevers::from_env(
         args.mtp_gate_force(),
         args.mtp_shape.mtp_dcut_ratio,
@@ -261,7 +263,10 @@ pub(crate) fn load_model(
                 snapshot: run_snapshot,
                 telemetry: metrale_telemetry::global(),
                 pipeline_faults: scheduler::PipelineFaults::NONE,
-                dflash_rung,
+                spec: scheduler::config::SpecPolicy {
+                    objective: spec_objective,
+                    dflash_depth_pinned,
+                },
             },
         );
     });

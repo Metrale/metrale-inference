@@ -209,7 +209,32 @@ fn require_auth_needs_a_token() {
 #[test]
 fn num_drafts_needs_speculative() {
     assert!(validate_serve_args(&parse(&["--num-drafts", "2"])).is_err());
-    assert!(validate_serve_args(&parse(&["--num-drafts", "2", "--speculative"])).is_ok());
+    assert!(
+        validate_serve_args(&parse(&[
+            "--num-drafts",
+            "2",
+            "--speculative",
+            "--spec-objective",
+            "throughput"
+        ]))
+        .is_ok()
+    );
+}
+
+/// 2026-10-10: The speculation controller has no default objective: speculation needs one
+/// unless `--mtp-gate force` disarms the controller, and `energy` needs the measured table.
+#[test]
+fn speculation_needs_an_objective_and_energy_needs_the_measured_table() {
+    let err = validate_serve_args(&parse(&["--speculative"])).unwrap_err();
+    assert!(err.contains("--spec-objective"), "{err}");
+    assert!(validate_serve_args(&parse(&["--speculative", "--mtp-gate", "force"])).is_ok());
+    for o in ["latency", "throughput"] {
+        assert!(validate_serve_args(&parse(&["--speculative", "--spec-objective", o])).is_ok());
+    }
+    let err =
+        validate_serve_args(&parse(&["--speculative", "--spec-objective", "energy"])).unwrap_err();
+    assert!(err.contains("--spec-cost-model measured"), "{err}");
+    assert!(validate_serve_args(&parse(&["--spec-objective", "latency"])).is_ok());
 }
 
 #[test]

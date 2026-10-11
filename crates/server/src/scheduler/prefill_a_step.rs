@@ -256,7 +256,7 @@ pub fn start_chunked_prefill(
             think_ended: !req_enable_thinking && think_end_token.is_some(),
             think_just_ended: false,
             post_think_emitted: 0,
-            spec_adapt: Default::default(),
+            spec_ctl: Default::default(),
             think_skip_count: 0,
             require_tool_call: use_legacy_tool_call,
             tool_request,

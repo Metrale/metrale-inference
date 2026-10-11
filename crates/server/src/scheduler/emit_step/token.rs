@@ -79,7 +79,7 @@ pub fn emit_token(
     if !a.inside_thinking && a.think_start_token == Some(tok) {
         a.inside_thinking = true;
         // 2026-09-25: restart the post-`</think>` count that
-        // `mtp_gate::spec_dispatch_eligible` reads.
+        // `spec_eligibility::spec_dispatch_eligible` reads.
         a.post_think_emitted = 0;
         a.think_ended = false;
         a.think_skip_count = 0;
@@ -165,7 +165,7 @@ pub fn emit_token(
     a.output_tokens.push(tok);
 
     // 2026-09-25: count tokens emitted after thinking ended, for
-    // `mtp_gate::spec_dispatch_eligible`. `</think>` itself is not counted:
+    // `spec_eligibility::spec_dispatch_eligible`. `</think>` itself is not counted:
     // `think_ended` is still false when it arrives. A request with thinking
     // off on a model with a `</think>` token starts with `think_ended` true
     // (prefill), so it counts from its first token.

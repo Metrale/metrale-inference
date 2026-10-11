@@ -45,6 +45,9 @@ defaults:
   gpu_memory_utilization: 0.85
   scheduler: slai
   speculative: true
+  # 2026-10-10: the speculation controller's objective (no default); throughput is what
+  # the MTP gate it replaced maximised (delivered tokens per second).
+  spec_objective: throughput
   mtp_quantization: bf16
   # 2026-10-03: Two MTP drafts at one or two active sequences, one from three up, D-Cut off.
   # Measured on dgx2 (MoE ladder harness, 3 interleaved fresh serves per arm): two drafts

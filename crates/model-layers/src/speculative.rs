@@ -9,6 +9,7 @@
 
 pub mod draft_stop;
 pub mod ladder;
+pub mod rung_table;
 pub mod tree_shape;
 pub mod verify_key;
 
@@ -17,6 +18,7 @@ pub use ladder::{
     mtp_ladder_disabled, mtp_ladder_drafts, mtp_ladder_pinned, mtp_max_seqs, parse_mtp_k_ladder,
     resolve_mtp_max_seqs, set_mtp_k_ladder, set_mtp_max_seqs,
 };
+pub use rung_table::RungTable;
 mod knobs;
 pub use knobs::{
     EP_CMD_MTP_PROPOSE, hidden_fingerprint, mtp_accept_debug, mtp_catchup_enabled,

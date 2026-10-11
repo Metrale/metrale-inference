@@ -67,6 +67,7 @@ defaults:
   gpu_memory_utilization: 0.88
   scheduler: slai
   speculative: true
+  spec_objective: throughput
   num_drafts: 1
   mtp_quantization: bf16
   enable_prefix_caching: true

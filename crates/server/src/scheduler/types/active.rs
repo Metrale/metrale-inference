@@ -148,10 +148,10 @@ pub(in crate::scheduler) struct ActiveSeq {
     /// reads it to keep the first `METRALE_DFLASH_RESUME_GUARD` tokens on
     /// serial decode.
     pub post_think_emitted: u32,
-    /// 2026-09-25: Adaptive speculation (`METRALE_DFLASH_ADAPTIVE=1`) state. Reset on
-    /// preemption and on swap-in, so a resumed sequence re-measures. See
-    /// `adaptive_spec`.
-    pub spec_adapt: crate::scheduler::adaptive_spec::AdaptState,
+    /// 2026-10-10: This sequence's speculation-controller state (acceptance counts,
+    /// suspension, exploration; `metrale_speculative::spec_ctl`). Reset on preemption and on
+    /// swap-in, so a resumed sequence re-measures.
+    pub spec_ctl: metrale_speculative::spec_ctl::controller::SeqState,
     /// 2026-09-25: Consecutive `</think>` tokens skipped outside thinking; the 50th ends
     /// the turn.
     pub think_skip_count: u32,

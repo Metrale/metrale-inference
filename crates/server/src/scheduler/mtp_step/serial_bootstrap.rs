@@ -25,10 +25,7 @@ pub(super) fn bootstrap_seq(
     // speculation allowed: skip the standalone decode. Propose drafts
     // directly (one under a grammar) and hand them to
     // `step_verify_k4`/`k3`/`k2` by draft count.
-    if dflash_verify_raw_argmax
-        && !sched.levers.dflash_seam_serial
-        && crate::scheduler::adaptive_spec::spec_allowed(a, sched)
-    {
+    if dflash_verify_raw_argmax && !sched.levers.dflash_seam_serial {
         let eff = if a.grammar_state.is_some() {
             1
         } else {
@@ -157,33 +154,6 @@ pub(super) fn bootstrap_seq(
         return;
     }
     a.last_token = tok;
-    // 2026-09-25: Adaptive speculation: count serial tokens toward the
-    // re-probe window.
-    crate::scheduler::adaptive_spec::tick_serial(a, sched);
-
-    // 2026-09-25: Drafter context for this token (the unified ctx
-    // commit when `dflash_unified_ctx`, else the serial append under
-    // `METRALE_DFLASH_SERIAL_APPEND`) is added here only when the propose
-    // below will not run, or on the step that resumes speculation after
-    // an adaptive suspension (`reprobe_resume`). `spec_allowed` mutates
-    // re-probe state, so it is evaluated once here and its verdict is
-    // reused for the propose gate.
-    let was_suspended = crate::scheduler::adaptive_spec::is_suspended(a, sched);
-    let will_propose = crate::scheduler::adaptive_spec::spec_allowed(a, sched);
-    let reprobe_resume = was_suspended && will_propose;
-    if sched.levers.dflash_unified_ctx {
-        if !will_propose || reprobe_resume {
-            let base_pos = a.seq.seq_len.saturating_sub(1);
-            if let Err(e) = model.commit_ctx(&mut a.seq, 1, base_pos, 0) {
-                tracing::error!(target: "met::scheduler::mtp_step", "commit_ctx (mtp serial): {e:#}");
-            }
-        }
-    } else if sched.levers.dflash_serial_append
-        && (!will_propose || reprobe_resume)
-        && let Err(e) = model.dflash_serial_ctx_append(&mut a.seq)
-    {
-        tracing::error!(target: "met::scheduler::mtp_step", "dflash_serial_ctx_append: {e:#}");
-    }
 
     if let Err(e) = model.save_hidden_for_mtp(0, 0) {
         tracing::error!(target: "met::scheduler::mtp_step", "save_hidden_for_mtp: {e:#}");
@@ -199,10 +169,7 @@ pub(super) fn bootstrap_seq(
     // `ladder_nd`.
     let effective_num_drafts =
         crate::scheduler::spec_step::effective_drafts_under_grammar(a, ladder_nd);
-    // 2026-09-25: A sequence suspended by adaptive speculation does not
-    // propose, so it stays on this bootstrap path until `spec_allowed`
-    // re-probes.
-    if will_propose {
+    {
         match model.run_mtp_propose_multi(
             tok,
             a.seq.seq_len,

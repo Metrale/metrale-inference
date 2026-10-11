@@ -88,6 +88,8 @@ pub(super) struct RunOptions {
     pub swap_space_gb: usize,
     pub slai_policy: bool,
     pub mtp_gate_force: bool,
+    /// 2026-10-10: `METRALE_SPEC_ENTRY_PIN`: goldens 8 (shipped), the controller test 0.
+    pub spec_entry_pin_tokens: u32,
     pub loop_watchdog: bool,
     /// 2026-09-25: Token ids the watchdog rollback treats as boundaries.
     pub boundary_tokens: Vec<u32>,
@@ -126,6 +128,7 @@ impl Default for RunOptions {
             swap_space_gb: 0,
             slai_policy: false,
             mtp_gate_force: true,
+            spec_entry_pin_tokens: 8,
             loop_watchdog: false,
             boundary_tokens: Vec::new(),
             think_end_token: None,
@@ -352,7 +355,7 @@ fn run_scenario_inner(sc: &Scenario, build: DeviceBuilder) -> Vec<String> {
         Box::new(FifoPolicy)
     };
     let mut levers = SchedLevers::defaults();
-    levers.mtp_gate_force = opts.mtp_gate_force;
+    opts.apply_spec_levers(&mut levers);
     let levers = Arc::new(levers);
     levers.set_loop_watchdog(opts.loop_watchdog);
     let masks = VocabMasks {
@@ -411,7 +414,7 @@ fn run_scenario_inner(sc: &Scenario, build: DeviceBuilder) -> Vec<String> {
                 watchdog: WatchdogParams::default(),
                 levers,
                 snapshot,
-                dflash_rung: metrale_speculative::dflash_rung::DflashRung::new(),
+                spec: opts.spec_policy(),
                 telemetry: opts.telemetry,
                 pipeline_faults: opts.pipeline_faults,
             },

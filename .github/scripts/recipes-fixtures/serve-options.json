@@ -29,6 +29,18 @@
    "recipe_aliases": []
   },
   {
+   "key": "spec_objective",
+   "flag": "spec-objective",
+   "presence_only": false,
+   "is_bool": false,
+   "options": [
+    "latency",
+    "throughput",
+    "energy"
+   ],
+   "recipe_aliases": []
+  },
+  {
    "key": "speculative",
    "flag": "speculative",
    "presence_only": true,

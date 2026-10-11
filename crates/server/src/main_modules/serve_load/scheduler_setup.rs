@@ -54,17 +54,11 @@ pub(super) fn resolve_max_batch_size(
 }
 
 /// 2026-09-26: `(use_speculative, use_self_spec, use_ngram_spec, num_drafts,
-/// dflash_rung)`.
+/// dflash_depth_pinned)`; the last (2026-10-10) is an explicit `--dflash-gamma`.
 pub(super) fn resolve_speculation(
     args: &cli::ServeArgs,
     scheduler_model: &dyn metrale_model_engine::traits::Model,
-) -> (
-    bool,
-    bool,
-    bool,
-    usize,
-    metrale_speculative::dflash_rung::DflashRung,
-) {
+) -> (bool, bool, bool, usize, bool) {
     let use_speculative = (args.speculative || args.dflash) && scheduler_model.has_proposer();
     let use_self_spec = args.self_speculative && scheduler_model.has_self_speculative();
     let use_ngram_spec = args.ngram_speculative;
@@ -77,16 +71,9 @@ pub(super) fn resolve_speculation(
     } else {
         args.resolved_num_drafts()
     };
-    let dflash_rung = metrale_speculative::dflash_rung::DflashRung::new();
-    if args.dflash {
-        // 2026-09-26: The head's gamma is the cap; `--dflash-gamma` pins it
-        // unless `METRALE_DFLASH_GAMMA_RESOLVER` is set.
-        dflash_rung.configure(
-            num_drafts + 1,
-            args.dflash_gamma.is_some(),
-            metrale_model_layers::layers::qwen3_ssm::gdn_flags::gdn_woa_enabled(),
-        );
-    }
+    // 2026-10-10: The head's gamma is the cap; an explicit `--dflash-gamma` pins the depth the
+    // speculation controller may run (`scheduler::config::SpecPolicy`).
+    let dflash_depth_pinned = args.dflash && args.dflash_gamma.is_some();
 
     if args.dflash {
         tracing::info!(target: "met::main_modules::serve_load", "DFlash speculative decoding: ENABLED (γ={}, window={}, drafter installed)",
@@ -113,7 +100,7 @@ pub(super) fn resolve_speculation(
         use_self_spec,
         use_ngram_spec,
         num_drafts,
-        dflash_rung,
+        dflash_depth_pinned,
     )
 }
 

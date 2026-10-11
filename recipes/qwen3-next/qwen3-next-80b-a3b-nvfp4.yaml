@@ -32,5 +32,8 @@ defaults:
   gpu_memory_utilization: 0.85
   scheduler: slai
   speculative: true
+  # 2026-10-10: the speculation controller's objective (no default); throughput is what
+  # the MTP gate it replaced maximised (delivered tokens per second).
+  spec_objective: throughput
   mtp_quantization: bf16
   enable_prefix_caching: true

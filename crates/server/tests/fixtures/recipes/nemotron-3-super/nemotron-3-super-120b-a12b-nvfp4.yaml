@@ -27,3 +27,5 @@ defaults:
   tool_call_parser: qwen3_coder
   ssm_cache_slots: 0
   speculative: true
+
+  spec_objective: throughput

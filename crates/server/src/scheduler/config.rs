@@ -16,6 +16,17 @@ use crate::scheduler::vocab_masks::VocabMasks;
 use crate::scheduling_policy::SchedulingPolicy;
 use crate::session_manager::SessionSsmManager;
 
+/// 2026-10-10: The speculation controller's serve-time settings.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpecPolicy {
+    /// 2026-10-10: `--spec-objective`. `None` exactly when no controller runs (`--mtp-gate
+    /// force`, or no MTP/DFlash): `validate_serve_args` refuses every other combination.
+    pub objective: Option<metrale_speculative::spec_ctl::decide::Objective>,
+    /// 2026-10-10: An explicit `--dflash-gamma` pins the DFlash depth: the controller chooses
+    /// only between plain decode and it. Otherwise it chooses among every depth up to gamma - 1.
+    pub dflash_depth_pinned: bool,
+}
+
 pub struct SchedulerConfig {
     pub eos_tokens: Vec<u32>,
     pub max_batch_size: usize,
@@ -61,8 +72,8 @@ pub struct SchedulerConfig {
     pub levers: Arc<SchedLevers>,
     /// 2026-09-25: The scheduler snapshot cell, shared with the dashboard.
     pub snapshot: Arc<metrale_speculative::snapshot::SnapshotCell>,
-    /// 2026-09-25: The DFlash gamma resolver, configured at serve time.
-    pub dflash_rung: metrale_speculative::dflash_rung::DflashRung,
+    /// 2026-10-10: How the per-step speculation decision is built (`spec_ctl::batch`).
+    pub spec: SpecPolicy,
     /// 2026-09-25: The instrument set this run feeds (`metrale_telemetry::global()` when
     /// serving).
     pub telemetry: &'static metrale_telemetry::Telemetry,

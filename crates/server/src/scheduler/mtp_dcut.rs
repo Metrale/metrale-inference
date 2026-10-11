@@ -190,7 +190,7 @@ pub(super) fn plan(
 ///
 /// 2026-10-04: With `sched.levers.spec_cost` set (`--spec-cost-model measured`), D-Cut and the
 /// stop are both bypassed: the retained depths come from
-/// [`metrale_speculative::spec_cost::plan::sequence_depths`] instead, over the same per-sequence
+/// [`metrale_speculative::spec_ctl::measured::sequence_depths`] instead, over the same per-sequence
 /// confidences and held-draft counts.
 pub(super) fn plan_with_stop(
     sched: &crate::scheduler::sched_ctx::SchedCtx,
@@ -245,7 +245,7 @@ pub(super) fn plan_with_stop(
             sched.levers.dcut_ratio,
         )
     } else if let Some(sc) = measured {
-        metrale_speculative::spec_cost::plan::sequence_depths(
+        metrale_speculative::spec_ctl::measured::sequence_depths(
             &sc.table,
             &sc.calibration,
             &confs,

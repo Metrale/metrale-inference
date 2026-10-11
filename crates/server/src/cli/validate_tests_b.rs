@@ -42,6 +42,8 @@ fn flagship_recipe_is_accepted() {
             "--scheduler",
             "slai",
             "--speculative",
+            "--spec-objective",
+            "throughput",
             "--num-drafts",
             "1",
             "--mtp-quantization",
@@ -144,6 +146,8 @@ fn dflash_refuses_the_f16_h_state_only_at_the_untwinned_width() {
     for dtype in ["f16", "f16-pool"] {
         let err = validate_serve_args(&parse(&[
             "--dflash",
+            "--spec-objective",
+            "throughput",
             "--dflash-gamma",
             "16",
             "--ssm-h-dtype",
@@ -155,6 +159,8 @@ fn dflash_refuses_the_f16_h_state_only_at_the_untwinned_width() {
         assert!(
             validate_serve_args(&parse(&[
                 "--dflash",
+                "--spec-objective",
+                "throughput",
                 "--dflash-gamma",
                 "10",
                 "--ssm-h-dtype",
@@ -165,10 +171,11 @@ fn dflash_refuses_the_f16_h_state_only_at_the_untwinned_width() {
             "{dtype}: gamma 10 (width 11) has a twin and must be allowed"
         );
     }
-    assert!(validate_serve_args(&parse(&["--dflash"])).is_ok());
+    let dflash = ["--dflash", "--spec-objective", "throughput"];
+    assert!(validate_serve_args(&parse(&dflash)).is_ok());
     assert!(validate_serve_args(&parse(&["--ssm-h-dtype", "f16", "--gdn-fused-norm"])).is_ok());
     assert!(
-        validate_serve_args(&parse(&["--dflash", "--ssm-h-dtype", "f32"])).is_ok(),
+        validate_serve_args(&parse(&[&dflash[..], &["--ssm-h-dtype", "f32"]].concat())).is_ok(),
         "the FP32 h-state has always been DFlash's supported pairing"
     );
 }
@@ -183,6 +190,8 @@ fn f16_dflash(gamma: Option<&str>) -> ServeArgs {
         "f16-pool",
         "--gdn-fused-norm",
         "--dflash",
+        "--spec-objective",
+        "throughput",
         "--draft-model",
         "some/drafter",
     ];
@@ -338,7 +347,12 @@ fn adaptive_levers_need_the_adaptive_routing() {
 
 #[test]
 fn hermetic_refuses_the_shared_prompt_lookup_cache() {
-    let pl = ["--speculative", "--prompt-lookup-decoding"];
+    let pl = [
+        "--speculative",
+        "--spec-objective",
+        "throughput",
+        "--prompt-lookup-decoding",
+    ];
     let cache = ["--prompt-lookup-shared-cache-mb", "64"];
     let both = [&pl[..], &cache[..], &["--hermetic"]].concat();
     let err =

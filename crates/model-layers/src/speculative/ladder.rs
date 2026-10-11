@@ -25,6 +25,8 @@
 //!   width gets `num_drafts`, and the default of [`mtp_max_seqs`] drops from
 //!   32 to 4.
 
+use super::rung_table::RungTable;
+
 /// 2026-09-25: Whether `METRALE_NO_MTP_K_LADDER` is present, with any value.
 /// Read once per process.
 pub fn mtp_ladder_disabled() -> bool {
@@ -54,16 +56,22 @@ const DEFAULT_LADDER: [(usize, usize); 4] = [(4, 3), (8, 3), (16, 1), (32, 1)];
 /// 2026-10-03: The ladder `--mtp-k-ladder` published ([`set_mtp_k_ladder`]).
 static PUBLISHED_LADDER: std::sync::OnceLock<Vec<(usize, usize)>> = std::sync::OnceLock::new();
 
-fn mtp_ladder_steps() -> &'static [(usize, usize)] {
-    if let Some(published) = PUBLISHED_LADDER.get() {
-        return published;
+/// 2026-10-10: The serve's MTP ladder as a [`RungTable`], built once: the published
+/// `--mtp-k-ladder`, else `METRALE_MTP_K_LADDER`, else [`DEFAULT_LADDER`].
+fn mtp_ladder_table() -> &'static RungTable {
+    static PUBLISHED: std::sync::OnceLock<Option<RungTable>> = std::sync::OnceLock::new();
+    if let Some(published) = PUBLISHED_LADDER.get()
+        && let Some(t) = PUBLISHED.get_or_init(|| RungTable::from_upper_bounds(published))
+    {
+        return t;
     }
-    static STEPS: std::sync::OnceLock<Vec<(usize, usize)>> = std::sync::OnceLock::new();
-    STEPS.get_or_init(|| {
-        std::env::var("METRALE_MTP_K_LADDER")
+    static ENV: std::sync::OnceLock<RungTable> = std::sync::OnceLock::new();
+    ENV.get_or_init(|| {
+        let steps = std::env::var("METRALE_MTP_K_LADDER")
             .ok()
             .and_then(|value| parse_ladder(&value))
-            .unwrap_or_else(|| DEFAULT_LADDER.to_vec())
+            .unwrap_or_else(|| DEFAULT_LADDER.to_vec());
+        RungTable::from_upper_bounds(&steps).expect("parse_ladder never returns an empty ladder")
     })
 }
 
@@ -84,6 +92,7 @@ pub fn parse_mtp_k_ladder(value: &str) -> anyhow::Result<Vec<(usize, usize)>> {
 /// (`ssm_reserve::verify_slot_drafts` reads the ladder) and the scheduler starts. It wins
 /// over `METRALE_MTP_K_LADDER`. A second publication of a different ladder is refused.
 pub fn set_mtp_k_ladder(steps: Vec<(usize, usize)>) -> anyhow::Result<()> {
+    anyhow::ensure!(!steps.is_empty(), "an MTP K-ladder needs at least one step");
     let got = PUBLISHED_LADDER.get_or_init(|| steps.clone());
     anyhow::ensure!(
         *got == steps,
@@ -109,12 +118,8 @@ pub fn ladder_drafts_from_steps(
     if num_drafts == 0 {
         return 0;
     }
-    steps
-        .iter()
-        .find(|&&(n_max, _)| n_active <= n_max)
-        .or(steps.last())
-        .map(|&(_, k)| k.clamp(1, num_drafts))
-        .unwrap_or(num_drafts)
+    RungTable::from_upper_bounds(steps)
+        .map_or(num_drafts, |t| t.drafts(n_active).clamp(1, num_drafts))
 }
 
 /// 2026-09-25: The per-step draft count for `n_active` concurrent sequences.
@@ -129,7 +134,7 @@ pub fn mtp_ladder_drafts(n_active: usize, num_drafts: usize) -> usize {
     if mtp_ladder_disabled() {
         return num_drafts;
     }
-    ladder_drafts_from_steps(mtp_ladder_steps(), n_active, num_drafts)
+    mtp_ladder_table().drafts(n_active).clamp(1, num_drafts)
 }
 
 /// 2026-09-29: Engine default of the multi-sequence MTP dispatch cap, when neither

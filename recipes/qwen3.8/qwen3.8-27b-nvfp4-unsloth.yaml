@@ -160,6 +160,9 @@ defaults:
   ssm_cache_slots: 256
   ssm_checkpoint_interval: 16
   speculative: true
+  # 2026-10-10: the speculation controller's objective (no default); throughput is what
+  # the MTP gate it replaced maximised (delivered tokens per second).
+  spec_objective: throughput
   # See provenance note 3 — explicit K, reproduces the reference run on images
   # both before and after the --num-drafts precedence fix.
   num_drafts: 3
