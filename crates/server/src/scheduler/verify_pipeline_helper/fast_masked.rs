@@ -17,7 +17,7 @@ use metrale_model_engine::traits::Model;
 /// caller must try its other paths.
 ///
 /// Requires: the `dflash_masked_verify` and `fast_masked` levers on, no
-/// grammar, AdaDec diagnostics off, `F2ConfidenceEarlyStop`, the forced
+/// grammar, outside thinking (2026-09-29, A146), AdaDec diagnostics off, `F2ConfidenceEarlyStop`, the forced
 /// `</think>` and the tool-call pin all inactive, penalties not `Blocked`,
 /// and at every position an argmax that is not the think-end, think-start
 /// or tool-call-start token and, for `ReduceOnly` penalties, is
@@ -45,7 +45,14 @@ pub(super) fn try_chat_fast_path(
     }
     let fast_masked_enabled = ctx.sampling.fast_masked;
     let adadec_recording = ctx.sampling.adadec_diagnostic;
-    if !fast_masked_enabled || a.grammar_state.is_some() || adadec_recording {
+    // 2026-09-29: A146, spec-in-think parity: the checks below are judged on
+    // the step-start state, but inside `<think>` the window itself can cross
+    // the F2 400-token gate, the thinking budget or a thinking-loop stride
+    // (arming the forced `</think>` mid-window), and the stateful F2 and
+    // defer-tick stages must run per position. Decode never takes a device
+    // argmax for a thinking row (`decode_row_uses_gpu_argmax`), so neither
+    // does this shortcut.
+    if !fast_masked_enabled || a.grammar_state.is_some() || adadec_recording || a.inside_thinking {
         return None;
     }
     use crate::scheduler::confidence::{
@@ -86,16 +93,16 @@ pub(super) fn try_chat_fast_path(
         return None;
     }
     let t_fast = ctx.clock.now();
-    let scoped_history: Vec<u32> =
+    // 2026-09-29: A146: position i is judged against the committed history
+    // plus picks 0..i-1, as the host path and decode judge it
+    // (`window_penalty_history` / `position_history`).
+    let window_history: Vec<u32> =
         if penalty_gate == crate::scheduler::fast_greedy::PenaltyGate::ReduceOnly {
-            crate::scheduler::sample_step::penalty_history_scope(
-                &a.output_tokens,
-                ctx.tool_call_end_token,
-            )
-            .to_vec()
+            super::window_penalty_history(a, argmax_ids)
         } else {
             Vec::new()
         };
+    let base_len = a.output_tokens.len();
     let vocab = model.vocab_size();
     let logits_base = model.logits_buffer_ptr();
     let mut all_clear = true;
@@ -110,15 +117,19 @@ pub(super) fn try_chat_fast_path(
             break;
         }
         if penalty_gate == crate::scheduler::fast_greedy::PenaltyGate::ReduceOnly
-            && !crate::scheduler::fast_greedy::argmax_immune(tok, &scoped_history, || {
-                crate::scheduler::fast_greedy::logit_is_positive(
-                    model,
-                    logits_base,
-                    row_base + i,
-                    vocab,
-                    tok,
-                )
-            })
+            && !crate::scheduler::fast_greedy::argmax_immune(
+                tok,
+                super::position_history(&window_history, base_len, i, ctx),
+                || {
+                    crate::scheduler::fast_greedy::logit_is_positive(
+                        model,
+                        logits_base,
+                        row_base + i,
+                        vocab,
+                        tok,
+                    )
+                },
+            )
         {
             all_clear = false;
             break;

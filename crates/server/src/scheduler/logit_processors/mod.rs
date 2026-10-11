@@ -70,6 +70,11 @@ pub struct LogitsContext<'a> {
     pub think_start_token: Option<u32>,
     pub tool_call_start_token: Option<u32>,
     pub tool_call_end_token: Option<u32>,
+    /// 2026-09-29: A146: the tokenizer's atomic ``` token. Read only by the
+    /// verify pick window (`pick_positions_from_host`), which advances
+    /// `in_code_fence` per position exactly as the commit paths do
+    /// (`think_commit`).
+    pub code_fence_token: Option<u32>,
     /// 2026-09-25: This position's index in the verify window (0 on the decode path).
     /// The `min_tokens` checks count `output_tokens.len() + verify_pos`.
     pub verify_pos: usize,
@@ -127,6 +132,11 @@ pub struct SamplingLevers {
     /// `sample_token_with_grammar` and the temperature > 0 branch of
     /// `verify_pick_with_pipeline`. On unless `METRALE_NO_MTP_MINP=1`.
     pub mtp_minp: bool,
+    /// 2026-09-29: `SchedLevers::think_ended_gpu_argmax`
+    /// (`METRALE_NO_THINKENDED_GPU_ARGMAX=1` turns it off), read by the
+    /// speculative paths to apply `logit_bias` exactly where decode does
+    /// (A144, `sample_step::speculative_base_logit_bias`).
+    pub think_ended_gpu_argmax: bool,
 }
 
 /// 2026-09-25: What a stage tells the driver: keep going, or emit this token and stop.

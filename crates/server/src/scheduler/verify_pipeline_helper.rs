@@ -8,13 +8,16 @@
 //! Invariants:
 //! - `verify_pick_all_with_pipeline` returns with the grammar matcher at the
 //!   history depth it entered with, and with `inside_thinking`,
-//!   `think_ended` and `think_just_ended` unchanged. Speculative
-//!   `accept_token` advances are rolled back by history delta, and the
-//!   thinking flags are restored (pick_all.rs, pick_positions.rs).
-//! - `a.output_tokens` does not grow during a pick, so every position sees
-//!   the step-start history. Only the two `min_tokens` checks
-//!   (`MinTokensEosMask`, `ForcedTokenFastPath`) and the sampling seed add
-//!   `verify_pos` to compensate.
+//!   `think_ended`, `think_just_ended` and (2026-09-29, A144)
+//!   `inside_tool_body` unchanged. Speculative `accept_token` advances are
+//!   rolled back by history delta, and the flags are restored (pick_all.rs,
+//!   pick_positions.rs).
+//! - 2026-09-29: A146: `pick_positions_from_host` pushes each position's
+//!   pick onto `a.output_tokens` before the next position (and truncates on
+//!   exit), so every position sees the committed history plus the window's
+//!   earlier picks, as decode would; it passes `verify_pos` 0. The
+//!   `min_tokens` checks (`MinTokensEosMask`, `ForcedTokenFastPath`) and the
+//!   sampling seed add `verify_pos` for callers that do not push.
 
 mod argmax;
 mod fast_masked;
@@ -27,6 +30,7 @@ mod scratch;
 use crate::scheduler::ActiveSeq;
 use crate::scheduler::helpers::bf16_to_f32;
 use crate::scheduler::logit_processors::LogitsContext;
+use metrale_gpu_runtime::gpu::DevicePtr;
 use metrale_model_engine::traits::Model;
 
 /// 2026-09-25: pick the token for one verify position.
@@ -38,7 +42,8 @@ use metrale_model_engine::traits::Model;
 ///   `METRALE_FORCE_TEMP_ZERO` raw argmax, or a forced grammar token);
 /// - a sample from the processed logits, when `mtp_verify_sample` is on and
 ///   the sequence's temperature is above 0;
-/// - the first-index argmax of the processed logits.
+/// - the last-index argmax of the processed logits (2026-09-29, A144b:
+///   decode's tie-break).
 ///
 /// The pipeline stages mutate `a` (for example the F2ConfidenceEarlyStop
 /// streak and `sentence_defer_count`). `verify_pos` is this position's index
@@ -84,14 +89,32 @@ pub fn verify_pick_with_pipeline(
 
     // 2026-09-25: verify positions take the sequence's repetition, presence,
     // frequency, LZ and DRY penalties and the min-reasoning `</think>` floor
-    // bias, with temperature 0, no seed and no request bias
-    // (`penalty_params_for`). Built before `a` is borrowed mutably below.
+    // bias, with temperature 0 and no seed (`penalty_params_for`). Built
+    // before `a` is borrowed mutably below.
+    //
+    // 2026-09-29: A144: the base bias is the one decode would apply at this
+    // position (`speculative_base_logit_bias`). It was empty, so the
+    // server's tools-active `<tool_call>` +3.0 nudge (and any client
+    // `logit_bias`) never reached verified tokens and spec-on diverged from
+    // spec-off on tool-bearing requests. `a` carries this position's think
+    // and tool-body state (advanced per position by
+    // `pick_positions_from_host`), so the in-tool-body opener strip in
+    // `penalty_params_for` is per position too. The raw-argmax probe runs
+    // only in decode's device-argmax regime, on a `think_ended` row with a
+    // non-empty bias.
+    let base_bias = crate::scheduler::sample_step::speculative_base_logit_bias(
+        a,
+        verify_pos,
+        ctx.think_end_token,
+        ctx.sampling.think_ended_gpu_argmax,
+        || argmax::argmax_first_wins(&f32_logits),
+    );
     let penalties = crate::scheduler::sample_step::penalty_params_for(
         a,
         crate::scheduler::sample_step::PositionKind::Verify,
         0.0,
         None,
-        Vec::new(),
+        base_bias,
         ctx.watchdog.min_reasoning_floor,
     );
 
@@ -164,13 +187,76 @@ pub fn verify_pick_with_pipeline(
         return sampled;
     }
 
-    // 2026-09-25: first-index-wins argmax. The sampler's own greedy branch
-    // breaks ties on the last index (`greedy_pick_last_wins`), so the two
-    // can differ on exact ties.
+    // 2026-09-29: A144b: this is decode's host greedy pick for this position
+    // (temperature 0 reaches here only when `process_position_logits`
+    // returned no forced token), so it uses decode's tie-break, last index
+    // wins (`greedy_pick_last_wins`), not first-index-wins
+    // `argmax_first_wins`. The first-wins pick was the A144b root cause: on
+    // quantised checkpoints exact logit ties are common, and spec-off decode
+    // and K3 verify emitted different tied ids (54/60 divergent TEB
+    // transcripts at temperature 0). `argmax_first_wins` stays where it
+    // mirrors the device argmax instead (`speculative_base_logit_bias`'s
+    // raw-argmax probe above), whose tie order is a different, unverified
+    // one.
     let t_argmax = ctx.clock.now();
-    let best_id = argmax::argmax_first_wins(&f32_logits);
+    let best_id = argmax::greedy_pick_last_wins(&f32_logits);
     ctx.tel.mark(Phase::Argmax, t_argmax);
     best_id
+}
+
+/// 2026-09-29: A146: the committed history followed by the window's
+/// positions `0..K-1` (`argmax_ids[..K-1]`; the last position is never
+/// history for another). Pair with [`position_history`]: position `i` must
+/// be judged against the committed tokens PLUS picks `0..i-1`, which is what
+/// decode (which has committed them) and the host path
+/// (`pick_positions_from_host` pushes them) see. Before this the fast paths
+/// tested immunity against the committed history only, so `[X, X]` with X
+/// new passed position 1 unpenalised while the host path and decode
+/// penalised it.
+pub(crate) fn window_penalty_history(a: &ActiveSeq, argmax_ids: &[u32]) -> Vec<u32> {
+    let prefix = &argmax_ids[..argmax_ids.len().saturating_sub(1)];
+    let mut h = Vec::with_capacity(a.output_tokens.len() + prefix.len());
+    h.extend_from_slice(&a.output_tokens);
+    h.extend_from_slice(prefix);
+    h
+}
+
+/// 2026-09-29: A146: position `i`'s penalty history (scoped like the
+/// pipeline's `penalty_history_scope`) out of a [`window_penalty_history`]
+/// buffer whose committed part is `base_len` long.
+pub(crate) fn position_history<'h>(
+    h: &'h [u32],
+    base_len: usize,
+    i: usize,
+    ctx: &LogitsContext,
+) -> &'h [u32] {
+    crate::scheduler::sample_step::penalty_history_scope(
+        &h[..(base_len + i).min(h.len())],
+        ctx.tool_call_end_token,
+    )
+}
+
+/// 2026-09-29: A146, spec-in-think parity: pick ONE decode row (the MTP
+/// bootstrap token) through the full host pipeline, as `process_decode_logits` does for every thinking row.
+/// The bootstrap's `sample_token_with_grammar` applies penalties and bias
+/// only (no forced `</think>` injection, mid-word mask, F2 or pin), so a
+/// bootstrap inside `<think>` could emit a token spec-off never would.
+/// `None` on a D2H failure (the caller fails the step as before).
+pub fn pick_decode_row_with_pipeline(
+    model: &dyn Model,
+    row_logits: DevicePtr,
+    a: &mut ActiveSeq,
+    ctx: &LogitsContext,
+) -> Option<u32> {
+    let vocab = model.vocab_size();
+    let is_fp32 = model.decode_logits_fp32();
+    let mut buf = vec![0u8; vocab * if is_fp32 { 4 } else { 2 }];
+    model.copy_logits_to_host(row_logits, &mut buf).ok()?;
+    // 2026-09-29: the pipeline mutates the accumulators on `a` directly here
+    // (decode semantics); a stale verify-window trail must not overwrite
+    // them.
+    a.spec_think_trail.clear();
+    Some(verify_pick_with_pipeline(&buf, is_fp32, vocab, a, ctx, 0))
 }
 
 pub use pick_all::verify_pick_all_with_pipeline;

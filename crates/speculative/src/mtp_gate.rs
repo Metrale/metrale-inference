@@ -34,6 +34,9 @@
 use std::time::Duration;
 
 mod driver;
+mod eligibility;
+
+pub use eligibility::{mtp_spec_think_default, spec_dispatch_eligible, spec_think_for_lane};
 
 /// 2026-09-25: A context depth that has grown or shrunk by this factor since
 /// the last measurement marks both estimates stale.
@@ -106,40 +109,6 @@ pub fn entry_pin_tokens_from_env() -> u32 {
 /// batch. `pin_tokens` is the run's [`entry_pin_tokens_from_env`] value.
 pub fn entry_pin_forces_verify(min_post_think_emitted: u32, pin_tokens: u32) -> bool {
     min_post_think_emitted < pin_tokens
-}
-
-/// 2026-09-25: Whether one sequence may take the speculative path this step.
-/// Never with `suppress_tool_call` or `disable_mtp`, and never inside
-/// `<think>` unless `spec_think` (`METRALE_DFLASH_SPEC_THINK=1`), for MTP and
-/// DFlash alike. Otherwise it needs `resume_guard` emitted tokens: counted
-/// after `</think>`, except inside `<think>` (reachable only with
-/// `spec_think`), where the whole output counts.
-pub fn spec_dispatch_eligible(
-    inside_thinking: bool,
-    post_think_emitted: u32,
-    output_len: u32,
-    suppress_tool_call: bool,
-    disable_mtp: bool,
-    spec_think: bool,
-    resume_guard: u32,
-    dflash_raw_argmax: bool,
-) -> bool {
-    if suppress_tool_call || disable_mtp {
-        return false;
-    }
-    // 2026-09-25: Batch-K verify can pick a different low-margin token than
-    // serial decode at T=0 (see `parse_entry_pin_tokens`).
-    if inside_thinking && !spec_think {
-        return false;
-    }
-    if dflash_raw_argmax && !spec_think {
-        return post_think_emitted >= resume_guard;
-    }
-    if inside_thinking {
-        output_len >= resume_guard
-    } else {
-        post_think_emitted >= resume_guard
-    }
 }
 
 /// 2026-09-25: The step the gate wants the scheduler to run next.
