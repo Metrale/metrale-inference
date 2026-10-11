@@ -34,7 +34,7 @@ impl DraftProposer for Glm5NextMtpHead {
             x: gpu.alloc(h * 2)?,
             logits: gpu.alloc(self.vocab * 2)?,
             arg: gpu.alloc(4)?,
-            head_xchg: gpu.alloc(16)?,
+            head_xchg: gpu.alloc(super::head_xchg::BUFFER_BYTES)?,
             released: false,
         }))
     }
