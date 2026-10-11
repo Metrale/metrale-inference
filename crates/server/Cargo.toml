@@ -64,7 +64,7 @@ socket2 = "0.6"
 minijinja = { version = "=2.21.0", features = ["builtins", "adjacent_loop_items", "json", "loop_controls", "preserve_order"] }
 parking_lot = { workspace = true }
 prometheus = { version = "0.14", default-features = false }
-ratatui = "0.29"
+ratatui = "0.30"
 rayon = "1.12"
 serde = { workspace = true }
 serde_json = { workspace = true }
