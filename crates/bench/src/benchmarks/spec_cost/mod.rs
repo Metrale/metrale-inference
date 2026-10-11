@@ -43,8 +43,13 @@ use crate::result::{
 };
 
 pub mod acceptance;
-mod cell;
-mod prom;
+// 2026-10-05: `pub(crate)` rather than private: `hardware::gpu_energy_counter`
+// reuses `prom::Scrape` and `cell::ENERGY_METRIC` to read the serve's NVML
+// counter at a window's two boundary scrapes, so a second /metrics parser and
+// a second copy of the metric name do not exist (SSOT). Their items were
+// already `pub(crate)`; only these two module declarations were narrower.
+pub(crate) mod cell;
+pub(crate) mod prom;
 pub mod table_input;
 mod wave;
 
