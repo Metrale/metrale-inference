@@ -37,7 +37,7 @@ pub(super) fn run_standard_chunk_loop(
     tool_call_end_token: Option<u32>,
     adaptive_sampling: bool,
     sched: &crate::scheduler::sched_ctx::SchedCtx,
-    completed_indices: &mut Vec<(usize, Option<u32>)>,
+    completed_indices: &mut Vec<(usize, Result<u32, String>)>,
     did_mixed_step: &mut bool,
 ) {
     // 2026-09-25: InnerQ calibration poll (`poll_innerq`).
@@ -175,11 +175,11 @@ pub(super) fn run_standard_chunk_loop(
                     ) {
                         Ok(first) => {
                             tracing::info!("Mixed prefill first token: {first}");
-                            completed_indices.push((idx, Some(first)));
+                            completed_indices.push((idx, Ok(first)));
                         }
                         Err(e) => {
                             tracing::error!("Mixed prefill sampling: {e:#}");
-                            completed_indices.push((idx, None));
+                            completed_indices.push((idx, Err(format!("prefill failed: {e:#}"))));
                         }
                     }
                 }
@@ -212,7 +212,7 @@ pub(super) fn run_standard_chunk_loop(
             }
             Err(e) => {
                 tracing::error!("Mixed forward error: {e:#}");
-                completed_indices.push((idx, None));
+                completed_indices.push((idx, Err(format!("prefill failed: {e:#}"))));
             }
         }
         return;
@@ -234,7 +234,7 @@ pub(super) fn run_standard_chunk_loop(
     })();
     if let Err(e) = ep_ok {
         tracing::error!("EP broadcast chunk: {e:#}");
-        completed_indices.push((idx, None));
+        completed_indices.push((idx, Err(format!("prefill failed: {e:#}"))));
         return;
     }
 
@@ -325,18 +325,18 @@ pub(super) fn run_standard_chunk_loop(
                 ) {
                     Ok(first) => {
                         tracing::info!("Prefill first token: {first}");
-                        completed_indices.push((idx, Some(first)));
+                        completed_indices.push((idx, Ok(first)));
                     }
                     Err(e) => {
                         tracing::error!("Chunked prefill argmax: {e:#}");
-                        completed_indices.push((idx, None));
+                        completed_indices.push((idx, Err(format!("prefill failed: {e:#}"))));
                     }
                 }
             }
         }
         Err(e) => {
             tracing::error!("Prefill chunk error: {e:#}");
-            completed_indices.push((idx, None));
+            completed_indices.push((idx, Err(format!("prefill failed: {e:#}"))));
         }
     }
 }
