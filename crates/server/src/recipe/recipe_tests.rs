@@ -386,10 +386,11 @@ fn the_env_block_is_read_verbatim_and_absent_means_none() {
     assert!(e.contains("`env:` must be a mapping"), "{e}");
 }
 
-/// 2026-09-26: A recipe that writes a boolean flag's default is refused, by recipe
-/// id, when it renders; an override's `false` removes the recipe's `true`.
+/// 2026-10-05: A recipe may state a boolean flag's value either way; `false` renders
+/// to an omitted flag, the same argv as never mentioning the key, so stating it
+/// explicitly is not refused (unlike a non-boolean value, which still is).
 #[test]
-fn a_recipe_restating_a_boolean_default_is_refused() {
+fn a_recipe_stating_a_boolean_default_either_way_renders() {
     let text = |line: &str| {
         format!(
             "recipe_version: \"2\"\nmodel: org/m\nruntime: metrale\ncontainer: c\n\
@@ -397,10 +398,12 @@ fn a_recipe_restating_a_boolean_default_is_refused() {
         )
     };
     let none = BTreeMap::new();
-    let r = Recipe::parse("t/restated", &text("speculative: false")).expect("parses");
-    let err = format!("{:#}", r.argv(&none).expect_err("refused"));
-    assert!(err.contains("t/restated"), "names the recipe: {err}");
-    assert!(err.contains("restates the default"), "{err}");
+    let r = Recipe::parse("t/stated-off", &text("speculative: false")).expect("parses");
+    assert!(
+        !r.argv(&none)
+            .expect("renders")
+            .contains(&"--speculative".to_string())
+    );
 
     let r = Recipe::parse("t/on", &text("enable_prefix_caching: true")).expect("parses");
     let flag = "--enable-prefix-caching".to_string();

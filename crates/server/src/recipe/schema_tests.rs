@@ -27,9 +27,11 @@ fn the_three_renames_are_applied() {
 
 #[test]
 fn a_presence_only_boolean_is_a_bare_flag_and_a_false_one_is_omitted() {
-    // 2026-09-26: `--speculative` is a clap SetTrue flag: it takes no value, so
-    // `false` can only be expressed by not passing it. Only an override may say
-    // `false`; `check_recipe_default` refuses it in a recipe's own `defaults:`.
+    // 2026-10-05: `--speculative` is a clap SetTrue flag: it takes no value, so
+    // `false` renders to an omitted flag — the same argv a recipe that never
+    // mentions the key produces. A recipe's own `defaults:` may write `false`
+    // explicitly (`check_recipe_default` accepts it since 2026-10-05); the
+    // rendering is identical either way.
     assert_eq!(
         argv_for("speculative", "true"),
         Some(vec!["--speculative".to_string()])
@@ -60,13 +62,13 @@ fn an_enum_keeps_its_value_and_a_boolean_never_carries_one() {
 }
 
 #[test]
-fn a_recipe_default_may_only_turn_a_boolean_on() {
+fn a_recipe_default_may_state_a_boolean_either_way() {
     assert_eq!(check_recipe_default("speculative", "true"), Ok(()));
-    let err = check_recipe_default("speculative", "false").unwrap_err();
-    assert!(err.contains("restates the default"), "{err}");
-    assert!(err.contains("--speculative"), "names the flag: {err}");
+    assert_eq!(check_recipe_default("speculative", "false"), Ok(()));
     let err = check_recipe_default("no_ssm_tail_midchunk", "yes").unwrap_err();
     assert!(err.contains("takes no value"), "{err}");
+    assert!(err.contains("true"), "names both options: {err}");
+    assert!(err.contains("false"), "names both options: {err}");
     // 2026-09-26: Value flags and enums pass, whatever their value.
     assert_eq!(check_recipe_default("tool_grammar", "auto"), Ok(()));
     assert_eq!(check_recipe_default("scheduler", "fifo"), Ok(()));
