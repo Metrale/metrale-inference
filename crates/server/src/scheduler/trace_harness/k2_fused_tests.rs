@@ -107,6 +107,37 @@ fn a_fused_k2_step_sends_one_announcement_and_one_verdict() {
     }
 }
 
+/// 2026-10-11: The workers' wait ends at the verdict, so rank 0 sends it before the commit on
+/// both paths: on a reject the commit is the SSM rollback copy, which on GB10 holds every
+/// kernel launched after it, the verdict broadcast included. Every K=2 step commits.
+#[test]
+fn the_verdict_precedes_the_commit_on_accept_and_reject() {
+    let ticks = verify_ticks(&sync_run(&k2_ep(true)));
+    let mut rejects = 0;
+    for t in &ticks {
+        let v = t
+            .iter()
+            .position(|l| l.starts_with("ep_send_k2_verdict("))
+            .unwrap();
+        if t[v].contains("accepted=false") {
+            rejects += 1;
+        }
+        let c = t
+            .iter()
+            .position(|l| l.starts_with("commit_accepted_prefix("));
+        if let Some(c) = c {
+            assert!(v < c, "commit before the verdict: {t:?}");
+        } else {
+            assert_eq!(
+                field(&t[v], "drafts"),
+                "0",
+                "a proposing step with no commit: {t:?}"
+            );
+        }
+    }
+    assert!(rejects > 0, "the scenario rejected no draft");
+}
+
 /// 2026-10-11: The verdict tells the workers what rank 0 proposes: a verdict with drafts
 /// proposes from its token at its position through the announced path (nothing sent), and a
 /// verdict without drafts (the step that finished the sequence) proposes nothing.
