@@ -363,9 +363,11 @@ fn proj_registered(
         return Ok(true);
     }
     if plan.gemv_tier(m) {
-        // 2026-10-11: Under `METRALE_GLM_W4A16_GEMV_SEG`, 2..=4 rows take the M-row segmented
-        // GEMV, whose rows are these tiers' bytes (each the one-row GEMV's).
-        if plan.seg_gemv(m) {
+        // 2026-10-11: Under `METRALE_GLM_W4A16_GEMV_SEG`, 2..=4 rows of a lone projection below
+        // K 2048 take the M-row segmented GEMV, whose rows are these tiers' bytes (each the
+        // one-row GEMV's); from K 2048 up the tier is as fast or faster (KDA o, DSA q_a and
+        // o_absorb; `ops::w4a16_gemv_seg_lone`).
+        if plan.seg_gemv(m) && w4a16_gemv_seg_lone(k32) {
             let segs = [W4a16Seg {
                 weight: e.w,
                 output: c,

@@ -11,8 +11,7 @@
 //!   every R and grid (the kernel's invariant; GPU proof: the `glm5next_w4a16_gemv_seg_bench`
 //!   example of model-arch).
 //! - 2026-10-11: The M-row points (`w4a16_gemv_seg_m<M>`, M = 2..=4, [`W4a16GemvSegPoint::Rows`])
-//!   write, for each row m, the bytes the one-row kernel writes for row m alone; the hoist point
-//!   ([`W4a16GemvSegPoint::Hoist`]) writes the `r1` bytes.
+//!   write, for each row m, the bytes the one-row kernel writes for row m alone.
 
 use anyhow::{Context, Result};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
@@ -45,13 +44,11 @@ pub fn w4a16_gemv_seg_entry(r: u32) -> Option<&'static str> {
     }
 }
 
-/// 2026-10-11: An entry point of the module: a tile height R over one row (`r<R>`), R = 1 with
-/// the step-0 weight loads hoisted above the input staging (`r1h`), or M input rows at R = 1
-/// (`m<M>`).
+/// 2026-10-11: An entry point of the module: a tile height R over one row (`r<R>`), or M input
+/// rows at R = 1 (`m<M>`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum W4a16GemvSegPoint {
     Tile(u32),
-    Hoist,
     Rows(u32),
 }
 
@@ -60,7 +57,6 @@ impl W4a16GemvSegPoint {
     pub fn entry(self) -> Option<&'static str> {
         match self {
             Self::Tile(r) => w4a16_gemv_seg_entry(r),
-            Self::Hoist => Some("w4a16_gemv_seg_r1h"),
             Self::Rows(2) => Some("w4a16_gemv_seg_m2"),
             Self::Rows(3) => Some("w4a16_gemv_seg_m3"),
             Self::Rows(4) => Some("w4a16_gemv_seg_m4"),
@@ -72,7 +68,7 @@ impl W4a16GemvSegPoint {
     pub fn rows(self) -> u32 {
         match self {
             Self::Rows(m) => m,
-            Self::Tile(_) | Self::Hoist => 1,
+            Self::Tile(_) => 1,
         }
     }
 
@@ -80,7 +76,7 @@ impl W4a16GemvSegPoint {
     pub fn tile(self) -> u32 {
         match self {
             Self::Tile(r) => r,
-            Self::Hoist | Self::Rows(_) => 1,
+            Self::Rows(_) => 1,
         }
     }
 }
@@ -88,9 +84,13 @@ impl W4a16GemvSegPoint {
 /// 2026-10-11: The widest M-row point (`SEG1_ROWS_ENTRY`).
 pub const W4A16_GEMV_SEG_MAX_ROWS: u32 = 4;
 
-/// 2026-10-11: The dynamic shared memory a launch may ask for: the M staged input rows. 96 KB
-/// fits GB10's 99 KB per-block opt-in (the runtime opts in above 48 KB).
+/// 2026-10-11: The most the M staged input rows may take: 96 KB (plus the 64-byte table) fits
+/// GB10's 99 KB per-block opt-in (the runtime opts in above 48 KB; the kernel has no static
+/// shared memory, so 48 KB of staged rows plus the table takes the opt-in too).
 pub const W4A16_GEMV_SEG_MAX_SMEM: u32 = 96 * 1024;
+
+/// 2026-10-11: The E2M1 table after the staged rows (16 FP32).
+pub const W4A16_GEMV_SEG_LUT_BYTES: u32 = 64;
 
 /// 2026-10-10: The kernel's contract, without a GPU: 1..=6 segments of positive width, K a
 /// positive multiple of 32 up to [`W4A16_GEMV_SEG_MAX_K`].
@@ -107,13 +107,18 @@ pub fn w4a16_gemv_seg_shape_ok(k: u32, ns: &[u32]) -> bool {
 pub fn w4a16_gemv_seg_rows_ok(k: u32, ns: &[u32], m: u32) -> bool {
     w4a16_gemv_seg_shape_ok(k, ns)
         && (1..=W4A16_GEMV_SEG_MAX_ROWS).contains(&m)
-        && w4a16_gemv_seg_smem(k, m) <= W4A16_GEMV_SEG_MAX_SMEM
+        && w4a16_gemv_seg_staged(k, m) <= W4A16_GEMV_SEG_MAX_SMEM
 }
 
-/// 2026-10-10: Dynamic shared memory of a launch over K: the permuted input, 4 KB per 2048 of K
-/// (one block of 128 chunks of 16 values), rounded up. 2026-10-11: Per input row, `m` rows.
-pub fn w4a16_gemv_seg_smem(k: u32, m: u32) -> u32 {
+/// 2026-10-10: The permuted input of a launch over K: 4 KB per 2048 of K (one block of 128 chunks
+/// of 16 values), rounded up. 2026-10-11: Per input row, `m` rows.
+pub fn w4a16_gemv_seg_staged(k: u32, m: u32) -> u32 {
     k.div_ceil(2048) * 4096 * m
+}
+
+/// 2026-10-11: Dynamic shared memory of a launch: the staged rows, then the E2M1 table.
+pub fn w4a16_gemv_seg_smem(k: u32, m: u32) -> u32 {
+    w4a16_gemv_seg_staged(k, m) + W4A16_GEMV_SEG_LUT_BYTES
 }
 
 /// 2026-10-10: Warp tiles of a launch of tile height `r` over segments `ns`.

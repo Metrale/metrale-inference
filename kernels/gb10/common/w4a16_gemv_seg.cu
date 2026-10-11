@@ -21,7 +21,7 @@
 // - Contract (ops::w4a16_gemv_seg_shape_ok): K a positive multiple of 32 (an orig lane's two
 //   chunks are both in or both out, rows and scale rows 16- and 2-byte aligned), K <= 24576 (the
 //   permuted A fits 48 KB of shared memory), A 16-byte aligned. Dynamic shared memory is
-//   ceil(K / 2048) * 4096 bytes.
+//   M * ceil(K / 2048) * 4096 bytes plus 64 for the E2M1 table (2026-10-11).
 // - CUDA only (the E4M3 scale goes through __nv_fp8_e4m3, as in w4a16_gemv.cu's CUDA build).
 
 #include <cuda_bf16.h>
@@ -152,22 +152,23 @@ __device__ __forceinline__ void seg1_decode(unsigned int w0, unsigned int w1,
 }
 
 // 2026-10-11: R output rows per warp tile, M input rows (row m of A at A + m K; its outputs at
-// out_i + m n_i), HOIST: the first tile's step-0 weight loads issued before the A staging's
-// barrier. Every (row, output) runs the one-row arithmetic, so each row's bytes are the one-row
-// kernel's for that row alone, whatever M, R and HOIST.
-template <int R, int M, bool HOIST>
+// out_i + m n_i). Every (row, output) runs the one-row arithmetic, so each row's bytes are the
+// one-row kernel's for that row alone, whatever M and R. The E2M1 table follows the staged rows
+// in dynamic shared memory (no static shared memory, so a launch above 48 KB takes the runtime's
+// opt-in). A step-0 load hoist above the staging barrier was measured and not kept (2026-10-11,
+// GB10: KDA six-group 82.6 vs 81.6 us).
+template <int R, int M>
 __device__ __forceinline__ void w4a16_gemv_seg_body(const __nv_bfloat16* __restrict__ A,
                                                     const Seg1 (&seg)[6], unsigned int K) {
     extern __shared__ uint4 s_a[];
-    __shared__ float s_lut[16];
 
     const unsigned int K16 = K / 16;
     const unsigned int half_K = K / 2;
     const unsigned int num_groups = K / 16;
     const unsigned int J = (K16 + 127) / 128;
+    float* s_lut = (float*)(s_a + 256u * J * M);
     const unsigned int lane = threadIdx.x & 31u;
     const unsigned int nw = gridDim.x * SEG1_WARPS;
-    const unsigned int t0 = blockIdx.x * SEG1_WARPS + (threadIdx.x >> 5);
 
     unsigned int tiles[6];
     unsigned int total = 0;
@@ -175,22 +176,6 @@ __device__ __forceinline__ void w4a16_gemv_seg_body(const __nv_bfloat16* __restr
     for (int i = 0; i < 6; i++) {
         tiles[i] = (seg[i].n + R - 1) / R;
         total += tiles[i];
-    }
-
-    uint4 w_h[R][2];
-    unsigned short sc_h[R][2];
-    if (HOIST && t0 < total) {
-        unsigned int local;
-        const int si = seg1_locate(t0, tiles, &local);
-        const unsigned char* packed = seg[0].packed;
-        const unsigned char* scale = seg[0].scale;
-        unsigned int n_seg = seg[0].n;
-        #pragma unroll
-        for (int i = 1; i < 6; i++) {
-            if (si == i) { packed = seg[i].packed; scale = seg[i].scale; n_seg = seg[i].n; }
-        }
-        seg1_load_j<R>(packed, scale, local * R, n_seg, 0u, lane, K16, half_K, num_groups, w_h,
-                       sc_h);
     }
 
     // 2026-10-10: Stage A permuted: uint4 u = 2 kk + h of A (h: values 0..7 or 8..15 of chunk
@@ -209,7 +194,7 @@ __device__ __forceinline__ void w4a16_gemv_seg_body(const __nv_bfloat16* __restr
     }
     __syncthreads();
 
-    for (unsigned int t = t0; t < total; t += nw) {
+    for (unsigned int t = blockIdx.x * SEG1_WARPS + (threadIdx.x >> 5); t < total; t += nw) {
         unsigned int local;
         const int si = seg1_locate(t, tiles, &local);
         const unsigned char* packed = seg[0].packed;
@@ -242,15 +227,7 @@ __device__ __forceinline__ void w4a16_gemv_seg_body(const __nv_bfloat16* __restr
         for (unsigned int j = 0; j < J; j++) {
             uint4 w[R][2];
             unsigned short sc[R][2];
-            if (HOIST && t == t0 && j == 0) {
-                #pragma unroll
-                for (int r = 0; r < R; r++) {
-                    w[r][0] = w_h[r][0]; w[r][1] = w_h[r][1];
-                    sc[r][0] = sc_h[r][0]; sc[r][1] = sc_h[r][1];
-                }
-            } else {
-                seg1_load_j<R>(packed, scale, n0, n_seg, j, lane, K16, half_K, num_groups, w, sc);
-            }
+            seg1_load_j<R>(packed, scale, n0, n_seg, j, lane, K16, half_K, num_groups, w, sc);
             #pragma unroll
             for (int h = 0; h < 2; h++) {
                 const unsigned int lp = lane + 32u * h;
@@ -311,7 +288,7 @@ __device__ __forceinline__ void w4a16_gemv_seg_body(const __nv_bfloat16* __restr
     const unsigned char* __restrict__ p##i, const unsigned char* __restrict__ s##i, \
     float g##i, __nv_bfloat16* __restrict__ c##i, unsigned int n##i
 
-#define SEG1_ENTRY_NAMED(NAME, R, M, HOIST)                                                   \
+#define SEG1_ENTRY_NAMED(NAME, R, M)                                                   \
 extern "C" __global__ void __launch_bounds__(SEG1_THREADS) NAME(                              \
     const __nv_bfloat16* __restrict__ A,                                                      \
     SEG1_PARAMS(0), SEG1_PARAMS(1), SEG1_PARAMS(2),                                           \
@@ -319,17 +296,15 @@ extern "C" __global__ void __launch_bounds__(SEG1_THREADS) NAME(                
     unsigned int K) {                                                                         \
     const Seg1 seg[6] = {{p0, s0, g0, c0, n0}, {p1, s1, g1, c1, n1}, {p2, s2, g2, c2, n2},   \
                          {p3, s3, g3, c3, n3}, {p4, s4, g4, c4, n4}, {p5, s5, g5, c5, n5}};  \
-    w4a16_gemv_seg_body<R, M, HOIST>(A, seg, K);                                              \
+    w4a16_gemv_seg_body<R, M>(A, seg, K);                                                     \
 }
 
-#define SEG1_ENTRY(R) SEG1_ENTRY_NAMED(w4a16_gemv_seg_r##R, R, 1, false)
-#define SEG1_ROWS_ENTRY(M) SEG1_ENTRY_NAMED(w4a16_gemv_seg_m##M, 1, M, false)
+#define SEG1_ENTRY(R) SEG1_ENTRY_NAMED(w4a16_gemv_seg_r##R, R, 1)
+#define SEG1_ROWS_ENTRY(M) SEG1_ENTRY_NAMED(w4a16_gemv_seg_m##M, 1, M)
 
 SEG1_ENTRY(1)
 SEG1_ENTRY(2)
 SEG1_ENTRY(4)
-// 2026-10-11: Experiment arm: R = 1 with the step-0 load hoist (ship only on a >= 2 us win).
-SEG1_ENTRY_NAMED(w4a16_gemv_seg_r1h, 1, 1, true)
 SEG1_ROWS_ENTRY(2)
 SEG1_ROWS_ENTRY(3)
 SEG1_ROWS_ENTRY(4)

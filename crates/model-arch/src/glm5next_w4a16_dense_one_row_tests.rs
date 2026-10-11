@@ -153,16 +153,17 @@ const ROWS4: SegPlan = SegPlan {
     ..ONE_ROW
 };
 
-/// 2026-10-11: Under the lever, a GEMV-tier launch of 2..=4 rows is one `w4a16_gemv_seg_m<M>`
-/// launch (M staged rows of shared memory, every K, KDA o included); without the lever the same
-/// rows take `w4a16_gemv_batch<M>` (7 or 8 arguments); 5 rows (no M-row point) keep the batch tier
-/// under the lever too.
+/// 2026-10-11: Under the lever, a GEMV-tier launch of 2..=4 rows of a lone projection below
+/// K 2048 (the shared down, K 768) is one `w4a16_gemv_seg_m<M>` launch (M staged rows of shared
+/// memory); without the lever the same rows take `w4a16_gemv_batch<M>` (7 or 8 arguments), and so
+/// does a lone K 2816 projection (KDA o) under it; 5 rows (no M-row point) keep the batch tier.
 #[test]
 fn gemv_tier_rows_take_the_m_row_point_under_the_lever() {
     let _serial = crate::glm5next_fp8_dense::lock_registries_for_test();
     let gpu = MockGpuBackend::new();
-    let (n, k) = (4096usize, 2816usize);
-    let key = register_all(&gpu, &[(n, k)])[0];
+    let (n, k) = (4096usize, 768usize);
+    let keys = register_all(&gpu, &[(n, k), (4096, 2816)]);
+    let key = keys[0];
     let (a, c) = (DevicePtr(0x1000_0000), DevicePtr(0x2000_0000));
     for m in 2..=4usize {
         let start = gpu.launches_snapshot().len();
@@ -170,7 +171,7 @@ fn gemv_tier_rows_take_the_m_row_point_under_the_lever() {
         let l = gpu.launches_snapshot()[start..].to_vec();
         assert_eq!(l.len(), 1, "{m} rows");
         assert_eq!(l[0].args.len(), 32, "{m} rows: the segmented GEMV");
-        assert_eq!(l[0].shared_mem, 8192 * m as u32);
+        assert_eq!(l[0].shared_mem, 4096 * m as u32 + 64);
         assert_eq!(seg_args(&l[0], 0), (key, c, n as u32));
         let name = format!("w4a16_gemv_seg_m{m}");
         assert!(
@@ -187,6 +188,12 @@ fn gemv_tier_rows_take_the_m_row_point_under_the_lever() {
         assert!(
             gpu.launches_snapshot()[start].args.len() <= 8,
             "{m} rows: the batch tier"
+        );
+        let start = gpu.launches_snapshot().len();
+        assert!(proj_registered(&gpu, ROWS4, keys[1], a, c, m, 4096, 2816, 3).unwrap());
+        assert!(
+            gpu.launches_snapshot()[start].args.len() <= 8,
+            "{m} rows: KDA o keeps the batch tier"
         );
     }
     let plan8 = SegPlan {
@@ -238,7 +245,7 @@ fn six_member_groups_run_at_gemv_tier_rows() {
     assert!(proj_group_registered(&gpu, ROWS4, &members, a, 3, k, 0).unwrap());
     let l = gpu.launches_snapshot()[start..].to_vec();
     assert_eq!(l.len(), 1);
-    assert_eq!(l[0].shared_mem, 3 * 8192);
+    assert_eq!(l[0].shared_mem, 3 * 8192 + 64);
     for i in 0..6 {
         assert_eq!(
             seg_args(&l[0], i),

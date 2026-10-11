@@ -65,11 +65,10 @@ fn main() -> Result<()> {
     let refs: Vec<DevicePtr> = (0..6).map(|_| g.alloc(11264 * 2)).collect::<Result<_>>()?;
     let caps = [4, sms * 2, sms * 3, sms * 4, sms * 6, u32::MAX];
 
-    // 2026-10-10: Byte gate over every group, R and cap. 2026-10-11: and the hoist point.
+    // 2026-10-10: Byte gate over every group, R and cap.
     let points: Vec<W4a16GemvSegPoint> = ops::W4A16_GEMV_SEG_TILES
         .into_iter()
         .map(W4a16GemvSegPoint::Tile)
-        .chain([W4a16GemvSegPoint::Hoist])
         .collect();
     for (name, ns, k, _) in GROUPS {
         let ws: Vec<_> = (0..ns.len()).map(|i| pool.weight(i, ns[i], k)).collect();
@@ -93,7 +92,7 @@ fn main() -> Result<()> {
             }
         }
     }
-    println!("byte gate: every segment of every group equals w4a16_gemv (R 1/2/4, hoist, 6 caps)");
+    println!("byte gate: every segment of every group equals w4a16_gemv (R 1/2/4, 6 caps)");
 
     // 2026-10-10: Negative control 1: a changed scale byte in segment 4 of the six.
     let (_, ns, k, _) = GROUPS[0];
@@ -130,15 +129,10 @@ fn main() -> Result<()> {
 
     // 2026-10-10: Timing: the arms of a group alternate over ROUNDS rounds (so drift and other
     // GPU work spread over every arm); per arm, the median of the round medians and its range.
-    // Arms: today's one launch per member, the policy (`w4a16_gemv_seg_policy`), 2026-10-11: the
-    // hoist point uncapped; with `--sweep`, every tile height at caps of 2 and 4 blocks per SM
-    // and uncapped.
+    // Arms: today's one launch per member and the policy (`w4a16_gemv_seg_policy`); with
+    // `--sweep`, every tile height at caps of 2 and 4 blocks per SM and uncapped.
     let sweep = std::env::args().any(|a| a == "--sweep");
-    let mut arms: Vec<Arm> = vec![
-        Arm::Old,
-        Arm::Policy,
-        Arm::At(W4a16GemvSegPoint::Hoist, u32::MAX),
-    ];
+    let mut arms: Vec<Arm> = vec![Arm::Old, Arm::Policy];
     if sweep {
         for r in ops::W4A16_GEMV_SEG_TILES {
             for cap in [sms * 2, sms * 4, u32::MAX] {
@@ -193,7 +187,6 @@ fn main() -> Result<()> {
             let (pt, cap) = resolve(arm).expect("a kernel arm");
             let what = match arm {
                 Arm::Policy => "policy",
-                _ if pt == W4a16GemvSegPoint::Hoist => "hoist ",
                 _ => "sweep ",
             };
             let cap_s = if cap == u32::MAX {
@@ -215,10 +208,9 @@ fn main() -> Result<()> {
     }
     // 2026-10-10: Old: every member its own `w4a16_gemv`; new: each counted group one launch.
     println!(
-        "per decode step (rank 0, counted groups): old {:.3} ms -> policy {:.3} ms, hoist {:.3} ms",
+        "per decode step (rank 0, counted groups): old {:.3} ms -> policy {:.3} ms",
         tot[0] / 1e3,
-        tot[1] / 1e3,
-        tot[2] / 1e3
+        tot[1] / 1e3
     );
     Ok(())
 }
