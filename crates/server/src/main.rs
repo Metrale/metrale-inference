@@ -31,6 +31,7 @@ mod env_config;
 mod error_hints;
 pub mod grammar;
 mod halluc_probe;
+mod harmony;
 mod hint_injector;
 mod identity;
 mod ids;
@@ -57,6 +58,7 @@ mod scheduler;
 mod scheduling_policy;
 mod session_manager;
 mod symbol_trie;
+
 mod tokenizer;
 mod tool_arg_dedup;
 pub mod tool_parser;

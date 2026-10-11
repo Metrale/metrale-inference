@@ -154,6 +154,14 @@ fn check_quant_method(config: &ModelConfig) -> Result<()> {
     if qc.quant_method.is_empty() {
         return Ok(());
     }
+    // 2026-10-07: Native GPT metadata was parsed strictly; packed extents are independently checked by QuantFormat and the loader.
+    if qc.quant_method == "mxfp4" {
+        anyhow::ensure!(
+            config.model_type == "gpt_oss" && config.gpt_oss.is_some(),
+            "MXFP4 preflight requires an explicit parsed GPT-OSS policy"
+        );
+        return Ok(());
+    }
     const KNOWN_METHODS: &[&str] = &["compressed-tensors", "modelopt", "fp8"];
     if !KNOWN_METHODS.contains(&qc.quant_method.as_str()) {
         bail!(
@@ -298,6 +306,24 @@ fn check_expert_count(store: &WeightStore, config: &ModelConfig) -> Result<()> {
         max_expert = Some(max_expert.map_or(idx, |m| m.max(idx)));
     }
     let Some(max_idx) = max_expert else {
+        // 2026-10-07: GPT packs every expert into each projection tensor; the
+        // strict native MXFP4 format binder validates their shapes/counts later.
+        if config.gpt_oss.is_some() {
+            let groups = store
+                .names()
+                .filter(|name| {
+                    name.ends_with(".mlp.experts.gate_up_proj_blocks")
+                        || name.ends_with(".mlp.experts.down_proj_blocks")
+                })
+                .count();
+            if groups > 0 {
+                tracing::info!(
+                    groups,
+                    "Pre-flight: bundled GPT expert groups detected; exact layout validation follows in the MXFP4 binder"
+                );
+                return Ok(());
+            }
+        }
         // Config says we're MoE but no expert tensors exist at all —
         // EP=2 may have sharded them all onto another rank, which is
         // legitimate. Warn rather than fail.
@@ -419,3 +445,24 @@ fn check_correction_bias_shape(store: &WeightStore, config: &ModelConfig) -> Res
 
 #[cfg(test)]
 mod qsa_kv_tests;
+
+#[cfg(test)]
+mod mxfp4_method_tests {
+    use super::*;
+    #[test]
+    fn native_method_requires_parsed_gpt_policy() {
+        let mut config = metrale_config::parse_config(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../circuit/tests/fixtures/checkpoints/openai--gpt-oss-20b/config.json"
+        )))
+        .unwrap();
+        assert!(check_quant_method(&config).is_ok());
+        config.model_type = "qwen3".into();
+        assert!(check_quant_method(&config).is_err());
+        config.model_type = "gpt_oss".into();
+        config.gpt_oss = None;
+        assert!(check_quant_method(&config).is_err());
+        config.quantization_config.as_mut().unwrap().quant_method = "unknown-packed".into();
+        assert!(check_quant_method(&config).is_err());
+    }
+}

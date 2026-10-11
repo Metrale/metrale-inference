@@ -239,6 +239,11 @@ pub(super) fn resolve_targets(workspace_root: &std::path::Path) -> Vec<Target> {
         }
     }
 
+    assert!(
+        !targets.is_empty(),
+        "no kernel targets remain after declared precision filtering; choose a compatible model and quant"
+    );
+
     // 2026-09-25: Sort by (model, quant) for deterministic ordering.
     targets.sort_by(|a, b| (&a.model, &a.quant).cmp(&(&b.model, &b.quant)));
     validate_collision_match_names(&targets);

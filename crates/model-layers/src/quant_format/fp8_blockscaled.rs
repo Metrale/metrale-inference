@@ -34,8 +34,8 @@ impl QuantFormat for Fp8BlockScaledFormat {
         "fp8-blockscaled"
     }
 
-    fn base_variant(&self) -> Nvfp4Variant {
-        Nvfp4Variant::Fp8Dequanted
+    fn base_variant(&self) -> Option<Nvfp4Variant> {
+        Some(Nvfp4Variant::Fp8Dequanted)
     }
 
     fn is_ignored(&self, module_path: &str) -> bool {

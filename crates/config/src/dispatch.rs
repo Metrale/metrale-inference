@@ -14,9 +14,10 @@ use anyhow::{Context, Result};
 use super::{
     AttnPositionEncoding, LayerType, ModelConfig, default_conv_kernel, default_partial_rotary,
     default_rms_eps, default_rope_theta, finalize_config, parse_deepseek_v4, parse_gemma4_params,
-    parse_glm5_next, parse_kimi_k3, parse_laguna, parse_longcat_ngram, parse_minimax_m2,
-    parse_mistral_params, parse_quantization_config, parse_qwen4_exp, parse_step3p7,
-    parse_vision_config, resolve_attn_position_encoding, sanitize_kimi_k3_eos, validate_config,
+    parse_glm5_next, parse_gpt_oss, parse_kimi_k3, parse_laguna, parse_longcat_ngram,
+    parse_minimax_m2, parse_mistral_params, parse_quantization_config, parse_qwen4_exp,
+    parse_step3p7, parse_vision_config, resolve_attn_position_encoding, sanitize_kimi_k3_eos,
+    validate_config,
 };
 
 fn required_u64(raw: &serde_json::Value, key: &str, model_type: &str) -> Result<u64> {
@@ -256,6 +257,7 @@ fn parse_config_dispatch(json: &str) -> Result<ModelConfig> {
         }
         "gemma4" => parse_gemma4_params(&raw),
         "laguna" => parse_laguna(&raw),
+        "gpt_oss" => parse_gpt_oss(&raw),
         "longcat_flash_ngram" | "longcat_flash" => parse_longcat_ngram(&raw),
         // 2026-09-26: `qwen3_8_flash_next` is a second name for `qwen4_exp`; both use the same
         // parser, which also reads the hyper-connection, indexer and n-gram PLE fields.

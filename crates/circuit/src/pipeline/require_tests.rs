@@ -159,3 +159,12 @@ fn keyed_state_formats_read_their_setting() {
         Ok(StateDtype::Bf16)
     );
 }
+
+#[test]
+fn mxfp4_pipeline_cannot_borrow_nvfp4_scale_semantics() {
+    use super::{Format, StepKind};
+    for act in [Format::Bf16, Format::F32, Format::Nvfp4 { group: 16 }] {
+        let err = super::derived(StepKind::Weight, act, Format::Mxfp4).unwrap_err();
+        assert!(err.contains("E8M0/group32"), "{err}");
+    }
+}

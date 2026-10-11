@@ -291,7 +291,9 @@ pub(super) fn build_sampling(
     let response_format_only = has_response_format && (!tools_active || tool_choice_none);
 
     let use_triggers = !tool_choice_required;
-    let grammar_spec: Option<GrammarSpec> = if response_format_only {
+    let grammar_spec: Option<GrammarSpec> = if state.tokenizer.harmony().is_some() {
+        None // 2026-10-07: Generic JSON/tool grammar cannot model Harmony channel framing.
+    } else if response_format_only {
         match req.response_format.as_ref().unwrap() {
             crate::ir::ResponseFormat::JsonObject => Some(GrammarSpec::JsonObject),
             crate::ir::ResponseFormat::JsonSchema { schema, .. } => Some(GrammarSpec::JsonSchema {

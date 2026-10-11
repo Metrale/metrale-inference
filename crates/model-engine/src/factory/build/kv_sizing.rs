@@ -32,6 +32,7 @@ pub(super) struct KvInputs<'a> {
     pub kv_config: &'a KvCacheConfig,
     pub prefix_cache: &'a dyn PrefixCache,
     pub dflash_reserve: usize,
+    pub layer_runtime_reserve: usize,
     pub use_speculative: bool,
     pub mtp_weights: &'a [MtpWeights],
     pub effective_mtp_quant: MtpQuantization,
@@ -83,10 +84,12 @@ pub(super) fn size_kv(inp: &KvInputs<'_>, plan: &SlotPlan<'_>) -> Result<KvSized
             .saturating_sub(used_so_far)
             .saturating_sub(reserve)
             .saturating_sub(inp.dflash_reserve)
+            .saturating_sub(inp.layer_runtime_reserve)
             .min(
                 actual_free
                     .saturating_sub(reserve)
-                    .saturating_sub(inp.dflash_reserve),
+                    .saturating_sub(inp.dflash_reserve)
+                    .saturating_sub(inp.layer_runtime_reserve),
             );
         let mtp_pool = kv_budget::mtp_pool_reserve_bytes(
             inp.use_speculative,

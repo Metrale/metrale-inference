@@ -19,6 +19,7 @@ fn every_spelling_round_trips() {
         "fp8/g128",
         "fp8/block128x128",
         "nvfp4/g16",
+        "mxfp4/g32",
     ] {
         let f = Format::parse(s).unwrap_or_else(|e| panic!("{s}: {e}"));
         assert_eq!(f.name(), s);
@@ -38,6 +39,9 @@ fn malformed_spellings_are_refused() {
         "nvfp4/16",
         "nvfp4/g",
         "fp16",
+        "mxfp4/g16",
+        "mxfp4/g64",
+        "mxfp4/g0",
         "fp8/token ",
     ] {
         assert_eq!(Format::parse(s), Err(FormatError(s.to_string())), "{s:?}");
@@ -95,4 +99,27 @@ fn a_dim_off_the_scale_group_has_no_size() {
         None
     );
     assert_eq!(Format::Bf16.bytes(u64::MAX, 2), None);
+}
+
+/// 2026-10-06: MXFP4 has no global multiplier, unlike NVFP4. Catch both scale-size and
+/// accidental format-alias regressions with multi-row expert-shaped matrices.
+#[test]
+fn mxfp4_counts_e8m0_groups_without_an_nvfp4_global() {
+    let mx = Format::parse("mxfp4/g32").unwrap();
+    assert_ne!(mx, Format::Nvfp4 { group: 32 });
+    assert_eq!(
+        mx.weight_bytes(32 * 5760, 2880),
+        Some(32 * 5760 * (1440 + 90))
+    );
+    assert_eq!(mx.bytes(2, 32), Some(34));
+    assert_eq!(mx.weight_bytes(2, 32), Some(34));
+    assert_eq!(Format::Nvfp4 { group: 32 }.weight_bytes(2, 32), Some(38));
+    assert_eq!(mx.bytes(1, 31), None);
+    assert_eq!(mx.bytes(u64::MAX, 32), None);
+    assert_eq!(mx.bytes(0, 32), Some(0));
+    assert!(!mx.is_plain());
+    assert!(
+        !mx.is_edge_format(),
+        "no E8M0 activation quantizer is implemented"
+    );
 }

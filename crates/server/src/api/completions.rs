@@ -380,6 +380,7 @@ pub(super) async fn completions_stream(
                 )]
             }
             StreamEvent::Done {
+                terminal_token_id: _,
                 finish_reason,
                 prompt_tokens: _,
                 completion_tokens,

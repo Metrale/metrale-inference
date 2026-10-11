@@ -93,11 +93,14 @@ fn ignore_entries_drive_effective_variants_for_every_format() {
         ),
     ];
     for (format, base) in formats {
-        assert_eq!(format.base_variant(), base);
+        assert_eq!(format.base_variant(), Some(base));
         assert_eq!(
             format.variant_for("model.layers.5.self_attn.q_proj"),
-            Nvfp4Variant::Bf16Raw
+            Some(Nvfp4Variant::Bf16Raw)
         );
-        assert_eq!(format.variant_for("model.layers.5.mlp.gate_proj"), base);
+        assert_eq!(
+            format.variant_for("model.layers.5.mlp.gate_proj"),
+            Some(base)
+        );
     }
 }

@@ -135,6 +135,21 @@ pub async fn responses_endpoint(
         chat_req.messages = combined;
     }
 
+    // 2026-10-07: This extractor has already discarded duplicate-key evidence. Keep
+    // Harmony tools fail-closed until raw Responses admission is validated.
+    if state.tokenizer.harmony().is_some()
+        && (chat_req
+            .tools
+            .as_ref()
+            .is_some_and(|tools| !tools.is_empty())
+            || chat_req
+                .messages
+                .iter()
+                .any(|m| m.tool_calls.as_ref().is_some_and(|v| !v.is_empty()) || m.role == "tool"))
+    {
+        return openai_error_response(StatusCode::BAD_REQUEST,"Harmony tools currently require Chat Completions or Messages; Responses tool history is unavailable".into());
+    }
+
     if streaming {
         return responses_endpoint_stream(
             CurrentModel(state),

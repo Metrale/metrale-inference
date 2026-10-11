@@ -126,6 +126,7 @@ pub(super) fn setup_model(
         None,
         None,
         None,
+        metrale_model_engine::factory::ExperimentalModelPolicy::Disabled,
     )?
     .model;
 

@@ -137,3 +137,45 @@ fn no_two_regular_kernel_files_share_a_name_and_their_bytes() {
         dups.join("\n  ")
     );
 }
+
+#[test]
+fn gpt_oss_has_an_explicit_mxfp4_leaf_and_hd64_attention() {
+    let root = workspace_root();
+    let mut target = metrale_closure::layout::Target {
+        hardware: "gb10".into(),
+        model: "gpt-oss-20b".into(),
+        quant: "mxfp4".into(),
+    };
+    let layout = discover(&root, &target).unwrap();
+    let modules = layout.modules();
+    for required in [
+        "dense_gemv_bf16",
+        "rms_norm_vanilla",
+        "projection_bias",
+        "nllb_encoder",
+        "gpt_oss_rope",
+        "reshape_and_cache",
+        "paged_decode_attn",
+        "moe_topk",
+        "gpt_oss_mxfp4_gemv",
+        "gpt_oss_expert_ops",
+        "residual_add",
+    ] {
+        assert!(
+            modules.iter().any(|(name, _)| name == required),
+            "missing {required}"
+        );
+    }
+    let wrapper =
+        std::fs::read_to_string(root.join("kernels/gb10/gpt-oss-20b/mxfp4/paged_decode_attn.cu"))
+            .unwrap();
+    assert!(wrapper.contains("#define HDIM 64"));
+    assert!(wrapper.contains("../../common/paged_decode_attn.cu"));
+    for incompatible in ["nvfp4", "bf16", "fp8"] {
+        target.quant = incompatible.into();
+        assert!(
+            discover(&root, &target).is_err(),
+            "common-only fallback for {incompatible}"
+        );
+    }
+}

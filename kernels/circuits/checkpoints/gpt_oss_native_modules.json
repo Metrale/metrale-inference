@@ -1,0 +1,110 @@
+{
+  "schema": 1,
+  "hardware": "gb10",
+  "weight_format": "mxfp4",
+  "kv_format": "bf16",
+  "scope": "standalone GPT-OSS-20B native validation; not factory registration",
+  "modules": [
+    {
+      "name": "rms_norm_vanilla",
+      "source": "kernels/gb10/common/rms_norm_vanilla.cu",
+      "required_symbols": [
+        "rms_norm_vanilla"
+      ],
+      "flags": []
+    },
+    {
+      "name": "gemv",
+      "source": "kernels/gb10/common/dense_gemv_bf16.cu",
+      "required_symbols": [
+        "dense_gemv_bf16_fp32out",
+        "dense_gemv_bf16"
+      ],
+      "flags": []
+    },
+    {
+      "name": "projection_bias",
+      "source": "kernels/gb10/common/projection_bias.cu",
+      "required_symbols": [
+        "projection_bias_bf16"
+      ],
+      "flags": []
+    },
+    {
+      "name": "nllb_encoder",
+      "source": "kernels/gb10/common/nllb_encoder.cu",
+      "required_symbols": [
+        "nllb_bias_bf16"
+      ],
+      "flags": []
+    },
+    {
+      "name": "gpt_oss_rope",
+      "source": "kernels/gb10/common/gpt_oss_rope.cu",
+      "required_symbols": [
+        "gpt_oss_yarn_frequencies",
+        "gpt_oss_rope_bf16"
+      ],
+      "flags": []
+    },
+    {
+      "name": "reshape_and_cache",
+      "source": "kernels/gb10/common/reshape_and_cache.cu",
+      "required_symbols": [
+        "reshape_and_cache_flash"
+      ],
+      "flags": []
+    },
+    {
+      "name": "paged_decode",
+      "source": "kernels/gb10/common/paged_decode_attn.cu",
+      "required_symbols": [
+        "paged_decode_attn_sink"
+      ],
+      "flags": [
+        "-DHDIM=64"
+      ]
+    },
+    {
+      "name": "moe_topk",
+      "source": "kernels/gb10/common/moe_topk.cu",
+      "required_symbols": [
+        "moe_topk_selected_bf16_rows"
+      ],
+      "flags": []
+    },
+    {
+      "name": "gpt_oss_mxfp4_gemv",
+      "source": "kernels/gb10/common/gpt_oss_mxfp4_gemv.cu",
+      "required_symbols": [
+        "gpt_oss_mxfp4_gemv_bf16"
+      ],
+      "flags": []
+    },
+    {
+      "name": "gpt_oss_expert_ops",
+      "source": "kernels/gb10/common/gpt_oss_expert_ops.cu",
+      "required_symbols": [
+        "gpt_oss_swiglu_bf16",
+        "gpt_oss_expert_reduce_bf16"
+      ],
+      "flags": []
+    },
+    {
+      "name": "residual_add",
+      "source": "kernels/gb10/common/residual_add.cu",
+      "required_symbols": [
+        "bf16_residual_add"
+      ],
+      "flags": []
+    },
+    {
+      "name": "embed_from_argmax",
+      "source": "kernels/gb10/common/embed_from_argmax.cu",
+      "required_symbols": [
+        "batched_embed"
+      ],
+      "flags": []
+    }
+  ]
+}

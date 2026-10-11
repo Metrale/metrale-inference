@@ -12,6 +12,7 @@
 
 #include <cuda_bf16.h>
 #include <cuda_fp8.h>
+#include <math.h>
 
 
 
@@ -32,13 +33,22 @@ __device__ __constant__ float E2M1_LUT_MOE[16] = {
     -0.0f, -0.5f, -1.0f, -1.5f, -2.0f, -3.0f, -4.0f, -6.0f
 };
 
+// 2026-10-07: Complete-value policy keeps reserved exponent behavior explicit.
+// Existing callers retain zero for exponent bytes 0/255; pinned GPT uses ldexp.
+template<bool PinnedGptScale>
+__device__ __forceinline__ float moe_e8m0_weight(unsigned nibble, unsigned char scale, float scale2) {
+    if (PinnedGptScale)
+        return ldexpf(E2M1_LUT_MOE[nibble], int(scale) - 127);
+    return E2M1_LUT_MOE[nibble] * mx_block_scale<true>(scale, scale2);
+}
+
 // 2026-09-25: moe_w4a16_grouped_gemm_ptrtable(_e8m0): 64 x 64 tiles, 128 threads, BF16 m16n8k16 MMAs on
 // weights dequantized to BF16 in shared memory, K steps of 16. Expert e's weight is B_packed [N, K/2] (row n,
 // the low nibble holds the even k) and B_scale [N, K / GS]. Grid (ceil(N / 64), max_m_tiles, num_experts)
 // (ops::moe_w4a16_grouped_gemm_ptrtable).
 
 
-template<int GS, bool E8M0>
+template<int GS, bool E8M0, bool PinnedGptScale = false>
 __device__ __forceinline__ void moe_w4a16_grouped_gemm_ptrtable_impl(
     const __nv_bfloat16* __restrict__ A,
     const unsigned long long* __restrict__ B_packed_ptrs,
@@ -129,7 +139,12 @@ __device__ __forceinline__ void moe_w4a16_grouped_gemm_ptrtable_impl(
                     unsigned char packed_byte = B_expert[(unsigned long long)gn * half_K + k_pair];
                     unsigned int nibble = (gk & 1) ? (packed_byte >> 4) : (packed_byte & 0xF);
                     unsigned char sb = S_expert[(unsigned long long)gn * num_groups + scale_group];
-                    if (E8M0) {
+                    if (PinnedGptScale) {
+                        // 2026-10-07: Pinned GPT unpack scales the value directly, including
+                        // zero/subnormal/overflow behavior; existing E8M0 policy is unchanged.
+                        smem_B[k][n] = __float2bfloat16_rn(
+                            moe_e8m0_weight<true>(nibble, sb, scale2));
+                    } else if (E8M0) {
                         // 2026-09-25: MXFP4: 2^(sb - 127), no per-tensor scale.
                         float sc = mx_block_scale<true>(sb, scale2);
                         smem_B[k][n] = __float2bfloat16(E2M1_LUT_MOE[nibble] * sc);
@@ -212,6 +227,23 @@ extern "C" __global__ void moe_w4a16_grouped_gemm_ptrtable_e8m0(
     unsigned int num_experts, unsigned int N, unsigned int K
 ) {
     moe_w4a16_grouped_gemm_ptrtable_impl<32, true>(
+        A, B_packed_ptrs, B_scale_ptrs, scale2_vals, C,
+        expert_offsets, sorted_token_ids, num_experts, N, K);
+}
+
+// 2026-10-07: Explicit pinned-GPT decode point of the same BF16 MMA family.
+// Row-major E2M1/g32, no per-tensor scale; output remains BF16 before separate bias.
+extern "C" __global__ void moe_w4a16_grouped_gemm_ptrtable_e8m0_gpt(
+    const __nv_bfloat16* __restrict__ A,
+    const unsigned long long* __restrict__ B_packed_ptrs,
+    const unsigned long long* __restrict__ B_scale_ptrs,
+    const float* __restrict__ scale2_vals,
+    __nv_bfloat16* __restrict__ C,
+    const int* __restrict__ expert_offsets,
+    const int* __restrict__ sorted_token_ids,
+    unsigned int num_experts, unsigned int N, unsigned int K
+) {
+    moe_w4a16_grouped_gemm_ptrtable_impl<32, true, true>(
         A, B_packed_ptrs, B_scale_ptrs, scale2_vals, C,
         expert_offsets, sorted_token_ids, num_experts, N, K);
 }

@@ -141,7 +141,9 @@ fn draw_segment(doc: &mut Document, pen: &Pen<'_>, s: &Segment, layers: &[usize]
         SegKind::Layer(l) => {
             let (glyph, style, name) = match c.layer_kinds[l] {
                 LayerKind::LinearAttention => (g.layer[0], Style::LayerGdn, "GatedDeltaNet layer"),
-                LayerKind::FullAttention => (g.layer[1], Style::LayerAttn, "Full-attention layer"),
+                LayerKind::FullAttention | LayerKind::SlidingAttention => {
+                    (g.layer[1], Style::LayerAttn, "Full-attention layer")
+                }
                 LayerKind::Mamba => (g.layer[0], Style::LayerGdn, "Mamba2 layer"),
                 LayerKind::Moe => (g.layer[3], Style::LayerMoe, "MoE layer"),
             };

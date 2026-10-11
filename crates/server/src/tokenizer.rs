@@ -60,6 +60,7 @@ mod deepseek_v4;
 pub(crate) mod jinja_helpers;
 mod kimi_k3;
 mod message_preprocess;
+mod strftime;
 
 pub(crate) use message_preprocess::{
     autoclose_assistant_think, remap_developer_role, resolve_think_control,
@@ -73,6 +74,7 @@ enum ChatEncoding {
 }
 
 pub struct ChatTokenizer {
+    harmony: Option<std::sync::Arc<crate::harmony::stream::ByteTokenizer>>,
     tokenizer: Tokenizer,
     eos_token_id: u32,
     supports_thinking: bool,

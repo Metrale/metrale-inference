@@ -42,6 +42,7 @@ impl Arrivals {
 /// blocking arms read different fields; the router picks by sink.
 pub struct FinishFrame<'a> {
     pub finish_reason: &'a str,
+    pub terminal_token_id: Option<u32>,
     pub output_tokens: &'a [u32],
     pub time_to_first_token_ms: f64,
     pub decode_time_ms: f64,
@@ -169,6 +170,7 @@ impl RequestIo for TokioRequestIo {
                 spawn_terminal_send(
                     tx,
                     StreamEvent::Done {
+                        terminal_token_id: f.terminal_token_id,
                         finish_reason: f.finish_reason.to_string(),
                         prompt_tokens: 0, // 2026-09-25: the API layer counts the prompt.
                         completion_tokens: f.output_tokens.len(),

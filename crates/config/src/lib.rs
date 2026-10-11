@@ -261,6 +261,11 @@ pub(crate) fn default_conv_kernel() -> usize {
 pub mod activation_quantization;
 mod dispatch;
 mod factory;
+mod gpt_oss;
+pub use gpt_oss::{
+    GptOssActivation, GptOssAttention, GptOssExpertBias, GptOssExpertFormat, GptOssNorm,
+    GptOssPolicy, GptOssRope, GptOssRouting,
+};
 mod gguf;
 mod kv_completeness;
 #[cfg(test)]
@@ -286,9 +291,9 @@ pub use parsers::{
     parse_quantization_config,
 };
 pub(crate) use parsers::{
-    parse_deepseek_v4, parse_gemma4_params, parse_glm5_next, parse_kimi_k3, parse_laguna,
-    parse_longcat_ngram, parse_minimax_m2, parse_qwen4_exp, parse_step3p7, parse_vision_config,
-    sanitize_kimi_k3_eos,
+    parse_deepseek_v4, parse_gemma4_params, parse_glm5_next, parse_gpt_oss, parse_kimi_k3,
+    parse_laguna, parse_longcat_ngram, parse_minimax_m2, parse_qwen4_exp, parse_step3p7,
+    parse_vision_config, sanitize_kimi_k3_eos,
 };
 pub use position_encoding::AttnPositionEncoding;
 pub(crate) use position_encoding::resolve_attn_position_encoding;
