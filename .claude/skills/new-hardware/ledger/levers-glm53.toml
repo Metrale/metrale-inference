@@ -1037,3 +1037,75 @@ effort_hours = 0.0
 transferability = "multi-rank serving; hybrid prefix caching"
 links = { pr = "", commit = "", evidence = "exclusive A/B + accuracy microtest + bring-up bench TTFT" }
 notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-kda-gates-fused"
+date = "2026-10-10"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_KDA_GATES_FUSED=1 (w4a16 dense tier, one-row low-rank group)"
+symptom = "KDA gate chain at C1: six launches (act-quant, f_b W8A8, kda_gate, sigmoid, act-quant, g_b W8A8) ~15 us per KDA layer for 0.7 MB of weights"
+diagnosis_tool = "nsys"
+root_cause_class = "latency-bound"
+lever_type = "new-kernel"
+lkb_effect = "WxAy engine K<=128 tile-per-warp entry (wxay::k128_tile); W8A8 policy, quantizer and KDA gate scalars moved to headers (PTX of the old modules byte-identical)"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "held"
+verdict_reason = "microbench 15.1 -> 3.7 us per KDA layer (median of 5 runs, graph replay, byte gate PASS incl. zero/NaN/spike rows); end-to-end A/B pending"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 3.0
+transferability = "any low-rank W8A8 projection pair with elementwise epilogues"
+links = { pr = "", commit = "", evidence = "glm5next_c1_fuse_microtest gates" }
+notes = "About -0.39 ms per C1 step expected from 34 KDA layers x 11.4 us"
+
+[[lever]]
+id = "gb10x3-glm53-router-gemv-topk-fused"
+date = "2026-10-10"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "router GEMV 48x384 with the rank top-k as a last-block-done tail (not wired)"
+symptom = "router GEMV 11-13 us plus top-k 2-3 us per MoE layer at C1"
+diagnosis_tool = "microbench"
+root_cause_class = "latency-bound"
+lever_type = "new-kernel"
+lkb_effect = "none kept"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "discarded"
+verdict_reason = "byte-identical but 13.4 us vs 13.0 us for GEMV + rank top-k (5 runs); 72x256 fused 13.3 us; the serial tail eats the saved launch gap"
+failure_mode = ""
+caught_by = "microbench"
+time_lost_hours = 0.5
+would_catch_earlier = "the 2026-10-10 prototype at 72x256 already showed no gain"
+effort_hours = 1.0
+transferability = "GEMV + small reduction fusions on GB10: graph launch gaps are ~0.5 us, a 1-block tail costs more"
+links = { pr = "", commit = "", evidence = "glm5next_c1_fuse_microtest routerf (removed)" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-mhc-pre-norm-split-bulk"
+date = "2026-10-10"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "hc_pre_norm with each mix row over 2 CTAs and cp.async.bulk staging (not wired)"
+symptom = "hc_pre_norm 10.4 us per site x 90 sites at C1, grid 24 on 48 SMs"
+diagnosis_tool = "microbench"
+root_cause_class = "latency-bound"
+lever_type = "new-kernel"
+lkb_effect = "none kept"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "discarded"
+verdict_reason = "byte-identical (y, post, comb, normed) but slower: 12.0 us (256-thread blocks) / 14.3 us (128-thread blocks) vs 10.4 us; mix phase alone 8.2 vs 9.7 us, lost again to the pair last-arriver step; 2 rows per CTA with full staging 11.5 us"
+failure_mode = ""
+caught_by = "microbench"
+time_lost_hours = 1.0
+would_catch_earlier = "time the mix phase and the tail separately first: the tail is 0.7 us, the mix 9.7 us, so a split can win at most ~1.5 us and the extra arrival step costs more"
+effort_hours = 2.0
+transferability = "low"
+links = { pr = "", commit = "", evidence = "standalone harness, 90 distinct sites in a graph" }
+notes = "Folding hc_post + rank-sum into the next pre needs ping-pong streams (post writes in place); not attempted"
