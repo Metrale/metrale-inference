@@ -22,29 +22,75 @@ const NODE_TYPE_HOST: u32 = 3;
 /// 2026-10-10: `CUDA_ERROR_LOSSY_QUERY`.
 const LOSSY_QUERY: i32 = 402;
 
-unsafe extern "C" {
-    fn cuGraphGetNodes(h_graph: u64, nodes: *mut u64, num_nodes: *mut usize) -> i32;
-    fn cuGraphNodeGetType(h_node: u64, ty: *mut u32) -> i32;
-    fn cuGraphNodeGetDependencies_v2(
-        h_node: u64,
-        deps: *mut u64,
-        edge_data: *mut std::ffi::c_void,
-        num: *mut usize,
-    ) -> i32;
-    fn cuGraphAddDependencies_v2(
-        h_graph: u64,
-        from: *const u64,
-        to: *const u64,
-        edge_data: *const std::ffi::c_void,
-        num: usize,
-    ) -> i32;
-    fn cuGraphRemoveDependencies_v2(
-        h_graph: u64,
-        from: *const u64,
-        to: *const u64,
-        edge_data: *const std::ffi::c_void,
-        num: usize,
-    ) -> i32;
+// 2026-10-11: The graph queries go through cudarc's dynamically loaded driver table, not a link-time
+// `extern` block: the CUDA 13 link stub (`lib64/stubs/libcuda.so`) does not export them, so a
+// static reference fails to link on boxes whose linker resolves `-lcuda` to that stub.
+use cudarc::driver::sys;
+
+unsafe fn graph_get_nodes(h_graph: u64, nodes: *mut u64, num_nodes: *mut usize) -> i32 {
+    unsafe { sys::cuGraphGetNodes(h_graph as sys::CUgraph, nodes.cast(), num_nodes) as i32 }
+}
+
+unsafe fn node_get_type(h_node: u64, ty: *mut u32) -> i32 {
+    let mut t = std::mem::MaybeUninit::<sys::CUgraphNodeType>::uninit();
+    let rc = unsafe { sys::cuGraphNodeGetType(h_node as sys::CUgraphNode, t.as_mut_ptr()) };
+    if rc == sys::CUresult::CUDA_SUCCESS {
+        // SAFETY: the driver wrote a valid node type on success.
+        unsafe { *ty = t.assume_init() as u32 };
+    }
+    rc as i32
+}
+
+unsafe fn node_get_dependencies(
+    h_node: u64,
+    deps: *mut u64,
+    edge_data: *mut std::ffi::c_void,
+    num: *mut usize,
+) -> i32 {
+    unsafe {
+        sys::cuGraphNodeGetDependencies_v2(
+            h_node as sys::CUgraphNode,
+            deps.cast(),
+            edge_data.cast(),
+            num,
+        ) as i32
+    }
+}
+
+unsafe fn add_dependencies(
+    h_graph: u64,
+    from: *const u64,
+    to: *const u64,
+    edge_data: *const std::ffi::c_void,
+    num: usize,
+) -> i32 {
+    unsafe {
+        sys::cuGraphAddDependencies_v2(
+            h_graph as sys::CUgraph,
+            from.cast(),
+            to.cast(),
+            edge_data.cast(),
+            num,
+        ) as i32
+    }
+}
+
+unsafe fn remove_dependencies(
+    h_graph: u64,
+    from: *const u64,
+    to: *const u64,
+    edge_data: *const std::ffi::c_void,
+    num: usize,
+) -> i32 {
+    unsafe {
+        sys::cuGraphRemoveDependencies_v2(
+            h_graph as sys::CUgraph,
+            from.cast(),
+            to.cast(),
+            edge_data.cast(),
+            num,
+        ) as i32
+    }
 }
 
 /// 2026-10-10: Whether the lever is on (read once per process).
@@ -66,12 +112,12 @@ fn check(rc: i32, what: &str) -> Result<()> {
 pub(super) fn hoist(graph: u64) -> Result<usize> {
     let mut n = 0usize;
     check(
-        unsafe { cuGraphGetNodes(graph, std::ptr::null_mut(), &mut n) },
+        unsafe { graph_get_nodes(graph, std::ptr::null_mut(), &mut n) },
         "cuGraphGetNodes",
     )?;
     let mut nodes = vec![0u64; n];
     check(
-        unsafe { cuGraphGetNodes(graph, nodes.as_mut_ptr(), &mut n) },
+        unsafe { graph_get_nodes(graph, nodes.as_mut_ptr(), &mut n) },
         "cuGraphGetNodes",
     )?;
     nodes.truncate(n);
@@ -81,15 +127,11 @@ pub(super) fn hoist(graph: u64) -> Result<usize> {
     let mut edges = Vec::new();
     for (i, &h) in nodes.iter().enumerate() {
         let mut ty = 0u32;
-        check(
-            unsafe { cuGraphNodeGetType(h, &mut ty) },
-            "cuGraphNodeGetType",
-        )?;
+        check(unsafe { node_get_type(h, &mut ty) }, "cuGraphNodeGetType")?;
         is_host[i] = ty == NODE_TYPE_HOST;
         let mut k = 0usize;
-        let rc = unsafe {
-            cuGraphNodeGetDependencies_v2(h, std::ptr::null_mut(), std::ptr::null_mut(), &mut k)
-        };
+        let rc =
+            unsafe { node_get_dependencies(h, std::ptr::null_mut(), std::ptr::null_mut(), &mut k) };
         if rc == LOSSY_QUERY {
             tracing::warn!("NCCL host-node hoist skipped: the graph has edge data");
             return Ok(0);
@@ -99,12 +141,7 @@ pub(super) fn hoist(graph: u64) -> Result<usize> {
         if k > 0 {
             check(
                 unsafe {
-                    cuGraphNodeGetDependencies_v2(
-                        h,
-                        deps.as_mut_ptr(),
-                        std::ptr::null_mut(),
-                        &mut k,
-                    )
+                    node_get_dependencies(h, deps.as_mut_ptr(), std::ptr::null_mut(), &mut k)
                 },
                 "cuGraphNodeGetDependencies",
             )?;
@@ -123,15 +160,13 @@ pub(super) fn hoist(graph: u64) -> Result<usize> {
     let plan = crate::graph_hoist::plan_hoist(n, &edges, &is_host)?;
     for &(a, b) in &plan.remove {
         check(
-            unsafe {
-                cuGraphRemoveDependencies_v2(graph, &nodes[a], &nodes[b], std::ptr::null(), 1)
-            },
+            unsafe { remove_dependencies(graph, &nodes[a], &nodes[b], std::ptr::null(), 1) },
             "cuGraphRemoveDependencies",
         )?;
     }
     for &(a, b) in &plan.add {
         check(
-            unsafe { cuGraphAddDependencies_v2(graph, &nodes[a], &nodes[b], std::ptr::null(), 1) },
+            unsafe { add_dependencies(graph, &nodes[a], &nodes[b], std::ptr::null(), 1) },
             "cuGraphAddDependencies",
         )?;
     }
