@@ -22,10 +22,17 @@ metadata:
   kv_dtype: bf16
 
 defaults:
-  # The --activation-quantization routing this recipe was measured under: the engine default,
-  # each projection picking its activation precision by row count (the row-invariant modes are
-  # opt-in until evaluated).
-  activation_quantization: adaptive
+  # The checkpoint's own activation precision per layer (no requantization) --
+  # the owner's checkpoint-declared rule (follow-the-checkpoint-precision),
+  # and the formats MOENVFP4's same-box A/B against vLLM actually measured
+  # (lean_ab/dgx3, 2026-10-04). Also the ONLY activation-quantization setting
+  # that reaches #108's lean expert decode repack: --weight-quantization
+  # declared is necessary but not sufficient, since the lean path keys off
+  # activation_quantization=declared too (CIRCUIT-MOE, 2026-10-05). adaptive
+  # was this recipe's own stale default -- a different lever (row-count-picked
+  # activation precision) that happened to leave weight_quantization: declared
+  # alone but never actually served the declared activation path.
+  activation_quantization: declared
   # The checkpoint's own precision per layer (no requantization).
   weight_quantization: declared
   port: 8888

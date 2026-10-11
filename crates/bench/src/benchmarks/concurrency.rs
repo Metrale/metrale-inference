@@ -34,7 +34,9 @@ use crate::result::{
 use cache::{
     SSM_CACHE_SLOTS_KEY, WARM_CACHE_FLOOR, cache_is_uncontrolled, slots_needed, warm_cache_capable,
 };
-pub use descriptors::{DESCRIPTOR, DFLASH2_DESCRIPTOR, METADATA, MOE_DESCRIPTOR};
+pub use descriptors::{
+    DESCRIPTOR, DFLASH2_DESCRIPTOR, METADATA, MOE_DESCRIPTOR, NVFP4_MOE_DESCRIPTOR,
+};
 use descriptors::{PEAK_FLOOR, RUNGS};
 use prompt::{Fixture, prompt_plan};
 use report::evidence_line;

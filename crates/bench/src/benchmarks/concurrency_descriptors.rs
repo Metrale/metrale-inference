@@ -125,6 +125,50 @@ pub const MOE_DESCRIPTOR: BenchmarkDescriptor = BenchmarkDescriptor {
 const MOE_SUMMARY: &str =
     "Latency/throughput curve across concurrency 1 → 16 on the 35B MoE, published instrument";
 
+/// 2026-10-04: The concurrency gate on the full `nvidia/Qwen3.6-35B-A3B-NVFP4` checkpoint — the
+/// native NVFP4 weights, not the FP8-weights-with-NVFP4-head recipe `concurrency-sweep-moe`
+/// already measures. Its own gate id for the reason `concurrency-sweep-moe` is its own gate id:
+/// a required gate counts only records of its declared default checkpoint
+/// (`gate::check::record_is_required_subject`), and `gate::bench::baseline_for` refuses two
+/// `default = true` checkpoints on one box class. A BENCH.toml variant of `concurrency-sweep-moe`
+/// could never be scored by `bench certify` (it spawns each REQUIRED id with no `--checkpoint`),
+/// so its floors could never fail a merge.
+///
+/// NOT YET a required gate: `gate::coverage::PROMOTION_CANDIDATES` until it is hand-measured
+/// (`--url`/`--model`, never `--pull-request-gate`, which refuses an unmeasured BENCH.toml entry)
+/// and its floors are committed — the bootstrap `concurrency-sweep-moe` itself followed. See
+/// [`gate-variants-cannot-bootstrap`] in the project's lessons.
+pub const NVFP4_MOE_DESCRIPTOR: BenchmarkDescriptor = BenchmarkDescriptor {
+    id: "concurrency-sweep-moe-nvfp4",
+    name: "Concurrency Sweep (MoE NVFP4)",
+    summary: NVFP4_MOE_SUMMARY,
+    detail: "The concurrency ladder on the native NVFP4 checkpoint of the Qwen3.6-35B-A3B MoE \
+             family (`nvidia/Qwen3.6-35B-A3B-NVFP4`), pinned by the variant's param_overrides to \
+             the same published instrument `concurrency-sweep-moe` uses: ISL 128 / OSL 1024, the \
+             ladder38 essay request byte for byte, C=1..16 — so a vLLM one-shot measured once on \
+             this instrument can baseline both MoE checkpoints. Same driver, same rungs-and-floors \
+             shape and same vacuity rule as `concurrency-sweep`. Its numbers are NOT comparable to \
+             `concurrency-sweep-moe`'s (a different weight format on the same instrument — the \
+             NVFP4 decode path takes the grouped-GEMM expert arm under native 4-bit tensor cores, \
+             not the FP8-weights W4A16-dequant path) and each is read against its own history only.",
+    duration_hint: "~5–15 min",
+    expected_secs: 600,
+    updated: "2026-10-04",
+    needs_confirmation: false,
+    intended_for: Some(crate::benchmark::ModelExpectation {
+        families: &["qwen3.6-35b-a3b"],
+        note: "The MoE ladder is defined on the Qwen3.6-35B-A3B family; this gate's declared \
+               subject is the native NVFP4 checkpoint specifically, not the FP8 one \
+               `concurrency-sweep-moe` already covers. Pointing it at the FP8 or dense checkpoint \
+               measures a mismatched weight format under this gate's floors, which have none yet.",
+    }),
+    threshold_params: GATE_THRESHOLD_PARAMS,
+    sensitivity: Sensitivity::Speed,
+    ctor: || Box::new(ConcurrencySweep::default()),
+};
+
+const NVFP4_MOE_SUMMARY: &str = "Latency/throughput curve across concurrency 1 → 16 on the 35B MoE NVFP4 checkpoint, published instrument";
+
 /// 2026-09-26: The gated rungs, `(C, floor param, metric key, label)`. The
 /// descriptors' `threshold_params`, the floor `ParamSpec`s and `configure`'s
 /// `Floors::per_c` are all derived from this table. A rung with no bound in

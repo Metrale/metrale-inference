@@ -316,7 +316,7 @@ fn the_promotion_debt_section_is_always_rendered() {
     let body = super::render(&root, &prs);
     assert!(
         body.contains(
-            "### Promotion-candidate debt\n\nThese gates are NOT required, so these PRs can merge without them. Each row is coverage this repository chose not to buy — recorded so the choice stays visible rather than becoming an assumption.\n\n| PR | merged? | title | gates that wanted to run |\n|---|---|---|---|\n| #1 | not yet | a scheduler change | cross-contamination, scheduler-equivalence, default-tier-boot, kat-equality-gate-nemotron-nano, kat-equality-gate-nemotron-super, bfcl-subset-mini-nemotron-nano, bfcl-subset-mini-nemotron-super |\n"
+            "### Promotion-candidate debt\n\nThese gates are NOT required, so these PRs can merge without them. Each row is coverage this repository chose not to buy — recorded so the choice stays visible rather than becoming an assumption.\n\n| PR | merged? | title | gates that wanted to run |\n|---|---|---|---|\n| #1 | not yet | a scheduler change | cross-contamination, scheduler-equivalence, default-tier-boot, kat-equality-gate-nemotron-nano, kat-equality-gate-nemotron-super, bfcl-subset-mini-nemotron-nano, bfcl-subset-mini-nemotron-super, concurrency-sweep-moe-nvfp4 |\n"
         ),
         "the unconditional debt section must retain its policy, schema, and row: {body}"
     );
@@ -364,7 +364,8 @@ fn debt_is_derived_from_the_prs_own_paths() {
             "kat-equality-gate-nemotron-nano",
             "kat-equality-gate-nemotron-super",
             "bfcl-subset-mini-nemotron-nano",
-            "bfcl-subset-mini-nemotron-super"
+            "bfcl-subset-mini-nemotron-super",
+            "concurrency-sweep-moe-nvfp4"
         ]
     );
 }
@@ -402,7 +403,7 @@ fn the_debt_table_distinguishes_merged_from_open() {
     let body = super::render(&root, &prs);
     assert!(
         body.contains(
-            "| #1 | not yet | still open | cross-contamination, scheduler-equivalence, default-tier-boot, kat-equality-gate-nemotron-nano, kat-equality-gate-nemotron-super, bfcl-subset-mini-nemotron-nano, bfcl-subset-mini-nemotron-super |\n| #2 | **yes** | already landed | cross-contamination, scheduler-equivalence, default-tier-boot, kat-equality-gate-nemotron-nano, kat-equality-gate-nemotron-super, bfcl-subset-mini-nemotron-nano, bfcl-subset-mini-nemotron-super |\n"
+            "| #1 | not yet | still open | cross-contamination, scheduler-equivalence, default-tier-boot, kat-equality-gate-nemotron-nano, kat-equality-gate-nemotron-super, bfcl-subset-mini-nemotron-nano, bfcl-subset-mini-nemotron-super, concurrency-sweep-moe-nvfp4 |\n| #2 | **yes** | already landed | cross-contamination, scheduler-equivalence, default-tier-boot, kat-equality-gate-nemotron-nano, kat-equality-gate-nemotron-super, bfcl-subset-mini-nemotron-nano, bfcl-subset-mini-nemotron-super, concurrency-sweep-moe-nvfp4 |\n"
         ),
         "open warning and accrued merged debt must remain distinct: {body}"
     );

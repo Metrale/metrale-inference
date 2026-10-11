@@ -1,0 +1,115 @@
+{
+  "schema": 1,
+  "title": "Qwen3.6-35B-A3B-NVFP4 concurrency ladder: vLLM one-shot baseline",
+  "subtitle": "vLLM + MTP, C=1..16 (throughput) and C=1..128 (energy leg), on the published ladder instrument; no Metrale Engine leg at this instrument yet",
+  "aggregate": "mean tok/s over 3 timed reps (1 warmup discarded)",
+  "results_doc": "bench/baselines/qwen36-35b-a3b-nvfp4/published.json",
+  "subject_note": "No series has role \"subject\": no Metrale Engine run exists at this instrument for this checkpoint yet (PR #112 registers the gate id concurrency-sweep-moe-nvfp4 as a PROMOTION_CANDIDATE, unmeasured). This manifest mirrors bench/baselines/qwen36-35b-a3b/published.json (the FP8 MoE sibling) so that when a Metrale leg is hand-measured at this instrument, it is added here as a series with role \"subject\" and scored against this one the same way.",
+  "version_note": "★ IMPORTANT: this is NOT vLLM 0.27.1. `docker pull vllm/vllm-openai:latest` on dgx3 on 2026-10-05 resolved to v0.31.0 (image id sha256:bbe7045055707d1027079ed01cca40812578a235c56032d85c16108ad473384c, repo digest vllm/vllm-openai@sha256:c1c9f6fd5c109ba7f0546a59f5b2f15fb87f64c77782e90a27b648b42a8e67c3, created 2026-10-03). The FP8 MoE sibling's published.json pins v0.27.1 explicitly (sha256:2c211a1273b4...) on dgx2; dgx3's `:latest` tag had moved on by the time this ran. Found by `docker image inspect`, not assumed -- disclosed here rather than mislabeled as 0.27.1 to match the sibling or the informal same-box A/B (moenvfp4/lean_ab) that preceded this, which described itself as \"vLLM 0.27.1 (Marlin+MTP3)\" without a verified image digest. This version gap is a real difference between this baseline and the FP8 sibling's: do not read the two as apples to apples on engine version, only on checkpoint family and instrument. A newer vLLM is plausibly faster, which this measurement's numbers (3-7% above the informal same-box A/B's vLLM arm at most rungs) are consistent with, though that comparison is confounded by the harness also differing (checked-in harness_w55/w56 here vs an uncommitted driver there, driver_sha256 7b3efab2e6... matching neither).",
+  "workload": {
+    "checkpoint": "nvidia/Qwen3.6-35B-A3B-NVFP4",
+    "checkpoint_note": "MoE 35B, 256 experts top-8 (~3B active per token), native NVFP4 weights (ModelOpt W4A16_NVFP4), 40 layers; architecture qwen3_5_moe. Distinct from Qwen/Qwen3.6-35B-A3B-FP8, the FP8-weights checkpoint the sibling manifest covers.",
+    "isl_tokens": 128,
+    "isl_note": "~200 rendered prompt tokens after the chat template (prompt_tokens_per_req is 200 in every rep of the raw files)",
+    "osl_tokens": 1024,
+    "reps": 3,
+    "warmup": 1,
+    "temperature": 0.0,
+    "seed": 42,
+    "thinking": "disabled via chat_template_kwargs.enable_thinking=false",
+    "sampling_parity": "presence_penalty and frequency_penalty pinned to 0.0 by the harness",
+    "harness": "bench/ladder38/harness_w55_conc_ladder.py (throughput) / harness_w56_conc_ladder.py (energy)"
+  },
+  "box": {
+    "name": "dgx3 (spark-28c2)",
+    "gpu": "NVIDIA GB10 Grace Blackwell, 121.7 GB unified",
+    "note": "the energy-reference box (--energy-reference-node), same box the concurrency-sweep-moe-nvfp4 gate's Metrale leg will be measured on once it exists"
+  },
+  "harness_shas": {
+    "4649c9b0": "Throughput leg (vllm_nvfp4_c1_16.json). sha256 of the copy at bench/ladder38/harness_w55_conc_ladder.py in the tree this ran from (origin/main 5eafc5c8c, same commit PR #112 branches from) -- 4649c9b001d1c984bdbaae9b9a97631b526a6725f4fe963a23a5c378f6d5cb3c. This does not match any sha recorded in the FP8 sibling manifest (41e242c072/6412b12d4d/1c77e1d8e9/1f10d4887b) because the file's comments have moved since those ran; the content that matters (the request/scoring logic) is unchanged -- verified by diffing against bench/ladder38/harness_w55_conc_ladder.py at HEAD, which is byte-identical to the copy that ran.",
+    "55a5963e4b": "Energy legs (vllm_nvfp4_energy_c1_16.json, _c32.json, _c64.json, _c128.json). sha256 55a5963e4beea50e8f7e12de6c70e0709a53ff0d62b020cddefdea24ae92a216 -- byte-identical to bench/ladder38/harness_w56_conc_ladder.py at HEAD and to the sha the FP8 sibling manifest already records for its own vllm-mtp-energy leg. Same harness, same revision, both checkpoints."
+  },
+  "series": [
+    {
+      "id": "vllm-mtp",
+      "label": "vLLM + MTP",
+      "role": "baseline",
+      "parity": "unmatched",
+      "parity_deltas": [
+        "vLLM version is v0.31.0, not the v0.27.1 pinned by the FP8 sibling's vllm-mtp series (see version_note) -- not adjudicated against a Metrale leg since none exists at this instrument yet",
+        "ctx 2048, max_num_seqs 128, util 0.85, kv_cache_dtype fp8, dtype bfloat16, MTP num_speculative_tokens=3 -- same shape as the FP8 sibling's profile, chosen as a best-effort match, not oracle-adjudicated (no Metrale NVFP4 leg exists yet to adjudicate parity against)"
+      ],
+      "engine": "vLLM v0.31.0",
+      "build": "vllm/vllm-openai:latest @ sha256:bbe7045055707d1027079ed01cca40812578a235c56032d85c16108ad473384c (repo digest vllm/vllm-openai@sha256:c1c9f6fd5c109ba7f0546a59f5b2f15fb87f64c77782e90a27b648b42a8e67c3, created 2026-10-03T08:19:23Z)",
+      "env": "HF_HUB_OFFLINE=1 VLLM_NVFP4_GEMM_BACKEND=marlin VLLM_USE_FLASHINFER_MOE_FP4=0 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True",
+      "env_note": "VLLM_NVFP4_GEMM_BACKEND is logged by this vLLM version as an unrecognized environment variable (no-op) -- it auto-selects Marlin regardless; engine logs confirm 'Using MarlinNvFp4LinearKernel for NVFP4 GEMM' and the MARLIN NvFp4 MoE backend.",
+      "cli": "docker run -d --name <rung> --network host --gpus all --ipc=host -v /home/claude/.cache/huggingface:/root/.cache/huggingface -e HF_HUB_OFFLINE=1 -e VLLM_NVFP4_GEMM_BACKEND=marlin -e VLLM_USE_FLASHINFER_MOE_FP4=0 -e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True vllm/vllm-openai:latest --model nvidia/Qwen3.6-35B-A3B-NVFP4 --served-model-name nvidia/Qwen3.6-35B-A3B-NVFP4 --host 127.0.0.1 --port 8010 --max-model-len 2048 --max-num-seqs 128 --gpu-memory-utilization 0.85 --enable-prefix-caching --dtype bfloat16 --kv-cache-dtype fp8 --speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":3}'",
+      "speculation": "vLLM's own MTP drafter, num_speculative_tokens=3",
+      "instrument": {
+        "isl": 128,
+        "osl": 1024,
+        "prompt_mode": "essay",
+        "max_model_len": 2048,
+        "max_batch_size": 128,
+        "kv_cache_dtype": "fp8",
+        "reps": 3,
+        "warmup": 1,
+        "temperature": 0.0,
+        "seed": 42
+      },
+      "instrument_note": "prompt_mode essay: the harness defaults to it (PROMPT_MODE = os.environ.get('W55_PROMPT_MODE', 'essay')) and this run's env did not set it. Fresh container per rung group (narrow leg C=1,2,4,8,16 on one serve; C=32/64/128 each its own fresh container), the mitigation that let the FP8 sibling's wide rungs complete without a wedge on 2026-09-28 (memory vllm-c128-wedges-gb10) -- this run also completed all rungs, zero wedges, zero request errors.",
+      "sources": {
+        "1": "vllm_nvfp4_c1_16.json",
+        "2": "vllm_nvfp4_c1_16.json",
+        "4": "vllm_nvfp4_c1_16.json",
+        "8": "vllm_nvfp4_c1_16.json",
+        "16": "vllm_nvfp4_c1_16.json"
+      },
+      "unmeasured": {
+        "rungs": [32, 64, 128],
+        "reason": "the throughput leg (w55, no power sampling) stops at C=16 by the same convention as the FP8 sibling's vllm-mtp series; C=32/64/128 throughput is read from the energy leg instead, which measured them successfully (see vllm-mtp-energy below) -- not a memory or stability limit this time, every rung completed clean."
+      },
+      "source_note": "One-shot: measured 2026-10-05 04:07-04:21Z UTC on dgx3, nothing else on the box (GPU-exclusive, cooled to <=55C before starting). Raw file vllm_nvfp4_c1_16.json, sha256 c12ab6a7463b9a09e758e8b504c4de16fece366e92b9e9aab478a6a7b74cb4c9. Zero request errors at every rung."
+    },
+    {
+      "id": "vllm-mtp-energy",
+      "label": "vLLM + MTP (energy)",
+      "role": "baseline",
+      "parity": "unmatched",
+      "parity_deltas": [
+        "vLLM version is v0.31.0, not v0.27.1 (see version_note)",
+        "same best-effort, non-adjudicated profile as vllm-mtp above"
+      ],
+      "engine": "vLLM v0.31.0",
+      "build": "vllm/vllm-openai:latest @ sha256:bbe7045055707d1027079ed01cca40812578a235c56032d85c16108ad473384c",
+      "env": "HF_HUB_OFFLINE=1 VLLM_NVFP4_GEMM_BACKEND=marlin VLLM_USE_FLASHINFER_MOE_FP4=0 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True",
+      "cli": "vllm-mtp's command, verbatim, run separately per rung-group (see fresh-container note above)",
+      "speculation": "vLLM's own MTP drafter, num_speculative_tokens=3",
+      "instrument": {
+        "isl": 128,
+        "osl": 1024,
+        "prompt_mode": "essay",
+        "max_model_len": 2048,
+        "max_batch_size": 128,
+        "kv_cache_dtype": "fp8",
+        "reps": 3,
+        "warmup": 1,
+        "temperature": 0.0,
+        "seed": 42
+      },
+      "instrument_note": "Energy = GPU RAIL via an NVML cumulative-energy-counter sidecar sampled through the run (nvml_energy_sidecar.py), gpu_rail_energy_j per rep, the same metric name the FP8 sibling's energy leg reports. C=1,2,4,8,16 ran together on one serve (the narrow leg); C=32,64,128 each ran on its own fresh container -- the wide-rung mitigation (memory vllm-c128-wedges-gb10). A stall_probe.py (2s cadence, 180s-no-progress / <1GB-MemAvailable thresholds) and an independent ping/ssh/metrics watchdog from dgx1 (30s cadence) ran throughout every rung; neither ever fired. Lowest observed host MemAvailable across the whole campaign and highest GPU temp were not separately logged in this pass but no distress or stall was flagged at any rung.",
+      "sources": {
+        "1": "vllm_nvfp4_energy_c1_16.json",
+        "2": "vllm_nvfp4_energy_c1_16.json",
+        "4": "vllm_nvfp4_energy_c1_16.json",
+        "8": "vllm_nvfp4_energy_c1_16.json",
+        "16": "vllm_nvfp4_energy_c1_16.json",
+        "32": "vllm_nvfp4_energy_c32.json",
+        "64": "vllm_nvfp4_energy_c64.json",
+        "128": "vllm_nvfp4_energy_c128.json"
+      },
+      "scope": "cost",
+      "source_note": "2026-10-05 04:21-05:07Z UTC on dgx3, nothing else on the box throughout (GPU-exclusive, cooled to <=55C before each step). Raw files: vllm_nvfp4_energy_c1_16.json (sha256 4164f187c60333c2bc73634217fd8967da1db721b8ab900890e190986b13a628), vllm_nvfp4_energy_c32.json (sha256 748d19b11543c1bf2c799e2b9ebb3712d7bc40e399592eb535ca94d721eb2800), vllm_nvfp4_energy_c64.json (sha256 53d5f400da4114c5b8c583e1002cd5e276c5501352da58829cca33a6ac8a8646), vllm_nvfp4_energy_c128.json (sha256 9683dfa96a07e0f3f91f8633b33115f17f61b68f1e482bf331b97b9d7e70defb). Zero request errors at every rung, every rung (1,2,4,8,16,32,64,128) completed."
+    }
+  ]
+}
