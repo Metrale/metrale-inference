@@ -42,6 +42,12 @@ fn field<'a>(line: &'a str, key: &str) -> &'a str {
     rest.split([',', ')']).next().unwrap()
 }
 
+/// 2026-10-11: The `tokens=[..]` list of a trace line.
+fn tokens(line: &str) -> &str {
+    let rest = line.split("tokens=[").nth(1).expect("tokens");
+    rest.split(']').next().unwrap()
+}
+
 fn ep_lines(tick: &[String]) -> Vec<&String> {
     tick.iter().filter(|l| l.starts_with("ep_")).collect()
 }
@@ -70,8 +76,8 @@ fn a_fused_k2_step_sends_one_announcement_and_one_verdict() {
         let v = t.iter().position(|l| l.starts_with("decode_verify_graphed(")).unwrap();
         assert!(t[v - 1].starts_with("ep_announce_k2_fused("), "{t:?}");
         assert_eq!(
-            field(&t[v - 1], "tokens"),
-            field(&t[v], "tokens"),
+            tokens(&t[v - 1]),
+            tokens(&t[v]),
             "announced tokens differ from the verified ones"
         );
     }
