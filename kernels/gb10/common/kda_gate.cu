@@ -62,12 +62,10 @@
 #include <cuda_bf16.h>
 #include <math.h>
 
-// 2026-09-25: Both entry points call this, so their arithmetic is the same.
-
-__device__ __forceinline__ float kda_gate_scalar(float g_raw, float dt_bias,
-                                                 float decay, float lower_bound) {
-    return lower_bound * (1.0f / (1.0f + expf(-(decay * (g_raw + dt_bias)))));
-}
+// 2026-09-25: Both entry points call kda_gate_scalar, so their arithmetic is the same.
+// 2026-10-10: It lives in kda_gate_scalar.cuh, shared with the fused gate epilogue of
+// kda_gates_w8a8.cu.
+#include "kda_gate_scalar.cuh"
 
 // 2026-09-25: The entry point glm5next_kda resolves; g_raw is the BF16 output of f_b.
 

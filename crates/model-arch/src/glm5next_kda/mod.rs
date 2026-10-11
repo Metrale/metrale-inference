@@ -37,6 +37,7 @@ mod config;
 mod decode;
 #[cfg(test)]
 mod decode_rows_tests;
+mod gates_fused;
 mod kernels;
 mod prefill;
 mod replay;
@@ -379,6 +380,11 @@ impl Glm5NextKdaLayer {
                 hid,
                 stream,
             )?;
+        }
+        // 2026-10-10: One launch for f_b, gate, beta and g_b at one row under
+        // `METRALE_GLM_KDA_GATES_FUSED=1` (`gates_fused.rs`); same bytes.
+        if self.gates_fused(gpu, t, low, ws, stream)? {
+            return Ok(());
         }
         self.gemm(
             gpu,
