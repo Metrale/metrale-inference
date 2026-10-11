@@ -78,11 +78,32 @@ impl TransformerModel {
 
     /// 2026-10-11: The worker's commit after a K=2 verdict, for the fused and the unfused
     /// command: keep both rows after an accept, drop the draft row after a reject.
+    ///
+    /// 2026-10-11: In snapshot mode the worker commits as rank 0 does (`commit_accepted_prefix`,
+    /// nothing after an accept, intermediate 0 after a reject), as the K=γ worker already does.
+    /// It used to checkpoint the live state after every accept (53.6 MB per step at TP=3) and
+    /// roll back then checkpoint after every reject (107 MB), on the secondary stream beside
+    /// the propose. In snapshot mode that checkpoint is never read: the only reads of
+    /// `h_state_checkpoint` / `conv_state_checkpoint` are the `num_accepted == 0` rewinds
+    /// (`start_rollback_and_checkpoint_async_dispatch`, `rollback_ssm_states`), and every
+    /// caller passes 1 or more. The live state after the commit is the same copy of
+    /// intermediate 0 either way. Replay mode reads the checkpoint (`replay_parts`), so it keeps
+    /// the checkpointing path.
     pub(in crate::model) fn ep_worker_k2_commit(
         &self,
         seq: &mut SequenceState,
         accepted: bool,
     ) -> Result<()> {
+        if let K2WorkerCommit::Mirror { rows } =
+            k2_worker_commit(self.ssm_pool.rollback_mode, accepted)
+        {
+            if !accepted {
+                seq.seq_len -= 1;
+                seq.tokens.pop();
+            }
+            self.trim_proposer_state(seq, usize::from(accepted), 0)?;
+            return self.commit_accepted_prefix(seq, rows, 2);
+        }
         if accepted {
             self.start_checkpoint_async(seq)?;
             self.trim_proposer_state(seq, 1, 0)
@@ -114,6 +135,64 @@ impl TransformerModel {
         }
         if let Err(e) = self.run_mtp_propose_inner(last_token, position, num_drafts, seq, None) {
             tracing::warn!("EP worker MTP propose failed (continuing): {e:#}");
+        }
+    }
+}
+
+/// 2026-10-11: How a worker commits its recurrent state after a K=2 verdict.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::model) enum K2WorkerCommit {
+    /// 2026-10-11: As rank 0: `commit_accepted_prefix(rows, 2)`, no checkpoint.
+    Mirror { rows: usize },
+    /// 2026-10-11: Checkpoint after an accept, roll back and checkpoint after a reject.
+    Checkpoint,
+}
+
+/// 2026-10-11: The worker's K=2 commit for a rollback mode and verdict (see
+/// `ep_worker_k2_commit`): rank 0's commit in snapshot mode, the checkpointing path in replay
+/// mode.
+pub(in crate::model) fn k2_worker_commit(
+    mode: metrale_model_layers::ssm_reserve::SsmRollbackMode,
+    accepted: bool,
+) -> K2WorkerCommit {
+    use metrale_model_layers::ssm_reserve::SsmRollbackMode;
+    match mode {
+        SsmRollbackMode::Snapshot => K2WorkerCommit::Mirror {
+            rows: 1 + usize::from(accepted),
+        },
+        SsmRollbackMode::Replay => K2WorkerCommit::Checkpoint,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use metrale_model_layers::ssm_reserve::SsmRollbackMode;
+
+    /// 2026-10-11: Snapshot mode commits what rank 0 commits: both rows after an accept (a
+    /// no-op in `commit_accepted_prefix`), row 0 after a reject, and never 0 rows, which
+    /// `commit_accepted_prefix` refuses.
+    #[test]
+    fn snapshot_mode_commits_what_rank_0_commits() {
+        assert_eq!(
+            k2_worker_commit(SsmRollbackMode::Snapshot, true),
+            K2WorkerCommit::Mirror { rows: 2 }
+        );
+        assert_eq!(
+            k2_worker_commit(SsmRollbackMode::Snapshot, false),
+            K2WorkerCommit::Mirror { rows: 1 }
+        );
+    }
+
+    /// 2026-10-11: Replay mode keeps the checkpointing path, since its verify reads the
+    /// checkpoint.
+    #[test]
+    fn replay_mode_keeps_checkpointing() {
+        for accepted in [true, false] {
+            assert_eq!(
+                k2_worker_commit(SsmRollbackMode::Replay, accepted),
+                K2WorkerCommit::Checkpoint
+            );
         }
     }
 }
