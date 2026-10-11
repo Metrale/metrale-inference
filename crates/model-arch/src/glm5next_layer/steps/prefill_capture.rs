@@ -19,6 +19,9 @@
 //! Owner: model-arch (GLM-5.3).
 //! Invariants:
 //! - Without a capture the rows run exactly as before: one segment.
+//! - The rows equal the separate passes' bytes only for passes ending and starting at the
+//!   SAME points: the model therefore plans one point, the tail split point, for such layers
+//!   (`prepare_cut_capture`), the split `--no-ssm-tail-midchunk` runs as two passes.
 
 use super::*;
 use metrale_model_layers::layer::MidchunkCapture;
