@@ -212,6 +212,21 @@ pub(crate) fn dense_quant_refusal(
     })
 }
 
+/// 2026-10-11: The refusal of `--dsa-quantization` below `declared` on a model without GLM-5.3's
+/// DSA projections (only `glm5_next` has them), so the flag is never accepted and ignored.
+pub(crate) fn dsa_quant_refusal(
+    model_type: &str,
+    tier: metrale_model_layers::layers::DsaQuantization,
+) -> Option<String> {
+    (tier.below_declared() && model_type != "glm5_next").then(|| {
+        format!(
+            "--dsa-quantization {}: only glm5_next has the DSA projections it moves; model_type \
+             {model_type:?} would ignore it",
+            tier.name()
+        )
+    })
+}
+
 /// 2026-09-30: `support` for the published value, logging what runs. 2026-10-01: Also refuses the
 /// cross-sequence prefill levers beside a fixed format ([`prefill_lever_refusal`]).
 pub(crate) fn check(config: &ModelConfig, lm_head_dtype: &str) -> Result<()> {
@@ -230,6 +245,12 @@ pub(crate) fn check(config: &ModelConfig, lm_head_dtype: &str) -> Result<()> {
     if let Some(why) = dense_quant_refusal(
         &config.model_type,
         metrale_model_layers::layers::dense_quantization(),
+    ) {
+        bail!("{why}");
+    }
+    if let Some(why) = dsa_quant_refusal(
+        &config.model_type,
+        metrale_model_layers::layers::dsa_quantization(),
     ) {
         bail!("{why}");
     }

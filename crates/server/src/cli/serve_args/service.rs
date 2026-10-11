@@ -12,9 +12,9 @@
 //! struct's fields sit where its `#[command(flatten)]` field is: last.
 
 use clap::Args;
-use metrale_model_layers::layers::DenseQuantization;
+use metrale_model_layers::layers::{DenseQuantization, DsaQuantization};
 
-use super::super::flag_values::{DenseQuantizationArg, MoeExpertLayoutArg};
+use super::super::flag_values::{DenseQuantizationArg, DsaQuantizationArg, MoeExpertLayoutArg};
 use super::{DEFAULT_REQUEST_TIMEOUT_SECS, parse_lora_adapter_spec, parse_lora_stageable_spec};
 
 /// 2026-09-30: `--activation-quantization`, parsed by the config crate's one grammar.
@@ -130,6 +130,20 @@ pub struct ServeServiceArgs {
     /// Unmeasured.
     #[arg(long, value_enum, default_value_t = DenseQuantizationArg(DenseQuantization::Declared))]
     pub dense_quantization: DenseQuantizationArg,
+
+    /// Precision of GLM-5.3's DSA query-down (q_a), absorbed query and absorbed output
+    /// projections, independent of `--dense-quantization`.
+    ///
+    /// `declared` (the default) serves them at the checkpoint's BF16 (the absorbed products are
+    /// formed at load in FP32 and kept BF16), whatever `--dense-quantization` is. `w8a8`
+    /// quantizes them at load to FP8 E4M3 with one scale per output channel and decodes them
+    /// with per-token FP8 activations, what the reference engine executes there, and what
+    /// `--dense-quantization fp8`/`w4a16` served them as before this flag existed. `w4a16`
+    /// quantizes them to NVFP4 and decodes them W4A16 (the former `METRALE_GLM_DSA_W4A16=1`),
+    /// FURTHER below declared. Below `declared` the answers change; the boot log says so.
+    /// GLM-5.3 (`glm5_next`) only; any other model refuses a value below `declared`.
+    #[arg(long, value_enum, default_value_t = DsaQuantizationArg(DsaQuantization::Declared))]
+    pub dsa_quantization: DsaQuantizationArg,
 
     /// How a routed MoE's experts are laid out over the ranks.
     ///

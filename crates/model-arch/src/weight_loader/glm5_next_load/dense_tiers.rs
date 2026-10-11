@@ -2,7 +2,10 @@
 
 //! 2026-10-09: `--dense-quantization` registration for one GLM-5.3 layer: every BF16 projection
 //! of its mixer and shared expert goes to the FP8 registry (`glm5next_fp8_dense`, `fp8`), or under
-//! `w4a16` to the registry `glm5next_w4a16_dense::tier_of` names.
+//! `w4a16` to the registry `glm5next_w4a16_dense::tier_of` names. 2026-10-11: the DSA q_a /
+//! absorbed q / absorbed o projections (`DSA_SITES`) take `--dsa-quantization`'s tier instead,
+//! whatever the dense tier is: BF16 under `declared` (left unregistered), FP8 under `w8a8`, W4A16
+//! under `w4a16` (`tier_for`).
 //!
 //! Owner: model-arch weight loader (GLM-5.3).
 //! Invariants:
@@ -14,6 +17,7 @@
 
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
+use metrale_model_layers::layers::{DenseQuantization, DsaQuantization};
 
 use crate::glm5next_layer::{Glm5NextMixer, Glm5NextMlpSite};
 use crate::glm5next_mlp::Glm5NextMlpConfig;
@@ -22,23 +26,59 @@ use crate::glm5next_w4a16_dense::{self as w4a16, ProjTier};
 /// 2026-10-09: One projection: `(weight, n, k, name)` with the shapes the forward launches.
 type Proj = (DevicePtr, usize, usize, &'static str);
 
-/// 2026-10-09: Split the layer's projections by tier: all FP8 unless `w4a16`, then by
-/// `tier_of` (with `dsa_absorbed`, `glm5next_w4a16_dense::dsa_absorbed_lever`). Pure, so the
-/// decision is tested without a GPU.
+/// 2026-10-11: Where one projection is served.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Tier {
+    /// 2026-10-11: Its checkpoint BF16 (not registered).
+    Bf16,
+    Fp8,
+    W4a16,
+}
+
+/// 2026-10-11: The tier of the projection named `name` under `dense` and `dsa`. The
+/// `DSA_SITES` follow `dsa` alone; every other projection follows `dense` (all FP8 under `fp8`,
+/// `glm5next_w4a16_dense::tier_of` under `w4a16`, which refuses a name it has no decision for).
+/// Pure, so the decision is tested without a GPU.
+pub(super) fn tier_for(name: &str, dense: DenseQuantization, dsa: DsaQuantization) -> Result<Tier> {
+    if w4a16::DSA_SITES.contains(&name) {
+        return Ok(match dsa {
+            DsaQuantization::Declared => Tier::Bf16,
+            DsaQuantization::W8a8 => Tier::Fp8,
+            DsaQuantization::W4a16 => Tier::W4a16,
+        });
+    }
+    Ok(match dense {
+        DenseQuantization::Declared => Tier::Bf16,
+        DenseQuantization::Fp8 => Tier::Fp8,
+        DenseQuantization::W4a16 => match w4a16::tier_of(name)? {
+            ProjTier::W4a16 => Tier::W4a16,
+            ProjTier::Fp8 => Tier::Fp8,
+        },
+    })
+}
+
+/// 2026-10-09: Split the layer's projections by tier into `(fp8, w4a16)`, keeping the layer's
+/// order; BF16 projections are in neither. 2026-10-11: by [`tier_for`].
 pub(super) fn split_by_tier(
     projs: Vec<Proj>,
-    w4a16_on: bool,
-    dsa_absorbed: bool,
+    dense: DenseQuantization,
+    dsa: DsaQuantization,
 ) -> Result<(Vec<Proj>, Vec<Proj>)> {
     let (mut fp8, mut w4) = (Vec::new(), Vec::new());
     for p in projs {
-        if w4a16_on && w4a16::tier_of(p.3, dsa_absorbed)? == ProjTier::W4a16 {
-            w4.push(p);
-        } else {
-            fp8.push(p);
+        match tier_for(p.3, dense, dsa)? {
+            Tier::Bf16 => {}
+            Tier::Fp8 => fp8.push(p),
+            Tier::W4a16 => w4.push(p),
         }
     }
     Ok((fp8, w4))
+}
+
+/// 2026-10-11: Whether any projection of a layer can leave BF16: a dense or DSA tier below
+/// declared. The loader registers only then.
+pub(super) fn any_below_declared(dense: DenseQuantization, dsa: DsaQuantization) -> bool {
+    dense.below_declared() || dsa.below_declared()
 }
 
 /// 2026-10-09: Register one layer's mixer and shared-expert projections under the published
@@ -64,8 +104,8 @@ pub(super) fn register_dense_tiers(
         gpu,
         projs,
         &mut weight_slots(mixer, mlp),
-        w4a16::enabled(),
-        w4a16::dsa_absorbed_lever()?,
+        metrale_model_layers::layers::dense_quantization(),
+        metrale_model_layers::layers::dsa_quantization(),
         idx,
     )
 }
@@ -77,11 +117,11 @@ pub(super) fn register_projections(
     gpu: &dyn GpuBackend,
     projs: Vec<Proj>,
     slots: &mut [&mut DevicePtr],
-    w4a16_on: bool,
-    dsa_absorbed: bool,
+    dense: DenseQuantization,
+    dsa: DsaQuantization,
     idx: usize,
 ) -> Result<()> {
-    let (fp8, w4) = split_by_tier(projs, w4a16_on, dsa_absorbed)?;
+    let (fp8, w4) = split_by_tier(projs, dense, dsa)?;
     if !fp8.is_empty() {
         let max_k = fp8.iter().map(|p| p.2).max().unwrap_or(0);
         crate::glm5next_fp8_dense::prepare(gpu, max_k)?;
@@ -111,7 +151,7 @@ pub(super) fn register_projections(
 }
 
 /// 2026-10-09: Every weight field a W4A16 projection can live in: the KDA projections', the
-/// shared expert's, and the DSA projections `tier_of` can move (under `METRALE_GLM_DSA_W4A16`).
+/// shared expert's, and the DSA projections `--dsa-quantization w4a16` moves.
 fn weight_slots<'a>(
     mixer: &'a mut Glm5NextMixer,
     mlp: &'a mut Glm5NextMlpSite,

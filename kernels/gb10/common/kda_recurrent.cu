@@ -497,3 +497,77 @@ extern "C" __global__ void kda_recurrent_decode_bf16_seq_reg(
         for (unsigned int kk = 0; kk < D; ++kk) S[(size_t)kk * D + vi] = col[kk];
     }
 }
+
+// 2026-10-11: kda_recurrent_decode_bf16_seq_reg that also stores the state after each of the
+// first n_snap tokens (n_snap <= 3, T > n_snap): token t < n_snap's column goes to snap_t at
+// the state's own layout. A K-row speculative verify needs the state after rows 0..K-2 for the
+// reject path (glm5next_kda/seq_tokens.rs, METRALE_GLM_KDA_VERIFY_TOKENS). The per-row walk
+// it replaces read and wrote the whole state once per row and then copied it once per
+// snapshot; this reads it once and writes it once per snapshot plus once at the end. Per
+// (h, vi, t) the arithmetic is seq_reg's (kda_reg_token on the same staging), and a snapshot
+// stores the column the per-row walk would have stored, so outputs, snapshots and the final
+// state are the walk's bits. The scaffolding repeats seq_reg's rather than templating it, so the
+// C1 decode kernel's code is untouched.
+extern "C" __global__ void kda_recurrent_decode_bf16_seq_reg_snap(
+    const __nv_bfloat16* __restrict__ q,
+    const __nv_bfloat16* __restrict__ k,
+    const __nv_bfloat16* __restrict__ v,
+    const float* __restrict__ gate,
+    const float* __restrict__ beta,
+    float* __restrict__ state,
+    float* __restrict__ out,
+    unsigned int H,
+    float scale,
+    unsigned int T,
+    unsigned int qkv_row_stride,
+    unsigned int gate_row_stride,
+    unsigned int beta_row_stride,
+    unsigned int out_row_stride,
+    float* __restrict__ snap0,
+    float* __restrict__ snap1,
+    float* __restrict__ snap2,
+    unsigned int n_snap
+) {
+    constexpr unsigned int D = KDA_REG_D;
+    const unsigned int h = blockIdx.x;
+    if (h >= H) return;
+    extern __shared__ float sh_seq[];
+    float* sh_decay = sh_seq;
+    float* sh_k = sh_seq + D;
+    float* sh_q = sh_seq + 2u * D;
+    const size_t hd = (size_t)h * D;
+    const unsigned int vi = blockIdx.y * blockDim.x + threadIdx.x;
+    const bool live = vi < D;
+    float* S = state + hd * D;
+
+    float col[D];
+    if (live) {
+        #pragma unroll
+        for (unsigned int kk = 0; kk < D; ++kk) col[kk] = S[(size_t)kk * D + vi];
+    }
+    for (unsigned int t = 0; t < T; ++t) {
+        const size_t qo = (size_t)t * qkv_row_stride + hd;
+        const size_t go = (size_t)t * gate_row_stride + hd;
+        __syncthreads();
+        for (unsigned int i = threadIdx.x; i < D; i += blockDim.x) {
+            sh_decay[i] = expf(gate[go + i]);
+            sh_k[i] = __bfloat162float(k[qo + i]);
+            sh_q[i] = __bfloat162float(q[qo + i]) * scale;
+        }
+        __syncthreads();
+        if (live) {
+            const float b = beta[(size_t)t * beta_row_stride + h];
+            out[(size_t)t * out_row_stride + hd + vi] =
+                kda_reg_token(col, sh_decay, sh_k, sh_q, __bfloat162float(v[qo + vi]), b);
+            if (t < n_snap) {
+                float* P = (t == 0u ? snap0 : (t == 1u ? snap1 : snap2)) + hd * D;
+                #pragma unroll
+                for (unsigned int kk = 0; kk < D; ++kk) P[(size_t)kk * D + vi] = col[kk];
+            }
+        }
+    }
+    if (live) {
+        #pragma unroll
+        for (unsigned int kk = 0; kk < D; ++kk) S[(size_t)kk * D + vi] = col[kk];
+    }
+}

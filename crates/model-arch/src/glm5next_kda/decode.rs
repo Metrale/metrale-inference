@@ -258,6 +258,11 @@ impl Glm5NextKdaLayer {
         let chunked =
             chunk_min.is_some_and(|r| k >= r) && snapshots.is_empty() && self.chunk16_ready();
         let tokens = !chunked && tokens && k > 1 && snapshots.is_empty() && self.seq_tokens_ready();
+        let snap_tokens = !chunked
+            && super::kda_verify_tokens()
+            && super::seq_tokens::snap_tokens_apply(k, snapshots.len())
+            && self.seq_tokens_ready()
+            && self.kernels.seq.recurrent_snap.0 != 0;
         self.rows_with(
             gpu,
             hidden,
@@ -265,7 +270,7 @@ impl Glm5NextKdaLayer {
             ws,
             stream,
             |row| {
-                if tokens || chunked {
+                if tokens || chunked || snap_tokens {
                     return Ok(());
                 }
                 self.stateful_row(gpu, RowIo::workspace(&self.cfg, ws, row), state, stream)?;
@@ -277,6 +282,8 @@ impl Glm5NextKdaLayer {
             || {
                 if chunked {
                     self.stateful_chunk16(gpu, k, state, ws, stream)
+                } else if snap_tokens {
+                    self.stateful_tokens_snap(gpu, k, state, ws, snapshots, stream)
                 } else if tokens {
                     self.stateful_tokens(gpu, k, state, ws, stream)
                 } else {

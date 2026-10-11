@@ -19,8 +19,9 @@
 //!
 //! Owner: model-arch (GLM-5.3).
 //! Invariants:
-//! - [`proj`] declines (`Ok(false)`) unless the tier is `w4a16` and the weight is registered;
-//!   under `declared` and `fp8` nothing is registered and every launch is unchanged.
+//! - [`proj`] declines (`Ok(false)`) unless the registry is in use ([`registry_in_use`]: the
+//!   `w4a16` dense tier, or 2026-10-11 `--dsa-quantization w4a16`) and the weight is registered;
+//!   otherwise nothing is registered and every launch is unchanged.
 //! - A registered weight runs only at the shape it was registered with; another shape is an
 //!   error, never a BF16 run (its field no longer points at BF16).
 //! - From 2 rows up a row's output does not depend on the row count: `w4a16_tc_rows` is
@@ -86,41 +87,27 @@ pub enum ProjTier {
     Fp8,
 }
 
-/// 2026-10-09: `METRALE_GLM_DSA_W4A16=1`: under `--dense-quantization w4a16`, also serve the DSA
-/// layers' absorbed query and output projections and their q_a projection (`dsa.q_a_proj`,
-/// `dsa.q_absorb`, `dsa.o_absorb`) W4A16 instead of FP8. Opt-in: these are load-time products
-/// (`q_b_proj` and `o_proj` through `kv_b_proj`), quantized below the 8 bits the reference
-/// engine keeps for them. Unset or `0` keeps them FP8; `1` without the `w4a16` tier, or any
-/// other value, is an error. Read once.
-pub fn dsa_absorbed_lever() -> Result<bool> {
-    static V: OnceLock<Result<bool, String>> = OnceLock::new();
-    V.get_or_init(|| {
-        parse_dsa_absorbed(
-            std::env::var("METRALE_GLM_DSA_W4A16").ok().as_deref(),
-            enabled(),
-        )
-    })
-    .clone()
-    .map_err(anyhow::Error::msg)
+/// 2026-10-11: Whether this registry is in use: `--dense-quantization w4a16`, or
+/// `--dsa-quantization w4a16` (the DSA q_a / absorbed q / absorbed o projections alone).
+/// [`enabled`] stays the dense tier itself, which also shapes the KDA head split and the
+/// segmented-GEMV levers.
+pub fn registry_in_use() -> bool {
+    enabled()
+        || metrale_model_layers::layers::dsa_quantization()
+            == metrale_model_layers::layers::DsaQuantization::W4a16
 }
 
-/// 2026-10-09: [`dsa_absorbed_lever`]'s parse, pure: the value and whether the tier is on.
-fn parse_dsa_absorbed(v: Option<&str>, tier_on: bool) -> Result<bool, String> {
-    match v {
-        None | Some("0") => Ok(false),
-        Some("1") if tier_on => Ok(true),
-        Some("1") => Err("METRALE_GLM_DSA_W4A16=1 needs --dense-quantization w4a16".into()),
-        Some(other) => Err(format!("METRALE_GLM_DSA_W4A16={other:?}: expected 0 or 1")),
-    }
-}
+/// 2026-10-11: The DSA projections `--dsa-quantization` decides (`dense_tiers::tier_for`),
+/// whatever `--dense-quantization` is.
+pub const DSA_SITES: [&str; 3] = ["dsa.q_a_proj", "dsa.q_absorb", "dsa.o_absorb"];
 
-/// 2026-10-09: The tier of the projection the loader names `name` (the names of
-/// `Glm5NextKdaLayer::dense_projections`, `Glm5NextDsaLayer::dense_projections` and the
-/// shared expert's). An unknown name is an error, so a projection added to those lists gets a
-/// decision here before it loads. `dsa_absorbed` is [`dsa_absorbed_lever`].
-pub fn tier_of(name: &str, dsa_absorbed: bool) -> Result<ProjTier> {
+/// 2026-10-09: The tier of the projection the loader names `name` under `--dense-quantization
+/// w4a16` (the names of `Glm5NextKdaLayer::dense_projections`, `Glm5NextDsaLayer::dense_projections`
+/// and the shared expert's). An unknown name is an error, so a projection added to those lists
+/// gets a decision here before it loads. 2026-10-11: the [`DSA_SITES`] answer `Fp8` here; their
+/// tier is `--dsa-quantization`'s (`dense_tiers::tier_for` asks that first).
+pub fn tier_of(name: &str) -> Result<ProjTier> {
     Ok(match name {
-        "dsa.q_a_proj" | "dsa.q_absorb" | "dsa.o_absorb" if dsa_absorbed => ProjTier::W4a16,
         "kda.q_proj"
         | "kda.k_proj"
         | "kda.v_proj"
@@ -296,7 +283,7 @@ pub fn proj(
     k: usize,
     stream: u64,
 ) -> Result<bool> {
-    if !enabled() {
+    if !registry_in_use() {
         return Ok(false);
     }
     proj_registered(gpu, seg::plan()?, b, a, c, m, n, k, stream)

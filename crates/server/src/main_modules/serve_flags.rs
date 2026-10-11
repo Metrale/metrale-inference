@@ -139,6 +139,26 @@ pub(crate) fn publish_kernel_flags(args: &cli::ServeArgs) {
             }
         );
     }
+    // 2026-10-11: `--dsa-quantization`, always published (owner decision B3): the GLM DSA q_a /
+    // absorbed q / absorbed o tier, independent of the dense tier; disclosed on every boot.
+    let dsa = metrale_model_layers::layers::set_dsa_quantization_from_cli(plan.dsa_quantization);
+    if dsa != plan.dsa_quantization {
+        tracing::warn!(
+            "dsa-quantization was already resolved ({}); the command line's ({}) did NOT \
+             take effect",
+            dsa.name(),
+            plan.dsa_quantization.name()
+        );
+    }
+    tracing::info!("{}", super::kernel_flag_plan::precision_line(dense, dsa));
+    if dsa.below_declared() {
+        tracing::warn!(
+            "--dsa-quantization {}: the DSA q_a, absorbed q and absorbed o projections run BELOW \
+             the checkpoint's declared precision ({}); outputs differ from the declared model",
+            dsa.name(),
+            dsa.describe()
+        );
+    }
     // 2026-09-26: Published only when given; otherwise
     // `prefill_codispatch_enabled()` reads `METRALE_PREFILL_CODISPATCH` on
     // first use.

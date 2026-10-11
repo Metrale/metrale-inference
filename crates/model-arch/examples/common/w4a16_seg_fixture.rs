@@ -14,7 +14,7 @@ use metrale_model_layers::layers::ops::W4a16Seg;
 use metrale_model_layers::weight_map::QuantizedWeight;
 
 /// 2026-10-10: `(name, [n of each member], k, launches per decode step)`: the rank-0 W4A16
-/// projections (34 KDA layers, 42 shared experts, 11 DSA layers under METRALE_GLM_DSA_W4A16=1).
+/// projections (34 KDA layers, 42 shared experts, 11 DSA layers under --dsa-quantization w4a16).
 pub const GROUPS: [(&str, &[u32], u32, u32); 13] = [
     (
         "kda q|k|v|f_a|b|g_a",

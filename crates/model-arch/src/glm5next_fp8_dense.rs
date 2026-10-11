@@ -101,13 +101,15 @@ fn state() -> &'static Mutex<Option<Fp8Dense>> {
 }
 
 /// 2026-10-09: Whether this FP8 registry is in use: `--dense-quantization fp8`, or `w4a16`,
-/// which serves the rest of `fp8`'s set here.
+/// which serves the rest of `fp8`'s set here. 2026-10-11: or `--dsa-quantization w8a8`, which
+/// registers the DSA q_a / absorbed q / absorbed o projections here (`dense_tiers::tier_for`).
 pub fn enabled() -> bool {
     use metrale_model_layers::layers::DenseQuantization as D;
     matches!(
         metrale_model_layers::layers::dense_quantization(),
         D::Fp8 | D::W4a16
-    )
+    ) || metrale_model_layers::layers::dsa_quantization()
+        == metrale_model_layers::layers::DsaQuantization::W8a8
 }
 
 /// 2026-10-09: The W8A8 family's K unit: the activation quantizer and the GEMV read K in

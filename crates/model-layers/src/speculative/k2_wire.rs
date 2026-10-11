@@ -172,13 +172,8 @@ mod tests {
             [1, NO_MASK],
         ));
         assert!(announced_tokens(&decode).is_err());
-        let two_mask = ep_wire::parse_block(&ep_wire::block(
-            0,
-            EP_CMD_VERIFY_K2_FUSED,
-            1,
-            0,
-            [2, 3],
-        ));
+        let two_mask =
+            ep_wire::parse_block(&ep_wire::block(0, EP_CMD_VERIFY_K2_FUSED, 1, 0, [2, 3]));
         assert!(announced_tokens(&two_mask).is_err());
     }
 

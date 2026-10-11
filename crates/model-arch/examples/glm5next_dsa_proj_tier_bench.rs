@@ -4,7 +4,7 @@
 //! weights, three ways, against the BF16 product they approximate:
 //!
 //! * FP8 W8A8 (`glm5next_fp8_dense`, today's `--dense-quantization w4a16` DSA tier),
-//! * NVFP4 W4A16 (`glm5next_w4a16_dense`, the `METRALE_GLM_DSA_W4A16=1` choice),
+//! * NVFP4 W4A16 (`glm5next_w4a16_dense`, the `--dsa-quantization w4a16` choice),
 //! * for `o` only, the un-absorbed decode (V up-projection per head, then `o_proj`), timed as
 //!   `o_proj` alone on FP8 and W4A16 (the per-head V up-projection reads another
 //!   22 x 256 x 512 weights and is not timed).

@@ -66,6 +66,74 @@ impl Glm5NextKdaLayer {
             .launch(stream)
     }
 
+    /// 2026-10-11: [`Self::stateful_tokens`] for a K-row verify that keeps the state after
+    /// rows `0..k - 1` in `snapshots[t]` = `(h_dst, conv_dst)`, as the per-row walk with a
+    /// snapshot per row leaves them (`decode_k_modes`): each conv intermediate is the conv
+    /// window copied and advanced past rows `0..=t` (the advance only moves inputs), before
+    /// `conv_tokens` advances the live window; each recurrent intermediate is stored by
+    /// `kda_recurrent_decode_bf16_seq_reg_snap` as the column passes row `t`. Refuses a
+    /// shape [`snap_tokens_apply`] refuses or a missing kernel.
+    pub(super) fn stateful_tokens_snap(
+        &self,
+        gpu: &dyn GpuBackend,
+        k: usize,
+        state: &KdaSeqState,
+        ws: &Glm5NextKdaWorkspace,
+        snapshots: &[(DevicePtr, DevicePtr)],
+        stream: u64,
+    ) -> Result<()> {
+        let s = &self.kernels.seq;
+        if !self.seq_tokens_ready()
+            || s.recurrent_snap.0 == 0
+            || !snap_tokens_apply(k, snapshots.len())
+        {
+            bail!(
+                "KDA: the snapshotting token kernels cannot run {k} rows with {} snapshots here",
+                snapshots.len()
+            );
+        }
+        let c = &self.cfg;
+        let (qkv, cd, d) = (c.qkv_dim(), c.conv_dim(), c.head_dim);
+        let io = RowIo::workspace(c, ws, 0);
+        for (t, &(_, conv_dst)) in snapshots.iter().enumerate() {
+            gpu.copy_d2d_async(state.conv, conv_dst, c.conv_state_elems() * 4, stream)?;
+            KernelLaunch::new(gpu, s.conv_window)
+                .grid([div_ceil(cd as u32, 256), 1, 1])
+                .block([256, 1, 1])
+                .arg_ptr(conv_dst)
+                .arg_ptr(io.qkv_in)
+                .arg_u32(cd as u32)
+                .arg_u32(c.conv_kernel as u32)
+                .arg_u32(t as u32 + 1)
+                .launch(stream)?;
+        }
+        self.conv_tokens(gpu, k, state, ws, stream)?;
+        let snap = |t: usize| snapshots.get(t).map_or(DevicePtr::NULL, |p| p.0);
+        KernelLaunch::new(gpu, s.recurrent_snap)
+            .grid([c.heads as u32, (d / SEQ_VB) as u32, 1])
+            .block([SEQ_VB as u32, 1, 1])
+            .shared_mem((3 * d * 4) as u32)
+            .arg_ptr(io.conv_out)
+            .arg_ptr(io.conv_out.offset(qkv * 2))
+            .arg_ptr(io.conv_out.offset(qkv * 4))
+            .arg_ptr(io.gate)
+            .arg_ptr(io.beta)
+            .arg_ptr(state.recurrent)
+            .arg_ptr(io.core)
+            .arg_u32(c.heads as u32)
+            .arg_f32(1.0 / (d as f32).sqrt())
+            .arg_u32(k as u32)
+            .arg_u32(cd as u32)
+            .arg_u32(qkv as u32)
+            .arg_u32(c.heads as u32)
+            .arg_u32(qkv as u32)
+            .arg_ptr(snap(0))
+            .arg_ptr(snap(1))
+            .arg_ptr(snap(2))
+            .arg_u32(snapshots.len() as u32)
+            .launch(stream)
+    }
+
     /// 2026-10-09: The conv, SiLU and L2 of workspace rows `0..k` of one sequence, each row as
     /// the per-row `causal_conv1d_update_l2norm` computes it, then the conv window advanced past
     /// the `k` rows: two launches. Also the chunked prefill's conv (`prefill.rs`).
@@ -105,6 +173,12 @@ impl Glm5NextKdaLayer {
             .arg_u32(k as u32)
             .launch(stream)
     }
+}
+
+/// 2026-10-11: The verify shapes `stateful_tokens_snap` takes: 2..=4 rows with one snapshot
+/// per row but the last (the kernel stores at most three).
+pub(super) fn snap_tokens_apply(k: usize, snapshots: usize) -> bool {
+    (2..=4).contains(&k) && snapshots + 1 == k
 }
 
 /// 2026-10-09: V columns per block of `kda_recurrent_decode_bf16_seq_reg`: one warp, so a
@@ -161,5 +235,25 @@ impl Glm5NextKdaLayer {
             .arg_u32(0)
             .arg_u32(0)
             .launch(stream)
+    }
+}
+
+#[cfg(test)]
+mod snap_tokens_tests {
+    use super::snap_tokens_apply;
+
+    /// 2026-10-11: The snapshotting kernels take a K=2..=4 verify with its K - 1 intermediates
+    /// and nothing else: no prefill (no snapshots), no partial snapshot list, no width the
+    /// kernel's three snapshot slots cannot hold.
+    #[test]
+    fn only_verify_shapes_with_every_intermediate_apply() {
+        assert!(snap_tokens_apply(2, 1));
+        assert!(snap_tokens_apply(3, 2));
+        assert!(snap_tokens_apply(4, 3));
+        assert!(!snap_tokens_apply(1, 0));
+        assert!(!snap_tokens_apply(2, 0));
+        assert!(!snap_tokens_apply(3, 1));
+        assert!(!snap_tokens_apply(5, 4));
+        assert!(!snap_tokens_apply(16, 0));
     }
 }

@@ -82,6 +82,9 @@ pub(super) fn layer(gpu: &MockGpuBackend) -> Glm5NextKdaLayer {
             conv_tokens: k(CONV_TOKENS),
             conv_window: k(CONV_WINDOW),
             recurrent: k(RECUR_SEQ),
+            // 2026-10-11: The verify's snapshotting kernel, which these batched-decode paths
+            // never launch: absent.
+            recurrent_snap: metrale_gpu_runtime::gpu::KernelHandle(0),
             chunk16_prepare: k(CHUNK16_PREP),
             chunk16_scan: k(CHUNK16_SCAN),
         },

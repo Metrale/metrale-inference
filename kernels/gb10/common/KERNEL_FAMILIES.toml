@@ -2038,6 +2038,7 @@ kernels = [
   "glm5next_mhc::glm5next_hc_finish", "glm5next_mhc::glm5next_hc_post",
   "glm5next_mhc::glm5next_hc_head", "glm5next_mhc::glm5next_hc_expand",
   "glm5next_mhc_fused::glm5next_hc_pre_norm", "glm5next_mhc_fused::glm5next_hc_pre_norm_rows",
+  "glm5next_mhc_fused::glm5next_hc_pre_norm_pf64",
   "glm5next_hc_post_sum::glm5next_hc_post_rank_sum",
 ]
 kernel_compute."glm5next_mhc::glm5next_hc_mix" = { compute = "cuda_core" }
@@ -2046,6 +2047,9 @@ kernel_compute."glm5next_mhc::glm5next_hc_mix_bf16" = { compute = "cuda_core" }
 # hc_pre arithmetic as hc_mix_bf16 + hc_finish, plus rms_norm_vanilla's on the collapsed row.
 kernel_compute."glm5next_mhc_fused::glm5next_hc_pre_norm" = { compute = "cuda_core" }
 kernel_compute."glm5next_mhc_fused::glm5next_hc_pre_norm_rows" = { compute = "cuda_core" }
+# 2026-10-11: glm5next_hc_pre_norm with every per-thread load issued up front (opt-in
+# METRALE_GLM_MHC_PRE_PREFETCH); the same chains in the same order.
+kernel_compute."glm5next_mhc_fused::glm5next_hc_pre_norm_pf64" = { compute = "cuda_core" }
 # 2026-10-10: The one-shot all-reduce's rank-order sum (bf16_add_rank_sum's arithmetic) fused
 # ahead of hc_post (opt-in METRALE_GLM_AR_FUSED_POST); the post-mix arithmetic is hc_post's.
 kernel_compute."glm5next_hc_post_sum::glm5next_hc_post_rank_sum" = { compute = "cuda_core" }
