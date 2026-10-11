@@ -58,5 +58,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Check the render thread never blocks on a future
+        # 2026-10-11: Keep the scan boundary explicit for the missing-tree self-test.
+        env:
+          SCAN_DIRS: crates/server/src/tui/ crates/server/src/recipe/
         shell: bash
         run: bash .github/scripts/check-no-block-on.sh
