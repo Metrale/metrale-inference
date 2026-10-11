@@ -107,6 +107,9 @@ struct CellRow {
     cache_uncontrolled: bool,
     gaps: Option<GapStats>,
     energy: Option<EnergyWindow>,
+    /// 2026-10-05: The HTTP-scraped `/metrics` counter's joules over the same
+    /// window `energy` covers; see `hardware::gpu_energy_counter`.
+    gpu_counter_j: Option<f64>,
 }
 
 #[derive(Default)]

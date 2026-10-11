@@ -256,11 +256,15 @@ impl Benchmark for DecodeFloor {
 
         if self.samples.len() < RUNS {
             handle.status(format!("run {}/{RUNS}", self.samples.len() + 1));
+            let before_mj = crate::hardware::gpu_energy_counter::read_mj(handle.target()).await;
             let window_start = Instant::now();
             let outcome = self.one_run().await?;
             let window_end = Instant::now();
+            let after_mj = crate::hardware::gpu_energy_counter::read_mj(handle.target()).await;
             let mut obs = RunObs::from_outcome(&outcome);
             obs.energy = self.energy.window(window_start, window_end);
+            obs.gpu_counter_j =
+                crate::hardware::gpu_energy_counter::window_joules(before_mj, after_mj);
             let fmt_ms =
                 |v: Option<f64>| v.map(|v| format!("{v:.2}")).unwrap_or_else(|| "—".into());
             let mut line = LogLine::info(format!(

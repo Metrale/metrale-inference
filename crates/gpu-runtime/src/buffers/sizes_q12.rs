@@ -19,22 +19,38 @@ pub const Q12_SIZING_STREAMS: usize = 8;
 /// (positions, three streams under MRoPE, slots, the block-table and seq_len
 /// pointer arrays, `cu_seqlens`, `kv_lens`) and the `h_state_ptrs` table.
 pub fn q12_batched_scratch_bytes(n: usize, chunk_len: usize, top_k: usize, mrope: bool) -> usize {
-    q12_batched_scratch_bytes_varlen(n, n * chunk_len, chunk_len, top_k, mrope)
+    let meta = n * q12_per_stream_meta_bytes(chunk_len, mrope);
+    q12_batched_scratch_bytes_varlen(n, n * chunk_len, meta, top_k, mrope)
+}
+
+/// 2026-10-05: Byte offset of the slot table in a prefill chunk's metadata block
+/// (`prefill_b_upload_meta_at`): after `proc_count` u32 positions, three streams of them
+/// (T, H, W) under MRoPE, rounded up to 8.
+pub fn prefill_meta_slot_offset(proc_count: usize, mrope: bool) -> usize {
+    let pos_streams = if mrope { 3 } else { 1 };
+    (proc_count * 4 * pos_streams + 7) & !7
+}
+
+/// 2026-10-05: Scratch bytes of one stream's metadata slot in the kernel-batched staging: the
+/// positions and the u64 slot table of a `chunk_len`-token chunk, rounded up to 64. A chunk
+/// uploads at most `chunk_len` rows, so its block fits; the slot is sized by the stream's own
+/// chunk, not the batch's longest.
+pub fn q12_per_stream_meta_bytes(chunk_len: usize, mrope: bool) -> usize {
+    (prefill_meta_slot_offset(chunk_len, mrope) + chunk_len * 8 + 63) & !63
 }
 
 /// 2026-09-25: [`q12_batched_scratch_bytes`] for a ragged batch: `total_tokens`
-/// is the packed total and `max_chunk_len` sizes the per-stream metadata
-/// slots, so a varlen batch is not charged the longest stream's length for
-/// every stream.
+/// is the packed total and `meta_bytes` the sum of the streams'
+/// [`q12_per_stream_meta_bytes`], so a varlen batch is not charged the longest
+/// stream's length for every stream.
 pub fn q12_batched_scratch_bytes_varlen(
     n: usize,
     total_tokens: usize,
-    max_chunk_len: usize,
+    meta_bytes: usize,
     top_k: usize,
     mrope: bool,
 ) -> usize {
     let moe = ((total_tokens * top_k * 4 * 2) + 63) & !63;
-    let per_stream_meta = ((max_chunk_len * 16) + 64).max(4096);
     let pos = (total_tokens * 4 + 7) & !7;
     let pos_streams = if mrope { 3 } else { 1 };
     let slot = (total_tokens * 8 + 7) & !7;
@@ -43,5 +59,5 @@ pub fn q12_batched_scratch_bytes_varlen(
     let kv_lens = ((n * 4) + 7) & !7;
     let stage_meta = pos_streams * pos + slot + 2 * ptrs + cu_seqlens + kv_lens;
     let h_state_ptrs = n * std::mem::size_of::<u64>();
-    moe + n * per_stream_meta + stage_meta + h_state_ptrs
+    moe + meta_bytes + stage_meta + h_state_ptrs
 }

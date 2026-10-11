@@ -94,6 +94,35 @@ pub enum BenchmarkCommand {
     /// GPU-free. It refuses runs that were not measured alike, a vacuous width, and a grid
     /// the serve would not load.
     SpecCostTable(SpecCostTableArgs),
+    /// Measure this box's calibration profile against the fleet and write it
+    /// to `kernels/<hardware>/BOX_PROFILES.toml`.
+    ///
+    /// Drives three existing gates — `decode-floor` (decode bandwidth, C1
+    /// energy, idle power), `high-isl-ttft-cold` (32k prefill) and
+    /// `high-isl-ttft-warm` (32k restore) — as `run --pull-request-gate
+    /// --serve-reuse` would, sharing one model load across the three
+    /// (~5-6 min). This is not a certification record: a leg's committed
+    /// gate record is written as a side effect (nothing new), but passing or
+    /// failing its own ceiling has no bearing on calibration, which only
+    /// reads the raw metric.
+    Calibrate(CalibrateArgs),
+}
+
+#[derive(clap::Args, Debug)]
+pub struct CalibrateArgs {
+    /// Which box class to calibrate, e.g. `gb10`. Inferred from the live box
+    /// when omitted, the same way `run --hardware` is.
+    #[arg(long)]
+    pub hardware: Option<String>,
+    /// The checkpoint each leg serves. Required rather than defaulted
+    /// (PCND): a calibration profile is comparable across boxes only when
+    /// every box measured the same checkpoint, and that must be a choice, not
+    /// whichever checkpoint happens to be marked `default = true` today.
+    #[arg(long)]
+    pub checkpoint: String,
+    /// Print what would run and exit, without starting a server.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 #[derive(clap::Args, Debug)]

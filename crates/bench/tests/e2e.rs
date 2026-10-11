@@ -89,7 +89,9 @@ async fn concurrency_sweep_measures_a_real_stream_end_to_end() {
         [("64", "1"), ("64", "4")],
         "each row retains its configured input length and concurrency"
     );
-    assert_eq!(mock.requests.load(Ordering::Relaxed), 5);
+    // 2026-10-05: +4 since #105: concurrency_cell now scrapes the gpu-energy-counter
+    // endpoint twice per cell (window start and end), and this run measures 2 cells.
+    assert_eq!(mock.requests.load(Ordering::Relaxed), 9);
 
     // 2026-09-26: TTFT was measured through the mock's mid-line chunk split.
     let ttft_p50 = &table.rows[0][2].text;
@@ -354,6 +356,8 @@ async fn a_headless_run_persists_a_record_the_history_pane_can_read() {
         "one isl x one concurrency"
     );
     // 2026-09-26: Two coherence questions plus the single measured request.
-    assert_eq!(mock.requests.load(Ordering::Relaxed), 3);
+    // 2026-10-05: +2 since #105: concurrency_cell scrapes the gpu-energy-counter
+    // endpoint twice (window start and end) for this one measured cell.
+    assert_eq!(mock.requests.load(Ordering::Relaxed), 5);
     assert_eq!(outcome.exit_code(), 0);
 }

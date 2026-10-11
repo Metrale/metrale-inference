@@ -73,6 +73,7 @@ pub(super) fn row(
         cache_uncontrolled: false,
         gaps: None,
         energy: None,
+        gpu_counter_j: None,
     }
 }
 

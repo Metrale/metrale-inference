@@ -9,8 +9,9 @@
 use super::super::tests::{SHA, bfcl_baseline, hw, run_record};
 use super::super::{GateRecord, check_record, read_record, records_newest_first};
 use super::{
-    ACTIVATION_QUANTIZATION, EXPERT_QUANTIZATION, MTP_GATE, PREFILL_CODISPATCH, SPECULATIVE,
-    W4A4_DOWNCAST, WEIGHT_QUANTIZATION, disclosure,
+    ACTIVATION_QUANTIZATION, EXPERT_QUANTIZATION, MTP_GATE, PREFILL_CODISPATCH,
+    PREFILL_VARLEN_BATCH, PREFILL_WAVE_EXACT, PrefillWave, SPECULATIVE, W4A4_DOWNCAST,
+    WEIGHT_QUANTIZATION, disclosure,
 };
 use crate::result::Verdict;
 use std::collections::BTreeMap;
@@ -21,7 +22,21 @@ fn keys(m: &BTreeMap<String, String>) -> Vec<(&str, &str)> {
 
 #[test]
 fn disclosure_spells_the_regime_and_omits_what_was_not_resolved() {
-    let d = |g, s, c, w, e| disclosure(g, s, c, w, e, "nvfp4", "adaptive");
+    let d = |g, s, c, w, e| {
+        disclosure(
+            g,
+            s,
+            PrefillWave {
+                codispatch: c,
+                varlen_batch: false,
+                wave_exact: false,
+            },
+            w,
+            e,
+            "nvfp4",
+            "adaptive",
+        )
+    };
     let aq = (ACTIVATION_QUANTIZATION, "adaptive");
     let wq = (WEIGHT_QUANTIZATION, "nvfp4");
     assert_eq!(
@@ -42,6 +57,52 @@ fn disclosure_spells_the_regime_and_omits_what_was_not_resolved() {
         keys(&d(None, true, true, false, None)),
         vec![aq, (PREFILL_CODISPATCH, "true"), (SPECULATIVE, "true"), wq]
     );
+    // 2026-10-04: `--prefill-varlen-batch` is disclosed only when given.
+    assert_eq!(
+        keys(&disclosure(
+            None,
+            true,
+            PrefillWave {
+                codispatch: false,
+                varlen_batch: true,
+                wave_exact: false,
+            },
+            false,
+            None,
+            "nvfp4",
+            "adaptive"
+        )),
+        vec![
+            aq,
+            (PREFILL_VARLEN_BATCH, "true"),
+            (SPECULATIVE, "true"),
+            wq
+        ]
+    );
+    // 2026-10-05: `--prefill-wave-exact` is disclosed only when given.
+    assert_eq!(
+        keys(&disclosure(
+            None,
+            true,
+            PrefillWave {
+                codispatch: true,
+                varlen_batch: true,
+                wave_exact: true,
+            },
+            false,
+            None,
+            "declared",
+            "declared"
+        )),
+        vec![
+            (ACTIVATION_QUANTIZATION, "declared"),
+            (PREFILL_CODISPATCH, "true"),
+            (PREFILL_VARLEN_BATCH, "true"),
+            (PREFILL_WAVE_EXACT, "true"),
+            (SPECULATIVE, "true"),
+            (WEIGHT_QUANTIZATION, "declared")
+        ]
+    );
     // 2026-09-26: `--w4a4-downcast` is disclosed only when on.
     assert_eq!(
         keys(&d(None, true, false, true, None)),
@@ -60,7 +121,13 @@ fn disclosure_spells_the_regime_and_omits_what_was_not_resolved() {
     // 2026-09-28: `--weight-quantization` is written for either tier, the default included.
     assert_eq!(
         keys(&disclosure(
-            None, true, false, false, None, "declared", "declared"
+            None,
+            true,
+            PrefillWave::default(),
+            false,
+            None,
+            "declared",
+            "declared"
         )),
         vec![
             (ACTIVATION_QUANTIZATION, "declared"),
@@ -88,7 +155,7 @@ fn serve_resolved_round_trips_and_older_records_simply_lack_it() {
     let record = passing_record().with_serve_resolved(disclosure(
         Some(true),
         true,
-        false,
+        PrefillWave::default(),
         false,
         None,
         "nvfp4",
@@ -139,7 +206,7 @@ fn serve_resolved_never_reaches_check_record() {
     let with = passing_record().with_serve_resolved(disclosure(
         Some(false),
         true,
-        false,
+        PrefillWave::default(),
         false,
         None,
         "nvfp4",
@@ -158,7 +225,7 @@ fn serve_resolved_never_reaches_check_record() {
     let failing_with = failing_without.clone().with_serve_resolved(disclosure(
         Some(true),
         true,
-        false,
+        PrefillWave::default(),
         false,
         None,
         "nvfp4",
@@ -184,7 +251,15 @@ fn live(forward: &str, digest: Option<&str>) -> super::LiveForward {
 
 #[test]
 fn a_legacy_forward_adds_no_keys_and_a_circuit_adds_its_digest() {
-    let mut m = disclosure(None, false, false, false, None, "nvfp4", "adaptive");
+    let mut m = disclosure(
+        None,
+        false,
+        PrefillWave::default(),
+        false,
+        None,
+        "nvfp4",
+        "adaptive",
+    );
     let before = m.clone();
     super::merge_live_forward(&mut m, "legacy", &live("legacy", None)).unwrap();
     assert_eq!(m, before);

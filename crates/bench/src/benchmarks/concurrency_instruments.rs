@@ -42,5 +42,6 @@ impl CellRow {
         if let Some(e) = &self.energy {
             e.metrics(prefix, self.tokens, idle, m);
         }
+        crate::hardware::gpu_energy_counter::metrics(prefix, self.gpu_counter_j, self.tokens, m);
     }
 }

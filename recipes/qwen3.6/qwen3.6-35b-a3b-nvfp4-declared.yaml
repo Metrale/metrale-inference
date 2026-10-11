@@ -22,25 +22,80 @@ metadata:
   kv_dtype: bf16
 
 defaults:
-  # The --activation-quantization routing this recipe was measured under: the engine default,
-  # each projection picking its activation precision by row count (the row-invariant modes are
-  # opt-in until evaluated).
-  activation_quantization: adaptive
+  # 2026-10-05: The serve the declared NVFP4 A/B measured (PR #120, dgx3, C1-C128, n=3), flag for
+  # flag; recipe_nvfp4_declared_tests.rs pins the rendered argv to it.
+  # The checkpoint's declared activation per projection (owner's follow-the-checkpoint rule).
+  activation_quantization: declared
   # The checkpoint's own precision per layer (no requantization).
   weight_quantization: declared
   port: 8888
   host: 0.0.0.0
-  max_model_len: 32768
+  # ISL 128 plus the chat template and OSL 1024, as the measured serve and the vLLM baseline.
+  max_model_len: 2048
+  # Above the widest rung (C=128), so no rung is limited by the batch cap (the CLI default is 8).
+  max_batch_size: 128
   kv_cache_dtype: bf16
   gpu_memory_utilization: 0.85
-  scheduler: slai
+  scheduler: fifo
   speculative: true
   num_drafts: 1
   mtp_quantization: bf16
-  mtp_gate: force
   enable_prefix_caching: true
+  # Marconi snapshot slots: an exact prefill wave runs in sub-waves of free / 3 streams.
+  ssm_cache_slots: 32
+  # No server-side deadline: the 300 s default cuts the wide rungs short.
+  request_timeout: 0
+  # Exact prefill waves: concurrently arriving prompts prefill together with each prompt keeping
+  # its single-stream bits (allowed beside a fixed --activation-quantization).
+  prefill_varlen_batch: true
+  prefill_codispatch: true
+  prefill_wave_exact: true
   # The checkpoint declares an NVFP4 (W4A16) head.
   lm_head_dtype: nvfp4
   kv_high_precision_layers: auto
   tool_call_parser: qwen3_coder
   tool_grammar: off
+  # --- explicit CLI defaults (owner directive 2026-10-05): pinned to today's met-serve
+  # clap default so the resolved config is unchanged; see recipe::explicit for the SSOT list.
+  block_size: 16
+  content_loop_watchdog: auto
+  default_min_p: 0.08
+  default_top_n_sigma: 1
+  dflash_window_size: 4096
+  ep_size: 1
+  expert_quantization: fp8
+  forward: legacy
+  fp8_kv_headroom: 2
+  high_speed_swap_cache_blocks_per_seq: 64
+  high_speed_swap_qd: 8
+  high_speed_swap_rank: 32
+  marconi_min_tokens: 256
+  max_loras: 8
+  max_num_seqs: 128
+  max_prefill_tokens: 8192
+  mtp_vocab: 100000
+  oom_guard_mb: 4096
+  prompt_lookup_max_drafts: 8
+  prompt_lookup_max_seqs: 8
+  prompt_lookup_min_match: 8
+  prompt_lookup_miss_backoff: 16
+  prompt_lookup_ngram: 4
+  prompt_lookup_shared_cache_scopes: 4
+  scheduler_config: sync
+  spec_cost_model: off
+  ssm_batched_recurrent: auto
+  ssm_checkpoint_interval: 256
+  ssm_decode_ring_slots: auto
+  ssm_rollback_mode: snapshot
+  swap_space_gb: 3
+  tbt_deadline_ms: 100
+  telemetry: off
+  tensor_parallel: 1
+  tool_max_tokens: 8192
+  video_decode_timeout_s: 120
+  video_ffmpeg_path: ffmpeg
+  video_fps: 2
+  video_max_frames: 768
+  vision_max_pixels: 0
+  vision_remote_image_max_mb: 20
+  vision_remote_image_timeout_s: 10

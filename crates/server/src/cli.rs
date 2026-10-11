@@ -10,6 +10,7 @@ use clap::Parser;
 
 pub mod bench_aggregate;
 mod bench_args;
+mod bench_calibrate;
 pub mod bench_card;
 pub(crate) mod bench_cause;
 pub mod bench_certify;
@@ -34,6 +35,7 @@ mod circuit_memory_weights;
 mod circuit_paint;
 mod circuit_precision;
 mod circuit_venn;
+mod debug_build_guard;
 pub(crate) mod doctor;
 pub(crate) mod flag_values;
 pub(crate) mod hermetic;

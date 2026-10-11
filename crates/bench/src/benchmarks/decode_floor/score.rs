@@ -63,6 +63,9 @@ pub(crate) struct RunObs {
     /// 2026-09-26: GPU-rail energy over this run's request window; set by the
     /// driver from its sampler, `None` when the rail was not sampled.
     pub energy: Option<EnergyWindow>,
+    /// 2026-10-05: The HTTP-scraped `/metrics` counter's joules over the same
+    /// window; see `hardware::gpu_energy_counter`.
+    pub gpu_counter_j: Option<f64>,
 }
 
 impl RunObs {
@@ -76,6 +79,7 @@ impl RunObs {
             server_tpot_ms: o.server_tpot_ms(),
             arrival_gaps: o.arrival_gaps.clone(),
             energy: None,
+            gpu_counter_j: None,
         }
     }
 
@@ -265,5 +269,19 @@ pub(crate) fn instrument_metrics(
             .map(|s| s.completion_tokens)
             .sum();
         total.metrics("", tokens, idle, m);
+    }
+    // 2026-10-05: The HTTP-scraped /metrics counter, summed over the same
+    // per-run windows (additive: a monotonic counter's delta over
+    // back-to-back windows sums the same as one delta over their span) and
+    // the same token denominator rule as the rail joules above.
+    let counter_joules: Vec<f64> = samples.iter().filter_map(|s| s.gpu_counter_j).collect();
+    if !counter_joules.is_empty() {
+        let total_j: f64 = counter_joules.iter().sum();
+        let tokens = samples
+            .iter()
+            .filter(|s| s.gpu_counter_j.is_some())
+            .map(|s| s.completion_tokens)
+            .sum();
+        crate::hardware::gpu_energy_counter::metrics("", Some(total_j), tokens, m);
     }
 }

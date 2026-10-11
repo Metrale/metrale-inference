@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-09-26: Whether two boxes count as one box for Speed-class numbers: same
-//! GPU name and driver major, clock ceiling and memory within the class's spreads,
-//! no thermal throttle reason asserted, and hottest chassis zones within its delta.
+//! GPU name, **exact** driver string and VBIOS (2026-10-04: a shared major
+//! version is not enough — see [`HardwareFingerprint::driver_full`]), clock
+//! ceiling and memory within the class's spreads, no thermal throttle reason
+//! asserted, and hottest chassis zones within its delta.
 //!
 //! Owner: bench hardware.
 //! Invariants:
@@ -24,8 +26,23 @@ use serde::{Deserialize, Serialize};
 pub struct HardwareFingerprint {
     /// 2026-09-26: The accelerator name as the driver reports it (`NVIDIA GB10`).
     pub gpu: String,
-    /// 2026-09-26: The driver's major version (`580` of `580.95.05`).
+    /// 2026-09-26: The driver's major version (`580` of `580.95.05`). Kept for
+    /// display (the fleet plan's `driver_major` key); [`equivalent`] judges
+    /// [`Self::driver_full`] instead — two 580.x builds are not one box (see
+    /// [`Self::driver_full`]'s doc).
     pub driver_major: Option<u32>,
+    /// 2026-10-04: The driver's exact string (`"580.126.09"`), from
+    /// `Hardware::driver`. `None` for an empty string.
+    ///
+    /// Measured 2026-09-15 on three loaded GB10s and again 2026-10-04: dgx2
+    /// (580.126.09) and dgx3 (580.159.03) share a major version and are the
+    /// exact pair that reads 6.6-13% apart on J/token — major-version equality
+    /// is not enough evidence that two boxes behave alike.
+    pub driver_full: Option<String>,
+    /// 2026-10-04: `nvidia-smi --query-gpu=vbios_version`
+    /// ([`super::state::ExtendedTelemetry::vbios`]). `None` for a live box or
+    /// record that never captured it (every record before this field existed).
+    pub vbios: Option<String>,
     /// 2026-09-26: The box's own SM clock ceiling (`clocks.max.sm`), MHz.
     pub sm_clock_max_mhz: Option<f64>,
     /// 2026-09-26: `MemTotal` from `/proc/meminfo`, kB.
@@ -63,6 +80,8 @@ impl HardwareFingerprint {
         Self {
             gpu: hardware.gpu.clone(),
             driver_major: driver_major(&hardware.driver),
+            driver_full: (!hardware.driver.is_empty()).then(|| hardware.driver.clone()),
+            vbios: state.and_then(|s| s.extended.vbios.clone()),
             sm_clock_max_mhz: state.and_then(|s| s.sm_clock_max_mhz),
             mem_total_kb: state.and_then(|s| s.mem_total_kb),
             thermal_alert: state.and_then(|s| s.throttle_active.thermal()),
@@ -116,7 +135,11 @@ impl EquivalencePolicy {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Mismatch {
     Gpu(String, String),
-    DriverMajor(u32, u32),
+    /// 2026-10-04: The full driver strings differ (major, minor or patch).
+    /// Replaces a major-only check: see [`HardwareFingerprint::driver_full`].
+    DriverVersion(String, String),
+    /// 2026-10-04: The VBIOS strings differ.
+    Vbios(String, String),
     ClockSpread {
         a: f64,
         b: f64,
@@ -148,7 +171,8 @@ impl std::fmt::Display for Mismatch {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Gpu(a, b) => write!(f, "gpu {a:?} vs {b:?}"),
-            Self::DriverMajor(a, b) => write!(f, "driver major {a} vs {b}"),
+            Self::DriverVersion(a, b) => write!(f, "driver {a} vs {b}"),
+            Self::Vbios(a, b) => write!(f, "vbios {a} vs {b}"),
             Self::ClockSpread { a, b, limit } => write!(
                 f,
                 "clock ceiling {a:.0} vs {b:.0} MHz (limit {:.1} %)",
@@ -199,10 +223,15 @@ pub fn equivalent(
     } else if a.gpu != b.gpu {
         out.push(Mismatch::Gpu(a.gpu.clone(), b.gpu.clone()));
     }
-    match (a.driver_major, b.driver_major) {
-        (Some(x), Some(y)) if x != y => out.push(Mismatch::DriverMajor(x, y)),
+    match (&a.driver_full, &b.driver_full) {
+        (Some(x), Some(y)) if x != y => out.push(Mismatch::DriverVersion(x.clone(), y.clone())),
         (Some(_), Some(_)) => {}
         _ => out.push(Mismatch::Undecidable("driver")),
+    }
+    match (&a.vbios, &b.vbios) {
+        (Some(x), Some(y)) if x != y => out.push(Mismatch::Vbios(x.clone(), y.clone())),
+        (Some(_), Some(_)) => {}
+        _ => out.push(Mismatch::Undecidable("vbios")),
     }
     match (a.sm_clock_max_mhz, b.sm_clock_max_mhz) {
         (Some(x), Some(y)) => {

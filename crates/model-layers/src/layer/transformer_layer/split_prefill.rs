@@ -151,4 +151,47 @@ pub trait LayerSplitPrefill {
     ) -> Result<()> {
         Ok(())
     }
+
+    /// 2026-10-05: Whether this layer runs a wave prefill: `prefill_mixer` per stream, then
+    /// `prefill_ffn_rows` once over every stream's rows, with each row getting the bits of
+    /// `prefill`. Default: no.
+    fn supports_wave_prefill(&self) -> bool {
+        false
+    }
+
+    /// 2026-10-05: `prefill` up to the FFN input: the layer's mixer (attention or GDN), its
+    /// residual add and the post-mixer norm, leaving the FFN input in
+    /// `ctx.buffers.norm_output()` (rows 0..`num_tokens`). Arguments as `prefill`. The
+    /// default returns an error.
+    #[allow(clippy::too_many_arguments)]
+    fn prefill_mixer(
+        &self,
+        _hidden: DevicePtr,
+        _residual: DevicePtr,
+        _num_tokens: usize,
+        _state: &mut dyn LayerState,
+        _kv_cache: &mut PagedKvCache,
+        _seq_len_start: usize,
+        _block_table: &mut Vec<u32>,
+        _disk_block_ids: &mut Vec<u32>,
+        _disk_last_offloaded_per_layer: &mut Vec<u32>,
+        _kv_write_start: usize,
+        _ctx: &ForwardContext,
+        _stream: u64,
+    ) -> Result<()> {
+        anyhow::bail!("prefill_mixer: not implemented for this layer type")
+    }
+
+    /// 2026-10-05: The rest of `prefill` for `num_tokens` rows whose FFN input is `ffn_in`:
+    /// the FFN and the residual add into `hidden`. The default returns an error.
+    fn prefill_ffn_rows(
+        &self,
+        _hidden: DevicePtr,
+        _ffn_in: DevicePtr,
+        _num_tokens: usize,
+        _ctx: &ForwardContext,
+        _stream: u64,
+    ) -> Result<()> {
+        anyhow::bail!("prefill_ffn_rows: not implemented for this layer type")
+    }
 }

@@ -18,6 +18,7 @@ pub fn fleet_json(f: &Fleet, units: &[Unit], plan: &Plan) -> serde_json::Value {
             "addr": n.addr, "name": n.name, "node_id": n.node_id, "signer": n.signer,
             "local": n.local, "built": n.built,
             "gpu": n.hardware.gpu, "driver_major": n.hardware.driver_major,
+            "driver_full": n.hardware.driver_full, "vbios": n.hardware.vbios,
             "sm_clock_max_mhz": n.hardware.sm_clock_max_mhz, "mem_total_kb": n.hardware.mem_total_kb,
             "thermal_alert": n.hardware.thermal_alert, "hottest_chassis_c": n.hardware.hottest_chassis_c,
             "free_fraction": n.free_fraction,

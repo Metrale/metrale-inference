@@ -73,6 +73,13 @@ pub async fn dispatch(args: BenchmarkArgs) -> Result<()> {
             let code = super::bench_aggregate::aggregate_cmd(a)?;
             std::process::exit(code);
         }
+        BenchmarkCommand::Calibrate(a) => {
+            let code = super::bench_calibrate::calibrate_cmd(a).await?;
+            if code != 0 {
+                std::process::exit(code);
+            }
+            Ok(())
+        }
         BenchmarkCommand::Run(a) => {
             let code = run(a).await?;
             // 2026-09-26: `run` reports its own outcome; this passes its exit
@@ -204,7 +211,17 @@ fn history_cmd(args: HistoryArgs) -> Result<()> {
     bench_print::print_history(&records, args.format)
 }
 
-async fn run(args: RunArgs) -> Result<i32> {
+// 2026-10-04: `pub(crate)` rather than private: `bench_calibrate` drives the
+// same run loop for its three legs, so the box-calibration profile is
+// measured by the identical code path an operator's own `run
+// --pull-request-gate` would take — no second serve-lifecycle/record-writing
+// implementation to keep in sync (SSOT).
+pub(crate) async fn run(args: RunArgs) -> Result<i32> {
+    if args.pull_request_gate
+        && let Err(msg) = super::debug_build_guard::refuse_debug_build(cfg!(debug_assertions))
+    {
+        bail!("{msg}");
+    }
     if let Err(msg) = args.reject_orphan_checkpoint() {
         bail!("{msg}");
     }

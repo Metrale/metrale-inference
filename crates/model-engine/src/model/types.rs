@@ -244,6 +244,9 @@ pub struct TransformerModel {
     /// leaves it short, and the propose-site coverage check then skips the
     /// drafter prefill.
     pub(super) mtp_prefill_capture_len: std::sync::atomic::AtomicUsize,
+    /// 2026-10-05: The exact wave prefill's FFN-input staging rows (`batch_kernel/wave.rs`):
+    /// pointer and byte size, allocated on first use and grown as needed; freed on drop.
+    pub(super) wave_ffn_staging: parking_lot::Mutex<Option<(DevicePtr, usize)>>,
     /// 2026-09-25: Generation of the single-slot capture above. A chunk-0
     /// prefill bumps it and stamps the new value on its sequence
     /// (`SequenceState::mtp_capture_gen`). Appends and the drafter-prefill

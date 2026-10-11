@@ -83,6 +83,12 @@ fn codispatch_settle(levers: &SchedLevers) -> std::time::Duration {
     std::time::Duration::from_millis(levers.codispatch_settle_ms)
 }
 
+/// 2026-10-05: How long a lone request first waits for a second one
+/// (`METRALE_PREFILL_CODISPATCH_PROBE_MS`, 1 when unset), at most one settle.
+fn codispatch_probe(levers: &SchedLevers) -> std::time::Duration {
+    std::time::Duration::from_millis(levers.codispatch_probe_ms).min(codispatch_settle(levers))
+}
+
 /// 2026-09-25: Drain pending request queue and policy-select prefills to start.
 pub(super) fn drain_pending_requests(
     io: &SchedIo,
@@ -126,8 +132,10 @@ pub(super) fn drain_pending_requests(
         }
         // 2026-09-25: Co-dispatch window: when idle, keep collecting requests
         // (up to `max_batch_size`) so a concurrent burst is admitted in one
-        // tick. A lone request can wait up to `window` longer for its first
-        // token.
+        // tick. 2026-10-05: A lone request first waits only `probe`; with no
+        // second arrival in it the window ends, so a single stream starts at
+        // once instead of after a full settle (the measured +11 ms C=1 TTFT).
+        // A second arrival inside the probe opens the settle slices.
         if g.requests.len() < max_batch_size
             && let Some(window) = codispatch_window(levers)
         {
@@ -136,12 +144,18 @@ pub(super) fn drain_pending_requests(
             let deadline = io.clock.now() + window;
             let settle = window.min(codispatch_settle(levers));
             let mut seen = g.requests.len();
+            let mut slice_len = if seen == 1 {
+                window.min(codispatch_probe(levers))
+            } else {
+                settle
+            };
             while g.requests.len() < max_batch_size && !g.closed {
                 let now = io.clock.now();
                 if now >= deadline {
                     break;
                 }
-                let slice = (deadline - now).min(settle);
+                let slice = (deadline - now).min(slice_len);
+                slice_len = settle;
                 let arrived = io.req.recv(WaitPolicy::Bounded(slice));
                 let timed_out =
                     arrived.requests.is_empty() && arrived.rotations.is_empty() && !arrived.closed;
@@ -338,3 +352,7 @@ pub(super) fn compact_survivors_into_range(io: &SchedIo, survivors: &mut [Active
 
 mod send;
 pub use send::*;
+
+#[cfg(test)]
+#[path = "mod_helpers_codispatch_tests.rs"]
+mod codispatch_tests;

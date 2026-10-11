@@ -384,6 +384,54 @@ impl LayerAuxState for Qwen3AttentionLayer {
 }
 
 impl LayerSplitPrefill for Qwen3AttentionLayer {
+    fn supports_wave_prefill(&self) -> bool {
+        self.supports_wave_prefill_body()
+    }
+
+    fn prefill_mixer(
+        &self,
+        hidden: DevicePtr,
+        residual: DevicePtr,
+        num_tokens: usize,
+        state: &mut dyn LayerState,
+        kv_cache: &mut PagedKvCache,
+        seq_len_start: usize,
+        block_table: &mut Vec<u32>,
+        disk_block_ids: &mut Vec<u32>,
+        disk_last_offloaded_per_layer: &mut Vec<u32>,
+        kv_write_start: usize,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        self.prefill_inner_ex(
+            hidden,
+            residual,
+            num_tokens,
+            state,
+            kv_cache,
+            seq_len_start,
+            block_table,
+            disk_block_ids,
+            disk_last_offloaded_per_layer,
+            kv_write_start,
+            None,
+            true,
+            ctx,
+            stream,
+        )
+    }
+
+    fn prefill_ffn_rows(
+        &self,
+        hidden: DevicePtr,
+        ffn_in: DevicePtr,
+        num_tokens: usize,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        self.prefill_ffn_tail(hidden, ffn_in, num_tokens, ctx, stream)
+    }
+
     /// 2026-09-25: Batched attention prefill over stacked streams: `prefill_inner`
     /// with `batched_meta = Some`, an empty layer state and empty per-stream
     /// block and disk lists. The streams' block tables travel in

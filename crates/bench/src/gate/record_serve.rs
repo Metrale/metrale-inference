@@ -24,6 +24,12 @@ pub const SPECULATIVE: &str = "speculative";
 /// 2026-09-26: Key for `--prefill-codispatch`, present (`true`) only when the
 /// rendered serve gave the flag.
 pub const PREFILL_CODISPATCH: &str = "prefill_codispatch";
+/// 2026-10-04: Key for `--prefill-varlen-batch`, present (`true`) only when the rendered serve gave
+/// the flag; like `prefill_codispatch` it decides how a wave of fresh prompts is prefilled.
+pub const PREFILL_VARLEN_BATCH: &str = "prefill_varlen_batch";
+/// 2026-10-05: Key for `--prefill-wave-exact`, present (`true`) only when the rendered serve gave
+/// the flag: whether a wave keeps each prompt's single-stream prefill bits.
+pub const PREFILL_WAVE_EXACT: &str = "prefill_wave_exact";
 /// 2026-09-26: Key for `--w4a4-downcast`, present (`true`) only when on. The
 /// flag defaults to false and has no environment fallback, so an absent key
 /// means off.
@@ -41,6 +47,16 @@ pub const EXPERT_QUANTIZATION: &str = "expert_quantization";
 /// without it predates the flag, and its server ran what `adaptive` names.
 pub const ACTIVATION_QUANTIZATION: &str = "activation_quantization";
 
+/// 2026-10-04: The flags that decide how a wave of fresh prompts is prefilled, as given on the
+/// rendered serve (`--prefill-codispatch`, `--prefill-varlen-batch`, 2026-10-05:
+/// `--prefill-wave-exact`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PrefillWave {
+    pub codispatch: bool,
+    pub varlen_batch: bool,
+    pub wave_exact: bool,
+}
+
 /// 2026-09-26: The disclosure for a server whose rendered flags resolved to
 /// these values.
 ///
@@ -49,9 +65,11 @@ pub const ACTIVATION_QUANTIZATION: &str = "activation_quantization";
 /// `None` (no flag, so the server's `METRALE_MTP_GATE_FORCE` decides) writes
 /// no key rather than a guessed default.
 ///
-/// `prefill_codispatch` writes `true` when the flag was given and no key
+/// `prefill.codispatch` writes `prefill_codispatch = true` when the flag was given and no key
 /// otherwise; the server's `METRALE_PREFILL_CODISPATCH` then decides, and
-/// `serve_env` discloses it when the recipe declares it.
+/// `serve_env` discloses it when the recipe declares it. `prefill.varlen_batch` likewise
+/// (`prefill_varlen_batch`, `METRALE_PREFILL_VARLEN`) and `prefill.wave_exact`
+/// (`prefill_wave_exact`, `METRALE_PREFILL_WAVE_EXACT`).
 ///
 /// `expert_quantization` is the tier's name when it is not the default `fp8`, else `None`.
 /// `weight_quantization` is the `--weight-quantization` tier's name, always written, and so is
@@ -59,7 +77,7 @@ pub const ACTIVATION_QUANTIZATION: &str = "activation_quantization";
 pub fn disclosure(
     mtp_gate_force: Option<bool>,
     speculative: bool,
-    prefill_codispatch: bool,
+    prefill: PrefillWave,
     w4a4_downcast: bool,
     expert_quantization: Option<&str>,
     weight_quantization: &str,
@@ -81,8 +99,14 @@ pub fn disclosure(
             if force { "force" } else { "auto" }.to_string(),
         );
     }
-    if prefill_codispatch {
+    if prefill.codispatch {
         m.insert(PREFILL_CODISPATCH.to_string(), "true".to_string());
+    }
+    if prefill.varlen_batch {
+        m.insert(PREFILL_VARLEN_BATCH.to_string(), "true".to_string());
+    }
+    if prefill.wave_exact {
+        m.insert(PREFILL_WAVE_EXACT.to_string(), "true".to_string());
     }
     if w4a4_downcast {
         m.insert(W4A4_DOWNCAST.to_string(), "true".to_string());

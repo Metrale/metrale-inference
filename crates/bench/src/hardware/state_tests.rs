@@ -54,6 +54,20 @@ fn healthy() -> HardwareState {
         }]),
         cpu_governor: Some("performance".into()),
         persistence_mode: Some(true),
+        extended: ExtendedTelemetry {
+            vbios: Some("9A.0B.1E.00.00".into()),
+            cuda_version: Some("13.0".into()),
+            power_limit_w: None,
+            kernel_release: Some("6.17.0-1008-nvidia".into()),
+            cpu_freq_mhz: Some(2_808.0),
+            tcp_rmem: Some("4096 87380 134217728".into()),
+            tcp_wmem: Some("4096 65536 134217728".into()),
+        },
+        disk_io: Some(DiskIoCounters {
+            device: "nvme0n1p2".into(),
+            read_sectors: Some(50_073_531_522),
+            write_sectors: Some(15_966_063_588),
+        }),
         sources: vec!["nvidia-smi".into(), "procfs".into(), "sysfs".into()],
     }
 }
@@ -180,6 +194,42 @@ fn a_run_that_throttled_midway_is_visible_only_in_the_delta() {
     assert_eq!(d.thermal_throttle_advanced(), Some(true));
     let f = d.thermal_throttle_fraction().unwrap();
     assert!((f - 12.0 / 692.0).abs() < 1e-9);
+}
+
+/// 2026-10-04: Disk throughput is bytes, not sectors, and a device swap
+/// mid-run (an unplugged drive, a different mount) is refused rather than
+/// read as a throughput number.
+#[test]
+fn disk_throughput_converts_sectors_to_bytes_and_refuses_a_device_swap() {
+    let before = healthy();
+    let mut after = healthy();
+    after.captured_at = 1_692;
+    after.disk_io = Some(DiskIoCounters {
+        device: "nvme0n1p2".into(),
+        read_sectors: Some(50_073_531_522 + 2_000),
+        write_sectors: Some(15_966_063_588 + 1_000),
+    });
+    let d = HardwareStateDelta::between(&before, &after);
+    assert_eq!(d.disk_read_bytes, Some(2_000 * DISK_SECTOR_BYTES));
+    assert_eq!(d.disk_write_bytes, Some(1_000 * DISK_SECTOR_BYTES));
+
+    let mut swapped = healthy();
+    swapped.disk_io = Some(DiskIoCounters {
+        device: "sda1".into(),
+        read_sectors: Some(1),
+        write_sectors: Some(1),
+    });
+    let d = HardwareStateDelta::between(&before, &swapped);
+    assert_eq!(
+        d.disk_read_bytes, None,
+        "a device swap is not a throughput reading"
+    );
+    assert_eq!(d.disk_write_bytes, None);
+
+    let mut no_disk = healthy();
+    no_disk.disk_io = None;
+    let d = HardwareStateDelta::between(&before, &no_disk);
+    assert_eq!(d.disk_read_bytes, None);
 }
 
 #[test]

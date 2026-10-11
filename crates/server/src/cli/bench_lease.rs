@@ -268,6 +268,13 @@ async fn start(
     )?;
     let argv = plan.argv(port)?;
     let exe = std::env::current_exe().context("current_exe")?;
+    // 2026-10-04: `create(true)` makes the FILE, not its parent directory: on
+    // a box whose metrale home has never held a lease (`met benchmark run
+    // --serve-reuse` has never run there), `store.root()` itself does not
+    // exist yet and the open below fails with ENOENT. Found live running
+    // `met benchmark calibrate` (which always leases) on a fresh box.
+    std::fs::create_dir_all(store.root())
+        .with_context(|| format!("creating {}", store.root().display()))?;
     let log = std::fs::OpenOptions::new()
         .create(true)
         .append(true)

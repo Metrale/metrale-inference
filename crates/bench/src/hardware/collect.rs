@@ -22,7 +22,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::parse;
-use super::state::{HardwareState, MachineIdentity, ThermalZone};
+use super::state::{DiskIoCounters, HardwareState, MachineIdentity, ThermalZone};
 
 /// 2026-09-26: Run a tool and return its stdout when it exits 0 with
 /// non-blank output; otherwise `None`.
@@ -89,6 +89,43 @@ fn cpu_governor() -> Option<String> {
     read("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor").map(|s| s.trim().to_string())
 }
 
+/// 2026-10-04: cpu0's current frequency, MHz. `scaling_cur_freq` is kHz.
+fn cpu_freq_mhz() -> Option<f64> {
+    read("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq")
+        .and_then(|s| s.trim().parse::<f64>().ok())
+        .map(|khz| khz / 1000.0)
+}
+
+/// 2026-10-04: The checkpoint volume every serve config mounts
+/// (`CLAUDE.md`'s `-v "${HOME}/.cache/huggingface:..."`). `None` when `$HOME`
+/// is unset or the path does not exist yet — never a guessed path such as
+/// `/root`.
+fn checkpoint_path() -> Option<std::path::PathBuf> {
+    let home = std::env::var("HOME").ok()?;
+    let path = std::path::PathBuf::from(home).join(".cache/huggingface");
+    path.exists().then_some(path)
+}
+
+/// 2026-10-04: The checkpoint device's cumulative sector counters, via
+/// `df --output=source` then `/sys/class/block/<dev>/stat`. `None` at any
+/// step that fails; never a fabricated device or a zero reading.
+fn disk_io() -> Option<DiskIoCounters> {
+    let path = checkpoint_path()?;
+    let device =
+        run("df", &["--output=source", path.to_str()?]).and_then(|t| parse::df_source(&t))?;
+    let name = std::path::Path::new(&device)
+        .file_name()?
+        .to_str()?
+        .to_string();
+    let stat = read(&format!("/sys/class/block/{name}/stat"))?;
+    let (read_sectors, write_sectors) = parse::disk_stat(&stat)?;
+    Some(DiskIoCounters {
+        device: name,
+        read_sectors: Some(read_sectors),
+        write_sectors: Some(write_sectors),
+    })
+}
+
 fn machine() -> MachineIdentity {
     MachineIdentity {
         // 2026-09-26: Read from procfs, which costs no subprocess.
@@ -117,7 +154,8 @@ pub fn collect() -> HardwareState {
     if let Some(text) = run(
         "nvidia-smi",
         &[
-            "--query-gpu=name,driver_version,clocks.sm,clocks.max.sm,temperature.gpu,persistence_mode",
+            "--query-gpu=name,driver_version,clocks.sm,clocks.max.sm,temperature.gpu,\
+             persistence_mode,vbios_version,power.limit",
             "--format=csv,noheader,nounits",
         ],
     ) {
@@ -128,10 +166,15 @@ pub fn collect() -> HardwareState {
         state.sm_clock_max_mhz = q.sm_clock_max_mhz;
         state.gpu_temp_c = q.gpu_temp_c;
         state.persistence_mode = q.persistence_mode;
+        state.extended.vbios = q.vbios;
+        state.extended.power_limit_w = q.power_limit_w;
         sources.push("nvidia-smi".to_string());
     }
 
+    // 2026-10-04: `CUDA Version` is the log header, not a `PERFORMANCE` section,
+    // so it comes off the same text `parse::performance` reads — no extra spawn.
     if let Some(text) = run("nvidia-smi", &["-q", "-d", "PERFORMANCE"]) {
+        state.extended.cuda_version = parse::cuda_version(&text);
         let (counters, active) = parse::performance(&text);
         state.throttle_counters = counters;
         state.throttle_active = active;
@@ -139,6 +182,13 @@ pub fn collect() -> HardwareState {
             sources.push("nvidia-smi".to_string());
         }
     }
+
+    state.extended.kernel_release =
+        read("/proc/sys/kernel/osrelease").map(|s| s.trim().to_string());
+    state.extended.tcp_rmem = read("/proc/sys/net/ipv4/tcp_rmem").map(|s| s.trim().to_string());
+    state.extended.tcp_wmem = read("/proc/sys/net/ipv4/tcp_wmem").map(|s| s.trim().to_string());
+    state.extended.cpu_freq_mhz = cpu_freq_mhz();
+    state.disk_io = disk_io();
 
     // 2026-09-26: Per-process `used_memory` from the compute-apps query, not
     // `--query-gpu=memory.used`, which reads `[N/A]` on GB10 (checked

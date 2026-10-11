@@ -131,6 +131,7 @@ fn metrics_map_carries_both_itl_clocks_jitter_and_energy_per_rung() {
         sw_power_cap_frac: Some(1.0),
         hw_power_brake_frac: Some(0.0),
     });
+    r.gpu_counter_j = Some(100.0);
     b.rows.push(r);
     let m = b.metrics();
     assert_eq!(m.get("c4_tpot_p50_ms"), Some(&31.0));
@@ -163,6 +164,10 @@ fn metrics_map_carries_both_itl_clocks_jitter_and_energy_per_rung() {
     // 2026-09-26: No idle baseline, so no above-idle key.
     assert!(!m.contains_key("c4_gpu_rail_energy_above_idle_j"));
     assert!(!m.contains_key("gpu_rail_idle_power_w"));
+    // 2026-10-05: The independently-sourced HTTP counter reading sits beside
+    // gpu_rail_* under its own key names, same prefix, same token count.
+    assert_eq!(m.get("c4_gpu_energy_counter_j"), Some(&100.0));
+    assert_eq!(m.get("c4_gpu_energy_counter_jpt"), Some(&(100.0 / 512.0)));
 
     // 2026-09-26: Without server-clock or instrument data, only the client
     // clock keys appear.
