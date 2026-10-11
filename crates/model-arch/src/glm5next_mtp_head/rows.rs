@@ -69,7 +69,11 @@ impl Glm5NextMtpHead {
                 .embed_tokens
                 .weight
                 .offset(tokens[r + 1] as usize * h * 2);
-            self.norm(gpu, embed_row, self.module.enorm, *concat, h, stream)?;
+            // 2026-10-11: Row r is pair key `row_base + r`.
+            let embed =
+                (!super::hidden_half::zeroes_embedding(ctx.levers.mtp_zero_pos0, row_base + r))
+                    .then_some(embed_row);
+            self.embed_half(gpu, embed, *concat, stream)?;
             // 2026-10-11: A context row is always a target row; `x` stages its target norm
             // before the `eh_proj` below writes it.
             self.hidden_half(ctx, hiddens.offset(r * h * 2), true, *x, *concat, stream)?;

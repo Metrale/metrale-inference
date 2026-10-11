@@ -147,6 +147,20 @@ impl DraftProposer for Glm5NextMtpHead {
         self.rows_impl(tokens, hiddens, row_base, state, ctx, stream)
     }
 
+    /// 2026-10-11: The batched-verify catch-up (`METRALE_MTP_ACCEPTED_ROWS` or `_KV_EXACT`): each
+    /// sequence's accepted drafts as context rows (`catchup.rs`).
+    fn catchup_batch(
+        &self,
+        tokens: &[Vec<u32>],
+        hiddens: &[Vec<DevicePtr>],
+        first_pos: &[usize],
+        states: &mut [&mut dyn ProposerState],
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<usize> {
+        self.catchup_rows(tokens, hiddens, first_pos, states, ctx, stream)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn propose(
         &self,

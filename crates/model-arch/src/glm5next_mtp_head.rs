@@ -37,6 +37,7 @@ use metrale_model_layers::weight_map::DenseWeight;
 
 mod batch;
 mod batch_check;
+mod catchup;
 mod graph;
 mod head_xchg;
 mod hidden_half;
@@ -246,7 +247,9 @@ impl Glm5NextMtpHead {
     /// body of the drafter graph (`graph.rs`).
     fn forward_body(
         &self,
-        embed_src: DevicePtr,
+        // 2026-10-11: The token's embedding row; `None` zeroes the embedding half (pair key 0
+        // under `METRALE_MTP_ZERO_POS0`, `hidden_half::zeroes_embedding`).
+        embed_src: Option<DevicePtr>,
         hidden_in: DevicePtr,
         // 2026-10-11: `hidden_in` is a target row (the first draft), not the drafter's own
         // chain output (`hidden_half`).
@@ -257,7 +260,7 @@ impl Glm5NextMtpHead {
     ) -> Result<()> {
         let gpu = ctx.gpu;
         let h = self.hidden;
-        self.norm(gpu, embed_src, self.module.enorm, st.concat, h, stream)?;
+        self.embed_half(gpu, embed_src, st.concat, stream)?;
         // 2026-10-11: `st.x` is free until `eh_proj` writes it, so it stages the target norm.
         self.hidden_half(ctx, hidden_in, target_row, st.x, st.concat, stream)?;
         self.eh_proj(gpu, st, ctx, stream)?;
@@ -410,10 +413,16 @@ impl Glm5NextMtpHead {
         let embed_row = self.embed_tokens.weight.offset(token as usize * h * 2);
         // 2026-10-11: `METRALE_GLM_MTP_GRAPH`: the same launches, replayed from a graph
         // (`graph.rs`); the readback and exchange below stay eager.
-        if graph::eligible(self, st, first) {
-            self.forward_graphed(embed_row, hidden_in, st, ctx, stream)?;
-        } else {
-            self.forward_body(embed_row, hidden_in, first, st, ctx, stream)?;
+        // 2026-10-11: This draft's pair key is `position - 1` (its hidden is position - 1's).
+        let zero = position
+            .checked_sub(1)
+            .is_some_and(|key| hidden_half::zeroes_embedding(ctx.levers.mtp_zero_pos0, key));
+        let embed = (!zero).then_some(embed_row);
+        match embed {
+            Some(e) if graph::eligible(self, st, first) => {
+                self.forward_graphed(e, hidden_in, st, ctx, stream)?
+            }
+            _ => self.forward_body(embed, hidden_in, first, st, ctx, stream)?,
         }
         // 2026-09-25: Timing arm `METRALE_GLM_MTP_SKIP=head`: the head is skipped and the
         // draft is token 0, so `propose` times the block alone. `=block` skips the block instead.

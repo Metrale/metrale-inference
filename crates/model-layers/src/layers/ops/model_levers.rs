@@ -224,6 +224,10 @@ pub struct ModelLevers {
     /// verify forward's live `hidden_states` rows: one per accepted draft, which no propose
     /// writes (`model/trait_impl/accepted_rows.rs`). vLLM's drafter runs every accepted position.
     pub mtp_accepted_rows: bool,
+    /// 2026-10-11: `METRALE_MTP_ZERO_POS0=1`: the GLM-5.3 drafter row at position 0 (pair key 0)
+    /// gets a zero embedding half, as vLLM's GLM MTP layer always gives it
+    /// (`glm5next_mtp_head/hidden_half.rs` `zeroes_embedding`).
+    pub mtp_zero_pos0: bool,
     /// 2026-09-25: `METRALE_FP8_MOE_GROUPED_DECODE=1`: the target model's multi-row FP8 MoE decode
     /// runs through the cross-row grouped kernels (`FfnComponent::fp8_grouped_decode_ok`). The MTP
     /// drafter calls `MoeLayer::fp8_grouped_decode_ok` directly and does not read this lever;

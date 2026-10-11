@@ -64,6 +64,7 @@ pub(super) fn from_values(
         mtp_target_postnorm: opt_in(value("METRALE_MTP_TARGET_POSTNORM").as_deref()),
         mtp_kv_exact: opt_in(value("METRALE_MTP_KV_EXACT").as_deref()),
         mtp_accepted_rows: opt_in(value("METRALE_MTP_ACCEPTED_ROWS").as_deref()),
+        mtp_zero_pos0: opt_in(value("METRALE_MTP_ZERO_POS0").as_deref()),
         moe_fp8_grouped_decode_target: opt_in(value("METRALE_FP8_MOE_GROUPED_DECODE").as_deref()),
         fp8_attn_m32: opt_in(value("METRALE_FP8_ATTN_M32").as_deref()),
         // 2026-09-25: The target's declaration (`kernels/<hw>/HARDWARE.toml` `[defaults]
