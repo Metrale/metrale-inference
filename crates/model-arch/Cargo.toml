@@ -323,6 +323,10 @@ name = "glm5next_c1_fuse_microtest"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "glm5next_hc_post_fold_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "glm5next_dsa_rows_microtest"
 required-features = ["cuda", "gpu-examples"]
 

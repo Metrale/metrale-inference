@@ -203,6 +203,7 @@ mod tests {
             hc_pre_norm_rows: k(if fused { 10 } else { 0 }),
             hc_post: k(7),
             hc_post_rank_sum: k(11),
+            hc_post_pre_norm: k(12),
             hc_head: k(8),
         }
     }

@@ -39,6 +39,10 @@ pub struct Glm5NextMhc {
     pub hc_mult: usize,
     pub sinkhorn_iters: usize,
     pub hc_eps: f32,
+    /// 2026-10-10: One token's `hc_mult * hidden` FP32 streams: where the folded post-mix of the
+    /// attention site writes (`METRALE_GLM_MHC_POST_FOLD=1`), since the fused kernel's blocks
+    /// all read the streams it updates. NULL unless the lever is on.
+    pub fold_streams: DevicePtr,
 }
 
 /// 2026-09-25: One bound GLM-5.3 decoder layer.

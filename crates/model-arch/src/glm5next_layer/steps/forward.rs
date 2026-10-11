@@ -127,37 +127,80 @@ impl Glm5NextLayer {
             stream,
         )?;
         let fused = self.fused_post(mhc)?;
+        // 2026-10-10: With the fold the attention site's sum and post-mix run inside the FFN
+        // site's pre-norm, writing the post-mixed streams to `fold_streams`; the FFN site's
+        // post-mix then reads them and writes the highway, so the slot ends the layer as before.
+        let fold = self.post_fold(mhc)?;
         let mut partials = None;
         if self.mixer_all_reduce {
             self.reduce_probe(profile::REDUCE_ATTN_BAR, "attn", ctx, stream);
             let t = profile::start_hot();
-            partials = self.reduce_or_exchange(attn_out, &[1], fused, ctx, stream)?;
+            partials = self.reduce_or_exchange(attn_out, &[1], fused || fold, ctx, stream)?;
             profile::end_nosync(profile::REDUCE_ATTN_ENQ, t);
             let t = profile::start_hot();
             profile::end(profile::REDUCE_ATTN, t, ctx.gpu, stream);
         }
-        let t_mhc_post = profile::start();
-        self.hc_post_reduced(gpu, mhc, attn_out, partials, streams, post, comb, 1, stream)?;
-        profile::end(profile::MHC_POST, t_mhc_post, gpu, stream);
+        let ffn_residual = if fold {
+            let t_mhc = profile::start();
+            crate::glm5next_mhc_post_fold::glm_hc_post_pre_norm(
+                gpu,
+                &mhc.kernels,
+                &mhc.ffn,
+                crate::glm5next_mhc_post_fold::PostFoldIo {
+                    own: attn_out,
+                    residual: streams,
+                    streams_out: mhc.fold_streams,
+                    post,
+                    comb,
+                    norm_w: self.post_attn_norm,
+                    y_out: hidden,
+                    normed_out: normed,
+                },
+                partials.as_ref(),
+                [h as u32, hc as u32, mhc.sinkhorn_iters as u32],
+                [self.rms_eps, mhc.hc_eps, self.rms_eps],
+                stream,
+            )?;
+            profile::end(profile::MHC, t_mhc, gpu, stream);
+            mhc.fold_streams
+        } else {
+            let t_mhc_post = profile::start();
+            self.hc_post_reduced(
+                gpu, mhc, attn_out, partials, streams, streams, post, comb, 1, stream,
+            )?;
+            profile::end(profile::MHC_POST, t_mhc_post, gpu, stream);
 
-        let t_mhc = profile::start();
-        self.mhc_pre_norm(
-            gpu,
-            mhc,
-            &mhc.ffn,
-            self.post_attn_norm,
-            streams,
-            hidden,
-            post,
-            comb,
-            normed,
-            1,
-            t_mhc,
-            stream,
-        )?;
+            let t_mhc = profile::start();
+            self.mhc_pre_norm(
+                gpu,
+                mhc,
+                &mhc.ffn,
+                self.post_attn_norm,
+                streams,
+                hidden,
+                post,
+                comb,
+                normed,
+                1,
+                t_mhc,
+                stream,
+            )?;
+            streams
+        };
         let partials = self.mlp_forward(normed, ffn_out, 1, &[1], fused, ctx, stream)?;
         let t_mhc_post = profile::start();
-        self.hc_post_reduced(gpu, mhc, ffn_out, partials, streams, post, comb, 1, stream)?;
+        self.hc_post_reduced(
+            gpu,
+            mhc,
+            ffn_out,
+            partials,
+            ffn_residual,
+            streams,
+            post,
+            comb,
+            1,
+            stream,
+        )?;
 
         if self.is_last {
             hc_head_mean(
@@ -361,7 +404,9 @@ impl Glm5NextLayer {
             profile::end(profile::REDUCE_ATTN, t, ctx.gpu, stream);
         }
         let t_mhc_post = profile::start();
-        self.hc_post_reduced(gpu, mhc, attn_out, partials, streams, post, comb, k, stream)?;
+        self.hc_post_reduced(
+            gpu, mhc, attn_out, partials, streams, streams, post, comb, k, stream,
+        )?;
         profile::end(profile::MHC_POST, t_mhc_post, gpu, stream);
 
         let t_mhc = profile::start();
@@ -381,7 +426,9 @@ impl Glm5NextLayer {
         )?;
         let partials = self.mlp_forward(normed, ffn_out, k, row_pieces, fused, ctx, stream)?;
         let t_mhc_post = profile::start();
-        self.hc_post_reduced(gpu, mhc, ffn_out, partials, streams, post, comb, k, stream)?;
+        self.hc_post_reduced(
+            gpu, mhc, ffn_out, partials, streams, streams, post, comb, k, stream,
+        )?;
         if self.is_last {
             hc_head_mean(
                 gpu,

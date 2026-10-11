@@ -276,6 +276,11 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                     hc_mult: config.hc_mult,
                     sinkhorn_iters: config.hc_sinkhorn_iters,
                     hc_eps: config.hc_eps,
+                    fold_streams: if crate::glm5next_layer::mhc_post_fold() {
+                        gpu.alloc(config.hc_mult * config.hidden_size * 4)?
+                    } else {
+                        DevicePtr::NULL
+                    },
                 })
             } else {
                 None
