@@ -221,6 +221,7 @@ pub fn build_model(
     );
     let glm_mtp_embed = embed;
     let glm_mtp_lm_head = lm_head;
+    let glm_mtp_target_final_norm = final_norm;
 
     let v4_mtp_module = mtp_modules::load_v4_mtp_module(
         &store,
@@ -458,6 +459,7 @@ pub fn build_model(
         glm_mtp_module,
         glm_mtp_embed,
         glm_mtp_lm_head,
+        glm_mtp_target_final_norm,
         max_seq_len,
     );
 
