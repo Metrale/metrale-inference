@@ -129,14 +129,31 @@ fn hardware(inst: &Instance) -> Result<&str, VennError> {
         })
 }
 
-/// 2026-09-29: Build and render the report `args` asks for. `checkpoint`, when the target was
+/// 2026-10-05: Everything a report is built from, read and checked: the target and compared
+/// instances, loaded; the family manifest (checked against the kernel sources); the measurements.
+pub struct Prepared {
+    /// 2026-10-05: The target instance.
+    pub target: Instance,
+    /// 2026-10-05: Its circuit and rules.
+    pub target_loaded: Loaded,
+    /// 2026-10-05: The compared instances, in `--against` order.
+    pub against: Vec<Instance>,
+    /// 2026-10-05: Their circuits and rules, in the same order.
+    pub against_loaded: Vec<Loaded>,
+    /// 2026-10-05: The instances' hardware's kernel-family manifest.
+    pub families: super::Families,
+    /// 2026-10-05: measurements.toml.
+    pub measurements: super::Measurements,
+}
+
+/// 2026-10-05: Resolve, load and check what `args` names. `checkpoint`, when the target was
 /// given as a checkpoint directory, is that directory's `config.json` text and, if present, its
 /// `hf_quant_config.json` text.
-pub fn report_text(
+pub fn prepare(
     repo: &dyn Repo,
     args: &VennArgs,
     checkpoint: Option<(&str, Option<&str>)>,
-) -> Result<String, VennError> {
+) -> Result<Prepared, VennError> {
     let io = |e: String| VennError::Load(e);
     let all = parse_instances(&repo.read("kernels/circuits/INSTANCES.toml").map_err(io)?)
         .map_err(|e| io(e.to_string()))?;
@@ -190,20 +207,50 @@ pub fn report_text(
             .map_err(io)?,
     )
     .map_err(io)?;
+    Ok(Prepared {
+        target,
+        target_loaded: lt,
+        against,
+        against_loaded: loaded,
+        families: fams,
+        measurements: meas,
+    })
+}
+
+/// 2026-09-29: Build and render the report `args` asks for, each side planned offline with its
+/// own rules. A report on a device (`args.hardware`) is `hardware::venn_text`'s.
+pub fn report_text(
+    repo: &dyn Repo,
+    args: &VennArgs,
+    checkpoint: Option<(&str, Option<&str>)>,
+) -> Result<String, VennError> {
+    if let Some(h) = &args.hardware {
+        return Err(VennError::Run(format!(
+            "--hardware {h}: a report on a device is planned by hardware::venn_text"
+        )));
+    }
+    let p = prepare(repo, args, checkpoint)?;
     let inputs = VennInputs {
         target: Side {
-            instance: &target,
-            loaded: &lt,
+            instance: &p.target,
+            loaded: &p.target_loaded,
+            on_device: None,
         },
-        against: against
+        against: p
+            .against
             .iter()
-            .zip(&loaded)
-            .map(|(instance, loaded)| Side { instance, loaded })
+            .zip(&p.against_loaded)
+            .map(|(instance, loaded)| Side {
+                instance,
+                loaded,
+                on_device: None,
+            })
             .collect(),
-        families: &fams,
-        measurements: &meas,
+        families: &p.families,
+        measurements: &p.measurements,
         runs: args.runs()?,
         command: args.command(),
+        device: None,
     };
     Ok(render(&build(&inputs)?))
 }

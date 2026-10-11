@@ -335,15 +335,18 @@ fn the_report_is_deterministic_and_ranked_by_time_then_site() {
         target: Side {
             instance: &t,
             loaded: &lt,
+            on_device: None,
         },
         against: vec![Side {
             instance: &a,
             loaded: &la,
+            on_device: None,
         }],
         families: &fams,
         measurements: &meas,
         runs,
         command: "toy".into(),
+        device: None,
     };
     let (r1, r2) = (build(&inputs).unwrap(), build(&inputs).unwrap());
     assert_eq!(render(&r1), render(&r2));

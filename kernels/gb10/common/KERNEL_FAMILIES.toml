@@ -979,7 +979,21 @@ id = "w4a16_tc"
 description = "NVFP4 W4A16 tensor-core GEMV row tiers (tc8, tc16)"
 compute = "tensor_core"
 mma = "mma.sync.m16n8k16.bf16"
-kernels = ["w4a16_gemv_tc::w4a16_gemv_tc8", "w4a16_gemv_tc::w4a16_gemv_tc16"]
+kernels = [
+  "w4a16_gemv_tc::w4a16_gemv_tc8", "w4a16_gemv_tc::w4a16_gemv_tc16",
+  "w4a16_gemv_tc::w4a16_gemv_tc8_nt1_ku4_o2", "w4a16_gemv_tc::w4a16_gemv_tc8_nt1_ku8_o2",
+  "w4a16_gemv_tc::w4a16_gemv_tc8_nt2_ku4_o2", "w4a16_gemv_tc::w4a16_gemv_tc8_nt2_ku2_o3",
+  "w4a16_gemv_tc::w4a16_gemv_tc8_nt1_ku4_o3", "w4a16_gemv_tc::w4a16_gemv_tc8_nt4_ku2_o2",
+  "w4a16_gemv_tc::w4a16_gemv_tc16_nt2_ku2_o2", "w4a16_gemv_tc::w4a16_gemv_tc16_nt1_ku4_o2",
+  "w4a16_gemv_tc::w4a16_gemv_tc16_nt4_ku1_o2", "w4a16_gemv_tc::w4a16_gemv_tc16_nt2_ku4_o2",
+  "w4a16_gemv_tc::w4a16_gemv_tc8_nt2_ku2_o4", "w4a16_gemv_tc::w4a16_gemv_tc8_nt4_ku1_o3",
+  "w4a16_gemv_tc::w4a16_gemv_tc8_nt2_ku1_o4", "w4a16_gemv_tc::w4a16_gemv_tc8_nt4_ku2_o3",
+  "w4a16_gemv_tc::w4a16_gemv_tc16_nt4_ku1_o3", "w4a16_gemv_tc::w4a16_gemv_tc16_nt8_ku1_o2",
+  "w4a16_gemv_tc::w4a16_gemv_tc16_nt4_ku2_o2",
+  "w4a16_gemv_tc::w4a16_gemv_tc32", "w4a16_gemv_tc::w4a16_gemv_tc32_nt4_ku1_o2",
+  "w4a16_gemv_tc::w4a16_gemv_tc32_nt2_ku1_o2", "w4a16_gemv_tc::w4a16_gemv_tc64",
+  "w4a16_gemv_tc::w4a16_gemv_tc64_nt2_ku1_o2", "w4a16_gemv_tc::w4a16_gemv_tc64_nt4_ku1_o1",
+]
 rows = [1, 16]
 # 2026-10-02: E2M1 x E4M3 folded into a BF16 operand exactly (w4a16_gemv_tc.cu:23-30, 201-204),
 # FP32 MMA sums, the global scale on the FP32 sum (:221, :230).
@@ -1181,6 +1195,11 @@ kernels = [
   "w8a8_gemv::w8a8_gemv_rowscale_mb16", "w8a8_gemv::w8a8_gemv_blk128_mb1_ku8",
   "w8a8_gemv::w8a8_gemv_blk128_mb2", "w8a8_gemv::w8a8_gemv_blk128_mb4",
   "w8a8_gemv::w8a8_gemv_blk128_mb8", "w8a8_gemv::w8a8_gemv_blk128_mb16",
+  "w8a8_gemv::w8a8_gemv_rowscale_mb1_ku2_o4", "w8a8_gemv::w8a8_gemv_rowscale_mb2_ku2_o2",
+  "w8a8_gemv::w8a8_gemv_rowscale_mb4_ku2_o2", "w8a8_gemv::w8a8_gemv_rowscale_mb8_ku2_o2",
+  "w8a8_gemv::w8a8_gemv_rowscale_mb16_ku1_o2", "w8a8_gemv::w8a8_gemv_blk128_mb1_ku2_o4",
+  "w8a8_gemv::w8a8_gemv_blk128_mb2_ku2_o2", "w8a8_gemv::w8a8_gemv_blk128_mb4_ku2_o2",
+  "w8a8_gemv::w8a8_gemv_blk128_mb8_ku2_o2", "w8a8_gemv::w8a8_gemv_blk128_mb16_ku1_o2",
 ]
 rows = [1, 128]
 pipeline.linear = { in = ["{activation}"], act = "{activation}", weight = "{weight}->e4m3", mma = "e4m3*e4m3", accumulate = "f32", scale = "f32", out = ["bf16"] }
@@ -1212,6 +1231,10 @@ files = ["kernels/gb10/common/w8a8_gemv.cu"]
 point = { weight = "fp8/channel", activation = "fp8/token" }
 rows = [1, 4, 16, 64]
 microbench = "standalone W8A8 GEMV, 10 dense-27B and 35B projection shapes, 2026-09-28: 181-255 GB/s (73-102% of the 249 GB/s floor)"
+[[family.evidence]]
+point = { weight = "fp8/channel", activation = "fp8/token" }
+rows = [1, 8, 16, 32, 64, 128]
+microbench = "H100 SXM test box, w8a8_gemv_bench raw entries, 2026-10-05: the occupancy points (KU2/KU1, 2-4 blocks per SM) vs the baseline entries cut the 27B projections 31-49 % at 1-128 rows (gdn qkv|z 54.5 -> 36.4 us at 8 rows, 85.1 -> 43.8 at 32, 267.6 -> 184.8 at 128); selected per class by [defaults] w8a8_gemv_entries"
 [[family.evidence]]
 point = { weight = "fp8/block128x128", activation = "fp8/g128" }
 rows = [1, 4, 16, 64]
@@ -1647,6 +1670,14 @@ kernels = [
   "w4a16_tc_rows::w4a16_tc_rows_16",
   "w4a16_tc_rows::w4a16_tc_rows_32",
   "w4a16_tc_rows::w4a16_tc_rows_64",
+  "w4a16_tc_rows::w4a16_tc_rows_16_w2",
+  "w4a16_tc_rows::w4a16_tc_rows_32_w2",
+  "w4a16_tc_rows::w4a16_tc_rows_64_w2",
+  "w4a16_tc_rows::w4a16_tc_rows_16_pf2",
+  "w4a16_tc_rows::w4a16_tc_rows_32_pf2",
+  "w4a16_tc_rows::w4a16_tc_rows_32_pf3",
+  "w4a16_tc_rows::w4a16_tc_rows_64_pf2",
+  "w4a16_tc_rows::w4a16_tc_rows_64_pf3",
 ]
 rows = [1, 64]
 # 2026-10-02: The FP8 point's pipeline (the NVFP4 point overrides it below): an E4M3 byte becomes
@@ -1669,9 +1700,11 @@ values = { weight = "nvfp4/g16" }
 how = "instantiation"
 files = ["kernels/gb10/common/tc_rows.cuh", "kernels/gb10/common/w4a16_tc_rows.cu"]
 # 2026-10-02: BF16(E2M1 x E4M3) exactly per weight, the FP32 sum times s2 once per output
-# (Nvfp4G16 `out`), BF16 logits; only the declared NVFP4 head uses it.
+# (Nvfp4G16 `out`), BF16 logits. 2026-10-05: also the NVFP4 dense-FFN projections of 9..=128
+# rows where a class declares `ffn_w4a16_tc_rows_max_m` (hopper), in 64-row calls. The `_w2`
+# entry points are the 32-column N tile (2 warps), same bits, picked from the class's sm_count.
 pipeline.lm_head = { in = ["bf16"], act = "bf16", weight = "nvfp4/g16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "f32", out = ["bf16"] }
-pipeline.linear = "uninstantiated"
+pipeline.linear = { in = ["bf16"], act = "bf16", weight = "nvfp4/g16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "f32", out = ["bf16"] }
 
 [[family]]
 id = "moe_nvfp4_grouped"

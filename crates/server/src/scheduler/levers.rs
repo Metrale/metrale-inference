@@ -127,6 +127,9 @@ pub struct SchedLevers {
     /// 2026-09-25: `METRALE_PREFILL_VARLEN`, as the model layer resolved it
     /// (`prefill_varlen_enabled`).
     pub prefill_varlen: bool,
+    /// 2026-10-09: `--prefill-varlen-with-decode` (CLI only; `serve_load` sets it
+    /// after `from_env`): varlen waves also form while sequences decode.
+    pub prefill_varlen_with_decode: bool,
     /// 2026-09-25: `METRALE_PREFILL_CODISPATCH_WINDOW_MS` (default 100).
     pub codispatch_window_ms: u64,
     /// 2026-09-25: `METRALE_PREFILL_CODISPATCH_SETTLE_MS` (default 10).
@@ -331,6 +334,7 @@ impl SchedLevers {
             holo_always_mixed: opt_in_word("METRALE_HOLO_ALWAYS_MIXED"),
             prefill_codispatch: metrale_model_layers::layers::ops::prefill_codispatch_enabled(),
             prefill_varlen: metrale_model_layers::layers::ops::prefill_varlen_enabled(),
+            prefill_varlen_with_decode: false,
             codispatch_window_ms: num("METRALE_PREFILL_CODISPATCH_WINDOW_MS", 100),
             codispatch_settle_ms: num("METRALE_PREFILL_CODISPATCH_SETTLE_MS", 10),
             vision_codispatch: opt_in_word("METRALE_VISION_CODISPATCH"),
@@ -361,6 +365,18 @@ impl SchedLevers {
 
             loop_watchdog: AtomicBool::new(false),
         }
+    }
+
+    /// 2026-10-09: Apply `--prefill-varlen-with-decode`. Refused unless the varlen
+    /// batched prefill it extends is on: alone it would change nothing, silently.
+    pub fn with_prefill_varlen_with_decode(mut self, cli: bool) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            !cli || self.prefill_varlen,
+            "--prefill-varlen-with-decode needs the varlen batched prefill \
+             (--prefill-varlen-batch or METRALE_PREFILL_VARLEN=1)"
+        );
+        self.prefill_varlen_with_decode = cli;
+        Ok(self)
     }
 
     /// 2026-09-25: Lever values for tests, without reading the environment.
@@ -402,6 +418,7 @@ impl SchedLevers {
             holo_always_mixed: false,
             prefill_codispatch: false,
             prefill_varlen: false,
+            prefill_varlen_with_decode: false,
             codispatch_window_ms: 100,
             codispatch_settle_ms: 10,
             vision_codispatch: false,

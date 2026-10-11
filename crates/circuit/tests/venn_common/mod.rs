@@ -58,6 +58,7 @@ pub fn args() -> VennArgs {
         rows: vec![1, 16, 128],
         verify_rows: vec![2],
         out: REPORT.into(),
+        hardware: None,
     }
 }
 
@@ -83,21 +84,25 @@ pub fn report() -> VennReport {
         target: Side {
             instance: &t,
             loaded: &lt,
+            on_device: None,
         },
         against: vec![
             Side {
                 instance: &m,
                 loaded: &lm,
+                on_device: None,
             },
             Side {
                 instance: &d,
                 loaded: &ld,
+                on_device: None,
             },
         ],
         families: &fams,
         measurements: &meas,
         runs: a.runs().expect("runs"),
         command: a.command(),
+        device: None,
     })
     .expect("report")
 }

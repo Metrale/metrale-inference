@@ -37,6 +37,43 @@ pub(crate) fn quant_multiplier(config: &ModelConfig) -> Option<f64> {
     }
 }
 
+/// 2026-10-03: The fast loader for `config`, with its skip rules (activation scales, an unbuilt
+/// MTP head, an unbound vision tower, other EP ranks' experts) and deferral hook. The `--mock`
+/// store keeps exactly what this loader would keep (`super::mock::load_store`).
+#[cfg(unix)]
+pub(crate) fn fast_loader(
+    config: &ModelConfig,
+    ep_rank: usize,
+    ep_size: usize,
+    mult: Option<f64>,
+) -> metrale_model_weights::fast_weights::FastSafetensorsLoader {
+    let mut loader = if ep_size > 1 {
+        metrale_model_weights::fast_weights::FastSafetensorsLoader::with_ep(
+            ep_rank,
+            ep_size,
+            config.num_experts,
+        )
+    } else {
+        metrale_model_weights::fast_weights::FastSafetensorsLoader::new()
+    };
+    loader.peak_memory_multiplier = mult;
+    loader.skip_activation_scales = skip_activation_scales(config);
+    loader.skip_mtp = skip_mtp(config);
+    // 2026-09-26: A loader that binds no vision encoder skips the
+    // tower here. `factory::build` frees an unbound tower too, but
+    // only after the reserve preflight has measured free memory.
+    loader.skip_vision = !binds_vision(config);
+    if loader.skip_vision {
+        tracing::info!(
+            "Vision tower: not loaded — the weight loader for model_type '{}' is a \
+             text-only port and binds no vision encoder.",
+            config.model_type,
+        );
+    }
+    loader.defer = defer_hook(config);
+    loader
+}
+
 pub(crate) fn load_weight_store(
     args: &cli::ServeArgs,
     config: &ModelConfig,
@@ -45,8 +82,12 @@ pub(crate) fn load_weight_store(
     ep_rank: usize,
     ep_size: usize,
     oom_reserve_bytes: usize,
+    mock: Option<&super::mock::MockServe>,
 ) -> Result<metrale_model_weights::weights::WeightStore> {
     use metrale_model_weights::weights::WeightLoader;
+    if let Some(m) = mock {
+        return super::mock::load_store(m, config, gpu, ep_rank, ep_size);
+    }
     if matches!(
         config.model_type.as_str(),
         "kimi_k3" | "kimi_linear" | "Kimi-K3"
@@ -96,30 +137,7 @@ pub(crate) fn load_weight_store(
         #[cfg(unix)]
         {
             tracing::info!("Using fast weight loader (O_DIRECT + pipelined read/copy)");
-            let mut loader = if ep_size > 1 {
-                metrale_model_weights::fast_weights::FastSafetensorsLoader::with_ep(
-                    ep_rank,
-                    ep_size,
-                    config.num_experts,
-                )
-            } else {
-                metrale_model_weights::fast_weights::FastSafetensorsLoader::new()
-            };
-            loader.peak_memory_multiplier = mult;
-            loader.skip_activation_scales = skip_activation_scales(config);
-            loader.skip_mtp = skip_mtp(config);
-            // 2026-09-26: A loader that binds no vision encoder skips the
-            // tower here. `factory::build` frees an unbound tower too, but
-            // only after the reserve preflight has measured free memory.
-            loader.skip_vision = !binds_vision(config);
-            if loader.skip_vision {
-                tracing::info!(
-                    "Vision tower: not loaded — the weight loader for model_type '{}' is a \
-                     text-only port and binds no vision encoder.",
-                    config.model_type,
-                );
-            }
-            loader.defer = defer_hook(config);
+            let mut loader = fast_loader(config, ep_rank, ep_size, mult);
             loader.prefetch_shards = args.fast_load_prefetch_shards
                 || std::env::var("METRALE_FAST_LOAD_PREFETCH_SHARDS")
                     .ok()

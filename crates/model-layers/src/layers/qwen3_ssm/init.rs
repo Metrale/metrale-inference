@@ -47,6 +47,7 @@ impl Qwen3SsmLayer {
             ffn,
             lora_out_proj: None,
             w8a8: None,
+            w8a8_prefill: None,
             qkvz_nvfp4,
             qkvz_nvfp4_t: None,
             out_proj_nvfp4_t: None,

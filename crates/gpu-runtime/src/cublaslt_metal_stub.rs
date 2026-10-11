@@ -39,6 +39,20 @@ pub fn bf16_gemm_act_weight_t_f32_out(
     unreachable!("cublaslt::bf16_gemm_act_weight_t_f32_out is cuda-only (not built for metal)")
 }
 
+#[allow(clippy::too_many_arguments)]
+pub fn bf16_gemm_act_weight_t_alpha(
+    _act: u64,
+    _weight: u64,
+    _out: u64,
+    _m: u32,
+    _n: u32,
+    _k: u32,
+    _alpha: f32,
+    _stream: u64,
+) -> Result<()> {
+    unreachable!("cublaslt::bf16_gemm_act_weight_t_alpha is cuda-only (not built for metal)")
+}
+
 pub fn fp8_gemm_act_weight_t_rowwise(
     _act_fp8: u64,
     _act_scale: u64,
@@ -51,6 +65,22 @@ pub fn fp8_gemm_act_weight_t_rowwise(
     _stream: u64,
 ) -> Result<()> {
     unreachable!("cublaslt::fp8_gemm_act_weight_t_rowwise is cuda-only (not built for metal)")
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn fp8_gemm_act_weight_t_rowwise_ldc(
+    _act_fp8: u64,
+    _act_scale: u64,
+    _weight_fp8: u64,
+    _weight_scale: u64,
+    _out: u64,
+    _m: u32,
+    _n: u32,
+    _k: u32,
+    _ldc: u32,
+    _stream: u64,
+) -> Result<()> {
+    unreachable!("cublaslt::fp8_gemm_act_weight_t_rowwise_ldc is cuda-only (not built for metal)")
 }
 
 pub fn fp8_gemm_act_weight_t_blkscaled(

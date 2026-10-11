@@ -25,7 +25,8 @@ use crate::weight_map::QuantizedWeight;
 pub const TC8_MAX_M: u32 = 8;
 /// 2026-09-25: Rows the `w4a16_gemv_tc16` entry covers (its `MT` is 16).
 pub const TC16_MAX_M: u32 = 16;
-/// 2026-09-25: Columns per CTA, `8 * NT`: tc8 has `NT = 1`, tc16 has `NT = 2`.
+/// 2026-09-25: Columns per CTA, `8 * NT`, of the baseline entries: tc8 has `NT = 1`, tc16 has
+/// `NT = 2`. 2026-10-09: a schedule point's own NT sizes the grid ([`tc_kernel`]).
 pub const TC8_COLS_PER_CTA: u32 = 8;
 pub const TC16_COLS_PER_CTA: u32 = 16;
 /// 2026-09-25: Threads per CTA, `TC_WARPS * 32` with `TC_WARPS = 8` in the .cu; the warps split K.
@@ -110,10 +111,16 @@ pub fn narrow_gemv_max_rows() -> u32 {
 /// 2026-09-25: Resolved handles, cached per backend. A `KernelHandle` names a function in one
 /// backend's loaded module, so the cache is keyed by the backend object's address. A missing
 /// entry is `KernelHandle(0)`.
+///
+/// 2026-10-09: Each tier's entry is the class's schedule point (`[defaults]
+/// w4a16_gemv_tc_entries`, `target_defaults::resolved`), with that point's 8-column tiles per CTA
+/// for the grid; a tier's points give the same bits.
 #[derive(Clone, Copy)]
 struct TcHandles {
     tc8: KernelHandle,
     tc16: KernelHandle,
+    nt8: u32,
+    nt16: u32,
 }
 
 fn tc_handles(gpu: &dyn GpuBackend) -> TcHandles {
@@ -124,9 +131,15 @@ fn tc_handles(gpu: &dyn GpuBackend) -> TcHandles {
     if let Some((_, h)) = guard.iter().find(|(k, _)| *k == key) {
         return *h;
     }
+    let [p8, p16] = super::target_defaults::resolved()
+        .w4a16_gemv_tc_entries
+        .value;
+    let nt = metrale_kernels::w4a16_gemv_tc_entries::w4a16_gemv_tc_nt;
     let h = TcHandles {
-        tc8: crate::layers::try_kernel(gpu, "w4a16_gemv_tc", "w4a16_gemv_tc8"),
-        tc16: crate::layers::try_kernel(gpu, "w4a16_gemv_tc", "w4a16_gemv_tc16"),
+        tc8: crate::layers::try_kernel(gpu, "w4a16_gemv_tc", &format!("w4a16_gemv_{p8}")),
+        tc16: crate::layers::try_kernel(gpu, "w4a16_gemv_tc", &format!("w4a16_gemv_{p16}")),
+        nt8: nt(p8),
+        nt16: nt(p16),
     };
     guard.push((key, h));
     h
@@ -140,11 +153,11 @@ pub fn tc_kernel(gpu: &dyn GpuBackend, m: u32, n: u32, k: u32) -> Option<(Kernel
     }
     let h = tc_handles(gpu);
     let kind = tc_route(m, n, k, true, h.tc8.0 != 0, h.tc16.0 != 0)?;
-    let handle = match kind {
-        TcKind::M8 => h.tc8,
-        TcKind::M16 => h.tc16,
+    let (handle, nt) = match kind {
+        TcKind::M8 => (h.tc8, h.nt8),
+        TcKind::M16 => (h.tc16, h.nt16),
     };
-    Some((handle, n.div_ceil(kind.cols_per_cta())))
+    Some((handle, n.div_ceil(8 * nt)))
 }
 
 /// 2026-09-25: The tensor-core route of the fixed-M launchers, taken only when

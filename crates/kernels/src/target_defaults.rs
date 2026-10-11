@@ -95,4 +95,37 @@ pub struct TargetDefaults {
     /// (`n <= k`: down). gb10 declares 384. See
     /// [`Self::w8a8_prefill_max_m_widening`].
     pub w8a8_prefill_max_m_narrowing: u32,
+    /// 2026-10-05: Upper `M` at which the NVFP4 dense-FFN projections run the row-tile
+    /// `w4a16_tc_rows` (BF16 activations, in 64-row calls) instead of the NVFP4 tile GEMMs, read
+    /// in metrale-model-layers `layers/dense_ffn_tc_rows.rs`. `0` means off, the baseline.
+    /// hopper declares 128; its HARDWARE.toml records the measurement.
+    pub ffn_w4a16_tc_rows_max_m: u32,
+    /// 2026-10-05: Whether an NVFP4 dense-FFN prefill projection wider than the small-M arm and
+    /// not served by `w4a16_tc_rows` runs the BF16-activation tile `w4a16_gemm_t_m128_bf16(_v2)`
+    /// instead of the tiles that round activations to E4M3, read in metrale-model-layers
+    /// `layers/dense_ffn_tc_rows.rs`. Off is the baseline; hopper declares it on.
+    pub ffn_w4a16_bf16_tile: bool,
+    /// 2026-10-05: The W8A8 GEMV entry per token-tile band (8, 16, 32, 64, 128 rows), each a point
+    /// of [`crate::w8a8_gemv_entries::W8A8_GEMV_POINTS`], read by metrale-model-layers
+    /// `ops::W8a8Kernels::load`. The points of a band give the same bits. The baseline is
+    /// [`crate::w8a8_gemv_entries::W8A8_GEMV_BASELINE`]; hopper declares the measured points.
+    pub w8a8_gemv_entries: [&'static str; 5],
+    /// 2026-10-09: The W4A16 tensor-core GEMV entry per row tier (tc8, tc16), each a point of
+    /// [`crate::w4a16_gemv_tc_entries::W4A16_GEMV_TC_POINTS`], read by metrale-model-layers
+    /// `ops::gemv_tc`. The points of a tier give the same bits. The baseline is
+    /// [`crate::w4a16_gemv_tc_entries::W4A16_GEMV_TC_BASELINE`]; hopper declares measured points.
+    pub w4a16_gemv_tc_entries: [&'static str; 2],
+    /// 2026-10-09: From this many rows up, a per-row-scaled declared-W8A8 decode projection runs as
+    /// cuBLASLt FP8 GEMMs under the `adaptive` activation routing (metrale-model-layers
+    /// `ops/w8a8_decode/lt.rs`). `0` means never, the baseline; hopper declares 64.
+    pub w8a8_lt_min_rows: u32,
+    /// 2026-10-09: From this many rows up, an NVFP4 dense-FFN projection runs as an exact
+    /// transient BF16 copy of its weight and a cuBLASLt BF16 GEMM, under the `adaptive`
+    /// activation routing (metrale-model-layers `layers/dense_ffn_lt.rs`); it also sizes the
+    /// arena's `ffn_bf16_weight`. `0` means never, the baseline.
+    pub ffn_w4a16_lt_min_rows: u32,
+    /// 2026-10-09: How many load groups ahead the 64-column `w4a16_tc_rows` entries run
+    /// (tc_rows.cuh PF; 1, 2 or 3, the widest compiled point at or below it per row tier), read by
+    /// metrale-model-layers `ops::w4a16_tc_rows`. The points give the same bits. The baseline is 1.
+    pub w4a16_tc_rows_pf: u32,
 }

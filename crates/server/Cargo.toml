@@ -26,6 +26,8 @@ metrale-cache = { path = "../cache", default-features = false }
 metrale-comm = { path = "../comm", default-features = false }
 metrale-config = { path = "../config", default-features = false }
 metrale-circuit = { path = "../circuit" }
+# 2026-10-03: `met ml-utils` and `met serve --mock` plan through the pure mock planner.
+metrale-ml-utils = { path = "../ml-utils" }
 # 2026-09-30: `met circuit plan --hardware` resolves a class's kernel sources with the layout the
 # kernels build compiles (metrale_closure::layout); it was a dev-dependency only before.
 metrale-closure = { path = "../closure", default-features = false }
@@ -82,6 +84,7 @@ unicode-width = "0.2"
 ureq = { version = "3", features = ["json"] }
 
 [dev-dependencies]
+metrale-ml-utils = { path = "../ml-utils", features = ["test-utils"] }
 tempfile = "3"
 
 [[bin]]

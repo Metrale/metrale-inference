@@ -232,3 +232,77 @@ fn diff_takes_its_counts_explicitly_and_the_serve_flags_after_them() {
         assert!(Cli::try_parse_from(argv).is_err(), "{missing} is required");
     }
 }
+
+/// 2026-10-05: `show`, `display`, `plan` and `venn` take the one device argument (`DeviceArg`);
+/// without it the views stay offline.
+#[test]
+fn every_device_view_takes_the_one_hardware_argument() {
+    let r = "--recipe=qwen3.8/qwen3.8-27b-nvfp4-unsloth";
+    for view in ["show", "display"] {
+        let p = plan_args(&[view, r, "--hardware", "h100-sxm"]);
+        assert_eq!(p.device.hardware.as_deref(), Some("h100-sxm"), "{view}");
+        assert!(plan_args(&[view, r]).device.hardware.is_none(), "{view}");
+    }
+    match parse(&[
+        "venn",
+        "--target=t",
+        "--against=a",
+        "--out=o.md",
+        "--hardware=b200",
+    ])
+    .action
+    {
+        CircuitAction::Venn(v) => assert_eq!(v.device.hardware.as_deref(), Some("b200")),
+        other => panic!("parsed {other:?}"),
+    }
+    let plan = [
+        "plan",
+        "--checkpoint=c",
+        "--precision=declared",
+        "--hardware=gb10",
+    ];
+    match parse(&plan).action {
+        CircuitAction::Plan(p) => assert_eq!(p.device.hardware.as_deref(), Some("gb10")),
+        other => panic!("parsed {other:?}"),
+    }
+}
+
+/// 2026-10-05: `show --hardware` prints exactly the plan `met circuit plan --checkpoint <recipe>
+/// --precision recipe --format plan` prints; the device changes it, and an unknown one is
+/// refused by name.
+#[test]
+fn show_on_a_device_is_the_plan_command_s_plan() {
+    use metrale_circuit::hardware::{self, CircuitSource, ModelSpec, PrecisionChoice};
+    let recipe = "qwen3.8/qwen3.8-27b-nvfp4-unsloth";
+    let inst = instance(recipe).unwrap();
+    let show = parse(&["show", &format!("--recipe={recipe}")]).action;
+    let (tree, reg, _) = super::super::circuit_hw::tree_here().unwrap();
+    let model = super::super::circuit_hw::source(&tree)
+        .model(&ModelSpec {
+            checkpoint: recipe,
+            config_json: None,
+            hf_quant: None,
+            precision: PrecisionChoice::Recipe,
+        })
+        .unwrap();
+    for (mode, rows) in [(Mode::Decode, 1), (Mode::MultiSeq, 16)] {
+        let shown = device_text(&show, &inst, "h100-sxm", (mode, rows)).unwrap();
+        let run = metrale_circuit::venn::Run { mode, rows };
+        let one = hardware::plan_one(&reg, "h100-sxm", &tree, &model, run).unwrap();
+        assert_eq!(
+            shown,
+            hardware::plan_text(&model.circuit, &one),
+            "{mode:?} n={rows}"
+        );
+        let gb10 = device_text(&show, &inst, "gb10", (mode, rows)).unwrap();
+        assert_ne!(
+            shown, gb10,
+            "{mode:?} n={rows}: the device must change the plan"
+        );
+    }
+    let e = device_text(&show, &inst, "no-such-gpu", (Mode::Decode, 1)).unwrap_err();
+    assert!(
+        e.to_string().contains("unknown device `no-such-gpu`"),
+        "{e}"
+    );
+}

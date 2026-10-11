@@ -124,6 +124,11 @@ async fn serve_main() -> Result<()> {
         return cli::circuit::dispatch(args);
     }
 
+    // 2026-10-03: `ml-utils` plans and writes from checkpoint metadata; no subscriber, TUI or GPU.
+    if let Command::MlUtils(args) = cli.command {
+        return cli::ml_utils::dispatch(args);
+    }
+
     let no_tui = match &cli.command {
         // 2026-09-26: `--check-kernels` prints a report and one JSON line on
         // stdout and exits, so it runs without a dashboard.
@@ -133,7 +138,8 @@ async fn serve_main() -> Result<()> {
         Command::DumpServeOptions
         | Command::SyncRecipes
         | Command::Doctor
-        | Command::Circuit(_) => true,
+        | Command::Circuit(_)
+        | Command::MlUtils(_) => true,
     };
 
     // 2026-09-26: `benchmark certify --json` writes JSON lines on stdout, so
@@ -169,7 +175,8 @@ async fn serve_main() -> Result<()> {
         Command::DumpServeOptions
         | Command::SyncRecipes
         | Command::Doctor
-        | Command::Circuit(_) => {
+        | Command::Circuit(_)
+        | Command::MlUtils(_) => {
             unreachable!("handled before initialisation")
         }
         Command::Benchmark(args) => {

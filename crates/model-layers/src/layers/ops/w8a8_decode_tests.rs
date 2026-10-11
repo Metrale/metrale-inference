@@ -91,7 +91,14 @@ fn entry_edges() {
     ];
     for (rows, e) in cases {
         assert_eq!(entry_index(rows), e, "rows={rows}");
-        assert!(ENTRIES[e].starts_with(["mb1", "mb2", "mb4", "mb8", "mb16"][e]));
+        // 2026-10-05: Every schedule point of band `e` launches `1 << e` token tiles.
+        let tiles = format!("mb{}", 1 << e);
+        for p in metrale_kernels::w8a8_gemv_entries::W8A8_GEMV_POINTS[e] {
+            assert!(
+                *p == tiles || p.starts_with(&format!("{tiles}_")),
+                "{p} in band {e}"
+            );
+        }
     }
 }
 

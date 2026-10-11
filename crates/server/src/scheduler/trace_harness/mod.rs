@@ -30,3 +30,4 @@ mod scripted_tests;
 mod shared_lookup_tests;
 mod telemetry_tests;
 mod tests;
+mod varlen_with_decode_tests;

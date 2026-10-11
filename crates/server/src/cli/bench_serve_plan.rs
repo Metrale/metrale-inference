@@ -113,6 +113,23 @@ pub async fn attach_live_forward(
         .map_err(|e| anyhow::anyhow!("{e}"))
 }
 
+/// 2026-10-03: Refuse to run against a mock (rehearsal) server when the run is a gate run or an
+/// accuracy benchmark (`record_serve::mock_run_allowed`). An endpoint without `GET /forward` is
+/// not a Metrale server and is not refused.
+pub async fn refuse_mock_target(
+    target: &metrale_bench::TargetEndpoint,
+    correctness: bool,
+    gate_run: bool,
+) -> Result<()> {
+    let live =
+        metrale_bench::http::get_json(target, "/forward", std::time::Duration::from_secs(10))
+            .await
+            .ok()
+            .and_then(|v| serde_json::from_value::<gate::record_serve::LiveForward>(v).ok());
+    gate::record_serve::mock_run_allowed(live.as_ref(), correctness, gate_run)
+        .map_err(|e| anyhow::anyhow!("{e}"))
+}
+
 /// 2026-09-30: The overrides a gate serve renders a recipe with: the requested set and the port.
 /// The served recipe names its `--activation-quantization` routing itself (`plan_serve` refuses
 /// one that does not), so no routing is added here. `requested`, and so the record's
@@ -150,7 +167,7 @@ pub(crate) fn disclosed_from(args: &crate::cli::ServeArgs) -> BTreeMap<String, S
     gate::record_serve::disclosure(
         args.mtp_gate_force(),
         args.speculative,
-        args.prefill_codispatch,
+        args.prefill_batch.prefill_codispatch,
         args.w4a4_downcast,
         (args.expert_quantization.0 != metrale_model_layers::layers::ExpertQuantization::Fp8)
             .then(|| args.expert_quantization.0.name()),

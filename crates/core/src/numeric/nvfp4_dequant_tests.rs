@@ -2,7 +2,7 @@
 
 //! 2026-09-25: Goldens for [`super::dequant_nvfp4_to_f32`].
 //!
-//! Owner: model-arch weight loader (GLM-5.3).
+//! Owner: metrale-core.
 //! Invariants: every expected value is written out from the `E2M1` and `E4M3` bit layouts,
 //! not read from the runtime tables the code under test uses, so a corrupted
 //! `NVFP4_E2M1_LUT` cannot agree with itself.

@@ -39,7 +39,7 @@ impl DenseFfnLayer {
             return Ok(ctx.buffers.moe_output());
         }
         // 2026-09-28: The declared-W8A8 arm first (`dense_ffn_w8a8.rs`).
-        if self.forward_w8a8(input, 1, ctx, stream)? {
+        if self.forward_w8a8(input, 1, ctx, stream, false)? {
             return Ok(ctx.buffers.moe_output());
         }
         let h = ctx.config.hidden_size as u32;

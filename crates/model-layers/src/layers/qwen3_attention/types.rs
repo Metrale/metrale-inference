@@ -37,6 +37,10 @@ pub struct Qwen3AttentionLayer {
     /// checkpoint that declares them FP8 W8A8; run ahead of every other decode
     /// arm at 1..=64 rows (`w8a8_decode_arm.rs`).
     pub(crate) w8a8: Option<crate::layers::W8a8Mixer>,
+    /// 2026-10-05: The W8A8 kernels with an activation scratch of the prefill's own
+    /// (`set_w8a8_prefill_ctx`): prefill runs on its own stream, possibly beside a decode step,
+    /// and the decode arms' scratch (`w8a8.ctx`) must not be shared with it.
+    pub(crate) w8a8_prefill: Option<crate::layers::W8a8Ctx>,
     pub(super) attn_layer_idx: usize,
     /// 2026-09-25: LoRA adapter weights for the attention projections, installed
     /// by `set_lora_weights`; `None` is base weights only.

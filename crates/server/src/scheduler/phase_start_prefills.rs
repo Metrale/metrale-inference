@@ -51,9 +51,12 @@ pub(super) fn start_new_requests(
     // two or more new requests or a prefill is already in flight. A lone
     // request with nothing in flight keeps its inline chunk 0 and the
     // `max_batch_tokens` budget.
+    // 2026-10-09: `--prefill-varlen-with-decode` drops the "nothing active"
+    // condition, so a burst that lands while others decode joins varlen waves
+    // (`continue_in_progress_prefills`) instead of one inline chunk 0 each.
     let want_varlen_defer = chunked
         && !model.is_ep()
-        && active.is_empty()
+        && (active.is_empty() || sched.levers.prefill_varlen_with_decode)
         && (new_reqs.len() >= 2 || !prefilling.is_empty())
         && sched.levers.prefill_varlen;
     // 2026-09-25: `METRALE_HOLO_ALWAYS_MIXED` on a non-EP model with decodes

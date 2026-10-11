@@ -52,9 +52,19 @@ impl Qwen3SsmLayer {
 
     /// 2026-09-28: Install W8A8 gate/up/down on this layer's dense FFN
     /// (`DenseFfnLayer::set_w8a8_decode_weights`); refuses a MoE or absent FFN.
-    pub fn set_w8a8_ffn_weights(&mut self, w: W8a8Ffn, hidden: u32, inter: u32) -> Result<()> {
+    pub fn set_w8a8_ffn_weights(
+        &mut self,
+        w: W8a8Ffn,
+        prefill: crate::layers::W8a8Ctx,
+        hidden: u32,
+        inter: u32,
+    ) -> Result<()> {
         match self.ffn {
-            FfnComponent::Dense(ref mut d) => d.set_w8a8_decode_weights(w, hidden, inter),
+            FfnComponent::Dense(ref mut d) => {
+                d.set_w8a8_decode_weights(w, hidden, inter)?;
+                d.set_w8a8_prefill_ctx(prefill);
+                Ok(())
+            }
             _ => anyhow::bail!("W8A8 FFN weights need a dense FFN"),
         }
     }
@@ -109,7 +119,7 @@ impl Qwen3SsmLayer {
         match self.w8a8 {
             Some(ref w) => w
                 .ctx
-                .proj(ctx.gpu, &w.input, normed, ldx, rows, out, ldc, stream),
+                .proj_rows(ctx.gpu, &w.input, normed, ldx, rows, out, ldc, stream),
             None => Ok(false),
         }
     }
@@ -148,8 +158,33 @@ impl Qwen3SsmLayer {
         match self.w8a8 {
             Some(ref w) => w
                 .ctx
-                .proj(ctx.gpu, &w.output, normed_out, ldx, rows, out, ldc, stream),
+                .proj_rows(ctx.gpu, &w.output, normed_out, ldx, rows, out, ldc, stream),
             None => Ok(false),
         }
+    }
+
+    /// 2026-10-05: Install the prefill's W8A8 context: the same kernels as the decode arms with
+    /// an activation scratch of its own. Without it the prefill arms below launch nothing.
+    pub fn set_w8a8_prefill_ctx(&mut self, ctx: crate::layers::W8a8Ctx) {
+        self.w8a8_prefill = Some(ctx);
+    }
+
+    /// 2026-10-05: The prefill QKV|Z (`out[rows, qkvz]`) or out_proj (`out[rows, hidden]`, with
+    /// `output`) of `x[rows, k]` at the declared W8A8, on the prefill's own scratch, in calls of at
+    /// most `W8A8_MAX_ROWS` rows. `Ok(false)` launches nothing (no W8A8 weights or no context).
+    pub(super) fn w8a8_prefill_proj(
+        &self,
+        ctx: &ForwardContext,
+        output: bool,
+        x: DevicePtr,
+        rows: usize,
+        out: DevicePtr,
+        stream: u64,
+    ) -> Result<bool> {
+        let (Some(w), Some(pc)) = (self.w8a8, self.w8a8_prefill) else {
+            return Ok(false);
+        };
+        let wt = if output { &w.output } else { &w.input };
+        pc.proj_rows(ctx.gpu, wt, x, wt.k(), rows, out, wt.n(), stream)
     }
 }

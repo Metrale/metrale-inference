@@ -13,6 +13,7 @@ use anyhow::Result;
 use metrale_gpu_runtime::gpu::DevicePtr;
 
 use super::nvfp4_plan::Nvfp4PrefillPlan;
+use super::tc_rows::PREFILL_SMALL_M_MAX;
 use super::{DenseFfnLayer, mmq_small_tile_enabled, mmq_tile64_enabled};
 use crate::layer::ForwardContext;
 use crate::layers::ops;
@@ -53,7 +54,7 @@ impl DenseFfnLayer {
             use_v2,
             bf16_kernel,
             bf16_tc_prefill,
-        } = self.nvfp4_prefill_plan(ctx);
+        } = self.nvfp4_prefill_plan(ctx, m);
 
         // 2026-09-28: Set when the down GEMM's NVFP4 kernel already applied down's
         // `weight_scale_2` in its store (`ops::nvfp4_mmq_gemm_tiled`).
@@ -157,6 +158,14 @@ impl DenseFfnLayer {
                             stream,
                         )?;
                     }
+                    // 2026-10-09: The cuBLASLt arm (`dense_ffn_lt.rs`) from the target's
+                    // `ffn_w4a16_lt_min_rows`; it reads the row-major weight, not `$wt`.
+                    _ if self.try_ffn_lt(ctx, $w, $in, $out, m, $n, $k, stream)? => {}
+                    // 2026-10-05: The row-tile arm (`dense_ffn_tc_rows.rs`) up to the target's
+                    // `ffn_w4a16_tc_rows_max_m`; it reads the row-major weight, not `$wt`.
+                    _ if self.tc_rows_serves(ctx, m, $n, $k) => {
+                        self.w4a16_tc_rows_chunked(ctx, $w, $in, $out, m, $n, $k, stream)?
+                    }
                     Some(wt) if fp8_m64_prefill => ops::w4a16_gemm_n128(
                         ctx.gpu,
                         self.w4a16_gemm_t_k,
@@ -196,7 +205,7 @@ impl DenseFfnLayer {
                     )?,
                     // 2026-09-25: m <= 64: `w4a16_prefill_gemm` picks the small-M kernels (unless
                     // `METRALE_FFN_SMALLM=0`) and otherwise the same v2/m128 kernels as below.
-                    Some(wt) if m <= 64 => {
+                    Some(wt) if m <= PREFILL_SMALL_M_MAX => {
                         self.w4a16_prefill_gemm(ctx, $w, Some(&wt), $in, $out, m, $n, $k, stream)?
                     }
                     Some(wt) if self.w4a16_gemm_t_m128_v2_k.0 != 0 => ops::w4a16_gemm_n128_m128_v2(

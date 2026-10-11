@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "metrale-ml-utils"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metrale Engine: model utilities as pure plans (mock/rehearsal checkpoints, inspection, extrapolation)."
+
+# 2026-10-03: Pure logic. No GPU, no file or network I/O, no environment, no clock. Callers
+# (the `met ml-utils` CLI, the `--mock` weight loader, the tests) read checkpoints through the
+# `CheckpointSource` trait and write through `CheckpointSink`.
+
+[features]
+# 2026-10-03: In-memory `CheckpointSource` / `CheckpointSink` for other crates' tests.
+test-utils = []
+
+[dependencies]
+metrale-circuit = { path = "../circuit" }
+metrale-config = { path = "../config", default-features = false }
+metrale-core = { path = "../core", default-features = false }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2.workspace = true
+thiserror.workspace = true
+# 2026-10-03: Same pin as `metrale-circuit`.
+toml = "1.1"
+
+[lints]
+workspace = true

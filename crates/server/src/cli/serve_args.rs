@@ -219,33 +219,10 @@ pub struct ServeArgs {
     #[arg(long, default_value = "auto", value_name = "auto|on|off")]
     pub ssm_batched_recurrent: String,
 
-    /// Varlen (ragged) batched prefill, opt-in (default: off).
-    ///
-    /// Concurrently queued prompts of different lengths are prefilled together,
-    /// one forward per wave, so each projection GEMM launches once over the wave's
-    /// summed tokens instead of once per request. The scheduler defers chunk 0 of
-    /// new requests so they can join a wave, and a wave holds at most
-    /// min(`--max-prefill-tokens`, the max batch tokens) tokens. With
-    /// `--prefill-codispatch` also set, this path is used.
-    ///
-    /// Batching changes GEMM row counts, and kernels are selected on row count, so
-    /// per-request outputs can differ from the serial path.
-    ///
-    /// Environment fallback: `METRALE_PREFILL_VARLEN=1` (or `true`) turns it on
-    /// when this flag is absent; a given flag wins over it.
-    #[arg(long)]
-    pub prefill_varlen_batch: bool,
-
-    /// Co-dispatch fresh prompts: when >=2 requests without images are admitted
-    /// together with nothing decoding or prefilling, defer their chunk-0 prefill so
-    /// they batch into one forward.
-    ///
-    /// Only with chunked prefill, and not on an expert-parallel model.
-    ///
-    /// Environment fallback: `METRALE_PREFILL_CODISPATCH=1` (or `true`) turns it on
-    /// when this flag is absent.
-    #[arg(long)]
-    pub prefill_codispatch: bool,
+    // 2026-10-09: `--prefill-varlen-batch`, `--prefill-codispatch` and
+    // `--prefill-varlen-with-decode` (cli/serve_args_prefill.rs), at this spot in `--help`.
+    #[command(flatten)]
+    pub prefill_batch: crate::cli::serve_args_prefill::ServePrefillBatchArgs,
 
     /// Precision of each linear layer (default: declared).
     ///

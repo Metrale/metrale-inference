@@ -80,6 +80,42 @@ impl W8a8Ctx {
         Ok(true)
     }
 
+    /// 2026-10-05: [`Self::proj`] over any row count, in calls of at most
+    /// `ops::W8A8_MAX_ROWS` rows (a row's bits do not depend on the call it falls in, the module
+    /// invariant); `Ok(false)`, launching nothing, when a full-width call is not available.
+    #[allow(clippy::too_many_arguments)]
+    pub fn proj_rows(
+        &self,
+        gpu: &dyn GpuBackend,
+        w: &W8a8Weight,
+        x: DevicePtr,
+        ldx: u32,
+        rows: usize,
+        out: DevicePtr,
+        ldc: u32,
+        stream: u64,
+    ) -> Result<bool> {
+        if rows == 0 || !self.available(w, rows.min(ops::W8A8_MAX_ROWS)) {
+            return Ok(false);
+        }
+        let mut row = 0;
+        while row < rows {
+            let n = (rows - row).min(ops::W8A8_MAX_ROWS);
+            self.proj(
+                gpu,
+                w,
+                x.offset(row * ldx as usize * 2),
+                ldx,
+                n,
+                out.offset(row * ldc as usize * 2),
+                ldc,
+                stream,
+            )?;
+            row += n;
+        }
+        Ok(true)
+    }
+
     /// 2026-09-28: The down projection of a SiLU FFN: `out` = W8A8 of
     /// `bf16(silu(gate) * up)` (gate and up `[rows, ld]` BF16) and `w`, with the
     /// SiLU product quantized in the same launch; `Ok(false)` when not available.

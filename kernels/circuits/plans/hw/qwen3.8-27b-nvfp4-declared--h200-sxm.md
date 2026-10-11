@@ -31,7 +31,55 @@ The checkpoint's formats are kept; this is how the device and its class's compil
 
 ## Tensor-core policy
 
-kernels/hopper/HARDWARE.toml states no `[tensor_core_policy]`: nothing is enforced on this class. The gap report names the compute unit of every planned group.
+kernels/hopper/HARDWARE.toml `[tensor_core_policy]`: a plan that runs one of these ops off tensor cores is refused unless an exemption lists the op, mode, rows and kernels. Compute units are the kernel families' (`compute`, `mma`).
+
+| ops | modes | from rows | weights |
+|---|---|---:|---|
+| linear, lm_head, router, expert_gate_up, expert_down, paged_attention | decode, multi_seq, verify, draft | 1 | any |
+
+| run | covered nodes | on tensor cores | exempted sites |
+|---|---:|---:|---:|
+| decode n=1 | 224 | 176 | 1 |
+| multi_seq n=16 | 448 | 352 | 2 |
+| multi_seq n=128 | 448 | 352 | 2 |
+
+Covered sites no kernel of this class plans (gaps; their kernel is tensor-core work):
+
+| run | site | op | weight |
+|---|---|---|---|
+| decode n=1 | `dense_ffn.gate_up` | linear:gate_up | nvfp4/g16 |
+| decode n=1 | `dense_ffn.down` | linear:down | nvfp4/g16 |
+| decode n=1 | `attn.attend` | paged_attention | - |
+| decode n=1 | `head.lm_head` | lm_head | fp8/channel |
+| multi_seq n=16 | `dense_ffn.gate_up` | linear:gate_up | nvfp4/g16 |
+| multi_seq n=16 | `dense_ffn.down` | linear:down | nvfp4/g16 |
+| multi_seq n=16 | `attn.attend` | paged_attention | - |
+| multi_seq n=16 | `head.lm_head` | lm_head | fp8/channel |
+| multi_seq n=128 | `dense_ffn.gate_up` | linear:gate_up | nvfp4/g16 |
+| multi_seq n=128 | `dense_ffn.down` | linear:down | nvfp4/g16 |
+| multi_seq n=128 | `attn.attend` | paged_attention | - |
+| multi_seq n=128 | `head.lm_head` | lm_head | fp8/channel |
+
+Covered sites off tensor cores, each under an exemption (`backlog` is a known violation awaiting a tensor-core kernel):
+
+| run | site | op | weight | unit | kernels | exemption |
+|---|---|---|---|---|---|---|
+| decode n=1 | `gdn.ba` | linear:ba | bf16 | cuda_core | `ssm_preprocess::dense_gemv_ba_gates` | #4 backlog |
+| multi_seq n=16 | `gdn.ba` | linear:ba | bf16 | cuda_core | `ssm_preprocess::dense_gemm_ba_gates_prefill` | #4 backlog |
+| multi_seq n=16 | `gdn.ba` | linear:ba | bf16 | cuda_core | `ssm_preprocess::dense_gemv_ba_gates` | #4 backlog |
+| multi_seq n=128 | `gdn.ba` | linear:ba | bf16 | cuda_core | `ssm_preprocess::dense_gemm_ba_gates_prefill` | #4 backlog |
+| multi_seq n=128 | `gdn.ba` | linear:ba | bf16 | cuda_core | `ssm_preprocess::dense_gemv_ba_gates` | #4 backlog |
+
+| # | kind | ops | rows | reason |
+|---:|---|---|---|---|
+| 1 | backlog | linear, lm_head | 1-3 | NVFP4 weights run W4A16 on Hopper (no FP4 MMA). At 1-3 rows they plan onto these inherited CUDA-core GEMVs; the inherited tensor-core row tier (w4a16_tc, mma.sync.m16n8k16.bf16) starts at 4 rows. Hopper's own path is a wgmma tier, or W4A8 on the FP8 MMA through the exact E2M1->E4M3 conversion. Unmeasured on Hopper. |
+| 2 | backlog | lm_head, router, linear | 1-64 | BF16 CUDA-core GEMV and batched GEMV: the BF16 head at 1-8 rows, the MoE router at 1-64 rows, the MTP draft projections at 1 row. The runtime's lm_head_m16_tc (dense_gemm_m16_bf16, tensor core) takes the head at 5-16 rows, but no rule models it yet. |
+| 3 | backlog | paged_attention | 1-128 | Paged decode attention plans onto the inherited CUDA-core kernel at every row count. The class's split-K decode pair (attn_decode_splitk) is what the runtime launches and no rule models it; a tensor-core decode attention (GQA groups fill an MMA tile) does not exist on this class. |
+| 4 | backlog | linear:ba | 1-128 | The GatedDeltaNet beta/decay projection (N = 2 x value heads) runs as a CUDA-core GEMV/GEMM fused with the gate math; gb10's batched twin rule is removed on this class (its row threshold is two CTAs per SM on 48 SMs). |
+| 5 | shape | linear:shared_gate | 1-64 | The shared-expert gate projects to one column and is folded into the expert blend: no MMA tile to fill. |
+| 6 | backlog | expert_gate_up, expert_down, linear:shared_gate_up, linear:shared_down | 1-64 | FP8 and BF16 MoE experts on CUDA cores (1-row fused and scalar grouped). FP8 MMA is native on Hopper, so these are the FP8 35B-A3B's first tensor-core gap; the class's moe_w8a8_m16 is not modelled by any rule yet. |
+| 7 | backlog | lm_head | 17-32 | The batched MTP draft head at 17-32 rows runs the CUDA-core W4A16 batch32 GEMV: the tensor-core row tiers stop at 16 rows. |
+| 8 | backlog | lm_head | 9-128 | The BF16 head above 8 rows runs dense_gemm_bf16, a CUDA-core tiled FMA GEMM inherited from gb10. |
 
 ## Roofline estimates
 
@@ -287,9 +335,9 @@ Kernels a rule under this policy names that the device's class does not provide:
 | nvfp4_mmq::metrale_nvfp4_quantize_bf16 | expected absent: Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights. |
 | nvfp4_mmq::metrale_nvfp4_scale_bf16 | expected absent: Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights. |
 | nvfp4_mmq::metrale_nvfp4_silu_mul_quant | expected absent: Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights. |
-| w4a4_gemv_mx::w4a4_gemv_mx16_nt2 | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) |
-| w4a4_gemv_mx::w4a4_gemv_mx16_ps | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) |
-| w4a4_gemv_mx::w4a4_gemv_mx32_nt4 | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) |
-| w4a4_gemv_mx::w4a4_gemv_mx32_ps | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) |
-| w4a4_gemv_mx::w4a4_gemv_mx8 | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) |
-| w4a4_gemv_mx::w4a4_quant_rows | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) |
+| w4a4_gemv_mx::w4a4_gemv_mx16_nt2 | expected absent: Hopper sm_90a: block-scaled FP4 MMA is unsupported; the hardware guard excludes the W4A4 decode, and NVFP4 projections run W4A16. |
+| w4a4_gemv_mx::w4a4_gemv_mx16_ps | expected absent: Hopper sm_90a: block-scaled FP4 MMA is unsupported; the hardware guard excludes the W4A4 decode, and NVFP4 projections run W4A16. |
+| w4a4_gemv_mx::w4a4_gemv_mx32_nt4 | expected absent: Hopper sm_90a: block-scaled FP4 MMA is unsupported; the hardware guard excludes the W4A4 decode, and NVFP4 projections run W4A16. |
+| w4a4_gemv_mx::w4a4_gemv_mx32_ps | expected absent: Hopper sm_90a: block-scaled FP4 MMA is unsupported; the hardware guard excludes the W4A4 decode, and NVFP4 projections run W4A16. |
+| w4a4_gemv_mx::w4a4_gemv_mx8 | expected absent: Hopper sm_90a: block-scaled FP4 MMA is unsupported; the hardware guard excludes the W4A4 decode, and NVFP4 projections run W4A16. |
+| w4a4_gemv_mx::w4a4_quant_rows | expected absent: Hopper sm_90a: block-scaled FP4 MMA is unsupported; the hardware guard excludes the W4A4 decode, and NVFP4 projections run W4A16. |

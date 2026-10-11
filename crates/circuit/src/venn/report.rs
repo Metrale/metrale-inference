@@ -33,6 +33,44 @@ pub struct Side<'a> {
     pub instance: &'a Instance,
     /// 2026-09-29: Its circuit and rules.
     pub loaded: &'a Loaded,
+    /// 2026-10-05: Planned on a device's class (`met circuit venn --hardware`); `None` plans it
+    /// offline with its own rules, every kernel they name counted as built.
+    pub on_device: Option<OnDevice<'a>>,
+}
+
+/// 2026-10-05: A side planned on a device's class: its fused plan per run, in
+/// [`VennInputs::runs`] order, and the policy settings after the class's defaults.
+#[derive(Debug, Clone, Copy)]
+pub struct OnDevice<'a> {
+    /// 2026-10-05: One plan per run.
+    pub plans: &'a [FusionPlan],
+    /// 2026-10-05: The settings the plans were made under.
+    pub settings: &'a BTreeMap<String, String>,
+}
+
+impl Side<'_> {
+    /// 2026-10-05: The policy settings this side is planned and costed under.
+    fn settings(&self) -> &BTreeMap<String, String> {
+        match &self.on_device {
+            Some(d) => d.settings,
+            None => &self.instance.policy.settings,
+        }
+    }
+
+    /// 2026-10-05: The side's plan at the `i`-th run.
+    fn plan(&self, i: usize, run: Run) -> Result<FusionPlan, VennError> {
+        match &self.on_device {
+            Some(d) => d.plans.get(i).cloned().ok_or_else(|| {
+                VennError::Run(format!(
+                    "{}: no device plan for {} n={}",
+                    self.instance.recipe,
+                    run.mode.name(),
+                    run.rows
+                ))
+            }),
+            None => fused(self, run),
+        }
+    }
 }
 
 /// 2026-09-29: Everything a report is built from.
@@ -50,6 +88,8 @@ pub struct VennInputs<'a> {
     pub runs: Vec<Run>,
     /// 2026-09-29: The command that regenerates the report, printed in its header.
     pub command: String,
+    /// 2026-10-05: The device the sides are planned on, as the report names it; `None` offline.
+    pub device: Option<String>,
 }
 
 /// 2026-09-29: One site: a template node across the layers that instantiate it.
@@ -126,6 +166,8 @@ pub struct VennReport {
     pub cited: BTreeMap<String, f64>,
     /// 2026-09-29: The regenerating command.
     pub command: String,
+    /// 2026-10-05: The device the sides were planned on; `None` offline.
+    pub device: Option<String>,
 }
 
 fn fused(side: &Side<'_>, run: Run) -> Result<FusionPlan, VennError> {
@@ -190,10 +232,10 @@ pub fn build(inp: &VennInputs<'_>) -> Result<VennReport, VennError> {
         }
     }
     let tc = &inp.target.loaded.circuit;
-    let settings = &inp.target.instance.policy.settings;
+    let settings = inp.target.settings();
     let mut tables = Vec::with_capacity(inp.runs.len());
     let mut flags = Vec::new();
-    for &run in &inp.runs {
+    for (i, &run) in inp.runs.iter().enumerate() {
         let scope = in_section(tc, run.mode);
         if scope.is_empty() {
             return Err(VennError::Run(format!(
@@ -204,10 +246,12 @@ pub fn build(inp: &VennInputs<'_>) -> Result<VennReport, VennError> {
         let plans: Vec<FusionPlan> = inp
             .against
             .iter()
-            .map(|s| fused(s, run))
+            .map(|s| s.plan(i, run))
             .collect::<Result<_, _>>()?;
-        let target_plan = if inp.target.instance.golden {
-            Some(fused(&inp.target, run)?)
+        // 2026-10-05: On a device the target is matched to families by op: its plan there may
+        // hold placeholder groups, which no family runs.
+        let target_plan = if inp.target.instance.golden && inp.target.on_device.is_none() {
+            Some(inp.target.plan(i, run)?)
         } else {
             None
         };
@@ -218,7 +262,7 @@ pub fn build(inp: &VennInputs<'_>) -> Result<VennReport, VennError> {
             .map(|(s, p)| Subject {
                 recipe: &s.instance.recipe,
                 circuit: &s.loaded.circuit,
-                settings: &s.instance.policy.settings,
+                settings: s.settings(),
                 plan: Some(p),
             })
             .collect();
@@ -318,6 +362,7 @@ pub fn build(inp: &VennInputs<'_>) -> Result<VennReport, VennError> {
         tables,
         cited,
         command: inp.command.clone(),
+        device: inp.device.clone(),
     })
 }
 
@@ -327,7 +372,7 @@ fn penalty(
     nodes: &[NodeIdx],
     run: Run,
 ) -> Result<f64, VennError> {
-    let settings = &inp.target.instance.policy.settings;
+    let settings = inp.target.settings();
     let r = &inp.families.roofline;
     let mut added = 0.0;
     for &n in nodes {

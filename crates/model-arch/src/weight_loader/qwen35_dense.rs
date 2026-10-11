@@ -280,13 +280,11 @@ impl ModelWeightLoader for Qwen35DenseWeightLoader {
         // also builds FP8 casts of its BF16 `[Q|K|V|Z]` and out_proj (`bf16_to_fp8`).
         let fp8_ssm_prefill = std::env::var_os("METRALE_NO_GDN_FP8_PREFILL").is_none();
         let bf16_to_fp8_k = if fp8_ssm_prefill {
+            // 2026-10-05: What the casts serve; the declared W8A8 (`w8a8_install.rs`) outranks it.
             tracing::info!(
-                "SSM in_proj_qkv + out_proj via native FP8 prefill GEMM \
-                 (BF16 act × FP8 weight via fp8_gemm_n128). PREFILL ONLY: \
-                 decode + batched verify read the NVFP4 copy — weight-streaming \
-                 GEMV at M<=8, tile GEMM above it (trait_decode_batched.rs). \
-                 The FP8 copy reaches decode only at M<=8 on a build whose \
-                 batched NVFP4 GEMVs are absent"
+                "SSM in_proj_qkv + out_proj: unscaled E4M3 casts (bf16_to_fp8) of the \
+                 dequantized weights for the fp8_fp8_gemm prefill arm. A layer that installs \
+                 the declared W8A8 runs that in prefill and decode and never reads them"
             );
             Some(gpu.kernel("w4a16", "bf16_to_fp8")?)
         } else {

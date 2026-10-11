@@ -152,6 +152,9 @@ pub fn render(r: &VennReport) -> String {
     let _ = writeln!(s, "| Checkpoint | `{}` |", t.checkpoint);
     let _ = writeln!(s, "| Circuit | `kernels/circuits/{}.toml` |", r.arch);
     let _ = writeln!(s, "| Kernel target | `{}` |", t.target);
+    if let Some(d) = &r.device {
+        let _ = writeln!(s, "| Planned on | {d} |");
+    }
     let mut kinds: Vec<(LayerKind, usize)> = Vec::new();
     for k in &r.layer_kinds {
         match kinds.iter_mut().find(|(x, _)| x == k) {

@@ -144,6 +144,8 @@ pub struct DenseFfnLayer {
     /// 2026-09-28: W8A8 gate, up and down (`set_w8a8_decode_weights`), for a checkpoint that
     /// declares them FP8 W8A8; run ahead of every other arm at 1..=64 decode rows.
     pub(crate) w8a8: Option<crate::layers::W8a8Ffn>,
+    /// 2026-10-05: The prefill's W8A8 context (`set_w8a8_prefill_ctx`), read by `forward_prompt`.
+    pub(crate) w8a8_prefill: Option<crate::layers::W8a8Ctx>,
     w8a16_gemv_k: KernelHandle,
     w8a16_gemm_k: KernelHandle,
     w8a16_gemv_batch4_k: KernelHandle,
@@ -447,6 +449,14 @@ mod prefill_nvfp4;
 /// 2026-09-26: The per-call arm choices of the NVFP4 prefill branch.
 #[path = "dense_ffn_nvfp4_plan.rs"]
 mod nvfp4_plan;
+
+/// 2026-10-05: The row-tile W4A16 arm of the NVFP4 prefill branch.
+#[path = "dense_ffn_tc_rows.rs"]
+mod tc_rows;
+
+/// 2026-10-09: The wide-row cuBLASLt arm of the NVFP4 projections.
+#[path = "dense_ffn_lt.rs"]
+mod lt;
 
 /// 2026-09-25: Whether `forward_k2`, `forward_k3` or `forward_km` must hand the layer to
 /// `forward_prefill`: true when a BF16 or FP8 overlay is installed.

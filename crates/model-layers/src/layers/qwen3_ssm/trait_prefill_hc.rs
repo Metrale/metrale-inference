@@ -249,7 +249,7 @@ impl Qwen3SsmLayer {
             stream,
         )?;
         stage!("hc_pre_ffn");
-        self.ffn.forward_prefill(hidden, num_tokens, ctx, stream)?;
+        self.ffn.forward_prompt(hidden, num_tokens, ctx, stream)?;
         stage!("moe");
         ops::hc_post_site(
             ctx.gpu,

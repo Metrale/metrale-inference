@@ -54,6 +54,9 @@ fn shard_problems(root: &Path, label: &str, record: &GateRecord, path: &Path) ->
             record.verdict_reason
         ));
     }
+    if let Some(m) = super::record_serve::mock_problem(record) {
+        problems.push(format!("{label}: {m}"));
+    }
     if !record.dirty_paths.is_empty() {
         problems.push(format!(
             "{label}: measured from a dirty tree — {} uncommitted invalidation-set \

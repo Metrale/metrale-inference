@@ -68,7 +68,7 @@ impl DenseFfnLayer {
         match self.fixed_route(m, ctx.gpu) {
             Some(Fixed::W8a8) => {
                 anyhow::ensure!(
-                    self.forward_w8a8(input, m, ctx, stream)?,
+                    self.forward_w8a8(input, m, ctx, stream, false)?,
                     "ffn: the declared W8A8 arm declined {m} rows"
                 );
                 Ok(())

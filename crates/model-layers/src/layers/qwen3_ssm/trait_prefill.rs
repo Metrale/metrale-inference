@@ -180,7 +180,7 @@ impl Qwen3SsmLayer {
             stream,
         )?;
         self.ffn
-            .forward_prefill(ctx.buffers.norm_output(), num_tokens, ctx, stream)?;
+            .forward_prompt(ctx.buffers.norm_output(), num_tokens, ctx, stream)?;
         // 2026-09-25: METRALE_GDN_DUMP tag `moe_out`: the FFN output.
         super::debug::maybe_dump_gdn_buf(
             ctx.gpu,

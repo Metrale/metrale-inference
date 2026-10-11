@@ -221,7 +221,12 @@ impl Qwen3AttentionLayer {
     /// (`ctx.stats.once`); either route writes the line.
     pub(super) fn log_cache_skip_qkv_route(&self, ctx: &ForwardContext, cublas: bool) {
         if ctx.stats.once("log:attn_cache_skip_qkv_prefill") {
-            if cublas {
+            // 2026-10-05: The per-row W8A8 arm (`w8a8_prefill_qkv_segment`) runs ahead of both.
+            if self.w8a8.is_some() && self.w8a8_prefill.is_some() {
+                tracing::info!(
+                    "[metrale] attention Q/K/V prefill (chunk 0, cache-skip): declared per-row                      W8A8 (per-token E4M3 activations x per-row FP8 weight read in place), on                      the prefill's own scratch"
+                );
+            } else if cublas {
                 tracing::info!(
                     "[metrale] attention Q/K/V prefill (chunk 0, cache-skip): W8A8 block-scaled \
                      via cuBLASLt, activation quantized once for all three \

@@ -99,11 +99,12 @@ pub(super) struct RunOptions {
     /// 2026-10-03: Close the request channel while the loop is parked at the first model call
     /// whose trace line starts with this prefix, then let it go on (the D15 race, forced).
     pub close_inbox_at: Option<&'static str>,
-    /// 2026-09-25: The instrument set the run feeds. The goldens are recorded with a
-    /// never-configured (`Off`) one.
+    /// 2026-09-25: The instrument set the run feeds; goldens use a never-configured (`Off`) one.
     pub telemetry: &'static metrale_telemetry::Telemetry,
     /// 2026-09-25: Fault injection for the pipelined lane (the negative controls).
     pub pipeline_faults: crate::scheduler::PipelineFaults,
+    /// 2026-10-09: Edits the run's levers after `SchedLevers::defaults()`; a no-op by default.
+    pub apply_levers: fn(&mut SchedLevers),
 }
 
 /// 2026-09-25: Never configured: every feed into it takes the `Off` branch.
@@ -134,6 +135,7 @@ impl Default for RunOptions {
             close_inbox_at: None,
             telemetry: &TELEMETRY_OFF,
             pipeline_faults: crate::scheduler::PipelineFaults::NONE,
+            apply_levers: |_| {},
         }
     }
 }
@@ -353,6 +355,7 @@ fn run_scenario_inner(sc: &Scenario, build: DeviceBuilder) -> Vec<String> {
     };
     let mut levers = SchedLevers::defaults();
     levers.mtp_gate_force = opts.mtp_gate_force;
+    (opts.apply_levers)(&mut levers);
     let levers = Arc::new(levers);
     levers.set_loop_watchdog(opts.loop_watchdog);
     let masks = VocabMasks {

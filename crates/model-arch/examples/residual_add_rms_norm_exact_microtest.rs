@@ -22,6 +22,8 @@ use metrale_gpu_runtime::kernel_args::{KernelLaunch, div_ceil};
 
 #[path = "common/norm_fusion_fixture.rs"]
 mod fixture;
+#[path = "common/xclass_digest.rs"]
+mod xclass_digest;
 use fixture::{EPS, HIDDENS, MAX_ROWS, Rng, backends, bytes, compare, matrix, sentinel, upload};
 
 struct Kernels {
@@ -115,6 +117,19 @@ fn control(
     norm_launch(g, k.norm, &[ha, w, oa, ra], MAX_ROWS, h)?;
     norm_launch(g, k.control, &[hc, src, w, oc, rc], MAX_ROWS, h)?;
     let differs = compare(g, oa, oc, total, total)?;
+    let mut out = vec![0u8; total];
+    g.copy_d2h(ha, &mut out)?;
+    xclass_digest::print(&format!("bf16_residual_add H={h} rows={MAX_ROWS}"), &out);
+    g.copy_d2h(oa, &mut out)?;
+    xclass_digest::print(
+        &format!("rms_norm_residual out H={h} rows={MAX_ROWS}"),
+        &out,
+    );
+    g.copy_d2h(ra, &mut out)?;
+    xclass_digest::print(
+        &format!("rms_norm_residual res H={h} rows={MAX_ROWS}"),
+        &out,
+    );
     for p in [ha, hc, oa, ra, oc, rc] {
         g.free(p)?;
     }

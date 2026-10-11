@@ -14,7 +14,10 @@
 // - Activations are staged per load group in shared memory times P::ACT_LIFT; a row's sum
 //   order is fixed by K alone and its MMA column reads only its own activations, so a row's
 //   output bits do not depend on M, on the other rows, on NT or on G.
-// - Grid (N / TR_COLS, 1, 1), block TR_THREADS, static shared memory only.
+// - Grid (N / TR_COLS, 1, 1), block TR_THREADS, static shared memory only; with W warps per
+//   block (WARPS, the N tile of 16 * WARPS columns) grid (N / (16 * WARPS), 1, 1) and block
+//   32 * WARPS. Each warp's 16 columns are computed the same way whatever WARPS is, so it changes
+//   no output bit.
 
 #pragma once
 
@@ -38,7 +41,10 @@ __device__ __forceinline__ void tr_mma_bf16(float* c, const unsigned int* a, uns
 // lane runs), one group ahead; each group's activations are loaded one group ahead into
 // registers and stored (times P::ACT_LIFT) into the other shared buffer after the current
 // group's MMAs. G changes only how loads are batched, never the arithmetic.
-template <class P, int NT, int G, bool RAGGED = false>
+// 2026-10-09: PF is how many groups of weights the loads run ahead (1: one group, as before). A
+// deeper ring keeps more bytes in flight per warp on a class whose DRAM latency x bandwidth needs
+// it; it changes when a group is loaded, never what is summed or in which order.
+template <class P, int NT, int G, bool RAGGED = false, int WARPS = TR_WARPS, int PF = 1>
 __device__ __forceinline__ void tr_block(
     const __nv_bfloat16* __restrict__ A, const typename P::Mat& W, __nv_bfloat16* __restrict__ C,
     unsigned int M, unsigned int N, unsigned int K, unsigned int lda, unsigned int ldc,
@@ -52,10 +58,11 @@ __device__ __forceinline__ void tr_block(
     constexpr int RS = GK * 2 + 16;
     constexpr int ROWS = 8 * NT;
     constexpr int U4 = ROWS * GK * 2 / 16;
-    constexpr int PER = (U4 + TR_THREADS - 1) / TR_THREADS;
+    constexpr int THREADS = WARPS * 32;
+    constexpr int PER = (U4 + THREADS - 1) / THREADS;
     __shared__ __align__(16) unsigned char xs[2][ROWS * RS];
     const unsigned int warp = threadIdx.x >> 5, lane = threadIdx.x & 31, g = lane >> 2, t = lane & 3;
-    const unsigned int f0 = col_block * TR_COLS + warp * 16;
+    const unsigned int f0 = col_block * (WARPS * 16) + warp * 16;
     const unsigned int ngroups = K / GK;
     const unsigned int nt_live = (M + 7) / 8;
     const __nv_bfloat162 liftx2 = __floats2bfloat162_rn(P::ACT_LIFT, P::ACT_LIFT);
@@ -64,7 +71,7 @@ __device__ __forceinline__ void tr_block(
     auto group_load = [&](unsigned int gi) {
         #pragma unroll
         for (int i = 0; i < PER; i++) {
-            const unsigned int u = threadIdx.x + i * TR_THREADS;
+            const unsigned int u = threadIdx.x + i * THREADS;
             const unsigned int row = u / (GK / 8), col = u % (GK / 8);
             xr[i] = (u < U4 && row < M)
                 ? *(const uint4*)(A + (unsigned long long)row * lda + gi * GK + col * 8)
@@ -74,7 +81,7 @@ __device__ __forceinline__ void tr_block(
     auto group_store = [&](unsigned int buf) {
         #pragma unroll
         for (int i = 0; i < PER; i++) {
-            const unsigned int u = threadIdx.x + i * TR_THREADS;
+            const unsigned int u = threadIdx.x + i * THREADS;
             if (u >= U4) break;
             const unsigned int row = u / (GK / 8), col = u % (GK / 8);
             if (P::ACT_LIFT != 1.0f) {
@@ -103,62 +110,78 @@ __device__ __forceinline__ void tr_block(
 
     group_load(0);
     group_store(0);
-    uint4 wn[G][2];
-    typename P::Sc sn[G][2];
+    // 2026-10-09: The weight ring: slot q holds group gi + q's weights while group gi runs.
+    uint4 wn[PF][G][2];
+    typename P::Sc sn[PF][G][2];
     #pragma unroll
-    for (int c = 0; c < G; c++) {
-        wn[c][0] = wload(0, c); wn[c][1] = wload(1, c);
-        sn[c][0] = sload(0, c); sn[c][1] = sload(1, c);
-    }
-    __syncthreads();
-    for (unsigned int gi = 0; gi < ngroups; gi++) {
-        const unsigned int buf = gi & 1;
-        uint4 w[G][2];
-        typename P::Sc s[G][2];
-        #pragma unroll
-        for (int c = 0; c < G; c++) { w[c][0] = wn[c][0]; w[c][1] = wn[c][1]; s[c][0] = sn[c][0]; s[c][1] = sn[c][1]; }
-        if (gi + 1 < ngroups) {
-            #pragma unroll
-            for (int c = 0; c < G; c++) {
-                wn[c][0] = wload(0, (gi + 1) * G + c);
-                wn[c][1] = wload(1, (gi + 1) * G + c);
-                sn[c][0] = sload(0, (gi + 1) * G + c);
-                sn[c][1] = sload(1, (gi + 1) * G + c);
-            }
-            group_load(gi + 1);
-        }
+    for (int q = 0; q < PF; q++) {
         #pragma unroll
         for (int c = 0; c < G; c++) {
-            const unsigned int chunk = gi * G + c;
-            unsigned int a[MMAS][4];
-            #pragma unroll
-            for (int j = 0; j < MMAS; j++) P::frag(w[c][0], w[c][1], s[c][0], s[c][1], j, a[j]);
-            #pragma unroll
-            for (int n = 0; n < NT; n++) {
-                if (n >= (int)nt_live) break;
-                const uint4* xp = (const uint4*)(&xs[buf][(n * 8 + g) * RS + c * (P::CHUNK_K * 2) + t * (P::CHUNK_K / 2)]);
-                uint4 xv[XU4];
-                #pragma unroll
-                for (int u = 0; u < XU4; u++) xv[u] = xp[u];
-                unsigned int xw[4 * XU4];
-                #pragma unroll
-                for (int u = 0; u < XU4; u++) { xw[4 * u] = xv[u].x; xw[4 * u + 1] = xv[u].y; xw[4 * u + 2] = xv[u].z; xw[4 * u + 3] = xv[u].w; }
-                #pragma unroll
-                for (int j = 0; j < MMAS; j++) tr_mma_bf16(P::FOLDS ? tmp[n] : acc[n], a[j], xw[2 * j], xw[2 * j + 1]);
+            if (PF == 1 || (unsigned int)q < ngroups) {
+                wn[q][c][0] = wload(0, q * G + c); wn[q][c][1] = wload(1, q * G + c);
+                sn[q][c][0] = sload(0, q * G + c); sn[q][c][1] = sload(1, q * G + c);
             }
-            // 2026-09-28: FP8: chunks 2kb and 2kb + 1 make 128-K block kb: scale it once.
-            if (P::FOLDS && P::fold_at(chunk)) {
-                const float sc = P::fold_scale(T, chunk);
+        }
+    }
+    __syncthreads();
+    // 2026-10-09: Group gi reads ring slot gi % PF; the loop is unrolled by PF so every slot index
+    // is a compile-time constant (the ring stays in registers), and slot pq is refilled with
+    // group gi + PF right after group gi took it.
+    for (unsigned int gi0 = 0; gi0 < ngroups; gi0 += PF) {
+        #pragma unroll
+        for (int pq = 0; pq < PF; pq++) {
+            const unsigned int gi = gi0 + pq;
+            if (gi >= ngroups) break;
+            const unsigned int buf = gi & 1;
+            uint4 w[G][2];
+            typename P::Sc s[G][2];
+            #pragma unroll
+            for (int c = 0; c < G; c++) { w[c][0] = wn[pq][c][0]; w[c][1] = wn[pq][c][1]; s[c][0] = sn[pq][c][0]; s[c][1] = sn[pq][c][1]; }
+            if (gi + PF < ngroups) {
+                #pragma unroll
+                for (int c = 0; c < G; c++) {
+                    wn[pq][c][0] = wload(0, (gi + PF) * G + c);
+                    wn[pq][c][1] = wload(1, (gi + PF) * G + c);
+                    sn[pq][c][0] = sload(0, (gi + PF) * G + c);
+                    sn[pq][c][1] = sload(1, (gi + PF) * G + c);
+                }
+            }
+            if (gi + 1 < ngroups) {
+                group_load(gi + 1);
+            }
+            #pragma unroll
+            for (int c = 0; c < G; c++) {
+                const unsigned int chunk = gi * G + c;
+                unsigned int a[MMAS][4];
+                #pragma unroll
+                for (int j = 0; j < MMAS; j++) P::frag(w[c][0], w[c][1], s[c][0], s[c][1], j, a[j]);
                 #pragma unroll
                 for (int n = 0; n < NT; n++) {
                     if (n >= (int)nt_live) break;
+                    const uint4* xp = (const uint4*)(&xs[buf][(n * 8 + g) * RS + c * (P::CHUNK_K * 2) + t * (P::CHUNK_K / 2)]);
+                    uint4 xv[XU4];
                     #pragma unroll
-                    for (int e = 0; e < 4; e++) { acc[n][e] += tmp[n][e] * sc; tmp[n][e] = 0.f; }
+                    for (int u = 0; u < XU4; u++) xv[u] = xp[u];
+                    unsigned int xw[4 * XU4];
+                    #pragma unroll
+                    for (int u = 0; u < XU4; u++) { xw[4 * u] = xv[u].x; xw[4 * u + 1] = xv[u].y; xw[4 * u + 2] = xv[u].z; xw[4 * u + 3] = xv[u].w; }
+                    #pragma unroll
+                    for (int j = 0; j < MMAS; j++) tr_mma_bf16(P::FOLDS ? tmp[n] : acc[n], a[j], xw[2 * j], xw[2 * j + 1]);
+                }
+                // 2026-09-28: FP8: chunks 2kb and 2kb + 1 make 128-K block kb: scale it once.
+                if (P::FOLDS && P::fold_at(chunk)) {
+                    const float sc = P::fold_scale(T, chunk);
+                    #pragma unroll
+                    for (int n = 0; n < NT; n++) {
+                        if (n >= (int)nt_live) break;
+                        #pragma unroll
+                        for (int e = 0; e < 4; e++) { acc[n][e] += tmp[n][e] * sc; tmp[n][e] = 0.f; }
+                    }
                 }
             }
+            if (gi + 1 < ngroups) group_store(buf ^ 1);
+            __syncthreads();
         }
-        if (gi + 1 < ngroups) group_store(buf ^ 1);
-        __syncthreads();
     }
     // 2026-09-28: acc[n][e]: column f0 + g (+ 8 for e >= 2) of row 8n + 2t + (e & 1).
     #pragma unroll

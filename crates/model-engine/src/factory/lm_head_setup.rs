@@ -73,8 +73,9 @@ pub(super) fn setup_lm_heads(
         let native = native_fp8_lm_head_share(store, config, gpu)?;
         let q = if let Some((shared, rows)) = native {
             tracing::info!(
-                "LM head served from the checkpoint's NATIVE FP8 (w8a16, vocab={}, \
-                 tensor rows={rows}) — no requantize, no second copy",
+                "LM head served from the checkpoint's NATIVE FP8 (per-row scale, vocab={}, \
+                 tensor rows={rows}) — no requantize, no second copy; W8A8 when its kernels \
+                 resolve (the `W8A8 lm_head` line), else W8A16",
                 config.vocab_size
             );
             shared
@@ -126,7 +127,7 @@ pub(super) fn setup_lm_heads(
             stream,
         )?;
         tracing::info!(
-            "Draft-only NVFP4 LM head built for MTP (main head stays BF16, vocab={})",
+            "Draft-only NVFP4 LM head built for MTP (the main head is unchanged, vocab={})",
             config.vocab_size,
         );
         Some(q)
@@ -203,7 +204,7 @@ pub(super) fn native_fp8_lm_head_share(
     let row_scale = gpu.alloc(n * 4)?;
     gpu.copy_h2d(&host_f32, row_scale)?;
     tracing::info!(
-        "Native FP8 lm_head share ready for the DFlash drafter tail \
+        "Native FP8 lm_head share ready \
          ([{rows} x {}] E4M3 + per-row scale; skips the 1.27 GB runtime mirror)",
         config.hidden_size
     );

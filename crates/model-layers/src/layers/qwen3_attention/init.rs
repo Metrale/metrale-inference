@@ -125,6 +125,7 @@ impl Qwen3AttentionLayer {
             post_attn_norm,
             ffn,
             w8a8: None,
+            w8a8_prefill: None,
             attn_layer_idx,
             lora: None,
             gated,
