@@ -168,6 +168,14 @@ pub fn step_verify_k2(
         .as_micros();
     a.last_token_time = sched.io.clock.now();
     let (v0_argmax, v1_argmax) = (result_vec[0], result_vec[1]);
+    // 2026-10-11: `METRALE_GLM_MTP_DEVICE_STEP`: a draft verified from the device reaches the host
+    // as the row-1 token the verify recorded.
+    // (A sentinel left unresolved could never equal `v0`, so it would only be rejected.)
+    let draft0 = if drafts[0] == metrale_model_layers::speculative::DEVICE_DRAFT {
+        a.seq.tokens.last().copied().unwrap_or(drafts[0])
+    } else {
+        drafts[0]
+    };
 
     let (v0, v1) = if dflash_verify_raw_argmax && !sched.levers.dflash_masked_verify {
         // 2026-09-25: DFlash without masked verify: judge on the raw argmax,
@@ -187,7 +195,7 @@ pub fn step_verify_k2(
             processed.get(1).copied().unwrap_or(v1_argmax),
         )
     };
-    let accepted = drafts[0] == v0;
+    let accepted = draft0 == v0;
 
     let verify_lps = if let Some(top_logprobs) = a.top_logprobs {
         extract_verify_logprobs(model, &[v0, v1], top_logprobs, 0)
@@ -254,7 +262,7 @@ pub fn step_verify_k2(
     );
 
     if accepted {
-        emit_token(a, drafts[0], verify_lps.first().cloned(), sched);
+        emit_token(a, draft0, verify_lps.first().cloned(), sched);
         if !a.finished {
             emit_token(a, v1, verify_lps.get(1).cloned(), sched);
         }
@@ -428,7 +436,7 @@ pub fn step_verify_k2(
             "K2 REJECT: ep={ep_us}μs sync={sync_us}μs verify={verify_us}μs propose={propose_us}μs seq_len={} last_tok={} prev_draft={} v0_verified={} new_draft={}",
             a.seq.seq_len,
             a.last_token,
-            drafts[0],
+            draft0,
             v0,
             new_draft,
         );
@@ -497,7 +505,8 @@ fn propose_k2(
 ) -> anyhow::Result<Vec<u32>> {
     let position = a.seq.seq_len;
     match fused {
-        Some(n) => model.run_mtp_propose_announced(token, position, n, &mut a.seq, mask),
+        // 2026-10-11: The lone draft may stay on the device (`METRALE_GLM_MTP_DEVICE_STEP`).
+        Some(n) => model.run_mtp_propose_announced_device(token, position, n, &mut a.seq, mask),
         None => {
             let n = crate::scheduler::spec_step::effective_drafts_under_grammar(a, num_drafts);
             model.run_mtp_propose_multi(token, position, n, &mut a.seq, 0, mask)

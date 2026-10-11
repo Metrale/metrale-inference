@@ -32,6 +32,31 @@ use crate::ep_wire::{self, CMD_BLOCK_BYTES, CmdBlock, NO_MASK};
 /// 2026-10-11: EP worker command: the fused K=2 verify (see the module doc).
 pub const EP_CMD_VERIFY_K2_FUSED: u32 = 0xFFFF_FFFC;
 
+/// 2026-10-11: The draft slot of a K=2 verify whose draft is still on the device
+/// (`METRALE_GLM_MTP_DEVICE_STEP`): every rank takes row 1's token from its own drafter's device
+/// cell (`DraftProposer::device_draft`) instead of a host id. Never a token id: vocabularies are
+/// far below `u32::MAX`.
+pub const DEVICE_DRAFT: u32 = u32::MAX;
+
+/// 2026-10-11: Words of the device verdict (`mtp_k2_verdict.cu`): accepted, next token, draft,
+/// argmax 0, argmax 1.
+pub const K2_DEVICE_VERDICT_WORDS: usize = 5;
+
+/// 2026-10-11: The host specification of the device verdict `mtp_k2_verdict` writes, for a K=2
+/// verify of `draft` whose rows' argmaxes are `argmax`: the verdict `step_verify_k2` reaches for
+/// a greedy request whose picks are its argmaxes. Accepted when the draft is row 0's argmax; the
+/// next token is row 1's argmax after an accept, row 0's after a reject.
+pub fn k2_device_verdict(argmax: [u32; 2], draft: u32) -> [u32; K2_DEVICE_VERDICT_WORDS] {
+    let accepted = draft == argmax[0];
+    [
+        u32::from(accepted),
+        if accepted { argmax[1] } else { argmax[0] },
+        draft,
+        argmax[0],
+        argmax[1],
+    ]
+}
+
 /// 2026-10-11: Words of the verdict broadcast.
 pub const K2_VERDICT_WORDS: usize = 4;
 
@@ -253,5 +278,23 @@ mod tests {
         assert_eq!(v.worker_position(100).unwrap(), 100);
         assert!(v.worker_position(101).is_err());
         assert!(v.worker_position(99).is_err());
+    }
+
+    /// 2026-10-11: The device verdict's words: an accept keeps the draft and moves to row 1's
+    /// argmax; a reject (any other draft, the sentinel included) moves to row 0's argmax. Ids 0
+    /// and the vocabulary's top are ordinary ids.
+    #[test]
+    fn the_device_verdict_accepts_exactly_row_0s_argmax() {
+        assert_eq!(k2_device_verdict([7, 9], 7), [1, 9, 7, 7, 9]);
+        assert_eq!(k2_device_verdict([7, 9], 9), [0, 7, 9, 7, 9]);
+        assert_eq!(k2_device_verdict([0, 0], 0), [1, 0, 0, 0, 0]);
+        assert_eq!(
+            k2_device_verdict([154_855, 3], DEVICE_DRAFT),
+            [0, 154_855, DEVICE_DRAFT, 154_855, 3]
+        );
+        assert_eq!(
+            k2_device_verdict([154_855, 154_855], 154_855),
+            [1, 154_855, 154_855, 154_855, 154_855]
+        );
     }
 }

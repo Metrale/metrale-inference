@@ -188,28 +188,8 @@ impl DraftProposer for Glm5NextMtpHead {
             .as_any_mut()
             .downcast_mut::<Glm5NextMtpProposerState>()
             .ok_or_else(|| anyhow::anyhow!("not a GLM MTP proposer state"))?;
-        // 2026-10-11: No KV region (`alloc_state`): no drafts.
-        if st.kv_region.is_none() {
+        if !self.begin_propose(st, last_token, target_hidden, position, ctx)? {
             return Ok(Vec::new());
-        }
-        // 2026-09-25: A drafter ahead of the target's `position` is rewound to it, so its
-        // indexer does not select over rows past the target's context.
-        let start = super::batch::start_row(st.seq_len, position);
-        if start < st.seq_len {
-            st.dsa.rewind_to(start)?;
-            st.seq_len = start;
-        }
-        if metrale_model_layers::speculative::mtp_refeed_debug() {
-            let fp = metrale_model_layers::speculative::hidden_fingerprint(
-                ctx.gpu,
-                target_hidden,
-                self.hidden,
-            );
-            tracing::info!(
-                "GLM_MTP_DBG propose position={position} drafter_rows={} tok={last_token} \
-                 fp_target={fp:016x}",
-                st.seq_len,
-            );
         }
         let mut drafts = Vec::with_capacity(num_drafts);
         let mut token = last_token;
@@ -236,6 +216,41 @@ impl DraftProposer for Glm5NextMtpHead {
         }
         st.last_drafted = drafts.len();
         Ok(drafts)
+    }
+
+    /// 2026-10-11: One draft left in `st.arg` (`DraftProposer::propose_device`), when the id
+    /// ends there on every rank (`draft_stays_on_device`): the same launches as `propose` with one
+    /// draft, without the readback.
+    fn propose_device(
+        &self,
+        last_token: u32,
+        target_hidden: DevicePtr,
+        position: usize,
+        state: &mut dyn ProposerState,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<bool> {
+        if !self.draft_stays_on_device(ctx) {
+            return Ok(false);
+        }
+        let st = state
+            .as_any_mut()
+            .downcast_mut::<Glm5NextMtpProposerState>()
+            .ok_or_else(|| anyhow::anyhow!("not a GLM MTP proposer state"))?;
+        if !self.begin_propose(st, last_token, target_hidden, position, ctx)? {
+            return Ok(false);
+        }
+        self.draft_on_device(last_token, target_hidden, true, position, st, ctx, stream)?;
+        st.last_drafted = 1;
+        Ok(true)
+    }
+
+    /// 2026-10-11: `st.arg`, where `propose_device` leaves the draft.
+    fn device_draft(&self, state: &mut dyn ProposerState) -> Option<DevicePtr> {
+        state
+            .as_any_mut()
+            .downcast_mut::<Glm5NextMtpProposerState>()
+            .map(|st| st.arg)
     }
 
     /// 2026-10-11: The batched propose (`batch.rs`); `Ok(None)` without it. Each draft's top-1
@@ -297,5 +312,41 @@ impl DraftProposer for Glm5NextMtpHead {
             st.dsa.rewind_to(st.seq_len)?;
         }
         Ok(())
+    }
+}
+
+impl Glm5NextMtpHead {
+    /// 2026-10-11: The start of every propose: `false` (no drafts) without a KV region
+    /// (`alloc_state`); a drafter ahead of the target's `position` is rewound to it, so its
+    /// indexer does not select over rows past the target's context.
+    fn begin_propose(
+        &self,
+        st: &mut Glm5NextMtpProposerState,
+        last_token: u32,
+        target_hidden: DevicePtr,
+        position: usize,
+        ctx: &ForwardContext,
+    ) -> Result<bool> {
+        if st.kv_region.is_none() {
+            return Ok(false);
+        }
+        let start = super::batch::start_row(st.seq_len, position);
+        if start < st.seq_len {
+            st.dsa.rewind_to(start)?;
+            st.seq_len = start;
+        }
+        if metrale_model_layers::speculative::mtp_refeed_debug() {
+            let fp = metrale_model_layers::speculative::hidden_fingerprint(
+                ctx.gpu,
+                target_hidden,
+                self.hidden,
+            );
+            tracing::info!(
+                "GLM_MTP_DBG propose position={position} drafter_rows={} tok={last_token} \
+                 fp_target={fp:016x}",
+                st.seq_len,
+            );
+        }
+        Ok(true)
     }
 }

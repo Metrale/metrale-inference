@@ -43,6 +43,10 @@ name = "argmax_key_gate"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "mtp_k2_verdict_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "residual_add_rms_norm_exact_microtest"
 required-features = ["cuda", "gpu-examples"]
 

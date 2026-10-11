@@ -246,6 +246,26 @@ pub fn argmax_key_shard_bf16(
 /// 2026-10-10: `cell[0]` = the token named by the max of `keys` and `n_peers` peer key pairs at
 /// `peers + slot * slot_bytes` (a one-shot exchange's slots; `n_peers` 0 when `keys` holds every
 /// slice), under `masks`.
+/// 2026-10-11: The K=2 MTP verdict on the device (`mtp_k2_verdict.cu`, host specification
+/// `speculative::k2_device_verdict`): from the verify's two argmaxes and its token ids (row 1 is
+/// the draft) into `out`'s `K2_DEVICE_VERDICT_WORDS` words.
+pub fn mtp_k2_verdict(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    argmax: DevicePtr,
+    token_ids: DevicePtr,
+    out: DevicePtr,
+    stream: u64,
+) -> Result<()> {
+    KernelLaunch::new(gpu, kernel)
+        .grid([1, 1, 1])
+        .block([32, 1, 1])
+        .arg_ptr(argmax)
+        .arg_ptr(token_ids)
+        .arg_ptr(out)
+        .launch(stream)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn argmax_key_resolve(
     gpu: &dyn GpuBackend,

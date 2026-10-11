@@ -60,7 +60,11 @@ impl Glm5NextMtpHead {
             let Some((window, row_base)) = plan_catchup(t, h, p, self.hidden * 2) else {
                 continue;
             };
-            written += self.rows_impl(&window, h[0], row_base, &mut **st, ctx, stream)?;
+            let n = self.rows_impl(&window, h[0], row_base, &mut **st, ctx, stream)?;
+            if n > 0 {
+                super::hidden_half::note_applied("ACCEPTED_ROWS (batched verify)");
+            }
+            written += n;
         }
         Ok(written)
     }

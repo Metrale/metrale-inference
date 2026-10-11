@@ -23,9 +23,9 @@ mod knobs;
 mod propose_batch_wire;
 mod verify_batch_wire;
 pub use k2_wire::{
-    EP_CMD_VERIFY_K2_FUSED, K2_FUSED_ENV, K2_VERDICT_WORDS, K2Verdict,
-    announce_block as k2_announce_block, announced_tokens as k2_announced_tokens,
-    check_k2_fused_wire, k2_fused_requested,
+    DEVICE_DRAFT, EP_CMD_VERIFY_K2_FUSED, K2_DEVICE_VERDICT_WORDS, K2_FUSED_ENV, K2_VERDICT_WORDS,
+    K2Verdict, announce_block as k2_announce_block, announced_tokens as k2_announced_tokens,
+    check_k2_fused_wire, k2_device_verdict, k2_fused_requested,
 };
 pub use kgamma_wire::{EP_CMD_VERIFY_KGAMMA, KGAMMA_MAX_ROWS, kgamma_committed_len, kgamma_width};
 pub use knobs::{
@@ -283,6 +283,33 @@ pub trait DraftProposer: Send + Sync {
     ) -> Result<usize> {
         let _ = (prompt_tokens, hiddens, state, ctx, stream);
         Ok(0)
+    }
+
+    /// 2026-10-11: One draft from `last_token` and `target_hidden`, as `propose` with
+    /// `num_drafts = 1` and no grammar computes it, left on the device ([`Self::device_draft`])
+    /// and not read back, so the caller can queue the next verify without waiting for it.
+    /// `Ok(false)`, with nothing run, when this proposer cannot (the default); the caller then
+    /// proposes as usual.
+    #[allow(clippy::too_many_arguments)]
+    fn propose_device(
+        &self,
+        last_token: u32,
+        target_hidden: DevicePtr,
+        position: usize,
+        state: &mut dyn ProposerState,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<bool> {
+        let _ = (last_token, target_hidden, position, state, ctx, stream);
+        Ok(false)
+    }
+
+    /// 2026-10-11: The device cell (one u32) holding the draft of the last
+    /// [`Self::propose_device`] on `state`, valid until the state's next propose; `None` when the
+    /// proposer has none (the default).
+    fn device_draft(&self, state: &mut dyn ProposerState) -> Option<DevicePtr> {
+        let _ = state;
+        None
     }
 
     /// 2026-09-25: The draft token id the last `propose` with

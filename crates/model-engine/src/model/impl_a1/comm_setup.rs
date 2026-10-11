@@ -57,6 +57,12 @@ pub(super) fn assert_rank_levers_agree(
                 "METRALE_GLM_MTP_EH_TP",
                 u64::from(metrale_model_arch::glm5next_mtp_head::eh_tp_enabled()),
             ),
+            // 2026-10-11: A device-step verify reads row 1 from each rank's own drafter cell, so
+            // every rank must leave the draft there the same way.
+            (
+                "METRALE_GLM_MTP_DEVICE_STEP",
+                u64::from(super::super::trait_impl::device_step::device_step_enabled()),
+            ),
             // 2026-10-11: The device draft exchange moves an all-reduce into the drafter graph.
             (
                 "METRALE_GLM_MTP_XCHG_DEVICE",
