@@ -100,7 +100,7 @@ fn mtp_cfg() -> ModelCfg {
     }
 }
 
-fn verify_k(name: &'static str, num_drafts: usize) -> Scenario {
+pub(super) fn verify_k(name: &'static str, num_drafts: usize) -> Scenario {
     let mut r = ReqSpec::new(1, 5, gen_eos(14, 10));
     r.draft_wrong_every = Some(4);
     Scenario {

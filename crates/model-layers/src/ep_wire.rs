@@ -99,8 +99,14 @@ pub fn host_block(seq_id: u32, cmd: u32) -> [u8; CMD_BLOCK_BYTES] {
 
 /// 2026-10-10: The block's bytes for a decode step with `flags` and its row `mask` (`arg` 0).
 pub fn decode_block(seq_id: u32, cmd: u32, flags: u32, mask: [u32; 2]) -> [u8; CMD_BLOCK_BYTES] {
+    block(seq_id, cmd, 0, flags, mask)
+}
+
+/// 2026-10-11: The block's bytes with every field given; a host command that carries its own
+/// argument words in `arg` and `mask` (the fused K=2 verify, `speculative::k2_wire`).
+pub fn block(seq_id: u32, cmd: u32, arg: u32, flags: u32, mask: [u32; 2]) -> [u8; CMD_BLOCK_BYTES] {
     let mut b = [0u8; CMD_BLOCK_BYTES];
-    for (i, w) in [seq_id, cmd, 0, flags, mask[0], mask[1]]
+    for (i, w) in [seq_id, cmd, arg, flags, mask[0], mask[1]]
         .into_iter()
         .enumerate()
     {

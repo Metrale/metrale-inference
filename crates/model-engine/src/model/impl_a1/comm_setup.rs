@@ -19,6 +19,10 @@ pub(super) fn assert_rank_levers_agree(
     gpu: &dyn GpuBackend,
     comm: &Arc<dyn metrale_comm::CommBackend>,
 ) -> Result<()> {
+    metrale_model_layers::speculative::check_k2_fused_wire(
+        metrale_model_layers::speculative::k2_fused_requested(),
+        metrale_model_layers::ep_wire::EpWire::get(),
+    )?;
     crate::rank_agree::assert_ranks_agree(
         gpu,
         comm.as_ref(),
@@ -40,6 +44,12 @@ pub(super) fn assert_rank_levers_agree(
             (
                 "METRALE_EP_PROTOCOL",
                 metrale_model_layers::ep_wire::EpWire::get().agreement_value(),
+            ),
+            // 2026-10-11: The fused K=2 MTP wire changes the command sequence of every
+            // K=2 step, so a rank running the other shape would read the wrong words.
+            (
+                metrale_model_layers::speculative::K2_FUSED_ENV,
+                u64::from(metrale_model_layers::speculative::k2_fused_requested()),
             ),
             // 2026-10-10: The resolved context window determines DFlash context-broadcast
             // chunking, so every rank must use the same value.

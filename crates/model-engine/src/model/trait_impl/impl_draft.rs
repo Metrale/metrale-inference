@@ -405,6 +405,21 @@ impl ModelDraft for TransformerModel {
         )
     }
 
+    fn run_mtp_propose_announced(
+        &self,
+        token: u32,
+        position: usize,
+        num_drafts: usize,
+        seq: &mut SequenceState,
+        grammar_bitmask: Option<&[i32]>,
+    ) -> Result<Vec<u32>> {
+        anyhow::ensure!(
+            self.k2_fused_wire_impl(),
+            "run_mtp_propose_announced outside the fused K=2 wire: the workers were not told"
+        );
+        self.run_mtp_propose_inner(token, position, num_drafts, seq, grammar_bitmask)
+    }
+
     fn read_deferred_draft_token(&self) -> Result<u32> {
         self.read_deferred_draft_token_dispatch()
     }

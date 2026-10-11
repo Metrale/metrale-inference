@@ -60,6 +60,9 @@ pub(super) struct ModelCfg {
     pub can_batch_verify: bool,
     /// 2026-10-09: The `is_ep` fact: a multi-rank serve, whose steps announce their work.
     pub ep: bool,
+    /// 2026-10-11: The `k2_fused_wire` fact: K=2 steps announce in one block and fold the
+    /// propose into the verdict.
+    pub k2_fused_wire: bool,
     /// 2026-10-09: The `ep_prefill_batch_rows` fact.
     pub ep_prefill_batch: Option<usize>,
     pub slot_draft_capacity: usize,
@@ -106,6 +109,7 @@ impl Default for ModelCfg {
             twophase_ok: false,
             can_batch_verify: true,
             ep: false,
+            k2_fused_wire: false,
             ep_prefill_batch: None,
             slot_draft_capacity: 8,
             kv_exhaust_at: Vec::new(),

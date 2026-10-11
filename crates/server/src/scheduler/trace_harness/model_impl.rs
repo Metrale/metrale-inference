@@ -385,6 +385,18 @@ impl ModelDraft for RecordingModel {
         let masked = grammar_bitmask.is_some();
         Ok(self.fx_propose_multi(token, position, num_drafts, seq, stream, masked))
     }
+    fn run_mtp_propose_announced(
+        &self,
+        token: u32,
+        position: usize,
+        num_drafts: usize,
+        seq: &mut SequenceState,
+        grammar_bitmask: Option<&[i32]>,
+    ) -> Result<Vec<u32>> {
+        rec!(self, "run_mtp_propose_announced(token={token}, pos={position})");
+        let masked = grammar_bitmask.is_some();
+        Ok(self.fx_propose_multi(token, position, num_drafts, seq, 0, masked))
+    }
     fn read_deferred_draft_token(&self) -> Result<u32> {
         anyhow::bail!("read_deferred_draft_token is not a scheduler path")
     }
@@ -429,12 +441,15 @@ impl ModelEp for RecordingModel {
         fn is_ep(&self) -> bool = self.cfg.ep;
         fn ep_prefill_batch_rows(&self) -> Option<usize> = self.cfg.ep_prefill_batch;
         fn ep_protocol_v2(&self) -> bool = false;
+        fn k2_fused_wire(&self) -> bool = self.cfg.k2_fused_wire;
     }
     recorded! {
         fn ep_worker_step(&self, _slots: &mut [Option<SequenceState>]) -> Result<bool> = Ok(false) => "ep_worker_step()";
         fn ep_broadcast_cmd(&self, cmd: u32) -> Result<()> = Ok(()) => "ep_broadcast_cmd({cmd:#x})";
         fn ep_broadcast_cmd_for_seq(&self, seq_id: u32, cmd: u32) -> Result<()> = Ok(()) => "ep_broadcast_cmd_for_seq(seq={seq_id}, cmd={cmd:#x})";
         fn ep_broadcast_tokens(&self, tokens: &[u32]) -> Result<Vec<u32>> = Ok(tokens.to_vec()) => "ep_broadcast_tokens(n={})", tokens.len();
+        fn ep_announce_k2_fused(&self, seq_id: u32, tokens: [u32; 2]) -> Result<()> = Ok(()) => "ep_announce_k2_fused(seq={seq_id}, tokens={tokens:?})";
+        fn ep_send_k2_verdict(&self, v: metrale_model_layers::speculative::K2Verdict) -> Result<()> = Ok(()) => "ep_send_k2_verdict(accepted={}, next={}, drafts={}, pos={})", v.accepted, v.next_token, v.num_drafts, v.position;
     }
 }
 

@@ -148,6 +148,8 @@ impl TransformerModel {
     ///   merged vision-row count and that many rows when it is non-zero
     /// - 0xFFFFFFF1: alloc slot (frees any prior occupant, then allocates)
     /// - 0xFFFFFFF2/3/4: verify K=2/3/4 → K tokens, then the accept count
+    /// - 0xFFFFFFFC (`EP_CMD_VERIFY_K2_FUSED`): fused K=2 verify, the tokens in the v3 block,
+    ///   then a verdict that may start a propose (`speculative/k2_wire.rs`)
     /// - 0xFFFFFFF5 (`EP_CMD_MTP_PROPOSE`): last_token, position, num_drafts,
     ///   hidden_idx
     /// - 0xFFFFFFF6 (`EP_CMD_VERIFY_KGAMMA`): DFlash K=γ verify → K, `tokens[K]`,
@@ -261,6 +263,11 @@ impl TransformerModel {
         if block.flags & metrale_model_layers::ep_wire::FLAG_DEVICE_ARGMAX != 0 {
             self.arm_device_argmax_from_block(block.mask)?;
         }
+        // 2026-10-11: The fused K=2 verify reads its tokens from the block itself.
+        if cmd == metrale_model_layers::speculative::EP_CMD_VERIFY_K2_FUSED {
+            self.ep_worker_verify_k2_fused(&block, seq, self.gpu.default_stream())?;
+            return Ok(true);
+        }
         self.ep_worker_dispatch_cmd(cmd, seq)
     }
 
@@ -302,15 +309,7 @@ impl TransformerModel {
                 self.sync_secondary()?;
                 self.decode_verify_graphed(&[t0, t1], seq, stream)?;
                 let accepted = self.ep_broadcast_u32(0)?;
-                if accepted == 1 {
-                    self.start_checkpoint_async(seq)?;
-                    self.trim_proposer_state(seq, 1, 0)?;
-                } else {
-                    seq.seq_len -= 1;
-                    seq.tokens.pop();
-                    self.trim_proposer_state(seq, 0, 0)?;
-                    self.start_rollback_and_checkpoint_async(seq, 1)?;
-                }
+                self.ep_worker_k2_commit(seq, accepted == 1)?;
             }
             crate::model::trait_impl::decode_checkpoint::EP_CMD_DECODE_CKPT => {
                 // 2026-09-25: Rank 0 saved a decode-time Marconi checkpoint;
@@ -334,17 +333,7 @@ impl TransformerModel {
                 // 2026-09-25: Save the hidden row the head saved
                 // (`save_hidden_for_mtp`), so both ranks feed the drafter the same
                 // input and its all-reduce sums partials of one vector.
-                if let Err(e) = self.save_hidden_for_mtp(hidden_idx, stream) {
-                    tracing::warn!("EP worker save_hidden_for_mtp({hidden_idx}) failed: {e:#}");
-                }
-                if let Err(e) =
-                    self.run_mtp_propose_inner(last_token, position, num_drafts, seq, None)
-                {
-                    // 2026-09-25: A drafter error is logged, not returned: the
-                    // worker's drafts are discarded, and rank 0 decides what is
-                    // verified.
-                    tracing::warn!("EP worker MTP propose failed (continuing): {e:#}");
-                }
+                self.ep_worker_mtp_propose(seq, last_token, position, num_drafts, hidden_idx);
             }
             0xFFFFFFF3 => {
                 // 2026-09-25: Verify K=3: 3 tokens, verify, then num_accepted (0..=2).
