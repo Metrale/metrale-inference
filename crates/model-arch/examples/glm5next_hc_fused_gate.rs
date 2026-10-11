@@ -30,7 +30,9 @@ use metrale_gpu_runtime::kernel_args::KernelLaunch;
 use metrale_model_arch::glm5next_mhc::{
     Glm5NextMhcKernels, Glm5NextMhcSiteWeights, glm_hc_pre, mhc_mix_max_tokens, mix_hc,
 };
-use metrale_model_arch::glm5next_mhc_fused::{glm_hc_pre_norm_with, pre_norm_kernel};
+use metrale_model_arch::glm5next_mhc_fused::{
+    glm_hc_pre_norm_with, pre_norm_kernel, splitk_kernel,
+};
 
 /// 2026-10-09: `(hidden, hc_mult, tokens)`. Rows 1, 4 and 16 are the decode widths; at 32 the
 /// unfused arm takes its 8-row mix and the fused arm its per-row grid, from 64 both take 8-row
@@ -209,7 +211,7 @@ fn fused(
     rms_eps: f32,
     stream: u64,
 ) -> Result<()> {
-    fused_arm(g, k, s, o, t, hid, hc, iters, rms_eps, false, stream)
+    fused_arm(g, k, s, o, t, hid, hc, iters, rms_eps, false, false, stream)
 }
 
 /// 2026-10-11: The fused launch with the prefetching kernel's choice explicit (`prefetch`), so
@@ -226,17 +228,21 @@ fn fused_arm(
     iters: u32,
     rms_eps: f32,
     prefetch: bool,
+    splitk: bool,
     stream: u64,
 ) -> Result<()> {
     glm_hc_pre_norm_with(
         g, k, s.streams, &s.w, s.norm_w, o.p[0], o.p[3], o.p[1], o.p[2], t as u32, hid as u32,
-        hc as u32, iters, NORM_EPS, HC_EPS, rms_eps, prefetch, stream,
+        hc as u32, iters, NORM_EPS, HC_EPS, rms_eps, prefetch, splitk, stream,
     )
 }
 
 /// 2026-10-11: Whether the prefetching kernel runs at this case (`pre_norm_kernel` picks it).
 fn pf_case(k: &Glm5NextMhcKernels, t: usize, hid: usize, hc: usize) -> bool {
-    pre_norm_kernel(k, t as u32, hid as u32, hc as u32, true).0 == k.hc_pre_norm_pf
+    pre_norm_kernel(k, t as u32, hid as u32, hc as u32, true)
+        .0
+        .0
+        == k.hc_pre_norm_pf.0
         && k.hc_pre_norm_pf.0 != 0
 }
 
@@ -267,6 +273,27 @@ fn graph_us(
     g.destroy_graph(graph)?;
     v.sort_by(|a, b| a.total_cmp(b));
     Ok((v[TRIALS / 2], v[0], v[TRIALS - 1]))
+}
+
+/// 2026-10-11: Largest relative error of `y` against `x` (BF16 when `bf16`, else FP32), each
+/// element measured against max(|x|, 1e-3).
+fn max_rel(x: &[u8], y: &[u8], bf16: bool) -> f64 {
+    let dec = |v: &[u8]| -> Vec<f64> {
+        if bf16 {
+            v.chunks_exact(2)
+                .map(|c| f32::from_bits((u16::from_le_bytes([c[0], c[1]]) as u32) << 16) as f64)
+                .collect()
+        } else {
+            v.chunks_exact(4)
+                .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]) as f64)
+                .collect()
+        }
+    };
+    dec(x)
+        .iter()
+        .zip(dec(y))
+        .map(|(a, b)| (a - b).abs() / a.abs().max(1e-3))
+        .fold(0.0, f64::max)
 }
 
 fn main() -> Result<()> {
@@ -317,7 +344,20 @@ fn main() -> Result<()> {
         if pf {
             for run in 0..3 {
                 b.poison(g)?;
-                fused_arm(g, &k, &s, &b, t, hid, hc, SINKHORN_ITERS, RMS_EPS, true, 0)?;
+                fused_arm(
+                    g,
+                    &k,
+                    &s,
+                    &b,
+                    t,
+                    hid,
+                    hc,
+                    SINKHORN_ITERS,
+                    RMS_EPS,
+                    true,
+                    false,
+                    0,
+                )?;
                 g.synchronize(0)?;
                 for ((n, x), y) in NAMES.iter().zip(&ah).zip(&b.read(g)?) {
                     if x != y {
@@ -332,10 +372,72 @@ fn main() -> Result<()> {
                 }
             }
             b.poison(g)?;
-            fused_arm(g, &k, &s, &b, t, hid, hc, CONTROL_ITERS, RMS_EPS, true, 0)?;
+            fused_arm(
+                g,
+                &k,
+                &s,
+                &b,
+                t,
+                hid,
+                hc,
+                CONTROL_ITERS,
+                RMS_EPS,
+                true,
+                false,
+                0,
+            )?;
             g.synchronize(0)?;
             if b.read(g)?[2] == ah[2] {
                 bail!("H={hid} hc={hc} T={t}: prefetching control did not change `comb`");
+            }
+        }
+        // 2026-10-11: The split-k kernel (accuracy class RO): within tolerance of the oracle and
+        // byte-identical across three launches (run-to-run identity).
+        let sk = splitk_kernel(
+            &k,
+            t as u32,
+            hid as u32,
+            hc as u32,
+            true,
+            metrale_model_arch::glm5next_mhc::mhc_mix_max_tokens(),
+        )
+        .is_some();
+        let mut sk_err = [0f64; 4];
+        if sk {
+            let mut first: Option<Vec<Vec<u8>>> = None;
+            for run in 0..3 {
+                b.poison(g)?;
+                fused_arm(
+                    g,
+                    &k,
+                    &s,
+                    &b,
+                    t,
+                    hid,
+                    hc,
+                    SINKHORN_ITERS,
+                    RMS_EPS,
+                    false,
+                    true,
+                    0,
+                )?;
+                g.synchronize(0)?;
+                let got = b.read(g)?;
+                for (j, (x, y)) in ah.iter().zip(&got).enumerate() {
+                    sk_err[j] = sk_err[j].max(max_rel(x, y, j == 0 || j == 3));
+                }
+                if let Some(f) = &first {
+                    if f != &got {
+                        bail!(
+                            "H={hid} hc={hc} T={t} run {run}: split-k is not run-to-run identical"
+                        );
+                    }
+                } else {
+                    first = Some(got);
+                }
+            }
+            if sk_err[0] > 2e-2 || sk_err[3] > 2e-2 || sk_err[1] > 1e-4 || sk_err[2] > 1e-4 {
+                bail!("H={hid} hc={hc} T={t}: split-k outside tolerance {sk_err:?}");
             }
         }
         // 2026-10-09: Negative controls: each must change the bytes it governs.
@@ -375,6 +477,12 @@ fn main() -> Result<()> {
                 ""
             }
         );
+        if sk {
+            println!(
+                "             split-k: max rel err y {:.2e} post {:.2e} comb {:.2e} normed {:.2e}; identical x3",
+                sk_err[0], sk_err[1], sk_err[2], sk_err[3]
+            );
+        }
     }
 
     if timing {
@@ -457,6 +565,7 @@ fn main() -> Result<()> {
                         SINKHORN_ITERS,
                         RMS_EPS,
                         true,
+                        false,
                         st,
                     )
                 })?;
@@ -466,6 +575,40 @@ fn main() -> Result<()> {
                     pfu.1,
                     pfu.2,
                     (new.0 - pfu.0) * 90.0 / 1000.0
+                );
+            }
+            if splitk_kernel(
+                &k,
+                t as u32,
+                hid as u32,
+                hc as u32,
+                true,
+                metrale_model_arch::glm5next_mhc::mhc_mix_max_tokens(),
+            )
+            .is_some()
+            {
+                let sku = graph_us(g, stream, |st, i| {
+                    fused_arm(
+                        g,
+                        &k,
+                        &sites[i],
+                        &o,
+                        t,
+                        hid,
+                        hc,
+                        SINKHORN_ITERS,
+                        RMS_EPS,
+                        false,
+                        true,
+                        st,
+                    )
+                })?;
+                println!(
+                    "           split-k     {:6.2} [{:6.2}, {:6.2}]  saves {:.3} ms/step at 90 sites vs fused",
+                    sku.0,
+                    sku.1,
+                    sku.2,
+                    (new.0 - sku.0) * 90.0 / 1000.0
                 );
             }
         }

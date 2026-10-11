@@ -199,3 +199,103 @@ glm5next_hc_pre_norm_pf64(GLM_HCF_ARGS) {
     if (hc_mult != 4u || hc_mult * hidden_size != 64u * GLM_HCF_BLOCK) return;
     glm_hcf_body<1, 4, 64>(GLM_HCF_PASS);
 }
+
+// 2026-10-11: glm5next_hc_pre_norm for hc_mult 4 at hc_mult * H == 64 * GLM_HCF_BLOCK (GLM-5.3:
+// H 4096) with the mix split along k across GLM_HCF_SK_SLICES blocks per token: grid (T, 64).
+// Block (t, b) takes elements b*256 .. b*256+255 of token t's 16384 stream values, one per
+// warp per three mix rows (16-byte hc_fn loads, the slice of x in shared memory), and forms
+// the RMS partial and all 24 mix partials of that slice by warp butterflies, and stores 25 floats at mix + (t * 64 + b) * 25 (the
+// site's `mix` scratch, which the host checks is large enough). The last block for the token
+// adds the 64 slices in slice order, then runs glm_hcf_body's tail unchanged (pre, Sinkhorn,
+// collapse + RMS norm). NOT bit-identical to glm5next_hc_pre_norm: the k order of every dot
+// product changes (accuracy class RO, judged by the numerics gate). Uses 64 x T blocks instead
+// of 24 x T, so the k loop is one load per array per thread instead of 64 chained.
+#define GLM_HCF_SK_SLICES 64
+#define GLM_HCF_SK_VALS 25
+extern "C" __global__ void __launch_bounds__(GLM_HCF_BLOCK)
+glm5next_hc_pre_norm_sk64(GLM_HCF_ARGS) {
+    __shared__ GlmHcfSmem<1> sm;
+    __shared__ float s_part[1][GLM_HCF_SK_VALS];
+    constexpr unsigned int HC = 4, MIX = (2 + HC) * HC;
+    if (hc_mult != HC || hc_mult * hidden_size != GLM_HCF_SK_SLICES * GLM_HCF_BLOCK) return;
+    const unsigned int t = blockIdx.x, b = blockIdx.y, tid = threadIdx.x;
+    const unsigned int lane = tid & 31u, warp = tid >> 5;
+    const unsigned int hc_dim = HC * hidden_size;
+    const float* x = streams + (size_t)t * hc_dim;
+    // 2026-10-11: The slice's 256 stream values go to shared memory (64 float4 loads); warp w
+    // takes mix rows w, w + 8, w + 16, lane l the 8 consecutive columns 8l .. 8l + 7 of each
+    // row through one 16-byte hc_fn load, so every warp request is 512 contiguous bytes.
+    __shared__ __align__(16) float s_x[GLM_HCF_BLOCK];
+    if (tid < GLM_HCF_BLOCK / 4)
+        reinterpret_cast<float4*>(s_x)[tid] =
+            reinterpret_cast<const float4*>(x + b * GLM_HCF_BLOCK)[tid];
+    uint4 wv[MIX / 8];
+#pragma unroll
+    for (unsigned int j = 0; j < MIX / 8; ++j) {
+        const unsigned int r = warp + 8u * j;
+        wv[j] = reinterpret_cast<const uint4*>(hc_fn + (size_t)r * hc_dim + b * GLM_HCF_BLOCK)[lane];
+    }
+    __syncthreads();
+#pragma unroll
+    for (unsigned int j = 0; j < MIX / 8; ++j) {
+        const __nv_bfloat16* wb = reinterpret_cast<const __nv_bfloat16*>(&wv[j]);
+        float a = 0.f;
+#pragma unroll
+        for (int e = 0; e < 8; ++e) a += __bfloat162float(wb[e]) * s_x[8u * lane + e];
+        a = glm_hcf_warp_sum(a);
+        if (lane == 0) s_part[0][1 + warp + 8u * j] = a;
+    }
+    if (warp == 0) {
+        float q = 0.f;
+#pragma unroll
+        for (int e = 0; e < 8; ++e) q += s_x[8u * lane + e] * s_x[8u * lane + e];
+        q = glm_hcf_warp_sum(q);
+        if (lane == 0) s_part[0][0] = q;
+    }
+    __syncthreads();
+    float* part = mix + ((size_t)t * GLM_HCF_SK_SLICES + b) * GLM_HCF_SK_VALS;
+    if (tid < GLM_HCF_SK_VALS) {
+        part[tid] = s_part[0][tid];
+        __threadfence();
+    }
+    __syncthreads();
+    if (tid == 0) {
+        __threadfence();
+        const unsigned int prev = atomicAdd(&done[t], 1u);
+        sm.last = (prev == gridDim.y - 1);
+    }
+    __syncthreads();
+    if (!sm.last) return;
+
+    __threadfence();
+    if (tid == 0) done[t] = 0;
+    const float* all = mix + (size_t)t * GLM_HCF_SK_SLICES * GLM_HCF_SK_VALS;
+    if (tid < GLM_HCF_SK_VALS) {
+        float s = 0.f;
+        float v[GLM_HCF_SK_SLICES];
+#pragma unroll
+        for (int q = 0; q < GLM_HCF_SK_SLICES; ++q) v[q] = __ldcg(&all[q * GLM_HCF_SK_VALS + tid]);
+#pragma unroll
+        for (int q = 0; q < GLM_HCF_SK_SLICES; ++q) s += v[q];
+        sm.red[0][tid] = s;
+    }
+    __syncthreads();
+    if (tid < MIX) {
+        const float rsq = rsqrtf(sm.red[0][0] / (float)hc_dim + norm_eps);
+        sm.mix[tid] = sm.red[0][tid + 1] * rsq;
+    }
+    __syncthreads();
+    if (tid < HC) {
+        float pr = sm.mix[tid] * hc_scale[0] + hc_base[tid];
+        sm.pre[tid] = 1.f / (1.f + expf(-pr)) + hc_eps;
+    }
+    __syncthreads();
+    if (tid < 32) {
+        glm_hcf_sinkhorn<HC>(sm.mix, hc_scale, hc_base, post_out, comb_out, t, sinkhorn_iters,
+                             hc_eps);
+    } else {
+        glm_hcf_collapse_norm<HC>(x, sm.pre, norm_w, y_out + (size_t)t * hidden_size,
+                                  normed_out + (size_t)t * hidden_size, sm.y, sm.ws, hidden_size,
+                                  rms_eps);
+    }
+}
