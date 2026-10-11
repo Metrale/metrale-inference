@@ -24,32 +24,46 @@ impl Glm5NextMtpHead {
             }
     }
 
-    /// 2026-10-11: The readback of the draft [`Self::draft_on_device`] computed: one read after
-    /// the device exchange, else the host exchange.
+    /// 2026-10-11: The readback of the draft [`Self::draft_on_device`] computed: the id and,
+    /// when this propose computes one, its log-probability (the lane after the id in `st.arg`),
+    /// in one read after the device exchange, else through the host exchange (no log-probability).
     pub(super) fn read_draft(
         &self,
         st: &mut Glm5NextMtpProposerState,
         ctx: &ForwardContext,
         stream: u64,
-    ) -> Result<u32> {
+    ) -> Result<(u32, f32)> {
         let gpu = ctx.gpu;
         // 2026-09-25: Timing arm `METRALE_GLM_MTP_SKIP=head`: the head is skipped and the
         // draft is token 0, so `propose` times the block alone. `=block` skips the block instead.
         if skip_head() {
-            return Ok(0);
+            return Ok((0, f32::NAN));
         }
         let (_, v0, sharded) = self.head_range(ctx);
-        let mut out = [0u8; 4];
+        // 2026-10-11: The id, and the log-probability after it when this propose computes one.
+        let with_lp = self.single_lp_ready(ctx);
+        let mut out = [0u8; 8];
+        let read = if with_lp { 8 } else { 4 };
+        let lp_of = |out: &[u8; 8]| {
+            if with_lp {
+                f32::from_le_bytes([out[4], out[5], out[6], out[7]])
+            } else {
+                f32::NAN
+            }
+        };
         if self.device_xchg(ctx).is_some() {
             // 2026-10-11: The device exchange left the global id in `st.arg`: one read.
-            gpu.copy_d2h(st.arg, &mut out)?;
-            return Ok(u32::from_le_bytes(out));
+            gpu.copy_d2h(st.arg, &mut out[..read])?;
+            return Ok((
+                u32::from_le_bytes([out[0], out[1], out[2], out[3]]),
+                lp_of(&out),
+            ));
         }
         gpu.synchronize(stream)?;
-        gpu.copy_d2h(st.arg, &mut out)?;
-        let local = u32::from_le_bytes(out) as usize;
+        gpu.copy_d2h(st.arg, &mut out[..read])?;
+        let local = u32::from_le_bytes([out[0], out[1], out[2], out[3]]) as usize;
         let Some(comm) = ctx.comm.filter(|_| sharded) else {
-            return Ok((v0 + local) as u32);
+            return Ok(((v0 + local) as u32, lp_of(&out)));
         };
         // 2026-09-25: Exchange (max, argmax) through one all-reduce of BF16 lanes: each rank's
         // max logit, then three base-256 digits of each rank's global index (`head_xchg` has
@@ -63,7 +77,8 @@ impl Glm5NextMtpHead {
         gpu.synchronize(stream)?;
         gpu.copy_d2h(st.head_xchg, &mut pack)?;
         // 2026-09-25: A tie goes to the lower rank, identically on every rank, so the ranks'
-        // drafter KV streams cannot diverge on a tie.
-        head_xchg::pick(self.head_world, &pack)
+        // drafter KV streams cannot diverge on a tie. 2026-10-11: No log-probability on the host
+        // exchange.
+        Ok((head_xchg::pick(self.head_world, &pack)?, f32::NAN))
     }
 }

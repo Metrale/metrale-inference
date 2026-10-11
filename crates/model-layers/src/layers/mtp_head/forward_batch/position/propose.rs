@@ -108,11 +108,14 @@ impl MtpHead {
         }
         // 2026-10-02: `--draft-confidence-stop`: with the log-probabilities
         // requested, the loop ends once every sequence's chain has stopped
-        // (`draft_stop::chain_continues`). Each sequence keeps the drafts the
+        // (`draft_stop::ChainStop::continues`). Each sequence keeps the drafts the
         // loop made; the scheduler truncates each chain to its own depth
-        // (`draft_stop::chain_depth`, in `mtp_dcut::plan`).
-        let stop_lp =
-            crate::speculative::draft_stop::draft_stop_logprob().filter(|_| out_conf.is_some());
+        // (`draft_stop::StopRule::depth`, in `mtp_dcut::plan`).
+        // 2026-10-11: One stop state per sequence, under the published rule (either form).
+        let mut stops: Option<Vec<crate::speculative::draft_stop::ChainStop>> =
+            crate::speculative::draft_stop::draft_stop_rule()
+                .filter(|_| out_conf.is_some())
+                .map(|r| vec![r.chain(); n]);
         let mut stopped = vec![false; n];
 
         let h = ctx.config.hidden_size;
@@ -175,9 +178,9 @@ impl MtpHead {
             for state in states.iter_mut() {
                 state.last_num_drafted = j + 1;
             }
-            if let Some(ln_tau) = stop_lp {
-                for (s, &l) in stopped.iter_mut().zip(&lp) {
-                    *s = *s || !crate::speculative::draft_stop::chain_continues(l, ln_tau);
+            if let Some(stops) = stops.as_mut() {
+                for ((s, &l), c) in stopped.iter_mut().zip(&lp).zip(stops.iter_mut()) {
+                    *s = *s || !c.continues(l);
                 }
                 if stopped.iter().all(|&s| s) {
                     break;

@@ -173,15 +173,15 @@ pub(super) fn plan(
         batchable,
         ladder_nd,
         rows,
-        metrale_model_layers::speculative::draft_stop::draft_stop_logprob(),
+        metrale_model_layers::speculative::draft_stop::draft_stop_rule(),
     )
 }
 
 /// 2026-10-02: [`plan`] with the `--draft-confidence-stop` threshold passed in
-/// (`ln tau`), so tests need not publish the process global.
+/// (2026-10-11: as its rule, either form), so tests need not publish the process global.
 ///
 /// With a threshold, every sequence's depth is also capped at its chain depth
-/// (`draft_stop::chain_depth` of its confidences), at every width, and at the
+/// (`StopRule::depth` of its confidences), at every width, and at the
 /// drafts it holds: under the stop a batch may arrive with fewer than
 /// `ladder_nd` drafts (the batched propose ends once every chain has stopped,
 /// and a per-sequence propose stops on its own). The canonical depth
@@ -198,7 +198,7 @@ pub(super) fn plan_with_stop(
     batchable: &mut Vec<usize>,
     ladder_nd: usize,
     rows: usize,
-    stop_ln_tau: Option<f32>,
+    stop: Option<metrale_model_layers::speculative::draft_stop::StopRule>,
 ) -> Vec<usize> {
     let mut ks: Vec<usize> = vec![rows; batchable.len()];
     // 2026-10-04: `--spec-cost-model measured` replaces D-Cut and the stop outright (they cannot
@@ -210,8 +210,7 @@ pub(super) fn plan_with_stop(
         && ladder_nd >= 2
         && !batchable.is_empty()
         && batchable.len() <= sched.levers.dcut_width_cap;
-    let stop_on =
-        measured.is_none() && stop_ln_tau.is_some() && ladder_nd >= 2 && !batchable.is_empty();
+    let stop_on = measured.is_none() && stop.is_some() && ladder_nd >= 2 && !batchable.is_empty();
     // 2026-10-04: `ladder_nd >= 1`, not just `measured.is_some()`: `propose_depth` returns `0`
     // above the serve's `mtp_max_seqs` (nothing to plan — `ks`'s `rows`-filled default above is
     // already the correct plain-decode answer), and `ladder_nd.clamp(1, ladder_nd)` below would
@@ -259,12 +258,10 @@ pub(super) fn plan_with_stop(
     };
     for (pos, r) in retained.iter().enumerate() {
         let mut depth = (*r).min(held[pos]);
-        if let Some(ln_tau) = stop_ln_tau
+        if let Some(rule) = stop
             && !confs[pos].is_empty()
         {
-            depth = depth.min(metrale_model_layers::speculative::draft_stop::chain_depth(
-                confs[pos], ln_tau,
-            ));
+            depth = depth.min(rule.depth(confs[pos]));
         }
         ks[pos] = depth.clamp(1, ladder_nd) + 1;
     }

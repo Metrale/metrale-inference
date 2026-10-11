@@ -40,6 +40,7 @@ mod batch_check;
 mod batch_graph;
 mod catchup;
 mod draft_io;
+mod draft_lp;
 mod graph;
 mod head_xchg;
 mod hidden_half;
@@ -56,8 +57,9 @@ pub use graph::state_bytes as graph_state_bytes;
 pub use head_xchg::BUFFER_BYTES as HEAD_XCHG_BUFFER_BYTES;
 /// 2026-10-11: The host exchange, the oracle of the device kernels (`glm53_mtp_xchg_gate`).
 pub use head_xchg::{
-    MAX_RANKS as HEAD_XCHG_MAX_RANKS, pack as head_xchg_pack, pick as head_xchg_pick,
-    xchg_bytes as head_xchg_bytes,
+    MAX_RANKS as HEAD_XCHG_MAX_RANKS, pack as head_xchg_pack, pack_lp as head_xchg_pack_lp,
+    pick as head_xchg_pick, pick_lp as head_xchg_pick_lp, xchg_bytes as head_xchg_bytes,
+    xchg_lp_bytes as head_xchg_lp_bytes,
 };
 /// 2026-10-11: The `METRALE_GLM_MTP_EH_TP` lever, for the ranks' agreement check.
 pub use init::eh_tp_enabled;
@@ -141,6 +143,8 @@ pub struct Glm5NextMtpHead {
     /// `METRALE_GLM_MTP_XCHG_DEVICE=1` and the build has them: the vocab-sharded head's exchange
     /// on the device (`exchange_on_device`). `None` keeps the host exchange.
     xchg_k: Option<(KernelHandle, KernelHandle)>,
+    /// 2026-10-11: The draft log-probability kernels (`draft_lp`).
+    lp_k: draft_lp::LpKernels,
     /// 2026-10-11: The target's own final norm (`model.language_model.norm.weight`, BF16
     /// `[hidden]`, the pointer its `final_norm_apply` reads), applied to target-hidden rows
     /// under `ModelLevers::mtp_target_postnorm` (`hidden_half`).
@@ -321,7 +325,23 @@ impl Glm5NextMtpHead {
                 stream,
             )?,
         }
-        ops::argmax_bf16(gpu, self.argmax_k, st.logits, st.arg, n as u32, stream)?;
+        // 2026-10-11: Under the confidence stop the argmax also writes the draft's
+        // log-probability, at `arg + 4` (`draft_lp`).
+        let lp = self.single_lp_ready(ctx).then_some(st.arg.offset(4));
+        match lp {
+            Some(lp) => ops::argmax_bf16_batch_lp(
+                gpu,
+                self.lp_k.argmax_lp,
+                st.logits,
+                st.arg,
+                lp,
+                n as u32,
+                1,
+                n as u32,
+                stream,
+            )?,
+            None => ops::argmax_bf16(gpu, self.argmax_k, st.logits, st.arg, n as u32, stream)?,
+        }
         if let (Some(k), Some(comm)) = (self.device_xchg(ctx), ctx.comm) {
             self.exchange_rows(
                 gpu,
@@ -332,6 +352,7 @@ impl Glm5NextMtpHead {
                 0,
                 st.head_xchg,
                 1,
+                lp,
                 v0,
                 stream,
             )?;
@@ -352,6 +373,10 @@ impl Glm5NextMtpHead {
     /// leave each winning global id in `arg[r]`. No host step, so it runs inside the drafter
     /// graph and the ranks meet at its all-reduce straight from their own head sweeps. Row `r`'s
     /// lanes are `xchg + r * xchg_bytes(world)`, so the rows are one contiguous all-reduce.
+    /// 2026-10-11: With `lp` (row `r`'s shard log-probability at `lp + 4r`, from
+    /// `argmax_bf16_batch_lp`) the lanes also carry each rank's shard log-sum-exp
+    /// (`head_xchg::pack_lp`, `xchg_lp_bytes` per row) and the winner's whole-vocab
+    /// log-probability replaces it at `lp + 4r`.
     #[allow(clippy::too_many_arguments)]
     fn exchange_rows(
         &self,
@@ -363,36 +388,59 @@ impl Glm5NextMtpHead {
         logits_row_bytes: usize,
         xchg: DevicePtr,
         rows: usize,
+        lp: Option<DevicePtr>,
         v0: usize,
         stream: u64,
     ) -> Result<()> {
-        let xb = head_xchg::xchg_bytes(self.head_world);
+        let world = self.head_world as u32;
+        let xb = match lp {
+            Some(_) => head_xchg::xchg_lp_bytes(self.head_world),
+            None => head_xchg::xchg_bytes(self.head_world),
+        };
         for r in 0..rows {
-            KernelLaunch::new(gpu, pack_k)
+            let launch = match lp {
+                Some(lp) => KernelLaunch::new(gpu, self.lp_k.pack_lp)
+                    .arg_ptr(arg.offset(r * 4))
+                    .arg_ptr(logits.offset(r * logits_row_bytes))
+                    .arg_ptr(lp.offset(r * 4)),
+                None => KernelLaunch::new(gpu, pack_k)
+                    .arg_ptr(arg.offset(r * 4))
+                    .arg_ptr(logits.offset(r * logits_row_bytes)),
+            };
+            launch
                 .grid([1, 1, 1])
                 .block([32, 1, 1])
-                .arg_ptr(arg.offset(r * 4))
-                .arg_ptr(logits.offset(r * logits_row_bytes))
                 .arg_ptr(xchg.offset(r * xb))
-                .arg_u32(self.head_world as u32)
+                .arg_u32(world)
                 .arg_u32(self.head_rank as u32)
                 .arg_u32(v0 as u32)
                 .launch(stream)?;
         }
         comm.all_reduce_async(xchg.0, rows * xb, stream)?;
         for r in 0..rows {
-            KernelLaunch::new(gpu, pick_k)
-                .grid([1, 1, 1])
-                .block([32, 1, 1])
-                .arg_ptr(xchg.offset(r * xb))
-                .arg_u32(self.head_world as u32)
-                .arg_ptr(arg.offset(r * 4))
-                .launch(stream)?;
+            let launch = KernelLaunch::new(
+                gpu,
+                if lp.is_some() {
+                    self.lp_k.pick_lp
+                } else {
+                    pick_k
+                },
+            )
+            .grid([1, 1, 1])
+            .block([32, 1, 1])
+            .arg_ptr(xchg.offset(r * xb))
+            .arg_u32(world)
+            .arg_ptr(arg.offset(r * 4));
+            match lp {
+                Some(lp) => launch.arg_ptr(lp.offset(r * 4)).launch(stream)?,
+                None => launch.launch(stream)?,
+            }
         }
         Ok(())
     }
 
-    /// 2026-09-25: One draft token. Advances `seq_len` by one.
+    /// 2026-09-25: One draft token. Advances `seq_len` by one. 2026-10-11: With its top-1
+    /// log-probability under the confidence stop (`draft_lp`), NaN otherwise.
     #[allow(clippy::too_many_arguments)]
     fn forward_one(
         &self,
@@ -404,7 +452,7 @@ impl Glm5NextMtpHead {
         st: &mut Glm5NextMtpProposerState,
         ctx: &ForwardContext,
         stream: u64,
-    ) -> Result<u32> {
+    ) -> Result<(u32, f32)> {
         self.draft_on_device(token, hidden_in, first, position, st, ctx, stream)?;
         self.read_draft(st, ctx, stream)
     }

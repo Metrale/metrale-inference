@@ -15,6 +15,10 @@
 //!   largest GLM-5.3 token id (154,855) and ids that use all three digits.
 //! - Negative control: a pick on a buffer with rank 1's logit lane raised must change the
 //!   answer, so the comparison can fail.
+//! - 2026-10-11: The log-probability exchange (`glm5next_mtp_xchg_pack_lp` / `_pick_lp`): every
+//!   rank's packed bytes equal `head_xchg_pack_lp`'s, the device pick's id equals the host's
+//!   and its log-probability is within 1e-4 of the host's and within 1e-2 of a direct
+//!   whole-vocab log-softmax.
 //!
 //! Run (GB10, a few MB of device memory):
 //!   METRALE_TARGET_HW=gb10 METRALE_TARGET_MODEL=glm-5.3-flash METRALE_TARGET_QUANT=nvfp4 \
@@ -27,7 +31,8 @@ use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
 use metrale_gpu_runtime::gpu::GpuBackend;
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 use metrale_model_arch::glm5next_mtp_head::{
-    HEAD_XCHG_MAX_RANKS, head_xchg_bytes, head_xchg_pack, head_xchg_pick,
+    HEAD_XCHG_MAX_RANKS, head_xchg_bytes, head_xchg_lp_bytes, head_xchg_pack, head_xchg_pack_lp,
+    head_xchg_pick, head_xchg_pick_lp,
 };
 
 /// 2026-10-11: One rank's shard: the vocab rows it starts at, its logits, its local argmax.
@@ -195,6 +200,101 @@ fn main() -> Result<()> {
             println!("  world {world} case {case}: pack x{world} and pick {got} identical");
         }
     }
+    checked += lp_cases(g, &mut rng)?;
     println!("\nglm53 mtp xchg gate PASS ({checked} cases)");
     Ok(())
+}
+
+/// 2026-10-11: The log-probability exchange against the host form, at 2, 3 and 4 ranks.
+fn lp_cases(g: &dyn GpuBackend, rng: &mut u64) -> Result<usize> {
+    let pack_k = g.kernel("glm5next_mtp_xchg", "glm5next_mtp_xchg_pack_lp")?;
+    let pick_k = g.kernel("glm5next_mtp_xchg", "glm5next_mtp_xchg_pick_lp")?;
+    let logits_d = g.alloc(512 * 2)?;
+    let arg_d = g.alloc(4)?;
+    let lp_d = g.alloc(4)?;
+    let xchg_d = g.alloc(12 * HEAD_XCHG_MAX_RANKS)?;
+    let lse = |xs: &[f32]| {
+        let m = xs.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        m + xs.iter().map(|x| (x - m).exp()).sum::<f32>().ln()
+    };
+    let mut checked = 0;
+    for world in 2..=HEAD_XCHG_MAX_RANKS {
+        let sh = shards(world, 0, rng);
+        let mut packs = Vec::new();
+        for (r, s) in sh.iter().enumerate() {
+            let xs: Vec<f32> = s.logits.iter().map(|x| x.to_f32()).collect();
+            let top = xs[s.local];
+            // 2026-10-11: What `argmax_bf16_batch_lp` hands the pack: the shard's log-softmax
+            // at its argmax.
+            let lp_local = top - lse(&xs);
+            let host = head_xchg_pack_lp(
+                world,
+                r,
+                s.logits[s.local].to_bits().to_le_bytes(),
+                s.v0 + s.local,
+                top - lp_local,
+            )?;
+            let bytes: Vec<u8> = s
+                .logits
+                .iter()
+                .flat_map(|x| x.to_bits().to_le_bytes())
+                .collect();
+            g.copy_h2d(&bytes, logits_d)?;
+            g.copy_h2d(&(s.local as u32).to_le_bytes(), arg_d)?;
+            g.copy_h2d(&lp_local.to_le_bytes(), lp_d)?;
+            KernelLaunch::new(g, pack_k)
+                .grid([1, 1, 1])
+                .block([32, 1, 1])
+                .arg_ptr(arg_d)
+                .arg_ptr(logits_d)
+                .arg_ptr(lp_d)
+                .arg_ptr(xchg_d)
+                .arg_u32(world as u32)
+                .arg_u32(r as u32)
+                .arg_u32(s.v0 as u32)
+                .launch(g.default_stream())?;
+            let mut got = vec![0u8; head_xchg_lp_bytes(world)];
+            g.copy_d2h(xchg_d, &mut got)?;
+            ensure!(
+                got == host,
+                "lp world {world} rank {r}: device pack {got:?} != host {host:?}"
+            );
+            packs.push(got);
+        }
+        let summed = all_reduce(&packs);
+        let (want_id, want_lp) = head_xchg_pick_lp(world, &summed)?;
+        g.copy_h2d(&summed, xchg_d)?;
+        KernelLaunch::new(g, pick_k)
+            .grid([1, 1, 1])
+            .block([32, 1, 1])
+            .arg_ptr(xchg_d)
+            .arg_u32(world as u32)
+            .arg_ptr(arg_d)
+            .arg_ptr(lp_d)
+            .launch(g.default_stream())?;
+        let (mut id, mut lp) = ([0u8; 4], [0u8; 4]);
+        g.copy_d2h(arg_d, &mut id)?;
+        g.copy_d2h(lp_d, &mut lp)?;
+        let (id, lp) = (u32::from_le_bytes(id), f32::from_le_bytes(lp));
+        let all: Vec<f32> = sh
+            .iter()
+            .flat_map(|s| s.logits.iter().map(|x| x.to_f32()))
+            .collect();
+        let win = sh
+            .iter()
+            .map(|s| s.logits[s.local].to_f32())
+            .fold(f32::NEG_INFINITY, f32::max);
+        let direct = win - lse(&all);
+        ensure!(
+            id == want_id,
+            "lp world {world}: device id {id} != host {want_id}"
+        );
+        ensure!(
+            (lp - want_lp).abs() < 1e-4 && (lp - direct).abs() < 1e-2,
+            "lp world {world}: device {lp}, host {want_lp}, direct {direct}"
+        );
+        println!("  lp world {world}: id {id} lp {lp:.5} (direct {direct:.5})");
+        checked += 1;
+    }
+    Ok(checked)
 }

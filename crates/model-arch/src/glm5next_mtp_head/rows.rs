@@ -102,8 +102,11 @@ impl Glm5NextMtpHead {
                     stream,
                 )?;
             } else {
+                // 2026-10-11: `concat` is free once `eh_proj` has read it: the normed row's
+                // scratch, so no shared forward buffer is written (`prefill_uses_shared_buffers`).
                 self.module.layer.drafter_write_kv_row(
                     *x,
+                    *concat,
                     dsa_state,
                     &mut kv,
                     *seq_len,

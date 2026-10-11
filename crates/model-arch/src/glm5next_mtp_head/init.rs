@@ -209,6 +209,7 @@ impl Glm5NextMtpHead {
             head_fp8,
             gemv_fp8w_k,
             xchg_k: xchg_kernels(gpu),
+            lp_k: super::draft_lp::LpKernels::resolve(gpu),
             target_final_norm: target_final_norm.weight,
         })
     }

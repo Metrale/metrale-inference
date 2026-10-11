@@ -438,6 +438,21 @@ impl TransformerModel {
 
         let stream = self.gpu.default_stream();
         self.decode_batch_compute_main(&tokens, &mut refs, stream)?;
+        // 2026-10-11: Stash every decode row, slot j <- row j, as rank 0's batched bootstrap does
+        // (`mtp_bootstrap_step`) before its proposes, which name stash slots: without it this
+        // rank's half of the drafter's collectives read whatever the last batched verify left.
+        // Only for a proposer every rank runs (an EP-sharded MTP block).
+        if self
+            .proposer
+            .as_ref()
+            .is_some_and(|p| p.needs_comm() && !p.collective_propose())
+            && !self.verify_hidden_stash.is_null()
+            && n <= metrale_model_layers::layer::VERIFY_WY_TABLE_SEQS
+        {
+            use crate::traits::ModelDraft;
+            let rows: Vec<usize> = (0..n).collect();
+            self.stash_verify_hidden_rows(&rows, stream)?;
+        }
         Ok(true)
     }
 }

@@ -56,7 +56,8 @@ impl DraftProposer for MtpHead {
 
         // 2026-10-02: `--draft-confidence-stop`: the chain stops after the first
         // draft whose top-1 probability is below tau (`speculative::draft_stop`).
-        let stop_lp = crate::speculative::draft_stop::draft_stop_logprob();
+        // 2026-10-11: The published rule, either form (`draft_stop::StopRule`).
+        let mut stop = crate::speculative::draft_stop::draft_stop_rule().map(|r| r.chain());
         let mut drafts = Vec::with_capacity(num_drafts);
         let mut current_token = last_token;
         let mut current_hidden = target_hidden;
@@ -98,12 +99,12 @@ impl DraftProposer for MtpHead {
             current_hidden = Self::chain_hidden(ctx);
             // 2026-10-02: The last draft's log-probability is NaN when it was not
             // measured (a masked or deferred draft), which never stops the chain.
-            if let Some(ln_tau) = stop_lp {
+            if let Some(stop) = stop.as_mut() {
                 let lp = f32::from_bits(
                     self.last_conf_bits
                         .load(std::sync::atomic::Ordering::Relaxed),
                 );
-                if !lp.is_nan() && !crate::speculative::draft_stop::chain_continues(lp, ln_tau) {
+                if !lp.is_nan() && !stop.continues(lp) {
                     break;
                 }
             }
