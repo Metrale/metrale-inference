@@ -36,7 +36,7 @@ use metrale_model_layers::layer::{AttnMetadataDev, ForwardContext, LayerState};
 use super::super::attend::DsaDecodePaging;
 use super::super::paged::IndexerCache;
 use super::super::state::Glm5NextDsaState;
-use super::{Glm5NextDsaLayer, IndexerPlace, gemm};
+use super::{Glm5NextDsaLayer, IndexerPlace};
 
 /// 2026-10-08: Row `r`'s `Glm5NextDsaState`; errors on any other state type.
 fn dsa_row<'a>(
