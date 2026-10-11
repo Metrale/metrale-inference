@@ -6,7 +6,8 @@
 //!
 //! Rank 0 (`ep_send_fed_step`, after `feed_resolve` wrote its feed ids) submits the step's
 //! announcement on its compute stream without waiting: on the v3 wire one block
-//! `[slot, EP_CMD_DECODE_FED, token]` with the token copied in on the device, otherwise three
+//! `[slot, EP_CMD_DECODE_FED, token, flags, m0, m1]` (`ep_wire`), the token copied over `arg`
+//! on the device and the flags set when the step ends in the device argmax, otherwise three
 //! broadcasts (slot word, [`EP_CMD_DECODE_FED`], then the 4-byte token from its feed ids). A
 //! worker reads the preamble with `ep_recv_seq_and_cmd`, moves the token into its feed ids on
 //! the device, and runs the same fed decode (`ep_worker_decode_fed`). Neither side reads the
@@ -26,7 +27,7 @@ use metrale_model_layers::ep_wire::{self, EpWire};
 
 use super::super::types::TransformerModel;
 use super::feed::DecodeInput;
-use crate::traits::SequenceState;
+use crate::traits::{RowMask, SequenceState};
 
 /// 2026-10-10: Worker command: run a fed single-row decode in the preamble's slot; the token
 /// follows as a 4-byte broadcast from rank 0's feed ids.
@@ -44,9 +45,11 @@ fn lever_on() -> bool {
 }
 
 /// 2026-10-10: Rank 0's half of a fed step, submitted on `stream` without a host wait. On the
-/// v3 wire (`one_block`) it is one broadcast of the block `[slot, EP_CMD_DECODE_FED, token]`,
-/// the token copied into the block on the device; otherwise the slot word, the command word,
-/// then the token in `feed_ids`. Host words are staged with pageable async copies, which the
+/// v3 wire (`one_block`) it is one broadcast of the block `[slot, EP_CMD_DECODE_FED, token,
+/// flags, m0, m1]`: the whole block from the host (with [`ep_wire::FLAG_DEVICE_ARGMAX`] and the
+/// row mask when `argmax` is set), then the token copied over its `arg` on the device.
+/// Otherwise the slot word, the command word, then the token in `feed_ids`; that wire carries
+/// no flags, so `argmax` must be `None`. Host words are staged with pageable async copies, which the
 /// driver stages before returning, so each is ordered after the broadcast before it has read
 /// `cmd_buf`.
 pub(in crate::model) fn send_fed_step(
@@ -57,14 +60,21 @@ pub(in crate::model) fn send_fed_step(
     stream: u64,
     slot: u32,
     one_block: bool,
+    argmax: Option<RowMask>,
 ) -> Result<()> {
     ensure!(comm.rank() == 0, "a fed step is announced by rank 0 only");
     if one_block {
-        let block = ep_wire::host_block(slot, EP_CMD_DECODE_FED);
-        gpu.copy_h2d_async(&block[..ep_wire::CMD_BLOCK_ARG], cmd_buf, stream)?;
+        let block = match argmax {
+            Some(mask) => {
+                ep_wire::decode_block(slot, EP_CMD_DECODE_FED, ep_wire::FLAG_DEVICE_ARGMAX, mask)
+            }
+            None => ep_wire::host_block(slot, EP_CMD_DECODE_FED),
+        };
+        gpu.copy_h2d_async(&block, cmd_buf, stream)?;
         gpu.copy_d2d_async(feed_ids, cmd_buf.offset(ep_wire::CMD_BLOCK_ARG), 4, stream)?;
         return comm.broadcast_enqueue(cmd_buf.0, ep_wire::CMD_BLOCK_BYTES, 0);
     }
+    ensure!(argmax.is_none(), "the device argmax needs the v3 wire");
     for word in [slot, EP_CMD_DECODE_FED] {
         gpu.copy_h2d_async(&word.to_le_bytes(), cmd_buf, stream)?;
         comm.broadcast_enqueue(cmd_buf.0, 4, 0)?;
@@ -115,6 +125,7 @@ impl TransformerModel {
             self.gpu.default_stream(),
             seq.slot_idx as u32,
             EpWire::get().one_block(),
+            self.device_argmax.armed_mask(),
         )
     }
 
@@ -156,6 +167,7 @@ impl TransformerModel {
 mod tests {
     use super::*;
     use crate::test_pair_comm::run_pair;
+    use ep_wire::NO_MASK;
 
     /// 2026-10-10: On each wire, rank 0's announcement and a worker's receive pair broadcast for
     /// broadcast, all rooted at rank 0 (three on v2, one on v3), and the worker ends with rank
@@ -173,29 +185,37 @@ mod tests {
                 let mut w = [0u8; 4];
                 if rank == 0 {
                     gpu.copy_h2d(&TOKEN.to_le_bytes(), feed_ids).unwrap();
-                    send_fed_step(comm, gpu, cmd_buf, feed_ids, 0, SLOT, one_block).unwrap();
+                    let argmax = one_block.then_some([3, NO_MASK]);
+                    send_fed_step(comm, gpu, cmd_buf, feed_ids, 0, SLOT, one_block, argmax)
+                        .unwrap();
                     return Vec::new();
                 }
-                let (slot, cmd) = if one_block {
+                let (slot, cmd, flags, mask) = if one_block {
                     let mut block = [0u8; ep_wire::CMD_BLOCK_BYTES];
                     comm.recv_command_block(cmd_buf.0, block.len(), 0).unwrap();
                     gpu.copy_d2h(cmd_buf, &mut block).unwrap();
-                    ep_wire::block_preamble(&block)
+                    let f = ep_wire::parse_block(&block);
+                    (f.seq_id, f.cmd, f.flags, f.mask)
                 } else {
                     comm.recv_command_u32(cmd_buf.0, 0).unwrap();
                     gpu.copy_d2h(cmd_buf, &mut w).unwrap();
                     let slot = u32::from_le_bytes(w);
                     comm.broadcast(cmd_buf.0, 4, 0).unwrap();
                     gpu.copy_d2h(cmd_buf, &mut w).unwrap();
-                    (slot, u32::from_le_bytes(w))
+                    (slot, u32::from_le_bytes(w), 0, [NO_MASK, NO_MASK])
                 };
                 recv_fed_token(comm, gpu, cmd_buf, feed_ids, 0, one_block).unwrap();
                 gpu.copy_d2h(feed_ids, &mut w).unwrap();
-                vec![slot, cmd, u32::from_le_bytes(w)]
+                vec![slot, cmd, u32::from_le_bytes(w), flags, mask[0], mask[1]]
             });
+            let (flags, m0) = if one_block {
+                (ep_wire::FLAG_DEVICE_ARGMAX, 3)
+            } else {
+                (0, NO_MASK)
+            };
             assert_eq!(
                 r1,
-                vec![SLOT, EP_CMD_DECODE_FED, TOKEN],
+                vec![SLOT, EP_CMD_DECODE_FED, TOKEN, flags, m0, NO_MASK],
                 "one_block={one_block}"
             );
             assert_eq!(ops0.len(), broadcasts, "one_block={one_block}");

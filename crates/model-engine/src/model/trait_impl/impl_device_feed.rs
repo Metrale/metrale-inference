@@ -23,6 +23,14 @@ impl ModelDeviceFeed for TransformerModel {
         self.fed_ahead_policy_dispatch()
     }
 
+    fn arm_device_argmax(&self, masks: &[RowMask]) -> Result<bool> {
+        self.arm_device_argmax_dispatch(masks)
+    }
+
+    fn device_argmax_to_host(&self, dst: &mut [u8], event: Option<u64>) -> Result<()> {
+        self.device_argmax_to_host_dispatch(dst, event)
+    }
+
     fn decode_batch_fed(
         &self,
         sources: &[FeedSource],

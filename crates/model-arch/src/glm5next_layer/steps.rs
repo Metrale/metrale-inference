@@ -10,7 +10,9 @@ use super::*;
 
 mod drafter;
 mod forward;
+mod mhc_slice;
 mod multi_seq;
+mod prefill_capture;
 pub use multi_seq::{GroupSpan, group_spans};
 mod prefill_spans;
 pub use prefill_spans::{SpanPiece, prefill_span_groups};
@@ -47,7 +49,7 @@ impl Glm5NextLayer {
     /// `mhc_fused()` the single `glm_hc_pre_norm` launch that writes the same bytes. Ends the
     /// caller's `profile::MHC` span `t_mhc`; the unfused norm keeps its `profile::NORM` span.
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::glm5next_layer) fn mhc_pre_norm(
+    pub(in crate::glm5next_layer) fn mhc_pre_norm_one(
         &self,
         gpu: &dyn GpuBackend,
         mhc: &Glm5NextMhc,

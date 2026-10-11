@@ -11,7 +11,9 @@ use anyhow::Result;
 use metrale_cache::kv_cache::PagedKvCache;
 use metrale_gpu_runtime::gpu::DevicePtr;
 
-use crate::layer::{BatchedAttnMetadata, ForwardContext, GdnPrefillBuffers, LayerState};
+use crate::layer::{
+    BatchedAttnMetadata, ForwardContext, GdnPrefillBuffers, LayerState, MidchunkCapture,
+};
 
 /// 2026-10-09: One sequence's rows in a multi-sequence prefill pass (`prefill_spans`): its
 /// layer state, block table, the position of its first row and its row count. The rows of
@@ -21,6 +23,10 @@ pub struct PrefillSpan<'a> {
     pub block_table: &'a mut Vec<u32>,
     pub seq_len_start: usize,
     pub rows: usize,
+    /// 2026-10-11: This sequence's in-pass SSM capture, in span-local rows (`cap_local` counts
+    /// from `seq_len_start`): the layer honours it as its `prefill` honours
+    /// `ForwardContext::midchunk_capture`, taking its own ordinal from the capture's counter.
+    pub capture: Option<&'a MidchunkCapture<'a>>,
 }
 
 /// 2026-09-26: A supertrait of `TransformerLayer`; see the module header.

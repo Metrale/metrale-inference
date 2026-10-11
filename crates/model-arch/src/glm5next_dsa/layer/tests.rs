@@ -317,21 +317,25 @@ fn only_a_multi_row_eager_prefill_takes_the_batched_selector() {
 }
 
 /// 2026-09-26: `forward_k` is `pub(in crate::glm5next_layer)`, so every caller is in a
-/// `glm5next_layer/` file. It has two call sites, both in `mod.rs`: the prefill sub-chunk
-/// loop (`is_prefill` true) and the speculative verify (`false`). A third caller in any
-/// module file fails this test and has to choose.
+/// `glm5next_layer/` file. It has two call sites: the prefill sub-chunk loop (`is_prefill`
+/// true; `steps/prefill_capture.rs` since 2026-10-11) and the speculative verify (`false`,
+/// `mod.rs`). A third caller in any module file fails this test and has to choose.
 #[test]
 fn forward_k_has_two_callers_and_the_verify_one_is_not_prefill() {
     let src = include_str!("../../glm5next_layer/mod.rs");
+    let prefill = include_str!("../../glm5next_layer/steps/prefill_capture.rs");
     let module = concat!(
         include_str!("../../glm5next_layer/mod.rs"),
+        include_str!("../../glm5next_layer/l2_warm.rs"),
         include_str!("../../glm5next_layer/levers.rs"),
         include_str!("../../glm5next_layer/profile.rs"),
         include_str!("../../glm5next_layer/state.rs"),
         include_str!("../../glm5next_layer/steps.rs"),
         include_str!("../../glm5next_layer/steps/drafter.rs"),
         include_str!("../../glm5next_layer/steps/forward.rs"),
+        include_str!("../../glm5next_layer/steps/mhc_slice.rs"),
         include_str!("../../glm5next_layer/steps/multi_seq.rs"),
+        include_str!("../../glm5next_layer/steps/prefill_capture.rs"),
         include_str!("../../glm5next_layer/steps/prefill_spans.rs"),
         include_str!("../../glm5next_layer/steps/replay.rs"),
         include_str!("../../glm5next_layer/steps/verify_multi.rs"),
@@ -341,6 +345,7 @@ fn forward_k_has_two_callers_and_the_verify_one_is_not_prefill() {
     assert_eq!(
         glm5next_layer_files(),
         [
+            "l2_warm.rs",
             "levers.rs",
             "mod.rs",
             "profile.rs",
@@ -348,7 +353,9 @@ fn forward_k_has_two_callers_and_the_verify_one_is_not_prefill() {
             "steps.rs",
             "steps/drafter.rs",
             "steps/forward.rs",
+            "steps/mhc_slice.rs",
             "steps/multi_seq.rs",
+            "steps/prefill_capture.rs",
             "steps/prefill_spans.rs",
             "steps/replay.rs",
             "steps/verify_multi.rs",
@@ -364,9 +371,9 @@ fn forward_k_has_two_callers_and_the_verify_one_is_not_prefill() {
         "a new forward_k caller must decide its own `is_prefill`, not inherit one"
     );
     assert!(
-        src.contains(
+        prefill.contains(
             "// This IS the prefill sub-chunk caller.
-                    true,"
+                        true,"
         ),
         "the prefill sub-chunk must pass is_prefill = true"
     );

@@ -216,6 +216,21 @@ pub fn register(
     Ok(())
 }
 
+/// 2026-10-10: The FP8 copy registered for the BF16 weight at `bf16` when this registry is in use
+/// and holds it as one per-row-scaled segment; `None` otherwise (the caller keeps its unfused
+/// path or refuses).
+pub fn row_weight(bf16: DevicePtr) -> Option<Fp8Weight> {
+    if !enabled() {
+        return None;
+    }
+    let g = state().lock().unwrap_or_else(|e| e.into_inner());
+    let w = g.as_ref()?.weights.get(&bf16.0)?;
+    match w.segment_weights() {
+        [s] if s.scale_format == WeightQuantFormat::Fp8PerRow => Some(*s),
+        _ => None,
+    }
+}
+
 /// 2026-10-09: Registered projections and their FP8 bytes (weights plus scales), for the log.
 pub fn registered() -> (usize, usize) {
     let g = state().lock().unwrap_or_else(|e| e.into_inner());

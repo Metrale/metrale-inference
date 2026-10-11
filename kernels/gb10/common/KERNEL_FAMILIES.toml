@@ -1262,7 +1262,14 @@ kernels = [
   "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep_k64",
   "w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep_k64",
   "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_slots_sweep_k64",
+  # 2026-10-10: The grouped GEMM for wide routed launches (prefill), each slot the slot GEMV's
+  # bytes, and its tile pass.
+  "w4a4_grouped_mx::w4a4_grouped_mx_m32", "w4a4_grouped_mx::w4a4_grouped_mx_m64",
+  "w4a4_grouped_mx::w4a4_grouped_mx_m128", "w4a4_grouped_mx::w4a4_grouped_mx_m128_s6",
+  "w4a4_grouped_mx::w4a4_grouped_mx_m32_k64", "w4a4_grouped_mx::w4a4_grouped_mx_m64_k64",
+  "w4a4_grouped_mx::w4a4_grouped_mx_m128_k64", "w4a4_grouped_mx::w4a4_grouped_tiles",
 ]
+kernel_compute."w4a4_grouped_mx::w4a4_grouped_tiles" = { compute = "memory" }
 rows = [1, 16]
 pipeline.expert_gate_up = { in = ["nvfp4/g16", "i32"], gather = "nvfp4/g16", act = "nvfp4/g16", weight = "nvfp4/g16->e2m1", mma = "e2m1*e2m1", accumulate = "f32", scale = "f32", out = ["bf16"] }
 pipeline.expert_down = { in = ["nvfp4/g16", "i32"], act = "nvfp4/g16", weight = "nvfp4/g16->e2m1", mma = "e2m1*e2m1", accumulate = "f32", scale = "f32", out = ["bf16"] }
@@ -1275,7 +1282,7 @@ op = [
 [[family.point]]
 values = {}
 how = "instantiation"
-files = ["kernels/gb10/common/w4a4_gemv_mx_moe.cu"]
+files = ["kernels/gb10/common/w4a4_gemv_mx_moe.cu", "kernels/gb10/common/w4a4_grouped_mx.cu"]
 
 [[family]]
 id = "w8a16_gemm"
@@ -2167,6 +2174,8 @@ kernels = [
   "dsa_indexer_rows::dsa_indexer_store_rows", "dsa_indexer_rows::dsa_write_geom_rows",
   "dsa_indexer_rows::dsa_pool_scores_rows", "dsa_indexer_rows::dsa_topk_pools_rows",
   "dsa_indexer_rows::dsa_expand_selection_rows",
+  # 2026-10-10: dsa_index_scores's bytes for a prefill sub-chunk's rows, register-tiled.
+  "dsa_indexer_rows::dsa_index_scores_tiled",
 ]
 kernel_compute."dsa_indexer::dsa_indexer_store" = { compute = "memory" }
 kernel_compute."dsa_indexer::dsa_write_geom" = { compute = "memory" }

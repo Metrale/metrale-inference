@@ -77,6 +77,9 @@ pub(super) struct ModelCfg {
     /// fake keeps recurrent state that a forward at a position it already consumed corrupts
     /// (the output turns to [`GARBAGE`]); `None`: `Redo`, no recurrent state.
     pub recurrent_fed_rows: Option<usize>,
+    /// 2026-10-10: `arm_device_argmax` accepts one-row steps, and the step's token is then read
+    /// with `device_argmax_to_host` (the cells `argmax_batch_to_feed` would write).
+    pub device_argmax: bool,
     /// 2026-09-25: `event_query` answers "pending" this many times per event before the
     /// event completes (0 = complete at once).
     pub event_lag: usize,
@@ -110,6 +113,7 @@ impl Default for ModelCfg {
             held_blocks: 0,
             device_token_feed: true,
             recurrent_fed_rows: None,
+            device_argmax: false,
             event_lag: 0,
             reversed_completion: false,
             event_query_fault_at: None,
@@ -129,6 +133,8 @@ pub(super) struct State {
     pub ticks: usize,
     /// 2026-09-25: What the last feed argmax wrote, per row.
     pub feed_cells: Vec<u32>,
+    /// 2026-10-10: The mask of the step armed for the device argmax, until it is read.
+    pub armed: Option<[u32; 2]>,
     /// 2026-09-25: Events handed out so far; the first event id is 2, as the goldens
     /// record.
     pub events_created: u64,

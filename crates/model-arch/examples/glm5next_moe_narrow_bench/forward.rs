@@ -24,7 +24,7 @@ use crate::device::*;
 use crate::{Fixture, Setup};
 
 /// 2026-10-09: Rank 0 of TP=3 / EP=3 (the serve's shapes).
-fn config() -> Glm5NextMlpConfig {
+pub fn config() -> Glm5NextMlpConfig {
     Glm5NextMlpConfig {
         hidden: HIDDEN,
         local_dense_intermediate: 4096,

@@ -54,6 +54,17 @@ impl TransformerModel {
     /// snapshots and prefix caching on and no vision pads in the prompt.
     /// `METRALE_NO_TAIL_SPLIT=1` turns the split off.
     pub(in crate::model) fn prefill_tail_split_dispatch(&self, tokens: &[u32]) -> Option<usize> {
+        let bs = self.kv_cache.lock().block_size();
+        self.prefill_tail_split_at(tokens, bs)
+    }
+
+    /// 2026-10-11: [`Self::prefill_tail_split_dispatch`] for a caller that holds the KV-cache
+    /// lock and passes its `block_size`.
+    pub(in crate::model) fn prefill_tail_split_at(
+        &self,
+        tokens: &[u32],
+        block_size: usize,
+    ) -> Option<usize> {
         if self.config.num_ssm_layers() == 0
             || !self.ssm_snapshots.is_enabled()
             || !self.prefix_cache.is_active()
@@ -62,7 +73,7 @@ impl TransformerModel {
         {
             return None;
         }
-        crate::prefill_plan::tail_split_point(tokens.len(), self.kv_cache.lock().block_size())
+        crate::prefill_plan::tail_split_point(tokens.len(), block_size)
     }
 
     pub(super) fn prefill_chunk_dispatch(
@@ -178,15 +189,32 @@ impl TransformerModel {
     /// state, which a snapshot takes at the end of a pass; one rank; and an FP32 h state,
     /// so the captured bytes equal what `SsmSnapshotPool::save` writes after a pass
     /// ending there.
-    fn inpass_cut_capture_supported(&self, seq: &SequenceState) -> bool {
+    ///
+    /// 2026-10-11: When every layer splits its whole pass at the capture
+    /// (`splits_pass_at_capture`, GLM-5.3), neither the row-invariant kernels nor a single
+    /// rank are needed: every launch runs as the separate passes would, and every rank plans
+    /// the same split points (`prepare_cut_capture`).
+    pub(in crate::model) fn inpass_cut_capture_supported(&self, seq: &SequenceState) -> bool {
+        self.inpass_cut_capture_serve_ok() && !self.seq_ssm_h_is_f16(seq)
+    }
+
+    /// 2026-10-11: The serve-wide part of [`Self::inpass_cut_capture_supported`], everything
+    /// but the sequence's h-state dtype.
+    pub(in crate::model) fn inpass_cut_capture_serve_ok(&self) -> bool {
         !cfg!(metrale_scale)
             && metrale_gpu_runtime::ssm_tail_midchunk_enabled()
             && !metrale_model_layers::layers::qwen3_ssm::ssm_h_fp16_enabled()
-            && !self.seq_ssm_h_is_f16(seq)
             && !self.requires_aux_state()
-            && !self.multi_rank_protocol_active()
-            && metrale_model_layers::layers::prefill_row_invariant()
+            && (self.splits_whole_pass_at_capture()
+                || (!self.multi_rank_protocol_active()
+                    && metrale_model_layers::layers::prefill_row_invariant()))
             && self.layers.iter().all(|l| l.supports_replay_tail_split())
+    }
+
+    /// 2026-10-11: Whether every layer splits its whole prefill pass at an in-pass capture
+    /// (`splits_pass_at_capture`).
+    pub(in crate::model) fn splits_whole_pass_at_capture(&self) -> bool {
+        self.layers.iter().all(|l| l.splits_pass_at_capture())
     }
 
     /// 2026-10-01: One prefill pass over `tokens[chunk_start..chunk_start + chunk_len]`.
@@ -386,24 +414,7 @@ impl TransformerModel {
         // checkpoint is the deeper one.
         if let Some(plan) = midcap_plan.as_ref() {
             if cut_captured {
-                if let (Some(tb_early), Some(slot)) = (plan.tb_early, plan.snap_slot_early) {
-                    self.prefill_b_register_checkpoint(
-                        tokens,
-                        seq,
-                        &mut kv_cache,
-                        tb_early,
-                        slot,
-                        stream,
-                    )?;
-                }
-                self.prefill_b_register_checkpoint(
-                    tokens,
-                    seq,
-                    &mut kv_cache,
-                    plan.tb,
-                    plan.snap_slot,
-                    stream,
-                )?;
+                self.register_cut_capture(tokens, seq, &mut kv_cache, plan, stream)?;
             } else {
                 self.finalize_midchunk_capture(tokens, seq, plan);
             }

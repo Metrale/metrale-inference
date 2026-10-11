@@ -17,8 +17,21 @@ use crate::glm5next_mlp::precision::MlpKernel;
 use crate::glm5next_mlp::weights::{Glm5NextDenseMlpWeights, Glm5NextDenseSite};
 use crate::glm5next_mlp::{Glm5NextMlpConfig, Glm5NextMlpKernels};
 
+/// 2026-10-11: The gate, up and activated buffers a dense MLP pass writes (BF16, each
+/// `max_rows * max_inter` elements): the workspace's (`Glm5NextMlpWorkspace::dense_scratch`) or,
+/// under `METRALE_GLM_SHARED_FORK`, the forked shared expert's own (`shared_fork`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DenseScratch {
+    pub(crate) gate: DevicePtr,
+    pub(crate) up: DevicePtr,
+    pub(crate) act: DevicePtr,
+    pub(crate) max_inter: usize,
+    pub(crate) max_rows: usize,
+}
+
 /// 2026-09-25: A BF16 SwiGLU MLP of width `inter`, `down(clamped_swiglu(gate(x), up(x)))`, for a
-/// dense layer or the shared expert. Errors when `inter` or `m` does not fit the workspace.
+/// dense layer or the shared expert. Errors when `inter` or `m` does not fit the scratch.
+/// 2026-10-11: The scratch is explicit (`DenseScratch`).
 #[allow(clippy::too_many_arguments)]
 pub fn forward_dense(
     gpu: &dyn GpuBackend,
@@ -29,7 +42,7 @@ pub fn forward_dense(
     x: DevicePtr,
     out: DevicePtr,
     m: usize,
-    ws: &Glm5NextMlpWorkspace,
+    ws: DenseScratch,
     stream: u64,
 ) -> Result<()> {
     if inter == 0 || inter > ws.max_inter {
@@ -47,7 +60,7 @@ pub fn forward_dense(
     // 2026-10-09: gate and up read `x` unchanged: one FP8 quantization under the FP8 tier.
     let stable = crate::glm5next_fp8_dense::stable_input(x);
     // 2026-10-09: One launch under `METRALE_GLM_W4A16_SEG` (`proj_group`), else one each.
-    let group = [(w.gate_proj, ws.a_gate, inter), (w.up_proj, ws.a_up, inter)];
+    let group = [(w.gate_proj, ws.gate, inter), (w.up_proj, ws.up, inter)];
     if !crate::glm5next_w4a16_dense::proj_group(gpu, &group, x, m, cfg.hidden, stream)? {
         gemm(
             gpu,
@@ -56,7 +69,7 @@ pub fn forward_dense(
             k.batchm(),
             x,
             w.gate_proj,
-            ws.a_gate,
+            ws.gate,
             m,
             inter,
             cfg.hidden,
@@ -69,7 +82,7 @@ pub fn forward_dense(
             k.batchm(),
             x,
             w.up_proj,
-            ws.a_up,
+            ws.up,
             m,
             inter,
             cfg.hidden,
@@ -80,9 +93,9 @@ pub fn forward_dense(
     swiglu(
         gpu,
         k.swiglu,
-        ws.a_gate,
-        ws.a_up,
-        ws.a_act,
+        ws.gate,
+        ws.up,
+        ws.act,
         // 2026-09-25: Elementwise over all `m * inter` values.
         m * inter,
         cfg.swiglu_limit,
@@ -93,7 +106,7 @@ pub fn forward_dense(
         k.gemm,
         k.gemv,
         k.batchm(),
-        ws.a_act,
+        ws.act,
         w.down_proj,
         out,
         m,
@@ -136,7 +149,7 @@ pub fn forward_dense_site(
                     "GLM dense MLP: the plan runs BF16 at {m} rows but no BF16 weights were bound"
                 );
             };
-            forward_dense(gpu, k, cfg, w, inter, x, out, m, ws, stream)
+            forward_dense(gpu, k, cfg, w, inter, x, out, m, ws.dense_scratch(), stream)
         }
     }
 }

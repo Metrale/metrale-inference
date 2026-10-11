@@ -1,0 +1,238 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! 2026-10-11: A GLM layer's prefill under an in-pass SSM capture (`ForwardContext::
+//! midchunk_capture`, the prefix cache's tail split): the pass's rows run as consecutive
+//! segments split at the capture points, each segment in its own sub-chunks from its first
+//! row on, and after a segment that ends at a capture point a KDA layer copies its recurrent
+//! and conv state into the plan's slot.
+//!
+//! Why the bits are those of separate passes. Without the capture the model runs the prompt
+//! tail as passes of its own (`prefill_chunk_dispatch`'s two-pass split), and every GLM launch
+//! is per sub-chunk of a pass: projections, MoE, mHC, all-reduces, the KDA walk and the DSA
+//! rows. Splitting the rows of one pass at the same points gives every layer the same sub-chunks
+//! with the same inputs (the KV, indexer and KDA state the earlier rows of the layer left), so
+//! every row and every captured state carries the separate passes' bytes, and a later request
+//! that restores a captured state and replays the rows after it gets the same bits too. The
+//! layer therefore answers `splits_pass_at_capture`, and the model may capture in-pass whatever
+//! the row-count dependence of the GLM kernels and on a multi-rank serve.
+//!
+//! Owner: model-arch (GLM-5.3).
+//! Invariants:
+//! - Without a capture the rows run exactly as before: one segment.
+
+use super::*;
+use metrale_model_layers::layer::MidchunkCapture;
+
+/// 2026-10-11: Which slot a capture point fills.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CapturePoint {
+    /// 2026-10-11: `cap_local_early` (`h_dsts_early`, `conv_dsts_early`).
+    Early,
+    /// 2026-10-11: `cap_local` (`h_dsts`, `conv_dsts`).
+    Main,
+}
+
+/// 2026-10-11: The `(start, end, capture after end)` segments of a pass of `n` rows split at the
+/// capture points strictly inside it (`early < main` when both exist), in row order; one
+/// `(0, n, None)` segment without a capture. Pure.
+pub(crate) fn capture_segments(
+    n: usize,
+    early: Option<usize>,
+    main: Option<usize>,
+) -> Vec<(usize, usize, Option<CapturePoint>)> {
+    let mut points: Vec<(usize, CapturePoint)> = [
+        early.map(|p| (p, CapturePoint::Early)),
+        main.map(|p| (p, CapturePoint::Main)),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|&(p, _)| p > 0 && p < n)
+    .collect();
+    points.sort_by_key(|&(p, _)| p);
+    points.dedup_by_key(|&mut (p, _)| p);
+    let mut out = Vec::with_capacity(points.len() + 1);
+    let mut start = 0;
+    for (p, which) in points {
+        out.push((start, p, Some(which)));
+        start = p;
+    }
+    out.push((start, n, None));
+    out
+}
+
+/// 2026-10-11: The capture points strictly inside a pass of `n` rows under `cap`, in row order,
+/// each with its slot: the ends of `capture_segments` that capture. None without a capture.
+pub(crate) fn capture_points(
+    n: usize,
+    cap: Option<&MidchunkCapture<'_>>,
+) -> Vec<(usize, CapturePoint)> {
+    let Some(c) = cap else {
+        return Vec::new();
+    };
+    capture_segments(n, c.cap_local_early, Some(c.cap_local))
+        .into_iter()
+        .filter_map(|(_, end, after)| after.map(|w| (end, w)))
+        .collect()
+}
+
+/// 2026-10-11: The SSM ordinal a layer takes from `cap`'s counter for its pass: one per KDA
+/// layer, in model order; none for a DSA layer or without a capture.
+pub(crate) fn kda_ordinal(
+    mixer: &Glm5NextMixer,
+    cap: Option<&MidchunkCapture<'_>>,
+) -> Option<usize> {
+    match (cap, mixer) {
+        (Some(c), Glm5NextMixer::Kda { .. }) => Some(
+            c.ssm_layer_counter
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        ),
+        _ => None,
+    }
+}
+
+impl Glm5NextLayer {
+    /// 2026-10-11: The rows of a text layer's prefill pass, `rows` per sub-chunk (`forward_k`,
+    /// or the per-token walk at one row), split at the capture points of
+    /// `ctx.midchunk_capture` (`capture_segments`). A KDA layer takes its ordinal from the
+    /// capture's counter, as every SSM layer of the pass does, and copies its state after each
+    /// segment that ends at a capture point into that point's destination for its ordinal;
+    /// an empty destination list (a rank that reserved no slot) copies nothing but splits the
+    /// same, so every rank runs the same launches.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::glm5next_layer) fn prefill_segments(
+        &self,
+        hidden: DevicePtr,
+        residual: DevicePtr,
+        num_tokens: usize,
+        rows: usize,
+        state: &mut dyn LayerState,
+        kv_cache: &mut PagedKvCache,
+        seq_len_start: usize,
+        block_table: &mut Vec<u32>,
+        disk_block_ids: &mut Vec<u32>,
+        disk_last_offloaded_per_layer: &mut Vec<u32>,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        let slot0 = ctx.hc_row_offset;
+        let cap = ctx.midchunk_capture.as_ref();
+        let ordinal = kda_ordinal(&self.mixer, cap);
+        let segments = capture_segments(
+            num_tokens,
+            cap.and_then(|c| c.cap_local_early),
+            cap.map(|c| c.cap_local),
+        );
+        for (start, end, after) in segments {
+            let mut t = start;
+            while t < end {
+                if rows > 1 {
+                    let k = rows.min(end - t);
+                    self.forward_k(
+                        hidden.offset(t * self.hidden * 2),
+                        k,
+                        state,
+                        kv_cache,
+                        seq_len_start + t,
+                        block_table,
+                        ctx,
+                        stream,
+                        false,
+                        slot0 + t,
+                        // 2026-09-25: `is_prefill` is true only for this caller.
+                        // This IS the prefill sub-chunk caller.
+                        true,
+                    )?;
+                    t += k;
+                } else {
+                    let off = t * self.hidden * 2;
+                    self.forward_one(
+                        hidden.offset(off),
+                        residual.offset(off),
+                        slot0 + t,
+                        state,
+                        kv_cache,
+                        seq_len_start + t,
+                        block_table,
+                        disk_block_ids,
+                        disk_last_offloaded_per_layer,
+                        ctx,
+                        stream,
+                    )?;
+                    t += 1;
+                }
+            }
+            if let (Some(which), Some(idx), Some(c)) = (after, ordinal, cap) {
+                self.capture_kda_state(state, c, which, idx, ctx.gpu, stream)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// 2026-10-11: Copy this KDA layer's recurrent and conv state into capture point `which`'s
+    /// destinations for SSM ordinal `idx`; nothing when that list has no entry `idx`. Errors
+    /// when the plan's per-layer sizes are not this layer's state sizes.
+    pub(in crate::glm5next_layer) fn capture_kda_state(
+        &self,
+        state: &mut dyn LayerState,
+        cap: &MidchunkCapture<'_>,
+        which: CapturePoint,
+        idx: usize,
+        gpu: &dyn GpuBackend,
+        stream: u64,
+    ) -> Result<()> {
+        let Glm5NextMixer::Kda { cfg, .. } = &self.mixer else {
+            return Ok(());
+        };
+        let (h_dsts, conv_dsts) = match which {
+            CapturePoint::Early => (cap.h_dsts_early, cap.conv_dsts_early),
+            CapturePoint::Main => (cap.h_dsts, cap.conv_dsts),
+        };
+        let (Some(&h_dst), Some(&conv_dst)) = (h_dsts.get(idx), conv_dsts.get(idx)) else {
+            return Ok(());
+        };
+        let (h_bytes, conv_bytes) = (cfg.recurrent_state_elems() * 4, cfg.conv_state_elems() * 4);
+        if (cap.h_bytes, cap.conv_bytes) != (h_bytes, conv_bytes) {
+            bail!(
+                "GLM layer {}: the capture plan holds {} + {} bytes per SSM layer, the KDA \
+                 state is {h_bytes} + {conv_bytes}",
+                self.layer_idx,
+                cap.h_bytes,
+                cap.conv_bytes
+            );
+        }
+        let st = self.kda_state(state)?;
+        gpu.copy_d2d_async(st.h_state, h_dst, h_bytes, stream)?;
+        gpu.copy_d2d_async(st.conv_state, conv_dst, conv_bytes, stream)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 2026-10-11: No capture, or capture points outside the pass: one segment. Points inside:
+    /// consecutive segments ending at each point in row order, each tagged with its slot.
+    #[test]
+    fn segments_split_at_the_points_inside_the_pass() {
+        use CapturePoint::{Early, Main};
+        assert_eq!(capture_segments(40, None, None), vec![(0, 40, None)]);
+        assert_eq!(capture_segments(40, None, Some(0)), vec![(0, 40, None)]);
+        assert_eq!(capture_segments(40, None, Some(40)), vec![(0, 40, None)]);
+        assert_eq!(
+            capture_segments(40, None, Some(32)),
+            vec![(0, 32, Some(Main)), (32, 40, None)]
+        );
+        assert_eq!(
+            capture_segments(4000, Some(3968), Some(3984)),
+            vec![
+                (0, 3968, Some(Early)),
+                (3968, 3984, Some(Main)),
+                (3984, 4000, None)
+            ]
+        );
+        assert_eq!(
+            capture_segments(40, Some(50), Some(32)),
+            vec![(0, 32, Some(Main)), (32, 40, None)]
+        );
+    }
+}

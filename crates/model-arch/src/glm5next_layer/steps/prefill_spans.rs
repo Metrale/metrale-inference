@@ -32,6 +32,7 @@
 //! `examples/glm5next_prefill_spans_mlp_gate.rs`.
 
 use super::forward::kda_chunk_prefill;
+use super::prefill_capture::{CapturePoint, capture_points, kda_ordinal};
 use super::*;
 use metrale_model_layers::layer::PrefillSpan;
 
@@ -50,8 +51,13 @@ pub struct SpanPiece {
 /// most `cap` rows. A piece shares a group only when `share` holds for its own row count and
 /// for the group's total with it; any other piece gets a group of its own, so its launches are
 /// those of its own prefill. A `cap` of 0 is treated as 1; a sequence with no rows has no piece.
+///
+/// 2026-10-11: `cuts[s]` (ascending, inside the sequence; a missing entry is none) are the
+/// sequence's in-pass capture points: the sequence is cut there too and its sub-chunk grid
+/// restarts at each, as its own prefill splits the pass there (`steps/prefill_capture.rs`).
 pub fn prefill_span_groups(
     rows: &[usize],
+    cuts: &[Vec<usize>],
     cap: usize,
     share: impl Fn(usize) -> bool,
 ) -> Vec<Vec<SpanPiece>> {
@@ -61,9 +67,15 @@ pub fn prefill_span_groups(
     let mut cur_rows = 0usize;
     let mut row = 0usize;
     for (seq, &n) in rows.iter().enumerate() {
+        let seq_cuts = cuts.get(seq).map_or(&[][..], Vec::as_slice);
         let mut t0 = 0usize;
         while t0 < n {
-            let len = cap.min(n - t0);
+            let bound = seq_cuts
+                .iter()
+                .copied()
+                .find(|&c| c > t0 && c < n)
+                .unwrap_or(n);
+            let len = cap.min(bound - t0);
             let piece = SpanPiece {
                 seq,
                 t0,
@@ -133,7 +145,21 @@ impl Glm5NextLayer {
         }
         let row_bytes = self.hidden * 2;
         let share = |r: usize| self.mlp_shares_rows(r);
-        for group in prefill_span_groups(&rows, prefill_rows().min(cap), share) {
+        // 2026-10-11: A sequence with an in-pass capture is cut at its points, and a KDA layer
+        // copies its state after the piece that ends at each (`steps/prefill_capture.rs`).
+        let points: Vec<Vec<(usize, CapturePoint)>> = spans
+            .iter()
+            .map(|s| capture_points(s.rows, s.capture))
+            .collect();
+        let ordinals: Vec<Option<usize>> = spans
+            .iter()
+            .map(|s| kda_ordinal(&self.mixer, s.capture))
+            .collect();
+        let cuts: Vec<Vec<usize>> = points
+            .iter()
+            .map(|p| p.iter().map(|&(at, _)| at).collect())
+            .collect();
+        for group in prefill_span_groups(&rows, &cuts, prefill_rows().min(cap), share) {
             let base = group[0].row;
             let m: usize = group.iter().map(|p| p.rows).sum();
             let slot_base = ctx.hc_row_offset + base;
@@ -156,6 +182,14 @@ impl Glm5NextLayer {
                         ctx,
                         stream,
                     )?;
+                    let end = p.t0 + p.rows;
+                    if let (Some(&(_, which)), Some(idx), Some(c)) = (
+                        points[p.seq].iter().find(|&&(at, _)| at == end),
+                        ordinals[p.seq],
+                        span.capture,
+                    ) {
+                        self.capture_kda_state(&mut *span.state, c, which, idx, ctx.gpu, stream)?;
+                    }
                 }
                 Ok(normed)
             })?;
@@ -259,7 +293,7 @@ mod tests {
     #[test]
     fn short_prompts_pack_whole_into_groups() {
         assert_eq!(
-            prefill_span_groups(&[198, 198, 197], 512, |_| true),
+            prefill_span_groups(&[198, 198, 197], &[], 512, |_| true),
             vec![
                 vec![piece(0, 0, 0, 198), piece(1, 0, 198, 198)],
                 vec![piece(2, 0, 396, 197)],
@@ -273,7 +307,7 @@ mod tests {
     #[test]
     fn a_long_sequence_keeps_its_own_sub_chunks() {
         assert_eq!(
-            prefill_span_groups(&[10, 3, 1], 4, |_| true),
+            prefill_span_groups(&[10, 3, 1], &[], 4, |_| true),
             vec![
                 vec![piece(0, 0, 0, 4)],
                 vec![piece(0, 4, 4, 4)],
@@ -296,7 +330,7 @@ mod tests {
             (vec![5], 1),
             (vec![3, 0, 4], 0),
         ] {
-            let groups = prefill_span_groups(&rows, cap, |_| true);
+            let groups = prefill_span_groups(&rows, &[], cap, |_| true);
             let cap = cap.max(1);
             let mut next_row = 0usize;
             let mut next_t = vec![0usize; rows.len()];
@@ -327,6 +361,61 @@ mod tests {
         }
     }
 
+    /// 2026-10-11: A sequence with capture points is cut there as well, and its sub-chunk grid
+    /// restarts at each point, as its own prefill splits the pass there; for assorted shapes
+    /// every sequence's pieces are exactly the sub-chunks of separate passes ending and starting
+    /// at its points. Points outside the sequence cut nothing.
+    #[test]
+    fn capture_points_cut_a_sequence_into_separate_passes_sub_chunks() {
+        assert_eq!(
+            prefill_span_groups(&[10, 6], &[vec![6], vec![]], 4, |_| true),
+            vec![
+                vec![piece(0, 0, 0, 4)],
+                vec![piece(0, 4, 4, 2)],
+                vec![piece(0, 6, 6, 4)],
+                vec![piece(1, 0, 10, 4)],
+                vec![piece(1, 4, 14, 2)],
+            ]
+        );
+        for (rows, cuts, cap) in [
+            (
+                vec![4000usize, 300],
+                vec![vec![3968usize, 3984], vec![]],
+                2048usize,
+            ),
+            (vec![50, 50], vec![vec![16], vec![32, 48]], 16),
+            (vec![7, 9], vec![vec![0, 7, 9], vec![1]], 4),
+            (vec![2048, 17], vec![vec![2048], vec![16]], 2048),
+        ] {
+            let groups = prefill_span_groups(&rows, &cuts, cap, |_| true);
+            for (s, &n) in rows.iter().enumerate() {
+                let mut want = Vec::new();
+                let mut starts: Vec<usize> = cuts[s]
+                    .iter()
+                    .copied()
+                    .filter(|&c| c > 0 && c < n)
+                    .collect();
+                starts.insert(0, 0);
+                starts.push(n);
+                for w in starts.windows(2) {
+                    let mut t = w[0];
+                    while t < w[1] {
+                        let k = cap.min(w[1] - t);
+                        want.push((t, k));
+                        t += k;
+                    }
+                }
+                let got: Vec<(usize, usize)> = groups
+                    .iter()
+                    .flatten()
+                    .filter(|p| p.seq == s)
+                    .map(|p| (p.t0, p.rows))
+                    .collect();
+                assert_eq!(got, want, "{rows:?} {cuts:?} cap {cap}: sequence {s}");
+            }
+        }
+    }
+
     /// 2026-10-09: The serve's routed site shares only from 17 rows (the grouped GEMM): a
     /// shorter piece runs alone, and a piece may not join a group whose total the predicate
     /// refuses.
@@ -334,7 +423,7 @@ mod tests {
     fn a_piece_the_predicate_refuses_runs_alone() {
         let grouped = |r: usize| r >= 17;
         assert_eq!(
-            prefill_span_groups(&[77, 9, 77, 77, 16, 20], 512, grouped),
+            prefill_span_groups(&[77, 9, 77, 77, 16, 20], &[], 512, grouped),
             vec![
                 vec![piece(0, 0, 0, 77)],
                 vec![piece(1, 0, 77, 9)],
@@ -345,7 +434,7 @@ mod tests {
         );
         let below_300 = |r: usize| r < 300;
         assert_eq!(
-            prefill_span_groups(&[200, 150, 50], 512, below_300),
+            prefill_span_groups(&[200, 150, 50], &[], 512, below_300),
             vec![
                 vec![piece(0, 0, 0, 200)],
                 vec![piece(1, 0, 200, 150), piece(2, 0, 350, 50)],

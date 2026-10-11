@@ -38,6 +38,13 @@ pub trait LayerCapabilities {
     /// single-sequence decode (`decode_a.rs`) captures with a communicator when every layer
     /// says so (unless `METRALE_COMM_DECODE_GRAPHS=0`), as it does under the `ep_graphs` and
     /// `gdn_decode_graph` levers. Default false.
+    /// 2026-10-10: The most rows a captured multi-row step (a verify) may carry through this
+    /// layer: above it the layer takes a path that reads device results back to the host, which
+    /// a capture cannot do. `None`, the default: no limit.
+    fn max_captured_rows(&self) -> Option<usize> {
+        None
+    }
+
     fn decode_graph_with_comm(&self) -> bool {
         false
     }
@@ -128,6 +135,17 @@ pub trait LayerCapabilities {
     /// (`TransformerModel::inpass_cut_capture_supported`); otherwise it keeps the
     /// two-pass tail split.
     fn supports_replay_tail_split(&self) -> bool {
+        false
+    }
+
+    /// 2026-10-11: True when this layer's `prefill` runs every launch of the pass, not only its
+    /// recurrence, as separate segments split at an in-pass capture's points (GLM-5.3,
+    /// `glm5next_layer/steps/prefill_capture.rs`), so each row and each captured state carries
+    /// the bytes of separate passes ending and starting there whatever the row-count dependence
+    /// of its kernels. When every layer says so the model captures in-pass without needing
+    /// `prefill_row_invariant` and on a multi-rank serve
+    /// (`TransformerModel::inpass_cut_capture_supported`).
+    fn splits_pass_at_capture(&self) -> bool {
         false
     }
 

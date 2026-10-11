@@ -35,6 +35,7 @@ pub mod flashinfer;
 pub mod gpu;
 #[path = "gpu_args.rs"]
 mod gpu_args;
+pub mod graph_hoist;
 pub mod host_heap;
 pub mod kernel_args;
 #[cfg(feature = "metal")]

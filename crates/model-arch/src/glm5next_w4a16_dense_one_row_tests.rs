@@ -47,15 +47,17 @@ fn seg_args(
     )
 }
 
-/// 2026-10-10: Under the lever one row of a lone projection is one `w4a16_gemv_seg` launch (one
-/// segment, the policy's tile and block cap); without it, the 7-argument `w4a16_gemv`. Two rows
-/// are untouched by the lever.
+/// 2026-10-10: Under the lever one row of a lone projection below K 2048 (the shared down, K 768)
+/// is one `w4a16_gemv_seg` launch (one segment, the policy's tile and block cap); without it, the
+/// 7-argument `w4a16_gemv`. 2026-10-11: A lone projection from K 2048 up (KDA o, K 2816) keeps
+/// `w4a16_gemv` under the lever. Two rows are untouched by the lever.
 #[test]
 fn one_row_takes_the_segmented_gemv_only_under_the_lever() {
     let _serial = crate::glm5next_fp8_dense::lock_registries_for_test();
     let gpu = MockGpuBackend::new();
-    let (n, k) = (4096usize, 2816usize);
-    let key = register_all(&gpu, &[(n, k)])[0];
+    let (n, k) = (4096usize, 768usize);
+    let keys = register_all(&gpu, &[(n, k), (4096, 2816)]);
+    let key = keys[0];
     let (a, c) = (DevicePtr(0x1000_0000), DevicePtr(0x2000_0000));
     let start = gpu.launches_snapshot().len();
     assert!(proj_registered(&gpu, ONE_ROW, key, a, c, 1, n, k, 7).unwrap());
@@ -80,6 +82,13 @@ fn one_row_takes_the_segmented_gemv_only_under_the_lever() {
     let start = gpu.launches_snapshot().len();
     assert!(proj_registered(&gpu, OFF, key, a, c, 1, n, k, 7).unwrap());
     assert_eq!(gpu.launches_snapshot()[start].args.len(), 7, "the GEMV");
+    let start = gpu.launches_snapshot().len();
+    assert!(proj_registered(&gpu, ONE_ROW, keys[1], a, c, 1, 4096, 2816, 7).unwrap());
+    assert_eq!(
+        gpu.launches_snapshot()[start].args.len(),
+        7,
+        "KDA o keeps the GEMV"
+    );
     let start = gpu.launches_snapshot().len();
     assert!(proj_registered(&gpu, ONE_ROW, key, a, c, 2, n, k, 7).unwrap());
     let off2 = gpu.launches_snapshot()[start..].to_vec();
@@ -136,4 +145,112 @@ fn one_row_groups_are_one_launch_of_up_to_six() {
     let seven: Vec<_> = members.iter().chain(&members[..1]).copied().collect();
     assert!(proj_group_registered(&gpu, ONE_ROW, &seven, a, 1, k, 0).is_err());
     assert_eq!(gpu.launches_snapshot().len(), start + 1);
+}
+
+/// 2026-10-11: The lever with GEMV rows 4 on GB10.
+const ROWS4: SegPlan = SegPlan {
+    gemv_rows: 4,
+    ..ONE_ROW
+};
+
+/// 2026-10-11: Under the lever, a GEMV-tier launch of 2..=4 rows of a lone projection below
+/// K 2048 (the shared down, K 768) is one `w4a16_gemv_seg_m<M>` launch (M staged rows of shared
+/// memory); without the lever the same rows take `w4a16_gemv_batch<M>` (7 or 8 arguments), and so
+/// does a lone K 2816 projection (KDA o) under it; 5 rows (no M-row point) keep the batch tier.
+#[test]
+fn gemv_tier_rows_take_the_m_row_point_under_the_lever() {
+    let _serial = crate::glm5next_fp8_dense::lock_registries_for_test();
+    let gpu = MockGpuBackend::new();
+    let (n, k) = (4096usize, 768usize);
+    let keys = register_all(&gpu, &[(n, k), (4096, 2816)]);
+    let key = keys[0];
+    let (a, c) = (DevicePtr(0x1000_0000), DevicePtr(0x2000_0000));
+    for m in 2..=4usize {
+        let start = gpu.launches_snapshot().len();
+        assert!(proj_registered(&gpu, ROWS4, key, a, c, m, n, k, 3).unwrap());
+        let l = gpu.launches_snapshot()[start..].to_vec();
+        assert_eq!(l.len(), 1, "{m} rows");
+        assert_eq!(l[0].args.len(), 32, "{m} rows: the segmented GEMV");
+        assert_eq!(l[0].shared_mem, 4096 * m as u32 + 64);
+        assert_eq!(seg_args(&l[0], 0), (key, c, n as u32));
+        let name = format!("w4a16_gemv_seg_m{m}");
+        assert!(
+            gpu.kernel_lookups_snapshot()
+                .iter()
+                .any(|(md, f)| md == "w4a16_gemv_seg" && *f == name)
+        );
+        let start = gpu.launches_snapshot().len();
+        let off = SegPlan {
+            one_row: false,
+            ..ROWS4
+        };
+        assert!(proj_registered(&gpu, off, key, a, c, m, n, k, 3).unwrap());
+        assert!(
+            gpu.launches_snapshot()[start].args.len() <= 8,
+            "{m} rows: the batch tier"
+        );
+        let start = gpu.launches_snapshot().len();
+        assert!(proj_registered(&gpu, ROWS4, keys[1], a, c, m, 4096, 2816, 3).unwrap());
+        assert!(
+            gpu.launches_snapshot()[start].args.len() <= 8,
+            "{m} rows: KDA o keeps the batch tier"
+        );
+    }
+    let plan8 = SegPlan {
+        gemv_rows: 8,
+        ..ONE_ROW
+    };
+    let start = gpu.launches_snapshot().len();
+    assert!(proj_registered(&gpu, plan8, key, a, c, 5, n, k, 3).unwrap());
+    assert_eq!(
+        gpu.launches_snapshot()[start].args.len(),
+        8,
+        "5 rows: w4a16_gemv_batch5"
+    );
+}
+
+/// 2026-10-11: A six-member group at 3 GEMV-tier rows is one M-row launch with every member;
+/// without GEMV rows (no tier at 3 rows) or without the lever it declines without a launch, and
+/// `seg_gemv_group` says which.
+#[test]
+fn six_member_groups_run_at_gemv_tier_rows() {
+    let _serial = crate::glm5next_fp8_dense::lock_registries_for_test();
+    let gpu = MockGpuBackend::new();
+    let k = 4096usize;
+    let ns = [2816usize, 2816, 2816, 128, 22, 128];
+    let keys = register_all(&gpu, &ns.map(|n| (n, k)));
+    let outs: Vec<DevicePtr> = (0..6)
+        .map(|i| DevicePtr(0x2000_0000 + i * 0x100_0000))
+        .collect();
+    let members: Vec<_> = (0..6).map(|i| (keys[i], outs[i], ns[i])).collect();
+    let a = DevicePtr(0x1000_0000);
+    let start = gpu.launches_snapshot().len();
+    for plan in [
+        ONE_ROW,
+        SegPlan {
+            one_row: false,
+            ..ROWS4
+        },
+    ] {
+        assert!(!seg_gemv_group(plan, 3).unwrap());
+        assert!(!proj_group_registered(&gpu, plan, &members, a, 3, k, 0).unwrap());
+    }
+    assert_eq!(
+        gpu.launches_snapshot().len(),
+        start,
+        "declines launch nothing"
+    );
+    assert!(seg_gemv_group(ROWS4, 3).unwrap());
+    assert!(!seg_gemv_group(ROWS4, 5).unwrap());
+    assert!(proj_group_registered(&gpu, ROWS4, &members, a, 3, k, 0).unwrap());
+    let l = gpu.launches_snapshot()[start..].to_vec();
+    assert_eq!(l.len(), 1);
+    assert_eq!(l[0].shared_mem, 3 * 8192 + 64);
+    for i in 0..6 {
+        assert_eq!(
+            seg_args(&l[0], i),
+            (keys[i], outs[i], ns[i] as u32),
+            "member {i}"
+        );
+    }
 }

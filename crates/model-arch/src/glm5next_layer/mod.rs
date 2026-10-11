@@ -226,46 +226,22 @@ impl TransformerLayer for Glm5NextLayer {
         } else {
             1
         };
-        if rows > 1 {
-            let mut t = 0usize;
-            while t < num_tokens {
-                let k = rows.min(num_tokens - t);
-                self.forward_k(
-                    hidden.offset(t * self.hidden * 2),
-                    k,
-                    state,
-                    kv_cache,
-                    seq_len_start + t,
-                    block_table,
-                    ctx,
-                    stream,
-                    false,
-                    slot0 + t,
-                    // 2026-09-25: `is_prefill` is true only for this caller.
-                    // This IS the prefill sub-chunk caller.
-                    true,
-                )?;
-                t += k;
-            }
-            return Ok(());
-        }
-        for t in 0..num_tokens {
-            let off = t * self.hidden * 2;
-            self.forward_one(
-                hidden.offset(off),
-                residual.offset(off),
-                slot0 + t,
-                state,
-                kv_cache,
-                seq_len_start + t,
-                block_table,
-                disk_block_ids,
-                disk_last_offloaded_per_layer,
-                ctx,
-                stream,
-            )?;
-        }
-        Ok(())
+        // 2026-10-11: The sub-chunk loop (or the per-token walk at one row), split at an
+        // in-pass SSM capture's points when the pass has one (`steps/prefill_capture.rs`).
+        self.prefill_segments(
+            hidden,
+            residual,
+            num_tokens,
+            rows,
+            state,
+            kv_cache,
+            seq_len_start,
+            block_table,
+            disk_block_ids,
+            disk_last_offloaded_per_layer,
+            ctx,
+            stream,
+        )
     }
 
     /// 2026-09-25: K tokens of one sequence in one call, the speculative-verify body:
@@ -397,6 +373,12 @@ impl LayerCapabilities for Glm5NextLayer {
         true
     }
 
+    /// 2026-10-10: Below the routed-MoE grouped GEMM's row floor (`grouped_row_floor`): from
+    /// there the grouped path's host-side tile sizing is what a capture must not run.
+    fn max_captured_rows(&self) -> Option<usize> {
+        Some(crate::glm5next_mlp::forward::grouped_row_floor() - 1)
+    }
+
     /// 2026-10-08: True: a DSA row selects over its own sequence's indexer cache
     /// (`Glm5NextDsaLayer::decode_rows`) and a KDA layer has no index, so the model's mHC +
     /// sparse-index per-sequence rule does not apply to this layer.
@@ -440,6 +422,18 @@ impl LayerCapabilities for Glm5NextLayer {
     /// 2026-09-25: True for a KDA layer, whose mixer carries recurrent state.
     fn is_ssm_layer(&self) -> bool {
         matches!(self.mixer, Glm5NextMixer::Kda { .. })
+    }
+
+    /// 2026-10-11: The prefill splits its whole pass at an in-pass capture's points
+    /// (`steps/prefill_capture.rs`), so the rows after a capture get a separate pass's bits.
+    fn supports_replay_tail_split(&self) -> bool {
+        true
+    }
+
+    /// 2026-10-11: Every launch of the prefill splits there, not only the recurrence, so the
+    /// model needs neither row-count-invariant kernels nor a single rank for the capture.
+    fn splits_pass_at_capture(&self) -> bool {
+        true
     }
 
     /// 2026-10-08: True for a KDA layer: `decode_batched` checkpoints and records a

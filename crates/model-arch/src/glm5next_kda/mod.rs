@@ -37,6 +37,7 @@ mod config;
 mod decode;
 #[cfg(test)]
 mod decode_rows_tests;
+mod gates_fused;
 mod kernels;
 mod prefill;
 mod replay;
@@ -324,7 +325,8 @@ impl Glm5NextKdaLayer {
             (w.g_a.weight, ws.lowrank_g, hd),
         ];
         // 2026-10-10: One row under `METRALE_GLM_W4A16_GEMV_SEG`: all six in one launch.
-        let front = t == 1 && {
+        // 2026-10-11: Also 2..=4 GEMV-tier rows (`glm5next_w4a16_dense::group_of_six`).
+        let front = crate::glm5next_w4a16_dense::group_of_six(t)? && {
             let all: Vec<_> = qkv_group.iter().chain(&low_group).copied().collect();
             crate::glm5next_w4a16_dense::proj_group(gpu, &all, hidden, t, hid, stream)?
         };
@@ -379,6 +381,11 @@ impl Glm5NextKdaLayer {
                 hid,
                 stream,
             )?;
+        }
+        // 2026-10-10: One launch for f_b, gate, beta and g_b at one row under
+        // `METRALE_GLM_KDA_GATES_FUSED=1` (`gates_fused.rs`); same bytes.
+        if self.gates_fused(gpu, t, low, ws, stream)? {
+            return Ok(());
         }
         self.gemm(
             gpu,

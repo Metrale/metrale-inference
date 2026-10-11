@@ -396,3 +396,18 @@ fn ckpt_payload_round_trips() {
     assert!(decode_ckpt_payload(&words[..5]).is_err());
     assert!(decode_ckpt_payload(&[0u32; 7]).is_err());
 }
+
+/// 2026-10-11: The decode-checkpoint interval: a positive override wins on any world; unset,
+/// zero or unparsable falls back to 4 blocks on one rank and 16 on a multi-rank serve.
+#[test]
+fn decode_ckpt_interval_defaults_per_world_and_honours_the_override() {
+    use crate::model::trait_impl::decode_checkpoint::decode_ckpt_interval;
+    assert_eq!(decode_ckpt_interval(None, false), 4);
+    assert_eq!(decode_ckpt_interval(None, true), 16);
+    for bad in ["0", "x", "-3"] {
+        assert_eq!(decode_ckpt_interval(Some(bad), true), 16, "{bad}");
+        assert_eq!(decode_ckpt_interval(Some(bad), false), 4, "{bad}");
+    }
+    assert_eq!(decode_ckpt_interval(Some("8"), true), 8);
+    assert_eq!(decode_ckpt_interval(Some("8"), false), 8);
+}

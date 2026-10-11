@@ -39,6 +39,10 @@ metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false, featu
 metrale-kernels = { path = "../kernels", default-features = false }
 
 [[example]]
+name = "argmax_key_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "residual_add_rms_norm_exact_microtest"
 required-features = ["cuda", "gpu-examples"]
 
@@ -112,6 +116,10 @@ required-features = ["cuda", "gpu-examples"]
 
 [[example]]
 name = "glm5next_w4a16_gemv_seg_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_w4a16_gemv_seg_rows_bench"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
@@ -264,6 +272,10 @@ required-features = ["cuda", "gpu-examples"]
 
 [[example]]
 name = "glm5next_dsa_scores_tiled_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_mhc_slice_bench"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]

@@ -26,7 +26,8 @@
 //!   projections bit for bit as the single-row decode. Opt-in; wider launches are unchanged.
 //! - 2026-10-10: `METRALE_GLM_W4A16_GEMV_SEG=1` runs one-row launches on `w4a16_gemv_seg`
 //!   ([`launch_one_row`]) in every mode: a group of projections that share the input row is one
-//!   persistent launch, a lone projection a one-segment launch. Every output byte is
+//!   persistent launch, a lone projection below K 2048 a one-segment launch (2026-10-11: from K
+//!   2048 up a lone projection keeps `w4a16_gemv`, `ops::w4a16_gemv_seg_lone`). Every output byte is
 //!   `w4a16_gemv`'s (the kernel's invariant), so the lever changes no bits; unset or `0` keeps
 //!   `w4a16_gemv`.
 
@@ -36,9 +37,10 @@ use anyhow::{Context, Result};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_gpu_runtime::kernel_args::{KernelLaunch, div_ceil};
 use metrale_model_layers::layers::ops::{
-    W4A16_GEMV_SEG_MODULE, W4A16_GEMV_SEG_TILES, W4A16_TC_ROWS_MAX_M, W4A16_TC_ROWS_SEG_MODULE,
-    W4a16Seg, w4a16_gemv_seg, w4a16_gemv_seg_entry, w4a16_gemv_seg_policy, w4a16_tc_rows_seg,
-    w4a16_tc_rows_seg_entries, w4a16_tc_rows_seg_tiles, w4a16_tc_rows_split_for,
+    W4A16_GEMV_SEG_MAX_ROWS, W4A16_GEMV_SEG_MODULE, W4A16_GEMV_SEG_TILES, W4A16_TC_ROWS_MAX_M,
+    W4A16_TC_ROWS_SEG_MODULE, W4a16GemvSegPoint, W4a16Seg, w4a16_gemv_seg, w4a16_gemv_seg_point,
+    w4a16_gemv_seg_policy, w4a16_tc_rows_seg, w4a16_tc_rows_seg_entries, w4a16_tc_rows_seg_tiles,
+    w4a16_tc_rows_split_for,
 };
 use metrale_model_layers::weight_map::QuantizedWeight;
 
@@ -203,6 +205,32 @@ pub(crate) fn parse_gemv_seg(v: Option<&str>, tier_on: bool) -> Result<bool, Str
     }
 }
 
+/// 2026-10-11: `segs[i].output [m, n_i] = a [m, k] @ W_i^T` (contiguous rows) in one
+/// `w4a16_gemv_seg` launch: [`launch_one_row`] at one row, the M-row point at 2..=4 (each row the
+/// one-row kernel's bytes for that row alone).
+pub(crate) fn launch_seg_gemv(
+    gpu: &dyn GpuBackend,
+    a: DevicePtr,
+    segs: &[W4a16Seg],
+    m: usize,
+    k: u32,
+    sms: u32,
+    stream: u64,
+) -> Result<()> {
+    if m == 1 {
+        return launch_one_row(gpu, a, segs, k, sms, stream);
+    }
+    w4a16_gemv_seg_point(
+        gpu,
+        W4a16GemvSegPoint::Rows(m as u32),
+        a,
+        segs,
+        k,
+        u32::MAX,
+        stream,
+    )
+}
+
 /// 2026-10-10: `segs[i].output [n_i] = a [k] @ W_i^T` for one row, in one `w4a16_gemv_seg`
 /// launch (1..=6 segments) with the tile height and block cap of `w4a16_gemv_seg_policy`.
 pub(crate) fn launch_one_row(
@@ -234,11 +262,18 @@ pub(crate) fn prepare(gpu: &dyn GpuBackend) -> Result<()> {
             .kernel(gpu, "w4a16_gemv", name)
             .with_context(|| format!("METRALE_GLM_W4A16_GEMV_ROWS: w4a16_gemv::{name}"))?;
     }
-    // 2026-10-10: Every one-row entry `METRALE_GLM_W4A16_GEMV_SEG` may reach.
+    // 2026-10-10: Every one-row entry `METRALE_GLM_W4A16_GEMV_SEG` may reach. 2026-10-11: and the
+    // M-row points of the GEMV-tier row counts (2..=min(4, METRALE_GLM_W4A16_GEMV_ROWS)).
     if gemv_seg()? {
-        for r in W4A16_GEMV_SEG_TILES {
-            let entry = w4a16_gemv_seg_entry(r)
-                .with_context(|| format!("METRALE_GLM_W4A16_GEMV_SEG: tile height {r}"))?;
+        let rows = (2..=gemv_rows()?.min(W4A16_GEMV_SEG_MAX_ROWS)).map(W4a16GemvSegPoint::Rows);
+        for pt in W4A16_GEMV_SEG_TILES
+            .into_iter()
+            .map(W4a16GemvSegPoint::Tile)
+            .chain(rows)
+        {
+            let entry = pt
+                .entry()
+                .with_context(|| format!("METRALE_GLM_W4A16_GEMV_SEG: {pt:?}"))?;
             gpu.op_cache()
                 .kernel(gpu, W4A16_GEMV_SEG_MODULE, entry)
                 .with_context(|| {
@@ -274,6 +309,13 @@ pub struct SegPlan {
 }
 
 impl SegPlan {
+    /// 2026-10-11: Whether a launch of `m` rows runs on `w4a16_gemv_seg` under
+    /// `METRALE_GLM_W4A16_GEMV_SEG`: one row, or a GEMV-tier row count
+    /// ([`Self::gemv_tier`]) the M-row points have (2..=4). Their rows carry the GEMV tiers' bytes.
+    pub(crate) fn seg_gemv(&self, m: usize) -> bool {
+        self.one_row && (m == 1 || (self.gemv_tier(m) && m <= W4A16_GEMV_SEG_MAX_ROWS as usize))
+    }
+
     /// 2026-10-10: Whether a launch of `m` rows runs on the GEMV tiers.
     pub(crate) fn gemv_tier(&self, m: usize) -> bool {
         m >= 2 && m <= self.gemv_rows as usize

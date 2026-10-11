@@ -55,13 +55,11 @@ impl TransformerModel {
         ) {
             return;
         }
-        // 2026-09-25: KV blocks between decode checkpoints. A positive `METRALE_DECODE_CKPT_BLOCKS`
-        // overrides the default of 4.
-        let interval = std::env::var("METRALE_DECODE_CKPT_BLOCKS")
-            .ok()
-            .and_then(|s| s.parse::<usize>().ok())
-            .filter(|&v| v > 0)
-            .unwrap_or(4);
+        // 2026-09-25: KV blocks between decode checkpoints. 2026-10-11: A positive
+        // `METRALE_DECODE_CKPT_BLOCKS` overrides the default, 4 on one rank and 16 on a
+        // multi-rank serve (`decode_ckpt_interval`); the variable is read once per process.
+        let interval =
+            decode_ckpt_interval(decode_ckpt_blocks_env(), self.multi_rank_protocol_active());
         let block_size = self.kv_cache.lock().block_size();
         let Some(plan) = decode_ckpt_plan(&CkptInputs {
             enabled,
