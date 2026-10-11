@@ -393,7 +393,10 @@ impl ModelDraft for RecordingModel {
         seq: &mut SequenceState,
         grammar_bitmask: Option<&[i32]>,
     ) -> Result<Vec<u32>> {
-        rec!(self, "run_mtp_propose_announced(token={token}, pos={position})");
+        rec!(
+            self,
+            "run_mtp_propose_announced(token={token}, pos={position})"
+        );
         let masked = grammar_bitmask.is_some();
         Ok(self.fx_propose_multi(token, position, num_drafts, seq, 0, masked))
     }

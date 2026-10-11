@@ -73,7 +73,10 @@ fn a_fused_k2_step_sends_one_announcement_and_one_verdict() {
         assert_eq!(ep.len(), 2, "tick sends {ep:?}");
         assert!(ep[0].starts_with("ep_announce_k2_fused("));
         assert!(ep[1].starts_with("ep_send_k2_verdict("));
-        let v = t.iter().position(|l| l.starts_with("decode_verify_graphed(")).unwrap();
+        let v = t
+            .iter()
+            .position(|l| l.starts_with("decode_verify_graphed("))
+            .unwrap();
         assert!(t[v - 1].starts_with("ep_announce_k2_fused("), "{t:?}");
         assert_eq!(
             tokens(&t[v - 1]),
@@ -95,7 +98,10 @@ fn the_verdict_is_the_propose_rank_0_runs() {
     let ticks = verify_ticks(&sync_run(&k2_ep(true)));
     let mut finished = 0;
     for t in &ticks {
-        let vi = t.iter().position(|l| l.starts_with("ep_send_k2_verdict(")).unwrap();
+        let vi = t
+            .iter()
+            .position(|l| l.starts_with("ep_send_k2_verdict("))
+            .unwrap();
         let verdict = &t[vi];
         let after = &t[vi + 1..];
         let proposes: Vec<&String> = after
@@ -114,7 +120,10 @@ fn the_verdict_is_the_propose_rank_0_runs() {
         }
         if field(verdict, "drafts") == "0" {
             finished += 1;
-            assert!(proposes.is_empty(), "proposed after a finishing verdict: {t:?}");
+            assert!(
+                proposes.is_empty(),
+                "proposed after a finishing verdict: {t:?}"
+            );
         } else {
             assert_eq!(proposes.len(), 1, "{t:?}");
             assert_eq!(field(proposes[0], "token"), field(verdict, "next"));
@@ -124,11 +133,14 @@ fn the_verdict_is_the_propose_rank_0_runs() {
             assert!(after.iter().any(|l| l.starts_with(&saved)), "{t:?}");
         }
     }
-    assert_eq!(finished, 1, "the EOS step should be the one verdict without drafts");
+    assert_eq!(
+        finished, 1,
+        "the EOS step should be the one verdict without drafts"
+    );
     assert!(
-        ticks
+        ticks.iter().any(|t| t
             .iter()
-            .any(|t| t.iter().any(|l| l.contains("ep_send_k2_verdict(accepted=false"))),
+            .any(|l| l.contains("ep_send_k2_verdict(accepted=false"))),
         "the scenario rejected no draft"
     );
 }
