@@ -67,15 +67,15 @@ fn target_layer_charge_at_131072_is_exact() {
 #[test]
 fn proposer_charge_at_131072_is_exact_and_is_a_separate_owner() {
     let per_layer = indexer_state_bytes(dsa_capacity(MSL, KPOOL), HEAD_DIM);
-    let proposer = per_layer + 2 * HIDDEN * 2 + HIDDEN * 2 + VOCAB * 2 + 4 + 32;
-    assert_eq!(proposer, 67_574_308);
-    // 2026-09-25: The proposer owns one indexer block plus five small buffers (334,372 B; 2026-10-11: the
-    // exchange buffer is 32 B, room for four ranks).
-    assert_eq!(proposer - per_layer, 334_372);
+    let proposer = per_layer + 2 * HIDDEN * 2 + HIDDEN * 2 + VOCAB * 2 + 8 + 48;
+    assert_eq!(proposer, 67_574_328);
+    // 2026-09-25: The proposer owns one indexer block plus five small buffers (334,392 B; 2026-10-11: the
+    // exchange buffer is 48 B, four ranks of the log-probability layout, and `arg` is 8 B).
+    assert_eq!(proposer - per_layer, 334_392);
     assert_eq!(12 * per_layer, 806_879_232);
     assert_ne!(
         proposer,
-        12 * per_layer - DSA_LAYERS * per_layer + 334_372 + 1
+        12 * per_layer - DSA_LAYERS * per_layer + 334_392 + 1
     );
 }
 
@@ -150,7 +150,7 @@ fn a_paged_text_indexer_is_not_charged_per_sequence() {
     assert_eq!(flat.target_layers, 739_639_296);
     assert_eq!(paged.target_layers, 0);
     assert_eq!(paged.proposer, flat.proposer);
-    // 2026-10-11: The indexer block and buffers (67,574,308 B) plus the drafter KV region
+    // 2026-10-11: The indexer block and buffers (67,574,328 B) plus the drafter KV region
     // (16,809,984 B).
-    assert_eq!(paged.proposer, 67_574_308 + 16_809_984);
+    assert_eq!(paged.proposer, 67_574_328 + 16_809_984);
 }

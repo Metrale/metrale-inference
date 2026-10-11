@@ -9,8 +9,10 @@
 use super::*;
 
 impl Glm5NextMtpHead {
-    /// 2026-10-11: `METRALE_GLM_MTP_PROPOSE_BATCH_CHECK=1`: rewind every sequence to its
-    /// position and run the per-sequence `propose` over the same inputs, then count the
+    /// 2026-10-11: `METRALE_GLM_MTP_PROPOSE_BATCH_CHECK=1`: rewind every sequence to the
+    /// drafter row the batched propose started from (`starts`, `batch::start_row`; NOT the
+    /// target position, which a drafter without its prompt context lags) and run the
+    /// per-sequence `propose` over the same inputs, then count the
     /// sequences whose drafts differ from the batched ones. The per-sequence rows overwrite
     /// the batched rows at the same slots, so the drafter state afterwards is the per-sequence
     /// one. Every rank runs it (it is inside the shared forward), so its collectives pair.
@@ -23,6 +25,7 @@ impl Glm5NextMtpHead {
         last_tokens: &[u32],
         target_hiddens: &[DevicePtr],
         positions: &[usize],
+        starts: &[usize],
         num_drafts: usize,
         sts: &mut [&mut Glm5NextMtpProposerState],
         ctx: &ForwardContext,
@@ -33,8 +36,8 @@ impl Glm5NextMtpHead {
         static DIFF: AtomicU64 = AtomicU64::new(0);
         let mut diff = 0u64;
         for (i, st) in sts.iter_mut().enumerate() {
-            st.dsa.rewind_to(positions[i])?;
-            st.seq_len = positions[i];
+            st.dsa.rewind_to(starts[i])?;
+            st.seq_len = starts[i];
             let rows = self.propose(
                 last_tokens[i],
                 target_hiddens[i],
@@ -47,7 +50,11 @@ impl Glm5NextMtpHead {
                 None,
                 None,
             )?;
-            if rows != batched[i] {
+            // 2026-10-11: Under the confidence stop the per-sequence propose ends its own chain
+            // where the batched one keeps drafting for the scheduler to truncate, so the
+            // shorter chain is compared with the other's prefix.
+            let k = rows.len().min(batched[i].len());
+            if rows[..k] != batched[i][..k] {
                 diff += 1;
                 tracing::warn!(
                     "GLM MTP batch check: sequence {i} of {} at row {}: batched {:?} vs \

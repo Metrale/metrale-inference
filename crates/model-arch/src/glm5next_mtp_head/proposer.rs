@@ -46,7 +46,8 @@ impl DraftProposer for Glm5NextMtpHead {
             concat: gpu.alloc(2 * h * 2)?,
             x: gpu.alloc(h * 2)?,
             logits: gpu.alloc(self.vocab * 2)?,
-            arg: gpu.alloc(4)?,
+            // 2026-10-11: The draft id, then its log-probability (`draft_lp`).
+            arg: gpu.alloc(8)?,
             head_xchg: gpu.alloc(super::head_xchg::BUFFER_BYTES)?,
             released: false,
             kv_region,
@@ -185,9 +186,10 @@ impl DraftProposer for Glm5NextMtpHead {
         }
         // 2026-09-25: A drafter ahead of the target's `position` is rewound to it, so its
         // indexer does not select over rows past the target's context.
-        if st.seq_len > position {
-            st.dsa.rewind_to(position)?;
-            st.seq_len = position;
+        let start = super::batch::start_row(st.seq_len, position);
+        if start < st.seq_len {
+            st.dsa.rewind_to(start)?;
+            st.seq_len = start;
         }
         if metrale_model_layers::speculative::mtp_refeed_debug() {
             let fp = metrale_model_layers::speculative::hidden_fingerprint(
@@ -204,9 +206,19 @@ impl DraftProposer for Glm5NextMtpHead {
         let mut drafts = Vec::with_capacity(num_drafts);
         let mut token = last_token;
         let mut hidden = target_hidden;
+        // 2026-10-11: `--draft-confidence-stop`: the chain ends with the first draft whose top-1
+        // probability is below tau (`speculative::draft_stop`); an unmeasured draft (NaN) never
+        // ends it.
+        let stop_lp = metrale_model_layers::speculative::draft_stop::draft_stop_logprob();
         for i in 0..num_drafts {
-            let d = self.forward_one(token, hidden, i == 0, position + i, st, ctx, stream)?;
+            let (d, lp) = self.forward_one(token, hidden, i == 0, position + i, st, ctx, stream)?;
             drafts.push(d);
+            if let Some(ln_tau) = stop_lp
+                && !lp.is_nan()
+                && !metrale_model_layers::speculative::draft_stop::chain_continues(lp, ln_tau)
+            {
+                break;
+            }
             token = d;
             // 2026-09-25: Draft 1 consumes the target's verified hidden; every later draft
             // consumes the drafter's own block output.
@@ -216,7 +228,8 @@ impl DraftProposer for Glm5NextMtpHead {
         Ok(drafts)
     }
 
-    /// 2026-10-11: The batched propose (`batch.rs`); `Ok(None)` without it. No confidences.
+    /// 2026-10-11: The batched propose (`batch.rs`); `Ok(None)` without it. Each draft's top-1
+    /// log-probability goes to `out_conf` when asked for (`draft_lp`).
     #[allow(clippy::too_many_arguments)]
     fn propose_batch(
         &self,
@@ -227,7 +240,7 @@ impl DraftProposer for Glm5NextMtpHead {
         states: &mut [&mut dyn ProposerState],
         ctx: &ForwardContext,
         stream: u64,
-        _out_conf: Option<&mut Vec<Vec<f32>>>,
+        out_conf: Option<&mut Vec<Vec<f32>>>,
     ) -> Result<Option<Vec<Vec<u32>>>> {
         self.propose_rows(
             last_tokens,
@@ -237,6 +250,7 @@ impl DraftProposer for Glm5NextMtpHead {
             states,
             ctx,
             stream,
+            out_conf,
         )
     }
 

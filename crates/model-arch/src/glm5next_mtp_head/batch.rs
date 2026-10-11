@@ -108,7 +108,8 @@ impl ProposeBatch {
             concat: gpu.alloc(n * 2 * hidden * 2)?,
             x: gpu.alloc(n * hidden * 2)?,
             logits: gpu.alloc(n * vocab * 2)?,
-            arg: gpu.alloc(n * 4)?,
+            // 2026-10-11: `[MAX]` u32 ids, then `[MAX]` f32 log-probabilities (`draft_lp`).
+            arg: gpu.alloc(n * 8)?,
             xchg: gpu.alloc(n * super::head_xchg::BUFFER_BYTES)?,
             meta_words: gpu.alloc(n * (8 + 4 + 4))?,
             block_table: gpu.alloc(n * per_seq * 4)?,
@@ -131,6 +132,15 @@ impl ProposeBatch {
             scratch: Mutex::new(scratch),
         }))
     }
+}
+
+/// 2026-10-11: The drafter row a propose at target position `position` starts writing at: the
+/// position when the drafter is ahead of it (rows past it are from rejected drafts), else the
+/// drafter's own length. A drafter can lag the target: its prompt context is skipped when
+/// another sequence's prefill overwrote the shared hidden capture first
+/// (`ensure_drafter_context`), so its rows start at 0.
+pub(super) fn start_row(drafter_rows: usize, position: usize) -> usize {
+    drafter_rows.min(position)
 }
 
 /// 2026-10-11: The packed row metadata of one draft step: the bytes `meta_words` holds for
@@ -198,6 +208,13 @@ impl Glm5NextMtpHead {
     /// per draft step over all of them. `Ok(None)` when the batch is not supported
     /// (`batch_max`); a supported batch never returns `None`, so a caller that announced it to
     /// other ranks gets drafts or an error.
+    ///
+    /// 2026-10-11: With `out_conf`, or under `--draft-confidence-stop`, each draft's top-1
+    /// log-probability (`draft_lp`; NaN where it cannot be computed) goes to `out_conf[i]`, and
+    /// under the stop the steps end once every sequence's chain has stopped
+    /// (`draft_stop::chain_continues`). Every sequence keeps the drafts the steps made; the
+    /// scheduler truncates each chain to its own depth (`draft_stop::chain_depth` in
+    /// `mtp_dcut::plan`), as for the Qwen drafter.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn propose_rows(
         &self,
@@ -208,6 +225,7 @@ impl Glm5NextMtpHead {
         states: &mut [&mut dyn ProposerState],
         ctx: &ForwardContext,
         stream: u64,
+        mut out_conf: Option<&mut Vec<Vec<f32>>>,
     ) -> Result<Option<Vec<Vec<u32>>>> {
         let m = states.len();
         let Some(batch) = self.batch.as_ref() else {
@@ -232,13 +250,16 @@ impl Glm5NextMtpHead {
                     .ok_or_else(|| anyhow::anyhow!("not a GLM MTP proposer state"))?,
             );
         }
-        // 2026-10-11: As `propose`: a drafter ahead of the target's position is rewound to it.
+        // 2026-10-11: As `propose`: a drafter ahead of the target's position is rewound to it
+        // (`start_row`); one behind it (no prompt context) starts where it is.
         for (st, &p) in sts.iter_mut().zip(positions) {
-            if st.seq_len > p {
-                st.dsa.rewind_to(p)?;
-                st.seq_len = p;
+            let start = start_row(st.seq_len, p);
+            if start < st.seq_len {
+                st.dsa.rewind_to(start)?;
+                st.seq_len = start;
             }
         }
+        let starts: Vec<usize> = sts.iter().map(|st| st.seq_len).collect();
         let gpu = ctx.gpu;
         let h = self.hidden;
         let mut sc = batch.scratch.lock();
@@ -281,6 +302,17 @@ impl Glm5NextMtpHead {
         let bctx = drafter_ctx(ctx, meta, false);
         let mut drafts: Vec<Vec<u32>> = vec![Vec::with_capacity(num_drafts); m];
         let mut tokens: Vec<u32> = last_tokens.to_vec();
+        let stop_lp = metrale_model_layers::speculative::draft_stop::draft_stop_logprob();
+        // 2026-10-11: Log-probabilities, when wanted and computable, at `arg + 4 * MAX`.
+        let lp = self
+            .lp_ready(ctx, stop_lp.is_some() || out_conf.is_some())
+            .then_some(sc.arg.offset(max * 4));
+        if let Some(c) = out_conf.as_deref_mut() {
+            c.clear();
+            c.resize(m, Vec::with_capacity(num_drafts));
+        }
+        let mut stopped = vec![false; m];
+        let mut steps = 0usize;
         for d in 0..num_drafts {
             let rows: Vec<usize> = sts.iter().map(|st| st.seq_len).collect();
             if let Some(&r) = rows.iter().find(|&&r| r >= self.max_seq_len) {
@@ -291,9 +323,17 @@ impl Glm5NextMtpHead {
             }
             let tables: Vec<&[u32]> = sts.iter().map(|st| st.block_table.as_slice()).collect();
             gpu.copy_h2d(&meta_words_bytes(&rows, &tables, max)?, sc.meta_words)?;
-            let embeds: Vec<DevicePtr> = tokens
+            // 2026-10-11: A row's embedding half is zeroed at pair key 0 under
+            // `METRALE_MTP_ZERO_POS0`, as `forward_one` does (its key is its row minus one).
+            let embeds: Vec<Option<DevicePtr>> = tokens
                 .iter()
-                .map(|&t| self.embed_tokens.weight.offset(t as usize * h * 2))
+                .zip(&rows)
+                .map(|(&t, &r)| {
+                    let zero = r.checked_sub(1).is_some_and(|key| {
+                        super::hidden_half::zeroes_embedding(ctx.levers.mtp_zero_pos0, key)
+                    });
+                    (!zero).then(|| self.embed_tokens.weight.offset(t as usize * h * 2))
+                })
                 .collect();
             let hiddens_in: Vec<DevicePtr> = (0..m)
                 .map(|i| {
@@ -307,20 +347,22 @@ impl Glm5NextMtpHead {
             // 2026-10-11: Draft 0 replays a graph of the step when `METRALE_GLM_MTP_GRAPH` is on
             // (`batch_graph.rs`); later drafts read the drafter's own rows and run eagerly, as
             // `propose` does.
-            if d == 0 && self.batch_graph_eligible(&sc) {
-                self.step_graphed(
+            // 2026-10-11: A zeroed embedding row has no row to stage, so that step runs eagerly.
+            let all_embedded: Option<Vec<DevicePtr>> = embeds.iter().copied().collect();
+            match all_embedded {
+                Some(e) if d == 0 && self.batch_graph_eligible(&sc) => self.step_graphed(
                     batch,
                     &mut sc,
                     &mut sts,
-                    &embeds,
+                    &e,
                     &hiddens_in,
                     &rows,
+                    lp,
                     meta,
                     ctx,
                     stream,
-                )?;
-            } else {
-                self.step_body(
+                )?,
+                _ => self.step_body(
                     batch,
                     &sc,
                     &mut sts,
@@ -328,28 +370,45 @@ impl Glm5NextMtpHead {
                     &hiddens_in,
                     d == 0,
                     &rows,
+                    lp,
                     &bctx,
                     stream,
-                )?;
+                )?,
             }
-            // 2026-10-11: One read of every row's id per draft step.
-            let mut ids = vec![0u8; m * 4];
-            gpu.copy_d2h(sc.arg, &mut ids)?;
+            steps = d + 1;
+            // 2026-10-11: One read per draft step: every row's id, and with `lp` every row's
+            // log-probability after the `MAX` id slots.
+            let mut out = vec![0u8; if lp.is_some() { max * 8 } else { m * 4 }];
+            gpu.copy_d2h(sc.arg, &mut out)?;
+            let word = |o: usize| [out[o], out[o + 1], out[o + 2], out[o + 3]];
             for i in 0..m {
                 // 2026-10-11: A global id: the exchange's pick when sharded, else the argmax over
                 // the whole vocab (`v0` is 0).
-                let id = u32::from_le_bytes([
-                    ids[i * 4],
-                    ids[i * 4 + 1],
-                    ids[i * 4 + 2],
-                    ids[i * 4 + 3],
-                ]);
+                let id = u32::from_le_bytes(word(i * 4));
+                let l = if lp.is_some() {
+                    f32::from_le_bytes(word(max * 4 + i * 4))
+                } else {
+                    f32::NAN
+                };
                 drafts[i].push(id);
                 tokens[i] = id;
+                if let Some(c) = out_conf.as_deref_mut() {
+                    c[i].push(l);
+                }
+                if let Some(ln_tau) = stop_lp
+                    && !l.is_nan()
+                    && !metrale_model_layers::speculative::draft_stop::chain_continues(l, ln_tau)
+                {
+                    stopped[i] = true;
+                }
+            }
+            if stop_lp.is_some() && stopped.iter().all(|&s| s) {
+                break;
             }
         }
+        // 2026-10-11: The rows each drafter wrote, which `after_verify` trims from.
         for st in sts.iter_mut() {
-            st.last_drafted = num_drafts;
+            st.last_drafted = steps;
         }
         drop(sc);
         if super::batch_check::propose_batch_check() {
@@ -358,6 +417,7 @@ impl Glm5NextMtpHead {
                 last_tokens,
                 target_hiddens,
                 positions,
+                &starts,
                 num_drafts,
                 &mut sts,
                 ctx,
@@ -390,6 +450,17 @@ mod tests {
         assert_eq!(u32_at(36), 6);
         assert_eq!(u32_at(40), 18);
         assert_eq!(u32_at(44), 0);
+    }
+
+    /// 2026-10-11: A drafter ahead of the target rewinds to the target's position; one behind
+    /// it (no prompt context: rows 2 at position 101, the case nightM's parity check hit when
+    /// it rewound "forward" to the position) starts at its own rows.
+    #[test]
+    fn a_propose_starts_at_the_drafter_rows_or_the_position_whichever_is_lower() {
+        assert_eq!(start_row(110, 101), 101);
+        assert_eq!(start_row(101, 101), 101);
+        assert_eq!(start_row(2, 101), 2);
+        assert_eq!(start_row(0, 76), 0);
     }
 
     /// 2026-10-11: A row past its table is refused, not written to another region's slot.

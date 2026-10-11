@@ -26,10 +26,15 @@ const GRAPHS_KEPT: usize = 8;
 /// 2026-10-11: The device addresses a captured step bakes, per row: the target hidden, the DSA
 /// indexer buffers and the KV region.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct BatchGraphKey(Vec<(u64, u64, u64, u64, Option<usize>)>);
+pub(super) struct BatchGraphKey(Vec<(u64, u64, u64, u64, Option<usize>)>, bool);
 
 impl BatchGraphKey {
-    pub(super) fn of(sts: &[&mut Glm5NextMtpProposerState], hiddens_in: &[DevicePtr]) -> Self {
+    /// 2026-10-11: `lp`: the step computes log-probabilities (other kernels).
+    pub(super) fn of(
+        sts: &[&mut Glm5NextMtpProposerState],
+        hiddens_in: &[DevicePtr],
+        lp: bool,
+    ) -> Self {
         Self(
             sts.iter()
                 .zip(hiddens_in)
@@ -43,6 +48,7 @@ impl BatchGraphKey {
                     )
                 })
                 .collect(),
+            lp,
         )
     }
 }
@@ -75,10 +81,11 @@ impl Glm5NextMtpHead {
         batch: &ProposeBatch,
         sc: &BatchScratch,
         sts: &mut [&mut Glm5NextMtpProposerState],
-        embeds: &[DevicePtr],
+        embeds: &[Option<DevicePtr>],
         hiddens_in: &[DevicePtr],
         target_rows: bool,
         rows: &[usize],
+        lp: Option<DevicePtr>,
         bctx: &ForwardContext,
         stream: u64,
     ) -> Result<()> {
@@ -94,7 +101,7 @@ impl Glm5NextMtpHead {
         // `x`, which `eh_proj` writes next) or the drafter's own output, as `propose`.
         for i in 0..m {
             let row = sc.concat.offset(i * 2 * h * 2);
-            self.norm(gpu, embeds[i], self.module.enorm, row, h, stream)?;
+            self.embed_half(gpu, embeds[i], row, stream)?;
             self.hidden_half(
                 bctx,
                 hiddens_in[i],
@@ -104,20 +111,42 @@ impl Glm5NextMtpHead {
                 stream,
             )?;
         }
-        // 2026-10-11: Every rank computes all of `eh_proj`'s rows here (no
-        // `METRALE_GLM_MTP_EH_TP` slice): the same rows either way.
-        ops::dense_gemv_batchm(
-            gpu,
-            batch.kernels.gemv_batchm,
-            sc.concat,
-            &self.module.eh_proj,
-            sc.x,
-            m as u32,
-            h as u32,
-            (2 * h) as u32,
-            h as u32,
-            stream,
-        )?;
+        // 2026-10-11: `eh_proj` over every row: under `METRALE_GLM_MTP_EH_TP` with a
+        // communicator, this rank's output rows into a zeroed `x` and one all-reduce of all the
+        // rows, as the one-row path does (`Self::eh_proj`); each output is the same GEMV either
+        // way.
+        match (bctx.comm, self.eh_shard) {
+            (Some(comm), Some((r0, rows_n))) => {
+                gpu.memset_async(sc.x, 0, m * h * 2, stream)?;
+                ops::dense_gemv_batchm(
+                    gpu,
+                    batch.kernels.gemv_batchm,
+                    sc.concat,
+                    &DenseWeight {
+                        weight: self.module.eh_proj.weight.offset(r0 * 2 * h * 2),
+                    },
+                    sc.x.offset(r0 * 2),
+                    m as u32,
+                    rows_n as u32,
+                    (2 * h) as u32,
+                    h as u32,
+                    stream,
+                )?;
+                comm.all_reduce_async(sc.x.0, m * h * 2, stream)?;
+            }
+            _ => ops::dense_gemv_batchm(
+                gpu,
+                batch.kernels.gemv_batchm,
+                sc.concat,
+                &self.module.eh_proj,
+                sc.x,
+                m as u32,
+                h as u32,
+                (2 * h) as u32,
+                h as u32,
+                stream,
+            )?,
+        }
         if !skip_block() {
             let mut kv = self.kv_cache.lock();
             let mut dsa: Vec<&mut (dyn LayerState + 'static)> = sts
@@ -154,16 +183,30 @@ impl Glm5NextMtpHead {
                 stream,
             )?,
         }
-        ops::argmax_bf16_batch(
-            gpu,
-            batch.kernels.argmax_batch,
-            sc.logits,
-            sc.arg,
-            n as u32,
-            m as u32,
-            n as u32,
-            stream,
-        )?;
+        // 2026-10-11: With `lp`, row i's log-probability at `lp + 4i` (`draft_lp`).
+        match lp {
+            Some(lp) => ops::argmax_bf16_batch_lp(
+                gpu,
+                self.lp_k.argmax_lp,
+                sc.logits,
+                sc.arg,
+                lp,
+                n as u32,
+                m as u32,
+                n as u32,
+                stream,
+            )?,
+            None => ops::argmax_bf16_batch(
+                gpu,
+                batch.kernels.argmax_batch,
+                sc.logits,
+                sc.arg,
+                n as u32,
+                m as u32,
+                n as u32,
+                stream,
+            )?,
+        }
         if sharded {
             let (Some(k), Some(comm)) = (self.device_xchg(bctx), bctx.comm) else {
                 bail!("GLM MTP batched propose: a sharded head without the device exchange");
@@ -177,6 +220,7 @@ impl Glm5NextMtpHead {
                 n * 2,
                 sc.xchg,
                 m,
+                lp,
                 v0,
                 stream,
             )?;
@@ -197,19 +241,20 @@ impl Glm5NextMtpHead {
         embeds: &[DevicePtr],
         hiddens_in: &[DevicePtr],
         rows: &[usize],
+        lp: Option<DevicePtr>,
         meta: AttnMetadataDev,
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<()> {
         let gpu = ctx.gpu;
         let h = self.hidden;
-        let staged: Vec<DevicePtr> = (0..sts.len())
-            .map(|i| sc.embed_in.offset(i * h * 2))
+        let staged: Vec<Option<DevicePtr>> = (0..sts.len())
+            .map(|i| Some(sc.embed_in.offset(i * h * 2)))
             .collect();
-        for (src, dst) in embeds.iter().zip(&staged) {
+        for (src, dst) in embeds.iter().zip(staged.iter().flatten()) {
             gpu.copy_d2d_async(*src, *dst, h * 2, stream)?;
         }
-        let key = BatchGraphKey::of(sts, hiddens_in);
+        let key = BatchGraphKey::of(sts, hiddens_in, lp.is_some());
         let layer = &self.module.layer;
         if let Some(&(_, graph)) = sc.graphs.iter().find(|(k, _)| *k == key) {
             for st in sts.iter() {
@@ -225,7 +270,7 @@ impl Glm5NextMtpHead {
         let gctx = super::batch::drafter_ctx(ctx, meta, true);
         gpu.begin_capture(stream)?;
         let body = self.step_body(
-            batch, sc, sts, &staged, hiddens_in, true, rows, &gctx, stream,
+            batch, sc, sts, &staged, hiddens_in, true, rows, lp, &gctx, stream,
         );
         let graph = gpu.end_capture(stream);
         if let (Err(e), Ok(g)) = (&body, &graph) {
@@ -262,19 +307,23 @@ mod tests {
     /// region or row order does not.
     #[test]
     fn keys_match_only_on_every_address() {
-        let a = BatchGraphKey(vec![(1, 2, 3, 4, Some(0)), (5, 6, 7, 8, Some(1))]);
+        assert_ne!(
+            BatchGraphKey(vec![(1, 2, 3, 4, Some(0))], false),
+            BatchGraphKey(vec![(1, 2, 3, 4, Some(0))], true)
+        );
+        let a = BatchGraphKey(vec![(1, 2, 3, 4, Some(0)), (5, 6, 7, 8, Some(1))], false);
         assert_eq!(a, a.clone());
         assert_ne!(
             a,
-            BatchGraphKey(vec![(1, 2, 3, 4, Some(0)), (9, 6, 7, 8, Some(1))])
+            BatchGraphKey(vec![(1, 2, 3, 4, Some(0)), (9, 6, 7, 8, Some(1))], false)
         );
         assert_ne!(
             a,
-            BatchGraphKey(vec![(1, 2, 3, 4, Some(0)), (5, 6, 7, 8, Some(2))])
+            BatchGraphKey(vec![(1, 2, 3, 4, Some(0)), (5, 6, 7, 8, Some(2))], false)
         );
         assert_ne!(
             a,
-            BatchGraphKey(vec![(5, 6, 7, 8, Some(1)), (1, 2, 3, 4, Some(0))])
+            BatchGraphKey(vec![(5, 6, 7, 8, Some(1)), (1, 2, 3, 4, Some(0))], false)
         );
     }
 }
