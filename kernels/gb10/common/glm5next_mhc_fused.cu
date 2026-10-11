@@ -34,7 +34,12 @@
 
 // 2026-10-09: The whole kernel for ROWS mix rows per block (1: glm5next_hc_mix_bf16's grid,
 // 8: glm5next_hc_mix_bf16_rows's) and hc_mult HC.
-template <int ROWS, int HC>
+// 2026-10-11: PF > 0 (ROWS 1 only, launched only where hc_mult * H == PF * GLM_HCF_BLOCK):
+// each thread issues all PF of its stream loads and all PF of its hc_fn loads before the first
+// add, then accumulates them in the loop's order, so every partial is the same chain of the
+// same operations and the outputs keep their bits; only the loads stop waiting on one another
+// (glm5next_hc_pre_norm_pf64, METRALE_GLM_MHC_PRE_PREFETCH).
+template <int ROWS, int HC, int PF = 0>
 __device__ __forceinline__ void glm_hcf_body(
     const float* __restrict__ streams,
     const __nv_bfloat16* __restrict__ hc_fn,
@@ -71,6 +76,22 @@ __device__ __forceinline__ void glm_hcf_body(
     float acc[ROWS];
 #pragma unroll
     for (int r = 0; r < ROWS; ++r) acc[r] = 0.f;
+    if constexpr (PF > 0) {
+        static_assert(ROWS == 1, "the prefetching mix runs one mix row per block");
+        float xv[PF];
+        __nv_bfloat16 wv[PF];
+        const __nv_bfloat16* __restrict__ wrow = hc_fn + (size_t)m0 * hc_dim;
+#pragma unroll
+        for (int j = 0; j < PF; ++j) xv[j] = x[tid + (unsigned int)j * GLM_HCF_BLOCK];
+#pragma unroll
+        for (int j = 0; j < PF; ++j) wv[j] = wrow[tid + (unsigned int)j * GLM_HCF_BLOCK];
+#pragma unroll
+        for (int j = 0; j < PF; ++j) {
+            const float v = xv[j];
+            ss += v * v;
+            acc[0] += __bfloat162float(wv[j]) * v;
+        }
+    } else {
     // 2026-10-09: Eight iterations in flight per thread: at one token the 24 blocks are bound by
     // load latency (whole kernel at C1: 13.4 us at unroll 4, 11.1 us at 8, 16 no better).
 #pragma unroll 8
@@ -83,6 +104,7 @@ __device__ __forceinline__ void glm_hcf_body(
                 acc[r] += __bfloat162float(hc_fn[(size_t)(m0 + r) * hc_dim + k]) * v;
             }
         }
+    }
     }
     red_ss[tid] = ss;
 #pragma unroll
@@ -165,4 +187,15 @@ extern "C" __global__ void __launch_bounds__(GLM_HCF_BLOCK)
 glm5next_hc_pre_norm_rows(GLM_HCF_ARGS) {
     __shared__ GlmHcfSmem<8> sm;
     GLM_HCF_DISPATCH(8)
+}
+
+// 2026-10-11: glm5next_hc_pre_norm for hc_mult 4 at hc_mult * H == 64 * GLM_HCF_BLOCK (GLM-5.3:
+// H 4096), with every stream and hc_fn load of a thread in flight at once (glm_hcf_body PF 64).
+// Same grid as glm5next_hc_pre_norm; any other shape returns without writing (the host never
+// launches it there: glm5next_mhc_fused.rs `pre_norm_kernel`).
+extern "C" __global__ void __launch_bounds__(GLM_HCF_BLOCK)
+glm5next_hc_pre_norm_pf64(GLM_HCF_ARGS) {
+    __shared__ GlmHcfSmem<1> sm;
+    if (hc_mult != 4u || hc_mult * hidden_size != 64u * GLM_HCF_BLOCK) return;
+    glm_hcf_body<1, 4, 64>(GLM_HCF_PASS);
 }

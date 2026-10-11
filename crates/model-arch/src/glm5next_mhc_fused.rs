@@ -89,6 +89,92 @@ pub fn glm_hc_pre_norm(
     rms_eps: f32,
     stream: u64,
 ) -> Result<()> {
+    glm_hc_pre_norm_with(
+        gpu,
+        kernels,
+        streams,
+        w,
+        norm_w,
+        y_out,
+        normed_out,
+        post_out,
+        comb_out,
+        num_tokens,
+        hidden_size,
+        hc_mult,
+        sinkhorn_iters,
+        norm_eps,
+        hc_eps,
+        rms_eps,
+        pre_prefetch(),
+        stream,
+    )
+}
+
+/// 2026-10-11: `METRALE_GLM_MHC_PRE_PREFETCH=1`: the per-row pre-norm takes
+/// `glm5next_hc_pre_norm_pf64` where the shape allows (`pre_norm_kernel`): each thread issues all
+/// 64 of its stream loads and its 64 `hc_fn` loads before accumulating them in the same order,
+/// instead of eight at a time, so the 24-block launch at one token stops waiting on load
+/// latency. Same bits (`glm5next_hc_fused_gate` checks it). Off until measured. Read once.
+pub fn pre_prefetch() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("METRALE_GLM_MHC_PRE_PREFETCH").as_deref() == Ok("1"))
+}
+
+/// 2026-10-11: `hc_mult * H` the prefetching kernel is compiled for: 64 loads per thread at the
+/// 256-thread block (GLM-5.3: hc 4, H 4096).
+pub const HC_PRE_NORM_PF_DIM: u32 = 64 * 256;
+
+/// 2026-10-11: `(kernel, grid y)` for `num_tokens` tokens: the 8-row grid from
+/// `HC_PRE_NORM_ROWS_MIN_TOKENS`; below it the prefetching per-row kernel when `prefetch` is
+/// asked, the shape is the one it is compiled for and the build has it; else the per-row kernel.
+pub fn pre_norm_kernel(
+    kernels: &Glm5NextMhcKernels,
+    num_tokens: u32,
+    hidden_size: u32,
+    hc_mult: u32,
+    prefetch: bool,
+) -> (KernelHandle, u32) {
+    let mix_rows = mix_hc(hc_mult as usize) as u32;
+    if num_tokens as usize >= HC_PRE_NORM_ROWS_MIN_TOKENS {
+        return (
+            kernels.hc_pre_norm_rows,
+            mix_rows.div_ceil(HC_MIX_ROWS as u32),
+        );
+    }
+    if prefetch
+        && hc_mult == 4
+        && hc_mult * hidden_size == HC_PRE_NORM_PF_DIM
+        && kernels.hc_pre_norm_pf.0 != 0
+    {
+        return (kernels.hc_pre_norm_pf, mix_rows);
+    }
+    (kernels.hc_pre_norm, mix_rows)
+}
+
+/// 2026-10-11: [`glm_hc_pre_norm`] with the prefetching kernel's choice explicit (`prefetch`;
+/// the bit-identity gate runs both arms).
+#[allow(clippy::too_many_arguments)]
+pub fn glm_hc_pre_norm_with(
+    gpu: &dyn GpuBackend,
+    kernels: &Glm5NextMhcKernels,
+    streams: DevicePtr,
+    w: &Glm5NextMhcSiteWeights,
+    norm_w: DevicePtr,
+    y_out: DevicePtr,
+    normed_out: DevicePtr,
+    post_out: DevicePtr,
+    comb_out: DevicePtr,
+    num_tokens: u32,
+    hidden_size: u32,
+    hc_mult: u32,
+    sinkhorn_iters: u32,
+    norm_eps: f32,
+    hc_eps: f32,
+    rms_eps: f32,
+    prefetch: bool,
+    stream: u64,
+) -> Result<()> {
     if let Some(why) = hc_pre_norm_refusal(hidden_size, hc_mult) {
         bail!("glm_hc_pre_norm: {why}");
     }
@@ -102,15 +188,7 @@ pub fn glm_hc_pre_norm(
              scratch (floor {MHC_MIX_MAX_TOKENS})"
         );
     }
-    let mix_rows = mix_hc(hc_mult as usize) as u32;
-    let (kernel, grid_y) = if num_tokens as usize >= HC_PRE_NORM_ROWS_MIN_TOKENS {
-        (
-            kernels.hc_pre_norm_rows,
-            mix_rows.div_ceil(HC_MIX_ROWS as u32),
-        )
-    } else {
-        (kernels.hc_pre_norm, mix_rows)
-    };
+    let (kernel, grid_y) = pre_norm_kernel(kernels, num_tokens, hidden_size, hc_mult, prefetch);
     if kernel.0 == 0 {
         bail!("glm_hc_pre_norm: the glm5next_mhc_fused kernels are not in this build");
     }
@@ -201,11 +279,42 @@ mod tests {
             hc_finish: k(6),
             hc_pre_norm: k(if fused { 9 } else { 0 }),
             hc_pre_norm_rows: k(if fused { 10 } else { 0 }),
+            hc_pre_norm_pf: k(if fused { 13 } else { 0 }),
             hc_post: k(7),
             hc_post_rank_sum: k(11),
             hc_post_pre_norm: k(12),
             hc_head: k(8),
         }
+    }
+
+    /// 2026-10-11: The prefetching kernel is taken only when asked, at GLM-5.3's shape, below the
+    /// 8-row threshold and when the build has it; its grid is the per-row kernel's.
+    #[test]
+    fn the_prefetching_pre_norm_needs_the_lever_the_shape_and_the_kernel() {
+        let k = kernels(true);
+        let mix = mix_hc(4) as u32;
+        assert_eq!(
+            pre_norm_kernel(&k, 1, 4096, 4, true),
+            (k.hc_pre_norm_pf, mix)
+        );
+        assert_eq!(
+            pre_norm_kernel(&k, 16, 4096, 4, true),
+            (k.hc_pre_norm_pf, mix)
+        );
+        assert_eq!(pre_norm_kernel(&k, 1, 4096, 4, false), (k.hc_pre_norm, mix));
+        assert_eq!(pre_norm_kernel(&k, 1, 5120, 4, true), (k.hc_pre_norm, mix));
+        assert_eq!(pre_norm_kernel(&k, 1, 4096, 3, true).0, k.hc_pre_norm);
+        let rows = HC_PRE_NORM_ROWS_MIN_TOKENS as u32;
+        assert_eq!(
+            pre_norm_kernel(&k, rows, 4096, 4, true).0,
+            k.hc_pre_norm_rows
+        );
+        let mut absent = kernels(true);
+        absent.hc_pre_norm_pf = KernelHandle(0);
+        assert_eq!(
+            pre_norm_kernel(&absent, 1, 4096, 4, true).0,
+            absent.hc_pre_norm
+        );
     }
 
     fn site(bf16: bool) -> Glm5NextMhcSiteWeights {

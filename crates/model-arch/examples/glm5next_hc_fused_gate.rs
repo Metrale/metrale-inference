@@ -10,6 +10,9 @@
 //!   two arms for every case, on each of three back-to-back fused launches (the per-token
 //!   arrival counters must come back to zero), and fails if the unfused arm left an output
 //!   unwritten.
+//! - 2026-10-11: Where `pre_norm_kernel` takes `glm5next_hc_pre_norm_pf64` (H 4096, hc 4, fewer
+//!   than 64 tokens) it is held to the same byte identity, three launches, and its own Sinkhorn
+//!   control must differ; its time is printed under the fused arm's.
 //! - Two negative controls must DIFFER: the fused arm with `CONTROL_ITERS` Sinkhorn iterations
 //!   (`comb`), and with a different norm epsilon (the normed row).
 //!
@@ -27,7 +30,7 @@ use metrale_gpu_runtime::kernel_args::KernelLaunch;
 use metrale_model_arch::glm5next_mhc::{
     Glm5NextMhcKernels, Glm5NextMhcSiteWeights, glm_hc_pre, mhc_mix_max_tokens, mix_hc,
 };
-use metrale_model_arch::glm5next_mhc_fused::glm_hc_pre_norm;
+use metrale_model_arch::glm5next_mhc_fused::{glm_hc_pre_norm_with, pre_norm_kernel};
 
 /// 2026-10-09: `(hidden, hc_mult, tokens)`. Rows 1, 4 and 16 are the decode widths; at 32 the
 /// unfused arm takes its 8-row mix and the fused arm its per-row grid, from 64 both take 8-row
@@ -206,10 +209,35 @@ fn fused(
     rms_eps: f32,
     stream: u64,
 ) -> Result<()> {
-    glm_hc_pre_norm(
+    fused_arm(g, k, s, o, t, hid, hc, iters, rms_eps, false, stream)
+}
+
+/// 2026-10-11: The fused launch with the prefetching kernel's choice explicit (`prefetch`), so
+/// neither arm depends on `METRALE_GLM_MHC_PRE_PREFETCH`.
+#[allow(clippy::too_many_arguments)]
+fn fused_arm(
+    g: &dyn GpuBackend,
+    k: &Glm5NextMhcKernels,
+    s: &Site,
+    o: &Outs,
+    t: usize,
+    hid: usize,
+    hc: usize,
+    iters: u32,
+    rms_eps: f32,
+    prefetch: bool,
+    stream: u64,
+) -> Result<()> {
+    glm_hc_pre_norm_with(
         g, k, s.streams, &s.w, s.norm_w, o.p[0], o.p[3], o.p[1], o.p[2], t as u32, hid as u32,
-        hc as u32, iters, NORM_EPS, HC_EPS, rms_eps, stream,
+        hc as u32, iters, NORM_EPS, HC_EPS, rms_eps, prefetch, stream,
     )
+}
+
+/// 2026-10-11: Whether the prefetching kernel runs at this case (`pre_norm_kernel` picks it).
+fn pf_case(k: &Glm5NextMhcKernels, t: usize, hid: usize, hc: usize) -> bool {
+    pre_norm_kernel(k, t as u32, hid as u32, hc as u32, true).0 == k.hc_pre_norm_pf
+        && k.hc_pre_norm_pf.0 != 0
 }
 
 /// 2026-10-09: Per-site microseconds of `f(stream, i)` for i in 0..REPS captured into one graph, replayed
@@ -283,6 +311,33 @@ fn main() -> Result<()> {
                 }
             }
         }
+        // 2026-10-11: The prefetching kernel against the same oracle, three launches, and its
+        // own Sinkhorn control, where `pre_norm_kernel` takes it.
+        let pf = pf_case(&k, t, hid, hc);
+        if pf {
+            for run in 0..3 {
+                b.poison(g)?;
+                fused_arm(g, &k, &s, &b, t, hid, hc, SINKHORN_ITERS, RMS_EPS, true, 0)?;
+                g.synchronize(0)?;
+                for ((n, x), y) in NAMES.iter().zip(&ah).zip(&b.read(g)?) {
+                    if x != y {
+                        let i = x.iter().zip(y).position(|(p, q)| p != q).unwrap();
+                        bail!(
+                            "H={hid} hc={hc} T={t} run {run}: prefetching `{n}` differs at byte \
+                             {i}: unfused {:#04x} prefetching {:#04x}",
+                            x[i],
+                            y[i]
+                        );
+                    }
+                }
+            }
+            b.poison(g)?;
+            fused_arm(g, &k, &s, &b, t, hid, hc, CONTROL_ITERS, RMS_EPS, true, 0)?;
+            g.synchronize(0)?;
+            if b.read(g)?[2] == ah[2] {
+                bail!("H={hid} hc={hc} T={t}: prefetching control did not change `comb`");
+            }
+        }
         // 2026-10-09: Negative controls: each must change the bytes it governs.
         b.poison(g)?;
         fused(g, &k, &s, &b, t, hid, hc, CONTROL_ITERS, RMS_EPS, 0)?;
@@ -313,7 +368,12 @@ fn main() -> Result<()> {
             );
         }
         println!(
-            "  H={hid:>5} hc={hc} T={t:>3}  y/post/comb/normed BYTE-IDENTICAL x3; controls differ"
+            "  H={hid:>5} hc={hc} T={t:>3}  y/post/comb/normed BYTE-IDENTICAL x3; controls differ{}",
+            if pf {
+                "; prefetching kernel BYTE-IDENTICAL x3"
+            } else {
+                ""
+            }
         );
     }
 
@@ -384,6 +444,30 @@ fn main() -> Result<()> {
                 old.0 / new.0,
                 (old.0 - new.0) * 90.0 / 1000.0
             );
+            if pf_case(&k, t, hid, hc) {
+                let pfu = graph_us(g, stream, |st, i| {
+                    fused_arm(
+                        g,
+                        &k,
+                        &sites[i],
+                        &o,
+                        t,
+                        hid,
+                        hc,
+                        SINKHORN_ITERS,
+                        RMS_EPS,
+                        true,
+                        st,
+                    )
+                })?;
+                println!(
+                    "           prefetching {:6.2} [{:6.2}, {:6.2}]  saves {:.3} ms/step at 90 sites vs fused",
+                    pfu.0,
+                    pfu.1,
+                    pfu.2,
+                    (new.0 - pfu.0) * 90.0 / 1000.0
+                );
+            }
         }
     }
     println!("\nfused gate PASS");
