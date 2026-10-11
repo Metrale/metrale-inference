@@ -81,6 +81,11 @@ fn margin_cells_have_no_default_and_shards_partition_the_grid() {
             .iter()
             .all(|c| c.cell.k % 128 == 0 && c.cell.n % 64 == 0)
     );
+    // 2026-10-10: The 03:00Z sweep died on a margin cell of N = 0 (the half of a 1-wide gate).
+    assert!(
+        g.iter().all(|c| c.cell.k > 0 && c.cell.n > 0),
+        "a cell has a zero width"
+    );
     // 2026-10-10: Served cells come before margin cells.
     let first_margin = g.iter().position(|c| c.margin).unwrap();
     assert!(g[first_margin..].iter().all(|c| c.margin));

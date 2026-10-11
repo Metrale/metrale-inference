@@ -178,6 +178,11 @@ pub fn grid(
         for (op, w, a, k, n) in shapes.keys() {
             for kk in [k / 2, k * 2] {
                 for nn in [n / 2, n * 2] {
+                    // 2026-10-10: A corner below one step (the half of a 1-wide shared gate)
+                    // is no shape: it rounded to N = 0 and its operands divided by zero.
+                    if kk < MARGIN_K_STEP || nn < MARGIN_N_STEP {
+                        continue;
+                    }
                     let (kk, nn) = (round_up(kk, MARGIN_K_STEP), round_up(nn, MARGIN_N_STEP));
                     let key = (op.clone(), w.clone(), a.clone(), kk, nn);
                     keys.entry(key).or_insert(true);

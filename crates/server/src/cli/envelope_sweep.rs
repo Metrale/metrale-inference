@@ -114,7 +114,7 @@ fn print_grid(g: &EnvelopeGridArgs) -> Result<i32> {
     for c in &cells {
         let cand: Vec<&str> = c.candidates.iter().map(|x| x.kernel.as_str()).collect();
         println!(
-            "{} {} {} {}x{} rows={} margin={} default={} floor_us={:.1} candidates={}",
+            "{} {} {} {}x{} rows={} margin={} default={} floor_us={:.1} candidates={} users={}",
             c.cell.op,
             c.cell.weight,
             c.cell.activation,
@@ -124,7 +124,8 @@ fn print_grid(g: &EnvelopeGridArgs) -> Result<i32> {
             c.margin,
             c.default.as_deref().unwrap_or("-"),
             c.floor_us,
-            cand.join(",")
+            cand.join(","),
+            c.users.iter().cloned().collect::<Vec<_>>().join(",")
         );
         est += c.floor_us * c.candidates.len() as f64;
     }
@@ -290,7 +291,15 @@ fn sweep_gpu(a: &EnvelopeSweepArgs) -> Result<i32> {
                 stopped = true;
                 break 'cells;
             }
-            let m = measure(&i, gc, cand, &mut shared, &mut runner, &gpu, a, &host);
+            // 2026-10-10: A panic in one candidate's operands or reference is that candidate's
+            // failure, recorded, never the end of the pass (the 03:00Z sweep lost 3/4 of its
+            // grid to one).
+            let m = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                measure(&i, gc, cand, &mut shared, &mut runner, &gpu, a, &host)
+            })) {
+                Ok(m) => m,
+                Err(p) => panicked(gc, cand, a, &host, &runner, &gpu, p.as_ref()),
+            };
             let line = serde_json::to_string(&m)?;
             writeln!(file, "{line}")?;
             file.flush()?;
@@ -345,12 +354,28 @@ impl Shared<'_> {
     }
 }
 
+/// 2026-10-10: The default first, then the other candidates in order: the first whose own
+/// contract builds the cell's operands leads (a WxAy row-scale contract cannot build a
+/// block-128 cell's operands, and the 03:00Z sweep lost whole cells to that).
 fn lead_case(i: &Inputs, gc: &GridCell, input: InputClass) -> Result<Case> {
-    let lead = gc
-        .default
-        .as_ref()
-        .and_then(|d| gc.candidates.iter().find(|c| &c.kernel == d))
-        .unwrap_or(&gc.candidates[0]);
+    let mut order: Vec<_> = gc.candidates.iter().collect();
+    order.sort_by_key(|c| Some(&c.kernel) != gc.default.as_ref());
+    let mut why = Vec::new();
+    for lead in order {
+        match lead_case_of(i, gc, lead, input) {
+            Ok(c) => return Ok(c),
+            Err(e) => why.push(format!("{}: {e:#}", lead.kernel)),
+        }
+    }
+    anyhow::bail!("no candidate builds the operands: {}", why.join("; "))
+}
+
+fn lead_case_of(
+    i: &Inputs,
+    gc: &GridCell,
+    lead: &metrale_accuracy::envelope::grid::Candidate,
+    input: InputClass,
+) -> Result<Case> {
     let contract = &i.contracts.contracts[lead.contract];
     let family = i
         .fams
@@ -371,6 +396,40 @@ fn lead_case(i: &Inputs, gc: &GridCell, input: InputClass) -> Result<Case> {
         seed: i.contracts.seed,
     };
     case_of(&job).map_err(anyhow::Error::msg)
+}
+
+fn panicked(
+    gc: &GridCell,
+    cand: &metrale_accuracy::envelope::grid::Candidate,
+    a: &EnvelopeSweepArgs,
+    host: &str,
+    runner: &GpuRunner,
+    gpu: &Gpu0,
+    p: &(dyn std::any::Any + Send),
+) -> Measurement {
+    let what = p
+        .downcast_ref::<&str>()
+        .map(|s| s.to_string())
+        .or_else(|| p.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "unknown".into());
+    Measurement {
+        schema: SCHEMA,
+        hardware: a.grid.hardware.clone(),
+        host: host.to_string(),
+        cell: gc.cell.clone(),
+        kernel: cand.kernel.clone(),
+        family: cand.family.clone(),
+        default: gc.default.clone(),
+        verdict: Verdict::Fail,
+        detail: format!("panic: {what}"),
+        digests: Default::default(),
+        time_us: Vec::new(),
+        floor_us: gc.floor_us,
+        throttled: false,
+        temp_c: gpu.temp_c(),
+        closure: runner.closure(),
+        at: rfc3339(now_unix()),
+    }
 }
 
 /// 2026-10-10: The rows at which a candidate is judged on every input class of its contract:
@@ -489,9 +548,15 @@ fn measure(
         };
         let o = run_on(&job, &case, runner);
         if o.verdict != CheckVerdict::Pass {
+            // 2026-10-10: A check that could not be set up (its contract does not apply to these
+            // formats) is no kernel failure: the candidate is unavailable here.
+            let v = match o.verdict {
+                CheckVerdict::Error(_) => Verdict::Unavailable,
+                _ => Verdict::Fail,
+            };
             fail(
                 &mut m,
-                Verdict::Fail,
+                v,
                 format!("{} on {}", o.verdict.name(), input.name()),
             );
             return m;
