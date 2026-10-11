@@ -17,10 +17,11 @@ name: CodeRAG
 # 2026-10-11: the single `metrale-coderag` code corpus came out at 105,944,953 B
 # (6,624 points) against the 99,614,720 B cap, so it was split. Measured on that
 # build, a point costs ~16 KB gzipped whatever it holds, so the cap is ~6,200
-# points and the split targets <= 50% of it per corpus (>= 50% headroom):
-#   crates         2,536 points   ~41 MB   (41% of the cap)
-#   crates-model   2,712 points   ~44 MB   (44%)
-#   kernels        1,376 points   ~22 MB   (22%)
+# points and the split targets <= 50% of it per corpus (>= 50% headroom).
+# Built 2026-10-11 (run 38183263400, full embeds):
+#   crates         2,536 points   40,623,154 B   (40% of the cap)
+#   crates-model   2,712 points   43,239,119 B   (43%)
+#   kernels        1,376 points   22,017,014 B   (22%)
 # crates/ alone was 5,248 points (~84 MB, 16% headroom), so kernels/ vs crates/
 # was not enough and crates/ is cut again by crate name. The two crates halves
 # are one glob and its complement, so a new crate lands in exactly one of them;
