@@ -54,8 +54,15 @@ pub use target_defaults::TargetDefaults;
 pub mod attn_splitk;
 pub use attn_splitk::{MAX_DECODE_SPLITS, SplitkPolicy};
 
+// 2026-10-10: The envelope sweep's schedules, baked from `kernels/<hw>/common/SCHEDULES.toml`.
+// The generated `TARGET_SCHEDULES` below names these types unqualified. Nothing routes on the
+// table yet (see the module doc), so it changes no default bits.
+pub mod schedules;
+pub use schedules::{Enabled, Numerics, Schedule};
+
 // 2026-09-25: The generated per-target kernel constants, `ptx_modules()`,
-// `all_ptx_sets()`, `TARGET_DEFAULTS` and `TARGET_SM_COUNT`.
+// `all_ptx_sets()`, `TARGET_DEFAULTS`, `TARGET_SM_COUNT`, `TARGET_SCHEDULES` and
+// `TARGET_SCHEDULES_STALE`.
 include!(concat!(env!("OUT_DIR"), "/target_ptx.rs"));
 
 /// 2026-09-25: Hash of the generated `target_ptx.rs` text (`content_hash` in

@@ -8,6 +8,18 @@
 
 use clap::Parser;
 
+pub(crate) mod accuracy;
+mod accuracy_adapters;
+mod accuracy_adapters_attention;
+mod accuracy_adapters_gdn;
+mod accuracy_adapters_moe;
+mod accuracy_adapters_norm;
+mod accuracy_adapters_quant;
+mod accuracy_adapters_tc;
+mod accuracy_adapters_w8a8;
+mod accuracy_args;
+mod accuracy_gpu;
+mod accuracy_model;
 pub mod bench_aggregate;
 mod bench_args;
 pub mod bench_card;
@@ -46,6 +58,9 @@ pub(crate) mod serve_args_spec_cost;
 pub(crate) mod sync_recipes;
 mod validate;
 mod validate_spec_cost;
+pub use accuracy_args::{
+    AccuracyAction, AccuracyArgs, AccuracyModelArgs, AccuracyRunArgs, AccuracySelectArgs,
+};
 pub use bench_args::BenchmarkArgs;
 pub use serve_args::{DEFAULT_KV_CACHE_DTYPE, DEFAULT_NUM_DRAFTS, ServeArgs};
 pub use validate::validate_serve_args;
@@ -107,6 +122,11 @@ pub enum Command {
     /// The circuits, precision tables and fusion rules are the ones this binary was built
     /// with (`kernels/circuits/`, `kernels/<hw>/common/FUSIONS.toml`).
     Circuit(CircuitArgs),
+    /// Kernel accuracy contracts (kernels/<hw>/common/ACCURACY.toml): list the kernel points the
+    /// described models run, or check each against its contract (a tolerance derived from the
+    /// family's declared formats and accumulation, or byte identity with a sibling) with seeded
+    /// inputs and seeded mutations that must fail.
+    Accuracy(AccuracyArgs),
 }
 
 /// `met circuit`: inspect an architecture circuit.

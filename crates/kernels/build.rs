@@ -6,7 +6,8 @@
 //! Invariants:
 //! - Both paths, the skip stub (`METRALE_SKIP_BUILD`, or macOS without an
 //!   explicit `METRALE_TARGET_HW`) and the compiling build, write
-//!   `target_ptx.rs` with `TARGET_DEFAULTS` and `TARGET_SM_COUNT` appended and
+//!   `target_ptx.rs` with `TARGET_DEFAULTS`, `TARGET_SM_COUNT` and
+//!   `TARGET_SCHEDULES` / `TARGET_SCHEDULES_STALE` appended and
 //!   emit `METRALE_KERNEL_SET_HASH` over that file's content.
 //! - A failed kernel compile panics the build, after every compile job has run.
 
@@ -418,6 +419,11 @@ mod build_defaults;
 // own file: `tests/build_summary.rs` compiles it directly.
 #[path = "build_summary.rs"]
 mod build_summary;
+
+// 2026-10-10: The SCHEDULES.toml bake (`TARGET_SCHEDULES`). Same reason for its own file:
+// `tests/schedules_bake.rs` compiles it directly.
+#[path = "build_schedules.rs"]
+mod build_schedules;
 
 #[path = "build_codegen.rs"]
 mod build_codegen;

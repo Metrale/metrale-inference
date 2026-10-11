@@ -6,8 +6,9 @@
 //!
 //! Owner: metrale-kernels build.
 //! Invariants:
-//! - Both writers append `target_defaults_literal` to `target_ptx.rs` and
-//!   emit `METRALE_KERNEL_SET_HASH` over the written content.
+//! - Both writers append `target_defaults_literal` (which carries the
+//!   SCHEDULES.toml bake) to `target_ptx.rs` and emit
+//!   `METRALE_KERNEL_SET_HASH` over the written content.
 //!
 //! Included via `#[path = "build_emit.rs"] mod build_emit;` so types from
 //! build.rs (`Target`) are reachable via `super::`.
@@ -16,7 +17,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 
 use super::build_codegen::generate_target_ptx_rs;
-use super::{Target, build_defaults, build_diagnose, build_target, content_hash};
+use super::{Target, build_defaults, build_diagnose, build_schedules, build_target, content_hash};
 
 /// 2026-09-25: The `TARGET_DEFAULTS` and `TARGET_SM_COUNT` constants for the
 /// hardware tree this build selected.
@@ -37,10 +38,30 @@ fn target_defaults_literal(workspace_root: &std::path::Path) -> String {
         println!("cargo:rerun-if-changed={}", path.display());
     }
     format!(
-        "{}{}",
+        "{}{}{}",
         build_defaults::literal(&build_defaults::read_defaults(&kernels_root, &hw)),
         build_defaults::sm_count_literal(build_defaults::read_sm_count(&kernels_root, &hw)),
+        target_schedules_literal(workspace_root, &hw),
     )
+}
+
+/// 2026-10-10: The `TARGET_SCHEDULES` / `TARGET_SCHEDULES_STALE` constants from
+/// `kernels/<hw>/common/SCHEDULES.toml`, empty when the file is absent. CPU-only, so it rides
+/// with the defaults on both paths, the skip stub included. A malformed file panics the build
+/// (naming it); a family whose sources changed since the sweep is dropped with a warning.
+fn target_schedules_literal(workspace_root: &Path, hw: &str) -> String {
+    let (baked, deps) =
+        build_schedules::read_tree(workspace_root, hw).unwrap_or_else(|e| panic!("{e}"));
+    for d in &deps {
+        println!("cargo:rerun-if-changed={}", d.display());
+    }
+    for family in &baked.stale {
+        println!(
+            "cargo:warning=SCHEDULES.toml: family `{family}` dropped as stale: its sources \
+             changed since the sweep, so its schedules are not baked (re-sweep to restore them)"
+        );
+    }
+    build_schedules::literal(&baked)
 }
 
 /// 2026-09-26: The skip path: write a stub `target_ptx.rs` that compiles no

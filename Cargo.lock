@@ -1527,6 +1527,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5449c8c750f1a07ea702bbd212bd999fceece9b3d1508b17023b3e174583124b"
 
 [[package]]
+name = "metrale-accuracy"
+version = "1.0.0-beta-preview"
+dependencies = [
+ "metrale-circuit",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "toml",
+]
+
+[[package]]
 name = "metrale-bench"
 version = "1.0.0-beta-preview"
 dependencies = [
@@ -1690,6 +1702,7 @@ dependencies = [
  "metrale-closure",
  "metrale-core",
  "serde_json",
+ "sha2",
  "toml",
 ]
 
@@ -1827,6 +1840,7 @@ dependencies = [
  "hyper-util",
  "lazy_static",
  "libc",
+ "metrale-accuracy",
  "metrale-bench",
  "metrale-cache",
  "metrale-circuit",
@@ -1835,6 +1849,7 @@ dependencies = [
  "metrale-config",
  "metrale-core",
  "metrale-gpu-runtime",
+ "metrale-gpu-sys",
  "metrale-grammar",
  "metrale-kernel-tree",
  "metrale-kernels",
@@ -1854,6 +1869,7 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+ "sha2",
  "socket2",
  "tempfile",
  "thiserror",

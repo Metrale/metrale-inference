@@ -12,45 +12,18 @@ mod common;
 mod venn_common;
 
 use metrale_circuit::Mode;
-use metrale_circuit::venn::union::{UnionInput, UnionReport, build_union};
-use metrale_circuit::venn::{Class, VennArgs, render_union};
+use metrale_circuit::venn::union::UnionReport;
+use metrale_circuit::venn::union_repo::union_of_repo;
+use metrale_circuit::venn::{Class, render_union};
 use venn_common::*;
 
 const UNION: &str = "kernels/circuits/venn/UNION.md";
 const COMMAND: &str = "cargo test -p metrale-circuit --test venn_union -- --ignored regenerate";
 
 fn union_text() -> (UnionReport, String) {
-    let all = common::instances();
-    let golden: Vec<String> = all
-        .iter()
-        .filter(|i| i.golden)
-        .map(|i| i.recipe.clone())
-        .collect();
-    let circuits: Vec<_> = all.iter().map(|i| common::load(i).circuit).collect();
-    let reports: Vec<_> = all
-        .iter()
-        .map(|i| {
-            report_of(&VennArgs {
-                target: i.recipe.clone(),
-                against: golden.iter().filter(|g| **g != i.recipe).cloned().collect(),
-                modes: vec![Mode::Decode, Mode::MultiSeq],
-                rows: vec![1, 16, 128],
-                verify_rows: vec![2],
-                out: UNION.into(),
-            })
-        })
-        .collect();
-    let inputs: Vec<UnionInput<'_>> = all
-        .iter()
-        .zip(&circuits)
-        .zip(&reports)
-        .map(|((instance, circuit), report)| UnionInput {
-            instance,
-            circuit,
-            report,
-        })
-        .collect();
-    let u = build_union(&inputs).expect("union");
+    // 2026-10-10: Before any envelope sweep (`met accuracy envelope union` regenerates the
+    // post-sweep report from SCHEDULES.toml).
+    let u = union_of_repo(&Tree, "gb10", &|_| false).expect("union");
     let text = render_union(&u, COMMAND);
     (u, text)
 }

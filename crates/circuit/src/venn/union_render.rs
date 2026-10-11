@@ -38,6 +38,7 @@ pub(super) fn pct(x: f64) -> String {
 pub(super) fn letter(u: &SiteUse) -> &'static str {
     match (u.class, u.envelope) {
         (_, Envelope::Shape) => "E",
+        (_, Envelope::Swept) => "S",
         (_, Envelope::Point) => "M",
         (Class::Shared | Class::SharedUnmeasured, _) => "U",
         (Class::PolicyVariant, _) => "V",
@@ -49,6 +50,7 @@ pub(super) fn letter(u: &SiteUse) -> &'static str {
 fn rank(l: &str) -> u8 {
     match l {
         "E" => 0,
+        "S" => 0,
         "M" => 1,
         "U" => 2,
         "O" => 3,
@@ -144,10 +146,28 @@ fn models(s: &mut String, r: &UnionReport) {
 }
 
 fn envelope(s: &mut String, r: &UnionReport) {
-    s.push_str(
+    // 2026-10-10: The S column (cells the envelope sweep measured) appears once a sweep has.
+    let swept = r.uses.iter().any(|u| letter(u) == "S");
+    let cols: &[&str] = if swept {
+        &["E", "S", "M", "U", "O", "V", "N"]
+    } else {
+        &["E", "M", "U", "O", "V", "N"]
+    };
+    let head: Vec<&str> = cols
+        .iter()
+        .map(|c| match *c {
+            "E" => "E (in envelope)",
+            "S" => "S (swept, in envelope)",
+            "M" => "M (point only)",
+            other => other,
+        })
+        .collect();
+    let _ = writeln!(
+        s,
         "\n## In-envelope step share per model\n\nShare of each model's estimated step by \
-         envelope status.\n\n| Model | Run | E (in envelope) | M (point only) | U | O | V | N |\n\
-         |---|---|---:|---:|---:|---:|---:|---:|\n",
+         envelope status.\n\n| Model | Run | {} |\n|---|---|{}",
+        head.join(" | "),
+        "---:|".repeat(cols.len())
     );
     for (i, m) in r.models.iter().enumerate() {
         for x in key_runs(r) {
@@ -155,19 +175,17 @@ fn envelope(s: &mut String, r: &UnionReport) {
             for u in r.uses.iter().filter(|u| u.model == i && u.run == x) {
                 *by.entry(letter(u)).or_insert(0.0) += u.share;
             }
-            let g = |l: &str| pct(by.get(l).copied().unwrap_or(0.0));
+            let cells: Vec<String> = cols
+                .iter()
+                .map(|l| pct(by.get(l).copied().unwrap_or(0.0)))
+                .collect();
             let _ = writeln!(
                 s,
-                "| M{} `{}` | {} | {} | {} | {} | {} | {} | {} |",
+                "| M{} `{}` | {} | {} |",
                 i + 1,
                 short(&m.recipe),
                 run_name(x),
-                g("E"),
-                g("M"),
-                g("U"),
-                g("O"),
-                g("V"),
-                g("N")
+                cells.join(" | ")
             );
         }
     }

@@ -3,7 +3,7 @@
 //! 2026-09-25: Numeric check of the block-scaled FP8 kernels `w8a16_gemv` (decode)
 //! and `w8a16_gemm_pipelined` / `w8a16_gemm` (prefill, M = 256) on inputs whose
 //! expected output is known in closed form. Results are printed as PASS/FAIL
-//! (relative error above 2%); the exit code does not reflect them.
+//! (relative error above 2%), and a FAIL makes the run exit non-zero.
 //!
 //! GEMV construction:
 //!   A[k]         = 1.0        for all k
@@ -137,6 +137,7 @@ fn run(gpu: &dyn GpuBackend, stream: u64, n: u32, k: u32, vary: bool) -> Result<
     if let Some((row, got, want)) = first_bad {
         println!("    FAIL first bad row {row}: got={got:.6} want={want:.6}");
         println!("    worst rel err {:.4} at row {worst_row}", worst);
+        bail!("{label}: row {row} got {got:.6}, want {want:.6}");
     } else {
         println!("    PASS (worst rel err {:.6} at row {worst_row})", worst);
     }
@@ -238,6 +239,7 @@ fn run_gemm(gpu: &dyn GpuBackend, stream: u64, which: &str, m: u32, n: u32, k: u
             "    FAIL first bad [{mi},{ni}] got={got:.4} want={want:.4}  bad={bad}/{}",
             (m as usize) * (n as usize)
         );
+        bail!("{which}: [{mi},{ni}] got {got:.4}, want {want:.4}");
     } else {
         println!("    PASS (worst rel {worst:.5})");
     }
