@@ -90,6 +90,10 @@ When a record is written:
 - **`cancelled`:** the client went away after dispatch.
 - **No record at all, for any request:** a binary built without a 40-hex
   `METRALE_BUILD_COMMIT`. Every record is keyed by runtime commit. The log says so once.
+  Release builds (`release-build.yml`, `datacenter-binaries.yml`) and every `docker/`
+  image build stamp it from `scripts/build-commit.sh` (via `--build-arg METRALE_GIT_SHA`);
+  `docker/build_commit_stamp_test.sh` holds each path to that. A local `cargo build` is
+  unstamped on purpose: it is not a commit anyone can name.
 
 A record never holds prompt or response text.
 

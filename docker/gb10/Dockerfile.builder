@@ -73,10 +73,14 @@ ENV METRALE_TARGET_QUANT=*
 # Native FP4 GEMM + cuBLASLt BF16 prefill projections on by default (matches prod).
 ENV METRALE_CUTLASS_NVFP4_GEMM=1
 
+# 2026-10-11: The source commit, stamped into `met` as METRALE_BUILD_COMMIT (usage records and the
+# /metrics build line are keyed by it). Pass --build-arg
+# METRALE_GIT_SHA="$(bash scripts/build-commit.sh)"; without it `met` is unstamped.
+ARG METRALE_GIT_SHA
 # CUDARC_CUDA_VERSION=13000: the vendored cudarc 0.19.2 tops out at 13.1 in its
 # nvcc-version table, so `nvcc --version` (13.2) panics without the pin. Same
 # value every CI workflow pins.
-RUN CUDARC_CUDA_VERSION=13000 cargo build --release -p metrale-server
+RUN METRALE_BUILD_COMMIT="${METRALE_GIT_SHA}" CUDARC_CUDA_VERSION=13000 cargo build --release -p metrale-server
 
 # ── Runtime stage: serve image on CUDA 13.2 ──────────────────────────────────
 FROM nvidia/cuda:${CUDA_VER}-runtime-ubuntu24.04

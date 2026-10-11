@@ -192,13 +192,13 @@ pub(crate) fn runtime_commit() -> Option<GitCommit> {
 fn runtime_identity() -> Option<RuntimeIdentity> {
     static IDENTITY: OnceLock<Option<RuntimeIdentity>> = OnceLock::new();
     *IDENTITY.get_or_init(|| {
-        let stamp = option_env!("METRALE_BUILD_COMMIT");
-        match stamp.map(GitCommit::from_hex) {
-            Some(Ok(runtime_commit)) => Some(RuntimeIdentity {
+        let stamp = crate::build_stamp::RAW;
+        match crate::build_stamp::build_commit() {
+            Some(runtime_commit) => Some(RuntimeIdentity {
                 runtime_commit,
                 recipe: None,
             }),
-            _ => {
+            None => {
                 tracing::warn!(
                     "inference usage records are withheld: this binary was built without a \
                      40-hex METRALE_BUILD_COMMIT (got {stamp:?}), and every record is keyed \

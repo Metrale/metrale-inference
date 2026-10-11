@@ -144,7 +144,9 @@ Build args: `METRALE_TARGET_HW` (defaults to `hopper` / `b200` per file),
 `METRALE_TARGET_MODEL` (`*` by default — `deepseek-v4-flash`,
 `nemotron-3-nano-30b-a3b`, `nemotron-super-120b-a12b`, `qwen3.6-35b-a3b`,
 `qwen3-next-80b-a3b`), `METRALE_TARGET_QUANT` (`nvfp4`), and `METRALE_GIT_SHA`
-(stamped into `org.opencontainers.image.revision`).
+(stamped into `org.opencontainers.image.revision` and, as `METRALE_BUILD_COMMIT`, into
+`met` itself; pass `"$(bash scripts/build-commit.sh)"`, which refuses a tree with
+uncommitted changes. An image built without it serves, but withholds its usage records).
 
 Neither image builds the optional CUTLASS or FlashInfer side objects
 (`CUTLASS_HOME` / `FLASHINFER_HOME` are deliberately unset). The CUTLASS

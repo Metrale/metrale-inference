@@ -217,6 +217,11 @@ jobs:
           # The vendored cudarc tops out at 13.1 in its nvcc-version table and
           # panics on anything newer; every workflow here pins the same value.
           CUDARC_CUDA_VERSION: "13000"
+          # 2026-10-11: The commit `actions/checkout` fetched (no `ref`, so github.sha),
+          # stamped into `met`: usage records and the /metrics build line are
+          # keyed by it. scripts/build-commit.sh is not used here: git is
+          # installed only after the checkout step, so the checkout may lack .git.
+          METRALE_BUILD_COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
           export PATH="/usr/local/cuda/bin:$PATH"

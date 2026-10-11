@@ -22,6 +22,7 @@ mod adaptive_sampler;
 mod anthropic;
 mod api;
 mod auth;
+mod build_stamp;
 mod citation;
 mod citation_structured;
 mod cli;
