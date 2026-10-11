@@ -2,8 +2,12 @@
 // 2026-10-07: Frozen BF16 batch and scalar controls; constructed operands only.
 #include <cuda_runtime.h>
 #define dense_gemv_bf16_batchm dense_gemv_bf16_batchm_frozen
+// 2026-10-11: Frozen kernel from 9484665ee9a7b2445358163ec0e1e33f8c16d166,
+// kernels/gb10/common/dense_gemv_bf16_batchm.cu, before FP32 specialization.
 #include "dense_batchm_frozen.cuh"
 #undef dense_gemv_bf16_batchm
+// 2026-10-11: The frozen macro must not replace the current capacity template parameter.
+#undef MAX_M
 #include "../../../../kernels/gb10/common/dense_gemv_bf16_batchm.cu"
 #include "../../../../kernels/gb10/common/dense_gemv_bf16.cu"
 extern "C" int compare_batch(const __nv_bfloat16* a,const __nv_bfloat16* b,
