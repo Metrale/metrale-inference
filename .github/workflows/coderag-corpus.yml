@@ -1,0 +1,236 @@
+name: CodeRAG corpus build
+
+# 2026-10-11: ONE corpus, built and checked. Called once per corpus by
+# coderag.yml, which serialises the calls (they share one free-tier key) and
+# publishes what they built. This is a reusable workflow rather than five
+# copies of one job because the copies had already reached 424 lines and were
+# about to be five: a composite action would be shorter still, but
+# `.github/actions/**` is on classify-diff.sh's build list, so touching one
+# spends the whole release matrix on a change that cannot alter a binary.
+#
+# A corpus is DERIVED data. If the embedder is rate limited, a chunk trips a
+# provider limit, verification finds a real problem, or the result is over the
+# publish cap, the right outcome is a loud annotation and yesterday's corpus
+# staying up, not a red main that blocks unrelated work. So the build and size
+# steps are `continue-on-error` and the job concludes green with `status` saying
+# what happened: built | failed | oversize.
+
+on:
+  workflow_call:
+    inputs:
+      base:
+        description: Corpus name; also the collection and the published file basename
+        required: true
+        type: string
+      paths:
+        description: Newline-separated include globs, relative to the source root
+        required: true
+        type: string
+      exclude:
+        description: Newline-separated exclude globs, applied after paths
+        required: false
+        type: string
+        default: ''
+      profile:
+        description: Chunk profile, "code" or "prose" (the line counts live in this file)
+        required: true
+        type: string
+      source_repo:
+        description: owner/name of an external repository to chunk instead of this one; empty = this repository
+        required: false
+        type: string
+        default: ''
+      source_ref:
+        description: Commit to check source_repo out at (required when source_repo is set)
+        required: false
+        type: string
+        default: ''
+      embed_model:
+        description: Embedding model id (the org variable, read once by the caller)
+        required: true
+        type: string
+      endpoint_base:
+        description: OpenAI-compatible embeddings API base URL
+        required: true
+        type: string
+      pages_base:
+        description: Base URL the corpora are published under; the previous copy is fetched from here
+        required: true
+        type: string
+      size_cap_bytes:
+        description: Per-file publish cap; GitHub rejects any pushed file over 100 MB
+        required: true
+        type: string
+      size_warn_percent:
+        description: Warn when the gzip reaches this percent of the cap, before it is over
+        required: true
+        type: string
+    secrets:
+      OPENROUTER_API_KEY_FREE:
+        description: Free-tier embeddings key
+        required: true
+    outputs:
+      status:
+        description: built, failed or oversize
+        value: ${{ jobs.build.outputs.status }}
+
+permissions:
+  contents: read
+
+env:
+  # A lattice-server release the action downloads and sha256-verifies; vectors
+  # rounded to 4 significant digits (the embedding noise floor sits well above
+  # the 4th digit).
+  LATTICE_VERSION: v0.3.3
+  VECTOR_PRECISION: '4'
+  # Slower than the action's old 2500ms default: OPENROUTER_API_KEY_FREE rides
+  # the free tier, and a merge-time batch job has no latency SLO.
+  REQUEST_INTERVAL_MS: '3000'
+  # The embedder rejects inputs over 8192 tokens; dense generated code (hex
+  # tables, LUT headers) can reach ~2 bytes per token, so a 16 KB chunk
+  # overflowed at 8 245 tokens on 2026-08-16. Capping chunks at 8 192 BYTES
+  # guarantees <= 8 192 tokens even at the 1-byte-per-token worst case.
+  MAX_CHUNK_BYTES: '8192'
+  # Code: 150-line chunks with light overlap (the action's old 90-line default
+  # produced a 165 MB gz for the unsplit code corpus).
+  CODE_CHUNK_LINES: '150'
+  CODE_CHUNK_OVERLAP: '10'
+  # Prose: shorter windows, so a chunk is about one section of a page.
+  PROSE_CHUNK_LINES: '40'
+  PROSE_CHUNK_OVERLAP: '5'
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      status: ${{ steps.status.outputs.value }}
+    steps:
+      # The sources are either this repository (a full checkout) or an external
+      # one pinned by commit (this repository only for .github/scripts).
+      - name: Check out this repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          sparse-checkout: ${{ inputs.source_repo != '' && '.github' || '' }}
+          persist-credentials: false
+
+      - name: Check out the external source at the pinned commit
+        if: inputs.source_repo != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ inputs.source_repo }}
+          ref: ${{ inputs.source_ref }}
+          path: .sources/external
+          persist-credentials: false
+
+      - name: Resolve the chunk profile
+        id: profile
+        env:
+          PROFILE: ${{ inputs.profile }}
+          SOURCE_REPO: ${{ inputs.source_repo }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          # An external source must be pinned: an empty ref would silently
+          # check out the default branch and embed whatever it holds today.
+          if [ -n "$SOURCE_REPO" ] && [ -z "$SOURCE_REF" ]; then
+            echo "::error::source_repo ${SOURCE_REPO} needs a source_ref (a full commit sha)"; exit 1
+          fi
+          case "$PROFILE" in
+            code)  lines="$CODE_CHUNK_LINES"  overlap="$CODE_CHUNK_OVERLAP" ;;
+            prose) lines="$PROSE_CHUNK_LINES" overlap="$PROSE_CHUNK_OVERLAP" ;;
+            *) echo "::error::unknown chunk profile '${PROFILE}' (code or prose)"; exit 1 ;;
+          esac
+          { echo "lines=${lines}"; echo "overlap=${overlap}"; } >> "$GITHUB_OUTPUT"
+
+      - name: Build corpus (incremental against the published one)
+        id: rag
+        continue-on-error: true
+        uses: Avarok-Cybersecurity/AutoRepoRAG@dff770896c2c0f9fe0cfaf26ef7f70a75251ab20 # v2.0.0
+        with:
+          source-dir: ${{ inputs.source_repo != '' && '.sources/external' || '' }}
+          collection: ${{ inputs.base }}
+          # output-name is a basename: the action writes <name>.jsonl,
+          # <name>.jsonl.gz and <name>.meta.json. "<base>.jsonl" is deliberate
+          # -- it makes the metadata file <base>.jsonl.meta.json, the exact name
+          # the site's OPFS preflight fetches; the doubled .jsonl.jsonl(.gz)
+          # intermediates are renamed by coderag-stage.sh.
+          output-name: ${{ inputs.base }}.jsonl
+          paths: ${{ inputs.paths }}
+          exclude: ${{ inputs.exclude }}
+          chunk-lines: ${{ steps.profile.outputs.lines }}
+          chunk-overlap: ${{ steps.profile.outputs.overlap }}
+          max-chunk-bytes: ${{ env.MAX_CHUNK_BYTES }}
+          vector-precision: ${{ env.VECTOR_PRECISION }}
+          embedding-endpoint: ${{ inputs.endpoint_base }}
+          embedding-model: ${{ inputs.embed_model }}
+          embedding-api-key: ${{ secrets.OPENROUTER_API_KEY_FREE }}
+          # A corpus never published before 404s here -> the action warns and
+          # does a full embed. Every later run reuses vectors for unchanged
+          # chunks by chunk_hash, from THIS corpus's own published copy.
+          previous-corpus-url: ${{ inputs.pages_base }}/${{ inputs.base }}.jsonl.gz
+          previous-corpus-meta-url: ${{ inputs.pages_base }}/${{ inputs.base }}.jsonl.meta.json
+          lattice-version: ${{ env.LATTICE_VERSION }}
+          request-interval-ms: ${{ env.REQUEST_INTERVAL_MS }}
+          generate-website-chat: 'false'
+
+      # 2026-10-11: the size verdict belongs right after the build, not only in
+      # the publish job. The code corpus came out at 105,944,953 B against a
+      # 99,614,720 B cap and the build job still ended green with nothing in its
+      # summary; only publish noticed, two jobs and 15 minutes later.
+      - name: Check the size cap
+        id: size
+        if: steps.rag.outcome == 'success'
+        continue-on-error: true
+        env:
+          BASE: ${{ inputs.base }}
+          GZ: ${{ steps.rag.outputs.corpus-gz-file }}
+          SIZE_CAP_BYTES: ${{ inputs.size_cap_bytes }}
+          SIZE_WARN_PERCENT: ${{ inputs.size_warn_percent }}
+        run: bash .github/scripts/coderag-size-check.sh
+
+      - name: Name the files as published
+        if: steps.rag.outcome == 'success'
+        env:
+          BASE: ${{ inputs.base }}
+          GZ: ${{ steps.rag.outputs.corpus-gz-file }}
+          META: ${{ steps.rag.outputs.metadata-file }}
+        run: bash .github/scripts/coderag-stage.sh "$BASE" "$GZ" "$META" coderag-stage
+
+      # Uploaded even when over the cap, so the oversized corpus can be
+      # inspected; the publish job ignores it unless the status is `built`.
+      - name: Upload CI copy (30-day artifact)
+        if: steps.rag.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ${{ inputs.base }}
+          path: coderag-stage/
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Record the outcome
+        id: status
+        if: always()
+        env:
+          BASE: ${{ inputs.base }}
+          BUILD: ${{ steps.rag.outcome }}
+          SIZE: ${{ steps.size.outcome }}
+          OVER: ${{ steps.size.outputs.over }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$BUILD" != success ] || { [ "$SIZE" != success ] && [ "$OVER" != true ]; }; then
+            echo "value=failed" >> "$GITHUB_OUTPUT"
+            echo "::warning::CodeRAG ${BASE} build did not succeed. The published corpus is unchanged. See the build step log."
+            {
+              echo "### CodeRAG ${BASE} NOT refreshed"
+              echo ""
+              echo "The build or its size check failed at \`$SHA\`. The previously published corpus stays live."
+            } >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$OVER" = true ]; then
+            # The size step has already written the summary line and the error.
+            echo "value=oversize" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=built" >> "$GITHUB_OUTPUT"
+          fi

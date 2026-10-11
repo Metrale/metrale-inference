@@ -580,6 +580,7 @@ jobs:
           run "Merge-ancestry guard self-test" bash scripts/check_merge_ancestry_test.sh
           run "the certification self-test is still wired" python3 .github/scripts/assert-selftest-wired.py
           run "comment-ttl configuration"     python3 .github/scripts/comment-ttl-config.py check
+          run "CodeRAG code corpora partition the code" python3 .github/scripts/assert-coderag-code-partition.py
 
           # `typos` ran as its own step; fold its verdict in here so the summary
           # below is the whole truth rather than most of it.
