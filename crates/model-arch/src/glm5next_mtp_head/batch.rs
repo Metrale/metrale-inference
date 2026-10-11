@@ -19,6 +19,7 @@
 //!   emitted token.
 
 use super::*;
+use metrale_gpu_runtime::gpu::GraphHandle;
 use metrale_model_layers::layer::AttnMetadataDev;
 
 /// 2026-10-11: The widest batch: the batched BF16 GEMV's and the FP8 batch head's row limit.
@@ -42,33 +43,40 @@ pub fn drafter_block_rows() -> usize {
 
 /// 2026-10-11: The kernels the batched pass needs beyond the one-row ones.
 pub(super) struct BatchKernels {
-    gemv_batchm: KernelHandle,
-    argmax_batch: KernelHandle,
+    pub(super) gemv_batchm: KernelHandle,
+    pub(super) argmax_batch: KernelHandle,
     /// 2026-10-11: `fp8_gemv_rowscale_batch16_rt2`; `0` keeps the BF16 batched head.
-    fp8_batch16: KernelHandle,
+    pub(super) fp8_batch16: KernelHandle,
 }
 
 /// 2026-10-11: The batched pass's device buffers, `PROPOSE_BATCH_MAX` rows each.
 pub(super) struct BatchScratch {
-    concat: DevicePtr,
-    x: DevicePtr,
-    logits: DevicePtr,
-    arg: DevicePtr,
-    xchg: DevicePtr,
+    pub(super) concat: DevicePtr,
+    pub(super) x: DevicePtr,
+    pub(super) logits: DevicePtr,
+    pub(super) arg: DevicePtr,
+    pub(super) xchg: DevicePtr,
     /// 2026-10-11: Row metadata in one buffer, written by one copy per draft step: `[MAX]` i64
     /// slots, then `[MAX]` u32 positions, then `[MAX]` i32 lengths.
-    meta_words: DevicePtr,
+    pub(super) meta_words: DevicePtr,
     /// 2026-10-11: `[MAX, per_seq]` i32 block tables; row `i` is the region in
     /// `table_regions[i]`.
-    block_table: DevicePtr,
-    per_seq: usize,
-    table_regions: Vec<Option<usize>>,
+    pub(super) block_table: DevicePtr,
+    pub(super) per_seq: usize,
+    pub(super) table_regions: Vec<Option<usize>>,
+    /// 2026-10-11: `[MAX, hidden]` BF16: the embedding rows a graphed step reads, copied in
+    /// before each launch.
+    pub(super) embed_in: DevicePtr,
+    /// 2026-10-11: Captured steps by the device addresses they bake (`batch_graph.rs`).
+    pub(super) graphs: Vec<(super::batch_graph::BatchGraphKey, GraphHandle)>,
+    /// 2026-10-11: Set after a capture failed: every later step runs eagerly.
+    pub(super) graph_off: bool,
 }
 
 /// 2026-10-11: The batched pass, present when the lever is on and its kernels resolve.
 pub(super) struct ProposeBatch {
-    kernels: BatchKernels,
-    scratch: Mutex<BatchScratch>,
+    pub(super) kernels: BatchKernels,
+    pub(super) scratch: Mutex<BatchScratch>,
 }
 
 impl ProposeBatch {
@@ -106,6 +114,9 @@ impl ProposeBatch {
             block_table: gpu.alloc(n * per_seq * 4)?,
             per_seq,
             table_regions: vec![None; n],
+            embed_in: gpu.alloc(n * hidden * 2)?,
+            graphs: Vec::new(),
+            graph_off: false,
         };
         tracing::info!(
             "GLM MTP: batched propose ON, up to {n} sequences per drafter pass ({} head)",
@@ -230,7 +241,6 @@ impl Glm5NextMtpHead {
         }
         let gpu = ctx.gpu;
         let h = self.hidden;
-        let (n, v0, sharded) = self.head_range(ctx);
         let mut sc = batch.scratch.lock();
         // 2026-10-11: Block-table rows are uploaded only when a row's region changes. Every
         // state holds a region unless the pool leaked one (`alloc_state`).
@@ -281,96 +291,44 @@ impl Glm5NextMtpHead {
             }
             let tables: Vec<&[u32]> = sts.iter().map(|st| st.block_table.as_slice()).collect();
             gpu.copy_h2d(&meta_words_bytes(&rows, &tables, max)?, sc.meta_words)?;
-            // 2026-10-11: Row i's concat: `enorm(embed[token_i])`, then `hnorm` of the target's
-            // hidden (draft 0) or of the drafter's own output row (later drafts), as `propose`.
-            for i in 0..m {
-                let embed_row = self.embed_tokens.weight.offset(tokens[i] as usize * h * 2);
-                let hidden_in = if d == 0 {
-                    target_hiddens[i]
-                } else {
-                    sc.x.offset(i * h * 2)
-                };
-                let row = sc.concat.offset(i * 2 * h * 2);
-                self.norm(gpu, embed_row, self.module.enorm, row, h, stream)?;
-                // 2026-10-11: As `propose`: draft 0 reads a target row (the target's final norm
-                // under `METRALE_MTP_TARGET_POSTNORM`, staged in row i of `x`, which `eh_proj`
-                // writes next), later drafts the drafter's own output.
-                self.hidden_half(ctx, hidden_in, d == 0, sc.x.offset(i * h * 2), row, stream)?;
-            }
-            // 2026-10-11: Every rank computes all of `eh_proj`'s rows here (no
-            // `METRALE_GLM_MTP_EH_TP` slice): the same rows either way.
-            ops::dense_gemv_batchm(
-                gpu,
-                batch.kernels.gemv_batchm,
-                sc.concat,
-                &self.module.eh_proj,
-                sc.x,
-                m as u32,
-                h as u32,
-                (2 * h) as u32,
-                h as u32,
-                stream,
-            )?;
-            if !skip_block() {
-                let mut kv = self.kv_cache.lock();
-                let mut dsa: Vec<&mut (dyn LayerState + 'static)> = sts
-                    .iter_mut()
-                    .map(|st| &mut st.dsa as &mut (dyn LayerState + 'static))
-                    .collect();
-                self.module.layer.decode_rows_for_drafter(
-                    sc.x, &mut dsa, &mut kv, &rows, &meta, &bctx, stream,
-                )?;
-            }
-            for st in sts.iter_mut() {
-                st.seq_len += 1;
-            }
-            self.norm_rows(gpu, sc.x, self.module.final_norm, sc.x, h, m, stream)?;
-            match (
-                self.head_fp8.filter(|_| sharded && n == self.head_n),
-                batch.kernels.fp8_batch16,
-            ) {
-                (Some(q), k) if k.0 != 0 => ops::fp8_gemv_rowscale_batch16_rt2_ldc(
-                    gpu, k, sc.x, &q, sc.logits, m as u32, n as u32, h as u32, n as u32, stream,
-                )?,
-                _ => ops::dense_gemv_batchm(
-                    gpu,
-                    batch.kernels.gemv_batchm,
-                    sc.x,
-                    &DenseWeight {
-                        weight: self.lm_head.weight.offset(v0 * h * 2),
-                    },
-                    sc.logits,
-                    m as u32,
-                    n as u32,
-                    h as u32,
-                    n as u32,
+            let embeds: Vec<DevicePtr> = tokens
+                .iter()
+                .map(|&t| self.embed_tokens.weight.offset(t as usize * h * 2))
+                .collect();
+            let hiddens_in: Vec<DevicePtr> = (0..m)
+                .map(|i| {
+                    if d == 0 {
+                        target_hiddens[i]
+                    } else {
+                        sc.x.offset(i * h * 2)
+                    }
+                })
+                .collect();
+            // 2026-10-11: Draft 0 replays a graph of the step when `METRALE_GLM_MTP_GRAPH` is on
+            // (`batch_graph.rs`); later drafts read the drafter's own rows and run eagerly, as
+            // `propose` does.
+            if d == 0 && self.batch_graph_eligible(&sc) {
+                self.step_graphed(
+                    batch,
+                    &mut sc,
+                    &mut sts,
+                    &embeds,
+                    &hiddens_in,
+                    &rows,
+                    meta,
+                    ctx,
                     stream,
-                )?,
-            }
-            ops::argmax_bf16_batch(
-                gpu,
-                batch.kernels.argmax_batch,
-                sc.logits,
-                sc.arg,
-                n as u32,
-                m as u32,
-                n as u32,
-                stream,
-            )?;
-            if sharded {
-                let (Some(k), Some(comm)) = (self.device_xchg(ctx), ctx.comm) else {
-                    bail!("GLM MTP batched propose: a sharded head without the device exchange");
-                };
-                self.exchange_rows(
-                    gpu,
-                    comm,
-                    k,
-                    sc.arg,
-                    sc.logits,
-                    n * 2,
-                    sc.xchg,
-                    m,
-                    v0,
+                )?;
+            } else {
+                self.step_body(
+                    batch,
+                    &sc,
+                    &mut sts,
+                    &embeds,
+                    &hiddens_in,
+                    d == 0,
+                    &rows,
+                    &bctx,
                     stream,
                 )?;
             }

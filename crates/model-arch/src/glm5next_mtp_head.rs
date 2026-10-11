@@ -37,6 +37,7 @@ use metrale_model_layers::weight_map::DenseWeight;
 
 mod batch;
 mod batch_check;
+mod batch_graph;
 mod graph;
 mod head_xchg;
 mod hidden_half;
