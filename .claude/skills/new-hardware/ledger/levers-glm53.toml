@@ -1037,3 +1037,75 @@ effort_hours = 0.0
 transferability = "multi-rank serving; hybrid prefix caching"
 links = { pr = "", commit = "", evidence = "exclusive A/B + accuracy microtest + bring-up bench TTFT" }
 notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-w4a16-gemv-seg"
+date = "2026-10-11"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_W4A16_GEMV_SEG=1 (dense w4a16 tier)"
+symptom = "1-row dense W4A16 projections run as separate small GEMVs"
+diagnosis_tool = "nsys"
+root_cause_class = "bandwidth"
+lever_type = "code"
+lkb_effect = "no new kernel"
+parity_tier_kept = "reordered (tf KL 0.0061, dec1 exact; anchor cumulative 0.0336)"
+per_rung = [{ rung = "C1", tok_s_pct = 4.8, j_tok_pct = 0.0, n = 3 }, { rung = "C8", tok_s_pct = -0.6, j_tok_pct = 0.0, n = 3 }, { rung = "C16", tok_s_pct = 2.0, j_tok_pct = 0.0, n = 3 }]
+verdict = "kept"
+verdict_reason = "interleaved WP0 A/B on 05001787a: C1 35.4 -> 37.1, C8 flat, C16 +2%; numerics PASS vs the w4a16 pin; exact tf/dec4 differ so the class is RO, not BI"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "1-row W4A16 dense GEMV on bandwidth-bound decode"
+links = { pr = "", commit = "", evidence = "logs/nightA.log interleaved n=3 + acc_check numerics + anchor" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-ar-fused-post"
+date = "2026-10-11"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_AR_FUSED_POST=1"
+symptom = "all-reduce epilogue (residual + norm) runs as separate kernels"
+diagnosis_tool = "nsys"
+root_cause_class = "launch-overhead"
+lever_type = "code"
+lkb_effect = "no new kernel"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 1.1, j_tok_pct = 0.0, n = 2 }, { rung = "C8", tok_s_pct = -1.0, j_tok_pct = 0.0, n = 2 }, { rung = "C16", tok_s_pct = 2.6, j_tok_pct = 0.0, n = 2 }]
+verdict = "discarded"
+verdict_reason = "within run-to-run noise (C1 +1%, C8 -1%) on the interleaved A/B"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "1-row W4A16 dense GEMV on bandwidth-bound decode"
+links = { pr = "", commit = "", evidence = "logs/nightA.log interleaved n=2" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-ar-l2-prefetch6"
+date = "2026-10-11"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_AR_L2_PREFETCH=6"
+symptom = "next layer's weights cold in L2 after the all-reduce"
+diagnosis_tool = "nsys"
+root_cause_class = "bandwidth"
+lever_type = "code"
+lkb_effect = "no new kernel"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 0.0, j_tok_pct = 0.0, n = 2 }, { rung = "C8", tok_s_pct = 0.4, j_tok_pct = 0.0, n = 2 }, { rung = "C16", tok_s_pct = 1.6, j_tok_pct = 0.0, n = 2 }]
+verdict = "discarded"
+verdict_reason = "within run-to-run noise on the interleaved A/B"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "1-row W4A16 dense GEMV on bandwidth-bound decode"
+links = { pr = "", commit = "", evidence = "logs/nightA.log interleaved n=2" }
+notes = ""
