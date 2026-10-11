@@ -91,18 +91,7 @@ impl TransformerModel {
         // prefill takes one ordinal from it, in model order, to index the plan's
         // per-layer destinations (qwen3_ssm/trait_prefill_block.rs).
         let midcap_counter = std::sync::atomic::AtomicUsize::new(0);
-        let midchunk_capture = midcap.map(|p| metrale_model_layers::layer::MidchunkCapture {
-            cap_local: p.cap_local,
-            h_dsts: &p.h_dsts,
-            conv_dsts: &p.conv_dsts,
-            h_bytes: p.h_bytes,
-            conv_bytes: p.conv_bytes,
-            ssm_layer_counter: &midcap_counter,
-            cap_local_early: p.cap_local_early,
-            h_dsts_early: &p.h_dsts_early,
-            conv_dsts_early: &p.conv_dsts_early,
-            replay_tail: p.replay_tail,
-        });
+        let midchunk_capture = midcap.map(|p| p.as_capture(&midcap_counter));
 
         let ctx = ForwardContext {
             buffers: &self.buffers,

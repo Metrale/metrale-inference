@@ -14,12 +14,17 @@
 //! - Each sequence gets what its single-sequence chunk gives it outside the layers: the
 //!   prefix lookup, block allocation, processing range, `tokens` / `seq_len`, and the last
 //!   chunk's logits (row `row_base + i`) or the intermediate checkpoint.
+//! - 2026-10-11: With a live prefix cache a sequence's rows are its processing range (from its
+//!   restore point; none for a fully cached non-last chunk), and a last chunk that computes
+//!   across the tail split point captures there in-pass (`prepare_cut_capture`), as
+//!   `prefill_chunk_dispatch` does; the layers split the sequence's rows at the capture points.
 
 use anyhow::{Result, bail, ensure};
 use metrale_gpu_runtime::gpu::DevicePtr;
 use metrale_model_layers::layer::{ForwardContext, PrefillSpan};
 
 use super::super::super::types::TransformerModel;
+use super::midchunk_capture::MidCapturePlan;
 use super::proc_range::ProcRange;
 use super::spans_wire::{
     EP_CMD_PREFILL_SPANS, SpansHeader, decode_spans_header, encode_spans_header, spans_batches,
@@ -31,14 +36,18 @@ impl TransformerModel {
     /// 2026-10-09: The rows one batched prefill step should carry, or `None` when this serve
     /// cannot run the multi-rank batched prefill at all. It runs on a multi-rank world on the v2
     /// protocol (the slots travel in the payload), with every layer implementing
-    /// `prefill_spans`, and none of the per-chunk extras the pass leaves out: a live prefix
-    /// cache (a restore changes a chunk's rows), DFlash or MTP prompt capture, LoRA, token
-    /// overlays, or the high-speed-swap window. The rows are the narrowest layer's row group
+    /// `prefill_spans`, and none of the per-chunk extras the pass leaves out: DFlash or MTP
+    /// prompt capture, LoRA, token overlays, or the high-speed-swap window. 2026-10-11: A live
+    /// prefix cache only where every layer splits its whole pass at an in-pass capture and the
+    /// serve captures in-pass (`inpass_cut_capture_serve_ok`): a stream's chunk then runs from
+    /// its restore point, and the tail split point is captured inside the pass, as its
+    /// single-sequence prefill does. The rows are the narrowest layer's row group
     /// (`prefill_spans_rows`), at most the arena.
     pub(in crate::model) fn prefill_spans_rows_dispatch(&self) -> Option<usize> {
         let ok = self.multi_rank_protocol_active()
             && self.ep_protocol_v2
-            && !self.prefix_cache.is_active()
+            && (!self.prefix_cache.is_active()
+                || (self.splits_whole_pass_at_capture() && self.inpass_cut_capture_serve_ok()))
             && self.dflash_capture_layers.is_empty()
             && self.mtp_prefill_hidden.is_null()
             && self.lora.is_none()
@@ -174,7 +183,8 @@ impl TransformerModel {
     }
 
     /// 2026-10-09: The pass every rank runs (module invariants). `streams` fit the arena
-    /// together; stream `i`'s rows start at hidden row `Σ chunk_len[..i]`.
+    /// together; stream `i`'s rows start at hidden row `Σ chunk_len[..i]`. 2026-10-11: At the
+    /// sum of the earlier streams' computed rows, which a restore shortens.
     pub(in crate::model) fn prefill_spans_run(
         &self,
         streams: &mut [PrefillSlice<'_>],
@@ -193,9 +203,13 @@ impl TransformerModel {
         self.buffers.zero_all(self.gpu.as_ref(), stream)?;
         let mut kv_cache = self.kv_cache.lock();
         let bs = kv_cache.block_size();
+        // 2026-10-11: Per stream: its first hidden row, its computed rows (`None` for a fully
+        // cached non-last chunk) and its in-pass capture plan.
         let mut offs = Vec::with_capacity(streams.len());
+        let mut ranges: Vec<Option<(usize, usize)>> = Vec::with_capacity(streams.len());
+        let mut plans: Vec<Option<MidCapturePlan>> = Vec::with_capacity(streams.len());
         let mut off = 0usize;
-        for (i, s) in streams.iter_mut().enumerate() {
+        for s in streams.iter_mut() {
             offs.push(off);
             let dst = hidden.offset(off * h * 2);
             let (tokens, seq) = (s.prompt_tokens, &mut *s.seq);
@@ -209,10 +223,6 @@ impl TransformerModel {
                 stream,
                 None,
             )?;
-            ensure!(
-                !skip,
-                "prefill spans: stream {i} restored a cached prefix; the pass runs whole chunks"
-            );
             let blocks_needed = (s.chunk_start + s.chunk_len - 1) / bs + 1;
             super::super::super::block_mgmt::ensure_blocks_through_prefill(
                 seq,
@@ -223,7 +233,7 @@ impl TransformerModel {
                 stream,
                 self.levers.kv_poison,
             )?;
-            match self.prefill_b_proc_range(
+            let range = match self.prefill_b_proc_range(
                 tokens,
                 seq,
                 s.chunk_start,
@@ -237,11 +247,25 @@ impl TransformerModel {
                 ProcRange::Compute {
                     proc_start,
                     proc_count,
-                    ..
-                } if proc_start == s.chunk_start && proc_count == s.chunk_len => {}
-                _ => bail!("prefill spans: stream {i} would not process its whole chunk"),
-            }
-            off += s.chunk_len;
+                    effective_seq_len_start,
+                } => {
+                    ensure!(
+                        effective_seq_len_start == proc_start,
+                        "prefill spans: processing range {proc_start}+{proc_count} starts its \
+                         positions at {effective_seq_len_start}"
+                    );
+                    Some((proc_start, proc_count))
+                }
+                ProcRange::EarlyReturn(_) => None,
+            };
+            plans.push(match range {
+                Some((proc_start, proc_count)) => {
+                    self.spans_cut_capture(s, &mut kv_cache, proc_start, proc_count)?
+                }
+                None => None,
+            });
+            off += range.map_or(0, |(_, n)| n);
+            ranges.push(range);
         }
         self.gpu.synchronize(stream)?;
         let adapter_slot = streams.first().map_or(-1, |s| s.seq.adapter_slot);
@@ -268,19 +292,35 @@ impl TransformerModel {
             midchunk_capture: None,
             moe_lora_route: self.moe_lora_route(adapter_slot),
         };
+        let counters: Vec<std::sync::atomic::AtomicUsize> = plans
+            .iter()
+            .map(|_| std::sync::atomic::AtomicUsize::new(0))
+            .collect();
+        let captures: Vec<_> = plans
+            .iter()
+            .zip(&counters)
+            .map(|(p, c)| p.as_ref().map(|p| p.as_capture(c)))
+            .collect();
         for (l, layer) in self.layers.iter().enumerate() {
             let mut spans: Vec<PrefillSpan<'_>> = streams
                 .iter_mut()
-                .map(|s| {
+                .zip(&ranges)
+                .zip(&captures)
+                .filter_map(|((s, range), capture)| {
+                    let (proc_start, proc_count) = (*range)?;
                     let seq = &mut *s.seq;
-                    PrefillSpan {
+                    Some(PrefillSpan {
                         state: seq.layer_states[l].as_mut(),
                         block_table: &mut seq.block_table,
-                        seq_len_start: s.chunk_start,
-                        rows: s.chunk_len,
-                    }
+                        seq_len_start: proc_start,
+                        rows: proc_count,
+                        capture: capture.as_ref(),
+                    })
                 })
                 .collect();
+            if spans.is_empty() {
+                break;
+            }
             layer
                 .prefill_spans(hidden, &mut spans, &mut kv_cache, &ctx, stream)
                 .map_err(|e| anyhow::anyhow!("Prefill spans layer {l} failed: {e}"))?;
@@ -289,10 +329,18 @@ impl TransformerModel {
         for (i, s) in streams.iter_mut().enumerate() {
             let (tokens, seq) = (s.prompt_tokens, &mut *s.seq);
             let end = s.chunk_start + s.chunk_len;
+            if let Some(plan) = plans[i].as_ref() {
+                self.register_cut_capture(tokens, seq, &mut kv_cache, plan, stream)?;
+            }
             seq.tokens.extend_from_slice(&tokens[s.chunk_start..end]);
             seq.seq_len = end;
             // 2026-10-09: Prime the decode-checkpoint gate, as `prefill_chunk_pass` does.
             seq.last_decode_ckpt_block = seq.tokens.len() / bs;
+            let Some((_, proc_count)) = ranges[i] else {
+                // 2026-10-11: A fully cached non-last chunk, as `prefill_chunk_pass` returns it.
+                out.push(DevicePtr::NULL);
+                continue;
+            };
             out.push(if s.is_last_chunk {
                 self.prefill_b_finalize_last_at(
                     tokens,
@@ -300,7 +348,7 @@ impl TransformerModel {
                     &mut kv_cache,
                     s.chunk_start,
                     s.chunk_len,
-                    s.chunk_len,
+                    proc_count,
                     offs[i],
                     row_base + i,
                     stream,
@@ -318,5 +366,36 @@ impl TransformerModel {
             });
         }
         Ok(out)
+    }
+
+    /// 2026-10-11: Stream `s`'s in-pass capture over its computed rows
+    /// `[proc_start, proc_start + proc_count)`, where `prefill_chunk_dispatch` would capture:
+    /// a last chunk from below the tail split point (`prefill_tail_split_dispatch`) that
+    /// computes across it. Errors where that dispatch would run two passes instead, which
+    /// `prefill_spans_rows_dispatch` rules out for the serve.
+    fn spans_cut_capture(
+        &self,
+        s: &PrefillSlice<'_>,
+        kv_cache: &mut metrale_cache::kv_cache::PagedKvCache,
+        proc_start: usize,
+        proc_count: usize,
+    ) -> Result<Option<MidCapturePlan>> {
+        let total = s.prompt_tokens.len();
+        let Some(cut) = s
+            .is_last_chunk
+            .then(|| self.prefill_tail_split_at(s.prompt_tokens, kv_cache.block_size()))
+            .flatten()
+            .filter(|&cut| {
+                cut > s.chunk_start && proc_start < cut && cut < proc_start + proc_count
+            })
+        else {
+            return Ok(None);
+        };
+        ensure!(
+            self.inpass_cut_capture_supported(&*s.seq),
+            "prefill spans: a {total}-token prompt computes across its tail split point {cut} \
+             and cannot capture it in-pass; it needs the single-sequence prefill"
+        );
+        Ok(self.prepare_cut_capture(&*s.seq, kv_cache, proc_start, proc_count, cut, total))
     }
 }

@@ -48,6 +48,28 @@ use crate::traits::SequenceState;
 /// registered.
 pub(in crate::model) const NO_SNAPSHOT_SLOT: usize = usize::MAX;
 
+impl MidCapturePlan {
+    /// 2026-10-11: The layers' view of this plan, with `counter` (fresh per pass and per
+    /// sequence) handing each SSM layer its ordinal.
+    pub(in crate::model) fn as_capture<'a>(
+        &'a self,
+        counter: &'a std::sync::atomic::AtomicUsize,
+    ) -> metrale_model_layers::layer::MidchunkCapture<'a> {
+        metrale_model_layers::layer::MidchunkCapture {
+            cap_local: self.cap_local,
+            h_dsts: &self.h_dsts,
+            conv_dsts: &self.conv_dsts,
+            h_bytes: self.h_bytes,
+            conv_bytes: self.conv_bytes,
+            ssm_layer_counter: counter,
+            cap_local_early: self.cap_local_early,
+            h_dsts_early: &self.h_dsts_early,
+            conv_dsts_early: &self.conv_dsts_early,
+            replay_tail: self.replay_tail,
+        }
+    }
+}
+
 /// 2026-09-25: Per-pass plan for a mid-chunk tail capture. Owns the per-SSM-layer
 /// destination pointers that `ForwardContext::midchunk_capture` borrows during
 /// `forward_layers`.
@@ -208,6 +230,37 @@ impl TransformerModel {
             conv_dsts_early,
             replay_tail: true,
         })
+    }
+
+    /// 2026-10-01: Register a cut capture's slots (`prepare_cut_capture`) once the pass has
+    /// written them, as `prefill_b_save_checkpoint` registers a pass that ends there: the split
+    /// point, then the deeper tail boundary when the plan has it, so the prompt's tail
+    /// checkpoint is the deeper one. 2026-10-11: A point without a slot (`NO_SNAPSHOT_SLOT`,
+    /// multi-rank) only split the pass; nothing was captured to register.
+    pub(in crate::model) fn register_cut_capture(
+        &self,
+        tokens: &[u32],
+        seq: &mut SequenceState,
+        kv_cache: &mut PagedKvCache,
+        plan: &MidCapturePlan,
+        stream: u64,
+    ) -> anyhow::Result<()> {
+        if let (Some(tb_early), Some(slot)) = (plan.tb_early, plan.snap_slot_early)
+            && slot != NO_SNAPSHOT_SLOT
+        {
+            self.prefill_b_register_checkpoint(tokens, seq, kv_cache, tb_early, slot, stream)?;
+        }
+        if plan.snap_slot != NO_SNAPSHOT_SLOT {
+            self.prefill_b_register_checkpoint(
+                tokens,
+                seq,
+                kv_cache,
+                plan.tb,
+                plan.snap_slot,
+                stream,
+            )?;
+        }
+        Ok(())
     }
 
     /// 2026-09-25: Plan an in-pass tail capture for the prefill pass over tokens

@@ -60,6 +60,36 @@ pub(crate) fn capture_segments(
     out
 }
 
+/// 2026-10-11: The capture points strictly inside a pass of `n` rows under `cap`, in row order,
+/// each with its slot: the ends of `capture_segments` that capture. None without a capture.
+pub(crate) fn capture_points(
+    n: usize,
+    cap: Option<&MidchunkCapture<'_>>,
+) -> Vec<(usize, CapturePoint)> {
+    let Some(c) = cap else {
+        return Vec::new();
+    };
+    capture_segments(n, c.cap_local_early, Some(c.cap_local))
+        .into_iter()
+        .filter_map(|(_, end, after)| after.map(|w| (end, w)))
+        .collect()
+}
+
+/// 2026-10-11: The SSM ordinal a layer takes from `cap`'s counter for its pass: one per KDA
+/// layer, in model order; none for a DSA layer or without a capture.
+pub(crate) fn kda_ordinal(
+    mixer: &Glm5NextMixer,
+    cap: Option<&MidchunkCapture<'_>>,
+) -> Option<usize> {
+    match (cap, mixer) {
+        (Some(c), Glm5NextMixer::Kda { .. }) => Some(
+            c.ssm_layer_counter
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        ),
+        _ => None,
+    }
+}
+
 impl Glm5NextLayer {
     /// 2026-10-11: The rows of a text layer's prefill pass, `rows` per sub-chunk (`forward_k`,
     /// or the per-token walk at one row), split at the capture points of
@@ -86,13 +116,7 @@ impl Glm5NextLayer {
     ) -> Result<()> {
         let slot0 = ctx.hc_row_offset;
         let cap = ctx.midchunk_capture.as_ref();
-        let ordinal = match (cap, &self.mixer) {
-            (Some(c), Glm5NextMixer::Kda { .. }) => Some(
-                c.ssm_layer_counter
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-            ),
-            _ => None,
-        };
+        let ordinal = kda_ordinal(&self.mixer, cap);
         let segments = capture_segments(
             num_tokens,
             cap.and_then(|c| c.cap_local_early),
@@ -147,7 +171,7 @@ impl Glm5NextLayer {
     /// 2026-10-11: Copy this KDA layer's recurrent and conv state into capture point `which`'s
     /// destinations for SSM ordinal `idx`; nothing when that list has no entry `idx`. Errors
     /// when the plan's per-layer sizes are not this layer's state sizes.
-    fn capture_kda_state(
+    pub(in crate::glm5next_layer) fn capture_kda_state(
         &self,
         state: &mut dyn LayerState,
         cap: &MidchunkCapture<'_>,
