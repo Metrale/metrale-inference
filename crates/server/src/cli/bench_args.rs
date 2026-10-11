@@ -88,6 +88,13 @@ pub enum BenchmarkCommand {
     /// a gate record because the record carries the hardware and the commit
     /// the number belongs to, which the card prints.
     Card(CardArgs),
+    /// Check the measurement-method preconditions a timed A/B, ladder or benchmark run
+    /// depends on: a release build, this binary's own commit and dirty flag, kernel
+    /// closure freshness, an optional vLLM image's digest pin, an optional directory
+    /// comparison's non-vacuousness, and an optional recipe's explicitness. Prints a
+    /// one-screen PASS/FAIL table and exits non-zero on any FAIL. Run it before every
+    /// timed run, not just once per box.
+    Preflight(super::bench_preflight::PreflightArgs),
     /// Build the measured speculative-cost table (`--spec-cost-model measured`) from
     /// spec-cost runs, one per draft depth 0..=K, measured on one box.
     ///
