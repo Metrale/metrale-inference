@@ -219,7 +219,7 @@ impl Glm5NextMtpHead {
         let gctx = super::batch::drafter_ctx(ctx, meta, true);
         gpu.begin_capture(stream)?;
         // 2026-10-11: Only a propose's first draft is graphed (`eligible`): a target row.
-        let body = self.forward_body(embed_in, hidden_in, true, st, &gctx, stream);
+        let body = self.forward_body(Some(embed_in), hidden_in, true, st, &gctx, stream);
         let graph = gpu.end_capture(stream);
         if let (Err(e), Ok(g)) = (&body, &graph) {
             if g.0 != 0 {

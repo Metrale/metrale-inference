@@ -156,7 +156,9 @@ impl TransformerModel {
         &self,
         slot_rows: &[(usize, usize)],
     ) -> Result<()> {
-        if !self.levers.mtp_kv_exact || self.verify_catchup_stash.is_null() {
+        if !(self.levers.mtp_kv_exact || self.levers.mtp_accepted_rows)
+            || self.verify_catchup_stash.is_null()
+        {
             return Ok(());
         }
         let cap = metrale_model_layers::layer::VERIFY_WY_TABLE_SEQS
@@ -186,7 +188,9 @@ impl TransformerModel {
         first_pos: &[usize],
         seqs: &mut [&mut SequenceState],
     ) -> Result<usize> {
-        if !self.levers.mtp_kv_exact || self.verify_catchup_stash.is_null() {
+        if !(self.levers.mtp_kv_exact || self.levers.mtp_accepted_rows)
+            || self.verify_catchup_stash.is_null()
+        {
             return Ok(0);
         }
         let Some(proposer) = self.proposer.as_ref().map(|p| p.as_ref()) else {

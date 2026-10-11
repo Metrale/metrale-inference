@@ -22,6 +22,14 @@
 
 use super::*;
 
+/// 2026-10-11: Whether pair key `key`'s embedding half is zero instead of `enorm(embed)`
+/// (`ModelLevers::mtp_zero_pos0`). vLLM's GLM MTP layer always zeroes the embedding of the row at
+/// position 0 (`fused_eh_norm`: `where(pos == 0, 0, embeds)`), and that row is pair key 0:
+/// `(embed(token_1), hidden_0)`. `enorm(0)` is 0, so the half is zeroed outright.
+pub(super) fn zeroes_embedding(lever: bool, key: usize) -> bool {
+    lever && key == 0
+}
+
 /// 2026-10-11: Whether a row takes the target's final norm before `hnorm`.
 pub(super) fn takes_target_norm(lever: bool, target_row: bool) -> bool {
     lever && target_row
@@ -78,6 +86,20 @@ pub(crate) fn launch_hidden_half(
 }
 
 impl Glm5NextMtpHead {
+    /// 2026-10-11: `concat[0..h] = enorm(embed)`, or zero for `None` (`zeroes_embedding`).
+    pub(super) fn embed_half(
+        &self,
+        gpu: &dyn GpuBackend,
+        embed: Option<DevicePtr>,
+        concat: DevicePtr,
+        stream: u64,
+    ) -> Result<()> {
+        match embed {
+            Some(e) => self.norm(gpu, e, self.module.enorm, concat, self.hidden, stream),
+            None => gpu.memset_async(concat, 0, self.hidden * 2, stream),
+        }
+    }
+
     /// 2026-10-11: `concat[h..2h] = hnorm(row)`, or `hnorm(target_final_norm(row))` for a target
     /// row under `ModelLevers::mtp_target_postnorm` (`METRALE_MTP_TARGET_POSTNORM=1`).
     pub(super) fn hidden_half(

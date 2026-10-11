@@ -137,7 +137,108 @@ impl TransformerModel {
                 .map(|(i, &c)| i * k + c - 1)
                 .collect();
             self.stash_verify_hidden_rows(&stash, 0)?;
+            // 2026-10-11: The accepted drafts' drafter rows, as rank 0's batched step writes them
+            // before its proposes (`run_mtp_catchup_batched`): a no-op unless
+            // `METRALE_MTP_ACCEPTED_ROWS` or `_KV_EXACT` (`accepted_catchup_plan`).
+            let plan = accepted_catchup_plan(&refs, &committed, k);
+            self.stash_verify_catchup_rows_dispatch(&plan.slot_rows)?;
+            self.run_mtp_catchup_batched_dispatch(
+                &plan.tokens,
+                &plan.first_slot,
+                &plan.first_pos,
+                &mut refs,
+            )?;
         }
         Ok(true)
+    }
+}
+
+/// 2026-10-11: A worker's catch-up after a batched MTP verify, the same rows rank 0's step
+/// stashes and appends (`verify_k4_batch_step`): for sequence i with `committed[i]` rows, its
+/// `committed - 1` accepted drafts (at most `MTP_CATCHUP_MAX`), verify rows `i * k + j` into
+/// stash slots `i * MTP_CATCHUP_MAX + j`, tokens at positions `seq_len - na..seq_len`.
+pub(in crate::model) struct AcceptedCatchup {
+    pub slot_rows: Vec<(usize, usize)>,
+    pub tokens: Vec<Vec<u32>>,
+    pub first_slot: Vec<usize>,
+    pub first_pos: Vec<usize>,
+}
+
+pub(in crate::model) fn accepted_catchup_plan(
+    seqs: &[&mut SequenceState],
+    committed: &[usize],
+    k: usize,
+) -> AcceptedCatchup {
+    let cmax = metrale_model_layers::layer::MTP_CATCHUP_MAX;
+    let mut p = AcceptedCatchup {
+        slot_rows: Vec::new(),
+        tokens: Vec::new(),
+        first_slot: Vec::new(),
+        first_pos: Vec::new(),
+    };
+    for (i, (seq, &c)) in seqs.iter().zip(committed).enumerate() {
+        let na = c.saturating_sub(1).min(cmax);
+        let na = if seq.tokens.len() >= seq.seq_len && seq.seq_len >= na {
+            na
+        } else {
+            0
+        };
+        p.slot_rows
+            .extend((0..na).map(|j| (i * cmax + j, i * k + j)));
+        p.tokens.push(if na == 0 {
+            Vec::new()
+        } else {
+            seq.tokens[seq.seq_len - na..seq.seq_len].to_vec()
+        });
+        p.first_slot.push(i * cmax);
+        p.first_pos.push(seq.seq_len - na);
+    }
+    p
+}
+
+#[cfg(test)]
+mod accepted_catchup_tests {
+    use super::*;
+
+    fn seq(tokens: &[u32], seq_len: usize) -> SequenceState {
+        let mut s = SequenceState::host_only(0);
+        s.tokens = tokens.to_vec();
+        s.seq_len = seq_len;
+        s
+    }
+
+    /// 2026-10-11: A worker's rows match rank 0's step: sequence 0 committed 3 rows of a k=4
+    /// verify (two accepted drafts at positions 11 and 12), sequence 1 committed 1 (none). The
+    /// drafts are the tokens at `seq_len - 2..seq_len`, their hiddens verify rows 0 and 1 of
+    /// sequence 0's block, into stash slots 0 and 1; sequence 1 writes nothing.
+    #[test]
+    fn a_worker_stashes_and_appends_the_same_rows_as_rank_0() {
+        let toks: Vec<u32> = (0..13).collect();
+        let mut a = seq(&toks, 13);
+        let mut b = seq(&toks[..9], 9);
+        let refs: Vec<&mut SequenceState> = vec![&mut a, &mut b];
+        let p = accepted_catchup_plan(&refs, &[3, 1], 4);
+        let cmax = metrale_model_layers::layer::MTP_CATCHUP_MAX;
+        assert_eq!(p.slot_rows, vec![(0, 0), (1, 1)]);
+        assert_eq!(p.tokens, vec![vec![11, 12], vec![]]);
+        assert_eq!(p.first_slot, vec![0, cmax]);
+        assert_eq!(p.first_pos, vec![11, 9]);
+    }
+
+    /// 2026-10-11: Sequence 1's block starts at verify row k; more accepted drafts than the
+    /// stash holds are clamped to `MTP_CATCHUP_MAX`, and a token list shorter than `seq_len`
+    /// writes nothing rather than reading past it.
+    #[test]
+    fn rows_follow_the_block_and_are_clamped_and_guarded() {
+        let cmax = metrale_model_layers::layer::MTP_CATCHUP_MAX;
+        let toks: Vec<u32> = (0..64).collect();
+        let mut a = seq(&toks[..5], 9);
+        let mut b = seq(&toks, 40);
+        let refs: Vec<&mut SequenceState> = vec![&mut a, &mut b];
+        let p = accepted_catchup_plan(&refs, &[2, cmax + 3], cmax + 3);
+        assert!(p.tokens[0].is_empty(), "tokens shorter than seq_len");
+        assert_eq!(p.tokens[1].len(), cmax);
+        assert_eq!(p.slot_rows.first(), Some(&(cmax, cmax + 3)));
+        assert_eq!(p.first_pos[1], 40 - cmax);
     }
 }

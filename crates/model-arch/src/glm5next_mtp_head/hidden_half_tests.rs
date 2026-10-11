@@ -26,6 +26,17 @@ fn only_target_rows_take_the_target_norm() {
     assert!(!takes_target_norm(false, false));
 }
 
+/// 2026-10-11: Only pair key 0, `(embed(token_1), hidden_0)` at position 0, is zeroed, and only
+/// under the lever: vLLM zeroes by position, and every other key is a later position.
+#[test]
+fn only_pair_key_0_has_its_embedding_zeroed() {
+    assert!(zeroes_embedding(true, 0));
+    for key in [1usize, 2, 15, 16, 8191] {
+        assert!(!zeroes_embedding(true, key), "key {key}");
+    }
+    assert!(!zeroes_embedding(false, 0), "the lever off");
+}
+
 fn bf16(v: f32) -> f32 {
     half::bf16::from_f32(v).to_f32()
 }

@@ -36,12 +36,15 @@ use metrale_model_layers::speculative::{DraftProposer, ProposerState};
 use metrale_model_layers::weight_map::DenseWeight;
 
 mod batch;
+mod batch_check;
+mod catchup;
 mod graph;
 mod head_xchg;
 mod hidden_half;
 mod init;
 mod kv_pool;
 mod proposer;
+mod rows;
 
 /// 2026-10-11: The batched propose's lever, its row limit, and the block workspaces' rows.
 pub use batch::{PROPOSE_BATCH_MAX, drafter_block_rows, propose_batch_enabled};
@@ -244,7 +247,9 @@ impl Glm5NextMtpHead {
     /// body of the drafter graph (`graph.rs`).
     fn forward_body(
         &self,
-        embed_src: DevicePtr,
+        // 2026-10-11: The token's embedding row; `None` zeroes the embedding half (pair key 0
+        // under `METRALE_MTP_ZERO_POS0`, `hidden_half::zeroes_embedding`).
+        embed_src: Option<DevicePtr>,
         hidden_in: DevicePtr,
         // 2026-10-11: `hidden_in` is a target row (the first draft), not the drafter's own
         // chain output (`hidden_half`).
@@ -255,7 +260,7 @@ impl Glm5NextMtpHead {
     ) -> Result<()> {
         let gpu = ctx.gpu;
         let h = self.hidden;
-        self.norm(gpu, embed_src, self.module.enorm, st.concat, h, stream)?;
+        self.embed_half(gpu, embed_src, st.concat, stream)?;
         // 2026-10-11: `st.x` is free until `eh_proj` writes it, so it stages the target norm.
         self.hidden_half(ctx, hidden_in, target_row, st.x, st.concat, stream)?;
         self.eh_proj(gpu, st, ctx, stream)?;
@@ -408,10 +413,16 @@ impl Glm5NextMtpHead {
         let embed_row = self.embed_tokens.weight.offset(token as usize * h * 2);
         // 2026-10-11: `METRALE_GLM_MTP_GRAPH`: the same launches, replayed from a graph
         // (`graph.rs`); the readback and exchange below stay eager.
-        if graph::eligible(self, st, first) {
-            self.forward_graphed(embed_row, hidden_in, st, ctx, stream)?;
-        } else {
-            self.forward_body(embed_row, hidden_in, first, st, ctx, stream)?;
+        // 2026-10-11: This draft's pair key is `position - 1` (its hidden is position - 1's).
+        let zero = position
+            .checked_sub(1)
+            .is_some_and(|key| hidden_half::zeroes_embedding(ctx.levers.mtp_zero_pos0, key));
+        let embed = (!zero).then_some(embed_row);
+        match embed {
+            Some(e) if graph::eligible(self, st, first) => {
+                self.forward_graphed(e, hidden_in, st, ctx, stream)?
+            }
+            _ => self.forward_body(embed, hidden_in, first, st, ctx, stream)?,
         }
         // 2026-09-25: Timing arm `METRALE_GLM_MTP_SKIP=head`: the head is skipped and the
         // draft is token 0, so `propose` times the block alone. `=block` skips the block instead.
@@ -445,122 +456,6 @@ impl Glm5NextMtpHead {
         // 2026-09-25: A tie goes to the lower rank, identically on every rank, so the ranks'
         // drafter KV streams cannot diverge on a tie.
         head_xchg::pick(self.head_world, &pack)
-    }
-
-    /// 2026-09-25: Append `tokens.len() - 1` drafter context rows: row `r` is pair key
-    /// `row_base + r` = `(embed(tokens[r + 1]), hiddens row r)`. Used for both the whole-prompt
-    /// prefill and the catch-up feed; the only difference between them is `row_base`.
-    ///
-    /// The row space is dense: a row's KV slot, indexer row and RoPE position are all
-    /// `seq_len` (see `Glm5NextDsaLayer::write_kv_row`), so every pair key from 0 up is
-    /// written and slot == key.
-    ///
-    /// Unless `METRALE_GLM_MTP_PREFILL_FULL=1`, a context row runs only `input_norm` and the
-    /// DSA cache writes (`drafter_write_kv_row`): no MoE, no attention, no `lm_head`, because
-    /// its block output is discarded.
-    #[allow(clippy::too_many_arguments)]
-    fn rows_impl(
-        &self,
-        tokens: &[u32],
-        hiddens: DevicePtr,
-        row_base: usize,
-        state: &mut dyn ProposerState,
-        ctx: &ForwardContext,
-        stream: u64,
-    ) -> Result<usize> {
-        let st = match state
-            .as_any_mut()
-            .downcast_mut::<Glm5NextMtpProposerState>()
-        {
-            Some(s) => s,
-            None => return Ok(0),
-        };
-        // 2026-09-25: Rows must append exactly at the drafter's current length, or the dense
-        // row space grows a hole and every later RoPE position is wrong. 2026-10-11: A state
-        // without a KV region writes nothing.
-        if st.seq_len != row_base || tokens.len() < 2 || st.kv_region.is_none() {
-            return Ok(0);
-        }
-        let h = self.hidden;
-        let rows = tokens.len() - 1;
-        if row_base + rows > self.max_seq_len {
-            return Ok(0);
-        }
-        let gpu = ctx.gpu;
-        let dbg = metrale_model_layers::speculative::mtp_refeed_debug();
-        let prefill_full = std::env::var("METRALE_GLM_MTP_PREFILL_FULL")
-            .ok()
-            .as_deref()
-            == Some("1");
-        let mut kv = self.kv_cache.lock();
-        let Glm5NextMtpProposerState {
-            dsa,
-            seq_len,
-            block_table,
-            concat,
-            x,
-            ..
-        } = st;
-        for r in 0..rows {
-            let embed_row = self
-                .embed_tokens
-                .weight
-                .offset(tokens[r + 1] as usize * h * 2);
-            self.norm(gpu, embed_row, self.module.enorm, *concat, h, stream)?;
-            // 2026-10-11: A context row is always a target row; `x` stages its target norm
-            // before the `eh_proj` below writes it.
-            self.hidden_half(ctx, hiddens.offset(r * h * 2), true, *x, *concat, stream)?;
-            ops::dense_gemv(
-                gpu,
-                self.gemv_k,
-                *concat,
-                &self.module.eh_proj,
-                *x,
-                h as u32,
-                (2 * h) as u32,
-                stream,
-            )?;
-            let dsa_state: &mut dyn LayerState = dsa;
-            // 2026-09-25: Diagnostic arm `METRALE_GLM_MTP_PREFILL_FULL=1`: build the row through
-            // the full block path a propose uses (`decode_one_for_drafter`) instead of the
-            // cache-only write.
-            if prefill_full {
-                self.module.layer.decode_one_for_drafter(
-                    *x,
-                    dsa_state,
-                    &mut kv,
-                    *seq_len,
-                    block_table,
-                    ctx,
-                    stream,
-                )?;
-            } else {
-                self.module.layer.drafter_write_kv_row(
-                    *x,
-                    dsa_state,
-                    &mut kv,
-                    *seq_len,
-                    block_table,
-                    ctx,
-                    stream,
-                )?;
-            }
-            if dbg {
-                let fp = metrale_model_layers::speculative::hidden_fingerprint(
-                    gpu,
-                    hiddens.offset(r * h * 2),
-                    h,
-                );
-                tracing::info!(
-                    "GLM_MTP_DBG ctx row slot={} key={} tok={} fp_hidden={fp:016x}",
-                    *seq_len,
-                    row_base + r,
-                    tokens[r + 1],
-                );
-            }
-            *seq_len += 1;
-        }
-        Ok(rows)
     }
 }
 
