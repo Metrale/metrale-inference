@@ -126,7 +126,9 @@ pub fn forward_dense_site(
                     "GLM dense MLP: the plan runs W4A4 at {m} rows but no packed weights were bound"
                 );
             };
-            super::w4a4::forward_dense_w4a4(gpu, k, cfg, w, *scales, inter, x, out, m, ws, stream)
+            super::w4a4_dense::forward_dense_w4a4(
+                gpu, k, cfg, w, *scales, inter, x, out, m, ws, stream,
+            )
         }
         MlpKernel::Bf16 | MlpKernel::W4a16 => {
             let Some(w) = &site.bf16 else {

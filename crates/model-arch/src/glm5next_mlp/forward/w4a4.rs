@@ -6,7 +6,8 @@
 //! one row over the row's own slots (`w4a4_gemv_mx8_moe_slots_sweep`, 2026-10-09), at 2..=16
 //! over the rows' union (`w4a4_gemv_mx{8,16}_moe_union_sweep`, each union expert read once); the
 //! slot GEMV (`w4a4_gemv_mx8_moe_slots`) where those kernels did not resolve;
-//! the dense MLP the mx GEMVs in chunks of [`DENSE_W4A4_CHUNK_ROWS`] rows.
+//! the dense MLP the mx GEMVs in chunks of `DENSE_W4A4_CHUNK_ROWS` rows (2026-10-10: in
+//! `w4a4_dense.rs`).
 //! 2026-10-10: A routed down projection whose K (the expert width) is a multiple of 64 but not
 //! of 128, a 64-unit expert slice of the `tp` layout, runs the `_k64` twins of the quantizer,
 //! the slot GEMV and the sweep ([`down_kernels`]).
@@ -28,14 +29,12 @@ use super::launch::swiglu;
 use super::moe_experts::MoeSite;
 use crate::glm5next_layer::profile;
 use crate::glm5next_mlp::build_w4a4::{check_w4a4_k, check_w4a4_k64};
-use crate::glm5next_mlp::weights::{
-    Glm5NextDenseNvfp4Weights, Glm5NextExpertPtrTable, Nvfp4Proj, W4a4ActScales,
-};
-use crate::glm5next_mlp::{DENSE_W4A4_CHUNK_ROWS, Glm5NextMlpConfig, Glm5NextMlpKernels};
+use crate::glm5next_mlp::weights::{Glm5NextExpertPtrTable, W4a4ActScales};
+use crate::glm5next_mlp::{Glm5NextMlpConfig, Glm5NextMlpKernels};
 
 /// 2026-10-08: Rows of output one mx or slot block covers (`w4a4_gemv_mx.cu`, n0 = 16 * x).
-const W4A4_ROWS_PER_CTA: u32 = 16;
-const W4A4_BLOCK: u32 = 256;
+pub(super) const W4A4_ROWS_PER_CTA: u32 = 16;
+pub(super) const W4A4_BLOCK: u32 = 256;
 
 /// 2026-10-08: Quantize `rows` BF16 rows of width `k` at `input` into the W4A4 scratch under the
 /// static global scale `gs`. 2026-10-10: `k_store` is the row width `kern` writes: `k`, or
@@ -181,6 +180,25 @@ fn sweep_kernel(
     (h.0 != 0 && k.w4a4_sweep_ctas != 0 && union_ok).then_some((h, entries))
 }
 
+/// 2026-10-10: Whether `w4a4_experts` at `rows` rows writes every row of `expert_out` itself:
+/// at one row when the down projection runs the own-slots sweep, which writes +0.0 over the
+/// rows of a slot it computes nothing for (invalid or another rank's expert). `forward_moe` then
+/// skips its zeroing of `expert_out`. A width the down kernels refuse reads false here and fails
+/// in `w4a4_experts`.
+pub(super) fn writes_every_expert_row(
+    k: &Glm5NextMlpKernels,
+    cfg: &Glm5NextMlpConfig,
+    rows: usize,
+) -> bool {
+    rows == 1
+        && down_kernels(k, cfg.moe_intermediate).is_ok_and(|d| {
+            matches!(
+                sweep_kernel(k, d.own, d.sweep, rows, cfg.top_k),
+                Some((_, SweepEntries::OwnSlots))
+            )
+        })
+}
+
 /// 2026-10-09: `out[r * top_k + s, n]` of every projection in `projs` (one or two, which read the
 /// same activations) for every (row, slot) through the union tables (`glm5next_moe_row_union`),
 /// each live union expert's weights read once, or at one row through the ids row itself, in one
@@ -230,44 +248,6 @@ fn moe_sweep(
         .arg_u32(act_div as u32)
         .arg_u32(cfg.num_experts as u32)
         .launch(site.stream)
-}
-
-/// 2026-10-08: The mx entry for `rows` (1..=32): mx8, mx16 or mx32.
-fn mx_kernel(k: &Glm5NextMlpKernels, rows: usize) -> KernelHandle {
-    match rows {
-        0..=8 => k.w4a4_mx[0],
-        9..=16 => k.w4a4_mx[1],
-        _ => k.w4a4_mx[2],
-    }
-}
-
-/// 2026-10-08: `out[rows, n]` = the quantized scratch times `w` (`[n, k]` NVFP4).
-#[allow(clippy::too_many_arguments)]
-fn mx_proj(
-    gpu: &dyn GpuBackend,
-    k: &Glm5NextMlpKernels,
-    ws: &Glm5NextMlpWorkspace,
-    w: &Nvfp4Proj,
-    out: DevicePtr,
-    rows: usize,
-    n: usize,
-    kk: usize,
-    stream: u64,
-) -> Result<()> {
-    KernelLaunch::new(gpu, mx_kernel(k, rows))
-        .grid([div_ceil(n as u32, W4A4_ROWS_PER_CTA), 1, 1])
-        .block([W4A4_BLOCK, 1, 1])
-        .arg_ptr(ws.w4a4_aq)
-        .arg_ptr(ws.w4a4_as)
-        .arg_ptr(ws.w4a4_ag)
-        .arg_ptr(w.packed)
-        .arg_ptr(w.scale)
-        .arg_f32(w.scale_2)
-        .arg_ptr(out)
-        .arg_u32(rows as u32)
-        .arg_u32(n as u32)
-        .arg_u32(kk as u32)
-        .launch(stream)
 }
 
 /// 2026-10-08: The routed experts of `forward_moe` at W4A4, every (row, slot) in one launch per
@@ -385,105 +365,6 @@ pub(super) fn w4a4_experts(site: &MoeSite<'_>, scales: W4a4ActScales) -> Result<
         None => slots_gemv(down.slots, &w.ptrs.down, ws.expert_out, h, mi, 1)?,
     }
     profile::end(profile::MOE_EXPERTS, t, gpu, stream);
-    Ok(())
-}
-
-/// 2026-10-08: The dense SwiGLU MLP of width `inter` at W4A4, `m` rows in chunks of
-/// [`DENSE_W4A4_CHUNK_ROWS`]: gate and up per chunk from one quantization, the clamped SwiGLU
-/// over all rows, then down per chunk. `out` is a partial sum under TP, as in `forward_dense`.
-#[allow(clippy::too_many_arguments)]
-pub fn forward_dense_w4a4(
-    gpu: &dyn GpuBackend,
-    k: &Glm5NextMlpKernels,
-    cfg: &Glm5NextMlpConfig,
-    w: &Glm5NextDenseNvfp4Weights,
-    scales: W4a4ActScales,
-    inter: usize,
-    x: DevicePtr,
-    out: DevicePtr,
-    m: usize,
-    ws: &Glm5NextMlpWorkspace,
-    stream: u64,
-) -> Result<()> {
-    let h = cfg.hidden;
-    ensure!(
-        m >= 1 && m <= ws.max_rows() && inter <= ws.max_inter,
-        "GLM dense W4A4: {m} rows x {inter} do not fit the workspace"
-    );
-    check_w4a4_k(h, "dense gate/up")?;
-    check_w4a4_k(inter, "dense down")?;
-    let chunks = (0..m)
-        .step_by(DENSE_W4A4_CHUNK_ROWS)
-        .map(|r0| (r0, (m - r0).min(DENSE_W4A4_CHUNK_ROWS)));
-    for (r0, n) in chunks.clone() {
-        quant_static(
-            gpu,
-            k.w4a4_quant_static,
-            ws,
-            x.offset(r0 * h * 2),
-            n,
-            h,
-            h,
-            scales.gate_up,
-            stream,
-        )?;
-        mx_proj(
-            gpu,
-            k,
-            ws,
-            &w.gate_proj,
-            ws.a_gate.offset(r0 * inter * 2),
-            n,
-            inter,
-            h,
-            stream,
-        )?;
-        mx_proj(
-            gpu,
-            k,
-            ws,
-            &w.up_proj,
-            ws.a_up.offset(r0 * inter * 2),
-            n,
-            inter,
-            h,
-            stream,
-        )?;
-    }
-    swiglu(
-        gpu,
-        k.swiglu,
-        ws.a_gate,
-        ws.a_up,
-        ws.a_act,
-        m * inter,
-        cfg.swiglu_limit,
-        stream,
-    )?;
-    for (r0, n) in chunks {
-        quant_static(
-            gpu,
-            k.w4a4_quant_static,
-            ws,
-            ws.a_act.offset(r0 * inter * 2),
-            n,
-            inter,
-            inter,
-            scales.down,
-            stream,
-        )?;
-        mx_proj(
-            gpu,
-            k,
-            ws,
-            &w.down_proj,
-            out.offset(r0 * h * 2),
-            n,
-            h,
-            inter,
-            stream,
-        )?;
-    }
     Ok(())
 }
 

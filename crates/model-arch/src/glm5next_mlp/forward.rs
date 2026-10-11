@@ -25,6 +25,7 @@ mod route;
 mod router;
 mod topk_combine;
 mod w4a4;
+mod w4a4_dense;
 mod w4a4_grouped;
 mod workspace;
 
@@ -32,7 +33,7 @@ pub use dense::{forward_dense, forward_dense_site};
 use launch::swiglu;
 pub(crate) use pieces::check_pieces;
 pub use route::{ExpertRoute, expert_route};
-pub use w4a4::forward_dense_w4a4;
+pub use w4a4_dense::forward_dense_w4a4;
 pub use w4a4_grouped::{moe_w4a4_grouped, smem_bytes as w4a4_grouped_smem_bytes};
 pub use workspace::{mlp_ws_bytes, mlp_ws_total_bytes};
 
@@ -384,7 +385,10 @@ pub fn forward_moe_pieces(
     // 2026-09-25: Zero every routed output first: an expert this rank does not own writes
     // nothing, and its slots must add zero to the sum. 2026-10-10: Not before the grouped W4A4
     // GEMM when this rank holds every expert: its down launch writes every sorted row.
-    if w4a4_grouped::zeroes_expert_out(grouped_w4a4, cfg) {
+    // 2026-10-10: Nor before the one-row own-slots sweep, which zeroes the rows it computes
+    // nothing for (`w4a4::writes_every_expert_row`).
+    let own_rows = w4a4.is_some() && w4a4::writes_every_expert_row(k, cfg, rows);
+    if w4a4_grouped::zeroes_expert_out(grouped_w4a4, cfg) && !own_rows {
         gpu.memset_async(ws.expert_out, 0, rows * cfg.top_k * cfg.hidden * 2, stream)?;
     }
 
