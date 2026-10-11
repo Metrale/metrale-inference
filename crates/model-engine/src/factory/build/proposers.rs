@@ -57,6 +57,7 @@ pub(super) fn install_glm_mtp_proposer(
     glm_mtp_embed: DenseWeight,
     glm_mtp_lm_head: DenseWeight,
     max_seq_len: usize,
+    max_batch_size: usize,
 ) {
     if let Some(m) = glm_mtp_module {
         match metrale_model_arch::glm5next_mtp_head::Glm5NextMtpHead::new(
@@ -66,6 +67,7 @@ pub(super) fn install_glm_mtp_proposer(
             model.config_ref(),
             model.gpu_backend(),
             max_seq_len,
+            max_batch_size,
         ) {
             Ok(head) => {
                 model.set_dflash_proposer(std::sync::Arc::new(head));

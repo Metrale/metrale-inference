@@ -74,7 +74,12 @@ pub fn load_glm5next_mtp_module(
         select_kernels: dsa_kernels,
         decode_kernel: crate::glm5next_dsa::attend::Glm5NextDsaDecodeKernel::resolve(gpu)?,
         // 2026-09-25: Single-row workspace: the drafter runs this layer one row at a time.
-        workspace: Glm5NextDsaWorkspace::new(gpu, &dsa_cfg, 1)?,
+        // 2026-10-11: One row per sequence of the widest batched propose under its lever.
+        workspace: Glm5NextDsaWorkspace::new(
+            gpu,
+            &dsa_cfg,
+            crate::glm5next_mtp_head::drafter_block_rows(),
+        )?,
         layer_idx: idx,
         // 2026-09-25: Sole consumer of its own one-layer KV pool.
         attn_layer_idx: 0,
@@ -100,7 +105,7 @@ pub fn load_glm5next_mtp_module(
         &load,
         &expert,
         &precision,
-        1,
+        crate::glm5next_mtp_head::drafter_block_rows(),
     )?));
     // 2026-10-11: The drafter's dense projections at the serve's tiers, as a text layer's. They
     // were left BF16: at TP=3 the drafter's DSA q_absorb and o_absorb alone read ~0.54 ms per
@@ -119,8 +124,11 @@ pub fn load_glm5next_mtp_module(
             mlp_kernels,
             // 2026-09-25: Its own one-row workspace, not the text stack's shared one, which
             // is sized for a prefill sub-chunk.
+            // 2026-10-11: As many rows as the DSA workspace above.
             mlp_ws: std::sync::Arc::new(crate::glm5next_mlp::forward::Glm5NextMlpWorkspace::new(
-                gpu, &mlp_cfg, 1,
+                gpu,
+                &mlp_cfg,
+                crate::glm5next_mtp_head::drafter_block_rows(),
             )?),
             // 2026-09-25: No hyper-connection: nothing here binds `hc_*` tensors, and
             // `mhc: None` selects the plain residual path.

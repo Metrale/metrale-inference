@@ -126,6 +126,19 @@ fn a_non_glm_config_is_charged_nothing() {
 const GLM_CONFIG: &str =
     include_str!("../../model-engine/tests/fixtures/glm53-nvfp4-9e0d74e3-config.json");
 
+/// 2026-10-11: One sequence's drafter KV region: the fixture leaves `serve_max_seq_len` unset,
+/// so the DSA context is 16,384 rows; 16,384 / 16 + 2 = 1,026 blocks of
+/// `2 (k + v) * 16 * 512` B (FP8 latent, one layer) = 16,384 B each.
+#[test]
+fn a_drafter_kv_region_is_1026_blocks_of_16_kib() {
+    let cfg = metrale_config::parse_config(GLM_CONFIG).expect("real config parses");
+    assert_eq!(
+        crate::glm5next_mtp_head::drafter_kv_bytes_per_seq(&cfg, MSL).unwrap(),
+        1026 * 16_384
+    );
+    assert_eq!(1026 * 16_384, 16_809_984);
+}
+
 /// 2026-10-09: The flat indexer is charged per sequence (11 layers at 513 B per token); the
 /// paged one lives in the KV pool and is charged nothing per sequence. The MTP proposer's own
 /// flat indexer is charged either way.
@@ -137,5 +150,7 @@ fn a_paged_text_indexer_is_not_charged_per_sequence() {
     assert_eq!(flat.target_layers, 739_639_296);
     assert_eq!(paged.target_layers, 0);
     assert_eq!(paged.proposer, flat.proposer);
-    assert_eq!(paged.proposer, 67_574_308);
+    // 2026-10-11: The indexer block and buffers (67,574,308 B) plus the drafter KV region
+    // (16,809,984 B).
+    assert_eq!(paged.proposer, 67_574_308 + 16_809_984);
 }

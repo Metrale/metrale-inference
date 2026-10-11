@@ -199,6 +199,10 @@ impl TransformerModel {
         if cmd == metrale_model_layers::speculative::EP_CMD_VERIFY_BATCH {
             return self.ep_worker_verify_batch(slots);
         }
+        // 2026-10-11: Batched MTP propose: the slots travel in its payload, as above.
+        if cmd == metrale_model_layers::speculative::EP_CMD_MTP_PROPOSE_BATCH {
+            return self.ep_worker_mtp_propose_batch(slots);
+        }
         // 2026-10-09: Multi-sequence prefill: the slots travel in its payload, as above.
         if cmd == crate::model::trait_impl::prefill_b::spans_wire::EP_CMD_PREFILL_SPANS {
             return self.ep_worker_prefill_spans(slots);

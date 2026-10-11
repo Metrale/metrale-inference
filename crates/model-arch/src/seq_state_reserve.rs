@@ -108,9 +108,11 @@ pub fn per_sequence_state_bytes_for(
     // 2026-09-25: The GLM MTP head's `alloc_state` (`glm5next_mtp_head/proposer.rs`)
     // allocates one DSA indexer block for its drafter layer and five buffers: `concat`,
     // `x`, `logits`, `arg`, `head_xchg`, in that order below. Its `block_table` is a host
-    // `Vec<u32>`, not device memory.
+    // `Vec<u32>`, not device memory. 2026-10-11: Plus its region of the drafter KV pool, which
+    // `Glm5NextMtpHead::new` allocates for `--max-batch-size` states up front.
     let proposer = if spec_on && config.mtp_layer_types.contains(&LayerType::SparseAttention) {
-        per_layer
+        crate::glm5next_mtp_head::drafter_kv_bytes_per_seq(config, max_seq_len)?
+            + per_layer
             + 2 * config.hidden_size * 2
             + config.hidden_size * 2
             + config.vocab_size * 2

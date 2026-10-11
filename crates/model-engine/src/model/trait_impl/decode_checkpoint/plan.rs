@@ -181,6 +181,44 @@ const _: () = {
     }
 };
 
+// 2026-10-11: FD, the batched MTP propose (`speculative::propose_batch_wire`), against every
+// code above.
+const _: () = {
+    use crate::model::trait_impl::prefill_b::spans_wire::EP_CMD_PREFILL_SPANS;
+    use metrale_model_layers::speculative as sp;
+    let p = sp::EP_CMD_MTP_PROPOSE_BATCH;
+    assert!(
+        p > 0xFFFF_FFEF,
+        "EP_CMD_MTP_PROPOSE_BATCH would be a decode token id"
+    );
+    let others = [
+        0xFFFF_FFE0,
+        0xFFFF_FFE1,
+        0xFFFF_FFF0,
+        0xFFFF_FFF1,
+        0xFFFF_FFF2,
+        0xFFFF_FFF3,
+        0xFFFF_FFF4,
+        sp::EP_CMD_MTP_PROPOSE,
+        sp::EP_CMD_VERIFY_KGAMMA,
+        0xFFFF_FFF7,
+        EP_CMD_DECODE_CKPT,
+        sp::EP_CMD_VERIFY_BATCH,
+        EP_CMD_PREFILL_SPANS,
+        sp::EP_CMD_DFLASH_PROPOSE,
+        sp::EP_CMD_VERIFY_K2_FUSED,
+        0xFFFF_FFFF,
+    ];
+    let mut i = 0;
+    while i < others.len() {
+        assert!(
+            p != others[i],
+            "EP_CMD_MTP_PROPOSE_BATCH collides with another worker opcode"
+        );
+        i += 1;
+    }
+};
+
 /// 2026-09-25: Payload width of [`EP_CMD_DECODE_CKPT`], in u32 words.
 pub(in crate::model) const EP_CKPT_WORDS: usize = 6;
 

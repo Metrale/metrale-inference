@@ -91,6 +91,7 @@ pub(super) fn step_verify_k4_batched(
     // `METRALE_EP_MTP_BATCH_VERIFY=1`): announce the batch as the batched DFlash verify does
     // (`EP_CMD_VERIFY_BATCH`, `verify_batch_wire.rs`); the verdict follows the forward below.
     let ep = model.is_ep();
+    let t_announce = sched.io.clock.now();
     if ep {
         let slots: Vec<u32> = batch.iter().map(|a| a.seq.slot_idx as u32).collect();
         let k = ks[0];
@@ -108,6 +109,10 @@ pub(super) fn step_verify_k4_batched(
             }
             return;
         }
+        sched
+            .io
+            .tel
+            .mark(crate::scheduler::mtp_timing::Phase::EpBroadcast, t_announce);
     }
 
     // 2026-09-25: `Model::decode_verify_batched` contract: on Ok each
@@ -232,6 +237,7 @@ pub(super) fn step_verify_k4_batched(
     // drafts) before any emit, as the batched DFlash verify sends it; the workers trim, fold,
     // commit and stash the same rows (`ep_worker_verify_batch`).
     if ep {
+        let t_send = sched.io.clock.now();
         let words: Vec<u32> = verdicts
             .iter()
             .enumerate()
@@ -247,6 +253,10 @@ pub(super) fn step_verify_k4_batched(
             }
             return;
         }
+        sched
+            .io
+            .tel
+            .mark(crate::scheduler::mtp_timing::Phase::EpBroadcast, t_send);
     }
     let t_stash = sched.io.clock.now();
     // 2026-09-25: stash each sequence's accepted-position hidden row

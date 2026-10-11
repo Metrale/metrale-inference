@@ -101,57 +101,6 @@ impl TransformerModel {
         self.run_mtp_propose_inner(token, position, num_drafts, seq, grammar_bitmask)
     }
 
-    /// 2026-09-25: Batched cross-sequence propose. Target hiddens are read from the verify
-    /// stash rows (`stash_idx[i]`), not from `mtp_hidden_save`. `Ok(None)` tells the caller
-    /// to fall back to the per-sequence propose: no proposer, the draft-confidence clamp
-    /// armed, no stash, a sequence without proposer state, or `propose_batch` unsupported.
-    pub(super) fn run_mtp_propose_batched_dispatch(
-        &self,
-        tokens: &[u32],
-        positions: &[usize],
-        stash_idx: &[usize],
-        num_drafts: usize,
-        seqs: &mut [&mut SequenceState],
-        out_conf: Option<&mut Vec<Vec<f32>>>,
-    ) -> Result<Option<Vec<Vec<u32>>>> {
-        let proposer = match &self.proposer {
-            Some(p) => p.as_ref(),
-            None => return Ok(None),
-        };
-        if self.verify_hidden_stash.is_null() {
-            return Ok(None);
-        }
-        let stream = self.gpu.default_stream();
-        let ctx = self.mtp_propose_ctx();
-        // 2026-09-25: Drafter context on each sequence's first propose; returns without
-        // work on later calls.
-        for seq in seqs.iter_mut() {
-            self.ensure_drafter_context(proposer, seq, &ctx, stream);
-        }
-        let h = self.config.hidden_size;
-        let hiddens: Vec<metrale_gpu_runtime::gpu::DevicePtr> = stash_idx
-            .iter()
-            .map(|&i| self.verify_hidden_stash.offset(i * h * 2))
-            .collect();
-        let mut states: Vec<&mut dyn metrale_model_layers::speculative::ProposerState> = Vec::new();
-        for seq in seqs.iter_mut() {
-            match seq.proposer_state.as_mut() {
-                Some(s) => states.push(s.as_mut()),
-                None => return Ok(None),
-            }
-        }
-        proposer.propose_batch(
-            tokens,
-            &hiddens,
-            positions,
-            num_drafts,
-            &mut states,
-            &ctx,
-            stream,
-            out_conf,
-        )
-    }
-
     /// 2026-09-25: The `ForwardContext` of the batched MTP propose and the batched catch-up.
     /// 2026-10-10: Worker side of `EP_CMD_DFLASH_PROPOSE` on the command slot's proposer state
     /// (`None` when the slot has none): the proposer's collective propose with the
@@ -175,7 +124,7 @@ impl TransformerModel {
         }
     }
 
-    fn mtp_propose_ctx(&self) -> ForwardContext<'_> {
+    pub(super) fn mtp_propose_ctx(&self) -> ForwardContext<'_> {
         ForwardContext {
             buffers: &self.buffers,
             hc_row_offset: 0,
