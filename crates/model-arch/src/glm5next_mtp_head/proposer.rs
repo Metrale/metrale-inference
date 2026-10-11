@@ -91,9 +91,17 @@ impl DraftProposer for Glm5NextMtpHead {
         metrale_model_layers::speculative::mtp_ep_propose_enabled()
     }
 
-    /// 2026-09-25: True: a context row normalises into `ctx.buffers` (`drafter_write_kv_row`).
+    /// 2026-10-11: A context row normalises into the state's own `concat`
+    /// (`drafter_write_kv_row`), so the drafter prefill can run at the end of each sequence's
+    /// target prefill, while the shared capture is still its own; at the first propose instead,
+    /// at C >= 2 every sequence but the last-prefilled drafts without its prompt. Opt-in
+    /// (`METRALE_GLM_MTP_EAGER_PREFILL=1`) until the context rows run as one pass: one at a time
+    /// they cost ~0.35 ms per prompt row, which would land in every request's TTFT. The
+    /// diagnostic full-block arm (`METRALE_GLM_MTP_PREFILL_FULL=1`, `decode_one_for_drafter`)
+    /// writes the shared scratch, so it always waits for the first propose.
     fn prefill_uses_shared_buffers(&self) -> bool {
-        true
+        std::env::var("METRALE_GLM_MTP_PREFILL_FULL").as_deref() == Ok("1")
+            || std::env::var("METRALE_GLM_MTP_EAGER_PREFILL").as_deref() != Ok("1")
     }
 
     fn drafter_rows(&self, state: &mut dyn ProposerState) -> usize {

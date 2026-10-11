@@ -107,10 +107,15 @@ impl Glm5NextLayer {
     /// 2026-09-25: One drafter context row: `input_norm`, then `Glm5NextDsaLayer::write_kv_row`,
     /// which writes the row's KV latent and indexer entry without computing the block output.
     /// Errors on a block whose mixer is not DSA.
+    ///
+    /// 2026-10-11: The normed row goes to the caller's `normed` (`[hidden]` BF16), not the
+    /// shared forward scratch, so the row can be written at the end of the target's prefill
+    /// while the target still owns that scratch (`DraftProposer::prefill_uses_shared_buffers`).
     #[allow(clippy::too_many_arguments)]
     pub fn drafter_write_kv_row(
         &self,
         x: DevicePtr,
+        normed: DevicePtr,
         state: &mut dyn LayerState,
         kv_cache: &mut PagedKvCache,
         seq_len: usize,
@@ -126,7 +131,6 @@ impl Glm5NextLayer {
                 self.layer_idx
             ),
         };
-        let normed = ctx.buffers.norm_output();
         self.norm(ctx.gpu, x, self.input_norm, normed, 1, stream)?;
         layer.write_kv_row(normed, state, kv_cache, seq_len, block_table, ctx, stream)
     }
