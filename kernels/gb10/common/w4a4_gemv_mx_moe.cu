@@ -205,6 +205,11 @@ __device__ __forceinline__ void w4a4_sweep_prefetch(const unsigned char* bq,
 // 2026-10-09: OWN: one row (rows == 1) whose entries are its own slots: u_eid is the router's ids
 // row and entry u is slot u (u_slot is not read). Every slot of a local expert runs, a repeated id
 // included, as in the slot GEMV; the union tables would keep one slot of a repeated id.
+// 2026-10-10: OWN also writes +0.0 over every output row of a slot it computes nothing for, so
+// C needs no zeroing first (N % 8 == 0: 16-byte rows). Every live entry's table pointers and
+// weight_scale_2 are read once at setup into shared memory, so no item waits on a global table
+// load before its first weight byte (measured on the tp shapes: -4 to -7% at 2 to 16 rows, the
+// same at one row; glm5next_moe_narrow_bench GLM_BENCH_TP=1).
 template <int MB, int PF, bool KH, bool OWN>
 __device__ __forceinline__ void w4a4_moe_union_sweep(
     const unsigned char* __restrict__ Aq, const unsigned char* __restrict__ As,
@@ -220,23 +225,36 @@ __device__ __forceinline__ void w4a4_moe_union_sweep(
     // 2026-10-09: Block-uniform refusals before any barrier.
     // s_live packs (entry << 16) | expert, so an expert id must fit 16 bits.
     if (T > W4A4_WARPS * 32u || rows > 8u * MB || nproj == 0u || nproj > 2u ||
-        num_experts > 0x10000u || (OWN && rows != 1u))
+        num_experts > 0x10000u || (OWN && (rows != 1u || (N & 7u) != 0u)))
         return;
     __shared__ int s_live[W4A4_WARPS * 32];
-    __shared__ unsigned int s_wcnt[W4A4_WARPS];
+    // 2026-10-10: Per live entry e and projection p: packed and scale bases, weight_scale_2.
+    __shared__ unsigned long long s_q[2][W4A4_WARPS * 32], s_s[2][W4A4_WARPS * 32];
+    __shared__ float s_f[2][W4A4_WARPS * 32];
+    __shared__ unsigned int s_wcnt[W4A4_WARPS], s_dead[W4A4_WARPS];
     __shared__ int s_sl[8 * MB];
     __shared__ unsigned int s_a[8 * MB], s_c[8 * MB], s_m;
     const unsigned int tid = threadIdx.x, lane = tid & 31u, warp = tid >> 5;
 
     int id = -1;
+    unsigned long long q0 = 0ull, q1 = 0ull;
     if (tid < T) {
         id = u_eid[tid];
-        if (id < 0 || (unsigned int)id >= num_experts ||
-            (packed0[id] == 0ull && (nproj == 1u || packed1[id] == 0ull)))
+        if (id < 0 || (unsigned int)id >= num_experts) {
             id = -1;
+        } else {
+            q0 = packed0[id];
+            q1 = nproj == 2u ? packed1[id] : 0ull;
+            if (q0 == 0ull && q1 == 0ull) id = -1;
+        }
     }
     const unsigned int bal = __ballot_sync(0xFFFFFFFFu, id >= 0);
-    if (lane == 0u) s_wcnt[warp] = (unsigned int)__popc(bal);
+    // 2026-10-10: OWN: the slots this rank writes no product for (expert invalid or remote).
+    const unsigned int dead = __ballot_sync(0xFFFFFFFFu, tid < T && id < 0);
+    if (lane == 0u) {
+        s_wcnt[warp] = (unsigned int)__popc(bal);
+        s_dead[warp] = dead;
+    }
     __syncthreads();
     unsigned int before = 0u, count = 0u;
     #pragma unroll
@@ -245,8 +263,36 @@ __device__ __forceinline__ void w4a4_moe_union_sweep(
         count += s_wcnt[w];
     }
     // 2026-10-09: s_live[e] = (union entry << 16) | expert of the e-th live entry.
-    if (id >= 0) s_live[before + (unsigned int)__popc(bal & ((1u << lane) - 1u))] = (int)((tid << 16) | (unsigned int)id);
+    if (id >= 0) {
+        const unsigned int e = before + (unsigned int)__popc(bal & ((1u << lane) - 1u));
+        s_live[e] = (int)((tid << 16) | (unsigned int)id);
+        s_q[0][e] = q0;
+        s_s[0][e] = scale0[id];
+        s_f[0][e] = s2_0[id];
+        if (nproj == 2u) {
+            s_q[1][e] = q1;
+            s_s[1][e] = scale1[id];
+            s_f[1][e] = s2_1[id];
+        }
+    }
     __syncthreads();
+
+    // 2026-10-10: OWN: every output row of a dead slot is zeroed here, in each projection (the
+    // slot GEMV writes nothing there, and a zeroed C reads +0.0, which these stores write). The
+    // CTAs share the rows' 16-byte words.
+    if constexpr (OWN) {
+        const unsigned int words = N >> 3, cta_threads = gridDim.x * blockDim.x;
+        for (unsigned int dw = 0; dw < W4A4_WARPS; dw++) {
+            for (unsigned int bits = s_dead[dw]; bits != 0u; bits &= bits - 1u) {
+                const unsigned int slot = dw * 32u + (unsigned int)__ffs(bits) - 1u;
+                for (unsigned int p = 0; p < nproj; p++) {
+                    uint4* row = (uint4*)((p == 0u ? C0 : C1) + (unsigned long long)slot * N);
+                    for (unsigned int i = blockIdx.x * blockDim.x + tid; i < words; i += cta_threads)
+                        row[i] = make_uint4(0u, 0u, 0u, 0u);
+                }
+            }
+        }
+    }
 
     // 2026-10-09: Work item w = (p * count + e) * tiles + x; this CTA takes [w0, w1).
     const unsigned int tiles = (N + 15u) >> 4;
@@ -256,18 +302,15 @@ __device__ __forceinline__ void w4a4_moe_union_sweep(
     unsigned int cur = 0xFFFFFFFFu;
     for (unsigned int w = w0; w < w1; w++) {
         const unsigned int x = w % tiles, pe = w / tiles;
-        const unsigned int p = pe / count;
-        const unsigned int ue = (unsigned int)s_live[pe % count];
-        const unsigned int u = ue >> 16, eid = ue & 0xFFFFu;
+        const unsigned int p = pe / count, e = pe % count;
+        const unsigned int u = (unsigned int)s_live[e] >> 16;
         // 2026-10-09: While this item computes, pull the weight tile of the item PF
         // ahead into L2 (a hint: it changes no value).
         if (PF != 0 && tid == 0u && w + PF < w1) {
             const unsigned int wn = w + PF, pn = wn / tiles;
-            const unsigned int en = (unsigned int)s_live[pn % count] & 0xFFFFu;
-            const bool first = pn / count == 0u;
-            w4a4_sweep_prefetch((const unsigned char*)(first ? packed0[en] : packed1[en]),
-                                (const unsigned char*)(first ? scale0[en] : scale1[en]),
-                                wn % tiles, N, K);
+            const unsigned int qn = pn / count, en = pn % count;
+            w4a4_sweep_prefetch((const unsigned char*)s_q[qn][en],
+                                (const unsigned char*)s_s[qn][en], wn % tiles, N, K);
         }
         // 2026-10-09: The previous item's reduction and token tables are done with.
         __syncthreads();
@@ -290,10 +333,10 @@ __device__ __forceinline__ void w4a4_moe_union_sweep(
             __syncthreads();
             cur = u;
         }
-        const unsigned long long bq = p == 0u ? packed0[eid] : packed1[eid];
+        const unsigned long long bq = s_q[p][e];
         if (s_m == 0u || bq == 0ull) continue;
-        const unsigned long long bs = p == 0u ? scale0[eid] : scale1[eid];
-        const float s2 = p == 0u ? s2_0[eid] : s2_1[eid];
+        const unsigned long long bs = s_s[p][e];
+        const float s2 = s_f[p][e];
         w4a4_gemv_mx_tok_impl<MB, 4, W4a4RowsTable, KH>(
             Aq, As, Ag, (const unsigned char*)bq, (const unsigned char*)bs, s2, p == 0u ? C0 : C1,
             W4a4RowsTable{s_m, s_a, s_c}, N, K, x);

@@ -147,8 +147,21 @@ pub struct Table {
 }
 
 pub fn table(gpu: &dyn GpuBackend, rng: &mut Rng, n: usize, k: usize, gs: f32) -> Result<Table> {
-    let mut projs = Vec::with_capacity(LOCAL);
-    for _ in 0..LOCAL {
+    table_n(gpu, rng, n, k, gs, LOCAL)
+}
+
+/// 2026-10-10: [`table`] with `count` local experts (ids 0..count); the tp expert layout holds
+/// a slice of every expert.
+pub fn table_n(
+    gpu: &dyn GpuBackend,
+    rng: &mut Rng,
+    n: usize,
+    k: usize,
+    gs: f32,
+    count: usize,
+) -> Result<Table> {
+    let mut projs = Vec::with_capacity(count);
+    for _ in 0..count {
         let packed: Vec<u8> = (0..n * k / 2).map(|_| rng.next() as u8).collect();
         let scales: Vec<u8> = (0..n * k / 16)
             .map(|_| 0x30 + (rng.next() % 9) as u8)

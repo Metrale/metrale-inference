@@ -13,7 +13,8 @@ use metrale_gpu_runtime::gpu::{DevicePtr, KernelHandle};
 
 use super::super::Glm5NextMlpWorkspace;
 use super::super::moe_experts::MoeSite;
-use super::{forward_dense_w4a4, w4a4_experts};
+use super::super::w4a4_dense::forward_dense_w4a4;
+use super::w4a4_experts;
 use crate::glm5next_mlp::precision::{GroupPrecision, MlpGroup};
 use crate::glm5next_mlp::weights::{
     Glm5NextDenseMlpWeights, Glm5NextDenseNvfp4Weights, Glm5NextExpertPtrTable,
@@ -466,4 +467,22 @@ fn a_k64_slice_without_the_twins_is_refused_before_launching() {
     let e = w4a4_experts(&site, SCALES).unwrap_err().to_string();
     assert!(e.contains("_k64"), "{e}");
     assert!(gpu.launches_snapshot().is_empty());
+}
+
+/// 2026-10-10: `forward_moe` skips zeroing `expert_out` exactly when one row's down projection
+/// runs the own-slots sweep (plain at 2048, `_k64` at 704), which zeroes the slots it computes
+/// nothing for; never at two rows, or when that sweep did not resolve.
+#[test]
+fn only_the_one_row_own_down_sweep_skips_the_zeroing() {
+    let gpu = MockGpuBackend::new();
+    let k = kernels(&gpu);
+    for c in [cfg(), cfg_tp()] {
+        assert!(super::writes_every_expert_row(&k, &c, 1));
+        assert!(!super::writes_every_expert_row(&k, &c, 2));
+    }
+    let mut no_own = k;
+    no_own.w4a4_moe_slots_sweep = KernelHandle(0);
+    assert!(!super::writes_every_expert_row(&no_own, &cfg(), 1));
+    no_own.w4a4_moe_k64.own = KernelHandle(0);
+    assert!(!super::writes_every_expert_row(&no_own, &cfg_tp(), 1));
 }

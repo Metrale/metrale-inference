@@ -15,6 +15,7 @@
 //!    sequence at a local union of 3, 5 and 8 experts and on fixture windows.
 //! 1b. The same at a 704-wide expert slice (the 64-unit `tp` layout, `k64.rs`): gate and up on
 //!    the plain own-slots sweep, down on its `_k64` twin against the `_k64` slot GEMV.
+//! 1c. `GLM_BENCH_TP=1`: the tp expert layout's shapes instead of everything else (`tp.rs`).
 //! 4. 2026-10-11 (`fork.rs`): `forward_moe` with the shared expert forked onto a side stream
 //!    against the unforked site, byte for byte at 1..=4 rows (eager and graph), then timed;
 //!    `GLM_BENCH_FORK_ONLY=1` runs it alone.
@@ -51,6 +52,7 @@ mod fork;
 mod forward;
 mod k64;
 mod timing;
+mod tp;
 
 pub struct Setup {
     pub kn: Kern,
@@ -139,13 +141,31 @@ pub fn route_of(gpu: &dyn GpuBackend, host: Vec<i32>) -> Result<Route> {
     })
 }
 
-/// 2026-10-09: The own-slots sweep `kern` (plain or `_k64`) over one or two projections: the ids row is the entry list
-/// (u_slot is passed and not read).
+/// 2026-10-09: The own-slots sweep `kern` (plain or `_k64`) over one or two projections: the
+/// ids row is the entry list (u_slot is passed and not read).
 #[allow(clippy::too_many_arguments)]
 pub fn own_sweep(
     gpu: &dyn GpuBackend,
     kern: KernelHandle,
     ctas: u32,
+    a: &Act,
+    r: &Route,
+    ts: &[&Table],
+    outs: &[DevicePtr],
+    nka: (usize, usize, usize),
+    st: u64,
+) -> Result<()> {
+    sweep_on(gpu, kern, ctas, r.ids, a, r, ts, outs, nka, st)
+}
+
+/// 2026-10-10: One persistent sweep launch of `kern` on `ctas` CTAs over the entry list `entries`
+/// (the ids row for an own-slots sweep, the union table `r.u_eid` for a union sweep).
+#[allow(clippy::too_many_arguments)]
+pub fn sweep_on(
+    gpu: &dyn GpuBackend,
+    kern: KernelHandle,
+    ctas: u32,
+    entries: DevicePtr,
     a: &Act,
     r: &Route,
     ts: &[&Table],
@@ -159,7 +179,7 @@ pub fn own_sweep(
         .arg_ptr(a.aq)
         .arg_ptr(a.as_)
         .arg_ptr(a.ag)
-        .arg_ptr(r.ids)
+        .arg_ptr(entries)
         .arg_ptr(r.u_slot);
     for i in 0..2 {
         let (t, o) = (ts.get(i).unwrap_or(&ts[0]), outs.get(i).unwrap_or(&outs[0]));
@@ -345,6 +365,10 @@ fn main() -> Result<()> {
     let gpu = MetraleCudaBackend::new(ordinal, &target.modules)?;
     let stream = gpu.create_stream()?;
     let g: &dyn GpuBackend = &gpu;
+    // 2026-10-10: GLM_BENCH_TP=1 runs the tp-layout shapes alone (`tp.rs`).
+    if std::env::var("GLM_BENCH_TP").as_deref() == Ok("1") {
+        return tp::run(g, stream);
+    }
     let m = "w4a4_gemv_mx_moe";
     let kn = Kern {
         quant: g.kernel(m, "w4a4_quant_rows_static")?,
