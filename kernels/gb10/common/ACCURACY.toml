@@ -1,0 +1,786 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-09: GB10 kernel accuracy contracts, one per family entry point set (`met accuracy`;
+# schema and rules: crates/accuracy/src/contract.rs; design: book and the crate docs).
+#
+# Owner: gb10 kernels.
+# Invariants:
+# - A contract never restates a format: the reference reads the family's `pipeline.<op>` in
+#   KERNEL_FAMILIES.toml. It states only what that pipeline does not: the reduction tree of
+#   each reduced dimension (`reduction.<dim>`, innermost level first; `sequential` adds its
+#   width to the depth, `tree` ceil(log2 width)), flush-to-zero, approximate-function errors,
+#   and where block scales fold (`element`: decoded with the value; `group`: on each group's
+#   partial sum; `none`).
+# - `derived`: every compared output must be a correct rounding of a value inside the bound
+#   derived from those declarations. `bit_identical`: the output equals `against`'s byte for
+#   byte on the same operands (one-row siblings run once per row).
+# - Every contract lists mutations that must fail; a mutation that passes fails the run.
+# - Each reduction is read from the kernel source; the comment above it cites the lines.
+
+schema = 1
+hardware = "gb10"
+seed = 20261009
+
+# 2026-10-09: w4a16_gemv.cu w4a16_gemv_partial + w4a16_gemv_sw: per 16-value chunk a fmaf chain
+# (`part`, 16 terms), folded by `acc_c = fmaf(scale, part, acc_c)` with scale = e4m3 * scale2;
+# chunks kk = 2*lane + c + 128j give each of two accumulators ceil(K/2048) chunks; acc0 + acc1;
+# a 32-lane shuffle tree on each of the two partials; acc_a + acc_b.
+[[contract]]
+family = "w4a16_gemv"
+kernels = ["w4a16_gemv::w4a16_gemv_sw"]
+op = "linear"
+reference = "linear"
+class = "derived"
+reduction.group = [{ level = "thread", width = "16", order = "sequential" }]
+reduction.k = [
+  { level = "thread", width = "k/2048", order = "sequential" },
+  { level = "accumulators", width = "2", order = "tree" },
+  { level = "warp", width = "32", order = "tree" },
+  { level = "partials", width = "2", order = "tree" },
+]
+ftz = false
+approx = {}
+scale_fold = "group"
+inputs = ["gaussian", "outliers", "near_overflow", "denormal", "all_equal", "zero_rows"]
+mutations = ["corrupt_block_scale", "swap_scale_granularity", "accumulate:bf16", "symbol:w4a16_gemv::w4a16_gemv"]
+
+# 2026-10-09: The two- and three-row GEMVs promise each row's bytes equal the one-row
+# w4a16_gemv's (w4a16_gemv.cu: one pass over the weight, the same K order per row).
+[[contract]]
+family = "w4a16_gemv"
+kernels = ["w4a16_gemv::w4a16_gemv_batch2", "w4a16_gemv::w4a16_gemv_batch3"]
+op = "linear"
+reference = "linear"
+class = "bit_identical"
+against = "w4a16_gemv::w4a16_gemv"
+inputs = ["gaussian", "outliers", "zero_rows"]
+mutations = ["corrupt_block_scale", "swap_scale_granularity"]
+
+# 2026-10-09: dense_gemv_bf16.cu: 64 threads per output, each a sequential chain over its
+# K/64 values (8 per uint4, kv = lane + 64j), a 32-lane shuffle tree, then the two warps' sums.
+# dense_gemv_bf16_batchm follows the same order per row (ops/gemm_quant_gemv.rs).
+[[contract]]
+family = "dense_bf16"
+kernels = ["gemv::dense_gemv_bf16"]
+op = "linear"
+reference = "linear"
+class = "derived"
+reduction.k = [
+  { level = "thread", width = "k/64", order = "sequential" },
+  { level = "warp", width = "32", order = "tree" },
+  { level = "warps", width = "2", order = "tree" },
+]
+ftz = false
+approx = {}
+scale_fold = "none"
+inputs = ["gaussian", "outliers", "near_overflow", "denormal", "all_equal", "zero_rows"]
+mutations = ["accumulate:bf16", "symbol:gemv::dense_gemv_bf16_fp32out"]
+
+# 2026-10-09: The vocabulary-parallel head: the lm_head rows split over three ranks at
+# 64-aligned edges (GLM's capped vocabulary is not a multiple of 64), each shard written at
+# its own output columns. The split mutation places every later shard one column off.
+[[contract]]
+family = "dense_bf16"
+kernels = ["dense_gemv_bf16_batchm::dense_gemv_bf16_batchm"]
+op = "lm_head"
+reference = "linear"
+class = "derived"
+reduction.k = [
+  { level = "thread", width = "k/64", order = "sequential" },
+  { level = "warp", width = "32", order = "tree" },
+  { level = "warps", width = "2", order = "tree" },
+]
+ftz = false
+approx = {}
+scale_fold = "none"
+split = { world = 3, align = 64 }
+inputs = ["gaussian", "zero_rows"]
+mutations = ["split_off_by_one", "accumulate:bf16"]
+
+[[contract]]
+family = "dense_bf16"
+kernels = ["dense_gemv_bf16_batchm::dense_gemv_bf16_batchm"]
+op = "router"
+reference = "linear"
+class = "bit_identical"
+against = "gemv::dense_gemv_bf16"
+inputs = ["gaussian", "outliers", "all_equal"]
+mutations = ["symbol:gemv::dense_gemv_bf16_fp32out"]
+
+# 2026-10-09: w8a8_gemv.cu on wxay_engine.cuh mma_gemv: per 128-value chunk four
+# mma.sync.m16n8k32.e4m3 into the running FP32 accumulator (the atom's internal order over its
+# 32 products is not documented: declared as a 32-term chain, the worst case); chunk c belongs
+# to warp c mod 8, ascending c, so each warp chains K/256 MMAs; the 8 warp partials are summed
+# in warp order (wxay_engine.cuh:108-127). rowscale folds (w_scale[n] * a_scale[m]) after the
+# sum (w8a8_gemv.cu:4).
+[[contract]]
+family = "wxay"
+kernels = [
+  "w8a8_gemv::w8a8_gemv_rowscale_mb1_ku8", "w8a8_gemv::w8a8_gemv_rowscale_mb2",
+  "w8a8_gemv::w8a8_gemv_rowscale_mb4", "w8a8_gemv::w8a8_gemv_rowscale_mb8",
+  "w8a8_gemv::w8a8_gemv_rowscale_mb16",
+]
+op = "linear"
+reference = "linear"
+class = "derived"
+reduction.k = [
+  { level = "mma", width = "32", order = "sequential" },
+  { level = "warp", width = "k/256", order = "sequential" },
+  { level = "cta", width = "8", order = "sequential" },
+]
+ftz = false
+approx = {}
+scale_fold = "none"
+inputs = ["gaussian", "outliers", "near_overflow", "zero_rows"]
+mutations = ["corrupt_block_scale", "accumulate:bf16"]
+
+# 2026-10-09: blk128: each chunk's four MMAs start from zero and fold into the accumulator by
+# acc = fmaf(w_scale * a_scale, chunk, acc) (w8a8_gemv.cu:118-128); a warp chains K/1024 chunks.
+[[contract]]
+family = "wxay"
+kernels = [
+  "w8a8_gemv::w8a8_gemv_blk128_mb1_ku8", "w8a8_gemv::w8a8_gemv_blk128_mb2",
+  "w8a8_gemv::w8a8_gemv_blk128_mb4", "w8a8_gemv::w8a8_gemv_blk128_mb8",
+  "w8a8_gemv::w8a8_gemv_blk128_mb16",
+]
+op = "linear"
+reference = "linear"
+class = "derived"
+reduction.group = [
+  { level = "mma", width = "32", order = "sequential" },
+  { level = "chunk", width = "4", order = "sequential" },
+]
+reduction.k = [
+  { level = "warp", width = "k/1024", order = "sequential" },
+  { level = "cta", width = "8", order = "sequential" },
+]
+ftz = false
+approx = {}
+scale_fold = "group"
+inputs = ["gaussian", "outliers", "near_overflow", "zero_rows"]
+mutations = ["corrupt_block_scale", "swap_scale_granularity", "accumulate:bf16"]
+
+# 2026-10-09: w8a8_act_quant.cu:4-22: s = fmaxf(amax / 448, 1e-12) and q = E4M3(clamp(v / s)),
+# correctly rounded divisions, amax exact. The rule is exact, so the contract is too (e = 0); the
+# codes and scales are decoded with the declared granularity.
+[[contract]]
+family = "w8a8_act_quant"
+kernels = ["w8a8_act_quant::w8a8_act_quant_row"]
+op = "act_quant"
+reference = "act_quant"
+class = "derived"
+reduction = {}
+ftz = false
+approx = {}
+constants = { scale_floor = 1e-12 }
+scale_fold = "none"
+inputs = ["gaussian", "outliers", "near_overflow", "all_equal", "zero_rows"]
+mutations = ["symbol:w8a8_act_quant::w8a8_act_quant_g128"]
+
+[[contract]]
+family = "w8a8_act_quant"
+kernels = ["w8a8_act_quant::w8a8_act_quant_g128"]
+op = "act_quant"
+reference = "act_quant"
+class = "derived"
+reduction = {}
+ftz = false
+approx = {}
+constants = { scale_floor = 1e-12 }
+scale_fold = "none"
+inputs = ["gaussian", "outliers", "near_overflow", "all_equal", "zero_rows"]
+mutations = ["symbol:w8a8_act_quant::w8a8_act_quant_row"]
+
+# 2026-10-09: rms_norm.cu rms_norm (:59-96), one block of min(n, 1024) threads per row
+# (ops::rms_norm): thread t squares the BF16 pairs t, t + blockDim, ... and adds each pair's
+# two squares before its running sum (:63-67, `v0*v0 + v1*v1` then `sum_sq +=`), ceil(n/2048)
+# pairs a thread; a 32-lane xor-shuffle sum (:75, :31-36); warp 0 sums the per-warp partials
+# with the same 32-lane shuffle, zeros past the last warp (:86-93). `rsqrtf` compiles to
+# rsqrt.approx.f32 (no fast-math flag in KERNEL.toml): the PTX ISA bounds its relative error by
+# 2^-22.9 and the CUDA Programming Guide rsqrtf by 2 ulp; 2^-22 covers both. The division by n
+# is div.rn.f32. The same three contracts for the input, final and per-head norms (one op
+# each); the wrong symbol is the plain-weight copy with rms_norm's signature.
+[[contract]]
+family = "rms_norm"
+kernels = ["norm::rms_norm"]
+op = "rms_norm"
+reference = "rms_norm"
+class = "derived"
+reduction.k = [
+  { level = "pair", width = "2", order = "tree" },
+  { level = "thread", width = "k/2048", order = "sequential" },
+  { level = "warp", width = "32", order = "tree" },
+  { level = "block", width = "32", order = "tree" },
+]
+ftz = false
+approx = { rsqrt = "2^-22" }
+scale_fold = "none"
+inputs = ["gaussian", "outliers", "near_overflow", "denormal", "all_equal", "zero_rows"]
+mutations = ["accumulate:bf16", "symbol:rms_norm_vanilla::rms_norm_vanilla"]
+
+[[contract]]
+family = "rms_norm"
+kernels = ["norm::rms_norm"]
+op = "final_norm"
+reference = "rms_norm"
+class = "derived"
+reduction.k = [
+  { level = "pair", width = "2", order = "tree" },
+  { level = "thread", width = "k/2048", order = "sequential" },
+  { level = "warp", width = "32", order = "tree" },
+  { level = "block", width = "32", order = "tree" },
+]
+ftz = false
+approx = { rsqrt = "2^-22" }
+scale_fold = "none"
+inputs = ["gaussian", "outliers", "near_overflow", "denormal", "all_equal", "zero_rows"]
+mutations = ["accumulate:bf16", "symbol:rms_norm_vanilla::rms_norm_vanilla"]
+
+[[contract]]
+family = "rms_norm"
+kernels = ["norm::rms_norm"]
+op = "qk_norm"
+reference = "rms_norm"
+class = "derived"
+reduction.k = [
+  { level = "pair", width = "2", order = "tree" },
+  { level = "thread", width = "k/2048", order = "sequential" },
+  { level = "warp", width = "32", order = "tree" },
+  { level = "block", width = "32", order = "tree" },
+]
+ftz = false
+approx = { rsqrt = "2^-22" }
+scale_fold = "none"
+inputs = ["gaussian", "outliers", "near_overflow", "denormal", "all_equal", "zero_rows"]
+mutations = ["accumulate:bf16", "symbol:rms_norm_vanilla::rms_norm_vanilla"]
+
+# 2026-10-09: rms_norm.cu residual_add_rms_norm: the pairs' FP32 sums `hv + sv` are squared
+# before their BF16 store (:405-413, the family's kernel_pipeline input f32) in rms_norm's
+# order and tree (:423-441), and the stored BF16 sums are scaled (:451-457). The wrong symbol
+# is its plain-weight copy, same arguments (:468).
+[[contract]]
+family = "rms_norm"
+kernels = ["norm::residual_add_rms_norm"]
+op = "rms_norm"
+reference = "rms_norm"
+class = "derived"
+reduction.k = [
+  { level = "pair", width = "2", order = "tree" },
+  { level = "thread", width = "k/2048", order = "sequential" },
+  { level = "warp", width = "32", order = "tree" },
+  { level = "block", width = "32", order = "tree" },
+]
+ftz = false
+approx = { rsqrt = "2^-22" }
+scale_fold = "none"
+inputs = ["gaussian", "outliers", "near_overflow", "denormal", "all_equal", "zero_rows"]
+mutations = ["accumulate:bf16", "symbol:norm::residual_add_rms_norm_vanilla"]
+
+# 2026-10-09: residual_add_rms_norm_exact.cu squares the BF16-rounded sums (:52-61) with
+# rms_norm's tree (rms_norm_exact.cuh rmsx_block_sum, :135-152) and scales them (:79-86). Its
+# declared norm input is bf16, so the case is a plain row (the adapter adds a zero branch).
+[[contract]]
+family = "rms_norm"
+kernels = ["residual_add_rms_norm_exact::residual_add_rms_norm_exact"]
+op = "rms_norm"
+reference = "rms_norm"
+class = "derived"
+reduction.k = [
+  { level = "pair", width = "2", order = "tree" },
+  { level = "thread", width = "k/2048", order = "sequential" },
+  { level = "warp", width = "32", order = "tree" },
+  { level = "block", width = "32", order = "tree" },
+]
+ftz = false
+approx = { rsqrt = "2^-22" }
+scale_fold = "none"
+inputs = ["gaussian", "outliers", "near_overflow", "denormal", "all_equal", "zero_rows"]
+mutations = ["accumulate:bf16", "symbol:norm::residual_add_rms_norm_vanilla"]
+
+# 2026-10-09: rms_norm_strided's per-row body is rms_norm's (rms_norm.cu:139-196 vs :52-112)
+# under the same block (ops::rms_norm_strided); only the row's base address differs, so with
+# packed rows it writes rms_norm's bytes. The plain-weight rms_norm_vanilla takes the strided
+# arguments less the trailing row stride, which it never reads.
+[[contract]]
+family = "rms_norm"
+kernels = ["norm::rms_norm_strided"]
+op = "qk_norm"
+reference = "rms_norm"
+class = "bit_identical"
+against = "norm::rms_norm"
+inputs = ["gaussian", "outliers", "zero_rows"]
+mutations = ["symbol:rms_norm_vanilla::rms_norm_vanilla"]
+
+# 2026-10-09: rms_norm_residual is rms_norm plus the residual copy (rms_norm.cu:267-331 vs
+# :52-112): its normed row is rms_norm's bytes.
+[[contract]]
+family = "rms_norm"
+kernels = ["norm::rms_norm_residual"]
+op = "rms_norm"
+reference = "rms_norm"
+class = "bit_identical"
+against = "norm::rms_norm"
+inputs = ["gaussian", "outliers", "zero_rows"]
+mutations = ["symbol:norm::rms_norm_residual_vanilla"]
+
+# 2026-10-09: With a zero branch the exact fused norm squares and scales the stream itself, in
+# rms_norm's order and tree (rms_norm_exact.cuh): its normed row is rms_norm's bytes.
+[[contract]]
+family = "rms_norm"
+kernels = ["residual_add_rms_norm_exact::residual_add_rms_norm_exact"]
+op = "rms_norm"
+reference = "rms_norm"
+class = "bit_identical"
+against = "norm::rms_norm"
+inputs = ["gaussian", "outliers", "zero_rows"]
+mutations = ["symbol:norm::residual_add_rms_norm_vanilla"]
+
+# 2026-10-09: rope.cu rope_forward: no reduction. The frequency is f32(1 / pow(theta, 2i/d))
+# with the quotient, `pow` and reciprocal in f64 (:69-72): CUDA's double pow is within 2 ulp
+# (CUDA Programming Guide, double-precision functions), 2^-51 relative. cosf and sinf (:86-87)
+# compile to the accurate library code (no fast-math flag; the PTX has the Payne-Hanek
+# reduction, not sin.approx): 2 ulp over the full range (same guide, single precision), 2^-22
+# relative. The wrong rope base is the theta argument times ten; the rotation's two products
+# and their sum are its only accumulation.
+[[contract]]
+family = "rope"
+kernels = ["rope::rope_forward"]
+op = "rope"
+reference = "rope"
+class = "derived"
+reduction = {}
+ftz = false
+approx = { pow = "2^-51", cos = "2^-22", sin = "2^-22" }
+scale_fold = "none"
+inputs = ["gaussian", "outliers", "near_overflow", "denormal", "all_equal", "zero_rows"]
+mutations = ["wrong_rope_base"]
+
+# 2026-10-09: rope_forward_strided runs rope_forward's per-pair body (rope.cu:165-237 vs
+# :40-114) and computes exactly what it does with the packed row strides (:142-146).
+[[contract]]
+family = "rope"
+kernels = ["rope::rope_forward_strided"]
+op = "rope"
+reference = "rope"
+class = "bit_identical"
+against = "rope::rope_forward"
+inputs = ["gaussian", "outliers", "zero_rows"]
+mutations = ["wrong_rope_base"]
+
+# 2026-10-09: dense_gemv_bf16_tc.cu: BF16 MMA m16n8k16 (the atom's internal order over its 16
+# products is not documented: declared as a 16-term chain, the worst case) into the running
+# FP32 accumulator (:63-71); per 64-K block four MMAs (:175-186); warp w takes blocks w, w + 8,
+# ... in ascending order (:138-142, :158-161), so it chains ceil(K / 512) * 4 MMAs, at most
+# k/128 + 3 (the `tail` level covers a K that is not a multiple of 512); the 8 warps' partials
+# summed in warp order through shared memory (:205-216); one BF16 rounding (:225).
+# Inputs: MMA subnormal handling is not documented, so the denormal class is left out, as the
+# W8A8 MMA contracts do.
+[[contract]]
+family = "dense_bf16_tc"
+kernels = [
+  "dense_gemv_bf16_tc::dense_gemv_bf16_tc8", "dense_gemv_bf16_tc::dense_gemv_bf16_tc16",
+  "dense_gemv_bf16_tc::dense_gemv_bf16_tc32",
+]
+op = "linear"
+reference = "linear"
+class = "derived"
+reduction.k = [
+  { level = "mma", width = "16", order = "sequential" },
+  { level = "warp", width = "k/128", order = "sequential" },
+  { level = "tail", width = "3", order = "sequential" },
+  { level = "cta", width = "8", order = "sequential" },
+]
+ftz = false
+approx = {}
+scale_fold = "none"
+inputs = ["gaussian", "outliers", "near_overflow", "all_equal", "zero_rows"]
+mutations = ["accumulate:bf16", "symbol:dense_gemv_bf16_batchm::dense_gemv_bf16_batchm"]
+
+# 2026-10-09: w4a16_gemv_tc.cu: each weight enters the MMA as BF16(E2M1 * E4M3 * 2^-26), exact
+# (:23-28, :199-204), so the block scale folds per element; BF16 MMA m16n8k16 (declared as a
+# 16-term chain) into the running FP32 accumulator (:65-73, :205-206); per 128-K block eight
+# MMAs (:183-207); warp w takes blocks w, w + 8, ... ascending (:153-158, :171-173), so it chains
+# ceil(K / 1024) * 8 MMAs, at most k/128 + 7 (`tail`); the 8 warps' partials summed in warp order
+# (:227-229), times scale2 * 2^26 in FP32 (:221, :230); one BF16 rounding (:98-106).
+# Inputs: besides the undocumented MMA subnormal handling, the 2^-26 operand pre-scale moves FP32
+# underflow 26 binades into the range the reference treats as normal; no denormal class.
+# No symbol mutation: the engine launcher (ops::w4a16_gemv_batchm) resolves its own tensor-core
+# entry from the row count (gemv_tc::tc_kernel) and takes no entry point.
+[[contract]]
+family = "w4a16_tc"
+kernels = ["w4a16_gemv_tc::w4a16_gemv_tc8", "w4a16_gemv_tc::w4a16_gemv_tc16"]
+op = "linear"
+reference = "linear"
+class = "derived"
+reduction.k = [
+  { level = "mma", width = "16", order = "sequential" },
+  { level = "warp", width = "k/128", order = "sequential" },
+  { level = "tail", width = "7", order = "sequential" },
+  { level = "cta", width = "8", order = "sequential" },
+]
+ftz = false
+approx = {}
+scale_fold = "element"
+inputs = ["gaussian", "outliers", "near_overflow", "all_equal", "zero_rows"]
+mutations = ["corrupt_block_scale", "swap_scale_granularity", "accumulate:bf16"]
+
+# 2026-10-09: The same kernels as the 27B's NVFP4 head (the reduction above).
+[[contract]]
+family = "w4a16_tc"
+kernels = ["w4a16_gemv_tc::w4a16_gemv_tc8", "w4a16_gemv_tc::w4a16_gemv_tc16"]
+op = "lm_head"
+reference = "linear"
+class = "derived"
+reduction.k = [
+  { level = "mma", width = "16", order = "sequential" },
+  { level = "warp", width = "k/128", order = "sequential" },
+  { level = "tail", width = "7", order = "sequential" },
+  { level = "cta", width = "8", order = "sequential" },
+]
+ftz = false
+approx = {}
+scale_fold = "element"
+inputs = ["gaussian", "outliers", "near_overflow", "all_equal", "zero_rows"]
+mutations = ["corrupt_block_scale", "swap_scale_granularity", "accumulate:bf16"]
+
+# 2026-10-09: tc_rows.cuh at the NVFP4 point (Nvfp4G16): each weight enters as BF16(E2M1 * E4M3),
+# exact (tc_weight_formats.cuh:124-136), so the block scale folds per element; one warp owns 16
+# columns over the whole K: 128-K chunks in ascending order (tc_rows.cuh:114-132), eight BF16
+# MMA m16n8k16 per chunk (declared as 16-term chains) into one FP32 accumulator (FOLDS = false,
+# :147), K / 16 MMAs in all; no cross-warp sum; times s2 in FP32 (tc_weight_formats.cuh:139);
+# one BF16 rounding (tc_rows.cuh:171). Rows, NT and G never change a row's order (:14-16, :40).
+# No symbol mutation: ops::w4a16_tc_rows resolves its entry (_16/_32/_64) from the row count.
+[[contract]]
+family = "tc_rows"
+kernels = ["w4a16_tc_rows::w4a16_tc_rows_64"]
+op = "lm_head"
+reference = "linear"
+class = "derived"
+reduction.k = [
+  { level = "mma", width = "16", order = "sequential" },
+  { level = "warp", width = "k/16", order = "sequential" },
+]
+ftz = false
+approx = {}
+scale_fold = "element"
+inputs = ["gaussian", "outliers", "near_overflow", "all_equal", "zero_rows"]
+mutations = ["corrupt_block_scale", "swap_scale_granularity", "accumulate:bf16"]
+
+# 2026-10-09: w8a16_gemm_pipelined_m32.cu: E4M3 to BF16 exactly (the LUT, :243-249; the skinny
+# body's bit move, w8a16_gemm_pipelined_m16.cuh:50-56; m64's pm64_b_pair, :310); each 128-K step runs
+# eight BF16 MMA m16n8k16 (declared as 16-term chains) into a zeroed FP32 inner sum (:116-155,
+# :399-429; m16.cuh:115-138); the step's sum times its FP32 block scale is added to the outer
+# sum in ascending step order (:275-281, :431-438; m16.cuh:140, :154-160); one BF16 rounding
+# (:288-291). The 32-row, 64-row and skinny bodies share that order per output.
+# The symbol arm runs the 16-row scalar GEMV (same arguments) on this launcher's grid: it covers
+# a fraction of the columns and only 16 rows.
+[[contract]]
+family = "w8a16_gemm"
+kernels = [
+  "w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32",
+  "w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64",
+]
+op = "linear"
+reference = "linear"
+class = "derived"
+reduction.group = [
+  { level = "mma", width = "16", order = "sequential" },
+  { level = "step", width = "8", order = "sequential" },
+]
+reduction.k = [{ level = "steps", width = "k/128", order = "sequential" }]
+ftz = false
+approx = {}
+scale_fold = "group"
+inputs = ["gaussian", "outliers", "near_overflow", "all_equal", "zero_rows"]
+mutations = ["corrupt_block_scale", "swap_scale_granularity", "accumulate:bf16", "symbol:w8a16_gemv_batch4::w8a16_gemv_batch16_strided"]
+
+# 2026-10-09: w8a16_gemm_pipelined.cu: the same order with 32-K steps: E4M3 to BF16 exactly
+# (:302-310); two BF16 MMA m16n8k16 per step (:133-169), four steps per 128-K block (:233-234)
+# into a zeroed FP32 inner sum; at each block boundary outer += inner * block scale in ascending
+# block order (:354-369); one BF16 rounding (:394-397).
+[[contract]]
+family = "w8a16_gemm"
+kernels = ["w8a16_gemm_pipelined::w8a16_gemm_pipelined"]
+op = "linear"
+reference = "linear"
+class = "derived"
+reduction.group = [
+  { level = "mma", width = "16", order = "sequential" },
+  { level = "step", width = "8", order = "sequential" },
+]
+reduction.k = [{ level = "steps", width = "k/128", order = "sequential" }]
+ftz = false
+approx = {}
+scale_fold = "group"
+inputs = ["gaussian", "outliers", "near_overflow", "all_equal", "zero_rows"]
+mutations = ["corrupt_block_scale", "swap_scale_granularity", "accumulate:bf16", "symbol:w8a16_gemv_batch4::w8a16_gemv_batch16"]
+
+# 2026-10-09: paged_decode_attn.cu paged_decode_attn (BF16 cache; the GB10 BF16 decode route
+# never splits, run_paged_decode/bf16_fp8.rs). Head-dim dot (`d`): per lane
+# `dot += q0*k0 + q1*k1` over VEC_U32 = HDIM/64 pairs (:166-172, :228-234; products of bf16
+# operands are exact in f32), then a 32-lane xor-shuffle tree (:174-175). Context (`ctx`): each
+# of the 8 warps takes a contiguous chunk of ceil(L/8) positions (:107-112) and folds them in
+# order, one rescale (`o *= exp_old`, `l *= exp_old`) before each add (:191-221, :239-254); the
+# warps merge pairwise at strides 4, 2, 1 (:276-298); one `1.0f / l` and one product per output
+# (:303-309). `__expf` is `ex2.approx.f32` of the argument times log2(e): 2 ulp from the
+# correctly rounded result over the full range (PTX ISA, `ex2`), so 2.5 ulp of the exact value,
+# 2^-21.68 relative. The kernels build with `--fmad=false` (KERNEL.toml): every operation rounds.
+[[contract]]
+family = "paged_decode_attn"
+kernels = ["paged_decode::paged_decode_attn"]
+op = "paged_attention"
+reference = "paged_attention"
+class = "derived"
+reduction.d = [
+  { level = "pair", width = "2", order = "tree" },
+  { level = "lane", width = "k/64", order = "sequential" },
+  { level = "warp", width = "32", order = "tree" },
+]
+reduction.ctx = [
+  { level = "warp", width = "k/8", order = "sequential" },
+  { level = "cta", width = "8", order = "tree" },
+]
+ftz = false
+approx = { exp2 = "2^-21.67" }
+scale_fold = "none"
+inputs = ["gaussian", "outliers", "near_overflow", "denormal", "all_equal", "zero_rows"]
+mutations = ["kv_page_swap", "accumulate:bf16"]
+
+# 2026-10-09: The decode symbols are compiled from different sources per target: the swept
+# qwen3.8-27b target from qwen3.6-27b/nvfp4/gated_delta_rule.cu, qwen3.6-35b-a3b from its own
+# nvfp4/gated_delta_rule.cu (both shadow common/gated_delta_rule.cu; both built with
+# --fmad=false, so every product and sum rounds in f32). Per value column (one thread):
+# - 27B decode_f32 (:661-718) and decode_f32_strided (:1288-1405), as common: hk_dot and q_dot
+#   add each step's four products as ((p0 + p1) + p2) + p3 into a running sum, k_dim/4 steps
+#   (depth 3 + k/4);
+# - 35B decode_f32 (:753-837) and decode_f32_strided (:990-1081): four running sums over k/4
+#   products each, then (s0 + s1) + (s2 + s3) (depth k/4 + 2).
+# The declared tree (4 + k/4) covers both. rsqrtf is rsqrt.approx.f32, at most 2 ulp (CUDA math
+# API), i.e. 2^-22 relative. state_max_norm: neither decode_f32 nor the 35B strided kernel
+# clamps the state norm (35B :28-32 says only the _norm and _conv_norm variants do); the 27B
+# strided kernel does (:1366-1400, SSM_STATE_MAX_NORM 1000 at :940-943). The contract holds
+# both arms to the unclamped step, the per-sequence arm's and the 35B target's: the 27B batched
+# arm fails it on every state whose norm passes 1000 (outliers, near_overflow), which is the
+# finding, not a tolerance to widen. The output compared is each row's o and new state.
+[[contract]]
+family = "gdn_recurrence_strided"
+kernels = ["gated_delta_rule::gated_delta_rule_decode_f32_strided"]
+op = "gdn_recurrence"
+reference = "gdn_recurrence"
+class = "derived"
+reduction.k = [
+  { level = "quad", width = "4", order = "sequential" },
+  { level = "thread", width = "k/4", order = "sequential" },
+]
+ftz = false
+approx = { rsqrt = "2^-22" }
+constants = { state_max_norm = inf }
+scale_fold = "none"
+inputs = ["gaussian", "outliers", "near_overflow", "denormal", "all_equal", "zero_rows"]
+mutations = ["state_stale", "accumulate:bf16"]
+
+# 2026-10-09: The per-sequence decode (the batched arm's fallback when state slots fragment);
+# sources and reduction as above.
+[[contract]]
+family = "gdn_recurrence"
+kernels = ["gated_delta_rule::gated_delta_rule_decode_f32"]
+op = "gdn_recurrence"
+reference = "gdn_recurrence"
+class = "derived"
+reduction.k = [
+  { level = "quad", width = "4", order = "sequential" },
+  { level = "thread", width = "k/4", order = "sequential" },
+]
+ftz = false
+approx = { rsqrt = "2^-22" }
+constants = { state_max_norm = inf }
+scale_fold = "none"
+inputs = ["gaussian", "outliers", "near_overflow", "denormal", "all_equal", "zero_rows"]
+mutations = ["state_stale", "accumulate:bf16"]
+
+# 2026-10-09: The batched decode arm promises the per-sequence kernel's output and state byte
+# for byte; near_overflow and outliers drive state norms past 1000. On the 27B target the
+# strided kernel clamps and decode_f32 does not, so those classes differ (the same finding).
+[[contract]]
+family = "gdn_recurrence_strided"
+kernels = ["gated_delta_rule::gated_delta_rule_decode_f32_strided"]
+op = "gdn_recurrence"
+reference = "gdn_recurrence"
+class = "bit_identical"
+against = "gated_delta_rule::gated_delta_rule_decode_f32"
+inputs = ["gaussian", "outliers", "near_overflow"]
+mutations = ["state_stale"]
+
+# 2026-10-09: causal_conv1d.cu causal_conv1d_update_l2norm_f32_strided (:496-557), compiled with
+# --fmad=false: per channel the window shifts and takes the input (:521-523), `acc += state[k] *
+# w[k]` runs the d_conv taps in order from 0 (:526-527, no bias on the GDN path), the sigmoid is
+# rcp.rn(1 + ex2.approx(acc * -log2 e)) (:528, the PTX of __expf and 1/x), and the q/k heads'
+# L2 norm sums squares in a 32-lane shfl_down tree (:536-537) and the head's four warps in
+# sequence (:544-545) before rsqrtf (:546). ex2.approx.f32 and rsqrt.approx.f32 are at most
+# 2 ulp (PTX ISA, CUDA math API), i.e. 2^-22 relative. The output compared is each row's conv
+# output followed by its updated window.
+[[contract]]
+family = "causal_conv1d_l2norm"
+kernels = ["causal_conv1d::causal_conv1d_update_l2norm_f32_strided"]
+op = "conv1d_update"
+reference = "conv1d_l2norm"
+class = "derived"
+reduction.conv = [{ level = "thread", width = "k/1", order = "sequential" }]
+reduction.head = [
+  { level = "warp", width = "32", order = "tree" },
+  { level = "warps", width = "k/32", order = "sequential" },
+]
+ftz = false
+approx = { ex2 = "2^-22", rsqrt = "2^-22" }
+scale_fold = "none"
+inputs = ["gaussian", "outliers", "near_overflow", "denormal", "all_equal", "zero_rows"]
+mutations = ["state_stale", "accumulate:bf16"]
+
+# 2026-10-09: causal_conv1d_update_l2norm_f32 (:413-472) is the strided kernel's text with
+# rows `dim` apart (:437-438, :442, :443, :451-452, :459-461, :465).
+[[contract]]
+family = "causal_conv1d_l2norm"
+kernels = ["causal_conv1d::causal_conv1d_update_l2norm_f32"]
+op = "conv1d_update"
+reference = "conv1d_l2norm"
+class = "derived"
+reduction.conv = [{ level = "thread", width = "k/1", order = "sequential" }]
+reduction.head = [
+  { level = "warp", width = "32", order = "tree" },
+  { level = "warps", width = "k/32", order = "sequential" },
+]
+ftz = false
+approx = { ex2 = "2^-22", rsqrt = "2^-22" }
+scale_fold = "none"
+inputs = ["gaussian", "outliers", "near_overflow", "denormal", "all_equal", "zero_rows"]
+mutations = ["state_stale", "accumulate:bf16"]
+
+# 2026-10-09: The batched conv promises the per-sequence kernel's output and window byte for byte.
+[[contract]]
+family = "causal_conv1d_l2norm"
+kernels = ["causal_conv1d::causal_conv1d_update_l2norm_f32_strided"]
+op = "conv1d_update"
+reference = "conv1d_l2norm"
+class = "bit_identical"
+against = "causal_conv1d::causal_conv1d_update_l2norm_f32"
+inputs = ["gaussian", "outliers", "near_overflow"]
+mutations = ["state_stale"]
+
+# 2026-10-09: The tensor-core grouped NVFP4 experts (W4A16, the declared path of
+# nvidia/Qwen3.6-35B-A3B-NVFP4). Per output column and row (moe_grouped_tc.cuh gtc_warp): every
+# 128-K chunk runs eight m16n8k16 BF16 MMAs (:155-166, tc_weight_formats.cuh Nvfp4G16 frag
+# :124-136, weight = BF16(E2M1 * E4M3), exact) straight into one FP32 accumulator (FOLDS =
+# false), so a column's sum is a chain of K/16 MMAs, each adding 16 products. The order inside
+# one mma.sync is not documented: the MMA level is stated as a sequential chain of its 16
+# products, which bounds any bracketing under round-to-nearest; the calibration confirms it.
+# s2 multiplies the FP32 sum once (Nvfp4G16::out :139), then gate and up round to BF16
+# (moe_grouped_tc.cuh:191-192). The f32 steps around the MMA are IEEE (no fast-math, no flush);
+# subnormal handling inside the MMA is not documented, IEEE is stated (tensor cores have kept
+# subnormal inputs and outputs on every architecture measured) and the calibration's denormal
+# class confirms it. The SiLU product (:193) uses __expf, ex2.approx after
+# an f32 multiply by log2(e): ex2.approx is within 2 ulp (CUDA C Programming Guide, __expf:
+# 2 + floor(|1.16 x|) ulp, the |x| part being the argument rounding the reference derives), so
+# 2^-22 relative; it is stored as BF16 hi + lo (:194-197), within 2^-16 of the f32 product.
+[[contract]]
+family = "moe_grouped_tc"
+kernels = ["moe_nvfp4_grouped_tc::moe_expert_gate_up_act_nvfp4_grouped_tc"]
+op = "expert_gate_up"
+reference = "moe_grouped"
+class = "derived"
+reduction.k = [
+  { level = "mma", width = "16", order = "sequential" },
+  { level = "chain", width = "k/16", order = "sequential" },
+]
+ftz = false
+approx = { ex2 = "2^-22", silu_store = "2^-16" }
+scale_fold = "element"
+inputs = ["gaussian", "outliers", "near_overflow", "denormal", "all_equal", "zero_rows"]
+mutations = ["zero_expert", "corrupt_block_scale", "accumulate:bf16"]
+
+# 2026-10-09: The down projection reads the hi + lo pair of each K value and runs one MMA on each,
+# hi first, into the same accumulator (moe_grouped_tc.cuh:163-164): the reference's reduced
+# length is 2K (each half times the same weight), a chain of 2K/16 MMAs; s2 once, then BF16
+# (:199).
+[[contract]]
+family = "moe_grouped_tc"
+kernels = ["moe_nvfp4_grouped_tc::moe_expert_down_act_nvfp4_grouped_tc"]
+op = "expert_down"
+reference = "moe_grouped"
+class = "derived"
+reduction.k = [
+  { level = "mma", width = "16", order = "sequential" },
+  { level = "chain", width = "k/16", order = "sequential" },
+]
+ftz = false
+approx = {}
+scale_fold = "element"
+inputs = ["gaussian", "outliers", "near_overflow", "denormal", "all_equal", "zero_rows"]
+mutations = ["zero_expert", "corrupt_block_scale", "accumulate:bf16"]
+
+# 2026-10-09: The lean point reads the same tables after the production repack
+# (nvfp4_tc_lean_repack) and promises the row-major kernels' bytes (moe_nvfp4_grouped_tc.cu:
+# 156-157, tc_weight_formats.cuh:153-154).
+[[contract]]
+family = "moe_grouped_tc"
+kernels = ["moe_nvfp4_grouped_tc::moe_expert_gate_up_act_nvfp4_grouped_tc_lean"]
+op = "expert_gate_up"
+reference = "moe_grouped"
+class = "bit_identical"
+against = "moe_nvfp4_grouped_tc::moe_expert_gate_up_act_nvfp4_grouped_tc"
+inputs = ["gaussian", "outliers", "zero_rows"]
+mutations = ["zero_expert", "corrupt_block_scale"]
+
+[[contract]]
+family = "moe_grouped_tc"
+kernels = ["moe_nvfp4_grouped_tc::moe_expert_down_act_nvfp4_grouped_tc_lean"]
+op = "expert_down"
+reference = "moe_grouped"
+class = "bit_identical"
+against = "moe_nvfp4_grouped_tc::moe_expert_down_act_nvfp4_grouped_tc"
+inputs = ["gaussian", "outliers", "zero_rows"]
+mutations = ["zero_expert", "corrupt_block_scale"]
+
+# 2026-10-09: The CUDA-core grouped FP8 experts (moe_shared_expert_fused_fp8_grouped.cu). gate+up:
+# a lane takes 16-K chunks k16 = lane + 32j (:251), each four times a four-product sum added to its
+# accumulator (:292, products and sums rounded separately: the gb10 KERNEL.toml compiles with
+# --fmad=false), K/128 additions per lane, then a 32-lane shuffle tree (:306-307); gate and up
+# round to BF16 and the FP32 SiLU product is stored as is (:311-317). down: 8-K chunks
+# k8 = lane + 32j (:413), twice a four-product sum each (:446), K/128 additions per lane, the
+# shuffle tree (:461-462), BF16 out (:463). IEEE f32 throughout (no fast-math, no flush).
+# gate+up lists no `accumulate:` mutation: its pipeline declares the scaled weight a BF16 operand
+# (the manifest's convention for a BF16 activation; the kernel itself scales in f32, :276), which
+# admits 2^-8 per product, and a BF16 accumulator stays inside that. down declares f32 operands
+# and catches it.
+[[contract]]
+family = "moe_grouped_fp8_scalar"
+kernels = ["moe_shared_expert_fused_fp8_grouped::moe_expert_gate_up_act_fp8_grouped"]
+op = "expert_gate_up"
+reference = "moe_grouped"
+class = "derived"
+reduction.k = [
+  { level = "products", width = "4", order = "sequential" },
+  { level = "lane", width = "k/128", order = "sequential" },
+  { level = "warp", width = "32", order = "tree" },
+]
+ftz = false
+approx = { ex2 = "2^-22", silu_store = "0" }
+scale_fold = "element"
+inputs = ["gaussian", "outliers", "near_overflow", "denormal", "all_equal", "zero_rows"]
+mutations = ["zero_expert", "corrupt_block_scale"]
+
+[[contract]]
+family = "moe_grouped_fp8_scalar"
+kernels = ["moe_shared_expert_fused_fp8_grouped::moe_expert_down_act_fp8_grouped"]
+op = "expert_down"
+reference = "moe_grouped"
+class = "derived"
+reduction.k = [
+  { level = "products", width = "4", order = "sequential" },
+  { level = "lane", width = "k/128", order = "sequential" },
+  { level = "warp", width = "32", order = "tree" },
+]
+ftz = false
+approx = {}
+scale_fold = "element"
+inputs = ["gaussian", "outliers", "near_overflow", "denormal", "all_equal", "zero_rows"]
+mutations = ["zero_expert", "corrupt_block_scale", "accumulate:bf16"]

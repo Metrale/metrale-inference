@@ -124,6 +124,13 @@ async fn serve_main() -> Result<()> {
         return cli::circuit::dispatch(args);
     }
 
+    // 2026-10-09: `accuracy` runs its own kernels on its own backend and exits with its
+    // verdict; no subscriber, TUI or serve.
+    if let Command::Accuracy(args) = cli.command {
+        let code = cli::accuracy::dispatch(args)?;
+        std::process::exit(code);
+    }
+
     let no_tui = match &cli.command {
         // 2026-09-26: `--check-kernels` prints a report and one JSON line on
         // stdout and exits, so it runs without a dashboard.
@@ -133,7 +140,8 @@ async fn serve_main() -> Result<()> {
         Command::DumpServeOptions
         | Command::SyncRecipes
         | Command::Doctor
-        | Command::Circuit(_) => true,
+        | Command::Circuit(_)
+        | Command::Accuracy(_) => true,
     };
 
     // 2026-09-26: `benchmark certify --json` writes JSON lines on stdout, so
@@ -169,7 +177,8 @@ async fn serve_main() -> Result<()> {
         Command::DumpServeOptions
         | Command::SyncRecipes
         | Command::Doctor
-        | Command::Circuit(_) => {
+        | Command::Circuit(_)
+        | Command::Accuracy(_) => {
             unreachable!("handled before initialisation")
         }
         Command::Benchmark(args) => {

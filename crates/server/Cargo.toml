@@ -25,6 +25,7 @@ metrale-bench = { path = "../bench" }
 metrale-cache = { path = "../cache", default-features = false }
 metrale-comm = { path = "../comm", default-features = false }
 metrale-config = { path = "../config", default-features = false }
+metrale-accuracy = { path = "../accuracy" }
 metrale-circuit = { path = "../circuit" }
 # 2026-09-30: `met circuit plan --hardware` resolves a class's kernel sources with the layout the
 # kernels build compiles (metrale_closure::layout); it was a dev-dependency only before.
@@ -68,6 +69,7 @@ ratatui = "0.29"
 rayon = "1.12"
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2.workspace = true
 thiserror = { workspace = true }
 tokenizers = { version = "0.23", default-features = false, features = ["onig"] }
 tokio = { version = "1", features = ["full", "parking_lot"] }
