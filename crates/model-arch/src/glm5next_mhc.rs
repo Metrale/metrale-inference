@@ -52,6 +52,11 @@ pub struct Glm5NextMhcKernels {
     /// `METRALE_GLM_MHC_PRE_PREFETCH=1` (`glm5next_mhc_fused::pre_norm_kernel`). Optional
     /// (`try_kernel`, 0 when absent).
     pub hc_pre_norm_pf: KernelHandle,
+    /// 2026-10-11: `glm5next_hc_pre_norm_sk64`: `hc_pre_norm` with the mix split along k over 64
+    /// blocks per token, at `hc_mult * H == 64 * 256` (GLM-5.3); taken under
+    /// `METRALE_GLM_MHC_PRE_SPLITK=1`. Reorders the mix sums (accuracy class RO). Optional
+    /// (`try_kernel`, 0 when absent).
+    pub hc_pre_norm_sk: KernelHandle,
     pub hc_post: KernelHandle,
     /// 2026-10-10: `glm5next_hc_post_rank_sum` (module [`GLM5NEXT_HC_POST_SUM_MODULE`]): the
     /// one-shot all-reduce's sum fused into `hc_post`, same bits. Optional (`try_kernel`, 0 when
@@ -109,6 +114,11 @@ impl Glm5NextMhcKernels {
                 gpu,
                 GLM5NEXT_MHC_FUSED_MODULE,
                 "glm5next_hc_pre_norm_pf64",
+            ),
+            hc_pre_norm_sk: metrale_model_layers::layers::try_kernel(
+                gpu,
+                GLM5NEXT_MHC_FUSED_MODULE,
+                "glm5next_hc_pre_norm_sk64",
             ),
             hc_post: gpu.kernel(GLM5NEXT_MHC_MODULE, "glm5next_hc_post")?,
             hc_post_pre_norm: metrale_model_layers::layers::try_kernel(
@@ -409,6 +419,7 @@ mod mhc_shape_tests {
             hc_pre_norm: k(9),
             hc_pre_norm_rows: k(10),
             hc_pre_norm_pf: k(13),
+            hc_pre_norm_sk: k(14),
             hc_post: k(7),
             hc_post_rank_sum: k(11),
             hc_post_pre_norm: k(12),

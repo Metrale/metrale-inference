@@ -2039,6 +2039,7 @@ kernels = [
   "glm5next_mhc::glm5next_hc_head", "glm5next_mhc::glm5next_hc_expand",
   "glm5next_mhc_fused::glm5next_hc_pre_norm", "glm5next_mhc_fused::glm5next_hc_pre_norm_rows",
   "glm5next_mhc_fused::glm5next_hc_pre_norm_pf64",
+  "glm5next_mhc_fused::glm5next_hc_pre_norm_sk64",
   "glm5next_hc_post_sum::glm5next_hc_post_rank_sum",
 ]
 kernel_compute."glm5next_mhc::glm5next_hc_mix" = { compute = "cuda_core" }
@@ -2050,6 +2051,9 @@ kernel_compute."glm5next_mhc_fused::glm5next_hc_pre_norm_rows" = { compute = "cu
 # 2026-10-11: glm5next_hc_pre_norm with every per-thread load issued up front (opt-in
 # METRALE_GLM_MHC_PRE_PREFETCH); the same chains in the same order.
 kernel_compute."glm5next_mhc_fused::glm5next_hc_pre_norm_pf64" = { compute = "cuda_core" }
+# 2026-10-11: glm5next_hc_pre_norm with the mix split along k over 64 blocks per token (opt-in
+# METRALE_GLM_MHC_PRE_SPLITK); reorders every mix dot product (accuracy class RO).
+kernel_compute."glm5next_mhc_fused::glm5next_hc_pre_norm_sk64" = { compute = "cuda_core" }
 # 2026-10-10: The one-shot all-reduce's rank-order sum (bf16_add_rank_sum's arithmetic) fused
 # ahead of hc_post (opt-in METRALE_GLM_AR_FUSED_POST); the post-mix arithmetic is hc_post's.
 kernel_compute."glm5next_hc_post_sum::glm5next_hc_post_rank_sum" = { compute = "cuda_core" }

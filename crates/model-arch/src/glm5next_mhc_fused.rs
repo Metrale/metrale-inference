@@ -107,6 +107,7 @@ pub fn glm_hc_pre_norm(
         hc_eps,
         rms_eps,
         pre_prefetch(),
+        pre_splitk(),
         stream,
     )
 }
@@ -119,6 +120,29 @@ pub fn glm_hc_pre_norm(
 pub fn pre_prefetch() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("METRALE_GLM_MHC_PRE_PREFETCH").as_deref() == Ok("1"))
+}
+
+/// 2026-10-11: `METRALE_GLM_MHC_PRE_SPLITK=1`: below `HC_PRE_NORM_ROWS_MIN_TOKENS` the pre-norm
+/// takes `glm5next_hc_pre_norm_sk64` where the shape allows and the site's `mix` scratch holds
+/// the slice partials (`pre_norm_kernel`): the mix runs on 64 blocks per token (k split) instead
+/// of 24 (one per mix row). Reorders the mix sums, so it is accuracy class RO. Off until
+/// measured. Read once.
+pub fn pre_splitk() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("METRALE_GLM_MHC_PRE_SPLITK").as_deref() == Ok("1"))
+}
+
+/// 2026-10-11: k slices per token of `glm5next_hc_pre_norm_sk64` (`GLM_HCF_SK_SLICES`) and the
+/// floats each slice stores in the site's `mix` scratch (`GLM_HCF_SK_VALS`: the RMS partial and
+/// the 24 mix partials).
+pub const HC_PRE_NORM_SK_SLICES: u32 = 64;
+pub const HC_PRE_NORM_SK_VALS: usize = 25;
+
+/// 2026-10-11: Whether the site's `mix` scratch (`mhc_mix_max_tokens() * mix_rows` floats) holds
+/// the split-k partials of `num_tokens` tokens.
+pub fn splitk_fits(num_tokens: u32, mix_rows: u32, mix_cap_tokens: usize) -> bool {
+    num_tokens as usize * HC_PRE_NORM_SK_SLICES as usize * HC_PRE_NORM_SK_VALS
+        <= mix_cap_tokens * mix_rows as usize
 }
 
 /// 2026-10-11: `hc_mult * H` the prefetching kernel is compiled for: 64 loads per thread at the
@@ -152,6 +176,28 @@ pub fn pre_norm_kernel(
     (kernels.hc_pre_norm, mix_rows)
 }
 
+/// 2026-10-11: `(glm5next_hc_pre_norm_sk64, 64)` when `splitk` is asked, the tokens are below
+/// `HC_PRE_NORM_ROWS_MIN_TOKENS`, the shape is the one it is compiled for (hc 4,
+/// `hc_mult * H == 64 * 256`), the build has it and the site's `mix` scratch
+/// (`mix_cap_tokens` tokens) holds the slice partials; `None` otherwise.
+pub fn splitk_kernel(
+    kernels: &Glm5NextMhcKernels,
+    num_tokens: u32,
+    hidden_size: u32,
+    hc_mult: u32,
+    splitk: bool,
+    mix_cap_tokens: usize,
+) -> Option<(KernelHandle, u32)> {
+    let mix_rows = mix_hc(hc_mult as usize) as u32;
+    (splitk
+        && (num_tokens as usize) < HC_PRE_NORM_ROWS_MIN_TOKENS
+        && hc_mult == 4
+        && hc_mult * hidden_size == HC_PRE_NORM_SK_SLICES * 256
+        && kernels.hc_pre_norm_sk.0 != 0
+        && splitk_fits(num_tokens, mix_rows, mix_cap_tokens))
+    .then_some((kernels.hc_pre_norm_sk, HC_PRE_NORM_SK_SLICES))
+}
+
 /// 2026-10-11: [`glm_hc_pre_norm`] with the prefetching kernel's choice explicit (`prefetch`;
 /// the bit-identity gate runs both arms).
 #[allow(clippy::too_many_arguments)]
@@ -173,6 +219,7 @@ pub fn glm_hc_pre_norm_with(
     hc_eps: f32,
     rms_eps: f32,
     prefetch: bool,
+    splitk: bool,
     stream: u64,
 ) -> Result<()> {
     if let Some(why) = hc_pre_norm_refusal(hidden_size, hc_mult) {
@@ -188,7 +235,10 @@ pub fn glm_hc_pre_norm_with(
              scratch (floor {MHC_MIX_MAX_TOKENS})"
         );
     }
-    let (kernel, grid_y) = pre_norm_kernel(kernels, num_tokens, hidden_size, hc_mult, prefetch);
+    let (kernel, grid_y) =
+        splitk_kernel(kernels, num_tokens, hidden_size, hc_mult, splitk, mix_cap).unwrap_or_else(
+            || pre_norm_kernel(kernels, num_tokens, hidden_size, hc_mult, prefetch),
+        );
     if kernel.0 == 0 {
         bail!("glm_hc_pre_norm: the glm5next_mhc_fused kernels are not in this build");
     }
@@ -280,6 +330,7 @@ mod tests {
             hc_pre_norm: k(if fused { 9 } else { 0 }),
             hc_pre_norm_rows: k(if fused { 10 } else { 0 }),
             hc_pre_norm_pf: k(if fused { 13 } else { 0 }),
+            hc_pre_norm_sk: k(if fused { 14 } else { 0 }),
             hc_post: k(7),
             hc_post_rank_sum: k(11),
             hc_post_pre_norm: k(12),
@@ -291,12 +342,13 @@ mod tests {
     /// 8-row threshold and when the build has it; its grid is the per-row kernel's.
     #[test]
     fn the_prefetching_pre_norm_needs_the_lever_the_shape_and_the_kernel() {
+        // KernelHandle has no PartialEq; compare the raw handles.
+        let pick = |k: &Glm5NextMhcKernels, rows: u32, h: u32, hc: u32, lever: bool| {
+            let (kh, grid) = pre_norm_kernel(k, rows, h, hc, lever);
+            (kh.0, grid)
+        };
         let k = kernels(true);
         let mix = mix_hc(4) as u32;
-        let pick = |k: &Glm5NextMhcKernels, t, h, hc, pf| {
-            let (kernel, y) = pre_norm_kernel(k, t, h, hc, pf);
-            (kernel.0, y)
-        };
         assert_eq!(pick(&k, 1, 4096, 4, true), (k.hc_pre_norm_pf.0, mix));
         assert_eq!(pick(&k, 16, 4096, 4, true), (k.hc_pre_norm_pf.0, mix));
         assert_eq!(pick(&k, 1, 4096, 4, false), (k.hc_pre_norm.0, mix));
@@ -307,6 +359,37 @@ mod tests {
         let mut absent = kernels(true);
         absent.hc_pre_norm_pf = KernelHandle(0);
         assert_eq!(pick(&absent, 1, 4096, 4, true).0, absent.hc_pre_norm.0);
+    }
+
+    /// 2026-10-11: The split-k kernel needs the lever, fewer than 64 tokens, GLM-5.3's shape, the
+    /// kernel in the build and a `mix` scratch that holds 64 x 25 floats per token.
+    #[test]
+    fn the_split_k_pre_norm_needs_the_lever_the_shape_the_kernel_and_the_scratch() {
+        let k = kernels(true);
+        let got = |k: &Glm5NextMhcKernels, t: u32, h: u32, hc: u32, on: bool, cap: usize| {
+            splitk_kernel(k, t, h, hc, on, cap).map(|(kh, g)| (kh.0, g))
+        };
+        assert_eq!(
+            got(&k, 1, 4096, 4, true, 256),
+            Some((k.hc_pre_norm_sk.0, 64))
+        );
+        assert_eq!(
+            got(&k, 3, 4096, 4, true, 256),
+            Some((k.hc_pre_norm_sk.0, 64))
+        );
+        // 4 tokens x 64 x 25 = 6400 floats > 256 x 24 = 6144: the scratch is too small.
+        assert_eq!(got(&k, 4, 4096, 4, true, 256), None);
+        assert_eq!(
+            got(&k, 4, 4096, 4, true, 2048),
+            Some((k.hc_pre_norm_sk.0, 64))
+        );
+        assert_eq!(got(&k, 1, 4096, 4, false, 2048), None);
+        assert_eq!(got(&k, 64, 4096, 4, true, 2048), None);
+        assert_eq!(got(&k, 1, 5120, 4, true, 2048), None);
+        assert_eq!(got(&k, 1, 4096, 3, true, 2048), None);
+        let mut absent = kernels(true);
+        absent.hc_pre_norm_sk = KernelHandle(0);
+        assert_eq!(got(&absent, 1, 4096, 4, true, 2048), None);
     }
 
     fn site(bf16: bool) -> Glm5NextMhcSiteWeights {
