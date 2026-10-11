@@ -43,6 +43,11 @@ use metrale_gpu_runtime::gpu::DevicePtr;
 use super::super::super::types::TransformerModel;
 use crate::traits::SequenceState;
 
+/// 2026-10-11: A capture point's slot on a multi-rank serve when none could be reserved
+/// (`prepare_cut_capture`): the point still splits the pass, captures nothing and is not
+/// registered.
+pub(in crate::model) const NO_SNAPSHOT_SLOT: usize = usize::MAX;
+
 /// 2026-09-25: Per-pass plan for a mid-chunk tail capture. Owns the per-SSM-layer
 /// destination pointers that `ForwardContext::midchunk_capture` borrows during
 /// `forward_layers`.
@@ -122,7 +127,8 @@ impl TransformerModel {
     ///
     /// `None` when the pass does not strictly span `cut`, or no slot can be reserved
     /// even after a reclaim: the prefill then keeps no checkpoint at `cut`, as
-    /// `prefill_b_save_checkpoint` does on an exhausted pool.
+    /// `prefill_b_save_checkpoint` does on an exhausted pool. On a multi-rank serve the
+    /// points never depend on the pool (`NO_SNAPSHOT_SLOT`).
     pub(in crate::model) fn prepare_cut_capture(
         &self,
         seq: &SequenceState,
@@ -136,22 +142,40 @@ impl TransformerModel {
         if !(proc_start < cut && cut < end) {
             return None;
         }
-        let Some(cut_slot) = self.reserve_snapshot_slot(seq.session_hash, kv_cache) else {
-            tracing::warn!(
-                "SSM snapshot pool exhausted and no evictable cached entries — no checkpoint \
-                 at the tail split point {cut}. Consider raising --ssm-cache-slots."
-            );
-            return None;
+        // 2026-10-11: On a multi-rank serve the split points must not depend on this rank's
+        // slot pool, or the ranks would run different launches (`splits_pass_at_capture`):
+        // a point whose slot could not be reserved still splits, with `NO_SNAPSHOT_SLOT` and
+        // no destinations, so it captures nothing and is not registered.
+        let ranks = self.multi_rank_protocol_active();
+        let cut_slot = match self.reserve_snapshot_slot(seq.session_hash, kv_cache) {
+            Some(slot) => slot,
+            None => {
+                tracing::warn!(
+                    "SSM snapshot pool exhausted and no evictable cached entries — no \
+                     checkpoint at the tail split point {cut}. Consider raising \
+                     --ssm-cache-slots."
+                );
+                if !ranks {
+                    return None;
+                }
+                NO_SNAPSHOT_SLOT
+            }
         };
         let bs = kv_cache.block_size();
         let deep = metrale_gpu_runtime::ssm_tail_boundary(total, bs)
             .filter(|&tb| tb > cut && tb < end && total - tb >= 2)
             .and_then(|tb| {
-                self.reserve_snapshot_slot(seq.session_hash, kv_cache)
-                    .map(|slot| (tb, slot))
+                match self.reserve_snapshot_slot(seq.session_hash, kv_cache) {
+                    Some(slot) => Some(slot),
+                    None => ranks.then_some(NO_SNAPSHOT_SLOT),
+                }
+                .map(|slot| (tb, slot))
             });
         let n = self.ssm_snapshots.num_ssm_layers();
         let dsts = |slot: usize| -> (Vec<DevicePtr>, Vec<DevicePtr>) {
+            if slot == NO_SNAPSHOT_SLOT {
+                return (Vec::new(), Vec::new());
+            }
             (
                 (0..n)
                     .map(|l| self.ssm_snapshots.tail_h_dst(l, slot))

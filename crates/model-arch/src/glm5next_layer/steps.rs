@@ -12,6 +12,7 @@ mod drafter;
 mod forward;
 mod mhc_slice;
 mod multi_seq;
+mod prefill_capture;
 pub use multi_seq::{GroupSpan, group_spans};
 mod prefill_spans;
 pub use prefill_spans::{SpanPiece, prefill_span_groups};

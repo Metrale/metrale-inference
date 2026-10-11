@@ -131,6 +131,17 @@ pub trait LayerCapabilities {
         false
     }
 
+    /// 2026-10-11: True when this layer's `prefill` runs every launch of the pass, not only its
+    /// recurrence, as separate segments split at an in-pass capture's points (GLM-5.3,
+    /// `glm5next_layer/steps/prefill_capture.rs`), so each row and each captured state carries
+    /// the bytes of separate passes ending and starting there whatever the row-count dependence
+    /// of its kernels. When every layer says so the model captures in-pass without needing
+    /// `prefill_row_invariant` and on a multi-rank serve
+    /// (`TransformerModel::inpass_cut_capture_supported`).
+    fn splits_pass_at_capture(&self) -> bool {
+        false
+    }
+
     /// 2026-10-08: True when this layer, a recurrent layer on the SSM pool, can roll a
     /// speculative verify back under `--ssm-rollback-mode replay`: its K-row verify copies
     /// the state to the slot's checkpoint and records each row's recurrent inputs in the

@@ -178,14 +178,21 @@ impl TransformerModel {
     /// state, which a snapshot takes at the end of a pass; one rank; and an FP32 h state,
     /// so the captured bytes equal what `SsmSnapshotPool::save` writes after a pass
     /// ending there.
+    ///
+    /// 2026-10-11: When every layer splits its whole pass at the capture
+    /// (`splits_pass_at_capture`, GLM-5.3), neither the row-invariant kernels nor a single
+    /// rank are needed: every launch runs as the separate passes would, and every rank plans
+    /// the same split points (`prepare_cut_capture`).
     fn inpass_cut_capture_supported(&self, seq: &SequenceState) -> bool {
+        let whole_pass = self.layers.iter().all(|l| l.splits_pass_at_capture());
         !cfg!(metrale_scale)
             && metrale_gpu_runtime::ssm_tail_midchunk_enabled()
             && !metrale_model_layers::layers::qwen3_ssm::ssm_h_fp16_enabled()
             && !self.seq_ssm_h_is_f16(seq)
             && !self.requires_aux_state()
-            && !self.multi_rank_protocol_active()
-            && metrale_model_layers::layers::prefill_row_invariant()
+            && (whole_pass
+                || (!self.multi_rank_protocol_active()
+                    && metrale_model_layers::layers::prefill_row_invariant()))
             && self.layers.iter().all(|l| l.supports_replay_tail_split())
     }
 
@@ -386,7 +393,12 @@ impl TransformerModel {
         // checkpoint is the deeper one.
         if let Some(plan) = midcap_plan.as_ref() {
             if cut_captured {
-                if let (Some(tb_early), Some(slot)) = (plan.tb_early, plan.snap_slot_early) {
+                // 2026-10-11: A point without a slot (`NO_SNAPSHOT_SLOT`, multi-rank) only split
+                // the pass; nothing was captured to register.
+                use midchunk_capture::NO_SNAPSHOT_SLOT;
+                if let (Some(tb_early), Some(slot)) = (plan.tb_early, plan.snap_slot_early)
+                    && slot != NO_SNAPSHOT_SLOT
+                {
                     self.prefill_b_register_checkpoint(
                         tokens,
                         seq,
@@ -396,14 +408,16 @@ impl TransformerModel {
                         stream,
                     )?;
                 }
-                self.prefill_b_register_checkpoint(
-                    tokens,
-                    seq,
-                    &mut kv_cache,
-                    plan.tb,
-                    plan.snap_slot,
-                    stream,
-                )?;
+                if plan.snap_slot != NO_SNAPSHOT_SLOT {
+                    self.prefill_b_register_checkpoint(
+                        tokens,
+                        seq,
+                        &mut kv_cache,
+                        plan.tb,
+                        plan.snap_slot,
+                        stream,
+                    )?;
+                }
             } else {
                 self.finalize_midchunk_capture(tokens, seq, plan);
             }
