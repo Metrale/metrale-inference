@@ -33,6 +33,7 @@ use metrale_model_layers::layers::ops;
 use metrale_model_layers::speculative::{DraftProposer, ProposerState};
 use metrale_model_layers::weight_map::DenseWeight;
 
+mod graph;
 mod head_xchg;
 mod init;
 mod proposer;
@@ -41,6 +42,8 @@ mod proposer;
 pub use head_xchg::BUFFER_BYTES as HEAD_XCHG_BUFFER_BYTES;
 /// 2026-10-11: The `METRALE_GLM_MTP_EH_TP` lever, for the ranks' agreement check.
 pub use init::eh_tp_enabled;
+/// 2026-10-11: The drafter graph's per-state bytes, for the per-sequence reserve.
+pub use graph::state_bytes as graph_state_bytes;
 
 /// 2026-09-25: Per-sequence drafter state: the block's own indexer cache and KV block table.
 pub struct Glm5NextMtpProposerState {
@@ -63,6 +66,9 @@ pub struct Glm5NextMtpProposerState {
     head_xchg: DevicePtr,
     /// 2026-09-25: Set by `free_state`, which is a no-op once it is set.
     released: bool,
+    /// 2026-10-11: The drafter graph's metadata and graph (`METRALE_GLM_MTP_GRAPH`); `None`
+    /// runs every draft eagerly.
+    graph: Option<graph::DrafterGraph>,
 }
 
 impl ProposerState for Glm5NextMtpProposerState {
@@ -174,28 +180,33 @@ impl Glm5NextMtpHead {
         )
     }
 
-    /// 2026-09-25: One draft token. Advances `seq_len` by one.
-    fn forward_one(
+    /// 2026-10-11: `(n, v0, sharded)`: the vocab rows this rank's draft head sweeps. Sharded
+    /// only with a communicator and a vocab split across ranks; otherwise the sweep covers the
+    /// whole vocab.
+    fn head_range(&self, ctx: &ForwardContext) -> (usize, usize, bool) {
+        let sharded = ctx.comm.is_some() && self.head_n != self.vocab;
+        if sharded {
+            (self.head_n, self.head_v0, true)
+        } else {
+            (self.vocab, 0, false)
+        }
+    }
+
+    /// 2026-10-11: One draft's device work, from the embedding row `embed_src` and the target
+    /// hidden `hidden_in` to the argmax in `st.arg`: the input norms and `eh_proj`, the block
+    /// (advancing `seq_len`), `shared_head.norm`, the head sweep and the argmax. Eager, or the
+    /// body of the drafter graph (`graph.rs`).
+    fn forward_body(
         &self,
-        token: u32,
+        embed_src: DevicePtr,
         hidden_in: DevicePtr,
-        position: usize,
         st: &mut Glm5NextMtpProposerState,
         ctx: &ForwardContext,
         stream: u64,
-    ) -> Result<u32> {
+    ) -> Result<()> {
         let gpu = ctx.gpu;
         let h = self.hidden;
-        if position >= self.max_seq_len {
-            bail!(
-                "GLM MTP drafter: position {position} is past the {} it was sized for",
-                self.max_seq_len
-            );
-        }
-        // 2026-09-25: The embedding row is read by pointer: `embed_tokens` is `[vocab, hidden]`
-        // BF16 and a row is contiguous, so there is nothing to gather.
-        let embed_row = self.embed_tokens.weight.offset(token as usize * h * 2);
-        self.norm(gpu, embed_row, self.module.enorm, st.concat, h, stream)?;
+        self.norm(gpu, embed_src, self.module.enorm, st.concat, h, stream)?;
         self.norm(
             gpu,
             hidden_in,
@@ -224,29 +235,13 @@ impl Glm5NextMtpHead {
             drop(kv);
             st.seq_len += 1;
         }
-
-        // 2026-09-25: Timing arm `METRALE_GLM_MTP_SKIP=head`: the head is skipped and the
-        // draft is token 0, so `propose` times the block alone. `=block` skips the block instead.
         if skip_head() {
-            return Ok(0);
+            return Ok(());
         }
         // 2026-09-25: `shared_head.norm`, then the target's own `lm_head`: the MTP layer carries
         // no head of its own.
         self.norm(gpu, st.x, self.module.final_norm, st.x, h, stream)?;
-        // 2026-09-25: Sharded only with a communicator and a vocab split across ranks;
-        // otherwise the sweep covers the whole vocab.
-        let sharded = ctx.comm.is_some() && self.head_n != self.vocab;
-        let (w, n, v0) = if sharded {
-            (
-                DenseWeight {
-                    weight: self.lm_head.weight.offset(self.head_v0 * h * 2),
-                },
-                self.head_n,
-                self.head_v0,
-            )
-        } else {
-            (self.lm_head, self.vocab, 0)
-        };
+        let (n, v0, sharded) = self.head_range(ctx);
         // 2026-09-25: The FP8 copy covers only `[head_v0, head_v0 + head_n)`, so it serves the
         // sharded sweep alone; an unsharded sweep reads the BF16 head.
         match self.head_fp8.filter(|_| sharded && n == self.head_n) {
@@ -264,14 +259,55 @@ impl Glm5NextMtpHead {
                 gpu,
                 self.gemv_k,
                 st.x,
-                &w,
+                &DenseWeight {
+                    weight: self.lm_head.weight.offset(v0 * h * 2),
+                },
                 st.logits,
                 n as u32,
                 h as u32,
                 stream,
             )?,
         }
-        ops::argmax_bf16(gpu, self.argmax_k, st.logits, st.arg, n as u32, stream)?;
+        ops::argmax_bf16(gpu, self.argmax_k, st.logits, st.arg, n as u32, stream)
+    }
+
+    /// 2026-09-25: One draft token. Advances `seq_len` by one.
+    #[allow(clippy::too_many_arguments)]
+    fn forward_one(
+        &self,
+        token: u32,
+        hidden_in: DevicePtr,
+        // 2026-10-11: The first draft of this propose (it reads the target's hidden row).
+        first: bool,
+        position: usize,
+        st: &mut Glm5NextMtpProposerState,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<u32> {
+        let gpu = ctx.gpu;
+        let h = self.hidden;
+        if position >= self.max_seq_len {
+            bail!(
+                "GLM MTP drafter: position {position} is past the {} it was sized for",
+                self.max_seq_len
+            );
+        }
+        // 2026-09-25: The embedding row is read by pointer: `embed_tokens` is `[vocab, hidden]`
+        // BF16 and a row is contiguous, so there is nothing to gather.
+        let embed_row = self.embed_tokens.weight.offset(token as usize * h * 2);
+        // 2026-10-11: `METRALE_GLM_MTP_GRAPH`: the same launches, replayed from a graph
+        // (`graph.rs`); the readback and exchange below stay eager.
+        if graph::eligible(self, st, first) {
+            self.forward_graphed(embed_row, hidden_in, st, ctx, stream)?;
+        } else {
+            self.forward_body(embed_row, hidden_in, st, ctx, stream)?;
+        }
+        // 2026-09-25: Timing arm `METRALE_GLM_MTP_SKIP=head`: the head is skipped and the
+        // draft is token 0, so `propose` times the block alone. `=block` skips the block instead.
+        if skip_head() {
+            return Ok(0);
+        }
+        let (_, v0, sharded) = self.head_range(ctx);
         let mut out = [0u8; 4];
         gpu.synchronize(stream)?;
         gpu.copy_d2h(st.arg, &mut out)?;

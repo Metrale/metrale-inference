@@ -36,6 +36,11 @@ impl DraftProposer for Glm5NextMtpHead {
             arg: gpu.alloc(4)?,
             head_xchg: gpu.alloc(super::head_xchg::BUFFER_BYTES)?,
             released: false,
+            graph: if super::graph::graph_enabled() {
+                Some(super::graph::DrafterGraph::alloc(gpu, h, blocks as usize)?)
+            } else {
+                None
+            },
         }))
     }
 
@@ -54,6 +59,9 @@ impl DraftProposer for Glm5NextMtpHead {
         st.dsa.free(gpu)?;
         for p in [st.concat, st.x, st.logits, st.arg, st.head_xchg] {
             gpu.free(p)?;
+        }
+        if let Some(mut g) = st.graph.take() {
+            g.free(gpu)?;
         }
         // 2026-09-25: The drafter's private pool is claimed whole by `alloc_state`
         // (`(0..blocks).collect()`), not drawn from an allocator, so there is
@@ -167,7 +175,7 @@ impl DraftProposer for Glm5NextMtpHead {
         let mut token = last_token;
         let mut hidden = target_hidden;
         for i in 0..num_drafts {
-            let d = self.forward_one(token, hidden, position + i, st, ctx, stream)?;
+            let d = self.forward_one(token, hidden, i == 0, position + i, st, ctx, stream)?;
             drafts.push(d);
             token = d;
             // 2026-09-25: Draft 1 consumes the target's verified hidden; every later draft
