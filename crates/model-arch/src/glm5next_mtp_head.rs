@@ -38,12 +38,12 @@ mod head_xchg;
 mod init;
 mod proposer;
 
+/// 2026-10-11: The drafter graph's per-state bytes, for the per-sequence reserve.
+pub use graph::state_bytes as graph_state_bytes;
 /// 2026-10-11: Bytes of the draft head's exchange buffer, one per sequence state.
 pub use head_xchg::BUFFER_BYTES as HEAD_XCHG_BUFFER_BYTES;
 /// 2026-10-11: The `METRALE_GLM_MTP_EH_TP` lever, for the ranks' agreement check.
 pub use init::eh_tp_enabled;
-/// 2026-10-11: The drafter graph's per-state bytes, for the per-sequence reserve.
-pub use graph::state_bytes as graph_state_bytes;
 
 /// 2026-09-25: Per-sequence drafter state: the block's own indexer cache and KV block table.
 pub struct Glm5NextMtpProposerState {

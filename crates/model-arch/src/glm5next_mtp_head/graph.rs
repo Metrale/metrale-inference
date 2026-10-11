@@ -189,7 +189,7 @@ impl Glm5NextMtpHead {
             (g.meta(), g.embed_in, cached)
         };
         if let Some(graph) = cached {
-            use metrale_model_layers::layer::TransformerLayer;
+            use metrale_model_layers::layer::LayerGraphHooks;
             layer.check_replay_room(&st.dsa, st.seq_len, 1)?;
             gpu.launch_graph(graph, stream)?;
             layer.sync_replayed_step(&mut st.dsa, st.seq_len, 1)?;
