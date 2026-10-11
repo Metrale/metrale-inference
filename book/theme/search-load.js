@@ -53,6 +53,7 @@
     handedOver = true;
     toggle.removeEventListener('click', onClick);
     document.removeEventListener('keydown', onKey);
+    if (bar.form) bar.form.removeEventListener('submit', onSubmit);
     // searcher.js has just closed the bar (or opened it for ?search=);
     // reopen it if the reader had it open.
     if (!open || !wrap.classList.contains('hidden')) return;
@@ -108,8 +109,18 @@
     }
   }
 
+  // Enter in the bar before searcher.js has its index would submit the bar's
+  // form and navigate away with the words in the address, losing them; until
+  // the hand-over it searches nothing yet and keeps the words where they are.
+  function onSubmit(e) {
+    if (handedOver) return;
+    e.preventDefault();
+    load();
+  }
+
   toggle.addEventListener('click', onClick);
   document.addEventListener('keydown', onKey);
+  if (bar.form) bar.form.addEventListener('submit', onSubmit);
   // A search result opens its page with ?highlight=, and a search survives a
   // reload as ?search=: searcher.js acts on both as soon as it starts.
   if (/[?&](?:search|highlight)=/.test(window.location.search)) load();
