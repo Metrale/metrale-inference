@@ -224,11 +224,15 @@ pub(super) fn step_mtp_bootstrap_batched(
 
     // 2026-09-25: Stash every proposing row before any propose: a propose
     // overwrites the shared `hidden_states` buffer
-    // (`Model::stash_verify_hidden_rows`). Stash slot s <-> proposing[s].
+    // (`Model::stash_verify_hidden_rows`). 2026-10-11: Every decode row is stashed, slot j <->
+    // decode row j, as a multi-rank worker stashes after the same batched decode
+    // (`ep_worker_decode_batch`): which rows propose is decided here, after sampling, so the
+    // worker cannot know the subset, and its proposes read the slot rank 0 names.
     let proposing: Vec<usize> = (0..n).filter(|&j| propose_rows[j].is_some()).collect();
     let mut stash_ok = false;
     if !proposing.is_empty() {
-        match model.stash_verify_hidden_rows(&proposing, 0) {
+        let all_rows: Vec<usize> = (0..n).collect();
+        match model.stash_verify_hidden_rows(&all_rows, 0) {
             Ok(()) => stash_ok = true,
             Err(e) => tracing::error!("batched bootstrap stash_verify_hidden_rows: {e:#}"),
         }
@@ -276,7 +280,7 @@ pub(super) fn step_mtp_bootstrap_batched(
                     .iter()
                     .map(|&s| refs[proposing[s]].seq.seq_len)
                     .collect();
-                let stash_idx: Vec<usize> = group.to_vec();
+                let stash_idx: Vec<usize> = group.iter().map(|&s| proposing[s]).collect();
                 let result = {
                     let mut seq_refs: Vec<&mut SequenceState> = Vec::with_capacity(group.len());
                     let mut it = refs.iter_mut();
@@ -326,8 +330,8 @@ pub(super) fn step_mtp_bootstrap_batched(
             if done[s] {
                 continue;
             }
-            if let Err(e) = model.save_hidden_for_mtp_from_stash(s, 0) {
-                tracing::error!("batched bootstrap save_hidden_for_mtp_from_stash({s}): {e:#}");
+            if let Err(e) = model.save_hidden_for_mtp_from_stash(row, 0) {
+                tracing::error!("batched bootstrap save_hidden_for_mtp_from_stash({row}): {e:#}");
                 continue;
             }
             let a = &mut refs[row];
