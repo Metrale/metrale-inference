@@ -23,15 +23,17 @@ mod moe_experts;
 mod pieces;
 mod route;
 mod router;
+mod shared_fork;
 mod topk_combine;
 mod w4a4;
 mod w4a4_grouped;
 mod workspace;
 
-pub use dense::{forward_dense, forward_dense_site};
+pub use dense::{DenseScratch, forward_dense, forward_dense_site};
 use launch::swiglu;
 pub(crate) use pieces::check_pieces;
 pub use route::{ExpertRoute, expert_route, grouped_row_floor};
+pub use shared_fork::{SHARED_FORK_MAX_ROWS, shared_fork_rows};
 pub use w4a4::forward_dense_w4a4;
 pub use w4a4_grouped::{moe_w4a4_grouped, smem_bytes as w4a4_grouped_smem_bytes};
 pub use workspace::{mlp_ws_bytes, mlp_ws_total_bytes};
@@ -103,6 +105,8 @@ pub struct Glm5NextMlpWorkspace {
     max_rows: usize,
     /// 2026-09-25: `max_rows * top_k`, the routed-slot count the grouped-path buffers hold.
     max_total_expanded: usize,
+    /// 2026-10-11: The shared expert's side stream and scratch (`METRALE_GLM_SHARED_FORK`).
+    shared_fork: Option<shared_fork::SharedFork>,
 }
 
 /// 2026-09-25: Whether the text layers share one MLP workspace: yes unless
@@ -122,6 +126,16 @@ pub fn mlp_ws_shared() -> bool {
 }
 
 impl Glm5NextMlpWorkspace {
+    /// 2026-10-11: The gate, up and activated buffers of a dense pass (`forward_dense`).
+    pub(super) fn dense_scratch(&self) -> DenseScratch {
+        DenseScratch {
+            gate: self.a_gate,
+            up: self.a_up,
+            act: self.a_act,
+            max_inter: self.max_inter,
+            max_rows: self.max_rows,
+        }
+    }
     /// 2026-09-25: Widest row group this scratch serves.
     pub(super) fn max_rows(&self) -> usize {
         self.max_rows
@@ -375,6 +389,15 @@ pub fn forward_moe_pieces(
         announce_grouped_prefill(grouped_prefill, rows);
     }
 
+    // 2026-10-11: Under `METRALE_GLM_SHARED_FORK` the shared expert starts here on its side
+    // stream (it reads only `x`) and joins before the combine.
+    let fork = ws.shared_fork.as_ref().filter(|f| f.takes(rows));
+    if let Some(f) = fork {
+        f.fork(gpu, stream, |side, scratch| {
+            pieces::shared_expert(gpu, k, cfg, w, x, ws, scratch, row_pieces, side)
+        })?;
+    }
+
     let t = profile::start();
     pieces::router_logits(gpu, k, cfg, w, x, ws, row_pieces, stream)?;
     // 2026-09-25: One top-k launch for all rows, one block per row (`topk_combine`).
@@ -419,7 +442,20 @@ pub fn forward_moe_pieces(
     }
 
     let t = profile::start();
-    pieces::shared_expert(gpu, k, cfg, w, x, ws, row_pieces, stream)?;
+    match fork {
+        Some(f) => f.join(gpu, stream)?,
+        None => pieces::shared_expert(
+            gpu,
+            k,
+            cfg,
+            w,
+            x,
+            ws,
+            ws.dense_scratch(),
+            row_pieces,
+            stream,
+        )?,
+    }
 
     // 2026-09-25: The shared expert joins the routed sum in the combine, before the caller's
     // all-reduce, so one collective reduces both partial sums.

@@ -15,6 +15,9 @@
 //!    sequence at a local union of 3, 5 and 8 experts and on fixture windows.
 //! 1b. The same at a 704-wide expert slice (the 64-unit `tp` layout, `k64.rs`): gate and up on
 //!    the plain own-slots sweep, down on its `_k64` twin against the `_k64` slot GEMV.
+//! 4. 2026-10-11 (`fork.rs`): `forward_moe` with the shared expert forked onto a side stream
+//!    against the unforked site, byte for byte at 1..=4 rows (eager and graph), then timed;
+//!    `GLM_BENCH_FORK_ONLY=1` runs it alone.
 //! 3. With a fixture: `forward_moe` at one row under the fixture's router on its router inputs,
 //!    the own-slots sweep against the slot GEMV (the kernel table with the sweep unresolved),
 //!    byte for byte on every token, and both timed.
@@ -44,6 +47,7 @@ use metrale_model_arch::glm5next_mlp::W4A4_SWEEP_CTAS_PER_SM;
 mod device;
 use device::*;
 
+mod fork;
 mod forward;
 mod k64;
 mod timing;
@@ -392,7 +396,14 @@ fn main() -> Result<()> {
         let rows = byte_gate(g, &s, &mut rng, fx.as_ref())?;
         k64::run(g, &s, &mut rng, &rows)?;
     }
+    // 2026-10-11: GLM_BENCH_FORK_ONLY=1 runs part 4 alone.
+    if std::env::var("GLM_BENCH_FORK_ONLY").as_deref() == Ok("1") {
+        return fork::run(&gpu, &s, stream);
+    }
     timing::run(g, &s, &mut rng, fx.as_ref(), stream)?;
+    if !timing_only {
+        fork::run(&gpu, &s, stream)?;
+    }
     match &fx {
         Some(_) if timing_only => Ok(()),
         Some(f) => forward::run(&gpu, &s, f, stream),
