@@ -25,6 +25,7 @@ use metrale_model_layers::layer::{AttnMetadataDev, LayerState};
 use metrale_model_layers::speculative::DraftProposer;
 use metrale_model_layers::weight_map::{DenseWeight, MtpWeights};
 
+mod accepted_rows;
 mod async_chkpt;
 mod borrow_streak;
 mod decode_a;

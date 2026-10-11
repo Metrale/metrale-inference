@@ -230,6 +230,18 @@ impl TransformerModel {
                 }
             }
         }
+        // 2026-10-11: `METRALE_MTP_ACCEPTED_ROWS`: the rows of accepted drafts, from the verify
+        // forward's live rows, before this propose writes its own (`accepted_rows.rs`).
+        if self.levers.mtp_accepted_rows {
+            self.feed_accepted_rows(
+                proposer,
+                &seq.tokens,
+                position,
+                prop_state.as_mut(),
+                &ctx,
+                stream,
+            );
+        }
         proposer.propose(
             token,
             self.mtp_hidden_save,

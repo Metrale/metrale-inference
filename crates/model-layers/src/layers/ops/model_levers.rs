@@ -210,13 +210,20 @@ pub struct ModelLevers {
     /// 2026-09-25: `METRALE_MTP_TARGET_POSTNORM=1`: drafter rows built from a target hidden (the
     /// first draft, drafter prefill, the exact-KV catch-up) go through the target's final norm
     /// before `pre_fc_norm_hidden` (`MtpHead::target_postnorm_rows`). No effect when the head holds
-    /// no target final-norm weight.
+    /// no target final-norm weight. 2026-10-11: The GLM-5.3 drafter reads it too: its target rows
+    /// go through the target's final norm before `hnorm` (`glm5next_mtp_head/hidden_half.rs`), the
+    /// feed vLLM's GLM MTP layer gets.
     pub mtp_target_postnorm: bool,
     /// 2026-09-25: `METRALE_MTP_KV_EXACT=1`: after a verify, the MTP drafter keeps the KV row built
     /// from the verified input token and trims only the chain rows (`draft_proposer.rs`); the
     /// model then appends one catch-up row per accepted draft from the verify forward's stashed
     /// hidden (`model/trait_impl/speculative_mtp.rs`).
     pub mtp_kv_exact: bool,
+    /// 2026-10-11: `METRALE_MTP_ACCEPTED_ROWS=1`: before a propose, a dense-row drafter (GLM-5.3)
+    /// whose rows stop short of this propose's pair key gets the missing rows written from the
+    /// verify forward's live `hidden_states` rows: one per accepted draft, which no propose
+    /// writes (`model/trait_impl/accepted_rows.rs`). vLLM's drafter runs every accepted position.
+    pub mtp_accepted_rows: bool,
     /// 2026-09-25: `METRALE_FP8_MOE_GROUPED_DECODE=1`: the target model's multi-row FP8 MoE decode
     /// runs through the cross-row grouped kernels (`FfnComponent::fp8_grouped_decode_ok`). The MTP
     /// drafter calls `MoeLayer::fp8_grouped_decode_ok` directly and does not read this lever;

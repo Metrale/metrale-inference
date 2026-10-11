@@ -56,6 +56,8 @@ pub(super) fn install_glm_mtp_proposer(
     glm_mtp_module: Option<Glm5NextMtpModule>,
     glm_mtp_embed: DenseWeight,
     glm_mtp_lm_head: DenseWeight,
+    // 2026-10-11: The target's final norm, for the drafter's `METRALE_MTP_TARGET_POSTNORM` feed.
+    glm_mtp_target_final_norm: DenseWeight,
     max_seq_len: usize,
     max_batch_size: usize,
 ) {
@@ -64,6 +66,7 @@ pub(super) fn install_glm_mtp_proposer(
             m,
             glm_mtp_embed,
             glm_mtp_lm_head,
+            glm_mtp_target_final_norm,
             model.config_ref(),
             model.gpu_backend(),
             max_seq_len,

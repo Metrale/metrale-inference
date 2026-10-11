@@ -391,6 +391,10 @@ pub struct TransformerModel {
     /// 2026-09-25: Last token index `save_hidden_for_mtp` copied from, broadcast
     /// to the other EP rank before an MTP propose.
     pub(super) last_mtp_hidden_idx: std::sync::atomic::AtomicUsize,
+    /// 2026-10-11: Whether the last MTP target hidden was saved from the live `hidden_states`
+    /// rows (`save_hidden_for_mtp`), so rows `[last_mtp_hidden_idx - k, last_mtp_hidden_idx)` are
+    /// the same forward's; false after a save from the verify stash (`accepted_rows.rs`).
+    pub(super) mtp_hidden_live: std::sync::atomic::AtomicBool,
     pub(super) vision_encoder: Option<metrale_model_layers::layers::VisionTower>,
     /// 2026-09-25: Number of patches encoded by the last `prepare_vision_embed`
     /// call. 0 means no vision embeddings are pending.
