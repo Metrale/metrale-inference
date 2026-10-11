@@ -42,7 +42,9 @@ impl Repo for Tree {
                 if path.is_dir() {
                     stack.push(path);
                 } else if let Ok(r) = path.strip_prefix(&root) {
-                    out.push(r.to_string_lossy().into_owned());
+                    // 2026-10-07: The manifest and the CLI list use `/`. A Windows
+                    // `strip_prefix` yields `\`, which the drift check then calls missing.
+                    out.push(r.to_string_lossy().replace('\\', "/"));
                 }
             }
         }

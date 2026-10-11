@@ -131,7 +131,11 @@ fn build_active_seq_from_prefill(
 ) -> ActiveSeq {
     let temperature = p.temperature;
     // 2026-09-25: Computed before `p.grammar_state` moves into the struct.
-    let tool_request = p.grammar_state.is_some() || use_legacy_tool_call;
+    let tool_request = tool_request_at_birth(
+        p.grammar_state.is_some(),
+        p.tools_present,
+        use_legacy_tool_call,
+    );
     ActiveSeq {
         seq: p.seq,
         session_hash: p.session_hash,

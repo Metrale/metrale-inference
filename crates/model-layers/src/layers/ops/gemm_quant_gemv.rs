@@ -116,6 +116,7 @@ pub fn dense_gemv_batchm(
         "dense_gemv_batchm: m={m} outside 1..={DENSE_GEMV_BATCHM_MAX_M} \
          (kernel MAX_M clamps silently; use dense_gemm_tc for wider batches)"
     );
+    let kernel = select_dense_batch_kernel(gpu, kernel, small_rows_enabled(), m, n, k)?;
     KernelLaunch::new(gpu, kernel)
         .grid([div_ceil(n, 4), 1, 1])
         .block([256, 1, 1])
@@ -151,6 +152,14 @@ pub fn dense_gemv_batchm_split(
         m >= 1 && (1..=m).contains(&y_blocks) && m.div_ceil(y_blocks) <= DENSE_GEMV_BATCHM_MAX_M,
         "dense_gemv_batchm_split: m={m} over y_blocks={y_blocks} must give 1..={DENSE_GEMV_BATCHM_MAX_M} rows per block row"
     );
+    let kernel = select_dense_batch_kernel(
+        gpu,
+        kernel,
+        small_rows_enabled(),
+        m.div_ceil(y_blocks),
+        n,
+        k,
+    )?;
     KernelLaunch::new(gpu, kernel)
         .grid([div_ceil(n, 4), y_blocks, 1])
         .block([256, 1, 1])
@@ -189,4 +198,33 @@ pub fn dense_gemv_fp8w(
         .arg_u32(n)
         .arg_u32(k)
         .launch(stream)
+}
+
+// 2026-10-07: Explicit opt-in only; unchanged default and all larger row groups.
+fn small_rows_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("METRALE_DENSE_GEMV_SMALL_ROWS").as_deref() == Ok("1"))
+}
+
+fn select_dense_batch_kernel(
+    gpu: &dyn GpuBackend,
+    original: KernelHandle,
+    enabled: bool,
+    rows: u32,
+    n: u32,
+    k: u32,
+) -> Result<KernelHandle> {
+    if enabled
+        && (1..=4).contains(&rows)
+        && n > 0
+        && n.is_multiple_of(4)
+        && k > 0
+        && k.is_multiple_of(8)
+    {
+        // 2026-10-07: Handles belong to the backend/context, never a global cache.
+        gpu.op_cache()
+            .kernel(gpu, "dense_gemv_bf16_batchm", "dense_gemv_bf16_batchm4")
+    } else {
+        Ok(original)
+    }
 }

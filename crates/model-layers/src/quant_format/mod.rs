@@ -18,6 +18,7 @@ mod fp8_blockscaled;
 mod modelopt;
 mod mxfp4;
 pub use mxfp4::Mxfp4Format;
+pub mod packed_int;
 
 pub use compressed_tensors::CompressedTensorsFormat;
 pub use fp8_blockscaled::Fp8BlockScaledFormat;

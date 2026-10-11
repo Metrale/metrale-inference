@@ -71,10 +71,10 @@ Plan groups that loop once per row, and the engine's layer loops per sequence (`
 |---|---|---:|---:|---|---|
 | multi_seq n=16 | mamba | 3.986 | 37.5% | mamba.add, mamba.conv, mamba.conv_ckpt, mamba.in_proj, mamba.in_proj_quant, mamba.norm, mamba.out_norm, mamba.out_proj, mamba.out_proj_quant, mamba.split, mamba.ssm, mamba.ssm_ckpt | legacy crates/model-arch/src/nemotron_mamba2/trait_impl.rs:23 |
 | multi_seq n=16 | moe | 2.282 | 21.4% | moe.add, moe.blend, moe.experts_act, moe.experts_down, moe.experts_up, moe.norm, moe.router, moe.shared_act, moe.shared_down, moe.shared_up, moe.top_k | legacy crates/model-arch/src/nemotron_moe.rs:278 |
-| multi_seq n=16 | full_attention | 0.666 | 6.3% | attn.k, attn.q, attn.v | legacy crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/qkv.rs:119 |
+| multi_seq n=16 | full_attention | 0.666 | 6.3% | attn.k, attn.q, attn.v | legacy crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/qkv.rs:120 |
 | multi_seq n=128 | moe | 35.041 | 41.5% | moe.add, moe.blend, moe.experts_act, moe.experts_down, moe.experts_up, moe.norm, moe.router, moe.shared_act, moe.shared_down, moe.shared_up, moe.top_k | legacy crates/model-arch/src/nemotron_moe.rs:278 |
 | multi_seq n=128 | mamba | 33.750 | 40.0% | mamba.add, mamba.conv, mamba.conv_ckpt, mamba.in_proj, mamba.in_proj_quant, mamba.norm, mamba.out_norm, mamba.out_proj, mamba.out_proj_quant, mamba.split, mamba.ssm, mamba.ssm_ckpt | legacy crates/model-arch/src/nemotron_mamba2/trait_impl.rs:23 |
-| multi_seq n=128 | full_attention | 5.635 | 6.7% | attn.k, attn.q, attn.v | legacy crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/qkv.rs:119 |
+| multi_seq n=128 | full_attention | 5.635 | 6.7% | attn.k, attn.q, attn.v | legacy crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/qkv.rs:120 |
 
 ## Fused plan: decode n=1
 

@@ -64,6 +64,10 @@ pub struct SchedCtx {
     /// device argmax picked `</think>` or `<think>` for a row whose thinking
     /// had ended.
     pub think_mask_fallbacks: std::cell::Cell<u64>,
+    /// 2026-10-07: Set from the serve's adaptive-sampling policy by SchedulerCore.
+    pub masked_greedy_sampling_allowed: bool,
+    /// 2026-10-07: The same close-think ID passed to the host logit pipeline.
+    pub masked_greedy_think_end: Option<u32>,
     /// 2026-10-02: Prompt-lookup settings (`--prompt-lookup-decoding`); `None`
     /// when off. Set once by `SchedulerCore::new`.
     pub prompt_lookup: Option<metrale_speculative::prompt_lookup::PromptLookupConfig>,
@@ -103,6 +107,8 @@ impl SchedCtx {
             dcut: crate::scheduler::mtp_dcut::DcutTelemetry::default(),
             admit_last_queued: std::cell::Cell::new(0),
             think_mask_fallbacks: std::cell::Cell::new(0),
+            masked_greedy_sampling_allowed: false,
+            masked_greedy_think_end: None,
             prompt_lookup: None,
             prompt_lookup_stats: std::cell::Cell::new([0; 3]),
             shared_lookup: None,

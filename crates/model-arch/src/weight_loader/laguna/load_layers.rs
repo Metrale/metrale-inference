@@ -127,6 +127,11 @@ fn load_moe_ffn(
     unified_moe_layout: bool,
 ) -> Result<FfnComponent> {
     let mlp = format!("{lp}.mlp");
+    // 2026-10-07: Packed INT4/INT8 experts (Laguna-XS-2.1-INT4) have their own layer; an
+    // NVFP4 checkpoint's U8 expert weights never take this branch.
+    if let Some(scheme) = super::packed_int::packed_int_scheme(store, config, &mlp)? {
+        return super::packed_int::load_packed_int_moe(store, config, gpu, &mlp, scheme);
+    }
     let gate = dense(store, &format!("{mlp}.gate.weight"))?;
     let correction_bias = dense(store, &format!("{mlp}.experts.e_score_correction_bias"))?;
     let experts = (0..config.num_experts)
@@ -203,6 +208,20 @@ fn load_moe_ffn(
         correction_bias: Some(correction_bias),
     };
     let mut layer = MoeLayer::new(weights, config.num_experts, None, gpu, config)?;
+    // 2026-10-07: Opt-in only at the measured XS shape; alternative layouts remain explicit.
+    if std::env::var("METRALE_LAGUNA_SMALL_ROW_PREFILL").as_deref() == Ok("1") {
+        anyhow::ensure!(
+            config.hidden_size == 2048
+                && config.moe_intermediate_size == 512
+                && config.num_experts == 256
+                && config.num_experts_per_tok == 8
+                && !unified_moe_layout
+                && !cutlass_grouped_moe_enabled(),
+            "Laguna small-row prefill requires the measured XS shape and original NVFP4 layout"
+        );
+        layer.enable_small_row_prefill(gpu)?;
+    }
+
     // 2026-09-25: Only a BF16 shared expert is installed here; an NVFP4 one
     // stays on the quantized path.
     if let Some((shared_gate, shared_up, shared_down)) = bf16_shared {

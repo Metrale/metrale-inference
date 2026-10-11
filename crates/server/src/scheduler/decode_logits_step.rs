@@ -13,6 +13,9 @@ use crate::scheduler::io::{DecodeRows, Readback, StepOutcome};
 
 mod content_emit;
 mod host_sample;
+#[cfg(test)]
+mod json_eos_policy_tests;
+mod masked_min_tokens;
 mod per_token;
 
 thread_local! {
@@ -91,7 +94,12 @@ pub(super) fn decode_readback_plan<'a>(
     sched: &crate::scheduler::sched_ctx::SchedCtx,
     staging: &'a mut Vec<u8>,
 ) -> Readback<'a> {
-    if argmax_readback_eligible(active.iter(), sched) {
+    if let Some(masks) = masked_min_tokens::plan(active, sched) {
+        Readback::MaskedGreedy {
+            masks,
+            into: staging,
+        }
+    } else if argmax_readback_eligible(active.iter(), sched) {
         Readback::Argmax
     } else {
         Readback::HostLogits { into: staging }

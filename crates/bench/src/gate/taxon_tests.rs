@@ -125,6 +125,7 @@ fn every_real_target_resolves_a_nonempty_source_set() {
             "strix/qwen3.6-27b/nvfp4",
             "strix/qwen3.6-35b-a3b/nvfp4",
             "strix-hip/gpt-oss-20b/mxfp4",
+            "strix-hip/laguna-xs-2.1/int4",
             "strix-hip/qwen3.6-27b/nvfp4",
             "strix-hip/qwen3.6-35b-a3b/nvfp4",
         ]

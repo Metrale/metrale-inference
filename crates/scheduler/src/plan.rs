@@ -33,6 +33,11 @@ pub enum Readback<'a> {
     /// the host re-pick would (see `argmax_feed.cu`); the ids also land
     /// in the device feed cells for a following fed step.
     ArgmaxMasked { masks: Vec<RowMask> },
+    /// 2026-10-07: Host-equivalent greedy EOS masks; unsupported rows retain host readback.
+    MaskedGreedy {
+        masks: Vec<Vec<u32>>,
+        into: &'a mut Vec<u8>,
+    },
     /// 2026-09-25: The whole logits block, copied into `into` (resized by the router to
     /// `rows * vocab * elem_bytes`; the core samples over it).
     HostLogits { into: &'a mut Vec<u8> },
@@ -43,6 +48,7 @@ impl std::fmt::Debug for Readback<'_> {
         match self {
             Self::Argmax => f.write_str("Argmax"),
             Self::ArgmaxMasked { masks } => write!(f, "ArgmaxMasked{{n={}}}", masks.len()),
+            Self::MaskedGreedy { masks, .. } => write!(f, "MaskedGreedy{{n={}}}", masks.len()),
             Self::HostLogits { .. } => f.write_str("HostLogits"),
         }
     }

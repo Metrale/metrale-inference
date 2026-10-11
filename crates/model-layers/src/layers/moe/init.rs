@@ -35,27 +35,7 @@ impl MoeLayer {
         gpu: &dyn GpuBackend,
         config: &metrale_config::ModelConfig,
     ) -> Result<Self> {
-        anyhow::ensure!(
-            config.num_experts_per_tok <= num_experts && num_experts > 0,
-            "MoE config invalid: num_experts_per_tok={} must be in 1..={}",
-            config.num_experts_per_tok,
-            num_experts,
-        );
-        // 2026-09-25: The sigmoid routing kernels hold at most MAX_TOP_K
-        // selections and MAX_EXPERTS experts in shared memory and ignore the
-        // rest, so such configs are refused here.
-        anyhow::ensure!(
-            config.num_experts_per_tok <= crate::layers::ops::MOE_TOPK_SIGMOID_MAX_TOP_K
-                && num_experts <= crate::layers::ops::MOE_TOPK_SIGMOID_MAX_EXPERTS,
-            "MoE config exceeds the routing kernels' fixed shared-memory bounds: \
-             num_experts_per_tok={} (max {}), num_experts={} (max {}). Raise \
-             MAX_TOP_K / MAX_EXPERTS in kernels/gb10/common/moe_topk_sigmoid.cu \
-             and their mirrors in layers::ops together.",
-            config.num_experts_per_tok,
-            crate::layers::ops::MOE_TOPK_SIGMOID_MAX_TOP_K,
-            num_experts,
-            crate::layers::ops::MOE_TOPK_SIGMOID_MAX_EXPERTS,
-        );
+        super::init_validation::validate_routing(config.num_experts_per_tok, num_experts)?;
         let gate_ptrs = build_ptr_table(&weights.experts, |e| &e.gate_proj, gpu)?;
         let up_ptrs = build_ptr_table(&weights.experts, |e| &e.up_proj, gpu)?;
         let down_ptrs = build_ptr_table(&weights.experts, |e| &e.down_proj, gpu)?;
@@ -145,6 +125,7 @@ impl MoeLayer {
             moe_sort_by_expert: gpu.kernel("moe", "moe_sort_by_expert")?,
             moe_sorted_gate_up: gpu.kernel("moe_sorted", "moe_sorted_gate_up")?,
             moe_sorted_silu_down: gpu.kernel("moe_sorted", "moe_sorted_silu_down")?,
+            small_row_prefill: None,
             moe_grouped_gemm: gpu.kernel("moe_w4a16", "moe_w4a16_grouped_gemm_ptrtable")?,
             moe_grouped_gemm_k32: if std::env::var("METRALE_MOE_GROUPED_K32").as_deref() == Ok("1")
             {

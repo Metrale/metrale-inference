@@ -44,6 +44,11 @@ impl MoeLayer {
             };
         }
 
+        // 2026-10-07: The disjoint tile pair must never inherit an average-based row cap.
+        anyhow::ensure!(
+            self.small_row_prefill.is_none() || ctx.levers.moe_prefill_max_load_factor.is_none(),
+            "small-row prefill cannot cap the expert row grid"
+        );
         let avg_per_expert = (num_tokens * top_k as usize).div_ceil(ne);
         // 2026-09-25: The default bound puts all n * top_k routed rows in one
         // expert, so no expert's rows are cut off. METRALE_MOE_PREFILL_MAX_LOAD_FACTOR

@@ -94,15 +94,28 @@ fn manifests() -> Vec<(String, PathBuf)> {
 /// 2026-09-25: Each Laguna hidden size is claimed by its own target and no
 /// other. A second claimant of the same pair would leave routing to the
 /// `match_names` tie-break (`resolve::resolve_target`).
+/// 2026-10-07: Per hardware: a build compiles one `METRALE_TARGET_HW`, so
+/// routing only ever chooses among that hardware's claims. gb10 routes both
+/// sizes; strix-hip routes XS to its packed-int target and claims no S.
 #[test]
 fn both_laguna_hidden_sizes_route_to_their_own_target() {
     let claims = claims();
-    let lookup = |hidden: u64| -> Vec<String> {
+    let lookup_on = |hw: &str, hidden: u64| -> Vec<String> {
         claims
             .get(&("laguna".to_string(), Some(hidden)))
+            .into_iter()
+            .flatten()
+            .filter(|t| t.starts_with(&format!("{hw}/")))
             .cloned()
-            .unwrap_or_default()
+            .collect()
     };
+    let lookup = |hidden: u64| lookup_on("gb10", hidden);
+    assert_eq!(
+        lookup_on("strix-hip", 2048),
+        vec!["strix-hip/laguna-xs-2.1".to_string()],
+        "on strix-hip, Laguna-XS-2.1 routes to its packed-int target only"
+    );
+    assert!(lookup_on("strix-hip", 3072).is_empty());
 
     assert_eq!(
         lookup(2048),

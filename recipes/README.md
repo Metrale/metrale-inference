@@ -5,6 +5,14 @@ image, the checkpoint, and the `met serve` settings it was measured under.
 `metralectl run <recipe>` launches one; a benchmark gate names one by id in
 `kernels/<hw>/<model>/BENCH.toml` (`recipe = "qwen3.8/qwen3.8-27b-nvfp4-throughput"`).
 
+## QCI reference pins
+
+`gemma4/gemma-4-26b-a4b-it-gguf-q4km` and
+`nemotron-3.5/nemotron-3.5-lightning-30b-a3b-gguf-q4_0` are consumer GGUF pins
+for investor-mvp #44 and #58. Their `runtime` is `gguf-reference`, so this job
+parses them and does not launch them. They are not measured serves, and they
+do not replace the NVFP4 recipes next to them.
+
 ## Layout
 
 `recipes/<family>/<name>.yaml`. A recipe's id is its path under `recipes/`
