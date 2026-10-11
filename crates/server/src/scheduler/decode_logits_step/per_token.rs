@@ -269,14 +269,15 @@ pub(super) fn process_decoded_token(
     // `seq_len` is at the `max_seq_len` ceiling.
     let hard_ceiling = hard_ceiling_hit(a.remaining, a.seq.seq_len, sched.limits.max_seq_len);
     let thinking_suppresses_eos = eos_suppressed_by_thinking(a.inside_thinking, hard_ceiling);
-    // 2026-09-25: Post-think EOS guard: on a tool-armed turn (`require_tool_call` or
-    // `tool_request`), after `</think>`, hold EOS back until the output holds
+    // 2026-10-11: Only a required tool call may impose the post-think EOS guard.
+    // Optional tools can return short prose when their grammar allows EOS.
+    // After `</think>`, hold EOS back until the output holds
     // `POST_THINK_MIN_CONTENT` tokens beyond the thinking ones, so the model
     // has room to open a tool call.
     const POST_THINK_MIN_CONTENT: u32 = 16;
     let post_think_content_tokens =
         (a.output_tokens.len() as u32).saturating_sub(a.thinking_tokens);
-    let tools_armed = a.require_tool_call || a.tool_request;
+    let tools_armed = a.require_tool_call;
     let post_think_suppresses_eos =
         tools_armed && a.think_ended && post_think_content_tokens < POST_THINK_MIN_CONTENT;
     let suppress_eos = grammar_suppresses_eos
