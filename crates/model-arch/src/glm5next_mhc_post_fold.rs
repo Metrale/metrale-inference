@@ -20,7 +20,7 @@ use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 use crate::glm5next_mhc::{Glm5NextMhcKernels, Glm5NextMhcSiteWeights, mix_hc};
 
-/// 2026-10-10: `#define GLM_HCF_POST_FOLD_MAX_H` in `glm5next_mhc_fused.cu`: each thread holds
+/// 2026-10-10: `#define GLM_HCF_POST_FOLD_MAX_H` in `glm5next_mhc_post_fold.cu`: each thread holds
 /// `hidden / 256` columns of every stream in registers.
 pub const POST_FOLD_MAX_HIDDEN: u32 = 4096;
 

@@ -65,6 +65,9 @@ pub const GLM5NEXT_MHC_MODULE: &str = "glm5next_mhc";
 /// 2026-10-09: The kernel module of the fused pre-mix + norm (`glm5next_mhc_fused.cu`).
 pub const GLM5NEXT_MHC_FUSED_MODULE: &str = "glm5next_mhc_fused";
 
+/// 2026-10-10: The kernel module of the folded post-mix + pre-norm (`glm5next_mhc_post_fold.cu`).
+pub const GLM5NEXT_MHC_POST_FOLD_MODULE: &str = "glm5next_mhc_post_fold";
+
 /// 2026-10-10: The kernel module of the fused all-reduce sum + post-mix (`glm5next_hc_post_sum.cu`).
 pub const GLM5NEXT_HC_POST_SUM_MODULE: &str = "glm5next_hc_post_sum";
 
@@ -100,7 +103,7 @@ impl Glm5NextMhcKernels {
             hc_post: gpu.kernel(GLM5NEXT_MHC_MODULE, "glm5next_hc_post")?,
             hc_post_pre_norm: metrale_model_layers::layers::try_kernel(
                 gpu,
-                GLM5NEXT_MHC_FUSED_MODULE,
+                GLM5NEXT_MHC_POST_FOLD_MODULE,
                 "glm5next_hc_post_pre_norm",
             ),
             hc_post_rank_sum: metrale_model_layers::layers::try_kernel(
