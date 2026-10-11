@@ -31,9 +31,9 @@
 //! single-sequence prefill's; the routed site is measured byte for byte by
 //! `examples/glm5next_prefill_spans_mlp_gate.rs`.
 
-use super::forward::kda_chunk_prefill;
 use super::prefill_capture::{CapturePoint, capture_points, kda_ordinal};
 use super::*;
+use crate::glm5next_layer::levers::kda_chunk_prefill;
 use metrale_model_layers::layer::PrefillSpan;
 
 /// 2026-10-09: One piece of a multi-sequence prefill pass: rows `t0..t0 + rows` of sequence

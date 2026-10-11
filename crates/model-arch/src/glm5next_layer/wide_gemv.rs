@@ -23,18 +23,22 @@ pub(crate) const BATCHM_WIDE_MIN: usize = 9;
 
 /// 2026-10-09: A batched-GEMV pair: `narrow` is the runtime-M entry `ops::dense_mm_bf16`
 /// launches at 2..=16 rows; `wide` the register-resident entry for 9..=16 rows, or
-/// `KernelHandle(0)` to keep `narrow` there.
+/// `KernelHandle(0)` to keep `narrow` there. 2026-10-11: `out_bytes`, the pair's output element
+/// size (2 for the BF16-out entries, 4 for the FP32-out ones), sizes a row of `C`.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Batchm {
     pub(crate) narrow: KernelHandle,
     pub(crate) wide: KernelHandle,
+    pub(crate) out_bytes: usize,
 }
 
 impl From<KernelHandle> for Batchm {
+    /// 2026-10-11: A BF16-out narrow entry alone.
     fn from(narrow: KernelHandle) -> Self {
         Self {
             narrow,
             wide: KernelHandle(0),
+            out_bytes: 2,
         }
     }
 }
@@ -51,6 +55,40 @@ pub(crate) fn takes_wide(wide: KernelHandle, m: usize) -> bool {
     wide.0 != 0
         && (BATCHM_WIDE_MIN..=ops::DENSE_GEMV_BATCHM_MAX_M as usize).contains(&m)
         && wide_enabled()
+}
+
+/// 2026-10-11: [`glm_mm`] in launches of at most `DENSE_GEMV_BATCHM_MAX_M` rows, each on the
+/// GEMV tiers (one row: the M = 1 GEMV; 2..=16: the batched GEMV), whose rows have the M = 1
+/// GEMV's bits; `C` rows are `n` elements of `batchm.out_bytes`. Errors when the batched handle
+/// is missing (the tile GEMM would take the rows, in another order).
+#[allow(clippy::too_many_arguments)]
+fn glm_mm_rows16(
+    gpu: &dyn GpuBackend,
+    gemm: KernelHandle,
+    gemv: KernelHandle,
+    batchm: Batchm,
+    a: DevicePtr,
+    b: DevicePtr,
+    c: DevicePtr,
+    m: usize,
+    n: usize,
+    kk: usize,
+    stream: u64,
+) -> Result<()> {
+    anyhow::ensure!(
+        batchm.narrow.0 != 0 && gemv.0 != 0,
+        "METRALE_GLM_BATCH_INVARIANT=1: a {m}-row projection needs the GEMV tiers"
+    );
+    let step = ops::DENSE_GEMV_BATCHM_MAX_M as usize;
+    let c_elem = batchm.out_bytes;
+    let mut r0 = 0;
+    while r0 < m {
+        let rows = step.min(m - r0);
+        let (ar, cr) = (a.offset(r0 * kk * 2), c.offset(r0 * n * c_elem));
+        glm_mm(gpu, gemm, gemv, batchm, ar, b, cr, rows, n, kk, stream)?;
+        r0 += rows;
+    }
+    Ok(())
 }
 
 /// 2026-10-09: `C[M, N] = A[M, K] @ B[N, K]^T` with BF16 inputs (the output element is the
@@ -80,7 +118,13 @@ pub(crate) fn glm_mm(
     if crate::glm5next_fp8_dense::proj(gpu, b, a, c, m, n, kk, stream)? {
         return Ok(());
     }
-    if m > ops::DENSE_GEMV_BATCHM_MAX_M as usize && crate::glm5next_layer::cublas_wide_proj() {
+    // 2026-10-11: Under `METRALE_GLM_BATCH_INVARIANT`, wider launches run as 16-row launches of
+    // the row-invariant batched GEMV ([`glm_mm_rows16`]), never cuBLASLt or the tile GEMM.
+    let wide_rows = m > ops::DENSE_GEMV_BATCHM_MAX_M as usize;
+    if wide_rows && crate::glm5next_batch_inv::enabled()? {
+        return glm_mm_rows16(gpu, gemm, gemv, batchm, a, b, c, m, n, kk, stream);
+    }
+    if wide_rows && crate::glm5next_layer::cublas_wide_proj() {
         return ops::cublas_bf16_proj_dense(a, b, c, m as u32, n as u32, kk as u32, stream);
     }
     if takes_wide(batchm.wide, m) {
@@ -111,4 +155,61 @@ pub(crate) fn glm_mm(
         kk,
         stream,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use metrale_gpu_runtime::gpu::mock::{MockArg, MockGpuBackend};
+
+    use super::*;
+
+    fn ptr(a: &MockArg) -> DevicePtr {
+        match a {
+            MockArg::Buffer(p) => *p,
+            MockArg::Bytes(_) => panic!("expected a buffer"),
+        }
+    }
+
+    fn u32_arg(a: &MockArg) -> u32 {
+        match a {
+            MockArg::Bytes(b) => u32::from_le_bytes(b[..4].try_into().unwrap()),
+            MockArg::Buffer(p) => panic!("expected a u32, got {p}"),
+        }
+    }
+
+    /// 2026-10-11: 40 FP32-out rows run as 16 + 16 + 8 rows on the narrow batched GEMV (no
+    /// wide entry given), each launch's A and C advanced by whole rows (C at 4 bytes per
+    /// element); a missing batched entry is refused rather than left to the tile GEMM.
+    #[test]
+    fn rows16_splits_into_whole_row_launches_of_at_most_16() {
+        let gpu = MockGpuBackend::new();
+        let (gemm, gemv, narrow) = (KernelHandle(11), KernelHandle(12), KernelHandle(13));
+        let b = Batchm {
+            narrow,
+            wide: KernelHandle(0),
+            out_bytes: 4,
+        };
+        let (a, w, c) = (
+            DevicePtr(0x1000_0000),
+            DevicePtr(0x2000_0000),
+            DevicePtr(0x3000_0000),
+        );
+        let (n, kk) = (288usize, 4096usize);
+        glm_mm_rows16(&gpu, gemm, gemv, b, a, w, c, 40, n, kk, 7).unwrap();
+        let l = gpu.launches_snapshot();
+        assert_eq!(l.len(), 3);
+        for (i, (rows, r0)) in [(16u32, 0usize), (16, 16), (8, 32)].into_iter().enumerate() {
+            assert_eq!(l[i].func, narrow.0, "launch {i}");
+            assert_eq!(ptr(&l[i].args[0]), a.offset(r0 * kk * 2));
+            assert_eq!(ptr(&l[i].args[1]), w);
+            assert_eq!(ptr(&l[i].args[2]), c.offset(r0 * n * 4));
+            assert_eq!(u32_arg(&l[i].args[3]), rows);
+        }
+        let no_batch = Batchm {
+            narrow: KernelHandle(0),
+            ..b
+        };
+        assert!(glm_mm_rows16(&gpu, gemm, gemv, no_batch, a, w, c, 40, n, kk, 7).is_err());
+        assert_eq!(gpu.launches_snapshot().len(), 3);
+    }
 }

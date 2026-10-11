@@ -235,6 +235,7 @@ impl Glm5NextMlpKernels {
         crate::glm5next_layer::wide_gemv::Batchm {
             narrow: self.gemv_batchm,
             wide: self.gemv_batchm_wide,
+            out_bytes: 2,
         }
     }
 
@@ -243,6 +244,7 @@ impl Glm5NextMlpKernels {
         crate::glm5next_layer::wide_gemv::Batchm {
             narrow: self.gemv_batchm_f32,
             wide: self.gemv_batchm_wide_f32,
+            out_bytes: 4,
         }
     }
 }

@@ -28,6 +28,11 @@ pub(super) fn group_precision(
         config.quantization_config.as_ref(),
         metrale_model_layers::layers::kernel_caps(),
     );
+    // 2026-10-11: `METRALE_GLM_BATCH_INVARIANT` refuses its conflicting levers here, where the
+    // routed experts' kernels have resolved.
+    if group == MlpGroup::RoutedExperts {
+        crate::glm5next_batch_inv::check_at_load(kernels)?;
+    }
     let (base, family, w4a4_rows) = match group {
         // 2026-10-10: `METRALE_GLM_MOE_W4A4_GROUPED=1` lifts the routed W4A4 row cap with
         // the grouped W4A4 GEMM (`glm5next_mlp::forward::w4a4_grouped`).
