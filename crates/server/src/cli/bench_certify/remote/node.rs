@@ -68,6 +68,18 @@ pub fn fingerprint_of(info: &NodeInfo) -> HardwareFingerprint {
             .gpu
             .as_ref()
             .and_then(|g| driver_major(&g.driver_version)),
+        // 2026-10-04: The exact strings, not just the driver's major version:
+        // `equivalent` judges these, not `driver_major` (display only).
+        driver_full: info
+            .gpu
+            .as_ref()
+            .map(|g| g.driver_version.clone())
+            .filter(|s| !s.is_empty()),
+        vbios: info
+            .gpu
+            .as_ref()
+            .map(|g| g.vbios.clone())
+            .filter(|s| !s.is_empty()),
         sm_clock_max_mhz: t.and_then(|t| t.sm_clock_max_mhz),
         mem_total_kb: t.and_then(|t| t.mem_total_kb),
         thermal_alert: t.and_then(|t| t.throttle_thermal),

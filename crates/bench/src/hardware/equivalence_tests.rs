@@ -16,12 +16,16 @@ fn speed() -> EquivalencePolicy {
         chassis_delta_c: 15.0,
     }
 }
-use crate::hardware::state::{ThermalZone, ThrottleActive};
+use crate::hardware::state::{ExtendedTelemetry, ThermalZone, ThrottleActive};
 
 fn state(chassis: f64, thermal: Option<bool>) -> HardwareState {
     HardwareState {
         sm_clock_max_mhz: Some(3_003.0),
         mem_total_kb: Some(125_000_000),
+        extended: ExtendedTelemetry {
+            vbios: Some("9A.0B.1E.00.00".into()),
+            ..ExtendedTelemetry::default()
+        },
         chassis_temps_c: Some(vec![
             ThermalZone {
                 name: "acpitz".into(),
@@ -97,13 +101,44 @@ fn every_static_field_is_checked_and_every_mismatch_is_named() {
         equivalent(&base, &other_gpu, &speed()).unwrap_err()[..],
         [Mismatch::Gpu(..)]
     ));
+    // 2026-10-04: Full driver string, not major only: dgx2 and dgx3 share major
+    // 580 and are exactly the pair that does not read as one box.
     let mut other_driver = base.clone();
-    other_driver.driver_major = Some(575);
+    other_driver.driver_full = Some("580.159.03".into());
     assert!(matches!(
-        equivalent(&base, &other_driver, &speed()).unwrap_err()[..],
-        [Mismatch::DriverMajor(580, 575)]
+        &equivalent(&base, &other_driver, &speed()).unwrap_err()[..],
+        [Mismatch::DriverVersion(a, b)] if a == "580.95.05" && b == "580.159.03"
     ));
-    // 2026-09-26: `driver_major` keeps only the major version.
+    let dgx2 = HardwareFingerprint {
+        driver_full: Some("580.126.09".into()),
+        vbios: Some("9A.0B.1E".into()),
+        ..base.clone()
+    };
+    let dgx3 = HardwareFingerprint {
+        driver_full: Some("580.159.03".into()),
+        vbios: Some("9A.0B.25".into()),
+        ..base.clone()
+    };
+    let why = equivalent(&dgx2, &dgx3, &speed()).unwrap_err();
+    assert!(
+        why.contains(&Mismatch::DriverVersion(
+            "580.126.09".into(),
+            "580.159.03".into()
+        )),
+        "{why:?}"
+    );
+    assert!(
+        why.contains(&Mismatch::Vbios("9A.0B.1E".into(), "9A.0B.25".into())),
+        "{why:?}"
+    );
+    let mut other_vbios = base.clone();
+    other_vbios.vbios = Some("9A.0B.25".into());
+    assert!(matches!(
+        &equivalent(&base, &other_vbios, &speed()).unwrap_err()[..],
+        [Mismatch::Vbios(a, b)] if a == "9A.0B.1E.00.00" && b == "9A.0B.25"
+    ));
+    // 2026-09-26: `driver_major` keeps only the major version (still used for
+    // display in the fleet plan; [`equivalent`] no longer reads it).
     assert_eq!(driver_major("580.126.09"), Some(580));
     assert_eq!(driver_major(""), None);
     assert_eq!(driver_major("unknown"), None);
@@ -135,7 +170,8 @@ fn every_static_field_is_checked_and_every_mismatch_is_named() {
     // 2026-09-26: Every variant's Display is non-empty.
     for m in [
         Mismatch::Gpu("a".into(), "b".into()),
-        Mismatch::DriverMajor(1, 2),
+        Mismatch::DriverVersion("a".into(), "b".into()),
+        Mismatch::Vbios("a".into(), "b".into()),
         Mismatch::ClockSpread {
             a: 1.0,
             b: 2.0,
@@ -159,6 +195,50 @@ fn every_static_field_is_checked_and_every_mismatch_is_named() {
     }
 }
 
+/// 2026-10-04: The incident pair, named: dgx2 (580.126.09, VBIOS 9A.0B.1E) and
+/// dgx3 (580.159.03, VBIOS 9A.0B.25) — the box calibration catalogue's
+/// documented fleet versions — share driver major 580 and clock/memory/chassis
+/// readings close enough to pass every other check, yet are the exact pair
+/// measured 6.6-13% apart on J/token. A major-only driver check would wave
+/// them through; the full-version-and-VBIOS check must not.
+#[test]
+fn dgx2_and_dgx3_are_not_equivalent() {
+    let dgx2 = HardwareFingerprint::from_live(
+        &hw("NVIDIA GB10", "580.126.09"),
+        &HardwareState {
+            extended: ExtendedTelemetry {
+                vbios: Some("9A.0B.1E".into()),
+                ..ExtendedTelemetry::default()
+            },
+            ..state(60.0, Some(false))
+        },
+    );
+    let dgx3 = HardwareFingerprint::from_live(
+        &hw("NVIDIA GB10", "580.159.03"),
+        &HardwareState {
+            extended: ExtendedTelemetry {
+                vbios: Some("9A.0B.25".into()),
+                ..ExtendedTelemetry::default()
+            },
+            ..state(60.0, Some(false))
+        },
+    );
+    // 2026-10-04: Same major version, so the old check would have passed them.
+    assert_eq!(dgx2.driver_major, dgx3.driver_major);
+    let why = equivalent(&dgx2, &dgx3, &speed()).expect_err("not one box");
+    assert!(
+        why.contains(&Mismatch::DriverVersion(
+            "580.126.09".into(),
+            "580.159.03".into()
+        )),
+        "{why:?}"
+    );
+    assert!(
+        why.contains(&Mismatch::Vbios("9A.0B.1E".into(), "9A.0B.25".into())),
+        "{why:?}"
+    );
+}
+
 #[test]
 fn a_missing_field_is_undecidable_which_is_not_equivalent() {
     let base = gb10(65.0);
@@ -168,7 +248,8 @@ fn a_missing_field_is_undecidable_which_is_not_equivalent() {
             Box::new(|f: &mut HardwareFingerprint| f.gpu.clear())
                 as Box<dyn Fn(&mut HardwareFingerprint)>,
         ),
-        ("driver", Box::new(|f| f.driver_major = None)),
+        ("driver", Box::new(|f| f.driver_full = None)),
+        ("vbios", Box::new(|f| f.vbios = None)),
         ("sm_clock_max_mhz", Box::new(|f| f.sm_clock_max_mhz = None)),
         ("mem_total_kb", Box::new(|f| f.mem_total_kb = None)),
         ("throttle reasons", Box::new(|f| f.thermal_alert = None)),
@@ -210,22 +291,30 @@ fn a_record_carries_its_before_capture_and_its_postcheck() {
     let fp = HardwareFingerprint::from_record(&rec);
     assert_eq!(fp.gpu, "NVIDIA GB10");
     assert_eq!(fp.driver_major, Some(580));
+    assert_eq!(fp.driver_full.as_deref(), Some("580.159.03"));
     assert_eq!(fp.sm_clock_max_mhz, Some(3_003.0));
     assert!(fp.mem_total_kb.is_some_and(|kb| kb > 100_000_000));
     assert_eq!(fp.thermal_alert, Some(false));
     assert!(fp.hottest_chassis_c.is_some());
     assert_eq!(fp.postcheck_valid, Some(true));
-    // 2026-09-26: It is one box with a live GB10 at the same chassis temperature
-    // and memory.
-    let live = HardwareFingerprint::from_live(
-        &hw("NVIDIA GB10", "580.95.05"),
+    // 2026-09-26: It is one box with a live GB10 at the same driver, chassis
+    // temperature and memory —
+    // 2026-10-04: except vbios: this fixture predates vbios capture
+    // (`extended` deserializes to its default), so the pair is Undecidable
+    // there, not Ok. A historical record cannot be vbios-compared until it is
+    // re-measured under this change.
+    let mut live = HardwareFingerprint::from_live(
+        &hw("NVIDIA GB10", "580.159.03"),
         &state(fp.hottest_chassis_c.unwrap(), Some(false)),
     );
-    let mut live = live;
     live.mem_total_kb = fp.mem_total_kb;
-    assert_eq!(equivalent(&fp, &live, &speed()), Ok(()));
-    // 2026-09-26: A record with no report is undecidable on each of the four live
-    // fields.
+    assert_eq!(fp.vbios, None, "the fixture predates vbios capture");
+    assert_eq!(
+        equivalent(&fp, &live, &speed()),
+        Err(vec![Mismatch::Undecidable("vbios")])
+    );
+    // 2026-09-26: A record with no report is undecidable on each of the five live
+    // fields (the four state-derived fields, plus vbios).
     let mut bare = rec.clone();
     bare.hardware_state = None;
     let fp = HardwareFingerprint::from_record(&bare);
@@ -235,5 +324,5 @@ fn a_record_carries_its_before_capture_and_its_postcheck() {
         why.iter().all(|m| matches!(m, Mismatch::Undecidable(_))),
         "{why:?}"
     );
-    assert_eq!(why.len(), 4);
+    assert_eq!(why.len(), 5);
 }
