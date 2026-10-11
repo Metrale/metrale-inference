@@ -33,7 +33,7 @@ fn launch_matches_the_kernel() {
     }
     assert!(CU.contains("tr_block_split<Nvfp4G16, NT, G, true, S, typename TrSegMerge<S>::T>("));
     assert!(ROWS.contains(
-        "    tr_block_split<P, NT, G, RAGGED, 1, TrWhole>(A, W, C, M, N, K, lda, ldc, col_block, 0u);"
+        "    tr_block_split<P, NT, G, RAGGED, 1, TrWhole, WARPS>(A, W, C, M, N, K, lda, ldc, col_block, 0u);"
     ));
     for s in W4A16_TC_ROWS_SPLITS.into_iter().filter(|&s| s > 1) {
         assert!(

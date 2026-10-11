@@ -265,6 +265,7 @@ impl Glm5NextKdaLayer {
             crate::glm5next_layer::wide_gemv::Batchm {
                 narrow: self.kernels.gemv_batchm,
                 wide: self.kernels.gemv_batchm_wide,
+                out_bytes: 2,
             },
             input,
             weight.weight,

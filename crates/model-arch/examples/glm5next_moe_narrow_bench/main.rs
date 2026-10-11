@@ -19,6 +19,9 @@
 //! 4. 2026-10-11 (`fork.rs`): `forward_moe` with the shared expert forked onto a side stream
 //!    against the unforked site, byte for byte at 1..=4 rows (eager and graph), then timed;
 //!    `GLM_BENCH_FORK_ONLY=1` runs it alone.
+//! 5. 2026-10-11 (`bi.rs`): batch invariance of `forward_moe` (rows 0..M in one launch vs each
+//!    row alone, M up to 128) under today's expert plan and the grouped-W4A4 one;
+//!    `GLM_BENCH_BI_ONLY=1` runs it alone.
 //! 3. With a fixture: `forward_moe` at one row under the fixture's router on its router inputs,
 //!    the own-slots sweep against the slot GEMV (the kernel table with the sweep unresolved),
 //!    byte for byte on every token, and both timed.
@@ -48,6 +51,7 @@ use metrale_model_arch::glm5next_mlp::W4A4_SWEEP_CTAS_PER_SM;
 mod device;
 use device::*;
 
+mod bi;
 mod fork;
 mod forward;
 mod k64;
@@ -419,6 +423,10 @@ fn main() -> Result<()> {
     if !timing_only {
         let rows = byte_gate(g, &s, &mut rng, fx.as_ref())?;
         k64::run(g, &s, &mut rng, &rows)?;
+    }
+    // 2026-10-11: GLM_BENCH_BI_ONLY=1 runs part 5 (batch invariance) alone.
+    if std::env::var("GLM_BENCH_BI_ONLY").as_deref() == Ok("1") {
+        return bi::run(&gpu, &s, stream);
     }
     // 2026-10-11: GLM_BENCH_FORK_ONLY=1 runs part 4 alone.
     if std::env::var("GLM_BENCH_FORK_ONLY").as_deref() == Ok("1") {

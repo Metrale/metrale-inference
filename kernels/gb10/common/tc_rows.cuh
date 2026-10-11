@@ -15,6 +15,10 @@
 //   order is fixed by K alone and its MMA column reads only its own activations, so a row's
 //   output bits do not depend on M, on the other rows, on NT or on G.
 // - Grid (N / TR_COLS, 1, 1), block TR_THREADS, static shared memory only.
+// - 2026-10-11: NW, the warps per block (default TR_WARPS), sets the block's columns (16 NW) and
+//   threads (32 NW) only: each warp owns its 16 columns and every output's MMA sequence over K
+//   is the same for any NW, so a row's bits do not depend on NW either. An NW != TR_WARPS point
+//   has grid ceil(N / (16 NW)) and block 32 NW.
 // - 2026-10-09: tr_block_split sums split s of S of K (S > 1: K's TR_SPLIT_K-wide units
 //   [s * u / S, (s + 1) * u / S), u = K / TR_SPLIT_K, chunk by chunk in the same order) and its
 //   Red policy merges the splits' FP32 partial sums before the store. tr_block is S = 1 with
@@ -57,7 +61,7 @@ struct TrWhole {
 // group's MMAs. G changes only how loads are batched, never the arithmetic.
 // 2026-10-09: Split s < S of K (S > 1 needs K a multiple of TR_SPLIT_K and S <= K / TR_SPLIT_K,
 // so no split is empty), then Red.
-template <class P, int NT, int G, bool RAGGED, int S, class Red>
+template <class P, int NT, int G, bool RAGGED, int S, class Red, int NW = TR_WARPS>
 __device__ __forceinline__ void tr_block_split(
     const __nv_bfloat16* __restrict__ A, const typename P::Mat& W, __nv_bfloat16* __restrict__ C,
     unsigned int M, unsigned int N, unsigned int K, unsigned int lda, unsigned int ldc,
@@ -71,11 +75,12 @@ __device__ __forceinline__ void tr_block_split(
     constexpr int RS = GK * 2 + 16;
     constexpr int ROWS = 8 * NT;
     constexpr int U4 = ROWS * GK * 2 / 16;
-    constexpr int PER = (U4 + TR_THREADS - 1) / TR_THREADS;
+    constexpr int THREADS = NW * 32;
+    constexpr int PER = (U4 + THREADS - 1) / THREADS;
     __shared__ __align__(16) unsigned char xs[2][ROWS * RS];
-    static_assert(2 * ROWS * RS >= TR_THREADS * NT * 16, "a K-split's merge scratch is the activation buffers");
+    static_assert(2 * ROWS * RS >= THREADS * NT * 16, "a K-split's merge scratch is the activation buffers");
     const unsigned int warp = threadIdx.x >> 5, lane = threadIdx.x & 31, g = lane >> 2, t = lane & 3;
-    const unsigned int f0 = col_block * TR_COLS + warp * 16;
+    const unsigned int f0 = col_block * (NW * 16) + warp * 16;
     const unsigned int ngroups = K / GK;
     static_assert(S == 1 || TR_SPLIT_K % GK == 0, "a split unit is whole load groups");
     unsigned int g0 = 0, g1 = ngroups;
@@ -91,7 +96,7 @@ __device__ __forceinline__ void tr_block_split(
     auto group_load = [&](unsigned int gi) {
         #pragma unroll
         for (int i = 0; i < PER; i++) {
-            const unsigned int u = threadIdx.x + i * TR_THREADS;
+            const unsigned int u = threadIdx.x + i * THREADS;
             const unsigned int row = u / (GK / 8), col = u % (GK / 8);
             xr[i] = (u < U4 && row < M)
                 ? *(const uint4*)(A + (unsigned long long)row * lda + gi * GK + col * 8)
@@ -101,7 +106,7 @@ __device__ __forceinline__ void tr_block_split(
     auto group_store = [&](unsigned int buf) {
         #pragma unroll
         for (int i = 0; i < PER; i++) {
-            const unsigned int u = threadIdx.x + i * TR_THREADS;
+            const unsigned int u = threadIdx.x + i * THREADS;
             if (u >= U4) break;
             const unsigned int row = u / (GK / 8), col = u % (GK / 8);
             if (P::ACT_LIFT != 1.0f) {
@@ -203,12 +208,12 @@ __device__ __forceinline__ void tr_block_split(
 #undef wload
 #undef sload
 
-// 2026-09-28: The whole K of one block of TR_COLS output columns.
-template <class P, int NT, int G, bool RAGGED = false>
+// 2026-09-28: The whole K of one block of TR_COLS output columns. 2026-10-11: Of 16 * WARPS.
+template <class P, int NT, int G, bool RAGGED = false, int WARPS = TR_WARPS>
 __device__ __forceinline__ void tr_block(
     const __nv_bfloat16* __restrict__ A, const typename P::Mat& W, __nv_bfloat16* __restrict__ C,
     unsigned int M, unsigned int N, unsigned int K, unsigned int lda, unsigned int ldc,
     unsigned int col_block
 ) {
-    tr_block_split<P, NT, G, RAGGED, 1, TrWhole>(A, W, C, M, N, K, lda, ldc, col_block, 0u);
+    tr_block_split<P, NT, G, RAGGED, 1, TrWhole, WARPS>(A, W, C, M, N, K, lda, ldc, col_block, 0u);
 }

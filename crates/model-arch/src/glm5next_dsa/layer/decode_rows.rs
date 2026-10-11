@@ -36,7 +36,7 @@ use metrale_model_layers::layer::{AttnMetadataDev, ForwardContext, LayerState};
 use super::super::attend::DsaDecodePaging;
 use super::super::paged::IndexerCache;
 use super::super::state::Glm5NextDsaState;
-use super::{Glm5NextDsaLayer, IndexerPlace, gemm};
+use super::{Glm5NextDsaLayer, IndexerPlace};
 
 /// 2026-10-08: Row `r`'s `Glm5NextDsaState`; errors on any other state type.
 fn dsa_row<'a>(
@@ -246,7 +246,9 @@ impl Glm5NextDsaLayer {
             // 2026-10-09: Above `DENSE_GEMV_BATCHM_MAX_M` rows (a `METRALE_GLM_ROW_GROUP` wider
             // than 16) `glm_mm`'s cuBLASLt arm writes BF16, so these FP32-out projections take
             // the FP32-out cuBLASLt call instead.
+            // 2026-10-11: Not under `METRALE_GLM_BATCH_INVARIANT` (`glm_mm` splits instead).
             let wide = n > metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M as usize
+                && !crate::glm5next_batch_inv::enabled()?
                 && crate::glm5next_layer::cublas_wide_proj();
             self.selector_query_rows(gpu, hidden, n, wide, stream)?;
         }

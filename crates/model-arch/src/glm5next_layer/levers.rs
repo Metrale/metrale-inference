@@ -209,3 +209,28 @@ pub(crate) fn multi_seq_chunks(rows: usize, cap: usize) -> Vec<(usize, usize)> {
         .map(|start| (start, cap.min(rows - start)))
         .collect()
 }
+
+/// 2026-09-25: `METRALE_GLM_KDA_CHUNK_PREFILL=1` sends a prefill sub-chunk's KDA mixer through
+/// the chunked scan (`Glm5NextKdaLayer::prefill`) instead of `decode_k`'s per-token recurrence.
+/// Off unless set to `1`; read once. The chunked scan computes the recurrence chunk by chunk, in
+/// a different order, so its output is not bit-identical to the per-token walk.
+/// 2026-10-09: Until today its conv rounded SiLU to BF16 and a separate L2 rounded again, which
+/// moved q/k by up to a BF16 ulp against the decode's fused conv (one rounding) and drove the
+/// carried state 2.8e-3 RMS away from the per-token walk on checkpoint weights; it now runs the
+/// decode's conv for all rows (`conv_tokens`), and the state stays within 1e-6 RMS
+/// (`examples/glm5next_kda_prefill_gate.rs`). `METRALE_GLM_KDA_SEQ_TOKENS=1` is the
+/// bit-identical alternative and is faster on GB10.
+pub(crate) fn kda_chunk_prefill() -> bool {
+    static E: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *E.get_or_init(|| {
+        let on = std::env::var("METRALE_GLM_KDA_CHUNK_PREFILL").as_deref() == Ok("1");
+        if on {
+            tracing::warn!(
+                "METRALE_GLM_KDA_CHUNK_PREFILL=1 - GLM prefill KDA uses the CHUNKED scan \
+                 (kda_chunk_prepare + kda_chunk_scan). Not bit-identical to the per-token \
+                 recurrent walk."
+            );
+        }
+        on
+    })
+}

@@ -386,7 +386,11 @@ fn glm53_declares_static_w4a4_experts_and_dense_mlp_bf16_elsewhere() {
         assert_eq!(got.label(), "W4A4", "{m}");
         let a = got.activation.expect("activation");
         assert!(a.is_fp4(), "{m}");
-        assert_eq!(a.timing, ScaleTiming::Static, "{m}: input_scale is a stored scale");
+        assert_eq!(
+            a.timing,
+            ScaleTiming::Static,
+            "{m}: input_scale is a stored scale"
+        );
         assert_eq!(a.granularity, Granularity::TensorGroup(16), "{m}");
     }
     for m in [

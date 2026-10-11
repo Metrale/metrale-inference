@@ -191,15 +191,10 @@ impl Glm5NextLayer {
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<()> {
-        if let Some(comm) = ctx.comm {
-            let bytes = rows * self.hidden * 2;
-            if ctx.graph_capture {
-                comm.all_reduce(p.0, bytes)?;
-            } else {
-                comm.all_reduce_async(p.0, bytes, stream)?;
-            }
-        }
-        Ok(())
+        // 2026-10-11: Sliced under `METRALE_GLM_BATCH_INVARIANT` (`glm5next_batch_inv`).
+        let Some(comm) = ctx.comm else { return Ok(()) };
+        let (h, cap) = (self.hidden * 2, ctx.graph_capture);
+        crate::glm5next_batch_inv::all_reduce_rows(comm, p, rows, h, cap, stream)
     }
 
     /// 2026-10-09: [`Self::reduce_partial`] once per piece of `row_pieces`, so each piece's

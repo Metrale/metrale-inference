@@ -106,6 +106,10 @@ impl CommBackend for NcclBackend {
         Ok(())
     }
 
+    fn oneshot_max_bytes(&self) -> usize {
+        self.oneshot_capacity()
+    }
+
     fn exchange_partials(
         &self,
         ptr: u64,

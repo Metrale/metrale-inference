@@ -351,10 +351,12 @@ fn proj_registered(
         return Ok(true);
     }
     if m == 1 {
-        // 2026-10-09: One row takes the NVFP4 GEMV, which streams the weight across every SM;
-        // the 64-column row tile left the KDA projections at 44 CTAs (C1 nsys: 34.6 us for a
-        // 2816 x 4096 weight). A one-row result is therefore not the bits that row gets inside
-        // a wider launch: this opt-in tier is not row-invariant between 1 and 2+ rows.
+        // 2026-10-11: Under `METRALE_GLM_BATCH_INVARIANT`, the row tile's order (as 2+ rows).
+        if crate::glm5next_batch_inv::enabled()? {
+            return crate::glm5next_batch_inv::one_row(gpu, &e.w, a, c, n32, k32, stream)
+                .map(|()| true);
+        }
+        // 2026-10-09: One row takes the NVFP4 GEMV (faster; not the bits of a 2+ row launch).
         let kernel = gpu
             .op_cache()
             .kernel(gpu, "w4a16_gemv", "w4a16_gemv")
@@ -465,7 +467,7 @@ fn proj_group_registered(
     let seg_gemv = seg_gemv_group(plan, m)?;
     if !seg_gemv
         && (plan.mode == SegMode::Off
-            || m < 2
+            || (m < 2 && !crate::glm5next_batch_inv::enabled()?)
             || plan.gemv_tier(m)
             || crate::glm5next_w4a16_wide::takes(crate::glm5next_w4a16_wide::min_rows()?, m))
     {
