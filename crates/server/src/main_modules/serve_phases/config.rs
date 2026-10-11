@@ -218,9 +218,9 @@ pub(crate) fn publish_copy_tier(args: &cli::ServeArgs) -> anyhow::Result<()> {
 /// `speculative::draft_stop`. Nothing is published without the flag.
 pub(crate) fn publish_draft_confidence_stop(args: &cli::ServeArgs) -> anyhow::Result<()> {
     match args.mtp_draft.draft_confidence_stop {
-        Some(tau) => {
-            tracing::info!("MTP draft confidence stop: tau={tau}");
-            metrale_model_layers::speculative::draft_stop::set_draft_confidence_stop(tau)
+        Some(spec) => {
+            tracing::info!("MTP draft confidence stop: {spec}");
+            metrale_model_layers::speculative::draft_stop::set_draft_stop(spec)
         }
         None => Ok(()),
     }

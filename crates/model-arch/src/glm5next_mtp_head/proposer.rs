@@ -217,13 +217,15 @@ impl DraftProposer for Glm5NextMtpHead {
         // 2026-10-11: `--draft-confidence-stop`: the chain ends with the first draft whose top-1
         // probability is below tau (`speculative::draft_stop`); an unmeasured draft (NaN) never
         // ends it.
-        let stop_lp = metrale_model_layers::speculative::draft_stop::draft_stop_logprob();
+        // 2026-10-11: The published rule, either form (`draft_stop::StopRule`).
+        let mut stop =
+            metrale_model_layers::speculative::draft_stop::draft_stop_rule().map(|r| r.chain());
         for i in 0..num_drafts {
             let (d, lp) = self.forward_one(token, hidden, i == 0, position + i, st, ctx, stream)?;
             drafts.push(d);
-            if let Some(ln_tau) = stop_lp
+            if let Some(stop) = stop.as_mut()
                 && !lp.is_nan()
-                && !metrale_model_layers::speculative::draft_stop::chain_continues(lp, ln_tau)
+                && !stop.continues(lp)
             {
                 break;
             }

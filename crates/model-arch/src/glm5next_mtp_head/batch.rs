@@ -212,7 +212,7 @@ impl Glm5NextMtpHead {
     /// 2026-10-11: With `out_conf`, or under `--draft-confidence-stop`, each draft's top-1
     /// log-probability (`draft_lp`; NaN where it cannot be computed) goes to `out_conf[i]`, and
     /// under the stop the steps end once every sequence's chain has stopped
-    /// (`draft_stop::chain_continues`). Every sequence keeps the drafts the steps made; the
+    /// (`draft_stop::ChainStop::continues`). Every sequence keeps the drafts the steps made; the
     /// scheduler truncates each chain to its own depth (`draft_stop::chain_depth` in
     /// `mtp_dcut::plan`), as for the Qwen drafter.
     #[allow(clippy::too_many_arguments)]
@@ -302,10 +302,12 @@ impl Glm5NextMtpHead {
         let bctx = drafter_ctx(ctx, meta, false);
         let mut drafts: Vec<Vec<u32>> = vec![Vec::with_capacity(num_drafts); m];
         let mut tokens: Vec<u32> = last_tokens.to_vec();
-        let stop_lp = metrale_model_layers::speculative::draft_stop::draft_stop_logprob();
+        // 2026-10-11: One stop state per sequence, under the published rule (either form).
+        let stop_rule = metrale_model_layers::speculative::draft_stop::draft_stop_rule();
+        let mut chains = stop_rule.map(|r| vec![r.chain(); m]);
         // 2026-10-11: Log-probabilities, when wanted and computable, at `arg + 4 * MAX`.
         let lp = self
-            .lp_ready(ctx, stop_lp.is_some() || out_conf.is_some())
+            .lp_ready(ctx, stop_rule.is_some() || out_conf.is_some())
             .then_some(sc.arg.offset(max * 4));
         if let Some(c) = out_conf.as_deref_mut() {
             c.clear();
@@ -395,14 +397,15 @@ impl Glm5NextMtpHead {
                 if let Some(c) = out_conf.as_deref_mut() {
                     c[i].push(l);
                 }
-                if let Some(ln_tau) = stop_lp
+                if let Some(c) = chains.as_mut()
+                    && !stopped[i]
                     && !l.is_nan()
-                    && !metrale_model_layers::speculative::draft_stop::chain_continues(l, ln_tau)
+                    && !c[i].continues(l)
                 {
                     stopped[i] = true;
                 }
             }
-            if stop_lp.is_some() && stopped.iter().all(|&s| s) {
+            if chains.is_some() && stopped.iter().all(|&s| s) {
                 break;
             }
         }
