@@ -238,6 +238,8 @@ pub struct InferenceResponse {
     pub accepted_prediction_tokens: usize,
     /// 2026-10-11: When the scheduler first picked the request up for prefill.
     pub prefill_started_at: std::time::Instant,
+    /// 2026-10-11: The device layer's energy for this request (`Telemetry::request_finished`).
+    pub energy: metrale_telemetry::energy::RequestEnergy,
     /// 2026-09-26: Prompt-token logprobs, empty unless `prompt_logprobs` was
     /// set: entry `i` scores prompt token `i + 1`, and the last prompt position
     /// is excluded. `completions_logprobs` gives the first prompt token `null`.
@@ -271,6 +273,8 @@ pub enum StreamEvent {
         guard_stop: Option<&'static str>,
         /// 2026-10-11: When the scheduler first picked the request up for prefill.
         prefill_started_at: std::time::Instant,
+        /// 2026-10-11: The device layer's energy for this request.
+        energy: metrale_telemetry::energy::RequestEnergy,
     },
     Error(String),
 }

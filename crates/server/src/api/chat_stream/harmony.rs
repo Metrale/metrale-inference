@@ -53,6 +53,7 @@ pub(super) fn adapt(
                     accepted_prediction_tokens,
                     guard_stop,
                     prefill_started_at,
+                    energy,
                     ..
                 } => {
                     let text =
@@ -84,6 +85,7 @@ pub(super) fn adapt(
                         prefill_started_at,
                         ttft_ms: time_to_first_token_ms,
                         decode_ms: decode_time_ms,
+                        energy,
                     });
                     if let Some(ref rctx) = ctx.req_ctx {
                         ctx.state.rate_limiter.refund_tokens(

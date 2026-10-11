@@ -23,10 +23,11 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+use metrale_qci_dump::contract::field::{AbsentReason, Field};
 use metrale_qci_dump::contract::ids::GitCommit;
 use metrale_qci_dump::contract::usage::{
-    EngineErrorKind, InferenceUsage, Outcome, RuntimeIdentity, RuntimeTimings, SchedulerSpan,
-    Tokens,
+    EnergyRail, EngineErrorKind, InferenceUsage, Outcome, RequestEnergy, RuntimeIdentity,
+    RuntimeTimings, SchedulerSpan, Tokens,
 };
 
 use crate::request_stamp::RequestStamp;
@@ -47,6 +48,8 @@ pub(crate) struct Finish {
     pub(crate) prefill_started_at: Instant,
     pub(crate) ttft_ms: f64,
     pub(crate) decode_ms: f64,
+    /// 2026-10-11: The device layer's energy for the request (every choice merged).
+    pub(crate) energy: metrale_telemetry::energy::RequestEnergy,
 }
 
 pub(crate) struct Pending {
@@ -116,7 +119,7 @@ impl Pending {
             self.reasoning_channel.then_some(f.reasoning),
         );
         let timings = RuntimeTimings::derive(self.stamp.received_unix_ms, Some(span), f.completion);
-        self.emit(f.outcome, tokens, timings)
+        self.emit(f.outcome, tokens, timings, energy_field(f.energy))
     }
 
     /// 2026-10-11: The request failed after dispatch.
@@ -136,7 +139,19 @@ impl Pending {
 
     fn emit_unfinished(&self, outcome: Outcome) {
         let timings = RuntimeTimings::derive(self.stamp.received_unix_ms, None, 0);
-        self.emit(outcome, Tokens::unfinished(self.prompt_len), timings);
+        // 2026-10-11: No finish frame, so the scheduler attributed nothing.
+        let off = metrale_telemetry::global().level() == metrale_telemetry::Level::Off;
+        let energy = Field::Absent(if off {
+            AbsentReason::Unsupported
+        } else {
+            AbsentReason::Unavailable
+        });
+        self.emit(
+            outcome,
+            Tokens::unfinished(self.prompt_len),
+            timings,
+            energy,
+        );
     }
 
     fn emit(
@@ -144,6 +159,7 @@ impl Pending {
         outcome: Outcome,
         tokens: Tokens,
         timings: RuntimeTimings,
+        energy: Field<RequestEnergy>,
     ) -> Option<InferenceUsage> {
         crate::metrics::REQUEST_OUTCOMES
             .with_label_values(&[outcome.label()])
@@ -159,6 +175,7 @@ impl Pending {
             outcome,
             tokens,
             timings,
+            energy,
             crate::ids::unix_millis(),
         );
         // 2026-10-11: A record that breaks the contract (a served-model name over 256
@@ -206,6 +223,22 @@ pub(crate) fn runtime_commit() -> Option<GitCommit> {
     commit
 }
 
+/// 2026-10-11: A request's energy as its record carries it: the device layer's token share,
+/// derived, read on the GPU rail between two measured counter samples; absent with the
+/// reason the device layer gave.
+pub(crate) fn energy_field(e: metrale_telemetry::energy::RequestEnergy) -> Field<RequestEnergy> {
+    use metrale_telemetry::energy::RequestEnergy as Device;
+    match e {
+        Device::Attributed(s) => Field::Derived(RequestEnergy {
+            millijoules: s.millijoules,
+            rail: EnergyRail::GpuRail,
+            window_mono_ns: Field::Measured(s.window_ns),
+        }),
+        Device::Off => Field::Absent(AbsentReason::Unsupported),
+        Device::Unattributed => Field::Absent(AbsentReason::Unavailable),
+    }
+}
+
 /// 2026-10-11: The `/metrics` counters of a finished request.
 fn count_finished(model: &str, prompt_len: usize, f: &Finish, queue: Option<Duration>) {
     use crate::metrics::*;
@@ -227,5 +260,33 @@ fn count_finished(model: &str, prompt_len: usize, f: &Finish, queue: Option<Dura
         if ms.is_finite() && ms > 0.0 {
             counter.inc_by(ms / 1000.0);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use metrale_telemetry::energy::{EnergyShare, RequestEnergy as Device};
+
+    use super::*;
+
+    #[test]
+    fn device_energy_becomes_a_derived_figure_or_an_absent_reason_never_zero() {
+        let share = Device::Attributed(EnergyShare {
+            millijoules: 1_900,
+            window_ns: (100, 3_100),
+        });
+        assert_eq!(
+            serde_json::to_value(energy_field(share)).unwrap(),
+            serde_json::json!({"derived": {"millijoules": 1900, "rail": "gpu_rail",
+                                           "window_mono_ns": {"measured": [100, 3100]}}})
+        );
+        assert_eq!(
+            energy_field(Device::Off),
+            Field::Absent(AbsentReason::Unsupported)
+        );
+        assert_eq!(
+            energy_field(Device::Unattributed),
+            Field::Absent(AbsentReason::Unavailable)
+        );
     }
 }

@@ -23,6 +23,7 @@ fn done() -> StreamEvent {
         accepted_prediction_tokens: 0,
         guard_stop: None,
         prefill_started_at: std::time::Instant::now(),
+        energy: metrale_telemetry::energy::RequestEnergy::Off,
     }
 }
 

@@ -60,6 +60,8 @@ fn table() -> NvmlFns {
         memory_info: None,
         pcie_throughput: None,
         nvlink_state: Some(link),
+        utilization: None,
+        device_count: None,
     }
 }
 

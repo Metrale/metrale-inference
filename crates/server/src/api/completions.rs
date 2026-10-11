@@ -397,6 +397,7 @@ pub(super) async fn completions_stream(
                 accepted_prediction_tokens,
                 guard_stop: _,
                 prefill_started_at,
+                energy,
             } => {
                 let inference_usage = pending.complete(crate::request_accounting::Finish {
                     outcome: crate::request_accounting::outcome_of(&finish_reason),
@@ -406,6 +407,7 @@ pub(super) async fn completions_stream(
                     prefill_started_at,
                     ttft_ms: time_to_first_token_ms,
                     decode_ms: decode_time_ms,
+                    energy,
                 });
                 let tps = crate::ir::Usage::decode_rate_tok_s(completion_tokens, decode_time_ms);
                 let usage = Usage {

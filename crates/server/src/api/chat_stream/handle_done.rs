@@ -34,6 +34,7 @@ pub(super) fn handle_done(
     cached_prompt_tokens: u32,
     accepted_prediction_tokens: usize,
     prefill_started_at: std::time::Instant,
+    energy: metrale_telemetry::energy::RequestEnergy,
 ) -> DeltaVec {
     let mut deltas: DeltaVec = Vec::new();
 
@@ -214,6 +215,7 @@ pub(super) fn handle_done(
         prefill_started_at,
         ttft_ms: time_to_first_token_ms,
         decode_ms: decode_time_ms,
+        energy,
     });
 
     // 2026-09-26: Terminal delta: finish reason and usage. How usage is framed on the

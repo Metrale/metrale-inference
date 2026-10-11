@@ -140,6 +140,8 @@ pub(super) async fn run_blocking_path(args: BlockingPathArgs<'_>) -> super::chat
     let mut total_cached_prompt_tokens = 0u32;
     let mut total_accepted_prediction_tokens = 0usize;
     let mut first_prefill = None;
+    // 2026-10-11: Every choice's energy, merged (`RequestEnergy::merge`).
+    let mut energy: Option<metrale_telemetry::energy::RequestEnergy> = None;
     let mut outcome = metrale_qci_dump::contract::usage::Outcome::Completed;
 
     let prompt_tokens = std::sync::Arc::new(prompt_tokens);
@@ -221,6 +223,7 @@ pub(super) async fn run_blocking_path(args: BlockingPathArgs<'_>) -> super::chat
             first_ttft = response.time_to_first_token_ms;
             first_prefill = Some(response.prefill_started_at);
         }
+        energy = Some(energy.map_or(response.energy, |e| e.merge(response.energy)));
         // 2026-10-11: A deadline cut on any choice makes the request's outcome `timeout`.
         let choice_outcome = crate::request_accounting::outcome_of(&response.finish_reason);
         if choice_outcome == metrale_qci_dump::contract::usage::Outcome::Timeout {
@@ -285,7 +288,7 @@ pub(super) async fn run_blocking_path(args: BlockingPathArgs<'_>) -> super::chat
         state,
         req_ctx,
         pending,
-        first_prefill,
+        first_prefill.zip(energy),
         outcome,
         all_choices,
         total_completion_tokens,

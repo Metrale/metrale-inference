@@ -79,7 +79,7 @@ written in two places:
 | `timings.ttft_ms` | ms | derived: queue + scheduler TTFT |
 | `timings.total_ms` | ms | derived: queue + TTFT + decode, up to the finish frame (serialization after it is not counted) |
 | `timings.tpot_us` | µs | derived: decode / (completion − 1); `absent: not_applicable` below 2 tokens |
-| `energy` | `{millijoules, rail, window_mono_ns}` | `{"absent": "unsupported"}` with no rail. The response path does not attribute energy to one request; the device-level energy is in `/metrics`. |
+| `energy` | `{"derived": {millijoules, rail: "gpu_rail", window_mono_ns}}` | The request's token share of the NVML energy counter (`nvmlDeviceGetTotalEnergyConsumption`) between the two device samples at or before its start and its finish; `window_mono_ns` is `measured`, those two samples' times on the process's monotonic telemetry clock. Under batching the share is by tokens emitted in the window. `{"absent": "unsupported"}` at `--telemetry off` (no device layer runs); `{"absent": "unavailable"}` when NVML is not readable, the window has no sample or emitted no tokens, and for a request with no finish frame. Several choices of one request are summed over one window covering them, only when every choice was attributed. |
 | `finished_at_unix_ms` | Unix ms | when the record was written |
 
 When a record is written:
@@ -123,10 +123,13 @@ Already exported, unchanged:
   (`metrale_gpu_*`), and scheduler queue depth and KV occupancy (`metrale_sched_*`,
   `metrale_kv_*`). At the default `off`, these series are absent.
 
-Not exported:
+Added with the device layer, so also only at `--telemetry basic|kernel` and absent (never
+`0`) when NVML does not answer:
 
-- GPU utilization. The NVML layer does not read it.
-- GPU count.
+- `metrale_gpu_utilization_percent`: `nvmlDeviceGetUtilizationRates`, percent of the
+  driver's last sample period the sampled GPU was busy. A measured idle GPU is `0`.
+- `metrale_gpu_count`: `nvmlDeviceGetCount_v2`, the GPUs NVML reports to this process
+  (the sampler reads one of them, `--gpu-ordinal`).
 
 A `--model-recipe` that pins a source revision other than the loaded Hub snapshot's is
 refused at startup: the records would otherwise name a recipe that is not what is served.

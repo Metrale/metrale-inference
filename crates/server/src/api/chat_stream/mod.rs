@@ -287,6 +287,7 @@ pub(crate) async fn run_chat_stream(
                 accepted_prediction_tokens,
                 guard_stop,
                 prefill_started_at,
+                energy,
             } => {
                 // 2026-09-26: `.or()`: the stream-side guards in `handle_token.rs` may have
                 // set `guard_stop` before this frame arrives; the scheduler's value fills
@@ -303,6 +304,7 @@ pub(crate) async fn run_chat_stream(
                     cached_prompt_tokens,
                     accepted_prediction_tokens,
                     prefill_started_at,
+                    energy,
                 )
             }
             StreamEvent::Error(msg) => handle_error::handle_error(&ctx, msg),

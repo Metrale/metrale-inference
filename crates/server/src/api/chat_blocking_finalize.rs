@@ -19,7 +19,7 @@ pub(super) fn finalize_response(
     state: Arc<AppState>,
     req_ctx: Option<axum::extract::Extension<crate::rate_limiter::RequestContext>>,
     pending: &crate::request_accounting::Pending,
-    first_prefill: Option<std::time::Instant>,
+    first_prefill: Option<(std::time::Instant, metrale_telemetry::energy::RequestEnergy)>,
     outcome: metrale_qci_dump::contract::usage::Outcome,
     all_choices: Vec<ir::Choice>,
     total_completion_tokens: usize,
@@ -46,8 +46,9 @@ pub(super) fn finalize_response(
     };
 
     // 2026-10-11: Token and latency counters and the usage record, in one place.
-    // `first_prefill` is set by the first choice, which every finalized response has.
-    let inference_usage = first_prefill.and_then(|prefill_started_at| {
+    // `first_prefill` is set by the first choice, which every finalized response has,
+    // with the merged energy of every choice.
+    let inference_usage = first_prefill.and_then(|(prefill_started_at, energy)| {
         pending.complete(crate::request_accounting::Finish {
             outcome,
             completion: total_completion_tokens,
@@ -56,6 +57,7 @@ pub(super) fn finalize_response(
             prefill_started_at,
             ttft_ms: first_ttft,
             decode_ms: last_decode_time_ms,
+            energy,
         })
     });
 

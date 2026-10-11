@@ -88,6 +88,8 @@ async fn run_choices(
     let mut last_decode_time_ms = 0.0f64;
     let mut last_tps = 0.0f64;
     let mut first: Option<(std::time::Instant, f64)> = None;
+    // 2026-10-11: Every choice's energy, merged (`RequestEnergy::merge`).
+    let mut energy: Option<metrale_telemetry::energy::RequestEnergy> = None;
     let mut outcome = metrale_qci_dump::contract::usage::Outcome::Completed;
 
     for (prompt_i, prompt_tokens) in prompts.iter().enumerate() {
@@ -207,6 +209,7 @@ async fn run_choices(
             if first.is_none() {
                 first = Some((response.prefill_started_at, response.time_to_first_token_ms));
             }
+            energy = Some(energy.map_or(response.energy, |e| e.merge(response.energy)));
             let choice_outcome = crate::request_accounting::outcome_of(&response.finish_reason);
             if choice_outcome == metrale_qci_dump::contract::usage::Outcome::Timeout {
                 outcome = choice_outcome;
@@ -229,17 +232,20 @@ async fn run_choices(
 
     // 2026-10-11: The record takes the first choice's prefill instant and TTFT, the last
     // choice's decode window, and the summed counts.
-    let inference_usage = first.and_then(|(prefill_started_at, ttft_ms)| {
-        pending.complete(crate::request_accounting::Finish {
-            outcome,
-            completion: sum_completion,
-            cached_prompt: sum_cached,
-            reasoning: sum_reasoning,
-            prefill_started_at,
-            ttft_ms,
-            decode_ms: last_decode_time_ms,
-        })
-    });
+    let inference_usage = first
+        .zip(energy)
+        .and_then(|((prefill_started_at, ttft_ms), energy)| {
+            pending.complete(crate::request_accounting::Finish {
+                outcome,
+                completion: sum_completion,
+                cached_prompt: sum_cached,
+                reasoning: sum_reasoning,
+                prefill_started_at,
+                ttft_ms,
+                decode_ms: last_decode_time_ms,
+                energy,
+            })
+        });
     let usage = Usage {
         prompt_tokens: sum_prompt,
         completion_tokens: sum_completion,

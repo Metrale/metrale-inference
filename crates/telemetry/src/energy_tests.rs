@@ -102,10 +102,48 @@ fn a_request_is_charged_its_token_share_of_its_window() {
     r.push(point(100, 6_000, 30));
     r.push(point(200, 9_000, 60));
     // 2026-09-26: 20 tokens over [100, 200]: the window drew 3000 mJ for 30 tokens.
-    assert_eq!(request_millijoules(&r, 100, 200, 20), Some(2_000));
+    // 2026-10-11: The window is the two ring points the figure was read between.
+    assert_eq!(
+        request_energy(&r, 150, 250, 20),
+        Some(EnergyShare {
+            millijoules: 2_000,
+            window_ns: (100, 200)
+        })
+    );
     // 2026-09-26: A window with no tokens emitted cannot attribute.
     let idle = EnergyRing::with_capacity(4);
     idle.push(point(0, 0, 5));
     idle.push(point(100, 500, 5));
-    assert_eq!(request_millijoules(&idle, 0, 100, 1), None);
+    assert_eq!(request_energy(&idle, 0, 100, 1), None);
+}
+
+#[test]
+fn choices_merge_into_one_window_only_when_all_are_attributed() {
+    let a = RequestEnergy::Attributed(EnergyShare {
+        millijoules: 5,
+        window_ns: (10, 40),
+    });
+    let b = RequestEnergy::Attributed(EnergyShare {
+        millijoules: 7,
+        window_ns: (20, 60),
+    });
+    assert_eq!(
+        a.merge(b),
+        RequestEnergy::Attributed(EnergyShare {
+            millijoules: 12,
+            window_ns: (10, 60)
+        })
+    );
+    assert_eq!(
+        a.merge(RequestEnergy::Unattributed),
+        RequestEnergy::Unattributed
+    );
+    assert_eq!(
+        RequestEnergy::Unattributed.merge(a),
+        RequestEnergy::Unattributed
+    );
+    assert_eq!(
+        RequestEnergy::Unattributed.merge(RequestEnergy::Off),
+        RequestEnergy::Off
+    );
 }

@@ -23,8 +23,8 @@ use std::time::Instant;
 use crate::clock::{Clock, MonotonicClock};
 use crate::device::{DeviceReading, SAMPLE_WORDS};
 use crate::energy::{
-    Advance, CounterTracker, EnergyPoint, EnergyRing, RING_SLOTS, joules_per_token,
-    request_millijoules,
+    Advance, CounterTracker, EnergyPoint, EnergyRing, RING_SLOTS, RequestEnergy, joules_per_token,
+    request_energy,
 };
 use crate::instrument::{Counter, Gauge, GaugeF64};
 use crate::kernel::{KernelInstruments, LANES};
@@ -228,10 +228,11 @@ impl Telemetry {
     }
 
     /// 2026-09-26: A request finished. Its energy is attributed from the ring
-    /// window its lifetime spans, only while the device layer is available.
-    pub fn request_finished(&self, r: &RequestTiming) {
+    /// window its lifetime spans, only while the device layer is available, and
+    /// returned for the request's own usage record (2026-10-11).
+    pub fn request_finished(&self, r: &RequestTiming) -> RequestEnergy {
         if !self.on() {
-            return;
+            return RequestEnergy::Off;
         }
         let end = self.clock.now_ns();
         let start = end.saturating_sub(r.e2e_ns());
@@ -239,8 +240,9 @@ impl Telemetry {
             .ring
             .get()
             .filter(|_| self.device_state() == DeviceState::Available)
-            .and_then(|ring| request_millijoules(ring, start, end, r.output_tokens));
-        self.requests.record(r, energy);
+            .and_then(|ring| request_energy(ring, start, end, r.output_tokens));
+        self.requests.record(r, energy.map(|e| e.millijoules));
+        energy.map_or(RequestEnergy::Unattributed, RequestEnergy::Attributed)
     }
 
     /// 2026-09-26: A scheduler step begins. At level `Kernel`, arms per-kernel

@@ -64,12 +64,17 @@ fn a_scripted_counter_delta_yields_the_exact_joules_per_token() {
     );
 
     // 2026-09-26: A request that emitted 40 of the window's 100 tokens over
-    // exactly that window is charged 40 × 0.5 J.
-    t.request_finished(&RequestTiming {
+    // exactly that window is charged 40 × 0.5 J; the request's own record gets the same
+    // figure (2026-10-11).
+    let share = t.request_finished(&RequestTiming {
         ttft_ms: 200.0,
         decode_ms: 800.0,
         output_tokens: 40,
     });
+    assert!(
+        matches!(share, crate::energy::RequestEnergy::Attributed(s) if s.millijoules == 20_000),
+        "{share:?}"
+    );
     let e = t.requests.energy.snapshot();
     assert_eq!((e.count, e.sum), (1, 20_000));
     assert_eq!(t.requests.energy_unattributed.get(), 0);
@@ -137,11 +142,12 @@ fn a_missing_driver_is_reported_and_requests_stay_unattributed() {
 
     clock.0.store(5 * SEC, Ordering::Relaxed);
     t.tokens(10);
-    t.request_finished(&RequestTiming {
+    let share = t.request_finished(&RequestTiming {
         ttft_ms: 10.0,
         decode_ms: 90.0,
         output_tokens: 10,
     });
+    assert_eq!(share, crate::energy::RequestEnergy::Unattributed);
     assert_eq!(
         t.requests.finished.get(),
         1,
@@ -164,11 +170,12 @@ fn level_off_records_nothing_and_exports_nothing() {
     t.tokens(5);
     t.spec_verified(3, 2);
     t.stream_sync();
-    t.request_finished(&RequestTiming {
+    let share = t.request_finished(&RequestTiming {
         ttft_ms: 1.0,
         decode_ms: 1.0,
         output_tokens: 2,
     });
+    assert_eq!(share, crate::energy::RequestEnergy::Off);
     assert_eq!(t.tokens.get(), 0);
     assert!(t.spec.widths().is_empty());
     assert_eq!(t.sched.stream_syncs.get(), 0);
@@ -198,6 +205,8 @@ fn readers_racing_the_sampler_see_whole_samples() {
                 pcie_tx_kbps: v,
                 pcie_rx_kbps: v,
                 nvlink_active_links: v,
+                gpu_util_pct: v,
+                device_count: v,
             }
         }
         fn read_errors(&self) -> u64 {

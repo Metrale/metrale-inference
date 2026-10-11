@@ -258,7 +258,8 @@ impl InferenceUsage {
         )
     }
 
-    /// 2026-10-11: Assemble one record. Pure: every clock reading is an argument.
+    /// 2026-10-11: Assemble one record. Pure: every clock and device reading is an argument.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         runtime: RuntimeIdentity,
         ids: (RequestId, TraceId),
@@ -266,6 +267,7 @@ impl InferenceUsage {
         outcome: Outcome,
         tokens: Tokens,
         timings: RuntimeTimings,
+        energy: Field<RequestEnergy>,
         finished_at_unix_ms: i64,
     ) -> Self {
         Self {
@@ -278,7 +280,7 @@ impl InferenceUsage {
             outcome,
             tokens,
             timings,
-            energy: Field::Absent(AbsentReason::Unsupported),
+            energy,
             finished_at_unix_ms,
         }
     }

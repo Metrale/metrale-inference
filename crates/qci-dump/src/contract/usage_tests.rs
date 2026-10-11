@@ -121,6 +121,7 @@ fn record(outcome: Outcome) -> InferenceUsage {
         outcome,
         Tokens::finished(10, 2, 0, None),
         RuntimeTimings::derive(5, Some(span(1, 2.0, 3.0)), 2),
+        Field::Absent(AbsentReason::Unsupported),
         6,
     )
 }
