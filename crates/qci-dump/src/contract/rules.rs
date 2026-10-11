@@ -50,6 +50,22 @@ pub fn model_name(s: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b':' | b'/' | b'-'))
 }
 
+/// 2026-10-11: `recipe_id`: `^[a-z0-9][a-z0-9._-]{0,63}(/[a-z0-9][a-z0-9._-]{0,63})?$`.
+pub fn recipe_id(s: &str) -> bool {
+    let part = |p: &str| {
+        let b = p.as_bytes();
+        (1..=64).contains(&b.len())
+            && (b[0].is_ascii_lowercase() || b[0].is_ascii_digit())
+            && b.iter().all(|c| {
+                c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, b'.' | b'_' | b'-')
+            })
+    };
+    match s.split_once('/') {
+        Some((family, stem)) => part(family) && part(stem),
+        None => part(s),
+    }
+}
+
 /// 2026-10-11: `value`: at most 1024 characters.
 pub fn value(s: &str) -> bool {
     s.chars().count() <= 1024
@@ -138,6 +154,21 @@ mod tests {
         }
         for bad in ["", "gpt oss", "-m", "/m", "m\n", "é", &"a".repeat(129)] {
             assert!(!model_name(bad), "{bad:?}");
+        }
+        for ok in ["gpt-oss/gpt-oss-20b-mxfp4", "qwen3.6-27b", "a/b"] {
+            assert!(recipe_id(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "GPT/OSS",
+            "a/b/c",
+            "/b",
+            "a/",
+            "-a",
+            "a b",
+            &"a".repeat(65),
+        ] {
+            assert!(!recipe_id(bad), "{bad}");
         }
         assert!(timestamp(0) && !timestamp(-1));
         assert_eq!(version(1), Ok(()));

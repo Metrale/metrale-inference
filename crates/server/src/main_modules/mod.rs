@@ -15,6 +15,7 @@ pub(crate) mod listener_rcvbuf;
 pub(crate) mod memory_probe;
 pub(crate) mod middleware;
 pub(crate) mod model_host;
+pub(crate) mod model_identity;
 pub(crate) mod model_swap;
 pub(crate) mod promotion;
 pub(crate) mod serve;

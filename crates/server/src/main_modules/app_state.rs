@@ -38,6 +38,9 @@ pub struct AppState {
     pub memory: crate::main_modules::memory_probe::MemoryFacts,
     pub tokenizer: ChatTokenizer,
     pub model_name: String,
+    /// 2026-10-11: The loaded checkpoint's revision and the launch recipe's digest
+    /// (`model_identity`).
+    pub(crate) model_identity: crate::main_modules::model_identity::ModelIdentity,
     /// 2026-09-26: The first `--lora-adapter`'s name, if any. No handler reads
     /// it.
     pub adapter_name: Option<String>,

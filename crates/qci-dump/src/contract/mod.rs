@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-11: The runtime's binding of the QCI platform contracts v1 (investor-mvp #41):
-//! `InferenceUsage`, `HardwareFingerprint` and `CompatibilityReceipt`, plus the shared
+//! `InferenceUsage`, `HardwareFingerprint` and `CompatibilityReceipt`, the launch
+//! `ModelRecipe` the runtime reads ([`recipe`]), plus the shared
 //! shapes they use (provenance [`field::Field`], fixed-width hex [`ids`], canonical JSON).
 //!
 //! Every field name, unit and closed word the runtime writes for these documents is in
@@ -25,6 +26,7 @@ pub mod field;
 pub mod hardware;
 pub mod ids;
 pub mod receipt;
+pub mod recipe;
 pub mod rules;
 pub mod usage;
 

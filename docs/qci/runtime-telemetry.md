@@ -69,7 +69,7 @@ written in two places:
 |---|---|---|
 | `request_id`, `trace_id` | 32 lower-case hex | from the stamp |
 | `served_model` | the served model name, a route token `[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}` | a name outside it withholds the record (logged) |
-| `recipe` | SHA-256 hex or `null` | `null`: no launcher passes a recipe digest yet |
+| `recipe` | SHA-256 hex or `null` | SHA-256 of the canonical JSON of the `ModelRecipe` given with `met serve --model-recipe recipe.json` (mfs PC-W); `null` without the flag |
 | `runtime_commit` | 40 hex | build-time `METRALE_BUILD_COMMIT` |
 | `outcome` | `completed`, `timeout`, `cancelled`, `{"engine_error": {"error": <kind>}}` | — |
 | `tokens.prompt`, `.completion`, `.cached_prompt` | count | measured |
@@ -109,6 +109,8 @@ A record never holds prompt or response text.
 | `metrale_build_info{version,commit}` | gauge = 1 | `commit="unstamped"` without `METRALE_BUILD_COMMIT` |
 | `metrale_process_start_time_seconds` | gauge | Unix s at process start. Uptime = scrape time − this. |
 | `metrale_startup_phase` | gauge | index of the last startup phase entered (`11` = listening) |
+| `metrale_model_revision_info{model,revision}` | gauge = 1 | the loaded checkpoint's commit. Only for a Hub snapshot (`.../snapshots/<commit>`); absent for any other directory |
+| `metrale_model_recipe_info{model,recipe}` | gauge = 1 | the `--model-recipe` digest; absent without one |
 
 `metrale_prompt_tokens_total`, `metrale_generation_tokens_total` and
 `metrale_time_to_first_token_seconds` now count `/v1/completions` too. They are written in
@@ -125,7 +127,9 @@ Not exported:
 
 - GPU utilization. The NVML layer does not read it.
 - GPU count.
-- Model revision.
+
+A `--model-recipe` that pins a source revision other than the loaded Hub snapshot's is
+refused at startup: the records would otherwise name a recipe that is not what is served.
 
 ## Compatibility receipt (#46)
 

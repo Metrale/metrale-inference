@@ -52,6 +52,8 @@ pub(crate) struct Finish {
 pub(crate) struct Pending {
     stamp: RequestStamp,
     served_model: String,
+    /// 2026-10-11: The launch recipe's digest (`model_identity`), `None` without one.
+    recipe: Option<metrale_qci_dump::contract::ids::Sha256Digest>,
     prompt_len: usize,
     /// 2026-10-11: The served model has a reasoning channel, so a reasoning count of 0 is
     /// a measurement rather than an unsupported field.
@@ -68,6 +70,7 @@ impl Pending {
         Self {
             stamp,
             served_model: state.model_name.clone(),
+            recipe: state.model_identity.recipe,
             prompt_len,
             reasoning_channel: state.think_end_token_id.is_some()
                 || state.tokenizer.harmony().is_some(),
@@ -145,8 +148,12 @@ impl Pending {
         crate::metrics::REQUEST_OUTCOMES
             .with_label_values(&[outcome.label()])
             .inc();
+        let runtime = RuntimeIdentity {
+            runtime_commit: runtime_commit()?,
+            recipe: self.recipe,
+        };
         let record = InferenceUsage::new(
-            runtime_identity()?,
+            runtime,
             self.stamp.ids(),
             &self.served_model,
             outcome,
@@ -181,33 +188,22 @@ pub(crate) fn outcome_of(finish_reason: &str) -> Outcome {
     Outcome::of_finish_reason(finish_reason, crate::ir::FINISH_REASON_TIMEOUT)
 }
 
-/// 2026-10-11: The build's runtime commit, when it was stamped (see [`runtime_identity`]).
-pub(crate) fn runtime_commit() -> Option<GitCommit> {
-    runtime_identity().map(|id| id.runtime_commit)
-}
-
 /// 2026-10-11: The runtime commit this binary was stamped with at build time
-/// (`METRALE_BUILD_COMMIT`, a full 40-hex commit) and the recipe digest, which no launcher
-/// passes yet, so it is `null`. `None`, logged once, when the stamp is missing or invalid.
-fn runtime_identity() -> Option<RuntimeIdentity> {
-    static IDENTITY: OnceLock<Option<RuntimeIdentity>> = OnceLock::new();
-    *IDENTITY.get_or_init(|| {
-        let stamp = crate::build_stamp::RAW;
-        match crate::build_stamp::build_commit() {
-            Some(runtime_commit) => Some(RuntimeIdentity {
-                runtime_commit,
-                recipe: None,
-            }),
-            None => {
-                tracing::warn!(
-                    "inference usage records are withheld: this binary was built without a \
-                     40-hex METRALE_BUILD_COMMIT (got {stamp:?}), and every record is keyed \
-                     by the runtime commit"
-                );
-                None
-            }
-        }
-    })
+/// (`crate::build_stamp`). `None`, logged once, when the stamp is missing or invalid.
+pub(crate) fn runtime_commit() -> Option<GitCommit> {
+    static WARNED: OnceLock<()> = OnceLock::new();
+    let commit = crate::build_stamp::build_commit();
+    if commit.is_none() {
+        WARNED.get_or_init(|| {
+            tracing::warn!(
+                "inference usage records are withheld: this binary was built without a \
+                 40-hex METRALE_BUILD_COMMIT (got {:?}), and every record is keyed by the \
+                 runtime commit",
+                crate::build_stamp::RAW
+            );
+        });
+    }
+    commit
 }
 
 /// 2026-10-11: The `/metrics` counters of a finished request.

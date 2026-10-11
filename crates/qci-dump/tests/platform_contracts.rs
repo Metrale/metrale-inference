@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use metrale_qci_dump::contract::canonical::{digest, sha256};
 use metrale_qci_dump::contract::hardware::HardwareFingerprint;
 use metrale_qci_dump::contract::receipt::CompatibilityReceipt;
+use metrale_qci_dump::contract::recipe::LaunchRecipe;
 use metrale_qci_dump::contract::usage::InferenceUsage;
 use serde_json::Value;
 
@@ -148,5 +149,50 @@ fn the_binding_agrees_with_every_fixture_verdict() {
     assert_eq!(
         seen_invalid, all,
         "a bound kind has no invalid fixture in the index"
+    );
+}
+
+/// 2026-10-11: The rules of `model-recipe` the runtime's launch-recipe reader enforces; the
+/// rest (closed objects, weights, images, env keys, precision roles) are Control's to admit.
+const RECIPE_RULES: [&str; 4] = [
+    "immutable-revision",
+    "repository-format",
+    "recipe-id-format",
+    "integer-units",
+];
+
+#[test]
+fn the_launch_recipe_reader_digests_every_valid_recipe_and_refuses_what_it_reads_wrong() {
+    let root = bundle().join("v1");
+    let index: Value = serde_json::from_slice(&read(&root.join("INDEX.json"))).unwrap();
+    let mut valid = 0;
+    for entry in index["valid"].as_array().unwrap() {
+        if entry["schema"] != "model-recipe" {
+            continue;
+        }
+        let file = entry["file"].as_str().unwrap();
+        let recipe = LaunchRecipe::read(&read(&root.join(file)))
+            .unwrap_or_else(|e| panic!("{file} refused: {e}"));
+        assert_eq!(recipe.digest.to_hex(), entry["jcs_sha256"], "{file}");
+        valid += 1;
+    }
+    assert!(valid > 0, "no valid model-recipe fixture in the index");
+    let mut refused = BTreeSet::new();
+    for entry in index["invalid"].as_array().unwrap() {
+        let rule = entry["rule"].as_str().unwrap();
+        if entry["schema"] != "model-recipe" || !RECIPE_RULES.contains(&rule) {
+            continue;
+        }
+        let file = entry["file"].as_str().unwrap();
+        assert!(
+            LaunchRecipe::read(&read(&root.join(file))).is_err(),
+            "{file} breaks {rule} but was read"
+        );
+        refused.insert(rule);
+    }
+    assert_eq!(
+        refused,
+        RECIPE_RULES.into_iter().collect(),
+        "a rule the reader enforces has no fixture"
     );
 }
