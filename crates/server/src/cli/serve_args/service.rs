@@ -294,4 +294,20 @@ pub struct ServeServiceArgs {
     /// not exceed `--max-lora-rank` (64 when unset).
     #[arg(long, value_name = "NAME=PATH_OR_HF_ID", value_parser = parse_lora_adapter_spec)]
     pub lora_stageable_disk: Vec<(String, String)>,
+
+    /// Serve a mock (rehearsal) of MODEL instead of MODEL: its architecture, formats and
+    /// per-layer precision exactly, with the layers and synthetic weights the mock spec (TOML,
+    /// see `met ml-utils mockify --help`) states. No weight file is read or downloaded: only
+    /// config, quantization metadata, tokenizer files and safetensors headers. GET /forward
+    /// discloses the spec digest (`mock`), and every gate and accuracy benchmark refuses the
+    /// server.
+    #[arg(long, value_name = "SPEC")]
+    pub mock: Option<std::path::PathBuf>,
+
+    /// Count, per MoE layer, the prefill rows each expert receives, and rewrite this JSON file
+    /// with the counts every 2 s: the routing profile a mock spec's `routing.histogram` names.
+    /// It synchronizes the device once per MoE layer in prefill, so it is a profiling run, not
+    /// a measurement.
+    #[arg(long, value_name = "PATH")]
+    pub record_routing: Option<std::path::PathBuf>,
 }

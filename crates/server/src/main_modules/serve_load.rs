@@ -63,6 +63,7 @@ pub(crate) fn load_model(
         forward,
         auto_max_batch_size,
         device_budget,
+        mock,
         drafter_weights_sha256,
     }) = engine::load_engine(args)?
     else {
@@ -336,6 +337,7 @@ pub(crate) fn load_model(
             forward: forward.forward.to_string(),
             plan_digest: forward.plan_digest,
             auto_max_batch_size,
+            mock,
             moe_expert_tables: metrale_model_layers::layers::moe_expert_tables()
                 .map(|t| t.name().to_string()),
             kernel_tree: crate::main_modules::serve_phases::expert_tables::planned_tree()

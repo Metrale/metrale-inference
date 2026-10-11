@@ -1694,6 +1694,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "metrale-ml-utils"
+version = "1.0.0-beta-preview"
+dependencies = [
+ "metrale-circuit",
+ "metrale-config",
+ "metrale-core",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "toml",
+]
+
+[[package]]
 name = "metrale-model-arch"
 version = "1.0.0-beta-preview"
 dependencies = [
@@ -1783,6 +1797,7 @@ dependencies = [
  "metrale-gpu-runtime",
  "metrale-gpu-sys",
  "metrale-kernels",
+ "metrale-ml-utils",
  "metrale-storage",
  "metrale-telemetry",
  "parking_lot",
@@ -1838,6 +1853,7 @@ dependencies = [
  "metrale-grammar",
  "metrale-kernel-tree",
  "metrale-kernels",
+ "metrale-ml-utils",
  "metrale-model-arch",
  "metrale-model-engine",
  "metrale-model-layers",

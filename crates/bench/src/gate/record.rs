@@ -38,6 +38,11 @@ pub struct GateRecord {
     /// for a clean tree; `check_one` fails a record whose list is not empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dirty_paths: Vec<String>,
+    /// 2026-10-03: The digest of the mock (rehearsal) checkpoint the measured server ran, from
+    /// its `GET /forward` (`record_serve::MOCK`); absent for a real checkpoint. `check_one` and
+    /// `check_group` fail a record that has one: a mock never certifies a number.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mock: Option<String>,
     pub recorded_at: u64,
     pub target_model: String,
     /// 2026-09-26: The run record's `params`, rendered into `command` as
@@ -334,6 +339,8 @@ impl GateRecord {
             benchmark_name: record.benchmark_name.clone(),
             git_sha,
             dirty_paths,
+            // 2026-10-03: Attached afterwards by `with_serve_resolved`, from the live forward.
+            mock: None,
             recorded_at: record.recorded_at,
             target_model: record.target_model.clone(),
             params: record.params.clone(),

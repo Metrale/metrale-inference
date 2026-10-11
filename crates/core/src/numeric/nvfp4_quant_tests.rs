@@ -2,7 +2,7 @@
 
 //! 2026-09-25: Goldens and the round-trip property for [`super::quantize_to_nvfp4`].
 //!
-//! Owner: model-arch weight loader (GLM-5.3).
+//! Owner: metrale-core.
 //! Invariants: every expected code and value is written out from the `E2M1` and `E4M3`
 //! bit layouts, not read from the runtime tables the code under test uses.
 
@@ -79,10 +79,10 @@ fn exactly_representable_data_round_trips_exactly() {
     );
 }
 
-/// 2026-09-25: Round-to-nearest-even puts every tie on the even code;
-/// truncation would put all seven on the code below.
+/// 2026-10-04: The GPU rule puts every E2M1 tie on the smaller magnitude (inclusive
+/// thresholds); round-to-nearest-even would put 0.75, 1.75 and 3.5 one code higher.
 #[test]
-fn e2m1_ties_go_to_the_even_code() {
+fn e2m1_ties_go_to_the_smaller_magnitude() {
     // 2026-09-25: Midpoints of consecutive E2M1 magnitudes: 0|0.5, 0.5|1,
     // 1|1.5, 1.5|2, 2|3, 3|4, 4|6. The trailing 6.0 fixes the block amax so the
     // effective scale is exactly 1; the second block pins the tensor amax at
@@ -93,34 +93,38 @@ fn e2m1_ties_go_to_the_even_code() {
     values.extend(ladder_block(448.0));
     let q = quantize_to_nvfp4("t", &values, 1, 32).unwrap();
     assert_eq!(q.scales[0], E4M3_ONE, "block amax 6 / 6 / 1 = 1.0");
-
-    // 2026-09-25: Even codes: 0 (0.0), 2 (1.0), 2 (1.0), 4 (2.0), 4 (2.0),
-    // 6 (4.0), 6 (4.0); then the exact 6.0 is code 7.
-    let want = [0u8, 2, 2, 4, 4, 6, 6, 7];
+    let want = [0u8, 1, 2, 3, 4, 5, 6, 7];
     for (i, w) in want.iter().enumerate() {
         assert_eq!(nibble(&q.packed, i), *w, "tie {i}");
     }
 }
 
-/// 2026-09-25: The `E4M3` scale encoder, against written-out values and both
-/// tie directions.
+/// 2026-10-04: The block-scale encoder is the GPU's `float_to_fp8_e4m3`: written-out values,
+/// mantissa ties rounded away from zero, the subnormal rule and the flush below 2^-9.
 #[test]
-fn e4m3_scales_round_to_nearest_even() {
-    assert_eq!(encode_e4m3_rne(0.0), E4M3_ZERO);
-    assert_eq!(encode_e4m3_rne(1.0), E4M3_ONE);
-    assert_eq!(encode_e4m3_rne(448.0), E4M3_MAX);
+fn e4m3_scales_round_as_the_gpu_kernel_does() {
+    assert_eq!(e4m3_scale_gpu(0.0), E4M3_ZERO);
+    assert_eq!(e4m3_scale_gpu(1.0), E4M3_ONE);
+    assert_eq!(e4m3_scale_gpu(448.0), E4M3_MAX);
     assert_eq!(
-        encode_e4m3_rne(1.0e9),
+        e4m3_scale_gpu(1.0e9),
         E4M3_MAX,
         "saturates, never wraps to NaN"
     );
-    assert_eq!(encode_e4m3_rne(0.001_953_125), E4M3_MIN_SUBNORMAL, "2^-9");
-    // 2026-09-25: 1.0625 is exactly between 1.0 (0x38, even) and 1.125 (0x39).
-    assert_eq!(encode_e4m3_rne(1.0625), E4M3_ONE);
-    // 2026-09-25: 1.1875 is exactly between 1.125 (0x39) and 1.25 (0x3A, even).
-    assert_eq!(encode_e4m3_rne(1.1875), E4M3_ONE_QUARTER_UP);
-    // 2026-09-25: Not a tie: the nearest code wins.
-    assert_eq!(encode_e4m3_rne(1.1), E4M3_ONE_EIGHTH_UP);
+    assert_eq!(e4m3_scale_gpu(0.001_953_125), E4M3_MIN_SUBNORMAL, "2^-9");
+    // 2026-10-04: 1.0625 is exactly between 1.0 (0x38) and 1.125 (0x39): away from zero.
+    assert_eq!(e4m3_scale_gpu(1.0625), E4M3_ONE_EIGHTH_UP);
+    // 2026-10-04: 1.1875 is exactly between 1.125 (0x39) and 1.25 (0x3A): away from zero.
+    assert_eq!(e4m3_scale_gpu(1.1875), E4M3_ONE_QUARTER_UP);
+    assert_eq!(
+        e4m3_scale_gpu(1.1),
+        E4M3_ONE_EIGHTH_UP,
+        "not a tie: the nearest code"
+    );
+    // 2026-10-04: Below 2^-9 flushes to zero (nearest-even would give 0x01 for 0.75 * 2^-9).
+    assert_eq!(e4m3_scale_gpu(0.75 * 0.001_953_125), E4M3_ZERO);
+    // 2026-10-04: Just under 2^-6 is capped at subnormal code 7, never promoted to 0x08.
+    assert_eq!(e4m3_scale_gpu(0.015_6), 0x07);
 }
 
 /// 2026-09-25: The round-trip error is bounded by what NVFP4 can represent.
@@ -219,18 +223,14 @@ fn an_all_zero_tensor_quantises_to_zeros() {
     assert!(back.iter().all(|v| *v == 0.0), "no NaN from a 0 * 0 scale");
 }
 
-/// 2026-09-25: The sign survives a magnitude that rounds to zero: `-0.0` is code `0x8`.
+/// 2026-10-04: The GPU rule sets the sign bit for `v < 0` only: a negative zero is code 0, a
+/// tiny negative that rounds to zero keeps its sign (code 0x8).
 #[test]
-fn the_sign_survives_a_magnitude_that_rounds_to_zero() {
-    assert_eq!(encode_e2m1_rne(-0.0), 0x8);
-    assert_eq!(encode_e2m1_rne(0.0), 0x0);
-    // 2026-09-25: A negative below half the smallest step still keeps its sign.
-    assert_eq!(encode_e2m1_rne(-1.0e-9), 0x8);
-    assert_eq!(
-        encode_e2m1_rne(-7.0),
-        0xF,
-        "saturates to -6, keeping the sign"
-    );
+fn the_sign_bit_follows_v_below_zero() {
+    assert_eq!(e2m1_gpu(-0.0), 0x0);
+    assert_eq!(e2m1_gpu(0.0), 0x0);
+    assert_eq!(e2m1_gpu(-1.0e-9), 0x8);
+    assert_eq!(e2m1_gpu(-7.0), 0xF, "saturates to -6, keeping the sign");
 }
 
 /// 2026-09-25: The row-band split changes no byte: `scale_2` is computed before

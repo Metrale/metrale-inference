@@ -57,6 +57,7 @@ pub(super) fn load_weights(
     total_reserve: usize,
     gdn_two_phase_bytes: usize,
     max_batch_tokens_pre: usize,
+    mock: Option<&serve_phases::mock::MockServe>,
 ) -> Result<metrale_model_weights::weights::WeightStore> {
     metrale_telemetry::progress::phase(5, "weight load");
     let oom_reserve_bytes = args.oom_guard_mb * 1024 * 1024;
@@ -69,6 +70,7 @@ pub(super) fn load_weights(
         ep_rank,
         ep_size,
         oom_reserve_bytes,
+        mock,
     )?;
 
     metrale_model_weights::weights::auto_detect_weight_prefix(&store, config);

@@ -264,6 +264,19 @@ async fn run(args: RunArgs) -> Result<i32> {
         Some(s) => s.target.clone(),
         None => TargetEndpoint::new(&args.url, args.model.as_deref().unwrap_or_default()),
     };
+    // 2026-10-03: A mock server never yields a gate record or an accuracy number.
+    if let Err(e) = super::bench_serve_plan::refuse_mock_target(
+        &target,
+        descriptor.sensitivity == metrale_bench::hardware::Sensitivity::Correctness,
+        args.pull_request_gate,
+    )
+    .await
+    {
+        if let Some(s) = served {
+            s.shutdown().await;
+        }
+        return Err(e);
+    }
     // 2026-09-26: The served variant's baseline entry sets its
     // `[benchmarks.param_overrides]` pins, then the threshold-coupled params;
     // an explicit --param wins over both (see `bench_resolve`).

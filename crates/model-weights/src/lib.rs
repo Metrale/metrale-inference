@@ -7,6 +7,7 @@ pub mod fast_weights;
 pub mod kimi_k3_host;
 pub mod mtp_layout;
 pub mod preflight;
+pub mod synthetic;
 pub mod weight_lora_rdma;
 #[cfg(feature = "cuda")]
 pub mod weight_tier_rdma;

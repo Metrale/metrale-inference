@@ -16,6 +16,8 @@ gpu-examples = []
 
 [dependencies]
 metrale-cache = { path = "../cache", default-features = false }
+# 2026-10-03: The host NVFP4 codec the GLM-5.3 loader uses lives in `metrale-core::numeric`.
+metrale-core = { path = "../core", default-features = false }
 metrale-comm = { path = "../comm", default-features = false }
 metrale-config = { path = "../config", default-features = false }
 metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false }
@@ -34,7 +36,6 @@ memmap2 = { version = "0.9", optional = true }
 safetensors = { version = "0.8", optional = true }
 
 [dev-dependencies]
-metrale-core = { path = "../core", default-features = false }
 metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false, features = ["test-utils"] }
 metrale-kernels = { path = "../kernels", default-features = false }
 
