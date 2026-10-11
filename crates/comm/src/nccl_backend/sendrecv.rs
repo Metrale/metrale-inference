@@ -125,6 +125,16 @@ impl NcclBackend {
         oneshot_applies(self.world_size, self.oneshot.max_bytes, bytes)
     }
 
+    /// 2026-10-11: The largest payload the one-shot path takes here: its buffer size when it
+    /// applies on this communicator (three or more ranks, a nonzero buffer), else 0.
+    pub(super) fn oneshot_capacity(&self) -> usize {
+        if self.oneshot_applies(self.oneshot.max_bytes) {
+            self.oneshot.max_bytes
+        } else {
+            0
+        }
+    }
+
     pub(super) fn set_oneshot_sum_kernel(&self, handle: u64) {
         self.oneshot.set_sum_kernel(handle);
     }

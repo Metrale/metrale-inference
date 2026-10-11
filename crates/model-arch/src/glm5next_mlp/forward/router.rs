@@ -36,7 +36,10 @@ pub(super) fn router_logits(
 ) -> Result<()> {
     let (n, kk) = (cfg.num_experts, cfg.hidden);
     let max_m = metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M as usize;
-    if rows > max_m && crate::glm5next_layer::cublas_wide_proj() {
+    // 2026-10-11: Under `METRALE_GLM_BATCH_INVARIANT` every row count takes the batched GEMV
+    // (`glm_mm` splits a wider launch into 16-row launches), never cuBLASLt.
+    let bi = crate::glm5next_batch_inv::enabled()?;
+    if rows > max_m && !bi && crate::glm5next_layer::cublas_wide_proj() {
         return metrale_model_layers::layers::ops::cublas_bf16_proj_dense_f32_out(
             x,
             router,
@@ -50,9 +53,9 @@ pub(super) fn router_logits(
     // 2026-10-09: `glm_mm` runs the M = 1 GEMV at one row, the narrow batched entry at
     // 2..=8 and the wide one at 9..=16. Both batched handles are needed so no row count of
     // the group falls through to the tile GEMM, whose rows are not the GEMV's bits.
-    let batch = batched
+    let batch = (batched || bi)
         && rows >= 2
-        && rows <= max_m
+        && (rows <= max_m || bi)
         && k.gemv_f32.0 != 0
         && k.gemv_batchm_f32.0 != 0
         && k.gemv_batchm_wide_f32.0 != 0;

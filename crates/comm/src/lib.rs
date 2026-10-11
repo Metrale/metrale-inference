@@ -133,6 +133,13 @@ pub trait CommBackend: Send + Sync {
         Ok(None)
     }
 
+    /// 2026-10-11: The largest payload in bytes the one-shot all-reduce takes (an FP32 sum of
+    /// the partials in rank order, one BF16 rounding, whatever the payload size); 0 when this
+    /// backend has none. The default returns 0.
+    fn oneshot_max_bytes(&self) -> usize {
+        0
+    }
+
     /// 2026-09-26: Register a device buffer with the backend and return an
     /// opaque handle (`ncclCommRegister` in `NcclBackend`). The default
     /// registers nothing and returns 0.

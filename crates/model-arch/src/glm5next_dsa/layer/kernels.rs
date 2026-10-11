@@ -90,6 +90,7 @@ impl Glm5NextDsaLayerKernels {
         Batchm {
             narrow: self.gemv_batchm,
             wide: self.gemv_batchm_wide,
+            out_bytes: 2,
         }
     }
 
@@ -98,6 +99,7 @@ impl Glm5NextDsaLayerKernels {
         Batchm {
             narrow: self.gemv_batchm_f32,
             wide: self.gemv_batchm_wide_f32,
+            out_bytes: 4,
         }
     }
 }

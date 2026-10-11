@@ -59,7 +59,7 @@ pub mod profile;
 pub use state::alloc_kda_ssm_state;
 
 pub mod l2_warm;
-mod levers;
+pub(crate) mod levers;
 mod steps;
 mod types;
 pub(crate) mod wide_gemv;
