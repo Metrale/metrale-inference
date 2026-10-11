@@ -1253,3 +1253,171 @@ effort_hours = 2.0
 transferability = "low"
 links = { pr = "", commit = "", evidence = "standalone harness, 90 distinct sites in a graph" }
 notes = "Folding hc_post + rank-sum into the next pre needs ping-pong streams (post writes in place); not attempted"
+
+[[lever]]
+id = "gb10x3-glm53-moe-sweep-table-pointers-in-shared"
+date = "2026-10-11"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes, expert layout tp"
+recipe_or_tier = "w4a4 routed sweeps (all entries): table pointers and weight_scale_2 read once per CTA into shared memory"
+symptom = "down k64 sweep 64.5 us per layer at C1 in the serve vs ~57 us in isolation; every item and its prefetch waited on a global table load before its first weight byte"
+diagnosis_tool = "microbench"
+root_cause_class = "latency-bound"
+lever_type = "kernel-restructure"
+lkb_effect = "mx sweep family: setup-cached tables"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "kept"
+verdict_reason = "one row unchanged (all at the 222-227 GB/s copy reference); union down 704: 2 rows 120.9 -> 112.8 us, 16 rows 764.0 -> 726.6; down 640 2 rows 107.9 -> 103.3; gate+up 4 rows 439.6 -> 427.4; forward_moe digests unchanged"
+failure_mode = ""
+caught_by = "microbench"
+time_lost_hours = 0.0
+would_catch_earlier = ""
+effort_hours = 1.0
+transferability = "persistent sweeps over pointer tables"
+links = { pr = "", commit = "8882589e5", evidence = "glm5next_moe_narrow_bench GLM_BENCH_TP=1, median of 3 interleaved runs (9 graph replays of 20 routings each)" }
+notes = "serve A/B not yet run"
+
+[[lever]]
+id = "gb10x3-glm53-moe-one-row-memset-drop"
+date = "2026-10-11"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes, expert layout tp"
+recipe_or_tier = "one-row own-slots sweep zeroes dead slot rows; forward_moe skips the expert_out memset at one row"
+symptom = "a 64 KB memset per MoE layer at C1 (one graph node each)"
+diagnosis_tool = "profile"
+root_cause_class = "launch-overhead"
+lever_type = "kernel-epilogue"
+lkb_effect = "own-slots sweep: dead-row zero fill"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "kept"
+verdict_reason = "byte gate on rows with invalid ids from a sentinel: the sweep writes the same +0.0 the memset left; forward_moe digests unchanged"
+failure_mode = ""
+caught_by = "microbench"
+time_lost_hours = 0.0
+would_catch_earlier = ""
+effort_hours = 0.5
+transferability = "any routed path whose producer can own its zero rows"
+links = { pr = "", commit = "8882589e5", evidence = "glm5next_moe_narrow_bench GLM_BENCH_TP=1, median of 3 interleaved runs (9 graph replays of 20 routings each)" }
+notes = "end-to-end gain unmeasured (one memset node per layer)"
+
+[[lever]]
+id = "gb10x3-glm53-moe-down-tiles-per-item"
+date = "2026-10-11"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes, expert layout tp"
+recipe_or_tier = "down sweep at K <= 8 chunks: 2 or 4 adjacent tiles per work item (all 8 warps on tile x chunk pairs, chunk-order reduction)"
+symptom = "down k64 (2048 items of 6.3 KB) assumed per-item-overhead bound"
+diagnosis_tool = "microbench"
+root_cause_class = "latency-bound"
+lever_type = "kernel-restructure"
+lkb_effect = "none kept"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "discarded"
+verdict_reason = "byte-identical but no faster: one-row down 704 57.9 (base) / 59.1 (2 tiles) / 61.8 us (4 tiles); the isolated sweep was already at the copy ceiling, so the serve gap is not per-item overhead"
+failure_mode = ""
+caught_by = "microbench"
+time_lost_hours = 0.5
+would_catch_earlier = "time the isolated kernel against the copy reference before restructuring it: 227 GB/s left nothing to win"
+effort_hours = 2.0
+transferability = "low"
+links = { pr = "", commit = "", evidence = "glm5next_moe_narrow_bench GLM_BENCH_TP=1, median of 3 interleaved runs (9 graph replays of 20 routings each) (variants t2, t4)" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-moe-sweep-pf-minb"
+date = "2026-10-11"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes, expert layout tp"
+recipe_or_tier = "sweep prefetch 2 or 3 items ahead; 2 CTAs per SM at 128 registers (grid 96)"
+symptom = "as above"
+diagnosis_tool = "microbench"
+root_cause_class = "latency-bound"
+lever_type = "kernel-tuning"
+lkb_effect = "none"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "discarded"
+verdict_reason = "slower at one row: down 704 64.1 (PF 2) / 77.1 us (PF 3, one run) / 64.5 us (2 CTAs per SM) vs 57.9"
+failure_mode = ""
+caught_by = "microbench"
+time_lost_hours = 0.2
+would_catch_earlier = ""
+effort_hours = 0.3
+transferability = "low"
+links = { pr = "", commit = "", evidence = "glm5next_moe_narrow_bench GLM_BENCH_TP=1, median of 3 interleaved runs (9 graph replays of 20 routings each)" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-moe-glu-last-arriver"
+date = "2026-10-11"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes, expert layout tp"
+recipe_or_tier = "one-row gate+up own sweep: the last of each (slot, tile) arrival runs the clamped SwiGLU and the static NVFP4 group quantization of the down input"
+symptom = "swiglu (1.2 us) and quant_k64 (2.4 us) launches per MoE layer at C1"
+diagnosis_tool = "microbench"
+root_cause_class = "launch-overhead"
+lever_type = "fusion"
+lkb_effect = "none kept"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "discarded"
+verdict_reason = "byte-identical (codes, scales, globals, counters reset; forward_moe digests unchanged with the lever on) but slower: 137.7 us vs 119.2 us for sweep + swiglu + quant; the per-item fence + atomic + serial group on lane 0 costs more than the two launches"
+failure_mode = ""
+caught_by = "microbench"
+time_lost_hours = 1.0
+would_catch_earlier = "cost one arrival (fence + atomic) per item first: 704 items x ~25 ns of serialized tail per CTA exceeds two ~2 us launches"
+effort_hours = 3.0
+transferability = "last-arriver epilogues pay off only when items are few or the epilogue is wide"
+links = { pr = "", commit = "", evidence = "glm5next_moe_narrow_bench GLM_BENCH_TP=1, median of 3 interleaved runs (9 graph replays of 20 routings each)" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-moe-combine-last-arriver"
+date = "2026-10-11"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes, expert layout tp"
+recipe_or_tier = "one-row down own sweep: the arrival completing a hidden tile runs glm5next_moe_combine for it (shared expert first)"
+symptom = "combine launch 1.6 us per MoE layer at C1"
+diagnosis_tool = "microbench"
+root_cause_class = "launch-overhead"
+lever_type = "fusion"
+lkb_effect = "none kept"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "discarded"
+verdict_reason = "byte-identical (output, routed rows, all-dead row, counters reset; forward_moe digests unchanged with the lever on) but slower: 100.5 vs 60.9 us (one tile per item), 74.3 vs 61.6 us (2 tiles per item); a fence + two barriers + an atomic per item"
+failure_mode = ""
+caught_by = "microbench"
+time_lost_hours = 1.0
+would_catch_earlier = "as for the GLU epilogue"
+effort_hours = 2.5
+transferability = "low"
+links = { pr = "", commit = "", evidence = "glm5next_moe_narrow_bench GLM_BENCH_TP=1, median of 3 interleaved runs (9 graph replays of 20 routings each)" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-kda-state-store-hint"
+date = "2026-10-11"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes, expert layout tp"
+recipe_or_tier = "KDA register step (seq_reg) state written with streaming (.cs) or write-through stores"
+symptom = "gate+up ~13 us slower after a KDA layer than after a DSA layer in the serve"
+diagnosis_tool = "microbench"
+root_cause_class = "memory-traffic"
+lever_type = "store-hint"
+lkb_effect = "none kept"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "discarded"
+verdict_reason = "no change: KDA step + next gate+up sweep 136.5 (plain) / 136.2 (cs) / 136.5 us (wt), also with a 4 MB copy between; the 1.44 MB of dirty state still costs ~7 us of the following sweep, and neither hint moves its write-back earlier"
+failure_mode = ""
+caught_by = "microbench"
+time_lost_hours = 0.5
+would_catch_earlier = ""
+effort_hours = 1.0
+transferability = "low: GB10 L2 evict-first and write-through hints did not change when dirty lines reach DRAM"
+links = { pr = "", commit = "", evidence = "glm5next_moe_narrow_bench GLM_BENCH_TP=1, median of 3 interleaved runs (9 graph replays of 20 routings each)" }
+notes = "the outputs were byte-identical (glm5next_c1_fuse_microtest arms, removed)"
