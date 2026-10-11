@@ -110,6 +110,10 @@ pub struct Glm5NextMtpHead {
     /// Measured 2026-08-29 (nsys): 2.66 ms -> ~1.33 ms per draft sweep.
     head_fp8: Option<metrale_model_layers::weight_map::Fp8DenseWeight>,
     gemv_fp8w_k: KernelHandle,
+    /// 2026-10-11: `(glm5next_mtp_xchg_pack, glm5next_mtp_xchg_pick)` when
+    /// `METRALE_GLM_MTP_XCHG_DEVICE=1` and the build has them: the vocab-sharded head's exchange
+    /// on the device (`exchange_on_device`). `None` keeps the host exchange.
+    xchg_k: Option<(KernelHandle, KernelHandle)>,
 }
 
 /// 2026-09-25: Rows the GLM drafter can ever be asked for: the served context, clamped to
@@ -268,7 +272,55 @@ impl Glm5NextMtpHead {
                 stream,
             )?,
         }
-        ops::argmax_bf16(gpu, self.argmax_k, st.logits, st.arg, n as u32, stream)
+        ops::argmax_bf16(gpu, self.argmax_k, st.logits, st.arg, n as u32, stream)?;
+        if let (Some(k), Some(comm)) = (self.device_xchg(ctx), ctx.comm) {
+            self.exchange_on_device(gpu, comm, k, st, v0, stream)?;
+        }
+        Ok(())
+    }
+
+    /// 2026-10-11: The device exchange's kernels when this propose runs it: the lever and kernels
+    /// (`xchg_k`) and a sharded head with a communicator.
+    fn device_xchg(&self, ctx: &ForwardContext) -> Option<(KernelHandle, KernelHandle)> {
+        let (_, _, sharded) = self.head_range(ctx);
+        self.xchg_k.filter(|_| sharded && ctx.comm.is_some())
+    }
+
+    /// 2026-10-11: The `(max, argmax)` exchange of the host tail (`head_xchg::pack` / `pick`) on
+    /// the device: pack this rank's lanes from `st.arg` and its logit, all-reduce them, and
+    /// leave the winning global id in `st.arg`. No host step, so it runs inside the drafter
+    /// graph and the ranks meet at its all-reduce straight from their own head sweeps.
+    fn exchange_on_device(
+        &self,
+        gpu: &dyn GpuBackend,
+        comm: &dyn metrale_comm::CommBackend,
+        (pack_k, pick_k): (KernelHandle, KernelHandle),
+        st: &Glm5NextMtpProposerState,
+        v0: usize,
+        stream: u64,
+    ) -> Result<()> {
+        KernelLaunch::new(gpu, pack_k)
+            .grid([1, 1, 1])
+            .block([32, 1, 1])
+            .arg_ptr(st.arg)
+            .arg_ptr(st.logits)
+            .arg_ptr(st.head_xchg)
+            .arg_u32(self.head_world as u32)
+            .arg_u32(self.head_rank as u32)
+            .arg_u32(v0 as u32)
+            .launch(stream)?;
+        comm.all_reduce_async(
+            st.head_xchg.0,
+            head_xchg::xchg_bytes(self.head_world),
+            stream,
+        )?;
+        KernelLaunch::new(gpu, pick_k)
+            .grid([1, 1, 1])
+            .block([32, 1, 1])
+            .arg_ptr(st.head_xchg)
+            .arg_u32(self.head_world as u32)
+            .arg_ptr(st.arg)
+            .launch(stream)
     }
 
     /// 2026-09-25: One draft token. Advances `seq_len` by one.
@@ -309,6 +361,11 @@ impl Glm5NextMtpHead {
         }
         let (_, v0, sharded) = self.head_range(ctx);
         let mut out = [0u8; 4];
+        if self.device_xchg(ctx).is_some() {
+            // 2026-10-11: The device exchange left the global id in `st.arg`: one read.
+            gpu.copy_d2h(st.arg, &mut out)?;
+            return Ok(u32::from_le_bytes(out));
+        }
         gpu.synchronize(stream)?;
         gpu.copy_d2h(st.arg, &mut out)?;
         let local = u32::from_le_bytes(out) as usize;
