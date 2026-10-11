@@ -259,6 +259,10 @@ name = "glm53_lmhead_fp8_shard_microtest"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "glm53_mtp_xchg_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "glm5next_moe_wide_bench"
 required-features = ["cuda", "gpu-examples"]
 

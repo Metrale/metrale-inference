@@ -42,6 +42,11 @@ mod proposer;
 pub use graph::state_bytes as graph_state_bytes;
 /// 2026-10-11: Bytes of the draft head's exchange buffer, one per sequence state.
 pub use head_xchg::BUFFER_BYTES as HEAD_XCHG_BUFFER_BYTES;
+/// 2026-10-11: The host exchange, the oracle of the device kernels (`glm53_mtp_xchg_gate`).
+pub use head_xchg::{
+    MAX_RANKS as HEAD_XCHG_MAX_RANKS, pack as head_xchg_pack, pick as head_xchg_pick,
+    xchg_bytes as head_xchg_bytes,
+};
 /// 2026-10-11: The `METRALE_GLM_MTP_EH_TP` lever, for the ranks' agreement check.
 pub use init::eh_tp_enabled;
 
