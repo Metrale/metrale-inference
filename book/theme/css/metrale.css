@@ -22,6 +22,18 @@
    script, the <noscript> label beside it toggles the sidebar instead. */
 .no-js #sidebar-toggle { display: none; }
 
+/* FontAwesome is applied only once the page has loaded (theme/index.hbs). Until
+   then each menu-bar icon keeps the box FontAwesome 4.7 gives it (its glyph's
+   advance, 1536, 1664 or 1792 of 1792 units), so the title and the buttons
+   do not move when the icons appear. */
+#menu-bar .fa { display: inline-block; }
+#menu-bar .fa-bars,
+#menu-bar .fa-github { width: 0.857143em; }
+#menu-bar .fa-search,
+#menu-bar .fa-print { width: 0.928571em; }
+#menu-bar .fa-paint-brush,
+#menu-bar .fa-edit { width: 1em; }
+
 @media screen {
     html {
         font-family: var(--font-sans);

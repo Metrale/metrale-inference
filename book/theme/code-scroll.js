@@ -7,7 +7,8 @@
 // must be unique); arrow keys then scroll it, and metrale.css's :focus-visible
 // draws the copper ring. One that fits is left out of the tab order, and the
 // set is re-measured when the width changes. mdBook offers no build-time hook
-// for this, so it runs as the book's last script, after book.js.
+// for this, so it runs in the page, once parsed (after book.js, which index.hbs
+// defers).
 //
 // book.js turns Left and Right on the document into previous and next chapter.
 // Inside a region those keys must scroll it instead, so they stop there.

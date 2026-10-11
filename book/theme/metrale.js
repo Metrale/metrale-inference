@@ -13,6 +13,6 @@
       logo +
       '</a><span class="metrale-docs" aria-hidden="true">Engine docs</span>';
   }
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', place);
-  else place();
+  if (document.querySelector('h1.menu-title')) place();
+  else document.addEventListener('DOMContentLoaded', place);
 })();

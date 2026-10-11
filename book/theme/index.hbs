@@ -3,7 +3,7 @@
       If a copy of the MPL was not distributed with this file, You can obtain one at
       https://mozilla.org/MPL/2.0/. (LICENSES/MPL-2.0.txt; THIRD_PARTY_NOTICES.md section 11.)
 
-      mdBook 0.4.40's stock index.hbs (the version docs.yml pins), with four changes (the
+      mdBook 0.4.40's stock index.hbs (the version docs.yml pins), with seven changes (the
       markup they add is marked "Metrale:"). Re-take the stock file when the mdBook pin moves.
       1. The sidebar toggle is a <button aria-expanded aria-controls>, not a <label> carrying
          ARIA a label may not have (WCAG 4.1.2): book.js keeps aria-expanded current, and a
@@ -11,7 +11,15 @@
       2. No second theme-color: head.hbs carries the kit's ground; the stock #ffffff is gone.
       3. The faces load from fonts/fonts-v2.css (head.hbs); theme/fonts/fonts.css is empty,
          so mdBook links nothing of its own.
-      4. The menu bar is the banner landmark, so no page content sits outside a landmark. --}}
+      4. The menu bar is the banner landmark, so no page content sits outside a landmark.
+      5. The search scripts are not linked: theme/search-load.js loads them, and through them
+         the 2.3 MB search index, when a reader opens search.
+      6. mdBook's own scripts (clipboard, highlight.js, book.js) are deferred: the page paints
+         before 50 KB of script arrives and runs. They run in the same order, once parsed.
+      7. FontAwesome (31 KB of CSS, a 77 KB icon font) is applied once the page has loaded and
+         painted: the menu-bar icons are not content, and the font was the largest file
+         ahead of the first paint.
+         metrale.css keeps each icon's box, so nothing moves when they appear. --}}
 <!DOCTYPE HTML>
 <html lang="{{ language }}" class="{{ default_theme }}" dir="{{ text_direction }}">
     <head>
@@ -46,7 +54,10 @@
         {{/if}}
 
         <!-- Fonts -->
-        <link rel="stylesheet" href="{{ path_to_root }}FontAwesome/css/font-awesome.css">
+        {{!-- Metrale: after the page (see the note at the top); media="print" fetches it without
+              blocking the paint, and a handler at the end of the body applies it. --}}
+        <link rel="stylesheet" href="{{ path_to_root }}FontAwesome/css/font-awesome.css" media="print" id="font-awesome-css">
+        <noscript><link rel="stylesheet" href="{{ path_to_root }}FontAwesome/css/font-awesome.css"></noscript>
         {{#if copy_fonts}}
         <link rel="stylesheet" href="{{ path_to_root }}fonts/fonts.css">
         {{/if}}
@@ -342,15 +353,26 @@
         <script src="{{ path_to_root }}theme-tomorrow_night.js"></script>
         {{/if}}
 
-        {{#if search_js}}
-        <script src="{{ path_to_root }}elasticlunr.min.js"></script>
-        <script src="{{ path_to_root }}mark.min.js"></script>
-        <script src="{{ path_to_root }}searcher.js"></script>
-        {{/if}}
+        {{!-- Metrale: elasticlunr, mark.js and searcher.js load when a reader opens search
+              (theme/search-load.js), not on every page; see the note at the top. --}}
 
-        <script src="{{ path_to_root }}clipboard.min.js"></script>
-        <script src="{{ path_to_root }}highlight.js"></script>
-        <script src="{{ path_to_root }}book.js"></script>
+        {{!-- Metrale: mdBook's scripts deferred, and FontAwesome applied once the page has
+              loaded (changes 6 and 7 at the top). --}}
+        <script defer src="{{ path_to_root }}clipboard.min.js"></script>
+        <script defer src="{{ path_to_root }}highlight.js"></script>
+        <script defer src="{{ path_to_root }}book.js"></script>
+        <script>
+            // After the load event and the frame that follows it: on a fast connection the
+            // load event can come before the first paint, and the icon font would then be
+            // fetched ahead of the text after all.
+            addEventListener('load', function () {
+                requestAnimationFrame(function () {
+                    setTimeout(function () {
+                        document.getElementById('font-awesome-css').media = 'all';
+                    });
+                });
+            });
+        </script>
 
         <!-- Custom JS scripts -->
         {{#each additional_js}}

@@ -134,7 +134,11 @@ ${readFileSync(kit('fonts/manrope-fallback.css'), 'utf8').trim()}
 // book's palette is dark in every mdBook theme (css/variables.css), so the
 // logo is the kit's dark-ground cut. It replaces the title mdBook sets in type,
 // linked to the front page, with "Engine docs" beside it; the link's name keeps
-// the title for assistive technology. css/wordmark.css places it.
+// the title for assistive technology. css/wordmark.css places it. The script is
+// linked at the end of the body, below the menu bar, so it places the logo as
+// soon as it runs, before the first paint, rather than waiting for the parse to
+// end: mdBook's own scripts are deferred (index.hbs), and the title would be
+// painted in type first and then swapped.
 const ondark = readFileSync(kit('svg/logo-horizontal-ondark.svg'), 'utf8').trim();
 files.set(
   repo('book/theme/metrale.js'),
@@ -153,8 +157,8 @@ files.set(
       logo +
       '</a><span class="metrale-docs" aria-hidden="true">Engine docs</span>';
   }
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', place);
-  else place();
+  if (document.querySelector('h1.menu-title')) place();
+  else document.addEventListener('DOMContentLoaded', place);
 })();
 `,
 );
@@ -168,6 +172,14 @@ if (!head.includes(`<meta name="theme-color" content="${C.ground}">`))
   problems.push(`book/theme/head.hbs: theme-color is not the kit's ground ${C.ground}`);
 if (!head.includes(`<link rel="stylesheet" href="{{ path_to_root }}fonts/fonts-v2.css">`))
   problems.push('book/theme/head.hbs: does not link fonts/fonts-v2.css');
+// head.hbs preloads the faces the first paint sets; each must be one fonts-v2.css declares.
+const facesCss = files.get(repo('book/theme/fonts/fonts-v2.css'));
+for (const face of ['manrope-latin-wght-normal.woff2', 'ibm-plex-mono-latin-400-normal.woff2']) {
+  if (!facesCss.includes(`url('${face}')`))
+    problems.push(`book/theme/fonts/fonts-v2.css: no longer declares ${face}, which head.hbs preloads`);
+  if (!head.includes(`<link rel="preload" href="{{ path_to_root }}fonts/${face}" as="font" type="font/woff2" crossorigin>`))
+    problems.push(`book/theme/head.hbs: does not preload fonts/${face}`);
+}
 const tokens = read('book/theme/css/metrale-tokens.css');
 const block = (sel) => {
   const i = tokens.indexOf(`${sel} {`);

@@ -42,5 +42,12 @@
 <link rel="alternate" type="text/plain" href="{{ path_to_root }}llms.txt" title="llms.txt">
 
 {{!-- The faces (Manrope, IBM Plex Mono). Not fonts/fonts.css: /fonts/* is cached as
-      immutable, so a new brand's faces take a new file name (assets/brand/derive.mjs). --}}
+      immutable, so a new brand's faces take a new file name (assets/brand/derive.mjs).
+      Manrope sets the text and IBM Plex Mono 400 the code every page paints first (a code
+      block is the largest thing the quickstart paints), so both are fetched with the
+      stylesheets rather than after them: the first layout already has them, and text is
+      not laid out a second time when a face arrives, which moved the lines below inline
+      code. derive.mjs --check holds the file names to fonts-v2.css's. --}}
+<link rel="preload" href="{{ path_to_root }}fonts/manrope-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="{{ path_to_root }}fonts/ibm-plex-mono-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="{{ path_to_root }}fonts/fonts-v2.css">
