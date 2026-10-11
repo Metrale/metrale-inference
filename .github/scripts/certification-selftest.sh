@@ -2496,9 +2496,43 @@ printf 'jobs:\n  a:\n    outputs:\n      x: y\n  b:\n    steps:\n      - run: ec
   > "$TMP/jo/.github/workflows/w.yml"
 want_rc_msg 1 "does not export 'zzz'" "control: an unexported consumer is caught" \
   sh -c "cd '$TMP/jo' && python3 '$PWD/.github/scripts/assert-job-outputs-exported.py'"
+# 2026-10-11: a job that calls a local reusable workflow exports what the
+# callee declares under `workflow_call.outputs`, not an `outputs:` of its own.
+printf 'on:\n  workflow_call:\n    outputs:\n      status:\n        value: x\njobs:\n  j:\n    runs-on: x\n' \
+  > "$TMP/jo/.github/workflows/callee.yml"
+printf 'jobs:\n  a:\n    uses: ./.github/workflows/callee.yml\n  b:\n    steps:\n      - run: echo ${{ needs.a.outputs.status }}\n' \
+  > "$TMP/jo/.github/workflows/w.yml"
+want_rc 0 "control: an output the local callee declares is accepted" \
+  sh -c "cd '$TMP/jo' && python3 '$PWD/.github/scripts/assert-job-outputs-exported.py'"
+printf 'jobs:\n  a:\n    uses: ./.github/workflows/callee.yml\n  b:\n    steps:\n      - run: echo ${{ needs.a.outputs.zzz }}\n' \
+  > "$TMP/jo/.github/workflows/w.yml"
+want_rc_msg 1 "does not export 'zzz'" "control: an output the local callee does not declare is caught" \
+  sh -c "cd '$TMP/jo' && python3 '$PWD/.github/scripts/assert-job-outputs-exported.py'"
 rm -rf "$TMP/jo/.github/workflows"; mkdir -p "$TMP/jo/.github/workflows"
 want_rc_msg 1 "no workflow files found" "control: a guard that finds nothing must fail" \
   sh -c "cd '$TMP/jo' && python3 '$PWD/.github/scripts/assert-job-outputs-exported.py'"
+
+echo "== the CodeRAG code corpora partition the code =="
+# 2026-10-11: the unsplit code corpus went over the publish cap and was cut into
+# crates / model crates / kernels by glob. A glob split fails silently two ways:
+# a file in no corpus (the chat cannot answer about it) and a file in two
+# (embedded twice). Run against the real tree, then against fixtures that MUST
+# be rejected.
+PART='.github/scripts/assert-coderag-code-partition.py'
+want_rc 0 "every code file in this tree is in exactly one code corpus" python3 "$PART"
+part_fixture() { # <model-corpus include> <crates-corpus extra exclude>
+  rm -rf "$TMP/cp"; mkdir -p "$TMP/cp/.github/workflows" "$TMP/cp/crates/core" "$TMP/cp/crates/model-x"
+  touch "$TMP/cp/crates/core/a.rs" "$TMP/cp/crates/model-x/b.rs"
+  printf 'jobs:\n  c:\n    uses: ./.github/workflows/coderag-corpus.yml\n    with:\n      base: metrale-code-crates\n      paths: |\n        crates/**/*.rs\n      exclude: |\n        **/target/**\n        %s\n  m:\n    uses: ./.github/workflows/coderag-corpus.yml\n    with:\n      base: metrale-code-crates-model\n      paths: |\n        %s\n      exclude: |\n        **/target/**\n' \
+    "$2" "$1" > "$TMP/cp/.github/workflows/coderag.yml"
+  git -C "$TMP/cp" init -q && git -C "$TMP/cp" add -A
+}
+part_fixture 'crates/model-*/**/*.rs' 'crates/model-*/**'
+want_rc 0 "control: a glob and its complement partition the files" python3 "$PART" "$TMP/cp"
+part_fixture 'crates/model-*/**/*.rs' 'crates/nothing/**'
+want_rc_msg 1 "overlap: crates/model-x/b.rs" "control: a file in two corpora is caught" python3 "$PART" "$TMP/cp"
+part_fixture 'crates/modl-*/**/*.rs' 'crates/model-*/**'
+want_rc_msg 1 "gap: crates/model-x/b.rs" "control: a file in no corpus is caught" python3 "$PART" "$TMP/cp"
 
 echo "== stuck runs are recognised before they can hide =="
 # A run that never creates a job publishes no check run, so a required context

@@ -3,16 +3,23 @@
 
 # Publish every CodeRAG corpus as ONE orphan commit on gh-pages.
 #
-# The three corpora are built by separate jobs and any of them can fail, hit
-# the free-tier rate limit, or be skipped as already current. A publish that
-# only wrote the corpora built this run would delete the others from the
-# branch, because the branch is one force-pushed commit. So this starts from
-# what gh-pages holds NOW and overwrites only the corpora that were built,
-# fit under the size cap, and have all three published files. Everything else
-# keeps its last good copy.
+# The corpora are built by separate jobs and any of them can fail, hit the
+# free-tier rate limit, be skipped as already current, or come out over the
+# size cap. A publish that only wrote the corpora built this run would delete
+# the others from the branch, because the branch is one force-pushed commit. So
+# this starts from what gh-pages holds NOW and overwrites only the corpora that
+# were built, fit under the size cap, and have all three published files.
+# Everything else keeps its last good copy.
+#
+# 2026-10-11: a corpus that is no longer built (the unsplit `metrale-coderag`)
+# is named in RETIRED_CORPORA and carried forward untouched, so consumers that
+# still fetch it keep working until they migrate. Removing a name from that
+# list is what deletes its files, on the next publish.
 #
 # Inputs (all required, no defaults):
-#   CORPORA        space-separated <base>:<status>, status = built|skipped|failed
+#   CORPORA        space-separated <base>:<status>,
+#                  status = built|skipped|failed|oversize
+#   RETIRED_CORPORA space-separated bases to keep as published (may be empty)
 #   INCOMING       directory holding the staged files of the corpora built
 #   SIZE_CAP_BYTES per-file limit; GitHub rejects a pushed file over 100 MB
 #   PUBLISH_REMOTE authenticated git URL of the repository
@@ -21,7 +28,7 @@
 # Appends a per-corpus table to $GITHUB_STEP_SUMMARY when it is set.
 set -euo pipefail
 
-: "${CORPORA:?}" "${INCOMING:?}" "${SIZE_CAP_BYTES:?}" "${PUBLISH_REMOTE:?}" \
+: "${RETIRED_CORPORA?}" "${CORPORA:?}" "${INCOMING:?}" "${SIZE_CAP_BYTES:?}" "${PUBLISH_REMOTE:?}" \
   "${SOURCES_JSON:?}" "${GITHUB_SHA:?}"
 summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
 suffixes=(.jsonl.gz .jsonl.meta.json .meta.json)
@@ -65,11 +72,12 @@ for entry in $CORPORA; do
         echo "${base}.jsonl.gz: ${bytes} bytes (cap ${SIZE_CAP_BYTES})"
         if [ "$bytes" -gt "$SIZE_CAP_BYTES" ]; then
           usable=false
-          reason="${bytes} B exceeds the ${SIZE_CAP_BYTES} B cap; raise chunk-lines, lower vector-precision or trim paths"
+          reason="${bytes} B exceeds the ${SIZE_CAP_BYTES} B cap; split the corpus by path (see the header of coderag.yml)"
         fi
       fi ;;
     skipped) reason="already current" ;;
     failed)  reason="build did not succeed" ;;
+    oversize) reason="over the ${SIZE_CAP_BYTES} B cap (see the build job's summary)" ;;
     *) echo "::error::unknown status '${status}' for ${base}" >&2; exit 1 ;;
   esac
 
@@ -84,6 +92,18 @@ for entry in $CORPORA; do
   else
     echo "| ${base} | ${status} | NOT PUBLISHED (${reason}; no previous copy to keep) |" >> "$summary"
     unrefreshed+=("${base}: ${reason}, and no copy was published before")
+  fi
+done
+
+for base in $RETIRED_CORPORA; do
+  case " $CORPORA " in
+    *" ${base}:"*) echo "::error::${base} is both built and retired" >&2; exit 1 ;;
+  esac
+  if [ -s "$prev/coderag/${base}.jsonl.gz" ]; then
+    for s in "${suffixes[@]}"; do cp "$prev/coderag/${base}${s}" "$site/coderag/${base}${s}"; done
+    echo "| ${base} | retired | kept previous copy (no longer built) |" >> "$summary"
+  else
+    echo "| ${base} | retired | nothing published to keep |" >> "$summary"
   fi
 done
 

@@ -6,10 +6,31 @@ name: CodeRAG
 # publishes self-verifying lattice-jsonl corpora -- gzip + metadata -- for the
 # website to load into an in-browser lattice-db.
 #
-# One corpus per source, because GitHub rejects any pushed file over 100 MB:
-#   metrale-coderag   the engine's Rust / CUDA / Metal source   (code profile)
-#   metrale-docs      book/src, docs/ and the root *.md         (prose profile)
-#   books-rust        The Rust Programming Language, pinned     (prose profile)
+# One corpus per source slice, because GitHub rejects any pushed file over
+# 100 MB. Each corpus is built by .github/workflows/coderag-corpus.yml:
+#   metrale-code-crates        crates/** except the model-* crates   (code profile)
+#   metrale-code-crates-model  crates/model-*                        (code profile)
+#   metrale-code-kernels       kernels/** (CUDA, Metal, HIP)         (code profile)
+#   metrale-docs               book/src, docs/ and the root *.md     (prose profile)
+#   books-rust                 The Rust Programming Language, pinned (prose profile)
+#
+# 2026-10-11: the single `metrale-coderag` code corpus came out at 105,944,953 B
+# (6,624 points) against the 99,614,720 B cap, so it was split. Measured on that
+# build, a point costs ~16 KB gzipped whatever it holds, so the cap is ~6,200
+# points and the split targets <= 50% of it per corpus (>= 50% headroom).
+# Built 2026-10-11 (run 38183263400, full embeds):
+#   crates         2,536 points   40,623,154 B   (40% of the cap)
+#   crates-model   2,712 points   43,239,119 B   (43%)
+#   kernels        1,376 points   22,017,014 B   (22%)
+# crates/ alone was 5,248 points (~84 MB, 16% headroom), so kernels/ vs crates/
+# was not enough and crates/ is cut again by crate name. The two crates halves
+# are one glob and its complement, so a new crate lands in exactly one of them;
+# assert-coderag-code-partition.py fails CI if any file falls in none or two.
+#
+# `metrale-coderag` (the old unsplit corpus) is no longer built. Its last
+# published copy stays on gh-pages, listed in RETIRED_CORPORA below, until the
+# consumers have moved to the three code corpora; dropping the name from that
+# list removes the files on the next publish.
 #
 # Stable URLs this produces (no TTL, fetchable directly from the browser):
 #   https://metrale.github.io/metrale-inference/coderag/<corpus>.jsonl.gz
@@ -47,6 +68,7 @@ on:
       - '.github/ai-models.json'
       - '.github/scripts/coderag-*.sh'
       - '.github/workflows/coderag.yml'
+      - '.github/workflows/coderag-corpus.yml'
   workflow_dispatch:
     inputs:
       force-books:
@@ -69,28 +91,11 @@ env:
   # 95 MiB. GitHub rejects any pushed file over 100 MB; fail here with the real
   # number instead of dying inside git push with an LFS hint.
   SIZE_CAP_BYTES: '99614720'
-  # Shared by all three corpora. A lattice-server release the action downloads
-  # and sha256-verifies; vectors rounded to 4 significant digits (the embedding
-  # noise floor sits well above the 4th digit, and the code corpus at 5 digits
-  # was 99,316,510 B against the 99,614,720 B cap).
-  LATTICE_VERSION: v0.3.3
-  VECTOR_PRECISION: '4'
-  # Slower than the action's old 2500ms default: OPENROUTER_API_KEY_FREE rides
-  # the free tier, and a merge-time batch job has no latency SLO. The three
-  # build jobs run one after another for the same reason: they share one key.
-  REQUEST_INTERVAL_MS: '3000'
-  # The embedder rejects inputs over 8192 tokens; dense generated code (hex
-  # tables, LUT headers) can reach ~2 bytes per token, so a 16 KB chunk
-  # overflowed at 8 245 tokens on 2026-08-16. Capping chunks at 8 192 BYTES
-  # guarantees <= 8 192 tokens even at the 1-byte-per-token worst case.
-  MAX_CHUNK_BYTES: '8192'
-  # Code: 150-line chunks with light overlap keep the corpus under the cap
-  # (the action's old 90-line default produced a 165 MB gz).
-  CODE_CHUNK_LINES: '150'
-  CODE_CHUNK_OVERLAP: '10'
-  # Prose: shorter windows, so a chunk is about one section of a page.
-  PROSE_CHUNK_LINES: '40'
-  PROSE_CHUNK_OVERLAP: '5'
+  # Warn once a corpus reaches 75% of the cap, i.e. before the headroom a split
+  # is meant to leave (>= 25%) is gone, not after the build is over the cap.
+  SIZE_WARN_PERCENT: '75'
+  # Corpora no longer built whose last published copy is kept on gh-pages.
+  RETIRED_CORPORA: metrale-coderag
 
 jobs:
   config:
@@ -102,6 +107,11 @@ jobs:
       endpoint_base: ${{ steps.ssot.outputs.endpoint_base }}
       book_repo: ${{ steps.ssot.outputs.book_repo }}
       book_ref: ${{ steps.ssot.outputs.book_ref }}
+      # `with:` of a reusable-workflow call cannot read `env`, so the values the
+      # builds share are exported here, from the one place they are defined.
+      pages_base: ${{ env.PAGES_BASE }}
+      size_cap_bytes: ${{ env.SIZE_CAP_BYTES }}
+      size_warn_percent: ${{ env.SIZE_WARN_PERCENT }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -124,186 +134,127 @@ jobs:
             echo "book_ref=$(jq -er '.sources.rust_book.ref' .github/ai-models.json)"
           } >> "$GITHUB_OUTPUT"
 
-  code:
-    name: Code corpus
+  # The corpus builds run one after another: they share one free-tier key. Each
+  # runs whether or not the one before it succeeded, so one failed corpus does
+  # not hold back the others; only a failed `config` (no model, no endpoint)
+  # stops all. Every build calls the same workflow; only the slice differs.
+  code_crates:
+    name: Code corpus (crates)
     needs: config
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    outputs:
-      status: ${{ steps.status.outputs.value }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+    if: ${{ !cancelled() && needs.config.result == 'success' }}
+    uses: ./.github/workflows/coderag-corpus.yml
+    with:
+      base: metrale-code-crates
+      profile: code
+      paths: |
+        crates/**/*.rs
+        crates/**/*.cu
+        crates/**/*.cuh
+      # The first three lines are shared by all three code corpora (the
+      # partition check relies on that); the last is this corpus's complement of
+      # metrale-code-crates-model.
+      exclude: |
+        **/target/**
+        **/*_tests.rs
+        crates/**/tests/**
+        crates/model-*/**
+      embed_model: ${{ needs.config.outputs.embed_model }}
+      endpoint_base: ${{ needs.config.outputs.endpoint_base }}
+      pages_base: ${{ needs.config.outputs.pages_base }}
+      size_cap_bytes: ${{ needs.config.outputs.size_cap_bytes }}
+      size_warn_percent: ${{ needs.config.outputs.size_warn_percent }}
+    secrets:
+      OPENROUTER_API_KEY_FREE: ${{ secrets.OPENROUTER_API_KEY_FREE }}
 
-      - name: Build corpus (incremental against the published one)
-        id: rag
-        # A corpus is DERIVED data. If the embedder is rate limited, a chunk
-        # trips a provider limit, or verification finds a real problem, the
-        # right outcome is a loud warning and yesterday's corpus staying up,
-        # not a red main that blocks unrelated work. Every downstream step is
-        # gated on this one's outcome and the job concludes green either way.
-        continue-on-error: true
-        uses: Avarok-Cybersecurity/AutoRepoRAG@dff770896c2c0f9fe0cfaf26ef7f70a75251ab20 # v2.0.0
-        with:
-          collection: metrale-coderag
-          # output-name is a basename: the action writes <name>.jsonl,
-          # <name>.jsonl.gz and <name>.meta.json. "metrale-coderag.jsonl" is
-          # deliberate -- it makes the metadata file metrale-coderag.jsonl.meta.json,
-          # the exact name the site's OPFS preflight fetches; the doubled
-          # .jsonl.jsonl(.gz) intermediates are renamed by coderag-stage.sh.
-          output-name: metrale-coderag.jsonl
-          paths: |
-            crates/**/*.rs
-            crates/**/*.cu
-            crates/**/*.cuh
-            kernels/**/*.cu
-            kernels/**/*.cuh
-            kernels/**/*.h
-            kernels/**/*.metal
-          exclude: |
-            **/target/**
-            **/*_tests.rs
-            crates/**/tests/**
-          chunk-lines: ${{ env.CODE_CHUNK_LINES }}
-          chunk-overlap: ${{ env.CODE_CHUNK_OVERLAP }}
-          max-chunk-bytes: ${{ env.MAX_CHUNK_BYTES }}
-          vector-precision: ${{ env.VECTOR_PRECISION }}
-          embedding-endpoint: ${{ needs.config.outputs.endpoint_base }}
-          embedding-model: ${{ needs.config.outputs.embed_model }}
-          embedding-api-key: ${{ secrets.OPENROUTER_API_KEY_FREE }}
-          # The first run 404s here -> the action warns and does a full embed.
-          # Every later run reuses vectors for unchanged chunks by chunk_hash.
-          previous-corpus-url: ${{ env.PAGES_BASE }}/metrale-coderag.jsonl.gz
-          previous-corpus-meta-url: ${{ env.PAGES_BASE }}/metrale-coderag.jsonl.meta.json
-          lattice-version: ${{ env.LATTICE_VERSION }}
-          request-interval-ms: ${{ env.REQUEST_INTERVAL_MS }}
-          generate-website-chat: 'false'
+  code_crates_model:
+    name: Code corpus (model crates)
+    needs: [config, code_crates]
+    if: ${{ !cancelled() && needs.config.result == 'success' }}
+    uses: ./.github/workflows/coderag-corpus.yml
+    with:
+      base: metrale-code-crates-model
+      profile: code
+      paths: |
+        crates/model-*/**/*.rs
+        crates/model-*/**/*.cu
+        crates/model-*/**/*.cuh
+      exclude: |
+        **/target/**
+        **/*_tests.rs
+        crates/**/tests/**
+      embed_model: ${{ needs.config.outputs.embed_model }}
+      endpoint_base: ${{ needs.config.outputs.endpoint_base }}
+      pages_base: ${{ needs.config.outputs.pages_base }}
+      size_cap_bytes: ${{ needs.config.outputs.size_cap_bytes }}
+      size_warn_percent: ${{ needs.config.outputs.size_warn_percent }}
+    secrets:
+      OPENROUTER_API_KEY_FREE: ${{ secrets.OPENROUTER_API_KEY_FREE }}
 
-      - name: Name the files as published
-        if: steps.rag.outcome == 'success'
-        env:
-          GZ: ${{ steps.rag.outputs.corpus-gz-file }}
-          META: ${{ steps.rag.outputs.metadata-file }}
-        run: bash .github/scripts/coderag-stage.sh metrale-coderag "$GZ" "$META" coderag-stage
-
-      - name: Upload CI copy (30-day artifact)
-        if: steps.rag.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: metrale-coderag
-          path: coderag-stage/
-          retention-days: 30
-          if-no-files-found: error
-
-      - name: Record the outcome
-        id: status
-        if: always()
-        env:
-          BUILD: ${{ steps.rag.outcome }}
-          SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          if [ "$BUILD" = success ]; then
-            echo "value=built" >> "$GITHUB_OUTPUT"
-          else
-            echo "value=failed" >> "$GITHUB_OUTPUT"
-            echo "::warning::CodeRAG code corpus build did not succeed. The published corpus is unchanged. See the build step log."
-            echo "### CodeRAG code corpus NOT refreshed" >> "$GITHUB_STEP_SUMMARY"
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "The build step failed at \`$SHA\`. The previously published corpus stays live." >> "$GITHUB_STEP_SUMMARY"
-          fi
+  code_kernels:
+    name: Code corpus (kernels)
+    needs: [config, code_crates_model]
+    if: ${{ !cancelled() && needs.config.result == 'success' }}
+    uses: ./.github/workflows/coderag-corpus.yml
+    with:
+      base: metrale-code-kernels
+      profile: code
+      paths: |
+        kernels/**/*.cu
+        kernels/**/*.cuh
+        kernels/**/*.h
+        kernels/**/*.metal
+      exclude: |
+        **/target/**
+        **/*_tests.rs
+        crates/**/tests/**
+      embed_model: ${{ needs.config.outputs.embed_model }}
+      endpoint_base: ${{ needs.config.outputs.endpoint_base }}
+      pages_base: ${{ needs.config.outputs.pages_base }}
+      size_cap_bytes: ${{ needs.config.outputs.size_cap_bytes }}
+      size_warn_percent: ${{ needs.config.outputs.size_warn_percent }}
+    secrets:
+      OPENROUTER_API_KEY_FREE: ${{ secrets.OPENROUTER_API_KEY_FREE }}
 
   docs:
     name: Docs corpus
-    needs: [config, code]
-    # Runs whether or not `code` succeeded: one failed corpus must not hold
-    # back the others. Only a failed `config` (no model, no endpoint) stops all.
+    needs: [config, code_kernels]
+    if: ${{ !cancelled() && needs.config.result == 'success' }}
+    uses: ./.github/workflows/coderag-corpus.yml
+    with:
+      base: metrale-docs
+      profile: prose
+      paths: |
+        book/src/**/*.md
+        docs/**/*.md
+        *.md
+      exclude: |
+        **/target/**
+        **/node_modules/**
+      embed_model: ${{ needs.config.outputs.embed_model }}
+      endpoint_base: ${{ needs.config.outputs.endpoint_base }}
+      pages_base: ${{ needs.config.outputs.pages_base }}
+      size_cap_bytes: ${{ needs.config.outputs.size_cap_bytes }}
+      size_warn_percent: ${{ needs.config.outputs.size_warn_percent }}
+    secrets:
+      OPENROUTER_API_KEY_FREE: ${{ secrets.OPENROUTER_API_KEY_FREE }}
+
+  # The book changes only when its pin does, so the free-tier quota is not
+  # spent re-embedding it on every merge: skip when the published copy was
+  # built from the pinned commit by the current embed model.
+  books_preflight:
+    name: Rust book preflight (is the published corpus current?)
+    needs: config
     if: ${{ !cancelled() && needs.config.result == 'success' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 5
     outputs:
-      status: ${{ steps.status.outputs.value }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Build corpus (incremental against the published one)
-        id: rag
-        continue-on-error: true
-        uses: Avarok-Cybersecurity/AutoRepoRAG@dff770896c2c0f9fe0cfaf26ef7f70a75251ab20 # v2.0.0
-        with:
-          collection: metrale-docs
-          output-name: metrale-docs.jsonl
-          paths: |
-            book/src/**/*.md
-            docs/**/*.md
-            *.md
-          exclude: |
-            **/target/**
-            **/node_modules/**
-          chunk-lines: ${{ env.PROSE_CHUNK_LINES }}
-          chunk-overlap: ${{ env.PROSE_CHUNK_OVERLAP }}
-          max-chunk-bytes: ${{ env.MAX_CHUNK_BYTES }}
-          vector-precision: ${{ env.VECTOR_PRECISION }}
-          embedding-endpoint: ${{ needs.config.outputs.endpoint_base }}
-          embedding-model: ${{ needs.config.outputs.embed_model }}
-          embedding-api-key: ${{ secrets.OPENROUTER_API_KEY_FREE }}
-          previous-corpus-url: ${{ env.PAGES_BASE }}/metrale-docs.jsonl.gz
-          previous-corpus-meta-url: ${{ env.PAGES_BASE }}/metrale-docs.jsonl.meta.json
-          lattice-version: ${{ env.LATTICE_VERSION }}
-          request-interval-ms: ${{ env.REQUEST_INTERVAL_MS }}
-          generate-website-chat: 'false'
-
-      - name: Name the files as published
-        if: steps.rag.outcome == 'success'
-        env:
-          GZ: ${{ steps.rag.outputs.corpus-gz-file }}
-          META: ${{ steps.rag.outputs.metadata-file }}
-        run: bash .github/scripts/coderag-stage.sh metrale-docs "$GZ" "$META" coderag-stage
-
-      - name: Upload CI copy (30-day artifact)
-        if: steps.rag.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: metrale-docs
-          path: coderag-stage/
-          retention-days: 30
-          if-no-files-found: error
-
-      - name: Record the outcome
-        id: status
-        if: always()
-        env:
-          BUILD: ${{ steps.rag.outcome }}
-          SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          if [ "$BUILD" = success ]; then
-            echo "value=built" >> "$GITHUB_OUTPUT"
-          else
-            echo "value=failed" >> "$GITHUB_OUTPUT"
-            echo "::warning::CodeRAG docs corpus build did not succeed. The published corpus is unchanged. See the build step log."
-            echo "### CodeRAG docs corpus NOT refreshed" >> "$GITHUB_STEP_SUMMARY"
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "The build step failed at \`$SHA\`. The previously published corpus stays live." >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-  books:
-    name: Rust book corpus
-    needs: [config, docs]
-    if: ${{ !cancelled() && needs.config.result == 'success' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    outputs:
-      status: ${{ steps.status.outputs.value }}
+      skip: ${{ steps.preflight.outputs.skip }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           sparse-checkout: .github
           persist-credentials: false
-
-      # The book changes only when its pin does, so the free-tier quota is not
-      # spent re-embedding it on every merge: skip when the published copy was
-      # built from the pinned commit by the current embed model.
-      - name: Preflight (is the published book corpus current?)
+      - name: Preflight
         id: preflight
         env:
           META_URL: ${{ env.PAGES_BASE }}/books-rust.jsonl.meta.json
@@ -312,79 +263,31 @@ jobs:
           FORCE: ${{ inputs.force-books || false }}
         run: bash .github/scripts/coderag-books-preflight.sh
 
-      - name: Check out the book at the pinned commit
-        if: steps.preflight.outputs.skip != 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          repository: ${{ needs.config.outputs.book_repo }}
-          ref: ${{ needs.config.outputs.book_ref }}
-          path: .sources/rust-book
-          persist-credentials: false
-
-      - name: Build corpus (incremental against the published one)
-        id: rag
-        if: steps.preflight.outputs.skip != 'true'
-        continue-on-error: true
-        uses: Avarok-Cybersecurity/AutoRepoRAG@dff770896c2c0f9fe0cfaf26ef7f70a75251ab20 # v2.0.0
-        with:
-          source-dir: .sources/rust-book
-          collection: books-rust
-          output-name: books-rust.jsonl
-          paths: |
-            src/**/*.md
-          chunk-lines: ${{ env.PROSE_CHUNK_LINES }}
-          chunk-overlap: ${{ env.PROSE_CHUNK_OVERLAP }}
-          max-chunk-bytes: ${{ env.MAX_CHUNK_BYTES }}
-          vector-precision: ${{ env.VECTOR_PRECISION }}
-          embedding-endpoint: ${{ needs.config.outputs.endpoint_base }}
-          embedding-model: ${{ needs.config.outputs.embed_model }}
-          embedding-api-key: ${{ secrets.OPENROUTER_API_KEY_FREE }}
-          previous-corpus-url: ${{ env.PAGES_BASE }}/books-rust.jsonl.gz
-          previous-corpus-meta-url: ${{ env.PAGES_BASE }}/books-rust.jsonl.meta.json
-          lattice-version: ${{ env.LATTICE_VERSION }}
-          request-interval-ms: ${{ env.REQUEST_INTERVAL_MS }}
-          generate-website-chat: 'false'
-
-      - name: Name the files as published
-        if: steps.rag.outcome == 'success'
-        env:
-          GZ: ${{ steps.rag.outputs.corpus-gz-file }}
-          META: ${{ steps.rag.outputs.metadata-file }}
-        run: bash .github/scripts/coderag-stage.sh books-rust "$GZ" "$META" coderag-stage
-
-      - name: Upload CI copy (30-day artifact)
-        if: steps.rag.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: books-rust
-          path: coderag-stage/
-          retention-days: 30
-          if-no-files-found: error
-
-      - name: Record the outcome
-        id: status
-        if: always()
-        env:
-          SKIP: ${{ steps.preflight.outputs.skip }}
-          BUILD: ${{ steps.rag.outcome }}
-          SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          if [ "$SKIP" = true ]; then
-            echo "value=skipped" >> "$GITHUB_OUTPUT"
-          elif [ "$BUILD" = success ]; then
-            echo "value=built" >> "$GITHUB_OUTPUT"
-          else
-            echo "value=failed" >> "$GITHUB_OUTPUT"
-            echo "::warning::CodeRAG book corpus build did not succeed. The published corpus is unchanged. See the build step log."
-            echo "### CodeRAG book corpus NOT refreshed" >> "$GITHUB_STEP_SUMMARY"
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "The build step failed at \`$SHA\`. The previously published corpus stays live." >> "$GITHUB_STEP_SUMMARY"
-          fi
+  books:
+    name: Rust book corpus
+    needs: [config, books_preflight, docs]
+    # A failed preflight leaves `skip` empty, which builds: a wasted build is
+    # cheap, a stale book silently kept is not.
+    if: ${{ !cancelled() && needs.config.result == 'success' && needs.books_preflight.outputs.skip != 'true' }}
+    uses: ./.github/workflows/coderag-corpus.yml
+    with:
+      base: books-rust
+      profile: prose
+      source_repo: ${{ needs.config.outputs.book_repo }}
+      source_ref: ${{ needs.config.outputs.book_ref }}
+      paths: |
+        src/**/*.md
+      embed_model: ${{ needs.config.outputs.embed_model }}
+      endpoint_base: ${{ needs.config.outputs.endpoint_base }}
+      pages_base: ${{ needs.config.outputs.pages_base }}
+      size_cap_bytes: ${{ needs.config.outputs.size_cap_bytes }}
+      size_warn_percent: ${{ needs.config.outputs.size_warn_percent }}
+    secrets:
+      OPENROUTER_API_KEY_FREE: ${{ secrets.OPENROUTER_API_KEY_FREE }}
 
   publish:
     name: Publish to gh-pages
-    needs: [config, code, docs, books]
+    needs: [config, code_crates, code_crates_model, code_kernels, docs, books_preflight, books]
     # Only main publishes: a dispatch from a branch validates the build and
     # stops. Nothing to publish when no corpus was built this run (a skipped
     # book alone is not news).
@@ -411,13 +314,16 @@ jobs:
       # Orphan single-commit branch: gh-pages history never grows, this
       # workflow is its sole owner, and the corpus URLs are stable forever. The
       # script starts from what gh-pages holds now, so a corpus that failed,
-      # was skipped or came out over the size cap keeps its last good copy.
+      # was skipped or came out over the size cap keeps its last good copy, and
+      # a RETIRED corpus is carried forward untouched.
       - name: Publish all corpora as one gh-pages commit
         env:
           CORPORA: >-
-            metrale-coderag:${{ needs.code.outputs.status || 'failed' }}
+            metrale-code-crates:${{ needs.code_crates.outputs.status || 'failed' }}
+            metrale-code-crates-model:${{ needs.code_crates_model.outputs.status || 'failed' }}
+            metrale-code-kernels:${{ needs.code_kernels.outputs.status || 'failed' }}
             metrale-docs:${{ needs.docs.outputs.status || 'failed' }}
-            books-rust:${{ needs.books.outputs.status || 'failed' }}
+            books-rust:${{ needs.books.outputs.status || (needs.books_preflight.outputs.skip == 'true' && 'skipped' || 'failed') }}
           INCOMING: incoming
           SOURCES_JSON: .github/ai-models.json
           PUBLISH_REMOTE: https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git
