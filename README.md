@@ -2,13 +2,13 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/readme/banner-dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/readme/banner-light.svg">
-    <img alt="Metrale Engine: Next-Generation LLM Inference Engine in Rust" src="docs/readme/banner-light.svg" width="640">
+    <img alt="Metrale" src="docs/readme/banner-light.svg" width="640">
   </picture>
 </p>
 
 <p align="center">
   <a href="https://github.com/Metrale/metrale-inference/actions/workflows/ci.yml"><img alt="CI status of the main branch" src="https://github.com/Metrale/metrale-inference/actions/workflows/ci.yml/badge.svg?branch=main"></a>
-  <a href="#licence"><img alt="Licence: MIT OR Apache-2.0" src="https://img.shields.io/badge/licence-MIT%20OR%20Apache--2.0-8A76CC"></a>
+  <a href="#licence"><img alt="Licence: MIT OR Apache-2.0" src="https://img.shields.io/badge/licence-MIT%20OR%20Apache--2.0-9E4422"></a>
 </p>
 
 # Metrale Engine: Next-Generation LLM Inference Engine in Rust

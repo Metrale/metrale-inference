@@ -198,14 +198,17 @@ committed here, but binaries built with them incorporate it.
 
 Font files served by the book, each under its own font license.
 
-### 9a. Urbanist — OFL-1.1
+### 9a. Manrope — OFL-1.1
 
-- **Files**: `book/theme/fonts/urbanist-*.woff2`
+- **Files**: `book/theme/fonts/manrope-latin-wght-normal.woff2`, and the brand
+  kit's copy it is derived from,
+  `assets/brand/metrale-assets/fonts/manrope-latin-wght-normal.woff2`
 - **License text**: shipped in place at
-  [`book/theme/fonts/URBANIST-LICENSE.txt`](book/theme/fonts/URBANIST-LICENSE.txt);
+  [`book/theme/fonts/MANROPE-LICENSE.txt`](book/theme/fonts/MANROPE-LICENSE.txt)
+  and [`assets/brand/metrale-assets/fonts/MANROPE-LICENSE.txt`](assets/brand/metrale-assets/fonts/MANROPE-LICENSE.txt);
   canonical text at [`LICENSES/OFL-1.1.txt`](LICENSES/OFL-1.1.txt).
-- **Copyright**: `Copyright 2021 The Urbanist Project Authors
-  (https://github.com/coreyhu/Urbanist)`.
+- **Copyright**: `Copyright 2019 The Manrope Project Authors
+  (https://github.com/sharanda/manrope)`.
 
 ### 9b. IBM Plex Mono — OFL-1.1
 
@@ -233,6 +236,25 @@ TTFT gates. The file is compiled into the bench binary with `include_str!`.
   [`NOTICE.md`](crates/bench/src/benchmarks/ttft/prompts/NOTICE.md) beside it
   records the download's sha256 and the trimming, and
   `scripts/make_long_prompt.py` rebuilds the file from the download.
+
+---
+
+## 11. mdBook page template and script — MPL-2.0
+
+The book's page template is mdBook's own, modified: the sidebar toggle is a
+button, the menu bar is a banner landmark, the stock theme-color is removed,
+the fonts stylesheet is not linked, the search scripts load on demand, mdBook's
+scripts are deferred and FontAwesome is applied once the page has loaded (the
+changes are listed at the top of the file). So is its script, with one change:
+an empty `unload` handler listens for `pagehide` instead. The modified files
+stay under MPL-2.0.
+
+- **Files**: `book/theme/index.hbs` and `book/theme/book.js`, from mdBook
+  v0.4.40's `src/theme/index.hbs` and `src/theme/book.js`.
+- **License**: MPL-2.0; the notice is at the top of each file, the text at
+  [`LICENSES/MPL-2.0.txt`](LICENSES/MPL-2.0.txt).
+- **Copyright**: the mdBook contributors.
+- **Upstream**: https://github.com/rust-lang/mdBook
 
 ---
 
