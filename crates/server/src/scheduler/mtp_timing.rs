@@ -101,6 +101,9 @@ pub struct RunTiming {
     /// (0 = none yet). Written by the drop, read by [`StepTimer::new`] to
     /// record [`Phase::Gap`].
     last_step_end_us: AtomicU64,
+    /// 2026-10-11: The backend's host round-trip counts at the last summary, so each summary
+    /// reports per-step syncs, H2D and D2H copies (`metrale_gpu_runtime::host_sync_counts`).
+    host_counts: std::sync::Mutex<metrale_gpu_runtime::host_sync_counts::HostSyncCounts>,
     /// 2026-09-25: Origin of the gap clock. `Instant` cannot live in an
     /// atomic, so gap timestamps are micros since this anchor; only their
     /// difference is recorded.
@@ -119,6 +122,7 @@ impl RunTiming {
             count: [const { AtomicU64::new(0) }; NUM_PHASES],
             steps: AtomicU64::new(0),
             last_step_end_us: AtomicU64::new(0),
+            host_counts: std::sync::Mutex::new(metrale_gpu_runtime::host_sync_counts::snapshot()),
             anchor: Instant::now(),
         }
     }
@@ -186,6 +190,21 @@ pub(crate) fn step_done(timing: &RunTiming, step_start: Instant, seq_len: usize)
         let fires = cnt as f64 / SUMMARY_PERIOD as f64;
         let _ = write!(line, " {}={per_step_ms:.2}ms(x{fires:.1})", NAMES[i]);
     }
+    let now = metrale_gpu_runtime::host_sync_counts::snapshot();
+    let d = {
+        let mut last = timing.host_counts.lock().unwrap_or_else(|e| e.into_inner());
+        let d = now.since(*last);
+        *last = now;
+        d
+    };
+    let per = |n: u64| n as f64 / SUMMARY_PERIOD as f64;
+    let _ = write!(
+        line,
+        " host_syncs/step={:.1} h2d/step={:.1} d2h/step={:.1}",
+        per(d.syncs),
+        per(d.h2d),
+        per(d.d2h)
+    );
     tracing::info!("MTP verify timing [{SUMMARY_PERIOD} steps, seq_len={seq_len}]:{line}");
 }
 

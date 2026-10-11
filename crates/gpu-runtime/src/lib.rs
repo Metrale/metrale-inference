@@ -37,6 +37,7 @@ pub mod gpu;
 mod gpu_args;
 pub mod graph_hoist;
 pub mod host_heap;
+pub mod host_sync_counts;
 pub mod kernel_args;
 #[cfg(feature = "metal")]
 pub mod metal_backend;
