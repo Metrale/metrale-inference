@@ -54,7 +54,8 @@ impl TransformerModel {
         // scheduler, so the per-sequence loop below can interleave announcements
         // with `decode()` calls.
         if n == 1 {
-            self.ep_broadcast_cmd_for_seq(seqs[0].slot_idx as u32, tokens[0])?;
+            // 2026-10-10: With the step's device-argmax arming, when it has one.
+            self.ep_broadcast_decode(seqs[0].slot_idx as u32, tokens[0])?;
             self.decode(tokens[0], seqs[0], stream)?;
             return Ok(self.decode_logits_ptr());
         }

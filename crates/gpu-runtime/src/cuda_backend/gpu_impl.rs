@@ -238,6 +238,7 @@ impl GpuBackend for MetraleCudaBackend {
     }
 
     fn synchronize(&self, stream: u64) -> Result<()> {
+        self.refuse_host_sync_in_capture(stream, "synchronize")?;
         metrale_telemetry::global().stream_sync();
         let status = unsafe { cuStreamSynchronize(stream) };
         if status != 0 {

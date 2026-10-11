@@ -85,6 +85,54 @@ impl RecordingModel {
         Ok(self.row_ptr(0))
     }
 
+    /// 2026-10-10: The masked pick of row `row` of the last forward (`argmax_feed.cu`'s rule
+    /// over the fake's one-hot logits).
+    fn masked_pick(&self, row: usize, mask: RowMask) -> u32 {
+        let hit = self.row(row);
+        if hit == mask[0] || hit == mask[1] {
+            (0..self.cfg.vocab as u32)
+                .rev()
+                .find(|t| *t != mask[0] && *t != mask[1])
+                .unwrap_or(0)
+        } else {
+            hit
+        }
+    }
+
+    pub(super) fn fx_arm_device_argmax(&self, masks: &[RowMask]) -> Result<bool> {
+        let mut st = self.state.lock().unwrap();
+        st.armed = None;
+        if !self.cfg.device_argmax || masks.len() != 1 {
+            return Ok(false);
+        }
+        st.armed = Some(masks[0]);
+        drop(st);
+        rec!(self, "arm_device_argmax(masks={masks:?}) -> true");
+        Ok(true)
+    }
+
+    pub(super) fn fx_device_argmax_to_host(
+        &self,
+        dst: &mut [u8],
+        event: Option<u64>,
+    ) -> Result<()> {
+        let mask = self
+            .state
+            .lock()
+            .unwrap()
+            .armed
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("device_argmax_to_host without an armed step"))?;
+        let tok = self.masked_pick(0, mask);
+        self.state.lock().unwrap().feed_cells = vec![tok];
+        dst[..4].copy_from_slice(&tok.to_le_bytes());
+        if let Some(e) = event {
+            self.fx_record_event(e);
+        }
+        rec!(self, "device_argmax_to_host(event={event:?}) -> {tok}");
+        Ok(())
+    }
+
     pub(super) fn fx_argmax_batch_to_feed(
         &self,
         logits_ptr: DevicePtr,
@@ -208,6 +256,12 @@ impl ModelDeviceFeed for RecordingModel {
             Some(max_rows) => FedAheadPolicy::RepickOnly { max_rows },
             None => FedAheadPolicy::Redo,
         }
+    }
+    fn arm_device_argmax(&self, masks: &[RowMask]) -> Result<bool> {
+        self.fx_arm_device_argmax(masks)
+    }
+    fn device_argmax_to_host(&self, dst: &mut [u8], event: Option<u64>) -> Result<()> {
+        self.fx_device_argmax_to_host(dst, event)
     }
     fn decode_batch_fed(
         &self,

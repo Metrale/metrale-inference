@@ -22,6 +22,8 @@ mod fault_probe;
 mod gpu_copy;
 mod gpu_impl;
 mod gpu_impl_graph;
+#[cfg(not(metrale_scale))]
+mod graph_hoist_cu;
 mod n_tile;
 mod redzone;
 pub mod tensormap;

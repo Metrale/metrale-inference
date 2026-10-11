@@ -31,6 +31,14 @@ impl TransformerModel {
     /// 2026-10-09: True when the model has layers, every one answers true to
     /// `decode_graph_with_comm`, and `METRALE_COMM_DECODE_GRAPHS` is not `0` (read once per
     /// process). `decode_a.rs` then captures the single-sequence decode with a communicator.
+    /// 2026-10-10: Whether a captured step of `rows` rows stays within every layer's
+    /// `max_captured_rows`.
+    pub(crate) fn rows_capturable(&self, rows: usize) -> bool {
+        self.layers
+            .iter()
+            .all(|l| l.max_captured_rows().is_none_or(|m| rows <= m))
+    }
+
     pub(crate) fn layers_capture_with_comm(&self) -> bool {
         static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         let off =

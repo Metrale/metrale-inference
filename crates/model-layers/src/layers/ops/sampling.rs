@@ -212,3 +212,60 @@ pub fn feed_resolve(
         .arg_u32(n_rows)
         .launch(stream)
 }
+
+/// 2026-10-10: Threads per block of [`argmax_key_shard_bf16`].
+const ARGMAX_KEY_BLOCK: u32 = 256;
+
+/// 2026-10-10: Raise `keys` (`[p, q]` u64, zeroed before the first slice) to the sharded feed
+/// argmax keys of `n_local` BF16 logits at `shard`, whose first entry is global index `base`;
+/// `masks` is the row's `[m0, m1]` (`argmax_key.cu`, host spec
+/// `metrale_sampling::feed_argmax_key`). One block per 1024 entries, at most 128.
+#[allow(clippy::too_many_arguments)]
+pub fn argmax_key_shard_bf16(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    shard: DevicePtr,
+    masks: DevicePtr,
+    keys: DevicePtr,
+    base: u32,
+    n_local: u32,
+    stream: u64,
+) -> Result<()> {
+    let blocks = n_local.div_ceil(1024).clamp(1, 128);
+    KernelLaunch::new(gpu, kernel)
+        .grid([blocks, 1, 1])
+        .block([ARGMAX_KEY_BLOCK, 1, 1])
+        .arg_ptr(shard)
+        .arg_ptr(masks)
+        .arg_ptr(keys)
+        .arg_u32(base)
+        .arg_u32(n_local)
+        .launch(stream)
+}
+
+/// 2026-10-10: `cell[0]` = the token named by the max of `keys` and `n_peers` peer key pairs at
+/// `peers + slot * slot_bytes` (a one-shot exchange's slots; `n_peers` 0 when `keys` holds every
+/// slice), under `masks`.
+#[allow(clippy::too_many_arguments)]
+pub fn argmax_key_resolve(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    keys: DevicePtr,
+    peers: DevicePtr,
+    slot_bytes: u64,
+    n_peers: u32,
+    masks: DevicePtr,
+    cell: DevicePtr,
+    stream: u64,
+) -> Result<()> {
+    KernelLaunch::new(gpu, kernel)
+        .grid([1, 1, 1])
+        .block([32, 1, 1])
+        .arg_ptr(keys)
+        .arg_ptr(peers)
+        .arg_u64(slot_bytes)
+        .arg_u32(n_peers)
+        .arg_ptr(masks)
+        .arg_ptr(cell)
+        .launch(stream)
+}

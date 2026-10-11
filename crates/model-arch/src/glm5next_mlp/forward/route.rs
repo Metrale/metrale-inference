@@ -29,6 +29,12 @@ pub enum ExpertRoute {
     PerRow,
 }
 
+/// 2026-10-10: The fewest rows the grouped GEMM takes: wider than `MOE_ROW_BATCH_MAX_ROWS`
+/// and at least `prefill_gemm_min_rows()`. Fewer rows never reach its host-side tile sizing.
+pub fn grouped_row_floor() -> usize {
+    (MOE_ROW_BATCH_MAX_ROWS + 1).max(forward_prefill_gemm::prefill_gemm_min_rows())
+}
+
 /// 2026-10-09: The path a `forward_moe` of `rows` rows takes: the precision plan first, then the
 /// grouped GEMM above `MOE_ROW_BATCH_MAX_ROWS` rows and from `prefill_gemm_min_rows()`, then
 /// the row-union GEMV, else per row.
@@ -43,8 +49,7 @@ pub fn expert_route(
     if w.precision.kernel(rows) == MlpKernel::W4a4Static {
         return ExpertRoute::W4a4;
     }
-    let grouped = rows > MOE_ROW_BATCH_MAX_ROWS
-        && rows >= forward_prefill_gemm::prefill_gemm_min_rows()
+    let grouped = rows >= grouped_row_floor()
         && forward_prefill_gemm::prefill_gemm_enabled()
         && !host_dispatch_forced()
         && !profile::trace_on()

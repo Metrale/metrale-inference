@@ -384,6 +384,9 @@ pub struct TransformerModel {
     /// comm backend, `new` checks that the ranks agree on it
     /// (`rank_agree::assert_ranks_agree`).
     pub(super) ep_protocol_v2: bool,
+    /// 2026-10-10: The sharded device argmax that may end a one-row decode step
+    /// (`device_argmax.rs`).
+    pub(super) device_argmax: super::device_argmax::DeviceArgmax,
     pub(super) self_speculative: bool,
     /// 2026-09-25: Last token index `save_hidden_for_mtp` copied from, broadcast
     /// to the other EP rank before an MTP propose.

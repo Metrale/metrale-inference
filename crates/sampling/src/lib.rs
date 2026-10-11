@@ -258,6 +258,10 @@ impl Sampler {
 }
 
 pub mod feed_argmax;
+pub mod feed_argmax_key;
+#[cfg(test)]
+#[path = "feed_argmax_key_tests.rs"]
+mod feed_argmax_key_tests;
 #[cfg(test)]
 #[path = "feed_argmax_tests.rs"]
 mod feed_argmax_tests;

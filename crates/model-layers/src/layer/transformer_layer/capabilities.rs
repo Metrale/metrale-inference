@@ -38,6 +38,13 @@ pub trait LayerCapabilities {
     /// single-sequence decode (`decode_a.rs`) captures with a communicator when every layer
     /// says so (unless `METRALE_COMM_DECODE_GRAPHS=0`), as it does under the `ep_graphs` and
     /// `gdn_decode_graph` levers. Default false.
+    /// 2026-10-10: The most rows a captured multi-row step (a verify) may carry through this
+    /// layer: above it the layer takes a path that reads device results back to the host, which
+    /// a capture cannot do. `None`, the default: no limit.
+    fn max_captured_rows(&self) -> Option<usize> {
+        None
+    }
+
     fn decode_graph_with_comm(&self) -> bool {
         false
     }

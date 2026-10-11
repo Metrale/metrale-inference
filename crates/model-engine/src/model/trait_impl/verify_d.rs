@@ -186,6 +186,8 @@ impl TransformerModel {
             && !hss_engaged
             && !force_eager
             && !lora_eager
+            // 2026-10-10: Within every layer's captured-row limit (`max_captured_rows`).
+            && self.rows_capturable(k)
             // 2026-09-25: Sliding-window layers use `verify_attention_per_token`, whose
             // per-token H2D uploads are illegal under capture.
             && !(0..self.layers.len())

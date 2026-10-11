@@ -124,19 +124,43 @@ impl TransformerModel {
         }
         // 2026-10-10: v3 sends the pair as one block (`ep_wire`).
         if v2 && EpWire::get().one_block() {
-            let comm = self
-                .comm
-                .as_ref()
-                .expect("multi-rank protocol without comm");
-            self.gpu
-                .copy_h2d(&ep_wire::host_block(seq_id, cmd), self.ep_cmd_buf)?;
-            return comm.broadcast(self.ep_cmd_buf.0, ep_wire::CMD_BLOCK_BYTES, 0);
+            return self.ep_broadcast_block(&ep_wire::host_block(seq_id, cmd));
         }
         if v2 {
             self.ep_broadcast_u32(seq_id)?;
         }
         self.ep_broadcast_u32(cmd)?;
         Ok(())
+    }
+
+    /// 2026-10-10: Rank 0: broadcast a v3 command block, waiting for it as `ep_broadcast_u32`
+    /// does. A no-op unless `multi_rank_protocol_active()`.
+    pub(super) fn ep_broadcast_block(&self, block: &[u8; ep_wire::CMD_BLOCK_BYTES]) -> Result<()> {
+        if !self.multi_rank_protocol_active() {
+            return Ok(());
+        }
+        let comm = self
+            .comm
+            .as_ref()
+            .expect("multi-rank protocol without comm");
+        self.gpu.copy_h2d(block, self.ep_cmd_buf)?;
+        comm.broadcast(self.ep_cmd_buf.0, ep_wire::CMD_BLOCK_BYTES, 0)
+    }
+
+    /// 2026-10-10: Rank 0: announce a one-row host-token decode step (`cmd` = the token) in
+    /// `seq_id`. When the step is armed for the device argmax (`device_argmax.rs`) the v3 block
+    /// carries the flag and the row mask, so every worker ends the step the same way; otherwise
+    /// it is `ep_broadcast_seq_and_cmd`.
+    pub(crate) fn ep_broadcast_decode(&self, seq_id: u32, cmd: u32) -> Result<()> {
+        match self.device_argmax.armed_mask() {
+            Some(mask) => self.ep_broadcast_block(&ep_wire::decode_block(
+                seq_id,
+                cmd,
+                ep_wire::FLAG_DEVICE_ARGMAX,
+                mask,
+            )),
+            None => self.ep_broadcast_seq_and_cmd(seq_id, cmd, self.ep_protocol_v2),
+        }
     }
 
     /// 2026-09-25: Broadcast a batched decode step (`0xFFFFFFE0`) from rank 0:
@@ -182,7 +206,7 @@ impl TransformerModel {
     /// 2026-09-25: Receive a `(seq_id, cmd)` pair from rank 0; the worker side
     /// of [`Self::ep_broadcast_seq_and_cmd`]. With `v2` the `seq_id` is the
     /// slot to run the command in; without it the `seq_id` is always 0.
-    pub(super) fn ep_recv_seq_and_cmd(&self, v2: bool) -> Result<(u32, u32)> {
+    pub(super) fn ep_recv_seq_and_cmd(&self, v2: bool) -> Result<ep_wire::CmdBlock> {
         // 2026-09-25: Only the first word waits through server idle time. Once
         // it arrives the command is in flight, and the remaining words use the
         // bounded `broadcast`.
@@ -196,18 +220,26 @@ impl TransformerModel {
             self.gpu.synchronize(self.gpu.default_stream())?;
             let mut block = [0u8; ep_wire::CMD_BLOCK_BYTES];
             self.gpu.copy_d2h(self.ep_cmd_buf, &mut block)?;
-            return Ok(ep_wire::block_preamble(&block));
+            return Ok(ep_wire::parse_block(&block));
         }
         comm.recv_command_u32(self.ep_cmd_buf.0, 0)?;
         self.gpu.synchronize(self.gpu.default_stream())?;
         let mut buf = [0u8; 4];
         self.gpu.copy_d2h(self.ep_cmd_buf, &mut buf)?;
         let first = u32::from_le_bytes(buf);
-        if v2 {
-            Ok((first, self.ep_broadcast_u32(0)?))
+        let (seq_id, cmd) = if v2 {
+            (first, self.ep_broadcast_u32(0)?)
         } else {
-            Ok((0, first))
-        }
+            (0, first)
+        };
+        // 2026-10-10: Below v3 a command carries no argument, flags or mask.
+        Ok(ep_wire::CmdBlock {
+            seq_id,
+            cmd,
+            arg: 0,
+            flags: 0,
+            mask: [ep_wire::NO_MASK, ep_wire::NO_MASK],
+        })
     }
 
     /// 2026-09-25: Broadcast one u32 from rank 0 through `ep_cmd_buf`. Rank 0

@@ -167,3 +167,28 @@ fn the_c1_comparison_fails_when_the_over_run_discard_is_off() {
     assert!(count(&live, "fx launch DecodeFed") > 0);
     assert_ne!(client_lines(&live), expected);
 }
+
+/// 2026-10-10: The same C1 run with the model ending each one-row step in its device argmax
+/// (`arm_device_argmax`): the streams stay the synchronous router's, and the armed steps read
+/// the resolved cells instead of running the argmax over the logits.
+#[test]
+fn armed_device_argmax_steps_keep_the_synchronous_streams() {
+    let cfg = ModelCfg {
+        device_argmax: true,
+        ..ep_recurrent(Some(1))
+    };
+    let sc = c1("ep_recurrent_c1_device_argmax", cfg);
+    let expected = client_lines(&sync_run(&sc));
+    let live = async_run(&sc);
+    assert_eq!(client_lines(&live), expected);
+    assert!(
+        count(&live, "device_argmax_to_host") > 0,
+        "no step was armed"
+    );
+    assert_eq!(
+        count(&live, "argmax_batch_to_feed"),
+        0,
+        "an armed run still ran the argmax over the logits"
+    );
+    assert_eq!(count(&live, "consumed again"), 0);
+}
