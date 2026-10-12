@@ -68,7 +68,7 @@ fn the_floor_gates_the_layer_predicate() {
 }
 
 /// 2026-10-12: 130 rows: the conv, then one slab: prepare over 3 chunks of 64 for both heads
-/// (256 threads, its shared memory) and the scan over both heads' two 64-column blocks (128
+/// (256 threads, its shared memory) and the scan over both heads' two 64-column blocks (256
 /// threads), reading the conv's q/k/v (k one `qkv` and v two past q), gate and beta rows, the
 /// factors in the six scratch buffers, writing `core`, on the layer's recurrent state.
 #[test]
@@ -121,7 +121,7 @@ fn rows_run_conv_prepare_and_scan_over_their_chunks() {
         ),
         (2, 130, 0, cd as u32, qkv as u32)
     );
-    assert_eq!((s.grid, s.block), ([2, 2, 1], [128, 1, 1]));
+    assert_eq!((s.grid, s.block), ([2, 2, 1], [256, 1, 1]));
     assert_eq!(s.shared_mem, super::CHUNK64_SCAN_SMEM);
     assert_eq!((ptr(s, 6), ptr(s, 7)), (st.recurrent, ws.core));
     assert_eq!(

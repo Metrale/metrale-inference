@@ -22,10 +22,11 @@
 // from kda_chunk64_prepare.cu (kda_chunk64_prepare); kda_chunk64.cuh has the
 // scratch layout.
 //
-// kda_chunk64_scan, one block of 4 warps per (head, 64-value-column block), serial over the
-// slab's chunks (slab-local chunk lc covers tokens (c0 + lc) * C ..). Warp w holds the state rows 32 w .. 32 w + 31 x the block's 64 columns in registers in
-// the MMA accumulator layout for the whole walk. Per chunk: (A) delta = U - W S0 and o = Qg S0
-// (warp w: rows 16 w .. 16 w + 15), delta^T staged to shared memory; (B) S = diag(decay) S +
+// kda_chunk64_scan, one block of 8 warps per (head, 64-value-column block), serial over the
+// slab's chunks (slab-local chunk lc covers tokens (c0 + lc) * C ..). Warp w holds the state rows
+// 16 w .. 16 w + 15 x the block's 64 columns in registers in the MMA accumulator layout for the
+// whole walk. Per chunk: (A) delta = U - W S0 and o = Qg S0 (warp w: rows 16 (w & 3) .., columns
+// 32 (w >> 2) ..), delta^T staged to shared memory; (B) S = diag(decay) S +
 // Kd^T delta; (C) o += P delta, written out. Products on mma.sync.m16n8k16 BF16 with FP32
 // accumulation (W, Qg, Kd, P, delta and the staged S0 rounded to BF16, as FLA's chunked KDA
 // does); U, the state and the outputs stay FP32. So the outputs differ from the token walk at
@@ -141,7 +142,11 @@ extern "C" __global__ void __launch_bounds__(KDA64_SCAN_THREADS) kda_chunk64_sca
     unsigned int out_stride
 ) {
     constexpr int C = KDA64_C, D = KDA64_D, VB = KDA64_VB, LD = KDA64_LD, LDC = KDA64_LDC;
-    constexpr int NT = VB / 8;
+    // 2026-10-12: 8 warps: in (A) and (C) warp w covers rows 16 (w & 3) .. and the column half
+    // 32 (w >> 2) .. of the block's VB columns (NTW n-tiles); in (B) it owns the state rows
+    // 16 w .. 16 w + 15 across all VB columns (NT n-tiles), held in registers for the whole walk.
+    constexpr int NT = VB / 8, NTW = VB / 16, SR = D / (KDA64_SCAN_THREADS / 32);
+    static_assert(SR == 16, "one m16 tile of state rows per warp");
     extern __shared__ __align__(16) unsigned char k64_scan_sh[];
     __nv_bfloat16* sW = (__nv_bfloat16*)k64_scan_sh;     // [C][LD]
     __nv_bfloat16* sQ = sW + C * LD;                      // [C][LD]
@@ -160,6 +165,7 @@ extern "C" __global__ void __launch_bounds__(KDA64_SCAN_THREADS) kda_chunk64_sca
 
     const unsigned int h = blockIdx.x, v0 = blockIdx.y * VB, tid = threadIdx.x;
     const unsigned int warp = tid >> 5, lane = tid & 31u, g = lane >> 2, tig = lane & 3u;
+    const unsigned int r0 = (warp & 3u) * 16u, cw = (warp >> 2) * 32u, k0 = warp * (unsigned int)SR;
     float* S = state + (size_t)h * D * D;
 
     // 2026-10-12: The chunk's factors, three cp.async groups: W + Qg; Kd + decay; P.
@@ -183,59 +189,53 @@ extern "C" __global__ void __launch_bounds__(KDA64_SCAN_THREADS) kda_chunk64_sca
         k64_cp_commit();
     };
 
-    // 2026-10-12: The state rows 32 warp .. 32 warp + 31, all VB columns, in the m16n8 accumulator
-    // layout: st[mt][nt][0..3] = rows 32 warp + 16 mt + (g, g, g + 8, g + 8), columns
-    // v0 + 8 nt + 2 tig + (0, 1, 0, 1).
-    float st[2][NT][4];
+    // 2026-10-12: The state rows k0 .. k0 + 15, all VB columns, in the m16n8 accumulator layout:
+    // st[nt][0..3] = rows k0 + (g, g, g + 8, g + 8), columns v0 + 8 nt + 2 tig + (0, 1, 0, 1).
+    float st[NT][4];
 #pragma unroll
-    for (int mt = 0; mt < 2; ++mt)
+    for (int nt = 0; nt < NT; ++nt)
 #pragma unroll
-        for (int nt = 0; nt < NT; ++nt)
-#pragma unroll
-            for (int e = 0; e < 4; ++e) {
-                const unsigned int row = warp * 32u + (unsigned int)mt * 16u + g + (e >= 2 ? 8u : 0u);
-                const unsigned int col = v0 + (unsigned int)nt * 8u + 2u * tig + (unsigned int)(e & 1);
-                st[mt][nt][e] = S[(size_t)row * D + col];
-            }
+        for (int e = 0; e < 4; ++e) {
+            const unsigned int row = k0 + g + (e >= 2 ? 8u : 0u);
+            const unsigned int col = v0 + (unsigned int)nt * 8u + 2u * tig + (unsigned int)(e & 1);
+            st[nt][e] = S[(size_t)row * D + col];
+        }
     if (num_chunks > 0) {
         load_wq((size_t)h);
         load_kd((size_t)h);
         load_p((size_t)h);
     }
 
-    const unsigned int r0 = warp * 16u;
     for (unsigned int c = 0; c < num_chunks; ++c) {
         const size_t cb = (size_t)c * H + h;
         const bool more = c + 1 < num_chunks;
         const size_t cbn = cb + H;
-        // 2026-10-12: U rows for this warp's delta, requested now, consumed after phase A.
-        float2 uv[NT][2];
+        // 2026-10-12: U rows for this warp's delta tile, requested now, consumed after phase A.
+        float2 uv[NTW][2];
 #pragma unroll
-        for (int nt = 0; nt < NT; ++nt)
+        for (int nt = 0; nt < NTW; ++nt)
 #pragma unroll
             for (int hr = 0; hr < 2; ++hr) {
                 const unsigned int i = r0 + g + (unsigned int)hr * 8u;
-                uv[nt][hr] = *(const float2*)(u_in + cb * C * D + (size_t)i * D + v0 +
+                uv[nt][hr] = *(const float2*)(u_in + cb * C * D + (size_t)i * D + v0 + cw +
                                               (unsigned int)nt * 8u + 2u * tig);
             }
         // 2026-10-12: S0^T as BF16: this warp's state rows are k = columns of S^T.
 #pragma unroll
-        for (int mt = 0; mt < 2; ++mt)
+        for (int nt = 0; nt < NT; ++nt)
 #pragma unroll
-            for (int nt = 0; nt < NT; ++nt)
-#pragma unroll
-                for (int e = 0; e < 4; ++e) {
-                    const unsigned int kr = warp * 32u + (unsigned int)mt * 16u + g + (e >= 2 ? 8u : 0u);
-                    const unsigned int vc = (unsigned int)nt * 8u + 2u * tig + (unsigned int)(e & 1);
-                    sST[vc * LD + kr] = __float2bfloat16_rn(st[mt][nt][e]);
-                }
+            for (int e = 0; e < 4; ++e) {
+                const unsigned int kr = k0 + g + (e >= 2 ? 8u : 0u);
+                const unsigned int vc = (unsigned int)nt * 8u + 2u * tig + (unsigned int)(e & 1);
+                sST[vc * LD + kr] = __float2bfloat16_rn(st[nt][e]);
+            }
         k64_cp_wait_all();
         __syncthreads();
 
-        // 2026-10-12: (A) delta = U - W S0 and o = Qg S0 for rows 16 warp .. 16 warp + 15.
-        float dl[NT][4], o[NT][4];
+        // 2026-10-12: (A) delta = U - W S0 and o = Qg S0 for rows r0 .., columns cw .. of the block.
+        float dl[NTW][4], o[NTW][4];
 #pragma unroll
-        for (int nt = 0; nt < NT; ++nt)
+        for (int nt = 0; nt < NTW; ++nt)
 #pragma unroll
             for (int e = 0; e < 4; ++e) {
                 dl[nt][e] = 0.0f;
@@ -247,20 +247,20 @@ extern "C" __global__ void __launch_bounds__(KDA64_SCAN_THREADS) kda_chunk64_sca
             k64_frag_a(bW, LD, r0, (unsigned int)ks * 16u, lane, aw);
             k64_frag_a(bQ, LD, r0, (unsigned int)ks * 16u, lane, aq);
 #pragma unroll
-            for (int nt = 0; nt < NT; ++nt) {
+            for (int nt = 0; nt < NTW; ++nt) {
                 uint32_t b0, b1;
-                k64_frag_b(bST, LD, (unsigned int)nt * 8u, (unsigned int)ks * 16u, lane, b0, b1);
+                k64_frag_b(bST, LD, cw + (unsigned int)nt * 8u, (unsigned int)ks * 16u, lane, b0, b1);
                 k64_mma(dl[nt], aw, b0, b1);
                 k64_mma(o[nt], aq, b0, b1);
             }
         }
         // 2026-10-12: delta^T to shared memory as BF16.
 #pragma unroll
-        for (int nt = 0; nt < NT; ++nt) {
+        for (int nt = 0; nt < NTW; ++nt) {
 #pragma unroll
             for (int hr = 0; hr < 2; ++hr) {
                 const unsigned int i = r0 + g + (unsigned int)hr * 8u;
-                const unsigned int vc = (unsigned int)nt * 8u + 2u * tig;
+                const unsigned int vc = cw + (unsigned int)nt * 8u + 2u * tig;
                 sDT[vc * LDC + i] = __float2bfloat16_rn(uv[nt][hr].x - dl[nt][hr * 2]);
                 sDT[(vc + 1u) * LDC + i] = __float2bfloat16_rn(uv[nt][hr].y - dl[nt][hr * 2 + 1]);
             }
@@ -268,32 +268,26 @@ extern "C" __global__ void __launch_bounds__(KDA64_SCAN_THREADS) kda_chunk64_sca
         __syncthreads();
         if (more) load_wq(cbn);
 
-        // 2026-10-12: (B) S = diag(decay) S0 + Kd^T delta for this warp's 32 state rows.
-#pragma unroll
-        for (int mt = 0; mt < 2; ++mt) {
-            const unsigned int ka = warp * 32u + (unsigned int)mt * 16u + g;
-            const float d0 = sDec[ka], d1 = sDec[ka + 8u];
+        // 2026-10-12: (B) S = diag(decay) S0 + Kd^T delta for this warp's 16 state rows.
+        {
+            const float d0 = sDec[k0 + g], d1 = sDec[k0 + g + 8u];
 #pragma unroll
             for (int nt = 0; nt < NT; ++nt) {
-                st[mt][nt][0] *= d0;
-                st[mt][nt][1] *= d0;
-                st[mt][nt][2] *= d1;
-                st[mt][nt][3] *= d1;
+                st[nt][0] *= d0;
+                st[nt][1] *= d0;
+                st[nt][2] *= d1;
+                st[nt][3] *= d1;
             }
         }
 #pragma unroll
         for (int ks = 0; ks < C / 16; ++ks) {
+            uint32_t ak[4];
+            k64_frag_a_t(bKd, LD, k0, (unsigned int)ks * 16u, lane, ak);
 #pragma unroll
-            for (int mt = 0; mt < 2; ++mt) {
-                uint32_t ak[4];
-                k64_frag_a_t(bKd, LD, warp * 32u + (unsigned int)mt * 16u, (unsigned int)ks * 16u,
-                             lane, ak);
-#pragma unroll
-                for (int nt = 0; nt < NT; ++nt) {
-                    uint32_t b0, b1;
-                    k64_frag_b(bDT, LDC, (unsigned int)nt * 8u, (unsigned int)ks * 16u, lane, b0, b1);
-                    k64_mma(st[mt][nt], ak, b0, b1);
-                }
+            for (int nt = 0; nt < NT; ++nt) {
+                uint32_t b0, b1;
+                k64_frag_b(bDT, LDC, (unsigned int)nt * 8u, (unsigned int)ks * 16u, lane, b0, b1);
+                k64_mma(st[nt], ak, b0, b1);
             }
         }
         __syncthreads();
@@ -305,19 +299,19 @@ extern "C" __global__ void __launch_bounds__(KDA64_SCAN_THREADS) kda_chunk64_sca
             uint32_t ap[4];
             k64_frag_a(bP, LDC, r0, (unsigned int)ks * 16u, lane, ap);
 #pragma unroll
-            for (int nt = 0; nt < NT; ++nt) {
+            for (int nt = 0; nt < NTW; ++nt) {
                 uint32_t b0, b1;
-                k64_frag_b(bDT, LDC, (unsigned int)nt * 8u, (unsigned int)ks * 16u, lane, b0, b1);
+                k64_frag_b(bDT, LDC, cw + (unsigned int)nt * 8u, (unsigned int)ks * 16u, lane, b0, b1);
                 k64_mma(o[nt], ap, b0, b1);
             }
         }
 #pragma unroll
-        for (int nt = 0; nt < NT; ++nt) {
+        for (int nt = 0; nt < NTW; ++nt) {
 #pragma unroll
             for (int hr = 0; hr < 2; ++hr) {
                 const unsigned int t = (c0 + c) * C + r0 + g + (unsigned int)hr * 8u;
                 if (t < T) {
-                    float2* op = (float2*)(out + (size_t)t * out_stride + (size_t)h * D + v0 +
+                    float2* op = (float2*)(out + (size_t)t * out_stride + (size_t)h * D + v0 + cw +
                                            (unsigned int)nt * 8u + 2u * tig);
                     *op = make_float2(o[nt][hr * 2], o[nt][hr * 2 + 1]);
                 }
@@ -328,13 +322,11 @@ extern "C" __global__ void __launch_bounds__(KDA64_SCAN_THREADS) kda_chunk64_sca
         if (more) load_p(cbn);
     }
 #pragma unroll
-    for (int mt = 0; mt < 2; ++mt)
+    for (int nt = 0; nt < NT; ++nt)
 #pragma unroll
-        for (int nt = 0; nt < NT; ++nt)
-#pragma unroll
-            for (int e = 0; e < 4; ++e) {
-                const unsigned int row = warp * 32u + (unsigned int)mt * 16u + g + (e >= 2 ? 8u : 0u);
-                const unsigned int col = v0 + (unsigned int)nt * 8u + 2u * tig + (unsigned int)(e & 1);
-                S[(size_t)row * D + col] = st[mt][nt][e];
-            }
+        for (int e = 0; e < 4; ++e) {
+            const unsigned int row = k0 + g + (e >= 2 ? 8u : 0u);
+            const unsigned int col = v0 + (unsigned int)nt * 8u + 2u * tig + (unsigned int)(e & 1);
+            S[(size_t)row * D + col] = st[nt][e];
+        }
 }

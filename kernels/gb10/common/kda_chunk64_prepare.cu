@@ -6,13 +6,20 @@
 // an SM; kda_chunk64.cuh has the scratch layout.
 //
 // Pairs: G = the in-chunk cumsum of the log gate (thread per channel), decay = exp(G_last), then
-// A[i,j] (j < i) and P[i,j] (j <= i): one warp per row i, lanes over channels (4 each), 16
-// columns j at a time with the 16 partial sums per lane reduced across the warp by a butterfly
-// transpose (31 shuffles for 16 pairs, not 31 per pair; 16 columns, not 32, keep the kernel
-// under 128 registers for two blocks per SM). q is read from global memory once per row. A rows
-// go to the block's global scratch slot as they complete (a fully unrolled row loop holding them
-// in registers spilled); once every warp is done with K, A is read back (L2) over K's shared
-// memory. P goes out as BF16. G stays.
+// A[i,j] (j < i) and P[i,j] (j <= i) with the pair weight factored through the midpoint m(J) =
+// 16 J + 8 of j's 16-token block J:
+//   exp(G_i - G_j) = exp(G_i - G_m(J)) * exp(G_m(J) - G_j),
+// so Y_j = k_j exp(G_m(J) - G_j) is computed once per (j, channel) in place over K (BF16; one
+// rounding on top of k's own) and a row i needs 4 exponentials per channel (one per block) instead
+// of 64. Both exponents are bounded by 8 |gate_lower_bound| (8 tokens from the midpoint), not 64,
+// so nothing overflows for |gate_lower_bound| < 10 (GLM: 5; the end reference would allow 16
+// tokens and the start reference would overflow Y). One warp per row i, lanes over channels (4
+// each), 16 columns j at a time with the 16 partial sums per lane reduced across the warp by a
+// butterfly transpose (31 shuffles per 16 pairs; 16 columns, not 32, keep the kernel under 128
+// registers for two blocks per SM). The row's own k and q come from global memory. A rows go to
+// the block's global scratch slot as they complete (a fully unrolled row loop holding them in
+// registers spilled); once every warp is done with Y, A is read back (L2) over its shared memory.
+// P goes out as BF16. G stays.
 // Solve: the forward substitution U_i = beta_i (v_i - sum_{j<i} A_ij U_j) (threads 0..127, one
 // channel each) and W_i = beta_i (exp(G_i) k_i - sum A_ij W_j) (threads 128..255), A rows read
 // as float4, four partial sums per row, exp(G_i) from the staged G; Qg = scale exp(G_i) q_i by
@@ -125,6 +132,13 @@ extern "C" __global__ void __launch_bounds__(KDA64_PREP_THREADS, 2) kda_chunk64_
     }
     __syncthreads();
 
+    // 2026-10-12: Y_j = k_j exp(G_m(J) - G_j) over K, in place (each element by one thread).
+    for (unsigned int e = tid; e < (unsigned int)(C * D); e += blockDim.x) {
+        const unsigned int j = e / D, d = e % D, m = (j & ~15u) + 8u;
+        sK[e] = __float2bfloat16_rn(__bfloat162float(sK[e]) * __expf(sG[m * D + d] - sG[e]));
+    }
+    __syncthreads();
+
     // 2026-10-12: Pairs. Warp w owns rows w, w + NW, ..; lanes 0..15 write each 16-column group.
     const unsigned int warp = tid >> 5, lane = tid & 31u, half = lane >> 4, lane16 = lane & 15u;
     __nv_bfloat16* P = p_out + cb * C * C;
@@ -135,9 +149,10 @@ extern "C" __global__ void __launch_bounds__(KDA64_PREP_THREADS, 2) kda_chunk64_
 #pragma unroll
         for (int e = 0; e < D / 32; ++e) {
             const unsigned int d = lane + 32u * (unsigned int)e;
-            ki[e] = __bfloat162float(sK[i * D + d]);
+            const size_t qo = (size_t)t * qkv_stride + hd + d;
+            ki[e] = t < T ? __bfloat162float(k[qo]) : 0.0f;
+            qi[e] = t < T ? scale * __bfloat162float(q[qo]) : 0.0f;
             gi[e] = sG[i * D + d];
-            qi[e] = t < T ? scale * __bfloat162float(q[(size_t)t * qkv_stride + hd + d]) : 0.0f;
         }
 #pragma unroll
         for (int gidx = 0; gidx < C / 16; ++gidx) {
@@ -149,7 +164,16 @@ extern "C" __global__ void __launch_bounds__(KDA64_PREP_THREADS, 2) kda_chunk64_
                 }
                 continue;
             }
-            // 2026-10-12: Columns j0 .. min(j0 + 15, i); the bound is warp-uniform.
+            // 2026-10-12: The row's factors against this block's midpoint, then columns
+            // j0 .. min(j0 + 15, i); the bound is warp-uniform.
+            float xk[D / 32], xq[D / 32];
+#pragma unroll
+            for (int e = 0; e < D / 32; ++e) {
+                const unsigned int d = lane + 32u * (unsigned int)e;
+                const float x = __expf(gi[e] - sG[(j0 + 8u) * D + d]);
+                xk[e] = ki[e] * x;
+                xq[e] = qi[e] * x;
+            }
             const unsigned int n = min(16u, i - j0 + 1u);
             float a[16], p[16];
 #pragma unroll
@@ -161,9 +185,9 @@ extern "C" __global__ void __launch_bounds__(KDA64_PREP_THREADS, 2) kda_chunk64_
 #pragma unroll
                     for (int e = 0; e < D / 32; ++e) {
                         const unsigned int d = lane + 32u * (unsigned int)e;
-                        const float kj = __bfloat162float(sK[jr * D + d]) * __expf(gi[e] - sG[jr * D + d]);
-                        a[jj] += ki[e] * kj;
-                        p[jj] += qi[e] * kj;
+                        const float y = __bfloat162float(sK[jr * D + d]);
+                        a[jj] += xk[e] * y;
+                        p[jj] += xq[e] * y;
                     }
                 }
             }
@@ -175,7 +199,7 @@ extern "C" __global__ void __launch_bounds__(KDA64_PREP_THREADS, 2) kda_chunk64_
             }
         }
     }
-    // 2026-10-12: K is dead; A (this block's own writes, visible after the barrier) and beta
+    // 2026-10-12: Y is dead; A (this block's own writes, visible after the barrier) and beta
     // take its place. G stays for the solve.
     __syncthreads();
     for (unsigned int e = tid; e < (unsigned int)(C * C / 4); e += blockDim.x) {

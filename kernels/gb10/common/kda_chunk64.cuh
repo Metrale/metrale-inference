@@ -30,7 +30,7 @@
 // on 48 SMs.
 #define KDA64_VB 64
 #define KDA64_PREP_THREADS 256
-#define KDA64_SCAN_THREADS 128
+#define KDA64_SCAN_THREADS 256
 // 2026-10-12: Padded BF16 row strides (halves) so ldmatrix row addresses hit distinct banks.
 #define KDA64_LD (KDA64_D + 8)
 #define KDA64_LDC (KDA64_C + 8)

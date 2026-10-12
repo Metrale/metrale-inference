@@ -45,7 +45,7 @@ pub const CHUNK64_AD_STRIDE: usize = CHUNK64 * CHUNK64 + CHUNK64_D;
 /// 2026-10-12: `KDA64_VB`, `KDA64_PREP_THREADS`, `KDA64_SCAN_THREADS`.
 pub const CHUNK64_VB: usize = 64;
 pub const CHUNK64_PREP_THREADS: u32 = 256;
-pub const CHUNK64_SCAN_THREADS: u32 = 128;
+pub const CHUNK64_SCAN_THREADS: u32 = 256;
 /// 2026-10-12: `KDA64_PREP_SMEM` and `KDA64_SCAN_SMEM` in bytes.
 pub const CHUNK64_PREP_SMEM: u32 =
     (CHUNK64 * CHUNK64_D * 4 + CHUNK64 * CHUNK64_D * 2 + CHUNK64 * 4) as u32;
@@ -124,6 +124,17 @@ impl Glm5NextKdaLayer {
                 ws.t_pad
             );
         }
+        // 2026-10-12: Once per process: the proof in the serve log that the lever reached this
+        // path (a serve A/B is unreadable without it).
+        static APPLIED: std::sync::Once = std::sync::Once::new();
+        APPLIED.call_once(|| {
+            tracing::info!(
+                "GLM KDA: METRALE_GLM_KDA_CHUNK64 applied at {}:{}: {k} rows as {nchunks} chunks \
+                 of {CHUNK64} in slabs of {CHUNK64_SLAB}",
+                file!(),
+                line!()
+            );
+        });
         self.conv_tokens(gpu, k, state, ws, stream)?;
         let io = RowIo::workspace(c, ws, 0);
         let scale = 1.0 / (d as f32).sqrt();
