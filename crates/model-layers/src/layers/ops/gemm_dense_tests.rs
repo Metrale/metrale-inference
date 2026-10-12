@@ -179,16 +179,16 @@ fn ldb_kernels_keep_their_dialect_specific_bounds() {
             }
         }
     }
-    // 2026-09-25: Six scalar paths, two files. hopper and b200 inherit gb10
+    // 2026-10-12: Seven scalar paths, two files. hopper and b200 inherit gb10
     // (`HARDWARE.toml`), and strix and b300 list `../gb10/common/w4a16_gemm.cu`
     // in their `KERNEL.toml`, so those four compile gb10's file; strix-hip holds
-    // its own. A new sharing target raises only the path count, while a new
-    // forked copy is a file that needs the `ldb` change by hand, so both counts
-    // are asserted.
+    // its own, which gfx1201 inherits. A new sharing target raises only the path
+    // count, while a new forked copy is a file that needs the `ldb` change by
+    // hand, so both counts are asserted.
     assert_eq!(
-        scalar, 6,
+        scalar, 7,
         "the shared `common/` scalar paths moved (gb10, strix, strix-hip, \
-         hopper, b200, b300) — update this count with the tree"
+         gfx1201, hopper, b200, b300) — update this count with the tree"
     );
     assert_eq!(
         scalar_forked, 2,

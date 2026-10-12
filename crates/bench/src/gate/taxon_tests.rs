@@ -111,6 +111,7 @@ fn every_real_target_resolves_a_nonempty_source_set() {
             "gb10/qwen3.8-27b/nvfp4",
             "gb10/qwen3.8-flash-next/nvfp4",
             "gb10/step3p7-flash/nvfp4",
+            "gfx1201/qwen3.6-27b/nvfp4",
             "hopper/deepseek-v4-flash/nvfp4",
             "hopper/deepseek-v4.1-flash/nvfp4",
             "hopper/nemotron-3-nano-30b-a3b/nvfp4",

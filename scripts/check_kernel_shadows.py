@@ -55,7 +55,7 @@ import kernel_layout as kl  # noqa: E402
 # below would otherwise scan nothing and print OK, which is how a renamed
 # `kernels/gb10` once passed. Adding or retiring hardware edits this list in
 # the same commit, which is exactly the moment to notice.
-HW_TREES = ("b200", "b300", "gb10", "hopper", "metal", "strix", "strix-hip")
+HW_TREES = ("b200", "b300", "gb10", "gfx1201", "hopper", "metal", "strix", "strix-hip")
 KERNEL_EXTS = (".cu", ".cuh", ".h", ".metal")
 
 
