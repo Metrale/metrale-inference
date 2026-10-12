@@ -235,6 +235,7 @@ impl Glm5NextKdaLayer {
             stream,
             tokens,
             super::chunk16::kda_chunk_scan_min_rows()?,
+            super::chunk64::kda_chunk64_min_rows()?,
         )
     }
 
@@ -254,9 +255,16 @@ impl Glm5NextKdaLayer {
         stream: u64,
         tokens: bool,
         chunk_min: Option<usize>,
+        // 2026-10-12: `METRALE_GLM_KDA_CHUNK64`'s floor (`chunk64.rs`), ahead of `chunk_min`.
+        chunk64_min: Option<usize>,
     ) -> Result<()> {
-        let chunked =
-            chunk_min.is_some_and(|r| k >= r) && snapshots.is_empty() && self.chunk16_ready();
+        let chunked64 =
+            chunk64_min.is_some_and(|r| k >= r) && snapshots.is_empty() && self.chunk64_ready();
+        let chunked = !chunked64
+            && chunk_min.is_some_and(|r| k >= r)
+            && snapshots.is_empty()
+            && self.chunk16_ready();
+        let chunked = chunked || chunked64;
         let tokens = !chunked && tokens && k > 1 && snapshots.is_empty() && self.seq_tokens_ready();
         let snap_tokens = !chunked
             && super::kda_verify_tokens()
@@ -280,7 +288,9 @@ impl Glm5NextKdaLayer {
                 }
             },
             || {
-                if chunked {
+                if chunked64 {
+                    self.stateful_chunk64(gpu, k, state, ws, stream)
+                } else if chunked {
                     self.stateful_chunk16(gpu, k, state, ws, stream)
                 } else if snap_tokens {
                     self.stateful_tokens_snap(gpu, k, state, ws, snapshots, stream)

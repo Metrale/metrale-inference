@@ -49,7 +49,7 @@ fn stateful(
         Vec::new()
     };
     let from = gpu.launch_count();
-    l.decode_k_modes(&gpu, hidden, k, &st, &ws, &snaps, 7, true, min)
+    l.decode_k_modes(&gpu, hidden, k, &st, &ws, &snaps, 7, true, min, None)
         .unwrap();
     let kinds = [
         CONV_TOKENS,

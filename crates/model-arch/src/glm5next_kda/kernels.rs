@@ -141,6 +141,10 @@ pub struct KdaSeqKernels {
     pub recurrent_snap: KernelHandle,
     pub chunk16_prepare: KernelHandle,
     pub chunk16_scan: KernelHandle,
+    /// 2026-10-12: The 64-token tensor-core chunked scan `kda_chunk64_prepare` /
+    /// `kda_chunk64_scan` (`kda_chunk64.cu`, `chunk64.rs`).
+    pub chunk64_prepare: KernelHandle,
+    pub chunk64_scan: KernelHandle,
 }
 
 impl KdaSeqKernels {
@@ -157,6 +161,8 @@ impl KdaSeqKernels {
             ),
             chunk16_prepare: k(gpu, "kda_chunk16", "kda_chunk16_prepare"),
             chunk16_scan: k(gpu, "kda_chunk16", "kda_chunk16_scan"),
+            chunk64_prepare: k(gpu, "kda_chunk64", "kda_chunk64_prepare"),
+            chunk64_scan: k(gpu, "kda_chunk64", "kda_chunk64_scan"),
         }
     }
 

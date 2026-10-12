@@ -283,6 +283,10 @@ name = "glm5next_kda_chunk16_bench"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "glm5next_kda_chunk64_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "glm5next_dsa_scores_tiled_bench"
 required-features = ["cuda", "gpu-examples"]
 
