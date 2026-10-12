@@ -30,6 +30,24 @@ pub fn tail_split_point(total: usize, block_size: usize) -> Option<usize> {
     (cut > 0).then_some(cut)
 }
 
+/// 2026-10-12: The split point a model takes: `tail_split_point` (one block below the tail
+/// boundary), or, when its layers split the whole pass at a capture (`whole_pass`, GLM-5.3),
+/// the tail boundary itself (`ssm_tail_boundary`). For such a model every split is a pass of
+/// its own and no second capture point is planned (`prepare_cut_capture`), so the one point
+/// sits where a byte-identical warm repeat's block-floored match lands (the boundary): it then
+/// restores there and replays the last partial block (1 to 16 tokens), not that plus a whole
+/// block. A next turn whose prompt shares all but the last token of this one matches the same
+/// boundary. Measured on the 3-rank GLM-5.3 serve: at `tail_split_point` a 268-token warm
+/// repeat restored nothing (the snapshot at 240 sits below `--marconi-min-tokens` 256) and a
+/// 4108-token one replayed 28 tokens (224 ms TTFT).
+pub fn tail_split_for(total: usize, block_size: usize, whole_pass: bool) -> Option<usize> {
+    if whole_pass {
+        metrale_gpu_runtime::ssm_tail_boundary(total, block_size)
+    } else {
+        tail_split_point(total, block_size)
+    }
+}
+
 /// 2026-09-27: Length of the prefill chunk at `offset` of a `total`-token prompt, given
 /// the capped `proposed` length.
 ///

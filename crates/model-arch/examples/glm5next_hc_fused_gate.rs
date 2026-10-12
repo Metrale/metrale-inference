@@ -233,7 +233,7 @@ fn fused_arm(
 ) -> Result<()> {
     glm_hc_pre_norm_with(
         g, k, s.streams, &s.w, s.norm_w, o.p[0], o.p[3], o.p[1], o.p[2], t as u32, hid as u32,
-        hc as u32, iters, NORM_EPS, HC_EPS, rms_eps, prefetch, splitk, stream,
+        hc as u32, iters, NORM_EPS, HC_EPS, rms_eps, prefetch, splitk, false, stream,
     )
 }
 

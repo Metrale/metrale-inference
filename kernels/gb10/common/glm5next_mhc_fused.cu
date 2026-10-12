@@ -152,16 +152,6 @@ __device__ __forceinline__ void glm_hcf_body(
     }
 }
 
-#define GLM_HCF_ARGS                                                                          \
-    const float* __restrict__ streams, const __nv_bfloat16* __restrict__ hc_fn,               \
-        const float* __restrict__ hc_scale, const float* __restrict__ hc_base,                \
-        float* __restrict__ mix, unsigned int* __restrict__ done,                             \
-        const __nv_bfloat16* __restrict__ norm_w, __nv_bfloat16* __restrict__ y_out,          \
-        float* __restrict__ post_out, float* __restrict__ comb_out,                           \
-        __nv_bfloat16* __restrict__ normed_out, const unsigned int hidden_size,               \
-        const unsigned int hc_mult, const unsigned int sinkhorn_iters, const float norm_eps,  \
-        const float hc_eps, const float rms_eps
-
 #define GLM_HCF_DISPATCH(ROWS)                                                                \
     switch (hc_mult) {                                                                        \
     case 1: glm_hcf_body<ROWS, 1>(GLM_HCF_PASS); break;                                       \
