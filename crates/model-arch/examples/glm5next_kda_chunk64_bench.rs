@@ -13,7 +13,8 @@
 //!
 //! Owner: model-arch examples.
 //! Invariants:
-//! - Returns an error when a factor is off its reference (FP32 ones past 1e-4, BF16 ones past
+//! - Returns an error when a factor is off its reference (the decay, FP32, past 1e-4; A and U,
+//!   whose terms carry the BF16 rounding of the prepare's Y table, and the BF16 factors past
 //!   5e-3), when the output's or the state's relative RMS difference exceeds 3e-2 (a broken scan,
 //!   not BF16 rounding, which is ~2e-3), and when the negative control (the first half's beta
 //!   dropped to zero) stays under that bound. The numerics are reported; the gate is the serve's
@@ -320,7 +321,7 @@ fn check_factors(
             "U",
             read_f32(gpu, s[0].offset(cb * C * D * 4), C * D)?,
             &r.u,
-            1e-4,
+            5e-3,
         ),
         (
             "W",
@@ -346,7 +347,7 @@ fn check_factors(
             &r.p,
             5e-3,
         ),
-        ("A", ad[..C * C].to_vec(), &r.a, 1e-4),
+        ("A", ad[..C * C].to_vec(), &r.a, 5e-3),
         ("decay", ad[C * C..].to_vec(), &r.decay, 1e-4),
     ];
     let mut out = Vec::new();
