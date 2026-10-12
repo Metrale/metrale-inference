@@ -260,7 +260,7 @@ impl Glm5NextLayer {
             Glm5NextMixer::Dsa(_) => None,
         };
 
-        self.forward_rows_with(mhc, hidden, k, slot_base, ctx, stream, &[k], |normed| {
+        let mixer = |normed: DevicePtr| -> Result<DevicePtr> {
             match (&self.mixer, &kda_ctx) {
                 (Glm5NextMixer::Kda { layer, ws, .. }, Some((kda, snaps))) => {
                     // 2026-09-25: The chunked scan runs only for a prefill sub-chunk of more
@@ -298,7 +298,13 @@ impl Glm5NextLayer {
                     bail!("GLM layer {}: KDA mixer without KDA state", self.layer_idx)
                 }
             }
-        })
+        };
+        // 2026-10-12: `METRALE_GLM_SP_MHC=1`: a wide TP prefill sub-chunk runs its mHC work on
+        // this rank's rows only (`steps/forward_sp.rs`).
+        if self.sp_takes(ctx, k, is_prefill)? {
+            return self.forward_rows_sp(mhc, hidden, k, slot_base, ctx, stream, mixer);
+        }
+        self.forward_rows_with(mhc, hidden, k, slot_base, ctx, stream, &[k], mixer)
     }
 
     /// 2026-10-08: The mHC layer body over `k` rows at highway slots `slot_base..slot_base + k`,
