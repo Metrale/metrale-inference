@@ -40,6 +40,9 @@ serde_json = { workspace = true }
 sha2.workspace = true
 tracing = "0.1"
 
+[build-dependencies]
+toml = "1.1"
+
 [dev-dependencies]
 metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false, features = ["test-utils"] }
 base64 = "0.23"
