@@ -43,7 +43,7 @@ jobs:
     steps:
       # Pinned by commit; the report artifact is named ccox-report-<job>-<attempt>
       # and kept 90 days (the action's defaults).
-      - uses: Avarok-Cybersecurity/ccox@b41c8c9ab67719a8beace8df8456411066cc2fd9 # v1.0.0
+      - uses: Avarok-Cybersecurity/ccox@86bf7cdd7eaf6eae106457e4fd12d153760a82db # v1.1.0
         with:
           provider: openrouter
           endpoint: https://openrouter.ai/api/v1
