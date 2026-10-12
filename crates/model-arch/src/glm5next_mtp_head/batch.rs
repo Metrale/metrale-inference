@@ -305,10 +305,14 @@ impl Glm5NextMtpHead {
         // 2026-10-11: One stop state per sequence, under the published rule (either form).
         let stop_rule = metrale_model_layers::speculative::draft_stop::draft_stop_rule();
         let mut chains = stop_rule.map(|r| vec![r.chain(); m]);
-        // 2026-10-11: Log-probabilities, when wanted and computable, at `arg + 4 * MAX`.
-        let lp = self
-            .lp_ready(ctx, stop_rule.is_some() || out_conf.is_some())
-            .then_some(sc.arg.offset(max * 4));
+        // 2026-10-11: Log-probabilities whenever computable, at `arg + 4 * MAX`. NOT "when this
+        // caller wants them": the choice sets the exchange's kernels and all-reduce size, and a
+        // worker's propose (`ep_worker_mtp_propose_batch`) passes no `out_conf` while rank 0's
+        // passes one under D-Cut. Keyed on `out_conf`, rank 0 all-reduced 36 bytes per row and
+        // the workers 24 (world 3): the drafts were garbage and the communicator died (nightO
+        // w2/w8). It must be the same on every rank, so it depends only on the build and the
+        // serve's levers.
+        let lp = self.lp_ready(ctx, true).then_some(sc.arg.offset(max * 4));
         if let Some(c) = out_conf.as_deref_mut() {
             c.clear();
             c.resize(m, Vec::with_capacity(num_drafts));
@@ -326,12 +330,14 @@ impl Glm5NextMtpHead {
             let tables: Vec<&[u32]> = sts.iter().map(|st| st.block_table.as_slice()).collect();
             gpu.copy_h2d(&meta_words_bytes(&rows, &tables, max)?, sc.meta_words)?;
             // 2026-10-11: A row's embedding half is zeroed at pair key 0 under
-            // `METRALE_MTP_ZERO_POS0`, as `forward_one` does (its key is its row minus one).
+            // `METRALE_MTP_ZERO_POS0`, as `forward_one` does: its key is the TARGET position of
+            // this draft minus one (`positions[i] + d - 1`), not the drafter row, which lags the
+            // target for a drafter without its prompt context.
             let embeds: Vec<Option<DevicePtr>> = tokens
                 .iter()
-                .zip(&rows)
-                .map(|(&t, &r)| {
-                    let zero = r.checked_sub(1).is_some_and(|key| {
+                .zip(positions)
+                .map(|(&t, &p)| {
+                    let zero = (p + d).checked_sub(1).is_some_and(|key| {
                         super::hidden_half::zeroes_embedding(ctx.levers.mtp_zero_pos0, key)
                     });
                     (!zero).then(|| self.embed_tokens.weight.offset(t as usize * h * 2))
