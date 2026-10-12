@@ -84,6 +84,7 @@ mod trace_harness;
 mod types;
 mod verify_dflash_batch_step;
 mod verify_dflash_step;
+mod verify_k2_device_step;
 mod verify_k2_step;
 mod verify_k3_step;
 mod verify_k4_batch_step;

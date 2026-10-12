@@ -14,7 +14,7 @@ use super::*;
 const K2_SUMMARY_PERIOD: u64 = 100;
 
 #[inline]
-fn k2_record_outcome(
+pub(super) fn k2_record_outcome(
     sched: &crate::scheduler::sched_ctx::SchedCtx,
     accepted: bool,
     seq_len: usize,
@@ -105,8 +105,14 @@ pub fn step_verify_k2(
     let t_ep = sched.io.clock.now();
     let tokens_k2 = [a.last_token, drafts[0]];
     let fused = !dflash_verify_raw_argmax && model.k2_fused_wire();
+    // 2026-10-11: `METRALE_GLM_MTP_DEVICE_STEP`: a draft on the device of an identity-pick
+    // request lets every worker act on its own device verdict (`verify_k2_device_step`).
+    let device_verdict = fused
+        && drafts[0] == metrale_model_layers::speculative::DEVICE_DRAFT
+        && super::verify_k2_device_step::identity_picks(a, verify_ctx);
     if fused {
-        if let Err(e) = model.ep_announce_k2_fused(a.seq.slot_idx as u32, tokens_k2) {
+        if let Err(e) = model.ep_announce_k2_fused(a.seq.slot_idx as u32, tokens_k2, device_verdict)
+        {
             tracing::error!("EP announce fused verify_k2: {e:#}");
             super::lifecycle::fail_sequence(a, format!("EP announce fused verify_k2: {e:#}"));
             return;
@@ -260,6 +266,19 @@ pub fn step_verify_k2(
         accepted,
         usize::from(accepted),
     );
+    if device_verdict {
+        super::verify_k2_device_step::finish_device_verdict(
+            model,
+            a,
+            sched,
+            draft0,
+            [v0, v1],
+            [v0_argmax, v1_argmax],
+            verify_lps,
+            t_step,
+        );
+        return;
+    }
 
     if accepted {
         emit_token(a, draft0, verify_lps.first().cloned(), sched);

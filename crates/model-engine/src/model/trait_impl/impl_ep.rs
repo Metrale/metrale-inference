@@ -47,8 +47,20 @@ impl ModelEp for TransformerModel {
         self.k2_fused_wire_impl()
     }
 
-    fn ep_announce_k2_fused(&self, seq_id: u32, tokens: [u32; 2]) -> Result<()> {
-        self.ep_announce_k2_fused_impl(seq_id, tokens)
+    fn ep_announce_k2_fused(
+        &self,
+        seq_id: u32,
+        tokens: [u32; 2],
+        device_verdict: bool,
+    ) -> Result<()> {
+        self.ep_announce_k2_fused_impl(seq_id, tokens, device_verdict)
+    }
+
+    fn ep_send_k2_verdict_after_propose(
+        &self,
+        verdict: metrale_model_layers::speculative::K2Verdict,
+    ) -> Result<()> {
+        self.ep_send_k2_verdict_staged(verdict)
     }
 
     fn ep_send_k2_verdict(

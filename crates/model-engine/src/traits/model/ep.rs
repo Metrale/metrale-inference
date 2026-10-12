@@ -75,8 +75,25 @@ pub trait ModelEp {
     }
 
     /// 2026-10-11: Rank 0, fused wire: announce the 2-row verify of `tokens` in slot `seq_id`.
-    /// Default: an error, since only a model whose [`Self::k2_fused_wire`] is true is asked.
-    fn ep_announce_k2_fused(&self, _seq_id: u32, _tokens: [u32; 2]) -> Result<()> {
+    /// `device_verdict` (`METRALE_GLM_MTP_DEVICE_STEP`, an identity-pick request): every rank
+    /// takes the verdict from its own device verdict and proposes at once, and rank 0's verdict
+    /// follows the propose ([`Self::ep_send_k2_verdict_after_propose`]). Default: an error, since
+    /// only a model whose [`Self::k2_fused_wire`] is true is asked.
+    fn ep_announce_k2_fused(
+        &self,
+        _seq_id: u32,
+        _tokens: [u32; 2],
+        _device_verdict: bool,
+    ) -> Result<()> {
+        anyhow::bail!("this model has no fused K=2 wire")
+    }
+
+    /// 2026-10-11: Rank 0, a device-verdict K=2 step: send the host verdict after the propose,
+    /// without waiting, for the workers' cross-check. Default: an error, as above.
+    fn ep_send_k2_verdict_after_propose(
+        &self,
+        _verdict: metrale_model_layers::speculative::K2Verdict,
+    ) -> Result<()> {
         anyhow::bail!("this model has no fused K=2 wire")
     }
 

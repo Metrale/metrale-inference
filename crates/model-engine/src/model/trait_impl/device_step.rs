@@ -34,6 +34,7 @@ use crate::traits::SequenceState;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::model) enum Stage {
     Block = 0,
+    Verdict = 32,
     TokenIds = 64,
     Positions = 128,
     Slots = 192,
@@ -50,7 +51,8 @@ pub(in crate::model) fn staging_bytes(block_table_bytes: usize) -> usize {
 /// `total`).
 pub(in crate::model) fn stage_fits(stage: Stage, len: usize, total: usize) -> bool {
     let end = match stage {
-        Stage::Block => Stage::TokenIds as usize,
+        Stage::Block => Stage::Verdict as usize,
+        Stage::Verdict => Stage::TokenIds as usize,
         Stage::TokenIds => Stage::Positions as usize,
         Stage::Positions => Stage::Slots as usize,
         Stage::Slots => Stage::SeqLens as usize,
@@ -343,6 +345,61 @@ impl TransformerModel {
         Ok(())
     }
 
+    /// 2026-10-11: Rank 0, a device-verdict K=2 step: its host verdict, staged and broadcast
+    /// without waiting behind the propose already queued, into the buffer the workers'
+    /// `ep_broadcast_tokens` receives it in (the head of scratch, free once the verify was read).
+    pub(in crate::model) fn ep_send_k2_verdict_staged(
+        &self,
+        verdict: metrale_model_layers::speculative::K2Verdict,
+    ) -> Result<()> {
+        if !self.multi_rank_protocol_active() {
+            return Ok(());
+        }
+        let comm = self
+            .comm
+            .as_ref()
+            .context("multi-rank protocol without a communicator")?;
+        let bytes: Vec<u8> = verdict
+            .to_words()
+            .iter()
+            .flat_map(|w| w.to_le_bytes())
+            .collect();
+        let dst = self.buffers.scratch();
+        self.k2_upload(true, Stage::Verdict, &bytes, dst, self.gpu.default_stream())?;
+        comm.broadcast_enqueue(dst.0, bytes.len(), 0)
+    }
+
+    /// 2026-10-11: Worker, a device-verdict K=2 step (`FLAG_K2_DEVICE_VERDICT`): the verdict from
+    /// this rank's own verify (`argmax` rows read back from its device verdict, row 1 the draft
+    /// it verified), then the commit and the one-draft propose rank 0 also runs, then rank 0's
+    /// host verdict, which must agree (`device_verdict_agrees`); a disagreement is an error.
+    pub(in crate::model) fn ep_worker_k2_device_verdict(
+        &self,
+        seq: &mut SequenceState,
+        argmax: [u32; 2],
+    ) -> Result<()> {
+        use metrale_model_layers::speculative::{K2_VERDICT_WORDS, K2Verdict, k2_device_verdict};
+        let draft = *seq
+            .tokens
+            .last()
+            .context("device-verdict verify recorded no tokens")?;
+        let w = k2_device_verdict(argmax, draft);
+        let (accepted, next) = (w[0] == 1, w[1]);
+        self.ep_worker_k2_commit(seq, accepted)?;
+        let position = seq.seq_len;
+        self.ep_worker_mtp_propose(seq, next, position, 1, usize::from(accepted));
+        let words = self.ep_broadcast_tokens(&[0u32; K2_VERDICT_WORDS])?;
+        let rank0 = K2Verdict::from_words(&words)?;
+        anyhow::ensure!(
+            metrale_model_layers::speculative::device_verdict_agrees(
+                rank0, accepted, next, position
+            ),
+            "device-verdict K=2 step: rank 0's verdict {rank0:?} differs from this rank's \
+             (accepted {accepted}, next {next}, position {position}); the ranks' states differ"
+        );
+        Ok(())
+    }
+
     /// 2026-10-11: The device cell holding `seq`'s draft left by `propose_device`.
     fn device_draft_cell(&self, seq: &mut SequenceState) -> Result<DevicePtr> {
         let proposer = self
@@ -432,6 +489,7 @@ mod tests {
         assert_eq!(total % 4096, 0);
         for (stage, len) in [
             (Stage::Block, metrale_model_layers::ep_wire::CMD_BLOCK_BYTES),
+            (Stage::Verdict, 16),
             (Stage::TokenIds, 8),
             (Stage::Positions, 8),
             (Stage::Slots, 16),
