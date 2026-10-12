@@ -99,3 +99,33 @@ extern "C" __global__ void dequant_nvfp4_to_bf16_g16(
     dst[0] = *(const uint4*)&v[0];
     dst[1] = *(const uint4*)&v[8];
 }
+
+// 2026-10-12: FP8 E4M3 with one FP32 scale per output row -> BF16: out[n, k] = bf16(E4M3(w[n, k]) *
+// row_scale[n]), the per-row W8A8 tier's weight (`gemv_fp8w::quantize_bf16_to_fp8`, max|row| / 448)
+// as a BF16 GEMM operand, so one cuBLASLt GEMM over it computes W8A16 (BF16 activations, no
+// activation quantization) with the channel scale folded into the weight: one BF16 rounding per
+// weight element (relative 2^-9, below E4M3's own 2^-4 step). One thread per 16 consecutive
+// elements (16 bytes in, 32 out); K % 16 == 0 so a group never straddles a row. `groups` = N * K / 16.
+// Launch: grid ceil(groups / 256), block 256.
+extern "C" __global__ void dequant_fp8_rowscale_to_bf16(
+    const unsigned char* __restrict__ w,
+    const float* __restrict__ row_scale,
+    __nv_bfloat16* __restrict__ out,
+    unsigned long long groups,
+    unsigned int K
+) {
+    const unsigned long long g = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (g >= groups) return;
+    const uint4 p = *(const uint4*)(w + g * 16ull);
+    const float s = row_scale[(g * 16ull) / K];
+    const unsigned int b[4] = {p.x, p.y, p.z, p.w};
+    __nv_bfloat16 v[16];
+#pragma unroll
+    for (int i = 0; i < 16; ++i) {
+        const unsigned char e = (unsigned char)((b[i >> 2] >> ((i & 3) * 8)) & 0xFFu);
+        v[i] = __float2bfloat16(dq_fp8_e4m3_decode(e) * s);
+    }
+    uint4* dst = (uint4*)(out + g * 16ull);
+    dst[0] = *(const uint4*)&v[0];
+    dst[1] = *(const uint4*)&v[8];
+}

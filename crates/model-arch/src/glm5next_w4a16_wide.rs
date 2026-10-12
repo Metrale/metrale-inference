@@ -15,10 +15,11 @@
 //! Owner: model-arch (GLM-5.3).
 //! Invariants:
 //! - The scratch is allocated at load (`reserve`, from `glm5next_w4a16_dense::register`), never
-//!   during a forward; a launch whose weight does not fit it is an error.
+//!   during a forward; a launch whose weight does not fit it is an error. 2026-10-12: it is the
+//!   one `glm5next_dequant_scratch` shares with `METRALE_GLM_FP8_DEQUANT_GEMM_MIN_ROWS`.
 //! - Unset or `0` launches exactly what the tier launched before this lever.
 
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
 use anyhow::{Context, Result, ensure};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
@@ -29,6 +30,8 @@ use metrale_model_layers::weight_map::QuantizedWeight;
 const DEQUANT_MODULE: &str = "dequant_nvfp4_bf16";
 const DEQUANT_ENTRY: &str = "dequant_nvfp4_to_bf16_g16";
 const BLOCK: u32 = 256;
+/// 2026-10-12: This lever's name in the shared scratch's errors.
+const WHAT: &str = "W4A16 dequant GEMM";
 
 /// 2026-10-10: The narrowest value the lever takes: wider than the batched decode and verify
 /// groups the row tiles serve bit-identically at every row count up to 16.
@@ -79,37 +82,13 @@ pub fn takes(min: Option<usize>, m: usize) -> bool {
     min.is_some_and(|r| m >= r)
 }
 
-/// 2026-10-10: The shared BF16 scratch: its address and capacity in elements.
-#[derive(Clone, Copy)]
-struct Scratch {
-    ptr: DevicePtr,
-    elems: usize,
-}
-
-fn scratch() -> &'static Mutex<Option<Scratch>> {
-    static S: OnceLock<Mutex<Option<Scratch>>> = OnceLock::new();
-    S.get_or_init(|| Mutex::new(None))
-}
-
-/// 2026-10-10: Grow the scratch to hold an `[n, k]` BF16 weight when the lever is on; a no-op
-/// when it is off or the scratch already holds it. Called at load, as each weight registers.
+/// 2026-10-10: Reserve the shared BF16 scratch (`glm5next_dequant_scratch`) for an `[n, k]`
+/// weight when the lever is on; a no-op when it is off. Called at load, as each weight registers.
 pub fn reserve(gpu: &dyn GpuBackend, n: usize, k: usize) -> Result<()> {
     if min_rows()?.is_none() {
         return Ok(());
     }
-    let elems = n * k;
-    let mut g = scratch().lock().unwrap_or_else(|e| e.into_inner());
-    if g.is_some_and(|s| s.elems >= elems) {
-        return Ok(());
-    }
-    if let Some(old) = g.take() {
-        gpu.free(old.ptr)?;
-    }
-    let ptr = gpu
-        .alloc(elems * 2)
-        .with_context(|| format!("W4A16 dequant GEMM scratch of {n} x {k} BF16"))?;
-    *g = Some(Scratch { ptr, elems });
-    Ok(())
+    crate::glm5next_dequant_scratch::reserve(gpu, n, k, WHAT)
 }
 
 /// 2026-10-10: `c[m, n] = s2 * (a[m, k] @ dequant(w)^T)` through the scratch reserved at load
@@ -125,10 +104,7 @@ pub fn proj(
     k: usize,
     stream: u64,
 ) -> Result<()> {
-    let s = scratch()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .context("W4A16 dequant GEMM: no scratch was reserved at load")?;
+    let s = crate::glm5next_dequant_scratch::get(WHAT)?;
     dequant_gemm(gpu, w, s.ptr, s.elems, a, c, m, n, k, stream)
 }
 
