@@ -2,40 +2,54 @@
 
 //! 2026-10-12: `METRALE_GLM_KDA_CHUNK64=<rows>`: a prefill sub-chunk of at least `rows` rows of
 //! one sequence (no per-row snapshot) steps the KDA recurrence in 64-token chunks with the
-//! chunk-level products on tensor cores (`kernels/gb10/common/kda_chunk64.cu`: every chunk's WY
-//! factors in parallel in FP32, then one scan over the chunks per head and 32-value-column block
-//! on BF16 mma.sync with FP32 accumulation and an FP32 state) instead of token by token
-//! (~1.7 us per token per layer) or in 16-token FP32 chunks (`chunk16.rs`, ~1.15 us). Takes
-//! precedence over `METRALE_GLM_KDA_CHUNK_SCAN` where both apply. The conv is the per-token
-//! path's (`conv_tokens`), so the scan reads the q/k/v/gate/beta rows the per-token walk reads and
+//! chunk-level products on tensor cores: `kda_chunk64_prepare`
+//! (`kernels/gb10/common/kda_chunk64_prepare.cu`: every chunk's WY factors in parallel, FP32 on
+//! CUDA cores) then `kda_chunk64_scan` (`kda_chunk64.cu`: one scan over the chunks per head and
+//! 64-value-column block on BF16 mma.sync with FP32 accumulation and an FP32 state) instead of
+//! token by token (~1.7 us per token per layer) or in 16-token FP32 chunks (`chunk16.rs`,
+//! ~1.15 us). Takes precedence over `METRALE_GLM_KDA_CHUNK_SCAN` and
+//! `METRALE_GLM_KDA_CHUNK_PREFILL` where it applies. The conv is the per-token path's
+//! (`conv_tokens`), so the scan reads the q/k/v/gate/beta rows the per-token walk reads and
 //! writes the same `core` rows.
 //!
 //! Numerics: the same recurrence in the chunk-level WY form, the scan's products with BF16
 //! operands (as FLA's chunked KDA), so the outputs and the carried state differ from the per-token
-//! walk at BF16 rounding level; opt-in and accuracy-gated (`glm5next_kda_chunk64_bench`). A
-//! sub-chunk narrower than `rows`, a verify, and decode are unchanged.
+//! walk at BF16 rounding level (~2e-3 relative RMS); opt-in and accuracy-gated
+//! (`glm5next_kda_chunk64_bench`). A sub-chunk narrower than `rows`, a verify, and decode are
+//! unchanged.
 //!
 //! Owner: model-arch (GLM-5.3-Flash KDA).
 //! Invariants:
 //! - Runs only where [`Glm5NextKdaLayer::chunk64_ready`] holds; the scratch is the workspace's
-//!   chunked-prefill buffers, each `t_pad * qkv` FP32 (`t_pad` a multiple of [`CHUNK64`]): U
-//!   (`chunk_u`, FP32), W, Qg, Kd (`chunk_w`, `q_f32`, `k_f32`, BF16 in the first half), P
-//!   (`v_f32`, FP32 `[C, C]` per chunk and head) and the decay (`chunk_gc`).
+//!   chunked-prefill buffers, each `t_pad * qkv` FP32 (`t_pad` a multiple of [`CHUNK64`]), laid
+//!   out per (slab-local chunk, head) as `kda_chunk64.cuh` says: U (`chunk_u`, FP32 `[C, D]`),
+//!   W, Qg, Kd (`chunk_w`, `q_f32`, `k_f32`, BF16 `[C, D]` in the first half), P (`v_f32`, BF16
+//!   `[C, C]`) and A + decay (`chunk_gc`, FP32 `[C, C]` then `[D]`, [`CHUNK64_AD_STRIDE`] floats
+//!   apart; A is the prepare's own read-back scratch).
+//! - The chunks run in slabs of [`CHUNK64_SLAB`]: one prepare and one scan launch per slab over
+//!   the same scratch, so a slab's factors (4 chunks x 22 heads x 88.5 KiB = 7.8 MiB; 4 measured
+//!   best of 4/8/16/32 for the scan) stay in GB10's 24 MiB L2 between the two instead of
+//!   round-tripping through DRAM; the scan carries
+//!   the state across slabs in the layer's state buffer.
 
 use super::decode::RowIo;
 use super::*;
 
-/// 2026-10-12: `KDA64_C` and `KDA64_D` of `kda_chunk64.cu`.
+/// 2026-10-12: `KDA64_C` and `KDA64_D` of `kda_chunk64.cuh`.
 pub const CHUNK64: usize = 64;
 pub const CHUNK64_D: usize = 128;
-/// 2026-10-12: `KDA64_VB`, `KDA64_PREP_THREADS` and `KDA64_SCAN_THREADS`.
-const CHUNK64_VB: usize = 32;
-const CHUNK64_PREP_THREADS: u32 = 256;
-const CHUNK64_SCAN_THREADS: u32 = 128;
+/// 2026-10-12: `KDA64_SLAB`: chunks per prepare + scan launch pair (L2-sized, see above).
+pub const CHUNK64_SLAB: usize = 4;
+/// 2026-10-12: `KDA64_AD_STRIDE`: floats per (chunk, head) in the A + decay buffer.
+pub const CHUNK64_AD_STRIDE: usize = CHUNK64 * CHUNK64 + CHUNK64_D;
+/// 2026-10-12: `KDA64_VB`, `KDA64_PREP_THREADS`, `KDA64_SCAN_THREADS`.
+pub const CHUNK64_VB: usize = 64;
+pub const CHUNK64_PREP_THREADS: u32 = 256;
+pub const CHUNK64_SCAN_THREADS: u32 = 128;
 /// 2026-10-12: `KDA64_PREP_SMEM` and `KDA64_SCAN_SMEM` in bytes.
-const CHUNK64_PREP_SMEM: u32 = ((CHUNK64 * CHUNK64_D + CHUNK64 * (CHUNK64 + 1) + CHUNK64) * 4
-    + 2 * CHUNK64 * CHUNK64_D * 2) as u32;
-const CHUNK64_SCAN_SMEM: u32 = ((3 * CHUNK64 * (CHUNK64_D + 8)
+pub const CHUNK64_PREP_SMEM: u32 =
+    (CHUNK64 * CHUNK64_D * 4 + CHUNK64 * CHUNK64_D * 2 + CHUNK64 * 4) as u32;
+pub const CHUNK64_SCAN_SMEM: u32 = ((3 * CHUNK64 * (CHUNK64_D + 8)
     + CHUNK64 * (CHUNK64 + 8)
     + CHUNK64_VB * (CHUNK64_D + 8)
     + CHUNK64_VB * (CHUNK64 + 8))
@@ -101,8 +115,8 @@ impl Glm5NextKdaLayer {
         let c = &self.cfg;
         let (qkv, cd, d, h) = (c.qkv_dim(), c.conv_dim(), c.head_dim, c.heads);
         let nchunks = k.div_ceil(CHUNK64);
-        // 2026-10-12: Each scratch buffer holds `t_pad * qkv` floats; the factors need
-        // `nchunks * heads * 64 * head_dim` (P `nchunks * heads * 64 * 64`, the decay less).
+        // 2026-10-12: Each scratch buffer holds `t_pad * qkv` floats; a slab's widest factor
+        // needs `slab * heads * 64 * head_dim` of them.
         if nchunks * CHUNK64 > ws.t_pad {
             bail!(
                 "KDA 64-token chunked scan: {nchunks} chunks of {CHUNK64} exceed the workspace's \
@@ -113,44 +127,50 @@ impl Glm5NextKdaLayer {
         self.conv_tokens(gpu, k, state, ws, stream)?;
         let io = RowIo::workspace(c, ws, 0);
         let scale = 1.0 / (d as f32).sqrt();
-        KernelLaunch::new(gpu, self.kernels.seq.chunk64_prepare)
-            .grid([nchunks as u32, h as u32, 1])
-            .block([CHUNK64_PREP_THREADS, 1, 1])
-            .shared_mem(CHUNK64_PREP_SMEM)
-            .arg_ptr(io.conv_out)
-            .arg_ptr(io.conv_out.offset(qkv * 2))
-            .arg_ptr(io.conv_out.offset(qkv * 4))
-            .arg_ptr(io.gate)
-            .arg_ptr(io.beta)
-            .arg_ptr(ws.chunk_u)
-            .arg_ptr(ws.chunk_w)
-            .arg_ptr(ws.q_f32)
-            .arg_ptr(ws.k_f32)
-            .arg_ptr(ws.v_f32)
-            .arg_ptr(ws.chunk_gc)
-            .arg_u32(h as u32)
-            .arg_u32(k as u32)
-            .arg_u32(cd as u32)
-            .arg_u32(qkv as u32)
-            .arg_f32(scale)
-            .launch(stream)?;
-        KernelLaunch::new(gpu, self.kernels.seq.chunk64_scan)
-            .grid([h as u32, (d / CHUNK64_VB) as u32, 1])
-            .block([CHUNK64_SCAN_THREADS, 1, 1])
-            .shared_mem(CHUNK64_SCAN_SMEM)
-            .arg_ptr(ws.chunk_u)
-            .arg_ptr(ws.chunk_w)
-            .arg_ptr(ws.q_f32)
-            .arg_ptr(ws.k_f32)
-            .arg_ptr(ws.v_f32)
-            .arg_ptr(ws.chunk_gc)
-            .arg_ptr(state.recurrent)
-            .arg_ptr(io.core)
-            .arg_u32(h as u32)
-            .arg_u32(k as u32)
-            .arg_u32(nchunks as u32)
-            .arg_u32(qkv as u32)
-            .launch(stream)
+        for c0 in (0..nchunks).step_by(CHUNK64_SLAB) {
+            let n = CHUNK64_SLAB.min(nchunks - c0);
+            KernelLaunch::new(gpu, self.kernels.seq.chunk64_prepare)
+                .grid([n as u32, h as u32, 1])
+                .block([CHUNK64_PREP_THREADS, 1, 1])
+                .shared_mem(CHUNK64_PREP_SMEM)
+                .arg_ptr(io.conv_out)
+                .arg_ptr(io.conv_out.offset(qkv * 2))
+                .arg_ptr(io.conv_out.offset(qkv * 4))
+                .arg_ptr(io.gate)
+                .arg_ptr(io.beta)
+                .arg_ptr(ws.chunk_u)
+                .arg_ptr(ws.chunk_w)
+                .arg_ptr(ws.q_f32)
+                .arg_ptr(ws.k_f32)
+                .arg_ptr(ws.v_f32)
+                .arg_ptr(ws.chunk_gc)
+                .arg_u32(h as u32)
+                .arg_u32(k as u32)
+                .arg_u32(c0 as u32)
+                .arg_u32(cd as u32)
+                .arg_u32(qkv as u32)
+                .arg_f32(scale)
+                .launch(stream)?;
+            KernelLaunch::new(gpu, self.kernels.seq.chunk64_scan)
+                .grid([h as u32, (d / CHUNK64_VB) as u32, 1])
+                .block([CHUNK64_SCAN_THREADS, 1, 1])
+                .shared_mem(CHUNK64_SCAN_SMEM)
+                .arg_ptr(ws.chunk_u)
+                .arg_ptr(ws.chunk_w)
+                .arg_ptr(ws.q_f32)
+                .arg_ptr(ws.k_f32)
+                .arg_ptr(ws.v_f32)
+                .arg_ptr(ws.chunk_gc)
+                .arg_ptr(state.recurrent)
+                .arg_ptr(io.core)
+                .arg_u32(h as u32)
+                .arg_u32(k as u32)
+                .arg_u32(c0 as u32)
+                .arg_u32(n as u32)
+                .arg_u32(qkv as u32)
+                .launch(stream)?;
+        }
+        Ok(())
     }
 }
 

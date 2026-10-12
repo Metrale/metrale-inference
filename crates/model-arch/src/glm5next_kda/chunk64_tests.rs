@@ -16,7 +16,7 @@ use super::super::decode::{ScanMode, scan_mode};
 use super::super::decode_rows_tests::{
     CHUNK64_PREP, CHUNK64_SCAN, CONV_TOKENS, CONV_WINDOW, cfg, layer, seq_state, since,
 };
-use super::{CHUNK64, parse_min_rows64};
+use super::{CHUNK64, CHUNK64_SLAB, parse_min_rows64};
 
 fn ptr(l: &MockLaunch, i: usize) -> DevicePtr {
     match &l.args[i] {
@@ -67,10 +67,10 @@ fn the_floor_gates_the_layer_predicate() {
     assert!(!l.chunk64_applies(4096, None));
 }
 
-/// 2026-10-12: 130 rows: the conv, then prepare over 3 chunks of 64 for both heads (256 threads,
-/// its shared memory) and the scan over both heads' four 32-column blocks (128 threads), reading
-/// the conv's q/k/v (k one `qkv` and v two past q), gate and beta rows, writing `core`, on the
-/// layer's recurrent state.
+/// 2026-10-12: 130 rows: the conv, then one slab: prepare over 3 chunks of 64 for both heads
+/// (256 threads, its shared memory) and the scan over both heads' two 64-column blocks (128
+/// threads), reading the conv's q/k/v (k one `qkv` and v two past q), gate and beta rows, the
+/// factors in the six scratch buffers, writing `core`, on the layer's recurrent state.
 #[test]
 fn rows_run_conv_prepare_and_scan_over_their_chunks() {
     let gpu = MockGpuBackend::new();
@@ -112,16 +112,69 @@ fn rows_run_conv_prepare_and_scan_over_their_chunks() {
         assert_eq!(ptr(s, i), *b, "scan scratch {i}");
     }
     assert_eq!(
-        (u32a(p, 11), u32a(p, 12), u32a(p, 13), u32a(p, 14)),
-        (2, 130, cd as u32, qkv as u32)
+        (
+            u32a(p, 11),
+            u32a(p, 12),
+            u32a(p, 13),
+            u32a(p, 14),
+            u32a(p, 15)
+        ),
+        (2, 130, 0, cd as u32, qkv as u32)
     );
-    assert_eq!((s.grid, s.block), ([2, 4, 1], [128, 1, 1]));
+    assert_eq!((s.grid, s.block), ([2, 2, 1], [128, 1, 1]));
     assert_eq!(s.shared_mem, super::CHUNK64_SCAN_SMEM);
     assert_eq!((ptr(s, 6), ptr(s, 7)), (st.recurrent, ws.core));
     assert_eq!(
-        (u32a(s, 8), u32a(s, 9), u32a(s, 10), u32a(s, 11)),
-        (2, 130, 3, qkv as u32)
+        (
+            u32a(s, 8),
+            u32a(s, 9),
+            u32a(s, 10),
+            u32a(s, 11),
+            u32a(s, 12)
+        ),
+        (2, 130, 0, 3, qkv as u32)
     );
+}
+
+/// 2026-10-12: 11 chunks (700 rows) run as two full slabs of 4 and a slab of 3, each a prepare
+/// over its chunks and a scan from its first chunk; the conv runs once.
+#[test]
+fn a_long_sub_chunk_runs_in_slabs() {
+    assert_eq!(CHUNK64_SLAB, 4, "the slab cases below assume 4");
+    let gpu = MockGpuBackend::new();
+    let lay = layer(&gpu);
+    let ws = Glm5NextKdaWorkspace::new(&gpu, &cfg(), 700).unwrap();
+    let st = seq_state(&gpu);
+    let from = gpu.launch_count();
+    lay.stateful_chunk64(&gpu, 700, &st, &ws, 7).unwrap();
+    let l = since(&gpu, from);
+    let funcs: Vec<u64> = l.iter().map(|x| x.func).collect();
+    assert_eq!(
+        funcs,
+        vec![
+            CONV_TOKENS,
+            CONV_WINDOW,
+            CHUNK64_PREP,
+            CHUNK64_SCAN,
+            CHUNK64_PREP,
+            CHUNK64_SCAN,
+            CHUNK64_PREP,
+            CHUNK64_SCAN
+        ]
+    );
+    for (slab, (c0, n)) in [(0usize, 4u32), (4, 4), (8, 3)].into_iter().enumerate() {
+        let (p, s) = (&l[2 + 2 * slab], &l[3 + 2 * slab]);
+        assert_eq!(
+            (p.grid[0], u32a(p, 13)),
+            (n, c0 as u32),
+            "slab {slab} prepare"
+        );
+        assert_eq!(
+            (u32a(s, 10), u32a(s, 11)),
+            (c0 as u32, n),
+            "slab {slab} scan"
+        );
+    }
 }
 
 /// 2026-10-12: Rows past the workspace are refused before any launch.
