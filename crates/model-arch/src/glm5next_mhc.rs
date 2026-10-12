@@ -57,6 +57,11 @@ pub struct Glm5NextMhcKernels {
     /// `METRALE_GLM_MHC_PRE_SPLITK=1`. Reorders the mix sums (accuracy class RO). Optional
     /// (`try_kernel`, 0 when absent).
     pub hc_pre_norm_sk: KernelHandle,
+    /// 2026-10-12: `glm5next_hc_pre_norm_tok4` (module [`GLM5NEXT_MHC_TOK_MODULE`]):
+    /// `hc_pre_norm` with four tokens and every mix row per block, same bits, for wide prefill
+    /// sub-chunks; taken under `METRALE_GLM_MHC_PRE_TOK=1` (`glm5next_mhc_tok`). Optional
+    /// (`try_kernel`, 0 when absent).
+    pub hc_pre_norm_tok: KernelHandle,
     pub hc_post: KernelHandle,
     /// 2026-10-10: `glm5next_hc_post_rank_sum` (module [`GLM5NEXT_HC_POST_SUM_MODULE`]): the
     /// one-shot all-reduce's sum fused into `hc_post`, same bits. Optional (`try_kernel`, 0 when
@@ -74,6 +79,8 @@ pub const GLM5NEXT_MHC_MODULE: &str = "glm5next_mhc";
 
 /// 2026-10-09: The kernel module of the fused pre-mix + norm (`glm5next_mhc_fused.cu`).
 pub const GLM5NEXT_MHC_FUSED_MODULE: &str = "glm5next_mhc_fused";
+/// 2026-10-12: The token-tiled pre-norm kernels (`glm5next_mhc_tok.cu`).
+pub const GLM5NEXT_MHC_TOK_MODULE: &str = "glm5next_mhc_tok";
 
 /// 2026-10-10: The kernel module of the folded post-mix + pre-norm (`glm5next_mhc_post_fold.cu`).
 pub const GLM5NEXT_MHC_POST_FOLD_MODULE: &str = "glm5next_mhc_post_fold";
@@ -119,6 +126,11 @@ impl Glm5NextMhcKernels {
                 gpu,
                 GLM5NEXT_MHC_FUSED_MODULE,
                 "glm5next_hc_pre_norm_sk64",
+            ),
+            hc_pre_norm_tok: metrale_model_layers::layers::try_kernel(
+                gpu,
+                GLM5NEXT_MHC_TOK_MODULE,
+                "glm5next_hc_pre_norm_tok4",
             ),
             hc_post: gpu.kernel(GLM5NEXT_MHC_MODULE, "glm5next_hc_post")?,
             hc_post_pre_norm: metrale_model_layers::layers::try_kernel(
@@ -420,6 +432,7 @@ mod mhc_shape_tests {
             hc_pre_norm_rows: k(10),
             hc_pre_norm_pf: k(13),
             hc_pre_norm_sk: k(14),
+            hc_pre_norm_tok: k(15),
             hc_post: k(7),
             hc_post_rank_sum: k(11),
             hc_post_pre_norm: k(12),

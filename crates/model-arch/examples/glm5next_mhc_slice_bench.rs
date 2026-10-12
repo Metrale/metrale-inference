@@ -4,12 +4,17 @@
 //! prefill sub-chunk launched per slice of rows): for the fused `glm_hc_pre_norm` and the
 //! unfused `glm_hc_pre` (mix + finish), one launch over T rows against T / slice launches over
 //! consecutive slices, at GLM-5.3's shape (hidden 4096, hc 4, 20 Sinkhorn iterations).
+//! 2026-10-12: Also `METRALE_GLM_MHC_PRE_TOK` (`glm5next_hc_pre_norm_tok4`, four tokens per
+//! block) against the fused 8-row grid, whose bytes `glm5next_hc_fused_gate` ties to the unfused
+//! kernels: byte gate with a negative control, and the time of each.
 //!
 //! Owner: model-arch examples (GLM-5.3 mHC kernels).
 //! Invariants:
 //! - Returns an error unless every output byte (y, post, comb, and the normed row on the fused
 //!   path) of the sliced launches equals the single launch's, at every width and slice, and
 //!   unless the negative control (one stream value of the last slice changed) changes them.
+//! - Likewise the token-tiled grid against the 8-row grid, at token counts that do and do not
+//!   fill the last block of four.
 //!
 //! Run (GB10, < 1 GB of device memory; the token bound needs `METRALE_GLM_PREFILL_ROWS`):
 //!   METRALE_GLM_PREFILL_ROWS=4096 cargo run --release -p metrale-model-arch \
@@ -20,7 +25,7 @@ use half::bf16;
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_model_arch::glm5next_mhc::{Glm5NextMhcKernels, Glm5NextMhcSiteWeights, glm_hc_pre};
-use metrale_model_arch::glm5next_mhc_fused::glm_hc_pre_norm;
+use metrale_model_arch::glm5next_mhc_fused::{glm_hc_pre_norm, glm_hc_pre_norm_with};
 
 const H: usize = 4096;
 const HC: usize = 4;
@@ -144,6 +149,73 @@ fn sliced(
     Ok(())
 }
 
+/// 2026-10-12: Rows `0..t` on the fused pre-norm, the token-tiled grid when `tok` (else the
+/// 8-row grid; both need at least 64 rows).
+#[allow(clippy::too_many_arguments)]
+fn pre_tok(
+    gpu: &dyn GpuBackend,
+    k: &Glm5NextMhcKernels,
+    w: &Glm5NextMhcSiteWeights,
+    streams: DevicePtr,
+    norm_w: DevicePtr,
+    o: &Out,
+    t: usize,
+    tok: bool,
+) -> Result<()> {
+    let [y, normed, post, comb] = o.0;
+    glm_hc_pre_norm_with(
+        gpu, k, streams, w, norm_w, y, normed, post, comb, t as u32, H as u32, HC as u32, 20, 1e-5,
+        1e-6, 1e-5, false, false, tok, 0,
+    )
+}
+
+/// 2026-10-12: The token-tiled gate and timing (module doc).
+#[allow(clippy::too_many_arguments)]
+fn tok_gate(
+    gpu: &dyn GpuBackend,
+    k: &Glm5NextMhcKernels,
+    w: &Glm5NextMhcSiteWeights,
+    streams: DevicePtr,
+    streams_h: &[f32],
+    norm_w: DevicePtr,
+    a: &Out,
+    b: &Out,
+) -> Result<()> {
+    ensure!(
+        k.hc_pre_norm_tok.0 != 0,
+        "glm5next_hc_pre_norm_tok4 is not in this build"
+    );
+    for t in [64usize, 66, 127, 512, 2048, 2051, 4096] {
+        a.poison(gpu, t)?;
+        b.poison(gpu, t)?;
+        pre_tok(gpu, k, w, streams, norm_w, a, t, false)?;
+        pre_tok(gpu, k, w, streams, norm_w, b, t, true)?;
+        let want = a.bytes(gpu, t)?;
+        ensure!(
+            b.bytes(gpu, t)? == want,
+            "token-tiled T={t}: bytes differ from the 8-row grid"
+        );
+        let row = (t - 1) * HC * H;
+        let mut bad = streams_h[row..row + HC * H].to_vec();
+        bad[7] += 1.0;
+        gpu.copy_h2d(&f32b(&bad), streams.offset(row * 4))?;
+        pre_tok(gpu, k, w, streams, norm_w, b, t, true)?;
+        let changed = b.bytes(gpu, t)? != want;
+        gpu.copy_h2d(
+            &f32b(&streams_h[row..row + HC * H]),
+            streams.offset(row * 4),
+        )?;
+        ensure!(changed, "token-tiled T={t}: negative control unchanged");
+        let rows = median_us(gpu, || pre_tok(gpu, k, w, streams, norm_w, a, t, false))?;
+        let tok = median_us(gpu, || pre_tok(gpu, k, w, streams, norm_w, b, t, true))?;
+        println!(
+            "token-tiled T={t:5}: identical; 8-row grid {rows:8.1} us, token-tiled {tok:8.1} us ({:.2}x)",
+            rows / tok
+        );
+    }
+    Ok(())
+}
+
 fn median_us(gpu: &dyn GpuBackend, f: impl Fn() -> Result<()>) -> Result<f64> {
     let mut v = Vec::new();
     for _ in 0..9 {
@@ -179,6 +251,7 @@ fn main() -> Result<()> {
     let streams_h: Vec<f32> = (0..tmax * HC * H).map(|_| rng.unit() * 2.0).collect();
     let streams = up(&gpu, &f32b(&streams_h))?;
     let (a, b) = (Out::alloc(&gpu, tmax)?, Out::alloc(&gpu, tmax)?);
+    tok_gate(&gpu, &k, &w, streams, &streams_h, norm_w, &a, &b)?;
     for fused in [true, false] {
         let path = if fused {
             "fused pre-norm"
