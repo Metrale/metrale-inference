@@ -27,6 +27,8 @@ pub(super) const CONV_WINDOW: u64 = 0x318;
 pub(super) const RECUR_SEQ: u64 = 0x319;
 pub(super) const CHUNK16_PREP: u64 = 0x31A;
 pub(super) const CHUNK16_SCAN: u64 = 0x31B;
+pub(super) const CHUNK64_PREP: u64 = 0x31C;
+pub(super) const CHUNK64_SCAN: u64 = 0x31D;
 pub(super) const GATES_FUSED: u64 = 0x31C;
 
 pub(super) fn cfg() -> Glm5NextKdaConfig {
@@ -87,6 +89,8 @@ pub(super) fn layer(gpu: &MockGpuBackend) -> Glm5NextKdaLayer {
             recurrent_snap: metrale_gpu_runtime::gpu::KernelHandle(0),
             chunk16_prepare: k(CHUNK16_PREP),
             chunk16_scan: k(CHUNK16_SCAN),
+            chunk64_prepare: k(CHUNK64_PREP),
+            chunk64_scan: k(CHUNK64_SCAN),
         },
         o_norm: k(0x30E),
         split_widen: k(0x30F),

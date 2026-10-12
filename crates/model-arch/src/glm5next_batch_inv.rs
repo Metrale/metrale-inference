@@ -100,8 +100,8 @@ pub(crate) fn check_levers(on: bool, l: Levers) -> Result<(), String> {
     }
     if l.kda_chunked {
         bad.push(
-            "METRALE_GLM_KDA_CHUNK_PREFILL / METRALE_GLM_KDA_CHUNK_SCAN (scan chunks follow the \
-             prefill piece)",
+            "METRALE_GLM_KDA_CHUNK_PREFILL / METRALE_GLM_KDA_CHUNK_SCAN / METRALE_GLM_KDA_CHUNK64 \
+             (scan chunks follow the prefill piece)",
         );
     }
     if bad.is_empty() {
@@ -129,7 +129,8 @@ pub(crate) fn check_at_load(k: &crate::glm5next_mlp::Glm5NextMlpKernels) -> Resu
             && k.w4a4_expert_rows_grouped() == usize::MAX,
         dsa_batch_qidx: crate::glm5next_layer::dsa_batch_qidx(),
         kda_chunked: crate::glm5next_layer::levers::kda_chunk_prefill()
-            || crate::glm5next_kda::chunk16::kda_chunk_scan_min_rows()?.is_some(),
+            || crate::glm5next_kda::chunk16::kda_chunk_scan_min_rows()?.is_some()
+            || crate::glm5next_kda::chunk64::kda_chunk64_min_rows()?.is_some(),
     };
     check_levers(true, l).map_err(anyhow::Error::msg)
 }

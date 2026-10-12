@@ -30,6 +30,7 @@
 
 pub mod binding;
 pub mod chunk16;
+pub mod chunk64;
 pub mod tp;
 pub mod tp_bind;
 
@@ -192,7 +193,10 @@ impl Glm5NextKdaWorkspace {
         }
         let (qkv, cd, hd, h) = (cfg.qkv_dim(), cfg.conv_dim(), cfg.head_dim, cfg.heads);
         let t = max_tokens;
-        let t_pad = t.div_ceil(cfg.chunk) * cfg.chunk;
+        // 2026-10-12: Padded to a multiple of both the FP32 chunk and the 64-token chunk
+        // (`chunk64.rs`), so a sub-chunk's last 64-token chunk fits the scratch.
+        let unit = lcm(cfg.chunk.max(1), chunk64::CHUNK64);
+        let t_pad = t.div_ceil(unit) * unit;
         let n = t_pad * qkv;
         Ok(Self {
             qkv_parts: gpu.alloc(3 * t * qkv * 2)?,
@@ -501,4 +505,13 @@ impl Glm5NextKdaLayer {
             stream,
         )
     }
+}
+
+/// 2026-10-12: The least common multiple of two positive integers.
+fn lcm(a: usize, b: usize) -> usize {
+    let (mut x, mut y) = (a, b);
+    while y != 0 {
+        (x, y) = (y, x % y);
+    }
+    a / x * b
 }

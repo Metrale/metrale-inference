@@ -41,6 +41,38 @@ impl RowIo {
     }
 }
 
+/// 2026-10-12: Which chunked scan `k` rows of one sequence take in `decode_k_modes`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ScanMode {
+    /// The 64-token tensor-core scan (`chunk64.rs`).
+    Chunk64,
+    /// The 16-token FP32 scan (`chunk16.rs`).
+    Chunk16,
+    /// Neither: the per-token paths.
+    None,
+}
+
+/// 2026-10-12: The chunked-scan choice, pure: with no per-row snapshot asked for
+/// (`unsnapshotted`), the 64-token scan where its floor `chunk64_min` is set and reached, else
+/// the 16-token scan where `chunk_min` is; otherwise none. Callers pass a floor only where that
+/// scan's kernels are bound (`chunk16_ready` / `chunk64_ready`).
+pub(super) fn scan_mode(
+    k: usize,
+    unsnapshotted: bool,
+    chunk_min: Option<usize>,
+    chunk64_min: Option<usize>,
+) -> ScanMode {
+    if !unsnapshotted {
+        ScanMode::None
+    } else if chunk64_min.is_some_and(|r| k >= r) {
+        ScanMode::Chunk64
+    } else if chunk_min.is_some_and(|r| k >= r) {
+        ScanMode::Chunk16
+    } else {
+        ScanMode::None
+    }
+}
+
 impl Glm5NextKdaLayer {
     /// 2026-09-25: The stateful half of one KDA token: the conv window update (SiLU and L2 fused),
     /// then one recurrent step, both on the row buffers `io`, updating `state` in place.
@@ -235,13 +267,14 @@ impl Glm5NextKdaLayer {
             stream,
             tokens,
             super::chunk16::kda_chunk_scan_min_rows()?,
+            super::chunk64::kda_chunk64_min_rows()?,
         )
     }
 
-    /// 2026-10-10: [`Self::decode_k_with`] with the chunked scan's floor
-    /// (`METRALE_GLM_KDA_CHUNK_SCAN`) explicit: rows that take no snapshot, at least
-    /// `chunk_min` of them, run the conv and the chunked recurrence (`chunk16.rs`); otherwise as
-    /// `decode_k_with`.
+    /// 2026-10-10: [`Self::decode_k_with`] with the chunked scans' floors
+    /// (`METRALE_GLM_KDA_CHUNK_SCAN`, `METRALE_GLM_KDA_CHUNK64`) explicit: rows that take no
+    /// snapshot, at least a floor of them, run the conv and that chunked recurrence
+    /// ([`scan_mode`]: `chunk64.rs` ahead of `chunk16.rs`); otherwise as `decode_k_with`.
     #[allow(clippy::too_many_arguments)]
     pub fn decode_k_modes(
         &self,
@@ -254,9 +287,17 @@ impl Glm5NextKdaLayer {
         stream: u64,
         tokens: bool,
         chunk_min: Option<usize>,
+        // 2026-10-12: `METRALE_GLM_KDA_CHUNK64`'s floor (`chunk64.rs`), ahead of `chunk_min`.
+        chunk64_min: Option<usize>,
     ) -> Result<()> {
-        let chunked =
-            chunk_min.is_some_and(|r| k >= r) && snapshots.is_empty() && self.chunk16_ready();
+        let mode = scan_mode(
+            k,
+            snapshots.is_empty(),
+            chunk_min.filter(|_| self.chunk16_ready()),
+            chunk64_min.filter(|_| self.chunk64_ready()),
+        );
+        let chunked64 = mode == ScanMode::Chunk64;
+        let chunked = mode != ScanMode::None;
         let tokens = !chunked && tokens && k > 1 && snapshots.is_empty() && self.seq_tokens_ready();
         let snap_tokens = !chunked
             && super::kda_verify_tokens()
@@ -280,7 +321,9 @@ impl Glm5NextKdaLayer {
                 }
             },
             || {
-                if chunked {
+                if chunked64 {
+                    self.stateful_chunk64(gpu, k, state, ws, stream)
+                } else if chunked {
                     self.stateful_chunk16(gpu, k, state, ws, stream)
                 } else if snap_tokens {
                     self.stateful_tokens_snap(gpu, k, state, ws, snapshots, stream)
