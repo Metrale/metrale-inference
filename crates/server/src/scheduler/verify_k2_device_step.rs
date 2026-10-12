@@ -179,7 +179,8 @@ mod tests {
     #[test]
     fn each_pick_changing_condition_disarms_the_device_verdict() {
         assert!(identity_rule(plain()));
-        let cases: [(&str, fn(&mut IdentityInputs)); 7] = [
+        type Disarm = fn(&mut IdentityInputs);
+        let cases: [(&str, Disarm); 7] = [
             ("sampled", |i| i.greedy = false),
             ("grammar", |i| i.grammar = true),
             ("logprobs", |i| i.logprobs = true),
