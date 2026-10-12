@@ -4,7 +4,7 @@
 //! other work.
 //!
 //! Owner: server chat API.
-//! Invariants: none beyond the types.
+//! Invariants: chat requests contain 1..=32,768 messages.
 
 use axum::http::StatusCode;
 use axum::response::Response;
@@ -13,7 +13,9 @@ use crate::ir::ChatRequest;
 
 use super::compact::{openai_error_response, openai_error_response_with_param};
 
-/// 2026-09-26: Check the request envelope: 1..=2048 messages, temperature in [0, 2],
+const MAX_MESSAGES_PER_CHAT_REQUEST: usize = 32_768;
+
+/// 2026-09-26: Check the request envelope: 1..=32,768 messages, temperature in [0, 2],
 /// top_p in (0, 1], max_tokens >= 1, n in 1..=128, a known `tool_choice` mode, and
 /// tools present when `tool_choice` is `required`. Every failure is an OpenAI-style
 /// 400 response.
@@ -27,10 +29,10 @@ pub(super) fn validate_input(req: &ChatRequest) -> Result<(), Response> {
             None,
         ));
     }
-    if req.messages.len() > 2048 {
+    if req.messages.len() > MAX_MESSAGES_PER_CHAT_REQUEST {
         return Err(openai_error_response_with_param(
             StatusCode::BAD_REQUEST,
-            "messages array exceeds maximum length (2048)".into(),
+            format!("messages array exceeds maximum length ({MAX_MESSAGES_PER_CHAT_REQUEST})"),
             Some("messages"),
             None,
         ));
@@ -91,4 +93,57 @@ pub(super) fn validate_input(req: &ChatRequest) -> Result<(), Response> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request_with_message_count(message_count: usize) -> ChatRequest {
+        ChatRequest {
+            model: "test".into(),
+            messages: vec![crate::ir::Message::synthetic_system(String::new()); message_count],
+            tools: Vec::new(),
+            tool_choice: None,
+            sampling: crate::ir::SamplingParams::default(),
+            max_tokens: 1,
+            min_tokens: 0,
+            stop: Vec::new(),
+            stream: false,
+            n: 1,
+            response_format: None,
+            thinking: crate::ir::ThinkingDirective::Unspecified,
+            reasoning_effort: None,
+            preserve_thinking: None,
+            template_thinking: None,
+            repetition_detection: None,
+            adapter: None,
+            src_lang: None,
+            tgt_lang: None,
+            num_beams: None,
+            length_penalty: None,
+            early_stopping: None,
+            logit_bias: Vec::new(),
+            top_logprobs: None,
+            seed: None,
+            timeout_secs: None,
+            return_token_ids: false,
+            lookup_tenant: None,
+        }
+    }
+
+    #[test]
+    fn accepts_the_32768_message_limit() {
+        assert!(validate_input(&request_with_message_count(MAX_MESSAGES_PER_CHAT_REQUEST)).is_ok());
+    }
+
+    #[test]
+    fn rejects_more_than_32768_messages() {
+        let response = validate_input(&request_with_message_count(
+            MAX_MESSAGES_PER_CHAT_REQUEST + 1,
+        ))
+        .unwrap_err();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
 }
