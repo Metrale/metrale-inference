@@ -108,6 +108,7 @@ pub fn glm_hc_pre_norm(
         rms_eps,
         pre_prefetch(),
         pre_splitk(),
+        crate::glm5next_mhc_tok::pre_tok(),
         stream,
     )
 }
@@ -220,6 +221,7 @@ pub fn glm_hc_pre_norm_with(
     rms_eps: f32,
     prefetch: bool,
     splitk: bool,
+    tok: bool,
     stream: u64,
 ) -> Result<()> {
     if let Some(why) = hc_pre_norm_refusal(hidden_size, hc_mult) {
@@ -233,6 +235,21 @@ pub fn glm_hc_pre_norm_with(
         bail!(
             "glm_hc_pre_norm: {num_tokens} tokens exceeds the {mix_cap}-token `mix` and `done` \
              scratch (floor {MHC_MIX_MAX_TOKENS})"
+        );
+    }
+    // 2026-10-12: The token-tiled grid takes its own launch (`glm5next_mhc_tok`).
+    if let Some(kernel) = crate::glm5next_mhc_tok::tok_kernel(kernels, num_tokens, tok) {
+        return crate::glm5next_mhc_tok::launch_tok(
+            gpu,
+            kernel,
+            streams,
+            w,
+            norm_w,
+            [y_out, post_out, comb_out, normed_out],
+            num_tokens,
+            [hidden_size, hc_mult, sinkhorn_iters],
+            [norm_eps, hc_eps, rms_eps],
+            stream,
         );
     }
     let (kernel, grid_y) =
@@ -331,6 +348,7 @@ mod tests {
             hc_pre_norm_rows: k(if fused { 10 } else { 0 }),
             hc_pre_norm_pf: k(if fused { 13 } else { 0 }),
             hc_pre_norm_sk: k(if fused { 14 } else { 0 }),
+            hc_pre_norm_tok: k(if fused { 15 } else { 0 }),
             hc_post: k(7),
             hc_post_rank_sum: k(11),
             hc_post_pre_norm: k(12),

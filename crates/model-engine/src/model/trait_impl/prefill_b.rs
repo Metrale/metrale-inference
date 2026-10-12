@@ -73,7 +73,11 @@ impl TransformerModel {
         {
             return None;
         }
-        crate::prefill_plan::tail_split_point(tokens.len(), block_size)
+        crate::prefill_plan::tail_split_for(
+            tokens.len(),
+            block_size,
+            self.splits_whole_pass_at_capture(),
+        )
     }
 
     pub(super) fn prefill_chunk_dispatch(
