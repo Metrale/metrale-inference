@@ -39,6 +39,7 @@ mod batch;
 mod batch_check;
 mod batch_graph;
 mod catchup;
+mod ctx_rows;
 mod draft_io;
 mod draft_lp;
 mod graph;
@@ -51,6 +52,11 @@ mod rows;
 
 /// 2026-10-11: The batched propose's lever, its row limit, and the block workspaces' rows.
 pub use batch::{PROPOSE_BATCH_MAX, drafter_block_rows, propose_batch_enabled};
+/// 2026-10-11: Rows the MTP block's DSA workspace is built for: the batched propose's rows and
+/// a context-row pass (`ctx_rows`).
+pub fn drafter_dsa_rows() -> usize {
+    drafter_block_rows().max(ctx_rows::CTX_ROWS_CHUNK)
+}
 /// 2026-10-11: The drafter graph's per-state bytes, for the per-sequence reserve.
 pub use graph::state_bytes as graph_state_bytes;
 /// 2026-10-11: Bytes of the draft head's exchange buffer, one per sequence state.
@@ -143,6 +149,8 @@ pub struct Glm5NextMtpHead {
     /// `METRALE_GLM_MTP_XCHG_DEVICE=1` and the build has them: the vocab-sharded head's exchange
     /// on the device (`exchange_on_device`). `None` keeps the host exchange.
     xchg_k: Option<(KernelHandle, KernelHandle)>,
+    /// 2026-10-11: The context rows' pass scratch (`ctx_rows`); `None` runs them one at a time.
+    ctx_rows: Option<Mutex<ctx_rows::CtxRowsScratch>>,
     /// 2026-10-11: The draft log-probability kernels (`draft_lp`).
     lp_k: draft_lp::LpKernels,
     /// 2026-10-11: The target's own final norm (`model.language_model.norm.weight`, BF16

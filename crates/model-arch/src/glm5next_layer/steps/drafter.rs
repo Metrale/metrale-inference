@@ -104,6 +104,44 @@ impl Glm5NextLayer {
         self.add_inplace(gpu, hidden, ffn_out, rows * self.hidden, stream)
     }
 
+    /// 2026-10-11: The most context rows [`Self::drafter_write_kv_rows`] takes in one pass: the
+    /// DSA workspace's rows; 0 for a block whose mixer is not DSA.
+    pub fn drafter_context_rows_max(&self) -> usize {
+        match &self.mixer {
+            Glm5NextMixer::Dsa(l) => l.drafter_rows_max(),
+            _ => 0,
+        }
+    }
+
+    /// 2026-10-11: `m` consecutive drafter context rows in one pass: `input_norm` over the rows
+    /// of `x` (`[m, hidden]`) into `normed` (the caller's `[m, hidden]` scratch, so no shared
+    /// forward buffer is written), then `Glm5NextDsaLayer::write_kv_rows_flat` at drafter row
+    /// `seq_len`, row `r` to KV slot `slots_dev[r]`. The rows [`Self::drafter_write_kv_row`]
+    /// writes one at a time.
+    #[allow(clippy::too_many_arguments)]
+    pub fn drafter_write_kv_rows(
+        &self,
+        x: DevicePtr,
+        normed: DevicePtr,
+        m: usize,
+        state: &mut dyn LayerState,
+        kv_cache: &mut PagedKvCache,
+        seq_len: usize,
+        slots_dev: DevicePtr,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        let Glm5NextMixer::Dsa(layer) = &self.mixer else {
+            bail!(
+                "GLM layer {}: drafter_write_kv_rows is the MTP block's path; this layer is not \
+                 a DSA layer",
+                self.layer_idx
+            );
+        };
+        self.norm(ctx.gpu, x, self.input_norm, normed, m, stream)?;
+        layer.write_kv_rows_flat(normed, m, state, kv_cache, seq_len, slots_dev, ctx, stream)
+    }
+
     /// 2026-09-25: One drafter context row: `input_norm`, then `Glm5NextDsaLayer::write_kv_row`,
     /// which writes the row's KV latent and indexer entry without computing the block output.
     /// Errors on a block whose mixer is not DSA.

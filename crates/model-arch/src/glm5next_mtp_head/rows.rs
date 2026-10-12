@@ -55,6 +55,12 @@ impl Glm5NextMtpHead {
             .ok()
             .as_deref()
             == Some("1");
+        // 2026-10-11: Two rows or more run in passes (`ctx_rows.rs`); the per-row loop below
+        // stays for one row and for the diagnostic arms (full block, per-row fingerprints).
+        if rows >= 2 && !prefill_full && !dbg && self.ctx_rows_batched() {
+            self.ctx_rows_impl(tokens, hiddens, row_base, rows, st, ctx, stream)?;
+            return Ok(rows);
+        }
         let mut kv = self.kv_cache.lock();
         let Glm5NextMtpProposerState {
             dsa,

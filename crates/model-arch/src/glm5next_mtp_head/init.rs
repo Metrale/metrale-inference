@@ -210,6 +210,8 @@ impl Glm5NextMtpHead {
             gemv_fp8w_k,
             xchg_k: xchg_kernels(gpu),
             lp_k: super::draft_lp::LpKernels::resolve(gpu),
+            ctx_rows: super::ctx_rows::CtxRowsScratch::new(gpu, config.hidden_size)?
+                .map(Mutex::new),
             target_final_norm: target_final_norm.weight,
         })
     }
