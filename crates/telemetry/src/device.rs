@@ -2,7 +2,7 @@
 
 //! 2026-09-26: L0: what the GPU reports through NVML: power, the cumulative
 //! energy counter, clocks, temperature, clock-event reasons, memory, PCIe and
-//! NVLink.
+//! NVLink; since 2026-10-11 also utilization and the visible device count.
 //!
 //! [`DeviceSource`] is the I/O seam: [`NvmlSource`] reads the driver, and a
 //! test supplies its own source or, for the NVML path itself, its own NVML
@@ -35,11 +35,15 @@ pub struct DeviceReading {
     pub pcie_tx_kbps: Option<u64>,
     pub pcie_rx_kbps: Option<u64>,
     pub nvlink_active_links: Option<u64>,
+    /// 2026-10-11: Percent of the driver's last sample period the GPU was busy.
+    pub gpu_util_pct: Option<u64>,
+    /// 2026-10-11: Devices NVML reports to this process (`nvmlDeviceGetCount_v2`).
+    pub device_count: Option<u64>,
 }
 
 /// 2026-09-26: The number of [`DeviceReading`] fields; `fields` lists them in
 /// declaration order.
-const FIELDS: usize = 12;
+const FIELDS: usize = 14;
 /// 2026-09-26: Words in the encoded form: a presence mask, the sample time,
 /// the fields.
 pub const SAMPLE_WORDS: usize = FIELDS + 2;
@@ -59,6 +63,8 @@ impl DeviceReading {
             self.pcie_tx_kbps,
             self.pcie_rx_kbps,
             self.nvlink_active_links,
+            self.gpu_util_pct,
+            self.device_count,
         ]
     }
 
@@ -76,6 +82,8 @@ impl DeviceReading {
             pcie_tx_kbps: f[9],
             pcie_rx_kbps: f[10],
             nvlink_active_links: f[11],
+            gpu_util_pct: f[12],
+            device_count: f[13],
         }
     }
 
@@ -184,6 +192,8 @@ impl DeviceSource for NvmlSource {
             pcie_tx_kbps: ok(widen(dev.pcie_kbps(NVML_PCIE_UTIL_TX_BYTES))),
             pcie_rx_kbps: ok(widen(dev.pcie_kbps(NVML_PCIE_UTIL_RX_BYTES))),
             nvlink_active_links: dev.nvlink_active_links().map(u64::from),
+            gpu_util_pct: ok(widen(dev.gpu_utilization_pct())),
+            device_count: ok(widen(self.nvml.device_count())),
         };
         self.errors += errors;
         reading

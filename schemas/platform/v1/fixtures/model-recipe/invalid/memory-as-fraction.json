@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "recipe_id": "gpt-oss/gpt-oss-20b-mxfp4",
+  "model": {
+    "source": {
+      "repository": "openai/gpt-oss-20b",
+      "revision": "ad31ec163396d5cb44d8deb87c596cecb0f55bf8"
+    },
+    "weights": [
+      {
+        "path": "model-00000-of-00002.safetensors",
+        "sha256": "762036e1ef0cea7232acd90a28bde9177f7a48a74143f27ad78cadd89bffc467",
+        "bytes": 4625017896
+      },
+      {
+        "path": "model-00001-of-00002.safetensors",
+        "sha256": "60c5590f72eef292f9545afc28bf63ca91d2016a0a288f90f9a32f89d3fffcaf",
+        "bytes": 4115256944
+      }
+    ]
+  },
+  "architecture": {
+    "family": "gpt_oss",
+    "tokenizer": {
+      "uri": "artifacts/tokenizer.json",
+      "sha256": "224931eb13f8d2471acd38a4a0d7417d20e8ea340160a467ceaa359d25197b87"
+    },
+    "chat_template": {
+      "uri": "artifacts/chat_template.jinja",
+      "sha256": "00824420d15876dddcfabe40381d9b9cc9804f6f1f73f2653edb74a9dc4c1b79"
+    }
+  },
+  "quantization": {
+    "weights": "mxfp4",
+    "activations": "adaptive",
+    "kv_cache": "fp8"
+  },
+  "limits": {
+    "max_context_tokens": 32768,
+    "max_concurrent_sequences": 16,
+    "gpu_memory_permille": 0.85
+  },
+  "runtime": {
+    "engine": "metrale",
+    "image": {
+      "repository": "metrale/metrale-inference-gb10",
+      "digest": "sha256:6105d6cc76af400325e94d588ce511be5bfdbb73b437dc51eca43917d7a43e3d"
+    },
+    "hardware_classes": [
+      "gb10"
+    ],
+    "min_nodes": 1,
+    "serve_flags": {
+      "kv_cache_dtype": "fp8",
+      "max_model_len": "32768",
+      "port": "8870"
+    },
+    "env": {
+      "METRALE_PREFILL_CODISPATCH": "1"
+    }
+  },
+  "semantics": {
+    "tool_calls": {
+      "supported": {
+        "parser": "harmony"
+      }
+    },
+    "structured_output": {
+      "supported": {
+        "parser": "json-schema"
+      }
+    },
+    "reasoning": {
+      "supported": {
+        "parser": "harmony"
+      }
+    },
+    "input_modalities": [
+      "text"
+    ],
+    "output_modalities": [
+      "text"
+    ]
+  },
+  "evidence": [
+    {
+      "kind": "coherence",
+      "artifact": {
+        "uri": "artifacts/coherence-gpt-oss-20b.json",
+        "sha256": "7ca709f72ce3c8f8aac99c2e5f2f2048ad54f6d986fa7e5167187cb09ac7a001"
+      }
+    },
+    {
+      "kind": "benchmark",
+      "artifact": {
+        "uri": "artifacts/bench-gpt-oss-20b.json",
+        "sha256": "0166fb16e5cefad20c7af94fb5b72e6a4dfa0bb7dd4a72f587596242be4b10b8"
+      }
+    }
+  ]
+}

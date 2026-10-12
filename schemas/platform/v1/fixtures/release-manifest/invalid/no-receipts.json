@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "release": "gpt-oss-20b-gb10-r1",
+  "created_at_unix_ms": 1791000000000,
+  "runtime": {
+    "git_commit": "f2e18ffc17e2595362b5468aac34221e09934bf8",
+    "image": {
+      "repository": "metrale/metrale-inference-gb10",
+      "digest": "sha256:6105d6cc76af400325e94d588ce511be5bfdbb73b437dc51eca43917d7a43e3d"
+    }
+  },
+  "recipe": "17699781ee35bdc0af168e4a85fab0bc0a6e420fc18aaf4e04c74fd25905a50b",
+  "model": {
+    "source": {
+      "repository": "openai/gpt-oss-20b",
+      "revision": "ad31ec163396d5cb44d8deb87c596cecb0f55bf8"
+    },
+    "weights": "05545ade5bcd3368fdff261e75f0fd453c0a6a84ce7f7c2a7c29989717ab761d"
+  },
+  "hardware": {
+    "hardware_class": "gb10",
+    "fingerprints": [
+      "16aa107c22f3c1363152acc19412989bc49eba78d080562af2264e11ff4b84e7"
+    ]
+  },
+  "sbom": {
+    "format": "spdx_json",
+    "artifact": {
+      "uri": "artifacts/sbom.spdx.json",
+      "sha256": "f83a802cd06855608ed5057ca4d5b475a09b7784cfaea15cef678028fdca8779"
+    }
+  },
+  "receipts": []
+}

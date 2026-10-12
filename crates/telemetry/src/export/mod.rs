@@ -5,6 +5,7 @@
 //!
 //! * [`prometheus`]: the telemetry section of `GET /metrics`.
 //! * [`events`]: one JSON object per line for `GET /v1/events` (SSE).
+//! * [`process`]: the build, start-time and startup-phase lines of `GET /metrics`.
 //! * `otlp` (cargo feature `otlp`): an OTLP/HTTP JSON metrics body.
 //!
 //! Owner: telemetry.
@@ -13,6 +14,7 @@
 pub mod events;
 #[cfg(feature = "otlp")]
 pub mod otlp;
+pub mod process;
 pub mod prometheus;
 mod prometheus_layers;
 mod prometheus_text;

@@ -62,6 +62,10 @@ pub struct Usage {
     /// 2026-09-26: `ir::Usage::total_time_ms`.
     #[serde(rename = "total_time_ms")]
     pub total_time_ms: f64,
+    /// 2026-10-11: The request's `InferenceUsage` record (request and trace ids, counts,
+    /// receipt-anchored timings with provenance). Omitted when the build is unstamped.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inference_usage: Option<metrale_qci_dump::contract::usage::InferenceUsage>,
 }
 
 impl From<&crate::ir::Usage> for Usage {
@@ -87,6 +91,7 @@ impl From<&crate::ir::Usage> for Usage {
             response_tokens_per_second: u.response_tokens_per_second,
             decode_time_ms: u.decode_time_ms,
             total_time_ms: u.total_time_ms(),
+            inference_usage: None,
         }
     }
 }

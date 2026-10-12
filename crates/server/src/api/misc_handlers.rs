@@ -61,7 +61,9 @@ pub async fn cancel_response(axum::extract::Path(id): axum::extract::Path<String
 }
 
 /// 2026-09-26: GET /metrics in Prometheus text format.
-pub async fn metrics_handler() -> impl IntoResponse {
+pub async fn metrics_handler(
+    State(host): State<Arc<crate::main_modules::model_host::ModelHost>>,
+) -> impl IntoResponse {
     use prometheus::Encoder;
     use std::fmt::Write;
 
@@ -132,6 +134,36 @@ pub async fn metrics_handler() -> impl IntoResponse {
         # TYPE metrale_low_entropy_ratio gauge\n\
         metrale_low_entropy_ratio {low_ratio:.4}\n"
     );
+
+    // 2026-10-11: Build, start time, startup phase and the loaded model's revision and
+    // recipe, at every telemetry level.
+    let commit = crate::request_accounting::runtime_commit().map(|c| c.to_hex());
+    let live = host.current();
+    let identity = live.as_ref().map(|s| {
+        let id = s.model_identity;
+        (
+            id.revision.map(|r| r.to_hex()),
+            id.recipe.map(|r| r.to_hex()),
+        )
+    });
+    text.push_str(&metrale_telemetry::export::process::render(
+        &metrale_telemetry::export::process::ProcessFacts {
+            version: crate::cli::METRALE_VERSION,
+            commit: commit.as_deref(),
+            start_unix_s: crate::metrics::PROCESS_START_UNIX_S.get().copied(),
+            phase: metrale_telemetry::progress::current_phase(),
+            model: live
+                .as_ref()
+                .zip(identity.as_ref())
+                .map(
+                    |(s, (rev, recipe))| metrale_telemetry::export::process::ModelFacts {
+                        served_model: &s.model_name,
+                        revision: rev.as_deref(),
+                        recipe: recipe.as_deref(),
+                    },
+                ),
+        },
+    ));
 
     // 2026-09-26: The telemetry section; empty at `--telemetry off`
     // (`metrale_telemetry::export::prometheus::render`).

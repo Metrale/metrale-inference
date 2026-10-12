@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "event_id": "53535353535353535353535353535353",
+  "writer": {
+    "node_id": "66570ff05a2074043084d4aca94293ef067530dde94ff4e92b8d8459253eb779",
+    "boot_id": "51515151515151515151515151515151",
+    "seq": 8
+  },
+  "actor": {
+    "kind": "user",
+    "id": "operator",
+    "node_id": null
+  },
+  "action": "deployment",
+  "resource": "acme/assistants/gpt-oss-20b",
+  "phase": "outcome",
+  "outcome": "allowed",
+  "intent_id": "52525252525252525252525252525252",
+  "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+  "occurred_at_unix_ms": 1791000000040,
+  "security": true
+}

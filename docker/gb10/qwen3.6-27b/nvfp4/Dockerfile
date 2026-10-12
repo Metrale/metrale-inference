@@ -40,7 +40,11 @@ ENV METRALE_TARGET_HW=gb10
 ENV METRALE_TARGET_MODEL=qwen3.6-27b
 ENV METRALE_TARGET_QUANT=nvfp4
 
-RUN cargo build --release -p metrale-server
+# 2026-10-11: The source commit, stamped into `met` as METRALE_BUILD_COMMIT (usage records and the
+# /metrics build line are keyed by it). Pass --build-arg
+# METRALE_GIT_SHA="$(bash scripts/build-commit.sh)"; without it `met` is unstamped.
+ARG METRALE_GIT_SHA
+RUN METRALE_BUILD_COMMIT="${METRALE_GIT_SHA}" cargo build --release -p metrale-server
 
 # ── Runtime stage ────────────────────────────────────────────────
 FROM nvidia/cuda:13.0.0-runtime-ubuntu24.04

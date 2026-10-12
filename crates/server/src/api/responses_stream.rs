@@ -54,6 +54,7 @@ use super::sanitizer::*;
 pub(super) async fn responses_endpoint_stream(
     CurrentModel(state): CurrentModel,
     tenant: Option<crate::auth::LookupTenant>,
+    stamp: crate::request_stamp::RequestStamp,
     mut chat_req: ChatCompletionRequest,
     metadata: Option<std::collections::HashMap<String, String>>,
     store_flag: bool,
@@ -91,18 +92,19 @@ pub(super) async fn responses_endpoint_stream(
         Vec::new()
     };
 
-    let deltas = match chat_completions_inner(state, None, tenant, chat_req.into(), None).await {
-        super::chat::ChatOutcome::Streaming(d) => d,
-        super::chat::ChatOutcome::Http(r) => return r,
-        // 2026-09-26: Not reached: `chat_req.stream` is true, so a success is
-        // `Streaming` (`chat/mod.rs` dispatch).
-        super::chat::ChatOutcome::Blocking(_) => {
-            return openai_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal: expected streaming outcome".to_string(),
-            );
-        }
-    };
+    let deltas =
+        match chat_completions_inner(state, None, tenant, stamp, chat_req.into(), None).await {
+            super::chat::ChatOutcome::Streaming(d) => d,
+            super::chat::ChatOutcome::Http(r) => return r,
+            // 2026-09-26: Not reached: `chat_req.stream` is true, so a success is
+            // `Streaming` (`chat/mod.rs` dispatch).
+            super::chat::ChatOutcome::Blocking(_) => {
+                return openai_error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal: expected streaming outcome".to_string(),
+                );
+            }
+        };
 
     // 2026-09-26: Same capacity as the chat stream's channel (`chat_stream/mod.rs`).
     let (tx, rx) = mpsc::channel::<Result<Event, std::convert::Infallible>>(1024);
@@ -379,25 +381,17 @@ pub(super) async fn responses_endpoint_stream(
                     }
                 }
                 StreamDelta::ToolCallArgs { .. } => {}
-                StreamDelta::Finish { reason, usage, .. } => {
+                StreamDelta::Finish {
+                    reason,
+                    usage,
+                    inference_usage,
+                    ..
+                } => {
                     finish_reason = reason.as_wire().to_string();
-                    // 2026-09-26: Usage in the chat wire shape, which
-                    // `build_responses_usage` reads.
-                    final_usage = Some(serde_json::json!({
-                        "prompt_tokens": usage.prompt_tokens,
-                        "completion_tokens": usage.completion_tokens,
-                        "total_tokens": usage.prompt_tokens + usage.completion_tokens,
-                        "prompt_tokens_details": {
-                            "cached_tokens": usage.cached_prompt_tokens,
-                            "audio_tokens": 0,
-                        },
-                        "completion_tokens_details": {
-                            "reasoning_tokens": usage.reasoning_tokens,
-                            "audio_tokens": 0,
-                            "accepted_prediction_tokens": usage.accepted_prediction_tokens,
-                            "rejected_prediction_tokens": 0,
-                        },
-                    }));
+                    final_usage = Some(super::responses_translate::chat_wire_usage(
+                        &usage,
+                        inference_usage.as_deref(),
+                    ));
                 }
                 // 2026-09-26: An error delta is only logged; the finalizer
                 // still closes the response when the deltas end.

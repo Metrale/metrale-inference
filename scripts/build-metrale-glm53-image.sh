@@ -20,6 +20,9 @@ BASE="${BASE:-metrale-glm53:t47}"
 NODES="${NODES:-10.10.10.1 10.10.10.2}"
 
 cd "$(dirname "$0")/.."
+# 2026-10-11: Stamp the commit when the tree is one; an iteration build from uncommitted changes is
+# unstamped (it serves, but withholds its usage records).
+if commit="$(bash scripts/build-commit.sh)"; then export METRALE_BUILD_COMMIT="$commit"; fi
 RUSTFLAGS="-L $PWD/.ncclstub" \
 METRALE_TARGET_HW=gb10 METRALE_TARGET_MODEL=glm-5.3-flash METRALE_TARGET_QUANT=nvfp4 \
   cargo build --release -p metrale-server

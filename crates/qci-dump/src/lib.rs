@@ -6,6 +6,10 @@
 //! Neither function reads a weight file or a GPU. A missing measurement is a named
 //! blocker in the text, and the word that would claim a model is served is never written.
 //!
+//! 2026-10-11: Also the runtime's pure QCI core: [`contract`] binds the platform contracts
+//! (investor-mvp #41: per-request `InferenceUsage`, `CompatibilityReceipt` for #46) and
+//! [`trace`] resolves request and trace identity (#49). The server does the I/O around them.
+//!
 //! Owner: qci-dump.
 //! Invariants:
 //! - [`render_dump`] is a pure function of its arguments. Two calls with the same
@@ -14,8 +18,11 @@
 //!   campaigns, so other chat traffic keeps the existing handler.
 
 mod admit;
+pub mod contract;
 mod dump;
+pub mod receipt_spec;
 mod recipe;
+pub mod trace;
 
 pub use dump::DumpInput;
 

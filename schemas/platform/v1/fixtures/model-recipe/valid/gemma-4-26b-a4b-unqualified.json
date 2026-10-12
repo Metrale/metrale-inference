@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "recipe_id": "gemma4/gemma-4-26b-a4b-nvfp4",
+  "model": {
+    "source": {
+      "repository": "google/gemma-4-26b-a4b-it",
+      "revision": "1fdaf6e447a0b5fea2808cb642aabd3620a79ef7"
+    },
+    "weights": [
+      {
+        "path": "model.safetensors",
+        "sha256": "9716536f62c81fe13e7c21c8807af96fd93f677e905e53817a0d2b72a95bcd2b",
+        "bytes": 15032385536
+      }
+    ]
+  },
+  "architecture": {
+    "family": "gemma4",
+    "tokenizer": {
+      "uri": "artifacts/gemma-tokenizer.json",
+      "sha256": "dfa54b9dd65d03c168555bd441a61732c1634e4a945eb2c0a50e0d2b1188a6a9"
+    },
+    "chat_template": {
+      "uri": "artifacts/gemma-template.jinja",
+      "sha256": "6f39021de735eb9cc7d50eb3fcaaf1801ccaa7c0113141f218c687617839e452"
+    }
+  },
+  "quantization": {
+    "weights": "nvfp4",
+    "activations": "bf16",
+    "kv_cache": "fp8"
+  },
+  "limits": {
+    "max_context_tokens": 8192,
+    "max_concurrent_sequences": 8,
+    "gpu_memory_permille": 850
+  },
+  "runtime": {
+    "engine": "metrale",
+    "image": {
+      "repository": "metrale/metrale-inference-gb10",
+      "digest": "sha256:6105d6cc76af400325e94d588ce511be5bfdbb73b437dc51eca43917d7a43e3d"
+    },
+    "hardware_classes": [
+      "gb10",
+      "strix-halo"
+    ],
+    "min_nodes": 1,
+    "serve_flags": {},
+    "env": {}
+  },
+  "semantics": {
+    "tool_calls": "unsupported",
+    "structured_output": "unsupported",
+    "reasoning": "unsupported",
+    "input_modalities": [
+      "text",
+      "image"
+    ],
+    "output_modalities": [
+      "text"
+    ]
+  },
+  "evidence": []
+}

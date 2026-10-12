@@ -51,6 +51,7 @@ use super::sanitizer::*;
 pub async fn responses_endpoint(
     CurrentModel(state): CurrentModel,
     tenant: Option<axum::extract::Extension<crate::auth::LookupTenant>>,
+    axum::extract::Extension(stamp): axum::extract::Extension<crate::request_stamp::RequestStamp>,
     req: Result<Json<crate::openai::ResponsesRequest>, JsonRejection>,
 ) -> Response {
     let Json(r) = match req {
@@ -154,6 +155,7 @@ pub async fn responses_endpoint(
         return responses_endpoint_stream(
             CurrentModel(state),
             tenant.map(|e| e.0),
+            stamp,
             chat_req,
             metadata,
             store_flag,
@@ -171,6 +173,7 @@ pub async fn responses_endpoint(
         state.clone(),
         None,
         tenant.map(|e| e.0),
+        stamp,
         chat_req.into(),
         None,
     )

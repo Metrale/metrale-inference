@@ -72,6 +72,11 @@ pub(crate) fn load_model(
         return Ok(None);
     };
 
+    let model_identity = crate::main_modules::model_identity::resolve(
+        args.scheduling.service.model_recipe.as_deref(),
+        &model_dir,
+    )?;
+
     // 2026-09-26: EOS ids from generation_config.json, else from the config.
     let mut eos_tokens = serve_phases::load_eos_tokens(&model_dir, &config);
 
@@ -291,6 +296,7 @@ pub(crate) fn load_model(
     let state = Arc::new(AppState {
         tokenizer,
         model_name,
+        model_identity,
         adapter_name: nllb_adapter_name
             .clone()
             .or_else(|| lora_states.first().map(|l| l.name.clone())),

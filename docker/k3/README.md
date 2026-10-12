@@ -6,12 +6,12 @@ From the repository root, build **on the destination CPU architecture**:
 # ARM64 DGX Spark host, GB10 device code.
 docker build --no-cache --platform linux/arm64 -f docker/k3/Dockerfile \
   --build-arg METRALE_TARGET_HW=gb10 \
-  --build-arg METRALE_GIT_SHA="$(git rev-parse HEAD)" -t metrale-k3:gb10-prep .
+  --build-arg METRALE_GIT_SHA="$(bash scripts/build-commit.sh)" -t metrale-k3:gb10-prep .
 
 # Native x86_64 builder for an x86_64 B300 rental.
 docker build --no-cache --platform linux/amd64 -f docker/k3/Dockerfile \
   --build-arg METRALE_TARGET_HW=b300 \
-  --build-arg METRALE_GIT_SHA="$(git rev-parse HEAD)" -t metrale-k3:b300-prep .
+  --build-arg METRALE_GIT_SHA="$(bash scripts/build-commit.sh)" -t metrale-k3:b300-prep .
 ```
 
 An ARM64 DGX Spark executable is **not portable to an x86_64 rental**, even if its

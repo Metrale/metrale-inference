@@ -19,3 +19,4 @@ mod convert;
 mod ir_carry;
 mod to_ir_blocks;
 mod translator_stream;
+mod usage_record;

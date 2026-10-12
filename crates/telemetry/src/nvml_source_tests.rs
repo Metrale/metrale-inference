@@ -30,6 +30,8 @@ fn every_reported_field_lands_in_the_reading() {
     assert_eq!(r.mem_total_bytes, Some(8 << 30));
     assert_eq!(r.pcie_tx_kbps, None, "an unresolved entry point is absent");
     assert_eq!(r.nvlink_active_links, None);
+    assert_eq!(r.gpu_util_pct, Some(93));
+    assert_eq!(r.device_count, Some(1));
     assert_eq!(src.read_errors(), 0);
 }
 

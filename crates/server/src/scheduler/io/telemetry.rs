@@ -55,8 +55,8 @@ pub trait TelemetryIo: Send + Sync + std::fmt::Debug {
     /// denominator).
     fn tokens(&self, n: u64);
     /// 2026-09-25: A request reached its terminal frame: its latencies and
-    /// attributed energy.
-    fn request_finished(&self, timing: RequestTiming);
+    /// attributed energy, which is also returned for its usage record (2026-10-11).
+    fn request_finished(&self, timing: RequestTiming) -> metrale_telemetry::energy::RequestEnergy;
     /// 2026-09-25: Output tokens of every request finished so far (it does
     /// not grow while the level is `Off`).
     fn finished_output_tokens(&self) -> u64;
@@ -169,8 +169,8 @@ impl TelemetryIo for SysTelemetry {
     fn tokens(&self, n: u64) {
         self.tel.tokens(n);
     }
-    fn request_finished(&self, timing: RequestTiming) {
-        self.tel.request_finished(&timing);
+    fn request_finished(&self, timing: RequestTiming) -> metrale_telemetry::energy::RequestEnergy {
+        self.tel.request_finished(&timing)
     }
     fn finished_output_tokens(&self) -> u64 {
         self.tel.requests.output_tokens.get()

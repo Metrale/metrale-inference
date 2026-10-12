@@ -173,12 +173,22 @@ pub fn compact_messages(
     result
 }
 
-/// 2026-09-26: The SSE `data:` payload `{"error": "<message>"}` for a
-/// mid-stream error on the `/v1/completions` stream. Built with `serde_json`
-/// so that a `"`, `\` or newline in `message` is escaped and the frame stays
-/// valid JSON.
-pub(super) fn completion_error_frame(message: &str) -> String {
-    serde_json::json!({ "error": message }).to_string()
+/// 2026-10-11: The SSE `data:` payload of a mid-stream error, on the chat and the
+/// `/v1/completions` streams alike: the OpenAI error envelope every JSON error body uses,
+/// `{"error": {"message", "type": "server_error", "code": 500, "request_id", "trace_id"}}`.
+/// The completions stream sent `{"error": "<message>"}` before, which had no room for the
+/// ids; the clients in this repository read both shapes (`metrale-bench`
+/// `http::stream_error`). Built with `serde_json`, so a `"`, `\` or newline in `message`
+/// stays valid JSON.
+pub(super) fn stream_error_frame(
+    message: &str,
+    trace: &metrale_qci_dump::trace::RequestTrace,
+) -> String {
+    let mut err = serde_json::json!({
+        "error": {"message": message, "type": "server_error", "code": 500}
+    });
+    trace.annotate_error(&mut err);
+    err.to_string()
 }
 
 pub(super) fn openai_error_response(status: StatusCode, message: String) -> Response {

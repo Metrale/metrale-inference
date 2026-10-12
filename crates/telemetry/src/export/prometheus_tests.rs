@@ -34,6 +34,8 @@ fn every_sample_line_is_a_declared_metric_with_a_numeric_value() {
         power_mw: Some(61_500),
         energy_counter_mj: Some(1_000),
         clocks_event_reasons: Some(0x4 | 0x80),
+        gpu_util_pct: Some(0),
+        device_count: Some(2),
         ..Default::default()
     };
     t.absorb_device(&mut tr, &reading, 0);
@@ -89,6 +91,29 @@ fn every_sample_line_is_a_declared_metric_with_a_numeric_value() {
         !text.contains("metrale_gpu_temperature_celsius"),
         "unreported is absent"
     );
+    // 2026-10-11: A measured idle GPU is 0, which is not the same as unreported.
+    assert!(
+        text.contains("metrale_gpu_utilization_percent 0\n"),
+        "{text}"
+    );
+    assert!(text.contains("metrale_gpu_count 2\n"), "{text}");
+}
+
+#[test]
+fn unreported_utilization_and_count_are_absent_not_zero() {
+    let t = hub(Level::Basic);
+    t.absorb_device(
+        &mut CounterTracker::default(),
+        &DeviceReading {
+            power_mw: Some(1),
+            ..Default::default()
+        },
+        0,
+    );
+    let text = render(t, &|_| None);
+    assert!(text.contains("metrale_gpu_power_watts"), "{text}");
+    assert!(!text.contains("metrale_gpu_utilization_percent"), "{text}");
+    assert!(!text.contains("metrale_gpu_count"), "{text}");
 }
 
 #[test]

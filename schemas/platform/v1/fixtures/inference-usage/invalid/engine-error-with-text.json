@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "request_id": "42424242424242424242424242424242",
+  "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+  "served_model": "gpt-oss-20b",
+  "recipe": null,
+  "runtime_commit": "f2e18ffc17e2595362b5468aac34221e09934bf8",
+  "outcome": {
+    "engine_error": {
+      "error": "context_too_long",
+      "detail": "the engine's own message"
+    }
+  },
+  "tokens": {
+    "prompt": {
+      "measured": 40000
+    },
+    "completion": {
+      "measured": 0
+    },
+    "cached_prompt": {
+      "absent": "not_applicable"
+    },
+    "reasoning": {
+      "absent": "unsupported"
+    }
+  },
+  "timings": {
+    "received_at_unix_ms": 1791000000000,
+    "queue_ms": {
+      "absent": "not_applicable"
+    },
+    "ttft_ms": {
+      "absent": "not_applicable"
+    },
+    "total_ms": {
+      "measured": 3
+    },
+    "tpot_us": {
+      "absent": "not_applicable"
+    }
+  },
+  "energy": {
+    "absent": "not_applicable"
+  },
+  "finished_at_unix_ms": 1791000000003
+}

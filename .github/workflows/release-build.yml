@@ -265,6 +265,20 @@ jobs:
           ref: ${{ inputs.ref }}
           fetch-depth: 0
 
+      # 2026-10-11: The checked-out commit, stamped into `met` as METRALE_BUILD_COMMIT: the
+      # server keys every usage record and its /metrics build line by it, and an
+      # unstamped binary withholds the records. Taken right after checkout, from
+      # the one script every build path uses; it refuses a tree whose tracked
+      # files differ from HEAD. A plain `echo "...=$(...)"` would swallow that
+      # refusal, so the value is assigned first.
+      - name: Stamp the build commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          commit="$(bash scripts/build-commit.sh)"
+          echo "METRALE_BUILD_COMMIT=$commit" >> "$GITHUB_ENV"
+          echo "stamping met with $commit"
+
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
           targets: ${{ matrix.target }}

@@ -246,6 +246,15 @@ pub struct ServeServiceArgs {
     #[arg(long, value_name = "TOKEN", conflicts_with = "auth_tokens_file")]
     pub auth_token: Option<String>,
 
+    /// The `ModelRecipe` document (a release's `recipe.json`) this server is
+    /// launched from. The SHA-256 of its canonical JSON is the `recipe` of every
+    /// usage record, of `GET /health/runtime` and of `/metrics`. Startup is
+    /// refused when the file is not a ModelRecipe v1 document, or when it pins a
+    /// source revision other than the loaded Hub snapshot's. Unset: no recipe,
+    /// reported as `null`.
+    #[arg(long, value_name = "PATH")]
+    pub model_recipe: Option<std::path::PathBuf>,
+
     /// LoRA adapter to serve, as NAME=PATH_OR_HF_ID (e.g.
     /// `holo-sft=/data/adapters/holo-sft` or `holo-sft=org/holo-31-08b-lora`).
     /// Repeatable: each adapter loads into its own pool slot at startup and is

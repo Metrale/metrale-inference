@@ -165,20 +165,63 @@ impl EnergyRing {
     }
 }
 
+/// 2026-10-11: Energy charged to one request, and the window it was integrated over: the
+/// ring points at or before the request's start and end (`at_ns`, the hub clock).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EnergyShare {
+    pub millijoules: u64,
+    pub window_ns: (u64, u64),
+}
+
+/// 2026-10-11: What the device layer says about one finished request's energy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RequestEnergy {
+    /// 2026-10-11: Its token share of the energy counted over its window.
+    Attributed(EnergyShare),
+    /// 2026-10-11: Telemetry is off, so no device layer runs.
+    Off,
+    /// 2026-10-11: The device layer is unavailable, the ring holds no point for the
+    /// window, or the window emitted no tokens.
+    Unattributed,
+}
+
+impl RequestEnergy {
+    /// 2026-10-11: The energy of several finished choices of one request: the sum over one
+    /// window covering them all, when every choice was attributed; else the first reason
+    /// (`Off` before `Unattributed`).
+    pub fn merge(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Attributed(a), Self::Attributed(b)) => Self::Attributed(EnergyShare {
+                millijoules: a.millijoules.saturating_add(b.millijoules),
+                window_ns: (
+                    a.window_ns.0.min(b.window_ns.0),
+                    a.window_ns.1.max(b.window_ns.1),
+                ),
+            }),
+            (Self::Off, _) | (_, Self::Off) => Self::Off,
+            _ => Self::Unattributed,
+        }
+    }
+}
+
 /// 2026-09-26: Millijoules attributed to a request that emitted `tokens` over
 /// `[start_ns, end_ns]`: its share, by tokens, of the energy counted over that
-/// window. `None` when the ring is empty or the window saw no tokens.
-pub fn request_millijoules(
+/// window, with the window of the two ring points it was read between. `None` when
+/// the ring is empty or the window saw no tokens.
+pub fn request_energy(
     ring: &EnergyRing,
     start_ns: u64,
     end_ns: u64,
     tokens: u64,
-) -> Option<u64> {
+) -> Option<EnergyShare> {
     let p0 = ring.at_or_before(start_ns)?;
     let p1 = ring.at_or_before(end_ns)?;
     let de = p1.energy_mj.checked_sub(p0.energy_mj)?;
     let dt = p1.tokens.checked_sub(p0.tokens).filter(|t| *t > 0)?;
-    Some((de as u128 * tokens as u128 / dt as u128) as u64)
+    Some(EnergyShare {
+        millijoules: (de as u128 * tokens as u128 / dt as u128) as u64,
+        window_ns: (p0.at_ns, p1.at_ns),
+    })
 }
 
 #[cfg(test)]

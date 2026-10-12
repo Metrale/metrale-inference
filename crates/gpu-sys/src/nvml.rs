@@ -58,7 +58,18 @@ pub struct NvmlMemory {
     pub used: c_ulonglong,
 }
 
+/// 2026-10-11: `nvmlUtilization_t`: percent of the last sample period the GPU (and the
+/// memory interface) was busy.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NvmlUtilization {
+    pub gpu: c_uint,
+    pub memory: c_uint,
+}
+
 pub type FnVoid = unsafe extern "C" fn() -> NvmlReturn;
+pub type FnCount = unsafe extern "C" fn(*mut c_uint) -> NvmlReturn;
+pub type FnDevUtil = unsafe extern "C" fn(NvmlDeviceHandle, *mut NvmlUtilization) -> NvmlReturn;
 pub type FnHandleByIndex = unsafe extern "C" fn(c_uint, *mut NvmlDeviceHandle) -> NvmlReturn;
 pub type FnDevU32 = unsafe extern "C" fn(NvmlDeviceHandle, *mut c_uint) -> NvmlReturn;
 pub type FnDevU64 = unsafe extern "C" fn(NvmlDeviceHandle, *mut c_ulonglong) -> NvmlReturn;
@@ -90,6 +101,10 @@ pub struct NvmlFns {
     pub pcie_throughput: Option<FnDevArgU32>,
     /// 2026-09-26: `nvmlDeviceGetNvLinkState(link)`, 1 = active.
     pub nvlink_state: Option<FnDevArgU32>,
+    /// 2026-10-11: `nvmlDeviceGetUtilizationRates`.
+    pub utilization: Option<FnDevUtil>,
+    /// 2026-10-11: `nvmlDeviceGetCount_v2`: the devices this process can see.
+    pub device_count: Option<FnCount>,
 }
 
 /// 2026-09-26: Why NVML cannot be used. The telemetry sampler records it as
@@ -189,6 +204,8 @@ fn resolve(lib: &Library) -> Result<NvmlFns, NvmlUnavailable> {
         memory_info: optional(lib, "nvmlDeviceGetMemoryInfo"),
         pcie_throughput: optional(lib, "nvmlDeviceGetPcieThroughput"),
         nvlink_state: optional(lib, "nvmlDeviceGetNvLinkState"),
+        utilization: optional(lib, "nvmlDeviceGetUtilizationRates"),
+        device_count: optional(lib, "nvmlDeviceGetCount_v2"),
     })
 }
 
@@ -223,6 +240,17 @@ impl Nvml {
             return Err(NvmlUnavailable::InitFailed(rc));
         }
         Ok(Self { fns, _keep: keep })
+    }
+
+    /// 2026-10-11: The number of devices NVML reports. `Ok(None)` when the entry point is
+    /// absent or answers NOT_SUPPORTED / NO_PERMISSION.
+    pub fn device_count(&self) -> Result<Option<u32>, NvmlReturn> {
+        let Some(f) = self.fns.device_count else {
+            return Ok(None);
+        };
+        let mut n: c_uint = 0;
+        // 2026-10-11: SAFETY: `n` is a valid out-pointer.
+        answer(unsafe { f(&mut n) }, n)
     }
 
     /// 2026-09-26: The device at NVML index `index`.
@@ -320,6 +348,16 @@ impl NvmlDevice<'_> {
         let mut m = NvmlMemory::default();
         // 2026-09-26: SAFETY: `m` is a valid `nvmlMemory_t` out-pointer.
         answer(unsafe { f(self.handle, &mut m) }, m)
+    }
+
+    /// 2026-10-11: Percent of the driver's last sample period the GPU was busy.
+    pub fn gpu_utilization_pct(&self) -> Result<Option<u32>, NvmlReturn> {
+        let Some(f) = self.fns.utilization else {
+            return Ok(None);
+        };
+        let mut u = NvmlUtilization::default();
+        // 2026-10-11: SAFETY: `u` is a valid `nvmlUtilization_t` out-pointer.
+        answer(unsafe { f(self.handle, &mut u) }, u.gpu)
     }
 
     pub fn pcie_kbps(&self, counter: c_uint) -> Result<Option<u32>, NvmlReturn> {

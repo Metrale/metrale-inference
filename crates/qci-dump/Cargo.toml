@@ -5,14 +5,18 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Device-free QCI receipts for the Gemma 4 and Nemotron 3.5 Lightning beachhead."
+description = "Device-free QCI receipts, request identity and the platform-contract binding of the runtime."
 
 # 2026-10-06: Host-only. No dependency here reaches CUDA, a weight file, or a GPU.
 # `qci-dump` is the dump entry. `metrale-server` calls `gate` on the chat path.
+# 2026-10-11: `contract` and `trace` are pure (no clock, file or socket), so the server's
+# QCI logic is unit-tested here on any host, including one without the CUDA crates.
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
+serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 
 [lints]
 workspace = true

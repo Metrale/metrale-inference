@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://metrale.ai/schemas/platform/v1/revocation-list.v1.schema.json",
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "title": "RevocationList",
+  "description": "Every release manifest, compatibility receipt and release signer the registry has withdrawn, cumulative and numbered. Signed as a DocumentSignature of kind revocation_list; a reader refuses a list whose sequence is below one it already holds.",
+  "type": "object",
+  "properties": {
+    "version": {
+      "$ref": "common.v1.schema.json#/$defs/version"
+    },
+    "issuer": {
+      "$ref": "common.v1.schema.json#/$defs/id32"
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 18446744073709551615
+    },
+    "issued_at_unix_ms": {
+      "$ref": "common.v1.schema.json#/$defs/timestamp_ms"
+    },
+    "revoked": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "subject": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "release_manifest": {
+                    "$ref": "common.v1.schema.json#/$defs/sha256"
+                  }
+                },
+                "required": [
+                  "release_manifest"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "compatibility_receipt": {
+                    "$ref": "common.v1.schema.json#/$defs/sha256"
+                  }
+                },
+                "required": [
+                  "compatibility_receipt"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "signer": {
+                    "$ref": "common.v1.schema.json#/$defs/id32"
+                  }
+                },
+                "required": [
+                  "signer"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "reason": {
+            "enum": [
+              "superseded",
+              "defect",
+              "evidence_invalid",
+              "license_withdrawn",
+              "key_compromised"
+            ]
+          },
+          "revoked_at_unix_ms": {
+            "$ref": "common.v1.schema.json#/$defs/timestamp_ms"
+          }
+        },
+        "required": [
+          "subject",
+          "reason",
+          "revoked_at_unix_ms"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1
+    }
+  },
+  "required": [
+    "version",
+    "issuer",
+    "sequence",
+    "issued_at_unix_ms",
+    "revoked"
+  ],
+  "additionalProperties": false
+}

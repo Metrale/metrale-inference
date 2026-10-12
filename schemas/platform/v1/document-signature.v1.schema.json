@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://metrale.ai/schemas/platform/v1/document-signature.v1.schema.json",
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "title": "DocumentSignature",
+  "description": "A release signer's detached hybrid signature over one platform document's canonical-JSON SHA-256. The signed string is the kind's domain followed by the 32 digest bytes; the signer's keys come from the verifier's trust anchor, never from this document.",
+  "type": "object",
+  "properties": {
+    "version": {
+      "$ref": "common.v1.schema.json#/$defs/version"
+    },
+    "kind": {
+      "enum": [
+        "release_manifest",
+        "revocation_list"
+      ]
+    },
+    "document": {
+      "$ref": "common.v1.schema.json#/$defs/sha256"
+    },
+    "signer": {
+      "$ref": "common.v1.schema.json#/$defs/id32"
+    },
+    "signature": {
+      "$ref": "common.v1.schema.json#/$defs/hybrid_signature"
+    }
+  },
+  "required": [
+    "version",
+    "kind",
+    "document",
+    "signer",
+    "signature"
+  ],
+  "additionalProperties": false
+}

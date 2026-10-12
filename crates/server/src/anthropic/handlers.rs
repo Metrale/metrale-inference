@@ -22,6 +22,7 @@ use super::types::*;
 pub async fn messages(
     CurrentModel(state): CurrentModel,
     tenant: Option<axum::extract::Extension<crate::auth::LookupTenant>>,
+    axum::extract::Extension(stamp): axum::extract::Extension<crate::request_stamp::RequestStamp>,
     body: axum::body::Bytes,
 ) -> Response {
     if state.tokenizer.harmony().is_some()
@@ -91,6 +92,7 @@ pub async fn messages(
         state.clone(),
         None,
         tenant.map(|e| e.0),
+        stamp,
         req.into(),
         None,
     )

@@ -61,6 +61,30 @@ pub(super) async fn emit(
     }
 }
 
+/// 2026-09-26: A stream's finish usage in the chat wire shape, which
+/// [`build_responses_usage`] reads; 2026-10-11: with the request's usage record.
+pub(super) fn chat_wire_usage(
+    usage: &crate::ir::Usage,
+    inference_usage: Option<&metrale_qci_dump::contract::usage::InferenceUsage>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "inference_usage": inference_usage,
+        "prompt_tokens": usage.prompt_tokens,
+        "completion_tokens": usage.completion_tokens,
+        "total_tokens": usage.prompt_tokens + usage.completion_tokens,
+        "prompt_tokens_details": {
+            "cached_tokens": usage.cached_prompt_tokens,
+            "audio_tokens": 0,
+        },
+        "completion_tokens_details": {
+            "reasoning_tokens": usage.reasoning_tokens,
+            "audio_tokens": 0,
+            "accepted_prediction_tokens": usage.accepted_prediction_tokens,
+            "rejected_prediction_tokens": 0,
+        },
+    })
+}
+
 pub(super) fn build_responses_usage(u: &serde_json::Value) -> crate::openai::ResponsesUsage {
     crate::openai::ResponsesUsage {
         input_tokens: u.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
@@ -75,6 +99,9 @@ pub(super) fn build_responses_usage(u: &serde_json::Value) -> crate::openai::Res
             .get("completion_tokens_details")
             .and_then(|v| serde_json::from_value(v.clone()).ok()),
         total_tokens: u.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+        inference_usage: u
+            .get("inference_usage")
+            .and_then(|v| serde_json::from_value(v.clone()).ok()),
     }
 }
 
@@ -155,6 +182,7 @@ pub(super) async fn translate_chat_response_to_responses(
             rejected_prediction_tokens: 0,
         }),
         total_tokens: chat.usage.prompt_tokens + chat.usage.completion_tokens,
+        inference_usage: chat.inference_usage.clone(),
     };
     let resp_id = format!("resp_{}", chat.id);
     let resp = crate::openai::ResponsesResponse {

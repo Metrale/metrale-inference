@@ -22,6 +22,9 @@ pub struct ChatResponse {
     /// more than one; the Anthropic and Responses encoders read the first.
     pub choices: Vec<Choice>,
     pub usage: Usage,
+    /// 2026-10-11: The request's `InferenceUsage` record (`request_accounting.rs`); `None`
+    /// when the build is unstamped. Only the OpenAI encoders write it.
+    pub inference_usage: Option<metrale_qci_dump::contract::usage::InferenceUsage>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

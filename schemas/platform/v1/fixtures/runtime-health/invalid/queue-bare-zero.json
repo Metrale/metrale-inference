@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "runtime": {
+    "name": "metrale-inference",
+    "version": "0.9.0",
+    "git_commit": "f2e18ffc17e2595362b5468aac34221e09934bf8"
+  },
+  "boot_id": "31313131313131313131313131313131",
+  "state": "ready",
+  "reason": null,
+  "models": [
+    {
+      "served_model": "gpt-oss-20b",
+      "recipe": "17699781ee35bdc0af168e4a85fab0bc0a6e420fc18aaf4e04c74fd25905a50b"
+    }
+  ],
+  "observed_at_unix_ms": 1791000000000,
+  "uptime_ms": 7200000,
+  "queue_depth": 0,
+  "active_requests": {
+    "measured": 3
+  },
+  "kv_occupancy_permille": {
+    "measured": 412
+  },
+  "accelerators": [
+    {
+      "device": "0000:01:00.0",
+      "product": {
+        "measured": "NVIDIA GB10"
+      },
+      "energy_cumulative_mj": {
+        "measured": 912345678
+      },
+      "power_mw": {
+        "measured": 61000
+      },
+      "temperature_mc": {
+        "measured": 54000
+      },
+      "gpu_util_permille": {
+        "measured": 930
+      },
+      "memory_used_bytes": {
+        "measured": 101000000000
+      },
+      "memory_total_bytes": {
+        "measured": 128849018880
+      },
+      "mono_ns": 7200000000000
+    }
+  ]
+}

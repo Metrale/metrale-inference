@@ -98,6 +98,7 @@ pub(crate) async fn run_chat_stream(
     req_ctx: Option<crate::rate_limiter::RequestContext>,
     dump_seq: Option<u64>,
     active_guard: crate::metrics::ActiveRequestGuard,
+    pending: crate::request_accounting::Pending,
 ) -> Result<crate::ir::DeltaStream, (StatusCode, String)> {
     let harmony_parser = state
         .tokenizer
@@ -179,6 +180,7 @@ pub(crate) async fn run_chat_stream(
             "Scheduler queue full".to_string(),
         )
     })?;
+    pending.dispatched();
 
     // 2026-09-26: `ctx.id` and `ctx.model` feed the `--dump` record and log lines; the
     // wire ids come from the surface encoders.
@@ -237,6 +239,7 @@ pub(crate) async fn run_chat_stream(
         max_tokens,
         timeout_at,
         _active_guard: active_guard,
+        pending,
     };
 
     if let Some(parser) = harmony_parser {
@@ -283,6 +286,8 @@ pub(crate) async fn run_chat_stream(
                 cached_prompt_tokens,
                 accepted_prediction_tokens,
                 guard_stop,
+                prefill_started_at,
+                energy,
             } => {
                 // 2026-09-26: `.or()`: the stream-side guards in `handle_token.rs` may have
                 // set `guard_stop` before this frame arrives; the scheduler's value fills
@@ -298,6 +303,8 @@ pub(crate) async fn run_chat_stream(
                     reasoning_tokens,
                     cached_prompt_tokens,
                     accepted_prediction_tokens,
+                    prefill_started_at,
+                    energy,
                 )
             }
             StreamEvent::Error(msg) => handle_error::handle_error(&ctx, msg),

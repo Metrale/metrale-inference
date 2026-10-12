@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "name": "gpt-oss-20b",
+  "scope": {
+    "tenant": "acme",
+    "project": "assistants"
+  },
+  "generation": 3,
+  "spec": {
+    "release": "a4d451ec23463726f72c43d64c710968f6b602cd653b4de8adee1b556240a829",
+    "served_model": "gpt-oss-20b",
+    "topology": {
+      "nodes": 1,
+      "accelerators_per_node": 1,
+      "tensor_parallel": 1,
+      "pipeline_parallel": 1,
+      "expert_parallel": 1
+    },
+    "replicas": 0,
+    "placement": {
+      "hardware_class": "gb10"
+    }
+  },
+  "status": {
+    "observed_generation": 3,
+    "phase": "ready",
+    "conditions": [
+      {
+        "kind": "release_verified",
+        "status": "true",
+        "since_unix_ms": 1791000000000
+      },
+      {
+        "kind": "receipt_approved",
+        "status": "true",
+        "since_unix_ms": 1791000000000
+      }
+    ],
+    "instances": [
+      {
+        "instance_id": "11111111111111111111111111111111",
+        "node_id": "66570ff05a2074043084d4aca94293ef067530dde94ff4e92b8d8459253eb779",
+        "hardware_fingerprint": "16aa107c22f3c1363152acc19412989bc49eba78d080562af2264e11ff4b84e7",
+        "generation": 3,
+        "state": "ready"
+      },
+      {
+        "instance_id": "12121212121212121212121212121212",
+        "node_id": "93ef37c6157138222b21a42be52183d08d75cd4fed49c1cbba571b06a69e39a4",
+        "hardware_fingerprint": "16aa107c22f3c1363152acc19412989bc49eba78d080562af2264e11ff4b84e7",
+        "generation": 3,
+        "state": "ready"
+      }
+    ],
+    "updated_at_unix_ms": 1791000005000
+  }
+}

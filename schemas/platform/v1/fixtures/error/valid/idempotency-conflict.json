@@ -1,0 +1,4 @@
+{
+  "code": "idempotency_conflict",
+  "message": "Idempotency-Key 2121...2121 was used with a different action."
+}

@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://metrale.ai/schemas/platform/v1/deployment-action-result.v1.schema.json",
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "title": "DeploymentActionResult",
+  "description": "The agent's answer to a DeploymentAction.",
+  "type": "object",
+  "properties": {
+    "version": {
+      "$ref": "common.v1.schema.json#/$defs/version"
+    },
+    "idempotency_key": {
+      "$ref": "common.v1.schema.json#/$defs/id16"
+    },
+    "node_id": {
+      "$ref": "common.v1.schema.json#/$defs/id32"
+    },
+    "outcome": {
+      "oneOf": [
+        {
+          "const": "applied"
+        },
+        {
+          "const": "already_applied"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "refused": {
+              "type": "object",
+              "properties": {
+                "reason": {
+                  "enum": [
+                    "stale_generation",
+                    "idempotency_conflict",
+                    "release_unverified",
+                    "receipt_missing",
+                    "hardware_incompatible",
+                    "not_here",
+                    "busy",
+                    "cordoned",
+                    "draining"
+                  ]
+                }
+              },
+              "required": [
+                "reason"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "refused"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "failed": {
+              "type": "object",
+              "properties": {
+                "reason": {
+                  "enum": [
+                    "image_unavailable",
+                    "launch_failed",
+                    "not_ready",
+                    "exited"
+                  ]
+                }
+              },
+              "required": [
+                "reason"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "failed"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "running_generation": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "common.v1.schema.json#/$defs/generation"
+        }
+      ]
+    },
+    "instances": {
+      "type": "array",
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/id16"
+      }
+    },
+    "answered_at_unix_ms": {
+      "$ref": "common.v1.schema.json#/$defs/timestamp_ms"
+    }
+  },
+  "required": [
+    "version",
+    "idempotency_key",
+    "node_id",
+    "outcome",
+    "running_generation",
+    "instances",
+    "answered_at_unix_ms"
+  ],
+  "additionalProperties": false
+}

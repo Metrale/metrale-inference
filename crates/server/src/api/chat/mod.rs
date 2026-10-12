@@ -83,6 +83,7 @@ pub async fn chat_completions(
     >,
     req_ctx: Option<axum::extract::Extension<crate::rate_limiter::RequestContext>>,
     tenant: Option<axum::extract::Extension<crate::auth::LookupTenant>>,
+    axum::extract::Extension(stamp): axum::extract::Extension<crate::request_stamp::RequestStamp>,
     body: axum::body::Bytes,
 ) -> Response {
     // 2026-09-26: Parsed by hand so the same bytes also feed the `--dump`
@@ -189,6 +190,7 @@ pub async fn chat_completions(
         state.clone(),
         req_ctx,
         tenant.map(|e| e.0),
+        stamp,
         req.into(),
         dump_seq,
     )
@@ -212,6 +214,7 @@ pub(crate) async fn chat_completions_inner(
     state: Arc<AppState>,
     req_ctx: Option<axum::extract::Extension<crate::rate_limiter::RequestContext>>,
     tenant: Option<crate::auth::LookupTenant>,
+    stamp: crate::request_stamp::RequestStamp,
     mut req: crate::ir::ChatRequest,
     dump_seq: Option<u64>,
 ) -> ChatOutcome {
@@ -398,6 +401,9 @@ pub(crate) async fn chat_completions_inner(
         );
     }
 
+    // 2026-10-11: The usage record; a refusal before dispatch records nothing.
+    let pending = crate::request_accounting::Pending::new(stamp, &state, prompt_len);
+
     if req.stream {
         return super::chat_stream_dispatch::dispatch_streaming(
             state,
@@ -438,12 +444,14 @@ pub(crate) async fn chat_completions_inner(
             top_logprobs,
             timeout_at,
             active_guard,
+            pending,
         )
         .await;
     }
 
-    super::chat_blocking::run_blocking_path(super::chat_blocking::BlockingPathArgs {
+    let outcome = super::chat_blocking::run_blocking_path(super::chat_blocking::BlockingPathArgs {
         state,
+        pending: &pending,
         req,
         req_ctx,
         prompt_tokens,
@@ -481,5 +489,10 @@ pub(crate) async fn chat_completions_inner(
         cwd_hint,
         prompt_len,
     })
-    .await
+    .await;
+    // 2026-10-11: An error status answered after dispatch is the request's outcome.
+    if let ChatOutcome::Http(resp) = &outcome {
+        pending.fail_status(resp.status());
+    }
+    outcome
 }

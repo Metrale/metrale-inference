@@ -39,6 +39,8 @@ pub enum StreamDelta {
         reason: super::response::FinishReason,
         usage: super::response::Usage,
         token_ids: Vec<u32>,
+        /// 2026-10-11: As `ChatResponse::inference_usage`.
+        inference_usage: Option<Box<metrale_qci_dump::contract::usage::InferenceUsage>>,
     },
     /// 2026-09-26: A wire-ready error payload; the OpenAI encoder sends it
     /// as SSE data unchanged.

@@ -107,6 +107,13 @@ pub fn finish_sequence(io: &SchedIo, a: &mut ActiveSeq, max_seq_len: usize) {
             .saturating_duration_since(a.decode_start)
             .as_secs_f64()
             * 1000.0;
+        let energy = io
+            .tel
+            .request_finished(metrale_telemetry::request::RequestTiming {
+                ttft_ms,
+                decode_ms,
+                output_tokens: a.output_tokens.len() as u64,
+            });
         io.req.finish(
             &mut a.sink,
             FinishFrame {
@@ -119,16 +126,12 @@ pub fn finish_sequence(io: &SchedIo, a: &mut ActiveSeq, max_seq_len: usize) {
                 cached_prompt_tokens: a.cached_prompt_tokens,
                 accepted_prediction_tokens: a.mtp_acct.accepted_total() as usize,
                 guard_stop: a.guard_stop,
+                prefill_started_at: a.request_start,
+                energy,
                 logprobs: &mut a.logprobs_data,
                 prompt_logprobs: &mut a.seq.prompt_logprobs,
             },
         );
-        io.tel
-            .request_finished(metrale_telemetry::request::RequestTiming {
-                ttft_ms,
-                decode_ms,
-                output_tokens: a.output_tokens.len() as u64,
-            });
     }
     let decode_s = io
         .clock
