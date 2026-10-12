@@ -49,6 +49,7 @@ use metrale_model_layers::layer::{ForwardContext, LayerState, TransformerLayer};
 
 mod decode_k;
 mod decode_rows;
+mod drafter_rows;
 mod host_rows;
 mod indexer_place;
 mod kernels;
