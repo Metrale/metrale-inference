@@ -152,6 +152,23 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
         };
 
         let dsa_plan = crate::glm5next_dsa::tp::DsaTpPlan::from_config(config, &dsa_cfg)?;
+        // 2026-10-12: One DSA workspace for the stack unless `METRALE_GLM_DSA_WS_SHARED=0`
+        // (`dsa_ws_shared`); sized like the KDA and MLP ones, for `verify_k` rows.
+        let shared_dsa_ws = if crate::glm5next_dsa::layer::dsa_ws_shared() {
+            tracing::info!(
+                "GLM DSA workspace: SHARED, 1 for {} DSA layers at {verify_k} rows",
+                skeleton
+                    .layers
+                    .iter()
+                    .filter(|l| l.mixer == Mixer::Dsa)
+                    .count()
+            );
+            Some(std::sync::Arc::new(
+                crate::glm5next_dsa::layer::Glm5NextDsaWorkspace::new(gpu, &dsa_cfg, verify_k)?,
+            ))
+        } else {
+            None
+        };
         let last = skeleton.layers.len() - 1;
         let mut out: Vec<Box<dyn TransformerLayer>> = Vec::with_capacity(skeleton.layers.len());
 
@@ -195,9 +212,14 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                         select_kernels: dsa_kernels,
                         decode_kernel:
                             crate::glm5next_dsa::attend::Glm5NextDsaDecodeKernel::resolve(gpu)?,
-                        workspace: crate::glm5next_dsa::layer::Glm5NextDsaWorkspace::new(
-                            gpu, &dsa_cfg, verify_k,
-                        )?,
+                        workspace: match &shared_dsa_ws {
+                            Some(ws) => ws.clone(),
+                            None => std::sync::Arc::new(
+                                crate::glm5next_dsa::layer::Glm5NextDsaWorkspace::new(
+                                    gpu, &dsa_cfg, verify_k,
+                                )?,
+                            ),
+                        },
                         layer_idx: idx,
                         attn_layer_idx: {
                             let a = attn_layer_idx;

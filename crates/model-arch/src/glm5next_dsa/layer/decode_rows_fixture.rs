@@ -182,7 +182,7 @@ impl Rig {
                 },
             },
             decode_kernel: Glm5NextDsaDecodeKernel::resolve(&self.gpu).unwrap(),
-            workspace: Glm5NextDsaWorkspace::new(&self.gpu, &c, 16).unwrap(),
+            workspace: std::sync::Arc::new(Glm5NextDsaWorkspace::new(&self.gpu, &c, 16).unwrap()),
             layer_idx: 3,
             attn_layer_idx: 0,
             rms_eps: 1e-6,
