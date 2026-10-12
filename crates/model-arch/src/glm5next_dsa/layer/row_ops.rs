@@ -254,11 +254,25 @@ impl Glm5NextDsaLayer {
         let (d, h) = (self.cfg.index_head_dim, self.cfg.hidden);
         let group = metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M as usize;
         let _stable = crate::glm5next_fp8_dense::stable_input(hidden);
+        let whole = crate::glm5next_layer::dsa_idx_proj_whole();
         for (weight, out) in [
             (self.weights.wk, w.stage_k),
             (self.weights.compress_gate, w.stage_gate),
         ] {
-            for (r0, m) in crate::glm5next_layer::multi_seq_chunks(n, group) {
+            // 2026-10-12: Under `METRALE_GLM_DSA_IDX_PROJ_WHOLE=1` a projection the FP8 registry
+            // serves (and the W4A16 one does not) runs all `n` rows in one call: the W8A8 family
+            // is row-invariant, so each row keeps its bits, and the two projections of `hidden`
+            // quantize it once per W8A8 launch instead of once per 16-row group each.
+            let chunks = if whole_rows_apply(
+                whole,
+                crate::glm5next_fp8_dense::holds(weight),
+                crate::glm5next_w4a16_dense::footprint(weight).is_some(),
+            ) {
+                vec![(0, n)]
+            } else {
+                crate::glm5next_layer::multi_seq_chunks(n, group)
+            };
+            for (r0, m) in chunks {
                 gemm(
                     gpu,
                     self.kernels.gemm,
@@ -285,5 +299,25 @@ impl Glm5NextDsaLayer {
             .arg_u32(d as u32)
             .arg_f32(self.rms_eps)
             .launch(stream)
+    }
+}
+
+/// 2026-10-12: Whether `indexer_project_rows` runs a projection over all rows at once: the
+/// lever on, the FP8 registry serving it, and no W4A16 copy (whose launch it would be).
+fn whole_rows_apply(lever: bool, fp8: bool, w4a16: bool) -> bool {
+    lever && fp8 && !w4a16
+}
+
+#[cfg(test)]
+mod whole_rows_tests {
+    use super::whole_rows_apply;
+
+    /// 2026-10-12: Only an FP8-served projection without a W4A16 copy, under the lever.
+    #[test]
+    fn only_fp8_served_projections_run_whole() {
+        assert!(whole_rows_apply(true, true, false));
+        assert!(!whole_rows_apply(false, true, false));
+        assert!(!whole_rows_apply(true, false, false));
+        assert!(!whole_rows_apply(true, true, true));
     }
 }

@@ -233,6 +233,17 @@ pub fn row_weight(bf16: DevicePtr) -> Option<Fp8Weight> {
     }
 }
 
+/// 2026-10-12: Whether [`proj`] serves the BF16 weight at `bf16` (the registry is in use and
+/// holds it), so a launch of any row count runs the row-invariant W8A8 family.
+pub fn holds(bf16: DevicePtr) -> bool {
+    enabled()
+        && state()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .is_some_and(|s| s.weights.contains_key(&bf16.0))
+}
+
 /// 2026-10-09: Registered projections and their FP8 bytes (weights plus scales), for the log.
 pub fn registered() -> (usize, usize) {
     let g = state().lock().unwrap_or_else(|e| e.into_inner());

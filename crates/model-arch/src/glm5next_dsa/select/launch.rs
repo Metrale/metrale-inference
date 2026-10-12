@@ -97,12 +97,43 @@ pub fn select_tokens(
 
     // 2026-10-10: `METRALE_GLM_DSA_SCORES_TILED=1`: the same scores, bit for bit, in query x
     // pool tiles for an exact launch of several query rows (`scores_tiled_for`).
-    let tiled = scores_tiled_for(
+    // 2026-10-12: `METRALE_GLM_DSA_SCORES_MMA=1`: the scores on BF16 tensor cores, ahead of
+    // the tiled path (`scores_mma_for`).
+    let mma = scores_mma_for(
         ceiling.is_some(),
         geom,
-        kernels.rows.scores_tiled,
-        scores_tiled(),
+        kernels.rows.scores_mma,
+        scores_mma(),
     );
+    let tiled = !mma
+        && scores_tiled_for(
+            ceiling.is_some(),
+            geom,
+            kernels.rows.scores_tiled,
+            scores_tiled(),
+        );
+    if has_pools && mma {
+        KernelLaunch::new(gpu, kernels.rows.scores_mma)
+            .grid([geom.q_rows.div_ceil(SCORES_MMA_ROWS) as u32, 1, 1])
+            .block([256, 1, 1])
+            .arg_ptr(inputs.q)
+            .arg_ptr(scratch.pool_keys)
+            .arg_ptr(inputs.weights)
+            .arg_ptr(scratch.pool_indices)
+            .arg_ptr(scratch.pool_valid)
+            .arg_ptr(inputs.rows.valid)
+            .arg_ptr(inputs.q_pos)
+            .arg_ptr(scratch.scores)
+            .arg_ptr(scratch.valid_cand)
+            .arg_u32(geom.q_rows as u32)
+            .arg_u32(npools_a as u32)
+            .arg_u32(geom.index_heads as u32)
+            .arg_u32(d as u32)
+            .arg_u32(kp as u32)
+            .arg_u32(seq_a as u32)
+            .arg_f32((d as f32).powf(-0.5))
+            .launch(stream)?;
+    }
     if has_pools && tiled {
         KernelLaunch::new(gpu, kernels.rows.scores_tiled)
             .grid([
@@ -131,7 +162,7 @@ pub fn select_tokens(
             .launch(stream)?;
     }
     if has_pools {
-        if !tiled {
+        if !tiled && !mma {
             KernelLaunch::new(gpu, kernels.index_scores)
                 .grid([
                     ceiling.unwrap_or(geom.n_pools) as u32,
@@ -162,20 +193,38 @@ pub fn select_tokens(
                 .launch(stream)?;
         }
 
-        // 2026-09-25: `np2_a` is at most `topk_tile()`, so the request is at most
-        // `topk_smem_for_tile(topk_tile())`, within `TOPK_SMEM_CEILING`.
-        KernelLaunch::new(gpu, kernels.topk_pools)
-            .grid([geom.q_rows as u32, 1, 1])
-            .block([ROW_BLOCK, 1, 1])
-            .shared_mem(topk_smem_for_tile(np2_a) as u32)
-            .arg_ptr(scratch.scores)
-            .arg_ptr(scratch.selected)
-            .arg_u32(geom.q_rows as u32)
-            .arg_u32(npools_a as u32)
-            .arg_u32(np2_a as u32)
-            .arg_u32(selk_a as u32)
-            .arg_ptr(gd)
-            .launch(stream)?;
+        // 2026-10-12: `METRALE_GLM_DSA_TOPK_RADIX=1`: the same selection by radix select.
+        if topk_radix_for(
+            ceiling.is_some(),
+            geom,
+            kernels.rows.topk_radix,
+            topk_radix(),
+        ) {
+            KernelLaunch::new(gpu, kernels.rows.topk_radix)
+                .grid([geom.q_rows as u32, 1, 1])
+                .block([ROW_BLOCK, 1, 1])
+                .arg_ptr(scratch.scores)
+                .arg_ptr(scratch.selected)
+                .arg_u32(geom.q_rows as u32)
+                .arg_u32(npools_a as u32)
+                .arg_u32(selk_a as u32)
+                .launch(stream)?;
+        } else {
+            // 2026-09-25: `np2_a` is at most `topk_tile()`, so the request is at most
+            // `topk_smem_for_tile(topk_tile())`, within `TOPK_SMEM_CEILING`.
+            KernelLaunch::new(gpu, kernels.topk_pools)
+                .grid([geom.q_rows as u32, 1, 1])
+                .block([ROW_BLOCK, 1, 1])
+                .shared_mem(topk_smem_for_tile(np2_a) as u32)
+                .arg_ptr(scratch.scores)
+                .arg_ptr(scratch.selected)
+                .arg_u32(geom.q_rows as u32)
+                .arg_u32(npools_a as u32)
+                .arg_u32(np2_a as u32)
+                .arg_u32(selk_a as u32)
+                .arg_ptr(gd)
+                .launch(stream)?;
+        }
     }
 
     KernelLaunch::new(gpu, kernels.expand_selection)

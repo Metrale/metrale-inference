@@ -177,6 +177,8 @@ impl Rig {
                     topk_pools: k(TOPK_ROWS),
                     expand_selection: k(EXPAND_ROWS),
                     scores_tiled: k(SCORES_TILED),
+                    scores_mma: KernelHandle(0),
+                    topk_radix: KernelHandle(0),
                 },
             },
             decode_kernel: Glm5NextDsaDecodeKernel::resolve(&self.gpu).unwrap(),

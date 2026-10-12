@@ -73,6 +73,58 @@ pub fn scores_tiled_for(
     lever && kernel.0 != 0 && !ceiling && geom.q_rows > 1 && geom.index_head_dim == SCORES_TILE_D
 }
 
+/// 2026-10-12: Query rows per block of `dsa_index_scores_mma` (`DSA_SM_QPC`), and the index
+/// head count and head dim it is built for.
+pub const SCORES_MMA_ROWS: usize = 8;
+pub const SCORES_MMA_HEADS: usize = 32;
+pub const SCORES_MMA_D: usize = 128;
+
+/// 2026-10-12: `METRALE_GLM_DSA_SCORES_MMA=1`, read once: score the pools of a prefill
+/// sub-chunk's query rows with `dsa_index_scores_mma` (BF16 tensor cores, FP32 accumulation;
+/// not `dsa_index_scores`'s bits). Off unless `1`. Takes precedence over the tiled scores.
+pub fn scores_mma() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| std::env::var("METRALE_GLM_DSA_SCORES_MMA").as_deref() == Ok("1"))
+}
+
+/// 2026-10-12: Whether a selection pass takes the tensor-core scores: the lever on, the kernel
+/// resolved, an exact launch of more than one query row, and the kernel's head count and dim.
+pub fn scores_mma_for(
+    ceiling: bool,
+    geom: &DsaSelectGeometry,
+    kernel: metrale_gpu_runtime::gpu::KernelHandle,
+    lever: bool,
+) -> bool {
+    lever
+        && kernel.0 != 0
+        && !ceiling
+        && geom.q_rows > 1
+        && geom.index_head_dim == SCORES_MMA_D
+        && geom.index_heads == SCORES_MMA_HEADS
+}
+
+/// 2026-10-12: The widest selection `dsa_topk_pools_radix` takes (`DSA_TR_MAX`).
+pub const TOPK_RADIX_MAX: usize = 512;
+
+/// 2026-10-12: `METRALE_GLM_DSA_TOPK_RADIX=1`, read once: select each row's top pools with
+/// `dsa_topk_pools_radix` (the same pools in the same order as `dsa_topk_pools`). Off unless
+/// `1`.
+pub fn topk_radix() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| std::env::var("METRALE_GLM_DSA_TOPK_RADIX").as_deref() == Ok("1"))
+}
+
+/// 2026-10-12: Whether a selection pass takes the radix top-k: the lever on, the kernel
+/// resolved, an exact launch, and a selection of at most [`TOPK_RADIX_MAX`] pools.
+pub fn topk_radix_for(
+    ceiling: bool,
+    geom: &DsaSelectGeometry,
+    kernel: metrale_gpu_runtime::gpu::KernelHandle,
+    lever: bool,
+) -> bool {
+    lever && kernel.0 != 0 && !ceiling && geom.select_k <= TOPK_RADIX_MAX
+}
+
 /// 2026-09-25: Threads per block for `dsa_index_scores`, and the least shared memory it is
 /// given, in bytes (`select_tokens` requests `max(SCORES_BLOCK, 4 * index_heads)`).
 pub(crate) const SCORES_BLOCK: u32 = 128;

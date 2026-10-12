@@ -104,6 +104,14 @@ pub(crate) fn dsa_indexer_rows() -> bool {
     *E.get_or_init(|| std::env::var("METRALE_GLM_DSA_INDEXER_ROWS").as_deref() == Ok("1"))
 }
 
+/// 2026-10-12: `METRALE_GLM_DSA_IDX_PROJ_WHOLE=1`: a DSA prefill sub-chunk's indexer key and
+/// compress gate, when the FP8 registry serves them, run over all of the sub-chunk's rows in one
+/// call each instead of 16-row groups (the W8A8 family is row-invariant: same bits). Read once.
+pub(crate) fn dsa_idx_proj_whole() -> bool {
+    static E: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *E.get_or_init(|| std::env::var("METRALE_GLM_DSA_IDX_PROJ_WHOLE").as_deref() == Ok("1"))
+}
+
 /// 2026-10-11: `METRALE_GLM_DSA_VERIFY_ROWS=1`: a captured k-row speculative verify of one
 /// sequence (`Glm5NextDsaLayer::decode_k_with`, k in 2..=16) computes the selector query (`wq_b`,
 /// 12.6 MB BF16 on GLM-5.3) and head weights of all rows in one launch each, and the indexer
