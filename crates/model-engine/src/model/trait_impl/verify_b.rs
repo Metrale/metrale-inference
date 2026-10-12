@@ -89,53 +89,51 @@ impl TransformerModel {
         let meta_base = self.buffers.scratch().offset(32768);
         let max_blocks = self.max_blocks_per_seq;
 
-        let positions = [seq.seq_len as u32, (seq.seq_len + 1) as u32];
-        // 2026-09-25: SAFETY: `positions` is the `[u32; 2]` literal on the line above, a
-        // fully-initialised local whose size is 2 * 4 = 8, exactly the byte
-        // length requested. `u32` is POD (no padding, every bit pattern
-        // valid), so the `&[u8]` view is sound, and `positions` is live for
-        // the whole function so the borrow outlives the H2D enqueue below.
-        let pos_bytes = unsafe { std::slice::from_raw_parts(positions.as_ptr() as *const u8, 8) };
-        self.k2_upload(device_draft, Stage::Positions, pos_bytes, meta_base, stream)?;
-
-        let mut slots = [0i64; 2];
-        for t in 0..k {
-            let pos = seq.seq_len + t;
-            let block_idx = pos / bs;
-            let block_offset = pos % bs;
-            // 2026-09-25: Fall back to the dummy block, not block 0: physical block 0 can be a
-            // live block, possibly shared through the prefix cache.
-            let physical_block = seq.physical_block_for(block_idx).unwrap_or_else(|| {
-                tracing::error!(
-                    "verify_k2: no physical block for pos {pos} (block_table len {}); \
-                     writing KV to dummy block",
-                    seq.block_table.len(),
-                );
-                self.dummy_kv_block
-            });
-            slots[t] = (physical_block as i64) * (bs as i64) + (block_offset as i64);
-        }
-        // 2026-09-25: SAFETY: `slots` is the `[0i64; 2]` declared above, zero at
-        // declaration and then overwritten by the `for t in 0..k` loop (`k == 2`). Its size
-        // is 2 * 8 = 16, exactly the byte length requested; `i64` is POD.
-        let slot_bytes = unsafe { std::slice::from_raw_parts(slots.as_ptr() as *const u8, 16) };
+        // 2026-10-11: One rule for the host metadata and the device step's
+        // (`speculative::device_step::k2_verify_meta`, `k2_verify_meta` in mtp_device_step.cu).
+        // A position past the table falls back to the dummy block, not block 0: physical block 0
+        // can be a live block, possibly shared through the prefix cache.
+        let meta = metrale_model_layers::speculative::device_step::k2_verify_meta(
+            seq.seq_len,
+            bs,
+            self.dummy_kv_block,
+            |i| {
+                let b = seq.physical_block_for(i);
+                if b.is_none() {
+                    tracing::error!(
+                        "verify_k2: no physical block for logical block {i} (block_table len \
+                         {}); writing KV to dummy block",
+                        seq.block_table.len(),
+                    );
+                }
+                b
+            },
+        );
+        let pos_bytes: Vec<u8> = meta
+            .positions
+            .iter()
+            .flat_map(|w| w.to_le_bytes())
+            .collect();
+        let slot_bytes: Vec<u8> = meta.slots.iter().flat_map(|w| w.to_le_bytes()).collect();
+        let sl_bytes: Vec<u8> = meta.seq_lens.iter().flat_map(|w| w.to_le_bytes()).collect();
+        self.k2_upload(
+            device_draft,
+            Stage::Positions,
+            &pos_bytes,
+            meta_base,
+            stream,
+        )?;
         self.k2_upload(
             device_draft,
             Stage::Slots,
-            slot_bytes,
+            &slot_bytes,
             meta_base.offset(256),
             stream,
         )?;
-
-        let seq_lens = [(seq.seq_len + 1) as i32, (seq.seq_len + 2) as i32];
-        // 2026-09-25: SAFETY: `seq_lens` is the `[i32; 2]` literal on the line above, so
-        // its size is 2 * 4 = 8, exactly the byte length requested. `i32` is
-        // POD and the local outlives this borrow.
-        let sl_bytes = unsafe { std::slice::from_raw_parts(seq_lens.as_ptr() as *const u8, 8) };
         self.k2_upload(
             device_draft,
             Stage::SeqLens,
-            sl_bytes,
+            &sl_bytes,
             meta_base.offset(512),
             stream,
         )?;
@@ -454,18 +452,23 @@ impl TransformerModel {
 
         let out_ptr = self.buffers.scratch();
         let mut buf = [0u8; 8];
-        self.gpu.copy_d2h(out_ptr, &mut buf)?;
-        let tok0 = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
-        let tok1 = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
+        // 2026-10-11: A device-step verify reads its device verdict instead (`k2_device_readback`):
+        // one copy with both argmaxes and the draft row 1 verified.
+        let (tok0, tok1, row1) = if device_draft {
+            let w = self.k2_device_readback(seq.slot_idx)?;
+            (w[3], w[4], w[2])
+        } else {
+            self.gpu.copy_d2h(out_ptr, &mut buf)?;
+            (
+                u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]),
+                u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]),
+                tokens[1],
+            )
+        };
 
         // 2026-09-25: All K tokens, including `tokens[0]`, are appended and `seq_len` advances
         // by K: the scheduler passes `[last_token, draft]`, and `last_token` is not yet in
         // `seq.tokens`. 2026-10-11: A device draft is recorded as the id row 1 verified.
-        let row1 = if device_draft {
-            self.verified_device_draft()?
-        } else {
-            tokens[1]
-        };
         for t in [tokens[0], row1] {
             seq.tokens.push(t);
         }

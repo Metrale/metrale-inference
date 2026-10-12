@@ -300,10 +300,20 @@ impl TransformerModel {
         // 2026-09-25: `hidden_states` rows are BF16 (2 bytes), despite the name below.
         let fp32 = 2usize;
         // 2026-09-25: Save the hidden state before the final norm: the MTP head applies
-        // its own `pre_fc_norm_hidden`.
-        let src = self.buffers.hidden_states().offset(token_idx * h * fp32);
-        self.gpu
-            .copy_d2d_async(src, self.mtp_hidden_save, h * fp32, stream)?;
+        // its own `pre_fc_norm_hidden`. 2026-10-11: After a device-step verify whose device
+        // verdict agrees, the row is selected on the device by its accept word
+        // (`select_mtp_hidden_on_device`, part 3); the same bytes.
+        match super::device_step::device_verdict_for(None, true) {
+            Some(acc) if token_idx == acc as usize => {
+                let verdict = self.device_verdict_buf()?;
+                self.select_mtp_hidden_on_device(verdict, stream)?;
+            }
+            _ => {
+                let src = self.buffers.hidden_states().offset(token_idx * h * fp32);
+                self.gpu
+                    .copy_d2d_async(src, self.mtp_hidden_save, h * fp32, stream)?;
+            }
+        }
         self.last_mtp_hidden_idx
             .store(token_idx, std::sync::atomic::Ordering::Relaxed);
         self.mtp_hidden_live
