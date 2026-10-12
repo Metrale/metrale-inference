@@ -16,6 +16,8 @@
 //! Owner: server.
 //! Invariants: every module declared here is also declared in `main.rs`.
 
+pub mod harmony;
+
 pub mod tokenizer;
 
 // 2026-09-26: The tokenizer tests use `reasoning_parser::ReasoningFormat`, so

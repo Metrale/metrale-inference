@@ -33,6 +33,8 @@ pub(super) fn handle_done(
     reasoning_tokens: u32,
     cached_prompt_tokens: u32,
     accepted_prediction_tokens: usize,
+    prefill_started_at: std::time::Instant,
+    energy: metrale_telemetry::energy::RequestEnergy,
 ) -> DeltaVec {
     let mut deltas: DeltaVec = Vec::new();
 
@@ -202,6 +204,20 @@ pub(super) fn handle_done(
         deltas.push(StreamDelta::Refusal { text: r.clone() });
     }
 
+    // 2026-10-11: Token and latency counters and the usage record (`request_accounting`).
+    // REQUESTS_ACTIVE is released by the `ActiveRequestGuard` in `StreamCtx` when the
+    // stream is dropped, so a stream that ends without `Done` releases it too.
+    let inference_usage = ctx.pending.complete(crate::request_accounting::Finish {
+        outcome: crate::request_accounting::outcome_of(&finish_reason),
+        completion: completion_tokens,
+        cached_prompt: cached_prompt_tokens as usize,
+        reasoning: reasoning_tokens as usize,
+        prefill_started_at,
+        ttft_ms: time_to_first_token_ms,
+        decode_ms: decode_time_ms,
+        energy,
+    });
+
     // 2026-09-26: Terminal delta: finish reason and usage. How usage is framed on the
     // wire (`include_usage`) is the encoder's choice (`openai::encode_stream`). Token
     // ids not yet sent on a content delta ride this one.
@@ -209,15 +225,8 @@ pub(super) fn handle_done(
         reason: crate::ir::FinishReason::from(fr),
         usage,
         token_ids: state.take_ids_if(ctx.req_return_token_ids),
+        inference_usage: inference_usage.map(Box::new),
     });
-
-    // 2026-09-26: REQUESTS_ACTIVE is released by the `ActiveRequestGuard` in `StreamCtx`
-    // when the stream is dropped, so a stream that ends without `Done` releases it too.
-    crate::metrics::PROMPT_TOKENS_TOTAL.inc_by(ctx.prompt_len as u64);
-    crate::metrics::GENERATION_TOKENS_TOTAL.inc_by(completion_tokens as u64);
-    crate::metrics::TTFT_SECONDS
-        .with_label_values(&[ctx.model.as_str()])
-        .observe(time_to_first_token_ms / 1000.0);
 
     // 2026-09-26: Refund the part of the rate-limit reservation that was not used.
     if let Some(ref rctx) = ctx.req_ctx {

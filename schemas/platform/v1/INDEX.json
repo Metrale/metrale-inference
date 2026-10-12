@@ -1,0 +1,608 @@
+{
+  "bundle": "metrale-platform-contracts",
+  "version": 1,
+  "schemas": {
+    "audit-event": "audit-event.v1.schema.json",
+    "compatibility-receipt": "compatibility-receipt.v1.schema.json",
+    "deployment-action": "deployment-action.v1.schema.json",
+    "deployment-action-result": "deployment-action-result.v1.schema.json",
+    "document-signature": "document-signature.v1.schema.json",
+    "error": "error.v1.schema.json",
+    "hardware-fingerprint": "hardware-fingerprint.v1.schema.json",
+    "inference-usage": "inference-usage.v1.schema.json",
+    "model-deployment": "model-deployment.v1.schema.json",
+    "model-recipe": "model-recipe.v1.schema.json",
+    "release-manifest": "release-manifest.v1.schema.json",
+    "revocation-list": "revocation-list.v1.schema.json",
+    "runtime-health": "runtime-health.v1.schema.json"
+  },
+  "valid": [
+    {
+      "file": "fixtures/audit-event/valid/intent.json",
+      "schema": "audit-event",
+      "jcs_sha256": "e81ff6b3aad37f4ccbe67cb23b084dfb9ebd46ff573b99309b0fba30dc99c7c4"
+    },
+    {
+      "file": "fixtures/audit-event/valid/outcome.json",
+      "schema": "audit-event",
+      "jcs_sha256": "b05fe208e697f27f146d9ee70e2993252de5b5d2470138524f8548f884461ff3"
+    },
+    {
+      "file": "fixtures/compatibility-receipt/valid/fail-below-floor.json",
+      "schema": "compatibility-receipt",
+      "jcs_sha256": "889961a374ed6431a5706747597a76496bb77a534ebe5364bbd74115934a95b0"
+    },
+    {
+      "file": "fixtures/compatibility-receipt/valid/pass.json",
+      "schema": "compatibility-receipt",
+      "jcs_sha256": "306327cad46249761189a9f5d0667b8ce46909b9b498df301e787a0b8d68873d"
+    },
+    {
+      "file": "fixtures/deployment-action-result/valid/applied.json",
+      "schema": "deployment-action-result",
+      "jcs_sha256": "f0d7d5b8c9dd26d81742eaca6bf28d6a0784baad8f81fa8dbc92c0ef58d5174b"
+    },
+    {
+      "file": "fixtures/deployment-action-result/valid/failed-not-ready.json",
+      "schema": "deployment-action-result",
+      "jcs_sha256": "c0f818df7408311d6bab6b3cf9d0c19105173df0c6ea89d8d2aacce5b3a662c9"
+    },
+    {
+      "file": "fixtures/deployment-action-result/valid/nothing-running.json",
+      "schema": "deployment-action-result",
+      "jcs_sha256": "e5f76ca6100957e67f1709ad7d512d6c56b33e098912393d33378efca9780ed9"
+    },
+    {
+      "file": "fixtures/deployment-action-result/valid/refused-stale.json",
+      "schema": "deployment-action-result",
+      "jcs_sha256": "4a4b179e96b692419f3702f4f34de97bd3fd993d64426b5b8bc00624a5f9dc38"
+    },
+    {
+      "file": "fixtures/deployment-action/valid/apply.json",
+      "schema": "deployment-action",
+      "jcs_sha256": "0db0b02572dbceab30a34c5f08557b24c797cd0644ac83865102d551ead8657a"
+    },
+    {
+      "file": "fixtures/document-signature/valid/release-manifest.json",
+      "schema": "document-signature",
+      "jcs_sha256": "137daacf27df5ec79d0a056736631e73f6e42584d6d7a71462873e25c90da196"
+    },
+    {
+      "file": "fixtures/error/valid/idempotency-conflict.json",
+      "schema": "error",
+      "jcs_sha256": "4eac3c428ef21d9cb9773b10fdd3d7f6002ad6063e52668295e5057c2e3b6e74"
+    },
+    {
+      "file": "fixtures/hardware-fingerprint/valid/gb10.json",
+      "schema": "hardware-fingerprint",
+      "jcs_sha256": "47de8c2f8d9ad5df993d875239f2650f34a5192066d77750fcc5094a6e854fe1"
+    },
+    {
+      "file": "fixtures/hardware-fingerprint/valid/partly-measured.json",
+      "schema": "hardware-fingerprint",
+      "jcs_sha256": "236410567e04993922706dd6a63ec29902fd6ed0254c2227342ad421f42f9c7f"
+    },
+    {
+      "file": "fixtures/hardware-fingerprint/valid/strix-halo.json",
+      "schema": "hardware-fingerprint",
+      "jcs_sha256": "dc7653529763634036062492f0aaf0615e952fb05be7a88657226e820808b079"
+    },
+    {
+      "file": "fixtures/inference-usage/valid/completed.json",
+      "schema": "inference-usage",
+      "jcs_sha256": "89bc9f5a29251532a8d344fe22ba31d9d6c5575274b9398748f65d9448f3cb70"
+    },
+    {
+      "file": "fixtures/inference-usage/valid/engine-error.json",
+      "schema": "inference-usage",
+      "jcs_sha256": "7b9e467ba7cb28ea7ed814cb81100c27391ec31196cca9c9708b5918a3035b83"
+    },
+    {
+      "file": "fixtures/model-deployment/valid/created.json",
+      "schema": "model-deployment",
+      "jcs_sha256": "8b49e0a50636f3dc17c68922cc382a937c9d5015a63fe52addad00f3a8ecec0f"
+    },
+    {
+      "file": "fixtures/model-deployment/valid/observed.json",
+      "schema": "model-deployment",
+      "jcs_sha256": "56b27c54dc64f22810e0ad9c070988d0b639d5eea40150d5798892dda1c2e1aa"
+    },
+    {
+      "file": "fixtures/model-recipe/valid/gemma-4-26b-a4b-unqualified.json",
+      "schema": "model-recipe",
+      "jcs_sha256": "cf4c5848a9263bbffe719cdada5b743f53eac6e8d55c67ce0f8e56a71e8455f9"
+    },
+    {
+      "file": "fixtures/model-recipe/valid/gpt-oss-20b-mxfp4.json",
+      "schema": "model-recipe",
+      "jcs_sha256": "aa300677f2cae98a41f71552f0f7781272251d3ab0d9b0684f116f6d8cacd9e7"
+    },
+    {
+      "file": "fixtures/release-manifest/valid/gpt-oss-20b-gb10.json",
+      "schema": "release-manifest",
+      "jcs_sha256": "a78cf072e759fb43522f696d040a436025ef7f0e5f1eb37018df163cb8fb4e28"
+    },
+    {
+      "file": "fixtures/revocation-list/valid/two-revoked.json",
+      "schema": "revocation-list",
+      "jcs_sha256": "e339da3611df923444b6bd6f4a357f4ca155147e55088d989fcc66fc45653111"
+    },
+    {
+      "file": "fixtures/runtime-health/valid/degraded-unmeasured.json",
+      "schema": "runtime-health",
+      "jcs_sha256": "5b8642cd445927ce70d1ae840c0add6bf09c0a27efae5517bc629f90213991c9"
+    },
+    {
+      "file": "fixtures/runtime-health/valid/ready.json",
+      "schema": "runtime-health",
+      "jcs_sha256": "9a241b81a4d7fb15e8980c5126a823e0fe17296a031501524f8a40568a85f072"
+    }
+  ],
+  "invalid": [
+    {
+      "file": "fixtures/model-recipe/invalid/unknown-limit.json",
+      "schema": "model-recipe",
+      "rule": "closed-object",
+      "base": "fixtures/model-recipe/valid/gpt-oss-20b-mxfp4.json",
+      "op": "add",
+      "pointer": "/limits/max_batch",
+      "value": 8
+    },
+    {
+      "file": "fixtures/model-deployment/invalid/status-omitted.json",
+      "schema": "model-deployment",
+      "rule": "field-present",
+      "base": "fixtures/model-deployment/valid/observed.json",
+      "op": "remove",
+      "pointer": "/status",
+      "value": null
+    },
+    {
+      "file": "fixtures/inference-usage/invalid/recipe-omitted.json",
+      "schema": "inference-usage",
+      "rule": "field-present",
+      "base": "fixtures/inference-usage/valid/completed.json",
+      "op": "remove",
+      "pointer": "/recipe",
+      "value": null
+    },
+    {
+      "file": "fixtures/runtime-health/invalid/state-healthy.json",
+      "schema": "runtime-health",
+      "rule": "closed-enum",
+      "base": "fixtures/runtime-health/valid/ready.json",
+      "op": "replace",
+      "pointer": "/state",
+      "value": "healthy"
+    },
+    {
+      "file": "fixtures/error/invalid/code-teapot.json",
+      "schema": "error",
+      "rule": "closed-enum",
+      "base": "fixtures/error/valid/idempotency-conflict.json",
+      "op": "replace",
+      "pointer": "/code",
+      "value": "teapot"
+    },
+    {
+      "file": "fixtures/inference-usage/invalid/ttft-bare-zero.json",
+      "schema": "inference-usage",
+      "rule": "absent-is-not-zero",
+      "base": "fixtures/inference-usage/valid/completed.json",
+      "op": "replace",
+      "pointer": "/timings/ttft_ms",
+      "value": 0
+    },
+    {
+      "file": "fixtures/runtime-health/invalid/queue-bare-zero.json",
+      "schema": "runtime-health",
+      "rule": "absent-is-not-zero",
+      "base": "fixtures/runtime-health/valid/ready.json",
+      "op": "replace",
+      "pointer": "/queue_depth",
+      "value": 0
+    },
+    {
+      "file": "fixtures/model-recipe/invalid/memory-as-fraction.json",
+      "schema": "model-recipe",
+      "rule": "integer-units",
+      "base": "fixtures/model-recipe/valid/gpt-oss-20b-mxfp4.json",
+      "op": "replace",
+      "pointer": "/limits/gpu_memory_permille",
+      "value": 0.85
+    },
+    {
+      "file": "fixtures/inference-usage/invalid/trace-id-short.json",
+      "schema": "inference-usage",
+      "rule": "hex-width",
+      "base": "fixtures/inference-usage/valid/completed.json",
+      "op": "replace",
+      "pointer": "/trace_id",
+      "value": "4bf92f3577b34da6a3ce929d0e0e47"
+    },
+    {
+      "file": "fixtures/deployment-action/invalid/idempotency-key-short.json",
+      "schema": "deployment-action",
+      "rule": "hex-width",
+      "base": "fixtures/deployment-action/valid/apply.json",
+      "op": "replace",
+      "pointer": "/idempotency_key",
+      "value": "abc"
+    },
+    {
+      "file": "fixtures/model-recipe/invalid/revision-is-branch.json",
+      "schema": "model-recipe",
+      "rule": "immutable-revision",
+      "base": "fixtures/model-recipe/valid/gpt-oss-20b-mxfp4.json",
+      "op": "replace",
+      "pointer": "/model/source/revision",
+      "value": "main"
+    },
+    {
+      "file": "fixtures/compatibility-receipt/invalid/runtime-is-tag.json",
+      "schema": "compatibility-receipt",
+      "rule": "immutable-revision",
+      "base": "fixtures/compatibility-receipt/valid/pass.json",
+      "op": "replace",
+      "pointer": "/key/runtime_commit",
+      "value": "v0.9.0"
+    },
+    {
+      "file": "fixtures/model-recipe/invalid/image-by-tag.json",
+      "schema": "model-recipe",
+      "rule": "no-mutable-tag",
+      "base": "fixtures/model-recipe/valid/gpt-oss-20b-mxfp4.json",
+      "op": "replace",
+      "pointer": "/runtime/image/digest",
+      "value": "latest"
+    },
+    {
+      "file": "fixtures/release-manifest/invalid/image-by-tag.json",
+      "schema": "release-manifest",
+      "rule": "no-mutable-tag",
+      "base": "fixtures/release-manifest/valid/gpt-oss-20b-gb10.json",
+      "op": "replace",
+      "pointer": "/runtime/image/digest",
+      "value": "latest"
+    },
+    {
+      "file": "fixtures/compatibility-receipt/invalid/version-2.json",
+      "schema": "compatibility-receipt",
+      "rule": "explicit-version",
+      "base": "fixtures/compatibility-receipt/valid/pass.json",
+      "op": "replace",
+      "pointer": "/version",
+      "value": 2
+    },
+    {
+      "file": "fixtures/audit-event/invalid/version-2.json",
+      "schema": "audit-event",
+      "rule": "explicit-version",
+      "base": "fixtures/audit-event/valid/outcome.json",
+      "op": "replace",
+      "pointer": "/version",
+      "value": 2
+    },
+    {
+      "file": "fixtures/inference-usage/invalid/trace-id-zero.json",
+      "schema": "inference-usage",
+      "rule": "trace-id-nonzero",
+      "base": "fixtures/inference-usage/valid/completed.json",
+      "op": "replace",
+      "pointer": "/trace_id",
+      "value": "00000000000000000000000000000000"
+    },
+    {
+      "file": "fixtures/deployment-action/invalid/trace-id-zero.json",
+      "schema": "deployment-action",
+      "rule": "trace-id-nonzero",
+      "base": "fixtures/deployment-action/valid/apply.json",
+      "op": "replace",
+      "pointer": "/trace_id",
+      "value": "00000000000000000000000000000000"
+    },
+    {
+      "file": "fixtures/model-deployment/invalid/tenant-not-a-label.json",
+      "schema": "model-deployment",
+      "rule": "name-format",
+      "base": "fixtures/model-deployment/valid/observed.json",
+      "op": "replace",
+      "pointer": "/scope/tenant",
+      "value": "Acme Corp"
+    },
+    {
+      "file": "fixtures/model-deployment/invalid/name-leading-dash.json",
+      "schema": "model-deployment",
+      "rule": "name-format",
+      "base": "fixtures/model-deployment/valid/observed.json",
+      "op": "replace",
+      "pointer": "/name",
+      "value": "-gpt"
+    },
+    {
+      "file": "fixtures/model-recipe/invalid/repository-without-owner.json",
+      "schema": "model-recipe",
+      "rule": "repository-format",
+      "base": "fixtures/model-recipe/valid/gpt-oss-20b-mxfp4.json",
+      "op": "replace",
+      "pointer": "/model/source/repository",
+      "value": "gpt-oss-20b"
+    },
+    {
+      "file": "fixtures/model-recipe/invalid/recipe-id-upper.json",
+      "schema": "model-recipe",
+      "rule": "recipe-id-format",
+      "base": "fixtures/model-recipe/valid/gpt-oss-20b-mxfp4.json",
+      "op": "replace",
+      "pointer": "/recipe_id",
+      "value": "GPT/OSS"
+    },
+    {
+      "file": "fixtures/release-manifest/invalid/repository-with-tag.json",
+      "schema": "release-manifest",
+      "rule": "image-repository-format",
+      "base": "fixtures/release-manifest/valid/gpt-oss-20b-gb10.json",
+      "op": "replace",
+      "pointer": "/runtime/image/repository",
+      "value": "metrale/metrale-inference-gb10:latest"
+    },
+    {
+      "file": "fixtures/error/invalid/message-empty.json",
+      "schema": "error",
+      "rule": "text-length",
+      "base": "fixtures/error/valid/idempotency-conflict.json",
+      "op": "replace",
+      "pointer": "/message",
+      "value": ""
+    },
+    {
+      "file": "fixtures/hardware-fingerprint/invalid/product-empty.json",
+      "schema": "hardware-fingerprint",
+      "rule": "text-length",
+      "base": "fixtures/hardware-fingerprint/valid/gb10.json",
+      "op": "replace",
+      "pointer": "/accelerators/0/product",
+      "value": ""
+    },
+    {
+      "file": "fixtures/deployment-action/invalid/issued-before-epoch.json",
+      "schema": "deployment-action",
+      "rule": "timestamp-range",
+      "base": "fixtures/deployment-action/valid/apply.json",
+      "op": "replace",
+      "pointer": "/issued_at_unix_ms",
+      "value": -1
+    },
+    {
+      "file": "fixtures/model-deployment/invalid/zero-replicas.json",
+      "schema": "model-deployment",
+      "rule": "count-range",
+      "base": "fixtures/model-deployment/valid/observed.json",
+      "op": "replace",
+      "pointer": "/spec/replicas",
+      "value": 0
+    },
+    {
+      "file": "fixtures/runtime-health/invalid/kv-over-1000.json",
+      "schema": "runtime-health",
+      "rule": "count-range",
+      "base": "fixtures/runtime-health/valid/ready.json",
+      "op": "replace",
+      "pointer": "/kv_occupancy_permille",
+      "value": {
+        "measured": 1001
+      }
+    },
+    {
+      "file": "fixtures/model-deployment/invalid/generation-zero.json",
+      "schema": "model-deployment",
+      "rule": "count-range",
+      "base": "fixtures/model-deployment/valid/observed.json",
+      "op": "replace",
+      "pointer": "/generation",
+      "value": 0
+    },
+    {
+      "file": "fixtures/model-deployment/invalid/served-model-with-space.json",
+      "schema": "model-deployment",
+      "rule": "model-name-format",
+      "base": "fixtures/model-deployment/valid/observed.json",
+      "op": "replace",
+      "pointer": "/spec/served_model",
+      "value": "gpt oss 20b"
+    },
+    {
+      "file": "fixtures/release-manifest/invalid/no-receipts.json",
+      "schema": "release-manifest",
+      "rule": "non-empty-list",
+      "base": "fixtures/release-manifest/valid/gpt-oss-20b-gb10.json",
+      "op": "replace",
+      "pointer": "/receipts",
+      "value": []
+    },
+    {
+      "file": "fixtures/model-recipe/invalid/no-weights.json",
+      "schema": "model-recipe",
+      "rule": "non-empty-list",
+      "base": "fixtures/model-recipe/valid/gpt-oss-20b-mxfp4.json",
+      "op": "replace",
+      "pointer": "/model/weights",
+      "value": []
+    },
+    {
+      "file": "fixtures/model-recipe/invalid/env-key-lower.json",
+      "schema": "model-recipe",
+      "rule": "key-format",
+      "base": "fixtures/model-recipe/valid/gpt-oss-20b-mxfp4.json",
+      "op": "replace",
+      "pointer": "/runtime/env",
+      "value": {
+        "metrale_x": "1"
+      }
+    },
+    {
+      "file": "fixtures/runtime-health/invalid/degraded-without-reason.json",
+      "schema": "runtime-health",
+      "rule": "degraded-needs-reason",
+      "base": "fixtures/runtime-health/valid/degraded-unmeasured.json",
+      "op": "replace",
+      "pointer": "/reason",
+      "value": null
+    },
+    {
+      "file": "fixtures/compatibility-receipt/invalid/pass-with-failed-check.json",
+      "schema": "compatibility-receipt",
+      "rule": "verdict-consistent",
+      "base": "fixtures/compatibility-receipt/valid/pass.json",
+      "op": "replace",
+      "pointer": "/checks/1/passed",
+      "value": false
+    },
+    {
+      "file": "fixtures/inference-usage/invalid/channel-lost.json",
+      "schema": "inference-usage",
+      "rule": "runtime-outcome",
+      "base": "fixtures/inference-usage/valid/completed.json",
+      "op": "replace",
+      "pointer": "/outcome",
+      "value": "channel_lost"
+    },
+    {
+      "file": "fixtures/model-recipe/invalid/weights-adaptive.json",
+      "schema": "model-recipe",
+      "rule": "precision-role",
+      "base": "fixtures/model-recipe/valid/gpt-oss-20b-mxfp4.json",
+      "op": "replace",
+      "pointer": "/quantization/weights",
+      "value": "adaptive"
+    },
+    {
+      "file": "fixtures/audit-event/invalid/outcome-without-outcome.json",
+      "schema": "audit-event",
+      "rule": "audit-phase",
+      "base": "fixtures/audit-event/valid/outcome.json",
+      "op": "replace",
+      "pointer": "/outcome",
+      "value": null
+    },
+    {
+      "file": "fixtures/inference-usage/invalid/engine-error-with-text.json",
+      "schema": "inference-usage",
+      "rule": "closed-object",
+      "base": "fixtures/inference-usage/valid/engine-error.json",
+      "op": "add",
+      "pointer": "/outcome/engine_error/detail",
+      "value": "the engine's own message"
+    },
+    {
+      "file": "fixtures/inference-usage/invalid/rail-without-figure.json",
+      "schema": "inference-usage",
+      "rule": "closed-object",
+      "base": "fixtures/inference-usage/valid/engine-error.json",
+      "op": "add",
+      "pointer": "/energy/rail",
+      "value": "gpu_rail"
+    },
+    {
+      "file": "fixtures/deployment-action-result/invalid/running-generation-zero.json",
+      "schema": "deployment-action-result",
+      "rule": "count-range",
+      "base": "fixtures/deployment-action-result/valid/applied.json",
+      "op": "replace",
+      "pointer": "/running_generation",
+      "value": 0
+    },
+    {
+      "file": "fixtures/deployment-action-result/invalid/refusal-unlisted.json",
+      "schema": "deployment-action-result",
+      "rule": "closed-enum",
+      "base": "fixtures/deployment-action-result/valid/refused-stale.json",
+      "op": "replace",
+      "pointer": "/outcome/refused/reason",
+      "value": "quota"
+    },
+    {
+      "file": "fixtures/document-signature/invalid/ml-dsa-truncated.json",
+      "schema": "document-signature",
+      "rule": "signature-width",
+      "base": "fixtures/document-signature/valid/release-manifest.json",
+      "op": "replace",
+      "pointer": "/signature/ml_dsa_65",
+      "value": "efc46e2c6e0cb4316d4abc58b69646aac9a85db9ed898b0e168368cf3e982753ccfce666754c45ca7ece363b447f2d287c879c44a577eaf6ad20717f4bc6021266b092f8ac116870e5c5afa866a9252050bf02d29c842dde11b2b22ea915f75efac38a395df3310abe86eb9b9fad2834f8a999dfcf181a2188fb36bace347e784c6f31d086d52b9cc369a939d3c382909170c61099981a631bb5cc7f43211333d6516923c9d3a1f1ec49309d40b5b28e00e80a41b1d61fac81db3d12159f021eb57fae9577a53ca16e80d23a6ef8e50e1696c8bbb512d54e33e41b38c1141dd2ff95424a25e6bddd3bc74b11fb9ef4de4b94e1988722b215cc84ba40318b0bb14667d314c25a3da7c8b20725d7f916bedbc1716afdaf2d290ef6975fa74ba780dcee03f3ae2bf0beb120b86893cba14a1d328ef24682196cd3cb7fd02a10af57909d63480d267bdd8b679a03b636133a8c5e0d812e49306812a6bb01497ba46abc782dde3d40f64e12bda63ef30781891e3ec6a7dbca512386fa5684bcba30b57164589310a070f528d47ac42255d7cf5b873da4cb38f163fd1b4d0ad84f12c15a8cfc58332bf79b66fd3e845b9d3752f8fb4b7cc48edc1d3389d8f589bd211f9ab72114acc4ae83cac9908fb15e15d592494276ef4c46eee075e40843825197985b8f4b80edc1769324caddb2403f16c3d83a21ac9b11a078dd22a7d0ca04b570db954000316c45d88df443daa1fcb9d28bc0b0407b4eefb65e888169a672196b59740bc598275a4b95096058dfadf6d1cd1677661c8cf55b0d4590827f0205ad7f456601956790b8f13334345c50efa5f1d9d789bcfe6881dc3f095602626ab9bb35b1f9a893d5223953f84eef36c81c070d24fdf4b98078525fee7de65e2d98556d7ab2999cdc36babbbaa99d3a6116841c8bfbab0907dc0f92f72937d4757a5201df8332c6c57f9159319a610ae4995565328a9e86f2fc8964dab9009521e5128e244661f0a02e7bea9cb9969c2a6b9d996237c8e6b275bed0675b704dd712c47f1076d4cdbb1f15569b45be2703155e1b46046de1ee9dae70291dae79c3e54fef46751b854bec3f5e901d4a693ac1f5dcfcf516de63b92583d97d41ecabb98fc2072e2c1512c6c2cb95b7918611266f1132910e4612fd1c2c58e1c17c6d381f9f51c2f7457b76fdbc9d8f3d3b54f32bed24a60a763806baa404ae00776304b0fb63056ecf8a98e34b560a9e05e5758221c4864f5cef0ed3728c01969c5e8559bca14c03028bf5cc40c3d325b8de6cbc2a24ca2866fc7540d92013f8dca6a8d72ee0e575c6fea9243c5b92b256d5ff432ab2fd68eaf77b26fee91811b2c91ed2fe4749a78636aafef04f6b824ae7551edd56da36bfb753b49a397ea97f55d347d08712df2169f0bc5e7785fa117297c8fe0af250fcd0f767b3f06ceba5a6509dd582680380c2fd5605a49f341e06cab87cd6eae8df388db712e3c4a9afdc9dc34252bcf838c9dc2b43a8054e16ca0c6e96a011060f5689114d61b9d019c7af7f9e8876baa471bdf0716ebb5c16e5187f3929e0e20f89ee858bf133104c15364a5b0421a5fc7d75b53e180d8ddbd162be35a6369c5e6d112bed028cd7aed9bfc04d5f16b3b0340b23597b05efaeba4007ea62b4d0faa3a06e9c7a53003f2b44b2f95e1d2fb0cc840ece47e064ba3a78ca6d7a6ccfb27e8a10042837d137c82557cf81bfe2d05fb943db943a548da5eb17d10fe5feddf6950afa2fcd90148342dc03c8203b5135db6ad9ebdbb85b02b75c852abb402214fbf6a4ed0bdbba44ff01b751a5a2bb9ab5578586cc7c107d88fa11564d1d4cab2058aefc8ac537bcab8eeefc202a34b5a0274c6dc9bdeac6e543d331bebaacf1b8c0d504ca928bfae5e89062946899d6ad26ca0e2279e47e09738eca0846d048ba52a7c6c22aec3527348cb3a62b9175b77cc3d738cc480e3dea303de9c93ea7144321174c2ecb97498ddf6bfe6fc41fc19dd5c73808bde86cd0588937b5f9912c1541eac09f075bb1702d3fd6714de8221bfb88271f33015bec6474401be86f9b38098ed9f652a45adbb0becdd2290c4bcb498173e1294bbaa0cfbdb62961f5ef9a531f7606a98ff534cc414d68d206eed8c5417d34e7dd938f76d03e47a881111f5844cb58ae383c4ea1626ffba58ac25d1c2b279ce0c0cfbc96fce0ebe2b086c23e2f053e4a8edacce538f5cce4df6cf2f8b022b156c34eec28cb45d4bc890aaeddd7b8fce1e83ec27546da05073a6355eb4fdeed121cbcc37ea1041c3c2bcd478c0a1bccfebabb348f4e8fe24eaf85df5f1d23d255de5145982f7e9fb4d324a4b39af69550e1ee7a8b1fbe0c838fd7d6837e2fc8f4b13fe92fbda4fffceac4952b5e0e4cbe36fc475a0f23272752ce5ad848f4f9070c401eedbc2a59038e103ccd36068859db60c5541100d41738262b5a84dde18db4f992c17ddb14a5be51cfaafe2906e689d5ef768c8ec154af7ecc4d98e997548e4bf086d8d53a45b2db11681c08354d4337e3f54f232d4d8c6332e60b9a6b2623392b18a22de2f8ed2f9bae133c180c7ccc7efbce5024049fedf85e11dbd5d0982ca8fcfa29fb695096c5702676f8d6ab08abf78062c1f5871fbda319f23eeddf59c3ffba20440321519b8bd3182e30d9db1057f0c997abd764d7dd944e18ca786612eb4ad68e89dc3cd330096656e39ec35ed498a826e5739027f6236d8a060c5780fc804f1bb782d0ee5eb03f2834cadf478bd5e03cde9e78ea0ec43b9e54abe3b29dc76264293a85e0dee21a5a47bb568073aefefef7c7999ad1873208e25fee41d817798cbc6d04c66e0fa6e38470f828720a36df463eeb5e20a42db7696f54cad634f90d4453199311f95a3adbac1f70fef0ae22edfddba1c7e8ddd3074f9f99b9f06890727d76493d8c4a45992c0f0093504c8d2d1a4248ec97c131de48642d65f0bf5729afac221968f83ff926ef9b47eb8f416ccabcd3848454e9d13d4c89b3d924d497bbf2232a9337382fe6552e507ba8426d75bd6fa881029874c28f2bf0fbf527bb0bbd844ea73703ab38087fdaa8683b147ee103bc0ca9a670480e284a7effd2cc6c469372cd1d9a47e243accea4317980488289eff05310e39ab2f37dc18572db315b60ba0f792d87bad60b707ca0dd507080ae4d2ec8842c36065ae1036c929d403f651d829ab8bc03f229732a338ea1f822acab27b934068c0f50919a800a6844c7365a563b4b0d847e51149c7974779f93461c7dcb1176083345326ad2dfd1dc501270fc1c0692aedc62c0f32dcf6f940ce2c2d0b0768ea0fb8aca2287932659efd6a7d2951af24425665371507ee033a3f68c92d85fbb47421560d39b284fbd4c753e2cadd57701377982a4567bc59228e2c1751c52dd4d9f49cf3faf6392b8e19e25ae14e41cbc2426094601aef8f6acdfedac222ccee3a0508bd49363964cf07753984239a0fbc1934e32f8a6f59cc0c54f01d6a4455a287c5ad3943a50ef29d6a1e3eb8c884eeb3672312a04c1d1541e7369ee7ff5f96398719b5ed842759b9b10e1fde73aa9137b85f14cad8b0c5b1f8b1c9c4be78c951dace5487ea1c3e3c5ce315fdfbdae2c1ca6c0f761238f17b3bdb84841aa33609035ea341ec66b63bb1780eb9548f364cf4ab1a6d69f37977c4d7c7b7ce4309946fc96738a4c779b74472d37d7a77ecc2a840ced07ce55e0747bbd8055f23d7b6d0aea04e9d86b54c72a15a56d13ab377cbcecbf53510b750014a3666ea3d0b321afeadb8ad4b6a54e456c0a6456298e0e07977d6fadd48667dcc6eb005ac06d8cd36b8b6f8e620798a14b476b2adeb9ebf486ea179c8460349f47037bacbcb823e80b427f5b92a536b85ba9c1985a3b0fe95d20f37bf98e9d2fa5f41304137b388dbe71ccdc2bab981cc35d1ac6b113ab6a0ed9f00cff072629adffc3ded34148be756144fb84c7fd95deee932e44d7ec566eaad75b6e240a693bbcd0fd9d4546ec4735dc97cdc81b86bd45d86e3ef61b1a8a8486f37ac980d28390c0300640e5e18bf8021eb4fb5aaf64d48e97ec1b668de59897f2eb5a5cf3baa5caef10f7f80a3c07f0db71b4c4277b869a7def6ed9a481ccb394e6720e90283ff18c5067db19c8730b2bd9f2b16299025a648e0d2e4b959e5f7266ce7ddb57fef8de02b299c419624b5ed81aef43875eefd1dd08810685129c31fdc834fa0c4fbd7fd548fb688ff03b9224b6be44228156677a0166192f607cf09c0e6b67ea8b331889d91bb08bc0fa6ab9dee3b9c60e78a574841e2604ad6672e0cc2a531b200b189e0e141f9e6a36881a6f17cfe7e0e47f1af1c5259cb41a319f79669661dda8b7d44af7216104e08135cdbaa759ed28619c37967377e2be4f76231fa47705afb30e17fb062ed271d0af985276761c1ffd4c9df3da6e6694b730d35b3e3d9254532f109374d116ce6b1dc57e6aa2af6d0911f339f50718f002610d2663b0008ce1b0fc44d27de15f12ffe4400e9b33fb16b24e8b24bdd32c5f540e8d55e103aac928fb0c8be4d46dfc0594bdec9b3eb83cc4f5b8179bcf487e51d7ac592e1e3a1c540c0f2a40697b9ee1e37a8f909fa4f62a75879cb4d0045c848bc70e3d46788ab537627ea7e9f10000000000000000000000000000000000090f151a20"
+    },
+    {
+      "file": "fixtures/document-signature/invalid/kind-receipt.json",
+      "schema": "document-signature",
+      "rule": "closed-enum",
+      "base": "fixtures/document-signature/valid/release-manifest.json",
+      "op": "replace",
+      "pointer": "/kind",
+      "value": "compatibility_receipt"
+    },
+    {
+      "file": "fixtures/document-signature/invalid/key-in-document.json",
+      "schema": "document-signature",
+      "rule": "closed-object",
+      "base": "fixtures/document-signature/valid/release-manifest.json",
+      "op": "add",
+      "pointer": "/public_key",
+      "value": "bef9755db4c50988c591fbde805cef24aeba849fb9d07f3dad453d053c6dbe55"
+    },
+    {
+      "file": "fixtures/revocation-list/invalid/sequence-zero.json",
+      "schema": "revocation-list",
+      "rule": "count-range",
+      "base": "fixtures/revocation-list/valid/two-revoked.json",
+      "op": "replace",
+      "pointer": "/sequence",
+      "value": 0
+    },
+    {
+      "file": "fixtures/revocation-list/invalid/nothing-revoked.json",
+      "schema": "revocation-list",
+      "rule": "non-empty-list",
+      "base": "fixtures/revocation-list/valid/two-revoked.json",
+      "op": "replace",
+      "pointer": "/revoked",
+      "value": []
+    },
+    {
+      "file": "fixtures/revocation-list/invalid/subject-recipe.json",
+      "schema": "revocation-list",
+      "rule": "closed-enum",
+      "base": "fixtures/revocation-list/valid/two-revoked.json",
+      "op": "replace",
+      "pointer": "/revoked/0/subject",
+      "value": {
+        "recipe": "17699781ee35bdc0af168e4a85fab0bc0a6e420fc18aaf4e04c74fd25905a50b"
+      }
+    },
+    {
+      "file": "fixtures/hardware-fingerprint/invalid/memory-bare-number.json",
+      "schema": "hardware-fingerprint",
+      "rule": "absent-is-not-zero",
+      "base": "fixtures/hardware-fingerprint/valid/gb10.json",
+      "op": "replace",
+      "pointer": "/host/memory_bytes",
+      "value": 0
+    },
+    {
+      "file": "fixtures/deployment-action/invalid/drain-per-deployment.json",
+      "schema": "deployment-action",
+      "rule": "closed-enum",
+      "base": "fixtures/deployment-action/valid/apply.json",
+      "op": "replace",
+      "pointer": "/action",
+      "value": "drain"
+    },
+    {
+      "file": "fixtures/deployment-action-result/invalid/failure-with-text.json",
+      "schema": "deployment-action-result",
+      "rule": "closed-object",
+      "base": "fixtures/deployment-action-result/valid/failed-not-ready.json",
+      "op": "add",
+      "pointer": "/outcome/failed/detail",
+      "value": "exit status 137"
+    }
+  ]
+}

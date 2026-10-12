@@ -101,6 +101,14 @@ components = ["kda", "short-conv", "mla", "moe", "dense-ffn"]
 shared_engine = true
 
 [[family]]
+id = "gpt-oss"
+label = "GPT-OSS"
+name = "GPT-OSS (experimental eager C1, sink attention + MXFP4 MoE)"
+models = ["gpt-oss-20b"]
+components = ["moe"]
+shared_engine = false
+
+[[family]]
 id = "laguna"
 label = "Laguna"
 name = "Laguna (full/sliding attention + MoE)"
@@ -351,6 +359,10 @@ paths = ["crates/model-arch/src/weight_loader/gemma4"]
 families = ["gemma4"]
 
 [[family_site]]
+paths = ["crates/model-arch/src/weight_loader/gpt_oss", "crates/model-layers/src/layers/ops/gpt_oss_"]
+families = ["gpt-oss"]
+
+[[family_site]]
 paths = ["crates/model-arch/src/weight_loader/laguna"]
 families = ["laguna"]
 
@@ -489,6 +501,12 @@ names = ["qwen35_qkv_split", "bf16_mul", "sigmoid_bf16_to_f32", "silu_apply"]
 files = ["kernels/metal/*"]
 
 # --- MoE ---------------------------------------------------------------------------------------------
+# 2026-10-07: All three disjoint entries are required; no standalone circuit lowering is claimed.
+[[rule]]
+component = "moe"
+kind = "expert GEMM/GEMV (row-partition residual pair)"
+names = ["moe_w4a16_grouped_gemm_ptrtable_small16", "moe_w4a16_grouped_gemm_ptrtable_small16_n32", "moe_w4a16_grouped_gemm_ptrtable_large64"]
+
 [[rule]]
 component = "moe"
 kind = "routing / top-k"
@@ -534,7 +552,7 @@ names = ["w4a4_*", "metrale_nvfp4_mmq*", "metrale_nvfp4_gemm_pipe*"]
 [[rule]]
 component = "gemm-intq"
 kind = "integer / K-quant GEMM/GEMV"
-names = ["int8_*", "q2_0_*", "metrale_q*_mmq*", "kquant_mmvq_*", "mlx_int8_*", "requant_*"]
+names = ["int8_*", "packed_int4_gemv_*", "packed_int8_gemv_*", "q2_0_*", "metrale_q*_mmq*", "kquant_mmvq_*", "mlx_int8_*", "requant_*"]
 
 [[rule]]
 component = "gemm-fp8"
@@ -587,3 +605,31 @@ names = ["argmax_*", "softmax_topp", "feed_resolve"]
 component = "elementwise"
 kind = "activation / gate / residual"
 names = ["*silu*", "gelu*", "relu_squared*", "*sigmoid*", "softplus_*", "bias_add_*", "bf16_add*", "vector_add", "bf16_residual_add", "f32_residual_add", "bf16_scaled_add", "bf16_concat", "sigmoid_gate", "silu_gate", "metrale_nvfp4_silu_*"]
+
+# 2026-10-07: New correctness primitives; classification does not claim target linkage or timing evidence.
+[[rule]]
+component = "elementwise"
+kind = "FP32 projection bias / BF16 store"
+names = ["projection_bias_bf16"]
+
+[[rule]]
+component = "moe"
+kind = "row-major MXFP4 expert GEMV (correctness residual)"
+names = ["gpt_oss_mxfp4_gemv_bf16", "gpt_oss_mxfp4_selected_bf16", "gpt_oss_mxfp4_selected_tokens_bf16", "gpt_oss_mxfp4_reuse_tokens_bf16", "gpt_oss_mxfp4_reuse_wide_bf16"]
+
+# 2026-10-07: Explicit staged-rounding correctness residuals, no speed claim.
+[[rule]]
+component = "rope"
+kind = "continuous YaRN / staged BF16 rotation"
+names = ["gpt_oss_yarn_frequencies", "gpt_oss_rope_bf16"]
+
+[[rule]]
+component = "moe"
+kind = "staged BF16 expert activation / reduction"
+names = ["gpt_oss_swiglu_bf16", "gpt_oss_expert_reduce_bf16", "gpt_oss_selected_bias_bf16", "gpt_oss_selected_bias_tokens_bf16"]
+
+# 2026-10-07: Bounded diagnostic policy; existing online attention is unchanged.
+[[rule]]
+component = "attention"
+kind = "staged BF16 sink attention (correctness residual)"
+names = ["gpt_oss_staged_attention_bf16"]

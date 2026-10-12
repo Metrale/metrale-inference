@@ -31,6 +31,7 @@ pub struct MockGpuBackend {
     max_allocation_bytes: AtomicUsize,
     launches: Mutex<Vec<MockLaunch>>,
     kernel_lookups: Mutex<Vec<(String, String)>>,
+    kernel_handles: Mutex<HashMap<(String, String), KernelHandle>>,
     /// 2026-09-25: Modules a test declares absent; every other module is present.
     absent_modules: Mutex<std::collections::HashSet<String>>,
     /// 2026-09-25: `kernel(module, func)` returns `Err` for these pairs.
@@ -91,6 +92,7 @@ impl MockGpuBackend {
             max_allocation_bytes: AtomicUsize::new(usize::MAX),
             launches: Mutex::new(Vec::new()),
             kernel_lookups: Mutex::new(Vec::new()),
+            kernel_handles: Mutex::new(HashMap::new()),
             absent_modules: Mutex::new(std::collections::HashSet::new()),
             denied_kernels: Mutex::new(Vec::new()),
             syncs: AtomicUsize::new(0),
@@ -138,11 +140,17 @@ impl MockGpuBackend {
         Ok(())
     }
 
-    /// 2026-09-25: Every launch recorded so far, in dispatch order. `kernel()`
-    /// returns the same handle for every function, so geometry and arguments are
-    /// what tell launches apart.
+    /// 2026-10-07: Every launch recorded so far, in dispatch order. Kernel handles
+    /// default to 0xDEAD unless a test explicitly gives a function its own handle.
     pub fn launches_snapshot(&self) -> Vec<MockLaunch> {
         self.launches.lock().clone()
+    }
+
+    /// 2026-10-07: Distinct handles let tests verify heterogeneous kernel metadata.
+    pub fn set_kernel_handle(&self, module: &str, function: &str, handle: KernelHandle) {
+        self.kernel_handles
+            .lock()
+            .insert((module.to_owned(), function.to_owned()), handle);
     }
 
     /// 2026-09-29: Publish `n_tile` as the N tile of `kernel`, as a CUDA module's
@@ -394,7 +402,12 @@ impl GpuBackend for MockGpuBackend {
         {
             anyhow::bail!("Kernel lookup {module}::{func_name}: missing");
         }
-        Ok(KernelHandle(0xDEAD))
+        Ok(self
+            .kernel_handles
+            .lock()
+            .get(&(module.to_owned(), func_name.to_owned()))
+            .copied()
+            .unwrap_or(KernelHandle(0xDEAD)))
     }
 
     fn memset(&self, ptr: DevicePtr, value: u8, bytes: usize) -> Result<()> {

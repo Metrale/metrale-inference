@@ -9,6 +9,7 @@
 pub mod chat;
 pub mod chat_blocking;
 mod chat_blocking_choice;
+mod chat_blocking_finalize;
 pub mod chat_phases;
 pub mod chat_stream;
 pub mod chat_stream_dispatch;
@@ -26,6 +27,7 @@ pub mod responses;
 pub mod responses_stream;
 pub mod responses_stream_finalize;
 pub mod responses_translate;
+pub mod runtime_health;
 pub mod sanitizer;
 pub mod scrub;
 pub mod stored;
@@ -61,6 +63,7 @@ pub use misc_handlers::{
 };
 pub use models::{embeddings_stub, get_model, list_models};
 pub use responses::responses_endpoint;
+pub use runtime_health::runtime_health;
 pub use stored::{
     delete_stored_response, get_stored_completion, get_stored_response, list_response_input_items,
 };

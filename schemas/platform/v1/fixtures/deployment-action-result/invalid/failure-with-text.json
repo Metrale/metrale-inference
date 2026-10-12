@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "idempotency_key": "22222222222222222222222222222222",
+  "node_id": "93ef37c6157138222b21a42be52183d08d75cd4fed49c1cbba571b06a69e39a4",
+  "outcome": {
+    "failed": {
+      "reason": "not_ready",
+      "detail": "exit status 137"
+    }
+  },
+  "running_generation": 4,
+  "instances": [
+    "13131313131313131313131313131313"
+  ],
+  "answered_at_unix_ms": 1791000001300
+}

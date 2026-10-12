@@ -37,8 +37,8 @@ impl QuantFormat for ModeloptFormat {
         "modelopt"
     }
 
-    fn base_variant(&self) -> Nvfp4Variant {
-        Nvfp4Variant::Standard
+    fn base_variant(&self) -> Option<Nvfp4Variant> {
+        Some(Nvfp4Variant::Standard)
     }
 
     fn is_ignored(&self, module_path: &str) -> bool {

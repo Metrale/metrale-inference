@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://metrale.ai/schemas/platform/v1/release-manifest.v1.schema.json",
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "title": "ReleaseManifest",
+  "description": "One accepted release bound by content: runtime image digest and commit, recipe, model revision and weights, hardware, SBOM and receipts.",
+  "type": "object",
+  "properties": {
+    "version": {
+      "$ref": "common.v1.schema.json#/$defs/version"
+    },
+    "release": {
+      "$ref": "common.v1.schema.json#/$defs/dns_label"
+    },
+    "created_at_unix_ms": {
+      "$ref": "common.v1.schema.json#/$defs/timestamp_ms"
+    },
+    "runtime": {
+      "type": "object",
+      "properties": {
+        "git_commit": {
+          "$ref": "common.v1.schema.json#/$defs/git_commit"
+        },
+        "image": {
+          "$ref": "common.v1.schema.json#/$defs/oci_image"
+        }
+      },
+      "required": [
+        "git_commit",
+        "image"
+      ],
+      "additionalProperties": false
+    },
+    "recipe": {
+      "$ref": "common.v1.schema.json#/$defs/sha256"
+    },
+    "model": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "$ref": "common.v1.schema.json#/$defs/model_revision"
+        },
+        "weights": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        }
+      },
+      "required": [
+        "source",
+        "weights"
+      ],
+      "additionalProperties": false
+    },
+    "hardware": {
+      "type": "object",
+      "properties": {
+        "hardware_class": {
+          "$ref": "common.v1.schema.json#/$defs/hardware_class"
+        },
+        "fingerprints": {
+          "type": "array",
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/sha256"
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "hardware_class",
+        "fingerprints"
+      ],
+      "additionalProperties": false
+    },
+    "sbom": {
+      "type": "object",
+      "properties": {
+        "format": {
+          "enum": [
+            "spdx_json",
+            "cyclonedx_json"
+          ]
+        },
+        "artifact": {
+          "$ref": "common.v1.schema.json#/$defs/artifact_ref"
+        }
+      },
+      "required": [
+        "format",
+        "artifact"
+      ],
+      "additionalProperties": false
+    },
+    "receipts": {
+      "type": "array",
+      "items": {
+        "$ref": "common.v1.schema.json#/$defs/sha256"
+      },
+      "minItems": 1
+    }
+  },
+  "required": [
+    "version",
+    "release",
+    "created_at_unix_ms",
+    "runtime",
+    "recipe",
+    "model",
+    "hardware",
+    "sbom",
+    "receipts"
+  ],
+  "additionalProperties": false
+}

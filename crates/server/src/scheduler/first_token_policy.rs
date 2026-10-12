@@ -89,3 +89,14 @@ where
     gs.accept_token(tok);
     Ok(tok)
 }
+
+/// 2026-10-07: A grammar arms tool-only guards only for an actual tool request.
+/// JSON response-format grammars must not force sixteen post-think content tokens.
+/// Preserve the existing legacy required-tool fallback when no grammar compiled.
+pub(super) fn tool_request_at_birth(
+    grammar_attached: bool,
+    tools_present: bool,
+    use_legacy_tool_call: bool,
+) -> bool {
+    (grammar_attached && tools_present) || use_legacy_tool_call
+}

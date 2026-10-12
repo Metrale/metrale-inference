@@ -254,9 +254,11 @@ pub(super) fn select_kernel_target(
     })?;
     // 2026-09-26: kimi_k3 MXFP4 weights need the exact mxfp4 target: for several
     // quant variants of one target, `ptx_for_config` returns the first.
-    let ptx_set = if config.model_type == "kimi_k3" && canonicalize_model_quant(config) == "mxfp4" {
+    let ptx_set = if matches!(config.model_type.as_str(), "kimi_k3" | "gpt_oss")
+        && canonicalize_model_quant(config) == "mxfp4"
+    {
         metrale_kernels::ptx_for_exact_target(ptx_set.target.model, "mxfp4")
-            .context("K3 MXFP4 requires its compiled mxfp4 target; rebuild with METRALE_TARGET_QUANT=mxfp4 or *")?
+            .context("MXFP4 requires its compiled mxfp4 target; rebuild with METRALE_TARGET_QUANT=mxfp4 or *")?
     } else {
         ptx_set
     };

@@ -31,6 +31,8 @@ pub enum Exec {
     /// 2026-09-30: The device's MMA of this kind runs it (weights narrower than the activation
     /// widen in registers: W4A16, W8A16).
     Native(MmaKind),
+    /// 2026-10-06: Storage understood, but no verified E8M0/group32 circuit lowering.
+    UnsupportedMxfp4,
     /// 2026-09-30: NVFP4 operands converted exactly to E4M3 and run on the FP8 MMA.
     ExactFp8Emulation,
     /// 2026-09-30: No MMA of the device can run the activation format.
@@ -48,6 +50,7 @@ impl Exec {
     /// 2026-09-30: The report spelling.
     pub fn describe(self) -> String {
         match self {
+            Exec::UnsupportedMxfp4 => "no path: MXFP4 E8M0/group32 circuit lowering is not implemented".into(),
             Exec::Native(k) => format!("native {}", k.name()),
             Exec::ExactFp8Emulation => {
                 "exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair)".into()
@@ -70,9 +73,10 @@ impl Exec {
                 (r.fp8_tflops, "the FP8 peak (exact E2M1->E4M3)")
             }
             Exec::Native(MmaKind::Fp8 | MmaKind::Fp4Fp8Nvfp4) => (r.fp8_tflops, "the FP8 peak"),
-            Exec::Native(_) | Exec::NoPath(_) | Exec::NoFp4Kernel { fp8: false } => {
-                (r.bf16_tflops, "the BF16 peak")
-            }
+            Exec::Native(_)
+            | Exec::NoPath(_)
+            | Exec::NoFp4Kernel { fp8: false }
+            | Exec::UnsupportedMxfp4 => (r.bf16_tflops, "the BF16 peak"),
         }
     }
 }
@@ -96,11 +100,15 @@ pub fn fp4_fallback(device: &Device) -> Exec {
 /// compiles no FP4 block-scale kernel for it (`no_fp4_kernel`).
 pub fn node_exec(device: &Device, c: &Circuit, n: &Node, no_fp4_kernel: bool) -> Option<Exec> {
     let (w, a) = (n.weight?, activation_of(c, n)?);
-    Some(if no_fp4_kernel {
-        fp4_fallback(device)
-    } else {
-        exec_of(device, w, a)
-    })
+    Some(
+        if matches!(w, Format::Mxfp4) || matches!(a, Format::Mxfp4) {
+            Exec::UnsupportedMxfp4
+        } else if no_fp4_kernel {
+            fp4_fallback(device)
+        } else {
+            exec_of(device, w, a)
+        },
+    )
 }
 
 /// 2026-09-30: The MMA kind the activation format needs.
@@ -108,6 +116,7 @@ pub fn kind_of(activation: Format) -> MmaKind {
     match activation {
         Format::Fp8E4m3 { .. } => MmaKind::Fp8,
         Format::Nvfp4 { .. } => MmaKind::Fp4BlockScale,
+        Format::Mxfp4 => MmaKind::Mxf8f6f4,
         Format::Bf16 | Format::F32 | Format::I32 => MmaKind::Bf16,
     }
 }
@@ -116,6 +125,9 @@ pub fn kind_of(activation: Format) -> MmaKind {
 /// under FP8 activations (W4A8 with group-16 E4M3 scales) have no single-instruction MMA on any
 /// device unless `native_mma` says so (`fp4_fp8_nvfp4_scaled`); they take the exact E4M3 path.
 pub fn exec_of(device: &Device, weight: Format, activation: Format) -> Exec {
+    if matches!(weight, Format::Mxfp4) || matches!(activation, Format::Mxfp4) {
+        return Exec::UnsupportedMxfp4;
+    }
     let kind = kind_of(activation);
     let w4a8 = matches!(weight, Format::Nvfp4 { .. }) && kind == MmaKind::Fp8;
     if w4a8 {
@@ -139,7 +151,7 @@ pub fn exec_of(device: &Device, weight: Format, activation: Format) -> Exec {
 /// 2026-09-30: The declared pair as `W4A16`-style text.
 pub fn pair_name(weight: Format, activation: Format) -> String {
     let bits = |f: Format| match f {
-        Format::Nvfp4 { .. } => "4",
+        Format::Nvfp4 { .. } | Format::Mxfp4 => "4",
         Format::Fp8E4m3 { .. } => "8",
         Format::Bf16 | Format::F32 | Format::I32 => "16",
     };

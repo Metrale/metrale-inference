@@ -20,6 +20,7 @@ use crate::ir;
 use crate::tool_parser;
 
 use super::chat_blocking_choice::{build_choice_message, build_logprobs};
+use super::chat_blocking_finalize::{finalize_response, stop_match_corrected};
 use super::compact::openai_error_response;
 use super::inference_impl::{extract_thinking, strip_stop_sequences};
 use super::inference_types::{GrammarSpec, InferenceRequest};
@@ -27,8 +28,10 @@ use super::inference_types::{GrammarSpec, InferenceRequest};
 #[cfg(test)]
 mod tests;
 
-pub(super) struct BlockingPathArgs {
+pub(super) struct BlockingPathArgs<'a> {
     pub state: Arc<AppState>,
+    /// 2026-10-11: Settled by `finalize_response`; an error return leaves it to the caller.
+    pub pending: &'a crate::request_accounting::Pending,
     pub req: crate::ir::ChatRequest,
     pub req_ctx: Option<axum::extract::Extension<crate::rate_limiter::RequestContext>>,
     pub prompt_tokens: Vec<u32>,
@@ -71,9 +74,10 @@ pub(super) struct BlockingPathArgs {
     pub prompt_len: usize,
 }
 
-pub(super) async fn run_blocking_path(args: BlockingPathArgs) -> super::chat::ChatOutcome {
+pub(super) async fn run_blocking_path(args: BlockingPathArgs<'_>) -> super::chat::ChatOutcome {
     let BlockingPathArgs {
         state,
+        pending,
         req,
         req_ctx,
         prompt_tokens,
@@ -112,6 +116,21 @@ pub(super) async fn run_blocking_path(args: BlockingPathArgs) -> super::chat::Ch
         prompt_len,
     } = args;
 
+    // 2026-10-07: Generic grammar and stop filters cannot preserve Harmony framing.
+    if state.tokenizer.harmony().is_some()
+        && (grammar_spec.is_some()
+            || req.response_format.is_some()
+            || !req.stop.is_empty()
+            || top_logprobs.is_some())
+    {
+        return super::chat::ChatOutcome::Http(openai_error_response(StatusCode::BAD_REQUEST,
+            "Experimental GPT-OSS does not support generic output grammar, structured output, stop overrides or logprobs".into()));
+    }
+    let stop_tokens = state
+        .tokenizer
+        .harmony()
+        .map_or(stop_tokens, |h| h.stop_ids());
+
     let n = req.n.max(1);
     let mut all_choices: Vec<ir::Choice> = Vec::with_capacity(n);
     let mut total_completion_tokens = 0usize;
@@ -120,6 +139,10 @@ pub(super) async fn run_blocking_path(args: BlockingPathArgs) -> super::chat::Ch
     let mut total_reasoning_tokens = 0u32;
     let mut total_cached_prompt_tokens = 0u32;
     let mut total_accepted_prediction_tokens = 0usize;
+    let mut first_prefill = None;
+    // 2026-10-11: Every choice's energy, merged (`RequestEnergy::merge`).
+    let mut energy: Option<metrale_telemetry::energy::RequestEnergy> = None;
+    let mut outcome = metrale_qci_dump::contract::usage::Outcome::Completed;
 
     let prompt_tokens = std::sync::Arc::new(prompt_tokens);
 
@@ -178,6 +201,7 @@ pub(super) async fn run_blocking_path(args: BlockingPathArgs) -> super::chat::Ch
                 "Scheduler queue full".to_string(),
             ));
         }
+        pending.dispatched();
 
         let response = match rx.await {
             Ok(Ok(r)) => r,
@@ -197,17 +221,46 @@ pub(super) async fn run_blocking_path(args: BlockingPathArgs) -> super::chat::Ch
 
         if choice_idx == 0 {
             first_ttft = response.time_to_first_token_ms;
+            first_prefill = Some(response.prefill_started_at);
+        }
+        energy = Some(energy.map_or(response.energy, |e| e.merge(response.energy)));
+        // 2026-10-11: A deadline cut on any choice makes the request's outcome `timeout`.
+        let choice_outcome = crate::request_accounting::outcome_of(&response.finish_reason);
+        if choice_outcome == metrale_qci_dump::contract::usage::Outcome::Timeout {
+            outcome = choice_outcome;
         }
         last_decode_time_ms = response.decode_time_ms;
 
         let num_completion = response.output_tokens.len();
         total_completion_tokens += num_completion;
-        total_reasoning_tokens += response.reasoning_tokens;
+
         total_accepted_prediction_tokens += response.accepted_prediction_tokens;
-        // 2026-09-26: Every choice sends the same prompt, so usage reports the largest
-        // per-choice prefix-cache hit, not the sum.
+        // 2026-09-26: Shared-prompt usage reports the largest per-choice cache hit.
         total_cached_prompt_tokens = total_cached_prompt_tokens.max(response.cached_prompt_tokens);
 
+        if state.tokenizer.harmony().is_some() {
+            match super::chat::harmony::choice(
+                &state.tokenizer,
+                &req,
+                &prompt_tokens,
+                &response.output_tokens,
+                choice_idx,
+            ) {
+                Ok((choice, reasoning)) => {
+                    total_reasoning_tokens += reasoning;
+                    all_choices.push(choice);
+                }
+                Err(error) => {
+                    return super::chat::ChatOutcome::Http(openai_error_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Invalid or incomplete Harmony response: {error}"),
+                    ));
+                }
+            }
+            continue;
+        }
+
+        total_reasoning_tokens += response.reasoning_tokens;
         let (reasoning_content_i, output_text_i) =
             decode_response_text(&state, &response, enable_thinking);
         let (output_text_i, matched_stop) =
@@ -234,6 +287,9 @@ pub(super) async fn run_blocking_path(args: BlockingPathArgs) -> super::chat::Ch
     finalize_response(
         state,
         req_ctx,
+        pending,
+        first_prefill.zip(energy),
+        outcome,
         all_choices,
         total_completion_tokens,
         first_ttft,
@@ -354,102 +410,4 @@ pub(super) fn merge_hoisted_tool_calls(
     });
     hoisted.extend(parsed);
     hoisted
-}
-
-/// 2026-09-26: Assemble usage, update the metrics, refund the unused rate-limit
-/// reservation, and return the response IR; the caller encodes it for the wire.
-#[allow(clippy::too_many_arguments)]
-fn finalize_response(
-    state: Arc<AppState>,
-    req_ctx: Option<axum::extract::Extension<crate::rate_limiter::RequestContext>>,
-    all_choices: Vec<ir::Choice>,
-    total_completion_tokens: usize,
-    first_ttft: f64,
-    last_decode_time_ms: f64,
-    total_reasoning_tokens: u32,
-    total_cached_prompt_tokens: u32,
-    total_accepted_prediction_tokens: usize,
-    prompt_len: usize,
-) -> super::chat::ChatOutcome {
-    let usage = ir::Usage {
-        prompt_tokens: prompt_len,
-        completion_tokens: total_completion_tokens,
-        cached_prompt_tokens: total_cached_prompt_tokens as usize,
-        reasoning_tokens: total_reasoning_tokens as usize,
-        accepted_prediction_tokens: total_accepted_prediction_tokens,
-        time_to_first_token_ms: first_ttft,
-        // 2026-09-26: The last choice's decode window, the same one the rate below uses.
-        decode_time_ms: last_decode_time_ms,
-        response_tokens_per_second: ir::Usage::decode_rate_tok_s(
-            total_completion_tokens,
-            last_decode_time_ms,
-        ),
-    };
-
-    // 2026-09-26: REQUESTS_ACTIVE is released by the caller's `ActiveRequestGuard`.
-    crate::metrics::PROMPT_TOKENS_TOTAL.inc_by(prompt_len as u64);
-    crate::metrics::GENERATION_TOKENS_TOTAL.inc_by(total_completion_tokens as u64);
-    crate::metrics::TTFT_SECONDS
-        .with_label_values(&[state.model_name.as_str()])
-        .observe(first_ttft / 1000.0);
-
-    // 2026-09-26: The rate-limit middleware reserved `max_seq_len` tokens; refund what
-    // prompt and completion did not use.
-    if let Some(axum::extract::Extension(ref ctx)) = req_ctx {
-        let actual = (prompt_len + total_completion_tokens) as u64;
-        let refund = ctx.reserved_tokens.saturating_sub(actual);
-        if refund > 0 {
-            state.rate_limiter.refund_tokens(&ctx.identity, refund);
-        }
-    }
-
-    super::chat::ChatOutcome::Blocking(Box::new(ir::ChatResponse {
-        id: crate::ids::uuid_v4(),
-        model: state.model_name.clone(),
-        created: crate::ids::unix_timestamp(),
-        choices: all_choices,
-        usage,
-    }))
-}
-
-/// 2026-09-26: A response ended by a client stop sequence reports `"stop"`, not
-/// `"length"`. The blocking path finds stop strings afterwards (the caller's suffix
-/// strip), so only `Length` is rewritten; `"timeout"` and `"tool_calls"` outrank a stop
-/// match, as in `chat_stream::handle_done::resolve_wire_finish_reason`.
-fn stop_match_corrected(fr: ir::FinishReason, stop_matched: bool) -> ir::FinishReason {
-    if stop_matched && fr == ir::FinishReason::Length {
-        ir::FinishReason::Stop
-    } else {
-        fr
-    }
-}
-
-#[cfg(test)]
-mod stop_match_corrected_tests {
-    use super::stop_match_corrected;
-    use crate::ir::{FINISH_REASON_TIMEOUT, FinishReason};
-
-    #[test]
-    fn matched_stop_corrects_length_to_stop() {
-        assert_eq!(
-            stop_match_corrected(FinishReason::Length, true),
-            FinishReason::Stop
-        );
-    }
-
-    #[test]
-    fn everything_else_passes_through() {
-        assert_eq!(
-            stop_match_corrected(FinishReason::Length, false),
-            FinishReason::Length
-        );
-        assert_eq!(
-            stop_match_corrected(FinishReason::ToolCalls, true),
-            FinishReason::ToolCalls
-        );
-        assert_eq!(
-            stop_match_corrected(FinishReason::Other(FINISH_REASON_TIMEOUT.into()), true),
-            FinishReason::Other(FINISH_REASON_TIMEOUT.into())
-        );
-    }
 }

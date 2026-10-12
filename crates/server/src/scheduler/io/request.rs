@@ -42,6 +42,7 @@ impl Arrivals {
 /// blocking arms read different fields; the router picks by sink.
 pub struct FinishFrame<'a> {
     pub finish_reason: &'a str,
+    pub terminal_token_id: Option<u32>,
     pub output_tokens: &'a [u32],
     pub time_to_first_token_ms: f64,
     pub decode_time_ms: f64,
@@ -49,6 +50,11 @@ pub struct FinishFrame<'a> {
     pub cached_prompt_tokens: u32,
     pub accepted_prediction_tokens: usize,
     pub guard_stop: Option<&'static str>,
+    /// 2026-10-11: When the scheduler first picked the request up for prefill
+    /// (`ActiveSeq::request_start`); the API layer measures queue time against it.
+    pub prefill_started_at: std::time::Instant,
+    /// 2026-10-11: The device layer's energy for this request.
+    pub energy: metrale_telemetry::energy::RequestEnergy,
     /// 2026-09-25: Taken by the blocking arm, left alone by the streaming one.
     pub logprobs: &'a mut Vec<crate::api::TokenLogprobs>,
     pub prompt_logprobs: &'a mut Vec<metrale_model_engine::traits::PromptTokenLogprob>,
@@ -169,6 +175,7 @@ impl RequestIo for TokioRequestIo {
                 spawn_terminal_send(
                     tx,
                     StreamEvent::Done {
+                        terminal_token_id: f.terminal_token_id,
                         finish_reason: f.finish_reason.to_string(),
                         prompt_tokens: 0, // 2026-09-25: the API layer counts the prompt.
                         completion_tokens: f.output_tokens.len(),
@@ -178,6 +185,8 @@ impl RequestIo for TokioRequestIo {
                         cached_prompt_tokens: f.cached_prompt_tokens,
                         accepted_prediction_tokens: f.accepted_prediction_tokens,
                         guard_stop: f.guard_stop,
+                        prefill_started_at: f.prefill_started_at,
+                        energy: f.energy,
                     },
                     "done frame",
                 );
@@ -194,6 +203,8 @@ impl RequestIo for TokioRequestIo {
                             reasoning_tokens: f.reasoning_tokens,
                             cached_prompt_tokens: f.cached_prompt_tokens,
                             accepted_prediction_tokens: f.accepted_prediction_tokens,
+                            prefill_started_at: f.prefill_started_at,
+                            energy: f.energy,
                             prompt_logprobs: std::mem::take(f.prompt_logprobs)
                                 .into_iter()
                                 .map(|p| crate::api::TokenLogprobs {

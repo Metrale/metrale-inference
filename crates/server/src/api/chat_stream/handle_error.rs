@@ -19,12 +19,12 @@ pub(super) fn handle_error(ctx: &StreamCtx, msg: String) -> DeltaVec {
             .rate_limiter
             .refund_tokens(&rctx.identity, rctx.reserved_tokens);
     }
-    // 2026-09-26: An OpenAI error envelope. The OpenAI encoder forwards it unchanged as
-    // the SSE data; other surfaces translate it.
-    let err = serde_json::json!({
-        "error": {"message": msg, "type": "server_error", "code": 500}
-    });
+    // 2026-10-11: A stream that fails after dispatch is an engine error.
+    ctx.pending
+        .fail(metrale_qci_dump::contract::usage::EngineErrorKind::Internal);
+    // 2026-09-26: An OpenAI error envelope with the request's ids. The OpenAI encoder
+    // forwards it unchanged as the SSE data; other surfaces translate it.
     vec![StreamDelta::Error {
-        message: err.to_string(),
+        message: crate::api::compact::stream_error_frame(&msg, ctx.pending.trace()),
     }]
 }

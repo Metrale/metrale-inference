@@ -2,7 +2,9 @@
 
 //! 2026-09-26: Ids (`uuid_v4`) and wire `created` timestamps
 //! (`unix_timestamp`). Callers add their own wire prefixes (`chatcmpl-`,
-//! `msg_`, `resp_`, `conv_`, `req_`).
+//! `msg_`, `resp_`, `conv_`). 2026-10-11: request ids are no longer `req_<uuid>`;
+//! they are 16-byte hex ids (`main_modules/trace_layer.rs`).
+//! 2026-10-11: Also `unix_millis`, the wall-clock stamp of per-request usage records.
 //!
 //! Owner: server API.
 //! Invariants: `uuid_v4` always returns 32 lowercase hex digits in 8-4-4-4-12
@@ -61,4 +63,12 @@ pub(crate) fn unix_timestamp() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+/// 2026-10-11: Milliseconds since the Unix epoch, or 0 if the clock reads earlier (the
+/// convention of [`unix_timestamp`]); the request receive and finish stamps use it.
+pub(crate) fn unix_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }

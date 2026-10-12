@@ -44,6 +44,8 @@ pub fn parse_quantization_config(raw: &serde_json::Value) -> Result<Option<Quant
         .or_else(|| {
             // 2026-09-26: Without `quant_algo`, the label comes from
             // `config_groups.group_0.weights`: a 4-bit float is NVFP4, an 8-bit float FP8.
+            // 2026-10-07: A 4-bit int is INT4 and an 8-bit int INT8 (compressed-tensors
+            // `pack-quantized`; which variants load is `precision_plan::packed_int`'s call).
             let group = qc.get("config_groups")?.get("group_0")?;
             let weights = group.get("weights")?;
             let bits = weights.get("num_bits")?.as_u64()?;
@@ -51,6 +53,8 @@ pub fn parse_quantization_config(raw: &serde_json::Value) -> Result<Option<Quant
             match (bits, ty) {
                 (4, "float") => Some("NVFP4"),
                 (8, "float") => Some("FP8"),
+                (4, "int") => Some("INT4"),
+                (8, "int") => Some("INT8"),
                 _ => None,
             }
         })
@@ -91,6 +95,20 @@ pub fn parse_quantization_config(raw: &serde_json::Value) -> Result<Option<Quant
     }
     let precision = crate::precision_plan::DeclaredPrecisionPlan::from_quantization_config(qc_raw)
         .context("quantization_config")?;
+
+    // 2026-10-07: Preserve validated MXFP4 exclusions for loader introspection too.
+    if quant_method == "mxfp4" {
+        ignore_modules = qc["modules_to_not_convert"]
+            .as_array()
+            .context("MXFP4 exclusions")?
+            .iter()
+            .map(|v| {
+                v.as_str()
+                    .map(str::to_owned)
+                    .context("MXFP4 exclusion string")
+            })
+            .collect::<Result<_>>()?;
+    }
 
     Ok(Some(QuantizationConfig {
         quant_method,

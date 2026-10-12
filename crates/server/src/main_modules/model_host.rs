@@ -166,6 +166,11 @@ impl ModelHost {
         self.swapping.lock()
     }
 
+    /// 2026-10-11: A swap is running (`swap_guard` is held): a missing model is loading.
+    pub fn is_swapping(&self) -> bool {
+        self.swapping.is_locked()
+    }
+
     /// 2026-09-26: The served model name (`AppState::model_name`), if a model is
     /// loaded.
     pub fn live_model(&self) -> Option<String> {

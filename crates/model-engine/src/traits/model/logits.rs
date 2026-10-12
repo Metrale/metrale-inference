@@ -34,6 +34,18 @@ pub trait ModelLogits {
     /// 2026-09-25: Argmax of each of `n` logits rows on the device.
     fn argmax_batch(&self, logits_ptr: DevicePtr, n: usize, stream: u64) -> Result<Vec<u32>>;
 
+    /// 2026-10-07: Exact host-greedy finite tie policy with per-row suppressed IDs.
+    /// Unsupported inputs return None and require the caller's unchanged host path.
+    fn argmax_batch_masked(
+        &self,
+        _logits_ptr: DevicePtr,
+        _n: usize,
+        _masks: &[Vec<u32>],
+        _stream: u64,
+    ) -> Result<Option<Vec<u32>>> {
+        Ok(None)
+    }
+
     /// 2026-09-25: The post-final-norm hidden state of the last decode step.
     fn hidden_after_norm(&self) -> DevicePtr;
 

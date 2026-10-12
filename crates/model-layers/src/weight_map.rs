@@ -25,6 +25,8 @@ pub mod model_a;
 mod model_b;
 #[path = "weight_map/moe.rs"]
 mod moe;
+#[path = "weight_map/mxfp4_experts.rs"]
+mod mxfp4_experts;
 #[path = "weight_map/nemotron.rs"]
 pub mod nemotron;
 #[path = "weight_map/nvfp4_detect.rs"]
@@ -48,6 +50,7 @@ pub use loaders_fp8::*;
 pub use loaders_mtp::*;
 pub use model_a::*;
 pub use moe::*;
+pub use mxfp4_experts::{Mxfp4ExpertView, PackedMxfp4Experts};
 pub use nemotron::*;
 pub use nvfp4_detect::*;
 pub use quantize_fns::*;

@@ -51,6 +51,7 @@ use super::sanitizer::*;
 pub async fn responses_endpoint(
     CurrentModel(state): CurrentModel,
     tenant: Option<axum::extract::Extension<crate::auth::LookupTenant>>,
+    axum::extract::Extension(stamp): axum::extract::Extension<crate::request_stamp::RequestStamp>,
     req: Result<Json<crate::openai::ResponsesRequest>, JsonRejection>,
 ) -> Response {
     let Json(r) = match req {
@@ -135,10 +136,26 @@ pub async fn responses_endpoint(
         chat_req.messages = combined;
     }
 
+    // 2026-10-07: This extractor has already discarded duplicate-key evidence. Keep
+    // Harmony tools fail-closed until raw Responses admission is validated.
+    if state.tokenizer.harmony().is_some()
+        && (chat_req
+            .tools
+            .as_ref()
+            .is_some_and(|tools| !tools.is_empty())
+            || chat_req
+                .messages
+                .iter()
+                .any(|m| m.tool_calls.as_ref().is_some_and(|v| !v.is_empty()) || m.role == "tool"))
+    {
+        return openai_error_response(StatusCode::BAD_REQUEST,"Harmony tools currently require Chat Completions or Messages; Responses tool history is unavailable".into());
+    }
+
     if streaming {
         return responses_endpoint_stream(
             CurrentModel(state),
             tenant.map(|e| e.0),
+            stamp,
             chat_req,
             metadata,
             store_flag,
@@ -156,6 +173,7 @@ pub async fn responses_endpoint(
         state.clone(),
         None,
         tenant.map(|e| e.0),
+        stamp,
         chat_req.into(),
         None,
     )

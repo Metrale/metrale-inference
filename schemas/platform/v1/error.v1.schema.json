@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://metrale.ai/schemas/platform/v1/error.v1.schema.json",
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "title": "ApiError",
+  "description": "Every non-2xx body of every API: one closed code and a message.",
+  "type": "object",
+  "properties": {
+    "code": {
+      "enum": [
+        "unauthorized",
+        "forbidden",
+        "not_found",
+        "bad_request",
+        "unsupported_version",
+        "conflict",
+        "idempotency_conflict",
+        "quota_exceeded",
+        "unavailable",
+        "upstream",
+        "internal"
+      ]
+    },
+    "message": {
+      "$ref": "common.v1.schema.json#/$defs/long_text"
+    }
+  },
+  "required": [
+    "code",
+    "message"
+  ],
+  "additionalProperties": false
+}

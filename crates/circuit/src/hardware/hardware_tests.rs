@@ -376,3 +376,19 @@ fn a_recipe_pin_stands_on_its_own_class_only() {
     let e = super::model::policy_on_class(&policy, Some("gb10"), &bare).unwrap_err();
     assert!(matches!(e, HwError::Class(_)), "{e}");
 }
+
+#[test]
+fn mxfp4_is_neither_native_bf16_nor_nvfp4_emulation_without_a_lowering() {
+    let reg = fx::registry();
+    for device in ["nofp8", "nofp4", "fp4dev"] {
+        for activation in [
+            Format::Bf16,
+            Format::parse("fp8/token").unwrap(),
+            Format::Mxfp4,
+        ] {
+            let answer = exec_of(reg.device(device).unwrap(), Format::Mxfp4, activation);
+            assert_eq!(answer, Exec::UnsupportedMxfp4);
+            assert!(answer.describe().contains("E8M0/group32"));
+        }
+    }
+}

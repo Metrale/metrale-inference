@@ -23,7 +23,8 @@ pub(crate) fn encode_chat_response(
     echo: &crate::api::ResponseEcho,
     dump_seq: Option<u64>,
 ) -> Response {
-    let usage = Usage::from(&ir.usage);
+    let mut usage = Usage::from(&ir.usage);
+    usage.inference_usage = ir.inference_usage;
 
     let choices: Vec<ChatChoice> = ir
         .choices

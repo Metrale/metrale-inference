@@ -241,7 +241,14 @@ run_ep2_model() {
 # ── Build single multi-target image ─────────────────────────────────────────
 
 log "Building ${IMAGE} (multi-target, all models)..."
-sudo docker build -f docker/gb10/Dockerfile -t "$IMAGE" "$REPO_ROOT" 2>&1 | tail -5
+# 2026-10-11: A tree with uncommitted changes is not a commit: build-commit.sh refuses it and the
+# image is built unstamped (it serves, but withholds its usage records).
+if ! git_sha="$(bash "$REPO_ROOT/scripts/build-commit.sh" "$REPO_ROOT")"; then
+  log "WARNING: building ${IMAGE} unstamped"
+  git_sha=""
+fi
+sudo docker build -f docker/gb10/Dockerfile --build-arg METRALE_GIT_SHA="$git_sha" \
+  -t "$IMAGE" "$REPO_ROOT" 2>&1 | tail -5
 # PIPESTATUS[0], not $?: after a pipeline `$?` is `tail`'s status, and tail
 # succeeds on any input. A failed build passed this check and the script went
 # on to benchmark whatever stale image was still tagged.

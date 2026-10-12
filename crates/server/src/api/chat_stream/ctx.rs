@@ -49,4 +49,7 @@ pub(super) struct StreamCtx {
     pub(super) req_return_token_ids: bool,
     pub(super) req_ctx: Option<crate::rate_limiter::RequestContext>,
     pub(super) dump_seq: Option<u64>,
+    /// 2026-10-11: The request's usage record, settled by `handle_done` or `handle_error`;
+    /// dropped unsettled with the stream, it records the request as cancelled.
+    pub(super) pending: crate::request_accounting::Pending,
 }

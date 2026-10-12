@@ -43,7 +43,11 @@ ENV METRALE_TARGET_HW=gb10
 ENV METRALE_TARGET_MODEL=*
 ENV METRALE_TARGET_QUANT=*
 
-RUN cargo build --release -p metrale-server
+# 2026-10-11: The source commit, stamped into `met` as METRALE_BUILD_COMMIT (usage records and the
+# /metrics build line are keyed by it). Pass --build-arg
+# METRALE_GIT_SHA="$(bash scripts/build-commit.sh)"; without it `met` is unstamped.
+ARG METRALE_GIT_SHA
+RUN METRALE_BUILD_COMMIT="${METRALE_GIT_SHA}" cargo build --release -p metrale-server
 
 # ── Runtime stage ────────────────────────────────────────────────
 FROM nvidia/cuda:13.0.0-runtime-ubuntu24.04@sha256:95318efecfd68ab3d109da5277863257b06137c84f34a87f38de970d5cd035d3
@@ -52,7 +56,7 @@ LABEL org.opencontainers.image.licenses="MIT OR Apache-2.0"
 
 # Stamp the source commit into the image so ":latest" provenance is answerable:
 #   docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' <tag>
-# Pass it with --build-arg METRALE_GIT_SHA=$(git rev-parse HEAD).
+# Pass it with --build-arg METRALE_GIT_SHA="$(bash scripts/build-commit.sh)".
 ARG METRALE_GIT_SHA=unknown
 LABEL org.opencontainers.image.revision="${METRALE_GIT_SHA}"
 

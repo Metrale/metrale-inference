@@ -25,6 +25,18 @@ fn parse_activation_quantization(
 // `ServeSchedulingArgs`.
 #[derive(Args, Debug, Clone, PartialEq)]
 pub struct ServeServiceArgs {
+    /// Opt into uncertified native GPT-OSS C1 serving with explicit BF16 KV and single-device restrictions.
+    #[arg(long, default_value_t = false)]
+    pub experimental_gpt_oss: bool,
+
+    /// 2026-10-07: Opt into experimental GPT-OSS prefill chunks; requires experimental GPT-OSS C1 serving and an explicit --experimental-gpt-oss-chunk-tokens.
+    #[arg(long, requires = "experimental_gpt_oss", default_value_t = false)]
+    pub experimental_gpt_oss_chunk_prefill: bool,
+
+    /// 2026-10-07: Explicit chunk capacity (16, 64 or 128); larger chunks remain experimental.
+    #[arg(long, requires = "experimental_gpt_oss_chunk_prefill")]
+    pub experimental_gpt_oss_chunk_tokens: Option<usize>,
+
     /// Server-side deadline for a single request, in seconds. A request
     /// that exceeds it is cut and the response is reported with
     /// `finish_reason="timeout"` (never "length") plus a WARN log naming
@@ -233,6 +245,15 @@ pub struct ServeServiceArgs {
     /// `ps`/`/proc/<pid>/cmdline`. Use `--auth-tokens-file` instead.
     #[arg(long, value_name = "TOKEN", conflicts_with = "auth_tokens_file")]
     pub auth_token: Option<String>,
+
+    /// The `ModelRecipe` document (a release's `recipe.json`) this server is
+    /// launched from. The SHA-256 of its canonical JSON is the `recipe` of every
+    /// usage record, of `GET /health/runtime` and of `/metrics`. Startup is
+    /// refused when the file is not a ModelRecipe v1 document, or when it pins a
+    /// source revision other than the loaded Hub snapshot's. Unset: no recipe,
+    /// reported as `null`.
+    #[arg(long, value_name = "PATH")]
+    pub model_recipe: Option<std::path::PathBuf>,
 
     /// LoRA adapter to serve, as NAME=PATH_OR_HF_ID (e.g.
     /// `holo-sft=/data/adapters/holo-sft` or `holo-sft=org/holo-31-08b-lora`).

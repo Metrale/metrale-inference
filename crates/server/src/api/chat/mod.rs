@@ -10,6 +10,7 @@
 //! Invariants: none beyond the types.
 
 pub(crate) mod echo;
+pub(super) mod harmony;
 pub(crate) mod levers;
 mod loop_detect;
 mod msg_entry;
@@ -82,6 +83,7 @@ pub async fn chat_completions(
     >,
     req_ctx: Option<axum::extract::Extension<crate::rate_limiter::RequestContext>>,
     tenant: Option<axum::extract::Extension<crate::auth::LookupTenant>>,
+    axum::extract::Extension(stamp): axum::extract::Extension<crate::request_stamp::RequestStamp>,
     body: axum::body::Bytes,
 ) -> Response {
     // 2026-09-26: Parsed by hand so the same bytes also feed the `--dump`
@@ -101,6 +103,16 @@ pub async fn chat_completions(
     // dropped without notice.
     if let Err(msg) = req.validate_reasoning_effort() {
         return openai_error_response(StatusCode::BAD_REQUEST, msg);
+    }
+
+    // 2026-10-06: The two QCI campaign ids admit text and images here, and refuse
+    // video, a malformed image, and context pressure, before any model load.
+    // Every other model falls through unchanged.
+    if let metrale_qci_dump::Gate::Respond { status, body } =
+        metrale_qci_dump::gate(&req.model, body.as_ref())
+    {
+        let code = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        return (code, Json(body)).into_response();
     }
 
     // 2026-09-26: With `--auto-swap`, a request naming another model that the
@@ -154,6 +166,12 @@ pub async fn chat_completions(
         );
     };
 
+    if state.tokenizer.harmony().is_some()
+        && let Err(error) = harmony::validate_wire(&req, &body)
+    {
+        return openai_error_response(StatusCode::BAD_REQUEST, error.into());
+    }
+
     let dump_seq = state.dump_writer.as_ref().and_then(|d| {
         match serde_json::from_slice::<serde_json::Value>(&body) {
             Ok(v) => {
@@ -172,6 +190,7 @@ pub async fn chat_completions(
         state.clone(),
         req_ctx,
         tenant.map(|e| e.0),
+        stamp,
         req.into(),
         dump_seq,
     )
@@ -195,9 +214,33 @@ pub(crate) async fn chat_completions_inner(
     state: Arc<AppState>,
     req_ctx: Option<axum::extract::Extension<crate::rate_limiter::RequestContext>>,
     tenant: Option<crate::auth::LookupTenant>,
+    stamp: crate::request_stamp::RequestStamp,
     mut req: crate::ir::ChatRequest,
     dump_seq: Option<u64>,
 ) -> ChatOutcome {
+    // 2026-10-07: Refuse before template/grammar work and scheduler dispatch.
+    if state.tokenizer.harmony().is_some()
+        && (req.response_format.is_some()
+            || !req.stop.is_empty()
+            || req.top_logprobs.is_some()
+            || req.return_token_ids
+            || req.min_tokens != 0
+            || req.repetition_detection.is_some()
+            || matches!(
+                req.thinking,
+                crate::ir::ThinkingDirective::Off
+                    | crate::ir::ThinkingDirective::On { budget: Some(_) }
+            )
+            || matches!(req.reasoning_effort, Some(crate::ir::ReasoningEffort::Max)))
+    {
+        return ChatOutcome::Http(openai_error_response(StatusCode::BAD_REQUEST,
+            "Experimental GPT-OSS does not support structured output, stop overrides, logprobs, raw token IDs, minimum-token overrides, thinking budgets, thinking-off or loop overrides".into()));
+    }
+    if state.tokenizer.harmony().is_some()
+        && let Err(error) = harmony::validate_request(&req)
+    {
+        return ChatOutcome::Http(openai_error_response(StatusCode::BAD_REQUEST, error.into()));
+    }
     req.lookup_tenant = tenant;
     crate::metrics::REQUESTS_TOTAL.inc();
     // 2026-09-26: Decrements on drop, so on every exit path, including this
@@ -358,6 +401,9 @@ pub(crate) async fn chat_completions_inner(
         );
     }
 
+    // 2026-10-11: The usage record; a refusal before dispatch records nothing.
+    let pending = crate::request_accounting::Pending::new(stamp, &state, prompt_len);
+
     if req.stream {
         return super::chat_stream_dispatch::dispatch_streaming(
             state,
@@ -398,12 +444,14 @@ pub(crate) async fn chat_completions_inner(
             top_logprobs,
             timeout_at,
             active_guard,
+            pending,
         )
         .await;
     }
 
-    super::chat_blocking::run_blocking_path(super::chat_blocking::BlockingPathArgs {
+    let outcome = super::chat_blocking::run_blocking_path(super::chat_blocking::BlockingPathArgs {
         state,
+        pending: &pending,
         req,
         req_ctx,
         prompt_tokens,
@@ -441,5 +489,10 @@ pub(crate) async fn chat_completions_inner(
         cwd_hint,
         prompt_len,
     })
-    .await
+    .await;
+    // 2026-10-11: An error status answered after dispatch is the request's outcome.
+    if let ChatOutcome::Http(resp) = &outcome {
+        pending.fail_status(resp.status());
+    }
+    outcome
 }

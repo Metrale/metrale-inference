@@ -230,6 +230,9 @@ pub fn required(need: &Need<'_>, n: NodeIdx) -> Result<NodePipeline, PipelineErr
 
 /// 2026-10-02: The weight, multiply and scale requirement of an `act` x `weight` projection.
 fn derived(kind: StepKind, act: Format, weight: Format) -> Result<Value, String> {
+    if matches!(act, Format::Mxfp4) || matches!(weight, Format::Mxfp4) {
+        return Err("MXFP4 E8M0/group32 pipeline is not implemented".into());
+    }
     let operand = match (act, weight) {
         (Format::Bf16, _) => Num::Bf16,
         (Format::F32, _) => Num::F32,

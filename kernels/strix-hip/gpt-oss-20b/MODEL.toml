@@ -1,0 +1,112 @@
+# 2026-10-07: gfx1151 (HIP) packaging of the GPT-OSS-20B MXFP4 target. Built with
+# hipcc for gfx1151 and booted on a Radeon 8060S: kernel gate, primitive numerics and
+# Harmony generation checked. Not a qualification; see docs/gpt-oss-native-bringup.md.
+# The model fields mirror kernels/gb10/gpt-oss-20b/MODEL.toml.
+[model]
+name = "gpt-oss-20b"
+hf_id = "openai/gpt-oss-20b"
+architecture = "GPT-OSS alternating full/sliding attention with interleaved MXFP4 experts"
+supported_quants = ["mxfp4"]
+layers_total = 24
+hidden_dim = 2880
+head_dim = 64
+q_heads = 64
+kv_heads = 8
+moe_experts = 32
+moe_top_k = 4
+intermediate_size = 2880
+vocab_size = 201088
+sliding_window = 128
+
+[[model_types]]
+model_type = "gpt_oss"
+hidden_size = 2880
+
+[behavior]
+default_kv_dtype = "bf16"
+thinking_default = true
+thinking_in_tools = false
+
+# 2026-10-07: Kernel lookups this model's dispatch may issue that this target
+# does not ship. The boot kernel gate refuses to serve on any other unresolved
+# lookup (server serve_phases/kernel_gate.rs, audit_and_gate). Both entries are
+# issued only by the explicit diagnostic constructor
+# PrefillScratch::new_packed_tc_diagnostic (model-arch gpt_oss/runtime/tc_scratch.rs);
+# the serving constructors never look them up.
+
+[expected_absent.gpt_oss_mxfp4_mma]
+moe_w4a16_grouped_gemm_ptrtable_e8m0_gpt = """
+Diagnostic packed tensor-core MoE. Its source uses inline PTX (mma.sync,
+cp.async) that hipcc cannot compile, so this target does not build the
+module. The diagnostic constructor returns an error on handle 0; serving
+uses gpt_oss_mxfp4_gemv, which resolves here."""
+
+[expected_absent.moe_v41]
+moe_v41_gather_rows = """
+Row reorder used only by the same packed tensor-core diagnostic. Without the
+diagnostic GEMM it has no caller, so this target does not build it."""
+
+# 2026-10-07: Optional model-level and layer-library lookups that resolve to handle 0 on this
+# target (first `met serve --check-kernels` on gfx1151, real weights). The gb10 tree compiles
+# these modules for its other models; no strix-hip target ships them. Each dispatch site is
+# unreachable under the explicit GPT admission (serve_load/experimental.rs): BF16 head, no
+# LoRA, no SSM layers, and GptOssLayer projects only through dense_gemv_bf16_fp32out,
+# projection_bias and gpt_oss_mxfp4_*.
+
+[expected_absent.dense_gemv_fp8w_batch2]
+dense_gemv_fp8w_batch2 = """
+Two-row FP8 lm_head GEMV (model-engine impl_a1/kernels.rs). Launched only for an FP8
+head; the GPT admission requires --lm-head-dtype bf16, so no FP8 head is built."""
+
+[expected_absent.fp8_gemv_rt]
+fp8_gemv_rowscale_batch8_rt2 = """
+Multi-row FP8 lm_head tile (model-engine lm_head_fp8_rows.rs). FP8 head only; the GPT
+admission requires a BF16 head."""
+fp8_gemv_rowscale_batch16_rt2 = """
+Multi-row FP8 lm_head tile (model-engine lm_head_fp8_rows.rs). FP8 head only; the GPT
+admission requires a BF16 head."""
+
+[expected_absent.fp8_gemm_t_blockscaled]
+fp8_gemm_t_blockscaled = """
+Probed by serve preflight (qwen3_attention::w8a8_prefill_kernels_loaded) only to size the
+W8A8 qwen3-attention prefill reserve. GPT-OSS layers have no W8A8 projections and never
+launch it."""
+
+[expected_absent.ssm_h_dtype]
+ssm_h_state_f32_to_f16 = """
+SSM h-state dtype conversion (model-engine impl_a1/kernels.rs, meta.rs, h_state_ptrs.rs).
+GPT-OSS has no SSM layers, so there is no h-state to convert."""
+ssm_h_state_f16_to_f32 = """
+SSM h-state dtype conversion (model-engine impl_a1/kernels.rs, meta.rs, h_state_ptrs.rs).
+GPT-OSS has no SSM layers, so there is no h-state to convert."""
+
+[expected_absent.token_overlay]
+embed_rowdiff_bf16 = """
+Token-overlay kernels (model-layers ops/token_overlay.rs). Dispatch needs an installed overlay
+set (model-engine token_overlay.rs returns early without one); the GPT admission refuses LoRA
+and overlays."""
+embed_overlay_routed_bf16 = """
+Token-overlay kernels (model-layers ops/token_overlay.rs). Dispatch needs an installed overlay
+set (model-engine token_overlay.rs returns early without one); the GPT admission refuses LoRA
+and overlays."""
+lmhead_overlay_routed_bf16 = """
+Token-overlay kernels (model-layers ops/token_overlay.rs). Dispatch needs an installed overlay
+set (model-engine token_overlay.rs returns early without one); the GPT admission refuses LoRA
+and overlays."""
+lmhead_overlay_routed_f32 = """
+Token-overlay kernels (model-layers ops/token_overlay.rs). Dispatch needs an installed overlay
+set (model-engine token_overlay.rs returns early without one); the GPT admission refuses LoRA
+and overlays."""
+
+[expected_absent.w4a4_gemv_mx]
+w4a4_quant_rows = """
+W4A4 (NVFP4-activation) projection kernels resolved by w4a4_proj::prepare under
+--activation-quantization. Their callers are the dense-FFN, qwen3-SSM and qwen3-attention
+layers; GptOssLayer never calls w4a4_proj, so none is launched for GPT-OSS."""
+w4a4_gemv_mx8 = "Same W4A4 projection family as w4a4_quant_rows; never launched by GptOssLayer."
+w4a4_gemv_mx16 = "Same W4A4 projection family as w4a4_quant_rows; never launched by GptOssLayer."
+w4a4_gemv_mx32 = "Same W4A4 projection family as w4a4_quant_rows; never launched by GptOssLayer."
+w4a4_gemv_mx16_nt2 = "Same W4A4 projection family as w4a4_quant_rows; never launched by GptOssLayer."
+w4a4_gemv_mx32_nt4 = "Same W4A4 projection family as w4a4_quant_rows; never launched by GptOssLayer."
+w4a4_gemv_mx16_ps = "Same W4A4 projection family as w4a4_quant_rows; never launched by GptOssLayer."
+w4a4_gemv_mx32_ps = "Same W4A4 projection family as w4a4_quant_rows; never launched by GptOssLayer."

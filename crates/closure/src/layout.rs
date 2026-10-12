@@ -56,7 +56,7 @@ use std::path::{Path, PathBuf};
 
 pub use crate::layout_manifest::{
     HEADER_EXTS, Hardware, KernelManifest, LayoutError, hardware, kernel_manifest,
-    kernel_source_dir, source_ext, stem_of,
+    kernel_source_dir, source_ext, stem_of, supports_quant,
 };
 use crate::layout_scan::{has_ext, layer, layer_contents};
 
@@ -324,6 +324,17 @@ pub fn discover(root: &Path, target: &Target) -> Result<Layout, LayoutError> {
         return Err(LayoutError::UnknownModel(model_dir));
     }
     let own_src = kernel_source_dir(&model_dir)?;
+    for model in [&model_dir, &own_src] {
+        if !supports_quant(model, &target.quant)? {
+            return Err(LayoutError::Manifest {
+                path: model.join("MODEL.toml"),
+                message: format!(
+                    "quant '{}' is not in model.supported_quants; refusing common-only fallback",
+                    target.quant
+                ),
+            });
+        }
+    }
     let source_model = own_src
         .file_name()
         .and_then(|n| n.to_str())

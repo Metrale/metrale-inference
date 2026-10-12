@@ -55,9 +55,10 @@ extern "C" __global__ void dense_gemm_tc(
     for (unsigned int k_base = 0; k_base < K; k_base += TC_TK) {
 
         {
-            unsigned int idx = tid;
-
-            if (idx < TC_TM * TC_TK) {
+            // 2026-10-07: strided, as in the gb10 original: TC_TM * TC_TK (256) elements and
+            // TC_BLOCK (128) threads. A single pass left rows 8..15 of the A tile unloaded, so
+            // those rows of C came from uninitialized shared memory whenever M > 8.
+            for (unsigned int idx = tid; idx < TC_TM * TC_TK; idx += TC_BLOCK) {
                 unsigned int r = idx / TC_TK;
                 unsigned int c = idx % TC_TK;
                 unsigned int gr = m_block + r;

@@ -143,6 +143,10 @@ pub struct ResponsesUsage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_tokens_details: Option<CompletionTokensDetails>,
     pub total_tokens: usize,
+    /// 2026-10-11: The runtime's `InferenceUsage` record (`request_accounting`), as chat
+    /// writes it in `usage.inference_usage`; omitted when the record is withheld.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inference_usage: Option<metrale_qci_dump::contract::usage::InferenceUsage>,
 }
 
 /// 2026-09-26: One streamed `/v1/responses` event. The handler sends each

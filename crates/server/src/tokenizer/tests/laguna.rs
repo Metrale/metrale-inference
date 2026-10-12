@@ -76,3 +76,77 @@ fn laguna_template_uses_checkpoint_tool_json_and_reasoning_controls() {
     let think = render_laguna_template(&messages, Some(&tools), true);
     assert!(think.ends_with("<assistant><think>"));
 }
+
+// 2026-10-07: Standalone binaries must carry the same reviewed template as repo launches.
+#[test]
+fn laguna_standalone_template_matches_reviewed_source() {
+    let dir = tempfile::tempdir().unwrap();
+    // 2026-10-07: Isolate cwd in a child, never mutate process-global cwd in parallel tests.
+    if std::path::Path::new("jinja-templates/laguna.jinja").exists() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tokenizer::tests::laguna::laguna_standalone_template_matches_reviewed_source",
+                "--nocapture",
+            ])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    tokenizers::Tokenizer::new(tokenizers::models::wordlevel::WordLevel::default())
+        .save(dir.path().join("tokenizer.json"), false)
+        .unwrap();
+    std::fs::write(
+        dir.path().join("tokenizer_config.json"),
+        json!({"chat_template": "{% generation %}checkpoint{% endgeneration %}"}).to_string(),
+    )
+    .unwrap();
+    let tokenizer = crate::tokenizer::ChatTokenizer::from_model_dir(
+        dir.path(),
+        0,
+        true,
+        "laguna",
+        Some(dir.path()),
+        false,
+    )
+    .expect("Laguna starts without a source checkout");
+    assert_eq!(
+        tokenizer.chat_template,
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../jinja-templates/laguna.jinja"
+        ))
+    );
+    assert!(
+        crate::tokenizer::ChatTokenizer::from_model_dir(
+            dir.path(),
+            0,
+            true,
+            "laguna",
+            Some(dir.path()),
+            true,
+        )
+        .is_err(),
+        "disabling overrides must still select the checkpoint template"
+    );
+    let overrides = dir.path().join("jinja-templates");
+    std::fs::create_dir(&overrides).unwrap();
+    std::fs::write(overrides.join("laguna.jinja"), "explicit override").unwrap();
+    let explicit = crate::tokenizer::ChatTokenizer::from_model_dir(
+        dir.path(),
+        0,
+        true,
+        "laguna",
+        Some(dir.path()),
+        false,
+    )
+    .unwrap();
+    assert_eq!(explicit.chat_template, "explicit override");
+}

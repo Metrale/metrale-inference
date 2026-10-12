@@ -56,7 +56,7 @@ pub fn model_type_ships_vanilla_norm_weights(model_type: &str) -> bool {
     // state. Nothing in the weight shapes reveals the convention.
     matches!(
         model_type,
-        "deepseek_v4" | "deepseek_v41" | "laguna" | "glm5_next" | "kimi_k3"
+        "deepseek_v4" | "deepseek_v41" | "laguna" | "glm5_next" | "kimi_k3" | "gpt_oss"
     )
 }
 
@@ -111,6 +111,7 @@ mod norm_convention_tests {
     fn vanilla_norm_models_are_explicit() {
         assert!(vanilla("deepseek_v4"));
         assert!(vanilla("laguna"));
+        assert!(vanilla("gpt_oss"));
         assert!(vanilla("glm5_next"));
         assert!(vanilla("kimi_k3"));
         for other in [

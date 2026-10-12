@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://metrale.ai/schemas/platform/v1/inference-usage.v1.schema.json",
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "title": "InferenceUsage",
+  "description": "The runtime's per-request record, joined to the agent's usage record by request_id and to the trace by trace_id.",
+  "type": "object",
+  "properties": {
+    "version": {
+      "$ref": "common.v1.schema.json#/$defs/version"
+    },
+    "request_id": {
+      "$ref": "common.v1.schema.json#/$defs/id16"
+    },
+    "trace_id": {
+      "$ref": "common.v1.schema.json#/$defs/trace_id"
+    },
+    "served_model": {
+      "$ref": "common.v1.schema.json#/$defs/model_name"
+    },
+    "recipe": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        }
+      ]
+    },
+    "runtime_commit": {
+      "$ref": "common.v1.schema.json#/$defs/git_commit"
+    },
+    "outcome": {
+      "description": "The runtime's outcomes; channel_lost and unknown are the agent's.",
+      "oneOf": [
+        {
+          "const": "completed"
+        },
+        {
+          "const": "cancelled"
+        },
+        {
+          "const": "timeout"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "engine_error": {
+              "type": "object",
+              "properties": {
+                "error": {
+                  "$ref": "common.v1.schema.json#/$defs/engine_error_kind"
+                }
+              },
+              "required": [
+                "error"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "engine_error"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "tokens": {
+      "$ref": "common.v1.schema.json#/$defs/tokens"
+    },
+    "timings": {
+      "type": "object",
+      "properties": {
+        "received_at_unix_ms": {
+          "$ref": "common.v1.schema.json#/$defs/timestamp_ms"
+        },
+        "queue_ms": {
+          "$ref": "common.v1.schema.json#/$defs/field_u32"
+        },
+        "ttft_ms": {
+          "$ref": "common.v1.schema.json#/$defs/field_u32"
+        },
+        "total_ms": {
+          "$ref": "common.v1.schema.json#/$defs/field_u32"
+        },
+        "tpot_us": {
+          "$ref": "common.v1.schema.json#/$defs/field_u32"
+        }
+      },
+      "required": [
+        "received_at_unix_ms",
+        "queue_ms",
+        "ttft_ms",
+        "total_ms",
+        "tpot_us"
+      ],
+      "additionalProperties": false
+    },
+    "energy": {
+      "$ref": "common.v1.schema.json#/$defs/energy"
+    },
+    "finished_at_unix_ms": {
+      "$ref": "common.v1.schema.json#/$defs/timestamp_ms"
+    }
+  },
+  "required": [
+    "version",
+    "request_id",
+    "trace_id",
+    "served_model",
+    "recipe",
+    "runtime_commit",
+    "outcome",
+    "tokens",
+    "timings",
+    "energy",
+    "finished_at_unix_ms"
+  ],
+  "additionalProperties": false
+}

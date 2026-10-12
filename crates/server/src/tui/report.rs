@@ -350,13 +350,14 @@ pub struct Composed {
     pub logs_total: usize,
 }
 
-/// 2026-09-26: The `## Environment` line. A build without
+/// 2026-09-26: The `## Environment` line. A build without a valid
 /// `METRALE_BUILD_COMMIT` says `commit unknown` rather than omitting it.
 pub fn env_line(model: &str, engine_ready: bool) -> String {
     format!(
         "Metrale Engine {} · {} · {}/{} · model: {} · engine ready: {engine_ready}",
         crate::cli::METRALE_VERSION,
-        option_env!("METRALE_BUILD_COMMIT").unwrap_or("commit unknown"),
+        crate::build_stamp::build_commit()
+            .map_or_else(|| "commit unknown".to_string(), |c| c.to_hex()),
         std::env::consts::OS,
         std::env::consts::ARCH,
         if model.is_empty() { "none" } else { model },

@@ -48,6 +48,7 @@ use prompts::resolve_prompts;
 pub async fn completions(
     CurrentModel(state): CurrentModel,
     tenant: Option<axum::extract::Extension<crate::auth::LookupTenant>>,
+    axum::extract::Extension(stamp): axum::extract::Extension<crate::request_stamp::RequestStamp>,
     req: Result<Json<CompletionRequest>, JsonRejection>,
 ) -> Response {
     let Json(req) = match req {
@@ -170,6 +171,9 @@ pub async fn completions(
     let num_beams = req.num_beams.unwrap_or(1);
     let length_penalty = req.length_penalty.unwrap_or(1.0);
     let early_stopping = req.early_stopping.unwrap_or(false);
+    // 2026-10-11: One usage record for the whole request: every prompt, `n` times.
+    let prompt_total = prompts.iter().map(Vec::len).sum::<usize>() * req.n;
+    let pending = crate::request_accounting::Pending::new(stamp, &state, prompt_total);
 
     let params = super::completions_exec::CompletionParams {
         temperature,
@@ -207,13 +211,13 @@ pub async fn completions(
             );
         }
         let prompt_tokens = prompts.into_iter().next().expect("checked non-empty");
-        return match completions_stream(state, prompt_tokens, req, params).await {
+        return match completions_stream(state, prompt_tokens, req, params, pending).await {
             Ok(r) => r,
             Err((status, msg)) => openai_error_response(status, msg),
         };
     }
 
-    super::completions_exec::run_blocking(state, &req, prompts, params).await
+    super::completions_exec::run_blocking(state, &req, prompts, params, pending).await
 }
 
 /// 2026-09-26: Build the streaming `InferenceRequest` for `/v1/completions`.
@@ -284,6 +288,7 @@ pub(super) async fn completions_stream(
     prompt_tokens: Vec<u32>,
     req: CompletionRequest,
     p: super::completions_exec::CompletionParams,
+    pending: crate::request_accounting::Pending,
 ) -> Result<Response, (StatusCode, String)> {
     // 2026-09-26: Same capacity as the chat stream's channel (`chat_stream/mod.rs`).
     let (token_tx, token_rx) = tokio::sync::mpsc::channel::<StreamEvent>(1024);
@@ -321,6 +326,7 @@ pub(super) async fn completions_stream(
             "Scheduler queue full".to_string(),
         )
     })?;
+    pending.dispatched();
 
     let chunk_id = crate::openai::new_completion_id();
     let model_name = state.model_name.clone();
@@ -380,6 +386,7 @@ pub(super) async fn completions_stream(
                 )]
             }
             StreamEvent::Done {
+                terminal_token_id: _,
                 finish_reason,
                 prompt_tokens: _,
                 completion_tokens,
@@ -389,7 +396,19 @@ pub(super) async fn completions_stream(
                 cached_prompt_tokens,
                 accepted_prediction_tokens,
                 guard_stop: _,
+                prefill_started_at,
+                energy,
             } => {
+                let inference_usage = pending.complete(crate::request_accounting::Finish {
+                    outcome: crate::request_accounting::outcome_of(&finish_reason),
+                    completion: completion_tokens,
+                    cached_prompt: cached_prompt_tokens as usize,
+                    reasoning: reasoning_tokens as usize,
+                    prefill_started_at,
+                    ttft_ms: time_to_first_token_ms,
+                    decode_ms: decode_time_ms,
+                    energy,
+                });
                 let tps = crate::ir::Usage::decode_rate_tok_s(completion_tokens, decode_time_ms);
                 let usage = Usage {
                     prompt_tokens: prompt_len,
@@ -409,6 +428,7 @@ pub(super) async fn completions_stream(
                     response_tokens_per_second: tps,
                     decode_time_ms,
                     total_time_ms: time_to_first_token_ms + decode_time_ms,
+                    inference_usage,
                 };
                 if include_usage {
                     // 2026-09-26: A finish chunk without usage, then a
@@ -427,9 +447,12 @@ pub(super) async fn completions_stream(
                     )]
                 }
             }
-            StreamEvent::Error(msg) => vec![Ok(
-                Event::default().data(super::compact::completion_error_frame(&msg))
-            )],
+            StreamEvent::Error(msg) => {
+                pending.fail(metrale_qci_dump::contract::usage::EngineErrorKind::Internal);
+                vec![Ok(Event::default().data(
+                    super::compact::stream_error_frame(&msg, pending.trace()),
+                ))]
+            }
         };
         futures::stream::iter(events)
     });

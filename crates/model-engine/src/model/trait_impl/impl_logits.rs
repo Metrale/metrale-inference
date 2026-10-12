@@ -37,6 +37,16 @@ impl ModelLogits for TransformerModel {
         self.argmax_batch_dispatch(logits_ptr, n, _stream)
     }
 
+    fn argmax_batch_masked(
+        &self,
+        logits_ptr: DevicePtr,
+        n: usize,
+        masks: &[Vec<u32>],
+        stream: u64,
+    ) -> Result<Option<Vec<u32>>> {
+        self.argmax_batch_masked_dispatch(logits_ptr, n, masks, stream)
+    }
+
     fn hidden_after_norm(&self) -> DevicePtr {
         self.hidden_after_norm_dispatch()
     }

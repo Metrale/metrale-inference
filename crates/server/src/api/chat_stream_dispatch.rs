@@ -64,6 +64,7 @@ pub(super) async fn dispatch_streaming(
     top_logprobs: Option<u8>,
     timeout_at: Option<std::time::Instant>,
     active_guard: crate::metrics::ActiveRequestGuard,
+    pending: crate::request_accounting::Pending,
 ) -> super::chat::ChatOutcome {
     if req.n > 1 {
         // 2026-09-26: Returning drops `active_guard`, which decrements
@@ -124,6 +125,7 @@ pub(super) async fn dispatch_streaming(
         ctx_for_stream,
         dump_seq,
         active_guard,
+        pending,
     )
     .await
     {

@@ -17,6 +17,7 @@
 
 
 #include <cuda_bf16.h>
+#include <math.h>
 
 #define WARP_SIZE 32
 #ifndef HDIM
@@ -51,7 +52,8 @@ __device__ __forceinline__ const __nv_bfloat16* paged_kv_ptr(
                  + (unsigned long long)kv_head * head_dim;
 }
 
-extern "C" __global__ void paged_decode_attn(
+template<bool HasSink>
+__device__ __forceinline__ void paged_decode_attn_impl(
     const __nv_bfloat16* __restrict__ Q,          // 2026-09-25: BF16, sequence s at s * q_stride, heads contiguous
     const __nv_bfloat16* __restrict__ K_cache,
     const __nv_bfloat16* __restrict__ V_cache,
@@ -65,7 +67,8 @@ extern "C" __global__ void paged_decode_attn(
     const unsigned int block_size,
     const float inv_sqrt_d,
     const unsigned int q_stride,              // 2026-09-25: elements between sequences' Q rows
-    const unsigned int sliding_window         // 2026-09-25: 0 attends every position; otherwise only the last sliding_window
+    const unsigned int sliding_window,        // 2026-09-25: 0 attends every position; otherwise only the last sliding_window
+    const __nv_bfloat16* __restrict__ sinks
 ) {
     const unsigned int q_head = blockIdx.x;
     const unsigned int seq_idx = blockIdx.y;
@@ -76,7 +79,14 @@ extern "C" __global__ void paged_decode_attn(
     if (q_head >= num_q_heads) return;
 
     const unsigned int seq_len = (unsigned int)seq_lens[seq_idx];
-    if (seq_len == 0) return;
+    if (seq_len == 0) {
+        // 2026-10-07: Empty real values have zero numerator; retain the legacy no-write policy.
+        if constexpr (HasSink) {
+            for (unsigned int d = tid; d < head_dim; d += blockDim.x)
+                O[((unsigned long long)seq_idx * num_q_heads + q_head) * head_dim + d] = __float2bfloat16(0.0f);
+        }
+        return;
+    }
 
     // 2026-09-25: Attend only the last sliding_window positions; window_start is 0 when sliding_window is 0 or
     // seq_len fits in the window.
@@ -301,6 +311,21 @@ extern "C" __global__ void paged_decode_attn(
     if (warp_id == 0) {
         float final_l = smem_l[0];
         float inv_l = (final_l > 0.0f) ? (1.0f / final_l) : 0.0f;
+        // 2026-10-07: Add one zero-value sink after the global warp merge.
+        // FP32 online softmax policy; not the reference's staged BF16 arithmetic.
+        // Negative infinity is exactly the no-sink path; positive infinity/NaN
+        // makes real-value probabilities NaN as softmax does for those inputs.
+        if constexpr (HasSink) {
+            const float sink = __bfloat162float(sinks[q_head]);
+            if (isnan(sink) || sink == INFINITY) {
+                inv_l = NAN;
+            } else if (sink != -INFINITY) {
+                const float maximum = fmaxf(smem_m[0], sink);
+                const float real_scale = __expf(smem_m[0] - maximum);
+                const float denominator = final_l * real_scale + __expf(sink - maximum);
+                inv_l = real_scale / denominator;
+            }
+        }
         unsigned int* o32 = (unsigned int*)(O + (unsigned long long)seq_idx * num_q_heads * head_dim
                                               + (unsigned long long)q_head * head_dim + vec_offset);
         #pragma unroll
@@ -312,6 +337,47 @@ extern "C" __global__ void paged_decode_attn(
             o32[i] = lo | (hi << 16);
         }
     }
+}
+
+// 2026-10-07: Preserve the existing ABI with the sink policy compiled out.
+extern "C" __global__ void paged_decode_attn(
+    const __nv_bfloat16* __restrict__ Q,          // 2026-09-25: BF16, sequence s at s * q_stride, heads contiguous
+    const __nv_bfloat16* __restrict__ K_cache,
+    const __nv_bfloat16* __restrict__ V_cache,
+    __nv_bfloat16* __restrict__ O,                // 2026-09-25: [num_seqs, num_q_heads, head_dim]
+    const int* __restrict__ block_tables,         // 2026-09-25: [num_seqs, max_blocks_per_seq]
+    const int* __restrict__ seq_lens,
+    const unsigned int max_blocks_per_seq,
+    const unsigned int num_q_heads,
+    const unsigned int num_kv_heads,
+    const unsigned int head_dim,
+    const unsigned int block_size,
+    const float inv_sqrt_d,
+    const unsigned int q_stride,              // 2026-09-25: elements between sequences' Q rows
+    const unsigned int sliding_window         // 2026-09-25: 0 attends every position; otherwise only the last sliding_window
+) {
+    paged_decode_attn_impl<false>(Q, K_cache, V_cache, O, block_tables, seq_lens, max_blocks_per_seq, num_q_heads, num_kv_heads, head_dim, block_size, inv_sqrt_d, q_stride, sliding_window, nullptr);
+}
+
+// 2026-10-07: BF16 denominator-only sink, one value per query head.
+extern "C" __global__ void paged_decode_attn_sink(
+    const __nv_bfloat16* __restrict__ Q,          // 2026-09-25: BF16, sequence s at s * q_stride, heads contiguous
+    const __nv_bfloat16* __restrict__ K_cache,
+    const __nv_bfloat16* __restrict__ V_cache,
+    __nv_bfloat16* __restrict__ O,                // 2026-09-25: [num_seqs, num_q_heads, head_dim]
+    const int* __restrict__ block_tables,         // 2026-09-25: [num_seqs, max_blocks_per_seq]
+    const int* __restrict__ seq_lens,
+    const unsigned int max_blocks_per_seq,
+    const unsigned int num_q_heads,
+    const unsigned int num_kv_heads,
+    const unsigned int head_dim,
+    const unsigned int block_size,
+    const float inv_sqrt_d,
+    const unsigned int q_stride,              // 2026-09-25: elements between sequences' Q rows
+    const unsigned int sliding_window,        // 2026-09-25: 0 attends every position; otherwise only the last sliding_window
+    const __nv_bfloat16* __restrict__ sinks
+) {
+    paged_decode_attn_impl<true>(Q, K_cache, V_cache, O, block_tables, seq_lens, max_blocks_per_seq, num_q_heads, num_kv_heads, head_dim, block_size, inv_sqrt_d, q_stride, sliding_window, sinks);
 }
 
 // 2026-09-25: `paged_decode_attn_splitk` splits each sequence into num_splits contiguous KV ranges, one CTA per

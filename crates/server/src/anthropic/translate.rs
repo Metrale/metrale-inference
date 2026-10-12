@@ -58,6 +58,7 @@ impl From<crate::ir::ChatResponse> for MessagesResponse {
                 input_tokens: ir.usage.prompt_tokens,
                 output_tokens: ir.usage.completion_tokens,
                 cache_read_input_tokens: ir.usage.cached_prompt_tokens,
+                inference_usage: ir.inference_usage,
             },
         }
     }

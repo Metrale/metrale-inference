@@ -12,6 +12,7 @@ use crate::api::inference_types::StreamEvent;
 
 fn done() -> StreamEvent {
     StreamEvent::Done {
+        terminal_token_id: None,
         finish_reason: "stop".into(),
         prompt_tokens: 1,
         completion_tokens: 1,
@@ -21,6 +22,8 @@ fn done() -> StreamEvent {
         cached_prompt_tokens: 0,
         accepted_prediction_tokens: 0,
         guard_stop: None,
+        prefill_started_at: std::time::Instant::now(),
+        energy: metrale_telemetry::energy::RequestEnergy::Off,
     }
 }
 

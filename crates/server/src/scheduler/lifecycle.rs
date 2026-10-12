@@ -107,10 +107,18 @@ pub fn finish_sequence(io: &SchedIo, a: &mut ActiveSeq, max_seq_len: usize) {
             .saturating_duration_since(a.decode_start)
             .as_secs_f64()
             * 1000.0;
+        let energy = io
+            .tel
+            .request_finished(metrale_telemetry::request::RequestTiming {
+                ttft_ms,
+                decode_ms,
+                output_tokens: a.output_tokens.len() as u64,
+            });
         io.req.finish(
             &mut a.sink,
             FinishFrame {
                 finish_reason: reason,
+                terminal_token_id: withheld_terminal_id(&a.output_tokens, &a.eos_tokens),
                 output_tokens: &a.output_tokens,
                 time_to_first_token_ms: ttft_ms,
                 decode_time_ms: decode_ms,
@@ -118,16 +126,12 @@ pub fn finish_sequence(io: &SchedIo, a: &mut ActiveSeq, max_seq_len: usize) {
                 cached_prompt_tokens: a.cached_prompt_tokens,
                 accepted_prediction_tokens: a.mtp_acct.accepted_total() as usize,
                 guard_stop: a.guard_stop,
+                prefill_started_at: a.request_start,
+                energy,
                 logprobs: &mut a.logprobs_data,
                 prompt_logprobs: &mut a.seq.prompt_logprobs,
             },
         );
-        io.tel
-            .request_finished(metrale_telemetry::request::RequestTiming {
-                ttft_ms,
-                decode_ms,
-                output_tokens: a.output_tokens.len() as u64,
-            });
     }
     let decode_s = io
         .clock
@@ -389,4 +393,28 @@ pub fn resume_swapped_seq(
 pub fn fail_sequence(a: &mut ActiveSeq, msg: String) {
     a.error = Some(msg);
     a.finished = true;
+}
+
+/// 2026-10-07: Only the final sampled stop belongs on Done; never duplicate ordinary text.
+fn withheld_terminal_id(output: &[u32], stops: &[u32]) -> Option<u32> {
+    output.last().copied().filter(|id| stops.contains(id))
+}
+
+#[cfg(test)]
+mod terminal_id_tests {
+    use super::withheld_terminal_id;
+    #[test]
+    fn terminal_metadata_does_not_replay_an_earlier_stop_or_last_ordinary_token() {
+        assert_eq!(withheld_terminal_id(&[], &[200002, 200012]), None);
+        assert_eq!(
+            withheld_terminal_id(&[200002], &[200002, 200012]),
+            Some(200002)
+        );
+        assert_eq!(
+            withheld_terminal_id(&[17, 200012], &[200002, 200012]),
+            Some(200012)
+        );
+        assert_eq!(withheld_terminal_id(&[200002, 17], &[200002, 200012]), None);
+        assert_eq!(withheld_terminal_id(&[200007], &[200002, 200012]), None);
+    }
 }

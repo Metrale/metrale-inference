@@ -47,6 +47,7 @@ fn text_stream_framing() {
             reason: FinishReason::Stop,
             usage: usage(3, 1),
             token_ids: Vec::new(),
+            inference_usage: None,
         },
     ]);
     assert_eq!(
@@ -89,6 +90,7 @@ fn thinking_then_text_framing() {
             reason: FinishReason::Stop,
             usage: usage(0, 0),
             token_ids: Vec::new(),
+            inference_usage: None,
         },
     ]);
     assert_eq!(
@@ -129,6 +131,7 @@ fn tool_call_stream_framing() {
             reason: FinishReason::ToolCalls,
             usage: usage(0, 0),
             token_ids: Vec::new(),
+            inference_usage: None,
         },
     ]);
     assert_eq!(
@@ -179,6 +182,7 @@ fn multi_tool_calls_close_and_reopen_blocks() {
             reason: FinishReason::ToolCalls,
             usage: usage(0, 2),
             token_ids: Vec::new(),
+            inference_usage: None,
         },
     ]);
     assert_eq!(

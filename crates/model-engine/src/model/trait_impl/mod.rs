@@ -61,6 +61,7 @@ mod lm_head_batched;
 mod mamba2_state_guard;
 mod meta;
 mod meta_argmax;
+mod meta_argmax_masked;
 mod prefill_a;
 mod prefill_b;
 mod prefill_c;

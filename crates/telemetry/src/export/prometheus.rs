@@ -166,6 +166,18 @@ fn render_level_and_device(out: &mut String, snap: &TelemetrySnapshot) {
         "Active NVLink links",
         r.nvlink_active_links.map(|v| v as f64),
     );
+    opt(
+        out,
+        "metrale_gpu_utilization_percent",
+        "Percent of the driver's last sample period the GPU was busy (nvmlDeviceGetUtilizationRates)",
+        r.gpu_util_pct.map(|v| v as f64),
+    );
+    opt(
+        out,
+        "metrale_gpu_count",
+        "GPUs NVML reports to this process (nvmlDeviceGetCount_v2)",
+        r.device_count.map(|v| v as f64),
+    );
 }
 fn render_energy(out: &mut String, t: &Telemetry, snap: &TelemetrySnapshot) {
     let e = &snap.energy;

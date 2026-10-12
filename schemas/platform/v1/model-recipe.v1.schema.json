@@ -1,0 +1,263 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://metrale.ai/schemas/platform/v1/model-recipe.v1.schema.json",
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "title": "ModelRecipe",
+  "description": "One served model, fully pinned: checkpoint, tokenizer, formats, limits, runtime image and flags, semantics and evidence.",
+  "type": "object",
+  "properties": {
+    "version": {
+      "$ref": "common.v1.schema.json#/$defs/version"
+    },
+    "recipe_id": {
+      "$ref": "common.v1.schema.json#/$defs/recipe_id"
+    },
+    "model": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "$ref": "common.v1.schema.json#/$defs/model_revision"
+        },
+        "weights": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/weight_file"
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "source",
+        "weights"
+      ],
+      "additionalProperties": false
+    },
+    "architecture": {
+      "type": "object",
+      "properties": {
+        "family": {
+          "$ref": "common.v1.schema.json#/$defs/text"
+        },
+        "tokenizer": {
+          "$ref": "common.v1.schema.json#/$defs/artifact_ref"
+        },
+        "chat_template": {
+          "$ref": "common.v1.schema.json#/$defs/artifact_ref"
+        }
+      },
+      "required": [
+        "family",
+        "tokenizer",
+        "chat_template"
+      ],
+      "additionalProperties": false
+    },
+    "quantization": {
+      "$ref": "common.v1.schema.json#/$defs/quantization"
+    },
+    "limits": {
+      "type": "object",
+      "properties": {
+        "max_context_tokens": {
+          "$ref": "common.v1.schema.json#/$defs/count"
+        },
+        "max_concurrent_sequences": {
+          "$ref": "common.v1.schema.json#/$defs/count"
+        },
+        "gpu_memory_permille": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        }
+      },
+      "required": [
+        "max_context_tokens",
+        "max_concurrent_sequences",
+        "gpu_memory_permille"
+      ],
+      "additionalProperties": false
+    },
+    "runtime": {
+      "type": "object",
+      "properties": {
+        "engine": {
+          "enum": [
+            "metrale",
+            "sim",
+            "vllm",
+            "sglang"
+          ]
+        },
+        "image": {
+          "$ref": "common.v1.schema.json#/$defs/oci_image"
+        },
+        "hardware_classes": {
+          "type": "array",
+          "items": {
+            "$ref": "common.v1.schema.json#/$defs/hardware_class"
+          },
+          "minItems": 1
+        },
+        "min_nodes": {
+          "$ref": "common.v1.schema.json#/$defs/count"
+        },
+        "serve_flags": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "common.v1.schema.json#/$defs/flag_key"
+          },
+          "additionalProperties": {
+            "$ref": "common.v1.schema.json#/$defs/value"
+          }
+        },
+        "env": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "common.v1.schema.json#/$defs/env_key"
+          },
+          "additionalProperties": {
+            "$ref": "common.v1.schema.json#/$defs/value"
+          }
+        }
+      },
+      "required": [
+        "engine",
+        "image",
+        "hardware_classes",
+        "min_nodes",
+        "serve_flags",
+        "env"
+      ],
+      "additionalProperties": false
+    },
+    "semantics": {
+      "type": "object",
+      "properties": {
+        "tool_calls": {
+          "$ref": "#/$defs/capability"
+        },
+        "structured_output": {
+          "$ref": "#/$defs/capability"
+        },
+        "reasoning": {
+          "$ref": "#/$defs/capability"
+        },
+        "input_modalities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/modality"
+          },
+          "minItems": 1
+        },
+        "output_modalities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/modality"
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "tool_calls",
+        "structured_output",
+        "reasoning",
+        "input_modalities",
+        "output_modalities"
+      ],
+      "additionalProperties": false
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "enum": [
+              "benchmark",
+              "coherence",
+              "certification"
+            ]
+          },
+          "artifact": {
+            "$ref": "common.v1.schema.json#/$defs/artifact_ref"
+          }
+        },
+        "required": [
+          "kind",
+          "artifact"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "version",
+    "recipe_id",
+    "model",
+    "architecture",
+    "quantization",
+    "limits",
+    "runtime",
+    "semantics",
+    "evidence"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "weight_file": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "$ref": "common.v1.schema.json#/$defs/text"
+        },
+        "sha256": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "bytes": {
+          "$ref": "common.v1.schema.json#/$defs/u64"
+        }
+      },
+      "required": [
+        "path",
+        "sha256",
+        "bytes"
+      ],
+      "additionalProperties": false
+    },
+    "capability": {
+      "oneOf": [
+        {
+          "const": "unsupported"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "supported": {
+              "type": "object",
+              "properties": {
+                "parser": {
+                  "$ref": "common.v1.schema.json#/$defs/text"
+                }
+              },
+              "required": [
+                "parser"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "supported"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "modality": {
+      "enum": [
+        "text",
+        "image",
+        "audio",
+        "video"
+      ]
+    }
+  }
+}

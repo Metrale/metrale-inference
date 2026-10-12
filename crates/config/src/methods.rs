@@ -233,7 +233,7 @@ impl ModelConfig {
 
     /// 2026-09-26: Whether to keep the LM head in BF16 instead of quantizing it to NVFP4 at
     /// load. `lm_head_bf16_override` (set by serve's `--lm-head-dtype`) wins when set;
-    /// otherwise yes for MLA models (`kv_lora_rank > 0`), for `laguna`, and for dense
+    /// otherwise yes for MLA models (`kv_lora_rank > 0`), for `laguna`, validated GPT-OSS, and for dense
     /// `gemma4` unless `METRALE_GEMMA4_LMHEAD_NVFP4=1`, and no for the rest.
     pub fn skip_lm_head_quantization(&self) -> bool {
         if let Some(force_bf16) = self.lm_head_bf16_override {
@@ -244,6 +244,13 @@ impl ModelConfig {
         }
         if self.model_type == "laguna" {
             return true;
+        }
+        // 2026-10-07: GPT-OSS keeps the head at its declared precision, not a second
+        // family-specific dtype constant. Explicit operator overrides above still win.
+        if self.gpt_oss.is_some() {
+            return self.quantization_config.as_ref().is_some_and(|q| {
+                !q.precision.is_undeclared() && q.precision.resolve("lm_head").weight.is_none()
+            });
         }
         if self.model_type == "gemma4" && self.num_experts == 0 {
             return std::env::var("METRALE_GEMMA4_LMHEAD_NVFP4").ok().as_deref() != Some("1");

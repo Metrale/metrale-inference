@@ -126,3 +126,43 @@ extern "C" __global__ void feed_resolve(
         ids_out[i] = (s & FEED_HOST_BIT) ? (s & ~FEED_HOST_BIT) : cells[s];
     }
 }
+
+// 2026-10-07: Host finite greedy policy, highest index on ties. Eight mask IDs
+// per row; UINT_MAX means absent. Any unmasked nonfinite value or no remaining
+// finite value returns UINT_MAX, requiring unchanged host processing. Launch
+// exactly 256 threads per row. Existing feed entry policies are unchanged.
+extern "C" __global__ void argmax_bf16_batch_masked_host(
+    const __nv_bfloat16* __restrict__ logits,
+    const unsigned* __restrict__ masks,
+    unsigned* __restrict__ out, unsigned vocab, unsigned stride) {
+    __shared__ float values[256];
+    __shared__ unsigned indices[256];
+    __shared__ unsigned invalid[256];
+    const unsigned t = threadIdx.x, row = blockIdx.x;
+    float best = -CUDART_INF_F;
+    unsigned idx = 0xffffffffu, bad = 0;
+    for (unsigned i = t; i < vocab; i += 256) {
+        bool masked = false;
+        #pragma unroll
+        for (unsigned j = 0; j < 8; ++j) masked |= masks[row * 8 + j] == i;
+        if (masked) continue;
+        float v = __bfloat162float(logits[(size_t)row * stride + i]);
+        if (!isfinite(v)) { bad = 1; continue; }
+        if (idx == 0xffffffffu || v > best || (v == best && i > idx)) { best = v; idx = i; }
+    }
+    values[t] = best; indices[t] = idx; invalid[t] = bad;
+    __syncthreads();
+    for (unsigned delta = 128; delta; delta >>= 1) {
+        if (t < delta) {
+            unsigned other = indices[t + delta];
+            float v = values[t + delta];
+            if (other != 0xffffffffu && (indices[t] == 0xffffffffu || v > values[t]
+                || (v == values[t] && other > indices[t]))) {
+                values[t] = v; indices[t] = other;
+            }
+            invalid[t] |= invalid[t + delta];
+        }
+        __syncthreads();
+    }
+    if (t == 0) out[row] = invalid[0] ? 0xffffffffu : indices[0];
+}

@@ -15,6 +15,7 @@ pub(crate) mod listener_rcvbuf;
 pub(crate) mod memory_probe;
 pub(crate) mod middleware;
 pub(crate) mod model_host;
+pub(crate) mod model_identity;
 pub(crate) mod model_swap;
 pub(crate) mod promotion;
 pub(crate) mod serve;
@@ -25,6 +26,7 @@ mod serve_router;
 pub(crate) mod telemetry_boot;
 #[cfg(feature = "otlp")]
 mod telemetry_otlp;
+pub(crate) mod trace_layer;
 
 #[cfg(test)]
 mod tests;

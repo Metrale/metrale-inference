@@ -1,0 +1,751 @@
+{
+  "frozen_source": "99b2613072a69a8708048347f1b74d9cc7880ed7",
+  "scope": "Bounded component/replay/API regression validation; no certification or performance qualification",
+  "cuda": {
+    "original142": "971ae43918aa811ee32a7e642af6360725fa0a0b",
+    "original143": "37723422e29d3c3598721372dfff6dc8c461ad57",
+    "machine": "spark2",
+    "compiler": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2025 NVIDIA Corporation\nBuilt on Wed_Aug_20_01:57:39_PM_PDT_2025\nCuda compilation tools, release 13.0, V13.0.88\nBuild cuda_13.0.r13.0/compiler.36424714_0\n",
+    "commands": [
+      "/usr/local/cuda/bin/nvcc -arch=sm_121 -O3 --fmad=false -Xptxas=-v b_batchm.cu -o b_batchm",
+      "timeout 180 ./b_batchm",
+      "/usr/local/cuda/bin/nvcc -arch=sm_121 -O3 --fmad=false -Xptxas=-v family_union.cu -o family_union",
+      "timeout 180 ./family_union",
+      "/usr/local/cuda/bin/nvcc -arch=sm_121 -O3 --fmad=false -Xptxas=-v --cubin union.cu -o union.cubin"
+    ],
+    "independent_oracle": "CPU signed int64 dot of integer operands scaled by 1/16 each; exact dyadic /256, host integer RNE BF16 conversion",
+    "results": {
+      "b_batchm": "batch cases=65 fp32_mismatches=0 legacy_mismatches=0 padding_ok=1 early_round_control=1129436\nlegacy split mismatches=0\ninteger oracle mismatches=0 truncation_detected_all=1 padding_ok=1\ndirect grid mismatches=0\nrefusals_all=1\nRESULT PASS b_batchm\n",
+      "family_union": "BF16 cases=108 five-way original143 legacy/M4 vs union legacy/M4/scalar mismatches=0 padding_errors=0\nFP32 original142/union/scalar cases=13 bit_mismatches=0; independent CPU int64 dyadic oracle mismatches=0 wrong_row_detected=1 omitted_Y_detected=1\nRESULT PASS family_union\n"
+    },
+    "limitations": [
+      "Constructed component operands only; no full-model run or certification.",
+      "Existing met-qwen38 service left untouched.",
+      "Historical dense harness missing frozen include supplied from exactly verified pinned Git blob.",
+      "Scratch adapter adds undef MAX_M after historical frozen header to prevent macro pollution."
+    ],
+    "passed": true
+  },
+  "hip_component_logs": {
+    "run.log": "batch cases=65 fp32_mismatches=0 legacy_mismatches=0 padding_ok=1 early_round_control=1129436\nlegacy split mismatches=0\ninteger oracle mismatches=0 truncation_detected_all=1 padding_ok=1\ndirect grid mismatches=0\nrefusals_all=1\nRESULT PASS b_batchm\n",
+    "family-run.log": "BF16 cases=108 five-way original143 legacy/M4 vs union legacy/M4/scalar mismatches=0 padding_errors=0\nFP32 original142/union/scalar cases=13 bit_mismatches=0; independent CPU int64 dyadic oracle mismatches=0 wrong_row_detected=1 omitted_Y_detected=1\nRESULT PASS family_union\n"
+  },
+  "gptoss_chunk_parity": {
+    "16": {
+      "scope": "diagnostic single-sequence chunks; no production admission or speed qualification",
+      "capacity": 16,
+      "future_cache_fill": "BF16 NaN",
+      "admission_controls": "empty/oversize/nonsequential/overflow/stream mismatch/released scratch; allocation failure poisons state",
+      "cases": [
+        {
+          "width": 0,
+          "hidden_byte_mismatches": 0,
+          "cache_byte_mismatches": 0,
+          "nonfinite": 0,
+          "following_decode_position": 251
+        },
+        {
+          "width": 1,
+          "hidden_byte_mismatches": 0,
+          "cache_byte_mismatches": 0,
+          "nonfinite": 0,
+          "following_decode_position": 251
+        },
+        {
+          "width": 2,
+          "hidden_byte_mismatches": 0,
+          "cache_byte_mismatches": 0,
+          "nonfinite": 0,
+          "following_decode_position": 251
+        },
+        {
+          "width": 8,
+          "hidden_byte_mismatches": 0,
+          "cache_byte_mismatches": 0,
+          "nonfinite": 0,
+          "following_decode_position": 251
+        },
+        {
+          "width": 16,
+          "hidden_byte_mismatches": 0,
+          "cache_byte_mismatches": 0,
+          "nonfinite": 0,
+          "following_decode_position": 251
+        },
+        {
+          "width": 15,
+          "hidden_byte_mismatches": 0,
+          "cache_byte_mismatches": 0,
+          "nonfinite": 0,
+          "following_decode_position": 251
+        }
+      ],
+      "passed": true
+    },
+    "64": {
+      "scope": "diagnostic single-sequence chunks; no production admission or speed qualification",
+      "capacity": 64,
+      "future_cache_fill": "BF16 NaN",
+      "admission_controls": "empty/oversize/nonsequential/overflow/stream mismatch/released scratch; allocation failure poisons state",
+      "cases": [
+        {
+          "width": 0,
+          "hidden_byte_mismatches": 0,
+          "cache_byte_mismatches": 0,
+          "nonfinite": 0,
+          "following_decode_position": 251
+        },
+        {
+          "width": 16,
+          "hidden_byte_mismatches": 0,
+          "cache_byte_mismatches": 0,
+          "nonfinite": 0,
+          "following_decode_position": 251
+        },
+        {
+          "width": 31,
+          "hidden_byte_mismatches": 0,
+          "cache_byte_mismatches": 0,
+          "nonfinite": 0,
+          "following_decode_position": 251
+        },
+        {
+          "width": 63,
+          "hidden_byte_mismatches": 0,
+          "cache_byte_mismatches": 0,
+          "nonfinite": 0,
+          "following_decode_position": 251
+        },
+        {
+          "width": 64,
+          "hidden_byte_mismatches": 0,
+          "cache_byte_mismatches": 0,
+          "nonfinite": 0,
+          "following_decode_position": 251
+        }
+      ],
+      "passed": true
+    },
+    "128": {
+      "scope": "diagnostic single-sequence chunks; no production admission or speed qualification",
+      "capacity": 128,
+      "future_cache_fill": "BF16 NaN",
+      "admission_controls": "empty/oversize/nonsequential/overflow/stream mismatch/released scratch; allocation failure poisons state",
+      "cases": [
+        {
+          "width": 0,
+          "hidden_byte_mismatches": 0,
+          "cache_byte_mismatches": 0,
+          "nonfinite": 0,
+          "following_decode_position": 251
+        },
+        {
+          "width": 16,
+          "hidden_byte_mismatches": 0,
+          "cache_byte_mismatches": 0,
+          "nonfinite": 0,
+          "following_decode_position": 251
+        },
+        {
+          "width": 31,
+          "hidden_byte_mismatches": 0,
+          "cache_byte_mismatches": 0,
+          "nonfinite": 0,
+          "following_decode_position": 251
+        },
+        {
+          "width": 64,
+          "hidden_byte_mismatches": 0,
+          "cache_byte_mismatches": 0,
+          "nonfinite": 0,
+          "following_decode_position": 251
+        },
+        {
+          "width": 127,
+          "hidden_byte_mismatches": 0,
+          "cache_byte_mismatches": 0,
+          "nonfinite": 0,
+          "following_decode_position": 251
+        },
+        {
+          "width": 128,
+          "hidden_byte_mismatches": 0,
+          "cache_byte_mismatches": 0,
+          "nonfinite": 0,
+          "following_decode_position": 251
+        }
+      ],
+      "passed": true
+    }
+  },
+  "laguna_baseline_comparison": {
+    "rows": [
+      {
+        "group": "g6",
+        "kv": "bf16",
+        "prompt": "capital",
+        "echo_logprobs_equal": true,
+        "greedy_logprobs_equal": true,
+        "greedy_text_equal": true,
+        "finish_equal": true
+      },
+      {
+        "group": "g6",
+        "kv": "bf16",
+        "prompt": "count",
+        "echo_logprobs_equal": true,
+        "greedy_logprobs_equal": true,
+        "greedy_text_equal": true,
+        "finish_equal": true
+      },
+      {
+        "group": "g6",
+        "kv": "bf16",
+        "prompt": "python",
+        "echo_logprobs_equal": true,
+        "greedy_logprobs_equal": true,
+        "greedy_text_equal": true,
+        "finish_equal": true
+      },
+      {
+        "group": "g6",
+        "kv": "bf16",
+        "prompt": "prose",
+        "echo_logprobs_equal": true,
+        "greedy_logprobs_equal": true,
+        "greedy_text_equal": true,
+        "finish_equal": true
+      },
+      {
+        "group": "g6",
+        "kv": "bf16",
+        "prompt": "json",
+        "echo_logprobs_equal": true,
+        "greedy_logprobs_equal": true,
+        "greedy_text_equal": true,
+        "finish_equal": true
+      },
+      {
+        "group": "g6",
+        "kv": "bf16",
+        "prompt": "chat_math",
+        "echo_logprobs_equal": true,
+        "greedy_logprobs_equal": true,
+        "greedy_text_equal": true,
+        "finish_equal": true
+      },
+      {
+        "group": "g6",
+        "kv": "bf16",
+        "prompt": "chat_code",
+        "echo_logprobs_equal": true,
+        "greedy_logprobs_equal": true,
+        "greedy_text_equal": true,
+        "finish_equal": true
+      },
+      {
+        "group": "g6",
+        "kv": "fp8",
+        "prompt": "capital",
+        "echo_logprobs_equal": true,
+        "greedy_logprobs_equal": true,
+        "greedy_text_equal": true,
+        "finish_equal": true
+      },
+      {
+        "group": "g6",
+        "kv": "fp8",
+        "prompt": "count",
+        "echo_logprobs_equal": true,
+        "greedy_logprobs_equal": true,
+        "greedy_text_equal": true,
+        "finish_equal": true
+      },
+      {
+        "group": "g6",
+        "kv": "fp8",
+        "prompt": "python",
+        "echo_logprobs_equal": true,
+        "greedy_logprobs_equal": true,
+        "greedy_text_equal": true,
+        "finish_equal": true
+      },
+      {
+        "group": "g6",
+        "kv": "fp8",
+        "prompt": "prose",
+        "echo_logprobs_equal": true,
+        "greedy_logprobs_equal": true,
+        "greedy_text_equal": true,
+        "finish_equal": true
+      },
+      {
+        "group": "g6",
+        "kv": "fp8",
+        "prompt": "json",
+        "echo_logprobs_equal": true,
+        "greedy_logprobs_equal": true,
+        "greedy_text_equal": true,
+        "finish_equal": true
+      },
+      {
+        "group": "g6",
+        "kv": "fp8",
+        "prompt": "chat_math",
+        "echo_logprobs_equal": true,
+        "greedy_logprobs_equal": true,
+        "greedy_text_equal": true,
+        "finish_equal": true
+      },
+      {
+        "group": "g6",
+        "kv": "fp8",
+        "prompt": "chat_code",
+        "echo_logprobs_equal": true,
+        "greedy_logprobs_equal": true,
+        "greedy_text_equal": true,
+        "finish_equal": true
+      },
+      {
+        "group": "g11",
+        "kv": "bf16",
+        "prompt": "long_measure",
+        "echo_logprobs_equal": true,
+        "greedy_logprobs_equal": true,
+        "greedy_text_equal": true,
+        "finish_equal": true
+      },
+      {
+        "group": "g11",
+        "kv": "bf16",
+        "prompt": "long_recall",
+        "echo_logprobs_equal": true,
+        "greedy_logprobs_equal": true,
+        "greedy_text_equal": true,
+        "finish_equal": true
+      },
+      {
+        "group": "g11",
+        "kv": "fp8",
+        "prompt": "long_measure",
+        "echo_logprobs_equal": true,
+        "greedy_logprobs_equal": true,
+        "greedy_text_equal": true,
+        "finish_equal": true
+      },
+      {
+        "group": "g11",
+        "kv": "fp8",
+        "prompt": "long_recall",
+        "echo_logprobs_equal": true,
+        "greedy_logprobs_equal": true,
+        "greedy_text_equal": true,
+        "finish_equal": true
+      }
+    ],
+    "all_equal": true
+  },
+  "api_smokes": {
+    "gptoss-serial": {
+      "passed": true,
+      "cases": [
+        {
+          "name": "arithmetic",
+          "passed": true,
+          "status": 200
+        },
+        {
+          "name": "extract",
+          "passed": true,
+          "status": 200
+        },
+        {
+          "name": "stream",
+          "passed": true,
+          "status": 200
+        },
+        {
+          "name": "tool-call",
+          "passed": true,
+          "status": 200
+        },
+        {
+          "name": "tool-result",
+          "passed": true,
+          "status": 200
+        },
+        {
+          "name": "repeat-after-tool",
+          "passed": true,
+          "status": 200
+        }
+      ],
+      "identity": {
+        "source": "99b2613072a69a8708048347f1b74d9cc7880ed7 (git archive)",
+        "binary_sha256": "83d5470fe8c8384e78d02f452bfb28bc02e01135c3739eb597416960fb7b40b1",
+        "command": [
+          "/home/tom/qci-stack-validation-20261011/bin/gptoss/met",
+          "serve",
+          "/home/tom/models/gpt-oss-20b",
+          "--model-name",
+          "gpt-oss-20b",
+          "--max-batch-size",
+          "1",
+          "--kv-cache-dtype",
+          "bf16",
+          "--lm-head-dtype",
+          "bf16",
+          "--swap-space-gb",
+          "0",
+          "--gpu-memory-utilization",
+          "0.85",
+          "--max-seq-len",
+          "2048",
+          "--activation-quantization",
+          "adaptive",
+          "--forward",
+          "legacy",
+          "--bind",
+          "127.0.0.1",
+          "--port",
+          "18944",
+          "--no-tui",
+          "--experimental-gpt-oss"
+        ],
+        "checkpoint": "/home/tom/models/gpt-oss-20b",
+        "scope": "bounded arithmetic/extraction/stream/fixture-tool smoke; no generated-code execution or certification"
+      },
+      "summary_sha256": "96f344ded8dfbd876d9d52374576cc7c1d9a84d3f80ac1543de32e676fc57a09"
+    },
+    "gptoss-chunk128": {
+      "passed": true,
+      "cases": [
+        {
+          "name": "arithmetic",
+          "passed": true,
+          "status": 200
+        },
+        {
+          "name": "extract",
+          "passed": true,
+          "status": 200
+        },
+        {
+          "name": "stream",
+          "passed": true,
+          "status": 200
+        },
+        {
+          "name": "tool-call",
+          "passed": true,
+          "status": 200
+        },
+        {
+          "name": "tool-result",
+          "passed": true,
+          "status": 200
+        },
+        {
+          "name": "repeat-after-tool",
+          "passed": true,
+          "status": 200
+        }
+      ],
+      "identity": {
+        "source": "99b2613072a69a8708048347f1b74d9cc7880ed7 (git archive)",
+        "binary_sha256": "83d5470fe8c8384e78d02f452bfb28bc02e01135c3739eb597416960fb7b40b1",
+        "command": [
+          "/home/tom/qci-stack-validation-20261011/bin/gptoss/met",
+          "serve",
+          "/home/tom/models/gpt-oss-20b",
+          "--model-name",
+          "gpt-oss-20b",
+          "--max-batch-size",
+          "1",
+          "--kv-cache-dtype",
+          "bf16",
+          "--lm-head-dtype",
+          "bf16",
+          "--swap-space-gb",
+          "0",
+          "--gpu-memory-utilization",
+          "0.85",
+          "--max-seq-len",
+          "2048",
+          "--activation-quantization",
+          "adaptive",
+          "--forward",
+          "legacy",
+          "--bind",
+          "127.0.0.1",
+          "--port",
+          "18944",
+          "--no-tui",
+          "--experimental-gpt-oss",
+          "--experimental-gpt-oss-chunk-prefill",
+          "--experimental-gpt-oss-chunk-tokens",
+          "128"
+        ],
+        "checkpoint": "/home/tom/models/gpt-oss-20b",
+        "scope": "bounded arithmetic/extraction/stream/fixture-tool smoke; no generated-code execution or certification"
+      },
+      "summary_sha256": "10444ff709982773bb34d2171c04f9adecff251d8ca2b687899dac3bdc53cd9c"
+    },
+    "laguna-serial": {
+      "passed": false,
+      "cases": [
+        {
+          "name": "arithmetic",
+          "passed": true,
+          "status": 200
+        },
+        {
+          "name": "extract",
+          "passed": true,
+          "status": 200
+        },
+        {
+          "name": "stream",
+          "passed": true,
+          "status": 200
+        },
+        {
+          "name": "tool-call",
+          "passed": true,
+          "status": 200
+        },
+        {
+          "name": "tool-result",
+          "passed": false,
+          "status": 200
+        },
+        {
+          "name": "repeat-after-tool",
+          "passed": true,
+          "status": 200
+        }
+      ],
+      "identity": {
+        "source": "99b2613072a69a8708048347f1b74d9cc7880ed7 (git archive)",
+        "binary_sha256": "7403dfb634eeff45ad44d423e267ae5d97d7a7af3e63dc8e9139b3fa5cd86408",
+        "command": [
+          "/home/tom/qci-stack-validation-20261011/bin/laguna/met",
+          "serve",
+          "/home/tom/models/laguna-xs-2.1-int4",
+          "--model-name",
+          "laguna-xs-2.1",
+          "--max-batch-size",
+          "1",
+          "--kv-cache-dtype",
+          "fp8",
+          "--lm-head-dtype",
+          "bf16",
+          "--swap-space-gb",
+          "0",
+          "--gpu-memory-utilization",
+          "0.85",
+          "--max-seq-len",
+          "2048",
+          "--activation-quantization",
+          "adaptive",
+          "--forward",
+          "legacy",
+          "--bind",
+          "127.0.0.1",
+          "--port",
+          "18944",
+          "--no-tui"
+        ],
+        "checkpoint": "/home/tom/models/laguna-xs-2.1-int4",
+        "scope": "bounded arithmetic/extraction/stream/fixture-tool smoke; no generated-code execution or certification"
+      },
+      "summary_sha256": "d20b3513edf6023553cc4b43479359cc04d4d776ab1b4b96757281925ba7959a"
+    },
+    "laguna-baseline": {
+      "passed": false,
+      "cases": [
+        {
+          "name": "arithmetic",
+          "passed": true,
+          "status": 200
+        },
+        {
+          "name": "extract",
+          "passed": true,
+          "status": 200
+        },
+        {
+          "name": "stream",
+          "passed": true,
+          "status": 200
+        },
+        {
+          "name": "tool-call",
+          "passed": true,
+          "status": 200
+        },
+        {
+          "name": "tool-result",
+          "passed": false,
+          "status": 200
+        },
+        {
+          "name": "repeat-after-tool",
+          "passed": true,
+          "status": 200
+        }
+      ],
+      "identity": {
+        "source": "older retained Laguna binary",
+        "binary_sha256": "02a7b5776b85c37300958b5adf3a45b8c74e08a0e0ef775c6345d8c207f4372f",
+        "command": [
+          "/home/tom/tgt/laguna/release/met",
+          "serve",
+          "/home/tom/models/laguna-xs-2.1-int4",
+          "--model-name",
+          "laguna-xs-2.1",
+          "--max-batch-size",
+          "1",
+          "--kv-cache-dtype",
+          "fp8",
+          "--lm-head-dtype",
+          "bf16",
+          "--swap-space-gb",
+          "0",
+          "--gpu-memory-utilization",
+          "0.85",
+          "--max-seq-len",
+          "2048",
+          "--activation-quantization",
+          "adaptive",
+          "--forward",
+          "legacy",
+          "--bind",
+          "127.0.0.1",
+          "--port",
+          "18944",
+          "--no-tui"
+        ],
+        "checkpoint": "/home/tom/models/laguna-xs-2.1-int4",
+        "scope": "bounded arithmetic/extraction/stream/fixture-tool smoke; no generated-code execution or certification"
+      },
+      "summary_sha256": "1631ecd01d0acea9c9b870e9eb6b813a1859b72011425f7317a5ceb6d4beffa5"
+    },
+    "laguna-fixed": {
+      "passed": true,
+      "cases": [
+        {
+          "name": "arithmetic",
+          "passed": true,
+          "status": 200
+        },
+        {
+          "name": "extract",
+          "passed": true,
+          "status": 200
+        },
+        {
+          "name": "stream",
+          "passed": true,
+          "status": 200
+        },
+        {
+          "name": "tool-call",
+          "passed": true,
+          "status": 200
+        },
+        {
+          "name": "tool-result",
+          "passed": true,
+          "status": 200
+        },
+        {
+          "name": "repeat-after-tool",
+          "passed": true,
+          "status": 200
+        }
+      ],
+      "identity": {
+        "source": "99b2613072a69a8708048347f1b74d9cc7880ed7 (git archive)",
+        "local_eos_patch": true,
+        "binary_sha256": "3955fe66b3e20bed0cfa148dea060e262c362c66a5c26bde0bf397f184f054e8",
+        "command": [
+          "/home/tom/qci-stack-validation-20261011/target/release/met",
+          "serve",
+          "/home/tom/models/laguna-xs-2.1-int4",
+          "--model-name",
+          "laguna-xs-2.1",
+          "--max-batch-size",
+          "1",
+          "--kv-cache-dtype",
+          "fp8",
+          "--lm-head-dtype",
+          "bf16",
+          "--swap-space-gb",
+          "0",
+          "--gpu-memory-utilization",
+          "0.85",
+          "--max-seq-len",
+          "2048",
+          "--activation-quantization",
+          "adaptive",
+          "--forward",
+          "legacy",
+          "--bind",
+          "127.0.0.1",
+          "--port",
+          "18944",
+          "--no-tui"
+        ],
+        "checkpoint": "/home/tom/models/laguna-xs-2.1-int4",
+        "scope": "bounded arithmetic/extraction/stream/fixture-tool smoke; no generated-code execution or certification"
+      },
+      "summary_sha256": "e541021a3c8ca62717ed16629b9911d555a75116f36bf6e21ea52b29b0ca2f14"
+    }
+  },
+  "scheduler_host_tests": {
+    "base": "99b2613072a69a8708048347f1b74d9cc7880ed7",
+    "commands": [
+      "METRALE_SKIP_BUILD=1 CUDARC_CUDA_VERSION=13000 CARGO_TARGET_DIR=/Users/tom/dev/.metrale-work/qci-stack-validation-20261011/host-target cargo test -p metrale-server --no-default-features --features metal --bin met optional_tools_short_answer_eos_finishes",
+      "METRALE_SKIP_BUILD=1 CUDARC_CUDA_VERSION=13000 CARGO_TARGET_DIR=/Users/tom/dev/.metrale-work/qci-stack-validation-20261011/host-target cargo test -p metrale-server --no-default-features --features metal --bin met json_eos_policy_tests",
+      "METRALE_SKIP_BUILD=1 CUDARC_CUDA_VERSION=13000 CARGO_TARGET_DIR=/Users/tom/dev/.metrale-work/qci-stack-validation-20261011/host-target cargo test -p metrale-server --no-default-features --features metal --bin met grammar::tests::parallel_calls"
+    ],
+    "red": "1 failing actual scheduler regression, optional tool EOS improperly suppressed",
+    "green": "4 EOS scheduler tests passed; 5 actual optional/required/parallel grammar controls passed",
+    "source_hashes": {
+      "crates/server/src/scheduler/decode_logits_step/per_token.rs": "0d385c22317276d41d9f186842c40afced31d8d362fc9ea5f70b9ded5ebd0c41",
+      "crates/server/src/scheduler/decode_logits_step/json_eos_policy_tests.rs": "39d1bf3525f5684ee19ac08eb6af757d79128afa34464a0cfe3fbd9c0243de7a"
+    },
+    "logs": {
+      "eos-red-local-metal-bin.log": "6f4e24f98df9e920ff97944660084c2d8fb1e5e658919aaec57d16254eb69235",
+      "eos-green-local-metal-bin.log": "69f7d9f52deb3e14bd88f37922e937c0fde3a759ecae461fca19756a8b32cc7e",
+      "eos-grammar-controls-local.log": "d9091274303b4abb9e6ac77817ae2be89745f5498ebb67d29cbb78b26f3faa98",
+      "eos-first_token_policy_tests-local.log": "50e45496fb3b28e8d1a9d4753c2d3e7ad2765a0b999ea5f6d63b3e72fd9937a2",
+      "eos-emit_eos_thinking_tests-local.log": "98449a27b8c7eaa823193d10b0d0743756d52b060b3c042e14a07936384859f9",
+      "eos-post_think-local.log": "b08c3c9980a5b4df5aa29cdd58c3573a0d279260de5ae76c460cedf3c153e3d3",
+      "eos-json_eos_policy_tests-local.log": "50ac72eb010fd1f560d477debc875386512c4323f6d211574fa10e95d1f94866"
+    },
+    "scope": "Local host tests only; no GPU, remote file changes or git remote writes. No hard-budget policy changes.",
+    "additional_controls": "first_token_policy_tests7passed, emit_eos_thinking_tests3passed, post_think2passed, json_eos_policy_tests4passed rerun after final formatting"
+  },
+  "fix_identity": {
+    "base": "99b2613072a69a8708048347f1b74d9cc7880ed7",
+    "sha256": {
+      "crates/server/src/scheduler/decode_logits_step/per_token.rs": "0d385c22317276d41d9f186842c40afced31d8d362fc9ea5f70b9ded5ebd0c41",
+      "crates/server/src/scheduler/decode_logits_step/json_eos_policy_tests.rs": "39d1bf3525f5684ee19ac08eb6af757d79128afa34464a0cfe3fbd9c0243de7a",
+      "crates/model-layers/tests/cuda/dense_batchm_fp32_test.cu": "8458bd31677855ca2894a69f65ea321d9374ee4311b2941f5259a4e2bb390f5f",
+      "crates/model-layers/tests/cuda/dense_batchm_frozen.cuh": "dbe5bc83ba5f02d74483dce95004549c936184bf48296a967cfed57139b15604"
+    }
+  },
+  "pre_push_checks": {
+    "fmt": "passed",
+    "changed_file_typos": "passed",
+    "diff_check": "passed",
+    "license_engine": {
+      "checked": 3820,
+      "invalid": 0
+    },
+    "macos_workspace_clippy": "blocked: storage integration tests import CUDA-gated modules under Metal/no-default features",
+    "macos_server_clippy": "blocked: unchanged Metal GPU runtime too_many_arguments and arc_with_non_send_sync lints"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "issuer": "5c1f0b3f6f3e4d2a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a",
+  "sequence": 2,
+  "issued_at_unix_ms": 1791000600000,
+  "revoked": [
+    {
+      "subject": {
+        "recipe": "17699781ee35bdc0af168e4a85fab0bc0a6e420fc18aaf4e04c74fd25905a50b"
+      },
+      "reason": "evidence_invalid",
+      "revoked_at_unix_ms": 1791000300000
+    },
+    {
+      "subject": {
+        "release_manifest": "a78cf072e759fb43522f696d040a436025ef7f0e5f1eb37018df163cb8fb4e28"
+      },
+      "reason": "superseded",
+      "revoked_at_unix_ms": 1791000500000
+    }
+  ]
+}

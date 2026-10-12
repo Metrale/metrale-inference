@@ -6,6 +6,7 @@
 //! Invariants: none beyond the types.
 
 mod load_layers;
+mod packed_int;
 
 use anyhow::Result;
 use metrale_cache::kv_cache::KvCacheDtype;

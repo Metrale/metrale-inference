@@ -14,6 +14,7 @@ use std::ffi::{c_uint, c_ulonglong};
 
 use metrale_gpu_sys::nvml::{
     NVML_ERROR_NOT_SUPPORTED, NVML_SUCCESS, NvmlDeviceHandle, NvmlFns, NvmlMemory, NvmlReturn,
+    NvmlUtilization,
 };
 
 /// 2026-09-26: What the scripted driver answers.
@@ -26,6 +27,8 @@ pub struct Script {
     pub memory_supported: bool,
     /// 2026-09-26: The temperature query's return code.
     pub temperature_rc: NvmlReturn,
+    /// 2026-10-11: `nvmlUtilization_t.gpu`, percent.
+    pub gpu_util_pct: u32,
 }
 
 impl Default for Script {
@@ -35,6 +38,7 @@ impl Default for Script {
             power_mw: 60_000,
             memory_supported: true,
             temperature_rc: NVML_SUCCESS,
+            gpu_util_pct: 93,
         }
     }
 }
@@ -110,6 +114,18 @@ unsafe extern "C" fn memory(_: NvmlDeviceHandle, out: *mut NvmlMemory) -> NvmlRe
     NVML_SUCCESS
 }
 
+unsafe extern "C" fn utilization(_: NvmlDeviceHandle, out: *mut NvmlUtilization) -> NvmlReturn {
+    let gpu = SCRIPT.with(|c| c.borrow().gpu_util_pct);
+    // 2026-10-11: SAFETY: `out` is the caller's valid out-pointer.
+    unsafe { *out = NvmlUtilization { gpu, memory: 40 } };
+    NVML_SUCCESS
+}
+unsafe extern "C" fn count(out: *mut c_uint) -> NvmlReturn {
+    // 2026-10-11: SAFETY: `out` is the caller's valid out-pointer.
+    unsafe { *out = 1 };
+    NVML_SUCCESS
+}
+
 /// 2026-09-26: The scripted table. Ordinal 0 is the only device, and the
 /// PCIe and NVLink entry points are left unresolved.
 pub fn table() -> NvmlFns {
@@ -125,5 +141,7 @@ pub fn table() -> NvmlFns {
         memory_info: Some(memory),
         pcie_throughput: None,
         nvlink_state: None,
+        utilization: Some(utilization),
+        device_count: Some(count),
     }
 }

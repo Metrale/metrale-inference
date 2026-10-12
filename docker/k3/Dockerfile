@@ -23,7 +23,11 @@ COPY tests/fixtures/ tests/fixtures/
 # own ignore file admits these despite the repository-wide docs exclusion.
 COPY docs/k3/fixtures/ docs/k3/fixtures/
 COPY docs/k3/official-weight-classes.tsv docs/k3/official-weight-classes.tsv
-RUN cargo build --locked --release -p metrale-server --bin met \
+# 2026-10-11: The source commit, stamped into `met` as METRALE_BUILD_COMMIT (usage records and the
+# /metrics build line are keyed by it). Pass --build-arg
+# METRALE_GIT_SHA="$(bash scripts/build-commit.sh)"; without it `met` is unstamped.
+ARG METRALE_GIT_SHA
+RUN METRALE_BUILD_COMMIT="${METRALE_GIT_SHA}" cargo build --locked --release -p metrale-server --bin met \
       --no-default-features --features cuda,nccl
 RUN mkdir -p /build/receipt && rustc --version > /build/receipt/rustc.txt && \
     nvcc --version > /build/receipt/nvcc.txt && \

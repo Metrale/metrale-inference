@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://metrale.ai/schemas/platform/v1/model-deployment.v1.schema.json",
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "title": "MetraleModelDeployment",
+  "description": "Desired state (spec at generation) and the last observed state (status at observed_generation) of one served model.",
+  "type": "object",
+  "properties": {
+    "version": {
+      "$ref": "common.v1.schema.json#/$defs/version"
+    },
+    "name": {
+      "$ref": "common.v1.schema.json#/$defs/dns_label"
+    },
+    "scope": {
+      "$ref": "common.v1.schema.json#/$defs/scope"
+    },
+    "generation": {
+      "$ref": "common.v1.schema.json#/$defs/generation"
+    },
+    "spec": {
+      "type": "object",
+      "properties": {
+        "release": {
+          "$ref": "common.v1.schema.json#/$defs/sha256"
+        },
+        "served_model": {
+          "$ref": "common.v1.schema.json#/$defs/model_name"
+        },
+        "topology": {
+          "$ref": "common.v1.schema.json#/$defs/topology"
+        },
+        "replicas": {
+          "$ref": "common.v1.schema.json#/$defs/count"
+        },
+        "placement": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "hardware_class": {
+                  "$ref": "common.v1.schema.json#/$defs/hardware_class"
+                }
+              },
+              "required": [
+                "hardware_class"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "nodes": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "common.v1.schema.json#/$defs/id32"
+                  },
+                  "minItems": 1
+                }
+              },
+              "required": [
+                "nodes"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": [
+        "release",
+        "served_model",
+        "topology",
+        "replicas",
+        "placement"
+      ],
+      "additionalProperties": false
+    },
+    "status": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "observed_generation": {
+              "$ref": "common.v1.schema.json#/$defs/generation"
+            },
+            "phase": {
+              "enum": [
+                "pending",
+                "progressing",
+                "ready",
+                "degraded",
+                "failed"
+              ]
+            },
+            "conditions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "release_verified",
+                      "receipt_approved",
+                      "hardware_compatible",
+                      "runtime_ready"
+                    ]
+                  },
+                  "status": {
+                    "enum": [
+                      "true",
+                      "false",
+                      "unknown"
+                    ]
+                  },
+                  "since_unix_ms": {
+                    "$ref": "common.v1.schema.json#/$defs/timestamp_ms"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "status",
+                  "since_unix_ms"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "instances": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "instance_id": {
+                    "$ref": "common.v1.schema.json#/$defs/id16"
+                  },
+                  "node_id": {
+                    "$ref": "common.v1.schema.json#/$defs/id32"
+                  },
+                  "hardware_fingerprint": {
+                    "$ref": "common.v1.schema.json#/$defs/sha256"
+                  },
+                  "generation": {
+                    "$ref": "common.v1.schema.json#/$defs/generation"
+                  },
+                  "state": {
+                    "$ref": "common.v1.schema.json#/$defs/health_state"
+                  }
+                },
+                "required": [
+                  "instance_id",
+                  "node_id",
+                  "hardware_fingerprint",
+                  "generation",
+                  "state"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "updated_at_unix_ms": {
+              "$ref": "common.v1.schema.json#/$defs/timestamp_ms"
+            }
+          },
+          "required": [
+            "observed_generation",
+            "phase",
+            "conditions",
+            "instances",
+            "updated_at_unix_ms"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "required": [
+    "version",
+    "name",
+    "scope",
+    "generation",
+    "spec",
+    "status"
+  ],
+  "additionalProperties": false
+}

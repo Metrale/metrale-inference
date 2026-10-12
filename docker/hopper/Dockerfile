@@ -92,13 +92,17 @@ ENV METRALE_TARGET_HW=${METRALE_TARGET_HW}
 ENV METRALE_TARGET_MODEL=${METRALE_TARGET_MODEL}
 ENV METRALE_TARGET_QUANT=${METRALE_TARGET_QUANT}
 
+# 2026-10-11: The source commit, stamped into `met` as METRALE_BUILD_COMMIT (usage records and the
+# /metrics build line are keyed by it). Pass --build-arg
+# METRALE_GIT_SHA="$(bash scripts/build-commit.sh)"; without it `met` is unstamped.
+ARG METRALE_GIT_SHA
 # `--no-default-features --features cuda,nccl` is the same set metrale-server's
 # `default` names today, spelled out so a change to that default cannot
 # silently drop NCCL out of a multi-GPU image. NCCL links here against the
 # libnccl-dev the CUDA devel base ships (2.27.7 on 13.0.0) — link-time only;
 # the shared object actually loaded is the runtime stage's, which the gate
 # below holds at >= 2.28.
-RUN cargo build --release -p metrale-server --bin met \
+RUN METRALE_BUILD_COMMIT="${METRALE_GIT_SHA}" cargo build --release -p metrale-server --bin met \
       --no-default-features --features cuda,nccl
 
 # ── Runtime stage ────────────────────────────────────────────────

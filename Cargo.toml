@@ -6,6 +6,7 @@ members = [
     "crates/closure",
     "crates/circuit",
     "crates/governance",
+    "crates/qci-dump",
     "crates/kernels",
     "crates/kernel-tree",
     "crates/gpu-sys",

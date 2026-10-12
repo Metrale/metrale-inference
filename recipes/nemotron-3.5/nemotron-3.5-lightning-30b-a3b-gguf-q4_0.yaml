@@ -1,0 +1,58 @@
+# 2026-10-06: Consumer reference pin for investor-mvp #58. Not a metrale serve.
+# Distinct from recipes/nemotron-3-nano. Optional MTP files on the GGUF repo are
+# not loaded. Q4_0 was HEAD-checked on 2026-10-06 at revision
+# 8a08a1c81dadcc75d35dbb96016cfd344b632e67: 18898091584 bytes.
+# Original nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16 revision
+# a9904d24bcc1d289a1950fa9d2b978c47cf903b9 matches the conversion .src_sha PRIMARY.
+# License on that card is openmdw-1.1. Do not assume NVFP4 kernels on an RTX 3090.
+
+recipe_version: "2"
+model: ggml-org/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF
+runtime: gguf-reference
+container: reference/gguf-consumer:pinned
+min_nodes: 1
+
+metadata:
+  description: Nemotron 3.5 Lightning 30B-A3B GGUF Q4_0 reference pin for QCI. Not a measured serve.
+  maintainer: metrale
+  category: qci-reference
+  quantization: Q4_0
+
+defaults:
+  max_model_len: "8192"
+  gpu_memory_utilization: "0.85"
+
+qci:
+  case: nemotron-3.5-lightning-30b-a3b
+  issue_url: https://github.com/Metrale/investor-mvp/issues/58
+  priority: P1
+  blocks_four_model_p0_exit: "no"
+  p0_exit_member: "no"
+  original_repository: nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16
+  repository: ggml-org/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF
+  revision: 8a08a1c81dadcc75d35dbb96016cfd344b632e67
+  artifact: NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_0.gguf
+  artifact_bytes: "18898091584"
+  quantization: Q4_0
+  license_tag: other
+  license_link: https://openmdw.ai/license/1-1/
+  license_status: openmdw-1.1
+  concurrency: "1"
+  context: modest
+  max_images: "4"
+  max_image_bytes: "2000000"
+  max_text_chars: "8192"
+  supplemental_hardware: rtx-3090
+  target_hardware: strix-halo
+  reference_runtime: ggml-gguf
+  native_limitations: pinned artifact is GGUF Q4_0, not the NVFP4 circuit fixture; do not assume nvfp4 kernels on an RTX 3090; distinct from Nemotron-3-Nano benchmarks
+  distinct_from: NVIDIA-Nemotron-3-Nano
+  mtp: "off"
+  tokenizer_bos: "<s>"
+  tokenizer_eos: "<|im_end|>"
+  tokenizer_json_sha256: 623c34567aebb18582765289fbe23d901c62704d6518d71866e0e58db892b5b7
+  chat_template_blob: d85b0c772f8fe585063847c5f6bf5ec48eb210be
+  template_status: measured; git blob of embedded tokenizer.chat_template equals d85b0c772f8fe585063847c5f6bf5ec48eb210be
+  pipeline: text-generation
+  required_contracts: 41,46
+  extra_blockers: NOT_THE_NANO_BENCHMARK,NATIVE_GGUF_Q4_0_UNSERVED

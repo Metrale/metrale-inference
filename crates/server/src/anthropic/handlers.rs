@@ -22,8 +22,21 @@ use super::types::*;
 pub async fn messages(
     CurrentModel(state): CurrentModel,
     tenant: Option<axum::extract::Extension<crate::auth::LookupTenant>>,
+    axum::extract::Extension(stamp): axum::extract::Extension<crate::request_stamp::RequestStamp>,
     body: axum::body::Bytes,
 ) -> Response {
+    if state.tokenizer.harmony().is_some()
+        && std::str::from_utf8(&body)
+            .ok()
+            .and_then(|body| crate::harmony::strict_json::parse(body).ok())
+            .is_none()
+    {
+        return anthropic_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request_error",
+            "Invalid or duplicate-key Harmony request JSON".into(),
+        );
+    }
     let req: MessagesRequest = match serde_json::from_slice(&body) {
         Ok(r) => r,
         Err(e) => {
@@ -34,6 +47,18 @@ pub async fn messages(
             );
         }
     };
+
+    // 2026-10-07: Native tool SSE is qualified only on Chat Completions.
+    if state.tokenizer.harmony().is_some()
+        && req.stream
+        && req.tools.as_ref().is_some_and(|tools| !tools.is_empty())
+    {
+        return anthropic_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request_error",
+            "Harmony streaming tools are supported only on Chat Completions".into(),
+        );
+    }
 
     tracing::info!(
         "Anthropic request: max_tokens={}, thinking={:?}, tools={}, model={}, stream={}",
@@ -67,6 +92,7 @@ pub async fn messages(
         state.clone(),
         None,
         tenant.map(|e| e.0),
+        stamp,
         req.into(),
         None,
     )

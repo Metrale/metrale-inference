@@ -1,0 +1,193 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://metrale.ai/schemas/platform/v1/audit-event.v1.schema.json",
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "title": "AuditEvent",
+  "description": "Who did what to which resource; intent and outcome are separate events.",
+  "type": "object",
+  "properties": {
+    "version": {
+      "$ref": "common.v1.schema.json#/$defs/version"
+    },
+    "event_id": {
+      "$ref": "common.v1.schema.json#/$defs/id16"
+    },
+    "writer": {
+      "type": "object",
+      "properties": {
+        "node_id": {
+          "$ref": "common.v1.schema.json#/$defs/id32"
+        },
+        "boot_id": {
+          "$ref": "common.v1.schema.json#/$defs/id16"
+        },
+        "seq": {
+          "$ref": "common.v1.schema.json#/$defs/u64"
+        }
+      },
+      "required": [
+        "node_id",
+        "boot_id",
+        "seq"
+      ],
+      "additionalProperties": false
+    },
+    "actor": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "rcon_user",
+            "user",
+            "service",
+            "node",
+            "system"
+          ]
+        },
+        "id": {
+          "$ref": "common.v1.schema.json#/$defs/text"
+        },
+        "node_id": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "common.v1.schema.json#/$defs/id32"
+            }
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "node_id"
+      ],
+      "additionalProperties": false
+    },
+    "action": {
+      "enum": [
+        "login",
+        "logout",
+        "token_issue",
+        "token_verify_fail",
+        "admin_call",
+        "roster_change",
+        "enrollment",
+        "deployment",
+        "config_change",
+        "data_access",
+        "export",
+        "service_start",
+        "service_stop",
+        "health_transition",
+        "drain",
+        "undrain"
+      ]
+    },
+    "resource": {
+      "$ref": "common.v1.schema.json#/$defs/long_text"
+    },
+    "phase": {
+      "enum": [
+        "intent",
+        "outcome"
+      ]
+    },
+    "outcome": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "enum": [
+            "allowed",
+            "denied",
+            "failed",
+            "unknown"
+          ]
+        }
+      ]
+    },
+    "intent_id": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "common.v1.schema.json#/$defs/id16"
+        }
+      ]
+    },
+    "trace_id": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "common.v1.schema.json#/$defs/trace_id"
+        }
+      ]
+    },
+    "occurred_at_unix_ms": {
+      "$ref": "common.v1.schema.json#/$defs/timestamp_ms"
+    },
+    "security": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "version",
+    "event_id",
+    "writer",
+    "actor",
+    "action",
+    "resource",
+    "phase",
+    "outcome",
+    "intent_id",
+    "trace_id",
+    "occurred_at_unix_ms",
+    "security"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "phase": {
+            "const": "intent"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "outcome": {
+            "type": "null"
+          },
+          "intent_id": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "phase": {
+            "const": "outcome"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "outcome": {
+            "not": {
+              "type": "null"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

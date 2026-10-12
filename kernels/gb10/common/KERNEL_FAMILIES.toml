@@ -95,7 +95,7 @@ description = "Row-wise BF16 argmax over the logits"
 compute = "memory"
 # 2026-09-30: `argmax_bf16_batch` is every row in one launch (the batched MTP verify);
 # `argmax_bf16_batch_lp` also writes each row's top-1 log-probability (the batched propose).
-kernels = ["argmax::argmax_bf16", "argmax::argmax_bf16_batch", "argmax::argmax_bf16_batch_lp"]
+kernels = ["argmax::argmax_bf16", "argmax::argmax_bf16_batch", "argmax::argmax_bf16_batch_lp", "argmax_feed::argmax_bf16_batch_masked_host"]
 rows = [1, 65536]
 pipeline.argmax = { in = ["bf16"], compare = "bf16", out = ["i32"] }
 op = [{ op = "argmax" }]
@@ -844,6 +844,7 @@ description = "BF16 GEMV (1 row), batched GEMV (M <= 16 per block row) and GEMM 
 compute = "cuda_core"
 kernels = [
   "gemv::dense_gemv_bf16", "dense_gemv_bf16_batchm::dense_gemv_bf16_batchm",
+  "dense_gemv_bf16_batchm::dense_gemv_bf16_batchm4",
   "gemm::dense_gemm_bf16", "gemm::dense_gemm_bf16_router",
 ]
 rows = [1, 65536]
@@ -1889,6 +1890,6 @@ layer_kind = "full_attention"
 per_sequence = ["multi_seq"]
 sites = ["attn.q", "attn.k", "attn.v"]
 rows_above = 8
-cite = "crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/qkv.rs:119"
+cite = "crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/qkv.rs:120"
 holds = "for i in 0..n {"
 note = "BF16 q/k/v projections batch 2-8 rows (dense_gemv_bf16_batchm); above 8 they run one GEMV per row"
