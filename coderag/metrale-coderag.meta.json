@@ -1,0 +1,19 @@
+{
+  "format": "lattice-jsonl",
+  "version": 1,
+  "dim": 2048,
+  "points": 5997,
+  "files": 2578,
+  "embedded": 292,
+  "reused": 5705,
+  "model": "nvidia/llama-nemotron-embed-vl-1b-v2:free",
+  "endpoint": "https://openrouter.ai/api/v1",
+  "repo": "Metrale/metrale-inference",
+  "commit_sha": "246f71bf5da3a0a984d2ab9273ab22c0abdd371e",
+  "generated_at": "2026-09-27T21:12:12.711Z",
+  "bytes": 290093852,
+  "gz_bytes": 99316510,
+  "sha256": "006cc8790a466469741c792690413e44deebcaedcbc47f74777a606cb7b1791e",
+  "action_version": "local",
+  "lattice_version": "v0.3.3"
+}

@@ -1,0 +1,19 @@
+{
+  "format": "lattice-jsonl",
+  "version": 1,
+  "dim": 2048,
+  "points": 828,
+  "files": 112,
+  "embedded": 828,
+  "reused": 0,
+  "model": "nvidia/llama-nemotron-embed-vl-1b-v2:free",
+  "endpoint": "https://openrouter.ai/api/v1",
+  "repo": "rust-lang/book",
+  "commit_sha": "1500248d8f230566e4ec9f27fcbb8fe9e2898ab1",
+  "generated_at": "2026-10-11T21:54:58.867Z",
+  "bytes": 37778238,
+  "gz_bytes": 12464294,
+  "sha256": "0ad9bb2cf3d9fb92d685c160eeb2db97c6f41bf38b242b73472c3e67bfa104b5",
+  "action_version": "local",
+  "lattice_version": "v0.3.3"
+}
