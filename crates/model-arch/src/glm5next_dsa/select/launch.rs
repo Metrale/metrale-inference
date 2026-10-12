@@ -3,7 +3,11 @@
 //! 2026-09-25: `select_tokens`, the launcher for one DSA selection pass.
 //!
 //! Owner: model-arch (GLM-5.3 DSA).
-//! Invariants: none beyond the types.
+//! Invariants:
+//! - 2026-10-11: `select_tokens_in_passes` launches the kernels `select_tokens` would for the
+//!   same pass when the scratch holds all its rows; otherwise one `dsa_kpool_compress`, then per
+//!   row sub-pass the scores, top-k and expansion of those rows, each row's inputs and output
+//!   at the offsets the one-pass launch reads and writes.
 
 use super::*;
 
@@ -22,6 +26,96 @@ pub fn select_tokens(
     inputs: &DsaSelectInputs,
     scratch: &DsaSelectScratch,
     launch: DsaSelectLaunch,
+    stream: u64,
+) -> Result<()> {
+    run(
+        gpu, kernels, cfg, geom, inputs, scratch, launch, true, stream,
+    )
+}
+
+/// 2026-10-11: [`select_tokens`] for an exact pass of `geom.q_rows` rows over a scratch whose
+/// per-row regions may hold fewer rows ([`DsaSelectScratch::rows_per_pass`]): the pools are
+/// compressed once, then the rows are scored, ranked and expanded in sub-passes of at most that
+/// many rows. Each row's selection is the one-pass selection, bit for bit: every kernel after
+/// the compression reads and writes only its own row (`r * H * D` of the query, `r * H` of the
+/// head weights, `q_pos[r]`, `q_mask[r]`, the scores / candidacy row `r * P`, the selected row
+/// `r * select_k`, the output row `r * out_width`), the compressed pools are a pure function
+/// of the cache, and a sub-pass shifts every per-row pointer by its first row while the
+/// temporaries start over at row 0. Returns the number of sub-passes. Errors when the output
+/// cannot hold `geom.q_rows` rows or the pool regions are too small.
+#[allow(clippy::too_many_arguments)]
+pub fn select_tokens_in_passes(
+    gpu: &dyn GpuBackend,
+    kernels: &Glm5NextDsaKernels,
+    cfg: &Glm5NextDsaConfig,
+    geom: &DsaSelectGeometry,
+    inputs: &DsaSelectInputs,
+    scratch: &DsaSelectScratch,
+    stream: u64,
+) -> Result<usize> {
+    let per = scratch.rows_per_pass(geom);
+    if per >= geom.q_rows {
+        run(
+            gpu,
+            kernels,
+            cfg,
+            geom,
+            inputs,
+            scratch,
+            DsaSelectLaunch::Exact,
+            true,
+            stream,
+        )?;
+        return Ok(1);
+    }
+    if per == 0 {
+        bail!(
+            "DSA select: the scratch holds no query row at {} pools ({} tokens)",
+            geom.n_pools,
+            geom.seq
+        );
+    }
+    let want_tokens = geom.q_rows * cfg.out_width() * 4;
+    if want_tokens > scratch.tokens_bytes {
+        bail!(
+            "DSA select: selection output needs {want_tokens} B but only {} B was reserved",
+            scratch.tokens_bytes
+        );
+    }
+    let mut passes = 0;
+    for r0 in (0..geom.q_rows).step_by(per) {
+        let sub = DsaSelectGeometry {
+            q_rows: per.min(geom.q_rows - r0),
+            ..*geom
+        };
+        run(
+            gpu,
+            kernels,
+            cfg,
+            &sub,
+            &inputs.from_row(r0, cfg),
+            &scratch.row(r0, cfg),
+            DsaSelectLaunch::Exact,
+            r0 == 0,
+            stream,
+        )?;
+        passes += 1;
+    }
+    Ok(passes)
+}
+
+/// 2026-10-11: The body of [`select_tokens`]; `compress` false skips `dsa_kpool_compress`, for
+/// a later row sub-pass over pools an earlier one on `stream` already compressed.
+#[allow(clippy::too_many_arguments)]
+fn run(
+    gpu: &dyn GpuBackend,
+    kernels: &Glm5NextDsaKernels,
+    cfg: &Glm5NextDsaConfig,
+    geom: &DsaSelectGeometry,
+    inputs: &DsaSelectInputs,
+    scratch: &DsaSelectScratch,
+    launch: DsaSelectLaunch,
+    compress: bool,
     stream: u64,
 ) -> Result<()> {
     scratch.fits(cfg, geom)?;
@@ -74,26 +168,28 @@ pub fn select_tokens(
 
     // 2026-09-25: Pool compression over the full pool count; the trailing partial pool is
     // written and marked invalid, and no later kernel reads it.
-    KernelLaunch::new(gpu, kernels.kpool_compress)
-        .grid([ceiling.map_or(geom.n_pools_full, |m| m + 1) as u32, 1, 1])
-        .block([d.min(1024) as u32, 1, 1])
-        .arg_ptr(inputs.rows.k)
-        .arg_ptr(inputs.rows.gate)
-        .arg_ptr(inputs.rows.valid)
-        .arg_ptr(inputs.ape)
-        .arg_ptr(scratch.pool_keys)
-        .arg_ptr(scratch.pool_indices)
-        .arg_ptr(scratch.pool_valid)
-        .arg_u32(seq_a as u32)
-        .arg_u32(d as u32)
-        .arg_u32(kp as u32)
-        .arg_i32(inputs.first_key)
-        .arg_ptr(gd)
-        // 2026-10-09: The paged address path; NULL / 0 / 0 for a flat cache.
-        .arg_ptr(inputs.rows.bt)
-        .arg_u32(inputs.rows.block_size)
-        .arg_u32(inputs.rows.blk_elems)
-        .launch(stream)?;
+    if compress {
+        KernelLaunch::new(gpu, kernels.kpool_compress)
+            .grid([ceiling.map_or(geom.n_pools_full, |m| m + 1) as u32, 1, 1])
+            .block([d.min(1024) as u32, 1, 1])
+            .arg_ptr(inputs.rows.k)
+            .arg_ptr(inputs.rows.gate)
+            .arg_ptr(inputs.rows.valid)
+            .arg_ptr(inputs.ape)
+            .arg_ptr(scratch.pool_keys)
+            .arg_ptr(scratch.pool_indices)
+            .arg_ptr(scratch.pool_valid)
+            .arg_u32(seq_a as u32)
+            .arg_u32(d as u32)
+            .arg_u32(kp as u32)
+            .arg_i32(inputs.first_key)
+            .arg_ptr(gd)
+            // 2026-10-09: The paged address path; NULL / 0 / 0 for a flat cache.
+            .arg_ptr(inputs.rows.bt)
+            .arg_u32(inputs.rows.block_size)
+            .arg_u32(inputs.rows.blk_elems)
+            .launch(stream)?;
+    }
 
     // 2026-10-10: `METRALE_GLM_DSA_SCORES_TILED=1`: the same scores, bit for bit, in query x
     // pool tiles for an exact launch of several query rows (`scores_tiled_for`).

@@ -283,6 +283,22 @@ pub struct DsaSelectInputs {
     pub geom_dev: DevicePtr,
 }
 
+impl DsaSelectInputs {
+    /// 2026-10-11: The same inputs starting at query row `r0`: `q`, `weights`, `q_pos` and
+    /// `q_mask` advanced by `r0` rows at the strides the kernels index them with (`q` and
+    /// `weights` by `r * H * D` and `r * H` f32, `q_pos` by `r` i32, `q_mask` by `r` u8); the
+    /// cache, the APE table and the device geometry are every row's.
+    pub fn from_row(&self, r0: usize, cfg: &Glm5NextDsaConfig) -> Self {
+        Self {
+            q: self.q.offset(r0 * cfg.index_heads * cfg.index_head_dim * 4),
+            weights: self.weights.offset(r0 * cfg.index_heads * 4),
+            q_pos: self.q_pos.offset(r0 * 4),
+            q_mask: self.q_mask.offset(r0),
+            ..*self
+        }
+    }
+}
+
 /// 2026-09-25: How a pass is launched: exactly, or at the context ceiling so one graph serves
 /// any length.
 ///
@@ -320,15 +336,39 @@ pub struct DsaSelectScratch {
 }
 
 impl DsaSelectScratch {
-    /// 2026-09-25: Allocate for `geom`, the largest pass the caller will run
-    /// (`Glm5NextDsaWorkspace::new` plans it at `max_dsa_context`).
+    /// 2026-09-25: Allocate for `geom`, the largest pass the caller will run.
     pub fn alloc(
         gpu: &dyn GpuBackend,
         cfg: &Glm5NextDsaConfig,
         geom: &DsaSelectGeometry,
     ) -> Result<Self> {
-        let capacity = geom.scratch_bytes();
-        let tokens_bytes = geom.q_rows * cfg.out_width() * 4;
+        Self::alloc_rows(gpu, cfg, geom, geom.q_rows)
+    }
+
+    /// 2026-10-11: Allocate the per-pass temporaries (pool regions, scores, candidacy, selected
+    /// pools) for `geom` and the selection output for `out_rows` rows, at least `geom.q_rows`.
+    /// `Glm5NextDsaWorkspace::new` plans `geom` at `max_dsa_context` and fewer rows than it
+    /// selects for at a long context (`select_scratch_rows`); `select_tokens_in_passes` then
+    /// runs a larger group in row sub-passes into the one `[out_rows, out_width]` output.
+    pub fn alloc_rows(
+        gpu: &dyn GpuBackend,
+        cfg: &Glm5NextDsaConfig,
+        geom: &DsaSelectGeometry,
+        out_rows: usize,
+    ) -> Result<Self> {
+        if out_rows < geom.q_rows {
+            bail!(
+                "DSA select: {out_rows} output rows for a {}-row pass",
+                geom.q_rows
+            );
+        }
+        // 2026-10-12: The selected-pools region is `select_k` wide whatever the context, so it is
+        // sized for every output row (2,048 x 512 i32 = 4 MiB); only the context-wide scores and
+        // candidacy are capped at `geom.q_rows`. Sized at `geom.q_rows` it would cap every pass at
+        // those rows even where the scores fit them all.
+        let mut capacity = geom.scratch_bytes();
+        capacity[5] = out_rows * geom.select_k * 4;
+        let tokens_bytes = out_rows * cfg.out_width() * 4;
         Ok(Self {
             pool_keys: gpu.alloc(capacity[0])?,
             pool_indices: gpu.alloc(capacity[1])?,
@@ -362,6 +402,16 @@ impl DsaSelectScratch {
             && rows * select_k * 4 <= self.capacity[5]
             && rows * cfg.out_width() * 4 <= self.tokens_bytes;
         fits.then_some((self.scores, self.valid_cand, self.selected))
+    }
+
+    /// 2026-10-11: The most query rows one pass over `geom`'s pools fits in the per-row regions
+    /// (scores, candidacy, selected pools); `usize::MAX` when `geom` has no pools to score. The
+    /// output rows and the pool regions are not counted: `fits` checks those.
+    pub fn rows_per_pass(&self, geom: &DsaSelectGeometry) -> usize {
+        let per = |cap: usize, row_bytes: usize| cap.checked_div(row_bytes).unwrap_or(usize::MAX);
+        per(self.capacity[3], geom.n_pools * 4)
+            .min(per(self.capacity[4], geom.n_pools))
+            .min(per(self.capacity[5], geom.select_k * 4))
     }
 
     /// 2026-09-25: The same scratch with `tokens` pointing at row `row`.
@@ -420,7 +470,10 @@ impl DsaSelectScratch {
 }
 
 mod launch;
-pub use launch::select_tokens;
+pub use launch::{select_tokens, select_tokens_in_passes};
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod passes_tests;
