@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-12: The launch plan of the 64-token chunked KDA scan on the mock backend: which rows
-//! take it (ahead of the 16-token scan), the conv before it, and the prepare and scan grids,
+//! take it (`scan_mode`, ahead of the 16-token scan), the conv before it, and the prepare and scan grids,
 //! shared memory and buffers. The numerics are measured on a GPU by
 //! `examples/glm5next_kda_chunk64_bench.rs` against the per-token walk.
 //!
 //! Owner: model-arch (GLM-5.3-Flash KDA).
 //! Invariants: none beyond the types.
 
+use metrale_gpu_runtime::gpu::DevicePtr;
 use metrale_gpu_runtime::gpu::mock::{MockArg, MockGpuBackend, MockLaunch};
-use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
 use super::super::Glm5NextKdaWorkspace;
+use super::super::decode::{ScanMode, scan_mode};
 use super::super::decode_rows_tests::{
-    CHUNK16_PREP, CHUNK16_SCAN, CHUNK64_PREP, CHUNK64_SCAN, CONV_TOKENS, CONV_WINDOW, RECUR_SEQ,
-    cfg, layer, seq_state, since,
+    CHUNK64_PREP, CHUNK64_SCAN, CONV_TOKENS, CONV_WINDOW, cfg, layer, seq_state, since,
 };
 use super::{CHUNK64, parse_min_rows64};
 
@@ -32,53 +32,39 @@ fn u32a(l: &MockLaunch, i: usize) -> u32 {
     }
 }
 
-const KINDS: [u64; 7] = [
-    CONV_TOKENS,
-    CONV_WINDOW,
-    RECUR_SEQ,
-    CHUNK16_PREP,
-    CHUNK16_SCAN,
-    CHUNK64_PREP,
-    CHUNK64_SCAN,
-];
-
-/// 2026-10-12: `decode_k_modes` over `k` rows with the two floors; the stateful launches.
-fn stateful(k: usize, min16: Option<usize>, min64: Option<usize>, snapshots: bool) -> Vec<u64> {
-    let gpu = MockGpuBackend::new();
-    let l = layer(&gpu);
-    let ws = Glm5NextKdaWorkspace::new(&gpu, &cfg(), 256).unwrap();
-    let st = seq_state(&gpu);
-    let hidden = gpu.alloc(k * 256 * 2).unwrap();
-    let snaps: Vec<(DevicePtr, DevicePtr)> = if snapshots {
-        (0..k - 1)
-            .map(|_| (gpu.alloc(1 << 17).unwrap(), gpu.alloc(1 << 15).unwrap()))
-            .collect()
-    } else {
-        Vec::new()
-    };
-    let from = gpu.launch_count();
-    l.decode_k_modes(&gpu, hidden, k, &st, &ws, &snaps, 7, true, min16, min64)
-        .unwrap();
-    since(&gpu, from)
-        .into_iter()
-        .filter(|x| KINDS.contains(&x.func))
-        .map(|x| x.func)
-        .collect()
-}
-
-/// 2026-10-12: At or past its floor the 64-token scan runs, ahead of the 16-token scan when both
-/// are armed; below it, the 16-token scan (if armed) or the token walk; a verify (per-row
-/// snapshots) never takes it.
+/// 2026-10-12: The scan choice: at or past its floor the 64-token scan, ahead of the 16-token
+/// scan when both are armed; below it, the 16-token scan (if armed) or neither; a verify (per-row
+/// snapshots) never takes a scan. (`decode_k_modes` itself cannot run 64 rows on the mock: the
+/// front end's projections past 16 rows go to cuBLASLt.)
 #[test]
 fn the_64_token_scan_takes_wide_unsnapshotted_rows_first() {
-    let c64 = vec![CONV_TOKENS, CONV_WINDOW, CHUNK64_PREP, CHUNK64_SCAN];
-    let c16 = vec![CONV_TOKENS, CONV_WINDOW, CHUNK16_PREP, CHUNK16_SCAN];
-    assert_eq!(stateful(64, None, Some(64), false), c64);
-    assert_eq!(stateful(64, Some(16), Some(64), false), c64);
-    assert_eq!(stateful(63, Some(16), Some(64), false), c16);
-    assert!(stateful(63, None, Some(64), false).contains(&RECUR_SEQ));
-    let v = stateful(64, None, Some(64), true);
-    assert!(!v.contains(&CHUNK64_PREP) && !v.contains(&CHUNK64_SCAN));
+    assert_eq!(scan_mode(64, true, None, Some(64)), ScanMode::Chunk64);
+    assert_eq!(scan_mode(64, true, Some(16), Some(64)), ScanMode::Chunk64);
+    assert_eq!(
+        scan_mode(4096, true, Some(16), Some(2048)),
+        ScanMode::Chunk64
+    );
+    assert_eq!(scan_mode(63, true, Some(16), Some(64)), ScanMode::Chunk16);
+    assert_eq!(
+        scan_mode(2047, true, Some(16), Some(2048)),
+        ScanMode::Chunk16
+    );
+    assert_eq!(scan_mode(63, true, None, Some(64)), ScanMode::None);
+    assert_eq!(scan_mode(64, true, None, None), ScanMode::None);
+    assert_eq!(scan_mode(64, false, Some(16), Some(64)), ScanMode::None);
+}
+
+/// 2026-10-12: `chunk64_applies` on a layer with the kernels bound: the floor must be set and
+/// reached; unset is never taken.
+#[test]
+fn the_floor_gates_the_layer_predicate() {
+    let gpu = MockGpuBackend::new();
+    let l = layer(&gpu);
+    assert!(l.chunk64_ready());
+    assert!(l.chunk64_applies(64, Some(64)));
+    assert!(l.chunk64_applies(4096, Some(2048)));
+    assert!(!l.chunk64_applies(63, Some(64)));
+    assert!(!l.chunk64_applies(4096, None));
 }
 
 /// 2026-10-12: 130 rows: the conv, then prepare over 3 chunks of 64 for both heads (256 threads,

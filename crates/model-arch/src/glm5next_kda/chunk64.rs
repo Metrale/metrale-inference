@@ -77,6 +77,14 @@ impl Glm5NextKdaLayer {
             && self.cfg.conv_kernel <= 4
     }
 
+    /// 2026-10-12: Whether `k` rows of one sequence at floor `min_rows`
+    /// ([`kda_chunk64_min_rows`]) take [`Self::stateful_chunk64`] where no per-row snapshot is
+    /// asked for: the floor is set and reached, and [`Self::chunk64_ready`] holds. `decode_k_modes`
+    /// and the prefill routing in `glm5next_layer` share this one predicate.
+    pub fn chunk64_applies(&self, k: usize, min_rows: Option<usize>) -> bool {
+        min_rows.is_some_and(|r| k >= r) && self.chunk64_ready()
+    }
+
     /// 2026-10-12: Workspace rows `0..k` of one sequence through the conv, then the 64-token
     /// chunked recurrence into `core`, advancing `state` past all of them.
     pub(super) fn stateful_chunk64(

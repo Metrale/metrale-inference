@@ -267,10 +267,16 @@ impl Glm5NextLayer {
                     // than one row that asked for no intermediates: it never materialises the
                     // state after an interior row, and its order differs from `decode_k`'s,
                     // which a verify must match.
+                    // 2026-10-12: `METRALE_GLM_KDA_CHUNK64` (`decode_k` picks it) is ahead of
+                    // `METRALE_GLM_KDA_CHUNK_PREFILL` where its floor is reached.
                     if is_prefill
                         && k > 1
                         && snaps.is_empty()
                         && crate::glm5next_layer::levers::kda_chunk_prefill()
+                        && !layer.chunk64_applies(
+                            k,
+                            crate::glm5next_kda::chunk64::kda_chunk64_min_rows()?,
+                        )
                     {
                         layer.prefill(gpu, normed, k, kda, ws, stream)?;
                     } else {
