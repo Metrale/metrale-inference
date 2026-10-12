@@ -27,6 +27,7 @@ pub mod glm5next_mhc_tok;
 pub mod glm5next_mlp;
 pub mod glm5next_mtp_head;
 pub mod glm5next_skeleton;
+pub mod glm5next_sp_mhc;
 pub mod glm5next_w4a16_dense;
 pub mod glm5next_w4a16_seg;
 pub mod glm5next_w4a16_wide;

@@ -68,6 +68,12 @@ pub(super) fn assert_rank_levers_agree(
                 "METRALE_GLM_MTP_XCHG_DEVICE",
                 u64::from(std::env::var("METRALE_GLM_MTP_XCHG_DEVICE").as_deref() == Ok("1")),
             ),
+            // 2026-10-12: SP-mHC changes every prefill sub-chunk's collectives from one
+            // all-reduce to a reduce-scatter and all-gathers, so every rank must take it alike.
+            (
+                "METRALE_GLM_SP_MHC",
+                u64::from(metrale_model_arch::glm5next_sp_mhc::enabled()?),
+            ),
             // 2026-10-10: The resolved context window determines DFlash context-broadcast
             // chunking, so every rank must use the same value.
             (

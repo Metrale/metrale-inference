@@ -289,6 +289,14 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                 None
             };
 
+            // 2026-10-12: `METRALE_GLM_SP_MHC=1`: the reduce-scatter workspace for the widest
+            // prefill sub-chunk at this TP width (a no-op once reserved).
+            crate::glm5next_sp_mhc::reserve(
+                gpu,
+                crate::glm5next_layer::prefill_rows(),
+                config.hidden_size,
+                mlp_cfg.tp_world_size,
+            )?;
             if l2.is_some() {
                 anyhow::ensure!(idx == l2_ranges.len(), "layer {idx} out of order");
                 l2_ranges.push(l2_warm::mixer_ranges(&mixer));
