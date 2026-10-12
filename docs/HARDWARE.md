@@ -103,6 +103,9 @@ variant, etc.), you'll also need to:
 
 ## Adding a new hardware target
 
+The `strix-hip` host (native Ubuntu 24.04 + ROCm, or Windows 11 + WSL) is
+set up by [porting/strix-hip-setup.md](porting/strix-hip-setup.md).
+
 Metrale Engine's NVIDIA targets are **GB10 (Blackwell, sm_121)**, **Hopper
 (H100/H200, sm_90a)**, **B200 (B200/GB200, sm_100a)** and a Kimi K3 bring-up
 set for **B300 (sm_103a)**; `strix`/`strix-hip` (AMD gfx1151) and `metal` are
