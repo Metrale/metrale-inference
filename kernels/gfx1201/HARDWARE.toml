@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
+
 # 2026-10-07: AMD gfx1201 (RDNA4: RX 9070 XT 16 GB, Radeon AI PRO R9700 32 GB), native HIP.
 # Ships no kernels of its own: the whole strix-hip tree, through `inherits` (docs/HARDWARE.md),
 # whose WMMA kernels go through common/wmma_rdna.cuh for the gfx12 fragment layout.

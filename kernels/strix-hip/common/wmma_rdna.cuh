@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+
 // 2026-10-07: One WMMA 16x16x16 (wave32) interface for RDNA3.5 (gfx1151) and RDNA4
 // (gfx1200 / gfx1201), so a strix-hip source compiles and runs on both.
 //
