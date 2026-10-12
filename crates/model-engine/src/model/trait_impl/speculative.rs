@@ -158,8 +158,18 @@ impl TransformerModel {
                 if carry_on && let Some(old) = self.mtp_carry.lock().take() {
                     proposer.free_drafter_kv(&old.block_table);
                 }
+                // 2026-10-12: `METRALE_MTP_ACCEPTED_ROWS` (every committed row absorbed): when the
+                // first generated token is already known (the first propose follows a bootstrap
+                // decode), the prefill also writes its key, `(hidden_{p-1}, token_p)`, from the
+                // capture's last prompt row; otherwise no propose ever writes it and every later
+                // row sits one key off its position.
+                let prefill_len = if self.levers.mtp_accepted_rows && seq_tokens.len() > p {
+                    p + 1
+                } else {
+                    p
+                };
                 if let Err(e) = proposer.prefill_drafter(
-                    &seq_tokens[..p],
+                    &seq_tokens[..prefill_len],
                     self.mtp_prefill_hidden,
                     prop_state.as_mut(),
                     ctx,
@@ -300,10 +310,20 @@ impl TransformerModel {
         // 2026-09-25: `hidden_states` rows are BF16 (2 bytes), despite the name below.
         let fp32 = 2usize;
         // 2026-09-25: Save the hidden state before the final norm: the MTP head applies
-        // its own `pre_fc_norm_hidden`.
-        let src = self.buffers.hidden_states().offset(token_idx * h * fp32);
-        self.gpu
-            .copy_d2d_async(src, self.mtp_hidden_save, h * fp32, stream)?;
+        // its own `pre_fc_norm_hidden`. 2026-10-11: After a device-step verify whose device
+        // verdict agrees, the row is selected on the device by its accept word
+        // (`select_mtp_hidden_on_device`, part 3); the same bytes.
+        match super::device_step::device_verdict_for(None, true) {
+            Some(acc) if token_idx == acc as usize => {
+                let verdict = self.device_verdict_buf()?;
+                self.select_mtp_hidden_on_device(verdict, stream)?;
+            }
+            _ => {
+                let src = self.buffers.hidden_states().offset(token_idx * h * fp32);
+                self.gpu
+                    .copy_d2d_async(src, self.mtp_hidden_save, h * fp32, stream)?;
+            }
+        }
         self.last_mtp_hidden_idx
             .store(token_idx, std::sync::atomic::Ordering::Relaxed);
         self.mtp_hidden_live

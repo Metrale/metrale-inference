@@ -57,6 +57,21 @@ pub fn k2_device_verdict(argmax: [u32; 2], draft: u32) -> [u32; K2_DEVICE_VERDIC
     ]
 }
 
+/// 2026-10-11: A worker's cross-check of a device-verdict K=2 step (`FLAG_K2_DEVICE_VERDICT`):
+/// rank 0's host verdict, sent after the propose, must be the one the worker committed and
+/// proposed from (its device verdict and its own length after the commit). A mismatch means the
+/// host picks were not the argmax; the ranks' states then differ and the step must fail.
+pub fn device_verdict_agrees(
+    rank0: K2Verdict,
+    accepted: bool,
+    next_token: u32,
+    position: usize,
+) -> bool {
+    rank0.accepted == accepted
+        && rank0.next_token == next_token
+        && rank0.position as usize == position
+}
+
 /// 2026-10-11: Words of the verdict broadcast.
 pub const K2_VERDICT_WORDS: usize = 4;
 
@@ -83,24 +98,46 @@ pub fn check_k2_fused_wire(requested: bool, wire: ep_wire::EpWire) -> Result<()>
     Ok(())
 }
 
-/// 2026-10-11: Rank 0's announcement of a fused K=2 verify of `tokens` in slot `seq_id`.
-pub fn announce_block(seq_id: u32, tokens: [u32; 2]) -> [u8; CMD_BLOCK_BYTES] {
+/// 2026-10-11: `flags` bit of a fused K=2 announcement (`METRALE_GLM_MTP_DEVICE_STEP`): every rank
+/// takes this step's verdict from its own device verdict and proposes right after its verify;
+/// rank 0's verdict follows the propose and only cross-checks it ([`announce_block`]). Distinct
+/// from `ep_wire::FLAG_DEVICE_ARGMAX`, which decode blocks carry.
+pub const FLAG_K2_DEVICE_VERDICT: u32 = 2;
+
+/// 2026-10-11: Rank 0's announcement of a fused K=2 verify of `tokens` in slot `seq_id`;
+/// `device_verdict` sets [`FLAG_K2_DEVICE_VERDICT`].
+pub fn announce_block(
+    seq_id: u32,
+    tokens: [u32; 2],
+    device_verdict: bool,
+) -> [u8; CMD_BLOCK_BYTES] {
     ep_wire::block(
         seq_id,
         EP_CMD_VERIFY_K2_FUSED,
         tokens[0],
-        0,
+        if device_verdict {
+            FLAG_K2_DEVICE_VERDICT
+        } else {
+            0
+        },
         [tokens[1], NO_MASK],
     )
 }
 
-/// 2026-10-11: The two verify tokens of a received announcement. Errors on another opcode, a
-/// flag, or a second mask word, so a block of another shape is never read as one.
-pub fn announced_tokens(block: &CmdBlock) -> Result<[u32; 2]> {
-    if block.cmd != EP_CMD_VERIFY_K2_FUSED || block.flags != 0 || block.mask[1] != NO_MASK {
+/// 2026-10-11: The two verify tokens of a received announcement, and whether it set
+/// [`FLAG_K2_DEVICE_VERDICT`]. Errors on another opcode, another flag, or a second mask word, so
+/// a block of another shape is never read as one.
+pub fn announced_tokens(block: &CmdBlock) -> Result<([u32; 2], bool)> {
+    if block.cmd != EP_CMD_VERIFY_K2_FUSED
+        || block.flags & !FLAG_K2_DEVICE_VERDICT != 0
+        || block.mask[1] != NO_MASK
+    {
         bail!("not a fused K=2 verify block: {block:?}");
     }
-    Ok([block.arg, block.mask[0]])
+    Ok((
+        [block.arg, block.mask[0]],
+        block.flags & FLAG_K2_DEVICE_VERDICT != 0,
+    ))
 }
 
 /// 2026-10-11: Rank 0's verdict on a fused K=2 verify.
@@ -177,10 +214,18 @@ mod tests {
     /// value, including 0 and ids above the vocab.
     #[test]
     fn an_announcement_round_trips_through_the_block_bytes() {
-        for tokens in [[0, 0], [785, 154_855], [u32::MAX - 1, 7], [3, 0]] {
-            let b = ep_wire::parse_block(&announce_block(5, tokens));
-            assert_eq!(b.seq_id, 5);
-            assert_eq!(announced_tokens(&b).unwrap(), tokens);
+        for tokens in [
+            [0, 0],
+            [785, 154_855],
+            [u32::MAX - 1, 7],
+            [3, 0],
+            [9, DEVICE_DRAFT],
+        ] {
+            for device_verdict in [false, true] {
+                let b = ep_wire::parse_block(&announce_block(5, tokens, device_verdict));
+                assert_eq!(b.seq_id, 5);
+                assert_eq!(announced_tokens(&b).unwrap(), (tokens, device_verdict));
+            }
         }
     }
 
@@ -197,6 +242,15 @@ mod tests {
             [1, NO_MASK],
         ));
         assert!(announced_tokens(&decode).is_err());
+        // 2026-10-11: The device-verdict bit is the only flag an announcement may carry.
+        let other_flag = ep_wire::parse_block(&ep_wire::block(
+            0,
+            EP_CMD_VERIFY_K2_FUSED,
+            1,
+            FLAG_K2_DEVICE_VERDICT | 4,
+            [2, NO_MASK],
+        ));
+        assert!(announced_tokens(&other_flag).is_err());
         let two_mask =
             ep_wire::parse_block(&ep_wire::block(0, EP_CMD_VERIFY_K2_FUSED, 1, 0, [2, 3]));
         assert!(announced_tokens(&two_mask).is_err());
@@ -296,5 +350,21 @@ mod tests {
             k2_device_verdict([154_855, 154_855], 154_855),
             [1, 154_855, 154_855, 154_855, 154_855]
         );
+    }
+
+    /// 2026-10-11: The cross-check passes only for the verdict the worker acted on: the same
+    /// accept bit, next token and position; any one differing fails it.
+    #[test]
+    fn a_device_verdict_step_agrees_only_with_its_own_verdict() {
+        let v = K2Verdict {
+            accepted: true,
+            next_token: 9,
+            num_drafts: 1,
+            position: 102,
+        };
+        assert!(device_verdict_agrees(v, true, 9, 102));
+        assert!(!device_verdict_agrees(v, false, 9, 102), "accept bit");
+        assert!(!device_verdict_agrees(v, true, 8, 102), "next token");
+        assert!(!device_verdict_agrees(v, true, 9, 101), "position");
     }
 }

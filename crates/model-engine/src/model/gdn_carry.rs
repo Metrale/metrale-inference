@@ -437,6 +437,12 @@ impl TransformerModel {
         Ok(true)
     }
 
+    /// 2026-10-11: Whether `slot`'s last verdict was committed by `gdn_carry_commit`, without
+    /// consuming the entry (the device step's commit refuses such a slot).
+    pub(super) fn gdn_carry_has_committed(&self, slot: usize) -> bool {
+        self.gdn_carry.inner.lock().committed.contains(&slot)
+    }
+
     /// 2026-09-26: Whether `slot`'s last verdict was committed by `gdn_carry_commit`; the
     /// entry is consumed.
     pub(super) fn gdn_carry_take_committed(&self, slot: usize) -> bool {

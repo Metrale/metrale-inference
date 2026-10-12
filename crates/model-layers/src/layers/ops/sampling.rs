@@ -266,6 +266,88 @@ pub fn mtp_k2_verdict(
         .launch(stream)
 }
 
+/// 2026-10-11: `predicated_copy_2d` (`mtp_device_step.cu`, host rule
+/// `speculative::device_step::predicated_copy_applies`): copy `height` rows of `width` bytes from
+/// `src + r * src_pitch` to `dst + r * dst_pitch` when the u32 at `flag` equals `match_value`.
+#[allow(clippy::too_many_arguments)]
+pub fn predicated_copy_2d(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    flag: DevicePtr,
+    match_value: u32,
+    src: DevicePtr,
+    src_pitch: usize,
+    dst: DevicePtr,
+    dst_pitch: usize,
+    width: usize,
+    height: usize,
+    stream: u64,
+) -> Result<()> {
+    // 2026-10-11: 16 bytes per thread at 256 threads per block; at most 64 blocks per row.
+    let blocks = width.div_ceil(256 * 16).clamp(1, 64) as u32;
+    KernelLaunch::new(gpu, kernel)
+        .grid([blocks, height as u32, 1])
+        .block([256, 1, 1])
+        .arg_ptr(flag)
+        .arg_u32(match_value)
+        .arg_ptr(src)
+        .arg_u64(src_pitch as u64)
+        .arg_ptr(dst)
+        .arg_u64(dst_pitch as u64)
+        .arg_u64(width as u64)
+        .arg_u32(height as u32)
+        .launch(stream)
+}
+
+/// 2026-10-11: `k2_verify_meta` (`mtp_device_step.cu`, host rule
+/// `speculative::device_step::k2_verify_meta`): the 2-row verify metadata for the length at
+/// `state`, into `positions` (`[2]` u32), `slots` (`[2]` i64) and `seq_lens` (`[2]` i32).
+#[allow(clippy::too_many_arguments)]
+pub fn k2_verify_meta(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    state: DevicePtr,
+    block_table: DevicePtr,
+    table_len: u32,
+    block_size: u32,
+    dummy_block: u32,
+    positions: DevicePtr,
+    slots: DevicePtr,
+    seq_lens: DevicePtr,
+    stream: u64,
+) -> Result<()> {
+    KernelLaunch::new(gpu, kernel)
+        .grid([1, 1, 1])
+        .block([32, 1, 1])
+        .arg_ptr(state)
+        .arg_ptr(block_table)
+        .arg_u32(table_len)
+        .arg_u32(block_size)
+        .arg_i32(dummy_block as i32)
+        .arg_ptr(positions)
+        .arg_ptr(slots)
+        .arg_ptr(seq_lens)
+        .launch(stream)
+}
+
+/// 2026-10-11: `k2_step_advance` (`mtp_device_step.cu`, host rule
+/// `speculative::device_step::k2_step_advance`): add the committed rows of the verdict at
+/// `verdict` to the length at `state`.
+pub fn k2_step_advance(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    verdict: DevicePtr,
+    state: DevicePtr,
+    stream: u64,
+) -> Result<()> {
+    KernelLaunch::new(gpu, kernel)
+        .grid([1, 1, 1])
+        .block([32, 1, 1])
+        .arg_ptr(verdict)
+        .arg_ptr(state)
+        .launch(stream)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn argmax_key_resolve(
     gpu: &dyn GpuBackend,

@@ -40,8 +40,9 @@ impl TransformerModel {
         &self,
         seq_id: u32,
         tokens: [u32; 2],
+        device_verdict: bool,
     ) -> Result<()> {
-        let block = k2_announce_block(seq_id, tokens);
+        let block = k2_announce_block(seq_id, tokens, device_verdict);
         // 2026-10-11: A device-step verify (its draft on the device) is announced without a
         // host wait, so the host queues the verify behind the propose in flight.
         if tokens[1] == metrale_model_layers::speculative::DEVICE_DRAFT {
@@ -62,9 +63,14 @@ impl TransformerModel {
         seq: &mut SequenceState,
         stream: u64,
     ) -> Result<()> {
-        let tokens = k2_announced_tokens(block)?;
+        let (tokens, device_verdict) = k2_announced_tokens(block)?;
         self.sync_secondary()?;
         let verified = self.decode_verify_graphed(&tokens, seq, stream);
+        // 2026-10-11: `METRALE_GLM_MTP_DEVICE_STEP`: commit and propose on this rank's own verdict
+        // at once; rank 0's verdict follows the propose (`device_step.rs`).
+        if device_verdict {
+            return self.ep_worker_k2_device_verdict(seq, verified?);
+        }
         let words = self.ep_broadcast_tokens(&[0u32; K2_VERDICT_WORDS])?;
         verified?;
         let verdict = K2Verdict::from_words(&words)?;
