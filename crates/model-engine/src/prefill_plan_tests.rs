@@ -171,3 +171,23 @@ fn checkpoint_chunk_end_rule() {
     assert!(!is_checkpoint_chunk_end(8, 32772, BS, 16));
     assert!(!is_checkpoint_chunk_end(8192, 32772, 0, 16));
 }
+
+/// 2026-10-12: A whole-pass-splitting model (GLM-5.3) splits at the tail boundary, where a
+/// byte-identical warm repeat's match lands, so it replays only the last partial block; other
+/// models keep the split one block lower. Both are `None` where the prompt has no boundary.
+#[test]
+fn a_whole_pass_model_splits_at_the_tail_boundary() {
+    for total in [17usize, 33, 48, 49, 268, 1036, 4108, 32772] {
+        let tb = metrale_gpu_runtime::ssm_tail_boundary(total, BS);
+        assert_eq!(tail_split_for(total, BS, true), tb, "{total}");
+        assert_eq!(
+            tail_split_for(total, BS, false),
+            tail_split_point(total, BS),
+            "{total}"
+        );
+    }
+    assert_eq!(tail_split_for(268, BS, true), Some(256));
+    assert_eq!(tail_split_for(268, BS, false), Some(240));
+    assert_eq!(tail_split_for(4108, BS, true), Some(4096));
+    assert_eq!(tail_split_for(16, BS, true), None);
+}
