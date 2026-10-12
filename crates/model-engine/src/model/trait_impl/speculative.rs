@@ -158,8 +158,18 @@ impl TransformerModel {
                 if carry_on && let Some(old) = self.mtp_carry.lock().take() {
                     proposer.free_drafter_kv(&old.block_table);
                 }
+                // 2026-10-12: `METRALE_MTP_ACCEPTED_ROWS` (every committed row absorbed): when the
+                // first generated token is already known (the first propose follows a bootstrap
+                // decode), the prefill also writes its key, `(hidden_{p-1}, token_p)`, from the
+                // capture's last prompt row; otherwise no propose ever writes it and every later
+                // row sits one key off its position.
+                let prefill_len = if self.levers.mtp_accepted_rows && seq_tokens.len() > p {
+                    p + 1
+                } else {
+                    p
+                };
                 if let Err(e) = proposer.prefill_drafter(
-                    &seq_tokens[..p],
+                    &seq_tokens[..prefill_len],
                     self.mtp_prefill_hidden,
                     prop_state.as_mut(),
                     ctx,

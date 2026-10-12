@@ -12,8 +12,10 @@
 //!
 //! Owner: model-engine speculative decoding.
 //! Invariants:
-//! - Only a dense-row drafter is fed: its newest pair key is `drafter_rows - 1`, so the next row
-//!   it writes is key `drafter_rows` (GLM-5.3's `Glm5NextMtpHead`).
+//! - Only a dense-row drafter is fed (GLM-5.3's `Glm5NextMtpHead`): its newest pair key is
+//!   `drafter_rows - 1`, and rows append at `drafter_rows`. 2026-10-12: When an older key was never
+//!   written the appended keys sit past their rows (as a propose's own row then does); the
+//!   bootstrap's key is written by the drafter prefill instead (`ensure_drafter_context`).
 //! - Rows are read only while `mtp_hidden_live` holds (the target hidden came from the live
 //!   `hidden_states` rows) and only rows below the saved one, so a serial decode step (saved row
 //!   0) or a stash-sourced propose writes nothing.
@@ -33,6 +35,9 @@ pub(super) struct AcceptedRows {
     pub first_key: usize,
     pub rows: usize,
     pub hidden_row0: usize,
+    /// 2026-10-12: The drafter row the first one is appended at (its row count): the key when
+    /// the drafter has every earlier key, past it when an older key was never written.
+    pub row_base: usize,
 }
 
 /// 2026-10-11: The rows to write before a propose at `position`, or `None`. `last_key` is the
@@ -53,14 +58,21 @@ pub(super) fn plan_accepted_rows(
     if last_key.map_or(drafter_rows != 0, |k| k + 1 != drafter_rows) {
         return None;
     }
-    let rows = want.checked_sub(drafter_rows).filter(|&g| g > 0)?;
-    if !live || rows > hidden_idx || tokens_len <= want {
+    let gap = want.checked_sub(drafter_rows).filter(|&g| g > 0)?;
+    // 2026-10-12: Only this verify's rows below the saved one are this sequence's: a gap wider
+    // than them (keys no verify covered: the bootstrap decode's, a gated-off stretch) writes the
+    // newest `hidden_idx` keys, the accepted drafts', appended after the drafter's rows. Measured
+    // 2026-10-12 (nOfeed): every C1 serve opened with that one-key bootstrap gap, so the
+    // gap-equals-accepted rule never fired.
+    let rows = gap.min(hidden_idx);
+    if !live || rows == 0 || tokens_len <= want {
         return None;
     }
     Some(AcceptedRows {
-        first_key: drafter_rows,
+        first_key: want - rows,
         rows,
         hidden_row0: hidden_idx - rows,
+        row_base: drafter_rows,
     })
 }
 
@@ -98,7 +110,7 @@ impl TransformerModel {
         match proposer.catchup_drafter(
             window,
             hiddens,
-            plan.first_key,
+            plan.row_base,
             plan.first_key + 1,
             state,
             ctx,
@@ -135,7 +147,8 @@ mod tests {
             Some(AcceptedRows {
                 first_key: n,
                 rows: 1,
-                hidden_row0: 0
+                hidden_row0: 0,
+                row_base: n,
             })
         );
     }
@@ -150,7 +163,8 @@ mod tests {
             Some(AcceptedRows {
                 first_key: n,
                 rows: 2,
-                hidden_row0: 0
+                hidden_row0: 0,
+                row_base: n,
             })
         );
     }
@@ -167,8 +181,7 @@ mod tests {
     }
 
     /// 2026-10-11: The rows the gap would need are not this forward's: a serial decode step saved
-    /// row 0, a stash-sourced save is not live, and a gap wider than the rows below the saved one
-    /// (an earlier miss) would read other sequences' or stale rows.
+    /// row 0 and a stash-sourced save is not live.
     #[test]
     fn rows_not_from_this_verify_are_never_read() {
         assert_eq!(
@@ -181,18 +194,40 @@ mod tests {
             None,
             "stash save"
         );
+    }
+
+    /// 2026-10-12: The bootstrap shape: the drafter missed the key the bootstrap decode committed
+    /// (one key behind), then a K=1 accept. The gap is 2 but the verify holds one row below the
+    /// saved one, so only the accepted draft's key (want - 1) is written, at the drafter's next
+    /// row, never a row before this verify.
+    #[test]
+    fn a_wider_gap_writes_only_this_verifys_newest_rows() {
+        let rows = 77;
+        let position = rows + 3;
         assert_eq!(
-            plan_accepted_rows(50, Some(49), 54, 1, true, 54),
-            None,
-            "gap 3 > row 1"
+            plan_accepted_rows(rows, Some(rows - 1), position, 1, true, position),
+            Some(AcceptedRows {
+                first_key: position - 2,
+                rows: 1,
+                hidden_row0: 0,
+                row_base: rows,
+            })
         );
     }
 
-    /// 2026-10-11: A drafter with no context rows (prefix-cache hit, capture lost) is not
-    /// back-filled: its gap is the whole prompt, wider than any verify.
+    /// 2026-10-11: A drafter with no context rows (prefix-cache hit, capture lost) gets only the
+    /// accepted draft's key from the verify, not the prompt it never saw.
     #[test]
-    fn an_empty_drafter_is_not_back_filled_from_the_verify() {
-        assert_eq!(plan_accepted_rows(0, None, 300, 1, true, 300), None);
+    fn an_empty_drafter_gets_only_the_accepted_key() {
+        assert_eq!(
+            plan_accepted_rows(0, None, 300, 1, true, 300),
+            Some(AcceptedRows {
+                first_key: 298,
+                rows: 1,
+                hidden_row0: 0,
+                row_base: 0,
+            })
+        );
     }
 
     /// 2026-10-11: Keys that are not row indices (a compacted or carried row space) have no
