@@ -242,3 +242,19 @@ pub(crate) fn kda_chunk_prefill() -> bool {
         on
     })
 }
+
+/// 2026-10-12: `METRALE_GLM_ARENA_LEAN`, read once: unset or `0` off, `1` sizes the buffer arena
+/// for the regions the GLM stack reads (`BufferSizes::lean_hc_stack`, applied by the engine's
+/// factory, which refuses it on another model type); another value is an error.
+pub fn arena_lean() -> anyhow::Result<bool> {
+    static V: std::sync::OnceLock<Result<bool, String>> = std::sync::OnceLock::new();
+    V.get_or_init(
+        || match std::env::var("METRALE_GLM_ARENA_LEAN").ok().as_deref() {
+            None | Some("0") => Ok(false),
+            Some("1") => Ok(true),
+            Some(other) => Err(format!("METRALE_GLM_ARENA_LEAN={other:?}: expected 0 or 1")),
+        },
+    )
+    .clone()
+    .map_err(anyhow::Error::msg)
+}

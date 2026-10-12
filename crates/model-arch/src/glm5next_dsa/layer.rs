@@ -66,6 +66,7 @@ pub use kernels::Glm5NextDsaLayerKernels;
 use proj_gemm::gemm;
 pub use workspace::Glm5NextDsaWorkspace;
 pub(crate) use workspace::batch_select_enabled;
+pub use workspace::dsa_ws_shared;
 
 /// 2026-09-25: One DSA block's weights on the device, already sharded for this rank.
 pub struct Glm5NextDsaWeights {
@@ -102,7 +103,10 @@ pub struct Glm5NextDsaLayer {
     pub kernels: Glm5NextDsaLayerKernels,
     pub select_kernels: Glm5NextDsaKernels,
     pub decode_kernel: Glm5NextDsaDecodeKernel,
-    pub workspace: Glm5NextDsaWorkspace,
+    /// 2026-10-12: One per layer, or (`METRALE_GLM_DSA_WS_SHARED`, the default) the one the
+    /// whole stack shares (`workspace::dsa_ws_shared`): layers run in sequence on one stream and
+    /// nothing in it carries across layers.
+    pub workspace: std::sync::Arc<Glm5NextDsaWorkspace>,
     /// 2026-09-25: Index in the model's layer stack; used only in error messages.
     pub layer_idx: usize,
     /// 2026-09-25: Index into the KV pool (`kv_cache.k_pool_ptr`): the loader counts DSA
@@ -379,6 +383,7 @@ impl Glm5NextDsaLayer {
         let kernel = if is_prefill {
             self.decode_kernel
                 .for_prefill(super::attend::hb_prefill_one_split())
+                .for_prefill_p_hi(super::attend::hb_prefill_p_hi()?)?
         } else {
             self.decode_kernel
         };

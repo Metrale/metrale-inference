@@ -75,6 +75,25 @@ pub fn select_scratch_rows(
     (max_rows * full / pools).max(floor_rows).min(max_rows)
 }
 
+/// 2026-10-12: `METRALE_GLM_DSA_WS_SHARED`: on unless set to `0`. On, the loader builds ONE
+/// `Glm5NextDsaWorkspace` for every DSA layer of the text stack (the KDA and MLP workspaces are
+/// shared the same way); off, one per layer, the pre-2026-10-12 allocation, which at 8208
+/// prefill rows is 11 x 0.67 GB on GLM-5.3. Safe because the layers run in sequence on one
+/// stream and every field is per-call scratch (`decode_k` re-uploads its metadata each call).
+pub fn dsa_ws_shared() -> bool {
+    static S: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *S.get_or_init(|| {
+        let shared = std::env::var("METRALE_GLM_DSA_WS_SHARED").as_deref() != Ok("0");
+        if !shared {
+            tracing::warn!(
+                "GLM DSA workspace: PER-LAYER (METRALE_GLM_DSA_WS_SHARED=0), one scratch per \
+                 DSA layer"
+            );
+        }
+        shared
+    })
+}
+
 /// 2026-09-25: `METRALE_DSA_SELECT_ROWS`: on unless set to `0`. When off,
 /// `Glm5NextDsaWorkspace::new` does not allocate the batched-selector buffers.
 pub(crate) fn dsa_select_rows_enabled() -> bool {

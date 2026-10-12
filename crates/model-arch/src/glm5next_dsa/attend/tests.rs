@@ -131,6 +131,7 @@ fn the_head_batched_lever_takes_a_split_count_or_nothing() {
 fn the_prefill_attend_drops_to_one_split_only_when_asked() {
     let hb = HeadBatched {
         decode: KernelHandle(11),
+        decode_p_hi: KernelHandle(13),
         merge: KernelHandle(12),
         splits: 8,
     };
@@ -146,4 +147,45 @@ fn the_prefill_attend_drops_to_one_split_only_when_asked() {
         head_batched: None,
     };
     assert_eq!(per_head.for_prefill(true).hb_splits(), None);
+}
+
+/// 2026-10-12: The P-hi twin replaces the head-batched entry only when asked and present: off,
+/// the kernel is unchanged; on without the head-batched kernel, or with a target that lacks the
+/// twin, it is an error rather than the hi + lo entry.
+#[test]
+fn the_prefill_p_hi_twin_is_swapped_in_only_when_asked_and_present() {
+    let hb = HeadBatched {
+        decode: KernelHandle(11),
+        decode_p_hi: KernelHandle(13),
+        merge: KernelHandle(12),
+        splits: 8,
+    };
+    let k = Glm5NextDsaDecodeKernel {
+        per_head: KernelHandle(10),
+        head_batched: Some(hb),
+    };
+    let off = k
+        .for_prefill_p_hi(false)
+        .ok()
+        .unwrap()
+        .head_batched
+        .unwrap();
+    assert_eq!(off.decode.0, 11);
+    let on = k.for_prefill_p_hi(true).ok().unwrap().head_batched.unwrap();
+    assert_eq!((on.decode.0, on.merge.0, on.splits), (13, 12, 8));
+    let no_twin = Glm5NextDsaDecodeKernel {
+        head_batched: Some(HeadBatched {
+            decode_p_hi: KernelHandle(0),
+            ..hb
+        }),
+        ..k
+    };
+    let e = no_twin.for_prefill_p_hi(true).err().unwrap().to_string();
+    assert!(e.contains("not in this target"), "{e}");
+    let per_head = Glm5NextDsaDecodeKernel {
+        per_head: KernelHandle(10),
+        head_batched: None,
+    };
+    let e = per_head.for_prefill_p_hi(true).err().unwrap().to_string();
+    assert!(e.contains("needs METRALE_GLM_DSA_DECODE_HB"), "{e}");
 }

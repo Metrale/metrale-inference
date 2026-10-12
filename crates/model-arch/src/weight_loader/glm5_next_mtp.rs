@@ -76,11 +76,11 @@ pub fn load_glm5next_mtp_module(
         // 2026-09-25: Single-row workspace: the drafter runs this layer one row at a time.
         // 2026-10-11: One row per sequence of the widest batched propose under its lever.
         // 2026-10-11: And a pass of drafter context rows (`ctx_rows`).
-        workspace: Glm5NextDsaWorkspace::new(
+        workspace: std::sync::Arc::new(Glm5NextDsaWorkspace::new(
             gpu,
             &dsa_cfg,
             crate::glm5next_mtp_head::drafter_dsa_rows(),
-        )?,
+        )?),
         layer_idx: idx,
         // 2026-09-25: Sole consumer of its own one-layer KV pool.
         attn_layer_idx: 0,

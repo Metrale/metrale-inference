@@ -39,6 +39,8 @@
 //   * ws_o [rows, num_splits, num_q_heads, 512] f32 and ws_ml [rows, num_splits,
 //     num_q_heads, 2] f32 when num_splits > 1; unused (may be null) when it is 1.
 //   * glm5next_dsa_mla_merge: grid (num_q_heads, rows), block 128.
+//   * 2026-10-12: glm5next_dsa_mla_decode_hb_fp8_phi: the same launch contract, P as bf16 hi
+//     only (see its definition).
 
 #include <cuda_bf16.h>
 #include <cuda_fp8.h>
@@ -98,15 +100,23 @@ __device__ __forceinline__ bool hb_valid(int t, unsigned int seq_len) {
     return t >= 0 && (unsigned int)t < seq_len;
 }
 
-extern "C" __global__ void __launch_bounds__(HB_THREADS, 1) glm5next_dsa_mla_decode_hb_fp8(
-    const __nv_bfloat16* __restrict__ Q, const unsigned char* __restrict__ KV,
-    __nv_bfloat16* __restrict__ O, const int* __restrict__ block_tables,
-    const int* __restrict__ seq_lens, const int* __restrict__ sel_indices,
-    float* __restrict__ ws_o, float* __restrict__ ws_ml, const unsigned int sel_width,
-    const unsigned int max_blocks_per_seq, const unsigned int num_q_heads,
-    const unsigned int block_size, const float inv_sqrt_d, const float k_scale,
-    const float v_scale, const unsigned long long cache_stride_bytes,
-    const unsigned int num_splits) {
+// 2026-10-12: The kernel's parameter list and the names, shared by the two entries below.
+#define HB_PARAMS                                                                                  \
+    const __nv_bfloat16* __restrict__ Q, const unsigned char* __restrict__ KV,                     \
+    __nv_bfloat16* __restrict__ O, const int* __restrict__ block_tables,                           \
+    const int* __restrict__ seq_lens, const int* __restrict__ sel_indices,                         \
+    float* __restrict__ ws_o, float* __restrict__ ws_ml, const unsigned int sel_width,             \
+    const unsigned int max_blocks_per_seq, const unsigned int num_q_heads,                         \
+    const unsigned int block_size, const float inv_sqrt_d, const float k_scale,                    \
+    const float v_scale, const unsigned long long cache_stride_bytes, const unsigned int num_splits
+#define HB_ARGS                                                                                    \
+    Q, KV, O, block_tables, seq_lens, sel_indices, ws_o, ws_ml, sel_width, max_blocks_per_seq,     \
+    num_q_heads, block_size, inv_sqrt_d, k_scale, v_scale, cache_stride_bytes, num_splits
+
+// 2026-10-12: The body. P_LO: carry P as bf16 hi + lo (the decode contract above); false: hi
+// only (`glm5next_dsa_mla_decode_hb_fp8_phi`), which drops the second PV MMA of every tile.
+template <bool P_LO>
+__device__ __forceinline__ void hb_body(HB_PARAMS) {
     __shared__ __align__(128) unsigned char kb[HB_TT * HB_CHUNKS * 16];   // 32 KB bf16 tile
     __shared__ __align__(16) float s_sc[HB_HEADS * HB_S_STRIDE];
     __shared__ __align__(16) __nv_bfloat16 s_ph[HB_HEADS * HB_P_STRIDE];
@@ -286,9 +296,9 @@ extern "C" __global__ void __launch_bounds__(HB_THREADS, 1) glm5next_dsa_mla_dec
                 const float p = ok[e] ? __expf(s4[e] - m_new) : 0.0f;
                 psum += p;
                 const __nv_bfloat16 hb = __float2bfloat16(p);
-                const __nv_bfloat16 lb = __float2bfloat16(p - __bfloat162float(hb));
                 ph[e] = __bfloat16_as_ushort(hb);
-                pl[e] = __bfloat16_as_ushort(lb);
+                pl[e] = P_LO ? __bfloat16_as_ushort(__float2bfloat16(p - __bfloat162float(hb)))
+                             : (unsigned short)0;
             }
             #pragma unroll
             for (int o = 1; o < 8; o <<= 1) psum += __shfl_xor_sync(0xffffffffu, psum, o);
@@ -300,7 +310,7 @@ extern "C" __global__ void __launch_bounds__(HB_THREADS, 1) glm5next_dsa_mla_dec
             lv.x = (unsigned int)pl[0] | ((unsigned int)pl[1] << 16);
             lv.y = (unsigned int)pl[2] | ((unsigned int)pl[3] << 16);
             *(uint2*)(s_ph + sm_h * HB_P_STRIDE + 4u * sm_sub) = hv;
-            *(uint2*)(s_pl + sm_h * HB_P_STRIDE + 4u * sm_sub) = lv;
+            if (P_LO) *(uint2*)(s_pl + sm_h * HB_P_STRIDE + 4u * sm_sub) = lv;
             if (sm_sub == 0) s_alpha[sm_h] = alpha;
         }
         __syncthreads();
@@ -326,8 +336,8 @@ extern "C" __global__ void __launch_bounds__(HB_THREADS, 1) glm5next_dsa_mla_dec
                 const unsigned int pr = (j * 8u + g) * HB_P_STRIDE + 16u * q + 2u * c;
                 bh[j][0] = *(const unsigned int*)(s_ph + pr);
                 bh[j][1] = *(const unsigned int*)(s_ph + pr + 8u);
-                bl[j][0] = *(const unsigned int*)(s_pl + pr);
-                bl[j][1] = *(const unsigned int*)(s_pl + pr + 8u);
+                bl[j][0] = P_LO ? *(const unsigned int*)(s_pl + pr) : 0u;
+                bl[j][1] = P_LO ? *(const unsigned int*)(s_pl + pr + 8u) : 0u;
             }
             const unsigned int v_tok = 16u * q + (lane & 7u) + ((lane >> 4) & 1u) * 8u;
             #pragma unroll
@@ -337,7 +347,7 @@ extern "C" __global__ void __launch_bounds__(HB_THREADS, 1) glm5next_dsa_mla_dec
                 #pragma unroll
                 for (int j = 0; j < HB_NT; j++) {
                     hb_mma(acc[i][j], a0, a1, a2, a3, bh[j][0], bh[j][1]);
-                    hb_mma(acc[i][j], a0, a1, a2, a3, bl[j][0], bl[j][1]);
+                    if (P_LO) hb_mma(acc[i][j], a0, a1, a2, a3, bl[j][0], bl[j][1]);
                 }
             }
         }
@@ -379,6 +389,19 @@ extern "C" __global__ void __launch_bounds__(HB_THREADS, 1) glm5next_dsa_mla_dec
             }
         }
     }
+}
+
+extern "C" __global__ void __launch_bounds__(HB_THREADS, 1) glm5next_dsa_mla_decode_hb_fp8(HB_PARAMS) {
+    hb_body<true>(HB_ARGS);
+}
+
+// 2026-10-12: The prefill twin (METRALE_GLM_DSA_HB_PREFILL_P_HI=1, glm5next_dsa/attend.rs): the
+// same contract with P carried as one bf16 (relative error <= 2^-9 per weight instead of 2^-16),
+// so each tile's PV runs one MMA per (dim tile, head tile) instead of two: a third of the
+// kernel's MMAs. Not bit-identical to the entry above (accuracy-gated; the gate is
+// examples/glm5next_dsa_hb_bench.rs).
+extern "C" __global__ void __launch_bounds__(HB_THREADS, 1) glm5next_dsa_mla_decode_hb_fp8_phi(HB_PARAMS) {
+    hb_body<false>(HB_ARGS);
 }
 
 // 2026-10-09: Merge the num_splits partials of one (head, row) in split order, skipping

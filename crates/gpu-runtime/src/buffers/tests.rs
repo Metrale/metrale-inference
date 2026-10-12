@@ -29,6 +29,46 @@ fn mixed_dense_moe_sizes_for_widest_ffn() {
 use crate::gpu::mock::MockGpuBackend;
 use std::collections::HashSet;
 
+/// 2026-10-12: The lean hc-stack sizes keep the regions the GLM stack reads at their size and
+/// shrink every other region to 256 B, so the arena loses the per-token regions of the other
+/// architectures and nothing else.
+#[test]
+fn lean_hc_stack_keeps_the_stack_regions_and_shrinks_the_rest() {
+    let mut cfg = ModelConfig::qwen3_next_80b_nvfp4();
+    cfg.hc_mult = 4;
+    let full = BufferSizes::from_config(&cfg, 4096, 4096, 16, 32);
+    let lean = full.clone().lean_hc_stack();
+    for (name, f, l) in [
+        ("hidden_states", full.hidden_states, lean.hidden_states),
+        ("residual", full.residual, lean.residual),
+        ("norm_output", full.norm_output, lean.norm_output),
+        ("moe_output", full.moe_output, lean.moe_output),
+        ("logits", full.logits, lean.logits),
+        ("token_ids", full.token_ids, lean.token_ids),
+        ("scratch", full.scratch, lean.scratch),
+        ("hc_streams", full.hc_streams, lean.hc_streams),
+        ("hc_post", full.hc_post, lean.hc_post),
+        ("hc_comb", full.hc_comb, lean.hc_comb),
+        ("lora_seq_slot", full.lora_seq_slot, lean.lora_seq_slot),
+    ] {
+        assert_eq!(f, l, "{name} is kept");
+    }
+    assert_eq!(lean.logits_rows, full.logits_rows);
+    for (name, l) in [
+        ("qkv_output", lean.qkv_output),
+        ("attn_output", lean.attn_output),
+        ("ssm_qkvz", lean.ssm_qkvz),
+        ("ssm_deinterleaved", lean.ssm_deinterleaved),
+        ("expert_gate_out", lean.expert_gate_out),
+        ("expert_up_out", lean.expert_up_out),
+        ("expert_down_out", lean.expert_down_out),
+        ("fp8_act", lean.fp8_act),
+        ("gate_logits", lean.gate_logits),
+    ] {
+        assert_eq!(l, 256, "{name} is shrunk");
+    }
+}
+
 #[test]
 fn test_buffer_sizes_qwen3() {
     let cfg = ModelConfig::qwen3_next_80b_nvfp4();
