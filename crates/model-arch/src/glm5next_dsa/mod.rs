@@ -118,6 +118,12 @@ pub struct DsaRowsKernels {
     /// prefill sub-chunk) in query x pool tiles (`select::scores_tiled`). Not part of
     /// [`Self::ready`].
     pub scores_tiled: KernelHandle,
+    /// 2026-10-12: `dsa_index_scores_mma`: the same scores on BF16 tensor cores (another
+    /// precision) for many query rows (`select::scores_mma`). Not part of [`Self::ready`].
+    pub scores_mma: KernelHandle,
+    /// 2026-10-12: `dsa_topk_pools_radix`: `dsa_topk_pools`'s selection, the same pools in the
+    /// same order, by radix select (`select::topk_radix`). Not part of [`Self::ready`].
+    pub topk_radix: KernelHandle,
 }
 
 impl DsaRowsKernels {
@@ -130,6 +136,8 @@ impl DsaRowsKernels {
             topk_pools: k("dsa_topk_pools_rows"),
             expand_selection: k("dsa_expand_selection_rows"),
             scores_tiled: k("dsa_index_scores_tiled"),
+            scores_mma: k("dsa_index_scores_mma"),
+            topk_radix: k("dsa_topk_pools_radix"),
         }
     }
 

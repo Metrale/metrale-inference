@@ -124,3 +124,26 @@ fn the_head_batched_lever_takes_a_split_count_or_nothing() {
         );
     }
 }
+
+/// 2026-10-12: The prefill attend takes one split only when asked and only on the head-batched
+/// kernel; decode keeps the lever's split count, and the per-head kernel stays per-head.
+#[test]
+fn the_prefill_attend_drops_to_one_split_only_when_asked() {
+    let hb = HeadBatched {
+        decode: KernelHandle(11),
+        merge: KernelHandle(12),
+        splits: 8,
+    };
+    let k = Glm5NextDsaDecodeKernel {
+        per_head: KernelHandle(10),
+        head_batched: Some(hb),
+    };
+    assert_eq!(k.for_prefill(true).hb_splits(), Some(1));
+    assert_eq!(k.for_prefill(false).hb_splits(), Some(8));
+    assert_eq!(k.hb_splits(), Some(8));
+    let per_head = Glm5NextDsaDecodeKernel {
+        per_head: KernelHandle(10),
+        head_batched: None,
+    };
+    assert_eq!(per_head.for_prefill(true).hb_splits(), None);
+}

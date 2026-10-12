@@ -376,6 +376,7 @@ impl Glm5NextDsaLayer {
             meta.block_table.offset(meta_row_base * bt_stride),
             meta.seq_len.offset(meta_row_base * 4),
             &paging,
+            false,
             stream,
         )?;
         drop(stable);

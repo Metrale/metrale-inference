@@ -94,14 +94,21 @@ impl DraftProposer for Glm5NextMtpHead {
     /// 2026-10-11: A context row normalises into the state's own `concat`
     /// (`drafter_write_kv_row`), so the drafter prefill can run at the end of each sequence's
     /// target prefill, while the shared capture is still its own; at the first propose instead,
-    /// at C >= 2 every sequence but the last-prefilled drafts without its prompt. Opt-in
-    /// (`METRALE_GLM_MTP_EAGER_PREFILL=1`) until the context rows run as one pass: one at a time
-    /// they cost ~0.35 ms per prompt row, which would land in every request's TTFT. The
-    /// diagnostic full-block arm (`METRALE_GLM_MTP_PREFILL_FULL=1`, `decode_one_for_drafter`)
-    /// writes the shared scratch, so it always waits for the first propose.
+    /// at C >= 2 every sequence but the last-prefilled drafts without its prompt. 2026-10-12: On
+    /// by default now that the context rows run in passes (`ctx_rows.rs`, ~0.04 ms per prompt
+    /// row measured, down from ~0.35); `METRALE_GLM_MTP_EAGER_PREFILL=0` defers it to the first
+    /// propose. The diagnostic full-block arm (`METRALE_GLM_MTP_PREFILL_FULL=1`,
+    /// `decode_one_for_drafter`) writes the shared scratch, so it always waits for the first
+    /// propose.
     fn prefill_uses_shared_buffers(&self) -> bool {
-        std::env::var("METRALE_GLM_MTP_PREFILL_FULL").as_deref() == Ok("1")
-            || std::env::var("METRALE_GLM_MTP_EAGER_PREFILL").as_deref() != Ok("1")
+        prefill_waits(
+            std::env::var("METRALE_GLM_MTP_PREFILL_FULL")
+                .ok()
+                .as_deref(),
+            std::env::var("METRALE_GLM_MTP_EAGER_PREFILL")
+                .ok()
+                .as_deref(),
+        )
     }
 
     fn drafter_rows(&self, state: &mut dyn ProposerState) -> usize {
@@ -348,5 +355,27 @@ impl Glm5NextMtpHead {
             );
         }
         Ok(true)
+    }
+}
+
+/// 2026-10-12: Whether the drafter prefill waits for the first propose, from
+/// `METRALE_GLM_MTP_PREFILL_FULL` and `METRALE_GLM_MTP_EAGER_PREFILL`: the full-block arm always
+/// waits; otherwise only an explicit `0` defers it.
+fn prefill_waits(full: Option<&str>, eager: Option<&str>) -> bool {
+    full == Some("1") || eager == Some("0")
+}
+
+#[cfg(test)]
+mod prefill_waits_tests {
+    use super::prefill_waits;
+
+    /// 2026-10-12: Eager by default; `0` defers; the full-block arm defers whatever the lever.
+    #[test]
+    fn the_eager_prefill_is_default_on_and_the_full_arm_always_defers() {
+        assert!(!prefill_waits(None, None));
+        assert!(!prefill_waits(None, Some("1")));
+        assert!(prefill_waits(None, Some("0")));
+        assert!(prefill_waits(Some("1"), None));
+        assert!(prefill_waits(Some("1"), Some("1")));
     }
 }

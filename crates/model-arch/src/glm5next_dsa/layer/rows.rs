@@ -15,7 +15,7 @@ use metrale_gpu_runtime::kernel_args::KernelLaunch;
 use metrale_model_layers::layer::{ForwardContext, LayerState};
 
 use super::super::paged::{IndexerCache, IndexerRowsDev};
-use super::super::select::{DsaSelectInputs, select_tokens};
+use super::super::select::{DsaSelectInputs, select_tokens_in_passes};
 use super::super::state::Glm5NextDsaState;
 use super::{Glm5NextDsaLayer, IndexerPlace, gemm};
 
@@ -163,15 +163,16 @@ impl Glm5NextDsaLayer {
         };
         let t = crate::glm5next_layer::profile::start();
         // 2026-09-25: The base of the `[max_rows, out_width]` output, not a row slice: the
-        // kernels index rows themselves, so rows 0..k land in their own slots.
-        select_tokens(
+        // kernels index rows themselves, so rows 0..k land in their own slots. 2026-10-11: In
+        // row sub-passes when the scratch holds fewer rows at this context
+        // (`select_scratch_rows`); each row's selection is the one-pass one.
+        select_tokens_in_passes(
             gpu,
             &self.select_kernels,
             &self.cfg,
             &geom,
             &inputs,
             &w.select,
-            super::super::select::DsaSelectLaunch::Exact,
             stream,
         )?;
         crate::glm5next_layer::profile::end(

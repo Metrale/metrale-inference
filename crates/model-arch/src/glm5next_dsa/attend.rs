@@ -69,6 +69,15 @@ pub fn hb_splits_lever() -> Result<Option<usize>> {
         .map_err(anyhow::Error::msg)
 }
 
+/// 2026-10-12: `METRALE_GLM_DSA_HB_PREFILL_ONE_SPLIT=1`: a prefill sub-chunk's head-batched
+/// attend runs at one split (each CTA walks its row's whole selection, writing BF16 directly: no
+/// partials, no merge) in a single launch over all its rows, which already fill the GPU. Decode
+/// keeps `METRALE_GLM_DSA_DECODE_HB`'s split count. Off unless `1`; read once.
+pub fn hb_prefill_one_split() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| std::env::var("METRALE_GLM_DSA_HB_PREFILL_ONE_SPLIT").as_deref() == Ok("1"))
+}
+
 /// 2026-10-09: [`hb_splits_lever`]'s parse, pure.
 fn parse_hb_splits(v: Option<&str>) -> Result<Option<usize>, String> {
     let Some(v) = v else { return Ok(None) };
@@ -132,6 +141,21 @@ impl Glm5NextDsaDecodeKernel {
     /// 2026-10-09: The head-batched split count, `None` on the per-head kernel.
     pub fn hb_splits(&self) -> Option<usize> {
         self.head_batched.map(|h| h.splits)
+    }
+
+    /// 2026-10-12: This kernel for a prefill sub-chunk's attend: the head-batched one at one
+    /// split when `one_split` ([`hb_prefill_one_split`]) is set, else unchanged.
+    pub fn for_prefill(self, one_split: bool) -> Self {
+        Self {
+            head_batched: self.head_batched.map(|h| {
+                if one_split {
+                    HeadBatched { splits: 1, ..h }
+                } else {
+                    h
+                }
+            }),
+            ..self
+        }
     }
 }
 
@@ -375,7 +399,13 @@ fn decode_head_batched(
              that shape, got {ws:?}"
         ),
     };
-    let launch_rows = ws.map_or(HB_LAUNCH_ROWS, |w| w.rows.min(HB_LAUNCH_ROWS));
+    // 2026-10-12: At one split there are no partials to bound, so every row goes in one launch
+    // (a row's output does not depend on the launch it is in).
+    let launch_rows = match ws {
+        Some(w) => w.rows.min(HB_LAUNCH_ROWS),
+        None if hb.splits == 1 => paging.num_seqs,
+        None => HB_LAUNCH_ROWS,
+    };
     let (ws_o, ws_ml) = ws.map_or((DevicePtr(0), DevicePtr(0)), |w| (w.o, w.ml));
     let latent_row = heads * cfg.kv_lora_rank * 2;
     let mut row0 = 0;

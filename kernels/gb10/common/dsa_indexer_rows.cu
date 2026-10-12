@@ -25,6 +25,7 @@
 //   (dsa_pool_slot) instead of reading the pool_indices dsa_kpool_compress would have stored.
 
 #include "dsa_indexer_body.cuh"
+#include <stdint.h>
 
 // 2026-10-09: grid (1, rows), block >= 1: dsa_indexer_store per row.
 extern "C" __global__ void dsa_indexer_store_rows(
@@ -299,4 +300,356 @@ extern "C" __global__ void __launch_bounds__(256) dsa_index_scores_tiled(
             if (r < Q && p < P) out[(size_t)r * P + p] = cand[a * DSA_ST_TP + b] ? acc[a * DSA_ST_TP + b] : -FLT_MAX;
         }
     }
+}
+
+// 2026-10-12: dsa_index_scores on the tensor cores, for a prefill sub-chunk's query rows
+// (`METRALE_GLM_DSA_SCORES_MMA`): score[r, p] = sum_h weights[r, h] * relu(scale * <q_{r,h}, k_p>)
+// is a multi-query GEMM, M = query rows x 32 heads, N = pools, K = 128, with the ReLU, the head
+// weights and the head sum in the epilogue (the [Q, H, P] products are never stored). q and the
+// pool keys are rounded to BF16 (RN) and multiplied on mma.sync.m16n8k16 with FP32 accumulation,
+// so a score is NOT dsa_index_scores's bits: another precision and summation order (vLLM runs
+// this as FP8 MQA logits). Candidacy and the -FLT_MAX of a non-candidate are dsa_index_scores's.
+//
+// One CTA of 8 warps per 8 query rows, warp w on row 8 * blockIdx.x + w: its 32 heads as two
+// m16 tiles whose A fragments (BF16) stay in registers for the whole pool walk. The CTA walks
+// the pools in tiles of 64: candidacy of its 8 x 64 (row, pool) pairs first (a tile with none
+// is written -FLT_MAX without a key load or an MMA), then the tile's keys to shared memory as
+// BF16 ([pool][k], rows padded to 136 halves so ldmatrix is conflict-free), 2 x 8 x 8 MMAs per
+// warp, and the epilogue: each lane folds its four heads (g, g + 8, 16 + g, 24 + g) of columns
+// 2 * tig + {0, 1}, then three xor-shuffles over g add the 8 lane groups; lane tig writes. The
+// order is fixed, so a score depends only on its own row and pool (row- and batch-invariant).
+// Launch: grid (ceil(Q / 8), 1, 1), block 256; H = 32 and D = 128 only (else nothing is
+// written; the launcher never sends another shape).
+#define DSA_SM_QPC 8u
+#define DSA_SM_PT 64u
+#define DSA_SM_D 128u
+#define DSA_SM_H 32u
+#define DSA_SM_LD (DSA_SM_D + 8u)
+
+__device__ __forceinline__ uint32_t dsa_sm_pack(float2 v) {
+    __nv_bfloat162 b = __floats2bfloat162_rn(v.x, v.y);
+    return *reinterpret_cast<uint32_t*>(&b);
+}
+
+__device__ __forceinline__ void dsa_sm_mma(float (&d)[4], const uint32_t (&a)[4], uint32_t b0,
+                                           uint32_t b1) {
+    asm volatile(
+        "mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 "
+        "{%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};\n"
+        : "+f"(d[0]), "+f"(d[1]), "+f"(d[2]), "+f"(d[3])
+        : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b0), "r"(b1));
+}
+
+__device__ __forceinline__ void dsa_sm_ldsm_x4(uint32_t addr, uint32_t& d0, uint32_t& d1,
+                                               uint32_t& d2, uint32_t& d3) {
+    asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%0,%1,%2,%3}, [%4];\n"
+                 : "=r"(d0), "=r"(d1), "=r"(d2), "=r"(d3)
+                 : "r"(addr));
+}
+
+extern "C" __global__ void __launch_bounds__(256) dsa_index_scores_mma(
+    const float* __restrict__ q,
+    const float* __restrict__ pool_keys,
+    const float* __restrict__ weights,
+    const int* __restrict__ pool_indices,
+    const unsigned char* __restrict__ pool_valid,
+    const unsigned char* __restrict__ valid_keys,
+    const int* __restrict__ q_pos,
+    float* __restrict__ out,
+    unsigned char* __restrict__ valid_cand,
+    unsigned int Q,
+    unsigned int P,
+    unsigned int H,
+    unsigned int D,
+    unsigned int KP,
+    unsigned int S,
+    float scale
+) {
+    __shared__ __align__(16) __nv_bfloat16 sB[DSA_SM_PT * DSA_SM_LD];
+    __shared__ unsigned char sCand[DSA_SM_QPC][DSA_SM_PT];
+    if (H != DSA_SM_H || D != DSA_SM_D) return;
+    const unsigned int warp = threadIdx.x >> 5, lane = threadIdx.x & 31u;
+    const unsigned int g = lane >> 2, tig = lane & 3u;
+    const unsigned int r = blockIdx.x * DSA_SM_QPC + warp;
+    const bool live = r < Q;
+
+    // 2026-10-12: Row r's 32 heads as BF16 A fragments: tile mt holds heads 16 mt .. 16 mt + 15;
+    // a[mt][ks] = rows (g, g + 8) x cols (2 tig, 2 tig + 1) and (2 tig + 8, 2 tig + 9) of k-step ks.
+    uint32_t a[2][8][4];
+    float wv[2][2];
+    {
+        const float* qr = q + (size_t)(live ? r : 0u) * DSA_SM_H * DSA_SM_D;
+        const float2 z = make_float2(0.0f, 0.0f);
+#pragma unroll
+        for (int mt = 0; mt < 2; ++mt) {
+            const unsigned int h0 = (unsigned int)mt * 16u + g, h1 = h0 + 8u;
+#pragma unroll
+            for (int ks = 0; ks < 8; ++ks) {
+                const unsigned int k0 = (unsigned int)ks * 16u + 2u * tig;
+                const float2 x00 = live ? *(const float2*)(qr + h0 * DSA_SM_D + k0) : z;
+                const float2 x10 = live ? *(const float2*)(qr + h1 * DSA_SM_D + k0) : z;
+                const float2 x01 = live ? *(const float2*)(qr + h0 * DSA_SM_D + k0 + 8u) : z;
+                const float2 x11 = live ? *(const float2*)(qr + h1 * DSA_SM_D + k0 + 8u) : z;
+                a[mt][ks][0] = dsa_sm_pack(x00);
+                a[mt][ks][1] = dsa_sm_pack(x10);
+                a[mt][ks][2] = dsa_sm_pack(x01);
+                a[mt][ks][3] = dsa_sm_pack(x11);
+            }
+            wv[mt][0] = live ? weights[(size_t)r * DSA_SM_H + h0] : 0.0f;
+            wv[mt][1] = live ? weights[(size_t)r * DSA_SM_H + h1] : 0.0f;
+        }
+    }
+    const uint32_t sbase = (uint32_t)__cvta_generic_to_shared(sB);
+    const unsigned int ntiles = (P + DSA_SM_PT - 1u) / DSA_SM_PT;
+    for (unsigned int t = 0; t < ntiles; ++t) {
+        const unsigned int p0 = t * DSA_SM_PT;
+        // 2026-10-12: Candidacy, dsa_index_scores's rule, for the CTA's 8 x 64 pairs.
+        bool any = false;
+        for (unsigned int e = threadIdx.x; e < DSA_SM_QPC * DSA_SM_PT; e += blockDim.x) {
+            const unsigned int rr = e / DSA_SM_PT, pp = e % DSA_SM_PT;
+            const unsigned int gr = blockIdx.x * DSA_SM_QPC + rr, gp = p0 + pp;
+            bool c = false;
+            if (gr < Q && gp < P) {
+                const int end = pool_indices[(size_t)gp * KP + KP - 1u];
+                const int end_c = end < 0 ? 0 : (end >= (int)S ? (int)S - 1 : end);
+                const bool vis = (end_c <= q_pos[gr]) && dsa_row_valid(valid_keys, end_c);
+                c = (pool_valid[gp] != 0) && vis;
+                valid_cand[(size_t)gr * P + gp] = c ? 1 : 0;
+            }
+            sCand[rr][pp] = c ? 1 : 0;
+            any |= c;
+        }
+        if (!__syncthreads_or(any)) {
+            for (unsigned int e = threadIdx.x; e < DSA_SM_QPC * DSA_SM_PT; e += blockDim.x) {
+                const unsigned int gr = blockIdx.x * DSA_SM_QPC + e / DSA_SM_PT;
+                const unsigned int gp = p0 + e % DSA_SM_PT;
+                if (gr < Q && gp < P) out[(size_t)gr * P + gp] = -FLT_MAX;
+            }
+            continue;
+        }
+        // 2026-10-12: The tile's keys, rounded to BF16, [pool][k]; pools past P are zero.
+        for (unsigned int e = threadIdx.x; e < DSA_SM_PT * (DSA_SM_D / 4u); e += blockDim.x) {
+            const unsigned int pp = e / (DSA_SM_D / 4u), c4 = e % (DSA_SM_D / 4u);
+            const unsigned int gp = p0 + pp;
+            const float4 v = gp < P ? ((const float4*)(pool_keys + (size_t)gp * DSA_SM_D))[c4]
+                                    : make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+            uint2 packed;
+            packed.x = dsa_sm_pack(make_float2(v.x, v.y));
+            packed.y = dsa_sm_pack(make_float2(v.z, v.w));
+            *(uint2*)(sB + pp * DSA_SM_LD + c4 * 4u) = packed;
+        }
+        __syncthreads();
+        float acc[2][8][4];
+#pragma unroll
+        for (int mt = 0; mt < 2; ++mt)
+#pragma unroll
+            for (int nt = 0; nt < 8; ++nt)
+#pragma unroll
+                for (int c = 0; c < 4; ++c) acc[mt][nt][c] = 0.0f;
+        // 2026-10-12: Warp-uniform: a row that sees none of the tile's pools skips its MMAs.
+        const bool mine = __any_sync(0xFFFFFFFFu, sCand[warp][lane] | sCand[warp][lane + 32u]);
+        if (live && mine) {
+#pragma unroll
+            for (int nt = 0; nt < 8; ++nt) {
+#pragma unroll
+                for (int kk = 0; kk < 4; ++kk) {
+                    const unsigned int row = (unsigned int)nt * 8u + (lane & 7u);
+                    const unsigned int kof = (unsigned int)kk * 32u + (lane >> 3) * 8u;
+                    uint32_t b0, b1, b2, b3;
+                    dsa_sm_ldsm_x4(sbase + (row * DSA_SM_LD + kof) * 2u, b0, b1, b2, b3);
+                    dsa_sm_mma(acc[0][nt], a[0][2 * kk], b0, b1);
+                    dsa_sm_mma(acc[1][nt], a[1][2 * kk], b0, b1);
+                    dsa_sm_mma(acc[0][nt], a[0][2 * kk + 1], b2, b3);
+                    dsa_sm_mma(acc[1][nt], a[1][2 * kk + 1], b2, b3);
+                }
+            }
+        }
+        // 2026-10-12: Epilogue. c0/c1 are rows g of columns 2 tig, 2 tig + 1; c2/c3 rows g + 8.
+#pragma unroll
+        for (int nt = 0; nt < 8; ++nt) {
+#pragma unroll
+            for (int j = 0; j < 2; ++j) {
+                float s = wv[0][0] * fmaxf(scale * acc[0][nt][j], 0.0f);
+                s += wv[0][1] * fmaxf(scale * acc[0][nt][2 + j], 0.0f);
+                s += wv[1][0] * fmaxf(scale * acc[1][nt][j], 0.0f);
+                s += wv[1][1] * fmaxf(scale * acc[1][nt][2 + j], 0.0f);
+                s += __shfl_xor_sync(0xFFFFFFFFu, s, 4);
+                s += __shfl_xor_sync(0xFFFFFFFFu, s, 8);
+                s += __shfl_xor_sync(0xFFFFFFFFu, s, 16);
+                const unsigned int pp = (unsigned int)nt * 8u + 2u * tig + (unsigned int)j;
+                const unsigned int gp = p0 + pp;
+                if (g == 0u && live && gp < P)
+                    out[(size_t)r * P + gp] = sCand[warp][pp] ? s : -FLT_MAX;
+            }
+        }
+        // 2026-10-12: sB and sCand are rewritten by the next tile.
+        __syncthreads();
+    }
+}
+
+// 2026-10-12: dsa_topk_pools by radix select (`METRALE_GLM_DSA_TOPK_RADIX`): the same
+// selected pools in the same order, without the tiled bitonic walk over every pool. One block
+// per query row r. The order is dsa_topk_pools's total order, score descending then pool index
+// ascending, over every pool of the row (a non-candidate's -FLT_MAX included):
+// 1. Four 8-bit radix passes over the scores' order-preserving keys (dsa_tk; -0.0 keyed as
+//    +0.0, so key equality is value equality) find the select_k-th largest key K and how many
+//    of the select_k winners equal it (`need`).
+// 2. One pass in pool order collects every pool keyed above K (select_k - need of them) and the
+//    first `need` pools keyed at K, in ascending pool order: exactly the top select_k of the
+//    total order.
+// 3. A bitonic sort of those select_k (score, pool) pairs in the total order, as the reference
+//    leaves its best list; slot i of the row is the i-th, -1 past the pools of a short row.
+// Launch: grid (Q, 1, 1), block 256; select_k <= DSA_TR_MAX.
+#define DSA_TR_MAX 512u
+#define DSA_TR_WARPS 8u
+
+__device__ __forceinline__ unsigned int dsa_tk(float f) {
+    unsigned int u = __float_as_uint(f);
+    if (u == 0x80000000u) u = 0u;
+    return (u & 0x80000000u) ? ~u : (u | 0x80000000u);
+}
+
+extern "C" __global__ void __launch_bounds__(256) dsa_topk_pools_radix(
+    const float* __restrict__ scores,
+    int* __restrict__ selected,
+    unsigned int Q,
+    unsigned int P,
+    unsigned int select_k
+) {
+    __shared__ unsigned int hist[DSA_TR_WARPS][256];
+    __shared__ float cv[DSA_TR_MAX];
+    __shared__ int ci[DSA_TR_MAX];
+    __shared__ unsigned int s_prefix, s_need, s_gt, s_eq, s_wsum[DSA_TR_WARPS];
+    const unsigned int r = blockIdx.x, tid = threadIdx.x, lane = tid & 31u, warp = tid >> 5;
+    if (r >= Q || select_k == 0u || select_k > DSA_TR_MAX || blockDim.x != 256u) return;
+    const float* row = scores + (size_t)r * P;
+    const unsigned int take = select_k < P ? select_k : P;
+
+    if (P > select_k) {
+        // 2026-10-12: 1. Radix select of the select_k-th largest key.
+        unsigned int prefix = 0u, mask = 0u, k = select_k;
+        for (int shift = 24; shift >= 0; shift -= 8) {
+            for (unsigned int i = tid; i < DSA_TR_WARPS * 256u; i += blockDim.x)
+                (&hist[0][0])[i] = 0u;
+            __syncthreads();
+            for (unsigned int i = tid; i < P; i += blockDim.x) {
+                const unsigned int key = dsa_tk(row[i]);
+                if ((key & mask) == prefix) atomicAdd(&hist[warp][(key >> shift) & 255u], 1u);
+            }
+            __syncthreads();
+            if (warp == 0u) {
+                // 2026-10-12: Lane l holds digits 255 - 8 l .. 248 - 8 l (descending).
+                unsigned int c[8], sum = 0u;
+#pragma unroll
+                for (int j = 0; j < 8; ++j) {
+                    const unsigned int d = 255u - 8u * lane - (unsigned int)j;
+                    unsigned int v = 0u;
+#pragma unroll
+                    for (unsigned int w = 0; w < DSA_TR_WARPS; ++w) v += hist[w][d];
+                    c[j] = v;
+                    sum += v;
+                }
+                unsigned int incl = sum;
+#pragma unroll
+                for (int o = 1; o < 32; o <<= 1) {
+                    const unsigned int n = __shfl_up_sync(0xFFFFFFFFu, incl, o);
+                    if (lane >= (unsigned int)o) incl += n;
+                }
+                const unsigned int excl = incl - sum;
+                const unsigned int hit = __ballot_sync(0xFFFFFFFFu, excl < k && incl >= k);
+                if (lane == (unsigned int)(__ffs(hit) - 1)) {
+                    unsigned int cum = excl;
+#pragma unroll
+                    for (int j = 0; j < 8; ++j) {
+                        if (cum + c[j] >= k) {
+                            const unsigned int d = 255u - 8u * lane - (unsigned int)j;
+                            s_prefix = prefix | (d << shift);
+                            s_need = k - cum;
+                            break;
+                        }
+                        cum += c[j];
+                    }
+                }
+            }
+            __syncthreads();
+            prefix = s_prefix;
+            k = s_need;
+            mask |= 255u << shift;
+        }
+        // 2026-10-12: 2. Collect: above K anywhere in [0, select_k - need), the first `need`
+        // at K, in pool order, after them.
+        const unsigned int kstar = prefix, need = k, n_gt = select_k - need;
+        if (tid == 0u) {
+            s_gt = 0u;
+            s_eq = 0u;
+        }
+        __syncthreads();
+        for (unsigned int base = 0; base < P; base += blockDim.x) {
+            const unsigned int i = base + tid;
+            const float v = i < P ? row[i] : 0.0f;
+            const unsigned int key = i < P ? dsa_tk(v) : 0u;
+            const bool gt = i < P && key > kstar;
+            const bool eq = i < P && key == kstar;
+            if (gt) {
+                const unsigned int pos = atomicAdd(&s_gt, 1u);
+                cv[pos] = v;
+                ci[pos] = (int)i;
+            }
+            const unsigned int bal = __ballot_sync(0xFFFFFFFFu, eq);
+            if (lane == 0u) s_wsum[warp] = (unsigned int)__popc(bal);
+            __syncthreads();
+            unsigned int before = s_eq;
+            for (unsigned int w = 0; w < warp; ++w) before += s_wsum[w];
+            const unsigned int pos = before + (unsigned int)__popc(bal & ((1u << lane) - 1u));
+            if (eq && pos < need) {
+                cv[n_gt + pos] = v;
+                ci[n_gt + pos] = (int)i;
+            }
+            __syncthreads();
+            if (tid == 0u) {
+                unsigned int t = 0u;
+                for (unsigned int w = 0; w < DSA_TR_WARPS; ++w) t += s_wsum[w];
+                s_eq += t;
+            }
+            __syncthreads();
+        }
+    } else {
+        for (unsigned int i = tid; i < P; i += blockDim.x) {
+            cv[i] = row[i];
+            ci[i] = (int)i;
+        }
+    }
+    // 2026-10-12: 3. Bitonic sort of the `take` winners (padded to a power of two with entries
+    // that sort last on both keys), descending in the total order.
+    unsigned int n2 = 2u;
+    while (n2 < take) n2 <<= 1;
+    for (unsigned int i = take + tid; i < n2; i += blockDim.x) {
+        cv[i] = -FLT_MAX;
+        ci[i] = INT_MAX;
+    }
+    __syncthreads();
+#define DSA_TR_GT(a, b) ((cv[(a)] > cv[(b)]) || (cv[(a)] == cv[(b)] && ci[(a)] < ci[(b)]))
+    for (unsigned int kk = 2; kk <= n2; kk <<= 1) {
+        for (unsigned int j = kk >> 1; j > 0; j >>= 1) {
+            for (unsigned int i = tid; i < n2; i += blockDim.x) {
+                const unsigned int l = i ^ j;
+                if (l > i) {
+                    const bool gt = DSA_TR_GT(i, l);
+                    const bool want_desc = (i & kk) == 0u;
+                    if (want_desc != gt) {
+                        const float tv = cv[i];
+                        cv[i] = cv[l];
+                        cv[l] = tv;
+                        const int ti = ci[i];
+                        ci[i] = ci[l];
+                        ci[l] = ti;
+                    }
+                }
+            }
+            __syncthreads();
+        }
+    }
+#undef DSA_TR_GT
+    for (unsigned int i = tid; i < select_k; i += blockDim.x)
+        selected[(size_t)r * select_k + i] = (i < take && ci[i] != INT_MAX) ? ci[i] : DSA_INVALID;
 }

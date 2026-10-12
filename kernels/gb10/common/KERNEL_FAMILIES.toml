@@ -2188,11 +2188,16 @@ kernels = [
   "dsa_indexer_rows::dsa_expand_selection_rows",
   # 2026-10-10: dsa_index_scores's bytes for a prefill sub-chunk's rows, register-tiled.
   "dsa_indexer_rows::dsa_index_scores_tiled",
+  # 2026-10-12: the same scores on BF16 tensor cores (another precision; METRALE_GLM_DSA_SCORES_MMA).
+  "dsa_indexer_rows::dsa_index_scores_mma",
+  # 2026-10-12: dsa_topk_pools's selection by radix select (METRALE_GLM_DSA_TOPK_RADIX).
+  "dsa_indexer_rows::dsa_topk_pools_radix",
 ]
 kernel_compute."dsa_indexer::dsa_indexer_store" = { compute = "memory" }
 kernel_compute."dsa_indexer::dsa_write_geom" = { compute = "memory" }
 kernel_compute."dsa_indexer_rows::dsa_indexer_store_rows" = { compute = "memory" }
 kernel_compute."dsa_indexer_rows::dsa_write_geom_rows" = { compute = "memory" }
+kernel_compute."dsa_indexer_rows::dsa_index_scores_mma" = { compute = "tensor_core", mma = "mma.sync.m16n8k16.bf16" }
 rows = [1, 1]
 pipeline.kpool_compress = { in = ["bf16", "bf16"], state = "bf16", compute = "f32", out = [] }
 pipeline.index_select = { in = ["f32", "f32"], scores = "f32", score = "f32", out = ["i32"] }

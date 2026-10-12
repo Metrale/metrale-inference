@@ -362,6 +362,8 @@ impl Glm5NextDsaLayer {
         block_table_dev: DevicePtr,
         seq_lens_dev: DevicePtr,
         paging: &DsaDecodePaging,
+        // 2026-10-12: A prefill sub-chunk's attend (`Glm5NextDsaDecodeKernel::for_prefill`).
+        is_prefill: bool,
         stream: u64,
     ) -> Result<()> {
         use crate::glm5next_layer::profile;
@@ -374,9 +376,15 @@ impl Glm5NextDsaLayer {
         };
         let t = profile::start();
         let pool = kv_cache.k_pool_ptr(self.attn_layer_idx);
+        let kernel = if is_prefill {
+            self.decode_kernel
+                .for_prefill(super::attend::hb_prefill_one_split())
+        } else {
+            self.decode_kernel
+        };
         decode_attention(
             gpu,
-            self.decode_kernel,
+            kernel,
             &self.cfg,
             &geom,
             &paging,
