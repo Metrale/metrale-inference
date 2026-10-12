@@ -3,5 +3,5 @@
 # SHA-256 of its `SHA256SUMS`. `crates/qci-dump/tests/platform_contracts.rs` checks both, and
 # runs the runtime's binding over the bundle's fixtures. Refresh both with
 # `bash scripts/vendor-platform-schemas.sh <mfs-clone> <commit>`; never edit the copy by hand.
-mfs_commit = "3d9eb413739de1dff27bdea632f915058c778899"
-sha256sums = "b1e190c9854f1a4a7947efcb167667a45664775260dd9b9b16180e2a183d15b3"
+mfs_commit = "a16127945bcb6f964424745dbb777e0df455d269"
+sha256sums = "7c676e1aa140e6ce55749fb324f0aa56bedb69256836233371e7b3bb0e9ab439"

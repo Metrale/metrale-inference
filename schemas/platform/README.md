@@ -17,12 +17,16 @@ that the copy is unchanged.
 | `v1/fixtures/<kind>/valid/*.json` | documents every implementation must accept |
 | `v1/fixtures/<kind>/invalid/*.json` | documents every implementation must refuse; each one is a valid fixture with one change |
 | `v1/INDEX.json` | every fixture with its kind and expected verdict; for an invalid fixture, the rule it breaks, its base fixture and the one change (`op`, `pointer`, `value`); for a valid fixture, the SHA-256 of its canonical JSON |
+| `v1/vectors/release-signer.json` | the public keys of a published **test** release signer (its seed is public: 32 bytes of `0x07`); the `document-signature` fixture is its real signature over the `release-manifest` fixture |
 | `SHA256SUMS` | the SHA-256 of every other file here, in `sha256sum` format |
 
 The document kinds are `model-recipe`, `hardware-fingerprint`, `model-deployment`,
 `deployment-action`, `deployment-action-result`, `runtime-health`, `inference-usage`,
-`audit-event`, `release-manifest`, `compatibility-receipt` and `error`. Every value in the
-fixtures is synthetic: digests, commits and ids are made up and refer to nothing.
+`audit-event`, `release-manifest`, `compatibility-receipt`, `document-signature`,
+`revocation-list` and `error`. Every value in the fixtures is synthetic: digests, commits and ids
+are made up and refer to nothing. The one exception is the signature fixture, which is a real
+signature by the published test signer, so a consumer's verifier can be checked against it
+(`docs/contracts/PLATFORM.md`, "Release signatures and revocation lists").
 
 ## Rules every document follows
 
