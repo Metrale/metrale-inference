@@ -60,6 +60,8 @@ pub(crate) struct Levers {
     pub gemv_rows: u32,
     /// `METRALE_GLM_W4A16_DEQUANT_GEMM_MIN_ROWS` is set (cuBLASLt over a dequantized weight).
     pub dequant_gemm: bool,
+    /// `METRALE_GLM_FP8_DEQUANT_GEMM_MIN_ROWS` is set (cuBLASLt over a dequantized FP8 weight).
+    pub fp8_dequant_gemm: bool,
     /// `METRALE_GLM_MOE_W4A4_GROUPED=1` and its kernels resolved (W4A4 experts at every M).
     pub w4a4_grouped_ready: bool,
     /// `METRALE_GLM_DSA_BATCH_QIDX=1` (indexer `wq_b` on cuBLASLt over a whole prefill chunk).
@@ -83,6 +85,9 @@ pub(crate) fn check_levers(on: bool, l: Levers) -> Result<(), String> {
     }
     if l.dequant_gemm {
         bad.push("METRALE_GLM_W4A16_DEQUANT_GEMM_MIN_ROWS (cuBLASLt picks its order by M)");
+    }
+    if l.fp8_dequant_gemm {
+        bad.push("METRALE_GLM_FP8_DEQUANT_GEMM_MIN_ROWS (cuBLASLt picks its order by M)");
     }
     if !l.w4a4_grouped_ready {
         bad.push(
@@ -119,6 +124,7 @@ pub(crate) fn check_at_load(k: &crate::glm5next_mlp::Glm5NextMlpKernels) -> Resu
         gemv_seg: crate::glm5next_w4a16_seg::gemv_seg()?,
         gemv_rows: crate::glm5next_w4a16_seg::gemv_rows()?,
         dequant_gemm: crate::glm5next_w4a16_wide::min_rows()?.is_some(),
+        fp8_dequant_gemm: crate::glm5next_fp8_wide::min_rows()?.is_some(),
         w4a4_grouped_ready: crate::glm5next_mlp::forward::moe_w4a4_grouped()?
             && k.w4a4_expert_rows_grouped() == usize::MAX,
         dsa_batch_qidx: crate::glm5next_layer::dsa_batch_qidx(),

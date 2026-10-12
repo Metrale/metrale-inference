@@ -16,6 +16,9 @@
 //! 2026-10-09: Under `--dense-quantization w4a16` this registry serves the part of the set the
 //! W4A16 tier leaves at FP8 (`glm5next_w4a16_dense::tier_of`), unchanged.
 //!
+//! 2026-10-12: `METRALE_GLM_FP8_DEQUANT_GEMM_MIN_ROWS` (`glm5next_fp8_wide`) moves launches of at
+//! least N rows (prefill sub-chunks) to a dequantized BF16 copy and one cuBLASLt GEMM.
+//!
 //! Owner: model-arch (GLM-5.3).
 //! Invariants:
 //! - [`proj`] declines (`Ok(false)`) unless the tier is `fp8` or `w4a16` and the weight was
@@ -23,7 +26,9 @@
 //! - A registered weight is used only at the shape it was registered with; any other shape is
 //!   an error, never a silent BF16 run.
 //! - A row's output does not depend on the row count: the W8A8 family is row-invariant and
-//!   launches here are chunked by whole rows.
+//!   launches here are chunked by whole rows. The exception is opt-in: a launch
+//!   `METRALE_GLM_FP8_DEQUANT_GEMM_MIN_ROWS` takes (cuBLASLt picks its order by M), which
+//!   `METRALE_GLM_BATCH_INVARIANT` therefore refuses.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -215,7 +220,8 @@ pub fn register(
         scale_format: WeightQuantFormat::Fp8PerRow,
     }])?;
     s.weights.insert(bf16.0, w);
-    Ok(())
+    drop(g);
+    crate::glm5next_fp8_wide::reserve(gpu, n, k)
 }
 
 /// 2026-10-10: The FP8 copy registered for the BF16 weight at `bf16` when this registry is in use
@@ -234,7 +240,8 @@ pub fn row_weight(bf16: DevicePtr) -> Option<Fp8Weight> {
 }
 
 /// 2026-10-12: Whether [`proj`] serves the BF16 weight at `bf16` (the registry is in use and
-/// holds it), so a launch of any row count runs the row-invariant W8A8 family.
+/// holds it), so a launch of any row count runs the row-invariant W8A8 family (or, from
+/// `METRALE_GLM_FP8_DEQUANT_GEMM_MIN_ROWS` rows, the dequantize + cuBLASLt path).
 pub fn holds(bf16: DevicePtr) -> bool {
     enabled()
         && state()
@@ -305,6 +312,17 @@ fn proj_registered(
         w.n(),
         w.k()
     );
+    if crate::glm5next_fp8_wide::takes(crate::glm5next_fp8_wide::min_rows()?, m) {
+        // 2026-10-12: The lever's path reads neither the activation scratch nor its record.
+        let [seg] = w.segment_weights() else {
+            bail!(
+                "METRALE_GLM_FP8_DEQUANT_GEMM_MIN_ROWS: weight {:#x} is not one per-row segment",
+                b.0
+            );
+        };
+        crate::glm5next_fp8_wide::proj(gpu, seg, a, c, m, n, k, stream)?;
+        return Ok(true);
+    }
     let key = (a.0, m, k, stream);
     if m <= W8A8_MAX_ROWS && s.stable == Some(a.0) && s.quantized == Some(key) {
         // 2026-10-09: The scratch already holds this stable input's quantization.

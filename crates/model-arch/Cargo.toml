@@ -279,6 +279,10 @@ name = "glm5next_w4a16_wide_bench"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "glm5next_fp8_wide_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "glm5next_kda_chunk16_bench"
 required-features = ["cuda", "gpu-examples"]
 

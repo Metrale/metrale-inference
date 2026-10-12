@@ -13,6 +13,7 @@ const OK: Levers = Levers {
     gemv_seg: false,
     gemv_rows: 0,
     dequant_gemm: false,
+    fp8_dequant_gemm: false,
     w4a4_grouped_ready: true,
     dsa_batch_qidx: false,
     kda_chunked: false,
@@ -38,6 +39,7 @@ fn each_conflicting_lever_is_refused_by_name() {
         gemv_seg: true,
         gemv_rows: 4,
         dequant_gemm: true,
+        fp8_dequant_gemm: true,
         w4a4_grouped_ready: false,
         dsa_batch_qidx: true,
         kda_chunked: true,
@@ -57,7 +59,14 @@ fn each_conflicting_lever_is_refused_by_name() {
                 dequant_gemm: true,
                 ..OK
             },
-            "DEQUANT_GEMM_MIN_ROWS",
+            "W4A16_DEQUANT_GEMM_MIN_ROWS",
+        ),
+        (
+            Levers {
+                fp8_dequant_gemm: true,
+                ..OK
+            },
+            "FP8_DEQUANT_GEMM_MIN_ROWS",
         ),
         (
             Levers {
