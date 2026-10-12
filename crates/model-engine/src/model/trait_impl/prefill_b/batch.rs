@@ -203,7 +203,15 @@ impl TransformerModel {
 
                 // 2026-09-25: The same zeroing rule as `prefill_chunk_dispatch`.
                 if self.comm.is_some() {
-                    self.buffers.zero_all(self.gpu.as_ref(), stream)?;
+                    if super::super::super::prefill_zero::prefill_zero_rows()? {
+                        self.buffers.zero_all_rows(
+                            self.gpu.as_ref(),
+                            stream,
+                            chunk_len.next_multiple_of(16),
+                        )?;
+                    } else {
+                        self.buffers.zero_all(self.gpu.as_ref(), stream)?;
+                    }
                 } else if chunk_start == 0 {
                     self.buffers
                         .zero_prefill_essentials(self.gpu.as_ref(), stream)?;

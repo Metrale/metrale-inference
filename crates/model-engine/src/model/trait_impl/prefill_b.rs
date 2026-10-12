@@ -253,8 +253,17 @@ impl TransformerModel {
         // Otherwise only the first chunk zeroes, and only the prefill
         // essentials; later chunks rely on the embedding and the layer forward
         // writing each buffer before it is read.
+        // 2026-10-12: `METRALE_PREFILL_ZERO_ROWS=1`: the chunk's rows only (`zero_all_rows`).
         if self.comm.is_some() {
-            self.buffers.zero_all(self.gpu.as_ref(), stream)?;
+            if super::super::prefill_zero::prefill_zero_rows()? {
+                self.buffers.zero_all_rows(
+                    self.gpu.as_ref(),
+                    stream,
+                    chunk_len.next_multiple_of(16),
+                )?;
+            } else {
+                self.buffers.zero_all(self.gpu.as_ref(), stream)?;
+            }
         } else if chunk_start == 0 {
             self.buffers
                 .zero_prefill_essentials(self.gpu.as_ref(), stream)?;
