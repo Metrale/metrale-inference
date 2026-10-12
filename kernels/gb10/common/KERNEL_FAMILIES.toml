@@ -2244,7 +2244,8 @@ files = ["kernels/gb10/glm-5.3-flash/nvfp4/glm5next_dsa_mla_decode.cu"]
 # in bf16),
 # and accumulates P V with P split into bf16 hi + lo; a merge kernel combines the splits. Opt-in
 # through METRALE_GLM_DSA_DECODE_HB (glm5next_dsa/attend.rs); it differs from glm_mla_decode in
-# summation order only.
+# summation order only. 2026-10-12: `_phi` is the same body with P as one bf16 (prefill only,
+# METRALE_GLM_DSA_HB_PREFILL_P_HI; accuracy-gated).
 [[family]]
 id = "glm_mla_decode_hb"
 description = "GLM-5 sparse NoPE MLA decode, head-batched on tensor cores, split + merge (latent 512)"
@@ -2252,6 +2253,7 @@ compute = "tensor_core"
 mma = "mma.sync.m16n8k16.bf16"
 kernels = [
   "glm5next_dsa_mla_decode_hb::glm5next_dsa_mla_decode_hb_fp8",
+  "glm5next_dsa_mla_decode_hb::glm5next_dsa_mla_decode_hb_fp8_phi",
   "glm5next_dsa_mla_decode_hb::glm5next_dsa_mla_merge",
 ]
 rows = [1, 4096]

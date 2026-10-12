@@ -15,6 +15,9 @@
 //!   [`PER_SAMPLE`] launches). Launches rotate over [`fixture::VARIANTS`] block tables and selections
 //!   into a [`fixture::POOL_BLOCKS`]-block (128 MB) latent pool, so the selected tokens are not
 //!   L2-resident from the previous launch, as in a serve where the other layers run between.
+//!   2026-10-12: Each case also runs the P-hi twin (`glm5next_dsa_mla_decode_hb_fp8_phi`,
+//!   `METRALE_GLM_DSA_HB_PREFILL_P_HI`) against the same reference and bound, and a 256-row
+//!   prefill-sized case runs at one split.
 //!   `HB_SPLITS=a,b,..` picks the split counts; `HB_PTX=<file>` swaps in a locally compiled
 //!   `glm5next_dsa_mla_decode_hb` PTX to measure a variant without rebuilding the kernels.
 //!
@@ -43,9 +46,12 @@ const HB_HEADS: usize = 24;
 /// fp32 summation and the hi + lo P split. The per-head kernel measures the same (printed).
 const TOL_ULP: f64 = 2.0;
 
+#[derive(Clone, Copy)]
 struct Kernels {
     old: KernelHandle,
     hb: KernelHandle,
+    /// 2026-10-12: The prefill twin with P as bf16 hi only (`METRALE_GLM_DSA_HB_PREFILL_P_HI`).
+    hb_phi: KernelHandle,
     merge: KernelHandle,
 }
 
@@ -88,7 +94,22 @@ fn launch_hb(
     ws: (DevicePtr, DevicePtr),
     splits: usize,
 ) -> Result<()> {
-    KernelLaunch::new(g, k.hb)
+    launch_hb_entry(g, k.hb, k.merge, cache, v, out, ws, splits)
+}
+
+/// 2026-10-12: [`launch_hb`] on the given head-batched entry (`hb` or its P-hi twin).
+#[allow(clippy::too_many_arguments)]
+fn launch_hb_entry(
+    g: &dyn GpuBackend,
+    entry: KernelHandle,
+    merge: KernelHandle,
+    cache: DevicePtr,
+    v: View,
+    out: DevicePtr,
+    ws: (DevicePtr, DevicePtr),
+    splits: usize,
+) -> Result<()> {
+    KernelLaunch::new(g, entry)
         .grid([
             splits as u32,
             v.rows as u32,
@@ -114,7 +135,7 @@ fn launch_hb(
         .arg_u32(splits as u32)
         .launch(0)?;
     if splits > 1 {
-        KernelLaunch::new(g, k.merge)
+        KernelLaunch::new(g, merge)
             .grid([v.heads as u32, v.rows as u32, 1])
             .block([128, 1, 1])
             .arg_ptr(ws.0)
@@ -207,6 +228,10 @@ fn main() -> Result<()> {
             "glm5next_dsa_mla_decode_hb",
             "glm5next_dsa_mla_decode_hb_fp8",
         )?,
+        hb_phi: g.kernel(
+            "glm5next_dsa_mla_decode_hb",
+            "glm5next_dsa_mla_decode_hb_fp8_phi",
+        )?,
         merge: g.kernel("glm5next_dsa_mla_decode_hb", "glm5next_dsa_mla_merge")?,
     };
     let splits_list: Vec<usize> = std::env::var("HB_SPLITS")
@@ -233,6 +258,9 @@ fn main() -> Result<()> {
         (21, 16, 2051),
         (32, 4, 1500),
         (64, 2, 2051),
+        // 2026-10-12: A prefill-sized launch (one split only: the split workspace would be
+        // rows x splits x heads x 2 KB).
+        (22, 256, 2051),
     ] {
         let c = make_case(g, &mut rng, heads, rows, valid, q_scale)?;
         let n_out = rows * heads * KVL * 2;
@@ -249,6 +277,9 @@ fn main() -> Result<()> {
             t_old.0, t_old.1, t_old.2
         );
         for &splits in &splits_list {
+            if rows > 16 && splits != 1 {
+                continue;
+            }
             let ws = (
                 g.alloc((rows * splits * heads * KVL * 4).max(4))?,
                 g.alloc((rows * splits * heads * 8).max(4))?,
@@ -289,9 +320,68 @@ fn main() -> Result<()> {
                     failed = true;
                 }
             }
+            // 2026-10-12: The P-hi twin against the same reference and bound; its rows are
+            // batch-invariant for the same reason (one CTA per row).
+            let t_phi = time(g, |i| {
+                launch_hb_entry(
+                    g,
+                    k.hb_phi,
+                    k.merge,
+                    pool.dev,
+                    c.view(i % VARIANTS, 0, rows),
+                    out,
+                    ws,
+                    splits,
+                )
+            })?;
+            launch_hb_entry(
+                g,
+                k.hb_phi,
+                k.merge,
+                pool.dev,
+                c.view(0, 0, rows),
+                out,
+                ws,
+                splits,
+            )?;
+            let all_phi = read(g, out, n_out)?;
+            let e_phi = worst_ulp(&c, &pool, &bf16s(&all_phi), checked);
+            println!(
+                "    phi    {splits:2}: {:7.1} ({:.1}-{:.1}) err {e_phi:.2} eq-hb {:.1}%  x{:.2} (vs hb x{:.2})",
+                t_phi.0,
+                t_phi.1,
+                t_phi.2,
+                same_as_old(&all_phi, &all) * 100.0,
+                t_old.0 / t_phi.0,
+                t.0 / t_phi.0
+            );
+            if e_phi > TOL_ULP {
+                println!("    FAIL: P-hi twin {e_phi:.2} ulp from the reference");
+                failed = true;
+            }
+            for r in 0..rows.min(16) {
+                launch_hb_entry(
+                    g,
+                    k.hb_phi,
+                    k.merge,
+                    pool.dev,
+                    c.view(0, r, 1),
+                    one,
+                    ws,
+                    splits,
+                )?;
+                if read(g, one, heads * KVL * 2)?
+                    != all_phi[r * heads * KVL * 2..][..heads * KVL * 2]
+                {
+                    println!("    FAIL: P-hi row {r} alone differs from the batched launch");
+                    failed = true;
+                }
+            }
         }
     }
     failed |= edge_cases(g, &k, &pool, &mut rng)?;
+    // 2026-10-12: The same edge cases on the P-hi twin.
+    failed |= edge_cases(g, &Kernels { hb: k.hb_phi, ..k }, &pool, &mut rng)?;
     if failed {
         bail!("head-batched DSA decode gate FAILED");
     }

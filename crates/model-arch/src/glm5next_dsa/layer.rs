@@ -383,6 +383,7 @@ impl Glm5NextDsaLayer {
         let kernel = if is_prefill {
             self.decode_kernel
                 .for_prefill(super::attend::hb_prefill_one_split())
+                .for_prefill_p_hi(super::attend::hb_prefill_p_hi()?)?
         } else {
             self.decode_kernel
         };

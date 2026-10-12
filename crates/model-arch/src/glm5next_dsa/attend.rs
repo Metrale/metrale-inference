@@ -78,6 +78,29 @@ pub fn hb_prefill_one_split() -> bool {
     *F.get_or_init(|| std::env::var("METRALE_GLM_DSA_HB_PREFILL_ONE_SPLIT").as_deref() == Ok("1"))
 }
 
+/// 2026-10-12: `METRALE_GLM_DSA_HB_PREFILL_P_HI`, read once: `1` runs a prefill sub-chunk's
+/// head-batched attend on `glm5next_dsa_mla_decode_hb_fp8_phi`, which carries the softmax
+/// weights as one bf16 instead of bf16 hi + lo and so runs two thirds of the MMAs; unset or `0`
+/// keeps the hi + lo entry; another value is an error. Decode is never affected. Opt-in and
+/// accuracy-gated: a weight's relative error grows from 2^-16 to 2^-9.
+pub fn hb_prefill_p_hi() -> Result<bool> {
+    static V: std::sync::OnceLock<Result<bool, String>> = std::sync::OnceLock::new();
+    V.get_or_init(|| {
+        match std::env::var("METRALE_GLM_DSA_HB_PREFILL_P_HI")
+            .ok()
+            .as_deref()
+        {
+            None | Some("0") => Ok(false),
+            Some("1") => Ok(true),
+            Some(other) => Err(format!(
+                "METRALE_GLM_DSA_HB_PREFILL_P_HI={other:?}: expected 0 or 1"
+            )),
+        }
+    })
+    .clone()
+    .map_err(anyhow::Error::msg)
+}
+
 /// 2026-10-09: [`hb_splits_lever`]'s parse, pure.
 fn parse_hb_splits(v: Option<&str>) -> Result<Option<usize>, String> {
     let Some(v) = v else { return Ok(None) };
@@ -93,6 +116,9 @@ fn parse_hb_splits(v: Option<&str>) -> Result<Option<usize>, String> {
 #[derive(Clone, Copy)]
 struct HeadBatched {
     decode: KernelHandle,
+    /// 2026-10-12: `glm5next_dsa_mla_decode_hb_fp8_phi` (P as bf16 hi only), or 0 when the
+    /// target lacks it; [`Glm5NextDsaDecodeKernel::for_prefill_p_hi`] swaps it in.
+    decode_p_hi: KernelHandle,
     merge: KernelHandle,
     splits: usize,
 }
@@ -127,6 +153,11 @@ impl Glm5NextDsaDecodeKernel {
                 );
                 Some(HeadBatched {
                     decode: gpu.kernel(DSA_DECODE_HB_MODULE, "glm5next_dsa_mla_decode_hb_fp8")?,
+                    decode_p_hi: metrale_model_layers::layers::try_kernel(
+                        gpu,
+                        DSA_DECODE_HB_MODULE,
+                        "glm5next_dsa_mla_decode_hb_fp8_phi",
+                    ),
                     merge: gpu.kernel(DSA_DECODE_HB_MODULE, "glm5next_dsa_mla_merge")?,
                     splits,
                 })
@@ -141,6 +172,32 @@ impl Glm5NextDsaDecodeKernel {
     /// 2026-10-09: The head-batched split count, `None` on the per-head kernel.
     pub fn hb_splits(&self) -> Option<usize> {
         self.head_batched.map(|h| h.splits)
+    }
+
+    /// 2026-10-12: This kernel with the head-batched entry replaced by its P-hi twin when
+    /// `p_hi` ([`hb_prefill_p_hi`]) is set; unchanged when it is not. An error when it is set
+    /// without the head-batched kernel (`METRALE_GLM_DSA_DECODE_HB`) or without the twin in the
+    /// build, never a silent fallback.
+    pub fn for_prefill_p_hi(self, p_hi: bool) -> Result<Self> {
+        if !p_hi {
+            return Ok(self);
+        }
+        let Some(h) = self.head_batched else {
+            bail!("METRALE_GLM_DSA_HB_PREFILL_P_HI=1 needs METRALE_GLM_DSA_DECODE_HB");
+        };
+        if h.decode_p_hi.0 == 0 {
+            bail!(
+                "METRALE_GLM_DSA_HB_PREFILL_P_HI=1: glm5next_dsa_mla_decode_hb_fp8_phi is not in \
+                 this target's kernels"
+            );
+        }
+        Ok(Self {
+            head_batched: Some(HeadBatched {
+                decode: h.decode_p_hi,
+                ..h
+            }),
+            ..self
+        })
     }
 
     /// 2026-10-12: This kernel for a prefill sub-chunk's attend: the head-batched one at one
