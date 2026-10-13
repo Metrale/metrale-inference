@@ -369,8 +369,8 @@ reason = "The BF16 head above 8 rows runs dense_gemm_bf16, a CUDA-core tiled FMA
 
 # 2026-10-02: What the driver holds beyond the allocation ledger on this class, for the circuit
 # memory model (`met circuit memory`, crates/circuit/src/memory/budget.rs). Calibrated by PR #72 on
-# GB10 serves (server preflight/runtime_headroom.rs `DRIVER_FIXED_BYTES`,
-# `DRIVER_BUDGET_PER_MILLE`): a serve's device footprint is the drop of host MemAvailable from an
+# GB10 serves (server preflight/runtime_headroom.rs; 2026-10-13: the reserve reads this table, and
+# every class without its own `[memory]` up its `inherits` chain): a serve's device footprint is the drop of host MemAvailable from an
 # idle box less the ledger and the serve's anonymous memory, 2.1-3.6 GB over five serves. Probed:
 # context 250 MiB, the 27B's 218 modules 94 MiB, the local-memory reservation 131 MiB
 # (driver_fixed_bytes, 1 GiB with the CUDA graphs); the rest is per-allocation bookkeeping, about

@@ -8,7 +8,7 @@
 //!   `ssm_pool_state_plan_tests.rs`), the f16 staging arena, the carry stash
 //!   (`GdnCarrySizes::total`, which `gdn_carry_bind` allocates) and the decode-rollback ring;
 //! - the driver terms cover the driver use measured on GB10 for these serves with at most 20%
-//!   to spare (`runtime_headroom.rs` carries the measurements);
+//!   to spare (`runtime_headroom.rs` carries the measurements), and hopper's every H100 serve's;
 //! - the inference reserve is the sum of its terms at any slot count.
 //!
 //! Owner: server startup (`met serve`).
@@ -22,7 +22,6 @@ use metrale_model_layers::ssm_reserve::{
     PoolPlan, PoolShape, SsmRollbackMode, pool_counts, ssm_h_prefill_stage_bytes,
 };
 
-use super::super::runtime_headroom::{DRIVER_BUDGET_PER_MILLE, DRIVER_FIXED_BYTES};
 use super::*;
 
 const MIB: usize = 1 << 20;
@@ -32,6 +31,15 @@ const MIB: usize = 1 << 20;
 const GB10_TOTAL: usize = 124_610 * MIB;
 fn gb10_budget() -> usize {
     (GB10_TOTAL as f64 * 0.85) as usize
+}
+
+/// 2026-10-13: The `[memory]` table of `class`, as checked in.
+fn class_driver(class: &str) -> DriverTerms {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../kernels")
+        .join(class)
+        .join("HARDWARE.toml");
+    DriverTerms::parse(class, &std::fs::read_to_string(path).unwrap()).unwrap()
 }
 
 fn config(name: &str) -> ModelConfig {
@@ -115,6 +123,7 @@ fn plan(s: &Serve) -> ReservePlan {
         per_sequence_bytes: 0,
         ring_slots: 0,
         per_seq_blob: blob,
+        driver: class_driver("gb10"),
         config: c,
     }
 }
@@ -215,7 +224,8 @@ fn the_driver_terms_cover_every_measured_serve_with_at_most_a_fifth_to_spare() {
     // default tier's worst case (C128 and prefix restores, 3,126 MiB), the throughput recipe
     // (2,423), the 35B-A3B MoE at 128 slots (2,798), Nemotron-3-Nano no-spec at its recipe flags
     // (2,935) and with prefix caching on (3,499 less its 429 MiB of chunk slack).
-    let driver = DRIVER_FIXED_BYTES + gb10_budget() / 1000 * DRIVER_BUDGET_PER_MILLE;
+    let gb10 = class_driver("gb10");
+    let driver = gb10.bytes(gb10_budget() as u64, 0) as usize;
     let measured = [
         ("dense default tier", 3_126 * MIB),
         ("throughput recipe", 2_423 * MIB),
@@ -256,4 +266,23 @@ fn the_slot_scaled_terms_follow_the_slot_count() {
     assert_eq!(t128.runtime, t91.runtime);
     let t8 = p.terms(8).unwrap();
     assert!(t8.runtime.carry_stash < t91.runtime.carry_stash);
+}
+
+/// 2026-10-13: H100's terms cover the largest driver share measured on an H100 serve (2.0 GiB
+/// logged to 0.1, so up to 2.05) from a 0.85 budget up, by at most a fifth at 0.98, and stay below
+/// gb10's at the same budget (kernels/hopper/HARDWARE.toml carries the measurements).
+#[test]
+fn the_hopper_driver_terms_cover_every_h100_serve_below_gb10s() {
+    const H100_TOTAL: u64 = 81_079 * MIB as u64;
+    let (hopper, gb10) = (class_driver("hopper"), class_driver("gb10"));
+    let largest = 2_050 * MIB as u64;
+    for util in [0.85, 0.90, 0.95, 0.98] {
+        let budget = (H100_TOTAL as f64 * util) as u64;
+        let driver = hopper.bytes(budget, 0);
+        assert!(driver >= largest, "util {util}: {driver} < {largest}");
+        assert!(driver < gb10.bytes(budget, 0), "util {util}");
+    }
+    let at_ceiling = hopper.bytes((H100_TOTAL as f64 * hopper.util_ceiling) as u64, 0);
+    assert!(at_ceiling <= largest + largest / 5, "{at_ceiling}");
+    assert!(!hopper.unified && gb10.unified);
 }

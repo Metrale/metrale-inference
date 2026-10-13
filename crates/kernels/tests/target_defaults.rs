@@ -15,8 +15,8 @@
 mod build_defaults;
 
 use build_defaults::{
-    BASELINE_SM_COUNT, Defaults, baseline, literal, parse_defaults, read_defaults, read_sm_count,
-    sm_count_literal,
+    BASELINE_SM_COUNT, Defaults, MEMORY_FALLBACK_CLASS, baseline, literal, memory_literal,
+    parse_defaults, read_defaults, read_memory_table, read_sm_count, sm_count_literal,
 };
 
 use std::path::PathBuf;
@@ -401,4 +401,67 @@ fn the_baked_constant_matches_its_own_hardware_tree() {
 fn b300_declares_conservative_defaults_until_measured_on_b300() {
     assert_eq!(declared("b300"), baseline("b300"));
     assert_eq!(read_sm_count(&kernels_root(), "b300"), 148);
+}
+
+/// 2026-10-13: The `[memory]` table governing each class: its own, an ancestor's through
+/// `inherits`, else gb10's; the fragment is the table alone, parseable and complete.
+#[test]
+fn each_class_resolves_the_memory_table_that_governs_it() {
+    for (hw, governing) in [
+        ("gb10", "gb10"),
+        ("hopper", "hopper"),
+        ("b200", "gb10"),
+        ("b300", MEMORY_FALLBACK_CLASS),
+        ("metal", MEMORY_FALLBACK_CLASS),
+    ] {
+        let (class, table) = read_memory_table(&kernels_root(), hw).expect(hw);
+        assert_eq!(class, governing, "{hw}");
+        let parsed: toml::Value = toml::from_str(&table).expect("the fragment parses");
+        let raw = std::fs::read_to_string(kernels_root().join(&class).join("HARDWARE.toml"));
+        let own: toml::Value = toml::from_str(&raw.unwrap()).unwrap();
+        assert_eq!(
+            parsed.as_table().map(|t| t.len()),
+            Some(1),
+            "{hw}: [memory] only"
+        );
+        assert_eq!(parsed.get("memory"), own.get("memory"), "{hw}");
+    }
+    let hopper = read_memory_table(&kernels_root(), "hopper").unwrap().1;
+    assert_ne!(
+        hopper,
+        read_memory_table(&kernels_root(), "gb10").unwrap().1
+    );
+}
+
+/// 2026-10-13: An `inherits` chain that loops fails the build naming the class.
+#[test]
+#[should_panic(expected = "inherits chain loops at a")]
+fn an_inherits_loop_fails_the_build() {
+    let root = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("memory-loop");
+    for (class, parent) in [("a", "b"), ("b", "a")] {
+        std::fs::create_dir_all(root.join(class)).unwrap();
+        let text = format!("[hardware]\ninherits = \"{parent}\"\n");
+        std::fs::write(root.join(class).join("HARDWARE.toml"), text).unwrap();
+    }
+    read_memory_table(&root, "a");
+}
+
+/// 2026-10-13: `memory_literal` emits a typed const for both outcomes, and the baked one is the
+/// table its own tree resolves to.
+#[test]
+fn the_memory_literal_is_a_const_and_the_baked_one_matches_its_tree() {
+    let found = (
+        "hopper".to_string(),
+        "[memory]\nunified = false\n".to_string(),
+    );
+    let some = memory_literal(Some(&found));
+    assert!(some.contains(
+        "pub const TARGET_MEMORY_TABLE: Option<(&str, &str)> = \
+         Some((\"hopper\", \"[memory]\\nunified = false\\n\"));"
+    ));
+    assert!(memory_literal(None).contains("Option<(&str, &str)> = None;"));
+    let baked = metrale_kernels::TARGET_MEMORY_TABLE.expect("a kernels/ tree build");
+    let (class, table) = read_memory_table(&kernels_root(), metrale_kernels::TARGET_DEFAULTS.hw)
+        .expect("this build's tree");
+    assert_eq!((baked.0, baked.1), (class.as_str(), table.as_str()));
 }

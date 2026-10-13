@@ -18,8 +18,8 @@ use std::path::{Path, PathBuf};
 use super::build_codegen::generate_target_ptx_rs;
 use super::{Target, build_defaults, build_diagnose, build_target, content_hash};
 
-/// 2026-09-25: The `TARGET_DEFAULTS` and `TARGET_SM_COUNT` constants for the
-/// hardware tree this build selected.
+/// 2026-09-25: The `TARGET_DEFAULTS`, `TARGET_SM_COUNT` and (2026-10-13) `TARGET_MEMORY_TABLE`
+/// constants for the hardware tree this build selected.
 ///
 /// Appended to `target_ptx.rs` on both paths, the skip stub and the compiling
 /// build, rather than written to a file of its own:
@@ -36,10 +36,17 @@ fn target_defaults_literal(workspace_root: &std::path::Path) -> String {
     if path.exists() {
         println!("cargo:rerun-if-changed={}", path.display());
     }
+    // 2026-10-13: The `[memory]` table may be an ancestor's (`read_memory_table`).
+    let memory = build_defaults::read_memory_table(&kernels_root, &hw);
+    if let Some((class, _)) = &memory {
+        let governing = kernels_root.join(class).join("HARDWARE.toml");
+        println!("cargo:rerun-if-changed={}", governing.display());
+    }
     format!(
-        "{}{}",
+        "{}{}{}",
         build_defaults::literal(&build_defaults::read_defaults(&kernels_root, &hw)),
         build_defaults::sm_count_literal(build_defaults::read_sm_count(&kernels_root, &hw)),
+        build_defaults::memory_literal(memory.as_ref()),
     )
 }
 
