@@ -36,6 +36,8 @@ mod ffn;
 mod hc;
 mod host_embed;
 mod ple;
+#[cfg(feature = "cuda")]
+mod ple_host;
 mod probe;
 
 pub use probe::audit_namespace;
