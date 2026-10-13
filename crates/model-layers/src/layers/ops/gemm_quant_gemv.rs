@@ -190,3 +190,7 @@ pub fn dense_gemv_fp8w(
         .arg_u32(k)
         .launch(stream)
 }
+
+#[cfg(test)]
+#[path = "gemm_quant_gemv_tests.rs"]
+mod gemm_quant_gemv_tests;
