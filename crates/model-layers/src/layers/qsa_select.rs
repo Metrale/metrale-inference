@@ -141,8 +141,10 @@ impl QsaIndexer {
         let qkw = self.qk_width();
         let q_row = nq as usize * hd_attn;
 
-        // 2026-09-25: Scratch layout. The per-call score stride is
+        // 2026-09-25: Scratch layout, sized by the call's widest score row
         // `total.div_ceil(ratio)`; sizes.rs reserves `max_seq_len.div_ceil(ratio)`.
+        // 2026-10-13: Each slab's scores are packed at its own row stride `n_blocks_max`
+        // (at most `stride`), the width `dsa_topk_pools` reads.
         let stride = total.div_ceil(ratio);
         let qk_buf = scratch;
         let qpost = scratch.offset(ROWS * qkw * 2);
@@ -150,6 +152,10 @@ impl QsaIndexer {
         let lists = scores.offset(ROWS * stride * 4);
 
         let first_sel_pos = bound.max(seq_start);
+        anyhow::ensure!(
+            (first_sel_pos + 1) / ratio > topk,
+            "QSA: a selective row at {first_sel_pos} has at most {topk} complete blocks"
+        );
         let n_sel_total = total - first_sel_pos;
         let mut slab = 0usize;
         while slab < n_sel_total {
@@ -202,7 +208,7 @@ impl QsaIndexer {
                     rows as u32,
                     n_blocks_max as u32,
                     first_pos as u32,
-                    stride as u32,
+                    n_blocks_max as u32,
                     self.ratio,
                     stream,
                 )?;
@@ -216,7 +222,7 @@ impl QsaIndexer {
                     rows as u32,
                     n_blocks_max as u32,
                     first_pos as u32,
-                    stride as u32,
+                    n_blocks_max as u32,
                     self.ratio,
                     self.n_heads,
                     self.hd,
@@ -224,31 +230,24 @@ impl QsaIndexer {
                 )?;
             }
 
-            // 2026-09-25: Host top-k per row; the D2H is ordered after the scoring
-            // kernel on `stream`. Larger score first, lower index on ties.
-            let mut raw = vec![0u8; rows * stride * 4];
-            gpu.copy_d2h_on_stream(scores, &mut raw, stream)?;
-            let sc: Vec<f32> = raw
-                .chunks_exact(4)
-                .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-                .collect();
-            let mut host_lists = vec![0u8; rows * topk * 4];
-            for r in 0..rows {
-                let complete = (first_pos + r + 1) / ratio;
-                let row_sc = &sc[r * stride..r * stride + complete];
-                let mut order: Vec<u32> = (0..complete as u32).collect();
-                order.sort_by(|&a, &b| {
-                    row_sc[b as usize]
-                        .partial_cmp(&row_sc[a as usize])
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                        .then(a.cmp(&b))
-                });
-                for (i, b) in order[..topk].iter().enumerate() {
-                    host_lists[(r * topk + i) * 4..(r * topk + i) * 4 + 4]
-                        .copy_from_slice(&(*b as i32).to_le_bytes());
-                }
-            }
-            gpu.copy_h2d_async(&host_lists, lists, stream)?;
+            // 2026-10-13: Device top-k per row, best first: larger score, then lower block
+            // index, the order the host sort used. Blocks at or past a row's `complete`
+            // score -1e30 and every real score is a sum of ReLUs (>= 0), so they sort last;
+            // every selective row has more than `topk` complete blocks (checked above), so
+            // none is ever picked and the lists are the host sort's, bit for bit.
+            let tile = ops::topk_tile().min(n_blocks_max.next_power_of_two());
+            ops::dsa_topk_pools(
+                gpu,
+                self.k_topk_pools_k,
+                scores,
+                lists,
+                rows as u32,
+                n_blocks_max as u32,
+                tile as u32,
+                topk as u32,
+                DevicePtr::NULL,
+                stream,
+            )?;
 
             ops::qsa_prefill_attn(
                 gpu,

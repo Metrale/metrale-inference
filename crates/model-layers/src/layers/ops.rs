@@ -154,6 +154,8 @@ mod norm_gated_rms_strided_tests;
 mod nvfp4_mmq;
 #[path = "ops/ple.rs"]
 mod ple;
+#[path = "ops/pool_topk.rs"]
+mod pool_topk;
 #[path = "ops/prefill_attn_a.rs"]
 mod prefill_attn_a;
 #[path = "ops/prefill_attn_b.rs"]
@@ -278,6 +280,7 @@ pub use moe_prefill::*;
 pub use norm::*;
 pub use nvfp4_mmq::*;
 pub use ple::*;
+pub use pool_topk::*;
 pub use prefill_attn_a::*;
 pub use prefill_attn_b::*;
 pub use prefill_attn_batched::*;

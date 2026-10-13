@@ -92,6 +92,8 @@ pub struct QsaIndexer {
     /// `qsa_score_rows`.
     k_score_rows_tc_k: KernelHandle,
     k_prefill_attn_k: KernelHandle,
+    /// 2026-10-13: `dsa_topk_pools`, the device top-k of the prefill selection.
+    k_topk_pools_k: KernelHandle,
 
     // 2026-09-25: Scratch shapes: `qk_scratch` [INGEST_SLAB, (n_heads+1)*hd]
     // BF16; `q_post` [n_heads, hd] F32; `scores_dev` [max_tokens/ratio] F32;
@@ -168,6 +170,7 @@ impl QsaIndexer {
             k_score_rows_k: gpu.kernel("qsa_indexer", "qsa_score_rows")?,
             k_score_rows_tc_k: crate::layers::try_kernel(gpu, "qsa_indexer", "qsa_score_rows_tc"),
             k_prefill_attn_k: gpu.kernel("qsa_indexer", "qsa_prefill_attn")?,
+            k_topk_pools_k: gpu.kernel("dsa_indexer", "dsa_topk_pools")?,
             qk_scratch: gpu.alloc(INGEST_SLAB * qk_width * 2)?,
             q_post: gpu.alloc(n_heads * hd * 4)?,
             scores_dev: gpu.alloc(max_tokens / ratio * 4)?,

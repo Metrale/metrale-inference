@@ -123,18 +123,18 @@ pub fn select_tokens(
 
         // 2026-09-25: `np2_a` is at most `topk_tile()`, so the request is at most
         // `topk_smem_for_tile(topk_tile())`, within `TOPK_SMEM_CEILING`.
-        KernelLaunch::new(gpu, kernels.topk_pools)
-            .grid([geom.q_rows as u32, 1, 1])
-            .block([ROW_BLOCK, 1, 1])
-            .shared_mem(topk_smem_for_tile(np2_a) as u32)
-            .arg_ptr(scratch.scores)
-            .arg_ptr(scratch.selected)
-            .arg_u32(geom.q_rows as u32)
-            .arg_u32(npools_a as u32)
-            .arg_u32(np2_a as u32)
-            .arg_u32(selk_a as u32)
-            .arg_ptr(gd)
-            .launch(stream)?;
+        metrale_model_layers::layers::ops::dsa_topk_pools(
+            gpu,
+            kernels.topk_pools,
+            scratch.scores,
+            scratch.selected,
+            geom.q_rows as u32,
+            npools_a as u32,
+            np2_a as u32,
+            selk_a as u32,
+            gd,
+            stream,
+        )?;
     }
 
     KernelLaunch::new(gpu, kernels.expand_selection)
