@@ -26,6 +26,8 @@ pub mod moe_v41;
 pub mod nemotron_mamba2;
 pub mod nemotron_moe;
 #[cfg(test)]
+pub mod ple_rows_tests;
+#[cfg(test)]
 pub mod ple_tests;
 pub mod precision_schedule;
 pub mod seq_state_reserve;

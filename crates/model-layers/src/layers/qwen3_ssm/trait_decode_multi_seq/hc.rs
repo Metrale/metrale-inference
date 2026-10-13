@@ -10,7 +10,8 @@
 //! path's `rms_norm_residual` and `residual_add_rms_norm` steps do not run.
 //! Per layer:
 //! - `hc_expand` over the `n` rows, on the first model layer only;
-//! - PLE per row, each against its own `PleSeqState`;
+//! - PLE over the live rows, each against its own `PleSeqState`
+//!   (`forward_rows`, 2026-10-13);
 //! - `hc_pre`, writing the mixed rows into `norm_output`;
 //! - the GDN: the batched-projection mixer (rows in `moe_output`), or
 //!   `ssm_forward` per row (rows copied into `hidden`) when it declines;
@@ -66,39 +67,38 @@ impl Qwen3SsmLayer {
             )?;
         }
 
-        // 2026-09-25: PLE per row: row `i` takes its token id from
-        // `ctx.host_token_ids` and its own carry, and `forward_row` runs the
-        // host half inline. The highway rows are FP32, `hc_mult * h` wide.
+        // 2026-10-13: PLE over the live rows: row `i` takes its token id from
+        // `ctx.host_token_ids` and its own carry; one host hash and gather for
+        // the batch (`PleLayer::forward_rows`). Padding rows (seq_len 0) carry a
+        // dummy state without a PLE carry; they follow the live rows
+        // (`decode_batch_push_pad_states`), which the highway rows' contiguity
+        // relies on.
         if let Some(ple) = self.ple.as_ref() {
             let host = ctx.host_token_ids.ok_or_else(|| {
                 anyhow::anyhow!("hc multi-seq decode: PLE needs host_token_ids threaded")
             })?;
-            for (i, state) in states.iter_mut().enumerate().take(n) {
-                // 2026-09-25: Padding rows (seq_len 0) carry a dummy state
-                // without a PLE carry, so they are skipped.
-                if seq_lens.get(i).copied() == Some(0) {
-                    continue;
-                }
-                anyhow::ensure!(
-                    host.len() > i,
-                    "hc multi-seq decode: {} host ids for real seq row {i}",
-                    host.len()
-                );
+            let is_pad = |i: usize| seq_lens.get(i).copied() == Some(0);
+            let live = (0..n).take_while(|&i| !is_pad(i)).count();
+            anyhow::ensure!(
+                (live..n).all(is_pad),
+                "hc multi-seq decode: a live sequence row after a padding row"
+            );
+            anyhow::ensure!(
+                host.len() >= live,
+                "hc multi-seq decode: {} host ids for {live} live rows",
+                host.len()
+            );
+            let mut carries = Vec::with_capacity(live);
+            for (i, state) in states.iter_mut().enumerate().take(live) {
                 let ssm = state
                     .as_any_mut()
                     .downcast_mut::<SsmLayerState>()
                     .ok_or_else(|| anyhow::anyhow!("Expected SsmLayerState for seq {i}"))?;
-                let st = ssm.ple.as_mut().ok_or_else(|| {
+                carries.push(ssm.ple.as_mut().ok_or_else(|| {
                     anyhow::anyhow!("PLE multi-seq decode before prefill: no seq state {i}")
-                })?;
-                ple.forward_row(
-                    st,
-                    streams.offset(i * (hc_mult as usize) * h * 4),
-                    &host[i..i + 1],
-                    ctx,
-                    stream,
-                )?;
+                })?);
             }
+            ple.forward_rows(&mut carries, streams, &host[..live], ctx, stream)?;
         }
 
         // 2026-09-25: `hc_pre` writes the mixed, normed rows into

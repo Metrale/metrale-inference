@@ -9,6 +9,8 @@
 //!   the ids itself; a consumed prestage has already advanced it.
 //! - Under CUDA-graph capture, `forward` returns an error instead of taking
 //!   the D2H id readback or the un-prestaged gather.
+//! - The multi-sequence form is `rows::forward_rows`; the kernel half is the
+//!   same four steps (`project`, `gate`, `conv`, `add_highway`).
 //!
 //! It runs on the layers `ple_layer_ids` names and adds into the
 //! `hc_mult`-wide highway before the layer's first hyper-connection site, as
@@ -18,7 +20,7 @@
 use anyhow::{Context, Result};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 
-use super::ids::{PleIdDims, ple_ngram_ids};
+use super::ids::PleIdDims;
 use crate::layer::ForwardContext;
 use crate::layers::ngram_embed::NgramTable;
 use crate::layers::ops;
@@ -209,7 +211,6 @@ impl PleLayer {
              scratch) or lower the prefill chunk size.",
             self.max_tokens
         );
-        let c = self.hc_mult * self.hidden;
         let heads = self.dims.ngram_heads();
         let gpu = ctx.gpu;
 
@@ -276,90 +277,24 @@ impl PleLayer {
             );
             // 2026-09-25: history ++ tokens, hashed together, then keep the new
             // tokens' rows: the same slice the reference takes with
-            // `[:, -input_ids.shape[1]:]`.
-            let mut window = st.history.clone();
-            window.extend_from_slice(&tokens);
-            let all = ple_ngram_ids(&self.dims, &window);
-            let rows = &all[all.len() - num_tokens..];
-            let flat: Vec<u64> = rows.iter().flat_map(|r| r.iter().copied()).collect();
-
+            // `[:, -input_ids.shape[1]:]` (`rows::next_ids`, shared with
+            // `prestage` and `forward_rows`).
+            let flat = rows::next_ids(&self.dims, &mut st.history, &tokens);
             self.gather(&flat, num_tokens, heads, gpu, stream)?;
-
-            let keep = self.dims.context_len();
-            st.history = window[window.len() - keep..].to_vec();
         }
 
-        // 2026-09-25: `gemm_k` is the pipelined kernel, so it must go through
-        // `ops::dense_gemm_bf16_pipelined` (grid [ceil(n,128), ceil(m,128)],
-        // block 256), not `ops::dense_gemm` (grid [ceil(n,16), ceil(m,16)],
-        // block 16x16): a kernel launched with the other wrapper's grid reads
-        // out of bounds.
-        ops::dense_gemm_bf16_pipelined(
-            gpu,
-            self.gemm_k,
-            self.emb,
-            &self.key_proj,
-            self.key,
-            num_tokens as u32,
-            c as u32,
-            self.hidden as u32,
-            stream,
-        )
-        .context("PLE key_proj")?;
-        ops::dense_gemm_bf16_pipelined(
-            gpu,
-            self.gemm_k,
-            self.emb,
-            &self.value_proj,
-            self.value,
-            num_tokens as u32,
-            self.hidden as u32,
-            self.hidden as u32,
-            stream,
-        )
-        .context("PLE value_proj")?;
-
-        ops::ple_gate(
-            gpu,
-            self.gate_k,
-            highway,
-            self.key,
-            self.value,
-            self.norm_query.weight,
-            self.norm_key.weight,
-            self.norm_conv.weight,
-            self.gated,
-            self.gated_normed,
-            num_tokens as u32,
-            self.hidden as u32,
-            self.hc_mult as u32,
-            self.eps,
-            stream,
-        )?;
-        ops::ple_conv(
-            gpu,
-            self.conv_k,
+        self.project(num_tokens, gpu, stream)?;
+        self.gate(highway, num_tokens, gpu, stream)?;
+        self.conv(
             self.gated_normed,
             self.gated,
-            self.conv1d.weight,
             st.conv,
             self.out,
-            num_tokens as u32,
-            c as u32,
-            self.k_size as u32,
-            self.dilation as u32,
-            stream,
-        )?;
-        ops::ple_add_highway(
+            num_tokens,
             gpu,
-            self.add_k,
-            self.out,
-            highway,
-            (num_tokens * c) as u32,
             stream,
         )?;
-
-        Ok(())
+        self.add_highway(highway, num_tokens, gpu, stream)
     }
 
     /// 2026-09-25: Resolve row ids to cache slots and gather them into `self.emb`.
@@ -482,3 +417,10 @@ pub struct PleWeights {
 // `PleLayer`'s private fields.
 #[path = "aux_state.rs"]
 mod aux_state;
+#[path = "kernel_half.rs"]
+mod kernel_half;
+#[path = "rows.rs"]
+mod rows;
+#[cfg(test)]
+#[path = "rows_tests.rs"]
+mod rows_tests;
