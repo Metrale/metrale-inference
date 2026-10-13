@@ -9,8 +9,10 @@
 // 16 x 16 WMMA tile, K consumed 16 at a time through shared memory.
 // Grid: (ceil(N/64), ceil(M/16), 1).
 //
-// WMMA fragments, lane l: a[i] = smem_A[l & 15][i], b[k] = smem_B[k][n + (l & 15)];
-// accumulator element e goes to C[row + 2e + (l >> 4)][col + (l & 15)].
+// WMMA fragments, lane l: a[i] = smem_A[l & 15][k0 + i], b[k] = smem_B[k0 + k][n + (l & 15)],
+// i, k < WMMA_FRAG_K; accumulator element e goes to C[row + WMMA_ACC_ROW_TERMS(e, (l >> 4))][col + (l & 15)].
+// 2026-10-07: fragments through wmma_rdna.cuh, so gfx1201 (RDNA4) runs the same source;
+// on gfx1151 k0 = 0, WMMA_FRAG_K = 16 and the row is 2e + (l >> 4), as before.
 //
 // Owner: strix-hip kernels.
 // Invariants: none beyond the types.
@@ -18,9 +20,7 @@
 
 
 #include <cuda_bf16.h>
-
-typedef __bf16 v16bf __attribute__((ext_vector_type(16)));
-typedef float  v8f   __attribute__((ext_vector_type(8)));
+#include "wmma_rdna.cuh"
 
 #define TC_TM 16
 #define TC_TN 64
@@ -49,15 +49,16 @@ extern "C" __global__ void dense_gemm_tc(
     __shared__ __nv_bfloat16 smem_A[TC_TM][TC_TK + TC_PAD];
     __shared__ __nv_bfloat16 smem_B[TC_TK][TC_TN + TC_PAD];
 
-    v8f acc = v8f{0, 0, 0, 0, 0, 0, 0, 0};
+    wmma_v8f acc = wmma_v8f{0, 0, 0, 0, 0, 0, 0, 0};
 
 
     for (unsigned int k_base = 0; k_base < K; k_base += TC_TK) {
 
         {
-            unsigned int idx = tid;
-
-            if (idx < TC_TM * TC_TK) {
+            // 2026-10-07: strided, as in the gb10 original: TC_TM * TC_TK (256) elements and
+            // TC_BLOCK (128) threads. A single pass left rows 8..15 of the A tile unloaded, so
+            // those rows of C came from uninitialized shared memory whenever M > 8.
+            for (unsigned int idx = tid; idx < TC_TM * TC_TK; idx += TC_BLOCK) {
                 unsigned int r = idx / TC_TK;
                 unsigned int c = idx % TC_TK;
                 unsigned int gr = m_block + r;
@@ -77,13 +78,14 @@ extern "C" __global__ void dense_gemm_tc(
         __syncthreads();
 
 
-        v16bf a;
+        const int k0 = wmma_k0(lane_id);
+        wmma_bf16x a;
         #pragma unroll
-        for (int i = 0; i < 16; i++) a[i] = (__bf16)(float)smem_A[lane_id & 15][i];
-        v16bf b;
+        for (int i = 0; i < WMMA_FRAG_K; i++) a[i] = (__bf16)(float)smem_A[lane_id & 15][k0 + i];
+        wmma_bf16x b;
         #pragma unroll
-        for (int k = 0; k < 16; k++) b[k] = (__bf16)(float)smem_B[k][n_warp_base + (lane_id & 15)];
-        acc = __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32(a, b, acc);
+        for (int k = 0; k < WMMA_FRAG_K; k++) b[k] = (__bf16)(float)smem_B[k0 + k][n_warp_base + (lane_id & 15)];
+        acc = wmma_bf16(a, b, acc);
 
         __syncthreads();
     }
@@ -91,7 +93,7 @@ extern "C" __global__ void dense_gemm_tc(
 
     #pragma unroll
     for (int e = 0; e < 8; e++) {
-        unsigned int r = m_block + 2 * e + (lane_id >> 4);
+        unsigned int r = m_block + WMMA_ACC_ROW_TERMS(e, (lane_id >> 4));
         unsigned int c = n_block + n_warp_base + (lane_id & 15);
         if (r < M && c < N) C[r * N + c] = __float2bfloat16(acc[e]);
     }

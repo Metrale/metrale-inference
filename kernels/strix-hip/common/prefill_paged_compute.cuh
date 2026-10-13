@@ -54,8 +54,9 @@ __device__ __forceinline__ void metrale_cp16_pred(void* smem_dst, const void* gm
 __device__ __forceinline__ void metrale_cp_commit() {}
 __device__ __forceinline__ void metrale_cp_wait()   {}
 
-typedef __bf16 v16bf __attribute__((ext_vector_type(16)));
-typedef __fp16 v16h  __attribute__((ext_vector_type(16)));
+#include "wmma_rdna.cuh"
+typedef wmma_bf16x v16bf;  // 2026-10-07: WMMA_FRAG_K wide (16 on gfx11, 8 on gfx12), see wmma_rdna.cuh
+typedef wmma_f16x v16h;  // 2026-10-07: WMMA_FRAG_K wide (16 on gfx11, 8 on gfx12), see wmma_rdna.cuh
 typedef float  v8f   __attribute__((ext_vector_type(8)));
 
 // 2026-09-25: Softmax exp: `__expf`, or, when METRALE_FAST_SOFTMAX_EXP is
@@ -229,17 +230,17 @@ extern "C" __global__ void KERNEL_NAME(
                 unsigned int k_off = ks * K16;
                 v16bf a;
                 #pragma unroll
-                for (int i = 0; i < 16; i++)
-                    a[i] = (__bf16)(float)smem_Q[qk_m + lane_lo][k_off + i];
+                for (int i = 0; i < WMMA_FRAG_K; i++)
+                    a[i] = (__bf16)(float)smem_Q[qk_m + lane_lo][k_off + wmma_k0(lane_id) + i];
 
                 #pragma unroll
                 for (int nt = 0; nt < QK_N_TILES; nt++) {
                     unsigned int key_row = nt * 16 + lane_lo;
                     v16bf bb;
                     #pragma unroll
-                    for (int k = 0; k < 16; k++)
-                        bb[k] = (__bf16)(float)smem_K[key_row][k_off + k];
-                    acc_s[nt] = __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32(a, bb, acc_s[nt]);
+                    for (int k = 0; k < WMMA_FRAG_K; k++)
+                        bb[k] = (__bf16)(float)smem_K[key_row][k_off + wmma_k0(lane_id) + k];
+                    acc_s[nt] = wmma_bf16(a, bb, acc_s[nt]);
                 }
             }
 
@@ -249,7 +250,7 @@ extern "C" __global__ void KERNEL_NAME(
                 unsigned int col = nt * 16 + lane_lo;
                 #pragma unroll
                 for (int e = 0; e < 8; e++) {
-                    unsigned int row = qk_m + 2 * e + lane_hi;
+                    unsigned int row = qk_m + WMMA_ACC_ROW_TERMS(e, lane_hi);
                     smem_S[row][col] = acc_s[nt][e];
                 }
             }
@@ -304,7 +305,7 @@ extern "C" __global__ void KERNEL_NAME(
             float resc_e[8];
             #pragma unroll
             for (int e = 0; e < 8; e++)
-                resc_e[e] = smem_resc[pv_warp_m + 2 * e + lane_hi];
+                resc_e[e] = smem_resc[pv_warp_m + WMMA_ACC_ROW_TERMS(e, lane_hi)];
             #pragma unroll
             for (int nt = 0; nt < PV_N_TILES; nt++)
                 #pragma unroll
@@ -325,32 +326,32 @@ extern "C" __global__ void KERNEL_NAME(
 #ifdef METRALE_DISABLE_FP16_PV
                 v16bf a;
                 #pragma unroll
-                for (int i = 0; i < 16; i++)
-                    a[i] = (__bf16)(float)smem_P[pv_warp_m + lane_lo][k_off + i];
+                for (int i = 0; i < WMMA_FRAG_K; i++)
+                    a[i] = (__bf16)(float)smem_P[pv_warp_m + lane_lo][k_off + wmma_k0(lane_id) + i];
 
                 #pragma unroll
                 for (int nt = 0; nt < PV_N_TILES; nt++) {
                     unsigned int d_col = (pv_n_start + nt) * 16 + lane_lo;
                     v16bf bb;
                     #pragma unroll
-                    for (int k = 0; k < 16; k++)
-                        bb[k] = (__bf16)(float)smem_V[k_off + k][d_col];
-                    acc_o[nt] = __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32(a, bb, acc_o[nt]);
+                    for (int k = 0; k < WMMA_FRAG_K; k++)
+                        bb[k] = (__bf16)(float)smem_V[k_off + wmma_k0(lane_id) + k][d_col];
+                    acc_o[nt] = wmma_bf16(a, bb, acc_o[nt]);
                 }
 #else
                 v16h a;
                 #pragma unroll
-                for (int i = 0; i < 16; i++)
-                    a[i] = (__fp16)__half2float(smem_P[pv_warp_m + lane_lo][k_off + i]);
+                for (int i = 0; i < WMMA_FRAG_K; i++)
+                    a[i] = (__fp16)__half2float(smem_P[pv_warp_m + lane_lo][k_off + wmma_k0(lane_id) + i]);
 
                 #pragma unroll
                 for (int nt = 0; nt < PV_N_TILES; nt++) {
                     unsigned int d_col = (pv_n_start + nt) * 16 + lane_lo;
                     v16h bb;
                     #pragma unroll
-                    for (int k = 0; k < 16; k++)
-                        bb[k] = (__fp16)(float)smem_V[k_off + k][d_col];
-                    acc_o[nt] = __builtin_amdgcn_wmma_f32_16x16x16_f16_w32(a, bb, acc_o[nt]);
+                    for (int k = 0; k < WMMA_FRAG_K; k++)
+                        bb[k] = (__fp16)(float)smem_V[k_off + wmma_k0(lane_id) + k][d_col];
+                    acc_o[nt] = wmma_f16(a, bb, acc_o[nt]);
                 }
 #endif
             }
@@ -370,7 +371,7 @@ extern "C" __global__ void KERNEL_NAME(
             unsigned int col = (pv_n_start + nt) * 16 + lane_lo;
             #pragma unroll
             for (int e = 0; e < 8; e++) {
-                unsigned int row = pv_warp_m + 2 * e + lane_hi;
+                unsigned int row = pv_warp_m + WMMA_ACC_ROW_TERMS(e, lane_hi);
                 unsigned int gr = q_start + row;
                 if (gr < q_len && row < q_tile_len && col < head_dim) {
                     float l = smem_ml[row][1];
@@ -517,16 +518,16 @@ extern "C" __global__ void PAGED_CONCAT(KERNEL_NAME, _64)(
                 unsigned int k_off = ks * K16;
                 v16bf a;
                 #pragma unroll
-                for (int i = 0; i < 16; i++)
-                    a[i] = (__bf16)(float)smem_Q[qk_m + lane_lo][k_off + i];
+                for (int i = 0; i < WMMA_FRAG_K; i++)
+                    a[i] = (__bf16)(float)smem_Q[qk_m + lane_lo][k_off + wmma_k0(lane_id) + i];
                 #pragma unroll
                 for (int nt = 0; nt < QK_N_TILES; nt++) {
                     unsigned int key_row = nt * 16 + lane_lo;
                     v16bf bb;
                     #pragma unroll
-                    for (int k = 0; k < 16; k++)
-                        bb[k] = (__bf16)(float)smem_K[key_row][k_off + k];
-                    acc_s[nt] = __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32(a, bb, acc_s[nt]);
+                    for (int k = 0; k < WMMA_FRAG_K; k++)
+                        bb[k] = (__bf16)(float)smem_K[key_row][k_off + wmma_k0(lane_id) + k];
+                    acc_s[nt] = wmma_bf16(a, bb, acc_s[nt]);
                 }
             }
 
@@ -535,7 +536,7 @@ extern "C" __global__ void PAGED_CONCAT(KERNEL_NAME, _64)(
                 unsigned int col = nt * 16 + lane_lo;
                 #pragma unroll
                 for (int e = 0; e < 8; e++) {
-                    unsigned int row = qk_m + 2 * e + lane_hi;
+                    unsigned int row = qk_m + WMMA_ACC_ROW_TERMS(e, lane_hi);
                     smem_S[row][col] = acc_s[nt][e];
                 }
             }
@@ -584,7 +585,7 @@ extern "C" __global__ void PAGED_CONCAT(KERNEL_NAME, _64)(
             float resc_e[8];
             #pragma unroll
             for (int e = 0; e < 8; e++)
-                resc_e[e] = smem_resc[pv_warp_m + 2 * e + lane_hi];
+                resc_e[e] = smem_resc[pv_warp_m + WMMA_ACC_ROW_TERMS(e, lane_hi)];
             #pragma unroll
             for (int nt = 0; nt < PV_N_TILES; nt++)
                 #pragma unroll
@@ -600,30 +601,30 @@ extern "C" __global__ void PAGED_CONCAT(KERNEL_NAME, _64)(
 #ifdef METRALE_DISABLE_FP16_PV
                 v16bf a;
                 #pragma unroll
-                for (int i = 0; i < 16; i++)
-                    a[i] = (__bf16)(float)smem_P[pv_warp_m + lane_lo][k_off + i];
+                for (int i = 0; i < WMMA_FRAG_K; i++)
+                    a[i] = (__bf16)(float)smem_P[pv_warp_m + lane_lo][k_off + wmma_k0(lane_id) + i];
                 #pragma unroll
                 for (int nt = 0; nt < PV_N_TILES; nt++) {
                     unsigned int d_col = (pv_n_start + nt) * 16 + lane_lo;
                     v16bf bb;
                     #pragma unroll
-                    for (int k = 0; k < 16; k++)
-                        bb[k] = (__bf16)(float)smem_V[k_off + k][d_col];
-                    acc_o[nt] = __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32(a, bb, acc_o[nt]);
+                    for (int k = 0; k < WMMA_FRAG_K; k++)
+                        bb[k] = (__bf16)(float)smem_V[k_off + wmma_k0(lane_id) + k][d_col];
+                    acc_o[nt] = wmma_bf16(a, bb, acc_o[nt]);
                 }
 #else
                 v16h a;
                 #pragma unroll
-                for (int i = 0; i < 16; i++)
-                    a[i] = (__fp16)__half2float(smem_P[pv_warp_m + lane_lo][k_off + i]);
+                for (int i = 0; i < WMMA_FRAG_K; i++)
+                    a[i] = (__fp16)__half2float(smem_P[pv_warp_m + lane_lo][k_off + wmma_k0(lane_id) + i]);
                 #pragma unroll
                 for (int nt = 0; nt < PV_N_TILES; nt++) {
                     unsigned int d_col = (pv_n_start + nt) * 16 + lane_lo;
                     v16h bb;
                     #pragma unroll
-                    for (int k = 0; k < 16; k++)
-                        bb[k] = (__fp16)(float)smem_V[k_off + k][d_col];
-                    acc_o[nt] = __builtin_amdgcn_wmma_f32_16x16x16_f16_w32(a, bb, acc_o[nt]);
+                    for (int k = 0; k < WMMA_FRAG_K; k++)
+                        bb[k] = (__fp16)(float)smem_V[k_off + wmma_k0(lane_id) + k][d_col];
+                    acc_o[nt] = wmma_f16(a, bb, acc_o[nt]);
                 }
 #endif
             }
@@ -642,7 +643,7 @@ extern "C" __global__ void PAGED_CONCAT(KERNEL_NAME, _64)(
             unsigned int col = (pv_n_start + nt) * 16 + lane_lo;
             #pragma unroll
             for (int e = 0; e < 8; e++) {
-                unsigned int row = pv_warp_m + 2 * e + lane_hi;
+                unsigned int row = pv_warp_m + WMMA_ACC_ROW_TERMS(e, lane_hi);
                 unsigned int gr = q_start + row;
                 if (gr < q_len && row < q_tile_len && col < head_dim) {
                     float l = smem_ml[row][1];

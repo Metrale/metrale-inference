@@ -21,13 +21,13 @@
 /// Two kinds of id live here:
 ///
 /// * **architecture classes**: `gb10`, `hopper`, `b200`, `b300`, `metal`, `strix`,
-///   `strix-hip`, the `kernels/<hw>/` directories that hold a `HARDWARE.toml`
+///   `strix-hip`, `gfx1201`, the `kernels/<hw>/` directories that hold a `HARDWARE.toml`
 ///   (`every_kernel_hardware_dir_is_registered`);
 /// * **bench SKUs**: the ids [`hardware_id_from_gpu_name`] maps a GPU name onto,
 ///   which a record's fingerprint keys by.
 ///
 /// They coincide for `gb10`, `b200` and `b300`.
-pub const KNOWN_HARDWARE_IDS: [&str; 12] = [
+pub const KNOWN_HARDWARE_IDS: [&str; 13] = [
     // 2026-09-26: NVIDIA GB10: architecture class and SKU at once.
     "gb10",
     // 2026-09-26: NVIDIA Hopper, the architecture class: `kernels/hopper/` (sm_90a).
@@ -51,6 +51,9 @@ pub const KNOWN_HARDWARE_IDS: [&str; 12] = [
     // `strix-hip` builds them with hipcc (`kernels/strix-hip/`).
     "strix",
     "strix-hip",
+    // 2026-10-12: AMD gfx1201 (RDNA4: RX 9070 XT, Radeon AI PRO R9700) with hipcc
+    // (`kernels/gfx1201/`, which inherits strix-hip).
+    "gfx1201",
     // 2026-09-26: AMD Instinct MI300X. No `kernels/` directory; registered because
     // `hardware_id_from_gpu_name` maps the SKU onto it.
     "mi300x",

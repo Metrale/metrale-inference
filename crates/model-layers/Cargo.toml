@@ -32,6 +32,9 @@ parking_lot = { workspace = true }
 serde_json = { workspace = true }
 tracing = "0.1"
 
+[build-dependencies]
+toml = "1.1"
+
 [dev-dependencies]
 metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false, features = ["test-utils"] }
 metrale-model-weights = { path = "../model-weights", default-features = false, features = ["test-utils"] }

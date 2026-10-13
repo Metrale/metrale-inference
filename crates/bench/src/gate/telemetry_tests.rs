@@ -46,7 +46,15 @@ fn a_common_kernel_change_reopens_every_target_that_compiles_it() {
     let hardware: BTreeSet<&str> = v.targets.iter().map(|t| t.hardware.as_str()).collect();
     assert_eq!(
         hardware,
-        BTreeSet::from(["b200", "b300", "gb10", "hopper", "strix", "strix-hip"])
+        BTreeSet::from([
+            "b200",
+            "b300",
+            "gb10",
+            "gfx1201",
+            "hopper",
+            "strix",
+            "strix-hip"
+        ])
     );
     assert!(!v.whole_repo, "a kernels-only diff is not whole-repo");
 }

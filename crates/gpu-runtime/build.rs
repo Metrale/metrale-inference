@@ -7,7 +7,8 @@
 //! - `metrale_cutlass` is set only when `CUTLASS_HOME` is set, and
 //!   `metrale_flashinfer` only when `FLASHINFER_HOME` is set, both with the
 //!   `cuda` feature on and `METRALE_SKIP_BUILD` not `1`/`true`.
-//! - `metrale_scale` is set when `METRALE_TARGET_HW` starts with `strix`.
+//! - `metrale_scale` is set when the `vendor` of `kernels/<METRALE_TARGET_HW>/HARDWARE.toml`
+//!   is an AMD one (`amd`/`rocm`/`scale`, `hip`).
 
 fn main() {
     println!("cargo:rerun-if-env-changed=METRALE_SKIP_BUILD");
@@ -15,9 +16,9 @@ fn main() {
     println!("cargo:rerun-if-env-changed=CUTLASS_HOME");
     println!("cargo:rerun-if-env-changed=FLASHINFER_HOME");
     println!("cargo:rerun-if-env-changed=METRALE_CUDA_ARCH");
-    // 2026-09-25: Declared so `#[cfg(...)]` on these names does not trip the
-    // `unexpected_cfgs` lint. `metrale_scale` covers both AMD targets, `strix`
-    // and `strix-hip`.
+    // 2026-10-12: Declared so `#[cfg(...)]` on these names does not trip the
+    // `unexpected_cfgs` lint. `metrale_scale` covers every AMD target, SCALE
+    // (`strix`) and native HIP (`strix-hip`, `gfx1201`).
     println!("cargo:rustc-check-cfg=cfg(metrale_scale)");
     println!("cargo:rustc-check-cfg=cfg(metrale_cutlass)");
     println!("cargo:rustc-check-cfg=cfg(metrale_flashinfer)");
@@ -25,11 +26,12 @@ fn main() {
     // 2026-09-25: Resolved once, before every early return, so the CUTLASS and
     // FlashInfer objects compile for the same architecture.
     let cuda_arch = resolve_cuda_arch();
-    if std::env::var("METRALE_TARGET_HW")
-        .as_deref()
-        .map(|hw| hw.starts_with("strix"))
-        .unwrap_or(false)
-    {
+    // 2026-10-12: Keyed on the target's HARDWARE.toml `vendor`, not its name: the name rule
+    // (`starts_with("strix")`) missed a new AMD class such as `gfx1201`.
+    if matches!(
+        target_vendor().as_deref(),
+        Some("amd" | "rocm" | "scale" | "hip")
+    ) {
         println!("cargo:rustc-cfg=metrale_scale");
     }
 
@@ -219,7 +221,8 @@ fn build_cutlass_object(cutlass_home: std::path::PathBuf, arch: &str) {
 /// 2026-09-25: The SM architecture the CUTLASS / FlashInfer reference objects
 /// compile for: `METRALE_CUDA_ARCH` when set, else `[hardware].arch` from
 /// `kernels/<METRALE_TARGET_HW>/HARDWARE.toml` (target `gb10` when unset).
-/// An unreadable file falls back to `sm_121f` with a `cargo:warning`.
+/// A file without `[hardware].arch` falls back to `sm_121f` with a `cargo:warning`; a missing or
+/// malformed one fails the build.
 fn resolve_cuda_arch() -> String {
     const FALLBACK: &str = "sm_121f";
     if let Ok(explicit) = std::env::var("METRALE_CUDA_ARCH") {
@@ -250,9 +253,37 @@ fn resolve_cuda_arch() -> String {
     }
 }
 
-/// 2026-09-25: `[hardware].arch` from a `HARDWARE.toml`, or `None` if it cannot be read.
+/// 2026-10-12: `[hardware].vendor` of `kernels/<METRALE_TARGET_HW>/HARDWARE.toml`, the key
+/// metrale-kernels' build.rs selects the compiler by. `None` when `METRALE_TARGET_HW` is unset
+/// (no `gb10` default here: an unset target sets no AMD cfg, as before) or the file has no
+/// `vendor`. A set target whose file is missing or malformed panics.
+fn target_vendor() -> Option<String> {
+    let hw = std::env::var("METRALE_TARGET_HW").ok()?;
+    let manifest =
+        std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+    let hardware_toml = manifest
+        .parent()
+        .and_then(|crates| crates.parent())
+        .expect("crates/<crate> sits two levels below the workspace root")
+        .join("kernels")
+        .join(hw)
+        .join("HARDWARE.toml");
+    println!("cargo:rerun-if-changed={}", hardware_toml.display());
+    let doc = read_hardware_toml(&hardware_toml);
+    Some(doc.get("hardware")?.get("vendor")?.as_str()?.to_string())
+}
+
+/// 2026-10-13: `[hardware].arch` from a `HARDWARE.toml`, or `None` if it has no string `arch`.
+/// A missing or malformed file panics (`read_hardware_toml`).
 fn hardware_arch(path: &std::path::Path) -> Option<String> {
-    let text = std::fs::read_to_string(path).ok()?;
-    let doc: toml::Value = toml::from_str(&text).ok()?;
+    let doc = read_hardware_toml(path);
     Some(doc.get("hardware")?.get("arch")?.as_str()?.to_string())
+}
+
+/// 2026-10-13: A `HARDWARE.toml` that is missing or does not parse fails the build, as it does in
+/// metrale-kernels' build.rs. Returning `None` instead would skip the AMD cfgs with no error.
+fn read_hardware_toml(path: &std::path::Path) -> toml::Value {
+    let text = std::fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+    toml::from_str(&text).unwrap_or_else(|e| panic!("invalid {}: {e}", path.display()))
 }

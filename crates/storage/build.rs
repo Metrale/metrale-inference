@@ -7,8 +7,9 @@
 //! Owner: metrale-storage build.
 //! Invariants:
 //! - A build that completes has written `OUT_DIR/storage_ptx.rs`. On macOS,
-//!   with `METRALE_SKIP_BUILD`/`SKIP_METRALE_BUILD` in {1, true, TRUE}, or with
-//!   `METRALE_TARGET_HW=strix-hip`, `STORAGE_PTX` is empty and
+//!   with `METRALE_SKIP_BUILD`/`SKIP_METRALE_BUILD` in {1, true, TRUE}, or for a
+//!   native-HIP target (`vendor = "hip"` in `kernels/<METRALE_TARGET_HW>/HARDWARE.toml`:
+//!   `strix-hip`, `gfx1201`), `STORAGE_PTX` is empty and
 //!   `predictor.rs` fails to load with "missing predictor kernel function".
 //! - An nvcc failure panics the build.
 
@@ -65,9 +66,10 @@ fn main() {
         println!("cargo:rerun-if-changed=build.rs");
         return;
     }
-    // 2026-09-25: The strix-hip target has hipcc, not nvcc, and these kernels
-    // are loaded as PTX text, so it gets the empty registry.
-    if std::env::var("METRALE_TARGET_HW").as_deref() == Ok("strix-hip") {
+    // 2026-10-12: A native-HIP target has hipcc, not nvcc, and these kernels
+    // are loaded as PTX text, so it gets the empty registry. Keyed on the HARDWARE.toml
+    // `vendor`; the name check (`strix-hip`) sent `gfx1201` to nvcc.
+    if target_vendor().as_deref() == Some("hip") {
         emit_stub();
         println!("cargo:rerun-if-changed=build.rs");
         return;
@@ -195,10 +197,38 @@ fn resolve_predictor_arch() -> String {
     }
 }
 
-/// 2026-09-25: `[hardware].arch` from a `HARDWARE.toml`, or `None` if the file
-/// cannot be read or parsed, or has no string `arch`.
+/// 2026-10-12: `[hardware].vendor` of `kernels/<METRALE_TARGET_HW>/HARDWARE.toml`, the key
+/// metrale-kernels' build.rs selects the compiler by. `None` when `METRALE_TARGET_HW` is unset
+/// (no `gb10` default here: an unset target is not a HIP target, as before) or the file has no
+/// `vendor`. A set target whose file is missing or malformed panics.
+fn target_vendor() -> Option<String> {
+    let hw = std::env::var("METRALE_TARGET_HW").ok()?;
+    let manifest =
+        std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+    let hardware_toml = manifest
+        .parent()
+        .and_then(|crates| crates.parent())
+        .expect("crates/<crate> sits two levels below the workspace root")
+        .join("kernels")
+        .join(hw)
+        .join("HARDWARE.toml");
+    println!("cargo:rerun-if-changed={}", hardware_toml.display());
+    let doc = read_hardware_toml(&hardware_toml);
+    Some(doc.get("hardware")?.get("vendor")?.as_str()?.to_string())
+}
+
+/// 2026-10-13: `[hardware].arch` from a `HARDWARE.toml`, or `None` if it has no string `arch`.
+/// A missing or malformed file panics (`read_hardware_toml`).
 fn hardware_arch(path: &Path) -> Option<String> {
-    let text = std::fs::read_to_string(path).ok()?;
-    let doc: toml::Value = toml::from_str(&text).ok()?;
+    let doc = read_hardware_toml(path);
     Some(doc.get("hardware")?.get("arch")?.as_str()?.to_string())
+}
+
+/// 2026-10-13: A `HARDWARE.toml` that is missing or does not parse fails the build, as it does in
+/// metrale-kernels' build.rs. Returning `None` instead would send a HIP target down the nvcc
+/// path with no error.
+fn read_hardware_toml(path: &Path) -> toml::Value {
+    let text = std::fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+    toml::from_str(&text).unwrap_or_else(|e| panic!("invalid {}: {e}", path.display()))
 }
