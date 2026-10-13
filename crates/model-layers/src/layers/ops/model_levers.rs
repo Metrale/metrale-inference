@@ -258,6 +258,11 @@ pub struct ModelLevers {
     /// 2026-09-25: `METRALE_GDN_DECODE_GRAPH=1` or `true` (case-sensitive): the same permission as
     /// [`Self::ep_graphs`]; `decode_a.rs` ORs the two.
     pub gdn_decode_graph: bool,
+    /// 2026-10-13: `METRALE_DECODE_GRAPH_PER_STEP=1` or `true` (case-sensitive): the
+    /// single-sequence decode (`model/trait_impl/decode_a.rs`) vetoes graphs per step from
+    /// each layer's `decode_graph_unsupported_at` instead of the build-time
+    /// `decode_graph_veto`.
+    pub decode_graph_per_step: bool,
 
     /// 2026-09-25: `METRALE_BF16_TC_PROJ` (presence): attention prefill projections use
     /// `w4a16_gemm_n128_m128_bf16` when that kernel is loaded (`qwen3_attention/prefill_weights.rs`).

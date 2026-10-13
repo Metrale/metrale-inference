@@ -183,11 +183,13 @@ fn qsa_matches_reference() {
     let table = upload(g, &ident);
 
     let last_row = hidden_dev.offset((t_all - 1) * hidden * 2);
+    let pos_dev = upload(g, &((t_all - 1) as u32).to_le_bytes());
     let sel = qsa
         .decode_select(
             &mut qst,
             last_row,
             t_all - 1,
+            pos_dev,
             kpool,
             vpool,
             table,

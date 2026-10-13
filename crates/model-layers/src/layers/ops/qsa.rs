@@ -51,6 +51,43 @@ pub fn qsa_block_pool(
         .launch(stream)
 }
 
+/// 2026-10-13: One decode token's indexer ingest at the position `pos_dev[0]` (u32 on
+/// the device): `raw_keys[pos] = key`, and the block it completes, if any, pooled as
+/// [`qsa_block_pool`] pools it. The position is read on the device, so a captured graph
+/// replays the step at every later position.
+#[allow(clippy::too_many_arguments)]
+pub fn qsa_ingest_step(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    key: DevicePtr,
+    raw_keys: DevicePtr,
+    k_norm_w: DevicePtr,
+    block_keys: DevicePtr,
+    pos_dev: DevicePtr,
+    ratio: u32,
+    hd: u32,
+    rot: u32,
+    theta: f32,
+    eps: f32,
+    stream: u64,
+) -> Result<()> {
+    KernelLaunch::new(gpu, kernel)
+        .grid([1, 1, 1])
+        .block([hd, 1, 1])
+        .shared_mem((hd + 32) * 4)
+        .arg_ptr(key)
+        .arg_ptr(raw_keys)
+        .arg_ptr(k_norm_w)
+        .arg_ptr(block_keys)
+        .arg_ptr(pos_dev)
+        .arg_u32(ratio)
+        .arg_u32(hd)
+        .arg_u32(rot)
+        .arg_f32(theta)
+        .arg_f32(eps)
+        .launch(stream)
+}
+
 /// 2026-09-25: One decode query: per head, RMSNorm scaled by `1 + w`, then
 /// partial rope at `pos`; FP32 output.
 #[allow(clippy::too_many_arguments)]
@@ -288,3 +325,7 @@ pub fn qsa_prefill_attn(
         .arg_f32(inv_sqrt_d)
         .launch(stream)
 }
+
+#[cfg(test)]
+#[path = "qsa_ingest_tests.rs"]
+mod tests;

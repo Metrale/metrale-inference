@@ -322,6 +322,7 @@ impl Qwen3AttentionLayer {
                 qsa_st,
                 normed,
                 seq_len,
+                meta.positions,
                 kv_cache.k_pool_ptr(self.attn_layer_idx),
                 kv_cache.v_pool_ptr(self.attn_layer_idx),
                 meta.block_table,

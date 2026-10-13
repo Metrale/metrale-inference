@@ -20,12 +20,12 @@ use crate::layer::{
     BatchedAttnMetadata, EmptyLayerState, ForwardContext, LayerState, TransformerLayer,
 };
 use crate::layer::{
-    LayerAuxState, LayerCapabilities, LayerGraphHooks, LayerSplitPrefill, LayerWeightSetup,
-    LayerWriteOnAccept,
+    LayerAuxState, LayerCapabilities, LayerSplitPrefill, LayerWeightSetup, LayerWriteOnAccept,
 };
 use crate::layers::FfnComponent;
 
 mod decode_inner;
+mod graph_hooks;
 pub(in crate::layers::qwen3_attention) mod multi_seq;
 mod prefill_inner;
 
@@ -243,6 +243,23 @@ impl LayerCapabilities for Qwen3AttentionLayer {
     fn decode_graph_unsupported(&self) -> bool {
         self.qsa.is_some()
     }
+
+    /// 2026-10-13: Per step, only a step that selects is vetoed: inside the inert bound the
+    /// indexer's ingest reads its position on the device (`qsa_ingest_step`), so a graph
+    /// replays it at every later position. A fed row's step is eager too, because the
+    /// indexer's step bookkeeping starts in `decode_prestage`, which only a host token
+    /// runs.
+    fn decode_graph_unsupported_at(&self, seq_len: usize, host_token: bool) -> bool {
+        self.qsa
+            .as_ref()
+            .is_some_and(|q| !host_token || q.selects_at(seq_len))
+    }
+
+    /// 2026-10-13: The indexer's raw and block keys are allocated per sequence, so a
+    /// captured graph's addresses die with it.
+    fn graph_stale_on_new_sequence(&self) -> bool {
+        self.qsa.is_some()
+    }
 }
 
 impl LayerWeightSetup for Qwen3AttentionLayer {
@@ -333,7 +350,6 @@ impl LayerWeightSetup for Qwen3AttentionLayer {
 }
 
 impl LayerWriteOnAccept for Qwen3AttentionLayer {}
-impl LayerGraphHooks for Qwen3AttentionLayer {}
 
 impl LayerAuxState for Qwen3AttentionLayer {
     fn has_aux_state(&self) -> bool {

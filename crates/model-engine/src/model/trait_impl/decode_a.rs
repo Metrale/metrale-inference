@@ -252,7 +252,17 @@ impl TransformerModel {
         // 2026-09-25: A layer that can never be captured (QSA's host top-k) vetoes
         // graphs for the whole model: a graph captured on the dense path would
         // replay the wrong attention once selection activates.
-        let layer_veto = self.decode_graph_veto;
+        // 2026-10-13: Under `METRALE_DECODE_GRAPH_PER_STEP` each layer answers for this
+        // step instead (`decode_graph_unsupported_at`): QSA vetoes only the steps
+        // that select, so the steps inside its inert bound are graphed.
+        let layer_veto = if self.levers.decode_graph_per_step {
+            let host_token = input.host().is_some();
+            self.layers
+                .iter()
+                .any(|l| l.decode_graph_unsupported_at(seq.seq_len, host_token))
+        } else {
+            self.decode_graph_veto
+        };
         let use_graphs = (self.comm.is_none() || ep_graphs || gdn_graphs)
             && !self.profile
             && !self

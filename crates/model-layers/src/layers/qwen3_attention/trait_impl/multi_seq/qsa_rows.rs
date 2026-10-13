@@ -71,6 +71,9 @@ impl Qwen3AttentionLayer {
                 st,
                 normed.offset(i * h * bf16),
                 seq_lens[i],
+                // 2026-10-13: Row `i`'s u32 position, which is `seq_lens[i]`
+                // (`upload_batch_metadata_fixed`).
+                meta.positions.offset(i * 4),
                 kv_cache.k_pool_ptr(self.attn_layer_idx),
                 kv_cache.v_pool_ptr(self.attn_layer_idx),
                 meta.block_table

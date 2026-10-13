@@ -22,13 +22,16 @@
 //! (`prefill_select`, in `qsa_select.rs`) overwrites the attention context of
 //! the rows past the bound. Selection takes a host top-k over scores read back
 //! from the device, so a layer with an indexer reports
-//! `decode_graph_unsupported`.
+//! `decode_graph_unsupported` (the batched decode) and, per step,
+//! `decode_graph_unsupported_at` past the bound (`qsa_decode.rs`).
 
 use anyhow::{Context, Result};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 
 use crate::layers::ops;
 
+#[path = "qsa_decode.rs"]
+mod qsa_decode;
 #[path = "qsa_select.rs"]
 mod qsa_select;
 #[path = "qsa_snapshot.rs"]
@@ -52,6 +55,10 @@ pub struct QsaSeqState {
     ingested: usize,
     /// 2026-09-25: Complete `ratio`-token blocks pooled into `block_keys`.
     pooled: usize,
+    /// 2026-10-13: `ingested` when the current decode step began (`begin_step`), which
+    /// `rearm_step` restores after a CUDA-graph capture that recorded the step but ran
+    /// nothing.
+    step_start: usize,
     /// 2026-09-25: Pages of the identity block table already uploaded to the
     /// layer's `table_dev` by `decode_select`.
     table_len: usize,
@@ -82,6 +89,8 @@ pub struct QsaIndexer {
     max_tokens: usize,
 
     k_pool_k: KernelHandle,
+    /// 2026-10-13: `qsa_ingest_step`, the decode ingest at the device position.
+    k_ingest_k: KernelHandle,
     k_qprep_k: KernelHandle,
     k_score_k: KernelHandle,
     k_gather_k: KernelHandle,
@@ -163,6 +172,7 @@ impl QsaIndexer {
             hd_attn: hd_attn as u32,
             max_tokens,
             k_pool_k: gpu.kernel("qsa_indexer", "qsa_block_pool")?,
+            k_ingest_k: gpu.kernel("qsa_indexer", "qsa_ingest_step")?,
             k_qprep_k: gpu.kernel("qsa_indexer", "qsa_qprep")?,
             k_score_k: gpu.kernel("qsa_indexer", "qsa_score")?,
             k_gather_k: gpu.kernel("qsa_indexer", "qsa_gather")?,
@@ -191,6 +201,7 @@ impl QsaIndexer {
         Ok(QsaSeqState {
             ingested: 0,
             pooled: 0,
+            step_start: 0,
             table_len: 0,
             raw_keys: gpu.alloc(self.max_tokens * hd * 2)?,
             block_keys: gpu.alloc(self.max_tokens / ratio * hd * 2)?,
@@ -327,155 +338,6 @@ impl QsaIndexer {
         Ok(())
     }
 
-    // 2026-09-25: `prefill_select` is in `qsa_select.rs`.
-
-    /// 2026-09-25: Decode-step ingest + selection for the token at `pos` (0-based;
-    /// `pos + 1` visible). `None` inside the inert bound (dense is exact).
-    /// Errors when `pos` is not the ingested count or reaches `max_tokens`.
-    #[allow(clippy::too_many_arguments)]
-    pub fn decode_select(
-        &self,
-        st: &mut QsaSeqState,
-        normed: DevicePtr,
-        pos: usize,
-        k_pool: DevicePtr,
-        v_pool: DevicePtr,
-        block_table_dev: DevicePtr,
-        block_size: u32,
-        gpu: &dyn GpuBackend,
-        stream: u64,
-    ) -> Result<Option<QsaSelection>> {
-        anyhow::ensure!(
-            pos == st.ingested,
-            "QSA: decode at pos {pos} but {} tokens ingested — the indexer \
-             cache lost sync (prefix-cache skip or a rewound sequence)",
-            st.ingested
-        );
-        anyhow::ensure!(
-            pos < self.max_tokens,
-            "QSA: pos {pos} >= the indexer's max_tokens {} (--max-seq-len)",
-            self.max_tokens
-        );
-
-        let hd = self.hd as usize;
-        let qkw = self.qk_width();
-        ops::cublas_bf16_proj_dense(
-            normed,
-            self.qk_proj_w,
-            self.qk_scratch,
-            1,
-            qkw as u32,
-            self.hidden,
-            stream,
-        )
-        .context("QSA qk projection (decode)")?;
-        gpu.copy_d2d_async(
-            self.qk_scratch.offset(self.n_heads as usize * hd * 2),
-            st.raw_keys.offset(pos * hd * 2),
-            hd * 2,
-            stream,
-        )?;
-        st.ingested = pos + 1;
-        self.pool_new_blocks(st, gpu, stream)?;
-
-        let visible = pos + 1;
-        let complete = visible / self.ratio as usize;
-        if complete <= self.block_topk as usize {
-            return Ok(None); // 2026-09-25: all blocks are selected, so dense is exact.
-        }
-
-        ops::qsa_qprep(
-            gpu,
-            self.k_qprep_k,
-            self.qk_scratch,
-            self.q_norm_w,
-            self.q_post,
-            self.n_heads,
-            self.hd,
-            self.rot,
-            pos as u32,
-            self.theta,
-            self.eps,
-            stream,
-        )?;
-        ops::qsa_score(
-            gpu,
-            self.k_score_k,
-            self.q_post,
-            st.block_keys,
-            self.scores_dev,
-            complete as u32,
-            self.n_heads,
-            self.hd,
-            stream,
-        )?;
-
-        // 2026-09-25: Host top-k over the block scores. The D2H cannot be
-        // captured; a layer with an indexer reports `decode_graph_unsupported`.
-        let mut raw = vec![0u8; complete * 4];
-        gpu.copy_d2h_on_stream(self.scores_dev, &mut raw, stream)?;
-        let scores: Vec<f32> = raw
-            .chunks_exact(4)
-            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-            .collect();
-        let mut order: Vec<u32> = (0..complete as u32).collect();
-        // 2026-09-25: Sort by (-score, index): ties go to the lower block index.
-        order.sort_by(|&a, &b| {
-            scores[b as usize]
-                .partial_cmp(&scores[a as usize])
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then(a.cmp(&b))
-        });
-        let mut blocks: Vec<u32> = order[..self.block_topk as usize].to_vec();
-        blocks.sort_unstable();
-
-        let ratio = self.ratio as usize;
-        let mut sel: Vec<i32> = Vec::with_capacity(self.budget as usize + ratio);
-        for b in &blocks {
-            let base = *b as i32 * self.ratio as i32;
-            for r in 0..self.ratio as i32 {
-                sel.push(base + r);
-            }
-        }
-        for t in complete * ratio..visible {
-            sel.push(t as i32);
-        }
-        let n_sel = sel.len() as u32;
-
-        let sel_bytes: Vec<u8> = sel.iter().flat_map(|v| v.to_le_bytes()).collect();
-        gpu.copy_h2d_async(&sel_bytes, self.sel_dev, stream)?;
-        ops::qsa_gather(
-            gpu,
-            self.k_gather_k,
-            k_pool,
-            v_pool,
-            block_table_dev,
-            self.sel_dev,
-            self.k_scratch,
-            self.v_scratch,
-            n_sel,
-            block_size,
-            self.nkv_attn,
-            self.hd_attn,
-            stream,
-        )?;
-
-        // 2026-09-25: Identity table + seq_len for the scratch-as-paged-cache view.
-        let pages = (n_sel as usize).div_ceil(block_size as usize);
-        if st.table_len < pages {
-            let ident: Vec<u8> = (0..pages as i32).flat_map(|v| v.to_le_bytes()).collect();
-            gpu.copy_h2d_async(&ident, self.table_dev, stream)?;
-            st.table_len = pages;
-        }
-        gpu.copy_h2d_async(&(n_sel as i32).to_le_bytes(), self.seq_len_dev, stream)?;
-
-        Ok(Some(QsaSelection {
-            k_scratch: self.k_scratch,
-            v_scratch: self.v_scratch,
-            table_dev: self.table_dev,
-            seq_len_dev: self.seq_len_dev,
-            n_sel,
-            max_blocks: pages as u32,
-        }))
-    }
+    // 2026-09-25: `prefill_select` is in `qsa_select.rs`; 2026-10-13: `decode_select`
+    // is in `qsa_decode.rs`.
 }

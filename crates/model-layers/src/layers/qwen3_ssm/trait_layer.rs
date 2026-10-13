@@ -16,8 +16,7 @@ use super::Qwen3SsmLayer;
 use super::ple_seq::ple_seq_state;
 use crate::layer::{ForwardContext, GdnPrefillBuffers, LayerState, TransformerLayer};
 use crate::layer::{
-    LayerAuxState, LayerCapabilities, LayerGraphHooks, LayerSplitPrefill, LayerWeightSetup,
-    LayerWriteOnAccept,
+    LayerAuxState, LayerGraphHooks, LayerSplitPrefill, LayerWeightSetup, LayerWriteOnAccept,
 };
 
 impl TransformerLayer for Qwen3SsmLayer {
@@ -234,28 +233,6 @@ impl TransformerLayer for Qwen3SsmLayer {
             anyhow::bail!("release_state: PLE seq state present but layer has no PLE");
         };
         ple.release_seq_state(&mut st, gpu)
-    }
-}
-
-impl LayerCapabilities for Qwen3SsmLayer {
-    /// 2026-09-25: True when this layer carries PLE. The multi-seq decode
-    /// (`forward_row`) hashes ids on the host inside the forward, which a graph
-    /// capture refuses. The model ORs this into `decode_graph_veto`, which keeps
-    /// decode eager.
-    fn decode_graph_unsupported(&self) -> bool {
-        self.ple.is_some()
-    }
-
-    fn is_ssm_layer(&self) -> bool {
-        self.is_ssm_layer_inner()
-    }
-
-    /// 2026-10-01: Both prefill entry paths (`prefill_inner`, `prefill_inner_hc`) run
-    /// `prefill_block`, whose conv (`conv1d_prefill_capture`) and recurrence
-    /// (`prefill_gdn_recurrence`) split at the capture point on every build, the
-    /// recurrence's tail on the exact-replay arm.
-    fn supports_replay_tail_split(&self) -> bool {
-        true
     }
 }
 

@@ -63,25 +63,25 @@ __device__ __forceinline__ void qsa_rope_store(
     }
 }
 
-// 2026-09-25: qsa_block_pool: pool `n_new` complete blocks starting at `first_block`:
-// mean(ratio raw keys) -> RMSNorm * (1 + w) -> rope at pos = block * ratio,
-// written to block_keys[block]. Grid (n_new), block (hd); dynamic shared memory
-// holds hd floats plus the reduction slots.
-extern "C" __global__ void qsa_block_pool(
-    const __nv_bfloat16* __restrict__ raw_keys,   // 2026-09-25: [S, hd]
-    const __nv_bfloat16* __restrict__ k_norm_w,   // 2026-09-25: [hd]
-    __nv_bfloat16* __restrict__ block_keys,       // 2026-09-25: [max_blocks, hd]
-    const unsigned int first_block,
+// 2026-10-13: Pool block `b`: mean(ratio raw keys) -> RMSNorm * (1 + w) -> rope at
+// pos = b * ratio, written to block_keys[b]. One thread per element d of a block of
+// hd threads; every thread of the block must call it. `smem` holds hd floats plus the
+// reduction slots. Shared by qsa_block_pool and qsa_ingest_step. `raw_keys` is not
+// `__restrict__`: qsa_ingest_step reads back a row it has just written, which a
+// non-coherent read-only load may not see.
+__device__ __forceinline__ void qsa_pool_block(
+    const __nv_bfloat16* raw_keys,
+    const __nv_bfloat16* __restrict__ k_norm_w,
+    __nv_bfloat16* __restrict__ block_keys,
+    const unsigned int b,
     const unsigned int ratio,
     const unsigned int hd,
     const unsigned int rot,
     const float theta,
-    const float eps
+    const float eps,
+    float* smem
 ) {
-    const unsigned int b = first_block + blockIdx.x;
     const unsigned int d = threadIdx.x;
-
-    extern __shared__ float smem[];
     float* stage = smem;
     float* red = smem + hd;
 
@@ -97,6 +97,53 @@ extern "C" __global__ void qsa_block_pool(
     __syncthreads();
 
     qsa_rope_store(stage, block_keys + (size_t)b * hd, d, rot, b * ratio, theta);
+}
+
+// 2026-09-25: qsa_block_pool: pool `n_new` complete blocks starting at `first_block`
+// (qsa_pool_block). Grid (n_new), block (hd); dynamic shared memory holds hd floats
+// plus the reduction slots.
+extern "C" __global__ void qsa_block_pool(
+    const __nv_bfloat16* __restrict__ raw_keys,   // 2026-09-25: [S, hd]
+    const __nv_bfloat16* __restrict__ k_norm_w,   // 2026-09-25: [hd]
+    __nv_bfloat16* __restrict__ block_keys,       // 2026-09-25: [max_blocks, hd]
+    const unsigned int first_block,
+    const unsigned int ratio,
+    const unsigned int hd,
+    const unsigned int rot,
+    const float theta,
+    const float eps
+) {
+    extern __shared__ float smem[];
+    qsa_pool_block(raw_keys, k_norm_w, block_keys, first_block + blockIdx.x, ratio, hd,
+                   rot, theta, eps, smem);
+}
+
+// 2026-10-13: qsa_ingest_step: one decode token's ingest at the position read from the
+// device (`pos_dev[0]`), so a captured CUDA graph replays it at every later step:
+// raw_keys[pos] = key, then, when the token completes a block ((pos + 1) % ratio == 0),
+// pool that block exactly as qsa_block_pool does. Thread d writes and later reads only
+// column d of raw_keys, so its own write is visible to it. Grid (1), block (hd); shared
+// memory as qsa_block_pool.
+extern "C" __global__ void qsa_ingest_step(
+    const __nv_bfloat16* __restrict__ key,        // 2026-10-13: [hd], this token's raw key
+    __nv_bfloat16* raw_keys,                      // 2026-10-13: [S, hd]
+    const __nv_bfloat16* __restrict__ k_norm_w,   // 2026-10-13: [hd]
+    __nv_bfloat16* __restrict__ block_keys,       // 2026-10-13: [max_blocks, hd]
+    const unsigned int* __restrict__ pos_dev,     // 2026-10-13: [1], the token's position
+    const unsigned int ratio,
+    const unsigned int hd,
+    const unsigned int rot,
+    const float theta,
+    const float eps
+) {
+    extern __shared__ float smem[];
+    const unsigned int pos = pos_dev[0];
+    const unsigned int d = threadIdx.x;
+    raw_keys[(size_t)pos * hd + d] = key[d];
+    if ((pos + 1) % ratio == 0) {
+        qsa_pool_block(raw_keys, k_norm_w, block_keys, (pos + 1) / ratio - 1, ratio, hd,
+                       rot, theta, eps, smem);
+    }
 }
 
 // 2026-09-25: qsa_qprep: one decode query: per head, RMSNorm * (1 + w) then rope

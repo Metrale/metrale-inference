@@ -36,6 +36,7 @@ mod row_tier_proj;
 mod rowwise_bf16;
 mod ssm_forward;
 pub(crate) mod ssm_h_fp16;
+mod trait_capabilities;
 mod trait_decode;
 mod trait_decode_batched;
 mod trait_decode_batched_conv_gdn;

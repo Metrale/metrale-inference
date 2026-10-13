@@ -32,6 +32,17 @@ pub trait LayerCapabilities {
         false
     }
 
+    /// 2026-10-13: True when this layer's single-sequence decode step at `seq_len` (the
+    /// length before the step) cannot be captured or replayed; `host_token` is whether the
+    /// step's token id is on the host. The single-sequence decode asks it per step under
+    /// `METRALE_DECODE_GRAPH_PER_STEP` instead of the build-time `decode_graph_veto`, so a
+    /// layer whose veto depends on the step (QSA selecting past its inert bound) graphs the
+    /// steps it can. Default: the static [`Self::decode_graph_unsupported`].
+    fn decode_graph_unsupported_at(&self, seq_len: usize, host_token: bool) -> bool {
+        let _ = (seq_len, host_token);
+        self.decode_graph_unsupported()
+    }
+
     /// 2026-09-25: True when this layer cannot serve a batched multi-sequence decode step.
     /// The batched decode ORs it across layers into `hc_perseq` (`decode_a2.rs`) and then
     /// runs each sequence through `decode`; the single-GPU fused decode+prefill ORs it into
