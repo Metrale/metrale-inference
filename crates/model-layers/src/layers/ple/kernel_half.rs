@@ -15,6 +15,31 @@ use super::PleLayer;
 use crate::layers::ops;
 
 impl PleLayer {
+    /// 2026-10-13: The kernel half of one sequence's step over `num_tokens`
+    /// consecutive rows already gathered into `emb`: project, gate, conv against
+    /// `conv_state`, and the add into `highway`.
+    pub(super) fn kernel_steps(
+        &self,
+        conv_state: DevicePtr,
+        highway: DevicePtr,
+        num_tokens: usize,
+        gpu: &dyn GpuBackend,
+        stream: u64,
+    ) -> Result<()> {
+        self.project(num_tokens, gpu, stream)?;
+        self.gate(highway, num_tokens, gpu, stream)?;
+        self.conv(
+            self.gated_normed,
+            self.gated,
+            conv_state,
+            self.out,
+            num_tokens,
+            gpu,
+            stream,
+        )?;
+        self.add_highway(highway, num_tokens, gpu, stream)
+    }
+
     /// 2026-10-13: `key = emb @ key_proj`, `value = emb @ value_proj` over
     /// `num_tokens` rows of `emb`. `gemm_k` is the pipelined kernel, so it must
     /// go through `ops::dense_gemm_bf16_pipelined` (grid [ceil(n,128),

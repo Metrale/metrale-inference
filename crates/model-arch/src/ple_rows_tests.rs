@@ -25,18 +25,20 @@ use metrale_model_layers::layers::ngram_embed::NgramTable;
 use metrale_model_layers::layers::ple::{PleIdDims, PleLayer, PleSeqState, PleWeights};
 use metrale_model_layers::weight_map::DenseWeight;
 
-const HC: usize = 4;
+pub(crate) const HC: usize = 4;
 const HEAD_DIM: usize = 16;
-const HIDDEN: usize = 64;
+pub(crate) const HIDDEN: usize = 64;
 const K_SIZE: usize = 4;
+/// 2026-10-13: Also the conv dilation, so the carried conv state is
+/// `(K_SIZE - 1) * NGRAM` = 9 rows.
 const NGRAM: usize = 3;
 const HEADS_PER_NGRAM: usize = 2;
 const ROWS: usize = 6;
 
 /// 2026-10-13: A deterministic generator (SplitMix64) so the test needs no crate.
-struct Rng(u64);
+pub(crate) struct Rng(pub(crate) u64);
 impl Rng {
-    fn next(&mut self) -> u64 {
+    pub(crate) fn next(&mut self) -> u64 {
         self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
         let mut z = self.0;
         z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
@@ -54,20 +56,20 @@ impl Rng {
             })
             .collect()
     }
-    fn f32s(&mut self, n: usize, scale: f32) -> Vec<u8> {
+    pub(crate) fn f32s(&mut self, n: usize, scale: f32) -> Vec<u8> {
         (0..n)
             .flat_map(|_| (self.unit() * scale).to_le_bytes())
             .collect()
     }
 }
 
-fn upload(g: &dyn GpuBackend, b: &[u8]) -> DevicePtr {
+pub(crate) fn upload(g: &dyn GpuBackend, b: &[u8]) -> DevicePtr {
     let p = g.alloc(b.len().max(256)).unwrap();
     g.copy_h2d(b, p).unwrap();
     p
 }
 
-fn download(g: &dyn GpuBackend, p: DevicePtr, n: usize) -> Vec<u8> {
+pub(crate) fn download(g: &dyn GpuBackend, p: DevicePtr, n: usize) -> Vec<u8> {
     let mut raw = vec![0u8; n];
     g.copy_d2h(p, &mut raw).unwrap();
     raw
@@ -90,7 +92,9 @@ fn dims() -> PleIdDims {
     }
 }
 
-fn layer(g: &dyn GpuBackend, rng: &mut Rng) -> PleLayer {
+/// 2026-10-13: A PLE layer on random weights drawn from `rng`, its scratch sized for
+/// `max_tokens` rows: two layers built from equal seeds hold equal weights.
+pub(crate) fn layer(g: &dyn GpuBackend, rng: &mut Rng, max_tokens: usize) -> PleLayer {
     let d = dims();
     let heads = d.ngram_heads();
     assert_eq!(heads * HEAD_DIM, HIDDEN);
@@ -120,53 +124,87 @@ fn layer(g: &dyn GpuBackend, rng: &mut Rng) -> PleLayer {
         weight: upload(g, &rng.bf16s(table_rows * HEAD_DIM, 1.0)),
     });
     PleLayer::new(
-        d, HEAD_DIM, HIDDEN, HC, K_SIZE, NGRAM, 1e-6, weights, table, 64, g,
+        d, HEAD_DIM, HIDDEN, HC, K_SIZE, NGRAM, 1e-6, weights, table, max_tokens, g,
     )
     .expect("PleLayer")
+}
+
+/// 2026-10-13: The CUDA backend over the Flash-Next kernel set.
+pub(crate) fn backend() -> metrale_gpu_runtime::cuda_backend::MetraleCudaBackend {
+    let set = metrale_kernels::ptx_for_exact_target("qwen3.8-flash-next", "nvfp4")
+        .expect("qwen3.8-flash-next/nvfp4 not in this build");
+    metrale_gpu_runtime::cuda_backend::MetraleCudaBackend::new(0, &set.modules)
+        .expect("CUDA backend")
+}
+
+/// 2026-10-13: What a [`ForwardContext`] borrows; PLE reads none of it but the GPU
+/// and the host token ids.
+pub(crate) struct CtxParts {
+    config: metrale_config::ModelConfig,
+    buffers: metrale_gpu_runtime::buffers::BufferArena,
+    dispatch: metrale_model_layers::layers::ops::GemmDispatch,
+    derived: metrale_model_layers::layers::ops::DerivedWeights,
+    levers: metrale_model_layers::layers::ops::ModelLevers,
+    stats: metrale_model_layers::layers::ops::ModelStats,
+}
+
+impl CtxParts {
+    pub(crate) fn new(g: &dyn GpuBackend) -> Self {
+        let config = metrale_config::ModelConfig::qwen3_next_80b_nvfp4();
+        let buffers =
+            metrale_gpu_runtime::buffers::BufferArena::new(&config, 16, 256, 4, 8, g).unwrap();
+        Self {
+            config,
+            buffers,
+            dispatch: metrale_model_layers::layers::ops::GemmDispatch::defaults(),
+            derived: metrale_model_layers::layers::ops::DerivedWeights::new(),
+            levers: metrale_model_layers::layers::ops::ModelLevers::defaults(),
+            stats: metrale_model_layers::layers::ops::ModelStats::new(),
+        }
+    }
+
+    pub(crate) fn ctx<'a>(
+        &'a self,
+        g: &'a dyn GpuBackend,
+        host_token_ids: Option<&'a [u32]>,
+        decode_step: bool,
+    ) -> ForwardContext<'a> {
+        ForwardContext {
+            dispatch: &self.dispatch,
+            derived: &self.derived,
+            levers: &self.levers,
+            stats: &self.stats,
+            buffers: &self.buffers,
+            hc_row_offset: 0,
+            gpu: g,
+            config: &self.config,
+            attn_metadata: None,
+            profile: false,
+            comm: None,
+            graph_capture: false,
+            decode_step,
+            gdn_exact_replay: false,
+            gdn_write_on_accept: false,
+            token_ids: None,
+            host_token_ids,
+            routed_lora_layers: None,
+            midchunk_capture: None,
+            moe_lora_route: MoeLoraRoute::Fold,
+        }
+    }
 }
 
 #[test]
 #[ignore]
 fn ple_rows_matches_per_row() {
-    let set = metrale_kernels::ptx_for_exact_target("qwen3.8-flash-next", "nvfp4")
-        .expect("qwen3.8-flash-next/nvfp4 not in this build");
-    let gpu = metrale_gpu_runtime::cuda_backend::MetraleCudaBackend::new(0, &set.modules)
-        .expect("CUDA backend");
+    let gpu = backend();
     let g: &dyn GpuBackend = &gpu;
     let stream = g.default_stream();
     let mut rng = Rng(7);
-    let ple = layer(g, &mut rng);
+    let ple = layer(g, &mut rng, 64);
     let c = HC * HIDDEN;
-
-    let config = metrale_config::ModelConfig::qwen3_next_80b_nvfp4();
-    let buffers =
-        metrale_gpu_runtime::buffers::BufferArena::new(&config, 16, 256, 4, 8, g).unwrap();
-    let dispatch = metrale_model_layers::layers::ops::GemmDispatch::defaults();
-    let derived = metrale_model_layers::layers::ops::DerivedWeights::new();
-    let levers = metrale_model_layers::layers::ops::ModelLevers::defaults();
-    let stats = metrale_model_layers::layers::ops::ModelStats::new();
-    let ctx = ForwardContext {
-        dispatch: &dispatch,
-        derived: &derived,
-        levers: &levers,
-        stats: &stats,
-        buffers: &buffers,
-        hc_row_offset: 0,
-        gpu: g,
-        config: &config,
-        attn_metadata: None,
-        profile: false,
-        comm: None,
-        graph_capture: false,
-        decode_step: true,
-        gdn_exact_replay: false,
-        gdn_write_on_accept: false,
-        token_ids: None,
-        host_token_ids: None,
-        routed_lora_layers: None,
-        midchunk_capture: None,
-        moe_lora_route: MoeLoraRoute::Fold,
-    };
+    let parts = CtxParts::new(g);
+    let ctx = parts.ctx(g, None, true);
 
     // 2026-10-13: Two steps of tokens per row; the same highway rows feed both arms.
     let steps: Vec<Vec<u32>> = (0..2)

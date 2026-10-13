@@ -88,6 +88,12 @@ impl PleLayer {
         gpu: &dyn GpuBackend,
         stream: u64,
     ) -> Result<()> {
+        anyhow::ensure!(
+            tokens.len() <= self.max_tokens,
+            "PLE prestage: {} tokens overflow the {}-row slot buffer",
+            tokens.len(),
+            self.max_tokens
+        );
         if st.history.len() != self.dims.context_len() {
             self.reset(st, gpu, stream)?;
         }

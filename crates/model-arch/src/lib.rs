@@ -28,6 +28,8 @@ pub mod nemotron_moe;
 #[cfg(test)]
 pub mod ple_rows_tests;
 #[cfg(test)]
+mod ple_subchunk_tests;
+#[cfg(test)]
 pub mod ple_tests;
 pub mod precision_schedule;
 pub mod seq_state_reserve;

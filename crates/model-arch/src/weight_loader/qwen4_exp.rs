@@ -170,10 +170,10 @@ impl ModelWeightLoader for Qwen4ExpWeightLoader {
             None
         };
 
-        // 2026-09-25: The PLE scratch is sized once, for the largest prefill
-        // chunk, not the context: `METRALE_PLE_MAX_TOKENS`, default 2048. A
-        // larger chunk is refused by the PLE layer with a message naming the
-        // variable (`ple/layer.rs`).
+        // 2026-09-25: The PLE scratch is sized once, not for the context:
+        // `METRALE_PLE_MAX_TOKENS` rows, default 2048. 2026-10-13: a longer pass
+        // runs in sub-chunks of that many rows (`ple/layer.rs`), so it bounds the
+        // scratch's device memory, not the prefill chunk.
         let max_ple_tokens: usize = std::env::var("METRALE_PLE_MAX_TOKENS")
             .ok()
             .and_then(|v| v.parse().ok())

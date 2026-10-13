@@ -71,7 +71,8 @@ pub struct PleLayer {
     conv_k: KernelHandle,
     add_k: KernelHandle,
 
-    /// 2026-09-25: Scratch, sized once for `max_tokens`.
+    /// 2026-09-25: Scratch, sized once for `max_tokens`. 2026-10-13: a longer pass runs
+    /// in sub-chunks of `max_tokens` (`forward_with_ids`).
     emb: DevicePtr,
     key: DevicePtr,
     value: DevicePtr,
@@ -98,6 +99,7 @@ impl PleLayer {
         gpu: &dyn GpuBackend,
     ) -> Result<Self> {
         dims.validate()?;
+        anyhow::ensure!(max_tokens > 0, "PLE: zero-token scratch");
         let heads = dims.ngram_heads();
         anyhow::ensure!(
             heads * head_dim == hidden,
@@ -204,13 +206,6 @@ impl PleLayer {
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<()> {
-        anyhow::ensure!(
-            num_tokens <= self.max_tokens,
-            "PLE: {num_tokens} tokens exceeds the {} this layer was sized for. \
-             Raise METRALE_PLE_MAX_TOKENS (costs tokens*10240*14 bytes of \
-             scratch) or lower the prefill chunk size.",
-            self.max_tokens
-        );
         let heads = self.dims.ngram_heads();
         let gpu = ctx.gpu;
 
@@ -268,33 +263,52 @@ impl PleLayer {
             // graph replay or capture: slots sit in `slots_dev`, history has
             // advanced. Only the capture-safe kernel half remains.
             self.gather_embed(table_va, num_tokens, heads, gpu, stream)?;
-        } else {
-            anyhow::ensure!(
-                !ctx.graph_capture,
-                "PLE: un-prestaged forward inside CUDA graph capture — the \
-                 pageable slot upload would invalidate the recording (901); \
-                 the scheduler must call decode_prestage every step"
-            );
-            // 2026-09-25: history ++ tokens, hashed together, then keep the new
-            // tokens' rows: the same slice the reference takes with
-            // `[:, -input_ids.shape[1]:]` (`rows::next_ids`, shared with
-            // `prestage` and `forward_rows`).
-            let flat = rows::next_ids(&self.dims, &mut st.history, &tokens);
-            self.gather(&flat, num_tokens, heads, gpu, stream)?;
+            return self.kernel_steps(st.conv, highway, num_tokens, gpu, stream);
         }
+        anyhow::ensure!(
+            !ctx.graph_capture,
+            "PLE: un-prestaged forward inside CUDA graph capture — the \
+             pageable slot upload would invalidate the recording (901); \
+             the scheduler must call decode_prestage every step"
+        );
+        // 2026-09-25: history ++ tokens, hashed together, then keep the new
+        // tokens' rows: the same slice the reference takes with
+        // `[:, -input_ids.shape[1]:]` (`rows::next_ids`, shared with
+        // `prestage` and `forward_rows`).
+        let flat = rows::next_ids(&self.dims, &mut st.history, &tokens);
+        // 2026-10-13: A pass longer than the scratch runs in sub-chunks of `max_tokens`
+        // rows, each carrying the conv state to the next as consecutive prefill chunks
+        // do; every step is per row or row-independent, so the result is the
+        // one-pass result. A faulting row cache may evict a released row on the next
+        // resolve, before the previous sub-chunk's gather has read it, so that table
+        // waits for the stream between sub-chunks.
+        let faulting = self.table_faults_rows()?;
+        let c = self.hc_mult * self.hidden;
+        for start in (0..num_tokens).step_by(self.max_tokens) {
+            let n = self.max_tokens.min(num_tokens - start);
+            if start > 0 && faulting {
+                gpu.synchronize(stream)?;
+            }
+            self.gather(
+                &flat[start * heads..(start + n) * heads],
+                n,
+                heads,
+                gpu,
+                stream,
+            )?;
+            self.kernel_steps(st.conv, highway.offset(start * c * 4), n, gpu, stream)?;
+        }
+        Ok(())
+    }
 
-        self.project(num_tokens, gpu, stream)?;
-        self.gate(highway, num_tokens, gpu, stream)?;
-        self.conv(
-            self.gated_normed,
-            self.gated,
-            st.conv,
-            self.out,
-            num_tokens,
-            gpu,
-            stream,
-        )?;
-        self.add_highway(highway, num_tokens, gpu, stream)
+    /// 2026-10-13: Whether the n-gram table faults rows in on demand (anything but a
+    /// fully resident table).
+    fn table_faults_rows(&self) -> Result<bool> {
+        let table = self
+            .table
+            .lock()
+            .map_err(|_| anyhow::anyhow!("PLE table mutex poisoned"))?;
+        Ok(!matches!(&*table, NgramTable::Bf16(_)))
     }
 
     /// 2026-09-25: Resolve row ids to cache slots and gather them into `self.emb`.
