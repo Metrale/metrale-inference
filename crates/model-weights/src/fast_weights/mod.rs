@@ -29,6 +29,7 @@ use std::sync::mpsc::sync_channel;
 
 mod direct_io;
 mod header;
+mod slab;
 
 use header::{parse_header, resolve_shards};
 
@@ -306,6 +307,8 @@ fn load_shard_fast(
     });
 
     // Copier: drains the channel, does gpu alloc + copy_h2d, inserts into the map.
+    // 2026-10-13: Small quantized tensors share one allocation per shard (`slab.rs`).
+    let slab_ptrs = slab::alloc_shard_slab(gpu, &tensors);
     for result in rx {
         let (idx, buf, slice_start) = result?;
         let meta = &tensors[idx];
@@ -320,7 +323,8 @@ fn load_shard_fast(
             raw
         };
 
-        let ptr = match gpu.alloc(meta.len) {
+        let alloc = slab_ptrs[idx].map_or_else(|| gpu.alloc(meta.len), Ok);
+        let ptr = match alloc {
             Ok(p) => {
                 gpu.copy_h2d(src, p)?;
                 p

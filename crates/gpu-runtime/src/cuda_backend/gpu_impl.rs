@@ -26,8 +26,8 @@ use anyhow::{Result, bail};
 use cudarc::driver::LaunchConfig;
 
 use super::{
-    MetraleCudaBackend, cuMemAlloc_v2, cuMemAllocManaged, cuMemFree_v2, cuMemGetInfo_v2,
-    cuMemcpyDtoDAsync_v2, cuMemcpyDtoHAsync_v2, cuStreamSynchronize,
+    MetraleCudaBackend, cuMemAlloc_v2, cuMemAllocManaged, cuMemGetInfo_v2, cuMemcpyDtoDAsync_v2,
+    cuMemcpyDtoHAsync_v2, cuStreamSynchronize,
 };
 use crate::gpu::{DevicePtr, GpuBackend, GraphHandle, KernelHandle};
 
@@ -110,6 +110,11 @@ impl GpuBackend for MetraleCudaBackend {
         Ok(DevicePtr(dptr))
     }
 
+    #[track_caller]
+    fn alloc_slab(&self, sizes: &[usize]) -> Result<Vec<DevicePtr>> {
+        self.alloc_slab_impl(sizes, std::panic::Location::caller())
+    }
+
     fn free(&self, ptr: DevicePtr) -> Result<()> {
         if ptr.is_null() {
             return Ok(());
@@ -120,7 +125,7 @@ impl GpuBackend for MetraleCudaBackend {
         if super::redzone_bytes() > 0 {
             self.forget_redzone(ptr.0);
         }
-        let status = unsafe { cuMemFree_v2(ptr.0) };
+        let status = self.free_raw_or_member(ptr.0);
         // 2026-09-25: A status meaning the context is already gone
         // (`registry::is_teardown_noop`: 4, 201, 709) is not an error.
         if status != 0 && !crate::registry::is_teardown_noop(status) {

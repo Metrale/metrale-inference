@@ -141,6 +141,9 @@ pub struct MetraleCudaBackend {
     /// [`MetraleCudaBackend::scan_redzones`] reads the zones back and reports
     /// the ones that changed: a write past the end of the buffer.
     redzones: parking_lot::Mutex<Vec<RedZone>>,
+    /// 2026-10-13: Live slabs from `alloc_slab` (`cuda_backend/slab.rs`). `free` and the sweep
+    /// free a slab's base with its last live member.
+    slabs: parking_lot::Mutex<slab::SlabTable>,
     /// 2026-09-25: The process CUDA host's stream (`MetraleRegistry::raw_stream`).
     default_stream: u64,
     /// 2026-09-25: The context current on the thread that ran `new`, after the
@@ -179,6 +182,7 @@ impl MetraleCudaBackend {
         Ok(Self {
             live_allocs: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
             redzones: parking_lot::Mutex::new(Vec::new()),
+            slabs: parking_lot::Mutex::new(slab::SlabTable::default()),
             registry,
             debug_sync_kernels: std::env::var("METRALE_DEBUG_SYNC_KERNELS").as_deref() == Ok("1"),
             op_cache: crate::op_cache::OpCache::new(),
@@ -234,10 +238,16 @@ impl MetraleCudaBackend {
         for (raw, _) in outstanding {
             // 2026-09-25: Not `free`: the ledger is already drained, and a
             // failed free is logged so the loop still frees the rest.
-            let status = unsafe { cuMemFree_v2(raw) };
+            let status = self.free_raw_or_member(raw);
             if status != 0 && !crate::registry::is_teardown_noop(status) {
                 tracing::warn!("sweep: cuMemFree failed for {raw:#x}: status {status}");
             }
+        }
+        // 2026-10-13: Every slab member is on the ledger until freed, so the drain released
+        // every slab; one still live means a member was taken off the ledger without `free`.
+        let stranded = self.slabs.lock().live_slabs();
+        if stranded > 0 {
+            tracing::warn!("sweep: {stranded} slab(s) still have members off the ledger");
         }
         count
     }
@@ -297,6 +307,8 @@ fn system_available_memory_bytes() -> Option<usize> {
 
 #[path = "cuda_backend/alloc_ledger.rs"]
 mod alloc_ledger;
+#[path = "cuda_backend/slab.rs"]
+mod slab;
 use alloc_ledger::AllocRecord;
 pub use alloc_ledger::LedgerProbe;
 

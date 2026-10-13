@@ -32,6 +32,28 @@ pub trait GpuBackend: Send + Sync {
     #[track_caller]
     fn alloc_managed(&self, bytes: usize) -> Result<DevicePtr>;
 
+    /// 2026-10-13: Allocate one buffer per entry of `sizes`, in order. CUDA carves them from a
+    /// single driver allocation (`cuda_backend/slab.rs`), so small buffers do not each pay the
+    /// driver's rounding; each is still freed with [`GpuBackend::free`], and the shared
+    /// allocation goes when its last buffer does. The default allocates each separately and,
+    /// when one fails, frees the ones it made before returning the error.
+    #[track_caller]
+    fn alloc_slab(&self, sizes: &[usize]) -> Result<Vec<DevicePtr>> {
+        let mut out = Vec::with_capacity(sizes.len());
+        for &bytes in sizes {
+            match self.alloc(bytes) {
+                Ok(p) => out.push(p),
+                Err(e) => {
+                    for p in out {
+                        self.free(p)?;
+                    }
+                    return Err(e);
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// 2026-09-25: Free device memory. A null pointer is a no-op.
     fn free(&self, ptr: DevicePtr) -> Result<()>;
 
