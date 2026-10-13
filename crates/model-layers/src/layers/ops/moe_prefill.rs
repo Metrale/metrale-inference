@@ -24,6 +24,10 @@ use super::*;
 /// (`[num_tokens * top_k, n]` BF16); the remaining `num_tokens` rows run the
 /// shared expert and write `sh_gate_out`/`sh_up_out` (`[num_tokens, n]` BF16).
 /// `blockIdx.z` picks gate (0) or up (1). `input` is `[num_tokens, k]` BF16.
+///
+/// 2026-10-13: With null `sh_gate` and `sh_up` (a BF16 shared expert the caller runs
+/// itself, or none) the launch has no shared rows and leaves `sh_gate_out`/`sh_up_out`
+/// untouched; see [`shared_expert_rows`].
 #[allow(clippy::too_many_arguments)]
 pub fn moe_expert_gate_up_shared_prefill(
     gpu: &dyn GpuBackend,
@@ -48,8 +52,9 @@ pub fn moe_expert_gate_up_shared_prefill(
     num_tokens: u32,
     stream: u64,
 ) -> Result<()> {
+    let shared = shared_expert_rows(&[sh_gate, sh_up])?;
     KernelLaunch::new(gpu, kernel)
-        .grid([div_ceil(n, 8), num_tokens * (top_k + 1), 2])
+        .grid([div_ceil(n, 8), num_tokens * (top_k + shared), 2])
         .block([128, 1, 1])
         .arg_ptr(input)
         .arg_ptr(gate_packed_ptrs)
@@ -81,6 +86,9 @@ pub fn moe_expert_gate_up_shared_prefill(
 /// Routed rows read `gate_out`/`up_out` and write `output`
 /// (`[num_tokens * top_k, n]` BF16); shared rows read `sh_gate_in`/`sh_up_in`
 /// and write `sh_down_out` (`[num_tokens, n]` BF16).
+///
+/// 2026-10-13: With a null `sh_down` the launch has no shared rows and leaves
+/// `sh_down_out` untouched; see [`shared_expert_rows`].
 #[allow(clippy::too_many_arguments)]
 pub fn moe_expert_silu_down_shared_prefill(
     gpu: &dyn GpuBackend,
@@ -102,8 +110,9 @@ pub fn moe_expert_silu_down_shared_prefill(
     num_tokens: u32,
     stream: u64,
 ) -> Result<()> {
+    let shared = shared_expert_rows(&[sh_down])?;
     KernelLaunch::new(gpu, kernel)
-        .grid([div_ceil(n, 8), num_tokens * (top_k + 1), 1])
+        .grid([div_ceil(n, 8), num_tokens * (top_k + shared), 1])
         .block([128, 1, 1])
         .arg_ptr(gate_out)
         .arg_ptr(up_out)
@@ -123,6 +132,19 @@ pub fn moe_expert_silu_down_shared_prefill(
         .arg_u32(top_k)
         .arg_u32(num_tokens)
         .launch(stream)
+}
+
+/// 2026-10-13: Shared-expert rows per token in a token-major launch: 1 when every
+/// shared weight is NVFP4, 0 when every one is null. The kernels do not null-check
+/// shared rows, so a null shared expert must launch none; a partly null one is refused.
+pub fn shared_expert_rows(weights: &[&QuantizedWeight]) -> Result<u32> {
+    let nulls = weights.iter().filter(|w| w.is_null()).count();
+    anyhow::ensure!(
+        nulls == 0 || nulls == weights.len(),
+        "token-major MoE: {nulls} of {} shared-expert weights are null",
+        weights.len()
+    );
+    Ok(u32::from(nulls == 0))
 }
 
 /// 2026-09-25: Per token `t`: `output[t] = sum_e expert_weights[t*top_k+e] *
@@ -367,3 +389,7 @@ pub fn sigmoid_blend_device(
         .arg_u32(num_elements)
         .launch(stream)
 }
+
+#[cfg(test)]
+#[path = "moe_prefill_tests.rs"]
+mod moe_prefill_tests;

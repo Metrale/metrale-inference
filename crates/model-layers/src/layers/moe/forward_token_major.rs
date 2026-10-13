@@ -13,9 +13,9 @@ impl MoeLayer {
     /// top-K, then gate+up, silu+down and weighted-sum+blend over every
     /// (row, expert-slot) pair.
     ///
-    /// Serves untransposed NVFP4 experts with an NVFP4 shared expert. LoRA, BF16
-    /// or FP8 experts, a mixed BF16 shared expert, the unified layout, or no
-    /// shared expert go to `forward_batched`.
+    /// Serves untransposed NVFP4 experts with an NVFP4 shared expert, or (2026-10-13)
+    /// with a BF16 shared expert run batched beside them. LoRA, BF16 or FP8 experts,
+    /// the unified layout, or no shared expert go to `forward_batched`.
     pub fn forward_token_major_decode(
         &self,
         input: DevicePtr,
@@ -38,11 +38,24 @@ impl MoeLayer {
         if self.lora.is_some() {
             return self.forward_batched(input, num_tokens, ctx, stream);
         }
-        let has_shared = self.weights.shared_expert.gate_proj.weight.0 != 0
-            && self.weights.shared_expert.up_proj.weight.0 != 0
-            && self.weights.shared_expert.down_proj.weight.0 != 0;
+        // 2026-10-13: A BF16 shared expert (the checkpoint's declared format) takes the
+        // token-major kernels' routed rows only and runs as one batched BF16 pass, where
+        // it used to send every row through `forward_batched`'s per-token loop. Any
+        // NVFP4 copy beside it is not launched, as in every other arm.
+        let bf16_shared = self.has_mixed_bf16_shared_expert();
+        let sh = &self.weights.shared_expert;
+        let (sh_gate, sh_up, sh_down) = if bf16_shared {
+            (
+                QuantizedWeight::null(),
+                QuantizedWeight::null(),
+                QuantizedWeight::null(),
+            )
+        } else {
+            (sh.gate_proj, sh.up_proj, sh.down_proj)
+        };
+        let has_shared = bf16_shared
+            || (!sh.gate_proj.is_null() && !sh.up_proj.is_null() && !sh.down_proj.is_null());
         let nvfp4_supported = self.bf16_gate_weight_ptrs.is_none()
-            && !self.has_mixed_bf16_shared_expert()
             && self.fp8_gate_weight_ptrs.is_none()
             && !self.use_t_layout_for_decode()
             && has_shared;
@@ -138,9 +151,9 @@ impl MoeLayer {
             self.up_ptrs.scale2_vals,
             expert_up_out,
             indices_dev,
-            &self.weights.shared_expert.gate_proj,
+            &sh_gate,
             shared_gate_scratch,
-            &self.weights.shared_expert.up_proj,
+            &sh_up,
             shared_up_scratch,
             inter,
             h,
@@ -160,7 +173,7 @@ impl MoeLayer {
             indices_dev,
             shared_gate_scratch,
             shared_up_scratch,
-            &self.weights.shared_expert.down_proj,
+            &sh_down,
             shared_down_out,
             h,
             inter,
@@ -168,6 +181,19 @@ impl MoeLayer {
             n,
             stream,
         )?;
+        if bf16_shared {
+            self.run_bf16_shared_expert(
+                input,
+                n,
+                h,
+                ctx.config.shared_expert_intermediate_size as u32,
+                shared_gate_scratch,
+                shared_up_scratch,
+                shared_down_out,
+                ctx,
+                stream,
+            )?;
+        }
 
         let is_ep = ctx.comm.is_some() && ctx.config.ep_world_size > 1;
         let shared_for_blend = if is_ep {
