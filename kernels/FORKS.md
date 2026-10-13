@@ -26,6 +26,7 @@ Distance = lines difflib reports as changed / lines of the larger file.
 | `attn_prefill_512tc.cu` | `gb10/gemma-4-26b-a4b/nvfp4/attn_prefill_512tc.cu` | `gb10/gemma-4-31b/nvfp4/attn_prefill_512tc.cu` | 18/27 (66%) | 18 |
 | `attn_prefill_fp8kv.cu` | `strix-hip/common/attn_prefill_fp8kv.cu` | `gb10/common/attn_prefill_fp8kv.cu` | 437/493 (88%) | 493 |
 | `attn_prefill_h128.cu` | `strix-hip/common/attn_prefill_h128.cu` | `gb10/common/attn_prefill_h128.cu` | 1045/928 (112%) | 928 |
+| `attn_prefill_paged_fp8.cu` | `strix-hip/common/attn_prefill_paged_fp8.cu` | `gb10/common/attn_prefill_paged_fp8.cu` | 70/82 (85%) | 62 |
 | `attn_prefill_paged_indirect.cu` | `gb10/qwen3.6-27b/nvfp4/attn_prefill_paged_indirect.cu` | `gb10/common/attn_prefill_paged_indirect.cu` | 64/66 (96%) | 66 |
 | `attn_prefill_v47.cu` | `strix-hip/common/attn_prefill_v47.cu` | `gb10/common/attn_prefill_v47.cu` | 518/498 (104%) | 498 |
 | `logit_softcap.cu` | `gb10/gemma-4-26b-a4b/nvfp4/logit_softcap.cu` | `gb10/gemma-4-31b/nvfp4/logit_softcap.cu` | 17/41 (41%) | 41 |
