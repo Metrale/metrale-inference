@@ -44,6 +44,8 @@ pub const W4A16_GEMV_TC_POINTS: [&[&str]; 2] = [
 /// 2026-10-09: The wide row tiers (`tc32`: 17..=32 rows, `tc64`: 33..=64), m16 tiles sharing each
 /// decoded weight fragment; a row's bits equal tc16's. Benched and identity-checked; not yet a
 /// `[defaults]` tier.
+// 2026-10-13: The build script includes this file for the parse only.
+#[allow(dead_code)]
 pub const W4A16_GEMV_TC_WIDE_POINTS: [&[&str]; 2] = [
     &["tc32", "tc32_nt4_ku1_o2", "tc32_nt2_ku1_o2"],
     &["tc64", "tc64_nt2_ku1_o2", "tc64_nt4_ku1_o1"],
