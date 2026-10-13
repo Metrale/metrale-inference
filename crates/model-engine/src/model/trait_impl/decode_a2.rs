@@ -23,6 +23,7 @@ use metrale_model_layers::layer::{ForwardContext, LayerState, SsmLayerState};
 use metrale_model_layers::layers::ops;
 
 mod pad_states;
+mod per_step;
 mod perseq;
 
 /// 2026-09-25: Multi-sequence decode CUDA graphs: on unless
@@ -167,8 +168,9 @@ impl TransformerModel {
         // legal; `METRALE_LORA_EAGER` is the same LoRA hatch as in `decode_a`.
         let lora_eager = self.lora.is_some() && self.levers.lora_eager;
         // 2026-09-25: The per-layer graph veto, as in `decode_a` (QSA's host top-k,
-        // PLE's host hash on the hc multi-seq path).
-        let layer_veto = self.decode_graph_veto;
+        // PLE's host hash on the hc multi-seq path). 2026-10-13: per step and row
+        // under `METRALE_DECODE_GRAPH_PER_STEP` (`per_step.rs`).
+        let layer_veto = self.batch_graph_veto(seqs, input.host().is_some());
         let graph_key = if !ms_profile && !lora_eager && !layer_veto && multiseq_graphs_enabled() {
             self.batch_decode_graph_key(&*seqs, padded_n)
         } else {
@@ -261,6 +263,9 @@ impl TransformerModel {
 
         // 2026-09-25: Upload metadata for `dispatch_n` rows (active and padding).
         let metadata = self.upload_batch_metadata_fixed(seqs, dispatch_n, &mut kv_cache, stream)?;
+        if let (true, Some(tokens)) = (use_graphs, input.host()) {
+            self.batch_prestage(tokens, seqs, stream)?;
+        }
 
         let ctx = ForwardContext {
             buffers: &self.buffers,
@@ -291,7 +296,9 @@ impl TransformerModel {
 
         if let Some(graph) = replay {
             if graph.0 != 0 {
+                self.batch_check_replay_room(seqs)?;
                 self.gpu.launch_graph(graph, stream)?;
+                self.batch_sync_replayed(seqs)?;
             }
 
             if let Some(tokens) = input.host() {

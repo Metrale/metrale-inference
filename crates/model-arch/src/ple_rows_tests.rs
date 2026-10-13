@@ -6,6 +6,11 @@
 //! byte-identical highway rows, conv states and token histories, over two
 //! consecutive steps (the second exercises the carried conv state and history).
 //!
+//! The host half of that step can also run first (`prestage_rows`), as before a
+//! CUDA-graph replay: staged, the step must equal the unstaged one launched directly
+//! and replayed from a graph captured once, and capture must refuse an unstaged or
+//! partly staged batch.
+//!
 //! The projections are the only step whose kernel sees more than one row at a
 //! time; it has no row-dependent reduction, and this is the test that holds it
 //! to that.
@@ -254,4 +259,123 @@ fn ple_rows_matches_per_row() {
             a.len()
         );
     }
+}
+
+/// 2026-10-13: One arm of `staged_rows_match_unstaged_direct_and_replayed`: how the
+/// batched step's host half reaches the kernels.
+#[derive(Clone, Copy, Debug)]
+enum Arm {
+    /// `forward_rows` hashes and uploads itself.
+    Unstaged,
+    /// `prestage_rows`, then `forward_rows` launched directly.
+    Staged,
+    /// `prestage_rows`, then one CUDA graph captured at step 0 and replayed at step 1.
+    Replayed,
+}
+
+/// 2026-10-13: Per step, the highway rows `arm` leaves and every row's carry blob.
+fn run_arm(
+    arm: Arm,
+    g: &dyn GpuBackend,
+    parts: &CtxParts,
+    ple: &PleLayer,
+    steps: &[Vec<u32>],
+    highway_init: &[Vec<u8>],
+) -> Vec<(Vec<u8>, Vec<Vec<u8>>)> {
+    // 2026-10-13: A stream of its own, as capture needs one.
+    let stream = g.create_stream().unwrap();
+    let c = HC * HIDDEN;
+    let mut states: Vec<PleSeqState> = (0..ROWS).map(|_| ple.new_seq_state(g).unwrap()).collect();
+    let hw = upload(g, &highway_init[0]);
+    let mut graph = None;
+    let mut out = Vec::new();
+    for (step, tokens) in steps.iter().enumerate() {
+        g.copy_h2d(&highway_init[step], hw).unwrap();
+        let mut carries: Vec<&mut PleSeqState> = states.iter_mut().collect();
+        if !matches!(arm, Arm::Unstaged) {
+            ple.prestage_rows(&mut carries, tokens, g, stream).unwrap();
+        }
+        match (arm, graph) {
+            (Arm::Unstaged | Arm::Staged, _) => {
+                let ctx = parts.ctx(g, None, true);
+                ple.forward_rows(&mut carries, hw, tokens, &ctx, stream)
+                    .unwrap();
+            }
+            (Arm::Replayed, None) => {
+                let mut ctx = parts.ctx(g, None, true);
+                ctx.graph_capture = true;
+                g.begin_capture(stream).unwrap();
+                let captured = ple.forward_rows(&mut carries, hw, tokens, &ctx, stream);
+                let gr = g.end_capture(stream).unwrap();
+                captured.unwrap();
+                g.launch_graph(gr, stream).unwrap();
+                graph = Some(gr);
+            }
+            (Arm::Replayed, Some(gr)) => {
+                g.launch_graph(gr, stream).unwrap();
+                carries.iter_mut().for_each(|st| ple.replayed(st));
+            }
+        }
+        g.synchronize(stream).unwrap();
+        let blobs = states
+            .iter()
+            .map(|st| ple.snapshot_aux(st, g, stream).unwrap())
+            .collect();
+        out.push((download(g, hw, ROWS * c * 4), blobs));
+    }
+    if let Some(gr) = graph {
+        g.destroy_graph(gr).unwrap();
+    }
+    out
+}
+
+#[test]
+#[ignore]
+fn staged_rows_match_unstaged_direct_and_replayed() {
+    let gpu = backend();
+    let g: &dyn GpuBackend = &gpu;
+    let stream = g.default_stream();
+    let mut rng = Rng(11);
+    let ple = layer(g, &mut rng, 64);
+    let parts = CtxParts::new(g);
+    let c = HC * HIDDEN;
+    let steps: Vec<Vec<u32>> = (0..2)
+        .map(|_| (0..ROWS).map(|_| (rng.next() % 1000) as u32).collect())
+        .collect();
+    let highway_init: Vec<Vec<u8>> = (0..2).map(|_| rng.f32s(ROWS * c, 1.0)).collect();
+
+    let want = run_arm(Arm::Unstaged, g, &parts, &ple, &steps, &highway_init);
+    for (step, (hw, _)) in want.iter().enumerate() {
+        assert!(
+            hw != &highway_init[step],
+            "step {step}: PLE changed nothing"
+        );
+    }
+    for arm in [Arm::Staged, Arm::Replayed] {
+        let got = run_arm(arm, g, &parts, &ple, &steps, &highway_init);
+        for (step, ((gh, gb), (wh, wb))) in got.iter().zip(&want).enumerate() {
+            assert_eq!(gh, wh, "{arm:?} step {step}: highway rows differ");
+            assert_eq!(gb, wb, "{arm:?} step {step}: a carry differs");
+        }
+        println!("{arm:?}: 2 steps x {ROWS} rows byte-identical to unstaged");
+    }
+
+    // 2026-10-13: Capture refuses an unstaged batch, and a batch staged in part fails
+    // rather than hashing the unstaged rows a second time.
+    let mut states: Vec<PleSeqState> = (0..ROWS).map(|_| ple.new_seq_state(g).unwrap()).collect();
+    let hw = upload(g, &highway_init[0]);
+    let mut ctx = parts.ctx(g, None, true);
+    ctx.graph_capture = true;
+    let mut carries: Vec<&mut PleSeqState> = states.iter_mut().collect();
+    let err = ple
+        .forward_rows(&mut carries, hw, &steps[0], &ctx, stream)
+        .unwrap_err();
+    assert!(format!("{err:#}").contains("prestage_rows"), "{err:#}");
+    ple.prestage_rows(&mut carries[..ROWS - 1], &steps[0][..ROWS - 1], g, stream)
+        .unwrap();
+    let ctx = parts.ctx(g, None, true);
+    let err = ple
+        .forward_rows(&mut carries, hw, &steps[0], &ctx, stream)
+        .unwrap_err();
+    assert!(format!("{err:#}").contains("staged in part"), "{err:#}");
 }

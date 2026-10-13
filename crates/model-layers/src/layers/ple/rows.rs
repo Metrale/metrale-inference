@@ -16,7 +16,7 @@
 //!   against its own state.
 
 use anyhow::Result;
-use metrale_gpu_runtime::gpu::DevicePtr;
+use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
 use super::super::ids::{PleIdDims, ple_ngram_ids};
 use super::{PleLayer, PleSeqState};
@@ -43,10 +43,54 @@ pub(in crate::layers::ple) fn next_ids(
 }
 
 impl PleLayer {
+    /// 2026-10-13: The host half of one batched decode step, before its CUDA-graph
+    /// replay or capture: every row's ids hashed, one slot upload for the batch (row `i`
+    /// at slot row `i`), every history advanced. `forward_rows` (or a replayed graph,
+    /// after which `replayed` clears the stage) consumes it.
+    pub fn prestage_rows(
+        &self,
+        carries: &mut [&mut PleSeqState],
+        tokens: &[u32],
+        gpu: &dyn GpuBackend,
+        stream: u64,
+    ) -> Result<()> {
+        let n = carries.len();
+        anyhow::ensure!(
+            tokens.len() == n,
+            "PLE prestage rows: {} tokens for {n} carries",
+            tokens.len()
+        );
+        anyhow::ensure!(
+            n <= self.max_tokens,
+            "PLE prestage rows: {n} rows overflow the {}-row slot buffer",
+            self.max_tokens
+        );
+        let mut flat = Vec::with_capacity(n * self.dims.ngram_heads());
+        for (st, &tok) in carries.iter_mut().zip(tokens) {
+            if st.history.len() != self.dims.context_len() {
+                self.reset(st, gpu, stream)?;
+            }
+            flat.extend(next_ids(&self.dims, &mut st.history, &[tok]));
+        }
+        let va = self.gather_host(&flat, gpu, stream)?;
+        for (i, st) in carries.iter_mut().enumerate() {
+            st.prestaged_va = Some(va);
+            st.last_staged_va = va;
+            st.staged_row = Some(i);
+        }
+        Ok(())
+    }
+
+    /// 2026-10-13: A replayed CUDA graph ran this carry's staged step, so the stage is
+    /// spent.
+    pub fn replayed(&self, st: &mut PleSeqState) {
+        st.prestaged_va = None;
+    }
+
     /// 2026-10-13: Inject one decode token per sequence into `highway`
     /// `[n, hc_mult * hidden]` FP32 (row `i` is `carries[i]`'s), in place.
-    /// `tokens[i]` is sequence `i`'s token. Never consumes a prestage and
-    /// refuses graph capture, as `forward_row` does.
+    /// `tokens[i]` is sequence `i`'s token. It consumes the rows `prestage_rows`
+    /// staged; unstaged, it hashes and uploads itself, which graph capture refuses.
     pub fn forward_rows(
         &self,
         carries: &mut [&mut PleSeqState],
@@ -67,10 +111,6 @@ impl PleLayer {
              METRALE_PLE_MAX_TOKENS or lower the decode batch.",
             self.max_tokens
         );
-        anyhow::ensure!(
-            !ctx.graph_capture,
-            "PLE rows: the pageable slot upload cannot run inside CUDA graph capture"
-        );
         if n == 0 {
             return Ok(());
         }
@@ -78,17 +118,44 @@ impl PleLayer {
         let heads = self.dims.ngram_heads();
         let gpu = ctx.gpu;
 
-        let mut flat = Vec::with_capacity(n * heads);
-        for (st, &tok) in carries.iter_mut().zip(tokens) {
-            // 2026-10-13: A prestage staged for this carry belongs to an earlier
-            // single-sequence step; it is dropped here as `forward_row` drops it.
-            st.prestaged_va = None;
-            if st.history.len() != self.dims.context_len() {
-                self.reset(st, gpu, stream)?;
+        // 2026-10-13: Rows staged by `prestage_rows` for this step are consumed: their
+        // slots are uploaded and their histories advanced, so only the kernels remain,
+        // which a CUDA graph may record. A single-sequence stage is a leftover of an
+        // earlier step and is dropped, as `forward_row` drops it.
+        let staged: Vec<Option<u64>> = carries
+            .iter_mut()
+            .enumerate()
+            .map(|(i, st)| {
+                let va = st.prestaged_va.take();
+                va.filter(|_| st.staged_row == Some(i))
+            })
+            .collect();
+        if let Some(Some(va)) = staged.first().copied() {
+            anyhow::ensure!(
+                staged.iter().all(|s| *s == Some(va)),
+                "PLE rows: the batch was staged in part ({} of {n} rows)",
+                staged.iter().filter(|s| s.is_some()).count()
+            );
+            self.gather_embed(va, n, heads, gpu, stream)?;
+        } else {
+            anyhow::ensure!(
+                staged.iter().all(Option::is_none),
+                "PLE rows: the batch was staged in part (row 0 is not)"
+            );
+            anyhow::ensure!(
+                !ctx.graph_capture,
+                "PLE rows: the pageable slot upload cannot run inside CUDA graph capture; \
+                 stage the rows first (`prestage_rows`)"
+            );
+            let mut flat = Vec::with_capacity(n * heads);
+            for (st, &tok) in carries.iter_mut().zip(tokens) {
+                if st.history.len() != self.dims.context_len() {
+                    self.reset(st, gpu, stream)?;
+                }
+                flat.extend(next_ids(&self.dims, &mut st.history, &[tok]));
             }
-            flat.extend(next_ids(&self.dims, &mut st.history, &[tok]));
+            self.gather(&flat, n, heads, gpu, stream)?;
         }
-        self.gather(&flat, n, heads, gpu, stream)?;
 
         self.project(n, gpu, stream)?;
         self.gate(highway, n, gpu, stream)?;

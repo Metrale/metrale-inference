@@ -15,9 +15,7 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use super::Qwen3SsmLayer;
 use super::ple_seq::ple_seq_state;
 use crate::layer::{ForwardContext, GdnPrefillBuffers, LayerState, TransformerLayer};
-use crate::layer::{
-    LayerAuxState, LayerGraphHooks, LayerSplitPrefill, LayerWeightSetup, LayerWriteOnAccept,
-};
+use crate::layer::{LayerAuxState, LayerSplitPrefill, LayerWeightSetup, LayerWriteOnAccept};
 
 impl TransformerLayer for Qwen3SsmLayer {
     fn decode(
@@ -284,35 +282,6 @@ impl LayerWriteOnAccept for Qwen3SsmLayer {
         stream: u64,
     ) -> Result<bool> {
         self.fold_accepted_impl(gpu, h_table, na_tab, k_rows, n, stream)
-    }
-}
-
-impl LayerGraphHooks for Qwen3SsmLayer {
-    /// 2026-09-25: PLE's host half (id hash, NVMe fault-in, slot upload), run
-    /// before graph replay or capture. A no-op on a layer without PLE.
-    fn decode_prestage(
-        &self,
-        token: u32,
-        state: &mut dyn LayerState,
-        gpu: &dyn GpuBackend,
-        stream: u64,
-    ) -> Result<()> {
-        if let Some(ple) = self.ple.as_ref() {
-            let st = ple_seq_state(ple, state, gpu)?;
-            ple.prestage(st, &[token], gpu, stream)?;
-        }
-        Ok(())
-    }
-
-    fn decode_prestage_rearm(&self, state: &mut dyn LayerState) {
-        if let Some(ple) = self.ple.as_ref()
-            && let Some(ssm) = state
-                .as_any_mut()
-                .downcast_mut::<crate::layer::SsmLayerState>()
-            && let Some(st) = ssm.ple.as_mut()
-        {
-            ple.rearm(st);
-        }
     }
 }
 

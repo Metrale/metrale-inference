@@ -42,6 +42,10 @@ pub struct PleSeqState {
     /// eagerly: the slots are still in `slots_dev` and history has already
     /// advanced, so hashing again would count the token twice.
     last_staged_va: u64,
+    /// 2026-10-13: The row of the last stage: `None` for `prestage` (row 0 of one
+    /// sequence's step), `Some(i)` for row `i` of `prestage_rows`. Each consumer takes
+    /// only its own kind, since the two put this carry's slots at different rows.
+    staged_row: Option<usize>,
 }
 
 pub struct PleLayer {
@@ -152,6 +156,7 @@ impl PleLayer {
             history: Vec::new(),
             prestaged_va: None,
             last_staged_va: 0,
+            staged_row: None,
         })
     }
 
@@ -250,10 +255,9 @@ impl PleLayer {
         // leftover staged for an earlier token. Consuming it would inject that
         // token's rows and skip the history advance. `.take()` clears it in
         // every case.
-        let prestaged = st
-            .prestaged_va
-            .take()
-            .filter(|_| num_tokens == 1 && !fresh && ids_override.is_none());
+        let prestaged = st.prestaged_va.take().filter(|_| {
+            num_tokens == 1 && !fresh && ids_override.is_none() && st.staged_row.is_none()
+        });
         if fresh || st.history.len() != self.dims.context_len() {
             self.reset(st, gpu, stream)?;
         }

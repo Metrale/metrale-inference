@@ -15,6 +15,7 @@ use crate::layers::FfnComponent;
 use crate::layers::ops;
 use crate::weight_map::{DenseWeight, QuantizedWeight, SsmWeights};
 
+mod graph_hooks;
 mod layer_struct;
 mod ple_seq;
 pub use layer_struct::Qwen3SsmLayer;

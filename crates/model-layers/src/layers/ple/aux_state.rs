@@ -101,6 +101,7 @@ impl PleLayer {
         let va = self.gather_host(&flat, gpu, stream)?;
         st.prestaged_va = Some(va);
         st.last_staged_va = va;
+        st.staged_row = None;
         Ok(())
     }
 
@@ -117,6 +118,7 @@ impl PleLayer {
         st.history.clear();
         st.prestaged_va = None;
         st.last_staged_va = 0;
+        st.staged_row = None;
         r
     }
 }
