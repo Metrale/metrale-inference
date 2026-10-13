@@ -199,8 +199,8 @@ fn resolve_predictor_arch() -> String {
 
 /// 2026-10-12: `[hardware].vendor` of `kernels/<METRALE_TARGET_HW>/HARDWARE.toml`, the key
 /// metrale-kernels' build.rs selects the compiler by. `None` when `METRALE_TARGET_HW` is unset
-/// (no `gb10` default here: an unset target is not a HIP target, as before) or the file or key
-/// is missing.
+/// (no `gb10` default here: an unset target is not a HIP target, as before) or the file has no
+/// `vendor`. A set target whose file is missing or malformed panics.
 fn target_vendor() -> Option<String> {
     let hw = std::env::var("METRALE_TARGET_HW").ok()?;
     let manifest =
@@ -213,15 +213,22 @@ fn target_vendor() -> Option<String> {
         .join(hw)
         .join("HARDWARE.toml");
     println!("cargo:rerun-if-changed={}", hardware_toml.display());
-    let text = std::fs::read_to_string(&hardware_toml).ok()?;
-    let doc: toml::Value = toml::from_str(&text).ok()?;
+    let doc = read_hardware_toml(&hardware_toml);
     Some(doc.get("hardware")?.get("vendor")?.as_str()?.to_string())
 }
 
-/// 2026-09-25: `[hardware].arch` from a `HARDWARE.toml`, or `None` if the file
-/// cannot be read or parsed, or has no string `arch`.
+/// 2026-10-13: `[hardware].arch` from a `HARDWARE.toml`, or `None` if it has no string `arch`.
+/// A missing or malformed file panics (`read_hardware_toml`).
 fn hardware_arch(path: &Path) -> Option<String> {
-    let text = std::fs::read_to_string(path).ok()?;
-    let doc: toml::Value = toml::from_str(&text).ok()?;
+    let doc = read_hardware_toml(path);
     Some(doc.get("hardware")?.get("arch")?.as_str()?.to_string())
+}
+
+/// 2026-10-13: A `HARDWARE.toml` that is missing or does not parse fails the build, as it does in
+/// metrale-kernels' build.rs. Returning `None` instead would send a HIP target down the nvcc
+/// path with no error.
+fn read_hardware_toml(path: &Path) -> toml::Value {
+    let text = std::fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+    toml::from_str(&text).unwrap_or_else(|e| panic!("invalid {}: {e}", path.display()))
 }

@@ -221,7 +221,8 @@ fn build_cutlass_object(cutlass_home: std::path::PathBuf, arch: &str) {
 /// 2026-09-25: The SM architecture the CUTLASS / FlashInfer reference objects
 /// compile for: `METRALE_CUDA_ARCH` when set, else `[hardware].arch` from
 /// `kernels/<METRALE_TARGET_HW>/HARDWARE.toml` (target `gb10` when unset).
-/// An unreadable file falls back to `sm_121f` with a `cargo:warning`.
+/// A file without `[hardware].arch` falls back to `sm_121f` with a `cargo:warning`; a missing or
+/// malformed one fails the build.
 fn resolve_cuda_arch() -> String {
     const FALLBACK: &str = "sm_121f";
     if let Ok(explicit) = std::env::var("METRALE_CUDA_ARCH") {
@@ -254,8 +255,8 @@ fn resolve_cuda_arch() -> String {
 
 /// 2026-10-12: `[hardware].vendor` of `kernels/<METRALE_TARGET_HW>/HARDWARE.toml`, the key
 /// metrale-kernels' build.rs selects the compiler by. `None` when `METRALE_TARGET_HW` is unset
-/// (no `gb10` default here: an unset target sets no AMD cfg, as before) or the file or key is
-/// missing.
+/// (no `gb10` default here: an unset target sets no AMD cfg, as before) or the file has no
+/// `vendor`. A set target whose file is missing or malformed panics.
 fn target_vendor() -> Option<String> {
     let hw = std::env::var("METRALE_TARGET_HW").ok()?;
     let manifest =
@@ -268,14 +269,21 @@ fn target_vendor() -> Option<String> {
         .join(hw)
         .join("HARDWARE.toml");
     println!("cargo:rerun-if-changed={}", hardware_toml.display());
-    let text = std::fs::read_to_string(&hardware_toml).ok()?;
-    let doc: toml::Value = toml::from_str(&text).ok()?;
+    let doc = read_hardware_toml(&hardware_toml);
     Some(doc.get("hardware")?.get("vendor")?.as_str()?.to_string())
 }
 
-/// 2026-09-25: `[hardware].arch` from a `HARDWARE.toml`, or `None` if it cannot be read.
+/// 2026-10-13: `[hardware].arch` from a `HARDWARE.toml`, or `None` if it has no string `arch`.
+/// A missing or malformed file panics (`read_hardware_toml`).
 fn hardware_arch(path: &std::path::Path) -> Option<String> {
-    let text = std::fs::read_to_string(path).ok()?;
-    let doc: toml::Value = toml::from_str(&text).ok()?;
+    let doc = read_hardware_toml(path);
     Some(doc.get("hardware")?.get("arch")?.as_str()?.to_string())
+}
+
+/// 2026-10-13: A `HARDWARE.toml` that is missing or does not parse fails the build, as it does in
+/// metrale-kernels' build.rs. Returning `None` instead would skip the AMD cfgs with no error.
+fn read_hardware_toml(path: &std::path::Path) -> toml::Value {
+    let text = std::fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+    toml::from_str(&text).unwrap_or_else(|e| panic!("invalid {}: {e}", path.display()))
 }

@@ -31,7 +31,8 @@ fn main() {
 
 /// 2026-10-12: `[hardware].vendor` of `kernels/<METRALE_TARGET_HW>/HARDWARE.toml`, the key
 /// metrale-kernels' build.rs selects the compiler by. `None` when `METRALE_TARGET_HW` is unset
-/// (an unset target sets no AMD cfg, as before) or the file or key is missing.
+/// (an unset target sets no AMD cfg, as before) or the file has no `vendor`. A set target whose
+/// file is missing or malformed panics.
 fn target_vendor() -> Option<String> {
     let hw = std::env::var("METRALE_TARGET_HW").ok()?;
     let manifest =
@@ -44,7 +45,14 @@ fn target_vendor() -> Option<String> {
         .join(hw)
         .join("HARDWARE.toml");
     println!("cargo:rerun-if-changed={}", hardware_toml.display());
-    let text = std::fs::read_to_string(&hardware_toml).ok()?;
-    let doc: toml::Value = toml::from_str(&text).ok()?;
+    let doc = read_hardware_toml(&hardware_toml);
     Some(doc.get("hardware")?.get("vendor")?.as_str()?.to_string())
+}
+
+/// 2026-10-13: A `HARDWARE.toml` that is missing or does not parse fails the build, as it does in
+/// metrale-kernels' build.rs. Returning `None` instead would skip the AMD cfgs with no error.
+fn read_hardware_toml(path: &std::path::Path) -> toml::Value {
+    let text = std::fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+    toml::from_str(&text).unwrap_or_else(|e| panic!("invalid {}: {e}", path.display()))
 }
