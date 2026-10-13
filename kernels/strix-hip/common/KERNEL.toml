@@ -104,7 +104,6 @@ use = [
   "../gb10/common/attn_prefill_paged.cu",
   "../gb10/common/attn_prefill_paged_512.cu",
   "../gb10/common/attn_prefill_paged_batched.cu",
-  "../gb10/common/attn_prefill_paged_fp8.cu",
   "../gb10/common/attn_prefill_paged_fp8_batched.cu",
   "../gb10/common/attn_prefill_paged_nvfp4.cu",
   "../gb10/common/attn_prefill_paged_nvfp4_batched.cu",

@@ -12,11 +12,14 @@
 //   (`cfg!(metrale_scale)` in ops/prefill_attn_main_b.rs); the two must match.
 //
 // Included on this tree by gb10/common's attn_prefill_paged.cu, _batched,
-// _fp8, _fp8_batched, _nvfp4 and _nvfp4_batched ([sources] use in
-// common/KERNEL.toml). The includer defines LOAD_KV_TILE(cache, block_table,
-// smem, kv_start, kv_len, kv_head, tid, stride), KERNEL_NAME, K_CACHE_TYPE,
-// V_CACHE_TYPE, KERNEL_EXTRA_PARAMS (which must declare `inv_sqrt_d`) and
-// KERNEL_PREAMBLE, and may define PREFILL_BATCHED and HDIM.
+// _fp8_batched, _nvfp4 and _nvfp4_batched ([sources] use in
+// common/KERNEL.toml), and by this directory's attn_prefill_paged_fp8.cu. The
+// includer defines LOAD_KV_TILE(cache, block_table, smem, kv_start, kv_len,
+// kv_head, tid, stride), KERNEL_NAME, K_CACHE_TYPE, V_CACHE_TYPE,
+// KERNEL_EXTRA_PARAMS (which must declare `inv_sqrt_d`) and KERNEL_PREAMBLE,
+// and may define PREFILL_BATCHED and HDIM. 2026-10-13: LOAD_KV_TILE must store
+// BF16. This body has no METRALE_ATTN_FP8_SMEM path (raw E4M3 in shared memory),
+// which is why gb10's attn_prefill_paged_fp8.cu is not compiled here.
 //
 // WMMA fragments (typedefs below), lane l = 0..31:
 //   A (M x K, row-major): a[i] = A[m_row + (l&15)][i]
