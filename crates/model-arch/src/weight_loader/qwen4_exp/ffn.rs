@@ -16,7 +16,9 @@ use metrale_model_weights::weights::WeightStore;
 
 use metrale_model_layers::layers::{FfnComponent, MoeLayer};
 use metrale_model_layers::weight_map::quant_helpers::dense_auto;
-use metrale_model_layers::weight_map::{Nvfp4Variant, load_moe_qwen35, quantize_to_nvfp4};
+use metrale_model_layers::weight_map::{
+    Nvfp4MoeCopies, Nvfp4Variant, load_moe_qwen35, quantize_to_nvfp4,
+};
 
 /// 2026-10-13: The shared expert's projections, as the checkpoint names them under `.mlp`.
 const SHARED_PROJS: [&str; 3] = ["gate_proj", "up_proj", "down_proj"];
@@ -46,6 +48,21 @@ pub(super) fn build_moe(
     let quantize_k = gpu.kernel("quantize_nvfp4", "quantize_bf16_to_nvfp4")?;
     let stream = gpu.default_stream();
 
+    // 2026-10-13: A shared expert the checkpoint keeps at BF16 runs at those weights (the
+    // store's own tensors, no copy), and no NVFP4 copy of it is built: every fused routed
+    // decode kernel zero-fills its shared term on a NULL shared weight, and the BF16 pass
+    // writes it (`has_mixed_bf16_shared_expert`).
+    let policy = WeightQuantPolicy::for_checkpoint(
+        metrale_model_layers::layers::weight_quantization(),
+        config.quantization_config.as_ref(),
+        metrale_model_layers::layers::kernel_caps(),
+    );
+    let bf16_shared = shared_expert_declared_bf16(&policy, lp);
+    let copies = Nvfp4MoeCopies {
+        shared: !bf16_shared,
+        ..Nvfp4MoeCopies::ALL
+    };
+
     let weights = load_moe_qwen35(
         store,
         lp,
@@ -56,7 +73,7 @@ pub(super) fn build_moe(
         absmax_k,
         quantize_k,
         stream,
-        metrale_model_layers::weight_map::Nvfp4MoeCopies::ALL,
+        copies,
     )
     .with_context(|| format!("qwen4_exp: MoE block at {lp}"))?;
 
@@ -81,16 +98,7 @@ pub(super) fn build_moe(
 
     let mut moe = MoeLayer::new(weights, config.num_experts, gate_nvfp4, gpu, config)?;
 
-    // 2026-10-13: A shared expert the checkpoint keeps at BF16 runs at those weights (the
-    // store's own tensors, no copy). The NVFP4 copies `load_moe_qwen35` built stay: the fused
-    // routed decode kernels read a shared operand, and the BF16 pass then overwrites its
-    // output (`has_mixed_bf16_shared_expert`).
-    let policy = WeightQuantPolicy::for_checkpoint(
-        metrale_model_layers::layers::weight_quantization(),
-        config.quantization_config.as_ref(),
-        metrale_model_layers::layers::kernel_caps(),
-    );
-    if shared_expert_declared_bf16(&policy, lp) {
+    if bf16_shared {
         let [gate, up, down] = SHARED_PROJS
             .map(|p| dense_auto(store, &format!("{lp}.mlp.shared_expert.{p}.weight"), gpu));
         moe.set_bf16_shared_expert(gate?, up?, down?)?;
