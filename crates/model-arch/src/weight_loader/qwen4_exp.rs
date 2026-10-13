@@ -34,6 +34,7 @@ use metrale_model_layers::weight_map::{DenseWeight, MtpWeights, dense};
 mod aux;
 mod ffn;
 mod hc;
+mod host_embed;
 mod ple;
 mod probe;
 
@@ -107,6 +108,15 @@ pub struct Qwen4ExpWeightLoader;
 impl ModelWeightLoader for Qwen4ExpWeightLoader {
     fn supports_tp(&self) -> bool {
         false
+    }
+
+    /// 2026-10-13: The input embedding, under `METRALE_QWEN4EXP_EMBED_ON_HOST=1`
+    /// (`host_embed`).
+    fn defer_predicate(
+        &self,
+        config: &ModelConfig,
+    ) -> Option<metrale_model_weights::weights::DeferHook> {
+        host_embed::defer_hook(config, host_embed::lever_set())
     }
 
     fn load_layers(
@@ -339,10 +349,13 @@ impl ModelWeightLoader for Qwen4ExpWeightLoader {
         &self,
         store: &WeightStore,
         config: &ModelConfig,
-        _gpu: &dyn GpuBackend,
+        gpu: &dyn GpuBackend,
     ) -> Result<DenseWeight> {
-        let pfx = embed_prefix(config);
-        dense(store, &format!("{pfx}.embed_tokens.weight")).context("qwen4_exp: embedding")
+        let name = embed_name(config);
+        if let Some(d) = store.deferred(&name) {
+            return host_embed::load(d, gpu);
+        }
+        dense(store, &name).context("qwen4_exp: embedding")
     }
 
     /// 2026-09-25: A ones-filled `[hidden]` placeholder
@@ -372,8 +385,7 @@ impl ModelWeightLoader for Qwen4ExpWeightLoader {
             config.tie_word_embeddings,
             "qwen4_exp: no lm_head.weight and tie_word_embeddings is false"
         );
-        let pfx = embed_prefix(config);
-        dense(store, &format!("{pfx}.embed_tokens.weight")).context("qwen4_exp: tied lm_head")
+        dense(store, &embed_name(config)).context("qwen4_exp: tied lm_head")
     }
 
     /// 2026-10-13: Same bind rule as the Qwen3.5 tower it delegates to.
@@ -416,6 +428,11 @@ fn embed_prefix(config: &ModelConfig) -> String {
     } else {
         config.weight_prefix.clone()
     }
+}
+
+/// 2026-10-13: The input embedding's tensor name.
+fn embed_name(config: &ModelConfig) -> String {
+    format!("{}.embed_tokens.weight", embed_prefix(config))
 }
 
 /// 2026-09-25: The prefix of the model-level hyper-connection mixer.
