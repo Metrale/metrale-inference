@@ -286,3 +286,18 @@ fn the_hopper_driver_terms_cover_every_h100_serve_below_gb10s() {
     assert!(at_ceiling <= largest + largest / 5, "{at_ceiling}");
     assert!(!hopper.unified && gb10.unified);
 }
+
+/// 2026-10-13: KV sizing may credit exactly the reserve's driver terms on a discrete class, and
+/// nothing on a unified one.
+#[test]
+fn the_driver_credit_cap_is_the_reserves_driver_terms_on_a_discrete_class_only() {
+    let mut p = plan(&SERVES[0]);
+    assert_eq!(p.driver_credit_cap(), 0, "gb10 is unified");
+    p.driver = class_driver("hopper");
+    let t = p.terms(1).expect("terms");
+    assert_eq!(
+        p.driver_credit_cap(),
+        t.runtime.driver_fixed + t.runtime.driver_bookkeeping
+    );
+    assert!(p.driver_credit_cap() > 0 && p.driver_credit_cap() < t.total());
+}

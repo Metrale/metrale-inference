@@ -67,6 +67,10 @@ impl std::fmt::Display for SlotRequest {
 pub struct SlotPlan<'a> {
     pub request: SlotRequest,
     pub reserve_for: &'a dyn Fn(usize) -> Result<usize>,
+    /// 2026-10-13: The bytes of the reserve's driver terms that KV sizing may credit against
+    /// driver use free memory already shows (`kv_budget::incurred_driver_credit`); 0 to credit
+    /// none.
+    pub driver_credit_cap: usize,
 }
 
 /// 2026-10-01: A built model and the slot count it was built with (the request, or what `auto`

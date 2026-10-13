@@ -125,6 +125,18 @@ impl ReservePlan {
         })
     }
 
+    /// 2026-10-13: The reserve's driver terms that KV sizing may credit against driver use the
+    /// device already shows (`SlotPlan::driver_credit_cap`): all of them on a discrete device;
+    /// none on a unified-memory class, whose free memory also moves with host caches, so its use
+    /// beyond the ledger is not the driver's alone.
+    pub(crate) fn driver_credit_cap(&self) -> usize {
+        if self.driver.unified {
+            0
+        } else {
+            self.driver.bytes(self.budget_bytes as u64, 0) as usize
+        }
+    }
+
     /// 2026-10-01: The inference reserve at `slots` slots.
     pub(crate) fn inference_reserve(&self, slots: usize) -> Result<usize> {
         Ok(self.terms(slots)?.total())

@@ -135,6 +135,7 @@ mod tests {
             SlotPlan {
                 request: SlotRequest::Count(8),
                 reserve_for: &|_| Ok(1 << 30),
+                driver_credit_cap: 0,
             },
             MtpQuantization::Nvfp4,
             false,

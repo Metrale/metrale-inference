@@ -3,7 +3,8 @@
 //! 2026-10-01: Step 5 of `build_model`: the slot count and the KV pool, sized together. The KV
 //! budget is the util budget less what is already placed (the ledger, plus the driver's slack
 //! around small allocations), the pre-load reserve at the slot count
-//! (`SlotPlan::reserve_for`), the DFlash reserve and the MTP propose pool. `--max-batch-size N`
+//! (`SlotPlan::reserve_for`), the DFlash reserve and the MTP propose pool, and at most the free
+//! memory less the same terms, net of the driver use free memory already shows (2026-10-13). `--max-batch-size N`
 //! sizes for N; `auto` takes the count `slots::balance_slots` chooses. Split from `build.rs`.
 //!
 //! Owner: metrale-model-engine.
@@ -75,19 +76,32 @@ pub(super) fn size_kv(inp: &KvInputs<'_>, plan: &SlotPlan<'_>) -> Result<KvSized
         None => used_so_far,
     };
     let total_budget = (total_mem as f64 * inp.gpu_memory_utilization) as usize;
+    let driver_credit = kv_budget::incurred_driver_credit(
+        metrale_gpu_runtime::gpu::baseline_free_bytes(),
+        actual_free,
+        inp.gpu.live_bytes(),
+        inp.gpu.chunk_slack_bytes().unwrap_or(0),
+        plan.driver_credit_cap,
+    );
+    if driver_credit > 0 {
+        tracing::info!(target: "metrale_model_engine::factory::build", "KV budget: {:.2} GB of driver use already taken since context init (of the \
+             reserve's {:.2} GB driver terms) credited on the free-memory bound",
+            gib(driver_credit),
+            gib(plan.driver_credit_cap),
+        );
+    }
     // 2026-10-01: The KV budget at a slot count: what `build_model` computed before, with the
     // reserve evaluated at that count.
     let budget_at = |slots: usize| -> Result<(usize, usize, usize)> {
         let reserve = (plan.reserve_for)(slots)?;
-        let kv_budget = total_budget
-            .saturating_sub(used_so_far)
-            .saturating_sub(reserve)
-            .saturating_sub(inp.dflash_reserve)
-            .min(
-                actual_free
-                    .saturating_sub(reserve)
-                    .saturating_sub(inp.dflash_reserve),
-            );
+        let kv_budget = kv_budget::kv_budget_bound(
+            total_budget,
+            used_so_far,
+            actual_free,
+            reserve,
+            driver_credit,
+            inp.dflash_reserve,
+        );
         let mtp_pool = kv_budget::mtp_pool_reserve_bytes(
             inp.use_speculative,
             inp.mtp_weights,
