@@ -285,8 +285,11 @@ impl BufferSizes {
             0
         };
 
+        // 2026-10-13: `!= 0`, not `> 0`: the point is a build-time constant that is 0
+        // on classes without the cuBLASLt arm, where `> 0` is a comparison clippy
+        // rejects as always false (`absurd_extreme_comparisons`).
         let ffn_bf16_weight = if config.num_experts == 0
-            && metrale_kernels::TARGET_DEFAULTS.ffn_w4a16_lt_min_rows > 0
+            && metrale_kernels::TARGET_DEFAULTS.ffn_w4a16_lt_min_rows != 0
         {
             config.intermediate_size * h * bf16
         } else {
