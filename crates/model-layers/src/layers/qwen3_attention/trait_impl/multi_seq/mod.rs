@@ -105,7 +105,7 @@ impl Qwen3AttentionLayer {
     }
 
     /// 2026-09-25: Multi-sequence decode for a hyper-connection layer. The
-    /// attention runs batched; the FFN runs one sequence at a time.
+    /// attention runs batched; the FFN runs the plain path's ladder (2026-10-13).
     fn decode_multi_seq_inner_hc<'a, 'b: 'a>(
         &self,
         c: ctx::MultiSeqCtx<'_>,
@@ -371,27 +371,21 @@ impl Qwen3AttentionLayer {
                 .copy_d2d_async(c.hidden, c.normed, n * h * 2, stream)?;
         }
 
-        for i in 0..n {
-            let normed2_i = c.normed.offset(i * c.h * c.bf16);
-            let moe_out = self.ffn.forward(normed2_i, ctx, stream)?;
-            // 2026-09-25: `hc_streams`, `post` and `comb` hold FP32, 4 bytes per element.
-            let hc_streams_i = hc_streams.offset(i * hc.hc_mult * c.h * 4);
-            let post_i = post.offset(i * hc.hc_mult * 4);
-            let comb_i = comb.offset(i * hc.hc_mult * hc.hc_mult * 4);
-            ops::hc_post_site(
-                ctx.gpu,
-                self.hc_post_k,
-                hc,
-                moe_out,
-                hc_streams_i,
-                post_i,
-                comb_i,
-                hc_streams_i,
-                1,
-                h as u32,
-                stream,
-            )?;
-        }
+        // 2026-10-13: The same FFN ladder as the plain path (`ms_phase_ffn`),
+        // with the highway injection as the row sink instead of a per-row
+        // `forward` loop.
+        let arm = crate::layers::select_attn_arm(&self.attn_ffn_caps(n, ctx));
+        let mut inject = ops::hc_post_rows(
+            ctx.gpu,
+            self.hc_post_k,
+            hc,
+            hc_streams,
+            post,
+            comb,
+            h,
+            stream,
+        );
+        crate::layers::ffn_rows(&self.ffn, arm, c.normed, n, ctx, stream, &mut inject)?;
         if diag_this {
             super::diag_norm_f32(
                 ctx.gpu,

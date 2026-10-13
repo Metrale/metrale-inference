@@ -160,6 +160,40 @@ pub fn hc_post_site(
     }
 }
 
+/// 2026-10-13: The highway injection as a row sink (`layers::RowSink`): `(rows, row0, m)`
+/// injects `m` block-output rows into streams `row0..row0 + m`. `post` and `comb` are the
+/// `[n, hc_mult]` and `[n, hc_mult, hc_mult]` FP32 outputs of the site's `hc_pre`. Both
+/// variants launch one block per token, so a chunked injection has the bits of one launch.
+#[allow(clippy::too_many_arguments)]
+pub fn hc_post_rows<'s>(
+    gpu: &'s dyn GpuBackend,
+    kernel: KernelHandle,
+    hc: &'s HcWeights,
+    streams: DevicePtr,
+    post: DevicePtr,
+    comb: DevicePtr,
+    hidden_size: usize,
+    stream: u64,
+) -> impl FnMut(DevicePtr, usize, usize) -> Result<()> + 's {
+    let hcm = hc.hc_mult;
+    move |rows, row0, m| {
+        let streams_i = streams.offset(row0 * hcm * hidden_size * 4);
+        hc_post_site(
+            gpu,
+            kernel,
+            hc,
+            rows,
+            streams_i,
+            post.offset(row0 * hcm * 4),
+            comb.offset(row0 * hcm * hcm * 4),
+            streams_i,
+            m as u32,
+            hidden_size as u32,
+            stream,
+        )
+    }
+}
+
 /// 2026-09-25: The model-level final collapse before the LM head. In the low-rank family this is
 /// also the model's final normalization: the Qwen3.8-Flash-Next config parser sets
 /// `final_norm_identity` (config/src/parsers/qwen4_exp.rs), and the mixer's `hc_norm` normalizes.

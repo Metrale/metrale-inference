@@ -16,8 +16,8 @@
 //!   `ssm_forward` per row (rows copied into `hidden`) when it declines;
 //! - `hc_post`;
 //! - `hc_pre` again, into `norm_output`;
-//! - the FFN: `forward_k2`/`forward_k3` at n = 2/3 (rows in `moe_output`),
-//!   else `forward` per row (rows copied into `hidden`);
+//! - the FFN: the plain path's ladder (`ffn_rows`, 2026-10-13), each chunk of
+//!   output rows injected through `hc_post_rows`;
 //! - `hc_post`.
 
 use anyhow::Result;
@@ -178,39 +178,13 @@ impl Qwen3SsmLayer {
             eps,
             stream,
         )?;
-        let moe_rows = match n {
-            2 => {
-                self.ffn.forward_k2(normed, ctx, stream)?;
-                moe_out
-            }
-            3 => {
-                self.ffn.forward_k3(normed, ctx, stream)?;
-                moe_out
-            }
-            _ => {
-                // 2026-09-25: Per-row loop, staged into `hidden` rows; any GDN
-                // rows there were consumed by the `hc_post_site` above.
-                for i in 0..n {
-                    let out = self.ffn.forward(normed.offset(i * h * bf16), ctx, stream)?;
-                    ctx.gpu
-                        .copy_d2d_async(out, hidden.offset(i * h * bf16), h * bf16, stream)?;
-                }
-                hidden
-            }
-        };
-        ops::hc_post_site(
-            ctx.gpu,
-            self.hc_post_k,
-            hc,
-            moe_rows,
-            streams,
-            post,
-            comb,
-            streams,
-            n as u32,
-            h as u32,
-            stream,
-        )?;
+        // 2026-10-13: The same FFN ladder as the plain path
+        // (`decode_multi_seq_inner`), with the highway injection as the row
+        // sink instead of a per-row `forward` loop.
+        let arm = crate::layers::select_ssm_arm(&self.ssm_ffn_caps(n, ctx));
+        let mut inject =
+            ops::hc_post_rows(ctx.gpu, self.hc_post_k, hc, streams, post, comb, h, stream);
+        crate::layers::ffn_rows(&self.ffn, arm, normed, n, ctx, stream, &mut inject)?;
         Ok(())
     }
 }
