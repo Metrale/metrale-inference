@@ -28,6 +28,7 @@ mod mla;
 mod mla_gemv;
 pub(in crate::layers::qwen3_attention) mod qkv;
 mod qkv_fp8_batch;
+mod qsa_rows;
 mod w8a8_decode;
 
 impl Qwen3AttentionLayer {
@@ -84,9 +85,9 @@ impl Qwen3AttentionLayer {
 
             self.ms_phase_cache_write(&c, kv_cache, meta)?;
 
-            let attn_out = self.ms_phase_paged_decode(&c, kv_cache, meta)?;
+            let attn = self.ms_phase_paged_decode(&c, kv_cache, meta)?;
 
-            self.ms_phase_o_proj(&c, attn_out)?
+            self.ms_phase_o_proj(&c, attn.attn_out)?
         };
 
         // 2026-09-25: Under tensor parallelism each rank's o_proj output is a
@@ -209,8 +210,12 @@ impl Qwen3AttentionLayer {
             self.ms_phase_qkv(&c)?;
             self.ms_phase_rope(&c, meta)?;
             self.ms_phase_cache_write(&c, kv_cache, meta)?;
-            let attn_out = self.ms_phase_paged_decode(&c, kv_cache, meta)?;
-            self.ms_phase_o_proj(&c, attn_out)?
+            let attn = self.ms_phase_paged_decode(&c, kv_cache, meta)?;
+            // 2026-10-13: QSA ingest for every live row and, past the inert
+            // bound, the row's attention over its selection (`qsa_rows.rs`),
+            // after the cache write so the current token can be gathered.
+            self.ms_qsa_rows(&c, states, seq_lens, kv_cache, meta, &attn)?;
+            self.ms_phase_o_proj(&c, attn.attn_out)?
         };
 
         if c.fwd.config.tp_world_size > 1
@@ -218,36 +223,6 @@ impl Qwen3AttentionLayer {
         {
             let bytes = c.n * c.h * c.bf16;
             comm.all_reduce_async(o_out.0, bytes, c.stream)?;
-        }
-
-        // 2026-09-25: QSA ingest for each sequence. Below the inert bound
-        // `decode_select` only ingests and returns `None`. The model's decode
-        // dispatch (`decode_a2.rs`, `qsa_active`) sends a hyper-connection batch
-        // to the per-sequence loop once any sequence reaches the bound, so a
-        // `Some` here means the two disagree, and the step fails instead of
-        // running dense attention past the budget.
-        if let Some(qsa) = self.qsa.as_ref() {
-            for (i, state) in states.iter_mut().enumerate().take(n) {
-                let st =
-                    crate::layers::qwen3_attention::helpers::qsa_seq_state(qsa, *state, ctx.gpu)?;
-                let sel = qsa.decode_select(
-                    st,
-                    c.normed.offset(i * h * c.bf16),
-                    seq_lens[i],
-                    kv_cache.k_pool_ptr(self.attn_layer_idx),
-                    kv_cache.v_pool_ptr(self.attn_layer_idx),
-                    meta.block_table
-                        .offset(i * meta.max_blocks_per_seq as usize * 4),
-                    c.bs,
-                    ctx.gpu,
-                    stream,
-                )?;
-                anyhow::ensure!(
-                    sel.is_none(),
-                    "QSA selection active for seq {i} on the batched ms path; \
-                     the dispatch gate should have routed this batch per-seq"
-                );
-            }
         }
 
         ops::hc_post_site(

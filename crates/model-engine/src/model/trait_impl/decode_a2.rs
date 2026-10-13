@@ -63,21 +63,13 @@ impl TransformerModel {
         // worker from `ep_worker_decode_batch`), so each layer's collectives match
         // in shape and order across ranks.
         let mla_perseq_fallback = self.is_mla_dispatch() && self.levers.mla_perseq_fallback;
-        let qsa_active = self.config.index_topk > 0 && {
-            // 2026-09-25: `QsaIndexer::inert_bound`: below `index_topk +
-            // index_compress_ratio - 1` visible tokens every block is selected,
-            // so selection is inert.
-            let bound = self.config.index_topk + self.config.index_compress_ratio - 1;
-            seqs.iter().any(|s| s.seq_len >= bound)
-        };
         // 2026-09-25: A layer may decline the batched multi-seq step. The veto sits
-        // outside the `hc_mult > 0` conjunction on purpose: keyed on `hc_mult`,
-        // `index_topk` or `model_type` instead, a declining model would be routed
-        // per-sequence only once `qsa_active` holds, i.e. correct on long contexts
-        // and wrong on short ones.
+        // outside the `hc_mult > 0` conjunction on purpose, so a declining model
+        // is routed per-sequence at every length. 2026-10-13: an active QSA
+        // indexer no longer routes the batch per sequence; the attention layer
+        // selects on the batched step (`multi_seq/qsa_rows.rs`).
         let ms_layer_veto = self.layers.iter().any(|l| l.decode_multi_seq_unsupported());
-        let hc_perseq = ms_layer_veto
-            || (self.config.hc_mult > 0 && (qsa_active || self.levers.hc_perseq_decode));
+        let hc_perseq = ms_layer_veto || (self.config.hc_mult > 0 && self.levers.hc_perseq_decode);
         // 2026-09-25: The per-sequence decision is made before the EP branch, so an
         // EP batch that needs the per-sequence path takes it too.
         if self.comm.is_some() && !(mla_perseq_fallback || hc_perseq) {
@@ -88,8 +80,8 @@ impl TransformerModel {
 
         // 2026-09-25: Per-sequence loop: `METRALE_MLA_PERSEQ_FALLBACK` on an MLA
         // model, or `hc_perseq` (a layer declines the batched step, or an mHC model
-        // with QSA active for some sequence or `METRALE_HC_PERSEQ_DECODE` set). Each
-        // sequence runs `decode()`, and its logits row is staged through the host.
+        // with `METRALE_HC_PERSEQ_DECODE` set). Each sequence runs `decode()`, and
+        // its logits row is staged through the host.
         if mla_perseq_fallback || hc_perseq {
             return self.decode_batch_perseq(tokens, seqs, n, stream);
         }

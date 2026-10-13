@@ -9,9 +9,11 @@
 //! from `decode_verify_multi_unsupported()` makes `can_batch_verify_dispatch` refuse the
 //! batched verify.
 //!
-//! The veto is the first disjunct, outside the `hc_mult > 0` conjunction. Inside it, the veto
-//! would also need `seq_len >= index_topk + index_compress_ratio - 1` and would miss every
-//! shorter sequence. The tests pin that placement, not only the presence of the term.
+//! The veto is the first disjunct, outside the `hc_mult > 0` conjunction, so it applies at
+//! every length; the tests pin that placement, not only the presence of the term. Since
+//! 2026-10-13 neither gate reads the QSA inert bound: an active indexer selects on the
+//! batched step (`qwen3_attention/trait_impl/multi_seq/qsa_rows.rs`), and the tests pin
+//! that the bound is gone from both gates.
 //!
 //! Owner: model-engine decode.
 //! Invariants: none beyond the types.
@@ -56,6 +58,12 @@ mod tests {
     fn src(rel: &str) -> String {
         std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(rel))
             .unwrap_or_else(|e| panic!("read {rel}: {e}"))
+    }
+
+    /// 2026-10-13: `s` with every run of whitespace as one space, so an anchor
+    /// over an expression does not depend on where rustfmt breaks it.
+    fn squash(s: &str) -> String {
+        s.split_whitespace().collect::<Vec<_>>().join(" ")
     }
 
     /// 2026-09-25: Slice `s` from the first `from` to the next `to` after it, or to the end.
@@ -146,9 +154,15 @@ mod tests {
         );
         // 2026-09-25: The veto is the first disjunct of hc_perseq, so it is outside `hc_mult > 0`.
         assert!(
-            b.contains("let hc_perseq = ms_layer_veto\n            || ("),
-            "the veto must be hoisted OUT of the hc_mult/qsa_active conjunction; \
-             folded inside, it would only fire at seq_len >= index_topk - 1"
+            squash(b).contains("let hc_perseq = ms_layer_veto || ("),
+            "the veto must be hoisted OUT of the hc_mult conjunction; \
+             folded inside, it would not fire on a model without a highway"
+        );
+        // 2026-10-13: QSA selection runs on the batched step; the gate no longer
+        // routes a long-context batch per sequence.
+        assert!(
+            !b.contains("index_compress_ratio") && !b.contains("qsa_active"),
+            "decode_a2 must not route per sequence on the QSA inert bound"
         );
     }
 
@@ -163,8 +177,12 @@ mod tests {
             "decode_b must consult the layer predicate — it is the single-GPU path"
         );
         assert!(
-            b.contains("let hc_qsa_perseq = ms_layer_veto\n            || ("),
-            "the veto must be hoisted OUT of the hc_mult/index_topk conjunction"
+            squash(b).contains("let hc_qsa_perseq = ms_layer_veto || ("),
+            "the veto must be hoisted OUT of the hc_mult conjunction"
+        );
+        assert!(
+            !b.contains("index_compress_ratio") && !b.contains("index_topk"),
+            "decode_b must not route per sequence on the QSA inert bound"
         );
     }
 
