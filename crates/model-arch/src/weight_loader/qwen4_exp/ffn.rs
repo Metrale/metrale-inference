@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-09-25: The per-layer MoE FFN of `qwen4_exp`: the weights from
-//! `load_moe_qwen35`, the router (BF16 as shipped, or an NVFP4 copy), and,
+//! `load_moe_qwen35`, the router (BF16 as shipped, or an NVFP4 copy), the shared
+//! expert at BF16 where the checkpoint declares it so (2026-10-13), and,
 //! with `METRALE_HOLO_MOE_GROUPED_CUTLASS=1`, the CUTLASS grouped scale
 //! tables.
 //!
@@ -9,12 +10,29 @@
 //! Invariants: none beyond the types.
 
 use anyhow::{Context, Result};
-use metrale_config::ModelConfig;
+use metrale_config::{ModelConfig, WeightQuantPolicy};
 use metrale_gpu_runtime::gpu::GpuBackend;
 use metrale_model_weights::weights::WeightStore;
 
 use metrale_model_layers::layers::{FfnComponent, MoeLayer};
+use metrale_model_layers::weight_map::quant_helpers::dense_auto;
 use metrale_model_layers::weight_map::{Nvfp4Variant, load_moe_qwen35, quantize_to_nvfp4};
+
+/// 2026-10-13: The shared expert's projections, as the checkpoint names them under `.mlp`.
+const SHARED_PROJS: [&str; 3] = ["gate_proj", "up_proj", "down_proj"];
+
+/// 2026-10-13: Whether layer `lp`'s shared expert runs at its BF16 weights: the policy follows
+/// the checkpoint's plan and the plan leaves all three projections unquantized (the Inferact
+/// NVFP4 checkpoint lists them in its `ignore`).
+pub(super) fn shared_expert_declared_bf16(policy: &WeightQuantPolicy, lp: &str) -> bool {
+    policy.follows_plan()
+        && SHARED_PROJS.iter().all(|p| {
+            policy
+                .declared(&format!("{lp}.mlp.shared_expert.{p}"))
+                .weight
+                .is_none()
+        })
+}
 
 pub(super) fn build_moe(
     store: &WeightStore,
@@ -63,6 +81,21 @@ pub(super) fn build_moe(
 
     let mut moe = MoeLayer::new(weights, config.num_experts, gate_nvfp4, gpu, config)?;
 
+    // 2026-10-13: A shared expert the checkpoint keeps at BF16 runs at those weights (the
+    // store's own tensors, no copy). The NVFP4 copies `load_moe_qwen35` built stay: the fused
+    // routed decode kernels read a shared operand, and the BF16 pass then overwrites its
+    // output (`has_mixed_bf16_shared_expert`).
+    let policy = WeightQuantPolicy::for_checkpoint(
+        metrale_model_layers::layers::weight_quantization(),
+        config.quantization_config.as_ref(),
+        metrale_model_layers::layers::kernel_caps(),
+    );
+    if shared_expert_declared_bf16(&policy, lp) {
+        let [gate, up, down] = SHARED_PROJS
+            .map(|p| dense_auto(store, &format!("{lp}.mlp.shared_expert.{p}.weight"), gpu));
+        moe.set_bf16_shared_expert(gate?, up?, down?)?;
+    }
+
     // 2026-09-25: The grouped CUTLASS prefill arm runs only when
     // `cutlass_grouped_host` is set (`moe/forward_prefill_routed.rs`), and
     // `build_cutlass_grouped_sfb` is what sets it. Without transposed scales it
@@ -77,3 +110,7 @@ pub(super) fn build_moe(
 
     Ok(FfnComponent::Moe(moe))
 }
+
+#[cfg(test)]
+#[path = "ffn_tests.rs"]
+mod tests;
