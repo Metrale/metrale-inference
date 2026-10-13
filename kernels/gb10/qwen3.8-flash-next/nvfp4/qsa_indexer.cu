@@ -66,11 +66,12 @@ __device__ __forceinline__ void qsa_rope_store(
 // 2026-10-13: Pool block `b`: mean(ratio raw keys) -> RMSNorm * (1 + w) -> rope at
 // pos = b * ratio, written to block_keys[b]. One thread per element d of a block of
 // hd threads; every thread of the block must call it. `smem` holds hd floats plus the
-// reduction slots. Shared by qsa_block_pool and qsa_ingest_step. `raw_keys` is not
-// `__restrict__`: qsa_ingest_step reads back a row it has just written, which a
-// non-coherent read-only load may not see.
+// reduction slots. Shared by qsa_block_pool and qsa_ingest_step. `raw_block` is the
+// block's own `ratio` raw keys, row r = position b * ratio + r (L-K9a: no sequence-long
+// raw-key buffer exists). It is not `__restrict__`: qsa_ingest_step reads back a row it
+// has just written, which a non-coherent read-only load may not see.
 __device__ __forceinline__ void qsa_pool_block(
-    const __nv_bfloat16* raw_keys,
+    const __nv_bfloat16* raw_block,
     const __nv_bfloat16* __restrict__ k_norm_w,
     __nv_bfloat16* __restrict__ block_keys,
     const unsigned int b,
@@ -87,7 +88,7 @@ __device__ __forceinline__ void qsa_pool_block(
 
     float v = 0.0f;
     for (unsigned int r = 0; r < ratio; ++r) {
-        v += (float)raw_keys[(size_t)(b * ratio + r) * hd + d];
+        v += (float)raw_block[(size_t)r * hd + d];
     }
     v /= (float)ratio;
 
@@ -101,9 +102,10 @@ __device__ __forceinline__ void qsa_pool_block(
 
 // 2026-09-25: qsa_block_pool: pool `n_new` complete blocks starting at `first_block`
 // (qsa_pool_block). Grid (n_new), block (hd); dynamic shared memory holds hd floats
-// plus the reduction slots.
+// plus the reduction slots. 2026-10-13: `raw_keys` holds exactly those blocks' keys from
+// its row 0: row i * ratio + r is position (first_block + i) * ratio + r.
 extern "C" __global__ void qsa_block_pool(
-    const __nv_bfloat16* __restrict__ raw_keys,   // 2026-09-25: [S, hd]
+    const __nv_bfloat16* __restrict__ raw_keys,   // 2026-10-13: [n_new * ratio, hd]
     const __nv_bfloat16* __restrict__ k_norm_w,   // 2026-09-25: [hd]
     __nv_bfloat16* __restrict__ block_keys,       // 2026-09-25: [max_blocks, hd]
     const unsigned int first_block,
@@ -114,19 +116,20 @@ extern "C" __global__ void qsa_block_pool(
     const float eps
 ) {
     extern __shared__ float smem[];
-    qsa_pool_block(raw_keys, k_norm_w, block_keys, first_block + blockIdx.x, ratio, hd,
-                   rot, theta, eps, smem);
+    qsa_pool_block(raw_keys + (size_t)blockIdx.x * ratio * hd, k_norm_w, block_keys,
+                   first_block + blockIdx.x, ratio, hd, rot, theta, eps, smem);
 }
 
 // 2026-10-13: qsa_ingest_step: one decode token's ingest at the position read from the
 // device (`pos_dev[0]`), so a captured CUDA graph replays it at every later step:
-// raw_keys[pos] = key, then, when the token completes a block ((pos + 1) % ratio == 0),
-// pool that block exactly as qsa_block_pool does. Thread d writes and later reads only
-// column d of raw_keys, so its own write is visible to it. Grid (1), block (hd); shared
+// raw_tail[pos % ratio] = key, then, when the token completes a block
+// ((pos + 1) % ratio == 0), pool that block exactly as qsa_block_pool does: the ring's
+// rows are then the block's keys in position order. Thread d writes and later reads only
+// column d of raw_tail, so its own write is visible to it. Grid (1), block (hd); shared
 // memory as qsa_block_pool.
 extern "C" __global__ void qsa_ingest_step(
     const __nv_bfloat16* __restrict__ key,        // 2026-10-13: [hd], this token's raw key
-    __nv_bfloat16* raw_keys,                      // 2026-10-13: [S, hd]
+    __nv_bfloat16* raw_tail,                      // 2026-10-13: [ratio, hd] ring
     const __nv_bfloat16* __restrict__ k_norm_w,   // 2026-10-13: [hd]
     __nv_bfloat16* __restrict__ block_keys,       // 2026-10-13: [max_blocks, hd]
     const unsigned int* __restrict__ pos_dev,     // 2026-10-13: [1], the token's position
@@ -139,9 +142,9 @@ extern "C" __global__ void qsa_ingest_step(
     extern __shared__ float smem[];
     const unsigned int pos = pos_dev[0];
     const unsigned int d = threadIdx.x;
-    raw_keys[(size_t)pos * hd + d] = key[d];
+    raw_tail[(size_t)(pos % ratio) * hd + d] = key[d];
     if ((pos + 1) % ratio == 0) {
-        qsa_pool_block(raw_keys, k_norm_w, block_keys, (pos + 1) / ratio - 1, ratio, hd,
+        qsa_pool_block(raw_tail, k_norm_w, block_keys, (pos + 1) / ratio - 1, ratio, hd,
                        rot, theta, eps, smem);
     }
 }

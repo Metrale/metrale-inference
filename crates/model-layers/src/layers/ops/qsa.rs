@@ -16,6 +16,10 @@ use metrale_gpu_runtime::kernel_args::KernelLaunch;
 /// 2026-09-25: Pool `n_new` newly complete blocks starting at `first_block`: the
 /// mean of `ratio` raw keys, then RMSNorm scaled by `1 + w`, then rope at the
 /// block's first token position. Returns without launching when `n_new == 0`.
+///
+/// 2026-10-13: `raw_keys` holds exactly those blocks' keys from its row 0 (row
+/// `i * ratio + r` is position `(first_block + i) * ratio + r`), so a caller pools out
+/// of a slab-sized scratch rather than a sequence-long buffer (L-K9a).
 #[allow(clippy::too_many_arguments)]
 pub fn qsa_block_pool(
     gpu: &dyn GpuBackend,
@@ -52,15 +56,15 @@ pub fn qsa_block_pool(
 }
 
 /// 2026-10-13: One decode token's indexer ingest at the position `pos_dev[0]` (u32 on
-/// the device): `raw_keys[pos] = key`, and the block it completes, if any, pooled as
-/// [`qsa_block_pool`] pools it. The position is read on the device, so a captured graph
+/// the device): `raw_tail[pos % ratio] = key` (`raw_tail` is a `[ratio, hd]` ring), and
+/// the block it completes, if any, pooled from the ring as [`qsa_block_pool`] pools it. The position is read on the device, so a captured graph
 /// replays the step at every later position.
 #[allow(clippy::too_many_arguments)]
 pub fn qsa_ingest_step(
     gpu: &dyn GpuBackend,
     kernel: KernelHandle,
     key: DevicePtr,
-    raw_keys: DevicePtr,
+    raw_tail: DevicePtr,
     k_norm_w: DevicePtr,
     block_keys: DevicePtr,
     pos_dev: DevicePtr,
@@ -76,7 +80,7 @@ pub fn qsa_ingest_step(
         .block([hd, 1, 1])
         .shared_mem((hd + 32) * 4)
         .arg_ptr(key)
-        .arg_ptr(raw_keys)
+        .arg_ptr(raw_tail)
         .arg_ptr(k_norm_w)
         .arg_ptr(block_keys)
         .arg_ptr(pos_dev)

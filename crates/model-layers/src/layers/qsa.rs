@@ -16,7 +16,10 @@
 //! the top `budget / ratio` blocks by `sum_h relu(q_h . k_b) / sqrt(hd)`, plus
 //! the incomplete tail.
 //!
-//! Raw keys are ingested during prefill and decode. Decode selection gathers
+//! Raw keys are ingested during prefill and decode. 2026-10-13 (L-K9a): only the
+//! incomplete block's raw keys are kept per sequence (`raw_tail`, a `ratio`-row ring);
+//! a complete block is pooled as soon as its last key arrives and its raw keys are not
+//! read again, so prefill pools each slab out of one per-layer scratch. Decode selection gathers
 //! the selected K/V into a contiguous scratch that, through an identity block
 //! table, the paged decode attention reads as a cache. Prefill selection
 //! (`prefill_select`, in `qsa_select.rs`) overwrites the attention context of
@@ -51,7 +54,8 @@ pub struct QsaSelection {
 }
 
 pub struct QsaSeqState {
-    /// 2026-09-25: Tokens whose raw keys are in `raw_keys` (contiguous from 0).
+    /// 2026-09-25: Tokens ingested (contiguous from 0). 2026-10-13: the raw keys of the
+    /// last `ingested % ratio` of them are in `raw_tail`; the rest are pooled.
     ingested: usize,
     /// 2026-09-25: Complete `ratio`-token blocks pooled into `block_keys`.
     pooled: usize,
@@ -62,8 +66,9 @@ pub struct QsaSeqState {
     /// 2026-09-25: Pages of the identity block table already uploaded to the
     /// layer's `table_dev` by `decode_select`.
     table_len: usize,
-    /// 2026-09-25: `[max_tokens, hd]` BF16: this sequence's raw indexer keys.
-    raw_keys: DevicePtr,
+    /// 2026-10-13: `[ratio, hd]` BF16 ring: the incomplete block's raw indexer keys,
+    /// row `pos % ratio` (L-K9a; was `[max_tokens, hd]`, 113 MB a sequence at 36,864).
+    raw_tail: DevicePtr,
     /// 2026-09-25: `[max_tokens/ratio, hd]` BF16: this sequence's pooled block keys.
     block_keys: DevicePtr,
 }
@@ -105,12 +110,16 @@ pub struct QsaIndexer {
     k_topk_pools_k: KernelHandle,
 
     // 2026-09-25: Scratch shapes: `qk_scratch` [INGEST_SLAB, (n_heads+1)*hd]
-    // BF16; `q_post` [n_heads, hd] F32; `scores_dev` [max_tokens/ratio] F32;
+    // BF16; 2026-10-13: `slab_raw` [INGEST_SLAB + ratio, hd] BF16;
+    // `q_post` [n_heads, hd] F32; `scores_dev` [max_tokens/ratio] F32;
     // `sel_dev` [budget+ratio] i32; `k_scratch`/`v_scratch`
     // [budget+ratio, nkv_attn, hd_attn] BF16; `table_dev`
     // [ceil((budget+ratio)/8)] i32, enough for any block_size >= 8;
     // `seq_len_dev` [1] i32.
     qk_scratch: DevicePtr,
+    /// 2026-10-13: One prefill slab's raw keys behind the sequence's incomplete block,
+    /// from that block's first position: what `qsa_block_pool` pools them from.
+    slab_raw: DevicePtr,
     q_post: DevicePtr,
     scores_dev: DevicePtr,
     sel_dev: DevicePtr,
@@ -125,6 +134,14 @@ pub struct QsaIndexer {
 
 /// 2026-09-25: Prefill ingest GEMM slab (rows), bounding `qk_scratch`.
 const INGEST_SLAB: usize = 2048;
+
+/// 2026-10-13: Device bytes of one sequence's QSA carry for an indexer of head dim `hd`
+/// and compress ratio `ratio` (> 0) sized for `max_tokens`: the `ratio`-row raw-tail ring
+/// plus `max_tokens / ratio` block keys, BF16. What `new_seq_state` allocates and the
+/// serve's preflight reserve charges.
+pub fn seq_state_bytes_for(max_tokens: usize, hd: usize, ratio: usize) -> usize {
+    ratio * hd * 2 + max_tokens / ratio * hd * 2
+}
 
 impl QsaIndexer {
     #[allow(clippy::too_many_arguments)]
@@ -182,6 +199,7 @@ impl QsaIndexer {
             k_prefill_attn_k: gpu.kernel("qsa_indexer", "qsa_prefill_attn")?,
             k_topk_pools_k: gpu.kernel("dsa_indexer", "dsa_topk_pools")?,
             qk_scratch: gpu.alloc(INGEST_SLAB * qk_width * 2)?,
+            slab_raw: gpu.alloc((INGEST_SLAB + ratio) * hd * 2)?,
             q_post: gpu.alloc(n_heads * hd * 4)?,
             scores_dev: gpu.alloc(max_tokens / ratio * 4)?,
             sel_dev: gpu.alloc(sel_cap * 4)?,
@@ -195,6 +213,7 @@ impl QsaIndexer {
 
     /// 2026-09-25: One sequence's indexer carry: counters + raw/pooled key buffers.
     /// The launch scratch stays in the layer and is shared by every sequence.
+    /// 2026-10-13: Its device bytes are [`Self::seq_state_bytes`].
     pub fn new_seq_state(&self, gpu: &dyn GpuBackend) -> Result<QsaSeqState> {
         let hd = self.hd as usize;
         let ratio = self.ratio as usize;
@@ -203,16 +222,21 @@ impl QsaIndexer {
             pooled: 0,
             step_start: 0,
             table_len: 0,
-            raw_keys: gpu.alloc(self.max_tokens * hd * 2)?,
+            // 2026-10-13: `seq_state_bytes_for` counts exactly these two.
+            raw_tail: gpu.alloc(ratio * hd * 2)?,
             block_keys: gpu.alloc(self.max_tokens / ratio * hd * 2)?,
         })
+    }
+
+    /// 2026-10-13: Device bytes one sequence's carry holds (`new_seq_state`).
+    pub fn seq_state_bytes(&self) -> usize {
+        seq_state_bytes_for(self.max_tokens, self.hd as usize, self.ratio as usize)
     }
 
     /// 2026-09-25: Release one sequence's indexer carry.
     ///
     /// `QsaSeqState` holds bare `DevicePtr`s, so dropping the struct frees
-    /// nothing; the `max_tokens * hd * 2` raw-key and
-    /// `max_tokens/ratio * hd * 2` block-key buffers are freed only here.
+    /// nothing; the raw-tail and block-key buffers are freed only here.
     ///
     /// Idempotent: each pointer is nulled once its free is attempted, so a
     /// second call (or a release after a partial failure) cannot double-free.
@@ -220,7 +244,7 @@ impl QsaIndexer {
     /// error is returned.
     pub fn release_seq_state(&self, st: &mut QsaSeqState, gpu: &dyn GpuBackend) -> Result<()> {
         let mut first_err: Option<anyhow::Error> = None;
-        for p in [&mut st.raw_keys, &mut st.block_keys] {
+        for p in [&mut st.raw_tail, &mut st.block_keys] {
             if p.is_null() {
                 continue;
             }
@@ -248,6 +272,10 @@ impl QsaIndexer {
 
     /// 2026-09-25: Ingest `num_tokens` prefill tokens starting at `seq_start`:
     /// project qk, store the raw keys, pool newly complete blocks.
+    /// 2026-10-13: Per slab, the incomplete block's keys (the ring) and the slab's keys
+    /// go back to back into `slab_raw`, every complete block there is pooled, and the
+    /// keys of the new incomplete block go back to the ring: the same keys pooled by the
+    /// same kernel as from a sequence-long buffer, so the block keys are bit-identical.
     /// `seq_start == 0` resets the counters. Errors when `seq_start` is not
     /// the ingested count (a prefix-cache skip) or the total exceeds
     /// `max_tokens` (the serve's `--max-seq-len`).
@@ -280,6 +308,8 @@ impl QsaIndexer {
         );
 
         let hd = self.hd as usize;
+        let ratio = self.ratio as usize;
+        let row = hd * 2;
         let qkw = self.qk_width();
         let mut off = 0usize;
         while off < num_tokens {
@@ -294,38 +324,30 @@ impl QsaIndexer {
                 stream,
             )
             .context("QSA qk projection (prefill)")?;
+            let first = seq_start + off;
+            let tail = first % ratio;
+            if tail > 0 {
+                gpu.copy_d2d_async(st.raw_tail, self.slab_raw, tail * row, stream)?;
+            }
             // 2026-09-25: Raw key = the last hd columns of each row.
             gpu.copy_d2d_2d_async(
                 self.qk_scratch.offset(self.n_heads as usize * hd * 2),
                 qkw * 2,
-                st.raw_keys.offset((seq_start + off) * hd * 2),
-                hd * 2,
-                hd * 2,
+                self.slab_raw.offset(tail * row),
+                row,
+                row,
                 ts,
                 stream,
             )?;
-            off += ts;
-        }
-        st.ingested = seq_start + num_tokens;
-        self.pool_new_blocks(st, gpu, stream)
-    }
-
-    fn pool_new_blocks(
-        &self,
-        st: &mut QsaSeqState,
-        gpu: &dyn GpuBackend,
-        stream: u64,
-    ) -> Result<()> {
-        let complete = st.ingested / self.ratio as usize;
-        if complete > st.pooled {
+            let complete = (tail + ts) / ratio;
             ops::qsa_block_pool(
                 gpu,
                 self.k_pool_k,
-                st.raw_keys,
+                self.slab_raw,
                 self.k_norm_w,
                 st.block_keys,
-                st.pooled as u32,
-                (complete - st.pooled) as u32,
+                (first / ratio) as u32,
+                complete as u32,
                 self.ratio,
                 self.hd,
                 self.rot,
@@ -333,8 +355,19 @@ impl QsaIndexer {
                 self.eps,
                 stream,
             )?;
-            st.pooled = complete;
+            let rest = (tail + ts) % ratio;
+            if rest > 0 {
+                gpu.copy_d2d_async(
+                    self.slab_raw.offset(complete * ratio * row),
+                    st.raw_tail,
+                    rest * row,
+                    stream,
+                )?;
+            }
+            off += ts;
         }
+        st.ingested = seq_start + num_tokens;
+        st.pooled = st.ingested / ratio;
         Ok(())
     }
 

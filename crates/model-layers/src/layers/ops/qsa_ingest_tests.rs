@@ -3,8 +3,9 @@
 //! 2026-10-13: `qsa_ingest_step`, the decode ingest that reads its position on the
 //! device, against the path it replaces (the key copied to `raw_keys[pos]`, then
 //! `qsa_block_pool` over the block it completes), launched directly and replayed from one
-//! CUDA graph captured once: raw and block keys must be byte-identical at every position,
-//! those that complete a block and those that do not.
+//! CUDA graph captured once: block keys must be byte-identical at every position, those
+//! that complete a block and those that do not, and the `ratio`-row ring (L-K9a) must
+//! hold the last `ratio` keys at row `pos % ratio`.
 //!
 //! GPU test: run with
 //! ```text
@@ -38,11 +39,11 @@ fn bf16s(n: usize, seed: u32) -> Vec<u8> {
         .collect()
 }
 
-/// 2026-10-13: Fresh zeroed raw-key and block-key buffers for `TOKENS` tokens.
-fn buffers(g: &dyn GpuBackend) -> (DevicePtr, DevicePtr) {
-    let raw = g.alloc(TOKENS * HD * 2).unwrap();
+/// 2026-10-13: Fresh zeroed raw-key (`raw_rows` rows) and block-key buffers.
+fn buffers(g: &dyn GpuBackend, raw_rows: usize) -> (DevicePtr, DevicePtr) {
+    let raw = g.alloc(raw_rows * HD * 2).unwrap();
     let blocks = g.alloc(TOKENS / RATIO * HD * 2).unwrap();
-    g.memset(raw, 0, TOKENS * HD * 2).unwrap();
+    g.memset(raw, 0, raw_rows * HD * 2).unwrap();
     g.memset(blocks, 0, TOKENS / RATIO * HD * 2).unwrap();
     (raw, blocks)
 }
@@ -73,13 +74,15 @@ fn the_device_position_ingest_equals_copy_then_pool_direct_and_replayed() {
     let (h, r, t, e) = (HD as u32, RATIO as u32, ROT as u32, (THETA, EPS));
 
     // 2026-10-13: The replaced path: copy the key, pool the block it completes.
-    let (raw_ref, blocks_ref) = buffers(g);
+    let (raw_ref, blocks_ref) = buffers(g, TOKENS);
     for p in 0..TOKENS {
         g.copy_h2d(row(p), raw_ref.offset(p * HD * 2)).unwrap();
         if (p + 1) % RATIO == 0 {
-            let b = ((p + 1) / RATIO - 1) as u32;
+            let b = (p + 1) / RATIO - 1;
+            // 2026-10-13: `qsa_block_pool` reads the pooled blocks' keys from row 0.
+            let first = raw_ref.offset(b * RATIO * HD * 2);
             qsa_block_pool(
-                g, pool_k, raw_ref, norm, blocks_ref, b, 1, r, h, t, e.0, e.1, stream,
+                g, pool_k, first, norm, blocks_ref, b as u32, 1, r, h, t, e.0, e.1, stream,
             )
             .unwrap();
             g.synchronize(stream).unwrap();
@@ -87,7 +90,7 @@ fn the_device_position_ingest_equals_copy_then_pool_direct_and_replayed() {
     }
 
     // 2026-10-13: Direct launches, the position uploaded before each.
-    let (raw_new, blocks_new) = buffers(g);
+    let (raw_new, blocks_new) = buffers(g, RATIO);
     let step = |raw: DevicePtr, blocks: DevicePtr| {
         qsa_ingest_step(
             g, ingest_k, key, raw, norm, blocks, pos_dev, r, h, t, e.0, e.1, stream,
@@ -101,7 +104,7 @@ fn the_device_position_ingest_equals_copy_then_pool_direct_and_replayed() {
     }
 
     // 2026-10-13: One graph captured once (capture runs nothing), replayed per position.
-    let (raw_graph, blocks_graph) = buffers(g);
+    let (raw_graph, blocks_graph) = buffers(g, RATIO);
     g.begin_capture(stream).unwrap();
     let captured = step(raw_graph, blocks_graph);
     let graph = g.end_capture(stream).unwrap();
@@ -121,14 +124,19 @@ fn the_device_position_ingest_equals_copy_then_pool_direct_and_replayed() {
         want_blocks.iter().any(|&b| b != 0),
         "the reference pooled nothing"
     );
-    for (label, raw, blocks) in [
+    let mut want_ring = vec![0u8; RATIO * HD * 2];
+    for p in TOKENS - RATIO..TOKENS {
+        let at = p % RATIO * HD * 2;
+        want_ring[at..at + HD * 2].copy_from_slice(row(p));
+    }
+    for (label, ring, blocks) in [
         ("direct", raw_new, blocks_new),
         ("replayed", raw_graph, blocks_graph),
     ] {
         assert_eq!(
-            download(g, raw, TOKENS * HD * 2),
-            want_raw,
-            "{label}: raw keys"
+            download(g, ring, RATIO * HD * 2),
+            want_ring,
+            "{label}: the ring holds the last {RATIO} keys at row pos % {RATIO}"
         );
         let got = download(g, blocks, TOKENS / RATIO * HD * 2);
         for (b, (gb, wb)) in got

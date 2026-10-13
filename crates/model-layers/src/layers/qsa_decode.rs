@@ -119,15 +119,13 @@ impl QsaIndexer {
             stream,
         )
         .context("QSA qk projection (decode)")?;
-        // 2026-10-13: A no-op when every complete block is pooled, which prefill
-        // ingest and restore leave; were one behind, re-pooling it at a replay
-        // rewrites the same bytes.
-        self.pool_new_blocks(st, gpu, stream)?;
+        // 2026-10-13 (L-K9a): every complete block is pooled already (prefill ingest and
+        // restore keep `pooled == ingested / ratio`); the ring holds the incomplete one.
         ops::qsa_ingest_step(
             gpu,
             self.k_ingest_k,
             self.qk_scratch.offset(self.n_heads as usize * hd * 2),
-            st.raw_keys,
+            st.raw_tail,
             self.k_norm_w,
             st.block_keys,
             pos_dev,
