@@ -328,4 +328,4 @@ pub fn qsa_prefill_attn(
 
 #[cfg(test)]
 #[path = "qsa_ingest_tests.rs"]
-mod tests;
+mod qsa_ingest_tests;
