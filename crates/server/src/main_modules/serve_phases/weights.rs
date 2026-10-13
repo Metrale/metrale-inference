@@ -436,7 +436,7 @@ fn skip_mtp(config: &ModelConfig) -> bool {
 /// `true` when the model type does not resolve to a loader.
 fn binds_vision(config: &metrale_config::ModelConfig) -> bool {
     metrale_model_engine::factory::loader_for_config(config)
-        .map(|l| l.binds_vision_encoder())
+        .map(|l| l.binds_vision_encoder(config))
         .unwrap_or(true)
 }
 

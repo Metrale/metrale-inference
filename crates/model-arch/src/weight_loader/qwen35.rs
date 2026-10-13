@@ -155,6 +155,13 @@ impl ModelWeightLoader for Qwen35WeightLoader {
     /// `patch_embed.proj.weight`. Reads `depth` blocks, one deepstack merger per
     /// `deepstack_visual_indexes` entry, and the final merger. Linear weights may be BF16,
     /// FP32 or FP8E4M3 (dequantized to BF16); biases, norms and embeddings BF16 or FP32.
+    /// 2026-10-13: The tower binds only under a `vision_config`
+    /// ([`Self::load_vision_encoder`] returns `None` without one), so a text-only config view
+    /// skips its tensors at load instead of uploading then freeing them.
+    fn binds_vision_encoder(&self, config: &ModelConfig) -> bool {
+        config.vision.is_some()
+    }
+
     fn load_vision_encoder(
         &self,
         store: &WeightStore,

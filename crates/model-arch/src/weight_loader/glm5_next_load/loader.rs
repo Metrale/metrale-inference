@@ -10,9 +10,9 @@ use super::*;
 impl ModelWeightLoader for Glm5NextWeightLoader {
     /// 2026-09-25: True only when `metrale_config::glm_vision_enabled()`
     /// (`METRALE_GLM_VISION`). The GLM-5.3 config parser reads the same function
-    /// before it parses `vision_config`; this method takes no config, so the
-    /// gate is the environment.
-    fn binds_vision_encoder(&self) -> bool {
+    /// before it parses `vision_config`, so the gate is the environment, not
+    /// the config this method is handed.
+    fn binds_vision_encoder(&self, _config: &ModelConfig) -> bool {
         metrale_config::glm_vision_enabled()
     }
 

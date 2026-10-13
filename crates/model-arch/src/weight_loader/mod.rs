@@ -309,8 +309,9 @@ pub trait ModelWeightLoader {
     /// weight. On `false` the checkpoint loader skips the tower's tensors
     /// (`serve_phases/weights.rs`). `factory::build` frees an unbound tower
     /// afterwards either way, keyed off the bind result, so this only lowers
-    /// peak memory.
-    fn binds_vision_encoder(&self) -> bool {
+    /// peak memory. 2026-10-13: Takes the config, so a loader whose tower needs a
+    /// `vision_config` (the Qwen family) declares `false` for a text-only one.
+    fn binds_vision_encoder(&self, _config: &ModelConfig) -> bool {
         true
     }
 

@@ -376,6 +376,11 @@ impl ModelWeightLoader for Qwen4ExpWeightLoader {
         dense(store, &format!("{pfx}.embed_tokens.weight")).context("qwen4_exp: tied lm_head")
     }
 
+    /// 2026-10-13: Same bind rule as the Qwen3.5 tower it delegates to.
+    fn binds_vision_encoder(&self, config: &ModelConfig) -> bool {
+        crate::weight_loader::qwen35::Qwen35WeightLoader.binds_vision_encoder(config)
+    }
+
     fn load_vision_encoder(
         &self,
         store: &WeightStore,

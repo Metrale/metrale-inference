@@ -52,7 +52,7 @@ impl ModelWeightLoader for KimiK3WeightLoader {
         true
     }
 
-    fn binds_vision_encoder(&self) -> bool {
+    fn binds_vision_encoder(&self, _config: &ModelConfig) -> bool {
         false
     }
 
