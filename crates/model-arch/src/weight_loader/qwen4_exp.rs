@@ -25,6 +25,7 @@ use metrale_model_weights::weights::WeightStore;
 
 use crate::weight_loader::ModelWeightLoader;
 use metrale_model_layers::layer::TransformerLayer;
+use metrale_model_layers::weight_map::quant_helpers::dense_auto;
 use metrale_model_layers::weight_map::{DenseWeight, MtpWeights, dense};
 
 // 2026-09-25: The file is `aux_sites.rs` because `aux` is a reserved file
@@ -172,6 +173,18 @@ impl ModelWeightLoader for Qwen4ExpWeightLoader {
         // (`build_linear_attention_dense_bf16`) unless
         // `METRALE_QWEN4EXP_BF16_GDN=0`, which requantizes them to NVFP4.
         let bf16_gdn = std::env::var("METRALE_QWEN4EXP_BF16_GDN").as_deref() != Ok("0");
+        // 2026-10-13: Full-attention Q/K/V/O likewise run BF16 as the checkpoint ships them
+        // (only the routed experts are NVFP4 there) unless `METRALE_QWEN4EXP_BF16_ATTN=0`,
+        // which requantizes them to NVFP4 (`build_full_attention_nvfp4`).
+        let bf16_attn = std::env::var("METRALE_QWEN4EXP_BF16_ATTN").as_deref() != Ok("0");
+        tracing::info!(
+            "Full-attention Q/K/V/O: {}",
+            if bf16_attn {
+                "BF16 as shipped"
+            } else {
+                "requantized to NVFP4 (METRALE_QWEN4EXP_BF16_ATTN=0)"
+            }
+        );
         tracing::info!(
             "GDN projections: {} on the {} linear-attention layers",
             if bf16_gdn {
@@ -224,6 +237,22 @@ impl ModelWeightLoader for Qwen4ExpWeightLoader {
                         input_norm, post_attn_norm, ffn,
                     )
                     .with_context(|| format!("qwen4_exp: GDN layer {i}"))?
+                }
+                LayerType::FullAttention if bf16_attn => {
+                    let kv_dtype = layer_kv_dtypes
+                        .get(attn_idx)
+                        .copied()
+                        .unwrap_or(KvCacheDtype::Bf16);
+                    let qkvo = ["q_proj", "k_proj", "v_proj", "o_proj"]
+                        .map(|n| dense_auto(store, &format!("{lp}.self_attn.{n}.weight"), gpu));
+                    let [q, k, v, o] = qkvo;
+                    let l = crate::weight_loader::qwen35::load_layers::fp8_attention_arms::assemble_bf16_dense_attention(
+                        store, &lp, config, gpu, kv_dtype, attn_idx, [q?, k?, v?, o?],
+                        [input_norm, post_attn_norm], ffn,
+                    )
+                    .with_context(|| format!("qwen4_exp: full-attention layer {i} (BF16)"))?;
+                    attn_idx += 1;
+                    Box::new(l) as Box<dyn TransformerLayer>
                 }
                 LayerType::FullAttention => {
                     let kv_dtype = layer_kv_dtypes

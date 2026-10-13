@@ -10,7 +10,7 @@
 pub(crate) mod attention_arms;
 mod declared;
 mod expert_plan;
-mod fp8_attention_arms;
+pub(crate) mod fp8_attention_arms;
 pub(crate) mod linear_attn_arms;
 mod linear_attn_route;
 mod load_cx;

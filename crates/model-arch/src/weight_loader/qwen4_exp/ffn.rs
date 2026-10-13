@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-09-25: The per-layer MoE FFN of `qwen4_exp`: the weights from
-//! `load_moe_qwen35`, an NVFP4 copy of the router for `MoeLayer::new`, and,
+//! `load_moe_qwen35`, the router (BF16 as shipped, or an NVFP4 copy), and,
 //! with `METRALE_HOLO_MOE_GROUPED_CUTLASS=1`, the CUTLASS grouped scale
 //! tables.
 //!
@@ -42,15 +42,24 @@ pub(super) fn build_moe(
     )
     .with_context(|| format!("qwen4_exp: MoE block at {lp}"))?;
 
-    let gate_nvfp4 = Some(quantize_to_nvfp4(
-        &weights.gate,
-        config.num_experts,
-        h,
-        gpu,
-        absmax_k,
-        quantize_k,
-        stream,
-    )?);
+    // 2026-10-13: The router runs BF16 as the checkpoint ships it (`gate_nvfp4 = None`: the
+    // dense GEMV/GEMM over `weights.gate`) unless `METRALE_QWEN4EXP_BF16_ROUTER=0`, which
+    // requantizes it to NVFP4. An NVFP4 router perturbs the logits that pick the top-10 of
+    // 512 experts, so it changes which experts run, not only their output.
+    let bf16_router = std::env::var("METRALE_QWEN4EXP_BF16_ROUTER").as_deref() != Ok("0");
+    let gate_nvfp4 = if bf16_router {
+        None
+    } else {
+        Some(quantize_to_nvfp4(
+            &weights.gate,
+            config.num_experts,
+            h,
+            gpu,
+            absmax_k,
+            quantize_k,
+            stream,
+        )?)
+    };
 
     let mut moe = MoeLayer::new(weights, config.num_experts, gate_nvfp4, gpu, config)?;
 

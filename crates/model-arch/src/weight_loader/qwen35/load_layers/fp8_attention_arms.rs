@@ -7,12 +7,16 @@
 //! Invariants: none beyond the types.
 
 use anyhow::Result;
-use metrale_model_layers::layers::Qwen3AttentionLayer;
+use metrale_cache::kv_cache::KvCacheDtype;
+use metrale_config::ModelConfig;
+use metrale_gpu_runtime::gpu::GpuBackend;
+use metrale_model_layers::layers::{FfnComponent, Qwen3AttentionLayer};
 use metrale_model_layers::weight_map::quant_helpers::dense_auto;
 use metrale_model_layers::weight_map::{
     AttentionWeights, DenseWeight, QuantizedWeight, load_fp8_block_scaled_as_fp8weight,
     load_kv_scales,
 };
+use metrale_model_weights::weights::WeightStore;
 
 use super::load_cx::{LayerIn, LoadCx};
 use crate::tp_shard::{TpShardKind, load_qkvo_tp, shard_fp8_block_scaled};
@@ -38,16 +42,9 @@ pub(super) fn build_bf16_dense_attention(
         post_attn_norm,
         ffn,
     } = parts;
-    // 2026-09-25: BF16 dense attention, TP=1 only: FP8 Q/K/V/O dequantized to BF16
+    // 2026-09-25: BF16 dense attention: FP8 Q/K/V/O dequantized to BF16
     // (`METRALE_FP8_DEQUANT_ATTN_TO_BF16`), or the Holo ModelOpt checkpoint's attention
-    // loaded with `dense_auto`. No quantized Q/K/V is passed, and O is installed with
-    // `set_o_dense_bf16`.
-    if config.tp_world_size.max(1) != 1 {
-        anyhow::bail!(
-            "BF16-dequant attention supports TP=1 only (got tp={})",
-            config.tp_world_size,
-        );
-    }
+    // loaded with `dense_auto`.
     let p = format!("{lp}.self_attn");
     tracing::info!(
         target: "metrale_model_arch::weight_loader::qwen35::load_layers",
@@ -64,18 +61,54 @@ pub(super) fn build_bf16_dense_attention(
             )
         }
     };
-    let q_bf16 = load_fp8_dense("q_proj")?;
-    let k_bf16 = load_fp8_dense("k_proj")?;
-    let v_bf16 = load_fp8_dense("v_proj")?;
-    let o_bf16 = load_fp8_dense("o_proj")?;
+    let qkvo = [
+        load_fp8_dense("q_proj")?,
+        load_fp8_dense("k_proj")?,
+        load_fp8_dense("v_proj")?,
+        load_fp8_dense("o_proj")?,
+    ];
+    assemble_bf16_dense_attention(
+        store,
+        lp,
+        config,
+        gpu,
+        layer_kv_dtypes[attn_idx],
+        attn_idx,
+        qkvo,
+        [input_norm, post_attn_norm],
+        ffn,
+    )
+}
 
+/// 2026-10-13: A full-attention layer over BF16 Q/K/V/O already on the device, TP=1 only: no
+/// quantized Q/K/V is passed, and O is installed with `set_o_dense_bf16`. Shared by the
+/// FP8-dequant and ModelOpt arms above and by checkpoints that ship attention in BF16
+/// (`qwen4_exp`), which run it as declared.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn assemble_bf16_dense_attention(
+    store: &WeightStore,
+    lp: &str,
+    config: &ModelConfig,
+    gpu: &dyn GpuBackend,
+    layer_kv_dtype: KvCacheDtype,
+    attn_idx: usize,
+    [q_proj, k_proj, v_proj, o_bf16]: [DenseWeight; 4],
+    [input_norm, post_attn_norm]: [DenseWeight; 2],
+    ffn: FfnComponent,
+) -> Result<Qwen3AttentionLayer> {
+    if config.tp_world_size.max(1) != 1 {
+        anyhow::bail!(
+            "BF16 dense attention supports TP=1 only (got tp={})",
+            config.tp_world_size,
+        );
+    }
+    let p = format!("{lp}.self_attn");
     let (k_scale, v_scale) = load_kv_scales(store, &p, gpu)?;
-    let dummy_qw = QuantizedWeight::null();
     let attn = AttentionWeights {
-        q_proj: q_bf16,
-        k_proj: k_bf16,
-        v_proj: v_bf16,
-        o_proj: dummy_qw,
+        q_proj,
+        k_proj,
+        v_proj,
+        o_proj: QuantizedWeight::null(),
         q_norm: dense_auto(store, &format!("{p}.q_norm.weight"), gpu)?,
         k_norm: dense_auto(store, &format!("{p}.k_norm.weight"), gpu)?,
         q_norm_full: None,
@@ -83,7 +116,6 @@ pub(super) fn build_bf16_dense_attention(
         k_scale,
         v_scale,
     };
-    let layer_kv_dtype = layer_kv_dtypes[attn_idx];
     let mut layer = Qwen3AttentionLayer::new(
         input_norm,
         attn,
