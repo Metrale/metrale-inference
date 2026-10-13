@@ -26,6 +26,12 @@ pub(crate) fn quant_multiplier(config: &ModelConfig) -> Option<f64> {
         Some(1.10)
     } else if config.model_type == "minimax_m2" || config.model_type == "step3p7" {
         Some(1.02)
+    } else if config.model_type == "qwen4_exp" {
+        // 2026-10-13: Every tensor is uploaded into its own exact-size buffer;
+        // the extras are the attention NVFP4/transposed/FP8 prefill copies and
+        // allocator rounding, ~1.5-2.5% of the 73.3 GiB counted. 1.3 refused
+        // an 80 GB H100 that the weights fit.
+        Some(1.03)
     } else if config
         .quantization_config
         .as_ref()
