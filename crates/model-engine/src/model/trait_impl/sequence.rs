@@ -34,6 +34,9 @@ use metrale_model_layers::layers::ops;
 use metrale_model_layers::speculative::DraftProposer;
 use metrale_model_layers::weight_map::{DenseWeight, MtpWeights, QuantizedWeight};
 
+mod aux_record;
+#[cfg(test)]
+mod aux_record_tests;
 mod state_io;
 
 impl TransformerModel {

@@ -53,8 +53,8 @@ fn glm53_validation_override_opens_only_the_prefix_cache_arm() {
         );
         assert!(
             !config.kv_only_swap_out_is_safe(),
-            "{model_type}: the swap-out image cannot carry aux blobs, so the \
-             validation switch must not reach it"
+            "{model_type}: the swap-out gate takes no validation switch, so it \
+             must stay closed while the prefix-cache arm is opened for validation"
         );
         assert!(
             !config.kv_only_prefix_cache_is_safe_with(false),
