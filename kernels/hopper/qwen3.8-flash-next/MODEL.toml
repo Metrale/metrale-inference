@@ -1,9 +1,12 @@
 # 2026-10-13: Hopper target: kernel set inherited from gb10 (HARDWARE.toml `inherits`).
+# `met serve --check-kernels` reports the lookups that do not resolve on this hardware.
 # Every table below equals kernels/gb10/qwen3.8-flash-next/MODEL.toml's except the
 # two Hopper-only W4A4 entries in [expected_absent.moe_w4a16], taken from
 # kernels/hopper/qwen3.6-35b-a3b/MODEL.toml: this target's leaf `use`s that
 # model's moe_w4a16_grouped_gemm.cu, whose block-scale FP4 region
-# kernels/hopper/HARDWARE.toml compiles out (-DMETRALE_NO_WARP_BLOCKSCALE_MMA).
+# kernels/hopper/HARDWARE.toml compiles out (-DMETRALE_NO_WARP_BLOCKSCALE_MMA),
+# and (2026-10-13) [expected_absent.w4a4_gemv_mx], taken from
+# kernels/hopper/qwen3.8-27b/MODEL.toml for the same reason.
 #
 # 2026-09-25: Qwen3.8-Flash-Next: hybrid GDN + QSA sparse attention,
 # multi-hyperconnection streams, PLE n-gram injection, MoE, ViT tower and an MTP layer.
@@ -297,3 +300,19 @@ min_reasoning_floor_tokens = 0
 
 honor_eos_inside_thinking = true
 max_thinking_budget = 2048
+
+# 2026-10-13: Harvested by the boot kernel gate on the H100 SXM reference box (the first serve
+# that reached it). Every kernel of kernels/gb10/common/w4a4_gemv_mx.cu sits inside `#ifndef
+# METRALE_NO_WARP_BLOCKSCALE_MMA`, which kernels/hopper/HARDWARE.toml defines; with them absent,
+# `w4a4_proj::prepare` (crates/model-layers/src/layers/ops/w4a4_proj.rs) leaves the W4A4 decode
+# unarmed and the routed NVFP4 experts run W4A16 (BF16 activations), the arithmetic vLLM's Marlin
+# backend runs on Hopper too.
+[expected_absent.w4a4_gemv_mx]
+w4a4_quant_rows = "Hopper sm_90a: block-scaled FP4 MMA is unsupported; the hardware guard excludes the W4A4 decode, and NVFP4 projections run W4A16."
+w4a4_gemv_mx8 = "Hopper sm_90a: block-scaled FP4 MMA is unsupported; the hardware guard excludes the W4A4 decode, and NVFP4 projections run W4A16."
+w4a4_gemv_mx16 = "Hopper sm_90a: block-scaled FP4 MMA is unsupported; the hardware guard excludes the W4A4 decode, and NVFP4 projections run W4A16."
+w4a4_gemv_mx32 = "Hopper sm_90a: block-scaled FP4 MMA is unsupported; the hardware guard excludes the W4A4 decode, and NVFP4 projections run W4A16."
+w4a4_gemv_mx16_nt2 = "Hopper sm_90a: block-scaled FP4 MMA is unsupported; the hardware guard excludes the W4A4 decode, and NVFP4 projections run W4A16."
+w4a4_gemv_mx32_nt4 = "Hopper sm_90a: block-scaled FP4 MMA is unsupported; the hardware guard excludes the W4A4 decode, and NVFP4 projections run W4A16."
+w4a4_gemv_mx16_ps = "Hopper sm_90a: block-scaled FP4 MMA is unsupported; the hardware guard excludes the W4A4 decode, and NVFP4 projections run W4A16."
+w4a4_gemv_mx32_ps = "Hopper sm_90a: block-scaled FP4 MMA is unsupported; the hardware guard excludes the W4A4 decode, and NVFP4 projections run W4A16."

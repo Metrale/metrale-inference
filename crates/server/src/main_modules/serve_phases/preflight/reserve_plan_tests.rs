@@ -269,14 +269,14 @@ fn the_slot_scaled_terms_follow_the_slot_count() {
 }
 
 /// 2026-10-13: H100's terms cover the largest driver share measured on an H100 serve (2.0 GiB
-/// logged to 0.1, so up to 2.05) from a 0.85 budget up, by at most a fifth at 0.98, and stay below
+/// logged to 0.1, so up to 2.05) from a 0.85 budget up, by at most a fifth at its util ceiling, and stay below
 /// gb10's at the same budget (kernels/hopper/HARDWARE.toml carries the measurements).
 #[test]
 fn the_hopper_driver_terms_cover_every_h100_serve_below_gb10s() {
     const H100_TOTAL: u64 = 81_079 * MIB as u64;
     let (hopper, gb10) = (class_driver("hopper"), class_driver("gb10"));
     let largest = 2_050 * MIB as u64;
-    for util in [0.85, 0.90, 0.95, 0.98] {
+    for util in [0.85, 0.90, 0.95, 0.98, 0.99] {
         let budget = (H100_TOTAL as f64 * util) as u64;
         let driver = hopper.bytes(budget, 0);
         assert!(driver >= largest, "util {util}: {driver} < {largest}");

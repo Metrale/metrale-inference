@@ -561,10 +561,13 @@ reason = "The BF16 head above 8 rows runs dense_gemm_bf16, a CUDA-core tiled FMA
 # graphs); driver_budget_per_mille = 16 covers the largest share (2.0, up to 2.05 unrounded) from
 # a 0.85 budget up: 1 GiB + 1.6% of 68,917 MiB is 2.08 GiB; at 0.98 it is 2.24 GiB, 0.39 GiB
 # below gb10's 21 per mille (`reserve_plan_tests`).
-# util_ceiling 0.98: no H100 serve here has run above it.
+# util_ceiling 0.99: a discrete device fails an allocation past its memory cleanly (a CUDA
+# out-of-memory error), never by freezing the host as gb10 did at 0.90; 0.99 leaves 0.8 GiB of
+# the device outside the budget, and Qwen3.8-Flash-Next's 71.3 GiB of weights needs it for a
+# 32k-token request's KV at a 4096-token prefill chunk.
 # unified = false: host caches do not compete for device memory.
 [memory]
-util_ceiling = 0.98
+util_ceiling = 0.99
 driver_fixed_bytes = 1073741824
 driver_budget_per_mille = 16
 unified = false
