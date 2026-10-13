@@ -19,6 +19,7 @@ pub mod ngram_embed;
 pub mod ops;
 pub mod ple;
 pub mod qsa;
+pub mod qsa_tokens;
 pub mod qwen3_attention;
 pub mod qwen3_ssm;
 pub mod vision_encoder;

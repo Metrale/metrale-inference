@@ -56,6 +56,7 @@ fn qsa_prefill_select_sets_match_reference() {
         hidden,
         nkv,
         hd_attn,
+        32768,
         g,
     )
     .unwrap();

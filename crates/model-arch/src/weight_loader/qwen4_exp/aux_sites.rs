@@ -39,6 +39,13 @@ pub(super) fn attach_qsa(
                 .with_context(|| format!("qwen4_exp layer {i}: indexer {name}"))?
                 .ptr)
         };
+        // 2026-10-13: Per-sequence key buffers are sized from the serve's
+        // `--max-seq-len`; the lever may only restate it.
+        let max_tokens = metrale_model_layers::layers::qsa_tokens::qsa_max_tokens(
+            config.serve_max_seq_len,
+            std::env::var("METRALE_QSA_MAX_TOKENS").ok().as_deref(),
+        )
+        .with_context(|| format!("qwen4_exp layer {i}: QSA indexer size"))?;
         let qsa = metrale_model_layers::layers::qsa::QsaIndexer::new(
             up("index_qk_proj.weight")?,
             up("q_layernorm.weight")?,
@@ -53,6 +60,7 @@ pub(super) fn attach_qsa(
             config.hidden_size,
             config.num_key_value_heads,
             config.head_dim,
+            max_tokens,
             gpu,
         )
         .with_context(|| format!("qwen4_exp layer {i}: QSA indexer"))?;

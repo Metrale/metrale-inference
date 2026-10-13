@@ -140,6 +140,7 @@ fn qsa_matches_reference() {
         hidden,
         2,
         256,
+        32768,
         g,
     )
     .unwrap();

@@ -131,16 +131,16 @@ impl QsaIndexer {
         hidden: usize,
         nkv_attn: usize,
         hd_attn: usize,
+        max_tokens: usize,
         gpu: &dyn GpuBackend,
     ) -> Result<Self> {
         anyhow::ensure!(
             ratio > 0 && budget.is_multiple_of(ratio),
             "QSA: budget % ratio != 0"
         );
-        let max_tokens: usize = std::env::var("METRALE_QSA_MAX_TOKENS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(32768);
+        // 2026-10-13: `max_tokens` sizes every sequence's raw and block keys; the
+        // serve derives it from `--max-seq-len` (`qsa_tokens::qsa_max_tokens`).
+        anyhow::ensure!(max_tokens > 0, "QSA: max_tokens must be positive");
         let block_topk = budget / ratio;
         let qk_width = (n_heads + 1) * hd;
         let sel_cap = budget + ratio;
@@ -236,7 +236,7 @@ impl QsaIndexer {
     /// project qk, store the raw keys, pool newly complete blocks.
     /// `seq_start == 0` resets the counters. Errors when `seq_start` is not
     /// the ingested count (a prefix-cache skip) or the total exceeds
-    /// `METRALE_QSA_MAX_TOKENS`.
+    /// `max_tokens` (the serve's `--max-seq-len`).
     pub fn prefill_ingest(
         &self,
         st: &mut QsaSeqState,
@@ -260,7 +260,7 @@ impl QsaIndexer {
         );
         anyhow::ensure!(
             seq_start + num_tokens <= self.max_tokens,
-            "QSA: {} tokens exceeds METRALE_QSA_MAX_TOKENS={}",
+            "QSA: {} tokens exceeds the indexer's max_tokens={} (--max-seq-len)",
             seq_start + num_tokens,
             self.max_tokens
         );
@@ -350,7 +350,8 @@ impl QsaIndexer {
         );
         anyhow::ensure!(
             pos < self.max_tokens,
-            "QSA: pos {pos} >= METRALE_QSA_MAX_TOKENS"
+            "QSA: pos {pos} >= the indexer's max_tokens {} (--max-seq-len)",
+            self.max_tokens
         );
 
         let hd = self.hd as usize;
