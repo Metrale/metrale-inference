@@ -1805,3 +1805,51 @@ effort_hours = 0.5
 transferability = "any MoE + MTP serve on a bandwidth-bound part: re-measure the cap per width, not per acceptance rate"
 links = { pr = "", commit = "331872ec1", evidence = "/workspace/claude-state/glm/logs/{runR3_1014T1149.log,chainK_kinv-1014T1152.log}, /workspace/claude-state/glm/ladders/bring-up-K65536-kinv-1014T1152-lad-1791979181.json" }
 notes = "The C1 step breakdown (decode worker, w2 nsys): 38.9 ms/step = verify 34 ms kernel-busy (MoE W4A4 union sweep 14.7 ms) + MTP draft graph 3.0 + host gap 1.6 + comm 2.2."
+
+[[lever]]
+id = "gb10x3-glm53-num-drafts-2"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "--num-drafts 2 vs the recipe's 1, M1L recipe, --mtp-max-seqs 8, binary 331872ec1"
+symptom = "C1-C4 tok/s trails vLLM (C1 39.98 vs 40.11, C2 58.30 vs 62.24, C4 79.32 vs 83.42); C1 is weight-bandwidth bound, so more tokens per step looked like the lever"
+diagnosis_tool = "ladder (ISL 128 / OSL 1024, NVML energy on all 3 boxes) + mtp_rungs.py per-rung counters"
+root_cause_class = "bandwidth"
+lever_type = "scheduling"
+lkb_effect = "none kept"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = -8.7, j_tok_pct = 1.1, n = 1 }, { rung = "C2", tok_s_pct = -13.3, j_tok_pct = 18.5, n = 1 }, { rung = "C4", tok_s_pct = -52.8, j_tok_pct = 100.1, n = 1 }]
+verdict = "discarded"
+verdict_reason = "ND2 vs M1L: C1 36.50 vs 39.98 tok/s, C2 50.54 vs 58.30, C4 37.41 vs 79.32. tok/step rose (1.97 / 1.82 / 1.82 vs ~1.62) but the step cost rose more: C1 step 27.4 x 1.97 = 54.0 ms vs 25.4 x 1.62 = 41.1 ms (1.31x cost for 1.22x tokens), because a 3-row verify reads a near-disjoint third expert set (adjacent-token routing is near-independent, union ~15 of 16 experts for 2 rows). C4 (12 verify rows) TPOT 103.2 vs 50.4 ms: an unexplained cliff, not pursued. NUM_DRAFTS 1 is now a measured recipe value"
+failure_mode = "on an MoE whose weight bytes scale with the routed-expert union, each extra draft row is nearly a full extra MoE read; acceptance gains cannot pay for it"
+caught_by = "the ND2 A/B arm"
+time_lost_hours = 0.3
+would_catch_earlier = "price a draft row as the union growth in bytes (decode-worker roofline: U 14.5-15 of 16 for 2 rows) before arming k > 1"
+effort_hours = 0.3
+transferability = "any bandwidth-bound MoE with near-independent per-token routing"
+links = { pr = "", commit = "331872ec1", evidence = "/workspace/claude-state/glm/logs/chainK_kinv-1014T1226.log, /workspace/claude-state/glm/ladders/bring-up-K65536-kinv-1014T1226-lad-1791981269.json" }
+notes = "The C1 roofline (decode worker): step floor ~29.7 ms vs 38.9 measured; MoE union sweep at 92-100% of 226 GB/s."
+
+[[lever]]
+id = "gb10x3-glm53-dsa-unabsorb"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "planned: un-absorb W_UV from DSA o and W_UK from DSA q (plan WP8b), behind a default-off METRALE_NUMERICS=num2-style switch"
+symptom = "W8A8 o_absorb (4096 x 11264, 212 us/call) and q_absorb (11264 x 1536) run at 97% / 89% of roofline, but absorption doubles K (22 heads x 512 = 11264 vs 5632): ~285 MB/step of avoidable weight bytes"
+diagnosis_tool = "nsys (decode worker C1 roofline table, w2_dec1.sqlite)"
+root_cause_class = "bandwidth"
+lever_type = "algorithm"
+lkb_effect = "none yet"
+parity_tier_kept = "same-precision re-baseline (num2)"
+per_rung = []
+verdict = "held"
+verdict_reason = "Coordinator ruling 2026-10-14 12:39Z: neither B (the bits change) nor N (no precision drop, only re-association). Conditions: each un-absorbed GEMV uses the checkpoint's own W_UK/W_UV at declared dtype with fp32 accumulation and no requantized fused product (any piece that needs one is N, default-off); one default-off switch; ONE combined gate with every other ready same-precision reduction-order change (acc set incl. longdec with a tolerance vs num1 stated before the run, run-to-run determinism, K-invariance at 2 MSLs x 2 chunk sizes cold+warm, perf A/B expected -1.26 ms/step at C1 and C8); on a pass flip the default once and re-record kinv/acc_ref.txt as num2, earlier records stay num1. Sequenced after the bit-exact decode GEMV re-map (L1) so its A/B stays readable"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0.0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "any MLA/DSA model whose serve absorbs the up-projections into q/o at decode: absorption trades FLOPs for bytes, the wrong trade on a bandwidth-bound part at small batch"
+links = { pr = "", commit = "", evidence = "/workspace/claude-state/glm/STATUS.md (12:4xZ ND2 / DSA ruling section)" }
+notes = "Expected -1.26 ms/step at every decode width (C1 about +3% tok/s)."
