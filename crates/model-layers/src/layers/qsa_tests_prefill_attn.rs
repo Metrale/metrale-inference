@@ -294,3 +294,18 @@ fn qsa_prefill_attn_tc_admission() {
     assert_eq!(picks(25, 2, 256, t), 1, "nq % nkv");
     assert_eq!(picks(24, 0, 256, t), 1, "nkv 0");
 }
+
+/// 2026-10-14: Dense prefill keeps exactly the rows before the inert bound: a chunk ending at or
+/// before it keeps all, one straddling it keeps the prefix, one starting at or past it keeps none.
+#[test]
+fn qsa_dense_rows_stop_at_the_inert_bound() {
+    use super::dense_rows_before as rows;
+    let b = 2051;
+    assert_eq!(rows(b, 0, 2051, false), 2051, "ends at the bound");
+    assert_eq!(rows(b, 0, 4096, false), 2051, "first 32k chunk");
+    assert_eq!(rows(b, 2000, 100, false), 51, "straddles");
+    assert_eq!(rows(b, 2051, 4096, false), 0, "starts at the bound");
+    assert_eq!(rows(b, 4096, 4096, false), 0, "later chunk");
+    assert_eq!(rows(b, 0, 0, false), 0, "empty chunk");
+    assert_eq!(rows(b, 4096, 4096, true), 4096, "lever off");
+}

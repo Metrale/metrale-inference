@@ -332,12 +332,19 @@ impl Qwen3AttentionLayer {
             // 2026-09-25: Single-stream: `meta_for_single` was checked above.
             let meta = meta_for_single
                 .expect("single-stream mode: meta_for_single guaranteed by validation above");
+            // 2026-10-14: On a QSA layer only the rows before `inert_bound` are attended
+            // densely; `prefill_select` below writes every later row. A chunk wholly past the
+            // bound skips dense attention.
+            let n_dense = self
+                .qsa
+                .as_ref()
+                .map_or(num_tokens, |q| q.dense_rows(seq_len_start, num_tokens));
             let mut args = super::paged_attn::PagedAttnArgs {
                 q_contiguous,
                 k_contiguous,
                 v_contiguous,
                 attn_out,
-                n,
+                n: n_dense as u32,
                 seq_len_start,
                 num_tokens,
                 nq,
@@ -346,16 +353,18 @@ impl Qwen3AttentionLayer {
                 bs,
                 bf16,
                 inv_sqrt_d,
-                kv_len,
+                kv_len: (seq_len_start + n_dense) as u32,
                 meta: &meta,
                 block_table,
                 disk_block_ids,
                 disk_last_offloaded_per_layer,
                 stream,
             };
-            match self.prefill_attention_paged_attn(kv_cache, ctx, &mut args)? {
-                super::paged_attn::PagedAttnOutcome::EarlyReturn(out) => return Ok(out),
-                super::paged_attn::PagedAttnOutcome::Continue => {}
+            if n_dense > 0 {
+                match self.prefill_attention_paged_attn(kv_cache, ctx, &mut args)? {
+                    super::paged_attn::PagedAttnOutcome::EarlyReturn(out) => return Ok(out),
+                    super::paged_attn::PagedAttnOutcome::Continue => {}
+                }
             }
         }
 

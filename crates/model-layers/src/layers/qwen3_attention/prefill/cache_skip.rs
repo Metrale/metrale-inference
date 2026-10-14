@@ -90,12 +90,18 @@ impl Qwen3AttentionLayer {
                 let meta = ctx
                     .attn_metadata
                     .expect("attention prefill requires metadata");
+                // 2026-10-14: Positions start at 0 here, so a QSA layer attends only the rows
+                // before `inert_bound` densely; `prefill_select` writes the rest.
+                let dense = self
+                    .qsa
+                    .as_ref()
+                    .map_or(n, |q| q.dense_rows(0, n as usize) as u32);
                 (
                     meta.positions,
                     meta.positions_h,
                     meta.positions_w,
                     meta.slot,
-                    n,
+                    dense,
                     1u32,
                 )
             };

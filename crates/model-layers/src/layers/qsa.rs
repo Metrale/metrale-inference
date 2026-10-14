@@ -269,6 +269,18 @@ impl QsaIndexer {
         (self.budget + self.ratio - 1) as usize
     }
 
+    /// 2026-10-14: How many leading rows of a single-stream prefill chunk at positions
+    /// `[seq_start, seq_start + n)` dense attention must compute: those before
+    /// [`Self::inert_bound`]. `prefill_select` rewrites every later row from the selected blocks,
+    /// so computing them densely first is wasted work (at a 32k prefill, all of chunks 1..7).
+    /// Causal attention gives a row the same bits whatever rows follow it, so the kept rows are
+    /// unchanged. `METRALE_QSA_DENSE_ALL=1` (read once per process) keeps every row.
+    pub fn dense_rows(&self, seq_start: usize, n: usize) -> usize {
+        static ALL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let all = *ALL.get_or_init(|| std::env::var("METRALE_QSA_DENSE_ALL").as_deref() == Ok("1"));
+        dense_rows_before(self.inert_bound(), seq_start, n, all)
+    }
+
     fn qk_width(&self) -> usize {
         (self.n_heads as usize + 1) * self.hd as usize
     }
@@ -376,4 +388,12 @@ impl QsaIndexer {
 
     // 2026-09-25: `prefill_select` is in `qsa_select.rs`; 2026-10-13: `decode_select`
     // is in `qsa_decode.rs`.
+}
+
+/// 2026-10-14: The rows of `[seq_start, seq_start + n)` before `bound` (all `n` when `all`).
+pub(crate) fn dense_rows_before(bound: usize, seq_start: usize, n: usize, all: bool) -> usize {
+    if all {
+        return n;
+    }
+    bound.saturating_sub(seq_start).min(n)
 }

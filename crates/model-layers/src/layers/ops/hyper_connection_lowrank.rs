@@ -53,6 +53,15 @@ fn hc_decode_split_forced() -> bool {
     *V.get_or_init(|| std::env::var("METRALE_HC_DECODE_SPLIT").as_deref() == Ok("1"))
 }
 
+/// 2026-10-14: `METRALE_HC_PREFILL_CUBLAS` equal to `"1"`, read once per process: the large-T
+/// GEMM path runs its projections on cuBLASLt (as `T <= 64` does) instead of
+/// `dense_gemm_bf16_pipelined`. An opt-in for a prefill A/B; it changes the projections'
+/// summation order, so it is off until measured.
+fn hc_prefill_cublas() -> bool {
+    static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *V.get_or_init(|| std::env::var("METRALE_HC_PREFILL_CUBLAS").as_deref() == Ok("1"))
+}
+
 /// 2026-09-25: Collapse the `hc_mult` streams to one, and emit the per-stream injection weights
 /// the matching [`hc_post_lowrank`] needs: `streams [T, hc, H] -> y_out [T, H]` BF16,
 /// `inj_out [T, hc]` FP32. Fails when `w.inject_w` is null (a site without an injection weight
@@ -127,7 +136,7 @@ pub fn hc_pre_lowrank(
             hc_mult,
             norm_eps,
             true,
-            false,
+            hc_prefill_cublas(),
             stream,
         );
     }
@@ -218,7 +227,7 @@ pub fn hc_head_lowrank(
             hc_mult,
             norm_eps,
             false,
-            false,
+            hc_prefill_cublas(),
             stream,
         );
     }

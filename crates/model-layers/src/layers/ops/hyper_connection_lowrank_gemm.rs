@@ -4,7 +4,8 @@
 //!
 //! Owner: model-layers ops.
 //! Invariants: none beyond the types. `hyper_connection_lowrank.rs` passes `use_cublas = true`
-//! for `T <= 64` and `false` for larger `T`. With `use_cublas` and a T the decode GEMVs admit
+//! for `T <= 64` and, unless `METRALE_HC_PREFILL_CUBLAS=1` (2026-10-14), `false` for larger
+//! `T`. With `use_cublas` and a T the decode GEMVs admit
 //! (2026-10-14, `hyper_connection_lowrank_gemv.rs`), those two launches replace the projections
 //! and `hc_silu_scale` / `hc_pre_mix`.
 
