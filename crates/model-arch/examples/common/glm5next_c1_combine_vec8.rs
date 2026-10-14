@@ -51,6 +51,23 @@ fn edges(eo: &mut [bf16], shared: &mut [bf16]) {
     }
 }
 
+/// 2026-10-14: `same` against the host reference, every BF16 NaN read as one value first: the
+/// device rounds a NaN sum to `0x7fff` and the host's `bf16::from_f32` keeps its quieted payload
+/// (`0x7fc0`), so only the NaN encoding may differ from the host. The kernel-to-kernel gates
+/// compare raw bytes, NaN payloads included.
+fn same_host(what: &str, host: &[u8], got: &[u8]) -> Result<()> {
+    let canon = |b: &[u8]| -> Vec<u8> {
+        b.chunks_exact(2)
+            .flat_map(|c| {
+                let v = u16::from_le_bytes([c[0], c[1]]);
+                let nan = v & 0x7f80 == 0x7f80 && v & 0x007f != 0;
+                if nan { 0x7fc0u16 } else { v }.to_le_bytes()
+            })
+            .collect()
+    };
+    same(what, &canon(host), &canon(got))
+}
+
 /// 2026-10-14: A shuffle of `0..n` (Fisher-Yates on the fixture's generator).
 fn shuffled(rng: &mut Lcg, n: usize) -> Vec<usize> {
     let mut p: Vec<usize> = (0..n).collect();
@@ -134,7 +151,7 @@ pub fn combine_vec8(g: &dyn GpuBackend, s: u64, rng: &mut Lcg) -> Result<()> {
             let want = read(g, s, base, ob)?;
             let host = (rows <= 16).then(|| combine_ref(&eo, &w, &shared, order));
             if let Some(h) = &host {
-                same(
+                same_host(
                     &format!("combine R={rows} idx={idx} scalar vs host"),
                     h,
                     &want,
@@ -152,7 +169,7 @@ pub fn combine_vec8(g: &dyn GpuBackend, s: u64, rng: &mut Lcg) -> Result<()> {
                     &got,
                 )?;
                 if let Some(h) = &host {
-                    same(&format!("combine_vec8 R={rows} idx={idx} vs host"), h, &got)?;
+                    same_host(&format!("combine_vec8 R={rows} idx={idx} vs host"), h, &got)?;
                 }
             }
             if idx {
