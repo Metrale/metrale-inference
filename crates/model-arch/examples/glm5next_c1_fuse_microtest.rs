@@ -19,6 +19,7 @@
 //! 4. KDA gate chain of one token: act-quant + f_b + kda_gate + beta sigmoid + act-quant + g_b
 //!    against `kda_gates_w8a8_k128` (`METRALE_GLM_KDA_GATES_FUSED=1`), byte for byte
 //!    (`common/glm5next_c1_kda_gates.rs`).
+//!    2026-10-14: At 1..=16, 24 and 32 rows (the MTP verify groups).
 //!
 //! Owner: model-arch examples (GLM-5.3).
 //! Invariants:
