@@ -159,6 +159,17 @@ pub(super) fn size_kv(inp: &KvInputs<'_>, plan: &SlotPlan<'_>) -> Result<KvSized
         }
     };
     let (kv_budget, reserve, mtp_pool) = budget_at(slots)?;
+    log_bounds(
+        kv_budget::kv_budget_bounds(
+            total_budget,
+            used_so_far,
+            actual_free,
+            reserve,
+            driver_credit,
+            inp.dflash_reserve,
+        ),
+        gib,
+    );
     if mtp_pool > 0 {
         tracing::info!(target: "metrale_model_engine::factory::build", "KV budget: reserving {:.1} GB for the MTP propose pool (post-sizing alloc in MtpHead::new)",
             gib(mtp_pool),
@@ -208,4 +219,25 @@ pub(super) fn size_kv(inp: &KvInputs<'_>, plan: &SlotPlan<'_>) -> Result<KvSized
         slots,
         num_kv_blocks,
     })
+}
+
+/// 2026-10-14: Which bound sized the pool. Four H100 boots of one model on 2026-10-14 all sat on
+/// the util bound with 2.1-2.6 GB to spare on the free bound, so their pools (1,678 to 3,105
+/// blocks) differed only by flags and binary, not by free memory. A boot on the free bound is
+/// warned: its pool can differ from the next boot's at the same flags.
+fn log_bounds(bounds: kv_budget::KvBounds, gib: impl Fn(usize) -> f64) {
+    if bounds.free_binds() {
+        tracing::warn!(target: "metrale_model_engine::factory::build", "KV budget: free device memory sizes the pool ({:.2} GB, under the util \
+             bound's {:.2} GB), so the pool moves with co-tenants and driver use from boot to \
+             boot; --require-kv-tokens refuses a boot whose pool comes up short",
+            gib(bounds.free),
+            gib(bounds.util),
+        );
+    } else {
+        tracing::info!(target: "metrale_model_engine::factory::build", "KV budget: the util bound sizes the pool ({:.2} GB; free-memory bound \
+             {:.2} GB)",
+            gib(bounds.util),
+            gib(bounds.free),
+        );
+    }
 }

@@ -5,7 +5,7 @@
 //! charged once, not again for the driver use free memory already shows; the util budget still
 //! binds; and nothing is credited without a baseline, a ledger, or on a class that credits none.
 
-use super::{incurred_driver_credit, kv_budget_bound};
+use super::{incurred_driver_credit, kv_budget_bound, kv_budget_bounds};
 
 const MIB: usize = 1 << 20;
 
@@ -121,5 +121,37 @@ fn the_dflash_reserve_comes_off_both_bounds() {
     assert_eq!(
         kv_budget_bound(budget(), used, ACTUAL_FREE, RESERVE, 0, d),
         ACTUAL_FREE - RESERVE - d
+    );
+}
+
+/// 2026-10-14: Boot fn-b19a (8 slots, prefix caching, util 0.99): ledger 73.6 GB, chunk slack
+/// 0.33 GB, reserve 3,951 MB, 6.471 GiB free at KV sizing, 0.10 GB driver credit, where boot X
+/// credited 0.97 GB. The util bound sizes the pool under either credit, so the credit's swing
+/// moved nothing; the slack, a term of the util bound, did.
+#[test]
+fn the_logged_boots_sit_on_the_util_bound_whatever_the_credit() {
+    let used = 75_366 * MIB + 338 * MIB;
+    let reserve = 3_951 * MIB;
+    let free = 6_626 * MIB;
+    for credit in [102 * MIB, 993 * MIB] {
+        let b = kv_budget_bounds(budget(), used, free, reserve, credit, 0);
+        assert!(!b.free_binds(), "{b:?}");
+        assert!(b.free - b.util > 2_000 * MIB, "{b:?}");
+        assert_eq!(b.budget(), budget() - used - reserve);
+    }
+    // 2026-10-14: 0.30 GB less slack is 0.30 GB more pool, one for one.
+    let fixed = kv_budget_bounds(budget(), used - 307 * MIB, free, reserve, 102 * MIB, 0);
+    assert_eq!(fixed.budget() - (budget() - used - reserve), 307 * MIB);
+}
+
+#[test]
+fn short_free_memory_binds_and_says_so() {
+    let used = LEDGER + SLACK;
+    let b = kv_budget_bounds(budget(), used, ACTUAL_FREE, RESERVE, 0, 0);
+    assert!(b.free_binds());
+    assert_eq!(b.budget(), b.free);
+    assert_eq!(
+        b.budget(),
+        kv_budget_bound(budget(), used, ACTUAL_FREE, RESERVE, 0, 0)
     );
 }

@@ -4,6 +4,7 @@
 //! allocating call site of every live allocation.
 //! 2026-10-01: Also [`LedgerProbe`], which reads the ledger without the backend, and
 //! [`chunk_slack`]: the device memory the driver holds beyond the ledger for small allocations.
+//! 2026-10-14: Read over the driver's allocations, where a slab is one allocation.
 //!
 //! Owner: gpu-runtime (CUDA backend).
 //! Invariants: none beyond the types.
@@ -97,9 +98,18 @@ impl MetraleCudaBackend {
     }
 
     /// 2026-10-01: `chunk_slack` of the live allocations, at `SMALL_ALLOC_CHUNK`.
+    /// 2026-10-14: Of the allocations the driver placed (`SlabTable::driver_allocations`): a
+    /// slab counts once at its full size, not once per member. The ledger is copied out first so
+    /// the two locks are never held together.
     pub fn chunk_slack_bytes(&self) -> usize {
-        let ledger = self.live_allocs.lock();
-        chunk_slack(ledger.iter().map(|(&a, r)| (a, r.bytes)), SMALL_ALLOC_CHUNK)
+        let ledger: Vec<(u64, usize)> = self
+            .live_allocs
+            .lock()
+            .iter()
+            .map(|(&a, r)| (a, r.bytes))
+            .collect();
+        let placed = self.slabs.lock().driver_allocations(ledger.into_iter());
+        chunk_slack(placed.into_iter(), SMALL_ALLOC_CHUNK)
     }
 
     /// 2026-10-01: A [`LedgerProbe`] on this backend's ledger.

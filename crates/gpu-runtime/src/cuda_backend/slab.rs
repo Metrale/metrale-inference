@@ -52,21 +52,25 @@ pub enum SlabRelease {
 }
 
 /// 2026-10-13: Live slabs: member pointer to base, base to live-member count.
+/// 2026-10-14: And base to the slab's bytes, the allocation the driver placed.
 #[derive(Default)]
 pub struct SlabTable {
     member_base: HashMap<u64, u64>,
     live: HashMap<u64, usize>,
+    bytes: HashMap<u64, usize>,
 }
 
 impl SlabTable {
     /// 2026-10-13: Register a slab at `base` whose members start at `base + offsets[i]`.
     /// Returns the member pointers in `offsets` order.
-    pub fn insert(&mut self, base: u64, offsets: &[usize]) -> Vec<u64> {
+    /// 2026-10-14: `total` is the slab's allocated bytes (`slab_layout`'s second value).
+    pub fn insert(&mut self, base: u64, offsets: &[usize], total: usize) -> Vec<u64> {
         let members: Vec<u64> = offsets.iter().map(|&o| base + o as u64).collect();
         for &m in &members {
             self.member_base.insert(m, base);
         }
         self.live.insert(base, members.len());
+        self.bytes.insert(base, total);
         members
     }
 
@@ -82,6 +86,7 @@ impl SlabTable {
         *count -= 1;
         if *count == 0 {
             self.live.remove(&base);
+            self.bytes.remove(&base);
             SlabRelease::LastMember(base)
         } else {
             SlabRelease::StillLive
@@ -91,6 +96,21 @@ impl SlabTable {
     /// 2026-10-13: Number of slabs with a live member.
     pub fn live_slabs(&self) -> usize {
         self.live.len()
+    }
+
+    /// 2026-10-14: `allocs` (address, bytes) as the driver placed them: every slab member
+    /// dropped, and each live slab as one allocation of its full bytes. A member below the 2 MiB
+    /// chunk read on its own looks like a small allocation the driver packs into a chunk, and a
+    /// chunk it shares with a larger member read as slack: 340 MiB of 166,823 members on
+    /// Qwen3.8-Flash-Next with its BF16 tensors in the slabs, against 0 for the slabs whole.
+    pub fn driver_allocations(
+        &self,
+        allocs: impl Iterator<Item = (u64, usize)>,
+    ) -> Vec<(u64, usize)> {
+        allocs
+            .filter(|(addr, _)| !self.member_base.contains_key(addr))
+            .chain(self.bytes.iter().map(|(&base, &total)| (base, total)))
+            .collect()
     }
 }
 
@@ -114,7 +134,7 @@ impl MetraleCudaBackend {
                 sizes.len()
             );
         }
-        let members = self.slabs.lock().insert(base, &offsets);
+        let members = self.slabs.lock().insert(base, &offsets, total);
         for (&m, &bytes) in members.iter().zip(sizes) {
             self.record_alloc(DevicePtr(m), bytes, site);
         }

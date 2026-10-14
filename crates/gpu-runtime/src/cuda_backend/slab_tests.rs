@@ -30,8 +30,8 @@ fn layout_of_nothing_is_empty() {
 #[test]
 fn base_is_released_once_with_the_last_member_in_any_order() {
     let mut t = SlabTable::default();
-    let a = t.insert(0x1000_0000, &[0, 256, 512]);
-    let b = t.insert(0x2000_0000, &[0]);
+    let a = t.insert(0x1000_0000, &[0, 256, 512], 768);
+    let b = t.insert(0x2000_0000, &[0], 256);
     assert_eq!(t.live_slabs(), 2);
     assert_eq!(t.release(a[1]), SlabRelease::StillLive);
     assert_eq!(t.release(a[2]), SlabRelease::StillLive);
@@ -43,7 +43,7 @@ fn base_is_released_once_with_the_last_member_in_any_order() {
 #[test]
 fn a_freed_member_is_no_longer_a_member() {
     let mut t = SlabTable::default();
-    let a = t.insert(0x1000_0000, &[0, 256]);
+    let a = t.insert(0x1000_0000, &[0, 256], 512);
     assert_eq!(t.release(a[0]), SlabRelease::StillLive);
     // 2026-10-13: A second free of the same pointer is not swallowed as a member free: the caller
     // hands it to the driver, which reports the double free as it would without slabs.
@@ -54,9 +54,68 @@ fn a_freed_member_is_no_longer_a_member() {
 #[test]
 fn a_pointer_never_carved_is_not_a_member() {
     let mut t = SlabTable::default();
-    t.insert(0x1000_0000, &[0, 256]);
+    t.insert(0x1000_0000, &[0, 256], 512);
     // 2026-10-13: Inside the slab but not a member start.
     assert_eq!(t.release(0x1000_0080), SlabRelease::NotMember);
     assert_eq!(t.release(0xdead_0000), SlabRelease::NotMember);
     assert_eq!(t.live_slabs(), 1);
+}
+
+/// 2026-10-14: A slab whose small members sit beside larger ones, laid out as `alloc_slab_impl`
+/// lays it out at a 2 MiB-aligned base.
+fn mixed_slab(t: &mut SlabTable, base: u64) -> Vec<(u64, usize)> {
+    const MIB: usize = 1 << 20;
+    let sizes = [MIB, 3 * MIB, 819_200, 5 * MIB + 7, 4096, 9 * MIB];
+    let (offsets, total) = slab_layout(&sizes);
+    let members = t.insert(base, &offsets, total);
+    members.into_iter().zip(sizes).collect()
+}
+
+#[test]
+fn a_slab_reads_as_one_allocation_and_its_members_as_none() {
+    use super::super::alloc_ledger::{SMALL_ALLOC_CHUNK, chunk_slack};
+    let mut t = SlabTable::default();
+    let base = 64 * SMALL_ALLOC_CHUNK;
+    let members = mixed_slab(&mut t, base);
+    let loose = (8 * SMALL_ALLOC_CHUNK, 4096usize);
+    let ledger: Vec<(u64, usize)> = members.iter().copied().chain([loose]).collect();
+    // 2026-10-14: Read member by member, the chunks the small members share with the larger
+    // ones count as slack, though the slab fills them.
+    assert!(chunk_slack(ledger.iter().copied(), SMALL_ALLOC_CHUNK) > SMALL_ALLOC_CHUNK as usize);
+    let placed = t.driver_allocations(ledger.into_iter());
+    let (_, total) = slab_layout(&members.iter().map(|m| m.1).collect::<Vec<_>>());
+    assert_eq!(placed.len(), 2);
+    assert!(placed.contains(&loose));
+    assert!(placed.contains(&(base, total)));
+    // 2026-10-14: Whole, only the loose small allocation leaves its chunk's rest.
+    assert_eq!(
+        chunk_slack(placed.into_iter(), SMALL_ALLOC_CHUNK),
+        SMALL_ALLOC_CHUNK as usize - loose.1
+    );
+}
+
+#[test]
+fn a_slab_under_a_chunk_is_one_small_allocation() {
+    use super::super::alloc_ledger::{SMALL_ALLOC_CHUNK, chunk_slack};
+    let mut t = SlabTable::default();
+    let base = 3 * SMALL_ALLOC_CHUNK;
+    let sizes = [1000usize, 3000];
+    let (offsets, total) = slab_layout(&sizes);
+    let members = t.insert(base, &offsets, total);
+    let placed = t.driver_allocations(members.into_iter().zip(sizes));
+    assert_eq!(placed, vec![(base, total)]);
+    assert_eq!(
+        chunk_slack(placed.into_iter(), SMALL_ALLOC_CHUNK),
+        SMALL_ALLOC_CHUNK as usize - total
+    );
+}
+
+#[test]
+fn a_released_slab_leaves_the_driver_view() {
+    let mut t = SlabTable::default();
+    let members = mixed_slab(&mut t, 0x4000_0000);
+    for &(m, _) in &members {
+        t.release(m);
+    }
+    assert!(t.driver_allocations(std::iter::empty()).is_empty());
 }
