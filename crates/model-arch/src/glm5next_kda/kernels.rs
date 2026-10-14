@@ -157,6 +157,13 @@ pub struct KdaSeqKernels {
     /// (`kda_chunk64_prepare.cu`): the two prepares with the forget gate inside (`gate_at.rs`).
     pub chunk64_prepare_graw: KernelHandle,
     pub chunk64_prepare_conv_graw: KernelHandle,
+    /// 2026-10-14: The multi-sequence verify kernels (`kda_seqs_tokens.cu`, `seqs_tokens.rs`):
+    /// `causal_conv1d_update_l2norm_tokens_seqs`, `causal_conv1d_window_advance_seqs` and
+    /// `kda_recurrent_decode_bf16_seqs_reg`: `conv_tokens`, `conv_window` and `recurrent` for up
+    /// to 16 sequences per launch.
+    pub conv_seqs: KernelHandle,
+    pub window_seqs: KernelHandle,
+    pub recurrent_seqs: KernelHandle,
 }
 
 impl KdaSeqKernels {
@@ -188,6 +195,13 @@ impl KdaSeqKernels {
                 "kda_chunk64_prepare",
                 "kda_chunk64_prepare_conv_graw",
             ),
+            conv_seqs: k(
+                gpu,
+                "kda_seqs_tokens",
+                "causal_conv1d_update_l2norm_tokens_seqs",
+            ),
+            window_seqs: k(gpu, "kda_seqs_tokens", "causal_conv1d_window_advance_seqs"),
+            recurrent_seqs: k(gpu, "kda_seqs_tokens", "kda_recurrent_decode_bf16_seqs_reg"),
         }
     }
 

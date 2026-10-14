@@ -98,9 +98,18 @@ pub fn kda_fixture(
     gpu: &dyn GpuBackend,
     rng: &mut Lcg,
 ) -> Result<(Glm5NextKdaConfig, Glm5NextKdaLayer, Glm5NextKdaWorkspace)> {
+    kda_fixture_heads(gpu, rng, 8)
+}
+
+/// 2026-10-14: [`kda_fixture`] with `heads` heads of 128 (22: the TP=3 per-rank KDA).
+pub fn kda_fixture_heads(
+    gpu: &dyn GpuBackend,
+    rng: &mut Lcg,
+    heads: usize,
+) -> Result<(Glm5NextKdaConfig, Glm5NextKdaLayer, Glm5NextKdaWorkspace)> {
     let cfg = Glm5NextKdaConfig {
         hidden: HIDDEN,
-        heads: 8,
+        heads,
         head_dim: 128,
         conv_kernel: 4,
         gate_lower_bound: -5.0,

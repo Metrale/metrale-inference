@@ -70,7 +70,7 @@ pub(crate) use levers::{
     router_topk_rank,
 };
 pub use levers::{arena_lean, prefill_rows};
-pub use steps::{GroupSpan, SpanPiece, group_spans, prefill_span_groups};
+pub use steps::{GroupSpan, SpanPiece, group_spans, kda_seqs_runs, prefill_span_groups};
 pub use types::{Glm5NextLayer, Glm5NextMhc, Glm5NextMixer, Glm5NextMlpSite};
 
 impl TransformerLayer for Glm5NextLayer {

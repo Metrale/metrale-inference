@@ -47,6 +47,7 @@ mod prefill;
 mod replay;
 mod rows;
 mod seq_tokens;
+pub mod seqs_tokens;
 pub use config::{Glm5NextKdaConfig, Glm5NextKdaWeights};
 use conv_pack::Pack;
 use gate_at::GateAt;
