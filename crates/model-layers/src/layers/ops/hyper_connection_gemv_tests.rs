@@ -4,7 +4,7 @@
 //! (`hc_lowrank_down_inject`, `hc_lowrank_up_mix`) against a CPU reference that rounds where the
 //! kernels round (projections to BF16, `low` and `y` to BF16), within a tolerance for their
 //! summation order and `__expf`; each token's outputs are the same bytes at T = 1 as inside a
-//! T = 13 batch (batch invariance, partial token groups of both kernels included) and on a second run; the
+//! T = 13 batch (batch invariance, a partial 8-token group included) and on a second run; the
 //! injection-free launch writes the same `low` and `y` and leaves `inj_out` alone; and the
 //! admission refuses the shapes the kernels trap on.
 //!
