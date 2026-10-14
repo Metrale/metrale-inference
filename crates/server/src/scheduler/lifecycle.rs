@@ -175,45 +175,45 @@ pub fn send_error_to_sink(io: &SchedIo, sink: &mut ResponseSink, msg: &str) {
 /// Removes the sequence at `victim_idx` from `active` (`swap_remove`),
 /// saves its state to a swap file, frees GPU resources, and returns a
 /// `SwappedSeq`. On error the victim gets an error frame and is released.
+///
+/// 2026-10-14: The victim is saved and released before anything moves. The row
+/// `swap_remove` moved into `victim_idx` is then compacted onto the victim's
+/// freed slot when that is lower than its own. Compacting first (the old order)
+/// copied the moved row's state over the victim's slot while the victim still
+/// owned it, so the save stored the wrong SSM state, and with a refused claim
+/// the two rows shared one slot. A failed compaction is logged and the row
+/// keeps its slot; the victim is already parked.
 pub fn swap_out_sequence(
     io: &SchedIo,
     active: &mut Vec<ActiveSeq>,
     victim_idx: usize,
     spill: &dyn SpillIo,
 ) -> Result<SwappedSeq> {
-    let mut a = active.swap_remove(victim_idx);
-
-    // 2026-09-25: `swap_remove` moved the last row into `victim_idx`;
-    // compact its slot to match.
-    if victim_idx < active.len() && active[victim_idx].seq.slot_idx != victim_idx {
-        // 2026-09-25: Not `?`: `a` is already out of `active`, so an early
-        // return would drop its sink (a blocking client would read
-        // "Inference cancelled") and never free its KV blocks. `send_error`
-        // answers the client and releases the sequence.
-        if let Err(e) = io.dev.apply(Effect::CompactSlot {
-            seq: &mut active[victim_idx].seq,
-            target: victim_idx,
-        }) {
-            let e = e.into_inner();
-            send_error(io, &mut a, &format!("swap-out failed: {e:#}"));
-            return Err(e);
-        }
-        // 2026-09-25: Disown the slot the moved row now owns before the
-        // fallible save below, so freeing or dropping `a` cannot release it
-        // (`detach_slot_for_reuse`).
-        let _ = io.dev.apply(Effect::DetachSlot { seq: &mut a.seq });
-    }
+    let a = active.swap_remove(victim_idx);
+    let freed = a.seq.slot_idx;
 
     // 2026-09-25: Save, free and build are `preempt::spill_out_sequence`,
     // shared with decode-time preemption. On error the victim gets an error
     // frame and is released.
-    match super::preempt::spill_out_sequence(io, a, spill) {
-        Ok(s) => Ok(s),
+    let swapped = match super::preempt::spill_out_sequence(io, a, spill) {
+        Ok(s) => s,
         Err((mut a, e)) => {
             send_error(io, &mut a, &format!("swap-out failed: {e:#}"));
-            Err(e)
+            return Err(e);
         }
+    };
+
+    if let Some(moved) = active.get_mut(victim_idx)
+        && freed != usize::MAX
+        && moved.seq.slot_idx > freed
+        && let Err(e) = io.dev.apply(Effect::CompactSlot {
+            seq: &mut moved.seq,
+            target: freed,
+        })
+    {
+        tracing::error!("swap-out: compacting the moved row onto freed slot {freed}: {e}");
     }
+    Ok(swapped)
 }
 
 /// 2026-09-25: Rebuild the GPU sequence for a parked request from its

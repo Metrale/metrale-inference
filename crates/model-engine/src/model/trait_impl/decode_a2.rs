@@ -57,6 +57,16 @@ impl TransformerModel {
             self.decode(tokens[0], seqs[0], stream)?;
             return Ok(self.decode_logits_ptr());
         }
+        // 2026-10-14: Refuse a batch in which two rows name one pool slot (DEF-1).
+        let slots = || seqs.iter().map(|s| s.slot_idx);
+        if let Some(s) =
+            super::sequence_compact::first_shared_slot(slots(), self.ssm_pool.max_slots)
+        {
+            anyhow::bail!(
+                "decode_batch: slot {s} named by two rows: {:?}",
+                slots().collect::<Vec<_>>()
+            );
+        }
 
         // 2026-09-25: EP with n > 1: the head announces the batch
         // (`ep_broadcast_decode_batch_dispatch`: command `0xFFFFFFE0`, N, the slot

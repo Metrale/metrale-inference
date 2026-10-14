@@ -58,9 +58,26 @@ impl TransformerModel {
             return Ok(());
         }
 
+        // 2026-10-14: Claim the target before touching it. A target that is not on the
+        // free list belongs to another live sequence (DEF-1: a survivor compacted onto
+        // the slot of a sequence still mid chunked prefill); moving onto it would give
+        // two sequences one SSM state, so refuse.
+        if !self.ssm_pool.claim_specific(new_slot) {
+            bail!(
+                "compact_sequence: target slot {new_slot} is not free (another sequence owns \
+                 it); refusing to move slot {old_slot} onto it"
+            );
+        }
         let stream = self.gpu.default_stream();
-        self.ssm_pool
-            .copy_slot(old_slot, new_slot, self.gpu.as_ref(), stream)?;
+        if let Err(e) = self
+            .ssm_pool
+            .copy_slot(old_slot, new_slot, self.gpu.as_ref(), stream)
+        {
+            if let Err(r) = self.ssm_pool.release_slot(new_slot) {
+                tracing::error!("compact_sequence: returning target slot {new_slot}: {r:#}");
+            }
+            return Err(e);
+        }
 
         // 2026-09-25: Repoint every slot-addressed pointer in each `SsmLayerState` (state,
         // prefill staging, MTP checkpoints and intermediates): the old slot is released
@@ -118,10 +135,10 @@ impl TransformerModel {
         // 2026-09-25: `copy_slot` is enqueued, so wait for it before the old slot is
         // released and can be claimed while the copy still reads it.
         self.gpu.synchronize(stream)?;
-        // 2026-09-25: Take the new slot off the free list if it is there, so it is never
-        // both owned by this guard and free. Then release the old slot once and point the
-        // guard at the new one; the guard's later release frees the new slot once.
-        self.ssm_pool.claim_specific(new_slot);
+        // 2026-10-14: The new slot was claimed above. Release the old slot once and point
+        // the guard at the new one; the guard's later release frees the new slot once.
+        // The guard is repointed before a release error propagates, so the new slot
+        // still has an owner.
         if let Some(g) = seq.ssm_slot.as_mut() {
             let owned = g.take();
             debug_assert_eq!(
@@ -129,11 +146,30 @@ impl TransformerModel {
                 Some(old_slot),
                 "compact_sequence: guard owned {owned:?}, expected old_slot {old_slot}"
             );
-            self.ssm_pool.release_slot(old_slot);
+            let released = self.ssm_pool.release_slot(old_slot);
             g.migrate(new_slot);
+            released
         } else {
-            self.ssm_pool.release_slot(old_slot);
+            self.ssm_pool.release_slot(old_slot)
         }
-        Ok(())
     }
 }
+
+/// 2026-10-14: The first pool slot two rows of one decode batch both name, if any.
+/// Slots at or above `max_slots` (the dummy padding slot, the detached sentinel)
+/// are not holdings and are skipped. Two rows on one slot read and write one
+/// SSM state, so both decode wrong with no error (DEF-1).
+pub(super) fn first_shared_slot(
+    slots: impl IntoIterator<Item = usize>,
+    max_slots: usize,
+) -> Option<usize> {
+    let mut seen = std::collections::HashSet::new();
+    slots
+        .into_iter()
+        .filter(|&s| s < max_slots)
+        .find(|&s| !seen.insert(s))
+}
+
+#[cfg(test)]
+#[path = "sequence_compact_tests.rs"]
+mod sequence_compact_tests;

@@ -23,6 +23,7 @@ impl SchedulerCore {
         let Self {
             ctx: sched,
             active,
+            prefilling,
             swapped,
             preempted,
             ..
@@ -34,7 +35,9 @@ impl SchedulerCore {
         if let Some(sl) = &sched.shared_lookup {
             sl.store_finished(active);
         }
-        retire_finished_sequences(&sched.io, active, sched.limits.max_seq_len);
+        // 2026-10-14: Mid-prefill sequences hold slots too; compaction must not target them.
+        let prefill_slots: Vec<usize> = prefilling.iter().map(|p| p.seq.slot_idx).collect();
+        retire_finished_sequences(&sched.io, active, sched.limits.max_seq_len, &prefill_slots);
         sched.io.tel.mark(mtp_timing::Phase::LoopRetire, t_loop);
 
         // 2026-09-25: Swap-in: while below `max_batch_size`, resume the first spilled
@@ -106,5 +109,9 @@ impl SchedulerCore {
             block_size,
         );
         sched.io.tel.mark(mtp_timing::Phase::LoopSwap, t_loop);
+        // 2026-10-14: The holders the next tick launches on. Checked here, after
+        // retirement, because a finished row keeps its `slot_idx` after its slot is
+        // released, so a check before retirement could see a stale duplicate.
+        assert_slots_distinct(active, prefilling);
     }
 }

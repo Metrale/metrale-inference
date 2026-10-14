@@ -69,18 +69,30 @@ impl SsmStatePool {
         })
     }
 
-    pub(super) fn release_slot(&self, idx: usize) {
+    /// 2026-10-14: Return `idx` to the free list. A slot outside the pool, or one
+    /// already free, is refused with an error and the free list is left unchanged:
+    /// pushing a second copy would let `claim_slot` hand the slot to two sequences.
+    pub(super) fn release_slot(&self, idx: usize) -> Result<()> {
+        if idx >= self.max_slots {
+            bail!(
+                "release_slot: slot {idx} is outside the pool (max {})",
+                self.max_slots
+            );
+        }
         let mut free = self.free_slots.lock();
-        debug_assert!(
-            !free.contains(&idx),
-            "release_slot: slot {idx} already free (double-release hands it to two seqs)"
-        );
+        if free.contains(&idx) {
+            bail!(
+                "release_slot: slot {idx} is already free; a second release would hand it to two sequences"
+            );
+        }
         free.push(idx);
+        Ok(())
     }
 
     /// 2026-09-25: Remove `slot` from the free list if present; returns whether it
     /// was. `compact_sequence` claims its migration target with this, so the target
     /// is not left on the free list while a sequence owns it.
+    #[must_use]
     pub(super) fn claim_specific(&self, slot: usize) -> bool {
         let mut free = self.free_slots.lock();
         if let Some(pos) = free.iter().position(|&s| s == slot) {
@@ -421,7 +433,9 @@ impl Drop for SlotGuard {
         if let Some(idx) = self.idx.take() {
             // 2026-09-25: Reached only when no explicit path took the index.
             tracing::debug!("SlotGuard::drop releasing un-freed SSM slot {idx}");
-            self.pool.release_slot(idx);
+            if let Err(e) = self.pool.release_slot(idx) {
+                tracing::error!("SlotGuard::drop: {e:#}");
+            }
         }
     }
 }

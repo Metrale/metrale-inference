@@ -245,6 +245,9 @@ pub(super) struct PreemptStubModel {
     /// 2026-09-30: Blocks of any non-empty prompt's prefix the stub's prefix cache
     /// holds, which `reclaim_prefix_blocks_for` leaves out of its target.
     pub(super) cached_prefix_blocks: usize,
+    /// 2026-10-14: `save <slot>`, `free <slot>` and `compact <from>-><to>`, in call
+    /// order, so a test can assert what ran before what.
+    pub(super) events: Mutex<Vec<String>>,
 }
 
 impl PreemptStubModel {
