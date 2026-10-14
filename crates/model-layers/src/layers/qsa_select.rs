@@ -157,6 +157,15 @@ impl QsaIndexer {
             "QSA: a selective row at {first_sel_pos} has at most {topk} complete blocks"
         );
         let n_sel_total = total - first_sel_pos;
+        let attn_kernel = ops::QsaPrefillAttn::select(
+            self.k_prefill_attn_k,
+            self.k_prefill_attn_tc_k,
+            nq,
+            self.nkv_attn,
+            self.hd_attn,
+        );
+        static LOGGED: std::sync::Once = std::sync::Once::new();
+        LOGGED.call_once(|| tracing::info!("QSA prefill attention: {attn_kernel:?}"));
         let mut slab = 0usize;
         while slab < n_sel_total {
             let rows = ROWS.min(n_sel_total - slab);
@@ -251,7 +260,7 @@ impl QsaIndexer {
 
             ops::qsa_prefill_attn(
                 gpu,
-                self.k_prefill_attn_k,
+                attn_kernel,
                 q_roped.offset(first_row * q_row * 2),
                 k_pool,
                 v_pool,

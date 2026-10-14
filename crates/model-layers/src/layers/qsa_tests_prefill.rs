@@ -14,7 +14,7 @@ use super::*;
 
 /// 2026-09-25: Prefill selection sets vs the golden mask rows. Ingest all T
 /// tokens, run `prefill_select` (its attention output is not checked: q and
-/// the pools are uninitialised, and `qsa_prefill_attn_matches_cpu` covers the
+/// the pools are uninitialised, and `qsa_prefill_attn_kernels_match_cpu` covers the
 /// kernel), read back the uploaded block lists and compare each selective
 /// row's set against the golden `mask_sel_rows` row.
 #[test]
@@ -172,132 +172,6 @@ fn qsa_prefill_select_sets_match_reference() {
     println!(
         "qsa prefill sets: {rows_exact}/{n_sel} rows EXACT, {total_flips} total near-tie flips"
     );
-}
-
-/// 2026-09-25: `qsa_prefill_attn` vs a CPU reference on synthetic data, covering the
-/// GQA head mapping, paged addressing and the tail tokens at a small topk.
-#[test]
-#[ignore]
-fn qsa_prefill_attn_matches_cpu() {
-    let set = metrale_kernels::ptx_for_exact_target("qwen3.8-flash-next", "nvfp4")
-        .expect("build with METRALE_TARGET_MODEL='*'");
-    let gpu = metrale_gpu_runtime::cuda_backend::MetraleCudaBackend::new(0, &set.modules)
-        .expect("CUDA backend");
-    let g: &dyn GpuBackend = &gpu;
-    let stream = g.default_stream();
-    let k = g.kernel("qsa_indexer", "qsa_prefill_attn").unwrap();
-
-    let (rows, nq, nkv, hd, ratio, topk, bs) =
-        (3usize, 24usize, 2usize, 256usize, 4usize, 8usize, 16usize);
-    // 2026-09-25: Row 0 has 10 complete blocks (more than topk = 8) and a tail of 2.
-    let first_pos = 41usize;
-    let n_pos = first_pos + rows;
-    let pages = n_pos.div_ceil(bs);
-
-    let mut seed = 0x12345u32;
-    let mut nextf = move || {
-        seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
-        ((seed >> 8) as f32 / (1 << 24) as f32) - 0.5
-    };
-    let bf = |v: f32| -> u16 { (v.to_bits() >> 16) as u16 };
-    let unbf = |u: u16| -> f32 { f32::from_bits((u as u32) << 16) };
-
-    let q_host: Vec<u16> = (0..rows * nq * hd).map(|_| bf(nextf())).collect();
-    let kv_elems = pages * bs * nkv * hd;
-    let k_host: Vec<u16> = (0..kv_elems).map(|_| bf(nextf())).collect();
-    let v_host: Vec<u16> = (0..kv_elems).map(|_| bf(nextf())).collect();
-    let lists_host: Vec<i32> = (0..rows)
-        .flat_map(|r| (0..topk as i32).map(move |i| (i * 5 + r as i32) % 10))
-        .collect();
-
-    let as_bytes = |v: &[u16]| -> Vec<u8> { v.iter().flat_map(|x| x.to_le_bytes()).collect() };
-    let q_dev = upload(g, &as_bytes(&q_host));
-    let k_dev = upload(g, &as_bytes(&k_host));
-    let v_dev = upload(g, &as_bytes(&v_host));
-    let lists_dev = upload(
-        g,
-        &lists_host
-            .iter()
-            .flat_map(|x| x.to_le_bytes())
-            .collect::<Vec<u8>>(),
-    );
-    let ident: Vec<u8> = (0..pages as i32).flat_map(|v| v.to_le_bytes()).collect();
-    let table = upload(g, &ident);
-    let out_dev = g.alloc(rows * nq * hd * 2).unwrap();
-    let scale = 1.0 / (hd as f32).sqrt();
-
-    ops::qsa_prefill_attn(
-        g,
-        k,
-        q_dev,
-        k_dev,
-        v_dev,
-        table,
-        lists_dev,
-        out_dev,
-        rows as u32,
-        first_pos as u32,
-        topk as u32,
-        ratio as u32,
-        bs as u32,
-        nq as u32,
-        nkv as u32,
-        hd as u32,
-        scale,
-        stream,
-    )
-    .unwrap();
-    g.synchronize(stream).unwrap();
-    let got = dl_bf16(g, out_dev, rows * nq * hd);
-
-    let group = nq / nkv;
-    let mut worst_cos = 1.0f64;
-    for r in 0..rows {
-        let pos = first_pos + r;
-        let complete = (pos + 1) / ratio;
-        let tail = (pos + 1) - complete * ratio;
-        let mut toks: Vec<usize> = lists_host[r * topk..(r + 1) * topk]
-            .iter()
-            .flat_map(|&b| (0..ratio).map(move |i| b as usize * ratio + i))
-            .collect();
-        toks.extend(complete * ratio..complete * ratio + tail);
-        for h in 0..nq {
-            let kvh = h / group;
-            let qv: Vec<f32> = (0..hd)
-                .map(|d| unbf(q_host[(r * nq + h) * hd + d]))
-                .collect();
-            let scores: Vec<f32> = toks
-                .iter()
-                .map(|&t| {
-                    let base = (t * nkv + kvh) * hd;
-                    (0..hd).map(|d| qv[d] * unbf(k_host[base + d])).sum::<f32>() * scale
-                })
-                .collect();
-            let m = scores.iter().cloned().fold(f32::MIN, f32::max);
-            let exps: Vec<f32> = scores.iter().map(|s| (s - m).exp()).collect();
-            let l: f32 = exps.iter().sum();
-            let mut refv = vec![0.0f32; hd];
-            for (i, &t) in toks.iter().enumerate() {
-                let base = (t * nkv + kvh) * hd;
-                let w = exps[i] / l;
-                for d in 0..hd {
-                    refv[d] += w * unbf(v_host[base + d]);
-                }
-            }
-            let gv = &got[(r * nq + h) * hd..(r * nq + h + 1) * hd];
-            let dot: f64 = gv
-                .iter()
-                .zip(&refv)
-                .map(|(a, b)| *a as f64 * *b as f64)
-                .sum();
-            let ng: f64 = gv.iter().map(|a| (*a as f64).powi(2)).sum::<f64>().sqrt();
-            let nr: f64 = refv.iter().map(|a| (*a as f64).powi(2)).sum::<f64>().sqrt();
-            let cos = dot / (ng * nr).max(1e-30);
-            worst_cos = worst_cos.min(cos);
-        }
-    }
-    println!("qsa_prefill_attn vs CPU: worst cos = {worst_cos:.9}");
-    assert!(worst_cos > 0.999, "attention kernel diverges: {worst_cos}");
 }
 
 /// 2026-09-25: Prints the cosine of `attn_prefill_64` against a CPU reference

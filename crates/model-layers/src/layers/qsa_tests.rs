@@ -272,3 +272,5 @@ fn qsa_matches_reference() {
 mod ingest;
 #[path = "qsa_tests_prefill.rs"]
 mod prefill;
+#[path = "qsa_tests_prefill_attn.rs"]
+mod prefill_attn;

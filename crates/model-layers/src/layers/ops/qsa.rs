@@ -283,13 +283,59 @@ pub fn qsa_score_rows(
         .launch(stream)
 }
 
+/// 2026-10-14: Shared memory of `qsa_prefill_attn_tc` (`QPA_SMEM_BYTES` in
+/// kernels/hopper/common/qsa_prefill_attn_tc_hopper.cu): Q tile, two K/V stages of 64 keys,
+/// the S and P tiles and two 16-float row vectors.
+const QSA_ATTN_TC_SMEM: u32 = 16 * 264 * 2 + 2 * 2 * 64 * 264 * 2 + 16 * 68 * 4 + 16 * 72 * 2 + 128;
+/// 2026-10-14: The head dimension `qsa_prefill_attn_tc` is built for (`QPA_HD`).
+const QSA_ATTN_TC_HD: u32 = 256;
+
+/// 2026-10-14: Which selective prefill attention kernel runs.
+#[derive(Clone, Copy, Debug)]
+pub enum QsaPrefillAttn {
+    /// 2026-10-14: `qsa_prefill_attn`: one CTA per (row, query head), CUDA cores.
+    Base(KernelHandle),
+    /// 2026-10-14: `qsa_prefill_attn_tc` (Hopper): one CTA per (row, KV head), the KV head's
+    /// query heads stacked into one m16n8k16 tile, K/V gathered once per KV head.
+    Tc(KernelHandle),
+}
+
+impl QsaPrefillAttn {
+    /// 2026-10-14: The tensor-core kernel's handle: zero where the target does not compile
+    /// kernels/hopper/common/qsa_prefill_attn_tc_hopper.cu, or when `METRALE_QSA_ATTN_TC` is
+    /// `"0"` (read once per process), so [`QsaPrefillAttn::select`] keeps the base kernel.
+    pub fn resolve_tc(gpu: &dyn GpuBackend) -> KernelHandle {
+        static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *OFF.get_or_init(|| std::env::var("METRALE_QSA_ATTN_TC").as_deref() == Ok("0")) {
+            return KernelHandle(0);
+        }
+        crate::layers::try_target_kernel(gpu, "qsa_prefill_attn_tc_hopper", "qsa_prefill_attn_tc")
+    }
+
+    /// 2026-10-14: The tensor-core kernel when `tc` is resolved (non-zero) and admits the shape
+    /// (`hd == 256`, `1 <= nq / nkv <= 16`, `nq % nkv == 0`), else the base kernel.
+    pub fn select(base: KernelHandle, tc: KernelHandle, nq: u32, nkv: u32, hd: u32) -> Self {
+        let admitted = tc.0 != 0
+            && hd == QSA_ATTN_TC_HD
+            && nkv > 0
+            && nq.is_multiple_of(nkv)
+            && (1..=16).contains(&(nq / nkv));
+        if admitted {
+            Self::Tc(tc)
+        } else {
+            Self::Base(base)
+        }
+    }
+}
+
 /// 2026-09-25: Per (row, q head), attention over exactly the selected blocks in
 /// `lists` plus the incomplete tail, read from the paged cache; the result
-/// overwrites that row's context in `attn_out`.
+/// overwrites that row's context in `attn_out`. 2026-10-14: [`QsaPrefillAttn::Tc`] computes the
+/// same attention per (row, KV head) on tensor cores.
 #[allow(clippy::too_many_arguments)]
 pub fn qsa_prefill_attn(
     gpu: &dyn GpuBackend,
-    kernel: KernelHandle,
+    kernel: QsaPrefillAttn,
     q: DevicePtr,
     k_cache: DevicePtr,
     v_cache: DevicePtr,
@@ -307,10 +353,13 @@ pub fn qsa_prefill_attn(
     inv_sqrt_d: f32,
     stream: u64,
 ) -> Result<()> {
-    // 2026-09-25: Per-warp `[hd]` partials for 8 warps, then 8 `m` and 8 `l`.
-    let smem = (8 * hd + 16) * 4;
-    KernelLaunch::new(gpu, kernel)
-        .grid([rows, nq, 1])
+    // 2026-09-25: Base: per-warp `[hd]` partials for 8 warps, then 8 `m` and 8 `l`.
+    let (handle, grid_y, smem) = match kernel {
+        QsaPrefillAttn::Base(h) => (h, nq, (8 * hd + 16) * 4),
+        QsaPrefillAttn::Tc(h) => (h, nkv, QSA_ATTN_TC_SMEM),
+    };
+    KernelLaunch::new(gpu, handle)
+        .grid([rows, grid_y, 1])
         .block([256, 1, 1])
         .shared_mem(smem)
         .arg_ptr(q)
