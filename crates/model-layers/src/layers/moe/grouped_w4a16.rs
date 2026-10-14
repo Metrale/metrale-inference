@@ -30,9 +30,14 @@ pub(super) struct GroupedW4a16Kernels {
     persist: KernelHandle,
     /// 2026-10-14: The warpgroup-MMA twin (`moe_w4a16_grouped_wgmma_hopper`). Loaded only when
     /// `METRALE_MOE_PREFILL_WGMMA=1` and the target compiles it (Hopper); preferred over
-    /// `persist` for the shapes it admits. Its bytes against the base are the GPU test's
-    /// question (`ops/moe_w4a16_wgmma_tests.rs`), so it stays opt-in.
+    /// `persist` for the shapes it admits on calls of at least `wgmma_min_rows` rows, below
+    /// which it is slower. It wrote the base kernel's bytes on the H100
+    /// (`ops/moe_w4a16_wgmma_tests.rs`, wgmma-01); it stays opt-in until the chunk gate
+    /// (`ops/moe_w4a16_wgmma_chunk_tests.rs`), the crossover sweep and a serve A/B report.
     wgmma: KernelHandle,
+    /// 2026-10-14: The recipe's routed-rows minimum for `wgmma`
+    /// (`METRALE_MOE_PREFILL_WGMMA_MIN_ROWS`, required with the lever); `None` with the lever off.
+    wgmma_min_rows: Option<u32>,
 }
 
 impl GroupedW4a16Kernels {
@@ -43,6 +48,13 @@ impl GroupedW4a16Kernels {
             } else {
                 KernelHandle(0)
             }
+        };
+        let wgmma_on = std::env::var("METRALE_MOE_PREFILL_WGMMA").as_deref() == Ok("1");
+        let wgmma_min_rows = if wgmma_on {
+            let raw = std::env::var(ops::MOE_W4A16_WGMMA_MIN_ROWS_ENV).ok();
+            Some(ops::moe_w4a16_wgmma_min_rows(raw.as_deref())?)
+        } else {
+            None
         };
         Ok(Self {
             base: gpu.kernel("moe_w4a16", "moe_w4a16_grouped_gemm_ptrtable")?,
@@ -64,7 +76,7 @@ impl GroupedW4a16Kernels {
                 "moe_w4a16_grouped_pipe_hopper",
                 "moe_w4a16_grouped_gemm_ptrtable_persist",
             ),
-            wgmma: if std::env::var("METRALE_MOE_PREFILL_WGMMA").as_deref() == Ok("1") {
+            wgmma: if wgmma_on {
                 try_target_kernel(
                     gpu,
                     "moe_w4a16_grouped_wgmma_hopper",
@@ -73,6 +85,7 @@ impl GroupedW4a16Kernels {
             } else {
                 KernelHandle(0)
             },
+            wgmma_min_rows,
         })
     }
 
@@ -84,11 +97,22 @@ impl GroupedW4a16Kernels {
             && ops::moe_w4a16_pipe_admits(gpu, self.persist, n_out, k)
     }
 
-    /// 2026-10-14: Whether `launch_grouped_gemm` takes the wgmma twin: loaded (the lever),
-    /// admitted for `num_experts`, and no opt-in twin ahead of it.
-    pub(super) fn wgmma(&self, gpu: &dyn GpuBackend, n_out: u32, k: u32, num_experts: u32) -> bool {
+    /// 2026-10-14: Whether `launch_grouped_gemm` takes the wgmma twin for a call of
+    /// `total_rows` expert-sorted rows: loaded (the lever), admitted for `num_experts`, routed
+    /// by `ops::moe_w4a16_wgmma_routes` at `wgmma_min_rows`, and no opt-in twin ahead of it.
+    pub(super) fn wgmma(
+        &self,
+        gpu: &dyn GpuBackend,
+        n_out: u32,
+        k: u32,
+        num_experts: u32,
+        total_rows: u32,
+    ) -> bool {
         self.m256.0 == 0
             && self.k32.0 == 0
+            && self
+                .wgmma_min_rows
+                .is_some_and(|min| ops::moe_w4a16_wgmma_routes(total_rows, min))
             && ops::moe_w4a16_wgmma_admits(gpu, self.wgmma, n_out, k, num_experts)
     }
 }
@@ -101,7 +125,8 @@ impl MoeLayer {
     /// The two opt-ins keep priority over the pipelined twin. 2026-10-14: the persistent pipelined
     /// twin goes first when `GroupedW4a16Kernels::persistent`; it ignores `max_m_tiles` and sizes
     /// its grid from `total_rows`, the expert-sorted row count. Ahead of it, the wgmma twin when
-    /// `GroupedW4a16Kernels::wgmma` (METRALE_MOE_PREFILL_WGMMA=1), sized the same way.
+    /// `GroupedW4a16Kernels::wgmma` (METRALE_MOE_PREFILL_WGMMA=1 and `total_rows` at least
+    /// METRALE_MOE_PREFILL_WGMMA_MIN_ROWS), sized the same way.
     ///
     /// The k32 and m256 kernels are opt-in. Measured 2026-08-27 on GB10 (qwen4_exp, 28K
     /// prefill, back to back): k32 +1.0% and m256 +1.4% over the arm without them,
@@ -125,7 +150,7 @@ impl MoeLayer {
         stream: u64,
     ) -> Result<()> {
         let kn = &self.w4a16_grouped;
-        if kn.wgmma(gpu, n_out, k, num_experts) {
+        if kn.wgmma(gpu, n_out, k, num_experts, total_rows) {
             return ops::moe_w4a16_grouped_gemm_ptrtable_wgmma(
                 gpu,
                 kn.wgmma,

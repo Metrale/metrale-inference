@@ -11,10 +11,14 @@
 //!   a grid far smaller than the work, and on the model's routing (512 experts, top-10) at
 //!   {1, 7, 20, 29, 80, 93, 256, 300, 4096} tokens. On a difference it prints how many elements
 //!   differ and the largest gap in BF16 units in the last place before failing.
-//! - `..._is_within_one_bf16_ulp_...` is the class-N bar: every output finite, written, and at most
-//!   one BF16 ulp from the base kernel's (the two differ only in how a k16 step sums in FP32).
+//! - `..._is_within_one_bf16_ulp_...` is the class-N guard: every output finite, written, and at
+//!   most one BF16 ulp from the persistent pipelined twin's, the kernel the MoE layer runs below
+//!   the recipe's METRALE_MOE_PREFILL_WGMMA_MIN_ROWS (wgmma-01 measured class B, so this bounds a
+//!   future regression).
 //! - `..._timing_...` prints microseconds per call of the persistent pipelined and wgmma twins on
-//!   the routing shape at 300 and 4096 tokens, and the speedup.
+//!   the routing shape at `SWEEP_TOKENS`, the speedup, and the crossover: the fewest swept tokens
+//!   from which the wgmma twin is faster on both projections at every larger swept count, with
+//!   its routed rows (the candidate METRALE_MOE_PREFILL_WGMMA_MIN_ROWS for the recipe).
 //!
 //! GPU test: run with
 //! ```text
@@ -39,8 +43,11 @@ const ROWS: [u32; 8] = [0, 1, 127, 128, 129, 300, 7, 64];
 const TOKENS: u32 = 97;
 /// 2026-10-14: Prefill lengths on the routing shape: decode widths, short prompts, a full chunk.
 const ROUTED_TOKENS: [u32; 9] = [1, 7, 20, 29, 80, 93, 256, 300, 4096];
+/// 2026-10-14: Prefill lengths of the timing sweep: wgmma-01's two points and the four between
+/// them where the crossover lies.
+pub(super) const SWEEP_TOKENS: [u32; 6] = [300, 512, 1024, 2048, 3072, 4096];
 
-fn wgmma_kernel(g: &dyn GpuBackend) -> KernelHandle {
+pub(super) fn wgmma_kernel(g: &dyn GpuBackend) -> KernelHandle {
     g.kernel(
         "moe_w4a16_grouped_wgmma_hopper",
         "moe_w4a16_grouped_gemm_ptrtable_wgmma",
@@ -143,8 +150,8 @@ fn wgmma_w4a16_grouped_gemm_is_byte_identical_to_the_base_kernel() {
 
 #[test]
 #[ignore]
-fn wgmma_w4a16_grouped_gemm_is_within_one_bf16_ulp_of_the_base_kernel() {
-    for_each_case(&mut |label, want, _pipe, got| {
+fn wgmma_w4a16_grouped_gemm_is_within_one_bf16_ulp_of_the_persistent_kernel() {
+    for_each_case(&mut |label, _base, want, got| {
         let unwritten = got
             .chunks_exact(2)
             .filter(|b| b == &[SENTINEL, SENTINEL])
@@ -154,6 +161,11 @@ fn wgmma_w4a16_grouped_gemm_is_within_one_bf16_ulp_of_the_base_kernel() {
             .filter(|b| b == &[SENTINEL, SENTINEL])
             .count();
         assert_eq!(unwritten, base_unwritten, "{label}: unwritten elements");
+        assert!(
+            want.chunks_exact(2)
+                .all(|b| u16::from_le_bytes([b[0], b[1]]) & 0x7F80 != 0x7F80),
+            "{label}: the persistent twin wrote a non-finite value"
+        );
         let (differing, max_ulps) = ulp_gap(want, got);
         assert!(
             max_ulps <= 1,
@@ -170,9 +182,11 @@ fn wgmma_w4a16_grouped_gemm_timing_against_the_persistent_twin() {
     let kn = kernels(g);
     let wg = wgmma_kernel(g);
     let s = g.create_stream().unwrap();
+    // 2026-10-14: wins[i]: the wgmma twin was faster at SWEEP_TOKENS[i] on every shape so far.
+    let mut wins = [true; SWEEP_TOKENS.len()];
     for (n, k, gather) in SHAPES {
         let w = weights(g, n, k, EXPERTS);
-        for tokens in [300, 4096] {
+        for (i, tokens) in SWEEP_TOKENS.into_iter().enumerate() {
             let p = problem(g, &w, k, gather, &routed_rows(tokens), tokens);
             let c = sentinel(g, (p.total * n) as usize * 2);
             let iters = if tokens >= 1024 { 20 } else { 100 };
@@ -188,9 +202,25 @@ fn wgmma_w4a16_grouped_gemm_timing_against_the_persistent_twin() {
                 p.total,
                 persist / wgmma
             );
+            wins[i] &= wgmma < persist;
             g.free(c).unwrap();
             p.free(g);
         }
         w.free(g);
+    }
+    // 2026-10-14: The crossover is the first swept count from which every larger one also wins;
+    // `None` when the largest does not.
+    let from = (0..wins.len())
+        .rev()
+        .take_while(|&i| wins[i])
+        .last()
+        .map(|i| SWEEP_TOKENS[i]);
+    match from {
+        Some(t) => println!(
+            "crossover: wgmma faster on both projections from T={t}: \
+             METRALE_MOE_PREFILL_WGMMA_MIN_ROWS={}",
+            t * super::moe_w4a16_pipe_tests::TOP_K
+        ),
+        None => println!("crossover: wgmma is not faster at the largest swept T"),
     }
 }

@@ -49,7 +49,7 @@ fn bytes(n: usize, seed: u32, scale: bool) -> Vec<u8> {
 }
 
 /// 2026-10-13: BF16 activations in [-2, 2].
-fn bf16s(n: usize, seed: u32) -> Vec<u8> {
+pub(super) fn bf16s(n: usize, seed: u32) -> Vec<u8> {
     bytes(n, seed, false)
         .into_iter()
         .flat_map(|b| {
@@ -175,6 +175,31 @@ pub(super) fn problem<'w>(
         },
         total,
         tiles: rows.iter().map(|r| r.div_ceil(64)).max().unwrap_or(0),
+    }
+}
+
+/// 2026-10-14: A problem over `w` from given host data: BF16 `a`, the `E + 1` expert offsets,
+/// and the sorted rows' A rows (`None`: no gather, row r of A feeds sorted row r).
+pub(super) fn problem_from<'w>(
+    g: &dyn GpuBackend,
+    w: &'w Weights,
+    a: &[u8],
+    offsets: &[u32],
+    gather: Option<&[u32]>,
+) -> Problem<'w> {
+    assert_eq!(offsets.len(), w.experts as usize + 1);
+    let total = offsets[w.experts as usize];
+    Problem {
+        w,
+        a: upload(g, a),
+        offsets: upload(g, &u32s(offsets.iter().copied())),
+        sorted: gather.map_or(DevicePtr(0), |rows| upload(g, &u32s(rows.iter().copied()))),
+        total,
+        tiles: offsets
+            .windows(2)
+            .map(|o| (o[1] - o[0]).div_ceil(64))
+            .max()
+            .unwrap_or(0),
     }
 }
 
@@ -338,26 +363,36 @@ fn pipelined_w4a16_grouped_gemm_is_byte_identical_to_the_base_kernel() {
 
 /// 2026-10-14: The model's routed experts and top-k.
 pub(super) const EXPERTS: u32 = 512;
-const TOP_K: u32 = 10;
+pub(super) const TOP_K: u32 = 10;
 /// 2026-10-14: Prefill lengths: decode-width batches, short prompts, one full 4096-token chunk.
 const ROUTED_TOKENS: [u32; 7] = [1, 7, 20, 29, 93, 300, 4096];
+
+/// 2026-10-14: TOP_K distinct pseudo-random experts for each of `tokens` tokens, drawn from a
+/// generator seeded by `seed`.
+pub(super) fn routes(tokens: u32, seed: u32) -> Vec<Vec<u32>> {
+    let mut x = 0x2545_f491u32 ^ seed;
+    (0..tokens)
+        .map(|_| {
+            let mut picked = Vec::with_capacity(TOP_K as usize);
+            while picked.len() < TOP_K as usize {
+                x ^= x << 13;
+                x ^= x >> 17;
+                x ^= x << 5;
+                let e = x % EXPERTS;
+                if !picked.contains(&e) {
+                    picked.push(e);
+                }
+            }
+            picked
+        })
+        .collect()
+}
 
 /// 2026-10-14: Rows per expert when each token picks TOP_K distinct pseudo-random experts.
 pub(super) fn routed_rows(tokens: u32) -> Vec<u32> {
     let mut rows = vec![0u32; EXPERTS as usize];
-    let mut x = 0x2545_f491u32 ^ tokens;
-    for _ in 0..tokens {
-        let mut picked = Vec::with_capacity(TOP_K as usize);
-        while picked.len() < TOP_K as usize {
-            x ^= x << 13;
-            x ^= x >> 17;
-            x ^= x << 5;
-            let e = x % EXPERTS;
-            if !picked.contains(&e) {
-                picked.push(e);
-                rows[e as usize] += 1;
-            }
-        }
+    for e in routes(tokens, tokens).into_iter().flatten() {
+        rows[e as usize] += 1;
     }
     rows
 }

@@ -133,3 +133,29 @@ fn zero_rows_launch_nothing_and_a_rejected_shape_is_an_error() {
     assert!(launch(&gpu, kernel, (704, 2560), 40_960).is_err());
     assert!(gpu.launches_snapshot().is_empty());
 }
+
+#[test]
+fn the_minimum_is_required_and_must_be_a_positive_row_count() {
+    let unset = moe_w4a16_wgmma_min_rows(None).unwrap_err().to_string();
+    assert!(
+        unset.contains("METRALE_MOE_PREFILL_WGMMA_MIN_ROWS"),
+        "{unset}"
+    );
+    for bad in ["", "0", "-5", "abc", "4096.5", "4294967296"] {
+        let err = moe_w4a16_wgmma_min_rows(Some(bad)).unwrap_err().to_string();
+        assert!(
+            err.contains("METRALE_MOE_PREFILL_WGMMA_MIN_ROWS"),
+            "{bad:?}: {err}"
+        );
+    }
+    assert_eq!(moe_w4a16_wgmma_min_rows(Some("40960")).unwrap(), 40960);
+    assert_eq!(moe_w4a16_wgmma_min_rows(Some("1")).unwrap(), 1);
+}
+
+#[test]
+fn a_call_routes_to_the_twin_from_the_minimum_up() {
+    assert!(!moe_w4a16_wgmma_routes(40959, 40960));
+    assert!(moe_w4a16_wgmma_routes(40960, 40960));
+    assert!(moe_w4a16_wgmma_routes(u32::MAX, 40960));
+    assert!(!moe_w4a16_wgmma_routes(0, 1));
+}
