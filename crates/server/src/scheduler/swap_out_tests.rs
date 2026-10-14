@@ -29,21 +29,98 @@ fn spill(name: &str) -> FileSpill {
     FileSpill::new(KvSpillManager::new(dir, 1 << 20).expect("spill dir"))
 }
 
+/// 2026-10-14: A spill store whose every `create` fails, so the save never happens.
+struct FailingSpill;
+
+impl metrale_scheduler::SpillIo for FailingSpill {
+    fn create(&self) -> anyhow::Result<(u64, Box<dyn std::io::Write + Send>)> {
+        anyhow::bail!("disk full")
+    }
+    fn open(&self, _id: u64) -> anyhow::Result<Box<dyn std::io::Read + Send>> {
+        anyhow::bail!("no such swap file")
+    }
+    fn remove(&self, _id: u64) -> anyhow::Result<()> {
+        Ok(())
+    }
+    fn record_usage(&self, _id: u64) {}
+}
+
 /// 2026-09-25: The survivors at slots 0 and 2 around a victim placed at index 1.
-/// `swap_remove(1)` moves slot 2 into index 1, and a slot that no longer
-/// matches its index is the condition under which `swap_out_sequence`
-/// compacts.
+/// `swap_remove(1)` moves slot 2 into index 1, and a moved row whose slot is
+/// above the victim's freed slot 1 is the condition under which
+/// `swap_out_sequence` compacts.
 fn three_actives() -> (ActiveSeq, ActiveSeq) {
     let (a0, _rx0) = active_seq(0, 5);
     let (a2, _rx2) = active_seq(2, 9);
     (a0, a2)
 }
 
+/// 2026-10-14: The victim's state is saved and its slot released before the moved
+/// row is compacted, and the compaction targets that freed slot. The old order
+/// copied the moved row over the victim's slot first, so the save stored the
+/// moved row's SSM state.
 #[test]
-fn compaction_failure_reaches_the_blocking_client_instead_of_dropping_it() {
+fn swap_out_saves_and_frees_the_victim_before_compacting_onto_its_slot() {
+    let model = std::sync::Arc::new(PreemptStubModel::default());
+    let (a0, a2) = three_actives();
+    let (victim, _victim_rx) = active_seq(1, 2);
+    let mut active = vec![a0, victim, a2];
+
+    swap_out_sequence(
+        &SchedIo::for_test_with(model.clone()),
+        &mut active,
+        1,
+        &spill("order"),
+    )
+    .expect("swap-out");
+    assert_eq!(
+        *model.events.lock().unwrap(),
+        ["save 1", "free 1", "compact 2->1"],
+        "save and free the victim, then move the last row onto its slot"
+    );
+}
+
+/// 2026-10-14: A compaction that fails after the victim is parked does not undo the
+/// park: the client hears nothing, the call succeeds, and the moved row stays
+/// in `active` on its own slot.
+#[test]
+fn a_compaction_failure_after_the_park_leaves_the_victim_parked() {
     let model = std::sync::Arc::new(PreemptStubModel::failing_compact(
-        "compact_sequence: slot 1 still owned",
+        "compact_sequence: target slot 1 is not free",
     ));
+    let (a0, a2) = three_actives();
+    let (victim, mut victim_rx) = streaming_seq(1, 2);
+    let mut active = vec![a0, victim, a2];
+
+    let s = swap_out_sequence(
+        &SchedIo::for_test_with(model.clone()),
+        &mut active,
+        1,
+        &spill("compact-fails"),
+    )
+    .expect("the victim was saved and released before the compaction");
+    assert_eq!(s.output_tokens.len(), 2);
+    assert_eq!(model.compact_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(*model.freed_slots.lock().unwrap(), [1]);
+    assert_eq!(
+        active.iter().map(|a| a.seq.slot_idx).collect::<Vec<_>>(),
+        [0, 2],
+        "the moved row keeps its slot"
+    );
+    assert!(
+        matches!(
+            victim_rx.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        ),
+        "a parked request's client must hear nothing yet"
+    );
+}
+
+/// 2026-10-14: A save failure still answers the client and frees the victim; the
+/// moved row is not compacted onto a slot the failed victim held.
+#[test]
+fn a_save_failure_reaches_the_client_and_compacts_nothing() {
+    let model = std::sync::Arc::new(PreemptStubModel::default());
     let (a0, a2) = three_actives();
     let (victim, mut victim_rx) = active_seq(1, 2);
     let mut active = vec![a0, victim, a2];
@@ -52,63 +129,21 @@ fn compaction_failure_reaches_the_blocking_client_instead_of_dropping_it() {
         &SchedIo::for_test_with(model.clone()),
         &mut active,
         1,
-        &spill("blocking"),
+        &FailingSpill,
     );
-    assert!(r.is_err(), "compaction failed, so the swap-out must fail");
-
-    // 2026-09-25: a dropped sink would close the oneshot, which
-    // `api::chat_blocking` renders as `500 "Inference cancelled"`; the
-    // client must instead receive the swap-out error.
-    let sent = victim_rx
+    assert!(r.is_err(), "the spill file could not be created");
+    let Err(err) = victim_rx
         .try_recv()
-        .expect("victim's sink was DROPPED — the client cannot tell this from its own abort");
-    let Err(err) = sent else {
+        .expect("victim's sink was DROPPED — the client cannot tell this from its own abort")
+    else {
         panic!("a failed swap-out must not report success to the client");
     };
-    let msg = format!("{err:#}");
     assert!(
-        msg.contains("swap-out failed") && msg.contains("compact_sequence"),
-        "the client must be told what actually failed, got: {msg}"
+        format!("{err:#}").contains("swap-out failed"),
+        "got: {err:#}"
     );
-
-    // 2026-09-25: the victim's sequence must also be freed on the way out.
-    assert!(
-        model.freed_slots.lock().unwrap().contains(&1),
-        "victim slot never freed: {:?}",
-        model.freed_slots.lock().unwrap()
-    );
-}
-
-#[test]
-fn compaction_failure_sends_a_terminal_frame_to_a_streaming_client() {
-    let model = std::sync::Arc::new(PreemptStubModel::failing_compact(
-        "compact_sequence: slot 1 still owned",
-    ));
-    let (a0, a2) = three_actives();
-    let (victim, mut victim_rx) = streaming_seq(1, 2);
-    let mut active = vec![a0, victim, a2];
-
-    assert!(
-        swap_out_sequence(
-            &SchedIo::for_test_with(model.clone()),
-            &mut active,
-            1,
-            &spill("streaming")
-        )
-        .is_err()
-    );
-
-    match victim_rx.try_recv() {
-        Ok(crate::api::StreamEvent::Error(msg)) => assert!(
-            msg.contains("swap-out failed"),
-            "terminal frame must name the failure, got: {msg}"
-        ),
-        Ok(_) => panic!("expected an Error frame, got a different StreamEvent"),
-        Err(e) => panic!(
-            "no terminal frame on the victim's stream ({e:?}) — the body is \
-             truncated under an already-committed HTTP 200"
-        ),
-    }
+    assert_eq!(*model.freed_slots.lock().unwrap(), [1]);
+    assert_eq!(model.compact_calls.load(Ordering::SeqCst), 0);
 }
 
 #[test]

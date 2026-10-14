@@ -257,12 +257,18 @@ pub(super) fn enforce_request_deadlines(io: &SchedIo, active: &mut [ActiveSeq]) 
 /// onto a free slot inside it (`compact_survivors_into_range`). A failed move
 /// is logged and that survivor keeps its slot.
 ///
+/// 2026-10-14: `held_elsewhere` is every slot a sequence outside `active` still holds
+/// (those mid chunked prefill). They count toward `n` and are never targets:
+/// DEF-1 was a survivor compacted onto a mid-prefill sequence's slot, after
+/// which both wrote one SSM state.
+///
 /// When the model uses `ep_protocol_v2`, finished sequences are removed with
 /// no compaction, so every survivor keeps its slot.
 pub(super) fn retire_finished_sequences(
     io: &SchedIo,
     active: &mut Vec<ActiveSeq>,
     max_seq_len: usize,
+    held_elsewhere: &[usize],
 ) {
     if io.dev.model().ep_protocol_v2() {
         // 2026-09-25: v2 EP: finish and remove, no compaction.
@@ -283,7 +289,8 @@ pub(super) fn retire_finished_sequences(
     //   Phase 1: finish every finished sequence (`finish_sequence` applies
     //            `Effect::ReleaseSeq`).
     //   Phase 2: move survivors outside [0..n) onto slots in [0..n) that no
-    //            survivor holds, each target used once.
+    //            survivor and no `held_elsewhere` holder holds, each target
+    //            used once.
 
     // 2026-09-25: Phase 1.
     let mut survivors: Vec<ActiveSeq> = Vec::with_capacity(active.len());
@@ -296,24 +303,35 @@ pub(super) fn retire_finished_sequences(
     }
 
     // 2026-09-25: Phase 2.
-    compact_survivors_into_range(io, &mut survivors);
+    compact_survivors_into_range(io, &mut survivors, held_elsewhere);
     *active = survivors;
 }
 
-/// 2026-09-25: Move each sequence whose `slot_idx` is outside `[0..n)` (n = the slice
-/// length) onto a slot in `[0..n)` that no sequence in the slice holds, via
-/// `Effect::CompactSlot`. Each target is used once. When the slots in the
-/// slice are distinct, there are exactly as many targets as sequences to
-/// move. A failed move, or a missing target, is logged and the sequence keeps
-/// its slot.
+/// 2026-09-25: Move each sequence whose `slot_idx` is outside `[0..n)` onto a slot
+/// in `[0..n)` that no slot holder holds, via `Effect::CompactSlot`. Each
+/// target is used once. A failed move, or a missing target, is logged and the
+/// sequence keeps its slot.
+///
+/// 2026-10-14: The holders are `survivors` plus `held_elsewhere` (slots held by
+/// sequences that are not in the slice and do not move, such as those mid
+/// chunked prefill), and n is their total count. When all held slots are
+/// distinct there are at least as many targets as survivors to move, because
+/// every holder outside `[0..n)` leaves one slot inside it unheld.
 ///
 /// Precondition: the slots of retired sequences are already released, so they
 /// can be targets. The only caller, `retire_finished_sequences`, does not call
 /// it under `ep_protocol_v2()`.
-pub(super) fn compact_survivors_into_range(io: &SchedIo, survivors: &mut [ActiveSeq]) {
-    let n = survivors.len();
-    let occupied: std::collections::HashSet<usize> =
-        survivors.iter().map(|a| a.seq.slot_idx).collect();
+pub(super) fn compact_survivors_into_range(
+    io: &SchedIo,
+    survivors: &mut [ActiveSeq],
+    held_elsewhere: &[usize],
+) {
+    let n = survivors.len() + held_elsewhere.len();
+    let occupied: std::collections::HashSet<usize> = survivors
+        .iter()
+        .map(|a| a.seq.slot_idx)
+        .chain(held_elsewhere.iter().copied())
+        .collect();
     let mut free_targets: Vec<usize> = (0..n).filter(|s| !occupied.contains(s)).collect();
     for a in survivors.iter_mut() {
         if a.seq.slot_idx >= n {
@@ -332,6 +350,29 @@ pub(super) fn compact_survivors_into_range(io: &SchedIo, survivors: &mut [Active
                     a.seq.slot_idx
                 ),
             }
+        }
+    }
+}
+
+/// 2026-10-14: Panic when two slot holders (`active` rows and mid-prefill sequences)
+/// name one slot. Two holders of one slot share its SSM/conv state, so every
+/// later token of both is wrong with no error (DEF-1); stopping the scheduler
+/// turns that into failed requests. `usize::MAX` (no slot) is skipped. Cost:
+/// one pass and a set of at most `max_batch_size` entries per tick.
+pub(super) fn assert_slots_distinct(active: &[ActiveSeq], prefilling: &[PrefillInProgress]) {
+    let mut seen = std::collections::HashSet::with_capacity(active.len() + prefilling.len());
+    let holders = active
+        .iter()
+        .map(|a| (a.seq.slot_idx, "decode"))
+        .chain(prefilling.iter().map(|p| (p.seq.slot_idx, "prefill")));
+    for (slot, role) in holders {
+        if slot != usize::MAX && !seen.insert(slot) {
+            let decode: Vec<usize> = active.iter().map(|a| a.seq.slot_idx).collect();
+            let prefill: Vec<usize> = prefilling.iter().map(|p| p.seq.slot_idx).collect();
+            panic!(
+                "scheduler invariant: slot {slot} held twice (second holder: {role}); \
+                 decode slots={decode:?}, prefill slots={prefill:?}"
+            );
         }
     }
 }

@@ -29,10 +29,18 @@ impl ModelLifecycle for PreemptStubModel {
     }
     fn free_sequence(&self, s: &mut SequenceState) -> Result<()> {
         self.freed_slots.lock().unwrap().push(s.slot_idx);
+        self.events
+            .lock()
+            .unwrap()
+            .push(format!("free {}", s.slot_idx));
         Ok(())
     }
-    fn compact_sequence(&self, _s: &mut SequenceState, _slot: usize) -> Result<()> {
+    fn compact_sequence(&self, s: &mut SequenceState, slot: usize) -> Result<()> {
         self.compact_calls.fetch_add(1, Ordering::SeqCst);
+        self.events
+            .lock()
+            .unwrap()
+            .push(format!("compact {}->{slot}", s.slot_idx));
         if let Some(msg) = self.fail_compact {
             anyhow::bail!("{msg}");
         }
@@ -43,9 +51,13 @@ impl ModelLifecycle for PreemptStubModel {
     /// so this writes one byte and returns Ok.
     fn save_sequence_state(
         &self,
-        _seq: &SequenceState,
+        seq: &SequenceState,
         writer: &mut dyn std::io::Write,
     ) -> Result<()> {
+        self.events
+            .lock()
+            .unwrap()
+            .push(format!("save {}", seq.slot_idx));
         writer.write_all(&[0u8])?;
         Ok(())
     }

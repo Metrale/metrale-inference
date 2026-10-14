@@ -105,7 +105,9 @@ impl TransformerModel {
             if let Err(e) = self.gpu.synchronize(stream) {
                 tracing::error!("free_sequence: gpu.synchronize after zero_slot({slot}): {e:#}");
             }
-            self.ssm_pool.release_slot(slot);
+            if let Err(e) = self.ssm_pool.release_slot(slot) {
+                tracing::error!("free_sequence: {e:#}");
+            }
         }
 
         // 2026-09-25: Layer state holds bare `DevicePtr`s, so dropping `layer_states` frees
