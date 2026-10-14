@@ -174,6 +174,17 @@ pub fn deadline_from(secs: f32, now: std::time::Instant) -> Option<std::time::In
 }
 
 impl AppState {
+    /// 2026-10-14: The reasoning field of this model's chat responses: its
+    /// reasoning format's (`ReasoningParser::reasoning_wire`), and
+    /// `reasoning_content` for a model without a reasoning parser.
+    pub fn reasoning_wire(&self) -> reasoning_parser::ReasoningWire {
+        self.reasoning_parser
+            .as_deref()
+            .map_or(reasoning_parser::ReasoningWire::ReasoningContent, |p| {
+                p.reasoning_wire()
+            })
+    }
+
     /// 2026-09-26: The absolute deadline for one request: `override_secs` (the
     /// request's `timeout`) when given, else `--request-timeout`.
     pub fn request_deadline(&self, override_secs: Option<f32>) -> Option<std::time::Instant> {

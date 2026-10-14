@@ -58,6 +58,9 @@ impl ReasoningParser for Glm47ReasoningParser {
     fn shapes_stream_whitespace(&self) -> bool {
         true
     }
+    fn reasoning_wire(&self) -> super::ReasoningWire {
+        super::ReasoningWire::Vllm
+    }
 
     /// 2026-10-08: Split `text` with the module's state machine. The reasoning
     /// is returned with trailing whitespace removed, and `None` when empty; the

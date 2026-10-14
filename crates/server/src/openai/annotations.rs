@@ -8,14 +8,15 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone)]
 pub struct ChatMessage {
     pub role: String,
-    /// 2026-09-26: The reasoning trace. It is the message's only reasoning
-    /// field; there is no `reasoning` copy. Requests may send either name
+    /// 2026-09-26: The reasoning trace, under one key only. 2026-10-14: the
+    /// key and its presence follow the model's `ReasoningWire`
+    /// (`reasoning_wire.rs`). Requests may send either name
     /// (`alias = "reasoning"` on `IncomingMessage::reasoning_content`).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reasoning_content: Option<String>,
+    #[serde(flatten)]
+    pub reasoning: super::WireReasoning,
     pub content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<crate::tool_parser::ToolCall>>,

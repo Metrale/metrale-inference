@@ -136,6 +136,24 @@ async fn a_chunk_carrying_both_halves_forwards_the_reasoning_first() {
 }
 
 #[tokio::test]
+async fn vllm_wire_reasoning_deltas_are_forwarded_as_reasoning() {
+    // 2026-10-14: GLM streams its reasoning as `reasoning` (vLLM's name); a null
+    // `reasoning` is not a delta.
+    let f = serve(|s| {
+        sse(
+            s,
+            &[
+                &frame(r#"{"choices":[{"delta":{"reasoning":"hm"}}]}"#),
+                &frame(r#"{"choices":[{"delta":{"reasoning":null,"content":"4"}}]}"#),
+                b"data: [DONE]\n\n",
+            ],
+        )
+    });
+    let ds = run(f.port).await;
+    assert_eq!(tags(&ds), vec!["rsn:hm", "tok:4", "done:1/1"]);
+}
+
+#[tokio::test]
 async fn keepalives_comments_and_unparseable_frames_do_not_break_the_stream() {
     let f = serve(|s| {
         sse(

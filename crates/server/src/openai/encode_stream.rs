@@ -11,6 +11,7 @@
 use axum::response::sse::Event;
 
 use crate::ir::StreamDelta;
+use crate::reasoning_parser::ReasoningWire;
 
 use super::{ChatCompletionChunk, Usage};
 
@@ -23,8 +24,9 @@ pub(crate) fn delta_to_chunk_events(
     model: &str,
     id: &str,
     include_usage: bool,
+    reasoning_wire: ReasoningWire,
 ) -> Vec<Event> {
-    delta_to_payloads(d, model, id, include_usage)
+    delta_to_payloads(d, model, id, include_usage, reasoning_wire)
         .into_iter()
         .map(|payload| Event::default().data(payload))
         .collect()
@@ -33,14 +35,20 @@ pub(crate) fn delta_to_chunk_events(
 /// 2026-09-26: The `data:` payloads for one delta, in emission order. A
 /// separate function so tests can read the chunk JSON; axum's `Event`
 /// cannot be read back.
-fn delta_to_payloads(d: &StreamDelta, model: &str, id: &str, include_usage: bool) -> Vec<String> {
+fn delta_to_payloads(
+    d: &StreamDelta,
+    model: &str,
+    id: &str,
+    include_usage: bool,
+    reasoning_wire: ReasoningWire,
+) -> Vec<String> {
     match d {
         StreamDelta::Content { text, token_ids } => vec![chunk_json(
             ChatCompletionChunk::content_chunk(model, id, text.clone())
                 .with_token_ids(token_ids.clone()),
         )],
         StreamDelta::Reasoning { text, token_ids } => vec![chunk_json(
-            ChatCompletionChunk::reasoning_chunk(model, id, text.clone())
+            ChatCompletionChunk::reasoning_chunk(model, id, reasoning_wire, text.clone())
                 .with_token_ids(token_ids.clone()),
         )],
         StreamDelta::ToolCallStart {
@@ -124,6 +132,7 @@ pub(crate) fn encode_sse_response(
     deltas: crate::ir::DeltaStream,
     model: String,
     include_usage: bool,
+    reasoning_wire: ReasoningWire,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
     use axum::response::sse::{Event, KeepAlive, Sse};
@@ -146,7 +155,7 @@ pub(crate) fn encode_sse_response(
             tracing::debug!("stream: first delta reaches the SSE encoder");
         }
         let events: Vec<Result<Event, std::convert::Infallible>> =
-            delta_to_chunk_events(&d, &model, &chunk_id, include_usage)
+            delta_to_chunk_events(&d, &model, &chunk_id, include_usage, reasoning_wire)
                 .into_iter()
                 .map(Ok)
                 .collect();
@@ -188,7 +197,13 @@ mod tests {
             text: "hi".into(),
             token_ids: Vec::new(),
         };
-        let p = delta_to_payloads(&d, "m", "chatcmpl-x", false);
+        let p = delta_to_payloads(
+            &d,
+            "m",
+            "chatcmpl-x",
+            false,
+            ReasoningWire::ReasoningContent,
+        );
         assert_eq!(p.len(), 1);
         assert!(p[0].contains("\"content\":\"hi\""), "payload: {}", p[0]);
         assert!(
@@ -208,8 +223,27 @@ mod tests {
             text: "hi".into(),
             token_ids: vec![1, 2],
         };
-        let p = delta_to_payloads(&d, "m", "chatcmpl-x", false);
+        let p = delta_to_payloads(
+            &d,
+            "m",
+            "chatcmpl-x",
+            false,
+            ReasoningWire::ReasoningContent,
+        );
         assert!(p[0].contains("\"token_ids\":[1,2]"), "payload: {}", p[0]);
+    }
+
+    #[test]
+    fn reasoning_delta_takes_the_wire_it_is_given() {
+        // 2026-10-14: The SSE encoder writes the key of the wire `encode_sse_response`
+        // passes (`AppState::reasoning_wire`); for GLM that is vLLM's `reasoning`.
+        let d = StreamDelta::Reasoning {
+            text: "mull".into(),
+            token_ids: vec![9],
+        };
+        let p = delta_to_payloads(&d, "m", "id-1", false, ReasoningWire::Vllm);
+        assert!(p[0].contains("\"reasoning\":\"mull\""), "payload: {}", p[0]);
+        assert!(!p[0].contains("reasoning_content"), "payload: {}", p[0]);
     }
 
     #[test]
@@ -218,7 +252,7 @@ mod tests {
             text: "mull".into(),
             token_ids: vec![9],
         };
-        let p = delta_to_payloads(&d, "m", "id-1", false);
+        let p = delta_to_payloads(&d, "m", "id-1", false, ReasoningWire::ReasoningContent);
         assert_eq!(p.len(), 1);
         assert!(
             p[0].contains("\"reasoning_content\":\"mull\""),
@@ -226,8 +260,13 @@ mod tests {
             p[0]
         );
         let expected = serde_json::to_string(
-            &ChatCompletionChunk::reasoning_chunk("m", "id-1", "mull".to_string())
-                .with_token_ids(vec![9]),
+            &ChatCompletionChunk::reasoning_chunk(
+                "m",
+                "id-1",
+                ReasoningWire::ReasoningContent,
+                "mull".to_string(),
+            )
+            .with_token_ids(vec![9]),
         )
         .unwrap();
         assert_eq!(norm(&p[0]), norm(&expected));
@@ -240,7 +279,7 @@ mod tests {
             id: "call_abc".into(),
             name: "get_weather".into(),
         };
-        let p = delta_to_payloads(&start, "m", "id-1", false);
+        let p = delta_to_payloads(&start, "m", "id-1", false, ReasoningWire::ReasoningContent);
         assert_eq!(p.len(), 1);
         assert!(p[0].contains("\"role\":\"assistant\""), "payload: {}", p[0]);
         assert!(
@@ -256,7 +295,7 @@ mod tests {
             fragment: "{\"city\":".into(),
             token_ids: Vec::new(),
         };
-        let p = delta_to_payloads(&args, "m", "id-1", false);
+        let p = delta_to_payloads(&args, "m", "id-1", false, ReasoningWire::ReasoningContent);
         assert_eq!(p.len(), 1);
         let expected = serde_json::to_string(&ChatCompletionChunk::tool_call_args_fragment(
             "m",
@@ -287,7 +326,7 @@ mod tests {
             usage,
             token_ids: Vec::new(),
         };
-        let p = delta_to_payloads(&d, "m", "id-1", true);
+        let p = delta_to_payloads(&d, "m", "id-1", true, ReasoningWire::ReasoningContent);
         let v: serde_json::Value = serde_json::from_str(&p[0]).unwrap();
         assert_eq!(v["usage"]["decode_time_ms"], 100.0, "{}", p[0]);
         assert_eq!(v["usage"]["total_time_ms"], 112.5, "{}", p[0]);
@@ -313,7 +352,7 @@ mod tests {
             token_ids: vec![7],
         };
 
-        let p = delta_to_payloads(&d, "m", "id-1", true);
+        let p = delta_to_payloads(&d, "m", "id-1", true, ReasoningWire::ReasoningContent);
         assert_eq!(p.len(), 2);
         assert!(p[0].contains("\"choices\":[]"), "payload: {}", p[0]);
         assert!(p[0].contains("\"prompt_tokens\":10"), "payload: {}", p[0]);
@@ -357,7 +396,7 @@ mod tests {
         );
         assert!(p[1].contains("\"token_ids\":[7]"), "payload: {}", p[1]);
 
-        let p = delta_to_payloads(&d, "m", "id-1", false);
+        let p = delta_to_payloads(&d, "m", "id-1", false, ReasoningWire::ReasoningContent);
         assert_eq!(p.len(), 1);
         assert!(
             p[0].contains("\"finish_reason\":\"stop\""),
@@ -375,7 +414,7 @@ mod tests {
         let d = StreamDelta::Error {
             message: msg.to_string(),
         };
-        let p = delta_to_payloads(&d, "m", "id-1", false);
+        let p = delta_to_payloads(&d, "m", "id-1", false, ReasoningWire::ReasoningContent);
         assert_eq!(p, vec![msg.to_string()]);
     }
 }

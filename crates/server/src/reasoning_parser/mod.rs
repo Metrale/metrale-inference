@@ -32,6 +32,18 @@ use std::str::FromStr;
 
 use crate::tokenizer::ChatTokenizer;
 
+/// 2026-10-14: The chat-response field that carries the reasoning text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReasoningWire {
+    /// `reasoning_content`, left out when there is no reasoning.
+    ReasoningContent,
+    /// vLLM's (`ChatMessage.reasoning`, `DeltaMessage.reasoning`):
+    /// `reasoning`. The blocking message always has it, null when there is no
+    /// reasoning (`model_dump()`); a stream delta has it only when it carries
+    /// reasoning (`exclude_unset=True`).
+    Vllm,
+}
+
 /// 2026-09-26: Splits reasoning blocks out of completed model output.
 pub trait ReasoningParser: Send + Sync {
     /// 2026-09-26: Parser name for logging (e.g. `"qwen"`, `"deepseek_r1"`).
@@ -67,6 +79,12 @@ pub trait ReasoningParser: Send + Sync {
     /// whitespace shaping (`api/chat_stream/vllm_shape.rs`). Default false.
     fn shapes_stream_whitespace(&self) -> bool {
         false
+    }
+
+    /// 2026-10-14: How a chat response carries this format's reasoning text
+    /// (`openai::WireReasoning`). Default `ReasoningContent`.
+    fn reasoning_wire(&self) -> ReasoningWire {
+        ReasoningWire::ReasoningContent
     }
 
     /// 2026-09-26: Split completed text into `(reasoning, content)`.
