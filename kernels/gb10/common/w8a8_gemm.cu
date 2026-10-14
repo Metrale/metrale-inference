@@ -21,7 +21,8 @@
 // Owner: gb10 kernels.
 // Invariants:
 // - K % 128 == 0, lda % 16 == 0, Aq and every W 16-byte aligned; n1 and n2 multiples of 16 with 0 < n1 <= n2 <= N.
-// - Grid (ceil(N / BN), ceil(M / BM), 1), block (256, 1, 1), dynamic shared memory STAGES * (BN + BM) * 128 bytes.
+// - Grid (ceil(N / BN), ceil(M / BM), 1) (tile counts; `raster` assigns the tiles), block (256, 1, 1), dynamic shared
+//   memory STAGES * (BN + BM) * 128 bytes.
 // - Only C[m, n] with m < M, n < N is written.
 
 #include "e4m3_mma_pipe.cuh"
@@ -60,6 +61,21 @@ __device__ __forceinline__ unsigned class_chunk(unsigned s, unsigned q, unsigned
     return w + CLASSES * i;
 }
 
+// 2026-10-14: The tile a CTA computes, from its launch order (x fastest): GROUP token tiles share each weight tile in
+// turn, so a weight tile is read from DRAM once per GROUP token tiles while those CTAs run together, and the GROUP
+// token tiles stay in L2 across the sweep over N. With x over weight tiles directly, a weight larger than L2 was
+// streamed again for every token tile (8448 x 4096 at M = 8192: 21.6 ms vs 11.9 ms for three 2816-row weights).
+// Changes which CTA computes a tile, never what it computes.
+constexpr unsigned GROUP = 8;
+
+__device__ __forceinline__ void raster(unsigned& nt, unsigned& mt) {
+    const unsigned num_n = gridDim.x, num_m = gridDim.y;
+    const unsigned lin = blockIdx.y * num_n + blockIdx.x, per_group = GROUP * num_n;
+    const unsigned first = lin / per_group * GROUP, size = min(num_m - first, GROUP), at = lin % per_group;
+    mt = first + at % size;
+    nt = at / size;
+}
+
 template <int BN, int BM, int WARPS_N, int WARPS_M, int STAGES>
 __device__ __forceinline__ void gemm_rowscale(const w8a8::Args& a, __nv_bfloat16* __restrict__ C, unsigned M,
                                               unsigned N, unsigned K) {
@@ -75,7 +91,9 @@ __device__ __forceinline__ void gemm_rowscale(const w8a8::Args& a, __nv_bfloat16
     extern __shared__ __align__(128) unsigned char smem[];
     const wxay::Lane L = wxay::lane_ids();
     const unsigned tid = threadIdx.x;
-    const unsigned n0 = blockIdx.x * BN, m0 = blockIdx.y * BM;
+    unsigned nt, mt;
+    raster(nt, mt);
+    const unsigned n0 = nt * BN, m0 = mt * BM;
     const unsigned num_c = K / CHUNK, q = num_c / CLASSES, r = num_c % CLASSES;
 
     // 2026-10-14: Each thread stages the same rows and unit at every step: row tid / 8 + 32 i, unit tid % 8.
