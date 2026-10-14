@@ -17,6 +17,13 @@ impl DraftProposer for Glm5NextMtpHead {
     }
 
     fn alloc_state(&self, gpu: &dyn GpuBackend) -> Result<Box<dyn ProposerState>> {
+        // 2026-10-14: `METRALE_GLM_MTP_STATE_POOL=1`: a freed state, reset to zero rows, before
+        // a fresh allocation (`state_pool`).
+        if metrale_model_layers::layers::ops::ModelLevers::get().glm_mtp_state_pool
+            && let Some(st) = self.state_pool.take()?
+        {
+            return Ok(Box::new(st));
+        }
         let dsa = match &self.module.layer.mixer {
             crate::glm5next_layer::Glm5NextMixer::Dsa(l) => Glm5NextDsaState::alloc(gpu, &l.cfg)?,
             _ => bail!("GLM MTP block is not a DSA layer"),
@@ -65,6 +72,14 @@ impl DraftProposer for Glm5NextMtpHead {
             .ok_or_else(|| anyhow::anyhow!("Invalid GLM MTP proposer state"))?;
         if st.released {
             return Ok(());
+        }
+        // 2026-10-14: `METRALE_GLM_MTP_STATE_POOL=1`: the buffers, region and graph go to the
+        // pool for the next sequence. A state without a region drafts nothing; it is freed.
+        if metrale_model_layers::layers::ops::ModelLevers::get().glm_mtp_state_pool
+            && st.kv_region.is_some()
+            && let crate::glm5next_layer::Glm5NextMixer::Dsa(l) = &self.module.layer.mixer
+        {
+            return self.state_pool.keep(&l.cfg, st);
         }
         st.released = true;
         st.dsa.free(gpu)?;

@@ -50,6 +50,7 @@ mod init;
 mod kv_pool;
 mod proposer;
 mod rows;
+mod state_pool;
 
 /// 2026-10-11: The batched propose's lever, its row limit, and the block workspaces' rows.
 pub use batch::{PROPOSE_BATCH_MAX, drafter_block_rows, propose_batch_enabled};
@@ -122,6 +123,8 @@ pub struct Glm5NextMtpHead {
     /// independently of the target's. 2026-10-11: One region per live state (`kv_regions`).
     kv_cache: Mutex<PagedKvCache>,
     kv_regions: kv_pool::DrafterKvRegions,
+    /// 2026-10-14: Freed states kept for reuse (`METRALE_GLM_MTP_STATE_POOL`).
+    state_pool: state_pool::StatePool,
     rms_norm_k: KernelHandle,
     gemv_k: KernelHandle,
     argmax_k: KernelHandle,

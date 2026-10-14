@@ -70,6 +70,7 @@ pub(super) fn from_values(
         one_row_tail_decode: opt_in(value("METRALE_ONE_ROW_TAIL_DECODE").as_deref()),
         seq_alloc_async: opt_in(value("METRALE_SEQ_ALLOC_ASYNC").as_deref()),
         glm_keep_slot_graphs: opt_in(value("METRALE_GLM_KEEP_SLOT_GRAPHS").as_deref()),
+        glm_mtp_state_pool: opt_in(value("METRALE_GLM_MTP_STATE_POOL").as_deref()),
         moe_fp8_grouped_decode_target: opt_in(value("METRALE_FP8_MOE_GROUPED_DECODE").as_deref()),
         fp8_attn_m32: opt_in(value("METRALE_FP8_ATTN_M32").as_deref()),
         // 2026-09-25: The target's declaration (`kernels/<hw>/HARDWARE.toml` `[defaults]
@@ -138,13 +139,15 @@ pub(super) fn from_values(
 
 impl ModelLevers {
     /// 2026-10-14: The boot readback of the new-sequence levers, as `TransformerModel::new` logs
-    /// it on every rank: `seq_alloc_async` and `glm_keep_slot_graphs`, each `on` or `off`.
+    /// it on every rank: `seq_alloc_async`, `glm_keep_slot_graphs` and (2026-10-14)
+    /// `glm_mtp_state_pool`, each `on` or `off`.
     pub fn new_sequence_readback(&self) -> String {
         let on = |b: bool| if b { "on" } else { "off" };
         format!(
-            "METRALE_SEQ_ALLOC_ASYNC={} METRALE_GLM_KEEP_SLOT_GRAPHS={}",
+            "METRALE_SEQ_ALLOC_ASYNC={} METRALE_GLM_KEEP_SLOT_GRAPHS={} METRALE_GLM_MTP_STATE_POOL={}",
             on(self.seq_alloc_async),
-            on(self.glm_keep_slot_graphs)
+            on(self.glm_keep_slot_graphs),
+            on(self.glm_mtp_state_pool)
         )
     }
 
