@@ -1613,3 +1613,51 @@ effort_hours = 3.0
 transferability = "any MTP model with a dense-row drafter and a shared whole-prompt capture"
 links = { pr = "", commit = "", evidence = "MTP acceptance 1k miss/hit" }
 notes = "A windowed catch-up is not possible for GLM: its drafter is dense row space (RoPE position = row), so a catch-up must start at the drafter's row count. The drafter carry is session-keyed and off at mtp_max_seqs > 1. A match that runs into decoded tokens (a later turn) is refused, since decode hiddens are not in the capture; filling them from the catch-up ring is a possible extension."
+
+[[lever]]
+id = "gb10x3-glm53-moe-w4a4-gu-fused-epilogue"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_MOE_W4A4_GROUPED=1 METRALE_GLM_MOE_W4A4_GU_FUSED=1 (prefill, grouped W4A4 routed experts)"
+symptom = "32k cold prefill, per 8208-row layer-chunk on rank 0: grouped gate+up 7.85 ms, glm5next_swiglu_clamp 1.14-1.38 ms, w4a4_quant_rows_static_k64 0.50 ms; the gate and up BF16 tiles (2 x 92 MB) go to DRAM only to be read back by the SwiGLU, whose BF16 output is read back by the quantizer"
+diagnosis_tool = "nsys kernel table of a 32k prefill + bytes-floor arithmetic"
+root_cause_class = "duplicate-materialization"
+lever_type = "fusion"
+lkb_effect = "w4a4_grouped_core.cuh: the grouped W4A4 body takes a GU template flag; w4a4_grouped_gu_m32/_m64/_m128 run the gate and up halves of one column block in one CTA (same chunk order, same fragment rows), round each to BF16 in registers, apply glm5next_swiglu_clamp_f32 (shared header with the standalone SwiGLU) and quantize each 16-value group with w4a4_quant_group / w4a4_quant_pad_group (extracted from w4a4_quant_rows_impl), writing the down input's codes, block scales and globals; one launcher (launch_w4a4_gu) serves the forward and the bench"
+parity_tier_kept = "bit-identical by construction (same MMA chunk order and accumulator rows, the BF16 rounding, SwiGLU and quantizer code shared with the separate path; PTX of every pre-existing entry unchanged); GPU byte gate pending"
+per_rung = [{ rung = "prefill-32k-cold", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "held"
+verdict_reason = "written without a GPU; the byte gate (examples/glm5next_moe_epi_bench: rows 17/64/512/1036/8208, uniform and Zipf 1.2 routing, m32/m64/m128, widths 704 and 640, limits 10 and the routing's 3/4 quantile) and the 32k cold TTFT A/B are pending. Expected about 1.6-2.3 ms per 8208-row layer-chunk (SwiGLU + quantizer launches and 185 MB of BF16 store/reload gone), about 0.2-0.3 s per 32k request at 126 layer-chunks"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = "a bytes-floor pass over every elementwise kernel that sits between two GEMMs"
+effort_hours = 6.0
+transferability = "any NVFP4 W4A4 MoE with a gated activation and a static down input scale on the grouped path (the lever needs METRALE_GLM_MOE_W4A4_GROUPED=1)"
+links = { pr = "", commit = "", evidence = "examples/glm5next_moe_epi_bench" }
+notes = "The down input lands in the a_gate/a_up/a_act scratch, so the W4A4 scratch the fused launch reads stays intact. The combine is deliberately NOT fused into the down epilogue: the only deterministic way is a per-token owner, and atomics would break bit identity."
+
+[[lever]]
+id = "gb10x3-glm53-moe-w4a4-down-tile-candidate"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_MOE_W4A4_GROUPED=1, routed down GEMM (w4a4_grouped_mx_m128_k64, N 4096, K 704 stored at 768)"
+symptom = "per 8208-row layer-chunk the down GEMM runs 5.85 ms (about 65 TFLOPS) against gate+up's 7.85 ms (about 96 TFLOPS)"
+diagnosis_tool = "roofline arithmetic (bytes and MACs per launch)"
+root_cause_class = "bandwidth-bound"
+lever_type = "kernel"
+lkb_effect = "none yet: the candidates are the down's tile (m64 or a new m128 x NT128 _k64 entry, which halves the 64-fold L2 re-read of each A tile and the CTA count) and overlapping the BF16 output store with the next tile's main loop; the bits do not depend on the tile, and K order is untouched"
+parity_tier_kept = "n/a (analysis)"
+per_rung = [{ rung = "prefill-32k-cold", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "held"
+verdict_reason = "analysis only. The down moves about 1.03 GB per chunk (538 MB BF16 output, about 467 MB weights, 28 MB input) for 379 GFLOP: about 2x the bytes per FLOP of gate+up (1.14 GB for 757 GFLOP). Its bandwidth ceiling at 249-273 GB/s is about 3.8-4.1 ms, so it already runs at about 65% of DRAM bandwidth versus gate+up's 53%; the TFLOPS gap is the roofline, not the K loop. At most about 2 ms per chunk is left, and only by better store/load overlap. The k64 tail costs 1/12 extra MMAs (768 vs 704) but no DRAM bytes."
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = "compare TFLOPS only between launches of equal arithmetic intensity"
+effort_hours = 1.0
+transferability = "any grouped MoE down GEMM whose output is wider than its K"
+links = { pr = "", commit = "", evidence = "ncu --metrics dram__bytes_read.sum,dram__bytes_write.sum,lts__t_sectors_srcunit_tex_op_read.sum on w4a4_grouped_mx_m128_k64" }
+notes = "Weight-read amortization: the grid's x (column blocks) varies fastest and every expert's m-tiles are adjacent in y, so a weight tile's next reader is 11 CTAs later on gate/up (704/64) and 64 later on the down (4096/64), inside the about 96 resident CTAs: weights stream from DRAM about once per chunk, 3 x 467 MB = 1.4 GB per layer-chunk (82% of gate+up's bytes, 45% of the down's). Larger prefill chunks amortize them: at 126 layer-chunks per 32k request, halving the chunk count would save about 88 GB of weight reads, about 0.35 s at the floor or about 0.6 s at the measured efficiency, at the cost of a larger activation scratch."

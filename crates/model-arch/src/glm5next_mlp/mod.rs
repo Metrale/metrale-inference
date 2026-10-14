@@ -204,6 +204,10 @@ pub struct W4a4GroupedKernels {
     pub one_group: KernelHandle,
     pub mx: [KernelHandle; 3],
     pub mx_k64: [KernelHandle; 3],
+    /// 2026-10-14: `w4a4_grouped_gu_m{32,64,128}`, gate, up, the clamped SwiGLU and the down
+    /// input's static quantization in one launch (`forward::w4a4_grouped_gu`,
+    /// `METRALE_GLM_MOE_W4A4_GU_FUSED=1`).
+    pub gu: [KernelHandle; 3],
 }
 
 /// 2026-10-10: `w4a4_quant_rows_static_k64`, `w4a4_gemv_mx8_moe_slots_k64` and
@@ -415,6 +419,12 @@ impl Glm5NextMlpKernels {
                     "w4a4_grouped_mx_m32_k64",
                     "w4a4_grouped_mx_m64_k64",
                     "w4a4_grouped_mx_m128_k64",
+                ]
+                .map(|e| metrale_model_layers::layers::try_kernel(gpu, W4A4_GROUPED_MODULE, e)),
+                gu: [
+                    "w4a4_grouped_gu_m32",
+                    "w4a4_grouped_gu_m64",
+                    "w4a4_grouped_gu_m128",
                 ]
                 .map(|e| metrale_model_layers::layers::try_kernel(gpu, W4A4_GROUPED_MODULE, e)),
             },
