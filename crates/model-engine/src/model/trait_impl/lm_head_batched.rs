@@ -134,7 +134,7 @@ fn lmhead_batch_gemv_enabled() -> bool {
 fn project_bf16_lm_head(
     gpu: &dyn GpuBackend,
     fallback: KernelHandle,
-    batch_gemv: KernelHandle,
+    batch_gemv: ops::DenseGemvBatchmPair,
     input: DevicePtr,
     weight: &DenseWeight,
     output: DevicePtr,
@@ -148,14 +148,14 @@ fn project_bf16_lm_head(
     // 2026-09-30: A fixed `--activation-quantization` for the head: the batched GEMV at every
     // row count, in chunks of its widest launch. Every row equals `dense_gemv_bf16`, the kernel
     // one row takes, whatever the row count.
-    if fixed && batch_gemv.0 != 0 && k.is_multiple_of(8) {
+    if fixed && batch_gemv.narrow.0 != 0 && k.is_multiple_of(8) {
         let h = k as usize;
         let mut done = 0u32;
         while done < m {
             let rows = (m - done).min(ops::DENSE_GEMV_BATCHM_MAX_M);
             ops::dense_gemv_batchm(
                 gpu,
-                batch_gemv,
+                batch_gemv.for_rows(rows),
                 input.offset(done as usize * h * 2),
                 weight,
                 output.offset(done as usize * n as usize * 2),
@@ -180,8 +180,13 @@ fn project_bf16_lm_head(
         log_m16_tc_head_route(n_tile, m16_tc.n_tile);
         return gemm(gpu, kernel, input, weight, output, m, n, k, k, n, stream);
     }
-    if batch_enabled && batch_gemv.0 != 0 && (1..=batchm_max).contains(&m) && k.is_multiple_of(8) {
-        ops::dense_gemv_batchm(gpu, batch_gemv, input, weight, output, m, n, k, n, stream)
+    if batch_enabled
+        && batch_gemv.narrow.0 != 0
+        && (1..=batchm_max).contains(&m)
+        && k.is_multiple_of(8)
+    {
+        let kernel = batch_gemv.for_rows(m);
+        ops::dense_gemv_batchm(gpu, kernel, input, weight, output, m, n, k, n, stream)
     } else {
         ops::dense_gemm(gpu, fallback, input, weight, output, m, n, k, stream)
     }
@@ -235,7 +240,7 @@ impl TransformerModel {
     /// batch it serves with the batched GEMV (0 when that arm is off), and whether the
     /// tensor-core arm is live (it takes 5..=16 rows ahead of the GEMV).
     pub(super) fn bf16_head_route(&self) -> (u32, bool) {
-        let batchm = if lmhead_batch_gemv_enabled() && self.dense_gemv_batchm_kernel.0 != 0 {
+        let batchm = if lmhead_batch_gemv_enabled() && self.dense_gemv_batchm_kernel.narrow.0 != 0 {
             lm_head_batchm_max()
         } else {
             0
@@ -265,7 +270,7 @@ impl TransformerModel {
         } else {
             lm_head_batchm_max()
         };
-        if self.dense_gemv_batchm_kernel.0 == 0
+        if self.dense_gemv_batchm_kernel.narrow.0 == 0
             || !(1..=band).contains(&m)
             || !h.is_multiple_of(8)
             || (!fixed
@@ -389,7 +394,7 @@ impl TransformerModel {
             self.gpu.memset_async(logits, 0, padded_n * v * 2, stream)?;
             ops::dense_gemv_batchm(
                 self.gpu.as_ref(),
-                self.dense_gemv_batchm_kernel,
+                self.dense_gemv_batchm_kernel.for_rows(padded_n as u32),
                 normed,
                 &DenseWeight {
                     weight: self.lm_head_weight.weight.offset(begin * h * 2),

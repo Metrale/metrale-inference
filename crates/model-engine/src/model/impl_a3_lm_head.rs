@@ -178,7 +178,7 @@ impl TransformerModel {
             }
         } else if self.lm_head_nvfp4.is_none()
             && (2..=ops::DENSE_GEMV_BATCHM_DECODE_MAX_M).contains(&num_tokens)
-            && self.dense_gemv_batchm_kernel.0 != 0
+            && self.dense_gemv_batchm_kernel.narrow.0 != 0
         {
             // 2026-09-25: BF16 head, 2..=`DENSE_GEMV_BATCHM_DECODE_MAX_M` rows: one
             // batched GEMV for every row, since the NVFP4 tiers below do not
@@ -212,7 +212,7 @@ impl TransformerModel {
             };
             ops::dense_gemv_batchm(
                 self.gpu.as_ref(),
-                self.dense_gemv_batchm_kernel,
+                self.dense_gemv_batchm_kernel.for_rows(num_tokens),
                 hidden,
                 &w,
                 dst,

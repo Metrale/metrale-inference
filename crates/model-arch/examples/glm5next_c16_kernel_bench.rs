@@ -130,7 +130,8 @@ fn gemv_launch(
 }
 
 /// 2026-10-09: Part 1. Shapes: KDA q/k/v (2816 x 4096), KDA o_proj (4096 x 2816), DSA q_a
-/// (1536 x 4096), a square 4096.
+/// (1536 x 4096), a square 4096. 2026-10-14: plus the vocab-TP=3 BF16 LM head shard
+/// (51627 x 4096), which `lm_head_batchm_max` = 8 sends to the tile GEMM at 9..=16 rows.
 fn dense(g: &dyn GpuBackend, rng: &mut Lcg) -> Result<()> {
     let gemv = g.kernel("gemv", "dense_gemv_bf16")?;
     let narrow = g.kernel("dense_gemv_bf16_batchm", "dense_gemv_bf16_batchm")?;
@@ -141,6 +142,7 @@ fn dense(g: &dyn GpuBackend, rng: &mut Lcg) -> Result<()> {
         (4096, 2816),
         (1536, 4096),
         (4096, 4096),
+        (51627, 4096),
     ] {
         let b = up_bf16(g, rng, n * kk, 0.03)?;
         let a = up_bf16(g, rng, 16 * kk, 1.0)?;

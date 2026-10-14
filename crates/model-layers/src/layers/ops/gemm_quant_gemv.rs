@@ -80,6 +80,34 @@ pub fn dense_gemv_batch2(
 /// `target_defaults::resolve_batchm_max`.
 pub const DENSE_GEMV_BATCHM_MAX_M: u32 = 16;
 
+/// 2026-10-14: `#define BATCHM_WIDE_MIN` in `kernels/gb10/common/dense_gemv_bf16_batchm.cu`:
+/// the narrowest M the register-resident `dense_gemv_bf16_batchm_wide` entries take.
+pub const DENSE_GEMV_BATCHM_WIDE_MIN: u32 = 9;
+
+/// 2026-10-14: The batched BF16 GEMV pair: `narrow` is `dense_gemv_bf16_batchm` (runtime M,
+/// `1..=DENSE_GEMV_BATCHM_MAX_M`), `wide` is `dense_gemv_bf16_batchm_wide` (accumulators in
+/// registers, `DENSE_GEMV_BATCHM_WIDE_MIN..=DENSE_GEMV_BATCHM_MAX_M`; `KernelHandle(0)` when the
+/// target lacks it). Both take [`dense_gemv_batchm`]'s arguments and grid, and a wide row has the
+/// narrow row's bits (`examples/glm5next_c16_kernel_bench.rs` checks it byte for byte); the wide
+/// entry is the faster one at 9..=16 rows (GB10, 51627 x 4096 BF16 at M = 16: 1.95 ms vs 3.04 ms).
+#[derive(Clone, Copy, Debug)]
+pub struct DenseGemvBatchmPair {
+    pub narrow: KernelHandle,
+    pub wide: KernelHandle,
+}
+
+impl DenseGemvBatchmPair {
+    /// 2026-10-14: The entry a launch of `m` rows takes: `wide` inside its band when loaded,
+    /// `narrow` otherwise.
+    pub fn for_rows(self, m: u32) -> KernelHandle {
+        if self.wide.0 != 0 && (DENSE_GEMV_BATCHM_WIDE_MIN..=DENSE_GEMV_BATCHM_MAX_M).contains(&m) {
+            self.wide
+        } else {
+            self.narrow
+        }
+    }
+}
+
 /// 2026-09-25: The widest batch that the MTP row dispatch
 /// (`mtp_head/row_dispatch.rs`) and the BF16 arm of the model's
 /// `lm_head_batched` (`impl_a3_lm_head.rs`) hand to `dense_gemv_bf16_batchm`;
@@ -189,4 +217,33 @@ pub fn dense_gemv_fp8w(
         .arg_u32(n)
         .arg_u32(k)
         .launch(stream)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 2026-10-14: The wide entry takes exactly 9..=16 rows and only when loaded; every other
+    /// width, and a target without it, keeps the runtime-M entry.
+    #[test]
+    fn batchm_pair_takes_wide_only_inside_its_band() {
+        let pair = DenseGemvBatchmPair {
+            narrow: KernelHandle(1),
+            wide: KernelHandle(2),
+        };
+        for m in 1..=8 {
+            assert_eq!(pair.for_rows(m).0, 1, "m={m}");
+        }
+        for m in 9..=16 {
+            assert_eq!(pair.for_rows(m).0, 2, "m={m}");
+        }
+        assert_eq!(pair.for_rows(17).0, 1);
+        let no_wide = DenseGemvBatchmPair {
+            wide: KernelHandle(0),
+            ..pair
+        };
+        for m in 1..=17 {
+            assert_eq!(no_wide.for_rows(m).0, 1, "m={m}");
+        }
+    }
 }

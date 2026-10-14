@@ -29,7 +29,7 @@ pub(super) struct ModelKernels {
     pub(super) dense_gemv_fp8w_kernel: KernelHandle,
     pub(super) dense_gemv_fp8w_batch2_kernel: KernelHandle,
     pub(super) dense_gemm_kernel: KernelHandle,
-    pub(super) dense_gemv_batchm_kernel: KernelHandle,
+    pub(super) dense_gemv_batchm_kernel: metrale_model_layers::layers::ops::DenseGemvBatchmPair,
     pub(super) lm_head_m16_tc_kernel: KernelHandle,
     pub(super) lm_head_m16_tc_n64_kernel: KernelHandle,
     pub(super) argmax_kernel: KernelHandle,
@@ -90,9 +90,18 @@ pub(super) fn resolve_model_kernels(
         "dense_gemv_fp8w_batch2",
     );
     let dense_gemm_kernel = gpu.kernel("gemm", "dense_gemm_bf16")?;
-    let dense_gemv_batchm_kernel = gpu
-        .kernel("dense_gemv_bf16_batchm", "dense_gemv_bf16_batchm")
-        .unwrap_or(metrale_gpu_runtime::gpu::KernelHandle(0));
+    // 2026-10-14: The wide entry is 0 where the target's tree lacks it; `for_rows` then keeps
+    // every launch on the narrow entry.
+    let dense_gemv_batchm_kernel = metrale_model_layers::layers::ops::DenseGemvBatchmPair {
+        narrow: gpu
+            .kernel("dense_gemv_bf16_batchm", "dense_gemv_bf16_batchm")
+            .unwrap_or(metrale_gpu_runtime::gpu::KernelHandle(0)),
+        wide: metrale_model_layers::layers::try_kernel(
+            gpu,
+            "dense_gemv_bf16_batchm",
+            "dense_gemv_bf16_batchm_wide",
+        ),
+    };
     // 2026-09-25: Tensor-core BF16 lm_head arm. `try_target_kernel` returns
     // 0 when the target's kernel tree has no `dense_gemm_m16_bf16` module
     // (only the hopper tree has one), and a 0 handle makes

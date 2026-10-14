@@ -18,8 +18,8 @@ use metrale_gpu_runtime::kernel_args::{KernelLaunch, div_ceil};
 use metrale_model_layers::layers::ops;
 
 /// 2026-10-09: `#define BATCHM_WIDE_MIN` in `dense_gemv_bf16_batchm.cu`: the narrowest M the
-/// wide entries take.
-pub(crate) const BATCHM_WIDE_MIN: usize = 9;
+/// wide entries take. 2026-10-14: derived from the layers crate's copy (one source).
+pub(crate) const BATCHM_WIDE_MIN: usize = ops::DENSE_GEMV_BATCHM_WIDE_MIN as usize;
 
 /// 2026-10-09: A batched-GEMV pair: `narrow` is the runtime-M entry `ops::dense_mm_bf16`
 /// launches at 2..=16 rows; `wide` the register-resident entry for 9..=16 rows, or

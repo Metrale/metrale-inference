@@ -46,7 +46,12 @@ fn run_band(m: u32, k: u32, present: bool, enabled: bool, batchm_max: u32, expec
     run_full(m, k, present, enabled, batchm_max, tc_off(), |launch| {
         assert_eq!(
             launch.func,
-            if expect_batch { 0xBF16 } else { 0xCAFE },
+            // 2026-10-14: 9..=16 rows take the wide entry.
+            match (expect_batch, m >= 9) {
+                (false, _) => 0xCAFE,
+                (true, false) => 0xBF16,
+                (true, true) => 0x1D3,
+            },
             "M={m}: BF16 head selected the wrong kernel"
         );
         let mut sizes = vec![m, 67, k];
@@ -103,7 +108,10 @@ fn run_full(
     project_bf16_lm_head(
         &gpu,
         KernelHandle(0xCAFE),
-        batch,
+        ops::DenseGemvBatchmPair {
+            narrow: batch,
+            wide: KernelHandle(if present { 0x1D3 } else { 0 }),
+        },
         input,
         &weight,
         output,
@@ -430,6 +438,8 @@ fn the_route_message_still_names_the_lever_kernel_band_and_off_switch() {
 /// 2026-09-30: A fixed `--activation-quantization` head runs the batched GEMV at every row
 /// count, in chunks of `DENSE_GEMV_BATCHM_MAX_M` rows, each chunk reading its own input rows and
 /// writing its own logits rows, whatever the tier's own band says (here 0 and disabled).
+/// 2026-10-14: Each chunk picks its entry by its own row count: the 16-row chunks take the wide
+/// entry, the 8-row tail the narrow one.
 #[test]
 fn a_fixed_head_chunks_the_batched_gemv_at_every_row_count() {
     let gpu = MockGpuBackend::new();
@@ -448,7 +458,10 @@ fn a_fixed_head_chunks_the_batched_gemv_at_every_row_count() {
     project_bf16_lm_head(
         &gpu,
         KernelHandle(0xCAFE),
-        KernelHandle(0xBF16),
+        ops::DenseGemvBatchmPair {
+            narrow: KernelHandle(0xBF16),
+            wide: KernelHandle(0x1D3),
+        },
         input,
         &weight,
         output,
@@ -465,7 +478,7 @@ fn a_fixed_head_chunks_the_batched_gemv_at_every_row_count() {
     assert_eq!(launches.len(), rows.len());
     let mut done = 0u32;
     for (l, r) in launches.iter().zip(rows) {
-        assert_eq!(l.func, 0xBF16);
+        assert_eq!(l.func, if r >= 9 { 0x1D3 } else { 0xBF16 }, "rows={r}");
         assert_eq!(
             l.args[0],
             MockArg::Buffer(input.offset((done * k * 2) as usize))
