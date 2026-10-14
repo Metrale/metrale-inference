@@ -319,9 +319,11 @@ fn only_a_multi_row_eager_prefill_takes_the_batched_selector() {
 /// 2026-09-26: `forward_k` is `pub(in crate::glm5next_layer)`, so every caller is in a
 /// `glm5next_layer/` file. It has two call sites: the prefill sub-chunk loop (`is_prefill`
 /// true; `steps/prefill_capture.rs` since 2026-10-11) and the speculative verify (`false`,
-/// `mod.rs`). A third caller in any module file fails this test and has to choose.
+/// `mod.rs`). 2026-10-14: A third, the one-piece call of `METRALE_GLM_PREFILL_PIECE_ROWS`
+/// (`steps/forward_pieces.rs`), is a prefill sub-chunk (`true`). Another caller in any module
+/// file fails this test and has to choose.
 #[test]
-fn forward_k_has_two_callers_and_the_verify_one_is_not_prefill() {
+fn forward_k_has_three_callers_and_the_verify_one_is_not_prefill() {
     let src = include_str!("../../glm5next_layer/mod.rs");
     let prefill = include_str!("../../glm5next_layer/steps/prefill_capture.rs");
     let module = concat!(
@@ -336,6 +338,7 @@ fn forward_k_has_two_callers_and_the_verify_one_is_not_prefill() {
         include_str!("../../glm5next_layer/steps/forward_pieces.rs"),
         include_str!("../../glm5next_layer/steps/forward_sp.rs"),
         include_str!("../../glm5next_layer/steps/forward_sp_pipe.rs"),
+        include_str!("../../glm5next_layer/steps/kda_seqs.rs"),
         include_str!("../../glm5next_layer/steps/mhc_slice.rs"),
         include_str!("../../glm5next_layer/steps/mix.rs"),
         include_str!("../../glm5next_layer/steps/multi_seq.rs"),
@@ -361,6 +364,7 @@ fn forward_k_has_two_callers_and_the_verify_one_is_not_prefill() {
             "steps/forward_pieces.rs",
             "steps/forward_sp.rs",
             "steps/forward_sp_pipe.rs",
+            "steps/kda_seqs.rs",
             "steps/mhc_slice.rs",
             "steps/mix.rs",
             "steps/multi_seq.rs",
