@@ -299,6 +299,10 @@ name = "glm5next_kda_chunk64_conv_parity"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "glm5next_kda_gate_in_prepare_parity"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "glm5next_dsa_scores_tiled_bench"
 required-features = ["cuda", "gpu-examples"]
 

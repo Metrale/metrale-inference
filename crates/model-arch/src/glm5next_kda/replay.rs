@@ -113,6 +113,15 @@ impl Glm5NextKdaLayer {
                 rows + 1
             );
         }
+        // 2026-10-14: Or `ws.gate` unwritten (`METRALE_GLM_KDA_GATE_IN_PREPARE`): refuse it.
+        if self.gate_in_prepare_skips_gate(rows + 1)? {
+            bail!(
+                "KDA layer {}: a {}-row verify on the 64-token scan with the gate in its prepare \
+                 (METRALE_GLM_KDA_GATE_IN_PREPARE=1) writes no gate rows to record",
+                self.layer_idx,
+                rows + 1
+            );
+        }
         self.record_verify_rows_at(gpu, ws, 0, 0, rows, record, stream)
     }
 

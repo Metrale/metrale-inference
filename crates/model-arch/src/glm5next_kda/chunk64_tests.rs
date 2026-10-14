@@ -17,6 +17,7 @@ use super::super::decode::{ScanMode, scan_mode};
 use super::super::decode_rows_tests::{
     CHUNK64_PREP, CHUNK64_SCAN, CONV_TOKENS, CONV_WINDOW, cfg, layer, seq_state, since,
 };
+use super::super::gate_at::GateAt;
 use super::{CHUNK64, CHUNK64_SLAB, parse_min_rows64};
 
 fn ptr(l: &MockLaunch, i: usize) -> DevicePtr {
@@ -84,7 +85,7 @@ fn rows_run_conv_prepare_and_scan_over_their_chunks() {
     );
     let st = seq_state(&gpu);
     let from = gpu.launch_count();
-    lay.stateful_chunk64(&gpu, 130, &st, &ws, Pack::InFrontEnd, 7)
+    lay.stateful_chunk64(&gpu, 130, &st, &ws, Pack::InFrontEnd, GateAt::Kernel, 7)
         .unwrap();
     let l = since(&gpu, from);
     let funcs: Vec<u64> = l.iter().map(|x| x.func).collect();
@@ -148,7 +149,7 @@ fn a_long_sub_chunk_runs_in_slabs() {
     let ws = Glm5NextKdaWorkspace::new(&gpu, &cfg(), 700).unwrap();
     let st = seq_state(&gpu);
     let from = gpu.launch_count();
-    lay.stateful_chunk64(&gpu, 700, &st, &ws, Pack::InFrontEnd, 7)
+    lay.stateful_chunk64(&gpu, 700, &st, &ws, Pack::InFrontEnd, GateAt::Kernel, 7)
         .unwrap();
     let l = since(&gpu, from);
     let funcs: Vec<u64> = l.iter().map(|x| x.func).collect();
@@ -189,7 +190,7 @@ fn rows_past_the_workspace_are_refused() {
     let st = seq_state(&gpu);
     let from = gpu.launch_count();
     assert!(
-        lay.stateful_chunk64(&gpu, 65, &st, &ws, Pack::InFrontEnd, 7)
+        lay.stateful_chunk64(&gpu, 65, &st, &ws, Pack::InFrontEnd, GateAt::Kernel, 7)
             .is_err()
     );
     assert_eq!(gpu.launch_count(), from);

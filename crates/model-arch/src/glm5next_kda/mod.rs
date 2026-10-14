@@ -39,6 +39,7 @@ mod conv_pack;
 mod decode;
 #[cfg(test)]
 mod decode_rows_tests;
+mod gate_at;
 mod gates_fused;
 mod kernels;
 mod prefill;
@@ -47,6 +48,7 @@ mod rows;
 mod seq_tokens;
 pub use config::{Glm5NextKdaConfig, Glm5NextKdaWeights};
 use conv_pack::Pack;
+use gate_at::GateAt;
 pub use kernels::{Glm5NextKdaKernels, KDA_REG_D, KDA_ROWS_MAX, KdaSeqKernels};
 pub use replay::KdaVerifyRecord;
 
@@ -323,6 +325,7 @@ impl Glm5NextKdaLayer {
         t: usize,
         ws: &Glm5NextKdaWorkspace,
         pack: Pack,
+        gate: GateAt,
         stream: u64,
     ) -> Result<()> {
         let c = &self.cfg;
@@ -398,28 +401,8 @@ impl Glm5NextKdaLayer {
         if self.gates_fused(gpu, t, low, ws, stream)? {
             return Ok(());
         }
-        self.gemm(
-            gpu,
-            ws.lowrank,
-            &self.weights.f_b,
-            ws.g_raw,
-            t,
-            qkv,
-            hd,
-            stream,
-        )?;
-        KernelLaunch::new(gpu, self.kernels.gate)
-            .grid([(t * c.heads) as u32, 1, 1])
-            .block([BLOCK, 1, 1])
-            .arg_ptr(ws.g_raw)
-            .arg_ptr(self.weights.dt_bias)
-            .arg_ptr(self.weights.a_log)
-            .arg_ptr(ws.gate)
-            .arg_u32(t as u32)
-            .arg_u32(c.heads as u32)
-            .arg_u32(hd as u32)
-            .arg_f32(c.gate_lower_bound)
-            .launch(stream)?;
+        // 2026-10-14: `METRALE_GLM_KDA_GATE_IN_PREPARE` (`gate_at.rs`) may move the gate.
+        self.forget_gate(gpu, t, ws, gate, stream)?;
 
         // 2026-09-25: beta = sigmoid(b_proj(hidden)); the KDA kernels read it after the sigmoid.
         if !low {

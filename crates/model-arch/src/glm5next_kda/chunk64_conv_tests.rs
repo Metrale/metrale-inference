@@ -17,6 +17,7 @@ use super::super::super::Pack;
 use super::super::super::decode_rows_tests::{
     CHUNK64_PREP_CONV, CHUNK64_SCAN, CONV_WINDOW_PARTS, cfg, layer, seq_state, since,
 };
+use super::super::super::gate_at::GateAt;
 use super::super::{CHUNK64_PREP_SMEM, CHUNK64_SCAN_SMEM};
 use super::{chunk64_conv_shape_refusal, parse_chunk64_conv};
 
@@ -55,8 +56,17 @@ fn the_fused_path_runs_no_conv_launch_and_advances_the_window_last() {
     let ws = Glm5NextKdaWorkspace::new(&gpu, &cfg(), 700).unwrap();
     let st = seq_state(&gpu);
     let from = gpu.launch_count();
-    lay.stateful_chunk64_with(&gpu, 700, &st, &ws, Pack::InFrontEnd, true, 7)
-        .unwrap();
+    lay.stateful_chunk64_with(
+        &gpu,
+        700,
+        &st,
+        &ws,
+        Pack::InFrontEnd,
+        true,
+        GateAt::Kernel,
+        7,
+    )
+    .unwrap();
     let l = since(&gpu, from);
     let funcs: Vec<u64> = l.iter().map(|x| x.func).collect();
     assert_eq!(
@@ -152,7 +162,7 @@ fn the_pack_in_conv_layout_reads_the_three_parts() {
     let ws = Glm5NextKdaWorkspace::new(&gpu, &cfg(), 300).unwrap();
     let st = seq_state(&gpu);
     let from = gpu.launch_count();
-    lay.stateful_chunk64_with(&gpu, 130, &st, &ws, Pack::InConv, true, 7)
+    lay.stateful_chunk64_with(&gpu, 130, &st, &ws, Pack::InConv, true, GateAt::Kernel, 7)
         .unwrap();
     let l = since(&gpu, from);
     assert_eq!(
@@ -192,8 +202,17 @@ fn the_fused_path_refuses_before_any_launch() {
     ] {
         let from = gpu.launch_count();
         assert!(
-            lay.stateful_chunk64_with(&gpu, 130, &st, &ws, Pack::InFrontEnd, true, 7)
-                .is_err(),
+            lay.stateful_chunk64_with(
+                &gpu,
+                130,
+                &st,
+                &ws,
+                Pack::InFrontEnd,
+                true,
+                GateAt::Kernel,
+                7
+            )
+            .is_err(),
             "{name}"
         );
         assert_eq!(gpu.launch_count(), from, "{name}");

@@ -101,7 +101,9 @@ impl Glm5NextKdaLayer {
 
     /// 2026-10-12: Workspace rows `0..k` of one sequence through the conv, then the 64-token
     /// chunked recurrence into `core`, advancing `state` past all of them.
-    /// 2026-10-14: `METRALE_GLM_KDA_CHUNK64_CONV` (`chunk64_conv.rs`) picks `fused`.
+    /// 2026-10-14: `METRALE_GLM_KDA_CHUNK64_CONV` (`chunk64_conv.rs`) picks `fused`; `gate` is
+    /// the forward's gate decision (`gate_at.rs`), which the front end obeyed.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn stateful_chunk64(
         &self,
         gpu: &dyn GpuBackend,
@@ -109,10 +111,11 @@ impl Glm5NextKdaLayer {
         state: &KdaSeqState,
         ws: &Glm5NextKdaWorkspace,
         pack: Pack,
+        gate: GateAt,
         stream: u64,
     ) -> Result<()> {
         let fused = self.chunk64_conv_on()?;
-        self.stateful_chunk64_with(gpu, k, state, ws, pack, fused, stream)
+        self.stateful_chunk64_with(gpu, k, state, ws, pack, fused, gate, stream)
     }
 
     /// 2026-10-14: [`Self::stateful_chunk64`] with the conv in front of the prepare (`fused`:
@@ -127,6 +130,7 @@ impl Glm5NextKdaLayer {
         ws: &Glm5NextKdaWorkspace,
         pack: Pack,
         fused: bool,
+        gate: GateAt,
         stream: u64,
     ) -> Result<()> {
         if !self.chunk64_ready() || k == 0 || k > ws.max_tokens {
@@ -134,6 +138,9 @@ impl Glm5NextKdaLayer {
         }
         if fused {
             self.chunk64_conv_check()?;
+        }
+        if gate == GateAt::Prepare {
+            self.gate_in_prepare_check()?;
         }
         let c = &self.cfg;
         let (qkv, d, h) = (c.qkv_dim(), c.head_dim, c.heads);
@@ -151,9 +158,11 @@ impl Glm5NextKdaLayer {
         // path (a serve A/B is unreadable without it).
         static APPLIED: std::sync::Once = std::sync::Once::new();
         APPLIED.call_once(|| {
+            let in_prepare = gate == GateAt::Prepare;
             tracing::info!(
                 "GLM KDA: METRALE_GLM_KDA_CHUNK64 applied at {}:{}: {k} rows as {nchunks} chunks \
-                 of {CHUNK64} in slabs of {CHUNK64_SLAB}, conv fused into the prepare: {fused}",
+                 of {CHUNK64} in slabs of {CHUNK64_SLAB}, conv fused into the prepare: {fused}, \
+                 gate in the prepare: {in_prepare}",
                 file!(),
                 line!()
             );
@@ -165,9 +174,9 @@ impl Glm5NextKdaLayer {
         for c0 in (0..nchunks).step_by(CHUNK64_SLAB) {
             let n = CHUNK64_SLAB.min(nchunks - c0);
             if fused {
-                self.chunk64_prepare_conv(gpu, k, c0, n, state, ws, pack, stream)?;
+                self.chunk64_prepare_conv(gpu, k, c0, n, state, ws, pack, gate, stream)?;
             } else {
-                self.chunk64_prepare(gpu, k, c0, n, ws, stream)?;
+                self.chunk64_prepare(gpu, k, c0, n, ws, gate, stream)?;
             }
             KernelLaunch::new(gpu, self.kernels.seq.chunk64_scan)
                 .grid([h as u32, (d / CHUNK64_VB) as u32, 1])
@@ -194,7 +203,9 @@ impl Glm5NextKdaLayer {
         Ok(())
     }
 
-    /// 2026-10-14: One slab's `kda_chunk64_prepare` over the conv's rows (chunks `c0 .. c0 + n`).
+    /// 2026-10-14: One slab's `kda_chunk64_prepare` over the conv's rows (chunks `c0 .. c0 + n`);
+    /// `kda_chunk64_prepare_graw` at [`GateAt::Prepare`].
+    #[allow(clippy::too_many_arguments)]
     fn chunk64_prepare(
         &self,
         gpu: &dyn GpuBackend,
@@ -202,20 +213,26 @@ impl Glm5NextKdaLayer {
         c0: usize,
         n: usize,
         ws: &Glm5NextKdaWorkspace,
+        gate: GateAt,
         stream: u64,
     ) -> Result<()> {
         let c = &self.cfg;
         let (qkv, cd, d, h) = (c.qkv_dim(), c.conv_dim(), c.head_dim, c.heads);
         let io = RowIo::workspace(c, ws, 0);
         let scale = 1.0 / (d as f32).sqrt();
-        KernelLaunch::new(gpu, self.kernels.seq.chunk64_prepare)
+        let s = &self.kernels.seq;
+        let kernel = match gate {
+            GateAt::Kernel => s.chunk64_prepare,
+            GateAt::Prepare => s.chunk64_prepare_graw,
+        };
+        let l = KernelLaunch::new(gpu, kernel)
             .grid([n as u32, h as u32, 1])
             .block([CHUNK64_PREP_THREADS, 1, 1])
             .shared_mem(CHUNK64_PREP_SMEM)
             .arg_ptr(io.conv_out)
             .arg_ptr(io.conv_out.offset(qkv * 2))
-            .arg_ptr(io.conv_out.offset(qkv * 4))
-            .arg_ptr(io.gate)
+            .arg_ptr(io.conv_out.offset(qkv * 4));
+        self.gate_args(l, ws, gate)
             .arg_ptr(io.beta)
             .arg_ptr(ws.chunk_u)
             .arg_ptr(ws.chunk_w)

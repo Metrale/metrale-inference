@@ -47,6 +47,7 @@
 
 #include "kda_chunk64.cuh"
 #include "kda_chunk64_conv.cuh"
+#include "kda_gate_scalar.cuh"
 
 #define KDA64_PRE 4
 
@@ -92,6 +93,15 @@ struct K64ConvIn {
     float l2_eps;
 };
 
+// 2026-10-14: The gate inputs of the _graw entries (`METRALE_GLM_KDA_GATE_IN_PREPARE`): f_b's
+// BF16 output rows and kda_gate_bf16's other arguments; the plain entries pass none.
+struct K64GateIn {
+    const __nv_bfloat16* g_raw;
+    const float* dt_bias;
+    const float* a_log;
+    float lower_bound;
+};
+
 // 2026-10-14: A q/k/v element of row i: CONV reads the stage this block wrote (through L2, not
 // the read-only path, which need not see this kernel's own stores).
 template <bool CONV>
@@ -103,7 +113,7 @@ __device__ __forceinline__ float k64_in(const __nv_bfloat16* p) {
     }
 }
 
-template <bool CONV>
+template <bool CONV, bool GRAW>
 __device__ __forceinline__ void k64_prepare_body(
     const __nv_bfloat16* __restrict__ q,
     const __nv_bfloat16* __restrict__ k,
@@ -122,7 +132,8 @@ __device__ __forceinline__ void k64_prepare_body(
     unsigned int qkv_stride,
     unsigned int gate_stride,
     float scale,
-    const K64ConvIn& cv
+    const K64ConvIn& cv,
+    const K64GateIn& gi
 ) {
     constexpr int C = KDA64_C, D = KDA64_D, NW = KDA64_PREP_THREADS / 32, PRE = KDA64_PRE;
     extern __shared__ __align__(16) float k64p_sh[];
@@ -141,12 +152,26 @@ __device__ __forceinline__ void k64_prepare_body(
     const uint32_t bK = (uint32_t)__cvta_generic_to_shared(sK);
 
     // 2026-10-12: gate rows (16 B = 4 floats) and k rows (16 B = 8 halves), zero past T.
-    for (unsigned int e = tid; e < (unsigned int)(C * D / 4); e += blockDim.x) {
-        const unsigned int i = e / (D / 4), q4 = e % (D / 4);
-        const unsigned int t = t0 + i;
-        const bool live = t < T;
-        const float* src = gate + (size_t)(live ? t : 0u) * gate_stride + hd + q4 * 4u;
-        k64_cp16z(bG + e * 16u, src, live);
+    // 2026-10-14: GRAW: f_b's BF16 rows (16 B = 8 halves) into the upper half of G instead; the
+    // gate is applied below, after the copies land.
+    if constexpr (GRAW) {
+        const uint32_t bR = bG + (uint32_t)(C * D * 2);
+        for (unsigned int e = tid; e < (unsigned int)(C * D / 8); e += blockDim.x) {
+            const unsigned int i = e / (D / 8), q8 = e % (D / 8);
+            const unsigned int t = t0 + i;
+            const bool live = t < T;
+            const __nv_bfloat16* src =
+                gi.g_raw + (size_t)(live ? t : 0u) * gate_stride + hd + q8 * 8u;
+            k64_cp16z(bR + e * 16u, src, live);
+        }
+    } else {
+        for (unsigned int e = tid; e < (unsigned int)(C * D / 4); e += blockDim.x) {
+            const unsigned int i = e / (D / 4), q4 = e % (D / 4);
+            const unsigned int t = t0 + i;
+            const bool live = t < T;
+            const float* src = gate + (size_t)(live ? t : 0u) * gate_stride + hd + q4 * 4u;
+            k64_cp16z(bG + e * 16u, src, live);
+        }
     }
     if constexpr (!CONV) {
         for (unsigned int e = tid; e < (unsigned int)(C * D / 8); e += blockDim.x) {
@@ -172,6 +197,28 @@ __device__ __forceinline__ void k64_prepare_body(
     }
     asm volatile("cp.async.wait_group 0;\n" ::: "memory");
     __syncthreads();
+    // 2026-10-14: GRAW: kda_gate_bf16's element (kda_gate_scalar on the widened BF16, the
+    // channel's dt_bias, expf(A_log[h]), the lower bound; the same module flags), and 0 past T
+    // where the FP32 copy zero-fills. Every thread holds its elements across the barrier, since
+    // the FP32 rows overwrite the BF16 ones.
+    if constexpr (GRAW) {
+        constexpr int PER = C * D / KDA64_PREP_THREADS;
+        const __nv_bfloat16* sR = (const __nv_bfloat16*)sG + C * D;
+        const float decay = expf(gi.a_log[h]);
+        float gv[PER];
+#pragma unroll
+        for (int r = 0; r < PER; ++r) {
+            const unsigned int e = tid + (unsigned int)(r * KDA64_PREP_THREADS);
+            const unsigned int i = e / (unsigned int)D, dd = e % (unsigned int)D;
+            gv[r] = t0 + i < T ? kda_gate_scalar(__bfloat162float(sR[e]), gi.dt_bias[hd + dd],
+                                                 decay, gi.lower_bound)
+                               : 0.0f;
+        }
+        __syncthreads();
+#pragma unroll
+        for (int r = 0; r < PER; ++r) sG[tid + (unsigned int)(r * KDA64_PREP_THREADS)] = gv[r];
+        __syncthreads();
+    }
     if (tid < (unsigned int)D) {
         float acc = 0.0f;
         for (int i = 0; i < C; ++i) {
@@ -325,9 +372,9 @@ extern "C" __global__ void __launch_bounds__(KDA64_PREP_THREADS, 2) kda_chunk64_
     unsigned int gate_stride,
     float scale
 ) {
-    const K64ConvIn none = {nullptr, nullptr, nullptr, 0u, nullptr, nullptr, nullptr, 0u, 0.0f};
-    k64_prepare_body<false>(q, k, v, gate, beta, u_out, w_out, qg_out, kd_out, p_out, ad_out, H,
-                            T, c0, qkv_stride, gate_stride, scale, none);
+    k64_prepare_body<false, false>(q, k, v, gate, beta, u_out, w_out, qg_out, kd_out, p_out,
+                                   ad_out, H, T, c0, qkv_stride, gate_stride, scale, K64ConvIn{},
+                                   K64GateIn{});
 }
 
 // 2026-10-14: kda_chunk64_prepare with the conv in front. xq/xk/xv: the q/k/v projections of the
@@ -364,7 +411,76 @@ extern "C" __global__ void __launch_bounds__(KDA64_PREP_THREADS, 2) kda_chunk64_
 ) {
     const K64ConvIn cv = {xq, xk, xv, in_stride, conv_state, weight, bias, d_conv, l2_eps};
     const size_t part = (size_t)H * KDA64_D;
-    k64_prepare_body<true>(stage, stage + part, stage + 2 * part, gate, beta, u_out, w_out,
-                           qg_out, kd_out, p_out, ad_out, H, T, c0, qkv_stride, gate_stride,
-                           scale, cv);
+    k64_prepare_body<true, false>(stage, stage + part, stage + 2 * part, gate, beta, u_out, w_out,
+                                  qg_out, kd_out, p_out, ad_out, H, T, c0, qkv_stride, gate_stride,
+                                  scale, cv, K64GateIn{});
+}
+
+// 2026-10-14: kda_chunk64_prepare with kda_gate_bf16 inside (`METRALE_GLM_KDA_GATE_IN_PREPARE`):
+// `gate` is replaced by f_b's BF16 output g_raw ([T, gate_stride]), dt_bias FP32 [H, D], A_log
+// FP32 [H] and the lower bound, kda_gate_bf16's arguments; no FP32 gate row reaches DRAM.
+extern "C" __global__ void __launch_bounds__(KDA64_PREP_THREADS, 2) kda_chunk64_prepare_graw(
+    const __nv_bfloat16* __restrict__ q,
+    const __nv_bfloat16* __restrict__ k,
+    const __nv_bfloat16* __restrict__ v,
+    const __nv_bfloat16* __restrict__ g_raw,
+    const float* __restrict__ dt_bias,
+    const float* __restrict__ a_log,
+    float lower_bound,
+    const float* __restrict__ beta,
+    float* __restrict__ u_out,
+    __nv_bfloat16* __restrict__ w_out,
+    __nv_bfloat16* __restrict__ qg_out,
+    __nv_bfloat16* __restrict__ kd_out,
+    __nv_bfloat16* __restrict__ p_out,
+    float* __restrict__ ad_out,
+    unsigned int H,
+    unsigned int T,
+    unsigned int c0,
+    unsigned int qkv_stride,
+    unsigned int gate_stride,
+    float scale
+) {
+    const K64GateIn gi = {g_raw, dt_bias, a_log, lower_bound};
+    k64_prepare_body<false, true>(q, k, v, nullptr, beta, u_out, w_out, qg_out, kd_out, p_out,
+                                  ad_out, H, T, c0, qkv_stride, gate_stride, scale, K64ConvIn{},
+                                  gi);
+}
+
+// 2026-10-14: kda_chunk64_prepare_conv with the gate inside, as kda_chunk64_prepare_graw.
+extern "C" __global__ void __launch_bounds__(KDA64_PREP_THREADS, 2) kda_chunk64_prepare_conv_graw(
+    const __nv_bfloat16* __restrict__ xq,
+    const __nv_bfloat16* __restrict__ xk,
+    const __nv_bfloat16* __restrict__ xv,
+    unsigned int in_stride,
+    const float* __restrict__ conv_state,
+    const __nv_bfloat16* __restrict__ weight,
+    const float* __restrict__ bias,
+    unsigned int d_conv,
+    float l2_eps,
+    __nv_bfloat16* stage,
+    const __nv_bfloat16* __restrict__ g_raw,
+    const float* __restrict__ dt_bias,
+    const float* __restrict__ a_log,
+    float lower_bound,
+    const float* __restrict__ beta,
+    float* __restrict__ u_out,
+    __nv_bfloat16* __restrict__ w_out,
+    __nv_bfloat16* __restrict__ qg_out,
+    __nv_bfloat16* __restrict__ kd_out,
+    __nv_bfloat16* __restrict__ p_out,
+    float* __restrict__ ad_out,
+    unsigned int H,
+    unsigned int T,
+    unsigned int c0,
+    unsigned int qkv_stride,
+    unsigned int gate_stride,
+    float scale
+) {
+    const K64ConvIn cv = {xq, xk, xv, in_stride, conv_state, weight, bias, d_conv, l2_eps};
+    const K64GateIn gi = {g_raw, dt_bias, a_log, lower_bound};
+    const size_t part = (size_t)H * KDA64_D;
+    k64_prepare_body<true, true>(stage, stage + part, stage + 2 * part, nullptr, beta, u_out,
+                                 w_out, qg_out, kd_out, p_out, ad_out, H, T, c0, qkv_stride,
+                                 gate_stride, scale, cv, gi);
 }
