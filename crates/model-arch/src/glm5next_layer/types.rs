@@ -80,3 +80,14 @@ pub struct Glm5NextLayer {
     /// layer; `None` when the lever is off and for the MTP block.
     pub l2_warm: Option<Arc<l2_warm::L2Warm>>,
 }
+
+impl Glm5NextLayer {
+    /// 2026-10-14: True, so a new sequence re-captures its slot's graphs, unless
+    /// `glm_keep_slot_graphs` is on and this is not a flat-indexer DSA layer. A flat state's
+    /// `alloc_state` buffers belong to one sequence; a paged state has no device buffers (its
+    /// rows go through the decode metadata), and KDA state lives in the SSM pool.
+    pub(crate) fn slot_graphs_stale(&self) -> bool {
+        !metrale_model_layers::layers::ops::ModelLevers::get().glm_keep_slot_graphs
+            || matches!(&self.mixer, Glm5NextMixer::Dsa(l) if l.indexer_cache == IndexerCache::Flat)
+    }
+}

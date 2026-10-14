@@ -49,7 +49,7 @@ impl TransformerModel {
             } else if super::super::graph_borrow::graph_borrow_enabled()
                 // 2026-10-09: Not when a layer keeps per-sequence buffers outside the pool
                 // (GLM-5.3's DSA indexer cache): a ghost row has no such buffers to write.
-                && !self.layers.iter().any(|l| l.graph_stale_on_new_sequence())
+                && !self.layers.iter().any(|l| l.verify_graph_borrow_unsafe())
             {
                 let wy_present = !wy_tables_base.is_null();
                 let borrowed = super::super::graph_borrow::find_borrowable_verify_key(

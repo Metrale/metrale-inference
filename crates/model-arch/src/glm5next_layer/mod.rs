@@ -409,9 +409,13 @@ impl LayerCapabilities for Glm5NextLayer {
         self.mhc.is_some().then(prefill_rows)
     }
 
-    /// 2026-09-25: True. A DSA layer's per-sequence state comes from `gpu.alloc` in
-    /// `alloc_state`, so the addresses a captured graph holds belong to one sequence.
+    /// 2026-10-14: [`Glm5NextLayer::slot_graphs_stale`] (`types.rs`).
     fn graph_stale_on_new_sequence(&self) -> bool {
+        self.slot_graphs_stale()
+    }
+
+    /// 2026-10-14: True: a borrowed verify graph's ghost rows have no DSA state of their own.
+    fn verify_graph_borrow_unsafe(&self) -> bool {
         true
     }
 

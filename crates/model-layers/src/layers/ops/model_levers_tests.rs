@@ -114,8 +114,11 @@ fn exact_one_opt_ins_map_to_their_own_fields() {
 /// off by default.
 #[test]
 fn new_sequence_levers_are_strict_opt_ins_on_their_own_fields() {
-    let cases: [(&str, fn(&mut ModelLevers) -> &mut bool); 1] = [
+    let cases: [(&str, fn(&mut ModelLevers) -> &mut bool); 2] = [
         ("METRALE_SEQ_ALLOC_ASYNC", |l| &mut l.seq_alloc_async),
+        ("METRALE_GLM_KEEP_SLOT_GRAPHS", |l| {
+            &mut l.glm_keep_slot_graphs
+        }),
     ];
     for (name, field) in cases {
         assert!(!*field(&mut resolve(&[])), "{name} on by default");

@@ -248,6 +248,11 @@ pub struct ModelLevers {
     /// first zeroing pass and then a synchronise per memset (`model/trait_impl/meta.rs`). The
     /// same bytes reach zero before the prefill; only the host time differs.
     pub seq_alloc_async: bool,
+    /// 2026-10-14: `METRALE_GLM_KEEP_SLOT_GRAPHS=1`: a GLM-5.3 layer reports its slot's decode
+    /// and verify graphs stale on a new sequence only when it keeps per-sequence buffers (a
+    /// flat-indexer DSA layer), so a paged-indexer stack replays them instead of capturing again
+    /// (`glm5next_layer/mod.rs`). Verify-graph borrowing stays off for GLM-5.3 either way.
+    pub glm_keep_slot_graphs: bool,
     /// 2026-09-25: `METRALE_FP8_MOE_GROUPED_DECODE=1`: the target model's multi-row FP8 MoE decode
     /// runs through the cross-row grouped kernels (`FfnComponent::fp8_grouped_decode_ok`). The MTP
     /// drafter calls `MoeLayer::fp8_grouped_decode_ok` directly and does not read this lever;

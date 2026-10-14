@@ -111,6 +111,13 @@ pub trait LayerCapabilities {
         false
     }
 
+    /// 2026-10-14: True when a verify graph captured with other slots' rows must not be
+    /// borrowed, because its ghost rows would run this layer without per-sequence state of
+    /// their own. By default the same answer as [`Self::graph_stale_on_new_sequence`].
+    fn verify_graph_borrow_unsafe(&self) -> bool {
+        self.graph_stale_on_new_sequence()
+    }
+
     /// 2026-09-25: True for an SSM layer. The model's split prefill then runs
     /// `prefill_phase1`, `prefill_gdn_full` and `prefill_phase3` instead of `prefill`.
     fn is_ssm_layer(&self) -> bool {
