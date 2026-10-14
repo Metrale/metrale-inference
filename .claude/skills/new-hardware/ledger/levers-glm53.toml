@@ -1853,3 +1853,27 @@ effort_hours = 0.0
 transferability = "any MLA/DSA model whose serve absorbs the up-projections into q/o at decode: absorption trades FLOPs for bytes, the wrong trade on a bandwidth-bound part at small batch"
 links = { pr = "", commit = "", evidence = "/workspace/claude-state/glm/STATUS.md (12:4xZ ND2 / DSA ruling section)" }
 notes = "Expected -1.26 ms/step at every decode width (C1 about +3% tok/s)."
+
+[[lever]]
+id = "gb10x3-glm53-lm-head-batchm-wide"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "planned arm L1+lmh (after decode L1): BF16 LM head takes dense_gemv_bf16_batchm_wide at 9..=16 rows (commit 6af90f757)"
+symptom = "at C8 under MTP (16 verify rows) the BF16 head runs the runtime-M narrow batchm at 3.04 ms vs a ~2.0 ms roofline (head shard 51627 x 4096); without LM_HEAD_BATCHM_MAX=16 it falls to cuBLAS at 5.74 ms"
+diagnosis_tool = "nsys (decode worker w2 C4/C8 traces) + glm5next_c16_kernel_bench"
+root_cause_class = "latency"
+lever_type = "kernel-selection"
+lkb_effect = "none: reuses the wide entry the dense layers already take at 9..=16 rows (BATCHM_WIDE_MIN=9)"
+parity_tier_kept = "bit-exact (class B)"
+per_rung = []
+verdict = "held"
+verdict_reason = "Coordinator 2026-10-14: class B, approved as its own arm right after L1 (never inside it, so L1's C8 delta stays readable). Evidence: kernels/gb10/common/dense_gemv_bf16_batchm.cu wide body (lines 315-383) equals the narrow body (160-228) except #pragma unroll and compile-time MM for runtime m; same per-row FP32 chain acc[t], same slab and 4-element inner loop, same scalar K tail, same shfl_down tree and 2-warp smem combine, same grid and args; the commit measured the real head shard byte-identical at M=16 (1.95 vs 3.04 ms). Gate: Tier-1 token-id byte identity plus an nsys check that dense_gemv_bf16_batchm_wide is the head launch at C8"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0.0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "any BF16 head on GB10 whose MTP verify width reaches 9..=16 rows"
+links = { pr = "", commit = "6af90f757", evidence = "decode worker L3 pricing message 2026-10-14 ~13:00Z; /workspace/claude-state/glm/STATUS.md" }
+notes = "Fires only at 9..=16 rows (C5-C8 with one draft), cannot move C1. Expected about -1.1 ms/step at C8."
