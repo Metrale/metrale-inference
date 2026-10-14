@@ -41,6 +41,7 @@
 use super::*;
 use crate::glm5next_dsa::layer::DsaRowSpan;
 use crate::glm5next_kda::KdaVerifyRecord;
+use crate::glm5next_kda::seqs_tokens::kda_seqs_tokens;
 
 /// 2026-10-09: One sequence's rows inside one row group of `forward_spans`: group rows
 /// `row0..row0 + rows` are the sequence's rows `t0..t0 + rows`.
@@ -242,6 +243,14 @@ impl Glm5NextLayer {
                     }
                     let seqs: Vec<(KdaSeqState, usize)> =
                         spans.iter().map(|sp| (kda[sp.seq], sp.rows)).collect();
+                    // 2026-10-14: Under `METRALE_GLM_KDA_SEQS_TOKENS=1` a verify group steps each
+                    // sequence's run in three launches, snapshot included (`kda_seqs.rs`).
+                    let runs = (kda_seqs_tokens() && layer.seqs_tokens_ready())
+                        .then(|| {
+                            let snaps = super::kda_seqs::snapshot_lists(keep);
+                            super::kda_seqs::kda_seqs_runs(&spans, &snaps, &kda)
+                        })
+                        .flatten();
                     self.forward_rows_with(
                         mhc,
                         x,
@@ -252,17 +261,28 @@ impl Glm5NextLayer {
                         &[m],
                         tap,
                         |normed| {
-                            layer.decode_seq_rows(ctx.gpu, normed, &seqs, ws, stream, |row| {
-                                self.kda_after_row(
-                                    layer,
-                                    &spans,
-                                    keep,
-                                    &row_states,
-                                    row,
-                                    ctx,
+                            if let Some(runs) = &runs {
+                                layer.decode_seqs_tokens(ctx.gpu, normed, runs, ws, stream)?;
+                            } else {
+                                layer.decode_seq_rows(
+                                    ctx.gpu,
+                                    normed,
+                                    &seqs,
+                                    ws,
                                     stream,
-                                )
-                            })?;
+                                    |row| {
+                                        self.kda_after_row(
+                                            layer,
+                                            &spans,
+                                            keep,
+                                            &row_states,
+                                            row,
+                                            ctx,
+                                            stream,
+                                        )
+                                    },
+                                )?;
+                            }
                             if let Some(keep) = keep {
                                 for sp in &spans {
                                     if let KdaRowKeep::Record { record, rows } = &keep[sp.seq] {

@@ -45,6 +45,7 @@ mod prefill;
 mod replay;
 mod rows;
 mod seq_tokens;
+pub mod seqs_tokens;
 pub use config::{Glm5NextKdaConfig, Glm5NextKdaWeights};
 use conv_pack::Pack;
 pub use kernels::{Glm5NextKdaKernels, KDA_REG_D, KDA_ROWS_MAX, KdaSeqKernels};

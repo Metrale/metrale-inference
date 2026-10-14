@@ -206,7 +206,7 @@ pub(super) fn snap_tokens_apply(k: usize, snapshots: usize) -> bool {
 
 /// 2026-10-09: V columns per block of `kda_recurrent_decode_bf16_seq_reg`: one warp, so a
 /// head's 128 columns run as four blocks.
-const SEQ_VB: usize = 32;
+pub(super) const SEQ_VB: usize = 32;
 
 /// 2026-10-10: `METRALE_GLM_KDA_ROW_REG=1` runs each single-row recurrent step
 /// (`stateful_row`: the C1 decode and every per-row walk) on `kda_recurrent_decode_bf16_seq_reg`

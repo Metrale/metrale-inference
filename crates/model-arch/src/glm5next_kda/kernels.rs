@@ -148,6 +148,12 @@ pub struct KdaSeqKernels {
     /// (`kda_chunk64_prepare.cu`) and `kda_chunk64_scan` (`kda_chunk64.cu`); `chunk64.rs`.
     pub chunk64_prepare: KernelHandle,
     pub chunk64_scan: KernelHandle,
+    /// 2026-10-14: The multi-sequence verify kernels (`kda_seqs_tokens.cu`, `seqs_tokens.rs`):
+    /// `causal_conv1d_update_l2norm_tokens_seqs`, `causal_conv1d_window_advance_seqs` and
+    /// `kda_recurrent_decode_bf16_seqs_reg`, the three above for up to 16 sequences per launch.
+    pub conv_seqs: KernelHandle,
+    pub window_seqs: KernelHandle,
+    pub recurrent_seqs: KernelHandle,
 }
 
 impl KdaSeqKernels {
@@ -171,6 +177,13 @@ impl KdaSeqKernels {
             chunk16_scan: k(gpu, "kda_chunk16", "kda_chunk16_scan"),
             chunk64_prepare: k(gpu, "kda_chunk64_prepare", "kda_chunk64_prepare"),
             chunk64_scan: k(gpu, "kda_chunk64", "kda_chunk64_scan"),
+            conv_seqs: k(
+                gpu,
+                "kda_seqs_tokens",
+                "causal_conv1d_update_l2norm_tokens_seqs",
+            ),
+            window_seqs: k(gpu, "kda_seqs_tokens", "causal_conv1d_window_advance_seqs"),
+            recurrent_seqs: k(gpu, "kda_seqs_tokens", "kda_recurrent_decode_bf16_seqs_reg"),
         }
     }
 
