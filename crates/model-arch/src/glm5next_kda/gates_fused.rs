@@ -113,6 +113,15 @@ impl Glm5NextKdaLayer {
                 w.k
             );
         }
+        // 2026-10-14: Once per process, at the first launch: the serve log's proof that the
+        // lever reached the fused kernel, not only that the variable was set.
+        static DISPATCHED: std::sync::Once = std::sync::Once::new();
+        DISPATCHED.call_once(|| {
+            tracing::warn!(
+                "METRALE_GLM_KDA_GATES_FUSED: fused KDA gates kernel dispatched (rank-local, \
+                 first call) at {t} rows"
+            );
+        });
         let blocks = (2 * qkv / TILE_ROWS).div_ceil(WARPS);
         KernelLaunch::new(gpu, self.kernels.gates_fused)
             .grid([blocks as u32, t.div_ceil(TOKEN_TILE) as u32, 1])
