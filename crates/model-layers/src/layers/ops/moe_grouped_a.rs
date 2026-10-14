@@ -44,6 +44,14 @@ pub use pipe::{
     moe_w4a16_grouped_gemm_ptrtable_persist, moe_w4a16_grouped_gemm_ptrtable_pipe,
     moe_w4a16_pipe_admits,
 };
+// 2026-10-14: The warpgroup-MMA Hopper twin (opt-in, METRALE_MOE_PREFILL_WGMMA=1).
+#[path = "moe_grouped_a/wgmma.rs"]
+mod wgmma;
+pub use wgmma::{
+    MOE_W4A16_WGMMA_LAUNCH, MOE_W4A16_WGMMA_M_TILE, MOE_W4A16_WGMMA_SMEM_OPTIN,
+    moe_w4a16_grouped_gemm_ptrtable_wgmma, moe_w4a16_wgmma_admits, moe_w4a16_wgmma_ctas,
+    moe_w4a16_wgmma_smem,
+};
 
 /// 2026-09-25: Launcher for `moe_w4a16_grouped_gemm`, whose weights are contiguous per expert
 /// rather than in pointer tables. No production code calls it (@human-review: its grid
@@ -377,3 +385,6 @@ pub fn moe_silu_mul(
 #[cfg(test)]
 #[path = "moe_w4a16_pipe_tests.rs"]
 mod moe_w4a16_pipe_tests;
+#[cfg(test)]
+#[path = "moe_grouped_a/wgmma_tests.rs"]
+mod wgmma_tests;
