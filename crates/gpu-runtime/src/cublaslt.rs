@@ -24,6 +24,11 @@ pub use fp8::{
 
 pub mod scale_layout;
 
+mod bf16_gemm;
+use bf16_gemm::{Bf16Gemm, HeuristicResult, Pref};
+mod pinned;
+pub use pinned::bf16_gemm_act_weight_t_pinned;
+
 #[allow(non_camel_case_types)]
 type cublasLtHandle_t = *mut c_void;
 #[allow(non_camel_case_types)]
@@ -49,6 +54,16 @@ const SCALE_MODE_OUTER_VEC_32F: i32 = 3;
 const SCALE_MODE_VEC128_32F: i32 = 4;
 const SCALE_MODE_BLK128X128_32F: i32 = 5;
 const PREF_MAX_WORKSPACE_BYTES: u32 = 1;
+const PREF_REDUCTION_SCHEME_MASK: u32 = 3;
+const PREF_MIN_ALIGNMENT_A_BYTES: u32 = 5;
+const PREF_MIN_ALIGNMENT_B_BYTES: u32 = 6;
+const PREF_MIN_ALIGNMENT_C_BYTES: u32 = 7;
+const PREF_MIN_ALIGNMENT_D_BYTES: u32 = 8;
+const ALGO_CONFIG_ID: u32 = 0;
+const ALGO_CONFIG_TILE_ID: u32 = 1;
+const ALGO_CONFIG_SPLITK_NUM: u32 = 2;
+const ALGO_CONFIG_REDUCTION_SCHEME: u32 = 3;
+const ALGO_CONFIG_STAGES_ID: u32 = 6;
 
 unsafe extern "C" {
     fn cublasLtCreate(handle: *mut cublasLtHandle_t) -> i32;
@@ -111,6 +126,24 @@ unsafe extern "C" {
         workspace: *mut c_void,
         workspace_size: usize,
         stream: *mut c_void,
+    ) -> i32;
+    #[allow(clippy::too_many_arguments)]
+    fn cublasLtMatmulAlgoCheck(
+        handle: cublasLtHandle_t,
+        desc: cublasLtMatmulDesc_t,
+        a: cublasLtMatrixLayout_t,
+        b: cublasLtMatrixLayout_t,
+        c: cublasLtMatrixLayout_t,
+        d: cublasLtMatrixLayout_t,
+        algo: *const c_void,
+        result: *mut c_void,
+    ) -> i32;
+    fn cublasLtMatmulAlgoConfigGetAttribute(
+        algo: *const c_void,
+        attr: u32,
+        buf: *mut c_void,
+        size: usize,
+        written: *mut usize,
     ) -> i32;
     fn cuMemAlloc_v2(dptr: *mut u64, bytesize: usize) -> i32;
     fn cuMemFree_v2(dptr: u64) -> i32;
@@ -244,6 +277,8 @@ pub fn bf16_gemm_act_weight_t_f32_out(
 
 /// 2026-09-25: Shared body of the wrappers above; `out_dtype` is the D
 /// layout's type. 2026-10-09: `alpha` scales the product (1.0 for the plain forms).
+/// 2026-10-14: The heuristic is asked per call with only a workspace cap, so the algorithm (and
+/// with it the bits of a row) may change with `m`; [`bf16_gemm_act_weight_t_pinned`] does not.
 #[allow(clippy::too_many_arguments)]
 fn gemm_act_weight_t_out(
     act: u64,
@@ -257,110 +292,20 @@ fn gemm_act_weight_t_out(
     stream: u64,
 ) -> Result<()> {
     let ctx = ctx()?;
-    unsafe {
-        let mut desc: cublasLtMatmulDesc_t = std::ptr::null_mut();
-        chk(
-            cublasLtMatmulDescCreate(&mut desc, CUBLAS_COMPUTE_32F, CUDA_R_32F),
-            "DescCreate",
-        )?;
-        let ta = CUBLAS_OP_T;
-        let tb = CUBLAS_OP_N;
-        chk(
-            cublasLtMatmulDescSetAttribute(
-                desc,
-                DESC_TRANSA,
-                &ta as *const i32 as *const c_void,
-                4,
-            ),
-            "TRANSA",
-        )?;
-        chk(
-            cublasLtMatmulDescSetAttribute(
-                desc,
-                DESC_TRANSB,
-                &tb as *const i32 as *const c_void,
-                4,
-            ),
-            "TRANSB",
-        )?;
-        // 2026-09-25: A = weight, row-major [N,K] = col-major [K,N], ld K, opT.
-        // B = act, row-major [M,K] = col-major [K,M], ld K, opN.
-        // D = out, row-major [M,N] = col-major [N,M], ld N.
-        let mut la: cublasLtMatrixLayout_t = std::ptr::null_mut();
-        let mut lb: cublasLtMatrixLayout_t = std::ptr::null_mut();
-        let mut ld_: cublasLtMatrixLayout_t = std::ptr::null_mut();
-        chk(
-            cublasLtMatrixLayoutCreate(&mut la, CUDA_R_16BF, k as u64, n as u64, k as i64),
-            "LayoutA",
-        )?;
-        chk(
-            cublasLtMatrixLayoutCreate(&mut lb, CUDA_R_16BF, k as u64, m as u64, k as i64),
-            "LayoutB",
-        )?;
-        chk(
-            cublasLtMatrixLayoutCreate(&mut ld_, out_dtype, n as u64, m as u64, n as i64),
-            "LayoutD",
-        )?;
-        let mut pref: cublasLtMatmulPreference_t = std::ptr::null_mut();
-        chk(cublasLtMatmulPreferenceCreate(&mut pref), "PrefCreate")?;
-        let ws_size = ctx.ws_size;
-        chk(
-            cublasLtMatmulPreferenceSetAttribute(
-                pref,
-                PREF_MAX_WORKSPACE_BYTES,
-                &ws_size as *const usize as *const c_void,
-                std::mem::size_of::<usize>(),
-            ),
-            "PrefWorkspace",
-        )?;
-        // 2026-09-25: Holds one cublasLtMatmulHeuristicResult_t (96 bytes in
-        // the CUDA 13 cublasLt.h: 64-byte algo first, then workspaceSize,
-        // state, wavesCount, reserved[4]); `algo` is read from offset 0.
-        let mut result = [0u8; 128];
-        let mut returned: i32 = 0;
-        chk(
-            cublasLtMatmulAlgoGetHeuristic(
-                ctx.handle,
-                desc,
-                la,
-                lb,
-                ld_,
-                ld_,
-                pref,
-                1,
-                result.as_mut_ptr() as *mut c_void,
-                &mut returned,
-            ),
-            "AlgoGetHeuristic",
-        )?;
-        if returned < 1 {
-            bail!("cuBLASLt: no algorithm for {m}x{n}x{k}");
-        }
-        let beta: f32 = 0.0;
-        let status = cublasLtMatmul(
-            ctx.handle,
-            desc,
-            &alpha as *const f32 as *const c_void,
-            weight as *const c_void,
-            la,
-            act as *const c_void,
-            lb,
-            &beta as *const f32 as *const c_void,
-            out as *const c_void,
-            ld_,
-            out as *mut c_void,
-            ld_,
-            result.as_ptr() as *const c_void,
-            ctx.workspace as *mut c_void,
-            ctx.ws_size,
-            stream as *mut c_void,
-        );
-        cublasLtMatmulPreferenceDestroy(pref);
-        cublasLtMatrixLayoutDestroy(la);
-        cublasLtMatrixLayoutDestroy(lb);
-        cublasLtMatrixLayoutDestroy(ld_);
-        cublasLtMatmulDescDestroy(desc);
-        chk(status, "Matmul")?;
+    let gemm = Bf16Gemm::new(m, n, k, out_dtype)?;
+    let pref = Pref::new()?;
+    pref.set(PREF_MAX_WORKSPACE_BYTES, &(ctx.ws_size as u64))?;
+    let mut result = [HeuristicResult::ZERO];
+    if gemm.heuristic(ctx, &pref, &mut result)? < 1 {
+        bail!("cuBLASLt: no algorithm for {m}x{n}x{k}");
     }
-    Ok(())
+    let workspace = (ctx.workspace, ctx.ws_size);
+    gemm.matmul(
+        ctx,
+        &result[0].algo,
+        (act, weight, out),
+        alpha,
+        workspace,
+        stream,
+    )
 }

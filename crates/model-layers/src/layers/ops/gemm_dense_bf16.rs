@@ -246,9 +246,20 @@ pub fn moe_router_gemm_rt(
         .launch(stream)
 }
 
+/// 2026-10-14: `METRALE_DENSE_BF16_CUBLAS_PINNED` equal to `"1"`, read once per process: every
+/// [`dense_gemm_bf16_pipelined`] call runs [`cublas_bf16_proj_dense_pinned`] instead, the
+/// pinned-algorithm cuBLASLt control for the dense BF16 prefill projections. Its rows differ
+/// from the kernel's (cuBLASLt sums K in its own order), so it is an A/B opt-in.
+fn dense_bf16_cublas_pinned() -> bool {
+    static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *V.get_or_init(|| std::env::var("METRALE_DENSE_BF16_CUBLAS_PINNED").as_deref() == Ok("1"))
+}
+
 /// 2026-09-25: Tensor-core BF16 GEMM (kernel `dense_gemm_bf16_pipelined`):
 /// m16n8k16 MMAs fed by a 2-stage `cp.async` pipeline on a 128x128 tile, with
 /// the inputs and output layout of [`dense_gemm`].
+/// 2026-10-14: Under `METRALE_DENSE_BF16_CUBLAS_PINNED=1` the pinned cuBLASLt GEMM instead, at
+/// every M, so a row's bits stay independent of its launch-mates on both arms.
 #[allow(clippy::too_many_arguments)]
 pub fn dense_gemm_bf16_pipelined(
     gpu: &dyn GpuBackend,
@@ -261,6 +272,9 @@ pub fn dense_gemm_bf16_pipelined(
     k: u32,
     stream: u64,
 ) -> Result<()> {
+    if dense_bf16_cublas_pinned() {
+        return cublas_bf16_proj_dense_pinned(input, weight.weight, output, m, n, k, stream);
+    }
     KernelLaunch::new(gpu, kernel)
         .grid([div_ceil(n, 128), div_ceil(m, 128), 1])
         .block([256, 1, 1])

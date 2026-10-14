@@ -279,3 +279,7 @@ pub fn w4a16_gemm_n128_m128_bf16(
 #[cfg(test)]
 #[path = "gemm_dense_tests.rs"]
 mod gemm_dense_tests;
+
+#[cfg(test)]
+#[path = "dense_cublas_pinned_tests.rs"]
+mod dense_cublas_pinned_tests;
