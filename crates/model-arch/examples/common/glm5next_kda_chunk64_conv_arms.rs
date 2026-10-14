@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-10-14: The arms of `glm5next_kda_chunk64_conv_parity.rs`: the unfused chunk64 path (the
-//! conv of every row, the window advance, a prepare and a scan per slab) and the fused one (the
-//! conv inside each slab's prepare, the window advance last), launched on one arm's buffers, with
-//! each slab's factors recorded on request.
+//! 2026-10-14: The arms of `glm5next_kda_chunk64_conv_parity.rs` and
+//! `glm5next_kda_gate_in_prepare_parity.rs`: the unfused chunk64 path (the conv of every row, the
+//! window advance, a prepare and a scan per slab) and the fused one (the conv inside each slab's
+//! prepare, the window advance last), launched on one arm's buffers, with each slab's factors
+//! recorded on request; the prepares read the FP32 gate rows or (the `_graw` entries) compute the
+//! gate from f_b's BF16 rows.
 //!
 //! Owner: model-arch examples (GLM-5.3).
 //! Invariants: the launches take each kernel's arguments in its signature's order
 //! (`kda_conv_tokens.cu`, `kda_chunk64_prepare.cu`, `kda_chunk64.cu`).
+#![allow(dead_code)]
 
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
@@ -31,10 +34,45 @@ pub struct Kernels {
     pub parts: KernelHandle,
     pub window: KernelHandle,
     pub window_parts: KernelHandle,
-    pub prep_base: KernelHandle,
     pub prep: KernelHandle,
     pub prep_conv: KernelHandle,
     pub scan: KernelHandle,
+}
+
+impl Kernels {
+    /// 2026-10-14: This tree's kernels, from the embedded modules.
+    pub fn load(g: &dyn GpuBackend) -> Result<Self> {
+        Ok(Kernels {
+            conv: g.kernel("kda_conv_tokens", "causal_conv1d_update_l2norm_tokens")?,
+            parts: g.kernel(
+                "kda_conv_tokens",
+                "causal_conv1d_update_l2norm_tokens_parts",
+            )?,
+            window: g.kernel("kda_conv_tokens", "causal_conv1d_window_advance")?,
+            window_parts: g.kernel("kda_conv_tokens", "causal_conv1d_window_advance_parts")?,
+            prep: g.kernel("kda_chunk64_prepare", "kda_chunk64_prepare")?,
+            prep_conv: g.kernel("kda_chunk64_prepare", "kda_chunk64_prepare_conv")?,
+            scan: g.kernel("kda_chunk64", "kda_chunk64_scan")?,
+        })
+    }
+}
+
+/// 2026-10-14: `kda_gate_bf16`'s inputs: f_b's BF16 rows `[T, QKV]`, `dt_bias` `[QKV]`, `A_log`
+/// `[H]` and the lower bound.
+#[derive(Clone, Copy)]
+pub struct GateRaw {
+    pub g_raw: DevicePtr,
+    pub dt_bias: DevicePtr,
+    pub a_log: DevicePtr,
+    pub lower_bound: f32,
+}
+
+/// 2026-10-14: What a prepare reads for the gate: the FP32 rows `In::gate`, or (a `_graw`
+/// prepare) the gate's inputs.
+#[derive(Clone, Copy)]
+pub enum Gate {
+    Rows,
+    Raw(GateRaw),
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -214,9 +252,17 @@ fn scan(
         .launch(s)
 }
 
-/// 2026-10-14: The prepare's trailing arguments (gate .. scale), shared by both entries.
-fn prep_tail<'a>(l: KernelLaunch<'a>, x: &In, a: &Arm, c0: usize) -> KernelLaunch<'a> {
-    let mut l = l.arg_ptr(x.gate).arg_ptr(x.beta);
+/// 2026-10-14: The prepare's trailing arguments (gate .. scale), shared by every entry.
+fn prep_tail<'a>(l: KernelLaunch<'a>, x: &In, a: &Arm, c0: usize, gate: Gate) -> KernelLaunch<'a> {
+    let l = match gate {
+        Gate::Rows => l.arg_ptr(x.gate),
+        Gate::Raw(r) => l
+            .arg_ptr(r.g_raw)
+            .arg_ptr(r.dt_bias)
+            .arg_ptr(r.a_log)
+            .arg_f32(r.lower_bound),
+    };
+    let mut l = l.arg_ptr(x.beta);
     for p in a.scratch {
         l = l.arg_ptr(p);
     }
@@ -233,12 +279,13 @@ fn launch(g: &dyn GpuBackend, k: KernelHandle, grid: [u32; 3]) -> KernelLaunch<'
 }
 
 /// 2026-10-14: The unfused path: the conv of every row, the window advance, then a prepare
-/// (`prep`) and a scan per slab.
+/// (`prep`, reading `gate`) and a scan per slab.
 #[allow(clippy::too_many_arguments)]
 pub fn unfused(
     g: &dyn GpuBackend,
     k: &Kernels,
     prep: KernelHandle,
+    gate: Gate,
     x: &In,
     a: &Arm,
     layout: Layout,
@@ -299,7 +346,7 @@ pub fn unfused(
             .arg_ptr(a.cout)
             .arg_ptr(a.cout.offset(QKV * 2))
             .arg_ptr(a.cout.offset(2 * QKV * 2));
-        prep_tail(l, x, a, c0).launch(s)?;
+        prep_tail(l, x, a, c0, gate).launch(s)?;
         if let Some(r) = rec.as_deref_mut() {
             r.push(snap(g, s, a, n)?);
         }
@@ -308,11 +355,14 @@ pub fn unfused(
     Ok(())
 }
 
-/// 2026-10-14: The fused path on inputs `src` (the layout's buffer or the control's copy).
+/// 2026-10-14: The fused path (`prep`, a conv prepare reading `gate`) on inputs `src` (the
+/// layout's buffer or the control's copy).
 #[allow(clippy::too_many_arguments)]
 pub fn fused(
     g: &dyn GpuBackend,
     k: &Kernels,
+    prep: KernelHandle,
+    gate: Gate,
     x: &In,
     a: &Arm,
     layout: Layout,
@@ -322,7 +372,7 @@ pub fn fused(
 ) -> Result<()> {
     let [(q, stride), (kk, _), (v, _)] = x.xs(layout, src);
     for (c0, n) in slabs(x.t) {
-        let l = KernelLaunch::new(g, k.prep_conv)
+        let l = KernelLaunch::new(g, prep)
             .grid([n as u32, H as u32, 1])
             .block([CHUNK64_PREP_THREADS, 1, 1])
             .shared_mem(CHUNK64_PREP_SMEM)
@@ -336,7 +386,7 @@ pub fn fused(
             .arg_u32(KC as u32)
             .arg_f32(EPS)
             .arg_ptr(a.cout);
-        prep_tail(l, x, a, c0).launch(s)?;
+        prep_tail(l, x, a, c0, gate).launch(s)?;
         if let Some(r) = rec.as_deref_mut() {
             r.push(snap(g, s, a, n)?);
         }

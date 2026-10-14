@@ -202,7 +202,7 @@ impl Glm5NextKdaLayer {
         ws: &Glm5NextKdaWorkspace,
         stream: u64,
     ) -> Result<()> {
-        self.front_end(gpu, hidden, 1, ws, Pack::InFrontEnd, stream)?;
+        self.front_end(gpu, hidden, 1, ws, Pack::InFrontEnd, GateAt::Kernel, stream)?;
         self.stateful_row(gpu, RowIo::workspace(&self.cfg, ws, 0), state, stream)?;
         self.back_end(gpu, 1, ws, stream)
     }
@@ -307,12 +307,15 @@ impl Glm5NextKdaLayer {
         // 2026-10-13: The verify that snapshots reads the packed rows before its conv, so only
         // the chunked and token paths may take the fused pack.
         let pack = self.pack_for(tokens || chunked)?;
+        // 2026-10-14: One gate decision for the front end and the scan (`gate_at.rs`).
+        let gate = self.gate_at_for(chunked64)?;
         self.rows_with(
             gpu,
             hidden,
             k,
             ws,
             pack,
+            gate,
             stream,
             |row| {
                 if tokens || chunked || snap_tokens {
@@ -326,7 +329,7 @@ impl Glm5NextKdaLayer {
             },
             || {
                 if chunked64 {
-                    self.stateful_chunk64(gpu, k, state, ws, pack, stream)
+                    self.stateful_chunk64(gpu, k, state, ws, pack, gate, stream)
                 } else if chunked {
                     self.stateful_chunk16(gpu, k, state, ws, pack, stream)
                 } else if snap_tokens {
@@ -402,6 +405,7 @@ impl Glm5NextKdaLayer {
             states.len(),
             ws,
             Pack::InFrontEnd,
+            GateAt::Kernel,
             stream,
             |row| {
                 self.stateful_row(
@@ -426,6 +430,7 @@ impl Glm5NextKdaLayer {
         k: usize,
         ws: &Glm5NextKdaWorkspace,
         pack: Pack,
+        gate: GateAt,
         stream: u64,
         mut per_row: impl FnMut(usize) -> Result<()>,
         after_rows: impl FnOnce() -> Result<()>,
@@ -440,7 +445,7 @@ impl Glm5NextKdaLayer {
         // 2026-09-25: Three profile buckets (front, recurrence, back), each closed where its span
         // ends.
         let t_front = profile::start();
-        self.front_end(gpu, hidden, k, ws, pack, stream)?;
+        self.front_end(gpu, hidden, k, ws, pack, gate, stream)?;
         profile::end(profile::KDA_FRONT, t_front, gpu, stream);
         let t_recur = profile::start();
         for row in 0..k {

@@ -14,7 +14,7 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use super::super::decode_rows_tests::{
     CONV_TOKENS, CONV_TOKENS_PARTS, CONV_WINDOW, cfg, layer, seq_state, since,
 };
-use super::super::{Glm5NextKdaWorkspace, Pack};
+use super::super::{GateAt, Glm5NextKdaWorkspace, Pack};
 use super::{conv_pack_spans, parse_conv_pack};
 
 /// 2026-10-13: `kda_pack_qkv_bf16`'s mock handle in `decode_rows_tests::layer`.
@@ -66,7 +66,8 @@ fn front_end_drops_only_the_pack() {
     let hidden = gpu.alloc(16 * cfg().hidden * 2).unwrap();
     let run = |pack| {
         let from = gpu.launch_count();
-        l.front_end(&gpu, hidden, 7, &ws, pack, 0).unwrap();
+        l.front_end(&gpu, hidden, 7, &ws, pack, GateAt::Kernel, 0)
+            .unwrap();
         since(&gpu, from)
     };
     let (sep, fused) = (run(Pack::InFrontEnd), run(Pack::InConv));

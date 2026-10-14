@@ -139,6 +139,7 @@ impl Glm5NextKdaLayer {
             total,
             ws,
             Pack::InFrontEnd,
+            GateAt::Kernel,
             stream,
             |_| Ok(()),
             || {
