@@ -98,12 +98,16 @@ pub fn peer_slot(rank: usize, peer: usize) -> Option<usize> {
 
 /// 2026-10-12: The reduce-scatter's transfers on `rank`: to every peer `p` the rows
 /// `[lo_p, hi_p)` of the partial (contiguous rows of `row_bytes`), and from every peer its
-/// partial of this rank's rows into that peer's slot of `slot_bytes` in the receive workspace.
+/// partial of this rank's rows into that peer's slot of `slot_bytes` in the receive workspace,
+/// `slot_off` bytes into the slot. 2026-10-14: `shards` may be one row piece of every rank's
+/// shard (`glm5next_sp_overlap`), received at the piece's place in the slot (`slot_off`); the
+/// whole shards take `slot_off` 0.
 pub fn reduce_scatter_plan(
     rank: usize,
     shards: &[(usize, usize)],
     row_bytes: usize,
     slot_bytes: usize,
+    slot_off: usize,
 ) -> Vec<Xfer> {
     let (lo, hi) = shards[rank];
     shards
@@ -115,7 +119,7 @@ pub fn reduce_scatter_plan(
                 peer: p,
                 send_off: plo * row_bytes,
                 send_bytes: (phi - plo) * row_bytes,
-                recv_off: slot * slot_bytes,
+                recv_off: slot * slot_bytes + slot_off,
                 recv_bytes: (hi - lo) * row_bytes,
             })
         })
@@ -163,29 +167,34 @@ fn exchange(
 
 /// 2026-10-12: The reduce-scatter of a partial at `p` (`k` rows of `row_bytes`): after it,
 /// `ws.recv` holds every peer's partial of this rank's shard, slot `peer_slot(rank, peer)`, and
-/// the returned `PeerPartials` describes it for `glm5next_hc_post_rank_sum`.
+/// the returned `PeerPartials` describes it for `glm5next_hc_post_rank_sum`. 2026-10-14: with
+/// `shards` one row piece per rank, `slot_row` is this rank's piece's first row within its
+/// shard: the piece lands there in every slot, and the returned partials start at it, so the
+/// kernel reads them as it reads a whole shard's.
 pub fn reduce_scatter_rows(
     comm: &dyn CommBackend,
     ws: &SpWorkspace,
     p: DevicePtr,
     shards: &[(usize, usize)],
+    slot_row: usize,
     row_bytes: usize,
     stream: u64,
 ) -> Result<metrale_comm::PeerPartials> {
     let (rank, world) = (comm.rank(), comm.world_size());
     let (lo, hi) = shards[rank];
     ensure!(
-        world == ws.world && (hi - lo) * row_bytes <= ws.slot_bytes,
-        "SP-mHC: a shard of {} rows x {row_bytes} B at {world} ranks exceeds the workspace \
-         reserved for {} B slots at {} ranks",
+        world == ws.world && (slot_row + hi - lo) * row_bytes <= ws.slot_bytes,
+        "SP-mHC: a shard of {} rows from slot row {slot_row} x {row_bytes} B at {world} ranks \
+         exceeds the workspace reserved for {} B slots at {} ranks",
         hi - lo,
         ws.slot_bytes,
         ws.world
     );
-    let plan = reduce_scatter_plan(rank, shards, row_bytes, ws.slot_bytes);
+    let slot_off = slot_row * row_bytes;
+    let plan = reduce_scatter_plan(rank, shards, row_bytes, ws.slot_bytes, slot_off);
     exchange(comm, &plan, p, ws.recv, stream)?;
     Ok(metrale_comm::PeerPartials {
-        recv: ws.recv.0,
+        recv: ws.recv.0 + slot_off as u64,
         slot_elems: ws.slot_bytes / 2,
         world_size: world,
         rank,
@@ -220,11 +229,13 @@ fn workspace() -> &'static Mutex<Option<SpWorkspace>> {
 
 /// 2026-10-12: Reserve the workspace for sub-chunks of up to `max_rows` rows of `hidden` BF16 at
 /// `world` ranks when the lever is on; a no-op when it is off or the workspace already holds
-/// it. Called at load, as each layer builds.
+/// it. Called at load, as each layer builds. 2026-10-14: also the overlap's comm stream and
+/// events under `METRALE_GLM_SP_OVERLAP=1` (`glm5next_sp_overlap::reserve`).
 pub fn reserve(gpu: &dyn GpuBackend, max_rows: usize, hidden: usize, world: usize) -> Result<()> {
     if !enabled()? || world < 2 {
         return Ok(());
     }
+    crate::glm5next_sp_overlap::reserve(gpu)?;
     let slot_bytes = max_shard(max_rows, world) * hidden * 2;
     let mut g = workspace().lock().unwrap_or_else(|e| e.into_inner());
     if g.is_some_and(|w| w.world == world && w.slot_bytes >= slot_bytes) {
@@ -257,4 +268,4 @@ pub fn workspace_get() -> Result<SpWorkspace> {
 
 #[cfg(test)]
 #[path = "glm5next_sp_mhc_tests.rs"]
-mod tests;
+pub(crate) mod tests;

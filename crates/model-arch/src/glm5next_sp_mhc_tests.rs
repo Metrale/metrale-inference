@@ -63,7 +63,7 @@ fn plans_match_the_slot_layout_and_the_rings_bytes() {
     let slot = max_shard(k, world) * row;
     for rank in 0..world {
         let (lo, hi) = s[rank];
-        let rs = reduce_scatter_plan(rank, &s, row, slot);
+        let rs = reduce_scatter_plan(rank, &s, row, slot, 0);
         let ag = all_gather_plan(rank, &s, row);
         assert_eq!(rs.len(), world - 1);
         assert_eq!(ag.len(), world - 1);
@@ -99,14 +99,14 @@ fn plans_match_the_slot_layout_and_the_rings_bytes() {
 
 /// 2026-10-12: A communicator that records what is enqueued: `(op, ptr, bytes, peer, stream)`,
 /// with group markers, so the exchange's order and grouping are checked without NCCL.
-struct Recorder {
-    rank: usize,
-    world: usize,
-    ops: Mutex<Vec<(&'static str, u64, usize, usize, u64)>>,
+pub(crate) struct Recorder {
+    pub(crate) rank: usize,
+    pub(crate) world: usize,
+    pub(crate) ops: Mutex<Vec<(&'static str, u64, usize, usize, u64)>>,
 }
 
 impl Recorder {
-    fn push(&self, op: &'static str, ptr: u64, bytes: usize, peer: usize, stream: u64) {
+    pub(crate) fn push(&self, op: &'static str, ptr: u64, bytes: usize, peer: usize, stream: u64) {
         self.ops
             .lock()
             .unwrap()
@@ -175,7 +175,7 @@ fn the_exchanges_enqueue_one_group_of_paired_transfers_on_the_stream() {
     };
     let s = shards(300, 3);
     let p = DevicePtr(0x1000_0000);
-    let partials = reduce_scatter_rows(&comm, &ws, p, &s, row, 7).unwrap();
+    let partials = reduce_scatter_rows(&comm, &ws, p, &s, 0, row, 7).unwrap();
     assert_eq!(
         (
             partials.recv,
@@ -212,10 +212,10 @@ fn the_exchanges_enqueue_one_group_of_paired_transfers_on_the_stream() {
         ]
     );
     let wide = shards(303, 3);
-    let e = reduce_scatter_rows(&comm, &ws, p, &wide, row, 7).unwrap_err();
+    let e = reduce_scatter_rows(&comm, &ws, p, &wide, 0, row, 7).unwrap_err();
     assert!(e.to_string().contains("exceeds the workspace"), "{e}");
     let other_world = SpWorkspace { world: 2, ..ws };
-    assert!(reduce_scatter_rows(&comm, &other_world, p, &s, row, 7).is_err());
+    assert!(reduce_scatter_rows(&comm, &other_world, p, &s, 0, row, 7).is_err());
     assert!(comm.ops.lock().unwrap().is_empty(), "nothing enqueued");
 }
 
