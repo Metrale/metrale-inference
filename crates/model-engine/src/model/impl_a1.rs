@@ -126,7 +126,7 @@ impl TransformerModel {
         levers.max_decode_seqs = (max_batch_size as u32).max(1);
 
         tracing::info!(
-            "TransformerModel: {} layers, vocab={}, hidden={}{}{}",
+            "TransformerModel: {} layers, vocab={}, hidden={}{}{}; new-sequence levers: {}",
             layers.len(),
             config.vocab_size,
             config.hidden_size,
@@ -136,6 +136,7 @@ impl TransformerModel {
             } else {
                 ""
             },
+            levers.new_sequence_readback(),
         );
 
         let (dflash_kgamma, draft_lm_head_nvfp4, has_mtp, mtp_quant_fwd, num_intermediates) =
