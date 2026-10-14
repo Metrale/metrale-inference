@@ -49,6 +49,7 @@ pub mod build;
 pub mod layer;
 pub mod paged;
 pub mod select;
+pub mod sp_select;
 pub mod state;
 pub mod tp;
 
