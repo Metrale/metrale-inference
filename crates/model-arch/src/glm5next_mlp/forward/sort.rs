@@ -93,6 +93,13 @@ pub(super) fn sort_by_expert_with(
         "METRALE_GLM_MOE_SORT_MULTIBLOCK=1: {slots} slots past the workspace's {}",
         ws.max_total_expanded
     );
+    // 2026-10-14: The serve log's proof that the lever reached a launch (lever_readback).
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        tracing::info!(
+            "GLM MoE: multi-block expert sort launched (METRALE_GLM_MOE_SORT_MULTIBLOCK=1)"
+        )
+    });
     let nb = slots.div_ceil(SORT_MB_CHUNK).max(1) as u32;
     KernelLaunch::new(gpu, hist)
         .grid([nb, 1, 1])
