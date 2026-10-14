@@ -159,6 +159,19 @@ pub(crate) fn publish_kernel_flags(args: &cli::ServeArgs) {
             dsa.describe()
         );
     }
+    // 2026-10-14: `--prefill-tail-mode`, always published and read back on every rank.
+    let tail = metrale_gpu_runtime::prefill_tail_mode::set_prefill_tail_mode_from_cli(
+        plan.prefill_tail_mode,
+    );
+    if tail != plan.prefill_tail_mode {
+        tracing::warn!(
+            "prefill-tail-mode was already resolved ({}); the command line's ({}) did NOT \
+             take effect",
+            tail.name(),
+            plan.prefill_tail_mode.name()
+        );
+    }
+    tracing::info!("prefill tail mode: {} ({})", tail.name(), tail.describe());
     // 2026-09-26: Published only when given; otherwise
     // `prefill_codispatch_enabled()` reads `METRALE_PREFILL_CODISPATCH` on
     // first use.

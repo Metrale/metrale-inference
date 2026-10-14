@@ -31,6 +31,7 @@
 pub mod binding;
 pub mod chunk16;
 pub mod chunk64;
+pub mod cut;
 pub mod tp;
 pub mod tp_bind;
 

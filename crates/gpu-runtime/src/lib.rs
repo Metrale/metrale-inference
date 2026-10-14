@@ -43,6 +43,7 @@ pub mod kernel_args;
 pub mod metal_backend;
 pub mod op_cache;
 pub mod pinned_hosts;
+pub mod prefill_tail_mode;
 pub mod timing;
 
 /// 2026-09-25: The last multiple of `block_size` strictly below `total_tokens`, or
