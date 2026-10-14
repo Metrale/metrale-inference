@@ -11,6 +11,7 @@
 #![allow(unused_imports, dead_code)]
 
 pub(crate) mod block_mgmt;
+pub(crate) mod block_tables;
 pub(crate) mod device_argmax;
 pub(crate) mod drop;
 mod gdn_carry;

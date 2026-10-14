@@ -440,12 +440,13 @@ pub struct TransformerModel {
     /// first use. The narrowing cannot run in place: output element `i` is
     /// written into the bytes that hold input element `i / 2`.
     pub(super) ssm_h_f16_scratch: std::sync::OnceLock<DevicePtr>,
-
     /// 2026-09-25: Fixed-address device buffer for the batched-decode MoE
     /// per-row adapter map, `[max_batch_size]` i32 (`< 0` = base row, `>= 0` =
     /// fold that adapter). Allocated in `new` and refreshed per decode step by
     /// `upload_moe_row_adapter`, which does not touch it when `lora` is `None`.
     pub(super) moe_row_adapter_buf: DevicePtr,
+    /// 2026-10-13: The batched decode/verify block tables (`block_tables.rs`).
+    pub(super) block_tables: super::block_tables::BlockTables,
 
     // 2026-09-25: Two-phase SSM prefill buffers, `gdn_buf_max_len` rows each,
     // shared by every layer and sequence. NULL when the model has no GDN
