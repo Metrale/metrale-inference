@@ -452,6 +452,13 @@ w4a16_tc_rows_pf = 1
 #                                        untransposed MoE prefill grouped
 #                                        W4A16 GEMM: model-layers MoE
 #                                        `launch_grouped_gemm`
+#   moe_w4a16_grouped_wgmma_hopper.cu,
+#   moe_w4a16_grouped_hopper.cuh         wgmma twin of the same GEMM
+#                                        (2026-10-14; behind
+#                                        METRALE_MOE_PREFILL_WGMMA) and the
+#                                        tile scan it shares with the pipe
+#                                        twin: model-layers MoE
+#                                        `launch_grouped_gemm`
 #   hc_lowrank_gemv_hopper.cu            decode GEMVs of the Qwen3.8-Flash-
 #                                        Next low-rank hyper-connection
 #                                        collapse: model-layers ops

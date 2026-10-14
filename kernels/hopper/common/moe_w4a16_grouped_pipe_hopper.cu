@@ -31,6 +31,8 @@
 
 #include "tc_weight_formats.cuh"  // 2026-10-13: ntc_e2m1x4_bf16, ntc_e4m3_bf16x2, ntc_hmul2
 
+#include "moe_w4a16_grouped_hopper.cuh"  // 2026-10-14: pipe_scale_pair, pipe_scan_tiles
+
 #define PIPE_MT 64
 #define PIPE_NT 128
 #define PIPE_KS 64
@@ -82,15 +84,6 @@ __device__ __forceinline__ void pipe_mma(float* c, const unsigned int* a, unsign
         "{%0, %1, %2, %3}, {%4, %5, %6, %7}, {%8, %9}, {%0, %1, %2, %3};\n"
         : "+f"(c[0]), "+f"(c[1]), "+f"(c[2]), "+f"(c[3])
         : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b0), "r"(b1));
-}
-
-// 2026-10-13: One BF16 pair p (each E2M1 * E4M3, exact) times scale2 in FP32, rounded to BF16 as
-// the base kernel rounds `lut * fp8 * scale2`.
-__device__ __forceinline__ unsigned int pipe_scale_pair(unsigned int p, float s2) {
-    const float lo = __uint_as_float(p << 16) * s2;
-    const float hi = __uint_as_float(p & 0xFFFF0000u) * s2;
-    const __nv_bfloat162 r = __floats2bfloat162_rn(lo, hi);
-    return *(const unsigned int*)&r;
 }
 
 // 2026-10-14: One 64 x 128 output tile: expert `expert_id`, its 64-row M tile `m_tile`, the
@@ -287,49 +280,16 @@ moe_w4a16_grouped_gemm_ptrtable_persist(
     extern __shared__ __align__(16) unsigned char pipe_smem[];
     __shared__ int warp_tiles[PIPE_THREADS / 32];
     int* first_tile = (int*)(pipe_smem + PIPE_SMEM_BYTES);
-    const unsigned int t = threadIdx.x, lane = t & 31, warp = t >> 5;
-
-    // 2026-10-14: Exclusive scan of ceil(rows_e / 64) over experts; thread t owns a contiguous run.
-    const unsigned int per = (num_experts + PIPE_THREADS - 1) / PIPE_THREADS;
-    const unsigned int e0 = t * per;
-    int mine = 0;
-    for (unsigned int i = 0; i < per && e0 + i < num_experts; i++) {
-        const int rows = expert_offsets[e0 + i + 1] - expert_offsets[e0 + i];
-        mine += rows > 0 ? (rows + PIPE_MT - 1) / PIPE_MT : 0;
-    }
-    int incl = mine;
-#pragma unroll
-    for (int d = 1; d < 32; d <<= 1) {
-        const int v = __shfl_up_sync(0xffffffffu, incl, d);
-        if ((int)lane >= d) incl += v;
-    }
-    if (lane == 31) warp_tiles[warp] = incl;
-    __syncthreads();
-    int before = 0, total = 0;
-#pragma unroll
-    for (int w = 0; w < PIPE_THREADS / 32; w++) {
-        before += w < (int)warp ? warp_tiles[w] : 0;
-        total += warp_tiles[w];
-    }
-    int run = before + incl - mine;
-    for (unsigned int i = 0; i < per && e0 + i < num_experts; i++) {
-        first_tile[e0 + i] = run;
-        const int rows = expert_offsets[e0 + i + 1] - expert_offsets[e0 + i];
-        run += rows > 0 ? (rows + PIPE_MT - 1) / PIPE_MT : 0;
-    }
-    if (t == 0) first_tile[num_experts] = total;
-    __syncthreads();
+    // 2026-10-14: Exclusive scan of ceil(rows_e / 64) over experts (moe_w4a16_grouped_hopper.cuh).
+    const int total =
+        pipe_scan_tiles<PIPE_MT, PIPE_THREADS>(first_tile, warp_tiles, expert_offsets, num_experts);
 
     const unsigned int n_tiles = N / PIPE_NT;
     const unsigned int units = (unsigned int)total * n_tiles;
     const unsigned int min_smem = PIPE_SMEM_BYTES + (num_experts + 1) * 4;
     for (unsigned int w = blockIdx.x; w < units; w += gridDim.x) {
         const unsigned int mt = w / n_tiles;
-        unsigned int lo = 0, hi = num_experts;
-        while (hi - lo > 1) {
-            const unsigned int mid = (lo + hi) >> 1;
-            if ((unsigned int)first_tile[mid] <= mt) lo = mid; else hi = mid;
-        }
+        const unsigned int lo = pipe_tile_expert(first_tile, num_experts, mt);
         // 2026-10-14: The previous unit's last shared-memory reads finish before this unit's
         // prologue overwrites the stages.
         __syncthreads();
