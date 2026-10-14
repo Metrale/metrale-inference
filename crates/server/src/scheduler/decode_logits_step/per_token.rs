@@ -255,93 +255,33 @@ pub(super) fn process_decoded_token(
         return;
     }
 
-    // 2026-09-25: EOS handling: each `*_suppress*` flag below can hold a sampled EOS
-    // back. EOS escape (`SchedLevers::tool_eos_escape`, on unless
-    // `METRALE_TOOL_EOS_ESCAPE` is `0` or `false`): once a tool call has
-    // completed, outside a tool body and thinking, the grammar does not hold
-    // EOS back.
-    let eos_escape = sched.levers.tool_eos_escape
-        && a.tool_call_completed
-        && !a.inside_tool_body
-        && !a.inside_thinking;
-    // 2026-09-25: The grammar holds EOS back only when the response cannot legally
-    // end at the matcher's position (`grammar_blocks_stop`). That fills a
-    // bitmask, so it is evaluated only when the sampled token is an EOS.
-    let grammar_suppresses_eos = a.eos_tokens.contains(&tok)
-        && !eos_escape
-        && crate::grammar::grammar_blocks_stop(a.grammar_state.as_mut(), &a.eos_tokens);
-    let legacy_suppresses_eos = a.require_tool_call;
-    let min_tokens_suppresses = a.output_tokens.len() < a.min_tokens;
-    // 2026-09-25: Inside thinking, EOS is held back unless a hard ceiling is hit
-    // (`hard_ceiling_hit`): `remaining` is 0 (it already counts this token) or
-    // `seq_len` is at the `max_seq_len` ceiling.
-    let hard_ceiling = hard_ceiling_hit(a.remaining, a.seq.seq_len, sched.limits.max_seq_len);
-    let thinking_suppresses_eos = eos_suppressed_by_thinking(a.inside_thinking, hard_ceiling);
-    // 2026-09-25: Post-think EOS guard: on a tool-armed turn (`require_tool_call` or
-    // `tool_request`), after `</think>`, hold EOS back until the output holds
-    // `POST_THINK_MIN_CONTENT` tokens beyond the thinking ones, so the model
-    // has room to open a tool call.
-    const POST_THINK_MIN_CONTENT: u32 = 16;
-    let post_think_content_tokens =
-        (a.output_tokens.len() as u32).saturating_sub(a.thinking_tokens);
-    let tools_armed = a.require_tool_call || a.tool_request;
-    let post_think_suppresses_eos =
-        tools_armed && a.think_ended && post_think_content_tokens < POST_THINK_MIN_CONTENT;
-    let suppress_eos = grammar_suppresses_eos
-        || legacy_suppresses_eos
-        || min_tokens_suppresses
-        || thinking_suppresses_eos
-        || post_think_suppresses_eos;
-
-    if a.eos_tokens.contains(&tok) && !suppress_eos {
-        // 2026-09-25: An EOS that is not held back: counted in `output_tokens` but not
-        // streamed; the sequence finishes.
-        a.output_tokens.push(tok);
-        crate::scheduler::emit_step::update_tool_param_state(a, tok);
-        a.finished = true;
-    } else if a.eos_tokens.contains(&tok) && suppress_eos {
-        // 2026-09-25: A held-back EOS is dropped (not streamed, not in
-        // `output_tokens`) and decoding continues.
-        //
-        // When thinking is the only reason it is held back and the model sets
-        // `honor_eos_inside_thinking`, the EOS closes the thinking block: the
-        // same state changes as the `</think>` branch above, plus
-        // `think_force_closed`. The EOS itself is still dropped, and thinking no
-        // longer holds back a later one.
-        let thinking_is_sole_suppressor = thinking_suppresses_eos
-            && !grammar_suppresses_eos
-            && !legacy_suppresses_eos
-            && !post_think_suppresses_eos
-            && !min_tokens_suppresses;
-        // 2026-09-25: MODEL.toml `[behavior].honor_eos_inside_thinking`, false when
-        // unset.
-        let honor_eos_in_think = sched.watchdog.honor_eos_inside_thinking;
-        if thinking_is_sole_suppressor && honor_eos_in_think {
-            a.inside_thinking = false;
-            a.think_force_closed = true;
-            a.force_end_thinking = false;
-            a.sentence_defer_count = 0;
-            a.consecutive_confident = 0;
-            a.in_code_fence = false;
-            a.think_ended = true;
-            a.think_just_ended = true;
+    // 2026-10-13: EOS handling, as vLLM decides it (`scheduler::eos_hold`):
+    // only `min_tokens`, a grammar that cannot stop, or a required tool call
+    // with no grammar can hold an EOS back, and the last two only outside
+    // thinking. An EOS inside `<think>` ends the turn.
+    if a.eos_tokens.contains(&tok) {
+        let generated_before = a.output_tokens.len();
+        let hold =
+            crate::scheduler::eos_hold::eos_hold(a, generated_before, sched.levers.tool_eos_escape);
+        if !hold.any() {
+            // 2026-09-25: An EOS that is not held back: counted in `output_tokens` but not
+            // streamed; the sequence finishes.
+            a.output_tokens.push(tok);
+            crate::scheduler::emit_step::update_tool_param_state(a, tok);
+            a.finished = true;
+        } else {
+            // 2026-09-25: A held-back EOS is dropped (not streamed, not in
+            // `output_tokens`) and decoding continues.
+            tracing::debug!(
+                target: "metrale::eos",
+                tok,
+                inside_thinking = a.inside_thinking,
+                by_grammar = hold.grammar,
+                by_required_tool_call = hold.required_tool_call,
+                by_min_tokens = hold.min_tokens,
+                "EOS suppressed; model forced to continue"
+            );
         }
-        tracing::debug!(
-            target: "metrale::eos",
-            tok,
-            implicit_think_close = thinking_is_sole_suppressor && honor_eos_in_think,
-            thinking_sole_suppressor = thinking_is_sole_suppressor,
-            honor_eos_inside_thinking = honor_eos_in_think,
-            inside_thinking = a.inside_thinking,
-            think_ended = a.think_ended,
-            thinking_tokens = a.thinking_tokens,
-            by_thinking = thinking_suppresses_eos,
-            by_grammar = grammar_suppresses_eos,
-            by_legacy_tool = legacy_suppresses_eos,
-            by_post_think = post_think_suppresses_eos,
-            by_min_tokens = min_tokens_suppresses,
-            "EOS suppressed; model forced to continue"
-        );
     } else {
         super::content_emit::emit_content_token(a, tok, model, sched);
     }

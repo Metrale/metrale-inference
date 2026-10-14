@@ -40,8 +40,8 @@ pub fn emit_token(
     }
 
     // 2026-09-25: ChatML role-boundary hard stop (`<|im_start|>`). It runs
-    // before the EOS suppression below (grammar, `require_tool_call`,
-    // `min_tokens`, thinking), which would otherwise hold the token back and
+    // before the EOS hold below (grammar, `require_tool_call`,
+    // `min_tokens`), which would otherwise hold the token back and
     // let generation continue.
     if let Some(ims) = sched.limits.im_start_hard_stop
         && tok == ims
@@ -306,53 +306,25 @@ pub fn emit_token(
         }
     }
 
-    // 2026-09-25: EOS escape: once a tool call has completed, outside a
-    // tool body and thinking, the grammar does not hold EOS back.
-    // `SchedLevers::tool_eos_escape` is on unless
-    // `METRALE_TOOL_EOS_ESCAPE` is `0` or `false`.
-    let eos_escape = sched.levers.tool_eos_escape
-        && a.tool_call_completed
-        && !a.inside_tool_body
-        && !a.inside_thinking;
-    // 2026-09-25: the grammar holds EOS back when stopping is not legal at
-    // the matcher's position (`grammar_blocks_stop`, evaluated only for an
-    // EOS token because it fills a bitmask). Inside thinking the matcher
-    // has not seen the thinking tokens, so a grammar-armed sequence holds
-    // EOS back there too.
-    let grammar_suppresses_eos = a.eos_tokens.contains(&tok)
-        && !eos_escape
-        && ((a.inside_thinking && a.grammar_state.is_some())
-            || crate::grammar::grammar_blocks_stop(a.grammar_state.as_mut(), &a.eos_tokens));
-    let legacy_suppresses_eos = a.require_tool_call;
-    let min_tokens_suppresses = a.output_tokens.len() < a.min_tokens;
-    // 2026-09-25: thinking holds EOS back until a hard ceiling is hit, the
-    // same `eos_suppressed_by_thinking` term as `decode_logits_step`.
-    let hard_ceiling = crate::scheduler::helpers::hard_ceiling_hit(
-        a.remaining,
-        a.seq.seq_len,
-        sched.limits.max_seq_len,
-    );
-    let thinking_suppresses_eos =
-        crate::scheduler::helpers::eos_suppressed_by_thinking(a.inside_thinking, hard_ceiling);
-    let suppress_eos = grammar_suppresses_eos
-        || legacy_suppresses_eos
-        || min_tokens_suppresses
-        || thinking_suppresses_eos;
-
-    if a.eos_tokens.contains(&tok) && !suppress_eos {
-        a.finished = true;
-        return;
-    }
-    if a.eos_tokens.contains(&tok) && suppress_eos {
+    // 2026-10-13: EOS: the same `eos_hold` decision as `decode_logits_step`.
+    // The EOS is already in `output_tokens`, so the tokens before it are one
+    // fewer.
+    if a.eos_tokens.contains(&tok) {
+        let generated_before = a.output_tokens.len().saturating_sub(1);
+        let hold =
+            crate::scheduler::eos_hold::eos_hold(a, generated_before, sched.levers.tool_eos_escape);
+        if !hold.any() {
+            a.finished = true;
+            return;
+        }
         // 2026-10-09: the same debug line as `decode_logits_step`'s held-back EOS.
         tracing::debug!(
             target: "metrale::eos",
             tok,
             inside_thinking = a.inside_thinking,
-            by_thinking = thinking_suppresses_eos,
-            by_grammar = grammar_suppresses_eos,
-            by_legacy_tool = legacy_suppresses_eos,
-            by_min_tokens = min_tokens_suppresses,
+            by_grammar = hold.grammar,
+            by_required_tool_call = hold.required_tool_call,
+            by_min_tokens = hold.min_tokens,
             "EOS suppressed in emit_token; model forced to continue"
         );
         return;

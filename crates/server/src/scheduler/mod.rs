@@ -17,9 +17,8 @@ mod decode_logits_content;
 mod decode_logits_seq;
 mod decode_logits_step;
 mod decode_step;
-#[cfg(test)]
-mod emit_eos_thinking_tests;
 mod emit_step;
+mod eos_hold;
 mod fast_greedy;
 #[cfg(test)]
 mod finish_guard_tests;

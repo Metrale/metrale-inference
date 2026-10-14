@@ -12,6 +12,8 @@ use super::*;
 use crate::scheduler::io::{DecodeRows, Readback, StepOutcome};
 
 mod content_emit;
+#[cfg(test)]
+mod eos_hold_tests;
 mod host_sample;
 mod per_token;
 

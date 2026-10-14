@@ -5,9 +5,9 @@
 //! call ends the reasoning (`ReasoningParser::tool_call_closes_reasoning`,
 //! GLM-4.7's), a `<tool_call>` written while thinking ends the thinking there,
 //! and the opener is the first content token. Without this the sequence stays
-//! in thinking through the call: the EOS the model writes after it (GLM's
-//! `<|observation|>`) is held back as a thinking EOS, the call is never marked
-//! complete and the grammar never sees it, so the model runs on past its call.
+//! in thinking through the call: the call is never marked complete and the
+//! grammar never sees it. The EOS the model writes after it (GLM's
+//! `<|observation|>`) ends the turn either way (`eos_hold`, as in vLLM).
 //!
 //! Both token paths call [`close_thinking_at_tool_call`] before they read
 //! `inside_thinking` for the token: `decode_logits_step` and `emit_token`.

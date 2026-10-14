@@ -386,16 +386,11 @@ fn forced_token_fastpath_enabled_by_falsy_or_junk() {
     assert!(parse_forced_token_fastpath(Some("yes")));
 }
 
-/// 2026-09-25: Pins two `WatchdogParams::default()` values: a mid-`<think>`
-/// EOS is not honored as an implicit close, and the think-loop watchdog is
-/// on. Served runs take both from `ModelBehavior` instead.
+/// 2026-09-25: Pins a `WatchdogParams::default()` value: the think-loop
+/// watchdog is on. Served runs take it from `ModelBehavior` instead.
 #[test]
-fn watchdog_defaults_keep_mid_think_eos_block_inert() {
+fn watchdog_defaults_arm_the_think_loop_watchdog() {
     let d = WatchdogParams::default();
-    assert!(
-        !d.honor_eos_inside_thinking,
-        "honor_eos_inside_thinking must default OFF (opt-in per model)"
-    );
     assert!(
         d.enable_think_loop_watchdog,
         "think-loop watchdog must default ON (opt-out per model)"
