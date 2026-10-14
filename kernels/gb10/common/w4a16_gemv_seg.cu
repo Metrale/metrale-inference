@@ -299,12 +299,12 @@ extern "C" __global__ void __launch_bounds__(SEG1_THREADS) NAME(                
     w4a16_gemv_seg_body<R, M>(A, seg, K);                                                     \
 }
 
-#define SEG1_ENTRY(R) SEG1_ENTRY_NAMED(w4a16_gemv_seg_r##R, R, 1)
-#define SEG1_ROWS_ENTRY(M) SEG1_ENTRY_NAMED(w4a16_gemv_seg_m##M, 1, M)
+// 2026-10-14: Each entry names its kernel directly (r<R>: R rows of one input, m<M>: one row of M
+// inputs), so the build's entry-point scan finds it; the expansion is the paste macros' was.
 
-SEG1_ENTRY(1)
-SEG1_ENTRY(2)
-SEG1_ENTRY(4)
-SEG1_ROWS_ENTRY(2)
-SEG1_ROWS_ENTRY(3)
-SEG1_ROWS_ENTRY(4)
+SEG1_ENTRY_NAMED(w4a16_gemv_seg_r1, 1, 1)
+SEG1_ENTRY_NAMED(w4a16_gemv_seg_r2, 2, 1)
+SEG1_ENTRY_NAMED(w4a16_gemv_seg_r4, 4, 1)
+SEG1_ENTRY_NAMED(w4a16_gemv_seg_m2, 1, 2)
+SEG1_ENTRY_NAMED(w4a16_gemv_seg_m3, 1, 3)
+SEG1_ENTRY_NAMED(w4a16_gemv_seg_m4, 1, 4)
