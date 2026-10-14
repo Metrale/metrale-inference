@@ -12,6 +12,7 @@
 //! - Every term is a pure function of the plan's fields and the slot count.
 
 use anyhow::Result;
+use metrale_circuit::memory::DriverTerms;
 use metrale_config::ModelConfig;
 use metrale_model_layers::ssm_reserve::{self, PoolShape, SsmRollbackMode};
 
@@ -40,6 +41,8 @@ pub(crate) struct ReservePlan {
     /// 2026-10-01: Decode-rollback ring depth (the preflight's fit) and the per-sequence blob.
     pub(super) ring_slots: usize,
     pub(super) per_seq_blob: usize,
+    /// 2026-10-13: The build class's driver terms (`runtime_headroom::target_driver_terms`).
+    pub(super) driver: DriverTerms,
 }
 
 /// 2026-10-01: The reserve's terms at one slot count, in bytes.
@@ -115,10 +118,23 @@ impl ReservePlan {
             runtime: RuntimeHeadroom::new(
                 self.budget_bytes,
                 carry_stash_bytes(&self.config, verify_slots, self.h_f16_pool),
+                &self.driver,
             ),
             per_sequence: self.per_sequence_bytes * slots.max(1),
             decode_ring: self.ring_slots * slots * self.per_seq_blob,
         })
+    }
+
+    /// 2026-10-13: The reserve's driver terms that KV sizing may credit against driver use the
+    /// device already shows (`SlotPlan::driver_credit_cap`): all of them on a discrete device;
+    /// none on a unified-memory class, whose free memory also moves with host caches, so its use
+    /// beyond the ledger is not the driver's alone.
+    pub(crate) fn driver_credit_cap(&self) -> usize {
+        if self.driver.unified {
+            0
+        } else {
+            self.driver.bytes(self.budget_bytes as u64, 0) as usize
+        }
     }
 
     /// 2026-10-01: The inference reserve at `slots` slots.

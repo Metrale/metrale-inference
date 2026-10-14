@@ -67,6 +67,8 @@ minimal change that makes every term derive from the circuit model, in the order
    `kernels/gb10/HARDWARE.toml [memory]` (already declared there), read through
    `memory::DriverTerms` at build time like the `[defaults]` levers
    (`metrale_kernels::TARGET_DEFAULTS`), so another class states its own calibration.
+   Done 2026-10-13: `metrale_kernels::TARGET_MEMORY_TABLE` (the build class's table, an
+   ancestor's through `inherits`, else gb10's); hopper declares its own.
 4. **The weights.** The post-load audit's `predicted_derived_bytes` (native-FP8 dense route
    only) is replaced by `memory::weights::node_weights` over COPIES.toml, which covers every
    default load path; `METRALE_DENSE_FP8`'s copies become rules with `when` keys.

@@ -39,36 +39,14 @@ use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 use super::{Glm5NextDsaConfig, Glm5NextDsaKernels};
 
-/// 2026-09-25: Shared-memory ceiling the top-k select is budgeted against; the same value
-/// as `SMEM_CEILING` in `examples/dsa_indexer_microtest.rs`.
-pub const TOPK_SMEM_CEILING: usize = 49_152;
+// 2026-10-13: The top-k tile helpers live with the shared `dsa_topk_pools` launcher.
+pub use metrale_model_layers::layers::ops::{TOPK_SMEM_CEILING, topk_smem_for_tile, topk_tile};
 
 /// 2026-09-25: Threads per block for `dsa_index_scores`, and the least shared memory it is
 /// given, in bytes (`select_tokens` requests `max(SCORES_BLOCK, 4 * index_heads)`).
 const SCORES_BLOCK: u32 = 128;
-/// 2026-09-25: Threads per block for `dsa_topk_pools` and `dsa_expand_selection`.
+/// 2026-09-25: Threads per block for `dsa_expand_selection`.
 const ROW_BLOCK: u32 = 256;
-
-/// 2026-09-25: Tile width `dsa_topk_pools` walks the pool axis in.
-///
-/// The block holds two tiles, the running best list and the candidate tile, of `[f32, i32]`
-/// pairs: `16 · T` bytes. This is the largest power of two `T` that fits
-/// [`TOPK_SMEM_CEILING`]: 2,048.
-///
-/// `Glm5NextDsaLayer::decode_k` passes this value to `dsa_write_geom` as `tile`; the kernel
-/// has no copy of it.
-pub fn topk_tile() -> usize {
-    let mut t = 2usize;
-    while t * 2 * 16 <= TOPK_SMEM_CEILING {
-        t *= 2;
-    }
-    t
-}
-
-/// 2026-09-25: Shared memory one `dsa_topk_pools` block needs for a tile of `t` pools.
-pub fn topk_smem_for_tile(t: usize) -> usize {
-    t * 2 * 8
-}
 
 /// 2026-09-25: Pools kept over a contiguous, unpadded cache of `seq` tokens.
 ///

@@ -235,10 +235,17 @@ impl Qwen3AttentionLayer {
                      W8A16. This arm allocates nothing."
                 );
             } else {
+                // 2026-10-13: Named from the weight the chain reads, not assumed FP8: a BF16
+                // checkpoint's Q/K/V hold no quantized weight and run BF16 x BF16.
+                let route = match self.q_weight.as_ref() {
+                    Some(w) if w.as_fp8().is_some() => "W8A16 (BF16 act x FP8 weight)",
+                    Some(w) if w.as_nvfp4().is_some() => "W4A16 (BF16 act x NVFP4 weight)",
+                    Some(_) => "BF16 act x packed weight dequantized to BF16",
+                    None => "BF16 x BF16 dense (the weight as shipped)",
+                };
                 tracing::info!(
-                    "[metrale] attention Q/K/V prefill (chunk 0, cache-skip): W8A16 \
-                     (BF16 act x FP8 weight). W8A8 cuBLASLt not selected — add `attn` to \
-                     METRALE_CUBLAS_GEMM; see #917/#928."
+                    "[metrale] attention Q/K/V prefill (chunk 0, cache-skip): {route}. W8A8 \
+                     cuBLASLt not selected — add `attn` to METRALE_CUBLAS_GEMM; see #917/#928."
                 );
             }
         }

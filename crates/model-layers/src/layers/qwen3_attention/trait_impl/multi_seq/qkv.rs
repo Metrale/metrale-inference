@@ -12,7 +12,7 @@
 //!
 //! `ms_phase_qkv` routes: n = 3, n = 2 or n > 3 with NVFP4 q/k/v (`ms_qkv_batch3`,
 //! `ms_qkv_batch2`, `ms_qkv_batchn`); block-scaled FP8 q/k/v
-//! (`qkv_fp8_batch.rs`); n in 2..=8 with ungated dense BF16 q/k/v
+//! (`qkv_fp8_batch.rs`); n >= 2 with dense BF16 q/k/v, gated or not
 //! (`ms_qkv_batchm_bf16`); otherwise one GEMV per row per projection, which
 //! handles every weight encoding.
 
@@ -103,8 +103,7 @@ impl Qwen3AttentionLayer {
             // NVFP4 and the BF16 route below needs neither, so their order does
             // not matter.
             self.ms_qkv_batchm_fp8(c)?;
-        } else if (2..=8).contains(&n)
-            && !self.gated
+        } else if n >= 2
             && self.dense_gemv_batchm_k.0 != 0
             && self.qkv_is_dense_bf16()
             && bf16_batchm_enabled()
@@ -114,6 +113,8 @@ impl Qwen3AttentionLayer {
             // (`decode_a2.rs`), which the decode graph key includes, so a branch on
             // it is the same at capture and replay, as for the n = 2 and n = 3
             // branches above.
+            // 2026-10-13: Gated layers and any n too (it was ungated n in 2..=8): every row
+            // keeps the per-row `dense_gemv` bits, so the route changes speed, not output.
             self.ms_qkv_batchm_bf16(c)?;
         } else {
             for i in 0..n {
@@ -161,12 +162,19 @@ impl Qwen3AttentionLayer {
     /// `dense_gemv_bf16_batchm.cu` header states the per-row order matches
     /// `dense_gemv_bf16`, and the build passes `--fmad=false`. The check is
     /// `examples/dense_gemv_bf16_batchm_microtest`.
+    ///
+    /// 2026-10-13: Rows past `DENSE_GEMV_BATCHM_DECODE_MAX_M` split over block rows of at
+    /// most that many (`dense_gemv_batchm_split`, same per-row result in any split). On a
+    /// gated layer Q is the interleaved `[Q | gate]`; without a q adapter one
+    /// `deinterleave_qg` launch splits every row, with one `ms_qkv_deinterleave_q` does
+    /// after the LoRA delta, as on the per-row route.
     fn ms_qkv_batchm_bf16(&self, c: &MultiSeqCtx<'_>) -> Result<()> {
         let MultiSeqCtx {
             fwd,
             n,
             stream,
             h,
+            nq,
             nkv,
             hd,
             bf16,
@@ -185,14 +193,16 @@ impl Qwen3AttentionLayer {
         let kv_dim = nkv * hd;
         let kv_bytes = kv_dim as usize * bf16;
 
+        let y_blocks = (n as u32).div_ceil(ops::DENSE_GEMV_BATCHM_DECODE_MAX_M);
         let gemv = |w, out, n_out| {
-            ops::dense_gemv_batchm(
+            ops::dense_gemv_batchm_split(
                 fwd.gpu,
                 self.dense_gemv_batchm_k,
                 normed,
                 w,
                 out,
                 n as u32,
+                y_blocks,
                 n_out,
                 h as u32,
                 out_stride,
@@ -207,6 +217,18 @@ impl Qwen3AttentionLayer {
             qkv_buf.offset(q_proj_bytes + kv_bytes),
             kv_dim,
         )?;
+        if self.gated && !self.q_lora_active() {
+            ops::deinterleave_qg(
+                fwd.gpu,
+                self.deinterleave_qg_k,
+                qkv_buf,
+                n as u32,
+                nq,
+                hd,
+                out_stride,
+                stream,
+            )?;
+        }
         Ok(())
     }
 

@@ -337,10 +337,16 @@ impl Qwen3AttentionLayer {
                     stream,
                 )
             }
+            // 2026-09-25: A layer the loader gave a sliding window (`set_sliding_window`)
+            // attends only to the last `sliding_window` positions; every other layer passes 0.
             KvCacheDtype::Bf16 => self.run_paged_decode_bf16(
                 gpu,
                 q,
-                kv_cache,
+                (
+                    kv_cache.k_pool_ptr(self.attn_layer_idx),
+                    kv_cache.v_pool_ptr(self.attn_layer_idx),
+                ),
+                self.sliding_window.unwrap_or(0),
                 output,
                 block_table,
                 seq_lens,

@@ -175,6 +175,9 @@ pub struct HcWeights {
     /// qwen4_exp that collapse is also the final norm: the checkpoint has no
     /// `model.norm`, and the loader installs a placeholder.
     pub is_last_model_layer: bool,
+    /// 2026-10-14: This layer's model index (GDN and attention layers counted alike); labels
+    /// the per-layer `METRALE_OP_DUMP` highway taps.
+    pub model_layer: usize,
 }
 
 /// 2026-09-25: Which of the four attention projections get an FP8 `[K, N]`

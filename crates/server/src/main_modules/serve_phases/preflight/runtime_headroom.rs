@@ -10,8 +10,9 @@
 //! Owner: server startup (`met serve`).
 //! Invariants:
 //! - The carry stash term is `GdnCarrySizes::total`, the bytes `gdn_carry_bind` allocates.
-//! - The driver terms are calibrated on GB10 from measured serves (below); a change to them
-//!   cites a new measurement.
+//! - The driver terms are the build class's HARDWARE.toml `[memory]` table, calibrated per
+//!   class from measured serves (GB10 below, H100 in kernels/hopper/HARDWARE.toml); a change to
+//!   them cites a new measurement.
 //!
 //! Calibration (GB10, 2026-10-01; a serve's device footprint is the drop of host
 //! `MemAvailable` from an idle box, less the allocation ledger and the serve's anonymous host
@@ -37,21 +38,28 @@
 //! Nemotron-3-Nano's 24,456 small weight allocations leave 429 MiB of that chunk slack (the dense
 //! 27B's 2,274 leave 52 MiB). The KV sizing charges it from the allocation ledger's addresses
 //! once the weights are placed (`model-engine` `kv_sizing.rs`), so it applies only where it occurs.
-//! Less that slack, `DRIVER_FIXED_BYTES + DRIVER_BUDGET_PER_MILLE` of the util budget covers every
+//! Less that slack, `driver_fixed_bytes + driver_budget_per_mille` of the util budget covers every
 //! measured serve, the largest being the dense default tier's 3.13 GB, with 0.12 GB to spare at
 //! util 0.85 on GB10. A KV pool the prefix cache leaves unclamped also keeps a small share of its
 //! own budget for the driver (`model-engine` `kv_blocks::PREFIX_POOL_DRIVER_PER_MILLE`), the one
 //! term calibrated rather than attributed.
 
+use metrale_circuit::memory::DriverTerms;
 use metrale_config::ModelConfig;
 
-/// 2026-10-01: The context, the loaded modules, the local-memory reservation and the CUDA
-/// graphs: 475 MiB measured without the graphs; 1 GiB.
-pub(crate) const DRIVER_FIXED_BYTES: usize = 1 << 30;
-
-/// 2026-10-01: The driver's bookkeeping for the allocations that fill the budget, per mille of
-/// the util budget: 21 (2.1%), so that with the fixed term it covers 3.13 GB at a 105.9 GB budget.
-pub(crate) const DRIVER_BUDGET_PER_MILLE: usize = 21;
+/// 2026-10-13: The driver terms of the class this binary's kernels were built for: its own
+/// HARDWARE.toml `[memory]` table, or the nearest ancestor's (`metrale_kernels::TARGET_MEMORY_TABLE`),
+/// read by the memory model's own parser. Until 2026-10-13 they were constants here, gb10's
+/// calibration for every class; an H100 then reserved 0.45 GB more than its driver uses.
+pub(crate) fn target_driver_terms() -> anyhow::Result<DriverTerms> {
+    let (class, table) = metrale_kernels::TARGET_MEMORY_TABLE.ok_or_else(|| {
+        anyhow::anyhow!(
+            "this build carries no HARDWARE.toml [memory] table (built without a kernels/ tree): \
+             the driver's share of the device cannot be reserved"
+        )
+    })?;
+    Ok(DriverTerms::parse(class, table)?)
+}
 
 /// 2026-10-01: The headroom's terms, in bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,20 +67,20 @@ pub(crate) struct RuntimeHeadroom {
     /// 2026-10-01: The GDN carry stash and its tables (`GdnCarrySizes::total`); 0 when the model
     /// cannot carry.
     pub carry_stash: usize,
-    /// 2026-10-01: [`DRIVER_FIXED_BYTES`].
+    /// 2026-10-01: The class's `driver_fixed_bytes`.
     pub driver_fixed: usize,
-    /// 2026-10-01: [`DRIVER_BUDGET_PER_MILLE`] of the util budget.
+    /// 2026-10-01: The class's `driver_budget_per_mille` of the util budget.
     pub driver_bookkeeping: usize,
 }
 
 impl RuntimeHeadroom {
-    /// 2026-10-01: The terms for a util budget of `budget_bytes` and a carry stash of
-    /// `carry_stash` bytes.
-    pub(crate) fn new(budget_bytes: usize, carry_stash: usize) -> Self {
+    /// 2026-10-01: The terms for a util budget of `budget_bytes`, a carry stash of
+    /// `carry_stash` bytes and the class's `driver` terms (2026-10-13).
+    pub(crate) fn new(budget_bytes: usize, carry_stash: usize, driver: &DriverTerms) -> Self {
         Self {
             carry_stash,
-            driver_fixed: DRIVER_FIXED_BYTES,
-            driver_bookkeeping: budget_bytes / 1000 * DRIVER_BUDGET_PER_MILLE,
+            driver_fixed: driver.driver_fixed_bytes as usize,
+            driver_bookkeeping: budget_bytes / 1000 * driver.driver_budget_per_mille as usize,
         }
     }
 

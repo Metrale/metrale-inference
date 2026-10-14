@@ -47,7 +47,7 @@ pub const P0_MODELS: &[&str] = &[
 ];
 
 /// 2026-09-25: `P0_MODELS` plus qwen3.8-27b and qwen3.6-27b, the source its
-/// `kernel_source` redirect names.
+/// `kernel_source` redirect names. 2026-10-13: plus qwen3.8-flash-next.
 pub const HOPPER_MODELS: &[&str] = &[
     "deepseek-v4-flash",
     "deepseek-v4.1-flash",
@@ -57,6 +57,7 @@ pub const HOPPER_MODELS: &[&str] = &[
     "qwen3.6-27b",
     "qwen3.6-35b-a3b",
     "qwen3.8-27b",
+    "qwen3.8-flash-next",
 ];
 
 /// 2026-09-25: Every hardware set with `[hardware] inherits = "gb10"`. b300 is

@@ -11,7 +11,10 @@
 //! for a native-FP8 checkpoint), the shared expert runs in FP8 through the grouped FP8 kernels
 //! (with no active experts), the NVFP4 kernels take only the routed experts, and prefill keeps
 //! the FP8 experts; under `nvfp4-gate-up` every down projection, routed and shared, runs
-//! through the grouped FP8 down kernel instead. Every step computes a row independently of
+//! through the grouped FP8 down kernel instead. A shared expert the checkpoint keeps at BF16
+//! (2026-10-13) runs after the routed down through `run_bf16_shared_expert`, whose batched GEMV
+//! rows are each the one-row GEMV's bits; the NVFP4 kernels then take only the routed experts.
+//! Which shared expert runs is `nvfp4_grouped_admit.rs`'s `nvfp4_grouped_shared`. Every step computes a row independently of
 //! the other rows, so a row's output bits do not depend on `m`: the path serves every width
 //! from one row up, and a row-invariant tier policy (`row_tiers.rs`) holds with it on.
 //! `model-arch/examples/nvfp4_moe_grouped_microtest.rs` checks this.
@@ -20,6 +23,7 @@
 //! Invariants: `forward_nvfp4_grouped_decode` launches nothing unless
 //! `nvfp4_grouped_decode_ok(m, ctx)` holds.
 
+use super::nvfp4_grouped_admit::Nvfp4GroupedShared;
 use super::*;
 
 /// 2026-09-27: Widest row count this path admits on the CUDA-core expert kernels, the grouped
@@ -45,6 +49,10 @@ pub(super) struct Nvfp4GroupedKernels {
     pub down: KernelHandle,
     pub gate_up_tc: KernelHandle,
     pub down_tc: KernelHandle,
+    /// 2026-10-14: The split pair (`_tc_split` / `_tc_mt1`: the unsplit pair's bytes on twice the
+    /// warps), taken in its place when both resolved; zero with `METRALE_MOE_TC_SPLIT=0`.
+    pub gate_up_tc_split: KernelHandle,
+    pub down_tc_mt1: KernelHandle,
     pub declared_experts: bool,
     /// 2026-10-04: The lean point's pair (`Nvfp4G16Lean`) and its load-time repack; `lean` is set
     /// once this layer's tables were repacked (`nvfp4_lean.rs`), after which only that pair reads them.
@@ -68,6 +76,16 @@ impl Nvfp4GroupedKernels {
             down: try_kernel(gpu, MODULE, "moe_expert_down_act_nvfp4_grouped"),
             gate_up_tc: try_kernel(gpu, TC, "moe_expert_gate_up_act_nvfp4_grouped_tc"),
             down_tc: try_kernel(gpu, TC, "moe_expert_down_act_nvfp4_grouped_tc"),
+            gate_up_tc_split: if moe_tc_split_disabled() {
+                KernelHandle(0)
+            } else {
+                try_kernel(gpu, TC, "moe_expert_gate_up_act_nvfp4_grouped_tc_split")
+            },
+            down_tc_mt1: if moe_tc_split_disabled() {
+                KernelHandle(0)
+            } else {
+                try_kernel(gpu, TC, "moe_expert_down_act_nvfp4_grouped_tc_mt1")
+            },
             declared_experts: false,
             gate_up_tc_lean: try_kernel(gpu, TC, "moe_expert_gate_up_act_nvfp4_grouped_tc_lean"),
             down_tc_lean: try_kernel(gpu, TC, "moe_expert_down_act_nvfp4_grouped_tc_lean"),
@@ -89,15 +107,32 @@ impl Nvfp4GroupedKernels {
     /// 2026-10-02: The gate+up and down launches for an `inter` x `hidden` expert: the
     /// tensor-core twins when on and the shape fits them, else the CUDA-core kernels.
     /// 2026-10-04: Always the lean pair once the tables are lean (the repack checked the shape).
-    fn select(&self, hidden: u32, inter: u32) -> Nvfp4GroupedLaunch {
+    pub(super) fn select(&self, hidden: u32, inter: u32) -> Nvfp4GroupedLaunch {
         if let Some(lean) = self.lean_launch() {
             return lean;
         }
         if nvfp4_grouped_tc_enabled()
+            && self.gate_up_tc_split.0 != 0
+            && self.down_tc_mt1.0 != 0
+            && ops::nvfp4_grouped_tc_pair_shape_ok(
+                hidden,
+                inter,
+                ops::NVFP4_GROUPED_GATE_UP_TC_SPLIT,
+                ops::NVFP4_GROUPED_DOWN_TC_MT1,
+            )
+        {
+            return Nvfp4GroupedLaunch {
+                gate_up: self.gate_up_tc_split,
+                gate_up_geometry: ops::NVFP4_GROUPED_GATE_UP_TC_SPLIT,
+                down: self.down_tc_mt1,
+                down_geometry: ops::NVFP4_GROUPED_DOWN_TC_MT1,
+                max_rows: NVFP4_GROUPED_DECODE_TC_MAX_ROWS,
+            };
+        }
+        if nvfp4_grouped_tc_enabled()
             && self.gate_up_tc.0 != 0
             && self.down_tc.0 != 0
-            && ops::nvfp4_grouped_tc_shape_ok(inter, hidden, ops::NVFP4_GROUPED_GATE_UP_TC)
-            && ops::nvfp4_grouped_tc_shape_ok(hidden, inter, ops::NVFP4_GROUPED_DOWN_TC)
+            && ops::nvfp4_grouped_tc_expert_shape_ok(hidden, inter)
         {
             Nvfp4GroupedLaunch {
                 gate_up: self.gate_up_tc,
@@ -137,6 +172,13 @@ pub(super) fn nvfp4_grouped_tc_enabled() -> bool {
     *ON.get_or_init(|| std::env::var_os("METRALE_NO_MOE_NVFP4_TC").is_none())
 }
 
+/// 2026-10-14: `METRALE_MOE_TC_SPLIT` equal to `"0"`, read once per process: the unsplit
+/// tensor-core pair runs instead of the split pair (same bytes).
+fn moe_tc_split_disabled() -> bool {
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *OFF.get_or_init(|| std::env::var("METRALE_MOE_TC_SPLIT").as_deref() == Ok("0"))
+}
+
 /// 2026-09-27: Shape admission without a GPU: `m` in `1..=max_rows` (2026-10-02: the selected
 /// expert kernels' widest, `NVFP4_GROUPED_DECODE_MAX_ROWS` or `NVFP4_GROUPED_DECODE_TC_MAX_ROWS`),
 /// `hidden % 32 == 0` (gate+up reads 32-element chunks) and `inter % 16 == 0` (down reads
@@ -158,118 +200,6 @@ pub fn nvfp4_grouped_decode_shape_ok(
 }
 
 impl MoeLayer {
-    /// 2026-09-27: Whether `forward_nvfp4_grouped_decode` serves `m` rows on this layer: an
-    /// NVFP4 `--expert-quantization` tier is in force or (2026-10-02) the experts are the
-    /// checkpoint's declared NVFP4 (`set_declared_nvfp4_experts`), the routed projections that tier decodes
-    /// as NVFP4 are present in the row-major decode layout, the shared expert (and, under
-    /// `nvfp4-gate-up`, the routed down projections) are there in FP8 or NVFP4 as the tier
-    /// reads them, the per-row router applies (BF16 softmax gate, no correction bias,
-    /// pre-router norm, FP32 gate or FP32 routing, no DFlash reroute), the kernels resolved,
-    /// the shape is admitted, the arena is wide enough, and there is no LoRA, pre-expert norm,
-    /// hash routing or expert parallelism.
-    pub fn nvfp4_grouped_decode_ok(&self, m: usize, ctx: &ForwardContext) -> bool {
-        let cfg = ctx.config;
-        let (h, inter) = (cfg.hidden_size, cfg.moe_intermediate_size);
-        let need = super::forward_fp8_grouped_decode::grouped_decode_buffer_need(
-            m,
-            h,
-            inter,
-            cfg.num_experts,
-            cfg.num_experts_per_tok,
-        );
-        let b = ctx.buffers;
-        let tier = crate::layers::expert_quantization();
-        let fp8_shared_ok = self.nvfp4_decode_fp8_shared().is_some()
-            && self.moe_expert_gate_up_act_fp8_grouped_k.0 != 0
-            && self.moe_expert_down_act_fp8_grouped_k.0 != 0;
-        let nvfp4_shared_ok = !self.weights.shared_expert.gate_proj.weight.is_null()
-            && !self.weights.shared_expert.up_proj.weight.is_null()
-            && !self.weights.shared_expert.down_proj.weight.is_null();
-        // 2026-09-27: The routed NVFP4 projections must have been built: a layer loaded without
-        // them (the MTP head's native-FP8 MoE) has pointer tables of NULL entries, which the
-        // kernels would read as zero experts. Expert parallelism is refused below, so every
-        // expert is local and the first stands for all.
-        let routed = self.weights.experts.first();
-        let gate_up_ok =
-            routed.is_some_and(|e| !e.gate_proj.weight.is_null() && !e.up_proj.weight.is_null());
-        let native = self.nvfp4_grouped.declared_experts;
-        let launch = self.nvfp4_grouped.select(h as u32, inter as u32);
-        let down_ok = if tier.nvfp4_down() || native {
-            !self.down_ptrs.packed_ptrs.is_null()
-                && routed.is_some_and(|e| !e.down_proj.weight.is_null())
-        } else {
-            fp8_shared_ok && self.fp8_down_weight_ptrs.is_some()
-        };
-        (tier.nvfp4_decode() || native)
-            && nvfp4_grouped_decode_shape_ok(
-                m,
-                launch.max_rows,
-                h,
-                inter,
-                cfg.shared_expert_intermediate_size,
-            )
-            && launch.gate_up.0 != 0
-            && launch.down.0 != 0
-            && gate_up_ok
-            && down_ok
-            && (fp8_shared_ok || nvfp4_shared_ok)
-            && self.moe_weighted_sum_blend_fp8_grouped_k.0 != 0
-            && self.moe_fp8_grouped_sort_k.0 != 0
-            && cfg.num_experts <= ops::FP8_GROUPED_SORT_MAX_EXPERTS as usize
-            && self.moe_topk_softmax_rows_k.0 != 0
-            && self.router_gemv_batchm_k.0 != 0
-            && self.experts_scale_kind == crate::weight_map::WeightQuantFormat::Nvfp4
-            && self.shared_experts_scale_kind == crate::weight_map::WeightQuantFormat::Nvfp4
-            && !self.gate_ptrs.packed_ptrs.is_null()
-            && !self.up_ptrs.packed_ptrs.is_null()
-            && self.bf16_gate_weight_ptrs.is_none()
-            && self.bf16_shared_expert.is_none()
-            && !self.use_t_layout_for_decode()
-            && self.lora.is_none()
-            && self.pre_expert_norm.is_none()
-            && self.tid2eid_dev.is_none()
-            && self.router_logits_n as usize == cfg.num_experts
-            && self.gate_nvfp4.is_none()
-            && self.correction_bias_dev.is_none()
-            && self.weights.router_pre_norm.is_none()
-            && !ctx.levers.fp32_gate
-            && !self.fp32_routing_active(ctx.levers)
-            && !(self.is_dflash_capture_layer && ctx.levers.frankenstein_decode_via_prefill)
-            && h.is_multiple_of(8)
-            && !(ctx.comm.is_some() && cfg.ep_world_size > 1)
-            && b.scratch_bytes() >= need.scratch
-            && b.gate_logits_bytes() >= need.gate_logits
-            && b.expert_gate_out_bytes() >= need.expert_gate_out
-            && b.expert_down_out_bytes() >= need.expert_down_out
-            && b.logits_bytes() >= need.shared_act
-            && b.attn_output_bytes() >= need.row_hidden
-            && b.moe_output_bytes() >= need.row_hidden
-    }
-
-    /// 2026-10-02: Mark this layer's routed and shared experts as the checkpoint's declared
-    /// NVFP4, so `nvfp4_grouped_decode_ok` admits it under every `--expert-quantization` tier.
-    /// Refused for a layer that also holds FP8 experts: the tier decides between those.
-    pub fn set_declared_nvfp4_experts(&mut self) -> Result<()> {
-        self.set_draft_nvfp4_experts()
-    }
-
-    /// 2026-10-02: The same mark for a drafter whose experts were requantized to NVFP4 for drafting
-    /// (`MtpHead::new_nvfp4_draft_moe`): the grouped NVFP4 decode serves them at every width.
-    pub fn set_draft_nvfp4_experts(&mut self) -> Result<()> {
-        anyhow::ensure!(
-            self.fp8_shared_expert.is_none() && self.fp8_down_weight_ptrs.is_none(),
-            "set_declared_nvfp4_experts: the layer holds FP8 experts"
-        );
-        self.nvfp4_grouped.declared_experts = true;
-        Ok(())
-    }
-
-    /// 2026-09-27: The FP8 shared expert this path runs instead of the NVFP4 one, when the
-    /// layer keeps its FP8 experts (`set_fp8_experts`).
-    fn nvfp4_decode_fp8_shared(&self) -> Option<&Fp8ExpertWeight> {
-        self.fp8_shared_expert.as_ref()
-    }
-
     /// 2026-09-27: The NVFP4 MoE of `m` rows: `input` is `[m, H]` BF16, the output lands in
     /// rows `0..m` of `moe_output()`. Returns an error, launching nothing, when
     /// `nvfp4_grouped_decode_ok(m, ctx)` is false.
@@ -354,7 +284,12 @@ impl MoeLayer {
         // (no shared rows). The down projections: under `nvfp4` the grouped FP8 down kernel runs
         // the shared expert alone and the NVFP4 one the routed experts; under `nvfp4-gate-up`
         // the grouped FP8 down kernel runs all of them from the FP8 experts.
-        let fp8_shared = self.nvfp4_decode_fp8_shared();
+        // 2026-10-13: A BF16 shared expert (`Nvfp4GroupedShared::Bf16`) runs after the routed
+        // down through `run_bf16_shared_expert`; the NVFP4 kernels then launch no shared rows.
+        let shared_form = self.nvfp4_grouped_shared();
+        let fp8_shared = self
+            .nvfp4_decode_fp8_shared()
+            .filter(|_| shared_form == Some(Nvfp4GroupedShared::Fp8));
         let fp8_down = if crate::layers::expert_quantization().nvfp4_down() {
             None
         } else {
@@ -407,7 +342,11 @@ impl MoeLayer {
                 stream,
             )?;
         }
-        let nvfp4_shared_rows = if fp8_shared.is_some() { 0 } else { n };
+        let nvfp4_shared_rows = if shared_form == Some(Nvfp4GroupedShared::Nvfp4) {
+            n
+        } else {
+            0
+        };
         let launch = self.nvfp4_grouped.select(h, inter);
         ops::moe_expert_gate_up_act_nvfp4_grouped(
             ctx.gpu,
@@ -471,6 +410,26 @@ impl MoeLayer {
                 nvfp4_shared_rows,
                 stream,
             )?;
+        }
+        if shared_form == Some(Nvfp4GroupedShared::Bf16) {
+            // 2026-10-13: gate and up land in `shared_act` (`[m, inter]` each, the SiLU product
+            // in place over gate), the BF16 `[m, H]` output in `shared_out`, which the blend
+            // reads as it reads the fused kernels' shared term.
+            let ran = self.run_bf16_shared_expert(
+                input,
+                n,
+                h,
+                ctx.config.shared_expert_intermediate_size as u32,
+                shared_act,
+                shared_act.offset(m * inter as usize * 2),
+                shared_out,
+                ctx,
+                stream,
+            )?;
+            anyhow::ensure!(
+                ran,
+                "forward_nvfp4_grouped_decode: BF16 shared expert absent"
+            );
         }
         ops::moe_weighted_sum_blend_fp8_grouped(
             ctx.gpu,

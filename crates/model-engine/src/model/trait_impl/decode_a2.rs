@@ -23,6 +23,7 @@ use metrale_model_layers::layer::{ForwardContext, LayerState, SsmLayerState};
 use metrale_model_layers::layers::ops;
 
 mod pad_states;
+mod per_step;
 mod perseq;
 
 /// 2026-09-25: Multi-sequence decode CUDA graphs: on unless
@@ -63,21 +64,13 @@ impl TransformerModel {
         // worker from `ep_worker_decode_batch`), so each layer's collectives match
         // in shape and order across ranks.
         let mla_perseq_fallback = self.is_mla_dispatch() && self.levers.mla_perseq_fallback;
-        let qsa_active = self.config.index_topk > 0 && {
-            // 2026-09-25: `QsaIndexer::inert_bound`: below `index_topk +
-            // index_compress_ratio - 1` visible tokens every block is selected,
-            // so selection is inert.
-            let bound = self.config.index_topk + self.config.index_compress_ratio - 1;
-            seqs.iter().any(|s| s.seq_len >= bound)
-        };
         // 2026-09-25: A layer may decline the batched multi-seq step. The veto sits
-        // outside the `hc_mult > 0` conjunction on purpose: keyed on `hc_mult`,
-        // `index_topk` or `model_type` instead, a declining model would be routed
-        // per-sequence only once `qsa_active` holds, i.e. correct on long contexts
-        // and wrong on short ones.
+        // outside the `hc_mult > 0` conjunction on purpose, so a declining model
+        // is routed per-sequence at every length. 2026-10-13: an active QSA
+        // indexer no longer routes the batch per sequence; the attention layer
+        // selects on the batched step (`multi_seq/qsa_rows.rs`).
         let ms_layer_veto = self.layers.iter().any(|l| l.decode_multi_seq_unsupported());
-        let hc_perseq = ms_layer_veto
-            || (self.config.hc_mult > 0 && (qsa_active || self.levers.hc_perseq_decode));
+        let hc_perseq = ms_layer_veto || (self.config.hc_mult > 0 && self.levers.hc_perseq_decode);
         // 2026-09-25: The per-sequence decision is made before the EP branch, so an
         // EP batch that needs the per-sequence path takes it too.
         if self.comm.is_some() && !(mla_perseq_fallback || hc_perseq) {
@@ -88,8 +81,8 @@ impl TransformerModel {
 
         // 2026-09-25: Per-sequence loop: `METRALE_MLA_PERSEQ_FALLBACK` on an MLA
         // model, or `hc_perseq` (a layer declines the batched step, or an mHC model
-        // with QSA active for some sequence or `METRALE_HC_PERSEQ_DECODE` set). Each
-        // sequence runs `decode()`, and its logits row is staged through the host.
+        // with `METRALE_HC_PERSEQ_DECODE` set). Each sequence runs `decode()`, and
+        // its logits row is staged through the host.
         if mla_perseq_fallback || hc_perseq {
             return self.decode_batch_perseq(tokens, seqs, n, stream);
         }
@@ -175,8 +168,9 @@ impl TransformerModel {
         // legal; `METRALE_LORA_EAGER` is the same LoRA hatch as in `decode_a`.
         let lora_eager = self.lora.is_some() && self.levers.lora_eager;
         // 2026-09-25: The per-layer graph veto, as in `decode_a` (QSA's host top-k,
-        // PLE's host hash on the hc multi-seq path).
-        let layer_veto = self.decode_graph_veto;
+        // PLE's host hash on the hc multi-seq path). 2026-10-13: per step and row
+        // under `METRALE_DECODE_GRAPH_PER_STEP` (`per_step.rs`).
+        let layer_veto = self.batch_graph_veto(seqs, input.host().is_some());
         let graph_key = if !ms_profile && !lora_eager && !layer_veto && multiseq_graphs_enabled() {
             self.batch_decode_graph_key(&*seqs, padded_n)
         } else {
@@ -269,6 +263,9 @@ impl TransformerModel {
 
         // 2026-09-25: Upload metadata for `dispatch_n` rows (active and padding).
         let metadata = self.upload_batch_metadata_fixed(seqs, dispatch_n, &mut kv_cache, stream)?;
+        if let (true, Some(tokens)) = (use_graphs, input.host()) {
+            self.batch_prestage(tokens, seqs, stream)?;
+        }
 
         let ctx = ForwardContext {
             buffers: &self.buffers,
@@ -299,7 +296,9 @@ impl TransformerModel {
 
         if let Some(graph) = replay {
             if graph.0 != 0 {
+                self.batch_check_replay_room(seqs)?;
                 self.gpu.launch_graph(graph, stream)?;
+                self.batch_sync_replayed(seqs)?;
             }
 
             if let Some(tokens) = input.host() {

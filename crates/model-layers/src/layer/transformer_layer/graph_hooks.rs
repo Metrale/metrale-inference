@@ -28,6 +28,30 @@ pub trait LayerGraphHooks {
         Ok(())
     }
 
+    /// 2026-10-13: `decode_prestage` for the live rows of a batched decode step: row `i`'s
+    /// token is `tokens[i]` and its state `states[i]`. The batched decode calls it before a
+    /// replay or capture under `METRALE_DECODE_GRAPH_PER_STEP` (`decode_a2.rs`). Default:
+    /// `decode_prestage` per row. PLE overrides it with one hash and one slot upload for
+    /// the batch, which its multi-sequence forward then consumes.
+    fn decode_prestage_rows(
+        &self,
+        tokens: &[u32],
+        states: &mut [&mut (dyn LayerState + 'static)],
+        gpu: &dyn GpuBackend,
+        stream: u64,
+    ) -> Result<()> {
+        anyhow::ensure!(
+            tokens.len() == states.len(),
+            "decode_prestage_rows: {} tokens for {} rows",
+            tokens.len(),
+            states.len()
+        );
+        for (&token, state) in tokens.iter().zip(states.iter_mut()) {
+            self.decode_prestage(token, &mut **state, gpu, stream)?;
+        }
+        Ok(())
+    }
+
     /// 2026-09-25: Re-arm prestaged state that a failed CUDA-graph capture consumed, so the
     /// same step can re-run eagerly (`decode_a.rs`). It must not recompute the prestage
     /// work: PLE's history already advanced in `decode_prestage`.

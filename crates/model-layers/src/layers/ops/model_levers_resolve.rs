@@ -32,7 +32,8 @@ pub(super) fn from_values(
         value.is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
     }
     /// 2026-09-25: `"1"` or `"true"` exactly: case-sensitive, unlike [`opt_in_truthy`], so `TRUE`
-    /// does not arm. Used by `ep_graphs`, `gdn_decode_graph`, `mla_perseq_fallback` and `conc_hsd`.
+    /// does not arm. Used by `ep_graphs`, `gdn_decode_graph`, `decode_graph_per_step`,
+    /// `mla_perseq_fallback` and `conc_hsd`.
     fn opt_in_truthy_exact(value: Option<&str>) -> bool {
         matches!(value, Some("1") | Some("true"))
     }
@@ -119,11 +120,15 @@ pub(super) fn from_values(
         ssm_save_dump: present("METRALE_SSM_SAVE_DUMP"),
         ep_graphs: opt_in_truthy_exact(value("METRALE_EP_GRAPHS").as_deref()),
         gdn_decode_graph: opt_in_truthy_exact(value("METRALE_GDN_DECODE_GRAPH").as_deref()),
+        decode_graph_per_step: opt_in_truthy_exact(
+            value("METRALE_DECODE_GRAPH_PER_STEP").as_deref(),
+        ),
         bf16_tc_proj: present("METRALE_BF16_TC_PROJ"),
         weight_pre_rotated: opt_in_truthy(value("TQ_PLUS_WEIGHT_ROTATION").as_deref()),
         ssm_ms_profile: opt_in(value("METRALE_SSM_MS_PROFILE").as_deref()),
         ssm_detail_profile: opt_in(value("METRALE_SSM_DETAIL_PROFILE").as_deref()),
         ssm_gemv_batch4: opt_out(value("METRALE_SSM_GEMV_BATCH4").as_deref()),
+        ssm_bf16_batchm: opt_in(value("METRALE_SSM_BF16_BATCHM").as_deref()),
         gdn_fused_conv: opt_in(value("METRALE_GDN_FUSED_CONV").as_deref()),
         moe_legacy_pertoken_decode: opt_in(value("METRALE_MOE_LEGACY_PERTOKEN_DECODE").as_deref()),
     }

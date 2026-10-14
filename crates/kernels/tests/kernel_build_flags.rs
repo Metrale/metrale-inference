@@ -16,7 +16,9 @@
 #[path = "../build_flags.rs"]
 mod build_flags;
 
-use build_flags::{flag_key, hardware_extra_flags, merge_extra_flags};
+use build_flags::{
+    batchm_direct_r, define_value, flag_key, hardware_extra_flags, merge_extra_flags,
+};
 
 use std::path::{Path, PathBuf};
 
@@ -133,4 +135,67 @@ fn gb10_declares_no_hardware_level_flags() {
         "kernels/gb10/HARDWARE.toml must add no flags — the guarded W4A4 path \
          is compiled IN on GB10 and its PTX may not move"
     );
+}
+
+/// 2026-10-14: A define's value, the last one winning, and no match on a
+/// longer name that shares the prefix.
+#[test]
+fn define_value_reads_the_named_define_only() {
+    let f = s(&[
+        "-DMETRALE_BATCHM_DIRECT_RX=9",
+        "-DMETRALE_BATCHM_DIRECT_R=4",
+        "-DMETRALE_BATCHM_DIRECT_R=2",
+    ]);
+    assert_eq!(define_value(&f, "METRALE_BATCHM_DIRECT_R"), Some("2"));
+    assert_eq!(
+        define_value(
+            &s(&["-DMETRALE_BATCHM_DIRECT_RX=9"]),
+            "METRALE_BATCHM_DIRECT_R"
+        ),
+        None
+    );
+    assert_eq!(
+        define_value(&s(&["-DTQ_PLUS_SIGNS"]), "TQ_PLUS_SIGNS"),
+        Some("1")
+    );
+    assert_eq!(define_value(&s(&["--fmad=false"]), "TQ_PLUS_SIGNS"), None);
+}
+
+/// 2026-10-14: The R every target of a build was compiled with, `None` when
+/// none defines it.
+#[test]
+fn batchm_direct_r_is_the_compiled_value() {
+    let two = s(&["--fmad=false", "-DMETRALE_BATCHM_DIRECT_R=2"]);
+    let none = s(&["--fmad=false"]);
+    assert_eq!(batchm_direct_r(&[&two, &two]), Some(2));
+    assert_eq!(batchm_direct_r(&[&none]), None);
+    assert_eq!(batchm_direct_r(&[]), None);
+}
+
+/// 2026-10-14: The binary carries one R, so targets that disagree refuse the
+/// build rather than bake one target's set for another.
+#[test]
+#[should_panic(expected = "differs between the targets")]
+fn targets_that_disagree_on_batchm_direct_r_are_refused() {
+    let two = s(&["-DMETRALE_BATCHM_DIRECT_R=2"]);
+    let none = s(&["--fmad=false"]);
+    let _ = batchm_direct_r(&[&two, &none]);
+}
+
+/// 2026-10-14: R = 0 would compile a zero-width group; it is refused, as is a
+/// non-number.
+#[test]
+#[should_panic(expected = "positive integer")]
+fn a_zero_batchm_direct_r_is_refused() {
+    let _ = batchm_direct_r(&[&s(&["-DMETRALE_BATCHM_DIRECT_R=0"])]);
+}
+
+/// 2026-10-14: hopper compiles R = 2 from its HARDWARE.toml; gb10 compiles no
+/// direct entry, so its runtime makes no direct-entry lookup.
+#[test]
+fn hopper_compiles_batchm_direct_r_2_and_gb10_none() {
+    let hopper = hardware_extra_flags(&hardware_toml("hopper"), "nvidia");
+    assert_eq!(batchm_direct_r(&[&hopper]), Some(2));
+    let gb10 = hardware_extra_flags(&hardware_toml("gb10"), "nvidia");
+    assert_eq!(batchm_direct_r(&[&gb10]), None);
 }

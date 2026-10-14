@@ -71,8 +71,9 @@ pub trait ModelLifecycle {
     /// `compact_sequence`, before any step that can drop the sequence.
     fn detach_slot_for_reuse(&self, seq: &mut SequenceState);
 
-    /// 2026-09-25: Write the sequence's KV blocks and SSM state to `writer`, in a format the
-    /// model owns, without freeing anything. Default: an error.
+    /// 2026-09-25: Write the sequence's KV blocks, SSM state and (2026-10-13) the layers'
+    /// aux carries to `writer`, in a format the model owns, without freeing anything.
+    /// Default: an error.
     fn save_sequence_state(
         &self,
         _seq: &SequenceState,

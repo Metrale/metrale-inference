@@ -137,230 +137,31 @@ impl Qwen3SsmLayer {
             None
         };
 
+        // 2026-10-13: The FFN ladder: the arm from `select_ssm_arm` over this
+        // layer's capabilities, run by `ffn_rows` with the residual add as the
+        // row sink (`layers/ffn_rows.rs`). The highway path (`hc.rs`) runs the
+        // same ladder with `hc_post_rows` as the sink.
         let normed_base = ctx.buffers.norm_output();
-        match n {
-            // 2026-09-30: A fixed `--activation-quantization` for the dense FFN: one format at
-            // every row count (`dense_ffn_fixed.rs`).
-            n if self.ffn.dense_fixed_ok(n, ctx) => {
-                self.ffn.forward_dense_fixed(normed_base, n, ctx, stream)?;
-                ops::residual_add(
-                    ctx.gpu,
-                    self.residual_add_k,
-                    hidden,
-                    ctx.buffers.moe_output(),
-                    (n * h) as u32,
-                    stream,
-                )?;
-            }
-            // 2026-09-27: An NVFP4 `--expert-quantization` tier takes the grouped decode at
-            // every row count.
-            n if self.ffn.nvfp4_grouped_ok(n, ctx) => {
-                self.ffn
-                    .forward_nvfp4_grouped(normed_base, n, ctx, stream)?;
-                ops::residual_add(
-                    ctx.gpu,
-                    self.residual_add_k,
-                    hidden,
-                    ctx.buffers.moe_output(),
-                    (n * h) as u32,
-                    stream,
-                )?;
-            }
-            // 2026-09-27: Under a row-invariant tier policy the FP8 MoE takes the
-            // grouped kernels with the per-row router at every row count, the bits
-            // of `MoeLayer::forward` and of the batched verify's GDN arm.
-            n if n >= 2
-                && crate::layers::row_invariant()
-                && self.ffn.fp8_grouped_routing_ok(
-                    n,
-                    crate::layers::moe::GroupedRouting::PerRow,
-                    ctx,
-                ) =>
-            {
-                self.ffn.forward_fp8_grouped_decode_routed(
-                    normed_base,
-                    n,
-                    crate::layers::moe::GroupedRouting::PerRow,
-                    ctx,
-                    stream,
-                )?;
-                ops::residual_add(
-                    ctx.gpu,
-                    self.residual_add_k,
-                    hidden,
-                    ctx.buffers.moe_output(),
-                    (n * h) as u32,
-                    stream,
-                )?;
-            }
-            2 | 3 => {
-                if n == 2 {
-                    self.ffn.forward_k2(normed_base, ctx, stream)?;
-                } else {
-                    self.ffn.forward_k3(normed_base, ctx, stream)?;
-                }
-                for i in 0..n {
-                    let hidden_i = hidden.offset(i * h * residual_elem);
-                    let moe_out_i = ctx.buffers.moe_output().offset(i * h * bf16);
-                    ops::residual_add(
-                        ctx.gpu,
-                        self.residual_add_k,
-                        hidden_i,
-                        moe_out_i,
-                        h as u32,
-                        stream,
-                    )?;
-                }
-            }
-            // 2026-09-25: Dense FFN at n >= `ssm_ffn_prefill_min_n()`: one
-            // batched `forward_prefill` over all n rows, where the chunked arm
-            // below reads gate/up/down once per 8 rows. Measured
-            // 2026-07-27 on GB10 (METRALE_SSM_MS_PROFILE, Qwen3.6-27B): the
-            // chunked arm cost 1023 us per layer at n=8 and 2022 us at n=16.
-            n if n >= ssm_ffn_prefill_min_n()
-                && self.ffn.is_dense()
-                && ssm_ffn_prefill_enabled() =>
-            {
-                self.ffn.forward_prefill(normed_base, n, ctx, stream)?;
-                ops::residual_add(
-                    ctx.gpu,
-                    self.residual_add_k,
-                    hidden,
-                    ctx.buffers.moe_output(),
-                    (n * h) as u32,
-                    stream,
-                )?;
-            }
-            4.. if self.ffn.can_forward_km(8.min(n) as u32) => {
-                // 2026-09-25: Dense layers at n >= 4 that the arm above did not
-                // take: `try_forward_km` runs a batched GEMV over chunks of at
-                // most 8 rows, reading the weights ceil(n/8) times.
-                // `can_forward_km` is false for MoE, which falls through.
-                // Each chunk reuses `moe_output[0..m]`, so its residual add
-                // runs before the next chunk overwrites it.
-                let mut done = 0usize;
-                while done < n {
-                    let m = (n - done).min(8);
-                    let normed_c = normed_base.offset(done * h * bf16);
-                    let used = self.ffn.try_forward_km(normed_c, m as u32, ctx, stream)?;
-                    debug_assert!(used, "can_forward_km checked at branch entry");
-                    let hidden_c = hidden.offset(done * h * residual_elem);
-                    ops::residual_add(
-                        ctx.gpu,
-                        self.residual_add_k,
-                        hidden_c,
-                        ctx.buffers.moe_output(),
-                        (m * h) as u32,
-                        stream,
-                    )?;
-                    done += m;
-                }
-            }
-            _ => {
-                // 2026-09-25: Every other case, in order: grouped FP8 MoE,
-                // grouped-GEMM MoE, the C=4 atomic MoE kernel, token-major MoE
-                // (the default), `forward_batched`, and a per-row `forward`
-                // loop.
-                if self.ffn.fp8_grouped_decode_ok(n, ctx) {
-                    // 2026-09-25: METRALE_FP8_MOE_GROUPED_DECODE: FP8
-                    // block-scaled experts grouped across all rows in one
-                    // dispatch (`forward_token_major_decode` hands FP8 experts
-                    // to `forward_batched`).
-                    self.ffn
-                        .forward_fp8_grouped_decode(normed_base, n, ctx, stream)?;
-                    let moe_out = ctx.buffers.moe_output();
-                    ops::residual_add(
-                        ctx.gpu,
-                        self.residual_add_k,
-                        hidden,
-                        moe_out,
-                        (n * h) as u32,
-                        stream,
-                    )?;
-                } else if crate::layers::moe_grouped_decode_for(n) {
-                    // 2026-09-25: Grouped-GEMM MoE over all rows.
-                    // `moe_grouped_decode_for` turns it on at n >= 16 unless
-                    // METRALE_NO_MOE_GROUPED_DECODE is set;
-                    // METRALE_MOE_GROUPED_DECODE=1 also runs it below 16.
-                    self.ffn.forward_prefill(normed_base, n, ctx, stream)?;
-                    let moe_out = ctx.buffers.moe_output();
-                    ops::residual_add(
-                        ctx.gpu,
-                        self.residual_add_k,
-                        hidden,
-                        moe_out,
-                        (n * h) as u32,
-                        stream,
-                    )?;
-                } else if n == 4
-                    && std::env::var("METRALE_MOE_ATOMIC_C4_DECODE")
-                        .ok()
-                        .as_deref()
-                        == Some("1")
-                {
-                    // 2026-09-25: C=4 MoE decode that accumulates the routed
-                    // down projections with FP32 atomic adds.
-                    self.ffn
-                        .forward_atomic_c4_decode(normed_base, n, ctx, stream)?;
-                    let moe_out = ctx.buffers.moe_output();
-                    ops::residual_add(
-                        ctx.gpu,
-                        self.residual_add_k,
-                        hidden,
-                        moe_out,
-                        (n * h) as u32,
-                        stream,
-                    )?;
-                } else if !crate::layers::ops::ModelLevers::get().moe_legacy_pertoken_decode {
-                    // 2026-09-25: Token-major MoE decode, the default
-                    // (METRALE_MOE_LEGACY_PERTOKEN_DECODE=1 turns it off). With a
-                    // resident MoE adapter or unsupported expert weights,
-                    // `forward_token_major_decode` runs `forward_batched` itself;
-                    // any error it returns also falls back to `forward_batched`.
-                    if self
-                        .ffn
-                        .forward_token_major_decode(normed_base, n, ctx, stream)
-                        .is_err()
-                    {
-                        self.ffn.forward_batched(normed_base, n, ctx, stream)?;
-                    }
-                    let moe_out = ctx.buffers.moe_output();
-                    ops::residual_add(
-                        ctx.gpu,
-                        self.residual_add_k,
-                        hidden,
-                        moe_out,
-                        (n * h) as u32,
-                        stream,
-                    )?;
-                } else if std::env::var("METRALE_MOE_BATCHED_DECODE").ok().as_deref() == Some("1") {
-                    self.ffn.forward_batched(normed_base, n, ctx, stream)?;
-                    let moe_out = ctx.buffers.moe_output();
-                    ops::residual_add(
-                        ctx.gpu,
-                        self.residual_add_k,
-                        hidden,
-                        moe_out,
-                        (n * h) as u32,
-                        stream,
-                    )?;
-                } else {
-                    for i in 0..n {
-                        let hidden_i = hidden.offset(i * h * residual_elem);
-                        let normed_i = normed_base.offset(i * h * bf16);
-                        let moe_out = self.ffn.forward(normed_i, ctx, stream)?;
-                        ops::residual_add(
-                            ctx.gpu,
-                            self.residual_add_k,
-                            hidden_i,
-                            moe_out,
-                            h as u32,
-                            stream,
-                        )?;
-                    }
-                }
-            }
-        }
+        let arm = crate::layers::select_ssm_arm(&self.ssm_ffn_caps(n, ctx));
+        let mut residual_add = |rows: DevicePtr, row0: usize, m: usize| {
+            ops::residual_add(
+                ctx.gpu,
+                self.residual_add_k,
+                hidden.offset(row0 * h * residual_elem),
+                rows,
+                (m * h) as u32,
+                stream,
+            )
+        };
+        crate::layers::ffn_rows(
+            &self.ffn,
+            arm,
+            normed_base,
+            n,
+            ctx,
+            stream,
+            &mut residual_add,
+        )?;
         if let Some(t0) = phase_b_t0 {
             ctx.gpu.synchronize(stream).ok();
             tracing::info!(
@@ -371,5 +172,40 @@ impl Qwen3SsmLayer {
         }
 
         Ok(())
+    }
+
+    /// 2026-10-13: The GDN ladder's capabilities for `n` rows (`select_ssm_arm`
+    /// orders them). Every predicate is evaluated here, once per step; none has
+    /// a side effect beyond its own once-per-process logging.
+    pub(super) fn ssm_ffn_caps(&self, n: usize, ctx: &ForwardContext) -> crate::layers::LadderCaps {
+        use crate::layers::moe::GroupedRouting;
+        crate::layers::LadderCaps {
+            n,
+            force_seq: false,
+            use_grouped: false,
+            dense_fixed: self.ffn.dense_fixed_ok(n, ctx),
+            nvfp4_grouped: self.ffn.nvfp4_grouped_ok(n, ctx),
+            fp8_row_invariant: n >= 2
+                && crate::layers::row_invariant()
+                && self
+                    .ffn
+                    .fp8_grouped_routing_ok(n, GroupedRouting::PerRow, ctx),
+            is_dense: self.ffn.is_dense(),
+            ssm_dense_prefill: n >= ssm_ffn_prefill_min_n()
+                && self.ffn.is_dense()
+                && ssm_ffn_prefill_enabled(),
+            // 2026-09-25: Chunks of at most 8 rows, reading the weights ceil(n/8) times.
+            km_chunk: (n >= 4 && self.ffn.can_forward_km(8.min(n) as u32)).then_some(8),
+            fp8_grouped: self.ffn.fp8_grouped_decode_ok(n, ctx),
+            moe_grouped: crate::layers::moe_grouped_decode_for(n),
+            atomic_c4: n == 4
+                && std::env::var("METRALE_MOE_ATOMIC_C4_DECODE")
+                    .ok()
+                    .as_deref()
+                    == Some("1"),
+            token_major: !crate::layers::ops::ModelLevers::get().moe_legacy_pertoken_decode,
+            pairwise: false,
+            batched: std::env::var("METRALE_MOE_BATCHED_DECODE").ok().as_deref() == Some("1"),
+        }
     }
 }

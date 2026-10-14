@@ -94,6 +94,13 @@ pub struct Qwen3SsmLayer {
     /// `gdn_norm_sigmoid` model; that file then loops per sequence.
     pub(super) gated_rms_norm_f32_strided_k: KernelHandle,
     pub(super) dense_gemv_k: KernelHandle,
+    /// 2026-10-14: `dense_gemv_bf16_batchm` for the BF16 projections of the
+    /// batched decode at 2..=16 rows (`ssm_batched_proj.rs`); 0 when absent.
+    pub(super) dense_gemv_batchm_k: KernelHandle,
+    /// 2026-10-14: The direct-schedule `dense_gemv_bf16_batchm` entries, which
+    /// `ssm_batched_proj.rs` prefers over `dense_gemv_batchm_k`; `None` where
+    /// the target compiles none.
+    pub(super) dense_gemv_batchm_direct: Option<ops::DenseGemvBatchmDirect>,
     /// 2026-09-25: `dense_gemv_bf16_batch2`, the two-row GEMV over the BF16
     /// `in_proj_qkvz` in the batched decode projection.
     pub(super) dense_gemv_batch2_k: KernelHandle,

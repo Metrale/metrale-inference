@@ -215,3 +215,137 @@ extern "C" __global__ void dense_gemv_bf16_batchm(
         }
     }
 }
+
+#ifdef METRALE_BATCHM_DIRECT_R
+// 2026-10-14: Direct schedule, compiled where a target's [build] flags define
+// METRALE_BATCHM_DIRECT_R (kernels/hopper/HARDWARE.toml). Entry
+// dense_gemv_bf16_batchm_r<R>_m<M>(A, B, C, N, K, out_stride) computes exactly M rows, and
+// each 64-lane group computes R consecutive outputs, so the launch is grid
+// (ceil(N / (4 * R)), 1, 1), block (256, 1, 1); the host reads R and M from the entry name.
+// M and R are compile-time, so the accumulators stay in registers; A is read through the
+// read-only cache instead of a shared-memory slab, so the K loop has no barriers.
+// Each row keeps the bits of dense_gemv_bf16: lane l takes kv = l + 64 j in ascending order,
+// lo-then-hi per 32-bit word, products and sums rounded separately (--fmad=false and the
+// explicit __fmul_rn/__fadd_rn), shfl_down 16..1, then warp 0 + warp 1.
+template <int M, int R>
+__device__ __forceinline__ void dense_gemv_bf16_batchm_direct(
+    const __nv_bfloat16* __restrict__ A,
+    const __nv_bfloat16* __restrict__ B,
+    __nv_bfloat16* __restrict__ C,
+    unsigned int N,
+    unsigned int K,
+    unsigned int out_stride
+) {
+    const unsigned int g = threadIdx.x / 64;
+    const unsigned int lane = threadIdx.x % 64;
+    const unsigned int n0 = (blockIdx.x * N_PER_BLOCK + g) * R;
+    const unsigned int K_VEC = K / VEC_SIZE;
+    float acc[M][R];
+    #pragma unroll
+    for (int t = 0; t < M; t++) {
+        #pragma unroll
+        for (int r = 0; r < R; r++) acc[t][r] = 0.0f;
+    }
+    // 2026-10-14: Outputs past N read the last weight row and are never written.
+    const uint4* B_vec[R];
+    #pragma unroll
+    for (int r = 0; r < R; r++) {
+        B_vec[r] = (const uint4*)(B + (unsigned long long)min(n0 + r, N - 1) * K);
+    }
+    const uint4* A_vec = (const uint4*)A;
+    for (unsigned int kv = lane; kv < K_VEC; kv += 64) {
+        unsigned int bw[R][4];
+        #pragma unroll
+        for (int r = 0; r < R; r++) {
+            const uint4 b = __ldcs(B_vec[r] + kv);
+            bw[r][0] = b.x; bw[r][1] = b.y; bw[r][2] = b.z; bw[r][3] = b.w;
+        }
+        #pragma unroll
+        for (int t = 0; t < M; t++) {
+            const uint4 a = __ldg(A_vec + (unsigned long long)t * K_VEC + kv);
+            const unsigned int aw[4] = {a.x, a.y, a.z, a.w};
+            #pragma unroll
+            for (int r = 0; r < R; r++) {
+                float s = acc[t][r];
+                #pragma unroll
+                for (int i = 0; i < 4; i++) {
+                    s = __fadd_rn(s, __fmul_rn(__uint_as_float(aw[i] << 16),
+                                               __uint_as_float(bw[r][i] << 16)));
+                    s = __fadd_rn(s, __fmul_rn(__uint_as_float(aw[i] & 0xFFFF0000u),
+                                               __uint_as_float(bw[r][i] & 0xFFFF0000u)));
+                }
+                acc[t][r] = s;
+            }
+        }
+    }
+    // 2026-10-14: Scalar tail for the last K % 8 elements, as in the staged schedule.
+    for (unsigned int k = K_VEC * VEC_SIZE + lane; k < K; k += 64) {
+        #pragma unroll
+        for (int t = 0; t < M; t++) {
+            const float av = __bfloat162float(A[(unsigned long long)t * K + k]);
+            #pragma unroll
+            for (int r = 0; r < R; r++) {
+                const float bv = __bfloat162float(B[(unsigned long long)min(n0 + r, N - 1) * K + k]);
+                acc[t][r] = __fadd_rn(acc[t][r], __fmul_rn(av, bv));
+            }
+        }
+    }
+    #pragma unroll
+    for (int t = 0; t < M; t++) {
+        #pragma unroll
+        for (int r = 0; r < R; r++) {
+            float a = acc[t][r];
+            #pragma unroll
+            for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
+                a = __fadd_rn(a, __shfl_down_sync(0xFFFFFFFF, a, offset));
+            }
+            acc[t][r] = a;
+        }
+    }
+    __shared__ float smem[M][R][N_PER_BLOCK][2];
+    if (threadIdx.x % WARP_SIZE == 0) {
+        #pragma unroll
+        for (int t = 0; t < M; t++) {
+            #pragma unroll
+            for (int r = 0; r < R; r++) smem[t][r][g][lane / WARP_SIZE] = acc[t][r];
+        }
+    }
+    __syncthreads();
+    // 2026-10-14: The group's lanes write its M x R outputs, one each.
+    for (unsigned int i = lane; i < (unsigned int)(M * R); i += 64) {
+        const unsigned int t = i / R;
+        const unsigned int r = i % R;
+        const unsigned int n = n0 + r;
+        if (n < N) {
+            C[(unsigned long long)t * out_stride + n] =
+                __float2bfloat16(__fadd_rn(smem[t][r][g][0], smem[t][r][g][1]));
+        }
+    }
+}
+
+#define METRALE_BATCHM_DIRECT_ENTRY3(R, M)                                                 \
+    extern "C" __global__ void __launch_bounds__(BLOCK_SIZE)                               \
+        dense_gemv_bf16_batchm_r##R##_m##M(                                                \
+            const __nv_bfloat16* __restrict__ A, const __nv_bfloat16* __restrict__ B,      \
+            __nv_bfloat16* __restrict__ C, unsigned int N, unsigned int K,                 \
+            unsigned int out_stride) {                                                     \
+        dense_gemv_bf16_batchm_direct<M, R>(A, B, C, N, K, out_stride);                    \
+    }
+#define METRALE_BATCHM_DIRECT_ENTRY2(R, M) METRALE_BATCHM_DIRECT_ENTRY3(R, M)
+#define METRALE_BATCHM_DIRECT_ENTRY(M) METRALE_BATCHM_DIRECT_ENTRY2(METRALE_BATCHM_DIRECT_R, M)
+METRALE_BATCHM_DIRECT_ENTRY(2)
+METRALE_BATCHM_DIRECT_ENTRY(3)
+METRALE_BATCHM_DIRECT_ENTRY(4)
+METRALE_BATCHM_DIRECT_ENTRY(5)
+METRALE_BATCHM_DIRECT_ENTRY(6)
+METRALE_BATCHM_DIRECT_ENTRY(7)
+METRALE_BATCHM_DIRECT_ENTRY(8)
+METRALE_BATCHM_DIRECT_ENTRY(9)
+METRALE_BATCHM_DIRECT_ENTRY(10)
+METRALE_BATCHM_DIRECT_ENTRY(11)
+METRALE_BATCHM_DIRECT_ENTRY(12)
+METRALE_BATCHM_DIRECT_ENTRY(13)
+METRALE_BATCHM_DIRECT_ENTRY(14)
+METRALE_BATCHM_DIRECT_ENTRY(15)
+METRALE_BATCHM_DIRECT_ENTRY(16)
+#endif

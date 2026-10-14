@@ -15,10 +15,7 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use super::Qwen3SsmLayer;
 use super::ple_seq::ple_seq_state;
 use crate::layer::{ForwardContext, GdnPrefillBuffers, LayerState, TransformerLayer};
-use crate::layer::{
-    LayerAuxState, LayerCapabilities, LayerGraphHooks, LayerSplitPrefill, LayerWeightSetup,
-    LayerWriteOnAccept,
-};
+use crate::layer::{LayerAuxState, LayerSplitPrefill, LayerWeightSetup, LayerWriteOnAccept};
 
 impl TransformerLayer for Qwen3SsmLayer {
     fn decode(
@@ -237,28 +234,6 @@ impl TransformerLayer for Qwen3SsmLayer {
     }
 }
 
-impl LayerCapabilities for Qwen3SsmLayer {
-    /// 2026-09-25: True when this layer carries PLE. The multi-seq decode
-    /// (`forward_row`) hashes ids on the host inside the forward, which a graph
-    /// capture refuses. The model ORs this into `decode_graph_veto`, which keeps
-    /// decode eager.
-    fn decode_graph_unsupported(&self) -> bool {
-        self.ple.is_some()
-    }
-
-    fn is_ssm_layer(&self) -> bool {
-        self.is_ssm_layer_inner()
-    }
-
-    /// 2026-10-01: Both prefill entry paths (`prefill_inner`, `prefill_inner_hc`) run
-    /// `prefill_block`, whose conv (`conv1d_prefill_capture`) and recurrence
-    /// (`prefill_gdn_recurrence`) split at the capture point on every build, the
-    /// recurrence's tail on the exact-replay arm.
-    fn supports_replay_tail_split(&self) -> bool {
-        true
-    }
-}
-
 impl LayerWeightSetup for Qwen3SsmLayer {
     /// 2026-09-25: Downcast hook: the LoRA install (`impl_lora_rotate.rs`) and
     /// the qwen4_exp loader reach this concrete layer through it.
@@ -307,35 +282,6 @@ impl LayerWriteOnAccept for Qwen3SsmLayer {
         stream: u64,
     ) -> Result<bool> {
         self.fold_accepted_impl(gpu, h_table, na_tab, k_rows, n, stream)
-    }
-}
-
-impl LayerGraphHooks for Qwen3SsmLayer {
-    /// 2026-09-25: PLE's host half (id hash, NVMe fault-in, slot upload), run
-    /// before graph replay or capture. A no-op on a layer without PLE.
-    fn decode_prestage(
-        &self,
-        token: u32,
-        state: &mut dyn LayerState,
-        gpu: &dyn GpuBackend,
-        stream: u64,
-    ) -> Result<()> {
-        if let Some(ple) = self.ple.as_ref() {
-            let st = ple_seq_state(ple, state, gpu)?;
-            ple.prestage(st, &[token], gpu, stream)?;
-        }
-        Ok(())
-    }
-
-    fn decode_prestage_rearm(&self, state: &mut dyn LayerState) {
-        if let Some(ple) = self.ple.as_ref()
-            && let Some(ssm) = state
-                .as_any_mut()
-                .downcast_mut::<crate::layer::SsmLayerState>()
-            && let Some(st) = ssm.ple.as_mut()
-        {
-            ple.rearm(st);
-        }
     }
 }
 

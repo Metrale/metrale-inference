@@ -83,8 +83,7 @@ impl MoeLayer {
                 "lean kernels not in the kernel set",
             ),
             (
-                ops::nvfp4_grouped_tc_shape_ok(inter, h, ops::NVFP4_GROUPED_GATE_UP_TC)
-                    && ops::nvfp4_grouped_tc_shape_ok(h, inter, ops::NVFP4_GROUPED_DOWN_TC)
+                ops::nvfp4_grouped_tc_expert_shape_ok(h, inter)
                     && ops::nvfp4_lean_repack_shape_ok(inter, h)
                     && ops::nvfp4_lean_repack_shape_ok(h, inter)
                     && config.shared_expert_intermediate_size == config.moe_intermediate_size,

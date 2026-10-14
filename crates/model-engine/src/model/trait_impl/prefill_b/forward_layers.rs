@@ -29,6 +29,7 @@ impl TransformerModel {
         effective_seq_len_start: usize,
         kv_write_start: usize,
         marconi_skip: bool,
+        gdn_exact_replay: bool,
         meta_base: DevicePtr,
         slot_offset: usize,
         pos_stream_bytes: usize,
@@ -120,7 +121,9 @@ impl TransformerModel {
             decode_step: false,
             // 2026-09-25: After a snapshot restore, GDN layers do not take the FLA
             // chunked kernel (`gdn_exact_replay` in qwen3_ssm/trait_prefill_recur.rs).
-            gdn_exact_replay: marconi_skip,
+            // 2026-10-14: Nor does the cold pass that starts at the tail split point
+            // (`prefill_gdn_exact_pass`), so a warm replay from there gets its bits.
+            gdn_exact_replay,
             gdn_write_on_accept: false,
             // 2026-09-25: Hash-MoE reads this chunk's token ids, staged by
             // `prefill_b_embed_chunk_at`.

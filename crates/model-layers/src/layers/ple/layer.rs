@@ -9,6 +9,8 @@
 //!   the ids itself; a consumed prestage has already advanced it.
 //! - Under CUDA-graph capture, `forward` returns an error instead of taking
 //!   the D2H id readback or the un-prestaged gather.
+//! - The multi-sequence form is `rows::forward_rows`; the kernel half is the
+//!   same four steps (`project`, `gate`, `conv`, `add_highway`).
 //!
 //! It runs on the layers `ple_layer_ids` names and adds into the
 //! `hc_mult`-wide highway before the layer's first hyper-connection site, as
@@ -18,7 +20,7 @@
 use anyhow::{Context, Result};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 
-use super::ids::{PleIdDims, ple_ngram_ids};
+use super::ids::PleIdDims;
 use crate::layer::ForwardContext;
 use crate::layers::ngram_embed::NgramTable;
 use crate::layers::ops;
@@ -40,6 +42,10 @@ pub struct PleSeqState {
     /// eagerly: the slots are still in `slots_dev` and history has already
     /// advanced, so hashing again would count the token twice.
     last_staged_va: u64,
+    /// 2026-10-13: The row of the last stage: `None` for `prestage` (row 0 of one
+    /// sequence's step), `Some(i)` for row `i` of `prestage_rows`. Each consumer takes
+    /// only its own kind, since the two put this carry's slots at different rows.
+    staged_row: Option<usize>,
 }
 
 pub struct PleLayer {
@@ -69,7 +75,8 @@ pub struct PleLayer {
     conv_k: KernelHandle,
     add_k: KernelHandle,
 
-    /// 2026-09-25: Scratch, sized once for `max_tokens`.
+    /// 2026-09-25: Scratch, sized once for `max_tokens`. 2026-10-13: a longer pass runs
+    /// in sub-chunks of `max_tokens` (`forward_with_ids`).
     emb: DevicePtr,
     key: DevicePtr,
     value: DevicePtr,
@@ -96,6 +103,7 @@ impl PleLayer {
         gpu: &dyn GpuBackend,
     ) -> Result<Self> {
         dims.validate()?;
+        anyhow::ensure!(max_tokens > 0, "PLE: zero-token scratch");
         let heads = dims.ngram_heads();
         anyhow::ensure!(
             heads * head_dim == hidden,
@@ -148,6 +156,7 @@ impl PleLayer {
             history: Vec::new(),
             prestaged_va: None,
             last_staged_va: 0,
+            staged_row: None,
         })
     }
 
@@ -202,14 +211,6 @@ impl PleLayer {
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<()> {
-        anyhow::ensure!(
-            num_tokens <= self.max_tokens,
-            "PLE: {num_tokens} tokens exceeds the {} this layer was sized for. \
-             Raise METRALE_PLE_MAX_TOKENS (costs tokens*10240*14 bytes of \
-             scratch) or lower the prefill chunk size.",
-            self.max_tokens
-        );
-        let c = self.hc_mult * self.hidden;
         let heads = self.dims.ngram_heads();
         let gpu = ctx.gpu;
 
@@ -254,10 +255,9 @@ impl PleLayer {
         // leftover staged for an earlier token. Consuming it would inject that
         // token's rows and skip the history advance. `.take()` clears it in
         // every case.
-        let prestaged = st
-            .prestaged_va
-            .take()
-            .filter(|_| num_tokens == 1 && !fresh && ids_override.is_none());
+        let prestaged = st.prestaged_va.take().filter(|_| {
+            num_tokens == 1 && !fresh && ids_override.is_none() && st.staged_row.is_none()
+        });
         if fresh || st.history.len() != self.dims.context_len() {
             self.reset(st, gpu, stream)?;
         }
@@ -267,99 +267,52 @@ impl PleLayer {
             // graph replay or capture: slots sit in `slots_dev`, history has
             // advanced. Only the capture-safe kernel half remains.
             self.gather_embed(table_va, num_tokens, heads, gpu, stream)?;
-        } else {
-            anyhow::ensure!(
-                !ctx.graph_capture,
-                "PLE: un-prestaged forward inside CUDA graph capture — the \
-                 pageable slot upload would invalidate the recording (901); \
-                 the scheduler must call decode_prestage every step"
-            );
-            // 2026-09-25: history ++ tokens, hashed together, then keep the new
-            // tokens' rows: the same slice the reference takes with
-            // `[:, -input_ids.shape[1]:]`.
-            let mut window = st.history.clone();
-            window.extend_from_slice(&tokens);
-            let all = ple_ngram_ids(&self.dims, &window);
-            let rows = &all[all.len() - num_tokens..];
-            let flat: Vec<u64> = rows.iter().flat_map(|r| r.iter().copied()).collect();
-
-            self.gather(&flat, num_tokens, heads, gpu, stream)?;
-
-            let keep = self.dims.context_len();
-            st.history = window[window.len() - keep..].to_vec();
+            return self.kernel_steps(st.conv, highway, num_tokens, gpu, stream);
         }
-
-        // 2026-09-25: `gemm_k` is the pipelined kernel, so it must go through
-        // `ops::dense_gemm_bf16_pipelined` (grid [ceil(n,128), ceil(m,128)],
-        // block 256), not `ops::dense_gemm` (grid [ceil(n,16), ceil(m,16)],
-        // block 16x16): a kernel launched with the other wrapper's grid reads
-        // out of bounds.
-        ops::dense_gemm_bf16_pipelined(
-            gpu,
-            self.gemm_k,
-            self.emb,
-            &self.key_proj,
-            self.key,
-            num_tokens as u32,
-            c as u32,
-            self.hidden as u32,
-            stream,
-        )
-        .context("PLE key_proj")?;
-        ops::dense_gemm_bf16_pipelined(
-            gpu,
-            self.gemm_k,
-            self.emb,
-            &self.value_proj,
-            self.value,
-            num_tokens as u32,
-            self.hidden as u32,
-            self.hidden as u32,
-            stream,
-        )
-        .context("PLE value_proj")?;
-
-        ops::ple_gate(
-            gpu,
-            self.gate_k,
-            highway,
-            self.key,
-            self.value,
-            self.norm_query.weight,
-            self.norm_key.weight,
-            self.norm_conv.weight,
-            self.gated,
-            self.gated_normed,
-            num_tokens as u32,
-            self.hidden as u32,
-            self.hc_mult as u32,
-            self.eps,
-            stream,
-        )?;
-        ops::ple_conv(
-            gpu,
-            self.conv_k,
-            self.gated_normed,
-            self.gated,
-            self.conv1d.weight,
-            st.conv,
-            self.out,
-            num_tokens as u32,
-            c as u32,
-            self.k_size as u32,
-            self.dilation as u32,
-            stream,
-        )?;
-        ops::ple_add_highway(
-            gpu,
-            self.add_k,
-            self.out,
-            highway,
-            (num_tokens * c) as u32,
-            stream,
-        )?;
-
+        anyhow::ensure!(
+            !ctx.graph_capture,
+            "PLE: un-prestaged forward inside CUDA graph capture — the \
+             pageable slot upload would invalidate the recording (901); \
+             the scheduler must call decode_prestage every step"
+        );
+        // 2026-09-25: history ++ tokens, hashed together, then keep the new
+        // tokens' rows: the same slice the reference takes with
+        // `[:, -input_ids.shape[1]:]` (`rows::next_ids`, shared with
+        // `prestage` and `forward_rows`).
+        let flat = rows::next_ids(&self.dims, &mut st.history, &tokens);
+        // 2026-10-13: A pass longer than the scratch runs in sub-chunks of `max_tokens`
+        // rows, each carrying the conv state to the next as consecutive prefill chunks
+        // do; every step is per row or row-independent, so the result is the
+        // one-pass result. A faulting row cache may evict a released row on the next
+        // resolve, before the previous sub-chunk's gather has read it, so that table
+        // waits for the stream between sub-chunks.
+        let faulting = self.table_faults_rows()?;
+        let c = self.hc_mult * self.hidden;
+        for start in (0..num_tokens).step_by(self.max_tokens) {
+            let n = self.max_tokens.min(num_tokens - start);
+            if start > 0 && faulting {
+                gpu.synchronize(stream)?;
+            }
+            self.gather(
+                &flat[start * heads..(start + n) * heads],
+                n,
+                heads,
+                gpu,
+                stream,
+            )?;
+            self.kernel_steps(st.conv, highway.offset(start * c * 4), n, gpu, stream)?;
+        }
         Ok(())
+    }
+
+    /// 2026-10-13: Whether the n-gram table faults rows in on demand (anything but a
+    /// fully resident table).
+    fn table_faults_rows(&self) -> Result<bool> {
+        let table = self
+            .table
+            .lock()
+            .map_err(|_| anyhow::anyhow!("PLE table mutex poisoned"))?;
+        Ok(!matches!(&*table, NgramTable::Bf16(_)))
     }
 
     /// 2026-09-25: Resolve row ids to cache slots and gather them into `self.emb`.
@@ -482,3 +435,10 @@ pub struct PleWeights {
 // `PleLayer`'s private fields.
 #[path = "aux_state.rs"]
 mod aux_state;
+#[path = "kernel_half.rs"]
+mod kernel_half;
+#[path = "rows.rs"]
+mod rows;
+#[cfg(test)]
+#[path = "rows_tests.rs"]
+mod rows_tests;

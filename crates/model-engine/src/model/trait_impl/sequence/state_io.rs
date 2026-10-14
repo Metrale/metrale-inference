@@ -3,10 +3,15 @@
 //! 2026-09-25: Swap-file save and restore of a sequence's state. The record is, for each
 //! block of `block_table` in order and each KV layer, the K bytes then the V bytes; then, for
 //! each linear-attention layer, the SSM h state at the pool's storage width and the conv
-//! state.
+//! state; then (2026-10-13) the aux blobs of the layers that keep per-sequence state outside
+//! KV and SSM (`LayerAuxState`: the PLE and QSA carries), in `aux_record`'s layout.
 //!
 //! Owner: model-engine.
-//! Invariants: save and restore write and read the record in the same order.
+//! Invariants:
+//! - Save and restore write and read the record in the same order.
+//! - The aux section is the same state the SSM snapshot carries for a prefix-cache hit
+//!   (`collect_aux_states` / `apply_aux_states`), so a swapped-in sequence resumes with its
+//!   carries, not from empty ones.
 
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -76,6 +81,12 @@ impl TransformerModel {
             }
         }
 
+        // 2026-10-13: The aux blobs. `snapshot_aux` orders its device reads on the
+        // stream and `copy_d2h_on_stream` waits for them, so the blobs are complete
+        // when they are written.
+        let aux = self.collect_aux_states(seq, gpu.default_stream())?;
+        super::aux_record::write_aux_blobs(writer, &aux)?;
+
         writer.flush()?;
         Ok(())
     }
@@ -141,6 +152,14 @@ impl TransformerModel {
                 gpu.copy_h2d(&c_buf, ssm.conv_state)?;
             }
         }
+
+        // 2026-10-13: The aux blobs, applied through the same layer hooks as a
+        // prefix-cache hit. `restore_aux` uploads asynchronously from the host
+        // blobs, so the stream is drained before they go out of scope.
+        let aux = super::aux_record::read_aux_blobs(reader, self.layers.len())?;
+        let stream = gpu.default_stream();
+        self.apply_aux_states(seq, &aux, stream)?;
+        gpu.synchronize(stream)?;
 
         Ok(())
     }

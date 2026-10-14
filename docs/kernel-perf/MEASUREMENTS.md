@@ -288,7 +288,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-moe-topk-cu-moe-topk-softmax-rows"></a>
 
-### `moe_topk_softmax_rows` — [kernels/gb10/common/moe_topk.cu](../../kernels/gb10/common/moe_topk.cu#L197)
+### `moe_topk_softmax_rows` — [kernels/gb10/common/moe_topk.cu](../../kernels/gb10/common/moe_topk.cu#L202)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | Source · notes |
 |---|---|---|---|---|---|---|---|
@@ -422,7 +422,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-ssm-preprocess-cu-deinterleave-qg"></a>
 
-### `deinterleave_qg` — [kernels/gb10/common/ssm_preprocess.cu](../../kernels/gb10/common/ssm_preprocess.cu#L90)
+### `deinterleave_qg` — [kernels/gb10/common/ssm_preprocess.cu](../../kernels/gb10/common/ssm_preprocess.cu#L93)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | Source · notes |
 |---|---|---|---|---|---|---|---|
@@ -431,7 +431,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-ssm-preprocess-cu-deinterleave-qg-split-qnorm"></a>
 
-### `deinterleave_qg_split_qnorm` — [kernels/gb10/common/ssm_preprocess.cu](../../kernels/gb10/common/ssm_preprocess.cu#L190)
+### `deinterleave_qg_split_qnorm` — [kernels/gb10/common/ssm_preprocess.cu](../../kernels/gb10/common/ssm_preprocess.cu#L210)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | Source · notes |
 |---|---|---|---|---|---|---|---|
@@ -441,7 +441,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-ssm-preprocess-cu-dense-gemm-ba-gates-prefill"></a>
 
-### `dense_gemm_ba_gates_prefill` — [kernels/gb10/common/ssm_preprocess.cu](../../kernels/gb10/common/ssm_preprocess.cu#L482)
+### `dense_gemm_ba_gates_prefill` — [kernels/gb10/common/ssm_preprocess.cu](../../kernels/gb10/common/ssm_preprocess.cu#L502)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | Source · notes |
 |---|---|---|---|---|---|---|---|
@@ -475,7 +475,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-w4a16-gemv-tc-cu-w4a16-gemv-tc16"></a>
 
-### `w4a16_gemv_tc16` — [kernels/gb10/common/w4a16_gemv_tc.cu](../../kernels/gb10/common/w4a16_gemv_tc.cu#L256)
+### `w4a16_gemv_tc16` — [kernels/gb10/common/w4a16_gemv_tc.cu](../../kernels/gb10/common/w4a16_gemv_tc.cu#L289)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | Source · notes |
 |---|---|---|---|---|---|---|---|
@@ -484,7 +484,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-w4a16-gemv-tc-cu-w4a16-gemv-tc8"></a>
 
-### `w4a16_gemv_tc8` — [kernels/gb10/common/w4a16_gemv_tc.cu](../../kernels/gb10/common/w4a16_gemv_tc.cu#L255)
+### `w4a16_gemv_tc8` — [kernels/gb10/common/w4a16_gemv_tc.cu](../../kernels/gb10/common/w4a16_gemv_tc.cu#L288)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | Source · notes |
 |---|---|---|---|---|---|---|---|

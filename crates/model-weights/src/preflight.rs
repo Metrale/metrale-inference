@@ -183,8 +183,11 @@ fn check_embedding_and_head(store: &WeightStore) -> Result<()> {
         "embed_tokens.weight",
         "embed.weight",
     ];
+    // 2026-10-13: A deferred embedding (read by the model's loader from disk) counts.
+    let deferred = store.deferred_sorted();
     let has_embed = store
         .names()
+        .chain(deferred.iter().map(|(n, _)| n.as_str()))
         .any(|n| EMBED_EXACTS.contains(&n) || EMBED_SUFFIXES.iter().any(|s| n.ends_with(s)));
     if !has_embed {
         let sample: Vec<_> = store.names().take(20).collect();
@@ -417,5 +420,7 @@ fn check_correction_bias_shape(store: &WeightStore, config: &ModelConfig) -> Res
     Ok(())
 }
 
+#[cfg(test)]
+mod embed_tests;
 #[cfg(test)]
 mod qsa_kv_tests;

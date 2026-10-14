@@ -151,6 +151,7 @@ fn a_recipe_slot_count_is_a_count_or_auto() {
     let with = |v: &str| BTreeMap::from([("max_batch_size".to_string(), v.to_string())]);
     for (v, want) in [
         ("auto", SlotRequest::Auto),
+        ("fill", SlotRequest::Fill),
         ("128", SlotRequest::Count(128)),
     ] {
         let args = r.serve_args(&with(v)).expect("validates");

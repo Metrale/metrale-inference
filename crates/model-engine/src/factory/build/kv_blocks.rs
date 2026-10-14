@@ -110,7 +110,16 @@ pub(super) fn budget_kv_blocks(
         kv_block_size,
         max_batch_size,
     )?;
-    if n < budget_blocks {
+    if n < budget_blocks && prefix_cache.is_active() {
+        // 2026-10-13: An unclamped pool is short of its budget only by the driver's share; until
+        // now this logged the reachable-demand clamp's reason, "prefix caching inactive".
+        tracing::info!(target: "metrale_model_engine::factory::build", "KV pool unclamped (prefix caching active): {} -> {} blocks, {} per mille \
+             of its budget kept for the driver",
+            budget_blocks,
+            n,
+            PREFIX_POOL_DRIVER_PER_MILLE,
+        );
+    } else if n < budget_blocks {
         let per_seq = max_seq_len.div_ceil(kv_block_size);
         let freed = (budget_blocks - n) * kv_config.block_bytes_kv_all_layers();
         tracing::info!(target: "metrale_model_engine::factory::build", "KV pool clamped to reachable demand: {} -> {} blocks \

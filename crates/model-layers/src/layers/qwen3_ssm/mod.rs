@@ -15,6 +15,7 @@ use crate::layers::FfnComponent;
 use crate::layers::ops;
 use crate::weight_map::{DenseWeight, QuantizedWeight, SsmWeights};
 
+mod graph_hooks;
 mod layer_struct;
 mod ple_seq;
 pub use layer_struct::Qwen3SsmLayer;
@@ -36,6 +37,7 @@ mod row_tier_proj;
 mod rowwise_bf16;
 mod ssm_forward;
 pub(crate) mod ssm_h_fp16;
+mod trait_capabilities;
 mod trait_decode;
 mod trait_decode_batched;
 mod trait_decode_batched_conv_gdn;

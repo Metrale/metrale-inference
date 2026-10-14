@@ -65,7 +65,7 @@ impl Qwen3AttentionLayer {
             attn_out,
             n,
             seq_len_start,
-            num_tokens: _,
+            num_tokens,
             nq,
             nkv,
             hd,
@@ -140,7 +140,9 @@ impl Qwen3AttentionLayer {
                 stream,
             )?;
         } else {
-            let use_br64 = n >= 256;
+            // 2026-10-14: From the chunk's length, not `n`: rows dropped past a QSA bound must
+            // not change the kernel (and so the bits) of the rows kept.
+            let use_br64 = num_tokens >= 256;
             let (fp8_k_scale, fp8_v_scale) = self.effective_fp8_scales();
             match (self.kv_dtype, use_br64) {
                 (KvCacheDtype::Nvfp4, true) => ops::prefill_attention_paged_nvfp4_64(

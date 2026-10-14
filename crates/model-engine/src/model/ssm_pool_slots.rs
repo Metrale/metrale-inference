@@ -183,10 +183,15 @@ impl SsmStatePool {
             g_c_sum += c_sum;
             g_c_ssq += c_ssq;
             g_c_sabs += c_sabs;
+            // 2026-10-14: Byte digests: the sums miss a one-ulp difference.
+            let seed = super::ssm_snapshot::FNV1A64_SEED;
+            let h_fnv = super::ssm_snapshot::fnv1a64(seed, &hb);
+            let c_fnv = super::ssm_snapshot::fnv1a64(seed, &cb);
             tracing::warn!(
                 "METRALE_SSM_CKSUM[{tag}] slot={slot} L{i} \
                  h_sum={h_sum:.6} h_ssq={h_ssq:.6} h_sabs={h_sabs:.6} \
-                 c_sum={c_sum:.6} c_ssq={c_ssq:.6} c_sabs={c_sabs:.6}"
+                 c_sum={c_sum:.6} c_ssq={c_ssq:.6} c_sabs={c_sabs:.6} \
+                 h_fnv={h_fnv:016x} c_fnv={c_fnv:016x}"
             );
         }
         tracing::warn!(

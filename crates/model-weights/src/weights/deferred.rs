@@ -110,20 +110,31 @@ impl DeferredTensor {
     /// a message pointing at the wrong thing. Seek-then-read rather than
     /// `pread`, because `WeightStore` builds on Windows too.
     pub fn read_host_bytes(&self) -> Result<Vec<u8>> {
+        let mut buf = vec![0u8; self.byte_size()];
+        self.read_into(&mut buf)?;
+        Ok(buf)
+    }
+
+    /// 2026-10-13: [`Self::read_host_bytes`] into a caller-owned buffer of exactly
+    /// [`Self::byte_size`] bytes (e.g. page-locked memory a kernel reads in place).
+    pub fn read_into(&self, dst: &mut [u8]) -> Result<()> {
         use std::io::{Read, Seek, SeekFrom};
         let n = self.byte_size();
+        anyhow::ensure!(
+            dst.len() == n,
+            "deferred tensor: destination is {} B but the tensor is {n} B",
+            dst.len()
+        );
         let mut f = std::fs::File::open(&self.path)
             .with_context(|| format!("deferred tensor: opening {}", self.path.display()))?;
         f.seek(SeekFrom::Start(self.offset))?;
-        let mut buf = vec![0u8; n];
-        f.read_exact(&mut buf).with_context(|| {
+        f.read_exact(dst).with_context(|| {
             format!(
                 "deferred tensor: reading {n} B at offset {} of {}",
                 self.offset,
                 self.path.display()
             )
-        })?;
-        Ok(buf)
+        })
     }
 }
 

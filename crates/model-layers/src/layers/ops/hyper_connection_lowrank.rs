@@ -10,19 +10,33 @@
 //! - `hc_expand` behaves the same in both kernel files, so it has no launcher here.
 //! - `hyper_connection_dispatch.rs` routes a site here when `HcSiteWeights::lowrank` is `Some`.
 //! - With `T <= 64` and a non-null scratch, [`hc_pre_lowrank`] and [`hc_head_lowrank`] run the
-//!   cuBLASLt GEMM path (or the three-launch split path when `METRALE_HC_DECODE_SPLIT=1`); with
-//!   larger `T` and a scratch they run the `dense_gemm_bf16_pipelined` GEMM path unless
-//!   `METRALE_QWEN4EXP_NO_HC_GEMM=1`; otherwise the fused kernel, one 1024-thread block per token.
+//!   cuBLASLt GEMM path (2026-10-14: on Hopper at `T <= 16`, its two-GEMV form), or the
+//!   three-launch split path when `METRALE_HC_DECODE_SPLIT=1`; with larger `T` and a scratch
+//!   they run the `dense_gemm_bf16_pipelined` GEMM path unless `METRALE_QWEN4EXP_NO_HC_GEMM=1`;
+//!   otherwise the fused kernel, one 1024-thread block per token.
 
 use anyhow::Result;
 #[path = "hyper_connection_lowrank_gemm.rs"]
 mod gemm;
 pub(crate) use gemm::hc_pre_gemm;
+#[path = "hyper_connection_lowrank_gemv.rs"]
+pub(crate) mod gemv;
 
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 use crate::layers::qwen3_attention::HcLowRank;
+
+/// 2026-10-13: Block width of `hc_post` and `hc_pre_mix`.
+pub(crate) const HC_ELEMENTWISE_BLOCK: u32 = 256;
+
+/// 2026-10-13: Grid y of `hc_post` and `hc_pre_mix`: one block-wide slice of the hidden
+/// dimension per block, so a decode token runs on `ceil(H / 256)` blocks, not one (the
+/// one-block launches were latency-bound, 16 and 13 us per call at C1 on an H100). A pure
+/// function of the shape; the kernels compute every element the same at every grid y.
+pub(crate) const fn hc_hidden_split(hidden_size: u32) -> u32 {
+    hidden_size.div_ceil(HC_ELEMENTWISE_BLOCK)
+}
 
 /// 2026-09-25: `METRALE_QWEN4EXP_NO_HC_GEMM` equal to `"1"`, read once per process: the large-T
 /// collapse runs the fused FP32 kernel instead of the GEMM path, which rounds `normed` to BF16
@@ -37,6 +51,15 @@ fn hc_gemm_disabled() -> bool {
 fn hc_decode_split_forced() -> bool {
     static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *V.get_or_init(|| std::env::var("METRALE_HC_DECODE_SPLIT").as_deref() == Ok("1"))
+}
+
+/// 2026-10-14: `METRALE_HC_PREFILL_CUBLAS` equal to `"1"`, read once per process: the large-T
+/// GEMM path runs its projections on cuBLASLt (as `T <= 64` does) instead of
+/// `dense_gemm_bf16_pipelined`. An opt-in for a prefill A/B; it changes the projections'
+/// summation order, so it is off until measured.
+fn hc_prefill_cublas() -> bool {
+    static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *V.get_or_init(|| std::env::var("METRALE_HC_PREFILL_CUBLAS").as_deref() == Ok("1"))
 }
 
 /// 2026-09-25: Collapse the `hc_mult` streams to one, and emit the per-stream injection weights
@@ -113,7 +136,7 @@ pub fn hc_pre_lowrank(
             hc_mult,
             norm_eps,
             true,
-            false,
+            hc_prefill_cublas(),
             stream,
         );
     }
@@ -204,7 +227,7 @@ pub fn hc_head_lowrank(
             hc_mult,
             norm_eps,
             false,
-            false,
+            hc_prefill_cublas(),
             stream,
         );
     }
@@ -242,8 +265,8 @@ pub fn hc_post_lowrank(
     stream: u64,
 ) -> Result<()> {
     KernelLaunch::new(gpu, kernel)
-        .grid([num_tokens, 1, 1])
-        .block([256, 1, 1])
+        .grid([num_tokens, hc_hidden_split(hidden_size), 1])
+        .block([HC_ELEMENTWISE_BLOCK, 1, 1])
         .arg_ptr(block_out)
         .arg_ptr(residual)
         .arg_ptr(inj)

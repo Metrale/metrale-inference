@@ -85,6 +85,9 @@ mod w8a16_gemm_m16;
 mod w8a16_gemv_ncol;
 pub use model_stats::ModelStats;
 
+#[cfg(test)]
+#[path = "ops/deinterleave_qg_tests.rs"]
+mod deinterleave_qg_tests;
 #[path = "ops/gemm_fp8_prefill.rs"]
 mod gemm_fp8_prefill;
 #[path = "ops/gemm_quant.rs"]
@@ -99,11 +102,17 @@ mod gemv_sw;
 mod hyper_connection;
 #[path = "ops/hyper_connection_dispatch.rs"]
 mod hyper_connection_dispatch;
+#[cfg(test)]
+#[path = "ops/hyper_connection_gemv_tests.rs"]
+mod hyper_connection_gemv_tests;
 #[path = "ops/hyper_connection_lowrank.rs"]
 mod hyper_connection_lowrank;
 #[cfg(test)]
 #[path = "ops/hyper_connection_lowrank_tests.rs"]
 mod hyper_connection_lowrank_tests;
+#[cfg(test)]
+#[path = "ops/hyper_connection_split_tests.rs"]
+mod hyper_connection_split_tests;
 #[path = "ops/kv_cache.rs"]
 mod kv_cache;
 #[path = "ops/kv_cache_fp8k.rs"]
@@ -134,8 +143,14 @@ mod moe_grouped_fp4;
 pub mod moe_lora_grouped;
 #[path = "ops/moe_prefill.rs"]
 mod moe_prefill;
+#[cfg(test)]
+#[path = "ops/moe_topk_warp_tests.rs"]
+mod moe_topk_warp_tests;
 #[path = "ops/norm.rs"]
 mod norm;
+#[cfg(test)]
+#[path = "ops/nvfp4_moe_tc_split_tests.rs"]
+mod nvfp4_moe_tc_split_tests;
 // 2026-09-25: Tensor-core routing of the MTP drafter's BF16 GEMV.
 #[path = "ops/dense_gemv_tc.rs"]
 pub mod dense_gemv_tc;
@@ -154,6 +169,8 @@ mod norm_gated_rms_strided_tests;
 mod nvfp4_mmq;
 #[path = "ops/ple.rs"]
 mod ple;
+#[path = "ops/pool_topk.rs"]
+mod pool_topk;
 #[path = "ops/prefill_attn_a.rs"]
 mod prefill_attn_a;
 #[path = "ops/prefill_attn_b.rs"]
@@ -278,6 +295,7 @@ pub use moe_prefill::*;
 pub use norm::*;
 pub use nvfp4_mmq::*;
 pub use ple::*;
+pub use pool_topk::*;
 pub use prefill_attn_a::*;
 pub use prefill_attn_b::*;
 pub use prefill_attn_batched::*;

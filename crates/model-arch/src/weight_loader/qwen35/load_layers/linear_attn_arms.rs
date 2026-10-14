@@ -212,7 +212,8 @@ pub(crate) fn build_linear_attention_dense_bf16(
     let tp_size = config.tp_world_size.max(1);
     let dims = TpGdnDims::from_config(config);
     tracing::info!(
-        "Layer {layer_idx}: loading SSM FP8 projections as BF16 dense \
+        "Layer {layer_idx}: loading SSM projections as BF16 dense (an FP8 or NVFP4 one \
+         dequantized, a BF16 one as shipped) \
          (tp={tp_size}, local_nk={}, local_nv={})",
         dims.local_nk,
         dims.local_nv,

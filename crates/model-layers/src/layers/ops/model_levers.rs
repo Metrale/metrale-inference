@@ -258,6 +258,11 @@ pub struct ModelLevers {
     /// 2026-09-25: `METRALE_GDN_DECODE_GRAPH=1` or `true` (case-sensitive): the same permission as
     /// [`Self::ep_graphs`]; `decode_a.rs` ORs the two.
     pub gdn_decode_graph: bool,
+    /// 2026-10-13: `METRALE_DECODE_GRAPH_PER_STEP=1` or `true` (case-sensitive): the
+    /// single-sequence decode (`model/trait_impl/decode_a.rs`) vetoes graphs per step from
+    /// each layer's `decode_graph_unsupported_at` instead of the build-time
+    /// `decode_graph_veto`.
+    pub decode_graph_per_step: bool,
 
     /// 2026-09-25: `METRALE_BF16_TC_PROJ` (presence): attention prefill projections use
     /// `w4a16_gemm_n128_m128_bf16` when that kernel is loaded (`qwen3_attention/prefill_weights.rs`).
@@ -278,6 +283,12 @@ pub struct ModelLevers {
     /// contiguous-batch GEMV tier (batch4 for n <= 4, batch16 above) when its kernel resolved
     /// (`trait_decode_multi_seq/ssm_batched_proj.rs`).
     pub ssm_gemv_batch4: bool,
+    /// 2026-10-14: `METRALE_SSM_BF16_BATCHM=1` (off by default until the batched kernel reaches
+    /// cuBLASLt's bandwidth). For n in 2..=16 the batched GDN decode
+    /// runs its BF16 `in_proj_qkvz` and `out_proj` on `dense_gemv_bf16_batchm`, whose rows have
+    /// `dense_gemv_bf16`'s bits (the n == 1 path), instead of cuBLASLt, whose split-K changes
+    /// the bits with the batch width (`trait_decode_multi_seq/ssm_batched_proj.rs`).
+    pub ssm_bf16_batchm: bool,
     /// 2026-09-25: `METRALE_GDN_FUSED_CONV=1`: the fused conv+GDN+norm decode kernel when
     /// `nv == 2 * nk`, the K and V head dims are 128 and the kernel resolved
     /// (`trait_decode_multi_seq/ssm_batched_recurrent.rs`).

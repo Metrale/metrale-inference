@@ -14,12 +14,23 @@
 // - gate+up rounds gate and up to BF16 (after P::out), forms the FP32 SiLU product a and stores
 //   it as two BF16 terms of a * ACT_LIFT, hi then lo, in the act buffer's FP32 row space (row r:
 //   N hi values then N lo values); down runs one MMA on each, hi first.
+// - 2026-10-14: A split gate+up (PART 1 and 2) runs the gate tiles and the up tiles of the same
+//   columns on two warps of one CTA: each tile's MMAs are the unsplit warp's, in the same order,
+//   the up warp hands its BF16-rounded outputs over shared memory, and the gate warp forms the
+//   product with the unsplit expression, so the bytes equal PART 0's.
 
 #pragma once
 
 #include <cuda_bf16.h>
 
 #include "moe_fp8_grouped_tc_rows.cuh"
+
+// 2026-10-14: Floats one split gate+up warp pair exchanges (two buffers, RG <= 2, 4 values per
+// lane per tile) and the named barrier the pair's CTA meets at once per row group.
+__host__ __device__ constexpr int gtc_split_xs_floats(int mt) { return 2 * 2 * mt * 4 * 32; }
+template <int THREADS> __device__ __forceinline__ void gtc_split_barrier() {
+    asm volatile("bar.sync 1, %0;" :: "r"(THREADS) : "memory");
+}
 
 __device__ __forceinline__ void gtc_mma_bf16(float* c, const unsigned int* a, unsigned int b0, unsigned int b1) {
     asm volatile(
@@ -33,13 +44,18 @@ __device__ __forceinline__ void gtc_mma_bf16(float* c, const unsigned int* a, un
 // unless by_pos: BF16 [.., K] for gate+up, the hi|lo SiLU rows [.., 2K] for down. RG row groups
 // of TC_ROWS share each decoded weight fragment; group q is its own MMA column block. G chunks
 // make one load group; a warp keeps two groups in flight.
-template <class P, bool GATE_UP, int MT, int RG, int G>
+// 2026-10-14: PART 0 runs every tile; a split gate+up runs PART 1 (the gate tiles, M0) on one
+// warp and PART 2 (the up tiles, M1) on its partner, which share `xs` (gtc_split_xs_floats(MT)
+// floats) and meet at a THREADS-thread named barrier once per row group: every warp of the CTA
+// must run the same row range.
+template <class P, bool GATE_UP, int MT, int RG, int G, int PART = 0, int THREADS = 0>
 __device__ __forceinline__ void gtc_warp(
     const void* __restrict__ X, const int* __restrict__ sorted_token_ids, bool by_pos,
     unsigned int begin, unsigned int end, const typename P::Mat& M0, const typename P::Mat& M1,
-    void* __restrict__ out, unsigned int N, unsigned int K, unsigned int f0
+    void* __restrict__ out, unsigned int N, unsigned int K, unsigned int f0, float* xs = nullptr
 ) {
-    constexpr int TILES = GATE_UP ? 2 * MT : MT;
+    static_assert(PART == 0 || (GATE_UP && THREADS > 0 && RG <= 2), "a split warp is a gate+up warp");
+    constexpr int TILES = (GATE_UP && PART == 0) ? 2 * MT : MT;
     constexpr unsigned int LANE_K = P::CHUNK_K / 4;   // 2026-10-03: K a lane holds per chunk
     constexpr unsigned int XU4 = LANE_K / 8;           // 2026-10-03: activation uint4 per lane per chunk
     constexpr unsigned int CU4 = P::CHUNK_K / 8;       // 2026-10-03: uint4 per chunk of an activation row
@@ -50,11 +66,12 @@ __device__ __forceinline__ void gtc_warp(
     typename P::Tile tile[TILES];
     #pragma unroll
     for (int m = 0; m < TILES; m++) {
-        const bool second = GATE_UP && m >= MT;
+        const bool second = GATE_UP && (PART == 2 || (PART == 0 && m >= MT));
         tile[m] = P::tile(second ? M1 : M0, f0 + 16 * (m % MT), g, t, K);
     }
 
-    for (unsigned int row0 = begin; row0 < end; row0 += TC_ROWS * RG) {
+    unsigned int pass = 0;
+    for (unsigned int row0 = begin; row0 < end; row0 += TC_ROWS * RG, pass++) {
         unsigned int cnt[RG];
         bool live[RG];
         const uint4* xp[RG];
@@ -177,43 +194,61 @@ __device__ __forceinline__ void gtc_warp(
             }
         }
         // 2026-10-02: acc[q][m][e]: column f + g (+ 8 for e >= 2) of row 2t + (e & 1) of group q.
-        #pragma unroll
-        for (int q = 0; q < RG; q++)
+        // 2026-10-14: xb[((q * MT + m) * 4 + e) * 32 + lane]: the up warp's BF16-rounded output.
+        float* xb = nullptr;
+        if constexpr (PART != 0) xb = xs + (pass & 1u) * (gtc_split_xs_floats(MT) / 2);
+        if constexpr (PART == 2) {
             #pragma unroll
-            for (int e = 0; e < 4; e++) {
-                const unsigned int r = 2 * t + (e & 1);
-                if (r >= cnt[q]) continue;
-                const unsigned int row = row0 + q * TC_ROWS + r;
-                const unsigned long long o = (unsigned long long)row * N + f0 + g + ((e >> 1) ? 8 : 0);
+            for (int q = 0; q < RG; q++)
                 #pragma unroll
-                for (int m = 0; m < MT; m++) {
-                    if (GATE_UP) {
-                        const float gv = __bfloat162float(__float2bfloat16(P::out(tile[m], acc[q][m][e])));
-                        const float uv = __bfloat162float(__float2bfloat16(P::out(tile[m + MT], acc[q][m + MT][e])));
-                        const float hv = (gv / (1.0f + __expf(-gv))) * uv * P::ACT_LIFT;
-                        const __nv_bfloat16 hi = __float2bfloat16(hv);
-                        const unsigned long long ro = (unsigned long long)row * 2 * N + f0 + g + ((e >> 1) ? 8 : 0);
-                        ((__nv_bfloat16*)out)[ro + 16 * m] = hi;
-                        ((__nv_bfloat16*)out)[ro + N + 16 * m] = __float2bfloat16(hv - __bfloat162float(hi));
-                    } else {
-                        ((__nv_bfloat16*)out)[o + 16 * m] = __float2bfloat16(P::out(tile[m], acc[q][m][e]));
+                for (int m = 0; m < MT; m++)
+                    #pragma unroll
+                    for (int e = 0; e < 4; e++)
+                        xb[((q * MT + m) * 4 + e) * 32 + lane] =
+                            __bfloat162float(__float2bfloat16(P::out(tile[m], acc[q][m][e])));
+            gtc_split_barrier<THREADS>();
+        } else {
+            if constexpr (PART == 1) gtc_split_barrier<THREADS>();
+            #pragma unroll
+            for (int q = 0; q < RG; q++)
+                #pragma unroll
+                for (int e = 0; e < 4; e++) {
+                    const unsigned int r = 2 * t + (e & 1);
+                    if (r >= cnt[q]) continue;
+                    const unsigned int row = row0 + q * TC_ROWS + r;
+                    const unsigned long long o = (unsigned long long)row * N + f0 + g + ((e >> 1) ? 8 : 0);
+                    #pragma unroll
+                    for (int m = 0; m < MT; m++) {
+                        if constexpr (GATE_UP) {
+                            const float gv = __bfloat162float(__float2bfloat16(P::out(tile[m], acc[q][m][e])));
+                            float uv;
+                            if constexpr (PART == 1) uv = xb[((q * MT + m) * 4 + e) * 32 + lane];
+                            else uv = __bfloat162float(__float2bfloat16(P::out(tile[m + MT], acc[q][m + MT][e])));
+                            const float hv = (gv / (1.0f + __expf(-gv))) * uv * P::ACT_LIFT;
+                            const __nv_bfloat16 hi = __float2bfloat16(hv);
+                            const unsigned long long ro = (unsigned long long)row * 2 * N + f0 + g + ((e >> 1) ? 8 : 0);
+                            ((__nv_bfloat16*)out)[ro + 16 * m] = hi;
+                            ((__nv_bfloat16*)out)[ro + N + 16 * m] = __float2bfloat16(hv - __bfloat162float(hi));
+                        } else {
+                            ((__nv_bfloat16*)out)[o + 16 * m] = __float2bfloat16(P::out(tile[m], acc[q][m][e]));
+                        }
                     }
                 }
-            }
+        }
     }
 }
 
 // 2026-10-02: gtc_warp for a routed expert's rows: RG = 2 (one weight pass per 16 rows) when the
 // expert has more than TC_ROWS rows, else RG = 1. The shared expert's block rows hold at most
 // TC_ROWS rows and keep RG = 1.
-template <class P, bool GATE_UP, int MT, int G>
+template <class P, bool GATE_UP, int MT, int G, int PART = 0, int THREADS = 0>
 __device__ __forceinline__ void gtc_warp_routed(
     const void* __restrict__ X, const int* __restrict__ sorted_token_ids, bool by_pos,
     unsigned int begin, unsigned int end, const typename P::Mat& M0, const typename P::Mat& M1,
-    void* __restrict__ out, unsigned int N, unsigned int K, unsigned int f0
+    void* __restrict__ out, unsigned int N, unsigned int K, unsigned int f0, float* xs = nullptr
 ) {
     if (end - begin > TC_ROWS)
-        gtc_warp<P, GATE_UP, MT, 2, G>(X, sorted_token_ids, by_pos, begin, end, M0, M1, out, N, K, f0);
+        gtc_warp<P, GATE_UP, MT, 2, G, PART, THREADS>(X, sorted_token_ids, by_pos, begin, end, M0, M1, out, N, K, f0, xs);
     else
-        gtc_warp<P, GATE_UP, MT, 1, G>(X, sorted_token_ids, by_pos, begin, end, M0, M1, out, N, K, f0);
+        gtc_warp<P, GATE_UP, MT, 1, G, PART, THREADS>(X, sorted_token_ids, by_pos, begin, end, M0, M1, out, N, K, f0, xs);
 }

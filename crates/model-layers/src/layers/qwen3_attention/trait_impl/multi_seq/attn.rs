@@ -209,7 +209,7 @@ impl Qwen3AttentionLayer {
         c: &MultiSeqCtx<'_>,
         kv_cache: &mut PagedKvCache,
         meta: AttnMetadataDev,
-    ) -> Result<DevicePtr> {
+    ) -> Result<MsAttn> {
         let MultiSeqCtx {
             fwd,
             n,
@@ -317,8 +317,23 @@ impl Qwen3AttentionLayer {
                 .arg_u32(hd)
                 .launch(stream)?;
         }
-        Ok(attn_out)
+        Ok(MsAttn {
+            attn_out,
+            q: q_contiguous,
+            q_row_bytes: q_stride as usize * bf16,
+        })
     }
+}
+
+/// 2026-10-13: What `ms_phase_paged_decode` produced and where it read Q from:
+/// `attn_out` holds one `[nq, hd]` BF16 row per sequence; row `i`'s query is at
+/// `q + i * q_row_bytes` (in place in `qkv_buf`, or the staged copy). The QSA
+/// rows (`qsa_rows.rs`) re-run row `i`'s attention over its selection from the
+/// same Q row into the same output row.
+pub(super) struct MsAttn {
+    pub attn_out: DevicePtr,
+    pub q: DevicePtr,
+    pub q_row_bytes: usize,
 }
 
 mod o_proj;

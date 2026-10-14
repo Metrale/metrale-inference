@@ -124,6 +124,7 @@ pub(super) fn load(
     // 2026-09-25: `(file, byte offset)` per shard, walked from `shard_0` up to
     // the first missing index.
     let mut shards: Vec<(std::path::PathBuf, u64)> = Vec::new();
+    let mut deferred = Vec::new();
     let mut rows_per = 0usize;
     let mut head_dim = 0usize;
     let mut dtype = None;
@@ -160,6 +161,7 @@ pub(super) fn load(
             );
         }
         shards.push((d.path.clone(), d.offset));
+        deferred.push(d.clone());
     }
     anyhow::ensure!(
         !shards.is_empty(),
@@ -197,16 +199,6 @@ pub(super) fn load(
              gather kernel has a path for BF16 and FP8 E4M3 only"
         ),
     };
-    let slots = slots_from_env();
-    let cache = metrale_storage::NgramRowCache::open_segmented(
-        &shards,
-        rows_per as u64,
-        None,
-        head_dim * elem,
-        slots,
-    )
-    .context("PLE: n-gram row cache")?;
-
     // 2026-09-25: An FP8 table is refused, after its one-element
     // `ngram_embedding.weight_scale` is read and checked.
     if elem == 1 {
@@ -230,6 +222,33 @@ pub(super) fn load(
         );
     }
 
+    // 2026-10-13: Fully resident in page-locked host memory (`ple_host`), or served off
+    // NVMe through the segmented row cache.
+    let (table, placement) = if super::ple_host::lever_set() {
+        let table = super::ple_host::load(&deferred, head_dim * elem, gpu)?;
+        (
+            NgramTable::Bf16(table),
+            "resident in page-locked host memory".to_string(),
+        )
+    } else {
+        let slots = slots_from_env();
+        let cache = metrale_storage::NgramRowCache::open_segmented(
+            &shards,
+            rows_per as u64,
+            None,
+            head_dim * elem,
+            slots,
+        )
+        .context("PLE: n-gram row cache")?;
+        (
+            NgramTable::Cached(Box::new(cache)),
+            format!(
+                "served off NVMe with {slots} cached slots ({:.1} MB)",
+                (slots * head_dim * elem) as f64 / 1e6
+            ),
+        )
+    };
+
     let weights = PleWeights {
         key_proj: dense(store, &format!("{lp}.key_proj.weight"))?,
         value_proj: dense(store, &format!("{lp}.value_proj.weight"))?,
@@ -243,13 +262,12 @@ pub(super) fn load(
     tracing::info!(
         "PLE at MODEL LAYER {layer_idx} (ple_layer_ids={:?}, 1-indexed): \
          {} shards x {rows_per} rows x {head_dim} dims = {} rows ({:.1} GB BF16) \
-         served off NVMe with {slots} cached slots ({:.1} MB); {heads} heads, \
+         {placement}; {heads} heads, \
          conv k={} dilation={dilation} (state {} steps)",
         config.ple_layer_ids,
         shards.len(),
         shards.len() * rows_per,
         (shards.len() * rows_per * head_dim * 2) as f64 / 1e9,
-        (slots * head_dim * 2) as f64 / 1e6,
         config.ple_conv_kernel_size,
         (config.ple_conv_kernel_size - 1) * dilation,
     );
@@ -263,7 +281,7 @@ pub(super) fn load(
         dilation,
         config.rms_norm_eps as f32,
         weights,
-        NgramTable::Cached(Box::new(cache)),
+        table,
         max_tokens,
         gpu,
     )

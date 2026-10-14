@@ -103,6 +103,7 @@ pub(crate) fn build_model(
         metrale_model_engine::factory::SlotPlan {
             request: args.max_batch_size,
             reserve_for: &|slots| reserve_plan.inference_reserve(slots),
+            driver_credit_cap: reserve_plan.driver_credit_cap(),
         },
         mtp_quant,
         args.speculative || args.dflash,

@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-09-25: Bit-identity and speed test of `dense_gemv_bf16_batchm` against M separate
-//! `dense_gemv_bf16` launches on the same rows.
+//! `dense_gemv_bf16` launches on the same rows. 2026-10-14: where the target compiles the
+//! direct-schedule entries (`METRALE_BATCHM_DIRECT_R`), they are checked and timed too,
+//! through the production launcher `ops::dense_gemv_batchm_direct`.
 //!
 //! Owner: model-arch examples.
 //! Invariants:
@@ -18,6 +20,8 @@ use half::bf16;
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::{KernelLaunch, div_ceil};
+use metrale_model_layers::layers::ops;
+use metrale_model_layers::weight_map::DenseWeight;
 
 /// 2026-09-25: (N, K, label). The first three rows are Laguna-S-2.1 shapes: hidden 3072,
 /// 72 q heads x 128 = 9216 (q_proj N, o_proj K), 8 kv heads x 128 and the shared
@@ -34,6 +38,10 @@ const SHAPES: &[(usize, usize, &str)] = &[
     (4096, 1024, "glm shared down"),
     (4096, 128, "glm KDA f_b (shallow K)"),
     (32, 4096, "glm KDA b_proj (8 blocks)"),
+    // 2026-10-14: The Qwen3.8-Flash-Next GDN BF16 decode projections (hidden 2560): the fused
+    // qkvz input projection and the output projection from the 6144-wide value heads.
+    (16384, 2560, "fn GDN qkvz"),
+    (2560, 6144, "fn GDN out"),
     // 2026-09-25: N % 4 != 0 (the kernel's N_PER_BLOCK is 4), so the last block has
     // lanes with n >= N. The kernel masks them instead of returning, so they still
     // reach the shared-memory staging barriers; this shape exercises that path.
@@ -124,18 +132,21 @@ fn main() -> Result<()> {
     let g: &dyn GpuBackend = &backend;
     let m1_k = g.kernel("gemv", "dense_gemv_bf16")?;
     let bm_k = g.kernel("dense_gemv_bf16_batchm", "dense_gemv_bf16_batchm")?;
+    let direct = ops::DenseGemvBatchmDirect::load(g);
+    println!("direct entries: {direct:?}");
 
     let mut rng = Lcg(0x5eed_1234);
     let mut fail = 0usize;
 
     println!(
-        "{:<12} {:>5} {:>10} {:>12} {:>12} {:>9}  bit-identical",
-        "shape", "M", "N", "Mx M=1 (ms)", "batchm (ms)", "speedup"
+        "{:<12} {:>5} {:>10} {:>12} {:>12} {:>9} {:>9} {:>12} {:>9}  bit-identical (batchm / direct)",
+        "shape", "M", "N", "Mx M=1 (ms)", "batchm (ms)", "speedup", "GB/s", "direct (ms)", "GB/s"
     );
 
     for &(n, k_dim, label) in SHAPES {
         let w: Vec<bf16> = (0..n * k_dim).map(|_| bf16::from_f32(rng.r())).collect();
         let wd = up_bf16(g, &w)?;
+        let wdense = DenseWeight { weight: wd };
 
         for &m in MS {
             let a: Vec<bf16> = (0..m * k_dim).map(|_| bf16::from_f32(rng.r())).collect();
@@ -204,20 +215,79 @@ fn main() -> Result<()> {
             }
             g.synchronize(0)?;
             let t_bat = t1.elapsed().as_secs_f64() * 1e3 / ITERS as f64;
+            // 2026-10-14: Effective bandwidth of the batched launch: weight, activations and
+            // outputs each moved once.
+            let bytes = 2 * (n * k_dim + m * k_dim + m * n);
+            let gbps = bytes as f64 / (t_bat * 1e6);
+
+            let (t_dir, dir_bits) = match (&direct, m >= 2) {
+                (Some(d), true) => {
+                    let run = || {
+                        ops::dense_gemv_batchm_direct(
+                            g,
+                            d,
+                            ad,
+                            &wdense,
+                            c_bat,
+                            m as u32,
+                            n as u32,
+                            k_dim as u32,
+                            n as u32,
+                            0,
+                        )
+                    };
+                    g.memset(c_bat, 0, m * n * 2)?;
+                    run()?;
+                    g.synchronize(0)?;
+                    let dbits = dn_bits(g, c_bat, m * n)?;
+                    let dd = r.iter().zip(&dbits).filter(|(x, y)| x != y).count();
+                    if dd != 0 {
+                        fail += 1;
+                    }
+                    for _ in 0..WARMUP {
+                        run()?;
+                    }
+                    g.synchronize(0)?;
+                    let t2 = std::time::Instant::now();
+                    for _ in 0..ITERS {
+                        run()?;
+                    }
+                    g.synchronize(0)?;
+                    let t = t2.elapsed().as_secs_f64() * 1e3 / ITERS as f64;
+                    let v = if dd == 0 {
+                        "yes".to_string()
+                    } else {
+                        format!("NO ({dd})")
+                    };
+                    (Some(t), v)
+                }
+                _ => (None, "-".to_string()),
+            };
+            let (t_dir_s, gbps_dir_s) = match t_dir {
+                Some(t) => (
+                    format!("{t:.4}"),
+                    format!("{:.0}", bytes as f64 / (t * 1e6)),
+                ),
+                None => ("-".to_string(), "-".to_string()),
+            };
 
             println!(
-                "{:<12} {:>5} {:>10} {:>12.4} {:>12.4} {:>8.2}x  {}",
+                "{:<12} {:>5} {:>10} {:>12.4} {:>12.4} {:>8.2}x {:>9.0} {:>12} {:>9}  {} / {}",
                 label,
                 m,
                 n,
                 t_ref,
                 t_bat,
                 t_ref / t_bat,
+                gbps,
+                t_dir_s,
+                gbps_dir_s,
                 if identical {
                     "yes".to_string()
                 } else {
                     format!("NO ({ndiff} elems differ)")
-                }
+                },
+                dir_bits
             );
 
             g.free(ad)?;

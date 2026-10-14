@@ -31,24 +31,13 @@ fn shape_admission() {
     assert_eq!(tc, 256);
     assert!(nvfp4_grouped_decode_shape_ok(tc, tc, 2048, 512, 512));
     assert!(!nvfp4_grouped_decode_shape_ok(tc + 1, tc, 2048, 512, 512));
-    assert!(ops::nvfp4_grouped_tc_shape_ok(
-        512,
-        2048,
-        ops::NVFP4_GROUPED_GATE_UP_TC
-    ));
-    assert!(ops::nvfp4_grouped_tc_shape_ok(
-        2048,
-        512,
-        ops::NVFP4_GROUPED_DOWN_TC
-    ));
-    assert!(!ops::nvfp4_grouped_tc_shape_ok(
-        2048,
-        384,
-        ops::NVFP4_GROUPED_DOWN_TC
-    ));
-    assert!(!ops::nvfp4_grouped_tc_shape_ok(
-        96,
-        2048,
-        ops::NVFP4_GROUPED_GATE_UP_TC
-    ));
+    // 2026-10-13: Each projection in its own load groups: the 35B (hidden 2048, inter 512) and
+    // Qwen3.8-Flash-Next (hidden 2560, inter 640, down K = 640 = 5 x 128) both fit; a gate+up K
+    // that is not a whole 256 group, a down K that is not a whole 128 chunk, or columns that are
+    // not whole CTAs do not.
+    assert!(ops::nvfp4_grouped_tc_expert_shape_ok(2048, 512));
+    assert!(ops::nvfp4_grouped_tc_expert_shape_ok(2560, 640));
+    assert!(!ops::nvfp4_grouped_tc_expert_shape_ok(2048 + 128, 512));
+    assert!(!ops::nvfp4_grouped_tc_expert_shape_ok(2048, 512 + 64));
+    assert!(!ops::nvfp4_grouped_tc_expert_shape_ok(2048, 96));
 }

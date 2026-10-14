@@ -3101,7 +3101,7 @@ source = "kernels/gb10/qwen3.6-35b-a3b/nvfp4/moe_w4a16_grouped_gemm.cu:172"
 match = "kernels/gb10/qwen3.6-35b-a3b/nvfp4/moe_w4a16_grouped_gemm.cu::moe_w4a16_grouped_gemm_ptrtable_m256"
 text = "256-row M tile on 512 threads reads expert weights once per 256 rows instead of 64. Opt-in (METRALE_MOE_GROUPED_M256=1): measured 2026-08-27 on GB10 at +1.4% end to end (noise), yet 31.30 ms per call against 26.17 ms for the base kernel."
 prs = []
-source = "crates/model-layers/src/layers/moe/helpers_b.rs:183"
+source = "crates/model-layers/src/layers/moe/grouped_w4a16.rs:66"
 
 [[t]]
 match = "kernels/gb10/qwen3.6-35b-a3b/nvfp4/moe_w4a16_grouped_gemm.cu::moe_w4a16_grouped_gemm_ptrtable_t"

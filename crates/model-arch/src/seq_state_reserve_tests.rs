@@ -121,3 +121,43 @@ fn a_non_glm_config_is_charged_nothing() {
     assert_eq!(s, PerSequenceState::default());
     assert_eq!(s.total(), 0);
 }
+
+/// 2026-10-13: Qwen3.8-Flash-Next from the checked-in checkpoint fixture: 12
+/// full-attention layers each carry a QSA indexer of head dim 128, compress ratio 4.
+fn flash_next() -> ModelConfig {
+    metrale_config::parse_config(include_str!(
+        "../../circuit/tests/fixtures/checkpoints/Inferact--Qwen3.8-Flash-Next-NVFP4/config.json"
+    ))
+    .expect("the Flash-Next fixture parses")
+}
+
+#[test]
+fn flash_next_charges_its_12_qsa_layers_exactly_and_no_proposer() {
+    let cfg = flash_next();
+    assert_eq!(cfg.model_type, "qwen4_exp");
+    assert!(cfg.index_topk > 0);
+    assert_eq!((cfg.index_head_dim, cfg.index_compress_ratio), (128, 4));
+    // 2026-10-13: Per layer at 36,864: the 4-row ring (1,024 B) plus 9,216 block keys of
+    // 256 B (2,359,296 B).
+    let s = per_sequence_state_bytes(&cfg, 36_864, true).unwrap();
+    assert_eq!(
+        s,
+        PerSequenceState {
+            target_layers: 12 * 2_360_320,
+            proposer: 0,
+        }
+    );
+    assert_eq!(s.target_layers, 28_323_840);
+}
+
+#[test]
+fn flash_next_without_an_indexer_budget_is_charged_nothing_and_a_zero_ratio_fails() {
+    let mut cfg = flash_next();
+    cfg.index_compress_ratio = 0;
+    assert!(per_sequence_state_bytes(&cfg, 36_864, false).is_err());
+    cfg.index_topk = 0;
+    assert_eq!(
+        per_sequence_state_bytes(&cfg, 36_864, false).unwrap(),
+        PerSequenceState::default()
+    );
+}

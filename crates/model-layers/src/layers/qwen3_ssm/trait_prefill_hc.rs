@@ -147,6 +147,21 @@ impl Qwen3SsmLayer {
             ple.forward(st, streams, num_tokens, seq_len_start == 0, ctx, stream)?;
         }
         stage!("ple");
+        let hc_dim = hc.hc_mult * h;
+        // 2026-10-14: `METRALE_OP_DUMP` tail-row taps (`op_dump::tail_rows`), by model layer.
+        let tap = |p: DevicePtr, row: usize, is_f32: bool, op: &str| {
+            crate::layers::qwen3_attention::op_dump::tail_rows(
+                ctx.gpu,
+                p,
+                num_tokens,
+                row,
+                is_f32,
+                hc.model_layer,
+                op,
+                stream,
+            )
+        };
+        tap(streams, hc_dim, true, "hc_in")?;
 
         // 2026-09-25: `hidden` is scratch from here on: the highway carries the
         // state between layers.
@@ -166,7 +181,7 @@ impl Qwen3SsmLayer {
             stream,
         )?;
         stage!("hc_pre_attn");
-        let hc_dim = hc.hc_mult * h;
+        tap(hidden, h, false, "block_in")?;
         crate::layers::ple::dump::tap_highway(
             ctx.gpu,
             streams,
@@ -195,6 +210,7 @@ impl Qwen3SsmLayer {
         let out_proj_buf =
             self.prefill_block(hidden, num_tokens, state, ssm_layer_idx, ctx, stream)?;
         stage!("gdn_block");
+        tap(out_proj_buf, h, false, "block_out")?;
         crate::layers::ple::dump::tap_bf16(
             ctx.gpu,
             out_proj_buf,
@@ -218,6 +234,7 @@ impl Qwen3SsmLayer {
         )?;
 
         stage!("hc_post_attn");
+        tap(streams, hc_dim, true, "hc_post_block")?;
         // 2026-09-25: Tapped before the MoE: at layer 0 a reference reproduces
         // this point from the GDN block alone, without any experts.
         crate::layers::ple::dump::tap_highway(
@@ -274,6 +291,7 @@ impl Qwen3SsmLayer {
             stream,
         );
         stage!("hc_post_ffn");
+        tap(streams, hc_dim, true, "hc_post_ffn")?;
 
         Ok(())
     }

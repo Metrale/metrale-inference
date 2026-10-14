@@ -65,6 +65,52 @@ impl Qwen3SsmLayer {
         }
     }
 
+    /// 2026-10-14: A BF16 projection `[n, k] -> [n, n_out]` of the batched
+    /// decode, output row stride `n_out`. At 2..=16 rows it runs
+    /// `dense_gemv_bf16_batchm` (its direct-schedule entry where the target
+    /// compiles one), whose rows have the bits of `dense_gemv_bf16`,
+    /// the kernel `ssm_forward` runs at one row, so a sequence's projection
+    /// does not change with the batch width. Wider batches, an absent kernel,
+    /// or `METRALE_SSM_BF16_BATCHM=0` take cuBLASLt, whose split-K choice
+    /// depends on `n`.
+    #[allow(clippy::too_many_arguments)]
+    fn bf16_rows_proj(
+        &self,
+        ctx: &ForwardContext,
+        weight: &DenseWeight,
+        input: DevicePtr,
+        output: DevicePtr,
+        n: usize,
+        n_out: u32,
+        k: u32,
+        stream: u64,
+    ) -> Result<()> {
+        let rows = (2..=ops::DENSE_GEMV_BATCHM_MAX_M as usize).contains(&n);
+        if rows
+            && ctx.levers.ssm_bf16_batchm
+            && let Some(direct) = &self.dense_gemv_batchm_direct
+        {
+            return ops::dense_gemv_batchm_direct(
+                ctx.gpu, direct, input, weight, output, n as u32, n_out, k, n_out, stream,
+            );
+        }
+        if rows && self.dense_gemv_batchm_k.0 != 0 && ctx.levers.ssm_bf16_batchm {
+            return ops::dense_gemv_batchm(
+                ctx.gpu,
+                self.dense_gemv_batchm_k,
+                input,
+                weight,
+                output,
+                n as u32,
+                n_out,
+                k,
+                n_out,
+                stream,
+            );
+        }
+        ops::cublas_bf16_proj_dense(input, weight.weight, output, n as u32, n_out, k, stream)
+    }
+
     /// 2026-09-25: Batched QKVZ projection: one `[n, h] -> [n, qkvz]`
     /// projection over all `n` rows, written into `deinterleaved`.
     #[allow(clippy::too_many_arguments)]
@@ -207,11 +253,12 @@ impl Qwen3SsmLayer {
                 }
             }
         } else {
-            ops::cublas_bf16_proj_dense(
+            self.bf16_rows_proj(
+                ctx,
+                &self.ssm.in_proj_qkvz,
                 normed_base,
-                self.ssm.in_proj_qkvz.weight,
                 deinterleaved,
-                n as u32,
+                n,
                 qkvz_size as u32,
                 h as u32,
                 stream,
@@ -322,11 +369,12 @@ impl Qwen3SsmLayer {
                 )?;
             }
         } else if let Some(ref out_proj_dense) = self.out_proj_dense {
-            ops::cublas_bf16_proj_dense(
+            self.bf16_rows_proj(
+                ctx,
+                out_proj_dense,
                 normed_out_base,
-                out_proj_dense.weight,
                 ssm_out_base,
-                n as u32,
+                n,
                 h as u32,
                 value_dim as u32,
                 stream,

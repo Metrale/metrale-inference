@@ -33,24 +33,20 @@
 // Owner: gb10 kernels (qwen3.8-flash-next).
 // Invariants:
 // - hc <= QHC_MAX_MULT (the `smem_rms` and `wv` arrays).
-// - hc_expand and hc_post stride by QHC_BLOCK, so they need blockDim.x == QHC_BLOCK;
-//   the launchers use 256.
+// - hc_expand strides by QHC_BLOCK, so it needs blockDim.x == QHC_BLOCK; the launchers use 256.
+// - 2026-10-13: hc_post, hc_pre_mix and hc_pre_stage_bf16 split one token over grid y (hidden
+//   slices, hidden slices, streams); every element's arithmetic is the same at every grid y,
+//   and grid y == 1 is the one-block-per-token launch.
 
 
 
 #include <cuda_bf16.h>
 
+#include "../../common/qhc_act.cuh"  // 2026-10-14: qhc_silu, qhc_sigmoid
+
 #define QHC_BLOCK 256
 #define QHC_MAX_MULT 8
 #define QHC_MAX_RANK 512
-
-__device__ __forceinline__ float qhc_silu(float v) {
-    return v / (1.0f + __expf(-v));
-}
-
-__device__ __forceinline__ float qhc_sigmoid(float v) {
-    return 1.0f / (1.0f + __expf(-v));
-}
 
 // 2026-09-25: Per-stream RMS reciprocals for one token: rms_inv[s] over x[s*H .. s*H+H),
 // left in `smem_rms`. No kernel in this file calls it.
@@ -311,7 +307,9 @@ extern "C" __global__ void hc_post(
     float wv[QHC_MAX_MULT];
     for (unsigned int s = 0; s < hc; ++s) wv[s] = w[s];
 
-    for (unsigned int d = tid; d < H; d += QHC_BLOCK) {
+    // 2026-10-13: Grid y splits the hidden dimension: block y starts at slice y.
+    const unsigned int step = blockDim.x * gridDim.y;
+    for (unsigned int d = blockIdx.y * blockDim.x + tid; d < H; d += step) {
         float xd = (float)x[d];
         for (unsigned int s = 0; s < hc; ++s) {
             o[s * H + d] = res[s * H + d] + xd * wv[s];
@@ -478,12 +476,12 @@ extern "C" __global__ void hc_pre_finish(
 // T <= 64 and on `dense_gemm_bf16_pipelined` above; these kernels are the
 // elementwise steps between them:
 //
-//   hc_pre_stage_bf16   grid=[T]    rms + (1+w) scale -> normed  [T, hc*H] BF16
+//   hc_pre_stage_bf16   grid=[T,hc]  rms + (1+w) scale -> normed  [T, hc*H] BF16
 //   GEMM                low_pre  = normed x down_w^T             [T, rank]
 //   hc_silu_scale       low      = silu(low_pre / hc)            in place
 //   GEMM                up_pre   = low x up_w^T                  [T, hc*H]
 //   GEMM                inj_pre  = normed x inject_w^T           [T, hc]
-//   hc_pre_mix          grid=[T]    y = mean_s sigmoid(up_pre)*normed;
+//   hc_pre_mix          grid=[T,H/256] y = mean_s sigmoid(up_pre)*normed;
 //                                   inj = 2*sigmoid(inj_pre / hc)
 //
 // Numerics: `normed` is rounded to BF16 before the GEMMs; the fused kernel keeps
@@ -517,7 +515,10 @@ extern "C" __global__ void hc_pre_stage_bf16(
     const unsigned int warp = tid >> 5;
     const unsigned int warps = blockDim.x >> 5;
 
-    for (unsigned int s2 = 0; s2 < hc; ++s2) {
+    // 2026-10-13: Grid y splits the streams: block y normalizes streams y, y + gridDim.y, ...
+    // Each stream's sum of squares runs over the same per-thread elements and the same warp
+    // order at every grid y, so its RMS, and every output element, is the same bits.
+    for (unsigned int s2 = blockIdx.y; s2 < hc; s2 += gridDim.y) {
         const float* xs = x + (size_t)s2 * H;
         float acc = 0.0f;
         for (unsigned int d = tid; d < H; d += blockDim.x) {
@@ -536,10 +537,12 @@ extern "C" __global__ void hc_pre_stage_bf16(
             smem_rms[s2] = rsqrtf(tot / (float)H + eps);
         }
         __syncthreads();
-    }
-    for (unsigned int i = tid; i < hc_dim; i += blockDim.x) {
-        out[i] = __float2bfloat16(
-            x[i] * smem_rms[i / H] * (1.0f + (float)hc_norm_w[i]));
+        const float rms = smem_rms[s2];
+        const __nv_bfloat16* ws = hc_norm_w + (size_t)s2 * H;
+        __nv_bfloat16* os = out + (size_t)s2 * H;
+        for (unsigned int d = tid; d < H; d += blockDim.x) {
+            os[d] = __float2bfloat16(xs[d] * rms * (1.0f + (float)ws[d]));
+        }
     }
 }
 
@@ -576,7 +579,9 @@ extern "C" __global__ void hc_pre_mix(
     const __nv_bfloat16* ux = up_pre + (size_t)t * hc_dim;
     __nv_bfloat16* y = y_out + (size_t)t * H;
 
-    for (unsigned int d = tid; d < H; d += blockDim.x) {
+    // 2026-10-13: Grid y splits the hidden dimension: block y starts at slice y.
+    const unsigned int step = blockDim.x * gridDim.y;
+    for (unsigned int d = blockIdx.y * blockDim.x + tid; d < H; d += step) {
         float mixed = 0.0f;
         for (unsigned int s2 = 0; s2 < hc; ++s2) {
             const unsigned int i = s2 * H + d;
@@ -584,7 +589,7 @@ extern "C" __global__ void hc_pre_mix(
         }
         y[d] = __float2bfloat16(mixed * inv_hc);
     }
-    if (inj_pre != nullptr && tid < hc) {
+    if (inj_pre != nullptr && blockIdx.y == 0 && tid < hc) {
         inj_out[(size_t)t * hc + tid] =
             2.0f * qhc_sigmoid((float)inj_pre[(size_t)t * hc + tid] * inv_hc);
     }

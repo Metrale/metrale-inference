@@ -6,7 +6,7 @@
 //! Owner: server startup (`met serve`).
 //! Invariants: none beyond the types.
 
-use super::{skip_activation_scales, skip_mtp};
+use super::{skip_activation_scales, skip_mtp, slab_bf16};
 use metrale_config::ModelConfig;
 
 fn cfg(model_type: &str) -> ModelConfig {
@@ -35,4 +35,15 @@ fn activation_scales_are_skipped_only_for_the_listed_models() {
 fn the_mtp_skip_list_is_unchanged_by_the_activation_scale_list() {
     assert!(skip_mtp(&cfg("qwen4_exp")));
     assert!(!skip_mtp(&cfg("glm5_next")));
+}
+
+/// 2026-10-14: The BF16 slab is the loader's declaration: on for `qwen4_exp`, off for loaders
+/// that keep the trait default (`qwen3_5_moe`, `glm5_next`), and off for a type no loader
+/// resolves. Run with the slab and BF16 levers unset.
+#[test]
+fn bf16_tensors_share_the_slab_only_where_the_loader_keeps_them() {
+    assert!(slab_bf16(&cfg("qwen4_exp")));
+    for off in ["qwen3_5_moe", "glm5_next", "no_such_model"] {
+        assert!(!slab_bf16(&cfg(off)), "{off} must keep per-tensor BF16");
+    }
 }

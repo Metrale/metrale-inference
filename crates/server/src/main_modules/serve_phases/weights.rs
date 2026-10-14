@@ -26,6 +26,12 @@ pub(crate) fn quant_multiplier(config: &ModelConfig) -> Option<f64> {
         Some(1.10)
     } else if config.model_type == "minimax_m2" || config.model_type == "step3p7" {
         Some(1.02)
+    } else if config.model_type == "qwen4_exp" {
+        // 2026-10-13: Every tensor is uploaded into its own exact-size buffer;
+        // the extras are the attention NVFP4/transposed/FP8 prefill copies and
+        // allocator rounding, ~1.5-2.5% of the 73.3 GiB counted. 1.3 refused
+        // an 80 GB H100 that the weights fit.
+        Some(1.03)
     } else if config
         .quantization_config
         .as_ref()
@@ -71,6 +77,7 @@ pub(crate) fn fast_loader(
         );
     }
     loader.defer = defer_hook(config);
+    loader.slab_bf16 = slab_bf16(config);
     loader
 }
 
@@ -426,11 +433,29 @@ fn skip_mtp(config: &ModelConfig) -> bool {
     matches!(config.model_type.as_str(), "qwen4_exp")
 }
 
+/// 2026-10-14: Whether small BF16 tensors share the shard slab (`FastSafetensorsLoader::
+/// slab_bf16`): when the model's weight loader declares it keeps them as loaded
+/// (`keeps_small_bf16`); `false` when the model type does not resolve. Saves 587 MiB of 2 MiB-
+/// granule rounding on Qwen3.8-Flash-Next. `METRALE_SLAB_BF16=0` keeps one allocation per BF16
+/// tensor.
+fn slab_bf16(config: &ModelConfig) -> bool {
+    let on = metrale_model_engine::factory::loader_for_config(config)
+        .is_ok_and(|l| l.keeps_small_bf16(config))
+        && std::env::var("METRALE_SLAB_BF16").as_deref() != Ok("0");
+    if on {
+        tracing::info!(
+            "Weight slab: BF16 tensors below the slab cap share their shard's allocation \
+             (METRALE_SLAB_BF16=0 gives each its own)."
+        );
+    }
+    on
+}
+
 /// 2026-09-26: Whether the model's weight loader binds a vision encoder;
 /// `true` when the model type does not resolve to a loader.
 fn binds_vision(config: &metrale_config::ModelConfig) -> bool {
     metrale_model_engine::factory::loader_for_config(config)
-        .map(|l| l.binds_vision_encoder())
+        .map(|l| l.binds_vision_encoder(config))
         .unwrap_or(true)
 }
 

@@ -25,13 +25,24 @@ use super::*;
 #[path = "moe_grouped_a/topk.rs"]
 mod topk;
 // 2026-09-25: Re-exported so the routers are reached as `ops::moe_topk_*`.
-pub use topk::{moe_topk_sigmoid_batched, moe_topk_softmax_batched, moe_topk_sqrtsoftplus_batched};
+pub use topk::{
+    moe_topk_sigmoid_batched, moe_topk_softmax_batched, moe_topk_softmax_rows_warp,
+    moe_topk_sqrtsoftplus_batched,
+};
 // 2026-09-30: The fused gate+up grouped GEMMs, split out to keep this file under the size cap.
 #[path = "moe_grouped_a/fused_gate_up.rs"]
 mod fused_gate_up;
 pub use fused_gate_up::{
     moe_w4a16_fused_gate_up_k64_m128, moe_w4a16_fused_gate_up_k64_n128,
     moe_w4a16_fused_gate_up_n128,
+};
+// 2026-10-14: The pipelined Hopper twins of `moe_w4a16_grouped_gemm_ptrtable`.
+#[path = "moe_grouped_a/pipe.rs"]
+mod pipe;
+pub use pipe::{
+    MOE_W4A16_PERSIST_CTAS_PER_SM, MOE_W4A16_PIPE_K_STEP, MOE_W4A16_PIPE_LAUNCH,
+    moe_w4a16_grouped_gemm_ptrtable_persist, moe_w4a16_grouped_gemm_ptrtable_pipe,
+    moe_w4a16_pipe_admits,
 };
 
 /// 2026-09-25: Launcher for `moe_w4a16_grouped_gemm`, whose weights are contiguous per expert
@@ -78,7 +89,7 @@ pub fn moe_w4a16_grouped_gemm(
 
 /// 2026-09-25: `moe_w4a16_grouped_gemm_ptrtable` with a 256-row M tile and a 512-thread block.
 /// `max_m_tiles` counts 256-row tiles: `MoeLayer::launch_grouped_gemm` divides the 64-row count
-/// by 4. Loaded only under `METRALE_MOE_GROUPED_M256=1` (`moe/init.rs`); the measurement behind
+/// by 4. Loaded only under `METRALE_MOE_GROUPED_M256=1` (`moe/grouped_w4a16.rs`); the measurement behind
 /// that is on `launch_grouped_gemm`.
 #[allow(clippy::too_many_arguments)]
 pub fn moe_w4a16_grouped_gemm_ptrtable_m256(
@@ -142,6 +153,28 @@ pub fn moe_w4a16_grouped_gemm_ptrtable(
     max_m_tiles: u32,
     stream: u64,
 ) -> Result<()> {
+    let tables = [a, b_packed_ptrs, b_scale_ptrs, scale2_vals, c];
+    let rows = [expert_offsets, sorted_token_ids];
+    let grid = [n_tile_blocks(gpu, kernel, n_out)?, max_m_tiles, num_experts];
+    let dims = [num_experts, n_out, k];
+    launch_w4a16_ptrtable(gpu, kernel, (grid, 128, 0), tables, rows, dims, stream)
+}
+
+/// 2026-10-13: One pointer-table W4A16 launch: `tables` = A, packed, scale, scale2 and C;
+/// `rows` = expert offsets and sorted token ids; `dims` = experts, N and K; `launch` = grid,
+/// threads and dynamic shared memory.
+fn launch_w4a16_ptrtable(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    launch: ([u32; 3], u32, u32),
+    tables: [DevicePtr; 5],
+    rows: [DevicePtr; 2],
+    dims: [u32; 3],
+    stream: u64,
+) -> Result<()> {
+    let [a, b_packed_ptrs, b_scale_ptrs, scale2_vals, c] = tables;
+    let [expert_offsets, sorted_token_ids] = rows;
+    let [num_experts, n_out, k] = dims;
     check_e4m3_grouped(
         gpu,
         kernel,
@@ -153,8 +186,9 @@ pub fn moe_w4a16_grouped_gemm_ptrtable(
         stream,
     )?;
     KernelLaunch::new(gpu, kernel)
-        .grid([n_tile_blocks(gpu, kernel, n_out)?, max_m_tiles, num_experts])
-        .block([128, 1, 1])
+        .grid(launch.0)
+        .block([launch.1, 1, 1])
+        .shared_mem(launch.2)
         .arg_ptr(a)
         .arg_ptr(b_packed_ptrs)
         .arg_ptr(b_scale_ptrs)
@@ -339,3 +373,7 @@ pub fn moe_silu_mul(
         .arg_u32(total_elements)
         .launch(stream)
 }
+
+#[cfg(test)]
+#[path = "moe_w4a16_pipe_tests.rs"]
+mod moe_w4a16_pipe_tests;

@@ -129,6 +129,85 @@ pub fn dense_gemv_batchm(
         .launch(stream)
 }
 
+/// 2026-10-14: The direct-schedule entries of `dense_gemv_bf16_batchm.cu`,
+/// `dense_gemv_bf16_batchm_r<R>_m<M>(A, B, C, N, K, out_stride)` for every M in
+/// `2..=DENSE_GEMV_BATCHM_MAX_M`, compiled only where the target defines
+/// `METRALE_BATCHM_DIRECT_R`. Each row keeps the bits of `dense_gemv_bf16`, as
+/// in [`dense_gemv_batchm`]. R (outputs per 64-lane group) is
+/// `metrale_kernels::TARGET_BATCHM_DIRECT_R`, which build.rs bakes from that
+/// same flag, so the build flag is its only source.
+#[derive(Debug, Clone)]
+pub struct DenseGemvBatchmDirect {
+    outputs_per_group: u32,
+    /// Entry for `m` at index `m - 2`.
+    by_m: Vec<KernelHandle>,
+}
+
+impl DenseGemvBatchmDirect {
+    /// 2026-10-14: The entries of the compiled R, or `None` when the build
+    /// compiled none (no lookup is made then).
+    ///
+    /// Only the compiled set is looked up, so no lookup is expected to fail; a
+    /// missing entry of that set is a broken build, recorded by the kernel
+    /// audit and refused by the boot's kernel gate. (2026-10-14: an earlier
+    /// version probed R = 4, 2, 1 and so recorded a failed R = 4 lookup on
+    /// every target that compiles R = 2, which the gate refused.)
+    pub fn load(gpu: &dyn GpuBackend) -> Option<Self> {
+        Self::load_compiled(gpu, metrale_kernels::TARGET_BATCHM_DIRECT_R)
+    }
+
+    /// 2026-10-14: [`Self::load`] for the compiled R `compiled`.
+    pub(crate) fn load_compiled(gpu: &dyn GpuBackend, compiled: Option<u32>) -> Option<Self> {
+        let r = compiled?;
+        let by_m = (2..=DENSE_GEMV_BATCHM_MAX_M)
+            .map(|m| {
+                let h = crate::layers::try_kernel(
+                    gpu,
+                    "dense_gemv_bf16_batchm",
+                    &format!("dense_gemv_bf16_batchm_r{r}_m{m}"),
+                );
+                (h.0 != 0).then_some(h)
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(Self {
+            outputs_per_group: r,
+            by_m,
+        })
+    }
+}
+
+/// 2026-10-14: [`dense_gemv_batchm`] through the direct-schedule entry for
+/// exactly `m` rows: same inputs, same per-row bits. Refuses `m` outside
+/// `2..=DENSE_GEMV_BATCHM_MAX_M`.
+#[allow(clippy::too_many_arguments)]
+pub fn dense_gemv_batchm_direct(
+    gpu: &dyn GpuBackend,
+    direct: &DenseGemvBatchmDirect,
+    input: DevicePtr,
+    weight: &DenseWeight,
+    output: DevicePtr,
+    m: u32,
+    n: u32,
+    k: u32,
+    out_stride: u32,
+    stream: u64,
+) -> Result<()> {
+    ensure!(
+        (2..=DENSE_GEMV_BATCHM_MAX_M).contains(&m),
+        "dense_gemv_batchm_direct: m={m} outside 2..={DENSE_GEMV_BATCHM_MAX_M}"
+    );
+    KernelLaunch::new(gpu, direct.by_m[(m - 2) as usize])
+        .grid([div_ceil(n, 4 * direct.outputs_per_group), 1, 1])
+        .block([256, 1, 1])
+        .arg_ptr(input)
+        .arg_ptr(weight.weight)
+        .arg_ptr(output)
+        .arg_u32(n)
+        .arg_u32(k)
+        .arg_u32(out_stride)
+        .launch(stream)
+}
+
 /// 2026-09-27: [`dense_gemv_batchm`] over `m` rows split into `y_blocks` block
 /// rows of `ceil(m / y_blocks)` rows each (at most `DENSE_GEMV_BATCHM_MAX_M`):
 /// more blocks for a narrow weight such as the MoE router, and one launch past
@@ -190,3 +269,11 @@ pub fn dense_gemv_fp8w(
         .arg_u32(k)
         .launch(stream)
 }
+
+#[cfg(test)]
+#[path = "gemm_quant_gemv_tests.rs"]
+mod gemm_quant_gemv_tests;
+
+#[cfg(test)]
+#[path = "gemm_quant_gemv_load_tests.rs"]
+mod gemm_quant_gemv_load_tests;

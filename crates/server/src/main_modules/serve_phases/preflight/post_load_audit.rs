@@ -8,6 +8,9 @@
 //!
 //! Free memory is read from the device; when that read fails or returns 0,
 //! pre-load free memory less the weight bytes stands in.
+//!
+//! 2026-10-14: The reserve comes with the slot count it was evaluated at (`audit`): the count
+//! itself, or one slot for a request the build resolves (`SlotRequest::floor`).
 
 use anyhow::Result;
 
@@ -23,10 +26,11 @@ pub(crate) fn post_load_memory_audit(
     weight_bytes: usize,
     free_mem: usize,
     inference_reserve: usize,
-    total_reserve: usize,
+    audit: (usize, usize),
     gdn_two_phase_bytes: usize,
     max_batch_tokens_pre: usize,
 ) -> Result<()> {
+    let (total_reserve, audit_slots) = audit;
     let estimated_free = free_mem.saturating_sub(weight_bytes);
     let actual_free = gpu.free_memory().unwrap_or(estimated_free);
     let available_free = if actual_free > 0 {
@@ -37,11 +41,10 @@ pub(crate) fn post_load_memory_audit(
     if available_free < total_reserve {
         let avail_gb = available_free as f64 / (1024.0 * 1024.0 * 1024.0);
         let need_gb = total_reserve as f64 / (1024.0 * 1024.0 * 1024.0);
-        let hint = if args.max_batch_size.ceiling() > 1 {
+        let hint = if audit_slots > 1 {
             format!(
                 " Reduce --max-batch-size (currently {}) or --max-seq-len (currently {}).",
-                args.max_batch_size.ceiling(),
-                args.max_seq_len
+                args.max_batch_size, args.max_seq_len
             )
         } else {
             format!(
@@ -56,7 +59,7 @@ pub(crate) fn post_load_memory_audit(
             weight_bytes as f64 / (1024.0 * 1024.0 * 1024.0),
             avail_gb,
             need_gb,
-            args.max_batch_size.ceiling(),
+            audit_slots,
             config.num_ssm_layers(),
             hint,
         );

@@ -47,8 +47,12 @@ impl ModelConfig {
 
     /// 2026-09-26: Whether a sequence may be swapped out to the `--swap-space-gb` pool and
     /// restored from it; `resolve_swap_space_gb` reads it. `save_sequence_state_dispatch`
-    /// writes the KV blocks and the `SsmLayerState` of each `LayerType::LinearAttention`
-    /// layer and nothing else, so any other per-sequence state would not survive the swap.
+    /// writes the KV blocks, the `SsmLayerState` of each `LayerType::LinearAttention`
+    /// layer and (2026-10-13) the layers' `LayerAuxState` blobs, the same carries the
+    /// prefix snapshot holds, so a model whose extra per-sequence state goes through those
+    /// hooks (the PLE and QSA carries of `qwen4_exp`) swaps completely. The gate stays
+    /// closed where the prefix-cache restore is itself unproven (`glm5_next`) or the state
+    /// has no hook at all (compressed `deepseek_v4`).
     pub fn kv_only_swap_out_is_safe(&self) -> bool {
         self.per_sequence_state_is_kv_complete()
     }

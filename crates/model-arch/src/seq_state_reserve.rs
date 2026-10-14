@@ -10,6 +10,8 @@
 //!
 //! Charged, per sequence:
 //!   * the target stack's DSA indexer caches (`Glm5NextDsaState`), one per text DSA layer;
+//!   * 2026-10-13: `qwen4_exp`'s QSA indexer carry (`QsaSeqState`), one per full-attention
+//!     layer when the config has an indexer budget (`index_topk > 0`);
 //!   * the draft proposer's own state (what `Glm5NextMtpHead`'s `alloc_state` allocates),
 //!     in its own field: the proposer is not a `TransformerLayer` and is not in the layer list.
 //!
@@ -23,7 +25,8 @@
 //!
 //! Owner: model-arch (serve memory reserve).
 //! Invariants:
-//! - Any `model_type` other than `glm5_next` is charged zero.
+//! - Any `model_type` other than `glm5_next` and `qwen4_exp` is charged zero.
+//! - `qwen4_exp` charges no proposer state.
 
 use anyhow::Result;
 use metrale_config::{LayerType, ModelConfig};
@@ -34,7 +37,8 @@ use crate::glm5next_skeleton::{Glm5NextTextSkeleton, Mixer};
 /// 2026-09-25: Per-sequence, per-rank device state, split by owner.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PerSequenceState {
-    /// 2026-09-25: Indexer caches owned by the target stack's DSA layers.
+    /// 2026-09-25: Indexer caches owned by the target stack's DSA (2026-10-13: or QSA)
+    /// layers.
     pub target_layers: usize,
     /// 2026-09-25: State owned by the draft proposer (a `DraftProposer`, not a `TransformerLayer`).
     pub proposer: usize,
@@ -55,17 +59,52 @@ impl PerSequenceState {
 /// 2026-09-25: Per-sequence owned device state for `config`, at a context of `max_seq_len`
 /// tokens.
 ///
-/// Returns zeros for any `model_type` other than `glm5_next`. The proposer term needs
-/// `spec_on` and a sparse-attention MTP layer. Errors when the GLM skeleton cannot be built
-/// from `config`.
+/// Returns zeros for any `model_type` other than `glm5_next` and `qwen4_exp`. The GLM
+/// proposer term needs `spec_on` and a sparse-attention MTP layer. Errors when the GLM
+/// skeleton cannot be built from `config`, or a QSA config has a zero compress ratio.
 pub fn per_sequence_state_bytes(
     config: &ModelConfig,
     max_seq_len: usize,
     spec_on: bool,
 ) -> Result<PerSequenceState> {
-    if config.model_type != "glm5_next" {
+    match config.model_type.as_str() {
+        "glm5_next" => glm5_next_state(config, max_seq_len, spec_on),
+        "qwen4_exp" => qsa_state(config, max_seq_len),
+        _ => Ok(PerSequenceState::default()),
+    }
+}
+
+/// 2026-10-13: `qwen4_exp`: the QSA carry of every full-attention layer, sized for
+/// `max_seq_len` (the indexer's `max_tokens`, `qsa_tokens::qsa_max_tokens`).
+fn qsa_state(config: &ModelConfig, max_seq_len: usize) -> Result<PerSequenceState> {
+    if config.index_topk == 0 {
         return Ok(PerSequenceState::default());
     }
+    anyhow::ensure!(
+        config.index_compress_ratio > 0,
+        "qwen4_exp: an indexer budget with a zero compress ratio"
+    );
+    let layers = config
+        .layer_types
+        .iter()
+        .filter(|t| **t == LayerType::FullAttention)
+        .count();
+    let per_layer = metrale_model_layers::layers::qsa::seq_state_bytes_for(
+        max_seq_len,
+        config.index_head_dim,
+        config.index_compress_ratio,
+    );
+    Ok(PerSequenceState {
+        target_layers: layers * per_layer,
+        proposer: 0,
+    })
+}
+
+fn glm5_next_state(
+    config: &ModelConfig,
+    max_seq_len: usize,
+    spec_on: bool,
+) -> Result<PerSequenceState> {
     let capacity = dsa_capacity(max_seq_len, config.index_kpool);
     let per_layer = indexer_state_bytes(capacity, config.index_head_dim);
 

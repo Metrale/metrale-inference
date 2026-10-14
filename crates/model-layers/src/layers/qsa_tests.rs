@@ -140,6 +140,7 @@ fn qsa_matches_reference() {
         hidden,
         2,
         256,
+        32768,
         g,
     )
     .unwrap();
@@ -154,14 +155,17 @@ fn qsa_matches_reference() {
         .unwrap();
     g.synchronize(stream).unwrap();
 
+    // 2026-10-13 (L-K9a): only the incomplete block's raw keys are kept (ring row
+    // `pos % ratio`); the block-key compare below covers the pooled ones.
     let want_raw = f32s("raw_keys");
+    let n_blocks_pre = t_pre / ratio;
+    let tail = t_pre - n_blocks_pre * ratio;
     compare(
-        "raw_keys",
-        &dl_bf16(g, qst.raw_keys, t_pre * hd),
-        &want_raw[..t_pre * hd],
+        "raw_tail",
+        &dl_bf16(g, qst.raw_tail, tail * hd),
+        &want_raw[n_blocks_pre * ratio * hd..t_pre * hd],
         0.05,
     );
-    let n_blocks_pre = t_pre / ratio;
     let want_bk = f32s("block_keys");
     compare(
         "block_keys",
@@ -182,11 +186,13 @@ fn qsa_matches_reference() {
     let table = upload(g, &ident);
 
     let last_row = hidden_dev.offset((t_all - 1) * hidden * 2);
+    let pos_dev = upload(g, &((t_all - 1) as u32).to_le_bytes());
     let sel = qsa
         .decode_select(
             &mut qst,
             last_row,
             t_all - 1,
+            pos_dev,
             kpool,
             vpool,
             table,
@@ -262,5 +268,9 @@ fn qsa_matches_reference() {
 
 // 2026-09-25: Prefill-side tests, as a child module so the fixture helpers
 // above are reachable through `super::*`.
+#[path = "qsa_tests_ingest.rs"]
+mod ingest;
 #[path = "qsa_tests_prefill.rs"]
 mod prefill;
+#[path = "qsa_prefill_attn_tests.rs"]
+mod prefill_attn;

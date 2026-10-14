@@ -114,6 +114,14 @@ pub(crate) fn load_model(
 
     let scheduler_model = model;
     let scheduler_eos = eos_tokens;
+    // 2026-10-14: `--require-kv-tokens`: the pool is fixed at build, so a short one stops the
+    // boot here, before the serve reports ready.
+    serve_phases::require_kv_tokens(
+        args.require_kv_tokens,
+        scheduler_model.num_total_blocks(),
+        scheduler_model.kv_block_size(),
+        scheduler_model.kv_block_bytes(),
+    )?;
     // 2026-10-01: Read before the model moves into the scheduler; the pool is fixed at build.
     let memory = crate::main_modules::memory_probe::MemoryFacts {
         kv_blocks: scheduler_model.num_total_blocks(),

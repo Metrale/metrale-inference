@@ -9,9 +9,13 @@
 use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 
+use super::super::{moe_w4a16_grouped_gemm_ptrtable_n128, w4a16_gemm, w4a16_gemm_n128};
+// 2026-10-13: Only the debug-build modules read the disclosures; a release test build
+// (`#![deny(warnings)]`) refused these as unused.
+#[cfg(debug_assertions)]
 use super::super::{
     E4m3Saturation, MOE_ROUTED_DOWN_KNOWN, NEMOTRON_SHARED_EXPERT_E4M3, allow_e4m3_saturation,
-    e4m3_saturations, moe_w4a16_grouped_gemm_ptrtable_n128, w4a16_gemm, w4a16_gemm_n128,
+    e4m3_saturations,
 };
 use crate::weight_map::QuantizedWeight;
 
@@ -180,6 +184,7 @@ fn a_grouped_launch_checks_only_the_rows_it_reads() {
 }
 
 /// 2026-09-30: A test-only disclosure, so the count is not shared with another test.
+#[cfg(debug_assertions)]
 const TEST_SITE: E4m3Saturation = E4m3Saturation {
     site: "e4m3_range_tests",
     why: "test",

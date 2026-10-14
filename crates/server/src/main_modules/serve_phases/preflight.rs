@@ -186,6 +186,7 @@ pub(crate) fn preflight_reserve(
         per_sequence_bytes,
         ring_slots: 0,
         per_seq_blob,
+        driver: runtime_headroom::target_driver_terms()?,
     };
     let at_ceiling = plan.terms(ceiling)?;
     let fixed_reserve = at_ceiling.fixed();

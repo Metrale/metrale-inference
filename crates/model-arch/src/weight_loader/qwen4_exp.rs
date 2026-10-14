@@ -25,6 +25,7 @@ use metrale_model_weights::weights::WeightStore;
 
 use crate::weight_loader::ModelWeightLoader;
 use metrale_model_layers::layer::TransformerLayer;
+use metrale_model_layers::weight_map::quant_helpers::dense_auto;
 use metrale_model_layers::weight_map::{DenseWeight, MtpWeights, dense};
 
 // 2026-09-25: The file is `aux_sites.rs` because `aux` is a reserved file
@@ -33,7 +34,10 @@ use metrale_model_layers::weight_map::{DenseWeight, MtpWeights, dense};
 mod aux;
 mod ffn;
 mod hc;
+mod host_embed;
 mod ple;
+#[cfg(feature = "cuda")]
+mod ple_host;
 mod probe;
 
 pub use probe::audit_namespace;
@@ -103,9 +107,31 @@ pub fn ple_shard_layout(snapshot: &str) -> Result<(Vec<(std::path::PathBuf, u64)
 
 pub struct Qwen4ExpWeightLoader;
 
+/// 2026-09-25: GDN layers are built with BF16 projections (`build_linear_attention_dense_bf16`)
+/// unless `METRALE_QWEN4EXP_BF16_GDN=0`, which requantizes them to NVFP4.
+fn bf16_gdn() -> bool {
+    std::env::var("METRALE_QWEN4EXP_BF16_GDN").as_deref() != Ok("0")
+}
+
+/// 2026-10-13: Full-attention Q/K/V/O likewise run BF16 as the checkpoint ships them (only the
+/// routed experts are NVFP4 there) unless `METRALE_QWEN4EXP_BF16_ATTN=0`, which requantizes them
+/// to NVFP4 (`build_full_attention_nvfp4`).
+fn bf16_attn() -> bool {
+    std::env::var("METRALE_QWEN4EXP_BF16_ATTN").as_deref() != Ok("0")
+}
+
 impl ModelWeightLoader for Qwen4ExpWeightLoader {
     fn supports_tp(&self) -> bool {
         false
+    }
+
+    /// 2026-10-13: The input embedding, under `METRALE_QWEN4EXP_EMBED_ON_HOST=1`
+    /// (`host_embed`).
+    fn defer_predicate(
+        &self,
+        config: &ModelConfig,
+    ) -> Option<metrale_model_weights::weights::DeferHook> {
+        host_embed::defer_hook(config, host_embed::lever_set())
     }
 
     fn load_layers(
@@ -157,10 +183,10 @@ impl ModelWeightLoader for Qwen4ExpWeightLoader {
             None
         };
 
-        // 2026-09-25: The PLE scratch is sized once, for the largest prefill
-        // chunk, not the context: `METRALE_PLE_MAX_TOKENS`, default 2048. A
-        // larger chunk is refused by the PLE layer with a message naming the
-        // variable (`ple/layer.rs`).
+        // 2026-09-25: The PLE scratch is sized once, not for the context:
+        // `METRALE_PLE_MAX_TOKENS` rows, default 2048. 2026-10-13: a longer pass
+        // runs in sub-chunks of that many rows (`ple/layer.rs`), so it bounds the
+        // scratch's device memory, not the prefill chunk.
         let max_ple_tokens: usize = std::env::var("METRALE_PLE_MAX_TOKENS")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -168,10 +194,15 @@ impl ModelWeightLoader for Qwen4ExpWeightLoader {
         // 2026-09-25: With `METRALE_QWEN4EXP_NO_PLE=1`, `ple::load` is not
         // called, so no row cache is opened.
         let ple_off = std::env::var("METRALE_QWEN4EXP_NO_PLE").as_deref() == Ok("1");
-        // 2026-09-25: GDN layers are built with BF16 projections
-        // (`build_linear_attention_dense_bf16`) unless
-        // `METRALE_QWEN4EXP_BF16_GDN=0`, which requantizes them to NVFP4.
-        let bf16_gdn = std::env::var("METRALE_QWEN4EXP_BF16_GDN").as_deref() != Ok("0");
+        let (bf16_gdn, bf16_attn) = (bf16_gdn(), bf16_attn());
+        tracing::info!(
+            "Full-attention Q/K/V/O: {}",
+            if bf16_attn {
+                "BF16 as shipped"
+            } else {
+                "requantized to NVFP4 (METRALE_QWEN4EXP_BF16_ATTN=0)"
+            }
+        );
         tracing::info!(
             "GDN projections: {} on the {} linear-attention layers",
             if bf16_gdn {
@@ -224,6 +255,22 @@ impl ModelWeightLoader for Qwen4ExpWeightLoader {
                         input_norm, post_attn_norm, ffn,
                     )
                     .with_context(|| format!("qwen4_exp: GDN layer {i}"))?
+                }
+                LayerType::FullAttention if bf16_attn => {
+                    let kv_dtype = layer_kv_dtypes
+                        .get(attn_idx)
+                        .copied()
+                        .unwrap_or(KvCacheDtype::Bf16);
+                    let qkvo = ["q_proj", "k_proj", "v_proj", "o_proj"]
+                        .map(|n| dense_auto(store, &format!("{lp}.self_attn.{n}.weight"), gpu));
+                    let [q, k, v, o] = qkvo;
+                    let l = crate::weight_loader::qwen35::load_layers::fp8_attention_arms::assemble_bf16_dense_attention(
+                        store, &lp, config, gpu, kv_dtype, attn_idx, [q?, k?, v?, o?],
+                        [input_norm, post_attn_norm], ffn,
+                    )
+                    .with_context(|| format!("qwen4_exp: full-attention layer {i} (BF16)"))?;
+                    attn_idx += 1;
+                    Box::new(l) as Box<dyn TransformerLayer>
                 }
                 LayerType::FullAttention => {
                     let kv_dtype = layer_kv_dtypes
@@ -310,10 +357,13 @@ impl ModelWeightLoader for Qwen4ExpWeightLoader {
         &self,
         store: &WeightStore,
         config: &ModelConfig,
-        _gpu: &dyn GpuBackend,
+        gpu: &dyn GpuBackend,
     ) -> Result<DenseWeight> {
-        let pfx = embed_prefix(config);
-        dense(store, &format!("{pfx}.embed_tokens.weight")).context("qwen4_exp: embedding")
+        let name = embed_name(config);
+        if let Some(d) = store.deferred(&name) {
+            return host_embed::load(d, gpu);
+        }
+        dense(store, &name).context("qwen4_exp: embedding")
     }
 
     /// 2026-09-25: A ones-filled `[hidden]` placeholder
@@ -343,8 +393,20 @@ impl ModelWeightLoader for Qwen4ExpWeightLoader {
             config.tie_word_embeddings,
             "qwen4_exp: no lm_head.weight and tie_word_embeddings is false"
         );
-        let pfx = embed_prefix(config);
-        dense(store, &format!("{pfx}.embed_tokens.weight")).context("qwen4_exp: tied lm_head")
+        dense(store, &embed_name(config)).context("qwen4_exp: tied lm_head")
+    }
+
+    /// 2026-10-14: True while both projection families stay BF16. The two tensors converted and
+    /// freed then, `in_proj_qkv` (50 MiB) and `in_proj_z` (30 MiB), are above the slab cap.
+    /// `METRALE_QWEN4EXP_BF16_ATTN=0` converts `k_proj`/`v_proj` (2.5 MiB each), below it, and
+    /// `METRALE_QWEN4EXP_BF16_GDN=0` converts GDN projections this rule has not audited.
+    fn keeps_small_bf16(&self, _config: &ModelConfig) -> bool {
+        bf16_gdn() && bf16_attn()
+    }
+
+    /// 2026-10-13: Same bind rule as the Qwen3.5 tower it delegates to.
+    fn binds_vision_encoder(&self, config: &ModelConfig) -> bool {
+        crate::weight_loader::qwen35::Qwen35WeightLoader.binds_vision_encoder(config)
     }
 
     fn load_vision_encoder(
@@ -382,6 +444,11 @@ fn embed_prefix(config: &ModelConfig) -> String {
     } else {
         config.weight_prefix.clone()
     }
+}
+
+/// 2026-10-13: The input embedding's tensor name.
+fn embed_name(config: &ModelConfig) -> String {
+    format!("{}.embed_tokens.weight", embed_prefix(config))
 }
 
 /// 2026-09-25: The prefix of the model-level hyper-connection mixer.

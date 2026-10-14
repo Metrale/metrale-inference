@@ -152,6 +152,7 @@ fn rejects_under_two_streams() {
         MROPE,
         false,
         false,
+        false,
     ));
     assert!(!check_kernel_batched_eligible(
         vec![s(4096, 0, false)],
@@ -162,6 +163,7 @@ fn rejects_under_two_streams() {
         BIG_SCRATCH,
         TOP_K,
         MROPE,
+        false,
         false,
         false,
     ));
@@ -180,6 +182,7 @@ fn rejects_chunk_zero() {
         MROPE,
         false,
         false,
+        false,
     ));
 }
 
@@ -196,23 +199,30 @@ fn accepts_chunk_zero_when_explicitly_allowed() {
         MROPE,
         true,
         false,
+        false,
     ));
 }
 
+/// 2026-10-14: The same batch with a layer veto (a layer whose split prefill skips its own
+/// work, e.g. mHC or QSA) is refused, so it runs per stream.
 #[test]
 fn accepts_uniform_paged_n_2() {
-    assert!(check_kernel_batched_eligible(
-        vec![s(4096, 4096, false), s(4096, 4096, false)],
-        2,
-        8192,
-        false,
-        256,
-        BIG_SCRATCH,
-        TOP_K,
-        MROPE,
-        false,
-        false,
-    ));
+    for layer_veto in [false, true] {
+        let ok = check_kernel_batched_eligible(
+            vec![s(4096, 4096, false), s(4096, 4096, false)],
+            2,
+            8192,
+            false,
+            256,
+            BIG_SCRATCH,
+            TOP_K,
+            MROPE,
+            false,
+            false,
+            layer_veto,
+        );
+        assert_eq!(ok, !layer_veto, "layer_veto={layer_veto}");
+    }
 }
 
 #[test]
@@ -226,6 +236,7 @@ fn rejects_mismatched_chunk_len() {
         BIG_SCRATCH,
         TOP_K,
         MROPE,
+        false,
         false,
         false,
     ));
@@ -244,6 +255,7 @@ fn rejects_mismatched_chunk_start() {
         MROPE,
         false,
         false,
+        false,
     ));
 }
 
@@ -258,6 +270,7 @@ fn rejects_mismatched_is_last() {
         BIG_SCRATCH,
         TOP_K,
         MROPE,
+        false,
         false,
         false,
     ));
@@ -276,6 +289,7 @@ fn rejects_arena_overflow() {
         MROPE,
         false,
         false,
+        false,
     ));
 }
 
@@ -290,6 +304,7 @@ fn rejects_large_head_dim() {
         BIG_SCRATCH,
         TOP_K,
         MROPE,
+        false,
         false,
         false,
     ));
@@ -314,7 +329,7 @@ fn accepts_varlen_batch_when_packed_footprint_fits() {
         MROPE,
     );
     assert!(check_kernel_batched_eligible(
-        streams, 4, arena, false, 128, scratch, TOP_K, MROPE, true, true,
+        streams, 4, arena, false, 128, scratch, TOP_K, MROPE, true, true, false,
     ));
 }
 
@@ -340,6 +355,7 @@ fn rejects_scratch_footprint_overflow() {
             true,
             false,
             false,
+            false,
         ),
         "footprint must NOT fit in the old 348_840 B scratch"
     );
@@ -353,6 +369,7 @@ fn rejects_scratch_footprint_overflow() {
             enlarged,
             8,
             true,
+            false,
             false,
             false,
         ),
@@ -375,6 +392,7 @@ fn raw_charge_blocks_stacking_at_production_sizes() {
         MROPE,
         true,
         false,
+        false,
     ));
 }
 
@@ -392,6 +410,7 @@ fn effective_charge_allows_warm_stacking() {
         TOP_K,
         MROPE,
         true,
+        false,
         false,
     ));
 }
@@ -412,6 +431,7 @@ fn effective_charge_still_rejects_when_sum_exceeds_arena() {
         MROPE,
         true,
         false,
+        false,
     ));
 }
 
@@ -430,6 +450,7 @@ fn effective_charge_rejects_zero_length_stream() {
         TOP_K,
         MROPE,
         true,
+        false,
         false,
     ));
 }
@@ -455,6 +476,7 @@ fn mistral_config_is_rejected_as_mla() {
             TOP_K,
             MROPE,
             true,
+            false,
             false,
         )
     };

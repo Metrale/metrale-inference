@@ -27,7 +27,7 @@ pub(super) fn per_sequence_reserve(args: &cli::ServeArgs, config: &ModelConfig) 
     let charge = per_seq.for_batch(args.max_batch_size.ceiling());
     if charge > 0 {
         tracing::info!(
-            "Per-sequence state reserve: {} MB = {} seq x ({} MB target DSA layers + {} MB \
+            "Per-sequence state reserve: {} MB = {} seq x ({} MB target indexer layers + {} MB \
              proposer). Owned per sequence, replicated per rank (EP does not shard the \
              indexer); previously covered only by cuda_headroom.",
             charge / (1024 * 1024),

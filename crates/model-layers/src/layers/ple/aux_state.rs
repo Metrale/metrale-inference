@@ -11,7 +11,6 @@ use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
 use super::{PleLayer, PleSeqState};
-use crate::layers::ple::ids::ple_ngram_ids;
 
 impl PleLayer {
     /// 2026-09-25: The aux blob: `hist_len` (u32), the history (u32 each),
@@ -89,19 +88,20 @@ impl PleLayer {
         gpu: &dyn GpuBackend,
         stream: u64,
     ) -> Result<()> {
+        anyhow::ensure!(
+            tokens.len() <= self.max_tokens,
+            "PLE prestage: {} tokens overflow the {}-row slot buffer",
+            tokens.len(),
+            self.max_tokens
+        );
         if st.history.len() != self.dims.context_len() {
             self.reset(st, gpu, stream)?;
         }
-        let mut window = st.history.clone();
-        window.extend_from_slice(tokens);
-        let all = ple_ngram_ids(&self.dims, &window);
-        let rows = &all[all.len() - tokens.len()..];
-        let flat: Vec<u64> = rows.iter().flat_map(|r| r.iter().copied()).collect();
+        let flat = super::rows::next_ids(&self.dims, &mut st.history, tokens);
         let va = self.gather_host(&flat, gpu, stream)?;
-        let keep = self.dims.context_len();
-        st.history = window[window.len() - keep..].to_vec();
         st.prestaged_va = Some(va);
         st.last_staged_va = va;
+        st.staged_row = None;
         Ok(())
     }
 
@@ -118,6 +118,7 @@ impl PleLayer {
         st.history.clear();
         st.prestaged_va = None;
         st.last_staged_va = 0;
+        st.staged_row = None;
         r
     }
 }

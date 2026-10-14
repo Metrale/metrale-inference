@@ -127,6 +127,92 @@ pub(super) fn self_relative_used(
     used_so_far
 }
 
+/// 2026-10-13: The share of the reserve's driver terms the driver has already taken: device
+/// memory consumed since context init (`baseline_free - actual_free`) beyond this backend's
+/// ledger and its small-allocation chunk slack, at most `cap` (`SlotPlan::driver_credit_cap`).
+/// Free memory has already lost those bytes, so the free-memory bound of [`kv_budget_bound`]
+/// credits them back instead of charging them a second time through the reserve. 0 without a
+/// baseline or a ledger. A co-tenant that allocates after context init reads as driver use
+/// here; the util-budget bound, which takes no credit, still holds the pool.
+pub(super) fn incurred_driver_credit(
+    baseline_free: Option<usize>,
+    actual_free: usize,
+    ledger_live: Option<usize>,
+    chunk_slack: usize,
+    cap: usize,
+) -> usize {
+    match (baseline_free, ledger_live) {
+        (Some(baseline), Some(ledger)) => baseline
+            .saturating_sub(actual_free)
+            .saturating_sub(ledger)
+            .saturating_sub(chunk_slack)
+            .min(cap),
+        _ => 0,
+    }
+}
+
+/// 2026-10-14: The two bounds on the KV budget ([`kv_budget_bounds`]). The util bound reads only
+/// the ledger and the planned terms, so it repeats from boot to boot at one binary and one set of
+/// flags; the free bound moves with co-tenants and driver use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct KvBounds {
+    pub util: usize,
+    pub free: usize,
+}
+
+impl KvBounds {
+    /// 2026-10-14: The KV budget: the smaller bound.
+    pub fn budget(self) -> usize {
+        self.util.min(self.free)
+    }
+
+    /// 2026-10-14: Whether free memory, not the util budget, sizes the pool.
+    pub fn free_binds(self) -> bool {
+        self.free < self.util
+    }
+}
+
+/// 2026-10-13: The KV budget before the MTP propose pool: the util budget less what is placed
+/// (`used`), the reserve and the DFlash reserve, and at most the free memory less the reserve
+/// net of `driver_credit` ([`incurred_driver_credit`]) and the DFlash reserve.
+pub(super) fn kv_budget_bound(
+    total_budget: usize,
+    used: usize,
+    actual_free: usize,
+    reserve: usize,
+    driver_credit: usize,
+    dflash_reserve: usize,
+) -> usize {
+    kv_budget_bounds(
+        total_budget,
+        used,
+        actual_free,
+        reserve,
+        driver_credit,
+        dflash_reserve,
+    )
+    .budget()
+}
+
+/// 2026-10-14: The two bounds [`kv_budget_bound`] takes the smaller of.
+pub(super) fn kv_budget_bounds(
+    total_budget: usize,
+    used: usize,
+    actual_free: usize,
+    reserve: usize,
+    driver_credit: usize,
+    dflash_reserve: usize,
+) -> KvBounds {
+    let util = total_budget
+        .saturating_sub(used)
+        .saturating_sub(reserve)
+        .saturating_sub(dflash_reserve);
+    let free = actual_free
+        .saturating_sub(reserve.saturating_sub(driver_credit))
+        .saturating_sub(dflash_reserve);
+    KvBounds { util, free }
+}
+
 /// 2026-09-26: Bytes reserved for the DFlash drafter head, which allocates
 /// after KV sizing; `0` without DFlash.
 pub(super) fn dflash_reserve_bytes(
@@ -202,3 +288,7 @@ pub(super) fn mtp_pool_reserve_bytes(
         0
     }
 }
+
+#[cfg(test)]
+#[path = "kv_budget_tests.rs"]
+mod kv_budget_tests;

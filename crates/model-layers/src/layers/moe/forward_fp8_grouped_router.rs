@@ -77,7 +77,7 @@ impl MoeLayer {
             GroupedRouting::PerToken => exact_router,
             GroupedRouting::PerRow => {
                 exact_router
-                    && self.router_gemv_batchm_k.0 != 0
+                    && self.dense_gemv_batchm_k.0 != 0
                     && ctx.config.hidden_size.is_multiple_of(8)
             }
         }
@@ -109,7 +109,7 @@ impl MoeLayer {
                 // router's 256 columns give only 64 blocks per row group.
                 ops::dense_gemv_batchm_split(
                     ctx.gpu,
-                    self.router_gemv_batchm_k,
+                    self.dense_gemv_batchm_k,
                     router_in,
                     &self.weights.gate,
                     gate_logits,
@@ -134,6 +134,20 @@ impl MoeLayer {
                     stream,
                 );
             }
+        }
+        if self.moe_topk_softmax_rows_warp_k.0 != 0 {
+            return ops::moe_topk_softmax_rows_warp(
+                ctx.gpu,
+                self.moe_topk_softmax_rows_warp_k,
+                gate_logits,
+                indices_dev,
+                weights_dev,
+                num_experts,
+                top_k,
+                ctx.config.norm_topk_prob,
+                n,
+                stream,
+            );
         }
         ops::moe_topk_softmax_batched(
             ctx.gpu,

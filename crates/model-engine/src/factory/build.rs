@@ -94,8 +94,8 @@ pub fn build_model(
         };
         let nllb_slots = match slots.request {
             slots::SlotRequest::Count(n) => n,
-            slots::SlotRequest::Auto => anyhow::bail!(
-                "--max-batch-size auto balances recurrent-state slots against the KV pool; \
+            request => anyhow::bail!(
+                "--max-batch-size {request} sizes recurrent-state slots against the KV pool; \
                  an encoder-decoder model has neither. Pass a count."
             ),
         };

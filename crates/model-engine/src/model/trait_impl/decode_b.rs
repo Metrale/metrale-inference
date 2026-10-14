@@ -65,17 +65,15 @@ impl TransformerModel {
         // 2026-09-25: Run `decode_batch` then `prefill_chunk` instead of fusing for
         // EP, MLA (its batched decode is the `decode_batch` route), `hc_qsa_perseq`,
         // a step over `max_batch_tokens` (counting the padded decode rows), or no
-        // decode rows. `hc_qsa_perseq` is `decode_a2`'s layer veto plus mHC rows
-        // with QSA active, since the fused batched decode has no per-sequence QSA
-        // arm. The veto is needed here as well: this is the single-GPU fused
-        // caller, and it keeps a declining layer away from `prefill_ctx`, the one
-        // context built with a non-zero `hc_row_offset`.
+        // decode rows. `hc_qsa_perseq` is `decode_a2`'s per-sequence decision: the
+        // layer veto, or an mHC model under `METRALE_HC_PERSEQ_DECODE`
+        // (2026-10-13: QSA selection runs on the batched step, so an active
+        // indexer no longer forces this route). The veto is needed here as well:
+        // this is the single-GPU fused caller, and it keeps a declining layer away
+        // from `prefill_ctx`, the one context built with a non-zero `hc_row_offset`.
         let ms_layer_veto = self.layers.iter().any(|l| l.decode_multi_seq_unsupported());
-        let hc_qsa_perseq = ms_layer_veto
-            || (self.config.hc_mult > 0 && self.config.index_topk > 0 && {
-                let bound = self.config.index_topk + self.config.index_compress_ratio - 1;
-                decode_seqs.iter().any(|s| s.seq_len >= bound)
-            });
+        let hc_qsa_perseq =
+            ms_layer_veto || (self.config.hc_mult > 0 && self.levers.hc_perseq_decode);
         if self.comm.is_some()
             || self.is_mla_dispatch()
             || hc_qsa_perseq

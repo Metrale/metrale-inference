@@ -43,6 +43,9 @@ mod snap_agree;
 #[cfg(test)]
 mod snap_agree_tests;
 mod stage_batched;
+mod tail_exact;
+#[cfg(test)]
+mod tail_exact_tests;
 mod upload_meta;
 mod upload_paged;
 
@@ -52,6 +55,17 @@ impl TransformerModel {
     /// snapshots and prefix caching on and no vision pads in the prompt.
     /// `METRALE_NO_TAIL_SPLIT=1` turns the split off.
     pub(in crate::model) fn prefill_tail_split_dispatch(&self, tokens: &[u32]) -> Option<usize> {
+        let bs = self.kv_cache.lock().block_size();
+        self.prefill_tail_split_at(tokens, bs)
+    }
+
+    /// 2026-10-14: `prefill_tail_split_dispatch` for a caller that already holds the
+    /// `kv_cache` lock and passes its `block_size`.
+    pub(in crate::model) fn prefill_tail_split_at(
+        &self,
+        tokens: &[u32],
+        bs: usize,
+    ) -> Option<usize> {
         if self.config.num_ssm_layers() == 0
             || !self.ssm_snapshots.is_enabled()
             || !self.prefix_cache.is_active()
@@ -60,7 +74,7 @@ impl TransformerModel {
         {
             return None;
         }
-        crate::prefill_plan::tail_split_point(tokens.len(), self.kv_cache.lock().block_size())
+        crate::prefill_plan::tail_split_point(tokens.len(), bs)
     }
 
     pub(super) fn prefill_chunk_dispatch(
@@ -249,6 +263,17 @@ impl TransformerModel {
                 stream,
                 &format!("chunk_entry start={chunk_start} len={chunk_len} kvws={kv_write_start}"),
             );
+            // 2026-10-14: The aux state (QSA keys, PLE carry) each layer enters the chunk with.
+            for (layer, blob) in self.collect_aux_states(seq, stream)? {
+                let fnv = crate::model::ssm_snapshot::fnv1a64(
+                    crate::model::ssm_snapshot::FNV1A64_SEED,
+                    &blob,
+                );
+                tracing::warn!(
+                    "METRALE_AUX_CKSUM[chunk_entry start={chunk_start}] L{layer} bytes={} fnv={fnv:016x}",
+                    blob.len()
+                );
+            }
         }
 
         let bs = kv_cache.block_size();
@@ -357,6 +382,7 @@ impl TransformerModel {
         };
 
         // 2026-09-25: Forward through all layers.
+        let gdn_exact = self.prefill_gdn_exact_pass(tokens, chunk_start, bs, marconi_skip);
         self.prefill_b_forward_layers(
             seq,
             &mut kv_cache,
@@ -367,6 +393,7 @@ impl TransformerModel {
             effective_seq_len_start,
             kv_write_start,
             marconi_skip,
+            gdn_exact,
             meta_base,
             slot_offset,
             pos_stream_bytes,

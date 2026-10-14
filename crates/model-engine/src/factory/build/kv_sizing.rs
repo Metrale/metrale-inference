@@ -3,8 +3,10 @@
 //! 2026-10-01: Step 5 of `build_model`: the slot count and the KV pool, sized together. The KV
 //! budget is the util budget less what is already placed (the ledger, plus the driver's slack
 //! around small allocations), the pre-load reserve at the slot count
-//! (`SlotPlan::reserve_for`), the DFlash reserve and the MTP propose pool. `--max-batch-size N`
-//! sizes for N; `auto` takes the count `slots::balance_slots` chooses. Split from `build.rs`.
+//! (`SlotPlan::reserve_for`), the DFlash reserve and the MTP propose pool, and at most the free
+//! memory less the same terms, net of the driver use free memory already shows (2026-10-13). `--max-batch-size N`
+//! sizes for N; `auto` takes the count `slots::balance_slots` chooses, `fill` the count
+//! `slots::fill_slots` chooses (2026-10-14). Split from `build.rs`.
 //!
 //! Owner: metrale-model-engine.
 //! Invariants:
@@ -20,7 +22,9 @@ use metrale_model_layers::weight_map::MtpWeights;
 use metrale_model_weights::weights::WeightStore;
 use metrale_telemetry::prefix_cache::PrefixCache;
 
-use super::slots::{AUTO_MAX_SLOTS, SlotPlan, SlotRequest, balance_slots};
+use super::slots::{
+    AUTO_MAX_SLOTS, FILL_FULL_LENGTH_REQUESTS, SlotPlan, SlotRequest, balance_slots, fill_slots,
+};
 use super::{kv_blocks, kv_budget};
 
 /// 2026-10-01: What sizing the slots and the KV pool reads.
@@ -75,19 +79,32 @@ pub(super) fn size_kv(inp: &KvInputs<'_>, plan: &SlotPlan<'_>) -> Result<KvSized
         None => used_so_far,
     };
     let total_budget = (total_mem as f64 * inp.gpu_memory_utilization) as usize;
+    let driver_credit = kv_budget::incurred_driver_credit(
+        metrale_gpu_runtime::gpu::baseline_free_bytes(),
+        actual_free,
+        inp.gpu.live_bytes(),
+        inp.gpu.chunk_slack_bytes().unwrap_or(0),
+        plan.driver_credit_cap,
+    );
+    if driver_credit > 0 {
+        tracing::info!(target: "metrale_model_engine::factory::build", "KV budget: {:.2} GB of driver use already taken since context init (of the \
+             reserve's {:.2} GB driver terms) credited on the free-memory bound",
+            gib(driver_credit),
+            gib(plan.driver_credit_cap),
+        );
+    }
     // 2026-10-01: The KV budget at a slot count: what `build_model` computed before, with the
     // reserve evaluated at that count.
     let budget_at = |slots: usize| -> Result<(usize, usize, usize)> {
         let reserve = (plan.reserve_for)(slots)?;
-        let kv_budget = total_budget
-            .saturating_sub(used_so_far)
-            .saturating_sub(reserve)
-            .saturating_sub(inp.dflash_reserve)
-            .min(
-                actual_free
-                    .saturating_sub(reserve)
-                    .saturating_sub(inp.dflash_reserve),
-            );
+        let kv_budget = kv_budget::kv_budget_bound(
+            total_budget,
+            used_so_far,
+            actual_free,
+            reserve,
+            driver_credit,
+            inp.dflash_reserve,
+        );
         let mtp_pool = kv_budget::mtp_pool_reserve_bytes(
             inp.use_speculative,
             inp.mtp_weights,
@@ -117,14 +134,18 @@ pub(super) fn size_kv(inp: &KvInputs<'_>, plan: &SlotPlan<'_>) -> Result<KvSized
     let full_length = inp.max_seq_len / inp.kv_block_size.max(1) + 1;
     let slots = match plan.request {
         SlotRequest::Count(n) => n,
-        SlotRequest::Auto => {
+        request => {
             ensure!(
                 inp.hss_cache_blocks_per_seq.is_none(),
-                "--max-batch-size auto balances slots against a budget-sized KV pool; \
+                "--max-batch-size {request} sizes slots against a budget-sized KV pool; \
                  --high-speed-swap sizes the pool from its per-sequence cap. Pass a count."
             );
-            let b = balance_slots(AUTO_MAX_SLOTS, full_length, blocks_at)?;
-            tracing::info!(target: "metrale_model_engine::factory::build", "--max-batch-size auto: {} slot(s) admit {} sequence(s) at the full \
+            let b = if request == SlotRequest::Fill {
+                fill_slots(AUTO_MAX_SLOTS, full_length, blocks_at)?
+            } else {
+                balance_slots(AUTO_MAX_SLOTS, full_length, blocks_at)?
+            };
+            tracing::info!(target: "metrale_model_engine::factory::build", "--max-batch-size {request}: {} slot(s) admit {} sequence(s) at the full \
                  --max-seq-len={} ({} KV blocks, {} block(s)/seq); {} slots would admit {}",
                 b.slots,
                 b.admitted,
@@ -138,6 +159,17 @@ pub(super) fn size_kv(inp: &KvInputs<'_>, plan: &SlotPlan<'_>) -> Result<KvSized
         }
     };
     let (kv_budget, reserve, mtp_pool) = budget_at(slots)?;
+    log_bounds(
+        kv_budget::kv_budget_bounds(
+            total_budget,
+            used_so_far,
+            actual_free,
+            reserve,
+            driver_credit,
+            inp.dflash_reserve,
+        ),
+        gib,
+    );
     if mtp_pool > 0 {
         tracing::info!(target: "metrale_model_engine::factory::build", "KV budget: reserving {:.1} GB for the MTP propose pool (post-sizing alloc in MtpHead::new)",
             gib(mtp_pool),
@@ -161,23 +193,51 @@ pub(super) fn size_kv(inp: &KvInputs<'_>, plan: &SlotPlan<'_>) -> Result<KvSized
     };
     // 2026-10-01: The fix the overcommit warning names, only when the pool cannot admit the
     // requested count at full length.
-    let balanced = (plan.request != SlotRequest::Auto
+    let balanced = (plan.request == SlotRequest::Count(slots)
         && inp.hss_cache_blocks_per_seq.is_none()
         && num_kv_blocks / kv_blocks::full_length_blocks(inp.max_seq_len, inp.kv_block_size)
             < slots)
         .then(|| balance_slots(AUTO_MAX_SLOTS, full_length, blocks_at).ok())
         .flatten()
         .map(|b| b.slots);
+    // 2026-10-14: `fill` guarantees KV for FILL_FULL_LENGTH_REQUESTS full-length request, not one
+    // per slot; the check holds it to that.
+    let guaranteed = if plan.request == SlotRequest::Fill {
+        FILL_FULL_LENGTH_REQUESTS
+    } else {
+        slots
+    };
     kv_blocks::check_kv_concurrency(
         num_kv_blocks,
         inp.hss_cache_blocks_per_seq,
         inp.max_seq_len,
         inp.kv_block_size,
-        slots,
+        guaranteed,
         balanced,
     )?;
     Ok(KvSized {
         slots,
         num_kv_blocks,
     })
+}
+
+/// 2026-10-14: Which bound sized the pool. Four H100 boots of one model on 2026-10-14 all sat on
+/// the util bound with 2.1-2.6 GB to spare on the free bound, so their pools (1,678 to 3,105
+/// blocks) differed only by flags and binary, not by free memory. A boot on the free bound is
+/// warned: its pool can differ from the next boot's at the same flags.
+fn log_bounds(bounds: kv_budget::KvBounds, gib: impl Fn(usize) -> f64) {
+    if bounds.free_binds() {
+        tracing::warn!(target: "metrale_model_engine::factory::build", "KV budget: free device memory sizes the pool ({:.2} GB, under the util \
+             bound's {:.2} GB), so the pool moves with co-tenants and driver use from boot to \
+             boot; --require-kv-tokens refuses a boot whose pool comes up short",
+            gib(bounds.free),
+            gib(bounds.util),
+        );
+    } else {
+        tracing::info!(target: "metrale_model_engine::factory::build", "KV budget: the util bound sizes the pool ({:.2} GB; free-memory bound \
+             {:.2} GB)",
+            gib(bounds.util),
+            gib(bounds.free),
+        );
+    }
 }

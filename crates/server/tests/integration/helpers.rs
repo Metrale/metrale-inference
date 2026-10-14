@@ -108,6 +108,7 @@ pub(super) fn setup_model(
         metrale_model_engine::factory::SlotPlan {
             request: metrale_model_engine::factory::SlotRequest::Count(8),
             reserve_for: &|_| Ok(1024 * 1024 * 1024),
+            driver_credit_cap: 0,
         },
         metrale_model_layers::layers::MtpQuantization::Nvfp4,
         false,

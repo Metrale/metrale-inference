@@ -77,7 +77,10 @@ extern "C" __global__ void deinterleave_qkvz(
 
 // 2026-09-25: In place per token: [Q_h0, G_h0, Q_h1, G_h1, ...] (each head_dim wide) becomes
 // [Q_h0, Q_h1, ... | G_h0, G_h1, ...]. The row is staged in dynamic shared memory
-// (num_heads * head_dim * 2 BF16). Grid num_tokens, block 256; rows are stride apart.
+// (num_heads * head_dim * 2 BF16). Grid num_tokens, any block size; rows are stride apart.
+// 2026-10-14: A row whose start is 16-byte aligned, with head_dim a multiple of 8, moves as
+// 16-byte vectors (a permutation of whole vectors, so the same bytes): one block per decode
+// token was a 48-trip serial scalar loop, 18.8 us per call on H100.
 
 
 
@@ -93,12 +96,29 @@ extern "C" __global__ void deinterleave_qg(
     unsigned int head_dim,
     unsigned int stride
 ) {
-    extern __shared__ __nv_bfloat16 smem[];
+    extern __shared__ __align__(16) __nv_bfloat16 smem[];
 
     unsigned int total = num_heads * head_dim * 2;
     unsigned int tid = threadIdx.x;
     __nv_bfloat16* tok_data = data + (unsigned long long)blockIdx.x * stride;
 
+    // 2026-10-14: The condition is the same for every thread of the block.
+    if (head_dim % 8 == 0 && (reinterpret_cast<unsigned long long>(tok_data) & 15) == 0) {
+        uint4* sv = reinterpret_cast<uint4*>(smem);
+        uint4* row = reinterpret_cast<uint4*>(tok_data);
+        unsigned int hv = head_dim / 8;
+        unsigned int qv = num_heads * hv;
+        for (unsigned int i = tid; i < 2 * qv; i += blockDim.x) {
+            sv[i] = row[i];
+        }
+        __syncthreads();
+        for (unsigned int i = tid; i < 2 * qv; i += blockDim.x) {
+            unsigned int g = i >= qv ? 1u : 0u;
+            unsigned int j = i - g * qv;
+            row[i] = sv[(j / hv) * 2 * hv + g * hv + j % hv];
+        }
+        return;
+    }
 
     for (unsigned int i = tid; i < total; i += blockDim.x) {
         smem[i] = tok_data[i];

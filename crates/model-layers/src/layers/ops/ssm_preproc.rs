@@ -60,7 +60,7 @@ pub fn deinterleave_qkvz(
 /// Output layout: [Q_h0(hd), Q_h1(hd), ..., G_h0(hd), G_h1(hd), ...]
 ///
 /// Kernel: `deinterleave_qg(data, num_heads, head_dim, stride)`
-/// Grid: (num_tokens, 1, 1)  Block: (256, 1, 1)
+/// Grid: (num_tokens, 1, 1)  Block: [`deinterleave_qg_threads`]
 /// Dynamic shared memory: num_heads * head_dim * 2 BF16 values
 pub fn deinterleave_qg(
     gpu: &dyn GpuBackend,
@@ -75,13 +75,22 @@ pub fn deinterleave_qg(
     let shared_bytes = num_heads * head_dim * 2 * 2;
     KernelLaunch::new(gpu, kernel)
         .grid([num_tokens, 1, 1])
-        .block([256, 1, 1])
+        .block([deinterleave_qg_threads(num_heads, head_dim), 1, 1])
         .shared_mem(shared_bytes)
         .arg_ptr(data)
         .arg_u32(num_heads)
         .arg_u32(head_dim)
         .arg_u32(stride)
         .launch(stream)
+}
+
+/// 2026-10-14: `deinterleave_qg`'s block: one thread per 16-byte vector of the row (its
+/// vector path), in whole warps, at least 256 and at most 1024. The kernel strides over the
+/// row, so any block size writes the same bytes.
+pub fn deinterleave_qg_threads(num_heads: u32, head_dim: u32) -> u32 {
+    (num_heads * head_dim / 4)
+        .next_multiple_of(32)
+        .clamp(256, 1024)
 }
 
 /// 2026-09-25: [`deinterleave_qg`] with Q written to `q_out` (contiguous

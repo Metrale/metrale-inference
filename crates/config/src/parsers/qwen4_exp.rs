@@ -17,7 +17,7 @@
 use anyhow::{Context, Result, ensure};
 use serde_json::Value;
 
-use super::super::ModelConfig;
+use super::super::{ModelConfig, parse_quantization_config};
 use super::vision::parse_vision_config;
 
 /// 2026-09-26: `make_ngram_vocab_size_divisible_by` when the config omits it; used only to
@@ -94,6 +94,14 @@ pub(crate) fn parse_qwen4_exp(raw: &Value) -> Result<ModelConfig> {
     if raw.get("vision_config").is_some() {
         config.vision = parse_vision_config(raw);
     }
+
+    // 2026-10-13: The checkpoint's `quantization_config` sits at the top level too. Without
+    // it the precision plan reads as undeclared and the engine-default head and shared-expert
+    // formats (NVFP4) run in place of the BF16 the checkpoint declares (`ignore`).
+    config.quantization_config = match parse_quantization_config(text)? {
+        Some(qc) => Some(qc),
+        None => parse_quantization_config(raw)?,
+    };
 
     ensure!(
         !config.layer_types.is_empty(),

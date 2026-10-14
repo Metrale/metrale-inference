@@ -40,6 +40,12 @@ memory_gb = 80
 # on sm_90a. crates/kernels/tests/blockscale_mma_guard.rs checks that every
 # such instruction in the hopper sources sits inside that guard, and
 # `scripts/hopper_ptx_gate.sh --hw hopper` compiles the set with nvcc.
+#
+# 2026-10-14: METRALE_BATCHM_DIRECT_R=2 compiles the direct-schedule
+# `dense_gemv_bf16_batchm_r2_m<M>` entries (two outputs per 64-lane group,
+# compile-time M) that the batched GDN projections prefer. build.rs bakes R
+# into `metrale_kernels::TARGET_BATCHM_DIRECT_R` and the host looks up exactly
+# those entries. Each row keeps the bits of `dense_gemv_bf16`.
 
 
 
@@ -48,7 +54,7 @@ memory_gb = 80
 
 
 [build]
-extra_nvcc_flags = ["-DMETRALE_NO_WARP_BLOCKSCALE_MMA"]
+extra_nvcc_flags = ["-DMETRALE_NO_WARP_BLOCKSCALE_MMA", "-DMETRALE_BATCHM_DIRECT_R=2"]
 
 # 2026-09-25: Serving defaults for this target. build.rs (build_defaults.rs)
 # bakes them into `metrale_kernels::TARGET_DEFAULTS`, and `resolve` in
@@ -442,6 +448,17 @@ w4a16_tc_rows_pf = 1
 #   moe_w8a8_m16.cu                      short-prefill M16/M128 expert
 #                                        buckets: model-layers MoE
 #                                        `adaptive_fp8`
+#   moe_w4a16_grouped_pipe_hopper.cu     cp.async-pipelined twin of the
+#                                        untransposed MoE prefill grouped
+#                                        W4A16 GEMM: model-layers MoE
+#                                        `launch_grouped_gemm`
+#   hc_lowrank_gemv_hopper.cu            decode GEMVs of the Qwen3.8-Flash-
+#                                        Next low-rank hyper-connection
+#                                        collapse: model-layers ops
+#                                        `hc_pre_gemm` (T <= 16)
+#   qsa_prefill_attn_tc_hopper.cu        tensor-core twin of the QSA selective
+#                                        prefill attention: model-layers ops
+#                                        `qsa_prefill_attn`
 #
 # crates/kernels/tests/inherited_targets.rs checks that a replacement is
 # declared in [shadow] and an addition is not.
@@ -550,3 +567,24 @@ rows = [9, 128]
 kernels = ["gemm::dense_gemm_bf16"]
 kind = "backlog"
 reason = "The BF16 head above 8 rows runs dense_gemm_bf16, a CUDA-core tiled FMA GEMM inherited from gb10."
+
+# 2026-10-13: The driver's share of an H100 SXM 80 GB (cuMemGetInfo total 81,079 MiB), measured on
+# the reference box. A discrete device keeps the driver's per-allocation bookkeeping in host
+# memory, so the share is below gb10's (whose LPDDR5X is both). The device memory a serve holds
+# beyond its allocation ledger, read at KV sizing (used less the ledger, logged in GiB to 0.1):
+# 0.9-1.0 at a 14-16 GiB ledger (27B, 39 serves), 2.0 at 48.8-49.5 GiB (27B declared tier, 51
+# serves), 1.3 at 74.2 GiB (Qwen3.8-Flash-Next, slab-carved weights); the bare context is 527 MiB.
+# driver_fixed_bytes keeps gb10's 1 GiB (context, modules, local-memory reservation, CUDA
+# graphs); driver_budget_per_mille = 16 covers the largest share (2.0, up to 2.05 unrounded) from
+# a 0.85 budget up: 1 GiB + 1.6% of 68,917 MiB is 2.08 GiB; at 0.98 it is 2.24 GiB, 0.39 GiB
+# below gb10's 21 per mille (`reserve_plan_tests`).
+# util_ceiling 0.99: a discrete device fails an allocation past its memory cleanly (a CUDA
+# out-of-memory error), never by freezing the host as gb10 did at 0.90; 0.99 leaves 0.8 GiB of
+# the device outside the budget, and Qwen3.8-Flash-Next's 71.3 GiB of weights needs it for a
+# 32k-token request's KV at a 4096-token prefill chunk.
+# unified = false: host caches do not compete for device memory.
+[memory]
+util_ceiling = 0.99
+driver_fixed_bytes = 1073741824
+driver_budget_per_mille = 16
+unified = false

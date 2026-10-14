@@ -39,7 +39,9 @@ pub fn audit_namespace(store: &WeightStore, config: &ModelConfig) -> NamespaceRe
     } else {
         config.weight_prefix.clone()
     };
-    r.has_embed = store.contains(&format!("{pfx}.embed_tokens.weight"));
+    // 2026-10-13: A deferred embedding (`host_embed`) is present, just not uploaded.
+    let embed = format!("{pfx}.embed_tokens.weight");
+    r.has_embed = store.contains(&embed) || store.deferred(&embed).is_some();
     r.has_lm_head = store.contains("lm_head.weight");
 
     for i in 0..config.num_hidden_layers {

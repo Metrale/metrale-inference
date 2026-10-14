@@ -28,6 +28,7 @@ mod mla;
 mod mla_gemv;
 pub(in crate::layers::qwen3_attention) mod qkv;
 mod qkv_fp8_batch;
+mod qsa_rows;
 mod w8a8_decode;
 
 impl Qwen3AttentionLayer {
@@ -84,9 +85,9 @@ impl Qwen3AttentionLayer {
 
             self.ms_phase_cache_write(&c, kv_cache, meta)?;
 
-            let attn_out = self.ms_phase_paged_decode(&c, kv_cache, meta)?;
+            let attn = self.ms_phase_paged_decode(&c, kv_cache, meta)?;
 
-            self.ms_phase_o_proj(&c, attn_out)?
+            self.ms_phase_o_proj(&c, attn.attn_out)?
         };
 
         // 2026-09-25: Under tensor parallelism each rank's o_proj output is a
@@ -105,7 +106,7 @@ impl Qwen3AttentionLayer {
     }
 
     /// 2026-09-25: Multi-sequence decode for a hyper-connection layer. The
-    /// attention runs batched; the FFN runs one sequence at a time.
+    /// attention runs batched; the FFN runs the plain path's ladder (2026-10-13).
     fn decode_multi_seq_inner_hc<'a, 'b: 'a>(
         &self,
         c: ctx::MultiSeqCtx<'_>,
@@ -209,8 +210,12 @@ impl Qwen3AttentionLayer {
             self.ms_phase_qkv(&c)?;
             self.ms_phase_rope(&c, meta)?;
             self.ms_phase_cache_write(&c, kv_cache, meta)?;
-            let attn_out = self.ms_phase_paged_decode(&c, kv_cache, meta)?;
-            self.ms_phase_o_proj(&c, attn_out)?
+            let attn = self.ms_phase_paged_decode(&c, kv_cache, meta)?;
+            // 2026-10-13: QSA ingest for every live row and, past the inert
+            // bound, the row's attention over its selection (`qsa_rows.rs`),
+            // after the cache write so the current token can be gathered.
+            self.ms_qsa_rows(&c, states, seq_lens, kv_cache, meta, &attn)?;
+            self.ms_phase_o_proj(&c, attn.attn_out)?
         };
 
         if c.fwd.config.tp_world_size > 1
@@ -218,36 +223,6 @@ impl Qwen3AttentionLayer {
         {
             let bytes = c.n * c.h * c.bf16;
             comm.all_reduce_async(o_out.0, bytes, c.stream)?;
-        }
-
-        // 2026-09-25: QSA ingest for each sequence. Below the inert bound
-        // `decode_select` only ingests and returns `None`. The model's decode
-        // dispatch (`decode_a2.rs`, `qsa_active`) sends a hyper-connection batch
-        // to the per-sequence loop once any sequence reaches the bound, so a
-        // `Some` here means the two disagree, and the step fails instead of
-        // running dense attention past the budget.
-        if let Some(qsa) = self.qsa.as_ref() {
-            for (i, state) in states.iter_mut().enumerate().take(n) {
-                let st =
-                    crate::layers::qwen3_attention::helpers::qsa_seq_state(qsa, *state, ctx.gpu)?;
-                let sel = qsa.decode_select(
-                    st,
-                    c.normed.offset(i * h * c.bf16),
-                    seq_lens[i],
-                    kv_cache.k_pool_ptr(self.attn_layer_idx),
-                    kv_cache.v_pool_ptr(self.attn_layer_idx),
-                    meta.block_table
-                        .offset(i * meta.max_blocks_per_seq as usize * 4),
-                    c.bs,
-                    ctx.gpu,
-                    stream,
-                )?;
-                anyhow::ensure!(
-                    sel.is_none(),
-                    "QSA selection active for seq {i} on the batched ms path; \
-                     the dispatch gate should have routed this batch per-seq"
-                );
-            }
         }
 
         ops::hc_post_site(
@@ -371,27 +346,21 @@ impl Qwen3AttentionLayer {
                 .copy_d2d_async(c.hidden, c.normed, n * h * 2, stream)?;
         }
 
-        for i in 0..n {
-            let normed2_i = c.normed.offset(i * c.h * c.bf16);
-            let moe_out = self.ffn.forward(normed2_i, ctx, stream)?;
-            // 2026-09-25: `hc_streams`, `post` and `comb` hold FP32, 4 bytes per element.
-            let hc_streams_i = hc_streams.offset(i * hc.hc_mult * c.h * 4);
-            let post_i = post.offset(i * hc.hc_mult * 4);
-            let comb_i = comb.offset(i * hc.hc_mult * hc.hc_mult * 4);
-            ops::hc_post_site(
-                ctx.gpu,
-                self.hc_post_k,
-                hc,
-                moe_out,
-                hc_streams_i,
-                post_i,
-                comb_i,
-                hc_streams_i,
-                1,
-                h as u32,
-                stream,
-            )?;
-        }
+        // 2026-10-13: The same FFN ladder as the plain path (`ms_phase_ffn`),
+        // with the highway injection as the row sink instead of a per-row
+        // `forward` loop.
+        let arm = crate::layers::select_attn_arm(&self.attn_ffn_caps(n, ctx));
+        let mut inject = ops::hc_post_rows(
+            ctx.gpu,
+            self.hc_post_k,
+            hc,
+            hc_streams,
+            post,
+            comb,
+            h,
+            stream,
+        );
+        crate::layers::ffn_rows(&self.ffn, arm, c.normed, n, ctx, stream, &mut inject)?;
         if diag_this {
             super::diag_norm_f32(
                 ctx.gpu,

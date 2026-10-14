@@ -94,19 +94,20 @@ fn the_carry_and_verify_tables_match_the_engines_sizes() {
     }
 }
 
-/// 2026-10-02: The driver terms the memory model reads from kernels/gb10/HARDWARE.toml equal the
-/// reserve's (`preflight/runtime_headroom.rs`), until the reserve reads them from there.
+/// 2026-10-02: The driver terms the reserve sizes with (`preflight/runtime_headroom.rs`) are the
+/// memory model's for the class this binary was built for: (2026-10-13) the reserve now reads
+/// that class's resolved HARDWARE.toml `[memory]` table, so both parse the same file.
 #[test]
 fn the_class_driver_terms_equal_the_reserves() {
-    use crate::main_modules::serve_phases::preflight::runtime_headroom::{
-        DRIVER_BUDGET_PER_MILLE, DRIVER_FIXED_BYTES,
-    };
+    use crate::main_modules::serve_phases::preflight::runtime_headroom::target_driver_terms;
+    let (class, _) = metrale_kernels::TARGET_MEMORY_TABLE.expect("a kernels/ tree build");
     let text = std::fs::read_to_string(
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../kernels/gb10/HARDWARE.toml"),
+            .join("../../kernels")
+            .join(class)
+            .join("HARDWARE.toml"),
     )
     .expect("HARDWARE.toml");
-    let t = metrale_circuit::memory::DriverTerms::parse("gb10", &text).expect("terms");
-    assert_eq!(t.driver_fixed_bytes, DRIVER_FIXED_BYTES as u64);
-    assert_eq!(t.driver_budget_per_mille, DRIVER_BUDGET_PER_MILLE as u64);
+    let model = metrale_circuit::memory::DriverTerms::parse(class, &text).expect("terms");
+    assert_eq!(target_driver_terms().expect("reserve terms"), model);
 }

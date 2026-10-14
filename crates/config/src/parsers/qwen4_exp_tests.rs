@@ -267,3 +267,34 @@ fn both_naming_revisions_route_to_this_parser() {
         assert_eq!(c.num_experts, 512);
     }
 }
+
+/// 2026-10-13: The top-level `quantization_config` is read: `ignore` keeps the head and the
+/// shared expert at 16 bits while the routed experts declare NVFP4.
+#[test]
+fn the_top_level_quantization_config_declares_the_plan() {
+    let mut raw = raw_config();
+    assert!(
+        parse_qwen4_exp(&raw).unwrap().quantization_config.is_none(),
+        "the fixture has no quantization_config"
+    );
+    raw["quantization_config"] = serde_json::json!({
+        "quant_method": "modelopt",
+        "quant_algo": "NVFP4",
+        "group_size": 16,
+        "ignore": ["lm_head", "model.language_model.layers.0.mlp.shared_expert.gate_proj"]
+    });
+    let qc = parse_qwen4_exp(&raw).unwrap().quantization_config.unwrap();
+    assert!(!qc.precision.is_undeclared());
+    let plan = &qc.precision;
+    assert_eq!(plan.resolve("lm_head").label(), "W16A16");
+    assert_eq!(
+        plan.resolve("model.language_model.layers.0.mlp.shared_expert.gate_proj")
+            .label(),
+        "W16A16"
+    );
+    assert_eq!(
+        plan.resolve("model.language_model.layers.0.mlp.experts.3.gate_proj")
+            .label(),
+        "W4A4"
+    );
+}

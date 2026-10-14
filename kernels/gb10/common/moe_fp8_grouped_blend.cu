@@ -40,6 +40,21 @@ extern "C" __global__ void moe_weighted_sum_blend_fp8_grouped(
     __shared__ float s_warp_sums[8];
     __shared__ float sigmoid_val;
 
+    // 2026-10-14: The routed sum does not depend on the gate: its loads issue before the gate
+    // dot and its barriers, so the two latencies overlap. Same additions, same order.
+    const unsigned int j = blockIdx.x * blockDim.x + tid;
+    const bool live = j < hidden;
+    float acc = 0.0f;
+    float shared_v = 0.0f;
+    if (live) {
+        #pragma unroll 4
+        for (unsigned int e = 0; e < top_k; e++) {
+            const unsigned long long pos = (unsigned long long)my_perm[e];
+            acc += my_weights[e] * __bfloat162float(expert_out[pos * hidden + j]);
+        }
+        shared_v = __bfloat162float(my_shared_out[j]);
+    }
+
     if (gate_weight == 0) {
         if (tid == 0) sigmoid_val = 1.0f;
         __syncthreads();
@@ -78,14 +93,7 @@ extern "C" __global__ void moe_weighted_sum_blend_fp8_grouped(
         __syncthreads();
     }
 
-    unsigned int j = blockIdx.x * blockDim.x + tid;
-    if (j >= hidden) return;
-
-    float acc = 0.0f;
-    for (unsigned int e = 0; e < top_k; e++) {
-        const unsigned long long pos = (unsigned long long)my_perm[e];
-        acc += my_weights[e] * __bfloat162float(expert_out[pos * hidden + j]);
-    }
-    acc += sigmoid_val * __bfloat162float(my_shared_out[j]);
+    if (!live) return;
+    acc += sigmoid_val * shared_v;
     my_output[j] = __float2bfloat16(acc);
 }

@@ -50,17 +50,24 @@ impl MoeLayer {
         // caps it at factor x the average rows per expert; an expert's rows past
         // that cap are then not computed.
         let worst_case_m_tiles = (num_tokens * top_k as usize).div_ceil(64).max(1) as u32;
+        // 2026-10-14: All three routed projections take the persistent pipelined twin
+        // (untransposed W4A16, no CUTLASS), which finds its tiles on the device and
+        // reads no tile count.
+        let persistent = !(ctx.levers.moe_grouped_cutlass && self.cutlass_grouped_host.is_some())
+            && self.gate_ptrs_t.is_none()
+            && self.down_ptrs_t.is_none()
+            && self.w4a16_grouped.persistent(ctx.gpu, inter, h)
+            && self.w4a16_grouped.persistent(ctx.gpu, h, inter);
         // 2026-09-25: Exact tiles copy the real expert offsets to the host (a D2H
         // copy on `stream`) and size the grid from the largest expert, never above
         // the bound. METRALE_MOE_PREFILL_EXACT_TILES=1/0 forces it; unset, it is on
         // for NVFP4 experts only. Never under graph capture. The unset default
         // depends on the expert format, so it is resolved here; `ModelLevers`
-        // carries only the override.
-        let exact_tiles = ctx
-            .levers
-            .moe_prefill_exact_tiles
-            .unwrap_or(self.experts_scale_kind == crate::weight_map::WeightQuantFormat::Nvfp4)
-            && !ctx.graph_capture;
+        // carries only the override. 2026-10-14: unset, it is also off when
+        // `persistent`, which needs no count.
+        let exact_tiles = ctx.levers.moe_prefill_exact_tiles.unwrap_or(
+            self.experts_scale_kind == crate::weight_map::WeightQuantFormat::Nvfp4 && !persistent,
+        ) && !ctx.graph_capture;
         let max_m_tiles = if exact_tiles {
             let mut offsets = vec![0u8; (ne + 1) * 4];
             ctx.gpu
@@ -266,6 +273,7 @@ impl MoeLayer {
                     inter,
                     h,
                     max_m_tiles,
+                    total_expanded,
                     stream,
                 )?;
                 self.launch_grouped_gemm(
@@ -281,6 +289,7 @@ impl MoeLayer {
                     inter,
                     h,
                     max_m_tiles,
+                    total_expanded,
                     stream,
                 )?;
             }
@@ -449,6 +458,7 @@ impl MoeLayer {
                     h,
                     inter,
                     max_m_tiles,
+                    total_expanded,
                     stream,
                 )?;
             }

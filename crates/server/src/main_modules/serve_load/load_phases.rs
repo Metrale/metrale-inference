@@ -54,7 +54,7 @@ pub(super) fn load_weights(
     ptx_set: &metrale_kernels::TargetPtxSet,
     free_mem: usize,
     inference_reserve: usize,
-    total_reserve: usize,
+    audit: (usize, usize),
     gdn_two_phase_bytes: usize,
     max_batch_tokens_pre: usize,
     mock: Option<&serve_phases::mock::MockServe>,
@@ -118,7 +118,7 @@ pub(super) fn load_weights(
         store.total_bytes(),
         free_mem,
         inference_reserve,
-        total_reserve,
+        audit,
         gdn_two_phase_bytes,
         max_batch_tokens_pre,
     )?;
