@@ -57,6 +57,7 @@ impl Glm5NextDsaLayer {
             stream,
             is_prefill,
             crate::glm5next_layer::dsa_indexer_rows(),
+            crate::glm5next_layer::dsa_span_select(),
         )
     }
 
@@ -66,7 +67,8 @@ impl Glm5NextDsaLayer {
     /// the indexer key, gate, key norm and head weights of all rows in groups of at most
     /// `DENSE_GEMV_BATCHM_MAX_M` rows, places them with one `dsa_indexer_store_rows`, and runs
     /// the selector query in such groups too: one launch per stage instead of per row, each row
-    /// with the per-row path's bits. Otherwise the rows run as before.
+    /// with the per-row path's bits. Otherwise the rows run as before. 2026-10-14: `span_select`
+    /// (`METRALE_GLM_DSA_SPAN_SELECT`): see `span_meta` below.
     #[allow(clippy::too_many_arguments)]
     pub fn decode_k_with(
         &self,
@@ -80,6 +82,7 @@ impl Glm5NextDsaLayer {
         stream: u64,
         is_prefill: bool,
         indexer_rows: bool,
+        span_select: bool,
     ) -> Result<()> {
         let bt_block_size = kv_cache.block_size().max(1);
         let st = state
@@ -166,8 +169,10 @@ impl Glm5NextDsaLayer {
         // (every row placed on the device) computes the selector query and head weights of all
         // rows in one launch each, and the indexer key, gate and key norm in one pass; each row
         // is then placed from its staging row and selected with its precomputed query.
+        // 2026-10-14: `span_select` stores and selects from what these batched projections leave
+        // (the staging rows, the selector query and head weights rows), so it takes them too.
         let verify_rows = verify_rows_apply(
-            crate::glm5next_layer::dsa_verify_rows(),
+            crate::glm5next_layer::dsa_verify_rows() || span_select,
             is_prefill,
             k,
             ctx.graph_capture && meta.is_some(),
@@ -178,6 +183,22 @@ impl Glm5NextDsaLayer {
             self.selector_query_rows(gpu, hidden, k, false, stream)?;
             self.indexer_project_rows(gpu, hidden, k, stream)?;
         }
+        // 2026-10-14: `span_select` on a batched verify over a paged cache: every row's latent in
+        // one launch, and after the loop all rows' indexer store and selection in one launch per
+        // stage (`select_paged_rows`, the metadata's k rows), as the multi-sequence decode does.
+        // Row `r` selects only keys below its own `seq_len`, so the rows stored after it leave
+        // its selection the per-row path's.
+        let span_meta = meta.filter(|_| {
+            span_select
+                && verify_rows
+                && st.cache() == super::super::paged::IndexerCache::Paged
+                && self.paged_rows_ready(k)
+        });
+        if let Some(m) = span_meta {
+            st.ensure_room(k)?;
+            self.write_latent_rows(gpu, 0, k, kv_cache, m.slot, stream)?;
+        }
+        let span_rows = span_meta.is_some();
         if staged {
             let (slot0, pos0, bt0, bt_rows) = match (meta, &host) {
                 (Some(m), _) => (m.slot, m.positions, m.block_table, m.max_blocks_per_seq),
@@ -195,7 +216,7 @@ impl Glm5NextDsaLayer {
                 (None, Some(h)) => h.slot.offset(row * 8),
                 (None, None) => bail!("DSA layer {}: no row metadata staged", self.layer_idx),
             };
-            if !staged {
+            if !staged && !span_rows {
                 self.write_latent_rows(gpu, row, 1, kv_cache, slot_dev, stream)?;
             }
 
@@ -220,7 +241,9 @@ impl Glm5NextDsaLayer {
                     block_table: block_table.as_slice(),
                 },
             };
-            if verify_rows {
+            if span_rows {
+                // 2026-10-14: Stored with the selection after the loop (`span_meta`).
+            } else if verify_rows {
                 st.ensure_room(1)?;
                 let pos = st.len();
                 self.store_indexer_row(
@@ -276,10 +299,12 @@ impl Glm5NextDsaLayer {
                 block_size,
                 cache_stride_bytes: (block_size * self.cfg.kv_lora_rank) as u64,
             };
-            if replay_safe {
+            if replay_safe && !span_rows {
                 self.write_geom(gpu, d_sl, stream)?;
             }
-            if batch_select && staged {
+            if span_rows {
+                // 2026-10-14: Selected after the loop with every row (`span_meta`).
+            } else if batch_select && staged {
                 batch_q_pos.push(pos as i32);
             } else if batch_select {
                 // 2026-09-25: `indexer_forward` left this row's head weights in the single-row
@@ -331,6 +356,15 @@ impl Glm5NextDsaLayer {
             )?;
         }
 
+        if let Some(m) = span_meta {
+            use crate::glm5next_layer::profile;
+            let t = profile::start();
+            let rows0 = self.indexer_rows(st, kv_cache, m.block_table)?;
+            self.select_paged_rows(gpu, k, rows0, m, 0, stream)?;
+            st.advance(k)?;
+            profile::end(profile::DSA_SELECT, t, gpu, stream);
+        }
+
         if let Some(paging) = attend_paging {
             self.attend_rows(
                 gpu, k, st, kv_cache, attend_bt, attend_sl, &paging, is_prefill, stream,
@@ -377,6 +411,10 @@ pub(super) fn verify_rows_apply(
         && device_kernels
         && query_ready
 }
+
+#[cfg(test)]
+#[path = "span_select_tests.rs"]
+mod span_select_tests;
 
 #[cfg(test)]
 mod verify_rows_tests {

@@ -349,6 +349,7 @@ fn run_indexer_rows(
         &rig.ctx(capture),
         7,
         indexer_rows,
+        false,
     );
     (hidden, r)
 }
