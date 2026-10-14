@@ -2371,11 +2371,12 @@ files = ["kernels/gb10/common/glm5next_ffn.cu"]
 
 # 2026-10-08: The routed outputs weighted and summed with the ungated shared expert, BF16 out,
 # from slot order or the expert-sorted order (glm5next_ffn.cu:209-263).
+# 2026-10-14: the _vec8 entries are the same bytes at eight elements per thread.
 [[family]]
 id = "glm_moe_combine"
 description = "Weighted routed sum plus the ungated shared expert"
 compute = "memory"
-kernels = ["glm5next_ffn::glm5next_moe_combine", "glm5next_ffn::glm5next_moe_combine_indexed"]
+kernels = ["glm5next_ffn::glm5next_moe_combine", "glm5next_ffn::glm5next_moe_combine_indexed", "glm5next_ffn::glm5next_moe_combine_vec8", "glm5next_ffn::glm5next_moe_combine_indexed_vec8"]
 rows = [1, 65536]
 pipeline.blend = { in = ["bf16", "f32", "bf16"], scatter = "f32", combine = "f32", out = ["bf16"] }
 op = [{ op = "blend" }]
