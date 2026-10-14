@@ -80,6 +80,12 @@ pub(super) fn assert_rank_levers_agree(
                 "METRALE_GLM_SP_MHC",
                 u64::from(metrale_model_arch::glm5next_sp_mhc::enabled()?),
             ),
+            // 2026-10-14: SP overlap cuts every SP-mHC exchange into row pieces on a comm
+            // stream, so every rank must enqueue the same pieces.
+            (
+                "METRALE_GLM_SP_OVERLAP",
+                u64::from(metrale_model_arch::glm5next_sp_overlap::enabled()?),
+            ),
             // 2026-10-10: The resolved context window determines DFlash context-broadcast
             // chunking, so every rank must use the same value.
             (
