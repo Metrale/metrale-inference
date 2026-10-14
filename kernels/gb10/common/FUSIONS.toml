@@ -1563,7 +1563,7 @@ rows = [1, 64]
 modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 100
-cite = "ml/moe/nvfp4_grouped_admit.rs:69-140 (admits m = 1..=256 when declared_experts), ml/moe/forward_nvfp4_grouped_decode.rs:143-161, :312-332; ml/moe/forward.rs:33-37 (one row); ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:162, ml/qwen3_ssm/trait_decode_multi_seq.rs:187, ml/ffn_rows.rs:80-83, ml/qwen3_ssm/trait_decode_batched.rs:308-312 (many rows); k/tc_weight_formats.cuh:101-140 (Nvfp4G16: BF16(E2M1 x E4M3) exact, s2 once)"
+cite = "ml/moe/nvfp4_grouped_admit.rs:69-140 (admits m = 1..=256 when declared_experts), ml/moe/forward_nvfp4_grouped_decode.rs:182-200, :351-371; ml/moe/forward.rs:33-37 (one row); ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:162, ml/qwen3_ssm/trait_decode_multi_seq.rs:187, ml/ffn_rows.rs:80-83, ml/qwen3_ssm/trait_decode_batched.rs:308-312 (many rows); k/tc_weight_formats.cuh:101-140 (Nvfp4G16: BF16(E2M1 x E4M3) exact, s2 once)"
 
 [[rule]]
 id = "moe_down_act_grouped_nvfp4_tc"
@@ -1578,7 +1578,7 @@ rows = [1, 64]
 modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 100
-cite = "ml/moe/forward_nvfp4_grouped_decode.rs:355-373 (the shared expert's rows in the same launch when it is NVFP4, :306-310)"
+cite = "ml/moe/forward_nvfp4_grouped_decode.rs:394-412 (the shared expert's rows in the same launch when it is NVFP4, :345-349)"
 
 # 2026-10-02: Above 64 rows the grouped router, top-k and blend rules stop (the FP8 MoE takes its
 # prefill-shaped group there), but the declared NVFP4 decode keeps its grouped path to 256 rows:
@@ -1611,7 +1611,7 @@ rows = [65, 256]
 modes = ["multi_seq", "verify"]
 numerics = "reference"
 priority = 100
-cite = "ml/moe/forward_nvfp4_grouped_decode.rs:194-231 (per-row router and moe_fp8_grouped_sort), :312-374 (the two expert launches), :395-410 (the grouped blend); NVFP4_GROUPED_DECODE_TC_MAX_ROWS, :36"
+cite = "ml/moe/forward_nvfp4_grouped_decode.rs:233-270 (per-row router and moe_fp8_grouped_sort), :351-413 (the two expert launches), :434-449 (the grouped blend); NVFP4_GROUPED_DECODE_TC_MAX_ROWS, :36"
 
 # 2026-10-02: The shared-expert gate logit stays FP32 into the sigmoid
 # (moe_expert_gemv.cu:224-261, moe_fp8_grouped_blend.cu:62-91): `sg` is held as f32.

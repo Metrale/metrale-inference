@@ -41,6 +41,10 @@
 // - Grids: gate+up (N / NTC_GU_COLS, cap + S), down (N / NTC_DOWN_COLS, cap + S), block
 //   NTC_THREADS, S = ceil(num_tokens / TC_ROWS). NTC_* and TC_ROWS must equal
 //   NVFP4_GROUPED_TC_* in nvfp4_moe_grouped.rs.
+// - 2026-10-14: The `_split` gate+up runs a column tile's gate and up rows on two warps (half the
+//   CTA's warps each, NTC_SPLIT_GU_COLS columns per CTA) and the `_mt1` down one tile per warp
+//   (NTC_DOWN1_COLS): twice the warps over the same MMAs in the same order per tile, so both
+//   return the bytes of the unsplit pair (moe_grouped_tc.cuh, PART).
 
 #include <cuda_bf16.h>
 
@@ -60,11 +64,17 @@
 #define NTC_DOWN_G 1
 #define NTC_GU_COLS (NTC_WARPS * 16 * NTC_GU_MT)
 #define NTC_DOWN_COLS (NTC_WARPS * 16 * NTC_DOWN_MT)
+// 2026-10-14: The split pair's columns per CTA: gate+up warps 0 .. NTC_WARPS / 2 - 1 take the gate
+// tiles and their partners w + NTC_WARPS / 2 the up tiles; down one m-tile per warp.
+#define NTC_SPLIT_GU_COLS (NTC_WARPS / 2 * 16 * NTC_GU_MT)
+#define NTC_DOWN1_MT 1
+#define NTC_DOWN1_COLS (NTC_WARPS * 16 * NTC_DOWN1_MT)
 
 // 2026-10-02: Gate+up and SiLU of the routed experts and the shared expert. A: [num_tokens, K]
 // BF16. act: routed hi|lo rows [pos, 2N] BF16 by sorted position; sh_act: shared hi|lo rows
 // [token, 2N]; both in FP32-sized buffers. Arguments as moe_expert_gate_up_act_nvfp4_grouped.
-template <class WF> __device__ __forceinline__ void ntc_gate_up(
+// 2026-10-14: SPLIT: the split pair's gate+up (NTC_SPLIT_GU_COLS columns per CTA).
+template <class WF, bool SPLIT> __device__ __forceinline__ void ntc_gate_up(
     const __nv_bfloat16* __restrict__ A,
     const unsigned long long* __restrict__ gate_packed_ptrs,
     const unsigned long long* __restrict__ gate_scale_ptrs,
@@ -90,32 +100,46 @@ template <class WF> __device__ __forceinline__ void ntc_gate_up(
     unsigned int expert, begin, end;
     if (!tc_block_rows(expert_offsets, active_experts, active_count, num_tokens,
                        &is_shared, &expert, &begin, &end)) return;
-    const unsigned int f0 = blockIdx.x * NTC_GU_COLS + (threadIdx.x >> 5) * 16 * NTC_GU_MT;
+    constexpr unsigned int COLS = SPLIT ? NTC_SPLIT_GU_COLS : NTC_GU_COLS;
+    constexpr unsigned int PAIRS = NTC_WARPS / 2;
+    __shared__ float xs[SPLIT ? PAIRS * gtc_split_xs_floats(NTC_GU_MT) : 1];
+    const unsigned int warp = threadIdx.x >> 5, pw = SPLIT ? warp % PAIRS : warp;
+    const unsigned int f0 = blockIdx.x * COLS + pw * 16 * NTC_GU_MT;
+    float* const pxs = xs + (SPLIT ? pw * gtc_split_xs_floats(NTC_GU_MT) : 0);
     if (is_shared) {
-        gtc_warp<WF, true, NTC_GU_MT, 1, NTC_GU_G>(
-            A, sorted_token_ids, true, begin, end, {sh_gate_packed, sh_gate_scale, sh_gate_s2},
-            {sh_up_packed, sh_up_scale, sh_up_s2}, sh_act, N, K, f0);
+        const typename WF::Mat g = {sh_gate_packed, sh_gate_scale, sh_gate_s2}, u = {sh_up_packed, sh_up_scale, sh_up_s2};
+        if constexpr (!SPLIT)
+            gtc_warp<WF, true, NTC_GU_MT, 1, NTC_GU_G>(A, sorted_token_ids, true, begin, end, g, u, sh_act, N, K, f0);
+        else if (warp < PAIRS)
+            gtc_warp<WF, true, NTC_GU_MT, 1, NTC_GU_G, 1, NTC_THREADS>(A, sorted_token_ids, true, begin, end, g, u, sh_act, N, K, f0, pxs);
+        else
+            gtc_warp<WF, true, NTC_GU_MT, 1, NTC_GU_G, 2, NTC_THREADS>(A, sorted_token_ids, true, begin, end, g, u, sh_act, N, K, f0, pxs);
         return;
     }
     const unsigned char* Pg = (const unsigned char*)gate_packed_ptrs[expert];
     const unsigned char* Pu = (const unsigned char*)up_packed_ptrs[expert];
     if (Pg == 0 || Pu == 0) {
         for (unsigned int pos = begin; pos < end; pos++)
-            for (unsigned int i = threadIdx.x; i < NTC_GU_COLS; i += NTC_THREADS)
+            for (unsigned int i = threadIdx.x; i < COLS; i += NTC_THREADS)
                 for (unsigned int hl = 0; hl < 2; hl++)
-                    act[(unsigned long long)pos * 2 * N + hl * N + blockIdx.x * NTC_GU_COLS + i] = __float2bfloat16(0.0f);
+                    act[(unsigned long long)pos * 2 * N + hl * N + blockIdx.x * COLS + i] = __float2bfloat16(0.0f);
         return;
     }
-    gtc_warp_routed<WF, true, NTC_GU_MT, NTC_GU_G>(
-        A, sorted_token_ids, false, begin, end,
-        {Pg, (const unsigned char*)gate_scale_ptrs[expert], gate_scale2[expert]},
-        {Pu, (const unsigned char*)up_scale_ptrs[expert], up_scale2[expert]}, act, N, K, f0);
+    const typename WF::Mat g = {Pg, (const unsigned char*)gate_scale_ptrs[expert], gate_scale2[expert]};
+    const typename WF::Mat u = {Pu, (const unsigned char*)up_scale_ptrs[expert], up_scale2[expert]};
+    if constexpr (!SPLIT)
+        gtc_warp_routed<WF, true, NTC_GU_MT, NTC_GU_G>(A, sorted_token_ids, false, begin, end, g, u, act, N, K, f0);
+    else if (warp < PAIRS)
+        gtc_warp_routed<WF, true, NTC_GU_MT, NTC_GU_G, 1, NTC_THREADS>(A, sorted_token_ids, false, begin, end, g, u, act, N, K, f0, pxs);
+    else
+        gtc_warp_routed<WF, true, NTC_GU_MT, NTC_GU_G, 2, NTC_THREADS>(A, sorted_token_ids, false, begin, end, g, u, act, N, K, f0, pxs);
 }
 
 // 2026-10-02: Down projection of the hi|lo SiLU rows (act routed by position, sh_act shared by
 // token) into C [pos, N] and sh_down_out [token, N] BF16. Arguments as
 // moe_expert_down_act_nvfp4_grouped.
-template <class WF> __device__ __forceinline__ void ntc_down(
+// 2026-10-14: MT: m-tiles per warp (NTC_DOWN_MT, or NTC_DOWN1_MT for the split pair's down).
+template <class WF, int MT> __device__ __forceinline__ void ntc_down(
     const __nv_bfloat16* __restrict__ act,
     const unsigned long long* __restrict__ packed_ptrs,
     const unsigned long long* __restrict__ scale_ptrs,
@@ -135,9 +159,10 @@ template <class WF> __device__ __forceinline__ void ntc_down(
     unsigned int expert, begin, end;
     if (!tc_block_rows(expert_offsets, active_experts, active_count, num_tokens,
                        &is_shared, &expert, &begin, &end)) return;
-    const unsigned int f0 = blockIdx.x * NTC_DOWN_COLS + (threadIdx.x >> 5) * 16 * NTC_DOWN_MT;
+    constexpr unsigned int COLS = NTC_WARPS * 16 * MT;
+    const unsigned int f0 = blockIdx.x * COLS + (threadIdx.x >> 5) * 16 * MT;
     if (is_shared) {
-        gtc_warp<WF, false, NTC_DOWN_MT, 1, NTC_DOWN_G>(
+        gtc_warp<WF, false, MT, 1, NTC_DOWN_G>(
             sh_act, nullptr, true, begin, end, {sh_down_packed, sh_down_scale, sh_down_s2},
             {nullptr, nullptr, 0.f}, sh_down_out, N, K, f0);
         return;
@@ -145,11 +170,11 @@ template <class WF> __device__ __forceinline__ void ntc_down(
     const unsigned char* P = (const unsigned char*)packed_ptrs[expert];
     if (P == 0) {
         for (unsigned int pos = begin; pos < end; pos++)
-            for (unsigned int i = threadIdx.x; i < NTC_DOWN_COLS; i += NTC_THREADS)
-                C[(unsigned long long)pos * N + blockIdx.x * NTC_DOWN_COLS + i] = __float2bfloat16(0.0f);
+            for (unsigned int i = threadIdx.x; i < COLS; i += NTC_THREADS)
+                C[(unsigned long long)pos * N + blockIdx.x * COLS + i] = __float2bfloat16(0.0f);
         return;
     }
-    gtc_warp_routed<WF, false, NTC_DOWN_MT, NTC_DOWN_G>(
+    gtc_warp_routed<WF, false, MT, NTC_DOWN_G>(
         act, nullptr, true, begin, end, {P, (const unsigned char*)scale_ptrs[expert], scale2[expert]},
         {nullptr, nullptr, 0.f}, C, N, K, f0);
 }
@@ -175,10 +200,13 @@ template <class WF> __device__ __forceinline__ void ntc_down(
     unsigned int N, unsigned int K, unsigned int cap, unsigned int num_tokens
 #define NTC_DN_PASS act, packed_ptrs, scale_ptrs, scale2, C, expert_offsets, active_experts, active_count, sh_act, \
     sh_down_packed, sh_down_scale, sh_down_s2, sh_down_out, N, K, cap, num_tokens
-extern "C" __global__ void __launch_bounds__(NTC_THREADS) moe_expert_gate_up_act_nvfp4_grouped_tc(NTC_GU_ARGS) { ntc_gate_up<Nvfp4G16>(NTC_GU_PASS); }
-extern "C" __global__ void __launch_bounds__(NTC_THREADS) moe_expert_down_act_nvfp4_grouped_tc(NTC_DN_ARGS) { ntc_down<Nvfp4G16>(NTC_DN_PASS); }
-extern "C" __global__ void __launch_bounds__(NTC_THREADS) moe_expert_gate_up_act_nvfp4_grouped_tc_lean(NTC_GU_ARGS) { ntc_gate_up<Nvfp4G16Lean>(NTC_GU_PASS); }
-extern "C" __global__ void __launch_bounds__(NTC_THREADS) moe_expert_down_act_nvfp4_grouped_tc_lean(NTC_DN_ARGS) { ntc_down<Nvfp4G16Lean>(NTC_DN_PASS); }
+extern "C" __global__ void __launch_bounds__(NTC_THREADS) moe_expert_gate_up_act_nvfp4_grouped_tc(NTC_GU_ARGS) { ntc_gate_up<Nvfp4G16, false>(NTC_GU_PASS); }
+extern "C" __global__ void __launch_bounds__(NTC_THREADS) moe_expert_down_act_nvfp4_grouped_tc(NTC_DN_ARGS) { ntc_down<Nvfp4G16, NTC_DOWN_MT>(NTC_DN_PASS); }
+extern "C" __global__ void __launch_bounds__(NTC_THREADS) moe_expert_gate_up_act_nvfp4_grouped_tc_lean(NTC_GU_ARGS) { ntc_gate_up<Nvfp4G16Lean, false>(NTC_GU_PASS); }
+extern "C" __global__ void __launch_bounds__(NTC_THREADS) moe_expert_down_act_nvfp4_grouped_tc_lean(NTC_DN_ARGS) { ntc_down<Nvfp4G16Lean, NTC_DOWN_MT>(NTC_DN_PASS); }
+// 2026-10-14: The split pair (row-major tables): the unsplit pair's bytes on twice the warps.
+extern "C" __global__ void __launch_bounds__(NTC_THREADS) moe_expert_gate_up_act_nvfp4_grouped_tc_split(NTC_GU_ARGS) { ntc_gate_up<Nvfp4G16, true>(NTC_GU_PASS); }
+extern "C" __global__ void __launch_bounds__(NTC_THREADS) moe_expert_down_act_nvfp4_grouped_tc_mt1(NTC_DN_ARGS) { ntc_down<Nvfp4G16, NTC_DOWN1_MT>(NTC_DN_PASS); }
 
 // 2026-10-04: One NVFP4 block (scale byte s, its 16 weights in packed words w[0], w[1]) of a row-major table in the
 // lean layout. Returns false on a negative or NaN scale. A +-0 scale zeroes the weights (code 0): every product is

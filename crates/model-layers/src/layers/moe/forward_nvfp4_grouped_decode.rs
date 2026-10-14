@@ -49,6 +49,10 @@ pub(super) struct Nvfp4GroupedKernels {
     pub down: KernelHandle,
     pub gate_up_tc: KernelHandle,
     pub down_tc: KernelHandle,
+    /// 2026-10-14: The split pair (`_tc_split` / `_tc_mt1`: the unsplit pair's bytes on twice the
+    /// warps), taken in its place when both resolved; zero with `METRALE_MOE_TC_SPLIT=0`.
+    pub gate_up_tc_split: KernelHandle,
+    pub down_tc_mt1: KernelHandle,
     pub declared_experts: bool,
     /// 2026-10-04: The lean point's pair (`Nvfp4G16Lean`) and its load-time repack; `lean` is set
     /// once this layer's tables were repacked (`nvfp4_lean.rs`), after which only that pair reads them.
@@ -72,6 +76,16 @@ impl Nvfp4GroupedKernels {
             down: try_kernel(gpu, MODULE, "moe_expert_down_act_nvfp4_grouped"),
             gate_up_tc: try_kernel(gpu, TC, "moe_expert_gate_up_act_nvfp4_grouped_tc"),
             down_tc: try_kernel(gpu, TC, "moe_expert_down_act_nvfp4_grouped_tc"),
+            gate_up_tc_split: if moe_tc_split_disabled() {
+                KernelHandle(0)
+            } else {
+                try_kernel(gpu, TC, "moe_expert_gate_up_act_nvfp4_grouped_tc_split")
+            },
+            down_tc_mt1: if moe_tc_split_disabled() {
+                KernelHandle(0)
+            } else {
+                try_kernel(gpu, TC, "moe_expert_down_act_nvfp4_grouped_tc_mt1")
+            },
             declared_experts: false,
             gate_up_tc_lean: try_kernel(gpu, TC, "moe_expert_gate_up_act_nvfp4_grouped_tc_lean"),
             down_tc_lean: try_kernel(gpu, TC, "moe_expert_down_act_nvfp4_grouped_tc_lean"),
@@ -96,6 +110,24 @@ impl Nvfp4GroupedKernels {
     pub(super) fn select(&self, hidden: u32, inter: u32) -> Nvfp4GroupedLaunch {
         if let Some(lean) = self.lean_launch() {
             return lean;
+        }
+        if nvfp4_grouped_tc_enabled()
+            && self.gate_up_tc_split.0 != 0
+            && self.down_tc_mt1.0 != 0
+            && ops::nvfp4_grouped_tc_pair_shape_ok(
+                hidden,
+                inter,
+                ops::NVFP4_GROUPED_GATE_UP_TC_SPLIT,
+                ops::NVFP4_GROUPED_DOWN_TC_MT1,
+            )
+        {
+            return Nvfp4GroupedLaunch {
+                gate_up: self.gate_up_tc_split,
+                gate_up_geometry: ops::NVFP4_GROUPED_GATE_UP_TC_SPLIT,
+                down: self.down_tc_mt1,
+                down_geometry: ops::NVFP4_GROUPED_DOWN_TC_MT1,
+                max_rows: NVFP4_GROUPED_DECODE_TC_MAX_ROWS,
+            };
         }
         if nvfp4_grouped_tc_enabled()
             && self.gate_up_tc.0 != 0
@@ -138,6 +170,13 @@ pub(super) struct Nvfp4GroupedLaunch {
 pub(super) fn nvfp4_grouped_tc_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("METRALE_NO_MOE_NVFP4_TC").is_none())
+}
+
+/// 2026-10-14: `METRALE_MOE_TC_SPLIT` equal to `"0"`, read once per process: the unsplit
+/// tensor-core pair runs instead of the split pair (same bytes).
+fn moe_tc_split_disabled() -> bool {
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *OFF.get_or_init(|| std::env::var("METRALE_MOE_TC_SPLIT").as_deref() == Ok("0"))
 }
 
 /// 2026-09-27: Shape admission without a GPU: `m` in `1..=max_rows` (2026-10-02: the selected

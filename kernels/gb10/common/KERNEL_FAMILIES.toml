@@ -1527,6 +1527,7 @@ kernel_compute."moe_fp8_grouped_tc_w8a8::moe_expert_down_act_fp8_grouped_tc_w8a8
 # `epilogue = silu_mul` and points alone cannot tell the two apart for a SiLU node.
 kernel_pipeline."moe_fp8_grouped_tc::moe_expert_gate_up_act_fp8_grouped_tc".silu_mul = { in = ["bf16"], compute = "f32", out = ["bf16"] }
 kernel_pipeline."moe_nvfp4_grouped_tc::moe_expert_gate_up_act_nvfp4_grouped_tc".silu_mul = { in = ["bf16"], compute = "f32", out = ["bf16"] }
+kernel_pipeline."moe_nvfp4_grouped_tc::moe_expert_gate_up_act_nvfp4_grouped_tc_split".silu_mul = { in = ["bf16"], compute = "f32", out = ["bf16"] }
 kernel_pipeline."moe_bf16_grouped_tc::moe_expert_gate_up_act_bf16_grouped_tc".silu_mul = { in = ["bf16"], compute = "f32", out = ["bf16"] }
 kernels = [
   "moe_fp8_grouped_tc::moe_expert_gate_up_act_fp8_grouped_tc",
@@ -1538,6 +1539,11 @@ kernels = [
   "moe_nvfp4_grouped_tc::moe_expert_down_act_nvfp4_grouped_tc",
   "moe_nvfp4_grouped_tc::moe_expert_gate_up_act_nvfp4_grouped_tc_lean",
   "moe_nvfp4_grouped_tc::moe_expert_down_act_nvfp4_grouped_tc_lean",
+  # 2026-10-14: The row-major point's split pair (gate and up tiles on two warps; down one m-tile
+  # per warp): a schedule of the same point, the same MMAs in the same order per tile, so the same
+  # bytes (nvfp4_moe_tc_split_tests); selected over the unsplit pair unless METRALE_MOE_TC_SPLIT=0.
+  "moe_nvfp4_grouped_tc::moe_expert_gate_up_act_nvfp4_grouped_tc_split",
+  "moe_nvfp4_grouped_tc::moe_expert_down_act_nvfp4_grouped_tc_mt1",
   "moe_bf16_grouped_tc::moe_expert_gate_up_act_bf16_grouped_tc",
   "moe_bf16_grouped_tc::moe_expert_down_act_bf16_grouped_tc",
 ]

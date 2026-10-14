@@ -85,6 +85,9 @@ mod w8a16_gemm_m16;
 mod w8a16_gemv_ncol;
 pub use model_stats::ModelStats;
 
+#[cfg(test)]
+#[path = "ops/deinterleave_qg_tests.rs"]
+mod deinterleave_qg_tests;
 #[path = "ops/gemm_fp8_prefill.rs"]
 mod gemm_fp8_prefill;
 #[path = "ops/gemm_quant.rs"]
@@ -130,12 +133,6 @@ mod moe_expert_more;
 mod moe_gate;
 #[path = "ops/moe_grouped_a.rs"]
 mod moe_grouped_a;
-#[cfg(test)]
-#[path = "ops/moe_topk_warp_tests.rs"]
-mod moe_topk_warp_tests;
-#[cfg(test)]
-#[path = "ops/deinterleave_qg_tests.rs"]
-mod deinterleave_qg_tests;
 #[path = "ops/moe_grouped_a2.rs"]
 mod moe_grouped_a2;
 #[path = "ops/moe_grouped_b.rs"]
@@ -146,8 +143,14 @@ mod moe_grouped_fp4;
 pub mod moe_lora_grouped;
 #[path = "ops/moe_prefill.rs"]
 mod moe_prefill;
+#[cfg(test)]
+#[path = "ops/moe_topk_warp_tests.rs"]
+mod moe_topk_warp_tests;
 #[path = "ops/norm.rs"]
 mod norm;
+#[cfg(test)]
+#[path = "ops/nvfp4_moe_tc_split_tests.rs"]
+mod nvfp4_moe_tc_split_tests;
 // 2026-09-25: Tensor-core routing of the MTP drafter's BF16 GEMV.
 #[path = "ops/dense_gemv_tc.rs"]
 pub mod dense_gemv_tc;

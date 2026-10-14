@@ -125,8 +125,9 @@ fn tc_shape_rule() {
 #[test]
 fn nvfp4_tc_geometry_matches_the_kernel() {
     use crate::layers::ops::{
-        NVFP4_GROUPED_DOWN_TC, NVFP4_GROUPED_DOWN_TC_K_STEP, NVFP4_GROUPED_GATE_UP_TC,
-        NVFP4_GROUPED_GATE_UP_TC_K_STEP, nvfp4_grouped_tc_shape_ok,
+        NVFP4_GROUPED_DOWN_TC, NVFP4_GROUPED_DOWN_TC_K_STEP, NVFP4_GROUPED_DOWN_TC_MT1,
+        NVFP4_GROUPED_GATE_UP_TC, NVFP4_GROUPED_GATE_UP_TC_K_STEP, NVFP4_GROUPED_GATE_UP_TC_SPLIT,
+        nvfp4_grouped_tc_pair_shape_ok, nvfp4_grouped_tc_shape_ok,
     };
     let warps = define(NVFP4_TC_CU, "NTC_WARPS");
     for (g, mt) in [
@@ -145,6 +146,31 @@ fn nvfp4_tc_geometry_matches_the_kernel() {
         NVFP4_GROUPED_DOWN_TC_K_STEP,
         128 * define(NVFP4_TC_CU, "NTC_DOWN_G")
     );
+    // 2026-10-14: The split pair: half the gate+up warps per projection, one down m-tile per warp.
+    assert!(NVFP4_TC_CU.contains("#define NTC_SPLIT_GU_COLS (NTC_WARPS / 2 * 16 * NTC_GU_MT)\n"));
+    assert_eq!(
+        NVFP4_GROUPED_GATE_UP_TC_SPLIT.cols_per_cta,
+        warps / 2 * 16 * define(NVFP4_TC_CU, "NTC_GU_MT")
+    );
+    assert_eq!(
+        NVFP4_GROUPED_DOWN_TC_MT1.cols_per_cta,
+        warps * 16 * define(NVFP4_TC_CU, "NTC_DOWN1_MT")
+    );
+    for g in [NVFP4_GROUPED_GATE_UP_TC_SPLIT, NVFP4_GROUPED_DOWN_TC_MT1] {
+        assert_eq!(g.rows_per_pass, define(TC_ROWS_CUH, "TC_ROWS"));
+        assert_eq!(g.threads, warps * 32);
+    }
+    let split = |h, i| {
+        nvfp4_grouped_tc_pair_shape_ok(
+            h,
+            i,
+            NVFP4_GROUPED_GATE_UP_TC_SPLIT,
+            NVFP4_GROUPED_DOWN_TC_MT1,
+        )
+    };
+    assert!(split(2560, 640));
+    assert!(!split(2560, 640 + 16));
+    assert!(!split(2560 + 32, 640));
     let gu = |n, k| nvfp4_grouped_tc_shape_ok(n, k, NVFP4_GROUPED_GATE_UP_TC, 256);
     assert!(gu(512, 2048));
     assert!(!gu(512, 2048 + 128));
