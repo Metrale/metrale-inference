@@ -27,8 +27,9 @@ use crate::glm5next_mlp::Glm5NextMlpKernels;
 const LEVER: &str = "METRALE_GLM_MOE_W4A4_RASTER";
 /// 2026-10-14: The widest group the lever takes (a whole 8192-row chunk is 800 m128 tiles).
 const MAX_GROUP: u32 = 4096;
-/// 2026-10-14: The lever's value when unset: off until the c32k A/B arm measures it.
-const DEFAULT: Option<RasterGroups> = None;
+/// 2026-10-14: The lever's value when unset: down raster 4, gate/up off. ab_2 at rows=8208 m128
+/// measured down -520/-225 us per call (n 704, zipf 0/1.2) and a mixed fused gate/up (-0.8%..+6.7%).
+const DEFAULT: Option<RasterGroups> = Some(RasterGroups { gu: 0, down: 4 });
 /// 2026-10-14: The m128 tile entry (`W4A4_GROUPED_MT[2]`), the only one with `_r` twins.
 const TILE: usize = 2;
 
@@ -97,16 +98,32 @@ pub(crate) fn check_ready(grouped: bool, ready: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// 2026-10-14: The load-time refusal of a lever this load cannot run.
+/// 2026-10-14: The lever's load readback, logged once per process on every rank: `active` only
+/// when the grouped path that it reorders runs.
+pub(crate) fn readback(r: Option<RasterGroups>, grouped: bool) -> String {
+    match (r, grouped) {
+        (Some(r), true) => format!(
+            "{LEVER}: active, gate/up group {}, down group {}",
+            r.gu, r.down
+        ),
+        (Some(r), false) => format!(
+            "{LEVER}: dormant (METRALE_GLM_MOE_W4A4_GROUPED off), gate/up group {}, down group {}",
+            r.gu, r.down
+        ),
+        (None, _) => format!("{LEVER}: off"),
+    }
+}
+
+/// 2026-10-14: The load-time readback and refusal of a lever this load cannot run.
 pub fn check_at_load(k: &Glm5NextMlpKernels) -> Result<()> {
-    if moe_w4a4_raster()?.is_none() {
+    static LOGGED: std::sync::Once = std::sync::Once::new();
+    let r = moe_w4a4_raster()?;
+    let grouped = super::moe_w4a4_grouped()?;
+    LOGGED.call_once(|| tracing::info!("{}", readback(r, grouped)));
+    if r.is_none() {
         return Ok(());
     }
-    check_ready(
-        super::moe_w4a4_grouped()?,
-        k.w4a4_grouped.raster.iter().all(|h| h.0 != 0),
-    )
-    .map_err(anyhow::Error::msg)
+    check_ready(grouped, k.w4a4_grouped.raster.iter().all(|h| h.0 != 0)).map_err(anyhow::Error::msg)
 }
 
 /// 2026-10-14: The fused gate/up entry of tile `ti`: its `_r` twin at the m128 tile with a

@@ -303,9 +303,10 @@ fn a_wide_k64_slice_runs_sort_tiles_and_three_grouped_gemms() {
 
 /// 2026-10-10: At 48 routed slots per expert on average the 128-slot entries run (plain down at
 /// K 2048: the plain quantizer and entry); at 47 the 32-slot ones.
+/// 2026-10-14: The m128 down is its raster twin under the lever's default (`0,4`).
 #[test]
 fn the_tile_follows_the_average_slots_per_expert() {
-    for (rows, mt, gu, dn) in [(48usize, 128u32, G128, G128), (47, 32, G32, G32)] {
+    for (rows, mt, gu, dn) in [(48usize, 128u32, G128, R128), (47, 32, G32, G32)] {
         let (r, l, ws) = run(cfg_small(), rows, true);
         r.unwrap();
         let funcs: Vec<u64> = l.iter().map(|l| l.func).collect();
