@@ -1709,3 +1709,27 @@ effort_hours = 1.0
 transferability = "any grouped MoE down GEMM whose output is wider than its K"
 links = { pr = "", commit = "", evidence = "ncu --metrics dram__bytes_read.sum,dram__bytes_write.sum,lts__t_sectors_srcunit_tex_op_read.sum on w4a4_grouped_mx_m128_k64" }
 notes = "Weight-read amortization: the grid's x (column blocks) varies fastest and every expert's m-tiles are adjacent in y, so a weight tile's next reader is 11 CTAs later on gate/up (704/64) and 64 later on the down (4096/64), inside the about 96 resident CTAs: weights stream from DRAM about once per chunk, 3 x 467 MB = 1.4 GB per layer-chunk (82% of gate+up's bytes, 45% of the down's). Larger prefill chunks amortize them: at 126 layer-chunks per 32k request, halving the chunk count would save about 88 GB of weight reads, about 0.35 s at the floor or about 0.6 s at the measured efficiency, at the cost of a larger activation scratch."
+
+[[lever]]
+id = "gb10x3-glm53-dsa-prefill-pipe"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_DSA_HB_PREFILL_PIPE=1 with METRALE_GLM_DSA_DECODE_HB=N and METRALE_GLM_DSA_HB_PREFILL_P_HI=1 (prefill sub-chunks; ONE_SPLIT optional)"
+symptom = "at a 32k prefill the sparse-MLA attend (glm5next_dsa_mla_decode_hb_fp8_phi, one split) takes ~1.1 s over 44 launches at ~33 TFLOP/s; a 32-token tile costs ~5500 cycles against an MMA floor of ~1536: gather + widen, QK on 6 of 8 warps, softmax and PV run as four barrier-separated phases"
+diagnosis_tool = "nsys"
+root_cause_class = "latency-bound"
+lever_type = "new-kernel"
+lkb_effect = "glm5next_dsa_mla_prefill_pipe_phi: the phi kernel rescheduled (double-buffered tile in 79 KB of dynamic shared memory, QK on all 8 warps as the phi kernel's four accumulator chains, two barriers per tile, the widen of tile t+1 under the softmax of tile t, QK(t+1) beside PV(t)); the tile functions shared through glm5next_dsa_mla_hb_tile.cuh"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "held"
+verdict_reason = "written without a GPU; the byte gate against the phi kernel, row invariance and timing (glm5next_dsa_prefill_pipe_gate) are pending. Expected 0.2-0.4 s per 32k prefill if the tile drops toward the MMA floor"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 5.0
+transferability = "any sparse or paged attention whose per-tile phases are serialized by barriers in one CTA per row"
+links = { pr = "", commit = "", evidence = "glm5next_dsa_prefill_pipe_gate" }
+notes = "A grouped-query union kernel (several rows sharing one gathered tile, masked per row) was rejected: a row's summation grouping would depend on where its tokens land in the union, so its bytes would depend on its neighbours (a new numerics point and not K-invariant), and canonical tiles waste MMAs unless selections cluster, which no captured selection dump can confirm yet"

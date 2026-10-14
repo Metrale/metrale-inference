@@ -42,79 +42,12 @@
 //   * 2026-10-12: glm5next_dsa_mla_decode_hb_fp8_phi: the same launch contract, P as bf16 hi
 //     only (see its definition).
 
-#include <cuda_bf16.h>
-#include <cuda_fp8.h>
-#include <cuda_fp16.h>
-
-#define HB_THREADS 256
-#define HB_WARPS 8
-#define HB_TT 32          // 2026-10-09: tokens per tile (two m16 tiles)
-#define HB_KVL 512
-#define HB_CHUNKS 64      // 2026-10-09: 16-byte bf16 chunks per 512-wide row
-#define HB_S_STRIDE 36    // 2026-10-09: f32 per S row (bank-conflict-free fragment stores)
-#define HB_P_STRIDE 40    // 2026-10-09: bf16 per P row (bank-conflict-free B-fragment loads)
-#define HB_HEADS 24       // 2026-10-09: heads per CTA: three n8 tiles
-#define HB_NT 3
-#define HB_NEG (-1e30f)
-
-// 2026-10-09: Byte offset of 16-byte chunk `chunk` of row `row` in a [rows][64 chunks] bf16
-// tile, XOR-swizzled so eight consecutive rows at one chunk hit eight bank groups.
-__device__ __forceinline__ unsigned int hb_swz(unsigned int row, unsigned int chunk) {
-    return row * (HB_CHUNKS * 16u) + ((chunk ^ (row & 7u)) * 16u);
-}
-
-// 2026-10-09: Two E4M3 bytes (low byte = lower index) to a bf16x2 word, exactly: through
-// f16 (every finite E4M3 value is a normal f16), then f16 -> bf16 by moving the exponent
-// bias (112) and dropping three mantissa bits that are zero.
-__device__ __forceinline__ unsigned int hb_e4m3x2_to_bf16x2(unsigned short v) {
-    __half2_raw h = __nv_cvt_fp8x2_to_halfraw2((__nv_fp8x2_storage_t)v, __NV_E4M3);
-    const unsigned int x = (unsigned int)h.x | ((unsigned int)h.y << 16);
-    const unsigned int mag = x & 0x7fff7fffu;
-    const unsigned int r = ((mag >> 3) & 0x0fff0fffu) + (0x38003800u & __vcmpne2(mag, 0u));
-    return r | (x & 0x80008000u);
-}
-
-__device__ __forceinline__ void hb_ldsm_x4(unsigned int addr, unsigned int& r0, unsigned int& r1,
-                                           unsigned int& r2, unsigned int& r3) {
-    asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%0,%1,%2,%3}, [%4];"
-                 : "=r"(r0), "=r"(r1), "=r"(r2), "=r"(r3) : "r"(addr));
-}
-
-__device__ __forceinline__ void hb_ldsm_x4_t(unsigned int addr, unsigned int& r0, unsigned int& r1,
-                                             unsigned int& r2, unsigned int& r3) {
-    asm volatile("ldmatrix.sync.aligned.m8n8.x4.trans.shared.b16 {%0,%1,%2,%3}, [%4];"
-                 : "=r"(r0), "=r"(r1), "=r"(r2), "=r"(r3) : "r"(addr));
-}
-
-__device__ __forceinline__ void hb_mma(float* d, unsigned int a0, unsigned int a1, unsigned int a2,
-                                       unsigned int a3, unsigned int b0, unsigned int b1) {
-    asm volatile(
-        "mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 "
-        "{%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};"
-        : "+f"(d[0]), "+f"(d[1]), "+f"(d[2]), "+f"(d[3])
-        : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1));
-}
-
-// 2026-10-09: Whether selection entry `t` names a token the row may attend.
-__device__ __forceinline__ bool hb_valid(int t, unsigned int seq_len) {
-    return t >= 0 && (unsigned int)t < seq_len;
-}
-
-// 2026-10-12: The kernel's parameter list and the names, shared by the two entries below.
-#define HB_PARAMS                                                                                  \
-    const __nv_bfloat16* __restrict__ Q, const unsigned char* __restrict__ KV,                     \
-    __nv_bfloat16* __restrict__ O, const int* __restrict__ block_tables,                           \
-    const int* __restrict__ seq_lens, const int* __restrict__ sel_indices,                         \
-    float* __restrict__ ws_o, float* __restrict__ ws_ml, const unsigned int sel_width,             \
-    const unsigned int max_blocks_per_seq, const unsigned int num_q_heads,                         \
-    const unsigned int block_size, const float inv_sqrt_d, const float k_scale,                    \
-    const float v_scale, const unsigned long long cache_stride_bytes, const unsigned int num_splits
-#define HB_ARGS                                                                                    \
-    Q, KV, O, block_tables, seq_lens, sel_indices, ws_o, ws_ml, sel_width, max_blocks_per_seq,     \
-    num_q_heads, block_size, inv_sqrt_d, k_scale, v_scale, cache_stride_bytes, num_splits
+#include "glm5next_dsa_mla_hb_tile.cuh"
 
 // 2026-10-12: The body. P_LO: carry P as bf16 hi + lo (the decode contract above); false: hi
 // only (`glm5next_dsa_mla_decode_hb_fp8_phi`), which drops the second PV MMA of every tile.
+// 2026-10-14: the per-tile steps live in glm5next_dsa_mla_hb_tile.cuh (shared with the
+// pipelined prefill entry); this function only schedules them.
 template <bool P_LO>
 __device__ __forceinline__ void hb_body(HB_PARAMS) {
     __shared__ __align__(128) unsigned char kb[HB_TT * HB_CHUNKS * 16];   // 32 KB bf16 tile
@@ -144,27 +77,8 @@ __device__ __forceinline__ void hb_body(HB_PARAMS) {
     const int* bt = block_tables + (size_t)row * max_blocks_per_seq;
     const unsigned int kb_base = (unsigned int)__cvta_generic_to_shared(kb);
 
-    // 2026-10-09: Stage this head group's queries in the tile buffer, rows past nh zero.
-    const __nv_bfloat16* q_row = Q + ((size_t)row * num_q_heads + head_base) * HB_KVL;
-    for (unsigned int i = tid; i < (unsigned int)HB_HEADS * HB_CHUNKS; i += HB_THREADS) {
-        const unsigned int h = i / HB_CHUNKS, ch = i % HB_CHUNKS;
-        uint4 v = make_uint4(0u, 0u, 0u, 0u);
-        if (h < nh) v = *(const uint4*)(q_row + (size_t)h * HB_KVL + ch * 8u);
-        *(uint4*)(kb + hb_swz(h, ch)) = v;
-    }
-
-    // 2026-10-09: The row's valid extent: one past its last valid entry. The selection is
-    // a prefix of pools plus a tail with -1 holes, so the split covers [0, n_end).
-    unsigned int last = 0;
-    for (unsigned int i = tid; i < sel_width; i += HB_THREADS)
-        if (hb_valid(sel[i], seq_len)) last = i + 1;
-    #pragma unroll
-    for (int o = 16; o > 0; o >>= 1) last = max(last, __shfl_xor_sync(0xffffffffu, last, o));
-    if (lane == 0) s_red[warp] = last;
-    __syncthreads();
-    unsigned int n_end = 0;
-    #pragma unroll
-    for (int w = 0; w < HB_WARPS; w++) n_end = max(n_end, s_red[w]);
+    hb_stage_q(kb, Q + ((size_t)row * num_q_heads + head_base) * HB_KVL, nh, tid);
+    const unsigned int n_end = hb_row_extent(sel, sel_width, seq_len, s_red, tid, warp, lane);
 
     const unsigned int tiles = (n_end + HB_TT - 1) / HB_TT;
     const unsigned int per = (tiles + num_splits - 1) / num_splits;
@@ -185,27 +99,13 @@ __device__ __forceinline__ void hb_body(HB_PARAMS) {
         }
     }
 
-    // 2026-10-09: Loader geometry: thread -> token (tid >> 3) of the tile, FP8 16-byte chunks
-    // (tid & 7) + 8k, k = 0..3.
     const unsigned int ld_tok = tid >> 3;
     const unsigned int ld_ch = tid & 7u;
     uint4 pre[4];
     bool pre_ok = false;
     auto load_tile = [&](unsigned int tile) {
-        const unsigned int slot = tile * HB_TT + ld_tok;
-        const int t = slot < n_end ? sel[slot] : -1;
-        pre_ok = hb_valid(t, seq_len);
-        if (pre_ok) {
-            const unsigned int lb = (unsigned int)t / block_size;
-            const unsigned int p = (unsigned int)t % block_size;
-            const unsigned char* src = KV + (unsigned long long)(unsigned int)bt[lb] * cache_stride_bytes
-                                       + (unsigned long long)p * HB_KVL;
-            #pragma unroll
-            for (int k = 0; k < 4; k++) pre[k] = *(const uint4*)(src + (ld_ch + 8u * k) * 16u);
-        } else {
-            #pragma unroll
-            for (int k = 0; k < 4; k++) pre[k] = make_uint4(0u, 0u, 0u, 0u);
-        }
+        pre_ok = hb_gather(pre, tile * HB_TT + ld_tok, n_end, sel, seq_len, bt, KV, block_size,
+                           cache_stride_bytes, ld_ch);
     };
 
     // 2026-10-09: Softmax state, per head, held identically by the 8 threads of the head's
@@ -228,22 +128,7 @@ __device__ __forceinline__ void hb_body(HB_PARAMS) {
 
     for (unsigned int tile = t_begin; tile < t_end; tile++) {
         __syncthreads();   // 2026-10-09: the previous tile's PV (and the Q fragment loads) are done
-        #pragma unroll
-        for (int k = 0; k < 4; k++) {
-            const unsigned int words[4] = {pre[k].x, pre[k].y, pre[k].z, pre[k].w};
-            uint4 lo, hi;
-            lo.x = hb_e4m3x2_to_bf16x2((unsigned short)(words[0] & 0xffffu));
-            lo.y = hb_e4m3x2_to_bf16x2((unsigned short)(words[0] >> 16));
-            lo.z = hb_e4m3x2_to_bf16x2((unsigned short)(words[1] & 0xffffu));
-            lo.w = hb_e4m3x2_to_bf16x2((unsigned short)(words[1] >> 16));
-            hi.x = hb_e4m3x2_to_bf16x2((unsigned short)(words[2] & 0xffffu));
-            hi.y = hb_e4m3x2_to_bf16x2((unsigned short)(words[2] >> 16));
-            hi.z = hb_e4m3x2_to_bf16x2((unsigned short)(words[3] & 0xffffu));
-            hi.w = hb_e4m3x2_to_bf16x2((unsigned short)(words[3] >> 16));
-            const unsigned int ch = 2u * (ld_ch + 8u * k);
-            *(uint4*)(kb + hb_swz(ld_tok, ch)) = lo;
-            *(uint4*)(kb + hb_swz(ld_tok, ch + 1u)) = hi;
-        }
+        hb_widen(kb, pre, ld_tok, ld_ch);
         if (ld_ch == 0) s_valid[ld_tok] = pre_ok ? 1 : 0;
         if (tile + 1 < t_end) load_tile(tile + 1);
         __syncthreads();
@@ -278,117 +163,15 @@ __device__ __forceinline__ void hb_body(HB_PARAMS) {
         if (sm_h < (unsigned int)HB_HEADS) {
             const float4 sv = *(const float4*)(s_sc + sm_h * HB_S_STRIDE + 4u * sm_sub);
             const float s4[4] = {sv.x, sv.y, sv.z, sv.w};
-            bool ok[4];
-            float tmax = HB_NEG;
-            #pragma unroll
-            for (int e = 0; e < 4; e++) {
-                ok[e] = s_valid[4u * sm_sub + e] != 0 && sm_h < nh;
-                if (ok[e]) tmax = fmaxf(tmax, s4[e]);
-            }
-            #pragma unroll
-            for (int o = 1; o < 8; o <<= 1) tmax = fmaxf(tmax, __shfl_xor_sync(0xffffffffu, tmax, o));
-            const float m_new = fmaxf(m_run, tmax);
-            const float alpha = __expf(m_run - m_new);
-            float psum = 0.0f;
-            unsigned short ph[4], pl[4];
-            #pragma unroll
-            for (int e = 0; e < 4; e++) {
-                const float p = ok[e] ? __expf(s4[e] - m_new) : 0.0f;
-                psum += p;
-                const __nv_bfloat16 hb = __float2bfloat16(p);
-                ph[e] = __bfloat16_as_ushort(hb);
-                pl[e] = P_LO ? __bfloat16_as_ushort(__float2bfloat16(p - __bfloat162float(hb)))
-                             : (unsigned short)0;
-            }
-            #pragma unroll
-            for (int o = 1; o < 8; o <<= 1) psum += __shfl_xor_sync(0xffffffffu, psum, o);
-            l_run = l_run * alpha + psum;
-            m_run = m_new;
-            uint2 hv, lv;
-            hv.x = (unsigned int)ph[0] | ((unsigned int)ph[1] << 16);
-            hv.y = (unsigned int)ph[2] | ((unsigned int)ph[3] << 16);
-            lv.x = (unsigned int)pl[0] | ((unsigned int)pl[1] << 16);
-            lv.y = (unsigned int)pl[2] | ((unsigned int)pl[3] << 16);
-            *(uint2*)(s_ph + sm_h * HB_P_STRIDE + 4u * sm_sub) = hv;
-            if (P_LO) *(uint2*)(s_pl + sm_h * HB_P_STRIDE + 4u * sm_sub) = lv;
-            if (sm_sub == 0) s_alpha[sm_h] = alpha;
+            hb_softmax<P_LO>(s4, s_valid, sm_h, sm_sub, nh, m_run, l_run, s_ph, s_pl, s_alpha);
         }
         __syncthreads();
 
-        // 2026-10-09: PV: warp w owns latent dims [64w, 64w + 64) as four m16 tiles.
-        #pragma unroll
-        for (int j = 0; j < HB_NT; j++) {
-            const float a0 = s_alpha[j * 8 + 2 * c];
-            const float a1 = s_alpha[j * 8 + 2 * c + 1];
-            #pragma unroll
-            for (int i = 0; i < 4; i++) {
-                acc[i][j][0] *= a0;
-                acc[i][j][1] *= a1;
-                acc[i][j][2] *= a0;
-                acc[i][j][3] *= a1;
-            }
-        }
-        #pragma unroll
-        for (int q = 0; q < 2; q++) {
-            unsigned int bh[HB_NT][2], bl[HB_NT][2];
-            #pragma unroll
-            for (int j = 0; j < HB_NT; j++) {
-                const unsigned int pr = (j * 8u + g) * HB_P_STRIDE + 16u * q + 2u * c;
-                bh[j][0] = *(const unsigned int*)(s_ph + pr);
-                bh[j][1] = *(const unsigned int*)(s_ph + pr + 8u);
-                bl[j][0] = P_LO ? *(const unsigned int*)(s_pl + pr) : 0u;
-                bl[j][1] = P_LO ? *(const unsigned int*)(s_pl + pr + 8u) : 0u;
-            }
-            const unsigned int v_tok = 16u * q + (lane & 7u) + ((lane >> 4) & 1u) * 8u;
-            #pragma unroll
-            for (int i = 0; i < 4; i++) {
-                unsigned int a0, a1, a2, a3;
-                hb_ldsm_x4_t(kb_base + hb_swz(v_tok, 8u * warp + 2u * i + ((lane >> 3) & 1u)), a0, a1, a2, a3);
-                #pragma unroll
-                for (int j = 0; j < HB_NT; j++) {
-                    hb_mma(acc[i][j], a0, a1, a2, a3, bh[j][0], bh[j][1]);
-                    if (P_LO) hb_mma(acc[i][j], a0, a1, a2, a3, bl[j][0], bl[j][1]);
-                }
-            }
-        }
+        hb_pv<P_LO>(acc, kb_base, s_ph, s_pl, s_alpha, warp, lane);
     }
 
-    // 2026-10-09: Publish (m, l) per head; a split with no tile publishes l = 0.
-    if (sm_h < (unsigned int)HB_HEADS && sm_sub == 0) {
-        s_l[sm_h] = l_run;
-        if (num_splits > 1 && sm_h < nh) {
-            float* ml = ws_ml + (((size_t)row * num_splits + split) * num_q_heads + head_base + sm_h) * 2u;
-            ml[0] = m_run;
-            ml[1] = l_run;
-        }
-    }
-    __syncthreads();
-    if (num_splits > 1 && t_begin >= t_end) return;   // 2026-10-09: nothing to write; merge skips l == 0
-
-    #pragma unroll
-    for (int j = 0; j < HB_NT; j++) {
-        #pragma unroll
-        for (int e = 0; e < 2; e++) {
-            const unsigned int h = j * 8u + 2u * c + e;
-            if (h >= nh) continue;
-            const float l = s_l[h];
-            const float inv_l = (l > 0.0f) ? (1.0f / l) : 0.0f;
-            #pragma unroll
-            for (int i = 0; i < 4; i++) {
-                #pragma unroll
-                for (int r = 0; r < 2; r++) {
-                    const unsigned int dim = 64u * warp + 16u * i + g + 8u * r;
-                    const float v = acc[i][j][2 * r + e];
-                    if (num_splits > 1) {
-                        ws_o[(((size_t)row * num_splits + split) * num_q_heads + head_base + h) * HB_KVL + dim] = v;
-                    } else {
-                        O[((size_t)row * num_q_heads + head_base + h) * HB_KVL + dim] =
-                            __float2bfloat16((v * v_scale) * inv_l);
-                    }
-                }
-            }
-        }
-    }
+    hb_finish(acc, m_run, l_run, s_l, sm_h, sm_sub, nh, row, split, head_base, t_begin >= t_end,
+              warp, lane, O, ws_o, ws_ml, num_q_heads, v_scale, num_splits);
 }
 
 extern "C" __global__ void __launch_bounds__(HB_THREADS, 1) glm5next_dsa_mla_decode_hb_fp8(HB_PARAMS) {

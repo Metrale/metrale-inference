@@ -381,9 +381,7 @@ impl Glm5NextDsaLayer {
         let t = profile::start();
         let pool = kv_cache.k_pool_ptr(self.attn_layer_idx);
         let kernel = if is_prefill {
-            self.decode_kernel
-                .for_prefill(super::attend::hb_prefill_one_split())
-                .for_prefill_p_hi(super::attend::hb_prefill_p_hi()?)?
+            self.decode_kernel.for_prefill_levers()?
         } else {
             self.decode_kernel
         };

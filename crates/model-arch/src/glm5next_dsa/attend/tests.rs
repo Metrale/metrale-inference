@@ -113,6 +113,7 @@ fn the_score_scale_is_the_latent_width_not_the_v4_cache_width() {
 /// error rather than a silent fallback to the per-head kernel.
 #[test]
 fn the_head_batched_lever_takes_a_split_count_or_nothing() {
+    use super::levers::parse_hb_splits;
     assert_eq!(parse_hb_splits(None), Ok(None));
     assert_eq!(parse_hb_splits(Some("8")), Ok(Some(8)));
     assert_eq!(parse_hb_splits(Some("1")), Ok(Some(1)));
@@ -125,28 +126,51 @@ fn the_head_batched_lever_takes_a_split_count_or_nothing() {
     }
 }
 
+/// 2026-10-14: The prefill switches (P_HI, PIPE) take unset, `0` or `1`; anything else is an
+/// error naming the lever, never a silent off.
+#[test]
+fn a_prefill_switch_takes_zero_one_or_nothing() {
+    use super::levers::parse_switch;
+    assert_eq!(parse_switch("X", None), Ok(false));
+    assert_eq!(parse_switch("X", Some("0")), Ok(false));
+    assert_eq!(parse_switch("X", Some("1")), Ok(true));
+    for bad in ["", "on", "true", " 1", "2"] {
+        let e = parse_switch("METRALE_X", Some(bad)).unwrap_err();
+        assert!(e.starts_with("METRALE_X="), "{bad:?}: {e}");
+    }
+}
+
+/// 2026-10-14: A head-batched kernel at 8 splits with every twin present.
+fn hb8() -> HeadBatched {
+    HeadBatched {
+        decode: KernelHandle(11),
+        decode_p_hi: KernelHandle(13),
+        prefill_pipe: KernelHandle(14),
+        merge: KernelHandle(12),
+        splits: 8,
+        smem: 0,
+    }
+}
+
+fn per_head_only() -> Glm5NextDsaDecodeKernel {
+    Glm5NextDsaDecodeKernel {
+        per_head: KernelHandle(10),
+        head_batched: None,
+    }
+}
+
 /// 2026-10-12: The prefill attend takes one split only when asked and only on the head-batched
 /// kernel; decode keeps the lever's split count, and the per-head kernel stays per-head.
 #[test]
 fn the_prefill_attend_drops_to_one_split_only_when_asked() {
-    let hb = HeadBatched {
-        decode: KernelHandle(11),
-        decode_p_hi: KernelHandle(13),
-        merge: KernelHandle(12),
-        splits: 8,
-    };
     let k = Glm5NextDsaDecodeKernel {
         per_head: KernelHandle(10),
-        head_batched: Some(hb),
+        head_batched: Some(hb8()),
     };
     assert_eq!(k.for_prefill(true).hb_splits(), Some(1));
     assert_eq!(k.for_prefill(false).hb_splits(), Some(8));
     assert_eq!(k.hb_splits(), Some(8));
-    let per_head = Glm5NextDsaDecodeKernel {
-        per_head: KernelHandle(10),
-        head_batched: None,
-    };
-    assert_eq!(per_head.for_prefill(true).hb_splits(), None);
+    assert_eq!(per_head_only().for_prefill(true).hb_splits(), None);
 }
 
 /// 2026-10-12: The P-hi twin replaces the head-batched entry only when asked and present: off,
@@ -154,12 +178,7 @@ fn the_prefill_attend_drops_to_one_split_only_when_asked() {
 /// twin, it is an error rather than the hi + lo entry.
 #[test]
 fn the_prefill_p_hi_twin_is_swapped_in_only_when_asked_and_present() {
-    let hb = HeadBatched {
-        decode: KernelHandle(11),
-        decode_p_hi: KernelHandle(13),
-        merge: KernelHandle(12),
-        splits: 8,
-    };
+    let hb = hb8();
     let k = Glm5NextDsaDecodeKernel {
         per_head: KernelHandle(10),
         head_batched: Some(hb),
@@ -172,7 +191,10 @@ fn the_prefill_p_hi_twin_is_swapped_in_only_when_asked_and_present() {
         .unwrap();
     assert_eq!(off.decode.0, 11);
     let on = k.for_prefill_p_hi(true).ok().unwrap().head_batched.unwrap();
-    assert_eq!((on.decode.0, on.merge.0, on.splits), (13, 12, 8));
+    assert_eq!(
+        (on.decode.0, on.merge.0, on.splits, on.smem),
+        (13, 12, 8, 0)
+    );
     let no_twin = Glm5NextDsaDecodeKernel {
         head_batched: Some(HeadBatched {
             decode_p_hi: KernelHandle(0),
@@ -182,10 +204,67 @@ fn the_prefill_p_hi_twin_is_swapped_in_only_when_asked_and_present() {
     };
     let e = no_twin.for_prefill_p_hi(true).err().unwrap().to_string();
     assert!(e.contains("not in this target"), "{e}");
-    let per_head = Glm5NextDsaDecodeKernel {
+    let e = per_head_only()
+        .for_prefill_p_hi(true)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(e.contains("needs METRALE_GLM_DSA_DECODE_HB"), "{e}");
+}
+
+/// 2026-10-14: The pipelined twin replaces the P-hi entry only when asked, only on top of the
+/// P-hi entry, and carries its dynamic shared memory; off, nothing changes (smem stays 0, the
+/// other entries' launch); every refusal is an error, never a silent P-hi or hi + lo launch.
+#[test]
+fn the_prefill_pipe_twin_is_swapped_in_only_over_p_hi_and_carries_its_smem() {
+    let hb = hb8();
+    let k = Glm5NextDsaDecodeKernel {
         per_head: KernelHandle(10),
-        head_batched: None,
+        head_batched: Some(hb),
     };
-    let e = per_head.for_prefill_p_hi(true).err().unwrap().to_string();
+    let p_hi = k.for_prefill_p_hi(true).ok().unwrap();
+    let off = p_hi
+        .for_prefill_pipe(false)
+        .ok()
+        .unwrap()
+        .head_batched
+        .unwrap();
+    assert_eq!((off.decode.0, off.smem), (13, 0));
+    let on = p_hi
+        .for_prefill_pipe(true)
+        .ok()
+        .unwrap()
+        .head_batched
+        .unwrap();
+    assert_eq!(
+        (on.decode.0, on.merge.0, on.splits, on.smem),
+        (14, 12, 8, PIPE_SMEM_BYTES)
+    );
+    // 2026-10-14: the kernel's PP_SMEM_BYTES: two 32 KB tiles + four 24 x 36 f32 planes.
+    assert_eq!(PIPE_SMEM_BYTES, 79_360);
+    let one = p_hi.for_prefill(true).for_prefill_pipe(true).ok().unwrap();
+    assert_eq!(one.hb_splits(), Some(1));
+
+    let e = k.for_prefill_pipe(true).err().unwrap().to_string();
+    assert!(e.contains("needs METRALE_GLM_DSA_HB_PREFILL_P_HI=1"), "{e}");
+    let no_twin = Glm5NextDsaDecodeKernel {
+        head_batched: Some(HeadBatched {
+            prefill_pipe: KernelHandle(0),
+            ..hb
+        }),
+        ..k
+    };
+    let e = no_twin
+        .for_prefill_p_hi(true)
+        .and_then(|k| k.for_prefill_pipe(true))
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(e.contains("not in this target"), "{e}");
+    let e = per_head_only()
+        .for_prefill_pipe(true)
+        .err()
+        .unwrap()
+        .to_string();
     assert!(e.contains("needs METRALE_GLM_DSA_DECODE_HB"), "{e}");
 }

@@ -30,8 +30,8 @@ mod fixture;
 
 use anyhow::{Context, Result, bail};
 use fixture::{
-    BLOCK, BLOCKS_PER_SEQ, Case, KVL, Lcg, Pool, VARIANTS, View, WIDTH, bf16s, make_case,
-    make_pool, read, reference, up_i32,
+    BLOCK, KVL, Lcg, Pool, TOL_ULP, VARIANTS, View, WIDTH, bf16s, launch_hb_entry, make_case,
+    make_edge_case, make_pool, read, reference, worst_ulp,
 };
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
@@ -39,13 +39,6 @@ use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 const SAMPLES: usize = 41;
 const PER_SAMPLE: usize = 5;
-/// 2026-10-09: Heads per CTA of the head-batched entry.
-const HB_HEADS: usize = 24;
-/// 2026-10-09: Allowed distance from the f64 reference, in BF16 ulps (2^-8 relative) of the
-/// head's largest |O|. The output itself rounds to half an ulp of each value; the rest is the
-/// fp32 summation and the hi + lo P split. The per-head kernel measures the same (printed).
-const TOL_ULP: f64 = 2.0;
-
 #[derive(Clone, Copy)]
 struct Kernels {
     old: KernelHandle,
@@ -73,7 +66,7 @@ fn launch_old(
         .arg_ptr(v.sl)
         .arg_ptr(v.sel)
         .arg_u32(WIDTH as u32)
-        .arg_u32(BLOCKS_PER_SEQ as u32)
+        .arg_u32(v.bps as u32)
         .arg_u32(v.heads as u32)
         .arg_u32(1)
         .arg_u32(KVL as u32)
@@ -94,76 +87,7 @@ fn launch_hb(
     ws: (DevicePtr, DevicePtr),
     splits: usize,
 ) -> Result<()> {
-    launch_hb_entry(g, k.hb, k.merge, cache, v, out, ws, splits)
-}
-
-/// 2026-10-12: [`launch_hb`] on the given head-batched entry (`hb` or its P-hi twin).
-#[allow(clippy::too_many_arguments)]
-fn launch_hb_entry(
-    g: &dyn GpuBackend,
-    entry: KernelHandle,
-    merge: KernelHandle,
-    cache: DevicePtr,
-    v: View,
-    out: DevicePtr,
-    ws: (DevicePtr, DevicePtr),
-    splits: usize,
-) -> Result<()> {
-    KernelLaunch::new(g, entry)
-        .grid([
-            splits as u32,
-            v.rows as u32,
-            v.heads.div_ceil(HB_HEADS) as u32,
-        ])
-        .block([256, 1, 1])
-        .arg_ptr(v.q)
-        .arg_ptr(cache)
-        .arg_ptr(out)
-        .arg_ptr(v.bt)
-        .arg_ptr(v.sl)
-        .arg_ptr(v.sel)
-        .arg_ptr(ws.0)
-        .arg_ptr(ws.1)
-        .arg_u32(WIDTH as u32)
-        .arg_u32(BLOCKS_PER_SEQ as u32)
-        .arg_u32(v.heads as u32)
-        .arg_u32(BLOCK as u32)
-        .arg_f32((KVL as f32).powf(-0.5))
-        .arg_f32(1.0)
-        .arg_f32(1.0)
-        .arg_u64((BLOCK * KVL) as u64)
-        .arg_u32(splits as u32)
-        .launch(0)?;
-    if splits > 1 {
-        KernelLaunch::new(g, merge)
-            .grid([v.heads as u32, v.rows as u32, 1])
-            .block([128, 1, 1])
-            .arg_ptr(ws.0)
-            .arg_ptr(ws.1)
-            .arg_ptr(v.sl)
-            .arg_ptr(out)
-            .arg_u32(v.heads as u32)
-            .arg_u32(splits as u32)
-            .arg_f32(1.0)
-            .launch(0)?;
-    }
-    Ok(())
-}
-
-/// 2026-10-09: Worst distance from the reference over the first `rows_checked` rows, in BF16
-/// ulps of each head's largest |O|.
-fn worst_ulp(c: &Case, pool: &Pool, out: &[f32], rows_checked: usize) -> f64 {
-    let mut worst = 0f64;
-    for r in 0..rows_checked {
-        for h in 0..c.heads {
-            let o = reference(c, pool, r, h);
-            let ulp = o.iter().fold(0f64, |a, x| a.max(x.abs())).max(1e-30) / 256.0;
-            for (i, x) in o.iter().enumerate() {
-                worst = worst.max((out[(r * c.heads + h) * KVL + i] as f64 - x).abs() / ulp);
-            }
-        }
-    }
-    worst
+    launch_hb_entry(g, k.hb, 0, k.merge, cache, v, out, ws, splits)
 }
 
 /// 2026-10-09: Fraction of outputs bit-equal to the per-head kernel's.
@@ -271,7 +195,7 @@ fn main() -> Result<()> {
         launch_old(g, &k, pool.dev, c.view(0, 0, rows), out_old)?;
         let old_bytes = read(g, out_old, n_out)?;
         let checked = rows.min(2);
-        let e_old = worst_ulp(&c, &pool, &bf16s(&old_bytes), checked);
+        let e_old = worst_ulp(&c, &pool, &bf16s(&old_bytes), 0..checked);
         println!(
             "heads {heads} rows {rows} valid {valid}: old {:7.1} ({:.1}-{:.1}) err {e_old:.2}",
             t_old.0, t_old.1, t_old.2
@@ -298,7 +222,7 @@ fn main() -> Result<()> {
             })?;
             launch_hb(g, &k, pool.dev, c.view(0, 0, rows), out, ws, splits)?;
             let all = read(g, out, n_out)?;
-            let e = worst_ulp(&c, &pool, &bf16s(&all), checked);
+            let e = worst_ulp(&c, &pool, &bf16s(&all), 0..checked);
             println!(
                 "    splits {splits:2}: {:7.1} ({:.1}-{:.1}) err {e:.2} eq {:.1}%  x{:.2}",
                 t.0,
@@ -326,6 +250,7 @@ fn main() -> Result<()> {
                 launch_hb_entry(
                     g,
                     k.hb_phi,
+                    0,
                     k.merge,
                     pool.dev,
                     c.view(i % VARIANTS, 0, rows),
@@ -337,6 +262,7 @@ fn main() -> Result<()> {
             launch_hb_entry(
                 g,
                 k.hb_phi,
+                0,
                 k.merge,
                 pool.dev,
                 c.view(0, 0, rows),
@@ -345,7 +271,7 @@ fn main() -> Result<()> {
                 splits,
             )?;
             let all_phi = read(g, out, n_out)?;
-            let e_phi = worst_ulp(&c, &pool, &bf16s(&all_phi), checked);
+            let e_phi = worst_ulp(&c, &pool, &bf16s(&all_phi), 0..checked);
             println!(
                 "    phi    {splits:2}: {:7.1} ({:.1}-{:.1}) err {e_phi:.2} eq-hb {:.1}%  x{:.2} (vs hb x{:.2})",
                 t_phi.0,
@@ -363,6 +289,7 @@ fn main() -> Result<()> {
                 launch_hb_entry(
                     g,
                     k.hb_phi,
+                    0,
                     k.merge,
                     pool.dev,
                     c.view(0, r, 1),
@@ -389,28 +316,11 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// 2026-10-09: Row 0 all -1 (exact zeros), row 1 `seq_len` 0 (untouched), row 2 every entry
-/// at or past `seq_len` (zeros), row 3 duplicates and out-of-range entries mixed in (vs the
-/// reference, which attends a duplicate twice). Returns whether any failed.
+/// 2026-10-09: The edge rows of [`fixture::make_edge_case`]: all -1 (exact zeros), `seq_len` 0
+/// (untouched), every entry past `seq_len` (zeros), duplicates and out-of-range entries (vs the
+/// reference). Returns whether any failed.
 fn edge_cases(g: &dyn GpuBackend, k: &Kernels, pool: &Pool, rng: &mut Lcg) -> Result<bool> {
-    let mut c = make_case(g, rng, 22, 4, 300, 4.0)?;
-    let row = |r: usize| r * WIDTH..(r + 1) * WIDTH;
-    c.sel[0][row(0)].fill(-1);
-    c.sl[1] = 0;
-    let sl2 = c.sl[2];
-    c.sel[0][row(2)]
-        .iter_mut()
-        .filter(|x| **x >= 0)
-        .for_each(|x| *x = sl2 + 3);
-    for j in 0..200 {
-        match j % 5 {
-            0 => c.sel[0][3 * WIDTH + j] = 17,
-            1 => c.sel[0][3 * WIDTH + j] = c.sl[3] + j as i32,
-            _ => {}
-        }
-    }
-    c.sel_d[0] = up_i32(g, &c.sel[0])?;
-    c.sl_d = up_i32(g, &c.sl)?;
+    let c = make_edge_case(g, rng)?;
     let per = 22 * KVL * 2;
     let mut failed = false;
     for splits in [1usize, 8] {
