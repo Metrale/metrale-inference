@@ -136,7 +136,8 @@ impl Glm5NextKdaLayer {
     }
 
     /// 2026-10-14: One slab's fused prepare: chunks `c0 .. c0 + n` of rows `0..k`, the stage at
-    /// `conv_out` row 0, the factors in the scratch `kda_chunk64_prepare` writes.
+    /// `conv_out` row 0, the factors in the scratch `kda_chunk64_prepare` writes;
+    /// `kda_chunk64_prepare_conv_graw` at [`GateAt::Prepare`].
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn chunk64_prepare_conv(
         &self,
@@ -147,12 +148,18 @@ impl Glm5NextKdaLayer {
         state: &KdaSeqState,
         ws: &Glm5NextKdaWorkspace,
         pack: Pack,
+        gate: GateAt,
         stream: u64,
     ) -> Result<()> {
         let c = &self.cfg;
         let (qkv, cd, h) = (c.qkv_dim(), c.conv_dim(), c.heads);
         let (xq, xk, xv, in_stride) = self.chunk64_conv_inputs(k, ws, pack);
-        KernelLaunch::new(gpu, self.kernels.seq.chunk64_prepare_conv)
+        let s = &self.kernels.seq;
+        let kernel = match gate {
+            GateAt::Kernel => s.chunk64_prepare_conv,
+            GateAt::Prepare => s.chunk64_prepare_conv_graw,
+        };
+        let l = KernelLaunch::new(gpu, kernel)
             .grid([n as u32, h as u32, 1])
             .block([CHUNK64_PREP_THREADS, 1, 1])
             .shared_mem(CHUNK64_PREP_SMEM)
@@ -165,8 +172,8 @@ impl Glm5NextKdaLayer {
             .arg_ptr(DevicePtr::NULL)
             .arg_u32(c.conv_kernel as u32)
             .arg_f32(c.l2_eps)
-            .arg_ptr(ws.conv_out)
-            .arg_ptr(ws.gate)
+            .arg_ptr(ws.conv_out);
+        self.gate_args(l, ws, gate)
             .arg_ptr(ws.beta)
             .arg_ptr(ws.chunk_u)
             .arg_ptr(ws.chunk_w)

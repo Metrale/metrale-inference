@@ -153,6 +153,10 @@ pub struct KdaSeqKernels {
     /// conv inside its prepare (`chunk64_conv.rs`).
     pub chunk64_prepare_conv: KernelHandle,
     pub conv_window_parts: KernelHandle,
+    /// 2026-10-14: `kda_chunk64_prepare_graw` and `kda_chunk64_prepare_conv_graw`
+    /// (`kda_chunk64_prepare.cu`): the two prepares with the forget gate inside (`gate_at.rs`).
+    pub chunk64_prepare_graw: KernelHandle,
+    pub chunk64_prepare_conv_graw: KernelHandle,
 }
 
 impl KdaSeqKernels {
@@ -178,6 +182,12 @@ impl KdaSeqKernels {
             chunk64_scan: k(gpu, "kda_chunk64", "kda_chunk64_scan"),
             chunk64_prepare_conv: k(gpu, "kda_chunk64_prepare", "kda_chunk64_prepare_conv"),
             conv_window_parts: k(gpu, "kda_conv_tokens", "causal_conv1d_window_advance_parts"),
+            chunk64_prepare_graw: k(gpu, "kda_chunk64_prepare", "kda_chunk64_prepare_graw"),
+            chunk64_prepare_conv_graw: k(
+                gpu,
+                "kda_chunk64_prepare",
+                "kda_chunk64_prepare_conv_graw",
+            ),
         }
     }
 
