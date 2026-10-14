@@ -1540,7 +1540,7 @@ would_catch_earlier = "one SSOT for the multi-rank stream remap (now Transformer
 effort_hours = 1.0
 transferability = "any engine that remaps a forward to another stream: every follow-on launch over the forward's outputs must use the remapped stream"
 links = { pr = "", commit = "", evidence = "" }
-notes = "Single-rank serves keep the caller's stream (unchanged launches); the other callers (worker loop, spans worker, decode) already pass the default stream, so the change is a no-op there. Not fixed: rank 0's multi-rank spans prefill never clamps while the workers do (spans.rs), and the eager drafter prefill (drafter_prefill.rs) may read mtp_prefill_hidden on the prefill stream without ordering on multi-rank."
+notes = "Single-rank serves keep the caller's stream (unchanged launches); the other callers (worker loop, spans worker, decode) already pass the default stream, so the change is a no-op there. Not fixed: rank 0's multi-rank spans prefill never clamps while the workers do (spans.rs), and the eager drafter prefill (drafter_prefill.rs) may read mtp_prefill_hidden on the prefill stream without ordering on multi-rank. Both fixed since: gb10x3-glm53-spans-rank0-ssm-clamp and gb10x3-glm53-eager-drafter-forward-stream."
 
 [[lever]]
 id = "gb10x3-glm53-sp-subchunk-pipeline"
@@ -1637,3 +1637,27 @@ effort_hours = 0.5
 transferability = "any multi-rank engine whose rank 0 and workers run separate wrappers around a shared pass"
 links = { pr = "", commit = "", evidence = "" }
 notes = "One helper (spans_normalize) now runs after each sub-batch on rank 0 and after the pass on the workers, on the default stream, logging a failure as the workers always did. The clamp only rescales a state whose norm passes the bound, so prompts below it are unchanged."
+
+[[lever]]
+id = "gb10x3-glm53-eager-drafter-forward-stream"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes; any multi-rank MTP serve"
+recipe_or_tier = "MTP on a multi-rank serve with the eager drafter prefill (the default; no lever: a correctness fix)"
+symptom = "the eager drafter prefill reads the whole-prompt hidden capture on the scheduler's prefill stream while the prefill and its capture copy ran on the default stream, with no event between them"
+diagnosis_tool = "code read (drafter_prefill.rs, impl_forward.rs)"
+root_cause_class = "wiring-defect"
+lever_type = "code"
+lkb_effect = "none"
+parity_tier_kept = "bit-identical on single-rank serves (forward_stream returns the caller's stream)"
+per_rung = []
+verdict = "held"
+verdict_reason = "written without a GPU; an nsys stream check of the drafter prefill and an MTP acceptance A/B on a multi-rank serve are pending"
+failure_mode = "the Model wrappers pass try_eager_drafter_prefill the caller's stream, but a multi-rank forward runs on the default stream (forward_stream), so the drafter could read capture rows before their copy landed"
+caught_by = "audit of the forward-stream clamp fix"
+time_lost_hours = 0
+would_catch_earlier = "the same SSOT as the clamp fix: every follow-on launch over the forward's outputs takes forward_stream"
+effort_hours = 0.5
+transferability = "any engine that remaps a forward to another stream"
+links = { pr = "", commit = "", evidence = "" }
+notes = "The batched spans path already passes the default stream; the change is in the one place every wrapper reaches."
