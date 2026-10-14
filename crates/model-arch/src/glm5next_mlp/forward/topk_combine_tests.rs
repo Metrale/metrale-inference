@@ -7,12 +7,12 @@
 //! Owner: model-arch (GLM-5.3 MLP).
 //! Invariants: none beyond the types.
 
-use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
+use metrale_gpu_runtime::gpu::mock::{MockArg, MockGpuBackend};
 use metrale_gpu_runtime::gpu::{GpuBackend, KernelHandle};
 
 use super::{
-    COMBINE_VEC8_MAX_K, ROUTER_RANK_MAX_EXPERTS, combine_blocks_per_row, combine_launch,
-    combine_with, topk_launch,
+    COMBINE_VEC8_MAX_K, CombinePtrs, CombineRing, ROUTER_RANK_MAX_EXPERTS, combine,
+    combine_blocks_per_row, combine_launch, combine_with, topk_launch,
 };
 use crate::glm5next_mlp::forward::Glm5NextMlpWorkspace;
 use crate::glm5next_mlp::{Glm5NextMlpConfig, Glm5NextMlpKernels};
@@ -182,8 +182,8 @@ fn vec8_launch_passes_the_scalar_arguments() {
     let out = gpu.alloc(4 * c.hidden * 2).unwrap();
     for indexed in [false, true] {
         let before = gpu.launches_snapshot().len();
-        combine_with(&gpu, &k, &c, &ws, out, 3, indexed, (true, false), 7).unwrap();
-        combine_with(&gpu, &k, &c, &ws, out, 3, indexed, (true, true), 7).unwrap();
+        combine_with(&gpu, &k, &c, &ws, out, (0, 3), indexed, (true, false), 7).unwrap();
+        combine_with(&gpu, &k, &c, &ws, out, (0, 3), indexed, (true, true), 7).unwrap();
         let l = gpu.launches_snapshot();
         let (base, vec) = (&l[before], &l[before + 1]);
         let want = if indexed {
@@ -197,4 +197,122 @@ fn vec8_launch_passes_the_scalar_arguments() {
         assert_eq!(base.args, vec.args);
         assert_eq!(base.args.len(), if indexed { 7 } else { 6 });
     }
+}
+
+/// 2026-10-14: A shard's launch starts at its first row: every per-row buffer `lo` rows in
+/// (slots of `top_k` FP32 weights and i32 perm entries, rows of `hidden` BF16), except the
+/// indexed kernel's routed rows, which `token_to_perm` names absolutely.
+#[test]
+fn shard_buffers_start_at_the_shard_row() {
+    let base = CombinePtrs {
+        expert_out: DevicePtr(0x10_0000),
+        token_to_perm: DevicePtr(0x20_0000),
+        wts: DevicePtr(0x30_0000),
+        shared: DevicePtr(0x40_0000),
+        out: DevicePtr(0x50_0000),
+    };
+    assert_eq!(base.from_row(0, 4096, 8, false), base);
+    assert_eq!(base.from_row(0, 4096, 8, true), base);
+    let want = |eo| CombinePtrs {
+        expert_out: DevicePtr(eo),
+        token_to_perm: DevicePtr(0x20_0000 + 3 * 8 * 4),
+        wts: DevicePtr(0x30_0000 + 3 * 8 * 4),
+        shared: DevicePtr(0x40_0000 + 3 * 4096 * 2),
+        out: DevicePtr(0x50_0000 + 3 * 4096 * 2),
+    };
+    assert_eq!(
+        base.from_row(3, 4096, 8, false),
+        want(0x10_0000 + 3 * 8 * 4096 * 2)
+    );
+    assert_eq!(base.from_row(3, 4096, 8, true), want(0x10_0000));
+}
+
+/// 2026-10-14: The ring is refused unless its shards cover every row exactly once with one
+/// event each; any order of a tiling is accepted.
+#[test]
+fn ring_shards_must_tile_the_rows() {
+    let ev = [1u64, 2, 3];
+    let ok = |s: &[(usize, usize)]| {
+        CombineRing {
+            shards: s,
+            events: &ev[..s.len()],
+        }
+        .check(6)
+    };
+    assert!(ok(&[(2, 4), (4, 6), (0, 2)]).is_ok());
+    assert!(ok(&[(0, 6)]).is_ok());
+    assert!(ok(&[(0, 2), (2, 2), (2, 6)]).is_ok());
+    for bad in [
+        &[(0, 2), (3, 6)][..],
+        &[(0, 3), (2, 6)],
+        &[(0, 2), (2, 5)],
+        &[(0, 2), (2, 7)],
+        &[(0, 4), (4, 2), (2, 6)],
+    ] {
+        let e = ok(bad).unwrap_err().to_string();
+        assert!(e.contains("do not tile 0..6"), "{bad:?}: {e}");
+    }
+    let short = CombineRing {
+        shards: &[(0, 3), (3, 6)],
+        events: &ev[..1],
+    };
+    assert!(
+        short
+            .check(6)
+            .unwrap_err()
+            .to_string()
+            .contains("2 shards but 1 events")
+    );
+}
+
+/// 2026-10-14: With a ring, one launch per non-empty shard in the ring's order, each the one
+/// launch's kernel, block and stream on the shard's rows and buffers; without, the one launch.
+#[test]
+fn ring_combine_launches_each_shard_at_its_rows() {
+    let gpu = MockGpuBackend::new();
+    let c = cfg(288);
+    let k = combine_kernels([VEC8, VEC8_IDX]);
+    let ws = Glm5NextMlpWorkspace::new(&gpu, &c, 8).unwrap();
+    let out = gpu.alloc(8 * c.hidden * 2).unwrap();
+    let shards = [(3usize, 5usize), (5, 5), (0, 3), (5, 6)];
+    let ring = CombineRing {
+        shards: &shards,
+        events: &[11, 12, 13, 14],
+    };
+    for indexed in [false, true] {
+        let before = gpu.launches_snapshot().len();
+        combine(&gpu, &k, &c, &ws, out, 6, indexed, None, 7).unwrap();
+        combine(&gpu, &k, &c, &ws, out, 6, indexed, Some(&ring), 7).unwrap();
+        let l = &gpu.launches_snapshot()[before..];
+        assert_eq!(l.len(), 4, "the empty shard launches nothing");
+        let (one, parts) = (&l[0], &l[1..]);
+        assert_eq!(one.grid[0], 6);
+        let base = CombinePtrs {
+            expert_out: ws.expert_out,
+            token_to_perm: ws.token_to_perm,
+            wts: ws.wts,
+            shared: ws.shared_out,
+            out,
+        };
+        for (p, &(lo, hi)) in parts.iter().zip([(3usize, 5usize), (0, 3), (5, 6)].iter()) {
+            assert_eq!(
+                (p.func, p.block, p.stream),
+                (one.func, one.block, one.stream)
+            );
+            assert_eq!(p.grid, [(hi - lo) as u32, one.grid[1], 1]);
+            let s = base.from_row(lo, c.hidden, c.top_k, indexed);
+            let mut want = vec![MockArg::Buffer(s.expert_out)];
+            if indexed {
+                want.push(MockArg::Buffer(s.token_to_perm));
+            }
+            want.extend([s.wts, s.shared, s.out].map(MockArg::Buffer));
+            assert_eq!(&p.args[..want.len()], &want[..], "shard {lo}..{hi}");
+            assert_eq!(p.args[want.len()..], one.args[want.len()..]);
+        }
+    }
+    let bad = CombineRing {
+        shards: &[(0, 3)],
+        events: &[1],
+    };
+    assert!(combine(&gpu, &k, &c, &ws, out, 6, false, Some(&bad), 7).is_err());
 }

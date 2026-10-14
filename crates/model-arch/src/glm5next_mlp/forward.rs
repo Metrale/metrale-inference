@@ -39,6 +39,7 @@ use launch::swiglu;
 pub(crate) use pieces::check_pieces;
 pub use route::{ExpertRoute, expert_route, grouped_row_floor};
 pub use shared_fork::{SHARED_FORK_MAX_ROWS, shared_fork_rows};
+pub use topk_combine::{CombinePtrs, CombineRing};
 pub use w4a4_dense::forward_dense_w4a4;
 pub use w4a4_dense_grouped::DenseGroupedTables;
 pub use w4a4_grouped::{
@@ -344,14 +345,28 @@ pub fn forward_moe(
     capturing: bool,
     stream: u64,
 ) -> Result<()> {
-    forward_moe_pieces(gpu, k, cfg, w, x, out, rows, &[rows], ws, capturing, stream)
+    forward_moe_pieces(
+        gpu,
+        k,
+        cfg,
+        w,
+        x,
+        out,
+        rows,
+        &[rows],
+        ws,
+        capturing,
+        None,
+        stream,
+    )
 }
 
 /// 2026-10-09: [`forward_moe`] with `row_pieces` splitting the `rows` rows into consecutive
 /// pieces: the router and the shared expert, whose arithmetic depends on the row count, run
 /// once per piece as a `forward_moe` of that piece's row count runs them (`pieces.rs`); the
 /// top-k, the routed experts and the combine run once over all rows. The multi-sequence
-/// prefill passes one piece per sequence; `forward_moe` passes `[rows]`.
+/// prefill passes one piece per sequence; `forward_moe` passes `[rows]`. 2026-10-14: `ring`
+/// cuts the combine into shard launches with an event after each (`CombineRing`).
 #[allow(clippy::too_many_arguments)]
 pub fn forward_moe_pieces(
     gpu: &dyn GpuBackend,
@@ -364,6 +379,7 @@ pub fn forward_moe_pieces(
     row_pieces: &[usize],
     ws: &Glm5NextMlpWorkspace,
     capturing: bool,
+    ring: Option<&CombineRing<'_>>,
     stream: u64,
 ) -> Result<()> {
     if rows == 0 || rows > ws.max_rows {
@@ -482,7 +498,7 @@ pub fn forward_moe_pieces(
     let t = profile::start();
     // 2026-09-25: One combine launch for all rows (row = `blockIdx.x`), reading the routed rows
     // in expert-sorted order after the grouped GEMM (`topk_combine`).
-    topk_combine::combine(gpu, k, cfg, ws, out, rows, sorted_out, stream)?;
+    topk_combine::combine(gpu, k, cfg, ws, out, rows, sorted_out, ring, stream)?;
     profile::end(profile::MOE_COMBINE, t, gpu, stream);
     Ok(())
 }

@@ -136,7 +136,7 @@ impl Glm5NextLayer {
                 }
                 Prim::Mlp(s) => {
                     let sub = &subs[s];
-                    self.mlp_compute(sub.normed, ffn_out, sub.k, &[sub.k], ctx, stream)?;
+                    self.mlp_compute(sub.normed, ffn_out, sub.k, &[sub.k], None, ctx, stream)?;
                 }
                 Prim::Rs(kind, s) => {
                     let sub = &subs[s];

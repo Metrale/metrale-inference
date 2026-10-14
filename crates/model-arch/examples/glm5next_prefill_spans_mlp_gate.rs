@@ -244,7 +244,7 @@ fn main() -> Result<()> {
         )?;
         // 2026-10-09: The packed call as the pass makes it: one router launch per sequence.
         forward_moe_pieces(
-            &gpu, &k, &c, &site, x, out_all, total, rows, &ws, false, stream,
+            &gpu, &k, &c, &site, x, out_all, total, rows, &ws, false, None, stream,
         )?;
         gpu.synchronize(stream)?;
         let all = read(&gpu, out_all, total * row_bytes)?;
@@ -304,7 +304,7 @@ fn main() -> Result<()> {
         })?;
         let together = time(&mut || {
             forward_moe_pieces(
-                &gpu, &k, &c, &site, x, out_all, total, rows, &ws, false, stream,
+                &gpu, &k, &c, &site, x, out_all, total, rows, &ws, false, None, stream,
             )
         })?;
         println!(

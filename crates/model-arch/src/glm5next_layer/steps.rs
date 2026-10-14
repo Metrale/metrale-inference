@@ -292,7 +292,7 @@ impl Glm5NextLayer {
         stream: u64,
         tap: Option<&dump::Tap<'_>>,
     ) -> Result<Option<metrale_comm::PeerPartials>> {
-        self.mlp_compute(normed, out, rows, row_pieces, ctx, stream)?;
+        self.mlp_compute(normed, out, rows, row_pieces, None, ctx, stream)?;
         dump::put(tap, dump::Point::MlpOut, out)?;
         // 2026-09-25: One all-reduce covers both partial sums, the EP-split routed experts and
         // the TP-split shared expert: `forward_moe` adds them together before returning.
@@ -315,17 +315,25 @@ impl Glm5NextLayer {
 
     /// 2026-10-12: The MLP launches of [`Self::mlp_forward`] without its all-reduce: `out`
     /// holds this rank's partial (or the whole output when no reduce is needed). SP-mHC
-    /// (`forward_rows_sp`) reduce-scatters it instead.
+    /// (`forward_rows_sp`) reduce-scatters it instead. 2026-10-14: `ring`, the routed combine's
+    /// shard launches (`mlp_ring`); a dense site refuses one.
+    #[allow(clippy::too_many_arguments)]
     pub(in crate::glm5next_layer) fn mlp_compute(
         &self,
         normed: DevicePtr,
         out: DevicePtr,
         rows: usize,
         row_pieces: &[usize],
+        ring: Option<&crate::glm5next_mlp::forward::CombineRing<'_>>,
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<()> {
         crate::glm5next_mlp::forward::check_pieces(rows, row_pieces)?;
+        anyhow::ensure!(
+            ring.is_none() || matches!(self.mlp, Glm5NextMlpSite::Moe(_)),
+            "GLM layer {}: a combine ring on a dense MLP",
+            self.layer_idx
+        );
         let t_dense = matches!(self.mlp, Glm5NextMlpSite::Dense(_))
             .then(profile::start)
             .flatten();
@@ -360,6 +368,7 @@ impl Glm5NextLayer {
                 &self.mlp_ws,
                 // 2026-10-09: A capture cannot read the expert histogram back to the host.
                 ctx.graph_capture,
+                ring,
                 stream,
             )?,
         }

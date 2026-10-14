@@ -14,6 +14,9 @@
 //! - 2026-10-14: `METRALE_GLM_MOE_COMBINE_VEC8=1` swaps in the `_vec8` combine, eight elements
 //!   per thread with the same per-element expressions (`glm5next_ffn.cu`); it errors where it
 //!   cannot run.
+//! - 2026-10-14: [`CombineRing`] (`METRALE_GLM_MOE_COMBINE_RING=1`, read by the SP-mHC MLP
+//!   section) cuts the combine into one launch per row shard: a row is computed from that row's
+//!   bytes alone (grid x is the row), so the shards' launches write the one launch's bytes.
 
 use anyhow::{Result, bail};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
@@ -137,10 +140,84 @@ pub(super) fn combine_launch(
     ))
 }
 
+/// 2026-10-14: The buffers one combine launch reads and writes, at its first row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CombinePtrs {
+    pub expert_out: DevicePtr,
+    pub token_to_perm: DevicePtr,
+    pub wts: DevicePtr,
+    pub shared: DevicePtr,
+    pub out: DevicePtr,
+}
+
+impl CombinePtrs {
+    /// 2026-10-14: The buffers of a launch whose row 0 is row `lo` of the launch at `self`:
+    /// every per-row buffer moves `lo` rows, except the indexed kernel's `expert_out`, whose rows
+    /// `token_to_perm` names absolutely. Row `t` of that launch is then row `lo + t` of this one,
+    /// the same expressions on the same bytes.
+    pub fn from_row(self, lo: usize, hidden: usize, top_k: usize, indexed: bool) -> Self {
+        let (row, slots) = (hidden * 2, lo * top_k);
+        Self {
+            expert_out: if indexed {
+                self.expert_out
+            } else {
+                self.expert_out.offset(slots * row)
+            },
+            token_to_perm: self.token_to_perm.offset(slots * 4),
+            wts: self.wts.offset(slots * 4),
+            shared: self.shared.offset(lo * row),
+            out: self.out.offset(lo * row),
+        }
+    }
+}
+
+/// 2026-10-14: `METRALE_GLM_MOE_COMBINE_RING=1`: the combine as one launch per row shard of
+/// `shards`, in that order, each followed by `events[i]` recorded on the compute stream, so a
+/// ring reduce-scatter can send shard `i` while the later shards combine.
+#[derive(Clone, Copy, Debug)]
+pub struct CombineRing<'a> {
+    pub shards: &'a [(usize, usize)],
+    pub events: &'a [u64],
+}
+
+impl CombineRing<'_> {
+    /// 2026-10-14: Errors unless there is one event per shard and the shards, in any order,
+    /// tile `0..rows` (every row combined exactly once, as by the one launch).
+    pub fn check(&self, rows: usize) -> Result<()> {
+        if self.shards.len() != self.events.len() {
+            bail!(
+                "MoE combine ring: {} shards but {} events",
+                self.shards.len(),
+                self.events.len()
+            );
+        }
+        let mut sorted = self.shards.to_vec();
+        sorted.sort_unstable();
+        let mut at = 0;
+        for (lo, hi) in sorted {
+            if lo != at || hi < lo {
+                bail!(
+                    "MoE combine ring: shards {:?} do not tile 0..{rows}",
+                    self.shards
+                );
+            }
+            at = hi;
+        }
+        if at != rows {
+            bail!(
+                "MoE combine ring: shards {:?} do not tile 0..{rows}",
+                self.shards
+            );
+        }
+        Ok(())
+    }
+}
+
 /// 2026-10-10: `out = shared + sum_k wts[k] * routed[k]` for `rows` rows. After the grouped GEMM
 /// (`indexed`) the routed rows are in expert-sorted order and `glm5next_moe_combine_indexed`
 /// finds each slot's row through `token_to_perm`. 2026-10-14: the kernel and grid from
-/// [`combine_launch`] under the two combine levers.
+/// [`combine_launch`] under the two combine levers; with `ring`, one launch per shard
+/// ([`CombineRing`]).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn combine(
     gpu: &dyn GpuBackend,
@@ -150,17 +227,26 @@ pub(super) fn combine(
     out: DevicePtr,
     rows: usize,
     indexed: bool,
+    ring: Option<&CombineRing<'_>>,
     stream: u64,
 ) -> Result<()> {
     let levers = (
         crate::glm5next_layer::moe_combine_split(),
         crate::glm5next_layer::moe_combine_vec8(),
     );
-    combine_with(gpu, k, cfg, ws, out, rows, indexed, levers, stream)
+    let Some(ring) = ring else {
+        return combine_with(gpu, k, cfg, ws, out, (0, rows), indexed, levers, stream);
+    };
+    ring.check(rows)?;
+    for (&shard, &ev) in ring.shards.iter().zip(ring.events) {
+        combine_with(gpu, k, cfg, ws, out, shard, indexed, levers, stream)?;
+        gpu.record_event(ev, stream)?;
+    }
+    Ok(())
 }
 
-/// 2026-10-14: [`combine`] with its `(split, vec8)` levers passed in. Every kernel it picks
-/// takes the same arguments.
+/// 2026-10-14: [`combine`] of rows `lo..hi` with its `(split, vec8)` levers passed in (no launch
+/// when the range is empty). Every kernel it picks takes the same arguments.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn combine_with(
     gpu: &dyn GpuBackend,
@@ -168,26 +254,37 @@ pub(super) fn combine_with(
     cfg: &Glm5NextMlpConfig,
     ws: &Glm5NextMlpWorkspace,
     out: DevicePtr,
-    rows: usize,
+    (lo, hi): (usize, usize),
     indexed: bool,
     (split, vec8): (bool, bool),
     stream: u64,
 ) -> Result<()> {
-    let bufs = [ws.expert_out, ws.shared_out, out];
+    if hi <= lo {
+        return Ok(());
+    }
+    let p = CombinePtrs {
+        expert_out: ws.expert_out,
+        token_to_perm: ws.token_to_perm,
+        wts: ws.wts,
+        shared: ws.shared_out,
+        out,
+    }
+    .from_row(lo, cfg.hidden, cfg.top_k, indexed);
+    let bufs = [p.expert_out, p.shared, p.out];
     let (func, y) = combine_launch(k, cfg, indexed, split, vec8, bufs)?;
     let launch = KernelLaunch::new(gpu, func)
-        .grid([rows as u32, y, 1])
+        .grid([(hi - lo) as u32, y, 1])
         .block([ACT_BLOCK, 1, 1])
-        .arg_ptr(ws.expert_out);
+        .arg_ptr(p.expert_out);
     let launch = if indexed {
-        launch.arg_ptr(ws.token_to_perm)
+        launch.arg_ptr(p.token_to_perm)
     } else {
         launch
     };
     launch
-        .arg_ptr(ws.wts)
-        .arg_ptr(ws.shared_out)
-        .arg_ptr(out)
+        .arg_ptr(p.wts)
+        .arg_ptr(p.shared)
+        .arg_ptr(p.out)
         .arg_u32(cfg.hidden as u32)
         .arg_u32(cfg.top_k as u32)
         .launch(stream)

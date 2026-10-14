@@ -18,8 +18,9 @@
 
 use anyhow::{Result, bail};
 use half::bf16;
-use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
+use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
+use metrale_model_arch::glm5next_mlp::forward::CombinePtrs;
 
 use crate::fixture::{Lcg, same, up, up_f32};
 use crate::timing::report;
@@ -155,6 +156,14 @@ pub fn combine_vec8(g: &dyn GpuBackend, s: u64, rng: &mut Lcg) -> Result<()> {
                     same(&format!("combine_vec8 R={rows} idx={idx} vs host"), h, &got)?;
                 }
             }
+            let at = CombinePtrs {
+                expert_out: eo_d,
+                token_to_perm: perm_d,
+                wts: w_d,
+                shared: sh_d,
+                out: arm,
+            };
+            ring_gate(g, s, vec8[usize::from(idx)], rows, idx, at, &want)?;
             if idx {
                 let (w2, p2) = swap_slots(&w, &perm);
                 let wp = [up_f32(g, &w2)?, up(g, &p2)?];
@@ -184,6 +193,59 @@ pub fn combine_vec8(g: &dyn GpuBackend, s: u64, rng: &mut Lcg) -> Result<()> {
         for p in bufs.into_iter().chain([base, arm]) {
             g.free(p)?;
         }
+    }
+    Ok(())
+}
+
+/// 2026-10-14: The ring combine (`METRALE_GLM_MOE_COMBINE_RING=1`, `topk_combine::CombineRing`):
+/// the `_vec8` kernel at the serve's grid, one launch per shard of three ranks in rank 1's ring
+/// order (shards 2, 0, 1), each at its buffers from `CombinePtrs::from_row`, must write `want`.
+/// Negative control (slot order only): the shards at the other order's buffers (the slot-order
+/// routed rows left at row 0) must not.
+#[allow(clippy::too_many_arguments)]
+fn ring_gate(
+    g: &dyn GpuBackend,
+    s: u64,
+    kernel: KernelHandle,
+    rows: usize,
+    idx: bool,
+    base: CombinePtrs,
+    want: &[u8],
+) -> Result<()> {
+    let shards = metrale_model_arch::glm5next_sp_mhc::shards(rows, 3);
+    let ob = rows * HIDDEN * 2;
+    let run = |idx_ptrs: bool| -> Result<Vec<u8>> {
+        g.memset(base.out, 0xA5, ob)?;
+        for r in [2usize, 0, 1] {
+            let (lo, hi) = shards[r];
+            if hi == lo {
+                continue;
+            }
+            let p = base.from_row(lo, HIDDEN, TOP_K, idx_ptrs);
+            let l = KernelLaunch::new(g, kernel)
+                .grid([(hi - lo) as u32, 2, 1])
+                .block([256, 1, 1])
+                .arg_ptr(p.expert_out);
+            let l = if idx { l.arg_ptr(p.token_to_perm) } else { l };
+            l.arg_ptr(p.wts)
+                .arg_ptr(p.shared)
+                .arg_ptr(p.out)
+                .arg_u32(HIDDEN as u32)
+                .arg_u32(TOP_K as u32)
+                .launch(s)?;
+        }
+        read(g, s, base.out, ob)
+    };
+    same(
+        &format!("combine ring R={rows} idx={idx}"),
+        want,
+        &run(idx)?,
+    )?;
+    if !idx && rows >= 3 {
+        if run(true)? == want {
+            bail!("combine ring R={rows}: negative control (routed rows at row 0) matched");
+        }
+        println!("combine ring R={rows}: negative control (routed rows at row 0) caught: differs");
     }
     Ok(())
 }
