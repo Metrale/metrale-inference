@@ -392,6 +392,13 @@ pub struct ServeArgs {
     #[arg(long, default_value_t = 0.90)]
     pub gpu_memory_utilization: f64,
 
+    /// Refuse to start when the KV pool holds fewer than this many tokens (its blocks times the
+    /// block size, as the "KV cache:" boot line reports); the error gives the shortfall. No
+    /// default: without it the pool is only logged. Pass --max-seq-len times the concurrency a
+    /// run needs at that length.
+    #[arg(long, value_name = "TOKENS")]
+    pub require_kv_tokens: Option<usize>,
+
     /// Capacity of the queue that carries new requests to the scheduler.
     #[arg(long, default_value_t = 128)]
     pub max_num_seqs: usize,

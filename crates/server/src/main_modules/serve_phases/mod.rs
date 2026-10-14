@@ -14,6 +14,7 @@ mod forward;
 pub(crate) mod fp8_kv_scale_source;
 mod kernel_gate;
 pub(crate) mod kv_cache;
+mod kv_require;
 pub(crate) mod mock;
 pub(crate) mod preflight;
 pub(crate) mod routing_profile;
@@ -37,6 +38,7 @@ pub(super) use kernel_gate::audit_and_gate;
 pub(super) use kv_cache::{
     KvCacheConfig, PrefillBudget, resolve_kv_cache_config, resolve_prefill_budget,
 };
+pub(super) use kv_require::require_kv_tokens;
 pub(super) use preflight::{
     PostLoadInputs, ReservePreflight, init_gpu_backend, post_load_memory_audit, preflight_reserve,
 };
