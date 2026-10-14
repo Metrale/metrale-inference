@@ -243,6 +243,11 @@ pub struct ModelLevers {
     /// one-row replay of that row takes, so the cold row and its replay carry the same bits
     /// (`layer/one_row_path.rs`). `one_row_prefill` takes precedence. Changes that row's numerics.
     pub one_row_tail_decode: bool,
+    /// 2026-10-14: `METRALE_SEQ_ALLOC_ASYNC=1`: a new sequence zeroes its SSM slot once, with
+    /// every memset enqueued on the default stream and one synchronise after them, instead of a
+    /// first zeroing pass and then a synchronise per memset (`model/trait_impl/meta.rs`). The
+    /// same bytes reach zero before the prefill; only the host time differs.
+    pub seq_alloc_async: bool,
     /// 2026-09-25: `METRALE_FP8_MOE_GROUPED_DECODE=1`: the target model's multi-row FP8 MoE decode
     /// runs through the cross-row grouped kernels (`FfnComponent::fp8_grouped_decode_ok`). The MTP
     /// drafter calls `MoeLayer::fp8_grouped_decode_ok` directly and does not read this lever;
