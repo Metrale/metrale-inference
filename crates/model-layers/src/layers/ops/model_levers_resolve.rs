@@ -137,6 +137,17 @@ pub(super) fn from_values(
 }
 
 impl ModelLevers {
+    /// 2026-10-14: The boot readback of the new-sequence levers, as `TransformerModel::new` logs
+    /// it on every rank: `seq_alloc_async` and `glm_keep_slot_graphs`, each `on` or `off`.
+    pub fn new_sequence_readback(&self) -> String {
+        let on = |b: bool| if b { "on" } else { "off" };
+        format!(
+            "METRALE_SEQ_ALLOC_ASYNC={} METRALE_GLM_KEEP_SLOT_GRAPHS={}",
+            on(self.seq_alloc_async),
+            on(self.glm_keep_slot_graphs)
+        )
+    }
+
     /// 2026-09-25: The process-wide levers, resolved from the environment on the first call and
     /// cached for the life of the process. Prefer this to [`Self::from_env`] outside model
     /// construction. `max_decode_seqs` is 1 here. `ModelLevers` is `Copy`, so

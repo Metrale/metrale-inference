@@ -136,6 +136,25 @@ fn new_sequence_levers_are_strict_opt_ins_on_their_own_fields() {
 }
 
 #[test]
+fn new_sequence_readback_names_each_lever_with_its_own_state() {
+    let off = resolve(&[]).new_sequence_readback();
+    assert_eq!(
+        off,
+        "METRALE_SEQ_ALLOC_ASYNC=off METRALE_GLM_KEEP_SLOT_GRAPHS=off"
+    );
+    let l1 = resolve(&[("METRALE_SEQ_ALLOC_ASYNC", "1")]).new_sequence_readback();
+    assert_eq!(
+        l1,
+        "METRALE_SEQ_ALLOC_ASYNC=on METRALE_GLM_KEEP_SLOT_GRAPHS=off"
+    );
+    let l3 = resolve(&[("METRALE_GLM_KEEP_SLOT_GRAPHS", "1")]).new_sequence_readback();
+    assert_eq!(
+        l3,
+        "METRALE_SEQ_ALLOC_ASYNC=off METRALE_GLM_KEEP_SLOT_GRAPHS=on"
+    );
+}
+
+#[test]
 fn truthy_opt_ins_map_independently_and_presence_is_distinct() {
     let cases = [
         (
