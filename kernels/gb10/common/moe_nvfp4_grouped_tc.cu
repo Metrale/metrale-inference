@@ -18,8 +18,9 @@
 //   j), E4M3 block scales [N, K / 16], a per-tensor FP32 scale s2 (per expert for the routed
 //   tables). The `_lean` kernels (2026-10-04, Nvfp4G16Lean) read the same tables after
 //   nvfp4_tc_lean_repack rewrote them in place (tc_weight_formats.cuh) and return the row-major
-//   kernels' bytes. K % 256 == 0 and N a multiple of the CTA's columns (the host checks
-//   `nvfp4_grouped_tc_shape_ok`).
+//   kernels' bytes. K a multiple of 128 * NTC_GU_G for gate+up and of 128 * NTC_DOWN_G for
+//   down (2026-10-13: per projection; the host checks `nvfp4_grouped_tc_expert_shape_ok`), and
+//   N a multiple of the CTA's columns.
 // - A weight enters the MMA as the BF16 E2M1 * E4M3: exact, since the product has at most five
 //   significant bits and lies in [2^-10, 2688]. s2 multiplies the FP32 sum once per output.
 //   The products and sums are therefore those of the declared W4A16 arithmetic up to FP32

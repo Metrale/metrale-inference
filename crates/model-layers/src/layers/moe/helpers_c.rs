@@ -9,6 +9,11 @@
 
 use super::*;
 
+/// 2026-10-13: Widest row count whose BF16 shared expert runs on the batched GEMV: the grouped
+/// decode's widest (`NVFP4_GROUPED_DECODE_TC_MAX_ROWS`). Wider runs (prefill chunks) take the GEMM.
+pub const BF16_SHARED_BATCHM_MAX_ROWS: u32 =
+    super::forward_nvfp4_grouped_decode::NVFP4_GROUPED_DECODE_TC_MAX_ROWS as u32;
+
 impl MoeLayer {
     /// 2026-09-25: Make FP8 copies of the NVFP4 router gate and of the NVFP4 shared
     /// expert for the prefill FP8 GEMMs. Routed experts are untouched.
@@ -139,6 +144,11 @@ impl MoeLayer {
     ///
     /// Returns `Ok(false)` without launching when no BF16 shared expert is
     /// installed. Errors if `num_tokens` or `shared_intermediate` is 0.
+    ///
+    /// 2026-10-13: Up to [`BF16_SHARED_BATCHM_MAX_ROWS`] rows the projections run on the
+    /// batched GEMV (`dense_gemv_batchm_split`, block rows of `DENSE_GEMV_BATCHM_DECODE_MAX_M`),
+    /// which reads each weight once per block row instead of once per GEMM tile pass and
+    /// gives every row the bits of the one-row `dense_gemv`, at any width.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn run_bf16_shared_expert(
         &self,
@@ -175,6 +185,20 @@ impl MoeLayer {
                     output,
                     n,
                     k,
+                    stream,
+                )
+            } else if num_tokens <= BF16_SHARED_BATCHM_MAX_ROWS && self.dense_gemv_batchm_k.0 != 0 {
+                ops::dense_gemv_batchm_split(
+                    ctx.gpu,
+                    self.dense_gemv_batchm_k,
+                    activation,
+                    weight,
+                    output,
+                    num_tokens,
+                    num_tokens.div_ceil(ops::DENSE_GEMV_BATCHM_DECODE_MAX_M),
+                    n,
+                    k,
+                    n,
                     stream,
                 )
             } else if ctx.dispatch.cublas.ffn {

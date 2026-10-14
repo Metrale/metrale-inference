@@ -3,14 +3,15 @@
 //! 2026-10-13: `shared_expert_declared_bf16` on the shape of Inferact/Qwen3.8-Flash-Next-NVFP4's
 //! own `quantization_config` (ModelOpt NVFP4, the shared expert in `ignore`): BF16 under the
 //! `declared` tier when all three projections are ignored, NVFP4 otherwise, and never under the
-//! `nvfp4` tier.
+//! `nvfp4` tier; and `experts_declared_nvfp4` (2026-10-13), which marks the routed experts for
+//! the grouped NVFP4 decode only where the plan is followed.
 
 use metrale_config::weight_quantization::KernelCaps;
 use metrale_config::{
     QuantizationConfig, W4a4Downcast, WeightQuantPolicy, WeightQuantTier, WeightQuantization,
 };
 
-use super::shared_expert_declared_bf16;
+use super::{experts_declared_nvfp4, shared_expert_declared_bf16};
 
 const L0: &str = "model.language_model.layers.0";
 const L1: &str = "model.language_model.layers.1";
@@ -65,4 +66,21 @@ fn the_nvfp4_tier_and_an_undeclared_checkpoint_keep_the_engine_default() {
     let qc = checkpoint();
     assert!(!decide(WeightQuantization::Nvfp4, Some(&qc), L0));
     assert!(!decide(WeightQuantization::Declared, None, L0));
+}
+
+fn experts_decide(tier: WeightQuantization, qc: Option<&QuantizationConfig>) -> bool {
+    let policy = WeightQuantPolicy::for_checkpoint(
+        WeightQuantTier::new(tier, W4a4Downcast::Off).expect("tier"),
+        qc,
+        KernelCaps::default(),
+    );
+    experts_declared_nvfp4(&policy, L0)
+}
+
+#[test]
+fn declared_nvfp4_experts_are_marked_only_where_the_plan_is_followed() {
+    let qc = checkpoint();
+    assert!(experts_decide(WeightQuantization::Declared, Some(&qc)));
+    assert!(!experts_decide(WeightQuantization::Nvfp4, Some(&qc)));
+    assert!(!experts_decide(WeightQuantization::Declared, None));
 }

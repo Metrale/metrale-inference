@@ -2,7 +2,8 @@
 
 //! 2026-09-25: The per-layer MoE FFN of `qwen4_exp`: the weights from
 //! `load_moe_qwen35`, the router (BF16 as shipped, or an NVFP4 copy), the shared
-//! expert at BF16 where the checkpoint declares it so (2026-10-13), and,
+//! expert at BF16 where the checkpoint declares it so (2026-10-13), the declared-NVFP4
+//! experts mark for the grouped NVFP4 decode (2026-10-13), and,
 //! with `METRALE_HOLO_MOE_GROUPED_CUTLASS=1`, the CUTLASS grouped scale
 //! tables.
 //!
@@ -34,6 +35,17 @@ pub(super) fn shared_expert_declared_bf16(policy: &WeightQuantPolicy, lp: &str) 
                 .weight
                 .is_none()
         })
+}
+
+/// 2026-10-13: Whether layer `lp`'s routed experts are the checkpoint's declared NVFP4: the
+/// policy follows the checkpoint's plan and the plan declares the experts FP4 (as
+/// `qwen35/load_layers/declared.rs` `mark_nvfp4_experts` reads it).
+pub(super) fn experts_declared_nvfp4(policy: &WeightQuantPolicy, lp: &str) -> bool {
+    policy.follows_plan()
+        && policy
+            .declared(&format!("{lp}.mlp.experts"))
+            .weight
+            .is_some_and(|w| w.is_fp4())
 }
 
 pub(super) fn build_moe(
@@ -102,6 +114,21 @@ pub(super) fn build_moe(
         let [gate, up, down] = SHARED_PROJS
             .map(|p| dense_auto(store, &format!("{lp}.mlp.shared_expert.{p}.weight"), gpu));
         moe.set_bf16_shared_expert(gate?, up?, down?)?;
+    }
+
+    // 2026-10-13: Declared NVFP4 experts under a BF16 router decode through the grouped NVFP4
+    // path at every width (`moe/nvfp4_grouped_admit.rs`), each active expert's weights read
+    // once per pass for all the rows routed to it; a BF16 shared expert runs beside it.
+    if variant == Nvfp4Variant::Standard && bf16_router && experts_declared_nvfp4(&policy, lp) {
+        moe.set_declared_nvfp4_experts()?;
+        static LOGGED: std::sync::Once = std::sync::Once::new();
+        LOGGED.call_once(|| {
+            tracing::info!(
+                "qwen4_exp: routed experts decode at the checkpoint's NVFP4 (W4A16) through the \
+                 grouped NVFP4 path; router BF16; shared expert {}",
+                if bf16_shared { "BF16" } else { "NVFP4" }
+            );
+        });
     }
 
     // 2026-09-25: The grouped CUTLASS prefill arm runs only when

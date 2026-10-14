@@ -6,6 +6,7 @@
 //! of at most `DENSE_GEMV_BATCHM_DECODE_MAX_M` plus one strided `deinterleave_qg` must
 //! leave every row byte-identical to `dense_gemv` plus a one-row `deinterleave_qg`, at
 //! every decode width, inside and past one block row.
+//! The same identity at the BF16 shared expert's shapes (2026-10-13).
 //!
 //! GPU test: run with
 //! ```text
@@ -159,5 +160,75 @@ fn batched_gated_qkv_rows_equal_the_per_row_route_at_every_width() {
         g.free(normed).unwrap();
         g.free(per_row).unwrap();
         g.free(batched).unwrap();
+    }
+}
+
+/// 2026-10-13: The BF16 shared expert's decode projections (`run_bf16_shared_expert`) at
+/// Qwen3.8-Flash-Next's shapes (gate/up `[640, 2560]`, down `[2560, 640]`): every row of the
+/// batched GEMV over block rows of at most `DENSE_GEMV_BATCHM_DECODE_MAX_M`, contiguous output,
+/// is byte-identical to the one-row `dense_gemv`, at every width up to the grouped decode's
+/// widest (256).
+#[test]
+#[ignore]
+fn batched_shared_expert_rows_equal_the_one_row_gemv_at_every_width() {
+    let set = metrale_kernels::ptx_for_exact_target("qwen3.8-flash-next", "nvfp4")
+        .expect("qwen3.8-flash-next/nvfp4 not in this build");
+    let gpu = metrale_gpu_runtime::cuda_backend::MetraleCudaBackend::new(0, &set.modules)
+        .expect("CUDA backend");
+    let g: &dyn GpuBackend = &gpu;
+    let row_k = g.kernel("gemv", "dense_gemv_bf16").unwrap();
+    let batch_k = g
+        .kernel("dense_gemv_bf16_batchm", "dense_gemv_bf16_batchm")
+        .unwrap();
+    let stream = g.create_stream().unwrap();
+    for (n_out, k) in [(640usize, H), (H, 640usize)] {
+        let wt = DenseWeight {
+            weight: upload(g, &bf16s(n_out * k, 17 ^ n_out as u32)),
+        };
+        for m in [2usize, 3, 9, 59, 64, 128, 256] {
+            let x = upload(g, &bf16s(m * k, 0x85EB_CA6B ^ m as u32));
+            let (per_row, batched) = (sentinel(g, m * n_out * 2), sentinel(g, m * n_out * 2));
+            for i in 0..m {
+                let (xi, oi) = (x.offset(i * k * 2), per_row.offset(i * n_out * 2));
+                dense_gemv(g, row_k, xi, &wt, oi, n_out as u32, k as u32, stream).unwrap();
+            }
+            let y = (m as u32).div_ceil(DENSE_GEMV_BATCHM_DECODE_MAX_M);
+            dense_gemv_batchm_split(
+                g,
+                batch_k,
+                x,
+                &wt,
+                batched,
+                m as u32,
+                y,
+                n_out as u32,
+                k as u32,
+                n_out as u32,
+                stream,
+            )
+            .unwrap();
+            g.synchronize(stream).unwrap();
+            let (a, b) = (
+                download(g, per_row, m * n_out * 2),
+                download(g, batched, m * n_out * 2),
+            );
+            let row = n_out * 2;
+            for i in 0..m {
+                assert!(
+                    a[i * row..(i + 1) * row]
+                        .chunks(2)
+                        .any(|c| c != [SENTINEL, SENTINEL]),
+                    "control: [{n_out}, {k}] m={m} row {i} written"
+                );
+                assert!(
+                    a[i * row..(i + 1) * row] == b[i * row..(i + 1) * row],
+                    "[{n_out}, {k}] m={m}: row {i} differs from the one-row GEMV"
+                );
+            }
+            for p in [x, per_row, batched] {
+                g.free(p).unwrap();
+            }
+        }
+        g.free(wt.weight).unwrap();
     }
 }

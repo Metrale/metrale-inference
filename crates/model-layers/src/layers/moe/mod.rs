@@ -246,9 +246,10 @@ pub struct MoeLayer {
     moe_fp8_grouped_sort_k: KernelHandle,
     // 2026-09-26: The exact-router kernels of the grouped decode
     // (`GroupedRouting::PerRow` / `PerToken`): `moe_topk_softmax_rows` and
-    // `dense_gemv_bf16_batchm`; 0 on targets that do not ship them.
+    // `dense_gemv_bf16_batchm`; 0 on targets that do not ship them. 2026-10-13: The
+    // batched GEMV also runs a BF16 shared expert's rows (`run_bf16_shared_expert`).
     moe_topk_softmax_rows_k: KernelHandle,
-    router_gemv_batchm_k: KernelHandle,
+    dense_gemv_batchm_k: KernelHandle,
     // 2026-09-27: The grouped NVFP4 decode's expert kernels (NVFP4 `--expert-quantization`
     // tiers); 0 on
     // targets that do not ship them.
@@ -378,6 +379,7 @@ mod forward_fp8_grouped_router;
 pub use forward_fp8_grouped_router::GroupedRouting;
 mod forward_bf16_grouped_decode;
 mod forward_nvfp4_grouped_decode;
+mod nvfp4_grouped_admit;
 mod nvfp4_lean;
 pub use forward_nvfp4_grouped_decode::{
     NVFP4_GROUPED_DECODE_MAX_ROWS, NVFP4_GROUPED_DECODE_TC_MAX_ROWS, nvfp4_grouped_decode_shape_ok,

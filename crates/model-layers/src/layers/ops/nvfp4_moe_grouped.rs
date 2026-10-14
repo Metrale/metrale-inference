@@ -65,10 +65,41 @@ pub const NVFP4_GROUPED_DOWN_TC: Fp8GroupedGeometry = Fp8GroupedGeometry {
     threads: 128,
 };
 
+/// 2026-10-13: K of one tensor-core load group: 128-wide chunks times the projection's chunks
+/// per group (`NTC_GU_G` = 2, `NTC_DOWN_G` = 1 in the `.cu`).
+pub const NVFP4_GROUPED_GATE_UP_TC_K_STEP: u32 = 256;
+pub const NVFP4_GROUPED_DOWN_TC_K_STEP: u32 = 128;
+
 /// 2026-10-02: Whether the tensor-core kernels take an `n`-column, `k`-deep projection: `k` in
-/// whole load groups of two 128-wide chunks, `n` in whole CTAs of `geometry`.
-pub fn nvfp4_grouped_tc_shape_ok(n: u32, k: u32, geometry: Fp8GroupedGeometry) -> bool {
-    n > 0 && k > 0 && k.is_multiple_of(256) && n.is_multiple_of(geometry.cols_per_cta)
+/// whole load groups of `k_step` (2026-10-13: the projection's own, so a 640-wide down
+/// projection is admitted), `n` in whole CTAs of `geometry`.
+pub fn nvfp4_grouped_tc_shape_ok(
+    n: u32,
+    k: u32,
+    geometry: Fp8GroupedGeometry,
+    k_step: u32,
+) -> bool {
+    n > 0
+        && k > 0
+        && k_step > 0
+        && k.is_multiple_of(k_step)
+        && n.is_multiple_of(geometry.cols_per_cta)
+}
+
+/// 2026-10-13: Whether the tensor-core pair takes an `inter` x `hidden` expert: gate+up
+/// `[inter, hidden]` and down `[hidden, inter]`, each in its own load groups.
+pub fn nvfp4_grouped_tc_expert_shape_ok(hidden: u32, inter: u32) -> bool {
+    nvfp4_grouped_tc_shape_ok(
+        inter,
+        hidden,
+        NVFP4_GROUPED_GATE_UP_TC,
+        NVFP4_GROUPED_GATE_UP_TC_K_STEP,
+    ) && nvfp4_grouped_tc_shape_ok(
+        hidden,
+        inter,
+        NVFP4_GROUPED_DOWN_TC,
+        NVFP4_GROUPED_DOWN_TC_K_STEP,
+    )
 }
 
 /// 2026-09-27: One NVFP4 projection across the routed experts: device tables of each

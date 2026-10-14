@@ -42,7 +42,7 @@ impl MoeLayer {
             && self.moe_weighted_sum_blend_fp8_grouped_k.0 != 0
             && self.moe_fp8_grouped_sort_k.0 != 0
             && self.moe_topk_softmax_rows_k.0 != 0
-            && self.router_gemv_batchm_k.0 != 0
+            && self.dense_gemv_batchm_k.0 != 0
             && cfg.num_experts <= ops::FP8_GROUPED_SORT_MAX_EXPERTS as usize
             && self.router_logits_n as usize == cfg.num_experts
             && self.gate_nvfp4.is_none()
