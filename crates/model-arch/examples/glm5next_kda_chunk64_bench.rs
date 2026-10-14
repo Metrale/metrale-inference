@@ -7,9 +7,9 @@
 //! BF16; gates in (-5, 0) per channel, mostly slow; beta in (0, 1); a non-zero carried state.
 //!
 //! Reports, per prompt length: the relative RMS of each WY factor of one (chunk, head) against a
-//! host f64 reference (`glm5next_kda_chunk64_ref.rs`), the relative RMS and max abs difference of
-//! the outputs and of the final state against the per-token walk, and the median time of each
-//! kernel and path.
+//! host f64 reference (`common/glm5next_kda_chunk64_ref.rs`), the relative RMS and max abs
+//! difference of the outputs and of the final state against the per-token walk, and the median
+//! time of each kernel and path.
 //!
 //! Owner: model-arch examples.
 //! Invariants:
@@ -25,7 +25,7 @@
 //!   GLM_BENCH_ROWS=512,2048,8192 cargo run --release -p metrale-model-arch \
 //!     --features cuda,gpu-examples --example glm5next_kda_chunk64_bench
 
-#[path = "glm5next_kda_chunk64_ref.rs"]
+#[path = "common/glm5next_kda_chunk64_ref.rs"]
 mod host_ref;
 
 use anyhow::{Result, ensure};
