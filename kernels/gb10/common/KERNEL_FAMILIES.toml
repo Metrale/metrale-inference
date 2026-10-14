@@ -1915,13 +1915,3 @@ rows_above = 1
 cite = "crates/model-arch/src/nemotron_moe.rs:278"
 holds = "impl TransformerLayer for NemotronMoeLayer"
 note = "MoE layer: only single-row decode (1-row routed GEMV + ReLU²-down kernels); multi-sequence decode and verify loop per row"
-
-[[legacy_path]]
-arch = "nemotron_h"
-layer_kind = "full_attention"
-per_sequence = ["multi_seq"]
-sites = ["attn.q", "attn.k", "attn.v"]
-rows_above = 8
-cite = "crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/qkv.rs:119"
-holds = "for i in 0..n {"
-note = "BF16 q/k/v projections batch 2-8 rows (dense_gemv_bf16_batchm); above 8 they run one GEMV per row"
