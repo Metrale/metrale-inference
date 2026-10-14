@@ -232,9 +232,12 @@ impl TransformerModel {
             .expect("claim_guarded returns a guard owning a slot");
         // 2026-09-25: Zero the slot's h and conv state on the default stream and wait for it,
         // so no prefill kernel reads a previous sequence's state.
+        // 2026-10-14: Under `seq_alloc_async` the single reset below zeroes these bytes and more.
         let stream = self.gpu.default_stream();
-        self.ssm_pool.zero_slot(slot, self.gpu.as_ref(), stream)?;
-        self.gpu.synchronize(stream)?;
+        if !self.levers.seq_alloc_async {
+            self.ssm_pool.zero_slot(slot, self.gpu.as_ref(), stream)?;
+            self.gpu.synchronize(stream)?;
+        }
         let has_mtp = self.proposer.is_some() || self.self_speculative;
 
         // 2026-09-25: A fresh sequence resets the whole-prompt capture length, so the capture
@@ -306,8 +309,15 @@ impl TransformerModel {
 
         // 2026-09-25: Zero the slot again, with its MTP checkpoints and intermediates when MTP
         // covers the slot, then synchronise.
-        self.ssm_pool.reset_slot(slot, self.gpu.as_ref())?;
-        self.gpu.synchronize(self.gpu.default_stream())?;
+        // 2026-10-14: `seq_alloc_async` enqueues the same memsets on the default stream, the
+        // stream the synchronous `memset` uses, and waits once instead of once per buffer.
+        if self.levers.seq_alloc_async {
+            self.ssm_pool
+                .reset_slot_async(slot, self.gpu.as_ref(), stream)?;
+        } else {
+            self.ssm_pool.reset_slot(slot, self.gpu.as_ref())?;
+        }
+        self.gpu.synchronize(stream)?;
 
         // 2026-09-25: MTP proposer state, sized to this request's reach, not --max-seq-len.
         let proposer_state = match &self.proposer {

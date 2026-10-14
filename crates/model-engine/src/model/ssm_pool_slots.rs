@@ -318,21 +318,41 @@ impl SsmStatePool {
     }
 
     pub(super) fn reset_slot(&self, slot: usize, gpu: &dyn GpuBackend) -> Result<()> {
+        self.reset_slot_with(slot, |ptr, bytes| gpu.memset(ptr, 0, bytes))
+    }
+
+    /// 2026-10-14: [`Self::reset_slot`]'s bytes, enqueued on `stream` with no synchronise; the
+    /// caller synchronises `stream` before anything reads the slot.
+    pub(super) fn reset_slot_async(
+        &self,
+        slot: usize,
+        gpu: &dyn GpuBackend,
+        stream: u64,
+    ) -> Result<()> {
+        self.reset_slot_with(slot, |ptr, bytes| gpu.memset_async(ptr, 0, bytes, stream))
+    }
+
+    /// 2026-10-14: The one list of buffers a slot reset zeroes, each passed to `zero`.
+    fn reset_slot_with(
+        &self,
+        slot: usize,
+        mut zero: impl FnMut(DevicePtr, usize) -> Result<()>,
+    ) -> Result<()> {
         // 2026-09-25: A slot at or above `mtp_slots` has no MTP state of its own;
         // its MTP accessors resolve to the shared MTP dummy.
         let reset_mtp = self.has_mtp && slot < self.mtp_slots;
         for i in 0..self.num_ssm_layers {
-            gpu.memset(self.h_state(i, slot), 0, self.h_stored_bytes)?;
-            gpu.memset(self.conv_state(i, slot), 0, self.conv_bytes)?;
+            zero(self.h_state(i, slot), self.h_stored_bytes)?;
+            zero(self.conv_state(i, slot), self.conv_bytes)?;
             if reset_mtp {
                 for t in 0..self.h_inter_count(slot) {
-                    gpu.memset(self.h_intermediate(i, slot, t), 0, self.h_stored_bytes)?;
+                    zero(self.h_intermediate(i, slot, t), self.h_stored_bytes)?;
                 }
                 for t in 0..self.conv_inter_count() {
-                    gpu.memset(self.conv_intermediate(i, slot, t), 0, self.conv_bytes)?;
+                    zero(self.conv_intermediate(i, slot, t), self.conv_bytes)?;
                 }
-                gpu.memset(self.h_checkpoint(i, slot), 0, self.h_stored_bytes)?;
-                gpu.memset(self.conv_checkpoint(i, slot), 0, self.conv_bytes)?;
+                zero(self.h_checkpoint(i, slot), self.h_stored_bytes)?;
+                zero(self.conv_checkpoint(i, slot), self.conv_bytes)?;
             }
         }
         Ok(())

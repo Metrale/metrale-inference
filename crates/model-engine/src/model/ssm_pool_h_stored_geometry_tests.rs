@@ -263,3 +263,59 @@ fn prefill_staging_is_one_fp32_blob_per_slot_and_only_when_narrowed() {
         0
     );
 }
+
+/// 2026-10-14: Every buffer of one slot, as (address, bytes): base h and conv state and, for an
+/// MTP-covered slot, the intermediates and checkpoints.
+fn slot_buffers(p: &SsmStatePool, slot: usize) -> Vec<(DevicePtr, usize)> {
+    let mut out = Vec::new();
+    for i in 0..p.num_ssm_layers {
+        out.push((p.h_state(i, slot), p.h_stored_bytes));
+        out.push((p.conv_state(i, slot), p.conv_bytes));
+        for t in 0..p.h_inter_count(slot) {
+            out.push((p.h_intermediate(i, slot, t), p.h_stored_bytes));
+        }
+        for t in 0..p.conv_inter_count() {
+            out.push((p.conv_intermediate(i, slot, t), p.conv_bytes));
+        }
+        out.push((p.h_checkpoint(i, slot), p.h_stored_bytes));
+        out.push((p.conv_checkpoint(i, slot), p.conv_bytes));
+    }
+    out
+}
+
+/// 2026-10-14: The enqueued reset (`METRALE_SEQ_ALLOC_ASYNC`) zeroes every buffer of an
+/// MTP-covered slot, intermediates and checkpoints included, and no byte of its neighbours.
+#[test]
+fn the_async_slot_reset_zeroes_the_whole_slot_and_only_it() {
+    let config = ModelConfig::qwen3_next_80b_nvfp4();
+    let gpu = MockGpuBackend::new();
+    let p = SsmStatePool::new(
+        &config,
+        SLOTS,
+        true,
+        4,
+        3,
+        true,
+        metrale_model_layers::ssm_reserve::SsmRollbackMode::Snapshot,
+        &gpu,
+    )
+    .unwrap();
+    assert!(p.has_mtp && 1 < p.mtp_slots, "slot 1 must be MTP-covered");
+    for slot in 0..3 {
+        for (ptr, bytes) in slot_buffers(&p, slot) {
+            gpu.memset(ptr, 0xAB, bytes).unwrap();
+        }
+    }
+    p.reset_slot_async(1, &gpu, 0).unwrap();
+    for slot in 0..3 {
+        let want = if slot == 1 { 0x00 } else { 0xAB };
+        for (k, (ptr, bytes)) in slot_buffers(&p, slot).into_iter().enumerate() {
+            let mut got = vec![0u8; bytes];
+            gpu.copy_d2h(ptr, &mut got).unwrap();
+            assert!(
+                got.iter().all(|&b| b == want),
+                "slot {slot} buffer {k}: expected every byte {want:#04x}"
+            );
+        }
+    }
+}

@@ -110,6 +110,28 @@ fn exact_one_opt_ins_map_to_their_own_fields() {
     assert!(!resolve(&[("METRALE_K4_DIAG", "true")]).k4_diag);
 }
 
+/// 2026-10-14: The new-sequence levers are strict `=1` opt-ins, each on its own field only,
+/// off by default.
+#[test]
+fn new_sequence_levers_are_strict_opt_ins_on_their_own_fields() {
+    let cases: [(&str, fn(&mut ModelLevers) -> &mut bool); 1] = [
+        ("METRALE_SEQ_ALLOC_ASYNC", |l| &mut l.seq_alloc_async),
+    ];
+    for (name, field) in cases {
+        assert!(!*field(&mut resolve(&[])), "{name} on by default");
+        for off in ["0", "true", ""] {
+            assert!(
+                !*field(&mut resolve(&[(name, off)])),
+                "{name} armed at {off:?}"
+            );
+        }
+        let mut armed = resolve(&[(name, "1")]);
+        assert!(*field(&mut armed), "{name} did not arm at =1");
+        *field(&mut armed) = false;
+        assert_eq!(armed, resolve(&[]), "{name} moved another field");
+    }
+}
+
 #[test]
 fn truthy_opt_ins_map_independently_and_presence_is_distinct() {
     let cases = [
