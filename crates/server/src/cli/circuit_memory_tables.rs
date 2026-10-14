@@ -44,7 +44,7 @@ pub(crate) struct TablesDecision {
 pub(crate) fn workload(args: &ServeArgs) -> (u64, u64, u64) {
     let c = match args.max_batch_size {
         SlotRequest::Count(n) => n as u64,
-        SlotRequest::Auto => 1,
+        SlotRequest::Auto | SlotRequest::Fill => 1,
     };
     (
         (c.max(1)),

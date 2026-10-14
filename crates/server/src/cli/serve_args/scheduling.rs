@@ -191,8 +191,9 @@ pub struct ServeSchedulingArgs {
 
     /// Maximum concurrent sequences batched into one GPU decode step, or `auto`: the count (up to
     /// 128) that admits the most sequences at the full --max-seq-len, the per-sequence state
-    /// (SSM and MTP pools) and the KV pool sized together at boot. The resolved count is logged
-    /// and disclosed in benchmark records.
+    /// (SSM and MTP pools) and the KV pool sized together at boot; or `fill`: the most slots (up
+    /// to 128) that leave KV for one request at the full --max-seq-len. The resolved count is
+    /// logged and disclosed in benchmark records.
     #[arg(long, default_value = "8")]
     pub max_batch_size: metrale_model_engine::factory::SlotRequest,
 
@@ -486,14 +487,12 @@ impl ServeSchedulingArgs {
 
 impl ServeSchedulingArgs {
     /// 2026-10-01: The slot count the model was built with: `--max-batch-size N`, or the count
-    /// `auto` resolved to, which `load_engine` writes back after the build. An error while `auto`
-    /// is unresolved (a reader that runs before the build sizes for `SlotRequest::ceiling`).
+    /// `auto`/`fill` resolved to, which `load_engine` writes back after the build. An error while
+    /// unresolved (a reader that runs before the build sizes for `SlotRequest::ceiling`).
     pub fn built_max_batch_size(&self) -> anyhow::Result<usize> {
         match self.max_batch_size {
             metrale_model_engine::factory::SlotRequest::Count(n) => Ok(n),
-            metrale_model_engine::factory::SlotRequest::Auto => {
-                anyhow::bail!("--max-batch-size auto read before the build resolved it")
-            }
+            r => anyhow::bail!("--max-batch-size {r} read before the build resolved it"),
         }
     }
 }

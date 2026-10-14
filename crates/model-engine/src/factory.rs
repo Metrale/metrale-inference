@@ -106,7 +106,10 @@ mod lm_head_setup;
 mod m2_setup;
 
 pub use build::build_model;
-pub use build::slots::{AUTO_MAX_SLOTS, BuiltModel, SlotPlan, SlotRequest, balance_slots};
+pub use build::slots::{
+    AUTO_MAX_SLOTS, BuiltModel, FILL_FULL_LENGTH_REQUESTS, SlotPlan, SlotRequest, balance_slots,
+    fill_slots,
+};
 
 #[cfg(test)]
 mod tests {

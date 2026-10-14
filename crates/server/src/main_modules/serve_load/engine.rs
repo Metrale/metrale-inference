@@ -138,6 +138,16 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
         &ptx_set,
     )?;
     let total_reserve = inference_reserve + buffer_arena_bytes;
+    // 2026-10-14: The post-load audit checks the reserve at the fewest slots the build may resolve
+    // to (`SlotRequest::floor`): a count is checked as itself, `auto`/`fill` at one slot, since the
+    // build sizes them against the memory the weights left. At the 128-slot ceiling it refused
+    // every `auto` serve whose weights leave less than 128 slots of state.
+    let audit_slots = args.max_batch_size.floor();
+    let audit_reserve = if audit_slots == args.max_batch_size.ceiling() {
+        total_reserve
+    } else {
+        reserve_plan.inference_reserve(audit_slots)? + buffer_arena_bytes
+    };
 
     // 2026-09-26: OOM watchdog (CUDA builds): every 2 s it reads free device
     // memory and, after three consecutive readings below 2048 MiB, exits the
@@ -171,7 +181,7 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
         &ptx_set,
         free_mem,
         inference_reserve,
-        total_reserve,
+        (audit_reserve, audit_slots),
         gdn_two_phase_bytes,
         max_batch_tokens_pre,
         mock.as_ref(),
@@ -262,10 +272,12 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
         nllb_lora_dir,
     )?;
     // 2026-10-01: From here `--max-batch-size` is the count the model was built with (what `auto`
-    // resolved to), for the scheduler, the EP worker and the disclosure.
-    let auto_max_batch_size = (args.max_batch_size
-        == metrale_model_engine::factory::SlotRequest::Auto)
-        .then_some(built.max_batch_size);
+    // or, 2026-10-14, `fill` resolved to), for the scheduler, the EP worker and the disclosure.
+    let auto_max_batch_size = (!matches!(
+        args.max_batch_size,
+        metrale_model_engine::factory::SlotRequest::Count(_)
+    ))
+    .then_some(built.max_batch_size);
     args.max_batch_size = metrale_model_engine::factory::SlotRequest::Count(built.max_batch_size);
     let model = built.model;
     let drafter_weights_sha256 = built.drafter_weights_sha256;

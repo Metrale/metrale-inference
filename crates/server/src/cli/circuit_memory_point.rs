@@ -146,7 +146,7 @@ impl Point<'_> {
                 (None, SlotRequest::Count(n)) => n,
                 // 2026-10-02: `--max-batch-size auto` balances slots against KV at boot; at a given
                 // concurrency the model sizes exactly that many, as `--slots auto` does.
-                (None, SlotRequest::Auto) | (Some("auto"), _) => c as usize,
+                (None, SlotRequest::Auto | SlotRequest::Fill) | (Some("auto"), _) => c as usize,
                 (Some(n), _) => n.parse().with_context(|| format!("--slots {n}"))?,
             },
         )

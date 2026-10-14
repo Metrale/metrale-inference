@@ -10,7 +10,14 @@
 //! Invariants:
 //! - [`balance_slots`] is pure: the reserve and the pool size come in as functions of the slot
 //!   count, so the boot and the tests evaluate the same arithmetic.
-//! - An explicit count is never changed; `auto` is the only request this module resolves.
+//! - An explicit count is never changed; `auto` and `fill` are the requests this module
+//!   resolves.
+//!
+//! 2026-10-14: `--max-batch-size fill` is the second objective: KV for exactly
+//! [`FILL_FULL_LENGTH_REQUESTS`] request at the full `--max-seq-len`, every remaining byte to
+//! slots ([`fill_slots`]). The scheduler already admits per request (prompt plus its own
+//! `max_tokens`, `scheduler/admission.rs`), so slots beyond what the pool holds at full length
+//! serve the shorter requests a wide ladder sends, and a full-length request still fits alone.
 
 use anyhow::{Result, ensure};
 
@@ -21,7 +28,13 @@ pub enum SlotRequest {
     Count(usize),
     /// 2026-10-01: The count [`balance_slots`] chooses, at most [`AUTO_MAX_SLOTS`].
     Auto,
+    /// 2026-10-14: The count [`fill_slots`] chooses, at most [`AUTO_MAX_SLOTS`].
+    Fill,
 }
+
+/// 2026-10-14: Full-length requests whose KV `fill` keeps: one, so any request the serve accepts
+/// can run, alone if it must; every byte past that goes to slots.
+pub const FILL_FULL_LENGTH_REQUESTS: usize = 1;
 
 /// 2026-10-01: The most slots `auto` considers: the widest rung of the decode batch ladder
 /// (`traits::DECODE_BATCH_LADDER`), the widest batch a decode step is padded to and captured at.
@@ -30,11 +43,21 @@ pub const AUTO_MAX_SLOTS: usize =
 
 impl SlotRequest {
     /// 2026-10-01: The slots sized before the KV pool is (the pre-load reserve, the buffer
-    /// arena): the count, or for `auto` its ceiling [`AUTO_MAX_SLOTS`].
+    /// arena): the count, or for `auto` and `fill` their ceiling [`AUTO_MAX_SLOTS`].
     pub fn ceiling(self) -> usize {
         match self {
             SlotRequest::Count(n) => n,
-            SlotRequest::Auto => AUTO_MAX_SLOTS,
+            SlotRequest::Auto | SlotRequest::Fill => AUTO_MAX_SLOTS,
+        }
+    }
+
+    /// 2026-10-14: The fewest slots the build may resolve to: the count, or 1 for `auto` and
+    /// `fill`. The post-load audit checks the reserve at this count; the build then resolves the
+    /// count against the memory the weights left.
+    pub fn floor(self) -> usize {
+        match self {
+            SlotRequest::Count(n) => n,
+            SlotRequest::Auto | SlotRequest::Fill => 1,
         }
     }
 }
@@ -43,12 +66,14 @@ impl std::str::FromStr for SlotRequest {
     type Err = String;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        if s == "auto" {
-            return Ok(SlotRequest::Auto);
+        match s {
+            "auto" => return Ok(SlotRequest::Auto),
+            "fill" => return Ok(SlotRequest::Fill),
+            _ => {}
         }
         s.parse::<usize>()
             .map(SlotRequest::Count)
-            .map_err(|_| format!("`{s}` is neither a slot count nor `auto`"))
+            .map_err(|_| format!("`{s}` is neither a slot count, `auto` nor `fill`"))
     }
 }
 
@@ -57,6 +82,7 @@ impl std::fmt::Display for SlotRequest {
         match self {
             SlotRequest::Count(n) => write!(f, "{n}"),
             SlotRequest::Auto => f.write_str("auto"),
+            SlotRequest::Fill => f.write_str("fill"),
         }
     }
 }
@@ -133,6 +159,46 @@ pub fn balance_slots(
         best.kv_blocks
     );
     Ok(best)
+}
+
+/// 2026-10-14: The largest slot count in `1..=max_slots` whose pool, `kv_blocks_at(slots)`, still
+/// holds [`FILL_FULL_LENGTH_REQUESTS`] request of `blocks_per_seq` blocks. Every count is
+/// evaluated (the pool is not assumed to shrink monotonically with the count). `admitted` is what
+/// the chosen pool holds at full length, at most the slots. An error when `max_slots` is 0 or
+/// when no count leaves that pool.
+pub fn fill_slots(
+    max_slots: usize,
+    blocks_per_seq: usize,
+    kv_blocks_at: impl Fn(usize) -> Result<usize>,
+) -> Result<Balance> {
+    ensure!(max_slots > 0, "no slot count to fill (ceiling 0)");
+    let per_seq = blocks_per_seq.max(1);
+    let need = FILL_FULL_LENGTH_REQUESTS * per_seq;
+    let mut best: Option<Balance> = None;
+    let mut at_one = None;
+    for slots in 1..=max_slots {
+        let Ok(kv_blocks) = kv_blocks_at(slots) else {
+            continue;
+        };
+        if slots == 1 {
+            at_one = Some(kv_blocks);
+        }
+        if kv_blocks >= need {
+            best = Some(Balance {
+                slots,
+                kv_blocks,
+                admitted: slots.min(kv_blocks / per_seq),
+            });
+        }
+    }
+    best.ok_or_else(|| {
+        anyhow::anyhow!(
+            "no slot count in 1..={max_slots} leaves a KV pool that holds \
+             {FILL_FULL_LENGTH_REQUESTS} request at the full --max-seq-len ({need} blocks; {} at \
+             1 slot): lower --max-seq-len",
+            at_one.map_or_else(|| "no pool".to_string(), |k| k.to_string())
+        )
+    })
 }
 
 #[cfg(test)]

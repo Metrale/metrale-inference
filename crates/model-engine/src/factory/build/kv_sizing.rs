@@ -5,7 +5,8 @@
 //! around small allocations), the pre-load reserve at the slot count
 //! (`SlotPlan::reserve_for`), the DFlash reserve and the MTP propose pool, and at most the free
 //! memory less the same terms, net of the driver use free memory already shows (2026-10-13). `--max-batch-size N`
-//! sizes for N; `auto` takes the count `slots::balance_slots` chooses. Split from `build.rs`.
+//! sizes for N; `auto` takes the count `slots::balance_slots` chooses, `fill` the count
+//! `slots::fill_slots` chooses (2026-10-14). Split from `build.rs`.
 //!
 //! Owner: metrale-model-engine.
 //! Invariants:
@@ -21,7 +22,9 @@ use metrale_model_layers::weight_map::MtpWeights;
 use metrale_model_weights::weights::WeightStore;
 use metrale_telemetry::prefix_cache::PrefixCache;
 
-use super::slots::{AUTO_MAX_SLOTS, SlotPlan, SlotRequest, balance_slots};
+use super::slots::{
+    AUTO_MAX_SLOTS, FILL_FULL_LENGTH_REQUESTS, SlotPlan, SlotRequest, balance_slots, fill_slots,
+};
 use super::{kv_blocks, kv_budget};
 
 /// 2026-10-01: What sizing the slots and the KV pool reads.
@@ -131,14 +134,18 @@ pub(super) fn size_kv(inp: &KvInputs<'_>, plan: &SlotPlan<'_>) -> Result<KvSized
     let full_length = inp.max_seq_len / inp.kv_block_size.max(1) + 1;
     let slots = match plan.request {
         SlotRequest::Count(n) => n,
-        SlotRequest::Auto => {
+        request => {
             ensure!(
                 inp.hss_cache_blocks_per_seq.is_none(),
-                "--max-batch-size auto balances slots against a budget-sized KV pool; \
+                "--max-batch-size {request} sizes slots against a budget-sized KV pool; \
                  --high-speed-swap sizes the pool from its per-sequence cap. Pass a count."
             );
-            let b = balance_slots(AUTO_MAX_SLOTS, full_length, blocks_at)?;
-            tracing::info!(target: "metrale_model_engine::factory::build", "--max-batch-size auto: {} slot(s) admit {} sequence(s) at the full \
+            let b = if request == SlotRequest::Fill {
+                fill_slots(AUTO_MAX_SLOTS, full_length, blocks_at)?
+            } else {
+                balance_slots(AUTO_MAX_SLOTS, full_length, blocks_at)?
+            };
+            tracing::info!(target: "metrale_model_engine::factory::build", "--max-batch-size {request}: {} slot(s) admit {} sequence(s) at the full \
                  --max-seq-len={} ({} KV blocks, {} block(s)/seq); {} slots would admit {}",
                 b.slots,
                 b.admitted,
@@ -175,19 +182,26 @@ pub(super) fn size_kv(inp: &KvInputs<'_>, plan: &SlotPlan<'_>) -> Result<KvSized
     };
     // 2026-10-01: The fix the overcommit warning names, only when the pool cannot admit the
     // requested count at full length.
-    let balanced = (plan.request != SlotRequest::Auto
+    let balanced = (plan.request == SlotRequest::Count(slots)
         && inp.hss_cache_blocks_per_seq.is_none()
         && num_kv_blocks / kv_blocks::full_length_blocks(inp.max_seq_len, inp.kv_block_size)
             < slots)
         .then(|| balance_slots(AUTO_MAX_SLOTS, full_length, blocks_at).ok())
         .flatten()
         .map(|b| b.slots);
+    // 2026-10-14: `fill` guarantees KV for FILL_FULL_LENGTH_REQUESTS full-length request, not one
+    // per slot; the check holds it to that.
+    let guaranteed = if plan.request == SlotRequest::Fill {
+        FILL_FULL_LENGTH_REQUESTS
+    } else {
+        slots
+    };
     kv_blocks::check_kv_concurrency(
         num_kv_blocks,
         inp.hss_cache_blocks_per_seq,
         inp.max_seq_len,
         inp.kv_block_size,
-        slots,
+        guaranteed,
         balanced,
     )?;
     Ok(KvSized {
