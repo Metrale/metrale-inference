@@ -67,7 +67,8 @@ impl Qwen3SsmLayer {
 
     /// 2026-10-14: A BF16 projection `[n, k] -> [n, n_out]` of the batched
     /// decode, output row stride `n_out`. At 2..=16 rows it runs
-    /// `dense_gemv_bf16_batchm`, whose rows have the bits of `dense_gemv_bf16`,
+    /// `dense_gemv_bf16_batchm` (its direct-schedule entry where the target
+    /// compiles one), whose rows have the bits of `dense_gemv_bf16`,
     /// the kernel `ssm_forward` runs at one row, so a sequence's projection
     /// does not change with the batch width. Wider batches, an absent kernel,
     /// or `METRALE_SSM_BF16_BATCHM=0` take cuBLASLt, whose split-K choice
@@ -84,10 +85,16 @@ impl Qwen3SsmLayer {
         k: u32,
         stream: u64,
     ) -> Result<()> {
-        if (2..=ops::DENSE_GEMV_BATCHM_MAX_M as usize).contains(&n)
-            && self.dense_gemv_batchm_k.0 != 0
+        let rows = (2..=ops::DENSE_GEMV_BATCHM_MAX_M as usize).contains(&n);
+        if rows
             && ctx.levers.ssm_bf16_batchm
+            && let Some(direct) = &self.dense_gemv_batchm_direct
         {
+            return ops::dense_gemv_batchm_direct(
+                ctx.gpu, direct, input, weight, output, n as u32, n_out, k, n_out, stream,
+            );
+        }
+        if rows && self.dense_gemv_batchm_k.0 != 0 && ctx.levers.ssm_bf16_batchm {
             return ops::dense_gemv_batchm(
                 ctx.gpu,
                 self.dense_gemv_batchm_k,

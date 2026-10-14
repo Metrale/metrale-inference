@@ -7,6 +7,8 @@
 //! leave every row byte-identical to `dense_gemv` plus a one-row `deinterleave_qg`, at
 //! every decode width, inside and past one block row.
 //! The same identity at the BF16 shared expert's shapes (2026-10-13).
+//! The direct-schedule entries against the one-row GEMV at the GDN projection shapes
+//! (2026-10-14).
 //!
 //! GPU test: run with
 //! ```text
@@ -223,6 +225,86 @@ fn batched_shared_expert_rows_equal_the_one_row_gemv_at_every_width() {
                 assert!(
                     a[i * row..(i + 1) * row] == b[i * row..(i + 1) * row],
                     "[{n_out}, {k}] m={m}: row {i} differs from the one-row GEMV"
+                );
+            }
+            for p in [x, per_row, batched] {
+                g.free(p).unwrap();
+            }
+        }
+        g.free(wt.weight).unwrap();
+    }
+}
+
+/// 2026-10-14: The direct-schedule batchm entries (`DenseGemvBatchmDirect`) against the one-row
+/// `dense_gemv`: at Qwen3.8-Flash-Next's GDN BF16 projection shapes (qkvz `[16384, 2560]`,
+/// out `[2560, 6144]`) and an odd N whose last 64-lane group has one output past N, every row
+/// at every width 2..=16 is byte-identical, written with an output stride wider than N, and
+/// the columns past N stay unwritten. Fails when the entries are absent only on a Hopper build
+/// (`METRALE_EXPECT_HOPPER=1`); elsewhere the target compiles none and the test returns.
+#[test]
+#[ignore]
+fn direct_batchm_rows_equal_the_one_row_gemv_at_every_width() {
+    let set = metrale_kernels::ptx_for_exact_target("qwen3.8-flash-next", "nvfp4")
+        .expect("qwen3.8-flash-next/nvfp4 not in this build");
+    let gpu = metrale_gpu_runtime::cuda_backend::MetraleCudaBackend::new(0, &set.modules)
+        .expect("CUDA backend");
+    let g: &dyn GpuBackend = &gpu;
+    let row_k = g.kernel("gemv", "dense_gemv_bf16").unwrap();
+    let direct = DenseGemvBatchmDirect::load(g);
+    if std::env::var("METRALE_EXPECT_HOPPER").as_deref() == Ok("1") {
+        assert!(
+            direct.is_some(),
+            "direct batchm entries not loaded on a Hopper build"
+        );
+    }
+    let Some(direct) = direct else {
+        return;
+    };
+    let stream = g.create_stream().unwrap();
+    for (n_out, k) in [(16384usize, H), (H, 6144usize), (2561, 1032)] {
+        let wt = DenseWeight {
+            weight: upload(g, &bf16s(n_out * k, 23 ^ n_out as u32)),
+        };
+        let stride = n_out + 8;
+        for m in 2..=DENSE_GEMV_BATCHM_MAX_M as usize {
+            let x = upload(g, &bf16s(m * k, 0xC2B2_AE35 ^ m as u32));
+            let (per_row, batched) = (sentinel(g, m * stride * 2), sentinel(g, m * stride * 2));
+            for i in 0..m {
+                let (xi, oi) = (x.offset(i * k * 2), per_row.offset(i * stride * 2));
+                dense_gemv(g, row_k, xi, &wt, oi, n_out as u32, k as u32, stream).unwrap();
+            }
+            dense_gemv_batchm_direct(
+                g,
+                &direct,
+                x,
+                &wt,
+                batched,
+                m as u32,
+                n_out as u32,
+                k as u32,
+                stride as u32,
+                stream,
+            )
+            .unwrap();
+            g.synchronize(stream).unwrap();
+            let (a, b) = (
+                download(g, per_row, m * stride * 2),
+                download(g, batched, m * stride * 2),
+            );
+            let (row, used) = (stride * 2, n_out * 2);
+            for i in 0..m {
+                let (ra, rb) = (&a[i * row..(i + 1) * row], &b[i * row..(i + 1) * row]);
+                assert!(
+                    ra[..used].chunks(2).any(|c| c != [SENTINEL, SENTINEL]),
+                    "control: [{n_out}, {k}] m={m} row {i} written"
+                );
+                assert!(
+                    ra[..used] == rb[..used],
+                    "[{n_out}, {k}] m={m}: row {i} differs from the one-row GEMV"
+                );
+                assert!(
+                    rb[used..].iter().all(|&v| v == SENTINEL),
+                    "[{n_out}, {k}] m={m}: row {i} written past N"
                 );
             }
             for p in [x, per_row, batched] {

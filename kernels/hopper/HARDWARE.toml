@@ -40,6 +40,11 @@ memory_gb = 80
 # on sm_90a. crates/kernels/tests/blockscale_mma_guard.rs checks that every
 # such instruction in the hopper sources sits inside that guard, and
 # `scripts/hopper_ptx_gate.sh --hw hopper` compiles the set with nvcc.
+#
+# 2026-10-14: METRALE_BATCHM_DIRECT_R=2 compiles the direct-schedule
+# `dense_gemv_bf16_batchm_r2_m<M>` entries (two outputs per 64-lane group,
+# compile-time M) that the batched GDN projections prefer; the host reads R
+# from the entry names. Each row keeps the bits of `dense_gemv_bf16`.
 
 
 
@@ -48,7 +53,7 @@ memory_gb = 80
 
 
 [build]
-extra_nvcc_flags = ["-DMETRALE_NO_WARP_BLOCKSCALE_MMA"]
+extra_nvcc_flags = ["-DMETRALE_NO_WARP_BLOCKSCALE_MMA", "-DMETRALE_BATCHM_DIRECT_R=2"]
 
 # 2026-09-25: Serving defaults for this target. build.rs (build_defaults.rs)
 # bakes them into `metrale_kernels::TARGET_DEFAULTS`, and `resolve` in
