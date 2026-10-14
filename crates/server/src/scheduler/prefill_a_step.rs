@@ -29,7 +29,7 @@ pub fn start_chunked_prefill(
     prefill_stream: u64,
     prefill_event: u64,
     grammar_engine: &mut Option<GrammarEngine>,
-    spontaneous_think_budget: u32,
+    spontaneous_think_budget: Option<u32>,
     // 2026-09-25: When true, do the per-request setup and the EP broadcast
     // but not the chunk-0 prefill, and return `InProgress` at offset 0 for
     // a batched prefill step. `start_new_requests` passes true only for

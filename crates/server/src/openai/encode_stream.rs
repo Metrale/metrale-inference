@@ -172,6 +172,17 @@ mod tests {
     }
 
     #[test]
+    fn role_chunk_carries_an_empty_content_string_as_vllm_does() {
+        let v = norm(
+            &serde_json::to_string(&ChatCompletionChunk::role_chunk("m", "chatcmpl-x")).unwrap(),
+        );
+        assert_eq!(
+            v["choices"][0]["delta"],
+            serde_json::json!({"role": "assistant", "content": ""})
+        );
+    }
+
+    #[test]
     fn content_delta_encodes_via_content_chunk() {
         let d = StreamDelta::Content {
             text: "hi".into(),

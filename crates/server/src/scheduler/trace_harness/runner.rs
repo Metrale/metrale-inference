@@ -340,7 +340,7 @@ fn run_scenario_inner(sc: &Scenario, build: DeviceBuilder) -> Vec<String> {
                 grammar_engine: None,
                 adaptive_sampling: false,
                 session_manager: crate::session_manager::SessionSsmManager::new(3600),
-                spontaneous_think_budget: 512,
+                spontaneous_think_budget: Some(512),
                 vocab_masks: masks,
                 limits: SchedLimits {
                     im_start_hard_stop: None,

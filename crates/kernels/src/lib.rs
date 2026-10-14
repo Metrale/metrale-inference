@@ -289,6 +289,13 @@ pub struct ModelBehavior {
     /// [`crate::ROLLBACK_RESTEER_CAP`] rollbacks of one sequence the rollback
     /// declines and the watchdog ends the response. Default true.
     pub rollback_resteer: bool,
+    /// 2026-10-14: The server steers the thinking block: it forces `</think>`
+    /// when a thinking budget or watchdog fires, defers that close to a
+    /// word or sentence boundary, masks `<think>` after a close, drops a
+    /// stray `</think>`, and gives a spontaneous `<think>` its own budget.
+    /// False does what vLLM does: the block is the model's, and only a
+    /// budget the client asks for forces `</think>`. Default true.
+    pub thinking_steering: bool,
     /// 2026-09-25: Path to a trained repetition-onset (ROM, arXiv:2603.22016)
     /// head artifact. Nothing loads it: a non-empty value only logs a startup
     /// warning, and the scheduler's `rom_head` stays `None`. Default empty.
@@ -353,6 +360,7 @@ impl Default for ModelBehavior {
             tscg: false,
             disable_tool_grammar: false,
             rollback_resteer: true,
+            thinking_steering: true,
             rom_head: "",
             tool_retry: true,
             preserve_thinking: None,

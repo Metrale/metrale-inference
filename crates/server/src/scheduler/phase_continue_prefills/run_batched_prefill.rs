@@ -222,6 +222,8 @@ pub(super) fn run_batched_prefill_step(
                     p.enable_thinking,
                     think_end_token,
                     tool_call_start_token,
+                    p.min_tokens,
+                    p.require_tool_call,
                 ),
                 &sched.levers.sampling(),
                 sched.io.tel.dumps(),

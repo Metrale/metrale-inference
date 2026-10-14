@@ -158,7 +158,13 @@ pub(super) fn run_batched_mixed_step(
             p.min_p,
             &p.eos_tokens,
             p.grammar_state.as_mut(),
-            FirstTokenPolicy::for_birth(p.enable_thinking, think_end_token, tool_call_start_token),
+            FirstTokenPolicy::for_birth(
+                p.enable_thinking,
+                think_end_token,
+                tool_call_start_token,
+                p.min_tokens,
+                p.require_tool_call,
+            ),
             &sched.levers.sampling(),
             sched.io.tel.dumps(),
         ) {

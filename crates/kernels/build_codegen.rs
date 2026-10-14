@@ -191,6 +191,7 @@ pub(super) fn generate_target_ptx_rs(
              \x20               tscg: {},\n\
              \x20               disable_tool_grammar: {},\n\
              \x20               rollback_resteer: {},\n\
+             \x20               thinking_steering: {},\n\
              \x20               rom_head: \"{}\",\n\
              \x20               tool_retry: {},\n\
              \x20               preserve_thinking: {:?},\n\
@@ -234,6 +235,7 @@ pub(super) fn generate_target_ptx_rs(
             target.behavior_tscg,
             target.behavior_disable_tool_grammar,
             target.behavior_rollback_resteer,
+            target.behavior_thinking_steering,
             target.behavior_rom_head,
             target.behavior_tool_retry,
             target.behavior_preserve_thinking,

@@ -372,7 +372,7 @@ impl InferenceRequest {
     }
 
     /// 2026-09-26: EOS ids are masked while the output is shorter than this
-    /// (`logit_processors/min_tokens_eos.rs`).
+    /// (`scheduler/eos_hold.rs::presample_hold`).
     pub fn min_tokens(&self) -> usize {
         match self {
             InferenceRequest::Blocking { min_tokens, .. } => *min_tokens,

@@ -18,8 +18,9 @@ use super::*;
 
 /// 2026-10-11: Whether a request's K=2 picks are its argmaxes, so the device verdict is the host
 /// verdict: greedy, no grammar, no log-probabilities, no penalty or bias that can move the
-/// argmax, past its `min_tokens`, and outside thinking and the tool-call pin, where the chat
-/// pipeline's masks can act (`verify_pipeline_helper/fast_masked.rs`).
+/// argmax, no EOS hold (`eos_hold::presample_hold`: `min_tokens`, a required tool call), and
+/// outside thinking, where the chat pipeline's masks can act
+/// (`verify_pipeline_helper/fast_masked.rs`).
 pub(super) fn identity_picks(
     a: &ActiveSeq,
     ctx: &crate::scheduler::logit_processors::LogitsContext,
@@ -40,9 +41,9 @@ pub(super) fn identity_picks(
         grammar: a.grammar_state.is_some(),
         logprobs: a.top_logprobs.is_some(),
         neutral_penalties: penalties == crate::scheduler::fast_greedy::PenaltyGate::Neutral,
-        below_min_tokens: a.output_tokens.len() < a.min_tokens,
+        // 2026-10-14: position 0 is enough: a hold at position 1 implies one at 0.
+        eos_held: crate::scheduler::eos_hold::presample_hold_for(a, a.output_tokens.len()).any(),
         thinking: a.inside_thinking || a.think_just_ended || a.force_end_thinking,
-        tool_pin: a.require_tool_call,
     })
 }
 
@@ -52,19 +53,12 @@ pub(super) struct IdentityInputs {
     pub grammar: bool,
     pub logprobs: bool,
     pub neutral_penalties: bool,
-    pub below_min_tokens: bool,
+    pub eos_held: bool,
     pub thinking: bool,
-    pub tool_pin: bool,
 }
 
 pub(super) fn identity_rule(i: IdentityInputs) -> bool {
-    i.greedy
-        && !i.grammar
-        && !i.logprobs
-        && i.neutral_penalties
-        && !i.below_min_tokens
-        && !i.thinking
-        && !i.tool_pin
+    i.greedy && !i.grammar && !i.logprobs && i.neutral_penalties && !i.eos_held && !i.thinking
 }
 
 /// 2026-10-11: The rest of a device-verdict K=2 step after the verify and the host picks
@@ -168,9 +162,8 @@ mod tests {
             grammar: false,
             logprobs: false,
             neutral_penalties: true,
-            below_min_tokens: false,
+            eos_held: false,
             thinking: false,
-            tool_pin: false,
         }
     }
 
@@ -180,14 +173,13 @@ mod tests {
     fn each_pick_changing_condition_disarms_the_device_verdict() {
         assert!(identity_rule(plain()));
         type Disarm = fn(&mut IdentityInputs);
-        let cases: [(&str, Disarm); 7] = [
+        let cases: [(&str, Disarm); 6] = [
             ("sampled", |i| i.greedy = false),
             ("grammar", |i| i.grammar = true),
             ("logprobs", |i| i.logprobs = true),
             ("penalties", |i| i.neutral_penalties = false),
-            ("min_tokens", |i| i.below_min_tokens = true),
+            ("EOS held", |i| i.eos_held = true),
             ("thinking", |i| i.thinking = true),
-            ("tool pin", |i| i.tool_pin = true),
         ];
         for (name, f) in cases {
             let mut i = plain();

@@ -32,6 +32,9 @@ mod strip;
 mod token_ids;
 mod tool_dispatch;
 mod tool_handlers;
+mod vllm_shape;
+#[cfg(test)]
+mod vllm_shape_tests;
 
 use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive};
@@ -253,6 +256,13 @@ pub(crate) async fn run_chat_stream(
         ));
     }
 
+    // 2026-10-14: vLLM's whitespace shaping, for a reasoning format that asks
+    // for it (`vllm_shape.rs`).
+    let mut vllm_shape = state
+        .reasoning_parser
+        .as_ref()
+        .is_some_and(|p| p.shapes_stream_whitespace())
+        .then(vllm_shape::VllmDeltaShape::default);
     // 2026-09-26: `terminated`: a stream the scheduler drops without Done/Error still
     // ends in an error frame (`stream_terminal.rs`).
     let events = super::stream_terminal::terminated(ReceiverStream::new(token_rx));
@@ -292,6 +302,10 @@ pub(crate) async fn run_chat_stream(
                 )
             }
             StreamEvent::Error(msg) => handle_error::handle_error(&ctx, msg),
+        };
+        let deltas = match vllm_shape.as_mut() {
+            Some(shape) => shape.apply(deltas),
+            None => deltas,
         };
 
         futures::stream::iter(deltas).boxed()

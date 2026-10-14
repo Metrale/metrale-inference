@@ -58,6 +58,7 @@ pub(crate) struct ParsedBehavior {
     pub tscg: bool,
     pub disable_tool_grammar: bool,
     pub rollback_resteer: bool,
+    pub thinking_steering: bool,
     pub rom_head: String,
     pub tool_retry: bool,
     /// 2026-09-25: Tri-state `preserve_thinking` chat-template flag. `None` (key absent)
@@ -97,6 +98,7 @@ impl Default for ParsedBehavior {
             tscg: false,
             disable_tool_grammar: false,
             rollback_resteer: true,
+            thinking_steering: true,
             rom_head: String::new(),
             tool_retry: true,
             preserve_thinking: None,
@@ -245,6 +247,10 @@ pub(crate) fn parse_behavior(model_dir: &std::path::Path) -> ParsedBehavior {
         .and_then(|v| v.get("rollback_resteer"))
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
+    let thinking_steering = b
+        .and_then(|v| v.get("thinking_steering"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
     let rom_head = b
         .and_then(|v| v.get("rom_head"))
         .and_then(|v| v.as_str())
@@ -287,6 +293,7 @@ pub(crate) fn parse_behavior(model_dir: &std::path::Path) -> ParsedBehavior {
         tscg,
         disable_tool_grammar,
         rollback_resteer,
+        thinking_steering,
         rom_head,
         tool_retry,
         preserve_thinking,

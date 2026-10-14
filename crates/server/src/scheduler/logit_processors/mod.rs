@@ -11,8 +11,10 @@
 //!
 //! ## Stage order
 //!
-//! 1. [`min_tokens_eos::MinTokensEosMask`] — masks EOS token ids while the
-//!    effective output length is below the request's `min_tokens` floor.
+//! 1. [`min_tokens_eos::EosHoldMask`] — masks EOS token ids while
+//!    `eos_hold::presample_hold` holds them: the effective output length is
+//!    below `min_tokens`, or a required tool call has not opened outside
+//!    thinking.
 //! 2. [`f2_confidence::F2ConfidenceEarlyStop`] — arms `force_end_thinking`
 //!    when top-1 probability stays ≥ 0.95 for the configured run.
 //! 3. [`mid_word::MidWordThinkEndMask`] — suppresses `</think>` when
@@ -55,6 +57,8 @@ pub mod tool_during_think;
 
 #[cfg(test)]
 mod pipeline_tests;
+#[cfg(test)]
+mod steering_off_tests;
 
 /// 2026-09-25: What every stage receives besides the logits and the sequence:
 /// special-token ids, vocab masks, levers, the model's watchdog tunables and
@@ -183,7 +187,7 @@ pub fn run_pipeline_with_path(
     path: &'static str,
 ) -> Option<u32> {
     let stages: [&dyn LogitsProcessor; 9] = [
-        &min_tokens_eos::MinTokensEosMask,
+        &min_tokens_eos::EosHoldMask,
         &f2_confidence::F2ConfidenceEarlyStop,
         &mid_word::MidWordThinkEndMask,
         &post_close::PostCloseThinkMask,

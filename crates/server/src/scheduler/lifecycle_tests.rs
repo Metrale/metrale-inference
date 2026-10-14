@@ -252,7 +252,7 @@ fn test_seq(
         enable_thinking: false,
         thinking_budget: None,
         repetition_detection: None,
-        spontaneous_think_budget: 0,
+        spontaneous_think_budget: Some(0),
         thinking_tokens: 0,
         force_end_thinking: false,
         think_force_closed: false,

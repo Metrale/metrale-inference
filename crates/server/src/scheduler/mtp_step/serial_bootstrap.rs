@@ -126,13 +126,16 @@ pub(super) fn bootstrap_seq(
     // `a.min_p` (the request's min_p raised to MODEL.toml `min_p_floor`
     // in `sampling_setup`). `METRALE_NO_MTP_MINP=1` passes 0.0 instead
     // (`effective_min_p`).
+    // 2026-10-14: The EOS ids `eos_hold::presample_hold` holds, masked before
+    // the pick as on every other path.
+    let eos_mask = crate::scheduler::eos_hold::eos_mask_ids(a, a.output_tokens.len()).to_vec();
     let tok = match sample_token_with_grammar(
         model,
         logits,
         a.temperature,
         a.top_k,
         a.top_p,
-        &[],
+        &eos_mask,
         a.grammar_state.as_mut(),
         &penalties,
         &history,

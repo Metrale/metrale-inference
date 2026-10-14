@@ -142,6 +142,7 @@ pub(super) fn step_mtp_bootstrap_batched(
                 && verify_ctx.sampling.fast_greedy_grammar
                 && (a.temperature == 0.0 || verify_ctx.sampling.force_temp_zero)
                 && a.grammar_state.is_none()
+                && !crate::scheduler::eos_hold::presample_hold_for(a, a.output_tokens.len()).any()
                 && crate::scheduler::fast_greedy::classify_penalties(p)
                     == crate::scheduler::fast_greedy::PenaltyGate::Neutral
         })
@@ -187,13 +188,16 @@ pub(super) fn step_mtp_bootstrap_batched(
                     a.tool_call_end_token,
                 )
                 .to_vec();
+                // 2026-10-14: the EOS ids `eos_hold::presample_hold` holds.
+                let eos_mask =
+                    crate::scheduler::eos_hold::eos_mask_ids(a, a.output_tokens.len()).to_vec();
                 match sample_token_with_grammar(
                     model,
                     row_logits,
                     a.temperature,
                     a.top_k,
                     a.top_p,
-                    &[],
+                    &eos_mask,
                     a.grammar_state.as_mut(),
                     &pen[j],
                     &history,

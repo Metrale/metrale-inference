@@ -11,7 +11,8 @@
 //!   entry values. Within the loop, each later position is masked against
 //!   the matcher state the earlier picks leave behind, and a `</think>` pick
 //!   switches the thinking flags for the remaining positions, so the first
-//!   position after it is picked outside thinking.
+//!   position after it is picked outside thinking. 2026-10-14: A `<think>`
+//!   pick outside thinking switches them back, as `emit_token` does.
 
 use super::verify_pick_with_pipeline;
 use crate::scheduler::logit_processors::LogitsContext;
@@ -47,6 +48,14 @@ pub(super) fn pick_positions_from_host(
             a.think_just_ended = true;
             continue;
         }
+        // 2026-10-14: `<think>` outside thinking re-opens it for the later
+        // positions (`emit_token`). It is not fed to the matcher.
+        if !a.inside_thinking && ctx.think_start_token == Some(pick) {
+            a.inside_thinking = true;
+            a.think_ended = false;
+            a.think_just_ended = false;
+            continue;
+        }
 
         // 2026-09-25: advance the matcher with the pick so the next position
         // is masked against the state after it. Not after the last position,
@@ -63,7 +72,7 @@ pub(super) fn pick_positions_from_host(
                     i,
                     "verify_pick: grammar speculative advance refused — pipeline picked a token outside the current bitmask. \
                      This indicates a stale bitmask in the pipeline or a forced-token fastpath that terminated grammar. \
-                     Stopping speculation here; the real `accept_token` in emit_token will fail and end the response."
+                     Stopping speculation here; emit_token keeps the token and leaves the grammar unadvanced."
                 );
                 break;
             }

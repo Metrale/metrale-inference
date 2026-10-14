@@ -55,7 +55,8 @@ pub struct ChunkDelta {
 }
 
 impl ChatCompletionChunk {
-    /// 2026-09-26: Opening chunk of a chat stream: `role: "assistant"` and nothing else.
+    /// 2026-09-26: Opening chunk of a chat stream: `role: "assistant"`. 2026-10-14:
+    /// with `content: ""`, as vLLM and OpenAI send it.
     pub fn role_chunk(model: &str, id: &str) -> Self {
         Self {
             id: id.to_string(),
@@ -68,7 +69,7 @@ impl ChatCompletionChunk {
                 delta: ChunkDelta {
                     role: Some("assistant".to_string()),
                     reasoning_content: None,
-                    content: None,
+                    content: Some(String::new()),
                     tool_calls: None,
                     refusal: None,
                 },

@@ -53,6 +53,14 @@ pub struct WatchdogParams {
     /// [`CONTENT_LOOP_MIN_REPEATS`]. A per-request `repetition_detection`
     /// object outranks it (see [`WatchdogParams::content_loop_params`]).
     pub content_loop_min_repeats: Option<u32>,
+    /// 2026-10-14: MODEL.toml `[behavior].thinking_steering`. False leaves the
+    /// thinking block to the model, as vLLM does: no confidence or loop
+    /// watchdog arms `</think>`, no `</think>` floor, mid-word or post-close
+    /// mask, a stray `</think>` is kept as a content token, and a `<think>`
+    /// re-opens reasoning. A client budget still forces `</think>`, at once
+    /// (vLLM's thinking-budget processor). `max_tokens`, `max_seq_len`, the
+    /// request timeout and cancellation bound the block.
+    pub thinking_steering: bool,
 }
 
 /// 2026-09-25: What `WatchdogParams::default()` returns. Served runs use
@@ -69,6 +77,7 @@ const DEFAULT_WATCHDOG_PARAMS: WatchdogParams = WatchdogParams {
     enable_think_loop_watchdog: true,
     content_loop_min_repeats: None,
     min_reasoning_floor: 16,
+    thinking_steering: true,
 };
 
 impl Default for WatchdogParams {
@@ -96,18 +105,24 @@ impl WatchdogParams {
         max_inter_tool_prose_cli: Option<u32>,
         content_loop_min_repeats_cli: Option<u32>,
     ) -> Self {
+        let steering = b.thinking_steering;
         let mut p = Self {
-            min_reasoning_floor: b.min_reasoning_floor_tokens,
+            min_reasoning_floor: if steering {
+                b.min_reasoning_floor_tokens
+            } else {
+                0
+            },
             think_loop_min_repeats: b.think_loop_min_repeats as usize,
             think_loop_scan_window: b.think_loop_scan_window as usize,
-            confidence_early_stop: b.confidence_early_stop,
+            confidence_early_stop: b.confidence_early_stop && steering,
             confidence_run_length: b.confidence_run_length,
             fuzzy_repeat_tolerance_div: b.fuzzy_repeat_tolerance_div as usize,
             max_inter_tool_prose: b.max_inter_tool_prose,
             max_post_think_content_tokens: b.max_post_think_content_tokens,
             rollback_resteer: b.rollback_resteer,
-            enable_think_loop_watchdog: b.enable_think_loop_watchdog,
+            enable_think_loop_watchdog: b.enable_think_loop_watchdog && steering,
             content_loop_min_repeats: None,
+            thinking_steering: steering,
         };
         let env = match std::env::var("METRALE_MAX_INTER_TOOL_PROSE") {
             Ok(v) => match v.parse::<u32>() {

@@ -8,13 +8,20 @@
 //! - The `<tool_response>` and stray-`</think>` hard stops, and the
 //!   post-think cap, content-loop and prose-budget stops, set `a.guard_stop`
 //!   where they set `finished`. `finish_guard_tests.rs` pins the count.
+//! - 2026-10-14: An EOS is decided right after the hard stops, with the same
+//!   `eos_hold` as `decode_logits_step`. A held one leaves no trace (not
+//!   pushed, not charged, the grammar not advanced); one that ends the turn
+//!   is pushed and charged, as vLLM counts its EOS.
+//! - 2026-10-14: A token the grammar rejects is kept and the grammar stays
+//!   attached, unadvanced, as vLLM's structured-output manager does.
 
 use super::*;
 
 /// 2026-09-25: Emit a token for an active sequence (stream + bookkeeping).
 ///
-/// EOS and the control tokens that end a turn are not streamed. An EOS is
-/// still recorded in `output_tokens`, so it counts as a generated token.
+/// EOS and the control tokens that end a turn are not streamed. An EOS that
+/// ends the turn is still recorded in `output_tokens` and charged, so it
+/// counts as a generated token.
 ///
 /// When `logprobs` is `Some`, it is appended to `a.logprobs_data` and the
 /// token is streamed as `StreamEvent::TokenWithLogprobs`.
@@ -74,23 +81,58 @@ pub fn emit_token(
         return;
     }
 
+    // 2026-10-13: EOS: the same `eos_hold` decision as `decode_logits_step`.
+    if a.eos_tokens.contains(&tok) {
+        let generated_before = a.output_tokens.len();
+        let hold =
+            crate::scheduler::eos_hold::eos_hold(a, generated_before, sched.levers.tool_eos_escape);
+        if hold.any() {
+            // 2026-10-14: The verify pickers mask a held EOS before they pick
+            // (`EosHoldMask`, `eos_masked_in_window`), as vLLM's sampler
+            // does for the draft and bonus positions. One that still arrives
+            // is dropped: not pushed, not charged, not streamed.
+            tracing::debug!(
+                target: "metrale::eos",
+                tok,
+                inside_thinking = a.inside_thinking,
+                by_grammar = hold.grammar,
+                by_required_tool_call = hold.required_tool_call,
+                by_min_tokens = hold.min_tokens,
+                "EOS suppressed in emit_token; model forced to continue"
+            );
+            return;
+        }
+        crate::scheduler::eos_hold::end_turn_at_eos(a, tok, logprobs);
+        return;
+    }
+
     // 2026-09-25: a `<think>` outside thinking enters thinking mode with the
     // spontaneous-think budget; the token itself is not emitted.
-    if !a.inside_thinking && a.think_start_token == Some(tok) {
+    // 2026-10-14: Without thinking steering (no spontaneous budget) the
+    // request's budget stays and the token is kept as reasoning text, as in
+    // vLLM and `decode_logits_step`.
+    let reopened_think = !a.inside_thinking && a.think_start_token == Some(tok);
+    if reopened_think {
         a.inside_thinking = true;
         // 2026-09-25: restart the post-`</think>` count that
         // `mtp_gate::spec_dispatch_eligible` reads.
         a.post_think_emitted = 0;
         a.think_ended = false;
         a.think_skip_count = 0;
-        a.thinking_budget = Some(a.spontaneous_think_budget);
+        if let Some(spontaneous) = a.spontaneous_think_budget {
+            a.thinking_budget = Some(spontaneous);
+        }
         tracing::debug!("Spontaneous <think> detected in emit_token, entering thinking mode");
-        return;
+        if sched.watchdog.thinking_steering {
+            return;
+        }
     }
 
     // 2026-09-25: a `</think>` outside thinking is skipped, as in
     // `process_decode_logits`; the 50th in a row ends the turn.
-    if !a.inside_thinking && a.think_end_token == Some(tok) {
+    // 2026-10-14: only with thinking steering; without it the token is
+    // content, as in vLLM.
+    if sched.watchdog.thinking_steering && !a.inside_thinking && a.think_end_token == Some(tok) {
         a.think_skip_count += 1;
         if a.think_skip_count >= 50 {
             a.finished = true;
@@ -144,26 +186,18 @@ pub fn emit_token(
 
     // 2026-09-25: advance the grammar, except inside thinking: the matcher
     // never sees thinking tokens or the closing `</think>`.
-    let mut disengage_grammar = false;
+    // 2026-10-14: a token the matcher refuses is kept and the grammar stays
+    // attached at its last accepted position, as vLLM's structured-output
+    // manager does (it logs and goes on); `decode_logits_step` does the same.
     if !a.inside_thinking
         && let Some(ref mut gs) = a.grammar_state
+        && !gs.accept_token(tok)
     {
-        let advanced = gs.accept_token(tok);
-        if !advanced {
-            // 2026-09-25: the matcher refused this token. Rather than end the
-            // turn, drop the grammar for the rest of this response and
-            // decode unconstrained.
-            tracing::warn!(
-                tok,
-                output_len = a.output_tokens.len(),
-                "gs.accept_token returned false — grammar/model disagreement; disengaging grammar for the remainder of this response (free decode + post-hoc tool parse) instead of aborting the turn."
-            );
-            disengage_grammar = true;
-        }
-    }
-    if disengage_grammar {
-        // 2026-09-25: set here, after the `gs` borrow ends.
-        a.grammar_state = None;
+        tracing::error!(
+            tok,
+            output_len = a.output_tokens.len(),
+            "grammar refused an emitted token; keeping the token and the grammar unadvanced"
+        );
     }
 
     if let Some(lp) = logprobs {
@@ -200,7 +234,7 @@ pub fn emit_token(
                 a.thinking_tokens,
                 a.thinking_budget,
             );
-        } else {
+        } else if !reopened_think {
             a.thinking_tokens += 1;
             if let Some(budget) = a.thinking_budget
                 && a.thinking_tokens >= budget
@@ -306,29 +340,6 @@ pub fn emit_token(
         }
     }
 
-    // 2026-10-13: EOS: the same `eos_hold` decision as `decode_logits_step`.
-    // The EOS is already in `output_tokens`, so the tokens before it are one
-    // fewer.
-    if a.eos_tokens.contains(&tok) {
-        let generated_before = a.output_tokens.len().saturating_sub(1);
-        let hold =
-            crate::scheduler::eos_hold::eos_hold(a, generated_before, sched.levers.tool_eos_escape);
-        if !hold.any() {
-            a.finished = true;
-            return;
-        }
-        // 2026-10-09: the same debug line as `decode_logits_step`'s held-back EOS.
-        tracing::debug!(
-            target: "metrale::eos",
-            tok,
-            inside_thinking = a.inside_thinking,
-            by_grammar = hold.grammar,
-            by_required_tool_call = hold.required_tool_call,
-            by_min_tokens = hold.min_tokens,
-            "EOS suppressed in emit_token; model forced to continue"
-        );
-        return;
-    }
     // 2026-09-25: thinking tokens of a request without thinking enabled are
     // not streamed, the same gate as `process_decode_logits`.
     let suppress_stream = a.inside_thinking && !a.enable_thinking;

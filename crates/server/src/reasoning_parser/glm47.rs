@@ -3,7 +3,8 @@
 //! 2026-10-08: The GLM-4.7 reasoning format, used by GLM-5.3 (`glm5_next`).
 //! The chat template ends every generation prompt with `<think>`, with
 //! thinking on or off (off means low effort, not no reasoning), so output
-//! starts inside the block on every request the prompt opened it for. The
+//! starts inside the block on every request (2026-10-14: the split starts
+//! there whatever the request's thinking flag says, as vLLM's does). The
 //! block ends at `</think>`, and also at `<tool_call>`: a call opened while
 //! reasoning ends the reasoning there, and the call and what follows are the
 //! answer.
@@ -54,18 +55,20 @@ impl ReasoningParser for Glm47ReasoningParser {
     fn tool_call_closes_reasoning(&self) -> bool {
         true
     }
+    fn shapes_stream_whitespace(&self) -> bool {
+        true
+    }
 
-    /// 2026-10-08: Split `text` with the module's state machine, starting in
-    /// the reasoning when `enable_thinking` (the prompt opened the block) and
-    /// in the answer otherwise. The reasoning is returned whatever
-    /// `enable_thinking` says, with trailing whitespace removed, and `None`
-    /// when empty; the answer is returned as written.
-    fn extract_thinking(&self, text: &str, enable_thinking: bool) -> (Option<String>, String) {
-        let mut state = if enable_thinking {
-            State::Reasoning
-        } else {
-            State::Answer
-        };
+    /// 2026-10-08: Split `text` with the module's state machine. The reasoning
+    /// is returned with trailing whitespace removed, and `None` when empty; the
+    /// answer is returned as written.
+    ///
+    /// 2026-10-14: The split always starts in the reasoning, whatever
+    /// `enable_thinking` says, as vLLM's `Glm47MoeParser` does
+    /// (GLM53-REASONING-ALWAYS): the template opens `<think>` on every
+    /// generation prompt, so output with no `</think>` is all reasoning.
+    fn extract_thinking(&self, text: &str, _enable_thinking: bool) -> (Option<String>, String) {
+        let mut state = State::Reasoning;
         let mut reasoning = String::new();
         let mut answer = String::new();
         let mut rest = text;

@@ -317,6 +317,8 @@ pub(super) fn continue_in_progress_prefills(
                             p.enable_thinking,
                             think_end_token,
                             tool_call_start_token,
+                            p.min_tokens,
+                            p.require_tool_call,
                         ),
                         &sched.levers.sampling(),
                         sched.io.tel.dumps(),

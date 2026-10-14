@@ -159,10 +159,13 @@ pub(crate) fn load_model(
     let session_manager = session_manager::SessionSsmManager::new(600);
     // 2026-09-26: The thinking budget a sequence gets when the model opens
     // `<think>` on its own (`emit_step/token.rs`): `--max-thinking-budget`,
-    // else MODEL.toml `[behavior].max_thinking_budget`.
-    let scheduler_spontaneous_think_budget = args
-        .max_thinking_budget
-        .unwrap_or(ptx_set.behavior.max_thinking_budget);
+    // else MODEL.toml `[behavior].max_thinking_budget`. 2026-10-14: none when
+    // `[behavior].thinking_steering` is false; the sequence keeps the
+    // request's budget, as vLLM does.
+    let scheduler_spontaneous_think_budget = ptx_set.behavior.thinking_steering.then(|| {
+        args.max_thinking_budget
+            .unwrap_or(ptx_set.behavior.max_thinking_budget)
+    });
     // 2026-09-26: With `--dflash` the verify steps pick on raw argmax, without
     // the pre-sample pipeline. The `dflash_masked_verify` lever
     // (`METRALE_DFLASH_MASKED_VERIFY`, on unless `0`) sends the picks back
@@ -350,7 +353,10 @@ pub(crate) fn load_model(
         // the CLI overrides below.
         behavior: model_setup::resolve_behavior(&ptx_set, &args, &default_kwargs),
         disable_thinking: args.disable_thinking,
-        uncapped_thinking: args.chat_surface.uncapped_thinking,
+        // 2026-10-14: a model without thinking steering arms only a budget the
+        // client states, as vLLM's `thinking_token_budget` does.
+        uncapped_thinking: args.chat_surface.uncapped_thinking
+            || !ptx_set.behavior.thinking_steering,
         default_thinking: default_kwargs.thinking,
         default_reasoning_effort: default_kwargs.reasoning_effort,
         response_store,
