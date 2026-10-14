@@ -34,11 +34,17 @@
 
 #define HLG_THREADS 256
 #define HLG_WARPS (HLG_THREADS / 32)
-// 2026-10-14: Tokens per block (grid y counts token groups). HLG_ROWS * HLG_TOKENS and
-// HLG_STREAMS * HLG_TOKENS are 32: one value per lane after the reduce-scatter.
+// 2026-10-14: Tokens per block (grid y counts token groups). HLG_ROWS * HLG_DOWN_TOKENS and
+// HLG_STREAMS * HLG_TOKENS are 32: one value per lane after the reduce-scatter. The down GEMV takes
+// one weight row per block (rank + hc = 324 blocks at T <= 32, not 81 at four rows: 81 left 51 SMs
+// idle and ran at ~1 TB/s); the reduce-scatter adds every index by the same tree, so a row's bits do
+// not depend on how many rows or tokens share its block.
 #define HLG_TOKENS 8
-#define HLG_ROWS 4
+#define HLG_ROWS 1
+#define HLG_DOWN_TOKENS 32
 #define HLG_STREAMS 4
+// 2026-10-14: K-loop iterations a lane of the up GEMV runs at HLG_MAX_RANK (rank / 8 / 32).
+#define HLG_UP_ITERS (HLG_MAX_RANK / 8 / 32)
 #define HLG_MAX_RANK 512
 
 // 2026-10-14: acc += dot(w, x) over one 8-element BF16 vector, in ascending element order.
@@ -83,7 +89,7 @@ __device__ __forceinline__ float hlg_reduce_scatter32(float (&v)[32]) {
     return v[0];
 }
 
-// 2026-10-14: Grid [ceil((rank + hc_inj) / HLG_ROWS), ceil(T / HLG_TOKENS)], block HLG_THREADS,
+// 2026-10-14: Grid [ceil((rank + hc_inj) / HLG_ROWS), ceil(T / HLG_DOWN_TOKENS)], block HLG_THREADS,
 // where hc_inj = hc with an injection weight and 0 without. Block x owns weight rows
 // [x * HLG_ROWS, +HLG_ROWS) of [down_w ; inject_w].
 extern "C" __global__ void __launch_bounds__(HLG_THREADS) hc_lowrank_down_inject(
@@ -101,9 +107,9 @@ extern "C" __global__ void __launch_bounds__(HLG_THREADS) hc_lowrank_down_inject
     if (blockDim.x != HLG_THREADS || (K & 7u) != 0u) __trap();
     const unsigned int rows = rank + (inject_w != nullptr ? hc : 0u);
     const unsigned int r0 = blockIdx.x * HLG_ROWS;
-    const unsigned int t0 = blockIdx.y * HLG_TOKENS;
+    const unsigned int t0 = blockIdx.y * HLG_DOWN_TOKENS;
     if (r0 >= rows || t0 >= T) return;
-    const unsigned int nt = min((unsigned int)HLG_TOKENS, T - t0);
+    const unsigned int nt = min((unsigned int)HLG_DOWN_TOKENS, T - t0);
     const unsigned int k8n = K / 8u;
 
     const uint4* wrow[HLG_ROWS];
@@ -116,21 +122,24 @@ extern "C" __global__ void __launch_bounds__(HLG_THREADS) hc_lowrank_down_inject
     }
     const uint4* xrow = reinterpret_cast<const uint4*>(normed + (size_t)t0 * K);
 
-    float acc[HLG_ROWS * HLG_TOKENS];
+    float acc[HLG_ROWS * HLG_DOWN_TOKENS];
     #pragma unroll
-    for (int i = 0; i < HLG_ROWS * HLG_TOKENS; ++i) acc[i] = 0.0f;
+    for (int i = 0; i < HLG_ROWS * HLG_DOWN_TOKENS; ++i) acc[i] = 0.0f;
 
+    // 2026-10-14: Unrolled so a thread's weight loads issue together (the loop is load-latency
+    // bound at decode); each accumulator still adds its K slice in ascending order.
     const uint4 zero = make_uint4(0u, 0u, 0u, 0u);
+    #pragma unroll 4
     for (unsigned int k = threadIdx.x; k < k8n; k += HLG_THREADS) {
         uint4 w[HLG_ROWS];
         #pragma unroll
         for (int r = 0; r < HLG_ROWS; ++r) w[r] = wrow[r] != nullptr ? __ldg(wrow[r] + k) : zero;
         #pragma unroll
-        for (int t = 0; t < HLG_TOKENS; ++t) {
+        for (int t = 0; t < HLG_DOWN_TOKENS; ++t) {
             if ((unsigned int)t < nt) {
                 const uint4 x = __ldg(xrow + (size_t)t * k8n + k);
                 #pragma unroll
-                for (int r = 0; r < HLG_ROWS; ++r) hlg_dot8(acc[r * HLG_TOKENS + t], w[r], x);
+                for (int r = 0; r < HLG_ROWS; ++r) hlg_dot8(acc[r * HLG_DOWN_TOKENS + t], w[r], x);
             }
         }
     }
@@ -145,8 +154,8 @@ extern "C" __global__ void __launch_bounds__(HLG_THREADS) hc_lowrank_down_inject
     float sum = 0.0f;
     #pragma unroll
     for (int w2 = 0; w2 < HLG_WARPS; ++w2) sum += red[w2][lane];
-    const unsigned int row = r0 + lane / HLG_TOKENS;
-    const unsigned int t = lane % HLG_TOKENS;
+    const unsigned int row = r0 + lane / HLG_DOWN_TOKENS;
+    const unsigned int t = lane % HLG_DOWN_TOKENS;
     if (row >= rows || t >= nt) return;
     const float p = __bfloat162float(__float2bfloat16(sum)) * inv_hc;
     if (row < rank) {
@@ -177,35 +186,54 @@ extern "C" __global__ void __launch_bounds__(HLG_THREADS) hc_lowrank_up_mix(
     if (t0 >= T) return;
     const unsigned int nt = min((unsigned int)HLG_TOKENS, T - t0);
     const unsigned int r8n = rank / 8u;
+    const unsigned int lane = threadIdx.x & 31u;
+    const unsigned int d = blockIdx.x * HLG_WARPS + (threadIdx.x >> 5);
+    const bool live = d < H;
+    const unsigned int s = lane / HLG_TOKENS;
+    const unsigned int t = lane % HLG_TOKENS;
+
+    // 2026-10-14: The weights and the lane's `normed` element do not depend on `low`: their loads
+    // issue before `low` is staged and the barrier, so the three latencies overlap.
+    const uint4 zero = make_uint4(0u, 0u, 0u, 0u);
+    uint4 w[HLG_UP_ITERS][HLG_STREAMS];
+    #pragma unroll
+    for (int i = 0; i < HLG_UP_ITERS; ++i) {
+        const unsigned int k = lane + 32u * (unsigned int)i;
+        #pragma unroll
+        for (int s2 = 0; s2 < HLG_STREAMS; ++s2) {
+            w[i][s2] = live && k < r8n && (unsigned int)s2 < hc
+                ? __ldg(reinterpret_cast<const uint4*>(up_w + ((size_t)s2 * H + d) * rank) + k)
+                : zero;
+        }
+    }
+    const size_t hc_dim = (size_t)hc * H;
+    const bool term_live = live && s < hc && t < nt;
+    const float nv =
+        term_live ? __bfloat162float(normed[(t0 + t) * hc_dim + (size_t)s * H + d]) : 0.0f;
+
     const uint4* lrow = reinterpret_cast<const uint4*>(low + (size_t)t0 * rank);
     for (unsigned int i = threadIdx.x; i < nt * r8n; i += HLG_THREADS) {
         lows[(i / r8n) * (HLG_MAX_RANK / 8) + i % r8n] = __ldg(lrow + i);
     }
     __syncthreads();
-
-    const unsigned int lane = threadIdx.x & 31u;
-    const unsigned int d = blockIdx.x * HLG_WARPS + (threadIdx.x >> 5);
-    if (d >= H) return;
+    if (!live) return;
 
     float acc[HLG_STREAMS * HLG_TOKENS];
     #pragma unroll
     for (int i = 0; i < HLG_STREAMS * HLG_TOKENS; ++i) acc[i] = 0.0f;
 
-    const uint4 zero = make_uint4(0u, 0u, 0u, 0u);
-    for (unsigned int k = lane; k < r8n; k += 32u) {
-        uint4 w[HLG_STREAMS];
+    #pragma unroll
+    for (int i = 0; i < HLG_UP_ITERS; ++i) {
+        const unsigned int k = lane + 32u * (unsigned int)i;
+        if (k >= r8n) break;
         #pragma unroll
-        for (int s = 0; s < HLG_STREAMS; ++s) {
-            w[s] = (unsigned int)s < hc
-                ? __ldg(reinterpret_cast<const uint4*>(up_w + ((size_t)s * H + d) * rank) + k)
-                : zero;
-        }
-        #pragma unroll
-        for (int t = 0; t < HLG_TOKENS; ++t) {
-            if ((unsigned int)t < nt) {
-                const uint4 x = lows[t * (HLG_MAX_RANK / 8) + k];
+        for (int t2 = 0; t2 < HLG_TOKENS; ++t2) {
+            if ((unsigned int)t2 < nt) {
+                const uint4 x = lows[t2 * (HLG_MAX_RANK / 8) + k];
                 #pragma unroll
-                for (int s = 0; s < HLG_STREAMS; ++s) hlg_dot8(acc[s * HLG_TOKENS + t], w[s], x);
+                for (int s2 = 0; s2 < HLG_STREAMS; ++s2) {
+                    hlg_dot8(acc[s2 * HLG_TOKENS + t2], w[i][s2], x);
+                }
             }
         }
     }
@@ -213,13 +241,10 @@ extern "C" __global__ void __launch_bounds__(HLG_THREADS) hc_lowrank_up_mix(
     // 2026-10-14: Lane s * HLG_TOKENS + t holds stream s, token t; lanes t < HLG_TOKENS gather the
     // streams in ascending order.
     const float part = hlg_reduce_scatter32(acc);
-    const unsigned int s = lane / HLG_TOKENS;
-    const unsigned int t = lane % HLG_TOKENS;
     float term = 0.0f;
-    if (s < hc && t < nt) {
+    if (term_live) {
         const float u = __bfloat162float(__float2bfloat16(part));
-        const size_t hc_dim = (size_t)hc * H;
-        term = qhc_sigmoid(u) * __bfloat162float(normed[(t0 + t) * hc_dim + (size_t)s * H + d]);
+        term = qhc_sigmoid(u) * nv;
     }
     float mixed = 0.0f;
     #pragma unroll

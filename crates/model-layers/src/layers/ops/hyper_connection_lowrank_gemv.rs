@@ -23,16 +23,16 @@ use crate::layers::try_target_kernel;
 const MODULE: &str = "hc_lowrank_gemv_hopper";
 /// 2026-10-14: The kernels' block width (`HLG_THREADS`).
 const THREADS: u32 = 256;
-/// 2026-10-14: Weight rows per block of the down GEMV (`HLG_ROWS`).
-const DOWN_ROWS: u32 = 4;
-/// 2026-10-14: Hidden indices per block of the up GEMV (`HLG_WARPS`).
+/// 2026-10-14: Weight rows and tokens per block of the down GEMV (`HLG_ROWS`, `HLG_DOWN_TOKENS`).
+const DOWN_ROWS: u32 = 1;
+const DOWN_TOKENS: u32 = 32;
+/// 2026-10-14: Hidden indices and tokens per block of the up GEMV (`HLG_WARPS`, `HLG_TOKENS`).
 const UP_COLS: u32 = THREADS / 32;
-/// 2026-10-14: Tokens per block in both kernels (`HLG_TOKENS`).
-const TOKENS: u32 = 8;
+const UP_TOKENS: u32 = 8;
 /// 2026-10-14: The largest rank and stream count the kernels hold (`HLG_MAX_RANK`, `HLG_STREAMS`).
 const MAX_RANK: u32 = 512;
 const MAX_STREAMS: u32 = 4;
-/// 2026-10-14: The largest T sent to the GEMVs. They read each weight row once per 8 tokens on
+/// 2026-10-14: The largest T sent to the GEMVs. They read each weight row once per 8 or 32 tokens on
 /// CUDA cores, so their cost grows with T while cuBLASLt's tensor-core GEMM stays flat; 16 is the
 /// starting point, to be re-cut from a measured crossover.
 pub(crate) const HC_GEMV_MAX_T: u32 = 16;
@@ -116,9 +116,12 @@ impl HcGemv {
         let inv_hc = 1.0f32 / hc_mult as f32;
         let k = hc_mult * hidden_size;
         let rows = rank + if a.inject_w.is_null() { 0 } else { hc_mult };
-        let token_groups = num_tokens.div_ceil(TOKENS);
         KernelLaunch::new(gpu, self.down)
-            .grid([rows.div_ceil(DOWN_ROWS), token_groups, 1])
+            .grid([
+                rows.div_ceil(DOWN_ROWS),
+                num_tokens.div_ceil(DOWN_TOKENS),
+                1,
+            ])
             .block([THREADS, 1, 1])
             .arg_ptr(a.normed)
             .arg_ptr(a.down_w)
@@ -132,7 +135,11 @@ impl HcGemv {
             .arg_f32(inv_hc)
             .launch(stream)?;
         KernelLaunch::new(gpu, self.up)
-            .grid([hidden_size.div_ceil(UP_COLS), token_groups, 1])
+            .grid([
+                hidden_size.div_ceil(UP_COLS),
+                num_tokens.div_ceil(UP_TOKENS),
+                1,
+            ])
             .block([THREADS, 1, 1])
             .arg_ptr(a.low)
             .arg_ptr(a.up_w)

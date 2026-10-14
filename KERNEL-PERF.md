@@ -1092,7 +1092,7 @@ Also launched here: [Activations and elementwise](#activations-and-elementwise-s
 | hc_v41::`hc_v41_{collapse, collapse_wide, finish_collapse, mixes_dot, mixes_finish, post_wide}` (6) | [gb10/deepseek-v4-flash/nvfp4/hc_v41.cu:118][f203] | hyper-connection mix | b200 gb10 hop | DeepSeek-V4 (2 ckpts) | [3 notes][t203] | not measured |
 | hyper_connection::`hc_expand`, `hc_head`, `hc_post`, `hc_pre` | [gb10/deepseek-v4-flash/nvfp4/hyper_connection.cu:38][f204] | hyper-connection mix | b200 gb10 hop | DeepSeek-V4 (2 ckpts) | [2 notes][t204] | not measured |
 | hyper_connection::`hc_expand`, `hc_head`, `hc_post`, `hc_pre`, `hc_pre_down`, `hc_pre_finish`, `hc_pre_mix`, `hc_pre_stage`, `hc_pre_stage_bf16`, `hc_silu_scale` | [gb10/qwen3.8-flash-next/nvfp4/hyper_connection.cu:92][f281] | hyper-connection mix | gb10 hop | Qwen3.8-FN (1 ckpts) | [2 notes][t281] | not measured |
-| hc_lowrank_gemv_hopper::`hc_lowrank_{down_inject, up_mix}` (2) | [hopper/common/hc_lowrank_gemv_hopper.cu:89][f290] | hyper-connection mix | hop | DeepSeek-V4, Qwen3.8-FN (3 ckpts) | — | not measured |
+| hc_lowrank_gemv_hopper::`hc_lowrank_{down_inject, up_mix}` (2) | [hopper/common/hc_lowrank_gemv_hopper.cu:95][f290] | hyper-connection mix | hop | DeepSeek-V4, Qwen3.8-FN (3 ckpts) | — | not measured |
 
 ### N-gram and memory embeddings (Engram, PLE, n-gram tables)
 
@@ -1626,7 +1626,7 @@ Entry points whose every engine call site belongs to one component.
 |---|---|---|---|---|---|---|
 | glm5next_mhc::`glm5next_hc_{expand, finish, head, mix, mix_bf16, post, pre}` (7) | [gb10/common/glm5next_mhc.cu:64][f57] | hyper-connection mix | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | [4 notes][t57] | not measured |
 | hyper_connection::`hc_pre_down`, `hc_pre_finish`, `hc_pre_mix`, `hc_pre_stage`, `hc_pre_stage_bf16`, `hc_silu_scale` | [gb10/qwen3.8-flash-next/nvfp4/hyper_connection.cu:327][f281] | hyper-connection mix | gb10 hop | Qwen3.8-FN (1 ckpts) | [2 notes][t281] | not measured |
-| hc_lowrank_gemv_hopper::`hc_lowrank_{down_inject, up_mix}` (2) | [hopper/common/hc_lowrank_gemv_hopper.cu:89][f290] | hyper-connection mix | hop | DeepSeek-V4, Qwen3.8-FN (3 ckpts) | — | not measured |
+| hc_lowrank_gemv_hopper::`hc_lowrank_{down_inject, up_mix}` (2) | [hopper/common/hc_lowrank_gemv_hopper.cu:95][f290] | hyper-connection mix | hop | DeepSeek-V4, Qwen3.8-FN (3 ckpts) | — | not measured |
 
 ### Unique to N-gram and memory embeddings (Engram, PLE, n-gram tables)
 
