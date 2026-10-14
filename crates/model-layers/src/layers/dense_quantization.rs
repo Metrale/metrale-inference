@@ -10,6 +10,8 @@
 //! names projections it quantizes at load to NVFP4 (E2M1 weights, E4M3 scales per 16, one F32
 //! scale per tensor) and serves W4A16 with 16-bit activations, and serves the rest of `fp8`'s
 //! set as `fp8` does (GLM-5.3: `glm5next_w4a16_dense`).
+//! 2026-10-14: The tier is per phase (`Phased`): [`dense_quantization`] is decode's and
+//! [`dense_prefill_quantization`] the prompt pass's, equal unless the flag split them.
 //!
 //! Owner: model-layers (quantization dispatch).
 //! Invariants:
@@ -49,9 +51,21 @@ impl DenseQuantization {
     pub fn below_declared(self) -> bool {
         self != Self::Declared
     }
+
+    /// 2026-10-14: The tier named `s` (its [`Self::name`]).
+    pub fn from_name(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|q| q.name() == s)
+    }
+
+    /// 2026-10-14: Whether `p` is a served phase pair: one tier in both phases, or W4A16 decode
+    /// with FP8 prefill (the projections W4A16 covers keep an FP8 copy for the prompt pass).
+    pub fn phase_pair_ok(p: Phased<Self>) -> bool {
+        !p.is_split() || (p.decode, p.prefill) == (Self::W4a16, Self::Fp8)
+    }
 }
 
 static DENSE_QUANTIZATION: OnceLock<DenseQuantization> = OnceLock::new();
+static DENSE_PREFILL_QUANTIZATION: OnceLock<DenseQuantization> = OnceLock::new();
 
 /// 2026-10-09: Publish `--dense-quantization`. Returns the tier in force; a caller that gets a
 /// different one should warn.
@@ -64,3 +78,20 @@ pub fn set_dense_quantization_from_cli(q: DenseQuantization) -> DenseQuantizatio
 pub fn dense_quantization() -> DenseQuantization {
     *DENSE_QUANTIZATION.get_or_init(DenseQuantization::default)
 }
+
+/// 2026-10-14: Publish the prompt pass's tier (`--dense-quantization decode=X,prefill=Y`).
+/// Returns the tier in force, like [`set_dense_quantization_from_cli`].
+pub fn set_dense_prefill_quantization_from_cli(q: DenseQuantization) -> DenseQuantization {
+    let _ = DENSE_PREFILL_QUANTIZATION.set(q);
+    *DENSE_PREFILL_QUANTIZATION.get().expect("just set")
+}
+
+/// 2026-10-14: The prompt pass's tier: [`dense_quantization`] (the decode tier) unless the serve
+/// published another.
+pub fn dense_prefill_quantization() -> DenseQuantization {
+    *DENSE_PREFILL_QUANTIZATION.get_or_init(dense_quantization)
+}
+
+#[path = "dense_quantization/phased.rs"]
+mod phased;
+pub use phased::{Phased, parse_phased, phased_name};

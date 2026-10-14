@@ -31,6 +31,7 @@
 //!   tiers, whose rows are the one-row GEMV's bytes, so rows 1..=r are row-invariant.
 //!   2026-10-10: Under `METRALE_GLM_W4A16_GEMV_SEG=1` one row takes `w4a16_gemv_seg` (grouped),
 //!   whose bytes are `w4a16_gemv`'s, so that invariant holds with it.
+//! - 2026-10-14: A prompt pass declines a weight with an FP8 copy (`fp8_dense::has_prefill_copy`).
 //! - 2026-10-09: `METRALE_GLM_W4A16_SEG` (`glm5next_w4a16_seg`) moves the launches of 2 rows
 //!   and up to the segmented row tiles; [`proj_group`] runs projections that share their input
 //!   in one launch there and declines otherwise. Unset, every launch is as before.
@@ -283,7 +284,8 @@ pub fn proj(
     k: usize,
     stream: u64,
 ) -> Result<bool> {
-    if !registry_in_use() {
+    // 2026-10-14: A prompt pass with an FP8 copy of `b` runs it (`glm5next_fp8_dense`).
+    if !registry_in_use() || crate::glm5next_fp8_dense::has_prefill_copy(b) {
         return Ok(false);
     }
     proj_registered(gpu, seg::plan()?, b, a, c, m, n, k, stream)
@@ -418,7 +420,12 @@ pub fn proj_group(
     k: usize,
     stream: u64,
 ) -> Result<bool> {
-    if !enabled() {
+    // 2026-10-14: A prompt pass with an FP8 copy of a member runs the members one by one.
+    if !enabled()
+        || members
+            .iter()
+            .any(|&(b, ..)| crate::glm5next_fp8_dense::has_prefill_copy(b))
+    {
         return Ok(false);
     }
     proj_group_registered(gpu, seg::plan()?, members, a, m, k, stream)

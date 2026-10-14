@@ -242,17 +242,19 @@ pub(crate) fn check(config: &ModelConfig, lm_head_dtype: &str) -> Result<()> {
             bail!("{why}");
         }
     }
-    if let Some(why) = dense_quant_refusal(
-        &config.model_type,
-        metrale_model_layers::layers::dense_quantization(),
-    ) {
-        bail!("{why}");
-    }
-    if let Some(why) = dsa_quant_refusal(
-        &config.model_type,
-        metrale_model_layers::layers::dsa_quantization(),
-    ) {
-        bail!("{why}");
+    // 2026-10-14: Each phase's tier: a split moves weights in both.
+    {
+        use metrale_model_layers::layers as ml;
+        for tier in [ml::dense_quantization(), ml::dense_prefill_quantization()] {
+            if let Some(why) = dense_quant_refusal(&config.model_type, tier) {
+                bail!("{why}");
+            }
+        }
+        for tier in [ml::dsa_quantization(), ml::dsa_prefill_quantization()] {
+            if let Some(why) = dsa_quant_refusal(&config.model_type, tier) {
+                bail!("{why}");
+            }
+        }
     }
     let unhonoured = support(value, ModelKind::of(config, lm_head_dtype))?;
     if !unhonoured.is_empty() {

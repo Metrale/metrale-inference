@@ -15,6 +15,10 @@ use super::*;
 
 const D: DsaQuantization = DsaQuantization::Declared;
 
+fn both<T: Copy + PartialEq>(t: T) -> Phased<T> {
+    Phased::both(t)
+}
+
 /// 2026-10-09: A KDA layer's projections at hidden 512 with two 128-wide heads (K 256 for
 /// o_proj), plus a 256-wide shared expert, each in its own allocation.
 fn layer(gpu: &MockGpuBackend) -> Vec<Proj> {
@@ -84,7 +88,7 @@ fn w4a16_retargets_and_frees_exactly_its_set() {
         );
         {
             let mut slots: Vec<&mut DevicePtr> = fields.iter_mut().collect();
-            register_projections(&gpu, projs.clone(), &mut slots, dense, D, 5).unwrap();
+            register_projections(&gpu, projs.clone(), &mut slots, both(dense), both(D), 5).unwrap();
         }
         let w4_new = crate::glm5next_w4a16_dense::registered().0 - w4_before;
         let fp8_new = crate::glm5next_fp8_dense::registered().0 - fp8_before;
@@ -112,8 +116,8 @@ fn an_unsupported_width_is_refused_before_anything_is_freed() {
         &gpu,
         vec![(w, 64, 2688, "kda.o_proj")],
         &mut [&mut field],
-        DenseQuantization::W4a16,
-        D,
+        both(DenseQuantization::W4a16),
+        both(D),
         9,
     )
     .unwrap_err()
@@ -156,7 +160,8 @@ fn each_flag_moves_exactly_its_own_projections() {
             let fp8_before = crate::glm5next_fp8_dense::registered().0;
             {
                 let mut slots: Vec<&mut DevicePtr> = fields.iter_mut().collect();
-                register_projections(&gpu, projs.clone(), &mut slots, dense, dsa, 3).unwrap();
+                register_projections(&gpu, projs.clone(), &mut slots, both(dense), both(dsa), 3)
+                    .unwrap();
             }
             let mut fp8_expected = 0;
             for (i, p) in projs.iter().enumerate() {
@@ -201,4 +206,103 @@ fn each_flag_moves_exactly_its_own_projections() {
             );
         }
     }
+}
+
+/// 2026-10-14: `--dense-quantization decode=w4a16,prefill=fp8` registers exactly the plain
+/// `w4a16` set plus one FP8 copy per W4A16 projection, keyed by its NVFP4 key, which only a
+/// prompt pass finds; the BF16 is still freed. `--dsa-quantization decode=w4a16,prefill=w8a8`
+/// does the same for the DSA sites alone.
+#[test]
+fn a_phase_split_adds_one_prompt_pass_copy_per_w4a16_projection() {
+    use crate::glm5next_fp8_dense::{has_prefill_copy, registered, registered_prefill};
+    let _serial = crate::glm5next_fp8_dense::lock_registries_for_test();
+    let gpu = MockGpuBackend::new();
+    let projs = layer(&gpu);
+    let mut fields: Vec<DevicePtr> = projs.iter().map(|p| p.0).collect();
+    let split = Phased {
+        decode: DenseQuantization::W4a16,
+        prefill: DenseQuantization::Fp8,
+    };
+    {
+        let mut slots: Vec<&mut DevicePtr> = fields.iter_mut().collect();
+        register_projections(&gpu, projs.clone(), &mut slots, split, both(D), 5).unwrap();
+    }
+    assert_eq!(crate::glm5next_w4a16_dense::registered().0, 10);
+    assert_eq!(registered().0, 2, "f_b and g_b, as under plain w4a16");
+    assert_eq!(registered_prefill().0, 10);
+    for (p, field) in projs.iter().zip(&fields) {
+        let moved = !matches!(p.3, "kda.f_b_proj" | "kda.g_b_proj");
+        assert_eq!(*field != p.0, moved, "{}", p.3);
+        assert_eq!(is_live(&gpu, p.0), !moved, "{} BF16 freed iff moved", p.3);
+        assert!(
+            !has_prefill_copy(*field),
+            "{}: decode never sees a copy",
+            p.3
+        );
+        let _phase = crate::glm5next_phase::enter_prefill();
+        assert_eq!(has_prefill_copy(*field), moved, "{}", p.3);
+    }
+
+    // 2026-10-14: From empty registries again.
+    drop(_serial);
+    let _serial = crate::glm5next_fp8_dense::lock_registries_for_test();
+    let w = gpu.alloc(256 * 512 * 2).unwrap();
+    let mut field = w;
+    let dsa_split = Phased {
+        decode: DsaQuantization::W4a16,
+        prefill: DsaQuantization::W8a8,
+    };
+    register_projections(
+        &gpu,
+        vec![(w, 256, 512, "dsa.q_a_proj")],
+        &mut [&mut field],
+        both(DenseQuantization::Declared),
+        dsa_split,
+        2,
+    )
+    .unwrap();
+    assert_ne!(field, w);
+    assert_eq!(registered_prefill().0, 1);
+    let _phase = crate::glm5next_phase::enter_prefill();
+    assert!(has_prefill_copy(field));
+}
+
+/// 2026-10-14: A phase pair other than W4A16 decode with an FP8 prompt pass is refused before
+/// anything registers.
+#[test]
+fn an_unserved_phase_pair_is_refused() {
+    let gpu = MockGpuBackend::new();
+    let projs = layer(&gpu);
+    for (dense, bad) in [
+        (
+            Phased {
+                decode: DenseQuantization::Fp8,
+                prefill: DenseQuantization::W4a16,
+            },
+            "kda.q_proj: decode Fp8 with prefill W4a16",
+        ),
+        (
+            Phased {
+                decode: DenseQuantization::Declared,
+                prefill: DenseQuantization::Fp8,
+            },
+            "kda.q_proj: decode Bf16 with prefill Fp8",
+        ),
+    ] {
+        let e = prefill_copies(&projs, dense, both(D))
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains(bad), "{e}");
+    }
+    let names = prefill_copies(
+        &projs,
+        Phased {
+            decode: DenseQuantization::W4a16,
+            prefill: DenseQuantization::Fp8,
+        },
+        both(D),
+    )
+    .unwrap();
+    assert_eq!(names.len(), 10);
+    assert!(!names.contains(&"kda.f_b_proj") && !names.contains(&"kda.g_b_proj"));
 }

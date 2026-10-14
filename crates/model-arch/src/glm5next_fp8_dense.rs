@@ -19,6 +19,14 @@
 //! 2026-10-12: `METRALE_GLM_FP8_DEQUANT_GEMM_MIN_ROWS` (`glm5next_fp8_wide`) moves launches of at
 //! least N rows (prefill sub-chunks) to a dequantized BF16 copy and one cuBLASLt GEMM.
 //!
+//! 2026-10-14: Under a phase split (`--dense-quantization decode=w4a16,prefill=fp8`, or
+//! `--dsa-quantization decode=w4a16,prefill=w8a8`) the loader also registers an FP8 copy of each
+//! W4A16 projection whose prompt-pass tier is FP8 ([`register_prefill`]), keyed by the W4A16
+//! registry's key (the NVFP4 buffer). Only a launch inside a prompt pass (`glm5next_phase`) finds
+//! it; `glm5next_w4a16_dense` declines such a launch ([`has_prefill_copy`]) so it lands here.
+//! `METRALE_GLM_W8A8_GEMM_MIN_ROWS` (`glm5next_w8a8_gemm`) runs wide launches of this registry
+//! on the W8A8 GEMM, whose rows are the GEMV family's bytes.
+//!
 //! Owner: model-arch (GLM-5.3).
 //! Invariants:
 //! - [`proj`] declines (`Ok(false)`) unless the tier is `fp8` or `w4a16` and the weight was
@@ -47,6 +55,8 @@ struct Fp8Dense {
     scratch: W8a8Scratch,
     max_k: u32,
     weights: HashMap<u64, W8a8Weight>,
+    /// 2026-10-14: The prompt pass's FP8 copies of W4A16 projections, by W4A16 registry key.
+    prefill_weights: HashMap<u64, W8a8Weight>,
     /// 2026-10-09: What the scratch holds: `(input, rows, k, stream)` of the last quantization.
     quantized: Option<(u64, usize, usize, u64)>,
     /// 2026-10-09: The input a [`StableInput`] guard declares unchanged while it lives.
@@ -108,13 +118,13 @@ fn state() -> &'static Mutex<Option<Fp8Dense>> {
 /// 2026-10-09: Whether this FP8 registry is in use: `--dense-quantization fp8`, or `w4a16`,
 /// which serves the rest of `fp8`'s set here. 2026-10-11: or `--dsa-quantization w8a8`, which
 /// registers the DSA q_a / absorbed q / absorbed o projections here (`dense_tiers::tier_for`).
+/// 2026-10-14: Or either flag's prompt-pass tier.
 pub fn enabled() -> bool {
-    use metrale_model_layers::layers::DenseQuantization as D;
-    matches!(
-        metrale_model_layers::layers::dense_quantization(),
-        D::Fp8 | D::W4a16
-    ) || metrale_model_layers::layers::dsa_quantization()
-        == metrale_model_layers::layers::DsaQuantization::W8a8
+    use metrale_model_layers::layers::{self as ml, DenseQuantization as D, DsaQuantization as S};
+    [ml::dense_quantization(), ml::dense_prefill_quantization()]
+        .into_iter()
+        .any(|t| matches!(t, D::Fp8 | D::W4a16))
+        || [ml::dsa_quantization(), ml::dsa_prefill_quantization()].contains(&S::W8a8)
 }
 
 /// 2026-10-09: The W8A8 family's K unit: the activation quantizer and the GEMV read K in
@@ -159,12 +169,17 @@ pub fn prepare(gpu: &dyn GpuBackend, max_k: usize) -> Result<()> {
          are not in this target's kernels"
     );
     let max_k = u32::try_from(max_k)?;
-    let weights = g.take().map(|s| s.weights).unwrap_or_default();
+    let (weights, prefill_weights) = g
+        .take()
+        .map(|s| (s.weights, s.prefill_weights))
+        .unwrap_or_default();
+    crate::glm5next_w8a8_gemm::reserve(gpu, max_k as usize)?;
     *g = Some(Fp8Dense {
         kernels,
         scratch: W8a8Scratch::alloc(gpu, max_k)?,
         max_k,
         weights,
+        prefill_weights,
         quantized: None,
         stable: None,
     });
@@ -204,6 +219,21 @@ pub fn register(
         );
         return Ok(());
     }
+    let w = quantize_rows(gpu, quantize, bf16, n, k, stream)?;
+    s.weights.insert(bf16.0, w);
+    drop(g);
+    crate::glm5next_fp8_wide::reserve(gpu, n, k)
+}
+
+/// 2026-10-14: The per-row FP8 copy of the BF16 `[n, k]` weight at `bf16`.
+fn quantize_rows(
+    gpu: &dyn GpuBackend,
+    quantize: KernelHandle,
+    bf16: DevicePtr,
+    n: usize,
+    k: usize,
+    stream: u64,
+) -> Result<W8a8Weight> {
     let q = metrale_model_layers::weight_map::quantize_to_fp8(
         &DenseWeight { weight: bf16 },
         n,
@@ -212,16 +242,73 @@ pub fn register(
         quantize,
         stream,
     )?;
-    let w = W8a8Weight::new(&[Fp8Weight {
+    W8a8Weight::new(&[Fp8Weight {
         weight: q.weight,
         row_scale: q.row_scale,
         n: n as u32,
         k: k as u32,
         scale_format: WeightQuantFormat::Fp8PerRow,
-    }])?;
-    s.weights.insert(bf16.0, w);
+    }])
+}
+
+/// 2026-10-14: Quantize the BF16 `[n, k]` weight at `bf16` (still live: call before freeing it)
+/// to FP8 per output channel and register it as the prompt pass's copy of the W4A16 projection
+/// registered under `key`. Errors as [`register`] does, and on a second copy under `key`.
+#[allow(clippy::too_many_arguments)]
+pub fn register_prefill(
+    gpu: &dyn GpuBackend,
+    quantize: KernelHandle,
+    bf16: DevicePtr,
+    key: DevicePtr,
+    n: usize,
+    k: usize,
+    what: &str,
+    stream: u64,
+) -> Result<()> {
+    let mut g = state().lock().unwrap_or_else(|e| e.into_inner());
+    let Some(s) = g.as_mut() else {
+        bail!("prefill FP8 copy: {what} registered before prepare");
+    };
+    ensure!(
+        k > 0 && k.is_multiple_of(FP8_K_UNIT) && k <= s.max_k as usize && n > 0,
+        "prefill FP8 copy: {what} is [{n}, {k}]; K must be a positive multiple of 128 and at \
+         most {}",
+        s.max_k
+    );
+    ensure!(
+        !s.prefill_weights.contains_key(&key.0) && !s.weights.contains_key(&key.0),
+        "prefill FP8 copy: {what}'s key {:#x} is already registered",
+        key.0
+    );
+    let w = quantize_rows(gpu, quantize, bf16, n, k, stream)?;
+    s.prefill_weights.insert(key.0, w);
     drop(g);
     crate::glm5next_fp8_wide::reserve(gpu, n, k)
+}
+
+/// 2026-10-14: Whether this thread is in a prompt pass and the registry holds a prompt-pass copy
+/// under `b` (a W4A16 key): the W4A16 registry then declines `b` so the launch lands here.
+pub fn has_prefill_copy(b: DevicePtr) -> bool {
+    crate::glm5next_phase::in_prefill()
+        && state()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .is_some_and(|s| s.prefill_weights.contains_key(&b.0))
+}
+
+/// 2026-10-14: Prompt-pass copies and their FP8 bytes (weights plus scales), for the log.
+pub fn registered_prefill() -> (usize, usize) {
+    let g = state().lock().unwrap_or_else(|e| e.into_inner());
+    g.as_ref().map_or((0, 0), |s| {
+        (s.prefill_weights.len(), fp8_bytes(&s.prefill_weights))
+    })
+}
+
+fn fp8_bytes(m: &HashMap<u64, W8a8Weight>) -> usize {
+    m.values()
+        .map(|w| w.n() as usize * (w.k() as usize + 4))
+        .sum()
 }
 
 /// 2026-10-10: The FP8 copy registered for the BF16 weight at `bf16` when this registry is in use
@@ -254,15 +341,8 @@ pub fn holds(bf16: DevicePtr) -> bool {
 /// 2026-10-09: Registered projections and their FP8 bytes (weights plus scales), for the log.
 pub fn registered() -> (usize, usize) {
     let g = state().lock().unwrap_or_else(|e| e.into_inner());
-    g.as_ref().map_or((0, 0), |s| {
-        (
-            s.weights.len(),
-            s.weights
-                .values()
-                .map(|w| w.n() as usize * (w.k() as usize + 4))
-                .sum(),
-        )
-    })
+    g.as_ref()
+        .map_or((0, 0), |s| (s.weights.len(), fp8_bytes(&s.weights)))
 }
 
 /// 2026-10-09: `c[m, n] = a[m, k] @ w[n, k]^T` (contiguous BF16 rows) on the FP8 copy of the
@@ -302,7 +382,13 @@ fn proj_registered(
     let Some(s) = g.as_mut() else {
         return Ok(false);
     };
-    let Some(&w) = s.weights.get(&b.0) else {
+    // 2026-10-14: A prompt pass also finds the prompt-pass copies.
+    let found = s.weights.get(&b.0).or_else(|| {
+        crate::glm5next_phase::in_prefill()
+            .then(|| s.prefill_weights.get(&b.0))
+            .flatten()
+    });
+    let Some(&w) = found else {
         return Ok(false);
     };
     ensure!(
@@ -312,6 +398,12 @@ fn proj_registered(
         w.n(),
         w.k()
     );
+    // 2026-10-14: `METRALE_GLM_W8A8_GEMM_MIN_ROWS`: the GEMV family's bytes, ahead of the
+    // dequantize + cuBLASLt arm.
+    if crate::glm5next_w8a8_gemm::takes(crate::glm5next_w8a8_gemm::min_rows()?, m) {
+        crate::glm5next_w8a8_gemm::proj(gpu, &s.kernels, &w, a, c, m, n, k, stream)?;
+        return Ok(true);
+    }
     if crate::glm5next_fp8_wide::takes(crate::glm5next_fp8_wide::min_rows()?, m) {
         // 2026-10-12: The lever's path reads neither the activation scratch nor its record.
         let [seg] = w.segment_weights() else {

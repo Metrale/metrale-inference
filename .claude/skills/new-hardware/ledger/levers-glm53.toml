@@ -1901,3 +1901,27 @@ effort_hours = 0.0
 transferability = "GLM MTP serves; re-test only with a C8 instrument whose spread is below the claimed gain"
 links = { pr = "", commit = "", evidence = "/workspace/claude-state/glm/logs/chainK_kinv-1014T1331.log; /workspace/claude-state/glm/STATUS.md 2026-10-14T13:45Z" }
 notes = "The table default (on) differs from the recipe (0); the recipe is fully explicit, so the serve runs 0."
+
+[[lever]]
+id = "gb10x3-glm53-fpd-w8a8-gemm-prefill"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "--dense-quantization decode=w4a16,prefill=fp8 --dsa-quantization w8a8 with METRALE_GLM_W8A8_GEMM_MIN_ROWS=<N>; replaces the W4A16 and FP8 dequant + vendor-GEMM prompt-pass arms"
+symptom = "cold TTFT: the prompt pass ran the dense projections on dequantize-to-BF16 copies and a vendor BF16 GEMM (forbidden dependency), or on the W8A8 GEMV family that re-reads each weight every 128 rows"
+diagnosis_tool = "w8a8_gemm_bitgate example (bits vs the GEMV family at M=17..8192, negative controls) + cold TTFT ladder A/B"
+root_cause_class = "bandwidth-underutilization"
+lever_type = "new-kernel"
+lkb_effect = "new own-layout W8A8 tensor-core GEMM family (w8a8_gemm_rowscale, 4 tiles) parameterized on weight rows x tokens x stages; walks K in the engine's class order so it shares the GEMV family's bits"
+parity_tier_kept = "bit-exact vs the W8A8 GEMV family at prefill widths (class B); the prompt pass itself moves from W4A16 to W8A8 under the phase split (class N, accuracy-gated)"
+per_rung = []
+verdict = "held"
+verdict_reason = "Pending gates: (a) bits vs GEMV M=17..8192 with failing negative controls, (b) tf KL < 0.040, (c) agentic-webserver, (d) cold A/B; plus a 512k fit check at util <= 0.85 for the prompt-pass FP8 copies"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0.0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "any per-row W8A8 projection family on sm_121; the phase-split flag applies to any model with a W4A16 decode tier"
+links = { pr = "", commit = "", evidence = "FPD progress log" }
+notes = "Class N for the split (default off): the prompt-pass copies cost extra FP8 bytes beside the W4A16 weights, read back at boot. The GEMM lever alone is bit-identical and also serves --dense-quantization fp8."

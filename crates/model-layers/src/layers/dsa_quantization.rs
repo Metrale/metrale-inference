@@ -47,6 +47,17 @@ impl DsaQuantization {
         self != Self::Declared
     }
 
+    /// 2026-10-14: The tier named `s` (its [`Self::name`]).
+    pub fn from_name(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|q| q.name() == s)
+    }
+
+    /// 2026-10-14: Whether `p` is a served phase pair: one tier in both phases, or W4A16 decode
+    /// with W8A8 prefill (the three projections keep an FP8 copy for the prompt pass).
+    pub fn phase_pair_ok(p: super::Phased<Self>) -> bool {
+        !p.is_split() || (p.decode, p.prefill) == (Self::W4a16, Self::W8a8)
+    }
+
     /// 2026-10-11: What the tier serves the three projections as, for the boot log.
     pub fn describe(self) -> &'static str {
         match self {
@@ -58,6 +69,7 @@ impl DsaQuantization {
 }
 
 static DSA_QUANTIZATION: OnceLock<DsaQuantization> = OnceLock::new();
+static DSA_PREFILL_QUANTIZATION: OnceLock<DsaQuantization> = OnceLock::new();
 
 /// 2026-10-11: Publish `--dsa-quantization`. Returns the tier in force; a caller that gets a
 /// different one should warn.
@@ -69,6 +81,18 @@ pub fn set_dsa_quantization_from_cli(q: DsaQuantization) -> DsaQuantization {
 /// 2026-10-11: The tier in force: `declared` unless the serve published another.
 pub fn dsa_quantization() -> DsaQuantization {
     *DSA_QUANTIZATION.get_or_init(DsaQuantization::default)
+}
+
+/// 2026-10-14: Publish the prompt pass's tier (`--dsa-quantization decode=X,prefill=Y`).
+pub fn set_dsa_prefill_quantization_from_cli(q: DsaQuantization) -> DsaQuantization {
+    let _ = DSA_PREFILL_QUANTIZATION.set(q);
+    *DSA_PREFILL_QUANTIZATION.get().expect("just set")
+}
+
+/// 2026-10-14: The prompt pass's tier: [`dsa_quantization`] (decode's) unless the serve
+/// published another.
+pub fn dsa_prefill_quantization() -> DsaQuantization {
+    *DSA_PREFILL_QUANTIZATION.get_or_init(dsa_quantization)
 }
 
 #[cfg(test)]
@@ -85,5 +109,60 @@ mod tests {
         assert!(!DsaQuantization::Declared.below_declared());
         assert!(DsaQuantization::W8a8.below_declared());
         assert!(DsaQuantization::W4a16.below_declared());
+    }
+
+    /// 2026-10-14: Each tier parses back from its name and nothing else does; of the split
+    /// pairs, only W4A16 decode over the FP8 prefill each flag's loader serves is accepted.
+    #[test]
+    fn names_parse_back_and_only_the_served_split_pairs_pass() {
+        use crate::layers::{DenseQuantization as D, Phased};
+        for q in DsaQuantization::ALL {
+            assert_eq!(DsaQuantization::from_name(q.name()), Some(q));
+        }
+        for q in D::ALL {
+            assert_eq!(D::from_name(q.name()), Some(q));
+        }
+        assert_eq!(DsaQuantization::from_name("fp8"), None);
+        assert_eq!(D::from_name("w8a8"), None);
+        let dsa_ok: Vec<_> = DsaQuantization::ALL
+            .into_iter()
+            .flat_map(|d| {
+                DsaQuantization::ALL.map(|p| Phased {
+                    decode: d,
+                    prefill: p,
+                })
+            })
+            .filter(|&p| p.is_split() && DsaQuantization::phase_pair_ok(p))
+            .collect();
+        assert_eq!(
+            dsa_ok,
+            [Phased {
+                decode: DsaQuantization::W4a16,
+                prefill: DsaQuantization::W8a8
+            }]
+        );
+        let dense_ok: Vec<_> = D::ALL
+            .into_iter()
+            .flat_map(|d| {
+                D::ALL.map(|p| Phased {
+                    decode: d,
+                    prefill: p,
+                })
+            })
+            .filter(|&p| p.is_split() && D::phase_pair_ok(p))
+            .collect();
+        assert_eq!(
+            dense_ok,
+            [Phased {
+                decode: D::W4a16,
+                prefill: D::Fp8
+            }]
+        );
+        for q in D::ALL {
+            assert!(D::phase_pair_ok(Phased::both(q)));
+        }
+        for q in DsaQuantization::ALL {
+            assert!(DsaQuantization::phase_pair_ok(Phased::both(q)));
+        }
     }
 }

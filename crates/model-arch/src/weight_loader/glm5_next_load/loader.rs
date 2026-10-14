@@ -377,6 +377,7 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                 bytes as f64 / 1e9
             );
         }
+        dense_tiers::announce_prefill_copies();
         if crate::glm5next_w4a16_dense::registry_in_use() {
             let (count, nvfp4, bf16) = crate::glm5next_w4a16_dense::registered();
             tracing::warn!(

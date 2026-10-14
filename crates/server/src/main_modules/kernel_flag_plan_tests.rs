@@ -9,7 +9,9 @@ use super::{GdnPlan, KernelFlagPlan, precision_line};
 use crate::cli::{Cli, Command, validate_serve_args};
 use clap::Parser;
 use metrale_config::{W4a4Downcast, WeightQuantTier, WeightQuantization};
-use metrale_model_layers::layers::{DenseQuantization, DsaQuantization, ExpertQuantization};
+use metrale_model_layers::layers::{
+    DenseQuantization, DsaQuantization, ExpertQuantization, Phased,
+};
 
 fn plan(flags: &[&str]) -> KernelFlagPlan {
     let mut argv = vec![
@@ -37,8 +39,8 @@ fn an_empty_command_line_publishes_nothing_the_environment_owns() {
             gdn: None,
             weight_quant: WeightQuantTier::default(),
             expert_quantization: ExpertQuantization::Fp8,
-            dense_quantization: DenseQuantization::Declared,
-            dsa_quantization: DsaQuantization::Declared,
+            dense_quantization: Phased::both(DenseQuantization::Declared),
+            dsa_quantization: Phased::both(DsaQuantization::Declared),
             prefill_codispatch: None,
             prefill_varlen: None,
             ssm_tail_midchunk: None,
@@ -202,10 +204,10 @@ fn the_dense_tier_reaches_the_plan() {
         ("w4a16", DenseQuantization::W4a16),
     ] {
         let p = plan(&["--dense-quantization", value]);
-        assert_eq!(p.dense_quantization, tier);
+        assert_eq!(p.dense_quantization, Phased::both(tier));
         assert_eq!(
             KernelFlagPlan {
-                dense_quantization: DenseQuantization::Declared,
+                dense_quantization: Phased::both(DenseQuantization::Declared),
                 ..p
             },
             plan(&[])
@@ -223,10 +225,10 @@ fn the_dsa_tier_reaches_the_plan_alone() {
         ("w4a16", DsaQuantization::W4a16),
     ] {
         let p = plan(&["--dsa-quantization", value]);
-        assert_eq!(p.dsa_quantization, tier);
+        assert_eq!(p.dsa_quantization, Phased::both(tier));
         assert_eq!(
             KernelFlagPlan {
-                dsa_quantization: DsaQuantization::Declared,
+                dsa_quantization: Phased::both(DsaQuantization::Declared),
                 ..p
             },
             plan(&[])
@@ -234,7 +236,7 @@ fn the_dsa_tier_reaches_the_plan_alone() {
         let both = plan(&["--dense-quantization", "w4a16", "--dsa-quantization", value]);
         assert_eq!(
             (both.dense_quantization, both.dsa_quantization),
-            (DenseQuantization::W4a16, tier)
+            (Phased::both(DenseQuantization::W4a16), Phased::both(tier))
         );
     }
 }
@@ -242,13 +244,73 @@ fn the_dsa_tier_reaches_the_plan_alone() {
 /// 2026-10-11: The boot log names both tiers and what the DSA sites run as.
 #[test]
 fn the_precision_line_discloses_both_tiers() {
-    let l = precision_line(DenseQuantization::W4a16, DsaQuantization::W8a8);
-    assert!(l.contains("--dense-quantization w4a16"), "{l}");
-    assert!(l.contains("--dsa-quantization w8a8"), "{l}");
+    let l = precision_line(
+        Phased::both(DenseQuantization::W4a16),
+        Phased::both(DsaQuantization::W8a8),
+    );
+    assert!(l.contains("--dense-quantization w4a16 "), "{l}");
+    assert!(l.contains("--dsa-quantization w8a8 "), "{l}");
     assert!(l.contains("W8A8"), "{l}");
-    let l = precision_line(DenseQuantization::Declared, DsaQuantization::Declared);
+    let l = precision_line(
+        Phased::both(DenseQuantization::Declared),
+        Phased::both(DsaQuantization::Declared),
+    );
     assert!(
         l.contains("--dsa-quantization declared") && l.contains("BF16"),
         "{l}"
     );
+    // 2026-10-14: A split prints its flag value back and each DSA phase's precision.
+    let l = precision_line(
+        Phased {
+            decode: DenseQuantization::W4a16,
+            prefill: DenseQuantization::Fp8,
+        },
+        Phased {
+            decode: DsaQuantization::W4a16,
+            prefill: DsaQuantization::W8a8,
+        },
+    );
+    assert!(
+        l.contains("--dense-quantization decode=w4a16,prefill=fp8 "),
+        "{l}"
+    );
+    assert!(
+        l.contains("--dsa-quantization decode=w4a16,prefill=w8a8 "),
+        "{l}"
+    );
+    assert!(
+        l.contains("(DSA q_a/q_absorb/o_absorb: decode NVFP4 weights, 16-bit activations (W4A16); prefill FP8 per-channel weights, per-token FP8 activations (W8A8))"),
+        "{l}"
+    );
+}
+
+/// 2026-10-14: The served split reaches the plan as two tiers; an unserved one (FP8 decode under a
+/// W4A16 prompt pass) is refused at parse, naming the flag.
+#[test]
+fn a_phase_split_reaches_the_plan_and_an_unserved_one_is_refused() {
+    let p = plan(&["--dense-quantization", "decode=w4a16,prefill=fp8"]);
+    assert_eq!(
+        p.dense_quantization,
+        Phased {
+            decode: DenseQuantization::W4a16,
+            prefill: DenseQuantization::Fp8
+        }
+    );
+    assert_eq!(
+        KernelFlagPlan {
+            dense_quantization: Phased::both(DenseQuantization::Declared),
+            ..p
+        },
+        plan(&[])
+    );
+    for (flag, value) in [
+        ("--dense-quantization", "decode=fp8,prefill=w4a16"),
+        ("--dense-quantization", "decode=declared,prefill=fp8"),
+        ("--dsa-quantization", "decode=w8a8,prefill=w4a16"),
+    ] {
+        let e = Cli::try_parse_from(["met", "serve", "m", flag, value])
+            .expect_err(value)
+            .to_string();
+        assert!(e.contains(flag), "{value}: {e}");
+    }
 }

@@ -314,6 +314,8 @@ impl metrale_model_layers::layer::LayerSplitPrefill for Glm5NextLayer {
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<()> {
+        // 2026-10-14: The prompt pass's dense tier (`glm5next_phase`).
+        let _phase = crate::glm5next_phase::enter_prefill();
         self.forward_prefill_spans(hidden, spans, kv_cache, ctx, stream)
     }
 }

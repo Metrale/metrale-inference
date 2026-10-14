@@ -7,6 +7,10 @@
 //! whatever the dense tier is: BF16 under `declared` (left unregistered), FP8 under `w8a8`, W4A16
 //! under `w4a16` (`tier_for`).
 //!
+//! 2026-10-14: Under a phase split (`decode=w4a16,prefill=fp8` / `decode=w4a16,prefill=w8a8`) a
+//! projection whose decode tier is W4A16 and prompt-pass tier FP8 also gets an FP8 copy
+//! (`glm5next_fp8_dense::register_prefill`), quantized from its BF16 before that is freed.
+//!
 //! Owner: model-arch weight loader (GLM-5.3).
 //! Invariants:
 //! - Under `fp8` every projection registers FP8 in the order the layer lists it, with the BF16
@@ -16,8 +20,9 @@
 //!   (`glm5next_w4a16_dense::retarget` refuses otherwise).
 
 use anyhow::Result;
+use anyhow::bail;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
-use metrale_model_layers::layers::{DenseQuantization, DsaQuantization};
+use metrale_model_layers::layers::{DenseQuantization, DsaQuantization, Phased};
 
 use crate::glm5next_layer::{Glm5NextMixer, Glm5NextMlpSite};
 use crate::glm5next_mlp::Glm5NextMlpConfig;
@@ -100,32 +105,98 @@ pub(super) fn register_dense_tiers(
         projs.push((w.shared.up_proj, s, h, "shared_experts.up_proj"));
         projs.push((w.shared.down_proj, h, s, "shared_experts.down_proj"));
     }
+    use metrale_model_layers::layers as ml;
     register_projections(
         gpu,
         projs,
         &mut weight_slots(mixer, mlp),
-        metrale_model_layers::layers::dense_quantization(),
-        metrale_model_layers::layers::dsa_quantization(),
+        Phased {
+            decode: ml::dense_quantization(),
+            prefill: ml::dense_prefill_quantization(),
+        },
+        Phased {
+            decode: ml::dsa_quantization(),
+            prefill: ml::dsa_prefill_quantization(),
+        },
         idx,
     )
 }
 
+/// 2026-10-14: Boot readback of a phase split: the per-phase tiers, and the prompt-pass FP8 copies
+/// held beside the decode's W4A16 (count and GB, read back from the registry, not predicted).
+pub(super) fn announce_prefill_copies() {
+    use metrale_model_layers::layers::{self as ml, phased_name};
+    let dense = Phased {
+        decode: ml::dense_quantization(),
+        prefill: ml::dense_prefill_quantization(),
+    };
+    let dsa = Phased {
+        decode: ml::dsa_quantization(),
+        prefill: ml::dsa_prefill_quantization(),
+    };
+    if !dense.is_split() && !dsa.is_split() {
+        return;
+    }
+    let (count, bytes) = crate::glm5next_fp8_dense::registered_prefill();
+    tracing::warn!(
+        "glm5_next --dense-quantization {} --dsa-quantization {}: {count} W4A16 projections also \
+         held as FP8 per-row ({:.2} GB) for the prompt pass only; decode and speculative verify \
+         keep W4A16",
+        phased_name(dense, DenseQuantization::name),
+        phased_name(dsa, DsaQuantization::name),
+        bytes as f64 / 1e9
+    );
+}
+
+/// 2026-10-14: The names of the projections that are W4A16 at decode and FP8 in the prompt pass.
+/// Errors on a phase pair the loader does not serve: every projection's two tiers must agree, or
+/// be that pair. Pure.
+pub(super) fn prefill_copies(
+    projs: &[Proj],
+    dense: Phased<DenseQuantization>,
+    dsa: Phased<DsaQuantization>,
+) -> Result<Vec<&'static str>> {
+    let mut copies = Vec::new();
+    for p in projs {
+        match (
+            tier_for(p.3, dense.decode, dsa.decode)?,
+            tier_for(p.3, dense.prefill, dsa.prefill)?,
+        ) {
+            (Tier::W4a16, Tier::Fp8) => copies.push(p.3),
+            (d, f) if d == f => {}
+            (d, f) => bail!("{}: decode {d:?} with prefill {f:?} is not served", p.3),
+        }
+    }
+    Ok(copies)
+}
+
 /// 2026-10-09: Register `projs` (layer `idx`): FP8 for the FP8 part of [`split_by_tier`], with
 /// the BF16 kept; W4A16 for the rest, each retargeted in `slots` to its NVFP4 key and its BF16
-/// freed.
+/// freed. 2026-10-14: The split is by the decode tiers; [`prefill_copies`] adds the prompt
+/// pass's FP8 copies.
 pub(super) fn register_projections(
     gpu: &dyn GpuBackend,
     projs: Vec<Proj>,
     slots: &mut [&mut DevicePtr],
-    dense: DenseQuantization,
-    dsa: DsaQuantization,
+    dense: Phased<DenseQuantization>,
+    dsa: Phased<DsaQuantization>,
     idx: usize,
 ) -> Result<()> {
-    let (fp8, w4) = split_by_tier(projs, dense, dsa)?;
-    if !fp8.is_empty() {
-        let max_k = fp8.iter().map(|p| p.2).max().unwrap_or(0);
-        crate::glm5next_fp8_dense::prepare(gpu, max_k)?;
-        let quantize = gpu.kernel("gemv_fp8w", "quantize_bf16_to_fp8")?;
+    let copies = prefill_copies(&projs, dense, dsa)?;
+    let (fp8, w4) = split_by_tier(projs, dense.decode, dsa.decode)?;
+    let max_k = fp8
+        .iter()
+        .chain(w4.iter().filter(|p| copies.contains(&p.3)))
+        .map(|p| p.2)
+        .max();
+    let quantize = match max_k {
+        Some(max_k) => {
+            crate::glm5next_fp8_dense::prepare(gpu, max_k)?;
+            Some(gpu.kernel("gemv_fp8w", "quantize_bf16_to_fp8")?)
+        }
+        None => None,
+    };
+    if let Some(quantize) = quantize {
         for (w, n, k, name) in fp8 {
             crate::glm5next_fp8_dense::register(
                 gpu,
@@ -143,7 +214,11 @@ pub(super) fn register_projections(
     }
     let kernels = w4a16::Nvfp4QuantKernels::load(gpu)?;
     for (w, n, k, name) in w4 {
-        let key = w4a16::register(gpu, &kernels, w, n, k, &format!("layer {idx} {name}"), 0)?;
+        let what = format!("layer {idx} {name}");
+        let key = w4a16::register(gpu, &kernels, w, n, k, &what, 0)?;
+        if let (true, Some(quantize)) = (copies.contains(&name), quantize) {
+            crate::glm5next_fp8_dense::register_prefill(gpu, quantize, w, key, n, k, &what, 0)?;
+        }
         w4a16::retarget(slots, w, key)?;
         gpu.free(w)?;
     }

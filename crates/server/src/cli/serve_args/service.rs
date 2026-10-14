@@ -11,11 +11,12 @@
 //! carries no date. clap lists the flags in declaration order, so a flattened
 //! struct's fields sit where its `#[command(flatten)]` field is: last.
 
-use clap::Args;
-use metrale_model_layers::layers::{DenseQuantization, DsaQuantization};
-
-use super::super::flag_values::{DenseQuantizationArg, DsaQuantizationArg, MoeExpertLayoutArg};
+use super::super::flag_values::{
+    DenseQuantizationArg, DsaQuantizationArg, MoeExpertLayoutArg, parse_dense_quantization,
+    parse_dsa_quantization,
+};
 use super::{DEFAULT_REQUEST_TIMEOUT_SECS, parse_lora_adapter_spec, parse_lora_stageable_spec};
+use clap::Args;
 
 /// 2026-09-30: `--activation-quantization`, parsed by the config crate's one grammar.
 fn parse_activation_quantization(
@@ -128,7 +129,12 @@ pub struct ServeServiceArgs {
     /// set (DSA latent and indexer projections, KDA f_b and g_b) runs as under `fp8`. At TP>1
     /// it splits the KDA heads in pairs and the shared expert in 256-wide units. GLM-5.3 only.
     /// Unmeasured.
-    #[arg(long, value_enum, default_value_t = DenseQuantizationArg(DenseQuantization::Declared))]
+    ///
+    /// `decode=w4a16,prefill=fp8` serves decode as `w4a16` and the prompt pass as `fp8`: the
+    /// projections `w4a16` covers keep an FP8 copy beside their NVFP4 one (more weight memory,
+    /// less room for the KV cache) and a prompt's rows run on it. Below declared in both
+    /// phases, with each phase's numbers as its tier's. GLM-5.3 only. Unmeasured.
+    #[arg(long, value_name = "TIER", default_value = "declared", value_parser = parse_dense_quantization)]
     pub dense_quantization: DenseQuantizationArg,
 
     /// Precision of GLM-5.3's DSA query-down (q_a), absorbed query and absorbed output
@@ -142,7 +148,10 @@ pub struct ServeServiceArgs {
     /// quantizes them to NVFP4 and decodes them W4A16 (the former `METRALE_GLM_DSA_W4A16=1`),
     /// FURTHER below declared. Below `declared` the answers change; the boot log says so.
     /// GLM-5.3 (`glm5_next`) only; any other model refuses a value below `declared`.
-    #[arg(long, value_enum, default_value_t = DsaQuantizationArg(DsaQuantization::Declared))]
+    ///
+    /// `decode=w4a16,prefill=w8a8` serves decode as `w4a16` and the prompt pass as `w8a8`, with
+    /// an FP8 copy of the three projections kept beside their NVFP4 one. Unmeasured.
+    #[arg(long, value_name = "TIER", default_value = "declared", value_parser = parse_dsa_quantization)]
     pub dsa_quantization: DsaQuantizationArg,
 
     /// How a routed MoE's experts are laid out over the ranks.

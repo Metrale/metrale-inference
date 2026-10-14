@@ -121,6 +121,9 @@ impl Glm5NextLayer {
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<()> {
+        // 2026-10-14: The prompt pass's dense tier (`glm5next_phase`); this is the layer
+        // prefill's whole body.
+        let _phase = crate::glm5next_phase::enter_prefill();
         let slot0 = ctx.hc_row_offset;
         let cap = ctx.midchunk_capture.as_ref();
         let ordinal = kda_ordinal(&self.mixer, cap);

@@ -235,7 +235,13 @@ impl W8a8Scratch {
     /// 2026-09-28: Room for [`W8A8_MAX_ROWS`] rows of a `max_k`-wide
     /// activation in either scale layout.
     pub fn alloc(gpu: &dyn GpuBackend, max_k: u32) -> Result<Self> {
-        let rows = W8A8_MAX_ROWS;
+        Self::alloc_rows(gpu, W8A8_MAX_ROWS, max_k)
+    }
+
+    /// 2026-10-14: Room for `rows` rows of a `max_k`-wide activation in either scale layout (a
+    /// prefill chunk for [`w8a8_gemm`]).
+    pub fn alloc_rows(gpu: &dyn GpuBackend, rows: usize, max_k: u32) -> Result<Self> {
+        ensure!(rows >= 1, "W8a8Scratch: 0 rows");
         let q_bytes = rows * max_k as usize;
         let scale_bytes = rows * (max_k.div_ceil(W8A8_K_UNIT) as usize).max(1) * 4;
         Ok(Self {
@@ -295,8 +301,10 @@ pub fn w8a8_act_quant(
     scratch: &W8a8Scratch,
     stream: u64,
 ) -> Result<()> {
+    // 2026-10-14: One CTA per row, so any row count the scratch holds (prefill chunks for
+    // `w8a8_gemm` included); the GEMV's 256-row cap is `w8a8_decode_available`'s.
     ensure!(
-        (1..=W8A8_MAX_ROWS).contains(&rows) && scratch.fits(rows, k, scale),
+        rows >= 1 && u32::try_from(rows).is_ok() && scratch.fits(rows, k, scale),
         "w8a8_act_quant: {rows} rows of K={k} do not fit the scratch"
     );
     ensure!(
@@ -454,6 +462,10 @@ pub fn w8a8_proj(
 
 #[path = "w8a8_decode/parts.rs"]
 mod parts;
+
+#[path = "w8a8_decode/gemm.rs"]
+mod gemm;
+pub use gemm::*;
 
 #[cfg(test)]
 #[path = "w8a8_decode_tests.rs"]

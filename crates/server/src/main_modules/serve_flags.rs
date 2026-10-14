@@ -111,14 +111,28 @@ pub(crate) fn publish_kernel_flags(args: &cli::ServeArgs) {
     }
     // 2026-10-09: `--dense-quantization`, always published; below declared when not `declared`,
     // which the boot log states loudly.
-    let dense =
-        metrale_model_layers::layers::set_dense_quantization_from_cli(plan.dense_quantization);
-    if dense != plan.dense_quantization {
+    // 2026-10-14: Per phase: decode's tier, then the prompt pass's.
+    use metrale_model_layers::layers::{self as ml, Phased, phased_name};
+    let dense_phases = Phased {
+        decode: ml::set_dense_quantization_from_cli(plan.dense_quantization.decode),
+        prefill: ml::set_dense_prefill_quantization_from_cli(plan.dense_quantization.prefill),
+    };
+    let dense = dense_phases.decode;
+    if dense_phases != plan.dense_quantization {
         tracing::warn!(
             "dense-quantization was already resolved ({}); the command line's ({}) did NOT \
              take effect",
-            dense.name(),
-            plan.dense_quantization.name()
+            phased_name(dense_phases, ml::DenseQuantization::name),
+            phased_name(plan.dense_quantization, ml::DenseQuantization::name)
+        );
+    }
+    if dense_phases.is_split() {
+        tracing::warn!(
+            "--dense-quantization {}: the prompt pass runs the {} tier on an FP8 copy kept \
+             beside each W4A16 weight; decode runs {}",
+            phased_name(dense_phases, ml::DenseQuantization::name),
+            dense_phases.prefill.name(),
+            dense.name()
         );
     }
     if dense.below_declared() {
@@ -141,16 +155,23 @@ pub(crate) fn publish_kernel_flags(args: &cli::ServeArgs) {
     }
     // 2026-10-11: `--dsa-quantization`, always published (owner decision B3): the GLM DSA q_a /
     // absorbed q / absorbed o tier, independent of the dense tier; disclosed on every boot.
-    let dsa = metrale_model_layers::layers::set_dsa_quantization_from_cli(plan.dsa_quantization);
-    if dsa != plan.dsa_quantization {
+    let dsa_phases = Phased {
+        decode: ml::set_dsa_quantization_from_cli(plan.dsa_quantization.decode),
+        prefill: ml::set_dsa_prefill_quantization_from_cli(plan.dsa_quantization.prefill),
+    };
+    let dsa = dsa_phases.decode;
+    if dsa_phases != plan.dsa_quantization {
         tracing::warn!(
             "dsa-quantization was already resolved ({}); the command line's ({}) did NOT \
              take effect",
-            dsa.name(),
-            plan.dsa_quantization.name()
+            phased_name(dsa_phases, ml::DsaQuantization::name),
+            phased_name(plan.dsa_quantization, ml::DsaQuantization::name)
         );
     }
-    tracing::info!("{}", super::kernel_flag_plan::precision_line(dense, dsa));
+    tracing::info!(
+        "{}",
+        super::kernel_flag_plan::precision_line(dense_phases, dsa_phases)
+    );
     if dsa.below_declared() {
         tracing::warn!(
             "--dsa-quantization {}: the DSA q_a, absorbed q and absorbed o projections run BELOW \

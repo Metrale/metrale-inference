@@ -12,6 +12,7 @@
 
 use crate::cli::ServeArgs;
 use crate::cli::flag_values::Tristate;
+use metrale_model_layers::layers::{Phased, phased_name};
 
 /// 2026-09-26: The GDN cell, which the command line owns as a whole once any GDN flag is
 /// given (`--ssm-h-dtype`, `--gdn-fused-norm`, `--ssm-batched-recurrent`
@@ -39,9 +40,11 @@ pub(crate) struct KernelFlagPlan {
     /// 2026-09-27: Always published: no environment fallback exists.
     pub expert_quantization: metrale_model_layers::layers::ExpertQuantization,
     /// 2026-10-09: `--dense-quantization`. Always published: no environment fallback exists.
-    pub dense_quantization: metrale_model_layers::layers::DenseQuantization,
+    /// 2026-10-14: Per phase.
+    pub dense_quantization: Phased<metrale_model_layers::layers::DenseQuantization>,
     /// 2026-10-11: `--dsa-quantization`. Always published: no environment fallback exists.
-    pub dsa_quantization: metrale_model_layers::layers::DsaQuantization,
+    /// 2026-10-14: Per phase.
+    pub dsa_quantization: Phased<metrale_model_layers::layers::DsaQuantization>,
     pub prefill_codispatch: Option<bool>,
     pub prefill_varlen: Option<bool>,
     pub ssm_tail_midchunk: Option<bool>,
@@ -88,15 +91,25 @@ impl KernelFlagPlan {
 }
 
 /// 2026-10-11: The boot log's dense-precision disclosure: both dense tiers as served.
+/// 2026-10-14: Each per phase; the DSA sites' description is each phase's.
 pub(crate) fn precision_line(
-    dense: metrale_model_layers::layers::DenseQuantization,
-    dsa: metrale_model_layers::layers::DsaQuantization,
+    dense: Phased<metrale_model_layers::layers::DenseQuantization>,
+    dsa: Phased<metrale_model_layers::layers::DsaQuantization>,
 ) -> String {
+    use metrale_model_layers::layers::{DenseQuantization as D, DsaQuantization as S};
+    let sites = if dsa.is_split() {
+        format!(
+            "decode {}; prefill {}",
+            dsa.decode.describe(),
+            dsa.prefill.describe()
+        )
+    } else {
+        dsa.decode.describe().to_string()
+    };
     format!(
-        "dense precision: --dense-quantization {} --dsa-quantization {} (DSA q_a/q_absorb/o_absorb: {})",
-        dense.name(),
-        dsa.name(),
-        dsa.describe()
+        "dense precision: --dense-quantization {} --dsa-quantization {} (DSA q_a/q_absorb/o_absorb: {sites})",
+        phased_name(dense, D::name),
+        phased_name(dsa, S::name),
     )
 }
 

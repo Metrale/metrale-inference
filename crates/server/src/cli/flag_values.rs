@@ -19,7 +19,9 @@
 //! Invariants: none beyond the types.
 
 use metrale_config::{MoeExpertLayout, WeightQuantization};
-use metrale_model_layers::layers::{DenseQuantization, DsaQuantization, ExpertQuantization};
+use metrale_model_layers::layers::{
+    DenseQuantization, DsaQuantization, ExpertQuantization, Phased, parse_phased, phased_name,
+};
 
 /// 2026-09-26: What `--kv-high-precision-layers auto` resolves to. The flag's
 /// help text states the same number as "recommended".
@@ -184,72 +186,41 @@ impl clap::ValueEnum for ExpertQuantizationArg {
     }
 }
 
-/// 2026-10-09: `--dense-quantization`: a clap value enum over the model layer's tiers
-/// (`metrale_model_layers::layers::DenseQuantization`), which own the names.
+/// 2026-10-09: `--dense-quantization`, over the model layer's tiers
+/// (`metrale_model_layers::layers::DenseQuantization`), which own the names. 2026-10-14: per
+/// phase (`X`, or `decode=X,prefill=Y` for a pair `DenseQuantization::phase_pair_ok` serves),
+/// parsed by [`parse_dense_quantization`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DenseQuantizationArg(pub DenseQuantization);
+pub struct DenseQuantizationArg(pub Phased<DenseQuantization>);
 
-impl clap::ValueEnum for DenseQuantizationArg {
-    fn value_variants<'a>() -> &'a [Self] {
-        const VARIANTS: [DenseQuantizationArg; 3] = [
-            DenseQuantizationArg(DenseQuantization::ALL[0]),
-            DenseQuantizationArg(DenseQuantization::ALL[1]),
-            DenseQuantizationArg(DenseQuantization::ALL[2]),
-        ];
-        &VARIANTS
+/// 2026-10-14: The clap parser of `--dense-quantization`.
+pub fn parse_dense_quantization(s: &str) -> Result<DenseQuantizationArg, String> {
+    let names = DenseQuantization::ALL.map(|q| q.name()).join(", ");
+    let p = parse_phased(s, DenseQuantization::from_name, &names)?;
+    if !DenseQuantization::phase_pair_ok(p) {
+        return Err(format!(
+            "{s}: the one served split is decode=w4a16,prefill=fp8 (else give one tier)"
+        ));
     }
-
-    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
-        let help = match self.0 {
-            DenseQuantization::Declared => "16-bit dense projections at the checkpoint's width",
-            DenseQuantization::Fp8 => {
-                "16-bit dense projections quantized at load to FP8 per-channel and decoded \
-                 W8A8 with per-token FP8 activations: below the checkpoint's declared \
-                 precision (glm5_next only; unmeasured)"
-            }
-            DenseQuantization::W4a16 => {
-                "FURTHER BELOW the checkpoint's declared precision than fp8: the KDA q/k/v, \
-                 f_a, b, g_a and o projections and the shared expert quantized at load to \
-                 NVFP4 (4-bit weights) and decoded W4A16 with 16-bit activations; the rest of \
-                 fp8's set stays fp8 (glm5_next only; unmeasured)"
-            }
-        };
-        Some(clap::builder::PossibleValue::new(self.0.name()).help(help))
-    }
+    Ok(DenseQuantizationArg(p))
 }
 
-/// 2026-10-11: `--dsa-quantization`: a clap value enum over the model layer's DSA tiers
-/// (`metrale_model_layers::layers::DsaQuantization`), which own the names.
+/// 2026-10-11: `--dsa-quantization`, over the model layer's DSA tiers
+/// (`metrale_model_layers::layers::DsaQuantization`), which own the names. 2026-10-14: per
+/// phase, like [`DenseQuantizationArg`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DsaQuantizationArg(pub DsaQuantization);
+pub struct DsaQuantizationArg(pub Phased<DsaQuantization>);
 
-impl clap::ValueEnum for DsaQuantizationArg {
-    fn value_variants<'a>() -> &'a [Self] {
-        const VARIANTS: [DsaQuantizationArg; 3] = [
-            DsaQuantizationArg(DsaQuantization::ALL[0]),
-            DsaQuantizationArg(DsaQuantization::ALL[1]),
-            DsaQuantizationArg(DsaQuantization::ALL[2]),
-        ];
-        &VARIANTS
+/// 2026-10-14: The clap parser of `--dsa-quantization`.
+pub fn parse_dsa_quantization(s: &str) -> Result<DsaQuantizationArg, String> {
+    let names = DsaQuantization::ALL.map(|q| q.name()).join(", ");
+    let p = parse_phased(s, DsaQuantization::from_name, &names)?;
+    if !DsaQuantization::phase_pair_ok(p) {
+        return Err(format!(
+            "{s}: the one served split is decode=w4a16,prefill=w8a8 (else give one tier)"
+        ));
     }
-
-    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
-        let help = match self.0 {
-            DsaQuantization::Declared => {
-                "the DSA q_a, absorbed q and absorbed o projections at the checkpoint's BF16"
-            }
-            DsaQuantization::W8a8 => {
-                "those three quantized at load to FP8 per-channel and decoded W8A8 with \
-                 per-token FP8 activations, as the reference engine runs them: below the \
-                 checkpoint's declared precision (glm5_next only)"
-            }
-            DsaQuantization::W4a16 => {
-                "FURTHER BELOW declared than w8a8: those three quantized at load to NVFP4 \
-                 (4-bit weights) and decoded W4A16 with 16-bit activations (glm5_next only)"
-            }
-        };
-        Some(clap::builder::PossibleValue::new(self.0.name()).help(help))
-    }
+    Ok(DsaQuantizationArg(p))
 }
 
 /// 2026-10-09: `--moe-expert-layout`: a clap value enum over the config crate's layouts
@@ -337,10 +308,18 @@ pub(crate) fn options_for_flag(flag: &str) -> Option<Vec<String>> {
                 .map(|q| q.name().to_string())
                 .collect(),
         ),
+        // 2026-10-14: Every tier, then the one served phase split.
         "dense-quantization" => Some(
             DenseQuantization::ALL
                 .iter()
                 .map(|q| q.name().to_string())
+                .chain([phased_name(
+                    Phased {
+                        decode: DenseQuantization::W4a16,
+                        prefill: DenseQuantization::Fp8,
+                    },
+                    DenseQuantization::name,
+                )])
                 .collect(),
         ),
         "moe-expert-layout" => Some(
