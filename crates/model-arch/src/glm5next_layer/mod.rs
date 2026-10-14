@@ -180,6 +180,7 @@ impl TransformerLayer for Glm5NextLayer {
             disk_last_offloaded_per_layer,
             ctx,
             stream,
+            crate::glm5next_layer_dump::Call::step(crate::glm5next_layer_dump::Path::Decode),
         )
     }
 
@@ -309,6 +310,7 @@ impl TransformerLayer for Glm5NextLayer {
             // A speculative verify, NOT a prefill sub-chunk: true here would give an eager
             // verify the prefill-only batched DSA selector (`batch_select_enabled`).
             false,
+            crate::glm5next_layer_dump::Call::step(crate::glm5next_layer_dump::Path::Verify),
         )?;
         if let (Some(record), Glm5NextMixer::Kda { layer, ws, .. }) = (replay, &self.mixer) {
             layer.record_verify_rows(ctx.gpu, ws, num_tokens - 1, &record, stream)?;

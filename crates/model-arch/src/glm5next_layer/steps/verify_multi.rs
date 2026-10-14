@@ -107,6 +107,7 @@ impl Glm5NextLayer {
             keep.as_deref(),
             ctx,
             stream,
+            dump::Path::MultiVerify,
         )
     }
 }

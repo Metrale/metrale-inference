@@ -279,6 +279,13 @@ impl Glm5NextDsaWorkspace {
             cfg.index_head_dim,
         )
     }
+
+    /// 2026-10-13: The `[max_rows, out_width]` i32 selection the last `decode_k` /
+    /// `decode_spans` left, row `r` of its launch at `r * out_width * 4` (`-1` = unselected).
+    /// Read by the opt-in layer dump (`glm5next_layer_dump`) only.
+    pub fn selection_tokens(&self) -> DevicePtr {
+        self.select.tokens()
+    }
 }
 
 #[cfg(test)]

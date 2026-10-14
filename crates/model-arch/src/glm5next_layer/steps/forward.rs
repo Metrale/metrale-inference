@@ -32,6 +32,7 @@ impl Glm5NextLayer {
         disk_offloaded: &mut Vec<u32>,
         ctx: &ForwardContext,
         stream: u64,
+        call: dump::Call,
     ) -> Result<()> {
         let gpu = ctx.gpu;
         let h = self.hidden;
@@ -50,6 +51,10 @@ impl Glm5NextLayer {
             );
         };
         let hc = mhc.hc_mult;
+        let tap = dump::begin(ctx, stream, self.dump_layer(mhc, true), call, None, || {
+            vec![dump::Window::single(1, seq_len, call.last_pos)]
+        })?;
+        let tap = tap.as_ref();
         let streams = ctx.buffers.hc_streams().offset(slot * hc * h * 4);
         let post = ctx.buffers.hc_post().offset(slot * hc * 4);
         let comb = ctx.buffers.hc_comb().offset(slot * hc * hc * 4);
@@ -63,6 +68,7 @@ impl Glm5NextLayer {
             l2.reset();
         }
         if self.is_first {
+            dump::put(tap, dump::Point::HiddenIn, hidden)?;
             glm_hc_expand(
                 gpu,
                 mhc.kernels.hc_expand,
@@ -89,6 +95,7 @@ impl Glm5NextLayer {
             t_mhc,
             stream,
         )?;
+        dump::site(tap, false, [streams, post, comb, normed])?;
         let attn_out = self.mixer_forward(
             normed,
             residual,
@@ -101,6 +108,8 @@ impl Glm5NextLayer {
             ctx,
             stream,
         )?;
+        dump::put(tap, dump::Point::MixerOut, attn_out)?;
+        dump::topk(tap)?;
         let fused = self.fused_post(mhc)?;
         // 2026-10-10: With the fold the attention site's sum and post-mix run inside the FFN
         // site's pre-norm, writing the post-mixed streams to `fold_streams`; the FFN site's
@@ -137,6 +146,8 @@ impl Glm5NextLayer {
                 stream,
             )?;
             profile::end(profile::MHC, t_mhc, gpu, stream);
+            // 2026-10-13: The fold does not write the summed mixer output back: no MixerRed.
+            dump::site(tap, true, [mhc.fold_streams, post, comb, normed])?;
             mhc.fold_streams
         } else {
             let t_mhc_post = profile::start();
@@ -144,6 +155,7 @@ impl Glm5NextLayer {
                 gpu, mhc, attn_out, partials, streams, streams, post, comb, 1, stream,
             )?;
             profile::end(profile::MHC_POST, t_mhc_post, gpu, stream);
+            self.dump_mixer_red(tap, attn_out)?;
 
             let t_mhc = profile::start();
             self.mhc_pre_norm(
@@ -160,9 +172,10 @@ impl Glm5NextLayer {
                 t_mhc,
                 stream,
             )?;
+            dump::site(tap, true, [streams, post, comb, normed])?;
             streams
         };
-        let partials = self.mlp_forward(normed, ffn_out, 1, &[1], fused, ctx, stream)?;
+        let partials = self.mlp_forward(normed, ffn_out, 1, &[1], fused, ctx, stream, tap)?;
         let t_mhc_post = profile::start();
         self.hc_post_reduced(
             gpu,
@@ -176,6 +189,7 @@ impl Glm5NextLayer {
             1,
             stream,
         )?;
+        self.dump_layer_out(tap, ffn_out, streams)?;
 
         if self.is_last {
             hc_head_mean(
@@ -188,6 +202,7 @@ impl Glm5NextLayer {
                 hc as u32,
                 stream,
             )?;
+            dump::put(tap, dump::Point::FinalHidden, hidden)?;
         }
         profile::end(profile::MHC_POST, t_mhc_post, gpu, stream);
         if self.is_last {
@@ -224,6 +239,7 @@ impl Glm5NextLayer {
         // the DSA batched selector (`batch_select_enabled`) and, with
         // `METRALE_GLM_KDA_CHUNK_PREFILL=1`, the KDA chunked scan, both prefill-only.
         is_prefill: bool,
+        call: dump::Call,
     ) -> Result<()> {
         let gpu = ctx.gpu;
         let Some(mhc) = self.mhc.as_ref() else {
@@ -307,10 +323,38 @@ impl Glm5NextLayer {
         };
         // 2026-10-12: `METRALE_GLM_SP_MHC=1`: a wide TP prefill sub-chunk runs its mHC work on
         // this rank's rows only (`steps/forward_sp.rs`).
-        if self.sp_takes(ctx, k, is_prefill)? {
-            return self.forward_rows_sp(mhc, hidden, k, slot_base, ctx, stream, mixer);
+        let sp = self.sp_takes(ctx, k, is_prefill)?;
+        // 2026-10-13: Under SP-mHC this rank holds the mHC rows of its own shard only.
+        let own = ctx
+            .comm
+            .filter(|_| sp)
+            .map(|c| crate::glm5next_sp_mhc::shards(k, c.world_size())[c.rank()]);
+        let tap = dump::begin(ctx, stream, self.dump_layer(mhc, true), call, own, || {
+            vec![dump::Window::single(k, seq_len, call.last_pos)]
+        })?;
+        if sp {
+            return self.forward_rows_sp(
+                mhc,
+                hidden,
+                k,
+                slot_base,
+                ctx,
+                stream,
+                tap.as_ref(),
+                mixer,
+            );
         }
-        self.forward_rows_with(mhc, hidden, k, slot_base, ctx, stream, &[k], mixer)
+        self.forward_rows_with(
+            mhc,
+            hidden,
+            k,
+            slot_base,
+            ctx,
+            stream,
+            &[k],
+            tap.as_ref(),
+            mixer,
+        )
     }
 
     /// 2026-10-08: The mHC layer body over `k` rows at highway slots `slot_base..slot_base + k`,
@@ -333,6 +377,7 @@ impl Glm5NextLayer {
         ctx: &ForwardContext,
         stream: u64,
         row_pieces: &[usize],
+        tap: Option<&dump::Tap<'_>>,
         mixer: impl FnOnce(DevicePtr) -> Result<DevicePtr>,
     ) -> Result<()> {
         crate::glm5next_mlp::forward::check_pieces(k, row_pieces)?;
@@ -355,6 +400,7 @@ impl Glm5NextLayer {
             l2.reset();
         }
         if self.is_first {
+            dump::put(tap, dump::Point::HiddenIn, hidden)?;
             glm_hc_expand(
                 gpu,
                 mhc.kernels.hc_expand,
@@ -381,9 +427,12 @@ impl Glm5NextLayer {
             t_mhc,
             stream,
         )?;
+        dump::site(tap, false, [streams, post, comb, normed])?;
         let t = profile::start();
         let attn_out = mixer(normed)?;
         profile::end(profile::KDA, t, gpu, stream);
+        dump::put(tap, dump::Point::MixerOut, attn_out)?;
+        dump::topk(tap)?;
         let fused = self.fused_post(mhc)?;
         let mut partials = None;
         if self.mixer_all_reduce {
@@ -399,6 +448,7 @@ impl Glm5NextLayer {
             gpu, mhc, attn_out, partials, streams, streams, post, comb, k, stream,
         )?;
         profile::end(profile::MHC_POST, t_mhc_post, gpu, stream);
+        self.dump_mixer_red(tap, attn_out)?;
 
         let t_mhc = profile::start();
         self.mhc_pre_norm(
@@ -415,11 +465,13 @@ impl Glm5NextLayer {
             t_mhc,
             stream,
         )?;
-        let partials = self.mlp_forward(normed, ffn_out, k, row_pieces, fused, ctx, stream)?;
+        dump::site(tap, true, [streams, post, comb, normed])?;
+        let partials = self.mlp_forward(normed, ffn_out, k, row_pieces, fused, ctx, stream, tap)?;
         let t_mhc_post = profile::start();
         self.hc_post_reduced(
             gpu, mhc, ffn_out, partials, streams, streams, post, comb, k, stream,
         )?;
+        self.dump_layer_out(tap, ffn_out, streams)?;
         if self.is_last {
             hc_head_mean(
                 gpu,
@@ -431,6 +483,7 @@ impl Glm5NextLayer {
                 hct,
                 stream,
             )?;
+            dump::put(tap, dump::Point::FinalHidden, hidden)?;
         }
         profile::end(profile::MHC_POST, t_mhc_post, gpu, stream);
         if self.is_last {

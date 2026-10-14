@@ -119,6 +119,7 @@ impl Glm5NextLayer {
             None,
             ctx,
             stream,
+            dump::Path::MultiDecode,
         )
     }
 
@@ -127,7 +128,8 @@ impl Glm5NextLayer {
     /// `multi_seq_chunk_rows()` through `forward_rows_with`. A KDA layer steps each sequence's
     /// state through its rows in order and keeps what `keep[s]` asks (`None`: nothing); a DSA
     /// layer runs `decode_spans` over the group's sequences. Errors on a layer without a
-    /// hyper-connection or when the rows pass the highway.
+    /// hyper-connection or when the rows pass the highway. 2026-10-13: `path` names the caller
+    /// for the layer dump.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::glm5next_layer) fn forward_spans(
         &self,
@@ -139,6 +141,7 @@ impl Glm5NextLayer {
         keep: Option<&[KdaRowKeep]>,
         ctx: &ForwardContext,
         stream: u64,
+        path: dump::Path,
     ) -> Result<()> {
         let Some(mhc) = self.mhc.as_ref() else {
             bail!(
@@ -191,10 +194,31 @@ impl Glm5NextLayer {
             Glm5NextMixer::Dsa(_) => Vec::new(),
         };
         let row_bytes = self.hidden * 2;
-        for (base, m) in multi_seq_chunks(total, multi_seq_chunk_rows()) {
+        for (chunk, (base, m)) in multi_seq_chunks(total, multi_seq_chunk_rows())
+            .into_iter()
+            .enumerate()
+        {
             let spans = group_spans(ks, base, m);
             let x = hidden.offset(base * row_bytes);
             let slot_base = ctx.hc_row_offset + base;
+            let call = dump::Call {
+                path,
+                chunk,
+                last_pos: None,
+            };
+            let tap = dump::begin(ctx, stream, self.dump_layer(mhc, true), call, None, || {
+                spans
+                    .iter()
+                    .map(|sp| dump::Window {
+                        row0: sp.row0,
+                        rows: sp.rows,
+                        seq: sp.seq,
+                        first_pos: seq_lens[sp.seq] + sp.t0,
+                        last_pos: None,
+                    })
+                    .collect()
+            })?;
+            let tap = tap.as_ref();
             match (&self.mixer, meta) {
                 (Glm5NextMixer::Kda { layer, ws, .. }, _) => {
                     let row_states: Vec<KdaSeqState> = spans
@@ -218,30 +242,48 @@ impl Glm5NextLayer {
                     }
                     let seqs: Vec<(KdaSeqState, usize)> =
                         spans.iter().map(|sp| (kda[sp.seq], sp.rows)).collect();
-                    self.forward_rows_with(mhc, x, m, slot_base, ctx, stream, &[m], |normed| {
-                        layer.decode_seq_rows(ctx.gpu, normed, &seqs, ws, stream, |row| {
-                            self.kda_after_row(layer, &spans, keep, &row_states, row, ctx, stream)
-                        })?;
-                        if let Some(keep) = keep {
-                            for sp in &spans {
-                                if let KdaRowKeep::Record { record, rows } = &keep[sp.seq] {
-                                    let end = (sp.t0 + sp.rows).min(*rows);
-                                    if end > sp.t0 {
-                                        layer.record_verify_rows_at(
-                                            ctx.gpu,
-                                            ws,
-                                            sp.row0,
-                                            sp.t0,
-                                            end - sp.t0,
-                                            record,
-                                            stream,
-                                        )?;
+                    self.forward_rows_with(
+                        mhc,
+                        x,
+                        m,
+                        slot_base,
+                        ctx,
+                        stream,
+                        &[m],
+                        tap,
+                        |normed| {
+                            layer.decode_seq_rows(ctx.gpu, normed, &seqs, ws, stream, |row| {
+                                self.kda_after_row(
+                                    layer,
+                                    &spans,
+                                    keep,
+                                    &row_states,
+                                    row,
+                                    ctx,
+                                    stream,
+                                )
+                            })?;
+                            if let Some(keep) = keep {
+                                for sp in &spans {
+                                    if let KdaRowKeep::Record { record, rows } = &keep[sp.seq] {
+                                        let end = (sp.t0 + sp.rows).min(*rows);
+                                        if end > sp.t0 {
+                                            layer.record_verify_rows_at(
+                                                ctx.gpu,
+                                                ws,
+                                                sp.row0,
+                                                sp.t0,
+                                                end - sp.t0,
+                                                record,
+                                                stream,
+                                            )?;
+                                        }
                                     }
                                 }
                             }
-                        }
-                        Ok(ws.final_out)
-                    })?;
+                            Ok(ws.final_out)
+                        },
+                    )?;
                 }
                 (Glm5NextMixer::Dsa(layer), Some(meta)) => {
                     let (s_lo, s_hi) = match (spans.first(), spans.last()) {
@@ -256,14 +298,24 @@ impl Glm5NextLayer {
                         })
                         .collect();
                     let group = &mut states[s_lo..=s_hi];
-                    self.forward_rows_with(mhc, x, m, slot_base, ctx, stream, &[m], |normed| {
-                        // 2026-10-08: Writes its output projection over its input buffer, as
-                        // `decode_k` does.
-                        layer.decode_spans(
-                            normed, group, &dsa_spans, kv_cache, meta, base, ctx, stream,
-                        )?;
-                        Ok(normed)
-                    })?;
+                    self.forward_rows_with(
+                        mhc,
+                        x,
+                        m,
+                        slot_base,
+                        ctx,
+                        stream,
+                        &[m],
+                        tap,
+                        |normed| {
+                            // 2026-10-08: Writes its output projection over its input buffer, as
+                            // `decode_k` does.
+                            layer.decode_spans(
+                                normed, group, &dsa_spans, kv_cache, meta, base, ctx, stream,
+                            )?;
+                            Ok(normed)
+                        },
+                    )?;
                 }
                 (Glm5NextMixer::Dsa(_), None) => {
                     bail!("GLM layer {}: DSA mixer without metadata", self.layer_idx)
