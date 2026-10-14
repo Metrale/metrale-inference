@@ -9,7 +9,7 @@
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::{KernelLaunch, div_ceil};
-use metrale_model_arch::glm5next_mlp::forward::{W4a4SlotsCall, launch_w4a4_slots};
+use metrale_model_arch::glm5next_mlp::forward::{GroupedEntry, W4a4SlotsCall, launch_w4a4_slots};
 
 use crate::device::{Rng, routing, up, up_bf16};
 
@@ -176,10 +176,26 @@ pub fn grouped(
     t: &Table,
     c: DevicePtr,
     gather: DevicePtr,
+    nk: (usize, usize),
+    s: u64,
+) -> Result<()> {
+    grouped_entry(gpu, GroupedEntry::plain(k), ti, b, t, c, gather, nk, s)
+}
+
+/// 2026-10-14: [`grouped`] on an entry that may be an `_r` twin (its raster group last).
+#[allow(clippy::too_many_arguments)]
+pub fn grouped_entry(
+    gpu: &dyn GpuBackend,
+    e: GroupedEntry,
+    ti: usize,
+    b: &Bufs,
+    t: &Table,
+    c: DevicePtr,
+    gather: DevicePtr,
     (n, kk): (usize, usize),
     s: u64,
 ) -> Result<()> {
-    KernelLaunch::new(gpu, k)
+    let l = KernelLaunch::new(gpu, e.kern)
         .grid([
             div_ceil(n as u32, COLS[ti]),
             ((b.rows * TOP_K).div_ceil(MT[ti]) + EXPERTS) as u32,
@@ -205,8 +221,12 @@ pub fn grouped(
         .arg_ptr(gather)
         .arg_u32(EXPERTS as u32)
         .arg_u32(n as u32)
-        .arg_u32(kk as u32)
-        .launch(s)
+        .arg_u32(kk as u32);
+    match e.raster {
+        Some(g) => l.arg_u32(g),
+        None => l,
+    }
+    .launch(s)
 }
 
 /// 2026-10-12: One group of the grouped GEMM (`num_experts` 1, offsets [0, rows], no gather) on

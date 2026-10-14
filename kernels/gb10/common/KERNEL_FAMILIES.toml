@@ -1274,6 +1274,9 @@ kernels = [
   # launch (the GU instantiations of the same body, w4a4_grouped_core.cuh).
   "w4a4_grouped_mx::w4a4_grouped_gu_m32", "w4a4_grouped_mx::w4a4_grouped_gu_m64",
   "w4a4_grouped_mx::w4a4_grouped_gu_m128",
+  # 2026-10-14: The m128 down and gate/up entries with a raster group (same bytes, another CTA walk).
+  "w4a4_grouped_mx::w4a4_grouped_mx_m128_r", "w4a4_grouped_mx::w4a4_grouped_mx_m128_k64_r",
+  "w4a4_grouped_mx::w4a4_grouped_gu_m128_r",
 ]
 kernel_compute."w4a4_grouped_mx::w4a4_grouped_tiles" = { compute = "memory" }
 kernel_compute."w4a4_grouped_mx::w4a4_grouped_one_group" = { compute = "memory" }

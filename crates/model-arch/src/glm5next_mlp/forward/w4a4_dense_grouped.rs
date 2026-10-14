@@ -34,6 +34,7 @@ use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 use super::Glm5NextMlpWorkspace;
 use super::w4a4_grouped::{W4A4_GROUPED_MT, grouped_launch, smem_bytes_of};
+use super::w4a4_grouped_raster::GroupedEntry;
 use crate::glm5next_mlp::weights::{Glm5NextDenseNvfp4Weights, Glm5NextExpertPtrTable, Nvfp4Proj};
 use crate::glm5next_mlp::{DENSE_W4A4_CHUNK_ROWS, Glm5NextMlpKernels};
 
@@ -211,7 +212,7 @@ pub(super) fn proj(
 ) -> Result<()> {
     grouped_launch(
         gpu,
-        k.w4a4_grouped.mx[TILE],
+        GroupedEntry::plain(k.w4a4_grouped.mx[TILE]),
         TILE,
         smem_bytes_of(TILE),
         [ws.w4a4_aq, ws.w4a4_as, ws.w4a4_ag],

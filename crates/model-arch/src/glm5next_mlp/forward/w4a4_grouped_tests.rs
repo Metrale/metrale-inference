@@ -40,6 +40,9 @@ const G128_K64: u64 = 0x6F;
 const GU32: u64 = 0x71;
 const GU64: u64 = 0x73;
 const GU128: u64 = 0x75;
+const R128: u64 = 0x77;
+const R128_K64: u64 = 0x79;
+const RGU128: u64 = 0x7B;
 
 const SCALES: W4a4ActScales = W4a4ActScales {
     gate_up: 0.000642,
@@ -102,6 +105,11 @@ fn kernels(gpu: &MockGpuBackend) -> Glm5NextMlpKernels {
             KernelHandle(G128_K64),
         ],
         gu: [KernelHandle(GU32), KernelHandle(GU64), KernelHandle(GU128)],
+        raster: [
+            KernelHandle(R128),
+            KernelHandle(R128_K64),
+            KernelHandle(RGU128),
+        ],
     };
     k
 }
@@ -415,3 +423,5 @@ fn the_lever_parses_strictly() {
 
 #[path = "w4a4_grouped_gu_tests.rs"]
 mod gu;
+#[path = "w4a4_grouped_raster_tests.rs"]
+mod raster;
