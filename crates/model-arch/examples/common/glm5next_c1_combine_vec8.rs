@@ -8,9 +8,10 @@
 //!
 //! Owner: model-arch examples (GLM-5.3).
 //! Invariants:
-//! - Negative control: the indexed sum with slots 2 and 3 of every row swapped (weight and row
+//! - Negative control: the indexed sum with slots 3 and 4 of every row swapped (weight and row
 //!   together, so only the FP32 addition order changes) must NOT match: the gate sees an order
-//!   change, the one way a re-vectorised sum could differ.
+//!   change, the one way a re-vectorised sum could differ. Element 64 of row 0 is planted (`plant`)
+//!   so the swap changes it by 1.0 at every row count, not by chance.
 //! - Row 0 carries the edge values (NaN, infinities, signed zeros, BF16 subnormals, products that
 //!   overflow FP32 and a sum that cancels), slot 0 of row 0 a zero weight and slot 1 a negative
 //!   zero; the outputs must be byte-identical to the scalar kernel's at every grid tried, and at
@@ -78,13 +79,25 @@ fn shuffled(rng: &mut Lcg, n: usize) -> Vec<usize> {
     p
 }
 
-/// 2026-10-14: `(weights, token_to_perm bytes)` with slots 2 and 3 of every row swapped, weight
+/// 2026-10-14: Element 64 of row 0, routed through `perm`: slots 2, 3 and 4 at weight 1 carry
+/// 1, 2^24 and -2^24. In slot order the FP32 sum is (1 + 2^24) - 2^24 = 0 (the first addition
+/// rounds to even); with slots 3 and 4 swapped it is (1 - 2^24) + 2^24 = 1. Slots 0 and 1 keep
+/// their zero weights, so the sum is still exactly 0 when slot 2 is added: a swap of slots 2 and
+/// 3 alone could never change row 0.
+fn plant(eo: &mut [bf16], w: &mut [f32], perm: &[usize]) {
+    for (k, v) in [(2, 1.0f32), (3, 16_777_216.0), (4, -16_777_216.0)] {
+        w[k] = 1.0;
+        eo[perm[k] * HIDDEN + 64] = bf16::from_f32(v);
+    }
+}
+
+/// 2026-10-14: `(weights, token_to_perm bytes)` with slots 3 and 4 of every row swapped, weight
 /// and routed row together: the same terms, summed in another order.
 fn swap_slots(w: &[f32], perm: &[usize]) -> (Vec<f32>, Vec<u8>) {
     let (mut w2, mut p2) = (w.to_vec(), perm.to_vec());
     for t in 0..w.len() / TOP_K {
-        w2.swap(t * TOP_K + 2, t * TOP_K + 3);
-        p2.swap(t * TOP_K + 2, t * TOP_K + 3);
+        w2.swap(t * TOP_K + 3, t * TOP_K + 4);
+        p2.swap(t * TOP_K + 3, t * TOP_K + 4);
     }
     let bytes = p2.iter().flat_map(|p| (*p as i32).to_le_bytes()).collect();
     (w2, bytes)
@@ -112,6 +125,7 @@ pub fn combine_vec8(g: &dyn GpuBackend, s: u64, rng: &mut Lcg) -> Result<()> {
         w[0] = 0.0;
         w[1] = -0.0;
         let perm = shuffled(rng, n);
+        plant(&mut eo, &mut w, &perm);
         let to_bytes = |v: &[bf16]| v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
         let perm_i: Vec<u8> = perm
             .iter()
@@ -183,11 +197,11 @@ pub fn combine_vec8(g: &dyn GpuBackend, s: u64, rng: &mut Lcg) -> Result<()> {
                 }
                 if got == want {
                     bail!(
-                        "combine_vec8 R={rows}: negative control (slots 2 and 3 swapped) matched"
+                        "combine_vec8 R={rows}: negative control (slots 3 and 4 swapped) matched"
                     );
                 }
                 println!(
-                    "combine_vec8 R={rows}: negative control (slots 2 and 3 swapped) caught: differs"
+                    "combine_vec8 R={rows}: negative control (slots 3 and 4 swapped) caught: differs"
                 );
             }
             let copies = if rows > 16 { 8 } else { MOE_LAYERS };
