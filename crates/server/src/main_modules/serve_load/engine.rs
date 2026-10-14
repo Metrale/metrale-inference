@@ -267,7 +267,12 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
     // boot's `--spec-cost-calibration` must agree on.
     match &drafter_weights_sha256 {
         Some(h) => tracing::info!("MTP drafter weights sha256: {h} (--spec-cost-model's key)"),
-        None => tracing::info!("No MTP drafter weights (checkpoint has no mtp.* tensors)"),
+        // 2026-10-14: None only means no `mtp.*` tensors were hashed. A drafter read from a
+        // next-n decoder layer (GLM-5.3: layers.45) still loads and drafts.
+        None => tracing::info!(
+            "MTP drafter weights sha256: none (no mtp.* tensors to hash for --spec-cost-model; \
+             a next-n layer drafter, if the model has one, is loaded separately)"
+        ),
     }
 
     // 2026-09-28: `--forward`, applied before the audit so the gate sees the executor's lookups.
