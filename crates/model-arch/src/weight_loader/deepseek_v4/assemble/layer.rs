@@ -340,6 +340,7 @@ pub fn assemble_layer(
             // the model layer index.
             is_first_model_layer: layer_idx == 0,
             is_last_model_layer: layer_idx + 1 == config.num_hidden_layers,
+            model_layer: layer_idx,
         });
     }
 

@@ -249,6 +249,17 @@ impl TransformerModel {
                 stream,
                 &format!("chunk_entry start={chunk_start} len={chunk_len} kvws={kv_write_start}"),
             );
+            // 2026-10-14: The aux state (QSA keys, PLE carry) each layer enters the chunk with.
+            for (layer, blob) in self.collect_aux_states(seq, stream)? {
+                let fnv = crate::model::ssm_snapshot::fnv1a64(
+                    crate::model::ssm_snapshot::FNV1A64_SEED,
+                    &blob,
+                );
+                tracing::warn!(
+                    "METRALE_AUX_CKSUM[chunk_entry start={chunk_start}] L{layer} bytes={} fnv={fnv:016x}",
+                    blob.len()
+                );
+            }
         }
 
         let bs = kv_cache.block_size();

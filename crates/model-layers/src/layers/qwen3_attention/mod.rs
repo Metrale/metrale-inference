@@ -27,7 +27,7 @@ mod init_kernel_dispatch;
 mod init_prefill_kernels;
 mod init_proj_kernels;
 mod kernel_requirements;
-mod op_dump;
+pub(crate) mod op_dump;
 // 2026-09-25: `innerq_driver` uses `metrale_gpu_runtime::registry`, which
 // exists only with the `cuda` feature, so the module carries the same gate.
 #[cfg(feature = "cuda")]

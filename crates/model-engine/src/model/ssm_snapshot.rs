@@ -278,13 +278,7 @@ impl SsmSnapshotPool {
         stream: u64,
     ) -> Option<u64> {
         gpu.synchronize(stream).ok()?;
-        let mut acc: u64 = 0xcbf2_9ce4_8422_2325;
-        let mut fold = |bytes: &[u8]| {
-            for &b in bytes {
-                acc ^= b as u64;
-                acc = acc.wrapping_mul(0x0000_0100_0000_01b3);
-            }
-        };
+        let mut acc = FNV1A64_SEED;
         for i in 0..self.num_ssm_layers {
             let mut hb = vec![0u8; self.h_bytes];
             let mut cb = vec![0u8; self.conv_bytes];
@@ -298,8 +292,7 @@ impl SsmSnapshotPool {
                 &mut cb,
             )
             .ok()?;
-            fold(&hb);
-            fold(&cb);
+            acc = fnv1a64(fnv1a64(acc, &hb), &cb);
         }
         Some(acc)
     }
@@ -398,4 +391,17 @@ impl SsmSnapshotPool {
         )?;
         Ok(())
     }
+}
+
+/// 2026-10-14: FNV-1a 64-bit offset basis, the seed of [`fnv1a64`].
+pub(crate) const FNV1A64_SEED: u64 = 0xcbf2_9ce4_8422_2325;
+
+/// 2026-10-14: Fold `bytes` into a 64-bit FNV-1a digest. The debug probes' byte-identity
+/// check (`METRALE_SSM_SAVE_DUMP`): equal inputs give equal digests.
+pub(crate) fn fnv1a64(mut acc: u64, bytes: &[u8]) -> u64 {
+    for &b in bytes {
+        acc ^= b as u64;
+        acc = acc.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    acc
 }

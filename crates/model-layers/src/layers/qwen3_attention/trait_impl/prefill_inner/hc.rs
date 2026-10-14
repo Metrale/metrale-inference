@@ -74,17 +74,30 @@ impl Qwen3AttentionLayer {
             )?;
         }
 
-        // 2026-09-25: Highway taps (`METRALE_QWEN4EXP_DUMP`). `model_layer`
-        // assumes three GDN layers before each attention layer (attention layer
-        // k is model layer 4k+3).
-        let model_layer = self.attn_layer_idx * 4 + 3;
+        // 2026-09-25: Highway taps (`METRALE_QWEN4EXP_DUMP`), labelled by model layer.
+        let model_layer = hc.model_layer;
+        let hc_dim = hc.hc_mult * h;
+        // 2026-10-14: `METRALE_OP_DUMP` tail-row taps (`op_dump::tail_rows`).
+        let tap = |p: DevicePtr, row: usize, is_f32: bool, op: &str| {
+            super::super::super::op_dump::tail_rows(
+                ctx.gpu,
+                p,
+                num_tokens,
+                row,
+                is_f32,
+                model_layer,
+                op,
+                stream,
+            )
+        };
+        tap(hc_streams, hc_dim, true, "hc_in")?;
         crate::layers::ple::dump::tap_highway(
             ctx.gpu,
             hc_streams,
             model_layer,
             "attn_in",
             num_tokens,
-            (hc_mult as usize) * h,
+            hc_dim,
             stream,
         );
 
@@ -127,6 +140,7 @@ impl Qwen3AttentionLayer {
             );
         }
 
+        tap(hidden, h, false, "block_in")?;
         let normed = ctx.buffers.norm_output();
         if ops::HcVariant::of(hc).applies_block_input_norm() {
             ops::rms_norm(
@@ -239,6 +253,7 @@ impl Qwen3AttentionLayer {
             )?;
         }
 
+        tap(attn_out, h, false, "block_out")?;
         if self.ffn.is_none() {
             ops::hc_post_site(
                 ctx.gpu,
@@ -310,9 +325,10 @@ impl Qwen3AttentionLayer {
             model_layer,
             "post_attn",
             num_tokens,
-            (hc_mult as usize) * h,
+            hc_dim,
             stream,
         );
+        tap(hc_streams, hc_dim, true, "hc_post_block")?;
 
         ops::hc_pre_site(
             ctx.gpu,
@@ -407,6 +423,7 @@ impl Qwen3AttentionLayer {
             h as u32,
             stream,
         )?;
+        tap(hc_streams, hc_dim, true, "hc_post_ffn")?;
         if diag_this {
             super::diag_norm_f32(
                 ctx.gpu,

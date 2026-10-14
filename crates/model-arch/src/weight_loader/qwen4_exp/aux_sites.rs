@@ -145,6 +145,7 @@ pub(super) fn attach_hc(
         // 2026-09-25: Model layer indices, not attention-layer ones.
         is_first_model_layer: idx == 0,
         is_last_model_layer: idx + 1 == config.num_hidden_layers,
+        model_layer: idx,
     };
     if let Some(l) = any.downcast_mut::<metrale_model_layers::layers::Qwen3AttentionLayer>() {
         l.set_hc_weights(w);

@@ -14,6 +14,13 @@
 //! the last token's row, and each call overwrites the file, so under chunked
 //! prefill the last chunk's row remains.
 //!
+//! 2026-10-14: `tail_rows` taps the mHC highway and the block input/output on every model
+//! layer, GDN and attention (`HcWeights::model_layer` labels them), for the last
+//! `min(num_tokens, TAIL_ROWS)` rows of the chunk. Under chunked prefill the last chunk
+//! remains, so a cold prompt and its warm replay leave the same tail rows to diff.
+//! `METRALE_OP_DUMP_GATE=<path>` dumps only while `<path>` exists, so a running server can
+//! serve the same request with and without the taps' stream synchronisation.
+//!
 //! Owner: model-layers (attention).
 //! Invariants: none beyond the types.
 
@@ -52,6 +59,11 @@ fn op_dump_dir(layer_idx: usize, op: &str) -> Option<String> {
     }
     let ops = parse_csv("METRALE_OP_DUMP_OPS");
     if !ops.is_empty() && !ops.iter().any(|o| o == op) {
+        return None;
+    }
+    if let Ok(gate) = std::env::var("METRALE_OP_DUMP_GATE")
+        && !std::path::Path::new(&gate).exists()
+    {
         return None;
     }
     Some(dir)
@@ -97,8 +109,34 @@ pub(crate) fn dump_bf16(
     Ok(())
 }
 
+/// 2026-10-14: Rows `tail_rows` keeps: a 20-row warm tail fits whole, a 4,096-row cold chunk
+/// keeps its last 64.
+const TAIL_ROWS: usize = 64;
+
+/// 2026-10-14: Dump the last `min(num_tokens, TAIL_ROWS)` rows of a `[num_tokens, row]`
+/// tensor, f32 when `is_f32`, BF16 otherwise; written as f32 either way.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn tail_rows(
+    gpu: &dyn GpuBackend,
+    ptr: DevicePtr,
+    num_tokens: usize,
+    row: usize,
+    is_f32: bool,
+    layer_idx: usize,
+    op: &str,
+    stream: u64,
+) -> Result<()> {
+    let rows = num_tokens.min(TAIL_ROWS);
+    let elem = if is_f32 { 4 } else { 2 };
+    let off = (num_tokens - rows) * row * elem;
+    if is_f32 {
+        dump_f32(gpu, ptr, off, rows * row, layer_idx, op, stream)
+    } else {
+        dump_bf16(gpu, ptr, off, rows * row, layer_idx, op, stream)
+    }
+}
+
 /// 2026-09-25: `dump_bf16` for a tensor already stored as f32 on the device.
-#[allow(dead_code)]
 pub(crate) fn dump_f32(
     gpu: &dyn GpuBackend,
     ptr: DevicePtr,
