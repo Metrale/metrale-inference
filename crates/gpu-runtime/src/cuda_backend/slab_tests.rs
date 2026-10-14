@@ -15,9 +15,9 @@ fn layout_aligns_every_member_and_never_overlaps() {
         let next = offsets.get(i + 1).copied().unwrap_or(total);
         assert!(end <= next, "member {i} overlaps the next");
     }
-    // Zero-size members still get distinct pointers.
+    // 2026-10-13: Zero-size members still get distinct pointers.
     assert_ne!(offsets[3], offsets[4]);
-    // Waste is below one alignment unit per member.
+    // 2026-10-13: Waste is below one alignment unit per member.
     let used: usize = sizes.iter().map(|s| s.max(&1)).sum();
     assert!(total - used < SLAB_ALIGN * sizes.len());
 }
@@ -45,7 +45,7 @@ fn a_freed_member_is_no_longer_a_member() {
     let mut t = SlabTable::default();
     let a = t.insert(0x1000_0000, &[0, 256]);
     assert_eq!(t.release(a[0]), SlabRelease::StillLive);
-    // A second free of the same pointer is not swallowed as a member free: the caller
+    // 2026-10-13: A second free of the same pointer is not swallowed as a member free: the caller
     // hands it to the driver, which reports the double free as it would without slabs.
     assert_eq!(t.release(a[0]), SlabRelease::NotMember);
     assert_eq!(t.release(a[1]), SlabRelease::LastMember(0x1000_0000));
@@ -55,7 +55,7 @@ fn a_freed_member_is_no_longer_a_member() {
 fn a_pointer_never_carved_is_not_a_member() {
     let mut t = SlabTable::default();
     t.insert(0x1000_0000, &[0, 256]);
-    // Inside the slab but not a member start.
+    // 2026-10-13: Inside the slab but not a member start.
     assert_eq!(t.release(0x1000_0080), SlabRelease::NotMember);
     assert_eq!(t.release(0xdead_0000), SlabRelease::NotMember);
     assert_eq!(t.live_slabs(), 1);

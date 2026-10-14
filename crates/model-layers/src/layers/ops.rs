@@ -99,6 +99,9 @@ mod gemv_sw;
 mod hyper_connection;
 #[path = "ops/hyper_connection_dispatch.rs"]
 mod hyper_connection_dispatch;
+#[cfg(test)]
+#[path = "ops/hyper_connection_gemv_tests.rs"]
+mod hyper_connection_gemv_tests;
 #[path = "ops/hyper_connection_lowrank.rs"]
 mod hyper_connection_lowrank;
 #[cfg(test)]
@@ -107,9 +110,6 @@ mod hyper_connection_lowrank_tests;
 #[cfg(test)]
 #[path = "ops/hyper_connection_split_tests.rs"]
 mod hyper_connection_split_tests;
-#[cfg(test)]
-#[path = "ops/hyper_connection_gemv_tests.rs"]
-mod hyper_connection_gemv_tests;
 #[path = "ops/kv_cache.rs"]
 mod kv_cache;
 #[path = "ops/kv_cache_fp8k.rs"]

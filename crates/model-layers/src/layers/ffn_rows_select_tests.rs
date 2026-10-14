@@ -70,13 +70,13 @@ fn ssm_ladder_small_widths() {
     assert_eq!(select_ssm_arm(&c), FfnArm::K3);
     c.fp8_row_invariant = true;
     assert_eq!(select_ssm_arm(&c), FfnArm::Fp8RowInvariant);
-    // The Km arm needs n >= 4 even when the chunk is offered.
+    // 2026-10-13: The Km arm needs n >= 4 even when the chunk is offered.
     let mut c = caps(3);
     c.km_chunk = Some(8);
     assert_eq!(select_ssm_arm(&c), FfnArm::K3);
     c.n = 4;
     assert_eq!(select_ssm_arm(&c), FfnArm::Km { chunk: 8 });
-    // The atomic C4 arm sits between the grouped MoE and token-major arms.
+    // 2026-10-13: The atomic C4 arm sits between the grouped MoE and token-major arms.
     let mut c = caps(4);
     c.atomic_c4 = true;
     c.token_major = true;
@@ -117,18 +117,18 @@ fn attn_ladder_small_widths_and_the_grouped_opt_in() {
     assert_eq!(select_attn_arm(&c), FfnArm::K3);
     c.n = 2;
     assert_eq!(select_attn_arm(&c), FfnArm::K2);
-    // The grouped routed opt-in skips the fused kernels and, below the km, FP8
+    // 2026-10-13: The grouped routed opt-in skips the fused kernels and, below the km, FP8
     // and prefill arms, runs `forward_prefill`.
     c.use_grouped = true;
     c.km_chunk = None;
     c.fp8_grouped = false;
     assert_eq!(select_attn_arm(&c), FfnArm::Prefill);
-    // A dense FFN takes `forward_prefill` whatever `moe_grouped` says.
+    // 2026-10-13: A dense FFN takes `forward_prefill` whatever `moe_grouped` says.
     let mut c = caps(6);
     c.is_dense = true;
     c.pairwise = true;
     assert_eq!(select_attn_arm(&c), FfnArm::Prefill);
-    // Pairwise needs an even n above 2.
+    // 2026-10-13: Pairwise needs an even n above 2.
     let mut c = caps(5);
     c.pairwise = true;
     assert_eq!(select_attn_arm(&c), FfnArm::PerRow);

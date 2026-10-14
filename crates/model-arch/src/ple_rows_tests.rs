@@ -265,11 +265,11 @@ fn ple_rows_matches_per_row() {
 /// batched step's host half reaches the kernels.
 #[derive(Clone, Copy, Debug)]
 enum Arm {
-    /// `forward_rows` hashes and uploads itself.
+    /// 2026-10-13: `forward_rows` hashes and uploads itself.
     Unstaged,
-    /// `prestage_rows`, then `forward_rows` launched directly.
+    /// 2026-10-13: `prestage_rows`, then `forward_rows` launched directly.
     Staged,
-    /// `prestage_rows`, then one CUDA graph captured at step 0 and replayed at step 1.
+    /// 2026-10-13: `prestage_rows`, then one CUDA graph captured at step 0 and replayed at step 1.
     Replayed,
 }
 

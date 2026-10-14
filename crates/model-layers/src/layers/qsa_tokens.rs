@@ -58,7 +58,7 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("32768") && err.contains("36864"), "{err}");
-        // Control: the same lever agrees with a matching serve value.
+        // 2026-10-13: Control: the same lever agrees with a matching serve value.
         assert_eq!(qsa_max_tokens(32_768, Some("32768")).unwrap(), 32_768);
     }
 

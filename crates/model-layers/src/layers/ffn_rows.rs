@@ -25,32 +25,32 @@ use crate::layer::ForwardContext;
 /// 2026-10-13: The FFN arm of one multi-sequence decode step.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FfnArm {
-    /// A dense FFN under a fixed `--activation-quantization` (`forward_dense_fixed`).
+    /// 2026-10-13: A dense FFN under a fixed `--activation-quantization` (`forward_dense_fixed`).
     DenseFixed,
-    /// An NVFP4 `--expert-quantization` tier's grouped decode (`forward_nvfp4_grouped`).
+    /// 2026-10-13: An NVFP4 `--expert-quantization` tier's grouped decode (`forward_nvfp4_grouped`).
     Nvfp4Grouped,
-    /// The FP8 MoE's grouped kernels with the per-row router: the bits of the
+    /// 2026-10-13: The FP8 MoE's grouped kernels with the per-row router: the bits of the
     /// per-row `forward` at every row count (`forward_fp8_grouped_decode_routed`).
     Fp8RowInvariant,
-    /// The fused two-row kernel (`forward_k2`).
+    /// 2026-10-13: The fused two-row kernel (`forward_k2`).
     K2,
-    /// The fused three-row kernel (`forward_k3`).
+    /// 2026-10-13: The fused three-row kernel (`forward_k3`).
     K3,
-    /// All rows in one `forward_prefill` (each weight read once).
+    /// 2026-10-13: All rows in one `forward_prefill` (each weight read once).
     Prefill,
-    /// A dense FFN's batched GEMV over chunks of at most `chunk` rows (`try_forward_km`).
+    /// 2026-10-13: A dense FFN's batched GEMV over chunks of at most `chunk` rows (`try_forward_km`).
     Km { chunk: usize },
-    /// The FP8 MoE grouped across all rows (`forward_fp8_grouped_decode`).
+    /// 2026-10-13: The FP8 MoE grouped across all rows (`forward_fp8_grouped_decode`).
     Fp8Grouped,
-    /// The C=4 MoE with FP32 atomic down-projection adds (`forward_atomic_c4_decode`).
+    /// 2026-10-13: The C=4 MoE with FP32 atomic down-projection adds (`forward_atomic_c4_decode`).
     AtomicC4,
-    /// Token-major MoE decode, `forward_batched` when it declines (`forward_token_major_decode`).
+    /// 2026-10-13: Token-major MoE decode, `forward_batched` when it declines (`forward_token_major_decode`).
     TokenMajor,
-    /// Even `n`: the batch two rows at a time through `forward_k2`.
+    /// 2026-10-13: Even `n`: the batch two rows at a time through `forward_k2`.
     PairwiseK2,
-    /// All rows in one `forward_batched`.
+    /// 2026-10-13: All rows in one `forward_batched`.
     Batched,
-    /// One `forward` per row.
+    /// 2026-10-13: One `forward` per row.
     PerRow,
 }
 

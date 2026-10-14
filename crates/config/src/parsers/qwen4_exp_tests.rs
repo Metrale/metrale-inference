@@ -288,11 +288,13 @@ fn the_top_level_quantization_config_declares_the_plan() {
     let plan = &qc.precision;
     assert_eq!(plan.resolve("lm_head").label(), "W16A16");
     assert_eq!(
-        plan.resolve("model.language_model.layers.0.mlp.shared_expert.gate_proj").label(),
+        plan.resolve("model.language_model.layers.0.mlp.shared_expert.gate_proj")
+            .label(),
         "W16A16"
     );
     assert_eq!(
-        plan.resolve("model.language_model.layers.0.mlp.experts.3.gate_proj").label(),
+        plan.resolve("model.language_model.layers.0.mlp.experts.3.gate_proj")
+            .label(),
         "W4A4"
     );
 }

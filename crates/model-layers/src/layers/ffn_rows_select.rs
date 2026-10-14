@@ -23,31 +23,31 @@ use super::ffn_rows::FfnArm;
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct LadderCaps {
     pub n: usize,
-    /// The attention ladder's "every batched arm is skipped" (an MLA layer).
+    /// 2026-10-13: The attention ladder's "every batched arm is skipped" (an MLA layer).
     pub force_seq: bool,
-    /// The attention ladder's opt-in grouped routed arm is on and eligible.
+    /// 2026-10-13: The attention ladder's opt-in grouped routed arm is on and eligible.
     pub use_grouped: bool,
     pub dense_fixed: bool,
     pub nvfp4_grouped: bool,
-    /// Row-invariant tier policy and the FP8 per-row grouped routing serves `n`.
+    /// 2026-10-13: Row-invariant tier policy and the FP8 per-row grouped routing serves `n`.
     pub fp8_row_invariant: bool,
     pub is_dense: bool,
-    /// The GDN ladder's dense `forward_prefill` arm: `n` at or above its
+    /// 2026-10-13: The GDN ladder's dense `forward_prefill` arm: `n` at or above its
     /// minimum, a dense FFN, the arm not disabled.
     pub ssm_dense_prefill: bool,
-    /// The `Km` arm's chunk when `can_forward_km` holds for it: 8 on the GDN
+    /// 2026-10-13: The `Km` arm's chunk when `can_forward_km` holds for it: 8 on the GDN
     /// ladder (chunks of at most 8), `n` on the attention ladder (one call).
     pub km_chunk: Option<usize>,
     pub fp8_grouped: bool,
-    /// `moe_grouped_decode_for(n)`.
+    /// 2026-10-13: `moe_grouped_decode_for(n)`.
     pub moe_grouped: bool,
-    /// `n == 4` and the atomic C4 arm is opted in.
+    /// 2026-10-13: `n == 4` and the atomic C4 arm is opted in.
     pub atomic_c4: bool,
-    /// Token-major decode is the default (the legacy per-token lever is off).
+    /// 2026-10-13: Token-major decode is the default (the legacy per-token lever is off).
     pub token_major: bool,
-    /// The pairwise `forward_k2` walk is on.
+    /// 2026-10-13: The pairwise `forward_k2` walk is on.
     pub pairwise: bool,
-    /// `METRALE_MOE_BATCHED_DECODE=1`.
+    /// 2026-10-13: `METRALE_MOE_BATCHED_DECODE=1`.
     pub batched: bool,
 }
 

@@ -15,11 +15,11 @@ use super::*;
 /// 2026-10-13: The shared expert one grouped NVFP4 decode runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Nvfp4GroupedShared {
-    /// The layer's FP8 shared expert, through the grouped FP8 kernels with no active experts.
+    /// 2026-10-14: The layer's FP8 shared expert, through the grouped FP8 kernels with no active experts.
     Fp8,
-    /// The NVFP4 shared expert, as the first block rows of the NVFP4 expert kernels.
+    /// 2026-10-14: The NVFP4 shared expert, as the first block rows of the NVFP4 expert kernels.
     Nvfp4,
-    /// The checkpoint's BF16 shared expert, through `run_bf16_shared_expert` (batched GEMV
+    /// 2026-10-14: The checkpoint's BF16 shared expert, through `run_bf16_shared_expert` (batched GEMV
     /// rows, each the one-row `dense_gemv`'s bits); the NVFP4 kernels launch no shared rows.
     Bf16,
 }

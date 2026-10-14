@@ -43,11 +43,11 @@ pub fn slab_layout(sizes: &[usize]) -> (Vec<usize>, usize) {
 /// 2026-10-13: What freeing one pointer means for the slabs.
 #[derive(Debug, PartialEq, Eq)]
 pub enum SlabRelease {
-    /// Not a slab member: the caller frees the pointer itself.
+    /// 2026-10-13: Not a slab member: the caller frees the pointer itself.
     NotMember,
-    /// A member, and its slab still has live members: nothing to free.
+    /// 2026-10-13: A member, and its slab still has live members: nothing to free.
     StillLive,
-    /// The slab's last live member: the caller frees this base.
+    /// 2026-10-13: The slab's last live member: the caller frees this base.
     LastMember(u64),
 }
 
