@@ -333,6 +333,7 @@ fn forward_k_has_two_callers_and_the_verify_one_is_not_prefill() {
         include_str!("../../glm5next_layer/steps.rs"),
         include_str!("../../glm5next_layer/steps/drafter.rs"),
         include_str!("../../glm5next_layer/steps/forward.rs"),
+        include_str!("../../glm5next_layer/steps/forward_pieces.rs"),
         include_str!("../../glm5next_layer/steps/forward_sp.rs"),
         include_str!("../../glm5next_layer/steps/forward_sp_pipe.rs"),
         include_str!("../../glm5next_layer/steps/mhc_slice.rs"),
@@ -357,6 +358,7 @@ fn forward_k_has_two_callers_and_the_verify_one_is_not_prefill() {
             "steps.rs",
             "steps/drafter.rs",
             "steps/forward.rs",
+            "steps/forward_pieces.rs",
             "steps/forward_sp.rs",
             "steps/forward_sp_pipe.rs",
             "steps/mhc_slice.rs",
@@ -375,7 +377,7 @@ fn forward_k_has_two_callers_and_the_verify_one_is_not_prefill() {
     );
     assert_eq!(
         module.matches("self.forward_k(").count(),
-        2,
+        3,
         "a new forward_k caller must decide its own `is_prefill`, not inherit one"
     );
     assert!(
@@ -384,6 +386,14 @@ fn forward_k_has_two_callers_and_the_verify_one_is_not_prefill() {
                         true,"
         ),
         "the prefill sub-chunk must pass is_prefill = true"
+    );
+    // 2026-10-14: The third caller, `METRALE_GLM_PREFILL_PIECE_ROWS`'s one-piece call.
+    assert!(
+        include_str!("../../glm5next_layer/steps/forward_pieces.rs").contains(
+            "// 2026-10-14: A one-piece call IS a prefill sub-chunk (`is_prefill`).
+                    true,"
+        ),
+        "a prefill piece must pass is_prefill = true"
     );
     assert!(
         src.contains("// A speculative verify, NOT a prefill sub-chunk"),

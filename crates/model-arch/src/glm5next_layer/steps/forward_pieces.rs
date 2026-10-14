@@ -103,6 +103,7 @@ impl Glm5NextLayer {
                     stream,
                     false,
                     slot_base + off,
+                    // 2026-10-14: A one-piece call IS a prefill sub-chunk (`is_prefill`).
                     true,
                     call,
                 )?;
