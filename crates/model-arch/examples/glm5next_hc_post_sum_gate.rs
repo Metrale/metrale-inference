@@ -11,6 +11,9 @@
 //! - The run fails unless the reduced row (`block_out`) and the post-mixed highway are
 //!   byte-identical between the two arms for every case (in place, `out` aliasing `residual`, as
 //!   the layer launches it).
+//! - 2026-10-14: The same holds for the capped grids (`METRALE_GLM_MHC_POST_SUM_CTAS`,
+//!   `glm5next_hc_post_sum_grid`) at [`CAPS`] blocks: fewer blocks than rows makes each block
+//!   stride over rows, and 1024 threads stride over the columns of widths past 1024.
 //! - Two negative controls must DIFFER from the oracle: the fused arm given a slot stride that
 //!   misses the second peer's partial, and `hc_post` on the unsummed partial. (A wrong rank is
 //!   no control: it only reorders the three terms, and a sum of three BF16 values is almost
@@ -28,7 +31,7 @@ use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 use metrale_model_arch::glm5next_mhc::{Glm5NextMhcKernels, glm_hc_post};
-use metrale_model_arch::glm5next_mhc_fused::glm_hc_post_rank_sum;
+use metrale_model_arch::glm5next_mhc_fused::{glm_hc_post_rank_sum, glm_hc_post_rank_sum_with};
 
 /// 2026-10-10: `(hidden, hc_mult, tokens, world, rank)`. Rows 1, 4 and 16 at the GLM-5.3 shape on
 /// every rank of 3; then other widths, `hc_mult` and worlds.
@@ -46,7 +49,10 @@ const CASES: [(usize, usize, usize, usize, usize); 10] = [
 ];
 /// 2026-10-10: The serve's one-shot bound is 1024 KB: 512 Ki BF16 elements per peer slot.
 const SLOT_ELEMS: usize = 512 * 1024;
-const TIMED_TOKENS: [usize; 3] = [1, 4, 16];
+const TIMED_TOKENS: [usize; 4] = [1, 4, 16, 128];
+/// 2026-10-14: Block caps checked against the oracle: fewer than most cases' rows, and the GB10
+/// cap that leaves 4 of 48 SMs free.
+const CAPS: [u32; 2] = [3, 44];
 const REPS: usize = 90;
 const TRIALS: usize = 9;
 
@@ -189,6 +195,27 @@ fn fused(
     )
 }
 
+fn capped(
+    g: &dyn GpuBackend,
+    k: &Glm5NextMhcKernels,
+    d: &Dev,
+    p: &PeerPartials,
+    (hid, hc, t): (usize, usize, usize),
+    cap: u32,
+    stream: u64,
+) -> Result<()> {
+    glm_hc_post_rank_sum_with(
+        g,
+        k.hc_post_rank_sum,
+        d.own,
+        p,
+        [d.streams, d.post, d.comb, d.streams],
+        [t as u32, hid as u32, hc as u32],
+        Some(cap),
+        stream,
+    )
+}
+
 fn outs(g: &dyn GpuBackend, d: &Dev, hid: usize, hc: usize, t: usize) -> Result<[Vec<u8>; 2]> {
     Ok([
         dn(g, d.own, t * hid * 2)?,
@@ -268,7 +295,23 @@ fn main() -> Result<()> {
         g.synchronize(0)?;
         let (oa, ob) = (outs(g, &a, hid, hc, t)?, outs(g, &b, hid, hc, t)?);
         let (o1, o2) = (outs(g, &c1, hid, hc, t)?, outs(g, &c2, hid, hc, t)?);
-        let same = oa == ob;
+        let mut caps_same = true;
+        for cap in CAPS {
+            let e = upload(g, &h)?;
+            capped(g, &k, &e, &partials(&e, world, rank), shape, cap, 0)?;
+            g.synchronize(0)?;
+            let oe = outs(g, &e, hid, hc, t)?;
+            let ok = oe == oa;
+            println!(
+                "  H={hid:5} hc={hc} T={t:3} world={world} rank={rank}: cap {cap:2} x 1024 {}",
+                if ok { "SAME" } else { "DIFF" }
+            );
+            caps_same &= ok;
+            for p in [e.own, e.peers, e.streams, e.post, e.comb] {
+                g.free(p)?;
+            }
+        }
+        let same = oa == ob && caps_same;
         let c1_differs = o1[1] != oa[1];
         let c2_differs = o2[1] != oa[1];
         println!(
@@ -311,15 +354,19 @@ fn main() -> Result<()> {
                 post(g, &k, &d, shape, st)
             })?;
             let new = graph_us(g, stream, |st, _| fused(g, &k, &d, &p, shape, st))?;
+            let cap = graph_us(g, stream, |st, _| capped(g, &k, &d, &p, shape, 44, st))?;
             println!(
-                "    T={t:3}: rank_sum+hc_post {:6.2} [{:6.2}, {:6.2}]  fused {:6.2} [{:6.2}, {:6.2}]  saved {:5.2}",
+                "    T={t:3}: rank_sum+hc_post {:6.2} [{:6.2}, {:6.2}]  fused {:6.2} [{:6.2}, {:6.2}]  saved {:5.2}  cap44 {:6.2} [{:6.2}, {:6.2}]",
                 old.0,
                 old.1,
                 old.2,
                 new.0,
                 new.1,
                 new.2,
-                old.0 - new.0
+                old.0 - new.0,
+                cap.0,
+                cap.1,
+                cap.2
             );
             for q in [d.own, d.peers, d.streams, d.post, d.comb] {
                 g.free(q)?;
@@ -330,6 +377,9 @@ fn main() -> Result<()> {
     if failed {
         bail!("glm5next_hc_post_rank_sum gate FAILED");
     }
-    println!("\nPASS: fused output byte-identical on every case; both controls differ");
+    println!(
+        "\nPASS: fused output byte-identical on every case, uncapped and at every cap; both \
+         controls differ"
+    );
     Ok(())
 }

@@ -23,7 +23,7 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 use crate::glm5next_mhc::{
-    Glm5NextMhcKernels, Glm5NextMhcSiteWeights, HC_MIX_ROWS, MHC_MIX_MAX_TOKENS, collapse_blocks,
+    Glm5NextMhcKernels, Glm5NextMhcSiteWeights, HC_MIX_ROWS, MHC_MIX_MAX_TOKENS,
     mhc_mix_max_tokens, mix_hc,
 };
 
@@ -287,6 +287,7 @@ pub fn glm_hc_pre_norm_with(
 /// the other ranks' landed (`CommBackend::exchange_partials`). Writes the reduced row back to
 /// `block_out` and the post-mix to `out`, both byte-identical to `bf16_add_rank_sum` followed by
 /// `glm_hc_post`. Errors when the kernel is not loaded or the rows exceed a peer slot.
+/// 2026-10-14: The grid is `METRALE_GLM_MHC_POST_SUM_CTAS`'s (`glm5next_hc_post_sum_grid`).
 #[allow(clippy::too_many_arguments)]
 pub fn glm_hc_post_rank_sum(
     gpu: &dyn GpuBackend,
@@ -302,6 +303,32 @@ pub fn glm_hc_post_rank_sum(
     hc_mult: u32,
     stream: u64,
 ) -> Result<()> {
+    let ctas = crate::glm5next_hc_post_sum_grid::ctas()?;
+    glm_hc_post_rank_sum_with(
+        gpu,
+        kernel,
+        block_out,
+        partials,
+        [residual, post, comb, out],
+        [num_tokens, hidden_size, hc_mult],
+        ctas,
+        stream,
+    )
+}
+
+/// 2026-10-14: [`glm_hc_post_rank_sum`] at an explicit block cap (`None`: the uncapped grid);
+/// `streams` is `[residual, post, comb, out]`, `dims` `[num_tokens, hidden_size, hc_mult]`.
+#[allow(clippy::too_many_arguments)]
+pub fn glm_hc_post_rank_sum_with(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    block_out: DevicePtr,
+    partials: &metrale_comm::PeerPartials,
+    [residual, post, comb, out]: [DevicePtr; 4],
+    [num_tokens, hidden_size, hc_mult]: [u32; 3],
+    ctas: Option<u32>,
+    stream: u64,
+) -> Result<()> {
     anyhow::ensure!(
         kernel.0 != 0,
         "glm5next_hc_post_rank_sum is not loaded on this target"
@@ -312,9 +339,11 @@ pub fn glm_hc_post_rank_sum(
         "{elems} elements exceed the one-shot peer slot of {}",
         partials.slot_elems
     );
+    let (grid, block) =
+        crate::glm5next_hc_post_sum_grid::launch_shape(num_tokens, hidden_size, ctas);
     KernelLaunch::new(gpu, kernel)
-        .grid([num_tokens, collapse_blocks(hidden_size), 1])
-        .block([256, 1, 1])
+        .grid(grid)
+        .block(block)
         .arg_ptr(block_out)
         .arg_ptr(DevicePtr(partials.recv))
         .arg_u64(partials.slot_elems as u64)
@@ -326,6 +355,7 @@ pub fn glm_hc_post_rank_sum(
         .arg_ptr(out)
         .arg_u32(hidden_size)
         .arg_u32(hc_mult)
+        .arg_u32(num_tokens)
         .launch(stream)
 }
 
@@ -542,6 +572,7 @@ mod tests {
                 MockArg::Buffer(res),
                 b(&4096u32.to_le_bytes()),
                 b(&4u32.to_le_bytes()),
+                b(&2u32.to_le_bytes()),
             ]
         );
         assert!(
