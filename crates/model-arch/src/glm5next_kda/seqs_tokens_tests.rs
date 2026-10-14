@@ -114,7 +114,9 @@ fn one_launch_each_with_every_runs_arguments_in_its_slot() {
 }
 
 /// 2026-10-14: 17 one-row-and-more runs split 16 + 1: two launches of each kernel, the
-/// second's first row the 17th run's absolute workspace row.
+/// second's first row the 17th run's absolute workspace row. On `seqs_chunks`, the stateful
+/// half: the front end's projections at more than 16 rows take a wide route the mock does
+/// not run.
 #[test]
 fn seventeen_runs_take_two_launches_with_absolute_rows() {
     let gpu = MockGpuBackend::new();
@@ -127,10 +129,8 @@ fn seventeen_runs_take_two_launches_with_absolute_rows() {
             snapshot: None,
         })
         .collect();
-    let total: usize = runs.iter().map(|r| r.rows).sum();
-    let hidden = gpu.alloc(total * 256 * 2).unwrap();
     let from = gpu.launch_count();
-    l.decode_seqs_tokens(&gpu, hidden, &runs, &ws, 7).unwrap();
+    l.seqs_chunks(&gpu, &runs, &ws, 7).unwrap();
     let launches = since(&gpu, from);
     let recur = stateful(&launches, RECUR_SEQS);
     assert_eq!(recur.len(), 2);

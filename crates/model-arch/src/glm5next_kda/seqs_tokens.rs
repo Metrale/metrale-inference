@@ -102,23 +102,33 @@ impl Glm5NextKdaLayer {
             Pack::InFrontEnd,
             stream,
             |_| Ok(()),
-            || {
-                let mut row0 = 0usize;
-                for chunk in runs.chunks(KDA_SEQS_MAX) {
-                    let w: Vec<u32> = chunk
-                        .iter()
-                        .scan(row0, |r, run| {
-                            let at = *r;
-                            *r += run.rows;
-                            Some(at as u32)
-                        })
-                        .collect();
-                    self.seqs_launches(gpu, chunk, &w, ws, stream)?;
-                    row0 += chunk.iter().map(|r| r.rows).sum::<usize>();
-                }
-                Ok(())
-            },
+            || self.seqs_chunks(gpu, runs, ws, stream),
         )
+    }
+
+    /// 2026-10-14: The stateful half of [`Self::decode_seqs_tokens`]: per `KDA_SEQS_MAX` runs
+    /// one [`Self::seqs_launches`], each run's first row its absolute workspace row.
+    fn seqs_chunks(
+        &self,
+        gpu: &dyn GpuBackend,
+        runs: &[KdaSeqRun],
+        ws: &Glm5NextKdaWorkspace,
+        stream: u64,
+    ) -> Result<()> {
+        let mut row0 = 0usize;
+        for chunk in runs.chunks(KDA_SEQS_MAX) {
+            let w: Vec<u32> = chunk
+                .iter()
+                .scan(row0, |r, run| {
+                    let at = *r;
+                    *r += run.rows;
+                    Some(at as u32)
+                })
+                .collect();
+            self.seqs_launches(gpu, chunk, &w, ws, stream)?;
+            row0 += chunk.iter().map(|r| r.rows).sum::<usize>();
+        }
+        Ok(())
     }
 
     /// 2026-10-14: The three launches of one chunk of runs; `w[r]` is run r's first row.
