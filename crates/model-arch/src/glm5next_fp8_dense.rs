@@ -95,6 +95,8 @@ impl Drop for StableInput {
             s.stable = None;
             s.quantized = None;
         }
+        // 2026-10-14: The prefill GEMM's scratch too (its own record, same rule).
+        crate::glm5next_w8a8_gemm::forget();
     }
 }
 
@@ -401,7 +403,8 @@ fn proj_registered(
     // 2026-10-14: `METRALE_GLM_W8A8_GEMM_MIN_ROWS`: the GEMV family's bytes, ahead of the
     // dequantize + cuBLASLt arm.
     if crate::glm5next_w8a8_gemm::takes(crate::glm5next_w8a8_gemm::min_rows()?, m) {
-        crate::glm5next_w8a8_gemm::proj(gpu, &s.kernels, &w, a, c, m, n, k, stream)?;
+        let stable = s.stable == Some(a.0);
+        crate::glm5next_w8a8_gemm::proj(gpu, &s.kernels, &w, a, c, m, n, k, stream, stable)?;
         return Ok(true);
     }
     if crate::glm5next_fp8_wide::takes(crate::glm5next_fp8_wide::min_rows()?, m) {

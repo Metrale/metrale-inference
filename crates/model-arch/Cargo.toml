@@ -291,6 +291,10 @@ name = "w8a8_gemm_bitgate"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "w8a8_shared_quant_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "glm5next_kda_chunk16_bench"
 required-features = ["cuda", "gpu-examples"]
 

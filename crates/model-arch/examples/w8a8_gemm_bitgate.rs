@@ -24,15 +24,17 @@
 
 use anyhow::{Result, bail, ensure};
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
-use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
+use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_model_arch::glm5next_fp8_wide::dequant_gemm;
 use metrale_model_layers::layers::ops::{
     W8A8_MAX_ROWS, W8a8GemmKernels, W8a8GemmTile, W8a8Kernels, W8a8Scale, W8a8Scratch, W8a8Weight,
     w8a8_act_quant, w8a8_gemm, w8a8_gemv, w8a8_proj, w8a8_proj_wide,
 };
-use metrale_model_layers::weight_map::{
-    DenseWeight, Fp8Weight, WeightQuantFormat, quantize_to_fp8,
-};
+use metrale_model_layers::weight_map::Fp8Weight;
+
+#[path = "common/w8a8_fixture.rs"]
+mod fixture;
+use fixture::{Rng, download, median_us, seg, upload};
 
 /// 2026-10-14: `(segment rows, K, name)` per site shape on one TP=3 rank.
 const SHAPES: [(&[usize], usize, &str); 14] = [
@@ -60,56 +62,6 @@ enum Control {
     Scale,
     Weight,
     Class,
-}
-
-struct Rng(u64);
-impl Rng {
-    fn next(&mut self) -> u32 {
-        self.0 = self
-            .0
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        (self.0 >> 32) as u32
-    }
-    fn bf16_bits(&mut self) -> u16 {
-        let u = self.next();
-        (((u & 1) << 15) | ((115 + (u >> 1) % 17) << 7) | ((u >> 8) & 0x7f)) as u16
-    }
-}
-
-fn upload(gpu: &dyn GpuBackend, bytes: &[u8]) -> Result<DevicePtr> {
-    let ptr = gpu.alloc(bytes.len().max(16))?;
-    gpu.copy_h2d(bytes, ptr)?;
-    Ok(ptr)
-}
-
-fn download(gpu: &dyn GpuBackend, p: DevicePtr, bytes: usize) -> Result<Vec<u8>> {
-    gpu.synchronize(0)?;
-    let mut b = vec![0u8; bytes];
-    gpu.copy_d2h(p, &mut b)?;
-    Ok(b)
-}
-
-fn seg(
-    gpu: &dyn GpuBackend,
-    rng: &mut Rng,
-    quant: KernelHandle,
-    n: usize,
-    k: usize,
-) -> Result<Fp8Weight> {
-    let bf: Vec<u8> = (0..n * k)
-        .flat_map(|_| rng.bf16_bits().to_le_bytes())
-        .collect();
-    let dev = upload(gpu, &bf)?;
-    let q = quantize_to_fp8(&DenseWeight { weight: dev }, n, k, gpu, quant, 0)?;
-    gpu.free(dev)?;
-    Ok(Fp8Weight {
-        weight: q.weight,
-        row_scale: q.row_scale,
-        n: n as u32,
-        k: k as u32,
-        scale_format: WeightQuantFormat::Fp8PerRow,
-    })
 }
 
 /// 2026-10-14: A device copy of `s` with the control applied (the oracle keeps `s`).
@@ -165,25 +117,6 @@ fn gemv_all(
         done += m;
     }
     Ok(())
-}
-
-fn median_us(
-    gpu: &dyn GpuBackend,
-    launches: usize,
-    mut f: impl FnMut(usize) -> Result<()>,
-) -> Result<f64> {
-    let mut t = Vec::new();
-    for rep in 0..5 {
-        gpu.synchronize(0)?;
-        let t0 = std::time::Instant::now();
-        for i in 0..launches {
-            f(rep * launches + i)?;
-        }
-        gpu.synchronize(0)?;
-        t.push(t0.elapsed().as_secs_f64() * 1e6 / launches as f64);
-    }
-    t.sort_by(f64::total_cmp);
-    Ok(t[2])
 }
 
 fn parse_args() -> Result<Control> {
@@ -407,6 +340,7 @@ fn time_shape(
     for &m in time_rows {
         let launches = copies.max(8);
         let mut line = format!("time {name:<22} M={m:5}");
+        let mut best = (f64::INFINITY, W8a8GemmTile::ALL[0]);
         for tile in W8a8GemmTile::ALL {
             let t = median_us(gpu, launches, |i| {
                 w8a8_proj_wide(
@@ -425,7 +359,40 @@ fn time_shape(
                 )
             })?;
             line += &format!(" {:?} {t:8.1}", tile);
+            if t < best.0 {
+                best = (t, tile);
+            }
         }
+        // 2026-10-14: The best tile's GEMM alone over one quantization, and the quantization
+        // alone, so a shared quantization's saving and the GEMM's rate read directly.
+        let quantize = |_: usize| {
+            w8a8_act_quant(
+                gpu,
+                k8,
+                W8a8Scale::PerRow,
+                x,
+                kmax as u32,
+                m,
+                k as u32,
+                q,
+                0,
+            )
+        };
+        let tq = median_us(gpu, launches, quantize)?;
+        let tg = median_us(gpu, launches, |i| {
+            w8a8_gemm(
+                gpu,
+                gk,
+                best.1,
+                &stacked[i % copies],
+                q,
+                m,
+                out,
+                n as u32,
+                0,
+            )
+        })?;
+        let tf = |us: f64| 2.0 * (m * n * k) as f64 / us / 1e6;
         let tv = median_us(gpu, launches, |i| {
             let mut done = 0;
             while done < m {
@@ -449,7 +416,13 @@ fn time_shape(
         let td = median_us(gpu, launches, |i| {
             dequant_gemm(gpu, &whole[i % copies], dq, n * k, xk_dev, out, m, n, k, 0)
         })?;
-        println!("{line}  gemv {tv:8.1}  dequant+gemm {td:8.1} us");
+        println!(
+            "{line}  gemv {tv:8.1}  dequant+gemm {td:8.1} us | {:?} gemm {tg:8.1} quant {tq:7.1} us; TFLOP/s gemm {:6.1} q+gemm {:6.1} dequant+gemm {:6.1}",
+            best.1,
+            tf(tg),
+            tf(best.0),
+            tf(td)
+        );
     }
     gpu.free(xk_dev)?;
     gpu.free(dq)?;
