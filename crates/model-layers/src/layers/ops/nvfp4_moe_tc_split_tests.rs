@@ -198,7 +198,10 @@ pub(super) fn routing_of(g: &dyn GpuBackend, picks: &[Vec<u32>]) -> Routing {
         .map(|(t, p)| {
             p.iter()
                 .map(|&e| {
-                    let i = rows[e as usize].iter().position(|&x| x == t as i32).unwrap();
+                    let i = rows[e as usize]
+                        .iter()
+                        .position(|&x| x == t as i32)
+                        .unwrap();
                     (offsets[e as usize] + i as i32) as u32
                 })
                 .collect()
@@ -233,8 +236,8 @@ pub(super) fn gate_up(
     let (na, ns) = ((r.positions * INTER * 4) as usize, (m * INTER * 4) as usize);
     let (act, sh_act) = (sentinel(g, na), sentinel(g, ns));
     moe_expert_gate_up_act_nvfp4_grouped(
-        g, kernel, geometry, smem, a, w.gate.0, w.up.0, act, r.offsets, r.sorted, r.active, r.count,
-        &w.gate.1, &w.up.1, sh_act, INTER, HIDDEN, r.cap, m, 0,
+        g, kernel, geometry, smem, a, w.gate.0, w.up.0, act, r.offsets, r.sorted, r.active,
+        r.count, &w.gate.1, &w.up.1, sh_act, INTER, HIDDEN, r.cap, m, 0,
     )
     .unwrap();
     g.synchronize(0).unwrap();
@@ -259,8 +262,8 @@ pub(super) fn down(
     );
     let (c, sh_out) = (sentinel(g, nc), sentinel(g, ns));
     moe_expert_down_act_nvfp4_grouped(
-        g, kernel, geometry, smem, act, w.down.0, c, r.offsets, r.active, r.count, sh_act, &w.down.1,
-        sh_out, HIDDEN, INTER, r.cap, m, 0,
+        g, kernel, geometry, smem, act, w.down.0, c, r.offsets, r.active, r.count, sh_act,
+        &w.down.1, sh_out, HIDDEN, INTER, r.cap, m, 0,
     )
     .unwrap();
     g.synchronize(0).unwrap();
@@ -372,8 +375,8 @@ fn nvfp4_tc_split_pair_writes_the_unsplit_pairs_bytes() {
         let dn_us = |(kernel, geometry, smem): Kern| {
             time_us(g, || {
                 moe_expert_down_act_nvfp4_grouped(
-                    g, kernel, geometry, smem, act.0, w.down.0, out.0, r.offsets, r.active, r.count,
-                    act.1, &w.down.1, out.1, HIDDEN, INTER, r.cap, m, 0,
+                    g, kernel, geometry, smem, act.0, w.down.0, out.0, r.offsets, r.active,
+                    r.count, act.1, &w.down.1, out.1, HIDDEN, INTER, r.cap, m, 0,
                 )
                 .unwrap()
             })

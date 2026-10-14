@@ -263,8 +263,26 @@ fn nvfp4_hsm_pair_cold_timing() {
                 let r = &rs[q % rs.len()];
                 q += 1;
                 moe_expert_gate_up_act_nvfp4_grouped(
-                    g, kernel, geometry, smem, a, gate, up, act, r.offsets, r.sorted, r.active,
-                    r.count, &none, &none, DevicePtr(0), INTER, HIDDEN, r.cap, 0, 0,
+                    g,
+                    kernel,
+                    geometry,
+                    smem,
+                    a,
+                    gate,
+                    up,
+                    act,
+                    r.offsets,
+                    r.sorted,
+                    r.active,
+                    r.count,
+                    &none,
+                    &none,
+                    DevicePtr(0),
+                    INTER,
+                    HIDDEN,
+                    r.cap,
+                    0,
+                    0,
                 )
                 .unwrap()
             })
@@ -275,8 +293,24 @@ fn nvfp4_hsm_pair_cold_timing() {
                 let r = &rs[q % rs.len()];
                 q += 1;
                 moe_expert_down_act_nvfp4_grouped(
-                    g, kernel, geometry, smem, act, dn, out, r.offsets, r.active, r.count, DevicePtr(0),
-                    &none, DevicePtr(0), HIDDEN, INTER, r.cap, 0, 0,
+                    g,
+                    kernel,
+                    geometry,
+                    smem,
+                    act,
+                    dn,
+                    out,
+                    r.offsets,
+                    r.active,
+                    r.count,
+                    DevicePtr(0),
+                    &none,
+                    DevicePtr(0),
+                    HIDDEN,
+                    INTER,
+                    r.cap,
+                    0,
+                    0,
                 )
                 .unwrap()
             })

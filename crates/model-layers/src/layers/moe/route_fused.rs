@@ -94,7 +94,10 @@ impl MoeLayer {
         let gate_logits = ctx.buffers.gate_logits();
         let fused = self.route_fused.kernel.0 != 0
             && ops::moe_route_fused_shape_ok(n, h, num_experts, top_k);
-        if let Some(counter) = fused.then(|| self.route_fused.counter_for(gate_logits)).flatten() {
+        if let Some(counter) = fused
+            .then(|| self.route_fused.counter_for(gate_logits))
+            .flatten()
+        {
             let router_in = self.router_input(input, n, h, ctx, stream)?;
             return ops::moe_route_fused(
                 ctx.gpu,
