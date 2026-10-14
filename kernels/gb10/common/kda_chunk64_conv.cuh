@@ -22,6 +22,7 @@
 // - v takes no L2 (v channels start at the q|k channel count, a 256 multiple, as there).
 // - Rows t >= T write nothing to the stage and zero to the K tile (the zero-filled copy the
 //   plain prepare takes there).
+// - No input row t >= T is read (a v half whose rows all lie at or past T is skipped whole).
 
 #pragma once
 
@@ -162,8 +163,10 @@ __device__ __forceinline__ void k64_conv_tile(
     }
 
     // 2026-10-14: v, no L2: threads 0..127 rows 0..31, threads 128..255 rows 32..63.
-    {
-        const unsigned int r0 = pi * (unsigned int)(C / 2);
+    // 2026-10-14: A half with no row below T is skipped: its window (rows t0 + r0 - K ..) would
+    // read past the inputs' last row, and it writes nothing. No barrier follows in this pass.
+    const unsigned int r0 = pi * (unsigned int)(C / 2);
+    if (t0 + r0 < T) {
         const __nv_bfloat16* src = xv + d;
         float win[K], w[K], b0;
         k64_conv_window<K>(win, w, b0, src, in_stride, conv_state, weight, bias, ch_v + d,
