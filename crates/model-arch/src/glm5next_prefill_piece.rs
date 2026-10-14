@@ -1,137 +1,125 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-10-14: `METRALE_GLM_PREFILL_PIECE_ROWS=P` (unset: off): a prefill sub-chunk of more than
-//! `P` rows keeps the launches whose arithmetic depends on the row count at `P`-row pieces, so a
-//! serve whose chunk is a multiple of `P` (`--max-prefill-tokens 16384` with `P = 8192`) computes
-//! every row with the bits of a serve chunked at `P`, while the row-invariant launches (the mHC
-//! and norm kernels, the top-k, the grouped routed experts, the combine) run once over the whole
-//! sub-chunk, so the routed-expert weights are read once per sub-chunk instead of once per `P`.
+//! 2026-10-14: How a GLM prefill pass is cut on the model's prefill grid
+//! (`ModelLevers::prefill_grid`, the scheduler's `prefill_plan::PREFILL_GRID`).
 //!
-//! Per piece (cut from the sub-chunk's first row, the last one shorter): the mixer (the KDA scan,
-//! anchored at its call start, and DSA with its cuBLASLt projections), the router GEMM, the
-//! shared expert, a dense MLP site, and the non-SP all-reduces (so each NCCL collective has the
-//! size a `P`-row chunk gives it). Pieces share a call only when the call's routed path and
-//! SP-mHC decision for the whole equal those for each piece ([`plan_calls`]); any other piece runs
-//! alone as the `P`-chunked serve runs it.
+//! A pass is cut at every absolute multiple of the grid G (counted from token 0) into cells, and
+//! each cell into sub-chunks of `prefill_rows()` rows from the cell's first row: the units a
+//! serve chunked at G runs, whatever this serve's budget ([`grid_units`]). Consecutive units
+//! narrower than a sub-chunk together may share one call ([`plan_calls`]): the launches whose
+//! arithmetic depends on the row count (the mixer, the router GEMM, the shared expert, a dense
+//! MLP site, the non-SP all-reduces) still run once per unit, and the row-invariant ones (the mHC
+//! and norm kernels, the top-k, the grouped routed experts, the combine) once over the call, so
+//! a `--max-prefill-tokens 16384` serve reads the routed-expert weights once per 16384 rows and
+//! computes every row with the bits of the 8192-chunk serve.
+//!
+//! Before this date the cut was the opt-in `METRALE_GLM_PREFILL_PIECE_ROWS=P`, taken from each
+//! sub-chunk's first row; it is retired, and a serve that sets it is refused
+//! ([`refuse_retired_env`]).
 //!
 //! Owner: model-arch (GLM-5.3).
 //! Invariants:
-//! - `P` is a multiple of [`PIECE_ALIGN`], so a piece boundary is a boundary of the KDA chunked
-//!   scan's 256-row slabs, whose state carries in FP32 either way.
-//! - [`plan_calls`] covers `0..k` once, in order, with every piece `P` rows except the last.
-//! - At load ([`check_piece_budget`]) the scheduler's chunk is a multiple of `P` wider than `P`,
-//!   and `prefill_rows()` covers the highway, so the layer never re-splits a chunk off the grid.
-
-use std::sync::OnceLock;
+//! - [`grid_units`] covers the pass once, in order; no unit crosses a grid line or is wider
+//!   than `rows`; without a grid the units are `rows` wide from row 0, the last shorter.
+//! - The grid is a multiple of [`PIECE_ALIGN`], so a cell boundary is a boundary of the KDA
+//!   chunked scan's 256-row slabs.
+//! - [`plan_calls`] keeps the units in order and puts at most `cap` rows in a call.
 
 use anyhow::Result;
 
-/// 2026-10-14: The env lever's name.
+/// 2026-10-14: The retired piece lever's name; setting it is refused at load.
 pub const PIECE_ROWS_ENV: &str = "METRALE_GLM_PREFILL_PIECE_ROWS";
 
-/// 2026-10-14: `P` must be a multiple of this: the KDA chunked scan's slab (`glm5next_kda`), so a
-/// piece boundary lands where the `P`-chunked serve's call boundary does in the scan's grid.
+/// 2026-10-14: The grid must be a multiple of this: the KDA chunked scan's slab
+/// (`glm5next_kda`).
 pub const PIECE_ALIGN: usize = 256;
 
-/// 2026-10-14: [`PIECE_ROWS_ENV`], read once: unset is off (`None`); otherwise a positive
-/// multiple of [`PIECE_ALIGN`], anything else an error.
-pub fn piece_rows() -> Result<Option<usize>> {
-    static V: OnceLock<Result<Option<usize>, String>> = OnceLock::new();
-    V.get_or_init(|| parse(std::env::var(PIECE_ROWS_ENV).ok().as_deref()))
-        .clone()
-        .map_err(anyhow::Error::msg)
-}
-
-/// 2026-10-14: [`piece_rows`]'s parse, pure.
-pub(crate) fn parse(v: Option<&str>) -> Result<Option<usize>, String> {
-    let Some(s) = v else {
-        return Ok(None);
-    };
-    let p: usize = s
-        .parse()
-        .map_err(|_| format!("{PIECE_ROWS_ENV}={s:?}: expected a row count"))?;
-    if p == 0 || !p.is_multiple_of(PIECE_ALIGN) {
-        return Err(format!(
-            "{PIECE_ROWS_ENV}={p}: must be a positive multiple of {PIECE_ALIGN} (the KDA scan's \
-             slab), or unset"
-        ));
+/// 2026-10-14: Refuses a serve that sets [`PIECE_ROWS_ENV`]: the prefill grid now cuts every
+/// GLM pass, so the lever would be silently ignored.
+pub fn refuse_retired_env() -> Result<()> {
+    if let Some(v) = std::env::var_os(PIECE_ROWS_ENV) {
+        anyhow::bail!(
+            "{PIECE_ROWS_ENV}={v:?} is retired: a GLM prefill pass is cut on the prefill grid \
+             whatever --max-prefill-tokens; unset it"
+        );
     }
-    Ok(Some(p))
+    Ok(())
 }
 
-/// 2026-10-14: The calls a `k`-row sub-chunk runs as, each a list of piece row counts: `k` cut
-/// into `p`-row pieces from row 0 (the last shorter), consecutive pieces grouped while
-/// `share(piece)` and `share(call total)` are both `Some` and equal to `share` of the call's
-/// first piece. A piece whose `share` is `None` runs as a call of its own. `share` names the
-/// row-count-dependent decisions a call makes (its routed path, SP-mHC); an error from it is
-/// returned unchanged. A `p` of 0 is an error.
+/// 2026-10-14: The unit widths of the `n` rows of a pass from absolute position `start`: cut at
+/// every multiple of `grid` (when set), then each cell into `rows`-wide sub-chunks from its
+/// first row. A `rows` of 0 is treated as 1. Errors on a grid off [`PIECE_ALIGN`].
+pub fn grid_units(start: usize, n: usize, rows: usize, grid: Option<usize>) -> Result<Vec<usize>> {
+    let rows = rows.max(1);
+    if let Some(g) = grid {
+        anyhow::ensure!(
+            g > 0 && g.is_multiple_of(PIECE_ALIGN),
+            "prefill grid {g}: must be a positive multiple of {PIECE_ALIGN}"
+        );
+    }
+    let mut out = Vec::new();
+    let mut t = 0usize;
+    for cell_end in grid_lines(start, n, grid).into_iter().chain([n]) {
+        while t < cell_end {
+            let k = rows.min(cell_end - t);
+            out.push(k);
+            t += k;
+        }
+    }
+    Ok(out)
+}
+
+/// 2026-10-14: The rows strictly inside a sequence of `n` rows from absolute position `start`
+/// at which a multiple of `grid` falls; none without a grid: the cell bounds of [`grid_units`].
+pub fn grid_lines(start: usize, n: usize, grid: Option<usize>) -> Vec<usize> {
+    let Some(g) = grid.filter(|&g| g > 0) else {
+        return Vec::new();
+    };
+    (start / g + 1..)
+        .map(|j| j * g - start)
+        .take_while(|&r| r < n)
+        .collect()
+}
+
+/// 2026-10-14: The calls the `units` of a pass run as, each a list of consecutive unit widths
+/// totalling at most `cap` rows. A unit joins the open call only when `share` of the unit and of
+/// the call total with it are both `Some` and equal to `share` of the call's first unit; `share`
+/// names the row-count-dependent decisions a call makes (its routed path, SP-mHC) and is asked
+/// only where a join fits in `cap`. An error from it is returned unchanged.
 pub fn plan_calls<S: PartialEq>(
-    k: usize,
-    p: usize,
+    units: &[usize],
+    cap: usize,
     mut share: impl FnMut(usize) -> Result<Option<S>>,
 ) -> Result<Vec<Vec<usize>>> {
-    anyhow::ensure!(p > 0, "prefill piece of 0 rows for {k} rows");
     let mut calls: Vec<Vec<usize>> = Vec::new();
     let mut cur: Vec<usize> = Vec::new();
-    let mut cur_sig: Option<S> = None;
-    let mut t = 0usize;
-    while t < k {
-        let n = p.min(k - t);
-        t += n;
-        let sig = share(n)?;
-        let joins = match (&cur_sig, &sig) {
-            (Some(first), Some(own)) if !cur.is_empty() && own == first => {
-                share(cur.iter().sum::<usize>() + n)?.as_ref() == Some(first)
+    // 2026-10-14: `share` of the open call's first unit, once asked.
+    let mut first: Option<Option<S>> = None;
+    for &n in units {
+        anyhow::ensure!(n > 0, "prefill unit of 0 rows in {units:?}");
+        let total = cur.iter().sum::<usize>() + n;
+        if !cur.is_empty() && total <= cap {
+            if first.is_none() {
+                first = Some(share(cur[0])?);
             }
-            _ => false,
-        };
-        if joins {
-            cur.push(n);
-            continue;
+            if let Some(Some(f)) = &first
+                && share(n)?.as_ref() == Some(f)
+                && share(total)?.as_ref() == Some(f)
+            {
+                cur.push(n);
+                continue;
+            }
         }
         if !cur.is_empty() {
             calls.push(std::mem::take(&mut cur));
         }
-        match sig {
-            Some(s) => {
-                cur.push(n);
-                cur_sig = Some(s);
-            }
-            None => {
-                calls.push(vec![n]);
-                cur_sig = None;
-            }
-        }
+        cur.push(n);
+        first = None;
     }
     if !cur.is_empty() {
         calls.push(cur);
     }
     Ok(calls)
-}
-
-/// 2026-10-14: The load-time check of piece mode against the serve's prefill sizing: the
-/// scheduler's chunk (`prefill_budget`) a multiple of `piece` and wider than it (otherwise the
-/// lever buys nothing, or cuts a chunk off the `P` grid), and `prefill_rows` at least the
-/// highway (`max_batch_tokens`), so the layer runs each chunk in one sub-chunk.
-pub fn check_piece_budget(
-    piece: usize,
-    prefill_rows: usize,
-    prefill_budget: usize,
-    max_batch_tokens: usize,
-) -> Result<(), String> {
-    if prefill_budget <= piece || !prefill_budget.is_multiple_of(piece) {
-        return Err(format!(
-            "{PIECE_ROWS_ENV}={piece}: the prefill budget ({prefill_budget}, \
-             --max-prefill-tokens) must be a multiple of the piece wider than it"
-        ));
-    }
-    if prefill_rows < max_batch_tokens {
-        return Err(format!(
-            "{PIECE_ROWS_ENV}={piece}: METRALE_GLM_PREFILL_ROWS ({prefill_rows}) must cover the \
-             {max_batch_tokens}-token batch, or the layer re-splits each chunk"
-        ));
-    }
-    Ok(())
 }
 
 #[cfg(test)]

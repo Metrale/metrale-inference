@@ -38,6 +38,7 @@ pub(super) fn stream_chunk_len(
         remaining.min(effective_max),
         model.kv_block_size(),
         model.prefill_tail_split(&p.prompt_tokens),
+        model.prefill_grid(),
     )
 }
 
@@ -89,6 +90,7 @@ pub(super) fn run_batched_prefill_step(
             total.min(max_prefill_tokens),
             model.kv_block_size(),
             model.prefill_tail_split(&prefilling[0].prompt_tokens),
+            model.prefill_grid(),
         );
         let is_last = cl >= total;
         Some((cl, is_last))

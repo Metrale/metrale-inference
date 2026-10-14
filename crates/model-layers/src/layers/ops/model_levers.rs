@@ -8,8 +8,9 @@
 //!   `model_levers_resolve.rs`).
 //! - `from_values` reads nothing but its two closures and its arguments, so the tests drive the
 //!   production resolution without touching the process environment.
-//! - Every field but `max_decode_seqs` comes from `from_values`. It sets `max_decode_seqs` to 1,
-//!   and `TransformerModel::new` overwrites it with the configured max batch.
+//! - Every field but `max_decode_seqs` and `prefill_grid` comes from `from_values`. It sets
+//!   `max_decode_seqs` to 1 and `prefill_grid` to `None`, and `TransformerModel::new` overwrites
+//!   them with the configured max batch and the model's grid.
 //!
 //! Read a lever here once and pass the resolved field down; do not read `METRALE_*` in code that
 //! runs per token, per layer or per request. The `hot_path_env_guards` test fails when a guarded
@@ -318,6 +319,11 @@ pub struct ModelLevers {
     /// sequence's attention reduction does not depend on how many sequences share its batch. It
     /// also bounds the verify WY-table stash (`model/trait_impl/gdn_woa.rs`).
     pub max_decode_seqs: u32,
+    /// 2026-10-14: The model's absolute prefill grid (`prefill_plan::PREFILL_GRID`), or `None`.
+    /// Not from the environment: `from_values` sets `None`, and `TransformerModel::new` sets the
+    /// grid when every layer splits whole passes (GLM-5.3). Such a layer cuts a prefill pass at
+    /// its multiples (`glm5next_layer/steps/prefill_capture.rs`), as the scheduler cuts chunks.
+    pub prefill_grid: Option<usize>,
     /// 2026-09-25: `METRALE_MTP_SHADOW_TOPK=k` (`speculative::shadow_topk`): unset or unparseable
     /// is 0 (off), and it is capped at 8. The MTP drafter copies its logits to the host and logs
     /// its top-k candidates (`mtp_head/forward.rs`); the server's `verify_k3_step.rs` and

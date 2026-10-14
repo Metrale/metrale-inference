@@ -133,17 +133,6 @@ impl Glm5NextLayer {
         let mut chunk = 0usize;
         let last_pos = (num_tokens > 0).then(|| seq_len_start + num_tokens - 1);
         let split = segments.len() > 1;
-        // 2026-10-14: `METRALE_GLM_PREFILL_PIECE_ROWS=P`: a wider sub-chunk runs as `P`-row
-        // pieces (`steps/forward_pieces.rs`); not beside the SP pipeline, which plans its own
-        // sub-chunks.
-        let piece = crate::glm5next_prefill_piece::piece_rows()?;
-        if piece.is_some() && crate::glm5next_sp_pipeline::enabled()? {
-            bail!(
-                "GLM layer {}: {} and METRALE_GLM_SP_PIPELINE=1 cannot both be set",
-                self.layer_idx,
-                crate::glm5next_prefill_piece::PIECE_ROWS_ENV
-            );
-        }
         for (start, end, after) in segments {
             // 2026-10-14: Under `METRALE_ONE_ROW_TAIL_DECODE=1` a one-row segment after position
             // 0 runs `decode`'s walk (`forward_one`, its dump call), the path a warm one-row
@@ -157,13 +146,22 @@ impl Glm5NextLayer {
                     ctx.levers.one_row_tail_decode,
                     ctx.levers.one_row_prefill,
                 );
+            // 2026-10-14: The segment's units: cut on the prefill grid at absolute positions,
+            // then `rows`-wide from each cell's first row (`glm5next_prefill_piece`), so a pass
+            // runs the units of a serve chunked at the grid whatever its budget.
+            let units = crate::glm5next_prefill_piece::grid_units(
+                seq_len_start + start,
+                end - start,
+                rows,
+                ctx.levers.prefill_grid,
+            )?;
             let mut t = start;
+            let mut u = 0usize;
             // 2026-10-14: `METRALE_GLM_SP_PIPELINE=1`: the segment's leading run of SP-mHC
-            // sub-chunks pipelined through the layer (`steps/forward_sp_pipe.rs`); the rows after
+            // units pipelined through the layer (`steps/forward_sp_pipe.rs`); the units after
             // it run below as before.
             if rows > 1 && !tail_decode && crate::glm5next_sp_pipeline::enabled()? {
-                let ks = crate::glm5next_sp_pipeline::sub_chunks(end - start, rows);
-                let takes = ks
+                let takes = units
                     .iter()
                     .map(|&k| self.sp_takes(ctx, k, true))
                     .collect::<Result<Vec<bool>>>()?;
@@ -171,7 +169,7 @@ impl Glm5NextLayer {
                 if p > 0 {
                     self.forward_sp_pipeline(
                         hidden.offset(t * self.hidden * 2),
-                        &ks[..p],
+                        &units[..p],
                         state,
                         kv_cache,
                         seq_len_start + t,
@@ -180,17 +178,26 @@ impl Glm5NextLayer {
                         stream,
                         slot0 + t,
                     )?;
-                    t += ks[..p].iter().sum::<usize>();
+                    t += units[..p].iter().sum::<usize>();
                     chunk += p;
+                    u = p;
                 }
             }
-            while t < end {
-                let k = rows.min(end - t);
-                if let Some(p) = piece.filter(|&p| rows > 1 && !tail_decode && k > p) {
+            // 2026-10-14: Consecutive units narrower than a sub-chunk together share a call where
+            // their row-count decisions agree (`steps/forward_pieces.rs`).
+            let calls = if rows > 1 && !tail_decode {
+                crate::glm5next_prefill_piece::plan_calls(&units[u..], rows, |n| {
+                    self.piece_share(ctx, n)
+                })?
+            } else {
+                units[u..].iter().map(|&k| vec![k]).collect()
+            };
+            for pieces in calls {
+                let k: usize = pieces.iter().sum();
+                if pieces.len() > 1 {
                     self.forward_k_pieces(
                         hidden.offset(t * self.hidden * 2),
-                        k,
-                        p,
+                        &pieces,
                         state,
                         kv_cache,
                         seq_len_start + t,
@@ -231,8 +238,8 @@ impl Glm5NextLayer {
                         true,
                         call,
                     )?;
-                    t += k;
                 } else {
+                    // 2026-10-14: `rows == 1` or the tail decode: one row per unit.
                     let off = t * self.hidden * 2;
                     self.forward_one(
                         hidden.offset(off),
@@ -248,9 +255,10 @@ impl Glm5NextLayer {
                         stream,
                         call,
                     )?;
-                    t += 1;
                 }
+                t += k;
             }
+            debug_assert_eq!(t, end);
             if let (Some(which), Some(idx), Some(c)) = (after, ordinal, cap) {
                 self.capture_kda_state(state, c, which, idx, ctx.gpu, stream)?;
             }

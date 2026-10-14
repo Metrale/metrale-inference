@@ -21,7 +21,7 @@ fn run_chunks(total: usize, first: usize, cont: usize) -> Vec<(usize, usize)> {
     let mut off = 0;
     while off < total {
         let cap = if off == 0 { first } else { cont };
-        let len = plan_chunk_len(off, total, (total - off).min(cap), Some(BS), split);
+        let len = plan_chunk_len(off, total, (total - off).min(cap), Some(BS), split, None);
         assert!(len >= 1, "total={total} off={off}: empty chunk");
         let end = off + len;
         match split {
@@ -129,22 +129,25 @@ fn chunks_tile_the_prompt_and_end_on_block_boundaries() {
 #[test]
 fn plan_keeps_a_last_chunk_and_never_grows_a_chunk() {
     assert_eq!(
-        plan_chunk_len(0, 300, 300, Some(BS), tail_split_point(300, BS)),
+        plan_chunk_len(0, 300, 300, Some(BS), tail_split_point(300, BS), None),
         300
     );
-    assert_eq!(plan_chunk_len(8192, 8195, 3, Some(BS), None), 3);
-    assert_eq!(plan_chunk_len(0, 32772, 8193, Some(BS), Some(32752)), 8192);
+    assert_eq!(plan_chunk_len(8192, 8195, 3, Some(BS), None, None), 3);
     assert_eq!(
-        plan_chunk_len(24576, 32772, 8192, Some(BS), Some(32752)),
+        plan_chunk_len(0, 32772, 8193, Some(BS), Some(32752), None),
+        8192
+    );
+    assert_eq!(
+        plan_chunk_len(24576, 32772, 8192, Some(BS), Some(32752), None),
         8176
     );
-    assert_eq!(plan_chunk_len(0, 100, 0, Some(BS), None), 0);
+    assert_eq!(plan_chunk_len(0, 100, 0, Some(BS), None, None), 0);
     // 2026-09-27: A proposal shorter than one block keeps its length, rounded to 4.
-    assert_eq!(plan_chunk_len(0, 100, 10, Some(BS), None), 8);
-    assert_eq!(plan_chunk_len(0, 100, 3, Some(BS), None), 3);
+    assert_eq!(plan_chunk_len(0, 100, 10, Some(BS), None, None), 8);
+    assert_eq!(plan_chunk_len(0, 100, 3, Some(BS), None, None), 3);
     // 2026-09-27: Without a block size the old WY4 rounding is all that applies.
-    assert_eq!(plan_chunk_len(0, 32772, 8193, None, None), 8192);
-    assert_eq!(plan_chunk_len(8193, 32772, 8191, None, None), 8188);
+    assert_eq!(plan_chunk_len(0, 32772, 8193, None, None, None), 8192);
+    assert_eq!(plan_chunk_len(8193, 32772, 8191, None, None, None), 8188);
 }
 
 #[test]
@@ -190,4 +193,112 @@ fn a_whole_pass_model_splits_at_the_tail_boundary() {
     assert_eq!(tail_split_for(268, BS, false), Some(240));
     assert_eq!(tail_split_for(4108, BS, true), Some(4096));
     assert_eq!(tail_split_for(16, BS, true), None);
+}
+
+const G: usize = PREFILL_GRID;
+
+/// 2026-10-14: The passes a grid model (whole-pass split, GLM-5.3) runs for the rows
+/// `start..total` at prefill budget `budget`: chunks of at most `budget`, a last chunk split
+/// at the tail split point.
+fn grid_passes(start: usize, total: usize, budget: usize) -> Vec<(usize, usize)> {
+    let split = tail_split_for(total, BS, true);
+    let mut out = Vec::new();
+    let mut off = start;
+    while off < total {
+        let proposed = (total - off).min(budget);
+        let len = plan_chunk_len(off, total, proposed, Some(BS), split, Some(G));
+        assert!(
+            len >= 1 && len <= proposed,
+            "total={total} off={off}: len {len}"
+        );
+        let end = off + len;
+        match split {
+            Some(cut) if end == total && off < cut && cut < end => {
+                out.push((off, cut));
+                out.push((cut, end));
+            }
+            _ => out.push((off, end)),
+        }
+        off = end;
+    }
+    out
+}
+
+/// 2026-10-14: The passes cut again at every grid line: the units a grid layer runs.
+fn cells(passes: &[(usize, usize)]) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    for &(s, e) in passes {
+        let mut a = s;
+        while a < e {
+            let b = ((a / G + 1) * G).min(e);
+            out.push((a, b));
+            a = b;
+        }
+    }
+    out
+}
+
+#[test]
+fn every_grid_budget_runs_the_same_cells() {
+    // 2026-10-14: The gate's lengths plus grid-adjacent ones, cold (start 0) and from warm
+    // restore points on and off the grid.
+    for total in [
+        1024usize, 8191, 8192, 8193, 8200, 16384, 20000, 24580, 32768, 32780, 40000, 65536,
+    ] {
+        for start in [0usize, 4096, 19984, 32768] {
+            if start >= total {
+                continue;
+            }
+            let base = cells(&grid_passes(start, total, G));
+            for budget in [2 * G, 3 * G, 8 * G] {
+                assert_eq!(
+                    cells(&grid_passes(start, total, budget)),
+                    base,
+                    "total={total} start={start} budget={budget}"
+                );
+            }
+            // 2026-10-14: At budget G a pass is one cell, and every pass but the tail split
+            // and the last ends on a grid line.
+            let passes = grid_passes(start, total, G);
+            assert_eq!(cells(&passes), passes, "total={total} start={start}");
+            let split = tail_split_for(total, BS, true);
+            for &(_, e) in &passes[..passes.len() - 1] {
+                assert!(
+                    e % G == 0 || Some(e) == split,
+                    "total={total} start={start}: pass end {e} off the grid"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn an_idle_chunk_0_ends_on_the_grid_line() {
+    // 2026-10-14: The idle serve's `max_batch_tokens` proposal (8192 + max batch 16) and the
+    // busy serve's 8192 give the same chunk 0; without a grid the idle chunk ran 8208 rows.
+    let split = tail_split_for(32780, BS, true);
+    assert_eq!(plan_chunk_len(0, 32780, 8208, Some(BS), split, Some(G)), G);
+    assert_eq!(plan_chunk_len(0, 32780, G, Some(BS), split, Some(G)), G);
+    assert_eq!(plan_chunk_len(0, 32780, 8208, Some(BS), split, None), 8208);
+    // 2026-10-14: From an off-grid restore the chunk runs to the next grid line it reaches.
+    assert_eq!(
+        plan_chunk_len(19984, 65536, 2 * G, Some(BS), None, Some(G)),
+        4 * G - 19984
+    );
+    // 2026-10-14: A proposal that reaches no grid line keeps the block rule.
+    assert_eq!(
+        plan_chunk_len(0, 32780, 4000, Some(BS), None, Some(G)),
+        4000
+    );
+}
+
+#[test]
+fn a_budget_off_the_grid_is_refused() {
+    assert_eq!(check_prefill_grid(G, G), Ok(()));
+    assert_eq!(check_prefill_grid(2 * G, G), Ok(()));
+    for bad in [0usize, 16, 4096, 8208, 16400, 3 * G / 2] {
+        let err = check_prefill_grid(bad, G).unwrap_err();
+        assert!(err.contains(&format!("{bad}")), "{bad}: {err}");
+    }
+    assert!(check_prefill_grid(G, 0).is_err());
 }

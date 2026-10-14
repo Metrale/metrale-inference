@@ -155,9 +155,22 @@ impl Glm5NextLayer {
             .iter()
             .map(|s| kda_ordinal(&self.mixer, s.capture))
             .collect();
+        // 2026-10-14: and at the prefill grid's absolute lines, as its own prefill cuts it
+        // (`glm5next_prefill_piece::grid_units`).
         let cuts: Vec<Vec<usize>> = points
             .iter()
-            .map(|p| p.iter().map(|&(at, _)| at).collect())
+            .zip(spans.iter())
+            .map(|(p, s)| {
+                let mut c: Vec<usize> = p.iter().map(|&(at, _)| at).collect();
+                c.extend(crate::glm5next_prefill_piece::grid_lines(
+                    s.seq_len_start,
+                    s.rows,
+                    ctx.levers.prefill_grid,
+                ));
+                c.sort_unstable();
+                c.dedup();
+                c
+            })
             .collect();
         for (chunk, group) in prefill_span_groups(&rows, &cuts, prefill_rows().min(cap), share)
             .into_iter()

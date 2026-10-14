@@ -1,18 +1,17 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-10-14: `METRALE_GLM_PREFILL_PIECE_ROWS=P` (`glm5next_prefill_piece`): a prefill
-//! sub-chunk of one sequence run as the calls of `plan_calls`. A one-piece call is `forward_k`.
-//! A call of several pieces is `forward_k`'s body over all its rows, except that the mixer runs
-//! once per piece (each at its own positions, as `forward_k` of that piece runs it) and the MLP
-//! and the non-SP all-reduces keep a launch per piece (`row_pieces`).
+//! 2026-10-14: One call of several grid units of a GLM prefill pass (`glm5next_prefill_piece`):
+//! `forward_k`'s body over all the call's rows, except that the mixer runs once per unit (each at
+//! its own positions, as `forward_k` of that unit runs it) and the MLP and the non-SP all-reduces
+//! keep a launch per unit (`row_pieces`).
 //!
 //! Owner: model-arch (GLM-5.3).
 //! Invariants:
-//! - Every rank plans from `k`, `P`, the levers and the layer alone, so all ranks issue the same
-//!   collectives.
-//! - Pieces share a call only where the routed path is row-invariant (the grouped W4A16 GEMM, or
-//!   the grouped W4A4 GEMM with the same tile for the piece and the call) and the SP-mHC choice
-//!   is the same for the piece and the call ([`Glm5NextLayer::piece_share`]).
+//! - Every rank plans from the pass, the grid, the levers and the layer alone, so all ranks issue
+//!   the same collectives.
+//! - Units share a call only where the routed path is row-invariant (the grouped W4A16 GEMM, or
+//!   the grouped W4A4 GEMM with the same tile for the unit and the call) and the SP-mHC choice
+//!   is the same for the unit and the call ([`Glm5NextLayer::piece_share`]).
 
 use super::*;
 use crate::glm5next_mlp::forward::{
@@ -56,15 +55,14 @@ impl Glm5NextLayer {
         Ok(Some(PieceSig { sp, route }))
     }
 
-    /// 2026-10-14: `k` rows of one prefill sub-chunk at positions from `seq_len`, highway slots
-    /// from `slot_base`, in `P`-row pieces (module header). `chunk` is the layer dump's sub-chunk
-    /// counter, advanced once per call.
+    /// 2026-10-14: The rows of one call of `pieces` (at least two grid units) at positions from
+    /// `seq_len`, highway slots from `slot_base` (module header). `chunk` is the layer dump's
+    /// sub-chunk counter, advanced once.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::glm5next_layer) fn forward_k_pieces(
         &self,
-        hidden: DevicePtr,
-        k: usize,
-        piece: usize,
+        x: DevicePtr,
+        pieces: &[usize],
         state: &mut dyn LayerState,
         kv_cache: &mut PagedKvCache,
         seq_len: usize,
@@ -79,42 +77,20 @@ impl Glm5NextLayer {
             bail!("GLM layer {}: no hyper-connection bound", self.layer_idx);
         };
         let row_bytes = self.hidden * 2;
-        let calls =
-            crate::glm5next_prefill_piece::plan_calls(k, piece, |n| self.piece_share(ctx, n))?;
-        let mut off = 0usize;
-        for pieces in calls {
-            let m: usize = pieces.iter().sum();
-            let call = dump::Call {
-                path: dump::Path::Prefill,
-                chunk: *chunk,
-                last_pos,
-            };
-            *chunk += 1;
-            let x = hidden.offset(off * row_bytes);
-            if let [n] = pieces[..] {
-                self.forward_k(
-                    x,
-                    n,
-                    state,
-                    kv_cache,
-                    seq_len + off,
-                    block_table,
-                    ctx,
-                    stream,
-                    false,
-                    slot_base + off,
-                    true,
-                    call,
-                )?;
-                off += n;
-                continue;
-            }
+        let m: usize = pieces.iter().sum();
+        let call = dump::Call {
+            path: dump::Path::Prefill,
+            chunk: *chunk,
+            last_pos,
+        };
+        *chunk += 1;
+        {
             let sp = self.sp_takes(ctx, m, true)?;
             let own = ctx
                 .comm
                 .filter(|_| sp)
                 .map(|c| crate::glm5next_sp_mhc::shards(m, c.world_size())[c.rank()]);
-            let first = seq_len + off;
+            let first = seq_len;
             // 2026-10-14: The DSA selection output holds the last piece's rows only.
             let tap = dump::begin(ctx, stream, self.dump_layer(mhc, false), call, own, || {
                 let mut r0 = 0usize;
@@ -134,7 +110,7 @@ impl Glm5NextLayer {
                     .collect()
             })?;
             let (st, kv, bt) = (&mut *state, &mut *kv_cache, &mut *block_table);
-            let p = &pieces;
+            let p = pieces;
             let mixer = move |normed: DevicePtr| -> Result<DevicePtr> {
                 let mut r0 = 0usize;
                 for &n in p {
@@ -154,10 +130,10 @@ impl Glm5NextLayer {
                     mhc,
                     x,
                     m,
-                    slot_base + off,
+                    slot_base,
                     ctx,
                     stream,
-                    &pieces,
+                    pieces,
                     tap.as_ref(),
                     mixer,
                 )?;
@@ -166,15 +142,14 @@ impl Glm5NextLayer {
                     mhc,
                     x,
                     m,
-                    slot_base + off,
+                    slot_base,
                     ctx,
                     stream,
-                    &pieces,
+                    pieces,
                     tap.as_ref(),
                     mixer,
                 )?;
             }
-            off += m;
         }
         Ok(())
     }

@@ -1,108 +1,166 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-10-14: Piece mode: the lever's parse, the call plan against the `P`-chunked serve's
-//! sub-chunks, and the load-time budget check.
+//! 2026-10-14: The prefill grid cut: the units of a pass against the grid-chunked serve's, the
+//! call plan, and the retired lever.
 //!
 //! Owner: model-arch (GLM-5.3).
 //! Invariants: none beyond the types.
 
 use super::*;
 
-/// 2026-10-14: Unset is off; a positive multiple of 256 is taken; zero, an off-grid count and
-/// text are refused.
+const G: usize = 8192;
+
+/// 2026-10-14: The units of the rows `start..end`, as absolute `(from, to)` ranges.
+fn ranges(start: usize, end: usize, rows: usize, grid: Option<usize>) -> Vec<(usize, usize)> {
+    let mut at = start;
+    grid_units(start, end - start, rows, grid)
+        .unwrap()
+        .into_iter()
+        .map(|k| {
+            at += k;
+            (at - k, at)
+        })
+        .collect()
+}
+
+/// 2026-10-14: A prompt run as passes ending at `ends` gives the same units as the same prompt
+/// run as one pass per grid cell, for every sub-chunk width: the bits of a grid-chunked serve.
 #[test]
-fn parses_and_refuses() {
-    assert_eq!(parse(None), Ok(None));
-    assert_eq!(parse(Some("8192")), Ok(Some(8192)));
-    assert_eq!(parse(Some("256")), Ok(Some(256)));
-    for bad in ["0", "8208", "64", "-8192", "", "8k", "1"] {
-        assert!(parse(Some(bad)).is_err(), "{bad:?} accepted");
+fn any_pass_split_on_the_grid_runs_the_grid_serves_units() {
+    for rows in [1usize, 16, 2048, 8208, 16400, 40000] {
+        for (start, total) in [
+            (0usize, 32780usize),
+            (19984, 40000),
+            (32768, 32780),
+            (0, 8200),
+        ] {
+            let mut want = Vec::new();
+            let mut a = start;
+            while a < total {
+                let b = ((a / G + 1) * G).min(total);
+                want.extend(ranges(a, b, rows, None));
+                a = b;
+            }
+            // 2026-10-14: One pass, passes of 2G from the first grid line, and a tail split.
+            let one = ranges(start, total, rows, Some(G));
+            assert_eq!(one, want, "rows {rows} {start}..{total}");
+            let mut cut = Vec::new();
+            let mut a = start;
+            for b in [2 * G, 4 * G, total - 12, total] {
+                if b > a && b <= total {
+                    cut.extend(ranges(a, b, rows, Some(G)));
+                    a = b;
+                }
+            }
+            let mut want_cut = Vec::new();
+            for (s, e) in want {
+                if s < total - 12 && total - 12 < e {
+                    want_cut.push((s, total - 12));
+                    want_cut.push((total - 12, e));
+                } else {
+                    want_cut.push((s, e));
+                }
+            }
+            assert_eq!(cut, want_cut, "rows {rows} {start}..{total} split");
+        }
     }
 }
 
-fn plan(k: usize, p: usize, share: impl Fn(usize) -> Option<u8>) -> Vec<Vec<usize>> {
-    plan_calls::<u8>(k, p, |n| Ok(share(n))).unwrap()
-}
-
-/// 2026-10-14: The serve's case: a 16384-row chunk at P 8192 is one call of two pieces, and the
-/// last chunk of a 32000-row prompt is one call of 8192 + 7424.
+/// 2026-10-14: Without a grid the units are the old sub-chunks; a grid off the KDA slab is an
+/// error.
 #[test]
-fn a_wide_chunk_is_one_call_of_p_pieces() {
-    let all = |_: usize| Some(0u8);
-    assert_eq!(plan(16384, 8192, all), vec![vec![8192, 8192]]);
-    assert_eq!(plan(15616, 8192, all), vec![vec![8192, 7424]]);
-    assert_eq!(plan(8192, 8192, all), vec![vec![8192]]);
-    assert_eq!(plan(100, 8192, all), vec![vec![100]]);
+fn no_grid_keeps_the_sub_chunks_and_a_bad_grid_is_refused() {
+    assert_eq!(grid_units(100, 40, 16, None).unwrap(), vec![16, 16, 8]);
+    assert_eq!(grid_units(8190, 10, 16, None).unwrap(), vec![10]);
+    assert_eq!(grid_units(8190, 10, 16, Some(G)).unwrap(), vec![2, 8]);
+    assert_eq!(grid_units(0, 0, 16, Some(G)).unwrap(), Vec::<usize>::new());
+    assert!(grid_units(0, 10, 16, Some(8208)).is_err());
+    assert!(grid_units(0, 10, 16, Some(0)).is_err());
 }
 
-/// 2026-10-14: A piece whose decisions differ from the call's first piece, or that would change
-/// the call total's decisions, starts a call of its own; a `None` piece always runs alone.
+/// 2026-10-14: The grid lines strictly inside a sequence, relative to its first row.
+#[test]
+fn grid_lines_fall_on_absolute_multiples() {
+    assert!(grid_lines(0, 100, None).is_empty());
+    assert!(grid_lines(0, G, Some(G)).is_empty());
+    assert_eq!(grid_lines(0, G + 1, Some(G)), vec![G]);
+    assert_eq!(grid_lines(G, G, Some(G)), Vec::<usize>::new());
+    assert_eq!(grid_lines(G - 2, 2 * G, Some(G)), vec![2, G + 2]);
+    assert_eq!(
+        grid_lines(19984, 40000 - 19984, Some(G)),
+        vec![24576 - 19984, 32768 - 19984]
+    );
+}
+
+fn plan(units: &[usize], cap: usize, share: impl Fn(usize) -> Option<u8>) -> Vec<Vec<usize>> {
+    plan_calls::<u8>(units, cap, |n| Ok(share(n))).unwrap()
+}
+
+/// 2026-10-14: The 16384 serve's case: two cells share a call when the sub-chunk holds both;
+/// a narrower sub-chunk keeps a call per cell.
+#[test]
+fn cells_share_a_call_only_within_the_cap() {
+    let all = |_: usize| Some(0u8);
+    assert_eq!(plan(&[G, G], 16400, all), vec![vec![G, G]]);
+    assert_eq!(plan(&[G, 7424], 16400, all), vec![vec![G, 7424]]);
+    assert_eq!(plan(&[G, G], 8208, all), vec![vec![G], vec![G]]);
+    assert_eq!(plan(&[G, G, G], 16400, all), vec![vec![G, G], vec![G]]);
+    assert_eq!(plan(&[100], 16400, all), vec![vec![100]]);
+}
+
+/// 2026-10-14: A unit whose decisions differ from the call's first, or that would change the
+/// call total's, starts a call of its own; a `None` unit always runs alone.
 #[test]
 fn differing_decisions_split_the_call() {
-    // 2026-10-14: SP-mHC from 192 rows: a 100-row last piece is not SP and runs alone.
     let sp = |n: usize| Some(u8::from(n >= 192));
-    assert_eq!(plan(16484, 8192, sp), vec![vec![8192, 8192], vec![100]]);
-    // 2026-10-14: The total's decision differs above 12000 rows: every piece runs alone.
+    assert_eq!(plan(&[G, G, 100], 1 << 20, sp), vec![vec![G, G], vec![100]]);
     let total = |n: usize| Some(u8::from(n > 12000));
     assert_eq!(
-        plan(24576, 8192, total),
-        vec![vec![8192], vec![8192], vec![8192]]
+        plan(&[G, G, G], 1 << 20, total),
+        vec![vec![G], vec![G], vec![G]]
     );
     let refused = |n: usize| (n != 4096).then_some(0u8);
     assert_eq!(
-        plan(3 * 8192 + 4096, 8192, refused),
-        vec![vec![8192, 8192, 8192], vec![4096]]
+        plan(&[G, G, G, 4096], 1 << 20, refused),
+        vec![vec![G, G, G], vec![4096]]
     );
-    let off = |n: usize| (n <= 8192).then_some(0u8);
-    assert_eq!(plan(16384, 8192, off), vec![vec![8192], vec![8192]]);
+    assert_eq!(
+        plan(&[4096, G], 1 << 20, refused),
+        vec![vec![4096], vec![G]]
+    );
 }
 
-/// 2026-10-14: For assorted shapes and predicates, the calls flattened are exactly the
-/// `P`-chunked serve's sub-chunks of the same rows: `P` rows from row 0, the last shorter.
+/// 2026-10-14: For assorted units, caps and predicates the calls flattened are the units, and
+/// no call passes the cap unless it is one unit.
 #[test]
-fn pieces_are_the_p_chunked_sub_chunks() {
+fn calls_keep_the_units_in_order_within_the_cap() {
     let preds: [&dyn Fn(usize) -> Option<u8>; 4] = [
         &|_| Some(0),
         &|n| Some(u8::from(n >= 192)),
         &|n| (n % 3 != 0).then_some(1),
         &|_| None,
     ];
-    for k in [
-        1usize, 255, 256, 8191, 8192, 8193, 16384, 16400, 32768, 40000,
-    ] {
-        for p in [256usize, 512, 8192] {
-            for pred in preds {
-                let calls = plan(k, p, pred);
-                let flat: Vec<usize> = calls.iter().flatten().copied().collect();
-                let mut want = Vec::new();
-                let mut t = 0;
-                while t < k {
-                    want.push(p.min(k - t));
-                    t += p;
+    for start in [0usize, 4096, 19984] {
+        for n in [1usize, 255, 8192, 16384, 40000] {
+            for rows in [16usize, 8192, 16400, 1 << 20] {
+                let units = grid_units(start, n, rows, Some(G)).unwrap();
+                for pred in preds {
+                    let calls = plan(&units, rows, pred);
+                    let flat: Vec<usize> = calls.iter().flatten().copied().collect();
+                    assert_eq!(flat, units, "start {start} n {n} rows {rows}");
+                    for c in &calls {
+                        assert!(c.len() == 1 || c.iter().sum::<usize>() <= rows);
+                    }
                 }
-                assert_eq!(flat, want, "k {k} p {p}");
-                assert!(calls.iter().all(|c| !c.is_empty()));
             }
         }
     }
 }
 
-/// 2026-10-14: A share error comes back unchanged; a zero piece is refused.
+/// 2026-10-14: A share error comes back unchanged; a zero unit is refused.
 #[test]
 fn errors_propagate() {
-    let r = plan_calls::<u8>(16384, 8192, |_| Err(anyhow::anyhow!("boom")));
+    let r = plan_calls::<u8>(&[G, G], 1 << 20, |_| Err(anyhow::anyhow!("boom")));
     assert_eq!(r.unwrap_err().to_string(), "boom");
-    assert!(plan_calls::<u8>(10, 0, |_| Ok(Some(0))).is_err());
-}
-
-/// 2026-10-14: The load check: a budget that is a multiple of the piece and wider than it, with
-/// `prefill_rows` covering the batch, passes; each other case is refused.
-#[test]
-fn budget_check() {
-    assert_eq!(check_piece_budget(8192, 16400, 16384, 16400), Ok(()));
-    assert_eq!(check_piece_budget(8192, 16400, 24576, 16400), Ok(()));
-    assert!(check_piece_budget(8192, 8208, 8192, 8208).is_err());
-    assert!(check_piece_budget(8192, 16400, 12288, 12304).is_err());
-    assert!(check_piece_budget(8192, 8208, 16384, 16400).is_err());
-    assert!(check_piece_budget(8192, 16384, 16384, 16400).is_err());
+    assert!(plan_calls::<u8>(&[10, 0], 100, |_| Ok(Some(0))).is_err());
 }

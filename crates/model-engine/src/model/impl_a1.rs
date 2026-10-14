@@ -124,6 +124,9 @@ impl TransformerModel {
         // reduction does not depend on how many others share its batch.
         let mut levers = ops::ModelLevers::from_env();
         levers.max_decode_seqs = (max_batch_size as u32).max(1);
+        // 2026-10-14: Layers that split whole passes (GLM-5.3) cut them on the prefill grid too.
+        let grid = !layers.is_empty() && layers.iter().all(|l| l.splits_pass_at_capture());
+        levers.prefill_grid = grid.then_some(crate::prefill_plan::PREFILL_GRID);
 
         tracing::info!(
             "TransformerModel: {} layers, vocab={}, hidden={}{}{}",

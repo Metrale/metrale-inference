@@ -39,6 +39,7 @@ pub(super) fn from_values(
 
     ModelLevers {
         max_decode_seqs: 1,
+        prefill_grid: None,
         shadow_topk,
         kv_poison: opt_in(value("METRALE_KV_POISON").as_deref()),
         drafter,
@@ -164,6 +165,7 @@ impl ModelLevers {
     pub fn defaults() -> Self {
         Self {
             max_decode_seqs: 1,
+            prefill_grid: None,
             shadow_topk: 0,
             kv_poison: false,
             drafter: crate::drafter_context::DrafterContext::BOTH,

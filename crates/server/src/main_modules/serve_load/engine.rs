@@ -165,17 +165,6 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
         max_batch_tokens,
         spec_tokens: _spec_tokens,
     } = serve_phases::resolve_prefill_budget(&args, ssm_prefill_chunk);
-    // 2026-10-14: `METRALE_GLM_PREFILL_PIECE_ROWS`: refuse a prefill sizing the piece grid does
-    // not divide before the KV cache is sized (`glm5next_prefill_piece::check_piece_budget`).
-    if let Some(piece) = metrale_model_arch::glm5next_prefill_piece::piece_rows()? {
-        metrale_model_arch::glm5next_prefill_piece::check_piece_budget(
-            piece,
-            metrale_model_arch::glm5next_layer::prefill_rows(),
-            prefill_budget,
-            max_batch_tokens,
-        )
-        .map_err(anyhow::Error::msg)?;
-    }
     let prefix_cache = serve_phases::build_prefix_cache(&args, &config);
     let comm = serve_phases::init_nccl_comm(
         &args,
@@ -261,6 +250,13 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
         .then_some(built.max_batch_size);
     args.max_batch_size = metrale_model_engine::factory::SlotRequest::Count(built.max_batch_size);
     let model = built.model;
+    // 2026-10-14: A grid model (`Model::prefill_grid`, GLM-5.3) refuses a prefill budget off its
+    // grid, on every rank, rather than round it (`prefill_plan::check_prefill_grid`).
+    if let Some(grid) = model.prefill_grid() {
+        metrale_model_engine::prefill_plan::check_prefill_grid(prefill_budget, grid)
+            .map_err(anyhow::Error::msg)?;
+    }
+    metrale_model_arch::glm5next_prefill_piece::refuse_retired_env()?;
     let drafter_weights_sha256 = built.drafter_weights_sha256;
     // 2026-10-04: Always logged, not only under --spec-cost-model measured: it is the only way
     // to learn the value `met benchmark spec-cost-table --drafter-weights-sha256` and a future

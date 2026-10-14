@@ -226,12 +226,15 @@ pub(super) fn start_new_requests(
                 None
             };
             // 2026-09-25: With nothing active or prefilling, chunk 0 may use
-            // `max_batch_tokens`.
-            let budget = if active.is_empty() && prefilling.is_empty() {
-                max_batch_tokens
-            } else {
-                max_prefill_tokens
-            };
+            // `max_batch_tokens`. 2026-10-14: Not on a grid model (`Model::prefill_grid`), whose
+            // chunk 0 is planned as when the serve is busy, so a prompt's passes do not depend
+            // on what else is running.
+            let budget =
+                if active.is_empty() && prefilling.is_empty() && model.prefill_grid().is_none() {
+                    max_batch_tokens
+                } else {
+                    max_prefill_tokens
+                };
             match start_chunked_prefill(
                 sched,
                 think_end_token,

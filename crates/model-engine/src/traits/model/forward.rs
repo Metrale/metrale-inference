@@ -202,4 +202,12 @@ pub trait ModelForward: ModelStreams {
     fn prefill_tail_split(&self, _tokens: &[u32]) -> Option<usize> {
         None
     }
+
+    /// 2026-10-14: The absolute grid this model's non-last prefill chunks end on
+    /// (`prefill_plan::PREFILL_GRID`), or `None` when its chunks need only the block rule. A
+    /// grid model's `--max-prefill-tokens` must be a multiple of it
+    /// (`prefill_plan::check_prefill_grid`). Default `None`.
+    fn prefill_grid(&self) -> Option<usize> {
+        None
+    }
 }

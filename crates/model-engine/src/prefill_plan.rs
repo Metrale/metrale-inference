@@ -15,10 +15,18 @@
 //! inside the second-to-last chunk: no tail snapshot was saved, and the byte-identical
 //! warm request restored at 24577 and replayed 8195 tokens (12.5 s instead of ~0.2 s).
 //!
+//! 2026-10-14: A model whose bits depend on where passes start and end (`Model::prefill_grid`,
+//! GLM-5.3) also ends every non-last chunk on an absolute multiple of [`PREFILL_GRID`], counted
+//! from token 0, and its layers cut a wider pass at the same multiples. Any budget that is a
+//! multiple of the grid then gives every row the same bits, whatever chunk 0's width, the
+//! batch's composition or the budget.
+//!
 //! Owner: model-engine prefill (SSM prefix cache).
 //! Invariants:
 //! - `plan_chunk_len` returns a length in `1..=proposed` for a non-empty `proposed`,
 //!   and returns `proposed` unchanged for a last chunk.
+//! - With a grid and a proposal that reaches a grid line past `offset`, a non-last chunk ends
+//!   on a grid line.
 
 /// 2026-09-27: The tail split point of a `total`-token prompt: one block below the last
 /// block boundary strictly under `total`, or `None` when that is not above token 0. A
@@ -48,6 +56,23 @@ pub fn tail_split_for(total: usize, block_size: usize, whole_pass: bool) -> Opti
     }
 }
 
+/// 2026-10-14: The prefill grid G of a grid model (`Model::prefill_grid`): non-last chunks end
+/// on absolute multiples of it, and `--max-prefill-tokens` must be a multiple of it. 8192 is
+/// the GLM-5.3 serve's chunk, so its measured bits and TTFT are the grid's.
+pub const PREFILL_GRID: usize = 8192;
+
+/// 2026-10-14: Load-time check of a grid model's prefill budget: a positive multiple of `grid`,
+/// so every non-last chunk can end on a grid line. Never rounds.
+pub fn check_prefill_grid(budget: usize, grid: usize) -> Result<(), String> {
+    if grid == 0 || budget == 0 || !budget.is_multiple_of(grid) {
+        return Err(format!(
+            "--max-prefill-tokens {budget}: this model cuts prefill on a {grid}-token grid; \
+             set a positive multiple of {grid}"
+        ));
+    }
+    Ok(())
+}
+
 /// 2026-09-27: Length of the prefill chunk at `offset` of a `total`-token prompt, given
 /// the capped `proposed` length.
 ///
@@ -57,17 +82,28 @@ pub fn tail_split_for(total: usize, block_size: usize, whole_pass: bool) -> Opti
 /// 4 (the GDN WY4 rule for intermediate chunks). With chunk ends on block boundaries
 /// every later offset is block-aligned, so the rounding changes nothing when
 /// `block_size` is a multiple of 4.
+///
+/// 2026-10-14: With a `grid`, a non-last chunk first ends at the last absolute multiple of it
+/// inside the chunk, when that is past `offset`; the block rule is then a no-op for a grid that
+/// is a multiple of the block size.
 pub fn plan_chunk_len(
     offset: usize,
     total: usize,
     proposed: usize,
     block_size: Option<usize>,
     split: Option<usize>,
+    grid: Option<usize>,
 ) -> usize {
     if proposed == 0 || offset + proposed >= total {
         return proposed;
     }
     let mut end = offset + proposed;
+    if let Some(g) = grid.filter(|&g| g > 0) {
+        let aligned = (end / g) * g;
+        if aligned > offset {
+            end = aligned;
+        }
+    }
     if let Some(bs) = block_size.filter(|&bs| bs > 0) {
         let aligned = (end / bs) * bs;
         if aligned > offset {

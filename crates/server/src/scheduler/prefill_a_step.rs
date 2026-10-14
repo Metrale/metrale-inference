@@ -144,6 +144,7 @@ pub fn start_chunked_prefill(
             total.min(max_prefill_tokens),
             model.kv_block_size(),
             model.prefill_tail_split(&prompt_tokens),
+            model.prefill_grid(),
         )
     };
     let is_last = chunk_len >= total;
