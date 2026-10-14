@@ -7,12 +7,14 @@
 //! for `T <= 64` and, unless `METRALE_HC_PREFILL_CUBLAS=1` (2026-10-14), `false` for larger
 //! `T`. With `use_cublas` and a T the decode GEMVs admit
 //! (2026-10-14, `hyper_connection_lowrank_gemv.rs`), those two launches replace the projections
-//! and `hc_silu_scale` / `hc_pre_mix`.
+//! and `hc_silu_scale` / `hc_pre_mix`; with `METRALE_HC_SITE_FUSED=1` and a shape it admits
+//! (2026-10-14, `hyper_connection_lowrank_site.rs`), one launch replaces the stage and both GEMVs.
 
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 
 use super::gemv::{HcGemv, HcGemvArgs};
+use super::site::{HcSite, HcSiteArgs};
 use super::{HC_ELEMENTWISE_BLOCK, hc_hidden_split};
 use crate::layers::qwen3_attention::HcLowRank;
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
@@ -54,11 +56,46 @@ pub(crate) fn hc_pre_gemm(
     let k_gemm = gpu.kernel("gemm", "dense_gemm_bf16_pipelined")?;
     let inv_hc = 1.0f32 / hc_mult as f32;
     let gemv = use_cublas.then(|| HcGemv::resolve(gpu));
+    let site = use_cublas.then(|| HcSite::resolve(gpu));
 
     let mut t0 = 0u32;
     while t0 < num_tokens {
         let ts = SLAB.min(num_tokens - t0);
         let streams_s = streams.offset(t0 as usize * hc_dim * 4);
+        let y_s = y_out.offset(t0 as usize * hidden_size as usize * 2);
+        let inj_s = inj_out.offset(t0 as usize * hc_mult as usize * 4);
+
+        // 2026-10-14: Decode widths: stage, down + injection and up + mix in one launch, the down
+        // partials in the unused `up_pre` rows.
+        let site_args = HcSiteArgs {
+            streams: streams_s,
+            norm_w: w.norm_w,
+            down_w: w.down_w,
+            inject_w: if inject { w.inject_w } else { DevicePtr::NULL },
+            up_w: w.up_w,
+            normed,
+            partial: up_pre,
+            low,
+            y_out: y_s,
+            inj_out: inj_s,
+        };
+        let up_pre_bytes = lay * hc_dim * 2;
+        if let Some(s) =
+            site.filter(|s| s.admits(&site_args, ts, hidden_size, hc_mult, rank, up_pre_bytes))
+        {
+            s.launch(
+                gpu,
+                &site_args,
+                ts,
+                hidden_size,
+                hc_mult,
+                rank,
+                norm_eps,
+                stream,
+            )?;
+            t0 += ts;
+            continue;
+        }
 
         // 2026-10-13: One block per (token, stream): a stream's RMS needs only its own slice.
         KernelLaunch::new(gpu, k_stage)
@@ -79,8 +116,8 @@ pub(crate) fn hc_pre_gemm(
             up_w: w.up_w,
             inject_w: if inject { w.inject_w } else { DevicePtr::NULL },
             low,
-            y_out: y_out.offset(t0 as usize * hidden_size as usize * 2),
-            inj_out: inj_out.offset(t0 as usize * hc_mult as usize * 4),
+            y_out: y_s,
+            inj_out: inj_s,
         };
         if let Some(g) = gemv.filter(|g| g.admits(&args, ts, hidden_size, hc_mult, rank)) {
             g.launch(gpu, &args, ts, hidden_size, hc_mult, rank, stream)?;

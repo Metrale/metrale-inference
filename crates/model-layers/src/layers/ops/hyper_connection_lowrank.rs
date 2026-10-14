@@ -21,6 +21,8 @@ mod gemm;
 pub(crate) use gemm::hc_pre_gemm;
 #[path = "hyper_connection_lowrank_gemv.rs"]
 pub(crate) mod gemv;
+#[path = "hyper_connection_lowrank_site.rs"]
+pub(crate) mod site;
 
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;

@@ -25,6 +25,9 @@
 // HLG_THREADS; K = hc * H and rank multiples of 8; rank <= HLG_MAX_RANK; hc <= HLG_STREAMS; every
 // pointer 16-byte aligned.
 //
+// 2026-10-14: hc_lowrank_site_hopper.cuh (included at the end) adds `hc_lowrank_site`, the stage
+// and both GEMVs in one launch with these trees (METRALE_HC_SITE_FUSED).
+//
 // Owner: hopper kernels.
 // Invariants: each token's outputs are independent of T (`ops/hyper_connection_gemv_tests.rs`).
 
@@ -229,3 +232,5 @@ extern "C" __global__ void __launch_bounds__(HLG_THREADS) hc_lowrank_up_mix(
     }
     if (lane < nt) y_out[(size_t)(t0 + lane) * H + d] = __float2bfloat16(mixed * inv_hc);
 }
+
+#include "hc_lowrank_site_hopper.cuh"  // 2026-10-14: hc_lowrank_site
