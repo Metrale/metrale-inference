@@ -299,6 +299,7 @@ impl TransformerModel {
                 self.gpu.synchronize(stream)?;
 
                 // 2026-09-25: Forward through all layers.
+                let gdn_exact = self.prefill_gdn_exact_pass(tokens, chunk_start, bs, marconi_skip);
                 self.prefill_b_forward_layers(
                     seq,
                     &mut kv_cache,
@@ -309,6 +310,7 @@ impl TransformerModel {
                     effective_seq_len_start,
                     kv_write_start,
                     marconi_skip,
+                    gdn_exact,
                     meta_base,
                     slot_offset,
                     pos_stream_bytes,
