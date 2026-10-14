@@ -1757,3 +1757,27 @@ effort_hours = 2.0
 transferability = "any chunked prefill whose M-dependent launches can be cut at the old chunk grid"
 links = { pr = "", commit = "", evidence = "code read; plain 16384 chunks change bits through cuBLASLt per-M algorithms (BF16 projections, router, dequant GEMMs) and NCCL ring sizes" }
 notes = "per-rank memory at 16400 rows vs 8208, pre-KV: MLP ws +994.7 MiB, KDA ws +1301.1 MiB, DSA ws ~+546 MiB, lean arena ~+792.6 MiB, GDN prefill buffers +222 MiB (unused by GLM), mHC scratch ~+70 MiB, SP-mHC receive +42.7 MiB: ~+3.9 GiB, taken from KV (~7.9 -> ~4 GB at MSL 64k). Sizing the KDA/DSA workspaces to P instead of PREFILL_ROWS would halve the delta (not done)."
+
+[[lever]]
+id = "gb10x3-glm53-sp-comm-overlap-transport"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_SP_INTERLEAVE=1/2, METRALE_GLM_SP_PIECES=1..4 (branch glm/comm, 9489350d9) + 13 NCCL transport configs (QPs, channels, npeer, buffer sizes)"
+symptom = "32k cold prefill: ncclDevKernel_SendRecv 3078 calls, 2139 ms on rank 0, ~1241 ms exposed; per-piece exchange 684 rows x 8 KB = 5.6 MB per peer in 0.644 ms (~8.7 GB/s per peer per direction, ~35% of the 200G link)"
+diagnosis_tool = "nsys"
+root_cause_class = "bandwidth"
+lever_type = "scheduling"
+lkb_effect = "none kept"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 1 }, { rung = "prefill-1k", tok_s_pct = 0, j_tok_pct = 0.0, n = 1 }]
+verdict = "discarded"
+verdict_reason = "cold 32k 12231 ms (control) vs 12199 ms (SP_INTERLEAVE=2), cold 1k 690 vs 696: neutral, inside the spread; bits identical to N0 including the 149- and 8358-token ncclAllReduce-path probes. Transport sweep: all 13 configs at 8.5-9 GB/s per peer per direction, message size irrelevant, no winner. With a concurrent 512 MB D2D stream the exchange falls from 8.56 to 1.79 GB/s per peer (4.8x slower): without GDR (never engages, even forced; nvidia-peermem not loaded) NCCL's net proxy stages through host DRAM, so comm and memory-bound compute share GB10's LPDDR5X and overlap buys little"
+failure_mode = "overlap assumes comm and compute use disjoint resources; on GB10 without GDR both are DRAM traffic"
+caught_by = "the comm worker's concurrent-D2D transport microbench (sect4mc)"
+time_lost_hours = 1.5
+would_catch_earlier = "run the transport microbench under a concurrent memory-bound stream before building an overlap lever on unified-memory parts"
+effort_hours = 4.0
+transferability = "any unified-memory part (GB10, GH200 C2C staging) where the NIC path stages through the same DRAM the kernels stream"
+links = { pr = "", commit = "9489350d9", evidence = "/workspace/claude-state/glm/comm/{bench_CMC-w1.txt,bench_CMX-w1.txt,bits_CM*-w1.json,sweep_w1.txt}" }
+notes = "Remaining comm ideas: fewer bytes per exchange (FP8 SP gather, which vLLM runs: class N, below declared) and fewer exchanges (merge layer L's tail reduce-scatter with layer L+1's head all-gather: ~180 ms by the comm worker's arithmetic, but the exchanges are bandwidth-bound, so a merge saves only per-call fixed cost). GDR (nvidia-peermem) is an owner question."
