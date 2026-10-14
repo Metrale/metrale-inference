@@ -159,7 +159,10 @@ impl Glm5NextLayer {
             .iter()
             .map(|p| p.iter().map(|&(at, _)| at).collect())
             .collect();
-        for group in prefill_span_groups(&rows, &cuts, prefill_rows().min(cap), share) {
+        for (chunk, group) in prefill_span_groups(&rows, &cuts, prefill_rows().min(cap), share)
+            .into_iter()
+            .enumerate()
+        {
             let base = group[0].row;
             let m: usize = group.iter().map(|p| p.rows).sum();
             let slot_base = ctx.hc_row_offset + base;
@@ -167,32 +170,67 @@ impl Glm5NextLayer {
             // 2026-10-09: The MLP keeps a launch per piece where its arithmetic depends on the
             // row count (`mlp_forward`).
             let pieces: Vec<usize> = group.iter().map(|p| p.rows).collect();
+            // 2026-10-13: The layer dump; the DSA selection holds the last piece's rows only.
+            let call = dump::Call {
+                path: dump::Path::SpanPrefill,
+                chunk,
+                last_pos: None,
+            };
+            let tap = dump::begin(ctx, stream, self.dump_layer(mhc, false), call, None, || {
+                group
+                    .iter()
+                    .map(|p| dump::Window {
+                        row0: p.row - base,
+                        rows: p.rows,
+                        seq: p.seq,
+                        first_pos: spans[p.seq].seq_len_start + p.t0,
+                        last_pos: Some(spans[p.seq].seq_len_start + spans[p.seq].rows - 1),
+                    })
+                    .collect()
+            })?;
             let spans = &mut *spans;
             let kv = &mut *kv_cache;
-            self.forward_rows_with(mhc, x, m, slot_base, ctx, stream, &pieces, |normed| {
-                for p in &group {
-                    let span = &mut spans[p.seq];
-                    self.prefill_piece_mixer(
-                        normed.offset((p.row - base) * row_bytes),
-                        p.rows,
-                        &mut *span.state,
-                        kv,
-                        span.seq_len_start + p.t0,
-                        span.block_table,
-                        ctx,
-                        stream,
-                    )?;
-                    let end = p.t0 + p.rows;
-                    if let (Some(&(_, which)), Some(idx), Some(c)) = (
-                        points[p.seq].iter().find(|&&(at, _)| at == end),
-                        ordinals[p.seq],
-                        span.capture,
-                    ) {
-                        self.capture_kda_state(&mut *span.state, c, which, idx, ctx.gpu, stream)?;
+            self.forward_rows_with(
+                mhc,
+                x,
+                m,
+                slot_base,
+                ctx,
+                stream,
+                &pieces,
+                tap.as_ref(),
+                |normed| {
+                    for p in &group {
+                        let span = &mut spans[p.seq];
+                        self.prefill_piece_mixer(
+                            normed.offset((p.row - base) * row_bytes),
+                            p.rows,
+                            &mut *span.state,
+                            kv,
+                            span.seq_len_start + p.t0,
+                            span.block_table,
+                            ctx,
+                            stream,
+                        )?;
+                        let end = p.t0 + p.rows;
+                        if let (Some(&(_, which)), Some(idx), Some(c)) = (
+                            points[p.seq].iter().find(|&&(at, _)| at == end),
+                            ordinals[p.seq],
+                            span.capture,
+                        ) {
+                            self.capture_kda_state(
+                                &mut *span.state,
+                                c,
+                                which,
+                                idx,
+                                ctx.gpu,
+                                stream,
+                            )?;
+                        }
                     }
-                }
-                Ok(normed)
-            })?;
+                    Ok(normed)
+                },
+            )?;
         }
         Ok(())
     }

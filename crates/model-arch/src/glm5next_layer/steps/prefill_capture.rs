@@ -125,9 +125,18 @@ impl Glm5NextLayer {
             cap.and_then(|c| c.cap_local_early),
             cap.map(|c| c.cap_local),
         );
+        // 2026-10-13: The layer dump's sub-chunk index and the pass's last position.
+        let mut chunk = 0usize;
+        let last_pos = (num_tokens > 0).then(|| seq_len_start + num_tokens - 1);
         for (start, end, after) in segments {
             let mut t = start;
             while t < end {
+                let call = dump::Call {
+                    path: dump::Path::Prefill,
+                    chunk,
+                    last_pos,
+                };
+                chunk += 1;
                 if rows > 1 {
                     let k = rows.min(end - t);
                     self.forward_k(
@@ -144,6 +153,7 @@ impl Glm5NextLayer {
                         // 2026-09-25: `is_prefill` is true only for this caller.
                         // This IS the prefill sub-chunk caller.
                         true,
+                        call,
                     )?;
                     t += k;
                 } else {
@@ -160,6 +170,7 @@ impl Glm5NextLayer {
                         disk_last_offloaded_per_layer,
                         ctx,
                         stream,
+                        call,
                     )?;
                     t += 1;
                 }

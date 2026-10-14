@@ -100,7 +100,7 @@ impl Glm5NextLayer {
         self.add_inplace(gpu, hidden, normed, rows * self.hidden, stream)?;
         self.norm(gpu, hidden, self.post_attn_norm, normed, rows, stream)?;
         // 2026-10-11: No post-mix here to take the sum, so the all-reduce stays whole.
-        self.mlp_forward(normed, ffn_out, rows, &[rows], false, ctx, stream)?;
+        self.mlp_forward(normed, ffn_out, rows, &[rows], false, ctx, stream, None)?;
         self.add_inplace(gpu, hidden, ffn_out, rows * self.hidden, stream)
     }
 

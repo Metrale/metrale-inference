@@ -7,6 +7,7 @@
 //! Invariants: none beyond the types.
 
 use super::*;
+use crate::glm5next_layer_dump::tap as dump;
 
 mod drafter;
 mod forward;
@@ -22,6 +23,54 @@ mod replay;
 mod verify_multi;
 
 impl Glm5NextLayer {
+    /// 2026-10-13: This layer as the layer dump sees it (`glm5next_layer_dump`); `topk` when the
+    /// launch's rows own the DSA selection output (not a multi-piece mixer call).
+    pub(in crate::glm5next_layer) fn dump_layer(
+        &self,
+        mhc: &Glm5NextMhc,
+        topk: bool,
+    ) -> dump::Layer {
+        let topk = match (&self.mixer, topk) {
+            (Glm5NextMixer::Dsa(l), true) => {
+                Some((l.workspace.selection_tokens(), l.cfg.out_width()))
+            }
+            _ => None,
+        };
+        dump::Layer {
+            idx: self.layer_idx,
+            hidden: self.hidden,
+            hc: mhc.hc_mult,
+            topk,
+        }
+    }
+
+    /// 2026-10-13: The summed mixer output after the attention site's post-mix, when the layer
+    /// all-reduces it: the reduce sums in place, and the fused post-mix writes the sum back.
+    pub(in crate::glm5next_layer) fn dump_mixer_red(
+        &self,
+        tap: Option<&dump::Tap<'_>>,
+        attn_out: DevicePtr,
+    ) -> Result<()> {
+        if !self.mixer_all_reduce {
+            return Ok(());
+        }
+        dump::put(tap, dump::Point::MixerRed, attn_out)
+    }
+
+    /// 2026-10-13: After the FFN site's post-mix: the summed MLP output (when the MLP reduces)
+    /// and the layer's output streams.
+    pub(in crate::glm5next_layer) fn dump_layer_out(
+        &self,
+        tap: Option<&dump::Tap<'_>>,
+        ffn_out: DevicePtr,
+        streams: DevicePtr,
+    ) -> Result<()> {
+        if self.mlp_cfg.needs_all_reduce() {
+            dump::put(tap, dump::Point::MlpRed, ffn_out)?;
+        }
+        dump::put(tap, dump::Point::StreamsOut, streams)
+    }
+
     /// 2026-09-25: `rms_norm_vanilla` over `rows` contiguous `[hidden]` rows in one launch. The
     /// kernel runs one block per row (`token = blockIdx.x`) and the blocks share nothing, so the
     /// result equals `rows` single-row launches.
@@ -227,6 +276,7 @@ impl Glm5NextLayer {
     /// (`reduce_pieces`).
     /// 2026-10-10: `fused` hands the all-reduce's sum to the caller's post-mix
     /// ([`Self::reduce_or_exchange`]); the returned partials are then `Some`.
+    /// 2026-10-13: `tap` dumps `out` between the MLP and the reduce (`glm5next_layer_dump`).
     #[allow(clippy::too_many_arguments)]
     fn mlp_forward(
         &self,
@@ -237,8 +287,10 @@ impl Glm5NextLayer {
         fused: bool,
         ctx: &ForwardContext,
         stream: u64,
+        tap: Option<&dump::Tap<'_>>,
     ) -> Result<Option<metrale_comm::PeerPartials>> {
         self.mlp_compute(normed, out, rows, row_pieces, ctx, stream)?;
+        dump::put(tap, dump::Point::MlpOut, out)?;
         // 2026-09-25: One all-reduce covers both partial sums, the EP-split routed experts and
         // the TP-split shared expert: `forward_moe` adds them together before returning.
         let mut partials = None;
@@ -379,7 +431,7 @@ impl Glm5NextLayer {
 
         self.norm(gpu, hidden, self.post_attn_norm, normed, 1, stream)?;
         // 2026-10-10: No post-mix here to take the sum, so the all-reduce stays whole.
-        self.mlp_forward(normed, ffn_out, 1, &[1], false, ctx, stream)?;
+        self.mlp_forward(normed, ffn_out, 1, &[1], false, ctx, stream, None)?;
         self.add_inplace(gpu, hidden, ffn_out, h, stream)
     }
 

@@ -20,6 +20,7 @@ pub mod glm5next_fp8_wide;
 pub mod glm5next_kda;
 pub mod glm5next_kda_ref;
 pub mod glm5next_layer;
+pub mod glm5next_layer_dump;
 pub mod glm5next_mhc;
 pub mod glm5next_mhc_fused;
 pub mod glm5next_mhc_post_fold;

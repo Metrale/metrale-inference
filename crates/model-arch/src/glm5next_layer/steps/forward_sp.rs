@@ -44,6 +44,8 @@ impl Glm5NextLayer {
 
     /// 2026-10-12: `forward_rows_with` with the mHC work on this rank's rows (see the module
     /// header). `mixer(normed)` runs the attention sublayer on all `k` normed rows.
+    /// 2026-10-13: `tap` dumps each point after the section that completes it; the summed mixer
+    /// output inside its section, before the pre-norm overwrites a DSA output.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::glm5next_layer) fn forward_rows_sp(
         &self,
@@ -53,6 +55,7 @@ impl Glm5NextLayer {
         slot_base: usize,
         ctx: &ForwardContext,
         stream: u64,
+        tap: Option<&dump::Tap<'_>>,
         mixer: impl FnOnce(DevicePtr) -> Result<DevicePtr>,
     ) -> Result<()> {
         use crate::glm5next_sp_mhc as sp;
@@ -113,6 +116,9 @@ impl Glm5NextLayer {
         {
             l2.reset();
         }
+        if self.is_first {
+            dump::put(tap, dump::Point::HiddenIn, hidden)?;
+        }
         ov::run_section(
             gpu,
             comm,
@@ -151,10 +157,13 @@ impl Glm5NextLayer {
                 )
             },
         )?;
+        dump::site(tap, false, [streams, post, comb, normed])?;
 
         let t = profile::start();
         let attn_out = mixer(normed)?;
         profile::end(profile::KDA, t, gpu, stream);
+        dump::put(tap, dump::Point::MixerOut, attn_out)?;
+        dump::topk(tap)?;
 
         ov::run_section(
             gpu,
@@ -185,6 +194,9 @@ impl Glm5NextLayer {
                     stream,
                 )?;
                 profile::end(profile::MHC_POST, t_mhc_post, gpu, stream);
+                if let Some(t) = tap {
+                    t.put_rows(dump::Point::MixerRed, attn_out, a..b)?;
+                }
                 let t_mhc = profile::start();
                 self.mhc_pre_norm(
                     gpu,
@@ -203,7 +215,9 @@ impl Glm5NextLayer {
             },
         )?;
 
+        dump::site(tap, true, [streams, post, comb, normed])?;
         self.mlp_compute(normed, ffn_out, k, &[k], ctx, stream)?;
+        dump::put(tap, dump::Point::MlpOut, ffn_out)?;
         let reduce = self.mlp_cfg.needs_all_reduce();
         ov::run_section(
             gpu,
@@ -256,6 +270,10 @@ impl Glm5NextLayer {
                 Ok(())
             },
         )?;
+        self.dump_layer_out(tap, ffn_out, streams)?;
+        if self.is_last {
+            dump::put(tap, dump::Point::FinalHidden, hidden)?;
+        }
         if self.is_last {
             if let Some(l2) = &self.l2_warm {
                 l2.join(gpu, stream)?;
