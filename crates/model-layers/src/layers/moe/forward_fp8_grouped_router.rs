@@ -135,6 +135,20 @@ impl MoeLayer {
                 );
             }
         }
+        if self.moe_topk_softmax_rows_warp_k.0 != 0 {
+            return ops::moe_topk_softmax_rows_warp(
+                ctx.gpu,
+                self.moe_topk_softmax_rows_warp_k,
+                gate_logits,
+                indices_dev,
+                weights_dev,
+                num_experts,
+                top_k,
+                ctx.config.norm_topk_prob,
+                n,
+                stream,
+            );
+        }
         ops::moe_topk_softmax_batched(
             ctx.gpu,
             self.moe_topk_softmax_rows_k,

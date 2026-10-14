@@ -130,6 +130,9 @@ mod moe_expert_more;
 mod moe_gate;
 #[path = "ops/moe_grouped_a.rs"]
 mod moe_grouped_a;
+#[cfg(test)]
+#[path = "ops/moe_topk_warp_tests.rs"]
+mod moe_topk_warp_tests;
 #[path = "ops/moe_grouped_a2.rs"]
 mod moe_grouped_a2;
 #[path = "ops/moe_grouped_b.rs"]

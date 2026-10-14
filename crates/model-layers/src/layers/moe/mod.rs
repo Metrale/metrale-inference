@@ -242,6 +242,9 @@ pub struct MoeLayer {
     // `dense_gemv_bf16_batchm`; 0 on targets that do not ship them. 2026-10-13: The
     // batched GEMV also runs a BF16 shared expert's rows (`run_bf16_shared_expert`).
     moe_topk_softmax_rows_k: KernelHandle,
+    // 2026-10-14: `moe_topk_softmax_rows_warp`, the same bytes from one warp per row; 0
+    // where the target lacks it or `METRALE_TOPK_WARP=0`, and then the block kernel runs.
+    moe_topk_softmax_rows_warp_k: KernelHandle,
     dense_gemv_batchm_k: KernelHandle,
     // 2026-09-27: The grouped NVFP4 decode's expert kernels (NVFP4 `--expert-quantization`
     // tiers); 0 on

@@ -45,6 +45,8 @@ pub(super) struct GroupedKernels {
     pub blend: KernelHandle,
     pub sort: KernelHandle,
     pub topk_rows: KernelHandle,
+    /// 2026-10-14: `moe_topk_softmax_rows_warp`; zero with `METRALE_TOPK_WARP=0`.
+    pub topk_rows_warp: KernelHandle,
     pub router_gemv: KernelHandle,
 }
 
@@ -64,9 +66,20 @@ impl GroupedKernels {
             ),
             sort: try_kernel(gpu, "moe_fp8_grouped_sort", "moe_fp8_grouped_sort"),
             topk_rows: try_kernel(gpu, "moe_topk", "moe_topk_softmax_rows"),
+            topk_rows_warp: if topk_warp_disabled() {
+                KernelHandle(0)
+            } else {
+                try_kernel(gpu, "moe_topk", "moe_topk_softmax_rows_warp")
+            },
             router_gemv: try_kernel(gpu, "dense_gemv_bf16_batchm", "dense_gemv_bf16_batchm"),
         }
     }
+}
+
+/// 2026-10-14: `METRALE_TOPK_WARP` equal to `"0"`, read once per process.
+fn topk_warp_disabled() -> bool {
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *OFF.get_or_init(|| std::env::var("METRALE_TOPK_WARP").as_deref() == Ok("0"))
 }
 
 /// 2026-09-25: `METRALE_NO_FP8_MOE_GROUPED_DECODE`, set to any value, turns this

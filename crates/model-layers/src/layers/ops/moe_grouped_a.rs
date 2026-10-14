@@ -25,7 +25,10 @@ use super::*;
 #[path = "moe_grouped_a/topk.rs"]
 mod topk;
 // 2026-09-25: Re-exported so the routers are reached as `ops::moe_topk_*`.
-pub use topk::{moe_topk_sigmoid_batched, moe_topk_softmax_batched, moe_topk_sqrtsoftplus_batched};
+pub use topk::{
+    moe_topk_sigmoid_batched, moe_topk_softmax_batched, moe_topk_softmax_rows_warp,
+    moe_topk_sqrtsoftplus_batched,
+};
 // 2026-09-30: The fused gate+up grouped GEMMs, split out to keep this file under the size cap.
 #[path = "moe_grouped_a/fused_gate_up.rs"]
 mod fused_gate_up;

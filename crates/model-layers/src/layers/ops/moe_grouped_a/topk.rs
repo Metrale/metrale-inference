@@ -43,6 +43,37 @@ pub fn moe_topk_softmax_batched(
         .launch(stream)
 }
 
+/// 2026-10-14: Rows per block of `moe_topk_softmax_rows_warp` (its WARP_ROWS), one warp each.
+pub const MOE_TOPK_WARP_ROWS: u32 = 4;
+
+/// 2026-10-14: `moe_topk_softmax_rows` for `num_tokens` tokens from `moe_topk_softmax_rows_warp`:
+/// the same bytes, one warp per row, no block barrier.
+#[allow(clippy::too_many_arguments)]
+pub fn moe_topk_softmax_rows_warp(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    gate_logits: DevicePtr,
+    expert_indices: DevicePtr,
+    expert_weights: DevicePtr,
+    num_experts: u32,
+    top_k: u32,
+    normalize: bool,
+    num_tokens: u32,
+    stream: u64,
+) -> Result<()> {
+    KernelLaunch::new(gpu, kernel)
+        .grid([num_tokens.div_ceil(MOE_TOPK_WARP_ROWS), 1, 1])
+        .block([MOE_TOPK_WARP_ROWS * 32, 1, 1])
+        .arg_ptr(gate_logits)
+        .arg_ptr(expert_indices)
+        .arg_ptr(expert_weights)
+        .arg_u32(num_experts)
+        .arg_u32(top_k)
+        .arg_u32(if normalize { 1 } else { 0 })
+        .arg_u32(num_tokens)
+        .launch(stream)
+}
+
 /// 2026-09-25: The sigmoid router with a selection-only bias for `num_tokens` tokens.
 #[allow(clippy::too_many_arguments)]
 pub fn moe_topk_sigmoid_batched(

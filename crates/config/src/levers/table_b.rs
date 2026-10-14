@@ -355,6 +355,7 @@ pub(super) const LEVERS: &[LeverSpec] = &[
     lever!("METRALE_TOOL_EOS_ESCAPE", "sampling.tool_eos_escape", Text, "unset", None, Runtime, "crates/server/src/scheduler/levers.rs", "`METRALE_TOOL_EOS_ESCAPE=0`/`false` disables."),
     lever!("METRALE_TOOL_RESPONSE_STOP", "sampling.tool_response_stop", Text, "unset", None, Runtime, "crates/server/src/scheduler/levers.rs", "Ships ON; `METRALE_TOOL_RESPONSE_STOP=0`/`false` disables."),
     lever!("METRALE_TOOL_SHORT_TRIGGER", "scheduler.tool_short_trigger", Switch, "off", None, Runtime, "crates/server/src/grammar/compile_tools.rs", "Read once per call from `METRALE_TOOL_SHORT_TRIGGER`; OFF unless exactly `\"1\"`. `1` turns it on."),
+    lever!("METRALE_TOPK_WARP", "kernels.topk_warp", Switch, "on", None, Runtime, "crates/model-layers/src/layers/moe/forward_fp8_grouped_decode.rs", "Kill switch for `moe_topk_softmax_rows_warp`, the warp-per-row exact MoE router (byte-identical to `moe_topk_softmax_rows`). `0` turns it off (the block kernel runs instead)."),
     lever!("METRALE_TUI_LOG_FILE", "harness.tui_log_file", Path, "unset", None, Harness, "crates/server/src/tui/init.rs", "Where the dashboard tees its log."),
     lever!("METRALE_UNIFIED_MOE_LAYOUT", "kernels.unified_moe_layout", Text, "unset", None, Runtime, "crates/model-arch/src/weight_loader/laguna/load_layers.rs", "Read in `crates/model-arch/src/weight_loader/laguna/load_layers.rs`."),
     lever!("METRALE_URL", "tool.url", Text, "unset", None, Tool, "bench/agentic/coherence_check.py", "Chat-completions URL the bench scripts call."),
