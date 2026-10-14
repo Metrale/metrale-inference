@@ -1781,3 +1781,27 @@ effort_hours = 4.0
 transferability = "any unified-memory part (GB10, GH200 C2C staging) where the NIC path stages through the same DRAM the kernels stream"
 links = { pr = "", commit = "9489350d9", evidence = "/workspace/claude-state/glm/comm/{bench_CMC-w1.txt,bench_CMX-w1.txt,bits_CM*-w1.json,sweep_w1.txt}" }
 notes = "Remaining comm ideas: fewer bytes per exchange (FP8 SP gather, which vLLM runs: class N, below declared) and fewer exchanges (merge layer L's tail reduce-scatter with layer L+1's head all-gather: ~180 ms by the comm worker's arithmetic, but the exchanges are bandwidth-bound, so a merge saves only per-call fixed cost). GDR (nvidia-peermem) is an owner question."
+
+[[lever]]
+id = "gb10x3-glm53-mtp-max-seqs-16"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "--mtp-max-seqs 16 vs the recipe's 8 (MTP drafting at C12/C16), M1L recipe, binary 331872ec1"
+symptom = "C12/C16 decode run without MTP under cap 8; MTP was 1.6 tok/step at C1-C8, so extending it to C12/C16 looked free"
+diagnosis_tool = "ladder (ISL 128 / OSL 1024, NVML energy on all 3 boxes) + mtp_rungs.py per-rung counters"
+root_cause_class = "compute"
+lever_type = "scheduling"
+lkb_effect = "none kept"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C12", tok_s_pct = -16.7, j_tok_pct = 17.0, n = 1 }, { rung = "C16", tok_s_pct = -17.4, j_tok_pct = 17.6, n = 1 }, { rung = "C8", tok_s_pct = 0.7, j_tok_pct = 1.1, n = 1 }]
+verdict = "discarded"
+verdict_reason = "MX16 (cap 16) vs M1L (cap 8): C12 103.77 vs 124.55 tok/s (1.088 vs 0.930 J/tok), C16 114.86 vs 139.13 (0.988 vs 0.840). Every rung drafted (mtp share 0.96, p1 0.607-0.638, ~1.61-1.64 tok/step), so the cap moved and MTP still lost: at width 12+ a 2-row verify costs more than the 1.6x token yield buys. C1-C8 identical config, within noise. --mtp-max-seqs 8 is now a measured recipe value; the C8 crossover (cap 4) is measured in LD2"
+failure_mode = "assuming acceptance rate alone decides MTP at width; the verify step's cost grows with rows x width"
+caught_by = "the MX16 A/B arm"
+time_lost_hours = 0.5
+would_catch_earlier = "bracket the cap at the widest MTP rung before declaring it"
+effort_hours = 0.5
+transferability = "any MoE + MTP serve on a bandwidth-bound part: re-measure the cap per width, not per acceptance rate"
+links = { pr = "", commit = "331872ec1", evidence = "/workspace/claude-state/glm/logs/{runR3_1014T1149.log,chainK_kinv-1014T1152.log}, /workspace/claude-state/glm/ladders/bring-up-K65536-kinv-1014T1152-lad-1791979181.json" }
+notes = "The C1 step breakdown (decode worker, w2 nsys): 38.9 ms/step = verify 34 ms kernel-busy (MoE W4A4 union sweep 14.7 ms) + MTP draft graph 3.0 + host gap 1.6 + comm 2.2."
