@@ -79,3 +79,47 @@ pub(crate) fn merge_extra_flags(
     }
     out
 }
+
+/// 2026-10-14: The value a `-D<name>=<value>` in `flags` gives `name`; a bare
+/// `-D<name>` reads as `"1"`, and the last definition wins, as on the
+/// compiler's command line. `None` when no flag defines `name`.
+pub(crate) fn define_value<'a>(flags: &'a [String], name: &str) -> Option<&'a str> {
+    flags.iter().rev().find_map(|f| {
+        let rest = f.strip_prefix("-D")?.strip_prefix(name)?;
+        if rest.is_empty() {
+            Some("1")
+        } else {
+            rest.strip_prefix('=')
+        }
+    })
+}
+
+/// 2026-10-14: The R that `-DMETRALE_BATCHM_DIRECT_R=<R>` compiled the
+/// `dense_gemv_bf16_batchm_r<R>_m<M>` entries with, read from the flags each
+/// target was built with (one slice per target). `None` when no target
+/// defines it.
+///
+/// Panics when R is not a positive integer, or when two targets of one build
+/// disagree: the binary carries one constant, so it must name the one set the
+/// kernels were compiled with.
+pub(crate) fn batchm_direct_r(per_target: &[&[String]]) -> Option<u32> {
+    const NAME: &str = "METRALE_BATCHM_DIRECT_R";
+    let mut found: Option<u32> = None;
+    for (i, flags) in per_target.iter().enumerate() {
+        let r = define_value(flags, NAME).map(|v| {
+            v.parse::<u32>()
+                .ok()
+                .filter(|&r| r > 0)
+                .unwrap_or_else(|| panic!("-D{NAME}={v}: R must be a positive integer"))
+        });
+        if i == 0 {
+            found = r;
+        } else {
+            assert_eq!(
+                r, found,
+                "-D{NAME} differs between the targets of one build ({r:?} vs {found:?})"
+            );
+        }
+    }
+    found
+}

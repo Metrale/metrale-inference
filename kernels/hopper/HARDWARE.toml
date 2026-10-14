@@ -43,8 +43,9 @@ memory_gb = 80
 #
 # 2026-10-14: METRALE_BATCHM_DIRECT_R=2 compiles the direct-schedule
 # `dense_gemv_bf16_batchm_r2_m<M>` entries (two outputs per 64-lane group,
-# compile-time M) that the batched GDN projections prefer; the host reads R
-# from the entry names. Each row keeps the bits of `dense_gemv_bf16`.
+# compile-time M) that the batched GDN projections prefer. build.rs bakes R
+# into `metrale_kernels::TARGET_BATCHM_DIRECT_R` and the host looks up exactly
+# those entries. Each row keeps the bits of `dense_gemv_bf16`.
 
 
 

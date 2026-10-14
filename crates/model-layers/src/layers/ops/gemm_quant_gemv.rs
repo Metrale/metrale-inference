@@ -133,8 +133,9 @@ pub fn dense_gemv_batchm(
 /// `dense_gemv_bf16_batchm_r<R>_m<M>(A, B, C, N, K, out_stride)` for every M in
 /// `2..=DENSE_GEMV_BATCHM_MAX_M`, compiled only where the target defines
 /// `METRALE_BATCHM_DIRECT_R`. Each row keeps the bits of `dense_gemv_bf16`, as
-/// in [`dense_gemv_batchm`]; R (outputs per 64-lane group) is read from the
-/// entry names, so the build flag is its only source.
+/// in [`dense_gemv_batchm`]. R (outputs per 64-lane group) is
+/// `metrale_kernels::TARGET_BATCHM_DIRECT_R`, which build.rs bakes from that
+/// same flag, so the build flag is its only source.
 #[derive(Debug, Clone)]
 pub struct DenseGemvBatchmDirect {
     outputs_per_group: u32,
@@ -143,24 +144,34 @@ pub struct DenseGemvBatchmDirect {
 }
 
 impl DenseGemvBatchmDirect {
-    /// 2026-10-14: The widest R whose full M set is loaded, or `None` when
-    /// the target compiles no direct entries.
+    /// 2026-10-14: The entries of the compiled R, or `None` when the build
+    /// compiled none (no lookup is made then).
+    ///
+    /// Only the compiled set is looked up, so no lookup is expected to fail; a
+    /// missing entry of that set is a broken build, recorded by the kernel
+    /// audit and refused by the boot's kernel gate. (2026-10-14: an earlier
+    /// version probed R = 4, 2, 1 and so recorded a failed R = 4 lookup on
+    /// every target that compiles R = 2, which the gate refused.)
     pub fn load(gpu: &dyn GpuBackend) -> Option<Self> {
-        [4u32, 2, 1].into_iter().find_map(|r| {
-            let by_m = (2..=DENSE_GEMV_BATCHM_MAX_M)
-                .map(|m| {
-                    let h = crate::layers::try_kernel(
-                        gpu,
-                        "dense_gemv_bf16_batchm",
-                        &format!("dense_gemv_bf16_batchm_r{r}_m{m}"),
-                    );
-                    (h.0 != 0).then_some(h)
-                })
-                .collect::<Option<Vec<_>>>()?;
-            Some(Self {
-                outputs_per_group: r,
-                by_m,
+        Self::load_compiled(gpu, metrale_kernels::TARGET_BATCHM_DIRECT_R)
+    }
+
+    /// 2026-10-14: [`Self::load`] for the compiled R `compiled`.
+    pub(crate) fn load_compiled(gpu: &dyn GpuBackend, compiled: Option<u32>) -> Option<Self> {
+        let r = compiled?;
+        let by_m = (2..=DENSE_GEMV_BATCHM_MAX_M)
+            .map(|m| {
+                let h = crate::layers::try_kernel(
+                    gpu,
+                    "dense_gemv_bf16_batchm",
+                    &format!("dense_gemv_bf16_batchm_r{r}_m{m}"),
+                );
+                (h.0 != 0).then_some(h)
             })
+            .collect::<Option<Vec<_>>>()?;
+        Some(Self {
+            outputs_per_group: r,
+            by_m,
         })
     }
 }
@@ -262,3 +273,7 @@ pub fn dense_gemv_fp8w(
 #[cfg(test)]
 #[path = "gemm_quant_gemv_tests.rs"]
 mod gemm_quant_gemv_tests;
+
+#[cfg(test)]
+#[path = "gemm_quant_gemv_load_tests.rs"]
+mod gemm_quant_gemv_load_tests;
