@@ -107,6 +107,19 @@ pub fn ple_shard_layout(snapshot: &str) -> Result<(Vec<(std::path::PathBuf, u64)
 
 pub struct Qwen4ExpWeightLoader;
 
+/// 2026-09-25: GDN layers are built with BF16 projections (`build_linear_attention_dense_bf16`)
+/// unless `METRALE_QWEN4EXP_BF16_GDN=0`, which requantizes them to NVFP4.
+fn bf16_gdn() -> bool {
+    std::env::var("METRALE_QWEN4EXP_BF16_GDN").as_deref() != Ok("0")
+}
+
+/// 2026-10-13: Full-attention Q/K/V/O likewise run BF16 as the checkpoint ships them (only the
+/// routed experts are NVFP4 there) unless `METRALE_QWEN4EXP_BF16_ATTN=0`, which requantizes them
+/// to NVFP4 (`build_full_attention_nvfp4`).
+fn bf16_attn() -> bool {
+    std::env::var("METRALE_QWEN4EXP_BF16_ATTN").as_deref() != Ok("0")
+}
+
 impl ModelWeightLoader for Qwen4ExpWeightLoader {
     fn supports_tp(&self) -> bool {
         false
@@ -181,14 +194,7 @@ impl ModelWeightLoader for Qwen4ExpWeightLoader {
         // 2026-09-25: With `METRALE_QWEN4EXP_NO_PLE=1`, `ple::load` is not
         // called, so no row cache is opened.
         let ple_off = std::env::var("METRALE_QWEN4EXP_NO_PLE").as_deref() == Ok("1");
-        // 2026-09-25: GDN layers are built with BF16 projections
-        // (`build_linear_attention_dense_bf16`) unless
-        // `METRALE_QWEN4EXP_BF16_GDN=0`, which requantizes them to NVFP4.
-        let bf16_gdn = std::env::var("METRALE_QWEN4EXP_BF16_GDN").as_deref() != Ok("0");
-        // 2026-10-13: Full-attention Q/K/V/O likewise run BF16 as the checkpoint ships them
-        // (only the routed experts are NVFP4 there) unless `METRALE_QWEN4EXP_BF16_ATTN=0`,
-        // which requantizes them to NVFP4 (`build_full_attention_nvfp4`).
-        let bf16_attn = std::env::var("METRALE_QWEN4EXP_BF16_ATTN").as_deref() != Ok("0");
+        let (bf16_gdn, bf16_attn) = (bf16_gdn(), bf16_attn());
         tracing::info!(
             "Full-attention Q/K/V/O: {}",
             if bf16_attn {
@@ -388,6 +394,14 @@ impl ModelWeightLoader for Qwen4ExpWeightLoader {
             "qwen4_exp: no lm_head.weight and tie_word_embeddings is false"
         );
         dense(store, &embed_name(config)).context("qwen4_exp: tied lm_head")
+    }
+
+    /// 2026-10-14: True while both projection families stay BF16. The two tensors converted and
+    /// freed then, `in_proj_qkv` (50 MiB) and `in_proj_z` (30 MiB), are above the slab cap.
+    /// `METRALE_QWEN4EXP_BF16_ATTN=0` converts `k_proj`/`v_proj` (2.5 MiB each), below it, and
+    /// `METRALE_QWEN4EXP_BF16_GDN=0` converts GDN projections this rule has not audited.
+    fn keeps_small_bf16(&self, _config: &ModelConfig) -> bool {
+        bf16_gdn() && bf16_attn()
     }
 
     /// 2026-10-13: Same bind rule as the Qwen3.5 tower it delegates to.

@@ -36,20 +36,37 @@ fn shard() -> Vec<TensorMeta> {
 #[test]
 fn bf16_and_large_tensors_keep_their_own_allocation() {
     let t = shard();
-    let got: Vec<bool> = t.iter().map(slab_eligible).collect();
+    let got: Vec<bool> = t.iter().map(|m| slab_eligible(m, false)).collect();
     assert_eq!(got, [true, false, true, true, false]);
-    assert!(slab_eligible(&meta(
-        "x",
-        WeightDtype::UInt8,
-        SLAB_MAX_TENSOR_BYTES - 1
-    )));
+    assert!(slab_eligible(
+        &meta("x", WeightDtype::UInt8, SLAB_MAX_TENSOR_BYTES - 1),
+        false
+    ));
+}
+
+#[test]
+fn slab_bf16_admits_small_bf16_but_never_a_tensor_at_the_cap() {
+    // 2026-10-14: With the model's opt-in the small BF16 projection joins; the cap still holds
+    // for every dtype.
+    let t = shard();
+    let got: Vec<bool> = t.iter().map(|m| slab_eligible(m, true)).collect();
+    assert_eq!(got, [true, true, true, true, false]);
+    let bf16 = |len| meta("w", WeightDtype::BF16, len);
+    assert!(!slab_eligible(&bf16(SLAB_MAX_TENSOR_BYTES), true));
+    assert!(slab_eligible(&bf16(SLAB_MAX_TENSOR_BYTES - 1), true));
+    let gpu = MockGpuBackend::new();
+    let ptrs = alloc_shard_slab(&gpu, &t, true);
+    assert!(ptrs[..4].iter().all(Option::is_some) && ptrs[4].is_none());
+    assert_eq!(gpu.alloc_count(), 4);
+    let (a, b) = (ptrs[0].unwrap(), ptrs[1].unwrap());
+    assert!(a.0 + 819_200 <= b.0, "the BF16 member overlaps the first");
 }
 
 #[test]
 fn eligible_tensors_get_distinct_pointers_in_order_and_others_none() {
     let gpu = MockGpuBackend::new();
     let t = shard();
-    let ptrs = alloc_shard_slab(&gpu, &t);
+    let ptrs = alloc_shard_slab(&gpu, &t, false);
     assert_eq!(ptrs.len(), t.len());
     assert!(ptrs[1].is_none() && ptrs[4].is_none());
     let (a, b, c) = (ptrs[0].unwrap(), ptrs[2].unwrap(), ptrs[3].unwrap());
@@ -68,7 +85,7 @@ fn a_failed_slab_falls_back_to_per_tensor_without_leaking() {
         meta("s", WeightDtype::FP8E4M3, 102_400),
         meta("w", WeightDtype::UInt8, 819_200),
     ];
-    let ptrs = alloc_shard_slab(&gpu, &t);
+    let ptrs = alloc_shard_slab(&gpu, &t, false);
     assert!(ptrs.iter().all(Option::is_none));
     assert_eq!(
         gpu.alloc_count(),
@@ -81,7 +98,7 @@ fn a_failed_slab_falls_back_to_per_tensor_without_leaking() {
 #[test]
 fn a_shard_with_nothing_eligible_allocates_nothing() {
     let gpu = MockGpuBackend::new();
-    let ptrs = alloc_shard_slab(&gpu, &[meta("q", WeightDtype::BF16, 4096)]);
+    let ptrs = alloc_shard_slab(&gpu, &[meta("q", WeightDtype::BF16, 4096)], false);
     assert_eq!(ptrs, [None]);
     assert_eq!(gpu.alloc_count(), 0);
 }

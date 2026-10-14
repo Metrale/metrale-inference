@@ -12,6 +12,11 @@
 //! requantized or transposed at bind) would strand its bytes; those, and anything at or above
 //! [`SLAB_MAX_TENSOR_BYTES`] (where rounding is a few percent at most), keep their own
 //! allocation.
+//!
+//! 2026-10-14: A model whose loader keeps its small BF16 tensors as loaded opts them in
+//! (`FastSafetensorsLoader::slab_bf16`). Qwen3.8-Flash-Next keeps 994 BF16 tensors resident
+//! (hyper-connection mixes, shared experts, routers, k/v projections, indexer projections); 686
+//! of them are 2-16 MiB, and the driver's 2 MiB granule rounds them up by 587 MiB in all.
 
 use super::header::TensorMeta;
 use crate::weights::WeightDtype;
@@ -22,9 +27,10 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 pub(super) const SLAB_MAX_TENSOR_BYTES: usize = 16 << 20;
 
 /// 2026-10-13: Whether a tensor goes in its shard's slab: smaller than the cap, and not BF16
-/// (the dtype model loaders rewrite at bind and free).
-pub(super) fn slab_eligible(meta: &TensorMeta) -> bool {
-    meta.len < SLAB_MAX_TENSOR_BYTES && meta.dtype != WeightDtype::BF16
+/// (the dtype model loaders rewrite at bind and free) unless `slab_bf16` says the model's loader
+/// keeps its BF16 tensors as loaded (2026-10-14).
+pub(super) fn slab_eligible(meta: &TensorMeta, slab_bf16: bool) -> bool {
+    meta.len < SLAB_MAX_TENSOR_BYTES && (slab_bf16 || meta.dtype != WeightDtype::BF16)
 }
 
 /// 2026-10-13: A device pointer for every slab-eligible tensor of `tensors` (same order;
@@ -34,9 +40,10 @@ pub(super) fn slab_eligible(meta: &TensorMeta) -> bool {
 pub(super) fn alloc_shard_slab(
     gpu: &dyn GpuBackend,
     tensors: &[TensorMeta],
+    slab_bf16: bool,
 ) -> Vec<Option<DevicePtr>> {
     let picked: Vec<usize> = (0..tensors.len())
-        .filter(|&i| slab_eligible(&tensors[i]))
+        .filter(|&i| slab_eligible(&tensors[i], slab_bf16))
         .collect();
     let mut out = vec![None; tensors.len()];
     if picked.is_empty() {

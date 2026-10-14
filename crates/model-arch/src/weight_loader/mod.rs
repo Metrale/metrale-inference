@@ -315,6 +315,14 @@ pub trait ModelWeightLoader {
         true
     }
 
+    /// 2026-10-14: Does this loader keep every BF16 tensor below the checkpoint loader's slab
+    /// cap as loaded, never converting and freeing one at bind? On `true` those tensors share
+    /// their shard's slab (`FastSafetensorsLoader::slab_bf16`), where a freed member's bytes
+    /// would return only with the whole slab. Default `false`: each keeps its own allocation.
+    fn keeps_small_bf16(&self, _config: &ModelConfig) -> bool {
+        false
+    }
+
     /// 2026-10-02: Does this loader read the serve's MoE expert-table decision
     /// (`metrale_model_layers::layers::MoeExpertTables`)? The serve plans and publishes it before
     /// load only for a loader that does.

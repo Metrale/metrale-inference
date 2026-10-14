@@ -77,6 +77,7 @@ pub(crate) fn fast_loader(
         );
     }
     loader.defer = defer_hook(config);
+    loader.slab_bf16 = slab_bf16(config);
     loader
 }
 
@@ -430,6 +431,24 @@ fn skip_activation_scales(config: &ModelConfig) -> bool {
 /// `Qwen4ExpWeightLoader::load_mtp_weights` returns `None`.
 fn skip_mtp(config: &ModelConfig) -> bool {
     matches!(config.model_type.as_str(), "qwen4_exp")
+}
+
+/// 2026-10-14: Whether small BF16 tensors share the shard slab (`FastSafetensorsLoader::
+/// slab_bf16`): when the model's weight loader declares it keeps them as loaded
+/// (`keeps_small_bf16`); `false` when the model type does not resolve. Saves 587 MiB of 2 MiB-
+/// granule rounding on Qwen3.8-Flash-Next. `METRALE_SLAB_BF16=0` keeps one allocation per BF16
+/// tensor.
+fn slab_bf16(config: &ModelConfig) -> bool {
+    let on = metrale_model_engine::factory::loader_for_config(config)
+        .is_ok_and(|l| l.keeps_small_bf16(config))
+        && std::env::var("METRALE_SLAB_BF16").as_deref() != Ok("0");
+    if on {
+        tracing::info!(
+            "Weight slab: BF16 tensors below the slab cap share their shard's allocation \
+             (METRALE_SLAB_BF16=0 gives each its own)."
+        );
+    }
+    on
 }
 
 /// 2026-09-26: Whether the model's weight loader binds a vision encoder;

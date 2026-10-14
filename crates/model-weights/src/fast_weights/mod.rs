@@ -95,6 +95,11 @@ pub struct FastSafetensorsLoader {
     /// model that does not opt in. See [`crate::weights::DeferHook`] for the
     /// contract — including the half that says the pre-flight must agree.
     pub defer: Option<crate::weights::DeferHook>,
+    /// 2026-10-14: Put BF16 tensors below the slab cap in the shard slab too (`slab.rs`). Set by
+    /// the caller only for a model whose loader keeps every such tensor as loaded: a slab's
+    /// bytes return only with its last member, so a tensor converted and freed at bind would
+    /// strand them.
+    pub slab_bf16: bool,
 }
 
 /// Is this tensor part of a multimodal checkpoint's vision tower?
@@ -136,6 +141,7 @@ impl FastSafetensorsLoader {
             prefetch_shards: false,
             skip_vision: false,
             defer: None,
+            slab_bf16: false,
         }
     }
 
@@ -152,6 +158,7 @@ impl FastSafetensorsLoader {
             prefetch_shards: false,
             skip_vision: false,
             defer: None,
+            slab_bf16: false,
         }
     }
 }
@@ -175,6 +182,7 @@ fn load_shard_fast(
     try_direct_io: bool,
     direct_io_tensor_cap: usize,
     prefetch_shards: bool,
+    slab_bf16: bool,
     out: &mut HashMap<String, WeightTensor>,
     deferred_out: &mut HashMap<String, crate::weights::DeferredTensor>,
     offload_logged: &mut bool,
@@ -308,7 +316,7 @@ fn load_shard_fast(
 
     // Copier: drains the channel, does gpu alloc + copy_h2d, inserts into the map.
     // 2026-10-13: Small quantized tensors share one allocation per shard (`slab.rs`).
-    let slab_ptrs = slab::alloc_shard_slab(gpu, &tensors);
+    let slab_ptrs = slab::alloc_shard_slab(gpu, &tensors, slab_bf16);
     for result in rx {
         let (idx, buf, slice_start) = result?;
         let meta = &tensors[idx];
