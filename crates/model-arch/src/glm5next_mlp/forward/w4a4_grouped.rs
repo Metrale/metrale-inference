@@ -275,18 +275,7 @@ pub(super) fn w4a4_grouped_experts_with(
     );
     let gu = fused.then(|| GuPlan::new(site, ti, k_store)).transpose()?;
     let t = profile::start();
-    KernelLaunch::new(gpu, k.moe_sort_by_expert)
-        .grid([1, 1, 1])
-        .block([BLOCK, 1, 1])
-        .arg_ptr(ws.ids)
-        .arg_ptr(ws.sorted_token_ids())
-        .arg_ptr(ws.sorted_expert_ids())
-        .arg_ptr(ws.expert_offsets())
-        .arg_ptr(ws.token_to_perm())
-        .arg_u32(slots as u32)
-        .arg_u32(cfg.num_experts as u32)
-        .arg_u32(cfg.top_k as u32)
-        .launch(stream)?;
+    super::sort::sort_by_expert(gpu, k, cfg, ws, slots, stream)?;
     KernelLaunch::new(gpu, k.w4a4_grouped.tiles)
         .grid([1, 1, 1])
         .block([32, 1, 1])

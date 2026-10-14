@@ -100,6 +100,14 @@ pub(crate) fn moe_combine_vec8() -> bool {
     *E.get_or_init(|| std::env::var("METRALE_GLM_MOE_COMBINE_VEC8").as_deref() == Ok("1"))
 }
 
+/// 2026-10-14: `METRALE_GLM_MOE_SORT_MULTIBLOCK=1` sorts the grouped W4A4 path's routed slots
+/// by expert over one block per 1024 slots, in slot order inside each expert, instead of on one
+/// block (`glm5next_mlp::forward::sort`). Off until measured end to end. Read once.
+pub(crate) fn moe_sort_multiblock() -> bool {
+    static E: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *E.get_or_init(|| std::env::var("METRALE_GLM_MOE_SORT_MULTIBLOCK").as_deref() == Ok("1"))
+}
+
 /// 2026-10-09: `METRALE_GLM_DSA_INDEXER_ROWS=1` runs the DSA indexer's key and gate
 /// projections and the key norm of a batched decode or verify group once over all its rows
 /// (`Glm5NextDsaLayer::indexer_project_rows`) instead of once per row; each row is then placed

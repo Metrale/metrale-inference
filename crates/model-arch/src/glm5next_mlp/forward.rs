@@ -24,6 +24,7 @@ mod pieces;
 mod route;
 mod router;
 mod shared_fork;
+mod sort;
 mod topk_combine;
 mod w4a4;
 mod w4a4_dense;
@@ -109,6 +110,9 @@ pub struct Glm5NextMlpWorkspace {
     /// 2026-10-10: `[num_experts + 1]` I32: the first 32- or 64-slot tile of each expert in the
     /// grouped W4A4 GEMM (`w4a4_grouped_tiles`), the last entry the tile count.
     w4a4_tile_off: DevicePtr,
+    /// 2026-10-14: `[ceil(max_total_expanded / 1024), num_experts]` U32: the multi-block expert
+    /// sort's per-block counts, then first rows (`forward::sort`).
+    sort_hist: DevicePtr,
     /// 2026-10-08: Rows, and the widest K, the W4A4 scratch holds.
     w4a4_rows: usize,
     w4a4_k: usize,

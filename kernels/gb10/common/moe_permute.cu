@@ -338,3 +338,154 @@ extern "C" __global__ void moe_build_tile_worklist(
     }
     total_tiles[0] = (int)w;
 }
+
+// 2026-10-14: moe_sort_by_expert over many blocks, in a stable order: inside each expert's range
+// the slots sit in increasing slot order, so the outputs are deterministic and are the stable
+// counting sort's (moe_sort_by_expert's offsets, any of its orders). Three launches on one stream:
+//   moe_sort_mb_hist    grid nb = ceil(total / MOE_SORT_MB_CHUNK), block 256: the per-block counts
+//                       blk_hist[b * num_experts + e];
+//   moe_sort_mb_scan    one block of num_experts threads rounded up to whole warps: blk_hist in
+//                       place to each block's first row inside the expert (an exclusive scan over
+//                       b), and expert_offsets[0..=num_experts] as moe_sort_by_expert writes them;
+//   moe_sort_mb_scatter grid nb, block 256 (MOE_SORT_MB_WARPS warps): the three outputs.
+// Block b owns slots [b * CHUNK, (b + 1) * CHUNK); warp w of it the MOE_SORT_MB_PER_WARP slots
+// from b * CHUNK + w * PER_WARP, lane l of round r the slot + r * 32 + l. Ranks inside a warp
+// come from __match_any_sync, so no atomic decides an order.
+// num_experts is at most MOE_SORT_MB_MAX_EXPERTS (the caller checks). An id >= num_experts is
+// skipped (not counted, not placed) where moe_sort_by_expert would index past its counts.
+#define MOE_SORT_MB_CHUNK 1024u
+#define MOE_SORT_MB_WARPS 8u
+#define MOE_SORT_MB_PER_WARP (MOE_SORT_MB_CHUNK / MOE_SORT_MB_WARPS)
+#define MOE_SORT_MB_ROUNDS (MOE_SORT_MB_PER_WARP / 32u)
+#define MOE_SORT_MB_MAX_EXPERTS 1024u
+
+extern "C" __global__ void moe_sort_mb_hist(
+    const unsigned int* __restrict__ topk_ids,
+    unsigned int* __restrict__ blk_hist,
+    unsigned int total_expanded,
+    unsigned int num_experts
+) {
+    __shared__ unsigned int cnt[MOE_SORT_MB_MAX_EXPERTS];
+    for (unsigned int e = threadIdx.x; e < num_experts; e += blockDim.x) cnt[e] = 0;
+    __syncthreads();
+    const unsigned int base = blockIdx.x * MOE_SORT_MB_CHUNK;
+    const unsigned int end = min(base + MOE_SORT_MB_CHUNK, total_expanded);
+    for (unsigned int i = base + threadIdx.x; i < end; i += blockDim.x) {
+        const unsigned int id = topk_ids[i];
+        if (id < num_experts) atomicAdd(&cnt[id], 1u);
+    }
+    __syncthreads();
+    for (unsigned int e = threadIdx.x; e < num_experts; e += blockDim.x)
+        blk_hist[blockIdx.x * num_experts + e] = cnt[e];
+}
+
+// 2026-10-14: bounded at MOE_SORT_MB_MAX_EXPERTS threads, so the widest scan block fits the
+// register file (unbounded, ptxas gave it 72 registers: 1024 threads would not launch).
+extern "C" __global__ void __launch_bounds__(MOE_SORT_MB_MAX_EXPERTS) moe_sort_mb_scan(
+    unsigned int* __restrict__ blk_hist,
+    int* __restrict__ expert_offsets,
+    unsigned int num_blocks,
+    unsigned int num_experts
+) {
+    __shared__ unsigned int warp_tot[32];
+    const unsigned int e = threadIdx.x;
+    const unsigned int lane = e & 31u;
+    const unsigned int warp = e >> 5;
+    unsigned int total = 0;
+    if (e < num_experts) {
+        // 2026-10-14: sixteen loads in flight before their stores.
+        for (unsigned int b0 = 0; b0 < num_blocks; b0 += 16u) {
+            unsigned int v[16];
+#pragma unroll
+            for (unsigned int j = 0; j < 16u; j++)
+                v[j] = b0 + j < num_blocks ? blk_hist[(b0 + j) * num_experts + e] : 0u;
+#pragma unroll
+            for (unsigned int j = 0; j < 16u; j++) {
+                if (b0 + j < num_blocks) blk_hist[(b0 + j) * num_experts + e] = total;
+                total += v[j];
+            }
+        }
+    }
+    unsigned int incl = total;
+#pragma unroll
+    for (unsigned int o = 1; o < 32u; o <<= 1) {
+        const unsigned int y = __shfl_up_sync(0xffffffffu, incl, o);
+        if (lane >= o) incl += y;
+    }
+    if (lane == 31u) warp_tot[warp] = incl;
+    __syncthreads();
+    if (warp == 0) {
+        unsigned int s = lane < (blockDim.x >> 5) ? warp_tot[lane] : 0u;
+#pragma unroll
+        for (unsigned int o = 1; o < 32u; o <<= 1) {
+            const unsigned int y = __shfl_up_sync(0xffffffffu, s, o);
+            if (lane >= o) s += y;
+        }
+        warp_tot[lane] = s;
+    }
+    __syncthreads();
+    const unsigned int excl = incl - total + (warp ? warp_tot[warp - 1] : 0u);
+    if (e < num_experts) expert_offsets[e] = (int)excl;
+    if (e + 1u == num_experts) expert_offsets[num_experts] = (int)(excl + total);
+}
+
+extern "C" __global__ void moe_sort_mb_scatter(
+    const unsigned int* __restrict__ topk_ids,
+    const unsigned int* __restrict__ blk_hist,
+    const int* __restrict__ expert_offsets,
+    int* __restrict__ sorted_token_ids,
+    int* __restrict__ sorted_expert_ids,
+    int* __restrict__ token_to_perm,
+    unsigned int total_expanded,
+    unsigned int num_experts,
+    unsigned int topk
+) {
+    // 2026-10-14: wcnt[w * num_experts + e]: warp w's count of expert e, then its first row.
+    __shared__ unsigned int wcnt[MOE_SORT_MB_WARPS * MOE_SORT_MB_MAX_EXPERTS];
+    const unsigned int lane = threadIdx.x & 31u;
+    const unsigned int warp = threadIdx.x >> 5;
+    for (unsigned int i = threadIdx.x; i < MOE_SORT_MB_WARPS * num_experts; i += blockDim.x)
+        wcnt[i] = 0;
+    const unsigned int first = blockIdx.x * MOE_SORT_MB_CHUNK + warp * MOE_SORT_MB_PER_WARP + lane;
+    unsigned int id[MOE_SORT_MB_ROUNDS];
+    unsigned int peers[MOE_SORT_MB_ROUNDS];
+#pragma unroll
+    for (unsigned int r = 0; r < MOE_SORT_MB_ROUNDS; r++) {
+        const unsigned int slot = first + r * 32u;
+        id[r] = slot < total_expanded ? topk_ids[slot] : 0xffffffffu;
+    }
+    __syncthreads();
+    unsigned int* const mine = wcnt + warp * num_experts;
+#pragma unroll
+    for (unsigned int r = 0; r < MOE_SORT_MB_ROUNDS; r++) {
+        peers[r] = __match_any_sync(0xffffffffu, id[r]);
+        if (id[r] < num_experts && lane == (unsigned int)(__ffs(peers[r]) - 1))
+            mine[id[r]] += __popc(peers[r]);
+        __syncwarp();
+    }
+    __syncthreads();
+    for (unsigned int e = threadIdx.x; e < num_experts; e += blockDim.x) {
+        unsigned int run = (unsigned int)expert_offsets[e] + blk_hist[blockIdx.x * num_experts + e];
+        for (unsigned int w = 0; w < MOE_SORT_MB_WARPS; w++) {
+            const unsigned int c = wcnt[w * num_experts + e];
+            wcnt[w * num_experts + e] = run;
+            run += c;
+        }
+    }
+    __syncthreads();
+    const unsigned int below = (1u << lane) - 1u;
+#pragma unroll
+    for (unsigned int r = 0; r < MOE_SORT_MB_ROUNDS; r++) {
+        const bool live = id[r] < num_experts;
+        if (live) {
+            const unsigned int slot = first + r * 32u;
+            const unsigned int pos = mine[id[r]] + __popc(peers[r] & below);
+            sorted_token_ids[pos] = (int)(slot / topk);
+            sorted_expert_ids[pos] = (int)id[r];
+            token_to_perm[slot] = (int)pos;
+        }
+        __syncwarp();
+        if (live && lane == (unsigned int)(__ffs(peers[r]) - 1)) mine[id[r]] += __popc(peers[r]);
+        __syncwarp();
+    }
+}

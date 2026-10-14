@@ -157,6 +157,10 @@ pub struct Glm5NextMlpKernels {
     /// ids into expert-contiguous order, writing `sorted_token_ids`, `expert_offsets` and
     /// `token_to_perm`. When 0, the grouped prefill path is off.
     pub moe_sort_by_expert: KernelHandle,
+    /// 2026-10-14: `moe_sort_mb_hist`, `moe_sort_mb_scan` and `moe_sort_mb_scatter`: the
+    /// multi-block stable [`Self::moe_sort_by_expert`], launched under
+    /// `METRALE_GLM_MOE_SORT_MULTIBLOCK=1` (`forward::sort`). `0` when absent.
+    pub sort_mb: [KernelHandle; 3],
     /// 2026-09-25: The tensor-core grouped W4A16 GEMM (`mma.sync.aligned.m16n8k16`) for
     /// prefill, at the tile `forward_prefill_gemm::gemm_tile` picks. When 0, the grouped
     /// prefill path is off.
@@ -329,6 +333,12 @@ impl Glm5NextMlpKernels {
                 MOE_MODULE,
                 "moe_sort_by_expert",
             ),
+            sort_mb: [
+                "moe_sort_mb_hist",
+                "moe_sort_mb_scan",
+                "moe_sort_mb_scatter",
+            ]
+            .map(|e| metrale_model_layers::layers::try_kernel(gpu, MOE_MODULE, e)),
             // 2026-09-25: Each tile is its own entry point, so the tile
             // (`METRALE_GLM_MOE_GEMM_TILE`) is read before resolving. A missing tile
             // other than the base falls back to `GEMM_TILES[0]`, with a warning.

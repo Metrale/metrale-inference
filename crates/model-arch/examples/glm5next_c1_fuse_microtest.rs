@@ -22,6 +22,10 @@
 //! 4. KDA gate chain of one token: act-quant + f_b + kda_gate + beta sigmoid + act-quant + g_b
 //!    against `kda_gates_w8a8_k128` (`METRALE_GLM_KDA_GATES_FUSED=1`), byte for byte
 //!    (`common/glm5next_c1_kda_gates.rs`).
+//! 5. 2026-10-14: The expert sort of the grouped W4A4 path: `moe_sort_by_expert` against the
+//!    multi-block stable sort (`METRALE_GLM_MOE_SORT_MULTIBLOCK=1`) at 1 to 8192 rows, against a
+//!    host stable sort and through the indexed combine, with negative controls
+//!    (`common/glm5next_c1_sort.rs`; alone with `C1_FUSE_ONLY=sort`).
 //!
 //! Owner: model-arch examples (GLM-5.3).
 //! Invariants:
@@ -38,6 +42,8 @@ mod c1_combine_vec8;
 mod c1_kda;
 #[path = "common/glm5next_c1_kda_gates.rs"]
 mod c1_kda_gates;
+#[path = "common/glm5next_c1_sort.rs"]
+mod c1_sort;
 #[path = "common/glm5next_rows_fixture.rs"]
 mod fixture;
 #[path = "common/graph_timing.rs"]
@@ -334,6 +340,9 @@ fn main() -> Result<()> {
     }
     if only.is_empty() || only == "gates" {
         c1_kda_gates::kda_gates(g, s, &mut rng)?;
+    }
+    if only.is_empty() || only == "sort" {
+        c1_sort::sort_multiblock(g, s, &mut rng)?;
     }
     println!("PASS: every new launch is byte-identical to the current kernel");
     Ok(())
