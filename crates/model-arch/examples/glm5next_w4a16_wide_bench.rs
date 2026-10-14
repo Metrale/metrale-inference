@@ -7,6 +7,10 @@
 //! tensor scale as alpha).
 //!
 //! Owner: model-arch examples.
+//! 2026-10-12: Also `ops::w4a16_tc_gemm` (`METRALE_GLM_W4A16_TC_GEMM_MIN_ROWS`, one launch over
+//! the full M on the row tiles' body), which must equal the row tiles BYTE FOR BYTE at every shape
+//! and width (and differ on another weight copy, its negative control).
+//!
 //! Invariants:
 //! - Returns an error unless, for every shape and width, the new path's outputs are within 1%
 //!   relative RMS of the row tiles' (the two compute the same products and differ in FP32
@@ -163,7 +167,7 @@ fn main() -> Result<()> {
     let scratch_elems = 4096 * 4096;
     let scratch = gpu.alloc(scratch_elems * 2)?;
     for &m in &rows_list {
-        let (mut t_old, mut t_new) = (0.0f64, 0.0f64);
+        let (mut t_old, mut t_new, mut t_tc) = (0.0f64, 0.0f64, 0.0f64);
         for (n, k, count) in SHAPES {
             let copies = (64usize << 20).div_ceil(n * k / 2).clamp(2, 64);
             let ws: Vec<QuantizedWeight> = (0..copies)
@@ -195,6 +199,30 @@ fn main() -> Result<()> {
                 o.iter().any(|&x| x != 0.0),
                 "[{n} x {k}] M={m}: zero output"
             );
+            // 2026-10-12: The full-M tensor-core GEMM must reproduce the row tiles byte for byte;
+            // 2026-10-13: its negative control (another weight copy) must not.
+            let out_tc = gpu.alloc(m * n * 2)?;
+            let tc_bytes = |w: &QuantizedWeight| -> Result<Vec<u8>> {
+                ops::w4a16_tc_gemm(
+                    &gpu, ad, w, out_tc, m as u32, n as u32, k as u32, k as u32, n as u32, 0,
+                )?;
+                gpu.synchronize(0)?;
+                let mut b = vec![0u8; m * n * 2];
+                gpu.copy_d2h(out_tc, &mut b)?;
+                Ok(b)
+            };
+            let mut b_old = vec![0u8; m * n * 2];
+            gpu.copy_d2h(out_old, &mut b_old)?;
+            let b_tc = tc_bytes(&ws[0])?;
+            ensure!(
+                b_tc == b_old,
+                "[{n} x {k}] M={m}: w4a16_tc_gemm differs from the row tiles ({} bytes)",
+                b_tc.iter().zip(&b_old).filter(|(x, y)| x != y).count()
+            );
+            ensure!(
+                tc_bytes(&ws[1])? != b_old,
+                "[{n} x {k}] M={m}: negative control (another weight) matched the row tiles"
+            );
             let bad = QuantizedWeight {
                 weight_scale_2: ws[0].weight_scale_2 * 1.05,
                 ..ws[0]
@@ -223,25 +251,44 @@ fn main() -> Result<()> {
                     0,
                 )
             })?;
+            let ttc = median_us(&gpu, launches, |i| {
+                ops::w4a16_tc_gemm(
+                    &gpu,
+                    ad,
+                    &ws[i % copies],
+                    out_tc,
+                    m as u32,
+                    n as u32,
+                    k as u32,
+                    k as u32,
+                    n as u32,
+                    0,
+                )
+            })?;
+            gpu.free(out_tc)?;
             let tf = 2.0 * (m * n * k) as f64;
             println!(
-                "M={m:5} [{n:>4} x {k:>4}] x{count:<3} tiles {to:8.1} us ({:5.1} TFLOPS)  dequant+cuBLASLt {tn:8.1} us ({:5.1} TFLOPS)  diff rel RMS {rel:.1e} max/RMS {mx:.1e} (control {bad:.1e})",
+                "M={m:5} [{n:>4} x {k:>4}] x{count:<3} tiles {to:8.1} us ({:5.1} TFLOPS)  dequant+cuBLASLt {tn:8.1} us ({:5.1} TFLOPS)  tc_gemm {ttc:8.1} us ({:5.1} TFLOPS, bytes == tiles)  diff rel RMS {rel:.1e} max/RMS {mx:.1e} (control {bad:.1e})",
                 tf / to / 1e6,
-                tf / tn / 1e6
+                tf / tn / 1e6,
+                tf / ttc / 1e6
             );
             t_old += to * count as f64;
             t_new += tn * count as f64;
+            t_tc += ttc * count as f64;
             for w in ws {
                 gpu.free(w.weight)?;
                 gpu.free(w.weight_scale)?;
             }
         }
         println!(
-            "M={m:5}: W4A16 dense per forward {:.2} ms -> {:.2} ms; per 1k tokens {:.1} ms -> {:.1} ms",
+            "M={m:5}: W4A16 dense per forward {:.2} ms -> dequant {:.2} ms -> tc_gemm {:.2} ms; per 1k tokens {:.1} -> {:.1} -> {:.1} ms",
             t_old / 1e3,
             t_new / 1e3,
+            t_tc / 1e3,
             t_old / 1e3 * 1000.0 / m as f64,
-            t_new / 1e3 * 1000.0 / m as f64
+            t_new / 1e3 * 1000.0 / m as f64,
+            t_tc / 1e3 * 1000.0 / m as f64
         );
     }
     Ok(())
