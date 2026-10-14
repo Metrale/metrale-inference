@@ -24,6 +24,7 @@ pub mod glm5next_layer_dump;
 pub mod glm5next_mhc;
 pub mod glm5next_mhc_fused;
 pub mod glm5next_mhc_post_fold;
+pub mod glm5next_mhc_post_pre_tok;
 pub mod glm5next_mhc_tok;
 pub mod glm5next_mlp;
 pub mod glm5next_mtp_head;

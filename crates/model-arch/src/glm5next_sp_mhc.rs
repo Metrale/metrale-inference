@@ -230,8 +230,11 @@ fn workspace() -> &'static Mutex<Option<SpWorkspace>> {
 /// 2026-10-12: Reserve the workspace for sub-chunks of up to `max_rows` rows of `hidden` BF16 at
 /// `world` ranks when the lever is on; a no-op when it is off or the workspace already holds
 /// it. Called at load, as each layer builds. 2026-10-14: also the overlap's comm stream and
-/// events under `METRALE_GLM_SP_OVERLAP=1` (`glm5next_sp_overlap::reserve`).
+/// events under `METRALE_GLM_SP_OVERLAP=1` (`glm5next_sp_overlap::reserve`). 2026-10-14: and
+/// first reads `METRALE_GLM_MHC_POST_PRE_FUSED`, so a bad value or `1` without this lever fails
+/// the load, not the first prefill.
 pub fn reserve(gpu: &dyn GpuBackend, max_rows: usize, hidden: usize, world: usize) -> Result<()> {
+    crate::glm5next_mhc_post_pre_tok::enabled()?;
     if !enabled()? || world < 2 {
         return Ok(());
     }

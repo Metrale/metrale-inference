@@ -71,6 +71,11 @@ pub struct Glm5NextMhcKernels {
     /// front) and the next site's pre-norm in one launch, same bits; taken by the decode under
     /// `METRALE_GLM_MHC_POST_FOLD=1`. Optional (`try_kernel`, 0 when absent).
     pub hc_post_pre_norm: KernelHandle,
+    /// 2026-10-14: `glm5next_hc_post_pre_norm_tok4` (module [`GLM5NEXT_MHC_TOK_MODULE`]): a
+    /// prefill piece's `hc_post_rank_sum` and the next site's `hc_pre_norm_tok` in one launch,
+    /// same bits; taken by SP-mHC under `METRALE_GLM_MHC_POST_PRE_FUSED=1`
+    /// (`glm5next_mhc_post_pre_tok`). Optional (`try_kernel`, 0 when absent).
+    pub hc_post_pre_norm_tok: KernelHandle,
     pub hc_head: KernelHandle,
 }
 
@@ -142,6 +147,11 @@ impl Glm5NextMhcKernels {
                 gpu,
                 GLM5NEXT_HC_POST_SUM_MODULE,
                 "glm5next_hc_post_rank_sum",
+            ),
+            hc_post_pre_norm_tok: metrale_model_layers::layers::try_kernel(
+                gpu,
+                GLM5NEXT_MHC_TOK_MODULE,
+                "glm5next_hc_post_pre_norm_tok4",
             ),
             hc_head: gpu.kernel(GLM5NEXT_MHC_MODULE, "glm5next_hc_head")?,
         })
@@ -436,6 +446,7 @@ mod mhc_shape_tests {
             hc_post: k(7),
             hc_post_rank_sum: k(11),
             hc_post_pre_norm: k(12),
+            hc_post_pre_norm_tok: k(16),
             hc_head: k(8),
         };
         let site = |bf16| Glm5NextMhcSiteWeights {
