@@ -9,6 +9,7 @@
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::{KernelLaunch, div_ceil};
+use metrale_model_arch::glm5next_mlp::forward::{W4a4SlotsCall, launch_w4a4_slots};
 
 use crate::device::{Rng, routing, up, up_bf16};
 
@@ -266,7 +267,8 @@ pub fn slots_gemv(
     slots_gemv_ids(gpu, k, b, b.ids, t, c, (n, kk, act_div), b.rows * TOP_K)
 }
 
-/// 2026-10-12: [`slots_gemv`] over `slots` slots whose experts are `ids`.
+/// 2026-10-12: [`slots_gemv`] over `slots` slots whose experts are `ids`. 2026-10-14: Through the
+/// engine's launcher, which splits past CUDA's grid-Y limit (8208 rows x top 8 = 65664 slots).
 #[allow(clippy::too_many_arguments)]
 pub fn slots_gemv_ids(
     gpu: &dyn GpuBackend,
@@ -278,22 +280,22 @@ pub fn slots_gemv_ids(
     (n, kk, act_div): (usize, usize, usize),
     slots: usize,
 ) -> Result<()> {
-    KernelLaunch::new(gpu, k)
-        .grid([div_ceil(n as u32, 16), slots as u32, 1])
-        .block([256, 1, 1])
-        .arg_ptr(b.aq)
-        .arg_ptr(b.as_)
-        .arg_ptr(b.ag)
-        .arg_ptr(ids)
-        .arg_ptr(t.packed)
-        .arg_ptr(t.scale)
-        .arg_ptr(t.scale2)
-        .arg_ptr(c)
-        .arg_u32(n as u32)
-        .arg_u32(kk as u32)
-        .arg_u32(act_div as u32)
-        .arg_u32(EXPERTS as u32)
-        .launch(0)
+    let call = W4a4SlotsCall {
+        aq: b.aq,
+        as_: b.as_,
+        ag: b.ag,
+        ids,
+        packed_ptrs: t.packed,
+        scale_ptrs: t.scale,
+        scale2_vals: t.scale2,
+        out: c,
+        n,
+        k: kk,
+        slots,
+        act_div,
+        num_experts: EXPERTS,
+    };
+    launch_w4a4_slots(gpu, k, &call, 0)
 }
 
 /// 2026-10-10: The grouped W4A16 GEMM of the prefill before this lever, grid as
