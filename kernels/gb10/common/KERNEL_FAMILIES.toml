@@ -1242,8 +1242,8 @@ files = ["kernels/gb10/common/w4a4_gemv_mx.cu"]
 # one block row per (token, slot), weights and weight_scale_2 from global-id pointer tables).
 # GLM-5.3-Flash's declared W4A4 routed experts at 1..=16 rows; its dense MLP pairs the quantizer
 # with the w4a4_mx GEMVs (glm5next_mlp/forward/w4a4.rs).
-# 2026-10-09: The persistent sweeps over the same body: the union sweeps (2..=16 rows) and the
-# one-row own-slots sweep, gate and up in one launch.
+# 2026-10-09: The persistent sweeps over the same body: the union sweeps (2..=16 rows; 17..=32
+# since 2026-10-14) and the one-row own-slots sweep, gate and up in one launch.
 [[family]]
 id = "w4a4_mx_static"
 description = "W4A4 MX with static NVFP4 activation scales: static row quantize and the routed-expert slot GEMV"
@@ -1262,6 +1262,10 @@ kernels = [
   "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep_k64",
   "w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep_k64",
   "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_slots_sweep_k64",
+  # 2026-10-14: The union sweeps at 17..=32 rows (METRALE_GLM_MOE_W4A4_WIDE_SWEEP).
+  "w4a4_gemv_mx_moe::w4a4_gemv_mx24_moe_union_sweep", "w4a4_gemv_mx_moe::w4a4_gemv_mx32_moe_union_sweep",
+  "w4a4_gemv_mx_moe::w4a4_gemv_mx24_moe_union_sweep_k64",
+  "w4a4_gemv_mx_moe::w4a4_gemv_mx32_moe_union_sweep_k64",
   # 2026-10-10: The grouped GEMM for wide routed launches (prefill), each slot the slot GEMV's
   # bytes, and its tile pass.
   "w4a4_grouped_mx::w4a4_grouped_mx_m32", "w4a4_grouped_mx::w4a4_grouped_mx_m64",
@@ -1282,7 +1286,7 @@ kernels = [
 ]
 kernel_compute."w4a4_grouped_mx::w4a4_grouped_tiles" = { compute = "memory" }
 kernel_compute."w4a4_grouped_mx::w4a4_grouped_one_group" = { compute = "memory" }
-rows = [1, 16]
+rows = [1, 32]
 pipeline.expert_gate_up = { in = ["nvfp4/g16", "i32"], gather = "nvfp4/g16", act = "nvfp4/g16", weight = "nvfp4/g16->e2m1", mma = "e2m1*e2m1", accumulate = "f32", scale = "f32", out = ["bf16"] }
 pipeline.expert_down = { in = ["nvfp4/g16", "i32"], act = "nvfp4/g16", weight = "nvfp4/g16->e2m1", mma = "e2m1*e2m1", accumulate = "f32", scale = "f32", out = ["bf16"] }
 pipeline."act_quant:nvfp4/g16" = { in = ["bf16"], compute = "f32", out = ["nvfp4/g16"] }

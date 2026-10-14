@@ -33,6 +33,7 @@ mod w4a4_grouped_gu;
 mod w4a4_grouped_nc;
 mod w4a4_grouped_raster;
 mod w4a4_slots;
+mod w4a4_wide;
 mod workspace;
 
 pub use dense::{DenseScratch, forward_dense, forward_dense_site};
@@ -43,8 +44,7 @@ pub use shared_fork::{SHARED_FORK_MAX_ROWS, shared_fork_rows};
 pub use w4a4_dense::forward_dense_w4a4;
 pub use w4a4_dense_grouped::DenseGroupedTables;
 pub use w4a4_grouped::{
-    moe_w4a4_grouped, smem_bytes as w4a4_grouped_smem_bytes, takes_grouped as w4a4_takes_grouped,
-    tile_index as w4a4_grouped_tile_index,
+    moe_w4a4_grouped, smem_bytes as w4a4_grouped_smem_bytes, tile_index as w4a4_grouped_tile_index,
 };
 pub use w4a4_grouped_gu::{
     W4a4GuCall, check_at_load as check_gu_fused_at_load, launch_w4a4_gu, moe_w4a4_gu_fused,
@@ -54,6 +54,10 @@ pub use w4a4_grouped_raster::{
     GroupedEntry, RasterGroups, check_at_load as check_raster_at_load, moe_w4a4_raster,
 };
 pub use w4a4_slots::{CUDA_MAX_GRID_Y, W4a4SlotsCall, launch_w4a4_slots, slot_pieces};
+pub use w4a4_wide::{
+    WIDE_SWEEP_MAX_IDS, WIDE_SWEEP_MAX_ROWS, check_at_load as check_wide_sweep_at_load,
+    moe_w4a4_wide_sweep, takes_grouped as w4a4_takes_grouped,
+};
 pub use workspace::{mlp_ws_bytes, mlp_ws_total_bytes};
 
 const ACT_BLOCK: u32 = 256;
@@ -399,7 +403,7 @@ pub fn forward_moe_pieces(
     let grouped_prefill = path == route::ExpertRoute::Grouped;
     // 2026-10-10: A W4A4 launch wider than the slot GEMV serves runs the grouped W4A4 GEMM,
     // which leaves `expert_out` in expert-sorted order as the grouped W4A16 GEMM does.
-    let grouped_w4a4 = w4a4.is_some() && w4a4_grouped::takes_grouped(rows);
+    let grouped_w4a4 = w4a4.is_some() && w4a4_wide::takes_grouped(rows)?;
     let sorted_out = grouped_prefill || grouped_w4a4;
     let batched = path == route::ExpertRoute::RowBatched;
     if w4a4.is_none() {

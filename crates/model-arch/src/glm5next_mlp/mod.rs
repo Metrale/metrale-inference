@@ -177,8 +177,9 @@ pub struct Glm5NextMlpKernels {
     /// 2026-10-09: `w4a4_gemv_mx{8,16}_moe_union_sweep`: the slot GEMV with each union expert
     /// swept once for every row that chose it, up to 8 and 16 rows, on a persistent grid of
     /// [`Self::w4a4_sweep_ctas`] CTAs over the rank's live union entries; one launch covers gate
-    /// and up.
-    pub w4a4_moe_sweep: [KernelHandle; 2],
+    /// and up. 2026-10-14: Then `w4a4_gemv_mx{24,32}_moe_union_sweep`, up to 24 and 32 rows
+    /// (`METRALE_GLM_MOE_W4A4_WIDE_SWEEP=1`, `forward::w4a4_wide`).
+    pub w4a4_moe_sweep: [KernelHandle; 4],
     /// 2026-10-09: `w4a4_gemv_mx8_moe_slots_sweep`: the sweep at one row over the row's own
     /// slots (the router's ids row, no union build), gate and up in one launch; each output
     /// bit-identical to [`Self::w4a4_moe_slots`]'.
@@ -222,7 +223,7 @@ pub struct W4a4GroupedKernels {
 }
 
 /// 2026-10-10: `w4a4_quant_rows_static_k64`, `w4a4_gemv_mx8_moe_slots_k64` and
-/// `w4a4_gemv_mx{8,16}_moe_union_sweep_k64` (`w4a4_gemv_mx_moe.cu`): the quantizer writes rows at
+/// `w4a4_gemv_mx{8,16,24,32}_moe_union_sweep_k64` (`w4a4_gemv_mx_moe.cu`): the quantizer writes rows at
 /// `K.next_multiple_of(128)` with zero padding groups, and the GEMVs read the weights at their
 /// natural `K % 64 == 0` width. Each is `KernelHandle(0)` when absent from the target's PTX.
 #[derive(Clone, Copy)]
@@ -231,7 +232,8 @@ pub struct W4a4MoeK64Kernels {
     pub slots: KernelHandle,
     /// 2026-10-10: `w4a4_gemv_mx8_moe_slots_sweep_k64`, the one-row own-slots sweep's twin.
     pub own: KernelHandle,
-    pub sweep: [KernelHandle; 2],
+    /// 2026-10-14: The union sweeps' twins at 8, 16, 24 and 32 rows.
+    pub sweep: [KernelHandle; 4],
 }
 
 /// 2026-10-08: Widest launch on the W4A4 slot GEMV (each slot re-reads its expert); wider runs
@@ -382,6 +384,8 @@ impl Glm5NextMlpKernels {
             w4a4_moe_sweep: [
                 "w4a4_gemv_mx8_moe_union_sweep",
                 "w4a4_gemv_mx16_moe_union_sweep",
+                "w4a4_gemv_mx24_moe_union_sweep",
+                "w4a4_gemv_mx32_moe_union_sweep",
             ]
             .map(|e| metrale_model_layers::layers::try_kernel(gpu, W4A4_MOE_MODULE, e)),
             w4a4_moe_slots_sweep: metrale_model_layers::layers::try_kernel(
@@ -409,6 +413,8 @@ impl Glm5NextMlpKernels {
                 sweep: [
                     "w4a4_gemv_mx8_moe_union_sweep_k64",
                     "w4a4_gemv_mx16_moe_union_sweep_k64",
+                    "w4a4_gemv_mx24_moe_union_sweep_k64",
+                    "w4a4_gemv_mx32_moe_union_sweep_k64",
                 ]
                 .map(|e| metrale_model_layers::layers::try_kernel(gpu, W4A4_MOE_MODULE, e)),
             },

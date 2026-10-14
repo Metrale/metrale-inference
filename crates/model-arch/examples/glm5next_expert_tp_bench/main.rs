@@ -43,6 +43,7 @@ use metrale_model_arch::glm5next_mlp::{ExpertShard, Glm5NextMlpConfig, Glm5NextM
 #[path = "../glm5next_moe_wide_bench/device.rs"]
 mod device;
 mod gate;
+mod wide;
 use device::*;
 
 const SHARED: usize = 688;
@@ -195,18 +196,27 @@ fn main() -> Result<()> {
     let g: &dyn GpuBackend = &gpu;
     let stream = g.create_stream()?;
     let k = Glm5NextMlpKernels::resolve(g)?;
+    // 2026-10-14: GLM_BENCH_WIDE=1 runs the wide-sweep A/B alone (`wide.rs`).
+    if std::env::var("GLM_BENCH_WIDE").as_deref() == Ok("1") {
+        return wide::run(g, &k, stream);
+    }
     let kern = |quant, slots, sweep| Kern {
         quant,
         row_union: k.moe_row_union,
         slots,
-        union: k.w4a4_moe_sweep,
+        union: [k.w4a4_moe_sweep[0], k.w4a4_moe_sweep[1]],
         sweep,
         ctas: k.w4a4_sweep_ctas,
     };
     let t = &k.w4a4_moe_k64;
     let twins = gate::Twins {
-        plain: kern(k.w4a4_quant_static, k.w4a4_moe_slots, k.w4a4_moe_sweep),
-        k64: kern(t.quant, t.slots, t.sweep),
+        // 2026-10-14: The gate covers the 8- and 16-row sweeps (`wide.rs` the 24- and 32-row).
+        plain: kern(
+            k.w4a4_quant_static,
+            k.w4a4_moe_slots,
+            [k.w4a4_moe_sweep[0], k.w4a4_moe_sweep[1]],
+        ),
+        k64: kern(t.quant, t.slots, [t.sweep[0], t.sweep[1]]),
     };
     let mut rng = Rng(0x2545_f491_4f6c_dd1d);
     gate::run(g, &twins, &mut rng)?;

@@ -29,6 +29,10 @@
 //   natural K and the activations at the padded one (w4a4_gemv_mx_tok_impl KH); each output is
 //   bit-identical to the plain entry at the padded K over zero-padded weights. 2026-10-10: the
 //   one-row own-slots sweep has its twin too (w4a4_gemv_mx8_moe_slots_sweep_k64).
+// - 2026-10-14: w4a4_gemv_mx{24,32}_moe_union_sweep[_k64]: the union sweep at 17..=24 and
+//   25..=32 rows (rows * top_k <= 256), so a verify batch past 16 rows streams each union
+//   expert once instead of taking the grouped GEMM. An item whose expert serves at most 8 tokens
+//   runs the one-tile body (most of them at 32 rows); every token's bits are the slot GEMV's.
 //
 // Owner: gb10 kernels.
 // Invariants:
@@ -337,6 +341,18 @@ __device__ __forceinline__ void w4a4_moe_union_sweep(
         if (s_m == 0u || bq == 0ull) continue;
         const unsigned long long bs = s_s[p][e];
         const float s2 = s_f[p][e];
+        // 2026-10-14: MB > 2: an item of at most 8 tokens runs the one-tile body. s_m is
+        // block-uniform, so both branches reach the same barriers. A token's bits do not
+        // depend on MB: its MMA column mixes with no other, each warp takes the same K chunks,
+        // and the warp-order reduction is the same. MB <= 2 compiles as before.
+        if constexpr (MB > 2) {
+            if (s_m <= 8u) {
+                w4a4_gemv_mx_tok_impl<1, 4, W4a4RowsTable, KH>(
+                    Aq, As, Ag, (const unsigned char*)bq, (const unsigned char*)bs, s2,
+                    p == 0u ? C0 : C1, W4a4RowsTable{s_m, s_a, s_c}, N, K, x);
+                continue;
+            }
+        }
         w4a4_gemv_mx_tok_impl<MB, 4, W4a4RowsTable, KH>(
             Aq, As, Ag, (const unsigned char*)bq, (const unsigned char*)bs, s2, p == 0u ? C0 : C1,
             W4a4RowsTable{s_m, s_a, s_c}, N, K, x);
@@ -368,5 +384,11 @@ W4A4_SWEEP_ENTRY(w4a4_gemv_mx8_moe_slots_sweep, 1, W4A4_SWEEP_PF, W4A4_SWEEP_MIN
 W4A4_SWEEP_ENTRY(w4a4_gemv_mx8_moe_union_sweep_k64, 1, W4A4_SWEEP_PF, W4A4_SWEEP_MIN_CTAS_PER_SM, true, false)
 W4A4_SWEEP_ENTRY(w4a4_gemv_mx16_moe_union_sweep_k64, 2, W4A4_SWEEP_PF, W4A4_SWEEP_MIN_CTAS_PER_SM, true, false)
 W4A4_SWEEP_ENTRY(w4a4_gemv_mx8_moe_slots_sweep_k64, 1, W4A4_SWEEP_PF, W4A4_SWEEP_MIN_CTAS_PER_SM, true, true)
+// 2026-10-14: 17..=24 and 25..=32 rows (three and four 8-token MMA tiles), and their `_k64`
+// twins. Launch as the 16-row sweep; rows * top_k <= 256.
+W4A4_SWEEP_ENTRY(w4a4_gemv_mx24_moe_union_sweep, 3, W4A4_SWEEP_PF, W4A4_SWEEP_MIN_CTAS_PER_SM, false, false)
+W4A4_SWEEP_ENTRY(w4a4_gemv_mx32_moe_union_sweep, 4, W4A4_SWEEP_PF, W4A4_SWEEP_MIN_CTAS_PER_SM, false, false)
+W4A4_SWEEP_ENTRY(w4a4_gemv_mx24_moe_union_sweep_k64, 3, W4A4_SWEEP_PF, W4A4_SWEEP_MIN_CTAS_PER_SM, true, false)
+W4A4_SWEEP_ENTRY(w4a4_gemv_mx32_moe_union_sweep_k64, 4, W4A4_SWEEP_PF, W4A4_SWEEP_MIN_CTAS_PER_SM, true, false)
 
 #endif

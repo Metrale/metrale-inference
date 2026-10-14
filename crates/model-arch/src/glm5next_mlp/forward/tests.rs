@@ -91,8 +91,10 @@ mod ws_sizing {
             assert_eq!(b[3], rows * 288 * 4, "logits at {rows}");
             assert_eq!(b[6], rows * 8 * 4096 * 2, "expert_out at {rows}");
             assert_eq!(b[7], rows * 4096 * 2, "shared_out at {rows}");
-            // 2026-10-10: u_slot holds the widest union group (16 rows), not every row.
-            assert_eq!(b[9], 16 * 8 * 16 * 4, "u_slot at {rows}");
+            // 2026-10-10: u_slot holds the widest union group, not every row. 2026-10-14: That
+            // group is 32 rows (the wide W4A4 sweep), so 16 rows still hold 16.
+            let urows = rows.min(32);
+            assert_eq!(b[9], urows * 8 * urows * 4, "u_slot at {rows}");
             assert_eq!(b[12], 289 * 4, "expert_offsets is row-independent");
             // 2026-10-08: The W4A4 scratch: 16 routed rows x top_k 8 = 128 quantized rows of
             // the widest K, the 6144-wide TP=2 dense share; row-independent from 16 rows up.
@@ -102,13 +104,14 @@ mod ws_sizing {
             assert_eq!(b[17], 289 * 4, "w4a4 tile offsets are row-independent");
             assert_eq!(
                 mlp_ws_total_bytes(&c, rows, false),
-                rows * 173_376 + 8192 + 1156 + 1156 + 442_880
+                rows * 173_376 + urows * 8 * urows * 4 + 1156 + 1156 + 442_880
             );
         }
     }
 
     /// 2026-10-10: Below 16 rows u_slot is `rows * top_k * rows` as before; from 16 rows it stops
-    /// growing (it was 32 * rows^2 bytes: 134 MB at 2048 rows).
+    /// growing (it was 32 * rows^2 bytes: 134 MB at 2048 rows). 2026-10-14: The cap is 32 rows,
+    /// the wide W4A4 sweep's widest group.
     #[test]
     fn u_slot_is_capped_at_the_widest_union_group() {
         let c = cfg();
@@ -116,8 +119,10 @@ mod ws_sizing {
             (1usize, 32usize),
             (4, 512),
             (16, 8192),
-            (17, 8192),
-            (2048, 8192),
+            (17, 9248),
+            (32, 32768),
+            (33, 32768),
+            (2048, 32768),
         ] {
             assert_eq!(mlp_ws_bytes(&c, rows, false)[9], want, "u_slot at {rows}");
         }

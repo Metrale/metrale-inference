@@ -4,7 +4,8 @@
 //! weights times NVFP4 activations quantized under the static `input_scale`s, on the FP4
 //! block-scale MMA. The routed experts run the persistent sweep, gate and up in one launch: at
 //! one row over the row's own slots (`w4a4_gemv_mx8_moe_slots_sweep`, 2026-10-09), at 2..=16
-//! over the rows' union (`w4a4_gemv_mx{8,16}_moe_union_sweep`, each union expert read once); the
+//! over the rows' union (`w4a4_gemv_mx{8,16}_moe_union_sweep`, each union expert read once; 24
+//! and 32 too under `METRALE_GLM_MOE_W4A4_WIDE_SWEEP=1`, 2026-10-14); the
 //! slot GEMV (`w4a4_gemv_mx8_moe_slots`) where those kernels did not resolve;
 //! the dense MLP the mx GEMVs in chunks of `DENSE_W4A4_CHUNK_ROWS` rows (2026-10-10: in
 //! `w4a4_dense.rs`).
@@ -28,6 +29,7 @@ use super::MOE_ROW_UNION_MAX_IDS;
 use super::launch::swiglu;
 use super::moe_experts::MoeSite;
 use super::w4a4_slots::{W4a4SlotsCall, launch_w4a4_slots};
+use super::w4a4_wide::WIDE_SWEEP_MAX_IDS;
 use crate::glm5next_layer::profile;
 use crate::glm5next_mlp::build_w4a4::{check_w4a4_k, check_w4a4_k64};
 use crate::glm5next_mlp::weights::{Glm5NextExpertPtrTable, W4a4ActScales};
@@ -107,8 +109,8 @@ fn moe_slots(
 }
 
 /// 2026-10-09: Which entry list the persistent sweep reads.
-#[derive(Clone, Copy)]
-enum SweepEntries {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SweepEntries {
     /// 2026-10-09: One row's own slots: the router's ids row (`w4a4_gemv_mx8_moe_slots_sweep`).
     OwnSlots,
     /// 2026-10-09: The rows' union, which `glm5next_moe_row_union` builds first.
@@ -116,15 +118,15 @@ enum SweepEntries {
 }
 
 /// 2026-10-10: The kernels of one routed W4A4 projection's input: its quantizer, the row width
-/// that quantizer writes, the slot GEMV, the one-row own-slots sweep and the 8- and 16-token
-/// union sweeps.
+/// that quantizer writes, the slot GEMV, the one-row own-slots sweep and the 8-, 16-, 24- and
+/// 32-token union sweeps.
 #[derive(Clone, Copy)]
 struct ProjKernels {
     quant: KernelHandle,
     k_store: usize,
     slots: KernelHandle,
     own: KernelHandle,
-    sweep: [KernelHandle; 2],
+    sweep: [KernelHandle; 4],
 }
 
 /// 2026-10-10: The routed down projection's kernels for expert width `mi`: the plain entries at
@@ -162,22 +164,27 @@ fn down_kernels(k: &Glm5NextMlpKernels, mi: usize) -> Result<ProjKernels> {
 /// row over the row's own slots (`own`); at 2..=16 rows (the 8- or 16-token entry of `sweep`)
 /// over the union of rows whose `rows * top_k` ids the union builder covers. `None` runs the
 /// slot GEMV. 2026-10-10: `own` and `sweep` are the projection's (plain or `_k64`).
-fn sweep_kernel(
+/// 2026-10-14: With `wide` (`METRALE_GLM_MOE_W4A4_WIDE_SWEEP`) also 17..=24 and 25..=32 rows,
+/// over a union of at most `WIDE_SWEEP_MAX_IDS` ids.
+pub(super) fn sweep_kernel(
     k: &Glm5NextMlpKernels,
     own: KernelHandle,
-    sweep: [KernelHandle; 2],
+    sweep: [KernelHandle; 4],
     rows: usize,
     top_k: usize,
+    wide: bool,
 ) -> Option<(KernelHandle, SweepEntries)> {
-    let (h, entries) = match rows {
-        1 => (own, SweepEntries::OwnSlots),
-        2..=8 => (sweep[0], SweepEntries::Union),
-        9..=16 => (sweep[1], SweepEntries::Union),
+    let (h, entries, max_ids) = match rows {
+        1 => (own, SweepEntries::OwnSlots, 0),
+        2..=8 => (sweep[0], SweepEntries::Union, MOE_ROW_UNION_MAX_IDS),
+        9..=16 => (sweep[1], SweepEntries::Union, MOE_ROW_UNION_MAX_IDS),
+        17..=24 if wide => (sweep[2], SweepEntries::Union, WIDE_SWEEP_MAX_IDS),
+        25..=32 if wide => (sweep[3], SweepEntries::Union, WIDE_SWEEP_MAX_IDS),
         _ => return None,
     };
     let union_ok = match entries {
         SweepEntries::OwnSlots => true,
-        SweepEntries::Union => k.moe_row_union.0 != 0 && rows * top_k <= MOE_ROW_UNION_MAX_IDS,
+        SweepEntries::Union => k.moe_row_union.0 != 0 && rows * top_k <= max_ids,
     };
     (h.0 != 0 && k.w4a4_sweep_ctas != 0 && union_ok).then_some((h, entries))
 }
@@ -192,10 +199,11 @@ pub(super) fn writes_every_expert_row(
     cfg: &Glm5NextMlpConfig,
     rows: usize,
 ) -> bool {
+    // 2026-10-14: One row never reaches the wide entries, so `wide` is moot here.
     rows == 1
         && down_kernels(k, cfg.moe_intermediate).is_ok_and(|d| {
             matches!(
-                sweep_kernel(k, d.own, d.sweep, rows, cfg.top_k),
+                sweep_kernel(k, d.own, d.sweep, rows, cfg.top_k, false),
                 Some((_, SweepEntries::OwnSlots))
             )
         })
@@ -257,6 +265,11 @@ fn moe_sweep(
 /// every slot's product, down into `expert_out`. A slot of another rank's expert writes nothing
 /// (`forward_moe` zeroed `expert_out`).
 pub(super) fn w4a4_experts(site: &MoeSite<'_>, scales: W4a4ActScales) -> Result<()> {
+    w4a4_experts_at(site, scales, super::w4a4_wide::moe_w4a4_wide_sweep()?)
+}
+
+/// 2026-10-14: [`w4a4_experts`] under the wide-sweep lever value `wide`.
+pub(super) fn w4a4_experts_at(site: &MoeSite<'_>, scales: W4a4ActScales, wide: bool) -> Result<()> {
     let MoeSite {
         gpu,
         k,
@@ -268,7 +281,7 @@ pub(super) fn w4a4_experts(site: &MoeSite<'_>, scales: W4a4ActScales) -> Result<
         stream,
     } = *site;
     // 2026-10-10: Wider than the slot GEMV serves: the grouped W4A4 GEMM.
-    if super::w4a4_grouped::takes_grouped(rows) {
+    if super::w4a4_wide::takes_grouped_at(rows, wide) {
         return super::w4a4_grouped::w4a4_grouped_experts(site, scales);
     }
     let (mi, h) = (cfg.moe_intermediate, cfg.hidden);
@@ -283,8 +296,15 @@ pub(super) fn w4a4_experts(site: &MoeSite<'_>, scales: W4a4ActScales) -> Result<
         cfg.top_k,
         ws.w4a4_rows
     );
-    let sweep = sweep_kernel(k, k.w4a4_moe_slots_sweep, k.w4a4_moe_sweep, rows, cfg.top_k);
-    let down_sweep = sweep_kernel(k, down.own, down.sweep, rows, cfg.top_k);
+    let sweep = sweep_kernel(
+        k,
+        k.w4a4_moe_slots_sweep,
+        k.w4a4_moe_sweep,
+        rows,
+        cfg.top_k,
+        wide,
+    );
+    let down_sweep = sweep_kernel(k, down.own, down.sweep, rows, cfg.top_k, wide);
     let t = profile::start();
     quant_static(
         gpu,

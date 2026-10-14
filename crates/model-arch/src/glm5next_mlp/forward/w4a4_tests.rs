@@ -29,12 +29,16 @@ const MX16: u64 = 0x5A;
 pub(crate) const MX32: u64 = 0x5C;
 pub(crate) const SWIGLU: u64 = 0x5E;
 const SWEEP8: u64 = 0x60;
-const SWEEP16: u64 = 0x62;
-const ROW_UNION: u64 = 0x64;
-const QUANT_K64: u64 = 0x66;
+pub(crate) const SWEEP16: u64 = 0x62;
+pub(crate) const SWEEP24: u64 = 0x72;
+pub(crate) const SWEEP32: u64 = 0x74;
+pub(crate) const ROW_UNION: u64 = 0x64;
+pub(crate) const QUANT_K64: u64 = 0x66;
 const SLOTS_K64: u64 = 0x68;
 const SWEEP8_K64: u64 = 0x6A;
 const SWEEP16_K64: u64 = 0x6C;
+pub(crate) const SWEEP24_K64: u64 = 0x76;
+pub(crate) const SWEEP32_K64: u64 = 0x78;
 const OWN_SWEEP: u64 = 0x6E;
 const OWN_SWEEP_K64: u64 = 0x70;
 
@@ -67,20 +71,20 @@ pub(crate) fn kernels(gpu: &MockGpuBackend) -> Glm5NextMlpKernels {
     k.w4a4_moe_slots = KernelHandle(SLOTS);
     k.w4a4_mx = [KernelHandle(MX8), KernelHandle(MX16), KernelHandle(MX32)];
     k.swiglu = KernelHandle(SWIGLU);
-    k.w4a4_moe_sweep = [KernelHandle(SWEEP8), KernelHandle(SWEEP16)];
+    k.w4a4_moe_sweep = [SWEEP8, SWEEP16, SWEEP24, SWEEP32].map(KernelHandle);
     k.moe_row_union = KernelHandle(ROW_UNION);
     k.w4a4_moe_slots_sweep = KernelHandle(OWN_SWEEP);
     k.w4a4_moe_k64 = crate::glm5next_mlp::W4a4MoeK64Kernels {
         quant: KernelHandle(QUANT_K64),
         slots: KernelHandle(SLOTS_K64),
         own: KernelHandle(OWN_SWEEP_K64),
-        sweep: [KernelHandle(SWEEP8_K64), KernelHandle(SWEEP16_K64)],
+        sweep: [SWEEP8_K64, SWEEP16_K64, SWEEP24_K64, SWEEP32_K64].map(KernelHandle),
     };
     k
 }
 
 /// 2026-10-10: Rank 0 of GLM-5.3's tp expert layout at TP=3: every expert, 704 columns of each.
-fn cfg_tp() -> Glm5NextMlpConfig {
+pub(crate) fn cfg_tp() -> Glm5NextMlpConfig {
     Glm5NextMlpConfig {
         moe_intermediate: 704,
         local_experts: 288,
@@ -187,7 +191,7 @@ fn table(tag: u64) -> Glm5NextExpertPtrTable {
     }
 }
 
-fn moe_weights() -> Glm5NextMoeWeights {
+pub(crate) fn moe_weights() -> Glm5NextMoeWeights {
     let null = DevicePtr::NULL;
     Glm5NextMoeWeights {
         router: null,
@@ -246,12 +250,12 @@ fn run_experts_on(
     (gpu, l, ws)
 }
 
-const X: DevicePtr = DevicePtr(0x9000_0000);
+pub(crate) const X: DevicePtr = DevicePtr(0x9000_0000);
 
 /// 2026-10-09: The two sweep launches of a routed W4A4 run: gate and up in one launch (two tables,
 /// two outputs), down in another (its table in both slots), each reading entry list `u_eid`
 /// and `u_slot`, on one CTA per SM (the mock reports GB10's 48 SMs).
-fn assert_sweep_launches(
+pub(crate) fn assert_sweep_launches(
     l: &[MockLaunch],
     at: [usize; 2],
     rows: usize,

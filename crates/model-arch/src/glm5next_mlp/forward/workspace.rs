@@ -14,17 +14,25 @@ use super::Glm5NextMlpWorkspace;
 use crate::glm5next_mlp::{DENSE_W4A4_CHUNK_ROWS, Glm5NextMlpConfig, MOE_W4A4_MAX_ROWS};
 
 use super::MOE_ROW_BATCH_MAX_ROWS;
+use super::w4a4_wide::WIDE_SWEEP_MAX_ROWS;
 
 /// 2026-10-10: The widest row group a union table (`u_eid`, `u_slot`) is built for: the
 /// row-batched W4A16 sub-groups (at most `MOE_ROW_BATCH_MAX_ROWS`) and the W4A4 union sweeps
 /// (at most `MOE_W4A4_MAX_ROWS`). Each group rebuilds the tables from row 0, so `u_slot` holds
 /// `(UNION_MAX_ROWS * top_k) x UNION_MAX_ROWS` entries whatever the workspace's row count (it
-/// held `rows * top_k * rows`, 134 MB at 2048 rows).
-pub const UNION_MAX_ROWS: usize = if MOE_ROW_BATCH_MAX_ROWS > MOE_W4A4_MAX_ROWS {
-    MOE_ROW_BATCH_MAX_ROWS
-} else {
-    MOE_W4A4_MAX_ROWS
-};
+/// held `rows * top_k * rows`, 134 MB at 2048 rows). 2026-10-14: And the wide W4A4 sweeps (at
+/// most `WIDE_SWEEP_MAX_ROWS`, `METRALE_GLM_MOE_W4A4_WIDE_SWEEP`), allocated whatever the lever
+/// says (32 KB at top-8).
+pub const UNION_MAX_ROWS: usize = max3(
+    MOE_ROW_BATCH_MAX_ROWS,
+    MOE_W4A4_MAX_ROWS,
+    WIDE_SWEEP_MAX_ROWS,
+);
+
+const fn max3(a: usize, b: usize, c: usize) -> usize {
+    let ab = if a > b { a } else { b };
+    if ab > c { ab } else { c }
+}
 
 /// 2026-10-08: The NVFP4 activation scratch of the W4A4 paths: `(rows, k)`, the most rows one
 /// quantization holds (a routed down input of `MOE_W4A4_MAX_ROWS * top_k` slots, or one dense
