@@ -246,11 +246,7 @@ impl TransformerModel {
             );
         }
 
-        let stream = if self.multi_rank_protocol_active() {
-            self.gpu.default_stream()
-        } else {
-            stream
-        };
+        let stream = self.forward_stream(stream);
 
         // 2026-09-25: With `comm` set, every buffer is zeroed on every chunk.
         // Otherwise only the first chunk zeroes, and only the prefill

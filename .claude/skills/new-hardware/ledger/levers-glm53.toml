@@ -1493,3 +1493,51 @@ effort_hours = 4.0
 transferability = "any hyper-connection model whose post-mix feeds the next site's pre-mix on the same rows"
 links = { pr = "", commit = "", evidence = "glm5next_hc_post_pre_tok_bench" }
 notes = "In-layer pair only (attention post into the FFN pre). The cross-layer pair (FFN post into the next layer's attention pre) is not fused: the layer loop is layer-outer and sub-chunk-inner, the next layer's weights would have to be handed down, and the DFlash taps read the highway between layers. The common/ kernels compile with --fmad=false, so the prologue's plain expressions round as the rank-sum kernel's do."
+
+[[lever]]
+id = "gb10x3-glm53-ssm-clamp-on-forward-stream"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes; also any multi-rank SSM model (Qwen GDN at EP/TP > 1)"
+recipe_or_tier = "every multi-rank chunked prefill (no lever: a correctness fix)"
+symptom = "nsys of a 32k cold prefill: ssm_state_clamp_norm_fused runs on the scheduler's prefill stream while the chunk's forward ran on the default stream, with no event between them"
+diagnosis_tool = "nsys"
+root_cause_class = "wiring-defect"
+lever_type = "code"
+lkb_effect = "none"
+parity_tier_kept = "bit-identical"
+per_rung = []
+verdict = "held"
+verdict_reason = "written without a GPU; the stream placement (nsys) and the kinv_probe base-vs-arm byte compare are pending"
+failure_mode = "prefill_chunk_pass remaps a multi-rank forward to the default stream, but normalize_ssm_states launched the clamp on the stream the scheduler passed, so the clamp was ordered neither after the chunk's state writes nor before the next chunk's reads"
+caught_by = "nsys stream column of a cold 32k prefill"
+time_lost_hours = 0
+would_catch_earlier = "one SSOT for the multi-rank stream remap (now TransformerModel::forward_stream); the remap was duplicated at four prefill entry points and missed at the clamp"
+effort_hours = 1.0
+transferability = "any engine that remaps a forward to another stream: every follow-on launch over the forward's outputs must use the remapped stream"
+links = { pr = "", commit = "", evidence = "" }
+notes = "Single-rank serves keep the caller's stream (unchanged launches); the other callers (worker loop, spans worker, decode) already pass the default stream, so the change is a no-op there. Not fixed: rank 0's multi-rank spans prefill never clamps while the workers do (spans.rs), and the eager drafter prefill (drafter_prefill.rs) may read mtp_prefill_hidden on the prefill stream without ordering on multi-rank."
+
+[[lever]]
+id = "gb10x3-glm53-sp-subchunk-pipeline"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_SP_MHC=1 + METRALE_GLM_SP_OVERLAP=1, 32k cold prefill (4 SP sub-chunks per layer)"
+symptom = "about 3.15 of 10 ms per layer and sub-chunk is still exposed SP exchange under SP_OVERLAP: the edges and the comm-bound head (AG normed) and tail (RS ffn_out)"
+diagnosis_tool = "nsys"
+root_cause_class = "phase-serialization"
+lever_type = "scheduling"
+lkb_effect = "none"
+parity_tier_kept = "n/a"
+per_rung = []
+verdict = "held"
+verdict_reason = "not built: running sub-chunk s+1's mixer on a second compute stream beside sub-chunk s's MLP races three process-wide single-stream scratches (the cuBLASLt workspace, the CUTLASS workspace, the GLM dequant scratch) plus the KDA final_out buffer"
+failure_mode = ""
+caught_by = "design review before implementation"
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 2.0
+transferability = "any layer-outer, sub-chunk-inner prefill whose recurrent mixer links sub-chunks only through its own state"
+links = { pr = "", commit = "", evidence = "" }
+notes = "Feasible form: ONE compute stream plus the SP comm stream, the host enqueue reordered across sub-chunks (X(s+1) before the post-mix of s, so the RS of s's mixer output overlaps X(s+1); the AG of a later head overlaps F(s)). Needs parity buffers for normed, the KDA final_out and the SP receive workspace, and run_section's closing wait deferred. Expected about 0.3-0.45 s per 32k cold prefill, nothing below 2 sub-chunks."

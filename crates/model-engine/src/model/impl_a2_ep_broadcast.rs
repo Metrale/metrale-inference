@@ -110,6 +110,18 @@ impl TransformerModel {
         self.comm.is_some() && (self.config.ep_world_size > 1 || self.config.tp_world_size > 1)
     }
 
+    /// 2026-10-14: The stream a forward over the caller's `stream` runs on: the backend's default
+    /// stream in a multi-rank world (`multi_rank_protocol_active`), the caller's otherwise. Work
+    /// that reads or writes what a forward wrote (the SSM state clamp after a prefill chunk) must
+    /// run on the same stream, or nothing orders the two.
+    pub(crate) fn forward_stream(&self, stream: u64) -> u64 {
+        if self.multi_rank_protocol_active() {
+            self.gpu.default_stream()
+        } else {
+            stream
+        }
+    }
+
     /// 2026-09-25: Broadcast a `(seq_id, cmd)` pair from rank 0: the `seq_id`
     /// preamble only when `v2`, then `cmd`; under the v3 wire, one block. Workers read it with
     /// [`Self::ep_recv_seq_and_cmd`]. A no-op unless
