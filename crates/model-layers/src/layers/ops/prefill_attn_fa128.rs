@@ -163,3 +163,7 @@ impl AttnFa128Kernels {
         Ok(true)
     }
 }
+
+#[cfg(test)]
+#[path = "prefill_attn_rows_tests.rs"]
+mod prefill_attn_rows_tests;
