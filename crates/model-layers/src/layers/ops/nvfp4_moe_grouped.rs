@@ -80,6 +80,67 @@ pub const NVFP4_GROUPED_DOWN_TC_MT1: Fp8GroupedGeometry = Fp8GroupedGeometry {
     threads: 128,
 };
 
+/// 2026-10-14: `moe_expert_gate_up_act_nvfp4_grouped_hsm` (Hopper,
+/// kernels/hopper/common/moe_nvfp4_decode_hopper.cu, `HSM_GU_*`): one gate warp and one up warp per
+/// 16-column tile, each warp's weight tile staged whole in shared memory; the split pair's bytes.
+pub const NVFP4_GROUPED_GATE_UP_HSM: Fp8GroupedGeometry = Fp8GroupedGeometry {
+    cols_per_cta: 16,
+    rows_per_pass: NVFP4_GROUPED_TC_ROWS_PER_PASS,
+    threads: 64,
+};
+
+/// 2026-10-14: `moe_expert_down_act_nvfp4_grouped_hsm` (`HSM_DN_*`): four warps of one m-tile, each
+/// warp's weight tile staged whole in shared memory; the `_tc_mt1` kernel's bytes.
+pub const NVFP4_GROUPED_DOWN_HSM: Fp8GroupedGeometry = Fp8GroupedGeometry {
+    cols_per_cta: 64,
+    rows_per_pass: NVFP4_GROUPED_TC_ROWS_PER_PASS,
+    threads: 128,
+};
+
+/// 2026-10-14: The dynamic shared memory one CTA may take (sm_90: 227 KiB).
+pub const NVFP4_GROUPED_HSM_SMEM_MAX: u32 = 227 * 1024;
+
+/// 2026-10-14: Dynamic shared bytes of an `_hsm` CTA of `warps` warps over a `k`-deep projection
+/// with load groups of `k_step` and `xs_bytes` of split exchange (`hsm_head_bytes` + 9 * K per
+/// warp in the `.cu`): one 8-byte mbarrier per warp and load group (rounded up to 16), the
+/// exchange, then each warp's 16 x K / 2 packed and 16 x K / 16 scale bytes.
+fn nvfp4_grouped_hsm_smem(warps: u32, k: u32, k_step: u32, xs_bytes: u32) -> u32 {
+    (warps * (k / k_step) * 8).div_ceil(16) * 16 + xs_bytes + warps * 9 * k
+}
+
+/// 2026-10-14: [`nvfp4_grouped_hsm_smem`] of the `_hsm` gate+up over `k` = hidden (two warps,
+/// the 2 KiB `gtc_split_xs_floats(1)` exchange).
+pub fn nvfp4_grouped_hsm_gate_up_smem(k: u32) -> u32 {
+    nvfp4_grouped_hsm_smem(
+        NVFP4_GROUPED_GATE_UP_HSM.threads / 32,
+        k,
+        NVFP4_GROUPED_GATE_UP_TC_K_STEP,
+        2048,
+    )
+}
+
+/// 2026-10-14: [`nvfp4_grouped_hsm_smem`] of the `_hsm` down over `k` = inter.
+pub fn nvfp4_grouped_hsm_down_smem(k: u32) -> u32 {
+    nvfp4_grouped_hsm_smem(
+        NVFP4_GROUPED_DOWN_HSM.threads / 32,
+        k,
+        NVFP4_GROUPED_DOWN_TC_K_STEP,
+        0,
+    )
+}
+
+/// 2026-10-14: Whether the `_hsm` pair takes an `inter` x `hidden` expert: the split pair's load
+/// groups, whole CTAs of its geometries, and both CTAs within [`NVFP4_GROUPED_HSM_SMEM_MAX`].
+pub fn nvfp4_grouped_hsm_pair_shape_ok(hidden: u32, inter: u32) -> bool {
+    nvfp4_grouped_tc_pair_shape_ok(
+        hidden,
+        inter,
+        NVFP4_GROUPED_GATE_UP_HSM,
+        NVFP4_GROUPED_DOWN_HSM,
+    ) && nvfp4_grouped_hsm_gate_up_smem(hidden) <= NVFP4_GROUPED_HSM_SMEM_MAX
+        && nvfp4_grouped_hsm_down_smem(inter) <= NVFP4_GROUPED_HSM_SMEM_MAX
+}
+
 /// 2026-10-13: K of one tensor-core load group: 128-wide chunks times the projection's chunks
 /// per group (`NTC_GU_G` = 2, `NTC_DOWN_G` = 1 in the `.cu`).
 pub const NVFP4_GROUPED_GATE_UP_TC_K_STEP: u32 = 256;
@@ -140,11 +201,14 @@ pub struct Nvfp4ExpertTables {
 /// `[positions, n]` for the routed experts into `act` and `[num_tokens, n]` for the shared
 /// expert into `sh_act` (2026-10-02: the tensor-core kernel writes it as BF16 hi + lo in the
 /// same bytes, which only its down kernel reads).
+/// 2026-10-14: `shared_bytes`: the kernel's dynamic shared memory (0 but for the `_hsm` kernels,
+/// [`nvfp4_grouped_hsm_gate_up_smem`]).
 #[allow(clippy::too_many_arguments)]
 pub fn moe_expert_gate_up_act_nvfp4_grouped(
     gpu: &dyn GpuBackend,
     kernel: KernelHandle,
     geometry: Fp8GroupedGeometry,
+    shared_bytes: u32,
     input: DevicePtr,
     gate: Nvfp4ExpertTables,
     up: Nvfp4ExpertTables,
@@ -169,6 +233,7 @@ pub fn moe_expert_gate_up_act_nvfp4_grouped(
             1,
         ])
         .block([geometry.threads, 1, 1])
+        .shared_mem(shared_bytes)
         .arg_ptr(input)
         .arg_ptr(gate.packed_ptrs)
         .arg_ptr(gate.scale_ptrs)
@@ -243,10 +308,14 @@ pub fn nvfp4_lean_repack_shape_ok(n: u32, k: u32) -> bool {
         && NVFP4_LEAN_REPACK_SMEM_PER_K * k <= 48 * 1024
 }
 
+/// 2026-10-14: The grouped NVFP4 down (doc above `nvfp4_tc_lean_repack`); `shared_bytes` as for
+/// [`moe_expert_gate_up_act_nvfp4_grouped`] ([`nvfp4_grouped_hsm_down_smem`] for `_hsm`).
+#[allow(clippy::too_many_arguments)]
 pub fn moe_expert_down_act_nvfp4_grouped(
     gpu: &dyn GpuBackend,
     kernel: KernelHandle,
     geometry: Fp8GroupedGeometry,
+    shared_bytes: u32,
     act: DevicePtr,
     down: Nvfp4ExpertTables,
     output: DevicePtr,
@@ -269,6 +338,7 @@ pub fn moe_expert_down_act_nvfp4_grouped(
             1,
         ])
         .block([geometry.threads, 1, 1])
+        .shared_mem(shared_bytes)
         .arg_ptr(act)
         .arg_ptr(down.packed_ptrs)
         .arg_ptr(down.scale_ptrs)

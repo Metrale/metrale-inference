@@ -246,6 +246,8 @@ pub struct MoeLayer {
     // where the target lacks it or `METRALE_TOPK_WARP=0`, and then the block kernel runs.
     moe_topk_softmax_rows_warp_k: KernelHandle,
     dense_gemv_batchm_k: KernelHandle,
+    // 2026-10-14: The Hopper fused router + top-k + sort (`METRALE_MOE_ROUTE_FUSED`).
+    route_fused: route_fused::RouteFused,
     // 2026-09-27: The grouped NVFP4 decode's expert kernels (NVFP4 `--expert-quantization`
     // tiers); 0 on
     // targets that do not ship them.
@@ -375,8 +377,10 @@ mod forward_fp8_grouped_router;
 pub use forward_fp8_grouped_router::GroupedRouting;
 mod forward_bf16_grouped_decode;
 mod forward_nvfp4_grouped_decode;
+mod nvfp4_decode_hsm;
 mod nvfp4_grouped_admit;
 mod nvfp4_lean;
+mod route_fused;
 pub use forward_nvfp4_grouped_decode::{
     NVFP4_GROUPED_DECODE_MAX_ROWS, NVFP4_GROUPED_DECODE_TC_MAX_ROWS, nvfp4_grouped_decode_shape_ok,
 };

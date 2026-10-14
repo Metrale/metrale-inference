@@ -33,6 +33,8 @@ impl Nvfp4GroupedKernels {
             gate_up_geometry: ops::NVFP4_GROUPED_GATE_UP_TC,
             down: self.down_tc_lean,
             down_geometry: ops::NVFP4_GROUPED_DOWN_TC,
+            gate_up_smem: 0,
+            down_smem: 0,
             max_rows: super::NVFP4_GROUPED_DECODE_TC_MAX_ROWS,
         })
     }

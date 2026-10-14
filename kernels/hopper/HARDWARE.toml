@@ -475,6 +475,14 @@ moe_w4a16_wgmma_min_rows = 30720
 #   qsa_prefill_attn_tc_hopper.cu        tensor-core twin of the QSA selective
 #                                        prefill attention: model-layers ops
 #                                        `qsa_prefill_attn`
+#   moe_nvfp4_decode_hopper.cu           NVFP4 MoE decode expert pair with
+#                                        each warp's weight tile staged
+#                                        whole in shared memory: model-layers
+#                                        MoE `METRALE_MOE_DECODE_HSM`
+#   moe_route_fused_hopper.cu            exact MoE router GEMV, softmax top-k
+#                                        and slot sort in one launch:
+#                                        model-layers MoE
+#                                        `METRALE_MOE_ROUTE_FUSED`
 #
 # crates/kernels/tests/inherited_targets.rs checks that a replacement is
 # declared in [shadow] and an addition is not.

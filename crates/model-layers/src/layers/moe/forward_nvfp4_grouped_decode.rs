@@ -53,6 +53,10 @@ pub(super) struct Nvfp4GroupedKernels {
     /// warps), taken in its place when both resolved; zero with `METRALE_MOE_TC_SPLIT=0`.
     pub gate_up_tc_split: KernelHandle,
     pub down_tc_mt1: KernelHandle,
+    /// 2026-10-14: The Hopper staged pair (`moe_nvfp4_decode_hopper`, the split pair's bytes),
+    /// zero unless `METRALE_MOE_DECODE_HSM=1` and the module exists (`nvfp4_decode_hsm.rs`).
+    pub gate_up_hsm: KernelHandle,
+    pub down_hsm: KernelHandle,
     pub declared_experts: bool,
     /// 2026-10-04: The lean point's pair (`Nvfp4G16Lean`) and its load-time repack; `lean` is set
     /// once this layer's tables were repacked (`nvfp4_lean.rs`), after which only that pair reads them.
@@ -71,6 +75,7 @@ impl Nvfp4GroupedKernels {
         use super::super::try_kernel;
         const MODULE: &str = "moe_nvfp4_grouped";
         const TC: &str = "moe_nvfp4_grouped_tc";
+        let (gate_up_hsm, down_hsm) = super::nvfp4_decode_hsm::resolve(gpu);
         Self {
             gate_up: try_kernel(gpu, MODULE, "moe_expert_gate_up_act_nvfp4_grouped"),
             down: try_kernel(gpu, MODULE, "moe_expert_down_act_nvfp4_grouped"),
@@ -86,6 +91,8 @@ impl Nvfp4GroupedKernels {
             } else {
                 try_kernel(gpu, TC, "moe_expert_down_act_nvfp4_grouped_tc_mt1")
             },
+            gate_up_hsm,
+            down_hsm,
             declared_experts: false,
             gate_up_tc_lean: try_kernel(gpu, TC, "moe_expert_gate_up_act_nvfp4_grouped_tc_lean"),
             down_tc_lean: try_kernel(gpu, TC, "moe_expert_down_act_nvfp4_grouped_tc_lean"),
@@ -111,6 +118,9 @@ impl Nvfp4GroupedKernels {
         if let Some(lean) = self.lean_launch() {
             return lean;
         }
+        if let Some(hsm) = self.hsm_launch(hidden, inter) {
+            return hsm;
+        }
         if nvfp4_grouped_tc_enabled()
             && self.gate_up_tc_split.0 != 0
             && self.down_tc_mt1.0 != 0
@@ -126,6 +136,8 @@ impl Nvfp4GroupedKernels {
                 gate_up_geometry: ops::NVFP4_GROUPED_GATE_UP_TC_SPLIT,
                 down: self.down_tc_mt1,
                 down_geometry: ops::NVFP4_GROUPED_DOWN_TC_MT1,
+                gate_up_smem: 0,
+                down_smem: 0,
                 max_rows: NVFP4_GROUPED_DECODE_TC_MAX_ROWS,
             };
         }
@@ -139,6 +151,8 @@ impl Nvfp4GroupedKernels {
                 gate_up_geometry: ops::NVFP4_GROUPED_GATE_UP_TC,
                 down: self.down_tc,
                 down_geometry: ops::NVFP4_GROUPED_DOWN_TC,
+                gate_up_smem: 0,
+                down_smem: 0,
                 max_rows: NVFP4_GROUPED_DECODE_TC_MAX_ROWS,
             }
         } else {
@@ -147,6 +161,8 @@ impl Nvfp4GroupedKernels {
                 gate_up_geometry: ops::NVFP4_GROUPED_GATE_UP_SCALAR,
                 down: self.down,
                 down_geometry: ops::NVFP4_GROUPED_DOWN_SCALAR,
+                gate_up_smem: 0,
+                down_smem: 0,
                 max_rows: NVFP4_GROUPED_DECODE_MAX_ROWS,
             }
         }
@@ -160,6 +176,9 @@ pub(super) struct Nvfp4GroupedLaunch {
     pub(super) gate_up_geometry: ops::Fp8GroupedGeometry,
     pub(super) down: KernelHandle,
     pub(super) down_geometry: ops::Fp8GroupedGeometry,
+    /// 2026-10-14: Dynamic shared bytes of each launch (0 but for the `_hsm` pair).
+    pub(super) gate_up_smem: u32,
+    pub(super) down_smem: u32,
     pub(super) max_rows: usize,
 }
 
@@ -230,18 +249,9 @@ impl MoeLayer {
         let scratch = ctx.buffers.scratch();
         let indices_dev = scratch;
         let weights_dev = scratch.offset(te * 4);
-        self.grouped_route(
-            input,
-            m,
-            GroupedRouting::PerRow,
-            indices_dev,
-            weights_dev,
-            ctx,
-            stream,
-        )?;
 
-        // 2026-09-27: The sort scratch reuses `gate_logits`, which top-k has read earlier on
-        // this stream (the layout of `grouped_decode_buffer_need`).
+        // 2026-09-27: The sort scratch reuses `gate_logits` (the layout of
+        // `grouped_decode_buffer_need`). 2026-10-14: Routing and sort in `grouped_route_sorted`.
         let ne = num_experts as usize;
         let gate_logits = ctx.buffers.gate_logits();
         let sorted_token_ids = gate_logits;
@@ -251,9 +261,11 @@ impl MoeLayer {
         let cap = ops::fp8_grouped_active_cap(n, top_k, num_experts);
         let active_experts = token_to_perm.offset(te * 4);
         let active_count = active_experts.offset(cap as usize * 4);
-        ops::moe_fp8_grouped_sort(
-            ctx.gpu,
-            self.moe_fp8_grouped_sort_k,
+        self.grouped_route_sorted(
+            input,
+            m,
+            indices_dev,
+            weights_dev,
             ops::Fp8GroupedSortOut {
                 sorted_token_ids,
                 sorted_expert_ids,
@@ -262,10 +274,7 @@ impl MoeLayer {
                 active_experts,
                 active_count,
             },
-            indices_dev,
-            te as u32,
-            num_experts,
-            top_k,
+            ctx,
             stream,
         )?;
 
@@ -352,6 +361,7 @@ impl MoeLayer {
             ctx.gpu,
             launch.gate_up,
             launch.gate_up_geometry,
+            launch.gate_up_smem,
             input,
             tables(&self.gate_ptrs),
             tables(&self.up_ptrs),
@@ -395,6 +405,7 @@ impl MoeLayer {
                 ctx.gpu,
                 launch.down,
                 launch.down_geometry,
+                launch.down_smem,
                 act,
                 tables(&self.down_ptrs),
                 expert_down_out,

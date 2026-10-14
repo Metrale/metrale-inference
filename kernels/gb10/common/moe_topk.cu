@@ -14,6 +14,8 @@
 
 #include <cuda_bf16.h>
 
+#include "moe_topk_warp_tail.cuh"
+
 #define BLOCK_SIZE 256
 #define MAX_EXPERTS 512
 #define MAX_TOP_K 32  // 2026-09-25: MoeLayer::new_with_hash refuses num_experts_per_tok above MOE_TOPK_SIGMOID_MAX_TOP_K (32)
@@ -218,11 +220,13 @@ extern "C" __global__ void moe_topk_softmax_rows(
 // and a 5-step butterfly. A pick is the largest logit, the lower expert index on an equal one, whatever the tree.
 // The softmax sum keeps the block body's tree: lane l plays thread 32 w + l of every warp w of the 256-thread
 // block (its experts are slots w and w + 8), the per-warp shuffle-down steps run in the same order, and lane 0
-// adds the 8 warp sums and then the picks' terms, in order, as thread 0 does. Assumes top_k >= 1, as the block
-// body does.
+// adds the 8 warp sums and then the picks' terms, in order, as thread 0 does (moe_topk_warp_tail.cuh, shared
+// with the Hopper fused router). Assumes top_k >= 1, as the block body does.
 #define WARP_ROWS 4
 #define WARP_SLOTS (MAX_EXPERTS / WARP_SIZE)
 #define BODY_WARPS (BLOCK_SIZE / WARP_SIZE)
+static_assert(WARP_SLOTS == TOPK_WARP_SLOTS && BODY_WARPS == TOPK_WARP_BODY_WARPS,
+              "moe_topk_warp_tail.cuh plays this file's block body");
 
 extern "C" __global__ void __launch_bounds__(WARP_ROWS * WARP_SIZE) moe_topk_softmax_rows_warp(
     const __nv_bfloat16* __restrict__ gate_logits,
@@ -287,52 +291,7 @@ extern "C" __global__ void __launch_bounds__(WARP_ROWS * WARP_SIZE) moe_topk_sof
         }
     }
 
-    float warp_sum[BODY_WARPS];
-    #pragma unroll
-    for (unsigned int w = 0; w < BODY_WARPS; w++) {
-        float local_sum = 0.0f;
-        #pragma unroll
-        for (unsigned int j = w; j < WARP_SLOTS; j += BODY_WARPS) {
-            if (lane + WARP_SIZE * j < actual_n) local_sum += __expf(v[j] - global_max);
-        }
-        warp_sum[w] = local_sum;
-    }
-    #pragma unroll
-    for (int offset = 16; offset > 0; offset >>= 1) {
-        #pragma unroll
-        for (unsigned int w = 0; w < BODY_WARPS; w++) {
-            warp_sum[w] += __shfl_down_sync(0xFFFFFFFF, warp_sum[w], offset);
-        }
-    }
-
-    if (lane == 0) {
-        float exp_sum = 0.0f;
-        #pragma unroll
-        for (unsigned int w = 0; w < BODY_WARPS; w++) {
-            exp_sum += warp_sum[w];
-        }
-        for (unsigned int t = 0; t < rounds; t++) {
-            exp_sum += __expf(top_vals[t] - global_max);
-        }
-        for (unsigned int t = 0; t < rounds; t++) {
-            idx_out[t] = top_idxs[t];
-            float softmax_weight = __expf(top_vals[t] - global_max) / exp_sum;
-            if (normalize) {
-                top_vals[t] = softmax_weight;
-            } else {
-                w_out[t] = softmax_weight;
-            }
-        }
-        if (normalize) {
-            float topk_sum = 0.0f;
-            for (unsigned int t = 0; t < rounds; t++) {
-                topk_sum += top_vals[t];
-            }
-            for (unsigned int t = 0; t < rounds; t++) {
-                w_out[t] = top_vals[t] / topk_sum;
-            }
-        }
-    }
+    topk_warp_softmax_tail(v, lane, actual_n, rounds, global_max, top_vals, top_idxs, normalize, idx_out, w_out);
 }
 
 // 2026-09-25: `moe_topk_softmax_f32`: `moe_topk_softmax` with F32 logits, same tie-break. The MoE layer uses it when

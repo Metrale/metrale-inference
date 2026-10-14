@@ -137,8 +137,9 @@ fn the_overlay_owned_count_is_the_overlays_own_common_files() {
     // 2026-09-28: 17 since ssm_ba_gates_hopper.cu moved to gb10/common (inherited); 2026-10-13:
     // 18 with moe_w4a16_grouped_pipe_hopper.cu; 2026-10-14: 19 with hc_lowrank_gemv_hopper.cu,
     // 20 with qsa_prefill_attn_tc_hopper.cu, 22 with moe_w4a16_grouped_wgmma_hopper.cu and
-    // moe_w4a16_grouped_hopper.cuh.
-    assert_eq!(count("hopper", "qwen3.8-27b", "nvfp4"), 22);
+    // moe_w4a16_grouped_hopper.cuh, 23 with hc_lowrank_site_hopper.cuh, 25 with
+    // moe_nvfp4_decode_hopper.cu and moe_route_fused_hopper.cu.
+    assert_eq!(count("hopper", "qwen3.8-27b", "nvfp4"), 25);
     assert_eq!(count("b300", "kimi-k3", "bf16"), 0, "b300 inherits nothing");
     assert_eq!(count("b200", "kimi-k3", "bf16"), 0);
     assert_eq!(

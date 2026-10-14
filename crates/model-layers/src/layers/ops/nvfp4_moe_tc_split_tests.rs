@@ -27,15 +27,17 @@ use super::{
 use crate::weight_map::QuantizedWeight;
 
 const SENTINEL: u8 = 0xAB;
-const EXPERTS: u32 = 512;
-const TOP_K: u32 = 10;
-const HIDDEN: u32 = 2560;
-const INTER: u32 = 640;
+/// 2026-10-14: An expert kernel, its launch geometry and its dynamic shared bytes.
+pub(super) type Kern = (KernelHandle, Fp8GroupedGeometry, u32);
+pub(super) const EXPERTS: u32 = 512;
+pub(super) const TOP_K: u32 = 10;
+pub(super) const HIDDEN: u32 = 2560;
+pub(super) const INTER: u32 = 640;
 /// 2026-10-14: Distinct weight buffers; expert e points at buffer e % SETS.
 const SETS: u32 = 16;
 /// 2026-10-14: The expert whose gate pointer and the expert whose down pointer are null.
-const NULL_GATE: u32 = 5;
-const NULL_DOWN: u32 = 9;
+pub(super) const NULL_GATE: u32 = 5;
+pub(super) const NULL_DOWN: u32 = 9;
 const WIDTHS: [u32; 8] = [1, 2, 4, 8, 16, 32, 64, 128];
 const TIMED: u32 = 200;
 const MODULE: &str = "moe_nvfp4_grouped_tc";
@@ -58,7 +60,7 @@ fn bytes(n: usize, seed: u32, scale: bool) -> Vec<u8> {
 }
 
 /// 2026-10-14: BF16 activations in [-2, 2].
-fn bf16s(n: usize, seed: u32) -> Vec<u8> {
+pub(super) fn bf16s(n: usize, seed: u32) -> Vec<u8> {
     bytes(n, seed, false)
         .into_iter()
         .flat_map(|b| {
@@ -72,7 +74,7 @@ fn le<T: Copy, const N: usize>(v: &[T], f: impl Fn(T) -> [u8; N]) -> Vec<u8> {
     v.iter().flat_map(|&x| f(x)).collect()
 }
 
-fn upload(g: &dyn GpuBackend, data: &[u8]) -> DevicePtr {
+pub(super) fn upload(g: &dyn GpuBackend, data: &[u8]) -> DevicePtr {
     let p = g.alloc(data.len()).unwrap();
     g.copy_h2d(data, p).unwrap();
     p
@@ -84,7 +86,7 @@ fn sentinel(g: &dyn GpuBackend, n: usize) -> DevicePtr {
     p
 }
 
-fn download(g: &dyn GpuBackend, p: DevicePtr, n: usize) -> Vec<u8> {
+pub(super) fn download(g: &dyn GpuBackend, p: DevicePtr, n: usize) -> Vec<u8> {
     let mut out = vec![0u8; n];
     g.copy_d2h(p, &mut out).unwrap();
     out
@@ -92,7 +94,7 @@ fn download(g: &dyn GpuBackend, p: DevicePtr, n: usize) -> Vec<u8> {
 
 /// 2026-10-14: One projection's `[n, k]` weights: the routed tables (expert `null` points at
 /// NULL) and the shared expert.
-fn projection(
+pub(super) fn projection(
     g: &dyn GpuBackend,
     n: u32,
     k: u32,
@@ -138,7 +140,7 @@ fn projection(
 
 /// 2026-10-14: Token t's experts: hot expert t % 3, NULL_GATE / NULL_DOWN on every 7th / 11th
 /// token, then distinct pseudo-random experts up to TOP_K.
-fn picks(t: u32) -> Vec<u32> {
+pub(super) fn picks(t: u32) -> Vec<u32> {
     let mut p = vec![t % 3];
     for (every, e) in [(7, NULL_GATE), (11, NULL_DOWN)] {
         if t.is_multiple_of(every) {
@@ -159,19 +161,26 @@ fn picks(t: u32) -> Vec<u32> {
 }
 
 /// 2026-10-14: The routing tables of `m` tokens on the device, and (positions, active experts).
-struct Routing {
-    offsets: DevicePtr,
-    sorted: DevicePtr,
-    active: DevicePtr,
-    count: DevicePtr,
-    positions: u32,
-    cap: u32,
+pub(super) struct Routing {
+    pub(super) offsets: DevicePtr,
+    pub(super) sorted: DevicePtr,
+    pub(super) active: DevicePtr,
+    pub(super) count: DevicePtr,
+    pub(super) positions: u32,
+    pub(super) cap: u32,
+    /// 2026-10-14: `pos[t][j]`: the sorted position of token t's j-th pick.
+    pub(super) pos: Vec<Vec<u32>>,
 }
 
-fn routing(g: &dyn GpuBackend, m: u32) -> Routing {
+pub(super) fn routing(g: &dyn GpuBackend, m: u32) -> Routing {
+    routing_of(g, &(0..m).map(picks).collect::<Vec<_>>())
+}
+
+/// 2026-10-14: The routing tables of token t picking `picks[t]` (distinct experts per token).
+pub(super) fn routing_of(g: &dyn GpuBackend, picks: &[Vec<u32>]) -> Routing {
     let mut rows: Vec<Vec<i32>> = vec![Vec::new(); EXPERTS as usize];
-    for t in 0..m {
-        for e in picks(t) {
+    for (t, p) in picks.iter().enumerate() {
+        for &e in p {
             rows[e as usize].push(t as i32);
         }
     }
@@ -183,7 +192,20 @@ fn routing(g: &dyn GpuBackend, m: u32) -> Routing {
     let active: Vec<i32> = (0..EXPERTS as i32)
         .filter(|&e| !rows[e as usize].is_empty())
         .collect();
+    let pos = picks
+        .iter()
+        .enumerate()
+        .map(|(t, p)| {
+            p.iter()
+                .map(|&e| {
+                    let i = rows[e as usize].iter().position(|&x| x == t as i32).unwrap();
+                    (offsets[e as usize] + i as i32) as u32
+                })
+                .collect()
+        })
+        .collect();
     Routing {
+        pos,
         offsets: upload(g, &le(&offsets, i32::to_le_bytes)),
         sorted: upload(g, &le(&sorted, i32::to_le_bytes)),
         active: upload(g, &le(&active, i32::to_le_bytes)),
@@ -193,16 +215,16 @@ fn routing(g: &dyn GpuBackend, m: u32) -> Routing {
     }
 }
 
-struct Weights {
-    gate: (Nvfp4ExpertTables, QuantizedWeight),
-    up: (Nvfp4ExpertTables, QuantizedWeight),
-    down: (Nvfp4ExpertTables, QuantizedWeight),
+pub(super) struct Weights {
+    pub(super) gate: (Nvfp4ExpertTables, QuantizedWeight),
+    pub(super) up: (Nvfp4ExpertTables, QuantizedWeight),
+    pub(super) down: (Nvfp4ExpertTables, QuantizedWeight),
 }
 
 /// 2026-10-14: One gate+up launch into sentinel-filled (act, shared act); their bytes.
-fn gate_up(
+pub(super) fn gate_up(
     g: &dyn GpuBackend,
-    (kernel, geometry): (KernelHandle, Fp8GroupedGeometry),
+    (kernel, geometry, smem): Kern,
     w: &Weights,
     a: DevicePtr,
     r: &Routing,
@@ -211,7 +233,7 @@ fn gate_up(
     let (na, ns) = ((r.positions * INTER * 4) as usize, (m * INTER * 4) as usize);
     let (act, sh_act) = (sentinel(g, na), sentinel(g, ns));
     moe_expert_gate_up_act_nvfp4_grouped(
-        g, kernel, geometry, a, w.gate.0, w.up.0, act, r.offsets, r.sorted, r.active, r.count,
+        g, kernel, geometry, smem, a, w.gate.0, w.up.0, act, r.offsets, r.sorted, r.active, r.count,
         &w.gate.1, &w.up.1, sh_act, INTER, HIDDEN, r.cap, m, 0,
     )
     .unwrap();
@@ -223,9 +245,9 @@ fn gate_up(
 }
 
 /// 2026-10-14: One down launch over (act, shared act) into sentinel-filled (C, shared out).
-fn down(
+pub(super) fn down(
     g: &dyn GpuBackend,
-    (kernel, geometry): (KernelHandle, Fp8GroupedGeometry),
+    (kernel, geometry, smem): Kern,
     w: &Weights,
     (act, sh_act): (DevicePtr, DevicePtr),
     r: &Routing,
@@ -237,7 +259,7 @@ fn down(
     );
     let (c, sh_out) = (sentinel(g, nc), sentinel(g, ns));
     moe_expert_down_act_nvfp4_grouped(
-        g, kernel, geometry, act, w.down.0, c, r.offsets, r.active, r.count, sh_act, &w.down.1,
+        g, kernel, geometry, smem, act, w.down.0, c, r.offsets, r.active, r.count, sh_act, &w.down.1,
         sh_out, HIDDEN, INTER, r.cap, m, 0,
     )
     .unwrap();
@@ -249,7 +271,7 @@ fn down(
 }
 
 /// 2026-10-14: Every `row`-byte row of `out` was written (not all sentinel).
-fn all_rows_written(out: &[u8], row: usize, label: &str) {
+pub(super) fn all_rows_written(out: &[u8], row: usize, label: &str) {
     for (i, r) in out.chunks_exact(row).enumerate() {
         assert!(
             r.iter().any(|&b| b != SENTINEL),
@@ -259,7 +281,7 @@ fn all_rows_written(out: &[u8], row: usize, label: &str) {
 }
 
 /// 2026-10-14: Microseconds per launch of `f` over TIMED launches.
-fn time_us(g: &dyn GpuBackend, mut f: impl FnMut()) -> f64 {
+pub(super) fn time_us(g: &dyn GpuBackend, mut f: impl FnMut()) -> f64 {
     f();
     g.synchronize(0).unwrap();
     let t = std::time::Instant::now();
@@ -282,18 +304,22 @@ fn nvfp4_tc_split_pair_writes_the_unsplit_pairs_bytes() {
     let gu_base = (
         k("moe_expert_gate_up_act_nvfp4_grouped_tc"),
         NVFP4_GROUPED_GATE_UP_TC,
+        0,
     );
     let gu_split = (
         k("moe_expert_gate_up_act_nvfp4_grouped_tc_split"),
         NVFP4_GROUPED_GATE_UP_TC_SPLIT,
+        0,
     );
     let dn_base = (
         k("moe_expert_down_act_nvfp4_grouped_tc"),
         NVFP4_GROUPED_DOWN_TC,
+        0,
     );
     let dn_mt1 = (
         k("moe_expert_down_act_nvfp4_grouped_tc_mt1"),
         NVFP4_GROUPED_DOWN_TC_MT1,
+        0,
     );
     assert_ne!(gu_base.0.0, gu_split.0.0);
     assert_ne!(dn_base.0.0, dn_mt1.0.0);
@@ -334,19 +360,19 @@ fn nvfp4_tc_split_pair_writes_the_unsplit_pairs_bytes() {
             (m * HIDDEN * 2) as usize,
         );
         let out = (g.alloc(nc).unwrap(), g.alloc(nd).unwrap());
-        let gu_us = |(kernel, geometry): (KernelHandle, Fp8GroupedGeometry)| {
+        let gu_us = |(kernel, geometry, smem): Kern| {
             time_us(g, || {
                 moe_expert_gate_up_act_nvfp4_grouped(
-                    g, kernel, geometry, a, w.gate.0, w.up.0, scratch.0, r.offsets, r.sorted,
+                    g, kernel, geometry, smem, a, w.gate.0, w.up.0, scratch.0, r.offsets, r.sorted,
                     r.active, r.count, &w.gate.1, &w.up.1, scratch.1, INTER, HIDDEN, r.cap, m, 0,
                 )
                 .unwrap()
             })
         };
-        let dn_us = |(kernel, geometry): (KernelHandle, Fp8GroupedGeometry)| {
+        let dn_us = |(kernel, geometry, smem): Kern| {
             time_us(g, || {
                 moe_expert_down_act_nvfp4_grouped(
-                    g, kernel, geometry, act.0, w.down.0, out.0, r.offsets, r.active, r.count,
+                    g, kernel, geometry, smem, act.0, w.down.0, out.0, r.offsets, r.active, r.count,
                     act.1, &w.down.1, out.1, HIDDEN, INTER, r.cap, m, 0,
                 )
                 .unwrap()

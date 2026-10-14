@@ -152,11 +152,19 @@ mod moe_grouped_fp4;
 pub mod moe_lora_grouped;
 #[path = "ops/moe_prefill.rs"]
 mod moe_prefill;
+#[path = "ops/moe_route_fused.rs"]
+mod moe_route_fused;
+#[cfg(test)]
+#[path = "ops/moe_route_fused_tests.rs"]
+mod moe_route_fused_tests;
 #[cfg(test)]
 #[path = "ops/moe_topk_warp_tests.rs"]
 mod moe_topk_warp_tests;
 #[path = "ops/norm.rs"]
 mod norm;
+#[cfg(test)]
+#[path = "ops/nvfp4_moe_hsm_tests.rs"]
+mod nvfp4_moe_hsm_tests;
 #[cfg(test)]
 #[path = "ops/nvfp4_moe_tc_split_tests.rs"]
 mod nvfp4_moe_tc_split_tests;
@@ -301,6 +309,7 @@ pub(crate) use moe_grouped_b::*;
 pub use moe_grouped_fp4::*;
 pub use moe_lora_grouped::*;
 pub use moe_prefill::*;
+pub use moe_route_fused::*;
 pub use norm::*;
 pub use nvfp4_mmq::*;
 pub use ple::*;
