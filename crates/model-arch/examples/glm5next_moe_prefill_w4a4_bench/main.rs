@@ -4,10 +4,12 @@
 //! (`kernels/gb10/common/w4a4_grouped_mx.cu`) at the per-rank shapes of GLM-5.3's TP=3 `tp`
 //! expert layout (hidden 4096, all 288 experts, rank 0's 704-wide slice, top 8).
 //!
-//! 1. Byte gate, at `GLM_BENCH_ROWS` rows (default 17, 64, 512, 2048) of random routing: every
-//!    sorted slot of the grouped gate (gathered through `sorted_token_ids`) against the slot
-//!    GEMV `w4a4_gemv_mx8_moe_slots` on the same slot, and every row of the grouped `_k64` down
-//!    against the `_k64` slot GEMV on the same activation row, on both tile entries.
+//! 1. Byte gate, at `GLM_BENCH_ROWS` rows (default 17, 64, 512, 1036, 2048, 8208; 2026-10-14:
+//!    8208 x top 8 slots pass CUDA's grid-Y limit, 1036 ends on a ragged tile) of random
+//!    routing: every sorted slot of the grouped gate (gathered through `sorted_token_ids`)
+//!    against the slot GEMV `w4a4_gemv_mx8_moe_slots` on the same slot, and every row of the
+//!    grouped `_k64` down against the `_k64` slot GEMV on the same activation row, on both tile
+//!    entries.
 //! 2. Timing (CUDA-graph replay, median of `REPS` replays with p10 and max): at each row count
 //!    the grouped gate + up + down, the whole sequence (sort, tiles, quantizations, SwiGLU), and
 //!    the grouped W4A16 GEMM the prefill ran before (`moe_w4a16_grouped_gemm_ptrtable_bt_m16_k128`,
@@ -301,7 +303,7 @@ fn main() -> Result<()> {
     let rows_list: Vec<usize> = std::env::var("GLM_BENCH_ROWS")
         .ok()
         .map(|v| v.split(',').filter_map(|x| x.trim().parse().ok()).collect())
-        .unwrap_or_else(|| vec![17, 64, 512, 2048]);
+        .unwrap_or_else(|| vec![17, 64, 512, 1036, 2048, 8208]);
     let gate_only = env_or("GLM_BENCH_GATE_ONLY", 0) != 0;
     for &rows in &rows_list {
         let b = bufs(g, &mut rng, rows)?;

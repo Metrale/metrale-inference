@@ -21,12 +21,13 @@
 
 use anyhow::{Result, ensure};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
-use metrale_gpu_runtime::kernel_args::{KernelLaunch, div_ceil};
+use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 use super::Glm5NextMlpWorkspace;
 use super::MOE_ROW_UNION_MAX_IDS;
 use super::launch::swiglu;
 use super::moe_experts::MoeSite;
+use super::w4a4_slots::{W4a4SlotsCall, launch_w4a4_slots};
 use crate::glm5next_layer::profile;
 use crate::glm5next_mlp::build_w4a4::{check_w4a4_k, check_w4a4_k64};
 use crate::glm5next_mlp::weights::{Glm5NextExpertPtrTable, W4a4ActScales};
@@ -71,7 +72,8 @@ pub(super) fn quant_static(
 }
 
 /// 2026-10-08: `out[s, n]` for every slot `s < slots` over the quantized scratch, the weights of
-/// expert `ids[s]` from `table`; slot `s` reads activation row `s / act_div`.
+/// expert `ids[s]` from `table`; slot `s` reads activation row `s / act_div`. 2026-10-14: Through
+/// [`launch_w4a4_slots`], which splits past CUDA's grid-Y limit.
 #[allow(clippy::too_many_arguments)]
 fn moe_slots(
     gpu: &dyn GpuBackend,
@@ -86,22 +88,22 @@ fn moe_slots(
     num_experts: usize,
     stream: u64,
 ) -> Result<()> {
-    KernelLaunch::new(gpu, kern)
-        .grid([div_ceil(n as u32, W4A4_ROWS_PER_CTA), slots as u32, 1])
-        .block([W4A4_BLOCK, 1, 1])
-        .arg_ptr(ws.w4a4_aq)
-        .arg_ptr(ws.w4a4_as)
-        .arg_ptr(ws.w4a4_ag)
-        .arg_ptr(ws.ids)
-        .arg_ptr(table.packed_ptrs)
-        .arg_ptr(table.scale_ptrs)
-        .arg_ptr(table.scale2_vals)
-        .arg_ptr(out)
-        .arg_u32(n as u32)
-        .arg_u32(k as u32)
-        .arg_u32(act_div as u32)
-        .arg_u32(num_experts as u32)
-        .launch(stream)
+    let call = W4a4SlotsCall {
+        aq: ws.w4a4_aq,
+        as_: ws.w4a4_as,
+        ag: ws.w4a4_ag,
+        ids: ws.ids,
+        packed_ptrs: table.packed_ptrs,
+        scale_ptrs: table.scale_ptrs,
+        scale2_vals: table.scale2_vals,
+        out,
+        n,
+        k,
+        slots,
+        act_div,
+        num_experts,
+    };
+    launch_w4a4_slots(gpu, kern, &call, stream)
 }
 
 /// 2026-10-09: Which entry list the persistent sweep reads.
