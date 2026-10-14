@@ -62,6 +62,10 @@ extern "C" __global__ void dsa_write_geom_rows(
 
 // 2026-10-09: grid (max_pools, 1, rows), block SCORES_BLOCK: the score and candidacy of pool
 // blockIdx.x for row blockIdx.z. Dynamic shared memory: (D + H) floats.
+// 2026-10-13: grid (x, 1, rows) for any x >= 1: block x scores pools x, x + gridDim.x, ... below
+// the row's pool count, so the host caps x instead of launching one block per pool of the
+// context ceiling (`--max-seq-len` / KP blocks per row, almost all returning at once at a long
+// ceiling). Each pool's writes are the one-block-per-pool kernel's.
 extern "C" __global__ void dsa_pool_scores_rows(
     const __nv_bfloat16* __restrict__ k,
     const __nv_bfloat16* __restrict__ gate,
@@ -83,42 +87,46 @@ extern "C" __global__ void dsa_pool_scores_rows(
     unsigned int blk_elems,
     unsigned int sc_stride
 ) {
-    const unsigned int p = blockIdx.x;
     const unsigned int row = blockIdx.z;
     const unsigned int tid = threadIdx.x;
     const int* g = geom + (size_t)row * DSA_GEOM_SLOTS;
     const unsigned int S = (unsigned int)g[DSA_GEOM_S];
     const unsigned int P = (unsigned int)g[DSA_GEOM_NPOOLS];
-    if (p >= P) return;
     const int* btr = bt + (size_t)row * bt_stride;
-
-    // 2026-10-09: dsa_kpool_compress's slot bookkeeping, then dsa_index_scores' candidacy.
-    bool all_valid = true;
-    int end = DSA_INVALID;
-    for (unsigned int s = 0; s < KP; ++s) {
-        end = dsa_pool_slot(first_key, p, KP, s, S, nullptr);
-        all_valid &= end != DSA_INVALID;
-    }
-    int end_c = end < 0 ? 0 : (end >= (int)S ? (int)S - 1 : end);
-    bool vis = (end_c <= q_pos[row]) && dsa_row_valid(nullptr, end_c);
-    bool cand = all_valid && vis;
     float* out_r = out + (size_t)row * sc_stride;
-    if (tid == 0) valid_cand[(size_t)row * sc_stride + p] = cand ? 1 : 0;
-    if (!cand) {
-        if (tid == 0) out_r[p] = -FLT_MAX;
-        return;
-    }
-
     extern __shared__ float sh_rows[];
     float* key = sh_rows;
     float* heads = sh_rows + D;
-    for (unsigned int d = tid; d < D; d += blockDim.x)
-        key[d] = dsa_pool_key(k, gate, nullptr, ape, S, D, KP, first_key, btr, bs, blk_elems,
-                              p, d);
-    __syncthreads();
-    const float acc = dsa_score_heads(q + (size_t)row * H * D, key, weights + (size_t)row * H,
-                                      H, D, scale, heads, tid);
-    if (tid == 0) out_r[p] = acc;
+
+    // 2026-10-13: p, and so cand, is the same for every thread of the block: the `continue`
+    // is uniform and every thread reaches each __syncthreads.
+    for (unsigned int p = blockIdx.x; p < P; p += gridDim.x) {
+        // 2026-10-09: dsa_kpool_compress's slot bookkeeping, then dsa_index_scores' candidacy.
+        bool all_valid = true;
+        int end = DSA_INVALID;
+        for (unsigned int s = 0; s < KP; ++s) {
+            end = dsa_pool_slot(first_key, p, KP, s, S, nullptr);
+            all_valid &= end != DSA_INVALID;
+        }
+        int end_c = end < 0 ? 0 : (end >= (int)S ? (int)S - 1 : end);
+        bool vis = (end_c <= q_pos[row]) && dsa_row_valid(nullptr, end_c);
+        bool cand = all_valid && vis;
+        if (tid == 0) valid_cand[(size_t)row * sc_stride + p] = cand ? 1 : 0;
+        if (!cand) {
+            if (tid == 0) out_r[p] = -FLT_MAX;
+            continue;
+        }
+
+        for (unsigned int d = tid; d < D; d += blockDim.x)
+            key[d] = dsa_pool_key(k, gate, nullptr, ape, S, D, KP, first_key, btr, bs,
+                                  blk_elems, p, d);
+        __syncthreads();
+        const float acc = dsa_score_heads(q + (size_t)row * H * D, key,
+                                          weights + (size_t)row * H, H, D, scale, heads, tid);
+        if (tid == 0) out_r[p] = acc;
+        // 2026-10-13: The next pool overwrites `key` and `heads`.
+        __syncthreads();
+    }
 }
 
 // 2026-10-09: grid (1, rows), block ROW_BLOCK: dsa_topk_pools per row, over scores row

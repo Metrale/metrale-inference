@@ -475,6 +475,11 @@ fn paged_rows_store_and_select_in_one_launch_per_stage() {
     let scores = of(&l, SCORES_ROWS);
     assert_eq!(scores.len(), 1);
     assert_eq!(scores[0].grid[2], 3, "grid z is the row");
+    // 2026-10-13: A 16-pool ceiling is under the grid cap: grid x and the stride stay its pools.
+    assert_eq!(
+        (scores[0].grid[0], scores[0].args.last()),
+        (16, Some(&MockArg::Bytes(16u32.to_le_bytes().to_vec())))
+    );
     assert_eq!(scores[0].args[3], ptr(w.q_idx_rows));
     assert_eq!(of(&l, EXPAND_ROWS)[0].args[4], ptr(w.select.tokens()));
     // 2026-10-09: The flat row: one per-row store at metadata row 3, one per-row selection.

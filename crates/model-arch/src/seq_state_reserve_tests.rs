@@ -133,7 +133,7 @@ const GLM_CONFIG: &str =
 fn a_drafter_kv_region_is_1026_blocks_of_16_kib() {
     let cfg = metrale_config::parse_config(GLM_CONFIG).expect("real config parses");
     assert_eq!(
-        crate::glm5next_mtp_head::drafter_kv_bytes_per_seq(&cfg, MSL).unwrap(),
+        crate::glm5next_mtp_head::drafter_kv_bytes_per_seq(&cfg, MSL, 0).unwrap(),
         1026 * 16_384
     );
     assert_eq!(1026 * 16_384, 16_809_984);
@@ -145,12 +145,49 @@ fn a_drafter_kv_region_is_1026_blocks_of_16_kib() {
 #[test]
 fn a_paged_text_indexer_is_not_charged_per_sequence() {
     let cfg = metrale_config::parse_config(GLM_CONFIG).expect("real config parses");
-    let flat = per_sequence_state_bytes_for(&cfg, MSL, true, IndexerCache::Flat).unwrap();
-    let paged = per_sequence_state_bytes_for(&cfg, MSL, true, IndexerCache::Paged).unwrap();
+    let flat = per_sequence_state_bytes_for(&cfg, MSL, true, IndexerCache::Flat, 0).unwrap();
+    let paged = per_sequence_state_bytes_for(&cfg, MSL, true, IndexerCache::Paged, 0).unwrap();
     assert_eq!(flat.target_layers, 739_639_296);
     assert_eq!(paged.target_layers, 0);
     assert_eq!(paged.proposer, flat.proposer);
     // 2026-10-11: The indexer block and buffers (67,574,328 B) plus the drafter KV region
     // (16,809,984 B).
     assert_eq!(paged.proposer, 67_574_328 + 16_809_984);
+}
+
+/// 2026-10-13: The proposer's charge at `--max-seq-len` `msl` (set as the serve sets it) under
+/// drafter cap `cap`, with the paged text indexer of the lever recipe.
+fn proposer_at(msl: usize, cap: usize) -> usize {
+    let mut cfg = metrale_config::parse_config(GLM_CONFIG).expect("real config parses");
+    cfg.serve_max_seq_len = msl;
+    per_sequence_state_bytes_for(&cfg, msl, true, IndexerCache::Paged, cap)
+        .unwrap()
+        .proposer
+}
+
+/// 2026-10-13: Under the drafter cap the proposer's charge is the same at every
+/// `--max-seq-len` at or above it: 65,536 rows of indexer (33,619,968 B) and 4,098 KV blocks
+/// (67,141,632 B) plus the 334,392 B of buffers. Uncapped (the negative control) it grows with
+/// `--max-seq-len`, ~1,537 B per row, which is what failed the 512k boot.
+#[test]
+fn the_capped_proposer_charge_does_not_grow_with_max_seq_len() {
+    let at_cap = proposer_at(65_536, 65_536);
+    assert_eq!(at_cap, 33_619_968 + 4_098 * 16_384 + 334_392);
+    for msl in [131_072, 262_144, 524_288, 1_048_576] {
+        assert_eq!(proposer_at(msl, 65_536), at_cap, "msl {msl}");
+        assert!(proposer_at(msl, 0) > at_cap, "uncapped msl {msl} must grow");
+    }
+    assert_eq!(
+        proposer_at(524_288, 0) - proposer_at(262_144, 0),
+        262_144 * 513 + (262_144 / 16) * 16_384
+    );
+}
+
+/// 2026-10-13: At or below the cap the charge is the uncapped one, byte for byte (the lever
+/// recipe's 40,960 included).
+#[test]
+fn below_the_cap_the_charge_is_the_uncapped_one() {
+    for msl in [16_384, 40_960, 65_536] {
+        assert_eq!(proposer_at(msl, 65_536), proposer_at(msl, 0), "msl {msl}");
+    }
 }

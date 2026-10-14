@@ -39,6 +39,7 @@ mod batch;
 mod batch_check;
 mod batch_graph;
 mod catchup;
+mod context_cap;
 mod ctx_rows;
 mod draft_io;
 mod draft_lp;
@@ -57,6 +58,8 @@ pub use batch::{PROPOSE_BATCH_MAX, drafter_block_rows, propose_batch_enabled};
 pub fn drafter_dsa_rows() -> usize {
     drafter_block_rows().max(ctx_rows::CTX_ROWS_CHUNK)
 }
+/// 2026-10-13: The drafter's context cap (`METRALE_GLM_MTP_CONTEXT_CAP`, `context_cap`).
+pub use context_cap::{drafter_context_cap, drafter_dsa_config, drafter_max_context};
 /// 2026-10-11: The drafter graph's per-state bytes, for the per-sequence reserve.
 pub use graph::state_bytes as graph_state_bytes;
 /// 2026-10-11: Bytes of the draft head's exchange buffer, one per sequence state.
@@ -479,9 +482,11 @@ impl Glm5NextMtpHead {
         stream: u64,
     ) -> Result<()> {
         let h = self.hidden;
-        if position >= self.max_seq_len {
+        // 2026-10-13: The drafter's row, not the target's position (`context_cap::propose_start`).
+        if st.seq_len >= self.max_seq_len {
             bail!(
-                "GLM MTP drafter: position {position} is past the {} it was sized for",
+                "GLM MTP drafter: row {} is past its {} rows",
+                st.seq_len,
                 self.max_seq_len
             );
         }

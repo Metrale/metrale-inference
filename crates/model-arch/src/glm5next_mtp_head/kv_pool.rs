@@ -40,12 +40,14 @@ pub(super) fn blocks_per_seq(rows: usize) -> usize {
 
 /// 2026-10-11: Device bytes of one state's region at `--max-seq-len` `max_seq_len`, for the
 /// per-sequence reserve (`seq_state_reserve`). The same capped row count, layout and block
-/// count `Glm5NextMtpHead::new` allocates.
+/// count `Glm5NextMtpHead::new` allocates. 2026-10-13: Under the drafter's context cap `cap`
+/// (`context_cap`; 0 = none), as the loader builds the drafter block.
 pub fn drafter_kv_bytes_per_seq(
     config: &metrale_config::ModelConfig,
     max_seq_len: usize,
+    cap: usize,
 ) -> Result<usize> {
-    let dsa = crate::glm5next_dsa::Glm5NextDsaConfig::from_config(config)?;
+    let dsa = super::context_cap::drafter_dsa_config_capped(config, cap)?;
     let rows = drafter_context_rows(max_seq_len, &dsa);
     Ok(blocks_per_seq(rows) * drafter_kv_config(dsa.kv_lora_rank).block_bytes_kv_all_layers())
 }
