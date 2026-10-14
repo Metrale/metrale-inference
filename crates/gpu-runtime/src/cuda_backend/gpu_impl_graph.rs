@@ -228,6 +228,22 @@ impl MetraleCudaBackend {
         Ok(stream)
     }
 
+    /// 2026-10-14: [`Self::create_stream_cu`] at the context's greatest priority, through
+    /// cudarc's dynamically loaded driver (as `cuda_host` makes the high-priority process
+    /// stream), so no new link-time driver symbol is needed.
+    pub(super) fn create_stream_greatest_priority_cu(&self) -> Result<u64> {
+        use cudarc::driver::sys;
+        let (_, greatest) = cudarc::driver::result::ctx::stream_priority_range()
+            .map_err(|e| anyhow::anyhow!("cuCtxGetStreamPriorityRange: {e}"))?;
+        let mut stream = std::ptr::null_mut();
+        // 2026-10-14: Flag 1 is CU_STREAM_NON_BLOCKING, as in `create_stream_cu`.
+        let status = unsafe { sys::cuStreamCreateWithPriority(&mut stream, 1, greatest) };
+        if status != sys::CUresult::CUDA_SUCCESS {
+            bail!("cuStreamCreateWithPriority({greatest}) failed: {status:?}");
+        }
+        Ok(stream as u64)
+    }
+
     pub(super) fn bind_to_thread_cu(&self) -> Result<()> {
         let status = unsafe { cuCtxSetCurrent(self.cuda_ctx) };
         if status != 0 {

@@ -404,6 +404,9 @@ impl GpuBackend for MetraleCudaBackend {
     fn create_stream(&self) -> Result<u64> {
         self.create_stream_cu()
     }
+    fn create_stream_greatest_priority(&self) -> Result<u64> {
+        self.create_stream_greatest_priority_cu()
+    }
     fn bind_to_thread(&self) -> Result<()> {
         self.bind_to_thread_cu()
     }
