@@ -103,6 +103,16 @@ impl Glm5NextKdaLayer {
         record: &KdaVerifyRecord,
         stream: u64,
     ) -> Result<()> {
+        // 2026-10-14: The `rows + 1`-row forward this records may have left `qkv_proj` unwritten
+        // (`METRALE_GLM_KDA_CHUNK64_CONV` with the pack in the conv): refuse it.
+        if self.chunk64_conv_skips_pack(rows + 1)? {
+            bail!(
+                "KDA layer {}: a {}-row verify on the 64-token scan with the conv fused into its \
+                 prepare (METRALE_GLM_KDA_CHUNK64_CONV=1) writes no packed rows to record",
+                self.layer_idx,
+                rows + 1
+            );
+        }
         self.record_verify_rows_at(gpu, ws, 0, 0, rows, record, stream)
     }
 

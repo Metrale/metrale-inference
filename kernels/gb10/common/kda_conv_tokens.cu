@@ -223,3 +223,33 @@ extern "C" __global__ void __launch_bounds__(256) causal_conv1d_update_l2norm_to
     }
 #undef KDA_CONV_PARTS_PASS_ARGS
 }
+
+// 2026-10-14: causal_conv1d_window_advance reading the conv inputs where they lie instead of the
+// packed rows: channel ch is element ch % part of projection ch / part (q, k, v), rows
+// in_stride apart (the three parts: in_stride = part; the packed rows: q = the row start,
+// k = q + part, v = q + 2 part, in_stride = dim). Byte-identical to the packed advance; the
+// chunked prefill whose conv runs inside kda_chunk64_prepare_conv advances the window with it
+// after the last slab (the prepares read the window before it moves).
+extern "C" __global__ void causal_conv1d_window_advance_parts(
+    float* __restrict__ conv_state,
+    const __nv_bfloat16* __restrict__ q,
+    const __nv_bfloat16* __restrict__ k,
+    const __nv_bfloat16* __restrict__ v,
+    unsigned int dim,
+    unsigned int part,
+    unsigned int in_stride,
+    unsigned int d_conv,
+    unsigned int T
+) {
+    const unsigned int ch = blockIdx.x * blockDim.x + threadIdx.x;
+    if (ch >= dim) return;
+    const unsigned int pi = ch / part, off = ch - pi * part;
+    const __nv_bfloat16* src = (pi == 0u ? q : (pi == 1u ? k : v)) + off;
+    float* st = conv_state + (size_t)ch * d_conv;
+    float nw[4];
+    for (unsigned int s = 0; s < d_conv && s < 4u; ++s) {
+        const int j = (int)T - (int)d_conv + (int)s;
+        nw[s] = j >= 0 ? (float)src[(size_t)j * in_stride] : st[j + (int)d_conv];
+    }
+    for (unsigned int s = 0; s < d_conv && s < 4u; ++s) st[s] = nw[s];
+}
