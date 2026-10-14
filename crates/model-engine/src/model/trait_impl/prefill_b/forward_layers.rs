@@ -122,8 +122,15 @@ impl TransformerModel {
         };
 
         // 2026-09-25: A single-token pass after position 0 (for example the last-token
-        // re-run in `proc_range`) runs each layer's decode path.
-        let use_decode_path = proc_count == 1 && effective_seq_len_start > 0;
+        // re-run in `proc_range`) runs each layer's decode path. 2026-10-14: unless
+        // `METRALE_ONE_ROW_PREFILL=1` and the layers split their pass at a capture
+        // (`one_row_path`).
+        let use_decode_path = super::one_row_path::takes_decode_path(
+            proc_count,
+            effective_seq_len_start,
+            self.levers.one_row_prefill,
+            self.splits_whole_pass_at_capture(),
+        );
         // 2026-09-25: After a snapshot restore this pass recomputes the positions between
         // the snapshot and `seq.cached_prefix_tokens` (the radix match), whose K/V already
         // sits in shared prefix-cache blocks. Their count within this pass is the layers'

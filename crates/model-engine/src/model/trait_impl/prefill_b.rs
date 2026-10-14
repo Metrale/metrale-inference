@@ -34,6 +34,9 @@ mod finalize_last;
 mod forward_layers;
 mod h_state_ptrs;
 mod midchunk_capture;
+mod one_row_path;
+#[cfg(test)]
+mod one_row_path_tests;
 mod prefix_lookup;
 mod prefix_reserve;
 mod proc_range;
