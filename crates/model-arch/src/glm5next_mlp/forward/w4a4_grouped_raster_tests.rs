@@ -9,7 +9,7 @@
 //! Owner: model-arch (GLM-5.3).
 //! Invariants: none beyond the types.
 
-use super::super::super::w4a4_grouped_raster::{RasterGroups, check_ready, parse_raster};
+use super::super::super::w4a4_grouped_raster::{RasterGroups, check_ready, parse_raster, readback};
 use super::super::w4a4_grouped_experts_with;
 use super::*;
 
@@ -136,7 +136,10 @@ fn a_zero_group_and_the_narrow_tiles_keep_the_plain_plan() {
 /// 2026-10-14: The lever parses strictly; on the grouped path it needs every `_r` entry.
 #[test]
 fn the_raster_lever_parses_strictly_and_needs_its_entries() {
-    assert_eq!(parse_raster(None), Ok(None));
+    assert_eq!(
+        parse_raster(None),
+        Ok(Some(RasterGroups { gu: 0, down: 4 }))
+    );
     assert_eq!(parse_raster(Some("0")), Ok(None));
     assert_eq!(parse_raster(Some("16,4")), Ok(Some(G)));
     assert_eq!(
@@ -153,4 +156,19 @@ fn the_raster_lever_parses_strictly_and_needs_its_entries() {
     assert_eq!(check_ready(false, false), Ok(()));
     let e = check_ready(true, false).unwrap_err();
     assert!(e.contains("_r"), "{e}");
+}
+
+/// 2026-10-14: The readback says `active` only on the grouped path, and names both groups.
+#[test]
+fn the_raster_readback_names_the_groups_and_whether_they_run() {
+    let r = Some(RasterGroups { gu: 0, down: 4 });
+    assert_eq!(
+        readback(r, true),
+        "METRALE_GLM_MOE_W4A4_RASTER: active, gate/up group 0, down group 4"
+    );
+    assert_eq!(
+        readback(r, false),
+        "METRALE_GLM_MOE_W4A4_RASTER: dormant (METRALE_GLM_MOE_W4A4_GROUPED off), gate/up group 0, down group 4"
+    );
+    assert_eq!(readback(None, true), "METRALE_GLM_MOE_W4A4_RASTER: off");
 }

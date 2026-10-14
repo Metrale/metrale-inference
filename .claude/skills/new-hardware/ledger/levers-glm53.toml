@@ -1901,3 +1901,27 @@ effort_hours = 0.0
 transferability = "GLM MTP serves; re-test only with a C8 instrument whose spread is below the claimed gain"
 links = { pr = "", commit = "", evidence = "/workspace/claude-state/glm/logs/chainK_kinv-1014T1331.log; /workspace/claude-state/glm/STATUS.md 2026-10-14T13:45Z" }
 notes = "The table default (on) differs from the recipe (0); the recipe is fully explicit, so the serve runs 0."
+
+[[lever]]
+id = "gb10x3-glm53-moe-w4a4-raster"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_MOE_W4A4_RASTER=0,4 (default) under METRALE_GLM_MOE_W4A4_GROUPED=1"
+symptom = "32k cold TTFT behind vLLM; the routed down GEMM is about 6.3 ms per 8208-row call and its m128 CTAs walk the grid row-major, so each expert's weight panel leaves L2 before its next row tile needs it"
+diagnosis_tool = "microbench"
+root_cause_class = "memory-bound"
+lever_type = "scheduling"
+lkb_effect = "w4a4_grouped_core.cuh gains a raster template parameter: the m128 `_r` twins map blockIdx to (row tile, column tile) in bands of G slot tiles, every column tile of a band before the next; the tile body and its K order are unchanged"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "kept"
+verdict_reason = "glm5next_moe_epi_bench ab_2 (dgx1): byte-identical across rows 17..8208, zipf 0/1.2, n 704/640, groups 1/3/4/16/4096, and the negative control differs. Down raster 4 at rows=8208 n=704: -519.8 us per call (zipf 0) and -224.8 us (zipf 1.2), so -38 to -87 ms over the 168 down calls of a 32k prefill. Gate/up raster 16 is mixed (+0.2%/-0.8% at zipf 0, +6.7%/+5.1% at zipf 1.2), so it stays off. The cold c32k serve A/B is pending"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 6.0
+transferability = "any grouped GEMM whose B operand is selected per row tile (MoE experts) and outsizes L2 across one row-major sweep"
+links = { pr = "", commit = "", evidence = "/workspace/claude-state/glm/moegemm/ab_2.txt" }
+notes = "Only which CTA computes each tile moves. Raster 4 suits the down GEMM (K=2048 per expert, weights reused across 4 row tiles). Gate/up raster 16 helps only under skewed routing, and a per-zipf choice is not taken because the routing skew is not known at launch"
