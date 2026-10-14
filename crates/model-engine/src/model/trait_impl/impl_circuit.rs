@@ -174,13 +174,7 @@ impl TransformerModel {
                 residual: self.buffers.residual(),
                 logits: self.buffers.logits(),
                 meta: self.decode_meta(0, DevicePtr::NULL),
-                batch_meta: self.batch_meta_at(
-                    self.batch_meta_base(),
-                    0,
-                    0,
-                    DevicePtr::NULL,
-                    DevicePtr::NULL,
-                ),
+                batch_meta: self.decode_batch_meta(0, 0, DevicePtr::NULL, DevicePtr::NULL),
                 ffn_act_q8: self.buffers.ffn_act_q8(),
                 tokens: self.buffers.scratch(),
                 draft: draft.as_ref().map(|d| DraftFixed {

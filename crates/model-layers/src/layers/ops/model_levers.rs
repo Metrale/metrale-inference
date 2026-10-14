@@ -228,6 +228,11 @@ pub struct ModelLevers {
     /// gets a zero embedding half, as vLLM's GLM MTP layer always gives it
     /// (`glm5next_mtp_head/hidden_half.rs` `zeroes_embedding`).
     pub mtp_zero_pos0: bool,
+    /// 2026-10-14: `METRALE_ONE_ROW_PREFILL=1`: a one-row prefill pass after position 0 runs
+    /// each layer's prefill path, not its decode path, when the layers split their pass at an
+    /// in-pass capture (GLM-5.3), so a warm one-token replay carries the cold pass's bits
+    /// (`model-engine` `prefill_b/one_row_path.rs`). Changes those passes' numerics.
+    pub one_row_prefill: bool,
     /// 2026-09-25: `METRALE_FP8_MOE_GROUPED_DECODE=1`: the target model's multi-row FP8 MoE decode
     /// runs through the cross-row grouped kernels (`FfnComponent::fp8_grouped_decode_ok`). The MTP
     /// drafter calls `MoeLayer::fp8_grouped_decode_ok` directly and does not read this lever;

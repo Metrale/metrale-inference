@@ -33,12 +33,11 @@ use anyhow::{Result, bail, ensure};
 ///   seq_slot   u32 × R at [4R, 8R)
 ///   slots      i64 × R at [8R, 16R)
 ///   seq_lens   i32 × R at [16R, 20R)
-///   bt         i32 × R × max_blocks from 24R
+/// The block table lives in its own region since 2026-10-13 (`BlockTables`, `Region::Verify`).
 const VMETA_R: usize = super::verify_e2::VERIFY_ROW_CAP;
 const VMETA_SEQ_SLOT: usize = VMETA_R * 4;
 const VMETA_SLOTS: usize = VMETA_R * 8;
 const VMETA_SEQ_LENS: usize = VMETA_R * 16;
-const VMETA_BT: usize = VMETA_R * 24;
 use metrale_cache::kv_cache::PagedKvCache;
 use metrale_config::{LayerType, ModelConfig};
 use metrale_gpu_runtime::gpu::DevicePtr;

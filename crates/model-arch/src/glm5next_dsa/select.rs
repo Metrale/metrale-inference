@@ -131,6 +131,19 @@ pub(crate) const SCORES_BLOCK: u32 = 128;
 /// 2026-09-25: Threads per block for `dsa_topk_pools` and `dsa_expand_selection`.
 pub(crate) const ROW_BLOCK: u32 = 256;
 
+/// 2026-10-13: Widest grid x of a pool kernel launched at the context ceiling
+/// (`dsa_pool_scores_rows`; 2026-10-14: also `dsa_kpool_compress` and `dsa_index_scores` under
+/// [`DsaSelectLaunch::Ceiling`]). The kernels stride over pools (`p += gridDim.x`) up to the
+/// live count, so past this many pools a block takes several instead of the grid growing with
+/// `--max-seq-len` (one block per ceiling pool, almost all past the live count). 2,048 pools
+/// are an 8,192-token context at kpool 4.
+pub(crate) const POOL_GRID_MAX: usize = 2_048;
+
+/// 2026-10-13: Grid x of a ceiling-launched pool kernel whose one-block-per-pool grid is `pools`.
+pub(crate) fn pool_grid_x(pools: usize) -> u32 {
+    pools.min(POOL_GRID_MAX) as u32
+}
+
 /// 2026-09-25: Tile width `dsa_topk_pools` walks the pool axis in.
 ///
 /// The block holds two tiles, the running best list and the candidate tile, of `[f32, i32]`
@@ -477,3 +490,6 @@ mod tests;
 
 #[cfg(test)]
 mod passes_tests;
+
+#[cfg(test)]
+mod ceiling_tests;

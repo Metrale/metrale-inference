@@ -25,6 +25,7 @@ use super::block_mgmt::{
     apply_evicted_blocks, ensure_blocks_through_decode, ensure_blocks_through_prefill,
     extract_layer_refs, reuse_prefix_match_disk_ids,
 };
+use super::block_tables::BlockTables;
 use super::ssm_pool::SsmStatePool;
 use super::ssm_snapshot::SsmSnapshotPool;
 use super::types::TransformerModel;
@@ -297,6 +298,8 @@ impl TransformerModel {
             )?;
         let max_batch_tokens = buffers.max_batch_tokens();
         let pinned_staging = kernels::alloc_pinned_staging(&buffers, gpu.as_ref())?;
+        // 2026-10-13: The batched decode/verify block tables, at a fixed address (`block_tables.rs`).
+        let block_tables = BlockTables::alloc(gpu.as_ref(), max_blocks_per_seq, &buffers)?;
 
         let AuxKernels {
             ssm_norm_k,
@@ -474,6 +477,7 @@ impl TransformerModel {
             ssm_h_f16_scratch: std::sync::OnceLock::new(),
             ssm_norm_ptrs_buf: ssm_norm_ptrs,
             moe_row_adapter_buf,
+            block_tables,
             gdn_buf_qkv: gdn_qkv,
             gdn_buf_gate_beta: gdn_gate_beta,
             gdn_buf_out: gdn_out,
