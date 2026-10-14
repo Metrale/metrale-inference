@@ -279,7 +279,7 @@ pub fn cublas_bf16_proj_dense(
 }
 
 /// 2026-10-14: [`cublas_bf16_proj_dense`] on the algorithm cuBLASLt pins per (N, K)
-/// (`metrale_gpu_runtime::cublaslt::bf16_gemm_act_weight_t_pinned`): single-pass, no workspace,
+/// (`metrale_gpu_runtime::cublaslt::bf16_gemm_act_weight_t_pinned`): single-pass, a fixed workspace,
 /// the same at every M. Pointers and the N and K pitches must be 16-byte aligned.
 pub fn cublas_bf16_proj_dense_pinned(
     act: metrale_gpu_runtime::gpu::DevicePtr,

@@ -8,12 +8,15 @@
 //! Owner: gpu-runtime (cuBLASLt wrapper).
 //! Invariants:
 //! - The algorithm of an (N, K) is the heuristic's first candidate at [`PINNED_REFERENCE_M`] rows,
-//!   asked with reduction scheme NONE, no workspace and 16-byte operand alignment, that reports
-//!   split-K 1 and reduction NONE and passes `cublasLtMatmulAlgoCheck` without workspace at every
-//!   `PINNED_PROBE_M`. It depends on the device, the library and (N, K), never on the M of the
-//!   call that first asks for it.
-//! - Every call checks the algorithm again at its own M and runs it with no workspace; a check
-//!   that fails is an error, never a silent re-pick.
+//!   asked with reduction scheme NONE, at most [`PINNED_WORKSPACE_CAP`] workspace bytes and 16-byte
+//!   operand alignment, that reports split-K 1 and reduction NONE and passes
+//!   `cublasLtMatmulAlgoCheck` at every `PINNED_PROBE_M` within the cap. It depends on the device,
+//!   the library and (N, K), never on the M of the call that first asks for it.
+//! - 2026-10-14: Its workspace is fixed per (N, K): the largest need over the reference and probe
+//!   rows (H100 reports 4 bytes at 32,768 rows for every candidate, 0 below). Every call passes
+//!   that same size from the process workspace, so the size cuBLASLt sees never varies with M.
+//! - Every call checks the algorithm again at its own M and errors when it fails or needs more
+//!   than the fixed workspace, never a silent re-pick.
 //! - Whether the algorithm is in fact M-invariant is the GPU test's question
 //!   (model-layers `ops/dense_cublas_pinned_tests.rs`).
 
@@ -38,8 +41,18 @@ const BF16_BYTES: u64 = 2;
 
 /// 2026-10-14: The opaque `cublasLtMatmulAlgo_t` (64 bytes).
 type Algo = [u64; 8];
+/// 2026-10-14: Largest workspace in bytes a pinned algorithm may need at any probed M.
+const PINNED_WORKSPACE_CAP: usize = 1 << 20;
+
+/// 2026-10-14: An (N, K)'s pinned algorithm and the fixed workspace bytes every call passes.
+#[derive(Clone, Copy)]
+struct Pinned {
+    algo: Algo,
+    workspace: usize,
+}
+
 /// 2026-10-14: The algorithm pinned for each (N, K), filled on first use.
-static PINNED: OnceLock<Mutex<HashMap<(u32, u32), Algo>>> = OnceLock::new();
+static PINNED: OnceLock<Mutex<HashMap<(u32, u32), Pinned>>> = OnceLock::new();
 
 /// 2026-10-14: Whether a call meets the alignment the pinned algorithm assumes: every pointer and
 /// both row pitches (N and K BF16s) a multiple of 16 bytes.
@@ -60,6 +73,20 @@ fn pinned_operands_admitted(act: u64, weight: u64, out: u64, n: u32, k: u32) -> 
 /// no reduction scheme.
 fn single_pass(split_k: i32, reduction: u32) -> bool {
     split_k == 1 && reduction == 0
+}
+
+/// 2026-10-14: The fixed workspace of an algorithm from its needs at the reference and probe
+/// rows: the largest, or an error when one exceeds [`PINNED_WORKSPACE_CAP`].
+fn fixed_workspace(needs: &[(u32, usize)]) -> Result<usize> {
+    let mut fixed = 0;
+    for &(m, need) in needs {
+        ensure!(
+            need <= PINNED_WORKSPACE_CAP,
+            "needs {need} workspace bytes at M={m}, over the {PINNED_WORKSPACE_CAP}-byte cap"
+        );
+        fixed = fixed.max(need);
+    }
+    Ok(fixed)
 }
 
 /// 2026-10-14: [`super::bf16_gemm_act_weight_t`] on the algorithm pinned for (N, K). Errors when
@@ -83,19 +110,29 @@ pub fn bf16_gemm_act_weight_t_pinned(
         return Ok(());
     }
     let ctx = ctx()?;
-    let algo = pinned_algo(ctx, n, k)?;
+    let pinned = pinned_algo(ctx, n, k)?;
     let gemm = Bf16Gemm::new(m, n, k, CUDA_R_16BF)?;
-    let workspace = gemm
-        .check(ctx, &algo)
+    let need = gemm
+        .check(ctx, &pinned.algo)
         .with_context(|| format!("pinned cuBLASLt algorithm for N={n} K={k} rejected at M={m}"))?;
     ensure!(
-        workspace == 0,
-        "pinned cuBLASLt algorithm for N={n} K={k} needs {workspace} workspace bytes at M={m}"
+        need <= pinned.workspace,
+        "pinned cuBLASLt algorithm for N={n} K={k} needs {need} workspace bytes at M={m}, over \
+         its fixed {}",
+        pinned.workspace
     );
-    gemm.matmul(ctx, &algo, (act, weight, out), 1.0, (0, 0), stream)
+    let workspace = (ctx.workspace, pinned.workspace);
+    gemm.matmul(
+        ctx,
+        &pinned.algo,
+        (act, weight, out),
+        1.0,
+        workspace,
+        stream,
+    )
 }
 
-fn pinned_algo(ctx: &Ctx, n: u32, k: u32) -> Result<Algo> {
+fn pinned_algo(ctx: &Ctx, n: u32, k: u32) -> Result<Pinned> {
     let table = PINNED.get_or_init(|| Mutex::new(HashMap::new()));
     let mut table = table
         .lock()
@@ -103,15 +140,20 @@ fn pinned_algo(ctx: &Ctx, n: u32, k: u32) -> Result<Algo> {
     if let Some(algo) = table.get(&(n, k)) {
         return Ok(*algo);
     }
-    let algo = choose(ctx, n, k)?;
-    table.insert((n, k), algo);
-    Ok(algo)
+    let pinned = choose(ctx, n, k)?;
+    table.insert((n, k), pinned);
+    Ok(pinned)
 }
 
-fn choose(ctx: &Ctx, n: u32, k: u32) -> Result<Algo> {
+fn choose(ctx: &Ctx, n: u32, k: u32) -> Result<Pinned> {
+    ensure!(
+        PINNED_WORKSPACE_CAP <= ctx.ws_size,
+        "pinned cuBLASLt workspace cap {PINNED_WORKSPACE_CAP} over the {}-byte process workspace",
+        ctx.ws_size
+    );
     let gemm = Bf16Gemm::new(PINNED_REFERENCE_M, n, k, CUDA_R_16BF)?;
     let pref = Pref::new()?;
-    pref.set(PREF_MAX_WORKSPACE_BYTES, &0u64)?;
+    pref.set(PREF_MAX_WORKSPACE_BYTES, &(PINNED_WORKSPACE_CAP as u64))?;
     pref.set(PREF_REDUCTION_SCHEME_MASK, &0u32)?;
     for attr in [
         PREF_MIN_ALIGNMENT_A_BYTES,
@@ -127,9 +169,14 @@ fn choose(ctx: &Ctx, n: u32, k: u32) -> Result<Algo> {
     for result in &results[..found] {
         let config = AlgoConfig::read(&result.algo)?;
         match qualify(ctx, n, k, result, &config) {
-            Ok(()) => {
-                tracing::info!("cuBLASLt BF16 N={n} K={k} pinned to {config}");
-                return Ok(result.algo);
+            Ok(workspace) => {
+                tracing::info!(
+                    "cuBLASLt BF16 N={n} K={k} pinned to {config}, workspace {workspace} bytes"
+                );
+                return Ok(Pinned {
+                    algo: result.algo,
+                    workspace,
+                });
             }
             Err(e) => rejected.push(format!("{config}: {e:#}")),
         }
@@ -141,25 +188,23 @@ fn choose(ctx: &Ctx, n: u32, k: u32) -> Result<Algo> {
     )
 }
 
-fn qualify(ctx: &Ctx, n: u32, k: u32, result: &HeuristicResult, c: &AlgoConfig) -> Result<()> {
+/// 2026-10-14: The fixed workspace of a single-pass candidate that passes the check at every
+/// probed M within [`PINNED_WORKSPACE_CAP`]; an error names why another is rejected.
+fn qualify(ctx: &Ctx, n: u32, k: u32, result: &HeuristicResult, c: &AlgoConfig) -> Result<usize> {
     ensure!(
         single_pass(c.split_k, c.reduction),
         "not single-pass (split-K {}, reduction {})",
         c.split_k,
         c.reduction
     );
-    ensure!(
-        result.workspace_size == 0,
-        "needs {} workspace bytes",
-        result.workspace_size
-    );
+    let mut needs = vec![(PINNED_REFERENCE_M, result.workspace_size)];
     for m in PINNED_PROBE_M {
-        let workspace = Bf16Gemm::new(m, n, k, CUDA_R_16BF)?
+        let need = Bf16Gemm::new(m, n, k, CUDA_R_16BF)?
             .check(ctx, &result.algo)
             .with_context(|| format!("check at M={m}"))?;
-        ensure!(workspace == 0, "needs {workspace} workspace bytes at M={m}");
+        needs.push((m, need));
     }
-    Ok(())
+    fixed_workspace(&needs)
 }
 
 /// 2026-10-14: The configuration attributes of an algorithm that name it in the log and decide
@@ -245,6 +290,20 @@ mod tests {
         // 2026-10-14: Pitches of 4 BF16s (8 bytes) in N or K.
         assert!(!pinned_operands_admitted(base, base, base, 2564, 2560));
         assert!(!pinned_operands_admitted(base, base, base, 2560, 2564));
+    }
+
+    #[test]
+    fn the_fixed_workspace_is_the_largest_need_within_the_cap() {
+        // 2026-10-14: The H100 report: 0 bytes at every probe but 4 at 32,768 rows.
+        let h100 = [(2048, 0), (1, 0), (16, 0), (20, 0), (32_768, 4)];
+        assert_eq!(fixed_workspace(&h100).unwrap(), 4);
+        assert_eq!(fixed_workspace(&[(2048, 0), (1, 0)]).unwrap(), 0);
+        assert_eq!(
+            fixed_workspace(&[(1, PINNED_WORKSPACE_CAP), (16, 4)]).unwrap(),
+            PINNED_WORKSPACE_CAP
+        );
+        let over = fixed_workspace(&[(1, 0), (32_768, PINNED_WORKSPACE_CAP + 1), (16, 4)]);
+        assert!(over.unwrap_err().to_string().contains("M=32768"));
     }
 
     #[test]
