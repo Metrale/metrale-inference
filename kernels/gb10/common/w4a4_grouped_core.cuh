@@ -86,16 +86,16 @@ __device__ __forceinline__ unsigned int w4g_gu_col(unsigned int n0, unsigned int
 // (the bytes the one-projection launches store to their C); each thread takes a (slot, 16-column
 // group), applies the clamped SwiGLU and its BF16 rounding (glm5next_swiglu_clamp's expression)
 // and quantizes the group as w4a4_quant_rows_static[_k64] does, into the slot's own row of
-// (Dq, Ds) at width Kp. The x-tile 0 CTA writes each slot's global, and the CTA holding column
-// N - 1 the zero groups N / 16 .. Kp / 16 (PAD128).
-template <int MT, int NT>
+// (Dq, Ds) at width Kp. The n0 == 0 CTA writes each slot's global, and the CTA holding column
+// N - 1 the zero groups N / 16 .. Kp / 16 (PAD128). TH threads.
+template <int MT, int NT, int TH = W4G_THREADS>
 __device__ __forceinline__ void w4g_gu_epilogue(
     const __nv_bfloat16 (&out)[MT][NT + 8], const W4gGu& gu, const int m_start, const int m_valid,
     const unsigned int n0, const unsigned int N)
 {
     constexpr unsigned int GPR = NT / 32u;  // 16-column groups per slot row
     const float inv_gs = 1.0f / gu.gs;
-    for (unsigned int i = threadIdx.x; i < (unsigned int)MT * GPR; i += W4G_THREADS) {
+    for (unsigned int i = threadIdx.x; i < (unsigned int)MT * GPR; i += TH) {
         const unsigned int slot = i / GPR, gl = i % GPR;
         const unsigned int col = n0 + gl * 16u;
         if ((int)slot >= m_valid || col >= N) continue;
@@ -116,13 +116,15 @@ __device__ __forceinline__ void w4g_gu_epilogue(
                          gu.Dq, gu.Ds, (unsigned int)(m_start + (int)slot), gu.Kp, col >> 4, gu.gs,
                          inv_gs);
     }
-    if (blockIdx.x == 0u) {
-        for (unsigned int i = threadIdx.x; i < (unsigned int)MT; i += W4G_THREADS)
+    // 2026-10-14: The first column tile writes the rows' global scale (keyed on n0, not the grid
+    // coordinate, so any tile raster keeps exactly one writer).
+    if (n0 == 0u) {
+        for (unsigned int i = threadIdx.x; i < (unsigned int)MT; i += TH)
             if ((int)i < m_valid) gu.Dg[m_start + (int)i] = gu.gs;
     }
     if (n0 + NT / 2u >= N) {
         const unsigned int g0 = N >> 4, np = (gu.Kp >> 4) - g0;
-        for (unsigned int i = threadIdx.x; i < (unsigned int)MT * np; i += W4G_THREADS) {
+        for (unsigned int i = threadIdx.x; i < (unsigned int)MT * np; i += TH) {
             const unsigned int slot = i / np;
             if ((int)slot < m_valid)
                 w4a4_quant_pad_group(gu.Dq, gu.Ds, (unsigned int)(m_start + (int)slot), gu.Kp,
@@ -131,25 +133,41 @@ __device__ __forceinline__ void w4g_gu_epilogue(
     }
 }
 
-template <int MT, int NT, int S, bool KH, bool GU = false>
+// 2026-10-14: TH threads (TH / 32 warps over the MT x NT tile, 32 slots x NT / WN rows each); the
+// warp tiling never changes an output's K chain, so every TH gives the same bytes.
+template <int MT, int NT, int S, bool KH, bool GU = false, int TH = W4G_THREADS>
 __device__ __forceinline__ void w4g_body(
     const unsigned char* __restrict__ Aq, const unsigned char* __restrict__ As,
     const float* __restrict__ Ag, const unsigned long long* __restrict__ packed_ptrs,
     const unsigned long long* __restrict__ scale_ptrs, const float* __restrict__ scale2_vals,
     __nv_bfloat16* __restrict__ C, const int* __restrict__ expert_offsets,
     const int* __restrict__ tile_off, const int* __restrict__ sorted_token_ids,
-    unsigned int num_experts, unsigned int N, unsigned int K, const W4gGu gu = W4gGu{})
+    unsigned int num_experts, unsigned int N, unsigned int K, const W4gGu gu = W4gGu{},
+    const unsigned int raster = 0u)
 {
     constexpr int WM = MT / 32;          // warps along the slots
-    constexpr int WN = 8 / WM;           // warps along the weight rows
+    constexpr int WN = TH / 32 / WM;     // warps along the weight rows
     constexpr int FN = NT / WN / 16;     // 16-row weight fragments per warp
     constexpr int FM = 4;                // 8-slot fragments per warp (32 slots)
     static_assert(FN >= 1 && NT % (WN * 16) == 0, "NT must give each warp whole fragments");
+    static_assert(TH % 32 == 0 && (TH / 32) % WM == 0, "TH must give each 32-slot band whole warps");
     extern __shared__ __align__(16) unsigned char w4g_dyn[];
     W4gSmem<MT, NT, S>& sm = *reinterpret_cast<W4gSmem<MT, NT, S>*>(w4g_dyn);
 
+    // 2026-10-14: raster = 0: (column tile, tile) = (blockIdx.x, blockIdx.y). raster = G > 0: the
+    // linear block index walks G tiles fastest, then the column tiles, then the next G tiles, so
+    // the G tiles' weight tiles stay in L2 across the column sweep. Only which CTA computes which
+    // (tile, column tile) changes; every output's K chain is the same, so the bytes are the same.
+    int tile = (int)blockIdx.y;
+    unsigned int cx = blockIdx.x;
+    if (raster != 0u) {
+        const unsigned int nx = gridDim.x, band = raster * nx;
+        const unsigned int lin = blockIdx.x + nx * blockIdx.y, g = lin / band, r = lin % band;
+        const unsigned int gt = min(raster, gridDim.y - g * raster);
+        tile = (int)(g * raster + r % gt);
+        cx = r / gt;
+    }
     // 2026-10-10: The tile's expert: the last e with tile_off[e] <= tile (block-uniform).
-    const int tile = (int)blockIdx.y;
     if (tile >= tile_off[num_experts]) return;
     int lo = 0, hi = (int)num_experts - 1;
     while (lo < hi) {
@@ -176,7 +194,7 @@ __device__ __forceinline__ void w4g_body(
     const int m_start = expert_offsets[e] + (tile - tile_off[e]) * MT;
     const int m_valid = min(MT, expert_offsets[e + 1] - m_start);
     // 2026-10-14: GU: the tile's NT weight rows are NT / 2 output columns of gate and of up.
-    const unsigned int n0 = blockIdx.x * (GU ? NT / 2 : NT);
+    const unsigned int n0 = cx * (GU ? NT / 2 : NT);
 
     const unsigned int tid = threadIdx.x;
     const unsigned int warp = tid >> 5, lane = tid & 31u;
@@ -191,7 +209,7 @@ __device__ __forceinline__ void w4g_body(
     const unsigned int a_groups = KH ? num_c << 3 : groups;
     const unsigned int tail_c = (KH && (K & 127u) != 0u) ? num_c - 1u : 0xFFFFFFFFu;
 
-    for (unsigned int i = tid; i < (unsigned int)MT; i += W4G_THREADS) {
+    for (unsigned int i = tid; i < (unsigned int)MT; i += TH) {
         const int r = m_start + (int)i;
         const bool live = (int)i < m_valid;
         const int ar = live ? (sorted_token_ids != nullptr ? sorted_token_ids[r] : r) : 0;
@@ -210,7 +228,7 @@ __device__ __forceinline__ void w4g_body(
         W4gStage<MT, NT>& st = sm.u.st[s];
         const bool tail = c == tail_c;
 #pragma unroll
-        for (unsigned int i = tid; i < NT * 4u; i += W4G_THREADS) {
+        for (unsigned int i = tid; i < NT * 4u; i += TH) {
             const unsigned int r = i >> 2, part = i & 3u;
             const unsigned int n = GU ? w4g_gu_col(n0, r) : n0 + r;
             const unsigned char* bq = (GU && ((r >> 4) & 1u)) ? Uq : Bq;
@@ -219,7 +237,7 @@ __device__ __forceinline__ void w4g_body(
                 ok ? bq + (unsigned long long)n * half_K + c * 64u + part * 16u : bq;
             w4g_cp16(&st.w[r][part * 16u], src, ok);
         }
-        for (unsigned int i = tid; i < NT * 2u; i += W4G_THREADS) {
+        for (unsigned int i = tid; i < NT * 2u; i += TH) {
             const unsigned int r = i >> 1, h = i & 1u;
             const unsigned int n = GU ? w4g_gu_col(n0, r) : n0 + r;
             const unsigned char* bs = (GU && ((r >> 4) & 1u)) ? Us : Bs;
@@ -229,14 +247,14 @@ __device__ __forceinline__ void w4g_body(
             w4g_cp4(&st.ws[r][h * 4u], src, ok);
         }
 #pragma unroll
-        for (unsigned int i = tid; i < (unsigned int)MT * 4u; i += W4G_THREADS) {
+        for (unsigned int i = tid; i < (unsigned int)MT * 4u; i += TH) {
             const unsigned int r = i >> 2, part = i & 3u;
             const bool ok = (int)r < m_valid;
             const unsigned char* src =
                 ok ? Aq + (unsigned long long)sm.arow[r] * a_half_K + c * 64u + part * 16u : Aq;
             w4g_cp16(&st.a[r][part * 16u], src, ok);
         }
-        for (unsigned int i = tid; i < (unsigned int)MT; i += W4G_THREADS) {
+        for (unsigned int i = tid; i < (unsigned int)MT; i += TH) {
             const bool ok = (int)i < m_valid;
             const unsigned char* src =
                 ok ? As + (unsigned long long)sm.arow[i] * a_groups + c * 8u : As;
@@ -351,9 +369,9 @@ __device__ __forceinline__ void w4g_body(
     }
     __syncthreads();
     if constexpr (GU) {
-        w4g_gu_epilogue<MT, NT>(sm.u.out, gu, m_start, m_valid, n0, N);
+        w4g_gu_epilogue<MT, NT, TH>(sm.u.out, gu, m_start, m_valid, n0, N);
     } else {
-        for (unsigned int i = tid; i < (unsigned int)MT * (NT / 8u); i += W4G_THREADS) {
+        for (unsigned int i = tid; i < (unsigned int)MT * (NT / 8u); i += TH) {
             const unsigned int slot = i / (NT / 8u), piece = i % (NT / 8u);
             const unsigned int n = n0 + piece * 8u;
             if ((int)slot < m_valid && n < N) {

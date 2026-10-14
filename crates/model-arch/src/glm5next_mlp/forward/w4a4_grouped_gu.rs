@@ -19,11 +19,12 @@
 //!   fused entries, else the load is refused ([`check_at_load`]).
 
 use anyhow::{Result, ensure};
-use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
+use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 use super::moe_experts::MoeSite;
 use super::w4a4_grouped::{W4A4_GROUPED_COLS, W4A4_GROUPED_MT, grouped_launch, smem_bytes_of};
+use super::w4a4_grouped_raster::GroupedEntry;
 use crate::glm5next_mlp::Glm5NextMlpKernels;
 use crate::glm5next_mlp::weights::Glm5NextExpertPtrTable;
 
@@ -78,7 +79,7 @@ pub fn check_at_load(k: &Glm5NextMlpKernels) -> Result<()> {
 /// 2026-10-14: One routed site's fused launch, checked: the entry of tile `ti` and the down
 /// input's stored width `k_store` (`mi`, or `mi` rounded up to 128 for the `_k64` down).
 pub(super) struct GuPlan {
-    kern: KernelHandle,
+    entry: GroupedEntry,
     ti: usize,
     k_store: usize,
 }
@@ -89,18 +90,18 @@ impl GuPlan {
     /// `mi % 64 == 0` (the entry needs `mi % 16 == 0`) and `slots <= max_total_expanded`, and the
     /// down input (`slots * k_store / 2` code bytes, `k_store <= mi + 64`) then fits the activated
     /// scratch's `max_total_expanded * mi` BF16 values.
-    pub(super) fn new(site: &MoeSite<'_>, ti: usize, k_store: usize) -> Result<Self> {
-        let kern = site.k.w4a4_grouped.gu[ti];
+    /// 2026-10-14: `entry` is the tile's fused entry or its `_r` twin.
+    pub(super) fn new(entry: GroupedEntry, ti: usize, k_store: usize) -> Result<Self> {
         ensure!(
-            kern.0 != 0,
+            entry.kern.0 != 0,
             "{LEVER}=1: w4a4_grouped_gu (tile {ti}) is absent from this target's PTX"
         );
-        Ok(Self { kern, ti, k_store })
+        Ok(Self { entry, ti, k_store })
     }
 
     /// 2026-10-14: The fused gate/up launch, then `down` (the unchanged down entry) over its
     /// output into `expert_out`; `gs` is the down projection's `input_scale`.
-    pub(super) fn launch(&self, site: &MoeSite<'_>, down: KernelHandle, gs: f32) -> Result<()> {
+    pub(super) fn launch(&self, site: &MoeSite<'_>, down: GroupedEntry, gs: f32) -> Result<()> {
         let MoeSite {
             gpu,
             cfg,
@@ -129,7 +130,7 @@ impl GuPlan {
             gs,
             limit: cfg.swiglu_limit,
         };
-        launch_w4a4_gu(gpu, self.kern, &call, stream)?;
+        launch_w4a4_gu(gpu, self.entry, &call, stream)?;
         grouped_launch(
             gpu,
             down,
@@ -176,10 +177,10 @@ pub struct W4a4GuCall {
 
 /// 2026-10-14: The one launcher of `w4a4_grouped_gu_m*` (the forward and the byte-gate bench
 /// both go through it): grid (ceil(n / (cols / 2)), ceil(slots / mt) + num_experts), the
-/// one-projection entry's shared memory.
+/// one-projection entry's shared memory; 2026-10-14: an `_r` entry's raster group last.
 pub fn launch_w4a4_gu(
     gpu: &dyn GpuBackend,
-    kern: KernelHandle,
+    entry: GroupedEntry,
     c: &W4a4GuCall,
     stream: u64,
 ) -> Result<()> {
@@ -188,7 +189,7 @@ pub fn launch_w4a4_gu(
         "w4a4_grouped_gu: tile entry {} out of range",
         c.ti
     );
-    KernelLaunch::new(gpu, kern)
+    let l = KernelLaunch::new(gpu, entry.kern)
         .grid([
             c.n.div_ceil(W4A4_GROUPED_COLS[c.ti] / 2) as u32,
             (c.slots.div_ceil(W4A4_GROUPED_MT[c.ti]) + c.num_experts) as u32,
@@ -216,6 +217,10 @@ pub fn launch_w4a4_gu(
         .arg_u32(c.k as u32)
         .arg_u32(c.k_store as u32)
         .arg_f32(c.gs)
-        .arg_f32(c.limit)
-        .launch(stream)
+        .arg_f32(c.limit);
+    match entry.raster {
+        Some(g) => l.arg_u32(g),
+        None => l,
+    }
+    .launch(stream)
 }

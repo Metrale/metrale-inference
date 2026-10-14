@@ -34,7 +34,7 @@ fn run_fused(
         ws: &ws,
         stream: 5,
     };
-    let r = w4a4_grouped_experts_with(&site, SCALES, fused);
+    let r = w4a4_grouped_experts_with(&site, SCALES, fused, None);
     (r, gpu.launches_snapshot(), ws)
 }
 
