@@ -132,8 +132,22 @@ impl TransformerModel {
             self.ep_broadcast_tokens(&words)?;
             self.ep_broadcast_tokens(&prompts)?;
             out.extend(self.prefill_spans_run(sub, header.row_base)?);
+            self.spans_normalize(sub.iter().map(|s| &*s.seq));
         }
         Ok(out)
+    }
+
+    /// 2026-10-14: Clamp each sequence's SSM state after a batched pass, as the single-sequence
+    /// handlers do after a chunk. Rank 0 (`prefill_spans_dispatch`) and the workers
+    /// (`ep_worker_prefill_spans`) both call it, so every rank's state takes the same clamp;
+    /// before, only the workers clamped. A failure is logged, as the workers always logged it.
+    fn spans_normalize<'s>(&self, seqs: impl IntoIterator<Item = &'s SequenceState>) {
+        let stream = self.gpu.default_stream();
+        for seq in seqs {
+            if let Err(e) = self.normalize_ssm_states(seq, stream) {
+                tracing::warn!("SSM state normalization after a batched prefill failed: {e:#}");
+            }
+        }
     }
 
     /// 2026-10-09: Worker side of `EP_CMD_PREFILL_SPANS`: read the batch, run the pass rank 0
@@ -172,12 +186,7 @@ impl TransformerModel {
                 .collect();
             self.prefill_spans_run(&mut slices, header.row_base)?;
         }
-        let stream = self.gpu.default_stream();
-        for seq in refs.iter() {
-            if let Err(e) = self.normalize_ssm_states(seq, stream) {
-                tracing::warn!("Worker SSM state normalization failed: {e:#}");
-            }
-        }
+        self.spans_normalize(refs.iter().map(|s| &**s));
         Ok(true)
     }
 

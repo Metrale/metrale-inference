@@ -1540,7 +1540,7 @@ would_catch_earlier = "one SSOT for the multi-rank stream remap (now Transformer
 effort_hours = 1.0
 transferability = "any engine that remaps a forward to another stream: every follow-on launch over the forward's outputs must use the remapped stream"
 links = { pr = "", commit = "", evidence = "" }
-notes = "Single-rank serves keep the caller's stream (unchanged launches); the other callers (worker loop, spans worker, decode) already pass the default stream, so the change is a no-op there. Not fixed: rank 0's multi-rank spans prefill never clamps while the workers do (spans.rs), and the eager drafter prefill (drafter_prefill.rs) may read mtp_prefill_hidden on the prefill stream without ordering on multi-rank."
+notes = "Single-rank serves keep the caller's stream (unchanged launches); the other callers (worker loop, spans worker, decode) already pass the default stream, so the change is a no-op there. Not fixed: rank 0's multi-rank spans prefill never clamps while the workers do (spans.rs), and the eager drafter prefill (drafter_prefill.rs) may read mtp_prefill_hidden on the prefill stream without ordering on multi-rank. Both fixed since: gb10x3-glm53-spans-rank0-ssm-clamp and gb10x3-glm53-eager-drafter-forward-stream."
 
 [[lever]]
 id = "gb10x3-glm53-sp-subchunk-pipeline"
@@ -1552,19 +1552,19 @@ symptom = "about 3.15 of 10 ms per layer and sub-chunk is still exposed SP excha
 diagnosis_tool = "nsys"
 root_cause_class = "phase-serialization"
 lever_type = "scheduling"
-lkb_effect = "none"
-parity_tier_kept = "n/a"
+lkb_effect = "glm5next_sp_pipeline.rs: a pure stage order and program (Head, Mixer, Mid, Mlp, Tail per sub-chunk; prologue Head0 Mixer0 Head1, step s Mid(s) Mixer(s+1) Tail(s-1) Head(s+2) Mlp(s)) checked on a two-stream happens-before model with negative controls; glm5next_sp_overlap.rs run_section gains deferred sections and handed-in partials; driver glm5next_layer/steps/forward_sp_pipe.rs, taken from prefill_segments for a leading run of two or more SP sub-chunks"
+parity_tier_kept = "bit-identical (lever off); bit-identical to the serial SP-mHC body (lever on, to be proven on GPU)"
 per_rung = []
 verdict = "held"
-verdict_reason = "not built: running sub-chunk s+1's mixer on a second compute stream beside sub-chunk s's MLP races three process-wide single-stream scratches (the cuBLASLt workspace, the CUTLASS workspace, the GLM dequant scratch) plus the KDA final_out buffer"
+verdict_reason = "implemented as METRALE_GLM_SP_PIPELINE=1 (default off, composes with SP_OVERLAP), untested on GPU: the kinv byte gate against SP_MHC+SP_OVERLAP at 1k/8k/32k, an nsys of a 32k prefill and an unprofiled 32k cold TTFT A/B are pending. The two-compute-stream form stays rejected: it races the process-wide single-stream scratches (cuBLASLt, CUTLASS, GLM dequant) and the KDA final_out"
 failure_mode = ""
-caught_by = "design review before implementation"
+caught_by = "design review before implementation; CPU happens-before model"
 time_lost_hours = 0
 would_catch_earlier = ""
-effort_hours = 2.0
+effort_hours = 8.0
 transferability = "any layer-outer, sub-chunk-inner prefill whose recurrent mixer links sub-chunks only through its own state"
 links = { pr = "", commit = "", evidence = "" }
-notes = "Feasible form: ONE compute stream plus the SP comm stream, the host enqueue reordered across sub-chunks (X(s+1) before the post-mix of s, so the RS of s's mixer output overlaps X(s+1); the AG of a later head overlaps F(s)). Needs parity buffers for normed, the KDA final_out and the SP receive workspace, and run_section's closing wait deferred. Expected about 0.3-0.45 s per 32k cold prefill, nothing below 2 sub-chunks."
+notes = "Feasible form: ONE compute stream plus the SP comm stream, the host enqueue reordered across sub-chunks (X(s+1) before the post-mix of s, so the RS of s's mixer output overlaps X(s+1); the AG of a later head overlaps F(s)). Needs parity buffers for normed, the KDA final_out and the SP receive workspace, and run_section's closing wait deferred. Expected about 0.3-0.45 s per 32k cold prefill, nothing below 2 sub-chunks. 2026-10-14 build: the order puts Mid(s) before Mixer(s+1), so the all-gather after the post-mix also hides behind the next mixer; three normed slots, one KDA final_out and one MLP output (each rewritten only after the main stream waited for the reduce-scatter that read it), a second receive workspace for the MLP reduce-scatter; about 179 MB extra at 8208-row sub-chunks, hidden 4096, three ranks, reserved before the KV budget. Estimate refined to about 0.4-0.45 s of the 1.85 s per 32k; fill and drain (the first head all-gather, the last post-mix all-gather, the last MLP reduce-scatter and tail) stay exposed."
 
 [[lever]]
 id = "gb10x3-glm53-one-row-tail-decode"
@@ -1613,3 +1613,51 @@ effort_hours = 3.0
 transferability = "any MTP model with a dense-row drafter and a shared whole-prompt capture"
 links = { pr = "", commit = "", evidence = "MTP acceptance 1k miss/hit" }
 notes = "A windowed catch-up is not possible for GLM: its drafter is dense row space (RoPE position = row), so a catch-up must start at the drafter's row count. The drafter carry is session-keyed and off at mtp_max_seqs > 1. A match that runs into decoded tokens (a later turn) is refused, since decode hiddens are not in the capture; filling them from the catch-up ring is a possible extension."
+
+[[lever]]
+id = "gb10x3-glm53-spans-rank0-ssm-clamp"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes; also any multi-rank SSM model on the batched prefill"
+recipe_or_tier = "every multi-rank batched prefill (prefill_spans; no lever: a correctness fix)"
+symptom = "the worker ranks clamp each sequence's SSM state after a batched prefill pass and rank 0 does not, so the ranks' recurrent states can differ after a long prompt"
+diagnosis_tool = "code read (spans.rs)"
+root_cause_class = "wiring-defect"
+lever_type = "code"
+lkb_effect = "none"
+parity_tier_kept = "bit-identical on single-rank serves (path not taken); rank 0's state now takes the workers' clamp"
+per_rung = []
+verdict = "held"
+verdict_reason = "written without a GPU; a C>=2 batched prefill kinv probe on a multi-rank serve is pending"
+failure_mode = "ep_worker_prefill_spans normalised after prefill_spans_run; prefill_spans_dispatch (rank 0) did not, and the scheduler's batched prefill does not normalise either (its single-sequence path does)"
+caught_by = "audit of the forward-stream clamp fix"
+time_lost_hours = 0
+would_catch_earlier = "one helper for every rank's post-pass work, so a step cannot be added to one side only"
+effort_hours = 0.5
+transferability = "any multi-rank engine whose rank 0 and workers run separate wrappers around a shared pass"
+links = { pr = "", commit = "", evidence = "" }
+notes = "One helper (spans_normalize) now runs after each sub-batch on rank 0 and after the pass on the workers, on the default stream, logging a failure as the workers always did. The clamp only rescales a state whose norm passes the bound, so prompts below it are unchanged."
+
+[[lever]]
+id = "gb10x3-glm53-eager-drafter-forward-stream"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes; any multi-rank MTP serve"
+recipe_or_tier = "MTP on a multi-rank serve with the eager drafter prefill (the default; no lever: a correctness fix)"
+symptom = "the eager drafter prefill reads the whole-prompt hidden capture on the scheduler's prefill stream while the prefill and its capture copy ran on the default stream, with no event between them"
+diagnosis_tool = "code read (drafter_prefill.rs, impl_forward.rs)"
+root_cause_class = "wiring-defect"
+lever_type = "code"
+lkb_effect = "none"
+parity_tier_kept = "bit-identical on single-rank serves (forward_stream returns the caller's stream)"
+per_rung = []
+verdict = "held"
+verdict_reason = "written without a GPU; an nsys stream check of the drafter prefill and an MTP acceptance A/B on a multi-rank serve are pending"
+failure_mode = "the Model wrappers pass try_eager_drafter_prefill the caller's stream, but a multi-rank forward runs on the default stream (forward_stream), so the drafter could read capture rows before their copy landed"
+caught_by = "audit of the forward-stream clamp fix"
+time_lost_hours = 0
+would_catch_earlier = "the same SSOT as the clamp fix: every follow-on launch over the forward's outputs takes forward_stream"
+effort_hours = 0.5
+transferability = "any engine that remaps a forward to another stream"
+links = { pr = "", commit = "", evidence = "" }
+notes = "The batched spans path already passes the default stream; the change is in the one place every wrapper reaches."

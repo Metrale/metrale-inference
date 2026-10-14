@@ -23,6 +23,10 @@
 //!   the comm stream starts after the caller's stream's earlier work, so nothing overlaps
 //!   across sections, layers or sub-chunks.
 //! - Every rank enqueues the same exchanges in the same host order, all on the comm stream.
+//! - 2026-10-14: A deferred section (`Section::defer`, `METRALE_GLM_SP_PIPELINE=1`,
+//!   `glm5next_sp_pipeline`) takes the comm form at any piece count and records the comm
+//!   stream's end into the caller's event instead of waiting for it; the caller waits for that
+//!   event before the section's output is read.
 
 use std::sync::{Mutex, OnceLock};
 
@@ -98,7 +102,7 @@ pub fn pieces(shards: &[(usize, usize)], m: usize) -> Vec<Vec<(usize, usize)>> {
 }
 
 /// 2026-10-14: A stream of [`schedule`]: the caller's or the comm stream.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum On {
     Main,
     Comm,
@@ -106,7 +110,7 @@ pub enum On {
 
 /// 2026-10-14: An event of [`schedule`]: the section's start on the caller's stream, the comm
 /// stream's end, piece `j` received (its reduce-scatter done) and computed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Ev {
     In,
     Out,
@@ -164,6 +168,13 @@ pub fn schedule(m: usize, rs: bool, ag: bool) -> Vec<Op> {
         }
         return ops;
     }
+    let mut ops = comm_form(m, rs, ag);
+    ops.push(Op::Wait(On::Main, Ev::Out));
+    ops
+}
+
+/// 2026-10-14: The pipelined section up to the comm stream's recorded end (`Out`).
+fn comm_form(m: usize, rs: bool, ag: bool) -> Vec<Op> {
     let mut ops = vec![Op::Record(Ev::In, On::Main), Op::Wait(On::Comm, Ev::In)];
     if rs {
         for j in 0..m {
@@ -187,8 +198,20 @@ pub fn schedule(m: usize, rs: bool, ag: bool) -> Vec<Op> {
         }
     }
     ops.push(Op::Record(Ev::Out, On::Comm));
-    ops.push(Op::Wait(On::Main, Ev::Out));
     ops
+}
+
+/// 2026-10-14: [`schedule`] with the end left open: the comm form of [`comm_form`] at any
+/// piece count when the section all-gathers, its `Out` recorded and never waited here (the
+/// caller orders its readers after it); the computes alone when it does not. Its partials come
+/// from a reduce-scatter the caller enqueued before (`Section::received`), so it never
+/// reduce-scatters.
+pub fn schedule_deferred(m: usize, ag: bool) -> Vec<Op> {
+    if ag {
+        comm_form(m, false, true)
+    } else {
+        (0..m).map(Op::Compute).collect()
+    }
 }
 
 /// 2026-10-14: The comm stream (at the greatest priority, so its exchange kernels are not
@@ -204,10 +227,11 @@ fn streams() -> &'static Mutex<Option<OverlapStreams>> {
     S.get_or_init(|| Mutex::new(None))
 }
 
-/// 2026-10-14: Create the comm stream and events once when the lever is on; a no-op otherwise.
-/// Called from `glm5next_sp_mhc::reserve` at load.
+/// 2026-10-14: Create the comm stream and events once when this lever or
+/// `METRALE_GLM_SP_PIPELINE` is on (the pipeline's exchanges run on the same stream); a no-op
+/// otherwise. Called from `glm5next_sp_mhc::reserve` at load.
 pub fn reserve(gpu: &dyn GpuBackend) -> Result<()> {
-    if !enabled()? {
+    if !(enabled()? || crate::glm5next_sp_pipeline::enabled()?) {
         return Ok(());
     }
     let mut g = streams().lock().unwrap_or_else(|e| e.into_inner());
@@ -235,12 +259,17 @@ pub fn streams_get() -> Result<OverlapStreams> {
 
 /// 2026-10-14: One mHC section of a layer: its row pieces (`pieces[j][rank]`), the partial
 /// reduce-scattered before the compute and the buffer all-gathered after it (each with the
-/// profile bucket of its exchange), and the row width.
+/// profile bucket of its exchange), and the row width. 2026-10-14: `received` is this rank's
+/// whole-shard partials from a reduce-scatter the caller already enqueued (each piece reads
+/// them at its rows, `glm5next_sp_mhc::partials_at`), and `defer` the event a deferred
+/// section records its comm end into ([`schedule_deferred`]); both `None` for [`schedule`].
 pub struct Section<'a> {
     pub pieces: &'a [Vec<(usize, usize)>],
     pub rs: Option<(DevicePtr, Option<usize>)>,
     pub ag: Option<(DevicePtr, Option<usize>)>,
     pub row_bytes: usize,
+    pub received: Option<PeerPartials>,
+    pub defer: Option<u64>,
 }
 
 /// 2026-10-14: Enqueue `sec` by [`schedule`]: `compute(lo, hi, partials)` enqueues the mHC
@@ -270,10 +299,27 @@ pub fn run_section(
     };
     let event = |ev: Ev| -> Result<u64> {
         let o = overlap.context("SP overlap: a pipelined section without events")?;
-        Ok(o.events[event_index(ev)?])
+        match (ev, sec.defer) {
+            (Ev::Out, Some(e)) => Ok(e),
+            _ => Ok(o.events[event_index(ev)?]),
+        }
+    };
+    ensure!(
+        !(sec.rs.is_some() && sec.received.is_some()),
+        "SP overlap: a section both reduce-scatters and was handed its partials"
+    );
+    let ops = match sec.defer {
+        None => schedule(m, sec.rs.is_some(), sec.ag.is_some()),
+        Some(_) => {
+            ensure!(
+                sec.rs.is_none(),
+                "SP overlap: a deferred section reduce-scatters outside it"
+            );
+            schedule_deferred(m, sec.ag.is_some())
+        }
     };
     let mut partials: Vec<Option<PeerPartials>> = vec![None; m];
-    for op in schedule(m, sec.rs.is_some(), sec.ag.is_some()) {
+    for op in ops {
         match op {
             Op::Record(ev, s) => gpu.record_event(event(ev)?, on(s)?)?,
             Op::Wait(s, ev) => gpu.stream_wait_event(on(s)?, event(ev)?)?,
@@ -296,7 +342,11 @@ pub fn run_section(
             }
             Op::Compute(j) => {
                 let (lo, hi) = sec.pieces[j][rank];
-                compute(lo, hi, partials[j].as_ref())?;
+                let got = partials[j].or_else(|| {
+                    sec.received
+                        .map(|p| sp::partials_at(p, (lo - shard_lo) * sec.row_bytes))
+                });
+                compute(lo, hi, got.as_ref())?;
             }
             Op::AllGather(j, s) => {
                 let (buf, bucket) = sec.ag.context("SP overlap: no buffer to gather")?;

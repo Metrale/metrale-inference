@@ -320,6 +320,8 @@ fn a_section_enqueues_piece_groups_on_the_comm_stream() {
         rs: Some((src, None)),
         ag: Some((buf, None)),
         row_bytes: row,
+        received: None,
+        defer: None,
     };
     let mut compute = |lo: usize, hi: usize, p: Option<&PeerPartials>| -> Result<()> {
         comm.push("compute", p.unwrap().recv, hi - lo, lo, 7);

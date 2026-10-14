@@ -147,6 +147,32 @@ impl Glm5NextLayer {
                     ctx.levers.one_row_prefill,
                 );
             let mut t = start;
+            // 2026-10-14: `METRALE_GLM_SP_PIPELINE=1`: the segment's leading run of SP-mHC
+            // sub-chunks pipelined through the layer (`steps/forward_sp_pipe.rs`); the rows after
+            // it run below as before.
+            if rows > 1 && !tail_decode && crate::glm5next_sp_pipeline::enabled()? {
+                let ks = crate::glm5next_sp_pipeline::sub_chunks(end - start, rows);
+                let takes = ks
+                    .iter()
+                    .map(|&k| self.sp_takes(ctx, k, true))
+                    .collect::<Result<Vec<bool>>>()?;
+                let p = crate::glm5next_sp_pipeline::pipelined(&takes);
+                if p > 0 {
+                    self.forward_sp_pipeline(
+                        hidden.offset(t * self.hidden * 2),
+                        &ks[..p],
+                        state,
+                        kv_cache,
+                        seq_len_start + t,
+                        block_table,
+                        ctx,
+                        stream,
+                        slot0 + t,
+                    )?;
+                    t += ks[..p].iter().sum::<usize>();
+                    chunk += p;
+                }
+            }
             while t < end {
                 let call = if tail_decode {
                     dump::Call::step(dump::Path::Decode)

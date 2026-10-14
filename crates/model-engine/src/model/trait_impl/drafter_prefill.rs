@@ -148,8 +148,11 @@ impl TransformerModel {
     /// while it still owns the capture generation. Returns at once unless `is_last`, the
     /// caller's last-chunk flag.
     ///
-    /// The callers pass the `stream` their prefill ran on, so this is ordered after the
-    /// capture copy it reads.
+    /// The callers pass the `stream` they handed the prefill. 2026-10-14: The consume runs on
+    /// `forward_stream(stream)`, where the prefill and its capture copy ran: a multi-rank
+    /// world's forward runs on the default stream whatever stream the caller passes, so on the
+    /// caller's stream the drafter read the capture unordered after its copy. A single-rank
+    /// serve keeps the caller's stream.
     ///
     /// Never fails a prefill: a drafter with fewer rows costs acceptance, not
     /// correctness, because the target verifies every draft.
@@ -174,6 +177,7 @@ impl TransformerModel {
         if seq.proposer_state.is_none() {
             return;
         }
+        let stream = self.forward_stream(stream);
         let ctx = ForwardContext {
             buffers: &self.buffers,
             hc_row_offset: 0,

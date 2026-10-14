@@ -86,6 +86,12 @@ pub(super) fn assert_rank_levers_agree(
                 "METRALE_GLM_SP_OVERLAP",
                 u64::from(metrale_model_arch::glm5next_sp_overlap::enabled()?),
             ),
+            // 2026-10-14: The SP pipeline reorders a layer's SP-mHC exchanges across its
+            // sub-chunks, so every rank must enqueue the same program.
+            (
+                "METRALE_GLM_SP_PIPELINE",
+                u64::from(metrale_model_arch::glm5next_sp_pipeline::enabled()?),
+            ),
             // 2026-10-10: The resolved context window determines DFlash context-broadcast
             // chunking, so every rank must use the same value.
             (
