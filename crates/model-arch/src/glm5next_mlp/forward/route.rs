@@ -76,3 +76,23 @@ pub fn expert_route(
         ExpertRoute::PerRow
     }
 }
+
+/// 2026-10-14: The routed path a multi-sequence prefill group of `rows` rows shares with other
+/// sequences' rows, or `None` when it computes a row from its batch-mates too: the grouped
+/// W4A16 GEMM, and the W4A4 route wider than the slot GEMV (`METRALE_GLM_MOE_W4A4_GROUPED=1`,
+/// whose grouped GEMM writes each slot's bytes from that slot's row alone, whatever tile the
+/// group's width picks). The row-union GEMV, the per-row path and the narrow W4A4 sweeps are
+/// not shared. Measured byte for byte by `examples/glm5next_prefill_spans_mlp_gate.rs`.
+pub fn shared_route(
+    k: &Glm5NextMlpKernels,
+    cfg: &Glm5NextMlpConfig,
+    w: &Glm5NextMoeWeights,
+    ws: &Glm5NextMlpWorkspace,
+    rows: usize,
+) -> Option<ExpertRoute> {
+    match expert_route(k, cfg, w, ws, rows) {
+        ExpertRoute::Grouped => Some(ExpertRoute::Grouped),
+        ExpertRoute::W4a4 if super::w4a4_grouped::takes_grouped(rows) => Some(ExpertRoute::W4a4),
+        ExpertRoute::W4a4 | ExpertRoute::RowBatched | ExpertRoute::PerRow => None,
+    }
+}

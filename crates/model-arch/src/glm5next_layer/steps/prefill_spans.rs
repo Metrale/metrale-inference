@@ -15,8 +15,9 @@
 //!   pieces step its state in order and every group fits the mHC `mix` scratch and the MLP
 //!   workspace the single-sequence prefill fits.
 //! - Pieces share a group only where the layer's MLP computes a row the same whatever its
-//!   batch-mates (`mlp_shares_rows`): a routed site only on the grouped GEMM, both for the
-//!   piece's own row count and for the group's. Any other piece runs as a group of its own.
+//!   batch-mates (`mlp_share_class`): a routed site only on a grouped GEMM (W4A16, or W4A4
+//!   above 16 rows), the same one for the piece's own row count, the group's and every
+//!   batch-mate's. Any other piece runs as a group of its own.
 //! - Row `r` of the pass uses highway slot `ctx.hc_row_offset + r`.
 //!
 //! # Which launches a row shares with other sequences
@@ -36,6 +37,15 @@ use super::*;
 use crate::glm5next_layer::levers::kda_chunk_prefill;
 use metrale_model_layers::layer::PrefillSpan;
 
+/// 2026-10-14: The MLP path a group of pieces shares (`prefill_span_groups`' class).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MlpShare {
+    /// A dense site: it runs per piece.
+    Dense,
+    /// A routed site on this shared path.
+    Routed(crate::glm5next_mlp::forward::ExpertRoute),
+}
+
 /// 2026-10-09: One piece of a multi-sequence prefill pass: rows `t0..t0 + rows` of sequence
 /// `seq`, at row `row` of the pass.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -48,23 +58,28 @@ pub struct SpanPiece {
 
 /// 2026-10-09: The row groups of a pass whose sequence `s` has `rows[s]` rows: every sequence
 /// cut at multiples of `cap` from its first row, the pieces packed in order into groups of at
-/// most `cap` rows. A piece shares a group only when `share` holds for its own row count and
-/// for the group's total with it; any other piece gets a group of its own, so its launches are
-/// those of its own prefill. A `cap` of 0 is treated as 1; a sequence with no rows has no piece.
+/// most `cap` rows. A piece shares a group only when `share` gives its own row count a class
+/// and gives the group's total with it the same class; any other piece gets a group of its own,
+/// so its launches are those of its own prefill. A `cap` of 0 is treated as 1; a sequence with
+/// no rows has no piece.
+///
+/// 2026-10-14: `share` names a class (the MLP path a launch of that many rows takes), not a
+/// yes/no: two shareable paths that compute a row differently must never meet in one group.
 ///
 /// 2026-10-11: `cuts[s]` (ascending, inside the sequence; a missing entry is none) are the
 /// sequence's in-pass capture points: the sequence is cut there too and its sub-chunk grid
 /// restarts at each, as its own prefill splits the pass there (`steps/prefill_capture.rs`).
-pub fn prefill_span_groups(
+pub fn prefill_span_groups<C: PartialEq>(
     rows: &[usize],
     cuts: &[Vec<usize>],
     cap: usize,
-    share: impl Fn(usize) -> bool,
+    share: impl Fn(usize) -> Option<C>,
 ) -> Vec<Vec<SpanPiece>> {
     let cap = cap.max(1);
     let mut groups = Vec::new();
     let mut cur: Vec<SpanPiece> = Vec::new();
     let mut cur_rows = 0usize;
+    let mut cur_class: Option<C> = None;
     let mut row = 0usize;
     for (seq, &n) in rows.iter().enumerate() {
         let seq_cuts = cuts.get(seq).map_or(&[][..], Vec::as_slice);
@@ -84,20 +99,26 @@ pub fn prefill_span_groups(
             };
             row += len;
             t0 += len;
-            if !share(len) {
+            let Some(class) = share(len) else {
                 if !cur.is_empty() {
                     groups.push(std::mem::take(&mut cur));
                     cur_rows = 0;
                 }
                 groups.push(vec![piece]);
                 continue;
-            }
-            if !cur.is_empty() && (cur_rows + len > cap || !share(cur_rows + len)) {
+            };
+            // 2026-10-14: A piece joins only a group of its own class whose total keeps it.
+            if !cur.is_empty()
+                && (cur_rows + len > cap
+                    || cur_class.as_ref() != Some(&class)
+                    || share(cur_rows + len).as_ref() != Some(&class))
+            {
                 groups.push(std::mem::take(&mut cur));
                 cur_rows = 0;
             }
             cur.push(piece);
             cur_rows += len;
+            cur_class = Some(class);
         }
     }
     if !cur.is_empty() {
@@ -144,7 +165,7 @@ impl Glm5NextLayer {
             );
         }
         let row_bytes = self.hidden * 2;
-        let share = |r: usize| self.mlp_shares_rows(r);
+        let share = |r: usize| self.mlp_share_class(r);
         // 2026-10-11: A sequence with an in-pass capture is cut at its points, and a KDA layer
         // copies its state after the piece that ends at each (`steps/prefill_capture.rs`).
         let points: Vec<Vec<(usize, CapturePoint)>> = spans
@@ -237,21 +258,23 @@ impl Glm5NextLayer {
 
     /// 2026-10-09: Whether pieces whose rows add up to `rows` may share this layer's MLP
     /// launches with a row's bits unchanged: always for a dense site (it runs per piece); for a
-    /// routed site only on the grouped GEMM, whose rows do not depend on each other
-    /// (`examples/glm5next_prefill_spans_mlp_gate.rs`). The W4A4, row-union and per-row paths
-    /// are left to one piece per group.
-    fn mlp_shares_rows(&self, rows: usize) -> bool {
+    /// routed site only on a path whose rows do not depend on each other
+    /// (`examples/glm5next_prefill_spans_mlp_gate.rs`).
+    ///
+    /// 2026-10-14: As a class, so a group never mixes two shareable paths: the routed site's
+    /// `shared_route` (the grouped W4A16 GEMM, or the grouped W4A4 GEMM the declared serve
+    /// runs above 16 rows).
+    fn mlp_share_class(&self, rows: usize) -> Option<MlpShare> {
         match &self.mlp {
-            Glm5NextMlpSite::Dense(_) => true,
-            Glm5NextMlpSite::Moe(w) => {
-                crate::glm5next_mlp::forward::expert_route(
-                    &self.mlp_kernels,
-                    &self.mlp_cfg,
-                    w,
-                    &self.mlp_ws,
-                    rows,
-                ) == crate::glm5next_mlp::forward::ExpertRoute::Grouped
-            }
+            Glm5NextMlpSite::Dense(_) => Some(MlpShare::Dense),
+            Glm5NextMlpSite::Moe(w) => crate::glm5next_mlp::forward::shared_route(
+                &self.mlp_kernels,
+                &self.mlp_cfg,
+                w,
+                &self.mlp_ws,
+                rows,
+            )
+            .map(MlpShare::Routed),
         }
     }
 
@@ -319,164 +342,5 @@ impl metrale_model_layers::layer::LayerSplitPrefill for Glm5NextLayer {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn piece(seq: usize, t0: usize, row: usize, rows: usize) -> SpanPiece {
-        SpanPiece { seq, t0, row, rows }
-    }
-
-    /// 2026-10-09: Two ladder prompts share a 512-row group; the third starts the next one,
-    /// since the three do not fit together.
-    #[test]
-    fn short_prompts_pack_whole_into_groups() {
-        assert_eq!(
-            prefill_span_groups(&[198, 198, 197], &[], 512, |_| true),
-            vec![
-                vec![piece(0, 0, 0, 198), piece(1, 0, 198, 198)],
-                vec![piece(2, 0, 396, 197)],
-            ]
-        );
-    }
-
-    /// 2026-10-09: A sequence longer than the cap is cut where its own prefill cuts it (every
-    /// `cap` rows from its first row); a piece that does not fit the open group starts the next
-    /// one instead of being split.
-    #[test]
-    fn a_long_sequence_keeps_its_own_sub_chunks() {
-        assert_eq!(
-            prefill_span_groups(&[10, 3, 1], &[], 4, |_| true),
-            vec![
-                vec![piece(0, 0, 0, 4)],
-                vec![piece(0, 4, 4, 4)],
-                vec![piece(0, 8, 8, 2)],
-                vec![piece(1, 0, 10, 3), piece(2, 0, 13, 1)],
-            ]
-        );
-    }
-
-    /// 2026-10-09: For assorted shapes: every row lands in exactly one piece, in pass order;
-    /// groups are contiguous and at most `cap` rows; each sequence's pieces are exactly the
-    /// sub-chunks its single-sequence prefill runs (`t0` a multiple of `cap`, `cap` rows but
-    /// the last).
-    #[test]
-    fn pieces_cover_every_row_once_as_the_single_sequence_sub_chunks() {
-        for (rows, cap) in [
-            (vec![198usize, 198, 198, 198, 197], 512usize),
-            (vec![1, 1, 1], 2),
-            (vec![513, 7, 1024, 1], 512),
-            (vec![5], 1),
-            (vec![3, 0, 4], 0),
-        ] {
-            let groups = prefill_span_groups(&rows, &[], cap, |_| true);
-            let cap = cap.max(1);
-            let mut next_row = 0usize;
-            let mut next_t = vec![0usize; rows.len()];
-            for g in &groups {
-                assert!(!g.is_empty());
-                assert!(
-                    g.iter().map(|p| p.rows).sum::<usize>() <= cap,
-                    "{rows:?} cap {cap}"
-                );
-                for p in g {
-                    assert_eq!(p.row, next_row, "{rows:?} cap {cap}: rows out of order");
-                    assert_eq!(
-                        p.t0, next_t[p.seq],
-                        "{rows:?} cap {cap}: sequence rows skipped"
-                    );
-                    assert_eq!(
-                        p.t0 % cap,
-                        0,
-                        "{rows:?} cap {cap}: piece off the sub-chunk grid"
-                    );
-                    assert_eq!(p.rows, cap.min(rows[p.seq] - p.t0), "{rows:?} cap {cap}");
-                    next_row += p.rows;
-                    next_t[p.seq] += p.rows;
-                }
-            }
-            assert_eq!(next_row, rows.iter().sum::<usize>());
-            assert_eq!(next_t, rows);
-        }
-    }
-
-    /// 2026-10-11: A sequence with capture points is cut there as well, and its sub-chunk grid
-    /// restarts at each point, as its own prefill splits the pass there; for assorted shapes
-    /// every sequence's pieces are exactly the sub-chunks of separate passes ending and starting
-    /// at its points. Points outside the sequence cut nothing.
-    #[test]
-    fn capture_points_cut_a_sequence_into_separate_passes_sub_chunks() {
-        assert_eq!(
-            prefill_span_groups(&[10, 6], &[vec![6], vec![]], 4, |_| true),
-            vec![
-                vec![piece(0, 0, 0, 4)],
-                vec![piece(0, 4, 4, 2)],
-                vec![piece(0, 6, 6, 4)],
-                vec![piece(1, 0, 10, 4)],
-                vec![piece(1, 4, 14, 2)],
-            ]
-        );
-        for (rows, cuts, cap) in [
-            (
-                vec![4000usize, 300],
-                vec![vec![3968usize, 3984], vec![]],
-                2048usize,
-            ),
-            (vec![50, 50], vec![vec![16], vec![32, 48]], 16),
-            (vec![7, 9], vec![vec![0, 7, 9], vec![1]], 4),
-            (vec![2048, 17], vec![vec![2048], vec![16]], 2048),
-        ] {
-            let groups = prefill_span_groups(&rows, &cuts, cap, |_| true);
-            for (s, &n) in rows.iter().enumerate() {
-                let mut want = Vec::new();
-                let mut starts: Vec<usize> = cuts[s]
-                    .iter()
-                    .copied()
-                    .filter(|&c| c > 0 && c < n)
-                    .collect();
-                starts.insert(0, 0);
-                starts.push(n);
-                for w in starts.windows(2) {
-                    let mut t = w[0];
-                    while t < w[1] {
-                        let k = cap.min(w[1] - t);
-                        want.push((t, k));
-                        t += k;
-                    }
-                }
-                let got: Vec<(usize, usize)> = groups
-                    .iter()
-                    .flatten()
-                    .filter(|p| p.seq == s)
-                    .map(|p| (p.t0, p.rows))
-                    .collect();
-                assert_eq!(got, want, "{rows:?} {cuts:?} cap {cap}: sequence {s}");
-            }
-        }
-    }
-
-    /// 2026-10-09: The serve's routed site shares only from 17 rows (the grouped GEMM): a
-    /// shorter piece runs alone, and a piece may not join a group whose total the predicate
-    /// refuses.
-    #[test]
-    fn a_piece_the_predicate_refuses_runs_alone() {
-        let grouped = |r: usize| r >= 17;
-        assert_eq!(
-            prefill_span_groups(&[77, 9, 77, 77, 16, 20], &[], 512, grouped),
-            vec![
-                vec![piece(0, 0, 0, 77)],
-                vec![piece(1, 0, 77, 9)],
-                vec![piece(2, 0, 86, 77), piece(3, 0, 163, 77)],
-                vec![piece(4, 0, 240, 16)],
-                vec![piece(5, 0, 256, 20)],
-            ]
-        );
-        let below_300 = |r: usize| r < 300;
-        assert_eq!(
-            prefill_span_groups(&[200, 150, 50], &[], 512, below_300),
-            vec![
-                vec![piece(0, 0, 0, 200)],
-                vec![piece(1, 0, 200, 150), piece(2, 0, 350, 50)],
-            ]
-        );
-    }
-}
+#[path = "prefill_spans_tests.rs"]
+mod tests;

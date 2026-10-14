@@ -23,13 +23,20 @@
 //! The mixers run per sequence in the pass, with the same rows and state as alone, and the
 //! mHC and norm launches compute each token on its own (their own gates cover them).
 //!
+//! 2026-10-14: Under `METRALE_GLM_MOE_W4A4_GROUPED=1` (the declared serve) the routed experts run
+//! W4A4 at every row count, the grouped W4A4 GEMM above 16 rows, as the serve's loader stamps
+//! them; a second argument `tp` builds rank 0 of the `--moe-expert-layout tp` serve (all 288
+//! experts, each sliced to 704 columns) instead of the `ep` layout. `INFO_CASES` (pieces of 16
+//! rows or fewer, which the prefill grouping runs alone) are reported but never fail the gate.
+//!
 //! ```text
 //! METRALE_TARGET_HW=gb10 METRALE_TARGET_MODEL=glm-5.3-flash METRALE_TARGET_QUANT=nvfp4 \
 //! METRALE_GLM_MOE_PREFILL_GEMM_MIN_ROWS=17 GLM_BENCH_GPU_ORDINAL=0 \
 //! cargo run -p metrale-model-arch --release --example glm5next_prefill_spans_mlp_gate \
-//!     --features cuda,gpu-examples -- w4a16
+//!     --features cuda,gpu-examples -- w4a16 [ep|tp]
 //! ```
-//! The argument is the serve's `--dense-quantization` (`declared`, `fp8` or `w4a16`).
+//! The first argument is the serve's `--dense-quantization` (`declared`, `fp8` or `w4a16`), the
+//! second its `--moe-expert-layout` (`ep` when absent).
 
 use anyhow::{Context, Result, bail};
 use half::bf16;
@@ -37,8 +44,9 @@ use metrale_config::{ActivationQuantization, Nvfp4Act, ProjFamily};
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_model_arch::glm5next_mlp::build::build_moe;
+use metrale_model_arch::glm5next_mlp::expert_tp::expert_slice;
 use metrale_model_arch::glm5next_mlp::forward::{
-    Glm5NextMlpWorkspace, forward_moe, forward_moe_pieces,
+    Glm5NextMlpWorkspace, forward_moe, forward_moe_pieces, moe_w4a4_grouped,
 };
 use metrale_model_arch::glm5next_mlp::precision::{GroupPrecision, MlpGroup};
 use metrale_model_arch::glm5next_mlp::weights::{Glm5NextExpertWeights, Nvfp4Proj};
@@ -50,9 +58,20 @@ const MAX_ROWS: usize = 2048;
 /// 2026-10-09: Prompt-length sets, each at most `MAX_ROWS` rows in all: the ladder's two
 /// 198-token prompts, three uneven prompts, a short one before a long one, and a C16 burst of
 /// 77-token prompts in one group.
-const CASES: [&[usize]; 4] = [&[198, 198], &[198, 197, 116], &[64, 300], &[77; 16]];
+/// 2026-10-14: Plus the C8 ladder burst of 196-token prompts and the 192-row pieces before a
+/// block-boundary capture.
+const CASES: [&[usize]; 6] = [
+    &[198, 198],
+    &[198, 197, 116],
+    &[64, 300],
+    &[77; 16],
+    &[196; 8],
+    &[192; 7],
+];
+/// 2026-10-14: The 4-row tails after a 192-row capture, packed: reported, never a failure.
+const INFO_CASES: [&[usize]; 2] = [&[4; 7], &[16, 16]];
 /// 2026-10-09: The bursts timed apart and together.
-const TIMED: [&[usize]; 3] = [&[198, 198], &[77; 16], &[198; 8]];
+const TIMED: [&[usize]; 4] = [&[198, 198], &[77; 16], &[198; 8], &[4; 7]];
 const TIMING_REPS: usize = 9;
 
 struct Rng(u64);
@@ -106,9 +125,10 @@ fn read(gpu: &dyn GpuBackend, p: DevicePtr, n: usize) -> Result<Vec<u8>> {
     Ok(b)
 }
 
-/// 2026-10-09: Rank 0 of GLM-5.3-Flash at TP=3 / EP=3.
-fn cfg() -> Glm5NextMlpConfig {
-    Glm5NextMlpConfig {
+/// 2026-10-09: Rank 0 of GLM-5.3-Flash at TP=3 / EP=3. 2026-10-14: With `tp`, rank 0 of the
+/// `--moe-expert-layout tp` serve: every expert, sliced to this rank's columns.
+fn cfg(tp: bool) -> Result<Glm5NextMlpConfig> {
+    let ep = Glm5NextMlpConfig {
         hidden: 4096,
         local_dense_intermediate: 4096,
         dense_start: 0,
@@ -126,7 +146,18 @@ fn cfg() -> Glm5NextMlpConfig {
         tp_world_size: 3,
         ep_world_size: 3,
         expert_shard: metrale_model_arch::glm5next_mlp::ExpertShard::Whole,
+    };
+    if !tp {
+        return Ok(ep);
     }
+    let slice = expert_slice(ep.moe_intermediate, 3, 0)?;
+    Ok(Glm5NextMlpConfig {
+        moe_intermediate: slice.len,
+        local_experts: ep.num_experts,
+        ep_world_size: 1,
+        expert_shard: metrale_model_arch::glm5next_mlp::ExpertShard::Sliced(slice),
+        ..ep
+    })
 }
 
 fn expert_proj(
@@ -158,6 +189,11 @@ fn main() -> Result<()> {
         }
     };
     set_dense_quantization_from_cli(dense);
+    let tp = match std::env::args().nth(2).as_deref() {
+        None | Some("ep") => false,
+        Some("tp") => true,
+        other => bail!("the second argument is the expert layout (ep or tp), got {other:?}"),
+    };
     let shortest = CASES
         .iter()
         .flat_map(|c| c.iter())
@@ -179,15 +215,31 @@ fn main() -> Result<()> {
     let target = metrale_kernels::ptx_for_exact_target("glm-5.3-flash", "nvfp4")
         .context("glm-5.3-flash nvfp4 target")?;
     let gpu = MetraleCudaBackend::new(ordinal, &target.modules)?;
+    // 2026-10-14: What the serve's loader runs under `--dense-quantization w4a16`: resolve the
+    // W4A16 tiers and record the SM count the segmented launches (`METRALE_GLM_W4A16_SEG`) read.
+    if matches!(dense, DenseQuantization::W4a16) {
+        metrale_model_arch::glm5next_w4a16_dense::Nvfp4QuantKernels::load(&gpu)?;
+    }
     let stream = gpu.create_stream()?;
-    let (c, k) = (cfg(), Glm5NextMlpKernels::resolve(&gpu)?);
+    let (c, k) = (cfg(tp)?, Glm5NextMlpKernels::resolve(&gpu)?);
+    let mi = c.moe_intermediate;
+    // 2026-10-14: The routed W4A4 row cap the serve's loader stamps (`mlp_precision.rs`).
+    let w4a4_rows = if moe_w4a4_grouped()? {
+        k.w4a4_expert_rows_grouped()
+    } else {
+        k.w4a4_expert_rows()
+    };
+    println!(
+        "layout {}, expert width {mi}, routed W4A4 up to {w4a4_rows} rows",
+        if tp { "tp" } else { "ep" }
+    );
     let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
     let experts: Vec<Glm5NextExpertWeights> = (0..c.local_experts)
         .map(|_| -> Result<_> {
             Ok(Glm5NextExpertWeights {
-                gate_proj: expert_proj(&gpu, &mut rng, 2048, 4096, 3.0 / 2688.0)?,
-                up_proj: expert_proj(&gpu, &mut rng, 2048, 4096, 3.0 / 2688.0)?,
-                down_proj: expert_proj(&gpu, &mut rng, 4096, 2048, 100.0 / 2688.0)?,
+                gate_proj: expert_proj(&gpu, &mut rng, mi, 4096, 3.0 / 2688.0)?,
+                up_proj: expert_proj(&gpu, &mut rng, mi, 4096, 3.0 / 2688.0)?,
+                down_proj: expert_proj(&gpu, &mut rng, 4096, mi, 100.0 / 2688.0)?,
             })
         })
         .collect::<Result<_>>()?;
@@ -219,7 +271,7 @@ fn main() -> Result<()> {
                     .ladder(ProjFamily::Moe)
                     .clone(),
                 Nvfp4Act::A4,
-                k.w4a4_expert_rows(),
+                w4a4_rows,
                 has,
             )
         },
@@ -234,7 +286,11 @@ fn main() -> Result<()> {
     };
 
     let mut failures = 0usize;
-    for rows in CASES {
+    for (rows, counts) in CASES
+        .iter()
+        .map(|r| (*r, true))
+        .chain(INFO_CASES.iter().map(|r| (*r, false)))
+    {
         let total: usize = rows.iter().sum();
         let x = up_bf16(
             &gpu,
@@ -257,12 +313,13 @@ fn main() -> Result<()> {
             match one.iter().zip(packed).position(|(a, b)| a != b) {
                 None => println!("  {rows:?} sequence {s} ({n} rows): byte-identical"),
                 Some(i) => {
-                    failures += 1;
+                    failures += usize::from(counts);
                     let (rows_off, max) = diff_stats(&one, packed, row_bytes);
                     println!(
                         "  {rows:?} sequence {s} ({n} rows): DIFFERS from row {} (byte {i}); \
-                         {rows_off} rows differ, max |diff| {max:.3e}",
-                        i / row_bytes
+                         {rows_off} rows differ, max |diff| {max:.3e}{}",
+                        i / row_bytes,
+                        if counts { "" } else { " (informational)" }
                     );
                 }
             }

@@ -36,7 +36,7 @@ mod workspace;
 pub use dense::{DenseScratch, forward_dense, forward_dense_site};
 use launch::swiglu;
 pub(crate) use pieces::check_pieces;
-pub use route::{ExpertRoute, expert_route, grouped_row_floor};
+pub use route::{ExpertRoute, expert_route, grouped_row_floor, shared_route};
 pub use shared_fork::{SHARED_FORK_MAX_ROWS, shared_fork_rows};
 pub use w4a4_dense::forward_dense_w4a4;
 pub use w4a4_dense_grouped::DenseGroupedTables;
