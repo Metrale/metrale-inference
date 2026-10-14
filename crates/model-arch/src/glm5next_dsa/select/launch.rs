@@ -8,6 +8,9 @@
 //!   same pass when the scratch holds all its rows; otherwise one `dsa_kpool_compress`, then per
 //!   row sub-pass the scores, top-k and expansion of those rows, each row's inputs and output
 //!   at the offsets the one-pass launch reads and writes.
+//! - 2026-10-14: A ceiling launch's `dsa_kpool_compress` and `dsa_index_scores` grids stop at
+//!   [`POOL_GRID_MAX`] pools (the kernels stride over the live pools), so a single-row decode's
+//!   launches do not grow with `--max-seq-len`; an exact launch's grids are unchanged.
 
 use super::*;
 
@@ -104,6 +107,22 @@ pub fn select_tokens_in_passes(
     Ok(passes)
 }
 
+/// 2026-10-14: Grid x of `dsa_kpool_compress`: the full pool count of an exact pass, or under a
+/// ceiling of `max_pools` the old one-block-per-pool grid `max_pools + 1` capped at
+/// [`POOL_GRID_MAX`]. The kernel strides over pools up to the live count clamped to
+/// `max_pools + 1` (`S / KP + 1` of the ceiling's `S`), so the capped grid writes the same
+/// pools, each from one block running the same code.
+pub(crate) fn kpool_compress_grid_x(geom: &DsaSelectGeometry, ceiling: Option<usize>) -> u32 {
+    ceiling.map_or(geom.n_pools_full as u32, |m| pool_grid_x(m + 1))
+}
+
+/// 2026-10-14: Grid x of `dsa_index_scores`: the complete pool count of an exact pass, or the
+/// ceiling's `max_pools` capped at [`POOL_GRID_MAX`]; the kernel strides as
+/// [`kpool_compress_grid_x`] says, clamped to `P` = `max_pools`.
+pub(crate) fn index_scores_grid_x(geom: &DsaSelectGeometry, ceiling: Option<usize>) -> u32 {
+    ceiling.map_or(geom.n_pools as u32, pool_grid_x)
+}
+
 /// 2026-10-11: The body of [`select_tokens`]; `compress` false skips `dsa_kpool_compress`, for
 /// a later row sub-pass over pools an earlier one on `stream` already compressed.
 #[allow(clippy::too_many_arguments)]
@@ -170,7 +189,7 @@ fn run(
     // written and marked invalid, and no later kernel reads it.
     if compress {
         KernelLaunch::new(gpu, kernels.kpool_compress)
-            .grid([ceiling.map_or(geom.n_pools_full, |m| m + 1) as u32, 1, 1])
+            .grid([kpool_compress_grid_x(geom, ceiling), 1, 1])
             .block([d.min(1024) as u32, 1, 1])
             .arg_ptr(inputs.rows.k)
             .arg_ptr(inputs.rows.gate)
@@ -260,11 +279,7 @@ fn run(
     if has_pools {
         if !tiled && !mma {
             KernelLaunch::new(gpu, kernels.index_scores)
-                .grid([
-                    ceiling.unwrap_or(geom.n_pools) as u32,
-                    geom.q_rows as u32,
-                    1,
-                ])
+                .grid([index_scores_grid_x(geom, ceiling), geom.q_rows as u32, 1])
                 .block([SCORES_BLOCK, 1, 1])
                 // 2026-09-25: `dsa_index_scores` keeps one f32 per index head in shared memory and
                 // sums them in head order.

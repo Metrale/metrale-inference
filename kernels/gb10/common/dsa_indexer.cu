@@ -86,26 +86,33 @@ extern "C" __global__ void dsa_kpool_compress(
     unsigned int bs,
     unsigned int blk_elems
 ) {
-    const unsigned int p = blockIdx.x;
     const unsigned int tid = threadIdx.x;
+    // 2026-10-14: Pools [0, n) are written, block x taking x, x + gridDim.x, ... With no geom
+    // n is the grid (one pool per block, as before). Under a ceiling launch (geom set, S the
+    // ceiling's max_pools * KP) n is the live pool count clamped to the ceiling's
+    // max_pools + 1, the old one-block-per-pool grid, so the host may cap the grid without
+    // changing which pools are written or how: each pool's writes come from one block running
+    // the code below on the same inputs.
+    unsigned int n = gridDim.x;
     if (geom) {
+        n = min((unsigned int)geom[DSA_GEOM_NPOOLS_F], S / KP + 1u);
         S = (unsigned int)geom[DSA_GEOM_S];
-        // 2026-09-25: Under a ceiling launch this pool may not be live yet.
-        if (p >= (unsigned int)geom[DSA_GEOM_NPOOLS_F]) return;
     }
 
-    // 2026-09-25: Slot bookkeeping is the same for every channel, so thread 0 writes it.
-    bool all_valid = true;
-    for (unsigned int s = 0; s < KP; ++s) {
-        const int idx = dsa_pool_slot(first_key, p, KP, s, S, valid);
-        all_valid &= idx != DSA_INVALID;
-        if (tid == 0) pool_indices[p * KP + s] = idx;
-    }
-    if (tid == 0) pool_valid[p] = all_valid ? 1 : 0;
+    for (unsigned int p = blockIdx.x; p < n; p += gridDim.x) {
+        // 2026-09-25: Slot bookkeeping is the same for every channel, so thread 0 writes it.
+        bool all_valid = true;
+        for (unsigned int s = 0; s < KP; ++s) {
+            const int idx = dsa_pool_slot(first_key, p, KP, s, S, valid);
+            all_valid &= idx != DSA_INVALID;
+            if (tid == 0) pool_indices[p * KP + s] = idx;
+        }
+        if (tid == 0) pool_valid[p] = all_valid ? 1 : 0;
 
-    for (unsigned int d = tid; d < D; d += blockDim.x)
-        pool_keys[p * D + d] =
-            dsa_pool_key(k, gate, valid, ape, S, D, KP, first_key, bt, bs, blk_elems, p, d);
+        for (unsigned int d = tid; d < D; d += blockDim.x)
+            pool_keys[p * D + d] =
+                dsa_pool_key(k, gate, valid, ape, S, D, KP, first_key, bt, bs, blk_elems, p, d);
+    }
 }
 
 // 2026-09-25: 2. Per-(query, pool) index score, one block per (pool, query). `weights` must
@@ -131,34 +138,47 @@ extern "C" __global__ void dsa_index_scores(
     float scale,
     const int* __restrict__ geom
 ) {
-    const unsigned int p = blockIdx.x;
     const unsigned int r = blockIdx.y;
     const unsigned int tid = threadIdx.x;
     extern __shared__ float sh[];
+    // 2026-10-14: Pools [0, n) are scored, block x taking x, x + gridDim.x, ... With no geom n
+    // is P, the exact grid (one pool per block, as before). Under a ceiling launch (P the
+    // ceiling's max_pools, the old grid) n is the live pool count clamped to it, so the host
+    // may cap the grid without changing which pools are written or how: each score is one
+    // block's dsa_score_heads over the same inputs, in the same head order.
+    unsigned int n = P;
     if (geom) {
         S = (unsigned int)geom[DSA_GEOM_S];
         P = (unsigned int)geom[DSA_GEOM_NPOOLS];
         // 2026-09-25: `P` is also the row stride of out / valid_cand, so it may vary with geom
         // only because the device-geometry path is decode-only (Q == 1, every r * P is 0).
         // The launcher refuses a ceiling launch with Q > 1.
-        if (p >= P) return;
+        n = min(P, n);
     }
 
-    // 2026-09-25: A pool is a candidate only when it is complete and its last token, clamped
-    // to [0, S-1], is at or before this query's position and valid. Others score -FLT_MAX.
-    int end = pool_indices[p * KP + KP - 1];
-    int end_c = end < 0 ? 0 : (end >= (int)S ? (int)S - 1 : end);
-    bool vis = (end_c <= q_pos[r]) && dsa_row_valid(valid_keys, end_c);
-    bool cand = (pool_valid[p] != 0) && vis;
-    if (tid == 0) valid_cand[(size_t)r * P + p] = cand ? 1 : 0;
-    if (!cand) {
-        if (tid == 0) out[(size_t)r * P + p] = -FLT_MAX;
-        return;
-    }
+    // 2026-10-14: p, and so cand, is the same for every thread of the block: the `continue` is
+    // uniform and every thread reaches each __syncthreads.
+    for (unsigned int p = blockIdx.x; p < n; p += gridDim.x) {
+        // 2026-09-25: A pool is a candidate only when it is complete and its last token,
+        // clamped to [0, S-1], is at or before this query's position and valid. Others score
+        // -FLT_MAX.
+        int end = pool_indices[p * KP + KP - 1];
+        int end_c = end < 0 ? 0 : (end >= (int)S ? (int)S - 1 : end);
+        bool vis = (end_c <= q_pos[r]) && dsa_row_valid(valid_keys, end_c);
+        bool cand = (pool_valid[p] != 0) && vis;
+        if (tid == 0) valid_cand[(size_t)r * P + p] = cand ? 1 : 0;
+        if (!cand) {
+            if (tid == 0) out[(size_t)r * P + p] = -FLT_MAX;
+            continue;
+        }
 
-    const float acc = dsa_score_heads(q + (size_t)r * H * D, pool_keys + (size_t)p * D,
-                                      weights + (size_t)r * H, H, D, scale, sh, tid);
-    if (tid == 0) out[(size_t)r * P + p] = acc;
+        const float acc = dsa_score_heads(q + (size_t)r * H * D, pool_keys + (size_t)p * D,
+                                          weights + (size_t)r * H, H, D, scale, sh, tid);
+        if (tid == 0) out[(size_t)r * P + p] = acc;
+        // 2026-10-14: The next pool's dsa_score_heads overwrites `sh`, which thread 0 has
+        // just summed.
+        __syncthreads();
+    }
 }
 
 // 2026-09-25: 3. Deterministic top-k over pools, one block per query. A tiled bitonic

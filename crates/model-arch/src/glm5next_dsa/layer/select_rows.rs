@@ -15,7 +15,7 @@
 //!   `r`, and token row `r` of the selection output; the scores, candidacy and selected pools
 //!   use a region row of their own at the context ceiling's stride.
 //! - 2026-10-13: `dsa_pool_scores_rows`' grid x is the ceiling's pool count capped at
-//!   [`POOL_SCORES_GRID_MAX`] (the kernel strides over pools), so its launch does not grow with
+//!   `select::POOL_GRID_MAX` (the kernel strides over pools), so its launch does not grow with
 //!   `--max-seq-len` past an 8k-token ceiling.
 //!
 //! # Why a row's selection is the per-row path's
@@ -34,21 +34,10 @@ use metrale_model_layers::layer::AttnMetadataDev;
 
 use super::super::paged::IndexerRowsDev;
 use super::super::select::{
-    ROW_BLOCK, SCORES_BLOCK, contiguous_pool_count, topk_smem_for_tile, topk_tile,
+    ROW_BLOCK, SCORES_BLOCK, contiguous_pool_count, pool_grid_x, topk_smem_for_tile, topk_tile,
 };
 use super::super::state::max_dsa_context;
 use super::Glm5NextDsaLayer;
-
-/// 2026-10-13: Widest grid x of `dsa_pool_scores_rows`. The kernel strides over a row's pools
-/// (`p += gridDim.x`), so past this many pools a block scores several instead of the grid
-/// growing with the context ceiling (`--max-seq-len` / kpool blocks per row, almost all of them
-/// past the row's pool count). 2,048 pools are an 8,192-token context at kpool 4.
-const POOL_SCORES_GRID_MAX: usize = 2_048;
-
-/// 2026-10-13: Grid x of `dsa_pool_scores_rows` at a ceiling of `pools` pools.
-fn pool_scores_grid_x(pools: usize) -> u32 {
-    pools.min(POOL_SCORES_GRID_MAX) as u32
-}
 
 impl Glm5NextDsaLayer {
     /// 2026-10-09: The context ceiling's pool count, the per-row stride of the scores and
@@ -134,7 +123,7 @@ impl Glm5NextDsaLayer {
             .arg_u32(topk_tile() as u32)
             .launch(stream)?;
         KernelLaunch::new(gpu, k.pool_scores)
-            .grid([pool_scores_grid_x(pools), 1, m32])
+            .grid([pool_grid_x(pools), 1, m32])
             .block([SCORES_BLOCK, 1, 1])
             .shared_mem(((d + h) * 4) as u32)
             .arg_ptr(rows0.k)
@@ -184,23 +173,5 @@ impl Glm5NextDsaLayer {
             .arg_u32(pools as u32)
             .arg_u32(sel as u32)
             .launch(stream)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// 2026-10-13: The grid is the pool count up to the cap and the cap beyond it, so it no
-    /// longer grows with `--max-seq-len`; a short ceiling's launch is unchanged.
-    #[test]
-    fn the_scores_grid_follows_the_pools_up_to_the_cap_only() {
-        assert_eq!(pool_scores_grid_x(1), 1);
-        assert_eq!(pool_scores_grid_x(16), 16);
-        assert_eq!(pool_scores_grid_x(2_048), 2_048);
-        assert_eq!(pool_scores_grid_x(2_049), 2_048);
-        for msl in [65_536usize, 262_144, 524_288, 1_048_576] {
-            assert_eq!(pool_scores_grid_x(msl / 4), 2_048, "msl {msl}");
-        }
     }
 }

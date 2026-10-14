@@ -148,54 +148,61 @@ extern "C" __global__ void dsa_kpool_compress(
     unsigned int bs,
     unsigned int blk_elems
 ) {
-    const unsigned int p = blockIdx.x;
     const unsigned int tid = threadIdx.x;
+    // 2026-10-14: Pools [0, n) are written, block x taking x, x + gridDim.x, ... With no geom
+    // n is the grid (one pool per block, as before). Under a ceiling launch (geom set, S the
+    // ceiling's max_pools * KP) n is the live pool count clamped to the ceiling's
+    // max_pools + 1, the old one-block-per-pool grid, so the host may cap the grid without
+    // changing which pools are written or how: each pool's writes come from one block running
+    // the code below on the same inputs.
+    unsigned int n = gridDim.x;
     if (geom) {
+        n = min((unsigned int)geom[DSA_GEOM_NPOOLS_F], S / KP + 1u);
         S = (unsigned int)geom[DSA_GEOM_S];
-        // 2026-09-25: The grid is fixed at the context ceiling under capture; this pool is not live yet.
-        if (p >= (unsigned int)geom[DSA_GEOM_NPOOLS_F]) return;
     }
 
-    // 2026-09-25: Slot bookkeeping is the same for every channel, so thread 0 owns the index/validity write.
-    bool all_valid = true;
-    for (unsigned int s = 0; s < KP; ++s) {
-        long long raw = (long long)first_key + (long long)p * KP + s;
-        bool in_range = raw >= 0 && raw < (long long)S;
-        bool ok = in_range && dsa_row_valid(valid, raw);
-        all_valid &= ok;
-        if (tid == 0) pool_indices[p * KP + s] = ok ? (int)raw : DSA_INVALID;
-    }
-    if (tid == 0) pool_valid[p] = all_valid ? 1 : 0;
-
-    for (unsigned int d = tid; d < D; d += blockDim.x) {
-        float mx = -CUDART_INF_F;
-        float lg[8];
-        for (unsigned int s = 0; s < KP && s < 8; ++s) {
+    for (unsigned int p = blockIdx.x; p < n; p += gridDim.x) {
+        // 2026-09-25: Slot bookkeeping is the same for every channel, so thread 0 owns the index/validity write.
+        bool all_valid = true;
+        for (unsigned int s = 0; s < KP; ++s) {
             long long raw = (long long)first_key + (long long)p * KP + s;
             bool in_range = raw >= 0 && raw < (long long)S;
             bool ok = in_range && dsa_row_valid(valid, raw);
-            lg[s] = ok ? (__bfloat162float(gate[dsa_row_elem(raw, D, bt, bs, blk_elems) + d])
-                         + ape[s * D + d])
-                       : -CUDART_INF_F;
-            mx = fmaxf(mx, lg[s]);
+            all_valid &= ok;
+            if (tid == 0) pool_indices[p * KP + s] = ok ? (int)raw : DSA_INVALID;
         }
-        float sum = 0.0f;
-        for (unsigned int s = 0; s < KP && s < 8; ++s) {
-            lg[s] = (lg[s] == -CUDART_INF_F) ? 0.0f : __expf(lg[s] - mx);
-            sum += lg[s];
+        if (tid == 0) pool_valid[p] = all_valid ? 1 : 0;
+
+        for (unsigned int d = tid; d < D; d += blockDim.x) {
+            float mx = -CUDART_INF_F;
+            float lg[8];
+            for (unsigned int s = 0; s < KP && s < 8; ++s) {
+                long long raw = (long long)first_key + (long long)p * KP + s;
+                bool in_range = raw >= 0 && raw < (long long)S;
+                bool ok = in_range && dsa_row_valid(valid, raw);
+                lg[s] = ok ? (__bfloat162float(gate[dsa_row_elem(raw, D, bt, bs, blk_elems) + d])
+                             + ape[s * D + d])
+                           : -CUDART_INF_F;
+                mx = fmaxf(mx, lg[s]);
+            }
+            float sum = 0.0f;
+            for (unsigned int s = 0; s < KP && s < 8; ++s) {
+                lg[s] = (lg[s] == -CUDART_INF_F) ? 0.0f : __expf(lg[s] - mx);
+                sum += lg[s];
+            }
+            // 2026-09-25: A pool with no valid slot has sum 0 and gets zero keys.
+            float inv = (sum > 0.0f) ? (1.0f / sum) : 0.0f;
+            float acc = 0.0f;
+            for (unsigned int s = 0; s < KP && s < 8; ++s) {
+                long long raw = (long long)first_key + (long long)p * KP + s;
+                bool in_range = raw >= 0 && raw < (long long)S;
+                bool ok = in_range && dsa_row_valid(valid, raw);
+                if (ok)
+                    acc += lg[s] * inv
+                           * __bfloat162float(k[dsa_row_elem(raw, D, bt, bs, blk_elems) + d]);
+            }
+            pool_keys[p * D + d] = acc;
         }
-        // 2026-09-25: A pool with no valid slot has sum 0 and gets zero keys.
-        float inv = (sum > 0.0f) ? (1.0f / sum) : 0.0f;
-        float acc = 0.0f;
-        for (unsigned int s = 0; s < KP && s < 8; ++s) {
-            long long raw = (long long)first_key + (long long)p * KP + s;
-            bool in_range = raw >= 0 && raw < (long long)S;
-            bool ok = in_range && dsa_row_valid(valid, raw);
-            if (ok)
-                acc += lg[s] * inv
-                       * __bfloat162float(k[dsa_row_elem(raw, D, bt, bs, blk_elems) + d]);
-        }
-        pool_keys[p * D + d] = acc;
     }
 }
 
@@ -222,41 +229,49 @@ extern "C" __global__ void dsa_index_scores(
     float scale,
     const int* __restrict__ geom              // 2026-09-25: [5] or null
 ) {
-    const unsigned int p = blockIdx.x;
     const unsigned int r = blockIdx.y;
     const unsigned int tid = threadIdx.x;
     extern __shared__ float sh[];
+    // 2026-10-14: Pools [0, n) are scored, block x taking x, x + gridDim.x, ... With no geom n
+    // is P, the exact grid (one pool per block, as before). Under a ceiling launch (P the
+    // ceiling's max_pools, the old grid) n is the live pool count clamped to it, so the host
+    // may cap the grid without changing which pools are written or how: each score is one
+    // block's head loop over the same inputs, in the same order. Every head ends on a
+    // __syncthreads, so the next pool may reuse `sh`; p, and so cand, is block-uniform.
+    unsigned int n = P;
     if (geom) {
         S = (unsigned int)geom[DSA_GEOM_S];
         P = (unsigned int)geom[DSA_GEOM_NPOOLS];
         // 2026-09-25: `P` is also the row stride of `out`/`valid_cand`. It may vary only
         // because the device-geometry path is decode-only (Q == 1), so every `r * P`
         // is 0; the launcher refuses Q > 1 there (glm5next_dsa/select/launch.rs).
-        if (p >= P) return;
+        n = min(P, n);
     }
 
-    // 2026-09-25: A pool is a candidate only when it is complete and its last token is
-    // visible to this query (causal, and not padding). The last token's index is clamped to [0, S-1].
-    int end = pool_indices[p * KP + KP - 1];
-    int end_c = end < 0 ? 0 : (end >= (int)S ? (int)S - 1 : end);
-    bool vis = (end_c <= q_pos[r]) && dsa_row_valid(valid_keys, end_c);
-    bool cand = (pool_valid[p] != 0) && vis;
-    if (tid == 0) valid_cand[(size_t)r * P + p] = cand ? 1 : 0;
-    if (!cand) {
-        if (tid == 0) out[(size_t)r * P + p] = -FLT_MAX;
-        return;
-    }
+    for (unsigned int p = blockIdx.x; p < n; p += gridDim.x) {
+        // 2026-09-25: A pool is a candidate only when it is complete and its last token is
+        // visible to this query (causal, and not padding). The last token's index is clamped to [0, S-1].
+        int end = pool_indices[p * KP + KP - 1];
+        int end_c = end < 0 ? 0 : (end >= (int)S ? (int)S - 1 : end);
+        bool vis = (end_c <= q_pos[r]) && dsa_row_valid(valid_keys, end_c);
+        bool cand = (pool_valid[p] != 0) && vis;
+        if (tid == 0) valid_cand[(size_t)r * P + p] = cand ? 1 : 0;
+        if (!cand) {
+            if (tid == 0) out[(size_t)r * P + p] = -FLT_MAX;
+            continue;
+        }
 
-    float acc = 0.0f;
-    for (unsigned int h = 0; h < H; ++h) {
-        float dot = 0.0f;
-        for (unsigned int d = tid; d < D; d += blockDim.x)
-            dot += q[((size_t)r * H + h) * D + d] * pool_keys[(size_t)p * D + d];
-        dot = dsa_block_sum(dot, sh, tid, blockDim.x);
-        if (tid == 0) acc += weights[(size_t)r * H + h] * fmaxf(scale * dot, 0.0f);
-        __syncthreads();
+        float acc = 0.0f;
+        for (unsigned int h = 0; h < H; ++h) {
+            float dot = 0.0f;
+            for (unsigned int d = tid; d < D; d += blockDim.x)
+                dot += q[((size_t)r * H + h) * D + d] * pool_keys[(size_t)p * D + d];
+            dot = dsa_block_sum(dot, sh, tid, blockDim.x);
+            if (tid == 0) acc += weights[(size_t)r * H + h] * fmaxf(scale * dot, 0.0f);
+            __syncthreads();
+        }
+        if (tid == 0) out[(size_t)r * P + p] = acc;
     }
-    if (tid == 0) out[(size_t)r * P + p] = acc;
 }
 
 // 2026-09-25: 3. Deterministic top-k over pools. One block per query. A tiled bitonic

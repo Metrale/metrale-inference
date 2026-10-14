@@ -15,7 +15,7 @@ use metrale_gpu_runtime::gpu::KernelHandle;
 use metrale_gpu_runtime::gpu::mock::{MockArg, MockGpuBackend, MockLaunch};
 
 /// 2026-10-11: GLM-5.3's indexer geometry (`select/tests.rs`), with a 4,096-token context.
-fn cfg() -> Glm5NextDsaConfig {
+pub(super) fn cfg() -> Glm5NextDsaConfig {
     Glm5NextDsaConfig {
         hidden: 4096,
         index_heads: 32,
@@ -33,14 +33,14 @@ fn cfg() -> Glm5NextDsaConfig {
     }
 }
 
-const KPOOL_COMPRESS: u64 = 11;
-const INDEX_SCORES: u64 = 12;
+pub(super) const KPOOL_COMPRESS: u64 = 11;
+pub(super) const INDEX_SCORES: u64 = 12;
 const TOPK_POOLS: u64 = 13;
 const EXPAND: u64 = 14;
 
 /// 2026-10-11: Distinct handles, and no tiled-scores kernel, so the untiled path runs whatever
 /// `METRALE_GLM_DSA_SCORES_TILED` says.
-fn kernels() -> Glm5NextDsaKernels {
+pub(super) fn kernels() -> Glm5NextDsaKernels {
     let h = KernelHandle;
     Glm5NextDsaKernels {
         kpool_compress: h(KPOOL_COMPRESS),
@@ -67,7 +67,12 @@ fn kernels() -> Glm5NextDsaKernels {
 }
 
 /// 2026-10-11: Flat-cache inputs for `q` query rows over `seq` tokens, all zero.
-fn inputs(gpu: &MockGpuBackend, c: &Glm5NextDsaConfig, seq: usize, q: usize) -> DsaSelectInputs {
+pub(super) fn inputs(
+    gpu: &MockGpuBackend,
+    c: &Glm5NextDsaConfig,
+    seq: usize,
+    q: usize,
+) -> DsaSelectInputs {
     let (d, h) = (c.index_head_dim, c.index_heads);
     DsaSelectInputs {
         rows: super::super::paged::IndexerRowsDev::flat(
@@ -254,47 +259,9 @@ fn sub_passes_select_the_one_pass_tokens_bit_for_bit() {
         ..cfg()
     };
     let k = Glm5NextDsaKernels::resolve(&gpu).unwrap();
-    let (seq, q, d, h) = (5000usize, 64usize, c.index_head_dim, c.index_heads);
-    let mut x = 0x9e3779b97f4a7c15u64;
-    let mut rnd = || {
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        ((x >> 40) as f32 / (1u64 << 24) as f32) * 2.0 - 1.0
-    };
-    let bf = |v: &[f32]| -> Vec<u8> {
-        v.iter()
-            .flat_map(|f| half::bf16::from_f32(*f).to_le_bytes())
-            .collect()
-    };
-    let f4 = |v: &[f32]| -> Vec<u8> { v.iter().flat_map(|f| f.to_le_bytes()).collect() };
-    let up = |b: &[u8]| {
-        let p = gpu.alloc(b.len()).unwrap();
-        gpu.copy_h2d(b, p).unwrap();
-        p
-    };
-    let kv: Vec<f32> = (0..seq * d).map(|_| rnd()).collect();
-    let gate: Vec<f32> = (0..seq * d).map(|_| rnd()).collect();
-    let ape: Vec<f32> = (0..c.index_kpool * d).map(|_| rnd() * 0.1).collect();
-    let qv: Vec<f32> = (0..q * h * d).map(|_| rnd()).collect();
-    let wv: Vec<f32> = (0..q * h).map(|_| rnd().abs() * 0.2).collect();
-    let pos: Vec<u8> = (0..q)
-        .flat_map(|r| ((seq - 1 - r * 61) as i32).to_le_bytes())
-        .collect();
-    let inp = DsaSelectInputs {
-        rows: super::super::paged::IndexerRowsDev::flat(
-            up(&bf(&kv)),
-            up(&bf(&gate)),
-            up(&vec![1u8; seq]),
-        ),
-        ape: up(&f4(&ape)),
-        q: up(&f4(&qv)),
-        weights: up(&f4(&wv)),
-        q_pos: up(&pos),
-        q_mask: up(&vec![1u8; q]),
-        first_key: 0,
-        geom_dev: DevicePtr::NULL,
-    };
+    let (seq, q) = (5000usize, 64usize);
+    let pos: Vec<i32> = (0..q).map(|r| (seq - 1 - r * 61) as i32).collect();
+    let inp = random_inputs(&gpu, &c, seq, &pos);
     let geom = DsaSelectGeometry::plan(&c, seq, q).unwrap();
     let tokens = |scratch: &DsaSelectScratch| {
         let mut out = vec![0u8; q * c.out_width() * 4];
@@ -319,4 +286,55 @@ fn sub_passes_select_the_one_pass_tokens_bit_for_bit() {
         a, b,
         "the sub-pass selection differs from the one-pass selection"
     );
+}
+
+/// 2026-10-14: A random flat indexer cache of `seq` tokens (all valid) and one random query
+/// row per entry of `pos`, at that position, uploaded to `gpu`; the same xorshift stream on
+/// every call, so two calls build the same inputs.
+#[cfg(feature = "cuda")]
+pub(super) fn random_inputs(
+    gpu: &dyn GpuBackend,
+    c: &Glm5NextDsaConfig,
+    seq: usize,
+    pos: &[i32],
+) -> DsaSelectInputs {
+    let (q, d, h) = (pos.len(), c.index_head_dim, c.index_heads);
+    let mut x = 0x9e3779b97f4a7c15u64;
+    let mut rnd = || {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        ((x >> 40) as f32 / (1u64 << 24) as f32) * 2.0 - 1.0
+    };
+    let bf = |v: &[f32]| -> Vec<u8> {
+        v.iter()
+            .flat_map(|f| half::bf16::from_f32(*f).to_le_bytes())
+            .collect()
+    };
+    let f4 = |v: &[f32]| -> Vec<u8> { v.iter().flat_map(|f| f.to_le_bytes()).collect() };
+    let up = |b: &[u8]| {
+        let p = gpu.alloc(b.len()).unwrap();
+        gpu.copy_h2d(b, p).unwrap();
+        p
+    };
+    let kv: Vec<f32> = (0..seq * d).map(|_| rnd()).collect();
+    let gate: Vec<f32> = (0..seq * d).map(|_| rnd()).collect();
+    let ape: Vec<f32> = (0..c.index_kpool * d).map(|_| rnd() * 0.1).collect();
+    let qv: Vec<f32> = (0..q * h * d).map(|_| rnd()).collect();
+    let wv: Vec<f32> = (0..q * h).map(|_| rnd().abs() * 0.2).collect();
+    let pos: Vec<u8> = pos.iter().flat_map(|p| p.to_le_bytes()).collect();
+    DsaSelectInputs {
+        rows: super::super::paged::IndexerRowsDev::flat(
+            up(&bf(&kv)),
+            up(&bf(&gate)),
+            up(&vec![1u8; seq]),
+        ),
+        ape: up(&f4(&ape)),
+        q: up(&f4(&qv)),
+        weights: up(&f4(&wv)),
+        q_pos: up(&pos),
+        q_mask: up(&vec![1u8; q]),
+        first_key: 0,
+        geom_dev: DevicePtr::NULL,
+    }
 }
