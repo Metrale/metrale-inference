@@ -185,6 +185,7 @@ impl Glm5NextMtpHead {
             lm_head,
             kv_cache: Mutex::new(kv_cache),
             kv_regions: super::kv_pool::DrafterKvRegions::new(regions, per_seq),
+            state_pool: super::state_pool::StatePool::new(),
             batch: super::batch::ProposeBatch::new(
                 gpu,
                 config.hidden_size,

@@ -253,6 +253,10 @@ pub struct ModelLevers {
     /// flat-indexer DSA layer), so a paged-indexer stack replays them instead of capturing again
     /// (`glm5next_layer/mod.rs`). Verify-graph borrowing stays off for GLM-5.3 either way.
     pub glm_keep_slot_graphs: bool,
+    /// 2026-10-14: `METRALE_GLM_MTP_STATE_POOL=1`: a freed GLM-5.3 drafter state keeps its device
+    /// buffers, KV region and drafter graph for the next sequence instead of freeing them, so a
+    /// new sequence allocates nothing (`glm5next_mtp_head/state_pool.rs`). Drafts are unchanged.
+    pub glm_mtp_state_pool: bool,
     /// 2026-09-25: `METRALE_FP8_MOE_GROUPED_DECODE=1`: the target model's multi-row FP8 MoE decode
     /// runs through the cross-row grouped kernels (`FfnComponent::fp8_grouped_decode_ok`). The MTP
     /// drafter calls `MoeLayer::fp8_grouped_decode_ok` directly and does not read this lever;

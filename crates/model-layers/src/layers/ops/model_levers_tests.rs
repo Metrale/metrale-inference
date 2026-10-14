@@ -114,11 +114,12 @@ fn exact_one_opt_ins_map_to_their_own_fields() {
 /// off by default.
 #[test]
 fn new_sequence_levers_are_strict_opt_ins_on_their_own_fields() {
-    let cases: [(&str, fn(&mut ModelLevers) -> &mut bool); 2] = [
+    let cases: [(&str, fn(&mut ModelLevers) -> &mut bool); 3] = [
         ("METRALE_SEQ_ALLOC_ASYNC", |l| &mut l.seq_alloc_async),
         ("METRALE_GLM_KEEP_SLOT_GRAPHS", |l| {
             &mut l.glm_keep_slot_graphs
         }),
+        ("METRALE_GLM_MTP_STATE_POOL", |l| &mut l.glm_mtp_state_pool),
     ];
     for (name, field) in cases {
         assert!(!*field(&mut resolve(&[])), "{name} on by default");
@@ -140,17 +141,22 @@ fn new_sequence_readback_names_each_lever_with_its_own_state() {
     let off = resolve(&[]).new_sequence_readback();
     assert_eq!(
         off,
-        "METRALE_SEQ_ALLOC_ASYNC=off METRALE_GLM_KEEP_SLOT_GRAPHS=off"
+        "METRALE_SEQ_ALLOC_ASYNC=off METRALE_GLM_KEEP_SLOT_GRAPHS=off METRALE_GLM_MTP_STATE_POOL=off"
     );
     let l1 = resolve(&[("METRALE_SEQ_ALLOC_ASYNC", "1")]).new_sequence_readback();
     assert_eq!(
         l1,
-        "METRALE_SEQ_ALLOC_ASYNC=on METRALE_GLM_KEEP_SLOT_GRAPHS=off"
+        "METRALE_SEQ_ALLOC_ASYNC=on METRALE_GLM_KEEP_SLOT_GRAPHS=off METRALE_GLM_MTP_STATE_POOL=off"
     );
     let l3 = resolve(&[("METRALE_GLM_KEEP_SLOT_GRAPHS", "1")]).new_sequence_readback();
     assert_eq!(
         l3,
-        "METRALE_SEQ_ALLOC_ASYNC=off METRALE_GLM_KEEP_SLOT_GRAPHS=on"
+        "METRALE_SEQ_ALLOC_ASYNC=off METRALE_GLM_KEEP_SLOT_GRAPHS=on METRALE_GLM_MTP_STATE_POOL=off"
+    );
+    let l2 = resolve(&[("METRALE_GLM_MTP_STATE_POOL", "1")]).new_sequence_readback();
+    assert_eq!(
+        l2,
+        "METRALE_SEQ_ALLOC_ASYNC=off METRALE_GLM_KEEP_SLOT_GRAPHS=off METRALE_GLM_MTP_STATE_POOL=on"
     );
 }
 
