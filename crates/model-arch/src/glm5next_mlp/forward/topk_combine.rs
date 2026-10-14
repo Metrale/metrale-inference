@@ -11,6 +11,9 @@
 //!   error, never a quiet fallback.
 //! - `METRALE_GLM_MOE_COMBINE_SPLIT=1` only widens the combine's grid: each element is the same
 //!   expressions in the same order whatever the grid.
+//! - 2026-10-14: `METRALE_GLM_MOE_COMBINE_VEC8=1` swaps in the `_vec8` combine, eight elements
+//!   per thread with the same per-element expressions (`glm5next_ffn.cu`); it errors where it
+//!   cannot run.
 
 use anyhow::{Result, bail};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
@@ -85,9 +88,59 @@ pub(super) fn router_topk(
         .launch(stream)
 }
 
+/// 2026-10-14: The most slots `glm5next_moe_combine[_indexed]_vec8` sums
+/// (`GLM_COMBINE_VEC8_MAX_K` in `glm5next_ffn.cu`): one 16-byte register per slot.
+pub const COMBINE_VEC8_MAX_K: usize = 16;
+
+/// 2026-10-14: The combine kernel of one launch and its blocks per row. Off (`vec8` false), the
+/// scalar kernel at [`combine_blocks_per_row`]; on, the `_vec8` twin at one thread per eight
+/// elements of `hidden` (`split` is then moot: the grid always spreads a row). A `vec8` that
+/// cannot run (kernel absent, `hidden` not a multiple of 8, more than [`COMBINE_VEC8_MAX_K`]
+/// slots, a buffer of `bufs` not 16-byte aligned) is an error, never the scalar kernel.
+pub(super) fn combine_launch(
+    k: &Glm5NextMlpKernels,
+    cfg: &Glm5NextMlpConfig,
+    indexed: bool,
+    split: bool,
+    vec8: bool,
+    bufs: [DevicePtr; 3],
+) -> Result<(KernelHandle, u32)> {
+    if !vec8 {
+        let func = if indexed {
+            k.combine_indexed
+        } else {
+            k.combine
+        };
+        return Ok((func, combine_blocks_per_row(split, cfg.hidden)));
+    }
+    let func = k.combine_vec8[usize::from(indexed)];
+    if func.0 == 0 {
+        bail!("METRALE_GLM_MOE_COMBINE_VEC8=1: the _vec8 combine is not in this target");
+    }
+    if !cfg.hidden.is_multiple_of(8) || cfg.top_k > COMBINE_VEC8_MAX_K {
+        bail!(
+            "METRALE_GLM_MOE_COMBINE_VEC8=1: hidden {} is not a multiple of 8 or top_k {} > {}",
+            cfg.hidden,
+            cfg.top_k,
+            COMBINE_VEC8_MAX_K
+        );
+    }
+    if let Some(p) = bufs.iter().find(|p| !p.0.is_multiple_of(16)) {
+        bail!(
+            "METRALE_GLM_MOE_COMBINE_VEC8=1: buffer {:#x} is not 16-byte aligned",
+            p.0
+        );
+    }
+    Ok((
+        func,
+        (cfg.hidden / 8).div_ceil(ACT_BLOCK as usize).max(1) as u32,
+    ))
+}
+
 /// 2026-10-10: `out = shared + sum_k wts[k] * routed[k]` for `rows` rows. After the grouped GEMM
 /// (`indexed`) the routed rows are in expert-sorted order and `glm5next_moe_combine_indexed`
-/// finds each slot's row through `token_to_perm`.
+/// finds each slot's row through `token_to_perm`. 2026-10-14: the kernel and grid from
+/// [`combine_launch`] under the two combine levers.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn combine(
     gpu: &dyn GpuBackend,
@@ -99,18 +152,33 @@ pub(super) fn combine(
     indexed: bool,
     stream: u64,
 ) -> Result<()> {
-    let y = combine_blocks_per_row(crate::glm5next_layer::moe_combine_split(), cfg.hidden);
-    let launch = KernelLaunch::new(
-        gpu,
-        if indexed {
-            k.combine_indexed
-        } else {
-            k.combine
-        },
-    )
-    .grid([rows as u32, y, 1])
-    .block([ACT_BLOCK, 1, 1])
-    .arg_ptr(ws.expert_out);
+    let levers = (
+        crate::glm5next_layer::moe_combine_split(),
+        crate::glm5next_layer::moe_combine_vec8(),
+    );
+    combine_with(gpu, k, cfg, ws, out, rows, indexed, levers, stream)
+}
+
+/// 2026-10-14: [`combine`] with its `(split, vec8)` levers passed in. Every kernel it picks
+/// takes the same arguments.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn combine_with(
+    gpu: &dyn GpuBackend,
+    k: &Glm5NextMlpKernels,
+    cfg: &Glm5NextMlpConfig,
+    ws: &Glm5NextMlpWorkspace,
+    out: DevicePtr,
+    rows: usize,
+    indexed: bool,
+    (split, vec8): (bool, bool),
+    stream: u64,
+) -> Result<()> {
+    let bufs = [ws.expert_out, ws.shared_out, out];
+    let (func, y) = combine_launch(k, cfg, indexed, split, vec8, bufs)?;
+    let launch = KernelLaunch::new(gpu, func)
+        .grid([rows as u32, y, 1])
+        .block([ACT_BLOCK, 1, 1])
+        .arg_ptr(ws.expert_out);
     let launch = if indexed {
         launch.arg_ptr(ws.token_to_perm)
     } else {

@@ -164,6 +164,10 @@ pub struct Glm5NextMlpKernels {
     /// 2026-09-25: [`Self::combine`] reading the routed rows in expert-sorted order through
     /// `token_to_perm`, with the same accumulation order and single rounding.
     pub combine_indexed: KernelHandle,
+    /// 2026-10-14: `glm5next_moe_combine_vec8` and `glm5next_moe_combine_indexed_vec8`:
+    /// [`Self::combine`] and [`Self::combine_indexed`] at eight elements per thread, same bytes;
+    /// launched under `METRALE_GLM_MOE_COMBINE_VEC8=1` (`forward::topk_combine`). `0` when absent.
+    pub combine_vec8: [KernelHandle; 2],
     /// 2026-10-08: `w4a4_quant_rows_static` (`w4a4_gemv_mx_moe.cu`): NVFP4 activations under a
     /// static per-tensor scale, the input of every W4A4 projection here.
     pub w4a4_quant_static: KernelHandle,
@@ -357,6 +361,11 @@ impl Glm5NextMlpKernels {
                 FFN_MODULE,
                 "glm5next_moe_combine_indexed",
             ),
+            combine_vec8: [
+                "glm5next_moe_combine_vec8",
+                "glm5next_moe_combine_indexed_vec8",
+            ]
+            .map(|e| metrale_model_layers::layers::try_kernel(gpu, FFN_MODULE, e)),
             w4a4_quant_static: metrale_model_layers::layers::try_kernel(
                 gpu,
                 W4A4_MOE_MODULE,
