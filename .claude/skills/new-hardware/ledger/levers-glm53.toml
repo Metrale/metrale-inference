@@ -1877,3 +1877,27 @@ effort_hours = 0.0
 transferability = "any BF16 head on GB10 whose MTP verify width reaches 9..=16 rows"
 links = { pr = "", commit = "6af90f757", evidence = "decode worker L3 pricing message 2026-10-14 ~13:00Z; /workspace/claude-state/glm/STATUS.md" }
 notes = "Fires only at 9..=16 rows (C5-C8 with one draft), cannot move C1. Expected about -1.1 ms/step at C8."
+
+[[lever]]
+id = "gb10x3-glm53-mtp-eager-prefill-recipe"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "arm M8KE: winning recipe with METRALE_GLM_MTP_EAGER_PREFILL=1 (the recipe pins 0; the table default is on), MSL 16384, bin 331872ec1, chainK kinv-1014T1331"
+symptom = "at C >= 2 only the last-prefilled sequence has a drafter context at the first propose when the eager drafter prefill is off; expected higher early acceptance with it on"
+diagnosis_tool = "chainK ladder C1/C8 with per-rung MTP acceptance (mtp_rungs.py)"
+root_cause_class = "latency"
+lever_type = "runtime-config"
+lkb_effect = "none"
+parity_tier_kept = "bit-exact (class B): tf + anchor tf bit-equal to kinv/acc_ref.txt"
+per_rung = []
+verdict = "discarded"
+verdict_reason = "Coordinator 13:4xZ: DROPPED, bits-neutral with no demonstrated gain. C1 p1 identical (0.618); C8 p1 0.644 vs 0.607-0.638 across same-binary samples, and C8 tok/s inside the 96.6-103.6 control spread (M1L/LD2/M8K/M8KE). The recipe keeps METRALE_GLM_MTP_EAGER_PREFILL=0."
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0.0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "GLM MTP serves; re-test only with a C8 instrument whose spread is below the claimed gain"
+links = { pr = "", commit = "", evidence = "/workspace/claude-state/glm/logs/chainK_kinv-1014T1331.log; /workspace/claude-state/glm/STATUS.md 2026-10-14T13:45Z" }
+notes = "The table default (on) differs from the recipe (0); the recipe is fully explicit, so the serve runs 0."
