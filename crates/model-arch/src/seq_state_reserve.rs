@@ -65,21 +65,29 @@ pub fn per_sequence_state_bytes(
     max_seq_len: usize,
     spec_on: bool,
 ) -> Result<PerSequenceState> {
+    // 2026-10-13: The drafter cap is read only for a GLM serve; any other model is charged
+    // nothing whatever the lever says.
+    if config.model_type != "glm5_next" {
+        return Ok(PerSequenceState::default());
+    }
     per_sequence_state_bytes_for(
         config,
         max_seq_len,
         spec_on,
         crate::glm5next_dsa::paged::text_stack_indexer_cache(),
+        crate::glm5next_mtp_head::drafter_context_cap()?,
     )
 }
 
 /// 2026-10-09: [`per_sequence_state_bytes`] with the text stack's indexer mode as an argument
-/// (env-free).
+/// (env-free). 2026-10-13: And the drafter's context cap (`METRALE_GLM_MTP_CONTEXT_CAP`; 0 =
+/// none): the proposer's rows are `drafter_max_context(max_seq_len, drafter_cap)`.
 pub fn per_sequence_state_bytes_for(
     config: &ModelConfig,
     max_seq_len: usize,
     spec_on: bool,
     text_indexer: IndexerCache,
+    drafter_cap: usize,
 ) -> Result<PerSequenceState> {
     if config.model_type != "glm5_next" {
         return Ok(PerSequenceState::default());
@@ -111,15 +119,21 @@ pub fn per_sequence_state_bytes_for(
     // that order below. Its `block_table` is a host
     // `Vec<u32>`, not device memory. 2026-10-11: Plus its region of the drafter KV pool, which
     // `Glm5NextMtpHead::new` allocates for `--max-batch-size` states up front.
+    // 2026-10-13: Its indexer cache and graph table at the drafter's capped context, the
+    // `max_context` its block is loaded with (`drafter_dsa_config`).
+    let drafter_ctx = crate::glm5next_mtp_head::drafter_max_context(max_seq_len, drafter_cap);
     let proposer = if spec_on && config.mtp_layer_types.contains(&LayerType::SparseAttention) {
-        crate::glm5next_mtp_head::drafter_kv_bytes_per_seq(config, max_seq_len)?
-            + per_layer
+        crate::glm5next_mtp_head::drafter_kv_bytes_per_seq(config, max_seq_len, drafter_cap)?
+            + indexer_state_bytes(
+                dsa_capacity(drafter_ctx, config.index_kpool),
+                config.index_head_dim,
+            )
             + 2 * config.hidden_size * 2
             + config.hidden_size * 2
             + config.vocab_size * 2
             + 8
             + crate::glm5next_mtp_head::HEAD_XCHG_BUFFER_BYTES
-            + crate::glm5next_mtp_head::graph_state_bytes(config.hidden_size, max_seq_len)
+            + crate::glm5next_mtp_head::graph_state_bytes(config.hidden_size, drafter_ctx)
     } else {
         0
     };

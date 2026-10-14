@@ -195,7 +195,7 @@ impl DraftProposer for Glm5NextMtpHead {
             .as_any_mut()
             .downcast_mut::<Glm5NextMtpProposerState>()
             .ok_or_else(|| anyhow::anyhow!("not a GLM MTP proposer state"))?;
-        if !self.begin_propose(st, last_token, target_hidden, position, ctx)? {
+        if !self.begin_propose(st, last_token, target_hidden, position, num_drafts, ctx)? {
             return Ok(Vec::new());
         }
         let mut drafts = Vec::with_capacity(num_drafts);
@@ -244,7 +244,7 @@ impl DraftProposer for Glm5NextMtpHead {
             .as_any_mut()
             .downcast_mut::<Glm5NextMtpProposerState>()
             .ok_or_else(|| anyhow::anyhow!("not a GLM MTP proposer state"))?;
-        if !self.begin_propose(st, last_token, target_hidden, position, ctx)? {
+        if !self.begin_propose(st, last_token, target_hidden, position, 1, ctx)? {
             return Ok(false);
         }
         self.draft_on_device(last_token, target_hidden, true, position, st, ctx, stream)?;
@@ -325,19 +325,23 @@ impl DraftProposer for Glm5NextMtpHead {
 impl Glm5NextMtpHead {
     /// 2026-10-11: The start of every propose: `false` (no drafts) without a KV region
     /// (`alloc_state`); a drafter ahead of the target's `position` is rewound to it, so its
-    /// indexer does not select over rows past the target's context.
+    /// indexer does not select over rows past the target's context. 2026-10-13: One whose
+    /// `num_drafts` rows would pass its row space restarts at row 0 (`propose_start`).
+    #[allow(clippy::too_many_arguments)]
     fn begin_propose(
         &self,
         st: &mut Glm5NextMtpProposerState,
         last_token: u32,
         target_hidden: DevicePtr,
         position: usize,
+        num_drafts: usize,
         ctx: &ForwardContext,
     ) -> Result<bool> {
         if st.kv_region.is_none() {
             return Ok(false);
         }
-        let start = super::batch::start_row(st.seq_len, position);
+        let start =
+            super::context_cap::propose_start(st.seq_len, position, num_drafts, self.max_seq_len);
         if start < st.seq_len {
             st.dsa.rewind_to(start)?;
             st.seq_len = start;

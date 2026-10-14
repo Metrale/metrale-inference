@@ -57,6 +57,12 @@ pub(super) fn assert_rank_levers_agree(
                 "METRALE_GLM_MTP_EH_TP",
                 u64::from(metrale_model_arch::glm5next_mtp_head::eh_tp_enabled()),
             ),
+            // 2026-10-13: The drafter's row space: a rank with another cap would restart its
+            // drafter at another propose (`propose_start`) and draft other tokens.
+            (
+                "METRALE_GLM_MTP_CONTEXT_CAP",
+                metrale_model_arch::glm5next_mtp_head::drafter_context_cap()? as u64,
+            ),
             // 2026-10-11: A device-step verify reads row 1 from each rank's own drafter cell, so
             // every rank must leave the draft there the same way.
             (

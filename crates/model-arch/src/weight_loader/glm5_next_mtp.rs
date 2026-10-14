@@ -17,9 +17,9 @@ use metrale_config::ModelConfig;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_model_weights::weights::WeightStore;
 
+use crate::glm5next_dsa::Glm5NextDsaKernels;
 use crate::glm5next_dsa::build::build_dsa_weights;
 use crate::glm5next_dsa::layer::{Glm5NextDsaLayer, Glm5NextDsaLayerKernels, Glm5NextDsaWorkspace};
-use crate::glm5next_dsa::{Glm5NextDsaConfig, Glm5NextDsaKernels};
 use crate::glm5next_layer::{Glm5NextLayer, Glm5NextMixer, Glm5NextMlpSite};
 use crate::glm5next_mlp::{Glm5NextMlpConfig, Glm5NextMlpKernels, build as mlp_build};
 use metrale_model_layers::weight_map::DenseWeight;
@@ -59,7 +59,9 @@ pub fn load_glm5next_mtp_module(
         .with_context(|| format!("glm5_next MTP: collecting layer {idx}"))?;
     let load = |n: &str| src.f32(n);
 
-    let dsa_cfg = Glm5NextDsaConfig::from_config(config)?;
+    // 2026-10-13: The drafter block's context is capped (`METRALE_GLM_MTP_CONTEXT_CAP`), so its
+    // indexer cache, workspace and ceiling grids are sized at the cap, not `--max-seq-len`.
+    let dsa_cfg = crate::glm5next_mtp_head::drafter_dsa_config(config)?;
     let mlp_cfg = Glm5NextMlpConfig::from_config(config)?;
     let dsa_plan = crate::glm5next_dsa::tp::DsaTpPlan::from_config(config, &dsa_cfg)?;
     let dsa_layer_kernels = Glm5NextDsaLayerKernels::resolve(gpu)?;

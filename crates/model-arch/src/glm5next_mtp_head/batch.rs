@@ -251,9 +251,11 @@ impl Glm5NextMtpHead {
             );
         }
         // 2026-10-11: As `propose`: a drafter ahead of the target's position is rewound to it
-        // (`start_row`); one behind it (no prompt context) starts where it is.
+        // (`start_row`); one behind it (no prompt context) starts where it is. 2026-10-13: One
+        // whose drafts would pass its row space restarts at row 0 (`propose_start`).
         for (st, &p) in sts.iter_mut().zip(positions) {
-            let start = start_row(st.seq_len, p);
+            let start =
+                super::context_cap::propose_start(st.seq_len, p, num_drafts, self.max_seq_len);
             if start < st.seq_len {
                 st.dsa.rewind_to(start)?;
                 st.seq_len = start;
