@@ -115,7 +115,9 @@ def main() -> None:
     hidden = bf16_roundtrip(torch.randn(1, T, config.hidden_size) * 0.5)
 
     rot = Qwen4ExpTextRotaryEmbedding(config)
-    position_ids = torch.arange(T).unsqueeze(0)
+    # 2026-10-14: The rotary takes multimodal positions [3, batch, T]; text puts the same
+    # position on all three axes (as forward_ref.py does).
+    position_ids = torch.arange(T).view(1, 1, -1).expand(3, 1, -1)
     cos, sin = rot(hidden, position_ids)
 
     causal = torch.tril(torch.ones(T, T, dtype=torch.bool)).view(1, 1, T, T)
