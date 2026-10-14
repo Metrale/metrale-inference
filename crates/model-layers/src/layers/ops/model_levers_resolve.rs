@@ -128,6 +128,7 @@ pub(super) fn from_values(
         ssm_ms_profile: opt_in(value("METRALE_SSM_MS_PROFILE").as_deref()),
         ssm_detail_profile: opt_in(value("METRALE_SSM_DETAIL_PROFILE").as_deref()),
         ssm_gemv_batch4: opt_out(value("METRALE_SSM_GEMV_BATCH4").as_deref()),
+        ssm_bf16_batchm: opt_in(value("METRALE_SSM_BF16_BATCHM").as_deref()),
         gdn_fused_conv: opt_in(value("METRALE_GDN_FUSED_CONV").as_deref()),
         moe_legacy_pertoken_decode: opt_in(value("METRALE_MOE_LEGACY_PERTOKEN_DECODE").as_deref()),
     }

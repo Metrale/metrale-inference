@@ -157,12 +157,18 @@ fn truthy_opt_ins_map_independently_and_presence_is_distinct() {
     assert!(!d.gdn_fused_conv);
     assert!(!d.moe_legacy_pertoken_decode, "default is token-major MoE");
     assert!(d.ssm_gemv_batch4, "batch-4 GEMV ships ON");
+    assert!(
+        !d.ssm_bf16_batchm,
+        "the batched BF16 GDN projection is opt-in"
+    );
 
     assert!(resolve(&[("METRALE_SSM_MS_PROFILE", "1")]).ssm_ms_profile);
     assert!(resolve(&[("METRALE_SSM_DETAIL_PROFILE", "1")]).ssm_detail_profile);
     assert!(resolve(&[("METRALE_GDN_FUSED_CONV", "1")]).gdn_fused_conv);
     assert!(resolve(&[("METRALE_MOE_LEGACY_PERTOKEN_DECODE", "1")]).moe_legacy_pertoken_decode);
     assert!(!resolve(&[("METRALE_SSM_GEMV_BATCH4", "0")]).ssm_gemv_batch4);
+    assert!(!resolve(&[("METRALE_SSM_BF16_BATCHM", "0")]).ssm_bf16_batchm);
+    assert!(resolve(&[("METRALE_SSM_BF16_BATCHM", "1")]).ssm_bf16_batchm);
     // 2026-09-25: `=0` does not arm a value-gated opt-in; it does arm the presence-gated
     // `METRALE_BF16_TC_PROJ`.
     assert!(!resolve(&[("METRALE_GDN_FUSED_CONV", "0")]).gdn_fused_conv);

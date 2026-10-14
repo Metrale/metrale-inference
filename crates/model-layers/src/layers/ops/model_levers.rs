@@ -283,6 +283,12 @@ pub struct ModelLevers {
     /// contiguous-batch GEMV tier (batch4 for n <= 4, batch16 above) when its kernel resolved
     /// (`trait_decode_multi_seq/ssm_batched_proj.rs`).
     pub ssm_gemv_batch4: bool,
+    /// 2026-10-14: `METRALE_SSM_BF16_BATCHM=1` (off by default until the batched kernel reaches
+    /// cuBLASLt's bandwidth). For n in 2..=16 the batched GDN decode
+    /// runs its BF16 `in_proj_qkvz` and `out_proj` on `dense_gemv_bf16_batchm`, whose rows have
+    /// `dense_gemv_bf16`'s bits (the n == 1 path), instead of cuBLASLt, whose split-K changes
+    /// the bits with the batch width (`trait_decode_multi_seq/ssm_batched_proj.rs`).
+    pub ssm_bf16_batchm: bool,
     /// 2026-09-25: `METRALE_GDN_FUSED_CONV=1`: the fused conv+GDN+norm decode kernel when
     /// `nv == 2 * nk`, the K and V head dims are 128 and the kernel resolved
     /// (`trait_decode_multi_seq/ssm_batched_recurrent.rs`).
