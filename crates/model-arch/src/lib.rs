@@ -17,6 +17,7 @@ pub mod glm5next_dsa;
 pub mod glm5next_dsa_ref;
 pub mod glm5next_fp8_dense;
 pub mod glm5next_fp8_wide;
+pub mod glm5next_hc_post_sum_grid;
 pub mod glm5next_kda;
 pub mod glm5next_kda_ref;
 pub mod glm5next_layer;
