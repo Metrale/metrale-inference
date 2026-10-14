@@ -359,14 +359,13 @@ impl Qwen3AttentionLayer {
             })
             .expect("local installed checked in high_speed_swap_engaged")?;
         } else if let Some(sel) = qsa_sel {
-            // 2026-09-25: Attention over only the selected tokens, with the BF16 paged kernel
-            // pointed at the gathered scratch. The cached K rows already carry RoPE.
-            ops::paged_decode_attn_bf16(
+            // 2026-09-25: Attention over the gathered scratch (K rows carry RoPE); 2026-10-14:
+            // on the cache's BF16 route (split-K where the target has it).
+            self.run_paged_decode_bf16(
                 ctx.gpu,
-                self.paged_decode_k,
                 q_out,
-                sel.k_scratch,
-                sel.v_scratch,
+                (sel.k_scratch, sel.v_scratch),
+                0,
                 attn_out,
                 sel.table_dev,
                 sel.seq_len_dev,
@@ -378,7 +377,8 @@ impl Qwen3AttentionLayer {
                 bs as u32,
                 inv_sqrt_d,
                 nq * hd,
-                0,
+                ctx.buffers.splitk_workspace(),
+                ctx.levers.max_decode_seqs,
                 stream,
             )?;
         } else {

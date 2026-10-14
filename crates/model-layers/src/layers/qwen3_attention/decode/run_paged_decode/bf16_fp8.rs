@@ -26,11 +26,14 @@ pub(super) enum Bf16DecodeRoute {
 
 impl Qwen3AttentionLayer {
     /// 2026-09-26: The `KvCacheDtype::Bf16` arm.
-    pub(super) fn run_paged_decode_bf16(
+    /// 2026-10-14: Over any BF16 paged K/V `pools` with the window `sliding` (0: none), so the
+    /// QSA selection's gathered scratch takes the same route as the cache.
+    pub(in crate::layers::qwen3_attention) fn run_paged_decode_bf16(
         &self,
         gpu: &dyn GpuBackend,
         q: DevicePtr,
-        kv_cache: &PagedKvCache,
+        (k_pool, v_pool): (DevicePtr, DevicePtr),
+        sliding: u32,
         output: DevicePtr,
         block_table: DevicePtr,
         seq_lens: DevicePtr,
@@ -46,9 +49,6 @@ impl Qwen3AttentionLayer {
         max_decode_seqs: u32,
         stream: u64,
     ) -> Result<()> {
-        // 2026-09-25: A layer the loader gave a sliding window (`set_sliding_window`)
-        // attends only to the last `sliding_window` positions; every other layer passes 0.
-        let sliding = self.sliding_window.unwrap_or(0);
         match self.bf16_decode_route(
             num_q_heads,
             num_kv_heads,
@@ -78,8 +78,8 @@ impl Qwen3AttentionLayer {
                         sliding_window: sliding,
                     },
                     q,
-                    kv_cache.k_pool_ptr(self.attn_layer_idx),
-                    kv_cache.v_pool_ptr(self.attn_layer_idx),
+                    k_pool,
+                    v_pool,
                     workspace,
                     output,
                     block_table,
@@ -97,8 +97,8 @@ impl Qwen3AttentionLayer {
                     gpu,
                     gqa_k,
                     q,
-                    kv_cache.k_pool_ptr(self.attn_layer_idx),
-                    kv_cache.v_pool_ptr(self.attn_layer_idx),
+                    k_pool,
+                    v_pool,
                     output,
                     block_table,
                     seq_lens,
@@ -124,8 +124,8 @@ impl Qwen3AttentionLayer {
                     gpu,
                     kernel,
                     q,
-                    kv_cache.k_pool_ptr(self.attn_layer_idx),
-                    kv_cache.v_pool_ptr(self.attn_layer_idx),
+                    k_pool,
+                    v_pool,
                     output,
                     block_table,
                     seq_lens,

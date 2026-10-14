@@ -422,7 +422,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-ssm-preprocess-cu-deinterleave-qg"></a>
 
-### `deinterleave_qg` — [kernels/gb10/common/ssm_preprocess.cu](../../kernels/gb10/common/ssm_preprocess.cu#L90)
+### `deinterleave_qg` — [kernels/gb10/common/ssm_preprocess.cu](../../kernels/gb10/common/ssm_preprocess.cu#L93)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | Source · notes |
 |---|---|---|---|---|---|---|---|
@@ -431,7 +431,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-ssm-preprocess-cu-deinterleave-qg-split-qnorm"></a>
 
-### `deinterleave_qg_split_qnorm` — [kernels/gb10/common/ssm_preprocess.cu](../../kernels/gb10/common/ssm_preprocess.cu#L190)
+### `deinterleave_qg_split_qnorm` — [kernels/gb10/common/ssm_preprocess.cu](../../kernels/gb10/common/ssm_preprocess.cu#L210)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | Source · notes |
 |---|---|---|---|---|---|---|---|
@@ -441,7 +441,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-ssm-preprocess-cu-dense-gemm-ba-gates-prefill"></a>
 
-### `dense_gemm_ba_gates_prefill` — [kernels/gb10/common/ssm_preprocess.cu](../../kernels/gb10/common/ssm_preprocess.cu#L482)
+### `dense_gemm_ba_gates_prefill` — [kernels/gb10/common/ssm_preprocess.cu](../../kernels/gb10/common/ssm_preprocess.cu#L502)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | Source · notes |
 |---|---|---|---|---|---|---|---|

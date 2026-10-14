@@ -21,7 +21,6 @@ use metrale_cache::kv_cache::PagedKvCache;
 use super::attn::MsAttn;
 use super::ctx::MultiSeqCtx;
 use crate::layer::{AttnMetadataDev, LayerState};
-use crate::layers::ops;
 use crate::layers::qwen3_attention::Qwen3AttentionLayer;
 use metrale_cache::kv_cache::KvCacheDtype;
 
@@ -86,14 +85,14 @@ impl Qwen3AttentionLayer {
                 continue;
             };
             // 2026-10-13: As `decode/attention_forward.rs` does for one sequence:
-            // the BF16 paged kernel over the gathered scratch through its
-            // identity table, from this row's Q into this row's output.
-            ops::paged_decode_attn_bf16(
+            // the BF16 route over the gathered scratch through its identity table,
+            // from this row's Q into this row's output (2026-10-14: the same route
+            // and split count, so a row's bits do not depend on its batch).
+            self.run_paged_decode_bf16(
                 fwd.gpu,
-                self.paged_decode_k,
                 attn.q.offset(i * attn.q_row_bytes),
-                sel.k_scratch,
-                sel.v_scratch,
+                (sel.k_scratch, sel.v_scratch),
+                0,
                 attn.attn_out.offset(i * out_row),
                 sel.table_dev,
                 sel.seq_len_dev,
@@ -105,7 +104,8 @@ impl Qwen3AttentionLayer {
                 bs,
                 inv_sqrt_d,
                 nq * hd,
-                0,
+                fwd.buffers.splitk_workspace(),
+                fwd.levers.max_decode_seqs,
                 stream,
             )?;
         }
