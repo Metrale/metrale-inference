@@ -8,7 +8,12 @@
 //
 // Owner: gb10 kernels.
 // Invariants: as w4a4_gemv_mx.cu. Include inside a METRALE_NO_WARP_BLOCKSCALE_MMA guard.
+// 2026-10-14: The header carries the guard itself, so the block-scale MMA below is never compiled
+// where the define is set, and an include outside the guard there fails to build rather than
+// reaching an assembler that rejects the instruction.
 #pragma once
+
+#ifndef METRALE_NO_WARP_BLOCKSCALE_MMA
 
 #include <cuda_bf16.h>
 #include <cuda_fp8.h>
@@ -297,3 +302,6 @@ __device__ __forceinline__ void w4a4_quant_rows_impl(
     }
 }
 
+#else
+#error "w4a4_mx_core.cuh: include it inside #ifndef METRALE_NO_WARP_BLOCKSCALE_MMA"
+#endif // METRALE_NO_WARP_BLOCKSCALE_MMA
