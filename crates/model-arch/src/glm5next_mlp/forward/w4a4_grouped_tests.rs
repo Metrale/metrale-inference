@@ -30,6 +30,7 @@ const QUANT_K64: u64 = 0x53;
 const SWIGLU: u64 = 0x5E;
 const SORT: u64 = 0x61;
 const TILES: u64 = 0x63;
+const ONE_GROUP: u64 = 0x64;
 const G32: u64 = 0x65;
 const G64: u64 = 0x67;
 const G32_K64: u64 = 0x69;
@@ -90,6 +91,7 @@ fn kernels(gpu: &MockGpuBackend) -> Glm5NextMlpKernels {
     };
     k.w4a4_grouped = W4a4GroupedKernels {
         tiles: KernelHandle(TILES),
+        one_group: KernelHandle(ONE_GROUP),
         mx: [KernelHandle(G32), KernelHandle(G64), KernelHandle(G128)],
         mx_k64: [
             KernelHandle(G32_K64),

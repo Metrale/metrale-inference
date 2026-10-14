@@ -140,7 +140,18 @@ pub fn forward_dense_site(
                 );
             };
             super::w4a4_dense::forward_dense_w4a4(
-                gpu, k, cfg, w, *scales, inter, x, out, m, ws, stream,
+                gpu,
+                k,
+                cfg,
+                w,
+                *scales,
+                inter,
+                x,
+                out,
+                m,
+                ws,
+                site.grouped.as_ref(),
+                stream,
             )
         }
         MlpKernel::Bf16 | MlpKernel::W4a16 => {

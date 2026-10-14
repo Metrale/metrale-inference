@@ -69,6 +69,9 @@ pub struct Glm5NextDenseSite {
     pub bf16: Option<Glm5NextDenseMlpWeights>,
     pub nvfp4: Option<(Glm5NextDenseNvfp4Weights, W4a4ActScales)>,
     pub precision: GroupPrecision,
+    /// 2026-10-12: The one-group grouped-GEMM inputs of `METRALE_GLM_DENSE_W4A4_GROUPED_MIN_ROWS`,
+    /// built at load when the lever is on and `nvfp4` is bound.
+    pub grouped: Option<crate::glm5next_mlp::forward::DenseGroupedTables>,
 }
 
 /// 2026-09-25: One routed NVFP4 expert, owned whole by one EP rank.

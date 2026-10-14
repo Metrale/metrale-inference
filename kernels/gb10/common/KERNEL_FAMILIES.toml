@@ -1268,8 +1268,11 @@ kernels = [
   "w4a4_grouped_mx::w4a4_grouped_mx_m128", "w4a4_grouped_mx::w4a4_grouped_mx_m128_s6",
   "w4a4_grouped_mx::w4a4_grouped_mx_m32_k64", "w4a4_grouped_mx::w4a4_grouped_mx_m64_k64",
   "w4a4_grouped_mx::w4a4_grouped_mx_m128_k64", "w4a4_grouped_mx::w4a4_grouped_tiles",
+  # 2026-10-13: The offsets and tiles of one group (the dense MLP's one-group launch).
+  "w4a4_grouped_mx::w4a4_grouped_one_group",
 ]
 kernel_compute."w4a4_grouped_mx::w4a4_grouped_tiles" = { compute = "memory" }
+kernel_compute."w4a4_grouped_mx::w4a4_grouped_one_group" = { compute = "memory" }
 rows = [1, 16]
 pipeline.expert_gate_up = { in = ["nvfp4/g16", "i32"], gather = "nvfp4/g16", act = "nvfp4/g16", weight = "nvfp4/g16->e2m1", mma = "e2m1*e2m1", accumulate = "f32", scale = "f32", out = ["bf16"] }
 pipeline.expert_down = { in = ["nvfp4/g16", "i32"], act = "nvfp4/g16", weight = "nvfp4/g16->e2m1", mma = "e2m1*e2m1", accumulate = "f32", scale = "f32", out = ["bf16"] }

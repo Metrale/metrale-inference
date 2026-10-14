@@ -22,12 +22,12 @@ use crate::glm5next_mlp::weights::{
 };
 use crate::glm5next_mlp::{Glm5NextMlpConfig, Glm5NextMlpKernels};
 
-const QUANT: u64 = 0x51;
+pub(crate) const QUANT: u64 = 0x51;
 const SLOTS: u64 = 0x52;
 const MX8: u64 = 0x58;
 const MX16: u64 = 0x5A;
-const MX32: u64 = 0x5C;
-const SWIGLU: u64 = 0x5E;
+pub(crate) const MX32: u64 = 0x5C;
+pub(crate) const SWIGLU: u64 = 0x5E;
 const SWEEP8: u64 = 0x60;
 const SWEEP16: u64 = 0x62;
 const ROW_UNION: u64 = 0x64;
@@ -39,7 +39,7 @@ const OWN_SWEEP: u64 = 0x6E;
 const OWN_SWEEP_K64: u64 = 0x70;
 
 /// 2026-10-08: GLM-5.3-Flash at TP=3, EP=3, rank 0.
-fn cfg() -> Glm5NextMlpConfig {
+pub(crate) fn cfg() -> Glm5NextMlpConfig {
     Glm5NextMlpConfig {
         hidden: 4096,
         local_dense_intermediate: 4096,
@@ -61,7 +61,7 @@ fn cfg() -> Glm5NextMlpConfig {
     }
 }
 
-fn kernels(gpu: &MockGpuBackend) -> Glm5NextMlpKernels {
+pub(crate) fn kernels(gpu: &MockGpuBackend) -> Glm5NextMlpKernels {
     let mut k = Glm5NextMlpKernels::resolve(gpu).expect("mock resolves every kernel");
     k.w4a4_quant_static = KernelHandle(QUANT);
     k.w4a4_moe_slots = KernelHandle(SLOTS);
@@ -92,25 +92,25 @@ fn cfg_tp() -> Glm5NextMlpConfig {
     }
 }
 
-fn u32_arg(l: &MockLaunch, i: usize) -> u32 {
+pub(crate) fn u32_arg(l: &MockLaunch, i: usize) -> u32 {
     match &l.args[i] {
         MockArg::Bytes(b) => u32::from_le_bytes(b[..4].try_into().unwrap()),
         other => panic!("arg {i} is {other:?}, not 4 bytes"),
     }
 }
 
-fn f32_arg(l: &MockLaunch, i: usize) -> f32 {
+pub(crate) fn f32_arg(l: &MockLaunch, i: usize) -> f32 {
     f32::from_bits(u32_arg(l, i))
 }
 
-fn ptr_arg(l: &MockLaunch, i: usize) -> DevicePtr {
+pub(crate) fn ptr_arg(l: &MockLaunch, i: usize) -> DevicePtr {
     match &l.args[i] {
         MockArg::Buffer(p) => *p,
         other => panic!("arg {i} is {other:?}, not a pointer"),
     }
 }
 
-fn proj(tag: u64) -> Nvfp4Proj {
+pub(crate) fn proj(tag: u64) -> Nvfp4Proj {
     Nvfp4Proj {
         packed: DevicePtr(tag),
         scale: DevicePtr(tag + 1),
@@ -119,7 +119,7 @@ fn proj(tag: u64) -> Nvfp4Proj {
     }
 }
 
-const SCALES: W4a4ActScales = W4a4ActScales {
+pub(crate) const SCALES: W4a4ActScales = W4a4ActScales {
     gate_up: 0.000642,
     down: 0.000115,
 };
@@ -138,7 +138,7 @@ fn dense_rows_run_in_chunks_with_the_right_scales_and_shapes() {
         down_proj: proj(0x3000),
     };
     let (x, out) = (DevicePtr(0x9000_0000), DevicePtr(0xA000_0000));
-    forward_dense_w4a4(&gpu, &k, &c, &w, SCALES, 4096, x, out, 40, &ws, 7).unwrap();
+    forward_dense_w4a4(&gpu, &k, &c, &w, SCALES, 4096, x, out, 40, &ws, None, 7).unwrap();
     let l = gpu.launches_snapshot();
     let funcs: Vec<u64> = l.iter().map(|l| l.func).collect();
     assert_eq!(

@@ -12,6 +12,8 @@
 //!    the grouped gate + up + down, the whole sequence (sort, tiles, quantizations, SwiGLU), and
 //!    the grouped W4A16 GEMM the prefill ran before (`moe_w4a16_grouped_gemm_ptrtable_bt_m16_k128`,
 //!    gate + up + down on the same weights), with TFLOPS over the routed MACs.
+//! 3. 2026-10-13: The dense MLP's one-group launch (`dense.rs`): byte gate against the mx32 chunk
+//!    path and the slot GEMV, then its time against the chunk path.
 //!
 //! Owner: model-arch examples (GLM-5.3).
 //! Invariants: exits with an error on the first byte mismatch.
@@ -32,6 +34,7 @@ use metrale_gpu_runtime::kernel_args::{KernelLaunch, div_ceil};
 mod device;
 use device::{Rng, env_or, fmt, read, read_i32, time_set, up_bf16};
 
+mod dense;
 mod launch;
 use launch::*;
 
@@ -288,6 +291,7 @@ fn main() -> Result<()> {
             g.kernel(m, "w4a4_grouped_mx_m128_k64")?,
             g.kernel(m, "w4a4_grouped_mx_m128_k64")?,
         ],
+        mx32: g.kernel("w4a4_gemv_mx", "w4a4_gemv_mx32")?,
         w4a16: g.kernel("moe_w4a16", "moe_w4a16_grouped_gemm_ptrtable_bt_m16_k128")?,
     };
     let mut rng = Rng(0x243f_6a88_85a3_08d3);
@@ -306,6 +310,7 @@ fn main() -> Result<()> {
         }
         if !gate_only {
             timing(g, &kn, &b, [&gate, &upt, &down], stream)?;
+            dense::dense_one_group(g, &kn, &b, &mut rng, stream)?;
         }
         for p in [
             b.ids, b.sorted, b.sorted_e, b.offsets, b.perm, b.tile_off, b.x, b.aq, b.as_, b.ag,
