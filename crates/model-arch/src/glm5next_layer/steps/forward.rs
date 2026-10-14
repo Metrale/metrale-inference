@@ -241,85 +241,24 @@ impl Glm5NextLayer {
         is_prefill: bool,
         call: dump::Call,
     ) -> Result<()> {
-        let gpu = ctx.gpu;
         let Some(mhc) = self.mhc.as_ref() else {
             bail!("GLM layer {}: no hyper-connection bound", self.layer_idx);
         };
 
-        let kda_ctx = match &self.mixer {
-            Glm5NextMixer::Kda { ws, .. } => {
-                if k > ws.max_tokens() {
-                    bail!(
-                        "GLM layer {}: a {k}-token verify exceeds the KDA workspace built for {}",
-                        self.layer_idx,
-                        ws.max_tokens()
-                    );
-                }
-                let st = self.kda_state(state)?;
-                // 2026-09-25: Intermediates only when `take_snapshots` (a verify); prefill passes
-                // none. `decode_k` looks each row up with `get`, so an empty list takes none.
-                let snaps: Vec<(DevicePtr, DevicePtr)> = if take_snapshots {
-                    (0..k.saturating_sub(1))
-                        .map(|t| (st.h_state_intermediates[t], st.conv_state_intermediates[t]))
-                        .collect()
-                } else {
-                    Vec::new()
-                };
-                Some((
-                    KdaSeqState {
-                        conv: st.conv_state,
-                        recurrent: st.h_state,
-                    },
-                    snaps,
-                ))
-            }
-            Glm5NextMixer::Dsa(_) => None,
-        };
-
+        // 2026-10-14: The attention sublayer of the `k` rows (`steps/mix.rs`).
         let mixer = |normed: DevicePtr| -> Result<DevicePtr> {
-            match (&self.mixer, &kda_ctx) {
-                (Glm5NextMixer::Kda { layer, ws, .. }, Some((kda, snaps))) => {
-                    // 2026-09-25: The chunked scan runs only for a prefill sub-chunk of more
-                    // than one row that asked for no intermediates: it never materialises the
-                    // state after an interior row, and its order differs from `decode_k`'s,
-                    // which a verify must match.
-                    // 2026-10-12: `METRALE_GLM_KDA_CHUNK64` (`decode_k` picks it) is ahead of
-                    // `METRALE_GLM_KDA_CHUNK_PREFILL` where its floor is reached.
-                    if is_prefill
-                        && k > 1
-                        && snaps.is_empty()
-                        && crate::glm5next_layer::levers::kda_chunk_prefill()
-                        && !layer.chunk64_applies(
-                            k,
-                            crate::glm5next_kda::chunk64::kda_chunk64_min_rows()?,
-                        )
-                    {
-                        layer.prefill(gpu, normed, k, kda, ws, stream)?;
-                    } else {
-                        layer.decode_k(gpu, normed, k, kda, ws, snaps, stream)?;
-                    }
-                    Ok(ws.final_out)
-                }
-                (Glm5NextMixer::Dsa(layer), _) => {
-                    // 2026-09-25: DSA's `decode_k` writes its output projection over its input
-                    // buffer.
-                    layer.decode_k(
-                        normed,
-                        k,
-                        state,
-                        kv_cache,
-                        seq_len,
-                        block_table,
-                        ctx,
-                        stream,
-                        is_prefill,
-                    )?;
-                    Ok(normed)
-                }
-                (Glm5NextMixer::Kda { .. }, None) => {
-                    bail!("GLM layer {}: KDA mixer without KDA state", self.layer_idx)
-                }
-            }
+            self.mix(
+                normed,
+                k,
+                state,
+                kv_cache,
+                seq_len,
+                block_table,
+                ctx,
+                stream,
+                take_snapshots,
+                is_prefill,
+            )
         };
         // 2026-10-12: `METRALE_GLM_SP_MHC=1`: a wide TP prefill sub-chunk runs its mHC work on
         // this rank's rows only (`steps/forward_sp.rs`).

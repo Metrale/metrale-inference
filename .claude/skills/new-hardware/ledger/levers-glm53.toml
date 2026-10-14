@@ -1552,19 +1552,19 @@ symptom = "about 3.15 of 10 ms per layer and sub-chunk is still exposed SP excha
 diagnosis_tool = "nsys"
 root_cause_class = "phase-serialization"
 lever_type = "scheduling"
-lkb_effect = "none"
-parity_tier_kept = "n/a"
+lkb_effect = "glm5next_sp_pipeline.rs: a pure stage order and program (Head, Mixer, Mid, Mlp, Tail per sub-chunk; prologue Head0 Mixer0 Head1, step s Mid(s) Mixer(s+1) Tail(s-1) Head(s+2) Mlp(s)) checked on a two-stream happens-before model with negative controls; glm5next_sp_overlap.rs run_section gains deferred sections and handed-in partials; driver glm5next_layer/steps/forward_sp_pipe.rs, taken from prefill_segments for a leading run of two or more SP sub-chunks"
+parity_tier_kept = "bit-identical (lever off); bit-identical to the serial SP-mHC body (lever on, to be proven on GPU)"
 per_rung = []
 verdict = "held"
-verdict_reason = "not built: running sub-chunk s+1's mixer on a second compute stream beside sub-chunk s's MLP races three process-wide single-stream scratches (the cuBLASLt workspace, the CUTLASS workspace, the GLM dequant scratch) plus the KDA final_out buffer"
+verdict_reason = "implemented as METRALE_GLM_SP_PIPELINE=1 (default off, composes with SP_OVERLAP), untested on GPU: the kinv byte gate against SP_MHC+SP_OVERLAP at 1k/8k/32k, an nsys of a 32k prefill and an unprofiled 32k cold TTFT A/B are pending. The two-compute-stream form stays rejected: it races the process-wide single-stream scratches (cuBLASLt, CUTLASS, GLM dequant) and the KDA final_out"
 failure_mode = ""
-caught_by = "design review before implementation"
+caught_by = "design review before implementation; CPU happens-before model"
 time_lost_hours = 0
 would_catch_earlier = ""
-effort_hours = 2.0
+effort_hours = 8.0
 transferability = "any layer-outer, sub-chunk-inner prefill whose recurrent mixer links sub-chunks only through its own state"
 links = { pr = "", commit = "", evidence = "" }
-notes = "Feasible form: ONE compute stream plus the SP comm stream, the host enqueue reordered across sub-chunks (X(s+1) before the post-mix of s, so the RS of s's mixer output overlaps X(s+1); the AG of a later head overlaps F(s)). Needs parity buffers for normed, the KDA final_out and the SP receive workspace, and run_section's closing wait deferred. Expected about 0.3-0.45 s per 32k cold prefill, nothing below 2 sub-chunks."
+notes = "Feasible form: ONE compute stream plus the SP comm stream, the host enqueue reordered across sub-chunks (X(s+1) before the post-mix of s, so the RS of s's mixer output overlaps X(s+1); the AG of a later head overlaps F(s)). Needs parity buffers for normed, the KDA final_out and the SP receive workspace, and run_section's closing wait deferred. Expected about 0.3-0.45 s per 32k cold prefill, nothing below 2 sub-chunks. 2026-10-14 build: the order puts Mid(s) before Mixer(s+1), so the all-gather after the post-mix also hides behind the next mixer; three normed slots, one KDA final_out and one MLP output (each rewritten only after the main stream waited for the reduce-scatter that read it), a second receive workspace for the MLP reduce-scatter; about 179 MB extra at 8208-row sub-chunks, hidden 4096, three ranks, reserved before the KV budget. Estimate refined to about 0.4-0.45 s of the 1.85 s per 32k; fill and drain (the first head all-gather, the last post-mix all-gather, the last MLP reduce-scatter and tail) stay exposed."
 
 [[lever]]
 id = "gb10x3-glm53-one-row-tail-decode"

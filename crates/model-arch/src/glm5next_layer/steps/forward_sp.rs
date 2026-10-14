@@ -89,31 +89,22 @@ impl Glm5NextLayer {
         } else {
             None
         };
-        let (ht, hct) = (h as u32, hc as u32);
         // 2026-10-14: `METRALE_GLM_MHC_POST_PRE_FUSED=1`: section 2's post-mix and FFN pre-norm
         // as one launch per wide piece (`glm5next_mhc_post_pre_tok`, same bytes).
         let post_pre = crate::glm5next_mhc_post_pre_tok::enabled()?;
 
-        // 2026-10-12: Full-chunk views at the sub-chunk's slots; `at(a)` is row `a` of each.
-        let streams = ctx.buffers.hc_streams().offset(slot_base * hc * h * 4);
-        let post = ctx.buffers.hc_post().offset(slot_base * hc * 4);
-        let comb = ctx.buffers.hc_comb().offset(slot_base * hc * hc * 4);
+        // 2026-10-12: Full-chunk views at the sub-chunk's slots ([`SpRows`]).
         let normed = ctx.buffers.norm_output();
         let ffn_out = ctx.buffers.moe_output();
-        let at = |a: usize| {
-            (
-                streams.offset(a * hc * h * 4),
-                post.offset(a * hc * 4),
-                comb.offset(a * hc * hc * 4),
-                hidden.offset(a * row_bytes),
-                normed.offset(a * row_bytes),
-            )
-        };
+        let rows = SpRows::new(ctx, hc, h, slot_base, hidden, normed);
+        let streams = rows.streams;
         let section = |rs, ag| ov::Section {
             pieces: &pieces,
             rs,
             ag,
             row_bytes,
+            received: None,
+            defer: None,
         };
 
         if self.is_first
@@ -131,38 +122,9 @@ impl Glm5NextLayer {
             overlap.as_ref(),
             stream,
             &section(None, Some((normed, Some(profile::REDUCE_ATTN_ENQ)))),
-            &mut |a, b, _| {
-                let t_mhc = profile::start();
-                let (st, po, co, hi, no) = at(a);
-                if self.is_first {
-                    glm_hc_expand(
-                        gpu,
-                        mhc.kernels.hc_expand,
-                        hi,
-                        st,
-                        (b - a) as u32,
-                        ht,
-                        hct,
-                        stream,
-                    )?;
-                }
-                self.mhc_pre_norm(
-                    gpu,
-                    mhc,
-                    &mhc.attn,
-                    self.input_norm,
-                    st,
-                    hi,
-                    po,
-                    co,
-                    no,
-                    b - a,
-                    t_mhc,
-                    stream,
-                )
-            },
+            &mut |a, b, _| self.sp_head_piece(gpu, mhc, &rows, a, b, stream),
         )?;
-        dump::site(tap, false, [streams, post, comb, normed])?;
+        dump::site(tap, false, [streams, rows.post, rows.comb, normed])?;
 
         let t = profile::start();
         let attn_out = mixer(normed)?;
@@ -181,76 +143,13 @@ impl Glm5NextLayer {
                 Some((normed, Some(profile::REDUCE_MLP_ENQ))),
             ),
             &mut |a, b, partials| {
-                let partials = partials.context("SP-mHC: the mixer's partials")?;
-                let (st, po, co, hi, no) = at(a);
-                let n = (b - a) as u32;
-                if let Some(kernel) =
-                    crate::glm5next_mhc_post_pre_tok::kernel_for(&mhc.kernels, post_pre, n)?
-                {
-                    let t_mhc = profile::start();
-                    crate::glm5next_mhc_post_pre_tok::launch(
-                        gpu,
-                        kernel,
-                        &crate::glm5next_mhc_post_pre_tok::PostPreTok {
-                            block_out: attn_out.offset(a * row_bytes),
-                            partials,
-                            residual: st,
-                            post: po,
-                            comb: co,
-                            streams_out: st,
-                            site: &mhc.ffn,
-                            norm_w: self.post_attn_norm,
-                            y: hi,
-                            post_out: po,
-                            comb_out: co,
-                            normed: no,
-                            num_tokens: n,
-                            dims: [ht, hct, mhc.sinkhorn_iters as u32],
-                            eps: [self.rms_eps, mhc.hc_eps, self.rms_eps],
-                        },
-                        stream,
-                    )?;
-                    profile::end(profile::MHC, t_mhc, gpu, stream);
-                    return Ok(());
-                }
-                let t_mhc_post = profile::start();
-                glm_hc_post_rank_sum(
-                    gpu,
-                    mhc.kernels.hc_post_rank_sum,
-                    attn_out.offset(a * row_bytes),
-                    partials,
-                    st,
-                    po,
-                    co,
-                    st,
-                    n,
-                    ht,
-                    hct,
-                    stream,
-                )?;
-                profile::end(profile::MHC_POST, t_mhc_post, gpu, stream);
-                if let Some(t) = tap {
-                    t.put_rows(dump::Point::MixerRed, attn_out, a..b)?;
-                }
-                let t_mhc = profile::start();
-                self.mhc_pre_norm(
-                    gpu,
-                    mhc,
-                    &mhc.ffn,
-                    self.post_attn_norm,
-                    st,
-                    hi,
-                    po,
-                    co,
-                    no,
-                    b - a,
-                    t_mhc,
-                    stream,
+                self.sp_mid_piece(
+                    gpu, mhc, &rows, a, b, attn_out, partials, post_pre, tap, stream,
                 )
             },
         )?;
 
-        dump::site(tap, true, [streams, post, comb, normed])?;
+        dump::site(tap, true, [streams, rows.post, rows.comb, normed])?;
         self.mlp_compute(normed, ffn_out, k, &[k], ctx, stream)?;
         dump::put(tap, dump::Point::MlpOut, ffn_out)?;
         let reduce = self.mlp_cfg.needs_all_reduce();
@@ -265,44 +164,7 @@ impl Glm5NextLayer {
                 self.is_last.then_some((hidden, None)),
             ),
             &mut |a, b, partials| {
-                let (st, po, co, hi, _) = at(a);
-                let n = (b - a) as u32;
-                let t_mhc_post = profile::start();
-                if reduce {
-                    glm_hc_post_rank_sum(
-                        gpu,
-                        mhc.kernels.hc_post_rank_sum,
-                        ffn_out.offset(a * row_bytes),
-                        partials.context("SP-mHC: the MLP's partials")?,
-                        st,
-                        po,
-                        co,
-                        st,
-                        n,
-                        ht,
-                        hct,
-                        stream,
-                    )?;
-                } else {
-                    glm_hc_post(
-                        gpu,
-                        mhc.kernels.hc_post,
-                        ffn_out.offset(a * row_bytes),
-                        st,
-                        po,
-                        co,
-                        st,
-                        n,
-                        ht,
-                        hct,
-                        stream,
-                    )?;
-                }
-                if self.is_last {
-                    hc_head_mean(gpu, mhc.kernels.hc_head, st, hi, n, ht, hct, stream)?;
-                }
-                profile::end(profile::MHC_POST, t_mhc_post, gpu, stream);
-                Ok(())
+                self.sp_tail_piece(gpu, mhc, &rows, a, b, ffn_out, partials, reduce, stream)
             },
         )?;
         self.dump_layer_out(tap, ffn_out, streams)?;
@@ -316,5 +178,241 @@ impl Glm5NextLayer {
             profile::step();
         }
         Ok(())
+    }
+
+    /// 2026-10-12: Section 1 of this rank's rows `[a, b)`: `hc_expand` on the first layer and the
+    /// attention pre-norm. 2026-10-14: moved out of `forward_rows_sp` unchanged, shared with the
+    /// pipeline (`steps/forward_sp_pipe.rs`).
+    pub(in crate::glm5next_layer) fn sp_head_piece(
+        &self,
+        gpu: &dyn GpuBackend,
+        mhc: &Glm5NextMhc,
+        rows: &SpRows,
+        a: usize,
+        b: usize,
+        stream: u64,
+    ) -> Result<()> {
+        let (ht, hct) = (self.hidden as u32, mhc.hc_mult as u32);
+        let t_mhc = profile::start();
+        let (st, po, co, hi, no) = rows.at(a);
+        if self.is_first {
+            glm_hc_expand(
+                gpu,
+                mhc.kernels.hc_expand,
+                hi,
+                st,
+                (b - a) as u32,
+                ht,
+                hct,
+                stream,
+            )?;
+        }
+        self.mhc_pre_norm(
+            gpu,
+            mhc,
+            &mhc.attn,
+            self.input_norm,
+            st,
+            hi,
+            po,
+            co,
+            no,
+            b - a,
+            t_mhc,
+            stream,
+        )
+    }
+
+    /// 2026-10-12: Section 2 of rows `[a, b)`: the mixer output's post-mix summed with the
+    /// peers' `partials` and the FFN pre-norm (one launch under `post_pre`). 2026-10-14: moved
+    /// out of `forward_rows_sp` unchanged.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::glm5next_layer) fn sp_mid_piece(
+        &self,
+        gpu: &dyn GpuBackend,
+        mhc: &Glm5NextMhc,
+        rows: &SpRows,
+        a: usize,
+        b: usize,
+        attn_out: DevicePtr,
+        partials: Option<&metrale_comm::PeerPartials>,
+        post_pre: bool,
+        tap: Option<&dump::Tap<'_>>,
+        stream: u64,
+    ) -> Result<()> {
+        let (ht, hct) = (self.hidden as u32, mhc.hc_mult as u32);
+        let row_bytes = self.hidden * 2;
+        let partials = partials.context("SP-mHC: the mixer's partials")?;
+        let (st, po, co, hi, no) = rows.at(a);
+        let n = (b - a) as u32;
+        if let Some(kernel) =
+            crate::glm5next_mhc_post_pre_tok::kernel_for(&mhc.kernels, post_pre, n)?
+        {
+            let t_mhc = profile::start();
+            crate::glm5next_mhc_post_pre_tok::launch(
+                gpu,
+                kernel,
+                &crate::glm5next_mhc_post_pre_tok::PostPreTok {
+                    block_out: attn_out.offset(a * row_bytes),
+                    partials,
+                    residual: st,
+                    post: po,
+                    comb: co,
+                    streams_out: st,
+                    site: &mhc.ffn,
+                    norm_w: self.post_attn_norm,
+                    y: hi,
+                    post_out: po,
+                    comb_out: co,
+                    normed: no,
+                    num_tokens: n,
+                    dims: [ht, hct, mhc.sinkhorn_iters as u32],
+                    eps: [self.rms_eps, mhc.hc_eps, self.rms_eps],
+                },
+                stream,
+            )?;
+            profile::end(profile::MHC, t_mhc, gpu, stream);
+            return Ok(());
+        }
+        let t_mhc_post = profile::start();
+        glm_hc_post_rank_sum(
+            gpu,
+            mhc.kernels.hc_post_rank_sum,
+            attn_out.offset(a * row_bytes),
+            partials,
+            st,
+            po,
+            co,
+            st,
+            n,
+            ht,
+            hct,
+            stream,
+        )?;
+        profile::end(profile::MHC_POST, t_mhc_post, gpu, stream);
+        if let Some(t) = tap {
+            t.put_rows(dump::Point::MixerRed, attn_out, a..b)?;
+        }
+        let t_mhc = profile::start();
+        self.mhc_pre_norm(
+            gpu,
+            mhc,
+            &mhc.ffn,
+            self.post_attn_norm,
+            st,
+            hi,
+            po,
+            co,
+            no,
+            b - a,
+            t_mhc,
+            stream,
+        )
+    }
+
+    /// 2026-10-12: Section 3 of rows `[a, b)`: the MLP output's post-mix (summed with the peers'
+    /// `partials` when `reduce`) and `hc_head_mean` on the last layer. 2026-10-14: moved out of
+    /// `forward_rows_sp` unchanged.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::glm5next_layer) fn sp_tail_piece(
+        &self,
+        gpu: &dyn GpuBackend,
+        mhc: &Glm5NextMhc,
+        rows: &SpRows,
+        a: usize,
+        b: usize,
+        ffn_out: DevicePtr,
+        partials: Option<&metrale_comm::PeerPartials>,
+        reduce: bool,
+        stream: u64,
+    ) -> Result<()> {
+        let (ht, hct) = (self.hidden as u32, mhc.hc_mult as u32);
+        let row_bytes = self.hidden * 2;
+        let (st, po, co, hi, _) = rows.at(a);
+        let n = (b - a) as u32;
+        let t_mhc_post = profile::start();
+        if reduce {
+            glm_hc_post_rank_sum(
+                gpu,
+                mhc.kernels.hc_post_rank_sum,
+                ffn_out.offset(a * row_bytes),
+                partials.context("SP-mHC: the MLP's partials")?,
+                st,
+                po,
+                co,
+                st,
+                n,
+                ht,
+                hct,
+                stream,
+            )?;
+        } else {
+            glm_hc_post(
+                gpu,
+                mhc.kernels.hc_post,
+                ffn_out.offset(a * row_bytes),
+                st,
+                po,
+                co,
+                st,
+                n,
+                ht,
+                hct,
+                stream,
+            )?;
+        }
+        if self.is_last {
+            hc_head_mean(gpu, mhc.kernels.hc_head, st, hi, n, ht, hct, stream)?;
+        }
+        profile::end(profile::MHC_POST, t_mhc_post, gpu, stream);
+        Ok(())
+    }
+}
+
+/// 2026-10-12: A sub-chunk's full-chunk views at its highway slots (`hc_streams`, `hc_post`,
+/// `hc_comb` from `slot_base`), its `hidden` rows and its normed rows; [`SpRows::at`] is row
+/// `a` of each. 2026-10-14: a type, so the pipeline builds one per sub-chunk.
+#[derive(Clone, Copy, Debug)]
+pub(in crate::glm5next_layer) struct SpRows {
+    streams: DevicePtr,
+    post: DevicePtr,
+    comb: DevicePtr,
+    hidden: DevicePtr,
+    normed: DevicePtr,
+    hc: usize,
+    h: usize,
+}
+
+impl SpRows {
+    /// 2026-10-14: The views of a sub-chunk at `slot_base` of `hc` streams of width `h`.
+    pub(in crate::glm5next_layer) fn new(
+        ctx: &ForwardContext,
+        hc: usize,
+        h: usize,
+        slot_base: usize,
+        hidden: DevicePtr,
+        normed: DevicePtr,
+    ) -> Self {
+        Self {
+            streams: ctx.buffers.hc_streams().offset(slot_base * hc * h * 4),
+            post: ctx.buffers.hc_post().offset(slot_base * hc * 4),
+            comb: ctx.buffers.hc_comb().offset(slot_base * hc * hc * 4),
+            hidden,
+            normed,
+            hc,
+            h,
+        }
+    }
+
+    /// 2026-10-14: Row `a` of the streams, post, comb, hidden and normed views.
+    fn at(&self, a: usize) -> (DevicePtr, DevicePtr, DevicePtr, DevicePtr, DevicePtr) {
+        let (hc, h) = (self.hc, self.h);
+        (
+            self.streams.offset(a * hc * h * 4),
+            self.post.offset(a * hc * 4),
+            self.comb.offset(a * hc * hc * 4),
+            self.hidden.offset(a * h * 2),
+            self.normed.offset(a * h * 2),
+        )
     }
 }

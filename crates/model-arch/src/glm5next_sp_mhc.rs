@@ -193,12 +193,24 @@ pub fn reduce_scatter_rows(
     let slot_off = slot_row * row_bytes;
     let plan = reduce_scatter_plan(rank, shards, row_bytes, ws.slot_bytes, slot_off);
     exchange(comm, &plan, p, ws.recv, stream)?;
-    Ok(metrale_comm::PeerPartials {
-        recv: ws.recv.0 + slot_off as u64,
-        slot_elems: ws.slot_bytes / 2,
-        world_size: world,
-        rank,
-    })
+    Ok(partials_at(
+        metrale_comm::PeerPartials {
+            recv: ws.recv.0,
+            slot_elems: ws.slot_bytes / 2,
+            world_size: world,
+            rank,
+        },
+        slot_off,
+    ))
+}
+
+/// 2026-10-14: `p` advanced `off` bytes into every slot: the partials of rows that start `off`
+/// bytes into the received shard.
+pub fn partials_at(p: metrale_comm::PeerPartials, off: usize) -> metrale_comm::PeerPartials {
+    metrale_comm::PeerPartials {
+        recv: p.recv + off as u64,
+        ..p
+    }
 }
 
 /// 2026-10-12: The in-place all-gather of the rows at `buf` (`row_bytes` each): this rank's
@@ -230,8 +242,9 @@ fn workspace() -> &'static Mutex<Option<SpWorkspace>> {
 /// 2026-10-12: Reserve the workspace for sub-chunks of up to `max_rows` rows of `hidden` BF16 at
 /// `world` ranks when the lever is on; a no-op when it is off or the workspace already holds
 /// it. Called at load, as each layer builds. 2026-10-14: also the overlap's comm stream and
-/// events under `METRALE_GLM_SP_OVERLAP=1` (`glm5next_sp_overlap::reserve`). 2026-10-14: and
-/// first reads `METRALE_GLM_MHC_POST_PRE_FUSED`, so a bad value or `1` without this lever fails
+/// events under `METRALE_GLM_SP_OVERLAP=1` (`glm5next_sp_overlap::reserve`), and the
+/// pipeline's buffers under `METRALE_GLM_SP_PIPELINE=1` (`glm5next_sp_pipeline::reserve`).
+/// 2026-10-14: and first reads `METRALE_GLM_MHC_POST_PRE_FUSED`, so a bad value or `1` without this lever fails
 /// the load, not the first prefill.
 pub fn reserve(gpu: &dyn GpuBackend, max_rows: usize, hidden: usize, world: usize) -> Result<()> {
     crate::glm5next_mhc_post_pre_tok::enabled()?;
@@ -240,6 +253,7 @@ pub fn reserve(gpu: &dyn GpuBackend, max_rows: usize, hidden: usize, world: usiz
     }
     crate::glm5next_sp_overlap::reserve(gpu)?;
     let slot_bytes = max_shard(max_rows, world) * hidden * 2;
+    crate::glm5next_sp_pipeline::reserve(gpu, max_rows * hidden * 2, slot_bytes, world)?;
     let mut g = workspace().lock().unwrap_or_else(|e| e.into_inner());
     if g.is_some_and(|w| w.world == world && w.slot_bytes >= slot_bytes) {
         return Ok(());
