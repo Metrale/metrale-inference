@@ -101,6 +101,7 @@ impl Glm5NextKdaLayer {
 
     /// 2026-10-12: Workspace rows `0..k` of one sequence through the conv, then the 64-token
     /// chunked recurrence into `core`, advancing `state` past all of them.
+    /// 2026-10-14: `METRALE_GLM_KDA_CHUNK64_CONV` (`chunk64_conv.rs`) picks `fused`.
     pub(super) fn stateful_chunk64(
         &self,
         gpu: &dyn GpuBackend,
@@ -110,11 +111,32 @@ impl Glm5NextKdaLayer {
         pack: Pack,
         stream: u64,
     ) -> Result<()> {
+        let fused = self.chunk64_conv_on()?;
+        self.stateful_chunk64_with(gpu, k, state, ws, pack, fused, stream)
+    }
+
+    /// 2026-10-14: [`Self::stateful_chunk64`] with the conv in front of the prepare (`fused`:
+    /// `kda_chunk64_prepare_conv` per slab, the window advanced after the last) or as its own
+    /// launch.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn stateful_chunk64_with(
+        &self,
+        gpu: &dyn GpuBackend,
+        k: usize,
+        state: &KdaSeqState,
+        ws: &Glm5NextKdaWorkspace,
+        pack: Pack,
+        fused: bool,
+        stream: u64,
+    ) -> Result<()> {
         if !self.chunk64_ready() || k == 0 || k > ws.max_tokens {
             bail!("KDA: the 64-token chunked scan cannot run {k} rows here");
         }
+        if fused {
+            self.chunk64_conv_check()?;
+        }
         let c = &self.cfg;
-        let (qkv, cd, d, h) = (c.qkv_dim(), c.conv_dim(), c.head_dim, c.heads);
+        let (qkv, d, h) = (c.qkv_dim(), c.head_dim, c.heads);
         let nchunks = k.div_ceil(CHUNK64);
         // 2026-10-12: Each scratch buffer holds `t_pad * qkv` floats; a slab's widest factor
         // needs `slab * heads * 64 * head_dim` of them.
@@ -131,38 +153,22 @@ impl Glm5NextKdaLayer {
         APPLIED.call_once(|| {
             tracing::info!(
                 "GLM KDA: METRALE_GLM_KDA_CHUNK64 applied at {}:{}: {k} rows as {nchunks} chunks \
-                 of {CHUNK64} in slabs of {CHUNK64_SLAB}",
+                 of {CHUNK64} in slabs of {CHUNK64_SLAB}, conv fused into the prepare: {fused}",
                 file!(),
                 line!()
             );
         });
-        self.conv_tokens(gpu, k, state, ws, pack, stream)?;
+        if !fused {
+            self.conv_tokens(gpu, k, state, ws, pack, stream)?;
+        }
         let io = RowIo::workspace(c, ws, 0);
-        let scale = 1.0 / (d as f32).sqrt();
         for c0 in (0..nchunks).step_by(CHUNK64_SLAB) {
             let n = CHUNK64_SLAB.min(nchunks - c0);
-            KernelLaunch::new(gpu, self.kernels.seq.chunk64_prepare)
-                .grid([n as u32, h as u32, 1])
-                .block([CHUNK64_PREP_THREADS, 1, 1])
-                .shared_mem(CHUNK64_PREP_SMEM)
-                .arg_ptr(io.conv_out)
-                .arg_ptr(io.conv_out.offset(qkv * 2))
-                .arg_ptr(io.conv_out.offset(qkv * 4))
-                .arg_ptr(io.gate)
-                .arg_ptr(io.beta)
-                .arg_ptr(ws.chunk_u)
-                .arg_ptr(ws.chunk_w)
-                .arg_ptr(ws.q_f32)
-                .arg_ptr(ws.k_f32)
-                .arg_ptr(ws.v_f32)
-                .arg_ptr(ws.chunk_gc)
-                .arg_u32(h as u32)
-                .arg_u32(k as u32)
-                .arg_u32(c0 as u32)
-                .arg_u32(cd as u32)
-                .arg_u32(qkv as u32)
-                .arg_f32(scale)
-                .launch(stream)?;
+            if fused {
+                self.chunk64_prepare_conv(gpu, k, c0, n, state, ws, pack, stream)?;
+            } else {
+                self.chunk64_prepare(gpu, k, c0, n, ws, stream)?;
+            }
             KernelLaunch::new(gpu, self.kernels.seq.chunk64_scan)
                 .grid([h as u32, (d / CHUNK64_VB) as u32, 1])
                 .block([CHUNK64_SCAN_THREADS, 1, 1])
@@ -182,9 +188,54 @@ impl Glm5NextKdaLayer {
                 .arg_u32(qkv as u32)
                 .launch(stream)?;
         }
+        if fused {
+            self.chunk64_conv_window(gpu, k, state, ws, pack, stream)?;
+        }
         Ok(())
     }
+
+    /// 2026-10-14: One slab's `kda_chunk64_prepare` over the conv's rows (chunks `c0 .. c0 + n`).
+    fn chunk64_prepare(
+        &self,
+        gpu: &dyn GpuBackend,
+        k: usize,
+        c0: usize,
+        n: usize,
+        ws: &Glm5NextKdaWorkspace,
+        stream: u64,
+    ) -> Result<()> {
+        let c = &self.cfg;
+        let (qkv, cd, d, h) = (c.qkv_dim(), c.conv_dim(), c.head_dim, c.heads);
+        let io = RowIo::workspace(c, ws, 0);
+        let scale = 1.0 / (d as f32).sqrt();
+        KernelLaunch::new(gpu, self.kernels.seq.chunk64_prepare)
+            .grid([n as u32, h as u32, 1])
+            .block([CHUNK64_PREP_THREADS, 1, 1])
+            .shared_mem(CHUNK64_PREP_SMEM)
+            .arg_ptr(io.conv_out)
+            .arg_ptr(io.conv_out.offset(qkv * 2))
+            .arg_ptr(io.conv_out.offset(qkv * 4))
+            .arg_ptr(io.gate)
+            .arg_ptr(io.beta)
+            .arg_ptr(ws.chunk_u)
+            .arg_ptr(ws.chunk_w)
+            .arg_ptr(ws.q_f32)
+            .arg_ptr(ws.k_f32)
+            .arg_ptr(ws.v_f32)
+            .arg_ptr(ws.chunk_gc)
+            .arg_u32(h as u32)
+            .arg_u32(k as u32)
+            .arg_u32(c0 as u32)
+            .arg_u32(cd as u32)
+            .arg_u32(qkv as u32)
+            .arg_f32(scale)
+            .launch(stream)
+    }
 }
+
+// 2026-10-14: `METRALE_GLM_KDA_CHUNK64_CONV`: the conv inside the prepare.
+#[path = "chunk64_conv.rs"]
+pub(crate) mod conv;
 
 #[cfg(test)]
 #[path = "chunk64_tests.rs"]

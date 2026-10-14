@@ -29,6 +29,12 @@
 // Every exponent taken is <= 0 (G_i - G_j for j <= i, G_i, G_last - G_i), so nothing overflows.
 // Positions t >= T read as k = v = q = 0, gate = 0, beta = 0.
 //
+// 2026-10-14: kda_chunk64_prepare_conv (`METRALE_GLM_KDA_CHUNK64_CONV`) is the same prepare with
+// the conv in front (kda_chunk64_conv.cuh): it reads the q/k/v projections instead of the conv
+// output, writes its tile's conv output to a slab-local stage (rows lc * C .., L2-resident, the
+// next slab reuses it) and reads q/k/v back from there; its K tile is written by the conv, not
+// copied. Every byte it writes equals the conv kernel then kda_chunk64_prepare's.
+//
 // Owner: gb10 kernels.
 // Invariants:
 // - head_dim D = KDA64_D (128), chunk KDA64_C (64). q, k, v BF16 rows `qkv_stride` apart (q at
@@ -40,6 +46,7 @@
 #include <stdint.h>
 
 #include "kda_chunk64.cuh"
+#include "kda_chunk64_conv.cuh"
 
 #define KDA64_PRE 4
 
@@ -72,7 +79,32 @@ __device__ __forceinline__ void k64_transpose_reduce(float (&v)[16], unsigned in
     }
 }
 
-extern "C" __global__ void __launch_bounds__(KDA64_PREP_THREADS, 2) kda_chunk64_prepare(
+// 2026-10-14: The conv inputs of kda_chunk64_prepare_conv; kda_chunk64_prepare passes none.
+struct K64ConvIn {
+    const __nv_bfloat16* xq;
+    const __nv_bfloat16* xk;
+    const __nv_bfloat16* xv;
+    unsigned int in_stride;
+    const float* conv_state;
+    const __nv_bfloat16* weight;
+    const float* bias;
+    unsigned int d_conv;
+    float l2_eps;
+};
+
+// 2026-10-14: A q/k/v element of row i: CONV reads the stage this block wrote (through L2, not
+// the read-only path, which need not see this kernel's own stores).
+template <bool CONV>
+__device__ __forceinline__ float k64_in(const __nv_bfloat16* p) {
+    if constexpr (CONV) {
+        return __bfloat162float(__ldcg(p));
+    } else {
+        return __bfloat162float(*p);
+    }
+}
+
+template <bool CONV>
+__device__ __forceinline__ void k64_prepare_body(
     const __nv_bfloat16* __restrict__ q,
     const __nv_bfloat16* __restrict__ k,
     const __nv_bfloat16* __restrict__ v,
@@ -89,7 +121,8 @@ extern "C" __global__ void __launch_bounds__(KDA64_PREP_THREADS, 2) kda_chunk64_
     unsigned int c0,
     unsigned int qkv_stride,
     unsigned int gate_stride,
-    float scale
+    float scale,
+    const K64ConvIn& cv
 ) {
     constexpr int C = KDA64_C, D = KDA64_D, NW = KDA64_PREP_THREADS / 32, PRE = KDA64_PRE;
     extern __shared__ __align__(16) float k64p_sh[];
@@ -101,6 +134,9 @@ extern "C" __global__ void __launch_bounds__(KDA64_PREP_THREADS, 2) kda_chunk64_
     const unsigned int t0 = (c0 + lc) * C;
     const size_t cb = (size_t)lc * H + h;
     const size_t hd = (size_t)h * D;
+    // 2026-10-14: The row of q/k/v holding token t0 + i: the token's own row, or under CONV the
+    // block's stage row.
+    const size_t r0 = CONV ? (size_t)lc * C : (size_t)t0;
     const uint32_t bG = (uint32_t)__cvta_generic_to_shared(sG);
     const uint32_t bK = (uint32_t)__cvta_generic_to_shared(sK);
 
@@ -112,14 +148,28 @@ extern "C" __global__ void __launch_bounds__(KDA64_PREP_THREADS, 2) kda_chunk64_
         const float* src = gate + (size_t)(live ? t : 0u) * gate_stride + hd + q4 * 4u;
         k64_cp16z(bG + e * 16u, src, live);
     }
-    for (unsigned int e = tid; e < (unsigned int)(C * D / 8); e += blockDim.x) {
-        const unsigned int i = e / (D / 8), q8 = e % (D / 8);
-        const unsigned int t = t0 + i;
-        const bool live = t < T;
-        const __nv_bfloat16* src = k + (size_t)(live ? t : 0u) * qkv_stride + hd + q8 * 8u;
-        k64_cp16z(bK + e * 16u, src, live);
+    if constexpr (!CONV) {
+        for (unsigned int e = tid; e < (unsigned int)(C * D / 8); e += blockDim.x) {
+            const unsigned int i = e / (D / 8), q8 = e % (D / 8);
+            const unsigned int t = t0 + i;
+            const bool live = t < T;
+            const __nv_bfloat16* src = k + (size_t)(live ? t : 0u) * qkv_stride + hd + q8 * 8u;
+            k64_cp16z(bK + e * 16u, src, live);
+        }
     }
     asm volatile("cp.async.commit_group;\n" ::);
+    if constexpr (CONV) {
+        const unsigned int part = H * (unsigned int)D;
+        __nv_bfloat16* sq = const_cast<__nv_bfloat16*>(q) + r0 * qkv_stride + hd;
+        __nv_bfloat16* sk = const_cast<__nv_bfloat16*>(k) + r0 * qkv_stride + hd;
+        __nv_bfloat16* sv = const_cast<__nv_bfloat16*>(v) + r0 * qkv_stride + hd;
+        const unsigned int cq = (unsigned int)hd, ck = part + cq, cv2 = 2u * part + cq;
+        // 2026-10-14: GLM's width only (the launcher refuses others), one instantiation.
+        if (cv.d_conv != 4u) __trap();
+        k64_conv_tile<4>(cv.xq + hd, cv.xk + hd, cv.xv + hd, cv.in_stride, cv.conv_state,
+                         cv.weight, cv.bias, cq, ck, cv2, cv.l2_eps, sq, sk, sv, qkv_stride, sK, t0,
+                         T);
+    }
     asm volatile("cp.async.wait_group 0;\n" ::: "memory");
     __syncthreads();
     if (tid < (unsigned int)D) {
@@ -149,9 +199,9 @@ extern "C" __global__ void __launch_bounds__(KDA64_PREP_THREADS, 2) kda_chunk64_
 #pragma unroll
         for (int e = 0; e < D / 32; ++e) {
             const unsigned int d = lane + 32u * (unsigned int)e;
-            const size_t qo = (size_t)t * qkv_stride + hd + d;
-            ki[e] = t < T ? __bfloat162float(k[qo]) : 0.0f;
-            qi[e] = t < T ? scale * __bfloat162float(q[qo]) : 0.0f;
+            const size_t qo = (r0 + i) * qkv_stride + hd + d;
+            ki[e] = t < T ? k64_in<CONV>(k + qo) : 0.0f;
+            qi[e] = t < T ? scale * k64_in<CONV>(q + qo) : 0.0f;
             gi[e] = sG[i * D + d];
         }
 #pragma unroll
@@ -216,9 +266,9 @@ extern "C" __global__ void __launch_bounds__(KDA64_PREP_THREADS, 2) kda_chunk64_
     auto fetch = [&](int i) -> float2 {
         const unsigned int t = t0 + (unsigned int)i;
         if (t >= T) return make_float2(0.0f, 0.0f);
-        const size_t qo = (size_t)t * qkv_stride + hd + d;
-        return is_w ? make_float2(__bfloat162float(k[qo]), 0.0f)
-                    : make_float2(__bfloat162float(v[qo]), __bfloat162float(q[qo]));
+        const size_t qo = (r0 + (size_t)i) * qkv_stride + hd + d;
+        return is_w ? make_float2(k64_in<CONV>(k + qo), 0.0f)
+                    : make_float2(k64_in<CONV>(v + qo), k64_in<CONV>(q + qo));
     };
     float2 ring[PRE];
 #pragma unroll
@@ -254,4 +304,67 @@ extern "C" __global__ void __launch_bounds__(KDA64_PREP_THREADS, 2) kda_chunk64_
             u_out[base + (size_t)i * D + d] = hist[i];
         }
     }
+}
+
+extern "C" __global__ void __launch_bounds__(KDA64_PREP_THREADS, 2) kda_chunk64_prepare(
+    const __nv_bfloat16* __restrict__ q,
+    const __nv_bfloat16* __restrict__ k,
+    const __nv_bfloat16* __restrict__ v,
+    const float* __restrict__ gate,
+    const float* __restrict__ beta,
+    float* __restrict__ u_out,
+    __nv_bfloat16* __restrict__ w_out,
+    __nv_bfloat16* __restrict__ qg_out,
+    __nv_bfloat16* __restrict__ kd_out,
+    __nv_bfloat16* __restrict__ p_out,
+    float* __restrict__ ad_out,
+    unsigned int H,
+    unsigned int T,
+    unsigned int c0,
+    unsigned int qkv_stride,
+    unsigned int gate_stride,
+    float scale
+) {
+    const K64ConvIn none = {nullptr, nullptr, nullptr, 0u, nullptr, nullptr, nullptr, 0u, 0.0f};
+    k64_prepare_body<false>(q, k, v, gate, beta, u_out, w_out, qg_out, kd_out, p_out, ad_out, H,
+                            T, c0, qkv_stride, gate_stride, scale, none);
+}
+
+// 2026-10-14: kda_chunk64_prepare with the conv in front. xq/xk/xv: the q/k/v projections of the
+// sub-chunk's rows 0 .. T-1, in_stride elements apart (the three parts: H * D; the packed rows:
+// 3 H * D with xk = xq + H * D, xv = xq + 2 H * D); conv_state/weight/bias/d_conv/l2_eps as
+// causal_conv1d_update_l2norm_tokens_parts takes them (conv_state only read). stage: q at 0, k at
+// H * D, v at 2 H * D of rows qkv_stride apart; block (lc, h) uses rows lc * C .. lc * C + C - 1
+// (KDA64_SLAB * C rows in all). d_conv must be 4 (traps otherwise; the launcher refuses it).
+extern "C" __global__ void __launch_bounds__(KDA64_PREP_THREADS, 2) kda_chunk64_prepare_conv(
+    const __nv_bfloat16* __restrict__ xq,
+    const __nv_bfloat16* __restrict__ xk,
+    const __nv_bfloat16* __restrict__ xv,
+    unsigned int in_stride,
+    const float* __restrict__ conv_state,
+    const __nv_bfloat16* __restrict__ weight,
+    const float* __restrict__ bias,
+    unsigned int d_conv,
+    float l2_eps,
+    __nv_bfloat16* stage,
+    const float* __restrict__ gate,
+    const float* __restrict__ beta,
+    float* __restrict__ u_out,
+    __nv_bfloat16* __restrict__ w_out,
+    __nv_bfloat16* __restrict__ qg_out,
+    __nv_bfloat16* __restrict__ kd_out,
+    __nv_bfloat16* __restrict__ p_out,
+    float* __restrict__ ad_out,
+    unsigned int H,
+    unsigned int T,
+    unsigned int c0,
+    unsigned int qkv_stride,
+    unsigned int gate_stride,
+    float scale
+) {
+    const K64ConvIn cv = {xq, xk, xv, in_stride, conv_state, weight, bias, d_conv, l2_eps};
+    const size_t part = (size_t)H * KDA64_D;
+    k64_prepare_body<true>(stage, stage + part, stage + 2 * part, gate, beta, u_out, w_out,
+                           qg_out, kd_out, p_out, ad_out, H, T, c0, qkv_stride, gate_stride,
+                           scale, cv);
 }
