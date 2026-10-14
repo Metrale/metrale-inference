@@ -7,7 +7,7 @@
 //! Owner: server tests.
 //! Invariants: none beyond the types.
 
-use super::{ReasoningFormat, ReasoningParser};
+use super::{ReasoningFormat, ReasoningParser, ReasoningWire};
 
 fn glm() -> Box<dyn ReasoningParser> {
     ReasoningFormat::Glm47.into_parser()
@@ -113,4 +113,24 @@ fn stray_markers_in_the_answer_are_dropped_or_reopen_reasoning() {
         split("<think>a</think>b</think>c<think>d</think>e", true),
         (Some("ad".into()), "bce".into())
     );
+}
+
+#[test]
+fn only_glm_answers_on_vllms_reasoning_wire() {
+    // 2026-10-14: vLLM serves GLM-5.3 with `--reasoning-parser glm45` and returns its
+    // reasoning as `reasoning`; the other formats keep `reasoning_content`.
+    assert_eq!(glm().reasoning_wire(), ReasoningWire::Vllm);
+    for format in [
+        ReasoningFormat::Qwen,
+        ReasoningFormat::DeepSeekR1,
+        ReasoningFormat::MiniMax,
+        ReasoningFormat::Mistral,
+        ReasoningFormat::Gemma4,
+    ] {
+        assert_eq!(
+            format.into_parser().reasoning_wire(),
+            ReasoningWire::ReasoningContent,
+            "{format:?}"
+        );
+    }
 }

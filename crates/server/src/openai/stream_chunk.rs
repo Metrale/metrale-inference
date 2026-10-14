@@ -12,6 +12,7 @@
 use serde::Serialize;
 
 use super::*;
+use crate::reasoning_parser::ReasoningWire;
 
 /// 2026-09-26: One `chat.completion.chunk` SSE payload.
 #[derive(Debug, Serialize)]
@@ -41,10 +42,10 @@ pub struct ChunkChoice {
 pub struct ChunkDelta {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,
-    /// 2026-09-26: Reasoning text of this chunk. There is no `reasoning` alias field, so
-    /// the text appears once per delta.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reasoning_content: Option<String>,
+    /// 2026-09-26: Reasoning text of this chunk, under one key only, so the text appears
+    /// once per delta. 2026-10-14: the key follows the model's `ReasoningWire`.
+    #[serde(flatten)]
+    pub reasoning: WireReasoning,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -68,7 +69,7 @@ impl ChatCompletionChunk {
                 index: 0,
                 delta: ChunkDelta {
                     role: Some("assistant".to_string()),
-                    reasoning_content: None,
+                    reasoning: WireReasoning::Omitted,
                     content: Some(String::new()),
                     tool_calls: None,
                     refusal: None,
@@ -81,8 +82,8 @@ impl ChatCompletionChunk {
         }
     }
 
-    /// 2026-09-26: Delta chunk carrying only `reasoning_content`.
-    pub fn reasoning_chunk(model: &str, id: &str, text: String) -> Self {
+    /// 2026-09-26: Delta chunk carrying only reasoning, under `wire`'s key.
+    pub fn reasoning_chunk(model: &str, id: &str, wire: ReasoningWire, text: String) -> Self {
         Self {
             id: id.to_string(),
             object: "chat.completion.chunk".to_string(),
@@ -93,7 +94,7 @@ impl ChatCompletionChunk {
                 index: 0,
                 delta: ChunkDelta {
                     role: None,
-                    reasoning_content: Some(text),
+                    reasoning: WireReasoning::delta(wire, text),
                     content: None,
                     tool_calls: None,
                     refusal: None,
@@ -118,7 +119,7 @@ impl ChatCompletionChunk {
                 index: 0,
                 delta: ChunkDelta {
                     role: None,
-                    reasoning_content: None,
+                    reasoning: WireReasoning::Omitted,
                     content: Some(text),
                     tool_calls: None,
                     refusal: None,
@@ -149,7 +150,7 @@ impl ChatCompletionChunk {
                 index: 0,
                 delta: ChunkDelta {
                     role: Some("assistant".to_string()),
-                    reasoning_content: None,
+                    reasoning: WireReasoning::Omitted,
                     content: None,
                     tool_calls: Some(vec![crate::tool_parser::ChunkToolCall {
                         index: tc_index,
@@ -183,7 +184,7 @@ impl ChatCompletionChunk {
                 index: 0,
                 delta: ChunkDelta {
                     role: None,
-                    reasoning_content: None,
+                    reasoning: WireReasoning::Omitted,
                     content: None,
                     tool_calls: Some(vec![crate::tool_parser::ChunkToolCall {
                         index: tc_index,
@@ -216,7 +217,7 @@ impl ChatCompletionChunk {
                 index: 0,
                 delta: ChunkDelta {
                     role: None,
-                    reasoning_content: None,
+                    reasoning: WireReasoning::Omitted,
                     content: None,
                     tool_calls: None,
                     refusal: None,
@@ -257,7 +258,7 @@ impl ChatCompletionChunk {
                 index: 0,
                 delta: ChunkDelta {
                     role: None,
-                    reasoning_content: None,
+                    reasoning: WireReasoning::Omitted,
                     content: None,
                     tool_calls: None,
                     refusal: Some(refusal),
@@ -283,7 +284,7 @@ impl ChatCompletionChunk {
                 index: 0,
                 delta: ChunkDelta {
                     role: None,
-                    reasoning_content: None,
+                    reasoning: WireReasoning::Omitted,
                     content: None,
                     tool_calls: None,
                     refusal: None,

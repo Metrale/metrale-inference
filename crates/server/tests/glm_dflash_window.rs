@@ -92,7 +92,7 @@ fn complete(url: &str, model: &str, prompt: &str) -> Result<(String, u64)> {
     let text = format!(
         "{}\n--reasoning--\n{}",
         msg["content"].as_str().unwrap_or_default(),
-        msg["reasoning_content"].as_str().unwrap_or_default()
+        msg["reasoning"].as_str().unwrap_or_default()
     );
     let n = v["usage"]["completion_tokens"]
         .as_u64()
