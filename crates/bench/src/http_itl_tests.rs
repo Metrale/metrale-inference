@@ -5,33 +5,9 @@
 //!
 //! Owner: bench (HTTP client).
 //! Invariants: none beyond the types. A child of `http_tests`, so it uses
-//! that module's `sse` helper.
+//! that module's `sse` helper, phased mock and `SSE_HEAD`.
 
 use super::*;
-
-/// 2026-09-26: A mock that writes its reply in timed phases, so the client's
-/// clocks can be checked against a known schedule.
-async fn endpoint_answering_in_phases(phases: Vec<(String, Duration)>) -> TargetEndpoint {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind loopback");
-    let port = listener.local_addr().expect("address").port();
-    tokio::spawn(async move {
-        let (mut socket, _) = listener.accept().await.expect("accept");
-        let mut request = [0u8; 4096];
-        let _ = socket.read(&mut request).await.expect("read request");
-        for (bytes, pause) in phases {
-            socket.write_all(bytes.as_bytes()).await.expect("reply");
-            tokio::time::sleep(pause).await;
-        }
-    });
-    TargetEndpoint::local(port, "mock")
-}
-
-const SSE_HEAD: &str =
-    "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n";
 
 fn content_delta(text: &str) -> String {
     format!("data: {{\"choices\":[{{\"delta\":{{\"content\":\"{text}\"}}}}]}}\n\n")

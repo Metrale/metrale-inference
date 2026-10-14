@@ -35,9 +35,9 @@ pub struct ToolCall {
 #[derive(Clone, Debug, Default)]
 pub struct ChatOutcome {
     pub text: String,
-    /// 2026-09-26: The streamed `reasoning_content`, kept apart from `text`.
-    /// Each non-empty reasoning delta still counts toward `completion_tokens`
-    /// and can start the TTFT clock.
+    /// 2026-09-26: The streamed reasoning, kept apart from `text`, under
+    /// either name in [`REASONING_KEYS`]. Each non-empty reasoning delta still
+    /// counts toward `completion_tokens` and can start the TTFT clock.
     pub reasoning: String,
     pub tool_calls: Vec<ToolCall>,
     pub finish_reason: Option<String>,
@@ -255,6 +255,22 @@ pub(crate) fn stream_error(chunk: &Value) -> Option<String> {
     })
 }
 
+/// 2026-10-14: The delta keys a server may stream reasoning under:
+/// `reasoning_content` (this engine's default wire, and older vLLM) and
+/// `reasoning` (vLLM 0.30, and this engine's GLM wire). Without the second,
+/// a vLLM thinking model's TTFT would include its whole reasoning block.
+const REASONING_KEYS: [&str; 2] = ["reasoning_content", "reasoning"];
+
+/// 2026-10-14: A delta's reasoning text: the first non-empty one under
+/// [`REASONING_KEYS`], so a server that mirrors it under both names counts
+/// it once.
+fn reasoning_delta(delta: &Value) -> Option<&str> {
+    REASONING_KEYS
+        .iter()
+        .filter_map(|key| delta.get(key).and_then(Value::as_str))
+        .find(|text| !text.is_empty())
+}
+
 /// 2026-09-26: Fold one SSE chunk into the outcome. Returns true when it
 /// carried a non-empty reasoning or content delta, or any tool-call delta.
 fn apply_chunk(chunk: &Value, out: &mut ChatOutcome) -> bool {
@@ -305,9 +321,7 @@ fn apply_chunk(chunk: &Value, out: &mut ChatOutcome) -> bool {
     // 2026-09-26: A reasoning delta is a token: it counts and it can start the
     // TTFT clock, or a thinking model's TTFT would include its whole
     // reasoning block.
-    if let Some(reasoning) = delta.get("reasoning_content").and_then(Value::as_str)
-        && !reasoning.is_empty()
-    {
+    if let Some(reasoning) = reasoning_delta(delta) {
         out.reasoning.push_str(reasoning);
         out.completion_tokens += 1;
         carried = true;

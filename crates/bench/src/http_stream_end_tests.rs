@@ -6,12 +6,9 @@
 //!
 //! Owner: bench (HTTP client).
 //! Invariants: none beyond the types. A child of `http_tests`, so it uses
-//! that module's loopback mock `endpoint_answering`.
+//! that module's loopback mock `endpoint_answering` and `SSE_HEAD`.
 
 use super::*;
-
-const SSE_HEAD: &str =
-    "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n";
 
 async fn stream(body: &str) -> Result<ChatOutcome> {
     let target = endpoint_answering(format!("{SSE_HEAD}{body}")).await;
