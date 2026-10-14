@@ -16,6 +16,7 @@ mod forward_sp;
 mod forward_sp_pipe;
 mod mhc_slice;
 mod mix;
+mod mlp_ring;
 mod multi_seq;
 mod prefill_capture;
 pub use multi_seq::{GroupSpan, group_spans};

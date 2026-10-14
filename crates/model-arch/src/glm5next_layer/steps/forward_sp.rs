@@ -153,19 +153,43 @@ impl Glm5NextLayer {
         )?;
 
         dump::site(tap, true, [streams, rows.post, rows.comb, normed])?;
-        self.mlp_compute(normed, ffn_out, k, row_pieces, None, ctx, stream)?;
-        dump::put(tap, dump::Point::MlpOut, ffn_out)?;
         let reduce = self.mlp_cfg.needs_all_reduce();
+        // 2026-10-14: `METRALE_GLM_MOE_COMBINE_RING=1`: the reduce-scatter as ring steps behind
+        // the combine's shard launches (`mlp_ring`); `None` keeps the serial section.
+        let ring = super::mlp_ring::MlpRing::plan(
+            crate::glm5next_layer::moe_combine_ring()
+                && matches!(self.mlp, Glm5NextMlpSite::Moe(_)),
+            reduce,
+            gpu,
+            comm.rank(),
+            &shards,
+        )?;
+        let combine = ring.as_ref().map(super::mlp_ring::MlpRing::combine);
+        self.mlp_compute(
+            normed,
+            ffn_out,
+            k,
+            row_pieces,
+            combine.as_ref(),
+            ctx,
+            stream,
+        )?;
+        dump::put(tap, dump::Point::MlpOut, ffn_out)?;
+        let received = match &ring {
+            Some(r) => Some(r.exchange(gpu, comm, &ws, ffn_out, &shards, row_bytes, stream)?),
+            None => None,
+        };
+        let rs = (reduce && received.is_none()).then_some((ffn_out, Some(profile::REDUCE_MLP)));
         ov::run_section(
             gpu,
             comm,
             &ws,
             overlap.as_ref(),
             stream,
-            &section(
-                reduce.then_some((ffn_out, Some(profile::REDUCE_MLP))),
-                self.is_last.then_some((hidden, None)),
-            ),
+            &ov::Section {
+                received,
+                ..section(rs, self.is_last.then_some((hidden, None)))
+            },
             &mut |a, b, partials| {
                 self.sp_tail_piece(gpu, mhc, &rows, a, b, ffn_out, partials, reduce, stream)
             },
