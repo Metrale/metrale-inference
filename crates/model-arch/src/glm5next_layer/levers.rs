@@ -124,6 +124,18 @@ pub(crate) fn dsa_verify_rows() -> bool {
     *E.get_or_init(|| std::env::var("METRALE_GLM_DSA_VERIFY_ROWS").as_deref() == Ok("1"))
 }
 
+/// 2026-10-14: `METRALE_GLM_DSA_SPAN_SELECT=1`: a captured speculative verify stores and selects
+/// the paged indexer rows of all its rows in one launch per stage (`select_paged_rows`), as a
+/// one-row-per-sequence batched decode already does: the multi-sequence verify's leading paged
+/// spans (`Glm5NextDsaLayer::decode_spans_with`) and a one-sequence k-row verify under
+/// `METRALE_GLM_DSA_VERIFY_ROWS` (`decode_k_with`). Row `r` selects only keys below its own
+/// `seq_len`, so storing its span's later rows first leaves its bits. Off until measured end to
+/// end. Read once.
+pub(crate) fn dsa_span_select() -> bool {
+    static E: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *E.get_or_init(|| std::env::var("METRALE_GLM_DSA_SPAN_SELECT").as_deref() == Ok("1"))
+}
+
 /// 2026-10-10: `METRALE_GLM_AR_FUSED_POST=1`: where an mHC site's all-reduce takes the one-shot
 /// path in one piece, the exchange runs alone (`CommBackend::exchange_partials`) and
 /// `glm5next_hc_post_rank_sum` sums the partials and post-mixes in one launch instead of

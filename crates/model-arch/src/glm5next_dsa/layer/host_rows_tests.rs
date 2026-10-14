@@ -100,7 +100,7 @@ fn a_paged_prefill_chunk_stages_its_indexer_rows_once() {
         let from = rig.gpu.launch_count();
         layer
             .decode_k_with(
-                hidden, k, &mut st, &mut kv, seq_len, &mut bt, &ctx, 7, true, batched,
+                hidden, k, &mut st, &mut kv, seq_len, &mut bt, &ctx, 7, true, batched, false,
             )
             .unwrap();
         let l = rig.since(from);

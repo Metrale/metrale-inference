@@ -164,6 +164,7 @@ fn main() -> Result<()> {
                 &ctx,
                 s,
                 batched,
+                false,
             )
         };
         run(&mut a, false, s)?;
@@ -237,6 +238,7 @@ fn prefill(g: &dyn GpuBackend, fwd: &Fwd, c: &Glm5NextDsaConfig, rng: &mut Lcg) 
                 s,
                 true,
                 batched,
+                false,
             )
         };
         run(&mut a, false)?;

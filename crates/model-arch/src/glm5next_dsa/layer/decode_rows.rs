@@ -130,13 +130,16 @@ impl Glm5NextDsaLayer {
             ctx,
             stream,
             crate::glm5next_layer::dsa_indexer_rows(),
+            crate::glm5next_layer::dsa_span_select(),
         )
     }
 
     /// 2026-10-09: [`Self::decode_spans`] with the batched indexer (`indexer_rows`, the
     /// `METRALE_GLM_DSA_INDEXER_ROWS` lever) explicit: the indexer projections staged for all
     /// rows, and on a captured decode the paged rows' store and selection in one launch per
-    /// stage (`select_paged_rows`).
+    /// stage (`select_paged_rows`). 2026-10-14: `span_select` (the
+    /// `METRALE_GLM_DSA_SPAN_SELECT` lever) lets spans of several rows (a speculative verify)
+    /// take that batched store and selection too; without it only one-row spans do.
     #[allow(clippy::too_many_arguments)]
     pub fn decode_spans_with(
         &self,
@@ -149,6 +152,7 @@ impl Glm5NextDsaLayer {
         ctx: &ForwardContext,
         stream: u64,
         indexer_rows: bool,
+        span_select: bool,
     ) -> Result<()> {
         use crate::glm5next_layer::profile;
         let n: usize = spans.iter().map(|s| s.rows).sum();
@@ -273,28 +277,34 @@ impl Glm5NextDsaLayer {
         // 2026-10-09: Staged on the replay-safe path, the leading rows that are each one
         // sequence's decode row on a paged cache store and select in one launch per stage
         // (`select_paged_rows`); the rest (a padding row's flat cache) run row by row below.
-        let paged_rows = if staged && replay_safe && spans.iter().all(|s| s.rows == 1) {
-            let mut m = 0;
-            while m < n && dsa_row(states, m)?.cache() == IndexerCache::Paged {
-                m += 1;
-            }
-            if m >= 2 && self.paged_rows_ready(m) {
-                m
+        // 2026-10-14: With `span_select`, the rows of the leading paged spans of any length
+        // (`leading_paged_spans`). All of a span's rows are stored before any is selected; row
+        // `r` selects only keys below its own `seq_len` (`dsa_indexer_body.cuh`), and the later
+        // rows of its span sit at or above it, so its selection is the per-row path's.
+        let (paged_spans, paged_rows) =
+            if staged && replay_safe && (span_select || spans.iter().all(|s| s.rows == 1)) {
+                let mut paged = Vec::with_capacity(spans.len());
+                for s in 0..spans.len() {
+                    paged.push(dsa_row(states, s)?.cache() == IndexerCache::Paged);
+                }
+                let (sp, m) = leading_paged_spans(spans, &paged);
+                if m >= 2 && self.paged_rows_ready(m) {
+                    (sp, m)
+                } else {
+                    (0, 0)
+                }
             } else {
-                0
-            }
-        } else {
-            0
-        };
+                (0, 0)
+            };
         if paged_rows > 0 {
             let t = profile::start();
             let bt0 = meta.block_table.offset(meta_row_base * bt_stride);
             let rows0 = self.indexer_rows(dsa_row(states, 0)?, kv_cache, bt0)?;
             self.select_paged_rows(gpu, paged_rows, rows0, meta, meta_row_base, stream)?;
-            for s in 0..paged_rows {
+            for (s, span) in spans.iter().enumerate().take(paged_spans) {
                 let st = dsa_row(states, s)?;
-                st.ensure_room(1)?;
-                st.advance(1)?;
+                st.ensure_room(span.rows)?;
+                st.advance(span.rows)?;
             }
             profile::end(profile::DSA_SELECT, t, gpu, stream);
         }
@@ -384,6 +394,36 @@ impl Glm5NextDsaLayer {
     }
 }
 
+/// 2026-10-14: The leading spans whose states are paged (`paged[s]`) and their row count:
+/// `(spans, rows)`, the rows being `0..rows` because the rows are sequence-major.
+pub(super) fn leading_paged_spans(spans: &[DsaRowSpan], paged: &[bool]) -> (usize, usize) {
+    let sp = paged.iter().take_while(|&&p| p).count().min(spans.len());
+    (sp, spans[..sp].iter().map(|s| s.rows).sum())
+}
+
 #[cfg(test)]
 #[path = "decode_rows_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod span_tests {
+    use super::{DsaRowSpan, leading_paged_spans};
+
+    fn spans(rows: &[usize]) -> Vec<DsaRowSpan> {
+        rows.iter()
+            .map(|&rows| DsaRowSpan { first_pos: 9, rows })
+            .collect()
+    }
+
+    /// 2026-10-14: The batched selection covers the rows of the paged spans before the first
+    /// flat one and no more: counting spans as rows, or rows past a flat span, would hand
+    /// `select_paged_rows` a flat state's rows.
+    #[test]
+    fn counts_the_rows_of_the_leading_paged_spans() {
+        let s = spans(&[2, 3, 4]);
+        assert_eq!(leading_paged_spans(&s, &[true, true, true]), (3, 9));
+        assert_eq!(leading_paged_spans(&s, &[true, true, false]), (2, 5));
+        assert_eq!(leading_paged_spans(&s, &[true, false, true]), (1, 2));
+        assert_eq!(leading_paged_spans(&s, &[false, true, true]), (0, 0));
+    }
+}
