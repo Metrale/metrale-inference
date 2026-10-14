@@ -1493,3 +1493,27 @@ effort_hours = 4.0
 transferability = "any hyper-connection model whose post-mix feeds the next site's pre-mix on the same rows"
 links = { pr = "", commit = "", evidence = "glm5next_hc_post_pre_tok_bench" }
 notes = "In-layer pair only (attention post into the FFN pre). The cross-layer pair (FFN post into the next layer's attention pre) is not fused: the layer loop is layer-outer and sub-chunk-inner, the next layer's weights would have to be handed down, and the DFlash taps read the highway between layers. The common/ kernels compile with --fmad=false, so the prologue's plain expressions round as the rank-sum kernel's do."
+
+[[lever]]
+id = "gb10x3-glm53-one-row-prefill"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_ONE_ROW_PREFILL=1 on the Z recipe + MTP, --max-seq-len 65536"
+symptom = "K-invariance bit probe: the 1k prompt's prefix-cache hit leg differs from its miss leg (8k and 32k match); the hit leaves a one-row pass at start>0 that takes the layer decode path"
+diagnosis_tool = "kinv_probe"
+root_cause_class = "numerics-path-mismatch"
+lever_type = "process-fix"
+lkb_effect = "none"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "ttft-cold-1k", tok_s_pct = 0, j_tok_pct = 0.0, n = 3 }, { rung = "ttft-warm-4k", tok_s_pct = 0, j_tok_pct = 0.0, n = 3 }]
+verdict = "discarded"
+verdict_reason = "fixes 1k miss==hit (miss legs identical to R0; tf KL unchanged at 0.03122) but costs cold 1k 762 -> 818 ms, warm 4k 97 -> 142 ms, warm 256 123 -> 140 ms (same binary 8bff0c31a, same box, 3 reps); the miss-vs-hit defect needs a decode-path-equals-prefill-path fix instead"
+failure_mode = "routes every one-row tail through the prefill kernels, which are slower than the decode kernels at one row"
+caught_by = "bring-up bench A/B (R0 vs R1)"
+time_lost_hours = 0.5
+would_catch_earlier = ""
+effort_hours = 0.5
+transferability = "any engine whose prefix-cache hit leaves a short tail that a different (decode) path computes"
+links = { pr = "", commit = "8bff0c31a", evidence = "logs/chainK_K65536-kinv-1014T0359.txt" }
+notes = "Measured negative; do not adopt. The bit-exact fix belongs in the decode path (make the one-row layer path produce the prefill path's bytes), not in routing."
