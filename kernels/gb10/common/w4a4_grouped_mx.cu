@@ -9,6 +9,8 @@
 //   tile of expert e, from the expert-sorted row offsets (moe_sort_by_expert); tile_off[E] is the
 //   tile count. The GEMM's grid.y is an upper bound, ceil(slots / MT) + E; tiles past the count
 //   exit. No host read, so the launch can be captured.
+// - w4a4_grouped_one_group (2026-10-13): the offsets and tiles of one group of m rows, m a launch
+//   argument (the dense MLP's one-group launch).
 // - w4a4_grouped_mx_m{32,64}[_k64]: C rows [expert_offsets[e], expert_offsets[e + 1]) are expert
 //   e's sorted slots; C row r reads activation row sorted_token_ids[r] when that pointer is
 //   non-null (gate/up: the token's quantized row), else row r (down: the slot's own row). Weights
@@ -80,6 +82,20 @@ extern "C" __global__ void __launch_bounds__(W4G_THREADS) w4a4_grouped_tiles(
         acc += m > 0 ? (m + (int)mt - 1) / (int)mt : 0;
     }
     tile_off[num_experts] = acc;
+}
+
+// 2026-10-13: The offsets and tile pass of ONE group of m rows (a dense projection,
+// w4a4_dense_grouped.rs): expert_offsets = [0, m], tile_off = [0, ceil(m / mt)], exactly what
+// w4a4_grouped_tiles writes from those offsets. m arrives by value, so no host buffer is read
+// and a captured launch replays the m it was captured with. Launch: grid (1, 1, 1), block 32.
+extern "C" __global__ void __launch_bounds__(W4G_THREADS) w4a4_grouped_one_group(
+    int* __restrict__ expert_offsets, int* __restrict__ tile_off, unsigned int m, unsigned int mt)
+{
+    if (threadIdx.x != 0) return;
+    expert_offsets[0] = 0;
+    expert_offsets[1] = (int)m;
+    tile_off[0] = 0;
+    tile_off[1] = (int)((m + mt - 1u) / mt);
 }
 
 // 2026-10-10: One pipeline stage: a k128 chunk of NT weight rows and MT activation rows.

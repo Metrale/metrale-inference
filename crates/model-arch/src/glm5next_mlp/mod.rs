@@ -199,6 +199,9 @@ pub struct Glm5NextMlpKernels {
 #[derive(Clone, Copy)]
 pub struct W4a4GroupedKernels {
     pub tiles: KernelHandle,
+    /// 2026-10-13: `w4a4_grouped_one_group`, the offsets and tiles of one group of m rows (the
+    /// dense MLP's one-group launch, `forward::w4a4_dense_grouped`).
+    pub one_group: KernelHandle,
     pub mx: [KernelHandle; 3],
     pub mx_k64: [KernelHandle; 3],
 }
@@ -396,6 +399,11 @@ impl Glm5NextMlpKernels {
                     gpu,
                     W4A4_GROUPED_MODULE,
                     "w4a4_grouped_tiles",
+                ),
+                one_group: metrale_model_layers::layers::try_kernel(
+                    gpu,
+                    W4A4_GROUPED_MODULE,
+                    "w4a4_grouped_one_group",
                 ),
                 mx: [
                     "w4a4_grouped_mx_m32",

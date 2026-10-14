@@ -19,7 +19,7 @@
 //! - [`takes_grouped`] is the one row test `forward_moe_pieces` and `w4a4_experts` both read.
 
 use anyhow::{Result, ensure};
-use metrale_gpu_runtime::gpu::{DevicePtr, KernelHandle};
+use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 use super::launch::swiglu;
@@ -120,33 +120,78 @@ fn grouped_mx(
     k: usize,
 ) -> Result<()> {
     let (cfg, ws) = (site.cfg, site.ws);
-    let slots = site.rows * cfg.top_k;
-    KernelLaunch::new(site.gpu, kern)
+    grouped_launch(
+        site.gpu,
+        kern,
+        ti,
+        smem_bytes_of(ti),
+        [ws.w4a4_aq, ws.w4a4_as, ws.w4a4_ag],
+        table,
+        c,
+        ws.expert_offsets(),
+        ws.w4a4_tile_off,
+        gather,
+        cfg.num_experts,
+        site.rows * cfg.top_k,
+        n,
+        k,
+        site.stream,
+    )
+}
+
+/// 2026-10-12: The dynamic shared memory of tile entry `ti`.
+pub(super) fn smem_bytes_of(ti: usize) -> u32 {
+    smem_bytes(
+        W4A4_GROUPED_MT[ti],
+        W4A4_GROUPED_COLS[ti],
+        W4A4_GROUPED_STAGES[ti],
+    )
+}
+
+/// 2026-10-12: The grouped GEMM launch with its inputs spelled out (`grouped_mx` for a routed
+/// site, `w4a4_dense_grouped::proj` for a dense site as one group of `num_experts` = 1):
+/// `act` = the quantized rows, scales and globals; grid (ceil(n / cols), ceil(slots / mt) +
+/// num_experts).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn grouped_launch(
+    gpu: &dyn GpuBackend,
+    kern: KernelHandle,
+    ti: usize,
+    smem: u32,
+    act: [DevicePtr; 3],
+    table: &Glm5NextExpertPtrTable,
+    c: DevicePtr,
+    offsets: DevicePtr,
+    tile_off: DevicePtr,
+    gather: DevicePtr,
+    num_experts: usize,
+    slots: usize,
+    n: usize,
+    k: usize,
+    stream: u64,
+) -> Result<()> {
+    KernelLaunch::new(gpu, kern)
         .grid([
             n.div_ceil(W4A4_GROUPED_COLS[ti]) as u32,
-            (slots.div_ceil(W4A4_GROUPED_MT[ti]) + cfg.num_experts) as u32,
+            (slots.div_ceil(W4A4_GROUPED_MT[ti]) + num_experts) as u32,
             1,
         ])
         .block([BLOCK, 1, 1])
-        .shared_mem(smem_bytes(
-            W4A4_GROUPED_MT[ti],
-            W4A4_GROUPED_COLS[ti],
-            W4A4_GROUPED_STAGES[ti],
-        ))
-        .arg_ptr(ws.w4a4_aq)
-        .arg_ptr(ws.w4a4_as)
-        .arg_ptr(ws.w4a4_ag)
+        .shared_mem(smem)
+        .arg_ptr(act[0])
+        .arg_ptr(act[1])
+        .arg_ptr(act[2])
         .arg_ptr(table.packed_ptrs)
         .arg_ptr(table.scale_ptrs)
         .arg_ptr(table.scale2_vals)
         .arg_ptr(c)
-        .arg_ptr(ws.expert_offsets())
-        .arg_ptr(ws.w4a4_tile_off)
+        .arg_ptr(offsets)
+        .arg_ptr(tile_off)
         .arg_ptr(gather)
-        .arg_u32(cfg.num_experts as u32)
+        .arg_u32(num_experts as u32)
         .arg_u32(n as u32)
         .arg_u32(k as u32)
-        .launch(site.stream)
+        .launch(stream)
 }
 
 /// 2026-10-10: The down projection's entry and stored activation width for expert width `mi`:

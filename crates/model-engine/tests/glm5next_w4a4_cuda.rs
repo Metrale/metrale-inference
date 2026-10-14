@@ -324,6 +324,7 @@ fn dense_w4a4_tracks_bf16_and_is_row_invariant() -> Result<()> {
             bf16: Some(bf16w),
             nvfp4: Some((nvfp4, scales)),
             precision: plan(MlpGroup::DenseMlp, stamp, k.w4a4_dense_rows())?,
+            grouped: None,
         })
     };
     let (w4a4, wide16) = (site(Nvfp4Act::A4)?, site(Nvfp4Act::Unstamped)?);

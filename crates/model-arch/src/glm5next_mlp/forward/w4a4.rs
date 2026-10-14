@@ -370,4 +370,4 @@ pub(super) fn w4a4_experts(site: &MoeSite<'_>, scales: W4a4ActScales) -> Result<
 
 #[cfg(test)]
 #[path = "w4a4_tests.rs"]
-mod tests;
+pub(super) mod tests;

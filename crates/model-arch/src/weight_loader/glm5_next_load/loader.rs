@@ -525,9 +525,14 @@ fn build_dense_site(
     } else {
         None
     };
+    let grouped = match &nvfp4 {
+        Some((w, _)) => crate::glm5next_mlp::forward::DenseGroupedTables::build(gpu, kernels, w)?,
+        None => None,
+    };
     Ok(Glm5NextDenseSite {
         bf16,
         nvfp4,
         precision,
+        grouped,
     })
 }

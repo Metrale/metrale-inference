@@ -333,6 +333,11 @@ fn proj_registered(
         seg::launch_one_row(gpu, a, &segs, k32, plan.sms, stream)?;
         return Ok(true);
     }
+    // 2026-10-12: `METRALE_GLM_W4A16_TC_GEMM_MIN_ROWS`: one launch of the row tiles' bits.
+    if crate::glm5next_w4a16_tc::takes(crate::glm5next_w4a16_tc::min_rows()?, m) {
+        crate::glm5next_w4a16_tc::proj(gpu, &e.w, a, c, m, n, k, stream)?;
+        return Ok(true);
+    }
     if crate::glm5next_w4a16_wide::takes(crate::glm5next_w4a16_wide::min_rows()?, m) {
         crate::glm5next_w4a16_wide::proj(gpu, &e.w, a, c, m, n, k, stream)?;
         return Ok(true);
@@ -425,7 +430,8 @@ pub fn proj_group(
 fn seg_gemv_group(plan: SegPlan, m: usize) -> Result<bool> {
     Ok(plan.seg_gemv(m)
         && (m == 1
-            || !crate::glm5next_w4a16_wide::takes(crate::glm5next_w4a16_wide::min_rows()?, m)))
+            || !(crate::glm5next_w4a16_wide::takes(crate::glm5next_w4a16_wide::min_rows()?, m)
+                || crate::glm5next_w4a16_tc::takes(crate::glm5next_w4a16_tc::min_rows()?, m))))
 }
 
 /// 2026-10-11: Whether a group of `m` rows would run as one launch of up to six members (the KDA
@@ -456,7 +462,8 @@ fn proj_group_registered(
         && (plan.mode == SegMode::Off
             || (m < 2 && !crate::glm5next_batch_inv::enabled()?)
             || plan.gemv_tier(m)
-            || crate::glm5next_w4a16_wide::takes(crate::glm5next_w4a16_wide::min_rows()?, m))
+            || crate::glm5next_w4a16_wide::takes(crate::glm5next_w4a16_wide::min_rows()?, m)
+            || crate::glm5next_w4a16_tc::takes(crate::glm5next_w4a16_tc::min_rows()?, m))
     {
         return Ok(false);
     }

@@ -1268,8 +1268,11 @@ kernels = [
   "w4a4_grouped_mx::w4a4_grouped_mx_m128", "w4a4_grouped_mx::w4a4_grouped_mx_m128_s6",
   "w4a4_grouped_mx::w4a4_grouped_mx_m32_k64", "w4a4_grouped_mx::w4a4_grouped_mx_m64_k64",
   "w4a4_grouped_mx::w4a4_grouped_mx_m128_k64", "w4a4_grouped_mx::w4a4_grouped_tiles",
+  # 2026-10-13: The offsets and tiles of one group (the dense MLP's one-group launch).
+  "w4a4_grouped_mx::w4a4_grouped_one_group",
 ]
 kernel_compute."w4a4_grouped_mx::w4a4_grouped_tiles" = { compute = "memory" }
+kernel_compute."w4a4_grouped_mx::w4a4_grouped_one_group" = { compute = "memory" }
 rows = [1, 16]
 pipeline.expert_gate_up = { in = ["nvfp4/g16", "i32"], gather = "nvfp4/g16", act = "nvfp4/g16", weight = "nvfp4/g16->e2m1", mma = "e2m1*e2m1", accumulate = "f32", scale = "f32", out = ["bf16"] }
 pipeline.expert_down = { in = ["nvfp4/g16", "i32"], act = "nvfp4/g16", weight = "nvfp4/g16->e2m1", mma = "e2m1*e2m1", accumulate = "f32", scale = "f32", out = ["bf16"] }
@@ -1810,6 +1813,9 @@ kernels = [
   "w4a16_tc_rows_seg::w4a16_tc_rows_seg_64_k1",
   "w4a16_tc_rows_seg::w4a16_tc_rows_seg_64_k2",
   "w4a16_tc_rows_seg::w4a16_tc_rows_seg_64_k4",
+  # 2026-10-12: The full-M GEMM twin: the 64-row body over a 2-D grid (any M in one launch, the
+  # same bytes per row); METRALE_GLM_W4A16_TC_GEMM_MIN_ROWS.
+  "w4a16_tc_gemm::w4a16_tc_gemm_64x128",
 ]
 rows = [1, 64]
 # 2026-10-02: The FP8 point's pipeline (the NVFP4 point overrides it below): an E4M3 byte becomes
@@ -1830,7 +1836,7 @@ files = ["kernels/gb10/common/tc_rows.cuh", "kernels/gb10/common/w8a16_tc_rows.c
 [[family.point]]
 values = { weight = "nvfp4/g16" }
 how = "instantiation"
-files = ["kernels/gb10/common/tc_rows.cuh", "kernels/gb10/common/w4a16_tc_rows.cu", "kernels/gb10/common/w4a16_tc_rows_seg.cu"]
+files = ["kernels/gb10/common/tc_rows.cuh", "kernels/gb10/common/w4a16_tc_rows.cu", "kernels/gb10/common/w4a16_tc_rows_seg.cu", "kernels/gb10/common/w4a16_tc_gemm.cu"]
 # 2026-10-02: BF16(E2M1 x E4M3) exactly per weight, the FP32 sum times s2 once per output
 # (Nvfp4G16 `out`), BF16 logits; only the declared NVFP4 head uses it.
 pipeline.lm_head = { in = ["bf16"], act = "bf16", weight = "nvfp4/g16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "f32", out = ["bf16"] }

@@ -34,6 +34,8 @@ pub struct Kern {
     pub slots_k64: KernelHandle,
     pub mx: [KernelHandle; 4],
     pub mx_k64: [KernelHandle; 4],
+    /// 2026-10-12: The dense MLP's chunk GEMV (`w4a4_gemv_mx32`), the one-group case's baseline.
+    pub mx32: KernelHandle,
     pub w4a16: KernelHandle,
 }
 
@@ -206,6 +208,50 @@ pub fn grouped(
         .launch(s)
 }
 
+/// 2026-10-12: One group of the grouped GEMM (`num_experts` 1, offsets [0, rows], no gather) on
+/// the 128-slot tile, for the dense MLP case.
+#[allow(clippy::too_many_arguments)]
+pub fn grouped_one(
+    gpu: &dyn GpuBackend,
+    k: KernelHandle,
+    b: &Bufs,
+    t: &Table,
+    c: DevicePtr,
+    offsets: DevicePtr,
+    tile_off: DevicePtr,
+    (n, kk): (usize, usize),
+    s: u64,
+) -> Result<()> {
+    KernelLaunch::new(gpu, k)
+        .grid([
+            div_ceil(n as u32, COLS[2]),
+            (b.rows.div_ceil(MT[2]) + 1) as u32,
+            1,
+        ])
+        .shared_mem(
+            metrale_model_arch::glm5next_mlp::forward::w4a4_grouped_smem_bytes(
+                MT[2],
+                COLS[2] as usize,
+                STAGES[2],
+            ),
+        )
+        .block([256, 1, 1])
+        .arg_ptr(b.aq)
+        .arg_ptr(b.as_)
+        .arg_ptr(b.ag)
+        .arg_ptr(t.packed)
+        .arg_ptr(t.scale)
+        .arg_ptr(t.scale2)
+        .arg_ptr(c)
+        .arg_ptr(offsets)
+        .arg_ptr(tile_off)
+        .arg_ptr(DevicePtr::NULL)
+        .arg_u32(1)
+        .arg_u32(n as u32)
+        .arg_u32(kk as u32)
+        .launch(s)
+}
+
 /// 2026-10-10: The slot GEMV over every slot: `ids` gives each slot's expert, act_div the
 /// activation row divisor.
 #[allow(clippy::too_many_arguments)]
@@ -217,13 +263,28 @@ pub fn slots_gemv(
     c: DevicePtr,
     (n, kk, act_div): (usize, usize, usize),
 ) -> Result<()> {
+    slots_gemv_ids(gpu, k, b, b.ids, t, c, (n, kk, act_div), b.rows * TOP_K)
+}
+
+/// 2026-10-12: [`slots_gemv`] over `slots` slots whose experts are `ids`.
+#[allow(clippy::too_many_arguments)]
+pub fn slots_gemv_ids(
+    gpu: &dyn GpuBackend,
+    k: KernelHandle,
+    b: &Bufs,
+    ids: DevicePtr,
+    t: &Table,
+    c: DevicePtr,
+    (n, kk, act_div): (usize, usize, usize),
+    slots: usize,
+) -> Result<()> {
     KernelLaunch::new(gpu, k)
-        .grid([div_ceil(n as u32, 16), (b.rows * TOP_K) as u32, 1])
+        .grid([div_ceil(n as u32, 16), slots as u32, 1])
         .block([256, 1, 1])
         .arg_ptr(b.aq)
         .arg_ptr(b.as_)
         .arg_ptr(b.ag)
-        .arg_ptr(b.ids)
+        .arg_ptr(ids)
         .arg_ptr(t.packed)
         .arg_ptr(t.scale)
         .arg_ptr(t.scale2)

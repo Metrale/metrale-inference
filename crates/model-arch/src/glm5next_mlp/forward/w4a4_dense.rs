@@ -2,7 +2,9 @@
 
 //! 2026-10-10: The dense SwiGLU MLP of GLM-5.3 at the declared W4A4 (`forward_dense_w4a4`) on the
 //! mx GEMVs in chunks of [`DENSE_W4A4_CHUNK_ROWS`] rows, moved here unchanged from `w4a4.rs`
-//! (which keeps the routed experts and the shared static quantizer).
+//! (which keeps the routed experts and the shared static quantizer). 2026-10-12: At or above
+//! `METRALE_GLM_DENSE_W4A4_GROUPED_MIN_ROWS` rows, one group of the grouped GEMM per projection
+//! (`w4a4_dense_grouped`), byte-identical to the chunks.
 //!
 //! Owner: model-arch (GLM-5.3).
 //! Invariants: as `w4a4.rs`'s: a row's output does not depend on the row count or on the other
@@ -60,6 +62,8 @@ fn mx_proj(
 /// 2026-10-08: The dense SwiGLU MLP of width `inter` at W4A4, `m` rows in chunks of
 /// [`DENSE_W4A4_CHUNK_ROWS`]: gate and up per chunk from one quantization, the clamped SwiGLU
 /// over all rows, then down per chunk. `out` is a partial sum under TP, as in `forward_dense`.
+/// 2026-10-12: With `grouped` (`METRALE_GLM_DENSE_W4A4_GROUPED_MIN_ROWS`) taking `m`, each
+/// projection runs as one group of the grouped GEMM over all rows instead, the same bytes.
 #[allow(clippy::too_many_arguments)]
 pub fn forward_dense_w4a4(
     gpu: &dyn GpuBackend,
@@ -72,6 +76,7 @@ pub fn forward_dense_w4a4(
     out: DevicePtr,
     m: usize,
     ws: &Glm5NextMlpWorkspace,
+    grouped: Option<&super::w4a4_dense_grouped::DenseGroupedTables>,
     stream: u64,
 ) -> Result<()> {
     let h = cfg.hidden;
@@ -81,6 +86,47 @@ pub fn forward_dense_w4a4(
     );
     check_w4a4_k(h, "dense gate/up")?;
     check_w4a4_k(inter, "dense down")?;
+    // 2026-10-12: `METRALE_GLM_DENSE_W4A4_GROUPED_MIN_ROWS`: each projection as one group of the
+    // grouped GEMM, one quantization per input (`w4a4_dense_grouped`; the same bytes).
+    if let Some(t) = grouped.filter(|t| t.takes(m)) {
+        use super::w4a4_dense_grouped as g;
+        g::prepare(gpu, k, ws, t, m, h, inter, stream)?;
+        quant_static(
+            gpu,
+            k.w4a4_quant_static,
+            ws,
+            x,
+            m,
+            h,
+            h,
+            scales.gate_up,
+            stream,
+        )?;
+        g::proj(gpu, k, ws, t, &t.gate, ws.a_gate, m, inter, h, stream)?;
+        g::proj(gpu, k, ws, t, &t.up, ws.a_up, m, inter, h, stream)?;
+        swiglu(
+            gpu,
+            k.swiglu,
+            ws.a_gate,
+            ws.a_up,
+            ws.a_act,
+            m * inter,
+            cfg.swiglu_limit,
+            stream,
+        )?;
+        quant_static(
+            gpu,
+            k.w4a4_quant_static,
+            ws,
+            ws.a_act,
+            m,
+            inter,
+            inter,
+            scales.down,
+            stream,
+        )?;
+        return g::proj(gpu, k, ws, t, &t.down, out, m, h, inter, stream);
+    }
     let chunks = (0..m)
         .step_by(DENSE_W4A4_CHUNK_ROWS)
         .map(|r0| (r0, (m - r0).min(DENSE_W4A4_CHUNK_ROWS)));
