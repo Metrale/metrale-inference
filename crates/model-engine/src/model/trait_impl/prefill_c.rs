@@ -92,11 +92,7 @@ impl TransformerModel {
 
         // 2026-09-25: A multi-rank world (EP or TP, see `multi_rank_protocol_active`)
         // runs on the backend's default stream; otherwise on the caller's stream.
-        let stream = if self.multi_rank_protocol_active() {
-            self.gpu.default_stream()
-        } else {
-            stream
-        };
+        let stream = self.forward_stream(stream);
         let h = self.config.hidden_size;
         let _bf16 = 2usize;
         let fp32 = 2usize;
