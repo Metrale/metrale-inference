@@ -9,6 +9,7 @@
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 
+use super::{HC_ELEMENTWISE_BLOCK, hc_hidden_split};
 use crate::layers::qwen3_attention::HcLowRank;
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
@@ -54,8 +55,9 @@ pub(crate) fn hc_pre_gemm(
         let ts = SLAB.min(num_tokens - t0);
         let streams_s = streams.offset(t0 as usize * hc_dim * 4);
 
+        // 2026-10-13: One block per (token, stream): a stream's RMS needs only its own slice.
         KernelLaunch::new(gpu, k_stage)
-            .grid([ts, 1, 1])
+            .grid([ts, hc_mult, 1])
             .block([1024, 1, 1])
             .arg_ptr(streams_s)
             .arg_ptr(w.norm_w)
@@ -150,8 +152,8 @@ pub(crate) fn hc_pre_gemm(
         }
 
         KernelLaunch::new(gpu, k_mix)
-            .grid([ts, 1, 1])
-            .block([256, 1, 1])
+            .grid([ts, hc_hidden_split(hidden_size), 1])
+            .block([HC_ELEMENTWISE_BLOCK, 1, 1])
             .arg_ptr(normed)
             .arg_ptr(up_pre)
             .arg_ptr(if inject { inj_pre } else { DevicePtr::NULL })

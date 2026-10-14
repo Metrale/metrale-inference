@@ -104,6 +104,9 @@ mod hyper_connection_lowrank;
 #[cfg(test)]
 #[path = "ops/hyper_connection_lowrank_tests.rs"]
 mod hyper_connection_lowrank_tests;
+#[cfg(test)]
+#[path = "ops/hyper_connection_split_tests.rs"]
+mod hyper_connection_split_tests;
 #[path = "ops/kv_cache.rs"]
 mod kv_cache;
 #[path = "ops/kv_cache_fp8k.rs"]

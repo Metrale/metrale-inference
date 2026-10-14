@@ -24,6 +24,17 @@ use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 use crate::layers::qwen3_attention::HcLowRank;
 
+/// 2026-10-13: Block width of `hc_post` and `hc_pre_mix`.
+pub(crate) const HC_ELEMENTWISE_BLOCK: u32 = 256;
+
+/// 2026-10-13: Grid y of `hc_post` and `hc_pre_mix`: one block-wide slice of the hidden
+/// dimension per block, so a decode token runs on `ceil(H / 256)` blocks, not one (the
+/// one-block launches were latency-bound, 16 and 13 us per call at C1 on an H100). A pure
+/// function of the shape; the kernels compute every element the same at every grid y.
+pub(crate) const fn hc_hidden_split(hidden_size: u32) -> u32 {
+    hidden_size.div_ceil(HC_ELEMENTWISE_BLOCK)
+}
+
 /// 2026-09-25: `METRALE_QWEN4EXP_NO_HC_GEMM` equal to `"1"`, read once per process: the large-T
 /// collapse runs the fused FP32 kernel instead of the GEMM path, which rounds `normed` to BF16
 /// before the projections (`hc_pre_stage_bf16`).
@@ -242,8 +253,8 @@ pub fn hc_post_lowrank(
     stream: u64,
 ) -> Result<()> {
     KernelLaunch::new(gpu, kernel)
-        .grid([num_tokens, 1, 1])
-        .block([256, 1, 1])
+        .grid([num_tokens, hc_hidden_split(hidden_size), 1])
+        .block([HC_ELEMENTWISE_BLOCK, 1, 1])
         .arg_ptr(block_out)
         .arg_ptr(residual)
         .arg_ptr(inj)

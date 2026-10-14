@@ -12,9 +12,8 @@
 //!   and hands each chunk to `sink(rows, row0, m)` before the next chunk
 //!   overwrites it. `rows` holds `m` contiguous BF16 rows of `hidden_size`, the
 //!   rows `row0..row0 + m` of the batch.
-//! - The sink is elementwise per row (a residual add or the highway injection,
-//!   both launched one block per token), so the chunking is a launch count,
-//!   never a numeric difference.
+//! - The sink is elementwise per row (a residual add or the highway injection),
+//!   so the chunking is a launch count, never a numeric difference.
 
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::DevicePtr;
