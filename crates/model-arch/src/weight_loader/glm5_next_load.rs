@@ -43,6 +43,7 @@ mod act_scale;
 mod defer_hook_tests;
 mod dense_tiers;
 mod expert_quant;
+mod expert_slab;
 mod expert_tp;
 #[cfg(test)]
 mod export_layout_tests;
@@ -414,15 +415,15 @@ pub(super) fn layer_source(
 }
 
 /// 2026-09-25: [`bind_expert`], for the MTP loader. 2026-10-09: Under the MLP config's
-/// `shard` (`expert_tp::bind_routed_expert`).
-pub(super) fn bind_expert_at(
-    gpu: &dyn GpuBackend,
-    store: &WeightStore,
+/// `shard` (`expert_tp::bind_routed_expert`). 2026-10-14: As the binder of all of `layer`'s
+/// experts (`expert_tp::routed_expert_binder`), one slab under the `tp` layout.
+pub(super) fn expert_binder_at<'a>(
+    gpu: &'a dyn GpuBackend,
+    store: &'a WeightStore,
     layer: usize,
-    id: usize,
-    shard: crate::glm5next_mlp::ExpertShard,
-) -> Result<Glm5NextExpertWeights> {
-    expert_tp::bind_routed_expert(gpu, store, layer, id, shard)
+    cfg: &Glm5NextMlpConfig,
+) -> impl Fn(usize) -> Result<Glm5NextExpertWeights> + 'a {
+    expert_tp::routed_expert_binder(gpu, store, layer, cfg)
 }
 
 /// 2026-10-08: The routed-expert precision plan of the MTP layer `layer`, for the MTP loader.

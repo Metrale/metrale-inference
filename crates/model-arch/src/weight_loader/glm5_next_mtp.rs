@@ -93,9 +93,7 @@ pub fn load_glm5next_mtp_module(
         indexer_cache: crate::glm5next_dsa::paged::IndexerCache::Flat,
     }));
 
-    let expert = |id: usize| {
-        super::glm5_next_load::bind_expert_at(gpu, store, idx, id, mlp_cfg.expert_shard)
-    };
+    let expert = super::glm5_next_load::expert_binder_at(gpu, store, idx, &mlp_cfg);
     // 2026-10-08: The MTP layer's plan, as for a text layer; this checkpoint declares the layer
     // 16-bit, so its experts (quantized at load) run W4A16. One row: its workspace is one row.
     let precision = |has_scales: bool| {

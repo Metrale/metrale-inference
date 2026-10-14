@@ -248,9 +248,7 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                     verify_k,
                 )?)),
                 Mlp::RoutedMoe => {
-                    let expert = |id: usize| {
-                        expert_tp::bind_routed_expert(gpu, store, idx, id, mlp_cfg.expert_shard)
-                    };
+                    let expert = expert_tp::routed_expert_binder(gpu, store, idx, &mlp_cfg);
                     let precision = |has_scales: bool| {
                         mlp_precision::group_precision(
                             config,

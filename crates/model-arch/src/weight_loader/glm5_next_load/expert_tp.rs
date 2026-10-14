@@ -10,11 +10,16 @@
 //! expert (the MTP layer of the NVFP4 export) is quantized whole, as `bind_expert` would, and its
 //! packed bytes are sliced, so a slice holds exactly the bytes the whole expert would.
 //!
+//! 2026-10-14: A layer's sliced experts are uploaded into one [`ExpertSlab`], not one
+//! allocation per buffer: GB10 kept 16.5 GiB per rank of 2 MiB chunks part-empty under the
+//! per-buffer uploads (`expert_slab.rs`).
+//!
 //! Owner: model-arch weight loader.
 //! Invariants:
 //! - `ExpertShard::Whole` binds through `bind_expert`, unchanged.
 //! - A sliced projection keeps the expert's own `weight_scale_2` and `input_scale`.
 
+use super::expert_slab::ExpertSlab;
 use super::*;
 use crate::glm5next_mlp::expert_tp::{
     ExpertShard, ExpertSlice, pad_expert_rows, slice_expert_cols, slice_expert_rows,
@@ -29,22 +34,48 @@ pub(super) fn is_routed_expert_tensor(name: &str) -> bool {
         .is_some_and(|(idx, rel)| idx.parse::<usize>().is_ok() && rel.starts_with("mlp.experts."))
 }
 
-/// 2026-10-09: Routed expert `id` of `layer` as this rank holds it under `shard`.
+/// 2026-10-14: The `build_moe` expert binder of MoE layer `layer` under `cfg`'s shard:
+/// [`bind_routed_expert`] into one [`ExpertSlab`] over `cfg.local_expert_range()`.
+pub(super) fn routed_expert_binder<'a>(
+    gpu: &'a dyn GpuBackend,
+    store: &'a WeightStore,
+    layer: usize,
+    cfg: &Glm5NextMlpConfig,
+) -> impl Fn(usize) -> Result<Glm5NextExpertWeights> + 'a {
+    let (shard, slab) = (cfg.expert_shard, ExpertSlab::new(cfg.local_expert_range()));
+    move |id| bind_routed_expert(gpu, store, layer, id, shard, &slab)
+}
+
+/// 2026-10-09: Routed expert `id` of `layer` as this rank holds it under `shard`. 2026-10-14: A
+/// sliced expert's six buffers go into `id`'s slot of `slab`; a whole one ignores it.
 pub(super) fn bind_routed_expert(
     gpu: &dyn GpuBackend,
     store: &WeightStore,
     layer: usize,
     id: usize,
     shard: ExpertShard,
+    slab: &ExpertSlab,
 ) -> Result<Glm5NextExpertWeights> {
-    match shard {
-        ExpertShard::Whole => bind_expert(gpu, store, layer, id),
-        ExpertShard::Sliced(s) => Ok(Glm5NextExpertWeights {
-            gate_proj: bind_sliced_proj(gpu, store, layer, id, "gate_proj", &s)?,
-            up_proj: bind_sliced_proj(gpu, store, layer, id, "up_proj", &s)?,
-            down_proj: bind_sliced_proj(gpu, store, layer, id, "down_proj", &s)?,
-        }),
-    }
+    let s = match shard {
+        ExpertShard::Whole => return bind_expert(gpu, store, layer, id),
+        ExpertShard::Sliced(s) => s,
+    };
+    let g = sliced_proj(gpu, store, layer, id, "gate_proj", &s)?;
+    let u = sliced_proj(gpu, store, layer, id, "up_proj", &s)?;
+    let d = sliced_proj(gpu, store, layer, id, "down_proj", &s)?;
+    let blobs = [&g.0[..], &g.1, &u.0, &u.1, &d.0, &d.1];
+    let [gp, gs, up, us, dp, ds] = slab.place(gpu, store, id, blobs)?;
+    let proj = |h: &HostProj, packed, scale| Nvfp4Proj {
+        packed,
+        scale,
+        scale_2: h.2,
+        input_scale: h.3,
+    };
+    Ok(Glm5NextExpertWeights {
+        gate_proj: proj(&g, gp, gs),
+        up_proj: proj(&u, up, us),
+        down_proj: proj(&d, dp, ds),
+    })
 }
 
 /// 2026-10-09: A tensor's on-disk or store dtype and shape, deferred or resident.
@@ -97,22 +128,26 @@ fn scale_2(gpu: &dyn GpuBackend, store: &WeightStore, layer: usize, base: &str) 
     }
 }
 
+/// 2026-10-14: A sliced projection on the host: codes, block scales, global scale, activation
+/// scale.
+type HostProj = (Vec<u8>, Vec<u8>, f32, Option<f32>);
+
 /// 2026-10-09: One sliced projection: gate/up (`[full, hidden]`) keep the slice's rows, down
-/// (`[hidden, full]`) its columns, both zero-padded to `s.len`; uploaded and adopted by the
-/// store's derived-weight ledger.
-fn bind_sliced_proj(
+/// (`[hidden, full]`) its columns, both zero-padded to `s.len`. 2026-10-14: Returned on the host
+/// for the layer's slab, no longer uploaded here.
+fn sliced_proj(
     gpu: &dyn GpuBackend,
     store: &WeightStore,
     layer: usize,
     id: usize,
     p: &str,
     s: &ExpertSlice,
-) -> Result<Nvfp4Proj> {
+) -> Result<HostProj> {
     let by_rows = p != "down_proj";
     let base = format!("mlp.experts.{id}.{p}");
     let wname = qualify(layer, &format!("{base}.weight"));
     let (dtype, shape) = meta(store, &wname)?;
-    let (packed, scales, s2, input_scale) = match (dtype, &shape[..]) {
+    Ok(match (dtype, &shape[..]) {
         (WeightDtype::UInt8, &[n, half_k]) => {
             let k = half_k * 2;
             let (want_n, want_k) = if by_rows { (s.full, k) } else { (n, s.full) };
@@ -175,12 +210,6 @@ fn bind_sliced_proj(
             "{base}.weight is {dtype:?} {shape:?}; the tp expert layout binds 2-D packed U8 \
              NVFP4 or BF16"
         ),
-    };
-    Ok(Nvfp4Proj {
-        packed: expert_quant::upload_bytes(gpu, store, &packed)?,
-        scale: expert_quant::upload_bytes(gpu, store, &scales)?,
-        scale_2: s2,
-        input_scale,
     })
 }
 

@@ -3,16 +3,17 @@
 //! 2026-10-09: Tests of the tp-layout expert bind on the mock device: deferred packed experts
 //! read back as each rank's slices (rows by ranged read, columns whole), with the per-tensor
 //! scales carried; a BF16 expert sliced from its whole quantization; and the defer hook's
-//! extra family under the tp layout only.
+//! extra family under the tp layout only. 2026-10-14: And a layer's sliced experts in one slab.
 //!
 //! Owner: model-arch weight loader.
 //! Invariants: none beyond the types.
 
 use metrale_config::{ModelConfig, MoeExpertLayout};
-use metrale_gpu_runtime::gpu::GpuBackend;
 use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
+use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_model_weights::weights::{DeferredTensor, WeightDtype, WeightStore, WeightTensor};
 
+use super::super::expert_slab::{ExpertSlab, SLAB_ALIGN, slot_layout};
 use super::{bind_routed_expert, is_routed_expert_tensor};
 use crate::glm5next_mlp::expert_tp::{
     ExpertShard, ExpertSlice, expert_slice, slice_expert_cols, slice_expert_rows,
@@ -67,9 +68,26 @@ fn shard(tag: &str, tensors: &[(String, WeightDtype, Vec<usize>, Vec<u8>)]) -> S
     Shard { store, path }
 }
 
+/// 2026-10-14: `len` bytes from device address `p`, which may lie inside an allocation.
+fn read(gpu: &MockGpuBackend, p: DevicePtr, len: usize) -> Vec<u8> {
+    let mut v = vec![0u8; len];
+    gpu.copy_d2h(p, &mut v).unwrap();
+    v
+}
+
+/// 2026-10-14: A slab for expert `id` alone.
+fn one(id: usize) -> ExpertSlab {
+    ExpertSlab::new(id..id + 1)
+}
+
 /// 2026-10-09: A packed expert of width `full`: gate/up `[full, HIDDEN]`, down `[HIDDEN, full]`,
 /// each with scales, `weight_scale_2` = 0.5 / 0.25 / 0.125 and `input_scale` = 1 / 1 / 2.
 fn packed_expert(full: usize) -> Vec<(String, WeightDtype, Vec<usize>, Vec<u8>)> {
+    packed_expert_id(full, 7)
+}
+
+/// 2026-10-14: [`packed_expert`] as expert `id`, its bytes salted by `id`.
+fn packed_expert_id(full: usize, id: usize) -> Vec<(String, WeightDtype, Vec<usize>, Vec<u8>)> {
     let mut t = Vec::new();
     for (i, (p, n, k)) in [
         ("gate_proj", full, HIDDEN),
@@ -79,19 +97,19 @@ fn packed_expert(full: usize) -> Vec<(String, WeightDtype, Vec<usize>, Vec<u8>)>
     .into_iter()
     .enumerate()
     {
-        let base = format!("mlp.experts.7.{p}");
+        let base = format!("mlp.experts.{id}.{p}");
         let w = |leaf: &str| qualified(&format!("{base}.{leaf}"));
         t.push((
             w("weight"),
             WeightDtype::UInt8,
             vec![n, k / 2],
-            tagged(n * k / 2, i),
+            tagged(n * k / 2, i + 7 * id),
         ));
         t.push((
             w("weight_scale"),
             WeightDtype::FP8E4M3,
             vec![n, k / 16],
-            tagged(n * k / 16, 100 + i),
+            tagged(n * k / 16, 100 + i + 7 * id),
         ));
         let s2 = [0.5f32, 0.25, 0.125][i].to_le_bytes().to_vec();
         t.push((w("weight_scale_2"), WeightDtype::FP32, vec![], s2));
@@ -117,13 +135,14 @@ fn deferred_packed_expert_binds_each_ranks_slice() {
             let s = expert_slice(full, tp, r).unwrap();
             let gpu = MockGpuBackend::new();
             let before = sh.store.derived().bytes();
-            let e = bind_routed_expert(&gpu, &sh.store, LAYER, 7, ExpertShard::Sliced(s)).unwrap();
+            let slab = one(7);
+            let e = bind_routed_expert(&gpu, &sh.store, LAYER, 7, ExpertShard::Sliced(s), &slab)
+                .unwrap();
             // 2026-10-09: Only the slices reached the device: three projections of `s.len`
-            // rows or columns, codes plus scales.
-            assert_eq!(
-                sh.store.derived().bytes() - before,
-                3 * (s.len * HIDDEN / 2 + s.len * HIDDEN / 16)
-            );
+            // rows or columns, codes plus scales. 2026-10-14: In one slot of the slab.
+            let (codes, scales) = (s.len * HIDDEN / 2, s.len * HIDDEN / 16);
+            let slot = slot_layout(&[codes, scales].repeat(3), SLAB_ALIGN).unwrap();
+            assert_eq!(sh.store.derived().bytes() - before, slot.stride);
             let check = |proj: &crate::glm5next_mlp::weights::Nvfp4Proj, p: &str, rows: bool| {
                 let (wp, ws) = (
                     bytes_of(&t, &format!("mlp.experts.7.{p}.weight")),
@@ -134,16 +153,10 @@ fn deferred_packed_expert_binds_each_ranks_slice() {
                 } else {
                     slice_expert_cols(&wp, &ws, HIDDEN, &s).unwrap()
                 };
-                assert_eq!(
-                    gpu.read_alloc(proj.packed).unwrap(),
-                    want.0,
-                    "{p} r{r} codes"
-                );
-                assert_eq!(
-                    gpu.read_alloc(proj.scale).unwrap(),
-                    want.1,
-                    "{p} r{r} scales"
-                );
+                let got = read(&gpu, proj.packed, want.0.len());
+                assert_eq!(got, want.0, "{p} r{r} codes");
+                let got = read(&gpu, proj.scale, want.1.len());
+                assert_eq!(got, want.1, "{p} r{r} scales");
             };
             check(&e.gate_proj, "gate_proj", true);
             check(&e.up_proj, "up_proj", true);
@@ -189,7 +202,7 @@ fn whole_shard_binds_the_store_pointers_zero_copy() {
         }
     }
     let store = WeightStore::from_map(map);
-    let e = bind_routed_expert(&gpu, &store, LAYER, 0, ExpertShard::Whole).unwrap();
+    let e = bind_routed_expert(&gpu, &store, LAYER, 0, ExpertShard::Whole, &one(0)).unwrap();
     let want = store
         .get(&qualified("mlp.experts.0.down_proj.weight"))
         .unwrap()
@@ -232,7 +245,9 @@ fn bf16_expert_slices_its_whole_quantization() {
     for r in 0..2 {
         let s: ExpertSlice = expert_slice(full, 2, r).unwrap();
         let gpu = MockGpuBackend::new();
-        let e = bind_routed_expert(&gpu, &sh.store, LAYER, 2, ExpertShard::Sliced(s)).unwrap();
+        let slab = one(2);
+        let e =
+            bind_routed_expert(&gpu, &sh.store, LAYER, 2, ExpertShard::Sliced(s), &slab).unwrap();
         for (w, got, rows) in [
             (&whole.gate_proj, &e.gate_proj, true),
             (&whole.down_proj, &e.down_proj, false),
@@ -246,8 +261,8 @@ fn bf16_expert_slices_its_whole_quantization() {
             } else {
                 slice_expert_cols(&wp, &ws, HIDDEN, &s).unwrap()
             };
-            assert_eq!(gpu.read_alloc(got.packed).unwrap(), want.0, "r{r} codes");
-            assert_eq!(gpu.read_alloc(got.scale).unwrap(), want.1, "r{r} scales");
+            assert_eq!(read(&gpu, got.packed, want.0.len()), want.0, "r{r} codes");
+            assert_eq!(read(&gpu, got.scale, want.1.len()), want.1, "r{r} scales");
             assert_eq!(
                 got.scale_2, w.scale_2,
                 "r{r}: the whole tensor's global scale"
@@ -265,8 +280,63 @@ fn a_packed_expert_of_another_width_is_refused() {
     let sh = shard("wrong-width", &t);
     let s = expert_slice(640, 3, 0).unwrap();
     let gpu = MockGpuBackend::new();
-    let e = bind_routed_expert(&gpu, &sh.store, LAYER, 7, ExpertShard::Sliced(s)).unwrap_err();
+    let shard = ExpertShard::Sliced(s);
+    let e = bind_routed_expert(&gpu, &sh.store, LAYER, 7, shard, &one(7)).unwrap_err();
     assert!(e.to_string().contains("does not fit"), "{e}");
+}
+
+/// 2026-10-14: Two experts of a layer share one slab, adopted once: slot `id - 7`, each holding
+/// exactly the slicer's cut of its own expert, in a padded width that needs alignment padding.
+#[test]
+fn a_layers_sliced_experts_share_one_slab() {
+    let full = 336usize;
+    let t: Vec<_> = [7, 8]
+        .into_iter()
+        .flat_map(|id| packed_expert_id(full, id))
+        .collect();
+    let sh = shard("slab", &t);
+    let s = expert_slice(full, 3, 2).unwrap();
+    let gpu = MockGpuBackend::new();
+    let slab = ExpertSlab::new(7..9);
+    let bound: Vec<_> = [8, 7]
+        .map(|id| {
+            let e = bind_routed_expert(&gpu, &sh.store, LAYER, id, ExpertShard::Sliced(s), &slab);
+            (id, e.unwrap())
+        })
+        .into();
+    let (codes, scales) = (s.len * HIDDEN / 2, s.len * HIDDEN / 16);
+    let slot = slot_layout(&[codes, scales].repeat(3), SLAB_ALIGN).unwrap();
+    assert!(
+        slot.stride > 3 * (codes + scales),
+        "this width exercises padding"
+    );
+    assert_eq!(sh.store.derived().len(), 1, "one adoption for the layer");
+    assert_eq!(sh.store.derived().bytes(), 2 * slot.stride);
+    let base = bound[1].1.gate_proj.packed;
+    assert!(gpu.read_alloc(base).is_some(), "expert 7 opens the slab");
+    for (id, e) in bound {
+        assert_eq!(
+            e.gate_proj.packed.0,
+            base.0 + ((id - 7) * slot.stride) as u64
+        );
+        for (proj, p, rows) in [
+            (e.gate_proj, "gate_proj", true),
+            (e.up_proj, "up_proj", true),
+            (e.down_proj, "down_proj", false),
+        ] {
+            let (wp, ws) = (
+                bytes_of(&t, &format!("mlp.experts.{id}.{p}.weight")),
+                bytes_of(&t, &format!("mlp.experts.{id}.{p}.weight_scale")),
+            );
+            let want = if rows {
+                slice_expert_rows(&wp, &ws, HIDDEN, &s).unwrap()
+            } else {
+                slice_expert_cols(&wp, &ws, HIDDEN, &s).unwrap()
+            };
+            assert_eq!(read(&gpu, proj.packed, codes), want.0, "{id} {p} codes");
+            assert_eq!(read(&gpu, proj.scale, scales), want.1, "{id} {p} scales");
+        }
+    }
 }
 
 /// 2026-10-09: The routed-expert family: every `mlp.experts.*` tensor of a numbered layer, and
