@@ -148,6 +148,11 @@ pub struct KdaSeqKernels {
     /// (`kda_chunk64_prepare.cu`) and `kda_chunk64_scan` (`kda_chunk64.cu`); `chunk64.rs`.
     pub chunk64_prepare: KernelHandle,
     pub chunk64_scan: KernelHandle,
+    /// 2026-10-14: `kda_chunk64_prepare_conv` (`kda_chunk64_prepare.cu`) and
+    /// `causal_conv1d_window_advance_parts` (`kda_conv_tokens.cu`): the 64-token scan with the
+    /// conv inside its prepare (`chunk64_conv.rs`).
+    pub chunk64_prepare_conv: KernelHandle,
+    pub conv_window_parts: KernelHandle,
 }
 
 impl KdaSeqKernels {
@@ -171,6 +176,8 @@ impl KdaSeqKernels {
             chunk16_scan: k(gpu, "kda_chunk16", "kda_chunk16_scan"),
             chunk64_prepare: k(gpu, "kda_chunk64_prepare", "kda_chunk64_prepare"),
             chunk64_scan: k(gpu, "kda_chunk64", "kda_chunk64_scan"),
+            chunk64_prepare_conv: k(gpu, "kda_chunk64_prepare", "kda_chunk64_prepare_conv"),
+            conv_window_parts: k(gpu, "kda_conv_tokens", "causal_conv1d_window_advance_parts"),
         }
     }
 
