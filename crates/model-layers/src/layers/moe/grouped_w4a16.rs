@@ -35,8 +35,8 @@ pub(super) struct GroupedW4a16Kernels {
     /// (`ops/moe_w4a16_wgmma_tests.rs`, wgmma-01); it stays opt-in until the chunk gate
     /// (`ops/moe_w4a16_wgmma_chunk_tests.rs`), the crossover sweep and a serve A/B report.
     wgmma: KernelHandle,
-    /// 2026-10-14: The recipe's routed-rows minimum for `wgmma`
-    /// (`METRALE_MOE_PREFILL_WGMMA_MIN_ROWS`, required with the lever); `None` with the lever off.
+    /// 2026-10-14: The target's routed-rows minimum for `wgmma` (`moe_w4a16_wgmma_min_rows` in
+    /// `ops::target_defaults`, nonzero with the lever); `None` with the lever off.
     wgmma_min_rows: Option<u32>,
 }
 
@@ -51,8 +51,11 @@ impl GroupedW4a16Kernels {
         };
         let wgmma_on = std::env::var("METRALE_MOE_PREFILL_WGMMA").as_deref() == Ok("1");
         let wgmma_min_rows = if wgmma_on {
-            let raw = std::env::var(ops::MOE_W4A16_WGMMA_MIN_ROWS_ENV).ok();
-            Some(ops::moe_w4a16_wgmma_min_rows(raw.as_deref())?)
+            let levers = ops::target_defaults::resolved();
+            Some(ops::moe_w4a16_wgmma_min_rows(
+                levers.moe_w4a16_wgmma_min_rows.value,
+                levers.hw,
+            )?)
         } else {
             None
         };
@@ -125,8 +128,8 @@ impl MoeLayer {
     /// The two opt-ins keep priority over the pipelined twin. 2026-10-14: the persistent pipelined
     /// twin goes first when `GroupedW4a16Kernels::persistent`; it ignores `max_m_tiles` and sizes
     /// its grid from `total_rows`, the expert-sorted row count. Ahead of it, the wgmma twin when
-    /// `GroupedW4a16Kernels::wgmma` (METRALE_MOE_PREFILL_WGMMA=1 and `total_rows` at least
-    /// METRALE_MOE_PREFILL_WGMMA_MIN_ROWS), sized the same way.
+    /// `GroupedW4a16Kernels::wgmma` (METRALE_MOE_PREFILL_WGMMA=1 and `total_rows` at least the
+    /// target's `moe_w4a16_wgmma_min_rows`), sized the same way.
     ///
     /// The k32 and m256 kernels are opt-in. Measured 2026-08-27 on GB10 (qwen4_exp, 28K
     /// prefill, back to back): k32 +1.0% and m256 +1.4% over the arm without them,

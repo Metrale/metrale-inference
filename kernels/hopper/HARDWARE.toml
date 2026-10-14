@@ -417,6 +417,15 @@ w8a8_lt_min_rows = 64
 ffn_w4a16_lt_min_rows = 129
 # 2026-10-09: The row tiles' load-ahead (tc_rows.cuh PF): 1 until the PF points are measured here.
 w4a16_tc_rows_pf = 1
+# 2026-10-14: From 30720 routed rows (tokens x top-k) per call, a W4A16 MoE prefill projection
+# runs the WGMMA grouped twin (ops/moe_grouped_a/wgmma.rs) instead of the persistent grouped
+# kernel, only when METRALE_MOE_PREFILL_WGMMA=1 (crates/model-layers/src/layers/moe/grouped_w4a16.rs).
+# Bit-identical to the persistent kernel (0 elements differ, T=1..4096). Measured on the H100 SXM
+# test box (moe_w4a16_wgmma_tests timing sweep, 512 experts top-10), persistent vs WGMMA, us:
+# gate|up N=640 K=2560 at 3072 tokens 771.6 vs 724.1 (1.07x), 4096 tokens 1186.8 vs 725.1 (1.64x);
+# down N=2560 K=640 at 3072 tokens 819.8 vs 792.9 (1.03x), 4096 tokens 1233.3 vs 812.0 (1.52x).
+# At 2048 tokens and below the persistent kernel wins (0.84x / 0.79x); 2048-3072 is unmeasured.
+moe_w4a16_wgmma_min_rows = 30720
 # 2026-09-25: The sources in kernels/hopper/common. Every other kernel this
 # target compiles comes from gb10 through `inherits`.
 #

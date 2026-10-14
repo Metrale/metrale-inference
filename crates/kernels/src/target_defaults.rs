@@ -128,4 +128,9 @@ pub struct TargetDefaults {
     /// (tc_rows.cuh PF; 1, 2 or 3, the widest compiled point at or below it per row tier), read by
     /// metrale-model-layers `ops::w4a16_tc_rows`. The points give the same bits. The baseline is 1.
     pub w4a16_tc_rows_pf: u32,
+    /// 2026-10-14: From this many routed rows (tokens x top-k) per call up, a W4A16 MoE prefill
+    /// projection runs the WGMMA grouped twin instead of the persistent grouped kernel, when
+    /// `METRALE_MOE_PREFILL_WGMMA=1` (metrale-model-layers `layers/moe/grouped_w4a16.rs`). `0`
+    /// means never, the baseline; hopper declares its measured crossover.
+    pub moe_w4a16_wgmma_min_rows: u32,
 }

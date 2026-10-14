@@ -11,8 +11,8 @@
 //! (K % 64, N % 128, dynamic shared memory) cannot fire on them, and its grid never exceeds the
 //! SM count. Its bytes against the base and pipelined kernels are the GPU test's question
 //! (`ops/moe_w4a16_wgmma_tests.rs`); the MoE layer runs it only under
-//! METRALE_MOE_PREFILL_WGMMA=1, and only for calls `moe_w4a16_wgmma_routes` accepts at
-//! the recipe's METRALE_MOE_PREFILL_WGMMA_MIN_ROWS.
+//! METRALE_MOE_PREFILL_WGMMA=1, and only for calls `moe_w4a16_wgmma_routes` accepts at the
+//! target's routed-row floor (`moe_w4a16_wgmma_min_rows`).
 
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
@@ -33,29 +33,20 @@ const WGMMA_K_STEP: u32 = 64;
 /// kernel is compiled only for that class.
 pub const MOE_W4A16_WGMMA_SMEM_OPTIN: u32 = 232_448;
 
-/// 2026-10-14: The environment variable holding the fewest expert-sorted rows (tokens x top-k)
-/// a routed prefill call must have for the MoE layer to route it to the wgmma twin; smaller calls
-/// keep the persistent pipelined twin. It is a measured per-class crossover (on the H100, 512
-/// experts top-10, the twin lost at 300 tokens and won at 4,096, evidence wgmma-01), so it comes
-/// from the recipe, never from code.
-pub const MOE_W4A16_WGMMA_MIN_ROWS_ENV: &str = "METRALE_MOE_PREFILL_WGMMA_MIN_ROWS";
-
-/// 2026-10-14: The routed-rows minimum from `raw`, the value of `MOE_W4A16_WGMMA_MIN_ROWS_ENV`.
-/// Errors when it is unset, not a whole number, or zero: METRALE_MOE_PREFILL_WGMMA=1 without a
-/// measured minimum is a recipe error, not a default.
-pub fn moe_w4a16_wgmma_min_rows(raw: Option<&str>) -> Result<u32> {
-    let raw = raw.ok_or_else(|| {
-        anyhow::anyhow!(
-            "METRALE_MOE_PREFILL_WGMMA=1 needs {MOE_W4A16_WGMMA_MIN_ROWS_ENV}, the measured \
-             routed-rows crossover of the wgmma twin"
-        )
-    })?;
-    match raw.parse::<u32>() {
-        Ok(rows) if rows > 0 => Ok(rows),
-        _ => anyhow::bail!(
-            "{MOE_W4A16_WGMMA_MIN_ROWS_ENV}={raw:?}: expected a routed-row count above zero"
-        ),
-    }
+/// 2026-10-14: The fewest expert-sorted rows (tokens x top-k) a routed prefill call must have
+/// for the MoE layer to route it to the wgmma twin; smaller calls keep the persistent pipelined
+/// twin. `resolved` is the compiled target `hw`'s `moe_w4a16_wgmma_min_rows`
+/// (`ops::target_defaults`: the `kernels/<hw>/HARDWARE.toml [defaults]` declaration, or
+/// METRALE_MOE_PREFILL_WGMMA_MIN_ROWS). It is a measured per-class crossover, so a target that
+/// declares 0 has none: METRALE_MOE_PREFILL_WGMMA=1 there is a configuration error, not a default.
+pub fn moe_w4a16_wgmma_min_rows(resolved: u32, hw: &str) -> Result<u32> {
+    anyhow::ensure!(
+        resolved > 0,
+        "METRALE_MOE_PREFILL_WGMMA=1 on target {hw:?}, whose wgmma routed-row floor is 0: declare \
+         the measured crossover as kernels/{hw}/HARDWARE.toml [defaults] moe_w4a16_wgmma_min_rows \
+         or set METRALE_MOE_PREFILL_WGMMA_MIN_ROWS"
+    );
+    Ok(resolved)
 }
 
 /// 2026-10-14: Whether a routed prefill call of `total_rows` expert-sorted rows goes to the

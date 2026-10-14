@@ -9,6 +9,9 @@
 
 #[path = "ops/activations.rs"]
 mod activations;
+#[cfg(test)]
+#[path = "ops/bf16_ulp_tests_util.rs"]
+mod bf16_ulp_tests_util;
 #[path = "ops/derived_weights.rs"]
 mod derived_weights;
 #[path = "ops/dispatch_config.rs"]

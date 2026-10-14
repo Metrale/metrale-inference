@@ -42,6 +42,7 @@ const GB10: TargetDefaults = TargetDefaults {
     w8a8_lt_min_rows: 0,
     ffn_w4a16_lt_min_rows: 0,
     w4a16_tc_rows_pf: 1,
+    moe_w4a16_wgmma_min_rows: 0,
 };
 
 /// 2026-09-25: A copy of `kernels/hopper/HARDWARE.toml` `[defaults]`.
@@ -74,6 +75,7 @@ const HOPPER: TargetDefaults = TargetDefaults {
     w8a8_lt_min_rows: 64,
     ffn_w4a16_lt_min_rows: 129,
     w4a16_tc_rows_pf: 1,
+    moe_w4a16_wgmma_min_rows: 30720,
 };
 
 fn with(defaults: &TargetDefaults, env: &[(&str, &str)]) -> TargetLevers {
@@ -475,4 +477,20 @@ fn the_w8a8_gemv_entries_are_declared_per_target_and_overridable() {
         );
         assert!(!j.w8a8_gemv_entries.from_env(), "{junk:?}");
     }
+}
+
+/// 2026-10-14: The W4A16 MoE WGMMA routed-row floor: 0 on GB10, the measured 30720 on hopper,
+/// and `METRALE_MOE_PREFILL_WGMMA_MIN_ROWS` sets it either way with the source tagged.
+#[test]
+fn the_moe_wgmma_floor_is_declared_per_target_and_overridable() {
+    assert_eq!(empty(&GB10).moe_w4a16_wgmma_min_rows.value, 0);
+    let h = empty(&HOPPER);
+    assert_eq!(h.moe_w4a16_wgmma_min_rows.value, 30720);
+    assert!(format_levers(&h).contains("moe_w4a16_wgmma_min_rows=30720"));
+    let env = with(&GB10, &[("METRALE_MOE_PREFILL_WGMMA_MIN_ROWS", "40960")]);
+    assert_eq!(env.moe_w4a16_wgmma_min_rows.value, 40960);
+    assert!(format_levers(&env).contains("moe_w4a16_wgmma_min_rows=40960 (env)"));
+    let junk = with(&HOPPER, &[("METRALE_MOE_PREFILL_WGMMA_MIN_ROWS", "lots")]);
+    assert_eq!(junk.moe_w4a16_wgmma_min_rows.value, 30720);
+    assert!(!junk.moe_w4a16_wgmma_min_rows.from_env());
 }

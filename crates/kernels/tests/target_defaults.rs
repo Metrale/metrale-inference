@@ -221,6 +221,7 @@ fn every_declaring_target_states_every_lever() {
             "w8a8_lt_min_rows",
             "ffn_w4a16_lt_min_rows",
             "w4a16_tc_rows_pf",
+            "moe_w4a16_wgmma_min_rows",
         ] {
             assert!(
                 raw.contains(&format!("\n{lever} = ")),
@@ -347,6 +348,7 @@ fn the_generated_constant_names_every_field() {
         "w8a8_lt_min_rows: 64",
         "ffn_w4a16_lt_min_rows: 129",
         "w4a16_tc_rows_pf: 1",
+        "moe_w4a16_wgmma_min_rows: 30720",
     ] {
         assert!(
             generated.contains(field),
@@ -390,6 +392,10 @@ fn the_baked_constant_matches_its_own_hardware_tree() {
     assert_eq!(baked.w8a8_lt_min_rows, declared.w8a8_lt_min_rows);
     assert_eq!(baked.ffn_w4a16_lt_min_rows, declared.ffn_w4a16_lt_min_rows);
     assert_eq!(baked.w4a16_tc_rows_pf, declared.w4a16_tc_rows_pf);
+    assert_eq!(
+        baked.moe_w4a16_wgmma_min_rows,
+        declared.moe_w4a16_wgmma_min_rows
+    );
     assert_eq!(
         metrale_kernels::TARGET_SM_COUNT,
         read_sm_count(&kernels_root(), baked.hw),

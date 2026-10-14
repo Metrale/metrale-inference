@@ -15,6 +15,8 @@ extern "C" {
 int cublasLtCreate() { return 1; }
 int cublasLtDestroy() { return 1; }
 int cublasLtMatmul() { return 1; }
+int cublasLtMatmulAlgoCheck() { return 1; }
+int cublasLtMatmulAlgoConfigGetAttribute() { return 1; }
 int cublasLtMatmulAlgoGetHeuristic() { return 1; }
 int cublasLtMatmulDescCreate() { return 1; }
 int cublasLtMatmulDescDestroy() { return 1; }

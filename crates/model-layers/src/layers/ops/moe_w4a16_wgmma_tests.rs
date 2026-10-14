@@ -13,12 +13,12 @@
 //!   differ and the largest gap in BF16 units in the last place before failing.
 //! - `..._is_within_one_bf16_ulp_...` is the class-N guard: every output finite, written, and at
 //!   most one BF16 ulp from the persistent pipelined twin's, the kernel the MoE layer runs below
-//!   the recipe's METRALE_MOE_PREFILL_WGMMA_MIN_ROWS (wgmma-01 measured class B, so this bounds a
+//!   the target's moe_w4a16_wgmma_min_rows (wgmma-01 measured class B, so this bounds a
 //!   future regression).
 //! - `..._timing_...` prints microseconds per call of the persistent pipelined and wgmma twins on
 //!   the routing shape at `SWEEP_TOKENS`, the speedup, and the crossover: the fewest swept tokens
 //!   from which the wgmma twin is faster on both projections at every larger swept count, with
-//!   its routed rows (the candidate METRALE_MOE_PREFILL_WGMMA_MIN_ROWS for the recipe).
+//!   its routed rows (the candidate `moe_w4a16_wgmma_min_rows` for kernels/hopper/HARDWARE.toml).
 //!
 //! GPU test: run with
 //! ```text
@@ -33,6 +33,7 @@ use super::moe_w4a16_pipe_tests::{
     time_us, weights,
 };
 use crate::layers::ops;
+use crate::layers::ops::bf16_ulp_tests_util::ulp_gap;
 
 /// 2026-10-14: (N, K, gather): gate/up and down of the routed prefill.
 const SHAPES: [(u32, u32, bool); 2] = [(640, 2560, true), (2560, 640, false)];
@@ -53,30 +54,6 @@ pub(super) fn wgmma_kernel(g: &dyn GpuBackend) -> KernelHandle {
         "moe_w4a16_grouped_gemm_ptrtable_wgmma",
     )
     .expect("the Hopper wgmma twin is not in this build")
-}
-
-/// 2026-10-14: A BF16 as an integer that orders like the value (sign-magnitude to two's
-/// complement), so the distance of two finite BF16s in ulps is a difference.
-fn bf16_ordinal(b: [u8; 2]) -> i32 {
-    let v = u16::from_le_bytes(b) as i32;
-    if v & 0x8000 != 0 { -(v & 0x7FFF) } else { v }
-}
-
-/// 2026-10-14: Elements of `got` that differ from `want`, and the largest distance in BF16 ulps
-/// (`i32::MAX` when either side is not finite).
-fn ulp_gap(want: &[u8], got: &[u8]) -> (usize, i32) {
-    let finite = |b: &[u8]| u16::from_le_bytes([b[0], b[1]]) & 0x7F80 != 0x7F80;
-    want.chunks_exact(2)
-        .zip(got.chunks_exact(2))
-        .filter(|(w, g)| w != g)
-        .fold((0, 0), |(n, max), (w, g)| {
-            let gap = if finite(w) && finite(g) {
-                (bf16_ordinal([w[0], w[1]]) - bf16_ordinal([g[0], g[1]])).abs()
-            } else {
-                i32::MAX
-            };
-            (n + 1, max.max(gap))
-        })
 }
 
 /// 2026-10-14: Every (problem, wgmma arm) pair the class tests compare with the base kernel: the

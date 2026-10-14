@@ -48,9 +48,9 @@ pub use pipe::{
 #[path = "moe_grouped_a/wgmma.rs"]
 mod wgmma;
 pub use wgmma::{
-    MOE_W4A16_WGMMA_LAUNCH, MOE_W4A16_WGMMA_M_TILE, MOE_W4A16_WGMMA_MIN_ROWS_ENV,
-    MOE_W4A16_WGMMA_SMEM_OPTIN, moe_w4a16_grouped_gemm_ptrtable_wgmma, moe_w4a16_wgmma_admits,
-    moe_w4a16_wgmma_ctas, moe_w4a16_wgmma_min_rows, moe_w4a16_wgmma_routes, moe_w4a16_wgmma_smem,
+    MOE_W4A16_WGMMA_LAUNCH, MOE_W4A16_WGMMA_M_TILE, MOE_W4A16_WGMMA_SMEM_OPTIN,
+    moe_w4a16_grouped_gemm_ptrtable_wgmma, moe_w4a16_wgmma_admits, moe_w4a16_wgmma_ctas,
+    moe_w4a16_wgmma_min_rows, moe_w4a16_wgmma_routes, moe_w4a16_wgmma_smem,
 };
 
 /// 2026-09-25: Launcher for `moe_w4a16_grouped_gemm`, whose weights are contiguous per expert

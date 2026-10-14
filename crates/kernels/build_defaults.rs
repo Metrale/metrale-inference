@@ -42,6 +42,7 @@ pub(crate) struct Defaults {
     pub w8a8_lt_min_rows: u32,
     pub ffn_w4a16_lt_min_rows: u32,
     pub w4a16_tc_rows_pf: u32,
+    pub moe_w4a16_wgmma_min_rows: u32,
 }
 
 // 2026-10-05: The W8A8 GEMV schedule points (`src/w8a8_gemv_entries.rs`), one table for this
@@ -99,6 +100,8 @@ pub(crate) fn baseline(hw: &str) -> Defaults {
         ffn_w4a16_lt_min_rows: 0,
         // 2026-10-09: The row tiles' loads run one group ahead (tc_rows.cuh PF).
         w4a16_tc_rows_pf: 1,
+        // 2026-10-14: Off: W4A16 MoE prefill keeps the persistent grouped kernel at every width.
+        moe_w4a16_wgmma_min_rows: 0,
     }
 }
 
@@ -225,6 +228,7 @@ pub(crate) fn parse_defaults(hw: &str, hw_toml: &toml::Value) -> Defaults {
             }
             "w8a8_lt_min_rows" => out.w8a8_lt_min_rows = unsigned(key, value),
             "ffn_w4a16_lt_min_rows" => out.ffn_w4a16_lt_min_rows = unsigned(key, value),
+            "moe_w4a16_wgmma_min_rows" => out.moe_w4a16_wgmma_min_rows = unsigned(key, value),
             "w4a16_tc_rows_pf" => {
                 out.w4a16_tc_rows_pf = unsigned(key, value);
                 assert!(
@@ -287,6 +291,7 @@ pub(crate) fn literal(d: &Defaults) -> String {
          \x20   w8a8_lt_min_rows: {w8a8_lt},\n\
          \x20   ffn_w4a16_lt_min_rows: {ffn_lt},\n\
          \x20   w4a16_tc_rows_pf: {tc_rows_pf},\n\
+         \x20   moe_w4a16_wgmma_min_rows: {moe_wgmma},\n\
          }};\n",
         hw = d.hw,
         batchm = d.lm_head_batchm_max,
@@ -310,6 +315,7 @@ pub(crate) fn literal(d: &Defaults) -> String {
         w8a8_lt = d.w8a8_lt_min_rows,
         ffn_lt = d.ffn_w4a16_lt_min_rows,
         tc_rows_pf = d.w4a16_tc_rows_pf,
+        moe_wgmma = d.moe_w4a16_wgmma_min_rows,
     )
 }
 

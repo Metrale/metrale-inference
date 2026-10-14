@@ -185,6 +185,8 @@ pub struct TargetLevers {
     pub ffn_w4a16_lt_min_rows: Resolved<u32>,
     /// 2026-10-09: The row tiles' load-ahead (`ops::w4a16_tc_rows`).
     pub w4a16_tc_rows_pf: Resolved<u32>,
+    /// 2026-10-14: The W4A16 MoE prefill WGMMA twin's routed-row floor (`moe/grouped_w4a16.rs`).
+    pub moe_w4a16_wgmma_min_rows: Resolved<u32>,
 }
 
 /// 2026-10-09: The W4A16 tensor-core GEMV entries: the environment's two comma-separated points
@@ -274,6 +276,11 @@ pub fn resolve(
             Some(v) => Resolved::env(v),
             None => Resolved::target(defaults.w4a16_tc_rows_pf),
         },
+        // 2026-10-14: Read only under `METRALE_MOE_PREFILL_WGMMA=1`, which fails fast on a 0.
+        moe_w4a16_wgmma_min_rows: resolve_max_m(
+            defaults.moe_w4a16_wgmma_min_rows,
+            var("METRALE_MOE_PREFILL_WGMMA_MIN_ROWS").as_deref(),
+        ),
         // 2026-09-25: `kernels/hopper` declares it on, the other tables off. A
         // pinned `--ssm-batched-recurrent` outranks this row (`serve_flags.rs`).
         ssm_batched_recurrent: resolve_toggle(
@@ -426,7 +433,8 @@ pub fn format_levers(l: &TargetLevers) -> String {
          w4a16_gemv_tc_entries={w4tc_entries}{w4tc_entries_src} \
          w8a8_lt_min_rows={w8a8_lt}{w8a8_lt_src} \
          ffn_w4a16_lt_min_rows={ffn_lt}{ffn_lt_src} \
-         w4a16_tc_rows_pf={tc_pf}{tc_pf_src}",
+         w4a16_tc_rows_pf={tc_pf}{tc_pf_src} \
+         moe_w4a16_wgmma_min_rows={moe_wgmma}{moe_wgmma_src}",
         hw = if l.hw.is_empty() { "unknown" } else { l.hw },
         // 2026-09-25: Not a lever: the target's `[hardware] sm_count`, which
         // `arch_preflight::check_sm_count` compares with the device at boot.
@@ -463,6 +471,8 @@ pub fn format_levers(l: &TargetLevers) -> String {
         ffn_lt_src = l.ffn_w4a16_lt_min_rows.source.tag(),
         tc_pf = l.w4a16_tc_rows_pf.value,
         tc_pf_src = l.w4a16_tc_rows_pf.source.tag(),
+        moe_wgmma = l.moe_w4a16_wgmma_min_rows.value,
+        moe_wgmma_src = l.moe_w4a16_wgmma_min_rows.source.tag(),
     )
 }
 

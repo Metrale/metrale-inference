@@ -12,6 +12,11 @@
 //!   path and the pipelined kernel change at each M (not asserted).
 //! - `..._timing` prints microseconds per call of the pipelined kernel, the per-call heuristic
 //!   path and the pinned path at 2,048 and 4,096 rows.
+//! - `..._bytes_against_the_pipelined_kernel` measures the lever's class: per shape at 2,048 and
+//!   4,096 rows, how many elements of the pinned output differ from the pipelined kernel's (the
+//!   lever-off path), the largest gap in BF16 ulps and the match rate. It asserts only that both
+//!   are finite and fully written; a difference is the measurement (class N unless all match), and
+//!   the class it names still needs the model-level (Tier 2) output comparison.
 //!
 //! GPU test: run with
 //! ```text
@@ -22,6 +27,7 @@
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 
 use crate::layers::ops;
+use crate::layers::ops::bf16_ulp_tests_util::ulp_gap;
 use crate::weight_map::DenseWeight;
 
 /// 2026-10-14: (N, K) of the projections: GDN in (q, k, v, z), GDN out and attention o, the
@@ -256,4 +262,39 @@ fn pinned_cublas_bf16_timing() {
         }
         p.free(g);
     }
+}
+
+#[test]
+#[ignore]
+fn pinned_cublas_bf16_bytes_against_the_pipelined_kernel() {
+    let gpu = backend();
+    let g: &dyn GpuBackend = &gpu;
+    let pipe = g.kernel("gemm", "dense_gemm_bf16_pipelined").unwrap();
+    let s = g.create_stream().unwrap();
+    let le = |v: &[u16]| v.iter().flat_map(|b| b.to_le_bytes()).collect::<Vec<u8>>();
+    let mut unwritten = Vec::new();
+    for (n, k) in SHAPES {
+        let (p, _, _) = Problem::new(g, n, k);
+        for rows in [2_048, 4_096] {
+            let pipelined = p.run(g, Arm::Pipelined(pipe), rows, 0, s);
+            let pinned = p.run(g, Arm::Pinned, rows, 0, s);
+            // 2026-10-14: `run` fills the output with 0xFFFF (a NaN) first, so a non-finite
+            // element is either a non-finite product or a row the call never wrote.
+            for (arm, out) in [("pipelined", &pipelined), ("pinned", &pinned)] {
+                let bad = out.iter().filter(|&&b| b & 0x7F80 == 0x7F80).count();
+                if bad != 0 {
+                    unwritten.push(format!("{arm} N={n} K={k} M={rows}: {bad} non-finite"));
+                }
+            }
+            let (differ, max_ulps) = ulp_gap(&le(&pipelined), &le(&pinned));
+            let total = pinned.len();
+            println!(
+                "N={n:5} K={k:5} M={rows:4}: pinned vs pipelined {differ}/{total} differ, max \
+                 {max_ulps} ulp, {:.4}% match",
+                100.0 * (total - differ) as f64 / total as f64
+            );
+        }
+        p.free(g);
+    }
+    assert!(unwritten.is_empty(), "{unwritten:?}");
 }
