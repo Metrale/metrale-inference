@@ -219,6 +219,113 @@ fn the_exchanges_enqueue_one_group_of_paired_transfers_on_the_stream() {
     assert!(comm.ops.lock().unwrap().is_empty(), "nothing enqueued");
 }
 
+/// 2026-10-14: At every world 2..=5 and uneven shards: each rank's ring steps 1..world together
+/// are exactly its reduce-scatter plan's sends and receives, and at every step the peer a rank
+/// sends to receives from that rank the same byte count, so the stepped exchange pairs up.
+#[test]
+fn ring_steps_are_the_plan_and_pair_up_at_every_step() {
+    let row = 4096 * 2;
+    for world in 2..=5usize {
+        for k in [301usize, 4098] {
+            let s = shards(k, world);
+            let slot = max_shard(k, world) * row;
+            let step = |rank, st| ring_step_plan(rank, &s, row, slot, st).unwrap();
+            for rank in 0..world {
+                let plan = reduce_scatter_plan(rank, &s, row, slot, 0);
+                let mut sends: Vec<_> = (1..world)
+                    .map(|st| step(rank, st))
+                    .map(|x| (x.to, x.send_off, x.send_bytes))
+                    .collect();
+                let mut recvs: Vec<_> = (1..world)
+                    .map(|st| step(rank, st))
+                    .map(|x| (x.from, x.recv_off, x.recv_bytes))
+                    .collect();
+                sends.sort();
+                recvs.sort();
+                let mut want_s: Vec<_> = plan
+                    .iter()
+                    .map(|x| (x.peer, x.send_off, x.send_bytes))
+                    .collect();
+                let mut want_r: Vec<_> = plan
+                    .iter()
+                    .map(|x| (x.peer, x.recv_off, x.recv_bytes))
+                    .collect();
+                want_s.sort();
+                want_r.sort();
+                assert_eq!(
+                    (sends, recvs),
+                    (want_s, want_r),
+                    "world {world} rank {rank}"
+                );
+                for st in 1..world {
+                    let x = step(rank, st);
+                    let y = step(x.to, st);
+                    assert_eq!(y.from, rank, "world {world} step {st}");
+                    assert_eq!(y.recv_bytes, x.send_bytes, "world {world} step {st}");
+                }
+            }
+            assert!(ring_step_plan(0, &s, row, slot, 0).is_err());
+            assert!(ring_step_plan(0, &s, row, slot, world).is_err());
+        }
+    }
+}
+
+/// 2026-10-14: On rank 1 of 3 with 300 rows: step 1 is one group sending rows 200..300 to rank 2
+/// and receiving rank 0's partial into slot 0, and returns nothing; step 2 sends rows 0..100 to
+/// rank 0, receives rank 2's into slot 1, and returns the partials `reduce_scatter_rows` returns.
+/// A step outside 1..3 or a shard wider than the workspace is refused before anything is enqueued.
+#[test]
+fn the_ring_steps_enqueue_one_pair_each_and_the_last_returns_the_partials() {
+    let comm = Recorder {
+        rank: 1,
+        world: 3,
+        ops: Mutex::new(Vec::new()),
+    };
+    let row = 4096 * 2;
+    let ws = SpWorkspace {
+        recv: DevicePtr(0x9000_0000),
+        slot_bytes: 100 * row,
+        world: 3,
+    };
+    let s = shards(300, 3);
+    let p = DevicePtr(0x1000_0000);
+    let r = row as u64;
+    assert!(
+        reduce_scatter_step(&comm, &ws, p, &s, 1, row, 7)
+            .unwrap()
+            .is_none()
+    );
+    let last = reduce_scatter_step(&comm, &ws, p, &s, 2, row, 7)
+        .unwrap()
+        .unwrap();
+    let ops = std::mem::take(&mut *comm.ops.lock().unwrap());
+    assert_eq!(
+        ops,
+        vec![
+            ("group_start", 0, 0, 0, 0),
+            ("send", p.0 + 200 * r, 100 * row, 2, 7),
+            ("recv", ws.recv.0, 100 * row, 0, 7),
+            ("group_end", 0, 0, 0, 0),
+            ("group_start", 0, 0, 0, 0),
+            ("send", p.0, 100 * row, 0, 7),
+            ("recv", ws.recv.0 + 100 * r, 100 * row, 2, 7),
+            ("group_end", 0, 0, 0, 0),
+        ]
+    );
+    let whole = reduce_scatter_rows(&comm, &ws, p, &s, 0, row, 7).unwrap();
+    comm.ops.lock().unwrap().clear();
+    assert_eq!(
+        (last.recv, last.slot_elems, last.world_size, last.rank),
+        (whole.recv, whole.slot_elems, whole.world_size, whole.rank)
+    );
+    for bad in [0, 3] {
+        assert!(reduce_scatter_step(&comm, &ws, p, &s, bad, row, 7).is_err());
+    }
+    assert!(reduce_scatter_step(&comm, &ws, p, &shards(303, 3), 1, row, 7).is_err());
+    assert!(reduce_scatter_step(&comm, &ws, p, &shards(300, 2), 1, row, 7).is_err());
+    assert!(comm.ops.lock().unwrap().is_empty(), "nothing enqueued");
+}
+
 /// 2026-10-12: Off, `reserve` allocates nothing (the lever is unset in tests) and
 /// `workspace_get` reports that nothing was reserved.
 #[test]
