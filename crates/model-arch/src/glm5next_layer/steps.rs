@@ -11,6 +11,7 @@ use crate::glm5next_layer_dump::tap as dump;
 
 mod drafter;
 mod forward;
+mod forward_pieces;
 mod forward_sp;
 mod forward_sp_pipe;
 mod mhc_slice;

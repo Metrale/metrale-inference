@@ -279,6 +279,7 @@ impl Glm5NextLayer {
                 slot_base,
                 ctx,
                 stream,
+                &[k],
                 tap.as_ref(),
                 mixer,
             );

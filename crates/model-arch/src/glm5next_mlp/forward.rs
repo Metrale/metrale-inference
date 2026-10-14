@@ -41,7 +41,8 @@ pub use shared_fork::{SHARED_FORK_MAX_ROWS, shared_fork_rows};
 pub use w4a4_dense::forward_dense_w4a4;
 pub use w4a4_dense_grouped::DenseGroupedTables;
 pub use w4a4_grouped::{
-    moe_w4a4_grouped, smem_bytes as w4a4_grouped_smem_bytes, tile_index as w4a4_grouped_tile_index,
+    moe_w4a4_grouped, smem_bytes as w4a4_grouped_smem_bytes, takes_grouped as w4a4_takes_grouped,
+    tile_index as w4a4_grouped_tile_index,
 };
 pub use w4a4_grouped_gu::{
     W4a4GuCall, check_at_load as check_gu_fused_at_load, launch_w4a4_gu, moe_w4a4_gu_fused,

@@ -57,11 +57,14 @@ impl Glm5NextLayer {
         slot_base: usize,
         ctx: &ForwardContext,
         stream: u64,
+        // 2026-10-14: The MLP's per-piece launches, as `forward_rows_with`'s (`[k]` for one).
+        row_pieces: &[usize],
         tap: Option<&dump::Tap<'_>>,
         mixer: impl FnOnce(DevicePtr) -> Result<DevicePtr>,
     ) -> Result<()> {
         use crate::glm5next_sp_mhc as sp;
         use crate::glm5next_sp_overlap as ov;
+        crate::glm5next_mlp::forward::check_pieces(k, row_pieces)?;
         let Some(comm) = ctx.comm else {
             bail!(
                 "GLM layer {}: SP-mHC without a communicator",
@@ -150,7 +153,7 @@ impl Glm5NextLayer {
         )?;
 
         dump::site(tap, true, [streams, rows.post, rows.comb, normed])?;
-        self.mlp_compute(normed, ffn_out, k, &[k], ctx, stream)?;
+        self.mlp_compute(normed, ffn_out, k, row_pieces, ctx, stream)?;
         dump::put(tap, dump::Point::MlpOut, ffn_out)?;
         let reduce = self.mlp_cfg.needs_all_reduce();
         ov::run_section(
