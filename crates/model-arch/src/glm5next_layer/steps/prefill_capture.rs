@@ -22,9 +22,13 @@
 //! - The rows equal the separate passes' bytes only for passes ending and starting at the
 //!   SAME points: the model therefore plans one point, the tail split point, for such layers
 //!   (`prepare_cut_capture`), the split `--no-ssm-tail-midchunk` runs as two passes.
+//! - 2026-10-14: A separate pass of ONE row after position 0 runs each layer's decode path, so
+//!   a one-row segment carries its bytes only under `METRALE_ONE_ROW_TAIL_DECODE=1`, which runs
+//!   it through `forward_one` as `decode` does; by default it is a one-row `forward_k` prefill
+//!   sub-chunk, as before.
 
 use super::*;
-use metrale_model_layers::layer::MidchunkCapture;
+use metrale_model_layers::layer::{MidchunkCapture, split_segment_takes_decode_path};
 
 /// 2026-10-11: Which slot a capture point fills.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -128,16 +132,33 @@ impl Glm5NextLayer {
         // 2026-10-13: The layer dump's sub-chunk index and the pass's last position.
         let mut chunk = 0usize;
         let last_pos = (num_tokens > 0).then(|| seq_len_start + num_tokens - 1);
+        let split = segments.len() > 1;
         for (start, end, after) in segments {
+            // 2026-10-14: Under `METRALE_ONE_ROW_TAIL_DECODE=1` a one-row segment after position
+            // 0 runs `decode`'s walk (`forward_one`, its dump call), the path a warm one-row
+            // replay of the row takes, on the row's own highway slot (`layer/one_row_path.rs`).
+            // The per-token walk (`rows == 1`) already runs `forward_one`.
+            let tail_decode = rows > 1
+                && split_segment_takes_decode_path(
+                    end - start,
+                    seq_len_start + start,
+                    split,
+                    ctx.levers.one_row_tail_decode,
+                    ctx.levers.one_row_prefill,
+                );
             let mut t = start;
             while t < end {
-                let call = dump::Call {
-                    path: dump::Path::Prefill,
-                    chunk,
-                    last_pos,
+                let call = if tail_decode {
+                    dump::Call::step(dump::Path::Decode)
+                } else {
+                    dump::Call {
+                        path: dump::Path::Prefill,
+                        chunk,
+                        last_pos,
+                    }
                 };
                 chunk += 1;
-                if rows > 1 {
+                if rows > 1 && !tail_decode {
                     let k = rows.min(end - t);
                     self.forward_k(
                         hidden.offset(t * self.hidden * 2),

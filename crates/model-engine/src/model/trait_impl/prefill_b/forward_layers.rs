@@ -15,7 +15,7 @@ use metrale_gpu_runtime::gpu::DevicePtr;
 
 use super::super::super::types::TransformerModel;
 use crate::traits::SequenceState;
-use metrale_model_layers::layer::{AttnMetadataDev, ForwardContext};
+use metrale_model_layers::layer::{AttnMetadataDev, ForwardContext, takes_decode_path};
 
 impl TransformerModel {
     pub(super) fn prefill_b_forward_layers(
@@ -124,8 +124,8 @@ impl TransformerModel {
         // 2026-09-25: A single-token pass after position 0 (for example the last-token
         // re-run in `proc_range`) runs each layer's decode path. 2026-10-14: unless
         // `METRALE_ONE_ROW_PREFILL=1` and the layers split their pass at a capture
-        // (`one_row_path`).
-        let use_decode_path = super::one_row_path::takes_decode_path(
+        // (`takes_decode_path`).
+        let use_decode_path = takes_decode_path(
             proc_count,
             effective_seq_len_start,
             self.levers.one_row_prefill,

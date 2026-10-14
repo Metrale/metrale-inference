@@ -145,7 +145,15 @@ impl TransformerModel {
                     == self
                         .mtp_prefill_capture_gen
                         .load(std::sync::atomic::Ordering::Relaxed);
-            let cold_prefill_ok = p >= 2 && captured >= p && seq_tokens.len() >= p && owns_capture;
+            // 2026-10-14: `METRALE_MTP_ADOPT_CAPTURE`: a hit's capture claims the rows a consumed
+            // capture left, which holds only while they were computed for its matched tokens.
+            let adopted_ok = !self.levers.mtp_adopt_capture
+                || self
+                    .mtp_capture_record
+                    .lock()
+                    .covers(capture_gen, &seq_tokens[..p.min(seq_tokens.len())]);
+            let cold_prefill_ok =
+                p >= 2 && captured >= p && seq_tokens.len() >= p && owns_capture && adopted_ok;
             let carry_on = metrale_model_layers::mtp_carry::mtp_carry_drafter_enabled(&self.levers);
             // 2026-09-25: Both branches run only on the first propose: `prefill_drafter`
             // returns early once the drafter has rows, and the carry checks `first_propose`.
@@ -176,6 +184,11 @@ impl TransformerModel {
                     stream,
                 ) {
                     tracing::warn!("MTP drafter prefill failed (continuing without): {e:#}");
+                }
+                if self.levers.mtp_adopt_capture {
+                    self.mtp_capture_record
+                        .lock()
+                        .note_consumed(&seq_tokens[..p]);
                 }
             } else if carry_on && first_propose && p >= 2 {
                 let outcome = self.try_carry_drafter(

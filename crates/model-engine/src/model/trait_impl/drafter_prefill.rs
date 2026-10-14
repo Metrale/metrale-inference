@@ -75,6 +75,8 @@ impl TransformerModel {
             return Ok(());
         }
         let len = self.mtp_prefill_capture_len.load(Ordering::Relaxed);
+        let carry_on = metrale_model_layers::mtp_carry::mtp_carry_drafter_enabled(&self.levers);
+        let adopt = self.levers.mtp_adopt_capture;
         // 2026-09-25: The capture buffer is one shared slot. Chunk 0 claims it under a fresh
         // generation; an append counts only while this sequence still owns the current
         // generation, because another sequence's chunk 0 may have restarted the capture in
@@ -88,6 +90,21 @@ impl TransformerModel {
             && seq.mtp_capture_gen == self.mtp_prefill_capture_gen.load(Ordering::Relaxed)
         {
             Some(len + proc_count)
+        } else if metrale_model_layers::mtp_adopt::claims_adoption(
+            adopt,
+            carry_on,
+            chunk_start,
+            self.mtp_capture_record.lock().tokens.len(),
+        ) {
+            // 2026-10-14: `METRALE_MTP_ADOPT_CAPTURE`: a prefix-cache hit claims the capture,
+            // taking rows below `chunk_start` from the record; the consume checks the record
+            // still holds this prompt's matched tokens (`mtp_adopt`).
+            let generation = self.mtp_prefill_capture_gen.fetch_add(1, Ordering::Relaxed) + 1;
+            seq.mtp_capture_gen = generation;
+            self.mtp_capture_record
+                .lock()
+                .note_claim(generation, chunk_start);
+            Some(chunk_start + proc_count)
         } else {
             None
         };
@@ -95,9 +112,11 @@ impl TransformerModel {
         // tracker above rejects. With `mtp_carry_drafter_enabled`, the carry path records the
         // written interval by absolute row (`mtp_store_range`), so it wants the write wherever
         // the chunk starts. The source is this chunk's rows; only the destination is absolute.
-        let carry_on = metrale_model_layers::mtp_carry::mtp_carry_drafter_enabled(&self.levers);
         if contiguous_from_zero.is_none() && !carry_on {
             return Ok(());
+        }
+        if adopt {
+            self.mtp_capture_record.lock().note_write(chunk_start);
         }
         let h = self.config.hidden_size;
         let bf16 = 2usize;
