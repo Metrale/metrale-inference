@@ -79,6 +79,9 @@ impl TransformerModel {
             // 2026-09-28: Chunk 0 is admitted by the rule the attention layer routes by.
             metrale_model_layers::layers::ops::prefill_batched_chunk_zero_admitted(),
             varlen,
+            self.layers
+                .iter()
+                .any(|l| l.prefill_kernel_batched_unsupported()),
         )
     }
 }
@@ -192,11 +195,12 @@ pub(in crate::model) fn check_kernel_batched_eligible<I>(
     mrope: bool,
     allow_chunk_zero: bool,
     varlen: bool,
+    layer_veto: bool,
 ) -> bool
 where
     I: IntoIterator<Item = (usize, usize, usize, bool)>,
 {
-    if n < 2 {
+    if n < 2 || layer_veto {
         return false;
     }
     if is_mla {

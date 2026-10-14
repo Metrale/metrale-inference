@@ -43,4 +43,10 @@ impl LayerCapabilities for Qwen3SsmLayer {
     fn supports_replay_tail_split(&self) -> bool {
         true
     }
+
+    /// 2026-10-14: The split entry points run neither `prefill_inner_hc` (the mHC streams)
+    /// nor the PLE injection.
+    fn prefill_kernel_batched_unsupported(&self) -> bool {
+        self.hc.is_some() || self.ple.is_some()
+    }
 }

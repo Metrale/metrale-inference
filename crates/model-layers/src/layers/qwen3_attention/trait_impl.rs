@@ -260,6 +260,12 @@ impl LayerCapabilities for Qwen3AttentionLayer {
     fn graph_stale_on_new_sequence(&self) -> bool {
         self.qsa.is_some()
     }
+
+    /// 2026-10-14: `prefill_inner_batched_q12` hands `prefill_inner` an empty layer state:
+    /// no mHC streams and no per-sequence QSA indexer.
+    fn prefill_kernel_batched_unsupported(&self) -> bool {
+        self.hc.is_some() || self.qsa.is_some()
+    }
 }
 
 impl LayerWeightSetup for Qwen3AttentionLayer {

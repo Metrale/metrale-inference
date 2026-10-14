@@ -105,4 +105,13 @@ pub trait LayerCapabilities {
     fn supports_replay_tail_split(&self) -> bool {
         false
     }
+
+    /// 2026-10-14: True when the kernel-batched prefill (`prefill_batch_chunk_kernel_batched`)
+    /// cannot run this layer: its per-layer split entry points (`LayerSplitPrefill`) skip what
+    /// this layer's `prefill` does, such as the hyper-connection streams, PLE or a per-sequence
+    /// QSA indexer. The model ORs it across layers, and `kernel_batched_eligible` then sends
+    /// every batch down the per-stream loop.
+    fn prefill_kernel_batched_unsupported(&self) -> bool {
+        false
+    }
 }
