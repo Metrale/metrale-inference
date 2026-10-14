@@ -25,7 +25,7 @@ ep_broadcast_cmd(0x5)
 ep_broadcast_tokens(n=5)
 ep_sync_vision_embeds(n=5)
 prefill(n=5, s2@0:len=5, stream=0)
-copy_logits_to_host(row=0, off=0, bytes=128)
+argmax_on_device(row=0, stream=0) -> 20
 fx launch Decode{n=1, ctx=Unified, readback=Argmax}
 decode_batch(tokens=[20], seqs=["s2@0:len=5"], stream=0)
 commit_ctx(s2@0:len=6, n=1, base=5, row=0)

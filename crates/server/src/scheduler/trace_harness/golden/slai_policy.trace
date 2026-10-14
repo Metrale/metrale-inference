@@ -19,7 +19,7 @@ ep_sync_vision_embeds(n=5)
 prefill_chunk(start=0, len=5, last=true, s1@0:len=5, stream=1)
 record_event(event=2, stream=1)
 stream_wait_event(stream=0, event=2)
-copy_logits_to_host(row=0, off=0, bytes=128)
+argmax_on_device(row=0, stream=0) -> 10
 alloc_sequence_for(budget=23) -> slot 1
 adapter_id_for(-1)
 acquire_adapter_slot(-1)
@@ -45,7 +45,7 @@ poll_innerq()
 mixed_forward(decode=[11], prefill=s2@1:len=20 start=16 len=4 last=true, stream=1)
 record_event(event=2, stream=1)
 stream_wait_event(stream=0, event=2)
-copy_logits_to_host(row=1, off=0, bytes=128)
+argmax_on_device(row=1, stream=0) -> 20
 record_event(event=2, stream=1)
 stream_wait_event(stream=0, event=2)
 argmax_batch(row=0, n=1, stream=0) -> [12]

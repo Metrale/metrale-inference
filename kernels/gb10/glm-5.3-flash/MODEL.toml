@@ -64,6 +64,15 @@ hc_sinkhorn_iters = 20
 # `glm5_next_text` (crates/config/src/parsers/glm5_next/parse.rs).
 
 
+# 2026-10-14: Do what vLLM does with the thinking block. The chat template always ends
+# with `<|assistant|><think>`, and vLLM's GLM-5.3 parser (GLM53-REASONING-ALWAYS) starts
+# every turn in reasoning. vLLM forces `</think>` only when the client asks for a
+# thinking budget, never on a server budget or watchdog, and it does not drop a stray
+# `</think>` or mask `<think>`. false turns off our thinking steering for this model
+# (scheduler/helpers/watchdog.rs); max_tokens and the serve's limits remain the bound.
+[behavior]
+thinking_steering = false
+
 
 [[model_types]]
 model_type = "glm5_next"

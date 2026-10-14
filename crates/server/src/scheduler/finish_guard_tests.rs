@@ -185,11 +185,12 @@ fn every_finish_site_is_a_recorded_decision() {
     // post-think cap, content loop, inter-tool prose, tool_envelope_stuck.
     // decode_logits_content: post-think cap, content loop, inter-tool prose.
     //
-    // Unnamed: emit_step: cancel flag, `<|im_start|>`, EOS, failed stream
-    // send, length stop. decode_logits_step: post-completion tool-open cap,
-    // two failed stream sends, `</tool_call>` with no grammar and no tools
-    // declared, EOS, `remaining == 0`, `max_seq_len` ceiling, terminated
-    // grammar.
+    // Unnamed: emit_step: cancel flag, `<|im_start|>`, failed stream send,
+    // length stop. decode_logits_step: post-completion tool-open cap, two
+    // failed stream sends, `</tool_call>` with no grammar and no tools
+    // declared, `remaining == 0`, `max_seq_len` ceiling, terminated grammar.
+    // eos_hold: the model's EOS (2026-10-14: one site, `end_turn_at_eos`,
+    // shared by both token paths).
     const LEDGER: &[(&str, &str, usize, usize)] = &[
         (
             "decode_logits_step.rs + decode_logits_step/{host_sample,per_token,content_emit}.rs",
@@ -199,7 +200,7 @@ fn every_finish_site_is_a_recorded_decision() {
                 include_str!("decode_logits_step/per_token.rs"),
                 include_str!("decode_logits_step/content_emit.rs")
             ),
-            11,
+            10,
             3,
         ),
         (
@@ -209,9 +210,10 @@ fn every_finish_site_is_a_recorded_decision() {
                 include_str!("emit_step/grammar_close.rs"),
                 include_str!("emit_step/tool_param.rs")
             ),
-            11,
+            10,
             6,
         ),
+        ("eos_hold.rs", include_str!("eos_hold.rs"), 1, 0),
         (
             "decode_logits_content.rs",
             include_str!("decode_logits_content.rs"),

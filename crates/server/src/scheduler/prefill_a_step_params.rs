@@ -47,7 +47,7 @@ pub(super) fn build_prefill_in_progress(
     enable_thinking: bool,
     thinking_budget: Option<u32>,
     repetition_detection: Option<RepetitionDetectionParams>,
-    spontaneous_think_budget: u32,
+    spontaneous_think_budget: Option<u32>,
     require_tool_call: bool,
     tools_present: bool,
     suppress_tool_call: bool,

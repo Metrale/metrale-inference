@@ -54,7 +54,7 @@ pub struct SchedulerCore {
     grammar_engine: Option<GrammarEngine>,
     adaptive_sampling: bool,
     session_manager: crate::session_manager::SessionSsmManager,
-    spontaneous_think_budget: u32,
+    spontaneous_think_budget: Option<u32>,
     use_mtp: bool,
     chunked: bool,
     mtp_gate: Option<metrale_speculative::mtp_gate::MtpGate>,

@@ -54,7 +54,7 @@ pub(in crate::scheduler) struct SwappedSeq {
     /// 2026-09-25: Per-request override for the content-loop detector, carried across
     /// the spill.
     pub repetition_detection: Option<RepetitionDetectionParams>,
-    pub spontaneous_think_budget: u32,
+    pub spontaneous_think_budget: Option<u32>,
     pub thinking_tokens: u32,
     pub force_end_thinking: bool,
     pub think_force_closed: bool,

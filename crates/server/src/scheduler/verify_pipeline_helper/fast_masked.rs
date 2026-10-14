@@ -23,9 +23,9 @@ use metrale_model_engine::traits::Model;
 /// or tool-call-start token and, for `ReduceOnly` penalties, is
 /// penalty-immune (`fast_greedy`).
 ///
-/// Not checked: `MinTokensEosMask`, so an EOS argmax below `min_tokens` is
-/// returned unmasked; and the temperature, so above 0 this returns the
-/// argmax where the host path, with `mtp_verify_sample` on, would sample.
+/// An EOS argmax that `eos_hold::presample_hold` masks (`EosHoldMask`)
+/// declines the path. Not checked: the temperature, so above 0 this returns
+/// the argmax where the host path, with `mtp_verify_sample` on, would sample.
 ///
 /// `row_base` is as for `verify_pick_all_with_pipeline`.
 pub(super) fn try_chat_fast_path(
@@ -45,7 +45,11 @@ pub(super) fn try_chat_fast_path(
     }
     let fast_masked_enabled = ctx.sampling.fast_masked;
     let adadec_recording = ctx.sampling.adadec_diagnostic;
-    if !fast_masked_enabled || a.grammar_state.is_some() || adadec_recording {
+    if !fast_masked_enabled
+        || a.grammar_state.is_some()
+        || adadec_recording
+        || crate::scheduler::eos_hold::eos_masked_in_window(a, argmax_ids)
+    {
         return None;
     }
     use crate::scheduler::confidence::{

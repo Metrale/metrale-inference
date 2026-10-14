@@ -63,6 +63,24 @@ fn reasoning_is_returned_even_when_the_request_had_thinking_off() {
 }
 
 #[test]
+fn thinking_off_still_starts_inside_the_reasoning_as_vllm_does() {
+    // 2026-10-14: GLM53-REASONING-ALWAYS: the template opened `<think>` with
+    // thinking off too, so unclosed output is all reasoning and no answer.
+    assert_eq!(split("plain", false), (Some("plain".into()), String::new()));
+    assert_eq!(
+        split("low effort</think>Hi", false),
+        (Some("low effort".into()), "Hi".into())
+    );
+    // 2026-10-14: Negative control: the qwen parser reads it as the answer.
+    assert_eq!(
+        ReasoningFormat::Qwen
+            .into_parser()
+            .extract_thinking("plain", false),
+        (None, "plain".into())
+    );
+}
+
+#[test]
 fn a_tool_call_closes_the_reasoning_and_opens_the_answer() {
     let call = "<tool_call>bash<arg_key>command</arg_key><arg_value>ls</arg_value></tool_call>";
     assert_eq!(

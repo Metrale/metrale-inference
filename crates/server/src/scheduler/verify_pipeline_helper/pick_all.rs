@@ -49,14 +49,18 @@ pub fn verify_pick_all_with_pipeline(
     // penalty-immune (`fast_greedy`). The matcher is advanced speculatively
     // between positions and rolled back afterwards, as the host path does.
     //
-    // The other pipeline stages are not consulted: `MinTokensEosMask`,
-    // `PostCloseThinkMask`, `PinToToolCallStart` and the tool-call bias can
-    // still apply outside thinking, so this path can emit a token the host
-    // path would have masked. Temperature above 0 always takes the host path,
-    // where the sampling branch runs.
+    // An EOS pick that `EosHoldMask` would mask declines this path and the
+    // grammarless one below (`eos_hold::eos_masked_in_window`). The other
+    // pipeline stages are not consulted: `PostCloseThinkMask`,
+    // `PinToToolCallStart` and the tool-call bias can still apply outside
+    // thinking, so this path can emit a token the host path would have
+    // masked. Temperature above 0 always takes the host path, where the
+    // sampling branch runs.
+    let eos_held = crate::scheduler::eos_hold::eos_masked_in_window(a, argmax_ids);
     let fast_penalty_gate = if ctx.sampling.fast_greedy_grammar
         && a.grammar_state.is_some()
         && !a.inside_thinking
+        && !eos_held
         && (a.temperature == 0.0 || ctx.sampling.force_temp_zero)
     {
         crate::scheduler::fast_greedy::classify_penalties(
@@ -153,12 +157,13 @@ pub fn verify_pick_all_with_pipeline(
     // on (`METRALE_NO_FAST_GREEDY_CHAT=1` turns it off), no grammar is
     // active, the sequence is outside thinking, decoding is greedy, and the
     // penalties are `Neutral`, or `ReduceOnly` with every argmax
-    // penalty-immune. No mask stage is consulted (see the grammar path
+    // penalty-immune. Only the EOS hold is consulted (see the grammar path
     // above). The GPU argmax can also break near-ties differently from the
     // host scan, so the picks are not always the host path's.
     let chat_fast_gate = if ctx.sampling.fast_greedy_chat
         && a.grammar_state.is_none()
         && !a.inside_thinking
+        && !eos_held
         && (a.temperature == 0.0 || ctx.sampling.force_temp_zero)
     {
         crate::scheduler::fast_greedy::classify_penalties(

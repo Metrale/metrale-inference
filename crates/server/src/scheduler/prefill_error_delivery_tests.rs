@@ -83,7 +83,7 @@ fn start(req: InferenceRequest) -> anyhow::Result<()> {
         0,
         0,
         &mut engine,
-        0,
+        Some(0),
         false,
         None,
         None,

@@ -125,6 +125,7 @@ pub(super) struct Target {
     pub(super) behavior_tscg: bool,
     pub(super) behavior_disable_tool_grammar: bool,
     pub(super) behavior_rollback_resteer: bool,
+    pub(super) behavior_thinking_steering: bool,
     pub(super) behavior_rom_head: String,
     pub(super) behavior_tool_retry: bool,
     pub(super) behavior_preserve_thinking: Option<bool>,

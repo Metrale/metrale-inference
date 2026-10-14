@@ -11,11 +11,10 @@ use crate::scheduler::confidence::{
     should_inject_think_end,
 };
 
-/// 2026-09-25: Pins the `name()` of eight stages and checks they are distinct.
-/// `MinTokensEosMask` is not in the list.
+/// 2026-09-25: Pins the `name()` of the nine stages and checks they are distinct.
 #[test]
 fn stage_names_are_distinct_and_stable() {
-    let names: [&'static str; 8] = [
+    let names: [&'static str; 9] = [
         f2_confidence::F2ConfidenceEarlyStop.name(),
         mid_word::MidWordThinkEndMask.name(),
         post_close::PostCloseThinkMask.name(),
@@ -24,6 +23,7 @@ fn stage_names_are_distinct_and_stable() {
         pin_tool_call::PinToToolCallStart.name(),
         forced_token::ForcedTokenFastPath.name(),
         grammar_bitmask::GrammarBitmaskApply.name(),
+        min_tokens_eos::EosHoldMask.name(),
     ];
     for i in 0..names.len() {
         for j in (i + 1)..names.len() {
@@ -43,6 +43,7 @@ fn stage_names_are_distinct_and_stable() {
     assert_eq!(names[5], "pin_to_tool_call_start");
     assert_eq!(names[6], "forced_token_fastpath");
     assert_eq!(names[7], "grammar_bitmask_apply");
+    assert_eq!(names[8], "eos_hold_mask");
 }
 
 /// 2026-09-25: Of the eight stages listed, only `F2ConfidenceEarlyStop` reports

@@ -106,8 +106,10 @@ pub(in crate::scheduler) struct ActiveSeq {
     /// to the server's settings (`WatchdogParams::content_loop_params`).
     pub repetition_detection: Option<RepetitionDetectionParams>,
     /// 2026-09-25: Per-server spontaneous-thinking budget: `--max-thinking-budget`, else
-    /// MODEL.toml `[behavior].max_thinking_budget`.
-    pub spontaneous_think_budget: u32,
+    /// MODEL.toml `[behavior].max_thinking_budget`. 2026-10-14: `None` when the model's
+    /// `[behavior].thinking_steering` is false: a `<think>` the model opens keeps the
+    /// request's budget, as in vLLM.
+    pub spontaneous_think_budget: Option<u32>,
     /// 2026-09-25: Thinking tokens generated so far, not counting the closing `</think>`.
     pub thinking_tokens: u32,
     /// 2026-09-25: Armed when the thinking budget runs out, the thinking-loop watchdog

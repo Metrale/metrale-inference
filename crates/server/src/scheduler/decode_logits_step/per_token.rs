@@ -10,6 +10,10 @@
 //! - The `<tool_response>` and stray-`</think>` hard stops set
 //!   `a.guard_stop` where they set `finished`; `finish_guard_tests.rs`
 //!   pins the count over this module's files.
+//! - 2026-10-14: An EOS is decided before anything else touches the
+//!   sequence (`scheduler::eos_hold`). A held one leaves no trace: not
+//!   pushed, not charged, not streamed, the grammar not advanced. One that
+//!   ends the turn is pushed and charged, like vLLM's EOS.
 
 use super::*;
 
@@ -47,32 +51,67 @@ pub(super) fn process_decoded_token(
         return;
     }
 
-    // 2026-09-25: `<think>` outside thinking: enter thinking mode without emitting
-    // the token. The thinking budget is the spontaneous budget halved per
-    // earlier thinking-watchdog fire (at most 4 times, so 1/16), floored at 8.
-    // `PostCloseThinkMask` masks `a.think_start_token` while `think_ended` is
-    // set.
-    if !a.inside_thinking && think_start_token == Some(tok) {
-        let decay_shift = a.think_watchdog_fires.min(4);
-        let decayed = a.spontaneous_think_budget >> decay_shift;
-        a.inside_thinking = true;
-        a.think_ended = false;
-        a.think_skip_count = 0;
-        a.thinking_budget = Some(decayed.max(8));
-        if a.think_watchdog_fires > 0 {
-            tracing::debug!(target: "met::scheduler::decode_logits_step", fires = a.think_watchdog_fires,
-                decayed_budget = decayed,
-                "Spontaneous <think> re-entry after watchdog; decayed budget"
+    // 2026-10-13: EOS handling, as vLLM decides it (`scheduler::eos_hold`):
+    // only `min_tokens`, a grammar that cannot stop, or a required tool call
+    // with no grammar can hold an EOS back, and the last two only outside
+    // thinking. An EOS inside `<think>` ends the turn.
+    if a.eos_tokens.contains(&tok) {
+        let generated_before = a.output_tokens.len();
+        let hold =
+            crate::scheduler::eos_hold::eos_hold(a, generated_before, sched.levers.tool_eos_escape);
+        if hold.any() {
+            // 2026-10-14: The pre-sample mask removes a held EOS
+            // (`EosHoldMask`, the grammar bitmask), so one only arrives
+            // here from a path that skipped it. It is dropped: not
+            // streamed, not in `output_tokens`, not charged.
+            tracing::debug!(
+                target: "metrale::eos",
+                tok,
+                inside_thinking = a.inside_thinking,
+                by_grammar = hold.grammar,
+                by_required_tool_call = hold.required_tool_call,
+                by_min_tokens = hold.min_tokens,
+                "EOS suppressed; model forced to continue"
             );
-        } else {
-            tracing::debug!(target: "met::scheduler::decode_logits_step", "Spontaneous <think> detected, entering thinking mode");
+            return;
         }
+        crate::scheduler::eos_hold::end_turn_at_eos(a, tok, logprobs);
         return;
     }
 
+    // 2026-09-25: `<think>` outside thinking: enter thinking mode. The thinking
+    // budget is the spontaneous budget halved per earlier thinking-watchdog
+    // fire (at most 4 times, so 1/16), floored at 8. `PostCloseThinkMask`
+    // masks `a.think_start_token` while `think_ended` is set.
+    // 2026-10-14: Without thinking steering (no spontaneous budget) the
+    // request's budget stays, and the token is kept as reasoning text, as
+    // vLLM keeps it; with steering it is dropped.
+    let reopened_think = !a.inside_thinking && think_start_token == Some(tok);
+    if reopened_think {
+        a.inside_thinking = true;
+        a.think_ended = false;
+        a.think_skip_count = 0;
+        if let Some(spontaneous) = a.spontaneous_think_budget {
+            let decay_shift = a.think_watchdog_fires.min(4);
+            let decayed = spontaneous >> decay_shift;
+            a.thinking_budget = Some(decayed.max(8));
+            if a.think_watchdog_fires > 0 {
+                tracing::debug!(target: "met::scheduler::decode_logits_step", fires = a.think_watchdog_fires,
+                    decayed_budget = decayed,
+                    "Spontaneous <think> re-entry after watchdog; decayed budget"
+                );
+            }
+        }
+        tracing::debug!(target: "met::scheduler::decode_logits_step", "Spontaneous <think> detected, entering thinking mode");
+        if sched.watchdog.thinking_steering {
+            return;
+        }
+    }
+
     // 2026-09-25: Drop a `</think>` that arrives outside thinking; the 50th such token
-    // (`think_skip_count`) ends the turn.
-    if !a.inside_thinking && think_end_token == Some(tok) {
+    // (`think_skip_count`) ends the turn. 2026-10-14: Only with thinking
+    // steering; without it the token is content, as in vLLM.
+    if sched.watchdog.thinking_steering && !a.inside_thinking && think_end_token == Some(tok) {
         a.think_skip_count += 1;
         if a.think_skip_count >= 50 {
             a.finished = true;
@@ -122,7 +161,7 @@ pub(super) fn process_decoded_token(
             // 2026-09-25: One-shot flag for the first token after `</think>`
             // (`PinToToolCallStart` reads it); the next content token clears it.
             a.think_just_ended = true;
-        } else {
+        } else if !reopened_think {
             a.thinking_tokens += 1;
             // 2026-09-25: Track ``` code-fence parity inside thinking; a forced
             // `</think>` is deferred inside a fence (`should_inject_think_end`).
@@ -255,34 +294,5 @@ pub(super) fn process_decoded_token(
         return;
     }
 
-    // 2026-10-13: EOS handling, as vLLM decides it (`scheduler::eos_hold`):
-    // only `min_tokens`, a grammar that cannot stop, or a required tool call
-    // with no grammar can hold an EOS back, and the last two only outside
-    // thinking. An EOS inside `<think>` ends the turn.
-    if a.eos_tokens.contains(&tok) {
-        let generated_before = a.output_tokens.len();
-        let hold =
-            crate::scheduler::eos_hold::eos_hold(a, generated_before, sched.levers.tool_eos_escape);
-        if !hold.any() {
-            // 2026-09-25: An EOS that is not held back: counted in `output_tokens` but not
-            // streamed; the sequence finishes.
-            a.output_tokens.push(tok);
-            crate::scheduler::emit_step::update_tool_param_state(a, tok);
-            a.finished = true;
-        } else {
-            // 2026-09-25: A held-back EOS is dropped (not streamed, not in
-            // `output_tokens`) and decoding continues.
-            tracing::debug!(
-                target: "metrale::eos",
-                tok,
-                inside_thinking = a.inside_thinking,
-                by_grammar = hold.grammar,
-                by_required_tool_call = hold.required_tool_call,
-                by_min_tokens = hold.min_tokens,
-                "EOS suppressed; model forced to continue"
-            );
-        }
-    } else {
-        super::content_emit::emit_content_token(a, tok, model, sched);
-    }
+    super::content_emit::emit_content_token(a, tok, model, sched);
 }

@@ -18,7 +18,7 @@ ep_sync_vision_embeds(n=20)
 prefill_chunk(start=0, len=20, last=true, s1@0:len=20, stream=1)
 record_event(event=2, stream=1)
 stream_wait_event(stream=0, event=2)
-copy_logits_to_host(row=0, off=0, bytes=128)
+argmax_on_device(row=0, stream=0) -> 10
 fx launch Decode{n=1, ctx=Unified, readback=Argmax}
 decode_batch(tokens=[10], seqs=["s1@0:len=20"], stream=0)
 commit_ctx(s1@0:len=21, n=1, base=20, row=0)

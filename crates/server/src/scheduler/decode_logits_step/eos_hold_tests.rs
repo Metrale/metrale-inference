@@ -206,9 +206,8 @@ fn grammar_does_not_hold_eos_inside_thinking() {
 fn grammar_holds_eos_outside_thinking_on_the_decode_path() {
     // 2026-10-13: The control for the test above: the same grammar and EOS,
     // outside thinking, is held back. Only the decode path is checked:
-    // `emit_token` advances the matcher before the hold and drops a grammar
-    // that refuses the token, and its steps sample under the grammar mask,
-    // so a forbidden EOS never reaches its hold.
+    // `emit_token`'s steps sample under the grammar mask, so a forbidden EOS
+    // never reaches its hold.
     let sched = sched();
     let (mut a, _rx) = seq(vec![], false);
     a.eos_tokens = vec![TOY_EOS];
@@ -282,6 +281,9 @@ fn min_tokens_holds_eos_until_that_many_tokens_came_before_it() {
             !a.finished,
             "{path:?}: EOS after 2 of 3 min_tokens ended the turn"
         );
+        // 2026-10-14: A held EOS is inert: not recorded, not charged.
+        assert_eq!(a.output_tokens, vec![1000, 1001], "{path:?}");
+        assert_eq!(a.remaining, 5000, "{path:?}: a held EOS was charged");
 
         let (mut a, _rx) = seq(vec![1000, 1001, 1002], true);
         a.min_tokens = 3;
@@ -291,4 +293,55 @@ fn min_tokens_holds_eos_until_that_many_tokens_came_before_it() {
             "{path:?}: EOS after 3 of 3 min_tokens was held back"
         );
     }
+}
+
+#[test]
+fn stray_think_close_is_content_without_thinking_steering() {
+    // 2026-10-14: vLLM has no stray-`</think>` drop: after the reasoning
+    // ended the id is ordinary content. The control: with steering on (the
+    // other models' setting) it is still skipped.
+    for path in PATHS {
+        let mut sched = sched();
+        sched.watchdog.thinking_steering = false;
+        let (mut a, _rx) = seq(vec![ANSWER], false);
+        feed(path, &mut a, THINK_END, &sched);
+        assert_eq!(
+            a.output_tokens,
+            vec![ANSWER, THINK_END],
+            "{path:?}: a stray </think> was dropped with steering off"
+        );
+
+        let sched = sched_with_steering();
+        let (mut a, _rx) = seq(vec![ANSWER], false);
+        feed(path, &mut a, THINK_END, &sched);
+        assert_eq!(a.output_tokens, vec![ANSWER], "{path:?}: control");
+    }
+}
+
+/// 2026-10-14: `sched()` with steering explicitly on, so the control above
+/// does not lean on the default.
+fn sched_with_steering() -> SchedCtx {
+    let mut s = sched();
+    s.watchdog.thinking_steering = true;
+    s
+}
+
+#[test]
+fn a_token_the_grammar_refuses_is_kept_and_the_grammar_stays() {
+    // 2026-10-14: vLLM's structured-output manager logs a token the matcher
+    // refuses and keeps both. The emit path used to keep the token but drop
+    // the grammar, leaving the rest of the turn unconstrained.
+    let sched = sched();
+    let (mut a, _rx) = seq(vec![], false);
+    a.eos_tokens = vec![TOY_EOS];
+    a.grammar_state = Some(required_tool_grammar());
+    feed(Path::Emit, &mut a, u32::from(b'4'), &sched);
+    assert_eq!(a.output_tokens, vec![u32::from(b'4')]);
+    assert!(
+        a.grammar_state.is_some(),
+        "the refusing grammar was dropped"
+    );
+    // 2026-10-14: Still at its start, so it still cannot stop: EOS is held.
+    feed(Path::Decode, &mut a, TOY_EOS, &sched);
+    assert!(!a.finished, "the kept grammar no longer holds EOS");
 }

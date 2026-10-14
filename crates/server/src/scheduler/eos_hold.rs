@@ -41,11 +41,68 @@ impl EosHold {
     }
 }
 
+/// 2026-10-13: The part of [`EosHold`] known before sampling, with no
+/// grammar: `min_tokens` and the required call. Every pre-sample EOS mask
+/// (the pipeline stage, the verify fast paths, the device-argmax gates, the
+/// MTP and spec bootstraps, the first token) asks this one function.
+/// The grammar part is the grammar bitmask, applied by its own stage.
+pub(crate) fn presample_hold(
+    generated_before: usize,
+    min_tokens: usize,
+    inside_thinking: bool,
+    require_tool_call: bool,
+) -> EosHold {
+    EosHold {
+        min_tokens: generated_before < min_tokens,
+        grammar: false,
+        required_tool_call: !inside_thinking && require_tool_call,
+    }
+}
+
+/// 2026-10-13: [`presample_hold`] for `a` at `generated_before` tokens.
+pub(crate) fn presample_hold_for(a: &ActiveSeq, generated_before: usize) -> EosHold {
+    presample_hold(
+        generated_before,
+        a.min_tokens,
+        a.inside_thinking,
+        a.require_tool_call,
+    )
+}
+
+/// 2026-10-13: The EOS ids to mask before sampling `a`'s next token at
+/// `generated_before`: all of them while held, none otherwise.
+pub(crate) fn eos_mask_ids(a: &ActiveSeq, generated_before: usize) -> &[u32] {
+    if presample_hold_for(a, generated_before).any() {
+        &a.eos_tokens
+    } else {
+        &[]
+    }
+}
+
+/// 2026-10-13: Is `tok` an EOS that the pre-sample mask removes at
+/// `generated_before`? A fast path that picked it from unmasked logits
+/// must decline and let the masked path sample.
+pub(crate) fn eos_masked_at(a: &ActiveSeq, tok: u32, generated_before: usize) -> bool {
+    a.eos_tokens.contains(&tok) && presample_hold_for(a, generated_before).any()
+}
+
+/// 2026-10-13: Does any pick of a verify window, position `i` being output
+/// token `output_tokens.len() + i`, land on an EOS the pre-sample mask
+/// removes? The GPU-argmax fast paths decline then, and the host pipeline
+/// (which masks) picks the window.
+pub(crate) fn eos_masked_in_window(a: &ActiveSeq, picks: &[u32]) -> bool {
+    let base = a.output_tokens.len();
+    picks
+        .iter()
+        .enumerate()
+        .any(|(i, &tok)| eos_masked_at(a, tok, base + i))
+}
+
 /// 2026-10-13: Decide whether the EOS just sampled for `a` is held back.
 ///
-/// `generated_before` counts the tokens generated before this EOS. The
-/// decode path asks before pushing the token and the emit path after
-/// pushing it, so each passes its own count.
+/// `generated_before` counts the tokens generated before this EOS. Both
+/// token paths ask before they push anything, so it is
+/// `output_tokens.len()`.
 ///
 /// `tool_eos_escape` is `SchedLevers::tool_eos_escape`. Once a tool call has
 /// completed, and outside a tool body, the grammar no longer holds EOS
@@ -58,13 +115,33 @@ pub(crate) fn eos_hold(
     generated_before: usize,
     tool_eos_escape: bool,
 ) -> EosHold {
-    let constrained = !a.inside_thinking;
     let escaped = tool_eos_escape && a.tool_call_completed && !a.inside_tool_body;
     EosHold {
-        min_tokens: generated_before < a.min_tokens,
-        grammar: constrained
+        grammar: !a.inside_thinking
             && !escaped
             && crate::grammar::grammar_blocks_stop(a.grammar_state.as_mut(), &a.eos_tokens),
-        required_tool_call: constrained && a.require_tool_call,
+        ..presample_hold_for(a, generated_before)
     }
+}
+
+/// 2026-10-14: Record an EOS that ends `a`'s turn, as vLLM does: it is an
+/// output token (in `output_tokens`, charged to `max_tokens`, not streamed),
+/// and inside the reasoning block it counts as reasoning, since vLLM counts
+/// every id before `</think>` as reasoning. Both token paths call this once
+/// [`eos_hold`] lets the EOS through.
+pub(crate) fn end_turn_at_eos(
+    a: &mut ActiveSeq,
+    tok: u32,
+    logprobs: Option<crate::api::TokenLogprobs>,
+) {
+    if let Some(lp) = logprobs {
+        a.logprobs_data.push(lp);
+    }
+    a.output_tokens.push(tok);
+    if a.inside_thinking {
+        a.thinking_tokens += 1;
+    }
+    crate::scheduler::emit_step::update_tool_param_state(a, tok);
+    a.consume_generation_budget();
+    a.finished = true;
 }

@@ -69,7 +69,7 @@ fn deferred_prefill_clock_includes_cold_and_cached_grammar_preparation() {
             0,
             0,
             &mut engine,
-            0,
+            Some(0),
             true,
             None,
             None,

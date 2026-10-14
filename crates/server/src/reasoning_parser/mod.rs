@@ -63,6 +63,12 @@ pub trait ReasoningParser: Send + Sync {
         false
     }
 
+    /// 2026-10-14: Whether the streamed deltas get vLLM's parser-engine
+    /// whitespace shaping (`api/chat_stream/vllm_shape.rs`). Default false.
+    fn shapes_stream_whitespace(&self) -> bool {
+        false
+    }
+
     /// 2026-09-26: Split completed text into `(reasoning, content)`.
     ///
     /// `enable_thinking` is the request's resolved thinking state. When it is

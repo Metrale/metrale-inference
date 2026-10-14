@@ -137,3 +137,5 @@ mod inter_tool_prose_tests;
 #[cfg(test)]
 #[path = "helpers_tests.rs"]
 mod thinking_loop_tests;
+#[cfg(test)]
+mod thinking_steering_tests;

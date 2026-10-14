@@ -216,6 +216,7 @@ pub(super) fn resolve_targets(workspace_root: &std::path::Path) -> Vec<Target> {
                 behavior_tscg: pb.tscg,
                 behavior_disable_tool_grammar: pb.disable_tool_grammar,
                 behavior_rollback_resteer: pb.rollback_resteer,
+                behavior_thinking_steering: pb.thinking_steering,
                 behavior_rom_head: pb.rom_head,
                 behavior_tool_retry: pb.tool_retry,
                 behavior_preserve_thinking: pb.preserve_thinking,

@@ -25,7 +25,7 @@ pub fn prefill_request(
     mut req: InferenceRequest,
     eos_tokens: &[u32],
     grammar_engine: &mut Option<GrammarEngine>,
-    spontaneous_think_budget: u32,
+    spontaneous_think_budget: Option<u32>,
     // 2026-09-25: `Some` when this beam request's hypothesis was already
     // computed by a batched search; `None` runs the search here.
     precomputed_beam_hyp: Option<Vec<u32>>,
@@ -282,6 +282,8 @@ pub fn prefill_request(
                 req_enable_thinking,
                 think_end_token,
                 tool_call_start_token,
+                req_min_tokens,
+                req_require_tool_call,
             ),
             &sched.levers.sampling(),
             sched.io.tel.dumps(),
