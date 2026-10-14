@@ -69,6 +69,7 @@ pub(super) fn from_values(
         one_row_prefill: opt_in(value("METRALE_ONE_ROW_PREFILL").as_deref()),
         one_row_tail_decode: opt_in(value("METRALE_ONE_ROW_TAIL_DECODE").as_deref()),
         seq_alloc_async: opt_in(value("METRALE_SEQ_ALLOC_ASYNC").as_deref()),
+        glm_keep_slot_graphs: opt_in(value("METRALE_GLM_KEEP_SLOT_GRAPHS").as_deref()),
         moe_fp8_grouped_decode_target: opt_in(value("METRALE_FP8_MOE_GROUPED_DECODE").as_deref()),
         fp8_attn_m32: opt_in(value("METRALE_FP8_ATTN_M32").as_deref()),
         // 2026-09-25: The target's declaration (`kernels/<hw>/HARDWARE.toml` `[defaults]
