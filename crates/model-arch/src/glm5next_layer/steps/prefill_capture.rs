@@ -133,6 +133,17 @@ impl Glm5NextLayer {
         let mut chunk = 0usize;
         let last_pos = (num_tokens > 0).then(|| seq_len_start + num_tokens - 1);
         let split = segments.len() > 1;
+        // 2026-10-14: `METRALE_GLM_PREFILL_PIECE_ROWS=P`: a wider sub-chunk runs as `P`-row
+        // pieces (`steps/forward_pieces.rs`); not beside the SP pipeline, which plans its own
+        // sub-chunks.
+        let piece = crate::glm5next_prefill_piece::piece_rows()?;
+        if piece.is_some() && crate::glm5next_sp_pipeline::enabled()? {
+            bail!(
+                "GLM layer {}: {} and METRALE_GLM_SP_PIPELINE=1 cannot both be set",
+                self.layer_idx,
+                crate::glm5next_prefill_piece::PIECE_ROWS_ENV
+            );
+        }
         for (start, end, after) in segments {
             // 2026-10-14: Under `METRALE_ONE_ROW_TAIL_DECODE=1` a one-row segment after position
             // 0 runs `decode`'s walk (`forward_one`, its dump call), the path a warm one-row
@@ -174,6 +185,25 @@ impl Glm5NextLayer {
                 }
             }
             while t < end {
+                let k = rows.min(end - t);
+                if let Some(p) = piece.filter(|&p| rows > 1 && !tail_decode && k > p) {
+                    self.forward_k_pieces(
+                        hidden.offset(t * self.hidden * 2),
+                        k,
+                        p,
+                        state,
+                        kv_cache,
+                        seq_len_start + t,
+                        block_table,
+                        ctx,
+                        stream,
+                        slot0 + t,
+                        &mut chunk,
+                        last_pos,
+                    )?;
+                    t += k;
+                    continue;
+                }
                 let call = if tail_decode {
                     dump::Call::step(dump::Path::Decode)
                 } else {
@@ -185,7 +215,6 @@ impl Glm5NextLayer {
                 };
                 chunk += 1;
                 if rows > 1 && !tail_decode {
-                    let k = rows.min(end - t);
                     self.forward_k(
                         hidden.offset(t * self.hidden * 2),
                         k,

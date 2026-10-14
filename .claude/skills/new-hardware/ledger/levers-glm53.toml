@@ -1733,3 +1733,27 @@ effort_hours = 5.0
 transferability = "any sparse or paged attention whose per-tile phases are serialized by barriers in one CTA per row"
 links = { pr = "", commit = "", evidence = "glm5next_dsa_prefill_pipe_gate" }
 notes = "A grouped-query union kernel (several rows sharing one gathered tile, masked per row) was rejected: a row's summation grouping would depend on where its tokens land in the union, so its bytes would depend on its neighbours (a new numerics point and not K-invariant), and canonical tiles waste MMAs unless selections cluster, which no captured selection dump can confirm yet"
+
+[[lever]]
+id = "gb10x3-glm53-prefill-piece-rows"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_PREFILL_PIECE_ROWS=8192 + --max-prefill-tokens 16384 + METRALE_GLM_PREFILL_ROWS=16400"
+symptom = "32k cold TTFT 12258 ms vs vLLM 10479 ms; the routed-expert weights are read once per 8192-row chunk"
+diagnosis_tool = "code-read"
+root_cause_class = "redundant-work"
+lever_type = "scheduling"
+lkb_effect = "no kernel change; the M-dependent launches keep P-row shapes, the row-invariant ones widen"
+parity_tier_kept = "bit-identical-not-claimed"
+per_rung = []
+verdict = "held"
+verdict_reason = "built and CPU-tested; the GPU byte compare against the 8192-chunk serve and the TTFT A/B are not run yet"
+failure_mode = "the SSM state clamp (ssm_state_clamp_norm_fused, MAX_NORM 200) runs between scheduler chunks (rank 0 after chunks >= 1, EP workers after every chunk), so at 16384 it skips the 8192 and 24576 boundaries: bits differ only if a KDA head norm passes 200 there"
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 2.0
+transferability = "any chunked prefill whose M-dependent launches can be cut at the old chunk grid"
+links = { pr = "", commit = "", evidence = "code read; plain 16384 chunks change bits through cuBLASLt per-M algorithms (BF16 projections, router, dequant GEMMs) and NCCL ring sizes" }
+notes = "per-rank memory at 16400 rows vs 8208, pre-KV: MLP ws +994.7 MiB, KDA ws +1301.1 MiB, DSA ws ~+546 MiB, lean arena ~+792.6 MiB, GDN prefill buffers +222 MiB (unused by GLM), mHC scratch ~+70 MiB, SP-mHC receive +42.7 MiB: ~+3.9 GiB, taken from KV (~7.9 -> ~4 GB at MSL 64k). Sizing the KDA/DSA workspaces to P instead of PREFILL_ROWS would halve the delta (not done)."
