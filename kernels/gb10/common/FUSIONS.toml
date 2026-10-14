@@ -1468,7 +1468,7 @@ priority = 100
 cite = "ml/moe/forward.rs:263-304; ml/moe/init.rs:435-438"
 
 # 2026-10-02: The shared-expert gate logit stays FP32 into the sigmoid
-# (moe_expert_gemv.cu:224-261, moe_fp8_grouped_blend.cu:47-76): `sg` is held as f32.
+# (moe_expert_gemv.cu:224-261, moe_fp8_grouped_blend.cu:62-91): `sg` is held as f32.
 [[rule]]
 id = "moe_weighted_sum_blend"
 pattern = [{ op = "linear", role = "shared_gate", holds = "f32" }, { op = "blend" }]
@@ -1614,7 +1614,7 @@ priority = 100
 cite = "ml/moe/forward_nvfp4_grouped_decode.rs:194-231 (per-row router and moe_fp8_grouped_sort), :312-374 (the two expert launches), :395-410 (the grouped blend); NVFP4_GROUPED_DECODE_TC_MAX_ROWS, :36"
 
 # 2026-10-02: The shared-expert gate logit stays FP32 into the sigmoid
-# (moe_expert_gemv.cu:224-261, moe_fp8_grouped_blend.cu:47-76): `sg` is held as f32.
+# (moe_expert_gemv.cu:224-261, moe_fp8_grouped_blend.cu:62-91): `sg` is held as f32.
 [[rule]]
 id = "moe_blend_grouped"
 pattern = [{ op = "linear", role = "shared_gate", holds = "f32" }, { op = "blend" }]
