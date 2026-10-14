@@ -1613,3 +1613,27 @@ effort_hours = 3.0
 transferability = "any MTP model with a dense-row drafter and a shared whole-prompt capture"
 links = { pr = "", commit = "", evidence = "MTP acceptance 1k miss/hit" }
 notes = "A windowed catch-up is not possible for GLM: its drafter is dense row space (RoPE position = row), so a catch-up must start at the drafter's row count. The drafter carry is session-keyed and off at mtp_max_seqs > 1. A match that runs into decoded tokens (a later turn) is refused, since decode hiddens are not in the capture; filling them from the catch-up ring is a possible extension."
+
+[[lever]]
+id = "gb10x3-glm53-spans-rank0-ssm-clamp"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes; also any multi-rank SSM model on the batched prefill"
+recipe_or_tier = "every multi-rank batched prefill (prefill_spans; no lever: a correctness fix)"
+symptom = "the worker ranks clamp each sequence's SSM state after a batched prefill pass and rank 0 does not, so the ranks' recurrent states can differ after a long prompt"
+diagnosis_tool = "code read (spans.rs)"
+root_cause_class = "wiring-defect"
+lever_type = "code"
+lkb_effect = "none"
+parity_tier_kept = "bit-identical on single-rank serves (path not taken); rank 0's state now takes the workers' clamp"
+per_rung = []
+verdict = "held"
+verdict_reason = "written without a GPU; a C>=2 batched prefill kinv probe on a multi-rank serve is pending"
+failure_mode = "ep_worker_prefill_spans normalised after prefill_spans_run; prefill_spans_dispatch (rank 0) did not, and the scheduler's batched prefill does not normalise either (its single-sequence path does)"
+caught_by = "audit of the forward-stream clamp fix"
+time_lost_hours = 0
+would_catch_earlier = "one helper for every rank's post-pass work, so a step cannot be added to one side only"
+effort_hours = 0.5
+transferability = "any multi-rank engine whose rank 0 and workers run separate wrappers around a shared pass"
+links = { pr = "", commit = "", evidence = "" }
+notes = "One helper (spans_normalize) now runs after each sub-batch on rank 0 and after the pass on the workers, on the default stream, logging a failure as the workers always did. The clamp only rescales a state whose norm passes the bound, so prompts below it are unchanged."
