@@ -8,15 +8,18 @@
 //! Owner: model-arch (GLM-5.3).
 //! Invariants:
 //! - [`merge_plan`] covers `0..n` once, in order, in sub-chunks of at most `rows`.
-//! - Every captured state is the split's for the same rows: the rows before a point run in
-//!   the sub-chunks the split's segment ending there runs (see [`merge_plan`]).
+//! - The rows before a point start their sub-chunks where the split's segment ending there
+//!   does (see [`merge_plan`]). 2026-10-14: The captured state is the split's bits only when
+//!   that sub-chunk and the split's segment fall in the same row class of the row-count-dependent
+//!   GEMMs (dequant W4A16 at 256 rows, FP8 at 1024). Across a class boundary it can differ in
+//!   low bits (disclosure PREFILL-TAILMERGE-1).
 
 /// 2026-10-14: The `(start, end, cuts)` sub-chunks of a pass of `n` rows, `rows` per sub-chunk
 /// from row 0, with each capture point of `points` (sorted, strictly inside `0..n`, tagged with
 /// its slot `W`) a cut `(point - start, slot)` of the sub-chunk holding it. A sub-chunk that holds
 /// a point and would end before the next point ends at its last point instead, so the rows
-/// between two points start a sub-chunk where the split's segment does and the later point's
-/// captured state is the split's. Pure.
+/// between two points start a sub-chunk where the split's segment does, as the module's
+/// invariant says (with its row-class limit). Pure.
 pub fn merge_plan<W: Copy>(
     n: usize,
     rows: usize,

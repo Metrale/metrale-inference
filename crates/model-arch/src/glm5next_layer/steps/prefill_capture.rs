@@ -29,7 +29,8 @@
 //! - 2026-10-14: Under `--prefill-tail-mode merge` (and more than one row per sub-chunk) the rows
 //!   run in sub-chunks from row 0 instead (`glm5next_tail_merge::merge_plan`), a capture point cutting only the KDA
 //!   conv and recurrence of the sub-chunk holding it (`glm5next_kda/cut.rs`). The captured states
-//!   are the split's for the same rows; the rows after the last point are not the separate
+//!   are the split's bits only while each sub-chunk and the split's segment share a GEMM row
+//!   class (W4A16 256 rows, FP8 1024); the rows after the last point are not the separate
 //!   pass's bits (disclosure PREFILL-TAILMERGE-1).
 
 use super::*;
