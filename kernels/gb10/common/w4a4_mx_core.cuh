@@ -217,6 +217,64 @@ __device__ __forceinline__ unsigned int w4a4_e2m1_rne(float x) {
     return (x < 0.0f && c != 0u) ? (c | 8u) : c;
 }
 
+// 2026-10-14: One 16-value group of w4a4_quant_rows_impl, moved here unchanged so the fused
+// gate/up epilogue (w4a4_grouped_mx.cu, w4a4_grouped_gu_*) writes the same bytes: v0, v1 are the
+// group's 16 BF16 values in memory order, written as row `row` of a [*, Kp] quantization (codes
+// and the group scale in fragment order); gs / inv_gs are the row's global scale and 1 / gs.
+__device__ __forceinline__ void w4a4_quant_group(
+    const uint4 v0, const uint4 v1, unsigned char* __restrict__ Aq, unsigned char* __restrict__ As,
+    const unsigned int row, const unsigned int Kp, const unsigned int grp, const float gs,
+    const float inv_gs)
+{
+    const unsigned int w[8] = {v0.x, v0.y, v0.z, v0.w, v1.x, v1.y, v1.z, v1.w};
+    float f[16];
+    float gm = 0.0f;
+    #pragma unroll
+    for (int i = 0; i < 8; i++) {
+        f[2 * i] = __uint_as_float(w[i] << 16);
+        f[2 * i + 1] = __uint_as_float(w[i] & 0xFFFF0000u);
+        gm = fmaxf(gm, fmaxf(fabsf(f[2 * i]), fabsf(f[2 * i + 1])));
+    }
+    const __nv_fp8_e4m3 s8(gm * (1.0f / 6.0f) * inv_gs);
+    const float s = (float)s8;
+    // 2026-09-25: Fragment order: within each k128 chunk the 8 group scales are stored as
+    // [G0, G4, G2, G6, G1, G5, G3, G7], and group q's two ints land in int slot
+    // (2 * (q >> 2) + half) * 4 + perm[q & 3], perm = {0, 2, 1, 3}.
+    const unsigned int chunk = grp >> 3, q = grp & 7u;
+    const unsigned int spos = ((q & 1u) << 2) | ((q >> 2) & 1u) | (q & 2u);
+    As[(unsigned long long)row * (Kp >> 4) + chunk * 8u + spos] = *(const unsigned char*)&s8;
+    const float inv = s > 0.0f ? 1.0f / (s * gs) : 0.0f;
+    uint2 packed;
+    unsigned int p[2] = {0u, 0u};
+    #pragma unroll
+    for (int i = 0; i < 16; i++) p[i >> 3] |= w4a4_e2m1_rne(f[i] * inv) << ((i & 7) * 4);
+    (void)packed;
+    const unsigned int pr = (q & 3u) == 1u ? 2u : (q & 3u) == 2u ? 1u : (q & 3u);
+    unsigned char* dst = Aq + (unsigned long long)row * (Kp >> 1) + chunk * 64u;
+    #pragma unroll
+    for (unsigned int h = 0; h < 2u; h++) {
+        const unsigned int slot = (2u * (q >> 2) + h) * 4u + pr;
+        *(uint32_t*)(dst + slot * 4u) = p[h];
+    }
+}
+
+// 2026-10-14: A PAD128 padding group of w4a4_quant_rows_impl (zero scale, zero codes), moved here
+// unchanged for the same reason.
+__device__ __forceinline__ void w4a4_quant_pad_group(
+    unsigned char* __restrict__ Aq, unsigned char* __restrict__ As, const unsigned int row,
+    const unsigned int Kp, const unsigned int grp)
+{
+    // 2026-10-10: A padding group: zero scale, zero codes, at the positions below.
+    const unsigned int chunk = grp >> 3, q = grp & 7u;
+    const unsigned int spos = ((q & 1u) << 2) | ((q >> 2) & 1u) | (q & 2u);
+    As[(unsigned long long)row * (Kp >> 4) + chunk * 8u + spos] = 0u;
+    const unsigned int pr = (q & 3u) == 1u ? 2u : (q & 3u) == 2u ? 1u : (q & 3u);
+    unsigned char* dst = Aq + (unsigned long long)row * (Kp >> 1) + chunk * 64u;
+    #pragma unroll
+    for (unsigned int h = 0; h < 2u; h++)
+        *(uint32_t*)(dst + ((2u * (q >> 2) + h) * 4u + pr) * 4u) = 0u;
+}
+
 // 2026-09-25: One CTA of 256 threads per row; writes the row's Aq and As (fragment order) and Ag.
 // 2026-10-08: STATIC_GS: the row's global scale is the caller's `static_gs` (a checkpoint's
 // per-tensor activation scale, ModelOpt's `input_scale`), not amax(row) / (6 * 448); values past
@@ -255,50 +313,14 @@ __device__ __forceinline__ void w4a4_quant_rows_impl(
     for (unsigned int grp = threadIdx.x; grp < (Kp >> 4); grp += 256u) {
         if constexpr (PAD128) {
             if (grp >= (K >> 4)) {
-                // 2026-10-10: A padding group: zero scale, zero codes, at the positions below.
-                const unsigned int chunk = grp >> 3, q = grp & 7u;
-                const unsigned int spos = ((q & 1u) << 2) | ((q >> 2) & 1u) | (q & 2u);
-                As[(unsigned long long)row * (Kp >> 4) + chunk * 8u + spos] = 0u;
-                const unsigned int pr = (q & 3u) == 1u ? 2u : (q & 3u) == 2u ? 1u : (q & 3u);
-                unsigned char* dst = Aq + (unsigned long long)row * (Kp >> 1) + chunk * 64u;
-                #pragma unroll
-                for (unsigned int h = 0; h < 2u; h++)
-                    *(uint32_t*)(dst + ((2u * (q >> 2) + h) * 4u + pr) * 4u) = 0u;
+                // 2026-10-10: A padding group: zero scale, zero codes (w4a4_quant_pad_group).
+                w4a4_quant_pad_group(Aq, As, row, Kp, grp);
                 continue;
             }
         }
         const uint4* src = (const uint4*)(x + grp * 16u);
         const uint4 v0 = src[0], v1 = src[1];
-        const unsigned int w[8] = {v0.x, v0.y, v0.z, v0.w, v1.x, v1.y, v1.z, v1.w};
-        float f[16];
-        float gm = 0.0f;
-        #pragma unroll
-        for (int i = 0; i < 8; i++) {
-            f[2 * i] = __uint_as_float(w[i] << 16);
-            f[2 * i + 1] = __uint_as_float(w[i] & 0xFFFF0000u);
-            gm = fmaxf(gm, fmaxf(fabsf(f[2 * i]), fabsf(f[2 * i + 1])));
-        }
-        const __nv_fp8_e4m3 s8(gm * (1.0f / 6.0f) * inv_gs);
-        const float s = (float)s8;
-        // 2026-09-25: Fragment order: within each k128 chunk the 8 group scales are stored as
-        // [G0, G4, G2, G6, G1, G5, G3, G7], and group q's two ints land in int slot
-        // (2 * (q >> 2) + half) * 4 + perm[q & 3], perm = {0, 2, 1, 3}.
-        const unsigned int chunk = grp >> 3, q = grp & 7u;
-        const unsigned int spos = ((q & 1u) << 2) | ((q >> 2) & 1u) | (q & 2u);
-        As[(unsigned long long)row * (Kp >> 4) + chunk * 8u + spos] = *(const unsigned char*)&s8;
-        const float inv = s > 0.0f ? 1.0f / (s * gs) : 0.0f;
-        uint2 packed;
-        unsigned int p[2] = {0u, 0u};
-        #pragma unroll
-        for (int i = 0; i < 16; i++) p[i >> 3] |= w4a4_e2m1_rne(f[i] * inv) << ((i & 7) * 4);
-        (void)packed;
-        const unsigned int pr = (q & 3u) == 1u ? 2u : (q & 3u) == 2u ? 1u : (q & 3u);
-        unsigned char* dst = Aq + (unsigned long long)row * (Kp >> 1) + chunk * 64u;
-        #pragma unroll
-        for (unsigned int h = 0; h < 2u; h++) {
-            const unsigned int slot = (2u * (q >> 2) + h) * 4u + pr;
-            *(uint32_t*)(dst + slot * 4u) = p[h];
-        }
+        w4a4_quant_group(v0, v1, Aq, As, row, Kp, grp, gs, inv_gs);
     }
 }
 

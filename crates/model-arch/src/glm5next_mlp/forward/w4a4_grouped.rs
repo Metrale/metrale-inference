@@ -25,6 +25,7 @@ use metrale_gpu_runtime::kernel_args::KernelLaunch;
 use super::launch::swiglu;
 use super::moe_experts::MoeSite;
 use super::w4a4::quant_static;
+use super::w4a4_grouped_gu::GuPlan;
 use crate::glm5next_layer::profile;
 use crate::glm5next_mlp::build_w4a4::{check_w4a4_k, check_w4a4_k64};
 use crate::glm5next_mlp::weights::{Glm5NextExpertPtrTable, W4a4ActScales};
@@ -215,7 +216,18 @@ fn down_entry(
 
 /// 2026-10-10: The routed experts of a W4A4 `forward_moe` wider than `MOE_W4A4_MAX_ROWS`, every
 /// slot of every expert in one launch per projection; `expert_out` ends in expert-sorted order.
+/// 2026-10-14: Gate, up, SwiGLU and the down quantization as one launch under
+/// `METRALE_GLM_MOE_W4A4_GU_FUSED=1` (`w4a4_grouped_gu`), same bytes.
 pub(super) fn w4a4_grouped_experts(site: &MoeSite<'_>, scales: W4a4ActScales) -> Result<()> {
+    w4a4_grouped_experts_with(site, scales, super::w4a4_grouped_gu::moe_w4a4_gu_fused()?)
+}
+
+/// 2026-10-14: [`w4a4_grouped_experts`] with the fused gate/up lever's value given.
+pub(super) fn w4a4_grouped_experts_with(
+    site: &MoeSite<'_>,
+    scales: W4a4ActScales,
+    fused: bool,
+) -> Result<()> {
     let MoeSite {
         gpu,
         k,
@@ -261,6 +273,7 @@ pub(super) fn w4a4_grouped_experts(site: &MoeSite<'_>, scales: W4a4ActScales) ->
         ws.max_total_expanded(),
         ws.w4a4_rows
     );
+    let gu = fused.then(|| GuPlan::new(site, ti, k_store)).transpose()?;
     let t = profile::start();
     KernelLaunch::new(gpu, k.moe_sort_by_expert)
         .grid([1, 1, 1])
@@ -293,6 +306,11 @@ pub(super) fn w4a4_grouped_experts(site: &MoeSite<'_>, scales: W4a4ActScales) ->
         scales.gate_up,
         stream,
     )?;
+    if let Some(gu) = gu {
+        gu.launch(site, down, scales.down)?;
+        profile::end(profile::MOE_EXPERTS, t, gpu, stream);
+        return Ok(());
+    }
     let gather = ws.sorted_token_ids();
     grouped_mx(site, gate_up, ti, &w.ptrs.gate, ws.a_gate, gather, mi, h)?;
     grouped_mx(site, gate_up, ti, &w.ptrs.up, ws.a_up, gather, mi, h)?;

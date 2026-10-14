@@ -26,6 +26,9 @@
 
 #include <cuda_bf16.h>
 
+// 2026-10-14: The element expression, shared with the fused routed gate/up epilogue.
+#include "glm5next_swiglu.cuh"
+
 // 2026-09-26: One thread per element; the host launches ceil(n / 256) blocks of 256
 // (swiglu in model-arch glm5next_mlp/forward/launch.rs).
 extern "C" __global__ void glm5next_swiglu_clamp(
@@ -37,12 +40,7 @@ extern "C" __global__ void glm5next_swiglu_clamp(
 ) {
     unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
-    float g = (float)gate[i];
-    float u = (float)up[i];
-    g = fminf(g, limit);
-    u = fminf(fmaxf(u, -limit), limit);
-    float s = g / (1.0f + expf(-g));
-    out[i] = __float2bfloat16(s * u);
+    out[i] = __float2bfloat16(glm5next_swiglu_clamp_f32((float)gate[i], (float)up[i], limit));
 }
 
 
@@ -56,12 +54,7 @@ extern "C" __global__ void glm5next_swiglu_clamp_f32out(
 ) {
     unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
-    float g = (float)gate[i];
-    float u = (float)up[i];
-    g = fminf(g, limit);
-    u = fminf(fmaxf(u, -limit), limit);
-    float s = g / (1.0f + expf(-g));
-    out[i] = s * u;
+    out[i] = glm5next_swiglu_clamp_f32((float)gate[i], (float)up[i], limit);
 }
 
 

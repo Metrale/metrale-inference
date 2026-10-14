@@ -37,6 +37,9 @@ const G32_K64: u64 = 0x69;
 const G64_K64: u64 = 0x6B;
 const G128: u64 = 0x6D;
 const G128_K64: u64 = 0x6F;
+const GU32: u64 = 0x71;
+const GU64: u64 = 0x73;
+const GU128: u64 = 0x75;
 
 const SCALES: W4a4ActScales = W4a4ActScales {
     gate_up: 0.000642,
@@ -98,6 +101,7 @@ fn kernels(gpu: &MockGpuBackend) -> Glm5NextMlpKernels {
             KernelHandle(G64_K64),
             KernelHandle(G128_K64),
         ],
+        gu: [KernelHandle(GU32), KernelHandle(GU64), KernelHandle(GU128)],
     };
     k
 }
@@ -191,10 +195,26 @@ fn assert_grouped(
     t: u64,
     c: DevicePtr,
     gather: DevicePtr,
+    nk: (u32, u32),
+    tiles: (u32, u32, u32),
+) {
+    let act = [ws.w4a4_aq, ws.w4a4_as, ws.w4a4_ag];
+    assert_grouped_act(l, ws, act, t, c, gather, nk, tiles);
+}
+
+/// 2026-10-14: [`assert_grouped`] reading its activation from `act`.
+#[allow(clippy::too_many_arguments)]
+fn assert_grouped_act(
+    l: &MockLaunch,
+    ws: &Glm5NextMlpWorkspace,
+    act: [DevicePtr; 3],
+    t: u64,
+    c: DevicePtr,
+    gather: DevicePtr,
     (n, k): (u32, u32),
     (slots, mt, experts): (u32, u32, u32),
 ) {
-    for (i, want) in [ws.w4a4_aq, ws.w4a4_as, ws.w4a4_ag].into_iter().enumerate() {
+    for (i, want) in act.into_iter().enumerate() {
         assert_eq!(ptr_arg(l, i), want, "activation arg {i}");
     }
     for j in 0..3u64 {
@@ -392,3 +412,6 @@ fn the_lever_parses_strictly() {
     assert_eq!(tile_index(16384, 288), 2);
     assert_eq!(tile_index(8192, 288), 0);
 }
+
+#[path = "w4a4_grouped_gu_tests.rs"]
+mod gu;

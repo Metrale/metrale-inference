@@ -1270,6 +1270,10 @@ kernels = [
   "w4a4_grouped_mx::w4a4_grouped_mx_m128_k64", "w4a4_grouped_mx::w4a4_grouped_tiles",
   # 2026-10-13: The offsets and tiles of one group (the dense MLP's one-group launch).
   "w4a4_grouped_mx::w4a4_grouped_one_group",
+  # 2026-10-14: Gate, up, the clamped SwiGLU and the down input's static quantization in one
+  # launch (the GU instantiations of the same body, w4a4_grouped_core.cuh).
+  "w4a4_grouped_mx::w4a4_grouped_gu_m32", "w4a4_grouped_mx::w4a4_grouped_gu_m64",
+  "w4a4_grouped_mx::w4a4_grouped_gu_m128",
 ]
 kernel_compute."w4a4_grouped_mx::w4a4_grouped_tiles" = { compute = "memory" }
 kernel_compute."w4a4_grouped_mx::w4a4_grouped_one_group" = { compute = "memory" }
@@ -2313,7 +2317,8 @@ how = "instantiation"
 files = ["kernels/gb10/glm-5.3-flash/nvfp4/glm5next_mla_latent_write.cu"]
 
 # 2026-10-08: `silu(min(gate, limit)) * clamp(up, -limit, limit)` over separate gate and up rows,
-# FP32 arithmetic, BF16 out (glm5next_ffn.cu:29-47); the limit is a runtime argument.
+# FP32 arithmetic, BF16 out (glm5next_ffn.cu; 2026-10-14: the element expression is
+# glm5next_swiglu.cuh, shared with w4a4_grouped_gu_*); the limit is a runtime argument.
 [[family]]
 id = "glm_swiglu_clamp"
 description = "Clamped SwiGLU (swiglu_limit): clamp, SiLU and multiply in one pass"
