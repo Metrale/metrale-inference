@@ -42,6 +42,8 @@ pub(crate) struct KernelFlagPlan {
     pub dense_quantization: metrale_model_layers::layers::DenseQuantization,
     /// 2026-10-11: `--dsa-quantization`. Always published: no environment fallback exists.
     pub dsa_quantization: metrale_model_layers::layers::DsaQuantization,
+    /// 2026-10-14: `--prefill-tail-mode`. Always published: no environment fallback exists.
+    pub prefill_tail_mode: metrale_gpu_runtime::prefill_tail_mode::PrefillTailMode,
     pub prefill_codispatch: Option<bool>,
     pub prefill_varlen: Option<bool>,
     pub ssm_tail_midchunk: Option<bool>,
@@ -79,6 +81,7 @@ impl KernelFlagPlan {
             expert_quantization: args.expert_quantization.0,
             dense_quantization: args.dense_quantization.0,
             dsa_quantization: args.dsa_quantization.0,
+            prefill_tail_mode: args.prefill_tail_mode.0,
             prefill_codispatch: args.prefill_codispatch.then_some(true),
             prefill_varlen: args.prefill_varlen_batch.then_some(true),
             ssm_tail_midchunk: args.no_ssm_tail_midchunk.then_some(false),

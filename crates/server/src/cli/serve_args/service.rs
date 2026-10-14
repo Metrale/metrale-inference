@@ -14,8 +14,11 @@
 use clap::Args;
 use metrale_model_layers::layers::{DenseQuantization, DsaQuantization};
 
-use super::super::flag_values::{DenseQuantizationArg, DsaQuantizationArg, MoeExpertLayoutArg};
+use super::super::flag_values::{
+    DenseQuantizationArg, DsaQuantizationArg, MoeExpertLayoutArg, PrefillTailModeArg,
+};
 use super::{DEFAULT_REQUEST_TIMEOUT_SECS, parse_lora_adapter_spec, parse_lora_stageable_spec};
+use metrale_gpu_runtime::prefill_tail_mode::PrefillTailMode;
 
 /// 2026-09-30: `--activation-quantization`, parsed by the config crate's one grammar.
 fn parse_activation_quantization(
@@ -144,6 +147,19 @@ pub struct ServeServiceArgs {
     /// GLM-5.3 (`glm5_next`) only; any other model refuses a value below `declared`.
     #[arg(long, value_enum, default_value_t = DsaQuantizationArg(DsaQuantization::Declared))]
     pub dsa_quantization: DsaQuantizationArg,
+
+    /// How a prefill pass that captures its SSM state for the prefix cache at the tail split
+    /// point (the last block boundary below the prompt's end) runs the rows after that point.
+    ///
+    /// `split` (the default) runs them as a separate segment, so they carry the bits of the
+    /// pass a warm request that restores the captured state runs, at the cost of every layer's
+    /// weights read a second time for up to one block of rows. `merge` runs them in the pass's
+    /// ordinary sub-chunks and splits only the KDA conv and recurrence at the point to take the
+    /// captured state: the captured state is the same, a cold request is deterministic, and a
+    /// warm request's replayed tail rows may differ from the cold pass's in low bits
+    /// (disclosure PREFILL-TAILMERGE-1). GLM-5.3 (`glm5_next`) only; other models run `split`.
+    #[arg(long, value_enum, default_value_t = PrefillTailModeArg(PrefillTailMode::Split))]
+    pub prefill_tail_mode: PrefillTailModeArg,
 
     /// How a routed MoE's experts are laid out over the ranks.
     ///

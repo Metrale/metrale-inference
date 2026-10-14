@@ -26,8 +26,14 @@
 //!   a one-row segment carries its bytes only under `METRALE_ONE_ROW_TAIL_DECODE=1`, which runs
 //!   it through `forward_one` as `decode` does; by default it is a one-row `forward_k` prefill
 //!   sub-chunk, as before.
+//! - 2026-10-14: Under `--prefill-tail-mode merge` (and more than one row per sub-chunk) the rows
+//!   run in sub-chunks from row 0 instead (`glm5next_tail_merge::merge_plan`), a capture point cutting only the KDA
+//!   conv and recurrence of the sub-chunk holding it (`glm5next_kda/cut.rs`). The captured states
+//!   are the split's for the same rows; the rows after the last point are not the separate
+//!   pass's bits (disclosure PREFILL-TAILMERGE-1).
 
 use super::*;
+use crate::glm5next_kda::cut::KdaCut;
 use metrale_model_layers::layer::{MidchunkCapture, split_segment_takes_decode_path};
 
 /// 2026-10-11: Which slot a capture point fills.
@@ -124,27 +130,67 @@ impl Glm5NextLayer {
         let slot0 = ctx.hc_row_offset;
         let cap = ctx.midchunk_capture.as_ref();
         let ordinal = kda_ordinal(&self.mixer, cap);
-        let segments = capture_segments(
-            num_tokens,
-            cap.and_then(|c| c.cap_local_early),
-            cap.map(|c| c.cap_local),
-        );
+        // 2026-10-14: `--prefill-tail-mode merge`: sub-chunks from row 0 with KDA cuts at the
+        // capture points (`glm5next_tail_merge::merge_plan`), no capture after a segment; else the split segments.
+        let merge = rows > 1
+            && cap.is_some()
+            && metrale_gpu_runtime::prefill_tail_mode::prefill_tail_mode()
+                == metrale_gpu_runtime::prefill_tail_mode::PrefillTailMode::Merge;
+        let segments: Vec<(usize, usize, Option<CapturePoint>, Vec<KdaCut>)> = if merge {
+            let mut v = Vec::new();
+            for (s, e, cuts) in crate::glm5next_tail_merge::merge_plan(
+                num_tokens,
+                rows,
+                &capture_points(num_tokens, cap),
+            ) {
+                let cuts = cuts
+                    .into_iter()
+                    .map(|(row, which)| {
+                        let dst = match (ordinal, cap) {
+                            (Some(idx), Some(c)) => self.capture_dsts(c, which, idx)?,
+                            _ => None,
+                        };
+                        Ok(KdaCut { row, dst })
+                    })
+                    .collect::<Result<Vec<KdaCut>>>()?;
+                v.push((s, e, None, cuts));
+            }
+            v
+        } else {
+            capture_segments(
+                num_tokens,
+                cap.and_then(|c| c.cap_local_early),
+                cap.map(|c| c.cap_local),
+            )
+            .into_iter()
+            .map(|(s, e, after)| (s, e, after, Vec::new()))
+            .collect()
+        };
         // 2026-10-13: The layer dump's sub-chunk index and the pass's last position.
         let mut chunk = 0usize;
         let last_pos = (num_tokens > 0).then(|| seq_len_start + num_tokens - 1);
-        let split = segments.len() > 1;
+        let split = !merge && segments.len() > 1;
         // 2026-10-14: `METRALE_GLM_PREFILL_PIECE_ROWS=P`: a wider sub-chunk runs as `P`-row
         // pieces (`steps/forward_pieces.rs`); not beside the SP pipeline, which plans its own
-        // sub-chunks.
+        // sub-chunks, and neither under the merged tail (one `forward_k` per merged sub-chunk).
         let piece = crate::glm5next_prefill_piece::piece_rows()?;
-        if piece.is_some() && crate::glm5next_sp_pipeline::enabled()? {
+        let pipeline = crate::glm5next_sp_pipeline::enabled()?;
+        if piece.is_some() && pipeline {
             bail!(
                 "GLM layer {}: {} and METRALE_GLM_SP_PIPELINE=1 cannot both be set",
                 self.layer_idx,
                 crate::glm5next_prefill_piece::PIECE_ROWS_ENV
             );
         }
-        for (start, end, after) in segments {
+        if merge && (piece.is_some() || pipeline) {
+            bail!(
+                "GLM layer {}: --prefill-tail-mode merge runs neither {} nor \
+                 METRALE_GLM_SP_PIPELINE=1",
+                self.layer_idx,
+                crate::glm5next_prefill_piece::PIECE_ROWS_ENV
+            );
+        }
+        for (start, end, after, cuts) in segments {
             // 2026-10-14: Under `METRALE_ONE_ROW_TAIL_DECODE=1` a one-row segment after position
             // 0 runs `decode`'s walk (`forward_one`, its dump call), the path a warm one-row
             // replay of the row takes, on the row's own highway slot (`layer/one_row_path.rs`).
@@ -161,7 +207,7 @@ impl Glm5NextLayer {
             // 2026-10-14: `METRALE_GLM_SP_PIPELINE=1`: the segment's leading run of SP-mHC
             // sub-chunks pipelined through the layer (`steps/forward_sp_pipe.rs`); the rows after
             // it run below as before.
-            if rows > 1 && !tail_decode && crate::glm5next_sp_pipeline::enabled()? {
+            if rows > 1 && !tail_decode && pipeline {
                 let ks = crate::glm5next_sp_pipeline::sub_chunks(end - start, rows);
                 let takes = ks
                     .iter()
@@ -214,6 +260,12 @@ impl Glm5NextLayer {
                     }
                 };
                 chunk += 1;
+                if !cuts.is_empty() && (t, k) != (start, end - start) {
+                    bail!(
+                        "GLM layer {}: a merged sub-chunk [{start}, {end}) must run as one call",
+                        self.layer_idx
+                    );
+                }
                 if rows > 1 && !tail_decode {
                     self.forward_k(
                         hidden.offset(t * self.hidden * 2),
@@ -230,6 +282,7 @@ impl Glm5NextLayer {
                         // This IS the prefill sub-chunk caller.
                         true,
                         call,
+                        &cuts,
                     )?;
                     t += k;
                 } else {
@@ -270,15 +323,32 @@ impl Glm5NextLayer {
         gpu: &dyn GpuBackend,
         stream: u64,
     ) -> Result<()> {
-        let Glm5NextMixer::Kda { cfg, .. } = &self.mixer else {
+        let Some((h_dst, conv_dst)) = self.capture_dsts(cap, which, idx)? else {
             return Ok(());
+        };
+        let st = self.kda_state(state)?;
+        gpu.copy_d2d_async(st.h_state, h_dst, cap.h_bytes, stream)?;
+        gpu.copy_d2d_async(st.conv_state, conv_dst, cap.conv_bytes, stream)
+    }
+
+    /// 2026-10-14: Capture point `which`'s `(h_dst, conv_dst)` for SSM ordinal `idx` on this KDA
+    /// layer; `None` for a DSA layer or when that list has no entry `idx`. Errors when the plan's
+    /// per-layer sizes are not this layer's state sizes.
+    fn capture_dsts(
+        &self,
+        cap: &MidchunkCapture<'_>,
+        which: CapturePoint,
+        idx: usize,
+    ) -> Result<Option<(DevicePtr, DevicePtr)>> {
+        let Glm5NextMixer::Kda { cfg, .. } = &self.mixer else {
+            return Ok(None);
         };
         let (h_dsts, conv_dsts) = match which {
             CapturePoint::Early => (cap.h_dsts_early, cap.conv_dsts_early),
             CapturePoint::Main => (cap.h_dsts, cap.conv_dsts),
         };
         let (Some(&h_dst), Some(&conv_dst)) = (h_dsts.get(idx), conv_dsts.get(idx)) else {
-            return Ok(());
+            return Ok(None);
         };
         let (h_bytes, conv_bytes) = (cfg.recurrent_state_elems() * 4, cfg.conv_state_elems() * 4);
         if (cap.h_bytes, cap.conv_bytes) != (h_bytes, conv_bytes) {
@@ -290,9 +360,7 @@ impl Glm5NextLayer {
                 cap.conv_bytes
             );
         }
-        let st = self.kda_state(state)?;
-        gpu.copy_d2d_async(st.h_state, h_dst, h_bytes, stream)?;
-        gpu.copy_d2d_async(st.conv_state, conv_dst, conv_bytes, stream)
+        Ok(Some((h_dst, conv_dst)))
     }
 }
 

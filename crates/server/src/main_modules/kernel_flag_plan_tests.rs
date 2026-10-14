@@ -9,6 +9,7 @@ use super::{GdnPlan, KernelFlagPlan, precision_line};
 use crate::cli::{Cli, Command, validate_serve_args};
 use clap::Parser;
 use metrale_config::{W4a4Downcast, WeightQuantTier, WeightQuantization};
+use metrale_gpu_runtime::prefill_tail_mode::PrefillTailMode;
 use metrale_model_layers::layers::{DenseQuantization, DsaQuantization, ExpertQuantization};
 
 fn plan(flags: &[&str]) -> KernelFlagPlan {
@@ -39,6 +40,7 @@ fn an_empty_command_line_publishes_nothing_the_environment_owns() {
             expert_quantization: ExpertQuantization::Fp8,
             dense_quantization: DenseQuantization::Declared,
             dsa_quantization: DsaQuantization::Declared,
+            prefill_tail_mode: PrefillTailMode::Split,
             prefill_codispatch: None,
             prefill_varlen: None,
             ssm_tail_midchunk: None,
@@ -251,4 +253,27 @@ fn the_precision_line_discloses_both_tiers() {
         l.contains("--dsa-quantization declared") && l.contains("BF16"),
         "{l}"
     );
+}
+
+/// 2026-10-14: `--prefill-tail-mode merge` reaches the plan and moves nothing else; `split`
+/// is the default and an unknown value is refused.
+#[test]
+fn the_prefill_tail_mode_reaches_the_plan_alone() {
+    assert_eq!(plan(&[]).prefill_tail_mode, PrefillTailMode::Split);
+    for (value, mode) in [
+        ("split", PrefillTailMode::Split),
+        ("merge", PrefillTailMode::Merge),
+    ] {
+        let p = plan(&["--prefill-tail-mode", value]);
+        assert_eq!(p.prefill_tail_mode, mode);
+        assert_eq!(
+            KernelFlagPlan {
+                prefill_tail_mode: PrefillTailMode::Split,
+                ..p
+            },
+            plan(&[])
+        );
+    }
+    let argv = ["met", "serve", "org/model", "--prefill-tail-mode", "fused"];
+    assert!(Cli::try_parse_from(argv).is_err());
 }

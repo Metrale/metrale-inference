@@ -14,7 +14,9 @@ impl Glm5NextLayer {
     /// 2026-10-14: The attention sublayer on the `k` normed rows at `normed` (positions from
     /// `seq_len`), returning its output: KDA's `final_out`, or DSA's over its input. With
     /// `take_snapshots` a KDA layer writes its state after row `t` to intermediate `t`;
-    /// `is_prefill` as `forward_k`'s.
+    /// `is_prefill` as `forward_k`'s. 2026-10-14: non-empty `cuts` (`--prefill-tail-mode merge`)
+    /// run a KDA prefill sub-chunk's conv and recurrence cut there (`glm5next_kda/cut.rs`); DSA
+    /// has no state to cut and ignores them.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::glm5next_layer) fn mix(
         &self,
@@ -28,6 +30,7 @@ impl Glm5NextLayer {
         stream: u64,
         take_snapshots: bool,
         is_prefill: bool,
+        cuts: &[crate::glm5next_kda::cut::KdaCut],
     ) -> Result<DevicePtr> {
         let gpu = ctx.gpu;
         let kda_ctx = match &self.mixer {
@@ -68,7 +71,15 @@ impl Glm5NextLayer {
                 // which a verify must match.
                 // 2026-10-12: `METRALE_GLM_KDA_CHUNK64` (`decode_k` picks it) is ahead of
                 // `METRALE_GLM_KDA_CHUNK_PREFILL` where its floor is reached.
-                if is_prefill
+                if !cuts.is_empty() {
+                    if !is_prefill || !snaps.is_empty() {
+                        bail!(
+                            "GLM layer {}: KDA cuts are for a prefill sub-chunk without snapshots",
+                            self.layer_idx
+                        );
+                    }
+                    layer.prefill_cut(gpu, normed, k, kda, ws, cuts, stream)?;
+                } else if is_prefill
                     && k > 1
                     && snaps.is_empty()
                     && crate::glm5next_layer::levers::kda_chunk_prefill()

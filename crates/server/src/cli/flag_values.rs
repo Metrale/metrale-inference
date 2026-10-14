@@ -19,6 +19,7 @@
 //! Invariants: none beyond the types.
 
 use metrale_config::{MoeExpertLayout, WeightQuantization};
+use metrale_gpu_runtime::prefill_tail_mode::PrefillTailMode;
 use metrale_model_layers::layers::{DenseQuantization, DsaQuantization, ExpertQuantization};
 
 /// 2026-09-26: What `--kv-high-precision-layers auto` resolves to. The flag's
@@ -249,6 +250,25 @@ impl clap::ValueEnum for DsaQuantizationArg {
             }
         };
         Some(clap::builder::PossibleValue::new(self.0.name()).help(help))
+    }
+}
+
+/// 2026-10-14: `--prefill-tail-mode`: a clap value enum over gpu-runtime's tail modes
+/// (`metrale_gpu_runtime::prefill_tail_mode::PrefillTailMode`), which own the names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PrefillTailModeArg(pub PrefillTailMode);
+
+impl clap::ValueEnum for PrefillTailModeArg {
+    fn value_variants<'a>() -> &'a [Self] {
+        const VARIANTS: [PrefillTailModeArg; 2] = [
+            PrefillTailModeArg(PrefillTailMode::ALL[0]),
+            PrefillTailModeArg(PrefillTailMode::ALL[1]),
+        ];
+        &VARIANTS
+    }
+
+    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
+        Some(clap::builder::PossibleValue::new(self.0.name()).help(self.0.describe()))
     }
 }
 

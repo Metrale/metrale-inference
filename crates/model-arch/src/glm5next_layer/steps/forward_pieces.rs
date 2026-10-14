@@ -106,6 +106,7 @@ impl Glm5NextLayer {
                     // 2026-10-14: A one-piece call IS a prefill sub-chunk (`is_prefill`).
                     true,
                     call,
+                    &[],
                 )?;
                 off += n;
                 continue;
@@ -140,7 +141,19 @@ impl Glm5NextLayer {
                 let mut r0 = 0usize;
                 for &n in p {
                     let dst = normed.offset(r0 * row_bytes);
-                    let out = self.mix(dst, n, st, kv, first + r0, bt, ctx, stream, false, true)?;
+                    let out = self.mix(
+                        dst,
+                        n,
+                        st,
+                        kv,
+                        first + r0,
+                        bt,
+                        ctx,
+                        stream,
+                        false,
+                        true,
+                        &[],
+                    )?;
                     // 2026-10-14: KDA leaves its output in `ws.final_out`, which the next piece
                     // reuses; DSA writes over its input.
                     if out.0 != dst.0 {

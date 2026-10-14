@@ -130,6 +130,7 @@ impl Glm5NextLayer {
                         stream,
                         false,
                         true,
+                        &[],
                     )?;
                     profile::end(profile::KDA, t, gpu, stream);
                     subs[s].attn_out = Some(out);

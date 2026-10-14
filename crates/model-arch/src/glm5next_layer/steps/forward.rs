@@ -240,6 +240,8 @@ impl Glm5NextLayer {
         // `METRALE_GLM_KDA_CHUNK_PREFILL=1`, the KDA chunked scan, both prefill-only.
         is_prefill: bool,
         call: dump::Call,
+        // 2026-10-14: The KDA cuts of a prefill sub-chunk (`steps/mix.rs`); empty elsewhere.
+        cuts: &[crate::glm5next_kda::cut::KdaCut],
     ) -> Result<()> {
         let Some(mhc) = self.mhc.as_ref() else {
             bail!("GLM layer {}: no hyper-connection bound", self.layer_idx);
@@ -258,6 +260,7 @@ impl Glm5NextLayer {
                 stream,
                 take_snapshots,
                 is_prefill,
+                cuts,
             )
         };
         // 2026-10-12: `METRALE_GLM_SP_MHC=1`: a wide TP prefill sub-chunk runs its mHC work on
