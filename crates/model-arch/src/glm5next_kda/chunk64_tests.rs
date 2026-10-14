@@ -12,6 +12,7 @@ use metrale_gpu_runtime::gpu::DevicePtr;
 use metrale_gpu_runtime::gpu::mock::{MockArg, MockGpuBackend, MockLaunch};
 
 use super::super::Glm5NextKdaWorkspace;
+use super::super::Pack;
 use super::super::decode::{ScanMode, scan_mode};
 use super::super::decode_rows_tests::{
     CHUNK64_PREP, CHUNK64_SCAN, CONV_TOKENS, CONV_WINDOW, cfg, layer, seq_state, since,
@@ -83,7 +84,8 @@ fn rows_run_conv_prepare_and_scan_over_their_chunks() {
     );
     let st = seq_state(&gpu);
     let from = gpu.launch_count();
-    lay.stateful_chunk64(&gpu, 130, &st, &ws, 7).unwrap();
+    lay.stateful_chunk64(&gpu, 130, &st, &ws, Pack::InFrontEnd, 7)
+        .unwrap();
     let l = since(&gpu, from);
     let funcs: Vec<u64> = l.iter().map(|x| x.func).collect();
     assert_eq!(
@@ -146,7 +148,8 @@ fn a_long_sub_chunk_runs_in_slabs() {
     let ws = Glm5NextKdaWorkspace::new(&gpu, &cfg(), 700).unwrap();
     let st = seq_state(&gpu);
     let from = gpu.launch_count();
-    lay.stateful_chunk64(&gpu, 700, &st, &ws, 7).unwrap();
+    lay.stateful_chunk64(&gpu, 700, &st, &ws, Pack::InFrontEnd, 7)
+        .unwrap();
     let l = since(&gpu, from);
     let funcs: Vec<u64> = l.iter().map(|x| x.func).collect();
     assert_eq!(
@@ -185,7 +188,10 @@ fn rows_past_the_workspace_are_refused() {
     let ws = Glm5NextKdaWorkspace::new(&gpu, &cfg(), 64).unwrap();
     let st = seq_state(&gpu);
     let from = gpu.launch_count();
-    assert!(lay.stateful_chunk64(&gpu, 65, &st, &ws, 7).is_err());
+    assert!(
+        lay.stateful_chunk64(&gpu, 65, &st, &ws, Pack::InFrontEnd, 7)
+            .is_err()
+    );
     assert_eq!(gpu.launch_count(), from);
 }
 

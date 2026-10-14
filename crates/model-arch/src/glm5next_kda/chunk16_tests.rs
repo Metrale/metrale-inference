@@ -13,7 +13,7 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use super::super::decode_rows_tests::{
     CHUNK16_PREP, CHUNK16_SCAN, CONV_TOKENS, CONV_WINDOW, RECUR_SEQ, cfg, layer, seq_state, since,
 };
-use super::super::{Glm5NextKdaWorkspace, KdaSeqState};
+use super::super::{Glm5NextKdaWorkspace, KdaSeqState, Pack};
 use super::parse_min_rows;
 
 fn ptr(l: &MockLaunch, i: usize) -> DevicePtr {
@@ -73,7 +73,10 @@ fn rows_past_the_workspace_are_refused() {
     let ws = Glm5NextKdaWorkspace::new(&gpu, &cfg(), 16).unwrap();
     let st = seq_state(&gpu);
     let from = gpu.launch_count();
-    assert!(lay.stateful_chunk16(&gpu, 17, &st, &ws, 7).is_err());
+    assert!(
+        lay.stateful_chunk16(&gpu, 17, &st, &ws, Pack::InFrontEnd, 7)
+            .is_err()
+    );
     assert_eq!(gpu.launch_count(), from);
 }
 
@@ -100,7 +103,8 @@ fn forty_rows_run_conv_prepare_and_scan_over_three_chunks() {
     let ws = Glm5NextKdaWorkspace::new(&gpu, &cfg(), 64).unwrap();
     let st = seq_state(&gpu);
     let from = gpu.launch_count();
-    lay.stateful_chunk16(&gpu, 40, &st, &ws, 7).unwrap();
+    lay.stateful_chunk16(&gpu, 40, &st, &ws, Pack::InFrontEnd, 7)
+        .unwrap();
     let l = since(&gpu, from);
     let funcs: Vec<u64> = l.iter().map(|x| x.func).collect();
     assert_eq!(

@@ -35,6 +35,7 @@ pub mod tp;
 pub mod tp_bind;
 
 mod config;
+mod conv_pack;
 mod decode;
 #[cfg(test)]
 mod decode_rows_tests;
@@ -45,6 +46,7 @@ mod replay;
 mod rows;
 mod seq_tokens;
 pub use config::{Glm5NextKdaConfig, Glm5NextKdaWeights};
+use conv_pack::Pack;
 pub use kernels::{Glm5NextKdaKernels, KDA_REG_D, KDA_ROWS_MAX, KdaSeqKernels};
 pub use replay::KdaVerifyRecord;
 
@@ -320,6 +322,7 @@ impl Glm5NextKdaLayer {
         hidden: DevicePtr,
         t: usize,
         ws: &Glm5NextKdaWorkspace,
+        pack: Pack,
         stream: u64,
     ) -> Result<()> {
         let c = &self.cfg;
@@ -369,16 +372,7 @@ impl Glm5NextKdaLayer {
                 stream,
             )?;
         }
-        KernelLaunch::new(gpu, self.kernels.pack)
-            .grid([div_ceil(qkv as u32, 256), t as u32, 1])
-            .block([256, 1, 1])
-            .arg_ptr(ws.qkv_parts)
-            .arg_ptr(ws.qkv_parts.offset(t * qkv * 2))
-            .arg_ptr(ws.qkv_parts.offset(2 * t * qkv * 2))
-            .arg_ptr(ws.qkv_proj)
-            .arg_u32(t as u32)
-            .arg_u32(qkv as u32)
-            .launch(stream)?;
+        self.pack_qkv(gpu, t, ws, pack, stream)?;
 
         // 2026-09-25: Low-rank forget gate, hidden -> head_dim -> heads * head_dim, then
         // `lower_bound * sigmoid(exp(A_log[h]) * (g[c] + dt_bias[c]))` in `kda_gate_bf16`.

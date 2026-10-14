@@ -107,6 +107,7 @@ impl Glm5NextKdaLayer {
         k: usize,
         state: &KdaSeqState,
         ws: &Glm5NextKdaWorkspace,
+        pack: Pack,
         stream: u64,
     ) -> Result<()> {
         if !self.chunk64_ready() || k == 0 || k > ws.max_tokens {
@@ -135,7 +136,7 @@ impl Glm5NextKdaLayer {
                 line!()
             );
         });
-        self.conv_tokens(gpu, k, state, ws, stream)?;
+        self.conv_tokens(gpu, k, state, ws, pack, stream)?;
         let io = RowIo::workspace(c, ws, 0);
         let scale = 1.0 / (d as f32).sqrt();
         for c0 in (0..nchunks).step_by(CHUNK64_SLAB) {

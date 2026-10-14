@@ -36,12 +36,13 @@ impl Glm5NextKdaLayer {
         k: usize,
         state: &KdaSeqState,
         ws: &Glm5NextKdaWorkspace,
+        pack: Pack,
         stream: u64,
     ) -> Result<()> {
         if !self.seq_tokens_ready() || k == 0 {
             bail!("KDA: the per-sequence token kernels cannot run {k} rows here");
         }
-        self.conv_tokens(gpu, k, state, ws, stream)?;
+        self.conv_tokens(gpu, k, state, ws, pack, stream)?;
         let c = &self.cfg;
         let (qkv, cd, d) = (c.qkv_dim(), c.conv_dim(), c.head_dim);
         let io = RowIo::workspace(c, ws, 0);
@@ -107,7 +108,8 @@ impl Glm5NextKdaLayer {
                 .arg_u32(t as u32 + 1)
                 .launch(stream)?;
         }
-        self.conv_tokens(gpu, k, state, ws, stream)?;
+        // 2026-10-13: The snapshots above read the packed rows, so the pack ran in `front_end`.
+        self.conv_tokens(gpu, k, state, ws, Pack::InFrontEnd, stream)?;
         let snap = |t: usize| snapshots.get(t).map_or(DevicePtr::NULL, |p| p.0);
         KernelLaunch::new(gpu, s.recurrent_snap)
             .grid([c.heads as u32, (d / SEQ_VB) as u32, 1])
@@ -136,20 +138,50 @@ impl Glm5NextKdaLayer {
 
     /// 2026-10-09: The conv, SiLU and L2 of workspace rows `0..k` of one sequence, each row as
     /// the per-row `causal_conv1d_update_l2norm` computes it, then the conv window advanced past
-    /// the `k` rows: two launches. Also the chunked prefill's conv (`prefill.rs`).
+    /// the `k` rows: two launches. Also the chunked prefill's conv (`prefill.rs`). 2026-10-13:
+    /// under [`Pack::InConv`] the first launch also writes the pack `front_end` skipped
+    /// (`conv_pack.rs`).
     pub(super) fn conv_tokens(
         &self,
         gpu: &dyn GpuBackend,
         k: usize,
         state: &KdaSeqState,
         ws: &Glm5NextKdaWorkspace,
+        pack: Pack,
+        stream: u64,
+    ) -> Result<()> {
+        let c = &self.cfg;
+        let cd = c.conv_dim();
+        let io = RowIo::workspace(c, ws, 0);
+        let s = &self.kernels.seq;
+        if pack == Pack::InConv {
+            self.conv_tokens_parts(gpu, k, state, ws, stream)?;
+        } else {
+            self.conv_tokens_packed(gpu, k, state, io, stream)?;
+        }
+        KernelLaunch::new(gpu, s.conv_window)
+            .grid([div_ceil(cd as u32, 256), 1, 1])
+            .block([256, 1, 1])
+            .arg_ptr(state.conv)
+            .arg_ptr(io.qkv_in)
+            .arg_u32(cd as u32)
+            .arg_u32(c.conv_kernel as u32)
+            .arg_u32(k as u32)
+            .launch(stream)
+    }
+
+    /// 2026-10-13: `causal_conv1d_update_l2norm_tokens` over the packed rows `0..k`.
+    fn conv_tokens_packed(
+        &self,
+        gpu: &dyn GpuBackend,
+        k: usize,
+        state: &KdaSeqState,
+        io: RowIo,
         stream: u64,
     ) -> Result<()> {
         let c = &self.cfg;
         let (cd, d) = (c.conv_dim(), c.head_dim);
-        let io = RowIo::workspace(c, ws, 0);
-        let s = &self.kernels.seq;
-        KernelLaunch::new(gpu, s.conv_tokens)
+        KernelLaunch::new(gpu, self.kernels.seq.conv_tokens)
             .grid([div_ceil(cd as u32, 256), k as u32, 1])
             .block([256, 1, 1])
             .arg_ptr(state.conv)
@@ -162,15 +194,6 @@ impl Glm5NextKdaLayer {
             .arg_u32(c.qk_channels() as u32)
             .arg_u32(d as u32)
             .arg_f32(c.l2_eps)
-            .launch(stream)?;
-        KernelLaunch::new(gpu, s.conv_window)
-            .grid([div_ceil(cd as u32, 256), 1, 1])
-            .block([256, 1, 1])
-            .arg_ptr(state.conv)
-            .arg_ptr(io.qkv_in)
-            .arg_u32(cd as u32)
-            .arg_u32(c.conv_kernel as u32)
-            .arg_u32(k as u32)
             .launch(stream)
     }
 }

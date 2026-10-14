@@ -134,6 +134,9 @@ pub const KDA_REG_D: usize = 128;
 #[derive(Clone, Copy, Debug)]
 pub struct KdaSeqKernels {
     pub conv_tokens: KernelHandle,
+    /// 2026-10-13: `causal_conv1d_update_l2norm_tokens_parts`: `conv_tokens` reading the three
+    /// projections and writing the pack's `qkv_proj` too (`conv_pack.rs`).
+    pub conv_tokens_parts: KernelHandle,
     pub conv_window: KernelHandle,
     pub recurrent: KernelHandle,
     /// 2026-10-11: `kda_recurrent_decode_bf16_seq_reg_snap`: `recurrent` that also stores the
@@ -152,6 +155,11 @@ impl KdaSeqKernels {
         let k = metrale_model_layers::layers::try_kernel;
         Self {
             conv_tokens: k(gpu, "kda_conv_tokens", "causal_conv1d_update_l2norm_tokens"),
+            conv_tokens_parts: k(
+                gpu,
+                "kda_conv_tokens",
+                "causal_conv1d_update_l2norm_tokens_parts",
+            ),
             conv_window: k(gpu, "kda_conv_tokens", "causal_conv1d_window_advance"),
             recurrent: k(gpu, "kda_recurrent", "kda_recurrent_decode_bf16_seq_reg"),
             recurrent_snap: k(

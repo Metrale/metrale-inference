@@ -202,7 +202,7 @@ impl Glm5NextKdaLayer {
         ws: &Glm5NextKdaWorkspace,
         stream: u64,
     ) -> Result<()> {
-        self.front_end(gpu, hidden, 1, ws, stream)?;
+        self.front_end(gpu, hidden, 1, ws, Pack::InFrontEnd, stream)?;
         self.stateful_row(gpu, RowIo::workspace(&self.cfg, ws, 0), state, stream)?;
         self.back_end(gpu, 1, ws, stream)
     }
@@ -304,11 +304,15 @@ impl Glm5NextKdaLayer {
             && super::seq_tokens::snap_tokens_apply(k, snapshots.len())
             && self.seq_tokens_ready()
             && self.kernels.seq.recurrent_snap.0 != 0;
+        // 2026-10-13: The verify that snapshots reads the packed rows before its conv, so only
+        // the chunked and token paths may take the fused pack.
+        let pack = self.pack_for(tokens || chunked)?;
         self.rows_with(
             gpu,
             hidden,
             k,
             ws,
+            pack,
             stream,
             |row| {
                 if tokens || chunked || snap_tokens {
@@ -322,13 +326,13 @@ impl Glm5NextKdaLayer {
             },
             || {
                 if chunked64 {
-                    self.stateful_chunk64(gpu, k, state, ws, stream)
+                    self.stateful_chunk64(gpu, k, state, ws, pack, stream)
                 } else if chunked {
-                    self.stateful_chunk16(gpu, k, state, ws, stream)
+                    self.stateful_chunk16(gpu, k, state, ws, pack, stream)
                 } else if snap_tokens {
                     self.stateful_tokens_snap(gpu, k, state, ws, snapshots, stream)
                 } else if tokens {
-                    self.stateful_tokens(gpu, k, state, ws, stream)
+                    self.stateful_tokens(gpu, k, state, ws, pack, stream)
                 } else {
                     Ok(())
                 }
@@ -397,6 +401,7 @@ impl Glm5NextKdaLayer {
             hidden,
             states.len(),
             ws,
+            Pack::InFrontEnd,
             stream,
             |row| {
                 self.stateful_row(
@@ -420,6 +425,7 @@ impl Glm5NextKdaLayer {
         hidden: DevicePtr,
         k: usize,
         ws: &Glm5NextKdaWorkspace,
+        pack: Pack,
         stream: u64,
         mut per_row: impl FnMut(usize) -> Result<()>,
         after_rows: impl FnOnce() -> Result<()>,
@@ -434,7 +440,7 @@ impl Glm5NextKdaLayer {
         // 2026-09-25: Three profile buckets (front, recurrence, back), each closed where its span
         // ends.
         let t_front = profile::start();
-        self.front_end(gpu, hidden, k, ws, stream)?;
+        self.front_end(gpu, hidden, k, ws, pack, stream)?;
         profile::end(profile::KDA_FRONT, t_front, gpu, stream);
         let t_recur = profile::start();
         for row in 0..k {

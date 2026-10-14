@@ -30,6 +30,7 @@ pub(super) const CHUNK16_SCAN: u64 = 0x31B;
 pub(super) const CHUNK64_PREP: u64 = 0x31E;
 pub(super) const CHUNK64_SCAN: u64 = 0x320;
 pub(super) const GATES_FUSED: u64 = 0x31C;
+pub(super) const CONV_TOKENS_PARTS: u64 = 0x321;
 
 pub(super) fn cfg() -> Glm5NextKdaConfig {
     Glm5NextKdaConfig {
@@ -82,6 +83,7 @@ pub(super) fn layer(gpu: &MockGpuBackend) -> Glm5NextKdaLayer {
         recurrent_rows_reg: k(0x315),
         seq: crate::glm5next_kda::KdaSeqKernels {
             conv_tokens: k(CONV_TOKENS),
+            conv_tokens_parts: k(CONV_TOKENS_PARTS),
             conv_window: k(CONV_WINDOW),
             recurrent: k(RECUR_SEQ),
             // 2026-10-11: The verify's snapshotting kernel, which these batched-decode paths

@@ -66,3 +66,160 @@ extern "C" __global__ void causal_conv1d_window_advance(
     for (unsigned int s = 0; s < d_conv && s < 4u; ++s) st[s] = nw[s];
 }
 
+
+// 2026-10-13: Tokens per pass of causal_conv1d_update_l2norm_tokens_parts: each thread issues
+// this many input loads before it convolves them, and one pair of barriers serves them all.
+#define KDA_CONV_PARTS_PASS 8
+
+// 2026-10-13: kda_pack_qkv_bf16 and causal_conv1d_update_l2norm_tokens in one launch, a run of
+// tokens per block. Inputs are the three [T, part] projections (dim = 3 * part); channel ch reads
+// part ch / part at column ch % part, the element kda_pack_qkv_bf16 copies to packed[t, ch], and
+// writes that copy to `packed` as the pack does (the window advance and the verify record read
+// it). Grid (ceil(dim / 256), G), block 256: block (x, y) runs tokens [y * span, (y + 1) * span),
+// span = ceil(T / G), so G may come from the SM count; each token's bytes do not depend on G.
+// Byte-identical to the pack then causal_conv1d_update_l2norm_tokens, token by token:
+// - a thread's window holds the floats the per-token block builds (x_j = the BF16 input widened,
+//   x_j for j < 0 the conv_state slot j + K), shifted and appended in the body's order;
+// - acc, SiLU and the L2 are the body's expressions in its order (bias, then k = 0 .. K-1;
+//   __expf; the shuffle-down warp sums; the four warp sums from base_warp, summed and rsqrtf'd by
+//   threads 0 and head_dim, read back by every thread of the head);
+// - the store is the body's __float2bfloat16 of the same float.
+// Only the issue order changes: KDA_CONV_PARTS_PASS loads per thread in flight, each input read
+// once (the per-token grid read each one d_conv + 1 times), two barriers per pass instead of per
+// token. conv_state is only read; causal_conv1d_window_advance runs after this, on `packed`.
+template <int K>
+__device__ __forceinline__ void kda_conv_parts_body(
+    const float* __restrict__ conv_state,
+    const __nv_bfloat16* __restrict__ q,
+    const __nv_bfloat16* __restrict__ k,
+    const __nv_bfloat16* __restrict__ v,
+    const __nv_bfloat16* __restrict__ weight,
+    const float* __restrict__ bias,
+    __nv_bfloat16* __restrict__ packed,
+    __nv_bfloat16* __restrict__ output,
+    unsigned int dim,
+    unsigned int part,
+    unsigned int T,
+    unsigned int qk_channels,
+    unsigned int head_dim,
+    float l2_eps,
+    float (*warp_sums)[KDA_CONV_PARTS_PASS][8]
+) {
+    const unsigned int tid = threadIdx.x;
+    const unsigned int ch = blockIdx.x * blockDim.x + tid;
+    const bool ch_valid = ch < dim;
+    const bool block_needs_l2 = blockIdx.x * blockDim.x < qk_channels;
+    const unsigned int span = (T + gridDim.y - 1) / gridDim.y;
+    const unsigned int t_begin = blockIdx.y * span;
+    const unsigned int t_end = min(T, t_begin + span);
+    if (t_begin >= t_end) return;
+
+    const unsigned int pi = ch_valid ? ch / part : 0u;
+    const unsigned int off = ch_valid ? ch - pi * part : 0u;
+    const __nv_bfloat16* src = pi == 0u ? q : (pi == 1u ? k : v);
+
+    float win[K];
+    float w[K];
+    float b0 = 0.0f;
+    if (ch_valid) {
+#pragma unroll
+        for (int s = 0; s < K; ++s) {
+            const int j = (int)t_begin - K + s;
+            win[s] = j >= 0 ? (float)src[(size_t)j * part + off]
+                            : conv_state[(size_t)ch * K + (unsigned int)(j + K)];
+            w[s] = (float)weight[ch * K + s];
+        }
+        b0 = (bias != nullptr) ? bias[ch] : 0.0f;
+    }
+
+    const unsigned int warp_id = tid / 32;
+    const unsigned int lane = tid % 32;
+    const unsigned int head_in_block = tid / head_dim;
+    const unsigned int base_warp = head_in_block * (head_dim / 32);
+    unsigned int buf = 0;
+    for (unsigned int t0 = t_begin; t0 < t_end; t0 += KDA_CONV_PARTS_PASS, buf ^= 1u) {
+        __nv_bfloat16 xin[KDA_CONV_PARTS_PASS];
+#pragma unroll
+        for (int p = 0; p < KDA_CONV_PARTS_PASS; ++p) {
+            const unsigned int t = t0 + p;
+            xin[p] = (ch_valid && t < t_end) ? src[(size_t)t * part + off] : __ushort_as_bfloat16(0);
+        }
+        float silu[KDA_CONV_PARTS_PASS];
+#pragma unroll
+        for (int p = 0; p < KDA_CONV_PARTS_PASS; ++p) {
+            const unsigned int t = t0 + p;
+            const bool valid = ch_valid && t < t_end;
+            silu[p] = 0.0f;
+            if (valid) {
+                packed[(size_t)t * dim + ch] = xin[p];
+#pragma unroll
+                for (int i = 0; i < K - 1; ++i) win[i] = win[i + 1];
+                win[K - 1] = (float)xin[p];
+                float acc = b0;
+#pragma unroll
+                for (int i = 0; i < K; ++i) acc += win[i] * w[i];
+                float sigmoid_acc = 1.0f / (1.0f + __expf(-acc));
+                silu[p] = acc * sigmoid_acc;
+            }
+        }
+        if (block_needs_l2) {
+#pragma unroll
+            for (int p = 0; p < KDA_CONV_PARTS_PASS; ++p) {
+                float sq = (ch_valid && t0 + p < t_end) ? (silu[p] * silu[p]) : 0.0f;
+                for (int offset = 16; offset >= 1; offset >>= 1)
+                    sq += __shfl_down_sync(0xFFFFFFFF, sq, offset);
+                if (lane == 0) warp_sums[buf][p][warp_id] = sq;
+            }
+            __syncthreads();
+            if (tid < KDA_CONV_PARTS_PASS * 2) {
+                const unsigned int p = tid / 2;
+                const unsigned int bw = (tid % 2) * (head_dim / 32);
+                if (bw + 3 < 8) {
+                    float* ws = warp_sums[buf][p];
+                    float total = ws[bw] + ws[bw + 1] + ws[bw + 2] + ws[bw + 3];
+                    ws[bw] = rsqrtf(total + l2_eps);
+                }
+            }
+            __syncthreads();
+#pragma unroll
+            for (int p = 0; p < KDA_CONV_PARTS_PASS; ++p)
+                if (ch_valid && t0 + p < t_end) silu[p] *= warp_sums[buf][p][base_warp];
+        }
+#pragma unroll
+        for (int p = 0; p < KDA_CONV_PARTS_PASS; ++p) {
+            const unsigned int t = t0 + p;
+            if (ch_valid && t < t_end) output[(size_t)t * dim + ch] = __float2bfloat16(silu[p]);
+        }
+    }
+}
+
+extern "C" __global__ void __launch_bounds__(256) causal_conv1d_update_l2norm_tokens_parts(
+    const float* __restrict__ conv_state,
+    const __nv_bfloat16* __restrict__ q,
+    const __nv_bfloat16* __restrict__ k,
+    const __nv_bfloat16* __restrict__ v,
+    const __nv_bfloat16* __restrict__ weight,
+    const float* __restrict__ bias,
+    __nv_bfloat16* __restrict__ packed,
+    __nv_bfloat16* __restrict__ output,
+    unsigned int dim,
+    unsigned int part,
+    unsigned int T,
+    unsigned int d_conv,
+    unsigned int qk_channels,
+    unsigned int head_dim,
+    float l2_eps
+) {
+    __shared__ float warp_sums[2][KDA_CONV_PARTS_PASS][8];
+#define KDA_CONV_PARTS_PASS_ARGS                                                              \
+    conv_state, q, k, v, weight, bias, packed, output, dim, part, T, qk_channels, head_dim,   \
+        l2_eps, warp_sums
+    switch (d_conv) {
+    case 1: kda_conv_parts_body<1>(KDA_CONV_PARTS_PASS_ARGS); break;
+    case 2: kda_conv_parts_body<2>(KDA_CONV_PARTS_PASS_ARGS); break;
+    case 3: kda_conv_parts_body<3>(KDA_CONV_PARTS_PASS_ARGS); break;
+    case 4: kda_conv_parts_body<4>(KDA_CONV_PARTS_PASS_ARGS); break;
+    default: break;
+    }
+#undef KDA_CONV_PARTS_PASS_ARGS
+}

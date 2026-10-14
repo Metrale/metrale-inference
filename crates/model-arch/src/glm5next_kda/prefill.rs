@@ -49,7 +49,10 @@ impl Glm5NextKdaLayer {
         let tp = nchunks * c.chunk;
         // 2026-09-25: The same three profile buckets as `decode_k`.
         let t_front = crate::glm5next_layer::profile::start();
-        self.front_end(gpu, hidden, t, ws, stream)?;
+        let conv_tokens =
+            self.kernels.seq.conv_tokens.0 != 0 && self.kernels.seq.conv_window.0 != 0;
+        let pack = self.pack_for(conv_tokens)?;
+        self.front_end(gpu, hidden, t, ws, pack, stream)?;
         crate::glm5next_layer::profile::end(
             crate::glm5next_layer::profile::KDA_FRONT,
             t_front,
@@ -63,8 +66,8 @@ impl Glm5NextKdaLayer {
         // normalised in FP32 and rounded to BF16 once, so the scan below reads the q/k/v the
         // per-token path reads. Without those kernels, the older pair: conv + SiLU rounded to
         // BF16, then `l2_norm_bf16` rounding again.
-        if self.kernels.seq.conv_tokens.0 != 0 && self.kernels.seq.conv_window.0 != 0 {
-            self.conv_tokens(gpu, t, state, ws, stream)?;
+        if conv_tokens {
+            self.conv_tokens(gpu, t, state, ws, pack, stream)?;
         } else {
             // 2026-09-25: The prefill conv is conv + SiLU only; L2 is a separate launch over q|k.
             KernelLaunch::new(gpu, self.kernels.conv_prefill)

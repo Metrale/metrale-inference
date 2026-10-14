@@ -191,7 +191,7 @@ pub fn dsa_layer(
         kernels: Glm5NextDsaLayerKernels::resolve(gpu)?,
         select_kernels: Glm5NextDsaKernels::resolve(gpu)?,
         decode_kernel: Glm5NextDsaDecodeKernel::resolve(gpu)?,
-        workspace: Glm5NextDsaWorkspace::new(gpu, cfg, 16)?,
+        workspace: Glm5NextDsaWorkspace::new(gpu, cfg, 16)?.into(),
         layer_idx: 1,
         attn_layer_idx: 0,
         rms_eps: 1e-6,
