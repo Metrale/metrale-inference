@@ -146,8 +146,11 @@ impl Rig<'_> {
         drop_snap: bool,
     ) -> Result<Vec<u8>> {
         let (g, row) = (self.gpu, HIDDEN * 2);
-        let lists: Vec<Option<&[(DevicePtr, DevicePtr)]>> =
-            a.snaps.iter().map(|v| Some(v.as_slice())).collect();
+        let lists: Vec<Option<&[(DevicePtr, DevicePtr)]>> = a
+            .snaps
+            .iter()
+            .map(|v: &Vec<(DevicePtr, DevicePtr)>| Some(v.as_slice()))
+            .collect();
         let mut out = vec![0u8; ks.iter().sum::<usize>() * row];
         let mut dropped = !drop_snap;
         for (base, m, spans) in groups(ks) {
@@ -218,7 +221,7 @@ impl Rig<'_> {
     }
 }
 
-fn rig(gpu: &dyn GpuBackend, rng: &mut Lcg, heads: usize) -> Result<Rig<'_>> {
+fn rig<'a>(gpu: &'a dyn GpuBackend, rng: &mut Lcg, heads: usize) -> Result<Rig<'a>> {
     let (cfg, layer, ws) = kda_fixture_heads(gpu, rng, heads)?;
     Ok(Rig {
         gpu,
@@ -290,8 +293,11 @@ fn bench(gpu: &dyn GpuBackend, rng: &mut Lcg) -> Result<()> {
         let init = r.init(rng, c)?;
         let hidden = up_bf16(gpu, &rng.vec(2 * c * HIDDEN, 1.0))?;
         let (a, b) = (r.arm(&init, &ks, true)?, r.arm(&init, &ks, true)?);
-        let lists: Vec<Option<&[(DevicePtr, DevicePtr)]>> =
-            b.snaps.iter().map(|v| Some(v.as_slice())).collect();
+        let lists: Vec<Option<&[(DevicePtr, DevicePtr)]>> = b
+            .snaps
+            .iter()
+            .map(|v: &Vec<(DevicePtr, DevicePtr)>| Some(v.as_slice()))
+            .collect();
         let spans = group_spans(&ks, 0, 2 * c);
         let runs = kda_seqs_runs(&spans, &lists, &b.st).context("plan")?;
         let row_states: Vec<KdaSeqState> = a.st.iter().flat_map(|&st| [st, st]).collect();
