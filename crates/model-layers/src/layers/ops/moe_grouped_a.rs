@@ -388,3 +388,6 @@ mod moe_w4a16_pipe_tests;
 #[cfg(test)]
 #[path = "moe_grouped_a/wgmma_tests.rs"]
 mod wgmma_tests;
+#[cfg(test)]
+#[path = "moe_w4a16_wgmma_tests.rs"]
+mod moe_w4a16_wgmma_tests;

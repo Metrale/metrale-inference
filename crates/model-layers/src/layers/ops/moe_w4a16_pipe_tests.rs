@@ -23,7 +23,7 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 
 use crate::layers::ops;
 
-const SENTINEL: u8 = 0xAB;
+pub(super) const SENTINEL: u8 = 0xAB;
 /// 2026-10-13: Rows routed to each expert: empty, single, around the 64-row tile, several tiles.
 const ROWS: [u32; 8] = [0, 1, 63, 64, 65, 200, 7, 128];
 /// 2026-10-13: Token rows of A the gather draws from.
@@ -69,7 +69,7 @@ fn upload(g: &dyn GpuBackend, data: &[u8]) -> DevicePtr {
     p
 }
 
-fn sentinel(g: &dyn GpuBackend, n: usize) -> DevicePtr {
+pub(super) fn sentinel(g: &dyn GpuBackend, n: usize) -> DevicePtr {
     let p = g.alloc(n).unwrap();
     g.memset(p, SENTINEL, n).unwrap();
     p
@@ -83,7 +83,7 @@ fn download(g: &dyn GpuBackend, p: DevicePtr, n: usize) -> Vec<u8> {
 
 /// 2026-10-14: Random NVFP4 weights of `experts` experts for one (N, K): the three pointer
 /// tables and the per-expert buffers they point at.
-struct Weights {
+pub(super) struct Weights {
     packed: DevicePtr,
     scales: DevicePtr,
     scale2: DevicePtr,
@@ -91,7 +91,7 @@ struct Weights {
     buffers: Vec<DevicePtr>,
 }
 
-fn weights(g: &dyn GpuBackend, n: u32, k: u32, experts: u32) -> Weights {
+pub(super) fn weights(g: &dyn GpuBackend, n: u32, k: u32, experts: u32) -> Weights {
     let (n, k) = (n as usize, k as usize);
     let mut buffers = Vec::new();
     let mut table = |seed: u32, len: usize, scale: bool| -> Vec<u8> {
@@ -120,7 +120,7 @@ fn weights(g: &dyn GpuBackend, n: u32, k: u32, experts: u32) -> Weights {
 }
 
 impl Weights {
-    fn free(self, g: &dyn GpuBackend) {
+    pub(super) fn free(self, g: &dyn GpuBackend) {
         for p in [self.packed, self.scales, self.scale2]
             .into_iter()
             .chain(self.buffers)
@@ -131,19 +131,19 @@ impl Weights {
 }
 
 /// 2026-10-13: One problem's device buffers: A, offsets and gather, over a `Weights`.
-struct Problem<'w> {
+pub(super) struct Problem<'w> {
     w: &'w Weights,
     a: DevicePtr,
     offsets: DevicePtr,
     sorted: DevicePtr,
-    total: u32,
+    pub(super) total: u32,
     /// 2026-10-14: The largest expert's 64-row tile count (the exact grid y).
-    tiles: u32,
+    pub(super) tiles: u32,
 }
 
 /// 2026-10-14: `rows[e]` expert-sorted rows per expert of `w`; with `gather`, A has `tokens`
 /// rows and each sorted row reads a random one of them.
-fn problem<'w>(
+pub(super) fn problem<'w>(
     g: &dyn GpuBackend,
     w: &'w Weights,
     k: u32,
@@ -179,7 +179,7 @@ fn problem<'w>(
 }
 
 impl Problem<'_> {
-    fn free(self, g: &dyn GpuBackend) {
+    pub(super) fn free(self, g: &dyn GpuBackend) {
         for p in [self.a, self.offsets, self.sorted] {
             if !p.is_null() {
                 g.free(p).unwrap();
@@ -209,18 +209,32 @@ type Launcher = fn(
 /// 2026-10-14: A launcher and its kernel: the base or per-expert pipelined grid with grid y
 /// `m_tiles`, or the persistent grid sized for `total_rows` rows.
 #[derive(Clone, Copy)]
-enum Arm {
+pub(super) enum Arm {
     Base(KernelHandle, u32),
     Pipe(KernelHandle, u32),
     Persist(KernelHandle, u32),
+    /// 2026-10-14: The wgmma twin, its grid sized for `total_rows` rows like `Persist`.
+    Wgmma(KernelHandle, u32),
 }
 
-fn launch(g: &dyn GpuBackend, p: &Problem, arm: Arm, (n, k): (u32, u32), c: DevicePtr, s: u64) {
+pub(super) fn launch(
+    g: &dyn GpuBackend,
+    p: &Problem,
+    arm: Arm,
+    (n, k): (u32, u32),
+    c: DevicePtr,
+    s: u64,
+) {
     let (launcher, kernel, rows) = match arm {
         Arm::Base(kn, t) => (ops::moe_w4a16_grouped_gemm_ptrtable as Launcher, kn, t),
         Arm::Pipe(kn, t) => (ops::moe_w4a16_grouped_gemm_ptrtable_pipe as Launcher, kn, t),
         Arm::Persist(kn, r) => (
             ops::moe_w4a16_grouped_gemm_ptrtable_persist as Launcher,
+            kn,
+            r,
+        ),
+        Arm::Wgmma(kn, r) => (
+            ops::moe_w4a16_grouped_gemm_ptrtable_wgmma as Launcher,
             kn,
             r,
         ),
@@ -234,7 +248,7 @@ fn launch(g: &dyn GpuBackend, p: &Problem, arm: Arm, (n, k): (u32, u32), c: Devi
 }
 
 /// 2026-10-13: Run `arm` into a sentinel-filled C; returns C's bytes.
-fn run(g: &dyn GpuBackend, p: &Problem, arm: Arm, nk: (u32, u32), s: u64) -> Vec<u8> {
+pub(super) fn run(g: &dyn GpuBackend, p: &Problem, arm: Arm, nk: (u32, u32), s: u64) -> Vec<u8> {
     let c_bytes = (p.total * nk.0).max(1) as usize * 2;
     let c = sentinel(g, c_bytes);
     launch(g, p, arm, nk, c, s);
@@ -245,18 +259,18 @@ fn run(g: &dyn GpuBackend, p: &Problem, arm: Arm, nk: (u32, u32), s: u64) -> Vec
 }
 
 /// 2026-10-14: The first output row where `got` differs from `want`.
-fn first_differing_row(want: &[u8], got: &[u8], n: u32) -> Option<usize> {
+pub(super) fn first_differing_row(want: &[u8], got: &[u8], n: u32) -> Option<usize> {
     let row = n as usize * 2;
     (0..want.len() / row).find(|&r| got[r * row..][..row] != want[r * row..][..row])
 }
 
-struct Kernels {
-    base: KernelHandle,
+pub(super) struct Kernels {
+    pub(super) base: KernelHandle,
     pipe: KernelHandle,
-    persist: KernelHandle,
+    pub(super) persist: KernelHandle,
 }
 
-fn kernels(g: &dyn GpuBackend) -> Kernels {
+pub(super) fn kernels(g: &dyn GpuBackend) -> Kernels {
     let pipe = |f: &str| {
         g.kernel("moe_w4a16_grouped_pipe_hopper", f)
             .expect("the Hopper pipelined twins are not in this build")
@@ -270,7 +284,7 @@ fn kernels(g: &dyn GpuBackend) -> Kernels {
     }
 }
 
-fn backend() -> metrale_gpu_runtime::cuda_backend::MetraleCudaBackend {
+pub(super) fn backend() -> metrale_gpu_runtime::cuda_backend::MetraleCudaBackend {
     let set = metrale_kernels::ptx_for_exact_target("qwen3.8-flash-next", "nvfp4")
         .expect("qwen3.8-flash-next/nvfp4 not in this build");
     metrale_gpu_runtime::cuda_backend::MetraleCudaBackend::new(0, &set.modules)
@@ -323,13 +337,13 @@ fn pipelined_w4a16_grouped_gemm_is_byte_identical_to_the_base_kernel() {
 }
 
 /// 2026-10-14: The model's routed experts and top-k.
-const EXPERTS: u32 = 512;
+pub(super) const EXPERTS: u32 = 512;
 const TOP_K: u32 = 10;
 /// 2026-10-14: Prefill lengths: decode-width batches, short prompts, one full 4096-token chunk.
 const ROUTED_TOKENS: [u32; 7] = [1, 7, 20, 29, 93, 300, 4096];
 
 /// 2026-10-14: Rows per expert when each token picks TOP_K distinct pseudo-random experts.
-fn routed_rows(tokens: u32) -> Vec<u32> {
+pub(super) fn routed_rows(tokens: u32) -> Vec<u32> {
     let mut rows = vec![0u32; EXPERTS as usize];
     let mut x = 0x2545_f491u32 ^ tokens;
     for _ in 0..tokens {
@@ -350,7 +364,7 @@ fn routed_rows(tokens: u32) -> Vec<u32> {
 
 /// 2026-10-14: Mean wall time of `f` in microseconds over `iters` calls, after one warm-up, with
 /// the stream drained at both ends.
-fn time_us(g: &dyn GpuBackend, s: u64, iters: u32, f: &dyn Fn()) -> f64 {
+pub(super) fn time_us(g: &dyn GpuBackend, s: u64, iters: u32, f: &dyn Fn()) -> f64 {
     f();
     g.synchronize(s).unwrap();
     let t = std::time::Instant::now();
