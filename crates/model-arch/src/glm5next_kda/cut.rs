@@ -29,11 +29,12 @@
 //! - Only the per-sequence token kernels and the 64-token scan: refused under the 16-token
 //!   scan (`METRALE_GLM_KDA_CHUNK_SCAN`) or the chunked prefill (`METRALE_GLM_KDA_CHUNK_PREFILL`).
 //! - Cuts are strictly increasing rows in `1..=k`.
+//! - The gate runs in the front end and the o_norm in the back end ([`GateAt::Kernel`],
+//!   [`NormAt::Back`]) and the conv in its own launch, whatever `METRALE_GLM_KDA_GATE_IN_PREPARE`,
+//!   `METRALE_GLM_KDA_ONORM_IN_SCAN` and `METRALE_GLM_KDA_CHUNK64_CONV` say: a part on the token
+//!   kernels reads the gate rows and its own core rows, and those levers' bytes are the separate
+//!   launches' by their own invariants.
 
-use super::chunk64::{
-    CHUNK64, CHUNK64_PREP_SMEM, CHUNK64_PREP_THREADS, CHUNK64_SCAN_SMEM, CHUNK64_SCAN_THREADS,
-    CHUNK64_SLAB, CHUNK64_VB,
-};
 use super::decode::RowIo;
 use super::*;
 
@@ -68,11 +69,6 @@ pub fn cut_parts(k: usize, rows: &[usize]) -> Result<Vec<(usize, usize, Option<u
     }
     Ok(out)
 }
-
-/// 2026-10-14: `SEQ_VB` of `seq_tokens.rs` (private there): v columns per block of
-/// `kda_recurrent_decode_bf16_seq_reg`.
-// @human-review: drop this copy when `seq_tokens.rs` exports `SEQ_VB` (W-A's K2 rebase).
-const SEQ_VB: usize = 32;
 
 impl Glm5NextKdaLayer {
     /// 2026-10-14: `k` rows of one sequence's prefill sub-chunk with the conv and recurrence
@@ -126,6 +122,8 @@ impl Glm5NextKdaLayer {
             k,
             ws,
             pack,
+            GateAt::Kernel,
+            NormAt::Back,
             stream,
             |_| Ok(()),
             || {
@@ -149,11 +147,19 @@ impl Glm5NextKdaLayer {
                         .launch(stream)?;
                 }
                 for &(a, b, at) in &parts {
-                    let io = RowIo::workspace(c, ws, a);
                     if self.chunk64_applies(b - a, chunk64_min) {
-                        self.recurrence_chunk64(gpu, io, b - a, state, ws, stream)?;
+                        self.scan_chunk64_rows(
+                            gpu,
+                            a,
+                            b - a,
+                            state,
+                            ws,
+                            GateAt::Kernel,
+                            NormAt::Back,
+                            stream,
+                        )?;
                     } else {
-                        self.recurrence_tokens(gpu, io, b - a, state, stream)?;
+                        self.recurrence_tokens_rows(gpu, a, b - a, state, ws, stream)?;
                     }
                     if let Some((h_dst, _)) = at.and_then(|i| cuts[i].dst) {
                         gpu.copy_d2d_async(state.recurrent, h_dst, h_bytes, stream)?;
@@ -163,111 +169,11 @@ impl Glm5NextKdaLayer {
             },
         )
     }
-
-    /// 2026-10-14: The recurrence launch of `stateful_tokens` on the `n` conv-ed rows from `io`.
-    // @human-review: copy of `stateful_tokens`'s launch; replace with a shared row-offset
-    // helper after W-A's K2 rebase.
-    fn recurrence_tokens(
-        &self,
-        gpu: &dyn GpuBackend,
-        io: RowIo,
-        n: usize,
-        state: &KdaSeqState,
-        stream: u64,
-    ) -> Result<()> {
-        let c = &self.cfg;
-        let (qkv, cd, d) = (c.qkv_dim(), c.conv_dim(), c.head_dim);
-        KernelLaunch::new(gpu, self.kernels.seq.recurrent)
-            .grid([c.heads as u32, (d / SEQ_VB) as u32, 1])
-            .block([SEQ_VB as u32, 1, 1])
-            .shared_mem((3 * d * 4) as u32)
-            .arg_ptr(io.conv_out)
-            .arg_ptr(io.conv_out.offset(qkv * 2))
-            .arg_ptr(io.conv_out.offset(qkv * 4))
-            .arg_ptr(io.gate)
-            .arg_ptr(io.beta)
-            .arg_ptr(state.recurrent)
-            .arg_ptr(io.core)
-            .arg_u32(c.heads as u32)
-            .arg_f32(1.0 / (d as f32).sqrt())
-            .arg_u32(n as u32)
-            .arg_u32(cd as u32)
-            .arg_u32(qkv as u32)
-            .arg_u32(c.heads as u32)
-            .arg_u32(qkv as u32)
-            .launch(stream)
-    }
-
-    /// 2026-10-14: The slab loop of `stateful_chunk64` (without its conv) on the `n` conv-ed rows
-    /// from `io`.
-    // @human-review: copy of `stateful_chunk64`'s slab loop; replace with
-    // `scan_chunk64_at(row0, n)` after W-A's K2 rebase.
-    fn recurrence_chunk64(
-        &self,
-        gpu: &dyn GpuBackend,
-        io: RowIo,
-        n: usize,
-        state: &KdaSeqState,
-        ws: &Glm5NextKdaWorkspace,
-        stream: u64,
-    ) -> Result<()> {
-        let c = &self.cfg;
-        let (qkv, cd, d, h) = (c.qkv_dim(), c.conv_dim(), c.head_dim, c.heads);
-        let nchunks = n.div_ceil(CHUNK64);
-        if nchunks * CHUNK64 > ws.t_pad {
-            bail!(
-                "KDA 64-token chunked scan: {nchunks} chunks of {CHUNK64} exceed the workspace's \
-                 {} rows",
-                ws.t_pad
-            );
-        }
-        let scale = 1.0 / (d as f32).sqrt();
-        for c0 in (0..nchunks).step_by(CHUNK64_SLAB) {
-            let s = CHUNK64_SLAB.min(nchunks - c0);
-            KernelLaunch::new(gpu, self.kernels.seq.chunk64_prepare)
-                .grid([s as u32, h as u32, 1])
-                .block([CHUNK64_PREP_THREADS, 1, 1])
-                .shared_mem(CHUNK64_PREP_SMEM)
-                .arg_ptr(io.conv_out)
-                .arg_ptr(io.conv_out.offset(qkv * 2))
-                .arg_ptr(io.conv_out.offset(qkv * 4))
-                .arg_ptr(io.gate)
-                .arg_ptr(io.beta)
-                .arg_ptr(ws.chunk_u)
-                .arg_ptr(ws.chunk_w)
-                .arg_ptr(ws.q_f32)
-                .arg_ptr(ws.k_f32)
-                .arg_ptr(ws.v_f32)
-                .arg_ptr(ws.chunk_gc)
-                .arg_u32(h as u32)
-                .arg_u32(n as u32)
-                .arg_u32(c0 as u32)
-                .arg_u32(cd as u32)
-                .arg_u32(qkv as u32)
-                .arg_f32(scale)
-                .launch(stream)?;
-            KernelLaunch::new(gpu, self.kernels.seq.chunk64_scan)
-                .grid([h as u32, (d / CHUNK64_VB) as u32, 1])
-                .block([CHUNK64_SCAN_THREADS, 1, 1])
-                .shared_mem(CHUNK64_SCAN_SMEM)
-                .arg_ptr(ws.chunk_u)
-                .arg_ptr(ws.chunk_w)
-                .arg_ptr(ws.q_f32)
-                .arg_ptr(ws.k_f32)
-                .arg_ptr(ws.v_f32)
-                .arg_ptr(ws.chunk_gc)
-                .arg_ptr(state.recurrent)
-                .arg_ptr(io.core)
-                .arg_u32(h as u32)
-                .arg_u32(n as u32)
-                .arg_u32(c0 as u32)
-                .arg_u32(s as u32)
-                .arg_u32(qkv as u32)
-                .launch(stream)?;
-        }
-        Ok(())
-    }
 }
+
+#[cfg(test)]
+#[path = "cut_tests.rs"]
+mod launch_tests;
 
 #[cfg(test)]
 mod tests {

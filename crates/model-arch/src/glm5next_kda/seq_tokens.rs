@@ -43,9 +43,31 @@ impl Glm5NextKdaLayer {
             bail!("KDA: the per-sequence token kernels cannot run {k} rows here");
         }
         self.conv_tokens(gpu, k, state, ws, pack, stream)?;
+        self.recurrence_tokens_rows(gpu, 0, k, state, ws, stream)
+    }
+
+    /// 2026-10-14: The recurrence of [`Self::stateful_tokens`] over workspace rows
+    /// `row0 .. row0 + k`, whose conv rows are already in `conv_out`, advancing `state` past
+    /// them: the launch indexes rows from the pointers it is given, so a forward can step its rows
+    /// in pieces, a state copy between them (`cut.rs`).
+    pub(super) fn recurrence_tokens_rows(
+        &self,
+        gpu: &dyn GpuBackend,
+        row0: usize,
+        k: usize,
+        state: &KdaSeqState,
+        ws: &Glm5NextKdaWorkspace,
+        stream: u64,
+    ) -> Result<()> {
+        if !self.seq_tokens_ready() || k == 0 || row0 + k > ws.max_tokens {
+            bail!(
+                "KDA: the per-sequence token recurrence cannot run rows {row0}..{} here",
+                row0 + k
+            );
+        }
         let c = &self.cfg;
         let (qkv, cd, d) = (c.qkv_dim(), c.conv_dim(), c.head_dim);
-        let io = RowIo::workspace(c, ws, 0);
+        let io = RowIo::workspace(c, ws, row0);
         KernelLaunch::new(gpu, self.kernels.seq.recurrent)
             .grid([c.heads as u32, (d / SEQ_VB) as u32, 1])
             .block([SEQ_VB as u32, 1, 1])
