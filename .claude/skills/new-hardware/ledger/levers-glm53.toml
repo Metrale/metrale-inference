@@ -1445,3 +1445,27 @@ effort_hours = 3.0
 transferability = "any residual-stream architecture whose post-mix feeds the next pre-mix"
 links = { pr = "", commit = "", evidence = "glm5next_hc_post_fold_gate" }
 notes = "Intra-layer only (attention post into the FFN pre): a cross-layer fold would leave the highway slot without the layer's output when the DFlash taps read it"
+
+[[lever]]
+id = "gb10x3-glm53-kda-conv-pack"
+date = "2026-10-13"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_KDA_CONV_PACK=1 (per-sequence conv: decode_k tokens/chunked and the chunked prefill)"
+symptom = "at a 32k prefill the KDA q/k/v pack (1.175 ms) and the per-sequence conv (2.27 ms, 49% of its bytes floor) run back to back per sub-chunk and layer; the conv re-reads the rows the pack just wrote"
+diagnosis_tool = "nsys"
+root_cause_class = "bandwidth-underutilization"
+lever_type = "fusion"
+lkb_effect = "causal_conv1d_update_l2norm_tokens_parts: the tokens variant of the causal_conv1d_l2norm family reading the three projections and storing the pack's copy; grid (channel blocks, SM-count row spans), never sized by rows"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "held"
+verdict_reason = "written without a GPU; the byte gate and timing (glm5next_kda_conv_pack_bench) are pending; fused bytes floor 1.67 ms vs 3.45 ms now per 32k layer pair (~187 ms per 32k prefill expected)"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 4.0
+transferability = "any linear-attention layer whose projections are packed only to feed a short causal conv"
+links = { pr = "", commit = "", evidence = "glm5next_kda_conv_pack_bench" }
+notes = "Default off until the byte gate passes; the per-row conv and the snapshot verify keep the pack in front_end because they read the packed rows"
