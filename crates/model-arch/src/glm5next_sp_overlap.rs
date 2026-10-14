@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-14: `METRALE_GLM_SP_OVERLAP=1`: overlap SP-mHC's exchanges with its mHC launches
-//! (`glm5next_sp_mhc`; design: claude-state/glm/PREFILL_OVERLAP_DESIGN.md). Each rank's shard of
+//! (`glm5next_sp_mhc`). Each rank's shard of
 //! a sub-chunk is cut into [`piece_count`] row pieces, the same on every rank. A layer's three
 //! mHC sections (the pre-norm before the mixer, the post-mix and pre-norm between the mixer and
 //! the MLP, the post-mix after the MLP) then run per piece on the caller's stream while the

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-12: `METRALE_GLM_SP_MHC=1`: sequence-parallel mHC for a TP prefill sub-chunk
-//! (`glm5next_layer/steps/forward_sp.rs`; design: claude-state/glm/SP_MHC_DESIGN.md). Every rank
+//! (`glm5next_layer/steps/forward_sp.rs`). Every rank
 //! runs the mixer and the MLP on all `k` rows as before, but the per-row mHC work (`hc_expand`,
 //! the pre-norms, the post-mixes, `hc_head_mean`) only on its own shard of rows: rank `r` owns the
 //! contiguous rows `[lo_r, hi_r)` ([`shards`]). The two all-reduces of a layer become a
@@ -32,7 +32,7 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
 /// 2026-10-12: The narrowest sub-chunk that runs sequence-parallel: each shard of a 3-rank split
 /// then has at least 64 rows, where the token-tiled pre-norm and the post-mix are efficient
-/// (SP_MHC_DESIGN.md; a measured choice to revisit).
+/// (a measured choice to revisit).
 pub const SP_MIN_ROWS: usize = 192;
 
 /// 2026-10-12: `METRALE_GLM_SP_MHC`, read once: unset or `0` off, `1` on; another value is an
