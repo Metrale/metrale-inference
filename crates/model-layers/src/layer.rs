@@ -12,7 +12,9 @@ use metrale_config::ModelConfig;
 use metrale_gpu_runtime::buffers::BufferArena;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
+mod one_row_path;
 mod transformer_layer;
+pub use one_row_path::{split_segment_takes_decode_path, takes_decode_path};
 pub use transformer_layer::{
     GdnCarryBinding, LayerAuxState, LayerCapabilities, LayerGraphHooks, LayerSplitPrefill,
     LayerWeightSetup, LayerWriteOnAccept, MTP_CATCHUP_MAX, PrefillSpan, TransformerLayer,
@@ -386,6 +388,9 @@ pub enum MoeLoraRoute {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod one_row_path_tests;
 
 #[cfg(test)]
 #[path = "layer/release_contract_tests.rs"]

@@ -130,4 +130,5 @@ mod norm_convention_tests {
 }
 
 pub mod drafter_context;
+pub mod mtp_adopt;
 pub mod mtp_carry;

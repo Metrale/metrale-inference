@@ -224,6 +224,10 @@ pub struct ModelLevers {
     /// verify forward's live `hidden_states` rows: one per accepted draft, which no propose
     /// writes (`model/trait_impl/accepted_rows.rs`). vLLM's drafter runs every accepted position.
     pub mtp_accepted_rows: bool,
+    /// 2026-10-14: `METRALE_MTP_ADOPT_CAPTURE=1`: a prefix-cache hit adopts the capture rows a
+    /// consumed capture of the same matched tokens left, so the drafter is prefilled over the
+    /// whole prompt as on a miss (`mtp_adopt.rs`). Off while the drafter carry is armed.
+    pub mtp_adopt_capture: bool,
     /// 2026-10-11: `METRALE_MTP_ZERO_POS0=1`: the GLM-5.3 drafter row at position 0 (pair key 0)
     /// gets a zero embedding half, as vLLM's GLM MTP layer always gives it
     /// (`glm5next_mtp_head/hidden_half.rs` `zeroes_embedding`).
@@ -231,8 +235,14 @@ pub struct ModelLevers {
     /// 2026-10-14: `METRALE_ONE_ROW_PREFILL=1`: a one-row prefill pass after position 0 runs
     /// each layer's prefill path, not its decode path, when the layers split their pass at an
     /// in-pass capture (GLM-5.3), so a warm one-token replay carries the cold pass's bits
-    /// (`model-engine` `prefill_b/one_row_path.rs`). Changes those passes' numerics.
+    /// (`layer/one_row_path.rs`). Changes those passes' numerics.
     pub one_row_prefill: bool,
+    /// 2026-10-14: `METRALE_ONE_ROW_TAIL_DECODE=1`: a layer that splits its pass at an in-pass
+    /// capture (GLM-5.3) runs a one-row segment of a split pass after position 0 (the cold
+    /// prompt's tail one row past the capture point) through its decode path, the path a warm
+    /// one-row replay of that row takes, so the cold row and its replay carry the same bits
+    /// (`layer/one_row_path.rs`). `one_row_prefill` takes precedence. Changes that row's numerics.
+    pub one_row_tail_decode: bool,
     /// 2026-09-25: `METRALE_FP8_MOE_GROUPED_DECODE=1`: the target model's multi-row FP8 MoE decode
     /// runs through the cross-row grouped kernels (`FfnComponent::fp8_grouped_decode_ok`). The MTP
     /// drafter calls `MoeLayer::fp8_grouped_decode_ok` directly and does not read this lever;

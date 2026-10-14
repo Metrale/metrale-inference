@@ -1493,3 +1493,51 @@ effort_hours = 4.0
 transferability = "any hyper-connection model whose post-mix feeds the next site's pre-mix on the same rows"
 links = { pr = "", commit = "", evidence = "glm5next_hc_post_pre_tok_bench" }
 notes = "In-layer pair only (attention post into the FFN pre). The cross-layer pair (FFN post into the next layer's attention pre) is not fused: the layer loop is layer-outer and sub-chunk-inner, the next layer's weights would have to be handed down, and the DFlash taps read the highway between layers. The common/ kernels compile with --fmad=false, so the prologue's plain expressions round as the rank-sum kernel's do."
+
+[[lever]]
+id = "gb10x3-glm53-one-row-tail-decode"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_ONE_ROW_TAIL_DECODE=1 (any prefill pass the GLM layer splits at an in-pass capture whose last segment is one row past position 0)"
+symptom = "K-invariance probe at 1k: the miss and hit legs differ in the token bits; 8k and 32k match. The 1073-token miss splits its pass at the cut capture (1072) and runs the one-row tail through forward_k(k=1, prefill); the hit replays that row as a one-row pass, which takes each layer's decode path. A cold prompt of length 1 mod the prefill chunk hits the same split"
+diagnosis_tool = "kinv bit probe (miss vs hit legs)"
+root_cause_class = "path-divergence"
+lever_type = "routing"
+lkb_effect = "layer/one_row_path.rs split_segment_takes_decode_path: a one-row segment of a split pass after position 0 runs forward_one (the decode path) in glm5next_layer/steps/prefill_capture.rs prefill_segments, the path a separate one-row pass already takes; METRALE_ONE_ROW_PREFILL keeps precedence"
+parity_tier_kept = "bit-identical (lever off); miss == hit (lever on, to be proven on GPU)"
+per_rung = [{ rung = "prefill-1k-cold", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "held"
+verdict_reason = "written without a GPU; the 1k/8k/32k kinv probe (miss+hit), a cold 8209-token prompt at two chunk sizes and a cold 1k TTFT A/B are pending"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = "a bit probe whose prompt length is one past the capture cut, run with every new in-pass split"
+effort_hours = 3.0
+transferability = "any model whose layer splits a pass at an in-pass capture (splits_pass_at_capture); other models never call the segment loop"
+links = { pr = "", commit = "", evidence = "kinv bit probe 1k miss/hit" }
+notes = "Replaces METRALE_ONE_ROW_PREFILL=1 for this defect: that lever also fixed the bits but cost cold 1k +56 ms, warm 4k +45 ms and warm 256 +17 ms because it moves every one-row pass onto the prefill path. Gated to passes of more than one segment, so the fused decode+prefill path (no capture) is untouched."
+
+[[lever]]
+id = "gb10x3-glm53-mtp-adopt-capture"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_MTP_ADOPT_CAPTURE=1 with MTP on and the drafter carry off (the default at mtp_max_seqs > 1)"
+symptom = "on a prefix-cache hit the whole-prompt capture is short of the prompt, so the drafter prefill is skipped and the drafter proposes with no prompt context: 1k acceptance 0.409 on the hit vs 0.882 on the miss"
+diagnosis_tool = "MTP acceptance A/B (miss vs hit)"
+root_cause_class = "lost-context"
+lever_type = "state-reuse"
+lkb_effect = "mtp_adopt.rs CaptureRecord: the hit claims the capture rows a consumed capture left when they hold its matched tokens, writes its own rows from the match, and the drafter is prefilled over the whole prompt as on a miss; target passes untouched"
+parity_tier_kept = "bit-identical target tokens (the target verifies every draft; only the drafter's context changes)"
+per_rung = [{ rung = "warm-1k-hit", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "held"
+verdict_reason = "written without a GPU; the 1k hit acceptance A/B (expect ~0.88) and the warm TTFT cost (drafter prefill ~8-16 ms at 1k, ~59 ms at 8k, ~230 ms at 32k when eager) are pending"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = "report acceptance per leg in the kinv probe"
+effort_hours = 3.0
+transferability = "any MTP model with a dense-row drafter and a shared whole-prompt capture"
+links = { pr = "", commit = "", evidence = "MTP acceptance 1k miss/hit" }
+notes = "A windowed catch-up is not possible for GLM: its drafter is dense row space (RoPE position = row), so a catch-up must start at the drafter's row count. The drafter carry is session-keyed and off at mtp_max_seqs > 1. A match that runs into decoded tokens (a later turn) is refused, since decode hiddens are not in the capture; filling them from the catch-up ring is a possible extension."
