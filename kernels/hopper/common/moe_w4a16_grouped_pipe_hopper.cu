@@ -3,6 +3,8 @@
 // 2026-10-13: `moe_w4a16_grouped_gemm_ptrtable_pipe`: the grouped W4A16 MoE GEMM of
 // `moe_w4a16_grouped_gemm_ptrtable` (gb10/common/moe_w4a16_grouped_gemm.cu) for Hopper prefill,
 // with the same arguments, grid meaning and output bytes, staged through a cp.async pipeline.
+// 2026-10-14: `moe_w4a16_grouped_gemm_ptrtable_persist` computes the same tiles from a persistent
+// 1-D grid that finds its work on the device (no host tile count).
 //
 // - CTA tile 64 rows x 128 columns (published as `<entry>_n_tile` = 128; grid y counts 64-row M
 //   tiles, as the base kernel's does), 256 threads = 8 warps as 2 (M) x 4 (N), warp tile 32 x 32.
@@ -91,23 +93,20 @@ __device__ __forceinline__ unsigned int pipe_scale_pair(unsigned int p, float s2
     return *(const unsigned int*)&r;
 }
 
-extern "C" __global__ void __launch_bounds__(PIPE_THREADS)
-moe_w4a16_grouped_gemm_ptrtable_pipe(
-    const __nv_bfloat16* __restrict__ A,                   // 2026-10-13: [num_tokens, K]
-    const unsigned long long* __restrict__ B_packed_ptrs,  // 2026-10-13: [E] -> [N, K/2] E2M1
-    const unsigned long long* __restrict__ B_scale_ptrs,   // 2026-10-13: [E] -> [N, K/16] E4M3
-    const float* __restrict__ scale2_vals,                 // 2026-10-13: [E]
-    __nv_bfloat16* __restrict__ C,                         // 2026-10-13: [total_expanded, N]
-    const int* __restrict__ expert_offsets,                // 2026-10-13: [E + 1] prefix sum
-    const int* __restrict__ sorted_token_ids,              // 2026-10-13: row of A, or NULL
-    unsigned int num_experts, unsigned int N, unsigned int K) {
-    extern __shared__ __align__(16) unsigned char pipe_smem[];
-
-    const unsigned int expert_id = blockIdx.z;
-    if (expert_id >= num_experts) return;
+// 2026-10-14: One 64 x 128 output tile: expert `expert_id`, its 64-row M tile `m_tile`, the
+// 128-column N tile `n_tile`. Both entries below run exactly this body, so their bytes agree.
+// `min_smem` is the dynamic shared memory the caller's layout needs (it traps on less). Every
+// early return depends only on the tile, so it is uniform across the block.
+__device__ __forceinline__ void pipe_tile(
+    unsigned char* pipe_smem, unsigned int min_smem, const __nv_bfloat16* __restrict__ A,
+    const unsigned long long* __restrict__ B_packed_ptrs,
+    const unsigned long long* __restrict__ B_scale_ptrs, const float* __restrict__ scale2_vals,
+    __nv_bfloat16* __restrict__ C, const int* __restrict__ expert_offsets,
+    const int* __restrict__ sorted_token_ids, unsigned int expert_id, unsigned int m_tile,
+    unsigned int n_tile, unsigned int N, unsigned int K) {
     const int m_start = expert_offsets[expert_id];
     const int M_expert = expert_offsets[expert_id + 1] - m_start;
-    const int cta_m_local = blockIdx.y * PIPE_MT;
+    const int cta_m_local = m_tile * PIPE_MT;
     if (M_expert <= 0 || cta_m_local >= M_expert) return;
     const unsigned char* B_expert = (const unsigned char*)B_packed_ptrs[expert_id];
     const unsigned char* S_expert = (const unsigned char*)B_scale_ptrs[expert_id];
@@ -115,7 +114,7 @@ moe_w4a16_grouped_gemm_ptrtable_pipe(
     {
         unsigned int dyn;
         asm("mov.u32 %0, %%dynamic_smem_size;" : "=r"(dyn));
-        if (dyn < PIPE_SMEM_BYTES || (K % PIPE_KS) != 0 || (N % PIPE_NT) != 0 ||
+        if (dyn < min_smem || (K % PIPE_KS) != 0 || (N % PIPE_NT) != 0 ||
             (((unsigned long long)B_expert) & 15ull) != 0 ||
             (((unsigned long long)S_expert) & 3ull) != 0) {
             __trap();
@@ -123,7 +122,7 @@ moe_w4a16_grouped_gemm_ptrtable_pipe(
     }
     const float scale2 = scale2_vals[expert_id];
     const unsigned int cta_m = (unsigned int)(m_start + cta_m_local);
-    const unsigned int cta_n = blockIdx.x * PIPE_NT;
+    const unsigned int cta_n = n_tile * PIPE_NT;
     const int rows_left = M_expert - cta_m_local;
     const unsigned int t = threadIdx.x, lane = t & 31, warp = t >> 5;
     const unsigned int wm = warp & 1, wn = warp >> 1;
@@ -254,5 +253,93 @@ moe_w4a16_grouped_gemm_ptrtable_pipe(
     }
 }
 
+// 2026-10-13: Grid (N tiles, M tiles, experts), one output tile per CTA; CTAs past an expert's
+// rows return at once.
+extern "C" __global__ void __launch_bounds__(PIPE_THREADS)
+moe_w4a16_grouped_gemm_ptrtable_pipe(
+    const __nv_bfloat16* __restrict__ A,                   // 2026-10-13: [num_tokens, K]
+    const unsigned long long* __restrict__ B_packed_ptrs,  // 2026-10-13: [E] -> [N, K/2] E2M1
+    const unsigned long long* __restrict__ B_scale_ptrs,   // 2026-10-13: [E] -> [N, K/16] E4M3
+    const float* __restrict__ scale2_vals,                 // 2026-10-13: [E]
+    __nv_bfloat16* __restrict__ C,                         // 2026-10-13: [total_expanded, N]
+    const int* __restrict__ expert_offsets,                // 2026-10-13: [E + 1] prefix sum
+    const int* __restrict__ sorted_token_ids,              // 2026-10-13: row of A, or NULL
+    unsigned int num_experts, unsigned int N, unsigned int K) {
+    extern __shared__ __align__(16) unsigned char pipe_smem[];
+    if (blockIdx.z >= num_experts) return;
+    pipe_tile(pipe_smem, PIPE_SMEM_BYTES, A, B_packed_ptrs, B_scale_ptrs, scale2_vals, C,
+              expert_offsets, sorted_token_ids, blockIdx.z, blockIdx.y, blockIdx.x, N, K);
+}
+
+// 2026-10-14: The same product over a persistent 1-D grid of any size, so the host needs no
+// tile count (no device-to-host copy of the offsets, and the launch is graph-capturable). Each
+// CTA scans the experts' 64-row tile counts into shared memory after the pipeline buffers
+// (`(E + 1)` ints: the launcher adds them to PIPE_SMEM_BYTES), then strides over the work units
+// (expert, M tile, N tile), N fastest so the CTAs running at once share A rows and expert
+// weights. A unit's expert is the last one whose first tile is at or before it.
+extern "C" __global__ void __launch_bounds__(PIPE_THREADS)
+moe_w4a16_grouped_gemm_ptrtable_persist(
+    const __nv_bfloat16* __restrict__ A, const unsigned long long* __restrict__ B_packed_ptrs,
+    const unsigned long long* __restrict__ B_scale_ptrs, const float* __restrict__ scale2_vals,
+    __nv_bfloat16* __restrict__ C, const int* __restrict__ expert_offsets,
+    const int* __restrict__ sorted_token_ids, unsigned int num_experts, unsigned int N,
+    unsigned int K) {
+    extern __shared__ __align__(16) unsigned char pipe_smem[];
+    __shared__ int warp_tiles[PIPE_THREADS / 32];
+    int* first_tile = (int*)(pipe_smem + PIPE_SMEM_BYTES);
+    const unsigned int t = threadIdx.x, lane = t & 31, warp = t >> 5;
+
+    // 2026-10-14: Exclusive scan of ceil(rows_e / 64) over experts; thread t owns a contiguous run.
+    const unsigned int per = (num_experts + PIPE_THREADS - 1) / PIPE_THREADS;
+    const unsigned int e0 = t * per;
+    int mine = 0;
+    for (unsigned int i = 0; i < per && e0 + i < num_experts; i++) {
+        const int rows = expert_offsets[e0 + i + 1] - expert_offsets[e0 + i];
+        mine += rows > 0 ? (rows + PIPE_MT - 1) / PIPE_MT : 0;
+    }
+    int incl = mine;
+#pragma unroll
+    for (int d = 1; d < 32; d <<= 1) {
+        const int v = __shfl_up_sync(0xffffffffu, incl, d);
+        if ((int)lane >= d) incl += v;
+    }
+    if (lane == 31) warp_tiles[warp] = incl;
+    __syncthreads();
+    int before = 0, total = 0;
+#pragma unroll
+    for (int w = 0; w < PIPE_THREADS / 32; w++) {
+        before += w < (int)warp ? warp_tiles[w] : 0;
+        total += warp_tiles[w];
+    }
+    int run = before + incl - mine;
+    for (unsigned int i = 0; i < per && e0 + i < num_experts; i++) {
+        first_tile[e0 + i] = run;
+        const int rows = expert_offsets[e0 + i + 1] - expert_offsets[e0 + i];
+        run += rows > 0 ? (rows + PIPE_MT - 1) / PIPE_MT : 0;
+    }
+    if (t == 0) first_tile[num_experts] = total;
+    __syncthreads();
+
+    const unsigned int n_tiles = N / PIPE_NT;
+    const unsigned int units = (unsigned int)total * n_tiles;
+    const unsigned int min_smem = PIPE_SMEM_BYTES + (num_experts + 1) * 4;
+    for (unsigned int w = blockIdx.x; w < units; w += gridDim.x) {
+        const unsigned int mt = w / n_tiles;
+        unsigned int lo = 0, hi = num_experts;
+        while (hi - lo > 1) {
+            const unsigned int mid = (lo + hi) >> 1;
+            if ((unsigned int)first_tile[mid] <= mt) lo = mid; else hi = mid;
+        }
+        // 2026-10-14: The previous unit's last shared-memory reads finish before this unit's
+        // prologue overwrites the stages.
+        __syncthreads();
+        pipe_tile(pipe_smem, min_smem, A, B_packed_ptrs, B_scale_ptrs, scale2_vals, C,
+                  expert_offsets, sorted_token_ids, lo, mt - first_tile[lo], w - mt * n_tiles, N,
+                  K);
+    }
+}
+
 // 2026-10-13: Output columns per CTA; the host sizes grid x from it (`GpuBackend::kernel_n_tile`).
 extern "C" __device__ unsigned int moe_w4a16_grouped_gemm_ptrtable_pipe_n_tile = PIPE_NT;
+// 2026-10-14: The persistent entry's N tile, read by the host to count its work units.
+extern "C" __device__ unsigned int moe_w4a16_grouped_gemm_ptrtable_persist_n_tile = PIPE_NT;

@@ -2,12 +2,12 @@
 
 //! 2026-10-13: The routed grouped W4A16 GEMM of the untransposed MoE prefill: its kernels (the
 //! base `moe_w4a16_grouped_gemm_ptrtable`, its opt-in k32 and m256 twins and the target's
-//! pipelined twin) and the launcher that picks one. Moved out of `init.rs` and `helpers_b.rs`
+//! pipelined twins) and the launcher that picks one. Moved out of `init.rs` and `helpers_b.rs`
 //! (500-line cap) when the pipelined twin was added.
 //!
 //! Owner: model-layers (MoE).
-//! Invariants: the pipelined twin runs only the shapes `ops::moe_w4a16_pipe_admits` admits, and
-//! its output bytes equal the base kernel's (`ops/moe_w4a16_pipe_tests.rs`).
+//! Invariants: the pipelined twins run only the shapes `ops::moe_w4a16_pipe_admits` admits, and
+//! their output bytes equal the base kernel's (`ops/moe_w4a16_pipe_tests.rs`).
 
 use super::*;
 use crate::layers::{try_kernel, try_target_kernel};
@@ -24,6 +24,10 @@ pub(super) struct GroupedW4a16Kernels {
     /// 2026-10-13: The cp.async-pipelined twin (`moe_w4a16_grouped_pipe_hopper`), byte-identical
     /// to `base`; resolved on a target that compiles it (Hopper), zero elsewhere.
     pipe: KernelHandle,
+    /// 2026-10-14: The pipelined twin over a persistent grid (same module), preferred over
+    /// `pipe`: it reads the tile count on the device, so the prefill needs no host copy of the
+    /// expert offsets.
+    persist: KernelHandle,
 }
 
 impl GroupedW4a16Kernels {
@@ -50,7 +54,20 @@ impl GroupedW4a16Kernels {
                 "moe_w4a16_grouped_pipe_hopper",
                 "moe_w4a16_grouped_gemm_ptrtable_pipe",
             ),
+            persist: try_target_kernel(
+                gpu,
+                "moe_w4a16_grouped_pipe_hopper",
+                "moe_w4a16_grouped_gemm_ptrtable_persist",
+            ),
         })
+    }
+
+    /// 2026-10-14: Whether `launch_grouped_gemm` takes the persistent twin for an `n_out` x `k`
+    /// projection: resolved, admitted, and no opt-in twin ahead of it.
+    pub(super) fn persistent(&self, gpu: &dyn GpuBackend, n_out: u32, k: u32) -> bool {
+        self.m256.0 == 0
+            && self.k32.0 == 0
+            && ops::moe_w4a16_pipe_admits(gpu, self.persist, n_out, k)
     }
 }
 
@@ -59,7 +76,9 @@ impl MoeLayer {
     /// (METRALE_MOE_GROUPED_M256=1 and resolved) the M=64 tile count `max_m_tiles` is divided by
     /// 4, rounded up; else the k32 twin when it resolved (METRALE_MOE_GROUPED_K32=1); else
     /// (2026-10-13) the pipelined twin when it resolved and admits the shape; else the base kernel.
-    /// The two opt-ins keep priority over the pipelined twin.
+    /// The two opt-ins keep priority over the pipelined twin. 2026-10-14: the persistent pipelined
+    /// twin goes first when `GroupedW4a16Kernels::persistent`; it ignores `max_m_tiles` and sizes
+    /// its grid from `total_rows`, the expert-sorted row count.
     ///
     /// The k32 and m256 kernels are opt-in. Measured 2026-08-27 on GB10 (qwen4_exp, 28K
     /// prefill, back to back): k32 +1.0% and m256 +1.4% over the arm without them,
@@ -79,9 +98,28 @@ impl MoeLayer {
         n_out: u32,
         k: u32,
         max_m_tiles: u32,
+        total_rows: u32,
         stream: u64,
     ) -> Result<()> {
         let kn = &self.w4a16_grouped;
+        if kn.persistent(gpu, n_out, k) {
+            return ops::moe_w4a16_grouped_gemm_ptrtable_persist(
+                gpu,
+                kn.persist,
+                a,
+                packed_ptrs,
+                scale_ptrs,
+                scale2_vals,
+                c,
+                expert_offsets,
+                sorted_token_ids,
+                num_experts,
+                n_out,
+                k,
+                total_rows,
+                stream,
+            );
+        }
         let pipe =
             kn.m256.0 == 0 && kn.k32.0 == 0 && ops::moe_w4a16_pipe_admits(gpu, kn.pipe, n_out, k);
         let (kernel, m_tiles) = if kn.m256.0 != 0 {
