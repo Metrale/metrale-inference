@@ -42,17 +42,11 @@
 
 #include <cuda_bf16.h>
 
+#include "../../common/qhc_act.cuh"  // 2026-10-14: qhc_silu, qhc_sigmoid
+
 #define QHC_BLOCK 256
 #define QHC_MAX_MULT 8
 #define QHC_MAX_RANK 512
-
-__device__ __forceinline__ float qhc_silu(float v) {
-    return v / (1.0f + __expf(-v));
-}
-
-__device__ __forceinline__ float qhc_sigmoid(float v) {
-    return 1.0f / (1.0f + __expf(-v));
-}
 
 // 2026-09-25: Per-stream RMS reciprocals for one token: rms_inv[s] over x[s*H .. s*H+H),
 // left in `smem_rms`. No kernel in this file calls it.

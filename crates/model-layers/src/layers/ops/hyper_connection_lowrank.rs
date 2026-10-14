@@ -10,14 +10,17 @@
 //! - `hc_expand` behaves the same in both kernel files, so it has no launcher here.
 //! - `hyper_connection_dispatch.rs` routes a site here when `HcSiteWeights::lowrank` is `Some`.
 //! - With `T <= 64` and a non-null scratch, [`hc_pre_lowrank`] and [`hc_head_lowrank`] run the
-//!   cuBLASLt GEMM path (or the three-launch split path when `METRALE_HC_DECODE_SPLIT=1`); with
-//!   larger `T` and a scratch they run the `dense_gemm_bf16_pipelined` GEMM path unless
-//!   `METRALE_QWEN4EXP_NO_HC_GEMM=1`; otherwise the fused kernel, one 1024-thread block per token.
+//!   cuBLASLt GEMM path (2026-10-14: on Hopper at `T <= 16`, its two-GEMV form), or the
+//!   three-launch split path when `METRALE_HC_DECODE_SPLIT=1`; with larger `T` and a scratch
+//!   they run the `dense_gemm_bf16_pipelined` GEMM path unless `METRALE_QWEN4EXP_NO_HC_GEMM=1`;
+//!   otherwise the fused kernel, one 1024-thread block per token.
 
 use anyhow::Result;
 #[path = "hyper_connection_lowrank_gemm.rs"]
 mod gemm;
 pub(crate) use gemm::hc_pre_gemm;
+#[path = "hyper_connection_lowrank_gemv.rs"]
+pub(crate) mod gemv;
 
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;

@@ -446,6 +446,10 @@ w4a16_tc_rows_pf = 1
 #                                        untransposed MoE prefill grouped
 #                                        W4A16 GEMM: model-layers MoE
 #                                        `launch_grouped_gemm`
+#   hc_lowrank_gemv_hopper.cu            decode GEMVs of the Qwen3.8-Flash-
+#                                        Next low-rank hyper-connection
+#                                        collapse: model-layers ops
+#                                        `hc_pre_gemm` (T <= 16)
 #
 # crates/kernels/tests/inherited_targets.rs checks that a replacement is
 # declared in [shadow] and an addition is not.

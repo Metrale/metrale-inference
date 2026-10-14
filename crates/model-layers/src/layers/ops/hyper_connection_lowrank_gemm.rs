@@ -4,11 +4,14 @@
 //!
 //! Owner: model-layers ops.
 //! Invariants: none beyond the types. `hyper_connection_lowrank.rs` passes `use_cublas = true`
-//! for `T <= 64` and `false` for larger `T`.
+//! for `T <= 64` and `false` for larger `T`. With `use_cublas` and a T the decode GEMVs admit
+//! (2026-10-14, `hyper_connection_lowrank_gemv.rs`), those two launches replace the projections
+//! and `hc_silu_scale` / `hc_pre_mix`.
 
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 
+use super::gemv::{HcGemv, HcGemvArgs};
 use super::{HC_ELEMENTWISE_BLOCK, hc_hidden_split};
 use crate::layers::qwen3_attention::HcLowRank;
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
@@ -49,6 +52,7 @@ pub(crate) fn hc_pre_gemm(
     let k_mix = gpu.kernel("hyper_connection", "hc_pre_mix")?;
     let k_gemm = gpu.kernel("gemm", "dense_gemm_bf16_pipelined")?;
     let inv_hc = 1.0f32 / hc_mult as f32;
+    let gemv = use_cublas.then(|| HcGemv::resolve(gpu));
 
     let mut t0 = 0u32;
     while t0 < num_tokens {
@@ -66,6 +70,22 @@ pub(crate) fn hc_pre_gemm(
             .arg_u32(hc_mult)
             .arg_f32(norm_eps)
             .launch(stream)?;
+
+        // 2026-10-14: Decode widths: down + injection, then up + mix, on the Hopper GEMVs.
+        let args = HcGemvArgs {
+            normed,
+            down_w: w.down_w,
+            up_w: w.up_w,
+            inject_w: if inject { w.inject_w } else { DevicePtr::NULL },
+            low,
+            y_out: y_out.offset(t0 as usize * hidden_size as usize * 2),
+            inj_out: inj_out.offset(t0 as usize * hc_mult as usize * 4),
+        };
+        if let Some(g) = gemv.filter(|g| g.admits(&args, ts, hidden_size, hc_mult, rank)) {
+            g.launch(gpu, &args, ts, hidden_size, hc_mult, rank, stream)?;
+            t0 += ts;
+            continue;
+        }
 
         // 2026-09-25: low = normed x down_w^T   [ts, rank]
         if use_cublas {
