@@ -35,7 +35,10 @@ struct GlmHcfTokSmem {
     __nv_bfloat16 y[GLM_HCF_MAX_H];
 };
 
-template <int HC>
+// 2026-10-14: CG reads the streams through L2 (__ldcg) in the mix and the collapse, for
+// glm5next_hc_post_pre_norm_tok4, whose post-mix wrote them earlier in the same launch; the values
+// read, and so every output, are the same.
+template <int HC, bool CG = false>
 __device__ __forceinline__ void glm_hcf_tok_body(GLM_HCF_ARGS, unsigned int num_tokens,
                                                  GlmHcfTokSmem& sm) {
     constexpr unsigned int MIX = (2 + HC) * HC;
@@ -60,7 +63,9 @@ __device__ __forceinline__ void glm_hcf_tok_body(GLM_HCF_ARGS, unsigned int num_
         float v[GLM_HCF_TOK];
 #pragma unroll
         for (int q = 0; q < GLM_HCF_TOK; ++q)
-            v[q] = ((unsigned int)q < nt) ? xb[(size_t)q * hc_dim + k] : 0.f;
+            v[q] = ((unsigned int)q < nt)
+                       ? (CG ? __ldcg(&xb[(size_t)q * hc_dim + k]) : xb[(size_t)q * hc_dim + k])
+                       : 0.f;
 #pragma unroll
         for (int q = 0; q < GLM_HCF_TOK; ++q) ss[q] += v[q] * v[q];
 #pragma unroll
@@ -109,9 +114,9 @@ __device__ __forceinline__ void glm_hcf_tok_body(GLM_HCF_ARGS, unsigned int num_
             glm_hcf_sinkhorn<HC>(sm.mix[q], hc_scale, hc_base, post_out, comb_out, t,
                                  sinkhorn_iters, hc_eps);
         } else {
-            glm_hcf_collapse_norm<HC>(xb + (size_t)q * hc_dim, sm.pre, norm_w,
-                                      y_out + (size_t)t * H, normed_out + (size_t)t * H, sm.y,
-                                      sm.ws, H, rms_eps);
+            glm_hcf_collapse_norm<HC, CG>(xb + (size_t)q * hc_dim, sm.pre, norm_w,
+                                          y_out + (size_t)t * H, normed_out + (size_t)t * H, sm.y,
+                                          sm.ws, H, rms_eps);
         }
         __syncthreads();
     }
@@ -132,4 +137,120 @@ glm5next_hc_pre_norm_tok4(GLM_HCF_ARGS, const unsigned int num_tokens) {
     case 4: glm_hcf_tok_body<4>(GLM_HCF_TOK_PASS); break;
     default: break;
     }
+}
+
+// 2026-10-14: glm5next_hc_post_pre_norm_tok4 (METRALE_GLM_MHC_POST_PRE_FUSED, host side in
+// model-arch glm5next_mhc_post_pre_tok.rs): glm5next_hc_post_rank_sum (glm5next_hc_post_sum.cu)
+// over a block's GLM_HCF_TOK tokens, then glm5next_hc_pre_norm_tok4's body on the streams it
+// wrote, in one launch. Unfused, the SP-mHC layer runs the two launches back to back between the
+// mixer and the MLP.
+//
+// Byte-identical to that pair: thread tid forms column d = tid + 256 c of each token with
+// glm5next_hc_post_rank_sum's expressions in its order (x the FP32 rank-order sum of the BF16
+// partials from 0.0f, rounded to BF16 once and stored to `block_out`; stream j's new value
+// post[j] * x, then + comb[i][j] * residual[i][d] for i ascending) and stores the new streams.
+// This directory compiles with --fmad=false (KERNEL.toml), so neither kernel contracts a product
+// into an add: each product and sum rounds as written, in the same order;
+// after the block barrier the tok4 body reads them back through L2 and runs its chains, trees and
+// tails unchanged. The streams cannot stay in registers (64 floats per token and thread, four
+// tokens, beside the 96 mix accumulators), and summing them as they are formed would visit k
+// out of the mix's stream-major order, so they go through memory; the read-back mostly hits L2.
+//
+// Invariants: blockDim 256, grid (ceil(T / 4), 1, 1), the shapes glm5next_hc_pre_norm_tok4 takes;
+// `peers` as for glm5next_hc_post_rank_sum (peer r in slot (r < my_rank ? r : r - 1) of
+// `slot_elems` elements, element (t, d) at t * H + d); `n_ranks` >= 1. `streams` may be
+// `residual` (column d of a token is read, then written, by one thread), and `post`/`comb` may be
+// `post_out`/`comb_out` (a block reads its tokens' into shared memory before any tail writes
+// them; no other block touches those tokens), so none of those is __restrict__.
+struct GlmHcfPostTokSmem {
+    float p[GLM_HCF_TOK][GLM_HCF_MAX_MULT];
+    float c[GLM_HCF_TOK][GLM_HCF_MAX_MULT * GLM_HCF_MAX_MULT];
+};
+
+template <int HC>
+__device__ __forceinline__ void glm_hcf_post_tok(
+    __nv_bfloat16* __restrict__ block_out, const __nv_bfloat16* __restrict__ peers,
+    long long slot_elems, int n_ranks, int my_rank, const float* residual, const float* p_post,
+    const float* p_comb, float* streams, unsigned int H, unsigned int num_tokens,
+    GlmHcfPostTokSmem& ps) {
+    const unsigned int tid = threadIdx.x;
+    const unsigned int t0 = blockIdx.x * GLM_HCF_TOK;
+    if (t0 >= num_tokens) return;
+    const unsigned int nt = min((unsigned int)GLM_HCF_TOK, num_tokens - t0);
+    if (tid < nt * HC) ps.p[tid / HC][tid % HC] = p_post[(size_t)t0 * HC + tid];
+    if (tid < nt * HC * HC)
+        ps.c[tid / (HC * HC)][tid % (HC * HC)] = p_comb[(size_t)t0 * HC * HC + tid];
+    __syncthreads();
+
+    for (unsigned int q = 0; q < nt; ++q) {
+        const unsigned int t = t0 + q;
+        __nv_bfloat16* x = block_out + (size_t)t * H;
+        const float* res = residual + (size_t)t * HC * H;
+        float* o = streams + (size_t)t * HC * H;
+#pragma unroll 4
+        for (unsigned int d = tid; d < H; d += GLM_HCF_BLOCK) {
+            const long long e = (long long)t * H + d;
+            // glm5next_hc_post_rank_sum's arithmetic for element e and column d.
+            float acc = 0.0f;
+            for (int r = 0; r < n_ranks; ++r) {
+                __nv_bfloat16 v =
+                    (r == my_rank) ? x[d]
+                                   : peers[(long long)(r < my_rank ? r : r - 1) * slot_elems + e];
+                acc += __bfloat162float(v);
+            }
+            const __nv_bfloat16 xb = __float2bfloat16_rn(acc);
+            x[d] = xb;
+            float xd = (float)xb;
+            float rv[HC];
+#pragma unroll
+            for (int i = 0; i < HC; ++i) rv[i] = res[i * H + d];
+#pragma unroll
+            for (int j = 0; j < HC; ++j) {
+                float a = ps.p[q][j] * xd;
+#pragma unroll
+                for (int i = 0; i < HC; ++i) a += ps.c[q][i * HC + j] * rv[i];
+                o[j * H + d] = a;
+            }
+        }
+    }
+    // 2026-10-14: Every new stream of the block's tokens is stored before any thread reads one
+    // back (the tail's collapse reads columns other threads wrote).
+    __syncthreads();
+}
+
+extern "C" __global__ void __launch_bounds__(GLM_HCF_BLOCK) glm5next_hc_post_pre_norm_tok4(
+    __nv_bfloat16* __restrict__ block_out, const __nv_bfloat16* __restrict__ peers,
+    long long slot_elems, int n_ranks, int my_rank, const float* residual, const float* p_post,
+    const float* p_comb, float* streams, const __nv_bfloat16* __restrict__ hc_fn,
+    const float* __restrict__ hc_scale, const float* __restrict__ hc_base,
+    float* __restrict__ mix, unsigned int* __restrict__ done,
+    const __nv_bfloat16* __restrict__ norm_w, __nv_bfloat16* __restrict__ y_out,
+    float* post_out, float* comb_out, __nv_bfloat16* __restrict__ normed_out,
+    const unsigned int hidden_size, const unsigned int hc_mult, const unsigned int sinkhorn_iters,
+    const float norm_eps, const float hc_eps, const float rms_eps, const unsigned int num_tokens) {
+    __shared__ GlmHcfTokSmem sm;
+    __shared__ GlmHcfPostTokSmem ps;
+#define GLM_HCF_POST_TOK_PASS                                                                 \
+    block_out, peers, slot_elems, n_ranks, my_rank, residual, p_post, p_comb, streams,        \
+        hidden_size, num_tokens, ps
+    switch (hc_mult) {
+    case 1:
+        glm_hcf_post_tok<1>(GLM_HCF_POST_TOK_PASS);
+        glm_hcf_tok_body<1, true>(GLM_HCF_TOK_PASS);
+        break;
+    case 2:
+        glm_hcf_post_tok<2>(GLM_HCF_POST_TOK_PASS);
+        glm_hcf_tok_body<2, true>(GLM_HCF_TOK_PASS);
+        break;
+    case 3:
+        glm_hcf_post_tok<3>(GLM_HCF_POST_TOK_PASS);
+        glm_hcf_tok_body<3, true>(GLM_HCF_TOK_PASS);
+        break;
+    case 4:
+        glm_hcf_post_tok<4>(GLM_HCF_POST_TOK_PASS);
+        glm_hcf_tok_body<4, true>(GLM_HCF_TOK_PASS);
+        break;
+    default: break;
+    }
+#undef GLM_HCF_POST_TOK_PASS
 }

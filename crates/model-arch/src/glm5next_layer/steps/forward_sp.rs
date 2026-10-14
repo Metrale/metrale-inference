@@ -11,6 +11,8 @@
 //! 2026-10-14: The body is three mHC sections around the mixer and the MLP, each run by
 //! `glm5next_sp_overlap::run_section`: serially on the caller's stream, or under
 //! `METRALE_GLM_SP_OVERLAP=1` per row piece with the exchanges on a comm stream.
+//! Under `METRALE_GLM_MHC_POST_PRE_FUSED=1` the second section's post-mix and FFN pre-norm of
+//! a piece are one launch (`glm5next_mhc_post_pre_tok`), the pair's bytes.
 //!
 //! Owner: model-arch (GLM-5.3).
 //! Invariants:
@@ -85,6 +87,9 @@ impl Glm5NextLayer {
             None
         };
         let (ht, hct) = (h as u32, hc as u32);
+        // 2026-10-14: `METRALE_GLM_MHC_POST_PRE_FUSED=1`: section 2's post-mix and FFN pre-norm
+        // as one launch per wide piece (`glm5next_mhc_post_pre_tok`, same bytes).
+        let post_pre = crate::glm5next_mhc_post_pre_tok::enabled()?;
 
         // 2026-10-12: Full-chunk views at the sub-chunk's slots; `at(a)` is row `a` of each.
         let streams = ctx.buffers.hc_streams().offset(slot_base * hc * h * 4);
@@ -169,6 +174,36 @@ impl Glm5NextLayer {
             &mut |a, b, partials| {
                 let partials = partials.context("SP-mHC: the mixer's partials")?;
                 let (st, po, co, hi, no) = at(a);
+                let n = (b - a) as u32;
+                if let Some(kernel) =
+                    crate::glm5next_mhc_post_pre_tok::kernel_for(&mhc.kernels, post_pre, n)?
+                {
+                    let t_mhc = profile::start();
+                    crate::glm5next_mhc_post_pre_tok::launch(
+                        gpu,
+                        kernel,
+                        &crate::glm5next_mhc_post_pre_tok::PostPreTok {
+                            block_out: attn_out.offset(a * row_bytes),
+                            partials,
+                            residual: st,
+                            post: po,
+                            comb: co,
+                            streams_out: st,
+                            site: &mhc.ffn,
+                            norm_w: self.post_attn_norm,
+                            y: hi,
+                            post_out: po,
+                            comb_out: co,
+                            normed: no,
+                            num_tokens: n,
+                            dims: [ht, hct, mhc.sinkhorn_iters as u32],
+                            eps: [self.rms_eps, mhc.hc_eps, self.rms_eps],
+                        },
+                        stream,
+                    )?;
+                    profile::end(profile::MHC, t_mhc, gpu, stream);
+                    return Ok(());
+                }
                 let t_mhc_post = profile::start();
                 glm_hc_post_rank_sum(
                     gpu,
@@ -179,7 +214,7 @@ impl Glm5NextLayer {
                     po,
                     co,
                     st,
-                    (b - a) as u32,
+                    n,
                     ht,
                     hct,
                     stream,
