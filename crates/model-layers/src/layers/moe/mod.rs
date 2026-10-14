@@ -86,15 +86,8 @@ pub struct MoeLayer {
     moe_sort_by_expert: KernelHandle,
     moe_sorted_gate_up: KernelHandle,
     moe_sorted_silu_down: KernelHandle,
-    moe_grouped_gemm: KernelHandle,
-    /// 2026-09-25: Wider-K twin of `moe_grouped_gemm`. Loaded only when
-    /// `METRALE_MOE_GROUPED_K32=1` and the target ships it; `grouped_gemm_kernel`
-    /// prefers it whenever it is non-zero.
-    moe_grouped_gemm_k32: KernelHandle,
-    /// 2026-09-25: M_TILE=256 twin of `moe_grouped_gemm`. Loaded only when
-    /// `METRALE_MOE_GROUPED_M256=1` and the target ships it; used whenever it is
-    /// non-zero.
-    moe_grouped_gemm_m256: KernelHandle,
+    /// 2026-10-13: The untransposed prefill's grouped W4A16 GEMMs (`grouped_w4a16.rs`).
+    w4a16_grouped: grouped_w4a16::GroupedW4a16Kernels,
     moe_silu_mul: KernelHandle,
     /// 2026-09-25: Activation kernel for the sorted/unfused paths: `moe_silu_mul`, or
     /// `gelu_mul` after `set_gelu_activation`.
@@ -394,6 +387,7 @@ mod forward_prefill_phase;
 mod forward_prefill_routed;
 mod forward_prefill_router;
 mod forward_token_major;
+mod grouped_w4a16;
 mod helpers_a;
 mod helpers_b;
 mod helpers_c;

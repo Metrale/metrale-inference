@@ -475,7 +475,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-w4a16-gemv-tc-cu-w4a16-gemv-tc16"></a>
 
-### `w4a16_gemv_tc16` — [kernels/gb10/common/w4a16_gemv_tc.cu](../../kernels/gb10/common/w4a16_gemv_tc.cu#L256)
+### `w4a16_gemv_tc16` — [kernels/gb10/common/w4a16_gemv_tc.cu](../../kernels/gb10/common/w4a16_gemv_tc.cu#L289)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | Source · notes |
 |---|---|---|---|---|---|---|---|
@@ -484,7 +484,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-w4a16-gemv-tc-cu-w4a16-gemv-tc8"></a>
 
-### `w4a16_gemv_tc8` — [kernels/gb10/common/w4a16_gemv_tc.cu](../../kernels/gb10/common/w4a16_gemv_tc.cu#L255)
+### `w4a16_gemv_tc8` — [kernels/gb10/common/w4a16_gemv_tc.cu](../../kernels/gb10/common/w4a16_gemv_tc.cu#L288)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | Source · notes |
 |---|---|---|---|---|---|---|---|

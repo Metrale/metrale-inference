@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-09-25: The lazy down_proj scratch transpose, the layout predicates
-//! (`use_t_layout_for_prefill`, `use_t_layout_for_decode`, `grouped_decode_ok`)
-//! and the routed grouped-GEMM launcher.
+//! (`use_t_layout_for_prefill`, `use_t_layout_for_decode`, `grouped_decode_ok`).
+//! 2026-10-13: The routed grouped-GEMM launcher moved to `grouped_w4a16.rs`.
 //!
 //! Owner: model-layers (MoE).
 //! Invariants: none beyond the types.
@@ -163,80 +163,5 @@ impl MoeLayer {
             && self.up_ptrs_t.is_some()
             && self.down_ptrs_t.is_some()
             && self.down_t_scratch_packed.is_none()
-    }
-}
-
-impl super::MoeLayer {
-    /// 2026-09-25: The routed grouped-GEMM kernel: the wider-K twin when it
-    /// resolved (METRALE_MOE_GROUPED_K32=1 and the target ships it), else the
-    /// base kernel. Both launch through `moe_w4a16_grouped_gemm_ptrtable`.
-    pub(super) fn grouped_gemm_kernel(&self) -> metrale_gpu_runtime::gpu::KernelHandle {
-        if self.moe_grouped_gemm_k32.0 != 0 {
-            self.moe_grouped_gemm_k32
-        } else {
-            self.moe_grouped_gemm
-        }
-    }
-}
-
-impl super::MoeLayer {
-    /// 2026-09-25: Launch the routed grouped GEMM. With the M_TILE=256 kernel
-    /// (METRALE_MOE_GROUPED_M256=1 and resolved) the M=64 tile count
-    /// `max_m_tiles` is divided by 4, rounded up; otherwise `grouped_gemm_kernel()`.
-    ///
-    /// Both wide kernels are opt-in. Measured 2026-08-27 on GB10 (qwen4_exp, 28K
-    /// prefill, back to back): k32 +1.0% and m256 +1.4% over the arm without them,
-    /// inside run-to-run noise, and m256 averaged 31.30 ms per call against 26.17 ms for the base kernel.
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn launch_grouped_gemm(
-        &self,
-        gpu: &dyn metrale_gpu_runtime::gpu::GpuBackend,
-        a: metrale_gpu_runtime::gpu::DevicePtr,
-        packed_ptrs: metrale_gpu_runtime::gpu::DevicePtr,
-        scale_ptrs: metrale_gpu_runtime::gpu::DevicePtr,
-        scale2_vals: metrale_gpu_runtime::gpu::DevicePtr,
-        c: metrale_gpu_runtime::gpu::DevicePtr,
-        expert_offsets: metrale_gpu_runtime::gpu::DevicePtr,
-        sorted_token_ids: metrale_gpu_runtime::gpu::DevicePtr,
-        num_experts: u32,
-        n_out: u32,
-        k: u32,
-        max_m_tiles: u32,
-        stream: u64,
-    ) -> anyhow::Result<()> {
-        if self.moe_grouped_gemm_m256.0 != 0 {
-            return crate::layers::ops::moe_w4a16_grouped_gemm_ptrtable_m256(
-                gpu,
-                self.moe_grouped_gemm_m256,
-                a,
-                packed_ptrs,
-                scale_ptrs,
-                scale2_vals,
-                c,
-                expert_offsets,
-                sorted_token_ids,
-                num_experts,
-                n_out,
-                k,
-                max_m_tiles.div_ceil(4).max(1),
-                stream,
-            );
-        }
-        crate::layers::ops::moe_w4a16_grouped_gemm_ptrtable(
-            gpu,
-            self.grouped_gemm_kernel(),
-            a,
-            packed_ptrs,
-            scale_ptrs,
-            scale2_vals,
-            c,
-            expert_offsets,
-            sorted_token_ids,
-            num_experts,
-            n_out,
-            k,
-            max_m_tiles,
-            stream,
-        )
     }
 }

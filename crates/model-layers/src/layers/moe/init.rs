@@ -145,20 +145,7 @@ impl MoeLayer {
             moe_sort_by_expert: gpu.kernel("moe", "moe_sort_by_expert")?,
             moe_sorted_gate_up: gpu.kernel("moe_sorted", "moe_sorted_gate_up")?,
             moe_sorted_silu_down: gpu.kernel("moe_sorted", "moe_sorted_silu_down")?,
-            moe_grouped_gemm: gpu.kernel("moe_w4a16", "moe_w4a16_grouped_gemm_ptrtable")?,
-            moe_grouped_gemm_k32: if std::env::var("METRALE_MOE_GROUPED_K32").as_deref() == Ok("1")
-            {
-                super::super::try_kernel(gpu, "moe_w4a16", "moe_w4a16_grouped_gemm_ptrtable_k32")
-            } else {
-                KernelHandle(0)
-            },
-            moe_grouped_gemm_m256: if std::env::var("METRALE_MOE_GROUPED_M256").as_deref()
-                == Ok("1")
-            {
-                super::super::try_kernel(gpu, "moe_w4a16", "moe_w4a16_grouped_gemm_ptrtable_m256")
-            } else {
-                KernelHandle(0)
-            },
+            w4a16_grouped: super::grouped_w4a16::GroupedW4a16Kernels::resolve(gpu)?,
             moe_grouped_gemm_t: gpu.kernel("moe_w4a16", "moe_w4a16_grouped_gemm_ptrtable_t")?,
             moe_grouped_gemm_t_k64: gpu
                 .kernel("moe_w4a16", "moe_w4a16_grouped_gemm_ptrtable_t_k64")?,

@@ -78,7 +78,7 @@ pub fn moe_w4a16_grouped_gemm(
 
 /// 2026-09-25: `moe_w4a16_grouped_gemm_ptrtable` with a 256-row M tile and a 512-thread block.
 /// `max_m_tiles` counts 256-row tiles: `MoeLayer::launch_grouped_gemm` divides the 64-row count
-/// by 4. Loaded only under `METRALE_MOE_GROUPED_M256=1` (`moe/init.rs`); the measurement behind
+/// by 4. Loaded only under `METRALE_MOE_GROUPED_M256=1` (`moe/grouped_w4a16.rs`); the measurement behind
 /// that is on `launch_grouped_gemm`.
 #[allow(clippy::too_many_arguments)]
 pub fn moe_w4a16_grouped_gemm_ptrtable_m256(
@@ -142,6 +142,82 @@ pub fn moe_w4a16_grouped_gemm_ptrtable(
     max_m_tiles: u32,
     stream: u64,
 ) -> Result<()> {
+    let tables = [a, b_packed_ptrs, b_scale_ptrs, scale2_vals, c];
+    let rows = [expert_offsets, sorted_token_ids];
+    let dims = [num_experts, n_out, k, max_m_tiles];
+    launch_w4a16_ptrtable(gpu, kernel, (128, 0), tables, rows, dims, stream)
+}
+
+/// 2026-10-13: Threads and dynamic shared memory of `moe_w4a16_grouped_gemm_ptrtable_pipe`
+/// (kernels/hopper/common/moe_w4a16_grouped_pipe_hopper.cu: PIPE_THREADS, PIPE_SMEM_BYTES; the
+/// kernel traps on less shared memory).
+pub const MOE_W4A16_PIPE_LAUNCH: (u32, u32) = (256, 73_728);
+/// 2026-10-13: The K step and N tile the pipelined twin requires (its PIPE_KS and PIPE_NT).
+pub const MOE_W4A16_PIPE_K_STEP: u32 = 64;
+
+/// 2026-10-13: Whether the pipelined twin computes an `n_out` x `k` projection: N a multiple of
+/// the N tile it publishes and K of its K step. Other shapes take the base kernel.
+pub fn moe_w4a16_pipe_admits(gpu: &dyn GpuBackend, pipe: KernelHandle, n_out: u32, k: u32) -> bool {
+    pipe.0 != 0
+        && k.is_multiple_of(MOE_W4A16_PIPE_K_STEP)
+        && gpu
+            .kernel_n_tile(pipe)
+            .is_ok_and(|t| n_out.is_multiple_of(t))
+}
+
+/// 2026-10-13: `moe_w4a16_grouped_gemm_ptrtable`'s product through the pipelined Hopper twin, its
+/// output byte-identical (grid y counts the same 64-row tiles). Launch only shapes
+/// `moe_w4a16_pipe_admits` admits.
+#[allow(clippy::too_many_arguments)]
+pub fn moe_w4a16_grouped_gemm_ptrtable_pipe(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    a: DevicePtr,
+    b_packed_ptrs: DevicePtr,
+    b_scale_ptrs: DevicePtr,
+    scale2_vals: DevicePtr,
+    c: DevicePtr,
+    expert_offsets: DevicePtr,
+    sorted_token_ids: DevicePtr,
+    num_experts: u32,
+    n_out: u32,
+    k: u32,
+    max_m_tiles: u32,
+    stream: u64,
+) -> Result<()> {
+    anyhow::ensure!(
+        moe_w4a16_pipe_admits(gpu, kernel, n_out, k),
+        "moe_w4a16_grouped_gemm_ptrtable_pipe: N={n_out} K={k} not admitted"
+    );
+    let tables = [a, b_packed_ptrs, b_scale_ptrs, scale2_vals, c];
+    let rows = [expert_offsets, sorted_token_ids];
+    let dims = [num_experts, n_out, k, max_m_tiles];
+    launch_w4a16_ptrtable(
+        gpu,
+        kernel,
+        MOE_W4A16_PIPE_LAUNCH,
+        tables,
+        rows,
+        dims,
+        stream,
+    )
+}
+
+/// 2026-10-13: One pointer-table W4A16 launch: `tables` = A, packed, scale, scale2 and C;
+/// `rows` = expert offsets and sorted token ids; `dims` = experts, N, K and M tiles; `launch` =
+/// threads and dynamic shared memory.
+fn launch_w4a16_ptrtable(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    launch: (u32, u32),
+    tables: [DevicePtr; 5],
+    rows: [DevicePtr; 2],
+    dims: [u32; 4],
+    stream: u64,
+) -> Result<()> {
+    let [a, b_packed_ptrs, b_scale_ptrs, scale2_vals, c] = tables;
+    let [expert_offsets, sorted_token_ids] = rows;
+    let [num_experts, n_out, k, max_m_tiles] = dims;
     check_e4m3_grouped(
         gpu,
         kernel,
@@ -154,7 +230,8 @@ pub fn moe_w4a16_grouped_gemm_ptrtable(
     )?;
     KernelLaunch::new(gpu, kernel)
         .grid([n_tile_blocks(gpu, kernel, n_out)?, max_m_tiles, num_experts])
-        .block([128, 1, 1])
+        .block([launch.0, 1, 1])
+        .shared_mem(launch.1)
         .arg_ptr(a)
         .arg_ptr(b_packed_ptrs)
         .arg_ptr(b_scale_ptrs)
@@ -339,3 +416,7 @@ pub fn moe_silu_mul(
         .arg_u32(total_elements)
         .launch(stream)
 }
+
+#[cfg(test)]
+#[path = "moe_w4a16_pipe_tests.rs"]
+mod moe_w4a16_pipe_tests;
