@@ -45,6 +45,10 @@ const DECODE_BLOCK: u32 = 512;
 /// (split, row, head group) loads each selected latent token once for all its heads.
 pub const DSA_DECODE_HB_MODULE: &str = "glm5next_dsa_mla_decode_hb";
 
+/// 2026-10-14: Module of the pipelined prefill twin of the P-hi entry
+/// (`glm5next_dsa_mla_prefill_pipe.cu`).
+pub const DSA_PREFILL_PIPE_MODULE: &str = "glm5next_dsa_mla_prefill_pipe";
+
 /// 2026-10-09: Rows per head-batched launch. `decode_attention` walks wider row sets in launches
 /// of this many rows, so the split workspace is bounded by it, not by the workspace's
 /// `max_rows`. A row's output does not depend on the launch it is in.
@@ -58,59 +62,13 @@ const HB_HEADS: usize = 24;
 const HB_BLOCK: u32 = 256;
 const HB_MERGE_BLOCK: u32 = 128;
 
-/// 2026-10-09: `METRALE_GLM_DSA_DECODE_HB=N` (1..=[`HB_MAX_SPLITS`]): decode the DSA attention
-/// on the head-batched kernel, each row's selection split into `N` slices merged afterwards.
-/// Unset keeps the per-head kernel. Opt-in: it changes the summation order (accuracy-gated).
-/// Read once; any other value is an error at resolve time.
-pub fn hb_splits_lever() -> Result<Option<usize>> {
-    static V: std::sync::OnceLock<Result<Option<usize>, String>> = std::sync::OnceLock::new();
-    V.get_or_init(|| parse_hb_splits(std::env::var("METRALE_GLM_DSA_DECODE_HB").ok().as_deref()))
-        .clone()
-        .map_err(anyhow::Error::msg)
-}
+mod levers;
+pub use levers::{hb_prefill_one_split, hb_prefill_p_hi, hb_prefill_pipe, hb_splits_lever};
 
-/// 2026-10-12: `METRALE_GLM_DSA_HB_PREFILL_ONE_SPLIT=1`: a prefill sub-chunk's head-batched
-/// attend runs at one split (each CTA walks its row's whole selection, writing BF16 directly: no
-/// partials, no merge) in a single launch over all its rows, which already fill the GPU. Decode
-/// keeps `METRALE_GLM_DSA_DECODE_HB`'s split count. Off unless `1`; read once.
-pub fn hb_prefill_one_split() -> bool {
-    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *F.get_or_init(|| std::env::var("METRALE_GLM_DSA_HB_PREFILL_ONE_SPLIT").as_deref() == Ok("1"))
-}
-
-/// 2026-10-12: `METRALE_GLM_DSA_HB_PREFILL_P_HI`, read once: `1` runs a prefill sub-chunk's
-/// head-batched attend on `glm5next_dsa_mla_decode_hb_fp8_phi`, which carries the softmax
-/// weights as one bf16 instead of bf16 hi + lo and so runs two thirds of the MMAs; unset or `0`
-/// keeps the hi + lo entry; another value is an error. Decode is never affected. Opt-in and
-/// accuracy-gated: a weight's relative error grows from 2^-16 to 2^-9.
-pub fn hb_prefill_p_hi() -> Result<bool> {
-    static V: std::sync::OnceLock<Result<bool, String>> = std::sync::OnceLock::new();
-    V.get_or_init(|| {
-        match std::env::var("METRALE_GLM_DSA_HB_PREFILL_P_HI")
-            .ok()
-            .as_deref()
-        {
-            None | Some("0") => Ok(false),
-            Some("1") => Ok(true),
-            Some(other) => Err(format!(
-                "METRALE_GLM_DSA_HB_PREFILL_P_HI={other:?}: expected 0 or 1"
-            )),
-        }
-    })
-    .clone()
-    .map_err(anyhow::Error::msg)
-}
-
-/// 2026-10-09: [`hb_splits_lever`]'s parse, pure.
-fn parse_hb_splits(v: Option<&str>) -> Result<Option<usize>, String> {
-    let Some(v) = v else { return Ok(None) };
-    match v.trim().parse::<usize>() {
-        Ok(n) if (1..=HB_MAX_SPLITS).contains(&n) => Ok(Some(n)),
-        _ => Err(format!(
-            "METRALE_GLM_DSA_DECODE_HB={v:?}: expected a split count in 1..={HB_MAX_SPLITS}"
-        )),
-    }
-}
+/// 2026-10-14: Dynamic shared memory of `glm5next_dsa_mla_prefill_pipe_phi`: two bf16 tiles
+/// (32 tokens x 512 dims) and four f32 QK chain planes (24 heads x 36), its `PP_SMEM_BYTES`.
+/// The kernel traps when launched with less, so a drift between the two fails loudly.
+pub const PIPE_SMEM_BYTES: u32 = 2 * (32 * 512 * 2) + 4 * (24 * 36 * 4);
 
 /// 2026-10-09: The head-batched entry points and the split count they run with.
 #[derive(Clone, Copy)]
@@ -119,8 +77,13 @@ struct HeadBatched {
     /// 2026-10-12: `glm5next_dsa_mla_decode_hb_fp8_phi` (P as bf16 hi only), or 0 when the
     /// target lacks it; [`Glm5NextDsaDecodeKernel::for_prefill_p_hi`] swaps it in.
     decode_p_hi: KernelHandle,
+    /// 2026-10-14: `glm5next_dsa_mla_prefill_pipe_phi`, or 0 when the target lacks it;
+    /// [`Glm5NextDsaDecodeKernel::for_prefill_pipe`] swaps it in.
+    prefill_pipe: KernelHandle,
     merge: KernelHandle,
     splits: usize,
+    /// 2026-10-14: Dynamic shared memory `decode` is launched with (0 but for the pipe entry).
+    smem: u32,
 }
 
 /// 2026-09-25: The selected-index MLA decode entry point. 2026-10-09: and, under
@@ -158,8 +121,14 @@ impl Glm5NextDsaDecodeKernel {
                         DSA_DECODE_HB_MODULE,
                         "glm5next_dsa_mla_decode_hb_fp8_phi",
                     ),
+                    prefill_pipe: metrale_model_layers::layers::try_kernel(
+                        gpu,
+                        DSA_PREFILL_PIPE_MODULE,
+                        "glm5next_dsa_mla_prefill_pipe_phi",
+                    ),
                     merge: gpu.kernel(DSA_DECODE_HB_MODULE, "glm5next_dsa_mla_merge")?,
                     splits,
+                    smem: 0,
                 })
             }
         };
@@ -198,6 +167,44 @@ impl Glm5NextDsaDecodeKernel {
             }),
             ..self
         })
+    }
+
+    /// 2026-10-14: This kernel with the P-hi entry replaced by its pipelined twin when `pipe`
+    /// ([`hb_prefill_pipe`]) is set; unchanged when it is not. An error when it is set but the
+    /// head-batched entry is not the P-hi one ([`Self::for_prefill_p_hi`] first), or the twin is
+    /// not in the build.
+    pub fn for_prefill_pipe(self, pipe: bool) -> Result<Self> {
+        if !pipe {
+            return Ok(self);
+        }
+        let Some(h) = self.head_batched else {
+            bail!("METRALE_GLM_DSA_HB_PREFILL_PIPE=1 needs METRALE_GLM_DSA_DECODE_HB");
+        };
+        if h.decode_p_hi.0 == 0 || h.decode.0 != h.decode_p_hi.0 {
+            bail!("METRALE_GLM_DSA_HB_PREFILL_PIPE=1 needs METRALE_GLM_DSA_HB_PREFILL_P_HI=1");
+        }
+        if h.prefill_pipe.0 == 0 {
+            bail!(
+                "METRALE_GLM_DSA_HB_PREFILL_PIPE=1: glm5next_dsa_mla_prefill_pipe_phi is not in \
+                 this target's kernels"
+            );
+        }
+        Ok(Self {
+            head_batched: Some(HeadBatched {
+                decode: h.prefill_pipe,
+                smem: PIPE_SMEM_BYTES,
+                ..h
+            }),
+            ..self
+        })
+    }
+
+    /// 2026-10-14: This kernel for a prefill sub-chunk's attend under the prefill levers, in
+    /// order: [`hb_prefill_one_split`], [`hb_prefill_p_hi`], [`hb_prefill_pipe`].
+    pub fn for_prefill_levers(self) -> Result<Self> {
+        self.for_prefill(hb_prefill_one_split())
+            .for_prefill_p_hi(hb_prefill_p_hi()?)?
+            .for_prefill_pipe(hb_prefill_pipe()?)
     }
 
     /// 2026-10-12: This kernel for a prefill sub-chunk's attend: the head-batched one at one
@@ -431,92 +438,8 @@ fn launch_per_head(
     Ok(())
 }
 
-/// 2026-10-09: The head-batched decode of `decode_attention`, in launches of at most
-/// [`HB_LAUNCH_ROWS`] rows; from two splits up each launch is followed by the merge.
-fn decode_head_batched(
-    gpu: &dyn GpuBackend,
-    hb: HeadBatched,
-    cfg: &Glm5NextDsaConfig,
-    geom: &DsaSelectGeometry,
-    paging: &DsaDecodePaging,
-    inputs: &DsaDecodeInputs,
-    stream: u64,
-) -> Result<()> {
-    // 2026-10-09: The kernel reads one latent buffer as K and V; distinct ones would need the
-    // per-head kernel's second load.
-    if inputs.k_cache != inputs.v_cache {
-        bail!("DSA head-batched decode: K and V must be one latent buffer (absorbed MLA)");
-    }
-    let heads = paging.num_q_heads;
-    let ws = match (hb.splits, inputs.split_ws) {
-        (1, _) => None,
-        (_, Some(ws)) if ws.splits == hb.splits && ws.heads == heads => Some(ws),
-        (s, ws) => bail!(
-            "DSA head-batched decode: {s} splits over {heads} heads needs a split workspace of \
-             that shape, got {ws:?}"
-        ),
-    };
-    // 2026-10-12: At one split there are no partials to bound, so every row goes in one launch
-    // (a row's output does not depend on the launch it is in).
-    let launch_rows = match ws {
-        Some(w) => w.rows.min(HB_LAUNCH_ROWS),
-        None if hb.splits == 1 => paging.num_seqs,
-        None => HB_LAUNCH_ROWS,
-    };
-    let (ws_o, ws_ml) = ws.map_or((DevicePtr(0), DevicePtr(0)), |w| (w.o, w.ml));
-    let latent_row = heads * cfg.kv_lora_rank * 2;
-    let mut row0 = 0;
-    while row0 < paging.num_seqs {
-        let rows = launch_rows.min(paging.num_seqs - row0);
-        let q = inputs.q.offset(row0 * latent_row);
-        let out = inputs.out.offset(row0 * latent_row);
-        let bt = inputs
-            .block_tables
-            .offset(row0 * paging.max_blocks_per_seq * 4);
-        let sl = inputs.seq_lens.offset(row0 * 4);
-        KernelLaunch::new(gpu, hb.decode)
-            .grid([
-                hb.splits as u32,
-                rows as u32,
-                heads.div_ceil(HB_HEADS) as u32,
-            ])
-            .block([HB_BLOCK, 1, 1])
-            .arg_ptr(q)
-            .arg_ptr(inputs.k_cache)
-            .arg_ptr(out)
-            .arg_ptr(bt)
-            .arg_ptr(sl)
-            .arg_ptr(inputs.sel_indices.offset(row0 * geom.out_width * 4))
-            .arg_ptr(ws_o)
-            .arg_ptr(ws_ml)
-            .arg_u32(geom.out_width as u32)
-            .arg_u32(paging.max_blocks_per_seq as u32)
-            .arg_u32(heads as u32)
-            .arg_u32(paging.block_size as u32)
-            .arg_f32((cfg.kv_lora_rank as f32).powf(-0.5))
-            .arg_f32(inputs.k_scale)
-            .arg_f32(inputs.v_scale)
-            .arg_u64(paging.cache_stride_bytes)
-            .arg_u32(hb.splits as u32)
-            .launch(stream)?;
-        if hb.splits > 1 {
-            KernelLaunch::new(gpu, hb.merge)
-                .grid([heads as u32, rows as u32, 1])
-                .block([HB_MERGE_BLOCK, 1, 1])
-                .arg_ptr(ws_o)
-                .arg_ptr(ws_ml)
-                .arg_ptr(sl)
-                .arg_ptr(out)
-                .arg_u32(heads as u32)
-                .arg_u32(hb.splits as u32)
-                .arg_f32(inputs.v_scale)
-                .launch(stream)?;
-        }
-        row0 += rows;
-    }
-    Ok(())
-}
-
 mod check;
+mod head_batched;
+use head_batched::decode_head_batched;
 #[cfg(test)]
 mod tests;
