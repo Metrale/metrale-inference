@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-09-25: Tests for the pure hard-limit decision cores
-//! `seqlen_force_stop`, `hard_ceiling_hit` and `eos_suppressed_by_thinking`.
-//! Their call sites in the decode paths are not exercised here.
+//! `seqlen_force_stop` and `hard_ceiling_hit`. Their call sites in the
+//! decode paths are not exercised here.
 //!
 //! Owner: scheduler.
 //! Invariants: none beyond the types.
-use super::{eos_suppressed_by_thinking, hard_ceiling_hit, seqlen_force_stop};
+use super::{hard_ceiling_hit, seqlen_force_stop};
 
 #[test]
 fn seqlen_guard_disabled_when_unset() {
@@ -43,21 +43,5 @@ fn hard_ceiling_hit_on_budget_or_seqlen() {
     assert!(
         !hard_ceiling_hit(500, 10, 0),
         "max_seq_len unset → only budget matters"
-    );
-}
-
-#[test]
-fn eos_reachable_at_hard_ceiling_even_inside_thinking() {
-    assert!(
-        eos_suppressed_by_thinking(true, false),
-        "inside thinking, no ceiling → suppress (unchanged baseline)"
-    );
-    assert!(
-        !eos_suppressed_by_thinking(true, true),
-        "inside thinking, hard ceiling → EOS must fire (the fix)"
-    );
-    assert!(
-        !eos_suppressed_by_thinking(false, false),
-        "outside thinking → never suppressed"
     );
 }

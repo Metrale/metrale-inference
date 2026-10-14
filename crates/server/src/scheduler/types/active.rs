@@ -159,8 +159,8 @@ pub(in crate::scheduler) struct ActiveSeq {
     /// the sequence only when there is no grammar and the request declared no
     /// tools.
     pub tool_call_end_token: Option<u32>,
-    /// 2026-09-25: While true, EOS is suppressed; a `<tool_call>` outside thinking clears
-    /// it.
+    /// 2026-09-25: While true, EOS outside thinking is held back (`eos_hold`); a
+    /// `<tool_call>` outside thinking clears it.
     pub require_tool_call: bool,
     /// 2026-09-25: Sticky "this is a tool request" flag, set at birth when a grammar is
     /// attached or `use_legacy_tool_call` holds. Unlike

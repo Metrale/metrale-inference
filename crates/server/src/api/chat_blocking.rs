@@ -220,6 +220,7 @@ pub(super) async fn run_blocking_path(args: BlockingPathArgs) -> super::chat::Ch
             reasoning_content_i,
             output_text_i,
             tools_active,
+            tool_choice_required,
             cwd_hint.as_deref(),
             choice_idx,
         );

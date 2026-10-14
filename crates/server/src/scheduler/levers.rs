@@ -103,10 +103,6 @@ pub struct SchedLevers {
     /// 2026-09-25: `METRALE_DISABLE_WATCHDOGS=1`/`true`: disarm the
     /// generation watchdogs that check it.
     pub disable_watchdogs: bool,
-    /// 2026-09-25: Parsed from `METRALE_EOS_SUPPRESS_THINKING=1` but read
-    /// nowhere; EOS suppression inside thinking is
-    /// `helpers::eos_suppressed_by_thinking`.
-    pub eos_suppressed_by_thinking: bool,
     /// 2026-09-25: The forced-token fast path (`logit_processors::forced_token`).
     /// `METRALE_DISABLE_FORCED_TOKEN=1`/`true` turns it off.
     pub forced_token_fastpath: bool,
@@ -319,7 +315,6 @@ impl SchedLevers {
             disable_watchdogs: crate::scheduler::helpers::parse_disable_watchdogs(
                 metrale_config::levers::var("METRALE_DISABLE_WATCHDOGS").as_deref(),
             ),
-            eos_suppressed_by_thinking: opt_in("METRALE_EOS_SUPPRESS_THINKING"),
             forced_token_fastpath: crate::scheduler::helpers::parse_forced_token_fastpath(
                 metrale_config::levers::var("METRALE_DISABLE_FORCED_TOKEN").as_deref(),
             ),
@@ -398,7 +393,6 @@ impl SchedLevers {
             dflash_resume_guard: 0,
             shadow_topk: 0,
             disable_watchdogs: false,
-            eos_suppressed_by_thinking: false,
             forced_token_fastpath: true,
             decode_timing: false,
             mtp_timing: false,

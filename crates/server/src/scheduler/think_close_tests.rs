@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-09: `think_close`: a GLM-4.7 tool call written while thinking ends
-//! the thinking block, so the EOS after the call ends the turn. Driven through
+//! the thinking block and is marked complete. Driven through
 //! the real `emit_token` over a `test_seq` fixture, with GLM-5.3's ids for the
 //! call markers and the fixture's EOS standing in for `<|observation|>`.
 //!
@@ -74,15 +74,17 @@ fn a_call_written_while_thinking_ends_thinking_and_the_eos_after_it_ends_the_tur
 }
 
 #[test]
-fn without_the_format_flag_the_eos_after_the_call_is_held_back() {
+fn without_the_format_flag_the_call_stays_in_thinking_and_the_eos_still_ends_the_turn() {
     // 2026-10-09: The failure this module fixes, on the same tokens: thinking is
-    // still open, the EOS is dropped and the turn runs on.
+    // still open and the call is never marked complete.
+    // 2026-10-13: The EOS ends the turn anyway: as in vLLM, nothing about the
+    // thinking state holds an EOS back (`eos_hold`).
     let s = sched(None);
     let mut a = glm_seq();
     run_call_written_while_thinking(&mut a, &s);
     assert!(a.inside_thinking);
     assert!(!a.tool_call_completed);
-    assert!(!a.finished);
+    assert!(a.finished, "an EOS inside thinking must end the turn");
 }
 
 #[test]

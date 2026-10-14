@@ -233,9 +233,6 @@ pub struct ModelBehavior {
     /// 2026-09-25: Per-model gate for the thinking-loop watchdog. Default
     /// true.
     pub enable_think_loop_watchdog: bool,
-    /// 2026-09-25: When thinking is the only reason an EOS is suppressed,
-    /// close the thinking block instead of discarding the EOS. Default false.
-    pub honor_eos_inside_thinking: bool,
     /// 2026-09-25: While fewer than this many thinking tokens have been
     /// emitted, `</think>` gets a -8.0 logit bias; 0 disables it. Default 16.
     pub min_reasoning_floor_tokens: u32,
@@ -342,7 +339,6 @@ impl Default for ModelBehavior {
             tool_call_parser: "",
             enable_loop_watchdog: false,
             enable_think_loop_watchdog: true,
-            honor_eos_inside_thinking: false,
             min_reasoning_floor_tokens: 16,
             cap_thinking_at_max_tokens: true,
             min_p_floor: 0.0,

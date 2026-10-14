@@ -44,10 +44,26 @@ pub(super) fn log_raw_generation(state: &AppState, tokens: &[u32], what: &str) {
     }
 }
 
+/// 2026-10-13: The content vLLM returns beside a reasoning split. Empty content is
+/// null (`parser_engine.py`: `content or None`). When `tool_choice` forces a call
+/// (`required` or a named tool), vLLM sends `""` instead (`serving.py`:
+/// `content or ""`).
+pub(super) fn vllm_split_content(
+    content: Option<String>,
+    forced_tool_choice: bool,
+) -> Option<String> {
+    let content = content.filter(|c| !c.is_empty());
+    if forced_tool_choice {
+        Some(content.unwrap_or_default())
+    } else {
+        content
+    }
+}
+
 /// 2026-09-26: Build the assistant message and finish reason for one choice: tool
 /// parsing and validation, content stripping, and the refusal classifier. It awaits
 /// nothing, so it is not `async`. `matched_stop` and `logprobs` are left `None` for the
-/// caller.
+/// caller. `forced_tool_choice` is the request's `tool_choice_required`.
 pub(super) fn build_choice_message(
     state: &AppState,
     req: &crate::ir::ChatRequest,
@@ -55,6 +71,7 @@ pub(super) fn build_choice_message(
     reasoning_content_i: Option<String>,
     output_text_i: String,
     tools_active: bool,
+    forced_tool_choice: bool,
     cwd_hint: Option<&str>,
     choice_idx: usize,
 ) -> ir::Choice {
@@ -193,6 +210,18 @@ pub(super) fn build_choice_message(
     {
         msg_refusal = Some(refusal_sentence);
         msg_content = None;
+    }
+
+    // 2026-10-13: Under a format whose tool call closes the reasoning (GLM), the split
+    // follows vLLM's GLM parser, and so does its content: an unclosed `<think>` leaves
+    // the answer empty, which vLLM returns as null.
+    if msg_refusal.is_none()
+        && state
+            .reasoning_parser
+            .as_deref()
+            .is_some_and(|p| p.tool_call_closes_reasoning())
+    {
+        msg_content = vllm_split_content(msg_content, forced_tool_choice);
     }
 
     // 2026-09-26: Arguments that do not parse as JSON become an empty object.

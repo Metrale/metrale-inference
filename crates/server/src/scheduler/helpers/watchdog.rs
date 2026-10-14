@@ -38,9 +38,6 @@ pub struct WatchdogParams {
     /// 2026-09-25: Cap on content tokens per generation for a sequence
     /// with a grammar attached.
     pub max_post_think_content_tokens: u32,
-    /// 2026-09-25: When thinking is the only reason an EOS is suppressed,
-    /// close the thinking block instead of discarding the EOS.
-    pub honor_eos_inside_thinking: bool,
     /// 2026-09-25: Per-model gate for the thinking-loop watchdog.
     pub enable_think_loop_watchdog: bool,
     /// 2026-09-25: Thinking tokens during which `</think>` gets a negative
@@ -69,7 +66,6 @@ const DEFAULT_WATCHDOG_PARAMS: WatchdogParams = WatchdogParams {
     max_inter_tool_prose: MAX_INTER_TOOL_PROSE,
     max_post_think_content_tokens: MAX_POST_THINK_CONTENT_TOKENS,
     rollback_resteer: true,
-    honor_eos_inside_thinking: false,
     enable_think_loop_watchdog: true,
     content_loop_min_repeats: None,
     min_reasoning_floor: 16,
@@ -110,7 +106,6 @@ impl WatchdogParams {
             max_inter_tool_prose: b.max_inter_tool_prose,
             max_post_think_content_tokens: b.max_post_think_content_tokens,
             rollback_resteer: b.rollback_resteer,
-            honor_eos_inside_thinking: b.honor_eos_inside_thinking,
             enable_think_loop_watchdog: b.enable_think_loop_watchdog,
             content_loop_min_repeats: None,
         };

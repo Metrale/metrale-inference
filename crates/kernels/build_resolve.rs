@@ -202,7 +202,6 @@ pub(super) fn resolve_targets(workspace_root: &std::path::Path) -> Vec<Target> {
                 behavior_tool_call_parser: pb.tool_call_parser,
                 behavior_enable_loop_watchdog: pb.enable_loop_watchdog,
                 behavior_enable_think_loop_watchdog: pb.enable_think_loop_watchdog,
-                behavior_honor_eos_inside_thinking: pb.honor_eos_inside_thinking,
                 behavior_min_reasoning_floor_tokens: pb.min_reasoning_floor_tokens,
                 behavior_cap_thinking_at_max_tokens: pb.cap_thinking_at_max_tokens,
                 behavior_min_p_floor: pb.min_p_floor,
