@@ -127,18 +127,21 @@ impl Glm5NextKdaLayer {
             .launch(stream)
     }
 
-    /// 2026-10-14: The prepare's gate arguments: `ws.gate` at [`GateAt::Kernel`], else `g_raw`,
-    /// `dt_bias`, `A_log` and the lower bound (the `_graw` entries' order).
+    /// 2026-10-14: The prepare's gate arguments from workspace row `row0`: `ws.gate` at
+    /// [`GateAt::Kernel`], else `g_raw`, `dt_bias`, `A_log` and the lower bound (the `_graw`
+    /// entries' order).
     pub(super) fn gate_args<'a>(
         &self,
         l: KernelLaunch<'a>,
         ws: &Glm5NextKdaWorkspace,
+        row0: usize,
         gate: GateAt,
     ) -> KernelLaunch<'a> {
+        let qkv = self.cfg.qkv_dim();
         match gate {
-            GateAt::Kernel => l.arg_ptr(ws.gate),
+            GateAt::Kernel => l.arg_ptr(ws.gate.offset(row0 * qkv * 4)),
             GateAt::Prepare => l
-                .arg_ptr(ws.g_raw)
+                .arg_ptr(ws.g_raw.offset(row0 * qkv * 2))
                 .arg_ptr(self.weights.dt_bias)
                 .arg_ptr(self.weights.a_log)
                 .arg_f32(self.cfg.gate_lower_bound),

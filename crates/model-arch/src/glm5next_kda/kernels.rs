@@ -157,6 +157,9 @@ pub struct KdaSeqKernels {
     /// (`kda_chunk64_prepare.cu`): the two prepares with the forget gate inside (`gate_at.rs`).
     pub chunk64_prepare_graw: KernelHandle,
     pub chunk64_prepare_conv_graw: KernelHandle,
+    /// 2026-10-14: `kda_chunk64_scan_onorm` (`kda_chunk64.cu`): the 64-token scan that also
+    /// applies the sigmoid-gated RMSNorm (`onorm_at.rs`).
+    pub chunk64_scan_onorm: KernelHandle,
 }
 
 impl KdaSeqKernels {
@@ -188,6 +191,7 @@ impl KdaSeqKernels {
                 "kda_chunk64_prepare",
                 "kda_chunk64_prepare_conv_graw",
             ),
+            chunk64_scan_onorm: k(gpu, "kda_chunk64", "kda_chunk64_scan_onorm"),
         }
     }
 

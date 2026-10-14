@@ -204,7 +204,7 @@ impl Glm5NextKdaLayer {
     ) -> Result<()> {
         self.front_end(gpu, hidden, 1, ws, Pack::InFrontEnd, GateAt::Kernel, stream)?;
         self.stateful_row(gpu, RowIo::workspace(&self.cfg, ws, 0), state, stream)?;
-        self.back_end(gpu, 1, ws, stream)
+        self.back_end(gpu, 1, ws, NormAt::Back, stream)
     }
 
     /// 2026-09-25: `k` tokens of one sequence: the projections batched, the recurrence one row at a
@@ -309,6 +309,8 @@ impl Glm5NextKdaLayer {
         let pack = self.pack_for(tokens || chunked)?;
         // 2026-10-14: One gate decision for the front end and the scan (`gate_at.rs`).
         let gate = self.gate_at_for(chunked64)?;
+        // 2026-10-14: One o_norm decision for the scan and the back end (`onorm_at.rs`).
+        let norm = self.norm_at_for(chunked64)?;
         self.rows_with(
             gpu,
             hidden,
@@ -316,6 +318,7 @@ impl Glm5NextKdaLayer {
             ws,
             pack,
             gate,
+            norm,
             stream,
             |row| {
                 if tokens || chunked || snap_tokens {
@@ -329,7 +332,7 @@ impl Glm5NextKdaLayer {
             },
             || {
                 if chunked64 {
-                    self.stateful_chunk64(gpu, k, state, ws, pack, gate, stream)
+                    self.stateful_chunk64(gpu, k, state, ws, pack, gate, norm, stream)
                 } else if chunked {
                     self.stateful_chunk16(gpu, k, state, ws, pack, stream)
                 } else if snap_tokens {
@@ -406,6 +409,7 @@ impl Glm5NextKdaLayer {
             ws,
             Pack::InFrontEnd,
             GateAt::Kernel,
+            NormAt::Back,
             stream,
             |row| {
                 self.stateful_row(
@@ -431,6 +435,7 @@ impl Glm5NextKdaLayer {
         ws: &Glm5NextKdaWorkspace,
         pack: Pack,
         gate: GateAt,
+        norm: NormAt,
         stream: u64,
         mut per_row: impl FnMut(usize) -> Result<()>,
         after_rows: impl FnOnce() -> Result<()>,
@@ -454,7 +459,7 @@ impl Glm5NextKdaLayer {
         after_rows()?;
         profile::end(profile::KDA_RECUR, t_recur, gpu, stream);
         let t_back = profile::start();
-        let r = self.back_end(gpu, k, ws, stream);
+        let r = self.back_end(gpu, k, ws, norm, stream);
         profile::end(profile::KDA_BACK, t_back, gpu, stream);
         r
     }

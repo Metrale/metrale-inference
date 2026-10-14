@@ -33,6 +33,9 @@
 // BF16 rounding level: opt-in and accuracy-gated (model-arch example glm5next_kda_chunk64_bench).
 // The chunk's factors arrive by 16-byte cp.async: the next chunk's W and Qg are issued after
 // phase A, Kd and decay after B, P after C, so they land while this chunk computes.
+// 2026-10-14: kda_chunk64_scan_onorm (`METRALE_GLM_KDA_ONORM_IN_SCAN`) is the same scan that
+// also writes each chunk's sigmoid-gated RMSNorm output (kda_o_norm_gated_bf16's bytes) from the
+// core rows it just wrote; kda_chunk64_onorm.cuh has how.
 //
 // Owner: gb10 kernels.
 // Invariants:
@@ -40,11 +43,14 @@
 //   [H, D, D] indexed [k][v], read before the slab's first chunk and written after its last. Out
 //   rows t >= T are not written.
 // - grid (H, D / KDA64_VB), block KDA64_SCAN_THREADS, dynamic shared memory KDA64_SCAN_SMEM.
+// - kda_chunk64_scan_onorm: the core, the state and every other output are kda_chunk64_scan's
+//   bytes; part and count as kda_chunk64_onorm.cuh (count zero before and after each launch).
 
 #include <cuda_bf16.h>
 #include <stdint.h>
 
 #include "kda_chunk64.cuh"
+#include "kda_chunk64_onorm.cuh"
 
 __device__ __forceinline__ void k64_mma(float (&d)[4], const uint32_t (&a)[4], uint32_t b0,
                                         uint32_t b1) {
@@ -126,21 +132,20 @@ __device__ __forceinline__ void k64_cp_tile(uint32_t sbase, const __nv_bfloat16*
     }
 }
 
-extern "C" __global__ void __launch_bounds__(KDA64_SCAN_THREADS) kda_chunk64_scan(
-    const float* __restrict__ u_in,
-    const __nv_bfloat16* __restrict__ w_in,
-    const __nv_bfloat16* __restrict__ qg_in,
-    const __nv_bfloat16* __restrict__ kd_in,
-    const __nv_bfloat16* __restrict__ p_in,
-    const float* __restrict__ ad_in,
-    float* __restrict__ state,
-    float* __restrict__ out,
-    unsigned int H,
-    unsigned int T,
-    unsigned int c0,
-    unsigned int num_chunks,
-    unsigned int out_stride
-) {
+// 2026-10-14: The scan's parameters, shared by both entries.
+#define K64_SCAN_PARAMS                                                                       \
+    const float* __restrict__ u_in, const __nv_bfloat16* __restrict__ w_in,                  \
+        const __nv_bfloat16* __restrict__ qg_in, const __nv_bfloat16* __restrict__ kd_in,     \
+        const __nv_bfloat16* __restrict__ p_in, const float* __restrict__ ad_in,              \
+        float* __restrict__ state, float* __restrict__ out, unsigned int H, unsigned int T,   \
+        unsigned int c0, unsigned int num_chunks, unsigned int out_stride
+#define K64_SCAN_ARGS u_in, w_in, qg_in, kd_in, p_in, ad_in, state, out, H, T, c0, num_chunks, out_stride
+
+// 2026-10-14: The scan; with ONORM it also normalises each chunk's core rows
+// (kda_chunk64_onorm.cuh), `s_inv` and `s_last` being the entry's static shared memory.
+template <bool ONORM>
+__device__ __forceinline__ void k64_scan(K64_SCAN_PARAMS, const K64Onorm on, float* s_inv,
+                                         unsigned int* s_last) {
     constexpr int C = KDA64_C, D = KDA64_D, VB = KDA64_VB, LD = KDA64_LD, LDC = KDA64_LDC;
     // 2026-10-12: 8 warps: in (A) and (C) warp w covers rows 16 (w & 3) .. and the column half
     // 32 (w >> 2) .. of the block's VB columns (NTW n-tiles); in (B) it owns the state rows
@@ -317,9 +322,17 @@ extern "C" __global__ void __launch_bounds__(KDA64_SCAN_THREADS) kda_chunk64_sca
                 }
             }
         }
+        if constexpr (ONORM) {
+            k64_onorm_part<NTW>(o, on.part, cb, r0 + g, (v0 + cw) / 32u, tig);
+            __threadfence();
+        }
         // 2026-10-12: Every warp is past sP and sDT before the next chunk's P lands / S0^T staging.
         __syncthreads();
         if (more) load_p(cbn);
+        if constexpr (ONORM) {
+            k64_onorm_tail(on, out, cb, (c0 + c) * C, T, h, out_stride, gridDim.y, tid, s_inv,
+                           s_last);
+        }
     }
 #pragma unroll
     for (int nt = 0; nt < NT; ++nt)
@@ -329,4 +342,25 @@ extern "C" __global__ void __launch_bounds__(KDA64_SCAN_THREADS) kda_chunk64_sca
             const unsigned int col = v0 + (unsigned int)nt * 8u + 2u * tig + (unsigned int)(e & 1);
             S[(size_t)row * D + col] = st[nt][e];
         }
+}
+
+extern "C" __global__ void __launch_bounds__(KDA64_SCAN_THREADS) kda_chunk64_scan(K64_SCAN_PARAMS) {
+    k64_scan<false>(K64_SCAN_ARGS, K64Onorm{}, nullptr, nullptr);
+}
+
+// 2026-10-14: `METRALE_GLM_KDA_ONORM_IN_SCAN`: the scan, then each chunk's o_norm
+// (kda_o_norm_gated_bf16's bytes) into `onorm_out`; `part` and `count` as kda_chunk64_onorm.cuh.
+extern "C" __global__ void __launch_bounds__(KDA64_SCAN_THREADS) kda_chunk64_scan_onorm(
+    K64_SCAN_PARAMS,
+    const __nv_bfloat16* __restrict__ gate,
+    const __nv_bfloat16* __restrict__ weight,
+    __nv_bfloat16* __restrict__ onorm_out,
+    float* __restrict__ part,
+    unsigned int* __restrict__ count,
+    float eps
+) {
+    __shared__ float s_inv[KDA64_C];
+    __shared__ unsigned int s_last;
+    k64_scan<true>(K64_SCAN_ARGS, K64Onorm{gate, weight, onorm_out, part, count, eps}, s_inv,
+                   &s_last);
 }

@@ -42,9 +42,11 @@ mod fixture;
 #[path = "common/graph_timing.rs"]
 mod timing;
 
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Result, ensure};
 use arms::{Arm, CD, Gate, Kernels, Layout, fused, unfused};
-use cases::{bumped_copy, case_rows, compare, ensure_finite, free_inputs, inputs, leak, run_arm};
+use cases::{
+    bumped_copy, case_rows, compare, ensure_finite, free_inputs, inputs, modules_with_base, run_arm,
+};
 use fixture::Lcg;
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
@@ -107,23 +109,7 @@ fn case(
 }
 
 fn main() -> Result<()> {
-    let sets = metrale_kernels::all_ptx_sets();
-    let glm = sets
-        .iter()
-        .find(|s| s.target.model == "glm-5.3-flash")
-        .context("glm-5.3-flash kernel target not built")?;
-    let mut modules = glm.modules.clone();
-    let embedded = modules
-        .iter()
-        .find(|m| m.0 == "kda_chunk64_prepare")
-        .context("no kda_chunk64_prepare module")?
-        .1;
-    if leak("GLM_PARITY_FIDELITY_PTX")? != embedded {
-        bail!(
-            "GLM_PARITY_FIDELITY_PTX differs from the embedded kda_chunk64_prepare: the base PTX was not compiled as the build compiles"
-        );
-    }
-    modules.push(("kda_chunk64_prepare_base", leak("GLM_PARITY_BASE_PTX")?));
+    let modules = modules_with_base("kda_chunk64_prepare", "kda_chunk64_prepare_base")?;
     let gpu = MetraleCudaBackend::new(0, &modules)?;
     let g: &dyn GpuBackend = &gpu;
     let s = g.create_stream()?;

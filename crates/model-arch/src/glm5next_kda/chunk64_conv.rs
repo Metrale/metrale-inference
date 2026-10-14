@@ -173,7 +173,7 @@ impl Glm5NextKdaLayer {
             .arg_u32(c.conv_kernel as u32)
             .arg_f32(c.l2_eps)
             .arg_ptr(ws.conv_out);
-        self.gate_args(l, ws, gate)
+        self.gate_args(l, ws, 0, gate)
             .arg_ptr(ws.beta)
             .arg_ptr(ws.chunk_u)
             .arg_ptr(ws.chunk_w)

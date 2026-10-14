@@ -42,6 +42,7 @@ mod decode_rows_tests;
 mod gate_at;
 mod gates_fused;
 mod kernels;
+mod onorm_at;
 mod prefill;
 mod replay;
 mod rows;
@@ -50,6 +51,7 @@ pub use config::{Glm5NextKdaConfig, Glm5NextKdaWeights};
 use conv_pack::Pack;
 use gate_at::GateAt;
 pub use kernels::{Glm5NextKdaKernels, KDA_REG_D, KDA_ROWS_MAX, KdaSeqKernels};
+use onorm_at::NormAt;
 pub use replay::KdaVerifyRecord;
 
 use anyhow::{Result, bail};
@@ -175,6 +177,11 @@ pub struct Glm5NextKdaWorkspace {
     pub out_gate: DevicePtr,
     /// 2026-09-25: `[T, qkv]` BF16: after the sigmoid-gated RMSNorm.
     pub o_norm_out: DevicePtr,
+    /// 2026-10-14: `kda_chunk64_scan_onorm`'s scratch (`onorm_at.rs`): FP32 warp sums
+    /// `[slab chunk][heads][64][head_dim / 32]` and u32 arrival counters `[slab chunk][heads]`,
+    /// the counters zero between launches.
+    pub onorm_part: DevicePtr,
+    pub onorm_count: DevicePtr,
     /// 2026-09-25: `[T, hidden]` BF16: the block output.
     pub final_out: DevicePtr,
     lowrank: DevicePtr,
@@ -202,6 +209,9 @@ impl Glm5NextKdaWorkspace {
         let unit = lcm(cfg.chunk.max(1), chunk64::CHUNK64);
         let t_pad = t.div_ceil(unit) * unit;
         let n = t_pad * qkv;
+        let (part_n, count_n) = onorm_at::onorm_scratch_elems(cfg);
+        let onorm_count = gpu.alloc(count_n * 4)?;
+        gpu.memset(onorm_count, 0, count_n * 4)?;
         Ok(Self {
             qkv_parts: gpu.alloc(3 * t * qkv * 2)?,
             qkv_proj: gpu.alloc(t * cd * 2)?,
@@ -215,6 +225,8 @@ impl Glm5NextKdaWorkspace {
             g_raw: gpu.alloc(t * qkv * 2)?,
             out_gate: gpu.alloc(t * qkv * 2)?,
             o_norm_out: gpu.alloc(t * qkv * 2)?,
+            onorm_part: gpu.alloc(part_n * 4)?,
+            onorm_count,
             final_out: gpu.alloc(t * cfg.hidden * 2)?,
             lowrank: gpu.alloc(t * hd * 2)?,
             lowrank_g: gpu.alloc(t * hd * 2)?,
@@ -448,37 +460,6 @@ impl Glm5NextKdaLayer {
             t,
             qkv,
             hd,
-            stream,
-        )
-    }
-
-    /// 2026-09-25: Sigmoid-gated RMSNorm, then `o_proj`.
-    fn back_end(
-        &self,
-        gpu: &dyn GpuBackend,
-        t: usize,
-        ws: &Glm5NextKdaWorkspace,
-        stream: u64,
-    ) -> Result<()> {
-        let c = &self.cfg;
-        KernelLaunch::new(gpu, self.kernels.o_norm)
-            .grid([(t * c.heads) as u32, 1, 1])
-            .block([c.head_dim as u32, 1, 1])
-            .arg_ptr(ws.core)
-            .arg_ptr(ws.out_gate)
-            .arg_ptr(self.weights.o_norm.weight)
-            .arg_ptr(ws.o_norm_out)
-            .arg_u32(c.head_dim as u32)
-            .arg_f32(c.rms_norm_eps)
-            .launch(stream)?;
-        self.gemm(
-            gpu,
-            ws.o_norm_out,
-            &self.weights.o_proj,
-            ws.final_out,
-            t,
-            c.hidden,
-            c.qkv_dim(),
             stream,
         )
     }

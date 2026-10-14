@@ -16,6 +16,7 @@ use super::super::decode_rows_tests::{
     CHUNK64_PREP, CHUNK64_PREP_CONV, CHUNK64_PREP_CONV_GRAW, CHUNK64_PREP_GRAW, GATE, cfg, layer,
     seq_state, since,
 };
+use super::super::onorm_at::NormAt;
 use super::super::{Glm5NextKdaLayer, Glm5NextKdaWorkspace, Pack};
 use super::{GateAt, parse_gate_in_prepare};
 
@@ -120,8 +121,18 @@ fn the_plain_prepare_takes_the_gate_arguments() {
     let st = seq_state(&gpu);
     let run = |gate| {
         let from = gpu.launch_count();
-        lay.stateful_chunk64_with(&gpu, 700, &st, &ws, Pack::InFrontEnd, false, gate, 7)
-            .unwrap();
+        lay.stateful_chunk64_with(
+            &gpu,
+            700,
+            &st,
+            &ws,
+            Pack::InFrontEnd,
+            false,
+            gate,
+            NormAt::Back,
+            7,
+        )
+        .unwrap();
         since(&gpu, from)
     };
     let (kernel, prepare) = (run(GateAt::Kernel), run(GateAt::Prepare));
@@ -146,7 +157,7 @@ fn the_conv_prepare_takes_the_gate_arguments() {
     for pack in [Pack::InFrontEnd, Pack::InConv] {
         let run = |gate| {
             let from = gpu.launch_count();
-            lay.stateful_chunk64_with(&gpu, 700, &st, &ws, pack, true, gate, 7)
+            lay.stateful_chunk64_with(&gpu, 700, &st, &ws, pack, true, gate, NormAt::Back, 7)
                 .unwrap();
             since(&gpu, from)
         };
@@ -196,6 +207,7 @@ fn prepare_refuses_without_the_kernels_before_any_launch() {
                     Pack::InFrontEnd,
                     fused,
                     GateAt::Prepare,
+                    NormAt::Back,
                     7
                 )
                 .is_err(),
@@ -212,6 +224,7 @@ fn prepare_refuses_without_the_kernels_before_any_launch() {
             Pack::InFrontEnd,
             false,
             GateAt::Kernel,
+            NormAt::Back,
             7,
         )
         .unwrap();

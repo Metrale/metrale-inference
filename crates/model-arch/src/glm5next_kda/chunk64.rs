@@ -101,8 +101,9 @@ impl Glm5NextKdaLayer {
 
     /// 2026-10-12: Workspace rows `0..k` of one sequence through the conv, then the 64-token
     /// chunked recurrence into `core`, advancing `state` past all of them.
-    /// 2026-10-14: `METRALE_GLM_KDA_CHUNK64_CONV` (`chunk64_conv.rs`) picks `fused`; `gate` is
-    /// the forward's gate decision (`gate_at.rs`), which the front end obeyed.
+    /// 2026-10-14: `METRALE_GLM_KDA_CHUNK64_CONV` (`chunk64_conv.rs`) picks `fused`; `gate` and
+    /// `norm` are the forward's gate and o_norm decisions (`gate_at.rs`, `onorm_at.rs`), which
+    /// the front and back ends obey.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn stateful_chunk64(
         &self,
@@ -112,10 +113,11 @@ impl Glm5NextKdaLayer {
         ws: &Glm5NextKdaWorkspace,
         pack: Pack,
         gate: GateAt,
+        norm: NormAt,
         stream: u64,
     ) -> Result<()> {
         let fused = self.chunk64_conv_on()?;
-        self.stateful_chunk64_with(gpu, k, state, ws, pack, fused, gate, stream)
+        self.stateful_chunk64_with(gpu, k, state, ws, pack, fused, gate, norm, stream)
     }
 
     /// 2026-10-14: [`Self::stateful_chunk64`] with the conv in front of the prepare (`fused`:
@@ -131,84 +133,151 @@ impl Glm5NextKdaLayer {
         pack: Pack,
         fused: bool,
         gate: GateAt,
+        norm: NormAt,
         stream: u64,
     ) -> Result<()> {
-        if !self.chunk64_ready() || k == 0 || k > ws.max_tokens {
-            bail!("KDA: the 64-token chunked scan cannot run {k} rows here");
-        }
+        self.chunk64_refusal(0, k, ws, gate, norm)?;
         if fused {
             self.chunk64_conv_check()?;
         }
-        if gate == GateAt::Prepare {
-            self.gate_in_prepare_check()?;
-        }
-        let c = &self.cfg;
-        let (qkv, d, h) = (c.qkv_dim(), c.head_dim, c.heads);
         let nchunks = k.div_ceil(CHUNK64);
-        // 2026-10-12: Each scratch buffer holds `t_pad * qkv` floats; a slab's widest factor
-        // needs `slab * heads * 64 * head_dim` of them.
-        if nchunks * CHUNK64 > ws.t_pad {
-            bail!(
-                "KDA 64-token chunked scan: {nchunks} chunks of {CHUNK64} exceed the workspace's \
-                 {} rows",
-                ws.t_pad
-            );
-        }
         // 2026-10-12: Once per process: the proof in the serve log that the lever reached this
         // path (a serve A/B is unreadable without it).
         static APPLIED: std::sync::Once = std::sync::Once::new();
         APPLIED.call_once(|| {
-            let in_prepare = gate == GateAt::Prepare;
+            let (in_prepare, in_scan) = (gate == GateAt::Prepare, norm == NormAt::Scan);
             tracing::info!(
                 "GLM KDA: METRALE_GLM_KDA_CHUNK64 applied at {}:{}: {k} rows as {nchunks} chunks \
                  of {CHUNK64} in slabs of {CHUNK64_SLAB}, conv fused into the prepare: {fused}, \
-                 gate in the prepare: {in_prepare}",
+                 gate in the prepare: {in_prepare}, o_norm in the scan: {in_scan}",
                 file!(),
                 line!()
             );
         });
         if !fused {
             self.conv_tokens(gpu, k, state, ws, pack, stream)?;
+            return self.scan_chunk64_rows(gpu, 0, k, state, ws, gate, norm, stream);
         }
-        let io = RowIo::workspace(c, ws, 0);
         for c0 in (0..nchunks).step_by(CHUNK64_SLAB) {
             let n = CHUNK64_SLAB.min(nchunks - c0);
-            if fused {
-                self.chunk64_prepare_conv(gpu, k, c0, n, state, ws, pack, gate, stream)?;
-            } else {
-                self.chunk64_prepare(gpu, k, c0, n, ws, gate, stream)?;
-            }
-            KernelLaunch::new(gpu, self.kernels.seq.chunk64_scan)
-                .grid([h as u32, (d / CHUNK64_VB) as u32, 1])
-                .block([CHUNK64_SCAN_THREADS, 1, 1])
-                .shared_mem(CHUNK64_SCAN_SMEM)
-                .arg_ptr(ws.chunk_u)
-                .arg_ptr(ws.chunk_w)
-                .arg_ptr(ws.q_f32)
-                .arg_ptr(ws.k_f32)
-                .arg_ptr(ws.v_f32)
-                .arg_ptr(ws.chunk_gc)
-                .arg_ptr(state.recurrent)
-                .arg_ptr(io.core)
-                .arg_u32(h as u32)
-                .arg_u32(k as u32)
-                .arg_u32(c0 as u32)
-                .arg_u32(n as u32)
-                .arg_u32(qkv as u32)
-                .launch(stream)?;
+            self.chunk64_prepare_conv(gpu, k, c0, n, state, ws, pack, gate, stream)?;
+            self.chunk64_scan(gpu, 0, k, c0, n, state, ws, norm, stream)?;
         }
-        if fused {
-            self.chunk64_conv_window(gpu, k, state, ws, pack, stream)?;
+        self.chunk64_conv_window(gpu, k, state, ws, pack, stream)
+    }
+
+    /// 2026-10-14: The 64-token chunked recurrence over workspace rows `row0 .. row0 + k`, whose
+    /// conv rows are already in `conv_out`: per slab the prepare, then the scan, advancing
+    /// `state` past those rows. Every row-indexed buffer is read and written from row `row0`
+    /// (the kernels index rows from 0), so a forward can step its rows in pieces, a state copy
+    /// between them.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn scan_chunk64_rows(
+        &self,
+        gpu: &dyn GpuBackend,
+        row0: usize,
+        k: usize,
+        state: &KdaSeqState,
+        ws: &Glm5NextKdaWorkspace,
+        gate: GateAt,
+        norm: NormAt,
+        stream: u64,
+    ) -> Result<()> {
+        self.chunk64_refusal(row0, k, ws, gate, norm)?;
+        let nchunks = k.div_ceil(CHUNK64);
+        for c0 in (0..nchunks).step_by(CHUNK64_SLAB) {
+            let n = CHUNK64_SLAB.min(nchunks - c0);
+            self.chunk64_prepare(gpu, row0, k, c0, n, ws, gate, stream)?;
+            self.chunk64_scan(gpu, row0, k, c0, n, state, ws, norm, stream)?;
         }
         Ok(())
     }
 
-    /// 2026-10-14: One slab's `kda_chunk64_prepare` over the conv's rows (chunks `c0 .. c0 + n`);
-    /// `kda_chunk64_prepare_graw` at [`GateAt::Prepare`].
+    /// 2026-10-14: The refusals of a 64-token scan over workspace rows `row0 .. row0 + k`, before
+    /// any launch.
+    fn chunk64_refusal(
+        &self,
+        row0: usize,
+        k: usize,
+        ws: &Glm5NextKdaWorkspace,
+        gate: GateAt,
+        norm: NormAt,
+    ) -> Result<()> {
+        if !self.chunk64_ready() || k == 0 || row0 + k > ws.max_tokens {
+            bail!(
+                "KDA: the 64-token chunked scan cannot run rows {row0}..{} here",
+                row0 + k
+            );
+        }
+        if gate == GateAt::Prepare {
+            self.gate_in_prepare_check()?;
+        }
+        if norm == NormAt::Scan {
+            self.onorm_in_scan_check()?;
+        }
+        // 2026-10-12: Each scratch buffer holds `t_pad * qkv` floats; a slab's widest factor
+        // needs `slab * heads * 64 * head_dim` of them.
+        let slab = k.div_ceil(CHUNK64).min(CHUNK64_SLAB);
+        if slab * CHUNK64 > ws.t_pad {
+            bail!(
+                "KDA 64-token chunked scan: {slab} chunks of {CHUNK64} exceed the workspace's {} \
+                 rows",
+                ws.t_pad
+            );
+        }
+        Ok(())
+    }
+
+    /// 2026-10-14: One slab's scan (chunks `c0 .. c0 + n` of rows `row0 .. row0 + k`):
+    /// `kda_chunk64_scan`, or `kda_chunk64_scan_onorm` at [`NormAt::Scan`].
+    #[allow(clippy::too_many_arguments)]
+    fn chunk64_scan(
+        &self,
+        gpu: &dyn GpuBackend,
+        row0: usize,
+        k: usize,
+        c0: usize,
+        n: usize,
+        state: &KdaSeqState,
+        ws: &Glm5NextKdaWorkspace,
+        norm: NormAt,
+        stream: u64,
+    ) -> Result<()> {
+        let c = &self.cfg;
+        let (qkv, d, h) = (c.qkv_dim(), c.head_dim, c.heads);
+        let io = RowIo::workspace(c, ws, row0);
+        let s = &self.kernels.seq;
+        let kernel = match norm {
+            NormAt::Back => s.chunk64_scan,
+            NormAt::Scan => s.chunk64_scan_onorm,
+        };
+        let l = KernelLaunch::new(gpu, kernel)
+            .grid([h as u32, (d / CHUNK64_VB) as u32, 1])
+            .block([CHUNK64_SCAN_THREADS, 1, 1])
+            .shared_mem(CHUNK64_SCAN_SMEM)
+            .arg_ptr(ws.chunk_u)
+            .arg_ptr(ws.chunk_w)
+            .arg_ptr(ws.q_f32)
+            .arg_ptr(ws.k_f32)
+            .arg_ptr(ws.v_f32)
+            .arg_ptr(ws.chunk_gc)
+            .arg_ptr(state.recurrent)
+            .arg_ptr(io.core)
+            .arg_u32(h as u32)
+            .arg_u32(k as u32)
+            .arg_u32(c0 as u32)
+            .arg_u32(n as u32)
+            .arg_u32(qkv as u32);
+        self.onorm_args(l, ws, row0, norm).launch(stream)
+    }
+
+    /// 2026-10-14: One slab's `kda_chunk64_prepare` over the conv's rows (chunks `c0 .. c0 + n`
+    /// of rows `row0 .. row0 + k`); `kda_chunk64_prepare_graw` at [`GateAt::Prepare`].
     #[allow(clippy::too_many_arguments)]
     fn chunk64_prepare(
         &self,
         gpu: &dyn GpuBackend,
+        row0: usize,
         k: usize,
         c0: usize,
         n: usize,
@@ -218,7 +287,7 @@ impl Glm5NextKdaLayer {
     ) -> Result<()> {
         let c = &self.cfg;
         let (qkv, cd, d, h) = (c.qkv_dim(), c.conv_dim(), c.head_dim, c.heads);
-        let io = RowIo::workspace(c, ws, 0);
+        let io = RowIo::workspace(c, ws, row0);
         let scale = 1.0 / (d as f32).sqrt();
         let s = &self.kernels.seq;
         let kernel = match gate {
@@ -232,7 +301,7 @@ impl Glm5NextKdaLayer {
             .arg_ptr(io.conv_out)
             .arg_ptr(io.conv_out.offset(qkv * 2))
             .arg_ptr(io.conv_out.offset(qkv * 4));
-        self.gate_args(l, ws, gate)
+        self.gate_args(l, ws, row0, gate)
             .arg_ptr(io.beta)
             .arg_ptr(ws.chunk_u)
             .arg_ptr(ws.chunk_w)

@@ -18,6 +18,7 @@ use super::super::super::decode_rows_tests::{
     CHUNK64_PREP_CONV, CHUNK64_SCAN, CONV_WINDOW_PARTS, cfg, layer, seq_state, since,
 };
 use super::super::super::gate_at::GateAt;
+use super::super::super::onorm_at::NormAt;
 use super::super::{CHUNK64_PREP_SMEM, CHUNK64_SCAN_SMEM};
 use super::{chunk64_conv_shape_refusal, parse_chunk64_conv};
 
@@ -64,6 +65,7 @@ fn the_fused_path_runs_no_conv_launch_and_advances_the_window_last() {
         Pack::InFrontEnd,
         true,
         GateAt::Kernel,
+        NormAt::Back,
         7,
     )
     .unwrap();
@@ -162,8 +164,18 @@ fn the_pack_in_conv_layout_reads_the_three_parts() {
     let ws = Glm5NextKdaWorkspace::new(&gpu, &cfg(), 300).unwrap();
     let st = seq_state(&gpu);
     let from = gpu.launch_count();
-    lay.stateful_chunk64_with(&gpu, 130, &st, &ws, Pack::InConv, true, GateAt::Kernel, 7)
-        .unwrap();
+    lay.stateful_chunk64_with(
+        &gpu,
+        130,
+        &st,
+        &ws,
+        Pack::InConv,
+        true,
+        GateAt::Kernel,
+        NormAt::Back,
+        7,
+    )
+    .unwrap();
     let l = since(&gpu, from);
     assert_eq!(
         l.iter().map(|x| x.func).collect::<Vec<_>>(),
@@ -210,6 +222,7 @@ fn the_fused_path_refuses_before_any_launch() {
                 Pack::InFrontEnd,
                 true,
                 GateAt::Kernel,
+                NormAt::Back,
                 7
             )
             .is_err(),

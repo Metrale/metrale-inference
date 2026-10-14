@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-10-14: The arms of `glm5next_kda_chunk64_conv_parity.rs` and
-//! `glm5next_kda_gate_in_prepare_parity.rs`: the unfused chunk64 path (the conv of every row, the
+//! 2026-10-14: The arms of `glm5next_kda_chunk64_conv_parity.rs`,
+//! `glm5next_kda_gate_in_prepare_parity.rs` and `glm5next_kda_onorm_in_scan_parity.rs`: the unfused chunk64 path (the conv of every row, the
 //! window advance, a prepare and a scan per slab) and the fused one (the conv inside each slab's
 //! prepare, the window advance last), launched on one arm's buffers, with each slab's factors
 //! recorded on request; the prepares read the FP32 gate rows or (the `_graw` entries) compute the
-//! gate from f_b's BF16 rows.
+//! gate from f_b's BF16 rows; the scan is `Kernels::scan`, or (`Kernels::norm` set)
+//! `kda_chunk64_scan_onorm` with its o_norm arguments.
 //!
 //! Owner: model-arch examples (GLM-5.3).
 //! Invariants: the launches take each kernel's arguments in its signature's order
@@ -29,6 +30,7 @@ const EPS: f32 = 1e-6;
 /// 2026-10-14: Row spans of the parts conv; its bytes do not depend on them (its own gate).
 const SPANS: u32 = 48;
 
+#[derive(Clone, Copy)]
 pub struct Kernels {
     pub conv: KernelHandle,
     pub parts: KernelHandle,
@@ -37,6 +39,21 @@ pub struct Kernels {
     pub prep: KernelHandle,
     pub prep_conv: KernelHandle,
     pub scan: KernelHandle,
+    /// 2026-10-14: When set, each slab's scan is this entry instead of `scan`.
+    pub norm: Option<ScanNorm>,
+}
+
+/// 2026-10-14: `kda_chunk64_scan_onorm` and its six arguments after the scan's own
+/// (`kda_chunk64.cu`).
+#[derive(Clone, Copy)]
+pub struct ScanNorm {
+    pub scan: KernelHandle,
+    pub gate: DevicePtr,
+    pub weight: DevicePtr,
+    pub out: DevicePtr,
+    pub part: DevicePtr,
+    pub count: DevicePtr,
+    pub eps: f32,
 }
 
 impl Kernels {
@@ -53,6 +70,7 @@ impl Kernels {
             prep: g.kernel("kda_chunk64_prepare", "kda_chunk64_prepare")?,
             prep_conv: g.kernel("kda_chunk64_prepare", "kda_chunk64_prepare_conv")?,
             scan: g.kernel("kda_chunk64", "kda_chunk64_scan")?,
+            norm: None,
         })
     }
 }
@@ -235,21 +253,32 @@ fn scan(
     n: usize,
     s: u64,
 ) -> Result<()> {
-    let mut l = KernelLaunch::new(g, k.scan)
+    let mut l = KernelLaunch::new(g, k.norm.map_or(k.scan, |n| n.scan))
         .grid([H as u32, (D / CHUNK64_VB) as u32, 1])
         .block([CHUNK64_SCAN_THREADS, 1, 1])
         .shared_mem(CHUNK64_SCAN_SMEM);
     for p in a.scratch {
         l = l.arg_ptr(p);
     }
-    l.arg_ptr(a.rec)
+    let l = l
+        .arg_ptr(a.rec)
         .arg_ptr(a.core)
         .arg_u32(H as u32)
         .arg_u32(x.t as u32)
         .arg_u32(c0 as u32)
         .arg_u32(n as u32)
-        .arg_u32(QKV as u32)
-        .launch(s)
+        .arg_u32(QKV as u32);
+    match k.norm {
+        None => l,
+        Some(o) => l
+            .arg_ptr(o.gate)
+            .arg_ptr(o.weight)
+            .arg_ptr(o.out)
+            .arg_ptr(o.part)
+            .arg_ptr(o.count)
+            .arg_f32(o.eps),
+    }
+    .launch(s)
 }
 
 /// 2026-10-14: The prepare's trailing arguments (gate .. scale), shared by every entry.

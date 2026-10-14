@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-14: The cases the chunk64 byte gates share (`glm5next_kda_chunk64_conv_parity.rs`,
-//! `glm5next_kda_gate_in_prepare_parity.rs`): the row counts, the q/k/v rows with their spikes and
-//! zero runs, one arm's run from a reset, the byte comparison of two runs, and the negative
-//! control's perturbation (one element moved 4 across zero).
+//! `glm5next_kda_gate_in_prepare_parity.rs`, `glm5next_kda_onorm_in_scan_parity.rs`): the row
+//! counts, the q/k/v rows with their spikes and zero runs, one arm's run from a reset, the byte
+//! comparison of two runs, the negative control's perturbation (4 across zero), and the kernel
+//! modules with a base tree's module beside this tree's.
 //!
 //! Owner: model-arch examples (GLM-5.3).
 //! Invariants: none beyond the types.
@@ -11,7 +12,7 @@
 
 use super::arms::{Arm, CD, H, In, KC, QKV, Run, finish};
 use super::fixture::{Lcg, same, up_bf16, up_f32};
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use half::bf16;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_model_arch::glm5next_kda::chunk64::CHUNK64_D as D;
@@ -163,4 +164,32 @@ pub fn leak(var: &str) -> Result<&'static [u8]> {
             .with_context(|| format!("{var}={path}"))?
             .into_boxed_slice(),
     ))
+}
+
+/// 2026-10-14: The glm-5.3-flash kernel modules plus the base tree's module `name`
+/// (`GLM_PARITY_BASE_PTX`) loaded as `base`, after checking that `GLM_PARITY_FIDELITY_PTX` (this
+/// tree's source compiled by the base's command) equals the embedded `name` byte for byte, which
+/// proves the base was compiled as the build compiles.
+pub fn modules_with_base(
+    name: &str,
+    base: &'static str,
+) -> Result<Vec<(&'static str, &'static [u8])>> {
+    let sets = metrale_kernels::all_ptx_sets();
+    let glm = sets
+        .iter()
+        .find(|s| s.target.model == "glm-5.3-flash")
+        .context("glm-5.3-flash kernel target not built")?;
+    let mut modules = glm.modules.clone();
+    let embedded = modules
+        .iter()
+        .find(|m| m.0 == name)
+        .with_context(|| format!("no {name} module"))?
+        .1;
+    if leak("GLM_PARITY_FIDELITY_PTX")? != embedded {
+        bail!(
+            "GLM_PARITY_FIDELITY_PTX differs from the embedded {name}: the base PTX was not compiled as the build compiles"
+        );
+    }
+    modules.push((base, leak("GLM_PARITY_BASE_PTX")?));
+    Ok(modules)
 }

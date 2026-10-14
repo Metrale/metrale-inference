@@ -140,6 +140,7 @@ impl Glm5NextKdaLayer {
             ws,
             Pack::InFrontEnd,
             GateAt::Kernel,
+            NormAt::Back,
             stream,
             |_| Ok(()),
             || {
