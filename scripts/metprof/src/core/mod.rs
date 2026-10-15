@@ -18,5 +18,6 @@ pub mod spec;
 pub mod stats;
 pub mod tables;
 pub mod tree;
+pub mod ttft;
 pub mod union;
 pub mod verdict;

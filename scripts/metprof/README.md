@@ -9,7 +9,8 @@ Commands (`metprof --help` lists every flag): `summarize` (per-device busy
 union and family breakdown), `families` (kernel families and the coverage
 gate), `segment requests|decode|spec` (requests and pinned decode steps),
 `diff`, `envdiff`, `verdict` (two captures, two environments, a recorded
-verdict), and `tree` / `tree-diff` (the kernel tree below).
+verdict), `tree` / `tree-diff` (the kernel tree below), and `ttft log` /
+`ttft compare` / `ttft client` (time to first token, further below).
 
 Every threshold is a flag or a config key. A missing one is an error, never a
 default.
@@ -195,3 +196,63 @@ dependencies change, refresh this lock with
 The circuit tests read the repo's `kernels/` and compare the offline plan with
 the checked-in golden `kernels/circuits/plans/qwen3_5-decode-n1.txt`, so a
 plan change shows up here when the golden is regenerated.
+
+## Time to first token (`metprof ttft`)
+
+```
+metprof ttft log --log RANK0.log --config ttft.toml [--client RUN.jsonl]
+metprof ttft compare --a CONTROL.log --b TREATMENT.log --config ttft.toml --min-reps N
+metprof ttft client --url http://HOST:PORT --config ttft.toml --cell NAME \
+    --prompt PROMPT.txt --cold N --warm M --out RUN.jsonl
+```
+
+`config/ttft.example.toml` documents every key; a missing key is an error.
+
+### The one definition
+
+- **TTFT_server** is the rank-0 log's `Done: ... TTFT=` value for the
+  request, nothing else. A request runs from its `Chunked prefill start` line
+  to the next `Done` line.
+- **TTFT_client** is the time from writing the request to the first SSE frame
+  that carries reasoning, content or a tool call. A chunked frame is timed
+  when its HTTP chunk has fully arrived.
+- **cold / warm** is decided by the server: a request is warm when a
+  `Marconi SSM cache hit` line falls inside it. No latency threshold and no
+  "first request" rule decides it, and a cache-hit line in an unknown format
+  is an error.
+- **First-token class**: `step` when the first token is `[class]
+  step_token_id` (a token that streams no delta, so the client sees it one
+  decode step later), `other` otherwise. Both are reported per cell.
+- **Statistics**: the true median with n, the range, and p90 only at n >= 10
+  (labelled `p90_interpolated`).
+
+A request is measured when its `max_tokens` is `[select] max_tokens` and its
+prompt token count is a cell's. A measured request that overlaps another
+request, or has not finished when the log ends, is an error: without a
+request id in the log its `Done` line cannot be attributed.
+
+### Compare
+
+`ttft compare` reports, per (cell, mode) present in both logs, the median
+delta (B - A), both ranges and a verdict by range separation: `win` when every
+B rep is below every A rep, `loss` when every one is above, `overlap`
+otherwise, and `too-few` when either side has fewer than `--min-reps` reps.
+The verdict says nothing about whether a lever was engaged; that is
+`metprof verdict`.
+
+### Client and join contract
+
+`ttft client` sends `[client] warmup_requests` unmeasured requests (with
+`warmup_max_tokens`, which must differ from the measured `max_tokens` so the
+log never counts them), then `--cold` requests with a fresh salt each, then
+`--warm` re-sends of the last cold prompt. The prompt file carries `{salt}`
+exactly once; the salt is `salt_digits` decimal digits. A response whose
+`usage.prompt_tokens` is not the cell's is refused.
+
+`ttft log --client` joins the client records to the server's measured
+requests in order: each record (warm-ups excluded) takes the next measured
+request with the same prompt token count and a `Done` TTFT within 0.05 ms of
+the response's `usage.time_to_first_token_ms` (the log prints one decimal).
+The usage time is only the join key. A record that finds no request, has no
+usage time, lands in another cell, or whose cold/warm intent disagrees with
+the server's cache-hit marker is an error.

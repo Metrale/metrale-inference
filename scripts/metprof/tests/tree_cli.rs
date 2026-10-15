@@ -460,6 +460,8 @@ fn a_capture_that_runs_the_plan_is_attributed_in_full() {
         &Io {
             traces: &m,
             files: &Repo(&m),
+            chat: &m,
+            salt: &m,
         },
     );
     let v = written(&out);

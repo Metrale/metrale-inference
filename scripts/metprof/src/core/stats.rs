@@ -19,12 +19,18 @@ pub fn median_i64(values: &[i64]) -> Option<f64> {
 /// interpolation between the closest ranks at h = (n - 1) * p. At p = 0.5 it
 /// is the median above. `None` for no values or a `p` outside [0, 1].
 pub fn quantile_sorted(sorted: &[i64], p: f64) -> Option<f64> {
+    let v: Vec<f64> = sorted.iter().map(|x| *x as f64).collect();
+    quantile_sorted_f64(&v, p)
+}
+
+/// `quantile_sorted` over floats.
+pub fn quantile_sorted_f64(sorted: &[f64], p: f64) -> Option<f64> {
     if sorted.is_empty() || !(0.0..=1.0).contains(&p) {
         return None;
     }
     let h = (sorted.len() - 1) as f64 * p;
     let (lo, hi) = (h.floor() as usize, h.ceil() as usize);
-    let (a, b) = (sorted[lo] as f64, sorted[hi] as f64);
+    let (a, b) = (sorted[lo], sorted[hi]);
     Some(a + (h - lo as f64) * (b - a))
 }
 

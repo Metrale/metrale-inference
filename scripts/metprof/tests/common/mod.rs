@@ -7,13 +7,18 @@
 
 #![allow(dead_code)]
 
-use std::collections::HashMap;
+use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, VecDeque};
 
 use metprof::cli::{Io, Outcome, run};
 use metprof::core::capture::{CopyRow, KernelRow};
 use metprof::core::error::{Error, Result};
 use metprof::core::model::{ApiCall, Kernel, Launch};
-use metprof::ports::{Files, Trace, TraceSource};
+use metprof::core::ttft::client::Endpoint;
+use metprof::core::ttft::sse::Read;
+use metprof::ports::{ChatTransport, Files, SaltSource, Trace, TraceSource};
+
+pub mod ttft;
 
 pub const US: f64 = 1_000.0;
 
@@ -192,6 +197,10 @@ impl Trace for Capture {
 pub struct Mem {
     captures: HashMap<String, Capture>,
     files: HashMap<String, Vec<u8>>,
+    replies: RefCell<VecDeque<Result<Vec<Read>>>>,
+    /// Every exchange the CLI made: (endpoint, request bytes, timeout s).
+    pub sent: RefCell<Vec<(Endpoint, Vec<u8>, f64)>>,
+    salts: Cell<u64>,
 }
 
 impl Mem {
@@ -215,6 +224,20 @@ impl Mem {
         self
     }
 
+    /// The next exchange answers with these reads.
+    pub fn reply(self, reads: Vec<Read>) -> Self {
+        self.replies.borrow_mut().push_back(Ok(reads));
+        self
+    }
+
+    /// The next exchange fails with this transport error.
+    pub fn reply_err(self, msg: &str) -> Self {
+        self.replies
+            .borrow_mut()
+            .push_back(Err(Error(msg.to_string())));
+        self
+    }
+
     /// Run the real CLI over these ports.
     pub fn run(&self, argv: &[&str]) -> Outcome {
         let argv: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
@@ -223,6 +246,8 @@ impl Mem {
             &Io {
                 traces: self,
                 files: self,
+                chat: self,
+                salt: self,
             },
         )
     }
@@ -294,4 +319,24 @@ pub fn assert_close(a: f64, b: f64) {
 
 pub fn f(v: &serde_json::Value) -> f64 {
     v.as_f64().unwrap_or_else(|| panic!("{v} is not a number"))
+}
+
+impl ChatTransport for Mem {
+    fn exchange(&self, ep: &Endpoint, request: &[u8], timeout_s: f64) -> Result<Vec<Read>> {
+        self.sent
+            .borrow_mut()
+            .push((ep.clone(), request.to_vec(), timeout_s));
+        match self.replies.borrow_mut().pop_front() {
+            Some(r) => r,
+            None => Err(Error("test transport: no scripted reply left".to_string())),
+        }
+    }
+}
+
+/// Salts 1, 2, 3, ... in call order.
+impl SaltSource for Mem {
+    fn fresh(&self) -> u64 {
+        self.salts.set(self.salts.get() + 1);
+        self.salts.get()
+    }
 }

@@ -5,6 +5,7 @@
 
 use std::io::Write;
 
+use metprof::adapters::chat::{ClockSalt, TcpChat};
 use metprof::adapters::files::{FsFiles, write};
 use metprof::adapters::nsys::NsysSource;
 use metprof::cli::{Io, run};
@@ -16,6 +17,8 @@ fn main() {
         &Io {
             traces: &NsysSource,
             files: &FsFiles,
+            chat: &TcpChat,
+            salt: &ClockSalt,
         },
     );
     for (path, bytes) in &out.files {

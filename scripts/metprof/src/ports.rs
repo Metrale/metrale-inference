@@ -45,3 +45,21 @@ pub trait CircuitTexts {
     /// The fusion rules of one hardware class.
     fn fusions(&self, hw: &str) -> Result<String>;
 }
+
+/// One HTTP exchange over a fresh connection: write `request` whole, then read
+/// until the server closes. Each read is returned with its time since just
+/// before the write. A connect, write or read failure, and a response not
+/// complete within `timeout_s` of the write, are errors that name the endpoint.
+pub trait ChatTransport {
+    fn exchange(
+        &self,
+        ep: &crate::core::ttft::client::Endpoint,
+        request: &[u8],
+        timeout_s: f64,
+    ) -> Result<Vec<crate::core::ttft::sse::Read>>;
+}
+
+/// A fresh salt per call (never the same twice in one process).
+pub trait SaltSource {
+    fn fresh(&self) -> u64;
+}

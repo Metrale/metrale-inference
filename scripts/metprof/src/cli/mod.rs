@@ -3,7 +3,7 @@
 //! 2026-10-15: command line `metprof <command>`. Every threshold is an explicit
 //! argument or a config key; nothing analytical has a default.
 //!
-//! `run` is the whole program over two ports (traces, files), so the tests
+//! `run` is the whole program over four ports (traces, files, chat, salt), so the tests
 //! drive exactly the code `main` runs, with in-memory ports.
 
 pub mod args;
@@ -13,6 +13,7 @@ mod families;
 mod load;
 mod segment;
 mod tree;
+mod ttft;
 
 use serde_json::{Map, Value};
 
@@ -21,11 +22,13 @@ use crate::core::error::Result;
 use crate::core::report::render;
 use crate::core::repr::quote;
 use crate::fail;
-use crate::ports::{Files, TraceSource};
+use crate::ports::{ChatTransport, Files, SaltSource, TraceSource};
 
 pub struct Io<'a> {
     pub traces: &'a dyn TraceSource,
     pub files: &'a dyn Files,
+    pub chat: &'a dyn ChatTransport,
+    pub salt: &'a dyn SaltSource,
 }
 
 /// A command's result, and the files it asks the caller to write (path,
@@ -64,6 +67,7 @@ fn commands() -> Vec<&'static Command> {
         segment::COMMANDS,
         diff::COMMANDS,
         tree::COMMANDS,
+        ttft::COMMANDS,
     ]
     .concat()
 }
