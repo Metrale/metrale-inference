@@ -10,6 +10,8 @@ pub mod families;
 pub mod model;
 pub mod report;
 pub mod repr;
+pub mod segment;
+pub mod spec;
 pub mod stats;
 pub mod tables;
 pub mod union;

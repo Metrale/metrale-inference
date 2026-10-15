@@ -7,8 +7,10 @@ use crate::cli::Io;
 use crate::core::capture::device_kernels;
 use crate::core::config::parse_toml;
 use crate::core::error::{Error, Result};
-use crate::core::families::{FamilyTable, table_from_toml};
+use crate::core::families::{FamilyTable, classify, coverage_gate, table_from_toml};
 use crate::core::model::Kernel;
+use crate::core::tables::UNCLASSIFIED;
+use crate::core::union::union_ns;
 
 fn io_message(e: &std::io::Error) -> String {
     let s = e.to_string();
@@ -37,4 +39,28 @@ pub fn load_families(io: &Io, path: &str) -> Result<FamilyTable> {
 pub fn kernels(io: &Io, path: &str, device: i64) -> Result<Vec<Kernel>> {
     let trace = io.traces.open(path)?;
     device_kernels(path, trace.kernel_rows()?, device)
+}
+
+/// The device's kernels and their family labels, behind the coverage gate.
+pub fn classified_window<'t>(
+    io: &Io,
+    path: &str,
+    device: i64,
+    table: &'t FamilyTable,
+) -> Result<(Vec<Kernel>, Vec<&'t str>)> {
+    let ks = kernels(io, path, device)?;
+    let fams = classify(&ks, table);
+    let classified = union_ns(
+        ks.iter()
+            .zip(&fams)
+            .filter(|(_, f)| f.is_some())
+            .map(|(k, _)| (k.start, k.end)),
+    )?;
+    let all = union_ns(ks.iter().map(|k| (k.start, k.end)))?;
+    coverage_gate(classified as f64, all as f64, table)?;
+    let labels = fams
+        .into_iter()
+        .map(|f| f.unwrap_or(UNCLASSIFIED))
+        .collect();
+    Ok((ks, labels))
 }
