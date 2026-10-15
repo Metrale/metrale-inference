@@ -9,21 +9,32 @@
 name = "metprof"
 version = "0.1.0"
 edition = "2024"
+# 2026-10-15: File::try_lock (the KB lease) is stable from 1.89.
+rust-version = "1.89"
 license = "MIT OR Apache-2.0"
 publish = false
 description = "Profiling harness over nsys sqlite exports: busy union, families, segments, capture diff, kernel tree"
 
 [workspace]
+# 2026-10-15: library crates under crates/ (kb, envelope) are members, and the
+# default members include them so `cargo test` at this root runs their tests too.
+members = ["crates/*"]
+default-members = [".", "crates/*"]
 
 [dependencies]
 indexmap = "2.14"
 # 2026-10-15: the circuit-backed kernel tree plans with the engine's own pure planner, read only.
 metrale-circuit = { path = "../../crates/circuit" }
+# 2026-10-15: the KB sink every run is recorded through (--kb).
+metprof-kb = { path = "crates/kb" }
 regex = "1.13"
 sha2 = "0.11"
 serde = "1.0"
 serde_json = { version = "1.0", features = ["preserve_order"] }
 toml = "1.1"
+
+[dev-dependencies]
+tempfile = "3"
 
 [lints.rust]
 warnings = "deny"

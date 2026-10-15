@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-15: the kernel knowledge base sink of metprof: record types, natural-key
+# ids, canonical JSON, the embedding port, the pure derivation of kernel samples
+# from a kernel tree, and (native) the LatticeDB store behind a spool and a lease.
+# Pure Rust only. It does not depend on metprof (metprof depends on it).
+[package]
+name = "metprof-kb"
+version = "0.1.0"
+edition = "2024"
+# 2026-10-15: File::try_lock (the KB lease) is stable from 1.89.
+rust-version = "1.89"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Kernel knowledge base records, ids, embeddings and the metprof run sink"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["preserve_order", "float_roundtrip"] }
+sha2 = "0.11"
+toml = "1.1"
+unicode-normalization = "0.1"
+latticedb-core = { git = "https://github.com/Avarok-Cybersecurity/lattice-db", tag = "v0.3.4" }
+
+# The durable store, the spool and the lease are host-only; a wasm32 build
+# (the site) gets the pure modules and the interchange.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+metprof-envelope = { path = "../envelope" }
+latticedb-storage = { git = "https://github.com/Avarok-Cybersecurity/lattice-db", tag = "v0.3.4" }
+tokio = { version = "1", features = ["rt"] }
+zeroize = "1.9.0"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints.rust]
+warnings = "deny"
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }

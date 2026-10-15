@@ -1,0 +1,42 @@
+{
+  "schema": "metprof.kernel_tree/1",
+  "time_unit": "us",
+  "provenance": {"git_sha": "unknown", "window": {"start_ns": 0, "end_ns": 40000}},
+  "source": "circuit",
+  "total_time": 20.0,
+  "coverage": 1.0,
+  "kernels": {
+    "arch0": {
+      "fuses": [], "total_time": 20.0, "self_time": 0.0, "launches": 2,
+      "mean_us": 10.0, "min_us": 10.0, "max_us": 10.0, "p10_us": 10.0, "median_us": 10.0, "p90_us": 10.0,
+      "kernels": {
+        "decode": {
+          "fuses": [], "total_time": 20.0, "self_time": 0.0, "launches": 2,
+          "mean_us": 10.0, "min_us": 10.0, "max_us": 10.0, "p10_us": 10.0, "median_us": 10.0, "p90_us": 10.0,
+          "kernels": {
+            "layer0": {
+              "fuses": [], "total_time": 20.0, "self_time": 0.0, "launches": 2,
+              "mean_us": 10.0, "min_us": 10.0, "max_us": 10.0, "p10_us": 10.0, "median_us": 10.0, "p90_us": 10.0,
+              "kernels": {
+                "norm_matmul[0,1]": {
+                  "fuses": ["norm", "matmul"], "total_time": 20.0, "self_time": 0.0, "launches": 2,
+                  "mean_us": 10.0, "min_us": 10.0, "max_us": 10.0, "p10_us": 10.0, "median_us": 10.0, "p90_us": 10.0,
+                  "circuit": {"group": 0, "rule": "norm_matmul", "plan_digest": "d0d0"},
+                  "members": ["0", "1"],
+                  "kernels": {
+                    "mod_a::fused_norm_matmul": {
+                      "fuses": [], "total_time": 20.0, "self_time": 20.0, "launches": 2,
+                      "mean_us": 10.0, "min_us": 10.0, "max_us": 10.0, "p10_us": 10.0, "median_us": 10.0, "p90_us": 10.0, "kernels": {},
+                      "variants": [{"demangled": "void fused_norm_matmul_kernel(half*)", "grid": [8,1,1], "block": [128,1,1], "registers_per_thread": 80, "static_shared_bytes": 0, "dynamic_shared_bytes": 16384, "config_sha256": "0519f38490dc48cec5bade99aac765810eb3c3c18780b10b676aa5e7e1a0ef6a", "kernel_id": "0f4124d0702292f79794556c9616e243a5d9179362a8a357c5a5ee8f7584223e", "launches": 2, "total_time": 20.0, "p10_us": 10.0, "median_us": 10.0, "p90_us": 10.0}]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "unattributed": {}
+}

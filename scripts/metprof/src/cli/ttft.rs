@@ -23,7 +23,7 @@ use crate::fail;
 
 const CONFIG: Opt = Opt {
     name: "config",
-    kind: Kind::Str,
+    kind: Kind::File,
     required: true,
     metavar: "TOML",
     help: "ttft config: measured max_tokens, step token id, cells (and [client])",
@@ -32,7 +32,7 @@ const CONFIG: Opt = Opt {
 const fn path(name: &'static str, required: bool, help: &'static str) -> Opt {
     Opt {
         name,
-        kind: Kind::Str,
+        kind: Kind::File,
         required,
         metavar: "FILE",
         help,

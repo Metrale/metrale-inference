@@ -27,6 +27,13 @@ pub trait Trace {
 /// Whole-file reads for configs, records and environments.
 pub trait Files {
     fn read(&self, path: &str) -> std::io::Result<Vec<u8>>;
+
+    /// The SHA-256 (lowercase hex) of the file at `path`: how the KB records
+    /// a file argument.
+    fn sha256(&self, path: &str) -> std::io::Result<String> {
+        self.read(path)
+            .map(|b| crate::core::provenance::sha256_hex(&b))
+    }
 }
 
 /// The texts a circuit-backed kernel tree is planned from, by name. Each

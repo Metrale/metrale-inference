@@ -78,7 +78,7 @@ pub const COMMANDS: &[&Command] = &[
                 },
                 Opt {
                     name: "env",
-                    kind: Kind::Pair,
+                    kind: Kind::FilePair,
                     required: false,
                     metavar: "ENV_A ENV_B",
                     help: "also assert that the two arms' environments differ in exactly one lever",
@@ -107,7 +107,7 @@ pub const COMMANDS: &[&Command] = &[
             positionals: &[],
             opts: &[Opt {
                 name: "record",
-                kind: Kind::Str,
+                kind: Kind::File,
                 required: true,
                 metavar: "TOML",
                 help: "TOML record of one A/B; every field is required",

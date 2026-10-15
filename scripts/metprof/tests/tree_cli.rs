@@ -7,98 +7,13 @@
 
 mod common;
 
+use common::tree::{PROV, RULES, SHA_ABC, SHA_EMPTY, TREE, argv, mem, mem_with, written};
 use common::{Capture, K, K0, Mem};
 use metprof::adapters::circuit::{KernelsDir, plan_texts};
 use metprof::adapters::files::FsFiles;
-use metprof::cli::{Io, Outcome, run};
 use metprof::core::tree::circuit::plan_view;
 use metprof::ports::{CircuitTexts, Files};
 use serde_json::{Value, json};
-
-const RULES: &str = r#"
-schema = 1
-coverage_min = 0.5
-[api]
-host_sync_regex = "^cudaStreamSynchronize"
-[[rule]]
-family = "gemm"
-group = "dense"
-class = "compute"
-name_regex = "^gemm"
-[[rule]]
-family = "norm"
-group = "misc"
-class = "compute"
-name_regex = "^norm"
-"#;
-
-const TREE: &str = "[tree]\ncoverage_min = 0.9\n[tree.model.m]\nfuses = { gemm = [\"a\", \"b\"] }\n\
-                    [[tree.model.m.node]]\npath = \"blk\"\nfamilies = [\"^gemm$\"]\n";
-
-const PROV: &str = "binary = \"/bin/serve\"\ngit_sha = \"ABC1234\"\ngit_dirty = false\nenv_sha256 = \"unknown\"\n\
-                    recipe = \"r/x\"\nisl = 1024\nosl = \"unknown\"\nconcurrency = 1\nrank = 0\n";
-
-/// sha256("abc") and sha256(""), the FIPS 180-2 vectors.
-const SHA_ABC: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
-const SHA_EMPTY: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
-
-fn named(d: &'static str) -> K {
-    K {
-        demangled: Some(d),
-        ..K0
-    }
-}
-
-/// Two requests 969 us apart: gemm 10 + norm 5 + an unclassified 1, then gemm 10.
-fn capture() -> Capture {
-    Capture::new()
-        .kernel("gemm_a", 0.0, 10.0)
-        .kernel("norm_x", 20.0, 25.0)
-        .kernel_with("odd", 30.0, 31.0, named("void odd<4>()"))
-        .kernel("gemm_a", 1000.0, 1010.0)
-}
-
-fn mem_with(tree: &str, prov: &str) -> Mem {
-    Mem::new()
-        .capture("/cap.sqlite", capture())
-        .bytes("/cap.sqlite", b"abc")
-        .bytes("/bin/serve", b"")
-        .file("/cfg.toml", &format!("{RULES}{tree}"))
-        .file("/prov.toml", prov)
-}
-
-fn mem() -> Mem {
-    mem_with(TREE, PROV)
-}
-
-const BASE: [&str; 13] = [
-    "tree",
-    "--capture",
-    "/cap.sqlite",
-    "--device",
-    "0",
-    "--config",
-    "/cfg.toml",
-    "--provenance",
-    "/prov.toml",
-    "--out",
-    "/t.json",
-    "--segment",
-    "all",
-];
-
-fn argv<'a>(extra: &[&'a str]) -> Vec<&'a str> {
-    let mut v = BASE.to_vec();
-    v.extend_from_slice(extra);
-    v
-}
-
-fn written(out: &Outcome) -> Value {
-    assert_eq!(out.code, 0, "{}", out.stderr);
-    assert_eq!(out.files.len(), 1);
-    assert_eq!(out.files[0].0, "/t.json");
-    serde_json::from_slice(&out.files[0].1).expect("tree JSON")
-}
 
 #[test]
 fn tree_writes_the_file_with_its_provenance() {
@@ -440,29 +355,20 @@ fn a_capture_that_runs_the_plan_is_attributed_in_full() {
         "/cfg.toml",
         &format!("{RULES}[tree]\ncoverage_min = 0.99\n"),
     );
-    let argv: Vec<String> = argv(&[
-        "--circuit",
-        "qwen3_5",
-        "--mode",
-        "decode",
-        "--rows",
-        "1",
-        "--policy",
-        RECIPE,
-        "--kernels-dir",
-        KERNELS,
-    ])
-    .into_iter()
-    .map(str::to_string)
-    .collect();
-    let out = run(
-        &argv,
-        &Io {
-            traces: &m,
-            files: &Repo(&m),
-            chat: &m,
-            salt: &m,
-        },
+    let out = m.run_with(
+        &argv(&[
+            "--circuit",
+            "qwen3_5",
+            "--mode",
+            "decode",
+            "--rows",
+            "1",
+            "--policy",
+            RECIPE,
+            "--kernels-dir",
+            KERNELS,
+        ]),
+        &Repo(&m),
     );
     let v = written(&out);
     assert_eq!(v["source"], json!("circuit"));
