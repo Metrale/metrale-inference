@@ -22,6 +22,8 @@
 //! - A compared node whose plan kernel belongs to no family, and a parameter a node cannot
 //!   supply, are typed errors: the report is never built from a guess.
 
+pub mod affected;
+pub mod affected_repo;
 pub mod checkpoint;
 pub mod classify;
 mod cli_args;

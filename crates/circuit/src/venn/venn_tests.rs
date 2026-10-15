@@ -22,7 +22,7 @@ use crate::test_toy;
 
 /// 2026-09-29: A manifest for the toy rules: `gemv` varies `hidden` at compile time, `norm` a
 /// runtime `width`. `extra_gemv` is appended to the gemv family (points, evidence).
-fn manifest(gemv_points: &str) -> String {
+pub(super) fn manifest(gemv_points: &str) -> String {
     format!(
         r#"
 schema = 1
