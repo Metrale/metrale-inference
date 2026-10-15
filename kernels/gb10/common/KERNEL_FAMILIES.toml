@@ -2210,12 +2210,18 @@ kernels = [
   "dsa_indexer_rows::dsa_index_scores_mma",
   # 2026-10-12: dsa_topk_pools's selection by radix select (METRALE_GLM_DSA_TOPK_RADIX).
   "dsa_indexer_rows::dsa_topk_pools_radix",
+  # 2026-10-14: dsa_index_scores_mma's bytes from per-pool BF16 keys + visibility, the key tiles
+  # streamed through a cp.async ring (METRALE_GLM_DSA_SCORES_PIPE).
+  "dsa_index_scores_pipe::dsa_pool_prep_bf16",
+  "dsa_index_scores_pipe::dsa_index_scores_mma_pipe",
 ]
 kernel_compute."dsa_indexer::dsa_indexer_store" = { compute = "memory" }
 kernel_compute."dsa_indexer::dsa_write_geom" = { compute = "memory" }
 kernel_compute."dsa_indexer_rows::dsa_indexer_store_rows" = { compute = "memory" }
 kernel_compute."dsa_indexer_rows::dsa_write_geom_rows" = { compute = "memory" }
 kernel_compute."dsa_indexer_rows::dsa_index_scores_mma" = { compute = "tensor_core", mma = "mma.sync.m16n8k16.bf16" }
+kernel_compute."dsa_index_scores_pipe::dsa_pool_prep_bf16" = { compute = "memory" }
+kernel_compute."dsa_index_scores_pipe::dsa_index_scores_mma_pipe" = { compute = "tensor_core", mma = "mma.sync.m16n8k16.bf16" }
 rows = [1, 1]
 pipeline.kpool_compress = { in = ["bf16", "bf16"], state = "bf16", compute = "f32", out = [] }
 pipeline.index_select = { in = ["f32", "f32"], scores = "f32", score = "f32", out = ["i32"] }
@@ -2225,7 +2231,7 @@ values = {}
 how = "instantiation"
 # 2026-10-09: The bodies live in dsa_indexer_body.cuh; dsa_indexer_rows.cu runs them for one
 # sequence per grid row (the batched decode's paged rows, METRALE_GLM_DSA_INDEXER_ROWS).
-files = ["kernels/gb10/common/dsa_indexer.cu", "kernels/gb10/common/dsa_indexer_body.cuh", "kernels/gb10/common/dsa_indexer_rows.cu"]
+files = ["kernels/gb10/common/dsa_indexer.cu", "kernels/gb10/common/dsa_indexer_body.cuh", "kernels/gb10/common/dsa_indexer_rows.cu", "kernels/gb10/common/dsa_scores_mma.cuh", "kernels/gb10/common/dsa_index_scores_pipe.cu"]
 
 # 2026-10-08: NoPE latent decode attention over the selected tokens of an FP8 latent cache, one
 # CTA per (head, row). Its query is already in latent space and its output stays there: the

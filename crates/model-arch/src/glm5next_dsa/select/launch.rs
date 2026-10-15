@@ -220,6 +220,9 @@ fn run(
         kernels.rows.scores_mma,
         scores_mma(),
     );
+    // 2026-10-14: `METRALE_GLM_DSA_SCORES_PIPE=1`: those scores streamed (`pipe`), from BF16
+    // keys and visibility prepared once per compression.
+    let pipe = scores_pipe_for(mma, &kernels.rows, scores_pipe());
     let tiled = !mma
         && scores_tiled_for(
             ceiling.is_some(),
@@ -227,7 +230,13 @@ fn run(
             kernels.rows.scores_tiled,
             scores_tiled(),
         );
-    if has_pools && mma {
+    if has_pools && pipe {
+        if compress {
+            pipe::launch_prep(gpu, kernels, geom, inputs, scratch, npools_a, seq_a, stream)?;
+        }
+        pipe::launch_scores(gpu, kernels, geom, inputs, scratch, npools_a, stream)?;
+    }
+    if has_pools && mma && !pipe {
         KernelLaunch::new(gpu, kernels.rows.scores_mma)
             .grid([geom.q_rows.div_ceil(SCORES_MMA_ROWS) as u32, 1, 1])
             .block([256, 1, 1])

@@ -62,6 +62,8 @@ pub(super) fn kernels() -> Glm5NextDsaKernels {
             scores_tiled: h(0),
             scores_mma: h(0),
             topk_radix: h(0),
+            pool_prep: h(0),
+            scores_pipe: h(0),
         },
     }
 }

@@ -1733,3 +1733,27 @@ effort_hours = 5.0
 transferability = "any sparse or paged attention whose per-tile phases are serialized by barriers in one CTA per row"
 links = { pr = "", commit = "", evidence = "glm5next_dsa_prefill_pipe_gate" }
 notes = "A grouped-query union kernel (several rows sharing one gathered tile, masked per row) was rejected: a row's summation grouping would depend on where its tokens land in the union, so its bytes would depend on its neighbours (a new numerics point and not K-invariant), and canonical tiles waste MMAs unless selections cluster, which no captured selection dump can confirm yet"
+
+[[lever]]
+id = "gb10x3-glm53-dsa-scores-pipe"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_DSA_SCORES_PIPE=1 with METRALE_GLM_DSA_SCORES_MMA=1 (prefill sub-chunks)"
+symptom = "at a 32k cold prefill dsa_index_scores_mma takes 385 ms over 55 calls (11 DSA layers x 5 sub-chunks) at ~31 TFLOP/s against a 71 TFLOP/s mma-only rate: 182 registers x 256 threads gives 1 CTA per SM, and a 64-pool tile costs ~5.5 us against ~2.8 us of MMA because each CTA converts the tile's FP32 keys to BF16 and gathers its candidacy (4 loads per pair) between two barriers before its MMAs"
+diagnosis_tool = "nsys"
+root_cause_class = "latency-bound"
+lever_type = "new-kernel"
+lkb_effect = "dsa_pool_prep_bf16 (once per pass after dsa_kpool_compress: BF16 keys + one visibility position per pool) and dsa_index_scores_mma_pipe (3-stage cp.async ring of prepared tiles, one barrier per tile, coalesced epilogue writes); the A load, tile MMAs and fold shared with dsa_index_scores_mma through dsa_scores_mma.cuh"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "kept"
+verdict_reason = "2026-10-14 measured (glm5next_dsa_scores_pipe_gate on 7fbc32f06 + the lever, gb10): bit-identical to dsa_index_scores_mma on all six shapes (keys, visibility, score and candidacy rows differ 0; causal, first_key=5 and shuffled-row cases; key and visibility negative controls both fire). prep+pipe vs mma: Q=8208/P=2052 1.427 vs 2.220 ms (x1.556), Q=8192/P=8198 6.683 vs 15.159 ms (x2.268), Q=288/P=8268 0.337 vs 0.594 ms (x1.763), Q=1024/P=256 x1.127, Q=37/P=257 x1.048, Q=300/P=2250 x1.528. Kept default-off until a cold serve A/B; expected -0.20 s per cold 32k prefill (scores 34.5 -> ~16.2 ms per layer over the four full sub-chunks, x11 layers; replicated on every rank)"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 3.0
+transferability = "any multi-query scoring GEMM whose B operand is converted and masked per CTA when it could be prepared once per pass"
+links = { pr = "", commit = "", evidence = "glm5next_dsa_scores_pipe_gate" }
+notes = "Extra memory: 260 B per pool of DsaSelectScratch (BF16 key 256 B + i32 position), allocated only with the lever on: 34.1 MB at a 512k context (131,072 pools) per scratch; the shared DSA workspace plus the MTP drafter's makes ~68 MB. Projected before the gate: 385 -> 180-235 ms at c32k cold; the gate times (verdict_reason) put it at ~180 ms (-0.20 s), the middle sub-chunks P=4100/6148 interpolated linearly in P. Scoring is replicated per rank (the indexer is replicated under TP); splitting score + top-k + expand over the ranks is the next lever."

@@ -179,6 +179,8 @@ impl Rig {
                     scores_tiled: k(SCORES_TILED),
                     scores_mma: KernelHandle(0),
                     topk_radix: KernelHandle(0),
+                    pool_prep: KernelHandle(0),
+                    scores_pipe: KernelHandle(0),
                 },
             },
             decode_kernel: Glm5NextDsaDecodeKernel::resolve(&self.gpu).unwrap(),
