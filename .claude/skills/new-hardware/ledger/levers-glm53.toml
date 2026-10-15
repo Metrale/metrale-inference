@@ -2188,4 +2188,4 @@ would_catch_earlier = ""
 effort_hours = 0.0
 transferability = "any MLA model whose prefill runs absorbed weights: the absorption trades FLOPs for latent-space attention; prefill at wide rows pays for it, decode does not"
 links = { pr = "", commit = "", evidence = "" }
-notes = "Memory per rank (11 DSA layers, 22 local heads): BF16 q_b_proj 17.3 MB + o_proj 46.1 MB + W_UK^T 5.8 MB + W_UV 5.8 MB = 75.0 MB per layer, plus one 92.5 MB row scratch: about +0.92 GB. The absorbed weights stay resident until unabsorbed becomes the default."
+notes = "Memory per rank (11 DSA layers, 22 local heads): BF16 q_b_proj 17.3 MB + o_proj 46.1 MB + W_UK^T 5.8 MB + W_UV 5.8 MB = 75.0 MB per layer, plus one 92.5 MB row scratch: about +0.92 GB. The absorbed weights stay resident until unabsorbed becomes the default. Debt: loader.rs 537 > 500 pre-existing (weight_loader/glm5_next_load/loader.rs; this lever adds one call line, 538; splitting it is out of scope)."

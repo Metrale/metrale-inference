@@ -77,12 +77,12 @@ struct Ckpt {
 }
 
 impl Ckpt {
-    fn new(c: &Glm5NextDsaConfig, heads: usize, gen: impl Fn(usize, u64) -> Vec<f32>) -> Self {
+    fn new(c: &Glm5NextDsaConfig, heads: usize, mk: impl Fn(usize, u64) -> Vec<f32>) -> Self {
         let (nope, vd, kvl) = (c.qk_nope_head_dim, c.v_head_dim, c.kv_lora_rank);
         Self {
-            q_b: gen(heads * nope * c.q_lora_rank, 1),
-            kv_b: gen(heads * (nope + vd) * kvl, 2),
-            o: gen(c.hidden * heads * vd, 3),
+            q_b: mk(heads * nope * c.q_lora_rank, 1),
+            kv_b: mk(heads * (nope + vd) * kvl, 2),
+            o: mk(c.hidden * heads * vd, 3),
         }
     }
 
@@ -143,7 +143,12 @@ fn unabsorbed_equals_absorbed_exactly_on_every_rank() {
     for (c, plan) in ranks(3, 5) {
         let (q_abs, o_abs) = absorb_for_rank(&c, &plan, &|n| ck.load(n)).unwrap();
         let u = unabsorb_for_rank(&c, &plan, &|n| ck.load(n)).unwrap();
-        assert_eq!(gap(&c, &q_abs, &o_abs, &u, 17), 0.0, "rank {}", plan.head_start);
+        assert_eq!(
+            gap(&c, &q_abs, &o_abs, &u, 17),
+            0.0,
+            "rank {}",
+            plan.head_start
+        );
     }
 }
 
@@ -193,7 +198,10 @@ fn negative_controls_fire() {
             kv_local[h * rows * c.kv_lora_rank..][..c.v_head_dim * c.kv_lora_rank].to_vec()
         })
         .collect();
-    assert!(gap(c, &q_abs, &o_abs, &u, 5) > 0.0, "swapped-halves control");
+    assert!(
+        gap(c, &q_abs, &o_abs, &u, 5) > 0.0,
+        "swapped-halves control"
+    );
 
     let mut u = fresh();
     let (c0, p0) = &rk[0];
@@ -274,9 +282,18 @@ fn the_launch_grid_and_its_refusals() {
         head_bmm_grid(HeadBmm::Q, 8208, 22, 8208, p).unwrap(),
         [4, 65, 22]
     );
-    assert_eq!(head_bmm_grid(HeadBmm::O, 1, 22, 8208, p).unwrap(), [2, 1, 22]);
-    assert_eq!(head_bmm_grid(HeadBmm::O, 128, 1, 128, p).unwrap(), [2, 1, 1]);
-    assert_eq!(head_bmm_grid(HeadBmm::O, 129, 1, 129, p).unwrap(), [2, 2, 1]);
+    assert_eq!(
+        head_bmm_grid(HeadBmm::O, 1, 22, 8208, p).unwrap(),
+        [2, 1, 22]
+    );
+    assert_eq!(
+        head_bmm_grid(HeadBmm::O, 128, 1, 128, p).unwrap(),
+        [2, 1, 1]
+    );
+    assert_eq!(
+        head_bmm_grid(HeadBmm::O, 129, 1, 129, p).unwrap(),
+        [2, 2, 1]
+    );
     assert!(head_bmm_grid(HeadBmm::Q, 0, 22, 8208, p).is_err());
     assert!(head_bmm_grid(HeadBmm::Q, 8209, 22, 8208, p).is_err());
     assert!(head_bmm_grid(HeadBmm::Q, 16, 0, 8208, p).is_err());
@@ -357,7 +374,11 @@ fn off_touches_nothing() {
     let t = TextUnabsorb::new(&gpu, &bad, 8208, true, 11, MlaUnabsorb::Off).unwrap();
     let plan = DsaTpPlan::new(0, 1, 1, &bad).unwrap();
     let ck = Ckpt::new(&bad, 1, ints);
-    assert!(t.weights(&gpu, &bad, &plan, &|n| ck.load(n)).unwrap().is_none());
+    assert!(
+        t.weights(&gpu, &bad, &plan, &|n| ck.load(n))
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(gpu.live_bytes(), before);
     assert!(gpu.kernel_lookups_snapshot().is_empty());
     assert!(gpu.launches_snapshot().is_empty());
@@ -395,9 +416,19 @@ fn on_uploads_checkpoint_bits_and_sizes_the_scratch() {
                 "{f}"
             );
         }
-        let a = t.weights(&gpu, &c, &plan, &|n| ck.load(n)).unwrap().unwrap();
-        let b = t.weights(&gpu, &c, &plan, &|n| ck.load(n)).unwrap().unwrap();
-        assert_eq!(a.mid == b.mid, shared, "scratch shared iff the workspace is");
+        let a = t
+            .weights(&gpu, &c, &plan, &|n| ck.load(n))
+            .unwrap()
+            .unwrap();
+        let b = t
+            .weights(&gpu, &c, &plan, &|n| ck.load(n))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            a.mid == b.mid,
+            shared,
+            "scratch shared iff the workspace is"
+        );
         assert_eq!((a.mode, a.mid_rows), (MlaUnabsorb::Declared, rows));
         let per_layer = weight_bytes(&c) + if shared { 0 } else { mid_bytes(&c, rows) };
         assert_eq!(gpu.live_bytes().unwrap() - base, after_new + 2 * per_layer);

@@ -53,18 +53,14 @@ fn reads(l: &[MockLaunch], p: DevicePtr) -> Option<usize> {
 fn run_in(rig: &Rig, layer: &Glm5NextDsaLayer, k: usize, prefill: bool) -> Vec<MockLaunch> {
     let hidden = rig.buf(16 * HIDDEN * 2);
     let from = rig.gpu.launch_count();
-    layer
-        .project_in(&rig.gpu, hidden, k, prefill, 7)
-        .unwrap();
+    layer.project_in(&rig.gpu, hidden, k, prefill, 7).unwrap();
     rig.since(from)
 }
 
 fn run_out(rig: &Rig, layer: &Glm5NextDsaLayer, k: usize, prefill: bool) -> Vec<MockLaunch> {
     let hidden = rig.buf(16 * HIDDEN * 2);
     let from = rig.gpu.launch_count();
-    layer
-        .project_out(&rig.gpu, hidden, k, prefill, 7)
-        .unwrap();
+    layer.project_out(&rig.gpu, hidden, k, prefill, 7).unwrap();
     rig.since(from)
 }
 
@@ -156,7 +152,11 @@ fn decode_passes_are_unchanged() {
             l.iter().map(|x| (x.func, x.grid)).collect()
         };
         assert_eq!(shape(&l_in), shape(&run_in(&rig, &off, k, false)), "k {k}");
-        assert_eq!(shape(&l_out), shape(&run_out(&rig, &off, k, false)), "k {k}");
+        assert_eq!(
+            shape(&l_out),
+            shape(&run_out(&rig, &off, k, false)),
+            "k {k}"
+        );
     }
 }
 
@@ -169,9 +169,7 @@ fn rows_past_the_scratch_are_refused_before_launch() {
     let hidden = rig.buf(16 * HIDDEN * 2);
     let k = MID_ROWS + 1;
     let from = rig.gpu.launch_count();
-    let e = layer
-        .project_in(&rig.gpu, hidden, k, true, 7)
-        .unwrap_err();
+    let e = layer.project_in(&rig.gpu, hidden, k, true, 7).unwrap_err();
     assert!(e.to_string().contains("for a scratch of 8"), "{e}");
     let l = rig.since(from);
     assert_eq!(reads(&l, u.q_b), None);

@@ -57,8 +57,8 @@ mod prefill_rows;
 mod proj_gemm;
 mod row_ops;
 mod rows;
-mod unabsorb_rows;
 mod select_rows;
+mod unabsorb_rows;
 mod workspace;
 
 pub use decode_rows::DsaRowSpan;

@@ -31,8 +31,10 @@ use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
 use super::Glm5NextDsaConfig;
-use super::build::{LoadFn, up_bf16};
+use super::build::{LoadFn, build_dsa_weights, up_bf16};
+use super::layer::Glm5NextDsaWeights;
 use super::tp::DsaTpPlan;
+use crate::glm5next_skeleton::{Glm5NextTextSkeleton, Mixer};
 
 pub mod host;
 pub mod launch;
@@ -82,9 +84,40 @@ pub struct TextUnabsorb {
 }
 
 impl TextUnabsorb {
-    /// 2026-10-15: The lever in `mode` (the loader passes [`mode`]); on, check the geometry,
+    /// 2026-10-15: The loader's one call: [`Self::new`] in [`mode`] for `skeleton`'s DSA layers,
+    /// the scratch one for the stack when `shared` (the shared DSA workspace) is `Some`.
+    pub fn for_stack<T>(
+        gpu: &dyn GpuBackend,
+        cfg: &Glm5NextDsaConfig,
+        skeleton: &Glm5NextTextSkeleton,
+        rows: usize,
+        shared: &Option<T>,
+    ) -> Result<Self> {
+        let dsa_layers = skeleton
+            .layers
+            .iter()
+            .filter(|l| l.mixer == Mixer::Dsa)
+            .count();
+        Self::new(gpu, cfg, rows, shared.is_some(), dsa_layers, mode()?)
+    }
+
+    /// 2026-10-15: One DSA layer's weights: `build::build_dsa_weights`, with
+    /// [`Self::weights`] in `unabsorb`.
+    pub fn dsa_weights(
+        &self,
+        gpu: &dyn GpuBackend,
+        cfg: &Glm5NextDsaConfig,
+        plan: &DsaTpPlan,
+        load: LoadFn<'_>,
+    ) -> Result<Glm5NextDsaWeights> {
+        let mut w = build_dsa_weights(gpu, cfg, plan, load)?;
+        w.unabsorb = self.weights(gpu, cfg, plan, load)?;
+        Ok(w)
+    }
+
+    /// 2026-10-15: The lever in `mode`; on, check the geometry,
     /// resolve the kernels, allocate the shared scratch for `rows` rows (`shared`) and log what
-    /// is active and what it costs. Off touches nothing.
+    /// is active and what it costs. Off touches nothing. The loader calls [`Self::for_stack`].
     pub fn new(
         gpu: &dyn GpuBackend,
         cfg: &Glm5NextDsaConfig,

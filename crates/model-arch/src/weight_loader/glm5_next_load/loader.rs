@@ -169,15 +169,7 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
         } else {
             None
         };
-        // 2026-10-15: `METRALE_GLM_MLA_UNABSORB` (off: inert); its scratch follows the workspace.
-        let mla_unabsorb = crate::glm5next_dsa::unabsorb::TextUnabsorb::new(
-            gpu,
-            &dsa_cfg,
-            verify_k,
-            shared_dsa_ws.is_some(),
-            skeleton.layers.iter().filter(|l| l.mixer == Mixer::Dsa).count(),
-            crate::glm5next_dsa::unabsorb::mode()?,
-        )?;
+        let mla = TextUnabsorb::for_stack(gpu, &dsa_cfg, &skeleton, verify_k, &shared_dsa_ws)?;
         let last = skeleton.layers.len() - 1;
         let mut out: Vec<Box<dyn TransformerLayer>> = Vec::with_capacity(skeleton.layers.len());
 
@@ -211,8 +203,7 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                 }
                 Mixer::Dsa => {
                     let load = |n: &str| src.f32(n);
-                    let mut w = build_dsa_weights(gpu, &dsa_cfg, &dsa_plan, &load)?;
-                    w.unabsorb = mla_unabsorb.weights(gpu, &dsa_cfg, &dsa_plan, &load)?;
+                    let w = mla.dsa_weights(gpu, &dsa_cfg, &dsa_plan, &load)?;
                     Glm5NextMixer::Dsa(Box::new(Glm5NextDsaLayer {
                         persist_bt: std::env::var("METRALE_GLM_DSA_ALLOC_PER_STEP").as_deref()
                             != Ok("1"),

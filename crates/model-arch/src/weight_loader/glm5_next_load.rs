@@ -23,8 +23,8 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_model_weights::weights::{WeightDtype, WeightStore, WeightTensor};
 
 use super::ModelWeightLoader;
-use crate::glm5next_dsa::build::build_dsa_weights;
 use crate::glm5next_dsa::layer::{Glm5NextDsaLayer, Glm5NextDsaLayerKernels};
+use crate::glm5next_dsa::unabsorb::TextUnabsorb;
 use crate::glm5next_dsa::{Glm5NextDsaConfig, Glm5NextDsaKernels};
 use crate::glm5next_kda::binding::{KdaDtype, KdaTensorSource, RawTensor, bind_kda_weights};
 use crate::glm5next_kda::tp::KdaTpPlan;

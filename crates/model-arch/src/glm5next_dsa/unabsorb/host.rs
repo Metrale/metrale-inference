@@ -48,11 +48,7 @@ fn check_kv_b(cfg: &Glm5NextDsaConfig, kv_b_local: &[f32], heads: usize) -> Resu
 
 /// 2026-10-15: `kv_b_proj`'s K half per head, transposed:
 /// `w_uk_t[h][c][r] = kv_b_local[(h*(nope+vd) + r)*kvl + c]`, `[heads, kvl, nope]`.
-pub fn split_w_uk_t(
-    cfg: &Glm5NextDsaConfig,
-    kv_b_local: &[f32],
-    heads: usize,
-) -> Result<Vec<f32>> {
+pub fn split_w_uk_t(cfg: &Glm5NextDsaConfig, kv_b_local: &[f32], heads: usize) -> Result<Vec<f32>> {
     check_kv_b(cfg, kv_b_local, heads)?;
     let (nope, vd, kvl) = (cfg.qk_nope_head_dim, cfg.v_head_dim, cfg.kv_lora_rank);
     let mut out = vec![0f32; heads * kvl * nope];
@@ -125,14 +121,7 @@ pub fn unabsorb_for_rank(
 
 /// 2026-10-15: `glm5next_mla_head_bmm` in f64:
 /// `C[i, h*n + j] = Σ_k A[i, h*kk + k] · B[h][j][k]` for `m` rows and `heads` heads.
-pub fn head_bmm_ref(
-    a: &[f64],
-    b: &[f64],
-    m: usize,
-    heads: usize,
-    kk: usize,
-    n: usize,
-) -> Vec<f64> {
+pub fn head_bmm_ref(a: &[f64], b: &[f64], m: usize, heads: usize, kk: usize, n: usize) -> Vec<f64> {
     let mut c = vec![0f64; m * heads * n];
     for i in 0..m {
         for h in 0..heads {
@@ -152,7 +141,11 @@ pub fn dense_ref(a: &[f64], w: &[f64], m: usize, n: usize, kk: usize) -> Vec<f64
     for i in 0..m {
         let a_row = &a[i * kk..][..kk];
         for j in 0..n {
-            c[i * n + j] = a_row.iter().zip(&w[j * kk..][..kk]).map(|(x, y)| x * y).sum();
+            c[i * n + j] = a_row
+                .iter()
+                .zip(&w[j * kk..][..kk])
+                .map(|(x, y)| x * y)
+                .sum();
         }
     }
     c

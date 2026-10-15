@@ -23,9 +23,9 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_model_layers::layers::{DenseQuantization, DsaQuantization};
 use metrale_model_layers::weight_map::QuantizedWeight;
 
+use crate::glm5next_dsa::unabsorb::{MlaUnabsorb, SiteRule, site_rule};
 use crate::glm5next_layer::{Glm5NextMixer, Glm5NextMlpSite};
 use crate::glm5next_mlp::Glm5NextMlpConfig;
-use crate::glm5next_dsa::unabsorb::{MlaUnabsorb, SiteRule, site_rule};
 use crate::glm5next_w4a16_dense::{self as w4a16, ProjTier};
 
 /// 2026-10-09: One projection: `(weight, n, k, name)` with the shapes the forward launches.
