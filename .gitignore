@@ -21,10 +21,10 @@ docker/gb10/met-fastbin
 /book/output/
 /book/book/
 
-# Editor / agent scratch, except the repo's agent skills (.claude/skills/), which carry the
-# engine's methods (e.g. .claude/skills/new-model/SKILL.md).
+# Editor / agent scratch, except the repo's agent skills: .claude/skills is a submodule of the
+# private Metrale/metrale-skills repository (no trailing slash: a gitlink is not a directory).
 .claude/*
-!.claude/skills/
+!.claude/skills
 .agents/
 .gemini/
 .agent*/
