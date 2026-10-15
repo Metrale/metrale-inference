@@ -29,6 +29,10 @@
 //! - Only the per-sequence token kernels and the 64-token scan: refused under the 16-token
 //!   scan (`METRALE_GLM_KDA_CHUNK_SCAN`) or the chunked prefill (`METRALE_GLM_KDA_CHUNK_PREFILL`).
 //! - Cuts are strictly increasing rows in `1..=k`.
+//! - 2026-10-15: The conv and the gate run as their own launches (`GateAt::Kernel`) even
+//!   where `METRALE_GLM_KDA_CHUNK64_CONV` / `METRALE_GLM_KDA_GATE_IN_PREPARE` are set: those
+//!   levers move the same arithmetic into the prepare bit-for-bit, so the uncut sub-chunks that
+//!   take them and this one agree; a token part reads `ws.gate`, which only the kernel writes.
 
 use super::chunk64::{
     CHUNK64, CHUNK64_PREP_SMEM, CHUNK64_PREP_THREADS, CHUNK64_SCAN_SMEM, CHUNK64_SCAN_THREADS,
@@ -108,7 +112,9 @@ impl Glm5NextKdaLayer {
         static APPLIED: std::sync::Once = std::sync::Once::new();
         APPLIED.call_once(|| {
             tracing::info!(
-                "GLM KDA: --prefill-tail-mode merge applied at {}:{}: {k} rows cut at {rows:?}",
+                "GLM KDA: --prefill-tail-mode merge applied at {}:{}: {k} rows cut at {rows:?}; \
+                 a cut sub-chunk runs its conv and gate as their own launches \
+                 (METRALE_GLM_KDA_CHUNK64_CONV and METRALE_GLM_KDA_GATE_IN_PREPARE do not apply)",
                 file!(),
                 line!()
             );
@@ -126,6 +132,7 @@ impl Glm5NextKdaLayer {
             k,
             ws,
             pack,
+            GateAt::Kernel,
             stream,
             |_| Ok(()),
             || {
