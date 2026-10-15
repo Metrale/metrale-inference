@@ -27,6 +27,13 @@ __device__ __forceinline__ void glm_hcf_tail_bar() {
     asm volatile("bar.sync 1, %0;" ::"n"(GLM_HCF_TAIL_THREADS));
 }
 
+// 2026-10-15: glm_hcf_tail_bar on named barrier BAR, for a block that runs one tail per group of
+// GLM_HCF_BLOCK threads (glm5next_hc_pre_norm_tile8: group g's tail warps on barrier 4 + g).
+template <int BAR>
+__device__ __forceinline__ void glm_hcf_tail_bar_at() {
+    asm volatile("bar.sync %0, %1;" ::"n"(BAR), "n"(GLM_HCF_TAIL_THREADS));
+}
+
 // 2026-10-09: post and the Sinkhorn of glm5next_hc_finish block 0, on warp 0. Lane l holds comb
 // element (i, j) = (l / HC, l % HC); lanes at or past HC * HC hold a copy of lane l % (HC * HC)
 // so every shuffle runs on the full warp. Each sum starts where the unfused one does and adds
@@ -88,8 +95,12 @@ __device__ __forceinline__ void glm_hcf_sinkhorn(
 // NT = min(H, 1024) virtual threads: virtual thread v sums pairs v, v + NT, .. of y as
 // `s += a * a + b * b`, each virtual warp of 32 runs the same butterfly on one real warp, and
 // the warp sums go through the same final butterfly, zeros past the last warp included.
-template <int HC, bool CG = false>
-__device__ __forceinline__ void glm_hcf_collapse_norm(
+// 2026-10-15: `u` is the tail thread's index (0 .. GLM_HCF_TAIL_THREADS - 1) and BAR the named
+// barrier its GLM_HCF_TAIL_THREADS threads share; glm_hcf_collapse_norm below passes
+// threadIdx.x - 32 and barrier 1, as before. No value depends on either.
+template <int HC, bool CG, int BAR>
+__device__ __forceinline__ void glm_hcf_collapse_norm_at(
+    const unsigned int u,
     const float* __restrict__ x,
     const float* s_pre,
     const __nv_bfloat16* __restrict__ norm_w,
@@ -100,7 +111,6 @@ __device__ __forceinline__ void glm_hcf_collapse_norm(
     unsigned int H,
     float rms_eps
 ) {
-    const unsigned int u = threadIdx.x - 32u;
     const unsigned int rw = u >> 5;
     const unsigned int lane = threadIdx.x & 31u;
 
@@ -132,7 +142,7 @@ __device__ __forceinline__ void glm_hcf_collapse_norm(
         reinterpret_cast<__nv_bfloat162*>(s_y)[2 * q] = lo;
         reinterpret_cast<__nv_bfloat162*>(s_y)[2 * q + 1] = hi;
     }
-    glm_hcf_tail_bar();
+    glm_hcf_tail_bar_at<BAR>();
 
     const unsigned int nt = H < 1024u ? H : 1024u;
     const unsigned int nwv = nt / 32u;
@@ -147,13 +157,13 @@ __device__ __forceinline__ void glm_hcf_collapse_norm(
         s = glm_hcf_warp_sum(s);
         if (lane == 0) s_ws[vw] = s;
     }
-    glm_hcf_tail_bar();
+    glm_hcf_tail_bar_at<BAR>();
     if (rw == 0) {
         float v = (lane < nwv) ? s_ws[lane] : 0.0f;
         v = glm_hcf_warp_sum(v);
         if (lane == 0) s_ws[32] = v;
     }
-    glm_hcf_tail_bar();
+    glm_hcf_tail_bar_at<BAR>();
     const float rms = rsqrtf(s_ws[32] / (float)H + rms_eps);
 
     // 2026-10-09: Four columns per thread and pass, the weights through one 8-byte load; each
@@ -174,6 +184,22 @@ __device__ __forceinline__ void glm_hcf_collapse_norm(
         pk.y = (unsigned int)o[2] | ((unsigned int)o[3] << 16);
         reinterpret_cast<uint2*>(normed_out)[q] = pk;
     }
+}
+
+template <int HC, bool CG = false>
+__device__ __forceinline__ void glm_hcf_collapse_norm(
+    const float* __restrict__ x,
+    const float* s_pre,
+    const __nv_bfloat16* __restrict__ norm_w,
+    __nv_bfloat16* __restrict__ y_out,
+    __nv_bfloat16* __restrict__ normed_out,
+    __nv_bfloat16* s_y,
+    float* s_ws,
+    unsigned int H,
+    float rms_eps
+) {
+    glm_hcf_collapse_norm_at<HC, CG, 1>(threadIdx.x - 32u, x, s_pre, norm_w, y_out, normed_out,
+                                        s_y, s_ws, H, rms_eps);
 }
 
 // 2026-10-09: The block's shared memory, declared once in each entry point: a __shared__
