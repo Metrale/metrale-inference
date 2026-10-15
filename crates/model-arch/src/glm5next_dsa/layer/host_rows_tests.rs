@@ -132,3 +132,172 @@ fn a_paged_prefill_chunk_stages_its_indexer_rows_once() {
         assert_eq!(st.len(), seq_len + k);
     }
 }
+
+/// 2026-10-15: `METRALE_GLM_DSA_HOST_ROWS_PINNED`: unset and `0` off, `1` on, anything else
+/// an error naming the value.
+#[test]
+fn the_pinned_lever_parses_zero_and_one_only() {
+    assert_eq!(super::parse_pinned(None), Ok(false));
+    assert_eq!(super::parse_pinned(Some("0")), Ok(false));
+    assert_eq!(super::parse_pinned(Some("1")), Ok(true));
+    for bad in ["", "on", "2", "true"] {
+        let e = super::parse_pinned(Some(bad)).unwrap_err();
+        assert!(e.contains(&format!("{bad:?}")), "{e}");
+    }
+}
+
+/// 2026-10-15: The ring's steps: the first call writes region 0 without waiting; the same
+/// bytes read it again; new bytes go to the other region, waiting only once that region has
+/// copies behind it; a region read again from another stream is waited on first.
+#[test]
+fn the_staging_steps_never_rewrite_the_region_last_read() {
+    use super::{Step, step};
+    let (w, r) = (
+        |region, wait| Step::Write { region, wait },
+        |region, wait| Step::Reuse { region, wait },
+    );
+    assert_eq!(step(None, false, [false; 2], [false; 2]), w(0, false));
+    assert_eq!(
+        step(Some(0), true, [true, false], [true, false]),
+        r(0, false)
+    );
+    assert_eq!(
+        step(Some(0), true, [true, false], [false, false]),
+        r(0, true)
+    );
+    assert_eq!(
+        step(Some(0), false, [true, false], [true, false]),
+        w(1, false)
+    );
+    assert_eq!(step(Some(1), false, [true, true], [true, true]), w(0, true));
+    assert_eq!(
+        step(Some(0), false, [true, true], [true, false]),
+        w(1, true)
+    );
+}
+
+/// 2026-10-15: The workspace slot, position and length arrays and the table prefix after a
+/// host-path `decode_k` of `k` rows from `seq_len`, staged or not.
+fn staged_bytes(k: usize, seq_len: usize, pinned: bool) -> (Vec<Vec<u8>>, usize, usize) {
+    let rig = Rig::new();
+    let mut layer = rig.layer();
+    if pinned {
+        let ws = std::sync::Arc::get_mut(&mut layer.workspace).unwrap();
+        ws.host_staging = Some(super::HostRowsStaging::alloc(&rig.gpu, 16, ws.bt_cap).unwrap());
+    }
+    let mut kv = rig.kv();
+    let hidden = rig.buf(k * HIDDEN * 2);
+    let mut boxes = rig.states(&[seq_len]);
+    let mut ctx = rig.ctx(false);
+    ctx.decode_step = false;
+    let mut bt = vec![5u32, 1, 3];
+    let (h2d, syncs) = (rig.gpu.h2d_count(), rig.gpu.sync_count());
+    layer
+        .decode_k(
+            hidden,
+            k,
+            boxes[0].as_mut(),
+            &mut kv,
+            seq_len,
+            &mut bt,
+            &ctx,
+            7,
+            false,
+        )
+        .unwrap();
+    let w = &layer.workspace;
+    let read = |p, n| rig.gpu.read_alloc(p).unwrap()[..n].to_vec();
+    let bt_n = super::bt_entries_needed(seq_len, k, 16).min(bt.len()) * 4;
+    let bytes = vec![
+        read(w.slot, k * 8),
+        read(w.q_pos, k * 4),
+        read(w.sl, k * 4),
+        read(w.bt, bt_n),
+    ];
+    (
+        bytes,
+        rig.gpu.h2d_count() - h2d,
+        rig.gpu.sync_count() - syncs,
+    )
+}
+
+/// 2026-10-15: The byte gate on the mock: staged and pageable calls leave the same device
+/// bytes at the first sub-chunk, a full 16-row one and a prefix-hit continuation, in four
+/// uploads and no stream synchronisation; negative control: the rows one position on differ.
+#[test]
+fn staged_rows_are_the_pageable_bytes() {
+    for (k, seq_len) in [(1usize, 0usize), (6, 13), (16, 0), (16, 30)] {
+        let (off, off_h2d, off_sync) = staged_bytes(k, seq_len, false);
+        let (on, on_h2d, on_sync) = staged_bytes(k, seq_len, true);
+        assert_eq!(on, off, "k={k} seq_len={seq_len}: staged bytes differ");
+        assert_eq!((on_h2d, on_sync), (4, 0), "k={k} seq_len={seq_len}");
+        assert_eq!((off_h2d, off_sync), (4, 0), "k={k} seq_len={seq_len}");
+        let (shifted, _, _) = staged_bytes(k, seq_len + 1, true);
+        assert_ne!(
+            shifted[0], off[0],
+            "negctl k={k}: slots one row on must differ"
+        );
+        assert_ne!(
+            shifted[1], off[1],
+            "negctl k={k}: positions one row on must differ"
+        );
+    }
+}
+
+/// 2026-10-15: The same bytes again read the region they were written to, without
+/// rewriting it; new bytes alternate regions; the device receives every call's bytes; more
+/// bytes than the staging holds are refused before anything is enqueued.
+#[test]
+fn the_staging_ring_reuses_equal_bytes_and_alternates_new_ones() {
+    let rig = Rig::new();
+    let s = super::HostRowsStaging::alloc(&rig.gpu, 2, 1).unwrap();
+    let (d0, d1) = (rig.buf(32), rig.buf(32));
+    let up = |a: &[u8], b: &[u8]| {
+        s.upload(&rig.gpu, &[(a, d0), (b, d1)], 7).unwrap();
+        let ring = s.ring.lock().unwrap();
+        assert_eq!(rig.gpu.read_alloc(d0).unwrap()[..a.len()], *a);
+        assert_eq!(rig.gpu.read_alloc(d1).unwrap()[..b.len()], *b);
+        (
+            ring.last,
+            ring.filled,
+            ring.held(ring.last.unwrap()).to_vec(),
+        )
+    };
+    let (a, b, c) = ([1u8; 8], [2u8; 4], [3u8; 8]);
+    let first = up(&a, &b);
+    assert_eq!(first.0, Some(0));
+    assert_eq!(first.2, [&a[..], &b[..]].concat());
+    assert_eq!(up(&a, &b), first, "equal bytes reuse region 0");
+    let second = up(&c, &b);
+    assert_eq!(second.0, Some(1), "new bytes go to region 1");
+    assert_eq!(second.1, [12, 12]);
+    assert_eq!(up(&a, &c).0, Some(0), "and back to region 0");
+    let h2d = rig.gpu.h2d_count();
+    let e = s
+        .upload(&rig.gpu, &[(&[0u8; 32], d0), (&[0u8; 9], d1)], 7)
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("41 B of rows exceed the 36 B staging"), "{e}");
+    assert_eq!(rig.gpu.h2d_count(), h2d, "nothing enqueued on refusal");
+}
+
+/// 2026-10-15: Lever off (the test process leaves `METRALE_GLM_DSA_HOST_ROWS_PINNED` unset), a
+/// DSA workspace allocates no page-locked memory and holds no staging, and the readback says
+/// 0 B; with staging it states both regions' bytes.
+#[test]
+fn the_lever_off_allocates_nothing_and_the_readback_says_so() {
+    let rig = Rig::new();
+    let before = rig.gpu.host_pinned_alloc_count();
+    let layer = rig.layer();
+    assert!(layer.workspace.host_staging.is_none());
+    assert_eq!(rig.gpu.host_pinned_alloc_count(), before);
+    let off = super::staging_readback(None, 16, 4);
+    assert!(
+        off.contains("=0:") && off.contains("0 B page-locked"),
+        "{off}"
+    );
+    let s = super::HostRowsStaging::alloc(&rig.gpu, 2, 1).unwrap();
+    assert_eq!(rig.gpu.host_pinned_alloc_count(), before + 2);
+    let on = super::staging_readback(Some(&s), 2, 1);
+    assert!(on.contains("=1:") && on.contains("2 x 36 B = 72 B"), "{on}");
+}

@@ -159,6 +159,9 @@ pub struct Glm5NextDsaWorkspace {
     /// 2026-10-09: The head-batched decode's partials (`attend::DsaSplitWorkspace::alloc_for`),
     /// `None` unless `METRALE_GLM_DSA_DECODE_HB` asks for two splits or more.
     pub(super) split_ws: Option<DsaSplitWorkspace>,
+    /// 2026-10-15: Page-locked staging of `decode_k`'s host-path uploads
+    /// (`host_rows::HostRowsStaging`), `None` unless `METRALE_GLM_DSA_HOST_ROWS_PINNED=1`.
+    pub(super) host_staging: Option<super::host_rows::HostRowsStaging>,
 }
 
 impl Glm5NextDsaWorkspace {
@@ -252,6 +255,7 @@ impl Glm5NextDsaWorkspace {
             },
             pad_rows: cfg.index_kpool,
             split_ws: DsaSplitWorkspace::alloc_for(gpu, cfg, hb_splits_lever()?, rows)?,
+            host_staging: super::host_rows::staging_for(gpu, rows, bt_cap)?,
         })
     }
 

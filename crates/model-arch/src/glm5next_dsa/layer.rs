@@ -61,6 +61,7 @@ mod select_rows;
 mod workspace;
 
 pub use decode_rows::DsaRowSpan;
+pub use host_rows::{HostRowBytes, HostRowsStaging, host_rows_pinned, upload_rows};
 pub use indexer_place::IndexerPlace;
 pub use kernels::Glm5NextDsaLayerKernels;
 use proj_gemm::gemm;
