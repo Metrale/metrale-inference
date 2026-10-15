@@ -11,7 +11,11 @@
 //!    renormalisation. ids and weights must be byte-identical.
 //! 2. MoE combine (hidden 4096, top 8): one block per row against the row spread over several
 //!    blocks (`METRALE_GLM_MOE_COMBINE_SPLIT=1`), slot order and expert-sorted order. Outputs must
-//!    be byte-identical, and equal to a host reference.
+//!    be byte-identical, and equal to a host reference. 2026-10-14: its second arm,
+//!    eight elements per thread (`METRALE_GLM_MOE_COMBINE_VEC8=1`), at 1, 16, 17, 287, 341, 1036,
+//!    8192 and 8208 rows,
+//!    byte-equal to the split combine and the host reference, with a negative control
+//!    (`common/glm5next_c1_combine_vec8.rs`; alone with `C1_FUSE_ONLY=combine_vec8`).
 //! 3. KDA recurrence of one row (22 heads of 128): `kda_recurrent_decode_bf16_smem` against
 //!    `kda_recurrent_decode_bf16_seq_reg` at T = 1 (`METRALE_GLM_KDA_ROW_REG=1`) for several
 //!    block widths, sixteen consecutive tokens on one state. Every output and the final state must
@@ -29,6 +33,8 @@
 //!   cargo run -p metrale-model-arch --release --example glm5next_c1_fuse_microtest \
 //!       --features cuda,gpu-examples
 
+#[path = "common/glm5next_c1_combine_vec8.rs"]
+mod c1_combine_vec8;
 #[path = "common/glm5next_c1_kda.rs"]
 mod c1_kda;
 #[path = "common/glm5next_c1_kda_gates.rs"]
@@ -320,6 +326,9 @@ fn main() -> Result<()> {
     }
     if only.is_empty() || only == "combine" {
         combine(g, s, &mut rng)?;
+    }
+    if only.is_empty() || only == "combine" || only == "combine_vec8" {
+        c1_combine_vec8::combine_vec8(g, s, &mut rng)?;
     }
     if only.is_empty() || only == "kda" {
         c1_kda::kda_one_row(g, s, &mut rng)?;
