@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-15: metprof is a standalone workspace on purpose. It reads profiler
+# exports on the CPU; of the engine it links only the pure circuit planner
+# (read only, no GPU code), so it carries its own [workspace] table and
+# Cargo.lock and stays out of the engine workspace (and out of the paths that
+# re-open the performance gates).
+[package]
+name = "metprof"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Profiling harness over nsys sqlite exports: busy union, families, segments, capture diff, kernel tree"
+
+[workspace]
+
+[dependencies]
+indexmap = "2.14"
+# 2026-10-15: the circuit-backed kernel tree plans with the engine's own pure planner, read only.
+metrale-circuit = { path = "../../crates/circuit" }
+regex = "1.13"
+sha2 = "0.11"
+serde = "1.0"
+serde_json = { version = "1.0", features = ["preserve_order"] }
+toml = "1.1"
+
+[lints.rust]
+warnings = "deny"
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }

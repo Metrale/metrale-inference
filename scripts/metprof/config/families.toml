@@ -1,0 +1,348 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# The family table: the one place a kernel name is mapped to a family, a group
+# (the coarse roll-up) and a class (compute or comm). Rules are tried in order
+# and the first match wins, so a more specific rule must come before a broader
+# one. Patterns use the Rust `regex` crate syntax and are searched (unanchored
+# unless the pattern anchors itself) in the kernel's short name.
+#
+# `next_on_stream_family` (optional) makes a rule a call-site rule: it matches
+# only when the next kernel on the same stream was classified into one of the
+# listed families. Captures without NVTX ranges cannot tell a GEMM's caller
+# otherwise. The references must form a DAG and never name the rule's own
+# family, so a chain of call-site matches is bounded by this table.
+#
+# No key has a default; a missing or unknown key is an error.
+
+schema = 1
+
+# Minimum share of busy (union) time that must be classified. Below it, every
+# command that reads families fails rather than report a partial table.
+coverage_min = 0.99
+
+[api]
+# Host calls that block on the device; spec-step decomposition counts them.
+host_sync_regex = "^(cu|cuda)(Stream|Ctx|Event|Device)Synchronize"
+
+# ---- communication ---------------------------------------------------------
+[[rule]]
+family = "nccl_sendrecv"
+group = "comm"
+class = "comm"
+name_regex = "^ncclDevKernel_SendRecv"
+
+[[rule]]
+family = "nccl_allreduce"
+group = "comm"
+class = "comm"
+name_regex = "^nccl\\w*AllReduce"
+
+[[rule]]
+family = "nccl_broadcast"
+group = "comm"
+class = "comm"
+name_regex = "^nccl\\w*Broadcast"
+
+[[rule]]
+family = "nccl_other"
+group = "comm"
+class = "comm"
+name_regex = "^nccl"
+
+# ---- MoE router -----------------------------------------------------------
+# The router is a vendor GEMM (optionally split-K, or a GEMV at small M)
+# followed by the top-k rank kernel on the same stream. Without the call-site
+# rules the router GEMM is counted inside the dense `nvjet` family. The DSA
+# top-k kernels (radix select + expand) are a different bucket: `dsa_topk`.
+[[rule]]
+family = "router_topk"
+group = "router"
+class = "compute"
+name_regex = "_router_topk_rank$"
+
+[[rule]]
+family = "router_splitk_reduce"
+group = "router"
+class = "compute"
+name_regex = "^splitKreduce_kernel$"
+next_on_stream_family = ["router_topk"]
+
+[[rule]]
+family = "router_gemm"
+group = "router"
+class = "compute"
+name_regex = "^(nvjet_|dense_gemv_)"
+next_on_stream_family = ["router_topk", "router_splitk_reduce"]
+
+# ---- MoE -------------------------------------------------------------------
+
+[[rule]]
+family = "moe_grouped_gu"
+group = "moe"
+class = "compute"
+name_regex = "^w4a4_grouped_gu_"
+
+[[rule]]
+family = "moe_grouped"
+group = "moe"
+class = "compute"
+name_regex = "^(w4a4_grouped_mx_|moe_w4a16_grouped_)"
+
+[[rule]]
+family = "moe_tiles"
+group = "moe"
+class = "compute"
+name_regex = "^w4a4_grouped_tiles$"
+
+[[rule]]
+family = "moe_slots_sweep"
+group = "moe"
+class = "compute"
+name_regex = "_moe_slots_sweep"
+
+[[rule]]
+family = "moe_union_sweep"
+group = "moe"
+class = "compute"
+name_regex = "(_moe_union_sweep|_moe_row_union$)"
+
+[[rule]]
+family = "moe_gemv"
+group = "moe"
+class = "compute"
+name_regex = "^w4a16_gemv_sw_moe"
+
+[[rule]]
+family = "moe_sort"
+group = "moe"
+class = "compute"
+name_regex = "^moe_sort_by_expert$"
+
+[[rule]]
+family = "moe_combine"
+group = "moe"
+class = "compute"
+name_regex = "_moe_combine"
+
+[[rule]]
+family = "swiglu"
+group = "moe"
+class = "compute"
+name_regex = "_swiglu_clamp$"
+
+[[rule]]
+family = "act_quant"
+group = "quant"
+class = "compute"
+name_regex = "^(w4a4_quant_rows_|w8a8_act_quant_row$)"
+
+# ---- dense projections ------------------------------------------------------
+[[rule]]
+family = "nvjet"
+group = "dense"
+class = "compute"
+name_regex = "^nvjet_"
+
+[[rule]]
+family = "vendor_gemm_other"
+group = "dense"
+class = "compute"
+name_regex = "^(Kernel2|splitKreduce_kernel)$"
+
+[[rule]]
+family = "dense_gemv"
+group = "dense"
+class = "compute"
+name_regex = "^(dense_gemv_|w4a16_gemv|w4a16_tc_rows_|w8a8_gemv_|w4a4_gemv_mx\\d+$)"
+
+[[rule]]
+family = "dequant"
+group = "dense"
+class = "compute"
+name_regex = "^dequant_"
+
+# ---- attention (DSA / MLA) --------------------------------------------------
+[[rule]]
+family = "mla_attend"
+group = "attention"
+class = "compute"
+name_regex = "(_dsa_mla_|_mla_latent_)"
+
+[[rule]]
+family = "dsa_index_scores"
+group = "indexer"
+class = "compute"
+name_regex = "^dsa_index_scores"
+
+[[rule]]
+family = "dsa_topk"
+group = "indexer"
+class = "compute"
+name_regex = "^(dsa_topk_pools|dsa_expand_selection)"
+
+[[rule]]
+family = "dsa_kpool_compress"
+group = "indexer"
+class = "compute"
+name_regex = "^dsa_kpool_compress"
+
+[[rule]]
+family = "dsa_index_store"
+group = "indexer"
+class = "compute"
+name_regex = "^(dsa_indexer_store|dsa_write_geom)"
+
+# ---- KDA (linear attention) -------------------------------------------------
+[[rule]]
+family = "kda_chunk_prepare"
+group = "kda"
+class = "compute"
+name_regex = "^kda_chunk\\d+_prepare"
+
+[[rule]]
+family = "kda_chunk_scan"
+group = "kda"
+class = "compute"
+name_regex = "^kda_chunk\\d+_scan"
+
+[[rule]]
+family = "kda_recurrent"
+group = "kda"
+class = "compute"
+name_regex = "^kda_recurrent_decode"
+
+[[rule]]
+family = "conv1d_update"
+group = "kda"
+class = "compute"
+name_regex = "^causal_conv1d_update"
+
+[[rule]]
+family = "conv1d_window"
+group = "kda"
+class = "compute"
+name_regex = "^causal_conv1d_window_advance$"
+
+[[rule]]
+family = "kda_pack_qkv"
+group = "kda"
+class = "compute"
+name_regex = "^kda_pack_qkv"
+
+[[rule]]
+family = "kda_o_norm_gated"
+group = "kda"
+class = "compute"
+name_regex = "^kda_o_norm_gated"
+
+[[rule]]
+family = "kda_gate"
+group = "kda"
+class = "compute"
+name_regex = "^kda_gate_"
+
+[[rule]]
+family = "kda_sigmoid"
+group = "kda"
+class = "compute"
+name_regex = "^kda_sigmoid_"
+
+[[rule]]
+family = "ssm_state_clamp"
+group = "kda"
+class = "compute"
+name_regex = "^ssm_state_clamp"
+
+# ---- mHC (hyper-connections) ------------------------------------------------
+[[rule]]
+family = "mhc_pre_norm_tok4"
+group = "mhc"
+class = "compute"
+name_regex = "_hc_pre_norm_tok4$"
+
+[[rule]]
+family = "mhc_pre_norm"
+group = "mhc"
+class = "compute"
+name_regex = "_hc_pre_norm$"
+
+[[rule]]
+family = "mhc_post_rank_sum"
+group = "mhc"
+class = "compute"
+name_regex = "_hc_post_rank_sum$"
+
+[[rule]]
+family = "mhc_post"
+group = "mhc"
+class = "compute"
+name_regex = "_hc_post$"
+
+[[rule]]
+family = "mhc_other"
+group = "mhc"
+class = "compute"
+name_regex = "_hc_(head|expand|mix)"
+
+[[rule]]
+family = "rank_sum_add"
+group = "mhc"
+class = "compute"
+name_regex = "^bf16_add_rank_sum$"
+
+# ---- everything else --------------------------------------------------------
+[[rule]]
+family = "norm"
+group = "misc"
+class = "compute"
+name_regex = "^(rms_norm|nllb_layernorm)"
+
+[[rule]]
+family = "elementwise"
+group = "misc"
+class = "compute"
+name_regex = "^bf16_add_inplace$"
+
+[[rule]]
+family = "embed"
+group = "misc"
+class = "compute"
+name_regex = "^batched_embed$"
+
+[[rule]]
+family = "sampling"
+group = "misc"
+class = "compute"
+name_regex = "^argmax_"
+
+[[rule]]
+family = "kv_slots"
+group = "misc"
+class = "compute"
+name_regex = "^fill_slots_from_block_table$"
+
+# ---- kernel tree (`metprof tree`) ------------------------------------------
+# The tree's own gate: the share of summed kernel time that must sit under a
+# node (the rest is listed as unattributed by full name). It is separate from
+# the union coverage_min above, which gates busy time.
+[tree]
+coverage_min = 0.99
+
+# Structure over the families for one model. A node claims families by
+# pattern (over family names, never kernel names: matching kernels stays in
+# the rules above); an unclaimed family sits under its group. `fuses` states
+# what a kernel absorbed; it is never given a time of its own.
+[tree.model.glm]
+fuses = { moe_grouped_gu = ["gate_gemm", "up_gemm"] }
+
+[[tree.model.glm.node]]
+path = "moe"
+families = ["^router_", "^moe_", "^swiglu$"]
+
+[[tree.model.glm.node]]
+path = "attention"
+families = ["^mla_", "^dsa_"]
+
+[[tree.model.glm.node]]
+path = "mhc"
+families = ["^mhc_", "^rank_sum_add$"]

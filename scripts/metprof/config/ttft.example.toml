@@ -1,0 +1,31 @@
+# metprof ttft: an example config. Every value here is a placeholder for the
+# shape; set each one for the model and run being measured.
+schema = 1
+
+[select]
+# The max_tokens of the measured requests.
+max_tokens = 8
+
+[class]
+# The first token that streams no delta (classed `step`).
+step_token_id = 0
+
+# usage.prompt_tokens of each cell's requests (names unique).
+[[cell]]
+name = "c256"
+prompt_tokens = 256
+
+[[cell]]
+name = "c1k"
+prompt_tokens = 1024
+
+# Read by `ttft client` only.
+[client]
+model = "served-model-name"
+temperature = 0.0
+top_p = 1.0
+seed = 0
+salt_digits = 16
+timeout_s = 900
+warmup_requests = 1
+warmup_max_tokens = 32
