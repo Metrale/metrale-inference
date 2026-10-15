@@ -2,7 +2,8 @@
 
 //! 2026-10-14: The environment levers of the GLM-5.3 DSA attention launcher, each read once.
 //! Moved out of `attend.rs` unchanged (that file passed 500 lines), plus
-//! `METRALE_GLM_DSA_HB_PREFILL_PIPE` and `METRALE_GLM_DSA_HB_PREFILL_TC`.
+//! `METRALE_GLM_DSA_HB_PREFILL_PIPE` and `METRALE_GLM_DSA_HB_PREFILL_TC` (2026-10-15: and
+//! `METRALE_GLM_DSA_TC_NANOR`).
 //!
 //! Owner: model-arch (GLM-5.3 DSA).
 //! Invariants: a malformed value is an error at resolve time, never a silent default.
@@ -89,18 +90,44 @@ pub fn hb_prefill_tc() -> Result<bool> {
     .map_err(anyhow::Error::msg)
 }
 
-/// 2026-10-14: The readback of the prefill attend levers, logged once per process after the first
-/// prefill sub-chunk's attend resolved them without error, so every rank's serve log shows which
-/// entry its prefill ran (each set lever is refused unless it was swapped in).
-pub(super) fn readback_prefill_levers(one_split: bool, p_hi: bool, pipe: bool, tc: bool) {
+/// 2026-10-15: `METRALE_GLM_DSA_TC_NANOR`, read once: `1` runs the tc prefill attend
+/// (`METRALE_GLM_DSA_HB_PREFILL_TC=1`) on `glm5next_dsa_mla_prefill_tc_phi_nanor`, the same
+/// kernel with its E4M3 NaN-byte test made once per producer share of a tile instead of once per
+/// 32-bit word: byte-identical output, so no new numerics point. Unset or `0` keeps
+/// `glm5next_dsa_mla_prefill_tc_phi`; another value is an error; refused without the tc entry.
+/// Decode is never affected.
+pub fn tc_nanor() -> Result<bool> {
+    static V: std::sync::OnceLock<Result<bool, String>> = std::sync::OnceLock::new();
+    V.get_or_init(|| {
+        parse_switch(
+            "METRALE_GLM_DSA_TC_NANOR",
+            std::env::var("METRALE_GLM_DSA_TC_NANOR").ok().as_deref(),
+        )
+    })
+    .clone()
+    .map_err(anyhow::Error::msg)
+}
+
+/// 2026-10-14: The readback of the prefill attend levers (2026-10-15: and `tc_nanor`), logged
+/// once per process after the first prefill sub-chunk's attend resolved them without error, so
+/// every rank's serve log shows which entry its prefill ran (each set lever is refused unless it
+/// was swapped in).
+pub(super) fn readback_prefill_levers(
+    one_split: bool,
+    p_hi: bool,
+    pipe: bool,
+    tc: bool,
+    tc_nanor: bool,
+) {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
         tracing::info!(
-            "DSA prefill attend levers: one_split={} p_hi={} pipe={} tc={}",
+            "DSA prefill attend levers: one_split={} p_hi={} pipe={} tc={} tc_nanor={}",
             u8::from(one_split),
             u8::from(p_hi),
             u8::from(pipe),
-            u8::from(tc)
+            u8::from(tc),
+            u8::from(tc_nanor)
         )
     });
 }

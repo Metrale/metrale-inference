@@ -69,6 +69,7 @@ const HB_MERGE_BLOCK: u32 = 128;
 mod levers;
 pub use levers::{
     hb_prefill_one_split, hb_prefill_p_hi, hb_prefill_pipe, hb_prefill_tc, hb_splits_lever,
+    tc_nanor,
 };
 mod prefill_tc;
 pub use prefill_tc::{TC_BLOCK, TC_MAX_WIDTH, TC_SMEM_BYTES};
@@ -91,6 +92,9 @@ struct HeadBatched {
     /// 2026-10-14: `glm5next_dsa_mla_prefill_tc_phi`, or 0 when the target lacks it;
     /// [`Glm5NextDsaDecodeKernel::for_prefill_tc`] swaps it in.
     prefill_tc: KernelHandle,
+    /// 2026-10-15: `glm5next_dsa_mla_prefill_tc_phi_nanor`, or 0 when the target lacks it;
+    /// [`Glm5NextDsaDecodeKernel::for_prefill_tc_nanor`] swaps it in.
+    prefill_tc_nanor: KernelHandle,
     merge: KernelHandle,
     splits: usize,
     /// 2026-10-14: Dynamic shared memory `decode` is launched with (0 but for the pipe entry).
@@ -146,6 +150,11 @@ impl Glm5NextDsaDecodeKernel {
                         gpu,
                         DSA_PREFILL_TC_MODULE,
                         "glm5next_dsa_mla_prefill_tc_phi",
+                    ),
+                    prefill_tc_nanor: metrale_model_layers::layers::try_kernel(
+                        gpu,
+                        DSA_PREFILL_TC_MODULE,
+                        "glm5next_dsa_mla_prefill_tc_phi_nanor",
                     ),
                     merge: gpu.kernel(DSA_DECODE_HB_MODULE, "glm5next_dsa_mla_merge")?,
                     splits,
@@ -224,17 +233,18 @@ impl Glm5NextDsaDecodeKernel {
 
     /// 2026-10-14: This kernel for a prefill sub-chunk's attend under the prefill levers, in
     /// order: [`hb_prefill_one_split`], [`hb_prefill_p_hi`], [`hb_prefill_pipe`],
-    /// [`hb_prefill_tc`].
+    /// [`hb_prefill_tc`], [`tc_nanor`].
     /// Each process logs the resolved levers once ([`levers::readback_prefill_levers`]).
     pub fn for_prefill_levers(self) -> Result<Self> {
         let (one, p_hi) = (hb_prefill_one_split(), hb_prefill_p_hi()?);
-        let (pipe, tc) = (hb_prefill_pipe()?, hb_prefill_tc()?);
+        let (pipe, tc, nanor) = (hb_prefill_pipe()?, hb_prefill_tc()?, tc_nanor()?);
         let k = self
             .for_prefill(one)
             .for_prefill_p_hi(p_hi)?
             .for_prefill_pipe(pipe)?
-            .for_prefill_tc(tc)?;
-        levers::readback_prefill_levers(one, p_hi, pipe, tc);
+            .for_prefill_tc(tc)?
+            .for_prefill_tc_nanor(nanor)?;
+        levers::readback_prefill_levers(one, p_hi, pipe, tc, nanor);
         Ok(k)
     }
 

@@ -89,6 +89,21 @@ pub fn glm_hc_pre_norm(
     rms_eps: f32,
     stream: u64,
 ) -> Result<()> {
+    // 2026-10-15: The cp.async-ring tile kernel takes its own launch (`glm5next_mhc_tile`).
+    if crate::glm5next_mhc_tile::try_launch_tile(
+        gpu,
+        kernels,
+        streams,
+        w,
+        norm_w,
+        [y_out, post_out, comb_out, normed_out],
+        num_tokens,
+        [hidden_size, hc_mult, sinkhorn_iters],
+        [norm_eps, hc_eps, rms_eps],
+        stream,
+    )? {
+        return Ok(());
+    }
     glm_hc_pre_norm_with(
         gpu,
         kernels,
@@ -199,6 +214,30 @@ pub fn splitk_kernel(
     .then_some((kernels.hc_pre_norm_sk, HC_PRE_NORM_SK_SLICES))
 }
 
+/// 2026-10-15: What every pre-norm launch refuses: a shape `hc_pre_norm_refusal` names, an FP32
+/// `hc_fn`, more tokens than the site's `mix` scratch. Returns that scratch's token bound.
+pub(crate) fn pre_norm_checks(
+    w: &Glm5NextMhcSiteWeights,
+    num_tokens: u32,
+    hidden_size: u32,
+    hc_mult: u32,
+) -> Result<usize> {
+    if let Some(why) = hc_pre_norm_refusal(hidden_size, hc_mult) {
+        bail!("glm_hc_pre_norm: {why}");
+    }
+    if !w.hc_fn_bf16 {
+        bail!("glm_hc_pre_norm: the site's hc_fn is FP32; the fused kernel reads BF16 only");
+    }
+    let mix_cap = mhc_mix_max_tokens();
+    if num_tokens as usize > mix_cap {
+        bail!(
+            "glm_hc_pre_norm: {num_tokens} tokens exceeds the {mix_cap}-token `mix` and `done` \
+             scratch (floor {MHC_MIX_MAX_TOKENS})"
+        );
+    }
+    Ok(mix_cap)
+}
+
 /// 2026-10-11: [`glm_hc_pre_norm`] with the prefetching kernel's choice explicit (`prefetch`;
 /// the bit-identity gate runs both arms).
 #[allow(clippy::too_many_arguments)]
@@ -224,19 +263,7 @@ pub fn glm_hc_pre_norm_with(
     tok: bool,
     stream: u64,
 ) -> Result<()> {
-    if let Some(why) = hc_pre_norm_refusal(hidden_size, hc_mult) {
-        bail!("glm_hc_pre_norm: {why}");
-    }
-    if !w.hc_fn_bf16 {
-        bail!("glm_hc_pre_norm: the site's hc_fn is FP32; the fused kernel reads BF16 only");
-    }
-    let mix_cap = mhc_mix_max_tokens();
-    if num_tokens as usize > mix_cap {
-        bail!(
-            "glm_hc_pre_norm: {num_tokens} tokens exceeds the {mix_cap}-token `mix` and `done` \
-             scratch (floor {MHC_MIX_MAX_TOKENS})"
-        );
-    }
+    let mix_cap = pre_norm_checks(w, num_tokens, hidden_size, hc_mult)?;
     // 2026-10-12: The token-tiled grid takes its own launch (`glm5next_mhc_tok`).
     if let Some(kernel) = crate::glm5next_mhc_tok::tok_kernel(kernels, num_tokens, tok) {
         return crate::glm5next_mhc_tok::launch_tok(
@@ -379,6 +406,7 @@ mod tests {
             hc_pre_norm_pf: k(if fused { 13 } else { 0 }),
             hc_pre_norm_sk: k(if fused { 14 } else { 0 }),
             hc_pre_norm_tok: k(if fused { 15 } else { 0 }),
+            hc_pre_norm_tile: k(if fused { 17 } else { 0 }),
             hc_post: k(7),
             hc_post_rank_sum: k(11),
             hc_post_rank_sum_vec8: k(18),

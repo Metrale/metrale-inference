@@ -2057,6 +2057,7 @@ kernels = [
   "glm5next_mhc_fused::glm5next_hc_pre_norm_sk64",
   "glm5next_mhc_tok::glm5next_hc_pre_norm_tok4",
   "glm5next_mhc_tok::glm5next_hc_post_pre_norm_tok4",
+  "glm5next_mhc_tile::glm5next_hc_pre_norm_tile4",
   "glm5next_hc_post_sum::glm5next_hc_post_rank_sum",
   "glm5next_hc_post_sum::glm5next_hc_post_rank_sum_vec8",
 ]
@@ -2078,6 +2079,10 @@ kernel_compute."glm5next_mhc_tok::glm5next_hc_pre_norm_tok4" = { compute = "cuda
 # 2026-10-14: glm5next_hc_post_rank_sum and the next site's glm5next_hc_pre_norm_tok4 in one launch
 # (opt-in METRALE_GLM_MHC_POST_PRE_FUSED, SP-mHC); both halves' expressions in order, so the same bits.
 kernel_compute."glm5next_mhc_tok::glm5next_hc_post_pre_norm_tok4" = { compute = "cuda_core" }
+# 2026-10-15: glm5next_hc_pre_norm_tok4 with each k step of hc_fn and the streams staged through a
+# four-stage cp.async ring, four tokens per block (opt-in METRALE_GLM_MHC_PRE_TILE); tok4's
+# chains, trees and tails, so the same bits.
+kernel_compute."glm5next_mhc_tile::glm5next_hc_pre_norm_tile4" = { compute = "cuda_core" }
 # 2026-10-10: The one-shot all-reduce's rank-order sum (bf16_add_rank_sum's arithmetic) fused
 # ahead of hc_post (opt-in METRALE_GLM_AR_FUSED_POST); the post-mix arithmetic is hc_post's.
 kernel_compute."glm5next_hc_post_sum::glm5next_hc_post_rank_sum" = { compute = "cuda_core" }
@@ -2097,7 +2102,7 @@ op = [
 [[family.point]]
 values = {}
 how = "instantiation"
-files = ["kernels/gb10/common/glm5next_mhc.cu", "kernels/gb10/common/glm5next_mhc_fused.cu", "kernels/gb10/common/glm5next_hc_post_sum.cu", "kernels/gb10/common/glm5next_mhc_tok.cu"]
+files = ["kernels/gb10/common/glm5next_mhc.cu", "kernels/gb10/common/glm5next_mhc_fused.cu", "kernels/gb10/common/glm5next_hc_post_sum.cu", "kernels/gb10/common/glm5next_mhc_tok.cu", "kernels/gb10/common/glm5next_mhc_tile.cu"]
 
 # 2026-10-08: The KDA gates: the decay
 # `linear_lower_bound * sigmoid(exp(A_log[h]) * (g + dt_bias))` per channel from the BF16 `f_b`
@@ -2283,7 +2288,9 @@ files = ["kernels/gb10/glm-5.3-flash/nvfp4/glm5next_dsa_mla_decode.cu"]
 # (METRALE_GLM_DSA_HB_PREFILL_PIPE); both files take their per-tile steps from
 # glm5next_dsa_mla_hb_tile.cuh. 2026-10-14: `glm5next_dsa_mla_prefill_tc_phi` is `_phi` at one
 # split on one warp-specialized CTA per (row, head group) (producer warps gather + widen, consumer
-# warps QK + softmax + PV), byte-identical per row (METRALE_GLM_DSA_HB_PREFILL_TC).
+# warps QK + softmax + PV), byte-identical per row (METRALE_GLM_DSA_HB_PREFILL_TC). 2026-10-15:
+# `glm5next_dsa_mla_prefill_tc_phi_nanor` is the same with one NaN-byte test per producer share
+# of a tile instead of one per word, same bytes (METRALE_GLM_DSA_TC_NANOR).
 [[family]]
 id = "glm_mla_decode_hb"
 description = "GLM-5 sparse NoPE MLA decode, head-batched on tensor cores, split + merge (latent 512)"
@@ -2295,6 +2302,7 @@ kernels = [
   "glm5next_dsa_mla_decode_hb::glm5next_dsa_mla_merge",
   "glm5next_dsa_mla_prefill_pipe::glm5next_dsa_mla_prefill_pipe_phi",
   "glm5next_dsa_mla_prefill_tc::glm5next_dsa_mla_prefill_tc_phi",
+  "glm5next_dsa_mla_prefill_tc::glm5next_dsa_mla_prefill_tc_phi_nanor",
 ]
 rows = [1, 4096]
 pipeline.mla_attention = { in = ["bf16", "i32"], act = "bf16", weight = "bf16->bf16", cache = "fp8", scores = "f32", softmax = "f32", accumulate = "f32", out = ["bf16"] }

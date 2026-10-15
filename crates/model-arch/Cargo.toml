@@ -337,6 +337,10 @@ name = "glm5next_mhc_slice_bench"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "glm5next_mhc_tile_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "glm5next_expert_tp_bench"
 required-features = ["cuda", "gpu-examples"]
 
@@ -644,6 +648,10 @@ required-features = ["cuda", "gpu-examples"]
 
 [[example]]
 name = "glm5next_dsa_prefill_tc_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_dsa_prefill_tc_nanor_gate"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
