@@ -33,7 +33,9 @@ use super::super::select::{
     select_tokens_rows,
 };
 use super::super::{Glm5NextDsaConfig, Glm5NextDsaKernels};
-use super::{MinPoolsTable, SLABS_PER_RANK, applies, gather_shards, lever, owned};
+use super::{
+    MIN_SUBPASS_ROWS, MinPoolsTable, SLABS_PER_RANK, applies, gather_shards, lever, owned,
+};
 use crate::glm5next_sp_mhc::all_gather_rows;
 
 static GATHERS: AtomicU64 = AtomicU64::new(0);
@@ -78,7 +80,7 @@ fn split_streams(gpu: &dyn GpuBackend) -> Result<SplitStreams> {
 
 /// 2026-10-15: This rank's two owned slabs when a pass of `k` rows over `pools` pools splits,
 /// `None` when it runs unsplit: [`applies`] with the lever on (`table` given), and every
-/// sub-pass at `per` rows per sub-pass of at least 2 rows, unsplit and on every rank.
+/// sub-pass at `per` rows per sub-pass of at least [`MIN_SUBPASS_ROWS`] rows, unsplit and on every rank.
 pub fn plan(
     table: Option<&MinPoolsTable>,
     world: usize,
@@ -95,7 +97,9 @@ pub fn plan(
         return Ok(None);
     }
     let wide = |ranges: &[(usize, usize)]| -> Result<bool> {
-        Ok(row_passes(ranges, per)?.iter().all(|&(_, n)| n >= 2))
+        Ok(row_passes(ranges, per)?
+            .iter()
+            .all(|&(_, n)| n >= MIN_SUBPASS_ROWS))
     };
     if !wide(&[(0, k)])? {
         return Ok(None);

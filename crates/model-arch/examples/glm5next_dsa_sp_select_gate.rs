@@ -18,6 +18,9 @@
 //!    (spread the larger of the two). xAG is the two exchanges' exposed cost from the 3-box
 //!    send/recv sweep's linear fit, `XAG_LAT_MS + XAG_MS_PER_MB * MB per peer` each; for each k
 //!    the smallest measured P from which every larger measured P splits, else never.
+//! 5. The 32k prompt's four full chunks again on a scratch planned at a 524,288-token ceiling
+//!    (the 512k serve's): the same bytes as at 65,536, the timings, and the projected 32k delta
+//!    over 11 DSA layers at both ceilings, the gathers exposed and hidden.
 //!
 //! Owner: model-arch examples.
 //! Invariants: exits with an error unless every byte check and the negative control hold; the
@@ -43,6 +46,12 @@ use metrale_model_arch::glm5next_dsa::{Glm5NextDsaConfig, Glm5NextDsaKernels};
 
 /// 2026-10-15: The serve's `--max-seq-len` and prefill rows (the recipe's MSL 65536, 8208 rows).
 const CEILING: usize = 65_536;
+const CEILING_512K: usize = 524_288;
+/// 2026-10-15: GLM-5.3's DSA layers (each runs one selection pass per prefill chunk).
+const DSA_LAYERS: f64 = 11.0;
+/// 2026-10-15: The 32k prompt's full chunks (rows, pools) as the serve runs them (nsys, rank 0):
+/// one of 8208 rows, then 8192-row chunks; its 287-row tail never splits.
+const C32K: [(usize, usize); 4] = [(8208, 2052), (8192, 4100), (8192, 6148), (8192, 8196)];
 const MAX_ROWS: usize = 8208;
 const WORLD: usize = 3;
 /// 2026-10-15: Linear fit of the 3-box grouped send/recv sweep (one exchange to both peers,
@@ -53,7 +62,7 @@ const XAG_MS_PER_MB: f64 = 0.110;
 const SENTINEL: u8 = 0xEE;
 
 /// 2026-10-15: GLM-5.3's indexer geometry (the attention fields are not read by the selection).
-fn cfg() -> Glm5NextDsaConfig {
+fn cfg(max_context: usize) -> Glm5NextDsaConfig {
     Glm5NextDsaConfig {
         hidden: 4096,
         index_heads: 32,
@@ -67,7 +76,7 @@ fn cfg() -> Glm5NextDsaConfig {
         qk_nope_head_dim: 256,
         qk_rope_head_dim: 0,
         v_head_dim: 256,
-        max_context: CEILING,
+        max_context,
     }
 }
 
@@ -142,11 +151,16 @@ struct Point {
     unsplit: (f64, f64),
     split: (f64, f64),
     xag: f64,
+    /// 2026-10-15: FNV-1a of the unsplit token rows.
+    bytes: u64,
 }
 
 impl Point {
     fn net(&self) -> f64 {
         self.split.0 + self.xag - self.unsplit.0
+    }
+    fn hidden(&self) -> f64 {
+        self.split.0 - self.unsplit.0
     }
     fn wins(&self) -> bool {
         -self.net() > 2.0 * self.unsplit.1.max(self.split.1)
@@ -261,6 +275,9 @@ fn shape(
         unsplit,
         split,
         xag,
+        bytes: want.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| {
+            (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
+        }),
     };
     println!(
         "k={k:5} P={pools:5} per={per:5} passes={passes} rank_passes={rank_passes:?}: rows differ \
@@ -294,6 +311,34 @@ fn shape(
     Ok(p)
 }
 
+/// 2026-10-15: The serve's selection scratch (`Glm5NextDsaWorkspace::new`) at a ceiling: the
+/// ceiling's geometry at `select_scratch_rows` rows, the output at `MAX_ROWS`.
+fn serve_scratch(gpu: &dyn GpuBackend, c: &Glm5NextDsaConfig) -> Result<DsaSelectScratch> {
+    let full = DsaSelectGeometry::plan(c, c.max_context, MAX_ROWS)?;
+    let rows = select_scratch_rows(MAX_ROWS, c.max_context, c.index_kpool, 16);
+    println!("scratch rows {rows} at {} tokens", c.max_context);
+    DsaSelectScratch::alloc_rows(
+        gpu,
+        c,
+        &DsaSelectGeometry {
+            q_rows: rows,
+            ..full
+        },
+        MAX_ROWS,
+    )
+}
+
+/// 2026-10-15: The 32k prompt's projected selection delta in ms (gathers exposed, hidden) over
+/// its full chunks the table splits, 11 layers each.
+fn c32k_delta(points: &[&Point], t: &MinPoolsTable) -> (f64, f64) {
+    points
+        .iter()
+        .filter(|p| t.split(p.k, p.pools))
+        .fold((0.0, 0.0), |(e, h), p| {
+            (e + p.net() * DSA_LAYERS, h + p.hidden() * DSA_LAYERS)
+        })
+}
+
 fn main() -> Result<()> {
     for v in [
         "METRALE_GLM_DSA_SCORES_MMA",
@@ -308,22 +353,10 @@ fn main() -> Result<()> {
     let set = metrale_kernels::ptx_for_exact_target("glm-5.3-flash", "nvfp4")
         .context("glm-5.3-flash nvfp4 target")?;
     let gpu = MetraleCudaBackend::new(0, &set.modules)?;
-    let c = cfg();
+    let c = cfg(CEILING);
     let kern = Glm5NextDsaKernels::resolve(&gpu)?;
     let inp = inputs(&gpu, &c)?;
-    // 2026-10-15: The serve's scratch (`Glm5NextDsaWorkspace::new`): the ceiling's geometry at
-    // `select_scratch_rows` rows, the output at `MAX_ROWS`.
-    let full = DsaSelectGeometry::plan(&c, CEILING, MAX_ROWS)?;
-    let rows = select_scratch_rows(MAX_ROWS, CEILING, c.index_kpool, 16);
-    let scratch = DsaSelectScratch::alloc_rows(
-        &gpu,
-        &c,
-        &DsaSelectGeometry {
-            q_rows: rows,
-            ..full
-        },
-        MAX_ROWS,
-    )?;
+    let scratch = serve_scratch(&gpu, &c)?;
     let small = DsaSelectGeometry::plan(&c, 4096, MAX_ROWS)?;
     let one_row = DsaSelectScratch::alloc_rows(
         &gpu,
@@ -331,9 +364,9 @@ fn main() -> Result<()> {
         &DsaSelectGeometry { q_rows: 1, ..small },
         MAX_ROWS,
     )?;
-    println!("scratch rows {rows} at {CEILING} tokens; world {WORLD}");
-    let ks = [1024usize, 2048, 4096, 8208];
-    let ps = [1024usize, 2052, 4104, 6156, 8208, 16384];
+    println!("world {WORLD}");
+    let ks = [1024usize, 2048, 4096, 8192, 8208];
+    let ps = [1024usize, 2052, 4100, 6148, 8196, 16384];
     let mut points = Vec::new();
     for &k in &ks {
         for &p in &ps {
@@ -357,19 +390,47 @@ fn main() -> Result<()> {
         "table (gather exposed): METRALE_GLM_DSA_SP_SELECT={}",
         t.canonical()
     );
-    for (k, p) in [
-        (8208, 2052),
-        (8208, 4104),
-        (8208, 6156),
-        (8208, 8208),
-        (287, 8280),
-    ] {
+    for (k, p) in C32K.into_iter().chain([(287, 8268), (4096, 1024)]) {
         let geom = DsaSelectGeometry::plan(&c, p * c.index_kpool, k)?;
         let per = scratch.rows_per_pass(&geom);
         let d = run::plan(Some(&t), WORLD, 0, k, p, true, per)?;
         println!(
             "  plan k={k} P={p} per={per}: {}",
             if d.is_some() { "split" } else { "unsplit" }
+        );
+    }
+
+    // 2026-10-15: 5. The 32k chunks on the 512k serve's scratch.
+    let c512 = cfg(CEILING_512K);
+    let scratch512 = serve_scratch(&gpu, &c512)?;
+    let mut at512 = Vec::new();
+    for (k, p) in C32K {
+        let q = shape(&gpu, &kern, &c512, &inp, &scratch512, None, k, p)?;
+        let base = points
+            .iter()
+            .find(|x| x.k == k && x.pools == p)
+            .context("a 32k chunk outside the grid")?;
+        ensure!(
+            q.bytes == base.bytes,
+            "k {k} P {p}: the 524,288-ceiling selection differs from the 65,536 one"
+        );
+        at512.push(q);
+    }
+    for (name, pts) in [
+        (
+            "64k",
+            C32K.iter()
+                .map(|&(k, p)| points.iter().find(|x| x.k == k && x.pools == p))
+                .collect::<Option<Vec<_>>>()
+                .context("c32k points")?,
+        ),
+        ("512k", at512.iter().collect()),
+    ] {
+        let (e, h) = c32k_delta(&pts, &t);
+        let un: f64 = pts.iter().map(|p| p.unsplit.0 * DSA_LAYERS).sum();
+        println!(
+            "c32k projection at {name}: full-chunk selection {un:.1} ms unsplit; delta {e:+.1} ms \
+             (gathers exposed), {h:+.1} ms (gathers hidden)"
         );
     }
     println!("RESULT: PASS");

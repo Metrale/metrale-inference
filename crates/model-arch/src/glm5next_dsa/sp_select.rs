@@ -31,6 +31,11 @@ use crate::glm5next_sp_mhc::shards;
 /// 2026-10-14: Slabs each rank owns: one early, one late (zigzag).
 pub const SLABS_PER_RANK: usize = 2;
 
+/// 2026-10-15: The fewest rows any selection sub-pass of a split pass may have, unsplit or on any
+/// rank: a 1-row sub-pass takes other scores kernels (`scores_mma_for` needs `q_rows > 1`) and
+/// so other bits, so a pass whose plan holds one never splits (bit identity, not a tuning knob).
+pub const MIN_SUBPASS_ROWS: usize = 2;
+
 /// 2026-10-14: The `2 * world` contiguous row slabs of a `k`-row pass.
 pub fn slabs(k: usize, world: usize) -> Vec<(usize, usize)> {
     shards(k, SLABS_PER_RANK * world)

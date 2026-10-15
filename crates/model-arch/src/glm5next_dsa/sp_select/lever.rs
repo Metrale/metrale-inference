@@ -16,7 +16,7 @@ use std::sync::OnceLock;
 
 use anyhow::{Result, anyhow};
 
-use super::MinPoolsTable;
+use super::{MIN_SUBPASS_ROWS, MinPoolsTable};
 
 /// 2026-10-15: The lever's name.
 pub const ENV: &str = "METRALE_GLM_DSA_SP_SELECT";
@@ -54,17 +54,20 @@ pub fn parse(v: Option<&str>) -> Result<Option<MinPoolsTable>, String> {
 }
 
 /// 2026-10-15: The lever as read once from the environment, with its one-time readback line
-/// (`DSA SP select: sp_select=<0|1> table=<canonical|->`), or the parse error.
+/// (`DSA SP select: sp_select=<0|1> table=<canonical|-> prefill_only=1 min_subpass_rows=2`), or
+/// the parse error. 2026-10-15: the last two fields name the bit-identity guards of
+/// `run::plan`: decode never splits, nor does a pass with a 1-row sub-pass.
 pub fn table() -> Result<Option<&'static MinPoolsTable>> {
     static T: OnceLock<Result<Option<MinPoolsTable>, String>> = OnceLock::new();
     let t = T.get_or_init(|| {
         let t = parse(std::env::var(ENV).ok().as_deref());
         if let Ok(on) = &t {
             tracing::info!(
-                "DSA SP select: sp_select={} table={}",
+                "DSA SP select: sp_select={} table={} prefill_only=1 min_subpass_rows={}",
                 u8::from(on.is_some()),
                 on.as_ref()
-                    .map_or_else(|| "-".to_string(), |t| t.canonical())
+                    .map_or_else(|| "-".to_string(), |t| t.canonical()),
+                MIN_SUBPASS_ROWS
             );
         }
         t
