@@ -32,6 +32,21 @@ __device__ __forceinline__ void w4g_cp4(void* dst, const void* src, bool pred) {
     asm volatile("cp.async.ca.shared.global [%0], [%1], 4, %2;\n" ::"r"(w4g_smem(dst)), "l"(src),
                  "r"(pred ? 4 : 0));
 }
+// 2026-10-10: cp.async with zero fill: `ok` false copies 0 bytes, which writes zeros and reads nothing.
+// 2026-10-15: issued only when `issue` (a predicate, no branch); `dst` is a shared-state address
+// (w4g_smem), so a hoisted destination is not re-converted per stage.
+template <int B>
+__device__ __forceinline__ void w4g_cpi(unsigned int dst, const void* src, bool ok, bool issue) {
+    if constexpr (B == 16)
+        asm volatile("{\n.reg .pred p;\nsetp.ne.b32 p, %3, 0;\n@p cp.async.cg.shared.global [%0], [%1], 16, %2;\n}\n"
+                     ::"r"(dst), "l"(src), "r"(ok ? 16 : 0), "r"((int)issue));
+    else if constexpr (B == 8)
+        asm volatile("{\n.reg .pred p;\nsetp.ne.b32 p, %3, 0;\n@p cp.async.ca.shared.global [%0], [%1], 8, %2;\n}\n"
+                     ::"r"(dst), "l"(src), "r"(ok ? 8 : 0), "r"((int)issue));
+    else
+        asm volatile("{\n.reg .pred p;\nsetp.ne.b32 p, %3, 0;\n@p cp.async.ca.shared.global [%0], [%1], 4, %2;\n}\n"
+                     ::"r"(dst), "l"(src), "r"(ok ? 4 : 0), "r"((int)issue));
+}
 __device__ __forceinline__ void w4g_commit() { asm volatile("cp.async.commit_group;\n" ::); }
 template <int N>
 __device__ __forceinline__ void w4g_wait() {
@@ -224,41 +239,123 @@ __device__ __forceinline__ void w4g_body(
     }
     __syncthreads();
 
-    auto load = [&](unsigned int s, unsigned int c) {
-        W4gStage<MT, NT>& st = sm.u.st[s];
-        const bool tail = c == tail_c;
-#pragma unroll
-        for (unsigned int i = tid; i < NT * 4u; i += TH) {
-            const unsigned int r = i >> 2, part = i & 3u;
+    // 2026-10-15: The load plan, computed once after the sync (sm.arow is final): per copy slot j of
+    // each kind (weight codes, weight scales, activation codes, activation scales), the thread's
+    // chunk-0 source, its stage-0 shared destination, whether the slot exists (v*), whether its row
+    // is live (ok*) and whether it is a tail half (h*). A stage adds its offset to the destination and
+    // a chunk adds 64 code / 8 scale bytes to the source; a dead row keeps its base pointer and copies
+    // 0 bytes. Fused gate/up only: -238 us of 7.4 ms per call; other bodies spill with it (G5b).
+    constexpr unsigned int NW = (NT * 4u + TH - 1u) / TH, NS = (NT * 2u + TH - 1u) / TH;
+    constexpr unsigned int NA = (MT * 4u + TH - 1u) / TH, NAS = (MT + TH - 1u) / TH;
+    constexpr unsigned int STB = (unsigned int)sizeof(W4gStage<MT, NT>);
+    const unsigned char* pw[NW];
+    unsigned int dw[NW];
+    bool vw[NW], okw[NW], hw[NW];
+    const unsigned char* ps[NS];
+    unsigned int ds[NS];
+    bool vs[NS], oks[NS], hs[NS];
+    const unsigned char* pa[NA];
+    unsigned int da[NA];
+    bool va[NA], oka[NA];
+    const unsigned char* pas[NAS];
+    unsigned int das[NAS];
+    bool vas[NAS], okas[NAS];
+    if constexpr (GU) {
+    #pragma unroll
+        for (unsigned int j = 0; j < NW; ++j) {
+            const unsigned int i = tid + j * TH;
+            vw[j] = (NT * 4u) % TH == 0u || i < NT * 4u;
+            const unsigned int r = vw[j] ? i >> 2 : 0u, part = i & 3u;
             const unsigned int n = GU ? w4g_gu_col(n0, r) : n0 + r;
             const unsigned char* bq = (GU && ((r >> 4) & 1u)) ? Uq : Bq;
-            const bool ok = n < N && !(tail && part >= 2u);
-            const unsigned char* src =
-                ok ? bq + (unsigned long long)n * half_K + c * 64u + part * 16u : bq;
-            w4g_cp16(&st.w[r][part * 16u], src, ok);
+            okw[j] = n < N;
+            hw[j] = part >= 2u;
+            pw[j] = okw[j] ? bq + (unsigned long long)n * half_K + part * 16u : bq;
+            dw[j] = w4g_smem(&sm.u.st[0].w[r][part * 16u]);
         }
-        for (unsigned int i = tid; i < NT * 2u; i += TH) {
-            const unsigned int r = i >> 1, h = i & 1u;
+    #pragma unroll
+        for (unsigned int j = 0; j < NS; ++j) {
+            const unsigned int i = tid + j * TH;
+            vs[j] = (NT * 2u) % TH == 0u || i < NT * 2u;
+            const unsigned int r = vs[j] ? i >> 1 : 0u, h = i & 1u;
             const unsigned int n = GU ? w4g_gu_col(n0, r) : n0 + r;
             const unsigned char* bs = (GU && ((r >> 4) & 1u)) ? Us : Bs;
-            const bool ok = n < N && !(tail && h == 1u);
-            const unsigned char* src =
-                ok ? bs + (unsigned long long)n * groups + c * 8u + h * 4u : bs;
-            w4g_cp4(&st.ws[r][h * 4u], src, ok);
+            oks[j] = n < N;
+            hs[j] = h == 1u;
+            ps[j] = oks[j] ? bs + (unsigned long long)n * groups + h * 4u : bs;
+            ds[j] = w4g_smem(&sm.u.st[0].ws[r][h * 4u]);
         }
-#pragma unroll
-        for (unsigned int i = tid; i < (unsigned int)MT * 4u; i += TH) {
-            const unsigned int r = i >> 2, part = i & 3u;
-            const bool ok = (int)r < m_valid;
-            const unsigned char* src =
-                ok ? Aq + (unsigned long long)sm.arow[r] * a_half_K + c * 64u + part * 16u : Aq;
-            w4g_cp16(&st.a[r][part * 16u], src, ok);
+    #pragma unroll
+        for (unsigned int j = 0; j < NA; ++j) {
+            const unsigned int i = tid + j * TH;
+            va[j] = ((unsigned int)MT * 4u) % TH == 0u || i < (unsigned int)MT * 4u;
+            const unsigned int r = va[j] ? i >> 2 : 0u, part = i & 3u;
+            oka[j] = (int)r < m_valid;
+            pa[j] = oka[j] ? Aq + (unsigned long long)sm.arow[r] * a_half_K + part * 16u : Aq;
+            da[j] = w4g_smem(&sm.u.st[0].a[r][part * 16u]);
         }
-        for (unsigned int i = tid; i < (unsigned int)MT; i += TH) {
-            const bool ok = (int)i < m_valid;
-            const unsigned char* src =
-                ok ? As + (unsigned long long)sm.arow[i] * a_groups + c * 8u : As;
-            w4g_cp8(&st.as[i][0], src, ok);
+    #pragma unroll
+        for (unsigned int j = 0; j < NAS; ++j) {
+            const unsigned int i = tid + j * TH;
+            vas[j] = (unsigned int)MT % TH == 0u || i < (unsigned int)MT;
+            const unsigned int r = vas[j] ? i : 0u;
+            okas[j] = (int)r < m_valid;
+            pas[j] = okas[j] ? As + (unsigned long long)sm.arow[r] * a_groups : As;
+            das[j] = w4g_smem(&sm.u.st[0].as[r][0]);
+        }
+    }
+    auto load = [&](unsigned int s, unsigned int c) {
+        if constexpr (GU) {
+            const bool tail = c == tail_c;
+            const unsigned int so = s * STB;
+    #pragma unroll
+            for (unsigned int j = 0; j < NW; ++j)
+                w4g_cpi<16>(dw[j] + so, pw[j] + c * 64u, okw[j] && !(tail && hw[j]), vw[j]);
+    #pragma unroll
+            for (unsigned int j = 0; j < NS; ++j)
+                w4g_cpi<4>(ds[j] + so, ps[j] + c * 8u, oks[j] && !(tail && hs[j]), vs[j]);
+    #pragma unroll
+            for (unsigned int j = 0; j < NA; ++j)
+                w4g_cpi<16>(da[j] + so, pa[j] + c * 64u, oka[j], va[j]);
+    #pragma unroll
+            for (unsigned int j = 0; j < NAS; ++j)
+                w4g_cpi<8>(das[j] + so, pas[j] + c * 8u, okas[j], vas[j]);
+        } else {
+            W4gStage<MT, NT>& st = sm.u.st[s];
+            const bool tail = c == tail_c;
+    #pragma unroll
+            for (unsigned int i = tid; i < NT * 4u; i += TH) {
+                const unsigned int r = i >> 2, part = i & 3u;
+                const unsigned int n = GU ? w4g_gu_col(n0, r) : n0 + r;
+                const unsigned char* bq = (GU && ((r >> 4) & 1u)) ? Uq : Bq;
+                const bool ok = n < N && !(tail && part >= 2u);
+                const unsigned char* src =
+                    ok ? bq + (unsigned long long)n * half_K + c * 64u + part * 16u : bq;
+                w4g_cp16(&st.w[r][part * 16u], src, ok);
+            }
+            for (unsigned int i = tid; i < NT * 2u; i += TH) {
+                const unsigned int r = i >> 1, h = i & 1u;
+                const unsigned int n = GU ? w4g_gu_col(n0, r) : n0 + r;
+                const unsigned char* bs = (GU && ((r >> 4) & 1u)) ? Us : Bs;
+                const bool ok = n < N && !(tail && h == 1u);
+                const unsigned char* src =
+                    ok ? bs + (unsigned long long)n * groups + c * 8u + h * 4u : bs;
+                w4g_cp4(&st.ws[r][h * 4u], src, ok);
+            }
+    #pragma unroll
+            for (unsigned int i = tid; i < (unsigned int)MT * 4u; i += TH) {
+                const unsigned int r = i >> 2, part = i & 3u;
+                const bool ok = (int)r < m_valid;
+                const unsigned char* src =
+                    ok ? Aq + (unsigned long long)sm.arow[r] * a_half_K + c * 64u + part * 16u : Aq;
+                w4g_cp16(&st.a[r][part * 16u], src, ok);
+            }
+            for (unsigned int i = tid; i < (unsigned int)MT; i += TH) {
+                const bool ok = (int)i < m_valid;
+                const unsigned char* src =
+                    ok ? As + (unsigned long long)sm.arow[i] * a_groups + c * 8u : As;
+                w4g_cp8(&st.as[i][0], src, ok);
+            }
         }
     };
 
