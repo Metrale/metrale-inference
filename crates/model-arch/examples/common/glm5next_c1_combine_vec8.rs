@@ -3,8 +3,8 @@
 //! 2026-10-14: Byte gate and microbench of the GLM-5.3 MoE combine at eight elements per thread
 //! (`glm5next_moe_combine[_indexed]_vec8`, `METRALE_GLM_MOE_COMBINE_VEC8=1`) against the scalar
 //! combine at the serve's split grid (`METRALE_GLM_MOE_COMBINE_SPLIT=1`), in slot order and
-//! through a shuffled `token_to_perm` (the expert-sorted order), at 1 and 16 decode rows and the
-//! 8192-row prefill piece.
+//! through a shuffled `token_to_perm` (the expert-sorted order), at 1 and 16 decode rows, at 17,
+//! 287, 341 and 1036 rows and at the 8192- and 8208-row prefill pieces.
 //!
 //! Owner: model-arch examples (GLM-5.3).
 //! Invariants:
@@ -26,7 +26,9 @@ use crate::fixture::{Lcg, same, up, up_f32};
 use crate::timing::report;
 use crate::{HIDDEN, MOE_LAYERS, TOP_K, combine_ref, read, tg, zeros};
 
-const ROWS: [usize; 3] = [1, 16, 8192];
+/// 2026-10-15: Decode rows, the odd and SP-piece prefill rows the cold plan gates (17, 287, 341,
+/// 1036) and the 8192- and 8208-row prefill pieces.
+const ROWS: [usize; 8] = [1, 16, 17, 287, 341, 1036, 8192, 8208];
 
 /// 2026-10-14: Row 0's first 64 elements of every slot and of the shared row.
 fn edges(eo: &mut [bf16], shared: &mut [bf16]) {
