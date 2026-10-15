@@ -11,6 +11,9 @@
 //!   silent off. There is no built-in table: the value is the measured table.
 //! - [`agreement_value`] is 0 when off and otherwise a hash of the canonical table, so two
 //!   ranks that would take different split branches disagree at startup.
+//! - 2026-10-15: `METRALE_GLM_DSA_SP_SELECT_SEL` picks the gathered payload of a split pass:
+//!   unset or `0` the expanded token rows, `1` the folded selected pools (`select::folded`),
+//!   which needs the table on; any other value, or `1` without a table, is a startup error.
 
 use std::sync::OnceLock;
 
@@ -20,6 +23,50 @@ use super::{MIN_SUBPASS_ROWS, MinPoolsTable};
 
 /// 2026-10-15: The lever's name.
 pub const ENV: &str = "METRALE_GLM_DSA_SP_SELECT";
+
+/// 2026-10-15: The payload sub-lever's name.
+pub const ENV_SEL: &str = "METRALE_GLM_DSA_SP_SELECT_SEL";
+
+/// 2026-10-15: What a split pass gathers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Payload {
+    /// 2026-10-15: The expanded `[rows, out_width]` token rows.
+    Tokens,
+    /// 2026-10-15: The folded `[rows, select_k]` selected pools; every rank expands all rows.
+    Selected,
+}
+
+/// 2026-10-15: The payload a sub-lever value names, given whether the table is on.
+pub fn parse_payload(v: Option<&str>, table_on: bool) -> Result<Payload, String> {
+    match v {
+        None | Some("0") => Ok(Payload::Tokens),
+        Some("1") if table_on => Ok(Payload::Selected),
+        Some("1") => Err(format!("{ENV_SEL}=1 needs {ENV} set to a table")),
+        Some(s) => Err(format!("{ENV_SEL}={s:?}: expected `0` or `1`")),
+    }
+}
+
+/// 2026-10-15: The payload as read once, with its one-time readback line
+/// (`DSA SP select payload: sel=<0|1> row_bytes=<select_k*4|out_width*4> fold=launch
+/// expand=replicated`), or the error.
+pub fn payload() -> Result<Payload> {
+    static P: OnceLock<Result<Payload, String>> = OnceLock::new();
+    let p = P.get_or_init(|| {
+        let on = table().map_err(|e| e.to_string())?.is_some();
+        let p = parse_payload(std::env::var(ENV_SEL).ok().as_deref(), on);
+        if let Ok(p) = p {
+            let sel = p == Payload::Selected;
+            tracing::info!(
+                "DSA SP select payload: sel={} row_bytes={} fold={} expand=replicated",
+                u8::from(sel),
+                if sel { "select_k*4" } else { "out_width*4" },
+                if sel { "launch" } else { "-" }
+            );
+        }
+        p
+    });
+    p.clone().map_err(|e| anyhow!("{e}"))
+}
 
 /// 2026-10-15: The table a lever value names: `None` when off (unset or `0`).
 pub fn parse(v: Option<&str>) -> Result<Option<MinPoolsTable>, String> {
@@ -87,9 +134,11 @@ pub fn agreement_of(t: Option<&MinPoolsTable>) -> u64 {
     })
 }
 
-/// 2026-10-15: [`agreement_of`] the lever as read.
+/// 2026-10-15: [`agreement_of`] the lever as read, and the payload in the low bit (the
+/// table's hash with bit 0 flipped for the selected-pools payload, which needs a table, so
+/// off stays 0).
 pub fn agreement_value() -> Result<u64> {
-    Ok(agreement_of(table()?))
+    Ok(agreement_of(table()?) ^ u64::from(payload()? == Payload::Selected))
 }
 
 #[cfg(test)]
@@ -121,6 +170,21 @@ mod tests {
         ] {
             assert!(parse(Some(bad)).is_err(), "{bad:?} must be refused");
         }
+    }
+
+    /// 2026-10-15: The payload sub-lever: off spellings give the token rows, `1` the selected
+    /// pools with a table, and `1` without a table or any other value is refused.
+    #[test]
+    fn the_payload_lever_needs_a_table_and_refuses_everything_else() {
+        for on in [false, true] {
+            assert_eq!(parse_payload(None, on), Ok(Payload::Tokens));
+            assert_eq!(parse_payload(Some("0"), on), Ok(Payload::Tokens));
+            for bad in ["", "2", "on", "true", " 1"] {
+                assert!(parse_payload(Some(bad), on).is_err(), "{bad:?} on {on}");
+            }
+        }
+        assert_eq!(parse_payload(Some("1"), true), Ok(Payload::Selected));
+        assert!(parse_payload(Some("1"), false).is_err());
     }
 
     /// 2026-10-15: The agreement value tells off from on and one table from another, and is

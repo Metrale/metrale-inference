@@ -75,7 +75,8 @@ pub(super) fn assert_rank_levers_agree(
                 u64::from(std::env::var("METRALE_GLM_MTP_XCHG_DEVICE").as_deref() == Ok("1")),
             ),
             // 2026-10-15: The DSA SP selection's table decides which prefill passes enqueue
-            // two all-gathers of selected rows, so every rank must hold the same table.
+            // two all-gathers of selected rows, so every rank must hold the same table; the
+            // payload sub-lever (`_SEL`, low bit) sets their row size.
             (
                 "METRALE_GLM_DSA_SP_SELECT",
                 metrale_model_arch::glm5next_dsa::sp_select::lever::agreement_value()?,

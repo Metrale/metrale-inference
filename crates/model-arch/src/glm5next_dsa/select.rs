@@ -487,14 +487,14 @@ impl DsaSelectScratch {
 
 mod launch;
 pub use launch::{row_passes, select_tokens, select_tokens_in_passes, select_tokens_rows};
+mod folded;
+pub use folded::{expand_folded, folded_check, launch_fold, select_rows_folded};
 mod pipe;
 pub use pipe::{DsaPipeRegions, SCORES_PIPE_SMEM, scores_pipe, scores_pipe_for};
 
 #[cfg(test)]
-mod tests;
-
+mod ceiling_tests;
 #[cfg(test)]
 pub(crate) mod passes_tests;
-
 #[cfg(test)]
-mod ceiling_tests;
+mod tests;

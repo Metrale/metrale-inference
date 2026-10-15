@@ -18,6 +18,10 @@
 //!   unsplit pass's. The caller's stream waits for both gathers before it returns, and no
 //!   gather reads or writes a row a kernel of the pass is writing at the time (slab A is sent
 //!   while slab B, a disjoint row range, is selected).
+//! - 2026-10-15: under [`Payload::Selected`] [`run_split`] runs the same scores and top-k on
+//!   the owned rows, folds them (`select::folded`), gathers the folded `[rows, select_k]`
+//!   selected pools instead of the token rows, and then every rank expands all `k` rows from
+//!   them on the caller's stream: the token rows of the unsplit pass (`dsa_sel_fold.cu`).
 //! - [`gathers`] counts the gathers enqueued, process-wide; a decode step never moves it
 //!   ([`plan`] is `None` off prefill).
 
@@ -29,10 +33,11 @@ use metrale_comm::CommBackend;
 use metrale_gpu_runtime::gpu::GpuBackend;
 
 use super::super::select::{
-    DsaSelectGeometry, DsaSelectInputs, DsaSelectScratch, row_passes, select_tokens_in_passes,
-    select_tokens_rows,
+    DsaSelectGeometry, DsaSelectInputs, DsaSelectScratch, expand_folded, folded_check, row_passes,
+    select_rows_folded, select_tokens_in_passes, select_tokens_rows,
 };
 use super::super::{Glm5NextDsaConfig, Glm5NextDsaKernels};
+use super::lever::Payload;
 use super::{
     MIN_SUBPASS_ROWS, MinPoolsTable, SLABS_PER_RANK, applies, gather_shards, lever, owned,
 };
@@ -131,6 +136,7 @@ pub fn select(
 ) -> Result<usize> {
     select_with(
         lever::table()?,
+        lever::payload()?,
         gpu,
         kernels,
         cfg,
@@ -143,10 +149,11 @@ pub fn select(
     )
 }
 
-/// 2026-10-15: [`select`] under an explicit `table` (`None` = lever off).
+/// 2026-10-15: [`select`] under an explicit `table` (`None` = lever off) and `payload`.
 #[allow(clippy::too_many_arguments)]
 pub fn select_with(
     table: Option<&MinPoolsTable>,
+    payload: Payload,
     gpu: &dyn GpuBackend,
     kernels: &Glm5NextDsaKernels,
     cfg: &Glm5NextDsaConfig,
@@ -170,14 +177,18 @@ pub fn select_with(
         )?;
         if let Some(own) = split {
             let s = split_streams(gpu)?;
-            return run_split(gpu, kernels, cfg, geom, inputs, scratch, c, &s, own, stream);
+            return run_split(
+                gpu, kernels, cfg, geom, inputs, scratch, c, &s, own, payload, stream,
+            );
         }
     }
     select_tokens_in_passes(gpu, kernels, cfg, geom, inputs, scratch, stream)
 }
 
 /// 2026-10-15: The split pass on `main`: slab A (compressing the pools), its gather on the comm
-/// stream while slab B is selected on `main`, slab B's gather, and `main` waiting for both.
+/// stream while slab B is selected on `main`, slab B's gather, and `main` waiting for both;
+/// under [`Payload::Selected`] the slabs are folded selected pools and `main` then expands all
+/// rows. Errors before any launch when the selected-pools payload cannot run on this pass.
 #[allow(clippy::too_many_arguments)]
 pub fn run_split(
     gpu: &dyn GpuBackend,
@@ -189,29 +200,38 @@ pub fn run_split(
     comm: &dyn CommBackend,
     s: &SplitStreams,
     own: [(usize, usize); SLABS_PER_RANK],
+    payload: Payload,
     main: u64,
 ) -> Result<usize> {
     let shards = gather_shards(geom.q_rows, comm.world_size());
-    let row_bytes = cfg.out_width() * 4;
+    let sel = payload == Payload::Selected;
+    let (buf, row_bytes) = if sel {
+        folded_check(kernels, geom, inputs, scratch)?;
+        (scratch.selected(), geom.select_k * 4)
+    } else {
+        (scratch.tokens(), cfg.out_width() * 4)
+    };
     let mut passes = 0;
     for (i, (slab, event)) in own.into_iter().zip([s.slab_a, s.slab_b]).enumerate() {
-        passes += select_tokens_rows(
-            gpu,
-            kernels,
-            cfg,
-            geom,
-            inputs,
-            scratch,
-            &[slab],
-            i == 0,
-            main,
-        )?;
+        let (ranges, compress) = (&[slab], i == 0);
+        passes += if sel {
+            select_rows_folded(
+                gpu, kernels, cfg, geom, inputs, scratch, ranges, compress, main,
+            )?
+        } else {
+            select_tokens_rows(
+                gpu, kernels, cfg, geom, inputs, scratch, ranges, compress, main,
+            )?
+        };
         gpu.record_event(event, main)?;
         gpu.stream_wait_event(s.comm, event)?;
-        all_gather_rows(comm, scratch.tokens(), &shards[i], row_bytes, s.comm)?;
+        all_gather_rows(comm, buf, &shards[i], row_bytes, s.comm)?;
         GATHERS.fetch_add(1, Ordering::Relaxed);
     }
     gpu.record_event(s.done, s.comm)?;
     gpu.stream_wait_event(main, s.done)?;
+    if sel {
+        expand_folded(gpu, kernels, cfg, geom, inputs, scratch, main)?;
+    }
     Ok(passes)
 }

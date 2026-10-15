@@ -130,10 +130,18 @@ pub struct DsaRowsKernels {
     /// visibility, the key tiles streamed (`select::scores_pipe`). Not part of [`Self::ready`].
     pub pool_prep: KernelHandle,
     pub scores_pipe: KernelHandle,
+    /// 2026-10-15: `dsa_sel_fold.cu`'s `dsa_sel_fold` and `dsa_expand_selection_folded`: the
+    /// SP-split selection's selected-pools payload (`sp_select::run`, `SP_SELECT_SEL`). Not
+    /// part of [`Self::ready`].
+    pub sel_fold: KernelHandle,
+    pub expand_folded: KernelHandle,
 }
 
 /// 2026-10-14: Module of the streamed tensor-core scores: `dsa_index_scores_pipe.cu`.
 pub const DSA_SCORES_PIPE_MODULE: &str = "dsa_index_scores_pipe";
+
+/// 2026-10-15: Module of the SP-split selection's payload fold: `dsa_sel_fold.cu`.
+pub const DSA_SEL_FOLD_MODULE: &str = "dsa_sel_fold";
 
 impl DsaRowsKernels {
     pub fn resolve(gpu: &dyn GpuBackend) -> Self {
@@ -141,6 +149,8 @@ impl DsaRowsKernels {
         let pipe = |name: &str| {
             metrale_model_layers::layers::try_kernel(gpu, DSA_SCORES_PIPE_MODULE, name)
         };
+        let fold =
+            |name: &str| metrale_model_layers::layers::try_kernel(gpu, DSA_SEL_FOLD_MODULE, name);
         Self {
             store: k("dsa_indexer_store_rows"),
             write_geom: k("dsa_write_geom_rows"),
@@ -152,6 +162,8 @@ impl DsaRowsKernels {
             topk_radix: k("dsa_topk_pools_radix"),
             pool_prep: pipe("dsa_pool_prep_bf16"),
             scores_pipe: pipe("dsa_index_scores_mma_pipe"),
+            sel_fold: fold("dsa_sel_fold"),
+            expand_folded: fold("dsa_expand_selection_folded"),
         }
     }
 

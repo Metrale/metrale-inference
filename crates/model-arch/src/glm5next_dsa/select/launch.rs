@@ -33,7 +33,7 @@ pub fn select_tokens(
     stream: u64,
 ) -> Result<()> {
     run(
-        gpu, kernels, cfg, geom, inputs, scratch, launch, true, stream,
+        gpu, kernels, cfg, geom, inputs, scratch, launch, true, false, stream,
     )
 }
 
@@ -68,6 +68,7 @@ pub fn select_tokens_in_passes(
             scratch,
             DsaSelectLaunch::Exact,
             true,
+            false,
             stream,
         )?;
         return Ok(1);
@@ -150,6 +151,7 @@ pub fn select_tokens_rows(
             &scratch.row(r0, cfg),
             DsaSelectLaunch::Exact,
             compress && i == 0,
+            false,
             stream,
         )?;
     }
@@ -173,9 +175,11 @@ pub(crate) fn index_scores_grid_x(geom: &DsaSelectGeometry, ceiling: Option<usiz
 }
 
 /// 2026-10-11: The body of [`select_tokens`]; `compress` false skips `dsa_kpool_compress`, for
-/// a later row sub-pass over pools an earlier one on `stream` already compressed.
+/// a later row sub-pass over pools an earlier one on `stream` already compressed. 2026-10-15:
+/// `fold` ends the pass with `dsa_sel_fold` on the selected pools instead of the expansion
+/// (`folded`); it needs an exact launch with pools.
 #[allow(clippy::too_many_arguments)]
-fn run(
+pub(super) fn run(
     gpu: &dyn GpuBackend,
     kernels: &Glm5NextDsaKernels,
     cfg: &Glm5NextDsaConfig,
@@ -184,9 +188,15 @@ fn run(
     scratch: &DsaSelectScratch,
     launch: DsaSelectLaunch,
     compress: bool,
+    fold: bool,
     stream: u64,
 ) -> Result<()> {
     scratch.fits(cfg, geom)?;
+    ensure!(
+        !fold || (matches!(launch, DsaSelectLaunch::Exact) && geom.n_pools > 0),
+        "DSA select: a folded pass needs an exact launch with pools ({} pools)",
+        geom.n_pools
+    );
 
     let d = geom.index_head_dim;
     let kp = geom.index_kpool;
@@ -397,6 +407,10 @@ fn run(
                 .arg_ptr(gd)
                 .launch(stream)?;
         }
+    }
+
+    if fold {
+        return folded::launch_fold(gpu, kernels, geom, inputs, scratch, stream);
     }
 
     KernelLaunch::new(gpu, kernels.expand_selection)

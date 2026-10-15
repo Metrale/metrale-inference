@@ -35,8 +35,11 @@ pub(crate) fn cfg() -> Glm5NextDsaConfig {
 
 pub(crate) const KPOOL_COMPRESS: u64 = 11;
 pub(crate) const INDEX_SCORES: u64 = 12;
-const TOPK_POOLS: u64 = 13;
+pub(crate) const TOPK_POOLS: u64 = 13;
 pub(crate) const EXPAND: u64 = 14;
+/// 2026-10-15: The SP-split selection's payload fold and folded expansion (`sp_select`).
+pub(crate) const SEL_FOLD: u64 = 21;
+pub(crate) const EXPAND_FOLDED: u64 = 22;
 
 /// 2026-10-11: Distinct handles, and no tiled-scores kernel, so the untiled path runs whatever
 /// `METRALE_GLM_DSA_SCORES_TILED` says.
@@ -64,6 +67,8 @@ pub(crate) fn kernels() -> Glm5NextDsaKernels {
             topk_radix: h(0),
             pool_prep: h(0),
             scores_pipe: h(0),
+            sel_fold: h(SEL_FOLD),
+            expand_folded: h(EXPAND_FOLDED),
         },
     }
 }

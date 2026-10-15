@@ -21,6 +21,9 @@
 //! 5. The 32k prompt's four full chunks again on a scratch planned at a 524,288-token ceiling
 //!    (the 512k serve's): the same bytes as at 65,536, the timings, and the projected 32k delta
 //!    over 11 DSA layers at both ceilings, the gathers exposed and hidden.
+//! 6. 2026-10-15: The selected-pools payload (`METRALE_GLM_DSA_SP_SELECT_SEL`) on the same
+//!    chunks at both ceilings (`common/glm5next_dsa_sp_select_sel.rs`): its bytes, its
+//!    unfolded-input negative control, the fold launch, and both payloads' projections.
 //!
 //! Owner: model-arch examples.
 //! Invariants: exits with an error unless every byte check and the negative control hold; the
@@ -60,6 +63,9 @@ const WORLD: usize = 3;
 const XAG_LAT_MS: f64 = 0.027;
 const XAG_MS_PER_MB: f64 = 0.110;
 const SENTINEL: u8 = 0xEE;
+
+#[path = "common/glm5next_dsa_sp_select_sel.rs"]
+mod sel;
 
 /// 2026-10-15: GLM-5.3's indexer geometry (the attention fields are not read by the selection).
 fn cfg(max_context: usize) -> Glm5NextDsaConfig {
@@ -433,6 +439,8 @@ fn main() -> Result<()> {
              (gathers exposed), {h:+.1} ms (gathers hidden)"
         );
     }
+    sel::sel_gate(&gpu, &kern, &c, &inp, &scratch, "64k")?;
+    sel::sel_gate(&gpu, &kern, &c512, &inp, &scratch512, "512k")?;
     println!("RESULT: PASS");
     Ok(())
 }
