@@ -18,6 +18,7 @@ mod mhc_slice;
 mod mix;
 mod multi_seq;
 mod prefill_capture;
+mod prefill_cell;
 pub use multi_seq::{GroupSpan, group_spans};
 mod prefill_spans;
 pub use prefill_spans::{SpanPiece, prefill_span_groups};

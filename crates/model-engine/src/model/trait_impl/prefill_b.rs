@@ -335,6 +335,9 @@ impl TransformerModel {
             }
         };
 
+        // 2026-10-15: `METRALE_GLM_PREFILL_CELL_GRID`: the restored state's extra clamps.
+        self.cell_restored_clamps(seq, effective_seq_len_start, stream)?;
+
         // 2026-09-25: Upload positions (MRoPE when enabled) and slot metadata.
         let upload_meta::MetaLayout {
             meta_base,

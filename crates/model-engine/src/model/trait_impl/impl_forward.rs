@@ -47,6 +47,8 @@ impl ModelForward for TransformerModel {
             stream,
         )?;
         self.try_eager_drafter_prefill(seq, is_last_chunk, stream);
+        // 2026-10-15: `METRALE_GLM_PREFILL_CELL_GRID`: rank 0's clamp at its chunk 0's end.
+        self.cell_first_chunk_clamp(seq, chunk_start, chunk_len, stream)?;
         Ok(logits)
     }
 

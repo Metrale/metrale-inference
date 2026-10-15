@@ -63,4 +63,5 @@ pub mod nllb;
 #[path = "nllb/host_tests.rs"]
 mod nllb_host_tests;
 
+pub use trait_impl::prefill_cell_clamp::{SSM_NORM_READBACK_ENV, ssm_norm_readback};
 pub use types::TransformerModel;

@@ -68,6 +68,7 @@ mod meta_argmax;
 mod prefill_a;
 pub(in crate::model) mod prefill_b;
 mod prefill_c;
+pub(crate) mod prefill_cell_clamp;
 mod prefill_d;
 mod prefix_reuse;
 mod propose_batch_ep;

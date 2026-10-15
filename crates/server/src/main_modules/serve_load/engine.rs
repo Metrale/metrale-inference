@@ -176,6 +176,55 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
         )
         .map_err(anyhow::Error::msg)?;
     }
+    // 2026-10-15: `METRALE_GLM_PREFILL_CELL_GRID`: refuse a sizing, model or lever set the cell
+    // grid cannot mirror, then record the chunking the clamps mirror (on every rank, before the
+    // EP worker loop takes over).
+    let cell_grid = metrale_model_arch::glm5next_prefill_cell::cell_grid()?;
+    if let Some(grid) = cell_grid {
+        use metrale_model_arch::glm5next_prefill_cell as cell;
+        cell::check_cell_budget(
+            grid,
+            metrale_model_arch::glm5next_layer::prefill_rows(),
+            prefill_budget,
+            max_batch_tokens,
+        )
+        .map_err(anyhow::Error::msg)?;
+        let kda = metrale_model_arch::glm5next_kda::Glm5NextKdaConfig::from_model_config(&config);
+        cell::check_cell_model(
+            &config.model_type,
+            config.ssm_state_norm_dims(),
+            kda.heads,
+            kda.head_dim,
+        )
+        .map_err(anyhow::Error::msg)?;
+        if metrale_model_arch::glm5next_prefill_piece::piece_rows()?.is_some() {
+            anyhow::bail!(
+                "{} and {} cannot both be set",
+                cell::CELL_GRID_ENV,
+                metrale_model_arch::glm5next_prefill_piece::PIECE_ROWS_ENV
+            );
+        }
+        let levers = metrale_model_layers::layers::ops::ModelLevers::get();
+        if !(levers.one_row_tail_decode || levers.one_row_prefill) {
+            anyhow::bail!(
+                "{} needs METRALE_ONE_ROW_TAIL_DECODE=1 or METRALE_ONE_ROW_PREFILL=1: a one-row \
+                 cell runs the path a one-row pass takes",
+                cell::CELL_GRID_ENV
+            );
+        }
+        cell::set_chunking(cell::Chunking {
+            first: max_batch_tokens,
+            budget: prefill_budget,
+        })?;
+        tracing::info!(
+            "GLM prefill cell grid: first {} step {} (max_batch_tokens {max_batch_tokens})",
+            grid.first,
+            grid.step
+        );
+    }
+    if metrale_model_engine::model::ssm_norm_readback()? {
+        tracing::info!("GLM SSM norm readback: on (reads h_state before every clamp; kinv only)");
+    }
     let prefix_cache = serve_phases::build_prefix_cache(&args, &config);
     let comm = serve_phases::init_nccl_comm(
         &args,
@@ -282,6 +331,11 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
         &config_json,
     )?)?;
     let forward = model.forward_disclosure();
+    // 2026-10-15: `METRALE_GLM_PREFILL_CELL_GRID`: every grid point on a KV block boundary.
+    if let Some(grid) = cell_grid {
+        metrale_model_arch::glm5next_prefill_cell::check_cell_blocks(grid, model.kv_block_size())
+            .map_err(anyhow::Error::msg)?;
+    }
 
     // 2026-09-26: Kernel load audit and the boot gate (`kernel_gate`). Under
     // `--check-kernels` this call does not return: it prints the report and

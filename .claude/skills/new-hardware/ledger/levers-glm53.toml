@@ -2117,3 +2117,51 @@ effort_hours = 2.0
 transferability = "any BF16 weighted gather-sum whose rows are a multiple of eight elements and 16-byte aligned"
 links = { pr = "", commit = "", evidence = "glm5next_c1_fuse_microtest" }
 notes = "Only combines of COMBINE_VEC8_MIN_ROWS (1024) rows or more take it; decode and short prefills keep the scalar kernel. Refused where it cannot run (kernel absent, hidden not a multiple of 8, unaligned buffer); the serve log line 'GLM MoE: combine_vec8 kernels launched' proves a launch."
+
+[[lever]]
+id = "gb10x3-glm53-prefill-cell-grid"
+date = "2026-10-15"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_PREFILL_CELL_GRID=8208,8192 + --max-prefill-tokens 16384 (max_batch_tokens 16400) + METRALE_GLM_PREFILL_ROWS=8208 + METRALE_ONE_ROW_TAIL_DECODE=1"
+symptom = "32k cold prefill: 661 ms of NCCL exchange exposed on rank 0 out of a 10.66 s span; SP-mHC exchanges hide only under the mHC pre/post launches of their own sub-chunk, and every pass boundary idles about 3 ms"
+diagnosis_tool = "nsys"
+root_cause_class = "phase-serialization"
+lever_type = "scheduling"
+lkb_effect = "no kernel change: a 16384-row pass runs its layers per cell of the absolute 8208/8192 grid (the 8192 serve's passes), each cell on the path that serve's pass takes, with the KDA state clamp (ssm_state_clamp_norm_fused over one layer) between cells; the scheduler's chunk-end clamps of the 8192 serve are replayed (extra clamps of a restored prefix state, rank 0's clamp after a first chunk past 8208). Step 1 of the SP pipeline over two cells (COMM-1)"
+parity_tier_kept = "bit-identical-not-claimed"
+per_rung = []
+verdict = "held"
+verdict_reason = "2026-10-15 built and CPU-tested (the per-segment path against the 8192 serve's pass paths over hit offsets on and off the grid, the replayed clamp counts with off-by-one controls); the GPU tf compare against the 8192 serve (inert, a 16384 control without the grid that must differ, the grid arm with off-grid hits) is not run yet. Alone it saves only pass-boundary idle (projected about -7 ms); the win is the cell-pipelined arm after identity"
+failure_mode = "the 8192 serve clamps asymmetrically (rank 0 skips its chunk-0 clamp; every cached chunk of a prefix hit clamps the restored state again); the grid mirrors both exactly, since fixing either changes numerics"
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 6.0
+transferability = "any chunked prefill with a recurrent-state normalisation between chunks that wants wider passes at the narrow serve's bits"
+links = { pr = "", commit = "", evidence = "glm5next_prefill_cell_tests, glm5next_prefill_cell_clamp_tests" }
+notes = "Every rank must set it alike. The boot line 'GLM prefill cell grid: first 8208 step 8192 (max_batch_tokens 16400)' is the readback; a hit logs 'GLM prefill cell grid: rank <r> restored state at <u>: <k> extra clamps'. Under load the scheduler's first chunk is not max_batch_tokens; the grid follows the idle chunking, as the 8192 serve's own grid moves under load (pre-existing)."
+
+[[lever]]
+id = "gb10x3-glm53-ssm-norm-readback"
+date = "2026-10-15"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_SSM_NORM_READBACK=1 (kinv and accuracy runs only)"
+symptom = "whether the SSM state clamp's bound (per-head Frobenius norm 200) is ever reached on the accuracy and kinv corpus decides whether the clamp schedule's asymmetries matter at all"
+diagnosis_tool = "manual-inspection"
+root_cause_class = "numerics-path-mismatch"
+lever_type = "process-fix"
+lkb_effect = "none: before each between-pass clamp, each SSM layer's FP32 state is copied to the host and one SSM_NORM_MAX line gives the largest per-head norm, its layer and head, the count above 200 and each layer's largest"
+parity_tier_kept = "bit-identical"
+per_rung = []
+verdict = "held"
+verdict_reason = "2026-10-15 built and CPU-tested (norm_max with a block-boundary control); the zero-byte-effect run (tf lines equal with and without it) is not run yet"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 1.0
+transferability = "any recurrent-state clamp whose firing is in question"
+links = { pr = "", commit = "", evidence = "prefill_cell_clamp unit tests" }
+notes = "A host sync per clamp: never in a timed run. The boot line 'GLM SSM norm readback: on (reads h_state before every clamp; kinv only)' is the readback."

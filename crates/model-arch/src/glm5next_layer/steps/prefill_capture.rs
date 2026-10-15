@@ -33,6 +33,7 @@
 //!   class (W4A16 256 rows, FP8 1024); the rows after the last point are not the separate
 //!   pass's bits (disclosure PREFILL-TAILMERGE-1).
 
+use super::prefill_cell::LayerSeg;
 use super::*;
 use crate::glm5next_kda::cut::KdaCut;
 use metrale_model_layers::layer::{MidchunkCapture, split_segment_takes_decode_path};
@@ -137,7 +138,32 @@ impl Glm5NextLayer {
             && cap.is_some()
             && metrale_gpu_runtime::prefill_tail_mode::prefill_tail_mode()
                 == metrale_gpu_runtime::prefill_tail_mode::PrefillTailMode::Merge;
-        let segments: Vec<(usize, usize, Option<CapturePoint>, Vec<KdaCut>)> = if merge {
+        let piece = crate::glm5next_prefill_piece::piece_rows()?;
+        let pipeline = crate::glm5next_sp_pipeline::enabled()?;
+        // 2026-10-15: `METRALE_GLM_PREFILL_CELL_GRID`: the pass as cells of the grid serve's passes,
+        // the state clamped between them (`steps/prefill_cell.rs`); not beside the piece rows or
+        // the SP pipeline, which cut the rows their own way.
+        let grid = crate::glm5next_prefill_cell::cell_grid()?;
+        if grid.is_some() && (piece.is_some() || pipeline) {
+            bail!(
+                "GLM layer {}: {} runs neither {} nor METRALE_GLM_SP_PIPELINE=1",
+                self.layer_idx,
+                crate::glm5next_prefill_cell::CELL_GRID_ENV,
+                crate::glm5next_prefill_piece::PIECE_ROWS_ENV
+            );
+        }
+        let segments: Vec<LayerSeg> = if let Some(grid) = grid {
+            self.cell_segments(
+                grid,
+                num_tokens,
+                rows,
+                merge,
+                seq_len_start,
+                ctx,
+                cap,
+                ordinal,
+            )?
+        } else if merge {
             let mut v = Vec::new();
             for (s, e, cuts) in crate::glm5next_tail_merge::merge_plan(
                 num_tokens,
@@ -154,7 +180,14 @@ impl Glm5NextLayer {
                         Ok(KdaCut { row, dst })
                     })
                     .collect::<Result<Vec<KdaCut>>>()?;
-                v.push((s, e, None, cuts));
+                v.push(LayerSeg {
+                    start: s,
+                    end: e,
+                    after: None,
+                    cuts,
+                    clamp_after: false,
+                    decode: None,
+                });
             }
             v
         } else {
@@ -164,7 +197,14 @@ impl Glm5NextLayer {
                 cap.map(|c| c.cap_local),
             )
             .into_iter()
-            .map(|(s, e, after)| (s, e, after, Vec::new()))
+            .map(|(start, end, after)| LayerSeg {
+                start,
+                end,
+                after,
+                cuts: Vec::new(),
+                clamp_after: false,
+                decode: None,
+            })
             .collect()
         };
         // 2026-10-13: The layer dump's sub-chunk index and the pass's last position.
@@ -174,8 +214,6 @@ impl Glm5NextLayer {
         // 2026-10-14: `METRALE_GLM_PREFILL_PIECE_ROWS=P`: a wider sub-chunk runs as `P`-row
         // pieces (`steps/forward_pieces.rs`); not beside the SP pipeline, which plans its own
         // sub-chunks, and neither under the merged tail (one `forward_k` per merged sub-chunk).
-        let piece = crate::glm5next_prefill_piece::piece_rows()?;
-        let pipeline = crate::glm5next_sp_pipeline::enabled()?;
         if piece.is_some() && pipeline {
             bail!(
                 "GLM layer {}: {} and METRALE_GLM_SP_PIPELINE=1 cannot both be set",
@@ -191,19 +229,30 @@ impl Glm5NextLayer {
                 crate::glm5next_prefill_piece::PIECE_ROWS_ENV
             );
         }
-        for (start, end, after, cuts) in segments {
+        for LayerSeg {
+            start,
+            end,
+            after,
+            cuts,
+            clamp_after,
+            decode,
+        } in segments
+        {
             // 2026-10-14: Under `METRALE_ONE_ROW_TAIL_DECODE=1` a one-row segment after position
             // 0 runs `decode`'s walk (`forward_one`, its dump call), the path a warm one-row
             // replay of the row takes, on the row's own highway slot (`layer/one_row_path.rs`).
             // The per-token walk (`rows == 1`) already runs `forward_one`.
+            // 2026-10-15: Under the cell grid the plan decided the path (`decode`).
             let tail_decode = rows > 1
-                && split_segment_takes_decode_path(
-                    end - start,
-                    seq_len_start + start,
-                    split,
-                    ctx.levers.one_row_tail_decode,
-                    ctx.levers.one_row_prefill,
-                );
+                && decode.unwrap_or_else(|| {
+                    split_segment_takes_decode_path(
+                        end - start,
+                        seq_len_start + start,
+                        split,
+                        ctx.levers.one_row_tail_decode,
+                        ctx.levers.one_row_prefill,
+                    )
+                });
             let mut t = start;
             // 2026-10-14: `METRALE_GLM_SP_PIPELINE=1`: the segment's leading run of SP-mHC
             // sub-chunks pipelined through the layer (`steps/forward_sp_pipe.rs`); the rows after
@@ -308,6 +357,9 @@ impl Glm5NextLayer {
             if let (Some(which), Some(idx), Some(c)) = (after, ordinal, cap) {
                 self.capture_kda_state(state, c, which, idx, ctx.gpu, stream)?;
             }
+            if clamp_after {
+                self.cell_clamp(state, ctx.gpu, stream)?;
+            }
         }
         Ok(())
     }
@@ -335,7 +387,7 @@ impl Glm5NextLayer {
     /// 2026-10-14: Capture point `which`'s `(h_dst, conv_dst)` for SSM ordinal `idx` on this KDA
     /// layer; `None` for a DSA layer or when that list has no entry `idx`. Errors when the plan's
     /// per-layer sizes are not this layer's state sizes.
-    fn capture_dsts(
+    pub(in crate::glm5next_layer) fn capture_dsts(
         &self,
         cap: &MidchunkCapture<'_>,
         which: CapturePoint,

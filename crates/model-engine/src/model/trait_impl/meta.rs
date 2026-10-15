@@ -202,6 +202,8 @@ impl TransformerModel {
         self.gpu
             .copy_h2d_async(ptr_bytes, self.ssm_norm_ptrs_buf, stream)?;
 
+        // 2026-10-15: `METRALE_GLM_SSM_NORM_READBACK=1`: the norms before the clamp, read-only.
+        self.ssm_norm_readback_line(seq, stream)?;
         let (num_heads, k_dim, v_dim) = self.config.ssm_state_norm_dims();
 
         KernelLaunch::new(self.gpu.as_ref(), norm_k)
