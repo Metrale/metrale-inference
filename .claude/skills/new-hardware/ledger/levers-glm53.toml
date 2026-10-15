@@ -2045,3 +2045,27 @@ effort_hours = 5.0
 transferability = "any multi-stage cp.async tile body with spare registers: hoist the address plan, but gate it per body on a 0-spill ptxas check"
 links = { pr = "", commit = "", evidence = "/workspace/claude-state/glm/moegemm/g5ch_1.txt" }
 notes = "Not applied to the down/plain bodies: there the same plan (G5b) spills on the k64 twins (16/24, 4/4, 12/12). The register-unconstrained 'pre' harness variant suggests about -40 us on down r4 if a spill-free form is found. Raw pairs show a +140 to +250 us drift in iteration 3 on identical code, hence the control normalization"
+
+[[lever]]
+id = "gb10x3-glm53-dequant-persist"
+date = "2026-10-15"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_DEQUANT_PERSIST=kda|w4a16|all (default off); needs METRALE_GLM_W4A16_DEQUANT_GEMM_MIN_ROWS, plus METRALE_GLM_FP8_DEQUANT_GEMM_MIN_ROWS for all; refused with METRALE_GLM_W4A16_TC_GEMM_MIN_ROWS"
+symptom = "cold c32k prefill re-dequantizes every hot dense weight (364 NVFP4 W4A16 and 134 FP8 sites per rank) into the shared BF16 scratch on every 8208-row chunk: about 162 ms per rank of dequant kernels in the rank-0 profile"
+diagnosis_tool = "nsys"
+root_cause_class = "redundant-work"
+lever_type = "state-reuse"
+lkb_effect = "none: the copies are made at load by the existing dequant_nvfp4_to_bf16_g16 / dequant_fp8_rowscale_to_bf16 kernels; the dequant GEMM levers split into dequantize + gemm and the gemm step reads the copy when one is registered. No new kernel and no new external library: the cuBLASLt GEMM is the existing call with byte-identical inputs"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "held"
+verdict_reason = "Byte gate (glm5next_dequant_persist_gate, one GB10): copy vs per-launch dequant output identical at rows 1, 17, 268, 1036, 8192 and 8208 on all 12 site shapes (6 W4A16, 6 FP8), and the negative control (one copy element set to 1e30) changes the output at every row count. Timing at 8208 rows, median [min..max] of 7 batches of 10 calls: per chunk per rank, summed over the per-rank site counts, 598.86 -> 565.93 ms (saved 32.93 ms; dsa o_absorb alone 9440 -> 8244 us per call x11). That projects to about -130 to -160 ms on cold c32k per rank (4 chunks plus the tail). Costs about +5.66 GB per rank of persistent BF16 for all (KV still far above 512k tokens at util 0.82). The cold c32k / c1k serve A/B is pending"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 4.0
+transferability = "any dequantize-then-vendor-GEMM prefill path whose dequantized weight fits next to the KV cache: keep the BF16 copy once at load and trade memory for one weight-sized write and read per chunk"
+links = { pr = "", commit = "80346e9c0400608506397aa52e8152689df45ed5", evidence = "glm5next_dequant_persist_gate output, 2026-10-15T16:27Z" }
+notes = "Load-time readback: 'glm dequant persist: <mode> copies=<n> bytes=<b>'. Expected for all: about 498 copies and 5.66 GB per rank; w4a16 about 364 copies and 4.01 GB; kda about 238 copies and 3.21 GB. The shared dequant scratch is still reserved (smaller launches and weights without a copy use it). Several small shapes save less than their timing spread; the saving is concentrated in the KDA q/k/v/o and DSA o_absorb sites"
