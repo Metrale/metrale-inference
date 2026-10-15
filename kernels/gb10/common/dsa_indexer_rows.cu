@@ -25,6 +25,7 @@
 //   (dsa_pool_slot) instead of reading the pool_indices dsa_kpool_compress would have stored.
 
 #include "dsa_indexer_body.cuh"
+#include "dsa_scores_mma.cuh"
 #include <stdint.h>
 
 // 2026-10-09: grid (1, rows), block >= 1: dsa_indexer_store per row.
@@ -328,32 +329,7 @@ extern "C" __global__ void __launch_bounds__(256) dsa_index_scores_tiled(
 // order is fixed, so a score depends only on its own row and pool (row- and batch-invariant).
 // Launch: grid (ceil(Q / 8), 1, 1), block 256; H = 32 and D = 128 only (else nothing is
 // written; the launcher never sends another shape).
-#define DSA_SM_QPC 8u
-#define DSA_SM_PT 64u
-#define DSA_SM_D 128u
-#define DSA_SM_H 32u
-#define DSA_SM_LD (DSA_SM_D + 8u)
-
-__device__ __forceinline__ uint32_t dsa_sm_pack(float2 v) {
-    __nv_bfloat162 b = __floats2bfloat162_rn(v.x, v.y);
-    return *reinterpret_cast<uint32_t*>(&b);
-}
-
-__device__ __forceinline__ void dsa_sm_mma(float (&d)[4], const uint32_t (&a)[4], uint32_t b0,
-                                           uint32_t b1) {
-    asm volatile(
-        "mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 "
-        "{%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};\n"
-        : "+f"(d[0]), "+f"(d[1]), "+f"(d[2]), "+f"(d[3])
-        : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b0), "r"(b1));
-}
-
-__device__ __forceinline__ void dsa_sm_ldsm_x4(uint32_t addr, uint32_t& d0, uint32_t& d1,
-                                               uint32_t& d2, uint32_t& d3) {
-    asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%0,%1,%2,%3}, [%4];\n"
-                 : "=r"(d0), "=r"(d1), "=r"(d2), "=r"(d3)
-                 : "r"(addr));
-}
+// 2026-10-14: The shapes and the per-score arithmetic are in dsa_scores_mma.cuh.
 
 extern "C" __global__ void __launch_bounds__(256) dsa_index_scores_mma(
     const float* __restrict__ q,
@@ -381,32 +357,9 @@ extern "C" __global__ void __launch_bounds__(256) dsa_index_scores_mma(
     const unsigned int r = blockIdx.x * DSA_SM_QPC + warp;
     const bool live = r < Q;
 
-    // 2026-10-12: Row r's 32 heads as BF16 A fragments: tile mt holds heads 16 mt .. 16 mt + 15;
-    // a[mt][ks] = rows (g, g + 8) x cols (2 tig, 2 tig + 1) and (2 tig + 8, 2 tig + 9) of k-step ks.
     uint32_t a[2][8][4];
     float wv[2][2];
-    {
-        const float* qr = q + (size_t)(live ? r : 0u) * DSA_SM_H * DSA_SM_D;
-        const float2 z = make_float2(0.0f, 0.0f);
-#pragma unroll
-        for (int mt = 0; mt < 2; ++mt) {
-            const unsigned int h0 = (unsigned int)mt * 16u + g, h1 = h0 + 8u;
-#pragma unroll
-            for (int ks = 0; ks < 8; ++ks) {
-                const unsigned int k0 = (unsigned int)ks * 16u + 2u * tig;
-                const float2 x00 = live ? *(const float2*)(qr + h0 * DSA_SM_D + k0) : z;
-                const float2 x10 = live ? *(const float2*)(qr + h1 * DSA_SM_D + k0) : z;
-                const float2 x01 = live ? *(const float2*)(qr + h0 * DSA_SM_D + k0 + 8u) : z;
-                const float2 x11 = live ? *(const float2*)(qr + h1 * DSA_SM_D + k0 + 8u) : z;
-                a[mt][ks][0] = dsa_sm_pack(x00);
-                a[mt][ks][1] = dsa_sm_pack(x10);
-                a[mt][ks][2] = dsa_sm_pack(x01);
-                a[mt][ks][3] = dsa_sm_pack(x11);
-            }
-            wv[mt][0] = live ? weights[(size_t)r * DSA_SM_H + h0] : 0.0f;
-            wv[mt][1] = live ? weights[(size_t)r * DSA_SM_H + h1] : 0.0f;
-        }
-    }
+    dsa_sm_load_a(q, weights, r, live, g, tig, a, wv);
     const uint32_t sbase = (uint32_t)__cvta_generic_to_shared(sB);
     const unsigned int ntiles = (P + DSA_SM_PT - 1u) / DSA_SM_PT;
     for (unsigned int t = 0; t < ntiles; ++t) {
@@ -448,42 +401,16 @@ extern "C" __global__ void __launch_bounds__(256) dsa_index_scores_mma(
         }
         __syncthreads();
         float acc[2][8][4];
-#pragma unroll
-        for (int mt = 0; mt < 2; ++mt)
-#pragma unroll
-            for (int nt = 0; nt < 8; ++nt)
-#pragma unroll
-                for (int c = 0; c < 4; ++c) acc[mt][nt][c] = 0.0f;
+        dsa_sm_zero(acc);
         // 2026-10-12: Warp-uniform: a row that sees none of the tile's pools skips its MMAs.
         const bool mine = __any_sync(0xFFFFFFFFu, sCand[warp][lane] | sCand[warp][lane + 32u]);
-        if (live && mine) {
-#pragma unroll
-            for (int nt = 0; nt < 8; ++nt) {
-#pragma unroll
-                for (int kk = 0; kk < 4; ++kk) {
-                    const unsigned int row = (unsigned int)nt * 8u + (lane & 7u);
-                    const unsigned int kof = (unsigned int)kk * 32u + (lane >> 3) * 8u;
-                    uint32_t b0, b1, b2, b3;
-                    dsa_sm_ldsm_x4(sbase + (row * DSA_SM_LD + kof) * 2u, b0, b1, b2, b3);
-                    dsa_sm_mma(acc[0][nt], a[0][2 * kk], b0, b1);
-                    dsa_sm_mma(acc[1][nt], a[1][2 * kk], b0, b1);
-                    dsa_sm_mma(acc[0][nt], a[0][2 * kk + 1], b2, b3);
-                    dsa_sm_mma(acc[1][nt], a[1][2 * kk + 1], b2, b3);
-                }
-            }
-        }
-        // 2026-10-12: Epilogue. c0/c1 are rows g of columns 2 tig, 2 tig + 1; c2/c3 rows g + 8.
+        if (live && mine) dsa_sm_tile_mma(acc, a, sbase, lane);
+        // 2026-10-12: Epilogue (dsa_sm_fold); lane tig of group g == 0 writes.
 #pragma unroll
         for (int nt = 0; nt < 8; ++nt) {
 #pragma unroll
             for (int j = 0; j < 2; ++j) {
-                float s = wv[0][0] * fmaxf(scale * acc[0][nt][j], 0.0f);
-                s += wv[0][1] * fmaxf(scale * acc[0][nt][2 + j], 0.0f);
-                s += wv[1][0] * fmaxf(scale * acc[1][nt][j], 0.0f);
-                s += wv[1][1] * fmaxf(scale * acc[1][nt][2 + j], 0.0f);
-                s += __shfl_xor_sync(0xFFFFFFFFu, s, 4);
-                s += __shfl_xor_sync(0xFFFFFFFFu, s, 8);
-                s += __shfl_xor_sync(0xFFFFFFFFu, s, 16);
+                const float s = dsa_sm_fold(acc, wv, scale, nt, j);
                 const unsigned int pp = (unsigned int)nt * 8u + 2u * tig + (unsigned int)j;
                 const unsigned int gp = p0 + pp;
                 if (g == 0u && live && gp < P)

@@ -124,11 +124,22 @@ pub struct DsaRowsKernels {
     /// 2026-10-12: `dsa_topk_pools_radix`: `dsa_topk_pools`'s selection, the same pools in the
     /// same order, by radix select (`select::topk_radix`). Not part of [`Self::ready`].
     pub topk_radix: KernelHandle,
+    /// 2026-10-14: `dsa_index_scores_pipe.cu`'s `dsa_pool_prep_bf16` and
+    /// `dsa_index_scores_mma_pipe`: [`Self::scores_mma`]'s bytes from per-pool BF16 keys and
+    /// visibility, the key tiles streamed (`select::scores_pipe`). Not part of [`Self::ready`].
+    pub pool_prep: KernelHandle,
+    pub scores_pipe: KernelHandle,
 }
+
+/// 2026-10-14: Module of the streamed tensor-core scores: `dsa_index_scores_pipe.cu`.
+pub const DSA_SCORES_PIPE_MODULE: &str = "dsa_index_scores_pipe";
 
 impl DsaRowsKernels {
     pub fn resolve(gpu: &dyn GpuBackend) -> Self {
         let k = |name: &str| metrale_model_layers::layers::try_kernel(gpu, DSA_ROWS_MODULE, name);
+        let pipe = |name: &str| {
+            metrale_model_layers::layers::try_kernel(gpu, DSA_SCORES_PIPE_MODULE, name)
+        };
         Self {
             store: k("dsa_indexer_store_rows"),
             write_geom: k("dsa_write_geom_rows"),
@@ -138,6 +149,8 @@ impl DsaRowsKernels {
             scores_tiled: k("dsa_index_scores_tiled"),
             scores_mma: k("dsa_index_scores_mma"),
             topk_radix: k("dsa_topk_pools_radix"),
+            pool_prep: pipe("dsa_pool_prep_bf16"),
+            scores_pipe: pipe("dsa_index_scores_mma_pipe"),
         }
     }
 
