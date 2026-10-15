@@ -2060,7 +2060,7 @@ lkb_effect = "glm5next_hc_post_rank_sum_vec8 in glm5next_hc_post_sum.cu: the sca
 parity_tier_kept = "bit-identical"
 per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
 verdict = "held"
-verdict_reason = "byte gate (glm5next_hc_post_vec_gate) and clean/co-run timing pending; the 32k cold TTFT A/B is the lead's"
+verdict_reason = "2026-10-15 single-GPU gate: glm5next_hc_post_vec_gate byte-identical to the scalar kernel at rows 1/86/341/684/2736/8208 x ranks 0-2 (H4096 hc4 world 3) plus five odd shapes, write_x 0 and 1, exponent-flip control fires everywhere; graph-replayed median of 7, us per launch, clean: 86 rows 13.6 -> 11.5, 684 rows 522 -> 488, 2736 rows 2088 -> 1937; beside 2 co-running copy CTAs: 684 rows 594 -> 518, 2736 rows 2514 -> 2139. Held until the 32k cold TTFT A/B"
 failure_mode = ""
 caught_by = ""
 time_lost_hours = 0
