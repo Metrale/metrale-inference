@@ -7,7 +7,7 @@
 //! a reader of the final name sees the old file or the new one, never a part.
 
 use std::fs::{self, File};
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
 use crate::{Error, Result};
@@ -27,15 +27,14 @@ pub struct Staged {
     dest: PathBuf,
 }
 
-/// Write `bytes` beside `dir/name` under a hidden temporary name; the
-/// directory is created when missing.
+/// Write `bytes` beside `dir/name` under a hidden temporary name. `dir` must
+/// exist (`create_dir` makes it): a directory that vanished is not remade.
 pub fn stage(dir: &Path, name: &str, bytes: &[u8]) -> Result<Staged> {
     if name.is_empty() || name.starts_with(STAGED_PREFIX) || name.contains(['/', '\\']) {
         return Err(Error(format!(
             "atomic write: {name:?} is not a plain file name"
         )));
     }
-    fs::create_dir_all(dir).map_err(|e| io("creating", dir, e))?;
     let tmp = dir.join(format!("{STAGED_PREFIX}{name}.tmp-{}", std::process::id()));
     let mut f = File::create(&tmp).map_err(|e| io("creating", &tmp, e))?;
     f.write_all(bytes).map_err(|e| io("writing", &tmp, e))?;
@@ -65,6 +64,34 @@ pub fn sync_dir(dir: &Path) -> Result<()> {
         File::open(dir)
             .and_then(|d| d.sync_all())
             .map_err(|e| io("syncing", dir, e))?;
+    }
+    Ok(())
+}
+
+/// Create `dir` and its missing ancestors, syncing the parent of each
+/// directory created (a new entry is durable only once its parent is synced).
+pub fn create_dir(dir: &Path) -> Result<()> {
+    let mut missing = Vec::new();
+    let mut at = Some(dir);
+    while let Some(d) = at.filter(|d| !d.as_os_str().is_empty()) {
+        match fs::metadata(d) {
+            Ok(m) if m.is_dir() => break,
+            Ok(_) => return Err(Error(format!("creating {}: not a directory", d.display()))),
+            Err(e) if e.kind() == ErrorKind::NotFound => missing.push(d),
+            Err(e) => return Err(io("reading", d, e)),
+        }
+        at = d.parent();
+    }
+    for d in missing.into_iter().rev() {
+        match fs::create_dir(d) {
+            Ok(()) => {}
+            Err(e) if e.kind() == ErrorKind::AlreadyExists && d.is_dir() => continue,
+            Err(e) => return Err(io("creating", d, e)),
+        }
+        match d.parent().filter(|p| !p.as_os_str().is_empty()) {
+            Some(p) => sync_dir(p)?,
+            None => sync_dir(Path::new("."))?,
+        }
     }
     Ok(())
 }

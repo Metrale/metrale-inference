@@ -26,5 +26,6 @@ pub fn write<W: LatticeStorage, D: LatticeStorage>(
     store: &Store<W, D>,
     export_dir: &Path,
 ) -> Result<PathBuf> {
+    atomic::create_dir(export_dir)?;
     atomic::write(export_dir, EXPORT_FILE, &render(store)?)
 }

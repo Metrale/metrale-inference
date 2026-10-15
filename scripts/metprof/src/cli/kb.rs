@@ -7,7 +7,11 @@
 //!
 //! Exit statuses: 0 = recorded and materialised; 2 = a usage or
 //! configuration error (nothing written); 3 = recorded only, or not recorded
-//! (the reason is on stderr; any analysis is still on stdout).
+//! (the reason is on stderr; any analysis is still on stdout);
+//! `VERIFY_FAILED` (4) = `kb verify` did not verify the sealed export: it is
+//! missing, does not open (tampered with, or sealed under another key) or
+//! does not seal the current export, or could not be read. A busy lease is
+//! still 3.
 
 use metprof_kb::config::{self as embedding_toml, EmbeddingConfig};
 use metprof_kb::kb_toml::{self, KbConfig, SealConfig};
@@ -22,6 +26,9 @@ use crate::fail;
 
 pub const REQUIRED: &str = "--kb is required (kb.toml path, or 'off')";
 pub const OFF_NOTICE: &str = "metprof: --kb off: this run is not recorded in the KB\n";
+/// `kb verify` ran and the sealed export failed it (distinct from 3, a KB
+/// that was busy or not in the state asked for).
+pub const VERIFY_FAILED: i32 = 4;
 
 /// The value of `--kb`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -202,6 +209,14 @@ pub fn run_op(name: &str, op: KbOp, setup: Option<&Setup>, io: &Io, json: bool) 
     };
     let report = match report {
         Ok(r) => r,
+        Err(e) if op == KbOp::Verify => {
+            return Outcome {
+                code: VERIFY_FAILED,
+                stdout: String::new(),
+                stderr: format!("metprof: {name}: FAILED: {e}\n"),
+                files: Vec::new(),
+            };
+        }
         Err(e) => return incomplete(name, String::new(), &e),
     };
     let stdout = match render(&report.result, json) {

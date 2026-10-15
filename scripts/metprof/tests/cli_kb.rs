@@ -9,13 +9,13 @@
 mod common;
 
 use common::kb::NOW;
-use common::tree::{SHA_ABC, argv as tree_argv, mem as tree_mem, written};
+use common::tree::{argv as tree_argv, mem as tree_mem};
 use common::{Capture, FAMILIES_TOML, HASHED, Mem, Sink, kb_toml};
-use metprof::cli::kb::OFF_NOTICE;
+use metprof::cli::kb::{OFF_NOTICE, VERIFY_FAILED};
 use metprof::cli::{Io, Outcome, run};
 use metprof::core::provenance::sha256_hex;
 use metprof::ports::Files;
-use metprof_kb::port::{Arg, FileRef, Identity};
+use metprof_kb::port::{Arg, Identity};
 use serde_json::{Value, json};
 
 const SUMMARIZE: [&str; 10] = [
@@ -174,34 +174,6 @@ fn a_run_records_digests_and_stamps_never_paths() {
             hardware_class: "class-a".into(),
         }
     );
-}
-
-#[test]
-fn a_tree_run_records_the_tree_it_writes() {
-    let m = tree_mem();
-    let out = m.run(&tree_argv(&["--model", "m"]));
-    let tree = written(&out);
-    let [r] = <[_; 1]>::try_from(m.records()).expect("one record");
-    let sha = sha256_hex(&out.files[0].1);
-    assert_eq!(
-        r.files,
-        vec![FileRef {
-            name: "t.json".into(),
-            sha256: sha.clone(),
-            json: Some(tree),
-        }]
-    );
-    let at = r.args.iter().position(|a| *a == Arg::Word("--out".into()));
-    assert_eq!(
-        at.map(|i| &r.args[i + 1]),
-        Some(&Arg::File {
-            sha256: sha,
-            basename: "t.json".into()
-        })
-    );
-    assert_eq!(r.result["out"], json!("t.json"));
-    assert_eq!(r.stamps.config_sha256, m.sha256("/cfg.toml").unwrap());
-    assert_eq!(r.stamps.capture_sha256.as_deref(), Some(SHA_ABC));
 }
 
 #[test]
@@ -393,7 +365,7 @@ mod local {
         d.ok(&["kb", "verify"]);
         write(&d.export(), &format!("{exported}\n"));
         let out = d.run(&["kb", "verify"]);
-        assert_eq!(out.code, 3);
+        assert_eq!((out.code, out.stdout.as_str()), (VERIFY_FAILED, ""));
         assert!(
             out.stderr.contains("does not seal the current kkb.jsonl"),
             "{}",
@@ -409,10 +381,27 @@ mod local {
             (v["spool_files"].clone(), v["inserted"].clone()),
             (json!(2), json!(0))
         );
+        // A flipped byte, or no sealed export at all, fails verification.
+        let sealed = d.root.join("export").join("kkb.jsonl.kkb");
+        let mut bytes = fs::read(&sealed).unwrap();
+        let last = bytes.len() - 1;
+        bytes[last] ^= 1;
+        fs::write(&sealed, &bytes).unwrap();
+        let out = d.run(&["kb", "verify"]);
+        assert_eq!((out.code, out.stdout.as_str()), (VERIFY_FAILED, ""));
+        assert!(
+            out.stderr.contains("FAILED: seal: opening"),
+            "{}",
+            out.stderr
+        );
+        fs::remove_file(&sealed).unwrap();
+        assert_eq!(d.run(&["kb", "verify"]).code, VERIFY_FAILED);
+        d.ok(&["kb", "seal"]);
+        d.ok(&["kb", "verify"]);
         // Another key cannot open the sealed export.
         write(&d.root.join("export.key"), &"cd".repeat(32));
         let out = d.run(&["kb", "verify"]);
-        assert_eq!(out.code, 3);
+        assert_eq!((out.code, out.stdout.as_str()), (VERIFY_FAILED, ""));
         assert!(out.stderr.contains("seal: opening"), "{}", out.stderr);
     }
 

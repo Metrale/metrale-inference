@@ -26,6 +26,7 @@ latticedb-core = { git = "https://github.com/Avarok-Cybersecurity/lattice-db", t
 metprof-envelope = { path = "../envelope" }
 latticedb-storage = { git = "https://github.com/Avarok-Cybersecurity/lattice-db", tag = "v0.3.4" }
 tokio = { version = "1", features = ["rt"] }
+zeroize = "1.9.0"
 
 [dev-dependencies]
 tempfile = "3"

@@ -67,6 +67,7 @@ impl Spool {
     /// Write the record under a temporary name; it is not in the spool until
     /// the returned value is committed.
     pub fn stage(&self, run: &RunRecord) -> Result<Staged> {
+        atomic::create_dir(&self.dir)?;
         atomic::stage(&self.dir, &file_name(run)?, &encode(run)?)
     }
 

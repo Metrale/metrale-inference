@@ -8,11 +8,13 @@
 //! others is refused. The kid is `local-` and the first 16 hex digits of the
 //! key's SHA-256, so a reader knows which key a file needs without the key.
 
-use std::fs;
+use std::fs::{self, File};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use metprof_envelope::{Dek, Expected, OsEntropy, SealRequest, SystemClock};
 use sha2::{Digest, Sha256};
+use zeroize::Zeroizing;
 
 use crate::export::EXPORT_FILE;
 use crate::{Error, Result, atomic, bail};
@@ -21,13 +23,15 @@ pub const SEALED_FILE: &str = "kkb.jsonl.kkb";
 /// The plaintext encoding label: the export as it is (no compression).
 pub const ENCODING: &str = "lattice-jsonl/1";
 pub const KEY_LEN: usize = 32;
+/// The longest key file: the hex digits and one newline.
+const KEY_FILE_MAX: usize = 2 * KEY_LEN + 1;
 
 fn envelope(what: &str, e: impl std::fmt::Display) -> Error {
     Error(format!("seal: {what}: {e}"))
 }
 
-/// The key from the key file's bytes.
-pub fn parse_key(bytes: &[u8]) -> Result<[u8; KEY_LEN]> {
+/// The key from the key file's bytes (wiped from memory when dropped).
+pub fn parse_key(bytes: &[u8]) -> Result<Zeroizing<[u8; KEY_LEN]>> {
     let hex = bytes.strip_suffix(b"\n").unwrap_or(bytes);
     if hex.len() != 2 * KEY_LEN || !hex.iter().all(u8::is_ascii_hexdigit) {
         bail!(
@@ -35,7 +39,7 @@ pub fn parse_key(bytes: &[u8]) -> Result<[u8; KEY_LEN]> {
             2 * KEY_LEN
         );
     }
-    let mut key = [0u8; KEY_LEN];
+    let mut key = Zeroizing::new([0u8; KEY_LEN]);
     for (k, pair) in key.iter_mut().zip(hex.chunks_exact(2)) {
         let digit = |c: u8| (c as char).to_digit(16).unwrap_or(0) as u8;
         *k = digit(pair[0]) << 4 | digit(pair[1]);
@@ -57,25 +61,28 @@ impl std::fmt::Debug for ExportSeal {
 }
 
 impl ExportSeal {
-    pub fn new(key: [u8; KEY_LEN], publisher_build: &str) -> ExportSeal {
+    pub fn new(key: &[u8; KEY_LEN], publisher_build: &str) -> ExportSeal {
         let digest: String = Sha256::digest(key)
             .iter()
             .map(|b| format!("{b:02x}"))
             .collect();
         ExportSeal {
-            dek: Dek::from_bytes(key),
+            dek: Dek::from_bytes(*key),
             kid: format!("local-{}", &digest[..16]),
             publisher_build: publisher_build.to_string(),
         }
     }
 
-    /// Read the key file at `path`.
+    /// Read the key file at `path`: opened once, its mode checked on that
+    /// handle (so the file checked is the file read), its bytes read into
+    /// memory that is wiped when dropped.
     pub fn load(path: &Path, publisher_build: &str) -> Result<ExportSeal> {
         let what = |e: std::io::Error| Error(format!("seal: key file {}: {e}", path.display()));
+        let file = File::open(path).map_err(what)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mode = fs::metadata(path).map_err(what)?.permissions().mode();
+            let mode = file.metadata().map_err(what)?.permissions().mode();
             if mode & 0o077 != 0 {
                 bail!(
                     "seal: key file {} is mode {:o}; it must not be readable by group or others (0600)",
@@ -84,9 +91,14 @@ impl ExportSeal {
                 );
             }
         }
-        let bytes = fs::read(path).map_err(what)?;
+        // Read at most one byte past the limit into a buffer that never
+        // grows (a reallocation would leave an unwiped copy behind).
+        let mut bytes = Zeroizing::new(Vec::with_capacity(KEY_FILE_MAX + 1));
+        file.take(KEY_FILE_MAX as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(what)?;
         let key = parse_key(&bytes).map_err(|e| Error(format!("{} ({})", e.0, path.display())))?;
-        Ok(ExportSeal::new(key, publisher_build))
+        Ok(ExportSeal::new(&key, publisher_build))
     }
 
     pub fn kid(&self) -> &str {

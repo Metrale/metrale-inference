@@ -30,6 +30,8 @@ pub fn build_id() -> String {
 const CONFIG_OPTS: [&str; 2] = ["families", "config"];
 /// The option or positional naming the capture.
 const CAPTURE: &str = "capture";
+/// The option naming the file a command writes (`Outcome::files`).
+const OUTPUT: &str = "out";
 
 pub fn stamps(
     io: &Io,
@@ -53,20 +55,24 @@ fn basename(path: &str) -> String {
         .map_or_else(|| UNKNOWN.to_string(), |n| n.to_string_lossy().into_owned())
 }
 
-/// Digests of the files a run names, each read once. A file the command
-/// writes is digested from the bytes it writes.
+/// Digests of the files a run names, each read once. The output option's
+/// file is digested from the bytes the command writes to it; every other
+/// file as it is on disk (an input that is also the output path, as in
+/// `--baseline t.json --out t.json`, is the old file, read before the run).
 struct Digests<'a> {
     io: &'a Io<'a>,
     written: &'a [(String, Vec<u8>)],
-    seen: HashMap<String, String>,
+    seen: HashMap<(String, bool), String>,
 }
 
 impl Digests<'_> {
-    fn of(&mut self, path: &str) -> Result<String> {
-        if let Some(d) = self.seen.get(path) {
+    fn of(&mut self, path: &str, output: bool) -> Result<String> {
+        let key = (path.to_string(), output);
+        if let Some(d) = self.seen.get(&key) {
             return Ok(d.clone());
         }
-        let d = match self.written.iter().find(|(p, _)| p == path) {
+        let written = self.written.iter().find(|(p, _)| output && p == path);
+        let d = match written {
             Some((_, bytes)) => sha256_hex(bytes),
             None => self
                 .io
@@ -74,7 +80,7 @@ impl Digests<'_> {
                 .sha256(path)
                 .map_err(|e| Error(format!("cannot digest {path}: {e}")))?,
         };
-        self.seen.insert(path.to_string(), d.clone());
+        self.seen.insert(key, d.clone());
         Ok(d)
     }
 }
@@ -121,7 +127,7 @@ pub fn run_record(
         };
         let arg = match kind {
             Kind::File | Kind::FilePair => {
-                let sha256 = digests.of(value)?;
+                let sha256 = digests.of(value, name == Some(OUTPUT))?;
                 if name.is_some_and(|n| CONFIG_OPTS.contains(&n)) {
                     config = Some(sha256.clone());
                 }
