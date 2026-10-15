@@ -13,12 +13,12 @@ use anyhow::{Result, bail};
 use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
-use super::build::absorb_for_rank;
 use super::host::{
     UnabsorbHost, dense_ref, head_bmm_ref, split_w_uk_t, split_w_uv, unabsorb_for_rank,
 };
 use super::lever::{ENV, O_PROJ_SITE, Q_B_SITE, SITE_RULES, parse};
 use super::*;
+use crate::glm5next_dsa::build::absorb_for_rank;
 
 /// 2026-10-15: A small NoPE layer; `nope` != `vd` so a K/V width mix-up changes shapes.
 fn cfg(local_heads: usize, nope: usize, vd: usize) -> Glm5NextDsaConfig {
