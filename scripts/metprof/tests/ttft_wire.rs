@@ -318,4 +318,10 @@ fn records_join_in_order_within_the_done_line_rounding() {
     let mut no_key = rec(100, Intent::Cold, 450.0);
     no_key.usage_ttft_ms = None;
     assert_err(join(&[no_key], &sel), "no usage_ttft_ms");
+    let mut other_cell = rec(100, Intent::Cold, 450.0);
+    other_cell.cell = "b".to_string();
+    assert_err(
+        join(&[other_cell], &sel),
+        "joined the server request of line 1, which is cell a",
+    );
 }
