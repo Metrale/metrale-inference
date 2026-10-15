@@ -104,6 +104,11 @@ pub fn proj(
     k: usize,
     stream: u64,
 ) -> Result<()> {
+    // 2026-10-15: `METRALE_GLM_DEQUANT_PERSIST`: the copy kept at load holds the bytes the
+    // dequantization would write into the scratch; the GEMM is the same call.
+    if let Some(copy) = crate::glm5next_dequant_persist::copy_of(w.weight, n, k)? {
+        return gemm(a, copy, c, m, n, k, w.weight_scale_2, stream);
+    }
     let s = crate::glm5next_dequant_scratch::get(WHAT)?;
     dequant_gemm(gpu, w, s.ptr, s.elems, a, c, m, n, k, stream)
 }
@@ -123,9 +128,25 @@ pub fn dequant_gemm(
     k: usize,
     stream: u64,
 ) -> Result<()> {
+    dequantize(gpu, w, scratch, scratch_elems, n, k, stream)?;
+    gemm(a, scratch, c, m, n, k, w.weight_scale_2, stream)
+}
+
+/// 2026-10-15: Dequantize `w` (`[n, k]` NVFP4: packed codes and group scales) into `dst`
+/// (`dst_elems` BF16) on `stream`: [`dequant_gemm`]'s first step, also the load-time fill of
+/// `glm5next_dequant_persist`'s copies.
+pub fn dequantize(
+    gpu: &dyn GpuBackend,
+    w: &QuantizedWeight,
+    dst: DevicePtr,
+    dst_elems: usize,
+    n: usize,
+    k: usize,
+    stream: u64,
+) -> Result<()> {
     ensure!(
-        n * k <= scratch_elems && k.is_multiple_of(16),
-        "W4A16 dequant GEMM: a [{n}, {k}] weight does not fit the {scratch_elems}-element scratch"
+        n * k <= dst_elems && k.is_multiple_of(16),
+        "W4A16 dequant GEMM: a [{n}, {k}] weight does not fit the {dst_elems}-element scratch"
     );
     let kern = gpu
         .op_cache()
@@ -137,18 +158,26 @@ pub fn dequant_gemm(
         .block([BLOCK, 1, 1])
         .arg_ptr(w.weight)
         .arg_ptr(w.weight_scale)
-        .arg_ptr(scratch)
+        .arg_ptr(dst)
         .arg_u64(groups)
-        .launch(stream)?;
+        .launch(stream)
+}
+
+/// 2026-10-15: [`dequant_gemm`]'s second step: one cuBLASLt BF16 GEMM
+/// `c[m, n] = alpha * (a[m, k] @ w_bf16[n, k]^T)`.
+#[allow(clippy::too_many_arguments)]
+fn gemm(
+    a: DevicePtr,
+    w_bf16: DevicePtr,
+    c: DevicePtr,
+    m: usize,
+    n: usize,
+    k: usize,
+    alpha: f32,
+    stream: u64,
+) -> Result<()> {
     metrale_gpu_runtime::cublaslt::bf16_gemm_act_weight_t_scaled(
-        a.0,
-        scratch.0,
-        c.0,
-        m as u32,
-        n as u32,
-        k as u32,
-        w.weight_scale_2,
-        stream,
+        a.0, w_bf16.0, c.0, m as u32, n as u32, k as u32, alpha, stream,
     )
 }
 

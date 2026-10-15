@@ -112,6 +112,11 @@ pub fn proj(
     k: usize,
     stream: u64,
 ) -> Result<()> {
+    // 2026-10-15: `METRALE_GLM_DEQUANT_PERSIST=all`: the copy kept at load holds the bytes the
+    // dequantization would write into the scratch; the GEMM is the same call.
+    if let Some(copy) = crate::glm5next_dequant_persist::copy_of(w.weight, n, k)? {
+        return gemm(a, copy, c, m, n, k, stream);
+    }
     let s = crate::glm5next_dequant_scratch::get(WHAT)?;
     dequant_gemm(gpu, w, s.ptr, s.elems, a, c, m, n, k, stream)
 }
@@ -131,6 +136,22 @@ pub fn dequant_gemm(
     k: usize,
     stream: u64,
 ) -> Result<()> {
+    dequantize(gpu, w, scratch, scratch_elems, n, k, stream)?;
+    gemm(a, scratch, c, m, n, k, stream)
+}
+
+/// 2026-10-15: Dequantize `w` (`[n, k]` E4M3, one FP32 scale per row) into `dst` (`dst_elems`
+/// BF16) on `stream`: [`dequant_gemm`]'s first step, also the load-time fill of
+/// `glm5next_dequant_persist`'s copies.
+pub fn dequantize(
+    gpu: &dyn GpuBackend,
+    w: &Fp8Weight,
+    dst: DevicePtr,
+    dst_elems: usize,
+    n: usize,
+    k: usize,
+    stream: u64,
+) -> Result<()> {
     ensure!(
         w.scale_format == WeightQuantFormat::Fp8PerRow && (w.n as usize, w.k as usize) == (n, k),
         "{WHAT}: the weight is [{}, {}] {:?}, launched as [{n}, {k}] per-row",
@@ -139,8 +160,8 @@ pub fn dequant_gemm(
         w.scale_format
     );
     ensure!(
-        n * k <= scratch_elems && k.is_multiple_of(GROUP),
-        "{WHAT}: a [{n}, {k}] weight does not fit the {scratch_elems}-element scratch"
+        n * k <= dst_elems && k.is_multiple_of(GROUP),
+        "{WHAT}: a [{n}, {k}] weight does not fit the {dst_elems}-element scratch"
     );
     let kern = gpu
         .op_cache()
@@ -152,12 +173,25 @@ pub fn dequant_gemm(
         .block([BLOCK, 1, 1])
         .arg_ptr(w.weight)
         .arg_ptr(w.row_scale)
-        .arg_ptr(scratch)
+        .arg_ptr(dst)
         .arg_u64(groups)
         .arg_u32(k as u32)
-        .launch(stream)?;
+        .launch(stream)
+}
+
+/// 2026-10-15: [`dequant_gemm`]'s second step: one cuBLASLt BF16 GEMM
+/// `c[m, n] = a[m, k] @ w_bf16[n, k]^T`.
+fn gemm(
+    a: DevicePtr,
+    w_bf16: DevicePtr,
+    c: DevicePtr,
+    m: usize,
+    n: usize,
+    k: usize,
+    stream: u64,
+) -> Result<()> {
     metrale_gpu_runtime::cublaslt::bf16_gemm_act_weight_t_scaled(
-        a.0, scratch.0, c.0, m as u32, n as u32, k as u32, 1.0, stream,
+        a.0, w_bf16.0, c.0, m as u32, n as u32, k as u32, 1.0, stream,
     )
 }
 

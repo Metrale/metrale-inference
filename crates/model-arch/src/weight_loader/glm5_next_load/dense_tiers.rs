@@ -15,9 +15,10 @@
 //!   freed, after the quantization finished; nothing else in the layer still names the buffer
 //!   (`glm5next_w4a16_dense::retarget` refuses otherwise).
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_model_layers::layers::{DenseQuantization, DsaQuantization};
+use metrale_model_layers::weight_map::QuantizedWeight;
 
 use crate::glm5next_layer::{Glm5NextMixer, Glm5NextMlpSite};
 use crate::glm5next_mlp::Glm5NextMlpConfig;
@@ -112,7 +113,8 @@ pub(super) fn register_dense_tiers(
 
 /// 2026-10-09: Register `projs` (layer `idx`): FP8 for the FP8 part of [`split_by_tier`], with
 /// the BF16 kept; W4A16 for the rest, each retargeted in `slots` to its NVFP4 key and its BF16
-/// freed.
+/// freed. 2026-10-15: each projection `METRALE_GLM_DEQUANT_PERSIST` names also keeps its BF16
+/// dequantized copy (`glm5next_dequant_persist`).
 pub(super) fn register_projections(
     gpu: &dyn GpuBackend,
     projs: Vec<Proj>,
@@ -122,20 +124,19 @@ pub(super) fn register_projections(
     idx: usize,
 ) -> Result<()> {
     let (fp8, w4) = split_by_tier(projs, dense, dsa)?;
+    let persist = crate::glm5next_dequant_persist::mode()?;
     if !fp8.is_empty() {
         let max_k = fp8.iter().map(|p| p.2).max().unwrap_or(0);
         crate::glm5next_fp8_dense::prepare(gpu, max_k)?;
         let quantize = gpu.kernel("gemv_fp8w", "quantize_bf16_to_fp8")?;
         for (w, n, k, name) in fp8 {
-            crate::glm5next_fp8_dense::register(
-                gpu,
-                quantize,
-                w,
-                n,
-                k,
-                &format!("layer {idx} {name}"),
-                0,
-            )?;
+            let what = format!("layer {idx} {name}");
+            crate::glm5next_fp8_dense::register(gpu, quantize, w, n, k, &what, 0)?;
+            if persist.keeps(true, name) {
+                let seg = crate::glm5next_fp8_dense::row_weight(w)
+                    .with_context(|| format!("{what}: no per-row FP8 weight to keep"))?;
+                crate::glm5next_dequant_persist::keep_fp8(gpu, &seg, &what)?;
+            }
         }
     }
     if w4.is_empty() {
@@ -143,7 +144,18 @@ pub(super) fn register_projections(
     }
     let kernels = w4a16::Nvfp4QuantKernels::load(gpu)?;
     for (w, n, k, name) in w4 {
-        let key = w4a16::register(gpu, &kernels, w, n, k, &format!("layer {idx} {name}"), 0)?;
+        let what = format!("layer {idx} {name}");
+        let key = w4a16::register(gpu, &kernels, w, n, k, &what, 0)?;
+        if persist.keeps(false, name) {
+            let [(weight, _), (weight_scale, _)] = w4a16::footprint(key)
+                .with_context(|| format!("{what}: not registered under its key"))?;
+            let q = QuantizedWeight {
+                weight,
+                weight_scale,
+                ..QuantizedWeight::null()
+            };
+            crate::glm5next_dequant_persist::keep_w4a16(gpu, &q, n, k, &what)?;
+        }
         w4a16::retarget(slots, w, key)?;
         gpu.free(w)?;
     }
