@@ -2045,3 +2045,51 @@ effort_hours = 5.0
 transferability = "any multi-stage cp.async tile body with spare registers: hoist the address plan, but gate it per body on a 0-spill ptxas check"
 links = { pr = "", commit = "", evidence = "/workspace/claude-state/glm/moegemm/g5ch_1.txt" }
 notes = "Not applied to the down/plain bodies: there the same plan (G5b) spills on the k64 twins (16/24, 4/4, 12/12). The register-unconstrained 'pre' harness variant suggests about -40 us on down r4 if a spill-free form is found. Raw pairs show a +140 to +250 us drift in iteration 3 on identical code, hence the control normalization"
+
+[[lever]]
+id = "gb10x3-glm53-dsa-sp-select"
+date = "2026-10-15"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_DSA_SP_SELECT=<measured k:min_pools table> (prefill only; with METRALE_GLM_DSA_SCORES_MMA=1 METRALE_GLM_DSA_SCORES_PIPE=1)"
+symptom = "the DSA indexer's scores, top-k and expansion run on every query row on every rank under TP=3 (the indexer is replicated): 283 ms of full-chunk selection per cold 32k prefill on each rank after the scores pipe"
+diagnosis_tool = "microbench"
+root_cause_class = "redundant-work"
+lever_type = "parallelism"
+lkb_effect = "sp_select::run splits a batched prefill pass over the ranks: each rank selects its two zigzag slabs (the same row sub-passes the unsplit pass runs), then two in-place all-gathers of the selected token rows on a greatest-priority comm stream, slab A's gather overlapping slab B's selection; decode, verify and MTP passes never split (prefill flag), and a pass whose sub-pass plan has a 1-row sub-pass anywhere runs unsplit (another scores kernel, other bits)"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "pending"
+verdict_reason = "2026-10-15 glm5next_dsa_sp_select_gate (gb10, one box, ranks simulated): 0 rows differ and 0 foreign rows at 28 grid points (k 1024..8208 x P 1024..16384) and the four 32k chunks at a 524,288-token ceiling; the shifted-input negative control differs in every slab row. Per layer, unsplit vs slowest rank (ms): 8208x2052 3.215 vs 1.368, 8192x4100 5.219 vs 2.263, 8192x6148 7.501 vs 3.274, 8192x8196 9.824 vs 4.344; the token gathers cost 2.52 ms per chunk-layer (11.22 MB per peer, 3-box sweep fit), so the measured table 1024:6148,2048:4100,4096:4100,8192:8196,8208:6148 splits only the last 32k chunk: -32.6 ms per cold 32k prefill (-60.3 ms with the gathers hidden). Serve A/B and the 3-rank token hash pending"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 8.0
+transferability = "any per-query-row selection that tensor parallelism replicates: split rows over the ranks, gather the result rows; pays only when the gathered bytes cost less than the rows' compute"
+links = { pr = "", commit = "052c69723", evidence = "glm5next_dsa_sp_select_gate" }
+notes = "The table is the value of the lever (no built-in table) and is agreed across ranks at startup by hash. The gather cost is modelled from a 3-box send/recv sweep, not measured inside a serve; contention with the SP overlap's other traffic is unmeasured. The token payload is 4x the selected-pools payload (gb10x3-glm53-dsa-sp-select-sel), which wins at every 32k chunk."
+
+[[lever]]
+id = "gb10x3-glm53-dsa-sp-select-sel"
+date = "2026-10-15"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_DSA_SP_SELECT=8192:4100,8208:2052 METRALE_GLM_DSA_SP_SELECT_SEL=1"
+symptom = "the SP-split selection's token-row gathers (out_width x 4 = 8204 B per row) cost 2.52 ms per 32k chunk-layer and eat most of the split's saving"
+diagnosis_tool = "microbench"
+root_cause_class = "communication-bound"
+lever_type = "new-kernel"
+lkb_effect = "dsa_sel_fold.cu: dsa_sel_fold folds a sub-pass's candidacy into its selected pools in place (entries the expansion would drop become -1), the ranks gather the folded [rows, select_k] i32 pools (2048 B per row at 32k), and dsa_expand_selection_folded (dsa_expand_selection_body with the candidacy test reduced to p >= 0) expands every row on every rank"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "pending"
+verdict_reason = "2026-10-15 glm5next_dsa_sp_select_gate section 6 (gb10, sparse inputs: ~3% invalid keys, ~1% masked rows), at 65,536 and 524,288 ceilings: 0 token rows differ, 0 foreign selected rows, 0 folded entries other than the raw entry or -1 (748,009 dropped); the control (expanding the unfolded pools) differs in 2193 rows. Per layer, folded slabs + gathers + replicated expansion vs unsplit (ms, 64k): 8208x2052 1.199+0.670+0.468 vs 3.234 (-0.897), 8192x4100 1.996+0.669+0.589 vs 5.266 (-2.011), 8192x6148 2.902+0.669+0.757 vs 7.563 (-3.235), 8192x8196 3.874+0.669+0.926 vs 9.862 (-4.392); fold launch 0.010-0.016 ms per sub-pass. Projected -115.9 ms per cold 32k prefill at 64k, -119.5 ms at 512k (gathers exposed; -145.4/-149.0 hidden). Serve A/B and the 3-rank token hash pending"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 5.0
+transferability = "gather a selection's indices, not its expansion, whenever the expansion is a pure function of indices every rank already holds"
+links = { pr = "", commit = "74a781e88", evidence = "glm5next_dsa_sp_select_gate" }
+notes = "The fold is a separate launch, not a top-k epilogue. The control fires only at the first 32k chunk (2052 pools, where rows have fewer pools than select_k); at the later chunks the fold drops only masked rows' entries. The table holds the four measured 32k chunk points; smaller passes stay unsplit until measured under this payload."
