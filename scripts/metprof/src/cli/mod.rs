@@ -8,6 +8,7 @@
 
 pub mod args;
 mod busy;
+mod families;
 mod load;
 
 use serde_json::{Map, Value};
@@ -37,7 +38,7 @@ pub struct Outcome {
 }
 
 fn commands() -> Vec<&'static Command> {
-    [busy::COMMANDS].concat()
+    [busy::COMMANDS, families::COMMANDS].concat()
 }
 
 fn groups(cmds: &[&Command]) -> Vec<&'static str> {

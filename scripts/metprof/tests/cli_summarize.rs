@@ -96,3 +96,46 @@ fn thresholds_have_no_defaults() {
     ]);
     assert!(err.contains("required: --gap-ms"), "{err}");
 }
+
+#[test]
+fn json_flag_works_on_either_side_of_the_subcommand() {
+    let cap = Capture::new()
+        .kernel_with(
+            "gemm_a",
+            0.0,
+            100.0,
+            common::K {
+                grid: (4, 1, 1),
+                ..K0
+            },
+        )
+        .kernel("norm_b", 100.0, 150.0);
+    let m = mem(cap);
+    let tail = [
+        "c.sqlite",
+        "--device",
+        "0",
+        "--families",
+        "f.toml",
+        "--grid-filter",
+        "gemm:x>=4",
+    ];
+    let mut a_argv = vec!["--json", "families"];
+    a_argv.extend(tail);
+    let mut b_argv = vec!["families"];
+    b_argv.extend(tail);
+    b_argv.push("--json");
+    let a = m.run(&a_argv);
+    let b = m.run(&b_argv);
+    assert_eq!(a.code, 0, "{}", a.stderr);
+    assert_eq!(a, b);
+    let r: serde_json::Value = serde_json::from_str(&a.stdout).unwrap();
+    let fams: Vec<&str> = r["families"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| x["family"].as_str().unwrap())
+        .collect();
+    assert_eq!(fams, vec!["gemm", "norm"]);
+    assert_eq!(r["families"][0]["grid_filter"], "x>=4");
+}
