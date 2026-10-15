@@ -28,6 +28,7 @@ mod topk_combine;
 mod w4a4;
 mod w4a4_dense;
 mod w4a4_dense_grouped;
+mod w4a4_early;
 mod w4a4_grouped;
 mod w4a4_grouped_gu;
 mod w4a4_grouped_nc;
@@ -42,6 +43,7 @@ pub use route::{ExpertRoute, expert_route, grouped_row_floor};
 pub use shared_fork::{SHARED_FORK_MAX_ROWS, shared_fork_rows};
 pub use w4a4_dense::forward_dense_w4a4;
 pub use w4a4_dense_grouped::DenseGroupedTables;
+pub use w4a4_early::{GateUpCodes, gate_up_codes};
 pub use w4a4_grouped::{
     moe_w4a4_grouped, smem_bytes as w4a4_grouped_smem_bytes, takes_grouped as w4a4_takes_grouped,
     tile_index as w4a4_grouped_tile_index,

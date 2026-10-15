@@ -31,6 +31,7 @@ pub mod glm5next_mhc_post_pre_tok;
 pub mod glm5next_mhc_tile;
 pub mod glm5next_mhc_tok;
 pub mod glm5next_mlp;
+pub mod glm5next_moe_quant_early;
 pub mod glm5next_mtp_head;
 pub mod glm5next_prefill_piece;
 pub mod glm5next_skeleton;

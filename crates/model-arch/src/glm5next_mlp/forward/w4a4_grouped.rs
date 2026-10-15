@@ -314,17 +314,23 @@ pub(super) fn w4a4_grouped_experts_with(
         .arg_u32(cfg.num_experts as u32)
         .arg_u32(mt as u32)
         .launch(stream)?;
-    quant_static(
-        gpu,
-        k.w4a4_quant_static,
-        ws,
-        x,
-        rows,
-        h,
-        h,
-        scales.gate_up,
-        stream,
-    )?;
+    // 2026-10-15: `METRALE_GLM_MOE_QUANT_EARLY`: these rows' codes were quantized and
+    // all-gathered ahead (`glm5next_moe_quant_early`); wait for them instead.
+    let codes = super::w4a4_early::GateUpCodes::of(k, ws, h, scales);
+    match crate::glm5next_moe_quant_early::take(x, rows, &codes)? {
+        Some(ready) => gpu.stream_wait_event(stream, ready)?,
+        None => quant_static(
+            gpu,
+            k.w4a4_quant_static,
+            ws,
+            x,
+            rows,
+            h,
+            h,
+            scales.gate_up,
+            stream,
+        )?,
+    }
     if let Some(gu) = gu {
         gu.launch(site, down, scales.down)?;
         profile::end(profile::MOE_EXPERTS, t, gpu, stream);

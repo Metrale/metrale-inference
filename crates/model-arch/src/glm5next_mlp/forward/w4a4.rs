@@ -59,13 +59,40 @@ pub(super) fn quant_static(
         ws.w4a4_rows,
         ws.w4a4_k
     );
+    launch_quant(
+        gpu,
+        kern,
+        input,
+        [ws.w4a4_aq, ws.w4a4_as, ws.w4a4_ag],
+        rows,
+        k,
+        gs,
+        stream,
+    )
+}
+
+/// 2026-10-15: The quantizer launch: `rows` rows of width `k` at `input` into the codes, group
+/// scales and global scales at `out` (row 0 of each) under the static scale `gs`, one block per
+/// row; a launch of rows `[r0, r1)` at pointers `r0` rows on writes there the bytes a launch of
+/// every row writes (`w4a4_early`).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn launch_quant(
+    gpu: &dyn GpuBackend,
+    kern: KernelHandle,
+    input: DevicePtr,
+    out: [DevicePtr; 3],
+    rows: usize,
+    k: usize,
+    gs: f32,
+    stream: u64,
+) -> Result<()> {
     KernelLaunch::new(gpu, kern)
         .grid([rows as u32, 1, 1])
         .block([W4A4_BLOCK, 1, 1])
         .arg_ptr(input)
-        .arg_ptr(ws.w4a4_aq)
-        .arg_ptr(ws.w4a4_as)
-        .arg_ptr(ws.w4a4_ag)
+        .arg_ptr(out[0])
+        .arg_ptr(out[1])
+        .arg_ptr(out[2])
         .arg_u32(k as u32)
         .arg_f32(gs)
         .launch(stream)

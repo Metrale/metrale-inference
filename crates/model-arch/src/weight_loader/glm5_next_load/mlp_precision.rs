@@ -38,6 +38,8 @@ pub(super) fn group_precision(
         crate::glm5next_mlp::forward::check_raster_at_load(kernels)?;
         // 2026-10-15: and `METRALE_GLM_MOE_W4A4_NC`.
         crate::glm5next_mlp::forward::check_nc_at_load(kernels)?;
+        // 2026-10-15: and `METRALE_GLM_MOE_QUANT_EARLY`.
+        crate::glm5next_moe_quant_early::check_at_load()?;
     }
     let (base, family, w4a4_rows) = match group {
         // 2026-10-10: `METRALE_GLM_MOE_W4A4_GROUPED=1` lifts the routed W4A4 row cap with

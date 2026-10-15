@@ -471,6 +471,8 @@ fn funcs(l: &[MockLaunch]) -> Vec<u64> {
     l.iter().map(|l| l.func).collect()
 }
 
+#[path = "w4a4_early_tests.rs"]
+mod early;
 #[path = "w4a4_grouped_gu_tests.rs"]
 mod gu;
 #[path = "w4a4_grouped_nc_tests.rs"]

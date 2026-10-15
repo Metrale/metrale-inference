@@ -275,6 +275,10 @@ name = "glm5next_moe_prefill_w4a4_bench"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "glm5next_moe_quant_early_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "glm5next_moe_epi_bench"
 required-features = ["cuda", "gpu-examples"]
 

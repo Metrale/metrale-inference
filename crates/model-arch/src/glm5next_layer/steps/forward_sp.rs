@@ -99,6 +99,9 @@ impl Glm5NextLayer {
         // 2026-10-12: Full-chunk views at the sub-chunk's slots ([`SpRows`]).
         let normed = ctx.buffers.norm_output();
         let ffn_out = ctx.buffers.moe_output();
+        // 2026-10-15: `METRALE_GLM_MOE_QUANT_EARLY=1` (`glm5next_moe_quant_early`).
+        let comm_stream = overlap.as_ref().map(|o| o.comm);
+        let mut early = self.moe_quant_early(gpu, normed, k, &shards, comm.rank(), comm_stream)?;
         let rows = SpRows::new(ctx, hc, h, slot_base, hidden, normed);
         let streams = rows.streams;
         let section = |rs, ag| ov::Section {
@@ -148,12 +151,15 @@ impl Glm5NextLayer {
             &mut |a, b, partials| {
                 self.sp_mid_piece(
                     gpu, mhc, &rows, a, b, attn_out, partials, post_pre, tap, stream,
-                )
+                )?;
+                crate::glm5next_moe_quant_early::after_piece(early.as_mut(), gpu, b, stream)
             },
         )?;
 
+        crate::glm5next_moe_quant_early::gather(early.as_mut(), gpu, comm)?;
         dump::site(tap, true, [streams, rows.post, rows.comb, normed])?;
         self.mlp_compute(normed, ffn_out, k, row_pieces, ctx, stream)?;
+        crate::glm5next_moe_quant_early::finish(early)?;
         dump::put(tap, dump::Point::MlpOut, ffn_out)?;
         let reduce = self.mlp_cfg.needs_all_reduce();
         ov::run_section(
