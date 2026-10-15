@@ -486,7 +486,7 @@ impl DsaSelectScratch {
 }
 
 mod launch;
-pub use launch::{select_tokens, select_tokens_in_passes};
+pub use launch::{row_passes, select_tokens, select_tokens_in_passes, select_tokens_rows};
 mod pipe;
 pub use pipe::{DsaPipeRegions, SCORES_PIPE_SMEM, scores_pipe, scores_pipe_for};
 
@@ -494,7 +494,7 @@ pub use pipe::{DsaPipeRegions, SCORES_PIPE_SMEM, scores_pipe, scores_pipe_for};
 mod tests;
 
 #[cfg(test)]
-mod passes_tests;
+pub(crate) mod passes_tests;
 
 #[cfg(test)]
 mod ceiling_tests;

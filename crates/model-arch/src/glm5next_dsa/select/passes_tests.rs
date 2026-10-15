@@ -15,7 +15,7 @@ use metrale_gpu_runtime::gpu::KernelHandle;
 use metrale_gpu_runtime::gpu::mock::{MockArg, MockGpuBackend, MockLaunch};
 
 /// 2026-10-11: GLM-5.3's indexer geometry (`select/tests.rs`), with a 4,096-token context.
-pub(super) fn cfg() -> Glm5NextDsaConfig {
+pub(crate) fn cfg() -> Glm5NextDsaConfig {
     Glm5NextDsaConfig {
         hidden: 4096,
         index_heads: 32,
@@ -33,14 +33,14 @@ pub(super) fn cfg() -> Glm5NextDsaConfig {
     }
 }
 
-pub(super) const KPOOL_COMPRESS: u64 = 11;
-pub(super) const INDEX_SCORES: u64 = 12;
+pub(crate) const KPOOL_COMPRESS: u64 = 11;
+pub(crate) const INDEX_SCORES: u64 = 12;
 const TOPK_POOLS: u64 = 13;
-const EXPAND: u64 = 14;
+pub(crate) const EXPAND: u64 = 14;
 
 /// 2026-10-11: Distinct handles, and no tiled-scores kernel, so the untiled path runs whatever
 /// `METRALE_GLM_DSA_SCORES_TILED` says.
-pub(super) fn kernels() -> Glm5NextDsaKernels {
+pub(crate) fn kernels() -> Glm5NextDsaKernels {
     let h = KernelHandle;
     Glm5NextDsaKernels {
         kpool_compress: h(KPOOL_COMPRESS),
@@ -69,7 +69,7 @@ pub(super) fn kernels() -> Glm5NextDsaKernels {
 }
 
 /// 2026-10-11: Flat-cache inputs for `q` query rows over `seq` tokens, all zero.
-pub(super) fn inputs(
+pub(crate) fn inputs(
     gpu: &MockGpuBackend,
     c: &Glm5NextDsaConfig,
     seq: usize,

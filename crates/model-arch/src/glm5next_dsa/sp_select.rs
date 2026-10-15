@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-14: The rank-local half of the sequence-parallel DSA selection
-//! (`METRALE_GLM_DSA_SP_SELECT`, design `claude-state/glm/SP_INDEXER_DESIGN.md`): which query
+//! (`METRALE_GLM_DSA_SP_SELECT`): which query
 //! rows of a prefill pass each rank selects, how the selected rows are all-gathered, and whether
 //! a pass splits at all.
 //!
@@ -65,8 +65,8 @@ pub fn gather_shards(k: usize, world: usize) -> [Vec<(usize, usize)>; SLABS_PER_
 
 /// 2026-10-14: The measured split threshold: for each measured pass width `k`, the fewest
 /// candidate pools at which the split was measured faster than the unsplit selection by more
-/// than its margin. Loaded at startup from the hardware class's benchmark record; there is no
-/// built-in table.
+/// than its margin. 2026-10-15: Read once from the lever's value (`sp_select::lever`), the
+/// table the single-GPU gate measured; there is no built-in table.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MinPoolsTable {
     rows: Vec<(usize, usize)>,
@@ -100,6 +100,16 @@ impl MinPoolsTable {
             None => false,
         }
     }
+
+    /// 2026-10-15: The table as the lever spells it, `k:min_pools` rows joined by `,`
+    /// ([`lever::parse`] reads it back to the same table).
+    pub fn canonical(&self) -> String {
+        self.rows
+            .iter()
+            .map(|(k, p)| format!("{k}:{p}"))
+            .collect::<Vec<_>>()
+            .join(",")
+    }
 }
 
 /// 2026-10-14: Whether a pass splits its selection over the ranks: the lever on, a prefill pass,
@@ -115,8 +125,14 @@ pub fn applies(
     on && is_prefill && world >= 2 && k >= SLABS_PER_RANK * world && table.split(k, pools)
 }
 
+pub mod lever;
+pub mod run;
+
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod run_tests;
 
 #[cfg(test)]
 mod tie_tests;

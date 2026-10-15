@@ -318,7 +318,17 @@ impl Glm5NextDsaLayer {
         if batch_select && !batch_q_pos.is_empty() {
             // 2026-10-09: Every row is this one sequence, so row 0's block table serves all.
             let rows = self.indexer_rows(st, kv_cache, attend_bt)?;
-            self.select_rows_batched(gpu, k, st, rows, &batch_q_pos, indexer_rows, stream)?;
+            self.select_rows_batched(
+                gpu,
+                k,
+                st,
+                rows,
+                &batch_q_pos,
+                indexer_rows,
+                ctx.comm,
+                is_prefill,
+                stream,
+            )?;
         }
 
         if let Some(paging) = attend_paging {
