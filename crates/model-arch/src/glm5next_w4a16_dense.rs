@@ -98,8 +98,16 @@ pub fn registry_in_use() -> bool {
 }
 
 /// 2026-10-11: The DSA projections `--dsa-quantization` decides (`dense_tiers::tier_for`),
-/// whatever `--dense-quantization` is.
-pub const DSA_SITES: [&str; 3] = ["dsa.q_a_proj", "dsa.q_absorb", "dsa.o_absorb"];
+/// whatever `--dense-quantization` is. 2026-10-15: and the unabsorbed prefill's `q_b_proj` and
+/// `o_proj` (`METRALE_GLM_MLA_UNABSORB`), which follow the knob or the checkpoint as the DSA site
+/// tier table says (`glm5next_dsa::unabsorb::lever::SITE_RULES`).
+pub const DSA_SITES: [&str; 5] = [
+    "dsa.q_a_proj",
+    "dsa.q_absorb",
+    "dsa.o_absorb",
+    "dsa.q_b_proj",
+    "dsa.o_proj",
+];
 
 /// 2026-10-09: The tier of the projection the loader names `name` under `--dense-quantization
 /// w4a16` (the names of `Glm5NextKdaLayer::dense_projections`, `Glm5NextDsaLayer::dense_projections`

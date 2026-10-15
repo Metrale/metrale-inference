@@ -57,6 +57,7 @@ mod prefill_rows;
 mod proj_gemm;
 mod row_ops;
 mod rows;
+mod unabsorb_rows;
 mod select_rows;
 mod workspace;
 
@@ -95,6 +96,9 @@ pub struct Glm5NextDsaWeights {
     pub weights_proj: DevicePtr,
     /// 2026-09-25: `[index_kpool, index_head_dim]` FP32; the checkpoint stores BF16.
     pub ape: DevicePtr,
+    /// 2026-10-15: The unabsorbed-MLA prefill's weights and scratch (`METRALE_GLM_MLA_UNABSORB`,
+    /// `unabsorb::TextUnabsorb::attach`); `None` with the lever off and on the MTP drafter.
+    pub unabsorb: Option<super::unabsorb::UnabsorbWeights>,
 }
 
 pub struct Glm5NextDsaLayer {
@@ -126,28 +130,6 @@ pub struct Glm5NextDsaLayer {
 }
 
 impl Glm5NextDsaLayer {
-    /// 2026-10-09: Every BF16-output projection this layer launches through `proj_gemm::gemm`,
-    /// as `(weight, n, k, name)` with the shapes the forward passes, for
-    /// `--dense-quantization fp8`. The FP32-output `wq_b` and `weights_proj` are not listed.
-    pub fn dense_projections(&self) -> Vec<(DevicePtr, usize, usize, &'static str)> {
-        let c = &self.cfg;
-        let w = &self.weights;
-        let latent = c.local_heads * c.kv_lora_rank;
-        vec![
-            (w.q_a_proj, c.q_lora_rank, c.hidden, "dsa.q_a_proj"),
-            (w.q_absorb, latent, c.q_lora_rank, "dsa.q_absorb"),
-            (w.kv_a_proj, c.kv_lora_rank, c.hidden, "dsa.kv_a_proj"),
-            (w.o_absorb, c.hidden, latent, "dsa.o_absorb"),
-            (w.wk, c.index_head_dim, c.hidden, "dsa.indexer.wk"),
-            (
-                w.compress_gate,
-                c.index_head_dim,
-                c.hidden,
-                "dsa.indexer.compress_gate",
-            ),
-        ]
-    }
-
     /// 2026-09-25: Project `hidden` into indexer cache row `state.len()`, then advance by one.
     ///
     /// With [`IndexerPlace::Device`], `k_normed` and `gate` go to the workspace staging rows

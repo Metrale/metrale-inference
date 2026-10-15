@@ -52,6 +52,7 @@ pub mod select;
 pub mod sp_select;
 pub mod state;
 pub mod tp;
+pub mod unabsorb;
 
 /// 2026-09-25: Module name the DSA selection kernels resolve from. `dsa_indexer.cu` has no
 /// entry in `kernels/gb10/common/KERNEL.toml` `[modules]`, so its module is its file stem.

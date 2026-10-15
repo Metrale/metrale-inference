@@ -2325,6 +2325,38 @@ files = [
   "kernels/gb10/glm-5.3-flash/nvfp4/glm5next_dsa_mla_prefill_tc.cu",
 ]
 
+# 2026-10-15: The per-head halves of kv_b_proj for an unabsorbed MLA prefill
+# (METRALE_GLM_MLA_UNABSORB, glm5next_dsa/unabsorb): `_q` takes q_b_proj's per-head NoPE query
+# (256) through the key half into the latent query (512) the attend kernels read; `_o` takes their
+# latent output (512) through the value half into o_proj's input (256). Together with a
+# glm_mla_decode_hb attend entry they run the circuit's mla_attention (whose node binds
+# kv_b_proj) in its unabsorbed form, which no circuit states yet (`form`), so no plan picks them.
+# One CTA per (128 columns, 128 rows, head), BF16 m16n8k16 MMA into FP32, fixed k order.
+[[family]]
+id = "glm_mla_head_bmm"
+description = "GLM-5 unabsorbed MLA prefill: the per-head kv_b_proj key and value halves (BF16 tensor core)"
+compute = "tensor_core"
+mma = "mma.sync.m16n8k16.bf16"
+kernels = [
+  "glm5next_mla_head_bmm::glm5next_mla_head_bmm_q",
+  "glm5next_mla_head_bmm::glm5next_mla_head_bmm_o",
+]
+rows = [1, 65536]
+pipeline.mla_attention = { in = ["bf16", "i32"], act = "bf16", weight = "bf16->bf16", cache = "fp8", scores = "f32", softmax = "f32", accumulate = "f32", out = ["bf16"] }
+op = [{ op = "mla_attention", params = { form = "unabsorbed" } }]
+[[family.param]]
+name = "kv_lora"
+kind = "compile"
+from = "dim:kv_lora"
+[[family.param]]
+name = "head_dim"
+kind = "compile"
+from = "dim:mla_v"
+[[family.point]]
+values = { kv_lora = "512", head_dim = "256" }
+how = "instantiation"
+files = ["kernels/gb10/glm-5.3-flash/nvfp4/glm5next_mla_head_bmm.cu"]
+
 # 2026-10-08: RMSNorm (plain weight) of the kv_a row, FP8-quantised into its paged slot, one token
 # per launch (glm5next_mla_latent_write.cu:1-14).
 [[family]]

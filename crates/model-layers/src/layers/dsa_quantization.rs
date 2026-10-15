@@ -8,7 +8,11 @@
 //! channel and decodes them with dynamic per-token FP8 activations, what the reference engine
 //! executes there. `w4a16` quantizes them to NVFP4 and decodes them with 16-bit activations
 //! (the former `METRALE_GLM_DSA_W4A16=1`). Both are below declared and disclosed in the boot log.
-//! The GLM loader moves exactly these three projections (`dense_tiers.rs`).
+//! The GLM loader moves exactly these three projections (`dense_tiers.rs`); the knob covers
+//! the absorbed sites. 2026-10-15: under `METRALE_GLM_MLA_UNABSORB=declared` the unabsorbed
+//! prefill's `q_b_proj` and `o_proj` follow the checkpoint-declared precision (BF16) whatever
+//! this tier is; under `=dsa` the loader moves them too (the DSA site tier table,
+//! `glm5next_dsa::unabsorb::lever::SITE_RULES`, says which as data).
 //!
 //! Owner: model-layers (quantization dispatch).
 //! Invariants:

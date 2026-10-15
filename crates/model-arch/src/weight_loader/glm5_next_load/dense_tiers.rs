@@ -5,7 +5,10 @@
 //! `w4a16` to the registry `glm5next_w4a16_dense::tier_of` names. 2026-10-11: the DSA q_a /
 //! absorbed q / absorbed o projections (`DSA_SITES`) take `--dsa-quantization`'s tier instead,
 //! whatever the dense tier is: BF16 under `declared` (left unregistered), FP8 under `w8a8`, W4A16
-//! under `w4a16` (`tier_for`).
+//! under `w4a16` (`tier_for`). 2026-10-15: under `METRALE_GLM_MLA_UNABSORB` the unabsorbed
+//! prefill adds `dsa.q_b_proj` and `dsa.o_proj`; which precision they follow is data, the DSA
+//! site tier table (`glm5next_dsa::unabsorb::lever::SITE_RULES`): the checkpoint under
+//! `declared`, `--dsa-quantization` under `dsa`.
 //!
 //! Owner: model-arch weight loader (GLM-5.3).
 //! Invariants:
@@ -22,6 +25,7 @@ use metrale_model_layers::weight_map::QuantizedWeight;
 
 use crate::glm5next_layer::{Glm5NextMixer, Glm5NextMlpSite};
 use crate::glm5next_mlp::Glm5NextMlpConfig;
+use crate::glm5next_dsa::unabsorb::{MlaUnabsorb, SiteRule, site_rule};
 use crate::glm5next_w4a16_dense::{self as w4a16, ProjTier};
 
 /// 2026-10-09: One projection: `(weight, n, k, name)` with the shapes the forward launches.
@@ -39,9 +43,19 @@ pub(super) enum Tier {
 /// 2026-10-11: The tier of the projection named `name` under `dense` and `dsa`. The
 /// `DSA_SITES` follow `dsa` alone; every other projection follows `dense` (all FP8 under `fp8`,
 /// `glm5next_w4a16_dense::tier_of` under `w4a16`, which refuses a name it has no decision for).
-/// Pure, so the decision is tested without a GPU.
-pub(super) fn tier_for(name: &str, dense: DenseQuantization, dsa: DsaQuantization) -> Result<Tier> {
+/// Pure, so the decision is tested without a GPU. 2026-10-15: a DSA site follows `dsa` or the
+/// checkpoint as `site_rule` says for `mla` (a site without a rule is an error).
+pub(super) fn tier_for(
+    name: &str,
+    dense: DenseQuantization,
+    dsa: DsaQuantization,
+    mla: MlaUnabsorb,
+) -> Result<Tier> {
     if w4a16::DSA_SITES.contains(&name) {
+        let dsa = match site_rule(name, mla)? {
+            SiteRule::DsaKnob => dsa,
+            SiteRule::Checkpoint => DsaQuantization::Declared,
+        };
         return Ok(match dsa {
             DsaQuantization::Declared => Tier::Bf16,
             DsaQuantization::W8a8 => Tier::Fp8,
@@ -64,10 +78,11 @@ pub(super) fn split_by_tier(
     projs: Vec<Proj>,
     dense: DenseQuantization,
     dsa: DsaQuantization,
+    mla: MlaUnabsorb,
 ) -> Result<(Vec<Proj>, Vec<Proj>)> {
     let (mut fp8, mut w4) = (Vec::new(), Vec::new());
     for p in projs {
-        match tier_for(p.3, dense, dsa)? {
+        match tier_for(p.3, dense, dsa, mla)? {
             Tier::Bf16 => {}
             Tier::Fp8 => fp8.push(p),
             Tier::W4a16 => w4.push(p),
@@ -93,7 +108,11 @@ pub(super) fn register_dense_tiers(
 ) -> Result<()> {
     let mut projs = match &*mixer {
         Glm5NextMixer::Kda { layer, .. } => layer.dense_projections(),
-        Glm5NextMixer::Dsa(layer) => layer.dense_projections(),
+        Glm5NextMixer::Dsa(layer) => {
+            let mut p = layer.dense_projections();
+            p.extend(layer.unabsorb_projections());
+            p
+        }
     };
     if let Glm5NextMlpSite::Moe(w) = &*mlp {
         let (h, s) = (mlp_cfg.hidden, mlp_cfg.local_shared_intermediate);
@@ -107,6 +126,7 @@ pub(super) fn register_dense_tiers(
         &mut weight_slots(mixer, mlp),
         metrale_model_layers::layers::dense_quantization(),
         metrale_model_layers::layers::dsa_quantization(),
+        crate::glm5next_dsa::unabsorb::mode()?,
         idx,
     )
 }
@@ -121,9 +141,10 @@ pub(super) fn register_projections(
     slots: &mut [&mut DevicePtr],
     dense: DenseQuantization,
     dsa: DsaQuantization,
+    mla: MlaUnabsorb,
     idx: usize,
 ) -> Result<()> {
-    let (fp8, w4) = split_by_tier(projs, dense, dsa)?;
+    let (fp8, w4) = split_by_tier(projs, dense, dsa, mla)?;
     let persist = crate::glm5next_dequant_persist::mode()?;
     if !fp8.is_empty() {
         let max_k = fp8.iter().map(|p| p.2).max().unwrap_or(0);
@@ -163,7 +184,8 @@ pub(super) fn register_projections(
 }
 
 /// 2026-10-09: Every weight field a W4A16 projection can live in: the KDA projections', the
-/// shared expert's, and the DSA projections `--dsa-quantization w4a16` moves.
+/// shared expert's, and the DSA projections `--dsa-quantization w4a16` moves (2026-10-15: with the
+/// unabsorbed prefill's `q_b_proj` and `o_proj` when the layer holds them).
 fn weight_slots<'a>(
     mixer: &'a mut Glm5NextMixer,
     mlp: &'a mut Glm5NextMlpSite,
@@ -187,6 +209,9 @@ fn weight_slots<'a>(
         Glm5NextMixer::Dsa(layer) => {
             let w = &mut layer.weights;
             slots.extend([&mut w.q_a_proj, &mut w.q_absorb, &mut w.o_absorb]);
+            if let Some(u) = &mut w.unabsorb {
+                slots.extend([&mut u.q_b, &mut u.o_proj]);
+            }
         }
     }
     if let Glm5NextMlpSite::Moe(w) = mlp {

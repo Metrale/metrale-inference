@@ -14,6 +14,8 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use super::*;
 
 const D: DsaQuantization = DsaQuantization::Declared;
+/// 2026-10-15: The unabsorbed-MLA lever off, as on every layer these tests build without it.
+const M: MlaUnabsorb = MlaUnabsorb::Off;
 
 /// 2026-10-09: A KDA layer's projections at hidden 512 with two 128-wide heads (K 256 for
 /// o_proj), plus a 256-wide shared expert, each in its own allocation.
@@ -51,17 +53,17 @@ fn the_split_is_all_fp8_unless_w4a16() {
     let gpu = MockGpuBackend::new();
     let projs = layer(&gpu);
     let names = |v: &[Proj]| v.iter().map(|p| p.3).collect::<Vec<_>>();
-    let (fp8, w4) = split_by_tier(projs.clone(), Q::Fp8, D).unwrap();
+    let (fp8, w4) = split_by_tier(projs.clone(), Q::Fp8, D, M).unwrap();
     assert_eq!(names(&fp8), names(&projs));
     assert!(w4.is_empty());
-    let (fp8, w4) = split_by_tier(projs.clone(), Q::W4a16, D).unwrap();
+    let (fp8, w4) = split_by_tier(projs.clone(), Q::W4a16, D, M).unwrap();
     assert_eq!(names(&fp8), vec!["kda.f_b_proj", "kda.g_b_proj"]);
     assert_eq!(w4.len(), 10);
-    let (fp8, w4) = split_by_tier(projs, Q::Declared, D).unwrap();
+    let (fp8, w4) = split_by_tier(projs, Q::Declared, D, M).unwrap();
     assert!(fp8.is_empty() && w4.is_empty());
-    let e = split_by_tier(vec![(DevicePtr(1), 1, 1, "dsa.wq_b")], Q::W4a16, D).unwrap_err();
+    let e = split_by_tier(vec![(DevicePtr(1), 1, 1, "dsa.wq_b")], Q::W4a16, D, M).unwrap_err();
     assert!(e.to_string().contains("no tier decided"), "{e}");
-    assert!(split_by_tier(vec![(DevicePtr(1), 1, 1, "dsa.wq_b")], Q::Fp8, D).is_ok());
+    assert!(split_by_tier(vec![(DevicePtr(1), 1, 1, "dsa.wq_b")], Q::Fp8, D, M).is_ok());
 }
 
 /// 2026-10-09: Under `w4a16` the ten W4A16 fields hold their NVFP4 keys and their BF16 buffers
@@ -84,7 +86,7 @@ fn w4a16_retargets_and_frees_exactly_its_set() {
         );
         {
             let mut slots: Vec<&mut DevicePtr> = fields.iter_mut().collect();
-            register_projections(&gpu, projs.clone(), &mut slots, dense, D, 5).unwrap();
+            register_projections(&gpu, projs.clone(), &mut slots, dense, D, M, 5).unwrap();
         }
         let w4_new = crate::glm5next_w4a16_dense::registered().0 - w4_before;
         let fp8_new = crate::glm5next_fp8_dense::registered().0 - fp8_before;
@@ -114,6 +116,7 @@ fn an_unsupported_width_is_refused_before_anything_is_freed() {
         &mut [&mut field],
         DenseQuantization::W4a16,
         D,
+        M,
         9,
     )
     .unwrap_err()
@@ -127,14 +130,22 @@ fn an_unsupported_width_is_refused_before_anything_is_freed() {
 /// `--dense-quantization` everything else, in all nine combinations, on a full DSA layer's six
 /// projections plus a shared expert's three: `declared` leaves a projection unregistered (its
 /// BF16 field untouched and live), `w8a8`/`fp8` registers it FP8 beside its BF16, `w4a16`
-/// retargets its field to an NVFP4 key and frees its BF16.
+/// retargets its field to an NVFP4 key and frees its BF16. 2026-10-15: in each
+/// `METRALE_GLM_MLA_UNABSORB` mode (27 combinations); on, the layer also lists the unabsorbed
+/// prefill's `q_b_proj` and `o_proj`, which stay BF16 under `declared` (Option B) whatever
+/// `--dsa-quantization` is and follow it under `dsa` (Option A).
 #[test]
 fn each_flag_moves_exactly_its_own_projections() {
     use DenseQuantization as Q;
     use DsaQuantization as S;
     let sites = ["dsa.q_a_proj", "dsa.q_absorb", "dsa.o_absorb"];
-    for dense in Q::ALL {
-        for dsa in S::ALL {
+    let unabsorbed = ["dsa.q_b_proj", "dsa.o_proj"];
+    for (mla, dense, dsa) in [MlaUnabsorb::Off, MlaUnabsorb::Declared, MlaUnabsorb::Dsa]
+        .into_iter()
+        .flat_map(|m| Q::ALL.into_iter().map(move |q| (m, q)))
+        .flat_map(|(m, q)| S::ALL.into_iter().map(move |s| (m, q, s)))
+    {
+        {
             let _serial = crate::glm5next_fp8_dense::lock_registries_for_test();
             let gpu = MockGpuBackend::new();
             let (hid, ql, lat, kvl) = (512usize, 256usize, 512usize, 256usize);
@@ -150,17 +161,24 @@ fn each_flag_moves_exactly_its_own_projections() {
                 (hid, 256, "shared_experts.down_proj"),
             ]
             .into_iter()
+            .chain(
+                [(512, ql, "dsa.q_b_proj"), (hid, 512, "dsa.o_proj")]
+                    .into_iter()
+                    .filter(|_| mla.is_on()),
+            )
             .map(|(n, k, name)| (gpu.alloc(n * k * 2).unwrap(), n, k, name))
             .collect();
             let mut fields: Vec<DevicePtr> = projs.iter().map(|p| p.0).collect();
             let fp8_before = crate::glm5next_fp8_dense::registered().0;
             {
                 let mut slots: Vec<&mut DevicePtr> = fields.iter_mut().collect();
-                register_projections(&gpu, projs.clone(), &mut slots, dense, dsa, 3).unwrap();
+                register_projections(&gpu, projs.clone(), &mut slots, dense, dsa, mla, 3).unwrap();
             }
             let mut fp8_expected = 0;
             for (i, p) in projs.iter().enumerate() {
-                let want = if sites.contains(&p.3) {
+                let want = if unabsorbed.contains(&p.3) && mla == MlaUnabsorb::Declared {
+                    Tier::Bf16
+                } else if sites.contains(&p.3) || unabsorbed.contains(&p.3) {
                     match dsa {
                         S::Declared => Tier::Bf16,
                         S::W8a8 => Tier::Fp8,
@@ -175,9 +193,9 @@ fn each_flag_moves_exactly_its_own_projections() {
                     }
                 };
                 assert_eq!(
-                    tier_for(p.3, dense, dsa).unwrap(),
+                    tier_for(p.3, dense, dsa, mla).unwrap(),
                     want,
-                    "{} dense {dense:?} dsa {dsa:?}",
+                    "{} dense {dense:?} dsa {dsa:?} mla {mla:?}",
                     p.3
                 );
                 let moved = want == Tier::W4a16;
@@ -199,6 +217,22 @@ fn each_flag_moves_exactly_its_own_projections() {
                 any_below_declared(dense, dsa),
                 dense != Q::Declared || dsa != S::Declared
             );
+        }
+    }
+}
+
+/// 2026-10-15: With the lever off, an unabsorbed site has no row in the DSA site tier table, so a
+/// layer that listed one anyway is refused before anything registers; with it on, every tier has
+/// an answer.
+#[test]
+fn an_unabsorbed_site_without_the_lever_is_refused() {
+    for name in ["dsa.q_b_proj", "dsa.o_proj"] {
+        for dsa in DsaQuantization::ALL {
+            let e = tier_for(name, DenseQuantization::Declared, dsa, M).unwrap_err();
+            assert!(e.to_string().contains("has no tier rule"), "{e}");
+            for mla in [MlaUnabsorb::Declared, MlaUnabsorb::Dsa] {
+                assert!(tier_for(name, DenseQuantization::W4a16, dsa, mla).is_ok());
+            }
         }
     }
 }

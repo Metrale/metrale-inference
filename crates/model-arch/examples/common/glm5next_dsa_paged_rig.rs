@@ -161,6 +161,7 @@ pub(crate) fn layer_rows(
         wq_b: bf(cfg.index_heads * d * ql, 0.03)?,
         weights_proj: bf(cfg.index_heads * h, 0.03)?,
         ape: up(gpu, &ape)?,
+        unabsorb: None,
     };
     Ok(Glm5NextDsaLayer {
         cfg: *cfg,

@@ -145,6 +145,11 @@ pub struct ServeServiceArgs {
     /// quantizes them to NVFP4 and decodes them W4A16 (the former `METRALE_GLM_DSA_W4A16=1`),
     /// FURTHER below declared. Below `declared` the answers change; the boot log says so.
     /// GLM-5.3 (`glm5_next`) only; any other model refuses a value below `declared`.
+    ///
+    /// The knob covers the absorbed sites (q_a, q_absorb, o_absorb). Under
+    /// `METRALE_GLM_MLA_UNABSORB=declared` a prefill runs MLA unabsorbed and its q_b_proj and
+    /// o_proj follow the checkpoint-declared precision (BF16) whatever this flag is; under
+    /// `=dsa` they take this flag's tier too. Decode keeps the absorbed sites either way.
     #[arg(long, value_enum, default_value_t = DsaQuantizationArg(DsaQuantization::Declared))]
     pub dsa_quantization: DsaQuantizationArg,
 

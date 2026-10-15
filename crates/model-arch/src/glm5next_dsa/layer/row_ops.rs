@@ -17,13 +17,37 @@ use metrale_gpu_runtime::kernel_args::KernelLaunch;
 use super::{Glm5NextDsaLayer, gemm};
 
 impl Glm5NextDsaLayer {
+    /// 2026-10-09: Every BF16-output projection this layer launches through `proj_gemm::gemm`,
+    /// as `(weight, n, k, name)` with the shapes the forward passes, for
+    /// `--dense-quantization fp8`. The FP32-output `wq_b` and `weights_proj` are not listed.
+    pub fn dense_projections(&self) -> Vec<(DevicePtr, usize, usize, &'static str)> {
+        let c = &self.cfg;
+        let w = &self.weights;
+        let latent = c.local_heads * c.kv_lora_rank;
+        vec![
+            (w.q_a_proj, c.q_lora_rank, c.hidden, "dsa.q_a_proj"),
+            (w.q_absorb, latent, c.q_lora_rank, "dsa.q_absorb"),
+            (w.kv_a_proj, c.kv_lora_rank, c.hidden, "dsa.kv_a_proj"),
+            (w.o_absorb, c.hidden, latent, "dsa.o_absorb"),
+            (w.wk, c.index_head_dim, c.hidden, "dsa.indexer.wk"),
+            (
+                w.compress_gate,
+                c.index_head_dim,
+                c.hidden,
+                "dsa.indexer.compress_gate",
+            ),
+        ]
+    }
+
     /// 2026-10-08: `q_a_proj`, its RMSNorm into `q_resid`, `q_absorb` into `q_abs`, and
-    /// `kv_a_proj` into `kv_a`, each once for all `k` rows of `hidden`.
+    /// `kv_a_proj` into `kv_a`, each once for all `k` rows of `hidden`. 2026-10-15: a prefill
+    /// pass of a layer holding unabsorbed weights writes `q_abs` through `unabsorbed_q` instead.
     pub(super) fn project_in(
         &self,
         gpu: &dyn GpuBackend,
         hidden: DevicePtr,
         k: usize,
+        is_prefill: bool,
         stream: u64,
     ) -> Result<()> {
         let w = &self.workspace;
@@ -51,19 +75,23 @@ impl Glm5NextDsaLayer {
             .arg_u32(self.cfg.q_lora_rank as u32)
             .arg_f32(self.rms_eps)
             .launch(stream)?;
-        gemm(
-            gpu,
-            self.kernels.gemm,
-            self.kernels.gemv,
-            self.kernels.batchm_bf16(),
-            w.q_resid,
-            self.weights.q_absorb,
-            w.q_abs,
-            k,
-            self.cfg.local_heads * self.cfg.kv_lora_rank,
-            self.cfg.q_lora_rank,
-            stream,
-        )?;
+        if let Some(u) = self.prefill_unabsorb(is_prefill) {
+            self.unabsorbed_q(gpu, u, k, stream)?;
+        } else {
+            gemm(
+                gpu,
+                self.kernels.gemm,
+                self.kernels.gemv,
+                self.kernels.batchm_bf16(),
+                w.q_resid,
+                self.weights.q_absorb,
+                w.q_abs,
+                k,
+                self.cfg.local_heads * self.cfg.kv_lora_rank,
+                self.cfg.q_lora_rank,
+                stream,
+            )?;
+        }
         gemm(
             gpu,
             self.kernels.gemm,
@@ -124,29 +152,35 @@ impl Glm5NextDsaLayer {
             .launch(stream)
     }
 
-    /// 2026-10-08: `o_absorb` over the `k` rows of `attn_out`, written over `hidden`.
+    /// 2026-10-08: `o_absorb` over the `k` rows of `attn_out`, written over `hidden`. 2026-10-15:
+    /// a prefill pass of a layer holding unabsorbed weights runs `unabsorbed_o` instead.
     pub(super) fn project_out(
         &self,
         gpu: &dyn GpuBackend,
         hidden: DevicePtr,
         k: usize,
+        is_prefill: bool,
         stream: u64,
     ) -> Result<()> {
         use crate::glm5next_layer::profile;
         let t_proj = profile::start();
-        gemm(
-            gpu,
-            self.kernels.gemm,
-            self.kernels.gemv,
-            self.kernels.batchm_bf16(),
-            self.workspace.attn_out,
-            self.weights.o_absorb,
-            hidden,
-            k,
-            self.cfg.hidden,
-            self.cfg.local_heads * self.cfg.kv_lora_rank,
-            stream,
-        )?;
+        if let Some(u) = self.prefill_unabsorb(is_prefill) {
+            self.unabsorbed_o(gpu, u, hidden, k, stream)?;
+        } else {
+            gemm(
+                gpu,
+                self.kernels.gemm,
+                self.kernels.gemv,
+                self.kernels.batchm_bf16(),
+                self.workspace.attn_out,
+                self.weights.o_absorb,
+                hidden,
+                k,
+                self.cfg.hidden,
+                self.cfg.local_heads * self.cfg.kv_lora_rank,
+                stream,
+            )?;
+        }
         profile::end(profile::DSA_PROJ, t_proj, gpu, stream);
         Ok(())
     }

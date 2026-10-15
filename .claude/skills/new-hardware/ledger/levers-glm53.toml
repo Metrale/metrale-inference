@@ -2165,3 +2165,27 @@ effort_hours = 8.0
 transferability = "any per-token reduction kernel that re-reads a shared weight per small block: widen the block's work with a cp.async ring instead of adding tokens per block, and keep each token's summation order"
 links = { pr = "", commit = "", evidence = "glm5next_mhc_tile_gate example output and standalone harness, 2026-10-15" }
 notes = "Variants measured and not shipped: eight tokens per block with three stages (tile8) ran 381 us at T=684 vs tile4's 350. Five or six stages gain 0-4% clean and 4-5% under SM-copy load at 684 rows, within spread; a split Sinkhorn tail gains about 1%. createpolicy.fractional.L2::evict_last with cp.async L2::cache_hint raised CUDA_ERROR_ILLEGAL_INSTRUCTION on GB10 at T=1, with or without applypriority. Not applied on the MHC_POST_PRE_FUSED path. A faster pre-norm may expose NCCL time it now hides"
+
+[[lever]]
+id = "gb10x3-glm53-mla-unabsorb"
+date = "2026-10-15"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_MLA_UNABSORB=declared (Option B: q_b_proj/o_proj at the checkpoint-declared BF16) or =dsa (Option A: they take --dsa-quantization's tier), default off; prefill only, decode stays absorbed"
+symptom = "DSA prefill o_absorb (W_UV folded into o_proj, K 11264) runs dequant_fp8 then a BF16 GEMM M 8192 N 4096: 44 launches x 8.6 ms = 378.7 ms per rank at c32k at about 88 TF, about 1.8x the FLOPs the unabsorbed form needs; q_absorb (N 11264, K 1536) 33 launches x 3.27 ms"
+diagnosis_tool = "nsys"
+root_cause_class = "redundant-work"
+lever_type = "algorithm"
+lkb_effect = "new kernel glm5next_mla_head_bmm (_q K 256 N 512, _o K 512 N 256): per-head BF16 m16n8k16 MMA, 128x128 CTA tile, 3-stage cp.async, fixed k order (row bytes independent of M and row position); q_b_proj and o_proj run on the existing dense GEMM path. Absorbed decode, q_absorb/o_absorb and the DEQ persisted copy unchanged"
+parity_tier_kept = "accuracy-gated"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "held"
+verdict_reason = "Projected from FLOPs: o side 756 -> 425 GF per rank (-44%), q side 283 -> 189 GF (-33%); Option B -165..-193 ms at c32k and -12..-13.5 ms at c1k, Option A -145..-176 / -7.6..-8.7 ms. Held for G1 (host), G2 (kernel vs f64, unabsorbed error <= 1.25x absorbed), G3 (acc numerics A and B in one run, agentic, kinv) and the lead's serve A/B"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0.0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "any MLA model whose prefill runs absorbed weights: the absorption trades FLOPs for latent-space attention; prefill at wide rows pays for it, decode does not"
+links = { pr = "", commit = "", evidence = "" }
+notes = "Memory per rank (11 DSA layers, 22 local heads): BF16 q_b_proj 17.3 MB + o_proj 46.1 MB + W_UK^T 5.8 MB + W_UV 5.8 MB = 75.0 MB per layer, plus one 92.5 MB row scratch: about +0.92 GB. The absorbed weights stay resident until unabsorbed becomes the default."

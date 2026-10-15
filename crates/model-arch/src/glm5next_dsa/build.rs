@@ -219,7 +219,7 @@ pub fn absorb_o(
 }
 
 /// 2026-09-25: Rows `[start, end)` of a `[rows, row_elems]` row-major tensor.
-fn row_slice(v: &[f32], row_elems: usize, start: usize, end: usize) -> Vec<f32> {
+pub(super) fn row_slice(v: &[f32], row_elems: usize, start: usize, end: usize) -> Vec<f32> {
     v[start * row_elems..end * row_elems].to_vec()
 }
 
@@ -250,7 +250,7 @@ pub fn shard_host(plan: &super::tp::DsaTensorPlan, full: &[f32]) -> Vec<f32> {
     }
 }
 
-fn up_bf16(gpu: &dyn GpuBackend, v: &[f32]) -> Result<DevicePtr> {
+pub(super) fn up_bf16(gpu: &dyn GpuBackend, v: &[f32]) -> Result<DevicePtr> {
     let b: Vec<u8> = v
         .iter()
         .flat_map(|x| half::bf16::from_f32(*x).to_le_bytes())
@@ -340,6 +340,7 @@ pub fn build_dsa_weights(
         wq_b: up_bf16(gpu, &get("indexer.wq_b.weight")?)?,
         weights_proj: up_bf16(gpu, &weights_proj)?,
         ape: up_f32(gpu, &ape)?,
+        unabsorb: None,
     })
 }
 

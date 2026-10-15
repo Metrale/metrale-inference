@@ -184,6 +184,7 @@ pub fn dsa_layer(
         wq_b: bf(cfg.index_heads * d * ql, 0.03)?,
         weights_proj: bf(cfg.index_heads * h, 0.03)?,
         ape,
+        unabsorb: None,
     };
     Ok(Glm5NextDsaLayer {
         cfg: *cfg,

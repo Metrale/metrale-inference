@@ -218,7 +218,7 @@ impl Glm5NextDsaLayer {
         // tiers `indexer_project_rows` reuses the activation quantization `kv_a_proj` made of it
         // (same bytes: the same kernel on the same rows).
         let stable = crate::glm5next_fp8_dense::stable_input(hidden);
-        self.project_in(gpu, hidden, n, stream)?;
+        self.project_in(gpu, hidden, n, false, stream)?;
         // 2026-10-08: One latent-write launch for every row: the metadata's slots are a
         // contiguous i64 array, and the kernel writes row `i` to `slot[i]`.
         self.write_latent_rows(
@@ -380,7 +380,7 @@ impl Glm5NextDsaLayer {
             stream,
         )?;
         drop(stable);
-        self.project_out(gpu, hidden, n, stream)
+        self.project_out(gpu, hidden, n, false, stream)
     }
 }
 

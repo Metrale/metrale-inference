@@ -146,6 +146,7 @@ impl Rig {
                 wq_b: self.buf(64),
                 weights_proj: self.buf(64),
                 ape: self.buf(64),
+                unabsorb: None,
             },
             kernels: Glm5NextDsaLayerKernels {
                 gemm: k(0x101),

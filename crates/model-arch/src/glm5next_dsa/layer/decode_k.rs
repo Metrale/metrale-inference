@@ -121,7 +121,7 @@ impl Glm5NextDsaLayer {
         // quantization `kv_a_proj` made of it instead of quantizing it twice more (same bytes:
         // the same kernel on the same input).
         let stable = crate::glm5next_fp8_dense::stable_input(hidden);
-        self.project_in(gpu, hidden, k, stream)?;
+        self.project_in(gpu, hidden, k, is_prefill, stream)?;
         let mut attend_bt = DevicePtr::NULL;
         let mut attend_sl = DevicePtr::NULL;
         // 2026-09-25: On the host path without `persist_bt`, row 0 allocates the shared bt/sl
@@ -343,7 +343,7 @@ impl Glm5NextDsaLayer {
         }
 
         drop(stable);
-        self.project_out(gpu, hidden, k, stream)
+        self.project_out(gpu, hidden, k, is_prefill, stream)
     }
 }
 
