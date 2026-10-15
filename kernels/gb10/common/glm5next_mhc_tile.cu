@@ -24,7 +24,7 @@
 #include "glm5next_mhc_fused_parts.cuh"
 
 #ifndef GLM_HCT_STAGES
-#define GLM_HCT_STAGES 3
+#define GLM_HCT_STAGES 4
 #endif
 
 #define GLM_HCT_HC 4
@@ -226,14 +226,9 @@ __device__ __forceinline__ void glm_hct_body(GLM_HCF_ARGS, const unsigned int nu
     }
 }
 
-// 2026-10-15: One group (four tokens, 256 threads, two blocks per SM) and two groups (eight
-// tokens, 512 threads: each 16-byte hc_fn copy serves eight tokens).
+// 2026-10-15: One group: four tokens, 256 threads, GLM_HCT_STAGES 4 (one block per SM). Two
+// groups (eight tokens per block, three stages) measured slower on GB10 and are not built.
 extern "C" __global__ void __launch_bounds__(GLM_HCF_BLOCK, 2)
 glm5next_hc_pre_norm_tile4(GLM_HCF_ARGS, const unsigned int num_tokens) {
     glm_hct_body<1>(GLM_HCT_PASS, num_tokens);
-}
-
-extern "C" __global__ void __launch_bounds__(2 * GLM_HCF_BLOCK, 1)
-glm5next_hc_pre_norm_tile8(GLM_HCF_ARGS, const unsigned int num_tokens) {
-    glm_hct_body<2>(GLM_HCT_PASS, num_tokens);
 }

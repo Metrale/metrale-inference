@@ -28,7 +28,7 @@ __device__ __forceinline__ void glm_hcf_tail_bar() {
 }
 
 // 2026-10-15: glm_hcf_tail_bar on named barrier BAR, for a block that runs one tail per group of
-// GLM_HCF_BLOCK threads (glm5next_hc_pre_norm_tile8: group g's tail warps on barrier 4 + g).
+// GLM_HCF_BLOCK threads (glm5next_mhc_tile.cu: group g's tail warps on barrier 4 + g).
 template <int BAR>
 __device__ __forceinline__ void glm_hcf_tail_bar_at() {
     asm volatile("bar.sync %0, %1;" ::"n"(BAR), "n"(GLM_HCF_TAIL_THREADS));

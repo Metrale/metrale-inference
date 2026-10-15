@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-10-15: The cp.async-ring mHC pre-norm (`glm5next_hc_pre_norm_tile8` in
-//! `glm5next_mhc_tile.cu`), `METRALE_GLM_MHC_PRE_TILE=1`: eight tokens per 512-thread block,
-//! each 256-wide k step of `hc_fn` and of the block's FP32 streams staged through shared memory
-//! `HC_PRE_TILE_STAGES - 1` steps ahead, instead of `glm5next_hc_pre_norm_tok4`'s four tokens
-//! per block loading straight into registers. Each thread keeps tok4's chains, trees and tails,
-//! so every output byte is tok4's (`examples/glm5next_mhc_tile_gate.rs`).
+//! 2026-10-15: The cp.async-ring mHC pre-norm (`glm5next_hc_pre_norm_tile4` in
+//! `glm5next_mhc_tile.cu`), `METRALE_GLM_MHC_PRE_TILE=1`: tok4's four tokens per 256-thread
+//! block, but each 256-wide k step of `hc_fn` and of the block's FP32 streams is staged through
+//! shared memory `HC_PRE_TILE_STAGES - 1` steps ahead instead of loading straight into
+//! registers. Each thread keeps tok4's chains, trees and tails, so every output byte is tok4's
+//! (`examples/glm5next_mhc_tile_gate.rs`).
 //!
 //! Owner: model-arch (GLM-5.3).
 //! Invariants:
@@ -13,8 +13,8 @@
 //!   tokens, hc 4, H a multiple of 64, and 16-byte aligned `streams` and `hc_fn`; anything else
 //!   takes the path the lever-off build takes. The caller has already refused the shapes the
 //!   fused kernels do not cover (`hc_pre_norm_refusal`, H at most 8192).
-//! - The launch's dynamic shared memory is `tile_smem_bytes()`, the sum `GlmHctLayout<2>` makes
-//!   in the kernel source at `GLM_HCT_STAGES` 3.
+//! - The launch's dynamic shared memory is `tile_smem_bytes()`, the sum `GlmHctLayout<NG>` makes
+//!   in the kernel source at its default `GLM_HCT_STAGES`.
 
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
@@ -27,18 +27,20 @@ use crate::glm5next_mhc_fused::{HC_PRE_NORM_MAX_HIDDEN, HC_PRE_NORM_ROWS_MIN_TOK
 /// anything else is refused at the first wide pre-norm.
 pub const PRE_TILE_ENV: &str = "METRALE_GLM_MHC_PRE_TILE";
 
-/// 2026-10-15: `glm5next_hc_pre_norm_tile8`: `NG` 2 groups of 256 threads, four tokens each.
-pub const HC_PRE_TILE_GROUPS: u32 = 2;
+/// 2026-10-15: The kernel this lever launches.
+pub const HC_PRE_TILE_KERNEL: &str = "glm5next_hc_pre_norm_tile4";
+/// 2026-10-15: Its `NG`: one group of 256 threads, four tokens.
+pub const HC_PRE_TILE_GROUPS: u32 = 1;
 /// 2026-10-15: Tokens per block (`GLM_HCT_TOK * NG`).
 pub const HC_PRE_TILE_TOKENS: u32 = 4 * HC_PRE_TILE_GROUPS;
 /// 2026-10-15: `GLM_HCT_STAGES` the module is compiled with (the source's default).
-pub const HC_PRE_TILE_STAGES: u32 = 3;
+pub const HC_PRE_TILE_STAGES: u32 = 4;
 /// 2026-10-15: `GLM_HCT_HC`: the only `hc_mult` the kernel is compiled for.
 pub const HC_PRE_TILE_MULT: u32 = 4;
 
 /// 2026-10-15: `GlmHctLayout<NG>::BYTES`: the ring (per stage the 24 BF16 `hc_fn` rows and the
 /// block's FP32 stream rows of one 256-wide step), reused by the trees and the tails, whichever
-/// is largest; then the mixes, the pre weights and the norm's warp sums.
+/// is largest; then the mixes, each group's pre weights and the norm's warp sums.
 pub const fn tile_smem_bytes() -> u32 {
     let mix = (2 + HC_PRE_TILE_MULT) * HC_PRE_TILE_MULT;
     let stage = mix * 256 * 2 + HC_PRE_TILE_TOKENS * 256 * 4;
@@ -72,7 +74,7 @@ pub fn pre_tile() -> Result<bool> {
             tracing::info!(
                 "{PRE_TILE_ENV}=1: wide GLM mHC pre-norms (hc 4) run {HC_PRE_TILE_TOKENS} \
                  tokens per block through a {HC_PRE_TILE_STAGES}-stage cp.async ring \
-                 (glm5next_hc_pre_norm_tile8, {} B shared, same bits as tok4)",
+                 ({HC_PRE_TILE_KERNEL}, {} B shared, same bits as tok4)",
                 tile_smem_bytes()
             );
         }
@@ -105,7 +107,8 @@ pub fn tile_kernel(
 }
 
 /// 2026-10-15: One launch of `kernel` over `num_tokens` tokens: tok4's arguments in tok4's order
-/// (`glm5next_mhc_tok::launch_tok`), on `ceil(num_tokens / 8)` blocks of 512 threads with
+/// (`glm5next_mhc_tok::launch_tok`), on `ceil(num_tokens / HC_PRE_TILE_TOKENS)` blocks of
+/// `256 * HC_PRE_TILE_GROUPS` threads with
 /// `tile_smem_bytes()` of dynamic shared memory.
 #[allow(clippy::too_many_arguments)]
 pub fn launch_tile(

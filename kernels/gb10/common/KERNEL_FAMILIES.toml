@@ -2056,7 +2056,6 @@ kernels = [
   "glm5next_mhc_tok::glm5next_hc_pre_norm_tok4",
   "glm5next_mhc_tok::glm5next_hc_post_pre_norm_tok4",
   "glm5next_mhc_tile::glm5next_hc_pre_norm_tile4",
-  "glm5next_mhc_tile::glm5next_hc_pre_norm_tile8",
   "glm5next_hc_post_sum::glm5next_hc_post_rank_sum",
 ]
 kernel_compute."glm5next_mhc::glm5next_hc_mix" = { compute = "cuda_core" }
@@ -2078,10 +2077,9 @@ kernel_compute."glm5next_mhc_tok::glm5next_hc_pre_norm_tok4" = { compute = "cuda
 # (opt-in METRALE_GLM_MHC_POST_PRE_FUSED, SP-mHC); both halves' expressions in order, so the same bits.
 kernel_compute."glm5next_mhc_tok::glm5next_hc_post_pre_norm_tok4" = { compute = "cuda_core" }
 # 2026-10-15: glm5next_hc_pre_norm_tok4 with each k step of hc_fn and the streams staged through a
-# cp.async ring, four or eight tokens per block (opt-in METRALE_GLM_MHC_PRE_TILE, tile8); tok4's
+# four-stage cp.async ring, four tokens per block (opt-in METRALE_GLM_MHC_PRE_TILE); tok4's
 # chains, trees and tails, so the same bits.
 kernel_compute."glm5next_mhc_tile::glm5next_hc_pre_norm_tile4" = { compute = "cuda_core" }
-kernel_compute."glm5next_mhc_tile::glm5next_hc_pre_norm_tile8" = { compute = "cuda_core" }
 # 2026-10-10: The one-shot all-reduce's rank-order sum (bf16_add_rank_sum's arithmetic) fused
 # ahead of hc_post (opt-in METRALE_GLM_AR_FUSED_POST); the post-mix arithmetic is hc_post's.
 kernel_compute."glm5next_hc_post_sum::glm5next_hc_post_rank_sum" = { compute = "cuda_core" }

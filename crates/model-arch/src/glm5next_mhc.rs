@@ -62,7 +62,7 @@ pub struct Glm5NextMhcKernels {
     /// sub-chunks; taken under `METRALE_GLM_MHC_PRE_TOK=1` (`glm5next_mhc_tok`). Optional
     /// (`try_kernel`, 0 when absent).
     pub hc_pre_norm_tok: KernelHandle,
-    /// 2026-10-15: `glm5next_hc_pre_norm_tile8` (`glm5next_mhc_tile`): tok4's bits; optional.
+    /// 2026-10-15: `glm5next_hc_pre_norm_tile4` (`glm5next_mhc_tile`): tok4's bits; optional.
     pub hc_pre_norm_tile: KernelHandle,
     pub hc_post: KernelHandle,
     /// 2026-10-10: `glm5next_hc_post_rank_sum` (module [`GLM5NEXT_HC_POST_SUM_MODULE`]): the
@@ -144,7 +144,7 @@ impl Glm5NextMhcKernels {
             hc_pre_norm_tile: metrale_model_layers::layers::try_kernel(
                 gpu,
                 GLM5NEXT_MHC_TILE_MODULE,
-                "glm5next_hc_pre_norm_tile8",
+                crate::glm5next_mhc_tile::HC_PRE_TILE_KERNEL,
             ),
             hc_post: gpu.kernel(GLM5NEXT_MHC_MODULE, "glm5next_hc_post")?,
             hc_post_pre_norm: metrale_model_layers::layers::try_kernel(

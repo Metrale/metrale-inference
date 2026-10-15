@@ -30,12 +30,12 @@ fn the_lever_takes_one_or_zero_and_refuses_anything_else() {
     }
 }
 
-/// 2026-10-15: `GlmHctLayout<2>` at three stages: the ring (3 x (24 x 256 x 2 + 8 x 256 x 4))
-/// outgrows the trees (2 x 25 x 256 x 4) and the tails (2 x 8192 x 2), then 8 x 24 mixes, 2 x 4
-/// pre weights and 2 x 33 warp sums, all FP32. The kernel traps on less.
+/// 2026-10-15: `GlmHctLayout<1>` at four stages: the ring (4 x (24 x 256 x 2 + 4 x 256 x 4))
+/// outgrows the trees (25 x 256 x 4) and the tail (8192 x 2), then 4 x 24 mixes, 4 pre weights
+/// and 33 warp sums, all FP32. The kernel traps on less.
 #[test]
 fn the_shared_memory_is_the_kernel_layouts_sum() {
-    assert_eq!(tile_smem_bytes(), 61_440 + 768 + 32 + 264);
+    assert_eq!(tile_smem_bytes(), 65_536 + 384 + 16 + 132);
     assert!(tile_smem_bytes() <= 99 * 1024, "one block must fit an SM");
 }
 
@@ -93,7 +93,7 @@ fn the_tile_kernel_needs_every_condition() {
     );
 }
 
-/// 2026-10-15: tok4's arguments in tok4's order on ceil(T / 8) blocks of 512 threads with the
+/// 2026-10-15: tok4's arguments in tok4's order on ceil(T / 4) blocks of 256 threads with the
 /// layout's shared memory; a dropped or swapped pointer would read the wrong buffer silently.
 #[test]
 fn the_launch_passes_tok4s_arguments_on_the_tile_grid() {
@@ -120,8 +120,8 @@ fn the_launch_passes_tok4s_arguments_on_the_tile_grid() {
     .unwrap();
     let l = gpu.launches_snapshot().last().cloned().expect("one launch");
     assert_eq!(l.func, k.hc_pre_norm_tile.0);
-    assert_eq!(l.grid, [86, 1, 1]);
-    assert_eq!(l.block, [512, 1, 1]);
+    assert_eq!(l.grid, [171, 1, 1]);
+    assert_eq!(l.block, [256, 1, 1]);
     assert_eq!(l.shared_mem, tile_smem_bytes());
     let ptrs = [
         0x1000u64, 0x100, 0x200, 0x300, 0x400, 0x500, 0x2000, 0x3000, 0x5000, 0x6000, 0x4000,

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-15: Byte gate and microbench of `METRALE_GLM_MHC_PRE_TILE`
-//! (`glm5next_hc_pre_norm_tile8`, the cp.async-ring pre-norm) against
+//! (`glm5next_hc_pre_norm_tile4`, the cp.async-ring pre-norm) against
 //! `glm5next_hc_pre_norm_tok4`, whose bytes `glm5next_mhc_slice_bench` ties to the 8-row grid, at
 //! GLM-5.3's shape (hidden 4096, hc 4, 20 Sinkhorn iterations).
 //!
@@ -25,7 +25,7 @@ use half::bf16;
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_model_arch::glm5next_mhc::{Glm5NextMhcKernels, Glm5NextMhcSiteWeights};
-use metrale_model_arch::glm5next_mhc_tile::launch_tile;
+use metrale_model_arch::glm5next_mhc_tile::{HC_PRE_TILE_KERNEL, launch_tile};
 use metrale_model_arch::glm5next_mhc_tok::launch_tok;
 
 const H: usize = 4096;
@@ -273,7 +273,7 @@ fn main() -> Result<()> {
     );
     ensure!(
         k.hc_pre_norm_tile.0 != 0,
-        "glm5next_hc_pre_norm_tile8 is not in this build"
+        "{HC_PRE_TILE_KERNEL} is not in this build"
     );
     let mut rng = Rng(0x3c6e_f372_fe94_f82b);
     let norm: Vec<f32> = (0..H).map(|_| 1.0 + 0.2 * rng.unit()).collect();
@@ -332,12 +332,15 @@ fn main() -> Result<()> {
     }
     negative_controls(&mut b, &sites[2], &mut rng)?;
     println!("BYTE GATE: PASS");
+    // 2026-10-15: Fresh streams for the timing; the gate's were freed above.
+    let h: Vec<f32> = (0..TMAX * HC * H).map(|_| rng.unit() * 2.0).collect();
+    b.streams = up(&gpu, &f32b(&h))?;
     for t in [684usize, 2736] {
         let site = &sites[2];
         let a = b.median_us(k.hc_pre_norm_tok, site, &b.tok, t)?;
         let c = b.median_us(k.hc_pre_norm_tile, site, &b.tile, t)?;
         println!(
-            "T={t:5}: tok4 {:8.1} us [{:.1}, {:.1}], tile8 {:8.1} us [{:.1}, {:.1}] (median [min, max], \
+            "T={t:5}: tok4 {:8.1} us [{:.1}, {:.1}], tile {:8.1} us [{:.1}, {:.1}] (median [min, max], \
              n=9 x 5 launches) -> {:.2}x",
             a[0],
             a[1],
@@ -348,6 +351,7 @@ fn main() -> Result<()> {
             a[0] / c[0]
         );
     }
+    gpu.free(b.streams)?;
     Ok(())
 }
 
