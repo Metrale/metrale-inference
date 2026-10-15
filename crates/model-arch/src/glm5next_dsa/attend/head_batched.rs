@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-14: The head-batched launch of `decode_attention`, moved out of `attend.rs` unchanged
-//! but for the dynamic shared memory the entry declares ([`HeadBatched::smem`]).
+//! but for the dynamic shared memory, block size and offset-table limits the entry declares
+//! ([`HeadBatched::smem`], [`HeadBatched::block`], [`HeadBatched::offset_table`]).
 //!
 //! Owner: model-arch (GLM-5.3 DSA).
 //! Invariants: a row's output does not depend on the launch it is in, so the row windowing below
@@ -12,8 +13,8 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 use super::{
-    DsaDecodeInputs, DsaDecodePaging, Glm5NextDsaConfig, HB_BLOCK, HB_HEADS, HB_LAUNCH_ROWS,
-    HB_MERGE_BLOCK, HeadBatched,
+    DsaDecodeInputs, DsaDecodePaging, Glm5NextDsaConfig, HB_HEADS, HB_LAUNCH_ROWS, HB_MERGE_BLOCK,
+    HeadBatched, TC_MAX_WIDTH,
 };
 use crate::glm5next_dsa::select::DsaSelectGeometry;
 
@@ -49,6 +50,19 @@ pub(super) fn decode_head_batched(
         None if hb.splits == 1 => paging.num_seqs,
         None => HB_LAUNCH_ROWS,
     };
+    // 2026-10-14: The tc entry holds a row's selection in a shared table of
+    // TC_MAX_WIDTH slots and gathers through 16-byte cache offsets; it traps on a wider row, an
+    // unaligned stride or an offset past 2^36 bytes (a pool size this launcher does not see).
+    if hb.offset_table
+        && (geom.out_width > TC_MAX_WIDTH || !paging.cache_stride_bytes.is_multiple_of(16))
+    {
+        bail!(
+            "DSA tc prefill attend: selection width {} (max {TC_MAX_WIDTH}) or cache stride {} \
+             (a multiple of 16) out of range",
+            geom.out_width,
+            paging.cache_stride_bytes
+        );
+    }
     let (ws_o, ws_ml) = ws.map_or((DevicePtr(0), DevicePtr(0)), |w| (w.o, w.ml));
     let latent_row = heads * cfg.kv_lora_rank * 2;
     let mut row0 = 0;
@@ -66,7 +80,7 @@ pub(super) fn decode_head_batched(
                 rows as u32,
                 heads.div_ceil(HB_HEADS) as u32,
             ])
-            .block([HB_BLOCK, 1, 1])
+            .block([hb.block, 1, 1])
             .shared_mem(hb.smem)
             .arg_ptr(q)
             .arg_ptr(inputs.k_cache)

@@ -146,9 +146,12 @@ fn hb8() -> HeadBatched {
         decode: KernelHandle(11),
         decode_p_hi: KernelHandle(13),
         prefill_pipe: KernelHandle(14),
+        prefill_tc: KernelHandle(15),
         merge: KernelHandle(12),
         splits: 8,
         smem: 0,
+        block: HB_BLOCK,
+        offset_table: false,
     }
 }
 
@@ -266,5 +269,70 @@ fn the_prefill_pipe_twin_is_swapped_in_only_over_p_hi_and_carries_its_smem() {
         .err()
         .unwrap()
         .to_string();
+    assert!(e.contains("needs METRALE_GLM_DSA_DECODE_HB"), "{e}");
+}
+
+/// 2026-10-14: The tc twin replaces the P-hi entry only when asked, only at one split and only
+/// over the P-hi entry (not over the pipe twin), and carries its block, shared memory and
+/// offset-table limits; off, nothing changes. Every refusal is an error naming what is missing.
+#[test]
+fn the_prefill_tc_twin_is_swapped_in_only_over_p_hi_at_one_split() {
+    let hb = hb8();
+    let k = Glm5NextDsaDecodeKernel {
+        per_head: KernelHandle(10),
+        head_batched: Some(hb),
+    };
+    let p_hi1 = k.for_prefill(true).for_prefill_p_hi(true).ok().unwrap();
+    let off = p_hi1
+        .for_prefill_tc(false)
+        .ok()
+        .unwrap()
+        .head_batched
+        .unwrap();
+    assert_eq!(
+        (off.decode.0, off.smem, off.block, off.offset_table),
+        (13, 0, HB_BLOCK, false)
+    );
+    let on = p_hi1
+        .for_prefill_tc(true)
+        .ok()
+        .unwrap()
+        .head_batched
+        .unwrap();
+    assert_eq!(
+        (on.decode.0, on.splits, on.smem, on.block, on.offset_table),
+        (15, 1, TC_SMEM_BYTES, TC_BLOCK, true)
+    );
+    // 2026-10-14: the kernel's TC_SMEM_BYTES: two 32 KB tiles, four 24 x 36 f32 planes and a
+    // 2064-slot u32 offset table.
+    assert_eq!(TC_SMEM_BYTES, 87_616);
+
+    let err = |r: Result<Glm5NextDsaDecodeKernel>| r.err().unwrap().to_string();
+    let e = err(k.for_prefill(true).for_prefill_tc(true));
+    assert!(e.contains("needs METRALE_GLM_DSA_HB_PREFILL_P_HI=1"), "{e}");
+    let e = err(p_hi1
+        .for_prefill_pipe(true)
+        .and_then(|k| k.for_prefill_tc(true)));
+    assert!(
+        e.contains("excludes METRALE_GLM_DSA_HB_PREFILL_PIPE=1"),
+        "{e}"
+    );
+    let e = err(k
+        .for_prefill_p_hi(true)
+        .and_then(|k| k.for_prefill_tc(true)));
+    assert!(e.contains("one split, got 8"), "{e}");
+    let no_twin = Glm5NextDsaDecodeKernel {
+        head_batched: Some(HeadBatched {
+            prefill_tc: KernelHandle(0),
+            ..hb
+        }),
+        ..k
+    };
+    let e = err(no_twin
+        .for_prefill(true)
+        .for_prefill_p_hi(true)
+        .and_then(|k| k.for_prefill_tc(true)));
+    assert!(e.contains("not in this target"), "{e}");
+    let e = err(per_head_only().for_prefill_tc(true));
     assert!(e.contains("needs METRALE_GLM_DSA_DECODE_HB"), "{e}");
 }

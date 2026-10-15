@@ -1723,8 +1723,8 @@ lever_type = "new-kernel"
 lkb_effect = "glm5next_dsa_mla_prefill_pipe_phi: the phi kernel rescheduled (double-buffered tile in 79 KB of dynamic shared memory, QK on all 8 warps as the phi kernel's four accumulator chains, two barriers per tile, the widen of tile t+1 under the softmax of tile t, QK(t+1) beside PV(t)); the tile functions shared through glm5next_dsa_mla_hb_tile.cuh"
 parity_tier_kept = "bit-identical"
 per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
-verdict = "held"
-verdict_reason = "written without a GPU; the byte gate against the phi kernel, row invariance and timing (glm5next_dsa_prefill_pipe_gate) are pending. Expected 0.2-0.4 s per 32k prefill if the tile drops toward the MMA floor"
+verdict = "discarded"
+verdict_reason = "2026-10-14 measured (glm5next_dsa_prefill_pipe_gate, 8208 rows x 22 heads, one split): byte-identical to the phi kernel (0 rows differ; 8 splits, sub-chunks, neighbours, stride 640 and the E4M3 NaN pool all exact) but 26.37 ms against phi's 25.66 ms (x0.973): one CTA per row still runs gather + widen inside the tile's critical path, so the overlap does not pay. Superseded by the warp-specialized twin (gb10x3-glm53-dsa-prefill-tc); the lever stays default-off"
 failure_mode = ""
 caught_by = ""
 time_lost_hours = 0
@@ -1901,3 +1901,27 @@ effort_hours = 0.0
 transferability = "GLM MTP serves; re-test only with a C8 instrument whose spread is below the claimed gain"
 links = { pr = "", commit = "", evidence = "/workspace/claude-state/glm/logs/chainK_kinv-1014T1331.log; /workspace/claude-state/glm/STATUS.md 2026-10-14T13:45Z" }
 notes = "The table default (on) differs from the recipe (0); the recipe is fully explicit, so the serve runs 0."
+
+[[lever]]
+id = "gb10x3-glm53-dsa-prefill-tc"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "Z recipe (METRALE_GLM_DSA_DECODE_HB=8, METRALE_GLM_DSA_HB_PREFILL_P_HI=1, METRALE_GLM_DSA_HB_PREFILL_ONE_SPLIT=1) + METRALE_GLM_DSA_HB_PREFILL_TC=1 (prefill sub-chunks only)"
+symptom = "cold 32k TTFT 12.26 s against vLLM's 10.48 s; the sparse-MLA prefill attend (glm5next_dsa_mla_decode_hb_fp8_phi, one split, 44 launches) runs ~25-29 ms per 8208-row sub-chunk at ~26-30 TFLOP/s"
+diagnosis_tool = "microbench"
+root_cause_class = "latency-bound"
+lever_type = "new-kernel"
+lkb_effect = "glm5next_dsa_mla_prefill_tc_phi: one warp-specialized CTA per (row, head group), block 384: a prologue builds a per-row table of 16-byte KV offsets; 4 producer warps gather + widen 32-slot tiles into two bf16 buffers (named barriers FULL/EMPTY) two tiles ahead of 8 consumer warps that run the phi kernel's QK chains, softmax and PV (the shared glm5next_dsa_mla_hb_tile.cuh functions) in the same IEEE order; the widen is cvt E4M3x2 -> f16x2 -> f32 -> bf16 RN (exact for finite E4M3) with a per-word fallback to hb_e4m3x2_to_bf16x2 when a word holds an E4M3 NaN byte"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "kept"
+verdict_reason = "2026-10-14 measured (glm5next_dsa_prefill_tc_gate, 8208 rows of a 32768-token sequence x 22 heads, one split, 7fbc32f06 + the twin): byte-identical to the phi kernel (0 of 8208 rows differ; sub-chunks 1/7/512/2052/4104/uneven, permuted neighbours, stride 640, edge rows and the E4M3 NaN pool all exact; 0.93-1.15 ulp from f64) and 20.433 ms against phi's 25.313 ms in the same run (x1.239, 37.1 vs 29.9 TFLOP/s). Kept default-off until a cold serve A/B; expected -0.21 s per cold 32k prefill (4.88 ms x 44 launches; attend is serial on each rank)"
+failure_mode = "a first port (persistent CTAs, grid min(rows, SMs), row loop per CTA) was byte-exact but 35.6 ms against phi's 29.2 ms (x0.82): with one CTA per SM the 4 producer warps cannot keep the consumers fed (widen-bound; widen variants w0-w3 29.9-37.4 ms, a 2x grid no better)"
+caught_by = "glm5next_dsa_prefill_tc_gate (iv) timing"
+time_lost_hours = 1.0
+would_catch_earlier = "run the repo kernel in the same harness run as the prototype it ports before wiring it"
+effort_hours = 8.0
+transferability = "any per-row gather attention whose tile phases serialize in one CTA (sparse MLA, paged decode at prefill widths)"
+links = { pr = "", commit = "", evidence = "glm5next_dsa_prefill_tc_gate" }
+notes = "Harness (8208 rows, 22 heads, one split): phi 29.2 ms / 25.9 TF vs tc 19.26 ms / 39.4 TF in the same run (earlier run 25.6 vs 17.58 ms / 43.1 TF), 0 rows differ. Phi ablations (ms): no load 16.9, no widen 17.6, no QK 19.9, no PV 21.3, no QK+PV 11.6, skeleton 3.4. tc ablations: no producer 14.0, no MMA 11.9, no softmax 15.2, MMA only 10.7 (71 TF), prologue 2.24; L2 gather ~1950 GB/s. So 100 TF is not reachable byte-exact: the MMA-only floor is ~10.7 ms; beyond it needs a new numerics point (FP8 MMA on the latent). NaN: the phi widen maps E4M3 NaN (0x7f/0xff) to a finite bf16 (0x47ff class) while the cvt path gives NaN, hence the per-word fallback; the gate's NaN pool (one byte in 61) checks it. The pre-gate estimate (~7-10 ms x 44 launches = ~0.3-0.4 s) was high: the gate run measured 4.88 ms per launch, ~0.21 s per cold 32k prefill."

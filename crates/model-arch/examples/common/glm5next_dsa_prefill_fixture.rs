@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-10-14: A prefill-shaped DSA attend input for `glm5next_dsa_prefill_pipe_gate`: one
+//! 2026-10-14: A prefill-shaped DSA attend input for the prefill twin gates: one
 //! 32k-token sequence, its query rows the last `rows` positions, all rows sharing one block
 //! table (stride 0, as a prefill sub-chunk launches), and per row a selection laid out as
 //! `dsa_expand_selection` lays it (kernels/gb10/common/dsa_indexer_body.cuh): the row's top

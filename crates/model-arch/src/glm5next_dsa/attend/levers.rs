@@ -2,7 +2,7 @@
 
 //! 2026-10-14: The environment levers of the GLM-5.3 DSA attention launcher, each read once.
 //! Moved out of `attend.rs` unchanged (that file passed 500 lines), plus
-//! `METRALE_GLM_DSA_HB_PREFILL_PIPE`.
+//! `METRALE_GLM_DSA_HB_PREFILL_PIPE` and `METRALE_GLM_DSA_HB_PREFILL_TC`.
 //!
 //! Owner: model-arch (GLM-5.3 DSA).
 //! Invariants: a malformed value is an error at resolve time, never a silent default.
@@ -67,6 +67,42 @@ pub fn hb_prefill_pipe() -> Result<bool> {
     })
     .clone()
     .map_err(anyhow::Error::msg)
+}
+
+/// 2026-10-14: `METRALE_GLM_DSA_HB_PREFILL_TC`, read once: `1` runs the P-hi prefill attend
+/// (`METRALE_GLM_DSA_HB_PREFILL_P_HI=1`, one split) on `glm5next_dsa_mla_prefill_tc_phi`, the same
+/// arithmetic on a warp-specialized CTA per (row, head group) (producer warps gather and widen the
+/// next tiles while consumer warps run QK, softmax and PV): byte-identical output per row, so no
+/// new numerics point. Unset or `0` keeps the P-hi entry; another value is an error; exclusive
+/// with `METRALE_GLM_DSA_HB_PREFILL_PIPE`. Decode is never affected.
+pub fn hb_prefill_tc() -> Result<bool> {
+    static V: std::sync::OnceLock<Result<bool, String>> = std::sync::OnceLock::new();
+    V.get_or_init(|| {
+        parse_switch(
+            "METRALE_GLM_DSA_HB_PREFILL_TC",
+            std::env::var("METRALE_GLM_DSA_HB_PREFILL_TC")
+                .ok()
+                .as_deref(),
+        )
+    })
+    .clone()
+    .map_err(anyhow::Error::msg)
+}
+
+/// 2026-10-14: The readback of the prefill attend levers, logged once per process after the first
+/// prefill sub-chunk's attend resolved them without error, so every rank's serve log shows which
+/// entry its prefill ran (each set lever is refused unless it was swapped in).
+pub(super) fn readback_prefill_levers(one_split: bool, p_hi: bool, pipe: bool, tc: bool) {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        tracing::info!(
+            "DSA prefill attend levers: one_split={} p_hi={} pipe={} tc={}",
+            u8::from(one_split),
+            u8::from(p_hi),
+            u8::from(pipe),
+            u8::from(tc)
+        )
+    });
 }
 
 /// 2026-10-14: A `0`/`1` switch lever's parse, pure: unset or `0` off, `1` on, else an error

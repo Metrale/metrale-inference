@@ -49,6 +49,10 @@ pub const DSA_DECODE_HB_MODULE: &str = "glm5next_dsa_mla_decode_hb";
 /// (`glm5next_dsa_mla_prefill_pipe.cu`).
 pub const DSA_PREFILL_PIPE_MODULE: &str = "glm5next_dsa_mla_prefill_pipe";
 
+/// 2026-10-14: Module of the warp-specialized prefill twin of the P-hi entry
+/// (`glm5next_dsa_mla_prefill_tc.cu`).
+pub const DSA_PREFILL_TC_MODULE: &str = "glm5next_dsa_mla_prefill_tc";
+
 /// 2026-10-09: Rows per head-batched launch. `decode_attention` walks wider row sets in launches
 /// of this many rows, so the split workspace is bounded by it, not by the workspace's
 /// `max_rows`. A row's output does not depend on the launch it is in.
@@ -63,7 +67,11 @@ const HB_BLOCK: u32 = 256;
 const HB_MERGE_BLOCK: u32 = 128;
 
 mod levers;
-pub use levers::{hb_prefill_one_split, hb_prefill_p_hi, hb_prefill_pipe, hb_splits_lever};
+pub use levers::{
+    hb_prefill_one_split, hb_prefill_p_hi, hb_prefill_pipe, hb_prefill_tc, hb_splits_lever,
+};
+mod prefill_tc;
+pub use prefill_tc::{TC_BLOCK, TC_MAX_WIDTH, TC_SMEM_BYTES};
 
 /// 2026-10-14: Dynamic shared memory of `glm5next_dsa_mla_prefill_pipe_phi`: two bf16 tiles
 /// (32 tokens x 512 dims) and four f32 QK chain planes (24 heads x 36), its `PP_SMEM_BYTES`.
@@ -80,10 +88,18 @@ struct HeadBatched {
     /// 2026-10-14: `glm5next_dsa_mla_prefill_pipe_phi`, or 0 when the target lacks it;
     /// [`Glm5NextDsaDecodeKernel::for_prefill_pipe`] swaps it in.
     prefill_pipe: KernelHandle,
+    /// 2026-10-14: `glm5next_dsa_mla_prefill_tc_phi`, or 0 when the target lacks it;
+    /// [`Glm5NextDsaDecodeKernel::for_prefill_tc`] swaps it in.
+    prefill_tc: KernelHandle,
     merge: KernelHandle,
     splits: usize,
     /// 2026-10-14: Dynamic shared memory `decode` is launched with (0 but for the pipe entry).
     smem: u32,
+    /// 2026-10-14: Threads per block of `decode` ([`HB_BLOCK`] but for the tc entry).
+    block: u32,
+    /// 2026-10-14: `decode` gathers through a [`TC_MAX_WIDTH`]-slot table of 16-byte cache
+    /// offsets (the tc entry), so the launcher refuses a wider row or an unaligned stride.
+    offset_table: bool,
 }
 
 /// 2026-09-25: The selected-index MLA decode entry point. 2026-10-09: and, under
@@ -126,9 +142,16 @@ impl Glm5NextDsaDecodeKernel {
                         DSA_PREFILL_PIPE_MODULE,
                         "glm5next_dsa_mla_prefill_pipe_phi",
                     ),
+                    prefill_tc: metrale_model_layers::layers::try_kernel(
+                        gpu,
+                        DSA_PREFILL_TC_MODULE,
+                        "glm5next_dsa_mla_prefill_tc_phi",
+                    ),
                     merge: gpu.kernel(DSA_DECODE_HB_MODULE, "glm5next_dsa_mla_merge")?,
                     splits,
                     smem: 0,
+                    block: HB_BLOCK,
+                    offset_table: false,
                 })
             }
         };
@@ -200,11 +223,19 @@ impl Glm5NextDsaDecodeKernel {
     }
 
     /// 2026-10-14: This kernel for a prefill sub-chunk's attend under the prefill levers, in
-    /// order: [`hb_prefill_one_split`], [`hb_prefill_p_hi`], [`hb_prefill_pipe`].
+    /// order: [`hb_prefill_one_split`], [`hb_prefill_p_hi`], [`hb_prefill_pipe`],
+    /// [`hb_prefill_tc`].
+    /// Each process logs the resolved levers once ([`levers::readback_prefill_levers`]).
     pub fn for_prefill_levers(self) -> Result<Self> {
-        self.for_prefill(hb_prefill_one_split())
-            .for_prefill_p_hi(hb_prefill_p_hi()?)?
-            .for_prefill_pipe(hb_prefill_pipe()?)
+        let (one, p_hi) = (hb_prefill_one_split(), hb_prefill_p_hi()?);
+        let (pipe, tc) = (hb_prefill_pipe()?, hb_prefill_tc()?);
+        let k = self
+            .for_prefill(one)
+            .for_prefill_p_hi(p_hi)?
+            .for_prefill_pipe(pipe)?
+            .for_prefill_tc(tc)?;
+        levers::readback_prefill_levers(one, p_hi, pipe, tc);
+        Ok(k)
     }
 
     /// 2026-10-12: This kernel for a prefill sub-chunk's attend: the head-batched one at one
