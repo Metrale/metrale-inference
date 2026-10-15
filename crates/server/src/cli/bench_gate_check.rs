@@ -39,15 +39,43 @@ pub(super) fn print_statuses(
     open
 }
 
+/// 2026-10-15: The (gate, model) pairs this change re-opens and leaves uncertified: each is
+/// certified after merge by its own certification PR.
+fn print_owed(owed: &[gate::check_models::Owed]) {
+    println!();
+    if owed.is_empty() {
+        println!("owed: nothing — every model this change reaches is certified");
+        return;
+    }
+    println!("owed after merge ({}):", owed.len());
+    for o in owed {
+        println!(
+            "        {} — {} on {} ({})",
+            o.gate, o.subject.checkpoint, o.subject.hw, o.subject.model
+        );
+    }
+}
+
 /// 2026-09-26: `--pull-request-gate-check`: print every required gate's status
 /// at the checked-out commit, then the advisory intent for `pr`. Returns 0
 /// when every gate passes and 1 otherwise; the caller exits with it.
-pub(super) fn gate_check_cmd(pr: Option<u64>) -> Result<i32> {
+pub(super) fn gate_check_cmd(pr: Option<u64>, base: Option<&str>) -> Result<i32> {
     let root = repo_root()?;
     let sha = gate::git_sha(&root)?;
-    let gates = gate::check_gates(&root, &sha);
     println!("gate check for {sha} ({})", root.display());
-    let open = print_statuses(&gates);
+    let open = match base {
+        None => print_statuses(&gate::check_gates(&root, &sha)),
+        Some(base) => {
+            let map = gate::kernel_map::load(&gate::kernel_map::FsRepo { root: root.clone() });
+            if let gate::model_scope::KernelMap::Unavailable(why) = &map {
+                println!("kernel map unavailable, every model counts as reached: {why}");
+            }
+            let checked = gate::check_models::check_models(&root, &sha, base, &map);
+            let open = print_statuses(&checked.statuses);
+            print_owed(&checked.owed);
+            open
+        }
+    };
     // 2026-09-26: Advisory only: what the PR's classified intent would ask for.
     // The ledger is printed, never used for the verdict: the governance crate
     // doc keeps the gate independent of a file any job can append to.

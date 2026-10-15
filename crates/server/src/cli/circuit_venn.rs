@@ -17,38 +17,12 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use metrale_circuit::venn::{Repo, VennArgs, checkpoint_id_of, report_text};
+use metrale_circuit::venn::{VennArgs, checkpoint_id_of, report_text};
 
 use super::{CircuitMode, CircuitVennArgs};
 
-/// 2026-09-29: The repository on disk.
-pub(crate) struct FsRepo {
-    pub(crate) root: PathBuf,
-}
-
-impl Repo for FsRepo {
-    fn read(&self, rel: &str) -> std::result::Result<String, String> {
-        std::fs::read_to_string(self.root.join(rel)).map_err(|e| format!("{rel}: {e}"))
-    }
-
-    fn list(&self, rel: &str) -> std::result::Result<Vec<String>, String> {
-        let mut out = Vec::new();
-        let mut stack = vec![self.root.join(rel)];
-        while let Some(dir) = stack.pop() {
-            let entries = std::fs::read_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-            for entry in entries {
-                let path = entry.map_err(|e| e.to_string())?.path();
-                if path.is_dir() {
-                    stack.push(path);
-                } else if let Ok(r) = path.strip_prefix(&self.root) {
-                    out.push(r.to_string_lossy().replace('\\', "/"));
-                }
-            }
-        }
-        out.sort();
-        Ok(out)
-    }
-}
+/// 2026-10-15: The repository on disk; one implementation, shared with the gate check.
+pub(crate) use metrale_bench::gate::kernel_map::FsRepo;
 
 pub(crate) fn find_root(start: &Path) -> Result<PathBuf> {
     start

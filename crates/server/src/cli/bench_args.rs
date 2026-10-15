@@ -33,6 +33,19 @@ pub struct BenchmarkArgs {
     /// (`BenchmarkArgs::reject_orphan_pr`).
     #[arg(long)]
     pub pr: Option<u64>,
+
+    /// The commit this branch is merged into, for `--pull-request-gate-check`:
+    /// judge each gate per registered model. A change re-opens only the models
+    /// it reaches through the kernels they run, at least one of them must
+    /// certify, and the rest are listed as owed for the post-merge
+    /// certification PRs. Every registered model's covering record is judged
+    /// against its own BENCH.toml entry.
+    ///
+    /// There is no default: without it the check judges each gate's declared
+    /// subject only, as `met benchmark certify` does. Without
+    /// `--pull-request-gate-check` it is refused.
+    #[arg(long = "gate-base", value_name = "REV")]
+    pub gate_base: Option<String>,
     #[command(subcommand)]
     pub command: Option<BenchmarkCommand>,
 }
@@ -53,6 +66,13 @@ impl BenchmarkArgs {
             return Err(
                 "--pr keys the advisory intent lookup of --pull-request-gate-check and does \
                  nothing anywhere else; pass --pull-request-gate-check with it, or drop --pr."
+                    .to_string(),
+            );
+        }
+        if self.gate_base.is_some() && !self.pull_request_gate_check {
+            return Err(
+                "--gate-base scopes --pull-request-gate-check per model and does nothing \
+                 anywhere else; pass --pull-request-gate-check with it, or drop --gate-base."
                     .to_string(),
             );
         }

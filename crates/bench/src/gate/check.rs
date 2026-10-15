@@ -94,7 +94,20 @@ pub fn record_standing(
     record: &GateRecord,
     gate: &super::coverage::GateCoverage,
 ) -> Standing {
-    let by_paths = match invalidating_paths(root, sha, &record.git_sha, gate) {
+    record_standing_for(root, sha, record, gate, &|paths| paths)
+}
+
+/// 2026-10-15: [`record_standing`] counting only the invalidating paths `reach` keeps: the paths
+/// that reach the record's model (`check_models`). `reach` sees the paths before the closure
+/// does, so it can only narrow the boundary.
+pub fn record_standing_for(
+    root: &Path,
+    sha: &str,
+    record: &GateRecord,
+    gate: &super::coverage::GateCoverage,
+    reach: &dyn Fn(Vec<String>) -> Vec<String>,
+) -> Standing {
+    let by_paths = match invalidating_paths(root, sha, &record.git_sha, gate).map(reach) {
         None => Standing::Unknown,
         Some(paths) if paths.is_empty() => Standing::Stands,
         Some(paths) => {
@@ -279,6 +292,17 @@ pub(super) fn check_one(root: &Path, benchmark_id: &str, sha: &str) -> GateStatu
             None => "latest record is unreadable".to_string(),
         });
     };
+    judge(root, &record, &record_path, &baseline)
+}
+
+/// 2026-10-15: The verdict on one covering record: its run, its tree, its own verdict, its
+/// numbers against its own (hardware, model) baseline entry, and its signature.
+pub(super) fn judge(
+    root: &Path,
+    record: &GateRecord,
+    record_path: &Path,
+    baseline: &GateBaseline,
+) -> GateStatus {
     if record.frame_status_failed() {
         return GateStatus::Fail(vec![format!(
             "the run itself failed: {}",
@@ -304,12 +328,12 @@ pub(super) fn check_one(root: &Path, benchmark_id: &str, sha: &str) -> GateStatu
             record.verdict_reason
         ));
     }
-    if let Some(breaches) = check_record(&record, &baseline) {
+    if let Some(breaches) = check_record(record, baseline) {
         problems.extend(breaches);
     }
     // 2026-09-26: A signature `verify_record` rejects fails the gate.
     if let Err(why) =
-        super::signing::verify_record(root, &record_path, &record.git_sha, record.recorded_at)
+        super::signing::verify_record(root, record_path, &record.git_sha, record.recorded_at)
     {
         problems.push(format!("{why}"));
     }

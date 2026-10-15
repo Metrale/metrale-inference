@@ -47,7 +47,7 @@ pub const PERF_PATHS: [&str; 7] = [
 /// Every other file under `crates/bench/src/gate` is in `GATE_MACHINERY_FILES` and falls under
 /// every gate's `GATE_MACHINERY` exclusion. `every_verdict_symbol_is_defined_inside_the_boundary`
 /// fails if a verdict function it names is defined in a gate file outside this list.
-pub const BOUNDARY_FILES: [&str; 15] = [
+pub const BOUNDARY_FILES: [&str; 20] = [
     "crates/bench/src/gate/coverage.rs",
     // 2026-09-26: `required_for`, `union`, `intent_only`: what the intent half adds to the
     // path-derived floor.
@@ -92,6 +92,15 @@ pub const BOUNDARY_FILES: [&str; 15] = [
     // 2026-10-02: `recipe_standing`, `canonical`: whether the recipe a record served is still
     // what its gate serves.
     "crates/bench/src/gate/recipe_closure.rs",
+    // 2026-10-15: `check_models`, `decide`: the per-model verdict and what a change leaves owed.
+    "crates/bench/src/gate/check_models.rs",
+    // 2026-10-15: `reaching`: which registered models a changed path re-opens.
+    "crates/bench/src/gate/model_scope.rs",
+    // 2026-10-15: `load`: the kernel → model map `reaching` reads, and how it fails closed.
+    "crates/bench/src/gate/kernel_map.rs",
+    // 2026-10-15: `affected`, `instance_uses`: which models a kernel file reaches.
+    "crates/circuit/src/venn/affected.rs",
+    "crates/circuit/src/venn/affected_repo.rs",
 ];
 
 /// 2026-09-26: Gate sources reviewed and found not to decide a verdict. Every non-test `.rs`
@@ -134,6 +143,9 @@ const GATE_MACHINERY_FILES: &[&str] = &[
     // 2026-09-26: Signature minting, the signer registry and `verify_record`, whose error
     // `check_one` and `check_group` report as a failure.
     "crates/bench/src/gate/signing.rs",
+    // 2026-10-15: Which certification PRs a merge opens for what `check_models` says it owes;
+    // no verdict reads it.
+    "crates/bench/src/gate/owed_prs.rs",
     // 2026-09-26: Test-only baseline fixtures (`#[cfg(test)]` in mod.rs).
     "crates/bench/src/gate/fixture_baseline.rs",
     "crates/bench/src/gate/mod.rs",

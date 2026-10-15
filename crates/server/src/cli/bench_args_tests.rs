@@ -125,6 +125,23 @@ fn a_pr_without_the_gate_check_is_refused() {
 }
 
 #[test]
+fn a_gate_base_without_the_gate_check_is_refused() {
+    let a = bench_args(&["met", "benchmark", "--gate-base", "abc", "list"]);
+    let err = a.reject_orphan_pr().expect_err("refused");
+    assert!(err.contains("--gate-base"), "names the orphan flag: {err}");
+    // 2026-10-15: Control: with the gate check it is accepted and carried.
+    let a = bench_args(&[
+        "met",
+        "benchmark",
+        "--pull-request-gate-check",
+        "--gate-base",
+        "abc",
+    ]);
+    a.reject_orphan_pr().expect("valid pairing accepted");
+    assert_eq!(a.gate_base.as_deref(), Some("abc"));
+}
+
+#[test]
 fn a_pr_with_the_gate_check_is_accepted() {
     // 2026-09-26: The accepted pairing parses and passes `reject_orphan_pr`.
     let a = bench_args(&[
