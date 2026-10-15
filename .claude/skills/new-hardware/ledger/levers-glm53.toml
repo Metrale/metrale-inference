@@ -2044,7 +2044,7 @@ would_catch_earlier = ""
 effort_hours = 5.0
 transferability = "any multi-stage cp.async tile body with spare registers: hoist the address plan, but gate it per body on a 0-spill ptxas check"
 links = { pr = "", commit = "", evidence = "/workspace/claude-state/glm/moegemm/g5ch_1.txt" }
-notes = "Not applied to the down/plain bodies: there the same plan (G5b) spills on the k64 twins (16/24, 4/4, 12/12). The register-unconstrained 'pre' harness variant suggests about -40 us on down r4 if a spill-free form is found. Raw pairs show a +140 to +250 us drift in iteration 3 on identical code, hence the control normalization"
+notes = "Not applied to the down/plain bodies: there the same plan (G5b) spills on the k64 twins (16/24, 4/4, 12/12). The register-unconstrained 'pre' harness variant suggests about -40 us on down r4 if a spill-free form is found. Raw pairs show a +140 to +250 us drift in iteration 3 on identical code, hence the control normalization. 2026-10-15 gate rule: any gate/up variant must also pass a uniform-routing byte gate in which every slot is assigned and the reference buffers are poisoned as well as the candidate. An earlier uniform DIFFER on two harness variants came from unpoisoned references plus unassigned slots (see gb10x3-glm53-moe-w4a4-remainder), not from the kernel"
 
 [[lever]]
 id = "gb10x3-glm53-moe-w4a4-nc"
@@ -2069,3 +2069,75 @@ effort_hours = 6.0
 transferability = "any grouped GEMM with a short per-expert K loop where per-CTA fixed cost rivals the MMA work"
 links = { pr = "", commit = "", evidence = "/workspace/claude-state/glm/moe2/epi_nc.txt" }
 notes = "Only the m128 down tile switches; m32/m64 (rows <= 1036 use m32) and the gate/up are untouched, so c1k is unaffected. At m128 with rows <= 1036 (not a production tile choice) nc costs 3-9%. ptxas: the _n twins spill 4 B, the same as the production plain m128 entry, outside the K loop. NC=2 is the conservative fallback (epi rows 8208: -12 us zipf 0, +134 us zipf 1.2 at raster 4)"
+
+[[lever]]
+id = "gb10x3-glm53-moe-w4a4-smallt"
+date = "2026-10-15"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "harness only, never wired: m32 grouped W4A4 small-T variants (deeper cp.async pipeline S4/S6, nc column tiles on gate and down)"
+symptom = "at short prefills (rows 256-1036, the m32 tile) the routed fused gate/up and gate GEMMs read their weights at 183-196 GB/s against a measured 214-228 GB/s device read ceiling"
+diagnosis_tool = "microbench"
+root_cause_class = "bandwidth-bound"
+lever_type = "kernel-restructure"
+lkb_effect = "none (not shipped)"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-1k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "discarded"
+verdict_reason = "Stop rule set before timing: keep only if a variant moves the m32 gate/up from 197 GB/s toward 225 GB/s. Harness smallt1 (dgx1, rows 256/287/1036, median of 15, 2-4 rounds): a no-MMA diagnostic of the same body runs as fast as production (gu T1036 3.327/3.378 vs 3.319/3.377 ms; T287 3.015 vs 3.015), so the m32 gate/up is load-bound and MMA work is not on its critical path; S4 moves gu by -0.03..+0.03 ms and S6 by -0.10 (T287) to +0.17 ms (T1036); gate nc2/nc6 are +0.00..+0.06 ms. The m32 down with nc 2-8 gains -0.19 ms at T1036 but loses +0.07..+0.18 ms at T256/T287, so it was not wired (lead ruling). Bytes identical on 5 of 6 cases; the 6th (gu under uniform routing) differed only through a harness defect, see gb10x3-glm53-moe-w4a4-remainder"
+failure_mode = "the small-T tile is already at the load path's practical rate; deeper pipelines add shared memory and lower occupancy"
+caught_by = "no-MMA diagnostic timing equal to production"
+time_lost_hours = 0.5
+would_catch_earlier = "time a no-MMA copy of the body before building pipeline variants: equal times mean only the load path can be moved"
+effort_hours = 2.0
+transferability = "any weight-streaming GEMM at small M: check no-MMA == production first"
+links = { pr = "", commit = "", evidence = "/workspace/claude-state/glm/moe2/smallt/smallt1.txt" }
+notes = "c1k uses m32/m64 at rows <= 1036; nothing changed there. The m32 down nc gain at T1036 (-0.19 ms) could only ship row-gated, and was parked by the lead"
+
+[[lever]]
+id = "gb10x3-glm53-moe-w4a4-wide"
+date = "2026-10-15"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "harness only, never wired: m128 grouped W4A4 tile at 128x128 with 512 threads (16 warps), gate/up and down, stage 1 of MOE-1"
+symptom = "32k cold prefill: the m128 fused gate/up runs at 105-118 useful TFLOP/s and the m128 down at 66-69 on real routing"
+diagnosis_tool = "microbench"
+root_cause_class = "latency-bound"
+lever_type = "kernel-restructure"
+lkb_effect = "none (not shipped)"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "discarded"
+verdict_reason = "Stop rule set before timing: stage 1 must gain >= 0.7 ms per call or stage 2 (mbarrier pipeline) is not built. Harness moe1_1 (dgx1, rows 8208/8192, median of 15, 3 rounds): gate/up wide vs production -0.02/-0.36/-0.41 ms on real routing fx 8208 (r4) and -0.13..-0.56 ms on fx44 8192, but +0.04..+0.20 ms under uniform routing; down wide nc4 r4 vs production nc4 r4 -0.02..-0.06 ms real (about equal to the shipped NC8), -0.10..-0.25 ms uniform. No call reached -0.7 ms, so stage 2 was skipped. ptxas: w_gu_m128 and w_m128_k64 spill 0"
+failure_mode = "doubling the CTA width trades the per-CTA fixed cost for fewer resident CTAs; the gain is not stable across routings"
+caught_by = "per-call timing against the pre-set 0.7 ms stop rule"
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 2.5
+transferability = "wide-CTA restructures of a load-bound grouped GEMM: expect small, routing-dependent gains"
+links = { pr = "", commit = "", evidence = "/workspace/claude-state/glm/moe2/moe1/moe1_1.txt" }
+notes = "The lead ruled the wide nc4 r4 down not to be wired for now (it is within noise of NC8 on real routing). The gate/up byte DIFFER reported under uniform routing in this harness came from unpoisoned reference buffers plus unassigned slots, not from the kernel; see gb10x3-glm53-moe-w4a4-remainder"
+
+[[lever]]
+id = "gb10x3-glm53-moe-w4a4-remainder"
+date = "2026-10-15"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "harness only, never wired: m128 grouped W4A4 bodies that skip the dead 8-slot fragments of a partly filled (remainder) tile, MOE-4"
+symptom = "32k cold prefill, real routing: 651 m128 tiles carry 513 tiles' worth of slots; the 227 per-expert remainder tiles are about 39% live, yet every warp builds weight fragments and issues all 16 MMAs per chunk"
+diagnosis_tool = "microbench"
+root_cause_class = "bandwidth-bound"
+lever_type = "kernel-restructure"
+lkb_effect = "none (not shipped)"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "discarded"
+verdict_reason = "Stop rule set before timing: keep only if bytes identical with a firing negative control, gate/up + down gains >= 0.05 ms per layer on real fx 8208 and fx44 8192 in >= 2 of 3 rounds, and uniform routing regresses <= 0.02 ms per kernel. Bytes (moe4_1, dgx1): identical on 11 fixture/routing cases (real T287/2048/8208, uniform, uniform_old T1036/8208, ladder, skew T4100/8192, fx44) for gate/up r0/4/16, gate r0/4, down r0/4/16 and nc 1/2/8/65 x r0/4; the floor-instead-of-ceil negative control fired 32 of 32 where partial fragments exist. Timing (median of 15, 3 rounds), skip minus production per call: real fx 8208 gate/up +0.06/-0.06/-0.09 ms, down r4 +0.06/+0.04/+0.06, so per layer +0.12/-0.02/-0.03; fx44 per layer +0.06/-0.04/-0.02; uniform gate/up +0.39/+0.12/+0.17; the nc8 skip twin +0.69..+0.92 ms, uniform down r4 +0.02/+0.04/+0.02 (ptxas 44 B spill stores in its K loop). Decomposition: the 227 remainder tiles alone take 3.84-4.04 ms gate/up and 2.70-2.77 ms down at 24-34 useful TFLOP/s, and the skip moves them by -0.05..+0.01 ms; the m32 tile over the same remainders is no faster (3.88-4.06 / 2.91-2.94 ms). Remainder tiles are bound by streaming their expert's weights, not by dead MMA work"
+failure_mode = "the extra warp-uniform branch and lambda cost registers on full tiles (full-only gate/up +0.06..+0.29 ms, down +0.07..+0.10) and on the nc twin; dead MMAs were never on the critical path"
+caught_by = "rem/full split timing against the pre-set stop rule"
+time_lost_hours = 0
+would_catch_earlier = "time a remainder-only launch before building a skip: if it costs about the same as streaming those experts' weights, dead MMAs are free"
+effort_hours = 3.0
+transferability = "grouped GEMMs whose per-expert tail tile is weight-load bound: fill or merge tails (fewer weight reads), do not trim their MMAs"
+links = { pr = "", commit = "", evidence = "/workspace/claude-state/glm/moe2/moe4/moe4_1.txt" }
+notes = "Side finding: the gate/up byte DIFFER under uniform routing seen in the smallt and MOE-1 harnesses was a harness defect. Those harnesses poisoned only the candidate buffers, and their uniform route left T*8 mod 256 slots unassigned, so the unwritten rows compared zero against poison. With both sides poisoned (uniform_old, T1036 and 8208) the gate/up entries are identical: m32 S4 vs m32, m32 vs m128, and the 512-thread wide m128 vs m128. The option of routing remainders to a per-expert m32 launch was not pursued for the same reason the skip failed"
