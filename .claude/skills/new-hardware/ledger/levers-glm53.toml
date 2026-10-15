@@ -1925,3 +1925,51 @@ effort_hours = 6.0
 transferability = "any grouped GEMM whose B operand is selected per row tile (MoE experts) and outsizes L2 across one row-major sweep"
 links = { pr = "", commit = "", evidence = "/workspace/claude-state/glm/moegemm/ab_2.txt" }
 notes = "Only which CTA computes each tile moves. Raster 4 suits the down GEMM (K=2048 per expert, weights reused across 4 row tiles). Gate/up raster 16 helps only under skewed routing, and a per-zipf choice is not taken because the routing skew is not known at launch"
+
+[[lever]]
+id = "gb10x3-glm53-moe-w4a4-cpasync-hoist"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "G5: hoist the per-stage cp.async source/destination address arithmetic of every w4a4_grouped body out of the K loop"
+symptom = "routed gate/up GEMM about 7.4 ms per 8208-row call; the per-stage load issues recompute row/column addresses each K step"
+diagnosis_tool = "microbench"
+root_cause_class = "latency-bound"
+lever_type = "kernel-restructure"
+lkb_effect = "none kept; the core was reverted"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "discarded"
+verdict_reason = "Measured negative; do not adopt. Old -> G5 interleaved harness timing (3 iterations, quiet dgx1): prod gate/up +493/+516 us per call (7.43 -> 7.93 ms), prod_r gate/up r16 +787/+588 us, prod_r down r4 +171/+118 us, prod down about 0. ptxas: G5 spills at the 128-register cap (8 B stack, 16 B stores / 24 B loads) on gu_m128 and both mx_m128_k64 twins, where the old core had 0"
+failure_mode = "register spills at the 128-register launch bound"
+caught_by = "interleaved harness timing; ptxas -v spill table"
+time_lost_hours = 0
+would_catch_earlier = "run the ptxas spill table per entry before any GPU time"
+effort_hours = 3.0
+transferability = "any multi-stage cp.async tile body under a 128-register bound: hoisting live addresses trades ALU for registers"
+links = { pr = "", commit = "", evidence = "/workspace/claude-state/glm/moegemm/g5h_1.txt" }
+notes = "An earlier -130 us down / -250 us gate/up figure compared prod with the harness 'pre' diag variant inside the old binary, not old with G5; it is void. G6-lite (G5 plus a shared per-CTA load plan) spilled more and was never timed: gu_m128 32 B stack 28/28, gu_m128_r 16 B 32/48, the down k64 twins 16/24. The register-neutral form (plan on the fused gate/up bodies only) is tracked separately"
+
+[[lever]]
+id = "gb10x3-glm53-moe-w4a4-gu-load-plan"
+date = "2026-10-15"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "always on (no lever): the fused gate/up w4a4_grouped bodies compute their cp.async load plan once per CTA"
+symptom = "routed fused gate/up GEMM about 7.4 ms per 8208-row call; each pipeline stage recomputed every copy's source and shared destination"
+diagnosis_tool = "microbench"
+root_cause_class = "latency-bound"
+lever_type = "kernel-restructure"
+lkb_effect = "w4g_body under `if constexpr (GU)` hoists the per-slot source, stage-0 destination and live/tail predicates out of the K loop and issues each copy through one predicated cp.async (w4g_cpi); every non-GU body is PTX-identical to before"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "kept"
+verdict_reason = "Harness g5ch_1 (dgx1): bytes identical to the old core on 7 fixture/routing variants, and the negative control (chunk-1 activation offset +16) differs on all 7. Old vs G5c interleaved, 3 iterations x 2 blocks, each pair normalized by an identical-code control in the same block: prod gate/up (raster 0, shipped) -238 us per call (median, 5 of 6 pairs negative), prod_r gate/up raster 16 -311 us (6 of 6). Over the 168 gate/up calls of a 32k prefill that is about -40 ms (-31 ms against the median of all 9 controls). ptxas: the 4 gate/up entries spill 0 (the old core spilled 8/16 and 8/8 on two of them); the 3 old spills on the mx entries are unchanged. The cold c32k serve A/B is pending"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 5.0
+transferability = "any multi-stage cp.async tile body with spare registers: hoist the address plan, but gate it per body on a 0-spill ptxas check"
+links = { pr = "", commit = "", evidence = "/workspace/claude-state/glm/moegemm/g5ch_1.txt" }
+notes = "Not applied to the down/plain bodies: there the same plan (G5b) spills on the k64 twins (16/24, 4/4, 12/12). The register-unconstrained 'pre' harness variant suggests about -40 us on down r4 if a spill-free form is found. Raw pairs show a +140 to +250 us drift in iteration 3 on identical code, hence the control normalization"
