@@ -369,7 +369,7 @@ impl Glm5NextLayer {
                         // This IS the prefill sub-chunk caller.
                         true,
                         call,
-                        &cuts,
+                        cuts,
                     )?;
                     t += k;
                 } else {
