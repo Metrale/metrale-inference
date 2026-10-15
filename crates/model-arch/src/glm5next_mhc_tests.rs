@@ -43,8 +43,8 @@ fn the_mix_scratch_costs_megabytes_not_gigabytes() {
 /// (grid y = 24); an FP32 site always takes the per-row FP32 kernel.
 #[test]
 fn wide_token_counts_take_the_grouped_mix_kernel() {
-    use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
     use metrale_gpu_runtime::gpu::DevicePtr;
+    use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
     let gpu = MockGpuBackend::new();
     let k = |h| KernelHandle(h);
     let kernels = Glm5NextMhcKernels {
