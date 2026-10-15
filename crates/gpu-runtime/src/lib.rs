@@ -161,6 +161,8 @@ pub mod cuda_host;
 pub mod kernel;
 pub mod mlx_int8;
 #[cfg(feature = "cuda")]
+mod ptx_globals;
+#[cfg(feature = "cuda")]
 pub mod registry;
 #[cfg(feature = "cuda")]
 pub mod stream;

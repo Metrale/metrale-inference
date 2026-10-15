@@ -36,9 +36,14 @@ pub(super) fn record_published(
 
 /// 2026-09-29: The value of `module`'s 4-byte device symbol `name`, `None` when the module
 /// defines no such symbol.
+/// 2026-10-14: An absent symbol is found absent without a driver call
+/// (`MetraleRegistry::device_symbol_if_defined`); a lookup failure or a size other than 4
+/// bytes is an error, not `None`.
 fn read_u32(registry: &MetraleRegistry, module: &str, name: &str) -> Result<Option<u32>> {
-    let Ok((dptr, 4)) = registry.device_symbol(module, name) else {
-        return Ok(None);
+    let dptr = match registry.device_symbol_if_defined(module, name)? {
+        None => return Ok(None),
+        Some((dptr, 4)) => dptr,
+        Some((_, bytes)) => anyhow::bail!("{module}::{name}: {bytes} bytes, expected 4"),
     };
     let mut v = 0u32;
     let stream = registry.raw_stream();
