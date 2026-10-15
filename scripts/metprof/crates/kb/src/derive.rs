@@ -25,7 +25,7 @@ use crate::ids::{hex_id, natural_key, node_id};
 use crate::port::{RunRecord, UNKNOWN};
 use crate::schema::{
     Body, CircuitJoin, KernelSample, KernelSymbol, Kind, MappedBy, NodeRef, ProfileRun, Record,
-    Relation,
+    Relation, Variant,
 };
 use crate::{Error, Result, bail, canon};
 
@@ -79,8 +79,15 @@ struct NodeDoc {
     mean_us: Option<f64>,
     min_us: Option<f64>,
     max_us: Option<f64>,
+    #[serde(deserialize_with = "stated")]
+    p10_us: Option<f64>,
+    #[serde(deserialize_with = "stated")]
+    median_us: Option<f64>,
+    #[serde(deserialize_with = "stated")]
+    p90_us: Option<f64>,
     kernels: Map<String, Value>,
     circuit: Option<CircuitJoin>,
+    variants: Option<Vec<Variant>>,
     #[serde(rename = "members")]
     _members: Option<Vec<String>>,
     #[serde(rename = "baseline_time")]
@@ -96,6 +103,14 @@ struct LooseDoc {
     _total_time: f64,
     #[serde(rename = "launches")]
     _launches: u64,
+    #[serde(rename = "p10_us", deserialize_with = "stated")]
+    _p10_us: Option<f64>,
+    #[serde(rename = "median_us", deserialize_with = "stated")]
+    _median_us: Option<f64>,
+    #[serde(rename = "p90_us", deserialize_with = "stated")]
+    _p90_us: Option<f64>,
+    #[serde(rename = "variants")]
+    _variants: Vec<Variant>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -142,6 +157,12 @@ impl Builder {
                 .collect(),
         }
     }
+}
+
+/// A key the tree always states, whose value may be null: unlike a plain
+/// `Option`, a missing key is refused.
+fn stated<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Option<f64>, D::Error> {
+    Option::<f64>::deserialize(d)
 }
 
 fn parse<T: for<'de> Deserialize<'de>>(place: &str, v: &Value) -> Result<T> {
@@ -351,6 +372,9 @@ fn walk(
             format!("{prefix}/{k}")
         };
         let n: NodeDoc = parse(&format!("tree node {path:?}"), v)?;
+        if n.variants.is_some() != n.kernels.is_empty() {
+            bail!("tree node {path:?}: variants are required on a leaf and refused elsewhere");
+        }
         if let Some(c) = &n.circuit {
             b.edge(
                 w.run,
@@ -373,9 +397,13 @@ fn walk(
                 mean_us: n.mean_us,
                 min_us: n.min_us,
                 max_us: n.max_us,
+                p10_us: n.p10_us,
+                median_us: n.median_us,
+                p90_us: n.p90_us,
                 union_ms: None,
                 fuses: n.fuses.clone(),
                 circuit: n.circuit.clone(),
+                variants: n.variants.clone().unwrap_or_default(),
                 ord: w.ord,
             };
             w.ord += 1;

@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use metprof_kb::derive::{Graph, derive, run_key};
 use metprof_kb::ids::{hex_id, node_id};
 use metprof_kb::port::{Arg, FileRef, Identity, RUN_SCHEMA, RunRecord, Stamps};
-use metprof_kb::schema::{Body, Kind, MAX_SAMPLE_DEPTH, NodeRef, Relation};
+use metprof_kb::schema::{Body, Kind, MAX_SAMPLE_DEPTH, NodeRef, Relation, Variant};
 use serde_json::{Map, Value};
 
 fn run(tree: &str) -> RunRecord {
@@ -310,4 +310,59 @@ fn a_circuit_tree_links_its_plan_ops_and_kernels() {
         !deep.iter().any(|e| e.2 == "SYMBOL_OF"),
         "a circuit tree has no symbols"
     );
+}
+
+#[test]
+fn a_leaf_sample_carries_its_launch_identities_and_quantiles() {
+    let r = families();
+    let g = derive(&r, 3).expect("derives");
+    let tree = r.files[0].json.as_ref().expect("tree");
+    let leaf = &tree["kernels"]["moe"]["kernels"]["experts"]["kernels"]["grouped_gemm"]["kernels"]
+        ["gg_kernel_a"];
+    let want: Vec<Variant> = serde_json::from_value(leaf["variants"].clone()).expect("variants");
+    let s = sample_of(&g, "moe/experts/grouped_gemm/gg_kernel_a");
+    assert_eq!(s.variants, want);
+    let ids: BTreeSet<&str> = s.variants.iter().map(|v| v.kernel_id.as_str()).collect();
+    assert_eq!(ids.len(), 2, "two launch configurations, two kernel ids");
+    assert_eq!(
+        (s.p10_us, s.median_us, s.p90_us),
+        (Some(8.4), Some(10.0), Some(11.6))
+    );
+    let interior = sample_of(&g, "moe/experts");
+    assert!(interior.variants.is_empty());
+    assert_eq!(interior.median_us, Some(10.0));
+}
+
+#[test]
+fn a_tree_with_misplaced_variants_or_a_missing_quantile_is_refused() {
+    let ok = families();
+    derive(&ok, 3).expect("the fixture derives");
+    let leaf = "/kernels/attn/kernels/flash_fwd/kernels/flash_fwd_k";
+    let interior = "/kernels/attn/kernels/flash_fwd";
+    type Edit = fn(&mut Value, &str, &str);
+    let edits: [(&str, Edit); 3] = [
+        ("a leaf without variants", |t, leaf, _| {
+            t.pointer_mut(leaf)
+                .and_then(Value::as_object_mut)
+                .expect("leaf")
+                .remove("variants");
+        }),
+        ("an interior node with variants", |t, _, interior| {
+            t.pointer_mut(interior)
+                .and_then(Value::as_object_mut)
+                .expect("node")
+                .insert("variants".into(), Value::Array(vec![]));
+        }),
+        ("a node without its p90_us key", |t, _, interior| {
+            t.pointer_mut(interior)
+                .and_then(Value::as_object_mut)
+                .expect("node")
+                .remove("p90_us");
+        }),
+    ];
+    for (what, edit) in edits {
+        let mut r = ok.clone();
+        edit(r.files[0].json.as_mut().expect("tree"), leaf, interior);
+        assert!(derive(&r, 3).is_err(), "{what} must be refused");
+    }
 }

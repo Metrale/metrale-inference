@@ -1,22 +1,23 @@
 {
   "schema": "metprof.kernel_tree/1",
   "time_unit": "us",
-  "provenance": {"git_sha": "unknown", "segment": "all"},
+  "provenance": {"git_sha": "unknown", "window": {"start_ns": 1000, "end_ns": 201000}},
   "source": "families",
   "total_time": 100.0,
   "coverage": 0.9,
   "kernels": {
     "attn": {
       "fuses": [], "total_time": 40.0, "self_time": 0.0, "launches": 4,
-      "mean_us": 10.0, "min_us": 9.0, "max_us": 11.0,
+      "mean_us": 10.0, "min_us": 9.0, "max_us": 11.0, "p10_us": 9.3, "median_us": 10.0, "p90_us": 10.7,
       "kernels": {
         "flash_fwd": {
           "fuses": ["rope"], "total_time": 40.0, "self_time": 0.0, "launches": 4,
-          "mean_us": 10.0, "min_us": 9.0, "max_us": 11.0,
+          "mean_us": 10.0, "min_us": 9.0, "max_us": 11.0, "p10_us": 9.3, "median_us": 10.0, "p90_us": 10.7,
           "kernels": {
             "flash_fwd_k": {
               "fuses": [], "total_time": 40.0, "self_time": 40.0, "launches": 4,
-              "mean_us": 10.0, "min_us": 9.0, "max_us": 11.0, "kernels": {}
+              "mean_us": 10.0, "min_us": 9.0, "max_us": 11.0, "p10_us": 9.3, "median_us": 10.0, "p90_us": 10.7, "kernels": {},
+              "variants": [{"demangled": "void flash_fwd_k<64>(float*)", "grid": [128,1,1], "block": [128,1,1], "registers_per_thread": 96, "static_shared_bytes": 0, "dynamic_shared_bytes": 49152, "config_sha256": "2e268527ed4e3a8a8a5e24cfa9eb2defbd965f20dadea35b36c496f774c19bb3", "kernel_id": "56a103802d25fa86e59261fcdbdcbe798b3c6a222740691d928e4df67840e050", "launches": 4, "total_time": 40.0, "p10_us": 9.3, "median_us": 10.0, "p90_us": 10.7}]
             }
           }
         }
@@ -24,23 +25,25 @@
     },
     "moe": {
       "fuses": [], "total_time": 50.0, "self_time": 0.0, "launches": 5,
-      "mean_us": 10.0, "min_us": 8.0, "max_us": 12.0,
+      "mean_us": 10.0, "min_us": 8.0, "max_us": 12.0, "p10_us": 8.4, "median_us": 10.0, "p90_us": 11.6,
       "kernels": {
         "experts": {
           "fuses": ["topk"], "total_time": 50.0, "self_time": 0.0, "launches": 5,
-          "mean_us": 10.0, "min_us": 8.0, "max_us": 12.0,
+          "mean_us": 10.0, "min_us": 8.0, "max_us": 12.0, "p10_us": 8.4, "median_us": 10.0, "p90_us": 11.6,
           "kernels": {
             "grouped_gemm": {
               "fuses": [], "total_time": 50.0, "self_time": 0.0, "launches": 5,
-              "mean_us": 10.0, "min_us": 8.0, "max_us": 12.0,
+              "mean_us": 10.0, "min_us": 8.0, "max_us": 12.0, "p10_us": 8.4, "median_us": 10.0, "p90_us": 11.6,
               "kernels": {
                 "gg_kernel_a": {
                   "fuses": [], "total_time": 30.0, "self_time": 30.0, "launches": 3,
-                  "mean_us": 10.0, "min_us": 8.0, "max_us": 12.0, "kernels": {}
+                  "mean_us": 10.0, "min_us": 8.0, "max_us": 12.0, "p10_us": 8.4, "median_us": 10.0, "p90_us": 11.6, "kernels": {},
+                  "variants": [{"demangled": "void gg_kernel_a<1>(int)", "grid": [64,1,1], "block": [256,1,1], "registers_per_thread": 64, "static_shared_bytes": 1024, "dynamic_shared_bytes": 0, "config_sha256": "1d869a48a2b39d5792462ceaf2898c9bfd64ec2650f635c87993912efecb073d", "kernel_id": "6b7505a682d1d69536fbe9e79cb8188e8e51e14f8850adc22985a17a0fb011cb", "launches": 2, "total_time": 18.0, "p10_us": 8.1, "median_us": 9.0, "p90_us": 9.9}, {"demangled": "void gg_kernel_a<1>(int)", "grid": [32,1,1], "block": [256,1,1], "registers_per_thread": 64, "static_shared_bytes": 1024, "dynamic_shared_bytes": 0, "config_sha256": "65b743ea10b21b71e12c4d8649a815a987e6cf54aaa1f6158c900979d4c80518", "kernel_id": "8e9ccd1cf2138f89c500a6c965d234f3a582e2e78332ca45c86cf2ed70d4fca6", "launches": 1, "total_time": 12.0, "p10_us": 12.0, "median_us": 12.0, "p90_us": 12.0}]
                 },
                 "gg_kernel_b": {
                   "fuses": [], "total_time": 20.0, "self_time": 20.0, "launches": 2,
-                  "mean_us": 10.0, "min_us": 9.0, "max_us": 11.0, "kernels": {}
+                  "mean_us": 10.0, "min_us": 9.0, "max_us": 11.0, "p10_us": 9.2, "median_us": 10.0, "p90_us": 10.8, "kernels": {},
+                  "variants": [{"demangled": "void gg_kernel_b(int)", "grid": [16,2,1], "block": [128,1,1], "registers_per_thread": 40, "static_shared_bytes": 0, "dynamic_shared_bytes": 0, "config_sha256": "5f666436a7b06389f87257c4e55c066d78a8926b045424d2d11702b36897ef46", "kernel_id": "b073c1f7223b9e111ea78fc61f53fd2a2bcfc416d950c382610440cc219c0be3", "launches": 2, "total_time": 20.0, "p10_us": 9.2, "median_us": 10.0, "p90_us": 10.8}]
                 }
               }
             }
@@ -50,6 +53,6 @@
     }
   },
   "unattributed": {
-    "mystery_kernel(int)": {"total_time": 10.0, "launches": 1}
+    "mystery_kernel(int)": {"total_time": 10.0, "launches": 1, "p10_us": 10.0, "median_us": 10.0, "p90_us": 10.0, "variants": [{"demangled": "mystery_kernel(int)", "grid": [1,1,1], "block": [32,1,1], "registers_per_thread": 16, "static_shared_bytes": 0, "dynamic_shared_bytes": 0, "config_sha256": "e9fc6558b4f6bab4af0c74db6ef161340a5487d1a51d84425a3fb1c19bb73332", "kernel_id": "cc28268a2eb92a8d06c1978f1d4a4061c3124181c71016cf596fba84da5563a7", "launches": 1, "total_time": 10.0, "p10_us": 10.0, "median_us": 10.0, "p90_us": 10.0}]}
   }
 }

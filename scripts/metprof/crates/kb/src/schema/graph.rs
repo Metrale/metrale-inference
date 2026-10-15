@@ -131,9 +131,15 @@ pub struct KernelSample {
     pub mean_us: Option<f64>,
     pub min_us: Option<f64>,
     pub max_us: Option<f64>,
+    /// Per-launch p10, median and p90 over the subtree (`None` without launches).
+    pub p10_us: Option<f64>,
+    pub median_us: Option<f64>,
+    pub p90_us: Option<f64>,
     pub union_ms: Option<f64>,
     pub fuses: Vec<String>,
     pub circuit: Option<CircuitJoin>,
+    /// A leaf's launch identities (empty on an interior node).
+    pub variants: Vec<Variant>,
     /// Pre-order position among the run's samples.
     pub ord: u64,
 }
@@ -212,4 +218,26 @@ pub struct Bound {
     pub critical_path_share: Option<f64>,
     pub overlap_behaviour: Overlap,
     pub method: BoundMethod,
+}
+
+/// One launch identity of a tree leaf (metprof `kernel_tree/1`): the
+/// demangled name and launch configuration, their digests, and the launches'
+/// times. `kernel_id` = SHA-256 of the name, a newline and the configuration
+/// text; `config_sha256` = SHA-256 of that text (both computed by metprof).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Variant {
+    pub demangled: String,
+    pub grid: [i64; 3],
+    pub block: [i64; 3],
+    pub registers_per_thread: i64,
+    pub static_shared_bytes: i64,
+    pub dynamic_shared_bytes: i64,
+    pub config_sha256: String,
+    pub kernel_id: String,
+    pub launches: u64,
+    pub total_time: f64,
+    pub p10_us: Option<f64>,
+    pub median_us: Option<f64>,
+    pub p90_us: Option<f64>,
 }
