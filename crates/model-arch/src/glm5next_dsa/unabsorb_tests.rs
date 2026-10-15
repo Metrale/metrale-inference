@@ -18,6 +18,7 @@ use super::host::{
 };
 use super::lever::{ENV, O_PROJ_SITE, Q_B_SITE, SITE_RULES, parse};
 use super::*;
+use crate::glm5next_dsa::KERNEL_KV_LORA_DIM;
 use crate::glm5next_dsa::build::absorb_for_rank;
 
 /// 2026-10-15: A small NoPE layer; `nope` != `vd` so a K/V width mix-up changes shapes.
@@ -31,7 +32,7 @@ fn cfg(local_heads: usize, nope: usize, vd: usize) -> Glm5NextDsaConfig {
         always_select_tail: true,
         local_heads,
         q_lora_rank: 6,
-        kv_lora_rank: 4,
+        kv_lora_rank: KERNEL_KV_LORA_DIM,
         qk_nope_head_dim: nope,
         qk_rope_head_dim: 0,
         v_head_dim: vd,
@@ -165,8 +166,14 @@ fn unabsorbed_matches_absorbed_on_real_weights() {
     for (c, plan) in ranks(3, 5) {
         let (q_abs, o_abs) = absorb_for_rank(&c, &plan, &|n| ck.load(n)).unwrap();
         let u = unabsorb_for_rank(&c, &plan, &|n| ck.load(n)).unwrap();
+        // 2026-10-15: worst-case f32 bound: an absorbed element sums `n` products of weights
+        // |w| <= 1, so it is off by at most n * n * eps; a gap entry sums `k` of them against
+        // activations |a| <= 3. A layout error opens gaps of order 1 (see the controls).
+        let n = c.qk_nope_head_dim.max(c.v_head_dim) as f64;
+        let k = (c.local_heads * c.kv_lora_rank).max(c.q_lora_rank) as f64;
+        let bound = k * 3.0 * n * n * f64::from(f32::EPSILON);
         let g = gap(&c, &q_abs, &o_abs, &u, 9);
-        assert!(g < 1e-4, "rank {}: gap {g}", plan.head_start);
+        assert!(g < bound, "rank {}: gap {g} >= {bound}", plan.head_start);
     }
 }
 
@@ -214,7 +221,7 @@ fn negative_controls_fire() {
 #[test]
 fn split_layouts_index_the_checkpoint_rows() {
     let c = cfg(2, 3, 5);
-    let (nope, vd, kvl) = (3, 5, 4);
+    let (nope, vd, kvl) = (3, 5, c.kv_lora_rank);
     let kv_b: Vec<f32> = (0..2 * (nope + vd) * kvl).map(|i| i as f32).collect();
     let uk = split_w_uk_t(&c, &kv_b, 2).unwrap();
     let uv = split_w_uv(&c, &kv_b, 2).unwrap();
@@ -232,7 +239,8 @@ fn split_layouts_index_the_checkpoint_rows() {
         }
     }
     let e = split_w_uv(&c, &kv_b[1..], 2).unwrap_err();
-    assert!(e.to_string().contains("expected 64"), "{e}");
+    let want = format!("expected {}", 2 * (nope + vd) * kvl);
+    assert!(e.to_string().contains(&want), "{e}");
     let mut rope = c;
     rope.qk_rope_head_dim = 2;
     assert!(split_w_uk_t(&rope, &kv_b, 2).is_err());
@@ -345,7 +353,7 @@ fn the_site_tier_table_is_complete() {
 fn the_footprint_at_glm_shape() {
     let c = glm(22);
     assert_eq!(mid_bytes(&c, 8208), 8208 * 22 * 256 * 2);
-    assert_eq!(mid_bytes(&c, 8208), 92_471_296);
+    assert_eq!(mid_bytes(&c, 8208), 92_454_912);
     assert_eq!(
         weight_bytes(&c),
         2 * (22 * 256 * 1536 + 4096 * 22 * 256 + 2 * 22 * 512 * 256)
