@@ -2136,7 +2136,7 @@ verdict_reason = "STOP rule (V1 must save >= 8 us per launch) hit. Driver-API ha
 failure_mode = "the instruction-fetch diagnosis holds only for code not resident in L2; with the 337 KB entry L2-resident the fetch cost is small and the rolled loops add issue work"
 caught_by = "interleaved harness timing with and without an L2 flush per launch"
 time_lost_hours = 0
-would_catch_earlier = "time an instruction-footprint lever L2-warm and L2-flushed before projecting from bytes of code per us"
+would_catch_earlier = "anti-pattern: flush-L2-per-launch microbench overstates instruction-fetch-bound savings; the steady-state L2-warm timing is the rule input"
 effort_hours = 4.0
 transferability = "any fully unrolled GB10 kernel diagnosed as instruction-fetch bound: rolling helps only where its code is evicted from L2 between launches"
 links = { pr = "", commit = "", evidence = "/workspace/claude-state/glm/kdaprep/kp_1.txt" }
