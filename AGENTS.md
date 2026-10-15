@@ -115,7 +115,8 @@ happened to fail.
 ## Adding a new model
 
 The standard method is the `new-model` skill,
-[`.claude/skills/new-model/SKILL.md`](.claude/skills/new-model/SKILL.md): describe the model as
+`.claude/skills/new-model/SKILL.md` (the skills are a private submodule;
+`git submodule update --init` needs access to it): describe the model as
 an architecture circuit, run `met circuit venn` against the closest supported models, share
 kernels by parameterizing them, then prove, optimize, fuse and beat vLLM. The vocabulary (LKB,
 LAB, lowering rule, relation, realization, LKB residual) is defined in
