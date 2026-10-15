@@ -287,6 +287,10 @@ name = "glm5next_fp8_wide_bench"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "glm5next_dequant_persist_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "glm5next_kda_chunk16_bench"
 required-features = ["cuda", "gpu-examples"]
 

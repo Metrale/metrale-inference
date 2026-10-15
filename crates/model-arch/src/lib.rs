@@ -12,6 +12,7 @@ pub mod deepseek_v4_mtp;
 pub mod dflash_head;
 pub mod engram_v41;
 pub mod glm5next_batch_inv;
+pub mod glm5next_dequant_persist;
 pub mod glm5next_dequant_scratch;
 pub mod glm5next_dsa;
 pub mod glm5next_dsa_ref;

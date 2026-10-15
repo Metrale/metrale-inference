@@ -389,6 +389,7 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                 bf16 as f64 / 1e9
             );
         }
+        crate::glm5next_dequant_persist::log_readback()?;
         Ok(out)
     }
 
