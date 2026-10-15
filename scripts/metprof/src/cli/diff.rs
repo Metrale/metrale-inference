@@ -8,7 +8,7 @@ use serde_json::{Map, Value, json};
 
 use crate::cli::args::{Args, Kind, Opt, Spec};
 use crate::cli::busy::{DEVICE, FAMILIES};
-use crate::cli::{Command, Io, load};
+use crate::cli::{Command, Io, Run, load};
 use crate::core::diff::{Side, capture_diff};
 use crate::core::envdiff::{EnvChange, env_diff, one_lever, parse_env};
 use crate::core::error::{Error, Result};
@@ -86,7 +86,7 @@ pub const COMMANDS: &[&Command] = &[
                 IGNORE,
             ],
         },
-        run: diff,
+        run: Run::Report(diff),
     },
     &Command {
         spec: Spec {
@@ -98,7 +98,7 @@ pub const COMMANDS: &[&Command] = &[
             ],
             opts: &[IGNORE],
         },
-        run: envdiff,
+        run: Run::Report(envdiff),
     },
     &Command {
         spec: Spec {
@@ -113,7 +113,7 @@ pub const COMMANDS: &[&Command] = &[
                 help: "TOML record of one A/B; every field is required",
             }],
         },
-        run: verdict,
+        run: Run::Report(verdict),
     },
 ];
 

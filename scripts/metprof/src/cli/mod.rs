@@ -12,6 +12,7 @@ mod diff;
 mod families;
 mod load;
 mod segment;
+mod tree;
 
 use serde_json::{Map, Value};
 
@@ -27,9 +28,24 @@ pub struct Io<'a> {
     pub files: &'a dyn Files,
 }
 
+/// A command's result, and the files it asks the caller to write (path,
+/// bytes). The core never writes; `main` does, after `run` returns.
+pub struct Done {
+    pub result: Map<String, Value>,
+    pub files: Vec<(String, Vec<u8>)>,
+}
+
+#[derive(Clone, Copy)]
+pub enum Run {
+    /// A command that only reports.
+    Report(fn(&Args, &Io) -> Result<Map<String, Value>>),
+    /// A command that also produces files.
+    Files(fn(&Args, &Io) -> Result<Done>),
+}
+
 pub struct Command {
     pub spec: Spec,
-    pub run: fn(&Args, &Io) -> Result<Map<String, Value>>,
+    pub run: Run,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,6 +53,8 @@ pub struct Outcome {
     pub code: i32,
     pub stdout: String,
     pub stderr: String,
+    /// Files to write (path, bytes), in order; empty on any error.
+    pub files: Vec<(String, Vec<u8>)>,
 }
 
 fn commands() -> Vec<&'static Command> {
@@ -45,6 +63,7 @@ fn commands() -> Vec<&'static Command> {
         families::COMMANDS,
         segment::COMMANDS,
         diff::COMMANDS,
+        tree::COMMANDS,
     ]
     .concat()
 }
@@ -150,6 +169,7 @@ pub fn run(argv: &[String], io: &Io) -> Outcome {
         code: 2,
         stdout: String::new(),
         stderr: format!("metprof: error: {msg}\n"),
+        files: Vec::new(),
     };
     let (cmd, parsed) = match select(argv, &cmds, &mut json) {
         Ok(x) => x,
@@ -161,6 +181,7 @@ pub fn run(argv: &[String], io: &Io) -> Outcome {
                 code: 0,
                 stdout: format!("{text}\n"),
                 stderr: String::new(),
+                files: Vec::new(),
             };
         }
         (Some(cmd), Parsed::Args(a)) => (cmd, a),
@@ -168,11 +189,19 @@ pub fn run(argv: &[String], io: &Io) -> Outcome {
             return err("the following arguments are required: command".to_string());
         }
     };
-    match (cmd.run)(&a, io).and_then(|r| render(&r, json)) {
-        Ok(text) => Outcome {
+    let done = match cmd.run {
+        Run::Report(f) => f(&a, io).map(|result| Done {
+            result,
+            files: Vec::new(),
+        }),
+        Run::Files(f) => f(&a, io),
+    };
+    match done.and_then(|d| Ok((render(&d.result, json)?, d.files))) {
+        Ok((text, files)) => Outcome {
             code: 0,
             stdout: format!("{text}\n"),
             stderr: String::new(),
+            files,
         },
         Err(e) => err(e.0),
     }

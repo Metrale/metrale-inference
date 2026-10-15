@@ -33,7 +33,9 @@ fn kn(start: i64, end: i64, name: &str, corr: i64, node: Option<i64>) -> Kernel 
         correlation: corr,
         graph_node: node,
         name: name.to_string(),
+        demangled: name.to_string(),
         grid: (1, 1, 1),
+        launch: common::LAUNCH0,
     }
 }
 

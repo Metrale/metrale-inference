@@ -30,7 +30,9 @@ fn k(name: &str, start: i64, end: i64, grid: (i64, i64, i64), stream: i64) -> Ke
         correlation: 0,
         graph_node: None,
         name: name.to_string(),
+        demangled: name.to_string(),
         grid,
+        launch: common::LAUNCH0,
     }
 }
 

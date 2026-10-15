@@ -11,7 +11,7 @@ use serde_json::{Map, Value, json};
 
 use crate::cli::args::{Args, Kind, Opt, Spec};
 use crate::cli::busy::{CAPTURE, DEVICE, FAMILIES};
-use crate::cli::{Command, Io, load};
+use crate::cli::{Command, Io, Run, load};
 use crate::core::capture::{device_copies, device_kernels, graph_node_traced, ordered_calls};
 use crate::core::error::Result;
 use crate::core::model::{ms, ms_to_ns};
@@ -58,7 +58,7 @@ pub const COMMANDS: &[&Command] = &[
                 TOP,
             ],
         },
-        run: requests,
+        run: Run::Report(requests),
     },
     &Command {
         spec: Spec {
@@ -78,7 +78,7 @@ pub const COMMANDS: &[&Command] = &[
                 TOP,
             ],
         },
-        run: decode,
+        run: Run::Report(decode),
     },
     &Command {
         spec: Spec {
@@ -87,7 +87,7 @@ pub const COMMANDS: &[&Command] = &[
             positionals: &[CAPTURE],
             opts: &[DEVICE, FAMILIES],
         },
-        run: spec,
+        run: Run::Report(spec),
     },
 ];
 

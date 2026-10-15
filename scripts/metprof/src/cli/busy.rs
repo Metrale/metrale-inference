@@ -7,7 +7,7 @@ use indexmap::IndexMap;
 use serde_json::{Map, Value, json};
 
 use crate::cli::args::{Args, Kind, Opt, Spec};
-use crate::cli::{Command, Io, load};
+use crate::cli::{Command, Io, Run, load};
 use crate::core::error::Result;
 use crate::core::families::{classify, coverage_gate};
 use crate::core::model::{KernelKey, ms, ms_to_ns};
@@ -54,7 +54,7 @@ pub const COMMANDS: &[&Command] = &[&Command {
             },
         ],
     },
-    run: summarize,
+    run: Run::Report(summarize),
 }];
 
 fn summarize(a: &Args, io: &Io) -> Result<Map<String, Value>> {

@@ -20,7 +20,9 @@ fn k(start_ms: f64, dur_ms: f64, name: &str, grid: (i64, i64, i64)) -> Kernel {
         correlation: 0,
         graph_node: None,
         name: name.to_string(),
+        demangled: name.to_string(),
         grid,
+        launch: common::LAUNCH0,
     }
 }
 

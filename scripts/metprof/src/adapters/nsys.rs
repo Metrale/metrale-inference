@@ -11,7 +11,7 @@ use std::path::Path;
 use crate::adapters::sqlite::{Db, Table, Value};
 use crate::core::capture::{CopyRow, KernelRow};
 use crate::core::error::Result;
-use crate::core::model::{ApiCall, Kernel};
+use crate::core::model::{ApiCall, Kernel, Launch};
 use crate::fail;
 use crate::ports::{Trace, TraceSource};
 
@@ -111,11 +111,18 @@ impl Trace for NsysTrace {
             "gridX",
             "gridY",
             "gridZ",
+            "demangledName",
+            "blockX",
+            "blockY",
+            "blockZ",
+            "registersPerThread",
+            "staticSharedMemory",
+            "dynamicSharedMemory",
         ];
         if node {
             cols.push("graphNodeId");
         }
-        let mut raw: Vec<(i64, Kernel, i64)> = Vec::new();
+        let mut raw: Vec<(i64, Kernel, i64, i64)> = Vec::new();
         self.db.scan(&self.kernels, &cols, &mut |r| {
             let kernel = Kernel {
                 start: int(&r[0], "start")?,
@@ -123,25 +130,42 @@ impl Trace for NsysTrace {
                 stream: int(&r[3], "streamId")?,
                 correlation: int(&r[4], "correlationId")?,
                 graph_node: if node {
-                    opt_int(&r[9], "graphNodeId")?
+                    opt_int(&r[16], "graphNodeId")?
                 } else {
                     None
                 },
                 name: String::new(),
+                demangled: String::new(),
                 grid: (
                     int(&r[6], "gridX")?,
                     int(&r[7], "gridY")?,
                     int(&r[8], "gridZ")?,
                 ),
+                launch: Launch {
+                    block: (
+                        int(&r[10], "blockX")?,
+                        int(&r[11], "blockY")?,
+                        int(&r[12], "blockZ")?,
+                    ),
+                    registers_per_thread: int(&r[13], "registersPerThread")?,
+                    static_shared_bytes: int(&r[14], "staticSharedMemory")?,
+                    dynamic_shared_bytes: int(&r[15], "dynamicSharedMemory")?,
+                },
             };
-            raw.push((int(&r[2], "deviceId")?, kernel, int(&r[5], "shortName")?));
+            raw.push((
+                int(&r[2], "deviceId")?,
+                kernel,
+                int(&r[5], "shortName")?,
+                int(&r[9], "demangledName")?,
+            ));
             Ok(())
         })?;
-        let names = self.names(raw.iter().map(|r| r.2))?;
+        let names = self.names(raw.iter().flat_map(|r| [r.2, r.3]))?;
         Ok(raw
             .into_iter()
-            .map(|(device, mut kernel, id)| {
-                kernel.name = names[&id].clone();
+            .map(|(device, mut kernel, short, full)| {
+                kernel.name = names[&short].clone();
+                kernel.demangled = names[&full].clone();
                 KernelRow { device, kernel }
             })
             .collect())

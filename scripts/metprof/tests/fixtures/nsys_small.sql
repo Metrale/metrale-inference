@@ -20,6 +20,12 @@ CREATE TABLE CUPTI_ACTIVITY_KIND_KERNEL (
     gridX                       INTEGER   NOT NULL,
     gridY                       INTEGER   NOT NULL,
     gridZ                       INTEGER   NOT NULL,
+    blockX                      INTEGER   NOT NULL,
+    blockY                      INTEGER   NOT NULL,
+    blockZ                      INTEGER   NOT NULL,
+    registersPerThread          INTEGER   NOT NULL,
+    staticSharedMemory          INTEGER   NOT NULL,                 -- Static shared memory (bytes).
+    dynamicSharedMemory         INTEGER   NOT NULL,                 -- Dynamic shared memory (bytes).
     graphNodeId                 INTEGER                             -- REFERENCES CUDA_GRAPH_NODE_EVENTS(graphNodeId)
 );
 CREATE TABLE CUPTI_ACTIVITY_KIND_MEMCPY (
@@ -39,9 +45,9 @@ CREATE TABLE CUPTI_ACTIVITY_KIND_RUNTIME (
 INSERT INTO StringIds VALUES (1, 'gemm_b'), (2, 'gemm_a'), (3, 'nccl_x'), (4, 'cudaStreamSynchronize_v3020'),
     (5, 'void gemm_b<128>(float*)'), (6, 'void gemm_a<64>(float*)'), (7, 'ncclDevKernel_x(ncclWork)');
 INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL VALUES
-    (50000, 60000, 0, 1, 3, 77, 5, 1, 4, 2, 1, 9),
-    (10000, 20000, 0, 1, 3, 1001, 6, 2, 1, 1, 1, NULL),
-    (15000, 40000, 1, 2, 5, 1002, 7, 3, 1, 1, 1, NULL);
+    (50000, 60000, 0, 1, 3, 77, 5, 1, 4, 2, 1, 128, 1, 1, 64, 0, 16384, 9),
+    (10000, 20000, 0, 1, 3, 1001, 6, 2, 1, 1, 1, 256, 1, 1, 32, 1024, 0, NULL),
+    (15000, 40000, 1, 2, 5, 1002, 7, 3, 1, 1, 1, 512, 1, 1, 96, 0, 0, NULL);
 INSERT INTO CUPTI_ACTIVITY_KIND_MEMCPY VALUES
     (0, 5000, 0, 64, 1),
     (70000, 71000, 0, 64, 2),

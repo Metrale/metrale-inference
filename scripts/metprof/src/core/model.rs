@@ -12,10 +12,23 @@ pub struct Kernel {
     pub correlation: i64,
     pub graph_node: Option<i64>,
     pub name: String,
+    /// The full (demangled) name; `name` is the short name.
+    pub demangled: String,
     pub grid: Grid,
+    pub launch: Launch,
 }
 
 pub type Grid = (i64, i64, i64);
+
+/// What CUPTI records about a launch besides its grid: the block shape,
+/// registers per thread and shared memory in bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Launch {
+    pub block: Grid,
+    pub registers_per_thread: i64,
+    pub static_shared_bytes: i64,
+    pub dynamic_shared_bytes: i64,
+}
 
 /// Kernel identity: the name alone is not enough (one name runs at several
 /// shapes), so the grid is part of the key.

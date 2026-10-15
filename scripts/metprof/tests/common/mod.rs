@@ -12,10 +12,18 @@ use std::collections::HashMap;
 use metprof::cli::{Io, Outcome, run};
 use metprof::core::capture::{CopyRow, KernelRow};
 use metprof::core::error::{Error, Result};
-use metprof::core::model::{ApiCall, Kernel};
+use metprof::core::model::{ApiCall, Kernel, Launch};
 use metprof::ports::{Files, Trace, TraceSource};
 
 pub const US: f64 = 1_000.0;
+
+/// The launch configuration of every synthetic kernel unless a test sets one.
+pub const LAUNCH0: Launch = Launch {
+    block: (128, 1, 1),
+    registers_per_thread: 32,
+    static_shared_bytes: 0,
+    dynamic_shared_bytes: 0,
+};
 
 pub const FAMILIES_TOML: &str = r#"
 schema = 1
@@ -53,6 +61,9 @@ pub struct K {
     pub corr: Option<i64>,
     pub node: Option<i64>,
     pub grid: (i64, i64, i64),
+    pub launch: Launch,
+    /// The demangled name; `None` = the short name.
+    pub demangled: Option<&'static str>,
 }
 
 pub const K0: K = K {
@@ -61,6 +72,8 @@ pub const K0: K = K {
     corr: None,
     node: None,
     grid: (1, 1, 1),
+    launch: LAUNCH0,
+    demangled: None,
 };
 
 #[derive(Debug, Clone)]
@@ -110,7 +123,9 @@ impl Capture {
                 correlation: corr,
                 graph_node: k.node,
                 name: name.to_string(),
+                demangled: k.demangled.unwrap_or(name).to_string(),
                 grid: k.grid,
+                launch: k.launch,
             },
         });
         self

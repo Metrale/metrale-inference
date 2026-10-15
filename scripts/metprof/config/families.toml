@@ -320,3 +320,29 @@ family = "kv_slots"
 group = "misc"
 class = "compute"
 name_regex = "^fill_slots_from_block_table$"
+
+# ---- kernel tree (`metprof tree`) ------------------------------------------
+# The tree's own gate: the share of summed kernel time that must sit under a
+# node (the rest is listed as unattributed by full name). It is separate from
+# the union coverage_min above, which gates busy time.
+[tree]
+coverage_min = 0.99
+
+# Structure over the families for one model. A node claims families by
+# pattern (over family names, never kernel names: matching kernels stays in
+# the rules above); an unclaimed family sits under its group. `fuses` states
+# what a kernel absorbed; it is never given a time of its own.
+[tree.model.glm]
+fuses = { moe_grouped_gu = ["gate_gemm", "up_gemm"] }
+
+[[tree.model.glm.node]]
+path = "moe"
+families = ["^router_", "^moe_", "^swiglu$"]
+
+[[tree.model.glm.node]]
+path = "attention"
+families = ["^mla_", "^dsa_"]
+
+[[tree.model.glm.node]]
+path = "mhc"
+families = ["^mhc_", "^rank_sum_add$"]

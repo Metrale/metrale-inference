@@ -15,6 +15,19 @@ pub fn median_i64(values: &[i64]) -> Option<f64> {
     }
 }
 
+/// The `p` quantile (0 <= p <= 1) of ascending `sorted` values, by linear
+/// interpolation between the closest ranks at h = (n - 1) * p. At p = 0.5 it
+/// is the median above. `None` for no values or a `p` outside [0, 1].
+pub fn quantile_sorted(sorted: &[i64], p: f64) -> Option<f64> {
+    if sorted.is_empty() || !(0.0..=1.0).contains(&p) {
+        return None;
+    }
+    let h = (sorted.len() - 1) as f64 * p;
+    let (lo, hi) = (h.floor() as usize, h.ceil() as usize);
+    let (a, b) = (sorted[lo] as f64, sorted[hi] as f64);
+    Some(a + (h - lo as f64) * (b - a))
+}
+
 pub fn median_f64(values: &[f64]) -> Option<f64> {
     let mut v = values.to_vec();
     v.sort_by(f64::total_cmp);
@@ -44,6 +57,28 @@ mod tests {
         assert_eq!(median_f64(&[0.5, 0.25]), Some(0.375));
         assert_eq!(median_i64(&[]), None);
         assert_eq!(mean(&[]), None);
+    }
+
+    #[test]
+    fn quantiles_interpolate_between_ranks_and_agree_with_the_median() {
+        let v = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110];
+        assert_eq!(quantile_sorted(&v, 0.1), Some(20.0));
+        assert_eq!(quantile_sorted(&v, 0.0), Some(10.0));
+        assert_eq!(quantile_sorted(&v, 1.0), Some(110.0));
+        let q = quantile_sorted(&[1, 2, 3, 10], 0.9);
+        assert!((q.expect("q") - 7.9).abs() < 1e-12, "{q:?}");
+        assert_eq!(quantile_sorted(&[7], 0.9), Some(7.0));
+        for v in [
+            &[1, 5][..],
+            &[2, 3, 9],
+            &[1, 4, 4, 100],
+            &[3, 3, 8, 8, 9, 20],
+        ] {
+            assert_eq!(quantile_sorted(v, 0.5), median_i64(v));
+        }
+        assert_eq!(quantile_sorted(&[], 0.5), None);
+        assert_eq!(quantile_sorted(&[1, 2], 1.5), None);
+        assert_eq!(quantile_sorted(&[1, 2], -0.1), None);
     }
 
     #[test]

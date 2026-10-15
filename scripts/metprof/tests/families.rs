@@ -21,7 +21,9 @@ fn kern(name: &str, start: i64, stream: i64) -> Kernel {
         correlation: 0,
         graph_node: None,
         name: name.to_string(),
+        demangled: name.to_string(),
         grid: (1, 1, 1),
+        launch: common::LAUNCH0,
     }
 }
 

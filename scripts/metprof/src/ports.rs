@@ -28,3 +28,20 @@ pub trait Trace {
 pub trait Files {
     fn read(&self, path: &str) -> std::io::Result<Vec<u8>>;
 }
+
+/// The texts a circuit-backed kernel tree is planned from, by name. Each
+/// method returns the file's text or an error that names the file.
+pub trait CircuitTexts {
+    /// The instance list (recipes, shapes, policies).
+    fn instances(&self) -> Result<String>;
+    /// The circuit of one arch.
+    fn circuit(&self, arch: &str) -> Result<String>;
+    /// One block library a circuit includes.
+    fn block(&self, name: &str) -> Result<String>;
+    /// A stated precision table.
+    fn precision_table(&self, name: &str) -> Result<String>;
+    /// A checkpoint plan fixture (the policy precision's input).
+    fn checkpoint_plan(&self, name: &str) -> Result<String>;
+    /// The fusion rules of one hardware class.
+    fn fusions(&self, hw: &str) -> Result<String>;
+}

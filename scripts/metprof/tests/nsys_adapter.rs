@@ -12,6 +12,7 @@ use metprof::adapters::nsys::{NsysSource, NsysTrace};
 use metprof::core::capture::{
     device_copies, device_kernels, devices, graph_node_traced, ordered_calls,
 };
+use metprof::core::model::Launch;
 use metprof::ports::{Trace, TraceSource};
 
 fn fixture(name: &str) -> String {
@@ -37,6 +38,11 @@ fn kernels_are_device_filtered_named_and_ordered() {
     let ks = device_kernels("c", rows, 0).unwrap();
     let names: Vec<&str> = ks.iter().map(|k| k.name.as_str()).collect();
     assert_eq!(names, ["gemm_a", "gemm_b"]);
+    let full: Vec<&str> = ks.iter().map(|k| k.demangled.as_str()).collect();
+    assert_eq!(
+        full,
+        ["void gemm_a<64>(float*)", "void gemm_b<128>(float*)"]
+    );
     let b = &ks[1];
     assert_eq!(
         (b.start, b.end, b.grid, b.graph_node, b.correlation),
@@ -44,6 +50,16 @@ fn kernels_are_device_filtered_named_and_ordered() {
     );
     assert_eq!(b.stream, 3);
     assert_eq!(ks[0].graph_node, None);
+    let launch = |l: Launch| {
+        (
+            l.block,
+            l.registers_per_thread,
+            l.static_shared_bytes,
+            l.dynamic_shared_bytes,
+        )
+    };
+    assert_eq!(launch(b.launch), ((128, 1, 1), 64, 0, 16384));
+    assert_eq!(launch(ks[0].launch), ((256, 1, 1), 32, 1024, 0));
 }
 
 #[test]
@@ -134,4 +150,10 @@ fn capture_is_only_read() {
 fn a_name_id_absent_from_stringids_is_an_error_not_a_dropped_row() {
     let t = NsysTrace::open(&fixture("nsys_orphan.sqlite")).unwrap();
     assert_err(t.kernel_rows(), "string id 99 is missing from StringIds");
+}
+
+#[test]
+fn a_kernel_table_without_launch_configuration_is_an_error() {
+    let t = NsysTrace::open(&fixture("nsys_nolaunch.sqlite")).unwrap();
+    assert_err(t.kernel_rows(), "has no column \"?blockX");
 }
