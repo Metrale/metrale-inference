@@ -4,6 +4,7 @@
 //! routing over a seeded expert permutation (exponent 0 = uniform), the two expert widths the
 //! fused gate/up launch must serve (704, the TP=3 slice with the `_k64` down, and 640, a plain
 //! multiple of 128) and the separate and fused gate/up segments.
+//! 2026-10-15: and the down GEMM on any entry (the `_n` twins).
 //!
 //! Owner: model-arch examples (GLM-5.3).
 //! Invariants: none beyond the types.
@@ -75,14 +76,23 @@ pub struct Width {
     pub down_quant: KernelHandle,
     pub down: [KernelHandle; 3],
     pub down_r: KernelHandle,
+    /// 2026-10-15: The m128 down's `_n` twin (`w4a4_grouped_mx_m128[_k64]_n`).
+    pub down_n: KernelHandle,
     pub gate: Table,
     pub up: Table,
     pub dn: Table,
 }
 
 impl Width {
-    /// 2026-10-14: `down_r` = `w4a4_grouped_mx_m128_r` and `_m128_k64_r`.
-    pub fn new(kn: &Kern, mi: usize, t: [Table; 3], down_r: [KernelHandle; 2]) -> Self {
+    /// 2026-10-14: `down_r` = `w4a4_grouped_mx_m128_r` and `_m128_k64_r`; 2026-10-15: `down_n`
+    /// = `w4a4_grouped_mx_m128_n` and `_m128_k64_n`.
+    pub fn new(
+        kn: &Kern,
+        mi: usize,
+        t: [Table; 3],
+        down_r: [KernelHandle; 2],
+        down_n: [KernelHandle; 2],
+    ) -> Self {
         let plain = mi.is_multiple_of(128);
         let [gate, up, dn] = t;
         Self {
@@ -95,6 +105,7 @@ impl Width {
                 [kn.mx_k64[0], kn.mx_k64[1], kn.mx_k64[2]]
             },
             down_r: down_r[usize::from(!plain)],
+            down_n: down_n[usize::from(!plain)],
             gate,
             up,
             dn,
@@ -216,12 +227,24 @@ pub fn down(
         "the raster twins are m128 only"
     );
     let e = match raster {
-        Some(g) => GroupedEntry {
-            kern: w.down_r,
-            raster: Some(g),
-        },
+        Some(g) => GroupedEntry::raster(w.down_r, g),
         None => GroupedEntry::plain(w.down[ti]),
     };
+    down_entry(gpu, w, b, act, out, ti, e, s)
+}
+
+/// 2026-10-15: [`down`] on a given entry of tile `ti` (an `_n` twin is m128).
+#[allow(clippy::too_many_arguments)]
+pub fn down_entry(
+    gpu: &dyn GpuBackend,
+    w: &Width,
+    b: &Bufs,
+    act: [DevicePtr; 3],
+    out: DevicePtr,
+    ti: usize,
+    e: GroupedEntry,
+    s: u64,
+) -> Result<()> {
     let v = Bufs {
         aq: act[0],
         as_: act[1],

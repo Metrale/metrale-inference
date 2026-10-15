@@ -189,6 +189,10 @@ pub fn launch_w4a4_gu(
         "w4a4_grouped_gu: tile entry {} out of range",
         c.ti
     );
+    ensure!(
+        entry.nc.is_none(),
+        "w4a4_grouped_gu: the fused entry has no `_n` twin"
+    );
     let l = KernelLaunch::new(gpu, entry.kern)
         .grid([
             c.n.div_ceil(W4A4_GROUPED_COLS[c.ti] / 2) as u32,

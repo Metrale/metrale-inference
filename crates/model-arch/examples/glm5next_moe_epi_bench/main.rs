@@ -27,6 +27,8 @@
 //!    groups (`<gu>,<down>`, default 16,4) against the plain entries, interleaved.
 //!    Negative control (part 1, m128): the raster down on the reference input with every
 //!    per-slot global doubled must differ from the reference output, or the bench fails.
+//! 4. 2026-10-15: The m128 down's `_n` twins (`METRALE_GLM_MOE_W4A4_NC`): byte gate, negative
+//!    control and timing in [`nc`] (in parts 1 and 2 at the m128 entry).
 //!
 //! Owner: model-arch examples (GLM-5.3).
 //! Invariants: exits with an error on the first byte mismatch.
@@ -52,6 +54,7 @@ use device::{Rng, fmt, read, time_set};
 mod launch;
 use launch::{Bufs, EXPERTS, HIDDEN, KP, Kern, MI, MT, TOP_K, bufs, sort, table, tiles};
 
+mod nc;
 mod route;
 use route::{LIMIT, Width, down, fused, max_load, quant_x, quartile_limit, separate, zipf_routing};
 
@@ -71,10 +74,7 @@ struct GuKerns {
 impl GuKerns {
     fn entry(&self, ti: usize, raster: Option<u32>) -> GroupedEntry {
         match raster {
-            Some(g) => GroupedEntry {
-                kern: self.r,
-                raster: Some(g),
-            },
+            Some(g) => GroupedEntry::raster(self.r, g),
             None => GroupedEntry::plain(self.plain[ti]),
         }
     }
@@ -159,6 +159,7 @@ fn byte_gate(
     }
     if ti == 2 {
         raster_control(gpu, w, b, dq, &want, &want_out, &at)?;
+        nc::byte_gate(gpu, w, b, dq, &want, &want_out, &at)?;
     }
     ensure!(
         want_out.iter().any(|&x| x != 0) && want[0].iter().any(|&x| x != 0),
@@ -256,6 +257,7 @@ fn timing(
     }
     if ti == 2 {
         raster_timing(gpu, gu, w, b, dq, &at, s)?;
+        nc::timing(gpu, w, b, &at, s)?;
     }
     Ok(())
 }
@@ -344,6 +346,10 @@ fn main() -> Result<()> {
         g.kernel(m, "w4a4_grouped_mx_m128_r")?,
         g.kernel(m, "w4a4_grouped_mx_m128_k64_r")?,
     ];
+    let down_n = [
+        g.kernel(m, "w4a4_grouped_mx_m128_n")?,
+        g.kernel(m, "w4a4_grouped_mx_m128_k64_n")?,
+    ];
     let mut rng = Rng(0x243f_6a88_85a3_08d3);
     let mut widths = Vec::with_capacity(2);
     for mi in [MI, 640] {
@@ -352,7 +358,7 @@ fn main() -> Result<()> {
             table(g, &mut rng, mi, HIDDEN)?,
             table(g, &mut rng, HIDDEN, mi)?,
         ];
-        widths.push(Width::new(&kn, mi, t, down_r));
+        widths.push(Width::new(&kn, mi, t, down_r, down_n));
     }
     let list = |name: &str, default: &str| -> Vec<String> {
         std::env::var(name)
@@ -392,7 +398,8 @@ fn main() -> Result<()> {
                 println!(
                     "byte gate rows={rows} zipf={z} n={}: fused down input and down output \
                      identical on m32/m64/m128 and the m128 raster groups {RASTER_GATE:?} at \
-                     limits {LIMIT} and {q}; negative control (globals x2, raster {}) differs",
+                     limits {LIMIT} and {q}, and the m128 nc twins; negative controls (globals \
+                     x2, raster {} and nc 4) differ",
                     w.mi, RASTER_GATE[3]
                 );
                 for ti in [0, 2] {

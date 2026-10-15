@@ -297,6 +297,10 @@ name = "glm5next_fp8_wide_bench"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "glm5next_dequant_persist_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "glm5next_kda_chunk16_bench"
 required-features = ["cuda", "gpu-examples"]
 
@@ -322,6 +326,10 @@ required-features = ["cuda", "gpu-examples"]
 
 [[example]]
 name = "glm5next_dsa_scores_pipe_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_dsa_sp_select_gate"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
@@ -358,6 +366,10 @@ required-features = ["cuda", "gpu-examples"]
 
 [[example]]
 name = "glm5next_hc_post_sum_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_hc_post_vec_gate"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]

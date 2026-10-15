@@ -66,7 +66,7 @@ pub(crate) mod wide_gemv;
 pub(crate) use levers::{
     PREFILL_ROWS, ar_fused_post, cublas_wide_proj, dsa_batch_qidx, dsa_idx_proj_whole,
     dsa_indexer_rows, dsa_verify_rows, mhc_fused, mhc_post_fold, moe_combine_split,
-    multi_seq_chunk_rows, multi_seq_chunks, router_rows, router_topk_rank,
+    moe_combine_vec8, multi_seq_chunk_rows, multi_seq_chunks, router_rows, router_topk_rank,
 };
 pub use levers::{arena_lean, prefill_rows};
 pub use steps::{GroupSpan, SpanPiece, group_spans, prefill_span_groups};

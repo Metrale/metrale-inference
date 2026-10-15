@@ -183,6 +183,7 @@ pub fn grouped(
 }
 
 /// 2026-10-14: [`grouped`] on an entry that may be an `_r` twin (its raster group last).
+/// 2026-10-15: or an `_n` twin (raster group and `nc` last, a grid `nc` times narrower).
 #[allow(clippy::too_many_arguments)]
 pub fn grouped_entry(
     gpu: &dyn GpuBackend,
@@ -197,7 +198,7 @@ pub fn grouped_entry(
 ) -> Result<()> {
     let l = KernelLaunch::new(gpu, e.kern)
         .grid([
-            div_ceil(n as u32, COLS[ti]),
+            e.grid_x(n, COLS[ti] as usize),
             ((b.rows * TOP_K).div_ceil(MT[ti]) + EXPERTS) as u32,
             1,
         ])
@@ -222,11 +223,7 @@ pub fn grouped_entry(
         .arg_u32(EXPERTS as u32)
         .arg_u32(n as u32)
         .arg_u32(kk as u32);
-    match e.raster {
-        Some(g) => l.arg_u32(g),
-        None => l,
-    }
-    .launch(s)
+    e.tail_args(l).launch(s)
 }
 
 /// 2026-10-12: One group of the grouped GEMM (`num_experts` 1, offsets [0, rows], no gather) on

@@ -389,3 +389,85 @@ extern "C" __global__ void glm5next_router_topk_rank(
     ids[tid] = sel_id[tid];
     wts[tid] = w;
 }
+
+// 2026-10-14: glm5next_moe_combine[_indexed]_vec8: the same combine with each thread owning
+// eight consecutive elements, so every routed slot, the shared row and the output move as one
+// 16-byte access and a thread issues all its slot loads before it adds any of them. Each
+// element is the scalar kernels' expression: the FP32 sum from 0.0f over the slots in slot
+// order, each product rounded before its add (--fmad=false, KERNEL.toml), then the shared
+// value, then one __float2bfloat16. Same bytes as glm5next_moe_combine[_indexed] at any grid.
+// The host (model-arch glm5next_mlp/forward/topk_combine.rs) launches it only when hidden is a
+// multiple of 8 and expert_out, shared and out are 16-byte aligned, with
+// Grid (T, ceil(hidden / 8 / blockDim.x), 1); top_k <= GLM_COMBINE_VEC8_MAX_K (the config keeps
+// top_k <= 16). INDEXED reads slot k of token t from row token_to_perm[t * top_k + k].
+#define GLM_COMBINE_VEC8_MAX_K 16
+template <bool INDEXED>
+__device__ __forceinline__ void glm5next_moe_combine_vec8_body(
+    const __nv_bfloat16* __restrict__ expert_out,
+    const int* __restrict__ token_to_perm,
+    const float* __restrict__ weights,
+    const __nv_bfloat16* __restrict__ shared,
+    __nv_bfloat16* __restrict__ out,
+    const unsigned int hidden,
+    const unsigned int top_k
+) {
+    const unsigned int t = blockIdx.x;
+    const unsigned int d = (blockIdx.y * blockDim.x + threadIdx.x) * 8u;
+    if (d >= hidden || top_k > GLM_COMBINE_VEC8_MAX_K) return;
+    const float* w = weights + (size_t)t * top_k;
+    uint4 v[GLM_COMBINE_VEC8_MAX_K];
+    #pragma unroll
+    for (unsigned int k = 0; k < GLM_COMBINE_VEC8_MAX_K; ++k) {
+        if (k < top_k) {
+            const size_t row = INDEXED ? (size_t)token_to_perm[(size_t)t * top_k + k]
+                                       : (size_t)t * top_k + k;
+            v[k] = *reinterpret_cast<const uint4*>(expert_out + row * hidden + d);
+        }
+    }
+    const uint4 sv = *reinterpret_cast<const uint4*>(shared + (size_t)t * hidden + d);
+    float acc[8];
+    #pragma unroll
+    for (unsigned int j = 0; j < 8u; ++j) acc[j] = 0.0f;
+    #pragma unroll
+    for (unsigned int k = 0; k < GLM_COMBINE_VEC8_MAX_K; ++k) {
+        if (k < top_k) {
+            const float wk = w[k];
+            const __nv_bfloat16* e = reinterpret_cast<const __nv_bfloat16*>(&v[k]);
+            #pragma unroll
+            for (unsigned int j = 0; j < 8u; ++j) acc[j] += wk * (float)e[j];
+        }
+    }
+    const __nv_bfloat16* sh = reinterpret_cast<const __nv_bfloat16*>(&sv);
+    uint4 o;
+    __nv_bfloat16* ob = reinterpret_cast<__nv_bfloat16*>(&o);
+    #pragma unroll
+    for (unsigned int j = 0; j < 8u; ++j) {
+        acc[j] += (float)sh[j];
+        ob[j] = __float2bfloat16(acc[j]);
+    }
+    *reinterpret_cast<uint4*>(out + (size_t)t * hidden + d) = o;
+}
+
+extern "C" __global__ void glm5next_moe_combine_vec8(
+    const __nv_bfloat16* __restrict__ expert_out,
+    const float* __restrict__ weights,
+    const __nv_bfloat16* __restrict__ shared,
+    __nv_bfloat16* __restrict__ out,
+    const unsigned int hidden,
+    const unsigned int top_k
+) {
+    glm5next_moe_combine_vec8_body<false>(expert_out, nullptr, weights, shared, out, hidden, top_k);
+}
+
+extern "C" __global__ void glm5next_moe_combine_indexed_vec8(
+    const __nv_bfloat16* __restrict__ expert_out,
+    const int* __restrict__ token_to_perm,
+    const float* __restrict__ weights,
+    const __nv_bfloat16* __restrict__ shared,
+    __nv_bfloat16* __restrict__ out,
+    const unsigned int hidden,
+    const unsigned int top_k
+) {
+    glm5next_moe_combine_vec8_body<true>(expert_out, token_to_perm, weights, shared, out, hidden,
+                                         top_k);
+}

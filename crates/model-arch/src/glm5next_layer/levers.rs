@@ -91,6 +91,15 @@ pub(crate) fn moe_combine_split() -> bool {
     *E.get_or_init(|| std::env::var("METRALE_GLM_MOE_COMBINE_SPLIT").as_deref() == Ok("1"))
 }
 
+/// 2026-10-14: `METRALE_GLM_MOE_COMBINE_VEC8=1` runs the MoE combine as
+/// `glm5next_moe_combine[_indexed]_vec8`, eight elements per thread in 16-byte accesses; every
+/// element's arithmetic is unchanged (`glm5next_mlp::forward::topk_combine`). Off until measured
+/// end to end. Read once.
+pub(crate) fn moe_combine_vec8() -> bool {
+    static E: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *E.get_or_init(|| std::env::var("METRALE_GLM_MOE_COMBINE_VEC8").as_deref() == Ok("1"))
+}
+
 /// 2026-10-09: `METRALE_GLM_DSA_INDEXER_ROWS=1` runs the DSA indexer's key and gate
 /// projections and the key norm of a batched decode or verify group once over all its rows
 /// (`Glm5NextDsaLayer::indexer_project_rows`) instead of once per row; each row is then placed

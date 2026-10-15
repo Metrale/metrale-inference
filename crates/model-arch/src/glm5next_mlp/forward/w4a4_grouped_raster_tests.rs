@@ -10,52 +10,7 @@
 //! Invariants: none beyond the types.
 
 use super::super::super::w4a4_grouped_raster::{RasterGroups, check_ready, parse_raster, readback};
-use super::super::w4a4_grouped_experts_with;
 use super::*;
-
-/// 2026-10-14: 1728 rows x top 8 over 288 experts = 48 slots per expert, the first m128 launch.
-const M128_ROWS: usize = 1728;
-
-/// 2026-10-14: The routed experts' launches over `rows` rows on a fresh mock (so two runs see
-/// the same buffer addresses), the fused and raster levers as given.
-fn plan(
-    c: Glm5NextMlpConfig,
-    rows: usize,
-    fused: bool,
-    raster: Option<RasterGroups>,
-) -> Vec<MockLaunch> {
-    let gpu = MockGpuBackend::new();
-    let k = kernels(&gpu);
-    let ws = Glm5NextMlpWorkspace::new_with(&gpu, &c, rows, true).unwrap();
-    let w = moe_weights(usize::MAX);
-    let site = MoeSite {
-        gpu: &gpu,
-        k: &k,
-        cfg: &c,
-        w: &w,
-        x: X,
-        rows,
-        ws: &ws,
-        stream: 5,
-    };
-    w4a4_grouped_experts_with(&site, SCALES, fused, raster).unwrap();
-    gpu.launches_snapshot()
-}
-
-/// 2026-10-14: Two launch lists equal field for field (`MockLaunch` has no `PartialEq`).
-fn assert_same(got: &[MockLaunch], want: &[MockLaunch]) {
-    assert_eq!(got.len(), want.len());
-    for (g, w) in got.iter().zip(want) {
-        assert_eq!(
-            (g.func, g.grid, g.block, g.shared_mem, g.stream, &g.args),
-            (w.func, w.grid, w.block, w.shared_mem, w.stream, &w.args)
-        );
-    }
-}
-
-fn funcs(l: &[MockLaunch]) -> Vec<u64> {
-    l.iter().map(|l| l.func).collect()
-}
 
 /// 2026-10-14: `got` is `want` with one more trailing u32 argument, `group`; same grid, block,
 /// shared memory and stream.
@@ -75,8 +30,8 @@ const G: RasterGroups = RasterGroups { gu: 16, down: 4 };
 /// `gu_m128_r` (group 16) and the `_k64` down `mx_m128_k64_r` (group 4); the rest is unchanged.
 #[test]
 fn the_m128_fused_and_k64_down_take_their_twins() {
-    let plain = plan(cfg_tp(), M128_ROWS, true, None);
-    let r = plan(cfg_tp(), M128_ROWS, true, Some(G));
+    let plain = plan(cfg_tp(), M128_ROWS, true, None, None);
+    let r = plan(cfg_tp(), M128_ROWS, true, Some(G), None);
     assert_eq!(funcs(&plain), vec![SORT, TILES, QUANT, GU128, G128_K64]);
     assert_eq!(funcs(&r), vec![SORT, TILES, QUANT, RGU128, R128_K64]);
     assert_same(&r[..3], &plain[..3]);
@@ -87,8 +42,8 @@ fn the_m128_fused_and_k64_down_take_their_twins() {
 /// 2026-10-14: A plain-width (2048) down at the m128 tile takes `mx_m128_r`.
 #[test]
 fn a_plain_width_down_takes_the_plain_twin() {
-    let plain = plan(cfg_small(), 48, true, None);
-    let r = plan(cfg_small(), 48, true, Some(G));
+    let plain = plan(cfg_small(), 48, true, None, None);
+    let r = plan(cfg_small(), 48, true, Some(G), None);
     assert_eq!(funcs(&r), vec![SORT, TILES, QUANT, RGU128, R128]);
     assert_twin(&r[3], &plain[3], 16);
     assert_twin(&r[4], &plain[4], 4);
@@ -98,8 +53,8 @@ fn a_plain_width_down_takes_the_plain_twin() {
 /// the SwiGLU and the quantizer are the plain plan's.
 #[test]
 fn the_separate_gate_up_keep_their_order() {
-    let plain = plan(cfg_tp(), M128_ROWS, false, None);
-    let r = plan(cfg_tp(), M128_ROWS, false, Some(G));
+    let plain = plan(cfg_tp(), M128_ROWS, false, None, None);
+    let r = plan(cfg_tp(), M128_ROWS, false, Some(G), None);
     assert_eq!(
         funcs(&r),
         vec![SORT, TILES, QUANT, G128, G128, SWIGLU, QUANT_K64, R128_K64]
@@ -111,12 +66,13 @@ fn the_separate_gate_up_keep_their_order() {
 /// 2026-10-14: A group of 0 keeps that launch's plain entry; below the m128 tile nothing changes.
 #[test]
 fn a_zero_group_and_the_narrow_tiles_keep_the_plain_plan() {
-    let plain = plan(cfg_tp(), M128_ROWS, true, None);
+    let plain = plan(cfg_tp(), M128_ROWS, true, None, None);
     let r = plan(
         cfg_tp(),
         M128_ROWS,
         true,
         Some(RasterGroups { gu: 0, down: 4 }),
+        None,
     );
     assert_eq!(funcs(&r), vec![SORT, TILES, QUANT, GU128, R128_K64]);
     assert_same(&r[..4], &plain[..4]);
@@ -125,11 +81,12 @@ fn a_zero_group_and_the_narrow_tiles_keep_the_plain_plan() {
         M128_ROWS,
         true,
         Some(RasterGroups { gu: 16, down: 0 }),
+        None,
     );
     assert_eq!(funcs(&r), vec![SORT, TILES, QUANT, RGU128, G128_K64]);
     assert_same(&r[4..], &plain[4..]);
-    let narrow = plan(cfg_tp(), 32, true, None);
-    assert_same(&plan(cfg_tp(), 32, true, Some(G)), &narrow);
+    let narrow = plan(cfg_tp(), 32, true, None, None);
+    assert_same(&plan(cfg_tp(), 32, true, Some(G), None), &narrow);
     assert_eq!(funcs(&narrow), vec![SORT, TILES, QUANT, GU32, G32_K64]);
 }
 

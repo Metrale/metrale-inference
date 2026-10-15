@@ -67,6 +67,8 @@ pub struct Glm5NextMhcKernels {
     /// one-shot all-reduce's sum fused into `hc_post`, same bits. Optional (`try_kernel`, 0 when
     /// absent); taken under `METRALE_GLM_AR_FUSED_POST=1`.
     pub hc_post_rank_sum: KernelHandle,
+    /// 2026-10-15: Its 16-byte-access twin, same bits (`glm5next_hc_post_vec`; 0 when absent).
+    pub hc_post_rank_sum_vec8: KernelHandle,
     /// 2026-10-10: `glm5next_hc_post_pre_norm`: one token's post-mix (with the one-shot sum in
     /// front) and the next site's pre-norm in one launch, same bits; taken by the decode under
     /// `METRALE_GLM_MHC_POST_FOLD=1`. Optional (`try_kernel`, 0 when absent).
@@ -148,6 +150,7 @@ impl Glm5NextMhcKernels {
                 GLM5NEXT_HC_POST_SUM_MODULE,
                 "glm5next_hc_post_rank_sum",
             ),
+            hc_post_rank_sum_vec8: crate::glm5next_hc_post_vec::resolve(gpu),
             hc_post_pre_norm_tok: metrale_model_layers::layers::try_kernel(
                 gpu,
                 GLM5NEXT_MHC_TOK_MODULE,
@@ -445,6 +448,7 @@ mod mhc_shape_tests {
             hc_pre_norm_tok: k(15),
             hc_post: k(7),
             hc_post_rank_sum: k(11),
+            hc_post_rank_sum_vec8: k(18),
             hc_post_pre_norm: k(12),
             hc_post_pre_norm_tok: k(16),
             hc_head: k(8),

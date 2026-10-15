@@ -15,7 +15,7 @@ use metrale_gpu_runtime::kernel_args::KernelLaunch;
 use metrale_model_layers::layer::{ForwardContext, LayerState};
 
 use super::super::paged::{IndexerCache, IndexerRowsDev};
-use super::super::select::{DsaSelectInputs, select_tokens_in_passes};
+use super::super::select::DsaSelectInputs;
 use super::super::state::Glm5NextDsaState;
 use super::{Glm5NextDsaLayer, IndexerPlace, gemm};
 
@@ -94,6 +94,11 @@ impl Glm5NextDsaLayer {
         // (`f32_proj_rows`, each row the M = 1 GEMV's bits) instead of one GEMV per row
         // (`METRALE_GLM_DSA_INDEXER_ROWS`).
         batched_query: bool,
+        // 2026-10-15: The tensor-parallel communicator and whether this is a prefill pass: a
+        // prefill pass may split its scores, top-k and expansion over the ranks
+        // (`METRALE_GLM_DSA_SP_SELECT`, `sp_select::run`); decode never does.
+        comm: Option<&dyn metrale_comm::CommBackend>,
+        is_prefill: bool,
         stream: u64,
     ) -> Result<()> {
         let w = &self.workspace;
@@ -165,14 +170,17 @@ impl Glm5NextDsaLayer {
         // 2026-09-25: The base of the `[max_rows, out_width]` output, not a row slice: the
         // kernels index rows themselves, so rows 0..k land in their own slots. 2026-10-11: In
         // row sub-passes when the scratch holds fewer rows at this context
-        // (`select_scratch_rows`); each row's selection is the one-pass one.
-        select_tokens_in_passes(
+        // (`select_scratch_rows`); each row's selection is the one-pass one. 2026-10-15: Or
+        // split over the ranks, each row's bytes unchanged (`sp_select::run`).
+        super::super::sp_select::run::select(
             gpu,
             &self.select_kernels,
             &self.cfg,
             &geom,
             &inputs,
             &w.select,
+            comm,
+            is_prefill,
             stream,
         )?;
         crate::glm5next_layer::profile::end(

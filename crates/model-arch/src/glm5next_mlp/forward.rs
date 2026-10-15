@@ -30,6 +30,7 @@ mod w4a4_dense;
 mod w4a4_dense_grouped;
 mod w4a4_grouped;
 mod w4a4_grouped_gu;
+mod w4a4_grouped_nc;
 mod w4a4_grouped_raster;
 mod w4a4_slots;
 mod workspace;
@@ -48,6 +49,7 @@ pub use w4a4_grouped::{
 pub use w4a4_grouped_gu::{
     W4a4GuCall, check_at_load as check_gu_fused_at_load, launch_w4a4_gu, moe_w4a4_gu_fused,
 };
+pub use w4a4_grouped_nc::{check_at_load as check_nc_at_load, moe_w4a4_nc};
 pub use w4a4_grouped_raster::{
     GroupedEntry, RasterGroups, check_at_load as check_raster_at_load, moe_w4a4_raster,
 };

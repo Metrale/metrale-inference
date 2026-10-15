@@ -181,6 +181,8 @@ impl Rig {
                     topk_radix: KernelHandle(0),
                     pool_prep: KernelHandle(0),
                     scores_pipe: KernelHandle(0),
+                    sel_fold: KernelHandle(0),
+                    expand_folded: KernelHandle(0),
                 },
             },
             decode_kernel: Glm5NextDsaDecodeKernel::resolve(&self.gpu).unwrap(),

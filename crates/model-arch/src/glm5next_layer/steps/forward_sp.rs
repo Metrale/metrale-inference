@@ -167,7 +167,18 @@ impl Glm5NextLayer {
                 self.is_last.then_some((hidden, None)),
             ),
             &mut |a, b, partials| {
-                self.sp_tail_piece(gpu, mhc, &rows, a, b, ffn_out, partials, reduce, stream)
+                self.sp_tail_piece(
+                    gpu,
+                    mhc,
+                    &rows,
+                    a,
+                    b,
+                    ffn_out,
+                    partials,
+                    reduce,
+                    tap.is_some(),
+                    stream,
+                )
             },
         )?;
         self.dump_layer_out(tap, ffn_out, streams)?;
@@ -278,18 +289,14 @@ impl Glm5NextLayer {
             return Ok(());
         }
         let t_mhc_post = profile::start();
-        glm_hc_post_rank_sum(
+        crate::glm5next_hc_post_vec::post_rank_sum(
             gpu,
-            mhc.kernels.hc_post_rank_sum,
+            &mhc.kernels,
             attn_out.offset(a * row_bytes),
             partials,
-            st,
-            po,
-            co,
-            st,
-            n,
-            ht,
-            hct,
+            [st, po, co, st],
+            [n, ht, hct],
+            tap.is_some(),
             stream,
         )?;
         profile::end(profile::MHC_POST, t_mhc_post, gpu, stream);
@@ -315,7 +322,8 @@ impl Glm5NextLayer {
 
     /// 2026-10-12: Section 3 of rows `[a, b)`: the MLP output's post-mix (summed with the peers'
     /// `partials` when `reduce`) and `hc_head_mean` on the last layer. 2026-10-14: moved out of
-    /// `forward_rows_sp` unchanged.
+    /// `forward_rows_sp` unchanged. 2026-10-15: `write_x` asks the post-mix to leave the summed
+    /// row in `ffn_out` (only a dump tap reads it; `glm5next_hc_post_vec`).
     #[allow(clippy::too_many_arguments)]
     pub(in crate::glm5next_layer) fn sp_tail_piece(
         &self,
@@ -327,6 +335,7 @@ impl Glm5NextLayer {
         ffn_out: DevicePtr,
         partials: Option<&metrale_comm::PeerPartials>,
         reduce: bool,
+        write_x: bool,
         stream: u64,
     ) -> Result<()> {
         let (ht, hct) = (self.hidden as u32, mhc.hc_mult as u32);
@@ -335,18 +344,14 @@ impl Glm5NextLayer {
         let n = (b - a) as u32;
         let t_mhc_post = profile::start();
         if reduce {
-            glm_hc_post_rank_sum(
+            crate::glm5next_hc_post_vec::post_rank_sum(
                 gpu,
-                mhc.kernels.hc_post_rank_sum,
+                &mhc.kernels,
                 ffn_out.offset(a * row_bytes),
                 partials.context("SP-mHC: the MLP's partials")?,
-                st,
-                po,
-                co,
-                st,
-                n,
-                ht,
-                hct,
+                [st, po, co, st],
+                [n, ht, hct],
+                write_x,
                 stream,
             )?;
         } else {

@@ -26,6 +26,7 @@ use super::launch::swiglu;
 use super::moe_experts::MoeSite;
 use super::w4a4::quant_static;
 use super::w4a4_grouped_gu::GuPlan;
+use super::w4a4_grouped_nc::down_entry as nc_down;
 use super::w4a4_grouped_raster::{GroupedEntry, RasterGroups, down_entry as raster_down, gu_entry};
 use crate::glm5next_layer::profile;
 use crate::glm5next_mlp::build_w4a4::{check_w4a4_k, check_w4a4_k64};
@@ -154,6 +155,7 @@ pub(super) fn smem_bytes_of(ti: usize) -> u32 {
 /// site, `w4a4_dense_grouped::proj` for a dense site as one group of `num_experts` = 1):
 /// `act` = the quantized rows, scales and globals; grid (ceil(n / cols), ceil(slots / mt) +
 /// num_experts). 2026-10-14: an `_r` entry takes its raster group as one more argument.
+/// 2026-10-15: an `_n` entry its raster group and `nc`, over a grid `nc` times narrower.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn grouped_launch(
     gpu: &dyn GpuBackend,
@@ -174,7 +176,7 @@ pub(super) fn grouped_launch(
 ) -> Result<()> {
     let l = KernelLaunch::new(gpu, entry.kern)
         .grid([
-            n.div_ceil(W4A4_GROUPED_COLS[ti]) as u32,
+            entry.grid_x(n, W4A4_GROUPED_COLS[ti]),
             (slots.div_ceil(W4A4_GROUPED_MT[ti]) + num_experts) as u32,
             1,
         ])
@@ -193,11 +195,7 @@ pub(super) fn grouped_launch(
         .arg_u32(num_experts as u32)
         .arg_u32(n as u32)
         .arg_u32(k as u32);
-    match entry.raster {
-        Some(g) => l.arg_u32(g),
-        None => l,
-    }
-    .launch(stream)
+    entry.tail_args(l).launch(stream)
 }
 
 /// 2026-10-10: The down projection's entry and stored activation width for expert width `mi`:
@@ -224,21 +222,26 @@ fn down_entry(
 /// 2026-10-14: Gate, up, SwiGLU and the down quantization as one launch under
 /// `METRALE_GLM_MOE_W4A4_GU_FUSED=1` (`w4a4_grouped_gu`), same bytes; the m128 launches'
 /// raster under `METRALE_GLM_MOE_W4A4_RASTER` (`w4a4_grouped_raster`), same bytes.
+/// 2026-10-15: the m128 down's column tiles per CTA under `METRALE_GLM_MOE_W4A4_NC`
+/// (`w4a4_grouped_nc`), same bytes.
 pub(super) fn w4a4_grouped_experts(site: &MoeSite<'_>, scales: W4a4ActScales) -> Result<()> {
     w4a4_grouped_experts_with(
         site,
         scales,
         super::w4a4_grouped_gu::moe_w4a4_gu_fused()?,
         super::w4a4_grouped_raster::moe_w4a4_raster()?,
+        super::w4a4_grouped_nc::moe_w4a4_nc()?,
     )
 }
 
 /// 2026-10-14: [`w4a4_grouped_experts`] with the fused gate/up and raster levers' values given.
+/// 2026-10-15: and the column tiles per m128 down CTA (`METRALE_GLM_MOE_W4A4_NC`).
 pub(super) fn w4a4_grouped_experts_with(
     site: &MoeSite<'_>,
     scales: W4a4ActScales,
     fused: bool,
     raster: Option<RasterGroups>,
+    nc: Option<u32>,
 ) -> Result<()> {
     let MoeSite {
         gpu,
@@ -256,7 +259,8 @@ pub(super) fn w4a4_grouped_experts_with(
     let mt = W4A4_GROUPED_MT[ti];
     check_w4a4_k(h, "routed gate/up")?;
     let (down_plain, down_quant, k_store) = down_entry(k, mi, ti)?;
-    let down = raster_down(k, raster, ti, k_store != mi, down_plain);
+    let k64 = k_store != mi;
+    let down = nc_down(k, nc, ti, k64, raster_down(k, raster, ti, k64, down_plain));
     let gate_up = GroupedEntry::plain(k.w4a4_grouped.mx[ti]);
     ensure!(
         h <= W4A4_GROUPED_MAX_K && k_store <= W4A4_GROUPED_MAX_K,
