@@ -412,6 +412,7 @@ mod tests {
             hc_post_rank_sum_vec8: k(18),
             hc_post_pre_norm: k(12),
             hc_post_pre_norm_tok: k(if fused { 16 } else { 0 }),
+            hc_post_pre_tile: k(if fused { 19 } else { 0 }),
             hc_head: k(8),
         }
     }

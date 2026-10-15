@@ -80,6 +80,9 @@ pub struct Glm5NextMhcKernels {
     /// same bits; taken by SP-mHC under `METRALE_GLM_MHC_POST_PRE_FUSED=1`
     /// (`glm5next_mhc_post_pre_tok`). Optional (`try_kernel`, 0 when absent).
     pub hc_post_pre_norm_tok: KernelHandle,
+    /// 2026-10-15: `glm5next_hc_post_pre_tile1` (module [`GLM5NEXT_MHC_POST_TILE_MODULE`]):
+    /// vec8 + tile4 in one launch, same bits (`glm5next_mhc_post_tile`; 0 when absent).
+    pub hc_post_pre_tile: KernelHandle,
     pub hc_head: KernelHandle,
 }
 
@@ -92,6 +95,9 @@ pub const GLM5NEXT_MHC_FUSED_MODULE: &str = "glm5next_mhc_fused";
 pub const GLM5NEXT_MHC_TOK_MODULE: &str = "glm5next_mhc_tok";
 /// 2026-10-15: The cp.async-ring pre-norm kernels (`glm5next_mhc_tile.cu`).
 pub const GLM5NEXT_MHC_TILE_MODULE: &str = "glm5next_mhc_tile";
+/// 2026-10-15: The fused post-mix + pre-norm with the streams in registers
+/// (`glm5next_mhc_post_tile.cu`).
+pub const GLM5NEXT_MHC_POST_TILE_MODULE: &str = "glm5next_mhc_post_tile";
 
 /// 2026-10-10: The kernel module of the folded post-mix + pre-norm (`glm5next_mhc_post_fold.cu`).
 pub const GLM5NEXT_MHC_POST_FOLD_MODULE: &str = "glm5next_mhc_post_fold";
@@ -165,6 +171,7 @@ impl Glm5NextMhcKernels {
                 GLM5NEXT_MHC_TOK_MODULE,
                 "glm5next_hc_post_pre_norm_tok4",
             ),
+            hc_post_pre_tile: crate::glm5next_mhc_post_tile::resolve(gpu)?,
             hc_head: gpu.kernel(GLM5NEXT_MHC_MODULE, "glm5next_hc_head")?,
         })
     }

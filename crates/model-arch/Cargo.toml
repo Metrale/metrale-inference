@@ -331,6 +331,10 @@ name = "glm5next_mhc_tile_gate"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "glm5next_hc_post_pre_tile_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "glm5next_expert_tp_bench"
 required-features = ["cuda", "gpu-examples"]
 

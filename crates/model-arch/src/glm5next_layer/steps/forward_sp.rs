@@ -259,32 +259,40 @@ impl Glm5NextLayer {
         let partials = partials.context("SP-mHC: the mixer's partials")?;
         let (st, po, co, hi, no) = rows.at(a);
         let n = (b - a) as u32;
+        let pair = crate::glm5next_mhc_post_pre_tok::PostPreTok {
+            block_out: attn_out.offset(a * row_bytes),
+            partials,
+            residual: st,
+            post: po,
+            comb: co,
+            streams_out: st,
+            site: &mhc.ffn,
+            norm_w: self.post_attn_norm,
+            y: hi,
+            post_out: po,
+            comb_out: co,
+            normed: no,
+            num_tokens: n,
+            dims: [ht, hct, mhc.sinkhorn_iters as u32],
+            eps: [self.rms_eps, mhc.hc_eps, self.rms_eps],
+        };
+        // 2026-10-15: METRALE_GLM_MHC_POST_PRE_TILE: the post-mix and the pre-norm below in one
+        // launch, the same bytes (glm5next_mhc_post_tile).
+        use crate::glm5next_mhc_post_tile as post_tile;
+        if let Some(kernel) = post_tile::kernel_for(&mhc.kernels, post_tile::enabled()?, n)? {
+            let t_mhc = profile::start();
+            post_tile::launch(gpu, kernel, post_tile::GROUPS, &pair, tap.is_some(), stream)?;
+            profile::end(profile::MHC, t_mhc, gpu, stream);
+            if let Some(t) = tap {
+                t.put_rows(dump::Point::MixerRed, attn_out, a..b)?;
+            }
+            return Ok(());
+        }
         if let Some(kernel) =
             crate::glm5next_mhc_post_pre_tok::kernel_for(&mhc.kernels, post_pre, n)?
         {
             let t_mhc = profile::start();
-            crate::glm5next_mhc_post_pre_tok::launch(
-                gpu,
-                kernel,
-                &crate::glm5next_mhc_post_pre_tok::PostPreTok {
-                    block_out: attn_out.offset(a * row_bytes),
-                    partials,
-                    residual: st,
-                    post: po,
-                    comb: co,
-                    streams_out: st,
-                    site: &mhc.ffn,
-                    norm_w: self.post_attn_norm,
-                    y: hi,
-                    post_out: po,
-                    comb_out: co,
-                    normed: no,
-                    num_tokens: n,
-                    dims: [ht, hct, mhc.sinkhorn_iters as u32],
-                    eps: [self.rms_eps, mhc.hc_eps, self.rms_eps],
-                },
-                stream,
-            )?;
+            crate::glm5next_mhc_post_pre_tok::launch(gpu, kernel, &pair, stream)?;
             profile::end(profile::MHC, t_mhc, gpu, stream);
             return Ok(());
         }

@@ -65,6 +65,7 @@ fn wide_token_counts_take_the_grouped_mix_kernel() {
         hc_post_rank_sum_vec8: k(18),
         hc_post_pre_norm: k(12),
         hc_post_pre_norm_tok: k(16),
+        hc_post_pre_tile: k(19),
         hc_head: k(8),
     };
     let site = |bf16| Glm5NextMhcSiteWeights {

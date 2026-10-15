@@ -22,13 +22,12 @@
 
 #include "e4m3_mma_pipe.cuh"
 #include "glm5next_mhc_fused_parts.cuh"
+#include "glm5next_mhc_tile_parts.cuh"
 
 #ifndef GLM_HCT_STAGES
 #define GLM_HCT_STAGES 4
 #endif
 
-#define GLM_HCT_HC 4
-#define GLM_HCT_MIX ((2 + GLM_HCT_HC) * GLM_HCT_HC)
 #define GLM_HCT_TOK 4
 
 // 2026-10-15: Shared memory, in bytes from the dynamic base: the ring (stage s: hc_fn columns
@@ -50,13 +49,6 @@ struct GlmHctLayout {
     static constexpr unsigned int WS_OFF = PRE_OFF + NG * GLM_HCT_HC * 4;
     static constexpr unsigned int BYTES = WS_OFF + NG * 33 * 4;
 };
-
-// 2026-10-15: Named barrier over the 256 threads of group G (barrier 2 + G); the tails of the
-// group's warps 1..7 use barrier 4 + G (glm_hcf_collapse_norm_at).
-template <int G>
-__device__ __forceinline__ void glm_hct_group_bar() {
-    asm volatile("bar.sync %0, %1;" ::"n"(2 + G), "n"(GLM_HCF_BLOCK));
-}
 
 // 2026-10-15: One ring stage: the hc_fn columns base .. base + 255 of every mix row and the same
 // stream columns of the block's tokens; a token at or past `ntb` gets zeros (no read).
@@ -103,35 +95,15 @@ __device__ __forceinline__ void glm_hct_group_finish(
 
     // 2026-10-15: tok4's trees, token by token, on the group's barrier.
 #pragma unroll
-    for (int q = 0; q < GLM_HCT_TOK; ++q) {
-        red[0][t] = ss[q];
-#pragma unroll
-        for (int r = 0; r < (int)MIX; ++r) red[1 + r][t] = acc[q][r];
-        glm_hct_group_bar<G>();
-        for (unsigned int s = GLM_HCF_BLOCK / 2; s > 0; s >>= 1) {
-            if (t < s) {
-#pragma unroll
-                for (int r = 0; r <= (int)MIX; ++r) red[r][t] += red[r][t + s];
-            }
-            glm_hct_group_bar<G>();
-        }
-        if (t < MIX) {
-            const float rsq = rsqrtf(red[0][0] / (float)hc_dim + norm_eps);
-            const float m = red[1 + t][0] * rsq;
-            s_mix[q][t] = m;
-            if ((unsigned int)q < ntg) mix[(size_t)(tg0 + q) * MIX + t] = m;
-        }
-        glm_hct_group_bar<G>();
-    }
+    for (int q = 0; q < GLM_HCT_TOK; ++q)
+        glm_hct_tree<G>(ss[q], acc[q], red, s_mix[q], mix, tg0 + q, (unsigned int)q < ntg, t,
+                        hc_dim, norm_eps);
 
     // 2026-10-15: tok4's tails. y (the group's slice of the reused ring) overlaps `red`, whose
     // last read precedes the barrier above.
     for (unsigned int q = 0; q < ntg; ++q) {
         const unsigned int tk = tg0 + q;
-        if (t < GLM_HCT_HC) {
-            float pr = s_mix[q][t] * hc_scale[0] + hc_base[t];
-            s_pre[t] = 1.f / (1.f + expf(-pr)) + hc_eps;
-        }
+        glm_hct_pre(s_mix[q], s_pre, t, hc_scale, hc_base, hc_eps);
         glm_hct_group_bar<G>();
         if (t < 32) {
             glm_hcf_sinkhorn<GLM_HCT_HC>(s_mix[q], hc_scale, hc_base, post_out, comb_out, tk,
