@@ -28,9 +28,7 @@ pub const SEQ32: usize = 32768;
 const KP: usize = 4;
 const SELECT_K: usize = 512;
 
-/// 2026-10-14: A [`Case`] with `variants` block tables (each `SEQ32 / BLOCK` distinct pool
-/// blocks) and selections (each from its own per-row noise), `rows` query rows at positions
-/// `SEQ32 - rows ..`, `seq_len = pos + 1`, `bps` 0 (one shared table).
+/// 2026-10-14: [`make_prefill_case_at`] a [`SEQ32`]-token sequence.
 pub fn make_prefill_case(
     g: &dyn GpuBackend,
     rng: &mut Lcg,
@@ -39,20 +37,36 @@ pub fn make_prefill_case(
     variants: usize,
     q_scale: f32,
 ) -> Result<Case> {
+    make_prefill_case_at(g, rng, SEQ32, heads, rows, variants, q_scale)
+}
+
+/// 2026-10-14: A [`Case`] with `variants` block tables (each `seq / BLOCK` distinct pool
+/// blocks, rounded up) and selections (each from its own per-row noise), `rows` query rows at
+/// positions `seq - rows ..`, `seq_len = pos + 1`, `bps` 0 (one shared table). 2026-10-15: the
+/// sequence length is a parameter (`glm5next_dsa_prefill_tc_nanor_gate` times a 1k one).
+pub fn make_prefill_case_at(
+    g: &dyn GpuBackend,
+    rng: &mut Lcg,
+    seq: usize,
+    heads: usize,
+    rows: usize,
+    variants: usize,
+    q_scale: f32,
+) -> Result<Case> {
     let q: Vec<f32> = (0..rows * heads * KVL)
         .map(|_| bf16::from_f32(rng.f() * q_scale).to_f32())
         .collect();
-    let pos = |r: usize| SEQ32 - rows + r;
+    let pos = |r: usize| seq - rows + r;
     let sl: Vec<i32> = (0..rows).map(|r| (pos(r) + 1) as i32).collect();
-    let n_pools = SEQ32 / KP;
+    let n_pools = seq / KP;
     let (mut bt, mut sel) = (Vec::new(), Vec::new());
     for _ in 0..variants {
         let mut blocks: Vec<i32> = (0..POOL_BLOCKS as i32).collect();
-        for i in 0..SEQ32 / BLOCK {
+        for i in 0..seq.div_ceil(BLOCK) {
             let j = i + rng.u() as usize % (POOL_BLOCKS - i);
             blocks.swap(i, j);
         }
-        blocks.truncate(SEQ32 / BLOCK);
+        blocks.truncate(seq.div_ceil(BLOCK));
         bt.push(blocks);
         let base: Vec<f32> = (0..n_pools).map(|_| rng.f() + rng.f()).collect();
         let mut s = vec![-1i32; rows * WIDTH];

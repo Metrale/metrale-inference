@@ -147,6 +147,7 @@ fn hb8() -> HeadBatched {
         decode_p_hi: KernelHandle(13),
         prefill_pipe: KernelHandle(14),
         prefill_tc: KernelHandle(15),
+        prefill_tc_nanor: KernelHandle(16),
         merge: KernelHandle(12),
         splits: 8,
         smem: 0,
@@ -334,5 +335,68 @@ fn the_prefill_tc_twin_is_swapped_in_only_over_p_hi_at_one_split() {
         .and_then(|k| k.for_prefill_tc(true)));
     assert!(e.contains("not in this target"), "{e}");
     let e = err(per_head_only().for_prefill_tc(true));
+    assert!(e.contains("needs METRALE_GLM_DSA_DECODE_HB"), "{e}");
+}
+
+/// 2026-10-15: The NaN-test twin replaces only the tc entry, keeping its launch shape (block,
+/// shared memory, offset table, one split); off, nothing changes. Refused, as an error naming
+/// what is missing, over any other entry or without the twin in the build.
+#[test]
+fn the_tc_nanor_twin_is_swapped_in_only_over_the_tc_entry() {
+    let hb = hb8();
+    let k = Glm5NextDsaDecodeKernel {
+        per_head: KernelHandle(10),
+        head_batched: Some(hb),
+    };
+    let tc = k
+        .for_prefill(true)
+        .for_prefill_p_hi(true)
+        .and_then(|k| k.for_prefill_tc(true))
+        .ok()
+        .unwrap();
+    let off = tc.for_prefill_tc_nanor(false).ok().unwrap();
+    assert_eq!(off.head_batched.unwrap().decode.0, 15);
+    let on = tc
+        .for_prefill_tc_nanor(true)
+        .ok()
+        .unwrap()
+        .head_batched
+        .unwrap();
+    assert_eq!(
+        (on.decode.0, on.splits, on.smem, on.block, on.offset_table),
+        (16, 1, TC_SMEM_BYTES, TC_BLOCK, true)
+    );
+
+    let err = |r: Result<Glm5NextDsaDecodeKernel>| r.err().unwrap().to_string();
+    let p_hi1 = k.for_prefill(true).for_prefill_p_hi(true).ok().unwrap();
+    let e = err(p_hi1.for_prefill_tc_nanor(true));
+    assert!(e.contains("needs METRALE_GLM_DSA_HB_PREFILL_TC=1"), "{e}");
+    let e = err(p_hi1
+        .for_prefill_pipe(true)
+        .and_then(|k| k.for_prefill_tc_nanor(true)));
+    assert!(e.contains("needs METRALE_GLM_DSA_HB_PREFILL_TC=1"), "{e}");
+    let no_tc = Glm5NextDsaDecodeKernel {
+        head_batched: Some(HeadBatched {
+            prefill_tc: KernelHandle(0),
+            ..hb
+        }),
+        ..k
+    };
+    let e = err(no_tc.for_prefill(true).for_prefill_tc_nanor(true));
+    assert!(e.contains("needs METRALE_GLM_DSA_HB_PREFILL_TC=1"), "{e}");
+    let no_twin = Glm5NextDsaDecodeKernel {
+        head_batched: Some(HeadBatched {
+            prefill_tc_nanor: KernelHandle(0),
+            ..hb
+        }),
+        ..k
+    };
+    let e = err(no_twin
+        .for_prefill(true)
+        .for_prefill_p_hi(true)
+        .and_then(|k| k.for_prefill_tc(true))
+        .and_then(|k| k.for_prefill_tc_nanor(true)));
+    assert!(e.contains("not in this target"), "{e}");
+    let e = err(per_head_only().for_prefill_tc_nanor(true));
     assert!(e.contains("needs METRALE_GLM_DSA_DECODE_HB"), "{e}");
 }

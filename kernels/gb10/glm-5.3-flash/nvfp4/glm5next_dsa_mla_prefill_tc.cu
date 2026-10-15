@@ -21,7 +21,11 @@
 // The widen: a 32-bit word of four finite E4M3 bytes goes E4M3 -> f16 -> f32 -> bf16 (round to
 // nearest), exact because every finite E4M3 value is a bf16; a word holding an E4M3 NaN byte
 // (0x7f / 0xff) takes hb_e4m3x2_to_bf16x2, the phi kernel's own path (which maps NaN to a
-// finite bf16), so every byte widens to the phi kernel's bf16.
+// finite bf16), so every byte widens to the phi kernel's bf16. 2026-10-15: the second entry,
+// glm5next_dsa_mla_prefill_tc_phi_nanor, makes that NaN test once per producer share of a tile
+// (128 bytes) instead of once per word, the same bits with one branch instead of 32 (the
+// per-word branches cost ~20% of the kernel at 8192 rows); gate
+// examples/glm5next_dsa_prefill_tc_nanor_gate.rs.
 // Every (row, head) goes through the same IEEE operations in the same order as in the phi
 // kernel, so its bytes are identical; nothing a CTA computes reads another row's data, so a
 // row's bytes do not depend on the rows launched beside it. The gate is
@@ -84,19 +88,57 @@ __device__ __forceinline__ bool tc_gather(uint4 (&r)[TC_PER], unsigned int tile,
         r[k] = ok ? __ldg((const uint4*)(src + 64u * k)) : make_uint4(0u, 0u, 0u, 0u);
     return ok;
 }
+// 2026-10-15: One 16-byte FP8 chunk widened into bf16 channels ch, ch + 1: the finite converts
+// when FINITE (the caller proved the chunk free of E4M3 NaN bytes), else tc_cv_word per word.
+template <bool FINITE>
+__device__ __forceinline__ void tc_widen_chunk(unsigned char* kb, const uint4& r, unsigned int tok,
+                                               unsigned int ch) {
+    uint4 lo, hi;
+    if (FINITE) {
+        lo.x = tc_cvt2((unsigned short)(r.x & 0xffffu));
+        lo.y = tc_cvt2((unsigned short)(r.x >> 16));
+        lo.z = tc_cvt2((unsigned short)(r.y & 0xffffu));
+        lo.w = tc_cvt2((unsigned short)(r.y >> 16));
+        hi.x = tc_cvt2((unsigned short)(r.z & 0xffffu));
+        hi.y = tc_cvt2((unsigned short)(r.z >> 16));
+        hi.z = tc_cvt2((unsigned short)(r.w & 0xffffu));
+        hi.w = tc_cvt2((unsigned short)(r.w >> 16));
+    } else {
+        tc_cv_word(r.x, lo.x, lo.y);
+        tc_cv_word(r.y, lo.z, lo.w);
+        tc_cv_word(r.z, hi.x, hi.y);
+        tc_cv_word(r.w, hi.z, hi.w);
+    }
+    *(uint4*)(kb + hb_swz(tok, ch)) = lo;
+    *(uint4*)(kb + hb_swz(tok, ch + 1u)) = hi;
+}
+
+// 2026-10-15: A byte's top bit set exactly when that byte of w is an E4M3 NaN (0x7f or 0xff):
+// each byte sum (b & 0x7f) + 1 is at most 0x80, so no carry crosses into the next byte.
+__device__ __forceinline__ unsigned int tc_nan_bits(unsigned int w) {
+    return ((w & 0x7f7f7f7fu) + 0x01010101u) & 0x80808080u;
+}
+
+// 2026-10-15: The producer's share of a tile widened. NANOR (the _nanor entry) tests the whole
+// 128-byte share for an E4M3 NaN byte once and, when there is none, takes the finite converts
+// for every chunk; a share holding one takes the per-word path below for every chunk. Each word
+// widens to the same bits either way: the test only moves the branch from 32 words to one share.
+template <bool NANOR>
 __device__ __forceinline__ void tc_widen(unsigned char* kb, const uint4 (&r)[TC_PER], unsigned int tok,
                                          unsigned int c4) {
-    #pragma unroll
-    for (int k = 0; k < TC_PER; k++) {
-        uint4 lo, hi;
-        tc_cv_word(r[k].x, lo.x, lo.y);
-        tc_cv_word(r[k].y, lo.z, lo.w);
-        tc_cv_word(r[k].z, hi.x, hi.y);
-        tc_cv_word(r[k].w, hi.z, hi.w);
-        const unsigned int ch = 2u * (c4 + 4u * k);
-        *(uint4*)(kb + hb_swz(tok, ch)) = lo;
-        *(uint4*)(kb + hb_swz(tok, ch + 1u)) = hi;
+    if (NANOR) {
+        unsigned int nan = 0u;
+        #pragma unroll
+        for (int k = 0; k < TC_PER; k++)
+            nan |= tc_nan_bits(r[k].x) | tc_nan_bits(r[k].y) | tc_nan_bits(r[k].z) | tc_nan_bits(r[k].w);
+        if (nan == 0u) {
+            #pragma unroll
+            for (int k = 0; k < TC_PER; k++) tc_widen_chunk<true>(kb, r[k], tok, 2u * (c4 + 4u * k));
+            return;
+        }
     }
+    #pragma unroll
+    for (int k = 0; k < TC_PER; k++) tc_widen_chunk<false>(kb, r[k], tok, 2u * (c4 + 4u * k));
 }
 
 // 2026-10-14: Chain `chain` of one tile's QK for token m-tile `mt`, all three head n-tiles, from
@@ -130,6 +172,7 @@ __device__ __forceinline__ void tc_qk_chain(unsigned int tile_base, const unsign
 
 // 2026-10-14: The producer warps: tiles 0, 1 gathered before Q leaves buffer 1, then each tile is
 // widened into its buffer once the consumers release it and the tile two ahead is gathered.
+template <bool NANOR>
 __device__ __forceinline__ void tc_produce(unsigned int p, unsigned int tiles, unsigned int n_end,
                                            const unsigned int* s_off, unsigned char* const (&kb)[2],
                                            int (*s_valid)[HB_TT], const unsigned char* __restrict__ KV) {
@@ -141,13 +184,13 @@ __device__ __forceinline__ void tc_produce(unsigned int p, unsigned int tiles, u
     __syncthreads();   // 2026-10-14: the consumers hold their Q fragments; buffer 1 is free
     for (unsigned int n = 0; n < tiles; n += 2) {
         if (n >= 2) tc_bar_sync(3, TC_THREADS);
-        tc_widen(kb[0], ra, tok, c4);
+        tc_widen<NANOR>(kb[0], ra, tok, c4);
         if (c4 == 0) s_valid[0][tok] = va ? 1 : 0;
         tc_bar_arrive(1, TC_THREADS);
         if (n + 2 < tiles) va = tc_gather(ra, n + 2, tok, c4, n_end, s_off, KV);
         if (n + 1 < tiles) {
             if (n + 1 >= 2) tc_bar_sync(4, TC_THREADS);
-            tc_widen(kb[1], rb, tok, c4);
+            tc_widen<NANOR>(kb[1], rb, tok, c4);
             if (c4 == 0) s_valid[1][tok] = vb ? 1 : 0;
             tc_bar_arrive(2, TC_THREADS);
             if (n + 3 < tiles) vb = tc_gather(rb, n + 3, tok, c4, n_end, s_off, KV);
@@ -156,7 +199,9 @@ __device__ __forceinline__ void tc_produce(unsigned int p, unsigned int tiles, u
     __syncthreads();   // 2026-10-14: the barrier inside hb_finish
 }
 
-extern "C" __global__ void __launch_bounds__(TC_THREADS, 1) glm5next_dsa_mla_prefill_tc_phi(HB_PARAMS) {
+// 2026-10-15: The body of both entries; NANOR picks the widen (tc_widen).
+template <bool NANOR>
+__device__ __forceinline__ void tc_phi(HB_PARAMS) {
     extern __shared__ __align__(128) unsigned char tc_smem[];
     __shared__ __align__(16) __nv_bfloat16 s_ph[HB_HEADS * HB_P_STRIDE];
     __shared__ float s_alpha[HB_HEADS];
@@ -218,7 +263,7 @@ extern "C" __global__ void __launch_bounds__(TC_THREADS, 1) glm5next_dsa_mla_pre
     const unsigned int tiles = (n_end + HB_TT - 1) / HB_TT;
 
     if (tid >= TC_CONS) {
-        tc_produce(tid - TC_CONS, tiles, n_end, s_off, kb, s_valid, KV);
+        tc_produce<NANOR>(tid - TC_CONS, tiles, n_end, s_off, kb, s_valid, KV);
         return;
     }
 
@@ -275,4 +320,14 @@ extern "C" __global__ void __launch_bounds__(TC_THREADS, 1) glm5next_dsa_mla_pre
     }
     hb_finish(acc, m_run, l_run, s_l, sm_h, sm_sub, nh, row, 0u, head_base, tiles == 0, warp, lane, O, ws_o, ws_ml,
               num_q_heads, v_scale, 1u);
+}
+
+extern "C" __global__ void __launch_bounds__(TC_THREADS, 1) glm5next_dsa_mla_prefill_tc_phi(HB_PARAMS) {
+    tc_phi<false>(HB_ARGS);
+}
+
+// 2026-10-15: The same kernel with the share-wide NaN test (tc_widen), lever
+// METRALE_GLM_DSA_TC_NANOR: the same bytes, one branch per producer share instead of 32.
+extern "C" __global__ void __launch_bounds__(TC_THREADS, 1) glm5next_dsa_mla_prefill_tc_phi_nanor(HB_PARAMS) {
+    tc_phi<true>(HB_ARGS);
 }
