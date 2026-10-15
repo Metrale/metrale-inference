@@ -52,6 +52,10 @@ deint = "deint"
 # `float_ue4m3_t`, helpers like `mt_float_to_ue4m3`) split on the digit, so
 # the checker reads the leading `ue` as a typo for "use"/"due". Not a typo.
 ue = "ue"
+# `DOUB` — SQLite's REAL type-affinity rule matches a declared column type
+# containing `REAL`, `FLOA` or `DOUB` (scripts/metprof's read-only SQLite
+# reader applies it verbatim). Not a typo of `DOUBT`.
+DOUB = "DOUB"
 # "subtiles" = sub-tiles: WMMA n-sub-tile partitioning in the strix-hip
 # MoE/dense GEMM kernels (PM4_SUBTILES_PER_WARP). Not a typo of "subtitles".
 subtiles = "subtiles"

@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-15: metprof is a standalone workspace on purpose. It reads profiler
+# exports on the CPU and never links the engine, so it carries its own
+# [workspace] table and Cargo.lock and stays out of the engine workspace (and
+# out of the paths that re-open the performance gates).
+[package]
+name = "metprof"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Profiling harness over nsys sqlite exports: busy union, families, segments, capture diff"
+
+[workspace]
+
+[dependencies]
+indexmap = "2.14"
+regex = "1.13"
+serde = "1.0"
+serde_json = { version = "1.0", features = ["preserve_order"] }
+toml = "1.1"
+
+[lints.rust]
+warnings = "deny"
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
