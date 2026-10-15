@@ -87,7 +87,7 @@ fn launch_hb(
     ws: (DevicePtr, DevicePtr),
     splits: usize,
 ) -> Result<()> {
-    launch_hb_entry(g, k.hb, 0, k.merge, cache, v, out, ws, splits)
+    launch_hb_entry(g, k.hb, 256, 0, k.merge, cache, v, out, ws, splits)
 }
 
 /// 2026-10-09: Fraction of outputs bit-equal to the per-head kernel's.
@@ -250,6 +250,7 @@ fn main() -> Result<()> {
                 launch_hb_entry(
                     g,
                     k.hb_phi,
+                    256,
                     0,
                     k.merge,
                     pool.dev,
@@ -262,6 +263,7 @@ fn main() -> Result<()> {
             launch_hb_entry(
                 g,
                 k.hb_phi,
+                256,
                 0,
                 k.merge,
                 pool.dev,
@@ -289,6 +291,7 @@ fn main() -> Result<()> {
                 launch_hb_entry(
                     g,
                     k.hb_phi,
+                    256,
                     0,
                     k.merge,
                     pool.dev,

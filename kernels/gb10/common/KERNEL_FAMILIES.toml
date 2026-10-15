@@ -2262,7 +2262,9 @@ files = ["kernels/gb10/glm-5.3-flash/nvfp4/glm5next_dsa_mla_decode.cu"]
 # METRALE_GLM_DSA_HB_PREFILL_P_HI; accuracy-gated). 2026-10-14: `glm5next_dsa_mla_prefill_pipe_phi`
 # is `_phi` rescheduled (double-buffered tile, QK on all eight warps), byte-identical per row
 # (METRALE_GLM_DSA_HB_PREFILL_PIPE); both files take their per-tile steps from
-# glm5next_dsa_mla_hb_tile.cuh.
+# glm5next_dsa_mla_hb_tile.cuh. 2026-10-14: `glm5next_dsa_mla_prefill_tc_phi` is `_phi` at one
+# split on one warp-specialized CTA per (row, head group) (producer warps gather + widen, consumer
+# warps QK + softmax + PV), byte-identical per row (METRALE_GLM_DSA_HB_PREFILL_TC).
 [[family]]
 id = "glm_mla_decode_hb"
 description = "GLM-5 sparse NoPE MLA decode, head-batched on tensor cores, split + merge (latent 512)"
@@ -2273,6 +2275,7 @@ kernels = [
   "glm5next_dsa_mla_decode_hb::glm5next_dsa_mla_decode_hb_fp8_phi",
   "glm5next_dsa_mla_decode_hb::glm5next_dsa_mla_merge",
   "glm5next_dsa_mla_prefill_pipe::glm5next_dsa_mla_prefill_pipe_phi",
+  "glm5next_dsa_mla_prefill_tc::glm5next_dsa_mla_prefill_tc_phi",
 ]
 rows = [1, 4096]
 pipeline.mla_attention = { in = ["bf16", "i32"], act = "bf16", weight = "bf16->bf16", cache = "fp8", scores = "f32", softmax = "f32", accumulate = "f32", out = ["bf16"] }
@@ -2292,6 +2295,7 @@ files = [
   "kernels/gb10/glm-5.3-flash/nvfp4/glm5next_dsa_mla_hb_tile.cuh",
   "kernels/gb10/glm-5.3-flash/nvfp4/glm5next_dsa_mla_decode_hb.cu",
   "kernels/gb10/glm-5.3-flash/nvfp4/glm5next_dsa_mla_prefill_pipe.cu",
+  "kernels/gb10/glm-5.3-flash/nvfp4/glm5next_dsa_mla_prefill_tc.cu",
 ]
 
 # 2026-10-08: RMSNorm (plain weight) of the kv_a row, FP8-quantised into its paged slot, one token

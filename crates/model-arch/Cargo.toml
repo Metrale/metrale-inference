@@ -609,6 +609,10 @@ name = "glm5next_dsa_prefill_pipe_gate"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "glm5next_dsa_prefill_tc_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "glm5next_dsa_proj_tier_bench"
 required-features = ["cuda", "gpu-examples"]
 
