@@ -311,6 +311,10 @@ name = "glm5next_dsa_scores_mma_bench"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "glm5next_dsa_scores_pipe_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "glm5next_mhc_slice_bench"
 required-features = ["cuda", "gpu-examples"]
 

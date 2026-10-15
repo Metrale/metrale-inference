@@ -344,6 +344,8 @@ pub struct DsaSelectScratch {
     /// 2026-09-25: `[q_rows, out_width]` i32 token ids, `-1` where nothing was selected. The
     /// result of the pass; `dsa_expand_selection` writes every slot of each row.
     tokens: DevicePtr,
+    /// 2026-10-14: The streamed scores' prepared pools (`pipe`); empty unless that lever is on.
+    pipe: pipe::DsaPipeRegions,
     capacity: [usize; 6],
     tokens_bytes: usize,
 }
@@ -390,6 +392,7 @@ impl DsaSelectScratch {
             valid_cand: gpu.alloc(capacity[4])?,
             selected: gpu.alloc(capacity[5])?,
             tokens: gpu.alloc(tokens_bytes)?,
+            pipe: pipe::DsaPipeRegions::alloc(gpu, geom, scores_pipe() && scores_mma())?,
             capacity,
             tokens_bytes,
         })
@@ -478,12 +481,14 @@ impl DsaSelectScratch {
         ] {
             gpu.free(p)?;
         }
-        Ok(())
+        self.pipe.free(gpu)
     }
 }
 
 mod launch;
 pub use launch::{select_tokens, select_tokens_in_passes};
+mod pipe;
+pub use pipe::{DsaPipeRegions, SCORES_PIPE_SMEM, scores_pipe, scores_pipe_for};
 
 #[cfg(test)]
 mod tests;
