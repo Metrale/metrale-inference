@@ -14,6 +14,10 @@ publish = false
 description = "Profiling harness over nsys sqlite exports: busy union, families, segments, capture diff, kernel tree"
 
 [workspace]
+# 2026-10-15: library crates under crates/ (kb, envelope) are members, and the
+# default members include them so `cargo test` at this root runs their tests too.
+members = ["crates/*"]
+default-members = [".", "crates/*"]
 
 [dependencies]
 indexmap = "2.14"
