@@ -169,9 +169,21 @@ pub(super) fn combine(
     indexed: bool,
     stream: u64,
 ) -> Result<()> {
+    let on = crate::glm5next_layer::moe_combine_vec8();
+    if on {
+        // 2026-10-15: The readback at the first combine of any size, so a run that never
+        // reaches the row floor still shows the lever armed.
+        static ARMED: std::sync::Once = std::sync::Once::new();
+        ARMED.call_once(|| {
+            tracing::info!(
+                "METRALE_GLM_MOE_COMBINE_VEC8=1: vec8 combine at >= {COMBINE_VEC8_MIN_ROWS} rows \
+                 (fewer rows keep the scalar combine; same bytes)"
+            )
+        });
+    }
     let levers = (
         crate::glm5next_layer::moe_combine_split(),
-        vec8_for(crate::glm5next_layer::moe_combine_vec8(), rows),
+        vec8_for(on, rows),
     );
     combine_with(gpu, k, cfg, ws, out, rows, indexed, levers, stream)
 }
