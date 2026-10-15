@@ -2117,3 +2117,27 @@ effort_hours = 2.0
 transferability = "any BF16 weighted gather-sum whose rows are a multiple of eight elements and 16-byte aligned"
 links = { pr = "", commit = "", evidence = "glm5next_c1_fuse_microtest" }
 notes = "Only combines of COMBINE_VEC8_MIN_ROWS (1024) rows or more take it; decode and short prefills keep the scalar kernel. Refused where it cannot run (kernel absent, hidden not a multiple of 8, unaligned buffer); the serve log line 'GLM MoE: combine_vec8 kernels launched' proves a launch."
+
+[[lever]]
+id = "gb10x3-glm53-dsa-tc-nanor"
+date = "2026-10-15"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "Z recipe + METRALE_GLM_DSA_HB_PREFILL_TC=1 + METRALE_GLM_DSA_TC_NANOR=1 (prefill sub-chunks only)"
+symptom = "the tc prefill attend (glm5next_dsa_mla_prefill_tc_phi) ran ~20.3 ms per 8208-row sub-chunk while the prototype it was ported from ran ~16.3 ms in the same harness run, byte-identical; 55 launches = 887 ms of rank 0's cold 32k profile, none of it under comm"
+diagnosis_tool = "microbench"
+root_cause_class = "latency-bound"
+lever_type = "kernel-rewrite"
+lkb_effect = "glm5next_dsa_mla_prefill_tc_phi_nanor (same file, same launch shape): each producer ORs a carry-free per-byte NaN test ((w & 0x7f7f7f7f) + 0x01010101) & 0x80808080 over its whole 128-byte share of a tile and, with no NaN byte, widens every chunk on the unguarded finite converts; a share holding one takes the old per-word path. The old entry keeps its per-word test (vcmpeq4 + branch per 32-bit word, 32 branches per producer per tile)"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "held"
+verdict_reason = "2026-10-15 measured (glm5next_dsa_prefill_tc_nanor_gate, 22 heads, one split): the twin gate vs phi passes (0 of 8208 rows differ, sub-chunks, neighbours, stride 640, edge rows, NaN pool, 0.82-1.15 ulp from f64); 0 rows differ from the tc entry at 8192/8208 rows of a 32k sequence and 1040/1056 rows of a 32k and of a 1k sequence over three pools (every one of the 256 E4M3 bytes at every token position, all present in the selected tokens; the 254 finite bytes; NaN-dense tokens); control: the tc entry with NaN read as the same-sign max-finite code differs in every row. Medians of 9 interleaved, ms phi / tc / nanor: 8192 rows 25.26 / 20.48 / 16.76 (x0.818), 8208 rows 24.57 / 19.73 / 15.79 (x0.800); c1k 1040 rows 0.898 / 0.849 / 0.711, 1056 rows 0.916 / 0.841 / 0.710. Same-run scratch harness: proto 16.28, repo tc 20.32, this design 16.46 ms at 8208 rows. Held until the cold serve A/B; projected -160..-177 ms per cold 32k prefill (18-20% of 887 ms, serial)"
+failure_mode = "the port of the prototype lost 4.0-4.5 ms per launch to a NaN guard added during the port; nothing timed the repo kernel against the prototype until a same-run three-way harness did"
+caught_by = "same-run three-way harness (phi, prototype, repo tc) at the serve rows"
+time_lost_hours = 1.0
+would_catch_earlier = "time the repo kernel against the prototype it ports in the same harness run before wiring it"
+effort_hours = 3.0
+transferability = "any FP8 widen that guards a rare special value per word: test a whole per-thread share once and branch once"
+links = { pr = "", commit = "", evidence = "glm5next_dsa_prefill_tc_nanor_gate" }
+notes = "ptxas: both entries 164 registers, 0 spills; the old entry keeps its 8-byte stack frame, the new one has none. The old entry's SASS changed in scheduling only (28 of 4096 lines: an OR as an add of zero-low-bit offsets, reordered zeroing and shared loads), output bytes unchanged (its own gate passes on the same build: 20.22 ms vs phi 25.11). A pool with a NaN byte every 4096 bytes makes this design slower than the tc entry at c1k (0.883 vs 0.835 ms): every share holding one pays the test and the fallback; a quantized latent cache holds no NaN bytes unless its input did. A per-16-byte guard was slower (17.55 ms), a warp vote no faster (16.40)."
