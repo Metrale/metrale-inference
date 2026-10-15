@@ -17,11 +17,15 @@ pub enum Kind {
     Int,
     Float,
     Str,
+    /// A path to one file (recorded in the KB as its digest and base name).
+    File,
+    /// A path to a directory (recorded as its base name).
+    Dir,
     Choice(&'static [&'static str]),
     /// Repeatable, each occurrence takes one value.
     Append,
-    /// One occurrence taking exactly two values.
-    Pair,
+    /// One occurrence taking exactly two file paths.
+    FilePair,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -38,6 +42,8 @@ pub struct Spec {
     /// The command words, e.g. `segment decode`.
     pub name: &'static str,
     pub about: &'static str,
+    /// Every positional argument is a file path (the KB records it as a
+    /// digest, never as a path).
     pub positionals: &'static [(&'static str, &'static str)],
     pub opts: &'static [Opt],
 }
@@ -46,6 +52,17 @@ pub struct Spec {
 pub struct Args {
     pos: Vec<String>,
     vals: HashMap<&'static str, Vec<String>>,
+    items: Vec<Item>,
+}
+
+/// One argument as given, in order (`--name=value` as two items; `--json`,
+/// `--help` and `--` are not arguments of the run).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Item {
+    Opt(&'static str),
+    Val(Kind, String),
+    /// A positional argument, by its name.
+    Pos(&'static str, String),
 }
 
 pub enum Parsed {
@@ -73,7 +90,7 @@ fn check(opt: &Opt, v: &str) -> Result<()> {
             }
             true
         }
-        Kind::Str | Kind::Append | Kind::Pair => true,
+        Kind::Str | Kind::File | Kind::Dir | Kind::Append | Kind::FilePair => true,
     };
     if !ok {
         let what = if opt.kind == Kind::Int {
@@ -120,6 +137,10 @@ pub fn help(spec: &Spec) -> String {
         "-h, --help", "show this help and exit"
     ));
     out.push(format!("  {:<22}{}", "--json", "print the result as JSON"));
+    out.push(format!(
+        "  {:<22}{}",
+        "--kb KB.TOML|off", "record this run in the KB kb.toml names, or not (required)"
+    ));
     for o in spec.opts {
         let tail = match o.kind {
             Kind::Append => " (repeatable)",
@@ -137,6 +158,7 @@ pub fn parse(spec: &Spec, tokens: &[String], json: &mut bool) -> Result<Parsed> 
     let mut a = Args {
         pos: Vec::new(),
         vals: HashMap::new(),
+        items: Vec::new(),
     };
     let mut extra: Vec<String> = Vec::new();
     let mut i = 0;
@@ -145,7 +167,8 @@ pub fn parse(spec: &Spec, tokens: &[String], json: &mut bool) -> Result<Parsed> 
         let t = tokens[i].as_str();
         i += 1;
         if only_pos || !t.starts_with('-') || t == "-" || is_number(t) {
-            if a.pos.len() < spec.positionals.len() {
+            if let Some((name, _)) = spec.positionals.get(a.pos.len()) {
+                a.items.push(Item::Pos(name, t.to_string()));
                 a.pos.push(t.to_string());
             } else {
                 extra.push(t.to_string());
@@ -176,7 +199,7 @@ pub fn parse(spec: &Spec, tokens: &[String], json: &mut bool) -> Result<Parsed> 
             extra.push(t.to_string());
             continue;
         };
-        let want = if opt.kind == Kind::Pair { 2 } else { 1 };
+        let want = if opt.kind == Kind::FilePair { 2 } else { 1 };
         let mut values = Vec::new();
         if let Some(v) = inline {
             values.push(v);
@@ -200,6 +223,9 @@ pub fn parse(spec: &Spec, tokens: &[String], json: &mut bool) -> Result<Parsed> 
         for v in &values {
             check(opt, v)?;
         }
+        a.items.push(Item::Opt(opt.name));
+        a.items
+            .extend(values.iter().map(|v| Item::Val(opt.kind, v.clone())));
         if opt.kind == Kind::Append {
             a.vals.entry(opt.name).or_default().extend(values);
         } else {
@@ -231,6 +257,11 @@ pub fn parse(spec: &Spec, tokens: &[String], json: &mut bool) -> Result<Parsed> 
 }
 
 impl Args {
+    /// Every argument as given, in order.
+    pub fn items(&self) -> &[Item] {
+        &self.items
+    }
+
     pub fn pos(&self, i: usize) -> Result<&str> {
         match self.pos.get(i) {
             Some(p) => Ok(p),

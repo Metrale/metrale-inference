@@ -11,9 +11,63 @@ gate), `segment requests|decode|spec` (requests and pinned decode steps),
 `diff`, `envdiff`, `verdict` (two captures, two environments, a recorded
 verdict), `tree` / `tree-diff` (the kernel tree below), and `ttft log` /
 `ttft compare` / `ttft client` (time to first token, further below).
+verdict), `tree` / `tree-diff` (the kernel tree below), and
+`kb selfcheck|replay|export|seal|verify` (the knowledge base every run is
+recorded in, below).
 
 Every threshold is a flag or a config key. A missing one is an error, never a
 default.
+
+## Kernel knowledge base (`--kb`)
+
+Every command takes the global `--kb KB.TOML|off` (before or after the
+command words). Without it metprof refuses to run (exit 2). With a `kb.toml`,
+every analysis command that succeeds records exactly one run in the kernel
+knowledge base (`kb selfcheck` records only its sentinel); `--kb off` records nothing and says so on stderr. `--help` needs no
+`--kb`.
+
+```toml
+# kb.toml (every key is required; paths are absolute)
+schema = 1
+spool_dir = "/path/to/kkb/spool"      # one file per run, written first
+durable_dir = "/path/to/kkb/durable"  # the LatticeDB store
+export_dir = "/path/to/kkb/export"    # kkb.jsonl and kkb.jsonl.kkb
+seal_key_file = "/path/to/kkb/export.key"  # or: seal = "off"
+embedding = "/path/to/kkb/embedding.toml"  # [embedder] kind = "hashed"
+[identity]
+box_alias = "box-a"
+campaign = "campaign-a"
+hardware_class = "class-a"
+```
+
+The export key is 32 bytes as 64 hex digits in a file of mode 0600 (a key
+readable by group or others is refused), for example
+`(umask 077; od -An -tx1 -N32 /dev/urandom | tr -d ' \n' > export.key)`. It
+seals only the local export; metprof embeds with the hashed space only.
+
+A run is spooled, then under a lease materialised into the store, exported to
+`kkb.jsonl` and sealed to `kkb.jsonl.kkb` (both replaced atomically). The
+record keeps a file argument as its SHA-256 and base name and a directory as
+its base name, never a path, and is stamped with the time, the metprof
+version and commit, the family table's and the capture's digests and the
+`[identity]` above (`unknown` where a fact cannot be known).
+
+Exit status: `0` recorded and materialised; `2` a usage or configuration
+error (bad `kb.toml`, key or embedder; nothing is written); `3` the analysis
+ran (it is on stdout, and any `--out` file is written) but the run was only
+spooled, or not recorded at all; the reason is on stderr.
+
+```
+metprof --kb kb.toml kb selfcheck   # record a sentinel, read it back everywhere
+metprof --kb kb.toml kb replay      # materialise every spooled run (idempotent)
+metprof --kb kb.toml kb export      # re-export (and seal) the store
+metprof --kb kb.toml kb seal        # seal the current export again
+metprof --kb kb.toml kb verify      # the sealed export opens to kkb.jsonl
+```
+
+A `kb` subcommand exits 3 when the KB is not in the state asked for (another
+writer holds the lease, or the sealed export does not match); `kb seal` and
+`kb verify` refuse a `kb.toml` with `seal = "off"`.
 
 ## Kernel tree (`metprof tree`)
 

@@ -2,8 +2,7 @@
 
 //! 2026-10-15: the local export (DESIGN §3.1 step 4): the collection as
 //! deterministic JSONL, vectors omitted, replacing `<export_dir>/kkb.jsonl`
-//! atomically. Sealing it to `kkb.jsonl.kkb` is `metprof kb seal` (the
-//! envelope crate), not this module.
+//! atomically. Sealing it to `kkb.jsonl.kkb` is `seal`.
 
 use std::path::{Path, PathBuf};
 

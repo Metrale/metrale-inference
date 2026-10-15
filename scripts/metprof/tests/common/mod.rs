@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-15: shared test helpers: an in-memory capture behind the
-//! `TraceSource` port, an in-memory `Files` port, and a driver for the real
-//! `cli::run`. Times are given in microseconds and stored as ns, as the
-//! profiler stores them.
+//! `TraceSource` port, an in-memory `Files` port, a fake KB behind the
+//! `KbOpen` port with a fixed clock, and a driver for the real `cli::run`.
+//! Times are given in microseconds and stored as ns, as the profiler stores
+//! them.
 
 #![allow(dead_code)]
+
+pub mod kb;
+pub mod tree;
+pub mod ttft;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
@@ -17,8 +22,9 @@ use metprof::core::model::{ApiCall, Kernel, Launch};
 use metprof::core::ttft::client::Endpoint;
 use metprof::core::ttft::sse::Read;
 use metprof::ports::{ChatTransport, Files, SaltSource, Trace, TraceSource};
+use metprof_kb::port::{Arg, RunRecord};
 
-pub mod ttft;
+pub use kb::{EMBEDDING_TOML, HASHED, KB_TOML, Sink, kb_toml};
 
 pub const US: f64 = 1_000.0;
 
@@ -192,8 +198,7 @@ impl Trace for Capture {
     }
 }
 
-/// Captures and files by path, in memory.
-#[derive(Default)]
+/// Captures and files by path, in memory, and the runs the fake KB holds.
 pub struct Mem {
     captures: HashMap<String, Capture>,
     files: HashMap<String, Vec<u8>>,
@@ -201,11 +206,40 @@ pub struct Mem {
     /// Every exchange the CLI made: (endpoint, request bytes, timeout s).
     pub sent: RefCell<Vec<(Endpoint, Vec<u8>, f64)>>,
     salts: Cell<u64>,
+    sink: Sink,
+    records: RefCell<Vec<RunRecord>>,
+}
+
+impl Default for Mem {
+    fn default() -> Self {
+        Mem {
+            captures: HashMap::new(),
+            files: HashMap::from([
+                (KB_TOML.to_string(), kb_toml("seal = \"off\"").into_bytes()),
+                (EMBEDDING_TOML.to_string(), HASHED.as_bytes().to_vec()),
+            ]),
+            sink: Sink::Materialises,
+            records: RefCell::new(Vec::new()),
+            replies: RefCell::new(VecDeque::new()),
+            sent: RefCell::new(Vec::new()),
+            salts: Cell::new(0),
+        }
+    }
 }
 
 impl Mem {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn sink(mut self, sink: Sink) -> Self {
+        self.sink = sink;
+        self
+    }
+
+    /// The runs recorded so far, in order.
+    pub fn records(&self) -> Vec<RunRecord> {
+        self.records.borrow().clone()
     }
 
     pub fn capture(mut self, path: &str, c: Capture) -> Self {
@@ -238,18 +272,79 @@ impl Mem {
         self
     }
 
-    /// Run the real CLI over these ports.
+    /// Run the real CLI over these ports, recording through `KB_TOML`
+    /// unless `argv` names a `--kb`. A run that succeeds records exactly one
+    /// run, a refused one none, and no recorded word or result string is a
+    /// path this `Mem` holds.
     pub fn run(&self, argv: &[&str]) -> Outcome {
+        self.run_with(argv, self)
+    }
+
+    /// `run`, with the files read through `files`.
+    pub fn run_with(&self, argv: &[&str], files: &dyn Files) -> Outcome {
+        let names_kb = argv.iter().any(|a| *a == "--kb" || a.starts_with("--kb="));
+        let help = argv.iter().any(|a| *a == "--help" || *a == "-h");
+        let mut full = if names_kb {
+            vec![]
+        } else {
+            vec!["--kb", KB_TOML]
+        };
+        full.extend_from_slice(argv);
+        let before = self.records.borrow().len();
+        let out = self.run_raw(&full, files);
+        let new = self.records.borrow()[before..].to_vec();
+        // A spooled run is recorded even when it is not materialised (exit 3).
+        let spooled = out.code == 0 || (out.code == 3 && self.sink == Sink::SpoolsOnly);
+        let recorded = !names_kb && !help && spooled;
+        assert_eq!(
+            new.len(),
+            usize::from(recorded),
+            "metprof {argv:?} (exit {}) recorded {} runs",
+            out.code,
+            new.len()
+        );
+        for r in &new {
+            self.assert_no_paths(r);
+        }
+        out
+    }
+
+    /// Run the real CLI with exactly `argv`.
+    pub fn run_raw(&self, argv: &[&str], files: &dyn Files) -> Outcome {
         let argv: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
         run(
             &argv,
             &Io {
                 traces: self,
-                files: self,
+                files,
                 chat: self,
                 salt: self,
+                kb: self,
+                clock: self,
             },
         )
+    }
+
+    fn assert_no_paths(&self, r: &RunRecord) {
+        let held = |s: &str| self.files.contains_key(s) || self.captures.contains_key(s);
+        for a in &r.args {
+            if let Arg::Word(w) = a {
+                assert!(!held(w), "the record keeps the path {w:?}: {:?}", r.args);
+            }
+        }
+        fn strings(v: &serde_json::Value, out: &mut Vec<String>) {
+            match v {
+                serde_json::Value::String(s) => out.push(s.clone()),
+                serde_json::Value::Array(xs) => xs.iter().for_each(|x| strings(x, out)),
+                serde_json::Value::Object(m) => m.values().for_each(|x| strings(x, out)),
+                _ => {}
+            }
+        }
+        let mut all = Vec::new();
+        r.result.values().for_each(|v| strings(v, &mut all));
+        for s in all {
+            assert!(!held(&s), "the record's result keeps the path {s:?}");
+        }
     }
 
     /// Run with `--json`, require success, and parse stdout.
@@ -288,6 +383,20 @@ impl Files for Mem {
         match self.files.get(path) {
             Some(b) => Ok(b.clone()),
             None => Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "No such file or directory",
+            )),
+        }
+    }
+
+    /// A file's digest; a capture held only as rows digests its rows.
+    fn sha256(&self, path: &str) -> std::io::Result<String> {
+        match (self.files.get(path), self.captures.get(path)) {
+            (Some(b), _) => Ok(metprof::core::provenance::sha256_hex(b)),
+            (None, Some(c)) => Ok(metprof::core::provenance::sha256_hex(
+                format!("{c:?}").as_bytes(),
+            )),
+            (None, None) => Err(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 "No such file or directory",
             )),

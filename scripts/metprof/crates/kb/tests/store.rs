@@ -17,7 +17,7 @@ use metprof_kb::lattice::Store;
 use metprof_kb::lease::SystemLeaseEnv;
 use metprof_kb::port::RunRecord;
 use metprof_kb::schema::{Kind, MAX_SAMPLE_DEPTH, NodeRef, SUPERSEDES_KEPT};
-use metprof_kb::sink::{KbPaths, LatticeSink, Materialized, block_on, open_durable};
+use metprof_kb::sink::{KbPaths, LatticeSink, Materialized, Sealing, block_on, open_durable};
 use metprof_kb::{Result, canon, export};
 use serde_json::{Value, json};
 
@@ -157,7 +157,7 @@ fn export_is_byte_identical_on_repeat_and_across_reopen() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let h = Hashed::new();
     let env = SystemLeaseEnv;
-    let sink = LatticeSink::new(paths(tmp.path()), &h, &env);
+    let sink = LatticeSink::new(paths(tmp.path()), &h, &env, &Sealing::Off);
     let Materialized::Done { export, .. } = sink.materialize(&[families()]).expect("materialises")
     else {
         panic!("the lease is free")
@@ -186,13 +186,16 @@ fn replay_materialises_every_spool_file_and_is_idempotent() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let h = Hashed::new();
     let env = SystemLeaseEnv;
-    let sink = LatticeSink::new(paths(tmp.path()), &h, &env);
+    let sink = LatticeSink::new(paths(tmp.path()), &h, &env, &Sealing::Off);
     for n in 0..3 {
         sink.spool().write(&other_run(n)).expect("spools");
     }
     assert!(!tmp.path().join("db").exists(), "spooled only");
 
-    let Materialized::Done { applied, export } = sink.replay().expect("replays") else {
+    let Materialized::Done {
+        applied, export, ..
+    } = sink.replay().expect("replays")
+    else {
         panic!("the lease is free")
     };
     assert!(applied.inserted > 3);
@@ -214,7 +217,7 @@ fn a_store_refuses_an_embedder_or_points_of_another_space() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let h = Hashed::new();
     let env = SystemLeaseEnv;
-    let sink = LatticeSink::new(paths(tmp.path()), &h, &env);
+    let sink = LatticeSink::new(paths(tmp.path()), &h, &env, &Sealing::Off);
     sink.materialize(&[families()]).expect("materialises");
 
     let other = dense();

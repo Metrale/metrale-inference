@@ -19,7 +19,7 @@ use metprof_kb::lease::{
     Acquired, HOLDER_FILE, Holder, LEASE_DIR, LeaseEnv, STALE_AFTER_S, WAIT_S, acquire,
 };
 use metprof_kb::port::{KbSink, RunRecord};
-use metprof_kb::sink::{KbPaths, LatticeSink};
+use metprof_kb::sink::{KbPaths, LatticeSink, Sealing};
 use metprof_kb::spool::{Spool, decode, file_name};
 
 const T0_MS: u64 = 1_800_000_000_000;
@@ -152,7 +152,7 @@ fn a_second_writer_waits_the_full_window_then_is_busy() {
         durable_dir: durable.clone(),
         export_dir: tmp.path().join("export"),
     };
-    let sink = LatticeSink::new(paths, &embedder, &second);
+    let sink = LatticeSink::new(paths, &embedder, &second, &Sealing::Off);
     let rec = sink.record(&families()).expect("spooled");
     assert!(!rec.materialized);
     assert!(

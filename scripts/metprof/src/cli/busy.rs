@@ -24,7 +24,7 @@ pub const DEVICE: Opt = Opt {
 };
 pub const FAMILIES: Opt = Opt {
     name: "families",
-    kind: Kind::Str,
+    kind: Kind::File,
     required: true,
     metavar: "TOML",
     help: "family table (config/families.toml)",

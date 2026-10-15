@@ -16,6 +16,7 @@ use crate::lattice::{Applied, Store};
 use crate::lease::{self, Acquired, Holder, LeaseEnv};
 use crate::port::{KbSink, Recorded, RunRecord};
 use crate::schema::MAX_SAMPLE_DEPTH;
+use crate::seal::ExportSeal;
 use crate::spool::Spool;
 use crate::{Error, Result, export};
 
@@ -24,12 +25,13 @@ pub const PAGE_SIZE: usize = 4096;
 pub const WAL_DIR: &str = "wal";
 pub const DATA_DIR: &str = "data";
 
-/// Where the sink writes (from `kb.toml`; every path explicit).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct KbPaths {
-    pub spool_dir: PathBuf,
-    pub durable_dir: PathBuf,
-    pub export_dir: PathBuf,
+pub use crate::kb_toml::KbPaths;
+
+/// Whether each export is also sealed (explicit: `kb.toml` says which).
+#[derive(Debug)]
+pub enum Sealing {
+    Off,
+    Sealed(ExportSeal),
 }
 
 /// The outcome of one materialisation.
@@ -38,6 +40,8 @@ pub enum Materialized {
     Done {
         applied: Applied,
         export: PathBuf,
+        /// The sealed export, unless sealing is off.
+        sealed: Option<PathBuf>,
     },
     /// The durable directory stayed leased by another writer.
     Busy(Option<Holder>),
@@ -74,9 +78,11 @@ pub struct LatticeSink<'a> {
     paths: KbPaths,
     embedder: &'a dyn Embedder,
     env: &'a dyn LeaseEnv,
+    sealing: &'a Sealing,
 }
 
-fn busy_reason(h: Option<Holder>) -> String {
+/// Why a leased step did not run.
+pub fn busy_reason(h: Option<Holder>) -> String {
     let who = match h {
         Some(h) => format!("pid {} since {}", h.pid, h.since),
         None => "a writer that has not yet stated itself".to_string(),
@@ -85,12 +91,38 @@ fn busy_reason(h: Option<Holder>) -> String {
 }
 
 impl<'a> LatticeSink<'a> {
-    pub fn new(paths: KbPaths, embedder: &'a dyn Embedder, env: &'a dyn LeaseEnv) -> Self {
+    pub fn new(
+        paths: KbPaths,
+        embedder: &'a dyn Embedder,
+        env: &'a dyn LeaseEnv,
+        sealing: &'a Sealing,
+    ) -> Self {
         LatticeSink {
             paths,
             embedder,
             env,
+            sealing,
         }
+    }
+
+    pub fn sealing(&self) -> &Sealing {
+        self.sealing
+    }
+
+    /// Run `f` under the lease; `Err(holder)` when another writer kept it.
+    pub fn leased<T>(
+        &self,
+        f: impl FnOnce() -> Result<T>,
+    ) -> Result<std::result::Result<T, Option<Holder>>> {
+        let lease = match lease::acquire(&self.paths.durable_dir, self.env)? {
+            Acquired::Held(l) => l,
+            Acquired::Busy(h) => return Ok(Err(h)),
+        };
+        let out = f();
+        let released = lease.release();
+        let out = out?;
+        released?;
+        Ok(Ok(out))
     }
 
     pub fn paths(&self) -> &KbPaths {
@@ -104,15 +136,9 @@ impl<'a> LatticeSink<'a> {
     /// Under the lease: derive and apply `runs` in order, then export (with
     /// no runs, only export).
     pub fn materialize(&self, runs: &[RunRecord]) -> Result<Materialized> {
-        let lease = match lease::acquire(&self.paths.durable_dir, self.env)? {
-            Acquired::Held(l) => l,
-            Acquired::Busy(h) => return Ok(Materialized::Busy(h)),
-        };
-        let out = block_on(self.load(runs)).and_then(|r| r);
-        let released = lease.release();
-        let out = out?;
-        released?;
-        Ok(out)
+        Ok(self
+            .leased(|| block_on(self.load(runs)).and_then(|r| r))?
+            .unwrap_or_else(Materialized::Busy))
     }
 
     async fn load(&self, runs: &[RunRecord]) -> Result<Materialized> {
@@ -123,7 +149,15 @@ impl<'a> LatticeSink<'a> {
             applied.add(store.apply(&graph, self.embedder).await?);
         }
         let export = export::write(&store, &self.paths.export_dir)?;
-        Ok(Materialized::Done { applied, export })
+        let sealed = match self.sealing {
+            Sealing::Off => None,
+            Sealing::Sealed(s) => Some(s.seal(&self.paths.export_dir)?),
+        };
+        Ok(Materialized::Done {
+            applied,
+            export,
+            sealed,
+        })
     }
 
     /// Materialise every spool file, in name order (idempotent).

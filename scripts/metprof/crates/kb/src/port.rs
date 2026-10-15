@@ -8,6 +8,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use crate::config::EmbeddingConfig;
+use crate::kb_toml::KbConfig;
 use crate::{Result, bail, canon};
 
 /// The schema of a spooled run record.
@@ -21,7 +23,14 @@ pub const UNKNOWN: &str = "unknown";
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum Arg {
     Word(String),
-    File { sha256: String, basename: String },
+    File {
+        sha256: String,
+        basename: String,
+    },
+    /// A directory argument: only its base name (its content is not one file).
+    Dir {
+        basename: String,
+    },
 }
 
 /// A file the command wrote: its base name, digest, and for a JSON file
@@ -101,5 +110,35 @@ pub trait KbSink {
 
 /// The injected clock: the current time, RFC 3339 UTC.
 pub trait Clock {
-    fn now_rfc3339(&self) -> String;
+    fn now_rfc3339(&self) -> Result<String>;
+}
+
+/// What a `metprof kb` subcommand reports. `incomplete` says why the KB is
+/// not in the state asked for (the run was spooled but not materialised, or
+/// another writer held the lease); the CLI exits 3 with it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct KbReport {
+    pub result: Map<String, Value>,
+    pub incomplete: Option<String>,
+}
+
+/// One configured KB: the sink and the maintenance the CLI offers.
+pub trait Kb: KbSink {
+    /// The whole write path with `sentinel`, then read it back from the
+    /// spool, the durable store, the export and the sealed export.
+    fn selfcheck(&self, sentinel: &RunRecord) -> Result<KbReport>;
+    /// Materialise every spool file (idempotent), export and seal.
+    fn replay(&self) -> Result<KbReport>;
+    /// Export (and seal) the durable store as it is.
+    fn export(&self) -> Result<KbReport>;
+    /// Seal the current export again.
+    fn seal(&self) -> Result<KbReport>;
+    /// Open the sealed export and require it to equal the export.
+    fn verify(&self) -> Result<KbReport>;
+}
+
+/// The port that opens the KB a `kb.toml` (and its `embedding.toml`) names.
+/// The configuration comes from argv, so the CLI holds this, not a sink.
+pub trait KbOpen {
+    fn open<'a>(&'a self, kb: &KbConfig, embedding: &EmbeddingConfig) -> Result<Box<dyn Kb + 'a>>;
 }

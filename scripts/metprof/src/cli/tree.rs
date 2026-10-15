@@ -52,7 +52,7 @@ pub const COMMANDS: &[&Command] = &[
             about: "per-kernel time tree of one segment (circuit plan or family table) as JSON",
             positionals: &[],
             opts: &[
-                opt("capture", Kind::Str, true, "SQLITE", "nsys sqlite export"),
+                opt("capture", Kind::File, true, "SQLITE", "nsys sqlite export"),
                 DEVICE,
                 opt(
                     "segment",
@@ -77,14 +77,14 @@ pub const COMMANDS: &[&Command] = &[
                 ),
                 opt(
                     "config",
-                    Kind::Str,
+                    Kind::File,
                     true,
                     "TOML",
                     "family table with its [tree] section",
                 ),
                 opt(
                     "provenance",
-                    Kind::Str,
+                    Kind::File,
                     true,
                     "TOML",
                     "what the capture was measured on",
@@ -120,19 +120,19 @@ pub const COMMANDS: &[&Command] = &[
                 ),
                 opt(
                     "kernels-dir",
-                    Kind::Str,
+                    Kind::Dir,
                     false,
                     "DIR",
                     "the engine's kernels/ directory",
                 ),
                 opt(
                     "baseline",
-                    Kind::Str,
+                    Kind::File,
                     false,
                     "JSON",
                     "an older tree: add baseline_time and delta per node",
                 ),
-                opt("out", Kind::Str, true, "JSON", "where the tree is written"),
+                opt("out", Kind::File, true, "JSON", "where the tree is written"),
             ],
         },
         run: Run::Files(tree),
@@ -144,7 +144,7 @@ pub const COMMANDS: &[&Command] = &[
             positionals: &[("a", "older tree JSON"), ("b", "newer tree JSON")],
             opts: &[opt(
                 "out",
-                Kind::Str,
+                Kind::File,
                 false,
                 "JSON",
                 "also write the full diff here",
