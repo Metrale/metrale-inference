@@ -1901,3 +1901,100 @@ effort_hours = 0.0
 transferability = "GLM MTP serves; re-test only with a C8 instrument whose spread is below the claimed gain"
 links = { pr = "", commit = "", evidence = "/workspace/claude-state/glm/logs/chainK_kinv-1014T1331.log; /workspace/claude-state/glm/STATUS.md 2026-10-14T13:45Z" }
 notes = "The table default (on) differs from the recipe (0); the recipe is fully explicit, so the serve runs 0."
+
+
+[[lever]]
+id = "gb10x3-glm53-kda-chunk64-conv-in-prepare"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "Z recipe (METRALE_GLM_KDA_CHUNK64=64) plus METRALE_GLM_KDA_CHUNK64_CONV=1"
+symptom = "cold prefill: conv1d_l2norm costs 299 ms of rank 0's 1120 ms KDA prefill at c32k; the conv writes every conv row to DRAM and each slab's prepare reads it back"
+diagnosis_tool = "nsys cold c32k kernel table (rank 0) + glm5next_kda_chunk64_conv_parity"
+root_cause_class = "memory-traffic"
+lever_type = "fusion"
+lkb_effect = "kda_chunk64_prepare_conv: the KDA conv (SiLU, q/k L2) of each 64-row tile runs inside the prepare into an L2-resident slab stage; window advance after the last slab"
+parity_tier_kept = "bit-exact (class B): every core, state and factor byte equals the unfused path's (byte gate with a negative control)"
+per_rung = []
+verdict = "kept"
+verdict_reason = "Cold arm WAK0 (off) / WAK1 (L1 and K1 together, one binary), server TTFT medians: c256 457.9 / 465.6 ms, c1k 703.5 / 696.7, c4k 1654.2 / 1622.9, c32k 11837.8 / 11636.8 (-201 ms; ranges 11779-11938 vs 11574-11676, no overlap); numerics bit-equal, readbacks PASS. Measured only jointly with K1 (gb10x3-glm53-kda-gate-in-prepare); the c256 +7.7 ms is not judged here (no spread recorded). Default off until the stack arm."
+failure_mode = "out-of-bounds read past the last input row (byte-neutral, so byte parity stayed green)"
+caught_by = "Xid 31 MMU fault during the owner's ncu run of the K1 gate parity (case not recorded; T=1100 is the first case past T=70 that hits it)"
+time_lost_hours = 0.0
+would_catch_earlier = "compute-sanitizer memcheck with --padding on a case whose last chunk has <= 31 rows, once per new kernel"
+effort_hours = 0.0
+transferability = "any KDA/GDN chunked prefill whose conv output feeds only the chunk prepare"
+links = { pr = "", commit = "7ec98f6e2", evidence = "examples/glm5next_kda_chunk64_conv_parity.rs" }
+notes = "Readback: 'conv fused into the prepare: true'. Refused for replay-mode verify. 2026-10-14 defect found after commit: the v half of the conv tile seeded its window from rows past T on a last chunk of <= 31 rows (OOB read, byte-neutral, MMU-faulted once as Xid 31 under the owner's ncu run); fixed in 2d7cf52b8, confirmed with compute-sanitizer memcheck (padding 2 MB, unlimited print limit, T=70): before the fix 1440 'Invalid __global__ read of size 2 bytes' in kda_chunk64_prepare_conv (threads 192+, the v half) then CUDA_ERROR_LAUNCH_FAILED; after it, conv/gate/o_norm parities report only the 16-20 expected cuModuleGetGlobal_v2 NOT_FOUND API records of the optional published-symbol probe (silenced in ea2d8883e) and PASS."
+
+[[lever]]
+id = "gb10x3-glm53-kda-gate-in-prepare"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "Z recipe (METRALE_GLM_KDA_CHUNK64=64) plus METRALE_GLM_KDA_GATE_IN_PREPARE=1"
+symptom = "cold prefill: kda_gate costs ~585 us per 8192-row launch; it writes the FP32 log-gate rows to DRAM and each slab's prepare reads them back"
+diagnosis_tool = "kda64/NOTES.md per-launch table + glm5next_kda_gate_in_prepare_parity"
+root_cause_class = "memory-traffic"
+lever_type = "fusion"
+lkb_effect = "kda_chunk64_prepare(_conv)_graw: the prepare reads the BF16 raw gate rows and applies kda_gate's arithmetic, operation for operation, in its load; the kda_gate launch is skipped"
+parity_tier_kept = "bit-exact (class B): every core, state and factor byte equals the kda_gate path's (byte gate with a negative control)"
+per_rung = []
+verdict = "kept"
+verdict_reason = "Cold arm WAK0 (off) / WAK1 (L1 and K1 together, one binary), server TTFT medians: c256 457.9 / 465.6 ms, c1k 703.5 / 696.7, c4k 1654.2 / 1622.9, c32k 11837.8 / 11636.8 (-201 ms; ranges 11779-11938 vs 11574-11676, no overlap); numerics bit-equal, readbacks PASS. Measured only jointly with L1 (gb10x3-glm53-kda-chunk64-conv-in-prepare); the c256 +7.7 ms is not judged here (no spread recorded). Default off until the stack arm."
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0.0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "any KDA chunked prefill whose per-channel gate feeds only the chunk prepare"
+links = { pr = "", commit = "8181b1a63", evidence = "examples/glm5next_kda_gate_in_prepare_parity.rs" }
+notes = "Readback: 'gate in the prepare: true'. A one-ulp BF16 control bump rounded away downstream and was not caught; the control moves one element 4 across zero."
+
+[[lever]]
+id = "gb10x3-glm53-kda-onorm-in-scan"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "Z recipe (METRALE_GLM_KDA_CHUNK64=64) plus METRALE_GLM_KDA_ONORM_IN_SCAN=1"
+symptom = "cold prefill: kda_o_norm_gated_bf16 reads every FP32 core row back from DRAM after the chunk64 scan wrote it"
+diagnosis_tool = "nsys cold kernel table + glm5next_kda_onorm_in_scan_parity"
+root_cause_class = "memory-traffic"
+lever_type = "fusion"
+lkb_effect = "kda_chunk64_scan_onorm: each chunk's last-arriving scan block normalises the chunk's core rows from L2 (warp sums + per-(chunk, head) arrival counter); the back end runs only o_proj"
+parity_tier_kept = "bit-exact (class B): every output, core and state byte equals the o_norm launch's path's (byte gate with a negative control)"
+per_rung = []
+verdict = "discarded"
+verdict_reason = "Lead 23:41Z: parked as a measured negative, no cold arm. GPU byte parity PASS (rows 70/300/1100/8192, Packed and Parts, negative control caught), but the isolated scan+o_norm time does not drop: x0.99/x0.98 at T=8192 (7481->7556 us Packed, 6178->6314 us Parts), x0.92-0.98 at T=300, x0.99-1.03 at T=1100. The saved DRAM read of the FP32 core rows is, most likely, paid back by the scan's per-chunk norm tail (warp sums, arrival counter, last-block normalise), which sits on the scan's serial chunk chain (not profiled)."
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0.0
+would_catch_earlier = "a roofline of the o_norm launch first: it reads 4 B per core element once, at bandwidth, while the scan is latency-bound on its chunk chain, so moving the norm onto that chain can only lengthen it"
+effort_hours = 0.0
+transferability = "any chunked linear-attention prefill whose output norm is per (token, head)"
+links = { pr = "", commit = "38a7a0c19", evidence = "examples/glm5next_kda_onorm_in_scan_parity.rs" }
+notes = "Readback: 'o_norm in the scan: true'. A mock-backend back_end test at 200 rows reached cuBLASLt on the real GPU (glm_mm routes rows > 16 to it); tests stay at DENSE_GEMV_BATCHM_MAX_M rows."
+
+[[lever]]
+id = "gb10x3-glm53-kda-prepare-scan-overlap"
+date = "2026-10-15"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "Z recipe (METRALE_GLM_KDA_CHUNK64=64); standalone probe, never wired into the engine"
+symptom = "cold prefill: each slab runs its chunk64 prepare then its scan on one stream; the scan of slab s could overlap the prepare of slab s+1"
+diagnosis_tool = "standalone two-stream probe of the prepare and scan kernels at T=8192, 22 heads, slabs 1-8 (event timing), plus clock64 phase stamps per CTA"
+root_cause_class = "serialization"
+lever_type = "scheduling"
+lkb_effect = "none (not built): the probe ran slab s's scan on a second stream beside slab s+1's prepare"
+parity_tier_kept = "not applicable (probe only)"
+per_rung = []
+verdict = "discarded"
+verdict_reason = "Measured negative at every slab, two runs: overlap minus sequential per 8192-row pass +152..+1325 us for the plain prepare, +675..+1818 us for the conv+gate prepare. At slab 4 the prepare puts 88 CTAs on 48 SMs at two resident per SM (88 of 96 slots), so a concurrent scan only contends for the same SMs."
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0.0
+would_catch_earlier = "count resident CTA slots first: a prepare that already fills them leaves nothing for a second stream"
+effort_hours = 0.0
+transferability = "any chunked linear-attention prefill whose prepare launch fills the GPU's resident slots"
+links = { pr = "", commit = "", evidence = "standalone probe (prepare/scan two-stream timing and phase stamps), not in the tree" }
+notes = "Phase stamps at slab 4 (us per CTA, conv+gate prepare): loads+conv 45.5, cumsum 5.2, Y 2.0, pairs 33.1, A readback 0.9, solve 42.6 of 126. Slab 4 is the fastest pass for every prepare variant (slab 2 and 8 are slower)."
