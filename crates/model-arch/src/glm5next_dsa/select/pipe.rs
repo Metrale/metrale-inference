@@ -30,6 +30,20 @@ pub fn scores_pipe() -> bool {
     *F.get_or_init(|| std::env::var("METRALE_GLM_DSA_SCORES_PIPE").as_deref() == Ok("1"))
 }
 
+/// 2026-10-15: The readback of the prefill selection levers as the first exact multi-row pass
+/// resolved them (lever set AND kernel resolved AND shape eligible), logged once per process so
+/// every rank's serve log shows which scores path its prefill ran.
+pub fn readback_select_levers(mma: bool, pipe: bool) {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        tracing::info!(
+            "DSA select levers: scores_mma={} scores_pipe={}",
+            u8::from(mma),
+            u8::from(pipe)
+        )
+    });
+}
+
 /// 2026-10-14: Whether a pass that takes the tensor-core scores (`mma`) streams them: the lever
 /// on and both kernels resolved.
 pub fn scores_pipe_for(mma: bool, kernels: &super::super::DsaRowsKernels, lever: bool) -> bool {
