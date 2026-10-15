@@ -20,6 +20,12 @@ fn io_message(e: &std::io::Error) -> String {
     }
 }
 
+pub fn read_bytes(io: &Io, path: &str) -> Result<Vec<u8>> {
+    io.files
+        .read(path)
+        .map_err(|e| Error(format!("cannot read {path}: {}", io_message(&e))))
+}
+
 pub fn read_toml(io: &Io, path: &str) -> Result<toml::Table> {
     let bytes = match io.files.read(path) {
         Ok(b) => b,

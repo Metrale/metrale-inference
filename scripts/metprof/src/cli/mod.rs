@@ -8,6 +8,7 @@
 
 pub mod args;
 mod busy;
+mod diff;
 mod families;
 mod load;
 mod segment;
@@ -39,7 +40,13 @@ pub struct Outcome {
 }
 
 fn commands() -> Vec<&'static Command> {
-    [busy::COMMANDS, families::COMMANDS, segment::COMMANDS].concat()
+    [
+        busy::COMMANDS,
+        families::COMMANDS,
+        segment::COMMANDS,
+        diff::COMMANDS,
+    ]
+    .concat()
 }
 
 fn groups(cmds: &[&Command]) -> Vec<&'static str> {

@@ -5,6 +5,8 @@
 
 pub mod capture;
 pub mod config;
+pub mod diff;
+pub mod envdiff;
 pub mod error;
 pub mod families;
 pub mod model;
@@ -15,3 +17,4 @@ pub mod spec;
 pub mod stats;
 pub mod tables;
 pub mod union;
+pub mod verdict;
