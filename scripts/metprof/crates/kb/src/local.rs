@@ -15,28 +15,31 @@ use crate::derive::{derive, run_key};
 use crate::embed::Hashed;
 use crate::export::EXPORT_FILE;
 use crate::kb_toml::{KbConfig, KbPaths, SealConfig};
-use crate::lease::{Holder, SystemLeaseEnv};
-use crate::port::{Kb, KbOpen, KbReport, KbSink, Recorded, RunRecord};
+use crate::lease::{Holder, LeaseEnv};
+use crate::port::{Kb, KbOpen, KbReport, KbSink, Recorded, RunRecord, Verify};
 use crate::schema::{Kind, MAX_SAMPLE_DEPTH, NodeRef};
 use crate::seal::ExportSeal;
 use crate::sink::{LatticeSink, Materialized, Sealing, block_on, busy_reason, open_durable};
 use crate::spool::Spool;
 use crate::{Error, Result, bail, canon, export};
 
-/// Opens the KB of a `kb.toml`; `publisher_build` names the sealing build.
-pub struct LocalKbs {
+/// Opens the KB of a `kb.toml`; `publisher_build` names the sealing build,
+/// and `env` is the machine the lease waits on (`SystemLeaseEnv`).
+pub struct LocalKbs<E> {
     publisher_build: String,
+    env: E,
 }
 
-impl LocalKbs {
-    pub fn new(publisher_build: &str) -> LocalKbs {
+impl<E: LeaseEnv> LocalKbs<E> {
+    pub fn new(publisher_build: &str, env: E) -> LocalKbs<E> {
         LocalKbs {
             publisher_build: publisher_build.to_string(),
+            env,
         }
     }
 }
 
-impl KbOpen for LocalKbs {
+impl<E: LeaseEnv> KbOpen for LocalKbs<E> {
     fn open<'a>(&'a self, kb: &KbConfig, embedding: &EmbeddingConfig) -> Result<Box<dyn Kb + 'a>> {
         if embedding.embedder != EmbedderConfig::Hashed {
             bail!(
@@ -53,16 +56,16 @@ impl KbOpen for LocalKbs {
             paths: kb.paths.clone(),
             sealing,
             embedder: Hashed::new(),
-            env: SystemLeaseEnv,
+            env: &self.env,
         }))
     }
 }
 
-struct LocalKb {
+struct LocalKb<'a> {
     paths: KbPaths,
     sealing: Sealing,
     embedder: Hashed,
-    env: SystemLeaseEnv,
+    env: &'a dyn LeaseEnv,
 }
 
 fn path(p: &Path) -> Value {
@@ -103,9 +106,9 @@ fn materialized(m: Materialized) -> KbReport {
     }
 }
 
-impl LocalKb {
+impl LocalKb<'_> {
     fn sink(&self) -> LatticeSink<'_> {
-        LatticeSink::new(self.paths.clone(), &self.embedder, &self.env, &self.sealing)
+        LatticeSink::new(self.paths.clone(), &self.embedder, self.env, &self.sealing)
     }
 
     fn key(&self, what: &str) -> Result<&ExportSeal> {
@@ -138,19 +141,19 @@ impl LocalKb {
             bail!("selfcheck: {} is not the store's export", file.display());
         }
         if let Sealing::Sealed(s) = &self.sealing {
-            s.verify(&self.paths.export_dir)?;
+            s.verify(&self.paths.export_dir)?.map_err(Error)?;
         }
         Ok(())
     }
 }
 
-impl KbSink for LocalKb {
+impl KbSink for LocalKb<'_> {
     fn record(&self, run: &RunRecord) -> Result<Recorded> {
         self.sink().record(run)
     }
 }
 
-impl Kb for LocalKb {
+impl Kb for LocalKb<'_> {
     fn selfcheck(&self, sentinel: &RunRecord) -> Result<KbReport> {
         let rec = self.record(sentinel)?;
         let mut r = Map::new();
@@ -211,19 +214,20 @@ impl Kb for LocalKb {
         }
     }
 
-    fn verify(&self) -> Result<KbReport> {
+    fn verify(&self) -> Result<Verify> {
         let key = self.key("verify")?;
         let mut r = Map::new();
         r.insert("kid".into(), json!(key.kid()));
         match self.sink().leased(|| key.verify(&self.paths.export_dir))? {
-            Ok(n) => {
+            Ok(Ok(n)) => {
                 r.insert("verified_bytes".into(), json!(n));
-                Ok(KbReport {
+                Ok(Verify::Report(KbReport {
                     result: r,
                     incomplete: None,
-                })
+                }))
             }
-            Err(h) => Ok(busy(r, h)),
+            Ok(Err(why)) => Ok(Verify::Failed(why)),
+            Err(h) => Ok(Verify::Report(busy(r, h))),
         }
     }
 }

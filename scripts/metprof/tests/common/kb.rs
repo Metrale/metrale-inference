@@ -6,9 +6,9 @@
 
 use metprof_kb::config::EmbeddingConfig;
 use metprof_kb::kb_toml::KbConfig;
-use metprof_kb::port::{Clock, Kb, KbOpen, KbReport, KbSink, Recorded, RunRecord};
+use metprof_kb::port::{Clock, Kb, KbOpen, KbReport, KbSink, Recorded, RunRecord, Verify};
 
-use super::Mem;
+use super::{Capture, Mem};
 
 /// The kb.toml every `Mem::run` records through unless argv names one.
 pub const KB_TOML: &str = "/kb/kb.toml";
@@ -77,7 +77,7 @@ impl Kb for FakeKb<'_> {
     fn seal(&self) -> metprof_kb::Result<KbReport> {
         Err(metprof_kb::Error("the fake KB has no maintenance".into()))
     }
-    fn verify(&self) -> metprof_kb::Result<KbReport> {
+    fn verify(&self) -> metprof_kb::Result<Verify> {
         Err(metprof_kb::Error("the fake KB has no maintenance".into()))
     }
 }
@@ -96,4 +96,25 @@ impl Clock for Mem {
     fn now_rfc3339(&self) -> metprof_kb::Result<String> {
         Ok(NOW.to_string())
     }
+}
+
+/// The command the KB tests record: a summary of `capture()`.
+pub const SUMMARIZE: [&str; 10] = [
+    "summarize",
+    "c.sqlite",
+    "--device",
+    "0",
+    "--families",
+    "f.toml",
+    "--gap-ms",
+    "1",
+    "--top",
+    "2",
+];
+
+/// A two-kernel capture.
+pub fn capture() -> Capture {
+    Capture::new()
+        .kernel("gemm_a", 0.0, 100.0)
+        .kernel("norm_x", 3000.0, 3010.0)
 }

@@ -8,14 +8,16 @@
 //! Exit statuses: 0 = recorded and materialised; 2 = a usage or
 //! configuration error (nothing written); 3 = recorded only, or not recorded
 //! (the reason is on stderr; any analysis is still on stdout);
-//! `VERIFY_FAILED` (4) = `kb verify` did not verify the sealed export: it is
-//! missing, does not open (tampered with, or sealed under another key) or
-//! does not seal the current export, or could not be read. A busy lease is
-//! still 3.
+//! `VERIFY_FAILED` (4) = `kb verify` looked and the sealed export failed: it
+//! is missing, does not open (tampered with, or sealed under another key)
+//! or does not seal the current export. A `kb verify` that could not look
+//! (the lease was busy, the lock or a file could not be opened or read)
+//! exits 3 like every `kb` subcommand that did not reach the state asked
+//! for, never 4.
 
 use metprof_kb::config::{self as embedding_toml, EmbeddingConfig};
 use metprof_kb::kb_toml::{self, KbConfig, SealConfig};
-use metprof_kb::port::{KbReport, RUN_SCHEMA, RunRecord, UNKNOWN};
+use metprof_kb::port::{KbReport, RUN_SCHEMA, RunRecord, UNKNOWN, Verify};
 use serde_json::{Map, json};
 
 use crate::cli::args::Spec;
@@ -26,8 +28,8 @@ use crate::fail;
 
 pub const REQUIRED: &str = "--kb is required (kb.toml path, or 'off')";
 pub const OFF_NOTICE: &str = "metprof: --kb off: this run is not recorded in the KB\n";
-/// `kb verify` ran and the sealed export failed it (distinct from 3, a KB
-/// that was busy or not in the state asked for).
+/// `kb verify` looked and the sealed export failed it (distinct from 3: a KB
+/// that was busy, could not be read, or is not in the state asked for).
 pub const VERIFY_FAILED: i32 = 4;
 
 /// The value of `--kb`.
@@ -205,18 +207,21 @@ pub fn run_op(name: &str, op: KbOp, setup: Option<&Setup>, io: &Io, json: bool) 
         KbOp::Replay => kb.replay().map_err(|e| e.0),
         KbOp::Export => kb.export().map_err(|e| e.0),
         KbOp::Seal => kb.seal().map_err(|e| e.0),
-        KbOp::Verify => kb.verify().map_err(|e| e.0),
+        KbOp::Verify => match kb.verify() {
+            Ok(Verify::Report(r)) => Ok(r),
+            Ok(Verify::Failed(why)) => {
+                return Outcome {
+                    code: VERIFY_FAILED,
+                    stdout: String::new(),
+                    stderr: format!("metprof: {name}: FAILED: {why}\n"),
+                    files: Vec::new(),
+                };
+            }
+            Err(e) => Err(e.0),
+        },
     };
     let report = match report {
         Ok(r) => r,
-        Err(e) if op == KbOp::Verify => {
-            return Outcome {
-                code: VERIFY_FAILED,
-                stdout: String::new(),
-                stderr: format!("metprof: {name}: FAILED: {e}\n"),
-                files: Vec::new(),
-            };
-        }
         Err(e) => return incomplete(name, String::new(), &e),
     };
     let stdout = match render(&report.result, json) {

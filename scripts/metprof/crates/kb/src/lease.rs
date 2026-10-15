@@ -9,13 +9,21 @@
 //! loses it when its descriptor closes. There is no age-based staleness and
 //! no fallback: on a platform without file locks `acquire` fails.
 //!
+//! Local filesystems only. Over NFS the lock does not exclude: mounted
+//! `nolock`, `flock` is local to each host, so two hosts can both hold it.
+//!
 //! The holder writes `pid=<pid>\nsince=<unix s>\n` into the lock file and
 //! empties it on release. That statement is informational only (it names the
 //! holder in a busy message); it never decides anything, and a crashed
 //! holder's leftover statement is simply overwritten.
 //!
-//! The lock file is never deleted, by this code or by anyone else: deleting
-//! it while it is held lets a second writer lock a new file of the same name.
+//! The lock file is never deleted by this code, and must not be by anyone
+//! else. If it is deleted or replaced while a writer waits, the lock that
+//! writer then takes is on a file the path no longer names; on Unix `acquire`
+//! sees that (the descriptor's device and inode differ from the path's) and
+//! locks the file the path names now. A file deleted while it is held is not
+//! detected by its holder: a second writer can then lock a new file of the
+//! same name. Other platforms make no such check.
 //!
 //! A held lock is waited on for `WAIT_S`, then the caller gets `Busy`: the
 //! run stays in the spool, not materialised (exit 3; `metprof kb replay`
@@ -118,29 +126,67 @@ pub fn read_holder(lock_path: &Path) -> Option<Holder> {
         .and_then(|t| Holder::parse(&t).ok())
 }
 
-/// Take the lease on `durable_dir`, waiting up to `WAIT_S` for its holder.
-pub fn acquire(durable_dir: &Path, env: &dyn LeaseEnv) -> Result<Acquired> {
-    atomic::create_dir(durable_dir)?;
-    let path = durable_dir.join(LOCK_FILE);
-    let file = OpenOptions::new()
+fn open(path: &Path) -> Result<File> {
+    OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
-        .open(&path)
-        .map_err(|e| io("opening", &path, e))?;
-    let deadline = env.now_s()? + WAIT_S;
+        .open(path)
+        .map_err(|e| io("opening", path, e))
+}
+
+/// Lock `file`, polling until `deadline`; false when it stayed held.
+fn lock_by(file: &File, path: &Path, deadline: u64, env: &dyn LeaseEnv) -> Result<bool> {
     loop {
         match file.try_lock() {
-            Ok(()) => break,
+            Ok(()) => return Ok(true),
             Err(TryLockError::WouldBlock) => {}
-            Err(TryLockError::Error(e)) => return Err(io("locking", &path, e)),
+            Err(TryLockError::Error(e)) => return Err(io("locking", path, e)),
         }
         if env.now_s()? >= deadline {
-            return Ok(Acquired::Busy(read_holder(&path)));
+            return Ok(false);
         }
         env.sleep(POLL);
     }
+}
+
+/// Whether `path` still names the file `file` has open.
+#[cfg(unix)]
+fn names(path: &Path, file: &File) -> Result<bool> {
+    use std::os::unix::fs::MetadataExt;
+    let held = file.metadata().map_err(|e| io("inspecting", path, e))?;
+    match fs::metadata(path) {
+        Ok(now) => Ok((now.dev(), now.ino()) == (held.dev(), held.ino())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(io("inspecting", path, e)),
+    }
+}
+
+/// No portable file identity in std off Unix: see the module doc.
+#[cfg(not(unix))]
+fn names(_: &Path, _: &File) -> Result<bool> {
+    Ok(true)
+}
+
+/// Take the lease on `durable_dir`, waiting up to `WAIT_S` for its holder.
+pub fn acquire(durable_dir: &Path, env: &dyn LeaseEnv) -> Result<Acquired> {
+    let path = durable_dir.join(LOCK_FILE);
+    let deadline = env.now_s()? + WAIT_S;
+    let file = loop {
+        atomic::create_dir(durable_dir)?;
+        let file = open(&path)?;
+        if !lock_by(&file, &path, deadline, env)? {
+            return Ok(Acquired::Busy(read_holder(&path)));
+        }
+        if names(&path, &file)? {
+            break file;
+        }
+        // Deleted or replaced while we waited: this lock excludes nobody.
+        if env.now_s()? >= deadline {
+            return Ok(Acquired::Busy(read_holder(&path)));
+        }
+    };
     let holder = Holder {
         pid: env.pid(),
         since: env.now_s()?,

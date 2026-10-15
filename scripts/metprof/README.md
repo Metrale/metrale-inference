@@ -51,7 +51,9 @@ lease is an exclusive file lock (`flock` on Linux and macOS, `LockFileEx` on
 Windows) on `<durable_dir>/.lock`: held however long its writer runs, released
 by the operating system when the writer exits or is killed, and never judged
 stale by age. The pid and time written into that file only name the holder in
-a busy message. Never delete `.lock` while metprof may be running. The
+a busy message. Never delete `.lock` while metprof may be running. Keep the
+KB on a local filesystem: over NFS the lock does not exclude (mounted
+`nolock`, `flock` is local to each host, so two hosts can both hold it). The
 record keeps a file argument as its SHA-256 and base name and a directory as
 its base name, never a path, and is stamped with the time, the metprof
 version and commit, the family table's and the capture's digests and the
@@ -60,10 +62,11 @@ version and commit, the family table's and the capture's digests and the
 Exit status: `0` recorded and materialised; `2` a usage or configuration
 error (bad `kb.toml`, key or embedder; nothing is written); `3` the analysis
 ran (it is on stdout, and any `--out` file is written) but the run was only
-spooled, or not recorded at all; the reason is on stderr. The record is made
-before metprof writes an `--out` file: a record can name an output file (and
-its digest) that metprof then failed to write; the error is on stderr and the
-exit status is not 0.
+spooled, or not recorded at all; the reason is on stderr; `1` an `--out` file
+(or the result on stdout) could not be written. The record is made before
+metprof writes an `--out` file: a record can name an output file (and its
+digest) that metprof then failed to write; the error is on stderr and the
+exit status is 1.
 
 ```
 metprof --kb kb.toml kb selfcheck   # record a sentinel, read it back everywhere
@@ -73,10 +76,11 @@ metprof --kb kb.toml kb seal        # seal the current export again
 metprof --kb kb.toml kb verify      # the sealed export opens to kkb.jsonl
 ```
 
-A `kb` subcommand exits 3 when another writer holds the lease (or the KB is
-not in the state asked for). `kb verify` exits 4 when the sealed export fails
-verification: it is missing, does not open (tampered with, or sealed under
-another key), does not seal the current `kkb.jsonl`, or cannot be read.
+A `kb` subcommand exits 3 when the KB could not be brought to the state asked
+for: another writer holds the lease, or the lock or a file cannot be opened,
+read or written (a read-only KB, say). `kb verify` exits 4 only when it
+looked and the sealed export failed: it is missing, does not open (tampered
+with, or sealed under another key) or does not seal the current `kkb.jsonl`.
 `kb seal` and `kb verify` refuse a `kb.toml` with `seal = "off"` (exit 2).
 
 ## Kernel tree (`metprof tree`)

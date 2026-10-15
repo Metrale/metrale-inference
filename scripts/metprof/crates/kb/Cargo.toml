@@ -8,6 +8,8 @@
 name = "metprof-kb"
 version = "0.1.0"
 edition = "2024"
+# 2026-10-15: File::try_lock (the KB lease) is stable from 1.89.
+rust-version = "1.89"
 license = "MIT OR Apache-2.0"
 publish = false
 description = "Kernel knowledge base records, ids, embeddings and the metprof run sink"

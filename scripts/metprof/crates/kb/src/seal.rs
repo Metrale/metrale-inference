@@ -9,7 +9,7 @@
 //! key's SHA-256, so a reader knows which key a file needs without the key.
 
 use std::fs::{self, File};
-use std::io::Read;
+use std::io::{ErrorKind, Read};
 use std::path::{Path, PathBuf};
 
 use metprof_envelope::{Dek, Expected, OsEntropy, SealRequest, SystemClock};
@@ -121,33 +121,52 @@ impl ExportSeal {
         atomic::write(export_dir, SEALED_FILE, &sealed)
     }
 
-    /// Open `kkb.jsonl.kkb` and require its plaintext to be `kkb.jsonl`;
-    /// the number of bytes verified.
-    pub fn verify(&self, export_dir: &Path) -> Result<usize> {
+    /// Open `kkb.jsonl.kkb` and require its plaintext to be `kkb.jsonl`:
+    /// `Ok(Ok(bytes verified))`, or `Ok(Err(why))` when the sealed export
+    /// fails verification (missing, does not open, or seals something
+    /// else). `Err` is a failure to look (the export or the sealed export
+    /// could not be read).
+    pub fn verify(&self, export_dir: &Path) -> Result<std::result::Result<usize, String>> {
         let sealed_path = export_dir.join(SEALED_FILE);
-        let opened = metprof_envelope::open(
-            &self.dek,
-            &Expected {
-                kid: &self.kid,
-                path: EXPORT_FILE,
-            },
-            &read(&sealed_path)?,
-        )
-        .map_err(|e| envelope(&format!("opening {}", sealed_path.display()), e))?;
+        let sealed = match fs::read(&sealed_path) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == ErrorKind::NotFound => {
+                return Ok(Err(format!(
+                    "seal: {} is missing; `metprof kb seal` seals the export",
+                    sealed_path.display()
+                )));
+            }
+            Err(e) => bail!("seal: reading {}: {e}", sealed_path.display()),
+        };
+        let plain = read(&export_dir.join(EXPORT_FILE))?;
+        let expected = Expected {
+            kid: &self.kid,
+            path: EXPORT_FILE,
+        };
+        let opened = match metprof_envelope::open(&self.dek, &expected, &sealed) {
+            Ok(opened) => opened,
+            Err(e) => {
+                return Ok(Err(envelope(
+                    &format!("opening {}", sealed_path.display()),
+                    e,
+                )
+                .0));
+            }
+        };
         if opened.header.plaintext.encoding != ENCODING {
-            bail!(
+            return Ok(Err(format!(
                 "seal: {} has encoding {:?}, not {ENCODING:?}",
                 sealed_path.display(),
                 opened.header.plaintext.encoding
-            );
+            )));
         }
-        if opened.plaintext != read(&export_dir.join(EXPORT_FILE))? {
-            bail!(
+        if opened.plaintext != plain {
+            return Ok(Err(format!(
                 "seal: {} does not seal the current {EXPORT_FILE}; `metprof kb seal` re-seals it",
                 sealed_path.display()
-            );
+            )));
         }
-        Ok(opened.plaintext.len())
+        Ok(Ok(opened.plaintext.len()))
     }
 }
 

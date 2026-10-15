@@ -9,12 +9,13 @@ use metprof::adapters::chat::{ClockSalt, TcpChat};
 use metprof::adapters::files::{FsFiles, write};
 use metprof::adapters::nsys::NsysSource;
 use metprof::cli::{Io, run};
+use metprof_kb::lease::SystemLeaseEnv;
 use metprof_kb::local::LocalKbs;
 use metprof_kb::time::SystemClock;
 
 fn main() {
     let argv: Vec<String> = std::env::args().skip(1).collect();
-    let kbs = LocalKbs::new(&metprof::cli::build_id());
+    let kbs = LocalKbs::new(&metprof::cli::build_id(), SystemLeaseEnv);
     let out = run(
         &argv,
         &Io {

@@ -122,6 +122,18 @@ pub struct KbReport {
     pub incomplete: Option<String>,
 }
 
+/// What `kb verify` found when it could look (an `Err` around it means it
+/// could not: no key, or the lease or a read failed).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Verify {
+    /// The sealed export verified (`incomplete` when another writer held
+    /// the lease, and nothing was looked at).
+    Report(KbReport),
+    /// The sealed export is missing, does not open (tampered with, or
+    /// sealed under another key) or does not seal the current export.
+    Failed(String),
+}
+
 /// One configured KB: the sink and the maintenance the CLI offers.
 pub trait Kb: KbSink {
     /// The whole write path with `sentinel`, then read it back from the
@@ -134,7 +146,7 @@ pub trait Kb: KbSink {
     /// Seal the current export again.
     fn seal(&self) -> Result<KbReport>;
     /// Open the sealed export and require it to equal the export.
-    fn verify(&self) -> Result<KbReport>;
+    fn verify(&self) -> Result<Verify>;
 }
 
 /// The port that opens the KB a `kb.toml` (and its `embedding.toml`) names.

@@ -11,8 +11,8 @@
 
 mod common;
 
-use std::cell::Cell;
-use std::fs;
+use std::cell::{Cell, RefCell};
+use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
@@ -38,6 +38,9 @@ struct FakeEnv {
     now_ms: Cell<u64>,
     slept_ms: Cell<u64>,
     clock_broken: bool,
+    /// Runs once, at the first sleep: another process acting while the
+    /// code under test waits.
+    on_sleep: RefCell<Option<Box<dyn FnOnce()>>>,
 }
 
 impl FakeEnv {
@@ -47,6 +50,7 @@ impl FakeEnv {
             now_ms: Cell::new(T0_MS),
             slept_ms: Cell::new(0),
             clock_broken: false,
+            on_sleep: RefCell::new(None),
         }
     }
 }
@@ -65,6 +69,10 @@ impl LeaseEnv for FakeEnv {
         let ms = d.as_millis() as u64;
         self.now_ms.set(self.now_ms.get() + ms);
         self.slept_ms.set(self.slept_ms.get() + ms);
+        let hook = self.on_sleep.borrow_mut().take();
+        if let Some(act) = hook {
+            act();
+        }
     }
 }
 
@@ -263,6 +271,59 @@ fn a_clock_that_fails_fails_the_acquire() {
     assert!(err.0.contains("fake clock"), "{err}");
 }
 
+/// A lock on a file the path no longer names excludes nobody: `acquire`
+/// must lock the file `.lock` names now. Both cases start the same way:
+/// `first` holds the lease and `second` waits; at its first sleep, `first`
+/// releases and the lock file is deleted (and maybe replaced), so the
+/// descriptor `second` opened at the start is on an orphan.
+fn deleted_while_waiting(replace: bool) -> (tempfile::TempDir, Acquired, File, Option<File>) {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let durable = tmp.path().join("db");
+    let lock = durable.join(LOCK_FILE);
+    let first = acquire(&durable, &FakeEnv::new(100)).expect("acquires");
+    assert_eq!(holder_of(&first).pid, 100);
+    let third = std::rc::Rc::new(RefCell::new(None));
+    let second = FakeEnv::new(200);
+    let (path, slot) = (lock.clone(), third.clone());
+    *second.on_sleep.borrow_mut() = Some(Box::new(move || {
+        drop(first);
+        fs::remove_file(&path).expect("deletes the lock file");
+        if replace {
+            let f = File::create_new(&path).expect("a new lock file");
+            f.try_lock().expect("a third writer locks it");
+            *slot.borrow_mut() = Some(f);
+        }
+    }));
+    let got = acquire(&durable, &second).expect("acquire");
+    assert!(second.on_sleep.borrow().is_none(), "it waited");
+    let other = File::options()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock)
+        .expect("opens what the path names");
+    let third = third.borrow_mut().take();
+    (tmp, got, other, third)
+}
+
+#[test]
+fn a_lock_file_deleted_while_waiting_is_recreated_and_locked() {
+    let (_tmp, got, other, _) = deleted_while_waiting(false);
+    assert_eq!(holder_of(&got).pid, 200);
+    assert!(
+        matches!(other.try_lock(), Err(std::fs::TryLockError::WouldBlock)),
+        "the lease holds the file the path names"
+    );
+}
+
+#[test]
+fn a_lock_file_replaced_while_waiting_is_waited_on_again() {
+    let (_tmp, got, _, third) = deleted_while_waiting(true);
+    assert!(third.is_some(), "a third writer holds the new file");
+    assert_eq!(busy_holder(got), None, "busy behind the third writer");
+}
+
 /// Kills the child when the test ends, however it ends.
 struct Reap(Child);
 
@@ -277,6 +338,9 @@ fn spawn_holder(durable: &Path) -> Reap {
     let exe = std::env::current_exe().expect("test binary");
     let mut child = Command::new(exe)
         .args(["--exact", "lease_child", "--ignored", "--nocapture"])
+        // One thread: libtest then prints the child's line after its own
+        // "test lease_child ... " on the same line; ends_with reads both.
+        .env("RUST_TEST_THREADS", "1")
         .env(CHILD_DIR, durable)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -287,7 +351,7 @@ fn spawn_holder(durable: &Path) -> Reap {
     let held = BufReader::new(out)
         .lines()
         .map(|l| l.expect("reads"))
-        .any(|l| l == HELD);
+        .any(|l| l.ends_with(HELD));
     if !held {
         let status = reap.0.wait().expect("waits");
         panic!("the holder exited ({status}) without taking the lease");
