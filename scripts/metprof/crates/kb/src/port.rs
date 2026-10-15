@@ -1,0 +1,103 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! 2026-10-15: what metprof hands the KB sink (DESIGN §3.1), as pure types,
+//! and the two ports the CLI gains: the sink and the clock. A `RunRecord` is
+//! what the spool keeps, one per run; everything the KB derives from a run is
+//! re-derived from it.
+
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
+
+use crate::{Result, bail, canon};
+
+/// The schema of a spooled run record.
+pub const RUN_SCHEMA: &str = "metrale.kkb/1";
+/// The value metprof writes for a fact it cannot know.
+pub const UNKNOWN: &str = "unknown";
+
+/// One argv word. A file argument is never kept as a path: only its content
+/// digest and its base name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum Arg {
+    Word(String),
+    File { sha256: String, basename: String },
+}
+
+/// A file the command wrote: its base name, digest, and for a JSON file
+/// (the kernel tree) its parsed content.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FileRef {
+    pub name: String,
+    pub sha256: String,
+    pub json: Option<Value>,
+}
+
+/// Who recorded the run, from `kb.toml` (explicit, never guessed).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Identity {
+    pub box_alias: String,
+    pub campaign: String,
+    pub hardware_class: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Stamps {
+    pub recorded_at: String,
+    pub metprof_version: String,
+    pub metprof_git_sha: String,
+    /// The family table's digest, or `unknown` for a command without one.
+    pub config_sha256: String,
+    pub capture_sha256: Option<String>,
+    pub identity: Identity,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RunRecord {
+    pub schema: String,
+    pub command: String,
+    pub args: Vec<Arg>,
+    pub result: Map<String, Value>,
+    pub files: Vec<FileRef>,
+    pub stamps: Stamps,
+}
+
+impl RunRecord {
+    pub fn check(&self) -> Result<()> {
+        if self.schema != RUN_SCHEMA {
+            bail!("run record: schema {:?} is not {RUN_SCHEMA:?}", self.schema);
+        }
+        if self.command.is_empty() {
+            bail!("run record: empty command");
+        }
+        Ok(())
+    }
+
+    /// SHA-256 of the record's canonical JSON (names its spool file).
+    pub fn content_sha256(&self) -> Result<String> {
+        canon::digest(self)
+    }
+}
+
+/// The outcome of a sink write.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Recorded {
+    pub spool_path: String,
+    /// True when the run also reached the durable store and the export.
+    pub materialized: bool,
+}
+
+/// The KB sink port. A run is spooled before anything else; an error means
+/// it was not spooled (the caller exits 3 either way when not materialised).
+pub trait KbSink {
+    fn record(&self, run: &RunRecord) -> Result<Recorded>;
+}
+
+/// The injected clock: the current time, RFC 3339 UTC.
+pub trait Clock {
+    fn now_rfc3339(&self) -> String;
+}

@@ -1,0 +1,41 @@
+{
+  "schema": "metprof.kernel_tree/1",
+  "time_unit": "us",
+  "provenance": {"git_sha": "unknown"},
+  "source": "circuit",
+  "total_time": 20.0,
+  "coverage": 1.0,
+  "kernels": {
+    "arch0": {
+      "fuses": [], "total_time": 20.0, "self_time": 0.0, "launches": 2,
+      "mean_us": 10.0, "min_us": 10.0, "max_us": 10.0,
+      "kernels": {
+        "decode": {
+          "fuses": [], "total_time": 20.0, "self_time": 0.0, "launches": 2,
+          "mean_us": 10.0, "min_us": 10.0, "max_us": 10.0,
+          "kernels": {
+            "layer0": {
+              "fuses": [], "total_time": 20.0, "self_time": 0.0, "launches": 2,
+              "mean_us": 10.0, "min_us": 10.0, "max_us": 10.0,
+              "kernels": {
+                "norm_matmul[0,1]": {
+                  "fuses": ["norm", "matmul"], "total_time": 20.0, "self_time": 0.0, "launches": 2,
+                  "mean_us": 10.0, "min_us": 10.0, "max_us": 10.0,
+                  "circuit": {"group": 0, "rule": "norm_matmul", "plan_digest": "d0d0"},
+                  "members": ["0", "1"],
+                  "kernels": {
+                    "mod_a::fused_norm_matmul": {
+                      "fuses": [], "total_time": 20.0, "self_time": 20.0, "launches": 2,
+                      "mean_us": 10.0, "min_us": 10.0, "max_us": 10.0, "kernels": {}
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "unattributed": {}
+}
