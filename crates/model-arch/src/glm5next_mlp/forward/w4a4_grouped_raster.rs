@@ -21,6 +21,7 @@
 
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::KernelHandle;
+use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 use crate::glm5next_mlp::Glm5NextMlpKernels;
 
@@ -41,17 +42,48 @@ pub struct RasterGroups {
 }
 
 /// 2026-10-14: A grouped launch's entry: the kernel and, for an `_r` twin, its raster group
-/// (the one extra trailing argument).
+/// (the one extra trailing argument). 2026-10-15: for an `_n` twin (`w4a4_grouped_nc`), `nc`
+/// column tiles per CTA: the raster group (0 = row-major) and `nc` trail, and the grid is
+/// `nc` times narrower.
 #[derive(Clone, Copy, Debug)]
 pub struct GroupedEntry {
     pub kern: KernelHandle,
     pub raster: Option<u32>,
+    pub nc: Option<u32>,
 }
 
 impl GroupedEntry {
     /// 2026-10-14: An entry without a raster argument.
     pub fn plain(kern: KernelHandle) -> Self {
-        Self { kern, raster: None }
+        Self {
+            kern,
+            raster: None,
+            nc: None,
+        }
+    }
+
+    /// 2026-10-15: An `_r` twin with raster group `g`.
+    pub fn raster(kern: KernelHandle, g: u32) -> Self {
+        Self {
+            kern,
+            raster: Some(g),
+            nc: None,
+        }
+    }
+
+    /// 2026-10-15: The grid's x extent over `n` output columns of `cols` per tile.
+    pub fn grid_x(&self, n: usize, cols: usize) -> u32 {
+        n.div_ceil(cols).div_ceil(self.nc.map_or(1, |c| c as usize)) as u32
+    }
+
+    /// 2026-10-15: The entry's trailing arguments: none (plain), the raster group (`_r`), or the
+    /// raster group (0 when absent) and `nc` (`_n`).
+    pub fn tail_args<'a>(&self, l: KernelLaunch<'a>) -> KernelLaunch<'a> {
+        match (self.raster, self.nc) {
+            (r, Some(nc)) => l.arg_u32(r.unwrap_or(0)).arg_u32(nc),
+            (Some(g), None) => l.arg_u32(g),
+            (None, None) => l,
+        }
     }
 }
 
@@ -152,10 +184,7 @@ pub(super) fn down_entry(
 
 fn twin(group: Option<u32>, ti: usize, r_kern: KernelHandle, plain: KernelHandle) -> GroupedEntry {
     match group {
-        Some(g) if g != 0 && ti == TILE => GroupedEntry {
-            kern: r_kern,
-            raster: Some(g),
-        },
+        Some(g) if g != 0 && ti == TILE => GroupedEntry::raster(r_kern, g),
         _ => GroupedEntry::plain(plain),
     }
 }

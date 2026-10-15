@@ -212,6 +212,9 @@ pub struct W4a4GroupedKernels {
     /// `w4a4_grouped_gu_m128_r`: the m128 down (plain and `_k64`) and fused gate/up entries with
     /// a raster-group argument (`forward::w4a4_grouped_raster`, `METRALE_GLM_MOE_W4A4_RASTER`).
     pub raster: [KernelHandle; 3],
+    /// 2026-10-15: `w4a4_grouped_mx_m128_n` and `w4a4_grouped_mx_m128_k64_n`: the m128 down with
+    /// `nc` column tiles per CTA (`forward::w4a4_grouped_nc`, `METRALE_GLM_MOE_W4A4_NC`).
+    pub nc: [KernelHandle; 2],
 }
 
 /// 2026-10-10: `w4a4_quant_rows_static_k64`, `w4a4_gemv_mx8_moe_slots_k64` and
@@ -437,6 +440,8 @@ impl Glm5NextMlpKernels {
                     "w4a4_grouped_gu_m128_r",
                 ]
                 .map(|e| metrale_model_layers::layers::try_kernel(gpu, W4A4_GROUPED_MODULE, e)),
+                nc: ["w4a4_grouped_mx_m128_n", "w4a4_grouped_mx_m128_k64_n"]
+                    .map(|e| metrale_model_layers::layers::try_kernel(gpu, W4A4_GROUPED_MODULE, e)),
             },
         })
     }

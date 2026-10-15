@@ -1277,6 +1277,8 @@ kernels = [
   # 2026-10-14: The m128 down and gate/up entries with a raster group (same bytes, another CTA walk).
   "w4a4_grouped_mx::w4a4_grouped_mx_m128_r", "w4a4_grouped_mx::w4a4_grouped_mx_m128_k64_r",
   "w4a4_grouped_mx::w4a4_grouped_gu_m128_r",
+  # 2026-10-15: The m128 down entries with nc column tiles per CTA (same bytes, one load stream).
+  "w4a4_grouped_mx::w4a4_grouped_mx_m128_n", "w4a4_grouped_mx::w4a4_grouped_mx_m128_k64_n",
 ]
 kernel_compute."w4a4_grouped_mx::w4a4_grouped_tiles" = { compute = "memory" }
 kernel_compute."w4a4_grouped_mx::w4a4_grouped_one_group" = { compute = "memory" }
