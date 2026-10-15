@@ -216,7 +216,7 @@ impl Glm5NextLayer {
                                 stream,
                             ),
                             _ => self.sp_tail_piece(
-                                gpu, mhc, &sub.rows, a, b, ffn_out, partials, reduce, stream,
+                                gpu, mhc, &sub.rows, a, b, ffn_out, partials, reduce, false, stream,
                             ),
                         },
                     )?;

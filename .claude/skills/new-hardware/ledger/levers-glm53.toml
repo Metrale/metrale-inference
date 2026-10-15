@@ -2069,3 +2069,27 @@ effort_hours = 6.0
 transferability = "any grouped GEMM with a short per-expert K loop where per-CTA fixed cost rivals the MMA work"
 links = { pr = "", commit = "", evidence = "/workspace/claude-state/glm/moe2/epi_nc.txt" }
 notes = "Only the m128 down tile switches; m32/m64 (rows <= 1036 use m32) and the gate/up are untouched, so c1k is unaffected. At m128 with rows <= 1036 (not a production tile choice) nc costs 3-9%. ptxas: the _n twins spill 4 B, the same as the production plain m128 entry, outside the K loop. NC=2 is the conservative fallback (epi rows 8208: -12 us zipf 0, +134 us zipf 1.2 at raster 4)"
+
+[[lever]]
+id = "gb10x3-glm53-mhc-post-vec"
+date = "2026-10-15"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_MHC_POST_VEC=1 with METRALE_GLM_SP_MHC=1 (SP-mHC prefill post-mix of every row piece; composes with METRALE_GLM_SP_OVERLAP)"
+symptom = "at a 32k cold prefill glm5next_hc_post_rank_sum runs about 420 launches per rank at 0.53 ms clean and 0.71 ms beside NCCL; each thread moves one column in 2- and 4-byte accesses and writes the summed row back although only a dump tap reads it"
+diagnosis_tool = "nsys"
+root_cause_class = "bandwidth-underutilization"
+lever_type = "kernel-rewrite"
+lkb_effect = "glm5next_hc_post_rank_sum_vec8 in glm5next_hc_post_sum.cu: the scalar kernel's expressions in order, eight columns per thread in 16-byte loads and stores, 128-thread blocks (an 86-row piece keeps 344 blocks), the summed-row store behind a write_x flag"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "held"
+verdict_reason = "byte gate (glm5next_hc_post_vec_gate) and clean/co-run timing pending; the 32k cold TTFT A/B is the lead's"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 3.0
+transferability = "any element-wise BF16/FP32 epilogue whose rows are a multiple of eight elements and 16-byte aligned"
+links = { pr = "", commit = "", evidence = "glm5next_hc_post_vec_gate" }
+notes = "write_x is tap.is_some() at both SP-mHC sites (the mixer reduce's MixerRed and the MLP reduce's MlpRed dump points are the only readers of the summed row); the pipelined SP body has no tap and passes 0. The decode path (reduce_post.rs) keeps the scalar kernel. METRALE_GLM_MHC_POST_SUM_CTAS caps only the scalar kernel."

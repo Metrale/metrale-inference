@@ -2058,6 +2058,7 @@ kernels = [
   "glm5next_mhc_tok::glm5next_hc_pre_norm_tok4",
   "glm5next_mhc_tok::glm5next_hc_post_pre_norm_tok4",
   "glm5next_hc_post_sum::glm5next_hc_post_rank_sum",
+  "glm5next_hc_post_sum::glm5next_hc_post_rank_sum_vec8",
 ]
 kernel_compute."glm5next_mhc::glm5next_hc_mix" = { compute = "cuda_core" }
 kernel_compute."glm5next_mhc::glm5next_hc_mix_bf16" = { compute = "cuda_core" }
@@ -2080,6 +2081,9 @@ kernel_compute."glm5next_mhc_tok::glm5next_hc_post_pre_norm_tok4" = { compute = 
 # 2026-10-10: The one-shot all-reduce's rank-order sum (bf16_add_rank_sum's arithmetic) fused
 # ahead of hc_post (opt-in METRALE_GLM_AR_FUSED_POST); the post-mix arithmetic is hc_post's.
 kernel_compute."glm5next_hc_post_sum::glm5next_hc_post_rank_sum" = { compute = "cuda_core" }
+# 2026-10-15: glm5next_hc_post_rank_sum with eight columns per thread in 16-byte accesses and the
+# summed-row store optional (opt-in METRALE_GLM_MHC_POST_VEC, SP-mHC); every expression in order.
+kernel_compute."glm5next_hc_post_sum::glm5next_hc_post_rank_sum_vec8" = { compute = "cuda_core" }
 rows = [1, 256]
 pipeline."linear:hc_mix" = { in = ["f32"], act = "f32", weight = "bf16->f32", mma = "f32*f32", accumulate = "f32", scale = "none", out = ["f32"] }
 pipeline.hc_pre = { in = ["f32", "f32"], compute = "f32", out = ["bf16", "f32", "f32"] }
