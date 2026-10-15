@@ -2084,7 +2084,7 @@ lkb_effect = "glm5next_moe_combine[_indexed]_vec8 in glm5next_ffn.cu: the scalar
 parity_tier_kept = "bit-identical"
 per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
 verdict = "held"
-verdict_reason = "byte gate (glm5next_c1_fuse_microtest, C1_FUSE_ONLY=combine_vec8) and timing pending; the 32k cold TTFT A/B is the lead's"
+verdict_reason = "2026-10-15 single-GPU gate (glm5next_c1_fuse_microtest, C1_FUSE_ONLY=combine_vec8, two runs): byte-identical to the scalar combine at 1/16/17/287/341/1036/8192/8208 rows in slot and expert-sorted order at four grids; the slot-swap control fires at every row count. Graph-replayed median of 7, us per indexed launch: 8192 rows about 3280 (one block per row) and 3115-3135 (split grid) -> 3025-3045; 8208 rows about 3275 and 3097-3173 -> 2935-2970; 1 row 1.4 -> 2.2, hence the 1024-row floor. Held until the 32k cold TTFT A/B"
 failure_mode = ""
 caught_by = ""
 time_lost_hours = 0
@@ -2092,4 +2092,4 @@ would_catch_earlier = ""
 effort_hours = 2.0
 transferability = "any BF16 weighted gather-sum whose rows are a multiple of eight elements and 16-byte aligned"
 links = { pr = "", commit = "", evidence = "glm5next_c1_fuse_microtest" }
-notes = "Refused where it cannot run (kernel absent, hidden not a multiple of 8, unaligned buffer); the serve log line 'GLM MoE: combine_vec8 kernels launched' proves a launch."
+notes = "Only combines of COMBINE_VEC8_MIN_ROWS (1024) rows or more take it; decode and short prefills keep the scalar kernel. Refused where it cannot run (kernel absent, hidden not a multiple of 8, unaligned buffer); the serve log line 'GLM MoE: combine_vec8 kernels launched' proves a launch."

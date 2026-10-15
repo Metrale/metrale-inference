@@ -11,8 +11,8 @@ use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
 use metrale_gpu_runtime::gpu::{GpuBackend, KernelHandle};
 
 use super::{
-    COMBINE_VEC8_MAX_K, ROUTER_RANK_MAX_EXPERTS, combine_blocks_per_row, combine_launch,
-    combine_with, topk_launch,
+    COMBINE_VEC8_MAX_K, COMBINE_VEC8_MIN_ROWS, ROUTER_RANK_MAX_EXPERTS, combine_blocks_per_row,
+    combine_launch, combine_with, topk_launch, vec8_for,
 };
 use crate::glm5next_mlp::forward::Glm5NextMlpWorkspace;
 use crate::glm5next_mlp::{Glm5NextMlpConfig, Glm5NextMlpKernels};
@@ -197,4 +197,14 @@ fn vec8_launch_passes_the_scalar_arguments() {
         assert_eq!(base.args, vec.args);
         assert_eq!(base.args.len(), if indexed { 7 } else { 6 });
     }
+}
+
+/// 2026-10-15: The `_vec8` kernel takes only combines of [`COMBINE_VEC8_MIN_ROWS`] rows or more,
+/// and never with the lever off.
+#[test]
+fn vec8_only_from_the_row_floor() {
+    let floor = COMBINE_VEC8_MIN_ROWS;
+    assert!(!vec8_for(true, 1) && !vec8_for(true, 16) && !vec8_for(true, floor - 1));
+    assert!(vec8_for(true, floor) && vec8_for(true, 8192));
+    assert!(!vec8_for(false, floor) && !vec8_for(false, 8192));
 }

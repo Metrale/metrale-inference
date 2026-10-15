@@ -13,7 +13,7 @@
 //!   expressions in the same order whatever the grid.
 //! - 2026-10-14: `METRALE_GLM_MOE_COMBINE_VEC8=1` swaps in the `_vec8` combine, eight elements
 //!   per thread with the same per-element expressions (`glm5next_ffn.cu`); it errors where it
-//!   cannot run.
+//!   cannot run. 2026-10-15: only at [`COMBINE_VEC8_MIN_ROWS`] rows or more.
 
 use anyhow::{Result, bail};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
@@ -92,6 +92,18 @@ pub(super) fn router_topk(
 /// (`GLM_COMBINE_VEC8_MAX_K` in `glm5next_ffn.cu`): one 16-byte register per slot.
 pub const COMBINE_VEC8_MAX_K: usize = 16;
 
+/// 2026-10-15: The fewest rows a combine takes the `_vec8` kernel at. Measured on GB10 (graph
+/// replay, median of 7, hidden 4096, top 8): 0.2 to 0.3 ms per launch under the one-block-per-row
+/// scalar grid at 8192 rows, about even at 287 to 1036 rows, and slower at decode rows (1.4 ->
+/// 2.2 us at one row), so decode and short prefills keep the scalar kernel. Same bytes either way.
+pub const COMBINE_VEC8_MIN_ROWS: usize = 1024;
+
+/// 2026-10-15: Whether a `rows`-row combine runs the `_vec8` kernel: the lever on and at least
+/// [`COMBINE_VEC8_MIN_ROWS`] rows.
+pub(super) fn vec8_for(on: bool, rows: usize) -> bool {
+    on && rows >= COMBINE_VEC8_MIN_ROWS
+}
+
 /// 2026-10-14: The combine kernel of one launch and its blocks per row. Off (`vec8` false), the
 /// scalar kernel at [`combine_blocks_per_row`]; on, the `_vec8` twin at one thread per eight
 /// elements of `hidden` (`split` is then moot: the grid always spreads a row). A `vec8` that
@@ -159,7 +171,7 @@ pub(super) fn combine(
 ) -> Result<()> {
     let levers = (
         crate::glm5next_layer::moe_combine_split(),
-        crate::glm5next_layer::moe_combine_vec8(),
+        vec8_for(crate::glm5next_layer::moe_combine_vec8(), rows),
     );
     combine_with(gpu, k, cfg, ws, out, rows, indexed, levers, stream)
 }
