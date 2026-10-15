@@ -278,8 +278,10 @@ __device__ __forceinline__ void dsa_topk_pools_body(
 // dsa_expand_selection in dsa_indexer.cu). 2026-10-09: with SLOTS_FROM_GEOM the pools' token
 // ids are recomputed (dsa_pool_slot) instead of read from the pool_indices
 // dsa_kpool_compress stored, which are the same values; pool_indices is then not read.
-// Every thread of the block must call it.
-template <bool SLOTS_FROM_GEOM>
+// Every thread of the block must call it. 2026-10-15: with FOLDED the selected pools were
+// already folded (dsa_sel_fold in dsa_sel_fold.cu: -1 wherever the candidacy test below fails),
+// so a pool is taken iff p >= 0 and valid_cand is not read.
+template <bool SLOTS_FROM_GEOM, bool FOLDED = false>
 __device__ __forceinline__ void dsa_expand_selection_body(
     const int* __restrict__ selected,
     const int* __restrict__ pool_indices,
@@ -323,7 +325,7 @@ __device__ __forceinline__ void dsa_expand_selection_body(
 
     for (unsigned int j = tid; j < row_select_k; j += blockDim.x) {
         int p = selected[(size_t)r * select_k + j];
-        bool ok = (p >= 0) && (valid_cand[(size_t)r * P + p] != 0);
+        bool ok = (p >= 0) && (FOLDED || valid_cand[(size_t)r * P + p] != 0);
         for (unsigned int s = 0; s < KP; ++s) {
             unsigned int w = j * KP + s;
             if (w < width) {
