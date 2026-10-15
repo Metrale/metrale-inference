@@ -1094,11 +1094,72 @@ pub const PROMOTION_CANDIDATES: &[GateCoverage] = &[
         id: "bfcl-subset-mini-nemotron-super",
         excludes: BFCL_EXCLUDES,
     },
+    // 2026-10-15: GLM-5.3-Flash's gates, one id per (mode, prompt, served context) and one for the
+    // agentic task: the TTFT and agentic drivers under their own ids, so each excludes what its
+    // driver's gates do (benchmarks/ttft/glm.rs, benchmarks/agentic/descriptors.rs).
+    GateCoverage {
+        id: "ttft-cold-glm-64k",
+        excludes: TTFT_EXCLUDES,
+    },
+    GateCoverage {
+        id: "ttft-cold-glm-256k",
+        excludes: TTFT_EXCLUDES,
+    },
+    GateCoverage {
+        id: "ttft-cold-glm-512k",
+        excludes: TTFT_EXCLUDES,
+    },
+    GateCoverage {
+        id: "ttft-warm-glm-64k",
+        excludes: TTFT_EXCLUDES,
+    },
+    GateCoverage {
+        id: "ttft-warm-glm-256k",
+        excludes: TTFT_EXCLUDES,
+    },
+    GateCoverage {
+        id: "ttft-warm-glm-512k",
+        excludes: TTFT_EXCLUDES,
+    },
+    GateCoverage {
+        id: "high-isl-ttft-cold-glm-64k",
+        excludes: TTFT_EXCLUDES,
+    },
+    GateCoverage {
+        id: "high-isl-ttft-cold-glm-256k",
+        excludes: TTFT_EXCLUDES,
+    },
+    GateCoverage {
+        id: "high-isl-ttft-cold-glm-512k",
+        excludes: TTFT_EXCLUDES,
+    },
+    GateCoverage {
+        id: "high-isl-ttft-warm-glm-64k",
+        excludes: TTFT_EXCLUDES,
+    },
+    GateCoverage {
+        id: "high-isl-ttft-warm-glm-256k",
+        excludes: TTFT_EXCLUDES,
+    },
+    GateCoverage {
+        id: "high-isl-ttft-warm-glm-512k",
+        excludes: TTFT_EXCLUDES,
+    },
+    GateCoverage {
+        id: "agentic-webserver-glm",
+        excludes: AGENTIC_EXCLUDES,
+    },
 ];
+
+/// 2026-10-15: Why the GLM-5.3-Flash gates are not required yet.
+const GLM_EXCUSAL: &str = "not required YET: a promotion candidate (see PROMOTION_CANDIDATES), a \
+     GLM-5.3-Flash gate. Its bounds are measured, but the model serves across three nodes and no \
+     committed recipe serves it yet, so the gate cannot start its own server; it becomes \
+     required once a recipe lands and a certification campaign records it";
 
 /// 2026-09-26: Registered benchmarks that are not required gates, each with the reason
 /// (`every_excusal_names_a_real_benchmark_and_a_reason`).
-pub const NOT_REQUIRED: [(&str, &str); 13] = [
+pub const NOT_REQUIRED: [(&str, &str); 26] = [
     (
         "quick-speed-bench",
         "a single-user speed probe with no thresholds and no baseline — a MEASUREMENT tool, \
@@ -1175,6 +1236,19 @@ pub const NOT_REQUIRED: [(&str, &str); 13] = [
          discharge is worse than no row. Promote only after the dataset ships and a \
          calibration run sizes a <2 h draw",
     ),
+    ("ttft-cold-glm-64k", GLM_EXCUSAL),
+    ("ttft-cold-glm-256k", GLM_EXCUSAL),
+    ("ttft-cold-glm-512k", GLM_EXCUSAL),
+    ("ttft-warm-glm-64k", GLM_EXCUSAL),
+    ("ttft-warm-glm-256k", GLM_EXCUSAL),
+    ("ttft-warm-glm-512k", GLM_EXCUSAL),
+    ("high-isl-ttft-cold-glm-64k", GLM_EXCUSAL),
+    ("high-isl-ttft-cold-glm-256k", GLM_EXCUSAL),
+    ("high-isl-ttft-cold-glm-512k", GLM_EXCUSAL),
+    ("high-isl-ttft-warm-glm-64k", GLM_EXCUSAL),
+    ("high-isl-ttft-warm-glm-256k", GLM_EXCUSAL),
+    ("high-isl-ttft-warm-glm-512k", GLM_EXCUSAL),
+    ("agentic-webserver-glm", GLM_EXCUSAL),
 ];
 
 /// 2026-09-26: True when `path` is `entry` or lies beneath it, compared per component:

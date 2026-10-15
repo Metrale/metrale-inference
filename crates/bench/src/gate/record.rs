@@ -297,7 +297,9 @@ impl GateRecord {
         for (k, v) in &serve_overrides {
             params.push(("--serve-override".to_string(), format!("{k}={v}")));
         }
-        if record.benchmark_id == "agentic-webserver" {
+        // 2026-10-15: Every benchmark that asks before it starts, not one id by name: a model's
+        // own copy of one (`agentic-webserver-glm`) asks too.
+        if crate::registry::find(&record.benchmark_id).is_some_and(|d| d.needs_confirmation) {
             params.push(("--yes".to_string(), String::new()));
         }
         let mut command: Vec<String> = vec![

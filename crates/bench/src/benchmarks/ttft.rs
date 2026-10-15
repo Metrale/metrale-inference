@@ -35,10 +35,17 @@ use crate::plugin::{Plugin, PluginHandle};
 use crate::result::{BenchmarkResult, Cell, CellStyle, Column, LogLine, ResultTable, RunStatus};
 
 mod descriptors;
+mod glm;
 mod long_prompt;
+mod per_length;
 pub use descriptors::{
     COLD_DESCRIPTOR, COLD_METADATA, HIGH_ISL_COLD_DESCRIPTOR, HIGH_ISL_COLD_MOE_DESCRIPTOR,
     HIGH_ISL_WARM_DESCRIPTOR, HIGH_ISL_WARM_MOE_DESCRIPTOR, WARM_DESCRIPTOR, WARM_METADATA,
+};
+pub use glm::{
+    GLM_COLD_64K, GLM_COLD_256K, GLM_COLD_512K, GLM_HIGH_ISL_COLD_64K, GLM_HIGH_ISL_COLD_256K,
+    GLM_HIGH_ISL_COLD_512K, GLM_HIGH_ISL_WARM_64K, GLM_HIGH_ISL_WARM_256K, GLM_HIGH_ISL_WARM_512K,
+    GLM_WARM_64K, GLM_WARM_256K, GLM_WARM_512K,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -121,6 +128,16 @@ impl TtftGate {
 
     pub fn new(mode: Mode) -> Self {
         Self::build(mode, mode.descriptor(), mode.metadata(), false)
+    }
+
+    /// 2026-10-15: The synthetic driver under another gate id, for a model whose bounds must be
+    /// read against its own history only (`glm.rs`).
+    pub(crate) fn synthetic(
+        mode: Mode,
+        descriptor: &'static BenchmarkDescriptor,
+        metadata: &'static PluginMetadata,
+    ) -> Self {
+        Self::build(mode, descriptor, metadata, false)
     }
 
     fn build(
@@ -413,6 +430,11 @@ impl Benchmark for TtftGate {
             // it was measured at rather than the size the gate asked for.
             if let Some(n) = self.observed_prompt_tokens() {
                 metrics.insert("prompt_tokens".to_string(), n as f64);
+            }
+            // 2026-10-15: One median per requested length; the fixture gates have one length.
+            if !self.fixture {
+                let samples: Vec<Vec<f64>> = self.rows.iter().map(|r| r.samples.clone()).collect();
+                metrics.extend(per_length::per_length_medians(&self.lengths, &samples));
             }
             if self.should_store(&verdict) {
                 let target = handle.target();

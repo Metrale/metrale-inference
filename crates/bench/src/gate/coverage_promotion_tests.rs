@@ -8,6 +8,22 @@
 
 use super::coverage;
 
+/// 2026-10-15: GLM-5.3-Flash's TTFT gate ids, in `PROMOTION_CANDIDATES` order.
+const GLM_TTFT: [&str; 12] = [
+    "ttft-cold-glm-64k",
+    "ttft-cold-glm-256k",
+    "ttft-cold-glm-512k",
+    "ttft-warm-glm-64k",
+    "ttft-warm-glm-256k",
+    "ttft-warm-glm-512k",
+    "high-isl-ttft-cold-glm-64k",
+    "high-isl-ttft-cold-glm-256k",
+    "high-isl-ttft-cold-glm-512k",
+    "high-isl-ttft-warm-glm-64k",
+    "high-isl-ttft-warm-glm-256k",
+    "high-isl-ttft-warm-glm-512k",
+];
+
 /// 2026-09-26: A candidate that is not a registered benchmark would owe a debt that no
 /// run can discharge.
 #[test]
@@ -26,7 +42,20 @@ fn every_promotion_candidate_is_a_registered_benchmark() {
             "kat-equality-gate-nemotron-nano",
             "kat-equality-gate-nemotron-super",
             "bfcl-subset-mini-nemotron-nano",
-            "bfcl-subset-mini-nemotron-super"
+            "bfcl-subset-mini-nemotron-super",
+            GLM_TTFT[0],
+            GLM_TTFT[1],
+            GLM_TTFT[2],
+            GLM_TTFT[3],
+            GLM_TTFT[4],
+            GLM_TTFT[5],
+            GLM_TTFT[6],
+            GLM_TTFT[7],
+            GLM_TTFT[8],
+            GLM_TTFT[9],
+            GLM_TTFT[10],
+            GLM_TTFT[11],
+            "agentic-webserver-glm",
         ],
         "promotion tracking must not pass vacuously or gain an unreviewed candidate"
     );
@@ -86,7 +115,20 @@ fn the_contamination_candidate_accrues_debt_for_engine_changes() {
             "kat-equality-gate-nemotron-nano",
             "kat-equality-gate-nemotron-super",
             "bfcl-subset-mini-nemotron-nano",
-            "bfcl-subset-mini-nemotron-super"
+            "bfcl-subset-mini-nemotron-super",
+            GLM_TTFT[0],
+            GLM_TTFT[1],
+            GLM_TTFT[2],
+            GLM_TTFT[3],
+            GLM_TTFT[4],
+            GLM_TTFT[5],
+            GLM_TTFT[6],
+            GLM_TTFT[7],
+            GLM_TTFT[8],
+            GLM_TTFT[9],
+            GLM_TTFT[10],
+            GLM_TTFT[11],
+            "agentic-webserver-glm",
         ],
         "a scheduler change is exactly the kind of edit that can cross-wire \
          concurrent requests, so the contamination candidate is owed — and the \
@@ -109,8 +151,10 @@ fn the_contamination_candidate_accrues_debt_for_engine_changes() {
 fn the_candidate_is_owed_for_its_own_driver_and_not_for_other_drivers() {
     let owed = coverage::promotion_debt(["crates/bench/src/benchmarks/contamination/driver.rs"]);
     assert_eq!(owed, ["cross-contamination"]);
-    assert!(
-        coverage::promotion_debt(["crates/bench/src/benchmarks/ttft/descriptors.rs"]).is_empty(),
+    // 2026-10-15: The TTFT driver is GLM's TTFT gates' own driver and no other candidate's.
+    assert_eq!(
+        coverage::promotion_debt(["crates/bench/src/benchmarks/ttft/descriptors.rs"]),
+        GLM_TTFT,
         "another benchmark's driver cannot change what this detector measures"
     );
 }

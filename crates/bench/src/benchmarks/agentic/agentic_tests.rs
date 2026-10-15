@@ -31,7 +31,7 @@ fn it_requires_confirmation_because_it_runs_shell() {
 
 #[test]
 fn defaults_are_the_gate_a_tier() {
-    let b = AgenticWebserver::default();
+    let b = AgenticWebserver::new(&DESCRIPTOR);
     let v = ParamValues::defaults(&b.parameters());
     assert_eq!(v.usize("iterations").unwrap(), 10);
     assert_eq!(v.usize("max_turns").unwrap(), 40);
@@ -62,7 +62,7 @@ pub(super) fn with_budgets(
         wall_budget_s: budget,
         s_per_turn_budget: s_per_turn,
         rows,
-        ..Default::default()
+        ..AgenticWebserver::new(&DESCRIPTOR)
     }
 }
 
@@ -411,4 +411,15 @@ fn the_record_carries_turns_so_a_wall_anomaly_is_diagnosable_after_the_fact() {
     assert_eq!(m["sum_wall_s"], 774.0);
     assert_eq!(m["sum_turns"], 113.0);
     assert!((m["s_per_turn"] - 774.0 / 113.0).abs() < 1e-9);
+}
+
+/// 2026-10-15: An instance built for the GLM id reports that id, so its runs, records and
+/// bounds are GLM's own, and it confirms before running shell like the flagship's.
+#[test]
+fn the_glm_instance_runs_under_its_own_id() {
+    let glm = GLM_DESCRIPTOR.build();
+    assert_eq!(glm.descriptor().id, "agentic-webserver-glm");
+    assert_eq!(DESCRIPTOR.build().descriptor().id, "agentic-webserver");
+    const { assert!(GLM_DESCRIPTOR.needs_confirmation) };
+    assert_eq!(GLM_DESCRIPTOR.threshold_params, DESCRIPTOR.threshold_params);
 }

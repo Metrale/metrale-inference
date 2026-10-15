@@ -88,6 +88,13 @@ pub struct BenchEntry {
     /// 2026-09-26: Thresholds. Absent exactly when `status` is `unmeasured`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metrics: Option<BTreeMap<String, super::record::Bound>>,
+    /// 2026-10-15: A reference value per declared metric, e.g. another engine's number on the same
+    /// cell (`targets = { median_ms_256 = 488.0 }`). Informational: no verdict reads it,
+    /// so a bound can be a regression ratchet while a known loss against the reference is
+    /// still on the page. [`load_all`] refuses a key that names no declared metric and a
+    /// value that is not finite. Empty and omitted is the normal case.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub targets: BTreeMap<String, f64>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -176,6 +183,7 @@ pub fn load_all(root: &Path) -> Result<Vec<(taxon::Target, BenchEntry)>> {
             )
             .with_context(|| path.display().to_string())?;
             validate_noise(&path, &entry)?;
+            validate_targets(&path, &entry)?;
             out.push((
                 taxon::Target {
                     hardware: hardware.clone(),
@@ -360,6 +368,32 @@ fn validate_noise(path: &std::path::Path, entry: &BenchEntry) -> Result<()> {
                 entry.gate,
                 entry.checkpoint,
                 MAX_NOISE_FRACTION * 100.0,
+            );
+        }
+    }
+    Ok(())
+}
+
+/// 2026-10-15: Each `targets` key must name a declared metric and each value must be finite: a
+/// reference on a metric the entry does not bound, or a NaN, reads like a bar while meaning
+/// nothing.
+fn validate_targets(path: &std::path::Path, entry: &BenchEntry) -> Result<()> {
+    for (name, value) in &entry.targets {
+        let declared = entry.metrics.as_ref().is_some_and(|m| m.contains_key(name));
+        if !declared {
+            bail!(
+                "{}: {} / {} [benchmarks.targets] names {name}, which is not a declared metric",
+                path.display(),
+                entry.gate,
+                entry.checkpoint,
+            );
+        }
+        if !value.is_finite() {
+            bail!(
+                "{}: {} / {} target {name} must be finite, got {value}",
+                path.display(),
+                entry.gate,
+                entry.checkpoint,
             );
         }
     }

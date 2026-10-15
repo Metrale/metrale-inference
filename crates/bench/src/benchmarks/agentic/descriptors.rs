@@ -53,5 +53,29 @@ pub const DESCRIPTOR: BenchmarkDescriptor = BenchmarkDescriptor {
     // counts, but `wall_budget_s` and `s_per_turn_budget` bound speed, so the
     // benchmark is classed as Speed.
     sensitivity: Sensitivity::Speed,
-    ctor: || Box::new(AgenticWebserver::default()),
+    ctor: || Box::new(AgenticWebserver::new(&DESCRIPTOR)),
+};
+
+/// 2026-10-15: `agentic-webserver` on GLM-5.3-Flash under its own id, so one gate id keeps one
+/// default subject per hardware and GLM's bounds are read against its own records only. The
+/// driver, prompt, scoring and threshold couplings are the flagship's.
+pub const GLM_DESCRIPTOR: BenchmarkDescriptor = BenchmarkDescriptor {
+    id: "agentic-webserver-glm",
+    name: "Agentic Webserver Test (GLM)",
+    summary: SUMMARY,
+    detail: "agentic-webserver on GLM-5.3-Flash served at 512k context: the same task, sandbox, \
+             scoring and wall-time bounds, recorded under its own id. RUNS MODEL-AUTHORED SHELL \
+             inside the sandbox directory.",
+    duration_hint: "~1 min per iteration",
+    expected_secs: 480,
+    updated: "2026-10-15",
+    needs_confirmation: true,
+    intended_for: Some(crate::benchmark::ModelExpectation {
+        families: &["glm-5.3-flash"],
+        note: "agentic-webserver-glm is defined on GLM-5.3-Flash; agentic-webserver measures \
+               the Qwen subjects.",
+    }),
+    threshold_params: DESCRIPTOR.threshold_params,
+    sensitivity: Sensitivity::Speed,
+    ctor: || Box::new(AgenticWebserver::new(&GLM_DESCRIPTOR)),
 };
