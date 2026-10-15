@@ -6,7 +6,8 @@
 //! and `content_sha256`), `config` (`embedding.toml`), `embed` (the embedding
 //! port and the hashed space), `rerank` (the reranker port), `port` (what
 //! metprof hands the sink) and `derive` (a profile run and its kernel
-//! samples, edges included).
+//! samples, edges included); on the host also `spool`, `lease`, `lattice`,
+//! `export` and `sink` (the write path of DESIGN §3.1) over `atomic`.
 
 pub mod canon;
 pub mod config;
@@ -17,5 +18,19 @@ pub mod ids;
 pub mod port;
 pub mod rerank;
 pub mod schema;
+
+// The adapters: files, the lease and the durable LatticeDB store (host only).
+#[cfg(not(target_arch = "wasm32"))]
+pub mod atomic;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod export;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod lattice;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod lease;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod sink;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod spool;
 
 pub use error::{Error, Result};

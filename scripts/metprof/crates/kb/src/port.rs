@@ -89,6 +89,8 @@ pub struct Recorded {
     pub spool_path: String,
     /// True when the run also reached the durable store and the export.
     pub materialized: bool,
+    /// Why it did not (None exactly when `materialized`).
+    pub reason: Option<String>,
 }
 
 /// The KB sink port. A run is spooled before anything else; an error means
