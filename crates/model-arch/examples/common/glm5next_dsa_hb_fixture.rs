@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-09: Inputs and the f64 reference for the head-batched DSA decode bench
-//! (`glm5next_dsa_hb_bench`, `glm5next_dsa_prefill_pipe_gate`): an FP8 latent pool past L2, and per shape [`VARIANTS`] block
-//! tables and selections laid out as `dsa_expand_selection` lays them.
+//! (`glm5next_dsa_hb_bench`, the prefill twin gates): an FP8 latent pool past L2, and per
+//! shape [`VARIANTS`] block tables and selections laid out as `dsa_expand_selection` lays them.
 //!
 //! Owner: model-arch examples (GLM-5.3).
 //! Invariants: none beyond the types.
@@ -286,28 +286,24 @@ pub fn worst_ulp(c: &Case, pool: &Pool, out: &[f32], rows: impl IntoIterator<Ite
     worst
 }
 
-/// 2026-10-12: One launch of a head-batched entry (`glm5next_dsa_mla_decode_hb_fp8`, its P-hi
-/// twin, or 2026-10-14 `glm5next_dsa_mla_prefill_pipe_phi` with its `smem` dynamic bytes) over
-/// `v`, then the merge from two splits up. 2026-10-14: moved here from glm5next_dsa_hb_bench.rs.
+/// 2026-10-14: A head-batched entry's launch over `v` with its common arguments, not yet
+/// launched: the caller appends what its entry takes beyond [`launch_hb_entry`]'s.
 #[allow(clippy::too_many_arguments)]
-pub fn launch_hb_entry(
-    g: &dyn GpuBackend,
+pub fn hb_launch<'a>(
+    g: &'a dyn GpuBackend,
     entry: KernelHandle,
+    grid: [u32; 3],
+    block: u32,
     smem: u32,
-    merge: KernelHandle,
     cache: DevicePtr,
     v: View,
     out: DevicePtr,
     ws: (DevicePtr, DevicePtr),
     splits: usize,
-) -> Result<()> {
+) -> KernelLaunch<'a> {
     KernelLaunch::new(g, entry)
-        .grid([
-            splits as u32,
-            v.rows as u32,
-            v.heads.div_ceil(HB_HEADS) as u32,
-        ])
-        .block([256, 1, 1])
+        .grid(grid)
+        .block([block, 1, 1])
         .shared_mem(smem)
         .arg_ptr(v.q)
         .arg_ptr(cache)
@@ -326,7 +322,31 @@ pub fn launch_hb_entry(
         .arg_f32(1.0)
         .arg_u64((BLOCK * KVL) as u64)
         .arg_u32(splits as u32)
-        .launch(0)?;
+}
+
+/// 2026-10-12: One launch of a head-batched entry (`glm5next_dsa_mla_decode_hb_fp8`, its P-hi
+/// twin, or 2026-10-14 `glm5next_dsa_mla_prefill_pipe_phi` with its `smem` dynamic bytes) over
+/// `v`, then the merge from two splits up. 2026-10-14: moved here from glm5next_dsa_hb_bench.rs;
+/// takes the entry's `block` (the tensor-core twin runs 384 threads).
+#[allow(clippy::too_many_arguments)]
+pub fn launch_hb_entry(
+    g: &dyn GpuBackend,
+    entry: KernelHandle,
+    block: u32,
+    smem: u32,
+    merge: KernelHandle,
+    cache: DevicePtr,
+    v: View,
+    out: DevicePtr,
+    ws: (DevicePtr, DevicePtr),
+    splits: usize,
+) -> Result<()> {
+    let grid = [
+        splits as u32,
+        v.rows as u32,
+        v.heads.div_ceil(HB_HEADS) as u32,
+    ];
+    hb_launch(g, entry, grid, block, smem, cache, v, out, ws, splits).launch(0)?;
     if splits > 1 {
         KernelLaunch::new(g, merge)
             .grid([v.heads as u32, v.rows as u32, 1])
