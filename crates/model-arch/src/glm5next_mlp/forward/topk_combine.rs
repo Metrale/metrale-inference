@@ -131,6 +131,11 @@ pub(super) fn combine_launch(
             p.0
         );
     }
+    // 2026-10-14: The serve log's proof that the lever reached a launch (lever_readback).
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        tracing::info!("GLM MoE: combine_vec8 kernels launched (METRALE_GLM_MOE_COMBINE_VEC8=1)")
+    });
     Ok((
         func,
         (cfg.hidden / 8).div_ceil(ACT_BLOCK as usize).max(1) as u32,
