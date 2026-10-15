@@ -99,8 +99,8 @@ impl Glm5NextKdaLayer {
             || crate::glm5next_layer::levers::kda_chunk_prefill()
         {
             bail!(
-                "--prefill-tail-mode merge: not beside METRALE_GLM_KDA_CHUNK_SCAN or \
-                 METRALE_GLM_KDA_CHUNK_PREFILL"
+                "--prefill-tail-mode merge (the default): not beside METRALE_GLM_KDA_CHUNK_SCAN \
+                 or METRALE_GLM_KDA_CHUNK_PREFILL; pass --prefill-tail-mode split beside them"
             );
         }
         let chunk64_min = super::chunk64::kda_chunk64_min_rows()?;

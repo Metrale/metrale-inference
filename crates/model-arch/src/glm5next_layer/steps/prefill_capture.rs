@@ -185,8 +185,8 @@ impl Glm5NextLayer {
         }
         if merge && (piece.is_some() || pipeline) {
             bail!(
-                "GLM layer {}: --prefill-tail-mode merge runs neither {} nor \
-                 METRALE_GLM_SP_PIPELINE=1",
+                "GLM layer {}: --prefill-tail-mode merge (the default) runs neither {} nor \
+                 METRALE_GLM_SP_PIPELINE=1; pass --prefill-tail-mode split beside them",
                 self.layer_idx,
                 crate::glm5next_prefill_piece::PIECE_ROWS_ENV
             );

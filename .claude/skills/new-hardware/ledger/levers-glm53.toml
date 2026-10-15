@@ -1901,3 +1901,27 @@ effort_hours = 0.0
 transferability = "GLM MTP serves; re-test only with a C8 instrument whose spread is below the claimed gain"
 links = { pr = "", commit = "", evidence = "/workspace/claude-state/glm/logs/chainK_kinv-1014T1331.log; /workspace/claude-state/glm/STATUS.md 2026-10-14T13:45Z" }
 notes = "The table default (on) differs from the recipe (0); the recipe is fully explicit, so the serve runs 0."
+
+[[lever]]
+id = "gb10x3-glm53-prefill-tail-merge-default"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "--prefill-tail-mode merge becomes the default (af7c751e4 added it, default split); split stays selectable by the flag"
+symptom = "a cold prompt whose prefix-cache capture point falls inside its last sub-chunk ran its tail rows as a separate segment, reading every layer's weights a second time for up to one block of rows"
+diagnosis_tool = "bench"
+root_cause_class = "redundant-work"
+lever_type = "config"
+lkb_effect = "no kernel change"
+parity_tier_kept = "accuracy-gated (class N): disclosure PREFILL-TAILMERGE-1. A cold request is deterministic; the captured state equals split's; a warm request's replayed tail rows may differ from the cold pass's in low bits. Not bit-identical to split."
+per_rung = [{ rung = "ttft-cold-c256", tok_s_pct = 0, j_tok_pct = 0.0, n = 6 }, { rung = "ttft-cold-c1k", tok_s_pct = 0, j_tok_pct = 0.0, n = 6 }, { rung = "ttft-cold-c4k", tok_s_pct = 0, j_tok_pct = 0.0, n = 6 }, { rung = "ttft-cold-c32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 6 }]
+verdict = "kept"
+verdict_reason = "owner ruling 2026-10-14 ~23:25Z (merge becomes the default once a claim-grade 512k merge run passes); the 512k run (CL2MR, K524288-kinv-1014T2333, 3/3 pre-rep cool reads ok) met every condition, lead FLIP GO 2026-10-15 ~00:15Z. Server TTFT median, merge minus split, 64k: -48.6 / -63.8 / -66.0 / -46.4 ms at c256 / c1k / c4k / c32k (405.1/633.7/1585.1/11835.4 vs 453.7/697.5/1651.1/11881.8, n=6 cold per cell). Teacher-forced KL 0.0285 (merge, 64k) vs 0.03122 (split, the pinned baseline, bit-equal). agentic-webserver 10/10 webserver_ok and 10/10 followed_directions under merge at 256k (4.751 s/turn) and under split at 64k (4.659 s/turn). 512k merge: 10/10 webserver_ok, 10/10 followed_directions at 4.186 s/turn; server TTFT medians 398.4 / 630.1 / 1566.7 / 11731.5 ms at c256 / c1k / c4k / c32k (128k cold about 52.1 s, 256k about 120.7 s). Numerics on the amended criteria (the strict NUMERICS gate compares tf to the split pin, so it reports FAIL for merge by construction): dec1 and dec4 PASS on the 64k, 256k and 512k merge runs; teacher-forced tf bit-equal across MSL (sha256[:16] of canonical JSON over run[\"tf\"] = 2ab5bf5cc0e04e2a at 64k, 256k and 512k; split 3b2bad06482c1094); tf KL 0.0285 / top1 0.95841 vs split 0.03122 / 0.96014, and 0.04269 vs split 0.04628 against the declared anchor. lever readback \"prefill tail mode: merge\" PASS on all 3 ranks."
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0.0
+would_catch_earlier = ""
+effort_hours = 0.5
+transferability = "hybrid SSM/attention prefills that capture recurrent state mid-pass for a prefix cache"
+links = { pr = "", commit = "", evidence = "/workspace/claude-state/glm/ttft/split_K65536-kinv-1014T2104.txt vs split_K65536-kinv-1014T2254.txt; acc/run_K65536-kinv-1014T2104.json and run_K65536-kinv-1014T2254.json (KL, STATUS.md 2026-10-14 CL2/CL2S table); acc/agentic_K262144-kinv-1014T2141.json, acc/agentic_K65536-kinv-1014T2254.json; 512k: ttft/split_K524288-kinv-1014T2333.txt, acc/run_K524288-kinv-1014T2333.json, acc/agentic_K524288-kinv-1014T2333.json, logs/chainK_acc_K524288-kinv-1014T2333.txt, logs/chainK_kinv-1014T2333.log; readbacks kinv/readback_K65536-kinv-1014T2104.txt, kinv/readback_K262144-kinv-1014T2141.txt, kinv/readback_K524288-kinv-1014T2333.txt" }
+notes = "The 64k merge agentic leg failed at setup (HOME unset); 64k agentic is covered by the split control plus the tf bits, which are equal at 64k, 256k and 512k. The boot log and --help carry the disclosure (PrefillTailMode::describe). Merge refuses METRALE_GLM_SP_PIPELINE, METRALE_GLM_PREFILL_PIECE_ROWS, METRALE_GLM_KDA_CHUNK_SCAN and METRALE_GLM_KDA_CHUNK_PREFILL at the first captured prefill; serves that set them pass --prefill-tail-mode split. Option A (a bit-identical tail) stays preferred if it reaches equal speed."

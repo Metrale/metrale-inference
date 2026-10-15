@@ -40,7 +40,7 @@ fn an_empty_command_line_publishes_nothing_the_environment_owns() {
             expert_quantization: ExpertQuantization::Fp8,
             dense_quantization: DenseQuantization::Declared,
             dsa_quantization: DsaQuantization::Declared,
-            prefill_tail_mode: PrefillTailMode::Split,
+            prefill_tail_mode: PrefillTailMode::Merge,
             prefill_codispatch: None,
             prefill_varlen: None,
             ssm_tail_midchunk: None,
@@ -255,11 +255,11 @@ fn the_precision_line_discloses_both_tiers() {
     );
 }
 
-/// 2026-10-14: `--prefill-tail-mode merge` reaches the plan and moves nothing else; `split`
+/// 2026-10-14: `--prefill-tail-mode split` reaches the plan and moves nothing else; `merge`
 /// is the default and an unknown value is refused.
 #[test]
 fn the_prefill_tail_mode_reaches_the_plan_alone() {
-    assert_eq!(plan(&[]).prefill_tail_mode, PrefillTailMode::Split);
+    assert_eq!(plan(&[]).prefill_tail_mode, PrefillTailMode::Merge);
     for (value, mode) in [
         ("split", PrefillTailMode::Split),
         ("merge", PrefillTailMode::Merge),
@@ -268,7 +268,7 @@ fn the_prefill_tail_mode_reaches_the_plan_alone() {
         assert_eq!(p.prefill_tail_mode, mode);
         assert_eq!(
             KernelFlagPlan {
-                prefill_tail_mode: PrefillTailMode::Split,
+                prefill_tail_mode: PrefillTailMode::Merge,
                 ..p
             },
             plan(&[])
