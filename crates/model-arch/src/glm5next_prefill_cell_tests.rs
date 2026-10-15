@@ -35,6 +35,66 @@ fn parses_and_refuses() {
     }
 }
 
+/// 2026-10-15: The pipeline lever: unset and `0` are off whatever else is set; `1` is on only
+/// with the grid and SP-mHC, without the SP pipeline and the dump. Negative controls: each
+/// single missing or conflicting lever flips an accepted `1` to its own error.
+#[test]
+fn pipeline_parses_and_refuses() {
+    let ok = (true, true, false, false);
+    let p = |v, (g, m, s, d): (bool, bool, bool, bool)| parse_pipeline(v, g, m, s, d);
+    for others in [ok, (false, false, true, true)] {
+        assert_eq!(p(None, others), Ok(false));
+        assert_eq!(p(Some("0"), others), Ok(false));
+    }
+    assert_eq!(p(Some("1"), ok), Ok(true));
+    for (bad, what) in [
+        (
+            (false, true, false, false),
+            "needs METRALE_GLM_PREFILL_CELL_GRID",
+        ),
+        ((true, false, false, false), "needs METRALE_GLM_SP_MHC=1"),
+        (
+            (true, true, true, false),
+            "METRALE_GLM_SP_PIPELINE=1 cannot both",
+        ),
+        ((true, true, false, true), "METRALE_GLM_LAYER_DUMP"),
+    ] {
+        let e = p(Some("1"), bad).unwrap_err();
+        assert!(e.contains(what), "{bad:?}: {e}");
+    }
+    for v in ["", "2", "on", "true", " 1"] {
+        assert!(p(Some(v), ok).is_err(), "{v:?} accepted");
+    }
+}
+
+/// 2026-10-15: The agreement word: 0 unset; `first` high, `step` low, so grids that differ in
+/// either (or swap them) never agree; a count past 32 bits is refused rather than truncated.
+#[test]
+fn agreement_words_separate_grids() {
+    assert_eq!(agreement_value(None).unwrap(), 0);
+    assert_eq!(agreement_value(Some(GRID)).unwrap(), (8208u64 << 32) | 8192);
+    let swapped = CellGrid {
+        first: 8192,
+        step: 8208,
+    };
+    assert_ne!(
+        agreement_value(Some(swapped)).unwrap(),
+        agreement_value(Some(GRID)).unwrap()
+    );
+    for wide in [
+        CellGrid {
+            first: 1 << 32,
+            step: 8192,
+        },
+        CellGrid {
+            first: 1,
+            step: 1 << 32,
+        },
+    ] {
+        assert!(agreement_value(Some(wide)).is_err(), "{wide:?}");
+    }
+}
+
 /// 2026-10-15: The idle cold path's chunks of a `total`-token prompt: the first `first` tokens
 /// (the idle budget, `max_batch_tokens`), then `budget` each, the last shorter.
 fn chunks(total: usize, first: usize, budget: usize) -> Vec<(usize, usize)> {

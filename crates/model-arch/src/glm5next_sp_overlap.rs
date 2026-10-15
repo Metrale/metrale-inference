@@ -229,9 +229,10 @@ fn streams() -> &'static Mutex<Option<OverlapStreams>> {
 
 /// 2026-10-14: Create the comm stream and events once when this lever or
 /// `METRALE_GLM_SP_PIPELINE` is on (the pipeline's exchanges run on the same stream); a no-op
-/// otherwise. Called from `glm5next_sp_mhc::reserve` at load.
+/// otherwise. Called from `glm5next_sp_mhc::reserve` at load. 2026-10-15: also under the cell
+/// pipeline (`glm5next_sp_pipeline::buffers_wanted`).
 pub fn reserve(gpu: &dyn GpuBackend) -> Result<()> {
-    if !(enabled()? || crate::glm5next_sp_pipeline::enabled()?) {
+    if !(enabled()? || crate::glm5next_sp_pipeline::buffers_wanted()?) {
         return Ok(());
     }
     let mut g = streams().lock().unwrap_or_else(|e| e.into_inner());

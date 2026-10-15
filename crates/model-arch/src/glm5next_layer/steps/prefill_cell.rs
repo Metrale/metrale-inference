@@ -12,6 +12,7 @@
 //!   segment's launches; a DSA layer clamps nothing.
 //! - Each KDA layer owns its own device pointer slot, so no two layers' clamps share a buffer.
 
+use super::forward_sp_pipe::PipeSub;
 use super::prefill_capture::{CapturePoint, capture_points};
 use super::*;
 use crate::glm5next_kda::cut::KdaCut;
@@ -115,6 +116,95 @@ impl Glm5NextLayer {
             });
         }
         Ok(out)
+    }
+
+    /// 2026-10-15: What runs on this layer's mixer state after a segment: the capture at its end
+    /// (point `after`, SSM ordinal `ordinal` of `cap`), then the cell clamp when `clamp_after`.
+    /// The serial loop runs it after the segment, the cell pipeline after the segment's mixer
+    /// (`Prim::AfterMixer`), the last launch before it that touches the state.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::glm5next_layer) fn seg_after(
+        &self,
+        state: &mut dyn LayerState,
+        after: Option<CapturePoint>,
+        clamp_after: bool,
+        ordinal: Option<usize>,
+        cap: Option<&MidchunkCapture<'_>>,
+        gpu: &dyn GpuBackend,
+        stream: u64,
+    ) -> Result<()> {
+        if let (Some(which), Some(idx), Some(c)) = (after, ordinal, cap) {
+            self.capture_kda_state(state, c, which, idx, gpu, stream)?;
+        }
+        if clamp_after {
+            self.cell_clamp(state, gpu, stream)?;
+        }
+        Ok(())
+    }
+
+    /// 2026-10-15: `METRALE_GLM_PREFILL_CELL_PIPELINE=1`: the leading run of `segs` (consecutive,
+    /// rows of the pass from `seq_len_start` at `hidden`, highway slot `slot0`) that each are one
+    /// SP-mHC sub-chunk of at most `rows` off the decode path, pipelined through this layer
+    /// (`steps/forward_sp_pipe.rs`) when it holds two or more. Returns how many segments it ran
+    /// (0: none, the caller runs them serially). Every rank plans the same segment boundaries
+    /// (`glm5next_prefill_cell::plan`; only the clamps differ by rank), so the programs pair.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::glm5next_layer) fn cell_pipeline_run(
+        &self,
+        hidden: DevicePtr,
+        segs: &[LayerSeg],
+        rows: usize,
+        state: &mut dyn LayerState,
+        kv_cache: &mut PagedKvCache,
+        seq_len_start: usize,
+        block_table: &mut Vec<u32>,
+        ctx: &ForwardContext,
+        stream: u64,
+        slot0: usize,
+        ordinal: Option<usize>,
+        cap: Option<&MidchunkCapture<'_>>,
+    ) -> Result<usize> {
+        let mut takes = Vec::with_capacity(segs.len());
+        for (i, g) in segs.iter().enumerate() {
+            let k = g.end - g.start;
+            anyhow::ensure!(
+                i == 0 || segs[i - 1].end == g.start,
+                "GLM layer {}: cell segments are not consecutive",
+                self.layer_idx
+            );
+            if rows < 2 || g.decode != Some(false) || k > rows || !self.sp_takes(ctx, k, true)? {
+                break;
+            }
+            takes.push(true);
+        }
+        let p = crate::glm5next_sp_pipeline::pipelined(&takes);
+        if p == 0 {
+            return Ok(0);
+        }
+        let subs: Vec<PipeSub<'_>> = segs[..p]
+            .iter()
+            .map(|g| PipeSub {
+                k: g.end - g.start,
+                cuts: &g.cuts,
+                after: g.after,
+                clamp_after: g.clamp_after,
+            })
+            .collect();
+        let t = segs[0].start;
+        self.forward_sp_pipeline(
+            hidden.offset(t * self.hidden * 2),
+            &subs,
+            state,
+            kv_cache,
+            seq_len_start + t,
+            block_table,
+            ctx,
+            stream,
+            slot0 + t,
+            ordinal,
+            cap,
+        )?;
+        Ok(p)
     }
 
     /// 2026-10-15: Clamp this KDA layer's recurrent state on `stream`, as the model's

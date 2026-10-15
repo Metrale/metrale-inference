@@ -222,6 +222,12 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
             grid.step
         );
     }
+    // 2026-10-15: The cell pipeline, read here so a bad value or combination fails the load.
+    if metrale_model_arch::glm5next_prefill_cell::cell_pipeline()? {
+        tracing::info!(
+            "GLM prefill cell pipeline: on (a pass's cells pipelined on the SP comm stream)"
+        );
+    }
     if metrale_model_engine::model::ssm_norm_readback()? {
         tracing::info!("GLM SSM norm readback: on (reads h_state before every clamp; kinv only)");
     }

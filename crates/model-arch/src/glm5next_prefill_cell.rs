@@ -84,6 +84,76 @@ pub(crate) fn parse(v: Option<&str>) -> Result<Option<CellGrid>, String> {
     Ok(Some(CellGrid { first, step }))
 }
 
+/// 2026-10-15: The cell pipeline lever's name: `1` runs a pass's consecutive SP-mHC cells through
+/// a layer as the SP pipeline's sub-chunks (`glm5next_sp_pipeline::program`), each cell's
+/// capture and clamp after its mixer, so one cell's exchanges run behind another's compute.
+pub const CELL_PIPELINE_ENV: &str = "METRALE_GLM_PREFILL_CELL_PIPELINE";
+
+/// 2026-10-15: [`CELL_PIPELINE_ENV`], read once: unset or `0` off, `1` on (which needs the grid,
+/// `METRALE_GLM_SP_MHC=1`, no `METRALE_GLM_SP_PIPELINE=1` and no layer dump); else an error.
+pub fn cell_pipeline() -> Result<bool> {
+    static V: OnceLock<Result<bool, String>> = OnceLock::new();
+    V.get_or_init(|| {
+        let grid = cell_grid().map_err(|e| e.to_string())?.is_some();
+        let sp_mhc = crate::glm5next_sp_mhc::enabled().map_err(|e| e.to_string())?;
+        let sp_pipeline = crate::glm5next_sp_pipeline::enabled().map_err(|e| e.to_string())?;
+        let dump = crate::glm5next_layer_dump::config()
+            .map_err(|e| e.to_string())?
+            .is_some();
+        parse_pipeline(
+            std::env::var(CELL_PIPELINE_ENV).ok().as_deref(),
+            grid,
+            sp_mhc,
+            sp_pipeline,
+            dump,
+        )
+    })
+    .clone()
+    .map_err(anyhow::Error::msg)
+}
+
+/// 2026-10-15: [`cell_pipeline`]'s parse, pure: `grid` whether [`CELL_GRID_ENV`] is set, the rest
+/// the other levers' values.
+pub(crate) fn parse_pipeline(
+    v: Option<&str>,
+    grid: bool,
+    sp_mhc: bool,
+    sp_pipeline: bool,
+    dump: bool,
+) -> Result<bool, String> {
+    let on = match v {
+        None | Some("0") => return Ok(false),
+        Some("1") => true,
+        Some(other) => return Err(format!("{CELL_PIPELINE_ENV}={other:?}: expected 0 or 1")),
+    };
+    let missing = [
+        (!grid, format!("needs {CELL_GRID_ENV}")),
+        (!sp_mhc, "needs METRALE_GLM_SP_MHC=1".to_string()),
+        (
+            sp_pipeline,
+            "and METRALE_GLM_SP_PIPELINE=1 cannot both be set".to_string(),
+        ),
+        (
+            dump,
+            "with METRALE_GLM_LAYER_DUMP: the dump taps read the serial order".to_string(),
+        ),
+    ];
+    match missing.into_iter().find(|(bad, _)| *bad) {
+        Some((_, why)) => Err(format!("{CELL_PIPELINE_ENV}=1 {why}")),
+        None => Ok(on),
+    }
+}
+
+/// 2026-10-15: The grid as one cross-rank agreement word (`first` high, `step` low; 0 unset):
+/// the grid sets every pass's sub-chunks and so its collectives. Errors past 32 bits each.
+pub fn agreement_value(grid: Option<CellGrid>) -> Result<u64> {
+    let Some(CellGrid { first, step }) = grid else {
+        return Ok(0);
+    };
+    let (f, s) = (u32::try_from(first)?, u32::try_from(step)?);
+    Ok((u64::from(f) << 32) | u64::from(s))
+}
+
 impl CellGrid {
     /// 2026-10-15: Whether absolute position `a` is a grid point.
     pub fn is_point(&self, a: usize) -> bool {

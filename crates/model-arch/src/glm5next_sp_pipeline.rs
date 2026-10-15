@@ -39,6 +39,10 @@
 //!   overlaps across layers or segments.
 //! - Refused at the first read without `METRALE_GLM_SP_MHC=1`, and under the layer dump (whose
 //!   taps read buffers by the serial order).
+//! - 2026-10-15: `AfterMixer(s)` (the cell pipeline's capture and clamp of the mixer state,
+//!   `METRALE_GLM_PREFILL_CELL_PIPELINE`) runs on the main stream after `Mixer(s)` and before
+//!   `Mixer(s + 1)`, the only other launches that touch that state; the driver runs nothing
+//!   for it outside the cell pipeline.
 
 use std::sync::{Mutex, OnceLock};
 
@@ -71,6 +75,13 @@ pub fn enabled() -> Result<bool> {
     })
     .clone()
     .map_err(anyhow::Error::msg)
+}
+
+/// 2026-10-15: Whether the pipeline's buffers and the SP comm stream are reserved at load: under
+/// this lever or the cell pipeline (`glm5next_prefill_cell::cell_pipeline`), which runs this
+/// program over a pass's cells.
+pub fn buffers_wanted() -> Result<bool> {
+    Ok(enabled()? || crate::glm5next_prefill_cell::cell_pipeline()?)
 }
 
 /// 2026-10-14: [`enabled`]'s parse, pure: `sp_mhc` is `METRALE_GLM_SP_MHC`'s value, `dump`
@@ -201,6 +212,9 @@ pub enum Prim {
         done: Option<Event>,
     },
     Mixer(usize),
+    /// 2026-10-15: After sub-chunk `s`'s mixer, on the main stream: what the serial body runs
+    /// on the mixer state after `s` (the cell pipeline's capture and clamp; nothing otherwise).
+    AfterMixer(usize),
     Mlp(usize),
     Rs(RsKind, usize),
 }
@@ -230,6 +244,7 @@ pub fn program(n: usize, reduce: bool, last: bool) -> Vec<Prim> {
                 p.push(Prim::Wait(On::Main, Event::Head));
                 p.push(Prim::Mixer(sub));
                 rs(&mut p, RsKind::Mixer, sub, Event::MixerRs);
+                p.push(Prim::AfterMixer(sub));
             }
             Stage::Mid => {
                 p.push(Prim::Wait(On::Main, Event::MixerRs));
@@ -341,7 +356,7 @@ fn workspace() -> &'static Mutex<Option<PipelineWorkspace>> {
     S.get_or_init(|| Mutex::new(None))
 }
 
-/// 2026-10-14: Reserve the pipeline's buffers once when the lever is on (a no-op otherwise or
+/// 2026-10-14: Reserve the pipeline's buffers once when [`buffers_wanted`] (a no-op otherwise or
 /// when they already hold the sizes): normed slots of `normed_bytes` (the widest sub-chunk's
 /// rows) and a receive workspace of `world - 1` slots of `slot_bytes`. Called from
 /// `glm5next_sp_mhc::reserve` at load, before the KV budget reads the allocator, so the bytes
@@ -352,7 +367,7 @@ pub fn reserve(
     slot_bytes: usize,
     world: usize,
 ) -> Result<()> {
-    if !enabled()? || world < 2 {
+    if !buffers_wanted()? || world < 2 {
         return Ok(());
     }
     let mut g = workspace().lock().unwrap_or_else(|e| e.into_inner());

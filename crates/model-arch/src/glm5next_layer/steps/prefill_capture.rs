@@ -229,15 +229,41 @@ impl Glm5NextLayer {
                 crate::glm5next_prefill_piece::PIECE_ROWS_ENV
             );
         }
-        for LayerSeg {
-            start,
-            end,
-            after,
-            cuts,
-            clamp_after,
-            decode,
-        } in segments
-        {
+        // 2026-10-15: `METRALE_GLM_PREFILL_CELL_PIPELINE=1`: each run of two or more SP-mHC cells
+        // pipelined through the layer (`cell_pipeline_run`); the other segments run below.
+        let cell_pipe = grid.is_some() && crate::glm5next_prefill_cell::cell_pipeline()?;
+        let mut i = 0;
+        while i < segments.len() {
+            if cell_pipe {
+                let p = self.cell_pipeline_run(
+                    hidden,
+                    &segments[i..],
+                    rows,
+                    state,
+                    kv_cache,
+                    seq_len_start,
+                    block_table,
+                    ctx,
+                    stream,
+                    slot0,
+                    ordinal,
+                    cap,
+                )?;
+                if p > 0 {
+                    i += p;
+                    chunk += p;
+                    continue;
+                }
+            }
+            let LayerSeg {
+                start,
+                end,
+                after,
+                ref cuts,
+                clamp_after,
+                decode,
+            } = segments[i];
+            i += 1;
             // 2026-10-14: Under `METRALE_ONE_ROW_TAIL_DECODE=1` a one-row segment after position
             // 0 runs `decode`'s walk (`forward_one`, its dump call), the path a warm one-row
             // replay of the row takes, on the row's own highway slot (`layer/one_row_path.rs`).
@@ -265,9 +291,18 @@ impl Glm5NextLayer {
                     .collect::<Result<Vec<bool>>>()?;
                 let p = crate::glm5next_sp_pipeline::pipelined(&takes);
                 if p > 0 {
+                    let subs: Vec<super::forward_sp_pipe::PipeSub<'_>> = ks[..p]
+                        .iter()
+                        .map(|&k| super::forward_sp_pipe::PipeSub {
+                            k,
+                            cuts: &[],
+                            after: None,
+                            clamp_after: false,
+                        })
+                        .collect();
                     self.forward_sp_pipeline(
                         hidden.offset(t * self.hidden * 2),
-                        &ks[..p],
+                        &subs,
                         state,
                         kv_cache,
                         seq_len_start + t,
@@ -275,6 +310,8 @@ impl Glm5NextLayer {
                         ctx,
                         stream,
                         slot0 + t,
+                        None,
+                        None,
                     )?;
                     t += ks[..p].iter().sum::<usize>();
                     chunk += p;
@@ -354,12 +391,7 @@ impl Glm5NextLayer {
                     t += 1;
                 }
             }
-            if let (Some(which), Some(idx), Some(c)) = (after, ordinal, cap) {
-                self.capture_kda_state(state, c, which, idx, ctx.gpu, stream)?;
-            }
-            if clamp_after {
-                self.cell_clamp(state, ctx.gpu, stream)?;
-            }
+            self.seg_after(state, after, clamp_after, ordinal, cap, ctx.gpu, stream)?;
         }
         Ok(())
     }

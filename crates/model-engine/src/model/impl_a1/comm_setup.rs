@@ -99,6 +99,18 @@ pub(super) fn assert_rank_levers_agree(
                 "METRALE_GLM_SP_PIPELINE",
                 u64::from(metrale_model_arch::glm5next_sp_pipeline::enabled()?),
             ),
+            // 2026-10-15: The cell grid cuts every prefill pass into its cells, each with its
+            // own collectives; the cell pipeline reorders them across a layer's cells.
+            (
+                metrale_model_arch::glm5next_prefill_cell::CELL_GRID_ENV,
+                metrale_model_arch::glm5next_prefill_cell::agreement_value(
+                    metrale_model_arch::glm5next_prefill_cell::cell_grid()?,
+                )?,
+            ),
+            (
+                metrale_model_arch::glm5next_prefill_cell::CELL_PIPELINE_ENV,
+                u64::from(metrale_model_arch::glm5next_prefill_cell::cell_pipeline()?),
+            ),
             // 2026-10-10: The resolved context window determines DFlash context-broadcast
             // chunking, so every rank must use the same value.
             (

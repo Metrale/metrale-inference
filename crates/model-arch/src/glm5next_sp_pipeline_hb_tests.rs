@@ -44,6 +44,8 @@ enum Label {
     HeadC(usize, usize),
     Agh(usize, usize),
     Mixer(usize),
+    /// 2026-10-15: The capture and clamp of the mixer state after sub-chunk `s` (`AfterMixer`).
+    After(usize),
     Rsm(usize),
     MidC(usize, usize),
     Agm(usize, usize),
@@ -117,6 +119,10 @@ fn access(l: Label, v: Variant) -> (Vec<Loc>, Vec<Loc>) {
             w.push((Buf::MixState, Rg::Own(0)));
             (r, w)
         }
+        Label::After(_) => (
+            vec![(Buf::MixState, Rg::Own(0))],
+            vec![(Buf::MixState, Rg::Own(0))],
+        ),
         Label::Rsm(_) => (peer_all(attn, m), own_all(Buf::RecvMid, m)),
         Label::MidC(s, j) => (
             vec![own(attn, j), own(Buf::RecvMid, j), own(Buf::Streams(s), j)],
@@ -182,6 +188,7 @@ fn sub_of(l: Label) -> usize {
         Label::HeadC(s, _)
         | Label::Agh(s, _)
         | Label::Mixer(s)
+        | Label::After(s)
         | Label::Rsm(s)
         | Label::MidC(s, _)
         | Label::Agm(s, _)
@@ -217,6 +224,7 @@ fn lower(prims: &[Prim], v: Variant) -> Vec<Low> {
             Prim::Record(e, s) => out.push(Low::Rec(Key::Pipe(e), s)),
             Prim::Wait(s, e) => out.push(Low::Wait(s, Key::Pipe(e))),
             Prim::Mixer(s) => out.push(Low::Run(On::Main, Label::Mixer(s))),
+            Prim::AfterMixer(s) => out.push(Low::Run(On::Main, Label::After(s))),
             Prim::Mlp(s) => out.push(Low::Run(On::Main, Label::Mlp(s))),
             Prim::Rs(RsKind::Mixer, s) => out.push(Low::Run(On::Comm, Label::Rsm(s))),
             Prim::Rs(RsKind::Mlp, s) => out.push(Low::Run(On::Comm, Label::Rst(s))),
@@ -265,6 +273,7 @@ fn serial(v: Variant) -> Vec<Label> {
         if v.last {
             out.extend((0..v.m).map(|j| Label::Agt(s, j)));
         }
+        out.push(Label::After(s));
     }
     out.push(Label::End);
     out
@@ -369,119 +378,5 @@ fn check(lows: &[Low], v: Variant, lay: Layout) -> Result<(), String> {
     Ok(())
 }
 
-fn variants() -> Vec<Variant> {
-    let mut out = Vec::new();
-    for n in 2..=4 {
-        for m in 1..=3 {
-            for dsa in [false, true] {
-                for reduce in [false, true] {
-                    for last in [false, true] {
-                        out.push(Variant {
-                            m,
-                            dsa,
-                            reduce,
-                            last,
-                            n,
-                        });
-                    }
-                }
-            }
-        }
-    }
-    out
-}
-
-/// 2026-10-14: For 2-4 sub-chunks, 1-3 pieces, KDA and DSA, with and without the MLP reduce,
-/// on the last layer and not: the program is race-free and every read sees its serial writer
-/// (so the bytes are the serial body's), with every exchange waited before its consumer and
-/// the comm stream joined before the later work.
-#[test]
-fn the_program_is_the_serial_body_on_two_streams() {
-    for v in variants() {
-        let lows = lower(&program(v.n, v.reduce, v.last), v);
-        check(&lows, v, PIPELINE).unwrap_or_else(|e| panic!("{v:?}: {e}"));
-    }
-}
-
-/// 2026-10-14: The negative controls: two normed slots (a head two sub-chunks ahead overwrites
-/// the normed rows the MLP still reads), one receive workspace for both reduce-scatters, a
-/// dropped consumer wait (each kind in turn), and no join each fail the check.
-#[test]
-fn the_check_catches_each_broken_variant() {
-    let v = Variant {
-        m: 2,
-        dsa: false,
-        reduce: true,
-        last: true,
-        n: 4,
-    };
-    let prims = program(v.n, v.reduce, v.last);
-    let lows = lower(&prims, v);
-    for lay in [
-        Layout {
-            normed_slots: 2,
-            shared_recv: false,
-        },
-        Layout {
-            normed_slots: NORMED_SLOTS,
-            shared_recv: true,
-        },
-    ] {
-        assert!(check(&lows, v, lay).is_err(), "{lay:?}");
-    }
-    for ev in [Event::Head, Event::MixerRs, Event::Mid, Event::MlpRs] {
-        let i = prims
-            .iter()
-            .rposition(|&p| p == Prim::Wait(On::Main, ev))
-            .unwrap();
-        let mut dropped = prims.clone();
-        dropped.remove(i);
-        assert!(
-            check(&lower(&dropped, v), v, PIPELINE).is_err(),
-            "dropped the last wait on {ev:?}"
-        );
-    }
-    let mut unjoined = prims.clone();
-    assert_eq!(unjoined.pop(), Some(Prim::Wait(On::Main, Event::Join)));
-    assert!(check(&lower(&unjoined, v), v, PIPELINE).is_err());
-    let mut no_rs_in = prims.clone();
-    let i = no_rs_in
-        .iter()
-        .position(|&p| p == Prim::Wait(On::Comm, Event::RsIn))
-        .unwrap();
-    no_rs_in.remove(i);
-    assert!(check(&lower(&no_rs_in, v), v, PIPELINE).is_err());
-}
-
-/// 2026-10-14: The overlap is real in the steady state: the mixer's reduce-scatter of `s + 1`
-/// and the head all-gather of `s + 2` are unordered with the MLP of `s`; the post-mix
-/// all-gather of `s` with the mixer of `s + 1`; the MLP's reduce-scatter of `s` with the mixer
-/// of `s + 2`.
-#[test]
-fn the_exchanges_overlap_the_mixer_and_the_mlp() {
-    for m in 1..=3 {
-        let v = Variant {
-            m,
-            dsa: false,
-            reduce: true,
-            last: false,
-            n: 4,
-        };
-        let runs = clocks(&lower(&program(v.n, v.reduce, v.last), v));
-        let at = |l: Label| runs.iter().position(|r| r.0 == l).unwrap();
-        let free = |a: Label, b: Label| {
-            let (a, b) = (at(a), at(b));
-            let hb = |x: usize, y: usize| runs[x].2[runs[x].1] <= runs[y].2[runs[x].1];
-            !hb(a, b) && !hb(b, a)
-        };
-        for s in 0..2 {
-            assert!(free(Label::Rsm(s + 1), Label::Mlp(s)), "m {m} s {s}");
-            assert!(free(Label::Agh(s + 2, m - 1), Label::Mlp(s)), "m {m} s {s}");
-            assert!(
-                free(Label::Agm(s, m - 1), Label::Mixer(s + 1)),
-                "m {m} s {s}"
-            );
-            assert!(free(Label::Rst(s), Label::Mixer(s + 2)), "m {m} s {s}");
-        }
-    }
-}
+#[path = "glm5next_sp_pipeline_hb_cases.rs"]
+mod cases;

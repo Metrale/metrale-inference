@@ -18,6 +18,9 @@
 //!   `mix`): only the normed rows' and the MLP partials' buffers and the host order across
 //!   sub-chunks differ (the module header of `glm5next_sp_pipeline`).
 //! - Leaves the comm stream joined into the caller's stream.
+//! - 2026-10-15: A sub-chunk's capture and clamp (`seg_after`, what the serial loop runs after
+//!   its segment) run after its mixer on the caller's stream: only the mixers read or write
+//!   that state, and the next one is enqueued after them.
 
 use metrale_comm::PeerPartials;
 
@@ -26,6 +29,17 @@ use super::*;
 use crate::glm5next_sp_mhc as sp;
 use crate::glm5next_sp_overlap::{self as ov, On};
 use crate::glm5next_sp_pipeline::{self as pipe, Prim, RsKind, Stage};
+use metrale_model_layers::layer::MidchunkCapture;
+
+/// 2026-10-15: A sub-chunk handed to the pipeline: its rows, its KDA cuts (merge mode), and what
+/// runs on the mixer state after its mixer (`Prim::AfterMixer`): the capture at its end and the
+/// cell clamp (`METRALE_GLM_PREFILL_CELL_PIPELINE`; none and false otherwise).
+pub(in crate::glm5next_layer) struct PipeSub<'a> {
+    pub k: usize,
+    pub cuts: &'a [crate::glm5next_kda::cut::KdaCut],
+    pub after: Option<super::prefill_capture::CapturePoint>,
+    pub clamp_after: bool,
+}
 
 /// 2026-10-14: One sub-chunk of the run: its rows, its views and pieces, and what its earlier
 /// stages left for its later ones.
@@ -46,12 +60,13 @@ impl Glm5NextLayer {
     /// 2026-10-14: The sub-chunks `ks` of a segment's leading rows through this layer, pipelined:
     /// row 0 at `hidden`, position `seq_len` and highway slot `slot_base`; sub-chunk `s` at the
     /// rows after those of the sub-chunks before it, exactly as `prefill_segments` hands them
-    /// to `forward_k` one by one.
+    /// to `forward_k` one by one. 2026-10-15: each with its cuts and after-mixer work
+    /// ([`PipeSub`]); a capture writes SSM ordinal `ordinal` of `cap`.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::glm5next_layer) fn forward_sp_pipeline(
         &self,
         hidden: DevicePtr,
-        ks: &[usize],
+        ks: &[PipeSub<'_>],
         state: &mut dyn LayerState,
         kv_cache: &mut PagedKvCache,
         seq_len: usize,
@@ -59,6 +74,8 @@ impl Glm5NextLayer {
         ctx: &ForwardContext,
         stream: u64,
         slot_base: usize,
+        ordinal: Option<usize>,
+        cap: Option<&MidchunkCapture<'_>>,
     ) -> Result<()> {
         let Some(mhc) = self.mhc.as_ref() else {
             bail!("GLM layer {}: no hyper-connection bound", self.layer_idx);
@@ -90,7 +107,7 @@ impl Glm5NextLayer {
         let ffn_out = ctx.buffers.moe_output();
         let mut subs = Vec::with_capacity(ks.len());
         let mut r = 0;
-        for (s, &k) in ks.iter().enumerate() {
+        for (s, &PipeSub { k, .. }) in ks.iter().enumerate() {
             let normed = pw.normed_at(ctx.buffers.norm_output(), s, k * row_bytes)?;
             let sub_hidden = hidden.offset(r * row_bytes);
             let shards = sp::shards(k, world);
@@ -130,10 +147,16 @@ impl Glm5NextLayer {
                         stream,
                         false,
                         true,
-                        &[],
+                        ks[s].cuts,
                     )?;
                     profile::end(profile::KDA, t, gpu, stream);
                     subs[s].attn_out = Some(out);
+                }
+                Prim::AfterMixer(s) => {
+                    let PipeSub {
+                        after, clamp_after, ..
+                    } = ks[s];
+                    self.seg_after(state, after, clamp_after, ordinal, cap, gpu, stream)?;
                 }
                 Prim::Mlp(s) => {
                     let sub = &subs[s];
