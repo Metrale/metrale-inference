@@ -12,7 +12,8 @@
 //! 2. MoE combine (hidden 4096, top 8): one block per row against the row spread over several
 //!    blocks (`METRALE_GLM_MOE_COMBINE_SPLIT=1`), slot order and expert-sorted order. Outputs must
 //!    be byte-identical, and equal to a host reference. 2026-10-14: its second arm,
-//!    eight elements per thread (`METRALE_GLM_MOE_COMBINE_VEC8=1`), at 1, 16 and 8192 rows,
+//!    eight elements per thread (`METRALE_GLM_MOE_COMBINE_VEC8=1`), at 1, 16, 17, 287, 341, 1036,
+//!    8192 and 8208 rows,
 //!    byte-equal to the split combine and the host reference, with a negative control
 //!    (`common/glm5next_c1_combine_vec8.rs`; alone with `C1_FUSE_ONLY=combine_vec8`).
 //! 3. KDA recurrence of one row (22 heads of 128): `kda_recurrent_decode_bf16_smem` against
