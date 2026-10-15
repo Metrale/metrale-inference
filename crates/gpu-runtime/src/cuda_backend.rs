@@ -25,6 +25,8 @@ mod gpu_impl_graph;
 #[cfg(not(metrale_scale))]
 mod graph_hoist_cu;
 mod n_tile;
+#[cfg(not(metrale_scale))]
+mod occupancy;
 mod redzone;
 pub mod tensormap;
 pub(crate) use redzone::{

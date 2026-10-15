@@ -35,6 +35,7 @@ pub(super) const CHUNK64_PREP_CONV: u64 = 0x322;
 pub(super) const CONV_WINDOW_PARTS: u64 = 0x323;
 pub(super) const CHUNK64_PREP_GRAW: u64 = 0x324;
 pub(super) const CHUNK64_PREP_CONV_GRAW: u64 = 0x325;
+pub(super) const CHUNK64_SCAN_ONORM: u64 = 0x326;
 pub(super) const GATE: u64 = 0x309;
 
 pub(super) fn cfg() -> Glm5NextKdaConfig {
@@ -102,6 +103,7 @@ pub(super) fn layer(gpu: &MockGpuBackend) -> Glm5NextKdaLayer {
             conv_window_parts: k(CONV_WINDOW_PARTS),
             chunk64_prepare_graw: k(CHUNK64_PREP_GRAW),
             chunk64_prepare_conv_graw: k(CHUNK64_PREP_CONV_GRAW),
+            chunk64_scan_onorm: k(CHUNK64_SCAN_ONORM),
         },
         o_norm: k(0x30E),
         split_widen: k(0x30F),

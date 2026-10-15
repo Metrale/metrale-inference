@@ -401,6 +401,16 @@ impl GpuBackend for MetraleCudaBackend {
     fn sm_count(&self) -> Result<u32> {
         self.sm_count_cu()
     }
+    #[cfg(not(metrale_scale))]
+    fn max_active_clusters(
+        &self,
+        kernel: KernelHandle,
+        grid: [u32; 3],
+        block: [u32; 3],
+        shared_mem: u32,
+    ) -> Result<u32> {
+        self.max_active_clusters_cu(kernel, grid, block, shared_mem)
+    }
     fn create_stream(&self) -> Result<u64> {
         self.create_stream_cu()
     }

@@ -57,6 +57,8 @@ pub struct MockGpuBackend {
     /// 2026-09-25: `copy_h2d` calls and their total bytes.
     h2d: AtomicUsize,
     h2d_bytes: AtomicUsize,
+    /// 2026-10-15: What `max_active_clusters` answers (`set_max_active_clusters`).
+    max_active_clusters: AtomicUsize,
 }
 
 #[derive(Debug, Clone)]
@@ -105,6 +107,9 @@ impl MockGpuBackend {
             host_pinned_allocs: AtomicUsize::new(0),
             h2d: AtomicUsize::new(0),
             h2d_bytes: AtomicUsize::new(0),
+            // 2026-10-15: Rationale (PCND): GB10's 48 SMs as pairs, one block each, so a
+            // cluster-gated launch in tests sees a GB10 that places it.
+            max_active_clusters: AtomicUsize::new(24),
         }
     }
 
@@ -175,6 +180,12 @@ impl MockGpuBackend {
         self.denied_kernels
             .lock()
             .push((module.to_owned(), func_name.to_owned()));
+    }
+
+    /// 2026-10-15: What every later `max_active_clusters` answers; 0 is a device that
+    /// cannot place the cluster.
+    pub fn set_max_active_clusters(&self, n: usize) {
+        self.max_active_clusters.store(n, Ordering::SeqCst);
     }
 }
 
@@ -431,6 +442,16 @@ impl GpuBackend for MockGpuBackend {
         // `kernels/gb10/HARDWARE.toml`, so occupancy-gated dispatch in tests sees
         // a GB10.
         Ok(48)
+    }
+
+    fn max_active_clusters(
+        &self,
+        _kernel: KernelHandle,
+        _grid: [u32; 3],
+        _block: [u32; 3],
+        _shared_mem: u32,
+    ) -> Result<u32> {
+        Ok(self.max_active_clusters.load(Ordering::SeqCst) as u32)
     }
 
     fn free_memory(&self) -> Result<usize> {

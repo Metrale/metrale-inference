@@ -6,18 +6,24 @@
 //! prepare, the window advance last), launched on one arm's buffers, with each slab's factors
 //! recorded on request; the prepares read the FP32 gate rows or (the `_graw` entries) compute the
 //! gate from f_b's BF16 rows.
+//! 2026-10-15: An arm with [`Arm::norm`] set scans with `kda_chunk64_scan_onorm` (the output norm in
+//! the scan, `METRALE_GLM_KDA_SCAN_ONORM`) into that norm's output instead of `core`; the gate
+//! launch the `_graw` prepares replace is here too (`glm5next_kda_gate_in_prepare_parity.rs`,
+//! `glm5next_kda_scan_onorm_gate.rs`).
 //!
 //! Owner: model-arch examples (GLM-5.3).
 //! Invariants: the launches take each kernel's arguments in its signature's order
 //! (`kda_conv_tokens.cu`, `kda_chunk64_prepare.cu`, `kda_chunk64.cu`).
 #![allow(dead_code)]
 
+use super::fixture::{Lcg, up_bf16, up_f32};
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 use metrale_model_arch::glm5next_kda::chunk64::{
     CHUNK64 as C, CHUNK64_AD_STRIDE, CHUNK64_D as D, CHUNK64_PREP_SMEM, CHUNK64_PREP_THREADS,
-    CHUNK64_SCAN_SMEM, CHUNK64_SCAN_THREADS, CHUNK64_SLAB as SLAB, CHUNK64_VB,
+    CHUNK64_SCAN_ONORM_SMEM, CHUNK64_SCAN_SMEM, CHUNK64_SCAN_THREADS, CHUNK64_SLAB as SLAB,
+    CHUNK64_VB,
 };
 
 /// 2026-10-14: Per-rank KDA heads at TP=3, conv width 4, the config's L2 eps.
@@ -37,6 +43,7 @@ pub struct Kernels {
     pub prep: KernelHandle,
     pub prep_conv: KernelHandle,
     pub scan: KernelHandle,
+    pub scan_onorm: KernelHandle,
 }
 
 impl Kernels {
@@ -53,6 +60,7 @@ impl Kernels {
             prep: g.kernel("kda_chunk64_prepare", "kda_chunk64_prepare")?,
             prep_conv: g.kernel("kda_chunk64_prepare", "kda_chunk64_prepare_conv")?,
             scan: g.kernel("kda_chunk64", "kda_chunk64_scan")?,
+            scan_onorm: g.kernel("kda_chunk64", "kda_chunk64_scan_onorm")?,
         })
     }
 }
@@ -65,6 +73,48 @@ pub struct GateRaw {
     pub dt_bias: DevicePtr,
     pub a_log: DevicePtr,
     pub lower_bound: f32,
+}
+
+/// 2026-10-14: `linear_attn_config.gate_lower_bound` of GLM-5.3-Flash.
+pub const LOWER_BOUND: f32 = -5.0;
+
+/// 2026-10-14: f_b's BF16 rows `[t, QKV]` (noise of scale 3, every 1009th element +-40: both
+/// ends of the sigmoid), `dt_bias` `[QKV]` and `A_log` `[H]` on the device.
+pub fn gate_inputs(g: &dyn GpuBackend, rng: &mut Lcg, t: usize) -> Result<GateRaw> {
+    let mut raw = rng.vec(t * QKV, 3.0);
+    for (i, x) in raw.iter_mut().enumerate() {
+        if i % 1009 == 0 {
+            *x = if i % 2 == 0 { 40.0 } else { -40.0 };
+        }
+    }
+    Ok(GateRaw {
+        g_raw: up_bf16(g, &raw)?,
+        dt_bias: up_f32(g, &rng.vec(QKV, 1.0))?,
+        a_log: up_f32(g, &rng.vec(H, 1.0))?,
+        lower_bound: LOWER_BOUND,
+    })
+}
+
+/// 2026-10-14: `kda_gate_bf16` (`gate`) into `x.gate`, as the front end launches it.
+pub fn gate_launch(
+    g: &dyn GpuBackend,
+    gate: KernelHandle,
+    r: &GateRaw,
+    x: &In,
+    s: u64,
+) -> Result<()> {
+    KernelLaunch::new(g, gate)
+        .grid([(x.t * H) as u32, 1, 1])
+        .block([128, 1, 1])
+        .arg_ptr(r.g_raw)
+        .arg_ptr(r.dt_bias)
+        .arg_ptr(r.a_log)
+        .arg_ptr(x.gate)
+        .arg_u32(x.t as u32)
+        .arg_u32(H as u32)
+        .arg_u32(D as u32)
+        .arg_f32(r.lower_bound)
+        .launch(s)
 }
 
 /// 2026-10-14: What a prepare reads for the gate: the FP32 rows `In::gate`, or (a `_graw`
@@ -112,8 +162,21 @@ impl In {
     }
 }
 
+/// 2026-10-15: The output norm's operands (`kda_o_norm_gated_bf16`): the BF16 output gate and
+/// output `[T, QKV]`, the BF16 weight `[D]` and the RMS eps.
+#[derive(Clone, Copy)]
+pub struct Norm {
+    pub gate: DevicePtr,
+    pub weight: DevicePtr,
+    pub out: DevicePtr,
+    pub eps: f32,
+}
+
 /// 2026-10-14: One arm's outputs and state.
 pub struct Arm {
+    /// 2026-10-15: Set: the scans are `kda_chunk64_scan_onorm` into `norm.out`; `core` is not
+    /// written.
+    pub norm: Option<Norm>,
     pub conv: DevicePtr,
     pub rec: DevicePtr,
     pub core: DevicePtr,
@@ -145,6 +208,7 @@ impl Arm {
             *p = g.alloc(n)?;
         }
         let a = Arm {
+            norm: None,
             conv: g.alloc(CD * KC * 4)?,
             rec: g.alloc(H * D * D * 4)?,
             core: g.alloc(t * QKV * 4)?,
@@ -226,7 +290,13 @@ fn slabs(t: usize) -> impl Iterator<Item = (usize, usize)> {
     (0..nc).step_by(SLAB).map(move |c0| (c0, SLAB.min(nc - c0)))
 }
 
-fn scan(
+/// 2026-10-15: The scan's grid (heads x column blocks) and block.
+pub const SCAN_GRID: [u32; 3] = [H as u32, (D / CHUNK64_VB) as u32, 1];
+pub const SCAN_BLOCK: [u32; 3] = [CHUNK64_SCAN_THREADS, 1, 1];
+
+/// 2026-10-15: One slab's scan (chunks `c0 .. c0 + n`): into `core`, or with [`Arm::norm`] the
+/// fused norm into its output.
+pub fn scan(
     g: &dyn GpuBackend,
     k: &Kernels,
     x: &In,
@@ -235,16 +305,27 @@ fn scan(
     n: usize,
     s: u64,
 ) -> Result<()> {
-    let mut l = KernelLaunch::new(g, k.scan)
-        .grid([H as u32, (D / CHUNK64_VB) as u32, 1])
-        .block([CHUNK64_SCAN_THREADS, 1, 1])
-        .shared_mem(CHUNK64_SCAN_SMEM);
+    let (kernel, smem) = match a.norm {
+        None => (k.scan, CHUNK64_SCAN_SMEM),
+        Some(_) => (k.scan_onorm, CHUNK64_SCAN_ONORM_SMEM),
+    };
+    let mut l = KernelLaunch::new(g, kernel)
+        .grid(SCAN_GRID)
+        .block(SCAN_BLOCK)
+        .shared_mem(smem);
     for p in a.scratch {
         l = l.arg_ptr(p);
     }
-    l.arg_ptr(a.rec)
-        .arg_ptr(a.core)
-        .arg_u32(H as u32)
+    let l = l.arg_ptr(a.rec);
+    let l = match a.norm {
+        None => l.arg_ptr(a.core),
+        Some(nm) => l
+            .arg_ptr(nm.gate)
+            .arg_ptr(nm.weight)
+            .arg_ptr(nm.out)
+            .arg_f32(nm.eps),
+    };
+    l.arg_u32(H as u32)
         .arg_u32(x.t as u32)
         .arg_u32(c0 as u32)
         .arg_u32(n as u32)

@@ -454,24 +454,28 @@ impl Glm5NextKdaLayer {
     }
 
     /// 2026-09-25: Sigmoid-gated RMSNorm, then `o_proj`.
+    /// 2026-10-15: `normed`: the scan already wrote `o_norm_out` (`chunk64_onorm.rs`).
     fn back_end(
         &self,
         gpu: &dyn GpuBackend,
         t: usize,
         ws: &Glm5NextKdaWorkspace,
+        normed: bool,
         stream: u64,
     ) -> Result<()> {
         let c = &self.cfg;
-        KernelLaunch::new(gpu, self.kernels.o_norm)
-            .grid([(t * c.heads) as u32, 1, 1])
-            .block([c.head_dim as u32, 1, 1])
-            .arg_ptr(ws.core)
-            .arg_ptr(ws.out_gate)
-            .arg_ptr(self.weights.o_norm.weight)
-            .arg_ptr(ws.o_norm_out)
-            .arg_u32(c.head_dim as u32)
-            .arg_f32(c.rms_norm_eps)
-            .launch(stream)?;
+        if !normed {
+            KernelLaunch::new(gpu, self.kernels.o_norm)
+                .grid([(t * c.heads) as u32, 1, 1])
+                .block([c.head_dim as u32, 1, 1])
+                .arg_ptr(ws.core)
+                .arg_ptr(ws.out_gate)
+                .arg_ptr(self.weights.o_norm.weight)
+                .arg_ptr(ws.o_norm_out)
+                .arg_u32(c.head_dim as u32)
+                .arg_f32(c.rms_norm_eps)
+                .launch(stream)?;
+        }
         self.gemm(
             gpu,
             ws.o_norm_out,

@@ -77,6 +77,30 @@ pub fn cuda_error_text(status: i32) -> String {
     format!("{name} ({status}): {msg}")
 }
 
+/// 2026-09-25: Opt `raw_func` in to `bytes` of dynamic shared memory when that is above the
+/// default 48 KiB (a launch, or an occupancy query, at that size needs it first).
+/// 2026-10-15: A free function, shared by the launch and the cluster-occupancy query.
+pub(crate) fn opt_in_dynamic_smem(raw_func: RawCudaFunc, bytes: u32) -> Result<()> {
+    if bytes <= 48 * 1024 {
+        return Ok(());
+    }
+    const CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES: i32 = 8;
+    let status = unsafe {
+        cuFuncSetAttribute(
+            raw_func.0,
+            CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
+            bytes as i32,
+        )
+    };
+    if status != 0 {
+        return Err(MetraleError::KernelLaunch(format!(
+            "cuFuncSetAttribute(MAX_DYNAMIC_SHARED={bytes}) failed: {}",
+            cuda_error_text(status)
+        )));
+    }
+    Ok(())
+}
+
 /// 2026-10-14: `CUDA_ERROR_NOT_FOUND`: no symbol of that name in the module.
 const CUDA_ERROR_NOT_FOUND: i32 = 500;
 
@@ -428,24 +452,7 @@ impl MetraleRegistry {
         // 2026-09-25: The caller's stream is used as given; the registry's own
         // stream is never substituted.
         let stream = stream_ptr;
-        // 2026-09-25: Opt in to more than 48 KiB of dynamic shared memory when asked.
-        if cfg.shared_mem_bytes > 48 * 1024 {
-            const CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES: i32 = 8;
-            let attr_status = unsafe {
-                cuFuncSetAttribute(
-                    raw_func.0,
-                    CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
-                    cfg.shared_mem_bytes as i32,
-                )
-            };
-            if attr_status != 0 {
-                return Err(MetraleError::KernelLaunch(format!(
-                    "cuFuncSetAttribute(MAX_DYNAMIC_SHARED={}) failed: {}",
-                    cfg.shared_mem_bytes,
-                    cuda_error_text(attr_status)
-                )));
-            }
-        }
+        opt_in_dynamic_smem(raw_func, cfg.shared_mem_bytes)?;
         let status = unsafe {
             cuLaunchKernel(
                 raw_func.0,

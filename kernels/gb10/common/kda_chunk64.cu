@@ -40,11 +40,14 @@
 //   [H, D, D] indexed [k][v], read before the slab's first chunk and written after its last. Out
 //   rows t >= T are not written.
 // - grid (H, D / KDA64_VB), block KDA64_SCAN_THREADS, dynamic shared memory KDA64_SCAN_SMEM.
+// - 2026-10-15: kda_chunk64_scan_onorm: the same grid in (1, 2, 1) clusters, dynamic shared memory
+//   KDA64_SCAN_ONORM_SMEM; writes the normed BF16 rows instead of `out` (kda_chunk64_onorm.cuh).
 
 #include <cuda_bf16.h>
 #include <stdint.h>
 
 #include "kda_chunk64.cuh"
+#include "kda_chunk64_onorm.cuh"
 
 __device__ __forceinline__ void k64_mma(float (&d)[4], const uint32_t (&a)[4], uint32_t b0,
                                         uint32_t b1) {
@@ -126,7 +129,11 @@ __device__ __forceinline__ void k64_cp_tile(uint32_t sbase, const __nv_bfloat16*
     }
 }
 
-extern "C" __global__ void __launch_bounds__(KDA64_SCAN_THREADS) kda_chunk64_scan(
+// 2026-10-15: The scan of both entries. ONORM (kda_chunk64_scan_onorm) replaces the FP32 store of
+// each chunk's outputs by the gated RMSNorm epilogue (kda_chunk64_onorm.cuh, operands `on`; `out`
+// unused); every other instruction is the plain entry's.
+template <bool ONORM>
+__device__ __forceinline__ void k64_scan(
     const float* __restrict__ u_in,
     const __nv_bfloat16* __restrict__ w_in,
     const __nv_bfloat16* __restrict__ qg_in,
@@ -139,7 +146,8 @@ extern "C" __global__ void __launch_bounds__(KDA64_SCAN_THREADS) kda_chunk64_sca
     unsigned int T,
     unsigned int c0,
     unsigned int num_chunks,
-    unsigned int out_stride
+    unsigned int out_stride,
+    const K64Onorm& on
 ) {
     constexpr int C = KDA64_C, D = KDA64_D, VB = KDA64_VB, LD = KDA64_LD, LDC = KDA64_LDC;
     // 2026-10-12: 8 warps: in (A) and (C) warp w covers rows 16 (w & 3) .. and the column half
@@ -167,6 +175,19 @@ extern "C" __global__ void __launch_bounds__(KDA64_SCAN_THREADS) kda_chunk64_sca
     const unsigned int warp = tid >> 5, lane = tid & 31u, g = lane >> 2, tig = lane & 3u;
     const unsigned int r0 = (warp & 3u) * 16u, cw = (warp >> 2) * 32u, k0 = warp * (unsigned int)SR;
     float* S = state + (size_t)h * D * D;
+    // 2026-10-15: ONORM: the partial-sum buffer past sDec and the norm weight at this lane's
+    // phase-C columns.
+    float* part = sDec + D;
+    float wv[NTW][2];
+    if constexpr (ONORM) {
+#pragma unroll
+        for (int nt = 0; nt < NTW; ++nt) {
+            const float2 w2 = __bfloat1622float2(
+                *(const __nv_bfloat162*)(on.weight + v0 + cw + (unsigned int)nt * 8u + 2u * tig));
+            wv[nt][0] = w2.x;
+            wv[nt][1] = w2.y;
+        }
+    }
 
     // 2026-10-12: The chunk's factors, three cp.async groups: W + Qg; Kd + decay; P.
     auto load_wq = [&](size_t cb) {
@@ -305,20 +326,27 @@ extern "C" __global__ void __launch_bounds__(KDA64_SCAN_THREADS) kda_chunk64_sca
                 k64_mma(o[nt], ap, b0, b1);
             }
         }
+        if constexpr (ONORM) {
+            // 2026-10-15: Its cluster barrier also orders every warp of this block past sP and
+            // sDT before the next chunk's P lands, as the plain branch's __syncthreads does.
+            k64_onorm_epilogue(o, on, part, wv, c & 1u, h, v0, cw, r0, g, tig, (c0 + c) * C, T,
+                               out_stride);
+        } else {
 #pragma unroll
-        for (int nt = 0; nt < NTW; ++nt) {
+            for (int nt = 0; nt < NTW; ++nt) {
 #pragma unroll
-            for (int hr = 0; hr < 2; ++hr) {
-                const unsigned int t = (c0 + c) * C + r0 + g + (unsigned int)hr * 8u;
-                if (t < T) {
-                    float2* op = (float2*)(out + (size_t)t * out_stride + (size_t)h * D + v0 + cw +
-                                           (unsigned int)nt * 8u + 2u * tig);
-                    *op = make_float2(o[nt][hr * 2], o[nt][hr * 2 + 1]);
+                for (int hr = 0; hr < 2; ++hr) {
+                    const unsigned int t = (c0 + c) * C + r0 + g + (unsigned int)hr * 8u;
+                    if (t < T) {
+                        float2* op = (float2*)(out + (size_t)t * out_stride + (size_t)h * D + v0 + cw +
+                                               (unsigned int)nt * 8u + 2u * tig);
+                        *op = make_float2(o[nt][hr * 2], o[nt][hr * 2 + 1]);
+                    }
                 }
             }
+            // 2026-10-12: Every warp is past sP and sDT before the next chunk's P lands / S0^T staging.
+            __syncthreads();
         }
-        // 2026-10-12: Every warp is past sP and sDT before the next chunk's P lands / S0^T staging.
-        __syncthreads();
         if (more) load_p(cbn);
     }
 #pragma unroll
@@ -329,4 +357,59 @@ extern "C" __global__ void __launch_bounds__(KDA64_SCAN_THREADS) kda_chunk64_sca
             const unsigned int col = v0 + (unsigned int)nt * 8u + 2u * tig + (unsigned int)(e & 1);
             S[(size_t)row * D + col] = st[nt][e];
         }
+    // 2026-10-15: ONORM: each block stays resident until its peer has read its last partials.
+    if constexpr (ONORM) {
+        k64_cluster_arrive();
+        k64_cluster_wait();
+    }
+}
+
+extern "C" __global__ void __launch_bounds__(KDA64_SCAN_THREADS) kda_chunk64_scan(
+    const float* __restrict__ u_in,
+    const __nv_bfloat16* __restrict__ w_in,
+    const __nv_bfloat16* __restrict__ qg_in,
+    const __nv_bfloat16* __restrict__ kd_in,
+    const __nv_bfloat16* __restrict__ p_in,
+    const float* __restrict__ ad_in,
+    float* __restrict__ state,
+    float* __restrict__ out,
+    unsigned int H,
+    unsigned int T,
+    unsigned int c0,
+    unsigned int num_chunks,
+    unsigned int out_stride
+) {
+    const K64Onorm none = {nullptr, nullptr, nullptr, 0.0f};
+    k64_scan<false>(u_in, w_in, qg_in, kd_in, p_in, ad_in, state, out, H, T, c0, num_chunks,
+                    out_stride, none);
+}
+
+// 2026-10-15: `METRALE_GLM_KDA_SCAN_ONORM`: kda_chunk64_scan with kda_o_norm_gated_bf16 as its
+// epilogue (kda_chunk64_onorm.cuh): the BF16 normed rows `onorm_out` [T, out_stride] from the
+// output gate `gate` (same layout), the norm `weight` [D] and `eps`, byte for byte the plain
+// scan then the norm; the FP32 core rows are not written. The two column blocks of a head are
+// one cluster; dynamic shared memory KDA64_SCAN_ONORM_SMEM.
+extern "C" __global__ void __cluster_dims__(1, 2, 1) __launch_bounds__(KDA64_SCAN_THREADS)
+    kda_chunk64_scan_onorm(
+    const float* __restrict__ u_in,
+    const __nv_bfloat16* __restrict__ w_in,
+    const __nv_bfloat16* __restrict__ qg_in,
+    const __nv_bfloat16* __restrict__ kd_in,
+    const __nv_bfloat16* __restrict__ p_in,
+    const float* __restrict__ ad_in,
+    float* __restrict__ state,
+    const __nv_bfloat16* __restrict__ gate,
+    const __nv_bfloat16* __restrict__ weight,
+    __nv_bfloat16* __restrict__ onorm_out,
+    float eps,
+    unsigned int H,
+    unsigned int T,
+    unsigned int c0,
+    unsigned int num_chunks,
+    unsigned int out_stride
+) {
+    static_assert(KDA64_D / KDA64_VB == 2, "a head's columns are the two blocks of one cluster");
+    const K64Onorm on = {gate, weight, onorm_out, eps};
+    k64_scan<true>(u_in, w_in, qg_in, kd_in, p_in, ad_in, state, nullptr, H, T, c0, num_chunks,
+                   out_stride, on);
 }

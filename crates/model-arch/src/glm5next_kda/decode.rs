@@ -204,7 +204,7 @@ impl Glm5NextKdaLayer {
     ) -> Result<()> {
         self.front_end(gpu, hidden, 1, ws, Pack::InFrontEnd, GateAt::Kernel, stream)?;
         self.stateful_row(gpu, RowIo::workspace(&self.cfg, ws, 0), state, stream)?;
-        self.back_end(gpu, 1, ws, stream)
+        self.back_end(gpu, 1, ws, false, stream)
     }
 
     /// 2026-09-25: `k` tokens of one sequence: the projections batched, the recurrence one row at a
@@ -329,16 +329,16 @@ impl Glm5NextKdaLayer {
             },
             || {
                 if chunked64 {
-                    self.stateful_chunk64(gpu, k, state, ws, pack, gate, stream)
-                } else if chunked {
-                    self.stateful_chunk16(gpu, k, state, ws, pack, stream)
-                } else if snap_tokens {
-                    self.stateful_tokens_snap(gpu, k, state, ws, snapshots, stream)
-                } else if tokens {
-                    self.stateful_tokens(gpu, k, state, ws, pack, stream)
-                } else {
-                    Ok(())
+                    return self.stateful_chunk64(gpu, k, state, ws, pack, gate, stream);
                 }
+                if chunked {
+                    self.stateful_chunk16(gpu, k, state, ws, pack, stream)?;
+                } else if snap_tokens {
+                    self.stateful_tokens_snap(gpu, k, state, ws, snapshots, stream)?;
+                } else if tokens {
+                    self.stateful_tokens(gpu, k, state, ws, pack, stream)?;
+                }
+                Ok(false)
             },
         )
     }
@@ -416,13 +416,15 @@ impl Glm5NextKdaLayer {
                 )?;
                 after_row(row)
             },
-            || Ok(()),
+            || Ok(false),
         )
     }
 
     /// 2026-10-08: `front_end` over `k` rows, `per_row(row)` for each row in order,
     /// (2026-10-09) `after_rows`, then `back_end`, each span in its profile bucket. Refuses `k == 0` or `k` above the
     /// workspace before any launch.
+    /// 2026-10-15: `after_rows` answers whether it wrote `o_norm_out` (`chunk64_onorm.rs`), and
+    /// `back_end` then does not norm.
     pub(super) fn rows_with(
         &self,
         gpu: &dyn GpuBackend,
@@ -433,7 +435,7 @@ impl Glm5NextKdaLayer {
         gate: GateAt,
         stream: u64,
         mut per_row: impl FnMut(usize) -> Result<()>,
-        after_rows: impl FnOnce() -> Result<()>,
+        after_rows: impl FnOnce() -> Result<bool>,
     ) -> Result<()> {
         if k == 0 || k > ws.max_tokens {
             bail!(
@@ -451,10 +453,10 @@ impl Glm5NextKdaLayer {
         for row in 0..k {
             per_row(row)?;
         }
-        after_rows()?;
+        let normed = after_rows()?;
         profile::end(profile::KDA_RECUR, t_recur, gpu, stream);
         let t_back = profile::start();
-        let r = self.back_end(gpu, k, ws, stream);
+        let r = self.back_end(gpu, k, ws, normed, stream);
         profile::end(profile::KDA_BACK, t_back, gpu, stream);
         r
     }

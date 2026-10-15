@@ -150,7 +150,7 @@ impl Glm5NextKdaLayer {
                         after_row(step.row)?;
                     }
                 }
-                Ok(())
+                Ok(false)
             },
         )
     }

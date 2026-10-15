@@ -48,26 +48,30 @@ type EncodeTiledFn = unsafe extern "C" fn(
     u32,
 ) -> i32;
 
+/// 2026-10-15: The address of a driver entry point in the libcuda the process has already
+/// loaded (`dlsym(RTLD_DEFAULT)`), or `None`. For entry points the link-time stub libcuda
+/// lacks (CUDA 13.0's stub has no `cuOccupancyMaxActiveClusters`).
+pub(super) fn libcuda_symbol(name: &std::ffi::CStr) -> Option<usize> {
+    // 2026-09-25: `dlsym` is unix-only. Elsewhere the symbol is reported missing and the
+    // caller returns an error.
+    #[cfg(unix)]
+    {
+        unsafe extern "C" {
+            fn dlsym(handle: *mut std::ffi::c_void, symbol: *const i8) -> *mut std::ffi::c_void;
+        }
+        let p = unsafe { dlsym(std::ptr::null_mut(), name.as_ptr().cast::<i8>()) };
+        if p.is_null() { None } else { Some(p as usize) }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = name;
+        None
+    }
+}
+
 fn tensor_map_encode_tiled() -> Option<EncodeTiledFn> {
     static CACHED: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();
-    let addr = (*CACHED.get_or_init(|| {
-        // 2026-09-25: `dlsym` is unix-only. Elsewhere the symbol is reported
-        // missing and `tiled_2d_bf16` returns an error.
-        #[cfg(unix)]
-        {
-            unsafe extern "C" {
-                fn dlsym(handle: *mut std::ffi::c_void, symbol: *const i8)
-                -> *mut std::ffi::c_void;
-            }
-            let name = c"cuTensorMapEncodeTiled";
-            let p = unsafe { dlsym(std::ptr::null_mut(), name.as_ptr().cast::<i8>()) };
-            if p.is_null() { None } else { Some(p as usize) }
-        }
-        #[cfg(not(unix))]
-        {
-            None
-        }
-    }))?;
+    let addr = (*CACHED.get_or_init(|| libcuda_symbol(c"cuTensorMapEncodeTiled")))?;
     // 2026-09-25: SAFETY: `addr` is libcuda's `cuTensorMapEncodeTiled`, whose
     // prototype in `cuda.h` is `EncodeTiledFn`.
     Some(unsafe { std::mem::transmute::<usize, EncodeTiledFn>(addr) })

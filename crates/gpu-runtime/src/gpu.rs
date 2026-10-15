@@ -184,6 +184,21 @@ pub trait GpuBackend: Send + Sync {
     #[track_caller]
     fn kernel(&self, module: &str, func_name: &str) -> Result<KernelHandle>;
 
+    /// 2026-10-15: How many thread-block clusters of `kernel` (its compile-time cluster
+    /// dims) the device can hold at once at this launch shape: 0 when not even one fits,
+    /// which a launch would fail on. A launcher whose blocks wait on each other refuses
+    /// before launching on 0. The default refuses: a backend without clusters.
+    fn max_active_clusters(
+        &self,
+        kernel: KernelHandle,
+        grid: [u32; 3],
+        block: [u32; 3],
+        shared_mem: u32,
+    ) -> Result<u32> {
+        let _ = (kernel, grid, block, shared_mem);
+        anyhow::bail!("this backend does not report thread-block cluster occupancy")
+    }
+
     /// 2026-09-29: The output-column (N) tile width `kernel` publishes as the
     /// `extern "C" __device__ unsigned int <entry>_n_tile` of its module, read when the
     /// handle was resolved. A launch whose grid covers N in tiles must size it from this,

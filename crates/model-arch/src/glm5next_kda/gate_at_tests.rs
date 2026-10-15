@@ -120,7 +120,7 @@ fn the_plain_prepare_takes_the_gate_arguments() {
     let st = seq_state(&gpu);
     let run = |gate| {
         let from = gpu.launch_count();
-        lay.stateful_chunk64_with(&gpu, 700, &st, &ws, Pack::InFrontEnd, false, gate, 7)
+        lay.stateful_chunk64_with(&gpu, 700, &st, &ws, Pack::InFrontEnd, false, gate, false, 7)
             .unwrap();
         since(&gpu, from)
     };
@@ -146,7 +146,7 @@ fn the_conv_prepare_takes_the_gate_arguments() {
     for pack in [Pack::InFrontEnd, Pack::InConv] {
         let run = |gate| {
             let from = gpu.launch_count();
-            lay.stateful_chunk64_with(&gpu, 700, &st, &ws, pack, true, gate, 7)
+            lay.stateful_chunk64_with(&gpu, 700, &st, &ws, pack, true, gate, false, 7)
                 .unwrap();
             since(&gpu, from)
         };
@@ -196,6 +196,7 @@ fn prepare_refuses_without_the_kernels_before_any_launch() {
                     Pack::InFrontEnd,
                     fused,
                     GateAt::Prepare,
+                    false,
                     7
                 )
                 .is_err(),
@@ -212,6 +213,7 @@ fn prepare_refuses_without_the_kernels_before_any_launch() {
             Pack::InFrontEnd,
             false,
             GateAt::Kernel,
+            false,
             7,
         )
         .unwrap();

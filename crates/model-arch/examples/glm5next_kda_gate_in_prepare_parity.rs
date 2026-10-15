@@ -38,54 +38,20 @@ mod fixture;
 mod timing;
 
 use anyhow::{Context, Result, ensure};
-use arms::{Arm, Gate, GateRaw, H, In, Kernels, Layout, QKV, fused, unfused};
+use arms::{
+    Arm, Gate, GateRaw, In, Kernels, Layout, QKV, fused, gate_inputs, gate_launch, unfused,
+};
 use cases::{bumped_copy, case_rows, compare, ensure_finite, free_inputs, inputs, run_arm};
-use fixture::{Lcg, up_bf16, up_f32};
+use fixture::Lcg;
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
 use metrale_gpu_runtime::gpu::{GpuBackend, KernelHandle};
-use metrale_gpu_runtime::kernel_args::KernelLaunch;
 use metrale_model_arch::glm5next_kda::chunk64::CHUNK64_D as D;
-
-/// 2026-10-14: `linear_attn_config.gate_lower_bound` of GLM-5.3-Flash.
-const LOWER_BOUND: f32 = -5.0;
 
 /// 2026-10-14: The gate kernel and the two `_graw` prepares.
 struct GateKernels {
     gate: KernelHandle,
     prep: KernelHandle,
     prep_conv: KernelHandle,
-}
-
-/// 2026-10-14: f_b's BF16 rows `[t, QKV]`, `dt_bias` `[QKV]` and `A_log` `[H]` on the device.
-fn gate_inputs(g: &dyn GpuBackend, rng: &mut Lcg, t: usize) -> Result<GateRaw> {
-    let mut raw = rng.vec(t * QKV, 3.0);
-    for (i, x) in raw.iter_mut().enumerate() {
-        if i % 1009 == 0 {
-            *x = if i % 2 == 0 { 40.0 } else { -40.0 };
-        }
-    }
-    Ok(GateRaw {
-        g_raw: up_bf16(g, &raw)?,
-        dt_bias: up_f32(g, &rng.vec(QKV, 1.0))?,
-        a_log: up_f32(g, &rng.vec(H, 1.0))?,
-        lower_bound: LOWER_BOUND,
-    })
-}
-
-/// 2026-10-14: `kda_gate_bf16` into `x.gate`, as the front end launches it.
-fn gate_launch(g: &dyn GpuBackend, gk: &GateKernels, r: &GateRaw, x: &In, s: u64) -> Result<()> {
-    KernelLaunch::new(g, gk.gate)
-        .grid([(x.t * H) as u32, 1, 1])
-        .block([128, 1, 1])
-        .arg_ptr(r.g_raw)
-        .arg_ptr(r.dt_bias)
-        .arg_ptr(r.a_log)
-        .arg_ptr(x.gate)
-        .arg_u32(x.t as u32)
-        .arg_u32(H as u32)
-        .arg_u32(D as u32)
-        .arg_f32(r.lower_bound)
-        .launch(s)
 }
 
 /// 2026-10-14: The four paths of a case.
@@ -120,11 +86,11 @@ impl Ctx<'_> {
         let src = x.src(layout);
         match path {
             Path::Kernel => {
-                gate_launch(g, gk, r, x, s)?;
+                gate_launch(g, gk.gate, r, x, s)?;
                 unfused(g, k, k.prep, Gate::Rows, x, a, layout, s, rec)
             }
             Path::KernelConv => {
-                gate_launch(g, gk, r, x, s)?;
+                gate_launch(g, gk.gate, r, x, s)?;
                 fused(g, k, k.prep_conv, Gate::Rows, x, a, layout, src, s, rec)
             }
             Path::Prepare => unfused(g, k, gk.prep, Gate::Raw(*r), x, a, layout, s, rec),

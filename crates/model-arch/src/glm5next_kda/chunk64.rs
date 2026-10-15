@@ -113,14 +113,19 @@ impl Glm5NextKdaLayer {
         pack: Pack,
         gate: GateAt,
         stream: u64,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let fused = self.chunk64_conv_on()?;
-        self.stateful_chunk64_with(gpu, k, state, ws, pack, fused, gate, stream)
+        // 2026-10-15: `METRALE_GLM_KDA_SCAN_ONORM` (`chunk64_onorm.rs`): `true` when the scan
+        // wrote `o_norm_out` and `back_end` must not norm `core`.
+        let onorm = onorm::kda_scan_onorm()?;
+        self.stateful_chunk64_with(gpu, k, state, ws, pack, fused, gate, onorm, stream)?;
+        Ok(onorm)
     }
 
     /// 2026-10-14: [`Self::stateful_chunk64`] with the conv in front of the prepare (`fused`:
     /// `kda_chunk64_prepare_conv` per slab, the window advanced after the last) or as its own
     /// launch.
+    /// 2026-10-15: With `onorm` the scans norm their rows into `o_norm_out` instead of `core`.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn stateful_chunk64_with(
         &self,
@@ -131,6 +136,7 @@ impl Glm5NextKdaLayer {
         pack: Pack,
         fused: bool,
         gate: GateAt,
+        onorm: bool,
         stream: u64,
     ) -> Result<()> {
         if !self.chunk64_ready() || k == 0 || k > ws.max_tokens {
@@ -142,8 +148,10 @@ impl Glm5NextKdaLayer {
         if gate == GateAt::Prepare {
             self.gate_in_prepare_check()?;
         }
-        let c = &self.cfg;
-        let (qkv, d, h) = (c.qkv_dim(), c.head_dim, c.heads);
+        if onorm {
+            self.scan_onorm_check(gpu)?;
+            onorm::scan_onorm_readback();
+        }
         let nchunks = k.div_ceil(CHUNK64);
         // 2026-10-12: Each scratch buffer holds `t_pad * qkv` floats; a slab's widest factor
         // needs `slab * heads * 64 * head_dim` of them.
@@ -170,7 +178,6 @@ impl Glm5NextKdaLayer {
         if !fused {
             self.conv_tokens(gpu, k, state, ws, pack, stream)?;
         }
-        let io = RowIo::workspace(c, ws, 0);
         for c0 in (0..nchunks).step_by(CHUNK64_SLAB) {
             let n = CHUNK64_SLAB.min(nchunks - c0);
             if fused {
@@ -178,24 +185,7 @@ impl Glm5NextKdaLayer {
             } else {
                 self.chunk64_prepare(gpu, k, c0, n, ws, gate, stream)?;
             }
-            KernelLaunch::new(gpu, self.kernels.seq.chunk64_scan)
-                .grid([h as u32, (d / CHUNK64_VB) as u32, 1])
-                .block([CHUNK64_SCAN_THREADS, 1, 1])
-                .shared_mem(CHUNK64_SCAN_SMEM)
-                .arg_ptr(ws.chunk_u)
-                .arg_ptr(ws.chunk_w)
-                .arg_ptr(ws.q_f32)
-                .arg_ptr(ws.k_f32)
-                .arg_ptr(ws.v_f32)
-                .arg_ptr(ws.chunk_gc)
-                .arg_ptr(state.recurrent)
-                .arg_ptr(io.core)
-                .arg_u32(h as u32)
-                .arg_u32(k as u32)
-                .arg_u32(c0 as u32)
-                .arg_u32(n as u32)
-                .arg_u32(qkv as u32)
-                .launch(stream)?;
+            self.chunk64_scan(gpu, k, c0, n, state, ws, onorm, stream)?;
         }
         if fused {
             self.chunk64_conv_window(gpu, k, state, ws, pack, stream)?;
@@ -253,6 +243,11 @@ impl Glm5NextKdaLayer {
 // 2026-10-14: `METRALE_GLM_KDA_CHUNK64_CONV`: the conv inside the prepare.
 #[path = "chunk64_conv.rs"]
 pub(crate) mod conv;
+
+// 2026-10-15: `METRALE_GLM_KDA_SCAN_ONORM`: the output norm inside the scan.
+#[path = "chunk64_onorm.rs"]
+pub(crate) mod onorm;
+pub use onorm::CHUNK64_SCAN_ONORM_SMEM;
 
 #[cfg(test)]
 #[path = "chunk64_tests.rs"]

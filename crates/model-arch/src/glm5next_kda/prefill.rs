@@ -172,7 +172,7 @@ impl Glm5NextKdaLayer {
         );
 
         let t_back = crate::glm5next_layer::profile::start();
-        let r = self.back_end(gpu, t, ws, stream);
+        let r = self.back_end(gpu, t, ws, false, stream);
         crate::glm5next_layer::profile::end(
             crate::glm5next_layer::profile::KDA_BACK,
             t_back,

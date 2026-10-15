@@ -166,7 +166,8 @@ impl Glm5NextKdaLayer {
                         gpu.copy_d2d_async(state.recurrent, h_dst, h_bytes, stream)?;
                     }
                 }
-                Ok(())
+                // 2026-10-15: The tail-merge keeps the plain scan: `back_end` norms `core`.
+                Ok(false)
             },
         )
     }
