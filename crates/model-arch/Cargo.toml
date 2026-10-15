@@ -13,6 +13,8 @@ cuda = ["metrale-model-layers/cuda"]
 metal = ["metrale-model-layers/metal"]
 metal-example = ["metal", "dep:tokenizers", "dep:memmap2", "dep:safetensors"]
 gpu-examples = []
+# 2026-10-15: examples that run NCCL (the comm co-run and exchange probes); links libnccl.
+nccl-examples = ["gpu-examples", "metrale-comm/nccl"]
 
 [dependencies]
 metrale-cache = { path = "../cache", default-features = false }
@@ -273,6 +275,14 @@ required-features = ["cuda", "gpu-examples"]
 [[example]]
 name = "glm5next_moe_prefill_w4a4_bench"
 required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_comm_corun_probe"
+required-features = ["cuda", "nccl-examples"]
+
+[[example]]
+name = "glm5next_comm_xchg_probe"
+required-features = ["cuda", "nccl-examples"]
 
 [[example]]
 name = "glm5next_moe_epi_bench"
