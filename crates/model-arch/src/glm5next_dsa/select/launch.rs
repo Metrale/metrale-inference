@@ -223,6 +223,9 @@ fn run(
     // 2026-10-14: `METRALE_GLM_DSA_SCORES_PIPE=1`: those scores streamed (`pipe`), from BF16
     // keys and visibility prepared once per compression.
     let pipe = scores_pipe_for(mma, &kernels.rows, scores_pipe());
+    if ceiling.is_none() && geom.q_rows > 1 {
+        pipe::readback_select_levers(mma, pipe);
+    }
     let tiled = !mma
         && scores_tiled_for(
             ceiling.is_some(),
