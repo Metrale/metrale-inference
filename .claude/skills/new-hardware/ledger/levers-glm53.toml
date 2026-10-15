@@ -2117,3 +2117,27 @@ effort_hours = 2.0
 transferability = "any BF16 weighted gather-sum whose rows are a multiple of eight elements and 16-byte aligned"
 links = { pr = "", commit = "", evidence = "glm5next_c1_fuse_microtest" }
 notes = "Only combines of COMBINE_VEC8_MIN_ROWS (1024) rows or more take it; decode and short prefills keep the scalar kernel. Refused where it cannot run (kernel absent, hidden not a multiple of 8, unaligned buffer); the serve log line 'GLM MoE: combine_vec8 kernels launched' proves a launch."
+
+[[lever]]
+id = "gb10x3-glm53-kda-conv-roll"
+date = "2026-10-15"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_KDA_CONV_ROLL=1 (proposed, not landed): kda_chunk64_prepare_conv_graw with the conv's q/k and v pass loops at `#pragma unroll 1`, built as a second module from the same source"
+symptom = "at a 32k cold prefill kda_chunk64_prepare_conv_graw runs 4386 launches at 134.0 us (pfDG1) / 146.3 us (pfCTLI) median, about 592-648 ms on the critical path; its entry is 21,543 SASS instructions (0x54270 = 337 KB of code), the fully unrolled conv passes about 110 KB of it, and the issue rate implied about 2.9-3.0 KB of code per us, so it was diagnosed as instruction-fetch bound"
+diagnosis_tool = "microbench"
+root_cause_class = "latency-bound"
+lever_type = "kernel-restructure"
+lkb_effect = "none kept. Prototype: KDA64_CONV_PASS_UNROLL in kda_chunk64_conv.cuh, a kda_chunk64_prepare_roll.cu TU defining KDA64_CONV_ROLL and including kda_chunk64_prepare.cu (production module PTX byte-identical on CPU); rolled entry 128 registers, 0 spill, 15,927 SASS instructions (0x3e370 = 249 KB), conv region 110 KB -> 23 KB"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "discarded"
+verdict_reason = "STOP rule (V1 must save >= 8 us per launch) hit. Driver-API harness kp (dgx1, PTX JIT as production, H=22 D=128 parts layout, SM clock 2405 MHz for most samples), median of 7 interleaved round medians x 640 launches: L2 warm T=8192 old 122.88 [121.73, 124.10] -> rolled 122.05 [120.00, 122.08] us (-0.8), rolled + v prefetch 121.95 (-0.9); T=16384 old 119.39 -> rolled + prefetch 121.86 (+2.5); conv-only early-exit variant 40.00 -> 42.05 (+2.1, rolling costs the conv issue slots). Only with L2 flushed before every launch does rolling pay: 172.96 -> 156.61 (-16.4) / 155.68 (-17.3). Byte gate: all 7 outputs (stage, U, W, Qg, Kd, P, A+decay) identical over every slab at T 64/70/1100/8155/8192/16384 with and without a nonzero conv_state (prefix hit); the bump, conv-state-slot and last-pass-prefetch negative controls differ"
+failure_mode = "the instruction-fetch diagnosis holds only for code not resident in L2; with the 337 KB entry L2-resident the fetch cost is small and the rolled loops add issue work"
+caught_by = "interleaved harness timing with and without an L2 flush per launch"
+time_lost_hours = 0
+would_catch_earlier = "time an instruction-footprint lever L2-warm and L2-flushed before projecting from bytes of code per us"
+effort_hours = 4.0
+transferability = "any fully unrolled GB10 kernel diagnosed as instruction-fetch bound: rolling helps only where its code is evicted from L2 between launches"
+links = { pr = "", commit = "", evidence = "/workspace/claude-state/glm/kdaprep/kp_1.txt" }
+notes = "The harness L2-warm median (122.9 us) sits 11-23 us under production (134.0/146.3 us), between the warm and flushed regimes. If the production excess splits as the flushed one does (about a third code fetch), rolling would save about 4-8 us per launch, 19-37 ms at c32k: under the 50 ms arm threshold. The prototype patch is kept at /workspace/claude-state/glm/kdaprep/kroll_prototype (Rust lever not compiled). The 134.0 vs 146.3 us cross-boot gap is investigated separately from the pf{DG1,CTLI}{b,c}_32k repeat boots"
