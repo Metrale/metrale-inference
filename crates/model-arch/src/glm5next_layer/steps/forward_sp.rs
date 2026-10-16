@@ -281,7 +281,7 @@ impl Glm5NextLayer {
         use crate::glm5next_mhc_post_tile as post_tile;
         if let Some(kernel) = post_tile::kernel_for(&mhc.kernels, post_tile::enabled()?, n)? {
             let t_mhc = profile::start();
-            post_tile::launch(gpu, kernel, post_tile::GROUPS, &pair, tap.is_some(), stream)?;
+            post_tile::launch(gpu, kernel, post_tile::WIRED, &pair, tap.is_some(), stream)?;
             profile::end(profile::MHC, t_mhc, gpu, stream);
             if let Some(t) = tap {
                 t.put_rows(dump::Point::MixerRed, attn_out, a..b)?;

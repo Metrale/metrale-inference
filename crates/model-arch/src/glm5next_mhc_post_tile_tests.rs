@@ -120,7 +120,7 @@ fn on_without_the_kernel_is_an_error_not_a_fallback() {
     assert!(load_check(false, KernelHandle(0)).is_ok());
     assert!(load_check(true, KernelHandle(TILE)).is_ok());
     let err = load_check(true, KernelHandle(0)).unwrap_err().to_string();
-    assert!(err.contains(KERNELS[GROUPS as usize - 1]), "{err}");
+    assert!(err.contains(WIRED.name()), "{err}");
 
     let gpu = MockGpuBackend::new();
     let mut k = Glm5NextMhcKernels::resolve(&gpu).expect("mock resolves every kernel");
@@ -146,6 +146,8 @@ fn each_shape_the_kernel_cannot_take_is_refused() {
         hc_mult: 4,
         hc_fn_bf16: true,
         hc_fn: 0x100,
+        ring: true,
+        streams_out: 0x5000,
         num_tokens: 684,
         mix_cap: 2736,
         slot_elems: 2736 * 4096,
@@ -161,6 +163,10 @@ fn each_shape_the_kernel_cannot_take_is_refused() {
             ..ok
         },
         Shape { hc_fn: 0x108, ..ok },
+        Shape {
+            streams_out: 0x5004,
+            ..ok
+        },
         Shape {
             num_tokens: 0,
             ..ok
@@ -188,8 +194,13 @@ fn each_shape_the_kernel_cannot_take_is_refused() {
     for m in mutants {
         assert!(refusal(&m).is_some(), "{m:?} was taken");
     }
-    // 2026-10-15: The edges themselves are taken.
+    // 2026-10-15: The edges themselves are taken; only a ring needs aligned streams.
     for edge in [
+        Shape {
+            ring: false,
+            streams_out: 0x5004,
+            ..ok
+        },
         Shape {
             num_tokens: 2736,
             ..ok
@@ -213,32 +224,79 @@ fn each_shape_the_kernel_cannot_take_is_refused() {
     }
 }
 
-/// 2026-10-15: `GlmHcptLayout<NG>::BYTES` worked by hand from the kernel source: one group fits
-/// two blocks per GB10 SM (102400 B, 1 KiB reserved per block), as `__launch_bounds__(256, 2)`
-/// assumes, and two groups fit the 101376 B per-block opt-in.
+/// 2026-10-15: `GlmHcptLayout<NG>::BYTES` and `GlmHcprLayout::BYTES` worked by hand from the
+/// kernel sources: one register group fits two blocks per GB10 SM (102400 B, 1 KiB reserved per
+/// block), as `__launch_bounds__(256, 2)` assumes; two groups and a ring fit the 101376 B
+/// per-block opt-in, a ring one block per SM (`__launch_bounds__(256, 1)`).
 #[test]
 fn the_shared_memory_sum_is_the_kernel_layout() {
+    let [t1, t2, r0, r1, r1e] = ENTRIES.map(Entry::smem_bytes);
     // ring 4 x 24 x 256 x 2 = 49152 > red 25 x 256 x 4 = 25600; tail (24 + 4 + 33 + 4 + 16) x 4.
-    assert_eq!(smem_bytes(1), 49152 + 324);
+    assert_eq!(t1, 49152 + 324);
     // red 2 x 25600 = 51200 > ring 49152; tail 2 x 324.
-    assert_eq!(smem_bytes(2), 51200 + 648);
-    assert!(2 * (smem_bytes(1) + 1024) <= 102_400);
-    assert!(smem_bytes(2) <= 101_376);
-    assert!(kernel_name(0).is_err() && kernel_name(3).is_err());
+    assert_eq!(t2, 51200 + 648);
+    // tile4: ring 4 x (24 x 256 x 2 + 4 x 256 x 4) = 65536, then (4 x 24 + 4 + 33) x 4 = 66068;
+    // rounded up to 66080, then 4 tokens x (4 + 16) x 4.
+    assert_eq!(r0, 66080 + 320);
+    assert_eq!([r1, r1e], [r0, r0]);
+    assert!(2 * (t1 + 1024) <= 102_400);
+    assert!(t2 <= 101_376 && r0 <= 101_376);
+    assert!(2 * (r0 + 1024) > 102_400);
+}
+
+/// 2026-10-15: Names and modules are the kernel sources' (a wrong one resolves to no kernel and
+/// fails the load); the rings cover four tokens per block up to one block per SM.
+#[test]
+fn each_entry_names_its_kernel_and_grid() {
+    let names = ENTRIES.map(Entry::name);
+    let want =
+        ["tile1", "tile2", "ring0", "ring1", "ring1e"].map(|s| format!("glm5next_hc_post_pre_{s}"));
+    assert_eq!(names.map(String::from), want);
+    for e in ENTRIES {
+        let module = if e.is_ring() {
+            GLM5NEXT_MHC_POST_RING_MODULE
+        } else {
+            GLM5NEXT_MHC_POST_TILE_MODULE
+        };
+        assert_eq!(e.module(), module, "{e:?}");
+        assert_eq!(e.block(), if e == Entry::Tile2 { 512 } else { 256 });
+    }
+    assert_eq!(WIRED, Entry::Tile1);
+    let grid = |e: Entry, t| e.grid(t, 48);
+    assert_eq!([grid(Entry::Tile1, 1), grid(Entry::Tile1, 347)], [1, 347]);
+    assert_eq!([grid(Entry::Tile2, 1), grid(Entry::Tile2, 347)], [1, 174]);
+    for r in [Entry::Ring0, Entry::Ring1, Entry::Ring1e] {
+        assert_eq!(
+            [grid(r, 1), grid(r, 4), grid(r, 5), grid(r, 100)],
+            [1, 1, 2, 25]
+        );
+        assert_eq!(
+            [grid(r, 189), grid(r, 192), grid(r, 193), grid(r, 2736)],
+            [48, 48, 48, 48]
+        );
+        assert_eq!(r.grid(2736, 20), 20);
+    }
 }
 
 /// 2026-10-15: The parameter list in the kernel's order (GLM_HCPT_ARGS): vec8's post operands
 /// with `write_x` after the streams, then the pre-norm's. A swapped pointer reads the wrong
-/// buffer with no error; the grid is one block per `groups` tokens.
+/// buffer with no error; the grid and block are the entry's, a ring's from the mock's 48 SMs.
 #[test]
 fn the_launch_passes_the_kernel_arguments_in_order() {
     let gpu = MockGpuBackend::new();
     let w = site(true, 0x100);
-    for (groups, write_x, t, grid) in [(1, false, 200, 200), (2, true, 201, 101)] {
+    let cases = [
+        (Entry::Tile1, false, 200, 200),
+        (Entry::Tile2, true, 201, 101),
+        (Entry::Ring0, true, 100, 25),
+        (Entry::Ring1, false, 256, 48),
+        (Entry::Ring1e, true, 193, 48),
+    ];
+    for (entry, write_x, t, grid) in cases {
         launch(
             &gpu,
             KernelHandle(TILE),
-            groups,
+            entry,
             &args(&w, &PEERS, t),
             write_x,
             9,
@@ -247,8 +305,8 @@ fn the_launch_passes_the_kernel_arguments_in_order() {
         let l = gpu.launches_snapshot().pop().expect("one launch");
         assert_eq!(l.func, TILE);
         assert_eq!(l.grid, [grid, 1, 1]);
-        assert_eq!(l.block, [256 * groups, 1, 1]);
-        assert_eq!(l.shared_mem, smem_bytes(groups));
+        assert_eq!(l.block, [entry.block(), 1, 1]);
+        assert_eq!(l.shared_mem, entry.smem_bytes());
         assert_eq!(l.stream, 9);
         let buf = |p: u64| MockArg::Buffer(DevicePtr(p));
         let le = |v: &[u8]| MockArg::Bytes(v.to_vec());
@@ -283,8 +341,8 @@ fn the_launch_passes_the_kernel_arguments_in_order() {
     }
 }
 
-/// 2026-10-15: A refused launch launches nothing: a zero handle, a bad group count, an FP32 or
-/// misaligned hc_fn, a shape `refusal` names.
+/// 2026-10-15: A refused launch launches nothing: a zero handle, an FP32 or misaligned hc_fn,
+/// misaligned streams on a ring entry, a shape `refusal` names.
 #[test]
 fn a_refused_launch_launches_nothing() {
     let gpu = MockGpuBackend::new();
@@ -295,18 +353,23 @@ fn a_refused_launch_launches_nothing() {
         world_size: 5,
         ..PEERS
     };
-    let go = |k: u64, g: u32, w: &Glm5NextMhcSiteWeights, p: &PeerPartials| {
-        launch(&gpu, KernelHandle(k), g, &args(w, p, 128), false, 0)
+    let go = |k: u64, e: Entry, w: &Glm5NextMhcSiteWeights, p: &PeerPartials| {
+        launch(&gpu, KernelHandle(k), e, &args(w, p, 128), false, 0)
     };
-    assert!(go(0, 1, &bf16, &PEERS).is_err());
-    assert!(go(TILE, 3, &bf16, &PEERS).is_err());
-    assert!(go(TILE, 1, &f32w, &PEERS).is_err());
-    assert!(go(TILE, 1, &skew, &PEERS).is_err());
-    assert!(go(TILE, 1, &bf16, &five).is_err());
-    let mut wide = args(&bf16, &PEERS, 128);
-    wide.dims = [4096, 2, 20];
-    assert!(launch(&gpu, KernelHandle(TILE), 1, &wide, false, 0).is_err());
+    for e in [Entry::Tile1, Entry::Ring1] {
+        assert!(go(0, e, &bf16, &PEERS).is_err());
+        assert!(go(TILE, e, &f32w, &PEERS).is_err());
+        assert!(go(TILE, e, &skew, &PEERS).is_err());
+        assert!(go(TILE, e, &bf16, &five).is_err());
+        let mut wide = args(&bf16, &PEERS, 128);
+        wide.dims = [4096, 2, 20];
+        assert!(launch(&gpu, KernelHandle(TILE), e, &wide, false, 0).is_err());
+    }
+    let mut skewed = args(&bf16, &PEERS, 128);
+    skewed.streams_out = DevicePtr(0x5004);
+    assert!(launch(&gpu, KernelHandle(TILE), Entry::Ring0, &skewed, false, 0).is_err());
     assert_eq!(gpu.launch_count(), 0);
-    go(TILE, 1, &bf16, &PEERS).unwrap();
-    assert_eq!(gpu.launch_count(), 1, "the control launches");
+    launch(&gpu, KernelHandle(TILE), Entry::Tile1, &skewed, false, 0).unwrap();
+    go(TILE, Entry::Ring1, &bf16, &PEERS).unwrap();
+    assert_eq!(gpu.launch_count(), 2, "the controls launch");
 }

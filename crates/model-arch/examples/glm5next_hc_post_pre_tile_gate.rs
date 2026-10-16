@@ -1,23 +1,24 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-15: Byte gate and microbench of `METRALE_GLM_MHC_POST_PRE_TILE`
-//! (`glm5next_hc_post_pre_tile1` and `..._tile2`, the SP-mHC post-mix and the FFN pre-norm in
-//! one launch) against the pair it replaces, `glm5next_hc_post_rank_sum_vec8` then
+//! (every `glm5next_mhc_post_tile::ENTRIES` kernel: `glm5next_hc_post_pre_tile1`, `..._tile2`
+//! and the persistent rings `..._ring0`, `..._ring1`, `..._ring1e`; the SP-mHC post-mix and the
+//! FFN pre-norm in one launch) against the pair it replaces, `glm5next_hc_post_rank_sum_vec8` then
 //! `glm5next_hc_pre_norm_tile4`, at GLM-5.3's shape (hidden 4096, hc 4, 20 Sinkhorn iterations).
 //!
 //! Owner: model-arch examples (GLM-5.3 mHC kernels).
 //! Invariants:
-//! - Returns an error unless, for both entry points, every byte of `block_out`, the streams,
+//! - Returns an error unless, for every entry point, every byte of `block_out`, the streams,
 //!   `post`, `comb`, `y`, `normed` and the `mix` scratch over rows `0..r0 + T + 8` (the rows
 //!   before the piece and the poisoned rows after it included) equals the pair's, for:
-//!   T in {1, 2, 3, 4, 5, 17, 347, 684, 2736} on every site (two synthetic, both sites of every
-//!   packet layer) and two stream distributions, `write_x` on, aliased as the layer calls it
-//!   (streams, post and comb updated in place); and on the first site, without aliasing and
-//!   with `write_x` off, from row offset 3, at 1 to 4 ranks, split into pieces (the layer's
-//!   four-way split and an odd split), and as a continuation chunk after a prefix-cache hit:
-//!   the chunk starts at row 61 or 64 and its residual rows are restored from a cache buffer by
-//!   an async copy on the launch stream right before each piece, so the pre-norm reads streams
-//!   the post-mix formed from restored columns.
+//!   T in {1, 2, 3, 4, 5, 17, 64, 96, 100, 347, 684, 2736} on every site (two synthetic, both
+//!   sites of every packet layer) and two stream distributions, `write_x` on, aliased as the
+//!   layer calls it (streams, post and comb updated in place); and on the first site, without
+//!   aliasing and with `write_x` off, from row offset 3, at 1 to 4 ranks, split into pieces
+//!   (the layer's four-way split and an odd split), and as a continuation chunk after a
+//!   prefix-cache hit: the chunk starts at row 61 or 64 and its residual rows are restored from
+//!   a cache buffer by an async copy on the launch stream right before each piece, so the
+//!   pre-norm reads streams the post-mix formed from restored columns.
 //! - Returns an error unless the fused kernel split at row 100 equals the pair over the unsplit
 //!   chunk (`mix` aside: it is piece-local).
 //! - Returns an error unless each negative control changes the fused kernel's bytes against the
@@ -41,9 +42,9 @@ use metrale_comm::PeerPartials;
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_model_arch::glm5next_hc_post_vec;
-use metrale_model_arch::glm5next_mhc::{GLM5NEXT_MHC_POST_TILE_MODULE, Glm5NextMhcKernels};
+use metrale_model_arch::glm5next_mhc::Glm5NextMhcKernels;
 use metrale_model_arch::glm5next_mhc_post_pre_tok::PostPreTok;
-use metrale_model_arch::glm5next_mhc_post_tile::{self as post_tile, KERNELS};
+use metrale_model_arch::glm5next_mhc_post_tile::{self as post_tile, ENTRIES, Entry};
 use metrale_model_arch::glm5next_mhc_tile::launch_tile;
 use sites::{H, HC, Rng, Site, all_sites, bf16b, read, up};
 
@@ -76,8 +77,8 @@ impl Case {
     }
 }
 
-/// 2026-10-15: A fused entry point and its tokens per block.
-type Fused = (KernelHandle, u32);
+/// 2026-10-15: A fused entry point and its kernel.
+type Fused = (KernelHandle, Entry);
 
 struct Gate<'a> {
     gpu: &'a dyn GpuBackend,
@@ -85,7 +86,7 @@ struct Gate<'a> {
     inp: Inputs,
     want: Arm,
     got: Arm,
-    fused: [Fused; 2],
+    fused: [Fused; ENTRIES.len()],
 }
 
 impl Gate<'_> {
@@ -130,7 +131,7 @@ impl Gate<'_> {
                     let k = self.k.hc_pre_norm_tile;
                     launch_tile(self.gpu, k, streams, &w, norm_w, outs, rows, DIMS, EPS, 0)?;
                 }
-                Some((kernel, groups)) => {
+                Some((kernel, entry)) => {
                     let a = PostPreTok {
                         block_out,
                         partials: &partials,
@@ -148,7 +149,7 @@ impl Gate<'_> {
                         dims: DIMS,
                         eps: EPS,
                     };
-                    post_tile::launch(self.gpu, kernel, groups, &a, c.write_x, 0)?;
+                    post_tile::launch(self.gpu, kernel, entry, &a, c.write_x, 0)?;
                 }
             }
         }
@@ -167,7 +168,7 @@ impl Gate<'_> {
         self.got.bytes(self.gpu, c.r0 + c.t + PAD, with_mix)
     }
 
-    /// 2026-10-15: Both entry points against the pair on `c`.
+    /// 2026-10-15: Every entry point against the pair on `c`.
     fn check(&self, site: &Site, label: &str, c: &Case) -> Result<()> {
         let want = self.pair_bytes(site, c, true)?;
         for f in self.fused {
@@ -176,7 +177,7 @@ impl Gate<'_> {
                 let i = want.iter().zip(&got).position(|(a, b)| a != b).unwrap_or(0);
                 bail!(
                     "{} / {} / {label} {c:?}: bytes differ from the pair, first at {}",
-                    KERNELS[f.1 as usize - 1],
+                    f.1.name(),
                     site.name,
                     locate(i, c.r0 + c.t + PAD)
                 );
@@ -191,13 +192,12 @@ fn main() -> Result<()> {
         .context("MHC_PACKET_DIR (the checkpoint mHC packets) is required")?;
     let gpu = MetraleCudaBackend::new(0, &metrale_kernels::ptx_modules())?;
     let k = Glm5NextMhcKernels::resolve(&gpu)?;
-    let fused = [1u32, 2].map(|g| {
-        let name = KERNELS[g as usize - 1];
-        let h = metrale_model_layers::layers::try_kernel(&gpu, GLM5NEXT_MHC_POST_TILE_MODULE, name);
-        (h, g)
+    let fused = ENTRIES.map(|e| {
+        let h = metrale_model_layers::layers::try_kernel(&gpu, e.module(), e.name());
+        (h, e)
     });
-    for (h, g) in fused {
-        ensure!(h.0 != 0, "{} is not in this build", KERNELS[g as usize - 1]);
+    for (h, e) in fused {
+        ensure!(h.0 != 0, "{} is not in this build", e.name());
     }
     ensure!(
         k.hc_post_rank_sum_vec8.0 != 0 && k.hc_pre_norm_tile.0 != 0,
@@ -222,7 +222,7 @@ fn main() -> Result<()> {
             g.inp = inputs(&gpu, &mut rng, mag, norm_w)?;
         }
         for site in &sites {
-            for t in [1, 2, 3, 4, 5, 17, 347, 684, 2736] {
+            for t in [1, 2, 3, 4, 5, 17, 64, 96, 100, 347, 684, 2736] {
                 g.check(site, dname, &Case::new(t))?;
             }
             println!("{} / {dname}: identical at every T", site.name);
@@ -232,7 +232,7 @@ fn main() -> Result<()> {
     split_vs_unsplit(&g, &sites[0])?;
     negative_controls(&g, &sites[2])?;
     println!("BYTE GATE: PASS");
-    for t in [347usize, 684, 2736] {
+    for t in [64usize, 347, 684, 2736] {
         let c = Case {
             write_x: false,
             aliased: false,
@@ -240,11 +240,8 @@ fn main() -> Result<()> {
         };
         let mut line = format!("T={t:5}:");
         let mut pair = 0.0;
-        for (name, f) in [
-            ("pair", None),
-            ("tile1", Some(fused[0])),
-            ("tile2", Some(fused[1])),
-        ] {
+        let arms = std::iter::once(("pair", None));
+        for (name, f) in arms.chain(fused.map(|f| (f.1.name(), Some(f)))) {
             let m = median_us(&g, &sites[2], &c, f)?;
             if f.is_none() {
                 pair = m[0];
@@ -338,7 +335,7 @@ fn split_vs_unsplit(g: &Gate, site: &Site) -> Result<()> {
         ensure!(
             got == want,
             "{}: split at row 100 differs from the pair over the whole chunk",
-            KERNELS[f.1 as usize - 1]
+            f.1.name()
         );
     }
     println!("split vs unsplit: identical");
@@ -355,7 +352,7 @@ fn negative_controls(g: &Gate, site: &Site) -> Result<()> {
     let peer = g.inp.peers.offset((SLOT + last * H + 77) * 2);
     let resid = g.inp.src[1].offset((last * HC * H + 3 * H + 9) * 4);
     for f in g.fused {
-        let name = KERNELS[f.1 as usize - 1];
+        let name = f.1.name();
         ensure!(
             g.fused_bytes(site, &c, f, true)? == want,
             "{name}: control differs"

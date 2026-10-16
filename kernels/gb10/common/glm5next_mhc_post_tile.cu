@@ -29,11 +29,9 @@
 #include "e4m3_mma_pipe.cuh"
 #include "glm5next_mhc_fused_parts.cuh"
 #include "glm5next_mhc_tile_parts.cuh"
+#include "glm5next_mhc_post_args.cuh"
 
-#define GLM_HCPT_H 4096
-#define GLM_HCPT_COLS (GLM_HCPT_H / GLM_HCF_BLOCK)
 #define GLM_HCPT_STEPS (GLM_HCT_HC * GLM_HCPT_COLS)
-#define GLM_HCPT_MAX_RANKS 4
 #define GLM_HCPT_STAGES 4
 #define GLM_HCPT_CB 4
 
@@ -73,22 +71,6 @@ __device__ __forceinline__ void glm_hcpt_issue(unsigned char* stage,
     }
     e4m3g::cp_commit();
 }
-
-#define GLM_HCPT_ARGS                                                                         \
-    __nv_bfloat16 *__restrict__ block_out, const __nv_bfloat16 *__restrict__ peers,           \
-        long long slot_elems, int n_ranks, int my_rank, const float *residual,                \
-        const float *post, const float *comb, float *streams_out, int write_x,                \
-        const __nv_bfloat16 *__restrict__ hc_fn, const float *__restrict__ hc_scale,          \
-        const float *__restrict__ hc_base, float *__restrict__ mix,                           \
-        const __nv_bfloat16 *__restrict__ norm_w, __nv_bfloat16 *__restrict__ y_out,          \
-        float *post_out, float *comb_out, __nv_bfloat16 *__restrict__ normed_out,             \
-        unsigned int hidden_size, unsigned int sinkhorn_iters, float norm_eps, float hc_eps,  \
-        float rms_eps, unsigned int num_tokens
-
-#define GLM_HCPT_PASS                                                                         \
-    block_out, peers, slot_elems, n_ranks, my_rank, residual, post, comb, streams_out,        \
-        write_x, hc_fn, hc_scale, hc_base, mix, norm_w, y_out, post_out, comb_out,            \
-        normed_out, hidden_size, sinkhorn_iters, norm_eps, hc_eps, rms_eps, num_tokens
 
 // 2026-10-15: vec8's post for token tk's columns cc * 256 + t: x[i][cc] gets stream i.
 __device__ __forceinline__ void glm_hcpt_post(float (&x)[GLM_HCT_HC][GLM_HCPT_COLS],
