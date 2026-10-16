@@ -63,10 +63,10 @@ fn args<'a>(site: &'a Glm5NextMhcSiteWeights, peers: &'a PeerPartials, t: u32) -
 #[test]
 fn the_lever_needs_the_pair_it_replaces() {
     for r in [ALL, Requires::default()] {
-        assert_eq!(parse(None, r), Ok(false));
-        assert_eq!(parse(Some("0"), r), Ok(false));
+        assert_eq!(parse(None, None, r), Ok(None));
+        assert_eq!(parse(Some("0"), None, r), Ok(None));
     }
-    assert_eq!(parse(Some("1"), ALL), Ok(true));
+    assert_eq!(parse(Some("1"), Some("576"), ALL), Ok(Some(576)));
     let cases = [
         (
             Requires {
@@ -105,12 +105,38 @@ fn the_lever_needs_the_pair_it_replaces() {
         ),
     ];
     for (r, name) in cases {
-        let err = parse(Some("1"), r).unwrap_err();
+        let err = parse(Some("1"), Some("576"), r).unwrap_err();
         assert!(err.contains(name), "{r:?}: {err}");
     }
     for bad in ["2", "on", "true", ""] {
-        let err = parse(Some(bad), ALL).unwrap_err();
+        let err = parse(Some(bad), Some("576"), ALL).unwrap_err();
         assert!(err.contains(LEVER), "{bad:?}: {err}");
+    }
+}
+
+/// 2026-10-16: On, the threshold is required (no default) and at least tile4's floor; set with
+/// the lever off it is refused rather than ignored.
+#[test]
+fn the_threshold_is_explicit_and_no_lower_than_the_floor() {
+    let floor = HC_PRE_NORM_ROWS_MIN_TOKENS as u32;
+    let err = parse(Some("1"), None, ALL).unwrap_err();
+    assert!(err.contains(MIN_TOKENS_ENV), "{err}");
+    assert_eq!(
+        parse(Some("1"), Some(&floor.to_string()), ALL),
+        Ok(Some(floor))
+    );
+    assert_eq!(parse(Some("1"), Some("4096"), ALL), Ok(Some(4096)));
+    let below = (floor - 1).to_string();
+    for bad in [below.as_str(), "0", "-1", "", "576.0", "x", " 576"] {
+        let err = parse(Some("1"), Some(bad), ALL).unwrap_err();
+        assert!(err.contains(MIN_TOKENS_ENV), "{bad:?}: {err}");
+    }
+    for v in [None, Some("0")] {
+        let err = parse(v, Some("576"), ALL).unwrap_err();
+        assert!(
+            err.contains(MIN_TOKENS_ENV) && err.contains(LEVER),
+            "{v:?}: {err}"
+        );
     }
 }
 
@@ -125,17 +151,27 @@ fn on_without_the_kernel_is_an_error_not_a_fallback() {
     let gpu = MockGpuBackend::new();
     let mut k = Glm5NextMhcKernels::resolve(&gpu).expect("mock resolves every kernel");
     k.hc_post_pre_tile = KernelHandle(TILE);
-    let pick =
-        |k: &Glm5NextMhcKernels, on: bool, t: u32| kernel_for(k, on, t).unwrap().map(|h| h.0);
+    let pick = |k: &Glm5NextMhcKernels, on: Option<u32>, t: u32| {
+        kernel_for(k, on, t).unwrap().map(|h| h.0)
+    };
     let min = HC_PRE_NORM_ROWS_MIN_TOKENS as u32;
-    assert_eq!(pick(&k, false, 2736), None);
-    assert_eq!(pick(&k, true, min - 1), None);
-    assert_eq!(pick(&k, true, min), Some(TILE));
-    assert_eq!(pick(&k, true, 2736), Some(TILE));
+    assert_eq!(pick(&k, None, 2736), None);
+    assert_eq!(pick(&k, Some(min), min - 1), None);
+    assert_eq!(pick(&k, Some(min), min), Some(TILE));
+    assert_eq!(pick(&k, Some(min), 2736), Some(TILE));
+    // 2026-10-16: The threshold splits c1k's 345-row pieces from c32k's 683-row ones.
+    assert_eq!(pick(&k, Some(576), 347), None);
+    assert_eq!(pick(&k, Some(576), 575), None);
+    assert_eq!(pick(&k, Some(576), 576), Some(TILE));
+    assert_eq!(pick(&k, Some(576), 684), Some(TILE));
+    // 2026-10-16: Below tile4's floor whatever the caller passes.
+    assert_eq!(pick(&k, Some(1), min - 1), None);
     let mut absent = k;
     absent.hc_post_pre_tile = KernelHandle(0);
-    assert_eq!(pick(&absent, true, min - 1), None);
-    assert!(kernel_for(&absent, true, min).is_err());
+    assert_eq!(pick(&absent, Some(min), min - 1), None);
+    assert_eq!(pick(&absent, Some(576), 575), None);
+    assert!(kernel_for(&absent, Some(min), min).is_err());
+    assert!(kernel_for(&absent, Some(576), 576).is_err());
 }
 
 /// 2026-10-15: Every condition of `refusal` refuses on its own; the control shape passes.
@@ -372,4 +408,53 @@ fn a_refused_launch_launches_nothing() {
     launch(&gpu, KernelHandle(TILE), Entry::Tile1, &skewed, false, 0).unwrap();
     go(TILE, Entry::Ring1, &bf16, &PEERS).unwrap();
     assert_eq!(gpu.launch_count(), 2, "the controls launch");
+}
+
+/// 2026-10-16: The per-piece choice the caller acts on; `None` runs the pair (vec8 + tile4).
+type Pick = fn(&Glm5NextMhcKernels, Option<u32>, u32) -> Result<Option<KernelHandle>>;
+
+/// 2026-10-16: The `(threshold, rows)` cases where `pick` fuses when it should run the pair, or
+/// the reverse. c1k's pieces are ~345 rows, c32k's ~683.
+fn threshold_misses(pick: Pick, k: &Glm5NextMhcKernels) -> Vec<(u32, u32)> {
+    let cases = [
+        (576, 64, false),
+        (576, 345, false),
+        (576, 347, false),
+        (576, 575, false),
+        (576, 576, true),
+        (576, 684, true),
+        (576, 2736, true),
+        (64, 63, false),
+        (64, 64, true),
+        (1, 63, false),
+        (1, 64, true),
+    ];
+    let fuses = |min, t| matches!(pick(k, Some(min), t), Ok(Some(_)));
+    cases
+        .into_iter()
+        .filter(|&(min, t, want)| fuses(min, t) != want)
+        .map(|(min, t, _)| (min, t))
+        .collect()
+}
+
+/// 2026-10-16: Pieces below the threshold (or tile4's floor) run the pair, the rest fuse; each
+/// mutant of the comparison is caught (negative controls).
+#[test]
+fn pieces_below_the_threshold_run_the_pair() {
+    let gpu = MockGpuBackend::new();
+    let mut k = Glm5NextMhcKernels::resolve(&gpu).expect("mock resolves every kernel");
+    k.hc_post_pre_tile = KernelHandle(TILE);
+    assert_eq!(threshold_misses(kernel_for, &k), vec![]);
+    let mutants: [(&str, Pick); 3] = [
+        ("threshold ignored", |k, m, t| {
+            kernel_for(k, m.map(|_| 1), t)
+        }),
+        ("off by one", |k, m, t| kernel_for(k, m.map(|m| m + 1), t)),
+        ("floor ignored", |k, m, t| {
+            Ok(m.filter(|&m| t >= m).map(|_| k.hc_post_pre_tile))
+        }),
+    ];
+    for (name, pick) in mutants {
+        assert!(!threshold_misses(pick, &k).is_empty(), "{name} not caught");
+    }
 }

@@ -21,7 +21,10 @@
 //!   `METRALE_GLM_SP_MHC=1`, `METRALE_GLM_MHC_FUSED=1`, `METRALE_GLM_MHC_PRE_TILE=1` and
 //!   `METRALE_GLM_MHC_POST_VEC=1` (the pair it replaces, which narrower pieces keep running),
 //!   `METRALE_GLM_MHC_POST_PRE_FUSED` is off, and the build has the kernel: no silent fallback.
-//! - Taken per piece from `HC_PRE_NORM_ROWS_MIN_TOKENS` rows, as tile4 is.
+//! - Taken per piece from [`MIN_TOKENS_ENV`] rows, a threshold with no default (the lever on
+//!   without it fails the load) and no lower than `HC_PRE_NORM_ROWS_MIN_TOKENS`, tile4's floor;
+//!   a narrower piece runs the pair. 2026-10-16: tile1 is slower than the pair at 347 rows and
+//!   faster at 684 (crossover measured between 390 and 510 rows on GB10), so the recipe sets it.
 //! - Hidden [`HIDDEN`], hc [`HC`], at most [`MAX_RANKS`] ranks, BF16 `hc_fn` 16-byte aligned (and
 //!   `streams_out` for a ring entry); [`launch`] refuses anything else before launching
 //!   (`refusal`).
@@ -41,6 +44,8 @@ use crate::glm5next_mhc_post_pre_tok::PostPreTok;
 
 /// 2026-10-15: The lever's environment variable.
 pub const LEVER: &str = "METRALE_GLM_MHC_POST_PRE_TILE";
+/// 2026-10-16: The narrowest piece the lever takes, required when it is on.
+pub const MIN_TOKENS_ENV: &str = "METRALE_GLM_MHC_POST_PRE_TILE_MIN_TOKENS";
 /// 2026-10-15: `GLM_HCPT_H`: the only hidden size the kernels are compiled for.
 pub const HIDDEN: u32 = 4096;
 /// 2026-10-15: `GLM_HCT_HC`: the only `hc_mult`.
@@ -158,12 +163,23 @@ pub(crate) struct Requires {
 
 /// 2026-10-15: [`enabled`]'s parse, pure: unset or `0` off, `1` on when every lever it needs is
 /// on and the `METRALE_GLM_MHC_POST_PRE_FUSED` kernel is not; anything else is an error.
-pub(crate) fn parse(v: Option<&str>, r: Requires) -> Result<bool, String> {
-    let on = match v {
-        None | Some("0") => return Ok(false),
-        Some("1") => true,
+/// 2026-10-16: On, the threshold `min` ([`MIN_TOKENS_ENV`]) is required and returned; set with
+/// the lever off it is an error too.
+pub(crate) fn parse(
+    v: Option<&str>,
+    min: Option<&str>,
+    r: Requires,
+) -> Result<Option<u32>, String> {
+    match v {
+        None | Some("0") => {
+            return match min {
+                None => Ok(None),
+                Some(m) => Err(format!("{MIN_TOKENS_ENV}={m:?} is set but {LEVER} is off")),
+            };
+        }
+        Some("1") => {}
         Some(s) => return Err(format!("{LEVER}={s:?}: expected 0 (off) or 1 (on)")),
-    };
+    }
     let missing: Vec<&str> = [
         (r.sp_mhc, "METRALE_GLM_SP_MHC=1"),
         (r.fused, "METRALE_GLM_MHC_FUSED=1"),
@@ -185,14 +201,28 @@ pub(crate) fn parse(v: Option<&str>, r: Requires) -> Result<bool, String> {
             "{LEVER}=1 and METRALE_GLM_MHC_POST_PRE_FUSED=1 replace the same pair; set one"
         ));
     }
-    Ok(on)
+    let floor = HC_PRE_NORM_ROWS_MIN_TOKENS as u32;
+    let Some(m) = min else {
+        return Err(format!(
+            "{LEVER}=1 needs {MIN_TOKENS_ENV}=N, the narrowest piece it takes (no default: \
+             narrower pieces are faster as the pair)"
+        ));
+    };
+    match m.parse::<u32>() {
+        Ok(n) if n >= floor => Ok(Some(n)),
+        _ => Err(format!(
+            "{MIN_TOKENS_ENV}={m:?}: expected a row count of at least {floor}"
+        )),
+    }
 }
 
 /// 2026-10-15: The lever, read once with the levers it needs, and a one-time readback when on.
-pub fn enabled() -> Result<bool> {
-    static V: std::sync::OnceLock<Result<bool, String>> = std::sync::OnceLock::new();
+/// 2026-10-16: `Some(threshold)` when on, `None` off.
+pub fn enabled() -> Result<Option<u32>> {
+    static V: std::sync::OnceLock<Result<Option<u32>, String>> = std::sync::OnceLock::new();
     V.get_or_init(|| {
         let v = std::env::var(LEVER).ok();
+        let min = std::env::var(MIN_TOKENS_ENV).ok();
         // 2026-10-15: The other levers are read only when this one is `1`, so a load with it off
         // reads nothing new.
         let s = |e: anyhow::Error| e.to_string();
@@ -207,12 +237,11 @@ pub fn enabled() -> Result<bool> {
         } else {
             Requires::default()
         };
-        let on = parse(v.as_deref(), r)?;
-        if on {
+        let on = parse(v.as_deref(), min.as_deref(), r)?;
+        if let Some(n) = on {
             tracing::info!(
-                "{LEVER}=1: SP-mHC pieces of {HC_PRE_NORM_ROWS_MIN_TOKENS}+ rows run the post-mix \
-                 and the FFN pre-norm as one launch ({}, {} B shared; same bytes as vec8 + \
-                 tile4)",
+                "{LEVER}=1: SP-mHC pieces of {n}+ rows ({MIN_TOKENS_ENV}) run the post-mix and \
+                 the FFN pre-norm as one launch ({}, {} B shared; same bytes as vec8 + tile4)",
                 WIRED.name(),
                 WIRED.smem_bytes()
             );
@@ -227,7 +256,7 @@ pub fn enabled() -> Result<bool> {
 /// after the load check: the lever on with the handle 0 is an error.
 pub fn resolve(gpu: &dyn GpuBackend) -> Result<KernelHandle> {
     let k = metrale_model_layers::layers::try_kernel(gpu, WIRED.module(), WIRED.name());
-    load_check(enabled()?, k)?;
+    load_check(enabled()?.is_some(), k)?;
     Ok(k)
 }
 
@@ -243,15 +272,19 @@ pub(crate) fn load_check(on: bool, kernel: KernelHandle) -> Result<()> {
 
 /// 2026-10-15: The fused kernel for a `num_tokens`-row piece: `None` off or narrower than
 /// `HC_PRE_NORM_ROWS_MIN_TOKENS` (the caller runs the pair).
+/// 2026-10-16: `min_tokens` is [`enabled`]'s: `None` off, else the narrowest piece taken.
 pub fn kernel_for(
     kernels: &Glm5NextMhcKernels,
-    on: bool,
+    min_tokens: Option<u32>,
     num_tokens: u32,
 ) -> Result<Option<KernelHandle>> {
-    if !on || (num_tokens as usize) < HC_PRE_NORM_ROWS_MIN_TOKENS {
+    let Some(min) = min_tokens else {
+        return Ok(None);
+    };
+    if num_tokens < min || (num_tokens as usize) < HC_PRE_NORM_ROWS_MIN_TOKENS {
         return Ok(None);
     }
-    load_check(on, kernels.hc_post_pre_tile)?;
+    load_check(true, kernels.hc_post_pre_tile)?;
     Ok(Some(kernels.hc_post_pre_tile))
 }
 

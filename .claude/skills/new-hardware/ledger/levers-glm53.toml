@@ -2171,7 +2171,7 @@ id = "gb10x3-glm53-mhc-post-pre-tile"
 date = "2026-10-15"
 hardware_class = "gb10"
 model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
-recipe_or_tier = "METRALE_GLM_MHC_POST_PRE_TILE=1 (default off) on top of METRALE_GLM_SP_MHC=1 METRALE_GLM_MHC_FUSED=1 METRALE_GLM_MHC_POST_VEC=1 METRALE_GLM_MHC_PRE_TILE=1, MHC_POST_PRE_FUSED off: each wide in-layer hc post + next pre-norm pair runs glm5next_hc_post_pre_tile1"
+recipe_or_tier = "METRALE_GLM_MHC_POST_PRE_TILE=1 (default off) on top of METRALE_GLM_SP_MHC=1 METRALE_GLM_MHC_FUSED=1 METRALE_GLM_MHC_POST_VEC=1 METRALE_GLM_MHC_PRE_TILE=1, MHC_POST_PRE_FUSED off: each wide in-layer hc post + next pre-norm pair runs glm5next_hc_post_pre_tile1; 2026-10-16: METRALE_GLM_MHC_POST_PRE_TILE_MIN_TOKENS=N is required with it (no default): pieces narrower than N rows run the pair"
 symptom = "the in-layer pair vec8 post rank-sum + tile4 pre-norm costs about 855 us at 684 rows (505 + 361); the post writes 64 KiB of fp32 streams per row that the pre-norm reads straight back"
 diagnosis_tool = "microbench"
 root_cause_class = "bandwidth-bound"
@@ -2188,4 +2188,28 @@ would_catch_earlier = "time a post-only and a pre-only half of the fused kernel 
 effort_hours = 7.0
 transferability = "fusing a bandwidth-bound producer into a latency-bound consumer pays only when the consumer's loads were the cost; keep the consumer's multi-token pipelining or the saved traffic is spent on lost overlap"
 links = { pr = "", commit = "", evidence = "glm5next_hc_post_pre_tile_gate example and standalone harness, 2026-10-15" }
-notes = "tile2 (two tokens per 512-thread block) is slower than tile1 everywhere: 813.9 us clean at T=684. Under SM+CE load the fused kernel saves about 160 us per pair at T=684. The in-tree gate example is built but its GPU run was cancelled after the stop"
+notes = "tile2 (two tokens per 512-thread block) is slower than tile1 everywhere: 813.9 us clean at T=684. Under SM+CE load the fused kernel saves about 160 us per pair at T=684. The in-tree gate example is built but its GPU run was cancelled after the stop. 2026-10-16 replication (a second window, right after a serve arm; harness interleaved, n=9, pair vs tile1): T=347 clean 461.0 vs 496.8 us (slower), T=684 946.3 vs 898.9, T=2736 3567.7 vs 3434.0, T=684 beside an SM copy 1043.9 vs 974.5 and beside SM copy + copy engine 1583.5 vs 1483.6; the in-tree gate example (sequential) T=347 399.0 vs 432.7, T=684 833.6 vs 797.4, T=2736 3182.4 vs 3031.3. The crossover interpolates to 390-510 rows, so the lever takes a required min-row threshold: the recipe sets it between c1k's 345-row and c32k's 683-row pieces. Over 719 pairs per rank at c32k: -26 to -60 ms clean, -50 to -81 under an SM copy, -72 to -115 under SM copy + copy engine"
+
+[[lever]]
+id = "gb10x3-glm53-mhc-post-pre-ring"
+date = "2026-10-16"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "not wired: glm5next_hc_post_pre_ring0, ring1 and ring1e are gate-only entries of the METRALE_GLM_MHC_POST_PRE_TILE launcher; the layer keeps launching tile1"
+symptom = "the in-layer pair vec8 post rank-sum + tile4 pre-norm costs about 855 us at 684 rows, and the one-token fused tile1 saves only about 10% because it loses tile4's four-token pipelining"
+diagnosis_tool = "microbench"
+root_cause_class = "latency-bound"
+lever_type = "fusion"
+lkb_effect = "three persistent-grid kernels keep tile4's four-token cp.async ring (one 256-thread block per SM, 66400 B dynamic shared memory) and fuse only the post's stream write-back: ring0 forms a group's streams and reads them back through the ring, ring1 forms the next group's streams during the current group's chains, ring1e is ring1 with its partial and residual loads marked L2 evict_first. 221, 237 and 224 registers, no spills; the ring body moved to a shared header and the tile and post_tile PTX stayed byte-identical"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "discarded"
+verdict_reason = "Byte gate PASS: 969 harness cases over ring0, ring1, ring1e and grids capped at 7, 5 and 3 blocks (T 1,2,3,4,5,17,64,96,100,347,684,2736, prefix continuations restored from a cache buffer), negative controls fire for every variant; the in-tree gate example passes for all five entries including split vs unsplit. The stop rule (T=684 clean above 716 us, T=347 clean above 403.0, T=64 more than 5% slower than the pair) fired on all three. Harness, interleaved, median of n=9, pair / ring0 / ring1 / ring1e: T=684 clean 946.3 / 899.1 / 1032.8 / 918.6 us; T=347 461.0 / 476.6 / 479.4 / 460.2; T=64 85.7 / 93.7 / 99.9 / 102.1; T=684 beside an SM copy 1043.9 / 1323.5 / 1446.1 / 1421.0; beside SM copy + copy engine 1583.5 / 1794.3 / 1963.8 / 1934.7. In-tree gate, sequential: T=684 833.6 / 728.1 / 846.5 / 762.6; T=64 72.8 / 78.5. Over 719 pairs per rank at c32k: -34 to -76 ms clean, +152 to +201 ms under load, where about 82% of the calls run"
+failure_mode = "one block per SM over a persistent grid cannot hide the reductions' latency once a co-running kernel takes SMs or bandwidth, and the stream write-back evicts the lines the next group re-reads; the one-group lookahead costs more registers and issue slots than it hides"
+caught_by = "microbench stop rule, before any serve arm"
+time_lost_hours = 0.0
+would_catch_earlier = "time the candidate beside an SM copy before the clean run: most prefill calls run beside NCCL, and this design lost there by 15-27% while it won clean"
+effort_hours = 6.0
+transferability = "a persistent one-block-per-SM grid that wins in isolation can lose beside communication kernels; price a fusion under the co-run mix the serve sees"
+links = { pr = "", commit = "", evidence = "glm5next_hc_post_pre_tile_gate example and standalone harness, 2026-10-16" }
+notes = "L2 evidence: evict_first (ring1e vs ring1) is 11.1% faster clean at T=684 and 8.6% at T=2736 (in-tree 9.9% and 9.6%); flushed minus clean at T=684 is pair +7.8%, ring0 +10.9%, ring1 +3.1%, ring1e +8.2%. The 44.8 MB of streams at T=684 exceed the 24 MB L2, so the read-back misses and the miss projection (747-755 us) applied, not the hit one (632 us). The window ran right after a serve arm and its pair read 946 us against 855 the day before; every comparison above is within the window and interleaved"
