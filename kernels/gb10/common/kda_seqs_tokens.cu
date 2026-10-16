@@ -38,6 +38,16 @@
     rows_pick16(r, p##0, p##1, p##2, p##3, p##4, p##5, p##6, p##7, p##8, p##9, p##10, p##11,      \
                 p##12, p##13, p##14, p##15)
 
+// 2026-10-16: SNAPZ (`METRALE_GLM_KDA_SNAPZ=1`): sequence r's state source. f<r> (nullable) is its
+// deferred-commit word: when set, the state the previous verdict kept is still in the snapshot
+// slot z<r> (the commit's copy into the live state was skipped), so the launch reads the state
+// from z<r>. Writes go where they always do. f<r> null (the lever off) reads the live state.
+__device__ __forceinline__ unsigned long long kda_seqs_src(unsigned long long live,
+                                                           unsigned long long f,
+                                                           unsigned long long z) {
+    return (f != 0ull && *(const unsigned int*)f != 0u) ? z : live;
+}
+
 // 2026-10-14: causal_conv1d_update_l2norm_tokens for every sequence: grid (ceil(dim / 256),
 // max rows, sequences), block 256. Block (x, t, r) is the tokens kernel's block (x, t) on
 // sequence r's rows (new_input and output offset by w<r> rows) and window c<r>; t >= n<r> is
@@ -54,13 +64,17 @@ extern "C" __global__ void causal_conv1d_update_l2norm_tokens_seqs(
     float l2_eps,
     KDA_SEQS_PTR_ARGS(c),
     KDA_SEQS_U32_ARGS(w),
-    KDA_SEQS_U32_ARGS(n)
+    KDA_SEQS_U32_ARGS(n),
+    KDA_SEQS_PTR_ARGS(f),
+    KDA_SEQS_PTR_ARGS(z)
 ) {
     const unsigned int r = blockIdx.z;
     if (r >= KDA_SEQS_MAX) return;
     const float* conv_state = (const float*)KDA_SEQS_PICK(r, c);
     const unsigned int t = blockIdx.y;
     if (conv_state == nullptr || t >= KDA_SEQS_PICK(r, n)) return;
+    conv_state = (const float*)kda_seqs_src((unsigned long long)conv_state, KDA_SEQS_PICK(r, f),
+                                            KDA_SEQS_PICK(r, z));
     const size_t row0 = KDA_SEQS_PICK(r, w);
     const __nv_bfloat16* in = new_input + row0 * dim;
     const unsigned int ch = blockIdx.x * blockDim.x + threadIdx.x;
@@ -87,7 +101,9 @@ extern "C" __global__ void causal_conv1d_window_advance_seqs(
     KDA_SEQS_PTR_ARGS(c),
     KDA_SEQS_PTR_ARGS(p),
     KDA_SEQS_U32_ARGS(w),
-    KDA_SEQS_U32_ARGS(n)
+    KDA_SEQS_U32_ARGS(n),
+    KDA_SEQS_PTR_ARGS(f),
+    KDA_SEQS_PTR_ARGS(z)
 ) {
     const unsigned int r = blockIdx.y;
     const unsigned int ch = blockIdx.x * blockDim.x + threadIdx.x;
@@ -98,8 +114,11 @@ extern "C" __global__ void causal_conv1d_window_advance_seqs(
     const unsigned int T = KDA_SEQS_PICK(r, n);
     const __nv_bfloat16* in = new_input + (size_t)KDA_SEQS_PICK(r, w) * dim;
     float* st = conv_state + (size_t)ch * d_conv;
+    const float* src = (const float*)kda_seqs_src((unsigned long long)conv_state,
+                                                  KDA_SEQS_PICK(r, f), KDA_SEQS_PICK(r, z)) +
+                       (size_t)ch * d_conv;
     float old[4];
-    for (unsigned int s = 0; s < d_conv && s < 4u; ++s) old[s] = st[s];
+    for (unsigned int s = 0; s < d_conv && s < 4u; ++s) old[s] = src[s];
     if (snap != nullptr) {
         float* sp = snap + (size_t)ch * d_conv;
         for (unsigned int s = 0; s < d_conv && s < 4u; ++s) {
@@ -135,7 +154,9 @@ extern "C" __global__ void kda_recurrent_decode_bf16_seqs_reg(
     KDA_SEQS_PTR_ARGS(s),
     KDA_SEQS_PTR_ARGS(sp),
     KDA_SEQS_U32_ARGS(w),
-    KDA_SEQS_U32_ARGS(n)
+    KDA_SEQS_U32_ARGS(n),
+    KDA_SEQS_PTR_ARGS(f),
+    KDA_SEQS_PTR_ARGS(z)
 ) {
     constexpr unsigned int D = KDA_REG_D;
     const unsigned int r = blockIdx.z;
@@ -162,11 +183,14 @@ extern "C" __global__ void kda_recurrent_decode_bf16_seqs_reg(
     const unsigned int vi = blockIdx.y * blockDim.x + threadIdx.x;
     const bool live = vi < D;
     float* S = state + hd * D;
+    const float* S_src = (const float*)kda_seqs_src((unsigned long long)state,
+                                                    KDA_SEQS_PICK(r, f), KDA_SEQS_PICK(r, z)) +
+                         hd * D;
 
     float col[D];
     if (live) {
         #pragma unroll
-        for (unsigned int kk = 0; kk < D; ++kk) col[kk] = S[(size_t)kk * D + vi];
+        for (unsigned int kk = 0; kk < D; ++kk) col[kk] = S_src[(size_t)kk * D + vi];
     }
     for (unsigned int t = 0; t < T; ++t) {
         const size_t qo = (size_t)t * qkv_row_stride + hd;
@@ -192,5 +216,20 @@ extern "C" __global__ void kda_recurrent_decode_bf16_seqs_reg(
     if (live) {
         #pragma unroll
         for (unsigned int kk = 0; kk < D; ++kk) S[(size_t)kk * D + vi] = col[kk];
+    }
+}
+
+// 2026-10-16: SNAPZ: the deferred commit of one state blob, for a verify that does not take the
+// seqs kernels (`seqs_tokens.rs`, `snapz_resolve`): when *flag is nonzero, dst <- src, n16
+// 16-byte words; else nothing. Grid-stride, block 256. The flag is read on the device, so a
+// captured graph replays the decision of the step it runs in.
+extern "C" __global__ void kda_snapz_resolve(const unsigned int* __restrict__ flag,
+                                             const uint4* __restrict__ src,
+                                             uint4* __restrict__ dst,
+                                             unsigned long long n16) {
+    if (*flag == 0u) return;
+    for (unsigned long long i = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x; i < n16;
+         i += (unsigned long long)gridDim.x * blockDim.x) {
+        dst[i] = src[i];
     }
 }

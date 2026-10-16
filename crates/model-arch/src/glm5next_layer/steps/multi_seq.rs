@@ -41,7 +41,7 @@
 use super::*;
 use crate::glm5next_dsa::layer::DsaRowSpan;
 use crate::glm5next_kda::KdaVerifyRecord;
-use crate::glm5next_kda::seqs_tokens::kda_seqs_tokens;
+use crate::glm5next_kda::seqs_tokens::{KdaDefer, kda_seqs_tokens};
 
 /// 2026-10-09: One sequence's rows inside one row group of `forward_spans`: group rows
 /// `row0..row0 + rows` are the sequence's rows `t0..t0 + rows`.
@@ -118,6 +118,7 @@ impl Glm5NextLayer {
             &mut states[..num_seqs],
             kv_cache,
             None,
+            &[],
             ctx,
             stream,
             dump::Path::MultiDecode,
@@ -131,6 +132,9 @@ impl Glm5NextLayer {
     /// layer runs `decode_spans` over the group's sequences. Errors on a layer without a
     /// hyper-connection or when the rows pass the highway. 2026-10-13: `path` names the caller
     /// for the layer dump.
+    /// 2026-10-16: `defer[s]` (SNAPZ, `kda_snapz.rs`; empty: none): sequence `s`'s state is in
+    /// that snapshot slot when its flag is set; the KDA rows read it there (the seqs kernels) or
+    /// copy it into the live state first (`snapz_resolve`).
     #[allow(clippy::too_many_arguments)]
     pub(in crate::glm5next_layer) fn forward_spans(
         &self,
@@ -140,6 +144,7 @@ impl Glm5NextLayer {
         states: &mut [&mut (dyn LayerState + 'static)],
         kv_cache: &mut PagedKvCache,
         keep: Option<&[KdaRowKeep]>,
+        defer: &[Option<KdaDefer>],
         ctx: &ForwardContext,
         stream: u64,
         path: dump::Path,
@@ -248,7 +253,7 @@ impl Glm5NextLayer {
                     let runs = (kda_seqs_tokens() && layer.seqs_tokens_ready())
                         .then(|| {
                             let snaps = super::kda_seqs::snapshot_lists(keep);
-                            super::kda_seqs::kda_seqs_runs(&spans, &snaps, &kda)
+                            super::kda_seqs::kda_seqs_runs(&spans, &snaps, &kda, defer)
                         })
                         .flatten();
                     self.forward_rows_with(
@@ -264,6 +269,11 @@ impl Glm5NextLayer {
                             if let Some(runs) = &runs {
                                 layer.decode_seqs_tokens(ctx.gpu, normed, runs, ws, stream)?;
                             } else {
+                                for sp in spans.iter().filter(|sp| sp.t0 == 0) {
+                                    if let Some(d) = defer.get(sp.seq).copied().flatten() {
+                                        layer.snapz_resolve(ctx.gpu, &kda[sp.seq], &d, stream)?;
+                                    }
+                                }
                                 layer.decode_seq_rows(
                                     ctx.gpu,
                                     normed,

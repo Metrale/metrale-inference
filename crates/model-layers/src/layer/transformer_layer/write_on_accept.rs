@@ -33,6 +33,21 @@ pub struct GdnCarryBinding {
     pub conv_tab: DevicePtr,
 }
 
+/// 2026-10-16: SNAPZ (`METRALE_GLM_KDA_SNAPZ=1`): what a recurrent layer's batched verify reads
+/// to learn that a sequence's last verdict kept only its first row, so its state is still in its
+/// first snapshot slot (the commit's copy into the live state was deferred, model-engine
+/// `kda_snapz`). Set once by the model before any capture; the buffer never moves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct KdaSnapzBinding {
+    /// 2026-10-16: One `u32` per batch position of a batched verify (`VERIFY_WY_TABLE_SEQS`),
+    /// shared by every layer: nonzero means that position's state is in its first snapshot.
+    pub flags: DevicePtr,
+    /// 2026-10-16: The pool's bytes of one sequence's recurrent state and conv state, which
+    /// the deferred commit copies; a layer whose own state sizes differ refuses the binding.
+    pub h_bytes: usize,
+    pub conv_bytes: usize,
+}
+
 /// 2026-09-26: A supertrait of `TransformerLayer`; see the module header.
 pub trait LayerWriteOnAccept {
     /// 2026-09-25: Per-sequence write-on-accept stash size in f32 elements when this layer
@@ -57,6 +72,13 @@ pub trait LayerWriteOnAccept {
     /// 2026-09-26: Bind this layer's carried-state buffers. Called once, before any
     /// capture; the buffers never move afterwards.
     fn gdn_carry_bind(&self, _binding: GdnCarryBinding) {}
+
+    /// 2026-10-16: Bind SNAPZ's flag words ([`KdaSnapzBinding`]); `true` when this layer's
+    /// batched verify honours them. Called once, before any capture. `false` (the default):
+    /// the layer cannot read a deferred state, so the model must not defer.
+    fn kda_snapz_bind(&self, _binding: KdaSnapzBinding) -> bool {
+        false
+    }
 
     /// 2026-09-30: Whether a batched verify runs one run of `states` (adjacent sequences of
     /// width `kk`, under the WY tables at `wy_tables`) through the batched conv and the

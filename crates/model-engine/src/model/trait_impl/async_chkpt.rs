@@ -219,6 +219,9 @@ impl TransformerModel {
         num_accepted: usize,
         k: usize,
     ) -> Result<()> {
+        // 2026-10-16: SNAPZ: whether the last batched verify armed this slot (consumed here,
+        // whichever path commits).
+        let snapz_armed = self.kda_snapz_take_armed(seq.slot_idx);
         // 2026-10-11: `METRALE_GLM_MTP_DEVICE_STEP` part 3: a K=2 verdict the device verdict agrees
         // with commits on the device, predicated on its accept word (`commit_k2_on_device`), on
         // the default stream behind the verdict. Same copies; the host path below otherwise.
@@ -283,6 +286,11 @@ impl TransformerModel {
         if self.ssm_pool.rollback_mode == metrale_model_layers::ssm_reserve::SsmRollbackMode::Replay
         {
             return self.commit_replay_prefix(seq, num_accepted, k);
+        }
+        // 2026-10-16: SNAPZ: a verdict keeping only the first row leaves the state in the first
+        // snapshot slot, where the next batched verify reads it (`kda_snapz.rs`).
+        if snapz_armed && num_accepted == 1 && !h_folded && self.kda_snapz_defer(seq)? {
+            return Ok(());
         }
 
         let stream = self.secondary_stream;

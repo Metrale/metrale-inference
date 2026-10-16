@@ -15,8 +15,17 @@ use super::super::types::TransformerModel;
 use super::{CarryInner, SlotStates};
 
 impl TransformerModel {
-    /// 2026-09-26: Fold every pending row into H. A no-op when nothing is pending.
+    /// 2026-09-26: Make every recurrent state live before a call that reads it: land SNAPZ's
+    /// deferred commits (2026-10-16, `kda_snapz.rs`), then fold every pending row into H.
     pub(crate) fn gdn_carry_flush_pending(&self) -> Result<()> {
+        self.kda_snapz_flush_all()?;
+        self.gdn_carry_fold_pending()
+    }
+
+    /// 2026-09-26: Fold every pending row into H. A no-op when nothing is pending.
+    /// 2026-10-16: The carry half of `gdn_carry_flush_pending` only: SNAPZ's deferred commits
+    /// stay deferred (the EP worker lands them per command, `impl_a2.rs`).
+    pub(crate) fn gdn_carry_fold_pending(&self) -> Result<()> {
         let mut inner = self.gdn_carry.inner.lock();
         if inner.pending.is_empty() {
             return Ok(());

@@ -38,13 +38,16 @@ impl Glm5NextLayer {
                 self.layer_idx
             );
         }
+        // 2026-10-16: SNAPZ: each sequence's deferred-commit source (empty when unbound, as
+        // every DSA layer is).
+        let defers = self.snapz_defers(states)?;
         let keep = match &self.mixer {
             Glm5NextMixer::Kda { layer, .. } => {
                 // 2026-10-09: Every sequence's plan is decided before any checkpoint is taken,
                 // so a refusal leaves every state as it was.
                 let mut replay = Vec::with_capacity(ks.len());
                 let mut keep = Vec::with_capacity(ks.len());
-                for (s, &k) in states.iter_mut().zip(ks) {
+                for (i, (s, &k)) in states.iter_mut().zip(ks).enumerate() {
                     let st = self.kda_state(&mut **s)?;
                     let snapshots = st.h_state_intermediates.len() + 1 >= k
                         && st.conv_state_intermediates.len() + 1 >= k;
@@ -61,6 +64,13 @@ impl Glm5NextLayer {
                         ));
                         replay.push(false);
                     } else if st.replay_ring.is_some() {
+                        if defers.get(i).is_some_and(Option::is_some) {
+                            bail!(
+                                "GLM layer {}: sequence {i} has a deferred commit (SNAPZ) and a \
+                                 replay record; SNAPZ refuses replay rollback at bind",
+                                self.layer_idx
+                            );
+                        }
                         let (_, _, record) = self.replay_parts(layer, st)?;
                         if record.rows() + 1 < k {
                             bail!(
@@ -105,6 +115,7 @@ impl Glm5NextLayer {
             states,
             kv_cache,
             keep.as_deref(),
+            &defers,
             ctx,
             stream,
             dump::Path::MultiVerify,

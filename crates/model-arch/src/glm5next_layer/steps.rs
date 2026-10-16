@@ -15,6 +15,7 @@ mod forward_pieces;
 mod forward_sp;
 mod forward_sp_pipe;
 mod kda_seqs;
+mod kda_snapz;
 mod mhc_slice;
 mod mix;
 mod multi_seq;

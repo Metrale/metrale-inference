@@ -73,7 +73,10 @@ impl ModelVerify for TransformerModel {
         opts: crate::traits::VerifyBatchedOpts,
     ) -> Result<Vec<u32>> {
         self.require_verify_rollback()?;
+        // 2026-10-16: SNAPZ (`kda_snapz.rs`): flags and landings before, arms after.
+        self.kda_snapz_begin(seqs)?;
         let r = self.decode_verify_batched_dispatch(tokens, ks, seqs, _stream, opts);
+        self.kda_snapz_end(seqs, r.is_ok());
         self.release_verify_capture_on_err(r)
     }
 

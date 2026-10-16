@@ -454,6 +454,11 @@ impl LayerCapabilities for Glm5NextLayer {
 
 impl LayerWeightSetup for Glm5NextLayer {}
 impl LayerWriteOnAccept for Glm5NextLayer {
+    /// 2026-10-16: SNAPZ (`steps/kda_snapz.rs`).
+    fn kda_snapz_bind(&self, b: metrale_model_layers::layer::KdaSnapzBinding) -> bool {
+        self.snapz_bind(b)
+    }
+
     /// 2026-10-08: A KDA layer's replay commit (`Glm5NextKdaLayer::commit_replay`); `Ok(false)`
     /// on a DSA layer, which keeps no recurrent state.
     fn ssm_replay_commit(

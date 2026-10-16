@@ -352,6 +352,7 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                 is_first: idx == 0,
                 is_last: idx == last,
                 l2_warm: l2.clone(),
+                snapz: std::sync::OnceLock::new(),
             }));
         }
         if let Some(l2) = &l2 {

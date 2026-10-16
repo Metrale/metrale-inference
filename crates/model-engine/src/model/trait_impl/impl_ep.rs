@@ -13,7 +13,9 @@ use crate::traits::{ModelEp, SequenceState};
 
 impl ModelEp for TransformerModel {
     fn ep_worker_step(&self, slots: &mut [Option<SequenceState>]) -> Result<bool> {
-        self.gdn_carry_flush_pending()?;
+        // 2026-10-16: SNAPZ's deferred commits land per command (`ep_worker_execute`): a
+        // batched verify or propose may keep them.
+        self.gdn_carry_fold_pending()?;
         self.ep_worker_step_dispatch(slots)
     }
 

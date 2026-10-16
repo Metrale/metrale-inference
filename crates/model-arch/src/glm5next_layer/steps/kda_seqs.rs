@@ -11,7 +11,7 @@
 
 use super::multi_seq::{GroupSpan, KdaRowKeep};
 use crate::glm5next_kda::KdaSeqState;
-use crate::glm5next_kda::seqs_tokens::KdaSeqRun;
+use crate::glm5next_kda::seqs_tokens::{KdaDefer, KdaSeqRun};
 use metrale_gpu_runtime::gpu::DevicePtr;
 
 /// 2026-10-14: Each sequence's snapshot list under `keep` (`None`: it keeps none).
@@ -32,10 +32,14 @@ pub(in crate::glm5next_layer) fn snapshot_lists(
 /// when the group should keep `decode_seq_rows`: no span has two rows (a batched decode), a
 /// span asks for more than one snapshot (the seqs kernels store the state after a run's first
 /// row only), or two spans step one state (a padded batch's dummy slot).
+/// 2026-10-16: A span that starts its sequence's rows takes `defer[span.seq]` (SNAPZ; a
+/// missing entry takes none): its first launch reads the state there, so only the group
+/// holding row 0 may.
 pub fn kda_seqs_runs(
     spans: &[GroupSpan],
     snaps: &[Option<&[(DevicePtr, DevicePtr)]>],
     kda: &[KdaSeqState],
+    defer: &[Option<KdaDefer>],
 ) -> Option<Vec<KdaSeqRun>> {
     if !spans.iter().any(|sp| sp.rows > 1) {
         return None;
@@ -61,6 +65,7 @@ pub fn kda_seqs_runs(
             state,
             rows: sp.rows,
             snapshot,
+            defer: defer.get(sp.seq).copied().flatten().filter(|_| sp.t0 == 0),
         });
     }
     Some(runs)
@@ -76,7 +81,7 @@ mod tests {
         keep: Option<&[KdaRowKeep]>,
         kda: &[KdaSeqState],
     ) -> Option<Vec<KdaSeqRun>> {
-        kda_seqs_runs(spans, &snapshot_lists(keep), kda)
+        kda_seqs_runs(spans, &snapshot_lists(keep), kda, &[])
     }
 
     fn st(i: u64) -> KdaSeqState {
@@ -186,5 +191,29 @@ mod tests {
         assert_eq!(shape(&runs), vec![(0x2000, 1, None), (0x2001, 2, None)]);
         let runs = plan(&[span(0, 0, 0, 2)], None, &kda).unwrap();
         assert_eq!(shape(&runs), vec![(0x2000, 2, None)]);
+    }
+
+    /// 2026-10-16: SNAPZ: a span starting at its sequence's row 0 takes that sequence's defer
+    /// (indexed by `span.seq`, not by span order); the second group of a straddling span
+    /// (`t0 > 0`) and a sequence past the defer list take none. The control: without a defer
+    /// list no run defers.
+    #[test]
+    fn only_a_spans_row_zero_takes_its_sequences_defer() {
+        let kda: Vec<KdaSeqState> = (0..3).map(st).collect();
+        let d = |i: u64| KdaDefer {
+            flag: DevicePtr(0x9000 + 4 * i),
+            h: DevicePtr(0x3000 + i),
+            conv: DevicePtr(0x4000 + i),
+        };
+        let defer = [Some(d(0)), Some(d(1))];
+        let first = [span(1, 0, 0, 2), span(0, 2, 0, 1), span(2, 3, 0, 1)];
+        let runs = kda_seqs_runs(&first, &[], &kda, &defer).unwrap();
+        let got: Vec<_> = runs.iter().map(|r| r.defer).collect();
+        assert_eq!(got, vec![Some(d(1)), Some(d(0)), None]);
+        let second = [span(0, 0, 1, 1), span(2, 1, 0, 2)];
+        let runs = kda_seqs_runs(&second, &[], &kda, &defer).unwrap();
+        assert!(runs.iter().all(|r| r.defer.is_none()));
+        let runs = kda_seqs_runs(&first, &[], &kda, &[]).unwrap();
+        assert!(runs.iter().all(|r| r.defer.is_none()));
     }
 }

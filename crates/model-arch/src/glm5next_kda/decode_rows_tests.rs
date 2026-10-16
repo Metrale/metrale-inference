@@ -39,6 +39,7 @@ pub(super) const GATE: u64 = 0x309;
 pub(super) const CONV_SEQS: u64 = 0x326;
 pub(super) const WINDOW_SEQS: u64 = 0x327;
 pub(super) const RECUR_SEQS: u64 = 0x328;
+pub(super) const SNAPZ_RESOLVE: u64 = 0x329;
 
 pub(super) fn cfg() -> Glm5NextKdaConfig {
     Glm5NextKdaConfig {
@@ -108,6 +109,7 @@ pub(super) fn layer(gpu: &MockGpuBackend) -> Glm5NextKdaLayer {
             conv_seqs: k(CONV_SEQS),
             window_seqs: k(WINDOW_SEQS),
             recurrent_seqs: k(RECUR_SEQS),
+            snapz_resolve: k(SNAPZ_RESOLVE),
         },
         o_norm: k(0x30E),
         split_widen: k(0x30F),

@@ -97,6 +97,8 @@ struct CarryInner {
 #[derive(Default)]
 pub(crate) struct GdnCarry {
     inner: Mutex<CarryInner>,
+    /// 2026-10-16: SNAPZ's deferred KDA commits (`kda_snapz.rs`), landed with the folds.
+    pub(super) snapz: super::kda_snapz::KdaSnapz,
 }
 
 impl TransformerModel {

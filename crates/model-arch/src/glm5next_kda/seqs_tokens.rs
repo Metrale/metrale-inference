@@ -29,13 +29,27 @@ use super::*;
 /// 2026-10-14: `#define KDA_SEQS_MAX` in `kda_seqs_tokens.cu`: the runs one launch takes.
 pub const KDA_SEQS_MAX: usize = 16;
 
+/// 2026-10-16: SNAPZ (`METRALE_GLM_KDA_SNAPZ=1`): where a run whose last verdict kept only its
+/// first verify row finds that state. `flag` is the run's batch-position word on the device:
+/// nonzero means the commit that would copy `(h, conv)` (the slot's first verify
+/// intermediates) into the live state was deferred, so the kernels read the state from there;
+/// zero reads the live state. Writes go where they always do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct KdaDefer {
+    pub flag: DevicePtr,
+    pub h: DevicePtr,
+    pub conv: DevicePtr,
+}
+
 /// 2026-10-14: One sequence's run: `rows` consecutive workspace rows stepping `state`, and
 /// where to keep the state after the first of them (`(h_dst, conv_dst)`), if anywhere.
+/// 2026-10-16: `defer`: SNAPZ, see [`KdaDefer`] (`None`: the live state, as before).
 #[derive(Clone, Copy, Debug)]
 pub struct KdaSeqRun {
     pub state: KdaSeqState,
     pub rows: usize,
     pub snapshot: Option<(DevicePtr, DevicePtr)>,
+    pub defer: Option<KdaDefer>,
 }
 
 /// 2026-10-14: `METRALE_GLM_KDA_SEQS_TOKENS=1` steps a batched speculative verify's KDA runs
@@ -47,13 +61,15 @@ pub fn kda_seqs_tokens() -> bool {
 }
 
 /// 2026-10-14: The total rows of `runs`, or why they cannot run as one batched verify: no run,
-/// an empty run, an unset state or snapshot pointer, or two runs on one state.
+/// an empty run, an unset state, snapshot or defer pointer, or two runs on one state.
 pub(super) fn check_runs(runs: &[KdaSeqRun]) -> Result<usize> {
     if runs.is_empty() {
         bail!("KDA seqs verify: no runs");
     }
     for (i, a) in runs.iter().enumerate() {
-        let snap_unset = a.snapshot.is_some_and(|(h, c)| h.0 == 0 || c.0 == 0);
+        let snap_unset = a.snapshot.is_some_and(|(h, c)| h.0 == 0 || c.0 == 0)
+            || a.defer
+                .is_some_and(|d| d.flag.0 == 0 || d.h.0 == 0 || d.conv.0 == 0);
         if a.rows == 0 || a.state.recurrent.0 == 0 || a.state.conv.0 == 0 || snap_unset {
             bail!("KDA seqs verify: run {i} has no rows or an unset pointer");
         }
@@ -171,7 +187,8 @@ impl Glm5NextKdaLayer {
             .arg_u32(c.qk_channels() as u32)
             .arg_u32(d as u32)
             .arg_f32(c.l2_eps);
-        rows(ptrs(conv, |r| r.state.conv.0)).launch(stream)?;
+        let defer = |l, z: fn(&KdaDefer) -> DevicePtr| seq_defer(l, runs, z);
+        defer(rows(ptrs(conv, |r| r.state.conv.0)), |d| d.conv).launch(stream)?;
         let window = KernelLaunch::new(gpu, s.window_seqs)
             .grid([div_ceil(cd as u32, 256), nseq, 1])
             .block([256, 1, 1])
@@ -179,7 +196,8 @@ impl Glm5NextKdaLayer {
             .arg_u32(cd as u32)
             .arg_u32(c.conv_kernel as u32);
         let window = ptrs(window, |r| r.state.conv.0);
-        rows(ptrs(window, |r| r.snapshot.map_or(0, |p| p.1.0))).launch(stream)?;
+        let window = rows(ptrs(window, |r| r.snapshot.map_or(0, |p| p.1.0)));
+        defer(window, |d| d.conv).launch(stream)?;
         let recurrent = KernelLaunch::new(gpu, s.recurrent_seqs)
             .grid([c.heads as u32, (d / SEQ_VB) as u32, nseq])
             .block([SEQ_VB as u32, 1, 1])
@@ -197,8 +215,64 @@ impl Glm5NextKdaLayer {
             .arg_u32(c.heads as u32)
             .arg_u32(qkv as u32);
         let recurrent = ptrs(recurrent, |r| r.state.recurrent.0);
-        rows(ptrs(recurrent, |r| r.snapshot.map_or(0, |p| p.0.0))).launch(stream)
+        let recurrent = rows(ptrs(recurrent, |r| r.snapshot.map_or(0, |p| p.0.0)));
+        defer(recurrent, |d| d.h).launch(stream)
     }
+
+    /// 2026-10-16: SNAPZ on a group that keeps `decode_seq_rows` (no seqs kernels): the
+    /// deferred commit of `state` on the device, `kda_snapz_resolve` once per blob: when the
+    /// run's flag word is set, the live state <- `(defer.h, defer.conv)`; else nothing. Called
+    /// before the group's first row of that sequence, so the rows read what the seqs kernels
+    /// would have read.
+    pub fn snapz_resolve(
+        &self,
+        gpu: &dyn GpuBackend,
+        state: &KdaSeqState,
+        defer: &KdaDefer,
+        stream: u64,
+    ) -> Result<()> {
+        let k = self.kernels.seq.snapz_resolve;
+        if k.0 == 0 {
+            bail!("KDA SNAPZ: kda_snapz_resolve is not loaded");
+        }
+        let c = &self.cfg;
+        let blobs = [
+            (defer.h, state.recurrent, c.recurrent_state_elems() * 4),
+            (defer.conv, state.conv, c.conv_state_elems() * 4),
+        ];
+        for (src, dst, bytes) in blobs {
+            if bytes % 16 != 0 {
+                bail!("KDA SNAPZ: a {bytes}-byte state is not whole 16-byte words");
+            }
+            let n16 = bytes / 16;
+            KernelLaunch::new(gpu, k)
+                .grid([div_ceil(n16 as u32, 256).min(SNAPZ_RESOLVE_BLOCKS), 1, 1])
+                .block([256, 1, 1])
+                .arg_ptr(defer.flag)
+                .arg_ptr(src)
+                .arg_ptr(dst)
+                .arg_u64(n16 as u64)
+                .launch(stream)?;
+        }
+        Ok(())
+    }
+}
+
+/// 2026-10-16: The grid cap of `kda_snapz_resolve` (grid-stride beyond it).
+const SNAPZ_RESOLVE_BLOCKS: u32 = 1024;
+
+/// 2026-10-16: SNAPZ's two per-run arguments: each run's flag word, then `z` of its defer (the
+/// state it reads when the flag is set), zeros for a run without one and after the last.
+fn seq_defer<'a>(
+    l: KernelLaunch<'a>,
+    runs: &[KdaSeqRun],
+    z: fn(&KdaDefer) -> DevicePtr,
+) -> KernelLaunch<'a> {
+    let pick = |r: usize, f: &dyn Fn(&KdaDefer) -> DevicePtr| {
+        runs.get(r).and_then(|x| x.defer).map_or(0, |d| f(&d).0)
+    };
+    let l = (0..KDA_SEQS_MAX).fold(l, |l, r| l.arg_u64(pick(r, &|d| d.flag)));
+    (0..KDA_SEQS_MAX).fold(l, |l, r| l.arg_u64(pick(r, &z)))
 }
 
 /// 2026-10-14: `KDA_SEQS_MAX` pointer arguments: `f` of each run, then zeros.

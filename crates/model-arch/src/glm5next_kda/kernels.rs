@@ -164,6 +164,9 @@ pub struct KdaSeqKernels {
     pub conv_seqs: KernelHandle,
     pub window_seqs: KernelHandle,
     pub recurrent_seqs: KernelHandle,
+    /// 2026-10-16: `kda_snapz_resolve` (`kda_seqs_tokens.cu`): SNAPZ's deferred commit on a
+    /// group without the seqs kernels (`seqs_tokens.rs`, `snapz_resolve`).
+    pub snapz_resolve: KernelHandle,
 }
 
 impl KdaSeqKernels {
@@ -202,6 +205,7 @@ impl KdaSeqKernels {
             ),
             window_seqs: k(gpu, "kda_seqs_tokens", "causal_conv1d_window_advance_seqs"),
             recurrent_seqs: k(gpu, "kda_seqs_tokens", "kda_recurrent_decode_bf16_seqs_reg"),
+            snapz_resolve: k(gpu, "kda_seqs_tokens", "kda_snapz_resolve"),
         }
     }
 

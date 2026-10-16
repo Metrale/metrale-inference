@@ -154,7 +154,7 @@ impl Rig<'_> {
         let mut out = vec![0u8; ks.iter().sum::<usize>() * row];
         let mut dropped = !drop_snap;
         for (base, m, spans) in groups(ks) {
-            let mut runs: Vec<KdaSeqRun> = kda_seqs_runs(&spans, &lists, &a.st)
+            let mut runs: Vec<KdaSeqRun> = kda_seqs_runs(&spans, &lists, &a.st, &[])
                 .with_context(|| format!("the plan turned down group at row {base}"))?;
             if !dropped && let Some(r) = runs.iter_mut().find(|r| r.snapshot.is_some()) {
                 r.snapshot = None;
@@ -299,7 +299,7 @@ fn bench(gpu: &dyn GpuBackend, rng: &mut Lcg) -> Result<()> {
             .map(|v: &Vec<(DevicePtr, DevicePtr)>| Some(v.as_slice()))
             .collect();
         let spans = group_spans(&ks, 0, 2 * c);
-        let runs = kda_seqs_runs(&spans, &lists, &b.st).context("plan")?;
+        let runs = kda_seqs_runs(&spans, &lists, &b.st, &[]).context("plan")?;
         let row_states: Vec<KdaSeqState> = a.st.iter().flat_map(|&st| [st, st]).collect();
         let old = timing::time_graph(gpu, s, COPIES, &mut |s| {
             r.layer

@@ -32,6 +32,7 @@ pub(crate) mod impl_lora;
 mod impl_lora_rotate;
 pub(crate) mod impl_lora_swap;
 mod impl_ngram;
+mod kda_snapz;
 pub(crate) mod lm_head_fp8_rows;
 pub(crate) mod lm_head_nvfp4_rows;
 pub(crate) mod lm_head_q6k;

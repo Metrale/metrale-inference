@@ -16,10 +16,10 @@ mod one_row_path;
 mod transformer_layer;
 pub use one_row_path::{split_segment_takes_decode_path, takes_decode_path};
 pub use transformer_layer::{
-    GdnCarryBinding, LayerAuxState, LayerCapabilities, LayerGraphHooks, LayerSplitPrefill,
-    LayerWeightSetup, LayerWriteOnAccept, MTP_CATCHUP_MAX, PrefillSpan, TransformerLayer,
-    VERIFY_WY_LAYER_STRIDE_BYTES, VERIFY_WY_TABLE_SEQS, VERIFY_WY_TABLE_STRIDE_BYTES,
-    VERIFY_WY_TABLES_PER_LAYER,
+    GdnCarryBinding, KdaSnapzBinding, LayerAuxState, LayerCapabilities, LayerGraphHooks,
+    LayerSplitPrefill, LayerWeightSetup, LayerWriteOnAccept, MTP_CATCHUP_MAX, PrefillSpan,
+    TransformerLayer, VERIFY_WY_LAYER_STRIDE_BYTES, VERIFY_WY_TABLE_SEQS,
+    VERIFY_WY_TABLE_STRIDE_BYTES, VERIFY_WY_TABLES_PER_LAYER,
 };
 
 /// 2026-09-25: One layer's per-sequence state, reached through `as_any` downcasts.

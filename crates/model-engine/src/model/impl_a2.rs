@@ -188,6 +188,23 @@ impl TransformerModel {
         if cmd == 0xFFFFFFFF {
             return Ok(false);
         }
+        // 2026-10-16: SNAPZ: only a batched verify (which reads a deferred state) and an MTP
+        // propose (which reads no recurrent state) run with deferred commits; every other
+        // command lands them first, as rank 0's `Model` methods do.
+        {
+            use metrale_model_layers::speculative::{
+                EP_CMD_MTP_PROPOSE, EP_CMD_MTP_PROPOSE_BATCH, EP_CMD_VERIFY_BATCH,
+            };
+            if ![
+                EP_CMD_VERIFY_BATCH,
+                EP_CMD_MTP_PROPOSE_BATCH,
+                EP_CMD_MTP_PROPOSE,
+            ]
+            .contains(&cmd)
+            {
+                self.kda_snapz_flush_all()?;
+            }
+        }
 
         // 2026-09-25: Batched decode: the preamble seq_id is 0, and the
         // per-row slots arrive in the `seq_ids[N]` payload the batched handler

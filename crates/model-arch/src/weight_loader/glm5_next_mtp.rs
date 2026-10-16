@@ -147,6 +147,7 @@ pub fn load_glm5next_mtp_module(
             is_last: false,
             // 2026-10-10: The MTP block has no mHC reduce to hide a warm under.
             l2_warm: None,
+            snapz: std::sync::OnceLock::new(),
         },
         eh_proj: DenseWeight {
             weight: store.get(&format!("{prefix}eh_proj.weight"))?.ptr,

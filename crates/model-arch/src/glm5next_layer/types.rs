@@ -79,6 +79,9 @@ pub struct Glm5NextLayer {
     /// 2026-10-10: The stack's L2 warm (`METRALE_GLM_AR_L2_PREFETCH`), shared by every text
     /// layer; `None` when the lever is off and for the MTP block.
     pub l2_warm: Option<Arc<l2_warm::L2Warm>>,
+    /// 2026-10-16: SNAPZ's flag words, set once by `kda_snapz_bind` (KDA layers only;
+    /// `steps/kda_snapz.rs`). Unset: no batched verify reads a deferred state.
+    pub snapz: std::sync::OnceLock<metrale_model_layers::layer::KdaSnapzBinding>,
 }
 
 impl Glm5NextLayer {
