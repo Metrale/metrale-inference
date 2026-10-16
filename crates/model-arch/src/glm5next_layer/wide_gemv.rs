@@ -13,7 +13,9 @@
 //!   (cuBLASLt above 16 rows, else `ops::dense_mm_bf16`), which other models share and which
 //!   is unchanged.
 //! - 2026-10-16: Under `METRALE_DENSE_BATCHM_32=1` exactly 17..=32 rows run as 16-row launches
-//!   ([`glm_mm_rows16`]) instead of cuBLASLt; off, nothing changes.
+//!   ([`glm_mm_rows16`]) instead of cuBLASLt, and only at a `DenseCallSite::Decode` or
+//!   `DenseCallSite::Verify` launch (`ops::dense_batchm_32_at`): a prefill launch keeps its
+//!   route at every row count. Off, nothing changes.
 //! - A register entry's row has the bits of the runtime-M batched GEMV's row
 //!   (`kernels/gb10/common/dense_gemv_bf16_batchm.cu`), which has `dense_gemv_bf16`'s.
 
@@ -106,10 +108,23 @@ impl Batchm {
     }
 }
 
-/// 2026-10-16: Whether `METRALE_DENSE_BATCHM_32` (`on`) sends an `m`-row `glm_mm` to
-/// [`glm_mm_rows16`]: exactly 17..=32 rows.
-fn rows32_takes(on: bool, m: usize) -> bool {
-    on && u32::try_from(m).is_ok_and(|m| ops::dense_batchm_band(0, true, m))
+/// 2026-10-16: Whether `METRALE_DENSE_BATCHM_32` (`on`) sends an `m`-row `glm_mm` launched at
+/// `site` to [`glm_mm_rows16`]: exactly 17..=32 rows, and only at the batched decode or verify
+/// (`ops::dense_batchm_32_at`), never from the row count alone.
+fn rows32_takes(on: bool, site: ops::DenseCallSite, m: usize) -> bool {
+    ops::dense_batchm_32_at(on, site)
+        && u32::try_from(m).is_ok_and(|m| ops::dense_batchm_band(0, true, m))
+}
+
+/// 2026-10-16: The site of a single-sequence k-row forward (`decode_k`) from its caller's
+/// `is_prefill`: `Prefill` for a prefill sub-chunk, else `General` (the single-sequence verify
+/// is not the batched body, so it keeps its route too).
+pub(crate) fn single_seq_site(is_prefill: bool) -> ops::DenseCallSite {
+    if is_prefill {
+        ops::DenseCallSite::Prefill
+    } else {
+        ops::DenseCallSite::General
+    }
 }
 
 /// 2026-10-16: The arm readback for `METRALE_DENSE_BATCHM_32`, once per process.
@@ -139,6 +154,7 @@ fn glm_mm_rows16(
     m: usize,
     n: usize,
     kk: usize,
+    site: ops::DenseCallSite,
     stream: u64,
 ) -> Result<()> {
     anyhow::ensure!(
@@ -152,7 +168,9 @@ fn glm_mm_rows16(
     while r0 < m {
         let rows = step.min(m - r0);
         let (ar, cr) = (a.offset(r0 * kk * 2), c.offset(r0 * n * c_elem));
-        glm_mm(gpu, gemm, gemv, batchm, ar, b, cr, rows, n, kk, stream)?;
+        glm_mm(
+            gpu, gemm, gemv, batchm, ar, b, cr, rows, n, kk, site, stream,
+        )?;
         r0 += rows;
     }
     Ok(())
@@ -162,6 +180,8 @@ fn glm_mm_rows16(
 /// kernels'): the W4A16 or FP8 dense path for a registered weight, then cuBLASLt above `DENSE_GEMV_BATCHM_MAX_M` rows when `cublas_wide_proj` is on (BF16
 /// out), the register batched GEMV in its band (`Batchm::register_entry`), else
 /// `ops::dense_mm_bf16` (GEMV at one row, `batchm.narrow` at 2..=16, the tile GEMM otherwise).
+/// 2026-10-16: `site` is the caller's pass; only `Decode` and `Verify` may take the 17..=32-row
+/// band of `METRALE_DENSE_BATCHM_32` ([`rows32_takes`]).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn glm_mm(
     gpu: &dyn GpuBackend,
@@ -174,6 +194,7 @@ pub(crate) fn glm_mm(
     m: usize,
     n: usize,
     kk: usize,
+    site: ops::DenseCallSite,
     stream: u64,
 ) -> Result<()> {
     // 2026-10-09: `--dense-quantization fp8` serves registered weights W8A8; only BF16-output
@@ -189,13 +210,13 @@ pub(crate) fn glm_mm(
     // the row-invariant batched GEMV ([`glm_mm_rows16`]), never cuBLASLt or the tile GEMM.
     let wide_rows = m > ops::DENSE_GEMV_BATCHM_MAX_M as usize;
     if wide_rows && crate::glm5next_batch_inv::enabled()? {
-        return glm_mm_rows16(gpu, gemm, gemv, batchm, a, b, c, m, n, kk, stream);
+        return glm_mm_rows16(gpu, gemm, gemv, batchm, a, b, c, m, n, kk, site, stream);
     }
     // 2026-10-16: `METRALE_DENSE_BATCHM_32=1`: 17..=32 rows as the same 16-row launches (an MTP
     // verify of 24 or 32 rows keeps the rows' 1..=16-row bits), ahead of cuBLASLt.
-    if rows32_takes(ops::dense_batchm_32(), m) {
+    if rows32_takes(ops::dense_batchm_32(), site, m) {
         log_rows32(m, n, kk);
-        return glm_mm_rows16(gpu, gemm, gemv, batchm, a, b, c, m, n, kk, stream);
+        return glm_mm_rows16(gpu, gemm, gemv, batchm, a, b, c, m, n, kk, site, stream);
     }
     if wide_rows && crate::glm5next_layer::cublas_wide_proj() {
         return ops::cublas_bf16_proj_dense(a, b, c, m as u32, n as u32, kk as u32, stream);
@@ -269,7 +290,21 @@ mod tests {
             DevicePtr(0x3000_0000),
         );
         let (n, kk) = (288usize, 4096usize);
-        glm_mm_rows16(&gpu, gemm, gemv, b, a, w, c, 40, n, kk, 7).unwrap();
+        glm_mm_rows16(
+            &gpu,
+            gemm,
+            gemv,
+            b,
+            a,
+            w,
+            c,
+            40,
+            n,
+            kk,
+            ops::DenseCallSite::General,
+            7,
+        )
+        .unwrap();
         let l = gpu.launches_snapshot();
         assert_eq!(l.len(), 3);
         for (i, (rows, r0)) in [(16u32, 0usize), (16, 16), (8, 32)].into_iter().enumerate() {
@@ -283,21 +318,70 @@ mod tests {
             narrow: KernelHandle(0),
             ..b
         };
-        assert!(glm_mm_rows16(&gpu, gemm, gemv, no_batch, a, w, c, 40, n, kk, 7).is_err());
+        assert!(
+            glm_mm_rows16(
+                &gpu,
+                gemm,
+                gemv,
+                no_batch,
+                a,
+                w,
+                c,
+                40,
+                n,
+                kk,
+                ops::DenseCallSite::General,
+                7
+            )
+            .is_err()
+        );
         assert_eq!(gpu.launches_snapshot().len(), 3);
     }
 
-    /// 2026-10-16: `METRALE_DENSE_BATCHM_32` takes exactly 17..=32 rows, and none when off; only
-    /// `1` turns it on.
+    const SITES: [ops::DenseCallSite; 4] = [
+        ops::DenseCallSite::Prefill,
+        ops::DenseCallSite::Decode,
+        ops::DenseCallSite::Verify,
+        ops::DenseCallSite::General,
+    ];
+
+    fn rows32_rows(on: bool, site: ops::DenseCallSite) -> Vec<usize> {
+        (0..=40).filter(|&m| rows32_takes(on, site, m)).collect()
+    }
+
+    /// 2026-10-16: Under `METRALE_DENSE_BATCHM_32=1` a prefill launch never takes the 16-row
+    /// split, at 17, 24 and 32 rows or any other count, and neither does a `General` one.
     #[test]
-    fn rows32_takes_exactly_17_to_32_rows() {
-        let on: Vec<usize> = (0..=40).filter(|&m| rows32_takes(true, m)).collect();
-        assert_eq!(on, (17..=32).collect::<Vec<_>>());
-        assert!((0..=40).all(|m| !rows32_takes(false, m)));
-        assert!(!rows32_takes(true, usize::MAX));
+    fn prefill_never_takes_rows32() {
+        for site in [ops::DenseCallSite::Prefill, ops::DenseCallSite::General] {
+            for m in [17, 24, 32] {
+                assert!(!rows32_takes(true, site, m), "{site:?} at {m} rows");
+            }
+            assert!(rows32_rows(true, site).is_empty(), "{site:?}");
+            assert!(!rows32_takes(true, site, usize::MAX), "{site:?}");
+        }
+    }
+
+    /// 2026-10-16: With the lever on, the batched decode and verify take exactly 17..=32 rows;
+    /// only `1` turns the lever on.
+    #[test]
+    fn decode_and_verify_take_exactly_17_to_32_rows() {
+        for site in [ops::DenseCallSite::Decode, ops::DenseCallSite::Verify] {
+            let want: Vec<usize> = (17..=32).collect();
+            assert_eq!(rows32_rows(true, site), want, "{site:?}");
+            assert!(!rows32_takes(true, site, usize::MAX), "{site:?}");
+        }
         assert!(ops::dense_batchm_32_from(Some("1")));
         for v in [None, Some("0"), Some("true"), Some(""), Some("32")] {
             assert!(!ops::dense_batchm_32_from(v), "{v:?}");
+        }
+    }
+
+    /// 2026-10-16: With the lever off no site takes the 16-row split at any row count.
+    #[test]
+    fn lever_off_no_site_takes_rows32() {
+        for site in SITES {
+            assert!(rows32_rows(false, site).is_empty(), "{site:?}");
         }
     }
 

@@ -107,16 +107,24 @@ fn kda_gate(gpu: &dyn GpuBackend, rng: &mut Lcg) -> Result<()> {
                 .flat_map(|sp| std::iter::repeat_n(batch[sp.seq].st, sp.rows))
                 .collect();
             let x = copy(gpu, hidden.offset(base * out_row), m * out_row)?;
-            layer.decode_rows_then(gpu, x, &row_states, &ws, STREAM, |row| {
-                let sp = spans
-                    .iter()
-                    .find(|sp| (sp.row0..sp.row0 + sp.rows).contains(&row))
-                    .context("row outside every span")?;
-                match batch[sp.seq].snaps.get(sp.t0 + row - sp.row0) {
-                    Some(dst) => layer.snapshot_state(gpu, &row_states[row], *dst, STREAM),
-                    None => Ok(()),
-                }
-            })?;
+            layer.decode_rows_then(
+                gpu,
+                x,
+                &row_states,
+                &ws,
+                metrale_model_layers::layers::ops::DenseCallSite::Verify,
+                STREAM,
+                |row| {
+                    let sp = spans
+                        .iter()
+                        .find(|sp| (sp.row0..sp.row0 + sp.rows).contains(&row))
+                        .context("row outside every span")?;
+                    match batch[sp.seq].snaps.get(sp.t0 + row - sp.row0) {
+                        Some(dst) => layer.snapshot_state(gpu, &row_states[row], *dst, STREAM),
+                        None => Ok(()),
+                    }
+                },
+            )?;
             got_out[base * out_row..(base + m) * out_row].copy_from_slice(&read(
                 gpu,
                 ws.final_out,
@@ -301,6 +309,7 @@ fn dsa_gate(gpu: &dyn GpuBackend, fwd: &Fwd, rng: &mut Lcg, capture: bool) -> Re
                 &m,
                 base,
                 &ctx,
+                metrale_model_layers::layers::ops::DenseCallSite::Verify,
                 STREAM,
             )?;
         }

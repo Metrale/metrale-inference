@@ -133,6 +133,7 @@ impl Glm5NextKdaLayer {
             ws,
             pack,
             GateAt::Kernel,
+            ops::DenseCallSite::Prefill,
             stream,
             |_| Ok(()),
             || {

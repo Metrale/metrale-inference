@@ -275,7 +275,17 @@ fn rows_gate(
         let ctx = fwd.ctx(gpu, capture, true, Some(m));
         let mut refs: Vec<&mut (dyn LayerState + 'static)> =
             states.iter_mut().map(|b| b.as_mut()).collect();
-        l.decode_spans(h, &mut refs, &spans, cache, &m, 0, &ctx, stream(gpu))?;
+        l.decode_spans(
+            h,
+            &mut refs,
+            &spans,
+            cache,
+            &m,
+            0,
+            &ctx,
+            metrale_model_layers::layers::ops::DenseCallSite::Decode,
+            stream(gpu),
+        )?;
         outs.push(read(gpu, h, k * c * HIDDEN * 2)?);
     }
     same_rows(

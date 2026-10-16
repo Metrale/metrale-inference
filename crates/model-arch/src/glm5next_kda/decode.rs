@@ -202,9 +202,19 @@ impl Glm5NextKdaLayer {
         ws: &Glm5NextKdaWorkspace,
         stream: u64,
     ) -> Result<()> {
-        self.front_end(gpu, hidden, 1, ws, Pack::InFrontEnd, GateAt::Kernel, stream)?;
+        let site = ops::DenseCallSite::Decode;
+        self.front_end(
+            gpu,
+            hidden,
+            1,
+            ws,
+            Pack::InFrontEnd,
+            GateAt::Kernel,
+            site,
+            stream,
+        )?;
         self.stateful_row(gpu, RowIo::workspace(&self.cfg, ws, 0), state, stream)?;
-        self.back_end(gpu, 1, ws, stream)
+        self.back_end(gpu, 1, ws, site, stream)
     }
 
     /// 2026-09-25: `k` tokens of one sequence: the projections batched, the recurrence one row at a
@@ -309,6 +319,8 @@ impl Glm5NextKdaLayer {
         let pack = self.pack_for(tokens || chunked)?;
         // 2026-10-14: One gate decision for the front end and the scan (`gate_at.rs`).
         let gate = self.gate_at_for(chunked64)?;
+        // 2026-10-16: One sequence's rows, a verify or a prefill sub-chunk: `General`, so never
+        // the 17..=32-row launches (`ops::dense_batchm_32_at`).
         self.rows_with(
             gpu,
             hidden,
@@ -316,6 +328,7 @@ impl Glm5NextKdaLayer {
             ws,
             pack,
             gate,
+            ops::DenseCallSite::General,
             stream,
             |row| {
                 if tokens || chunked || snap_tokens {
@@ -382,7 +395,15 @@ impl Glm5NextKdaLayer {
         // 2026-10-09: One row per sequence; `decode_seq_rows` steps them with the rows
         // kernels (conv and recurrence, one launch per 16 rows) when the target has them.
         let seqs: Vec<(KdaSeqState, usize)> = states.iter().map(|s| (*s, 1)).collect();
-        self.decode_seq_rows(gpu, hidden, &seqs, ws, stream, |_| Ok(()))
+        self.decode_seq_rows(
+            gpu,
+            hidden,
+            &seqs,
+            ws,
+            ops::DenseCallSite::Decode,
+            stream,
+            |_| Ok(()),
+        )
     }
 
     /// 2026-10-09: [`Self::decode_rows`] one row at a time, with `after_row(row)` called after
@@ -390,12 +411,14 @@ impl Glm5NextKdaLayer {
     /// sequence's state to several consecutive rows, which then step it in row order as
     /// [`Self::decode_k`] does (the one-launch recurrence of `decode_rows` would run them
     /// concurrently on one state), and takes that sequence's per-row snapshots in `after_row`.
+    /// 2026-10-16: `site` is the caller's `DenseCallSite`, for `front_end`/`back_end`.
     pub fn decode_rows_then(
         &self,
         gpu: &dyn GpuBackend,
         hidden: DevicePtr,
         states: &[KdaSeqState],
         ws: &Glm5NextKdaWorkspace,
+        site: ops::DenseCallSite,
         stream: u64,
         mut after_row: impl FnMut(usize) -> Result<()>,
     ) -> Result<()> {
@@ -406,6 +429,7 @@ impl Glm5NextKdaLayer {
             ws,
             Pack::InFrontEnd,
             GateAt::Kernel,
+            site,
             stream,
             |row| {
                 self.stateful_row(
@@ -431,6 +455,7 @@ impl Glm5NextKdaLayer {
         ws: &Glm5NextKdaWorkspace,
         pack: Pack,
         gate: GateAt,
+        site: ops::DenseCallSite,
         stream: u64,
         mut per_row: impl FnMut(usize) -> Result<()>,
         after_rows: impl FnOnce() -> Result<()>,
@@ -445,7 +470,7 @@ impl Glm5NextKdaLayer {
         // 2026-09-25: Three profile buckets (front, recurrence, back), each closed where its span
         // ends.
         let t_front = profile::start();
-        self.front_end(gpu, hidden, k, ws, pack, gate, stream)?;
+        self.front_end(gpu, hidden, k, ws, pack, gate, site, stream)?;
         profile::end(profile::KDA_FRONT, t_front, gpu, stream);
         let t_recur = profile::start();
         for row in 0..k {
@@ -454,7 +479,7 @@ impl Glm5NextKdaLayer {
         after_rows()?;
         profile::end(profile::KDA_RECUR, t_recur, gpu, stream);
         let t_back = profile::start();
-        let r = self.back_end(gpu, k, ws, stream);
+        let r = self.back_end(gpu, k, ws, site, stream);
         profile::end(profile::KDA_BACK, t_back, gpu, stream);
         r
     }

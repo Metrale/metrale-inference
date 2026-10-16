@@ -12,6 +12,7 @@
 
 use anyhow::{Result, bail};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
+use metrale_model_layers::layers::ops::DenseCallSite;
 
 use super::forward_prefill_gemm;
 use super::weights::Glm5NextMoeWeights;
@@ -366,6 +367,8 @@ pub fn forward_moe_at(
         );
     }
     pieces::check_pieces(rows, row_pieces)?;
+    // 2026-10-16: The router and shared-expert launches take the MoE site's label.
+    let dense = DenseCallSite::from(call_site);
 
     use crate::glm5next_layer::profile;
 
@@ -398,12 +401,12 @@ pub fn forward_moe_at(
     let fork = ws.shared_fork.as_ref().filter(|f| f.takes(rows));
     if let Some(f) = fork {
         f.fork(gpu, stream, |side, scratch| {
-            pieces::shared_expert(gpu, k, cfg, w, x, ws, scratch, row_pieces, side)
+            pieces::shared_expert(gpu, k, cfg, w, x, ws, scratch, row_pieces, dense, side)
         })?;
     }
 
     let t = profile::start();
-    pieces::router_logits(gpu, k, cfg, w, x, ws, row_pieces, stream)?;
+    pieces::router_logits(gpu, k, cfg, w, x, ws, row_pieces, dense, stream)?;
     // 2026-09-25: One top-k launch for all rows, one block per row (`topk_combine`).
     topk_combine::router_topk(gpu, k, cfg, w, ws, rows, stream)?;
     profile::end(profile::MOE_ROUTER, t, gpu, stream);
@@ -460,6 +463,7 @@ pub fn forward_moe_at(
             ws,
             ws.dense_scratch(),
             row_pieces,
+            dense,
             stream,
         )?,
     }

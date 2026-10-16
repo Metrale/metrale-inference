@@ -347,6 +347,7 @@ fn run_indexer_rows(
         meta,
         0,
         &rig.ctx(capture),
+        metrale_model_layers::layers::ops::DenseCallSite::Decode,
         7,
         indexer_rows,
     );

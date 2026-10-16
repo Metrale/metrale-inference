@@ -92,12 +92,14 @@ impl Glm5NextKdaLayer {
     /// rows before row `t + 1`. Without the rows kernels, or unless `METRALE_GLM_KDA_SEQ_ROWS`
     /// asks for them (`kda_seq_rows`; 2026-10-09: off by default), it steps row by row
     /// (`decode_rows_then`), with the same bits.
+    /// 2026-10-16: `site` is `Decode` for the batched decode, `Verify` for the batched verify.
     pub fn decode_seq_rows(
         &self,
         gpu: &dyn GpuBackend,
         hidden: DevicePtr,
         seqs: &[(KdaSeqState, usize)],
         ws: &Glm5NextKdaWorkspace,
+        site: ops::DenseCallSite,
         stream: u64,
         after_row: impl FnMut(usize) -> Result<()>,
     ) -> Result<()> {
@@ -108,7 +110,7 @@ impl Glm5NextKdaLayer {
             KdaSeqRows::DecodeOnly => decode,
             KdaSeqRows::Off => false,
         };
-        self.decode_seq_rows_with(gpu, hidden, seqs, ws, stream, after_row, use_rows)
+        self.decode_seq_rows_with(gpu, hidden, seqs, ws, site, stream, after_row, use_rows)
     }
 
     /// 2026-10-09: [`Self::decode_seq_rows`] with the rows-kernel choice explicit.
@@ -119,6 +121,7 @@ impl Glm5NextKdaLayer {
         hidden: DevicePtr,
         seqs: &[(KdaSeqState, usize)],
         ws: &Glm5NextKdaWorkspace,
+        site: ops::DenseCallSite,
         stream: u64,
         mut after_row: impl FnMut(usize) -> Result<()>,
         // 2026-10-09: Whether to use the rows kernels; `decode_seq_rows` passes the lever.
@@ -131,7 +134,7 @@ impl Glm5NextKdaLayer {
                 .iter()
                 .flat_map(|&(s, k)| std::iter::repeat_n(s, k))
                 .collect();
-            return self.decode_rows_then(gpu, hidden, &states, ws, stream, after_row);
+            return self.decode_rows_then(gpu, hidden, &states, ws, site, stream, after_row);
         }
         self.rows_with(
             gpu,
@@ -140,6 +143,7 @@ impl Glm5NextKdaLayer {
             ws,
             Pack::InFrontEnd,
             GateAt::Kernel,
+            site,
             stream,
             |_| Ok(()),
             || {

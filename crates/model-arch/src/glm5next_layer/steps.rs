@@ -234,22 +234,6 @@ impl Glm5NextLayer {
         );
     }
 
-    /// 2026-09-25: All-reduce `rows` contiguous `[hidden]` BF16 rows in one collective when
-    /// `ctx.comm` is set: blocking under graph capture, asynchronous otherwise. No-op without a
-    /// communicator.
-    fn reduce_partial(
-        &self,
-        p: DevicePtr,
-        rows: usize,
-        ctx: &ForwardContext,
-        stream: u64,
-    ) -> Result<()> {
-        // 2026-10-11: Sliced under `METRALE_GLM_BATCH_INVARIANT` (`glm5next_batch_inv`).
-        let Some(comm) = ctx.comm else { return Ok(()) };
-        let (h, cap) = (self.hidden * 2, ctx.graph_capture);
-        crate::glm5next_batch_inv::all_reduce_rows(comm, p, rows, h, cap, stream)
-    }
-
     /// 2026-10-09: [`Self::reduce_partial`] once per piece of `row_pieces`, so each piece's
     /// collective has the size its own pass gives it (NCCL may order an element's sum by the
     /// message size); `[rows]` is one collective, as before.
@@ -360,6 +344,7 @@ impl Glm5NextLayer {
                         out.offset(r0 * self.hidden * 2),
                         n,
                         &self.mlp_ws,
+                        site.into(),
                         stream,
                     )?;
                     r0 += n;

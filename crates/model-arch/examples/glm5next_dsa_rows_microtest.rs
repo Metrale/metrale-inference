@@ -162,6 +162,7 @@ fn main() -> Result<()> {
                 &m,
                 0,
                 &ctx,
+                metrale_model_layers::layers::ops::DenseCallSite::Decode,
                 s,
                 batched,
             )

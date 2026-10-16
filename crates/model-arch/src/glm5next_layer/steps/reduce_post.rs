@@ -3,6 +3,7 @@
 //! 2026-10-10: The all-reduce and post-mix steps of an mHC site (moved unchanged from `steps.rs`,
 //! with the decode's post fold): which post path a site takes, the exchange that hands the
 //! partials to a fused post, and the post-mix itself.
+//! 2026-10-16: `reduce_partial` moved unchanged from `steps.rs` (its line cap).
 //!
 //! Owner: model-arch (GLM-5.3).
 //! Invariants: as `steps.rs`'s.
@@ -112,5 +113,21 @@ impl Glm5NextLayer {
                 stream,
             ),
         }
+    }
+
+    /// 2026-09-25: All-reduce `rows` contiguous `[hidden]` BF16 rows in one collective when
+    /// `ctx.comm` is set: blocking under graph capture, asynchronous otherwise. No-op without a
+    /// communicator.
+    pub(in crate::glm5next_layer) fn reduce_partial(
+        &self,
+        p: DevicePtr,
+        rows: usize,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        // 2026-10-11: Sliced under `METRALE_GLM_BATCH_INVARIANT` (`glm5next_batch_inv`).
+        let Some(comm) = ctx.comm else { return Ok(()) };
+        let (h, cap) = (self.hidden * 2, ctx.graph_capture);
+        crate::glm5next_batch_inv::all_reduce_rows(comm, p, rows, h, cap, stream)
     }
 }

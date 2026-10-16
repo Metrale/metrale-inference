@@ -52,7 +52,16 @@ impl Glm5NextKdaLayer {
         let conv_tokens =
             self.kernels.seq.conv_tokens.0 != 0 && self.kernels.seq.conv_window.0 != 0;
         let pack = self.pack_for(conv_tokens)?;
-        self.front_end(gpu, hidden, t, ws, pack, GateAt::Kernel, stream)?;
+        self.front_end(
+            gpu,
+            hidden,
+            t,
+            ws,
+            pack,
+            GateAt::Kernel,
+            ops::DenseCallSite::Prefill,
+            stream,
+        )?;
         crate::glm5next_layer::profile::end(
             crate::glm5next_layer::profile::KDA_FRONT,
             t_front,
@@ -172,7 +181,7 @@ impl Glm5NextKdaLayer {
         );
 
         let t_back = crate::glm5next_layer::profile::start();
-        let r = self.back_end(gpu, t, ws, stream);
+        let r = self.back_end(gpu, t, ws, ops::DenseCallSite::Prefill, stream);
         crate::glm5next_layer::profile::end(
             crate::glm5next_layer::profile::KDA_BACK,
             t_back,

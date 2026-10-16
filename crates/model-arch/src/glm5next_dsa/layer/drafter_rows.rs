@@ -16,6 +16,7 @@ use metrale_cache::kv_cache::PagedKvCache;
 use metrale_gpu_runtime::gpu::DevicePtr;
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 use metrale_model_layers::layer::{ForwardContext, LayerState};
+use metrale_model_layers::layers::ops::DenseCallSite;
 
 use super::super::paged::IndexerCache;
 use super::super::state::Glm5NextDsaState;
@@ -74,6 +75,7 @@ impl Glm5NextDsaLayer {
         }
         st.ensure_room(m)?;
         let (k, c) = (&self.kernels, &self.cfg);
+        // 2026-10-16: Drafter context rows: `General` (no 17..=32-row launches).
         let proj = |a: DevicePtr, w: DevicePtr, out: DevicePtr, n: usize| {
             gemm(
                 gpu,
@@ -86,6 +88,7 @@ impl Glm5NextDsaLayer {
                 m,
                 n,
                 c.hidden,
+                DenseCallSite::General,
                 stream,
             )
         };
@@ -122,6 +125,7 @@ impl Glm5NextDsaLayer {
     /// width (`[m, hidden]` BF16 in, `[m, n]` BF16 out), through this layer's projection
     /// dispatch (`glm_mm`). For a caller outside the layer that projects over the same width
     /// (the drafter's `eh_proj` takes `kk = 2 * hidden`, so `kk` is explicit).
+    /// 2026-10-16: `site` is the caller's [`DenseCallSite`] (the drafter passes `General`).
     #[allow(clippy::too_many_arguments)]
     pub fn proj_rows(
         &self,
@@ -132,6 +136,7 @@ impl Glm5NextDsaLayer {
         m: usize,
         n: usize,
         kk: usize,
+        site: DenseCallSite,
         stream: u64,
     ) -> Result<()> {
         let k = &self.kernels;
@@ -146,6 +151,7 @@ impl Glm5NextDsaLayer {
             m,
             n,
             kk,
+            site,
             stream,
         )
     }

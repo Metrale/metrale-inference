@@ -169,6 +169,32 @@ pub fn dense_batchm_band(band: u32, rows32: bool, m: u32) -> bool {
         || (rows32 && (DENSE_GEMV_BATCHM_MAX_M + 1..=DENSE_GEMV_BATCHM_32_MAX_M).contains(&m))
 }
 
+/// 2026-10-16: The pass a dense BF16 projection launch belongs to, named by its caller. Only
+/// the batched decode and verify passes (`Decode`, `Verify`) may take the 17..=32-row band of
+/// `METRALE_DENSE_BATCHM_32`; a prefill launch keeps its route at every row count.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DenseCallSite {
+    /// A prefill sub-chunk or piece.
+    Prefill,
+    /// The batched decode body: one or more rows per sequence of a decode step.
+    Decode,
+    /// The batched speculative verify body.
+    Verify,
+    /// Any other launch (single-sequence k-row forwards, drafter and MTP context rows, one-row
+    /// helpers): routed as before `METRALE_DENSE_BATCHM_32`.
+    General,
+}
+
+/// 2026-10-16: Whether `METRALE_DENSE_BATCHM_32` (`on`) applies at `site`: only at
+/// [`DenseCallSite::Decode`] and [`DenseCallSite::Verify`], so a prefill launch of 17..=32 rows
+/// never leaves its own route. Callers combine it with [`dense_batchm_band`] for the row count.
+pub fn dense_batchm_32_at(on: bool, site: DenseCallSite) -> bool {
+    match site {
+        DenseCallSite::Decode | DenseCallSite::Verify => on,
+        DenseCallSite::Prefill | DenseCallSite::General => false,
+    }
+}
+
 /// 2026-10-16: [`dense_gemv_batchm`] over `m >= 1` rows in launches of at most
 /// `DENSE_GEMV_BATCHM_MAX_M` rows, each on `pair.for_rows(rows)`: input rows `K` elements
 /// apart, output rows `out_stride` BF16 elements apart. Each row has the bits it has in a launch

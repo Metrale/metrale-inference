@@ -13,6 +13,7 @@ use anyhow::Result;
 use metrale_cache::kv_cache::PagedKvCache;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
+use metrale_model_layers::layers::ops::DenseCallSite;
 
 use super::{Glm5NextDsaLayer, gemm};
 
@@ -24,6 +25,7 @@ impl Glm5NextDsaLayer {
         gpu: &dyn GpuBackend,
         hidden: DevicePtr,
         k: usize,
+        site: DenseCallSite,
         stream: u64,
     ) -> Result<()> {
         let w = &self.workspace;
@@ -38,6 +40,7 @@ impl Glm5NextDsaLayer {
             k,
             self.cfg.q_lora_rank,
             self.cfg.hidden,
+            site,
             stream,
         )?;
         KernelLaunch::new(gpu, self.kernels.rms_norm)
@@ -62,6 +65,7 @@ impl Glm5NextDsaLayer {
             k,
             self.cfg.local_heads * self.cfg.kv_lora_rank,
             self.cfg.q_lora_rank,
+            site,
             stream,
         )?;
         gemm(
@@ -75,6 +79,7 @@ impl Glm5NextDsaLayer {
             k,
             self.cfg.kv_lora_rank,
             self.cfg.hidden,
+            site,
             stream,
         )
     }
@@ -130,6 +135,7 @@ impl Glm5NextDsaLayer {
         gpu: &dyn GpuBackend,
         hidden: DevicePtr,
         k: usize,
+        site: DenseCallSite,
         stream: u64,
     ) -> Result<()> {
         use crate::glm5next_layer::profile;
@@ -145,6 +151,7 @@ impl Glm5NextDsaLayer {
             k,
             self.cfg.hidden,
             self.cfg.local_heads * self.cfg.kv_lora_rank,
+            site,
             stream,
         )?;
         profile::end(profile::DSA_PROJ, t_proj, gpu, stream);
@@ -164,6 +171,7 @@ impl Glm5NextDsaLayer {
         hidden: DevicePtr,
         n: usize,
         wide: bool,
+        site: DenseCallSite,
         stream: u64,
     ) -> Result<()> {
         let w = &self.workspace;
@@ -210,6 +218,7 @@ impl Glm5NextDsaLayer {
                     n,
                     n_out,
                     kk,
+                    site,
                     stream,
                 )?;
             }
@@ -242,6 +251,7 @@ impl Glm5NextDsaLayer {
         gpu: &dyn GpuBackend,
         hidden: DevicePtr,
         n: usize,
+        site: DenseCallSite,
         stream: u64,
     ) -> Result<()> {
         let w = &self.workspace;
@@ -284,6 +294,7 @@ impl Glm5NextDsaLayer {
                     m,
                     d,
                     h,
+                    site,
                     stream,
                 )?;
             }

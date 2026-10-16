@@ -32,7 +32,6 @@ use metrale_model_layers::layer::{AttnMetadataDev, LayerState};
 use metrale_model_layers::layers::ops::{DerivedWeights, GemmDispatch, ModelLevers, ModelStats};
 
 // 2026-10-09: The rig serves the paged-parity gate too; this example uses part of it.
-#[allow(dead_code)]
 #[path = "common/glm5next_dsa_paged_rig.rs"]
 pub(crate) mod rig;
 use rig::{BLOCK, Fwd, HIDDEN, Lcg, kv, layer, read, stream, up, up_i32};
@@ -191,7 +190,7 @@ fn main() -> Result<()> {
     let build = |hb: Option<usize>| -> Result<Glm5NextDsaLayer> {
         let mut l = layer(g, &c, &mut Lcg(0x6c6d_5e9d_0009))?;
         l.decode_kernel = Glm5NextDsaDecodeKernel::resolve_with(g, hb)?;
-        l.workspace = Glm5NextDsaWorkspace::new(g, &c, 64)?;
+        l.workspace = Glm5NextDsaWorkspace::new(g, &c, 64)?.into();
         Ok(l)
     };
     let (lo, lh) = (build(None)?, build(Some(splits))?);

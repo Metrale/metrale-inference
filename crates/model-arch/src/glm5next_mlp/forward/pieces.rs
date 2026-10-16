@@ -14,6 +14,7 @@
 
 use anyhow::{Result, bail};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
+use metrale_model_layers::layers::ops::DenseCallSite;
 
 use super::super::weights::Glm5NextMoeWeights;
 use super::super::{Glm5NextMlpConfig, Glm5NextMlpKernels};
@@ -39,6 +40,7 @@ pub(super) fn router_logits(
     x: DevicePtr,
     ws: &Glm5NextMlpWorkspace,
     pieces: &[usize],
+    site: DenseCallSite,
     stream: u64,
 ) -> Result<()> {
     // 2026-10-09: Each piece is one `router::router_logits` call, so a piece takes exactly the
@@ -54,6 +56,7 @@ pub(super) fn router_logits(
             ws.logits.offset(r0 * cfg.num_experts * 4),
             n,
             crate::glm5next_layer::router_rows(),
+            site,
             stream,
         )?;
         r0 += n;
@@ -73,6 +76,7 @@ pub(super) fn shared_expert(
     ws: &Glm5NextMlpWorkspace,
     scratch: DenseScratch,
     pieces: &[usize],
+    site: DenseCallSite,
     stream: u64,
 ) -> Result<()> {
     let mut r0 = 0usize;
@@ -87,6 +91,7 @@ pub(super) fn shared_expert(
             ws.shared_out.offset(r0 * cfg.hidden * 2),
             n,
             scratch,
+            site,
             stream,
         )?;
         r0 += n;

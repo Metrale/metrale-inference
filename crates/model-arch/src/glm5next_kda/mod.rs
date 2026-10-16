@@ -44,6 +44,7 @@ mod gate_at;
 mod gates_fused;
 mod kernels;
 mod prefill;
+mod proj;
 mod replay;
 mod rows;
 mod seq_tokens;
@@ -261,46 +262,6 @@ impl Glm5NextKdaLayer {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn gemm(
-        &self,
-        gpu: &dyn GpuBackend,
-        input: DevicePtr,
-        weight: &DenseWeight,
-        out: DevicePtr,
-        m: usize,
-        n: usize,
-        k: usize,
-        stream: u64,
-    ) -> Result<()> {
-        // 2026-10-09: `--dense-quantization fp8` (registered weights, W8A8) is checked first in
-        // `glm_mm`, as for every GLM projection.
-        // 2026-09-25: Only M above `DENSE_GEMV_BATCHM_MAX_M` goes to cuBLASLt. Below it
-        // `dense_mm_bf16` runs the M = 1 GEMV or the batched GEMV, whose rows carry the same
-        // bits, so the cuBLASLt switch never changes those widths. 2026-10-09: the dispatch is
-        // `glm_mm`'s, with the register-resident batched GEMV at 9..=16 rows.
-        crate::glm5next_layer::wide_gemv::glm_mm(
-            gpu,
-            self.kernels.gemm,
-            self.kernels.gemv,
-            crate::glm5next_layer::wide_gemv::Batchm {
-                narrow: self.kernels.gemv_batchm,
-                // 2026-10-16: No reg8 entry: every KDA projection is in `dense_projections`, so
-                // under `--dense-quantization w4a16|fp8` `glm_mm` never reaches the GEMV here.
-                reg8: KernelHandle(0),
-                wide: self.kernels.gemv_batchm_wide,
-                out_bytes: 2,
-            },
-            input,
-            weight.weight,
-            out,
-            m,
-            n,
-            k,
-            stream,
-        )
-    }
-
     /// 2026-10-09: Every BF16 projection this layer launches through `gemm`, as
     /// `(weight, n, k, name)` with the shapes the forward passes, for `--dense-quantization fp8`.
     pub fn dense_projections(&self) -> Vec<(DevicePtr, usize, usize, &'static str)> {
@@ -330,6 +291,7 @@ impl Glm5NextKdaLayer {
         ws: &Glm5NextKdaWorkspace,
         pack: Pack,
         gate: GateAt,
+        site: ops::DenseCallSite,
         stream: u64,
     ) -> Result<()> {
         let c = &self.cfg;
@@ -376,6 +338,7 @@ impl Glm5NextKdaLayer {
                 t,
                 qkv,
                 hid,
+                site,
                 stream,
             )?;
         }
@@ -397,6 +360,7 @@ impl Glm5NextKdaLayer {
                 t,
                 hd,
                 hid,
+                site,
                 stream,
             )?;
         }
@@ -406,7 +370,7 @@ impl Glm5NextKdaLayer {
             return Ok(());
         }
         // 2026-10-14: `METRALE_GLM_KDA_GATE_IN_PREPARE` (`gate_at.rs`) may move the gate.
-        self.forget_gate(gpu, t, ws, gate, stream)?;
+        self.forget_gate(gpu, t, ws, gate, site, stream)?;
 
         // 2026-09-25: beta = sigmoid(b_proj(hidden)); the KDA kernels read it after the sigmoid.
         if !low {
@@ -418,6 +382,7 @@ impl Glm5NextKdaLayer {
                 t,
                 c.heads,
                 hid,
+                site,
                 stream,
             )?;
         }
@@ -441,6 +406,7 @@ impl Glm5NextKdaLayer {
                 t,
                 hd,
                 hid,
+                site,
                 stream,
             )?;
         }
@@ -452,6 +418,7 @@ impl Glm5NextKdaLayer {
             t,
             qkv,
             hd,
+            site,
             stream,
         )
     }
@@ -462,6 +429,7 @@ impl Glm5NextKdaLayer {
         gpu: &dyn GpuBackend,
         t: usize,
         ws: &Glm5NextKdaWorkspace,
+        site: ops::DenseCallSite,
         stream: u64,
     ) -> Result<()> {
         let c = &self.cfg;
@@ -483,6 +451,7 @@ impl Glm5NextKdaLayer {
             t,
             c.hidden,
             c.qkv_dim(),
+            site,
             stream,
         )
     }

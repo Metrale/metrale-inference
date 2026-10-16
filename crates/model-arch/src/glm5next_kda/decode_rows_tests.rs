@@ -150,8 +150,17 @@ fn each_row_steps_only_its_own_sequence_state() {
     let hidden = gpu.alloc(3 * 256 * 2).unwrap();
     let from = gpu.launch_count();
     let seqs: Vec<(KdaSeqState, usize)> = states.iter().map(|s| (*s, 1)).collect();
-    l.decode_seq_rows_with(&gpu, hidden, &seqs, &ws, 7, |_| Ok(()), true)
-        .unwrap();
+    l.decode_seq_rows_with(
+        &gpu,
+        hidden,
+        &seqs,
+        &ws,
+        ops::DenseCallSite::Decode,
+        7,
+        |_| Ok(()),
+        true,
+    )
+    .unwrap();
     let launches = since(&gpu, from);
 
     let u64a = |v: u64| MockArg::Bytes(v.to_le_bytes().to_vec());
@@ -284,6 +293,7 @@ fn verify_rows_step_t_major_one_row_per_sequence_per_launch() {
         hidden,
         &seqs,
         &ws,
+        ops::DenseCallSite::Verify,
         7,
         |row| {
             after.push((row, gpu.launch_count()));
@@ -387,8 +397,17 @@ fn a_padded_decode_group_is_not_refused() {
     states.extend([dummy; 4]);
     let hidden = gpu.alloc(16 * 256 * 2).unwrap();
     let seqs: Vec<(KdaSeqState, usize)> = states.iter().map(|s| (*s, 1)).collect();
-    l.decode_seq_rows_with(&gpu, hidden, &seqs, &ws, 7, |_| Ok(()), true)
-        .unwrap();
+    l.decode_seq_rows_with(
+        &gpu,
+        hidden,
+        &seqs,
+        &ws,
+        ops::DenseCallSite::Decode,
+        7,
+        |_| Ok(()),
+        true,
+    )
+    .unwrap();
 }
 
 /// 2026-10-09: Without the opt-in the batched decode steps row by row: one single-row conv
@@ -402,8 +421,17 @@ fn the_default_steps_row_by_row() {
     let seqs: Vec<(KdaSeqState, usize)> = states.iter().map(|s| (*s, 1)).collect();
     let hidden = gpu.alloc(3 * 256 * 2).unwrap();
     let from = gpu.launch_count();
-    l.decode_seq_rows_with(&gpu, hidden, &seqs, &ws, 7, |_| Ok(()), false)
-        .unwrap();
+    l.decode_seq_rows_with(
+        &gpu,
+        hidden,
+        &seqs,
+        &ws,
+        ops::DenseCallSite::Decode,
+        7,
+        |_| Ok(()),
+        false,
+    )
+    .unwrap();
     let launches = since(&gpu, from);
     assert_eq!(launches.iter().filter(|x| x.func == CONV).count(), 3);
     assert_eq!(recurrent_launches(&launches).len(), 3);

@@ -10,6 +10,7 @@
 
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
+use metrale_model_layers::layers::ops::DenseCallSite;
 
 use crate::glm5next_layer::wide_gemv::{Batchm, glm_mm};
 
@@ -32,8 +33,41 @@ pub(super) fn gemm(
     m: usize,
     n: usize,
     kk: usize,
+    site: DenseCallSite,
     stream: u64,
 ) -> Result<()> {
     // 2026-10-09: The dispatch lives in `glm_mm`, shared with the MLP and KDA blocks.
-    glm_mm(gpu, k, gemv, batchm.into(), a, b, c, m, n, kk, stream)
+    glm_mm(gpu, k, gemv, batchm.into(), a, b, c, m, n, kk, site, stream)
+}
+
+/// 2026-10-16: [`gemm`] for one row (`m = 1`). One row takes the same route at every
+/// `DenseCallSite` (the `METRALE_DENSE_BATCHM_32` band starts at 17 rows), so the one-row
+/// launches of the shared indexer and selector helpers pass `DenseCallSite::General`.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn row_gemm(
+    gpu: &dyn GpuBackend,
+    k: KernelHandle,
+    gemv: KernelHandle,
+    batchm: impl Into<Batchm>,
+    a: DevicePtr,
+    b: DevicePtr,
+    c: DevicePtr,
+    n: usize,
+    kk: usize,
+    stream: u64,
+) -> Result<()> {
+    gemm(
+        gpu,
+        k,
+        gemv,
+        batchm,
+        a,
+        b,
+        c,
+        1,
+        n,
+        kk,
+        DenseCallSite::General,
+        stream,
+    )
 }

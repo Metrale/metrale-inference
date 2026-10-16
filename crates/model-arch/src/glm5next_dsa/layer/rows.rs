@@ -17,7 +17,7 @@ use metrale_model_layers::layer::{ForwardContext, LayerState};
 use super::super::paged::{IndexerCache, IndexerRowsDev};
 use super::super::select::DsaSelectInputs;
 use super::super::state::Glm5NextDsaState;
-use super::{Glm5NextDsaLayer, IndexerPlace, gemm};
+use super::{Glm5NextDsaLayer, IndexerPlace, row_gemm};
 
 impl Glm5NextDsaLayer {
     /// 2026-09-26: `indexer_forward`'s last step: places the projected `k_normed` and `gate`
@@ -130,11 +130,12 @@ impl Glm5NextDsaLayer {
                 k,
                 idx_row,
                 self.cfg.q_lora_rank,
+                crate::glm5next_layer::wide_gemv::single_seq_site(is_prefill),
                 stream,
             )?;
         } else {
             for row in 0..k {
-                gemm(
+                row_gemm(
                     gpu,
                     self.kernels.gemm_f32,
                     self.kernels.gemv_f32,
@@ -144,7 +145,6 @@ impl Glm5NextDsaLayer {
                     w.q_resid.offset(row * self.cfg.q_lora_rank * 2),
                     self.weights.wq_b,
                     w.q_idx_rows.offset(row * idx_row * 4),
-                    1,
                     idx_row,
                     self.cfg.q_lora_rank,
                     stream,
@@ -231,7 +231,7 @@ impl Glm5NextDsaLayer {
             std::cmp::Ordering::Equal => {}
         }
         let w = &self.workspace;
-        gemm(
+        row_gemm(
             gpu,
             self.kernels.gemm,
             self.kernels.gemv,
@@ -239,7 +239,6 @@ impl Glm5NextDsaLayer {
             hidden,
             self.weights.kv_a_proj,
             w.kv_a,
-            1,
             self.cfg.kv_lora_rank,
             self.cfg.hidden,
             stream,

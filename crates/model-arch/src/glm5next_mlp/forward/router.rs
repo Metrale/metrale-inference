@@ -13,6 +13,7 @@
 
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
+use metrale_model_layers::layers::ops::DenseCallSite;
 
 use super::super::{Glm5NextMlpConfig, Glm5NextMlpKernels};
 use super::launch::gemm;
@@ -32,6 +33,7 @@ pub(super) fn router_logits(
     logits: DevicePtr,
     rows: usize,
     batched: bool,
+    site: DenseCallSite,
     stream: u64,
 ) -> Result<()> {
     let (n, kk) = (cfg.num_experts, cfg.hidden);
@@ -71,6 +73,7 @@ pub(super) fn router_logits(
             rows,
             n,
             kk,
+            site,
             stream,
         );
     }
@@ -86,6 +89,7 @@ pub(super) fn router_logits(
             1,
             n,
             kk,
+            DenseCallSite::General,
             stream,
         )?;
     }
