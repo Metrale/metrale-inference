@@ -257,6 +257,36 @@ pub fn serial_estimate_secs(units: &[Unit]) -> u64 {
     units.iter().map(Unit::secs).sum()
 }
 
+/// 2026-09-26: `(secs, recorded_at)` of the newest completed run of `id` in the run
+/// history, in whole-draw seconds: a shard run's time is scaled up by its count
+/// (`whole_draw_secs`), because `plan::shard_secs` divides by the count the
+/// campaign wants.
+pub(super) fn measured_secs(store: &metrale_bench::ArtifactStore, id: &str) -> Option<(u64, u64)> {
+    metrale_bench::history::load(store, id)
+        .into_iter()
+        .find(|r| r.frame.status == metrale_bench::result::RunStatus::Completed)
+        .map(|r| {
+            (
+                whole_draw_secs(r.frame.elapsed.as_secs(), &r.params),
+                r.recorded_at,
+            )
+        })
+}
+
+/// 2026-09-26: `elapsed` of a run scaled to the whole draw: `× n` for `shard=i/n`
+/// with `n > 1`, unchanged otherwise.
+pub fn whole_draw_secs(elapsed: u64, params: &BTreeMap<String, String>) -> u64 {
+    let count = params
+        .get("shard")
+        .and_then(|s| s.split_once('/'))
+        .and_then(|(_, n)| n.trim().parse::<u64>().ok())
+        .filter(|n| *n > 1);
+    match count {
+        Some(n) => elapsed.saturating_mul(n),
+        None => elapsed,
+    }
+}
+
 #[cfg(test)]
 #[path = "plan_tests.rs"]
 mod plan_tests;

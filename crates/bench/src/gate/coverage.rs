@@ -152,6 +152,10 @@ const GATE_MACHINERY_FILES: &[&str] = &[
     // 2026-10-15: Which certification PRs a merge opens for what `check_models` says it owes;
     // no verdict reads it.
     "crates/bench/src/gate/owed_prs.rs",
+    // 2026-10-16: Named battles: a scoreboard of records against declared reference figures,
+    // and the I/O that loads it. No gate verdict reads either.
+    "crates/bench/src/gate/battle.rs",
+    "crates/bench/src/gate/battle_load.rs",
     // 2026-09-26: Test-only baseline fixtures (`#[cfg(test)]` in mod.rs).
     "crates/bench/src/gate/fixture_baseline.rs",
     "crates/bench/src/gate/mod.rs",
@@ -1155,6 +1159,12 @@ pub const PROMOTION_CANDIDATES: &[GateCoverage] = &[
         id: "agentic-webserver-glm",
         excludes: AGENTIC_EXCLUDES,
     },
+    // 2026-10-16: GLM-5.3-Flash's decode ladder runs the concurrency driver, so it ignores
+    // what the other concurrency gates ignore.
+    GateCoverage {
+        id: "concurrency-sweep-glm",
+        excludes: CONCURRENCY_EXCLUDES,
+    },
 ];
 
 /// 2026-10-15: Why the GLM-5.3-Flash gates are not required yet.
@@ -1163,9 +1173,14 @@ const GLM_EXCUSAL: &str = "not required YET: a promotion candidate (see PROMOTIO
      committed recipe serves it yet, so the gate cannot start its own server; it becomes \
      required once a recipe lands and a certification campaign records it";
 
+/// 2026-10-16: Why GLM-5.3-Flash's decode ladder is not required yet.
+const GLM_LADDER_EXCUSAL: &str = "not required YET: a promotion candidate (see \
+     PROMOTION_CANDIDATES), GLM-5.3-Flash's decode ladder. Its entry is unmeasured: its floors \
+     come only from a measured baseline ladder, and no committed recipe serves the model yet";
+
 /// 2026-09-26: Registered benchmarks that are not required gates, each with the reason
 /// (`every_excusal_names_a_real_benchmark_and_a_reason`).
-pub const NOT_REQUIRED: [(&str, &str); 26] = [
+pub const NOT_REQUIRED: [(&str, &str); 27] = [
     (
         "quick-speed-bench",
         "a single-user speed probe with no thresholds and no baseline — a MEASUREMENT tool, \
@@ -1255,6 +1270,7 @@ pub const NOT_REQUIRED: [(&str, &str); 26] = [
     ("high-isl-ttft-warm-glm-256k", GLM_EXCUSAL),
     ("high-isl-ttft-warm-glm-512k", GLM_EXCUSAL),
     ("agentic-webserver-glm", GLM_EXCUSAL),
+    ("concurrency-sweep-glm", GLM_LADDER_EXCUSAL),
 ];
 
 /// 2026-09-26: True when `path` is `entry` or lies beneath it, compared per component:

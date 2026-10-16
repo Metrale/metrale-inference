@@ -79,7 +79,8 @@ fn every_committed_param_override_parses_against_its_gates_schema() {
         )
     };
     // 2026-10-15: glm-5.3-flash sorts first: each GLM TTFT gate pins the three samples per
-    // length behind its ceilings; its agentic gate pins nothing.
+    // length behind its ceilings; its agentic gate pins nothing; its decode ladder (2026-10-16)
+    // pins the rungs and the prompt shape.
     let glm = [
         "ttft-cold-glm-64k",
         "ttft-cold-glm-256k",
@@ -94,7 +95,19 @@ fn every_committed_param_override_parses_against_its_gates_schema() {
         "high-isl-ttft-warm-glm-256k",
         "high-isl-ttft-warm-glm-512k",
     ]
-    .map(|gate| kat("glm-5.3-flash", gate, "repeats", "3"));
+    .map(|gate| kat("glm-5.3-flash", gate, "repeats", "3"))
+    .into_iter()
+    .chain(
+        // 2026-10-16: The GLM decode ladder pins the published instrument with the C=12 rung.
+        [
+            ("concurrencies", "1,2,4,8,12,16"),
+            ("isls", "128"),
+            ("osl", "1024"),
+            ("prompt_mode", "essay"),
+        ]
+        .map(|(key, value)| kat("glm-5.3-flash", "concurrency-sweep-glm", key, value)),
+    )
+    .collect::<Vec<_>>();
     assert!(observed.len() >= glm.len(), "{observed:?}");
     assert_eq!(observed[..glm.len()], glm);
     assert_eq!(

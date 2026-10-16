@@ -14,6 +14,7 @@
 //! Invariants: none beyond the types.
 
 pub mod args;
+pub mod battle;
 pub mod guard;
 pub mod local;
 pub mod lockfile;
@@ -33,7 +34,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use metrale_bench::hardware::equivalence::EquivalencePolicy;
-use metrale_bench::{ArtifactStore, gate, history};
+use metrale_bench::{ArtifactStore, gate};
 
 use self::args::CertifyArgs;
 use self::local::drive_local;
@@ -68,19 +69,20 @@ impl Emit {
     }
 }
 
-pub async fn certify_cmd(args: CertifyArgs) -> Result<i32> {
+pub async fn certify_cmd(mut args: CertifyArgs) -> Result<i32> {
+    let root = super::bench_run::repo_root()?;
+    let battle_ids = battle::take(&root, &mut args.gates)?;
     if let Err(msg) = args.validate() {
         bail!("{msg}");
     }
     let emit = Emit { json: args.json };
-    let root = super::bench_run::repo_root()?;
     let head = gate::git_sha(&root)?;
     let anchor = args.anchor.clone().unwrap_or_else(|| head.clone());
 
     let statuses = gate::check_gates(&root, &anchor);
-    let gates = plan::remaining(&statuses, &args.gates)?;
+    let gates = battle::remaining(&statuses, &args.gates, &battle_ids)?;
     let store = ArtifactStore::discover().context("locating METRALE_HOME")?;
-    let measured = |id: &str| measured_secs(&store, id);
+    let measured = |id: &str| plan::measured_secs(&store, id);
     let boxes = args.with_nodes.len() + usize::from(!args.remote_only);
     let wanted = args.shards.unwrap_or_else(|| plan::shard_count(boxes));
     let owed =
@@ -95,6 +97,8 @@ pub async fn certify_cmd(args: CertifyArgs) -> Result<i32> {
             k
         }
     };
+    let battles = battle::Plan::new(&root, &anchor, &hardware, &battle_ids)?;
+    let gates = battles.with_members(gates);
     // 2026-09-26: The class's limits (`kernels/<hw>/HARDWARE.toml`
     // `[benchmarks.limits]`): the thermal envelope, the equivalence spreads, the
     // memory floor and the timing allowances. A class that declares none is not
@@ -236,6 +240,7 @@ pub async fn certify_cmd(args: CertifyArgs) -> Result<i32> {
         } else {
             "dry run: preflight would refuse; nothing was run"
         });
+        battles.report(&emit, &root)?;
         return Ok(i32::from(!findings.is_empty()));
     }
     if !findings.is_empty() {
@@ -246,7 +251,7 @@ pub async fn certify_cmd(args: CertifyArgs) -> Result<i32> {
     }
     if units.is_empty() {
         emit.say("nothing remaining to run at this commit");
-        return finish(&emit, &root, &anchor, None);
+        return finish(&emit, &root, &anchor, None, &battles);
     }
 
     let now = lockfile::now_unix();
@@ -374,11 +379,18 @@ pub async fn certify_cmd(args: CertifyArgs) -> Result<i32> {
         },
         lockfile::now_unix(),
     )?;
-    finish(&emit, &root, &anchor, Some(&campaign))
+    finish(&emit, &root, &anchor, Some(&campaign), &battles)
 }
 
-/// 2026-09-26: The final gate table and agreement check, and the exit code.
-fn finish(emit: &Emit, root: &Path, anchor: &str, campaign: Option<&Campaign>) -> Result<i32> {
+/// 2026-09-26: The final gate table and agreement check, and the exit code. 2026-10-16: Then
+/// each battle asked for, which never moves the exit code.
+fn finish(
+    emit: &Emit,
+    root: &Path,
+    anchor: &str,
+    campaign: Option<&Campaign>,
+    battles: &battle::Plan,
+) -> Result<i32> {
     let f = report::evaluate(root, anchor)?;
     emit.event(
         "final",
@@ -393,6 +405,7 @@ fn finish(emit: &Emit, root: &Path, anchor: &str, campaign: Option<&Campaign>) -
     if !emit.json {
         report::print(&f, anchor, root);
     }
+    battles.report(emit, root)?;
     Ok(match campaign {
         Some(c) => c.exit_code(f.certified()),
         None => i32::from(!f.certified()) * 2,
@@ -431,36 +444,6 @@ fn energy_bounded_gates(
         }
     }
     Ok(out)
-}
-
-/// 2026-09-26: `(secs, recorded_at)` of the newest completed run of `id` in the run
-/// history, in whole-draw seconds: a shard run's time is scaled up by its count
-/// (`whole_draw_secs`), because `plan::shard_secs` divides by the count the
-/// campaign wants.
-fn measured_secs(store: &ArtifactStore, id: &str) -> Option<(u64, u64)> {
-    history::load(store, id)
-        .into_iter()
-        .find(|r| r.frame.status == metrale_bench::result::RunStatus::Completed)
-        .map(|r| {
-            (
-                whole_draw_secs(r.frame.elapsed.as_secs(), &r.params),
-                r.recorded_at,
-            )
-        })
-}
-
-/// 2026-09-26: `elapsed` of a run scaled to the whole draw: `× n` for `shard=i/n`
-/// with `n > 1`, unchanged otherwise.
-pub fn whole_draw_secs(elapsed: u64, params: &std::collections::BTreeMap<String, String>) -> u64 {
-    let count = params
-        .get("shard")
-        .and_then(|s| s.split_once('/'))
-        .and_then(|(_, n)| n.trim().parse::<u64>().ok())
-        .filter(|n| *n > 1);
-    match count {
-        Some(n) => elapsed.saturating_mul(n),
-        None => elapsed,
-    }
 }
 
 fn pid_alive(pid: u32) -> bool {

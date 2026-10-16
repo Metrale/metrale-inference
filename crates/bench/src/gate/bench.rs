@@ -92,10 +92,32 @@ pub struct BenchEntry {
     /// 2026-10-15: A reference value per declared metric, e.g. another engine's number on the same
     /// cell (`targets = { median_ms_256 = 488.0 }`). Informational: no verdict reads it,
     /// so a bound can be a regression ratchet while a known loss against the reference is
-    /// still on the page. [`load_all`] refuses a key that names no declared metric and a
-    /// value that is not finite. Empty and omitted is the normal case.
+    /// still on the page. [`load_all`] refuses a value that is not finite and, on a measured
+    /// entry, a key that names no declared metric; an `unmeasured` entry has no metrics yet,
+    /// so its keys are checked against its battle (`battle::problems`). Empty and omitted is
+    /// the normal case.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub targets: BTreeMap<String, f64>,
+    /// 2026-10-16: A short caveat per target, shown beside the target where it is published
+    /// (`target_caveats = { c16_aggregate_tok_s = "likely vLLM stall" }`), for a reference figure
+    /// that is not a clean bar. Prose only: no verdict and no battle reads it, and the full
+    /// account belongs in `target_note`. [`load_all`] refuses a key that names no target, an
+    /// empty text, and a caveat on an entry with no `target_note` for it to point to. Empty and
+    /// omitted is the normal case.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub target_caveats: BTreeMap<String, String>,
+    /// 2026-10-16: The account of the targets for a reader of the published page, which the
+    /// caveat marks link to; `note` stays the engineering account and is never published. Prose
+    /// only: no verdict, ratchet or battle reads it. [`load_all`] refuses it on an entry with
+    /// no `targets`. Empty and omitted is the normal case.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub target_note: String,
+    /// 2026-10-16: The context the reference run behind `targets` was served at
+    /// (`target_max_model_len = 262144`), so a page can say where that run was not made. Prose
+    /// only: no verdict, ratchet or battle reads it. [`load_all`] refuses it on an entry with
+    /// no `targets` and refuses a value that is not positive. Omitted is the normal case.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_max_model_len: Option<i64>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -322,6 +344,10 @@ mod bench_tests;
 #[path = "bench_serve_pin_tests.rs"]
 mod bench_serve_pin_tests;
 
+#[cfg(test)]
+#[path = "bench_target_tests.rs"]
+mod bench_target_tests;
+
 /// 2026-09-26: The largest `noise` an entry may declare, as a fraction of the
 /// bound's magnitude. `noise` widens a threshold at compare time
 /// (`scoring::compare`), so without a cap a large value would pass any record
@@ -377,12 +403,13 @@ fn validate_noise(path: &std::path::Path, entry: &BenchEntry) -> Result<()> {
     Ok(())
 }
 
-/// 2026-10-15: Each `targets` key must name a declared metric and each value must be finite: a
-/// reference on a metric the entry does not bound, or a NaN, reads like a bar while meaning
-/// nothing.
+/// 2026-10-15: Each `targets` key of a measured entry must name a declared metric and each value
+/// must be finite: a reference on a metric the entry does not bound, or a NaN, reads like a bar
+/// while meaning nothing. 2026-10-16: An `unmeasured` entry declares no metric yet, so its
+/// keys are left to `battle::problems`, which names one that is no battle cell.
 fn validate_targets(path: &std::path::Path, entry: &BenchEntry) -> Result<()> {
     for (name, value) in &entry.targets {
-        let declared = entry.metrics.as_ref().is_some_and(|m| m.contains_key(name));
+        let declared = entry.metrics.as_ref().is_none_or(|m| m.contains_key(name));
         if !declared {
             bail!(
                 "{}: {} / {} [benchmarks.targets] names {name}, which is not a declared metric",
@@ -399,6 +426,60 @@ fn validate_targets(path: &std::path::Path, entry: &BenchEntry) -> Result<()> {
                 entry.checkpoint,
             );
         }
+    }
+    validate_target_caveats(path, entry)
+}
+
+/// 2026-10-16: A caveat flags a published target, so it must name one; an empty caveat flags
+/// nothing; and the marker points at the entry's `target_note`, so an entry with a caveat must
+/// carry one, and that account describes targets, so it needs some. The reference run's context describes the targets, so it needs some, and a
+/// context is positive.
+fn validate_target_caveats(path: &std::path::Path, entry: &BenchEntry) -> Result<()> {
+    for (name, text) in &entry.target_caveats {
+        if !entry.targets.contains_key(name) {
+            bail!(
+                "{}: {} / {} [benchmarks.target_caveats] names {name}, which is not a target",
+                path.display(),
+                entry.gate,
+                entry.checkpoint,
+            );
+        }
+        if text.trim().is_empty() {
+            bail!(
+                "{}: {} / {} target caveat {name} is empty",
+                path.display(),
+                entry.gate,
+                entry.checkpoint,
+            );
+        }
+    }
+    let (gate, ckpt) = (&entry.gate, &entry.checkpoint);
+    if !entry.target_caveats.is_empty() && entry.target_note.trim().is_empty() {
+        bail!(
+            "{}: {gate} / {ckpt} has target caveats but no target_note for them to point to",
+            path.display()
+        );
+    }
+    if !entry.target_note.is_empty() && entry.targets.is_empty() {
+        bail!(
+            "{}: {gate} / {ckpt} declares target_note with no targets for it to describe",
+            path.display()
+        );
+    }
+    match entry.target_max_model_len {
+        Some(_) if entry.targets.is_empty() => bail!(
+            "{}: {} / {} declares target_max_model_len with no targets for it to describe",
+            path.display(),
+            entry.gate,
+            entry.checkpoint,
+        ),
+        Some(len) if len <= 0 => bail!(
+            "{}: {} / {} target_max_model_len must be positive, got {len}",
+            path.display(),
+            entry.gate,
+            entry.checkpoint,
+        ),
+        _ => {}
     }
     Ok(())
 }

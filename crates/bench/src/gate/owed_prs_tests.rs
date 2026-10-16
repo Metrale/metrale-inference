@@ -47,7 +47,14 @@ fn none() -> BTreeSet<String> {
 
 #[test]
 fn one_of_two_certified_opens_exactly_one_pr_for_the_other() {
-    let prs = owed_prs(&owed_after_one_of_two_certified(), SHA, &none(), &none()).expect("renders");
+    let prs = owed_prs(
+        &owed_after_one_of_two_certified(),
+        SHA,
+        &none(),
+        &none(),
+        &BTreeMap::new(),
+    )
+    .expect("renders");
     assert_eq!(prs.len(), 1, "{prs:?}");
     let pr = &prs[0];
     assert_eq!(pr.model, "glm");
@@ -71,17 +78,19 @@ fn a_rerun_opens_nothing_and_a_branch_without_its_pr_gets_the_pr_alone() {
     let owed = owed_after_one_of_two_certified();
     let branch = BTreeSet::from(["cert/glm/0123456".to_string()]);
     assert!(
-        owed_prs(&owed, SHA, &branch, &branch)
+        owed_prs(&owed, SHA, &branch, &branch, &BTreeMap::new())
             .expect("renders")
             .is_empty()
     );
-    let prs = owed_prs(&owed, SHA, &branch, &none()).expect("renders");
+    let prs = owed_prs(&owed, SHA, &branch, &none(), &BTreeMap::new()).expect("renders");
     assert_eq!(prs.len(), 1);
     assert!(!prs[0].create_branch, "the branch exists");
     // 2026-10-15: Control: another merge's branch for the same model does not suppress this one.
     let other = BTreeSet::from(["cert/glm/fedcba9".to_string()]);
     assert_eq!(
-        owed_prs(&owed, SHA, &other, &other).expect("renders").len(),
+        owed_prs(&owed, SHA, &other, &other, &BTreeMap::new())
+            .expect("renders")
+            .len(),
         1
     );
 }
@@ -89,7 +98,7 @@ fn a_rerun_opens_nothing_and_a_branch_without_its_pr_gets_the_pr_alone() {
 #[test]
 fn nothing_owed_opens_nothing() {
     assert!(
-        owed_prs(&[], SHA, &none(), &none())
+        owed_prs(&[], SHA, &none(), &none(), &BTreeMap::new())
             .expect("renders")
             .is_empty()
     );
@@ -108,11 +117,36 @@ fn every_gate_a_model_owes_rides_one_pr() {
             subject: s("gemma"),
         }])
         .collect();
-    let prs = owed_prs(&owed, SHA, &none(), &none()).expect("renders");
+    let prs = owed_prs(&owed, SHA, &none(), &none(), &BTreeMap::new()).expect("renders");
     assert_eq!(
         prs.iter().map(|p| p.model.as_str()).collect::<Vec<_>>(),
         ["gemma", "glm"]
     );
     let m: toml::Value = toml::from_str(&prs[1].manifest).expect("TOML");
     assert_eq!(m["owed"].as_array().map(Vec::len), Some(2), "deduplicated");
+}
+
+/// 2026-10-16: A model's PR names the battles it owes and the command that scores them; a model
+/// owing no battle gets no such line (control).
+#[test]
+fn a_pr_names_the_battles_its_model_owes() {
+    let owed: Vec<Owed> = ["glm", "gemma"]
+        .into_iter()
+        .map(|m| Owed {
+            gate: "ttft-cold-gate".into(),
+            subject: s(m),
+        })
+        .collect();
+    let battles = BTreeMap::from([(
+        "glm".to_string(),
+        BTreeSet::from(["ttft-battle".to_string()]),
+    )]);
+    let prs = owed_prs(&owed, SHA, &none(), &none(), &battles).expect("renders");
+    let body = |m: &str| &prs.iter().find(|p| p.model == m).expect("a PR").body;
+    assert!(
+        body("glm").contains("`met benchmark battle ttft-battle --model glm`"),
+        "{}",
+        body("glm")
+    );
+    assert!(!body("gemma").contains("battle"), "{}", body("gemma"));
 }

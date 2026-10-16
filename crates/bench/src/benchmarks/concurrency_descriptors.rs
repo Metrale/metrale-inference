@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-09-26: The concurrency sweep's registry entries: the three gate
+//! 2026-09-26: The concurrency sweep's registry entries: the four gate
 //! descriptors that run the `ConcurrencySweep` driver, and the rung table
 //! their floor params and metric keys are derived from.
 //!
@@ -125,15 +125,51 @@ pub const MOE_DESCRIPTOR: BenchmarkDescriptor = BenchmarkDescriptor {
 const MOE_SUMMARY: &str =
     "Latency/throughput curve across concurrency 1 → 16 on the 35B MoE, published instrument";
 
+/// 2026-10-16: GLM-5.3-Flash's decode ladder, a separate gate id for the reason the MoE one is
+/// (`gate::check::record_is_required_subject` scores one default checkpoint per box class). Its
+/// BENCH.toml entry pins the instrument the vLLM reference was measured on (ISL 128, OSL 1024,
+/// the `essay` fixture, C=1,2,4,8,12,16) at a 64k served context, MTP armed by the recipe. Its
+/// floors come only from a measured run: until then the entry is `unmeasured` and gates
+/// nothing.
+pub const GLM_DESCRIPTOR: BenchmarkDescriptor = BenchmarkDescriptor {
+    id: "concurrency-sweep-glm",
+    name: "Concurrency Sweep (GLM-5.3-Flash)",
+    summary: GLM_SUMMARY,
+    detail: "The concurrency ladder on GLM-5.3-Flash, pinned by the variant's param_overrides \
+             to the instrument its vLLM reference was measured on: ISL 128 / OSL 1024, the \
+             essay fixture, C=1,2,4,8,12,16, served at a 64k context with MTP armed by the \
+             recipe. Same driver, same rungs-and-floors shape and same vacuity rule as \
+             `concurrency-sweep`. Its numbers are read against its own history and, in the \
+             decode battle, against the reference figures its entry declares.",
+    duration_hint: "~5–15 min",
+    expected_secs: 900,
+    updated: "2026-10-16",
+    needs_confirmation: false,
+    intended_for: Some(crate::benchmark::ModelExpectation {
+        families: &["glm-5.3-flash"],
+        note: "The GLM ladder is defined on the GLM-5.3-Flash family; another checkpoint under \
+               its instrument is a number with no history and no floor.",
+    }),
+    threshold_params: GATE_THRESHOLD_PARAMS,
+    sensitivity: Sensitivity::Speed,
+    ctor: || Box::new(ConcurrencySweep::default()),
+};
+
+const GLM_SUMMARY: &str =
+    "Latency/throughput curve across concurrency 1 → 16 on GLM-5.3-Flash, MTP armed";
+
 /// 2026-09-26: The gated rungs, `(C, floor param, metric key, label)`. The
 /// descriptors' `threshold_params`, the floor `ParamSpec`s and `configure`'s
 /// `Floors::per_c` are all derived from this table. A rung with no bound in
 /// the variant's BENCH.toml keeps its 0.0 default and gates nothing.
-pub(super) const RUNGS: [(usize, &str, &str, &str); 8] = [
+pub(super) const RUNGS: [(usize, &str, &str, &str); 9] = [
     (1, "min_c1", "c1_aggregate_tok_s", "C=1 aggregate floor"),
     (2, "min_c2", "c2_aggregate_tok_s", "C=2 aggregate floor"),
     (4, "min_c4", "c4_aggregate_tok_s", "C=4 aggregate floor"),
     (8, "min_c8", "c8_aggregate_tok_s", "C=8 aggregate floor"),
+    // 2026-10-16: GLM-5.3-Flash's decode ladder runs C=12 (`concurrency-sweep-glm`); a gate
+    // with no C=12 rung leaves this floor at 0.0.
+    (12, "min_c12", "c12_aggregate_tok_s", "C=12 aggregate floor"),
     (16, "min_c16", "c16_aggregate_tok_s", "C=16 aggregate floor"),
     (32, "min_c32", "c32_aggregate_tok_s", "C=32 aggregate floor"),
     (64, "min_c64", "c64_aggregate_tok_s", "C=64 aggregate floor"),

@@ -7,14 +7,21 @@
 # Invariants:
 # - A [benchmarks.*] sub-table belongs to the [[benchmarks]] entry above it.
 # - Every entry is its own gate id (crates/bench/src/benchmarks/ttft/glm.rs and the
-#   agentic-webserver-glm descriptor), so GLM's bounds and baselines never share an id with
-#   another model's.
+#   agentic-webserver-glm and concurrency-sweep-glm descriptors), so GLM's bounds and
+#   baselines never share an id with another model's.
 # - Every bound is a regression ratchet from measured cells: the median of three reps on one
 #   boot plus the measured noise. No entry names a recipe yet: the GLM recipe is not on main,
 #   so a --pull-request-gate self-start refuses these entries until it lands.
 # - `targets` carries the vLLM reference per metric; no verdict reads it.
+# - `target_caveats` flags a target that is not a clean bar, pointing at the entry's
+#   `target_note`; no verdict reads it either.
+# - `target_note` is the account of the targets for a reader of the published page; the
+#   engineering `note` is never published. No verdict reads it.
+# - `target_max_model_len` is the context of the one vLLM serve behind every target here
+#   (262144); a page uses it to say where vLLM was not run. No verdict reads it.
 # - Cells not measured are not here: the 128k context, the 256k agentic tier and the 64k
-#   agentic tier.
+#   agentic tier. The one unmeasured entry, concurrency-sweep-glm (2026-10-16), has no bounds:
+#   it carries the gate definition and its vLLM targets until a measured ladder cuts them.
 
 [[benchmarks]]
 quant = "nvfp4"
@@ -30,10 +37,14 @@ each with its own warm-up), binary sha256 prefix a96c8bac54bfb4d0 (engine e8fd77
 nearest measured build to the one the GLM recipe of PR #161 pins), serve env sha256 prefix \
 c3d2e963efa6. Each ceiling is a regression ratchet: the median of the three reps plus their \
 range. The targets field holds the vLLM client p50 (n=5) on the same prompts, so a known loss \
-to vLLM is on the page without failing the gate.\
+to vLLM is on the page without failing the gate. \
+Every vLLM target comes from one vLLM serve at max_model_len 262144 (256k): vLLM was not run at 64k. \
+vLLM ran at gpu util 0.88; ours at 0.82.\
 """
 # 2026-10-15: The vLLM client p50 per metric (n=5, same prompts); no verdict reads it.
 targets = { median_ms_256 = 488.0, median_ms_1024 = 679.0, median_ms_4096 = 1705.0 }
+# 2026-10-16: The context of the one vLLM serve behind every target above; no verdict reads it.
+target_max_model_len = 262144
 
 [benchmarks.serve_overrides]
 # 2026-10-15: The context length this gate id names.
@@ -73,10 +84,14 @@ nearest measured build to the one the GLM recipe of PR #161 pins; its serve env 
 lever the recipe adds), serve env sha256 prefix 8a1ae0908c55. Each ceiling is a regression \
 ratchet: the median of the three reps plus their range. The targets field holds the vLLM \
 client p50 (n=5) on the same prompts, so a known loss to vLLM is on the page without failing \
-the gate.\
+the gate. \
+Every vLLM target comes from one vLLM serve at max_model_len 262144 (256k), this gate's context. \
+vLLM ran at gpu util 0.88; ours at 0.82.\
 """
 # 2026-10-15: The vLLM client p50 per metric (n=5, same prompts); no verdict reads it.
 targets = { median_ms_256 = 488.0, median_ms_1024 = 679.0, median_ms_4096 = 1705.0 }
+# 2026-10-16: The context of the one vLLM serve behind every target above; no verdict reads it.
+target_max_model_len = 262144
 
 [benchmarks.serve_overrides]
 # 2026-10-15: The context length this gate id names.
@@ -115,10 +130,15 @@ each with its own warm-up), binary sha256 prefix 160d252d8c84cd09 (engine 3b3874
 build the GLM recipe of PR #161 pins), serve env sha256 prefix c3d2e963efa6. Each ceiling is \
 a regression ratchet: the median of the three reps plus their range. The targets field holds \
 the vLLM client p50 (n=5) on the same prompts, so a known loss to vLLM is on the page without \
-failing the gate.\
+failing the gate. \
+Every vLLM target comes from one vLLM serve at max_model_len 262144 (256k): vLLM was not run at 512k, above \
+that serve's maximum. \
+vLLM ran at gpu util 0.88; ours at 0.82.\
 """
 # 2026-10-15: The vLLM client p50 per metric (n=5, same prompts); no verdict reads it.
 targets = { median_ms_256 = 488.0, median_ms_1024 = 679.0, median_ms_4096 = 1705.0 }
+# 2026-10-16: The context of the one vLLM serve behind every target above; no verdict reads it.
+target_max_model_len = 262144
 
 [benchmarks.serve_overrides]
 # 2026-10-15: The context length this gate id names.
@@ -157,10 +177,14 @@ each with its own warm-up), binary sha256 prefix a96c8bac54bfb4d0 (engine e8fd77
 nearest measured build to the one the GLM recipe of PR #161 pins), serve env sha256 prefix \
 c3d2e963efa6. Each ceiling is a regression ratchet: the median of the three reps plus their \
 range. The targets field holds the vLLM client p50 (n=5) on the same prompts, so a known loss \
-to vLLM is on the page without failing the gate.\
+to vLLM is on the page without failing the gate. \
+Every vLLM target comes from one vLLM serve at max_model_len 262144 (256k): vLLM was not run at 64k. \
+vLLM ran at gpu util 0.88; ours at 0.82.\
 """
 # 2026-10-15: The vLLM client p50 per metric (n=5, same prompts); no verdict reads it.
 targets = { median_ms_256 = 133.0, median_ms_1024 = 140.0, median_ms_4096 = 147.0 }
+# 2026-10-16: The context of the one vLLM serve behind every target above; no verdict reads it.
+target_max_model_len = 262144
 
 [benchmarks.serve_overrides]
 # 2026-10-15: The context length this gate id names.
@@ -200,10 +224,14 @@ nearest measured build to the one the GLM recipe of PR #161 pins; its serve env 
 lever the recipe adds), serve env sha256 prefix 8a1ae0908c55. Each ceiling is a regression \
 ratchet: the median of the three reps plus their range. The targets field holds the vLLM \
 client p50 (n=5) on the same prompts, so a known loss to vLLM is on the page without failing \
-the gate.\
+the gate. \
+Every vLLM target comes from one vLLM serve at max_model_len 262144 (256k), this gate's context. \
+vLLM ran at gpu util 0.88; ours at 0.82.\
 """
 # 2026-10-15: The vLLM client p50 per metric (n=5, same prompts); no verdict reads it.
 targets = { median_ms_256 = 133.0, median_ms_1024 = 140.0, median_ms_4096 = 147.0 }
+# 2026-10-16: The context of the one vLLM serve behind every target above; no verdict reads it.
+target_max_model_len = 262144
 
 [benchmarks.serve_overrides]
 # 2026-10-15: The context length this gate id names.
@@ -242,10 +270,15 @@ each with its own warm-up), binary sha256 prefix 160d252d8c84cd09 (engine 3b3874
 build the GLM recipe of PR #161 pins), serve env sha256 prefix c3d2e963efa6. Each ceiling is \
 a regression ratchet: the median of the three reps plus their range. The targets field holds \
 the vLLM client p50 (n=5) on the same prompts, so a known loss to vLLM is on the page without \
-failing the gate.\
+failing the gate. \
+Every vLLM target comes from one vLLM serve at max_model_len 262144 (256k): vLLM was not run at 512k, above \
+that serve's maximum. \
+vLLM ran at gpu util 0.88; ours at 0.82.\
 """
 # 2026-10-15: The vLLM client p50 per metric (n=5, same prompts); no verdict reads it.
 targets = { median_ms_256 = 133.0, median_ms_1024 = 140.0, median_ms_4096 = 147.0 }
+# 2026-10-16: The context of the one vLLM serve behind every target above; no verdict reads it.
+target_max_model_len = 262144
 
 [benchmarks.serve_overrides]
 # 2026-10-15: The context length this gate id names.
@@ -285,10 +318,14 @@ serve env sha256 prefix c3d2e963efa6. The ceiling is a regression ratchet: the m
 three reps plus the measured noise. The targets field holds the vLLM client p50 (n=5) on the \
 same prompt. The owner's bar for this cell is 10000 ms, below vLLM. RISK, not widened: across \
 12 samples of this cell on one binary, 3 fell in a slow mode 0.9-1.3 s above the rest; a run \
-with two slow samples of three would fail this ceiling.\
+with two slow samples of three would fail this ceiling. \
+Every vLLM target comes from one vLLM serve at max_model_len 262144 (256k): vLLM was not run at 64k. \
+vLLM ran at gpu util 0.88; ours at 0.82.\
 """
 # 2026-10-15: The vLLM client p50 per metric (n=5, same prompts); no verdict reads it.
 targets = { median_ms = 10479.0 }
+# 2026-10-16: The context of the one vLLM serve behind every target above; no verdict reads it.
+target_max_model_len = 262144
 
 [benchmarks.serve_overrides]
 # 2026-10-15: The context length this gate id names.
@@ -324,10 +361,14 @@ ceiling is a regression ratchet: the median of the three reps plus the measured 
 targets field holds the vLLM client p50 (n=5) on the same prompt. The owner's bar for this \
 cell is 10000 ms, below vLLM. RISK, not widened: across 12 samples of this cell on one \
 binary, 3 fell in a slow mode 0.9-1.3 s above the rest; a run with two slow samples of three \
-would fail this ceiling.\
+would fail this ceiling. \
+Every vLLM target comes from one vLLM serve at max_model_len 262144 (256k), this gate's context. \
+vLLM ran at gpu util 0.88; ours at 0.82.\
 """
 # 2026-10-15: The vLLM client p50 per metric (n=5, same prompts); no verdict reads it.
 targets = { median_ms = 10479.0 }
+# 2026-10-16: The context of the one vLLM serve behind every target above; no verdict reads it.
+target_max_model_len = 262144
 
 [benchmarks.serve_overrides]
 # 2026-10-15: The context length this gate id names.
@@ -362,10 +403,15 @@ c3d2e963efa6. The ceiling is a regression ratchet: the median of the three reps 
 measured noise. The targets field holds the vLLM client p50 (n=5) on the same prompt. The \
 owner's bar for this cell is 10000 ms, below vLLM. RISK, not widened: across 12 samples of \
 this cell on one binary, 3 fell in a slow mode 0.9-1.3 s above the rest; a run with two slow \
-samples of three would fail this ceiling.\
+samples of three would fail this ceiling. \
+Every vLLM target comes from one vLLM serve at max_model_len 262144 (256k): vLLM was not run at 512k, above \
+that serve's maximum. \
+vLLM ran at gpu util 0.88; ours at 0.82.\
 """
 # 2026-10-15: The vLLM client p50 per metric (n=5, same prompts); no verdict reads it.
 targets = { median_ms = 10479.0 }
+# 2026-10-16: The context of the one vLLM serve behind every target above; no verdict reads it.
+target_max_model_len = 262144
 
 [benchmarks.serve_overrides]
 # 2026-10-15: The context length this gate id names.
@@ -398,10 +444,14 @@ Cached-prefix TTFT on the committed 32k-token prompt. Measured on one boot, n=3 
 (engine e8fd77cef, the nearest measured build to the one the GLM recipe of PR #161 pins), \
 serve env sha256 prefix c3d2e963efa6. The ceiling is a regression ratchet: the median of the \
 three reps plus the measured noise. The targets field holds the vLLM client p50 (n=5) on the \
-same prompt.\
+same prompt. \
+Every vLLM target comes from one vLLM serve at max_model_len 262144 (256k): vLLM was not run at 64k. \
+vLLM ran at gpu util 0.88; ours at 0.82.\
 """
 # 2026-10-15: The vLLM client p50 per metric (n=5, same prompts); no verdict reads it.
 targets = { median_ms = 207.0 }
+# 2026-10-16: The context of the one vLLM serve behind every target above; no verdict reads it.
+target_max_model_len = 262144
 
 [benchmarks.serve_overrides]
 # 2026-10-15: The context length this gate id names.
@@ -433,10 +483,14 @@ Cached-prefix TTFT on the committed 32k-token prompt. Measured on one boot, n=3 
 (engine 2285594fb, the nearest measured build to the one the GLM recipe of PR #161 pins; its \
 serve env predates one lever the recipe adds), serve env sha256 prefix 8a1ae0908c55. The \
 ceiling is a regression ratchet: the median of the three reps plus the measured noise. The \
-targets field holds the vLLM client p50 (n=5) on the same prompt.\
+targets field holds the vLLM client p50 (n=5) on the same prompt. \
+Every vLLM target comes from one vLLM serve at max_model_len 262144 (256k), this gate's context. \
+vLLM ran at gpu util 0.88; ours at 0.82.\
 """
 # 2026-10-15: The vLLM client p50 per metric (n=5, same prompts); no verdict reads it.
 targets = { median_ms = 207.0 }
+# 2026-10-16: The context of the one vLLM serve behind every target above; no verdict reads it.
+target_max_model_len = 262144
 
 [benchmarks.serve_overrides]
 # 2026-10-15: The context length this gate id names.
@@ -467,10 +521,15 @@ Cached-prefix TTFT on the committed 32k-token prompt. Measured on one boot, n=3 
 (separate invocations, each with its own warm-up), binary sha256 prefix 160d252d8c84cd09 \
 (engine 3b3874954, the build the GLM recipe of PR #161 pins), serve env sha256 prefix \
 c3d2e963efa6. The ceiling is a regression ratchet: the median of the three reps plus the \
-measured noise. The targets field holds the vLLM client p50 (n=5) on the same prompt.\
+measured noise. The targets field holds the vLLM client p50 (n=5) on the same prompt. \
+Every vLLM target comes from one vLLM serve at max_model_len 262144 (256k): vLLM was not run at 512k, above \
+that serve's maximum. \
+vLLM ran at gpu util 0.88; ours at 0.82.\
 """
 # 2026-10-15: The vLLM client p50 per metric (n=5, same prompts); no verdict reads it.
 targets = { median_ms = 207.0 }
+# 2026-10-16: The context of the one vLLM serve behind every target above; no verdict reads it.
+target_max_model_len = 262144
 
 [benchmarks.serve_overrides]
 # 2026-10-15: The context length this gate id names.
@@ -538,3 +597,64 @@ max = 437.74
 # 2026-10-15: The ceiling of 100. Every measured tier of this model took 100 turns, so there is
 # no measured noise to add; an agent that needs more turns for the same ten tasks fails here.
 max = 100.0
+
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "nvidia/GLM-5.3-Flash-NVFP4"
+gate = "concurrency-sweep-glm"
+label = "GLM-5.3-Flash decode ladder, 64k context"
+default = true
+# 2026-10-16: When the first measured ladder cuts the floors, add cache_cold_cells max = 0 in the same
+# edit (the metric comes from the cache-cold PR, which must be on main first).
+status = "unmeasured"
+note = """\
+The decode ladder on GLM-5.3-Flash: aggregate tok/s at C=1, 2, 4, 8, 12 and 16 on the \
+published instrument (ISL 128, OSL 1024, the essay request), served at 64k context with MTP \
+as the GLM recipe of PR #161 sets it. UNMEASURED: no ladder of a current build exists, so \
+the entry carries no bounds and baseline_for drops it from enforcement. Its floors come only \
+from a measured run (two or more reps on one build, the noise measured), never from an older \
+build's ladder. The targets field holds the vLLM reference per rung; no verdict reads it. \
+J/tok is not a target: the vLLM run summed energy over three hosts, which no local rail \
+reading matches. The C=16 target, 115.73, is a single sample of that run and most likely a \
+stalled vLLM rep. vLLM's own three-rep ladder of the same build, run on a different instrument, \
+read that rung as 159.1, 101.0 and 158.5 tok/s: one rep in three stalls. Those reps come from \
+another instrument, are not comparable with this one and are not a target. A win at C=16 against \
+115.73 is not a clean win. Against a non-stalled vLLM C=16 (~159 tok/s), the internal target is \
+>= 164 tok/s (+3%). \
+Every vLLM target comes from one vLLM serve at max_model_len 262144 (256k): vLLM was not run at 64k. \
+vLLM ran at gpu util 0.88; ours at 0.82.\
+"""
+# 2026-10-16: The vLLM aggregate tok/s per rung on the same instrument (ISL 128, OSL 1024,
+# essay request, one warm-up, one sample per rung; vLLM 0.30.1rc1.dev193+gddd6fbca1, served
+# at max_model_len 262144, fp8_e4m3 KV, prefix caching on, gpu util 0.88; recorded
+# 2026-10-10T18:16:41Z). C=16 is a single sample of that run and most likely a stalled vLLM rep.
+# vLLM's own three-rep ladder of the same build, run on a different instrument, read that rung
+# as 159.1, 101.0 and 158.5 tok/s: one rep in three stalls. Those reps come from another
+# instrument, are not comparable with this one and are not a target. A win at C=16 against 115.73
+# is not a clean win. Against a non-stalled vLLM C=16 (~159 tok/s), the internal target is
+# >= 164 tok/s (+3%).
+targets = { c1_aggregate_tok_s = 40.11, c2_aggregate_tok_s = 62.24, c4_aggregate_tok_s = 83.42, c8_aggregate_tok_s = 114.56, c12_aggregate_tok_s = 131.74, c16_aggregate_tok_s = 115.73 }
+# 2026-10-16: The context of the one vLLM serve behind every target above; no verdict reads it.
+target_max_model_len = 262144
+# 2026-10-16: The C=16 target is flagged where it is published; target_note gives the account.
+target_caveats = { c16_aggregate_tok_s = "likely vLLM stall" }
+# 2026-10-16: The account of these targets for a reader of the published page.
+target_note = """\
+The C=16 vLLM figure, 115.73 tok/s, is a single sample and most likely a stalled vLLM rep. \
+vLLM's own three-rep ladder, on a different instrument, read that rung as 159.1, 101.0 and \
+158.5 tok/s. Those reps are not comparable with this instrument and are not a target. A win \
+at C=16 against 115.73 is not a clean win. Against a non-stalled vLLM C=16 (~159 tok/s), the \
+internal target is ≥ 164 tok/s (+3%). Every vLLM figure here comes from one vLLM serve at \
+256k context; vLLM was not run at 64k or 512k. vLLM ran at GPU util 0.88; ours at 0.82.\
+"""
+
+[benchmarks.serve_overrides]
+# 2026-10-16: The context length the ladder is measured at.
+max_model_len = "65536"
+
+[benchmarks.param_overrides]
+# 2026-10-16: The published instrument, as on concurrency-sweep-moe, with the C=12 rung.
+concurrencies = "1,2,4,8,12,16"
+isls = "128"
+osl = "1024"
+prompt_mode = "essay"

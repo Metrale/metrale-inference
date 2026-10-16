@@ -309,7 +309,7 @@ max = {max:.1}
     )
 }
 
-fn verdict_at(root: &Path, value: f64) -> bool {
+pub(super) fn verdict_at(root: &Path, value: f64) -> bool {
     let baseline = baseline_for(root, "ttft-cold-gate").unwrap();
     let bound = &baseline.hardware["gb10"].models["org/A"].metrics["median_ms"];
     matches!(
@@ -352,4 +352,35 @@ fn a_target_must_name_a_declared_metric_and_be_finite() {
     assert!(err.contains("target median_ms must be finite"), "{err}");
     let declared = with_target("target-declared", 500.0, "median_ms", "100.0");
     assert_eq!(load_all(&declared).unwrap().len(), 1);
+}
+
+/// 2026-10-16: An `unmeasured` entry has no metrics to name, so its targets load (a decode
+/// ladder's reference figures precede its first measured floors); a non-finite one is still
+/// refused there.
+#[test]
+fn an_unmeasured_entry_may_carry_targets() {
+    let entry = |name: &str, target: &str| {
+        fixture(
+            name,
+            &format!(
+                r#"
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "org/A"
+gate = "ttft-cold-gate"
+default = true
+status = "unmeasured"
+[benchmarks.targets]
+median_ms = {target}
+"#
+            ),
+        )
+    };
+    let loaded = load_all(&entry("target-unmeasured", "100.0")).unwrap();
+    assert_eq!(loaded[0].1.targets.get("median_ms"), Some(&100.0));
+    let err = format!(
+        "{:#}",
+        load_all(&entry("target-unmeasured-nan", "inf")).unwrap_err()
+    );
+    assert!(err.contains("target median_ms must be finite"), "{err}");
 }
