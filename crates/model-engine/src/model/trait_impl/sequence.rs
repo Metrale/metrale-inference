@@ -34,6 +34,9 @@ use metrale_model_layers::layers::ops;
 use metrale_model_layers::speculative::DraftProposer;
 use metrale_model_layers::weight_map::{DenseWeight, MtpWeights, QuantizedWeight};
 
+mod retire;
+#[cfg(test)]
+mod retire_tests;
 mod state_io;
 
 impl TransformerModel {
@@ -50,32 +53,26 @@ impl TransformerModel {
             {
                 // 2026-09-25: A leaf SSM snapshot at the full length (prompt + generated), so
                 // the next warm hit restores at this turn's end (`finish_leaf_snapshot`).
-                let finish_snap = self.finish_leaf_snapshot(seq);
-                let acquired = if let Some(snap_id) = finish_snap {
-                    let (displaced, acquired) = self.prefix_cache.insert_with_snapshot(
-                        &seq.tokens,
-                        &seq.block_table,
-                        &seq.disk_block_ids,
-                        bs,
-                        snap_id,
-                        seq.session_hash,
-                        seq.prompt_len,
-                        seq.adapter_id,
-                    );
-                    if let Some(old) = displaced {
-                        self.ssm_snapshots.free(old);
-                    }
-                    acquired
-                } else {
-                    self.prefix_cache.insert(
-                        &seq.tokens,
-                        &seq.block_table,
-                        &seq.disk_block_ids,
-                        bs,
-                        seq.prompt_len,
-                        seq.adapter_id,
-                    )
-                };
+                // 2026-10-16: Not on a multi-rank world, where no worker holds one
+                // (`retire::retire_insert`).
+                let multi_rank = self.multi_rank_protocol_active();
+                if multi_rank {
+                    static LOGGED: std::sync::Once = std::sync::Once::new();
+                    LOGGED.call_once(|| {
+                        tracing::info!(
+                            "finish-leaf SSM snapshot: off on a multi-rank world (rank 0 alone \
+                             retires; the snapshot vote needs every rank)"
+                        )
+                    });
+                }
+                let acquired = retire::retire_insert(
+                    self.prefix_cache.as_ref(),
+                    seq,
+                    bs,
+                    multi_rank,
+                    || self.finish_leaf_snapshot(seq),
+                    |old| self.ssm_snapshots.free(old),
+                );
                 // 2026-09-25: Take the cache's refs on exactly the blocks the insert reports,
                 // not on this sequence's `block_table` (see `cache_acquires_refs`).
                 super::super::block_mgmt::cache_acquires_refs(&acquired, &mut self.kv_cache.lock());
