@@ -9,7 +9,10 @@ use super::*;
 use crossterm::event::{KeyCode, KeyEvent};
 
 fn app() -> App {
-    App::new(clap::Parser::parse_from(["met", "org/m"]))
+    App::new(
+        clap::Parser::parse_from(["met", "org/m"]),
+        crate::tui::data::thermal::ThermalProbe::default(),
+    )
 }
 
 fn press(a: &mut App, c: char) {
@@ -36,7 +39,10 @@ fn q_asks_first_while_the_boot_load_is_still_running() {
 /// 2026-09-26: `met serve` with no model has nothing loading, so `q` quits without the loading prompt.
 #[test]
 fn an_awaiting_model_boot_quits_without_the_loading_prompt() {
-    let mut a = App::new(clap::Parser::parse_from(["met"]));
+    let mut a = App::new(
+        clap::Parser::parse_from(["met"]),
+        crate::tui::data::thermal::ThermalProbe::default(),
+    );
     assert!(a.work_in_flight().is_none());
     press(&mut a, 'q');
     assert!(a.should_quit);

@@ -9,7 +9,10 @@ use super::*;
 use crossterm::event::{KeyCode, KeyEvent};
 
 fn library() -> App {
-    let mut a = App::new(clap::Parser::parse_from(["met", "org/m"]));
+    let mut a = App::new(
+        clap::Parser::parse_from(["met", "org/m"]),
+        crate::tui::data::thermal::ThermalProbe::default(),
+    );
     a.on_key(KeyEvent::from(KeyCode::Char('4')));
     a
 }

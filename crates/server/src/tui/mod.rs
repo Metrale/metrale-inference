@@ -113,7 +113,7 @@ pub fn start(
                 .or_else(|| args.model.clone())
                 .unwrap_or_default();
             let cache_dir = args.cache_dir.clone();
-            let mut app = app::App::new(args);
+            let mut app = app::App::new(args, data::thermal::ThermalProbe::spawn());
             // 2026-09-26: The serve matrix boots checkpoints through this
             // process; without an installed host it refuses to load with
             // `serve_matrix::host::NO_HOST`.

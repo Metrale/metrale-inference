@@ -70,8 +70,9 @@ pub struct App {
     pub focus: Focus,
     pub progress: ProgressModel,
     pub stats: StatsModel,
-    /// 2026-09-26: Background thermal/throttle sampler. It spawns `nvidia-smi` on its
-    /// own thread, and the UI reads only its latest snapshot (`data::thermal`).
+    /// 2026-10-16: Background thermal/throttle sampler, handed in by `new`'s caller. A spawned one
+    /// runs `nvidia-smi` on its own thread and the UI reads only its latest snapshot
+    /// (`data::thermal`); the inert default never samples.
     pub thermal: super::data::thermal::ThermalProbe,
     pub started: Instant,
     /// 2026-09-26: None = follow newest; Some(n) = scrolled up by n lines.
@@ -139,7 +140,10 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(args: crate::cli::ServeArgs) -> Self {
+    /// 2026-10-16: `thermal` is the caller's: the serve passes `ThermalProbe::spawn()`, which
+    /// starts the hardware sampler; a caller that must not exec `nvidia-smi` passes the inert
+    /// `ThermalProbe::default()`.
+    pub fn new(args: crate::cli::ServeArgs, thermal: super::data::thermal::ThermalProbe) -> Self {
         // 2026-09-26: With no model, boot lands on the Library, the screen that can
         // start one.
         let awaiting_model = args.model.is_none() && args.model_from_path.is_none();
@@ -160,7 +164,7 @@ impl App {
             focus: Focus::Content,
             progress: ProgressModel::default(),
             stats: StatsModel::default(),
-            thermal: super::data::thermal::ThermalProbe::spawn(),
+            thermal,
             started: Instant::now(),
             log_scroll: None,
             log_filter: String::new(),
@@ -427,3 +431,8 @@ mod tests;
 #[cfg(test)]
 #[path = "app_keys_tests.rs"]
 mod key_tests;
+
+// 2026-10-16: An App starts a hardware sampler only when handed one (reads `/proc`).
+#[cfg(all(test, target_os = "linux"))]
+#[path = "app_thermal_tests.rs"]
+mod thermal_tests;

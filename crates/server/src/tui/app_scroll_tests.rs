@@ -10,7 +10,10 @@ use crate::tui::app::{BenchSub, Focus};
 use crossterm::event::{KeyCode, KeyEvent};
 
 fn app() -> App {
-    App::new(clap::Parser::parse_from(["met", "org/m"]))
+    App::new(
+        clap::Parser::parse_from(["met", "org/m"]),
+        crate::tui::data::thermal::ThermalProbe::default(),
+    )
 }
 
 fn press(a: &mut App, c: char) {

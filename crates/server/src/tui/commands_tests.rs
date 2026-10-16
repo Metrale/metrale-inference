@@ -10,7 +10,10 @@
 use super::*;
 
 fn app() -> App {
-    App::new(clap::Parser::parse_from(["met", "org/m"]))
+    App::new(
+        clap::Parser::parse_from(["met", "org/m"]),
+        crate::tui::data::thermal::ThermalProbe::default(),
+    )
 }
 
 /// 2026-09-26: Everything the pane printed, as one blob to search.
