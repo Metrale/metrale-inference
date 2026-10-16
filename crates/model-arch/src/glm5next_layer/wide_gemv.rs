@@ -349,10 +349,14 @@ mod tests {
         (0..=40).filter(|&m| rows32_takes(on, site, m)).collect()
     }
 
-    /// 2026-10-16: Under `METRALE_DENSE_BATCHM_32=1` a prefill launch never takes the 16-row
-    /// split, at 17, 24 and 32 rows or any other count, and neither does a `General` one.
+    /// 2026-10-16: Under `METRALE_DENSE_BATCHM_32=1` neither a `Prefill` launch nor a `General`
+    /// one (drafter rows, single-sequence `decode_k`, MTP context rows, one-row helpers) takes
+    /// the 16-row split, at 17, 24 and 32 rows or any other count; `decode_k` is labelled
+    /// `Prefill` for a prefill sub-chunk and `General` otherwise.
     #[test]
-    fn prefill_never_takes_rows32() {
+    fn prefill_and_general_never_take_rows32() {
+        assert_eq!(single_seq_site(true), ops::DenseCallSite::Prefill);
+        assert_eq!(single_seq_site(false), ops::DenseCallSite::General);
         for site in [ops::DenseCallSite::Prefill, ops::DenseCallSite::General] {
             for m in [17, 24, 32] {
                 assert!(!rows32_takes(true, site, m), "{site:?} at {m} rows");
