@@ -87,13 +87,15 @@ pub fn verdict(name: &str, draws: &[Draw], expert_bytes: usize) -> [bool; 3] {
     println!(
         "SUMMARY route={name} draws={} U16={u16:.1} U24={u24:.1} U32={u32_:.1} \
          U2x16={:.1} | sweep_us 16={t16:.1} 24={t24:.1} 32={t32:.1} 2x16={t2:.1} | full_us 16={:.1} \
-         24={:.1} 32={:.1} 2x16={:.1}",
+         24={:.1} 32={:.1} 2x16={:.1} | uniform_U 16={:.1} 32={:.1}",
         draws.len(),
         u(0) + u(1),
         mean(&|d| d.full[0]),
         mean(&|d| d.full[1]),
         mean(&|d| d.full[2]),
         mean(&|d| d.full[3]),
+        super::pwd_route::uniform_union(16),
+        super::pwd_route::uniform_union(32),
     );
     let pf = |b: bool| if b { "PASS" } else { "FAIL" };
     let fid = t16 / T16_SERVE_US - 1.0;

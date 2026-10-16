@@ -99,6 +99,7 @@ pub fn union_size(ids: &[i32]) -> usize {
 }
 
 /// 2026-10-15: The expected union of `rows` uniform rows, `E (1 - (1 - k / E)^rows)`.
+/// 2026-10-16: `SUMMARY` prints it as the no-locality reference the fitted routes sit under.
 pub fn uniform_union(rows: usize) -> f64 {
     let e = EXPERTS as f64;
     e * (1.0 - (1.0 - TOP_K as f64 / e).powi(rows as i32))
