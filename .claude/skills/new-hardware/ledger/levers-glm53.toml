@@ -2189,3 +2189,27 @@ effort_hours = 6.0
 transferability = "any per-row norm epilogue whose row a kernel's blocks split by columns: a 2-block cluster exchanging partial sums over DSMEM keeps the norm's reduction order when each half reproduces the norm kernel's warp tree"
 links = { pr = "", commit = "4988cd975", evidence = "glm5next_kda_scan_onorm_gate" }
 notes = "Not fused: the cut.rs tail-merge recurrence (a partial last chunk merged into the token path) keeps its own kda_o_norm_gated_bf16 launch, so a forward that ends there still norms on the side. Deadlock freedom: the cluster's two blocks are gang-scheduled, so a barrier never waits on an unplaced peer; the host refuses the lever when cuOccupancyMaxActiveClusters is 0 for the launch shape or the fused kernel is absent, with an error naming it. head_dim other than 128 is refused. Readback: 'GLM KDA: METRALE_GLM_KDA_SCAN_ONORM=1 applied at'"
+
+[[lever]]
+id = "gb10x3-glm53-dsa-index-scores-roofline"
+date = "2026-10-16"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "would be a default-off class B rework of dsa_index_scores_mma_pipe (METRALE_GLM_DSA_SCORES_PIPE); none built"
+symptom = "at a 32k cold prefill dsa_index_scores_mma_pipe runs 55 launches on rank 0 for 191.9 ms, the largest unowned kernel pool after the elementwise items were taken"
+diagnosis_tool = "nsys"
+root_cause_class = "latency-bound"
+lever_type = "kernel-restructure"
+lkb_effect = "none (not built)"
+parity_tier_kept = "bit-identical"
+per_rung = []
+verdict = "discarded"
+verdict_reason = "2026-10-16 CPU roofline from the nsys per-launch times (H 32, D 128, 64-pool tiles, kpool 4; executed FLOPs 2*32*128*64*ceil(pools/64) per row, within 3% of the useful ones). Per launch class, GF / ms / TF / share of the 123.7 TF BF16 peak / DRAM GB/s: chunk 1 (8208 rows, 2052 pools) 71.1 / 1.48 / 48.0 / 39% / 148, at its 0.88 ms DRAM floor (FP32 q is 136 MB); chunk 2 (4100 pools) 208.5 / 3.18 / 65.6 / 53% / 95; chunk 3 (6148) 346.0 / 5.45 / 63.5 / 51% / 71; chunk 4 (8196) 483.4 / 6.78 / 71.3 / 58% / 69; 269-row tail 18.2 / 0.33 / 55. Binding limit: one CTA per SM, set by both 131 registers (A fragments 64 + accumulators 64) and 52,992 B of shared memory, so two warps per SMSP, with a CTA-wide barrier per tile that puts every warp's fold epilogue in lockstep with the others' MMAs; shared-memory bandwidth (about 25%), the L2-resident key stream, the 3-stage ring and DRAM do not bind. Floors per layer: 17.2 ms now, 13.3 at 85 TF, 11.5 at 99.5 TF (nvjet level); over 11 layers -24..-63 ms (expected about -43) without the sequence-parallel selection. With METRALE_GLM_DSA_SP_SELECT, in the cold recipe, each rank runs a third of the rows, so the same rework is worth -8..-21 ms per rank: under the -50 ms bar"
+failure_mode = "the projected gain did not clear the bar once the sequence-parallel selection divides the kernel's work by the rank count"
+caught_by = "CPU roofline before any code"
+time_lost_hours = 0.0
+would_catch_earlier = "project a kernel lever against the recipe it ships in: a pre-split profile overstates any kernel the split divides"
+effort_hours = 0.5
+transferability = "any per-row tensor-core scorer whose A fragments and accumulators both live in registers: at 64 + 64 registers one CTA per SM is the ceiling, so splitting the N tile (accumulate half the columns, fold, then the other half) is the lever that opens a second CTA without touching the reduction order"
+links = { pr = "", commit = "", evidence = "pfCTLIc_32k.sqlite (also pfCTLIb, pfDG1c, pfALLU within 3%)" }
+notes = "Class B rework that was sketched and not built: rows-descending block order, accumulate nt 0-3 then 4-7 (about 100 registers) with a 2-stage ring (35 KB) for two CTAs per SM, per-warp mbarrier consumption instead of the CTA barrier, and a BF16-RN q from the producer (the kernel rounds q RN already, so the bits stay the same and chunk 1's DRAM floor halves). A class N E4M3 indexer (243.6 TF peak) would be about -25..-35 ms per rank with the split and changes numerics"
