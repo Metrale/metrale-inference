@@ -2165,3 +2165,27 @@ effort_hours = 8.0
 transferability = "any per-token reduction kernel that re-reads a shared weight per small block: widen the block's work with a cp.async ring instead of adding tokens per block, and keep each token's summation order"
 links = { pr = "", commit = "", evidence = "glm5next_mhc_tile_gate example output and standalone harness, 2026-10-15" }
 notes = "Variants measured and not shipped: eight tokens per block with three stages (tile8) ran 381 us at T=684 vs tile4's 350. Five or six stages gain 0-4% clean and 4-5% under SM-copy load at 684 rows, within spread; a split Sinkhorn tail gains about 1%. createpolicy.fractional.L2::evict_last with cp.async L2::cache_hint raised CUDA_ERROR_ILLEGAL_INSTRUCTION on GB10 at T=1, with or without applypriority. Not applied on the MHC_POST_PRE_FUSED path. A faster pre-norm may expose NCCL time it now hides"
+
+[[lever]]
+id = "gb10x3-glm53-mhc-post-pre-tile"
+date = "2026-10-15"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_MHC_POST_PRE_TILE=1 (default off) on top of METRALE_GLM_SP_MHC=1 METRALE_GLM_MHC_FUSED=1 METRALE_GLM_MHC_POST_VEC=1 METRALE_GLM_MHC_PRE_TILE=1, MHC_POST_PRE_FUSED off: each wide in-layer hc post + next pre-norm pair runs glm5next_hc_post_pre_tile1"
+symptom = "the in-layer pair vec8 post rank-sum + tile4 pre-norm costs about 855 us at 684 rows (505 + 361); the post writes 64 KiB of fp32 streams per row that the pre-norm reads straight back"
+diagnosis_tool = "microbench"
+root_cause_class = "bandwidth-bound"
+lever_type = "fusion"
+lkb_effect = "new post_tile kernel: one 256-thread block per token (two blocks per SM, 126 registers, 49476 B dynamic shared memory) sums the rank partials with vec8's per-element expression, writes the next streams and keeps them in registers for tile4's dot-product chains, reduction trees and Sinkhorn tail; a 512-thread two-token variant (tile2) is built and measured but not wired. The shared pre-norm pieces moved to one header; tok4, fused, fold and tile4 PTX keep their instruction multisets"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "held"
+verdict_reason = "Byte gate (standalone harness): 252 cases identical to vec8 + tile4 at T 1,2,3,4,5,17,64,347,684,2736, ranks 1-4, aliased and separate buffers, write_x 0/1, row offset 3, pieces 4x171 and 341+343, prefix continuations at row 61 and 64 restored from a cache buffer before each piece; rebuilt tile4 identical to the pre-edit tile4; negative controls (peer bit, hc_fn bit, residual + 1.0) fire. Microbench, median of n=9 (min max), T=684: clean pair 855.1 (854.0 919.6) us vs fused 772.0 (758.6 783.4); beside an SM copy 950.3 vs 838.2; beside SM copy + copy engine 1490.9 vs 1331.1. T=347 clean 403.0 vs 414.2 (slower). T=2736 clean 3413.9 vs 2935.7. Stopped at the 650 us per-pair clean bar (target was <=600): the fusion saves about 10%, not the 30% the traffic model gave"
+failure_mode = "the fused block runs the post's DRAM stream and the pre-norm's latency-bound reductions back to back, and with two blocks per SM nothing overlaps them; tile4 alone hides its loads behind a four-stage ring over four tokens"
+caught_by = "microbench gate (650 us per pair at T=684)"
+time_lost_hours = 0.0
+would_catch_earlier = "time a post-only and a pre-only half of the fused kernel before wiring: their sum against the pair shows whether fusion removes traffic or only adds serialization"
+effort_hours = 7.0
+transferability = "fusing a bandwidth-bound producer into a latency-bound consumer pays only when the consumer's loads were the cost; keep the consumer's multi-token pipelining or the saved traffic is spent on lost overlap"
+links = { pr = "", commit = "", evidence = "glm5next_hc_post_pre_tile_gate example and standalone harness, 2026-10-15" }
+notes = "tile2 (two tokens per 512-thread block) is slower than tile1 everywhere: 813.9 us clean at T=684. Under SM+CE load the fused kernel saves about 160 us per pair at T=684. The in-tree gate example is built but its GPU run was cancelled after the stop"
