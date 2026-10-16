@@ -20,6 +20,7 @@
 mod adaptive_k_tests;
 mod bootstrap_stash_tests;
 mod dflash_ctx_tests;
+mod ep_prefill_cell_tests;
 mod ep_prefill_tests;
 mod ep_verify_tests;
 mod gate;

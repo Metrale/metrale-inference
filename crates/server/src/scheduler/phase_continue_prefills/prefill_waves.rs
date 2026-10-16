@@ -68,6 +68,22 @@ pub(super) fn plan_prefill_waves(
     waves.into_iter().map(|(_, _, members)| members).collect()
 }
 
+/// 2026-10-16: Under `METRALE_GLM_PREFILL_CELL_GRID` (`grid`), how many leading streams a batched
+/// prefill step may carry: each `(chunk_start, chunk_len, prompt_len)` in stream order that
+/// `batched_pass_is_inert` admits, up to the first it does not. The others take the
+/// single-sequence chunk path, where the cell walk runs.
+pub(super) fn cell_batch_prefix(
+    grid: metrale_model_arch::glm5next_prefill_cell::CellGrid,
+    chunks: impl IntoIterator<Item = (usize, usize, usize)>,
+) -> usize {
+    chunks
+        .into_iter()
+        .take_while(|&(s, l, p)| {
+            metrale_model_arch::glm5next_prefill_cell::batched_pass_is_inert(grid, s, l, p)
+        })
+        .count()
+}
+
 /// 2026-10-09: How many leading streams one multi-rank batched prefill step takes: as many as
 /// fit `budget` rows together (`chunk_lens` in stream order), and the first one even when it
 /// alone is larger, so the queue always advances. 0 only for no streams.
@@ -86,7 +102,7 @@ pub(super) fn budget_prefix(chunk_lens: &[usize], budget: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{WaveGeom, budget_prefix, plan_prefill_waves};
+    use super::{WaveGeom, budget_prefix, cell_batch_prefix, plan_prefill_waves};
 
     /// 2026-10-09: The step takes the longest prefix within the budget, never skips ahead to a
     /// shorter later stream, and always takes the head.
@@ -98,6 +114,26 @@ mod tests {
         assert_eq!(budget_prefix(&[600, 10], 512), 1);
         assert_eq!(budget_prefix(&[300, 300, 10], 512), 1);
         assert_eq!(budget_prefix(&[], 512), 0);
+    }
+
+    /// 2026-10-16: Under the grid the step takes the leading whole prompts of at most the first
+    /// point, never one past an ineligible stream; an ineligible head (a long prompt's chunk,
+    /// a non-last chunk 0, a later chunk) gives 0, so the head takes the single-sequence path.
+    #[test]
+    fn the_cell_grid_takes_only_leading_inert_chunks() {
+        let grid = metrale_model_arch::glm5next_prefill_cell::CellGrid {
+            first: 8208,
+            step: 8192,
+        };
+        let short = [(0, 17, 17), (0, 8208, 8208), (0, 11, 11)];
+        assert_eq!(cell_batch_prefix(grid, short), 3);
+        assert_eq!(
+            cell_batch_prefix(grid, [(0, 17, 17), (0, 8209, 8209), (0, 11, 11)]),
+            1
+        );
+        assert_eq!(cell_batch_prefix(grid, [(0, 8208, 33_487), (0, 17, 17)]), 0);
+        assert_eq!(cell_batch_prefix(grid, [(8208, 100, 8308), (0, 17, 17)]), 0);
+        assert_eq!(cell_batch_prefix(grid, []), 0);
     }
 
     fn g(chunk_start: usize, chunk_len: usize, is_last: bool) -> WaveGeom {

@@ -180,9 +180,26 @@ pub(super) fn continue_in_progress_prefills(
     // also runs with decodes active, before this tick's decode, over the leading streams that fit
     // the model's batched-step rows (`budget_prefix`).
     let ep_rows = super::phase_start_prefills::ep_prefill_batch_rows(model, &sched.levers);
+    // 2026-10-16: Under `METRALE_GLM_PREFILL_CELL_GRID` the batched steps carry only the leading
+    // streams the cell walk leaves alone (`cell_batch_prefix`); without it, every stream.
+    let cell_grid = model.prefill_cell_grid();
+    let cell_ok = match cell_grid {
+        None => prefilling.len(),
+        Some(grid) => prefill_waves::cell_batch_prefix(
+            grid,
+            prefilling.iter().map(|p| {
+                (
+                    p.chunk_offset,
+                    run_batched_prefill::stream_chunk_len(model, p, max_prefill_tokens),
+                    p.prompt_tokens.len(),
+                )
+            }),
+        ),
+    };
     let can_batch_prefill_only = !q12_dispatch_disabled
         && !any_collecting
         && prefilling.len() >= 2
+        && cell_ok >= 1
         && (active.is_empty() || ep_rows.is_some())
         && super::phase_start_prefills::batched_prefill_allowed(model, &sched.levers);
     // 2026-09-25: With `always_mixed`, several prefills plus active decode
@@ -194,6 +211,7 @@ pub(super) fn continue_in_progress_prefills(
         && !any_collecting
         && prefilling.len() >= 2
         && !active.is_empty()
+        && cell_ok == prefilling.len()
         && !single_active_with_spec
         && !model.is_ep();
 
@@ -208,6 +226,7 @@ pub(super) fn continue_in_progress_prefills(
             }
             None => prefilling.len(),
         };
+        let take = take.min(cell_ok);
         run_batched_prefill_step(
             model,
             sched,
@@ -281,9 +300,12 @@ pub(super) fn continue_in_progress_prefills(
         // longer than one chunk that has not started chunking. It runs the
         // whole prompt in one call with no decode fused, so under
         // `always_mixed` it runs only when no decode is active.
+        // 2026-10-16: Never under `METRALE_GLM_PREFILL_CELL_GRID`: its chunk ends are not
+        // floored to the grid, so the prompt takes the floored chunks below instead.
         let use_twophase = (!always_mixed || active.is_empty())
             && p.chunk_offset == 0
-            && p.prompt_tokens.len() > max_prefill_tokens;
+            && p.prompt_tokens.len() > max_prefill_tokens
+            && cell_grid.is_none();
         if use_twophase {
             tracing::info!(
                 "Two-phase prefill: {} tokens, chunk_size={}",

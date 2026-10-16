@@ -57,6 +57,10 @@ use std::sync::OnceLock;
 
 use anyhow::Result;
 
+#[path = "glm5next_prefill_cell_paths.rs"]
+mod paths;
+pub use paths::{CellPathLevers, batched_pass_is_inert, check_cell_paths};
+
 /// 2026-10-15: The env lever's name.
 pub const CELL_GRID_ENV: &str = "METRALE_GLM_PREFILL_CELL_GRID";
 
@@ -401,46 +405,6 @@ pub fn check_cell_blocks(grid: CellGrid, block_size: Option<usize>) -> Result<()
             grid.first, grid.step
         )),
     }
-}
-
-/// 2026-10-16: The scheduler levers that send a prompt past `prefill_chunk`'s grid floor and
-/// cell walk, as the serve resolved them: the tail-checkpoint pre-cut (`ssm_tail_ckpt` without
-/// `ssm_tail_midchunk`) ends a chunk off the grid, and the deferred chunk 0 of the batched
-/// prefill (`ep_prefill_batch`, `prefill_codispatch`, `prefill_varlen`) runs as batched spans
-/// or, alone, as a two-phase prefill in unfloored `--max-prefill-tokens` pieces.
-#[derive(Clone, Copy, Debug)]
-pub struct CellPathLevers {
-    pub ssm_tail_ckpt: bool,
-    pub ssm_tail_midchunk: bool,
-    pub ep_prefill_batch: bool,
-    pub prefill_codispatch: bool,
-    pub prefill_varlen: bool,
-}
-
-/// 2026-10-16: The load-time refusal of a grid with any lever of [`CellPathLevers`] that routes
-/// a prompt around the floored chunk path; the error names every such lever. Pure.
-pub fn check_cell_paths(levers: CellPathLevers) -> Result<(), String> {
-    let off_path = [
-        (
-            levers.ssm_tail_ckpt && !levers.ssm_tail_midchunk,
-            "METRALE_SSM_TAIL_CKPT=1 without METRALE_SSM_TAIL_MIDCHUNK",
-        ),
-        (levers.ep_prefill_batch, "METRALE_EP_PREFILL_BATCH=1"),
-        (levers.prefill_codispatch, "METRALE_PREFILL_CODISPATCH"),
-        (levers.prefill_varlen, "METRALE_PREFILL_VARLEN"),
-    ];
-    let set: Vec<&str> = off_path
-        .iter()
-        .filter(|(on, _)| *on)
-        .map(|(_, n)| *n)
-        .collect();
-    if set.is_empty() {
-        return Ok(());
-    }
-    Err(format!(
-        "{CELL_GRID_ENV}: {} route prompts around the grid-floored chunk path",
-        set.join(", ")
-    ))
 }
 
 /// 2026-10-15: How many grid points are at or below `u`.

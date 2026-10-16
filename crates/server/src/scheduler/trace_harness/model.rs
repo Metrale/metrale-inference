@@ -65,6 +65,8 @@ pub(super) struct ModelCfg {
     pub k2_fused_wire: bool,
     /// 2026-10-09: The `ep_prefill_batch_rows` fact.
     pub ep_prefill_batch: Option<usize>,
+    /// 2026-10-16: The `prefill_cell_grid` fact (`METRALE_GLM_PREFILL_CELL_GRID`).
+    pub cell_grid: Option<metrale_model_arch::glm5next_prefill_cell::CellGrid>,
     pub slot_draft_capacity: usize,
     /// 2026-09-25: Indexes of `decode_batch` / `decode_batch_fed` calls (0-based, counted
     /// per model) that fail with "KV cache exhausted" instead of running.
@@ -111,6 +113,7 @@ impl Default for ModelCfg {
             ep: false,
             k2_fused_wire: false,
             ep_prefill_batch: None,
+            cell_grid: None,
             slot_draft_capacity: 8,
             kv_exhaust_at: Vec::new(),
             reclaimable: 0,

@@ -209,12 +209,6 @@ fn opt_in(var: &str) -> bool {
     metrale_config::levers::var(var).as_deref() == Some("1")
 }
 
-/// 2026-10-16: `METRALE_EP_PREFILL_BATCH=1` ([`SchedLevers::ep_prefill_batch`]); also read by the
-/// serve load's cell-grid path check (`check_cell_paths`), before the worker ranks branch off.
-pub(crate) fn ep_prefill_batch_enabled() -> bool {
-    opt_in("METRALE_EP_PREFILL_BATCH")
-}
-
 /// 2026-09-25: `METRALE_FOO=0` disables: a default-on lever whose off
 /// switch is an explicit zero. Not interchangeable with [`on_unless`]:
 /// swapping them inverts the switch, so `=0` would leave the lever on and
@@ -336,7 +330,7 @@ impl SchedLevers {
             holo_always_mixed: opt_in_word("METRALE_HOLO_ALWAYS_MIXED"),
             prefill_codispatch: metrale_model_layers::layers::ops::prefill_codispatch_enabled(),
             prefill_varlen: metrale_model_layers::layers::ops::prefill_varlen_enabled(),
-            ep_prefill_batch: ep_prefill_batch_enabled(),
+            ep_prefill_batch: opt_in("METRALE_EP_PREFILL_BATCH"),
             codispatch_window_ms: num("METRALE_PREFILL_CODISPATCH_WINDOW_MS", 100),
             codispatch_settle_ms: num("METRALE_PREFILL_CODISPATCH_SETTLE_MS", 10),
             vision_codispatch: opt_in_word("METRALE_VISION_CODISPATCH"),

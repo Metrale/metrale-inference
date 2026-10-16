@@ -203,6 +203,9 @@ impl ModelForward for RecordingModel {
     ) -> Result<DevicePtr> {
         self.fx_prefill_twophase(tokens, seq, chunk_size, stream)
     }
+    fn prefill_cell_grid(&self) -> Option<metrale_model_arch::glm5next_prefill_cell::CellGrid> {
+        self.cfg.cell_grid
+    }
     facts! {
         fn supports_beam(&self) -> bool = self.cfg.supports_beam;
         fn is_mla(&self) -> bool = false;

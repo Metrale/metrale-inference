@@ -209,7 +209,6 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
         cell::check_cell_paths(cell::CellPathLevers {
             ssm_tail_ckpt: metrale_gpu_runtime::ssm_tail_ckpt_enabled(),
             ssm_tail_midchunk: metrale_gpu_runtime::ssm_tail_midchunk_enabled(),
-            ep_prefill_batch: crate::scheduler::levers::ep_prefill_batch_enabled(),
             prefill_codispatch: metrale_model_layers::layers::ops::prefill_codispatch_enabled(),
             prefill_varlen: metrale_model_layers::layers::ops::prefill_varlen_enabled(),
         })
@@ -231,11 +230,19 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
     // 2026-10-16: The grid floor's readback on every rank: `prefill_plan::plan_chunk_len` floors
     // a non-last chunk end to the grid only when it is set. A positive line either way.
     match cell_grid {
-        Some(grid) => tracing::info!(
-            "prefill cell grid floor: on (first {} step {})",
-            grid.first,
-            grid.step
-        ),
+        Some(grid) => {
+            tracing::info!(
+                "prefill cell grid floor: on (first {} step {})",
+                grid.first,
+                grid.step
+            );
+            // 2026-10-16: The scheduler's routing under the grid (`batched_pass_is_inert`).
+            tracing::info!(
+                "prefill cell grid routing: batched prefill carries whole prompts of at most {} \
+                 tokens; two-phase prefill off",
+                grid.first
+            );
+        }
         None => tracing::info!("prefill cell grid floor: off"),
     }
     // 2026-10-15: The cell pipeline, read here so a bad value or combination fails the load.
