@@ -384,3 +384,110 @@ median_ms = {target}
     );
     assert!(err.contains("target median_ms must be finite"), "{err}");
 }
+
+fn with_caveat(name: &str, note: &str, caveats: &str) -> std::path::PathBuf {
+    fixture(
+        name,
+        &format!(
+            r#"
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "org/A"
+gate = "ttft-cold-gate"
+default = true
+status = "measured"
+note = "{note}"
+targets = {{ median_ms = 100.0 }}
+{caveats}
+[benchmarks.metrics.median_ms]
+max = 500.0
+"#
+        ),
+    )
+}
+
+/// 2026-10-16: A caveat must name a target, carry text, and sit on an entry with a note for its
+/// marker to point to; a caveat meeting all three loads.
+#[test]
+fn a_target_caveat_must_name_a_target_have_text_and_a_note() {
+    let refused = |name: &str, note: &str, caveats: &str| {
+        format!(
+            "{:#}",
+            load_all(&with_caveat(name, note, caveats)).unwrap_err()
+        )
+    };
+    let err = refused(
+        "caveat-untargeted",
+        "n",
+        r#"target_caveats = { p90_ms = "stall" }"#,
+    );
+    assert!(
+        err.contains("[benchmarks.target_caveats] names p90_ms, which is not a target"),
+        "{err}"
+    );
+    let err = refused(
+        "caveat-empty",
+        "n",
+        r#"target_caveats = { median_ms = "  " }"#,
+    );
+    assert!(err.contains("target caveat median_ms is empty"), "{err}");
+    let err = refused(
+        "caveat-no-note",
+        "",
+        r#"target_caveats = { median_ms = "stall" }"#,
+    );
+    assert!(
+        err.contains("has target caveats but no note for them to point to"),
+        "{err}"
+    );
+    let loaded = load_all(&with_caveat(
+        "caveat-ok",
+        "n",
+        r#"target_caveats = { median_ms = "stall" }"#,
+    ))
+    .unwrap();
+    assert_eq!(
+        loaded[0]
+            .1
+            .target_caveats
+            .get("median_ms")
+            .map(String::as_str),
+        Some("stall")
+    );
+}
+
+/// 2026-10-16: A caveat is prose: the baseline every gate verdict reads, the verdict itself on
+/// both sides of the bound, and the entry a battle judges are the same with and without it.
+#[test]
+fn a_target_caveat_never_moves_a_verdict() {
+    let with = with_caveat(
+        "caveat-verdict-with",
+        "n",
+        r#"target_caveats = { median_ms = "stall" }"#,
+    );
+    let without = with_caveat("caveat-verdict-without", "n", "");
+    let baseline = |root: &Path| {
+        serde_json::to_string(&baseline_for(root, "ttft-cold-gate").unwrap()).unwrap()
+    };
+    assert_eq!(baseline(&with), baseline(&without));
+    for value in [100.0, 499.0, 501.0] {
+        assert_eq!(
+            verdict_at(&with, value),
+            verdict_at(&without, value),
+            "{value}"
+        );
+    }
+    let entries = super::super::battle_load::entries;
+    let mut carried = entries(&with).unwrap();
+    assert_eq!(
+        carried[0].caveats.get("median_ms").map(String::as_str),
+        Some("stall"),
+        "the loader hands the caveat to the battle"
+    );
+    carried[0].caveats.clear();
+    assert_eq!(
+        format!("{carried:?}"),
+        format!("{:?}", entries(&without).unwrap()),
+        "the caveat is the only difference a battle sees"
+    );
+}

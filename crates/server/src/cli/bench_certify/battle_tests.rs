@@ -26,6 +26,7 @@ fn cell(gate: &str, hw: &str, checkpoint: &str) -> Cell {
         better: Better::Lower,
         target: 1.0,
         bound: None,
+        caveat: None,
     }
 }
 

@@ -13,6 +13,8 @@
 #   boot plus the measured noise. No entry names a recipe yet: the GLM recipe is not on main,
 #   so a --pull-request-gate self-start refuses these entries until it lands.
 # - `targets` carries the vLLM reference per metric; no verdict reads it.
+# - `target_caveats` flags a target that is not a clean bar, pointing at the entry's note; no
+#   verdict reads it either.
 # - Cells not measured are not here: the 128k context, the 256k agentic tier and the 64k
 #   agentic tier. The one unmeasured entry, concurrency-sweep-glm (2026-10-16), has no bounds:
 #   it carries the gate definition and its vLLM targets until a measured ladder cuts them.
@@ -572,6 +574,8 @@ another instrument, are not comparable with this one and are not a target. A win
 # is not a clean win. Against a non-stalled vLLM C=16 (~159 tok/s), the internal target is
 # >= 164 tok/s (+3%).
 targets = { c1_aggregate_tok_s = 40.11, c2_aggregate_tok_s = 62.24, c4_aggregate_tok_s = 83.42, c8_aggregate_tok_s = 114.56, c12_aggregate_tok_s = 131.74, c16_aggregate_tok_s = 115.73 }
+# 2026-10-16: The C=16 target is flagged where it is published; the note above gives the account.
+target_caveats = { c16_aggregate_tok_s = "likely vLLM stall" }
 
 [benchmarks.serve_overrides]
 # 2026-10-16: The context length the ladder is measured at.

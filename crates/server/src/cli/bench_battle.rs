@@ -68,13 +68,23 @@ fn number(v: Option<f64>) -> String {
     v.map_or_else(|| "-".into(), |v| format!("{v:.2}"))
 }
 
+/// 2026-10-16: The target, marked when its entry carries a caveat on it.
+fn target(j: &Judged) -> String {
+    let mark = if j.cell.caveat.is_some() {
+        "\u{2020}"
+    } else {
+        ""
+    };
+    format!("{}{mark}", number(Some(j.cell.target)))
+}
+
 fn row(j: &Judged) -> String {
     format!(
         "  {:<30} {:<22} {:>10} {:>10}  {:<12} {:>8}  {}\n",
         j.cell.gate,
         j.cell.metric,
         number(j.ours),
-        number(Some(j.cell.target)),
+        target(j),
         verdict(j.verdict),
         j.margin_pct
             .map_or_else(|| "-".into(), |m| format!("{m:+.1}%")),
@@ -115,6 +125,15 @@ pub(super) fn table(r: &Report) -> String {
             );
         }
         out.push_str(&row(j));
+    }
+    for j in &r.cells {
+        if let Some(caveat) = &j.cell.caveat {
+            let _ = write!(
+                out,
+                "\n\u{2020} {} {} on {}: {caveat}. The entry's note in kernels/{}/{}/BENCH.toml gives the account.",
+                j.cell.gate, j.cell.metric, j.cell.checkpoint, j.cell.hw, j.cell.model,
+            );
+        }
     }
     let _ = writeln!(out, "\nall cells win: {}", r.all_cells_win);
     out

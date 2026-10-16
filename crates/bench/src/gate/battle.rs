@@ -186,6 +186,8 @@ pub struct Entry {
     /// 2026-10-16: The entry's bounds; empty for an `unmeasured` entry.
     pub bounds: BTreeMap<String, Bound>,
     pub targets: BTreeMap<String, f64>,
+    /// 2026-10-16: The entry's `target_caveats`: shown beside a target, never judged.
+    pub caveats: BTreeMap<String, String>,
 }
 
 /// 2026-10-16: Every `targets` value in `entries` that is not a battle cell, one line each.
@@ -232,6 +234,9 @@ pub struct Cell {
     pub target: f64,
     /// 2026-10-16: The entry's own bound on the metric: its regression ratchet.
     pub bound: Option<Bound>,
+    /// 2026-10-16: The entry's caveat on this target, if any. [`judge`] never reads it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub caveat: Option<String>,
 }
 
 /// 2026-10-16: The cells of `battle`: every target its member gates' entries declare. Run
@@ -252,6 +257,7 @@ pub fn cells(battle: &Battle, entries: &[Entry]) -> Vec<Cell> {
                 better,
                 target: *target,
                 bound: e.bounds.get(metric).cloned(),
+                caveat: e.caveats.get(metric).cloned(),
             });
         }
     }

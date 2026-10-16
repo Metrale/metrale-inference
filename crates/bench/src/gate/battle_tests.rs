@@ -47,6 +47,7 @@ fn entry(gate: &str, hw: &str, targets: &[(&str, f64)]) -> Entry {
         checkpoint: "org/GLM".into(),
         bounds: BTreeMap::new(),
         targets: targets.iter().map(|(k, v)| (k.to_string(), *v)).collect(),
+        caveats: BTreeMap::new(),
     }
 }
 
@@ -60,6 +61,7 @@ fn cell(better: Better, target: f64, bound: Option<Bound>) -> Cell {
         better,
         target,
         bound,
+        caveat: None,
     }
 }
 
@@ -234,6 +236,49 @@ fn higher_is_better_wins_over_the_target_and_loses_under_it() {
     assert_eq!(win.verdict, Verdict::Win);
     assert!((win.margin_pct.unwrap() - 10.0).abs() < 1e-9);
     assert_eq!(judge(&c, Some(&seen(90.0))).verdict, Verdict::Loss);
+}
+
+/// 2026-10-16: A caveat rides its own cell only, and the cell judges the same with or without
+/// it, on both sides of the target and against its bound.
+#[test]
+fn a_caveat_rides_its_cell_and_never_moves_the_verdict() {
+    let b = battles();
+    let decode = b.iter().find(|b| b.id == "decode-battle").unwrap();
+    let plain = entry(
+        "concurrency-sweep-glm",
+        "gb10",
+        &[("c1_aggregate_tok_s", 40.0), ("c16_aggregate_tok_s", 115.0)],
+    );
+    let mut flagged = plain.clone();
+    flagged
+        .caveats
+        .insert("c16_aggregate_tok_s".into(), "likely vLLM stall".into());
+    let with = cells(decode, &[flagged]);
+    let without = cells(decode, &[plain]);
+    let caveats: Vec<_> = with.iter().map(|c| c.caveat.as_deref()).collect();
+    assert_eq!(caveats, [None, Some("likely vLLM stall")]);
+    let bound = Bound {
+        min: Some(120.0),
+        max: None,
+        noise: None,
+    };
+    for (mut w, mut wo) in with.into_iter().zip(without) {
+        w.bound = Some(bound.clone());
+        wo.bound = Some(bound.clone());
+        for value in [30.0, 118.0, 200.0] {
+            let observed = Observed {
+                metrics: [(w.metric.clone(), value)].into_iter().collect(),
+                ..seen(value)
+            };
+            let (a, b) = (judge(&w, Some(&observed)), judge(&wo, Some(&observed)));
+            assert_eq!(
+                (a.verdict, a.margin_pct, a.ratchet),
+                (b.verdict, b.margin_pct, b.ratchet),
+                "{} at {value}",
+                w.metric
+            );
+        }
+    }
 }
 
 #[test]

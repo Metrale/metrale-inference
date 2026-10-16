@@ -39,6 +39,7 @@ pub fn entries(root: &Path) -> Result<Vec<Entry>> {
             checkpoint: e.checkpoint,
             bounds: e.metrics.unwrap_or_default(),
             targets: e.targets,
+            caveats: e.target_caveats,
         })
         .collect())
 }

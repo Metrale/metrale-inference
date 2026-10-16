@@ -98,6 +98,14 @@ pub struct BenchEntry {
     /// the normal case.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub targets: BTreeMap<String, f64>,
+    /// 2026-10-16: A short caveat per target, shown beside the target where it is published
+    /// (`target_caveats = { c16_aggregate_tok_s = "likely vLLM stall" }`), for a reference figure
+    /// that is not a clean bar. Prose only: no verdict and no battle reads it, and the full
+    /// account belongs in `note`. [`load_all`] refuses a key that names no target, an empty
+    /// text, and a caveat on an entry with no `note` for it to point to. Empty and omitted is
+    /// the normal case.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub target_caveats: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -402,6 +410,39 @@ fn validate_targets(path: &std::path::Path, entry: &BenchEntry) -> Result<()> {
                 entry.checkpoint,
             );
         }
+    }
+    validate_target_caveats(path, entry)
+}
+
+/// 2026-10-16: A caveat flags a published target, so it must name one; an empty caveat flags
+/// nothing; and the marker points at the entry's `note`, so an entry with a caveat must
+/// carry one.
+fn validate_target_caveats(path: &std::path::Path, entry: &BenchEntry) -> Result<()> {
+    for (name, text) in &entry.target_caveats {
+        if !entry.targets.contains_key(name) {
+            bail!(
+                "{}: {} / {} [benchmarks.target_caveats] names {name}, which is not a target",
+                path.display(),
+                entry.gate,
+                entry.checkpoint,
+            );
+        }
+        if text.trim().is_empty() {
+            bail!(
+                "{}: {} / {} target caveat {name} is empty",
+                path.display(),
+                entry.gate,
+                entry.checkpoint,
+            );
+        }
+    }
+    if !entry.target_caveats.is_empty() && entry.note.trim().is_empty() {
+        bail!(
+            "{}: {} / {} has target caveats but no note for them to point to",
+            path.display(),
+            entry.gate,
+            entry.checkpoint,
+        );
     }
     Ok(())
 }
