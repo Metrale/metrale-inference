@@ -120,8 +120,10 @@ impl Glm5NextDsaLayer {
         // tiers the indexer's `wk` and compress gate of a one-row step reuse the activation
         // quantization `kv_a_proj` made of it instead of quantizing it twice more (same bytes:
         // the same kernel on the same input).
+        // 2026-10-16: A prefill sub-chunk or the single-sequence verify: never the batched body.
+        let site = crate::glm5next_layer::wide_gemv::single_seq_site(is_prefill);
         let stable = crate::glm5next_fp8_dense::stable_input(hidden);
-        self.project_in(gpu, hidden, k, stream)?;
+        self.project_in(gpu, hidden, k, site, stream)?;
         let mut attend_bt = DevicePtr::NULL;
         let mut attend_sl = DevicePtr::NULL;
         // 2026-09-25: On the host path without `persist_bt`, row 0 allocates the shared bt/sl
@@ -175,8 +177,8 @@ impl Glm5NextDsaLayer {
             self.selector_query_rows_ready(k),
         );
         if verify_rows {
-            self.selector_query_rows(gpu, hidden, k, false, stream)?;
-            self.indexer_project_rows(gpu, hidden, k, stream)?;
+            self.selector_query_rows(gpu, hidden, k, false, site, stream)?;
+            self.indexer_project_rows(gpu, hidden, k, site, stream)?;
         }
         if staged {
             let (slot0, pos0, bt0, bt_rows) = match (meta, &host) {
@@ -185,7 +187,9 @@ impl Glm5NextDsaLayer {
                 (None, None) => bail!("DSA layer {}: no row metadata staged", self.layer_idx),
             };
             self.write_latent_rows(gpu, 0, k, kv_cache, slot0, stream)?;
-            self.stage_prefill_rows(gpu, hidden, k, st, kv_cache, pos0, bt0, bt_rows, stream)?;
+            self.stage_prefill_rows(
+                gpu, hidden, k, st, kv_cache, pos0, bt0, bt_rows, site, stream,
+            )?;
         }
         for row in 0..k {
             let pos = seq_len + row;
@@ -343,7 +347,7 @@ impl Glm5NextDsaLayer {
         }
 
         drop(stable);
-        self.project_out(gpu, hidden, k, stream)
+        self.project_out(gpu, hidden, k, site, stream)
     }
 }
 

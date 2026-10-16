@@ -66,8 +66,17 @@ fn front_end_drops_only_the_pack() {
     let hidden = gpu.alloc(16 * cfg().hidden * 2).unwrap();
     let run = |pack| {
         let from = gpu.launch_count();
-        l.front_end(&gpu, hidden, 7, &ws, pack, GateAt::Kernel, 0)
-            .unwrap();
+        l.front_end(
+            &gpu,
+            hidden,
+            7,
+            &ws,
+            pack,
+            GateAt::Kernel,
+            metrale_model_layers::layers::ops::DenseCallSite::General,
+            0,
+        )
+        .unwrap();
         since(&gpu, from)
     };
     let (sep, fused) = (run(Pack::InFrontEnd), run(Pack::InConv));

@@ -17,6 +17,7 @@ use anyhow::{Result, bail};
 use metrale_cache::kv_cache::PagedKvCache;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
+use metrale_model_layers::layers::ops::DenseCallSite;
 
 use super::super::state::Glm5NextDsaState;
 use super::{Glm5NextDsaLayer, gemm};
@@ -35,6 +36,7 @@ impl Glm5NextDsaLayer {
         n: usize,
         n_out: usize,
         kk: usize,
+        site: DenseCallSite,
         stream: u64,
     ) -> Result<()> {
         let group = metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M as usize;
@@ -51,6 +53,7 @@ impl Glm5NextDsaLayer {
                 m,
                 n_out,
                 kk,
+                site,
                 stream,
             )?;
         }
@@ -74,6 +77,7 @@ impl Glm5NextDsaLayer {
         pos0: DevicePtr,
         bt0: DevicePtr,
         bt_rows: u32,
+        site: DenseCallSite,
         stream: u64,
     ) -> Result<()> {
         let w = &self.workspace;
@@ -86,7 +90,7 @@ impl Glm5NextDsaLayer {
         }
         st.ensure_room(k)?;
         let c = &self.cfg;
-        self.indexer_project_rows(gpu, hidden, k, stream)?;
+        self.indexer_project_rows(gpu, hidden, k, site, stream)?;
         // 2026-10-10: Under `METRALE_GLM_DSA_BATCH_QIDX=1` the head weights of the sub-chunk take
         // one cuBLASLt FP32-out GEMM too, as the selector query does (`select_rows_batched`);
         // another summation order than the per-row GEMV, so it rides on that opt-in lever.
@@ -109,6 +113,7 @@ impl Glm5NextDsaLayer {
                 k,
                 c.index_heads,
                 c.hidden,
+                site,
                 stream,
             )?;
         }

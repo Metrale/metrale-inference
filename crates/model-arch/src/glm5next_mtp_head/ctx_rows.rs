@@ -158,6 +158,7 @@ impl Glm5NextMtpHead {
                 m,
                 h,
                 2 * h,
+                metrale_model_layers::layers::ops::DenseCallSite::General,
                 stream,
             )?;
             gpu.copy_h2d(&ctx_row_slots(st.seq_len, m, &st.block_table)?, sc.slots)?;

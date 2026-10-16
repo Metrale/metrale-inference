@@ -41,6 +41,7 @@
 use super::*;
 use crate::glm5next_dsa::layer::DsaRowSpan;
 use crate::glm5next_kda::KdaVerifyRecord;
+use metrale_model_layers::layers::ops::DenseCallSite;
 
 /// 2026-10-09: One sequence's rows inside one row group of `forward_spans`: group rows
 /// `row0..row0 + rows` are the sequence's rows `t0..t0 + rows`.
@@ -118,6 +119,7 @@ impl Glm5NextLayer {
             kv_cache,
             None,
             ctx,
+            DenseCallSite::Decode,
             stream,
             dump::Path::MultiDecode,
         )
@@ -130,6 +132,8 @@ impl Glm5NextLayer {
     /// layer runs `decode_spans` over the group's sequences. Errors on a layer without a
     /// hyper-connection or when the rows pass the highway. 2026-10-13: `path` names the caller
     /// for the layer dump.
+    /// 2026-10-16: `site` (`Decode` or `Verify`) labels the dense projections for
+    /// `ops::dense_batchm_32_at`; the MLP keeps `MoeCallSite::BatchedDecode`.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::glm5next_layer) fn forward_spans(
         &self,
@@ -140,6 +144,7 @@ impl Glm5NextLayer {
         kv_cache: &mut PagedKvCache,
         keep: Option<&[KdaRowKeep]>,
         ctx: &ForwardContext,
+        site: DenseCallSite,
         stream: u64,
         path: dump::Path,
     ) -> Result<()> {
@@ -253,17 +258,25 @@ impl Glm5NextLayer {
                         tap,
                         MoeCallSite::BatchedDecode,
                         |normed| {
-                            layer.decode_seq_rows(ctx.gpu, normed, &seqs, ws, stream, |row| {
-                                self.kda_after_row(
-                                    layer,
-                                    &spans,
-                                    keep,
-                                    &row_states,
-                                    row,
-                                    ctx,
-                                    stream,
-                                )
-                            })?;
+                            layer.decode_seq_rows(
+                                ctx.gpu,
+                                normed,
+                                &seqs,
+                                ws,
+                                site,
+                                stream,
+                                |row| {
+                                    self.kda_after_row(
+                                        layer,
+                                        &spans,
+                                        keep,
+                                        &row_states,
+                                        row,
+                                        ctx,
+                                        stream,
+                                    )
+                                },
+                            )?;
                             if let Some(keep) = keep {
                                 for sp in &spans {
                                     if let KdaRowKeep::Record { record, rows } = &keep[sp.seq] {
@@ -313,7 +326,7 @@ impl Glm5NextLayer {
                             // 2026-10-08: Writes its output projection over its input buffer, as
                             // `decode_k` does.
                             layer.decode_spans(
-                                normed, group, &dsa_spans, kv_cache, meta, base, ctx, stream,
+                                normed, group, &dsa_spans, kv_cache, meta, base, ctx, site, stream,
                             )?;
                             Ok(normed)
                         },

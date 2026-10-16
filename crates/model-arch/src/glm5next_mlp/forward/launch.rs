@@ -9,6 +9,7 @@
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
+use metrale_model_layers::layers::ops::DenseCallSite;
 
 use super::ACT_BLOCK;
 use crate::glm5next_layer::wide_gemv::{Batchm, glm_mm};
@@ -31,10 +32,11 @@ pub(super) fn gemm(
     m: usize,
     n: usize,
     kk: usize,
+    site: DenseCallSite,
     stream: u64,
 ) -> Result<()> {
     // 2026-10-09: The dispatch lives in `glm_mm`, shared with the DSA and KDA blocks.
-    glm_mm(gpu, k, gemv, batchm.into(), a, b, c, m, n, kk, stream)
+    glm_mm(gpu, k, gemv, batchm.into(), a, b, c, m, n, kk, site, stream)
 }
 
 /// 2026-09-25: `C[1, N] = A[1, K] @ dequant(B)[N, K]^T` for one NVFP4 projection, on the

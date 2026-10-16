@@ -33,6 +33,7 @@ use metrale_model_arch::glm5next_mlp::weights::{
     Glm5NextMoeWeights, Nvfp4Proj, W4a4ActScales,
 };
 use metrale_model_arch::glm5next_mlp::{Glm5NextMlpConfig, Glm5NextMlpKernels};
+use metrale_model_layers::layers::ops::DenseCallSite;
 
 /// 2026-10-08: The tolerance of a W4A4 output against the W4A16 / BF16 output of the same
 /// weights: NVFP4 activations carry a per-element error of up to a quarter of an E2M1 step, so
@@ -332,7 +333,19 @@ fn dense_w4a4_tracks_bf16_and_is_row_invariant() -> Result<()> {
     let xd = upload(&gpu, &bf16_bytes(&x))?;
     let out = gpu.alloc(40 * h * 2)?;
     let run = |s: &Glm5NextDenseSite, x: DevicePtr, rows: usize| -> Result<Vec<f32>> {
-        forward_dense_site(&gpu, &k, &c, s, i, x, out, rows, &ws, stream)?;
+        forward_dense_site(
+            &gpu,
+            &k,
+            &c,
+            s,
+            i,
+            x,
+            out,
+            rows,
+            &ws,
+            DenseCallSite::General,
+            stream,
+        )?;
         gpu.synchronize(stream)?;
         read_bf16(&gpu, out, rows * h)
     };

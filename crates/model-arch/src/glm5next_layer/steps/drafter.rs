@@ -9,6 +9,7 @@
 use super::*;
 use crate::glm5next_dsa::layer::DsaRowSpan;
 use metrale_model_layers::layer::AttnMetadataDev;
+use metrale_model_layers::layers::ops::DenseCallSite;
 
 impl Glm5NextLayer {
     /// 2026-09-25: One token through this block for the MTP drafter; errors on a block with a
@@ -93,7 +94,19 @@ impl Glm5NextLayer {
             })
             .collect();
         // 2026-10-11: Writes its output projection over its input buffer, as `decode` does.
-        layer.decode_spans(normed, states, &spans, kv_cache, meta, 0, ctx, stream)?;
+        // 2026-10-16: `General`: the drafter is not the batched decode, so its rows keep the
+        // pre-`DenseCallSite` routing (no `METRALE_DENSE_BATCHM_32` 17..=32-row launches).
+        layer.decode_spans(
+            normed,
+            states,
+            &spans,
+            kv_cache,
+            meta,
+            0,
+            ctx,
+            DenseCallSite::General,
+            stream,
+        )?;
         if self.mixer_all_reduce {
             self.reduce_partial(normed, rows, ctx, stream)?;
         }

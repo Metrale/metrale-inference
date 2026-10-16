@@ -96,6 +96,7 @@ impl Glm5NextKdaLayer {
         t: usize,
         ws: &Glm5NextKdaWorkspace,
         gate: GateAt,
+        site: ops::DenseCallSite,
         stream: u64,
     ) -> Result<()> {
         let c = &self.cfg;
@@ -108,6 +109,7 @@ impl Glm5NextKdaLayer {
             t,
             qkv,
             hd,
+            site,
             stream,
         )?;
         if gate == GateAt::Prepare {

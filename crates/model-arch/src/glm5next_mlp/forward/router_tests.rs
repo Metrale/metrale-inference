@@ -10,6 +10,7 @@
 
 use metrale_gpu_runtime::gpu::mock::{MockArg, MockGpuBackend, MockLaunch};
 use metrale_gpu_runtime::gpu::{DevicePtr, KernelHandle};
+use metrale_model_layers::layers::ops::DenseCallSite;
 
 use super::router_logits;
 use crate::glm5next_mlp::{Glm5NextMlpConfig, Glm5NextMlpKernels};
@@ -70,7 +71,19 @@ fn u32_arg(l: &MockLaunch, i: usize) -> u32 {
 fn run(k: &Glm5NextMlpKernels, rows: usize, batched: bool) -> Vec<MockLaunch> {
     let _g = crate::glm5next_fp8_dense::lock_registries_for_test();
     let gpu = MockGpuBackend::new();
-    router_logits(&gpu, k, &cfg(), ROUTER, X, LOGITS, rows, batched, 3).unwrap();
+    router_logits(
+        &gpu,
+        k,
+        &cfg(),
+        ROUTER,
+        X,
+        LOGITS,
+        rows,
+        batched,
+        DenseCallSite::General,
+        3,
+    )
+    .unwrap();
     gpu.launches_snapshot()
 }
 

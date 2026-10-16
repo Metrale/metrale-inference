@@ -10,6 +10,7 @@
 
 use anyhow::{Result, bail};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
+use metrale_model_layers::layers::ops::DenseCallSite;
 
 use super::Glm5NextMlpWorkspace;
 use super::launch::{gemm, swiglu};
@@ -32,6 +33,7 @@ pub struct DenseScratch {
 /// 2026-09-25: A BF16 SwiGLU MLP of width `inter`, `down(clamped_swiglu(gate(x), up(x)))`, for a
 /// dense layer or the shared expert. Errors when `inter` or `m` does not fit the scratch.
 /// 2026-10-11: The scratch is explicit (`DenseScratch`).
+/// 2026-10-16: `site` labels the caller for the 17..=32-row routing (`dense_batchm_32_at`).
 #[allow(clippy::too_many_arguments)]
 pub fn forward_dense(
     gpu: &dyn GpuBackend,
@@ -43,6 +45,7 @@ pub fn forward_dense(
     out: DevicePtr,
     m: usize,
     ws: DenseScratch,
+    site: DenseCallSite,
     stream: u64,
 ) -> Result<()> {
     if inter == 0 || inter > ws.max_inter {
@@ -73,6 +76,7 @@ pub fn forward_dense(
             m,
             inter,
             cfg.hidden,
+            site,
             stream,
         )?;
         gemm(
@@ -86,6 +90,7 @@ pub fn forward_dense(
             m,
             inter,
             cfg.hidden,
+            site,
             stream,
         )?;
     }
@@ -112,6 +117,7 @@ pub fn forward_dense(
         m,
         cfg.hidden,
         inter,
+        site,
         stream,
     )
 }
@@ -130,6 +136,7 @@ pub fn forward_dense_site(
     out: DevicePtr,
     m: usize,
     ws: &Glm5NextMlpWorkspace,
+    call_site: DenseCallSite,
     stream: u64,
 ) -> Result<()> {
     match site.precision.kernel(m) {
@@ -160,7 +167,19 @@ pub fn forward_dense_site(
                     "GLM dense MLP: the plan runs BF16 at {m} rows but no BF16 weights were bound"
                 );
             };
-            forward_dense(gpu, k, cfg, w, inter, x, out, m, ws.dense_scratch(), stream)
+            forward_dense(
+                gpu,
+                k,
+                cfg,
+                w,
+                inter,
+                x,
+                out,
+                m,
+                ws.dense_scratch(),
+                call_site,
+                stream,
+            )
         }
     }
 }

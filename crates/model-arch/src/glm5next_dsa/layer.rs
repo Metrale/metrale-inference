@@ -63,7 +63,7 @@ mod workspace;
 pub use decode_rows::DsaRowSpan;
 pub use indexer_place::IndexerPlace;
 pub use kernels::Glm5NextDsaLayerKernels;
-use proj_gemm::gemm;
+use proj_gemm::{gemm, row_gemm};
 pub use workspace::Glm5NextDsaWorkspace;
 pub(crate) use workspace::batch_select_enabled;
 pub use workspace::{dsa_ws_shared, select_scratch_rows};
@@ -193,7 +193,7 @@ impl Glm5NextDsaLayer {
             }
         };
 
-        gemm(
+        row_gemm(
             gpu,
             self.kernels.gemm,
             self.kernels.gemv,
@@ -201,7 +201,6 @@ impl Glm5NextDsaLayer {
             hidden,
             self.weights.wk,
             k_dst,
-            1,
             d,
             self.cfg.hidden,
             stream,
@@ -218,7 +217,7 @@ impl Glm5NextDsaLayer {
             .arg_f32(self.rms_eps)
             .launch(stream)?;
 
-        gemm(
+        row_gemm(
             gpu,
             self.kernels.gemm,
             self.kernels.gemv,
@@ -226,7 +225,6 @@ impl Glm5NextDsaLayer {
             hidden,
             self.weights.compress_gate,
             gate_dst,
-            1,
             d,
             self.cfg.hidden,
             stream,
@@ -238,7 +236,7 @@ impl Glm5NextDsaLayer {
         // (`glm5next_dsa_ref/gen_dsa_indexer_golden.py`), and the scale is already in the
         // weight (`build.rs` transform 2).
         if head_weights {
-            gemm(
+            row_gemm(
                 gpu,
                 self.kernels.gemm_f32,
                 self.kernels.gemv_f32,
@@ -247,7 +245,6 @@ impl Glm5NextDsaLayer {
                 hidden,
                 self.weights.weights_proj,
                 self.workspace.head_weights,
-                1,
                 self.cfg.index_heads,
                 self.cfg.hidden,
                 stream,
@@ -284,7 +281,7 @@ impl Glm5NextDsaLayer {
             Some(p) => p,
             None => {
                 // 2026-09-25: The selector query `q_idx`, FP32 out.
-                gemm(
+                row_gemm(
                     gpu,
                     self.kernels.gemm_f32,
                     self.kernels.gemv_f32,
@@ -293,7 +290,6 @@ impl Glm5NextDsaLayer {
                     w.q_resid.offset(row * self.cfg.q_lora_rank * 2),
                     self.weights.wq_b,
                     w.q_idx,
-                    1,
                     self.cfg.index_heads * self.cfg.index_head_dim,
                     self.cfg.q_lora_rank,
                     stream,

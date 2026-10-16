@@ -23,6 +23,7 @@
 //!   ([`check_graphs_at_load`]). Off, every limit is the one before the lever.
 
 use anyhow::Result;
+use metrale_model_layers::layers::ops::DenseCallSite;
 
 use crate::glm5next_mlp::precision::{GroupPrecision, MlpKernel};
 use crate::glm5next_mlp::{Glm5NextMlpKernels, MOE_W4A4_MAX_ROWS};
@@ -81,6 +82,18 @@ pub fn wide_at(site: MoeCallSite) -> Result<bool> {
     match site {
         MoeCallSite::General => Ok(false),
         MoeCallSite::BatchedDecode => moe_w4a4_wide_sweep(),
+    }
+}
+
+/// 2026-10-16: The dense launches of a routed MoE site (router, shared expert) take the MoE
+/// site's label: the batched decode body is [`DenseCallSite::Decode`], every other caller
+/// [`DenseCallSite::General`] (`dense_batchm_32_at`).
+impl From<MoeCallSite> for DenseCallSite {
+    fn from(site: MoeCallSite) -> Self {
+        match site {
+            MoeCallSite::General => Self::General,
+            MoeCallSite::BatchedDecode => Self::Decode,
+        }
     }
 }
 

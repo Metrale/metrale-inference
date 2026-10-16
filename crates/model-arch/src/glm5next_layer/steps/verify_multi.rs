@@ -106,6 +106,7 @@ impl Glm5NextLayer {
             kv_cache,
             keep.as_deref(),
             ctx,
+            metrale_model_layers::layers::ops::DenseCallSite::Verify,
             stream,
             dump::Path::MultiVerify,
         )

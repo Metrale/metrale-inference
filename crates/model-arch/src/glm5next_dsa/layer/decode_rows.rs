@@ -32,6 +32,7 @@ use anyhow::{Result, bail};
 use metrale_cache::kv_cache::PagedKvCache;
 use metrale_gpu_runtime::gpu::DevicePtr;
 use metrale_model_layers::layer::{AttnMetadataDev, ForwardContext, LayerState};
+use metrale_model_layers::layers::ops::DenseCallSite;
 
 use super::super::attend::DsaDecodePaging;
 use super::super::paged::IndexerCache;
@@ -94,6 +95,7 @@ impl Glm5NextDsaLayer {
             meta,
             meta_row_base,
             ctx,
+            DenseCallSite::Decode,
             stream,
         )
     }
@@ -108,6 +110,9 @@ impl Glm5NextDsaLayer {
     ///
     /// Errors before any launch on the conditions [`Self::decode_rows`] lists, checked per
     /// sequence at the span's first position and for room for all its rows.
+    ///
+    /// 2026-10-16: `site` labels the caller (`Decode` for the batched decode, `Verify` for the
+    /// batched verify) for the projections' 17..=32-row routing (`dense_batchm_32_at`).
     #[allow(clippy::too_many_arguments)]
     pub fn decode_spans(
         &self,
@@ -118,6 +123,7 @@ impl Glm5NextDsaLayer {
         meta: &AttnMetadataDev,
         meta_row_base: usize,
         ctx: &ForwardContext,
+        site: DenseCallSite,
         stream: u64,
     ) -> Result<()> {
         self.decode_spans_with(
@@ -128,6 +134,7 @@ impl Glm5NextDsaLayer {
             meta,
             meta_row_base,
             ctx,
+            site,
             stream,
             crate::glm5next_layer::dsa_indexer_rows(),
         )
@@ -147,6 +154,7 @@ impl Glm5NextDsaLayer {
         meta: &AttnMetadataDev,
         meta_row_base: usize,
         ctx: &ForwardContext,
+        site: DenseCallSite,
         stream: u64,
         indexer_rows: bool,
     ) -> Result<()> {
@@ -218,7 +226,7 @@ impl Glm5NextDsaLayer {
         // tiers `indexer_project_rows` reuses the activation quantization `kv_a_proj` made of it
         // (same bytes: the same kernel on the same rows).
         let stable = crate::glm5next_fp8_dense::stable_input(hidden);
-        self.project_in(gpu, hidden, n, stream)?;
+        self.project_in(gpu, hidden, n, site, stream)?;
         // 2026-10-08: One latent-write launch for every row: the metadata's slots are a
         // contiguous i64 array, and the kernel writes row `i` to `slot[i]`.
         self.write_latent_rows(
@@ -250,7 +258,7 @@ impl Glm5NextDsaLayer {
             let wide = n > metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M as usize
                 && !crate::glm5next_batch_inv::enabled()?
                 && crate::glm5next_layer::cublas_wide_proj();
-            self.selector_query_rows(gpu, hidden, n, wide, stream)?;
+            self.selector_query_rows(gpu, hidden, n, wide, site, stream)?;
         }
         // 2026-10-09: `indexer_rows` (`METRALE_GLM_DSA_INDEXER_ROWS=1`): the indexer key and
         // gate projections and the key norm of every row in one pass (`indexer_project_rows`),
@@ -267,7 +275,7 @@ impl Glm5NextDsaLayer {
                     .all(|p| p));
         if staged {
             let t = profile::start();
-            self.indexer_project_rows(gpu, hidden, n, stream)?;
+            self.indexer_project_rows(gpu, hidden, n, site, stream)?;
             profile::end(profile::DSA_INDEXER, t, gpu, stream);
         }
         // 2026-10-09: Staged on the replay-safe path, the leading rows that are each one
@@ -380,7 +388,7 @@ impl Glm5NextDsaLayer {
             stream,
         )?;
         drop(stable);
-        self.project_out(gpu, hidden, n, stream)
+        self.project_out(gpu, hidden, n, site, stream)
     }
 }
 

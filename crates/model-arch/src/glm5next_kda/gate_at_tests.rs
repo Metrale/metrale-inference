@@ -84,8 +84,17 @@ fn front_end_drops_only_the_gate_launch() {
     let hidden = gpu.alloc(16 * cfg().hidden * 2).unwrap();
     let run = |gate| {
         let from = gpu.launch_count();
-        l.front_end(&gpu, hidden, 7, &ws, Pack::InFrontEnd, gate, 0)
-            .unwrap();
+        l.front_end(
+            &gpu,
+            hidden,
+            7,
+            &ws,
+            Pack::InFrontEnd,
+            gate,
+            metrale_model_layers::layers::ops::DenseCallSite::General,
+            0,
+        )
+        .unwrap();
         since(&gpu, from)
     };
     let (kernel, prepare) = (run(GateAt::Kernel), run(GateAt::Prepare));
