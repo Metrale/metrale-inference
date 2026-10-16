@@ -83,6 +83,7 @@ pub(super) fn run_standard_chunk_loop(
         chunk_len,
         model.kv_block_size(),
         model.prefill_tail_split(&p.prompt_tokens),
+        model.prefill_cell_grid(),
     );
     let is_last = p.chunk_offset + chunk_len >= p.prompt_tokens.len();
 

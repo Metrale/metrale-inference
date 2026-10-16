@@ -202,4 +202,11 @@ pub trait ModelForward: ModelStreams {
     fn prefill_tail_split(&self, _tokens: &[u32]) -> Option<usize> {
         None
     }
+
+    /// 2026-10-16: The prefill cell grid (`METRALE_GLM_PREFILL_CELL_GRID`) the scheduler floors
+    /// non-last chunk ends to (`prefill_plan::plan_chunk_len`), or `None` when this model plans
+    /// no cells. Default `None`.
+    fn prefill_cell_grid(&self) -> Option<metrale_model_arch::glm5next_prefill_cell::CellGrid> {
+        None
+    }
 }

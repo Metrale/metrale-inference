@@ -21,7 +21,7 @@ fn run_chunks(total: usize, first: usize, cont: usize) -> Vec<(usize, usize)> {
     let mut off = 0;
     while off < total {
         let cap = if off == 0 { first } else { cont };
-        let len = plan_chunk_len(off, total, (total - off).min(cap), Some(BS), split);
+        let len = plan_chunk_len(off, total, (total - off).min(cap), Some(BS), split, None);
         assert!(len >= 1, "total={total} off={off}: empty chunk");
         let end = off + len;
         match split {
@@ -129,22 +129,65 @@ fn chunks_tile_the_prompt_and_end_on_block_boundaries() {
 #[test]
 fn plan_keeps_a_last_chunk_and_never_grows_a_chunk() {
     assert_eq!(
-        plan_chunk_len(0, 300, 300, Some(BS), tail_split_point(300, BS)),
+        plan_chunk_len(0, 300, 300, Some(BS), tail_split_point(300, BS), None),
         300
     );
-    assert_eq!(plan_chunk_len(8192, 8195, 3, Some(BS), None), 3);
-    assert_eq!(plan_chunk_len(0, 32772, 8193, Some(BS), Some(32752)), 8192);
+    assert_eq!(plan_chunk_len(8192, 8195, 3, Some(BS), None, None), 3);
     assert_eq!(
-        plan_chunk_len(24576, 32772, 8192, Some(BS), Some(32752)),
+        plan_chunk_len(0, 32772, 8193, Some(BS), Some(32752), None),
+        8192
+    );
+    assert_eq!(
+        plan_chunk_len(24576, 32772, 8192, Some(BS), Some(32752), None),
         8176
     );
-    assert_eq!(plan_chunk_len(0, 100, 0, Some(BS), None), 0);
+    assert_eq!(plan_chunk_len(0, 100, 0, Some(BS), None, None), 0);
     // 2026-09-27: A proposal shorter than one block keeps its length, rounded to 4.
-    assert_eq!(plan_chunk_len(0, 100, 10, Some(BS), None), 8);
-    assert_eq!(plan_chunk_len(0, 100, 3, Some(BS), None), 3);
+    assert_eq!(plan_chunk_len(0, 100, 10, Some(BS), None, None), 8);
+    assert_eq!(plan_chunk_len(0, 100, 3, Some(BS), None, None), 3);
     // 2026-09-27: Without a block size the old WY4 rounding is all that applies.
-    assert_eq!(plan_chunk_len(0, 32772, 8193, None, None), 8192);
-    assert_eq!(plan_chunk_len(8193, 32772, 8191, None, None), 8188);
+    assert_eq!(plan_chunk_len(0, 32772, 8193, None, None, None), 8192);
+    assert_eq!(plan_chunk_len(8193, 32772, 8191, None, None, None), 8188);
+}
+
+/// 2026-10-16: With the GLM-5.3 cell grid (8208, 8192): the idle chunking (chunk 0 of 16400
+/// rows, then 16384) is a fixed point; a loaded chunk 0 of 16384 rows ends at the first point
+/// and every later end stays on the grid; a non-last span holding no grid point keeps its
+/// block-aligned end; a last chunk is returned unchanged. Negative control: the same loaded
+/// walk without the grid leaves it (the binary before the floor).
+#[test]
+fn plan_floors_non_last_ends_to_the_cell_grid() {
+    use metrale_model_arch::glm5next_prefill_cell::CellGrid;
+    let g = Some(CellGrid {
+        first: 8208,
+        step: 8192,
+    });
+    let total = 41_000;
+    let split = tail_split_for(total, BS, true);
+    let ends = |first: usize, grid| {
+        let (mut off, mut out) = (0, Vec::new());
+        while off < total {
+            let p = (total - off).min(if off == 0 { first } else { 16_384 });
+            off += plan_chunk_len(off, total, p, Some(BS), split, grid);
+            out.push(off);
+        }
+        out
+    };
+    assert_eq!(ends(16_400, g), [16_400, 32_784, 41_000]);
+    assert_eq!(ends(16_400, g), ends(16_400, None));
+    assert_eq!(ends(16_384, g), [8208, 24_592, 40_976, 41_000]);
+    assert_eq!(ends(16_384, None), [16_384, 32_768, 41_000]);
+    assert_eq!(plan_chunk_len(0, total, 8000, Some(BS), split, g), 8000);
+    assert_eq!(plan_chunk_len(8208, total, 8000, Some(BS), split, g), 8000);
+    assert_eq!(plan_chunk_len(0, total, 16_399, Some(BS), split, g), 8208);
+    assert_eq!(
+        plan_chunk_len(32_784, total, 16_384, Some(BS), split, g),
+        16_384
+    );
+    assert_eq!(
+        plan_chunk_len(0, 16_000, 16_384, Some(BS), split, g),
+        16_384
+    );
 }
 
 #[test]

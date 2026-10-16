@@ -108,6 +108,29 @@ fn chunks(total: usize, first: usize, budget: usize) -> Vec<(usize, usize)> {
     out
 }
 
+/// 2026-10-16: The cell serve's chunks: chunk 0 proposed `first` rows, later ones `budget`; a
+/// non-last end aligned down to a 16-row KV block, then floored to the grid, as
+/// `prefill_plan::plan_chunk_len` does with the lever set. Idle (16400, 16384) is a fixed point
+/// of the floor; loaded (16384, 16384) starts at the first point.
+fn floored_chunks(total: usize, first: usize, budget: usize) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut t = 0;
+    while t < total {
+        let want = t + if t == 0 { first } else { budget };
+        let e = if want >= total {
+            total
+        } else {
+            GRID.floor_end(t, want / 16 * 16)
+        };
+        out.push((t, e - t));
+        t = e;
+    }
+    out
+}
+
+/// 2026-10-16: The scheduler's chunkings: idle and loaded.
+const CHUNKINGS: [(usize, usize); 2] = [(16400, 16384), (16384, 16384)];
+
 /// 2026-10-15: Prompt lengths around every boundary of the first four grid points, the c32k
 /// bench prompt and a 512k-class prompt.
 fn totals() -> Vec<usize> {
@@ -120,19 +143,36 @@ fn totals() -> Vec<usize> {
 
 /// 2026-10-15: For every prompt length, the cells of the 16384-budget serve's passes, laid end
 /// to end, are exactly the passes of the 8192-budget serve (idle first chunks 16400 and 8208).
+/// 2026-10-16: idle and loaded, the chunk ends floored; the idle chunking is the floor's fixed
+/// point. Negative control: the loaded chunking unfloored (the binary before the floor) is not
+/// the 8192 serve's at the c32k prompt.
 #[test]
 fn cells_are_the_8192_serves_passes() {
-    for total in totals() {
-        let want: Vec<(usize, usize)> = chunks(total, 8208, 8192);
+    let cells = |ch: Vec<(usize, usize)>| {
         let mut got = Vec::new();
-        for (s, n) in chunks(total, 16400, 16384) {
+        for (s, n) in ch {
             for (cs, ce) in GRID.cells(s, n) {
                 got.push((s + cs, ce - cs));
             }
         }
-        assert_eq!(got, want, "total {total}");
-        assert!(got.iter().all(|&(_, n)| n <= 8208), "total {total}");
+        got
+    };
+    for total in totals() {
+        let want: Vec<(usize, usize)> = chunks(total, 8208, 8192);
+        assert_eq!(
+            floored_chunks(total, 16400, 16384),
+            chunks(total, 16400, 16384)
+        );
+        for (first, budget) in CHUNKINGS {
+            let got = cells(floored_chunks(total, first, budget));
+            assert_eq!(got, want, "total {total} chunking {first},{budget}");
+            assert!(got.iter().all(|&(_, n)| n <= 8208), "total {total}");
+        }
     }
+    assert_ne!(
+        cells(chunks(33570, 16384, 16384)),
+        chunks(33570, 8208, 8192)
+    );
 }
 
 /// 2026-10-15: Negative control: the layer's own sub-chunking of the same passes at 8208 rows
@@ -304,13 +344,14 @@ fn budget_check() {
     assert!(check_cell_budget(GRID, 8208, 8192, 8208).is_err());
     assert!(check_cell_budget(GRID, 8208, 12288, 12304).is_err());
     assert!(check_cell_budget(GRID, 8208, 16000, 16400).is_err());
+    assert!(check_cell_budget(GRID, 8208, 8192, 16400).is_err());
 }
 
 /// 2026-10-15: The passes from a prefix hit restoring `u` rows: the chunks of the idle cold
 /// path from origin 0, the fully cached ones dropped and the one holding `u` started at it.
-fn passes_from(total: usize, u: usize, first: usize, budget: usize) -> Vec<(usize, usize)> {
-    chunks(total, first, budget)
-        .into_iter()
+/// 2026-10-16: of any chunking `ch`.
+fn passes_from(ch: Vec<(usize, usize)>, u: usize) -> Vec<(usize, usize)> {
+    ch.into_iter()
         .filter(|&(s, n)| s + n > u)
         .map(|(s, n)| (s.max(u), s + n - s.max(u)))
         .collect()
@@ -329,7 +370,7 @@ fn reference_paths(
 ) -> Vec<(usize, usize, bool)> {
     use metrale_model_layers::layer::{split_segment_takes_decode_path, takes_decode_path};
     let mut out = Vec::new();
-    for (s, n) in passes_from(total, u, 8208, 8192) {
+    for (s, n) in passes_from(chunks(total, 8208, 8192), u) {
         if takes_decode_path(n, s, opr, true) {
             out.push((s, s + n, true));
             continue;
@@ -368,10 +409,35 @@ fn reference_paths(
     out
 }
 
+/// 2026-10-16: `(abs start, abs end, decode path)` of every cell-plan segment of `passes`
+/// (rank 0's plan), by [`seg_takes_decode`].
+fn cell_paths(
+    passes: Vec<(usize, usize)>,
+    merge: bool,
+    pts: &[usize],
+    td: bool,
+    opr: bool,
+) -> Vec<(usize, usize, bool)> {
+    let mut got = Vec::new();
+    for (s, n) in passes {
+        let local: Vec<(usize, u8)> = pts
+            .iter()
+            .filter(|&&p| p > s && p < s + n)
+            .map(|&p| (p - s, 0))
+            .collect();
+        for g in plan(GRID, s, n, 8208, merge, &local, true) {
+            let d = seg_takes_decode(&g, s + g.start, td, opr);
+            got.push((s + g.start, s + g.end, d));
+        }
+    }
+    got
+}
+
 /// 2026-10-15: From a cold start or a hit at any length (on, one row before or after a grid
 /// point, off the grid), with capture points that leave one-row segments and cells, under every
 /// combination of the one-row levers and both tail modes, each cell-plan segment runs the path
-/// the 8192 serve runs the same rows on ([`seg_takes_decode`]).
+/// the 8192 serve runs the same rows on ([`seg_takes_decode`]). 2026-10-16: under the idle and
+/// the loaded chunking, chunk ends floored.
 #[test]
 fn decode_path_matches_the_8192_serve() {
     let mut cases = 0usize;
@@ -385,29 +451,22 @@ fn decode_path_matches_the_8192_serve() {
                 for merge in [false, true] {
                     for (td, opr) in [(false, false), (true, false), (false, true), (true, true)] {
                         let want = reference_paths(total, u, merge, &pts, td, opr);
-                        let mut got = Vec::new();
-                        for (s, n) in passes_from(total, u, 16400, 16384) {
-                            let local: Vec<(usize, u8)> = pts
-                                .iter()
-                                .filter(|&&p| p > s && p < s + n)
-                                .map(|&p| (p - s, 0))
-                                .collect();
-                            for g in plan(GRID, s, n, 8208, merge, &local, true) {
-                                let d = seg_takes_decode(&g, s + g.start, td, opr);
-                                got.push((s + g.start, s + g.end, d));
-                            }
+                        for (first, budget) in CHUNKINGS {
+                            let ch = floored_chunks(total, first, budget);
+                            let got = cell_paths(passes_from(ch, u), merge, &pts, td, opr);
+                            assert_eq!(
+                                got, want,
+                                "total {total} hit {u} {pts:?} merge {merge} td {td} opr {opr} \
+                                 chunking {first},{budget}"
+                            );
+                            cases += 1;
                         }
-                        assert_eq!(
-                            got, want,
-                            "total {total} hit {u} {pts:?} merge {merge} td {td} opr {opr}"
-                        );
-                        cases += 1;
                     }
                 }
             }
         }
     }
-    assert!(cases > 200);
+    assert!(cases > 400);
 }
 
 /// 2026-10-15: Negative control: the layer rule alone (every cell routed as a segment of its

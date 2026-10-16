@@ -81,6 +81,11 @@ pub struct SequenceState {
     /// `finalize_last` restores the state from this snapshot again and takes the first token's
     /// hidden row from it. `None` otherwise.
     pub marconi_exact_snap: Option<usize>,
+    /// 2026-10-16: The end of every prefill chunk this sequence ran under
+    /// `METRALE_GLM_PREFILL_CELL_GRID`, in order; chunk 0 clears it. A state restored at a
+    /// prefix hit takes its extra clamps from these (`restored_clamps`). Empty with the lever
+    /// unset.
+    pub cell_chunk_ends: Vec<usize>,
     /// 2026-09-25: Session identity, set by the scheduler before prefill. Saved SSM snapshots are
     /// tagged with it and a snapshot is restored only for a matching tag
     /// (`SsmSnapshotPool::session_matches`); `0` skips the check.
@@ -206,6 +211,7 @@ impl SequenceState {
             ssm_slot: None,
             marconi_skip_to: 0,
             marconi_exact_snap: None,
+            cell_chunk_ends: Vec::new(),
             session_hash: 0,
             lookup_tenant: None,
             mtp_capture_gen: 0,

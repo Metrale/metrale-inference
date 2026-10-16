@@ -57,12 +57,19 @@ pub fn tail_split_for(total: usize, block_size: usize, whole_pass: bool) -> Opti
 /// 4 (the GDN WY4 rule for intermediate chunks). With chunk ends on block boundaries
 /// every later offset is block-aligned, so the rounding changes nothing when
 /// `block_size` is a multiple of 4.
+///
+/// 2026-10-16: With a cell grid (`METRALE_GLM_PREFILL_CELL_GRID`, `grid`), the block-aligned
+/// end is then floored to the largest grid point past `offset` (`CellGrid::floor_end`), so a
+/// loaded serve's chunk 0 (`--max-prefill-tokens` rows, not the idle `max_batch_tokens`) ends
+/// on the grid as the idle one does; the idle chunking is unchanged. Grid points are block
+/// boundaries (`check_cell_blocks`), so the rounding still changes nothing.
 pub fn plan_chunk_len(
     offset: usize,
     total: usize,
     proposed: usize,
     block_size: Option<usize>,
     split: Option<usize>,
+    grid: Option<metrale_model_arch::glm5next_prefill_cell::CellGrid>,
 ) -> usize {
     if proposed == 0 || offset + proposed >= total {
         return proposed;
@@ -73,6 +80,9 @@ pub fn plan_chunk_len(
         if aligned > offset {
             end = aligned;
         }
+    }
+    if let Some(g) = grid {
+        end = g.floor_end(offset, end);
     }
     if let Some(cut) = split
         && offset < cut

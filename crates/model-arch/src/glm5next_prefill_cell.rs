@@ -33,8 +33,15 @@
 //!
 //! The clamp scales a (head, layer) block only when its Frobenius norm exceeds 200; below that
 //! every extra or missing clamp is a no-op, so a short prompt cannot show a schedule defect.
-//! Only the idle cold path's chunking is mirrored: chunk 0 of `max_batch_tokens`, then
-//! `--max-prefill-tokens` each ([`check_cell_budget`] at load).
+//! The scheduler's chunks must start and end on the grid. The idle cold chunking (chunk 0 of
+//! `max_batch_tokens`, then `--max-prefill-tokens` each) does ([`check_cell_budget`] at load).
+//! 2026-10-16: A loaded serve's chunk 0 gets `--max-prefill-tokens` (16384, off the grid), so
+//! with the lever set every non-last chunk end is floored to a grid point
+//! ([`CellGrid::floor_end`], `prefill_plan::plan_chunk_len`): the loaded chunks end at
+//! 8208, 24592, ... and run the same cells and clamps as the idle ones, and the restored clamps
+//! count the chunk ends the request actually ran. A chunk too short to reach the next grid
+//! point keeps its end (off the grid; not reached by the scheduler's own budgets, which
+//! [`check_cell_budget`] checks).
 //!
 //! Owner: model-arch (GLM-5.3).
 //! Invariants:
@@ -167,6 +174,19 @@ impl CellGrid {
         } else {
             self.first + self.step * ((a - self.first) / self.step + 1)
         }
+    }
+
+    /// 2026-10-16: The end of a non-last prefill chunk from `offset` that would end at `end`,
+    /// floored to the largest grid point in `(offset, end]`, or `end` when none is. A chunk end
+    /// already on the grid is returned unchanged, so the idle chunking ([`check_cell_budget`])
+    /// is a fixed point; a loaded serve's chunk 0 of `--max-prefill-tokens` rows ends at the
+    /// first point instead of off the grid. Pure.
+    pub fn floor_end(&self, offset: usize, end: usize) -> usize {
+        if end < self.first {
+            return end;
+        }
+        let g = self.first + (end - self.first) / self.step * self.step;
+        if g > offset { g } else { end }
     }
 
     /// 2026-10-15: The cells of a pass of `n` rows from absolute position `seq_start`, as
@@ -333,6 +353,14 @@ pub fn check_cell_budget(
              --max-prefill-tokens) must be a multiple of the step"
         ));
     }
+    // 2026-10-16: A loaded serve's chunk 0 is `prefill_budget` rows, floored to the grid
+    // (`CellGrid::floor_end`); it must reach the first point to land on it.
+    if prefill_budget < first {
+        return Err(format!(
+            "{CELL_GRID_ENV}={first},{step}: the prefill budget ({prefill_budget}, \
+             --max-prefill-tokens), a loaded serve's chunk 0, must reach the first point"
+        ));
+    }
     Ok(())
 }
 
@@ -375,57 +403,80 @@ pub fn check_cell_blocks(grid: CellGrid, block_size: Option<usize>) -> Result<()
     }
 }
 
-/// 2026-10-15: The scheduler's chunking of an idle cold prompt: chunk 0 of `first` tokens
-/// (`max_batch_tokens`), then `budget` each (`--max-prefill-tokens`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Chunking {
-    pub first: usize,
-    pub budget: usize,
+/// 2026-10-16: The scheduler levers that send a prompt past `prefill_chunk`'s grid floor and
+/// cell walk, as the serve resolved them: the tail-checkpoint pre-cut (`ssm_tail_ckpt` without
+/// `ssm_tail_midchunk`) ends a chunk off the grid, and the deferred chunk 0 of the batched
+/// prefill (`ep_prefill_batch`, `prefill_codispatch`, `prefill_varlen`) runs as batched spans
+/// or, alone, as a two-phase prefill in unfloored `--max-prefill-tokens` pieces.
+#[derive(Clone, Copy, Debug)]
+pub struct CellPathLevers {
+    pub ssm_tail_ckpt: bool,
+    pub ssm_tail_midchunk: bool,
+    pub ep_prefill_batch: bool,
+    pub prefill_codispatch: bool,
+    pub prefill_varlen: bool,
 }
 
-static CHUNKING: OnceLock<Chunking> = OnceLock::new();
-
-/// 2026-10-15: Record the serve's chunking, once at load after [`check_cell_budget`]; a second
-/// call with other values is an error.
-pub fn set_chunking(c: Chunking) -> Result<()> {
-    let got = *CHUNKING.get_or_init(|| c);
-    anyhow::ensure!(
-        got == c,
-        "{CELL_GRID_ENV}: chunking already set to {got:?}, not {c:?}"
-    );
-    Ok(())
+/// 2026-10-16: The load-time refusal of a grid with any lever of [`CellPathLevers`] that routes
+/// a prompt around the floored chunk path; the error names every such lever. Pure.
+pub fn check_cell_paths(levers: CellPathLevers) -> Result<(), String> {
+    let off_path = [
+        (
+            levers.ssm_tail_ckpt && !levers.ssm_tail_midchunk,
+            "METRALE_SSM_TAIL_CKPT=1 without METRALE_SSM_TAIL_MIDCHUNK",
+        ),
+        (levers.ep_prefill_batch, "METRALE_EP_PREFILL_BATCH=1"),
+        (levers.prefill_codispatch, "METRALE_PREFILL_CODISPATCH"),
+        (levers.prefill_varlen, "METRALE_PREFILL_VARLEN"),
+    ];
+    let set: Vec<&str> = off_path
+        .iter()
+        .filter(|(on, _)| *on)
+        .map(|(_, n)| *n)
+        .collect();
+    if set.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "{CELL_GRID_ENV}: {} route prompts around the grid-floored chunk path",
+        set.join(", ")
+    ))
 }
 
-/// 2026-10-15: The chunking [`set_chunking`] recorded; an error before it was set.
-pub fn chunking() -> Result<Chunking> {
-    CHUNKING.get().copied().ok_or_else(|| {
-        anyhow::anyhow!("{CELL_GRID_ENV} is set but the load never recorded the chunking")
-    })
-}
-
-/// 2026-10-15: How many grid points (or chunk ends `first + j * step`) are at or below `u`.
+/// 2026-10-15: How many grid points are at or below `u`.
 fn ends_through(first: usize, step: usize, u: usize) -> usize {
     if u < first { 0 } else { (u - first) / step + 1 }
 }
 
 /// 2026-10-15: The clamps a state restored at `u` takes before the first computed row, beyond
 /// those the scheduler already ran: the grid serve's fully cached chunks (every grid point at
-/// or below `u`, less its unclamped chunk 0 on rank 0) less this serve's fully cached chunks
-/// (every chunk end at or below `u`, each clamped, rank 0's chunk 0 by
-/// [`rank0_first_chunk_clamp`]). Errors when the chunking has more cached chunk ends than the
-/// grid, which [`check_cell_budget`] rules out. Pure.
+/// or below `u`, less its unclamped chunk 0 on rank 0) less this request's fully cached chunks
+/// (`walked`, each clamped, rank 0's chunk 0 by [`rank0_first_chunk_clamp`]). 2026-10-16:
+/// `walked` is the chunk ends this request actually ran before the computed chunk (the
+/// sequence's record), not the idle chunking assumed at load: a loaded serve's chunk 0 is
+/// floored to the first point ([`CellGrid::floor_end`]), which rank 0 does not clamp. Errors
+/// when an end lies past `u` or more ends were clamped than the grid has. Pure.
 pub fn restored_clamps(
     grid: CellGrid,
-    chunking: Chunking,
+    walked: &[usize],
     rank0: bool,
     u: usize,
 ) -> Result<usize, String> {
+    if let Some(&e) = walked.iter().find(|&&e| e > u) {
+        return Err(format!(
+            "{CELL_GRID_ENV}: cached chunk end {e} is past the restored position {u}"
+        ));
+    }
     let grid_ends = ends_through(grid.first, grid.step, u) - usize::from(rank0 && grid.first <= u);
-    let own_ends = ends_through(chunking.first, chunking.budget, u);
+    let unclamped0 = rank0
+        && walked
+            .first()
+            .is_some_and(|&e| !rank0_first_chunk_clamp(grid, e));
+    let own_ends = walked.len() - usize::from(unclamped0);
     grid_ends.checked_sub(own_ends).ok_or_else(|| {
         format!(
-            "{CELL_GRID_ENV}: {own_ends} cached chunk ends at or below {u} under {chunking:?}, \
-             more than the grid's {grid_ends}"
+            "{CELL_GRID_ENV}: {own_ends} clamped chunk ends {walked:?} at or below {u}, more \
+             than the grid's {grid_ends}"
         )
     })
 }

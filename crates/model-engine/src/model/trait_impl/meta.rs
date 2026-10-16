@@ -349,6 +349,7 @@ impl TransformerModel {
             ssm_slot: Some(slot_guard),
             marconi_skip_to: 0,
             marconi_exact_snap: None,
+            cell_chunk_ends: Vec::new(),
             session_hash: 0,
             mtp_capture_gen: 0,
             mtp_store_gen: store_gen,

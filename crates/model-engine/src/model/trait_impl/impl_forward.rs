@@ -38,6 +38,7 @@ impl ModelForward for TransformerModel {
     ) -> Result<DevicePtr> {
         self.gdn_carry_flush_pending()?;
         self.stamp_overlay_route(seq.adapter_slot);
+        self.cell_walk_start(seq, chunk_start)?;
         let logits = self.prefill_chunk_dispatch(
             tokens,
             seq,
@@ -49,6 +50,7 @@ impl ModelForward for TransformerModel {
         self.try_eager_drafter_prefill(seq, is_last_chunk, stream);
         // 2026-10-15: `METRALE_GLM_PREFILL_CELL_GRID`: rank 0's clamp at its chunk 0's end.
         self.cell_first_chunk_clamp(seq, chunk_start, chunk_len, stream)?;
+        self.cell_walk_end(seq, chunk_start + chunk_len)?;
         Ok(logits)
     }
 
@@ -180,5 +182,13 @@ impl ModelForward for TransformerModel {
 
     fn prefill_tail_split(&self, tokens: &[u32]) -> Option<usize> {
         self.prefill_tail_split_dispatch(tokens)
+    }
+
+    // 2026-10-16: The serve load reads `METRALE_GLM_PREFILL_CELL_GRID` first and refuses a
+    // malformed value (`serve_load::engine`); the read is cached, so an `Err` here means the
+    // model was driven without that load, which is a bug, not a lever value.
+    fn prefill_cell_grid(&self) -> Option<metrale_model_arch::glm5next_prefill_cell::CellGrid> {
+        metrale_model_arch::glm5next_prefill_cell::cell_grid()
+            .expect("METRALE_GLM_PREFILL_CELL_GRID is checked at serve load")
     }
 }

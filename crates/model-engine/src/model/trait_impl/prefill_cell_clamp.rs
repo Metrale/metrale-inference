@@ -127,13 +127,39 @@ impl TransformerModel {
             return Ok(());
         }
         let rank = self.cell_rank();
-        let k = cell::restored_clamps(grid, cell::chunking()?, rank == 0, compute_start)
+        let walked = &seq.cell_chunk_ends;
+        let k = cell::restored_clamps(grid, walked, rank == 0, compute_start)
             .map_err(anyhow::Error::msg)?;
         tracing::info!(
-            "GLM prefill cell grid: rank {rank} restored state at {compute_start}: {k} extra clamps"
+            "GLM prefill cell grid: rank {rank} restored state at {compute_start}: {k} extra \
+             clamps (walked chunk ends {walked:?}, grid first {} step {})",
+            grid.first,
+            grid.step
         );
         for _ in 0..k {
             self.normalize_ssm_states(seq, stream)?;
+        }
+        Ok(())
+    }
+
+    /// 2026-10-16: Before a prefill chunk from `chunk_start`: chunk 0 clears the chunk ends this
+    /// request walked (a preempted request re-enters chunk 0), so [`Self::cell_restored_clamps`]
+    /// counts this attempt's only.
+    pub(super) fn cell_walk_start(
+        &self,
+        seq: &mut SequenceState,
+        chunk_start: usize,
+    ) -> Result<()> {
+        if chunk_start == 0 && cell::cell_grid()?.is_some() {
+            seq.cell_chunk_ends.clear();
+        }
+        Ok(())
+    }
+
+    /// 2026-10-16: After a prefill chunk: its end, walked.
+    pub(super) fn cell_walk_end(&self, seq: &mut SequenceState, chunk_end: usize) -> Result<()> {
+        if cell::cell_grid()?.is_some() {
+            seq.cell_chunk_ends.push(chunk_end);
         }
         Ok(())
     }

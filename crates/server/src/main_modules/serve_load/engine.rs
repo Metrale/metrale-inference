@@ -177,8 +177,8 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
         .map_err(anyhow::Error::msg)?;
     }
     // 2026-10-15: `METRALE_GLM_PREFILL_CELL_GRID`: refuse a sizing, model or lever set the cell
-    // grid cannot mirror, then record the chunking the clamps mirror (on every rank, before the
-    // EP worker loop takes over).
+    // grid cannot mirror. 2026-10-16: the clamps read each request's walked chunk ends
+    // (`SequenceState::cell_chunk_ends`), not a chunking recorded here.
     let cell_grid = metrale_model_arch::glm5next_prefill_cell::cell_grid()?;
     if let Some(grid) = cell_grid {
         use metrale_model_arch::glm5next_prefill_cell as cell;
@@ -204,6 +204,16 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
                 metrale_model_arch::glm5next_prefill_piece::PIECE_ROWS_ENV
             );
         }
+        // 2026-10-16: Refuse the levers that route a prompt around the floored chunk path, on
+        // every rank before the workers branch off.
+        cell::check_cell_paths(cell::CellPathLevers {
+            ssm_tail_ckpt: metrale_gpu_runtime::ssm_tail_ckpt_enabled(),
+            ssm_tail_midchunk: metrale_gpu_runtime::ssm_tail_midchunk_enabled(),
+            ep_prefill_batch: crate::scheduler::levers::ep_prefill_batch_enabled(),
+            prefill_codispatch: metrale_model_layers::layers::ops::prefill_codispatch_enabled(),
+            prefill_varlen: metrale_model_layers::layers::ops::prefill_varlen_enabled(),
+        })
+        .map_err(anyhow::Error::msg)?;
         let levers = metrale_model_layers::layers::ops::ModelLevers::get();
         if !(levers.one_row_tail_decode || levers.one_row_prefill) {
             anyhow::bail!(
@@ -212,15 +222,21 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
                 cell::CELL_GRID_ENV
             );
         }
-        cell::set_chunking(cell::Chunking {
-            first: max_batch_tokens,
-            budget: prefill_budget,
-        })?;
         tracing::info!(
             "GLM prefill cell grid: first {} step {} (max_batch_tokens {max_batch_tokens})",
             grid.first,
             grid.step
         );
+    }
+    // 2026-10-16: The grid floor's readback on every rank: `prefill_plan::plan_chunk_len` floors
+    // a non-last chunk end to the grid only when it is set. A positive line either way.
+    match cell_grid {
+        Some(grid) => tracing::info!(
+            "prefill cell grid floor: on (first {} step {})",
+            grid.first,
+            grid.step
+        ),
+        None => tracing::info!("prefill cell grid floor: off"),
     }
     // 2026-10-15: The cell pipeline, read here so a bad value or combination fails the load.
     if metrale_model_arch::glm5next_prefill_cell::cell_pipeline()? {
