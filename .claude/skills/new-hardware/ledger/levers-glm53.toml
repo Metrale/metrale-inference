@@ -2165,3 +2165,27 @@ effort_hours = 8.0
 transferability = "any per-token reduction kernel that re-reads a shared weight per small block: widen the block's work with a cp.async ring instead of adding tokens per block, and keep each token's summation order"
 links = { pr = "", commit = "", evidence = "glm5next_mhc_tile_gate example output and standalone harness, 2026-10-15" }
 notes = "Variants measured and not shipped: eight tokens per block with three stages (tile8) ran 381 us at T=684 vs tile4's 350. Five or six stages gain 0-4% clean and 4-5% under SM-copy load at 684 rows, within spread; a split Sinkhorn tail gains about 1%. createpolicy.fractional.L2::evict_last with cp.async L2::cache_hint raised CUDA_ERROR_ILLEGAL_INSTRUCTION on GB10 at T=1, with or without applypriority. Not applied on the MHC_POST_PRE_FUSED path. A faster pre-norm may expose NCCL time it now hides"
+
+[[lever]]
+id = "gb10x3-glm53-kda-scan-onorm"
+date = "2026-10-15"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_KDA_SCAN_ONORM=1 (default off): the KDA 64-token chunked scan (METRALE_GLM_KDA_CHUNK64 prefill) runs kda_chunk64_scan_onorm and the layer skips kda_o_norm_gated_bf16; composes with METRALE_GLM_KDA_CHUNK64_CONV and METRALE_GLM_KDA_GATE_IN_PREPARE"
+symptom = "at a 32k cold prefill kda_o_norm_gated_bf16 runs 170 launches on rank 0 for 111.4 ms: it re-reads the FP32 core rows the scan just wrote (4 bytes per element out, 4 back in) only to RMS-normalize, gate and narrow them to BF16"
+diagnosis_tool = "nsys"
+root_cause_class = "redundant-work"
+lever_type = "fusion"
+lkb_effect = "kda_chunk64_scan_onorm in kda_chunk64.cu (a template twin of kda_chunk64_scan; the plain entry's FP instruction sequence is unchanged): a (1, 2, 1) cluster per head, its two blocks the head's two 64-column halves; each block reduces its half-row squares in the norm kernel's order (shfl_down 16..1, then (w0 + w2) + (w1 + w3)), the halves meet over DSMEM behind a release/acquire cluster barrier with double-buffered partials, and the epilogue writes bf16(((x * inv) * w) * sigmoid(g)) in place of the FP32 core store"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "held"
+verdict_reason = "2026-10-16 measured on GB10 (glm5next_kda_scan_onorm_gate, 22 heads, one rank): the fused output equals scan then kda_o_norm_gated_bf16 byte for byte at T 70, 300, 1100, 8192, for prefix-hit and fresh state, packed and parts layouts, conv on and off, gate in the kernel and in the prepare (64 combinations); the lever-off scan equals the base tree scan in core rows, states and factors in every one; the PTX fidelity check passes. Controls fire at every T: the norm at 64 threads per row (another partial order) differs in every head row (180224 of 180224 at 8192), and one output-gate element moved across zero differs in 1 head row with the state equal. cuOccupancyMaxActiveClusters: 24 co-resident (1, 2, 1) clusters at grid [22, 2, 1], 89600 B shared. Medians of n=7 [min..max], us, old vs new: scans + norm vs fused scans 8192 rows 1739.2 [1737.3..1814.0] vs 1209.4 [1207.3..1210.0] (x1.44), 1100 rows 236.0 vs 148.5, 300 rows 48.7 vs 44.2, 70 rows 19.1 vs 18.8; the norm alone 800.2 us at 8192 rows against plain scans 907.9, so the epilogue costs about 300 us of the 800. Whole path (prepare, scans, norm) 8192 rows conv in prepare 6164.6 vs 5441.3 (x1.13), conv off 7897.5 vs 7367.7 (x1.07). Clean only, no co-run timing. Projection: 170 launches at 111.4 ms (0.66 ms each, under the 0.80 ms of 8192 rows) save about -75..-90 ms per rank on a cold 32k prefill. Held until the cold serve A/B"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0.5
+would_catch_earlier = "check new driver entry points against the CUDA link stub: CUDA 13.0's stub libcuda has no cuOccupancyMaxActiveClusters, so the first link failed; it is resolved in the loaded driver instead"
+effort_hours = 6.0
+transferability = "any per-row norm epilogue whose row a kernel's blocks split by columns: a 2-block cluster exchanging partial sums over DSMEM keeps the norm's reduction order when each half reproduces the norm kernel's warp tree"
+links = { pr = "", commit = "4988cd975", evidence = "glm5next_kda_scan_onorm_gate" }
+notes = "Not fused: the cut.rs tail-merge recurrence (a partial last chunk merged into the token path) keeps its own kda_o_norm_gated_bf16 launch, so a forward that ends there still norms on the side. Deadlock freedom: the cluster's two blocks are gang-scheduled, so a barrier never waits on an unplaced peer; the host refuses the lever when cuOccupancyMaxActiveClusters is 0 for the launch shape or the fused kernel is absent, with an error naming it. head_dim other than 128 is refused. Readback: 'GLM KDA: METRALE_GLM_KDA_SCAN_ONORM=1 applied at'"
