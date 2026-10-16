@@ -2060,6 +2060,8 @@ kernels = [
   "glm5next_mhc_tile::glm5next_hc_pre_norm_tile4",
   "glm5next_hc_post_sum::glm5next_hc_post_rank_sum",
   "glm5next_hc_post_sum::glm5next_hc_post_rank_sum_vec8",
+  "glm5next_mhc_post_tile::glm5next_hc_post_pre_tile1",
+  "glm5next_mhc_post_tile::glm5next_hc_post_pre_tile2",
 ]
 kernel_compute."glm5next_mhc::glm5next_hc_mix" = { compute = "cuda_core" }
 kernel_compute."glm5next_mhc::glm5next_hc_mix_bf16" = { compute = "cuda_core" }
@@ -2089,6 +2091,11 @@ kernel_compute."glm5next_hc_post_sum::glm5next_hc_post_rank_sum" = { compute = "
 # 2026-10-15: glm5next_hc_post_rank_sum with eight columns per thread in 16-byte accesses and the
 # summed-row store optional (opt-in METRALE_GLM_MHC_POST_VEC, SP-mHC); every expression in order.
 kernel_compute."glm5next_hc_post_sum::glm5next_hc_post_rank_sum_vec8" = { compute = "cuda_core" }
+# 2026-10-15: glm5next_hc_post_rank_sum_vec8 and the next site's glm5next_hc_pre_norm_tile4 in one
+# launch, the streams kept in registers (opt-in METRALE_GLM_MHC_POST_PRE_TILE, SP-mHC); every
+# expression of both halves in order, so the same bits. tile1: one token per block; tile2: two.
+kernel_compute."glm5next_mhc_post_tile::glm5next_hc_post_pre_tile1" = { compute = "cuda_core" }
+kernel_compute."glm5next_mhc_post_tile::glm5next_hc_post_pre_tile2" = { compute = "cuda_core" }
 rows = [1, 256]
 pipeline."linear:hc_mix" = { in = ["f32"], act = "f32", weight = "bf16->f32", mma = "f32*f32", accumulate = "f32", scale = "none", out = ["f32"] }
 pipeline.hc_pre = { in = ["f32", "f32"], compute = "f32", out = ["bf16", "f32", "f32"] }
@@ -2102,7 +2109,7 @@ op = [
 [[family.point]]
 values = {}
 how = "instantiation"
-files = ["kernels/gb10/common/glm5next_mhc.cu", "kernels/gb10/common/glm5next_mhc_fused.cu", "kernels/gb10/common/glm5next_hc_post_sum.cu", "kernels/gb10/common/glm5next_mhc_tok.cu", "kernels/gb10/common/glm5next_mhc_tile.cu"]
+files = ["kernels/gb10/common/glm5next_mhc.cu", "kernels/gb10/common/glm5next_mhc_fused.cu", "kernels/gb10/common/glm5next_hc_post_sum.cu", "kernels/gb10/common/glm5next_mhc_tok.cu", "kernels/gb10/common/glm5next_mhc_tile.cu", "kernels/gb10/common/glm5next_mhc_post_tile.cu"]
 
 # 2026-10-08: The KDA gates: the decay
 # `linear_lower_bound * sigmoid(exp(A_log[h]) * (g + dt_bias))` per channel from the BF16 `f_b`
@@ -2478,7 +2485,7 @@ layer_kind = "deepseek_sparse_attention"
 per_sequence = ["multi_seq"]
 sites = ["dsa.idx_k", "dsa.idx_k_norm", "dsa.idx_gate", "dsa.pool", "dsa.select"]
 rows_above = 1
-cite = "crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:341"
+cite = "crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:301"
 holds = "for r in paged_rows..n {"
 note = "DSA batched decode: indexer key, pool store and selection one row per launch unless METRALE_GLM_DSA_INDEXER_ROWS (2026-10-09: staged projections; captured paged rows store and select one launch per stage)"
 
@@ -2491,7 +2498,7 @@ layer_kind = "linear_attention"
 per_sequence = ["verify"]
 sites = ["kda.short_conv", "kda.conv_ckpt", "kda.l2", "kda.recur"]
 rows_above = 1
-cite = "crates/model-arch/src/glm5next_kda/decode.rs:353"
+cite = "crates/model-arch/src/glm5next_kda/decode.rs:451"
 holds = "for row in 0..k {"
 note = "KDA verify: conv and recurrence one row per launch (stateful_row); 2026-10-09: without per-row snapshots, one conv and one recurrent launch under METRALE_GLM_KDA_SEQ_TOKENS"
 
@@ -2501,6 +2508,6 @@ layer_kind = "deepseek_sparse_attention"
 per_sequence = ["verify"]
 sites = ["dsa.kv_norm", "dsa.kv_write", "dsa.idx_k", "dsa.idx_k_norm", "dsa.idx_gate", "dsa.pool", "dsa.idx_w", "dsa.idx_q", "dsa.select"]
 rows_above = 1
-cite = "crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:169"
+cite = "crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:190"
 holds = "for row in 0..k {"
 note = "DSA verify: latent write, indexer projections, store and selection one row per launch"

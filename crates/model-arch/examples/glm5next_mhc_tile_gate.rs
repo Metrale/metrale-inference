@@ -20,47 +20,19 @@
 //!   MHC_PACKET_DIR=/path/to/packets cargo run --release -p metrale-model-arch \
 //!     --features cuda,gpu-examples --example glm5next_mhc_tile_gate
 
+#[path = "common/glm5next_mhc_sites.rs"]
+mod sites;
+
 use anyhow::{Context, Result, bail, ensure};
-use half::bf16;
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
-use metrale_model_arch::glm5next_mhc::{Glm5NextMhcKernels, Glm5NextMhcSiteWeights};
+use metrale_model_arch::glm5next_mhc::Glm5NextMhcKernels;
 use metrale_model_arch::glm5next_mhc_tile::{HC_PRE_TILE_KERNEL, launch_tile};
 use metrale_model_arch::glm5next_mhc_tok::launch_tok;
+use sites::{H, HC, MIX, Rng, Site, all_sites, bf16b, f32b, read, up};
 
-const H: usize = 4096;
-const HC: usize = 4;
-const MIX: usize = (2 + HC) * HC;
 const TMAX: usize = 2736 + 3;
 const PAD: usize = 8;
-const LAYERS: [usize; 4] = [0, 3, 22, 44];
-
-struct Rng(u64);
-impl Rng {
-    fn unit(&mut self) -> f32 {
-        self.0 ^= self.0 << 13;
-        self.0 ^= self.0 >> 7;
-        self.0 ^= self.0 << 17;
-        (self.0 >> 40) as f32 / (1u64 << 23) as f32 - 1.0
-    }
-}
-
-fn up(gpu: &dyn GpuBackend, b: &[u8]) -> Result<DevicePtr> {
-    let p = gpu.alloc(b.len().max(16))?;
-    gpu.copy_h2d(b, p)?;
-    Ok(p)
-}
-
-fn f32b(v: &[f32]) -> Vec<u8> {
-    v.iter().flat_map(|x| x.to_le_bytes()).collect()
-}
-
-fn read(gpu: &dyn GpuBackend, p: DevicePtr, n: usize) -> Result<Vec<u8>> {
-    gpu.synchronize(0)?;
-    let mut b = vec![0u8; n];
-    gpu.copy_d2h(p, &mut b)?;
-    Ok(b)
-}
 
 /// 2026-10-15: One arm's outputs (y, normed, post, comb) and its `mix` scratch.
 struct Out([DevicePtr; 5]);
@@ -101,98 +73,6 @@ impl Out {
     }
 }
 
-/// 2026-10-15: One site's weights on the device: `hc_fn` (BF16 bytes), `hc_base`, `hc_scale`.
-struct Site {
-    name: String,
-    hc_fn: Vec<u8>,
-    hc_fn_d: DevicePtr,
-    hc_scale: DevicePtr,
-    hc_base: DevicePtr,
-}
-
-impl Site {
-    fn new(
-        gpu: &dyn GpuBackend,
-        name: String,
-        hc_fn: Vec<u8>,
-        base: &[f32],
-        scale: &[f32],
-    ) -> Result<Self> {
-        ensure!(hc_fn.len() == MIX * HC * H * 2 && base.len() == MIX && scale.len() == 3);
-        Ok(Self {
-            name,
-            hc_fn_d: up(gpu, &hc_fn)?,
-            hc_fn,
-            hc_scale: up(gpu, &f32b(scale))?,
-            hc_base: up(gpu, &f32b(base))?,
-        })
-    }
-    fn weights(&self, o: &Out) -> Glm5NextMhcSiteWeights {
-        Glm5NextMhcSiteWeights {
-            hc_fn: self.hc_fn_d,
-            hc_fn_bf16: true,
-            hc_scale: self.hc_scale,
-            hc_base: self.hc_base,
-            mix: o.0[4],
-            done: DevicePtr(0),
-        }
-    }
-}
-
-/// 2026-10-15: The checkpoint's two sites of `mhc_layer{L}.safetensors` (BF16 `fn`, F32 `base`
-/// and `scale`); a wrong dtype or shape is an error.
-fn packet_sites(gpu: &dyn GpuBackend, dir: &str, layer: usize) -> Result<Vec<Site>> {
-    let path = format!("{dir}/mhc_layer{layer}.safetensors");
-    let raw = std::fs::read(&path).with_context(|| format!("reading {path}"))?;
-    let n = u64::from_le_bytes(raw[..8].try_into()?) as usize;
-    let head: serde_json::Value = serde_json::from_slice(&raw[8..8 + n])?;
-    let tensor = |name: &str, dtype: &str, shape: &[u64]| -> Result<&[u8]> {
-        let t = &head[name];
-        ensure!(t["dtype"] == dtype, "{path} {name}: dtype {}", t["dtype"]);
-        ensure!(
-            t["shape"] == serde_json::json!(shape),
-            "{path} {name}: shape {}",
-            t["shape"]
-        );
-        let (a, b) = (
-            t["data_offsets"][0].as_u64().context("offset")? as usize,
-            t["data_offsets"][1].as_u64().context("offset")? as usize,
-        );
-        Ok(&raw[8 + n + a..8 + n + b])
-    };
-    let f32s = |b: &[u8]| -> Vec<f32> {
-        b.chunks_exact(4)
-            .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
-            .collect()
-    };
-    let mut out = Vec::new();
-    for s in ["attn", "ffn"] {
-        let hc_fn = tensor(
-            &format!("hc_{s}_fn"),
-            "BF16",
-            &[MIX as u64, (HC * H) as u64],
-        )?;
-        let base = f32s(tensor(&format!("hc_{s}_base"), "F32", &[MIX as u64])?);
-        let scale = f32s(tensor(&format!("hc_{s}_scale"), "F32", &[3])?);
-        out.push(Site::new(
-            gpu,
-            format!("layer {layer} {s}"),
-            hc_fn.to_vec(),
-            &base,
-            &scale,
-        )?);
-    }
-    Ok(out)
-}
-
-fn synthetic(gpu: &dyn GpuBackend, rng: &mut Rng, name: &str, w: f32) -> Result<Site> {
-    let hc_fn: Vec<u8> = (0..MIX * HC * H)
-        .flat_map(|_| bf16::from_f32(rng.unit() * w).to_le_bytes())
-        .collect();
-    let base: Vec<f32> = (0..MIX).map(|_| rng.unit() * 0.5).collect();
-    Site::new(gpu, name.to_string(), hc_fn, &base, &[0.7, 1.3, 0.9])
-}
-
 struct Bench<'a> {
     gpu: &'a dyn GpuBackend,
     k: &'a Glm5NextMhcKernels,
@@ -205,7 +85,7 @@ struct Bench<'a> {
 impl Bench<'_> {
     /// 2026-10-15: Tokens `r0..r0 + t` of the streams into rows `0..t` of `o`.
     fn run(&self, kernel: KernelHandle, site: &Site, o: &Out, r0: usize, t: usize) -> Result<()> {
-        let w = site.weights(o);
+        let w = site.weights(o.0[4]);
         let s = self.streams.offset(r0 * HC * H * 4);
         let outs = [o.0[0], o.0[2], o.0[3], o.0[1]];
         let (dims, eps) = ([H as u32, HC as u32, 20], [1e-5, 1e-6, 1e-5]);
@@ -277,17 +157,8 @@ fn main() -> Result<()> {
     );
     let mut rng = Rng(0x3c6e_f372_fe94_f82b);
     let norm: Vec<f32> = (0..H).map(|_| 1.0 + 0.2 * rng.unit()).collect();
-    let norm_w: Vec<u8> = norm
-        .iter()
-        .flat_map(|x| bf16::from_f32(*x).to_le_bytes())
-        .collect();
-    let mut sites = vec![
-        synthetic(&gpu, &mut rng, "synthetic w 0.05", 0.05)?,
-        synthetic(&gpu, &mut rng, "synthetic w 0.5", 0.5)?,
-    ];
-    for l in LAYERS {
-        sites.extend(packet_sites(&gpu, &dir, l)?);
-    }
+    let norm_w = bf16b(&norm);
+    let sites = all_sites(&gpu, &mut rng, &dir)?;
     let mut b = Bench {
         gpu: &gpu,
         k: &k,

@@ -88,62 +88,23 @@ __device__ __forceinline__ void glm_hcf_sinkhorn(
     if (lane < HC * HC) comb_out[(size_t)t * HC * HC + lane] = v;
 }
 
-// 2026-10-10: CG reads the streams through L2 (__ldcg), for a caller whose other blocks wrote
-// them in this launch (glm5next_hc_post_pre_norm); the values read are the same.
-// 2026-10-09: y and its RMS norm on warps 1..7 (u = threadIdx.x - 32). y[d] is
-// glm5next_hc_finish's collapse; the norm is rms_norm_vanilla over the BF16 y with
-// NT = min(H, 1024) virtual threads: virtual thread v sums pairs v, v + NT, .. of y as
-// `s += a * a + b * b`, each virtual warp of 32 runs the same butterfly on one real warp, and
-// the warp sums go through the same final butterfly, zeros past the last warp included.
-// 2026-10-15: `u` is the tail thread's index (0 .. GLM_HCF_TAIL_THREADS - 1) and BAR the named
-// barrier its GLM_HCF_TAIL_THREADS threads share; glm_hcf_collapse_norm below passes
-// threadIdx.x - 32 and barrier 1, as before. No value depends on either.
-template <int HC, bool CG, int BAR>
-__device__ __forceinline__ void glm_hcf_collapse_norm_at(
+// 2026-10-15: The RMS norm half of glm_hcf_collapse_norm_at below, moved out unchanged so a
+// caller that forms y itself (glm5next_mhc_post_tile.cu) runs the same norm: tail thread `u`
+// of the GLM_HCF_TAIL_THREADS threads on named barrier BAR, reading the BF16 y from `s_y`
+// after the caller's barrier published it.
+template <int BAR>
+__device__ __forceinline__ void glm_hcf_norm_at(
     const unsigned int u,
-    const float* __restrict__ x,
-    const float* s_pre,
     const __nv_bfloat16* __restrict__ norm_w,
-    __nv_bfloat16* __restrict__ y_out,
     __nv_bfloat16* __restrict__ normed_out,
-    __nv_bfloat16* s_y,
+    const __nv_bfloat16* s_y,
     float* s_ws,
     unsigned int H,
     float rms_eps
 ) {
     const unsigned int rw = u >> 5;
     const unsigned int lane = threadIdx.x & 31u;
-
-    float pre[HC];
-#pragma unroll
-    for (int i = 0; i < HC; ++i) pre[i] = s_pre[i];
-    // 2026-10-09: Four columns per thread and pass through 16-byte loads: one pass per
-    // GLM_HCF_TAIL_THREADS quads keeps the single tail block from waiting on one L2 round trip
-    // per column (measured 3.3 us scalar, 1.2 us here at H 4096). Each column's sum is still
-    // acc = 0 + pre[0] x[0] + .. + pre[HC-1] x[HC-1].
     const unsigned int nq = H / 4u;
-    const float4* x4 = reinterpret_cast<const float4*>(x);
-    for (unsigned int q = u; q < nq; q += GLM_HCF_TAIL_THREADS) {
-        float4 v[HC];
-#pragma unroll
-        for (int i = 0; i < HC; ++i) v[i] = CG ? __ldcg(&x4[i * nq + q]) : x4[i * nq + q];
-        float a0 = 0.f, a1 = 0.f, a2 = 0.f, a3 = 0.f;
-#pragma unroll
-        for (int i = 0; i < HC; ++i) {
-            a0 += pre[i] * v[i].x;
-            a1 += pre[i] * v[i].y;
-            a2 += pre[i] * v[i].z;
-            a3 += pre[i] * v[i].w;
-        }
-        const __nv_bfloat162 lo = __halves2bfloat162(__float2bfloat16(a0), __float2bfloat16(a1));
-        const __nv_bfloat162 hi = __halves2bfloat162(__float2bfloat16(a2), __float2bfloat16(a3));
-        reinterpret_cast<__nv_bfloat162*>(y_out)[2 * q] = lo;
-        reinterpret_cast<__nv_bfloat162*>(y_out)[2 * q + 1] = hi;
-        reinterpret_cast<__nv_bfloat162*>(s_y)[2 * q] = lo;
-        reinterpret_cast<__nv_bfloat162*>(s_y)[2 * q + 1] = hi;
-    }
-    glm_hcf_tail_bar_at<BAR>();
-
     const unsigned int nt = H < 1024u ? H : 1024u;
     const unsigned int nwv = nt / 32u;
     const unsigned int half = H / 2u;
@@ -184,6 +145,62 @@ __device__ __forceinline__ void glm_hcf_collapse_norm_at(
         pk.y = (unsigned int)o[2] | ((unsigned int)o[3] << 16);
         reinterpret_cast<uint2*>(normed_out)[q] = pk;
     }
+}
+
+// 2026-10-10: CG reads the streams through L2 (__ldcg), for a caller whose other blocks wrote
+// them in this launch (glm5next_hc_post_pre_norm); the values read are the same.
+// 2026-10-09: y and its RMS norm on warps 1..7 (u = threadIdx.x - 32). y[d] is
+// glm5next_hc_finish's collapse; the norm is rms_norm_vanilla over the BF16 y with
+// NT = min(H, 1024) virtual threads: virtual thread v sums pairs v, v + NT, .. of y as
+// `s += a * a + b * b`, each virtual warp of 32 runs the same butterfly on one real warp, and
+// the warp sums go through the same final butterfly, zeros past the last warp included.
+// 2026-10-15: `u` is the tail thread's index (0 .. GLM_HCF_TAIL_THREADS - 1) and BAR the named
+// barrier its GLM_HCF_TAIL_THREADS threads share; glm_hcf_collapse_norm below passes
+// threadIdx.x - 32 and barrier 1, as before. No value depends on either.
+template <int HC, bool CG, int BAR>
+__device__ __forceinline__ void glm_hcf_collapse_norm_at(
+    const unsigned int u,
+    const float* __restrict__ x,
+    const float* s_pre,
+    const __nv_bfloat16* __restrict__ norm_w,
+    __nv_bfloat16* __restrict__ y_out,
+    __nv_bfloat16* __restrict__ normed_out,
+    __nv_bfloat16* s_y,
+    float* s_ws,
+    unsigned int H,
+    float rms_eps
+) {
+
+    float pre[HC];
+#pragma unroll
+    for (int i = 0; i < HC; ++i) pre[i] = s_pre[i];
+    // 2026-10-09: Four columns per thread and pass through 16-byte loads: one pass per
+    // GLM_HCF_TAIL_THREADS quads keeps the single tail block from waiting on one L2 round trip
+    // per column (measured 3.3 us scalar, 1.2 us here at H 4096). Each column's sum is still
+    // acc = 0 + pre[0] x[0] + .. + pre[HC-1] x[HC-1].
+    const unsigned int nq = H / 4u;
+    const float4* x4 = reinterpret_cast<const float4*>(x);
+    for (unsigned int q = u; q < nq; q += GLM_HCF_TAIL_THREADS) {
+        float4 v[HC];
+#pragma unroll
+        for (int i = 0; i < HC; ++i) v[i] = CG ? __ldcg(&x4[i * nq + q]) : x4[i * nq + q];
+        float a0 = 0.f, a1 = 0.f, a2 = 0.f, a3 = 0.f;
+#pragma unroll
+        for (int i = 0; i < HC; ++i) {
+            a0 += pre[i] * v[i].x;
+            a1 += pre[i] * v[i].y;
+            a2 += pre[i] * v[i].z;
+            a3 += pre[i] * v[i].w;
+        }
+        const __nv_bfloat162 lo = __halves2bfloat162(__float2bfloat16(a0), __float2bfloat16(a1));
+        const __nv_bfloat162 hi = __halves2bfloat162(__float2bfloat16(a2), __float2bfloat16(a3));
+        reinterpret_cast<__nv_bfloat162*>(y_out)[2 * q] = lo;
+        reinterpret_cast<__nv_bfloat162*>(y_out)[2 * q + 1] = hi;
+        reinterpret_cast<__nv_bfloat162*>(s_y)[2 * q] = lo;
+        reinterpret_cast<__nv_bfloat162*>(s_y)[2 * q + 1] = hi;
+    }
+    glm_hcf_tail_bar_at<BAR>();
+    glm_hcf_norm_at<BAR>(u, norm_w, normed_out, s_y, s_ws, H, rms_eps);
 }
 
 template <int HC, bool CG = false>
