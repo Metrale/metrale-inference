@@ -212,6 +212,9 @@ pub fn build_moe(
     }
 
     let precision = precision(super::build_w4a4::experts_have_scales(&experts))?;
+    // 2026-10-16: `METRALE_GLM_WIDE_VERIFY_GRAPHS` refuses a plan it cannot capture, over the
+    // rows this site's workspace carries (the MTP drafter's never reach the grouped GEMM).
+    super::forward::check_graphs_at_load(&precision, max_rows)?;
     let act_scales = if precision.reaches(MlpKernel::W4a4Static, max_rows) {
         Some(super::build_w4a4::expert_act_scales(&experts)?)
     } else {

@@ -73,11 +73,6 @@ pub(super) fn group_precision(
         has_scales,
     )
     .with_context(|| format!("glm5_next layer {layer}"))?;
-    // 2026-10-16: `METRALE_GLM_WIDE_VERIFY_GRAPHS` refuses a routed plan it cannot capture.
-    if group == MlpGroup::RoutedExperts {
-        crate::glm5next_mlp::forward::check_graphs_at_load(&plan)
-            .with_context(|| format!("glm5_next layer {layer}"))?;
-    }
     Ok(plan)
 }
 

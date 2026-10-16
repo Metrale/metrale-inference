@@ -19,8 +19,8 @@
 //! - 2026-10-16: `METRALE_GLM_WIDE_VERIFY_GRAPHS=1` lifts a batched verify's captured-row limit
 //!   from below the grouped floor to [`WIDE_SWEEP_MAX_ROWS`] ([`captured_batched_rows`]): the
 //!   wide sweep makes 17..=32 decode rows host-read free. It needs the wide sweep and a routed
-//!   plan that runs W4A4 from the floor to 32 rows, else the load is refused
-//!   ([`check_graphs_at_load`]). Off, every limit is the one before the lever.
+//!   plan that runs W4A4 from the floor to 32 rows (or to the rows its workspace carries), else
+//!   the load is refused ([`check_graphs_at_load`]). Off, every limit is the one before the lever.
 
 use anyhow::Result;
 use metrale_model_layers::layers::ops::DenseCallSite;
@@ -190,20 +190,27 @@ pub(crate) fn check_graphs(graphs: bool, wide: bool, w4a4_through: bool) -> Resu
 }
 
 /// 2026-10-16: Whether `plan` runs the W4A4 kernels at every row count from `grouped_floor` to
-/// [`WIDE_SWEEP_MAX_ROWS`] (vacuously true when the floor is past it). Pure.
-pub(crate) fn w4a4_through_wide(plan: &GroupPrecision, grouped_floor: usize) -> bool {
-    (grouped_floor..=WIDE_SWEEP_MAX_ROWS).all(|r| plan.kernel(r) == MlpKernel::W4a4Static)
+/// [`WIDE_SWEEP_MAX_ROWS`] that the site's `max_rows`-row workspace can carry (vacuously true
+/// when the floor is past either: the MTP drafter's site, built for `drafter_block_rows` <= 16
+/// rows, never reaches the grouped GEMM). Pure.
+pub(crate) fn w4a4_through_wide(
+    plan: &GroupPrecision,
+    grouped_floor: usize,
+    max_rows: usize,
+) -> bool {
+    (grouped_floor..=WIDE_SWEEP_MAX_ROWS.min(max_rows))
+        .all(|r| plan.kernel(r) == MlpKernel::W4a4Static)
 }
 
-/// 2026-10-16: The load-time refusal of `METRALE_GLM_WIDE_VERIFY_GRAPHS`, from the routed
-/// experts' resolved plan, and its readback line when it runs.
-pub fn check_graphs_at_load(plan: &GroupPrecision) -> Result<()> {
+/// 2026-10-16: The load-time refusal of `METRALE_GLM_WIDE_VERIFY_GRAPHS`, from a routed site's
+/// resolved plan and the rows its workspace is built for, and its readback line when it runs.
+pub fn check_graphs_at_load(plan: &GroupPrecision, max_rows: usize) -> Result<()> {
     let graphs = wide_verify_graphs()?;
     let floor = super::grouped_row_floor();
     check_graphs(
         graphs,
         moe_w4a4_wide_sweep()?,
-        w4a4_through_wide(plan, floor),
+        w4a4_through_wide(plan, floor, max_rows),
     )
     .map_err(anyhow::Error::msg)?;
     static SAID: std::sync::Once = std::sync::Once::new();

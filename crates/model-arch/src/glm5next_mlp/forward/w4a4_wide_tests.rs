@@ -305,13 +305,56 @@ fn the_graphs_lever_needs_the_wide_sweep_and_w4a4_through_32_rows() {
 
 /// 2026-10-16: The W4A4 cap of a plain load (16 rows) leaves 17..=32 rows on W4A16, so the
 /// lever is refused there; the grouped load's cap covers them; a floor past 32 asks nothing.
+/// The text stack's sites carry `PREFILL_ROWS` rows and more, so 32 bounds them.
 #[test]
 fn w4a4_through_wide_reads_the_routed_plan() {
+    let text = crate::glm5next_layer::PREFILL_ROWS;
     let plain = routed_plan(MOE_W4A4_MAX_ROWS);
     assert_eq!(plain.kernel(17), MlpKernel::W4a16);
-    assert!(!w4a4_through_wide(&plain, 17));
-    assert!(!w4a4_through_wide(&routed_plan(31), 17));
-    assert!(w4a4_through_wide(&routed_plan(WIDE_SWEEP_MAX_ROWS), 17));
-    assert!(w4a4_through_wide(&routed_plan(8208), 17));
-    assert!(w4a4_through_wide(&plain, WIDE_SWEEP_MAX_ROWS + 1));
+    assert!(!w4a4_through_wide(&plain, 17, text));
+    assert!(!w4a4_through_wide(&routed_plan(31), 17, text));
+    assert!(w4a4_through_wide(
+        &routed_plan(WIDE_SWEEP_MAX_ROWS),
+        17,
+        text
+    ));
+    assert!(w4a4_through_wide(&routed_plan(8208), 17, text));
+    assert!(w4a4_through_wide(&plain, WIDE_SWEEP_MAX_ROWS + 1, text));
+}
+
+/// 2026-10-16: The MTP drafter's routed site (layer 45): its checkpoint stamp is 16-bit, so the
+/// plan is W4A16 at every row and the text-stack check refuses it, which disabled MTP on a
+/// served load. Its workspace carries `drafter_block_rows` (1, or `PROPOSE_BATCH_MAX` = 16)
+/// rows, below the grouped floor, so its plan passes; one row more than the floor would not.
+#[test]
+fn the_drafter_site_passes_below_the_grouped_floor_and_text_rows_do_not() {
+    let ladder = metrale_config::ActivationQuantization::parse("declared")
+        .expect("flag parses")
+        .ladder(metrale_config::ProjFamily::Moe)
+        .clone();
+    let drafter = GroupPrecision::resolve(
+        MlpGroup::RoutedExperts,
+        ladder,
+        metrale_config::Nvfp4Act::Wide,
+        MOE_W4A4_MAX_ROWS,
+        true,
+    )
+    .expect("resolves");
+    assert!((1..=4096).all(|r| drafter.kernel(r) == MlpKernel::W4a16));
+    let propose_max = crate::glm5next_mtp_head::PROPOSE_BATCH_MAX;
+    assert!(propose_max < 17);
+    for rows in [1, propose_max] {
+        assert!(w4a4_through_wide(&drafter, 17, rows), "{rows} rows");
+        assert_eq!(
+            check_graphs(true, true, w4a4_through_wide(&drafter, 17, rows)),
+            Ok(())
+        );
+    }
+    assert!(!w4a4_through_wide(&drafter, 17, 17));
+    assert!(!w4a4_through_wide(
+        &drafter,
+        17,
+        crate::glm5next_layer::PREFILL_ROWS
+    ));
+    assert!(check_graphs(true, true, w4a4_through_wide(&drafter, 17, 32)).is_err());
 }
