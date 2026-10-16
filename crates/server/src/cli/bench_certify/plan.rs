@@ -42,6 +42,10 @@ pub struct Unit {
     /// 2026-09-26: The class's `serve_allowance_s` (`HARDWARE.toml`
     /// `[benchmarks.limits.timing]`), which `deadline` adds.
     pub serve_allowance_s: u64,
+    /// 2026-10-15: The boxes this unit holds while it runs: 1, or the `min_nodes` of the
+    /// recipe its gate serves (`span::hold`). A wider unit runs once, on one node, with
+    /// the others held for it (`remote::gang`).
+    pub nodes: usize,
 }
 
 impl Unit {
@@ -195,6 +199,7 @@ pub fn units(
                 estimate,
                 needs_confirmation: d.needs_confirmation,
                 serve_allowance_s: timing.serve_allowance_s,
+                nodes: 1,
             });
         }
     }

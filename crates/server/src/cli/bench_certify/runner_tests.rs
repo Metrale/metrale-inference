@@ -18,6 +18,7 @@ fn plain() -> Unit {
         estimate: Estimate::Declared(180),
         needs_confirmation: false,
         serve_allowance_s: 600,
+        nodes: 1,
     }
 }
 
@@ -30,6 +31,7 @@ fn shard() -> Unit {
         estimate: Estimate::Declared(1500),
         needs_confirmation: false,
         serve_allowance_s: 600,
+        nodes: 1,
     }
 }
 

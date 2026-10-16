@@ -22,6 +22,7 @@ use metrale_bench::hardware::equivalence::{EquivalencePolicy, equivalent};
 use metrale_bench::hardware::policy::Sensitivity;
 
 use super::super::plan::Unit;
+use super::gang::{self, Slot, Take};
 use super::node::{Node, Rejection};
 
 /// 2026-09-26: Where Speed-class units may go.
@@ -174,7 +175,12 @@ pub fn bundle_on_reference(mode: SpeedMode, pin: &EnergyPin) -> SpeedMode {
 
 /// 2026-10-04: Whether `node` may run `unit`. Under a pin, a Speed-class or
 /// energy-bounded unit runs on the reference only; otherwise the Speed rule.
-fn may_run(unit: &Unit, node: usize, mode: &SpeedMode, energy: Option<&EnergyPin>) -> bool {
+pub(super) fn may_run(
+    unit: &Unit,
+    node: usize,
+    mode: &SpeedMode,
+    energy: Option<&EnergyPin>,
+) -> bool {
     match energy {
         Some(pin) if unit.class == Sensitivity::Speed || pin.gates.contains(unit.id) => {
             pin.node == node
@@ -204,6 +210,8 @@ pub fn next_for(
     };
     (0..units.len())
         .filter(|&i| pending[i])
+        // 2026-10-15: A multi-node unit is placed by `gang::take`, never as one box.
+        .filter(|&i| units[i].nodes <= 1)
         .filter(|&i| may_run(&units[i], node, mode, energy))
         .min_by_key(|&i| {
             let crowded = units[i].group.is_some_and(hosts_shard_of);
@@ -225,6 +233,10 @@ pub struct Plan {
 
 /// 2026-09-26: Simulate list scheduling. `build_allowance` is added once to a node that
 /// does not have the anchor built.
+///
+/// 2026-10-15: Steps are [`gang::take`], as in the run: a multi-node unit starts when
+/// its head and peers are all free, is queued on the head, and ends every held node's
+/// time together; a waiting node idles until the next busy node frees.
 pub fn simulate(
     units: &[Unit],
     nodes: &[Node],
@@ -236,30 +248,54 @@ pub fn simulate(
     let mut pending = vec![true; units.len()];
     let mut placed = vec![None; units.len()];
     let mut queues = vec![Vec::new(); n];
-    let mut free_at: Vec<u64> = nodes
+    // 2026-10-15: `clock` is when a node may next act; `finish_at` when its last unit
+    // (run or held) ends, so a wait that leads nowhere does not count as work.
+    let mut finish_at: Vec<u64> = nodes
         .iter()
         .map(|nd| if nd.built { 0 } else { build_allowance })
         .collect();
+    let mut clock = finish_at.clone();
     let mut idle = vec![false; n];
     while pending.iter().any(|p| *p) {
         // 2026-09-26: The earliest-free node that can still take something.
-        let Some(node) = (0..n).filter(|&k| !idle[k]).min_by_key(|&k| free_at[k]) else {
+        let Some(node) = (0..n).filter(|&k| !idle[k]).min_by_key(|&k| clock[k]) else {
             break;
         };
-        match next_for(node, units, &pending, &placed, mode, energy) {
-            Some(i) => {
-                pending[i] = false;
-                placed[i] = Some(node);
-                queues[node].push(i);
-                free_at[node] += units[i].secs();
+        let now = clock[node];
+        let slots: Vec<Slot> = (0..n)
+            .map(|k| {
+                if clock[k] <= now {
+                    Slot::Idle
+                } else {
+                    Slot::Busy
+                }
+            })
+            .collect();
+        match gang::take(node, units, &pending, &placed, mode, energy, &slots) {
+            Some(Take::Run { unit, peers }) => {
+                pending[unit] = false;
+                placed[unit] = Some(node);
+                queues[node].push(unit);
+                let end = now + units[unit].secs();
+                // 2026-10-15: A held peer that had found nothing to wait for looks again
+                // when the unit ends.
+                for k in peers.into_iter().chain([node]) {
+                    clock[k] = end;
+                    finish_at[k] = end;
+                    idle[k] = false;
+                }
             }
+            Some(Take::Wait) => match (0..n).map(|k| clock[k]).filter(|&t| t > now).min() {
+                Some(next) => clock[node] = next,
+                None => idle[node] = true,
+            },
             None => idle[node] = true,
         }
     }
-    let makespan_secs = free_at.iter().copied().max().unwrap_or(0);
+    let makespan_secs = finish_at.iter().copied().max().unwrap_or(0);
     Plan {
         queues,
-        finish_at: free_at,
+        finish_at,
         makespan_secs,
     }
 }

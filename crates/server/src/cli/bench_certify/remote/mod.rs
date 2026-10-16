@@ -14,6 +14,7 @@
 //!
 //! Invariants: none beyond the types.
 
+pub mod gang;
 pub mod metralectl;
 pub mod node;
 pub mod place;
@@ -179,6 +180,10 @@ pub fn local_signer(metrale_home: &std::path::Path) -> Result<String> {
 struct Board {
     campaign: Campaign,
     placed: Vec<Option<usize>>,
+    /// 2026-10-15: Per node, as `gang::take` sees it.
+    slots: Vec<gang::Slot>,
+    /// 2026-10-15: Per unit, the peers held for it while it runs.
+    held: Vec<Vec<usize>>,
 }
 
 /// 2026-09-26: Run the campaign across the fleet. Returns when every worker has
@@ -196,6 +201,8 @@ pub fn drive(
     let board = Arc::new(Mutex::new(Board {
         campaign,
         placed: vec![None; n],
+        slots: vec![gang::Slot::Idle; fleet.nodes.len()],
+        held: vec![Vec::new(); n],
     }));
     let mode = fleet.mode.clone();
     let energy = fleet.energy.as_ref();
@@ -278,8 +285,22 @@ pub fn drive(
 /// them, after which a node's worker returns.
 pub const STRIKES_TO_RETIRE: u32 = 2;
 
-/// 2026-09-26: One node's loop: take the next eligible unit, run it, report, repeat.
+/// 2026-10-15: [`work`], then the node is `Gone`: no wide unit waits for it any more.
 fn worker(
+    k: usize,
+    node: &Node,
+    runner: &mut dyn GateRunner,
+    board: &Mutex<Board>,
+    mode: &SpeedMode,
+    energy: Option<&EnergyPin>,
+    shared: &Shared,
+) {
+    work(k, node, runner, board, mode, energy, shared);
+    board.lock().unwrap_or_else(|p| p.into_inner()).slots[k] = gang::Slot::Gone;
+}
+
+/// 2026-09-26: One node's loop: take the next eligible unit, run it, report, repeat.
+fn work(
     k: usize,
     node: &Node,
     runner: &mut dyn GateRunner,
@@ -322,18 +343,39 @@ fn worker(
             if b.campaign.stopped() {
                 return;
             }
+            // 2026-10-15: Held as a peer of a multi-node unit: take nothing until it ends.
+            if b.slots[k] == gang::Slot::Busy {
+                drop(b);
+                std::thread::sleep(Duration::from_secs(2));
+                continue;
+            }
             let pending: Vec<bool> = b
                 .campaign
                 .phase
                 .iter()
                 .map(|p| *p == Phase::Pending)
                 .collect();
-            match schedule::next_for(k, &b.campaign.units, &pending, &b.placed, mode, energy) {
-                Some(i) => {
+            let step = gang::take(
+                k,
+                &b.campaign.units,
+                &pending,
+                &b.placed,
+                mode,
+                energy,
+                &b.slots,
+            );
+            match step {
+                Some(gang::Take::Run { unit: i, peers }) => {
                     b.campaign.start(i);
                     b.placed[i] = Some(k);
+                    for p in peers.iter().copied().chain([k]) {
+                        b.slots[p] = gang::Slot::Busy;
+                    }
+                    b.held[i] = peers;
                     Some((i, b.campaign.units[i].clone()))
                 }
+                // 2026-10-15: A multi-node unit is waiting for boxes; this one stays free.
+                Some(gang::Take::Wait) => None,
                 None => {
                     // 2026-09-26: Nothing this node may take. If something is still
                     // running it may come back as a retry, so wait; if nothing is,
@@ -350,7 +392,7 @@ fn worker(
             std::thread::sleep(Duration::from_secs(2));
             continue;
         };
-        let outcome = run_one(node, runner, board, shared, &unit, i);
+        let outcome = run_one(k, node, runner, board, shared, &unit, i);
         match outcome {
             RunOutcome::Harness {
                 retryable: true, ..
@@ -371,6 +413,7 @@ fn worker(
 }
 
 fn run_one(
+    k: usize,
     node: &Node,
     runner: &mut dyn GateRunner,
     board: &Mutex<Board>,
@@ -410,7 +453,7 @@ fn run_one(
             eprintln!("  {}@{} {}", unit.label(), node.addr, line.trim_end());
         }
     };
-    let outcome = runner.run(unit, &ctx, &mut on_line);
+    let outcome = gang::unlaunchable(unit).unwrap_or_else(|| runner.run(unit, &ctx, &mut on_line));
     let elapsed = started.elapsed().as_secs();
     emit.event(
         "done",
@@ -425,6 +468,8 @@ fn run_one(
     ));
     let mut b = board.lock().unwrap_or_else(|p| p.into_inner());
     let retry = b.campaign.finished(i, outcome.clone());
+    let peers = std::mem::take(&mut b.held[i]);
+    gang::release(&mut b.slots, k, peers);
     if retry {
         // 2026-09-26: Pending again, with no node recorded, so any node may take
         // it, this one included.

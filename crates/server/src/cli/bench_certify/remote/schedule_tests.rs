@@ -36,6 +36,7 @@ fn shard_unit(
         estimate: Estimate::Declared(secs),
         needs_confirmation: false,
         serve_allowance_s: 600,
+        nodes: 1,
     }
 }
 

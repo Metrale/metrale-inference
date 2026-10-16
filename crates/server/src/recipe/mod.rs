@@ -34,6 +34,11 @@ pub struct Recipe {
     /// `min_nodes: 2` here, so a launcher reading only `defaults` builds a config
     /// the validator rejects with "--ep-size 2 exceeds --world-size 1".
     pub min_nodes: usize,
+    /// 2026-10-15: The top-level `max_nodes` key, `None` when absent. The recipe renders
+    /// `min_nodes` as the world size (`argv`), so this only bounds it: a recipe whose
+    /// `max_nodes` is below its `min_nodes` is refused at parse. `met bench certify`
+    /// holds `min_nodes` boxes for a unit served from it (`bench_certify::span`).
+    pub max_nodes: Option<usize>,
     pub description: String,
     pub maintainer: String,
     pub category: String,
@@ -64,7 +69,8 @@ impl Recipe {
     /// # Errors
     /// YAML the reader refuses; a missing `recipe_version`, `model` or `container`;
     /// a `defaults:` or `env:` that is not a mapping of scalars (`defaults:` is
-    /// required); a `min_nodes` that is not a number.
+    /// required); a `min_nodes` that is not a number or is zero; a `max_nodes` that is not a
+    /// number or is below `min_nodes`.
     pub fn parse(id: impl Into<String>, text: &str) -> Result<Self> {
         let id = id.into();
         let doc = yaml::parse(text).with_context(|| format!("reading recipe {id}"))?;
@@ -118,6 +124,19 @@ impl Recipe {
                 .with_context(|| format!("{id}: min_nodes {n:?} is not a number"))?,
             None => 1,
         };
+        if min_nodes == 0 {
+            bail!("{id}: min_nodes is 0; a recipe is served on at least one node");
+        }
+        let max_nodes = match scalar("max_nodes") {
+            Some(n) => Some(
+                n.parse::<usize>()
+                    .with_context(|| format!("{id}: max_nodes {n:?} is not a number"))?,
+            ),
+            None => None,
+        };
+        if let Some(max) = max_nodes.filter(|max| *max < min_nodes) {
+            bail!("{id}: max_nodes {max} is below min_nodes {min_nodes}");
+        }
 
         Ok(Self {
             version: required("recipe_version")?,
@@ -125,6 +144,7 @@ impl Recipe {
             runtime: scalar("runtime"),
             container: required("container")?,
             min_nodes,
+            max_nodes,
             // 2026-09-26: Version 1 recipes carry a top-level `description`; version 2
             // puts it under `metadata`.
             description: match meta_str("description") {
