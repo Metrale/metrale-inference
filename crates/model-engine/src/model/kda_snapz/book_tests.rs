@@ -73,10 +73,10 @@ fn run(seed: u64, ops: usize, driver: Driver) -> Vec<u64> {
                     if driver != Driver::SkipBeginFlush {
                         land(&mut dev, b.flush);
                     }
-                    if let Some(t) = b.upload {
-                        if driver != Driver::DropFlags {
-                            dev.flags = t;
-                        }
+                    if let Some(t) = b.upload
+                        && driver != Driver::DropFlags
+                    {
+                        dev.flags = t;
                     }
                 }
                 let ok = rng.below(8) != 0;
