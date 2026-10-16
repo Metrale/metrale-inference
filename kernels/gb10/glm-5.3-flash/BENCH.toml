@@ -604,6 +604,8 @@ checkpoint = "nvidia/GLM-5.3-Flash-NVFP4"
 gate = "concurrency-sweep-glm"
 label = "GLM-5.3-Flash decode ladder, 64k context"
 default = true
+# 2026-10-16: When the first measured ladder cuts the floors, add cache_cold_cells max = 0 in the same
+# edit (the metric comes from the cache-cold PR, which must be on main first).
 status = "unmeasured"
 note = """\
 The decode ladder on GLM-5.3-Flash: aggregate tok/s at C=1, 2, 4, 8, 12 and 16 on the \
