@@ -168,7 +168,7 @@ pub(crate) fn layer_rows(
         kernels: Glm5NextDsaLayerKernels::resolve(gpu)?,
         select_kernels: Glm5NextDsaKernels::resolve(gpu)?,
         decode_kernel: Glm5NextDsaDecodeKernel::resolve(gpu)?,
-        workspace: Glm5NextDsaWorkspace::new(gpu, cfg, rows)?,
+        workspace: Glm5NextDsaWorkspace::new(gpu, cfg, rows)?.into(),
         layer_idx: 1,
         attn_layer_idx: 0,
         rms_eps: 1e-6,
