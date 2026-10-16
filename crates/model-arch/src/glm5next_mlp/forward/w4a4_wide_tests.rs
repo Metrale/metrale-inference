@@ -236,6 +236,11 @@ fn a_k64_slice_runs_the_k64_wide_twins() {
     }
 }
 
+/// 2026-10-16: The rows a text-stack site's workspace carries on a served load (the loader's
+/// `verify_k`, here `METRALE_GLM_PREFILL_ROWS=8208`). Any value past `WIDE_SWEEP_MAX_ROWS` bounds
+/// the check by 32; with every lever at its default `verify_k` is 16 and no wider call reaches it.
+const SERVED_TEXT_ROWS: usize = 8208;
+
 /// 2026-10-16: A routed-experts plan under `--activation-quantization declared` on an A4-stamped
 /// checkpoint whose W4A4 kernels serve up to `cap` rows.
 fn routed_plan(cap: usize) -> GroupPrecision {
@@ -305,13 +310,16 @@ fn the_graphs_lever_needs_the_wide_sweep_and_w4a4_through_32_rows() {
 
 /// 2026-10-16: The W4A4 cap of a plain load (16 rows) leaves 17..=32 rows on W4A16, so the
 /// lever is refused there; the grouped load's cap covers them; a floor past 32 asks nothing.
-/// The text stack's sites carry `PREFILL_ROWS` rows and more, so 32 bounds them.
+/// A served text site carries more than 32 rows, so 32 bounds it; a site whose workspace stops
+/// at 16 rows never runs 17 (batched groups are cut to it), so it asks nothing.
 #[test]
 fn w4a4_through_wide_reads_the_routed_plan() {
-    let text = crate::glm5next_layer::PREFILL_ROWS;
+    let text = SERVED_TEXT_ROWS;
     let plain = routed_plan(MOE_W4A4_MAX_ROWS);
     assert_eq!(plain.kernel(17), MlpKernel::W4a16);
     assert!(!w4a4_through_wide(&plain, 17, text));
+    assert!(!w4a4_through_wide(&plain, 17, WIDE_SWEEP_MAX_ROWS + 1));
+    assert!(w4a4_through_wide(&plain, 17, MOE_W4A4_MAX_ROWS));
     assert!(!w4a4_through_wide(&routed_plan(31), 17, text));
     assert!(w4a4_through_wide(
         &routed_plan(WIDE_SWEEP_MAX_ROWS),
@@ -351,10 +359,6 @@ fn the_drafter_site_passes_below_the_grouped_floor_and_text_rows_do_not() {
         );
     }
     assert!(!w4a4_through_wide(&drafter, 17, 17));
-    assert!(!w4a4_through_wide(
-        &drafter,
-        17,
-        crate::glm5next_layer::PREFILL_ROWS
-    ));
+    assert!(!w4a4_through_wide(&drafter, 17, SERVED_TEXT_ROWS));
     assert!(check_graphs(true, true, w4a4_through_wide(&drafter, 17, 32)).is_err());
 }
