@@ -385,6 +385,7 @@ pub fn forward_moe_at(
     // 2026-10-15: Past 16 rows only the batched decode body may keep the sweep (`w4a4_wide`).
     let wide = w4a4.is_some() && w4a4_wide::wide_at(call_site)?;
     let grouped_w4a4 = w4a4.is_some() && w4a4_wide::takes_grouped_at(rows, wide);
+    announce::announce_wide_sweep(wide && !grouped_w4a4, rows);
     let sorted_out = grouped_prefill || grouped_w4a4;
     let batched = path == route::ExpertRoute::RowBatched;
     if w4a4.is_none() {

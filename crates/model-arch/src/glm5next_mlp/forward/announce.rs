@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-15: The once-per-row-count log lines of the routed W4A16 paths, moved verbatim out of
-//! `forward.rs` (which keeps the dispatch) to hold that file under 500 lines.
+//! `forward.rs` (which keeps the dispatch) to hold that file under 500 lines. 2026-10-16: also the
+//! wide sweep's readback.
 //!
 //! Owner: model-arch (GLM-5.3).
 //! Invariants: logging only; no launch depends on these.
@@ -52,6 +53,25 @@ pub(super) fn announce_grouped_prefill(on: bool, rows: usize) {
         tracing::info!(
             "GLM MoE prefill: row-batched GEMV, {rows} rows split into \
              {MOE_ROW_BATCH_MAX_ROWS}-row sweeps"
+        );
+    }
+}
+
+/// 2026-10-16: Log once per row count the routed W4A4 launches past
+/// [`MOE_W4A4_MAX_ROWS`](crate::glm5next_mlp::MOE_W4A4_MAX_ROWS) that `on` (the wide sweep lever
+/// at the batched decode site, the launch not grouped) puts on the wide union sweep: the
+/// lever's readback.
+pub(super) fn announce_wide_sweep(on: bool, rows: usize) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEEN: AtomicU64 = AtomicU64::new(0);
+    if !on || rows <= crate::glm5next_mlp::MOE_W4A4_MAX_ROWS {
+        return;
+    }
+    let bit = 1u64 << rows.min(63);
+    if SEEN.fetch_or(bit, Ordering::Relaxed) & bit == 0 {
+        tracing::info!(
+            "GLM MoE: METRALE_GLM_MOE_W4A4_WIDE_SWEEP=1 -- {rows}-row batched decode routed \
+             launch on the wide union sweep"
         );
     }
 }
