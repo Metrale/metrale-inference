@@ -26,6 +26,10 @@ pub enum Kind {
     Append,
     /// One occurrence taking exactly two file paths.
     FilePair,
+    /// Repeatable, each occurrence one `ROWS=PATH`: a whole number of rows
+    /// and a path to one file (recorded as the rows and the file's digest
+    /// and base name).
+    RowsFile,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -74,7 +78,29 @@ fn is_number(s: &str) -> bool {
     s.parse::<f64>().is_ok()
 }
 
+/// `ROWS=PATH` split at the first `=`: rows a whole number of at least 1,
+/// path non-empty.
+pub fn rows_file(v: &str) -> Result<(u64, &str)> {
+    match v.split_once('=') {
+        Some((rows, path)) if !path.is_empty() => match rows.parse::<u64>() {
+            Ok(r) if r >= 1 => Ok((r, path)),
+            _ => fail!(
+                "{}: ROWS must be a whole number of rows, at least 1, got {}",
+                quote(v),
+                quote(rows)
+            ),
+        },
+        _ => fail!("{}: expected ROWS=PATH", quote(v)),
+    }
+}
+
 fn check(opt: &Opt, v: &str) -> Result<()> {
+    if opt.kind == Kind::RowsFile {
+        if let Err(e) = rows_file(v) {
+            fail!("argument --{}: {}", opt.name, e.0);
+        }
+        return Ok(());
+    }
     let ok = match opt.kind {
         Kind::Int => v.parse::<i64>().is_ok(),
         Kind::Float => v.parse::<f64>().is_ok(),
@@ -90,7 +116,7 @@ fn check(opt: &Opt, v: &str) -> Result<()> {
             }
             true
         }
-        Kind::Str | Kind::File | Kind::Dir | Kind::Append | Kind::FilePair => true,
+        Kind::Str | Kind::File | Kind::Dir | Kind::Append | Kind::FilePair | Kind::RowsFile => true,
     };
     if !ok {
         let what = if opt.kind == Kind::Int {
@@ -144,6 +170,8 @@ pub fn help(spec: &Spec) -> String {
     for o in spec.opts {
         let tail = match o.kind {
             Kind::Append => " (repeatable)",
+            Kind::RowsFile if o.required => " (repeatable, required)",
+            Kind::RowsFile => " (repeatable)",
             _ if o.required => " (required)",
             _ => "",
         };
@@ -226,7 +254,7 @@ pub fn parse(spec: &Spec, tokens: &[String], json: &mut bool) -> Result<Parsed> 
         a.items.push(Item::Opt(opt.name));
         a.items
             .extend(values.iter().map(|v| Item::Val(opt.kind, v.clone())));
-        if opt.kind == Kind::Append {
+        if matches!(opt.kind, Kind::Append | Kind::RowsFile) {
             a.vals.entry(opt.name).or_default().extend(values);
         } else {
             a.vals.insert(opt.name, values);
@@ -320,5 +348,10 @@ impl Args {
     /// Every value of a repeatable or two-value option (empty when absent).
     pub fn list(&self, name: &str) -> &[String] {
         self.vals.get(name).map(Vec::as_slice).unwrap_or(&[])
+    }
+
+    /// Every `ROWS=PATH` value of a repeatable option, as given.
+    pub fn rows_files(&self, name: &str) -> Result<Vec<(u64, &str)>> {
+        self.list(name).iter().map(|v| rows_file(v)).collect()
     }
 }

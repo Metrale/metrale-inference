@@ -14,6 +14,7 @@ pub mod provenance;
 pub mod report;
 pub mod repr;
 pub mod segment;
+pub mod slope;
 pub mod spec;
 pub mod stats;
 pub mod tables;

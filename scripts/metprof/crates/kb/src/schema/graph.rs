@@ -142,6 +142,10 @@ pub struct KernelSample {
     pub variants: Vec<Variant>,
     /// Pre-order position among the run's samples.
     pub ord: u64,
+    /// The node's per-row cost across widths (a `slope` run's tree only),
+    /// verbatim.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slope: Option<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
