@@ -195,6 +195,15 @@ impl Glm5NextDsaLayer {
                 && self.paged_rows_ready(k)
         });
         if let Some(m) = span_meta {
+            // 2026-10-16: Once per process: the serve log's proof that the lever reached the span
+            // path, not only that the variable was set.
+            static DISPATCHED: std::sync::Once = std::sync::Once::new();
+            DISPATCHED.call_once(|| {
+                tracing::warn!(
+                    "METRALE_GLM_DSA_SPAN_SELECT: span select dispatched (rank-local, first call) \
+                     at {k} rows"
+                );
+            });
             st.ensure_room(k)?;
             self.write_latent_rows(gpu, 0, k, kv_cache, m.slot, stream)?;
         }

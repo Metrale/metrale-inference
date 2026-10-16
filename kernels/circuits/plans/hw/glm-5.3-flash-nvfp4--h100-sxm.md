@@ -81,9 +81,9 @@ Plan groups that loop once per row, and the engine's layer loops per sequence (`
 
 | run | layer kind | added (ms) | share | sites | rules |
 |---|---|---:|---:|---|---|
-| multi_seq n=16 | deepseek_sparse_attention | 0.103 | 0.4% | dsa.idx_gate, dsa.idx_k, dsa.idx_k_norm, dsa.pool, dsa.select | legacy crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:301 |
+| multi_seq n=16 | deepseek_sparse_attention | 0.103 | 0.4% | dsa.idx_gate, dsa.idx_k, dsa.idx_k_norm, dsa.pool, dsa.select | legacy crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:311 |
 | multi_seq n=16 | linear_attention | 0.000 | 0.0% | kda.conv_ckpt, kda.l2, kda.short_conv | legacy crates/model-arch/src/glm5next_kda/rows.rs:134 |
-| multi_seq n=128 | deepseek_sparse_attention | 0.875 | 1.3% | dsa.idx_gate, dsa.idx_k, dsa.idx_k_norm, dsa.pool, dsa.select | legacy crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:301 |
+| multi_seq n=128 | deepseek_sparse_attention | 0.875 | 1.3% | dsa.idx_gate, dsa.idx_k, dsa.idx_k_norm, dsa.pool, dsa.select | legacy crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:311 |
 | multi_seq n=128 | linear_attention | 0.000 | 0.0% | kda.conv_ckpt, kda.l2, kda.short_conv | legacy crates/model-arch/src/glm5next_kda/rows.rs:134 |
 
 ## Fused plan: decode n=1

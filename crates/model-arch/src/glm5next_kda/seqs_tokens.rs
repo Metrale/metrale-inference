@@ -94,12 +94,23 @@ impl Glm5NextKdaLayer {
         if !self.seqs_tokens_ready() {
             bail!("KDA seqs verify: the seqs kernels cannot run here");
         }
+        // 2026-10-16: Once per process: the serve log's proof that the lever reached the seqs
+        // kernels, not only that the variable was set.
+        static DISPATCHED: std::sync::Once = std::sync::Once::new();
+        DISPATCHED.call_once(|| {
+            tracing::warn!(
+                "METRALE_GLM_KDA_SEQS_TOKENS: multi-sequence KDA verify dispatched (rank-local, \
+                 first call): {} runs, {total} rows",
+                runs.len()
+            );
+        });
         self.rows_with(
             gpu,
             hidden,
             total,
             ws,
             Pack::InFrontEnd,
+            GateAt::Kernel,
             stream,
             |_| Ok(()),
             || self.seqs_chunks(gpu, runs, ws, stream),
