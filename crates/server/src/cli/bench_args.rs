@@ -114,6 +114,27 @@ pub enum BenchmarkCommand {
     /// GPU-free. It refuses runs that were not measured alike, a vacuous width, and a grid
     /// the serve would not load.
     SpecCostTable(SpecCostTableArgs),
+    /// A named battle: each cell's newest record against the reference figure its
+    /// BENCH.toml entry declares (`targets`), beside the cell's own regression bound.
+    ///
+    /// GPU-free. A battle is a scoreboard: no gate reads it, and a cell can pass its
+    /// bound and still lose. The battles are in `bench/battles.toml`. Exit code 0 only
+    /// when there is a cell and every cell shown wins.
+    Battle(BattleArgs),
+}
+
+#[derive(clap::Args, Debug)]
+pub struct BattleArgs {
+    /// Battle id (`ttft-battle`, `decode-battle`).
+    pub id: String,
+    /// Only the cells of this checkpoint (`org/name`) or model directory.
+    #[arg(long)]
+    pub model: Option<String>,
+    /// Only the cells of this hardware class (`gb10`).
+    #[arg(long)]
+    pub hardware: Option<String>,
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
 }
 
 #[derive(clap::Args, Debug)]

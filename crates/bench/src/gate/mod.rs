@@ -12,6 +12,8 @@
 //! [`check_gates`] judges every id in [`REQUIRED_GATES`] against the committed files.
 
 pub mod amnesty;
+pub mod battle;
+pub mod battle_load;
 pub mod bench;
 pub mod card;
 pub mod check;

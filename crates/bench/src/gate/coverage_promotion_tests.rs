@@ -56,6 +56,7 @@ fn every_promotion_candidate_is_a_registered_benchmark() {
             GLM_TTFT[10],
             GLM_TTFT[11],
             "agentic-webserver-glm",
+            "concurrency-sweep-glm",
         ],
         "promotion tracking must not pass vacuously or gain an unreviewed candidate"
     );
@@ -129,6 +130,7 @@ fn the_contamination_candidate_accrues_debt_for_engine_changes() {
             GLM_TTFT[10],
             GLM_TTFT[11],
             "agentic-webserver-glm",
+            "concurrency-sweep-glm",
         ],
         "a scheduler change is exactly the kind of edit that can cross-wire \
          concurrent requests, so the contamination candidate is owed — and the \

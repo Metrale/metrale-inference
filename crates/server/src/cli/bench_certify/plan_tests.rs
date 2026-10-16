@@ -302,7 +302,7 @@ fn local_order_puts_groups_first_then_speed_shortest_first() {
 /// divides it again; a whole run, a shard of one, or an unparsable value is left alone.
 #[test]
 fn a_measured_shard_run_is_scaled_to_the_whole_draw() {
-    use super::super::whole_draw_secs;
+    use super::whole_draw_secs;
     let mut p = std::collections::BTreeMap::new();
     assert_eq!(whole_draw_secs(300, &p), 300);
     p.insert("shard".to_string(), "4/6".to_string());

@@ -6,10 +6,10 @@
 //!
 //! | stream | meaning |
 //! |---|---|
-//! | stdout | `{head, kernel_map, statuses, owed, standings, manifests, prs}` |
+//! | stdout | `{head, kernel_map, statuses, owed, standings, manifests, battles_owed, prs}` |
 //! | stderr | the cause (exit != 0) |
 //! | exit 0 | an answer was computed, possibly no PRs |
-//! | exit 1 | no answer: bad invocation, unreadable list file, or no `head` in this clone |
+//! | exit 1 | no answer: bad invocation, unreadable list file, no `head` in this clone, or a battle file or target that does not load |
 //!
 //! `--branches` and `--pr-heads` are files of branch names, one per line: the existing
 //! `cert/*` branches and the head refs of every `cert/*` PR, open or closed.
@@ -27,6 +27,7 @@ use metrale_bench::gate::check_models::check_models;
 use metrale_bench::gate::kernel_map::{FsRepo, load};
 use metrale_bench::gate::model_scope::KernelMap;
 use metrale_bench::gate::owed_prs::owed_prs;
+use metrale_bench::gate::{battle, battle_load};
 
 fn arg(name: &str) -> Result<String> {
     let args: Vec<String> = std::env::args().collect();
@@ -77,7 +78,9 @@ fn main() -> Result<()> {
             (id.as_str(), s)
         })
         .collect();
-    let prs = owed_prs(&checked.owed, &head, &branches, &pr_heads).map_err(anyhow::Error::msg)?;
+    let battles = battle::owed_battles(&battle_load::load(&root)?, &checked.owed);
+    let prs = owed_prs(&checked.owed, &head, &branches, &pr_heads, &battles)
+        .map_err(anyhow::Error::msg)?;
     let kernel_map = match &map {
         KernelMap::Derived { .. } => "derived".to_string(),
         KernelMap::Unavailable(why) => format!("unavailable (every model reached): {why}"),
@@ -89,6 +92,7 @@ fn main() -> Result<()> {
         "owed": checked.owed,
         "standings": checked.standings,
         "manifests": checked.manifests,
+        "battles_owed": battles,
         "prs": prs,
     });
     println!("{}", serde_json::to_string_pretty(&json)?);

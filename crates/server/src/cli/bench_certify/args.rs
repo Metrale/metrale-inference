@@ -30,7 +30,10 @@ pub struct CertifyArgs {
     pub pr: Option<u64>,
     /// Only these gates (comma-separated group/gate ids), each of which must
     /// still be open. A benchmark group is named by its group id; the shards
-    /// it still owes run in any case.
+    /// it still owes run in any case. A battle id (`bench/battles.toml`, e.g.
+    /// `ttft-battle`) adds the battle's member gates on this hardware whose
+    /// cells are not current, and prints the battle at the end; naming only
+    /// battles runs no required gate. A battle never decides `certified`.
     #[arg(long, value_delimiter = ',', value_name = "ID,...")]
     pub gates: Vec<String>,
     /// How many shards to cut each benchmark group's draw into. Default: two
@@ -139,7 +142,7 @@ impl CertifyArgs {
         for g in &self.gates {
             if !metrale_bench::gate::REQUIRED_GATES.contains(&g.as_str()) {
                 return Err(format!(
-                    "--gates names {g}, which is not a required gate ({})",
+                    "--gates names {g}, which is neither a required gate ({}) nor a battle (bench/battles.toml)",
                     metrale_bench::gate::REQUIRED_GATES.join(", ")
                 ));
             }
@@ -175,7 +178,7 @@ mod tests {
     fn a_legacy_shard_id_is_not_a_gate() {
         let mut a = args();
         a.gates = vec!["bfcl-subset-a".into()];
-        assert!(a.validate().unwrap_err().contains("not a required gate"));
+        assert!(a.validate().unwrap_err().contains("neither a required gate"));
     }
 
     #[test]

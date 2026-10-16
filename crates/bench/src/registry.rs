@@ -31,6 +31,9 @@ const ALL: &[&BenchmarkDescriptor] = &[
     // 2026-09-26: The MoE flagship's concurrency ladder, listed in
     // `gate::coverage::REQUIRED`; see `concurrency::MOE_DESCRIPTOR`.
     &concurrency::MOE_DESCRIPTOR,
+    // 2026-10-16: GLM-5.3-Flash's decode ladder, listed in
+    // `gate::coverage::PROMOTION_CANDIDATES`; see `concurrency::GLM_DESCRIPTOR`.
+    &concurrency::GLM_DESCRIPTOR,
     &ttft::WARM_DESCRIPTOR,
     &ttft::COLD_DESCRIPTOR,
     // 2026-09-27: Listed in `gate::coverage::REQUIRED`: the 32k-prompt pair on

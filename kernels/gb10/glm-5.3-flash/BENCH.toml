@@ -7,14 +7,15 @@
 # Invariants:
 # - A [benchmarks.*] sub-table belongs to the [[benchmarks]] entry above it.
 # - Every entry is its own gate id (crates/bench/src/benchmarks/ttft/glm.rs and the
-#   agentic-webserver-glm descriptor), so GLM's bounds and baselines never share an id with
-#   another model's.
+#   agentic-webserver-glm and concurrency-sweep-glm descriptors), so GLM's bounds and
+#   baselines never share an id with another model's.
 # - Every bound is a regression ratchet from measured cells: the median of three reps on one
 #   boot plus the measured noise. No entry names a recipe yet: the GLM recipe is not on main,
 #   so a --pull-request-gate self-start refuses these entries until it lands.
 # - `targets` carries the vLLM reference per metric; no verdict reads it.
 # - Cells not measured are not here: the 128k context, the 256k agentic tier and the 64k
-#   agentic tier.
+#   agentic tier. The one unmeasured entry, concurrency-sweep-glm (2026-10-16), has no bounds:
+#   it carries the gate definition and its vLLM targets until a measured ladder cuts them.
 
 [[benchmarks]]
 quant = "nvfp4"
@@ -538,3 +539,39 @@ max = 437.74
 # 2026-10-15: The ceiling of 100. Every measured tier of this model took 100 turns, so there is
 # no measured noise to add; an agent that needs more turns for the same ten tasks fails here.
 max = 100.0
+
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "nvidia/GLM-5.3-Flash-NVFP4"
+gate = "concurrency-sweep-glm"
+label = "GLM-5.3-Flash decode ladder, 64k context"
+default = true
+status = "unmeasured"
+note = """\
+The decode ladder on GLM-5.3-Flash: aggregate tok/s at C=1, 2, 4, 8, 12 and 16 on the \
+published instrument (ISL 128, OSL 1024, the essay request), served at 64k context with MTP \
+as the GLM recipe of PR #161 sets it. UNMEASURED: no ladder of a current build exists, so \
+the entry carries no bounds and baseline_for drops it from enforcement. Its floors come only \
+from a measured run (two or more reps on one build, the noise measured), never from an older \
+build's ladder. The targets field holds the vLLM reference per rung; no verdict reads it. \
+J/tok is not a target: the vLLM run summed energy over three hosts, which no local rail \
+reading matches.\
+"""
+# 2026-10-16: The vLLM aggregate tok/s per rung on the same instrument (ISL 128, OSL 1024,
+# essay request, one warm-up, one sample per rung; vLLM 0.30.1rc1.dev193+gddd6fbca1, served
+# at max_model_len 262144, fp8_e4m3 KV, prefix caching on, gpu util 0.88; recorded
+# 2026-10-10T18:16:41Z). C=16 is one sample. A three-rep ladder of the same vLLM build on another
+# instrument read that rung as 159.1, 101.0 and 158.5: one rep in three stalls, so 115.73 is
+# most likely a stalled rep, and a win at C=16 against it is not a clean win.
+targets = { c1_aggregate_tok_s = 40.11, c2_aggregate_tok_s = 62.24, c4_aggregate_tok_s = 83.42, c8_aggregate_tok_s = 114.56, c12_aggregate_tok_s = 131.74, c16_aggregate_tok_s = 115.73 }
+
+[benchmarks.serve_overrides]
+# 2026-10-16: The context length the ladder is measured at.
+max_model_len = "65536"
+
+[benchmarks.param_overrides]
+# 2026-10-16: The published instrument, as on concurrency-sweep-moe, with the C=12 rung.
+concurrencies = "1,2,4,8,12,16"
+isls = "128"
+osl = "1024"
+prompt_mode = "essay"

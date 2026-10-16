@@ -54,6 +54,8 @@ jq -r '"head \(.head), kernel map \(.kernel_map)",
        (.statuses | to_entries[] | "  \(.key): \(.value)"),
        "owed (\(.owed | length)):",
        (.owed[] | "  \(.gate) — \(.subject.checkpoint) on \(.subject.hw) (\(.subject.model))"),
+       "battles owed:",
+       (.battles_owed | to_entries[] | "  \(.key): \(.value | join(", "))"),
        "PRs to open (\(.prs | length)):",
        (.prs[] | "  \(.branch) create_branch=\(.create_branch) \(.manifest_path)")' "$work/owed.json"
 

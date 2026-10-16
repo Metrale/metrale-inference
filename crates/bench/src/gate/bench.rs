@@ -92,8 +92,10 @@ pub struct BenchEntry {
     /// 2026-10-15: A reference value per declared metric, e.g. another engine's number on the same
     /// cell (`targets = { median_ms_256 = 488.0 }`). Informational: no verdict reads it,
     /// so a bound can be a regression ratchet while a known loss against the reference is
-    /// still on the page. [`load_all`] refuses a key that names no declared metric and a
-    /// value that is not finite. Empty and omitted is the normal case.
+    /// still on the page. [`load_all`] refuses a value that is not finite and, on a measured
+    /// entry, a key that names no declared metric; an `unmeasured` entry has no metrics yet,
+    /// so its keys are checked against its battle (`battle::problems`). Empty and omitted is
+    /// the normal case.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub targets: BTreeMap<String, f64>,
 }
@@ -377,12 +379,13 @@ fn validate_noise(path: &std::path::Path, entry: &BenchEntry) -> Result<()> {
     Ok(())
 }
 
-/// 2026-10-15: Each `targets` key must name a declared metric and each value must be finite: a
-/// reference on a metric the entry does not bound, or a NaN, reads like a bar while meaning
-/// nothing.
+/// 2026-10-15: Each `targets` key of a measured entry must name a declared metric and each value
+/// must be finite: a reference on a metric the entry does not bound, or a NaN, reads like a bar
+/// while meaning nothing. 2026-10-16: An `unmeasured` entry declares no metric yet, so its
+/// keys are left to `battle::problems`, which names one that is no battle cell.
 fn validate_targets(path: &std::path::Path, entry: &BenchEntry) -> Result<()> {
     for (name, value) in &entry.targets {
-        let declared = entry.metrics.as_ref().is_some_and(|m| m.contains_key(name));
+        let declared = entry.metrics.as_ref().is_none_or(|m| m.contains_key(name));
         if !declared {
             bail!(
                 "{}: {} / {} [benchmarks.targets] names {name}, which is not a declared metric",

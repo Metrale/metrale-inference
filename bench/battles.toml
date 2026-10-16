@@ -1,0 +1,32 @@
+# 2026-10-16: Named battles: a family of gates read together against the reference figure
+# each BENCH.toml entry declares beside its bounds (`targets`). `met benchmark battle <id>`
+# prints one, and `met benchmark certify --gates <id>` runs its member gates whose cells are
+# not current. A battle is a scoreboard, not a verdict: no gate check reads this file, and
+# a cell can pass its own bound (the regression ratchet) and still lose its battle.
+#
+# 2026-10-16: A gate belongs to the battle whose `gate_prefixes` its id starts with, and to
+# at most one. Each `targets` key in the tree must match a `metrics` pattern of its gate's
+# battle (`{n}` is one or more digits); `met benchmark battle` refuses the tree otherwise.
+# A target is declared only from a measured reference run, with its provenance in the
+# entry's notes; a cell nobody measured has no target and is not a cell.
+schema = 1
+
+[[battles]]
+id = "ttft-battle"
+name = "TTFT battle"
+gate_prefixes = ["ttft-cold-", "ttft-warm-", "high-isl-ttft-cold-", "high-isl-ttft-warm-"]
+metrics = [
+  { pattern = "median_ms", better = "lower" },
+  { pattern = "median_ms_{n}", better = "lower" },
+]
+note = "Time to first token, cold and warm, by prompt length and served context."
+
+[[battles]]
+id = "decode-battle"
+name = "Decode battle"
+gate_prefixes = ["concurrency-sweep"]
+metrics = [{ pattern = "c{n}_aggregate_tok_s", better = "higher" }]
+# 2026-10-16: Joules per token is not scored: the reference figures sum the power of every
+# host a multi-node serve spans, while the sweep reads this box's GPU rail alone, so the two
+# are not one quantity. The sweep still records it, and its own bound still ratchets it.
+note = "Aggregate decode throughput by concurrency."

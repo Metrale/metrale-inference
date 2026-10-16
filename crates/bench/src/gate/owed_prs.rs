@@ -54,7 +54,12 @@ fn manifest(model: &str, merge_sha: &str, owed: &[&Owed]) -> Result<String, Stri
     })
 }
 
-fn body(model: &str, merge_sha: &str, owed: &[&Owed]) -> String {
+fn body(
+    model: &str,
+    merge_sha: &str,
+    owed: &[&Owed],
+    battles: Option<&BTreeSet<String>>,
+) -> String {
     let mut out = format!(
         "{merge_sha} changed code `{model}` runs and merged certified on another model, so \
          these gates are open for `{model}`. Commit a passing record of each, measured at or \
@@ -66,6 +71,12 @@ fn body(model: &str, merge_sha: &str, owed: &[&Owed]) -> String {
             o.gate, o.subject.hw, o.subject.checkpoint
         ));
     }
+    for id in battles.into_iter().flatten() {
+        out.push_str(&format!(
+            "\nThese gates hold cells of the battle `{id}`: once the records land, \
+             `met benchmark battle {id} --model {model}` shows whether `{model}` still wins it.\n"
+        ));
+    }
     out.push_str(&format!(
         "\nOnce every row passes, delete `{}` in this branch: the gate \
          check fails while a settled manifest is committed.\n",
@@ -75,12 +86,14 @@ fn body(model: &str, merge_sha: &str, owed: &[&Owed]) -> String {
 }
 
 /// 2026-10-15: The certification PRs to open for `owed` after the merge `merge_sha`; an error
-/// only when a manifest cannot be rendered.
+/// only when a manifest cannot be rendered. 2026-10-16: `battles` names, per model directory,
+/// the battles whose cells it owes (`battle::owed_battles`); each is named in the PR body.
 pub fn owed_prs(
     owed: &[Owed],
     merge_sha: &str,
     branches: &BTreeSet<String>,
     pr_heads: &BTreeSet<String>,
+    battles: &BTreeMap<String, BTreeSet<String>>,
 ) -> Result<Vec<OwedPr>, String> {
     let mut by_model: BTreeMap<&str, Vec<&Owed>> = BTreeMap::new();
     for o in owed {
@@ -107,7 +120,7 @@ pub fn owed_prs(
                 list.len(),
                 sha7(merge_sha)
             ),
-            body: body(model, merge_sha, &list),
+            body: body(model, merge_sha, &list, battles.get(model)),
             branch,
         });
     }
