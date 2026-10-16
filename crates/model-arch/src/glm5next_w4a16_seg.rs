@@ -30,16 +30,25 @@
 //!   2048 up a lone projection keeps `w4a16_gemv`, `ops::w4a16_gemv_seg_lone`). Every output byte is
 //!   `w4a16_gemv`'s (the kernel's invariant), so the lever changes no bits; unset or `0` keeps
 //!   `w4a16_gemv`.
+//! - 2026-10-16: `METRALE_GLM_W4A16_SEG_FILL=<b>` (1..=8; unset or `0` is off, needs `fuse` or
+//!   `split`) runs an unsplit launch of 1..=16 rows on the narrow segmented entries
+//!   (`ops::w4a16_tc_rows_seg_narrow`) with the warps per block of `ops::w4a16_tc_rows_seg_warps_for`
+//!   (at least b blocks per SM), a function of the segment widths and the device alone. Every
+//!   output byte equals the 4-warp unsplit launch's (the kernel's invariant), so the lever
+//!   changes no bits; launches of 17+ rows (prefill chunks) and K-split launches are unchanged.
 
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use anyhow::{Context, Result};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_gpu_runtime::kernel_args::{KernelLaunch, div_ceil};
 use metrale_model_layers::layers::ops::{
     W4A16_GEMV_SEG_MAX_ROWS, W4A16_GEMV_SEG_MODULE, W4A16_GEMV_SEG_TILES, W4A16_TC_ROWS_MAX_M,
-    W4A16_TC_ROWS_SEG_MODULE, W4a16GemvSegPoint, W4a16Seg, w4a16_gemv_seg, w4a16_gemv_seg_point,
-    w4a16_gemv_seg_policy, w4a16_tc_rows_seg, w4a16_tc_rows_seg_entries, w4a16_tc_rows_seg_tiles,
+    W4A16_TC_ROWS_SEG_MODULE, W4A16_TC_ROWS_SEG_NARROW_MAX_M, W4a16GemvSegPoint, W4a16Seg,
+    w4a16_gemv_seg, w4a16_gemv_seg_point, w4a16_gemv_seg_policy, w4a16_tc_rows_seg,
+    w4a16_tc_rows_seg_blocks, w4a16_tc_rows_seg_entries, w4a16_tc_rows_seg_narrow,
+    w4a16_tc_rows_seg_narrow_entries, w4a16_tc_rows_seg_tiles, w4a16_tc_rows_seg_warps_for,
     w4a16_tc_rows_split_for,
 };
 use metrale_model_layers::weight_map::QuantizedWeight;
@@ -89,6 +98,47 @@ pub(crate) fn parse_seg(v: Option<&str>, tier_on: bool) -> Result<SegMode, Strin
         ));
     }
     Ok(mode)
+}
+
+/// 2026-10-16: The widest `METRALE_GLM_W4A16_SEG_FILL` target, in blocks per SM.
+pub const SEG_FILL_MAX: u32 = 8;
+
+/// 2026-10-16: `METRALE_GLM_W4A16_SEG_FILL`, read once: 0 (off) when unset or `0`, else the
+/// blocks-per-SM target 1..=[`SEG_FILL_MAX`] of the narrow unsplit entries
+/// ([`SegPlan::narrow_warps`]). Another value, or a value while [`seg_mode`] is `off`, is an
+/// error.
+pub fn seg_fill() -> Result<u32> {
+    static V: OnceLock<Result<u32, String>> = OnceLock::new();
+    V.get_or_init(|| {
+        let mode = seg_mode().map_err(|e| e.to_string())?;
+        parse_seg_fill(
+            std::env::var("METRALE_GLM_W4A16_SEG_FILL").ok().as_deref(),
+            mode,
+        )
+    })
+    .clone()
+    .map_err(anyhow::Error::msg)
+}
+
+/// 2026-10-16: [`seg_fill`]'s parse, pure: the value and the segmented mode.
+pub(crate) fn parse_seg_fill(v: Option<&str>, mode: SegMode) -> Result<u32, String> {
+    let b = match v {
+        None | Some("0") => return Ok(0),
+        Some(s) => match s.parse::<u32>() {
+            Ok(b) if (1..=SEG_FILL_MAX).contains(&b) => b,
+            _ => {
+                return Err(format!(
+                    "METRALE_GLM_W4A16_SEG_FILL={s:?}: expected 0 or 1..={SEG_FILL_MAX}"
+                ));
+            }
+        },
+    };
+    if mode == SegMode::Off {
+        return Err(format!(
+            "METRALE_GLM_W4A16_SEG_FILL={b} needs METRALE_GLM_W4A16_SEG=fuse or split"
+        ));
+    }
+    Ok(b)
 }
 
 /// 2026-10-10: The widest row count `METRALE_GLM_W4A16_GEMV_ROWS` may name: the widest
@@ -294,18 +344,43 @@ pub(crate) fn prepare(gpu: &dyn GpuBackend) -> Result<()> {
                 format!("METRALE_GLM_W4A16_SEG: {W4A16_TC_ROWS_SEG_MODULE}::{entry}")
             })?;
     }
+    // 2026-10-16: The narrow unsplit entries `METRALE_GLM_W4A16_SEG_FILL` reaches, resolved here
+    // so a missing one is refused at load; the readback names the rule and the SM count.
+    let fill = seg_fill()?;
+    if fill > 0 {
+        let mut loaded = 0;
+        for entry in w4a16_tc_rows_seg_narrow_entries() {
+            gpu.op_cache()
+                .kernel(gpu, W4A16_TC_ROWS_SEG_MODULE, entry)
+                .with_context(|| {
+                    format!("METRALE_GLM_W4A16_SEG_FILL: {W4A16_TC_ROWS_SEG_MODULE}::{entry}")
+                })?;
+            loaded += 1;
+        }
+        static LOGGED: std::sync::Once = std::sync::Once::new();
+        LOGGED.call_once(|| {
+            tracing::info!(
+                "glm_w4a16_seg: METRALE_GLM_W4A16_SEG_FILL={fill} -- unsplit W4A16 launches of \
+                 1..={W4A16_TC_ROWS_SEG_NARROW_MAX_M} rows on 4/2/1-warp blocks, the widest with \
+                 >= {fill} blocks per SM over {} SMs (narrow entries loaded={loaded})",
+                SMS.get().copied().unwrap_or(0)
+            )
+        });
+    }
     Ok(())
 }
 
 /// 2026-10-09: The mode and the SM count its split rule reads. 2026-10-10: `gemv_rows`, the
 /// widest launch on the GEMV tiers ([`gemv_rows`]; 0 = none). 2026-10-10: `one_row`, whether
-/// one-row launches take `w4a16_gemv_seg` ([`gemv_seg`]).
+/// one-row launches take `w4a16_gemv_seg` ([`gemv_seg`]). 2026-10-16: `fill`, the narrow
+/// unsplit entries' blocks-per-SM target ([`seg_fill`]; 0 = off).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SegPlan {
     pub mode: SegMode,
     pub sms: u32,
     pub gemv_rows: u32,
     pub one_row: bool,
+    pub fill: u32,
 }
 
 impl SegPlan {
@@ -328,6 +403,17 @@ impl SegPlan {
             SegMode::Split => w4a16_tc_rows_split_for(w4a16_tc_rows_seg_tiles(ns), k, self.sms),
         }
     }
+
+    /// 2026-10-16: The warps per block of a launch of `m` rows over segments `ns` with K `k` on
+    /// the narrow unsplit entries: `Some` under a fill, at 1..=16 rows, when [`Self::split`] is 1
+    /// (K-split and 17+-row launches keep their entries). The choice reads `ns`, the fill and the
+    /// SM count, never `m`.
+    pub(crate) fn narrow_warps(&self, ns: &[u32], m: usize, k: u32) -> Option<u32> {
+        (self.fill > 0
+            && (1..=W4A16_TC_ROWS_SEG_NARROW_MAX_M as usize).contains(&m)
+            && self.split(ns, k) == 1)
+            .then(|| w4a16_tc_rows_seg_warps_for(ns, self.fill, self.sms))
+    }
 }
 
 /// 2026-10-09: The published plan: [`seg_mode`] and, unless it is `off`, the SM count
@@ -346,21 +432,39 @@ pub(crate) fn plan() -> Result<SegPlan> {
         sms,
         gemv_rows: gemv_rows()?,
         one_row,
+        fill: seg_fill()?,
     })
 }
 
+/// 2026-10-16: Narrow launches the readback names, one line each (the first ones only: a step
+/// repeats a handful of shapes).
+const NARROW_LOG_LINES: u32 = 16;
+
 /// 2026-10-09: `segs[i].output [m, n_i] = a [m, k] @ W_i^T` for contiguous rows, in launches of
 /// at most `W4A16_TC_ROWS_MAX_M` rows over consecutive row ranges, each over every segment with
-/// split `s`.
+/// `plan`'s split for the segments. 2026-10-16: Or one launch on the narrow unsplit entries when
+/// [`SegPlan::narrow_warps`] names a warps count.
 pub(crate) fn launch(
     gpu: &dyn GpuBackend,
+    plan: &SegPlan,
     a: DevicePtr,
     segs: &[W4a16Seg],
     m: usize,
     k: u32,
-    s: u32,
     stream: u64,
 ) -> Result<()> {
+    let ns: Vec<u32> = segs.iter().map(|g| g.n).collect();
+    if let Some(nw) = plan.narrow_warps(&ns, m, k) {
+        static LOGGED: AtomicU32 = AtomicU32::new(0);
+        if LOGGED.fetch_add(1, Ordering::Relaxed) < NARROW_LOG_LINES {
+            tracing::info!(
+                "glm_w4a16_seg narrow: m={m} n={ns:?} k={k} warps={nw} blocks={}",
+                w4a16_tc_rows_seg_blocks(&ns, nw)
+            );
+        }
+        return w4a16_tc_rows_seg_narrow(gpu, a, segs, m as u32, k, k, nw, stream);
+    }
+    let s = plan.split(&ns, k);
     let max = W4A16_TC_ROWS_MAX_M as usize;
     let mut done = 0;
     while done < m {
@@ -386,3 +490,7 @@ pub(crate) fn launch(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "glm5next_w4a16_seg_tests.rs"]
+mod tests;

@@ -80,6 +80,58 @@ pub fn dense_gemv_batch2(
 /// `target_defaults::resolve_batchm_max`.
 pub const DENSE_GEMV_BATCHM_MAX_M: u32 = 16;
 
+/// 2026-10-16: `#define BATCHM_WIDE_MIN` in `kernels/gb10/common/dense_gemv_bf16_batchm.cu`:
+/// the narrowest M the register-resident `dense_gemv_bf16_batchm_wide` entries take.
+pub const DENSE_GEMV_BATCHM_WIDE_MIN: u32 = 9;
+
+/// 2026-10-16: `#define BATCHM_REG8_MAX` in the same file: the widest M the
+/// register-resident `dense_gemv_bf16_batchm_reg8` entries take.
+pub const DENSE_GEMV_BATCHM_REG8_MAX: u32 = 8;
+
+/// 2026-10-16: The batched BF16 GEMV entries of one output type. `narrow` is
+/// `dense_gemv_bf16_batchm` (runtime M, `1..=DENSE_GEMV_BATCHM_MAX_M`, accumulators in local
+/// memory). `reg8` is `dense_gemv_bf16_batchm_reg8` (one register-resident instantiation per
+/// M in `1..=DENSE_GEMV_BATCHM_REG8_MAX`) and `wide` is `dense_gemv_bf16_batchm_wide` (the same
+/// for `DENSE_GEMV_BATCHM_WIDE_MIN..=DENSE_GEMV_BATCHM_MAX_M`); either is `KernelHandle(0)`
+/// when its lever is off or the target lacks it. All three take [`dense_gemv_batchm`]'s
+/// arguments and grid (never [`dense_gemv_batchm_split`]'s: the register entries ignore
+/// `gridDim.y`), and a register row has the narrow row's bits
+/// (`examples/glm5next_batchm_reg_gate.rs` checks it byte for byte). GB10, 51627 x 4096 at
+/// M = 16: wide 1.95 ms vs narrow 3.04 ms (2026-10-14).
+#[derive(Clone, Copy, Debug)]
+pub struct DenseGemvBatchmPair {
+    pub narrow: KernelHandle,
+    pub reg8: KernelHandle,
+    pub wide: KernelHandle,
+}
+
+impl DenseGemvBatchmPair {
+    /// 2026-10-16: The runtime-M entry alone (every row keeps it).
+    pub fn narrow_only(narrow: KernelHandle) -> Self {
+        Self {
+            narrow,
+            reg8: KernelHandle(0),
+            wide: KernelHandle(0),
+        }
+    }
+
+    /// 2026-10-16: The entry a launch of `m` rows takes: `reg8` at
+    /// `2..=DENSE_GEMV_BATCHM_REG8_MAX`, `wide` at
+    /// `DENSE_GEMV_BATCHM_WIDE_MIN..=DENSE_GEMV_BATCHM_MAX_M`, each only when loaded, else
+    /// `narrow`. One row keeps `narrow` (callers send it to the M = 1 GEMV).
+    pub fn for_rows(self, m: u32) -> KernelHandle {
+        if self.reg8.0 != 0 && (2..=DENSE_GEMV_BATCHM_REG8_MAX).contains(&m) {
+            self.reg8
+        } else if self.wide.0 != 0
+            && (DENSE_GEMV_BATCHM_WIDE_MIN..=DENSE_GEMV_BATCHM_MAX_M).contains(&m)
+        {
+            self.wide
+        } else {
+            self.narrow
+        }
+    }
+}
+
 /// 2026-09-25: The widest batch that the MTP row dispatch
 /// (`mtp_head/row_dispatch.rs`) and the BF16 arm of the model's
 /// `lm_head_batched` (`impl_a3_lm_head.rs`) hand to `dense_gemv_bf16_batchm`;
@@ -87,6 +139,73 @@ pub const DENSE_GEMV_BATCHM_MAX_M: u32 = 16;
 /// choose other kernels, some of which accumulate in a different order, so
 /// this value decides which bits a decode of a given width produces.
 pub const DENSE_GEMV_BATCHM_DECODE_MAX_M: u32 = 8;
+
+/// 2026-10-16: The widest row count `METRALE_DENSE_BATCHM_32` adds to the batched BF16 GEMV's
+/// band ([`dense_batchm_band`]); those rows run as launches of at most
+/// `DENSE_GEMV_BATCHM_MAX_M` ([`dense_gemv_batchm_rows`]).
+pub const DENSE_GEMV_BATCHM_32_MAX_M: u32 = 32;
+
+/// 2026-10-16: `METRALE_DENSE_BATCHM_32`: only `1` turns it on.
+pub fn dense_batchm_32_from(value: Option<&str>) -> bool {
+    value == Some("1")
+}
+
+/// 2026-10-16: `METRALE_DENSE_BATCHM_32=1`: launches of 17..=32 rows of the GLM-5.3 BF16
+/// projections (`glm_mm`) and of the BF16 head run on the batched GEMV in 16-row launches, so
+/// every row keeps the bits it has at 1..=16 rows (a 24/32-row MTP verify otherwise takes
+/// cuBLASLt or the tile GEMM). Read once, so the route is the same at CUDA-graph capture and
+/// replay.
+pub fn dense_batchm_32() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        dense_batchm_32_from(std::env::var("METRALE_DENSE_BATCHM_32").ok().as_deref())
+    })
+}
+
+/// 2026-10-16: Whether `m` rows take the batched BF16 GEMV: `1..=band`, and with `rows32` also
+/// `DENSE_GEMV_BATCHM_MAX_M + 1..=DENSE_GEMV_BATCHM_32_MAX_M`.
+pub fn dense_batchm_band(band: u32, rows32: bool, m: u32) -> bool {
+    (1..=band).contains(&m)
+        || (rows32 && (DENSE_GEMV_BATCHM_MAX_M + 1..=DENSE_GEMV_BATCHM_32_MAX_M).contains(&m))
+}
+
+/// 2026-10-16: [`dense_gemv_batchm`] over `m >= 1` rows in launches of at most
+/// `DENSE_GEMV_BATCHM_MAX_M` rows, each on `pair.for_rows(rows)`: input rows `K` elements
+/// apart, output rows `out_stride` BF16 elements apart. Each row has the bits it has in a launch
+/// of any other width.
+#[allow(clippy::too_many_arguments)]
+pub fn dense_gemv_batchm_rows(
+    gpu: &dyn GpuBackend,
+    pair: DenseGemvBatchmPair,
+    input: DevicePtr,
+    weight: &DenseWeight,
+    output: DevicePtr,
+    m: u32,
+    n: u32,
+    k: u32,
+    out_stride: u32,
+    stream: u64,
+) -> Result<()> {
+    ensure!(m >= 1, "dense_gemv_batchm_rows: m = 0");
+    let mut done = 0u32;
+    while done < m {
+        let rows = (m - done).min(DENSE_GEMV_BATCHM_MAX_M);
+        dense_gemv_batchm(
+            gpu,
+            pair.for_rows(rows),
+            input.offset(done as usize * k as usize * 2),
+            weight,
+            output.offset(done as usize * out_stride as usize * 2),
+            rows,
+            n,
+            k,
+            out_stride,
+            stream,
+        )?;
+        done += rows;
+    }
+    Ok(())
+}
 
 /// 2026-09-25: Dense BF16 GEMV for M rows, `C[t] = A[t] @ B^T` for `t` in
 /// `[0, M)`, reading the weight once for all rows. Each row follows
@@ -189,4 +308,52 @@ pub fn dense_gemv_fp8w(
         .arg_u32(n)
         .arg_u32(k)
         .launch(stream)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const N: KernelHandle = KernelHandle(1);
+    const R8: KernelHandle = KernelHandle(2);
+    const W: KernelHandle = KernelHandle(3);
+
+    fn picks(p: DenseGemvBatchmPair) -> Vec<u64> {
+        (1..=17).map(|m| p.for_rows(m).0).collect()
+    }
+
+    fn band(lo: usize, hi: usize, h: u64) -> Vec<u64> {
+        (1..=17)
+            .map(|m| if (lo..=hi).contains(&m) { h } else { 1 })
+            .collect()
+    }
+
+    /// 2026-10-16: Each loaded entry takes exactly its band; one row and 17 rows never take a
+    /// register entry; a missing entry leaves its band on the runtime-M entry.
+    #[test]
+    fn batchm_pair_band_follows_the_loaded_entries() {
+        assert_eq!(picks(DenseGemvBatchmPair::narrow_only(N)), vec![1u64; 17]);
+        let reg8 = DenseGemvBatchmPair {
+            reg8: R8,
+            ..DenseGemvBatchmPair::narrow_only(N)
+        };
+        assert_eq!(picks(reg8), band(2, 8, 2));
+        let wide = DenseGemvBatchmPair {
+            wide: W,
+            ..DenseGemvBatchmPair::narrow_only(N)
+        };
+        assert_eq!(picks(wide), band(9, 16, 3));
+        let both = DenseGemvBatchmPair {
+            narrow: N,
+            reg8: R8,
+            wide: W,
+        };
+        let mut want = band(2, 8, 2);
+        want[8..16].fill(3);
+        assert_eq!(picks(both), want);
+        assert_eq!(both.for_rows(1).0, N.0);
+        assert_eq!(both.for_rows(17).0, N.0);
+        assert_eq!(both.for_rows(0).0, N.0);
+        assert_eq!(DENSE_GEMV_BATCHM_REG8_MAX + 1, DENSE_GEMV_BATCHM_WIDE_MIN);
+    }
 }

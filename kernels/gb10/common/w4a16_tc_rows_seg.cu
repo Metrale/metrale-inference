@@ -27,6 +27,9 @@
 //   rank 0 adds the other splits' sums in rank order, ((p_0 + p_1) + p_2) + ..., then scales
 //   once by s2: other bits than S = 1, which depend on K and S alone. For each S, a row's bits
 //   do not depend on M, on the other rows, or on the entry (16, 32 or 64 rows).
+// - 2026-10-16: The narrow entries w4a16_tc_rows_seg_<R>_k1_w<NW> are S = 1 on blocks of NW
+//   warps: grid (sum_i ceil(N_i / (16 NW)), 1, 1), block 32 NW, 1 <= M <= R. NT and NW change no
+//   output's MMA sequence (tc_rows.cuh), so every byte equals w4a16_tc_rows_seg_16_k1's.
 
 #include <cooperative_groups.h>
 
@@ -78,8 +81,8 @@ struct TrSegMerge<1> {
 };
 
 // 2026-10-09: Block (blockIdx.x, blockIdx.y): the segment and column tile blockIdx.x names, split
-// blockIdx.y of S.
-template <int NT, int G, int S>
+// blockIdx.y of S. 2026-10-16: Column tiles of 16 NW (TR_COLS at the default NW).
+template <int NT, int G, int S, int NW = TR_WARPS>
 __device__ __forceinline__ void w4a16_seg_block(
     const __nv_bfloat16* __restrict__ A,
     const unsigned char* p0, const unsigned char* sc0, float s20, __nv_bfloat16* C0, unsigned int N0,
@@ -87,7 +90,8 @@ __device__ __forceinline__ void w4a16_seg_block(
     const unsigned char* p2, const unsigned char* sc2, float s22, __nv_bfloat16* C2, unsigned int N2,
     unsigned int M, unsigned int K, unsigned int lda
 ) {
-    const unsigned int t0 = (N0 + TR_COLS - 1) / TR_COLS, t01 = t0 + (N1 + TR_COLS - 1) / TR_COLS;
+    constexpr unsigned int COLS = 16 * NW;
+    const unsigned int t0 = (N0 + COLS - 1) / COLS, t01 = t0 + (N1 + COLS - 1) / COLS;
     const unsigned int b = blockIdx.x;
     const unsigned int seg = b >= t01 ? 2u : (b >= t0 ? 1u : 0u);
     const unsigned char* packed = seg == 2u ? p2 : (seg == 1u ? p1 : p0);
@@ -96,7 +100,7 @@ __device__ __forceinline__ void w4a16_seg_block(
     __nv_bfloat16* C = seg == 2u ? C2 : (seg == 1u ? C1 : C0);
     const unsigned int N = seg == 2u ? N2 : (seg == 1u ? N1 : N0);
     const unsigned int tile = b - (seg == 2u ? t01 : (seg == 1u ? t0 : 0u));
-    tr_block_split<Nvfp4G16, NT, G, true, S, typename TrSegMerge<S>::T>(
+    tr_block_split<Nvfp4G16, NT, G, true, S, typename TrSegMerge<S>::T, NW>(
         A, {packed, scale, s2}, C, M, N, K, lda, N, tile, blockIdx.y);
 }
 
@@ -123,3 +127,28 @@ __device__ __forceinline__ void w4a16_seg_block(
 W4A16_SEG_SPLITS(16, 2, 2)
 W4A16_SEG_SPLITS(32, 4, 1)
 W4A16_SEG_SPLITS(64, 8, 1)
+
+// 2026-10-16: Entry w4a16_tc_rows_seg_<R>_k1_w<NW>: the unsplit row tiles of R rows (NT, G) on
+// blocks of NW warps. Why: at 2..16 decode rows a 64-column block per tile leaves SMs idle or
+// unevenly loaded on the GLM-5.3 TP=3 groups (f_a/g_a/b 5 blocks, shared gate/up 24, KDA o and
+// shared down 64, on 48 SMs); narrower blocks spread the same columns over more SMs without
+// splitting K, so no output's summation order changes. R = 8 (NT = 1) is the 1..=8-row tile: half
+// the 16-row entry's activation staging and accumulators.
+#define W4A16_SEG_NARROW_ENTRY(R, NT, G, NW)                                                           \
+    extern "C" __global__ void __launch_bounds__(32 * NW) w4a16_tc_rows_seg_##R##_k1_w##NW(           \
+        const __nv_bfloat16* __restrict__ A,                                                           \
+        const unsigned char* p0, const unsigned char* sc0, float s20, __nv_bfloat16* C0, unsigned int N0, \
+        const unsigned char* p1, const unsigned char* sc1, float s21, __nv_bfloat16* C1, unsigned int N1, \
+        const unsigned char* p2, const unsigned char* sc2, float s22, __nv_bfloat16* C2, unsigned int N2, \
+        unsigned int M, unsigned int K, unsigned int lda                                               \
+    ) {                                                                                                \
+        w4a16_seg_block<NT, G, 1, NW>(A, p0, sc0, s20, C0, N0, p1, sc1, s21, C1, N1, p2, sc2, s22, C2, \
+                                      N2, M, K, lda);                                                  \
+    }
+
+// 2026-10-16: 1..=8 rows on 4, 2 and 1 warps; 9..=16 rows on 2 and 1 (4 is w4a16_tc_rows_seg_16_k1).
+W4A16_SEG_NARROW_ENTRY(8, 1, 2, 4)
+W4A16_SEG_NARROW_ENTRY(8, 1, 2, 2)
+W4A16_SEG_NARROW_ENTRY(8, 1, 2, 1)
+W4A16_SEG_NARROW_ENTRY(16, 2, 2, 2)
+W4A16_SEG_NARROW_ENTRY(16, 2, 2, 1)

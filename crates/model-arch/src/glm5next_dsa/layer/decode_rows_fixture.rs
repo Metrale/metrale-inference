@@ -156,6 +156,8 @@ impl Rig {
                 gemv_batchm_f32: k(BATCHM_F32),
                 gemv_batchm_wide: k(BATCHM_WIDE),
                 gemv_batchm_wide_f32: k(BATCHM_WIDE_F32),
+                gemv_batchm_reg8: k(0),
+                gemv_batchm_reg8_f32: k(0),
                 rms_norm: k(0x106),
                 latent_write: k(LATENT),
             },

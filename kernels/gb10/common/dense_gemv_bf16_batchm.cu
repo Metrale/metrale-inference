@@ -423,3 +423,62 @@ extern "C" __global__ void dense_gemv_bf16_batchm_wide_fp32out(
 ) {
     dense_gemv_bf16_batchm_wide_body<float>(A, B, C, M, N, K, out_stride);
 }
+
+// 2026-10-16: The register-resident body for M = 1..8, in its own entries. Folding these cases
+// into the wide switch above raised the wide entries from 64 to 74 registers (one CTA per SM
+// fewer on the default-on GLM-5.3 9..16 path), so the wide entries stay as they are and the
+// narrow band gets its own. Each case is dense_gemv_bf16_batchm_fixed, so each row's bits are
+// the runtime-M body's. Only opt-in callers launch these (levers METRALE_GLM_BATCHM_NARROW and
+// METRALE_LM_HEAD_BATCHM_NARROW, routed by ops::DenseGemvBatchmPair). Launch: grid
+// (ceil(N / 4), 1, 1), block (256, 1, 1); gridDim.y must be 1.
+#define BATCHM_REG8_MAX 8
+
+template <typename OutT>
+__device__ __forceinline__ void dense_gemv_bf16_batchm_reg8_body(
+    const __nv_bfloat16* __restrict__ A,
+    const __nv_bfloat16* __restrict__ B,
+    OutT* __restrict__ C,
+    unsigned int M,
+    unsigned int N,
+    unsigned int K,
+    unsigned int out_stride
+) {
+    __shared__ uint4 As[BATCHM_REG8_MAX][BLOCK_SIZE / N_PER_BLOCK];
+    __shared__ float smem[BATCHM_REG8_MAX][N_PER_BLOCK * 2];
+    switch (M) {
+        case 1: dense_gemv_bf16_batchm_fixed<1, OutT>(A, B, C, N, K, out_stride, As, smem); break;
+        case 2: dense_gemv_bf16_batchm_fixed<2, OutT>(A, B, C, N, K, out_stride, As, smem); break;
+        case 3: dense_gemv_bf16_batchm_fixed<3, OutT>(A, B, C, N, K, out_stride, As, smem); break;
+        case 4: dense_gemv_bf16_batchm_fixed<4, OutT>(A, B, C, N, K, out_stride, As, smem); break;
+        case 5: dense_gemv_bf16_batchm_fixed<5, OutT>(A, B, C, N, K, out_stride, As, smem); break;
+        case 6: dense_gemv_bf16_batchm_fixed<6, OutT>(A, B, C, N, K, out_stride, As, smem); break;
+        case 7: dense_gemv_bf16_batchm_fixed<7, OutT>(A, B, C, N, K, out_stride, As, smem); break;
+        case 8: dense_gemv_bf16_batchm_fixed<8, OutT>(A, B, C, N, K, out_stride, As, smem); break;
+        // 2026-10-16: Any other M writes nothing; the launchers send only 1..=8 here.
+        default: break;
+    }
+}
+
+extern "C" __global__ void dense_gemv_bf16_batchm_reg8(
+    const __nv_bfloat16* __restrict__ A,
+    const __nv_bfloat16* __restrict__ B,
+    __nv_bfloat16* __restrict__ C,
+    unsigned int M,
+    unsigned int N,
+    unsigned int K,
+    unsigned int out_stride
+) {
+    dense_gemv_bf16_batchm_reg8_body<__nv_bfloat16>(A, B, C, M, N, K, out_stride);
+}
+
+extern "C" __global__ void dense_gemv_bf16_batchm_reg8_fp32out(
+    const __nv_bfloat16* __restrict__ A,
+    const __nv_bfloat16* __restrict__ B,
+    float* __restrict__ C,
+    unsigned int M,
+    unsigned int N,
+    unsigned int K,
+    unsigned int out_stride
+) {
+    dense_gemv_bf16_batchm_reg8_body<float>(A, B, C, M, N, K, out_stride);
+}

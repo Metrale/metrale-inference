@@ -29,7 +29,7 @@ pub(super) struct ModelKernels {
     pub(super) dense_gemv_fp8w_kernel: KernelHandle,
     pub(super) dense_gemv_fp8w_batch2_kernel: KernelHandle,
     pub(super) dense_gemm_kernel: KernelHandle,
-    pub(super) dense_gemv_batchm_kernel: KernelHandle,
+    pub(super) dense_gemv_batchm_kernel: metrale_model_layers::layers::ops::DenseGemvBatchmPair,
     pub(super) lm_head_m16_tc_kernel: KernelHandle,
     pub(super) lm_head_m16_tc_n64_kernel: KernelHandle,
     pub(super) argmax_kernel: KernelHandle,
@@ -90,9 +90,7 @@ pub(super) fn resolve_model_kernels(
         "dense_gemv_fp8w_batch2",
     );
     let dense_gemm_kernel = gpu.kernel("gemm", "dense_gemm_bf16")?;
-    let dense_gemv_batchm_kernel = gpu
-        .kernel("dense_gemv_bf16_batchm", "dense_gemv_bf16_batchm")
-        .unwrap_or(metrale_gpu_runtime::gpu::KernelHandle(0));
+    let dense_gemv_batchm_kernel = resolve_head_batchm(gpu);
     // 2026-09-25: Tensor-core BF16 lm_head arm. `try_target_kernel` returns
     // 0 when the target's kernel tree has no `dense_gemm_m16_bf16` module
     // (only the hopper tree has one), and a 0 handle makes
@@ -313,4 +311,47 @@ pub(super) fn alloc_pinned_staging(
             slots: Vec::with_capacity(max_batch_tokens),
         },
     ))
+}
+
+/// 2026-10-16: `METRALE_LM_HEAD_BATCHM_NARROW=1` / `METRALE_LM_HEAD_BATCHM_WIDE=1`: the BF16
+/// head's batched GEMV takes the register-resident `dense_gemv_bf16_batchm_reg8` /
+/// `dense_gemv_bf16_batchm_wide` entry at 2..=8 / 9..=16 rows. Same grid, arguments and
+/// per-row bits as the runtime-M entry; off by default, which keeps every head launch where it
+/// was. Only `1` turns a lever on.
+fn head_batchm_levers() -> (bool, bool) {
+    let on = |k: &str| std::env::var(k).as_deref() == Ok("1");
+    (
+        on("METRALE_LM_HEAD_BATCHM_NARROW"),
+        on("METRALE_LM_HEAD_BATCHM_WIDE"),
+    )
+}
+
+/// 2026-10-16: The BF16 head's batched GEMV entries. A register entry is resolved only when
+/// its lever is on (0 where the target lacks it, which keeps the runtime-M entry); with a lever
+/// on, the resolved entries are logged once, as the readback for an arm.
+fn resolve_head_batchm(
+    gpu: &dyn GpuBackend,
+) -> metrale_model_layers::layers::ops::DenseGemvBatchmPair {
+    use metrale_model_layers::layers::{ops::DenseGemvBatchmPair, try_kernel};
+    let narrow = gpu
+        .kernel("dense_gemv_bf16_batchm", "dense_gemv_bf16_batchm")
+        .unwrap_or(KernelHandle(0));
+    let (narrow_on, wide_on) = head_batchm_levers();
+    let mut pair = DenseGemvBatchmPair::narrow_only(narrow);
+    if narrow_on {
+        pair.reg8 = try_kernel(gpu, "dense_gemv_bf16_batchm", "dense_gemv_bf16_batchm_reg8");
+    }
+    if wide_on {
+        pair.wide = try_kernel(gpu, "dense_gemv_bf16_batchm", "dense_gemv_bf16_batchm_wide");
+    }
+    if narrow_on || wide_on {
+        tracing::info!(
+            "lm_head batchm: METRALE_LM_HEAD_BATCHM_NARROW={narrow_on} (reg8 entry loaded={}, \
+             rows 2..=8), METRALE_LM_HEAD_BATCHM_WIDE={wide_on} (wide entry loaded={}, rows \
+             9..=16)",
+            pair.reg8.0 != 0,
+            pair.wide.0 != 0
+        );
+    }
+    pair
 }

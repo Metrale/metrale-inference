@@ -379,7 +379,7 @@ fn proj_registered(
             output: c,
             n: n32,
         }];
-        seg::launch(gpu, a, &segs, m, k32, plan.split(&[n32], k32), stream)?;
+        seg::launch(gpu, &plan, a, &segs, m, k32, stream)?;
         return Ok(true);
     }
     let mut done = 0;
@@ -483,8 +483,7 @@ fn proj_group_registered(
         seg::launch_seg_gemv(gpu, a, &segs, m, k32, plan.sms, stream)?;
         return Ok(true);
     }
-    let ns: Vec<u32> = segs.iter().map(|g| g.n).collect();
-    seg::launch(gpu, a, &segs, m, k32, plan.split(&ns, k32), stream)?;
+    seg::launch(gpu, &plan, a, &segs, m, k32, stream)?;
     Ok(true)
 }
 

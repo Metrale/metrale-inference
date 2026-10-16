@@ -2,14 +2,19 @@
 
 //! 2026-10-09: The BF16 projection dispatch every GLM-5.3 block shares (`glm_mm`), with the
 //! register-resident batched GEMV for 9..=16 rows (`dense_gemv_bf16_batchm_wide`).
+//! 2026-10-16: and, under `METRALE_GLM_BATCHM_NARROW=1`, for 2..=8 rows
+//! (`dense_gemv_bf16_batchm_reg8`).
 //!
 //! Owner: model-arch (GLM-5.3).
 //! Invariants:
-//! - Only `glm_mm` launches the wide entries, only at `BATCHM_WIDE_MIN..=DENSE_GEMV_BATCHM_MAX_M`
-//!   rows, and only when the caller passes a wide handle; every other M takes the dispatch the
-//!   DSA and MLP `gemm` helpers took before (cuBLASLt above 16 rows, else
-//!   `ops::dense_mm_bf16`), which other models share and which is unchanged.
-//! - A wide entry's row has the bits of the runtime-M batched GEMV's row
+//! - Only `glm_mm` launches the register entries, only in their bands
+//!   (`ops::DenseGemvBatchmPair::for_rows`), with grid y = 1, and only when the caller passes
+//!   their handles; every other M takes the dispatch the DSA and MLP `gemm` helpers took before
+//!   (cuBLASLt above 16 rows, else `ops::dense_mm_bf16`), which other models share and which
+//!   is unchanged.
+//! - 2026-10-16: Under `METRALE_DENSE_BATCHM_32=1` exactly 17..=32 rows run as 16-row launches
+//!   ([`glm_mm_rows16`]) instead of cuBLASLt; off, nothing changes.
+//! - A register entry's row has the bits of the runtime-M batched GEMV's row
 //!   (`kernels/gb10/common/dense_gemv_bf16_batchm.cu`), which has `dense_gemv_bf16`'s.
 
 use anyhow::Result;
@@ -17,17 +22,16 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::{KernelLaunch, div_ceil};
 use metrale_model_layers::layers::ops;
 
-/// 2026-10-09: `#define BATCHM_WIDE_MIN` in `dense_gemv_bf16_batchm.cu`: the narrowest M the
-/// wide entries take.
-pub(crate) const BATCHM_WIDE_MIN: usize = 9;
-
-/// 2026-10-09: A batched-GEMV pair: `narrow` is the runtime-M entry `ops::dense_mm_bf16`
+/// 2026-10-09: A batched-GEMV set: `narrow` is the runtime-M entry `ops::dense_mm_bf16`
 /// launches at 2..=16 rows; `wide` the register-resident entry for 9..=16 rows, or
-/// `KernelHandle(0)` to keep `narrow` there. 2026-10-11: `out_bytes`, the pair's output element
-/// size (2 for the BF16-out entries, 4 for the FP32-out ones), sizes a row of `C`.
+/// `KernelHandle(0)` to keep `narrow` there. 2026-10-11: `out_bytes`, the set's output element
+/// size (2 for the BF16-out entries, 4 for the FP32-out ones), sizes a row of `C`. 2026-10-16:
+/// `reg8`, the register-resident entry for 2..=8 rows ([`resolve_reg8`]: `KernelHandle(0)`
+/// unless `METRALE_GLM_BATCHM_NARROW=1`).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Batchm {
     pub(crate) narrow: KernelHandle,
+    pub(crate) reg8: KernelHandle,
     pub(crate) wide: KernelHandle,
     pub(crate) out_bytes: usize,
 }
@@ -37,6 +41,7 @@ impl From<KernelHandle> for Batchm {
     fn from(narrow: KernelHandle) -> Self {
         Self {
             narrow,
+            reg8: KernelHandle(0),
             wide: KernelHandle(0),
             out_bytes: 2,
         }
@@ -50,11 +55,72 @@ fn wide_enabled() -> bool {
     *E.get_or_init(|| std::env::var("METRALE_GLM_BATCHM_WIDE").as_deref() != Ok("0"))
 }
 
-/// 2026-10-09: Whether `glm_mm` takes the wide entry for `m` rows with handle `wide`.
-pub(crate) fn takes_wide(wide: KernelHandle, m: usize) -> bool {
-    wide.0 != 0
-        && (BATCHM_WIDE_MIN..=ops::DENSE_GEMV_BATCHM_MAX_M as usize).contains(&m)
-        && wide_enabled()
+/// 2026-10-16: `METRALE_GLM_BATCHM_NARROW=1` sends 2..=8 rows to the register-resident reg8
+/// entry (router logits, DSA indexer, the other BF16 projections at decode widths): same grid,
+/// arguments and per-row bits as the runtime-M entry, whose accumulators live in local memory.
+/// Off by default. Only `1` turns it on.
+fn narrow_lever(value: Option<&str>) -> bool {
+    value == Some("1")
+}
+
+/// 2026-10-16: The reg8 entry of one output type (`fp32_out`) for a kernels struct's
+/// `resolve`: `KernelHandle(0)` with `METRALE_GLM_BATCHM_NARROW` off, or where the target lacks
+/// the entry (both keep the runtime-M entry at 2..=8 rows). Logs the readback for an arm once.
+pub(crate) fn resolve_reg8(gpu: &dyn GpuBackend, fp32_out: bool) -> KernelHandle {
+    if !narrow_lever(std::env::var("METRALE_GLM_BATCHM_NARROW").ok().as_deref()) {
+        return KernelHandle(0);
+    }
+    let func = if fp32_out {
+        "dense_gemv_bf16_batchm_reg8_fp32out"
+    } else {
+        "dense_gemv_bf16_batchm_reg8"
+    };
+    let h = metrale_model_layers::layers::try_kernel(gpu, "dense_gemv_bf16_batchm", func);
+    static ONCE: [std::sync::Once; 2] = [std::sync::Once::new(), std::sync::Once::new()];
+    ONCE[usize::from(fp32_out)].call_once(|| {
+        tracing::info!(
+            "glm_mm: METRALE_GLM_BATCHM_NARROW=1 -- 2..=8-row BF16 projections on the \
+             register-resident batched GEMV ({func} loaded={})",
+            h.0 != 0
+        );
+    });
+    h
+}
+
+impl Batchm {
+    /// 2026-10-16: The entries `glm_mm` picks among, with the wide lever applied.
+    fn entries(self, wide_on: bool) -> ops::DenseGemvBatchmPair {
+        ops::DenseGemvBatchmPair {
+            narrow: self.narrow,
+            reg8: self.reg8,
+            wide: if wide_on { self.wide } else { KernelHandle(0) },
+        }
+    }
+
+    /// 2026-10-16: The register entry `glm_mm` launches for `m` rows, if any.
+    fn register_entry(self, m: usize, wide_on: bool) -> Option<KernelHandle> {
+        let m = u32::try_from(m).ok()?;
+        let e = self.entries(wide_on);
+        let h = e.for_rows(m);
+        (h.0 != e.narrow.0).then_some(h)
+    }
+}
+
+/// 2026-10-16: Whether `METRALE_DENSE_BATCHM_32` (`on`) sends an `m`-row `glm_mm` to
+/// [`glm_mm_rows16`]: exactly 17..=32 rows.
+fn rows32_takes(on: bool, m: usize) -> bool {
+    on && u32::try_from(m).is_ok_and(|m| ops::dense_batchm_band(0, true, m))
+}
+
+/// 2026-10-16: The arm readback for `METRALE_DENSE_BATCHM_32`, once per process.
+fn log_rows32(m: usize, n: usize, kk: usize) {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        tracing::info!(
+            "glm_mm: METRALE_DENSE_BATCHM_32=1 -- 17..=32-row BF16 projections as 16-row \
+             batched-GEMV launches (first m={m} n={n} k={kk})"
+        );
+    });
 }
 
 /// 2026-10-11: [`glm_mm`] in launches of at most `DENSE_GEMV_BATCHM_MAX_M` rows, each on the
@@ -77,7 +143,8 @@ fn glm_mm_rows16(
 ) -> Result<()> {
     anyhow::ensure!(
         batchm.narrow.0 != 0 && gemv.0 != 0,
-        "METRALE_GLM_BATCH_INVARIANT=1: a {m}-row projection needs the GEMV tiers"
+        "METRALE_GLM_BATCH_INVARIANT=1 or METRALE_DENSE_BATCHM_32=1: a {m}-row projection needs the \
+         GEMV tiers"
     );
     let step = ops::DENSE_GEMV_BATCHM_MAX_M as usize;
     let c_elem = batchm.out_bytes;
@@ -93,7 +160,7 @@ fn glm_mm_rows16(
 
 /// 2026-10-09: `C[M, N] = A[M, K] @ B[N, K]^T` with BF16 inputs (the output element is the
 /// kernels'): the W4A16 or FP8 dense path for a registered weight, then cuBLASLt above `DENSE_GEMV_BATCHM_MAX_M` rows when `cublas_wide_proj` is on (BF16
-/// out), the wide batched GEMV at 9..=16 rows when `batchm.wide` is set, else
+/// out), the register batched GEMV in its band (`Batchm::register_entry`), else
 /// `ops::dense_mm_bf16` (GEMV at one row, `batchm.narrow` at 2..=16, the tile GEMM otherwise).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn glm_mm(
@@ -124,11 +191,17 @@ pub(crate) fn glm_mm(
     if wide_rows && crate::glm5next_batch_inv::enabled()? {
         return glm_mm_rows16(gpu, gemm, gemv, batchm, a, b, c, m, n, kk, stream);
     }
+    // 2026-10-16: `METRALE_DENSE_BATCHM_32=1`: 17..=32 rows as the same 16-row launches (an MTP
+    // verify of 24 or 32 rows keeps the rows' 1..=16-row bits), ahead of cuBLASLt.
+    if rows32_takes(ops::dense_batchm_32(), m) {
+        log_rows32(m, n, kk);
+        return glm_mm_rows16(gpu, gemm, gemv, batchm, a, b, c, m, n, kk, stream);
+    }
     if wide_rows && crate::glm5next_layer::cublas_wide_proj() {
         return ops::cublas_bf16_proj_dense(a, b, c, m as u32, n as u32, kk as u32, stream);
     }
-    if takes_wide(batchm.wide, m) {
-        return KernelLaunch::new(gpu, batchm.wide)
+    if let Some(reg) = batchm.register_entry(m, wide_enabled()) {
+        return KernelLaunch::new(gpu, reg)
             .grid([div_ceil(n as u32, 4), 1, 1])
             .block([256, 1, 1])
             .arg_ptr(a)
@@ -186,6 +259,7 @@ mod tests {
         let (gemm, gemv, narrow) = (KernelHandle(11), KernelHandle(12), KernelHandle(13));
         let b = Batchm {
             narrow,
+            reg8: KernelHandle(0),
             wide: KernelHandle(0),
             out_bytes: 4,
         };
@@ -211,5 +285,51 @@ mod tests {
         };
         assert!(glm_mm_rows16(&gpu, gemm, gemv, no_batch, a, w, c, 40, n, kk, 7).is_err());
         assert_eq!(gpu.launches_snapshot().len(), 3);
+    }
+
+    /// 2026-10-16: `METRALE_DENSE_BATCHM_32` takes exactly 17..=32 rows, and none when off; only
+    /// `1` turns it on.
+    #[test]
+    fn rows32_takes_exactly_17_to_32_rows() {
+        let on: Vec<usize> = (0..=40).filter(|&m| rows32_takes(true, m)).collect();
+        assert_eq!(on, (17..=32).collect::<Vec<_>>());
+        assert!((0..=40).all(|m| !rows32_takes(false, m)));
+        assert!(!rows32_takes(true, usize::MAX));
+        assert!(ops::dense_batchm_32_from(Some("1")));
+        for v in [None, Some("0"), Some("true"), Some(""), Some("32")] {
+            assert!(!ops::dense_batchm_32_from(v), "{v:?}");
+        }
+    }
+
+    /// 2026-10-16: The default (wide only) takes the wide entry at exactly 9..=16 rows; a reg8
+    /// handle adds exactly 2..=8; `METRALE_GLM_BATCHM_WIDE=0` drops 9..=16; one row, 17 rows and
+    /// missing handles never take a register entry. Only `1` turns the narrow lever on.
+    #[test]
+    fn register_entries_follow_the_handles_and_the_wide_lever() {
+        let (narrow, reg8, wide) = (KernelHandle(4), KernelHandle(5), KernelHandle(6));
+        let picks = |b: Batchm, wide_on: bool| -> Vec<(usize, u64)> {
+            (0..=20)
+                .filter_map(|m| b.register_entry(m, wide_on).map(|h| (m, h.0)))
+                .collect()
+        };
+        let base = Batchm {
+            narrow,
+            reg8: KernelHandle(0),
+            wide,
+            out_bytes: 4,
+        };
+        let w: Vec<(usize, u64)> = (9..=16).map(|m| (m, 6)).collect();
+        let r: Vec<(usize, u64)> = (2..=8).map(|m| (m, 5)).collect();
+        assert_eq!(picks(base, true), w);
+        assert!(picks(base, false).is_empty());
+        let both = Batchm { reg8, ..base };
+        assert_eq!(picks(both, true), [r.clone(), w].concat());
+        assert_eq!(picks(both, false), r);
+        assert!(picks(Batchm::from(narrow), true).is_empty());
+        assert!(both.register_entry(usize::MAX, true).is_none());
+        assert!(narrow_lever(Some("1")));
+        for v in [None, Some("0"), Some("true"), Some(""), Some("on")] {
+            assert!(!narrow_lever(v), "{v:?}");
+        }
     }
 }
