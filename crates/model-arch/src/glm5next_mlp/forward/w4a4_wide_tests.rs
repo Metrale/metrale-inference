@@ -107,12 +107,12 @@ fn each_wide_width_maps_to_its_entry_only_under_the_lever() {
     let gpu = MockGpuBackend::new();
     let k = kernels(&gpu);
     let own = k.w4a4_moe_slots_sweep;
-    let at = |rows, top_k, wide| sweep_kernel(&k, own, k.w4a4_moe_sweep, rows, top_k, wide);
+    // 2026-10-16: `KernelHandle` has no `PartialEq`; compare the raw handle.
+    let at = |rows, top_k, wide| {
+        sweep_kernel(&k, own, k.w4a4_moe_sweep, rows, top_k, wide).map(|(h, e)| (h.0, e))
+    };
     for wide in [false, true] {
-        assert_eq!(
-            at(16, 8, wide),
-            Some((KernelHandle(SWEEP16), SweepEntries::Union))
-        );
+        assert_eq!(at(16, 8, wide), Some((SWEEP16, SweepEntries::Union)));
         assert_eq!(at(33, 8, wide), None);
     }
     for (rows, want) in [
@@ -124,20 +124,17 @@ fn each_wide_width_maps_to_its_entry_only_under_the_lever() {
         assert_eq!(at(rows, 8, false), None, "{rows} rows off");
         assert_eq!(
             at(rows, 8, true),
-            Some((KernelHandle(want), SweepEntries::Union)),
+            Some((want, SweepEntries::Union)),
             "{rows} rows on"
         );
     }
     // 2026-10-14: The union builder's table caps the ids at 256: 32 rows of top-9 do not fit.
     assert_eq!(32 * 8, WIDE_SWEEP_MAX_IDS);
     assert_eq!(at(32, 9, true), None);
-    assert_eq!(
-        at(28, 9, true),
-        Some((KernelHandle(SWEEP32), SweepEntries::Union))
-    );
+    assert_eq!(at(28, 9, true), Some((SWEEP32, SweepEntries::Union)));
     let mut k = kernels(&gpu);
     k.moe_row_union = KernelHandle(0);
-    assert_eq!(sweep_kernel(&k, own, k.w4a4_moe_sweep, 24, 8, true), None);
+    assert!(sweep_kernel(&k, own, k.w4a4_moe_sweep, 24, 8, true).is_none());
 }
 
 /// 2026-10-14: `w4a4_experts` over `rows` rows on a grouped workspace of 32 rows.
