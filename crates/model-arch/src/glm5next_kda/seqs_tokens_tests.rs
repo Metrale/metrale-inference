@@ -13,8 +13,8 @@ use metrale_gpu_runtime::gpu::mock::{MockArg, MockGpuBackend, MockLaunch};
 
 use super::*;
 use crate::glm5next_kda::decode_rows_tests::{
-    CONV_SEQS, CONV_TOKENS, CONV_WINDOW, RECUR_SEQ, RECUR_SEQS, WINDOW_SEQS, cfg, layer, seq_state,
-    since,
+    CONV_SEQS, CONV_TOKENS, CONV_WINDOW, RECUR_SEQ, RECUR_SEQS, SNAPZ_RESOLVE, WINDOW_SEQS, cfg,
+    layer, seq_state, since,
 };
 
 fn u64a(v: u64) -> MockArg {
