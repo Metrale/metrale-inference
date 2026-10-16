@@ -54,7 +54,7 @@ pub struct Score {
     /// attributes each to its own round.
     pub unmeasured_rounds: Vec<(usize, String)>,
     /// 2026-09-26: Rounds whose first turn reported zero cached prompt tokens
-    /// or, 2026-10-16, none ([`RoundRecord::is_vacuous`]).
+    /// or, 2026-10-16, none (see `RoundRecord::is_vacuous`).
     pub vacuous_rounds: Vec<usize>,
     /// 2026-09-26: Minimum turn-1 cached-token count across the measured
     /// replays. `None` when there is none or, 2026-10-16, when one of them
