@@ -179,7 +179,7 @@ fn segment(a: &Args, kernels: &[Kernel]) -> Result<(String, Vec<usize>)> {
     }
 }
 
-fn digest(io: &Io, d: &Digest, what: &str) -> Result<String> {
+pub(super) fn digest(io: &Io, d: &Digest, what: &str) -> Result<String> {
     Ok(match d {
         Digest::Path(p) => sha256_hex(&load::read_bytes(io, p).map_err(|e| e.context(what))?),
         Digest::Sha256(h) => h.clone(),
@@ -223,7 +223,7 @@ fn rows(a: &Args) -> Result<u64> {
     }
 }
 
-fn overlay(
+pub(super) fn overlay(
     a: &Args,
     tc: &TreeConfig,
     table: &crate::core::families::FamilyTable,

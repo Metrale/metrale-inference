@@ -13,7 +13,7 @@ use metprof_kb::port::{Arg, FileRef, Identity, RUN_SCHEMA, RunRecord, Stamps, UN
 use serde_json::{Map, Value};
 
 use crate::cli::Io;
-use crate::cli::args::{Args, Item, Kind};
+use crate::cli::args::{Args, Item, Kind, rows_file};
 use crate::core::error::{Error, Result};
 use crate::core::provenance::sha256_hex;
 
@@ -142,6 +142,16 @@ pub fn run_record(
             Kind::Dir => Arg::Dir {
                 basename: basename(value),
             },
+            Kind::RowsFile => {
+                let (rows, path) = rows_file(value)?;
+                out.push(Arg::Word(format!("{rows}=")));
+                out.push(Arg::File {
+                    sha256: digests.of(path, false)?,
+                    basename: basename(path),
+                });
+                paths.extend([value.clone(), path.to_string()]);
+                continue;
+            }
             _ => {
                 out.push(Arg::Word(value.clone()));
                 continue;

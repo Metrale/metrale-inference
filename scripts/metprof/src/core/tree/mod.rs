@@ -16,6 +16,7 @@ pub mod diff;
 pub mod families;
 pub mod identity;
 pub mod json;
+pub mod slope;
 
 use indexmap::IndexMap;
 use serde_json::{Map, Value, json};
@@ -24,6 +25,7 @@ use crate::core::error::Result;
 use crate::core::model::Kernel;
 use crate::core::repr::quote;
 use crate::core::tree::identity::{Quantiles, Variants, quantiles, quantiles_json, variants_json};
+use crate::core::tree::slope::{NodeSlope, RootSlope};
 use crate::fail;
 
 pub const SCHEMA: &str = "metprof.kernel_tree/1";
@@ -89,6 +91,9 @@ pub struct Node {
     /// The baseline total (ns) of the node at the same path; `None` when the
     /// baseline has no such node. Meaningful only when the tree has a baseline.
     pub baseline: Option<i64>,
+    /// Per-row cost across widths: on every node of a slope tree, on none
+    /// otherwise.
+    pub slope: Option<NodeSlope>,
     pub kernels: IndexMap<String, Node>,
 }
 
@@ -190,6 +195,8 @@ pub struct Tree {
     pub kernels: IndexMap<String, Node>,
     pub unattributed: IndexMap<String, Loose>,
     pub baseline: Option<BaselineView>,
+    /// The widths a slope tree joins; `None` for a single-capture tree.
+    pub slope: Option<RootSlope>,
 }
 
 pub fn us(ns: i64) -> f64 {
@@ -235,6 +242,35 @@ impl Tree {
                     quote(&what)
                 );
             }
+        }
+        Ok(())
+    }
+
+    /// A slope tree has a slope on every node and none elsewhere, and its
+    /// widest points are the tree's own figures.
+    pub fn check_slope(&self) -> Result<()> {
+        let Some(root) = &self.slope else {
+            if let Some((p, _)) = self.paths().into_iter().find(|(_, n)| n.slope.is_some()) {
+                fail!(
+                    "kernel tree: node {} has a slope but the tree has none",
+                    quote(&p)
+                );
+            }
+            return Ok(());
+        };
+        root.check_widest(
+            "kernel tree: step",
+            &root.step,
+            self.total_ns(),
+            slope::launches(self),
+        )?;
+        for (p, n) in self.paths() {
+            let place = format!("node {}", quote(&p));
+            let Some(s) = &n.slope else {
+                fail!("{place}: has no slope but the tree has one");
+            };
+            let t = n.total();
+            root.check_widest(&place, s, t.sum, t.n)?;
         }
         Ok(())
     }
@@ -302,6 +338,7 @@ impl Tree {
 
     pub fn to_json(&self) -> Result<Value> {
         self.check_sealed()?;
+        self.check_slope()?;
         let total = self.total_ns();
         let mut root = Map::new();
         root.insert("schema".into(), json!(SCHEMA));
@@ -310,6 +347,9 @@ impl Tree {
         root.insert("source".into(), json!(self.source.as_str()));
         root.insert("total_time".into(), json!(us(total)));
         root.insert("coverage".into(), json!(self.coverage()?));
+        if let Some(s) = &self.slope {
+            root.insert("slope".into(), s.to_json());
+        }
         if let Some(b) = &self.baseline {
             root.insert("baseline_time".into(), json!(us(b.total)));
             root.insert("delta".into(), json!(us(total - b.total)));
@@ -389,6 +429,9 @@ impl Tree {
         }
         if !n.members.is_empty() {
             m.insert("members".into(), json!(n.members));
+        }
+        if let Some(s) = &n.slope {
+            m.insert("slope".into(), s.to_json());
         }
         if self.baseline.is_some() {
             m.insert("baseline_time".into(), opt(n.baseline));

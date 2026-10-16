@@ -9,11 +9,10 @@ Commands (`metprof --help` lists every flag): `summarize` (per-device busy
 union and family breakdown), `families` (kernel families and the coverage
 gate), `segment requests|decode|spec` (requests and pinned decode steps),
 `diff`, `envdiff`, `verdict` (two captures, two environments, a recorded
-verdict), `tree` / `tree-diff` (the kernel tree below), and `ttft log` /
-`ttft compare` / `ttft client` (time to first token, further below).
-verdict), `tree` / `tree-diff` (the kernel tree below), and
-`kb selfcheck|replay|export|seal|verify` (the knowledge base every run is
-recorded in, below).
+verdict), `tree` / `tree-diff` (the kernel tree below), `slope` (per-row cost
+across widths, below), `ttft log` / `ttft compare` / `ttft client` (time to
+first token, further below), and `kb selfcheck|replay|export|seal|verify`
+(the knowledge base every run is recorded in, below).
 
 Every threshold is a flag or a config key. A missing one is an error, never a
 default.
@@ -264,6 +263,74 @@ dependencies change, refresh this lock with
 The circuit tests read the repo's `kernels/` and compare the offline plan with
 the checked-in golden `kernels/circuits/plans/qwen3_5-decode-n1.txt`, so a
 plan change shows up here when the golden is regenerated.
+
+## Per-row cost (`metprof slope`)
+
+```
+metprof slope --at ROWS=CAP.sqlite --at ROWS=CAP.sqlite --at ROWS=CAP.sqlite [--at ...]
+              --device N --families families.toml --min-graph-share SHARE
+              --provenance PROV.toml --out slope.json [--model NAME]
+```
+
+The same decode step captured at three or more widths (rows per step), in
+any order. Each capture is cut to its pinned decode steps exactly as
+`segment decode` cuts it (refused below `--min-graph-share`), and each is a
+family tree exactly as `tree` builds one (gated by `[tree] coverage_min`).
+The trees are joined by node path into one `metprof.kernel_tree/1` file: the
+widest width's tree, with every node that only a narrower width ran added at
+0 launches. Every node, and the root, gains a `slope` object; nothing else
+changes, so `tree-diff` and `--baseline` read the file like any tree.
+
+Per node and width: `ms_per_step` (the node's summed kernel time over the
+width's steps), `launches_per_step` and `launches_per_row`. Between
+consecutive widths: the marginal `ms_per_row` (added ms per step over added
+rows) and marginal `launches_per_row`. At each inner width: the change in
+marginal `ms_per_row` and its class against `[slope] flat_band_ms_per_row`
+(required, no default):
+
+- `FLAT`: the change lies within the band, inclusive. Every added row costs
+  the same again: per-row structure (per-row loops, launches, state).
+- `FALLING`: the change is below minus the band. The marginal row costs less
+  as the batch widens: a cost shared across rows (weight bytes read once per
+  step).
+- `RISING`: the change is above the band: a cliff.
+
+A node's `class` is `RISING` if any change is, else `FALLING` if any change
+is, else `FLAT`. A node absent at a width is 0 there (it did not run) and
+that width is listed in `absent_at`. A family node (the parent of its
+kernels) carries `cost_driver`: its `[slope.cost_driver]` entry
+(`weight_bytes`, `state_bytes`, `launches_per_row` or `host_sync`), or
+`undeclared`; metprof never infers one.
+
+```json
+"moe_expert_gemm": {
+  "...": "...",
+  "slope": {
+    "class": "FALLING",
+    "cost_driver": "weight_bytes",
+    "absent_at": [],
+    "widths": [
+      { "rows": 1, "ms_per_step": 1.0, "launches_per_step": 4.0, "launches_per_row": 4.0 },
+      { "rows": 2, "ms_per_step": 1.5, "launches_per_step": 4.0, "launches_per_row": 2.0 },
+      { "rows": 4, "ms_per_step": 2.0, "launches_per_step": 4.0, "launches_per_row": 1.0 }
+    ],
+    "marginals": [
+      { "from_rows": 1, "to_rows": 2, "ms_per_row": 0.5, "launches_per_row": 0.0 },
+      { "from_rows": 2, "to_rows": 4, "ms_per_row": 0.25, "launches_per_row": 0.0 }
+    ],
+    "changes": [ { "at_rows": 2, "delta_ms_per_row": -0.25, "class": "FALLING" } ]
+  },
+  "kernels": { "...": "..." }
+}
+```
+
+The root's `slope` states `flat_band_ms_per_row`, each width (`rows`,
+`steps`, `graph_share`, `capture_sha256`) and `step`: the same object over
+the whole step, unattributed kernels included. A tree read back has every
+slope rebuilt from its per-width points, and the widest point checked
+against the node's own `total_time` and `launches`; anything else stated is
+refused. Stdout lists the widths, the whole step and one row per family,
+largest at the widest width first.
 
 ## Time to first token (`metprof ttft`)
 

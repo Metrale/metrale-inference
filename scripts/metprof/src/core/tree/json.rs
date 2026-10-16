@@ -15,6 +15,7 @@ use crate::core::error::{Error, Result};
 use crate::core::model::{Grid, Launch};
 use crate::core::repr::quote;
 use crate::core::tree::identity::{Identity, QUANTILE_KEYS, Quantiles, Variant, Variants};
+use crate::core::tree::slope::{RootSlope, node_slope_from_json, root_slope_from_json};
 use crate::core::tree::{
     BaselineView, Join, Loose, Node, SCHEMA, Source, Stats, TIME_UNIT, Tree, us,
 };
@@ -45,7 +46,16 @@ const NODE_KEYS: [&str; 11] = [
     "kernels",
 ];
 /// `variants` is required on a leaf and refused on an interior node.
-const NODE_OPTIONAL: [&str; 5] = ["circuit", "members", "baseline_time", "delta", "variants"];
+/// `slope` is required on every node of a tree with a root `slope`, refused
+/// on every node of one without.
+const NODE_OPTIONAL: [&str; 6] = [
+    "circuit",
+    "members",
+    "baseline_time",
+    "delta",
+    "variants",
+    "slope",
+];
 const LOOSE_KEYS: [&str; 6] = [
     "total_time",
     "launches",
@@ -267,8 +277,11 @@ fn loose(key: &str, v: &Value) -> Result<Loose> {
 pub fn tree_from_json(v: &Value) -> Result<Tree> {
     let root = obj("kernel tree", v)?;
     let with_base = root.contains_key("baseline_time");
-    let optional: &[&str] = if with_base { &ROOT_BASELINE } else { &[] };
-    keys("kernel tree", root, &ROOT_KEYS, optional)?;
+    let mut optional = vec!["slope"];
+    if with_base {
+        optional.extend(ROOT_BASELINE);
+    }
+    keys("kernel tree", root, &ROOT_KEYS, &optional)?;
     if root["schema"] != SCHEMA {
         fail!(
             "kernel tree: schema {} is not {}",
@@ -291,7 +304,8 @@ pub fn tree_from_json(v: &Value) -> Result<Tree> {
     for (k, l) in obj("kernel tree: unattributed", &root["unattributed"])? {
         unattributed.insert(k.clone(), loose(k, l)?);
     }
-    let kernels = nodes("", &root["kernels"], with_base)?;
+    let slope = root.get("slope").map(root_slope_from_json).transpose()?;
+    let kernels = nodes("", &root["kernels"], with_base, slope.as_ref())?;
     let baseline = if with_base {
         let mut away = Vec::new();
         let items = root["fused_away"]
@@ -323,6 +337,7 @@ pub fn tree_from_json(v: &Value) -> Result<Tree> {
         kernels,
         unattributed,
         baseline,
+        slope,
     };
     if ns("kernel tree: total_time", &root["total_time"])? != tree.total_ns() {
         fail!(
@@ -337,6 +352,7 @@ pub fn tree_from_json(v: &Value) -> Result<Tree> {
             root["coverage"]
         );
     }
+    tree.check_slope()?;
     if let Some(b) = &tree.baseline {
         let delta = ns("kernel tree: delta", &root["delta"])?;
         if delta != tree.total_ns() - b.total {
@@ -349,7 +365,12 @@ pub fn tree_from_json(v: &Value) -> Result<Tree> {
     Ok(tree)
 }
 
-fn nodes(prefix: &str, v: &Value, with_base: bool) -> Result<IndexMap<String, Node>> {
+fn nodes(
+    prefix: &str,
+    v: &Value,
+    with_base: bool,
+    slope: Option<&RootSlope>,
+) -> Result<IndexMap<String, Node>> {
     let mut out = IndexMap::new();
     for (k, n) in obj(&format!("{prefix}: kernels"), v)? {
         let path = if prefix.is_empty() {
@@ -363,12 +384,12 @@ fn nodes(prefix: &str, v: &Value, with_base: bool) -> Result<IndexMap<String, No
                 quote(&path)
             );
         }
-        out.insert(k.clone(), node(&path, n, with_base)?);
+        out.insert(k.clone(), node(&path, n, with_base, slope)?);
     }
     Ok(out)
 }
 
-fn node(path: &str, v: &Value, with_base: bool) -> Result<Node> {
+fn node(path: &str, v: &Value, with_base: bool, root: Option<&RootSlope>) -> Result<Node> {
     let place = format!("node {}", quote(path));
     let m = obj(&place, v)?;
     keys(&place, m, &NODE_KEYS, &NODE_OPTIONAL)?;
@@ -378,7 +399,12 @@ fn node(path: &str, v: &Value, with_base: bool) -> Result<Node> {
         );
     }
     let field = |k: &str| format!("{place}: {k}");
-    let kernels = nodes(path, &m["kernels"], with_base)?;
+    let kernels = nodes(path, &m["kernels"], with_base, root)?;
+    let slope = match (root, m.get("slope")) {
+        (Some(r), Some(s)) => Some(node_slope_from_json(&place, s, r)?),
+        (None, None) => None,
+        _ => fail!("{place}: slope must be present exactly when the tree has one"),
+    };
     let launches = count(&field("launches"), &m["launches"])?;
     let total = ns(&field("total_time"), &m["total_time"])?;
     let own = if kernels.is_empty() {
@@ -429,6 +455,7 @@ fn node(path: &str, v: &Value, with_base: bool) -> Result<Node> {
         variants,
         quantiles,
         baseline,
+        slope,
         kernels,
     };
     let t = n.total();

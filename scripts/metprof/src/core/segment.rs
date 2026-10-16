@@ -19,7 +19,7 @@ use serde_json::{Map, Value, json};
 
 use crate::core::error::Result;
 use crate::core::model::{Kernel, ms};
-use crate::core::repr::quote;
+use crate::core::repr::{float, quote};
 use crate::core::stats::median_i64;
 use crate::core::tables::into_map;
 use crate::core::union::{islands, union_ns};
@@ -177,7 +177,7 @@ pub fn step_stats(kernels: &[Kernel], ps: &PinnedSteps) -> Result<StepStats> {
     };
     Ok(StepStats {
         span_median_ms: ms(span),
-        sum_per_step_ms: ms(total as f64 / ps.steps.len() as f64),
+        sum_per_step_ms: ms(per_unit(total as f64, ps.steps.len())),
         idle_median_ms: ms(idle),
     })
 }
@@ -195,6 +195,31 @@ pub fn graph_share(kernels: &[Kernel], ps: &PinnedSteps) -> Result<f64> {
         fail!("the window has no busy time");
     }
     Ok(inside as f64 / all as f64)
+}
+
+/// The pinned steps of a decode window and the share of busy time they
+/// cover, refused below `min_share`: a window the decode graph does not
+/// dominate has no step, and a per-step figure of it would be a window sum.
+pub fn decode_steps(kernels: &[Kernel], min_share: f64) -> Result<(PinnedSteps, f64)> {
+    let ps = pinned_steps(kernels)?;
+    let share = graph_share(kernels, &ps)?;
+    if share < min_share {
+        fail!(
+            "the pinned decode graph ({} nodes, {} launches) covers {share:.3} of the window's busy time, below \
+             --min-graph-share {}: this window is not a decode window, and a per-step table of it would be a \
+             window sum. Use `segment requests`.",
+            ps.nodes,
+            ps.steps.len(),
+            float(min_share)
+        );
+    }
+    Ok((ps, share))
+}
+
+/// A window sum per unit (request or step): the one normalisation every
+/// per-unit figure uses.
+pub fn per_unit(sum: f64, units: usize) -> f64 {
+    sum / units as f64
 }
 
 /// The unit a per-unit table divides by.
@@ -272,15 +297,18 @@ pub fn per_unit_rows(
             RowKey::Kernel(name, (x, y, z)) => into_map(json!({"kernel": name, "grid": [x, y, z]})),
             RowKey::Family(f) => into_map(json!({"family": f})),
         };
-        let per_unit: Vec<i64> = (0..n)
+        let ns_by_unit: Vec<i64> = (0..n)
             .map(|x| by_unit.get(&x).copied().unwrap_or(0))
             .collect();
-        r.insert(format!("ms_per_{u}"), json!(ms(total as f64 / n as f64)));
+        r.insert(format!("ms_per_{u}"), json!(ms(per_unit(total as f64, n))));
         r.insert(
             format!("median_ms_per_{u}"),
-            json!(median_i64(&per_unit).map(ms)),
+            json!(median_i64(&ns_by_unit).map(ms)),
         );
-        r.insert(format!("launches_per_{u}"), json!(count as f64 / n as f64));
+        r.insert(
+            format!("launches_per_{u}"),
+            json!(per_unit(count as f64, n)),
+        );
         r.insert(format!("{u}s_with_it"), json!(by_unit.len()));
         r.insert(
             "avg_us".to_string(),

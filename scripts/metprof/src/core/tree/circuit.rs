@@ -389,6 +389,7 @@ pub fn circuit_tree(
         kernels: roots,
         unattributed,
         baseline: None,
+        slope: None,
     };
     tree.seal();
     Ok((tree, al))

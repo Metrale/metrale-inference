@@ -18,6 +18,7 @@ mod record;
 
 pub use record::build_id;
 mod segment;
+mod slope;
 mod tree;
 mod ttft;
 
@@ -80,6 +81,7 @@ fn commands() -> Vec<&'static Command> {
         segment::COMMANDS,
         diff::COMMANDS,
         tree::COMMANDS,
+        slope::COMMANDS,
         ttft::COMMANDS,
         kb::COMMANDS,
     ]

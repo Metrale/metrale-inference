@@ -15,9 +15,8 @@ use crate::cli::{Command, Io, Run, load};
 use crate::core::capture::{device_copies, device_kernels, graph_node_traced, ordered_calls};
 use crate::core::error::Result;
 use crate::core::model::{ms, ms_to_ns};
-use crate::core::repr::float;
 use crate::core::segment::{
-    Unit, graph_share, inter_gaps, per_unit_rows, pinned_steps, split_requests, step_stats,
+    Unit, decode_steps, inter_gaps, per_unit_rows, split_requests, step_stats,
 };
 use crate::core::spec::spec_steps;
 use crate::core::tables::into_map;
@@ -135,19 +134,7 @@ fn requests(a: &Args, io: &Io) -> Result<Map<String, Value>> {
 fn decode(a: &Args, io: &Io) -> Result<Map<String, Value>> {
     let table = load::load_families(io, a.str("families")?)?;
     let (kernels, labels) = load::classified_window(io, a.pos(0)?, a.int("device")?, &table)?;
-    let min_share = a.float("min-graph-share")?;
-    let ps = pinned_steps(&kernels)?;
-    let share = graph_share(&kernels, &ps)?;
-    if share < min_share {
-        fail!(
-            "the pinned decode graph ({} nodes, {} launches) covers {share:.3} of the window's busy time, below \
-             --min-graph-share {}: this window is not a decode window, and a per-step table of it would be a \
-             window sum. Use `segment requests`.",
-            ps.nodes,
-            ps.steps.len(),
-            float(min_share)
-        );
-    }
+    let (ps, share) = decode_steps(&kernels, a.float("min-graph-share")?)?;
     let st = step_stats(&kernels, &ps)?;
     let n = top(a)?;
     Ok(into_map(json!({

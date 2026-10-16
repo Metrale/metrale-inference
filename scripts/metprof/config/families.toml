@@ -346,3 +346,19 @@ families = ["^mla_", "^dsa_"]
 [[tree.model.glm.node]]
 path = "mhc"
 families = ["^mhc_", "^rank_sum_add$"]
+
+# ---- per-row cost (`metprof slope`) ----------------------------------------
+# A change in marginal ms per added row (between consecutive widths) within
+# +/- flat_band_ms_per_row, inclusive, is FLAT; above it RISING, below it
+# FALLING. 2026-10-16: 0.002 ms per row is below the time of one short kernel
+# launch, so one added launch per row registers as a change, and well above
+# the rounding of ns kernel durations to ms. It is NOT calibrated against
+# run-to-run spread: re-capture each width twice and widen the band if a
+# repeat flips a class.
+[slope]
+flat_band_ms_per_row = 0.002
+
+# What a family's per-row cost is declared to come from, one of weight_bytes,
+# state_bytes, launches_per_row, host_sync. A family not listed reports
+# "undeclared": a driver is declared from a measurement, never guessed.
+[slope.cost_driver]

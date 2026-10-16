@@ -68,6 +68,7 @@ pub fn families_tree(
         kernels: roots,
         unattributed,
         baseline: None,
+        slope: None,
     };
     tree.seal();
     Ok(tree)

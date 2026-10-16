@@ -193,7 +193,7 @@ fn parse_rule(
 }
 
 pub fn table_from_toml(doc: &toml::Table) -> Result<FamilyTable> {
-    check_keys("families", doc, &TOP_REQUIRED, &["tree"])?;
+    check_keys("families", doc, &TOP_REQUIRED, &["tree", "slope"])?;
     if doc["schema"].as_integer() != Some(SCHEMA) {
         fail!(
             "families: schema {} is not supported (expected {SCHEMA})",

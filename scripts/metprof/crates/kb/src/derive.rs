@@ -67,6 +67,9 @@ struct TreeDoc {
     _fused_away: Option<Value>,
     #[serde(rename = "new")]
     _new: Option<Value>,
+    /// A slope tree's widths and band; kept whole in the run's tree.
+    #[serde(rename = "slope")]
+    _slope: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -94,6 +97,7 @@ struct NodeDoc {
     _baseline_time: Option<f64>,
     #[serde(rename = "delta")]
     _delta: Option<f64>,
+    slope: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -405,6 +409,7 @@ fn walk(
                 circuit: n.circuit.clone(),
                 variants: n.variants.clone().unwrap_or_default(),
                 ord: w.ord,
+                slope: n.slope.clone(),
             };
             w.ord += 1;
             b.put(Record::complete(
