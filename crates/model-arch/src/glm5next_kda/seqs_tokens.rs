@@ -10,7 +10,8 @@
 //! Invariants:
 //! - Runs are laid out sequence-major from workspace row 0, in `runs` order.
 //! - No two runs share a state; every state pointer is set. Checked before any launch.
-//! - A run keeps at most one snapshot: the state after its first row.
+//! - A run keeps at most `KDA_SEQS_SNAP_MAX` snapshots: the state after each of its first `n`
+//!   rows, `n` at most its row count (2026-10-16; before, at most one).
 //!
 //! # Why every row's bits are the per-row walk's
 //!
@@ -18,9 +19,10 @@
 //! per-sequence token kernel's launch (`stateful_tokens`, `stateful_tokens_snap`) on run r's
 //! rows and state, and those give each row the per-row walk's bits (`seq_tokens.rs`). Runs
 //! share nothing, so neither the grouping nor the order across sequences reaches a row. The
-//! conv snapshot is the window after one row, which `causal_conv1d_window_advance` at T = 1
-//! leaves on a copy of the window (`stateful_tokens_snap`); the recurrent snapshot is the
-//! column as it passes row 0, which the walk's copy after row 0 reads back.
+//! conv snapshot after row t is the window after t + 1 rows, which `causal_conv1d_window_advance`
+//! at T = t + 1 leaves on a copy of the window (`stateful_tokens_snap`) and which the kernel
+//! writes with the formula it uses for the final window; the recurrent snapshot after row t is
+//! the column as it passes row t, which the walk's copy after row t reads back.
 
 use super::decode::RowIo;
 use super::seq_tokens::SEQ_VB;
@@ -28,6 +30,44 @@ use super::*;
 
 /// 2026-10-14: `#define KDA_SEQS_MAX` in `kda_seqs_tokens.cu`: the runs one launch takes.
 pub const KDA_SEQS_MAX: usize = 16;
+
+/// 2026-10-16: `#define KDA_SEQS_SNAP_MAX` in `kda_seqs_tokens.cu`: the snapshots one run keeps,
+/// so a span of up to eight verify rows (`--num-drafts 7`) is snapshotted in the seqs kernels.
+pub const KDA_SEQS_SNAP_MAX: usize = 7;
+
+/// 2026-10-16: A run's snapshot slots, `(h_dst, conv_dst)` for the state after each of its
+/// first `as_slice().len()` rows. At most `KDA_SEQS_SNAP_MAX`, by construction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct KdaSnaps {
+    n: usize,
+    at: [(DevicePtr, DevicePtr); KDA_SEQS_SNAP_MAX],
+}
+
+impl KdaSnaps {
+    /// 2026-10-16: No snapshot.
+    pub const NONE: Self = Self {
+        n: 0,
+        at: [(DevicePtr::NULL, DevicePtr::NULL); KDA_SEQS_SNAP_MAX],
+    };
+
+    /// 2026-10-16: The slots of `list` in order; refuses more than `KDA_SEQS_SNAP_MAX`.
+    pub fn new(list: &[(DevicePtr, DevicePtr)]) -> Result<Self> {
+        if list.len() > KDA_SEQS_SNAP_MAX {
+            bail!(
+                "KDA seqs verify: {} snapshots for one run, the kernels keep {KDA_SEQS_SNAP_MAX}",
+                list.len()
+            );
+        }
+        let mut s = Self::NONE;
+        s.at[..list.len()].copy_from_slice(list);
+        s.n = list.len();
+        Ok(s)
+    }
+
+    pub fn as_slice(&self) -> &[(DevicePtr, DevicePtr)] {
+        &self.at[..self.n]
+    }
+}
 
 /// 2026-10-16: SNAPZ (`METRALE_GLM_KDA_SNAPZ=1`): where a run whose last verdict kept only its
 /// first verify row finds that state. `flag` is the run's batch-position word on the device:
@@ -42,13 +82,14 @@ pub struct KdaDefer {
 }
 
 /// 2026-10-14: One sequence's run: `rows` consecutive workspace rows stepping `state`, and
-/// where to keep the state after the first of them (`(h_dst, conv_dst)`), if anywhere.
+/// where to keep the state after each of its first rows (2026-10-16: [`KdaSnaps`]; before,
+/// after the first row only).
 /// 2026-10-16: `defer`: SNAPZ, see [`KdaDefer`] (`None`: the live state, as before).
 #[derive(Clone, Copy, Debug)]
 pub struct KdaSeqRun {
     pub state: KdaSeqState,
     pub rows: usize,
-    pub snapshot: Option<(DevicePtr, DevicePtr)>,
+    pub snapshots: KdaSnaps,
     pub defer: Option<KdaDefer>,
 }
 
@@ -61,13 +102,22 @@ pub fn kda_seqs_tokens() -> bool {
 }
 
 /// 2026-10-14: The total rows of `runs`, or why they cannot run as one batched verify: no run,
-/// an empty run, an unset state, snapshot or defer pointer, or two runs on one state.
+/// an empty run, an unset state, snapshot or defer pointer, more snapshots than rows, or two
+/// runs on one state.
 pub(super) fn check_runs(runs: &[KdaSeqRun]) -> Result<usize> {
     if runs.is_empty() {
         bail!("KDA seqs verify: no runs");
     }
     for (i, a) in runs.iter().enumerate() {
-        let snap_unset = a.snapshot.is_some_and(|(h, c)| h.0 == 0 || c.0 == 0)
+        let snaps = a.snapshots.as_slice();
+        if snaps.len() > a.rows {
+            bail!(
+                "KDA seqs verify: run {i} keeps {} snapshots over {} rows",
+                snaps.len(),
+                a.rows
+            );
+        }
+        let snap_unset = snaps.iter().any(|(h, c)| h.0 == 0 || c.0 == 0)
             || a.defer
                 .is_some_and(|d| d.flag.0 == 0 || d.h.0 == 0 || d.conv.0 == 0);
         if a.rows == 0 || a.state.recurrent.0 == 0 || a.state.conv.0 == 0 || snap_unset {
@@ -196,7 +246,7 @@ impl Glm5NextKdaLayer {
             .arg_u32(cd as u32)
             .arg_u32(c.conv_kernel as u32);
         let window = ptrs(window, |r| r.state.conv.0);
-        let window = rows(ptrs(window, |r| r.snapshot.map_or(0, |p| p.1.0)));
+        let window = rows(seq_snaps(window, runs, |p| p.1.0));
         defer(window, |d| d.conv).launch(stream)?;
         let recurrent = KernelLaunch::new(gpu, s.recurrent_seqs)
             .grid([c.heads as u32, (d / SEQ_VB) as u32, nseq])
@@ -215,7 +265,7 @@ impl Glm5NextKdaLayer {
             .arg_u32(c.heads as u32)
             .arg_u32(qkv as u32);
         let recurrent = ptrs(recurrent, |r| r.state.recurrent.0);
-        let recurrent = rows(ptrs(recurrent, |r| r.snapshot.map_or(0, |p| p.0.0)));
+        let recurrent = rows(seq_snaps(recurrent, runs, |p| p.0.0));
         defer(recurrent, |d| d.h).launch(stream)
     }
 
@@ -282,6 +332,25 @@ fn seq_ptrs<'a>(
     f: fn(&KdaSeqRun) -> u64,
 ) -> KernelLaunch<'a> {
     (0..KDA_SEQS_MAX).fold(l, |l, r| l.arg_u64(runs.get(r).map_or(0, f)))
+}
+
+/// 2026-10-16: The snapshot arguments: `KDA_SEQS_SNAP_MAX` blocks of `KDA_SEQS_MAX` pointers,
+/// block `t` holding `f` of each run's snapshot `t` (zero for a run that keeps fewer and after
+/// the last run). The kernels store snapshot `t` of a run wherever its pointer is set.
+fn seq_snaps<'a>(
+    l: KernelLaunch<'a>,
+    runs: &[KdaSeqRun],
+    f: fn(&(DevicePtr, DevicePtr)) -> u64,
+) -> KernelLaunch<'a> {
+    (0..KDA_SEQS_SNAP_MAX).fold(l, |l, t| {
+        (0..KDA_SEQS_MAX).fold(l, |l, r| {
+            l.arg_u64(
+                runs.get(r)
+                    .and_then(|x| x.snapshots.as_slice().get(t))
+                    .map_or(0, f),
+            )
+        })
+    })
 }
 
 /// 2026-10-14: The first-row arguments `w`, then the row counts, each padded with zeros to

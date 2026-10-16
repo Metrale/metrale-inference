@@ -50,6 +50,8 @@ fn stateful(l: &[MockLaunch], f: u64) -> Vec<MockLaunch> {
 /// kernel, grid z (y for the window) the run count, grid y of the conv the longest run; each
 /// run's conv state, recurrent state, snapshot slots, first row (0, 2, 3) and rows in its
 /// slot, zeros after; the recurrent strides as the per-sequence kernel's.
+/// 2026-10-16: The third run keeps two snapshots: block t of the snapshot arguments holds each
+/// run's snapshot t (run 0's one in block 0, run 2's two in blocks 0 and 1), zeros elsewhere.
 #[test]
 fn one_launch_each_with_every_runs_arguments_in_its_slot() {
     let gpu = MockGpuBackend::new();
@@ -57,6 +59,10 @@ fn one_launch_each_with_every_runs_arguments_in_its_slot() {
     let ws = Glm5NextKdaWorkspace::new(&gpu, &cfg(), 16).unwrap();
     let states: Vec<KdaSeqState> = (0..3).map(|_| seq_state(&gpu)).collect();
     let snap = (gpu.alloc(64).unwrap(), gpu.alloc(64).unwrap());
+    let two = [
+        (gpu.alloc(64).unwrap(), gpu.alloc(64).unwrap()),
+        (gpu.alloc(64).unwrap(), gpu.alloc(64).unwrap()),
+    ];
     let defer = KdaDefer {
         flag: gpu.alloc(4).unwrap(),
         h: gpu.alloc(64).unwrap(),
@@ -69,7 +75,11 @@ fn one_launch_each_with_every_runs_arguments_in_its_slot() {
         .map(|(i, (&state, rows))| KdaSeqRun {
             state,
             rows,
-            snapshot: (i == 0).then_some(snap),
+            snapshots: match i {
+                0 => KdaSnaps::new(&[snap]).unwrap(),
+                2 => KdaSnaps::new(&two).unwrap(),
+                _ => KdaSnaps::NONE,
+            },
             defer: (i == 1).then_some(defer),
         })
         .collect();
@@ -105,8 +115,18 @@ fn one_launch_each_with_every_runs_arguments_in_its_slot() {
     assert_eq!((slots(conv, 25), slots(conv, 41)), (&w[..], &n[..]));
     assert_eq!(window.args[0], MockArg::Buffer(ws.qkv_proj));
     assert_eq!(slots(window, 3), padded64(&conv_ptrs));
-    assert_eq!(slots(window, 19), padded64(&[snap.1.0]));
-    assert_eq!((slots(window, 35), slots(window, 51)), (&w[..], &n[..]));
+    let blocks = |l: &MockLaunch, at: usize, half: fn(&(DevicePtr, DevicePtr)) -> u64| {
+        let want = [
+            vec![half(&snap), 0, half(&two[0])],
+            vec![0, 0, half(&two[1])],
+        ];
+        for t in 0..KDA_SEQS_SNAP_MAX {
+            let v = want.get(t).cloned().unwrap_or_default();
+            assert_eq!(slots(l, at + t * KDA_SEQS_MAX), padded64(&v), "block {t}");
+        }
+    };
+    blocks(window, 19, |p| p.1.0);
+    assert_eq!((slots(window, 131), slots(window, 147)), (&w[..], &n[..]));
     assert_eq!(recur.args[5], MockArg::Buffer(ws.core));
     let u = |v: usize| u32a(v as u32);
     assert_eq!(
@@ -114,8 +134,8 @@ fn one_launch_each_with_every_runs_arguments_in_its_slot() {
         [u(c.conv_dim()), u(c.qkv_dim()), u(c.heads), u(c.qkv_dim())]
     );
     assert_eq!(slots(recur, 12), padded64(&rec_ptrs));
-    assert_eq!(slots(recur, 28), padded64(&[snap.0.0]));
-    assert_eq!((slots(recur, 44), slots(recur, 60)), (&w[..], &n[..]));
+    blocks(recur, 28, |p| p.0.0);
+    assert_eq!((slots(recur, 140), slots(recur, 156)), (&w[..], &n[..]));
     // 2026-10-16: SNAPZ: the second run's flag in every kernel's flag slots, its deferred conv
     // snapshot as the conv and window source, its deferred recurrent snapshot as the
     // recurrent source; zeros elsewhere (a zero flag reads the live state).
@@ -123,12 +143,15 @@ fn one_launch_each_with_every_runs_arguments_in_its_slot() {
     let (zc, zh) = (padded64(&[0, defer.conv.0]), padded64(&[0, defer.h.0]));
     assert_eq!((slots(conv, 57), slots(conv, 73)), (&flags[..], &zc[..]));
     assert_eq!(
-        (slots(window, 67), slots(window, 83)),
+        (slots(window, 163), slots(window, 179)),
         (&flags[..], &zc[..])
     );
-    assert_eq!((slots(recur, 76), slots(recur, 92)), (&flags[..], &zh[..]));
+    assert_eq!(
+        (slots(recur, 172), slots(recur, 188)),
+        (&flags[..], &zh[..])
+    );
     let lens = (conv.args.len(), window.args.len(), recur.args.len());
-    assert_eq!(lens, (89, 99, 108));
+    assert_eq!(lens, (89, 195, 204));
 }
 
 /// 2026-10-16: SNAPZ resolve: one launch per state half (recurrent, then conv), each with the
@@ -187,7 +210,7 @@ fn seventeen_runs_take_two_launches_with_absolute_rows() {
         .map(|i| KdaSeqRun {
             state: seq_state(&gpu),
             rows: 1 + i % 2,
-            snapshot: None,
+            snapshots: KdaSnaps::NONE,
             defer: None,
         })
         .collect();
@@ -198,7 +221,7 @@ fn seventeen_runs_take_two_launches_with_absolute_rows() {
     assert_eq!(recur.len(), 2);
     assert_eq!((recur[0].grid[2], recur[1].grid[2]), (16, 1));
     let first16: usize = runs[..16].iter().map(|r| r.rows).sum();
-    assert_eq!(slots(&recur[1], 44), padded32(&[first16 as u32]));
+    assert_eq!(slots(&recur[1], 140), padded32(&[first16 as u32]));
     assert_eq!(
         slots(&recur[1], 12),
         padded64(&[runs[16].state.recurrent.0])
@@ -209,6 +232,7 @@ fn seventeen_runs_take_two_launches_with_absolute_rows() {
 
 /// 2026-10-14: Runs it cannot step correctly are refused before any launch: none, an empty
 /// run, two runs on one recurrent or one conv state, an unset state or snapshot pointer.
+/// 2026-10-16: An unset second snapshot half, and more snapshots than rows.
 #[test]
 fn bad_runs_are_refused_before_any_launch() {
     let gpu = MockGpuBackend::new();
@@ -216,15 +240,16 @@ fn bad_runs_are_refused_before_any_launch() {
     let ws = Glm5NextKdaWorkspace::new(&gpu, &cfg(), 16).unwrap();
     let hidden = gpu.alloc(8 * 256 * 2).unwrap();
     let (a, b) = (seq_state(&gpu), seq_state(&gpu));
-    let run = |state, rows, snapshot| KdaSeqRun {
+    let run = |state, rows, snapshots| KdaSeqRun {
         state,
         rows,
-        snapshot,
+        snapshots,
         defer: None,
     };
+    let sn = |l: &[(DevicePtr, DevicePtr)]| KdaSnaps::new(l).unwrap();
     let deferred = |d: KdaDefer| KdaSeqRun {
         defer: Some(d),
-        ..run(a, 2, None)
+        ..run(a, 2, KdaSnaps::NONE)
     };
     let p = gpu.alloc(64).unwrap();
     let d = KdaDefer {
@@ -242,11 +267,13 @@ fn bad_runs_are_refused_before_any_launch() {
     };
     let cases: Vec<Vec<KdaSeqRun>> = vec![
         vec![],
-        vec![run(a, 0, None)],
-        vec![run(a, 2, None), run(a, 2, None)],
-        vec![run(a, 2, None), run(half, 2, None)],
-        vec![run(unset, 2, None)],
-        vec![run(a, 2, Some((DevicePtr::NULL, b.conv)))],
+        vec![run(a, 0, KdaSnaps::NONE)],
+        vec![run(a, 2, KdaSnaps::NONE), run(a, 2, KdaSnaps::NONE)],
+        vec![run(a, 2, KdaSnaps::NONE), run(half, 2, KdaSnaps::NONE)],
+        vec![run(unset, 2, KdaSnaps::NONE)],
+        vec![run(a, 2, sn(&[(DevicePtr::NULL, b.conv)]))],
+        vec![run(a, 3, sn(&[(p, p), (p, DevicePtr::NULL)]))],
+        vec![run(a, 1, sn(&[(p, p), (p, p)]))],
         // 2026-10-16: SNAPZ: a defer with any pointer unset.
         vec![deferred(KdaDefer {
             flag: DevicePtr::NULL,
@@ -267,6 +294,10 @@ fn bad_runs_are_refused_before_any_launch() {
     l.decode_seqs_tokens(&gpu, hidden, &[deferred(d)], &ws, 7)
         .unwrap();
     assert!(gpu.launch_count() > from);
+    let from = gpu.launch_count();
+    l.decode_seqs_tokens(&gpu, hidden, &[run(a, 2, sn(&[(p, p), (p, p)]))], &ws, 7)
+        .unwrap();
+    assert!(gpu.launch_count() > from);
     for (i, runs) in cases.iter().enumerate() {
         let from = gpu.launch_count();
         assert!(
@@ -274,5 +305,32 @@ fn bad_runs_are_refused_before_any_launch() {
             "case {i} accepted"
         );
         assert_eq!(gpu.launch_count(), from, "case {i} launched");
+    }
+}
+
+/// 2026-10-16: `KdaSnaps` keeps up to `KDA_SEQS_SNAP_MAX` slots in order and refuses one more
+/// (a refused span walks in `kda_seqs_runs`, never truncates).
+#[test]
+fn snaps_keep_up_to_the_cap_in_order_and_refuse_more() {
+    let list: Vec<(DevicePtr, DevicePtr)> = (1..=KDA_SEQS_SNAP_MAX as u64 + 1)
+        .map(|i| (DevicePtr(i), DevicePtr(0x100 + i)))
+        .collect();
+    let s = KdaSnaps::new(&list[..KDA_SEQS_SNAP_MAX]).unwrap();
+    assert_eq!(s.as_slice(), &list[..KDA_SEQS_SNAP_MAX]);
+    assert!(KdaSnaps::new(&list).is_err());
+    assert!(KdaSnaps::NONE.as_slice().is_empty());
+}
+
+/// 2026-10-16: The run and snapshot caps are the kernels' `#define`s: a mismatch would shift
+/// every argument after the snapshot blocks.
+#[test]
+fn caps_match_the_kernel_defines() {
+    let cu = include_str!("../../../../kernels/gb10/common/kda_seqs_tokens.cu");
+    for (name, v) in [
+        ("KDA_SEQS_MAX", KDA_SEQS_MAX),
+        ("KDA_SEQS_SNAP_MAX", KDA_SEQS_SNAP_MAX),
+    ] {
+        let line = format!("#define {name} {v}\n");
+        assert!(cu.contains(&line), "{line:?} not in kda_seqs_tokens.cu");
     }
 }

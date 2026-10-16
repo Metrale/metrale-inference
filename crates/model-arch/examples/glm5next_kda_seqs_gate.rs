@@ -10,8 +10,12 @@
 //! Owner: model-arch examples (GLM-5.3).
 //! Invariants:
 //! - Exits with an error unless every row's output, every sequence's final recurrent and conv
-//!   state and every snapshot are byte-identical to the walk's, and unless both mutation
-//!   controls (one input element changed; one snapshot dropped) are caught.
+//!   state and every snapshot are byte-identical to the walk's, and unless every mutation
+//!   control is caught: one input element changed, the last snapshot of an 8-row run dropped,
+//!   two snapshot slots of a 4-row run swapped, one byte of a deep snapshot flipped.
+//! - 2026-10-16: Spans of 3, 4, 5 and 8 rows keep every snapshot they owe (multi-snapshot
+//!   kernels). `--negctl <input|drop-snap|swap-snap|flip-snap>` runs only that control as the
+//!   gate: it must exit nonzero (a zero exit prints `NOT CAUGHT`).
 //! - The timed figures are one KDA mixer call per arm (34 copies captured into one graph, the
 //!   decode's KDA layers) at 22 heads (the TP=3 per-rank KDA).
 //!
@@ -28,14 +32,16 @@ use anyhow::{Context, Result, bail};
 use fixture::*;
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
-use metrale_model_arch::glm5next_kda::seqs_tokens::KdaSeqRun;
+use metrale_model_arch::glm5next_kda::seqs_tokens::{KdaSeqRun, KdaSnaps};
 use metrale_model_arch::glm5next_kda::{Glm5NextKdaLayer, Glm5NextKdaWorkspace, KdaSeqState};
-use metrale_model_arch::glm5next_layer::{GroupSpan, group_spans, kda_seqs_runs};
+use metrale_model_arch::glm5next_layer::{GroupSpan, SeqsPlan, group_spans, kda_seqs_runs};
 use metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M;
 
 /// 2026-10-14: (rows per sequence, snapshot rollback). k = 2 is the `--num-drafts 1` verify;
 /// nine of them put a sequence across two groups; the ones mix in decode rows; the
 /// snapshot-free case takes runs of 3..5 rows.
+/// 2026-10-16: k = 3, 4, 5, 8 keep k - 1 snapshots per sequence (`[5, 8, 8]` puts an 8-row
+/// sequence across two groups, mid-snapshots); 1-row sequences mix with 3-row ones.
 fn cases() -> Vec<(Vec<usize>, bool)> {
     vec![
         (vec![2, 2], true),
@@ -45,7 +51,55 @@ fn cases() -> Vec<(Vec<usize>, bool)> {
         (vec![2; 16], true),
         (vec![2, 1, 2, 2, 1, 2, 1, 2], true),
         (vec![3, 5, 1, 4], false),
+        (vec![3, 3], true),
+        (vec![3; 5], true),
+        (vec![4; 4], true),
+        (vec![8, 8], true),
+        (vec![5, 8, 8], true),
+        (vec![1, 3, 1, 3, 1, 3], true),
+        (vec![8, 3, 4], true),
+        (vec![3, 5, 1, 4], true),
     ]
+}
+
+/// 2026-10-16: A mutation of the seqs arm that the gate must catch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Perturb {
+    None,
+    /// One input element changed.
+    Input,
+    /// The last snapshot of an 8-row run (seven slots) not planned.
+    DropSnap,
+    /// Snapshot slots 1 and 2 of a 4-row run (three slots) swapped.
+    SwapSnap,
+    /// One byte of snapshot 6 of the 8-row sequence flipped after the arm.
+    FlipSnap,
+}
+
+const CONTROLS: [(&str, Perturb); 4] = [
+    ("input", Perturb::Input),
+    ("drop-snap", Perturb::DropSnap),
+    ("swap-snap", Perturb::SwapSnap),
+    ("flip-snap", Perturb::FlipSnap),
+];
+
+/// 2026-10-16: The controls' batch: a 4-, an 8- and a 4-row sequence in one group.
+const CONTROL_KS: [usize; 3] = [4, 8, 4];
+
+/// 2026-10-16: The first run keeping `len` slots, its list changed by `f`; whether one was.
+fn mutate_snaps(
+    runs: &mut [KdaSeqRun],
+    len: usize,
+    f: impl Fn(&[(DevicePtr, DevicePtr)]) -> Vec<(DevicePtr, DevicePtr)>,
+) -> Result<bool> {
+    let Some(r) = runs
+        .iter_mut()
+        .find(|r| r.snapshots.as_slice().len() == len)
+    else {
+        return Ok(false);
+    };
+    r.snapshots = KdaSnaps::new(&f(r.snapshots.as_slice()))?;
+    Ok(true)
 }
 
 /// 2026-10-14: The decode's KDA layers, the copies per timed graph.
@@ -68,6 +122,14 @@ fn groups(ks: &[usize]) -> Vec<(usize, usize, Vec<GroupSpan>)> {
 struct Arm {
     st: Vec<KdaSeqState>,
     snaps: Vec<Vec<(DevicePtr, DevicePtr)>>,
+}
+
+/// 2026-10-16: Each sequence's slot list as `verify_multi` plans it: `None` for none kept.
+fn snap_lists(a: &Arm) -> Vec<Option<&[(DevicePtr, DevicePtr)]>> {
+    a.snaps
+        .iter()
+        .map(|v| (!v.is_empty()).then_some(v.as_slice()))
+        .collect()
 }
 
 struct Rig<'a> {
@@ -135,30 +197,32 @@ impl Rig<'_> {
         Ok(out)
     }
 
-    /// 2026-10-14: `kda_seqs_runs` per group, then `decode_seqs_tokens`; `drop_snap` clears
-    /// the first planned snapshot (the mutation control).
+    /// 2026-10-14: `kda_seqs_runs` per group, then `decode_seqs_tokens`.
+    /// 2026-10-16: `p` mutates the planned snapshots of the first run it fits (the controls);
+    /// a group the plan walks fails the gate, since it would not test the kernels.
     fn seqs(
         &self,
         hidden: DevicePtr,
         ks: &[usize],
         a: &Arm,
         s: u64,
-        drop_snap: bool,
+        p: Perturb,
     ) -> Result<Vec<u8>> {
         let (g, row) = (self.gpu, HIDDEN * 2);
-        let lists: Vec<Option<&[(DevicePtr, DevicePtr)]>> = a
-            .snaps
-            .iter()
-            .map(|v: &Vec<(DevicePtr, DevicePtr)>| Some(v.as_slice()))
-            .collect();
+        let lists = snap_lists(a);
         let mut out = vec![0u8; ks.iter().sum::<usize>() * row];
-        let mut dropped = !drop_snap;
+        let mut done = !matches!(p, Perturb::DropSnap | Perturb::SwapSnap);
         for (base, m, spans) in groups(ks) {
-            let mut runs: Vec<KdaSeqRun> = kda_seqs_runs(&spans, &lists, &a.st, &[])
-                .with_context(|| format!("the plan turned down group at row {base}"))?;
-            if !dropped && let Some(r) = runs.iter_mut().find(|r| r.snapshot.is_some()) {
-                r.snapshot = None;
-                dropped = true;
+            let plan = kda_seqs_runs(&spans, ks, &lists, &a.st, &[])
+                .with_context(|| format!("the plan refused group at row {base}"))?;
+            let SeqsPlan::Runs(mut runs) = plan else {
+                bail!("group at row {base} walks: {plan:?}");
+            };
+            if !done {
+                done = match p {
+                    Perturb::DropSnap => mutate_snaps(&mut runs, 7, |v| v[..6].to_vec())?,
+                    _ => mutate_snaps(&mut runs, 3, |v| vec![v[0], v[2], v[1]])?,
+                };
             }
             let x = copy(g, hidden.offset(base * row), m * row)?;
             self.layer.decode_seqs_tokens(g, x, &runs, &self.ws, s)?;
@@ -169,8 +233,8 @@ impl Rig<'_> {
             )?);
             g.free(x)?;
         }
-        if !dropped {
-            bail!("no snapshot to drop");
+        if !done {
+            bail!("no run fits the {p:?} control");
         }
         Ok(out)
     }
@@ -232,79 +296,99 @@ fn rig<'a>(gpu: &'a dyn GpuBackend, rng: &mut Lcg, heads: usize) -> Result<Rig<'
     })
 }
 
-/// 2026-10-14: Every case byte for byte, then the two mutation controls.
-fn gate(gpu: &dyn GpuBackend, rng: &mut Lcg) -> Result<()> {
+/// 2026-10-16: The gate's rig, refused when the seqs kernels are not in the build.
+fn ready_rig<'a>(gpu: &'a dyn GpuBackend, rng: &mut Lcg) -> Result<Rig<'a>> {
     let r = rig(gpu, rng, 8)?;
     if !r.layer.seqs_tokens_ready() {
         bail!("the kda_seqs_tokens kernels are not in this build");
     }
+    Ok(r)
+}
+
+/// 2026-10-16: One control on `CONTROL_KS`: the outer `Err` is a broken rig, the inner one the
+/// gate's verdict (an `Err` there is the control caught).
+fn control(r: &Rig, rng: &mut Lcg, p: Perturb) -> Result<Result<()>> {
+    let ks = CONTROL_KS;
+    let total: usize = ks.iter().sum();
+    let init = r.init(rng, ks.len())?;
+    let x = rng.vec(total * HIDDEN, 1.0);
+    let hidden = up_bf16(r.gpu, &x)?;
+    let mut y = x;
+    if p == Perturb::Input {
+        y[(total - 1) * HIDDEN + 5] += 0.5;
+    }
+    let fed = up_bf16(r.gpu, &y)?;
+    let (a, b) = (r.arm(&init, &ks, true)?, r.arm(&init, &ks, true)?);
+    let wa = r.walk(hidden, &ks, &a, STREAM)?;
+    let wb = r.seqs(fed, &ks, &b, STREAM, p)?;
+    if p == Perturb::FlipSnap {
+        let at = b.snaps[1][6].0;
+        let mut v = read(r.gpu, at, r.hb)?;
+        v[r.hb / 2] ^= 0x01;
+        r.gpu.copy_h2d(&v, at)?;
+    }
+    Ok(r.compare(&format!("control {p:?}"), &ks, (&wa, &a), (&wb, &b)))
+}
+
+/// 2026-10-14: Every case byte for byte, then the mutation controls.
+fn gate(gpu: &dyn GpuBackend, rng: &mut Lcg) -> Result<()> {
+    let r = ready_rig(gpu, rng)?;
     for (ks, snap) in cases() {
         let total: usize = ks.iter().sum();
         let init = r.init(rng, ks.len())?;
         let hidden = up_bf16(gpu, &rng.vec(total * HIDDEN, 1.0))?;
         let (a, b) = (r.arm(&init, &ks, snap)?, r.arm(&init, &ks, snap)?);
         let wa = r.walk(hidden, &ks, &a, STREAM)?;
-        let wb = r.seqs(hidden, &ks, &b, STREAM, false)?;
+        let wb = r.seqs(hidden, &ks, &b, STREAM, Perturb::None)?;
         let tag = format!("ks={ks:?} snapshots={snap}");
         r.compare(&tag, &ks, (&wa, &a), (&wb, &b))?;
         println!("  {tag}: output, states and snapshots byte-identical");
     }
-    let ks = vec![2usize; 4];
-    let init = r.init(rng, 4)?;
-    let x = rng.vec(8 * HIDDEN, 1.0);
-    let hidden = up_bf16(gpu, &x)?;
-    let mut y = x.clone();
-    y[7 * HIDDEN + 5] += 0.5;
-    let mutated = up_bf16(gpu, &y)?;
-    let arms =
-        || -> Result<(Arm, Arm)> { Ok((r.arm(&init, &ks, true)?, r.arm(&init, &ks, true)?)) };
-    let (a, b) = arms()?;
-    let (wa, wb) = (
-        r.walk(hidden, &ks, &a, STREAM)?,
-        r.seqs(mutated, &ks, &b, STREAM, false)?,
-    );
-    if r.compare("control input", &ks, (&wa, &a), (&wb, &b))
-        .is_ok()
-    {
-        bail!("CONTROL MISSED: a changed input element passed the gate");
+    for (name, p) in CONTROLS {
+        if control(&r, rng, p)?.is_ok() {
+            bail!("CONTROL MISSED: the {name} control passed the gate");
+        }
+        println!("  control {name}: caught");
     }
-    let (a, b) = arms()?;
-    let (wa, wb) = (
-        r.walk(hidden, &ks, &a, STREAM)?,
-        r.seqs(hidden, &ks, &b, STREAM, true)?,
+    println!(
+        "  controls: a changed input, a dropped, a swapped and a flipped snapshot are all caught"
     );
-    if r.compare("control snapshot", &ks, (&wa, &a), (&wb, &b))
-        .is_ok()
-    {
-        bail!("CONTROL MISSED: a dropped snapshot passed the gate");
-    }
-    println!("  controls: a changed input and a dropped snapshot are both caught");
     Ok(())
 }
 
-/// 2026-10-14: One KDA mixer call per arm at 22 heads, C = 2, 4, 8 sequences of k = 2 rows
-/// with snapshot rollback, captured (the walk's per-row launches and copies against three
-/// launches).
+/// 2026-10-14: One KDA mixer call per arm at 22 heads, C sequences of k rows with snapshot
+/// rollback, captured (the walk's per-row launches and copies against three launches).
+/// 2026-10-16: k = 3, 4 and 8 keep their k - 1 snapshots in the same three launches.
 fn bench(gpu: &dyn GpuBackend, rng: &mut Lcg) -> Result<()> {
     let r = rig(gpu, rng, 22)?;
     let s = gpu.default_stream();
-    for c in [2usize, 4, 8] {
-        let ks = vec![2usize; c];
+    for (k, c) in [
+        (2usize, 2usize),
+        (2, 4),
+        (2, 8),
+        (3, 4),
+        (4, 2),
+        (4, 4),
+        (8, 2),
+    ] {
+        let ks = vec![k; c];
+        let rows = k * c;
         let init = r.init(rng, c)?;
-        let hidden = up_bf16(gpu, &rng.vec(2 * c * HIDDEN, 1.0))?;
+        let hidden = up_bf16(gpu, &rng.vec(rows * HIDDEN, 1.0))?;
         let (a, b) = (r.arm(&init, &ks, true)?, r.arm(&init, &ks, true)?);
-        let lists: Vec<Option<&[(DevicePtr, DevicePtr)]>> = b
-            .snaps
-            .iter()
-            .map(|v: &Vec<(DevicePtr, DevicePtr)>| Some(v.as_slice()))
-            .collect();
-        let spans = group_spans(&ks, 0, 2 * c);
-        let runs = kda_seqs_runs(&spans, &lists, &b.st, &[]).context("plan")?;
-        let row_states: Vec<KdaSeqState> = a.st.iter().flat_map(|&st| [st, st]).collect();
+        let spans = group_spans(&ks, 0, rows);
+        let plan = kda_seqs_runs(&spans, &ks, &snap_lists(&b), &b.st, &[]).context("plan")?;
+        let SeqsPlan::Runs(runs) = plan else {
+            bail!("the k={k} C={c} bench plan walks: {plan:?}");
+        };
+        let row_states: Vec<KdaSeqState> =
+            a.st.iter()
+                .flat_map(|&st| std::iter::repeat_n(st, k))
+                .collect();
         let old = timing::time_graph(gpu, s, COPIES, &mut |s| {
             r.layer
                 .decode_rows_then(gpu, hidden, &row_states, &r.ws, s, |row| {
-                    match a.snaps[row / 2].get(row % 2) {
+                    match a.snaps[row / k].get(row % k) {
                         Some(dst) => r.layer.snapshot_state(gpu, &row_states[row], *dst, s),
                         None => Ok(()),
                     }
@@ -313,12 +397,34 @@ fn bench(gpu: &dyn GpuBackend, rng: &mut Lcg) -> Result<()> {
         let new = timing::time_graph(gpu, s, COPIES, &mut |s| {
             r.layer.decode_seqs_tokens(gpu, hidden, &runs, &r.ws, s)
         })?;
-        timing::report("KDA verify mixer (k=2)", c, old, new);
+        timing::report(&format!("KDA verify mixer (k={k})"), c, old, new);
     }
     Ok(())
 }
 
+/// 2026-10-16: `--negctl <name>` runs that control alone: exit 3 when caught, 0 (with
+/// `NOT CAUGHT`) when missed, 1 when the rig fails.
+fn negctl(gpu: &dyn GpuBackend, rng: &mut Lcg, name: &str) -> Result<()> {
+    let p = CONTROLS
+        .iter()
+        .find(|c| c.0 == name)
+        .map(|c| c.1)
+        .with_context(|| format!("unknown control {name}"))?;
+    let r = ready_rig(gpu, rng)?;
+    match control(&r, rng, p)? {
+        Err(e) => {
+            println!("NEGCTL {name}: CAUGHT ({e:#})");
+            std::process::exit(3);
+        }
+        Ok(()) => {
+            println!("NEGCTL {name}: NOT CAUGHT");
+            Ok(())
+        }
+    }
+}
+
 fn main() -> Result<()> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
     let sets = metrale_kernels::all_ptx_sets();
     let glm = sets
         .iter()
@@ -326,6 +432,13 @@ fn main() -> Result<()> {
         .context("glm-5.3-flash kernel target not built")?;
     let gpu = MetraleCudaBackend::new(0, &glm.modules)?;
     let mut rng = Lcg(0x6c6d_5e9d_0014);
+    match args.as_slice() {
+        [] => {}
+        [flag, name] if flag == "--negctl" => return negctl(&gpu, &mut rng, name),
+        _ => {
+            bail!("usage: glm5next_kda_seqs_gate [--negctl <input|drop-snap|swap-snap|flip-snap>]")
+        }
+    }
     println!("GATE+BENCH: multi-sequence KDA verify (decode_seqs_tokens) vs the per-row walk");
     gate(&gpu, &mut rng)?;
     bench(&gpu, &mut rng)?;

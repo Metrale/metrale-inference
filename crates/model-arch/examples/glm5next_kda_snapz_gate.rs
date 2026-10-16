@@ -28,9 +28,9 @@ use anyhow::{Context, Result, bail};
 use fixture::*;
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
-use metrale_model_arch::glm5next_kda::seqs_tokens::{KdaDefer, KdaSeqRun};
+use metrale_model_arch::glm5next_kda::seqs_tokens::KdaDefer;
 use metrale_model_arch::glm5next_kda::{Glm5NextKdaLayer, Glm5NextKdaWorkspace, KdaSeqState};
-use metrale_model_arch::glm5next_layer::{GroupSpan, group_spans, kda_seqs_runs};
+use metrale_model_arch::glm5next_layer::{GroupSpan, SeqsPlan, group_spans, kda_seqs_runs};
 use metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M;
 
 /// 2026-10-16: (rows per sequence, which sequences the first verdict keeps one row of). The
@@ -112,10 +112,12 @@ impl Rig<'_> {
     /// gives each run its sequence's defer (where `kda_seqs_runs` grants it).
     fn verify(&self, hidden: DevicePtr, ks: &[usize], a: &Arm, defer: bool) -> Result<Vec<u8>> {
         let (g, row, s) = (self.gpu, HIDDEN * 2, STREAM);
+        // 2026-10-16: A decode row (k = 1) keeps no snapshot, as `verify_multi` plans it.
         let lists: Vec<Option<&[(DevicePtr, DevicePtr)]>> = a
             .snaps
             .iter()
-            .map(|p| Some(std::slice::from_ref(p)))
+            .zip(ks)
+            .map(|(p, &k)| (k > 1).then(|| std::slice::from_ref(p)))
             .collect();
         let defers: Vec<Option<KdaDefer>> = if defer {
             a.snaps
@@ -134,8 +136,11 @@ impl Rig<'_> {
         };
         let mut out = vec![0u8; ks.iter().sum::<usize>() * row];
         for (base, m, spans) in groups(ks) {
-            let runs: Vec<KdaSeqRun> = kda_seqs_runs(&spans, &lists, &a.st, &defers)
-                .with_context(|| format!("the plan turned down group at row {base}"))?;
+            let plan = kda_seqs_runs(&spans, ks, &lists, &a.st, &defers)
+                .with_context(|| format!("the plan refused group at row {base}"))?;
+            let SeqsPlan::Runs(runs) = plan else {
+                bail!("group at row {base} walks: {plan:?}");
+            };
             let x = copy(g, hidden.offset(base * row), m * row)?;
             self.layer.decode_seqs_tokens(g, x, &runs, &self.ws, s)?;
             out[base * row..(base + m) * row].copy_from_slice(&read(

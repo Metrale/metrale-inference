@@ -20,7 +20,7 @@ mod mhc_slice;
 mod mix;
 mod multi_seq;
 mod prefill_capture;
-pub use kda_seqs::kda_seqs_runs;
+pub use kda_seqs::{SeqsPlan, SeqsWalk, kda_seqs_runs};
 pub use multi_seq::{GroupSpan, group_spans};
 mod prefill_spans;
 pub use prefill_spans::{SpanPiece, prefill_span_groups};

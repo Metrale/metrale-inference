@@ -12,8 +12,9 @@
 // Invariants:
 // - Sequence r: state pointers c<r> (conv window) and s<r> (recurrent), first workspace row
 //   w<r>, rows n<r>. A null state pointer skips the sequence. No two sequences share a state.
-// - Snapshot p<r> / sp<r> (nullable) is the state after the sequence's first row: the
-//   recurrent state the per-row walk holds after row 0, and the conv window it holds then.
+// - Snapshot t of sequence r, p<t>_<r> / sp<t>_<r> (nullable, t < KDA_SEQS_SNAP_MAX), is the state
+//   after the sequence's row t: the recurrent state the per-row walk holds after row t, and the
+//   conv window it holds then (2026-10-16; before, row 0 only). Stored wherever set, t < n<r>.
 // - The state reads and writes of a sequence are its own launch's; nothing crosses sequences.
 
 #include "causal_conv1d_l2norm_body.cuh"
@@ -21,6 +22,8 @@
 #include "rows_pick.cuh"
 
 #define KDA_SEQS_MAX 16
+// 2026-10-16: KDA_SEQS_SNAP_MAX in glm5next_kda/seqs_tokens.rs: the snapshots one sequence keeps.
+#define KDA_SEQS_SNAP_MAX 7
 
 #define KDA_SEQS_PTR_ARGS(p)                                                                     \
     unsigned long long p##0, unsigned long long p##1, unsigned long long p##2,                    \
@@ -37,6 +40,22 @@
 #define KDA_SEQS_PICK(r, p)                                                                      \
     rows_pick16(r, p##0, p##1, p##2, p##3, p##4, p##5, p##6, p##7, p##8, p##9, p##10, p##11,      \
                 p##12, p##13, p##14, p##15)
+// 2026-10-16: The snapshot slots: KDA_SEQS_SNAP_MAX blocks of KDA_SEQS_MAX pointers, block t
+// (p<t>_0 .. p<t>_15) holding each sequence's snapshot t; KDA_SEQS_SNAP_PICK(t, r, p) is sequence
+// r's snapshot t, 0 for t >= KDA_SEQS_SNAP_MAX. Evaluated only on a row that may snapshot.
+#define KDA_SEQS_SNAP_ARGS(p)                                                                    \
+    KDA_SEQS_PTR_ARGS(p##0_), KDA_SEQS_PTR_ARGS(p##1_), KDA_SEQS_PTR_ARGS(p##2_),                 \
+        KDA_SEQS_PTR_ARGS(p##3_), KDA_SEQS_PTR_ARGS(p##4_), KDA_SEQS_PTR_ARGS(p##5_),             \
+        KDA_SEQS_PTR_ARGS(p##6_)
+#define KDA_SEQS_SNAP_PICK(t, r, p)                                                              \
+    ((t) == 0u   ? KDA_SEQS_PICK(r, p##0_)                                                      \
+     : (t) == 1u ? KDA_SEQS_PICK(r, p##1_)                                                      \
+     : (t) == 2u ? KDA_SEQS_PICK(r, p##2_)                                                      \
+     : (t) == 3u ? KDA_SEQS_PICK(r, p##3_)                                                      \
+     : (t) == 4u ? KDA_SEQS_PICK(r, p##4_)                                                      \
+     : (t) == 5u ? KDA_SEQS_PICK(r, p##5_)                                                      \
+     : (t) == 6u ? KDA_SEQS_PICK(r, p##6_)                                                      \
+                 : 0ull)
 
 // 2026-10-16: SNAPZ (`METRALE_GLM_KDA_SNAPZ=1`): sequence r's state source. f<r> (nullable) is its
 // deferred-commit word: when set, the state the previous verdict kept is still in the snapshot
@@ -92,14 +111,14 @@ extern "C" __global__ void causal_conv1d_update_l2norm_tokens_seqs(
 
 // 2026-10-14: causal_conv1d_window_advance for every sequence: grid (ceil(dim / 256),
 // sequences), block 256. Each thread reads its channel's window whole, writes the window after
-// the sequence's first row to p<r> when p<r> is set (the snapshot a copy of the window followed
-// by a one-row advance leaves), then the window after all n<r> rows to c<r>.
+// the sequence's row t to p<t>_<r> for each t < n<r> where that is set (the snapshot a copy of the
+// window followed by a (t + 1)-row advance leaves), then the window after all n<r> rows to c<r>.
 extern "C" __global__ void causal_conv1d_window_advance_seqs(
     const __nv_bfloat16* __restrict__ new_input,
     unsigned int dim,
     unsigned int d_conv,
     KDA_SEQS_PTR_ARGS(c),
-    KDA_SEQS_PTR_ARGS(p),
+    KDA_SEQS_SNAP_ARGS(p),
     KDA_SEQS_U32_ARGS(w),
     KDA_SEQS_U32_ARGS(n),
     KDA_SEQS_PTR_ARGS(f),
@@ -110,7 +129,6 @@ extern "C" __global__ void causal_conv1d_window_advance_seqs(
     if (r >= KDA_SEQS_MAX || ch >= dim) return;
     float* conv_state = (float*)KDA_SEQS_PICK(r, c);
     if (conv_state == nullptr) return;
-    float* snap = (float*)KDA_SEQS_PICK(r, p);
     const unsigned int T = KDA_SEQS_PICK(r, n);
     const __nv_bfloat16* in = new_input + (size_t)KDA_SEQS_PICK(r, w) * dim;
     float* st = conv_state + (size_t)ch * d_conv;
@@ -119,10 +137,12 @@ extern "C" __global__ void causal_conv1d_window_advance_seqs(
                        (size_t)ch * d_conv;
     float old[4];
     for (unsigned int s = 0; s < d_conv && s < 4u; ++s) old[s] = src[s];
-    if (snap != nullptr) {
+    for (unsigned int t = 0; t < T && t < KDA_SEQS_SNAP_MAX; ++t) {
+        float* snap = (float*)KDA_SEQS_SNAP_PICK(t, r, p);
+        if (snap == nullptr) continue;
         float* sp = snap + (size_t)ch * d_conv;
         for (unsigned int s = 0; s < d_conv && s < 4u; ++s) {
-            const int j = 1 - (int)d_conv + (int)s;
+            const int j = (int)t + 1 - (int)d_conv + (int)s;
             sp[s] = j >= 0 ? (float)in[(size_t)j * dim + ch] : old[j + (int)d_conv];
         }
     }
@@ -135,9 +155,9 @@ extern "C" __global__ void causal_conv1d_window_advance_seqs(
 // 2026-10-14: kda_recurrent_decode_bf16_seq_reg_snap for every sequence: grid (H, KDA_REG_D /
 // VB, sequences), block VB, 3 * KDA_REG_D floats of dynamic shared memory. Block (h, y, r) is
 // that kernel's block (h, y) on sequence r: rows w<r> .. w<r> + n<r> - 1 (the bases offset by
-// w<r> rows), state s<r>, and one snapshot slot sp<r> (n_snap 1 when set, 0 when null). The
-// scaffolding repeats seq_reg_snap's rather than sharing it, so the C1 kernels' code is
-// untouched; the per-token arithmetic is the shared kda_reg_token.
+// w<r> rows), state s<r>, and snapshot slots sp<t>_<r> (row t's state stored where set; before
+// 2026-10-16 one slot, row 0's). The scaffolding repeats seq_reg_snap's rather than sharing it,
+// so the C1 kernels' code is untouched; the per-token arithmetic is the shared kda_reg_token.
 extern "C" __global__ void kda_recurrent_decode_bf16_seqs_reg(
     const __nv_bfloat16* __restrict__ q,
     const __nv_bfloat16* __restrict__ k,
@@ -152,7 +172,7 @@ extern "C" __global__ void kda_recurrent_decode_bf16_seqs_reg(
     unsigned int beta_row_stride,
     unsigned int out_row_stride,
     KDA_SEQS_PTR_ARGS(s),
-    KDA_SEQS_PTR_ARGS(sp),
+    KDA_SEQS_SNAP_ARGS(sp),
     KDA_SEQS_U32_ARGS(w),
     KDA_SEQS_U32_ARGS(n),
     KDA_SEQS_PTR_ARGS(f),
@@ -164,9 +184,7 @@ extern "C" __global__ void kda_recurrent_decode_bf16_seqs_reg(
     if (r >= KDA_SEQS_MAX || h >= H) return;
     float* state = (float*)KDA_SEQS_PICK(r, s);
     if (state == nullptr) return;
-    float* snap0 = (float*)KDA_SEQS_PICK(r, sp);
     const unsigned int T = KDA_SEQS_PICK(r, n);
-    const unsigned int n_snap = snap0 != nullptr ? 1u : 0u;
     const size_t row0 = KDA_SEQS_PICK(r, w);
     q += row0 * qkv_row_stride;
     k += row0 * qkv_row_stride;
@@ -206,8 +224,9 @@ extern "C" __global__ void kda_recurrent_decode_bf16_seqs_reg(
             const float b = beta[(size_t)t * beta_row_stride + h];
             out[(size_t)t * out_row_stride + hd + vi] =
                 kda_reg_token(col, sh_decay, sh_k, sh_q, __bfloat162float(v[qo + vi]), b);
-            if (t < n_snap) {
-                float* P = snap0 + hd * D;
+            float* P = t < KDA_SEQS_SNAP_MAX ? (float*)KDA_SEQS_SNAP_PICK(t, r, sp) : nullptr;
+            if (P != nullptr) {
+                P += hd * D;
                 #pragma unroll
                 for (unsigned int kk = 0; kk < D; ++kk) P[(size_t)kk * D + vi] = col[kk];
             }

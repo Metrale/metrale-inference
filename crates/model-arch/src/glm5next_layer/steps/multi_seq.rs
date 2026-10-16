@@ -250,12 +250,21 @@ impl Glm5NextLayer {
                         spans.iter().map(|sp| (kda[sp.seq], sp.rows)).collect();
                     // 2026-10-14: Under `METRALE_GLM_KDA_SEQS_TOKENS=1` a verify group steps each
                     // sequence's run in three launches, snapshot included (`kda_seqs.rs`).
-                    let runs = (kda_seqs_tokens() && layer.seqs_tokens_ready())
-                        .then(|| {
+                    // 2026-10-16: Every snapshot of the run; a plan that does not add up fails
+                    // the step, and the first walk of each reason is logged.
+                    let runs = if kda_seqs_tokens() {
+                        use super::kda_seqs::{SeqsPlan, SeqsWalk};
+                        let plan = if layer.seqs_tokens_ready() {
                             let snaps = super::kda_seqs::snapshot_lists(keep);
-                            super::kda_seqs::kda_seqs_runs(&spans, &snaps, &kda, defer)
-                        })
-                        .flatten();
+                            super::kda_seqs::kda_seqs_runs(&spans, ks, &snaps, &kda, defer)
+                                .with_context(|| format!("GLM layer {}", self.layer_idx))?
+                        } else {
+                            SeqsPlan::Walk(SeqsWalk::NotReady)
+                        };
+                        super::kda_seqs::runs_or_logged_walk(plan)
+                    } else {
+                        None
+                    };
                     self.forward_rows_with(
                         mhc,
                         x,
