@@ -2189,3 +2189,27 @@ effort_hours = 3.0
 transferability = "any occupancy-driven launch rule over a DRAM-bound GEMV: check roofline headroom first, and fall back to the default tile, never to the narrowest"
 links = { pr = "", commit = "ad7970757", evidence = "/workspace/claude-state/glm/logs/ddgates_1016T1441.log (glm5next_w4a16_seg_narrow_gate, binary sha16 d8c448102c8aaf6c); /workspace/claude-state/glm/decode-plan/ARMS_dd.md sections 'RESULT dd GPU gates' (per-M table) and 'ANTI-PATTERN'" }
 notes = "Kept in the binary default-off (class B, gate-proven) and out of every recipe (MAIN ruling, no code change). Estimated step cost of fill 2: about +0.08 ms per step at C8 and +0.35 ms at C16 (about 39 sets per step); an estimate, because the gate does not time the FILL-unset 16-row tile (its w4 column is the narrow 4-warp entry). time_lost_hours and effort_hours are estimates of the kernel, gate and build work"
+
+[[lever]]
+id = "gb10x3-glm53-f1-finish-leaf"
+date = "2026-10-16"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "no flag: on a multi-rank world (multi_rank_protocol_active) the retire insert skips the finish-leaf SSM snapshot and keeps the plain prefix insert; single-rank retire unchanged (sequence/retire.rs retire_insert)"
+symptom = "C16 rungs ran cache-cold: the per-rank snapshot vote read [0, 192, 192], so min_cached_prompt_tokens fell below 192 and DB2's C16 rep was invalid"
+diagnosis_tool = "bench"
+root_cause_class = "wiring-defect"
+lever_type = "code"
+lkb_effect = "none (CPU-only prefix-cache policy; no kernel or launch changes)"
+parity_tier_kept = "bit-identical"
+per_rung = []
+verdict = "kept"
+verdict_reason = "DBF1 2026-10-16 (L=K65536-kinv-1016T1515, met-ddf1-e23cceeff sha16 d14366efcb6ba664): tf hash 460e8c2f8a0562ad == ref; kinv_xrun vs DB0 (1016T0645) SAME at 1024/8192/32768; readbacks 15/15 on 3 ranks; f1_check PASS (agreed=None 0, agreed=Some 104, finish-leaf saves 0 on all 3 ranks; DB0 dry run: 456 finish-leaf saves, 18 None); min_cached 192 at all 3 C16 reps; agentic 10/10, 4.121 s/turn (DB0 4.146). C16 median 142.23 tok/s (J/tok 0.830) vs DB0 139.00 (+2.3%), not attributed to F1 because the arm also carried the DB2 head lever; TTFT spot cells within noise on the client, server cold c256 -24.8 ms and cold c32k -357.5 ms"
+failure_mode = "only rank 0 retires through cache_sequence_dispatch (workers get the free command alone), so a rank-0 finish leaf is one no worker holds: the all-or-nothing snapshot vote can never restore it, its pool slots LRU-evict the prompt checkpoints every rank holds, and on a multi-turn prompt a deeper rank-0 leaf makes the vote yield None, losing a restore every rank could share"
+caught_by = "the C16 min_cached check (192 required) and the per-rank snapshot vote counts"
+time_lost_hours = 1.0
+would_catch_earlier = "a multi-rank CPU test that every snapshot a rank saves is one the other ranks also save (the vote's precondition), before any C16 arm"
+effort_hours = 2.0
+transferability = "any per-rank cache whose restore needs all ranks to agree: never let one rank insert entries the others cannot hold"
+links = { pr = "", commit = "46e4e1267, e23cceeff", evidence = "/workspace/claude-state/glm/STATUS.md 2026-10-16T15:55:14Z DBF1 verdict; /workspace/claude-state/glm/decode-plan/ARMS_dd.md DD-DBF1; /workspace/claude-state/glm/decode-plan/f1_check.sh" }
+notes = "Branches: glm/f1-finish-leaf (46e4e1267, on the DB0 base) and glm/dd-f1 (e23cceeff, ad7970757 + F1). A once-per-process info line ('finish-leaf SSM snapshot: off on a multi-rank world') is the readback; it prints on rank 0 only. time_lost_hours (one invalid C16 rep plus diagnosis) and effort_hours are estimates"
