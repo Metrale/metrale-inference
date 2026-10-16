@@ -2165,3 +2165,27 @@ effort_hours = 8.0
 transferability = "any per-token reduction kernel that re-reads a shared weight per small block: widen the block's work with a cp.async ring instead of adding tokens per block, and keep each token's summation order"
 links = { pr = "", commit = "", evidence = "glm5next_mhc_tile_gate example output and standalone harness, 2026-10-15" }
 notes = "Variants measured and not shipped: eight tokens per block with three stages (tile8) ran 381 us at T=684 vs tile4's 350. Five or six stages gain 0-4% clean and 4-5% under SM-copy load at 684 rows, within spread; a split Sinkhorn tail gains about 1%. createpolicy.fractional.L2::evict_last with cp.async L2::cache_hint raised CUDA_ERROR_ILLEGAL_INSTRUCTION on GB10 at T=1, with or without applypriority. Not applied on the MHC_POST_PRE_FUSED path. A faster pre-norm may expose NCCL time it now hides"
+
+[[lever]]
+id = "gb10x3-glm53-moe-quant-early"
+date = "2026-10-16"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_MOE_QUANT_EARLY=1 (default off; needs METRALE_GLM_SP_OVERLAP=1 and METRALE_GLM_MOE_W4A4_GROUPED=1, refused with METRALE_GLM_SP_PIPELINE=1)"
+symptom = "32k cold prefill: the grouped W4A4 routed-expert launch quantizes the gate/up activations of every gathered FFN-normed row (w4a4_quant_rows_static, about 395 us at 8,208 rows) at the head of the MoE, on the critical path after the SP-mHC all-gather of the normed rows, on every rank"
+diagnosis_tool = "microbench"
+root_cause_class = "redundant-work"
+lever_type = "scheduling"
+lkb_effect = "none (no kernel change): each rank launches the same per-row quantizer over only its own shard at the shard's row offset on a side stream once its last section-2 piece is computed, then all-gathers codes, group scales and global scales in place on the comm stream behind the normed rows; the grouped launch consumes the gathered codes (one-shot hand-off, refused for other rows, another scratch or another scale) and drops only its own quantization launch"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "held"
+verdict_reason = "Byte gate glm5next_moe_quant_early_gate (dgx1, single GPU, 3 emulated ranks, 2026-10-16 00:58Z, RESULT: PASS): at 17, 1036, 2048 and 8208 rows every rank's gathered codes, group scales and global scales equal one launch of every row (0 bytes differ, all 3 ranks, all 4 row counts); both negative controls fire at every row count (rank 1's shard one input row off: 11073 / 637841 / 1263261 / 5061115 code bytes differ; gate/up scale one ulp off: 17 / 1036 / 2048 / 8208 global-scale bytes differ). Graph replay, median of 9 replays x 20 launches (p10, max): every row 2.6 / 13.3 / 31.2 / 395.0 us (8208: p10 393.4, max 403.7) vs the largest shard 2.6 / 5.9 / 9.7 / 98.2 us (8208: p10 96.9, max 100.1). Projected c32k at most -59..-66 ms (395 us x 42 layers x 4 sub-chunks if the shard quantization and the 19 MB code gather stay hidden under the normed-row gather and section 2), m>=2 overlap path only. Held until the TP3 MlpOut dump tap on vs off is byte-equal, nsys shows the exposed time on s13, and 2 interleaved boots measure it"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 6.0
+transferability = "any row-local activation quantization at the head of a GEMM fed by an all-gather of sharded rows: quantize the shard before the gather and gather the codes instead"
+links = { pr = "", commit = "b4ac40d26", evidence = "/workspace/claude-state/glm/moe0/gate_20261016T0058Z.log" }
+notes = "Lever off: no side stream, no scratch, no extra launch or comm op (the hooks take None). The SP pipeline path never calls the hooks, so METRALE_GLM_SP_PIPELINE=1 with the lever is refused at load instead of being a silent no-op. W-C's CELLP will call after_piece/gather/finish per cell under its own lever. Merged with glm/mhc3 8e57f6b1a as 2565d4bb5 (no w4a4 or MoE source changed by the merge)"
