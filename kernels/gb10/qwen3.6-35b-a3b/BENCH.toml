@@ -535,6 +535,7 @@ min = 32768.0
 quant = "nvfp4"
 checkpoint = "Qwen/Qwen3.6-35B-A3B-FP8"
 gate = "concurrency-sweep-moe"
+# 2026-10-16: ISL 128 is below the restore threshold; cold by design. cache_cold_cells stays unbounded.
 # 2026-09-25: The nvfp4head recipe. Measured 2026-09-22 on this instrument with MTP k=3, aggregate
 # tok/s, NVFP4 head vs bf16 head: C=1 60.92 vs 55.49, C=2 69.85 vs 67.45, C=4 70.82 vs 66.79.
 

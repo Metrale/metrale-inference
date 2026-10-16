@@ -63,6 +63,20 @@ pub(super) fn prompt_plan(conc: usize, warmup: usize, fixture: Fixture) -> Promp
     }
 }
 
+impl PromptPlan {
+    /// 2026-10-16: True when a warm-up round sent every measured prompt first,
+    /// so each measured request shares its whole prompt with a warmed one and
+    /// the cache rule ([`super::cache::cache_state`]) applies. False with no
+    /// warm-up round.
+    pub(super) fn measured_prompts_warmed(&self) -> bool {
+        !self.warmup_rounds.is_empty()
+            && self
+                .measured
+                .iter()
+                .all(|tag| self.warmup_rounds.iter().any(|round| round.contains(tag)))
+    }
+}
+
 impl ConcurrencySweep {
     /// 2026-09-26: The ISL filler from [`stats::make_prompt`] first, the
     /// fixture's task last.

@@ -27,7 +27,8 @@ pub struct Transcript {
     pub completion_tokens: usize,
     /// 2026-09-26: Diagnostic: not in `canonical`, so no divergence check here
     /// compares it. The SSM poisoning gate reads it as its turn-1 cache count.
-    pub cached_prompt_tokens: usize,
+    /// `None` when the server did not report one.
+    pub cached_prompt_tokens: Option<u64>,
 }
 
 impl From<&ChatOutcome> for Transcript {

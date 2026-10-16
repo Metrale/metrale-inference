@@ -187,7 +187,7 @@ fn server_usage_overrides_the_streamed_delta_count() {
     );
     assert_eq!(out.completion_tokens, 37);
     assert_eq!(out.prompt_tokens, 12);
-    assert_eq!(out.cached_prompt_tokens, 8);
+    assert_eq!(out.cached_prompt_tokens, Some(8));
 }
 
 /// 2026-09-26: The server's timing extensions ride in `usage` and are kept
@@ -211,6 +211,32 @@ fn server_timing_extensions_are_captured_and_absent_ones_stay_none() {
     );
     assert_eq!(bare.server_ttft_ms, None);
     assert_eq!(bare.server_tps, None);
+}
+
+/// 2026-10-16: A server that sends no `prompt_tokens_details` reported nothing
+/// about its cache; a 0 it did send is a miss. The two must stay apart from
+/// the parse to the printed text.
+#[test]
+fn an_absent_cached_count_is_unreported_and_a_sent_zero_is_zero() {
+    let usage = |details: &str| {
+        let mut out = ChatOutcome::default();
+        apply_chunk(
+            &sse(&format!(
+                r#"{{"usage":{{"completion_tokens":3,"prompt_tokens":192{details}}},"choices":[]}}"#
+            )),
+            &mut out,
+        );
+        out.cached_prompt_tokens
+    };
+    assert_eq!(usage(""), None);
+    assert_eq!(usage(r#","prompt_tokens_details":{}"#), None);
+    assert_eq!(
+        usage(r#","prompt_tokens_details":{"cached_tokens":0}"#),
+        Some(0)
+    );
+    assert_eq!(cached_text(None), "unreported");
+    assert_eq!(cached_text(Some(0)), "0");
+    assert_eq!(cached_text(Some(192)), "192");
 }
 
 /// 2026-09-26: The accept count rides in `completion_tokens_details` and

@@ -455,6 +455,7 @@ max = 3.0
 quant = "nvfp4"
 checkpoint = "unsloth/Qwen3.8-27B-NVFP4"
 gate = "concurrency-sweep"
+# 2026-10-16: ISL 128 is below the restore threshold; cold by design. cache_cold_cells stays unbounded.
 recipe = "qwen3.8/qwen3.8-27b-nvfp4-throughput"
 label = "Qwen3.8-27B dense (NVFP4, unsloth)"
 default = true
@@ -1426,6 +1427,9 @@ max = 0.16
 quant = "nvfp4"
 checkpoint = "unsloth/Qwen3.8-27B-NVFP4"
 gate = "concurrency-sweep-dflash2"
+# 2026-10-16: Every record through 2026-10-05 carries min_cached_prompt_tokens 0 at ISL 512 after warm-up 1. Until 2026-10-16
+# an unreported count was also written as 0, so cold vs unreported is not established. cache_cold_cells
+# stays unbounded: reported, not judged.
 recipe = "qwen3.8/qwen3.8-27b-nvfp4-dflash2"
 label = "Qwen3.8-27B dense (NVFP4, unsloth) + DFlash2"
 default = true

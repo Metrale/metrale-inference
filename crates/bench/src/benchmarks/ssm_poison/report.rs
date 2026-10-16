@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 
 use super::compare::TurnDelta;
 use super::score::Score;
+use crate::http;
 use crate::result::{Cell, CellStyle, Column, ResultTable, Stat};
 
 fn delta_detail(turns: &[TurnDelta]) -> String {
@@ -96,17 +97,15 @@ pub(super) fn summary(s: &Score) -> Vec<Stat> {
         } else {
             CellStyle::Bad
         }),
-        // 2026-09-26: The vacuity tile: zero, or no figure, is Bad.
-        Stat::new(
-            "Min t1 cache",
-            s.min_turn1_cached.unwrap_or(0).to_string(),
-            "tok",
-        )
-        .with_style(if s.min_turn1_cached.unwrap_or(0) > 0 {
-            CellStyle::Good
-        } else {
-            CellStyle::Bad
-        }),
+        // 2026-09-26: The vacuity tile: zero, or no figure, is Bad. 2026-10-16:
+        // no figure prints "unreported", never 0.
+        Stat::new("Min t1 cache", http::cached_text(s.min_turn1_cached), "tok").with_style(
+            if s.min_turn1_cached.is_some_and(|c| c > 0) {
+                CellStyle::Good
+            } else {
+                CellStyle::Bad
+            },
+        ),
     ]
 }
 
@@ -124,8 +123,8 @@ pub(super) fn metrics(s: &Score) -> BTreeMap<String, f64> {
     .map(|(k, v)| (k.to_string(), v as f64))
     .collect();
     // 2026-09-26: The vacuity metric; the gate's BENCH.toml entry floors it at
-    // `min = 900.0`. It is written only when a replay reported a figure: with
-    // no figure the key is absent, and the gate reports it missing from the
+    // `min = 900.0`. It is written only when every measured replay reported a
+    // figure (2026-10-16): otherwise the key is absent, and the gate reports it missing from the
     // record rather than as a zero. `concurrency.rs` omits the same key the
     // same way.
     if let Some(min) = s.min_turn1_cached {

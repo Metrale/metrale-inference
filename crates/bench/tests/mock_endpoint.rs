@@ -38,7 +38,7 @@ pub async fn start(tokens: usize, ttft: Duration, gap: Duration) -> MockEndpoint
 /// different positions gets different answers. It lets a test show the gate
 /// detecting it, not only passing a well-behaved server.
 pub async fn start_indexed(ttft: Duration, gap: Duration) -> MockEndpoint {
-    start_inner(Reply::Indexed, 0, ttft, gap).await
+    start_inner(Reply::Indexed, 0, Some(MOCK_CACHED), ttft, gap).await
 }
 
 /// 2026-09-26: What a completion answers with.
@@ -53,7 +53,7 @@ enum Reply {
 }
 
 /// 2026-09-26: As [`start`], but with `Some(reply)` every completion answers
-/// with that text instead of filler. All three constructors share
+/// with that text instead of filler. All the constructors share
 /// `start_inner`, so the chunk splitting is identical.
 pub async fn start_saying(
     reply: Option<String>,
@@ -65,10 +65,32 @@ pub async fn start_saying(
         Some(text) => Reply::Fixed(text),
         None => Reply::Filler,
     };
-    start_inner(reply, tokens, ttft, gap).await
+    start_inner(reply, tokens, Some(MOCK_CACHED), ttft, gap).await
 }
 
-async fn start_inner(reply: Reply, tokens: usize, ttft: Duration, gap: Duration) -> MockEndpoint {
+/// 2026-10-16: The cached prompt tokens a usage chunk reports unless a test
+/// chooses otherwise: 40 of the 42 prompt tokens, a warm hit.
+const MOCK_CACHED: u64 = 40;
+
+/// 2026-10-16: As [`start`], but each usage chunk reports `Some(cached)`
+/// cached prompt tokens of 42, or with `None` omits `prompt_tokens_details`
+/// altogether, as a server that does not report the count does.
+pub async fn start_caching(
+    cached: Option<u64>,
+    tokens: usize,
+    ttft: Duration,
+    gap: Duration,
+) -> MockEndpoint {
+    start_inner(Reply::Filler, tokens, cached, ttft, gap).await
+}
+
+async fn start_inner(
+    reply: Reply,
+    tokens: usize,
+    cached: Option<u64>,
+    ttft: Duration,
+    gap: Duration,
+) -> MockEndpoint {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let port = listener.local_addr().expect("addr").port();
     let requests = Arc::new(AtomicUsize::new(0));
@@ -148,9 +170,12 @@ async fn start_inner(reply: Reply, tokens: usize, ttft: Duration, gap: Duration)
                     }
                     tokio::time::sleep(gap).await;
                 }
+                let details = cached
+                    .map(|c| format!(",\"prompt_tokens_details\":{{\"cached_tokens\":{c}}}"))
+                    .unwrap_or_default();
                 let usage = format!(
-                    "data: {{\"usage\":{{\"completion_tokens\":{tokens},\"prompt_tokens\":42,\
-                     \"prompt_tokens_details\":{{\"cached_tokens\":40}}}},\"choices\":[]}}\n"
+                    "data: {{\"usage\":{{\"completion_tokens\":{tokens},\"prompt_tokens\":42\
+                     {details}}},\"choices\":[]}}\n"
                 );
                 let _ = write_chunk(&mut socket, &usage).await;
                 let _ = write_chunk(&mut socket, "data: [DONE]\n").await;

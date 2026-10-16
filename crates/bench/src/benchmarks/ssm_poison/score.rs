@@ -22,8 +22,20 @@ pub struct RoundRecord {
     pub verdict: RoundVerdict,
     /// 2026-09-26: `usage.prompt_tokens_details.cached_tokens` of the round's
     /// first turn. `None` when the replay errored (the round is then
-    /// Unmeasured). `Some(0)` means turn 1 restored nothing from the cache.
-    pub turn1_cached: Option<usize>,
+    /// Unmeasured) or, 2026-10-16, when the server did not report it.
+    /// `Some(0)` means turn 1 restored nothing from the cache.
+    pub turn1_cached: Option<u64>,
+}
+
+impl RoundRecord {
+    /// 2026-10-16: A measured round whose turn 1 did not attest a restored
+    /// prefix: it reported 0 cached tokens, or no count at all. Either way its
+    /// transcript proves nothing about the restore path. An unmeasured round
+    /// fails on its own rule and is not counted here.
+    pub(super) fn is_vacuous(&self) -> bool {
+        !matches!(self.verdict, RoundVerdict::Unmeasured { .. })
+            && self.turn1_cached.is_none_or(|c| c == 0)
+    }
 }
 
 /// 2026-09-26: Everything the report and the gate record read.
@@ -41,11 +53,14 @@ pub struct Score {
     /// 2026-09-26: Which rounds were unmeasured, with the reason, so the report
     /// attributes each to its own round.
     pub unmeasured_rounds: Vec<(usize, String)>,
-    /// 2026-09-26: Rounds whose first turn reported zero cached prompt tokens.
+    /// 2026-09-26: Rounds whose first turn reported zero cached prompt tokens
+    /// or, 2026-10-16, none ([`RoundRecord::is_vacuous`]).
     pub vacuous_rounds: Vec<usize>,
-    /// 2026-09-26: Minimum turn-1 cached-token count across the replays that
-    /// have one. `None` when none has.
-    pub min_turn1_cached: Option<usize>,
+    /// 2026-09-26: Minimum turn-1 cached-token count across the measured
+    /// replays. `None` when there is none or, 2026-10-16, when one of them
+    /// reported no count: a minimum over the reporting rounds only would read
+    /// higher than what was measured.
+    pub min_turn1_cached: Option<u64>,
 }
 
 /// 2026-09-26: Reduce the collected replay records to a [`Score`].
@@ -83,10 +98,15 @@ pub(super) fn score(replays: &[RoundRecord]) -> Score {
         .collect();
     let vacuous_rounds = replays
         .iter()
-        .filter(|r| r.turn1_cached == Some(0))
+        .filter(|r| r.is_vacuous())
         .map(|r| r.round)
         .collect();
-    let min_turn1_cached = replays.iter().filter_map(|r| r.turn1_cached).min();
+    let min_turn1_cached = replays
+        .iter()
+        .filter(|r| !matches!(r.verdict, RoundVerdict::Unmeasured { .. }))
+        .map(|r| r.turn1_cached)
+        .collect::<Option<Vec<u64>>>()
+        .and_then(|counts| counts.into_iter().min());
     Score {
         rounds: replays.len(),
         invariant: count(|v| matches!(v, RoundVerdict::Invariant)),
@@ -118,8 +138,8 @@ fn turn_summary(turns: &[TurnDelta]) -> String {
 /// * fewer replays than the configured `rounds` fails;
 /// * any collapsed round fails;
 /// * any unmeasured round fails;
-/// * any replay whose turn 1 reported zero cached prompt tokens fails, since
-///   it never exercised the prefix restore;
+/// * any replay whose turn 1 reported zero cached prompt tokens, or none, fails
+///   ([`RoundRecord::is_vacuous`]), since it never proved the prefix restore;
 /// * otherwise it passes, and names the jittered rounds' count if any.
 pub(super) fn verdict(s: &Score, rounds: usize) -> Verdict {
     if s.rounds != rounds {
@@ -157,7 +177,7 @@ pub(super) fn verdict(s: &Score, rounds: usize) -> Verdict {
     }
     if !s.vacuous_rounds.is_empty() {
         return Verdict::fail(format!(
-            "replay round(s) {:?} attested 0 cached prompt tokens on turn 1 — the prefix \
+            "replay round(s) {:?} attested 0 cached prompt tokens, or reported none, on turn 1 — the prefix \
              restore path this gate polices was never exercised, so their transcripts prove \
              nothing about the poisoning class (is prefix caching enabled on the served \
              recipe?)",

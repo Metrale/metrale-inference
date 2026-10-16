@@ -32,7 +32,8 @@ use crate::result::{
     BenchmarkResult, Cell, CellStyle, Column, LogLine, ResultTable, RunStatus, Stat,
 };
 use cache::{
-    SSM_CACHE_SLOTS_KEY, WARM_CACHE_FLOOR, cache_is_uncontrolled, slots_needed, warm_cache_capable,
+    CacheState, SSM_CACHE_SLOTS_KEY, WARM_CACHE_FLOOR, cache_state, slots_needed,
+    warm_cache_capable,
 };
 pub use descriptors::{DESCRIPTOR, DFLASH2_DESCRIPTOR, METADATA, MOE_DESCRIPTOR};
 use descriptors::{PEAK_FLOOR, RUNGS};
@@ -80,7 +81,8 @@ fn essay_nonce_tag(i: usize) -> String {
 struct RequestEvidence {
     completion_tokens: usize,
     prompt_tokens: usize,
-    cached_prompt_tokens: usize,
+    /// 2026-10-16: `None` when the server did not report it, never read as 0.
+    cached_prompt_tokens: Option<u64>,
     finish_reason: Option<String>,
     server_ttft_ms: Option<f64>,
     server_tps: Option<f64>,
@@ -105,6 +107,10 @@ struct CellRow {
     requests: Vec<RequestEvidence>,
     vacuous: bool,
     cache_uncontrolled: bool,
+    /// 2026-10-16: [`cache::CacheState::Cold`] on a warm-capable cell: warmed,
+    /// yet no measured request reached `WARM_CACHE_FLOOR`. Counted in
+    /// `cache_cold_cells`; it does not exclude the cell.
+    cache_cold: bool,
     gaps: Option<GapStats>,
     energy: Option<EnergyWindow>,
 }

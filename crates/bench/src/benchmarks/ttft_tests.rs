@@ -90,7 +90,7 @@ fn reconfiguring_restarts_the_endpoint_probe_and_clears_rows() {
     g.rows.push(LengthRow {
         prompt_tokens: 256,
         samples: vec![1.0],
-        cached_tokens: 128,
+        cached_tokens: Some(128),
     });
 
     let mut values = ParamValues::defaults(&g.parameters());
@@ -300,4 +300,17 @@ fn warm_reuses_one_tag_per_length_and_cold_never_repeats_one() {
     let cold_c = sample_prefix_tag(Mode::Cold, 1024, 1, 1);
     assert_ne!(cold_a, cold_b);
     assert_ne!(cold_a, cold_c);
+}
+
+/// 2026-10-16: A server that reports no cached count must not look like a
+/// confirmed cold miss in the cold table, nor like a miss in the warm one.
+/// CONTROL: a reported 0 keeps its old colours.
+#[test]
+fn an_unreported_cached_count_is_neither_a_hit_nor_a_miss() {
+    assert_eq!(cached_style(Mode::Cold, None), CellStyle::Warn);
+    assert_eq!(cached_style(Mode::Warm, None), CellStyle::Warn);
+    assert_eq!(cached_style(Mode::Cold, Some(0)), CellStyle::Good);
+    assert_eq!(cached_style(Mode::Warm, Some(0)), CellStyle::Bad);
+    assert_eq!(cached_style(Mode::Warm, Some(128)), CellStyle::Good);
+    assert_eq!(cached_style(Mode::Cold, Some(128)), CellStyle::Warn);
 }

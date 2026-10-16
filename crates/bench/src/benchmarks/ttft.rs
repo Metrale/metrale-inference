@@ -71,12 +71,27 @@ impl Mode {
 struct LengthRow {
     prompt_tokens: usize,
     samples: Vec<f64>,
-    cached_tokens: usize,
+    /// 2026-10-16: The largest cached count any sample reported; `None` when
+    /// no sample reported one.
+    cached_tokens: Option<u64>,
 }
 
 fn ttft_stats(samples: &[f64]) -> (Option<f64>, Option<f64>, Option<f64>) {
     let percentiles = stats::Percentiles::of(samples);
     (stats::median(samples), percentiles.p90, percentiles.p99)
+}
+
+/// 2026-10-16: Cache-hit evidence for the table: 0 cached tokens is Bad in
+/// warm mode and Good in cold mode. An unreported count is evidence of
+/// neither, so it is Warn in both. The verdict does not read it.
+fn cached_style(mode: Mode, cached: Option<u64>) -> CellStyle {
+    match (mode, cached) {
+        (_, None) => CellStyle::Warn,
+        (Mode::Warm, Some(0)) => CellStyle::Bad,
+        (Mode::Cold, Some(0)) => CellStyle::Good,
+        (Mode::Warm, Some(_)) => CellStyle::Good,
+        (Mode::Cold, Some(_)) => CellStyle::Warn,
+    }
 }
 
 fn sample_prefix_tag(mode: Mode, tokens: usize, sample: usize, run_id: u64) -> String {
@@ -183,7 +198,7 @@ impl TtftGate {
     async fn run_length(&mut self, tokens: usize) -> Result<LengthRow> {
         let handle = self.handle()?.clone();
         let mut samples = Vec::with_capacity(self.repeats);
-        let mut cached_tokens = 0usize;
+        let mut cached_tokens: Option<u64> = None;
         for i in 0..self.repeats {
             handle.check_cancelled()?;
             handle.status(format!(
@@ -209,6 +224,8 @@ impl TtftGate {
             if let Some(long) = &mut self.long {
                 long.admit(i, outcome.prompt_tokens)?;
             }
+            // 2026-10-16: `Option` orders `None` below every `Some`, so one
+            // reporting sample is enough and an unreported one never reads as 0.
             cached_tokens = cached_tokens.max(outcome.cached_prompt_tokens);
             match outcome.ttft_ms {
                 Some(ms) if valid_ttft_ms(ms) => samples.push(ms),
@@ -246,16 +263,9 @@ impl TtftGate {
                 Cell::styled(stats::fmt_ms(median), CellStyle::Accent),
                 Cell::new(stats::fmt_ms(p90)),
                 Cell::new(stats::fmt_ms(p99)),
-                // 2026-09-26: Cache-hit evidence: 0 cached tokens is Bad in warm
-                // mode and Good in cold mode. The verdict does not read it.
                 Cell::styled(
-                    r.cached_tokens.to_string(),
-                    match (self.mode, r.cached_tokens) {
-                        (Mode::Warm, 0) => CellStyle::Bad,
-                        (Mode::Cold, 0) => CellStyle::Good,
-                        (Mode::Warm, _) => CellStyle::Good,
-                        (Mode::Cold, _) => CellStyle::Warn,
-                    },
+                    http::cached_text(r.cached_tokens),
+                    cached_style(self.mode, r.cached_tokens),
                 ),
             ]);
         }
@@ -444,7 +454,7 @@ impl Benchmark for TtftGate {
             self.mode.label(),
             stats::fmt_ms(median),
             stats::fmt_ms(p90),
-            row.cached_tokens
+            http::cached_text(row.cached_tokens)
         )));
         self.rows.push(row);
         self.cursor += 1;

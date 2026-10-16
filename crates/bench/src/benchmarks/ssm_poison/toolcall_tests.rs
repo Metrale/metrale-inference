@@ -18,7 +18,7 @@ fn transcript(calls: &[(&str, &str)], text: &str) -> Transcript {
             .collect(),
         finish_reason: Some("stop".to_string()),
         completion_tokens: 32,
-        cached_prompt_tokens: 0,
+        cached_prompt_tokens: Some(0),
     }
 }
 
