@@ -163,13 +163,24 @@ pub(crate) fn layer_rows(
         ape: up(gpu, &ape)?,
         unabsorb: None,
     };
+    layer_with(gpu, cfg, weights, rows)
+}
+
+/// 2026-10-15: A layer over `weights` (synthetic, or a checkpoint's) with its own workspace of
+/// `rows` rows.
+pub(crate) fn layer_with(
+    gpu: &dyn GpuBackend,
+    cfg: &Glm5NextDsaConfig,
+    weights: Glm5NextDsaWeights,
+    rows: usize,
+) -> Result<Glm5NextDsaLayer> {
     Ok(Glm5NextDsaLayer {
         cfg: *cfg,
         weights,
         kernels: Glm5NextDsaLayerKernels::resolve(gpu)?,
         select_kernels: Glm5NextDsaKernels::resolve(gpu)?,
         decode_kernel: Glm5NextDsaDecodeKernel::resolve(gpu)?,
-        workspace: Glm5NextDsaWorkspace::new(gpu, cfg, rows)?,
+        workspace: std::sync::Arc::new(Glm5NextDsaWorkspace::new(gpu, cfg, rows)?),
         layer_idx: 1,
         attn_layer_idx: 0,
         rms_eps: 1e-6,

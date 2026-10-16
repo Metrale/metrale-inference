@@ -70,3 +70,22 @@ pub fn tensor(dir: &str, name: &str) -> Result<(Vec<usize>, Vec<f32>)> {
             .collect(),
     ))
 }
+
+/// 2026-10-15: One BF16 or F32 tensor of the checkpoint as f32 (the DSA indexer's `ape` is F32
+/// in some exports).
+pub fn tensor_f32(dir: &str, name: &str) -> Result<Vec<f32>> {
+    let t = tensor_raw(dir, name)?;
+    Ok(match t.dtype.as_str() {
+        "BF16" => t
+            .bytes
+            .chunks(2)
+            .map(|c| bf16::from_le_bytes([c[0], c[1]]).to_f32())
+            .collect(),
+        "F32" => t
+            .bytes
+            .chunks(4)
+            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect(),
+        d => bail!("{name}: {d}, neither BF16 nor F32"),
+    })
+}

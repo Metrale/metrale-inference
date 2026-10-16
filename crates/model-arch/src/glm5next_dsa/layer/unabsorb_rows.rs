@@ -16,7 +16,7 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
 use super::super::unabsorb::lever::{HEAD_DIM, O_PROJ_SITE, Q_B_SITE};
 use super::super::unabsorb::{HeadBmm, UnabsorbWeights, launch_head_bmm};
-use super::{Glm5NextDsaLayer, gemm};
+use super::{Glm5NextDsaLayer, Glm5NextDsaWorkspace, gemm};
 
 impl Glm5NextDsaLayer {
     /// 2026-10-15: The unabsorbed weights a pass runs on: `Some` only for a prefill pass of a
@@ -126,6 +126,22 @@ impl Glm5NextDsaLayer {
             c.local_heads * HEAD_DIM,
             stream,
         )
+    }
+}
+
+/// 2026-10-15: Read access to the two buffers the unabsorbed query half runs between, for the
+/// MLA-UNABSORB layer gate (`examples/glm5next_mla_unabsorb_layer_gate.rs`), which checks a
+/// prefill pass's latent query against an f64 reference built from its input.
+impl Glm5NextDsaWorkspace {
+    /// 2026-10-15: `q_a_layernorm`'s output, `[max_rows, q_lora_rank]` BF16.
+    pub fn q_resid(&self) -> DevicePtr {
+        self.q_resid
+    }
+
+    /// 2026-10-15: The latent query the attend kernel reads, `[max_rows, local_heads *
+    /// kv_lora_rank]` BF16.
+    pub fn q_abs(&self) -> DevicePtr {
+        self.q_abs
     }
 }
 

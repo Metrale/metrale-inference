@@ -656,5 +656,13 @@ required-features = ["cuda", "gpu-examples"]
 name = "glm5next_dsa_hb_replay"
 required-features = ["cuda", "gpu-examples"]
 
+[[example]]
+name = "glm5next_mla_head_bmm_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_mla_unabsorb_layer_gate"
+required-features = ["cuda", "gpu-examples"]
+
 [lints]
 workspace = true
