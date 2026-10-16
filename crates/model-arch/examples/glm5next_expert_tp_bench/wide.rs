@@ -18,6 +18,10 @@
 //! Owner: model-arch examples (GLM-5.3).
 //! Invariants: refuses to run without both levers (the wide rows need the grouped scratch);
 //! exits with an error on the first byte difference between the call sites.
+//!
+//! 2026-10-16: The check's negative control: `GLM_BENCH_WIDE_NEG=1` flips one bit of the decode
+//! site's readback (byte 0 of its last row) before the check, which must then fail on the first
+//! routing. `GLM_BENCH_WIDE_ROWS` (comma-separated members of [`ROWS`]) narrows the row counts.
 
 use metrale_model_arch::glm5next_mlp::forward::{
     MoeCallSite, check_wide_sweep_at_load, forward_moe_at, moe_w4a4_grouped, moe_w4a4_wide_sweep,
@@ -31,6 +35,37 @@ const WIDE_ROWS: usize = 32;
 const SKEW_POOL: usize = 12;
 const SKEW_BIAS: f32 = 8.0;
 const WIDTH: usize = 704;
+
+/// 2026-10-16: `GLM_BENCH_WIDE_ROWS`: the row counts to run, each a member of [`ROWS`]; unset
+/// runs all of [`ROWS`].
+fn wide_rows() -> Result<Vec<usize>> {
+    let Ok(v) = std::env::var("GLM_BENCH_WIDE_ROWS") else {
+        return Ok(ROWS.to_vec());
+    };
+    v.split(',')
+        .map(|t| {
+            let r: usize = t
+                .trim()
+                .parse()
+                .with_context(|| format!("GLM_BENCH_WIDE_ROWS: {t:?} is not a row count"))?;
+            ensure!(
+                ROWS.contains(&r),
+                "GLM_BENCH_WIDE_ROWS: {r} is not one of {ROWS:?}"
+            );
+            Ok(r)
+        })
+        .collect()
+}
+
+/// 2026-10-16: `GLM_BENCH_WIDE_NEG`: `1` arms the injected flip, unset or `0` leaves it off,
+/// any other value is an error.
+fn neg_flip() -> Result<bool> {
+    match std::env::var("GLM_BENCH_WIDE_NEG").ok().as_deref() {
+        None | Some("0") => Ok(false),
+        Some("1") => Ok(true),
+        Some(v) => anyhow::bail!("GLM_BENCH_WIDE_NEG={v}: want 0 or 1"),
+    }
+}
 
 pub fn run(g: &dyn GpuBackend, k: &Glm5NextMlpKernels, stream: u64) -> Result<()> {
     ensure!(
@@ -125,14 +160,23 @@ pub fn run(g: &dyn GpuBackend, k: &Glm5NextMlpKernels, stream: u64) -> Result<()
         ("general", MoeCallSite::General, out),
         ("decode", MoeCallSite::BatchedDecode, out_b),
     ];
+    let (row_set, neg) = (wide_rows()?, neg_flip()?);
     for s in &sites {
-        for rows in ROWS {
+        for &rows in &row_set {
             for (d, &x) in xs.iter().enumerate() {
                 let mut got = Vec::new();
                 for (_, at, o) in sites_at {
                     call(s, x, o, rows, at, false)?;
                     g.synchronize(stream)?;
                     got.push(read(g, o, rows * HIDDEN * 2)?);
+                }
+                if neg {
+                    got[1][(rows - 1) * HIDDEN * 2] ^= 1;
+                    println!(
+                        "NEG {} rows={rows} draw={d}: flipped bit 0 of byte 0 of decode row {}",
+                        s.name,
+                        rows - 1
+                    );
                 }
                 ensure!(
                     got[0] == got[1],
