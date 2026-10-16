@@ -92,7 +92,7 @@ fn a_caveated_target_is_marked_and_footnoted() {
     assert!(
         flagged.contains(
             "\u{2020} concurrency-sweep-glm c16_aggregate_tok_s on org/GLM: likely vLLM stall. \
-             The entry's note in kernels/gb10/glm-5.3-flash/BENCH.toml gives the account."
+             The entry's target_note in kernels/gb10/glm-5.3-flash/BENCH.toml gives the account."
         ),
         "{flagged}"
     );

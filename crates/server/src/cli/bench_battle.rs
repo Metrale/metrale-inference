@@ -130,7 +130,7 @@ pub(super) fn table(r: &Report) -> String {
         if let Some(caveat) = &j.cell.caveat {
             let _ = write!(
                 out,
-                "\n\u{2020} {} {} on {}: {caveat}. The entry's note in kernels/{}/{}/BENCH.toml gives the account.",
+                "\n\u{2020} {} {} on {}: {caveat}. The entry's target_note in kernels/{}/{}/BENCH.toml gives the account.",
                 j.cell.gate, j.cell.metric, j.cell.checkpoint, j.cell.hw, j.cell.model,
             );
         }

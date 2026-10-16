@@ -101,11 +101,17 @@ pub struct BenchEntry {
     /// 2026-10-16: A short caveat per target, shown beside the target where it is published
     /// (`target_caveats = { c16_aggregate_tok_s = "likely vLLM stall" }`), for a reference figure
     /// that is not a clean bar. Prose only: no verdict and no battle reads it, and the full
-    /// account belongs in `note`. [`load_all`] refuses a key that names no target, an empty
-    /// text, and a caveat on an entry with no `note` for it to point to. Empty and omitted is
-    /// the normal case.
+    /// account belongs in `target_note`. [`load_all`] refuses a key that names no target, an
+    /// empty text, and a caveat on an entry with no `target_note` for it to point to. Empty and
+    /// omitted is the normal case.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub target_caveats: BTreeMap<String, String>,
+    /// 2026-10-16: The account of the targets for a reader of the published page, which the
+    /// caveat marks link to; `note` stays the engineering account and is never published. Prose
+    /// only: no verdict, ratchet or battle reads it. [`load_all`] refuses it on an entry with
+    /// no `targets`. Empty and omitted is the normal case.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub target_note: String,
     /// 2026-10-16: The context the reference run behind `targets` was served at
     /// (`target_max_model_len = 262144`), so a page can say where that run was not made. Prose
     /// only: no verdict, ratchet or battle reads it. [`load_all`] refuses it on an entry with
@@ -425,8 +431,8 @@ fn validate_targets(path: &std::path::Path, entry: &BenchEntry) -> Result<()> {
 }
 
 /// 2026-10-16: A caveat flags a published target, so it must name one; an empty caveat flags
-/// nothing; and the marker points at the entry's `note`, so an entry with a caveat must
-/// carry one. The reference run's context describes the targets, so it needs some, and a
+/// nothing; and the marker points at the entry's `target_note`, so an entry with a caveat must
+/// carry one, and that account describes targets, so it needs some. The reference run's context describes the targets, so it needs some, and a
 /// context is positive.
 fn validate_target_caveats(path: &std::path::Path, entry: &BenchEntry) -> Result<()> {
     for (name, text) in &entry.target_caveats {
@@ -447,12 +453,17 @@ fn validate_target_caveats(path: &std::path::Path, entry: &BenchEntry) -> Result
             );
         }
     }
-    if !entry.target_caveats.is_empty() && entry.note.trim().is_empty() {
+    let (gate, ckpt) = (&entry.gate, &entry.checkpoint);
+    if !entry.target_caveats.is_empty() && entry.target_note.trim().is_empty() {
         bail!(
-            "{}: {} / {} has target caveats but no note for them to point to",
-            path.display(),
-            entry.gate,
-            entry.checkpoint,
+            "{}: {gate} / {ckpt} has target caveats but no target_note for them to point to",
+            path.display()
+        );
+    }
+    if !entry.target_note.is_empty() && entry.targets.is_empty() {
+        bail!(
+            "{}: {gate} / {ckpt} declares target_note with no targets for it to describe",
+            path.display()
         );
     }
     match entry.target_max_model_len {

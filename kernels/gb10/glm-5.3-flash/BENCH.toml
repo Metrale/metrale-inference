@@ -13,8 +13,10 @@
 #   boot plus the measured noise. No entry names a recipe yet: the GLM recipe is not on main,
 #   so a --pull-request-gate self-start refuses these entries until it lands.
 # - `targets` carries the vLLM reference per metric; no verdict reads it.
-# - `target_caveats` flags a target that is not a clean bar, pointing at the entry's note; no
-#   verdict reads it either.
+# - `target_caveats` flags a target that is not a clean bar, pointing at the entry's
+#   `target_note`; no verdict reads it either.
+# - `target_note` is the account of the targets for a reader of the published page; the
+#   engineering `note` is never published. No verdict reads it.
 # - `target_max_model_len` is the context of the one vLLM serve behind every target here
 #   (262144); a page uses it to say where vLLM was not run. No verdict reads it.
 # - Cells not measured are not here: the 128k context, the 256k agentic tier and the 64k
@@ -632,8 +634,17 @@ vLLM ran at gpu util 0.88; ours at 0.82.\
 targets = { c1_aggregate_tok_s = 40.11, c2_aggregate_tok_s = 62.24, c4_aggregate_tok_s = 83.42, c8_aggregate_tok_s = 114.56, c12_aggregate_tok_s = 131.74, c16_aggregate_tok_s = 115.73 }
 # 2026-10-16: The context of the one vLLM serve behind every target above; no verdict reads it.
 target_max_model_len = 262144
-# 2026-10-16: The C=16 target is flagged where it is published; the note above gives the account.
+# 2026-10-16: The C=16 target is flagged where it is published; target_note gives the account.
 target_caveats = { c16_aggregate_tok_s = "likely vLLM stall" }
+# 2026-10-16: The account of these targets for a reader of the published page.
+target_note = """\
+The C=16 vLLM figure, 115.73 tok/s, is a single sample and most likely a stalled vLLM rep. \
+vLLM's own three-rep ladder, on a different instrument, read that rung as 159.1, 101.0 and \
+158.5 tok/s. Those reps are not comparable with this instrument and are not a target. A win \
+at C=16 against 115.73 is not a clean win. Against a non-stalled vLLM C=16 (~159 tok/s), the \
+internal target is ≥ 164 tok/s (+3%). Every vLLM figure here comes from one vLLM serve at \
+256k context; vLLM was not run at 64k or 512k. vLLM ran at GPU util 0.88; ours at 0.82.\
+"""
 
 [benchmarks.serve_overrides]
 # 2026-10-16: The context length the ladder is measured at.

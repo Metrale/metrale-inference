@@ -178,7 +178,11 @@ mod tests {
     fn a_legacy_shard_id_is_not_a_gate() {
         let mut a = args();
         a.gates = vec!["bfcl-subset-a".into()];
-        assert!(a.validate().unwrap_err().contains("neither a required gate"));
+        assert!(
+            a.validate()
+                .unwrap_err()
+                .contains("neither a required gate")
+        );
     }
 
     #[test]
