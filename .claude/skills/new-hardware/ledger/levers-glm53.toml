@@ -2180,12 +2180,36 @@ lkb_effect = "new kernel glm5next_mla_head_bmm (_q K 256 N 512, _o K 512 N 256):
 parity_tier_kept = "accuracy-gated"
 per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
 verdict = "held"
-verdict_reason = "Projected from FLOPs: o side 756 -> 425 GF per rank (-44%), q side 283 -> 189 GF (-33%); Option B -165..-193 ms at c32k and -12..-13.5 ms at c1k, Option A -145..-176 / -7.6..-8.7 ms. Held for G1 (host), G2 (kernel vs f64, unabsorbed error <= 1.25x absorbed), G3 (acc numerics A and B in one run, agentic, kinv) and the lead's serve A/B"
+verdict_reason = "Projected from FLOPs: o side 756 -> 425 GF per rank (-44%), q side 283 -> 189 GF (-33%); Option B -165..-193 ms at c32k and -12..-13.5 ms at c1k, Option A -145..-176 / -7.6..-8.7 ms. G1 (host) passed; G2 passed 2026-10-16 (below). Held for G3 (acc numerics A and B in one run, agentic, kinv) and the lead's serve A/B. G2 on dgx1: head_bmm vs f64 at M 1/17/1040, 0 elements outside the bound, rel-RMS 1.65e-3 (_q and _o); 30 (M, offset) row-identity cases per kernel byte-identical; the 21-for-22-heads stride control FIRED. Layer 3, rank 0, two 1040-row chunks vs an f64 unabsorbed reference, rel-RMS over the absorbed arm's: --dsa declared A = B 1.017 (q_abs) / 0.895-0.924 (hidden); --dsa w8a8 (recipe) A 0.758 / 0.801-0.865, B 0.113 / 0.078-0.089; heads-swapped control 12.3-162x, FIRED. head_bmm at M 8192/8208 runs 1.46-1.63 ms (_q) and 1.53 ms (_o), 29-32 TF/s and 181-193 GB/s (graph replay, host clock): bandwidth-bound (171 FLOP/B against a ridge of ~318), so tuning it has ~0.3 ms per launch at most. Re-projected from those times: B about -128 ms at c32k (o side -122, q side -6)"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0.0
+would_catch_earlier = ""
+effort_hours = 14.0
+transferability = "any MLA model whose prefill runs absorbed weights: the absorption trades FLOPs for latent-space attention; prefill at wide rows pays for it, decode does not"
+links = { pr = "", commit = "269410f80", evidence = "glm/mla G2 gates (examples glm5next_mla_head_bmm_gate, glm5next_mla_unabsorb_layer_gate), dgx1 2026-10-16T01:24Z-01:28Z" }
+notes = "Memory per rank (11 DSA layers, 22 local heads): BF16 q_b_proj 17.3 MB + o_proj 46.1 MB + W_UK^T 5.8 MB + W_UV 5.8 MB = 75.0 MB per layer, plus one 92.5 MB row scratch: about +0.92 GB (estimate; the lead measures it at boot). The absorbed weights stay resident until unabsorbed becomes the default. G2 gate processes peaked at 1.03 GB (kernel gate) and 2.33 GB (layer gate) of device memory above their start, measured; they replace the 0.5 / 1.5 GB stated before the run. Debt: loader.rs 537 > 500 pre-existing (weight_loader/glm5_next_load/loader.rs; this lever adds one call line, 538; splitting it is out of scope)."
+
+[[lever]]
+id = "gb10x3-glm53-mla-unabsorb-qfuse"
+date = "2026-10-16"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "idea, not built: under METRALE_GLM_MLA_UNABSORB, q_b_proj's head slice and glm5next_mla_head_bmm_q in one kernel"
+symptom = "the unabsorbed q side writes q_b_proj's output (92 MB at 8192 rows) to the row scratch and head_bmm_q reads it back; head_bmm runs at 181-193 GB/s, bandwidth-bound, so the 92 MB write and read-back costs about 0.7 ms of each q launch (head_bmm_q 1.46-1.63 ms at 8192 rows, against q_absorb 3.27 ms; q_b_proj was not timed separately)"
+diagnosis_tool = "roofline"
+root_cause_class = "memory-traffic"
+lever_type = "fusion"
+lkb_effect = "one CTA per (128-row tile, head): q_resid[128 x 1536] x q_b_h^T into a 128 x 256 BF16 tile kept in shared memory (64 KB), then x W_UK^T_h into the 128 x 512 latent query; our own MMA code, no external library; the fixed k order keeps rows independent of M"
+parity_tier_kept = "accuracy-gated"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "held"
+verdict_reason = "PARKED by the lead 2026-10-16 01:4xZ as a separate later lever; not started. Estimate about -0.7 ms per q launch, about -25 ms per rank at c32k. The o side cannot fuse the same way: o_proj reduces across all heads"
 failure_mode = ""
 caught_by = ""
 time_lost_hours = 0.0
 would_catch_earlier = ""
 effort_hours = 0.0
-transferability = "any MLA model whose prefill runs absorbed weights: the absorption trades FLOPs for latent-space attention; prefill at wide rows pays for it, decode does not"
-links = { pr = "", commit = "", evidence = "" }
-notes = "Memory per rank (11 DSA layers, 22 local heads): BF16 q_b_proj 17.3 MB + o_proj 46.1 MB + W_UK^T 5.8 MB + W_UV 5.8 MB = 75.0 MB per layer, plus one 92.5 MB row scratch: about +0.92 GB. The absorbed weights stay resident until unabsorbed becomes the default. Debt: loader.rs 537 > 500 pre-existing (weight_loader/glm5_next_load/loader.rs; this lever adds one call line, 538; splitting it is out of scope)."
+transferability = "any back-to-back GEMM pair whose intermediate is head-local and fits a CTA's shared memory"
+links = { pr = "", commit = "", evidence = "gb10x3-glm53-mla-unabsorb G2 timings" }
+notes = "Needs a dense BF16 q_b slice in our own kernel instead of the existing dense GEMM path; the 92 MB row scratch would shrink to the o side's alone"
