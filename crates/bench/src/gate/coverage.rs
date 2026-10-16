@@ -47,7 +47,7 @@ pub const PERF_PATHS: [&str; 7] = [
 /// Every other file under `crates/bench/src/gate` is in `GATE_MACHINERY_FILES` and falls under
 /// every gate's `GATE_MACHINERY` exclusion. `every_verdict_symbol_is_defined_inside_the_boundary`
 /// fails if a verdict function it names is defined in a gate file outside this list.
-pub const BOUNDARY_FILES: [&str; 20] = [
+pub const BOUNDARY_FILES: [&str; 22] = [
     "crates/bench/src/gate/coverage.rs",
     // 2026-09-26: `required_for`, `union`, `intent_only`: what the intent half adds to the
     // path-derived floor.
@@ -98,6 +98,12 @@ pub const BOUNDARY_FILES: [&str; 20] = [
     "crates/bench/src/gate/model_scope.rs",
     // 2026-10-15: `load`: the kernel → model map `reaching` reads, and how it fails closed.
     "crates/bench/src/gate/kernel_map.rs",
+    // 2026-10-15: `from_bench_toml`, `owners_of`: which registry paths a model owns, the input
+    // that narrows `reaching` from every registered model to one.
+    "crates/bench/src/gate/owns.rs",
+    // 2026-10-15: `parse`, `settled`: whether a committed owed manifest must be deleted, which
+    // fails `check_models`.
+    "crates/bench/src/gate/owed_manifest.rs",
     // 2026-10-15: `affected`, `instance_uses`: which models a kernel file reaches.
     "crates/circuit/src/venn/affected.rs",
     "crates/circuit/src/venn/affected_repo.rs",
@@ -1254,7 +1260,7 @@ pub const NOT_REQUIRED: [(&str, &str); 26] = [
 /// 2026-09-26: True when `path` is `entry` or lies beneath it, compared per component:
 /// `"Cargo.toml.orig"` and `"crates2/x"` start with `"Cargo.toml"` and `"crates"` but are
 /// not under them.
-fn under(path: &str, entry: &str) -> bool {
+pub(crate) fn under(path: &str, entry: &str) -> bool {
     path == entry
         || path
             .strip_prefix(entry)

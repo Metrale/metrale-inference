@@ -47,13 +47,17 @@ fn none() -> BTreeSet<String> {
 
 #[test]
 fn one_of_two_certified_opens_exactly_one_pr_for_the_other() {
-    let prs = owed_prs(&owed_after_one_of_two_certified(), SHA, &none(), &none());
+    let prs = owed_prs(&owed_after_one_of_two_certified(), SHA, &none(), &none()).expect("renders");
     assert_eq!(prs.len(), 1, "{prs:?}");
     let pr = &prs[0];
     assert_eq!(pr.model, "glm");
     assert_eq!(pr.branch, "cert/glm/0123456");
     assert!(pr.create_branch);
     assert_eq!(pr.manifest_path, format!(".benchmarks/owed/glm-{SHA}.toml"));
+    assert!(
+        pr.body.contains(&pr.manifest_path),
+        "the body names the manifest to delete"
+    );
     let m: toml::Value = toml::from_str(&pr.manifest).expect("the manifest is TOML");
     assert_eq!(m["merge_sha"].as_str(), Some(SHA));
     let owed = m["owed"].as_array().expect("owed list");
@@ -66,18 +70,29 @@ fn one_of_two_certified_opens_exactly_one_pr_for_the_other() {
 fn a_rerun_opens_nothing_and_a_branch_without_its_pr_gets_the_pr_alone() {
     let owed = owed_after_one_of_two_certified();
     let branch = BTreeSet::from(["cert/glm/0123456".to_string()]);
-    assert!(owed_prs(&owed, SHA, &branch, &branch).is_empty());
-    let prs = owed_prs(&owed, SHA, &branch, &none());
+    assert!(
+        owed_prs(&owed, SHA, &branch, &branch)
+            .expect("renders")
+            .is_empty()
+    );
+    let prs = owed_prs(&owed, SHA, &branch, &none()).expect("renders");
     assert_eq!(prs.len(), 1);
     assert!(!prs[0].create_branch, "the branch exists");
     // 2026-10-15: Control: another merge's branch for the same model does not suppress this one.
     let other = BTreeSet::from(["cert/glm/fedcba9".to_string()]);
-    assert_eq!(owed_prs(&owed, SHA, &other, &other).len(), 1);
+    assert_eq!(
+        owed_prs(&owed, SHA, &other, &other).expect("renders").len(),
+        1
+    );
 }
 
 #[test]
 fn nothing_owed_opens_nothing() {
-    assert!(owed_prs(&[], SHA, &none(), &none()).is_empty());
+    assert!(
+        owed_prs(&[], SHA, &none(), &none())
+            .expect("renders")
+            .is_empty()
+    );
 }
 
 #[test]
@@ -93,7 +108,7 @@ fn every_gate_a_model_owes_rides_one_pr() {
             subject: s("gemma"),
         }])
         .collect();
-    let prs = owed_prs(&owed, SHA, &none(), &none());
+    let prs = owed_prs(&owed, SHA, &none(), &none()).expect("renders");
     assert_eq!(
         prs.iter().map(|p| p.model.as_str()).collect::<Vec<_>>(),
         ["gemma", "glm"]

@@ -6,13 +6,16 @@
 //! Owner: bench gate tests.
 //! Invariants: none beyond the types.
 
+use std::collections::BTreeSet;
+
 use metrale_circuit::venn::Repo;
 
 use super::super::coverage_tests::scratch_repo::{
     branch, checkout_default, commit, current_branch, head, init,
 };
+use super::super::owns::Owners;
 use super::super::tests::tempdir;
-use super::{GitRepo, changed_paths, merge_base};
+use super::{GitRepo, changed_paths, merge_base, owners};
 
 #[test]
 fn git_repo_reads_the_revision_not_the_working_tree() {
@@ -64,4 +67,46 @@ fn a_change_is_what_the_head_added_since_the_merge_base() {
         "{base} is not the fork point {fork}"
     );
     assert!(merge_base(root, "no-such-rev", "pr").is_err());
+}
+
+#[test]
+fn owners_are_the_valid_lists_of_registered_bench_files_at_the_revision() {
+    let dir = tempdir::Dir::new();
+    let root = dir.path();
+    init(root);
+    commit(root, "kernels/gb10/HARDWARE.toml", "", "hw");
+    commit(
+        root,
+        "kernels/gb10/m/BENCH.toml",
+        "owns = [\"crates/m\"]\n",
+        "m",
+    );
+    commit(
+        root,
+        "kernels/gb10/bad/BENCH.toml",
+        "owns = [\"crates/*\"]\n",
+        "bad",
+    );
+    // 2026-10-16: No HARDWARE.toml: `bench::load_all` does not read this file, so neither do owners.
+    commit(
+        root,
+        "kernels/nohw/n/BENCH.toml",
+        "owns = [\"crates/n\"]\n",
+        "nohw",
+    );
+    let rev = head(root);
+    std::fs::write(
+        root.join("kernels/gb10/m/BENCH.toml"),
+        "owns = [\"crates/edited\"]\n",
+    )
+    .unwrap();
+    let got = owners(&GitRepo {
+        root: root.to_path_buf(),
+        rev,
+    });
+    assert_eq!(
+        got,
+        Owners::from([("m".to_string(), BTreeSet::from(["crates/m".to_string()]))]),
+        "the committed list of the registered file; the refused and unregistered ones own nothing"
+    );
 }

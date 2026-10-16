@@ -11,6 +11,7 @@ use std::collections::BTreeSet;
 use metrale_circuit::venn::affected::{InstanceUse, Usage};
 use metrale_circuit::venn::parse_families;
 
+use super::super::owns::Owners;
 use super::{KernelMap, Subject, reaching};
 
 pub(super) const SHARED: &str = "kernels/gb10/common/shared.cu";
@@ -78,7 +79,7 @@ fn bare() -> Subject {
 
 fn reached(paths: &[&str], map: &KernelMap) -> BTreeSet<Subject> {
     let paths: Vec<String> = paths.iter().map(|s| s.to_string()).collect();
-    reaching(&paths, &[glm(), qwen(), bare()], map)
+    reaching(&paths, &[glm(), qwen(), bare()], map, &Owners::new())
         .into_iter()
         .filter(|(_, p)| !p.is_empty())
         .map(|(s, _)| s)
@@ -132,6 +133,7 @@ fn a_model_on_other_hardware_is_not_reached_by_a_gb10_kernel() {
         &[GLM_ONLY.to_string()],
         std::slice::from_ref(&hopper),
         &map(),
+        &Owners::new(),
     );
     assert!(r[&hopper].is_empty());
     // 2026-10-15: Control: a non-kernel path reaches it.
@@ -139,6 +141,40 @@ fn a_model_on_other_hardware_is_not_reached_by_a_gb10_kernel() {
         &["Cargo.lock".to_string()],
         std::slice::from_ref(&hopper),
         &map(),
+        &Owners::new(),
     );
     assert!(!r[&hopper].is_empty());
+}
+
+#[test]
+fn an_owned_path_reaches_its_model_alone_and_an_unowned_path_reaches_all() {
+    const OWNED: &str = "crates/config/src/parsers/glm5_next";
+    let owners = Owners::from([(
+        "glm-5.3-flash".to_string(),
+        BTreeSet::from([OWNED.to_string()]),
+    )]);
+    let glm_b200 = subject("b200", "glm-5.3-flash", "nvidia/GLM-5.3-Flash-NVFP4");
+    let subjects = [glm(), qwen(), bare(), glm_b200.clone()];
+    let reached = |path: &str| -> BTreeSet<Subject> {
+        reaching(&[path.to_string()], &subjects, &map(), &owners)
+            .into_iter()
+            .filter(|(_, p)| !p.is_empty())
+            .map(|(s, _)| s)
+            .collect()
+    };
+    assert_eq!(
+        reached(&format!("{OWNED}/parse.rs")),
+        BTreeSet::from([glm(), glm_b200]),
+        "the owning model, on every hardware it is registered on"
+    );
+    let all = BTreeSet::from(subjects.clone());
+    assert_eq!(reached("crates/server/src/main.rs"), all, "unowned");
+    assert_eq!(
+        reached("crates/config/src/parsers/glm5_next.rs"),
+        all,
+        "a sibling sharing the entry's text but not its directory is unowned"
+    );
+    // 2026-10-16: A path a model the gate does not register owns re-opens none of its models.
+    let r = reaching(&[format!("{OWNED}/parse.rs")], &[qwen()], &map(), &owners);
+    assert!(r[&qwen()].is_empty());
 }

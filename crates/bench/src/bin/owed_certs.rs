@@ -6,7 +6,7 @@
 //!
 //! | stream | meaning |
 //! |---|---|
-//! | stdout | `{head, kernel_map, statuses, owed, standings, prs}` |
+//! | stdout | `{head, kernel_map, statuses, owed, standings, manifests, prs}` |
 //! | stderr | the cause (exit != 0) |
 //! | exit 0 | an answer was computed, possibly no PRs |
 //! | exit 1 | no answer: bad invocation, unreadable list file, or no `head` in this clone |
@@ -77,7 +77,7 @@ fn main() -> Result<()> {
             (id.as_str(), s)
         })
         .collect();
-    let prs = owed_prs(&checked.owed, &head, &branches, &pr_heads);
+    let prs = owed_prs(&checked.owed, &head, &branches, &pr_heads).map_err(anyhow::Error::msg)?;
     let kernel_map = match &map {
         KernelMap::Derived { .. } => "derived".to_string(),
         KernelMap::Unavailable(why) => format!("unavailable (every model reached): {why}"),
@@ -88,6 +88,7 @@ fn main() -> Result<()> {
         "statuses": statuses,
         "owed": checked.owed,
         "standings": checked.standings,
+        "manifests": checked.manifests,
         "prs": prs,
     });
     println!("{}", serde_json::to_string_pretty(&json)?);

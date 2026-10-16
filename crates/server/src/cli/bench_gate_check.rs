@@ -58,11 +58,13 @@ fn print_owed(owed: &[gate::check_models::Owed]) {
 
 /// 2026-09-26: `--pull-request-gate-check`: print every required gate's status
 /// at the checked-out commit, then the advisory intent for `pr`. Returns 0
-/// when every gate passes and 1 otherwise; the caller exits with it.
+/// when every gate passes and, with `base`, no committed owed manifest is
+/// settled or unreadable (2026-10-16); 1 otherwise. The caller exits with it.
 pub(super) fn gate_check_cmd(pr: Option<u64>, base: Option<&str>) -> Result<i32> {
     let root = repo_root()?;
     let sha = gate::git_sha(&root)?;
     println!("gate check for {sha} ({})", root.display());
+    let mut manifests = 0;
     let open = match base {
         None => print_statuses(&gate::check_gates(&root, &sha)),
         Some(base) => {
@@ -73,6 +75,17 @@ pub(super) fn gate_check_cmd(pr: Option<u64>, base: Option<&str>) -> Result<i32>
             let checked = gate::check_models::check_models(&root, &sha, base, &map);
             let open = print_statuses(&checked.statuses);
             print_owed(&checked.owed);
+            manifests = checked.manifests.len();
+            if !checked.manifests.is_empty() {
+                println!();
+                println!(
+                    "owed manifests to delete or fix ({}):",
+                    checked.manifests.len()
+                );
+                for m in &checked.manifests {
+                    println!("        {m}");
+                }
+            }
             open
         }
     };
@@ -126,9 +139,14 @@ pub(super) fn gate_check_cmd(pr: Option<u64>, base: Option<&str>) -> Result<i32>
         }
     }
 
-    if open.is_empty() {
+    if open.is_empty() && manifests == 0 {
         println!("all {} required gates pass", gate::REQUIRED_GATES.len());
         Ok(0)
+    } else if open.is_empty() {
+        println!(
+            "every required gate passes, but {manifests} owed manifest(s) must be deleted or fixed"
+        );
+        Ok(1)
     } else {
         println!(
             "{} bench(es) still need a passing gate record: {}",

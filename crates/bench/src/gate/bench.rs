@@ -15,7 +15,8 @@
 //! - [`load_all`] refuses an entry whose `status` is neither `measured` nor
 //!   `unmeasured`, an `unmeasured` entry with metrics, a `measured` entry
 //!   without them, a `port` serve override, an incomplete hermetic pin set,
-//!   an undeclared `serve_env` lever, and invalid `noise`.
+//!   an undeclared `serve_env` lever, invalid `noise`, and a file whose
+//!   top-level `owns` list `owns::from_bench_toml` refuses.
 //! - [`baseline_for`] contains only `measured` entries, and exactly one
 //!   default checkpoint per hardware.
 
@@ -116,6 +117,8 @@ pub fn load_all(root: &Path) -> Result<Vec<(taxon::Target, BenchEntry)>> {
             .with_context(|| format!("reading {}", path.display()))?;
         let parsed: BenchFile =
             toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+        super::owns::from_bench_toml(&text)
+            .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
         for entry in parsed.benchmarks {
             if entry.status != "measured" && entry.status != "unmeasured" {
                 bail!(

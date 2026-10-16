@@ -59,6 +59,12 @@ jobs:
         with:
           client-id: ${{ vars.CERTIFICATION_APP_CLIENT_ID }}
           private-key: ${{ secrets.CERTIFICATION_APP_PRIVATE_KEY }}
+          # 2026-10-16: Only what the script writes: branches and manifests
+          # (contents) and the PRs (pull-requests). Its reads, the cert/* refs
+          # and the PR list, need nothing more. The installation holds more;
+          # this token does not.
+          permission-contents: write
+          permission-pull-requests: write
       - name: Open one PR per owed model
         # 2026-10-15: Every `${{ }}` value arrives through the environment, never
         # spliced into the script text (certification-bot.yml says why).

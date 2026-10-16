@@ -13,6 +13,12 @@
 //!   declared subject must have a covering record, so the default-subject rule of
 //!   `check::check_one` still holds.
 //! - When git cannot diff the base, every registered model counts as reached (fail-closed).
+//! - `owns` lists are read at the merge base, never at the change: a change that widens a list
+//!   narrows its own reach only after it merges.
+//! - A model with no committed record of a gate that is not a declared subject is dropped from
+//!   that gate: neither reached nor owed (R8). A declared subject is never dropped.
+//! - A committed owed manifest that is settled at the commit, or unreadable, is reported in
+//!   `manifests`; the gate check fails until the change deletes or fixes it (R8 pruning).
 //! - A group gate (`check_group`) has no model dimension yet: its verdict is `check_group`'s
 //!   and it owes nothing.
 
@@ -28,6 +34,7 @@ use super::check::{
 use super::check_paths::invalidating_paths;
 use super::coverage::{GateCoverage, PROMOTION_CANDIDATES, REQUIRED};
 use super::model_scope::{KernelMap, Subject, reaching};
+use super::owns::Owners;
 use super::record::{read_baseline, read_record};
 
 /// 2026-10-15: One registered model's standing at the commit.
@@ -38,8 +45,12 @@ pub enum SubjectState {
     Pass,
     /// 2026-10-15: Its newest covering record fails: one entry per problem.
     Fail(Vec<String>),
-    /// 2026-10-15: No record of it covers the commit; the text says why.
+    /// 2026-10-15: A record of it is committed and none covers the commit; the text says why.
     Stale(String),
+    /// 2026-10-16: No record of it is committed for this gate. A model that is not a declared
+    /// subject is then dropped from the gate: never reached, never owed (owner ruling R8; a gate
+    /// variant is measured before it is declared, `gate-variants-cannot-bootstrap`).
+    Unrecorded,
 }
 
 /// 2026-10-15: A (gate, model) a merge leaves uncertified. The merge sha is the caller's.
@@ -64,6 +75,9 @@ pub struct ModelCheck {
     pub statuses: BTreeMap<String, GateStatus>,
     pub owed: Vec<Owed>,
     pub standings: BTreeMap<String, Vec<ModelStanding>>,
+    /// 2026-10-16: One line per committed owed manifest this change must delete (it is settled)
+    /// or fix (it is unreadable); `owed_manifest` decides.
+    pub manifests: Vec<String>,
 }
 
 fn name(s: &Subject) -> String {
@@ -80,9 +94,20 @@ pub fn decide(
     let passes = |s: &Subject| matches!(states.get(s), Some(SubjectState::Pass));
     let why = |s: &Subject| match states.get(s) {
         Some(SubjectState::Stale(why)) => why.clone(),
+        Some(SubjectState::Unrecorded) => "no record of it is committed".to_string(),
         _ => "not registered".to_string(),
     };
-    let owed: Vec<Subject> = reached.iter().filter(|s| !passes(s)).cloned().collect();
+    // 2026-10-16: A model with no record of this gate that is not a declared subject is not on
+    // the gate yet: it is neither reached nor owed.
+    let dropped = |s: &Subject| {
+        matches!(states.get(s), Some(SubjectState::Unrecorded)) && !defaults.contains(s)
+    };
+    let reached: BTreeSet<&Subject> = reached.iter().filter(|s| !dropped(s)).collect();
+    let owed: Vec<Subject> = reached
+        .iter()
+        .filter(|s| !passes(s))
+        .map(|s| (*s).clone())
+        .collect();
     let failing: Vec<String> = states
         .iter()
         .filter_map(|(s, st)| match st {
@@ -94,7 +119,7 @@ pub fn decide(
     if !failing.is_empty() {
         return (GateStatus::Fail(failing), owed);
     }
-    if let Some(d) = defaults.iter().find(|d| reached.contains(*d) && !passes(d)) {
+    if let Some(d) = defaults.iter().find(|d| reached.contains(d) && !passes(d)) {
         return (
             GateStatus::Missing(format!(
                 "this change reaches the declared subject {}, which must certify: {}",
@@ -121,8 +146,8 @@ pub fn decide(
             owed,
         );
     }
-    if !reached.is_empty() && !reached.iter().any(passes) {
-        let list: Vec<String> = reached.iter().map(name).collect();
+    if !reached.is_empty() && !reached.iter().any(|s| passes(s)) {
+        let list: Vec<String> = reached.iter().map(|s| name(s)).collect();
         return (
             GateStatus::Missing(format!(
                 "this change reaches {} and none has a covering record; certify at least one",
@@ -156,8 +181,8 @@ pub fn subjects(root: &Path, gate: &str) -> Result<(Vec<Subject>, BTreeSet<Subje
 }
 
 /// 2026-10-15: `paths` filtered to those that reach `s`, in order.
-fn reaching_one(paths: Vec<String>, s: &Subject, map: &KernelMap) -> Vec<String> {
-    let keep = reaching(&paths, std::slice::from_ref(s), map)
+fn reaching_one(paths: Vec<String>, s: &Subject, map: &KernelMap, owners: &Owners) -> Vec<String> {
+    let keep = reaching(&paths, std::slice::from_ref(s), map, owners)
         .remove(s)
         .unwrap_or_default();
     paths.into_iter().filter(|p| keep.contains(p)).collect()
@@ -169,12 +194,13 @@ fn subject_state(
     gate: &GateCoverage,
     s: &Subject,
     map: &KernelMap,
+    owners: &Owners,
 ) -> SubjectState {
     let baseline = match read_baseline(root, gate.id) {
         Ok(b) => b,
         Err(e) => return SubjectState::Stale(format!("baseline unreadable: {e:#}")),
     };
-    let reach = |paths: Vec<String>| reaching_one(paths, s, map);
+    let reach = |paths: Vec<String>| reaching_one(paths, s, map, owners);
     let mut newest: Option<Standing> = None;
     for path in records_newest_first(root, gate.id) {
         let Ok(record) = read_record(&path) else {
@@ -199,13 +225,15 @@ fn subject_state(
             }
         }
     }
+    let Some(newest) = newest else {
+        return SubjectState::Unrecorded;
+    };
     SubjectState::Stale(match newest {
-        None => "no record of it is committed".to_string(),
-        Some(Standing::Invalidated(paths)) => format!(
+        Standing::Invalidated(paths) => format!(
             "its newest record is invalidated by {}",
             super::check_fmt::summarize_paths(&paths)
         ),
-        Some(_) => "git cannot diff its newest record's commit against this one".to_string(),
+        _ => "git cannot diff its newest record's commit against this one".to_string(),
     })
 }
 
@@ -216,6 +244,7 @@ fn check_gate(
     base: Option<&str>,
     gate: &GateCoverage,
     map: &KernelMap,
+    owners: &Owners,
 ) -> (GateStatus, Vec<Owed>, Vec<ModelStanding>) {
     if let Some(group) = super::group::find(gate.id) {
         return (
@@ -237,7 +266,7 @@ fn check_gate(
     let reached: BTreeSet<Subject> = match base.and_then(|b| invalidating_paths(root, sha, b, gate))
     {
         None => all.iter().cloned().collect(),
-        Some(paths) => reaching(&paths, &all, map)
+        Some(paths) => reaching(&paths, &all, map, owners)
             .into_iter()
             .filter(|(_, p)| !p.is_empty())
             .map(|(s, _)| s)
@@ -245,7 +274,7 @@ fn check_gate(
     };
     let states: BTreeMap<Subject, SubjectState> = all
         .iter()
-        .map(|s| (s.clone(), subject_state(root, sha, gate, s, map)))
+        .map(|s| (s.clone(), subject_state(root, sha, gate, s, map, owners)))
         .collect();
     let (status, owed) = decide(&states, &reached, &defaults);
     let owed = owed
@@ -266,31 +295,78 @@ fn check_gate(
     (status, owed, standings)
 }
 
+/// 2026-10-16: The committed owed manifests that are settled at this commit, or unreadable.
+fn manifest_problems(root: &Path, standings: &BTreeMap<String, Vec<ModelStanding>>) -> Vec<String> {
+    let dir = root.join(super::owed_manifest::DIR);
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+        Err(e) => return vec![format!("{}: unreadable: {e}", dir.display())],
+    };
+    let mut out = Vec::new();
+    for entry in entries {
+        let path = match entry {
+            Ok(e) => e.path(),
+            Err(e) => {
+                out.push(format!("{}: unreadable entry: {e}", dir.display()));
+                continue;
+            }
+        };
+        let shown = path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .display()
+            .to_string();
+        let parsed = std::fs::read_to_string(&path)
+            .map_err(|e| e.to_string())
+            .and_then(|t| super::owed_manifest::parse(&t));
+        match parsed {
+            Err(e) => out.push(format!("{shown}: unreadable owed manifest: {e}")),
+            Ok(m) if super::owed_manifest::settled(&m, standings) => out.push(format!(
+                "{shown}: every pair it lists is certified at this commit; delete it in this change"
+            )),
+            Ok(_) => {}
+        }
+    }
+    out.sort();
+    out
+}
+
 /// 2026-10-15: Every required gate's verdict for `sha` as a change from `base`, and what the
 /// change leaves owed on the required gates and the promotion candidates.
 pub fn check_models(root: &Path, sha: &str, base: &str, map: &KernelMap) -> ModelCheck {
     // 2026-10-15: No merge base reads as no base: every registered model is reached.
     let base = super::kernel_map::merge_base(root, base, sha).ok();
     let base = base.as_deref();
+    let owners = base
+        .map(|rev| {
+            super::kernel_map::owners(&super::kernel_map::GitRepo {
+                root: root.to_path_buf(),
+                rev: rev.to_string(),
+            })
+        })
+        .unwrap_or_default();
     let mut statuses = BTreeMap::new();
     let mut owed = Vec::new();
     let mut standings = BTreeMap::new();
     for gate in REQUIRED.iter() {
-        let (status, o, s) = check_gate(root, sha, base, gate, map);
+        let (status, o, s) = check_gate(root, sha, base, gate, map, &owners);
         statuses.insert(gate.id.to_string(), status);
         owed.extend(o);
         standings.insert(gate.id.to_string(), s);
     }
     for gate in PROMOTION_CANDIDATES {
-        let (_, o, s) = check_gate(root, sha, base, gate, map);
+        let (_, o, s) = check_gate(root, sha, base, gate, map, &owners);
         owed.extend(o);
         standings.insert(gate.id.to_string(), s);
     }
     owed.sort();
+    let manifests = manifest_problems(root, &standings);
     ModelCheck {
         statuses,
         owed,
         standings,
+        manifests,
     }
 }
 

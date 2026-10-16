@@ -6,10 +6,10 @@
 //!
 //! Owner: bench gate.
 //! Invariants:
-//! - Pure: the caller passes the paths, the registered subjects and the kernel map.
-//! - A path outside `kernels/` reaches every subject (owner ruling Q1, 2026-10-15). Paths a
-//!   model's registry owns (its `BENCH.toml`) never invalidate in the first place
-//!   (`coverage::invalidates`), so no path outside `kernels/` is owned by one model.
+//! - Pure: the caller passes the paths, the registered subjects, the kernel map and the owners.
+//! - A path outside `kernels/` that some BENCH.toml `owns` list holds (`owns`) reaches the
+//!   subjects of the owning models alone; any other path outside `kernels/` reaches every
+//!   subject (owner ruling Q1, 2026-10-15).
 //! - A path under `kernels/` reaches the subjects `metrale_circuit`'s `affected` names for it.
 //!   It reaches every subject when the map is unavailable or the path is unmapped, and every
 //!   subject on its hardware that has no INSTANCES.toml entry, whose families are unknown
@@ -20,6 +20,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use metrale_circuit::venn::affected::{InstanceUse, affected};
 use metrale_circuit::venn::families::Families;
 use serde::Serialize;
+
+use super::owns::{Owners, owners_of};
 
 /// 2026-10-15: One registered model of a gate: a measured BENCH.toml entry.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
@@ -55,6 +57,7 @@ pub fn reaching(
     paths: &[String],
     subjects: &[Subject],
     map: &KernelMap,
+    owners: &Owners,
 ) -> BTreeMap<Subject, BTreeSet<String>> {
     let mut out: BTreeMap<Subject, BTreeSet<String>> = subjects
         .iter()
@@ -70,7 +73,16 @@ pub fn reaching(
         .cloned()
         .partition(|p| p.starts_with("kernels/"));
     for p in &other {
-        to_all(p, &mut out);
+        let by = owners_of(p, owners);
+        if by.is_empty() {
+            to_all(p, &mut out);
+            continue;
+        }
+        for (s, set) in out.iter_mut() {
+            if by.contains(s.model.as_str()) {
+                set.insert(p.clone());
+            }
+        }
     }
     let (manifests, uses) = match map {
         KernelMap::Unavailable(_) => {

@@ -1,7 +1,11 @@
 [model]
 name = "glm-5.3-flash"
-hf_id = "LibertAIDAI/GLM-5.3-Flash-NVFP4"
-revision = "9e0d74e3cef17f634e84fb8e2223707e02616290"
+# 2026-10-16: The served checkpoint, the one the GLM gate entries in BENCH.toml name, at
+# revision da920bb0b9f4a06727223a349e55468e38352348. The reference fixtures under
+# crates/model-engine/tests/fixtures/ (glm53-nvfp4-9e0d74e3-*) were taken from
+# LibertAIDAI/GLM-5.3-Flash-NVFP4 at 9e0d74e3.
+hf_id = "nvidia/GLM-5.3-Flash-NVFP4"
+revision = "da920bb0b9f4a06727223a349e55468e38352348"
 model_type = "glm5_next"
 architecture = "Hybrid KDA linear-attention + NoPE sparse MLA (DSA) + mHC + NVFP4 MoE"
 parameters = "320B-A18B"
@@ -14,7 +18,8 @@ first_k_dense_replace = 3
 
 hidden_dim = 4096
 vocab_size = 154624
-max_position_embeddings = 262144
+# 2026-10-16: text_config.max_position_embeddings in the checkpoint config (no top-level key).
+max_position_embeddings = 1048576
 
 
 q_heads = 64

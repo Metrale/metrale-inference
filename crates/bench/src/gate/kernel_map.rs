@@ -16,6 +16,7 @@ use metrale_circuit::venn::Repo;
 use metrale_circuit::venn::affected_repo::instance_uses;
 
 use super::model_scope::KernelMap;
+use super::owns::{Owners, from_bench_toml};
 
 /// 2026-09-29: The repository on disk (moved here from `met circuit venn` 2026-10-15).
 pub struct FsRepo {
@@ -113,6 +114,32 @@ pub fn load(repo: &dyn Repo) -> KernelMap {
         Ok((manifests, uses)) => KernelMap::Derived { manifests, uses },
         Err(e) => KernelMap::Unavailable(e.to_string()),
     }
+}
+
+/// 2026-10-16: Every `owns` list of the tree `repo` reads, by model directory, from the
+/// BENCH.toml files `bench::load_all` reads (`kernels/<hw>/<model>/BENCH.toml` under a hardware
+/// directory holding `HARDWARE.toml`). Never fails: a tree that does not list owns nothing,
+/// and a file that does not read or parse owns nothing, so its paths reach every model.
+pub fn owners(repo: &dyn Repo) -> Owners {
+    let Ok(files) = repo.list("kernels") else {
+        return Owners::new();
+    };
+    let mut out = Owners::new();
+    for path in &files {
+        let parts: Vec<&str> = path.split('/').collect();
+        let [_, hw, model, "BENCH.toml"] = parts[..] else {
+            continue;
+        };
+        if !files.contains(&format!("kernels/{hw}/HARDWARE.toml")) {
+            continue;
+        }
+        let Ok(owns) = repo.read(path).and_then(|t| from_bench_toml(&t)) else {
+            continue;
+        };
+        out.entry(model.to_string()).or_default().extend(owns);
+    }
+    out.retain(|_, entries| !entries.is_empty());
+    out
 }
 
 #[cfg(test)]

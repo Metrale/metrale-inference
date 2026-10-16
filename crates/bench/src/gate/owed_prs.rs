@@ -18,6 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::Serialize;
 
 use super::check_models::Owed;
+use super::owed_manifest::{Manifest, Pair, SCHEMA, path, render};
 
 /// 2026-10-15: One certification PR to open, and whether its branch must be created first.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -37,27 +38,20 @@ fn sha7(sha: &str) -> &str {
     sha.get(..7).unwrap_or(sha)
 }
 
-fn quoted(s: &str) -> String {
-    toml::Value::String(s.to_string()).to_string()
-}
-
-fn manifest(model: &str, merge_sha: &str, owed: &[&Owed]) -> String {
-    let mut out = format!(
-        "# Certification owed after {merge_sha}: a passing record of each entry below,\n\
-         # measured at or after that commit, settles it.\n\
-         schema = 1\nmerge_sha = {}\nmodel = {}\n",
-        quoted(merge_sha),
-        quoted(model)
-    );
-    for o in owed {
-        out.push_str(&format!(
-            "\n[[owed]]\ngate = {}\nhw = {}\ncheckpoint = {}\n",
-            quoted(&o.gate),
-            quoted(&o.subject.hw),
-            quoted(&o.subject.checkpoint)
-        ));
-    }
-    out
+fn manifest(model: &str, merge_sha: &str, owed: &[&Owed]) -> Result<String, String> {
+    render(&Manifest {
+        schema: SCHEMA,
+        merge_sha: merge_sha.to_string(),
+        model: model.to_string(),
+        owed: owed
+            .iter()
+            .map(|o| Pair {
+                gate: o.gate.clone(),
+                hw: o.subject.hw.clone(),
+                checkpoint: o.subject.checkpoint.clone(),
+            })
+            .collect(),
+    })
 }
 
 fn body(model: &str, merge_sha: &str, owed: &[&Owed]) -> String {
@@ -72,16 +66,22 @@ fn body(model: &str, merge_sha: &str, owed: &[&Owed]) -> String {
             o.gate, o.subject.hw, o.subject.checkpoint
         ));
     }
+    out.push_str(&format!(
+        "\nOnce every row passes, delete `{}` in this branch: the gate \
+         check fails while a settled manifest is committed.\n",
+        path(model, merge_sha)
+    ));
     out
 }
 
-/// 2026-10-15: The certification PRs to open for `owed` after the merge `merge_sha`.
+/// 2026-10-15: The certification PRs to open for `owed` after the merge `merge_sha`; an error
+/// only when a manifest cannot be rendered.
 pub fn owed_prs(
     owed: &[Owed],
     merge_sha: &str,
     branches: &BTreeSet<String>,
     pr_heads: &BTreeSet<String>,
-) -> Vec<OwedPr> {
+) -> Result<Vec<OwedPr>, String> {
     let mut by_model: BTreeMap<&str, Vec<&Owed>> = BTreeMap::new();
     for o in owed {
         by_model
@@ -100,8 +100,8 @@ pub fn owed_prs(
         out.push(OwedPr {
             model: model.to_string(),
             create_branch: !branches.contains(&branch),
-            manifest_path: format!(".benchmarks/owed/{model}-{merge_sha}.toml"),
-            manifest: manifest(model, merge_sha, &list),
+            manifest_path: path(model, merge_sha),
+            manifest: manifest(model, merge_sha, &list)?,
             title: format!(
                 "cert: {model} owes {} gate(s) after {}",
                 list.len(),
@@ -111,7 +111,7 @@ pub fn owed_prs(
             branch,
         });
     }
-    out
+    Ok(out)
 }
 
 #[cfg(test)]
