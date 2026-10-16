@@ -447,3 +447,28 @@ fn all_vendored_recipes_parse() {
     }
     assert_eq!(count, 28, "the vendored corpus is 28 recipes");
 }
+
+/// 2026-10-15: `max_nodes` bounds `min_nodes` and never sets the world size: absent is
+/// `None`, a value below `min_nodes` and a `min_nodes` of 0 are parse errors. Control:
+/// `max_nodes` equal to `min_nodes` parses, so the refusal is the comparison, not the key.
+#[test]
+fn max_nodes_bounds_min_nodes_and_zero_nodes_is_refused() {
+    let head = "recipe_version: \"2\"\nmodel: org/m\ncontainer: c\nruntime: metrale\n\
+                defaults:\n  port: 8888\n";
+    assert_eq!(Recipe::parse("f/s", head).unwrap().max_nodes, None);
+    let three = Recipe::parse("f/s", &format!("{head}min_nodes: 3\nmax_nodes: 3\n")).unwrap();
+    assert_eq!((three.min_nodes, three.max_nodes), (3, Some(3)));
+    let argv = three.argv(&BTreeMap::new()).expect("renders");
+    let world = argv
+        .iter()
+        .position(|a| a == "--world-size")
+        .expect("present");
+    assert_eq!(argv[world + 1], "3");
+    let below = Recipe::parse("f/s", &format!("{head}min_nodes: 3\nmax_nodes: 2\n"));
+    assert!(
+        format!("{:#}", below.unwrap_err()).contains("max_nodes 2 is below min_nodes 3"),
+        "a span that cannot hold its own world size must not load"
+    );
+    let zero = Recipe::parse("f/s", &format!("{head}min_nodes: 0\n"));
+    assert!(format!("{:#}", zero.unwrap_err()).contains("min_nodes is 0"));
+}

@@ -28,6 +28,7 @@ fn unit_shard(
         estimate: Estimate::Declared(10),
         needs_confirmation: false,
         serve_allowance_s: 600,
+        nodes: 1,
     }
 }
 

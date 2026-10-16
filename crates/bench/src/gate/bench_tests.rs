@@ -288,3 +288,68 @@ min = 85.0
     let all = load_all(&root).unwrap();
     assert_eq!(all.len(), 1, "one entry, not one per quant dir: {all:?}");
 }
+
+fn with_target(name: &str, max: f64, target_key: &str, target: &str) -> std::path::PathBuf {
+    fixture(
+        name,
+        &format!(
+            r#"
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "org/A"
+gate = "ttft-cold-gate"
+default = true
+status = "measured"
+[benchmarks.metrics.median_ms]
+max = {max:.1}
+[benchmarks.targets]
+{target_key} = {target}
+"#
+        ),
+    )
+}
+
+fn verdict_at(root: &Path, value: f64) -> bool {
+    let baseline = baseline_for(root, "ttft-cold-gate").unwrap();
+    let bound = &baseline.hardware["gb10"].models["org/A"].metrics["median_ms"];
+    matches!(
+        super::super::scoring::compare("median_ms", value, bound),
+        super::super::scoring::Comparison::Pass
+    )
+}
+
+/// 2026-10-15: A target is a reference, never a bound, in either direction: a run between the
+/// target and a looser ceiling passes, and a target looser than the ceiling does not let a run
+/// above the ceiling through.
+#[test]
+fn a_target_never_moves_the_verdict() {
+    let tight_target = with_target("target-tight", 500.0, "median_ms", "100.0");
+    assert!(
+        verdict_at(&tight_target, 300.0),
+        "300 is under the 500 ceiling"
+    );
+    let loose_target = with_target("target-loose", 100.0, "median_ms", "500.0");
+    assert!(
+        !verdict_at(&loose_target, 300.0),
+        "300 is over the 100 ceiling"
+    );
+    let entry = &load_all(&loose_target).unwrap()[0].1;
+    assert_eq!(entry.targets.get("median_ms"), Some(&500.0));
+}
+
+/// 2026-10-15: A target on a metric the entry does not bound, or a non-finite one, is refused
+/// at load; the same target on a declared metric loads.
+#[test]
+fn a_target_must_name_a_declared_metric_and_be_finite() {
+    let undeclared = with_target("target-undeclared", 500.0, "p90_ms", "100.0");
+    let err = format!("{:#}", load_all(&undeclared).unwrap_err());
+    assert!(
+        err.contains("[benchmarks.targets] names p90_ms, which is not a declared metric"),
+        "{err}"
+    );
+    let nan = with_target("target-nan", 500.0, "median_ms", "nan");
+    let err = format!("{:#}", load_all(&nan).unwrap_err());
+    assert!(err.contains("target median_ms must be finite"), "{err}");
+    let declared = with_target("target-declared", 500.0, "median_ms", "100.0");
+    assert_eq!(load_all(&declared).unwrap().len(), 1);
+}

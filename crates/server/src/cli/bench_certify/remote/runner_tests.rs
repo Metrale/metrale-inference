@@ -26,6 +26,7 @@ fn unit() -> Unit {
         estimate: Estimate::Declared(180),
         needs_confirmation: false,
         serve_allowance_s: 600,
+        nodes: 1,
     }
 }
 

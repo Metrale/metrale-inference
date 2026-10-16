@@ -42,7 +42,9 @@ fn sha256(text: &str) -> String {
 /// 2026-09-27: A loopback endpoint that answers `/v1/models` and every chat
 /// request with one streamed token, then a usage frame carrying
 /// `prompt_tokens` (none when `None`). It keeps every request body.
-async fn endpoint(prompt_tokens: Option<u64>) -> (TargetEndpoint, Arc<Mutex<Vec<Value>>>) {
+pub(in crate::benchmarks::ttft) async fn endpoint(
+    prompt_tokens: Option<u64>,
+) -> (TargetEndpoint, Arc<Mutex<Vec<Value>>>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind loopback");
@@ -114,6 +116,21 @@ async fn gate(
     root: &str,
     repeats: Option<i64>,
 ) -> (Box<dyn DynBenchmark>, ArtifactStore) {
+    gate_with(descriptor, target, root, |values| {
+        if let Some(n) = repeats {
+            values.set("repeats", ParamValue::Int(n));
+        }
+    })
+    .await
+}
+
+/// 2026-10-15: `gate` with any parameter set by `set` over the defaults.
+pub(in crate::benchmarks::ttft) async fn gate_with(
+    descriptor: &'static BenchmarkDescriptor,
+    target: TargetEndpoint,
+    root: &str,
+    set: impl FnOnce(&mut ParamValues),
+) -> (Box<dyn DynBenchmark>, ArtifactStore) {
     let mut g = descriptor.build();
     let (tx, rx) = std::sync::mpsc::channel();
     std::mem::forget(rx);
@@ -121,9 +138,7 @@ async fn gate(
     let _ = std::fs::remove_dir_all(&dir);
     let store = ArtifactStore::with_root(dir);
     let mut values = ParamValues::defaults(&g.parameters());
-    if let Some(n) = repeats {
-        values.set("repeats", ParamValue::Int(n));
-    }
+    set(&mut values);
     g.configure(&values).expect("defaults configure");
     let handle = PluginHandle::new(
         1,
@@ -136,7 +151,9 @@ async fn gate(
     (g, store)
 }
 
-async fn run(g: &mut Box<dyn DynBenchmark>) -> Result<BenchmarkResult> {
+pub(in crate::benchmarks::ttft) async fn run(
+    g: &mut Box<dyn DynBenchmark>,
+) -> Result<BenchmarkResult> {
     loop {
         let frame = g.next().await?;
         if frame.status != RunStatus::Running {

@@ -1,0 +1,540 @@
+# 2026-10-15: Gate benchmarks for GLM-5.3-Flash on GB10 (three nodes, tensor parallel 3), and the
+# bounds their records must meet.
+#
+# Owner: gb10 kernels.
+# Read by gate::bench (crates/bench/src/gate/bench.rs) and scripts/check_bench_threshold_prose.py.
+#
+# Invariants:
+# - A [benchmarks.*] sub-table belongs to the [[benchmarks]] entry above it.
+# - Every entry is its own gate id (crates/bench/src/benchmarks/ttft/glm.rs and the
+#   agentic-webserver-glm descriptor), so GLM's bounds and baselines never share an id with
+#   another model's.
+# - Every bound is a regression ratchet from measured cells: the median of three reps on one
+#   boot plus the measured noise. No entry names a recipe yet: the GLM recipe is not on main,
+#   so a --pull-request-gate self-start refuses these entries until it lands.
+# - `targets` carries the vLLM reference per metric; no verdict reads it.
+# - Cells not measured are not here: the 128k context, the 256k agentic tier and the 64k
+#   agentic tier.
+
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "nvidia/GLM-5.3-Flash-NVFP4"
+gate = "ttft-cold-glm-64k"
+label = "GLM-5.3-Flash, 64k context"
+default = true
+status = "measured"
+note = """\
+Uncached prefill TTFT over the synthetic 256, 1024 and 4096-token prompts, one median per \
+length. Measured on one boot per context length, n=3 reps per cell (separate invocations, \
+each with its own warm-up), binary sha256 prefix a96c8bac54bfb4d0 (engine e8fd77cef, the \
+nearest measured build to the one the GLM recipe of PR #161 pins), serve env sha256 prefix \
+c3d2e963efa6. Each ceiling is a regression ratchet: the median of the three reps plus their \
+range. The targets field holds the vLLM client p50 (n=5) on the same prompts, so a known loss \
+to vLLM is on the page without failing the gate.\
+"""
+# 2026-10-15: The vLLM client p50 per metric (n=5, same prompts); no verdict reads it.
+targets = { median_ms_256 = 488.0, median_ms_1024 = 679.0, median_ms_4096 = 1705.0 }
+
+[benchmarks.serve_overrides]
+# 2026-10-15: The context length this gate id names.
+max_model_len = "65536"
+
+[benchmarks.param_overrides]
+# 2026-10-15: Three samples per length, the n behind each ceiling.
+repeats = "3"
+
+[benchmarks.metrics.median_ms_256]
+# 2026-10-15: The ceiling of 449.0. Three reps on one boot read 404.2 / 420.7 / 432.5 ms
+# (median 420.7); the noise added is their range, 28.3 ms.
+max = 449.0
+
+[benchmarks.metrics.median_ms_1024]
+# 2026-10-15: The ceiling of 684.9. Three reps on one boot read 677.2 / 659.5 / 667.2 ms
+# (median 667.2); the noise added is their range, 17.7 ms.
+max = 684.9
+
+[benchmarks.metrics.median_ms_4096]
+# 2026-10-15: The ceiling of 1608.1. Three reps on one boot read 1578.6 / 1587.2 / 1599.5 ms
+# (median 1587.2); the noise added is their range, 20.9 ms.
+max = 1608.1
+
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "nvidia/GLM-5.3-Flash-NVFP4"
+gate = "ttft-cold-glm-256k"
+label = "GLM-5.3-Flash, 256k context"
+default = true
+status = "measured"
+note = """\
+Uncached prefill TTFT over the synthetic 256, 1024 and 4096-token prompts, one median per \
+length. Measured on one boot per context length, n=3 reps per cell (separate invocations, \
+each with its own warm-up), binary sha256 prefix 57c7df12f6981e8f (engine 2285594fb, the \
+nearest measured build to the one the GLM recipe of PR #161 pins; its serve env predates one \
+lever the recipe adds), serve env sha256 prefix 8a1ae0908c55. Each ceiling is a regression \
+ratchet: the median of the three reps plus their range. The targets field holds the vLLM \
+client p50 (n=5) on the same prompts, so a known loss to vLLM is on the page without failing \
+the gate.\
+"""
+# 2026-10-15: The vLLM client p50 per metric (n=5, same prompts); no verdict reads it.
+targets = { median_ms_256 = 488.0, median_ms_1024 = 679.0, median_ms_4096 = 1705.0 }
+
+[benchmarks.serve_overrides]
+# 2026-10-15: The context length this gate id names.
+max_model_len = "262144"
+
+[benchmarks.param_overrides]
+# 2026-10-15: Three samples per length, the n behind each ceiling.
+repeats = "3"
+
+[benchmarks.metrics.median_ms_256]
+# 2026-10-15: The ceiling of 441.4. Three reps on one boot read 410.4 / 428.0 / 423.8 ms
+# (median 423.8); the noise added is their range, 17.6 ms.
+max = 441.4
+
+[benchmarks.metrics.median_ms_1024]
+# 2026-10-15: The ceiling of 687.2. Three reps on one boot read 637.5 / 661.3 / 663.4 ms
+# (median 661.3); the noise added is their range, 25.9 ms.
+max = 687.2
+
+[benchmarks.metrics.median_ms_4096]
+# 2026-10-15: The ceiling of 1638.7. Three reps on one boot read 1573.3 / 1607.6 / 1604.4 ms
+# (median 1604.4); the noise added is their range, 34.3 ms.
+max = 1638.7
+
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "nvidia/GLM-5.3-Flash-NVFP4"
+gate = "ttft-cold-glm-512k"
+label = "GLM-5.3-Flash, 512k context"
+default = true
+status = "measured"
+note = """\
+Uncached prefill TTFT over the synthetic 256, 1024 and 4096-token prompts, one median per \
+length. Measured on one boot per context length, n=3 reps per cell (separate invocations, \
+each with its own warm-up), binary sha256 prefix 160d252d8c84cd09 (engine 3b3874954, the \
+build the GLM recipe of PR #161 pins), serve env sha256 prefix c3d2e963efa6. Each ceiling is \
+a regression ratchet: the median of the three reps plus their range. The targets field holds \
+the vLLM client p50 (n=5) on the same prompts, so a known loss to vLLM is on the page without \
+failing the gate.\
+"""
+# 2026-10-15: The vLLM client p50 per metric (n=5, same prompts); no verdict reads it.
+targets = { median_ms_256 = 488.0, median_ms_1024 = 679.0, median_ms_4096 = 1705.0 }
+
+[benchmarks.serve_overrides]
+# 2026-10-15: The context length this gate id names.
+max_model_len = "524288"
+
+[benchmarks.param_overrides]
+# 2026-10-15: Three samples per length, the n behind each ceiling.
+repeats = "3"
+
+[benchmarks.metrics.median_ms_256]
+# 2026-10-15: The ceiling of 450.9. Three reps on one boot read 433.8 / 428.3 / 445.4 ms
+# (median 433.8); the noise added is their range, 17.1 ms.
+max = 450.9
+
+[benchmarks.metrics.median_ms_1024]
+# 2026-10-15: The ceiling of 692.2. Three reps on one boot read 639.6 / 675.0 / 656.8 ms
+# (median 656.8); the noise added is their range, 35.4 ms.
+max = 692.2
+
+[benchmarks.metrics.median_ms_4096]
+# 2026-10-15: The ceiling of 1602.1. Three reps on one boot read 1565.7 / 1592.7 / 1575.1 ms
+# (median 1575.1); the noise added is their range, 27.0 ms.
+max = 1602.1
+
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "nvidia/GLM-5.3-Flash-NVFP4"
+gate = "ttft-warm-glm-64k"
+label = "GLM-5.3-Flash, 64k context"
+default = true
+status = "measured"
+note = """\
+Cached-prefix TTFT over the synthetic 256, 1024 and 4096-token prompts, one median per \
+length. Measured on one boot per context length, n=3 reps per cell (separate invocations, \
+each with its own warm-up), binary sha256 prefix a96c8bac54bfb4d0 (engine e8fd77cef, the \
+nearest measured build to the one the GLM recipe of PR #161 pins), serve env sha256 prefix \
+c3d2e963efa6. Each ceiling is a regression ratchet: the median of the three reps plus their \
+range. The targets field holds the vLLM client p50 (n=5) on the same prompts, so a known loss \
+to vLLM is on the page without failing the gate.\
+"""
+# 2026-10-15: The vLLM client p50 per metric (n=5, same prompts); no verdict reads it.
+targets = { median_ms_256 = 133.0, median_ms_1024 = 140.0, median_ms_4096 = 147.0 }
+
+[benchmarks.serve_overrides]
+# 2026-10-15: The context length this gate id names.
+max_model_len = "65536"
+
+[benchmarks.param_overrides]
+# 2026-10-15: Three samples per length, the n behind each ceiling.
+repeats = "3"
+
+[benchmarks.metrics.median_ms_256]
+# 2026-10-15: The ceiling of 84.7. Three reps on one boot read 83.7 / 82.2 / 83.2 ms
+# (median 83.2); the noise added is their range, 1.5 ms.
+max = 84.7
+
+[benchmarks.metrics.median_ms_1024]
+# 2026-10-15: The ceiling of 114.5. Three reps on one boot read 112.0 / 113.9 / 111.4 ms
+# (median 112.0); the noise added is their range, 2.5 ms.
+max = 114.5
+
+[benchmarks.metrics.median_ms_4096]
+# 2026-10-15: The ceiling of 99.8. Three reps on one boot read 97.6 / 93.1 / 95.3 ms
+# (median 95.3); the noise added is their range, 4.5 ms.
+max = 99.8
+
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "nvidia/GLM-5.3-Flash-NVFP4"
+gate = "ttft-warm-glm-256k"
+label = "GLM-5.3-Flash, 256k context"
+default = true
+status = "measured"
+note = """\
+Cached-prefix TTFT over the synthetic 256, 1024 and 4096-token prompts, one median per \
+length. Measured on one boot per context length, n=3 reps per cell (separate invocations, \
+each with its own warm-up), binary sha256 prefix 57c7df12f6981e8f (engine 2285594fb, the \
+nearest measured build to the one the GLM recipe of PR #161 pins; its serve env predates one \
+lever the recipe adds), serve env sha256 prefix 8a1ae0908c55. Each ceiling is a regression \
+ratchet: the median of the three reps plus their range. The targets field holds the vLLM \
+client p50 (n=5) on the same prompts, so a known loss to vLLM is on the page without failing \
+the gate.\
+"""
+# 2026-10-15: The vLLM client p50 per metric (n=5, same prompts); no verdict reads it.
+targets = { median_ms_256 = 133.0, median_ms_1024 = 140.0, median_ms_4096 = 147.0 }
+
+[benchmarks.serve_overrides]
+# 2026-10-15: The context length this gate id names.
+max_model_len = "262144"
+
+[benchmarks.param_overrides]
+# 2026-10-15: Three samples per length, the n behind each ceiling.
+repeats = "3"
+
+[benchmarks.metrics.median_ms_256]
+# 2026-10-15: The ceiling of 83.7. Three reps on one boot read 80.0 / 80.7 / 83.0 ms
+# (median 80.7); the noise added is their range, 3.0 ms.
+max = 83.7
+
+[benchmarks.metrics.median_ms_1024]
+# 2026-10-15: The ceiling of 117.3. Three reps on one boot read 114.3 / 113.5 / 110.5 ms
+# (median 113.5); the noise added is their range, 3.8 ms.
+max = 117.3
+
+[benchmarks.metrics.median_ms_4096]
+# 2026-10-15: The ceiling of 98.2. Three reps on one boot read 93.6 / 89.5 / 94.1 ms
+# (median 93.6); the noise added is their range, 4.6 ms.
+max = 98.2
+
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "nvidia/GLM-5.3-Flash-NVFP4"
+gate = "ttft-warm-glm-512k"
+label = "GLM-5.3-Flash, 512k context"
+default = true
+status = "measured"
+note = """\
+Cached-prefix TTFT over the synthetic 256, 1024 and 4096-token prompts, one median per \
+length. Measured on one boot per context length, n=3 reps per cell (separate invocations, \
+each with its own warm-up), binary sha256 prefix 160d252d8c84cd09 (engine 3b3874954, the \
+build the GLM recipe of PR #161 pins), serve env sha256 prefix c3d2e963efa6. Each ceiling is \
+a regression ratchet: the median of the three reps plus their range. The targets field holds \
+the vLLM client p50 (n=5) on the same prompts, so a known loss to vLLM is on the page without \
+failing the gate.\
+"""
+# 2026-10-15: The vLLM client p50 per metric (n=5, same prompts); no verdict reads it.
+targets = { median_ms_256 = 133.0, median_ms_1024 = 140.0, median_ms_4096 = 147.0 }
+
+[benchmarks.serve_overrides]
+# 2026-10-15: The context length this gate id names.
+max_model_len = "524288"
+
+[benchmarks.param_overrides]
+# 2026-10-15: Three samples per length, the n behind each ceiling.
+repeats = "3"
+
+[benchmarks.metrics.median_ms_256]
+# 2026-10-15: The ceiling of 87.0. Three reps on one boot read 85.4 / 82.2 / 80.6 ms
+# (median 82.2); the noise added is their range, 4.8 ms.
+max = 87.0
+
+[benchmarks.metrics.median_ms_1024]
+# 2026-10-15: The ceiling of 121.5. Three reps on one boot read 112.0 / 114.3 / 119.2 ms
+# (median 114.3); the noise added is their range, 7.2 ms.
+max = 121.5
+
+[benchmarks.metrics.median_ms_4096]
+# 2026-10-15: The ceiling of 102.6. Three reps on one boot read 93.5 / 98.6 / 97.5 ms
+# (median 97.5); the noise added is their range, 5.1 ms.
+max = 102.6
+
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "nvidia/GLM-5.3-Flash-NVFP4"
+gate = "high-isl-ttft-cold-glm-64k"
+label = "GLM-5.3-Flash, 64k context"
+default = true
+status = "measured"
+note = """\
+Uncached prefill TTFT on the committed 32k-token prompt. Measured on one boot, n=3 reps \
+(separate invocations, each with its own warm-up), binary sha256 prefix a96c8bac54bfb4d0 \
+(engine e8fd77cef, the nearest measured build to the one the GLM recipe of PR #161 pins), \
+serve env sha256 prefix c3d2e963efa6. The ceiling is a regression ratchet: the median of the \
+three reps plus the measured noise. The targets field holds the vLLM client p50 (n=5) on the \
+same prompt. The owner's bar for this cell is 10000 ms, below vLLM. RISK, not widened: across \
+12 samples of this cell on one binary, 3 fell in a slow mode 0.9-1.3 s above the rest; a run \
+with two slow samples of three would fail this ceiling.\
+"""
+# 2026-10-15: The vLLM client p50 per metric (n=5, same prompts); no verdict reads it.
+targets = { median_ms = 10479.0 }
+
+[benchmarks.serve_overrides]
+# 2026-10-15: The context length this gate id names.
+max_model_len = "65536"
+
+[benchmarks.param_overrides]
+# 2026-10-15: Three samples, the n behind the ceiling.
+repeats = "3"
+
+[benchmarks.metrics.median_ms]
+# 2026-10-15: The ceiling of 11446.9. Three reps on one boot read 11094.2 / 11117.4 / 11103.9 ms
+# (median 11103.9, range 23.2); the noise added is
+# the cold 32k cell's same-binary spread across two boots, 343 ms.
+max = 11446.9
+
+[benchmarks.metrics.prompt_tokens]
+# 2026-10-15: The fixture's floor, as on the other high-ISL gates.
+min = 32768.0
+
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "nvidia/GLM-5.3-Flash-NVFP4"
+gate = "high-isl-ttft-cold-glm-256k"
+label = "GLM-5.3-Flash, 256k context"
+default = true
+status = "measured"
+note = """\
+Uncached prefill TTFT on the committed 32k-token prompt. Measured on one boot, n=3 reps \
+(separate invocations, each with its own warm-up), binary sha256 prefix 57c7df12f6981e8f \
+(engine 2285594fb, the nearest measured build to the one the GLM recipe of PR #161 pins; its \
+serve env predates one lever the recipe adds), serve env sha256 prefix 8a1ae0908c55. The \
+ceiling is a regression ratchet: the median of the three reps plus the measured noise. The \
+targets field holds the vLLM client p50 (n=5) on the same prompt. The owner's bar for this \
+cell is 10000 ms, below vLLM. RISK, not widened: across 12 samples of this cell on one \
+binary, 3 fell in a slow mode 0.9-1.3 s above the rest; a run with two slow samples of three \
+would fail this ceiling.\
+"""
+# 2026-10-15: The vLLM client p50 per metric (n=5, same prompts); no verdict reads it.
+targets = { median_ms = 10479.0 }
+
+[benchmarks.serve_overrides]
+# 2026-10-15: The context length this gate id names.
+max_model_len = "262144"
+
+[benchmarks.param_overrides]
+# 2026-10-15: Three samples, the n behind the ceiling.
+repeats = "3"
+
+[benchmarks.metrics.median_ms]
+# 2026-10-15: The ceiling of 11742.0. Three reps on one boot read 11399.0 / 11440.9 / 11369.5 ms
+# (median 11399.0, range 71.4); the noise added is
+# the cold 32k cell's same-binary spread across two boots, 343 ms.
+max = 11742.0
+
+[benchmarks.metrics.prompt_tokens]
+# 2026-10-15: The fixture's floor, as on the other high-ISL gates.
+min = 32768.0
+
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "nvidia/GLM-5.3-Flash-NVFP4"
+gate = "high-isl-ttft-cold-glm-512k"
+label = "GLM-5.3-Flash, 512k context"
+default = true
+status = "measured"
+note = """\
+Uncached prefill TTFT on the committed 32k-token prompt. Measured on one boot, n=3 reps \
+(separate invocations, each with its own warm-up), binary sha256 prefix 160d252d8c84cd09 \
+(engine 3b3874954, the build the GLM recipe of PR #161 pins), serve env sha256 prefix \
+c3d2e963efa6. The ceiling is a regression ratchet: the median of the three reps plus the \
+measured noise. The targets field holds the vLLM client p50 (n=5) on the same prompt. The \
+owner's bar for this cell is 10000 ms, below vLLM. RISK, not widened: across 12 samples of \
+this cell on one binary, 3 fell in a slow mode 0.9-1.3 s above the rest; a run with two slow \
+samples of three would fail this ceiling.\
+"""
+# 2026-10-15: The vLLM client p50 per metric (n=5, same prompts); no verdict reads it.
+targets = { median_ms = 10479.0 }
+
+[benchmarks.serve_overrides]
+# 2026-10-15: The context length this gate id names.
+max_model_len = "524288"
+
+[benchmarks.param_overrides]
+# 2026-10-15: Three samples, the n behind the ceiling.
+repeats = "3"
+
+[benchmarks.metrics.median_ms]
+# 2026-10-15: The ceiling of 11536.4. Three reps on one boot read 11193.4 / 11253.0 / 11164.5 ms
+# (median 11193.4, range 88.5); the noise added is
+# the cold 32k cell's same-binary spread across two boots, 343 ms.
+max = 11536.4
+
+[benchmarks.metrics.prompt_tokens]
+# 2026-10-15: The fixture's floor, as on the other high-ISL gates.
+min = 32768.0
+
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "nvidia/GLM-5.3-Flash-NVFP4"
+gate = "high-isl-ttft-warm-glm-64k"
+label = "GLM-5.3-Flash, 64k context"
+default = true
+status = "measured"
+note = """\
+Cached-prefix TTFT on the committed 32k-token prompt. Measured on one boot, n=3 reps \
+(separate invocations, each with its own warm-up), binary sha256 prefix a96c8bac54bfb4d0 \
+(engine e8fd77cef, the nearest measured build to the one the GLM recipe of PR #161 pins), \
+serve env sha256 prefix c3d2e963efa6. The ceiling is a regression ratchet: the median of the \
+three reps plus the measured noise. The targets field holds the vLLM client p50 (n=5) on the \
+same prompt.\
+"""
+# 2026-10-15: The vLLM client p50 per metric (n=5, same prompts); no verdict reads it.
+targets = { median_ms = 207.0 }
+
+[benchmarks.serve_overrides]
+# 2026-10-15: The context length this gate id names.
+max_model_len = "65536"
+
+[benchmarks.param_overrides]
+# 2026-10-15: Three samples, the n behind the ceiling.
+repeats = "3"
+
+[benchmarks.metrics.median_ms]
+# 2026-10-15: The ceiling of 175.1. Three reps on one boot read 157.0 / 155.5 / 137.4 ms
+# (median 155.5); the noise added is their range, 19.6 ms.
+max = 175.1
+
+[benchmarks.metrics.prompt_tokens]
+# 2026-10-15: The fixture's floor, as on the other high-ISL gates.
+min = 32768.0
+
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "nvidia/GLM-5.3-Flash-NVFP4"
+gate = "high-isl-ttft-warm-glm-256k"
+label = "GLM-5.3-Flash, 256k context"
+default = true
+status = "measured"
+note = """\
+Cached-prefix TTFT on the committed 32k-token prompt. Measured on one boot, n=3 reps \
+(separate invocations, each with its own warm-up), binary sha256 prefix 57c7df12f6981e8f \
+(engine 2285594fb, the nearest measured build to the one the GLM recipe of PR #161 pins; its \
+serve env predates one lever the recipe adds), serve env sha256 prefix 8a1ae0908c55. The \
+ceiling is a regression ratchet: the median of the three reps plus the measured noise. The \
+targets field holds the vLLM client p50 (n=5) on the same prompt.\
+"""
+# 2026-10-15: The vLLM client p50 per metric (n=5, same prompts); no verdict reads it.
+targets = { median_ms = 207.0 }
+
+[benchmarks.serve_overrides]
+# 2026-10-15: The context length this gate id names.
+max_model_len = "262144"
+
+[benchmarks.param_overrides]
+# 2026-10-15: Three samples, the n behind the ceiling.
+repeats = "3"
+
+[benchmarks.metrics.median_ms]
+# 2026-10-15: The ceiling of 164.6. Three reps on one boot read 164.0 / 153.4 / 154.0 ms
+# (median 154.0); the noise added is their range, 10.6 ms.
+max = 164.6
+
+[benchmarks.metrics.prompt_tokens]
+# 2026-10-15: The fixture's floor, as on the other high-ISL gates.
+min = 32768.0
+
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "nvidia/GLM-5.3-Flash-NVFP4"
+gate = "high-isl-ttft-warm-glm-512k"
+label = "GLM-5.3-Flash, 512k context"
+default = true
+status = "measured"
+note = """\
+Cached-prefix TTFT on the committed 32k-token prompt. Measured on one boot, n=3 reps \
+(separate invocations, each with its own warm-up), binary sha256 prefix 160d252d8c84cd09 \
+(engine 3b3874954, the build the GLM recipe of PR #161 pins), serve env sha256 prefix \
+c3d2e963efa6. The ceiling is a regression ratchet: the median of the three reps plus the \
+measured noise. The targets field holds the vLLM client p50 (n=5) on the same prompt.\
+"""
+# 2026-10-15: The vLLM client p50 per metric (n=5, same prompts); no verdict reads it.
+targets = { median_ms = 207.0 }
+
+[benchmarks.serve_overrides]
+# 2026-10-15: The context length this gate id names.
+max_model_len = "524288"
+
+[benchmarks.param_overrides]
+# 2026-10-15: Three samples, the n behind the ceiling.
+repeats = "3"
+
+[benchmarks.metrics.median_ms]
+# 2026-10-15: The ceiling of 158.4. Three reps on one boot read 151.8 / 146.2 / 152.8 ms
+# (median 151.8); the noise added is their range, 6.6 ms.
+max = 158.4
+
+[benchmarks.metrics.prompt_tokens]
+# 2026-10-15: The fixture's floor, as on the other high-ISL gates.
+min = 32768.0
+
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "nvidia/GLM-5.3-Flash-NVFP4"
+gate = "agentic-webserver-glm"
+label = "GLM-5.3-Flash, 512k context"
+default = true
+status = "measured"
+note = """\
+The agentic webserver tier (N=10, the driver's default parameters) on GLM-5.3-Flash served at \
+512k context. Measured on one boot, binary sha256 prefix 160d252d8c84cd09 (engine 3b3874954, \
+the build the GLM recipe of PR #161 pins), serve env sha256 prefix c3d2e963efa6: 10/10 \
+webserver_ok, 10/10 followed_directions, 4.157 s per turn, 425.14 s summed wall, 100 turns. \
+The noise on \
+the two speed bounds is the spread across four same-day tiers of this model (all 10/10 and \
+100 turns): 4.107-4.224 s per turn and 419.8-432.3 s summed wall. The two counts of 10 are \
+correctness bounds and take no noise. The 64k and 256k agentic tiers are not gated.\
+"""
+
+[benchmarks.serve_overrides]
+# 2026-10-15: The context length this gate id is measured at.
+max_model_len = "524288"
+
+[benchmarks.metrics.webserver_ok]
+min = 10.0
+
+[benchmarks.metrics.followed_directions]
+min = 10.0
+
+[benchmarks.metrics.iterations]
+# 2026-10-15: The N the two counts of 10 are written for.
+min = 10.0
+max = 10.0
+
+[benchmarks.metrics.s_per_turn]
+# 2026-10-15: The ceiling of 4.274. The tier read 4.157 s per turn; the noise added is the
+# 0.117 s spread across four same-day tiers. Under --pull-request-gate this max is passed to the
+# driver as s_per_turn_budget.
+max = 4.274
+
+[benchmarks.metrics.sum_wall_s]
+# 2026-10-15: The ceiling of 437.74. The tier read 425.14 s; the noise added is the 12.6 s
+# spread across four same-day tiers. Under --pull-request-gate this max is passed to the driver
+# as wall_budget_s.
+max = 437.74
+
+[benchmarks.metrics.sum_turns]
+# 2026-10-15: The ceiling of 100. Every measured tier of this model took 100 turns, so there is
+# no measured noise to add; an agent that needs more turns for the same ten tasks fails here.
+max = 100.0

@@ -16,6 +16,9 @@ description = "Metrale Engine: plugin + benchmark abstraction and registry drive
 # `ledger_harvest` binaries.
 metrale-governance = { path = "../governance" }
 metrale-closure = { path = "../closure" }
+# 2026-10-15: The kernel-to-model map (`venn::affected`) that scopes a gate's invalidation to
+# the models a change reaches (`gate::model_scope`). Pure: no I/O, no build script.
+metrale-circuit = { path = "../circuit" }
 # 2026-09-26: The METRALE_* lever table: which names are serve levers and which are the box's.
 metrale-config = { path = "../config", default-features = false }
 # 2026-09-26: Parses BENCH.toml and HARDWARE.toml.

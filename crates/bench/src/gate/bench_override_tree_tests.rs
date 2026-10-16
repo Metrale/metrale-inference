@@ -78,8 +78,27 @@ fn every_committed_param_override_parses_against_its_gates_schema() {
             value.to_string(),
         )
     };
+    // 2026-10-15: glm-5.3-flash sorts first: each GLM TTFT gate pins the three samples per
+    // length behind its ceilings; its agentic gate pins nothing.
+    let glm = [
+        "ttft-cold-glm-64k",
+        "ttft-cold-glm-256k",
+        "ttft-cold-glm-512k",
+        "ttft-warm-glm-64k",
+        "ttft-warm-glm-256k",
+        "ttft-warm-glm-512k",
+        "high-isl-ttft-cold-glm-64k",
+        "high-isl-ttft-cold-glm-256k",
+        "high-isl-ttft-cold-glm-512k",
+        "high-isl-ttft-warm-glm-64k",
+        "high-isl-ttft-warm-glm-256k",
+        "high-isl-ttft-warm-glm-512k",
+    ]
+    .map(|gate| kat("glm-5.3-flash", gate, "repeats", "3"));
+    assert!(observed.len() >= glm.len(), "{observed:?}");
+    assert_eq!(observed[..glm.len()], glm);
     assert_eq!(
-        observed,
+        observed[glm.len()..],
         vec![
             kat(
                 "nemotron-3-nano-30b-a3b",

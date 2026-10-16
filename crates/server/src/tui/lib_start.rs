@@ -65,6 +65,7 @@ fn blank(model: &str) -> Recipe {
         runtime: Some("metrale".into()),
         container: String::new(),
         min_nodes: 1,
+        max_nodes: None,
         description: "Starting point, not a measurement: no settings pinned, so every \
                       flag is the server's own default. There is nothing to edit on \
                       this card — launch as-is, or pick a donor card to start from \

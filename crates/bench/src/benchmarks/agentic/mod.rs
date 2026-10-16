@@ -51,7 +51,7 @@ name, always wrapped in a short timeout so it can never stall your shell, for ex
 fuser -k ${METRALE_HARNESS_PORT:-3001}/tcp 2>/dev/null || true`.";
 
 mod descriptors;
-pub use descriptors::{DESCRIPTOR, METADATA};
+pub use descriptors::{DESCRIPTOR, GLM_DESCRIPTOR, METADATA};
 
 #[derive(Default)]
 struct IterationRow {
@@ -78,8 +78,10 @@ struct IterationRow {
     note: String,
 }
 
-#[derive(Default)]
 pub struct AgenticWebserver {
+    /// 2026-10-15: The gate id this instance runs and records under: `agentic-webserver`, or a
+    /// model's own id (`agentic-webserver-glm`) so its bounds are read against its own history.
+    descriptor: &'static BenchmarkDescriptor,
     handle: Option<PluginHandle>,
     iterations: usize,
     max_turns: usize,
@@ -99,6 +101,28 @@ pub struct AgenticWebserver {
 }
 
 impl AgenticWebserver {
+    pub(crate) fn new(descriptor: &'static BenchmarkDescriptor) -> Self {
+        Self {
+            descriptor,
+            handle: None,
+            iterations: 0,
+            max_turns: 0,
+            command_timeout: Duration::ZERO,
+            request_timeout: Duration::ZERO,
+            build_timeout: Duration::ZERO,
+            serve_timeout: Duration::ZERO,
+            max_tokens: 0,
+            wall_budget_s: 0.0,
+            s_per_turn_budget: 0.0,
+            cursor: 0,
+            rows: Vec::new(),
+            sandbox_root: None,
+            cargo_target_dir: None,
+            started: None,
+            probed: false,
+        }
+    }
+
     fn handle(&self) -> Result<&PluginHandle> {
         self.handle.as_ref().context("benchmark was not loaded")
     }
@@ -292,7 +316,7 @@ impl Plugin for AgenticWebserver {
                 .context(
                     "cargo is not on PATH — this benchmark builds the code the model writes",
                 )?;
-            let root = store.runs_dir(DESCRIPTOR.id)?.join("sandbox");
+            let root = store.runs_dir(self.descriptor.id)?.join("sandbox");
             std::fs::create_dir_all(&root)?;
             self.sandbox_root = Some(root);
             // 2026-09-26: Build the dependencies into the shared target dir the
@@ -305,7 +329,7 @@ impl Plugin for AgenticWebserver {
 
 impl Benchmark for AgenticWebserver {
     fn descriptor(&self) -> &'static BenchmarkDescriptor {
-        &DESCRIPTOR
+        self.descriptor
     }
 
     fn parameters(&self) -> Vec<ParamSpec> {

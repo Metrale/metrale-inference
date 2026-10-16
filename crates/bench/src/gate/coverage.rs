@@ -47,7 +47,7 @@ pub const PERF_PATHS: [&str; 7] = [
 /// Every other file under `crates/bench/src/gate` is in `GATE_MACHINERY_FILES` and falls under
 /// every gate's `GATE_MACHINERY` exclusion. `every_verdict_symbol_is_defined_inside_the_boundary`
 /// fails if a verdict function it names is defined in a gate file outside this list.
-pub const BOUNDARY_FILES: [&str; 15] = [
+pub const BOUNDARY_FILES: [&str; 22] = [
     "crates/bench/src/gate/coverage.rs",
     // 2026-09-26: `required_for`, `union`, `intent_only`: what the intent half adds to the
     // path-derived floor.
@@ -92,6 +92,21 @@ pub const BOUNDARY_FILES: [&str; 15] = [
     // 2026-10-02: `recipe_standing`, `canonical`: whether the recipe a record served is still
     // what its gate serves.
     "crates/bench/src/gate/recipe_closure.rs",
+    // 2026-10-15: `check_models`, `decide`: the per-model verdict and what a change leaves owed.
+    "crates/bench/src/gate/check_models.rs",
+    // 2026-10-15: `reaching`: which registered models a changed path re-opens.
+    "crates/bench/src/gate/model_scope.rs",
+    // 2026-10-15: `load`: the kernel → model map `reaching` reads, and how it fails closed.
+    "crates/bench/src/gate/kernel_map.rs",
+    // 2026-10-15: `from_bench_toml`, `owners_of`: which registry paths a model owns, the input
+    // that narrows `reaching` from every registered model to one.
+    "crates/bench/src/gate/owns.rs",
+    // 2026-10-15: `parse`, `settled`: whether a committed owed manifest must be deleted, which
+    // fails `check_models`.
+    "crates/bench/src/gate/owed_manifest.rs",
+    // 2026-10-15: `affected`, `instance_uses`: which models a kernel file reaches.
+    "crates/circuit/src/venn/affected.rs",
+    "crates/circuit/src/venn/affected_repo.rs",
 ];
 
 /// 2026-09-26: Gate sources reviewed and found not to decide a verdict. Every non-test `.rs`
@@ -134,6 +149,9 @@ const GATE_MACHINERY_FILES: &[&str] = &[
     // 2026-09-26: Signature minting, the signer registry and `verify_record`, whose error
     // `check_one` and `check_group` report as a failure.
     "crates/bench/src/gate/signing.rs",
+    // 2026-10-15: Which certification PRs a merge opens for what `check_models` says it owes;
+    // no verdict reads it.
+    "crates/bench/src/gate/owed_prs.rs",
     // 2026-09-26: Test-only baseline fixtures (`#[cfg(test)]` in mod.rs).
     "crates/bench/src/gate/fixture_baseline.rs",
     "crates/bench/src/gate/mod.rs",
@@ -1082,11 +1100,72 @@ pub const PROMOTION_CANDIDATES: &[GateCoverage] = &[
         id: "bfcl-subset-mini-nemotron-super",
         excludes: BFCL_EXCLUDES,
     },
+    // 2026-10-15: GLM-5.3-Flash's gates, one id per (mode, prompt, served context) and one for the
+    // agentic task: the TTFT and agentic drivers under their own ids, so each excludes what its
+    // driver's gates do (benchmarks/ttft/glm.rs, benchmarks/agentic/descriptors.rs).
+    GateCoverage {
+        id: "ttft-cold-glm-64k",
+        excludes: TTFT_EXCLUDES,
+    },
+    GateCoverage {
+        id: "ttft-cold-glm-256k",
+        excludes: TTFT_EXCLUDES,
+    },
+    GateCoverage {
+        id: "ttft-cold-glm-512k",
+        excludes: TTFT_EXCLUDES,
+    },
+    GateCoverage {
+        id: "ttft-warm-glm-64k",
+        excludes: TTFT_EXCLUDES,
+    },
+    GateCoverage {
+        id: "ttft-warm-glm-256k",
+        excludes: TTFT_EXCLUDES,
+    },
+    GateCoverage {
+        id: "ttft-warm-glm-512k",
+        excludes: TTFT_EXCLUDES,
+    },
+    GateCoverage {
+        id: "high-isl-ttft-cold-glm-64k",
+        excludes: TTFT_EXCLUDES,
+    },
+    GateCoverage {
+        id: "high-isl-ttft-cold-glm-256k",
+        excludes: TTFT_EXCLUDES,
+    },
+    GateCoverage {
+        id: "high-isl-ttft-cold-glm-512k",
+        excludes: TTFT_EXCLUDES,
+    },
+    GateCoverage {
+        id: "high-isl-ttft-warm-glm-64k",
+        excludes: TTFT_EXCLUDES,
+    },
+    GateCoverage {
+        id: "high-isl-ttft-warm-glm-256k",
+        excludes: TTFT_EXCLUDES,
+    },
+    GateCoverage {
+        id: "high-isl-ttft-warm-glm-512k",
+        excludes: TTFT_EXCLUDES,
+    },
+    GateCoverage {
+        id: "agentic-webserver-glm",
+        excludes: AGENTIC_EXCLUDES,
+    },
 ];
+
+/// 2026-10-15: Why the GLM-5.3-Flash gates are not required yet.
+const GLM_EXCUSAL: &str = "not required YET: a promotion candidate (see PROMOTION_CANDIDATES), a \
+     GLM-5.3-Flash gate. Its bounds are measured, but the model serves across three nodes and no \
+     committed recipe serves it yet, so the gate cannot start its own server; it becomes \
+     required once a recipe lands and a certification campaign records it";
 
 /// 2026-09-26: Registered benchmarks that are not required gates, each with the reason
 /// (`every_excusal_names_a_real_benchmark_and_a_reason`).
-pub const NOT_REQUIRED: [(&str, &str); 13] = [
+pub const NOT_REQUIRED: [(&str, &str); 26] = [
     (
         "quick-speed-bench",
         "a single-user speed probe with no thresholds and no baseline — a MEASUREMENT tool, \
@@ -1163,12 +1242,25 @@ pub const NOT_REQUIRED: [(&str, &str); 13] = [
          discharge is worse than no row. Promote only after the dataset ships and a \
          calibration run sizes a <2 h draw",
     ),
+    ("ttft-cold-glm-64k", GLM_EXCUSAL),
+    ("ttft-cold-glm-256k", GLM_EXCUSAL),
+    ("ttft-cold-glm-512k", GLM_EXCUSAL),
+    ("ttft-warm-glm-64k", GLM_EXCUSAL),
+    ("ttft-warm-glm-256k", GLM_EXCUSAL),
+    ("ttft-warm-glm-512k", GLM_EXCUSAL),
+    ("high-isl-ttft-cold-glm-64k", GLM_EXCUSAL),
+    ("high-isl-ttft-cold-glm-256k", GLM_EXCUSAL),
+    ("high-isl-ttft-cold-glm-512k", GLM_EXCUSAL),
+    ("high-isl-ttft-warm-glm-64k", GLM_EXCUSAL),
+    ("high-isl-ttft-warm-glm-256k", GLM_EXCUSAL),
+    ("high-isl-ttft-warm-glm-512k", GLM_EXCUSAL),
+    ("agentic-webserver-glm", GLM_EXCUSAL),
 ];
 
 /// 2026-09-26: True when `path` is `entry` or lies beneath it, compared per component:
 /// `"Cargo.toml.orig"` and `"crates2/x"` start with `"Cargo.toml"` and `"crates"` but are
 /// not under them.
-fn under(path: &str, entry: &str) -> bool {
+pub(crate) fn under(path: &str, entry: &str) -> bool {
     path == entry
         || path
             .strip_prefix(entry)

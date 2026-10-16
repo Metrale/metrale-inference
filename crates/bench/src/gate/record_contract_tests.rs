@@ -165,6 +165,22 @@ fn the_agentic_bench_needs_yes_in_its_command() {
     );
 }
 
+/// 2026-10-15: `--yes` follows the descriptor's `needs_confirmation`, so a model's own copy of a
+/// confirming benchmark replays without a prompt, and a benchmark that does not confirm never
+/// gets the flag.
+#[test]
+fn yes_follows_needs_confirmation_not_one_id() {
+    let command_for = |id: &str| {
+        let mut record = run_record(BTreeMap::new(), Verdict::pass("ok"));
+        record.benchmark_id = id.to_string();
+        GateRecord::from_run(&record, hw(), SHA.into(), Vec::new(), None)
+            .unwrap()
+            .command
+    };
+    assert!(command_for("agentic-webserver-glm").contains(&"--yes".to_string()));
+    assert!(!command_for("ttft-cold-glm-512k").contains(&"--yes".to_string()));
+}
+
 #[test]
 fn a_failed_frame_is_recorded_but_never_passes() {
     let record = RunRecord {

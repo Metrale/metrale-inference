@@ -40,7 +40,7 @@ pub async fn dispatch(args: BenchmarkArgs) -> Result<()> {
         bail!("{msg}");
     }
     if args.pull_request_gate_check {
-        let code = super::bench_gate_check::gate_check_cmd(args.pr)?;
+        let code = super::bench_gate_check::gate_check_cmd(args.pr, args.gate_base.as_deref())?;
         if code != 0 {
             std::process::exit(code);
         }

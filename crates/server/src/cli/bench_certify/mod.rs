@@ -22,6 +22,7 @@ pub mod preflight;
 pub mod remote;
 pub mod report;
 pub mod runner;
+pub mod span;
 pub mod state;
 mod text;
 
@@ -117,6 +118,7 @@ pub async fn certify_cmd(args: CertifyArgs) -> Result<i32> {
     };
     let build_allowance = Duration::from_secs(limits.timing.build_allowance_s);
     let units = plan::order_local(plan::units(&gates, &measured, &owed, &limits.timing)?);
+    let units = span::hold(units, &|id| recipe_width(&root, &hardware, id), boxes)?;
     let guard_ref = args
         .guard_ref
         .clone()
@@ -129,7 +131,7 @@ pub async fn certify_cmd(args: CertifyArgs) -> Result<i32> {
             "gates": gates, "shards": wanted, "serial_estimate_secs": serial,
             "units": units.iter().map(|u| serde_json::json!({
                 "id": u.label(), "group": u.group, "shard": u.shard, "class": format!("{:?}", u.class),
-                "expected_secs": u.secs(),
+                "expected_secs": u.secs(), "nodes": u.nodes,
                 "estimate": match u.estimate {
                     plan::Estimate::Declared(_) => "declared",
                     plan::Estimate::Measured { .. } => "measured",
@@ -397,6 +399,21 @@ fn finish(emit: &Emit, root: &Path, anchor: &str, campaign: Option<&Campaign>) -
     })
 }
 
+/// 2026-10-15: The boxes a unit of `id` holds: the `min_nodes` of the recipe its default
+/// entry on `hardware` serves, read from the tree under test; 1 when the gate has no entry
+/// on `hardware` or the entry names no recipe (the run refuses to self-start those).
+fn recipe_width(root: &Path, hardware: &str, id: &str) -> Result<usize> {
+    let baseline = gate::read_baseline(root, id)?;
+    if !baseline.hardware.contains_key(hardware) {
+        return Ok(1);
+    }
+    let Some(recipe_id) = baseline.resolve(hardware, None)?.1.recipe.clone() else {
+        return Ok(1);
+    };
+    let text = gate::recipe_closure::read_in_tree(root, &recipe_id)?;
+    Ok(crate::recipe::Recipe::parse(recipe_id, &text)?.min_nodes)
+}
+
 /// 2026-10-04: The campaign's gates that `plan::energy_bounded` holds for on
 /// `hardware`, read from the BENCH.toml files.
 fn energy_bounded_gates(
@@ -468,3 +485,7 @@ fn current_branch(root: &Path) -> String {
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_else(|| "HEAD".into())
 }
+
+#[cfg(test)]
+#[path = "span_tree_tests.rs"]
+mod span_tree_tests;

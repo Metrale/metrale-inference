@@ -17,6 +17,7 @@ fn recipe(id: &str, model: &str, runtime: &str) -> Recipe {
         runtime: Some(runtime.into()),
         container: "c".into(),
         min_nodes: 1,
+        max_nodes: None,
         description: "d".into(),
         maintainer: "metrale".into(),
         category: "agent".into(),

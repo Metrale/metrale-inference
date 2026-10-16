@@ -253,3 +253,7 @@ pub(crate) fn source_parameters() -> Vec<ParamSpec> {
 #[cfg(test)]
 #[path = "long_prompt_tests.rs"]
 mod tests;
+
+// 2026-10-15: The loopback endpoint and run helpers, for the GLM gates' tests (`glm_tests.rs`).
+#[cfg(test)]
+pub(super) use tests::{endpoint, gate_with, run};

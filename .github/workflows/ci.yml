@@ -2182,7 +2182,16 @@ jobs:
           # default-branch harvester, so nothing a PR author writes reaches
           # this gate through the flag within the PR's own run.
           PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: cargo run --locked -p metrale-server --bin met -- benchmark --pull-request-gate-check ${PR_NUMBER:+--pr "$PR_NUMBER"}
+          # 2026-10-15: The tree this change lands on, which makes the check per model:
+          # a gate the change invalidates is certified by a passing record of
+          # a model the change reaches (its declared subject whenever it is
+          # reached), every registered model's record is judged against its
+          # own limits, and the reached models left uncertified are printed
+          # as owed (post-merge, owed-certifications.yml opens their PRs).
+          # Empty on push and dispatch: no flag, and the check is the
+          # declared-subject check it always was.
+          GATE_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: cargo run --locked -p metrale-server --bin met -- benchmark --pull-request-gate-check ${PR_NUMBER:+--pr "$PR_NUMBER"} ${GATE_BASE:+--gate-base "$GATE_BASE"}
       # ── Queue-bounce diagnosis ───────────────────────────────────────────
       # A record-bearing perf PR can be GREEN at its head and still bounce
       # here, and TWO different conditions produce that identical symptom:
@@ -2312,3 +2321,35 @@ jobs:
           This check is a transitional alias for that job — read its log, not this one."
             exit 1
           fi
+
+  # 2026-10-15: The post-merge half of per-model certification
+  # (owed-certifications.yml) runs only on push to main, where a broken step
+  # would first show after a merge. This runs the same script in --dry-run on
+  # every PR: it lists the cert/* branches and PRs, runs the owed_certs binary
+  # against the PR's base, and prints which certification PRs this change would
+  # open once merged. Advisory: it writes nothing and gates nothing, and its
+  # verdict on what is owed is the gate check's, printed by PR Benchmark
+  # Certifications.
+  owed-certifications-dry-run:
+    name: owed certifications (dry run)
+    needs: changes
+    if: >-
+      ${{ github.event_name == 'pull_request'
+          && needs.changes.outputs.web_only != 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Which certification PRs this change would open
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: .github/scripts/owed-certifications.sh "$BASE" HEAD --dry-run

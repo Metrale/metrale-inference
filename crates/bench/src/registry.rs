@@ -39,6 +39,20 @@ const ALL: &[&BenchmarkDescriptor] = &[
     &ttft::HIGH_ISL_WARM_DESCRIPTOR,
     &ttft::HIGH_ISL_COLD_MOE_DESCRIPTOR,
     &ttft::HIGH_ISL_WARM_MOE_DESCRIPTOR,
+    // 2026-10-15: GLM-5.3-Flash's TTFT gates, one id per (mode, prompt, served context), listed
+    // in `gate::coverage::PROMOTION_CANDIDATES` (`ttft::glm`).
+    &ttft::GLM_COLD_64K,
+    &ttft::GLM_COLD_256K,
+    &ttft::GLM_COLD_512K,
+    &ttft::GLM_WARM_64K,
+    &ttft::GLM_WARM_256K,
+    &ttft::GLM_WARM_512K,
+    &ttft::GLM_HIGH_ISL_COLD_64K,
+    &ttft::GLM_HIGH_ISL_COLD_256K,
+    &ttft::GLM_HIGH_ISL_COLD_512K,
+    &ttft::GLM_HIGH_ISL_WARM_64K,
+    &ttft::GLM_HIGH_ISL_WARM_256K,
+    &ttft::GLM_HIGH_ISL_WARM_512K,
     &contamination::DESCRIPTOR,
     // 2026-09-26: Listed in `gate::coverage::REQUIRED`. Coverage has no
     // per-model dimension: the checkpoints it measures are the BENCH.toml
@@ -70,6 +84,8 @@ const ALL: &[&BenchmarkDescriptor] = &[
     // warmup wave. Listed in `gate::coverage::PROMOTION_CANDIDATES`.
     &default_tier_boot::DESCRIPTOR,
     &agentic::DESCRIPTOR,
+    // 2026-10-15: The same task on GLM-5.3-Flash under its own id, a promotion candidate.
+    &agentic::GLM_DESCRIPTOR,
     &bfcl::SUBSET_DESCRIPTOR,
     &bfcl::SUBSET_ECHOLP_DESCRIPTOR,
     &bfcl::FULL_DESCRIPTOR,
