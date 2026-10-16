@@ -184,7 +184,10 @@ fn the_layer_captures_events_and_leaves_the_progress_channel_alone() {
 fn an_error_toast_lands_in_the_ring_and_an_info_toast_does_not() {
     use tracing_subscriber::layer::SubscriberExt;
     let _serial = SERIAL.lock();
-    let mut app = crate::tui::app::App::new(clap::Parser::parse_from(["met", "org/m"]));
+    let mut app = crate::tui::app::App::new(
+        clap::Parser::parse_from(["met", "org/m"]),
+        crate::tui::data::thermal::ThermalProbe::default(),
+    );
     let sub = tracing_subscriber::registry().with(LogRingLayer);
     tracing::subscriber::with_default(sub, || {
         app.toast("toast-trace-9f3a: the launch was refused", true);

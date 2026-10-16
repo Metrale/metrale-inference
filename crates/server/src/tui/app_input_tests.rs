@@ -11,7 +11,10 @@ use crate::tui::chat_thinking::{ThinkingRequest, ThinkingView};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 pub(super) fn app() -> App {
-    App::new(clap::Parser::parse_from(["met", "org/m"]))
+    App::new(
+        clap::Parser::parse_from(["met", "org/m"]),
+        crate::tui::data::thermal::ThermalProbe::default(),
+    )
 }
 
 pub(super) fn press(a: &mut App, c: char) {

@@ -48,7 +48,8 @@ impl ThermalSnapshot {
     }
 }
 
-/// 2026-09-26: Shared handle. Cloning shares the same snapshot.
+/// 2026-10-16: Shared handle. Cloning shares the same snapshot. `Default` is an inert probe: no
+/// sampler thread, and its snapshot stays at the default (no data).
 #[derive(Debug, Clone, Default)]
 pub struct ThermalProbe {
     inner: Arc<Mutex<ThermalSnapshot>>,

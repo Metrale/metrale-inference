@@ -21,7 +21,10 @@ const NARROW: Size = Size {
 };
 
 fn app() -> App {
-    App::new(clap::Parser::parse_from(["met", "org/m"]))
+    App::new(
+        clap::Parser::parse_from(["met", "org/m"]),
+        crate::tui::data::thermal::ThermalProbe::default(),
+    )
 }
 
 fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {

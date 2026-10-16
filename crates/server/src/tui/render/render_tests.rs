@@ -17,10 +17,10 @@ use crate::tui::bench_state::View;
 
 pub(super) fn app() -> App {
     use clap::Parser;
-    let mut app = App::new(crate::cli::ServeArgs::parse_from([
-        "met",
-        "nvidia/Qwen3.6-27B-NVFP4",
-    ]));
+    let mut app = App::new(
+        crate::cli::ServeArgs::parse_from(["met", "nvidia/Qwen3.6-27B-NVFP4"]),
+        crate::tui::data::thermal::ThermalProbe::default(),
+    );
     // 2026-09-26: No `attach` (it needs a `BenchmarkExecutor`); `select(0)`
     // loads the first benchmark's form, which `attach` would also do.
     app.bench.select(0);

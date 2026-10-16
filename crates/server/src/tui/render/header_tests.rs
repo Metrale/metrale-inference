@@ -13,7 +13,8 @@ fn the_status_pill_does_not_claim_to_be_serving_with_no_model() {
     use clap::Parser as _;
     let mut args = crate::cli::ServeArgs::parse_from(["met", "m"]);
     args.model = None;
-    let mut app = crate::tui::app::App::new(args);
+    let mut app =
+        crate::tui::app::App::new(args, crate::tui::data::thermal::ThermalProbe::default());
     assert!(app.awaiting_model, "no model was named");
 
     app.progress.ready = true;
@@ -87,7 +88,8 @@ fn the_header_mini_strip_does_not_claim_a_kv_dtype_with_no_model() {
     use clap::Parser as _;
     let mut args = crate::cli::ServeArgs::parse_from(["met", "m"]);
     args.model = None;
-    let mut app = crate::tui::app::App::new(args);
+    let mut app =
+        crate::tui::app::App::new(args, crate::tui::data::thermal::ThermalProbe::default());
     assert!(app.awaiting_model, "no model was named");
     let line = super::header_line(&app);
     assert!(!line.contains("kv "), "no dtype with no model: {line}");

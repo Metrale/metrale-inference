@@ -40,7 +40,10 @@ fn nav_rows_include_subsections_in_sidebar_order() {
 fn digit_keys_match_the_sidebar_order() {
     use clap::Parser;
     use crossterm::event::{KeyCode, KeyEvent};
-    let mut app = App::new(crate::cli::ServeArgs::parse_from(["met", "some/model"]));
+    let mut app = App::new(
+        crate::cli::ServeArgs::parse_from(["met", "some/model"]),
+        crate::tui::data::thermal::ThermalProbe::default(),
+    );
     for (i, section) in Section::ALL.iter().enumerate() {
         let digit = char::from_digit(i as u32 + 1, 10).expect("<=9 sections");
         app.on_key(KeyEvent::from(KeyCode::Char(digit)));
@@ -97,7 +100,10 @@ fn chat_scroll_returns_to_follow_at_the_bottom() {
 fn the_watchdog_command_toggles_the_running_run_not_a_process_global() {
     // 2026-09-26: `/watchdog on|off` sets the levers of the run in `app.run` and no other.
     use clap::Parser as _;
-    let mut app = App::new(crate::cli::ServeArgs::parse_from(["met", "some/model"]));
+    let mut app = App::new(
+        crate::cli::ServeArgs::parse_from(["met", "some/model"]),
+        crate::tui::data::thermal::ThermalProbe::default(),
+    );
     let levers = std::sync::Arc::new(crate::scheduler::levers::SchedLevers::from_env(
         None, None, None,
     ));
@@ -121,7 +127,10 @@ fn the_watchdog_command_toggles_the_running_run_not_a_process_global() {
 fn the_watchdog_command_says_so_when_no_run_is_attached() {
     // 2026-09-26: Before a run is attached there is nothing to toggle, and the command says so.
     use clap::Parser as _;
-    let mut app = App::new(crate::cli::ServeArgs::parse_from(["met", "some/model"]));
+    let mut app = App::new(
+        crate::cli::ServeArgs::parse_from(["met", "some/model"]),
+        crate::tui::data::thermal::ThermalProbe::default(),
+    );
     crate::tui::commands::execute("/watchdog on", &mut app);
     assert!(
         app.ops.output.iter().any(|l| l.contains("no run yet")),
@@ -136,7 +145,7 @@ fn a_no_argument_boot_opens_the_library_rather_than_an_empty_main() {
     use clap::Parser as _;
     let mut args = crate::cli::ServeArgs::parse_from(["met", "m"]);
     args.model = None;
-    let app = App::new(args);
+    let app = App::new(args, crate::tui::data::thermal::ThermalProbe::default());
     assert!(app.awaiting_model);
     assert_eq!(app.section, Section::Library);
 }
@@ -145,7 +154,7 @@ fn a_no_argument_boot_opens_the_library_rather_than_an_empty_main() {
 fn a_boot_with_a_model_still_opens_main() {
     use clap::Parser as _;
     let args = crate::cli::ServeArgs::parse_from(["met", "org/m"]);
-    let app = App::new(args);
+    let app = App::new(args, crate::tui::data::thermal::ThermalProbe::default());
     assert!(!app.awaiting_model, "a model was named");
     assert_eq!(app.section, Section::Main);
 }
@@ -155,7 +164,7 @@ fn launching_from_the_library_stops_claiming_there_is_no_model() {
     use clap::Parser as _;
     let mut args = crate::cli::ServeArgs::parse_from(["met", "m"]);
     args.model = None;
-    let mut app = App::new(args);
+    let mut app = App::new(args, crate::tui::data::thermal::ThermalProbe::default());
     assert!(app.awaiting_model);
     // 2026-09-26: No host is attached, so the launch is refused and `awaiting_model` stays set.
     app.launch_selected_recipe();
@@ -167,7 +176,10 @@ fn changing_section_asks_for_a_full_repaint() {
     // 2026-09-26: A section change sets `repaint`; ratatui's diff cannot repair cells where its
     // buffer and the terminal have diverged, and a section change redraws the whole content area.
     use clap::Parser as _;
-    let mut app = App::new(crate::cli::ServeArgs::parse_from(["met", "m"]));
+    let mut app = App::new(
+        crate::cli::ServeArgs::parse_from(["met", "m"]),
+        crate::tui::data::thermal::ThermalProbe::default(),
+    );
     app.repaint = false;
     app.jump(Section::Library);
     assert!(app.repaint, "a real change repaints");
@@ -187,7 +199,7 @@ fn the_kernel_table_is_not_built_before_a_model_exists() {
     use clap::Parser as _;
     let mut args = crate::cli::ServeArgs::parse_from(["met", "m"]);
     args.model = None;
-    let mut app = App::new(args);
+    let mut app = App::new(args, crate::tui::data::thermal::ThermalProbe::default());
     app.progress.ready = true;
     app.on_tick();
     assert!(app.kernels.is_none(), "nothing to describe yet");
@@ -197,7 +209,10 @@ fn the_kernel_table_is_not_built_before_a_model_exists() {
 #[test]
 fn the_kernel_table_is_built_once_per_model() {
     use clap::Parser as _;
-    let mut app = App::new(crate::cli::ServeArgs::parse_from(["met", "org/a"]));
+    let mut app = App::new(
+        crate::cli::ServeArgs::parse_from(["met", "org/a"]),
+        crate::tui::data::thermal::ThermalProbe::default(),
+    );
     app.progress.ready = true;
     app.on_tick();
     assert_eq!(
@@ -218,7 +233,10 @@ fn the_wheel_scrolls_every_section_that_has_anything_to_scroll() {
     use crate::tui::app::{MainSub, TermSub};
     use crate::tui::section::Section;
 
-    let mut a = App::new(clap::Parser::parse_from(["met", "m"]));
+    let mut a = App::new(
+        clap::Parser::parse_from(["met", "m"]),
+        crate::tui::data::thermal::ThermalProbe::default(),
+    );
 
     // 2026-09-26: Main ▸ Overview: the log offset counts back from the newest line, so wheel-up
     // enters history and wheel-down returns to following.
@@ -259,7 +277,10 @@ fn scrolling_stops_at_the_limits_instead_of_running_away() {
     use crate::tui::app::{MainSub, TermSub};
     use crate::tui::section::Section;
 
-    let mut a = App::new(clap::Parser::parse_from(["met", "m"]));
+    let mut a = App::new(
+        clap::Parser::parse_from(["met", "m"]),
+        crate::tui::data::thermal::ThermalProbe::default(),
+    );
     a.section = Section::Main;
     a.main_sub = MainSub::Overview;
     a.log_scroll_max.set(10);
@@ -304,7 +325,10 @@ fn scrolling_stops_at_the_limits_instead_of_running_away() {
 #[test]
 fn error_toasts_outlive_info_toasts_but_still_leave() {
     use clap::Parser;
-    let mut a = App::new(crate::cli::ServeArgs::parse_from(["met", "some/model"]));
+    let mut a = App::new(
+        crate::cli::ServeArgs::parse_from(["met", "some/model"]),
+        crate::tui::data::thermal::ThermalProbe::default(),
+    );
     a.toast("plain note", false);
     a.toast("something failed", true);
     let aged = Instant::now() - std::time::Duration::from_secs(6);
