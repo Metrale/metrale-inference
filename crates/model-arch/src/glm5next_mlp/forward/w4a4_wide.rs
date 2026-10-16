@@ -13,6 +13,9 @@
 //!   W4A4 cap past 16 rows and the workspace's every-slot scratch) and the four wide entries,
 //!   else the load is refused ([`check_at_load`]).
 //! - The union builder covers `rows * top_k <= WIDE_SWEEP_MAX_IDS` ids.
+//! - 2026-10-15: Decode-only. The lever is read only at [`MoeCallSite::BatchedDecode`] (the
+//!   multi-sequence decode body); every other caller, prefill included, passes
+//!   [`MoeCallSite::General`] and keeps `w4a4_grouped::takes_grouped` unchanged.
 
 use anyhow::Result;
 
@@ -46,8 +49,30 @@ pub(crate) fn parse_wide_lever(v: Option<&str>) -> Result<bool, String> {
     }
 }
 
-/// 2026-10-14: The widest routed W4A4 launch the sweeps serve: [`WIDE_SWEEP_MAX_ROWS`] with the
-/// lever, else [`MOE_W4A4_MAX_ROWS`]. Wider launches run the grouped W4A4 GEMM.
+/// 2026-10-15: Which caller runs a routed MoE site. The wide sweep is a decode-only lever: it
+/// runs only at [`MoeCallSite::BatchedDecode`], so every prefill launch keeps its grouped
+/// dispatch whatever the lever says.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MoeCallSite {
+    /// 2026-10-15: Every caller but the batched decode body: prefill (spans, pieces, SP), the
+    /// single-sequence forward and the drafter. The wide sweep never runs here.
+    General,
+    /// 2026-10-15: The multi-sequence decode body (`forward_spans`: one row per sequence, or the
+    /// draft rows of a batched MTP verify).
+    BatchedDecode,
+}
+
+/// 2026-10-15: Whether the wide sweep serves a routed launch at `site`: the lever, read only at
+/// [`MoeCallSite::BatchedDecode`].
+pub fn wide_at(site: MoeCallSite) -> Result<bool> {
+    match site {
+        MoeCallSite::General => Ok(false),
+        MoeCallSite::BatchedDecode => moe_w4a4_wide_sweep(),
+    }
+}
+
+/// 2026-10-14: The widest routed W4A4 launch the sweeps serve: [`WIDE_SWEEP_MAX_ROWS`] with
+/// `wide`, else [`MOE_W4A4_MAX_ROWS`]. Wider launches run the grouped W4A4 GEMM.
 pub fn sweep_max_rows(wide: bool) -> usize {
     if wide {
         WIDE_SWEEP_MAX_ROWS
@@ -57,13 +82,9 @@ pub fn sweep_max_rows(wide: bool) -> usize {
 }
 
 /// 2026-10-14: Whether a W4A4 routed launch of `rows` rows runs the grouped W4A4 GEMM: the
-/// grouped module's row test, narrowed to past [`WIDE_SWEEP_MAX_ROWS`] under the lever. The one
-/// row test `forward_moe_pieces`, `w4a4_experts` and the prefill grouping read.
-pub fn takes_grouped(rows: usize) -> Result<bool> {
-    Ok(takes_grouped_at(rows, moe_w4a4_wide_sweep()?))
-}
-
-/// 2026-10-14: [`takes_grouped`] under the lever value `wide`, pure.
+/// grouped module's row test, narrowed to past [`WIDE_SWEEP_MAX_ROWS`] when `wide`
+/// ([`wide_at`]). With `wide` false it is exactly `w4a4_grouped::takes_grouped`, the test the
+/// prefill grouping reads. Pure.
 pub(crate) fn takes_grouped_at(rows: usize, wide: bool) -> bool {
     super::w4a4_grouped::takes_grouped(rows) && rows > sweep_max_rows(wide)
 }

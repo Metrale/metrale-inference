@@ -245,7 +245,7 @@ fn run_experts_on(
         ws: &ws,
         stream: 5,
     };
-    w4a4_experts(&site, SCALES).unwrap();
+    w4a4_experts(&site, SCALES, false).unwrap();
     let l = gpu.launches_snapshot();
     (gpu, l, ws)
 }
@@ -400,7 +400,7 @@ fn rows_past_the_scratch_are_refused_before_launching() {
         ws: &ws,
         stream: 0,
     };
-    assert!(w4a4_experts(&site, SCALES).is_err());
+    assert!(w4a4_experts(&site, SCALES, false).is_err());
     assert!(gpu.launches_snapshot().is_empty());
 }
 
@@ -468,7 +468,7 @@ fn a_k64_slice_without_the_twins_is_refused_before_launching() {
         ws: &ws,
         stream: 0,
     };
-    let e = w4a4_experts(&site, SCALES).unwrap_err().to_string();
+    let e = w4a4_experts(&site, SCALES, false).unwrap_err().to_string();
     assert!(e.contains("_k64"), "{e}");
     assert!(gpu.launches_snapshot().is_empty());
 }

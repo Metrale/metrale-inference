@@ -42,7 +42,7 @@ impl Glm5NextLayer {
                 let r = expert_route(&self.mlp_kernels, &self.mlp_cfg, w, &self.mlp_ws, rows);
                 match r {
                     ExpertRoute::Grouped => Some((r, 0)),
-                    ExpertRoute::W4a4 if w4a4_takes_grouped(rows)? => Some((
+                    ExpertRoute::W4a4 if w4a4_takes_grouped(rows) => Some((
                         r,
                         w4a4_grouped_tile_index(
                             rows * self.mlp_cfg.top_k,

@@ -14,6 +14,9 @@
 //!    draw of `x` is one routing; the candidates are interleaved per replay round so a load
 //!    another process puts on the GPU falls on all alike.
 //!
+//! 2026-10-15: `GLM_BENCH_WIDE=1` runs only the call-site A/B of the wide sweep (`wide.rs`),
+//! `GLM_BENCH_PWD=1` only its go/no-go on injected routings (`pwd.rs`).
+//!
 //! The weights are views into one pool of random NVFP4 bytes (timing does not depend on their
 //! values), about 1.6 GB of device memory in all.
 //!
@@ -43,6 +46,9 @@ use metrale_model_arch::glm5next_mlp::{ExpertShard, Glm5NextMlpConfig, Glm5NextM
 #[path = "../glm5next_moe_wide_bench/device.rs"]
 mod device;
 mod gate;
+mod pwd;
+mod pwd_route;
+mod pwd_verdict;
 mod wide;
 use device::*;
 
@@ -199,6 +205,10 @@ fn main() -> Result<()> {
     // 2026-10-14: GLM_BENCH_WIDE=1 runs the wide-sweep A/B alone (`wide.rs`).
     if std::env::var("GLM_BENCH_WIDE").as_deref() == Ok("1") {
         return wide::run(g, &k, stream);
+    }
+    // 2026-10-15: GLM_BENCH_PWD=1 runs the wide-sweep go/no-go alone (`pwd.rs`).
+    if std::env::var("GLM_BENCH_PWD").as_deref() == Ok("1") {
+        return pwd::run(g, &k, stream);
     }
     let kern = |quant, slots, sweep| Kern {
         quant,

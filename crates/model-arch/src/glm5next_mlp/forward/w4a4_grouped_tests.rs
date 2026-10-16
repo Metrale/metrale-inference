@@ -194,7 +194,7 @@ fn run(
         ws: &ws,
         stream: 5,
     };
-    let r = w4a4_experts(&site, SCALES);
+    let r = w4a4_experts(&site, SCALES, false);
     (r, gpu.launches_snapshot(), ws)
 }
 
@@ -363,7 +363,7 @@ fn a_missing_entry_is_refused_before_launching() {
         ws: &ws,
         stream: 0,
     };
-    assert!(w4a4_experts(&site, SCALES).is_err());
+    assert!(w4a4_experts(&site, SCALES, false).is_err());
     assert!(gpu.launches_snapshot().is_empty());
 }
 

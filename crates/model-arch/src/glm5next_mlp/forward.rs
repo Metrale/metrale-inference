@@ -17,6 +17,7 @@ use super::forward_prefill_gemm;
 use super::weights::Glm5NextMoeWeights;
 use super::{Glm5NextMlpConfig, Glm5NextMlpKernels};
 
+mod announce;
 mod dense;
 mod launch;
 mod moe_experts;
@@ -44,7 +45,8 @@ pub use shared_fork::{SHARED_FORK_MAX_ROWS, shared_fork_rows};
 pub use w4a4_dense::forward_dense_w4a4;
 pub use w4a4_dense_grouped::DenseGroupedTables;
 pub use w4a4_grouped::{
-    moe_w4a4_grouped, smem_bytes as w4a4_grouped_smem_bytes, tile_index as w4a4_grouped_tile_index,
+    moe_w4a4_grouped, smem_bytes as w4a4_grouped_smem_bytes, takes_grouped as w4a4_takes_grouped,
+    tile_index as w4a4_grouped_tile_index,
 };
 pub use w4a4_grouped_gu::{
     W4a4GuCall, check_at_load as check_gu_fused_at_load, launch_w4a4_gu, moe_w4a4_gu_fused,
@@ -55,8 +57,8 @@ pub use w4a4_grouped_raster::{
 };
 pub use w4a4_slots::{CUDA_MAX_GRID_Y, W4a4SlotsCall, launch_w4a4_slots, slot_pieces};
 pub use w4a4_wide::{
-    WIDE_SWEEP_MAX_IDS, WIDE_SWEEP_MAX_ROWS, check_at_load as check_wide_sweep_at_load,
-    moe_w4a4_wide_sweep, takes_grouped as w4a4_takes_grouped,
+    MoeCallSite, WIDE_SWEEP_MAX_IDS, WIDE_SWEEP_MAX_ROWS,
+    check_at_load as check_wide_sweep_at_load, moe_w4a4_wide_sweep,
 };
 pub use workspace::{mlp_ws_bytes, mlp_ws_total_bytes};
 
@@ -254,54 +256,6 @@ fn moe_row_groups(rows: usize, cap: usize) -> Vec<(usize, usize)> {
 /// 2026-10-09: 128 (was 64): `MOE_ROW_BATCH_MAX_ROWS` rows at GLM-5.3's top-8.
 pub const MOE_ROW_UNION_MAX_IDS: usize = 128;
 
-/// 2026-09-25: Log once per row count (counts from 15 up share one bit) whether the routed
-/// experts took the row-batched path.
-fn announce_row_batch(batched: bool, rows: usize) {
-    use std::sync::atomic::{AtomicU16, Ordering};
-    static SEEN: AtomicU16 = AtomicU16::new(0);
-    let bit = 1u16 << rows.min(15);
-    if SEEN.fetch_or(bit, Ordering::Relaxed) & bit != 0 {
-        return;
-    }
-    if batched {
-        tracing::info!("GLM MoE: row-batched expert union ({rows} rows, one sweep each)");
-    } else {
-        tracing::info!("GLM MoE: per-row expert sweeps ({rows} rows)");
-    }
-}
-
-/// 2026-09-25: Log once per row count (counts from 31 up share one bit) whether a row group
-/// wider than `MOE_ROW_BATCH_MAX_ROWS` took the grouped GEMM; narrower groups log nothing.
-fn announce_grouped_prefill(on: bool, rows: usize) {
-    use std::sync::atomic::{AtomicU32, Ordering};
-    static SEEN: AtomicU32 = AtomicU32::new(0);
-    if rows <= MOE_ROW_BATCH_MAX_ROWS {
-        return;
-    }
-    let bit = 1u32 << (rows.min(31));
-    if SEEN.fetch_or(bit, Ordering::Relaxed) & bit != 0 {
-        return;
-    }
-    if on {
-        let t = super::forward_prefill_gemm::gemm_tile();
-        tracing::info!(
-            "GLM MoE prefill: grouped tensor-core W4A16 GEMM, {rows} rows in ONE launch \
-             per projection, tile `{}` (M_TILE {}, N_TILE {}, {} threads) \
-             (METRALE_GLM_MOE_PREFILL_GEMM=0 to restore the GEMV path; \
-             METRALE_GLM_MOE_GEMM_TILE=base for the prior tile)",
-            t.name,
-            t.m_tile,
-            t.n_tile,
-            t.threads
-        );
-    } else {
-        tracing::info!(
-            "GLM MoE prefill: row-batched GEMV, {rows} rows split into \
-             {MOE_ROW_BATCH_MAX_ROWS}-row sweeps"
-        );
-    }
-}
-
 /// 2026-09-25: `METRALE_GLM_MOE_HOST_DISPATCH=1` forces the host-dispatch expert loop (ids read
 /// back to the host, one GEMV per local expert) and turns off every device-dispatched routed
 /// path. Read once.
@@ -358,6 +312,7 @@ pub fn forward_moe(
 /// once per piece as a `forward_moe` of that piece's row count runs them (`pieces.rs`); the
 /// top-k, the routed experts and the combine run once over all rows. The multi-sequence
 /// prefill passes one piece per sequence; `forward_moe` passes `[rows]`.
+/// 2026-10-15: [`forward_moe_at`] at [`MoeCallSite::General`]: the wide decode sweep never runs.
 #[allow(clippy::too_many_arguments)]
 pub fn forward_moe_pieces(
     gpu: &dyn GpuBackend,
@@ -369,6 +324,29 @@ pub fn forward_moe_pieces(
     rows: usize,
     row_pieces: &[usize],
     ws: &Glm5NextMlpWorkspace,
+    capturing: bool,
+    stream: u64,
+) -> Result<()> {
+    let site = MoeCallSite::General;
+    forward_moe_at(
+        gpu, k, cfg, w, x, out, rows, row_pieces, ws, site, capturing, stream,
+    )
+}
+
+/// 2026-10-15: [`forward_moe_pieces`] called from `call_site`. Only
+/// [`MoeCallSite::BatchedDecode`] reads `METRALE_GLM_MOE_W4A4_WIDE_SWEEP` (`w4a4_wide`).
+#[allow(clippy::too_many_arguments)]
+pub fn forward_moe_at(
+    gpu: &dyn GpuBackend,
+    k: &Glm5NextMlpKernels,
+    cfg: &Glm5NextMlpConfig,
+    w: &Glm5NextMoeWeights,
+    x: DevicePtr,
+    out: DevicePtr,
+    rows: usize,
+    row_pieces: &[usize],
+    ws: &Glm5NextMlpWorkspace,
+    call_site: MoeCallSite,
     capturing: bool,
     stream: u64,
 ) -> Result<()> {
@@ -403,12 +381,14 @@ pub fn forward_moe_pieces(
     let grouped_prefill = path == route::ExpertRoute::Grouped;
     // 2026-10-10: A W4A4 launch wider than the slot GEMV serves runs the grouped W4A4 GEMM,
     // which leaves `expert_out` in expert-sorted order as the grouped W4A16 GEMM does.
-    let grouped_w4a4 = w4a4.is_some() && w4a4_wide::takes_grouped(rows)?;
+    // 2026-10-15: Past 16 rows only the batched decode body may keep the sweep (`w4a4_wide`).
+    let wide = w4a4.is_some() && w4a4_wide::wide_at(call_site)?;
+    let grouped_w4a4 = w4a4.is_some() && w4a4_wide::takes_grouped_at(rows, wide);
     let sorted_out = grouped_prefill || grouped_w4a4;
     let batched = path == route::ExpertRoute::RowBatched;
     if w4a4.is_none() {
-        announce_row_batch(batched, rows);
-        announce_grouped_prefill(grouped_prefill, rows);
+        announce::announce_row_batch(batched, rows);
+        announce::announce_grouped_prefill(grouped_prefill, rows);
     }
 
     // 2026-10-11: Under `METRALE_GLM_SHARED_FORK` the shared expert starts here on its side
@@ -447,7 +427,7 @@ pub fn forward_moe_pieces(
         stream,
     };
     if let Some(scales) = w4a4 {
-        w4a4::w4a4_experts(&site, scales)?;
+        w4a4::w4a4_experts(&site, scales, wide)?;
     } else {
         moe_experts::per_row_experts(&site, batched, grouped_prefill)?;
     }

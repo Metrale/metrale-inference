@@ -280,6 +280,7 @@ impl Glm5NextLayer {
     /// 2026-10-10: `fused` hands the all-reduce's sum to the caller's post-mix
     /// ([`Self::reduce_or_exchange`]); the returned partials are then `Some`.
     /// 2026-10-13: `tap` dumps `out` between the MLP and the reduce (`glm5next_layer_dump`).
+    /// 2026-10-15: `site`: only the batched decode body passes `MoeCallSite::BatchedDecode`.
     #[allow(clippy::too_many_arguments)]
     fn mlp_forward(
         &self,
@@ -288,11 +289,12 @@ impl Glm5NextLayer {
         rows: usize,
         row_pieces: &[usize],
         fused: bool,
+        site: MoeCallSite,
         ctx: &ForwardContext,
         stream: u64,
         tap: Option<&dump::Tap<'_>>,
     ) -> Result<Option<metrale_comm::PeerPartials>> {
-        self.mlp_compute(normed, out, rows, row_pieces, ctx, stream)?;
+        self.mlp_compute_at(normed, out, rows, row_pieces, site, ctx, stream)?;
         dump::put(tap, dump::Point::MlpOut, out)?;
         // 2026-09-25: One all-reduce covers both partial sums, the EP-split routed experts and
         // the TP-split shared expert: `forward_moe` adds them together before returning.
@@ -316,12 +318,27 @@ impl Glm5NextLayer {
     /// 2026-10-12: The MLP launches of [`Self::mlp_forward`] without its all-reduce: `out`
     /// holds this rank's partial (or the whole output when no reduce is needed). SP-mHC
     /// (`forward_rows_sp`) reduce-scatters it instead.
+    /// 2026-10-15: At `MoeCallSite::General` (SP prefill); `mlp_compute_at` takes the site.
     pub(in crate::glm5next_layer) fn mlp_compute(
         &self,
         normed: DevicePtr,
         out: DevicePtr,
         rows: usize,
         row_pieces: &[usize],
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        let site = MoeCallSite::General;
+        self.mlp_compute_at(normed, out, rows, row_pieces, site, ctx, stream)
+    }
+
+    fn mlp_compute_at(
+        &self,
+        normed: DevicePtr,
+        out: DevicePtr,
+        rows: usize,
+        row_pieces: &[usize],
+        site: MoeCallSite,
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<()> {
@@ -348,7 +365,7 @@ impl Glm5NextLayer {
                     r0 += n;
                 }
             }
-            Glm5NextMlpSite::Moe(w) => forward_moe_pieces(
+            Glm5NextMlpSite::Moe(w) => forward_moe_at(
                 ctx.gpu,
                 &self.mlp_kernels,
                 &self.mlp_cfg,
@@ -358,6 +375,7 @@ impl Glm5NextLayer {
                 rows,
                 row_pieces,
                 &self.mlp_ws,
+                site,
                 // 2026-10-09: A capture cannot read the expert histogram back to the host.
                 ctx.graph_capture,
                 stream,
@@ -434,7 +452,8 @@ impl Glm5NextLayer {
 
         self.norm(gpu, hidden, self.post_attn_norm, normed, 1, stream)?;
         // 2026-10-10: No post-mix here to take the sum, so the all-reduce stays whole.
-        self.mlp_forward(normed, ffn_out, 1, &[1], false, ctx, stream, None)?;
+        let site = MoeCallSite::General;
+        self.mlp_forward(normed, ffn_out, 1, &[1], false, site, ctx, stream, None)?;
         self.add_inplace(gpu, hidden, ffn_out, h, stream)
     }
 

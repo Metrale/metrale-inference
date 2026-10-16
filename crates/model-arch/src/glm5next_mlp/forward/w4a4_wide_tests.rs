@@ -17,10 +17,10 @@ use super::super::w4a4::tests::{
     QUANT, QUANT_K64, ROW_UNION, SCALES, SWEEP16, SWEEP24, SWEEP24_K64, SWEEP32, SWEEP32_K64,
     SWIGLU, X, assert_sweep_launches, cfg, cfg_tp, kernels, moe_weights, u32_arg,
 };
-use super::super::w4a4::{SweepEntries, sweep_kernel, w4a4_experts_at};
+use super::super::w4a4::{SweepEntries, sweep_kernel, w4a4_experts};
 use super::{
-    WIDE_SWEEP_MAX_IDS, WIDE_SWEEP_MAX_ROWS, check_ready, parse_wide_lever, sweep_max_rows,
-    takes_grouped_at, wide_ready,
+    MoeCallSite, WIDE_SWEEP_MAX_IDS, WIDE_SWEEP_MAX_ROWS, check_ready, parse_wide_lever,
+    sweep_max_rows, takes_grouped_at, wide_at, wide_ready,
 };
 use crate::glm5next_mlp::{Glm5NextMlpConfig, MOE_W4A4_MAX_ROWS};
 
@@ -54,6 +54,25 @@ fn the_lever_moves_the_grouped_floor_from_17_to_33_rows() {
     }
     for rows in 1..=4096 {
         assert!(takes_grouped_at(rows, false) || !takes_grouped_at(rows, true));
+    }
+}
+
+/// 2026-10-15: Every caller but the batched decode body runs exactly the grouped row test it ran
+/// before the lever existed, at every prefill width up to the largest prefill chunk (8208 rows):
+/// the general site never reads the lever. The decode site reads it (unset here: off).
+#[test]
+fn only_the_batched_decode_site_reads_the_lever() {
+    assert!(!wide_at(MoeCallSite::General).unwrap());
+    assert_eq!(
+        wide_at(MoeCallSite::BatchedDecode).unwrap(),
+        super::moe_w4a4_wide_sweep().unwrap()
+    );
+    for rows in 1..=8208 {
+        assert_eq!(
+            takes_grouped_at(rows, wide_at(MoeCallSite::General).unwrap()),
+            super::super::w4a4_grouped::takes_grouped(rows),
+            "{rows} rows"
+        );
     }
 }
 
@@ -121,7 +140,7 @@ fn each_wide_width_maps_to_its_entry_only_under_the_lever() {
     assert_eq!(sweep_kernel(&k, own, k.w4a4_moe_sweep, 24, 8, true), None);
 }
 
-/// 2026-10-14: `w4a4_experts_at` over `rows` rows on a grouped workspace of 32 rows.
+/// 2026-10-14: `w4a4_experts` over `rows` rows on a grouped workspace of 32 rows.
 fn run_wide(
     c: Glm5NextMlpConfig,
     rows: usize,
@@ -141,7 +160,7 @@ fn run_wide(
         ws: &ws,
         stream: 5,
     };
-    w4a4_experts_at(&site, SCALES, wide).unwrap();
+    w4a4_experts(&site, SCALES, wide).unwrap();
     (gpu.launches_snapshot(), ws)
 }
 
@@ -192,7 +211,7 @@ fn the_grouped_gemm_keeps_the_wide_rows_off_and_past_32_rows_on() {
             ws: &ws,
             stream: 5,
         };
-        w4a4_experts_at(&site, SCALES, wide).unwrap();
+        w4a4_experts(&site, SCALES, wide).unwrap();
         let funcs: Vec<u64> = gpu.launches_snapshot().iter().map(|l| l.func).collect();
         assert!(!funcs.is_empty(), "{rows} rows wide={wide}");
         for f in [ROW_UNION, SWEEP24, SWEEP32] {

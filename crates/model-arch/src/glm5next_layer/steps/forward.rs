@@ -175,7 +175,8 @@ impl Glm5NextLayer {
             dump::site(tap, true, [streams, post, comb, normed])?;
             streams
         };
-        let partials = self.mlp_forward(normed, ffn_out, 1, &[1], fused, ctx, stream, tap)?;
+        let site = MoeCallSite::General;
+        let partials = self.mlp_forward(normed, ffn_out, 1, &[1], fused, site, ctx, stream, tap)?;
         let t_mhc_post = profile::start();
         self.hc_post_reduced(
             gpu,
@@ -323,6 +324,29 @@ impl Glm5NextLayer {
         tap: Option<&dump::Tap<'_>>,
         mixer: impl FnOnce(DevicePtr) -> Result<DevicePtr>,
     ) -> Result<()> {
+        let site = MoeCallSite::General;
+        self.forward_rows_at(
+            mhc, hidden, k, slot_base, ctx, stream, row_pieces, tap, site, mixer,
+        )
+    }
+
+    /// 2026-10-15: [`Self::forward_rows_with`] with its MLP called from `site`: the batched decode
+    /// body (`forward_spans`) passes `MoeCallSite::BatchedDecode`, every other caller goes
+    /// through `forward_rows_with` (`General`).
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::glm5next_layer) fn forward_rows_at(
+        &self,
+        mhc: &Glm5NextMhc,
+        hidden: DevicePtr,
+        k: usize,
+        slot_base: usize,
+        ctx: &ForwardContext,
+        stream: u64,
+        row_pieces: &[usize],
+        tap: Option<&dump::Tap<'_>>,
+        site: MoeCallSite,
+        mixer: impl FnOnce(DevicePtr) -> Result<DevicePtr>,
+    ) -> Result<()> {
         crate::glm5next_mlp::forward::check_pieces(k, row_pieces)?;
         let gpu = ctx.gpu;
         let h = self.hidden;
@@ -409,7 +433,9 @@ impl Glm5NextLayer {
             stream,
         )?;
         dump::site(tap, true, [streams, post, comb, normed])?;
-        let partials = self.mlp_forward(normed, ffn_out, k, row_pieces, fused, ctx, stream, tap)?;
+        let partials = self.mlp_forward(
+            normed, ffn_out, k, row_pieces, fused, site, ctx, stream, tap,
+        )?;
         let t_mhc_post = profile::start();
         self.hc_post_reduced(
             gpu, mhc, ffn_out, partials, streams, streams, post, comb, k, stream,

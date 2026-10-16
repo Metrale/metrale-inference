@@ -264,12 +264,9 @@ fn moe_sweep(
 /// projection: quantize the rows once, gate and up over all slots, the clamped SwiGLU, quantize
 /// every slot's product, down into `expert_out`. A slot of another rank's expert writes nothing
 /// (`forward_moe` zeroed `expert_out`).
-pub(super) fn w4a4_experts(site: &MoeSite<'_>, scales: W4a4ActScales) -> Result<()> {
-    w4a4_experts_at(site, scales, super::w4a4_wide::moe_w4a4_wide_sweep()?)
-}
-
-/// 2026-10-14: [`w4a4_experts`] under the wide-sweep lever value `wide`.
-pub(super) fn w4a4_experts_at(site: &MoeSite<'_>, scales: W4a4ActScales, wide: bool) -> Result<()> {
+/// 2026-10-15: `wide` (`w4a4_wide::wide_at`, true only on the batched decode body) keeps 17..=32
+/// rows on the union sweep instead of the grouped W4A4 GEMM.
+pub(super) fn w4a4_experts(site: &MoeSite<'_>, scales: W4a4ActScales, wide: bool) -> Result<()> {
     let MoeSite {
         gpu,
         k,

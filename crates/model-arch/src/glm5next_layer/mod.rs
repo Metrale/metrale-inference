@@ -39,7 +39,9 @@ use crate::glm5next_dsa::layer::Glm5NextDsaLayer;
 use crate::glm5next_dsa::paged::IndexerCache;
 use crate::glm5next_dsa::state::Glm5NextDsaState;
 use crate::glm5next_kda::{Glm5NextKdaConfig, Glm5NextKdaLayer, Glm5NextKdaWorkspace, KdaSeqState};
-use crate::glm5next_mlp::forward::{Glm5NextMlpWorkspace, forward_dense_site, forward_moe_pieces};
+use crate::glm5next_mlp::forward::{
+    Glm5NextMlpWorkspace, MoeCallSite, forward_dense_site, forward_moe_at,
+};
 use crate::glm5next_mlp::weights::{Glm5NextDenseSite, Glm5NextMoeWeights};
 use crate::glm5next_mlp::{Glm5NextMlpConfig, Glm5NextMlpKernels};
 use metrale_model_layers::layer::{ForwardContext, LayerState, SsmLayerState, TransformerLayer};
