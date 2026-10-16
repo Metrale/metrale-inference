@@ -35,12 +35,13 @@ pub enum Slot {
 pub enum Take {
     /// 2026-10-15: Run `unit`, holding `peers` (empty for a one-box unit).
     Run { unit: usize, peers: Vec<usize> },
-    /// 2026-10-15: A multi-node unit is pending but cannot start yet: take nothing.
+    /// 2026-10-15: This node is held as a peer of a running multi-node unit, or such a
+    /// unit is pending but cannot start yet: take nothing.
     Wait,
 }
 
-/// 2026-10-15: The next step for `node`, given every node's `slots` (this node's own
-/// slot is ignored: it is asking because it is free). `None` means nothing it may run.
+/// 2026-10-15: The next step for `node`, given every node's `slots`. A node whose own slot
+/// is `Busy` is held as a peer and waits. `None` means nothing it may run.
 pub fn take(
     node: usize,
     units: &[Unit],
@@ -50,6 +51,9 @@ pub fn take(
     energy: Option<&EnergyPin>,
     slots: &[Slot],
 ) -> Option<Take> {
+    if slots[node] == Slot::Busy {
+        return Some(Take::Wait);
+    }
     let live: Vec<usize> = (0..slots.len())
         .filter(|&k| k == node || slots[k] != Slot::Gone)
         .collect();

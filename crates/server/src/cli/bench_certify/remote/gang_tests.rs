@@ -104,6 +104,26 @@ fn a_unit_wider_than_the_live_fleet_does_not_stall_the_rest() {
     );
 }
 
+/// 2026-10-15: A node held as a peer (`Busy`) waits, even with one-box gates pending
+/// that it could run, so it is free when the wide unit's head launches its rank.
+/// Control: an idle node of the same fleet takes a one-box gate.
+#[test]
+fn a_node_held_as_a_peer_waits_while_one_box_units_are_pending() {
+    let singles: Vec<Unit> = campaign().into_iter().skip(1).collect();
+    let held = [Slot::Busy, Slot::Busy, Slot::Idle];
+    assert_eq!(
+        ask(1, &singles, &held, &SpeedMode::Spread),
+        Some(Take::Wait)
+    );
+    assert_eq!(
+        ask(2, &singles, &held, &SpeedMode::Spread),
+        Some(Take::Run {
+            unit: 0,
+            peers: vec![]
+        })
+    );
+}
+
 /// 2026-10-15: Under a Speed bundle only the home heads a Speed-class wide unit; the
 /// other nodes wait for it and are then held as its peers.
 #[test]
@@ -124,16 +144,17 @@ fn only_the_bundle_home_heads_a_speed_class_wide_unit() {
     );
 }
 
-/// 2026-10-15: With no multi-node unit pending, `take` is `next_for` for every node and
-/// every slot state: single-node scheduling is unchanged. And `next_for` alone never
-/// hands out a wide unit as one box.
+/// 2026-10-15: With no multi-node unit pending, `take` is `next_for` for every free node
+/// whatever the other nodes' slots: single-node scheduling is unchanged. And `next_for`
+/// alone never hands out a wide unit as one box.
 #[test]
 fn without_a_wide_unit_take_is_next_for_and_next_for_never_returns_one() {
     let singles: Vec<Unit> = campaign().into_iter().skip(1).collect();
     let pending = vec![true; singles.len()];
     let placed = vec![None; singles.len()];
     for k in 0..3 {
-        for slots in [[Slot::Idle; 3], [Slot::Idle, Slot::Busy, Slot::Gone]] {
+        for mut slots in [[Slot::Idle; 3], [Slot::Busy, Slot::Busy, Slot::Gone]] {
+            slots[k] = Slot::Idle;
             let want =
                 next_for(k, &singles, &pending, &placed, &SpeedMode::Spread, None).map(|unit| {
                     Take::Run {

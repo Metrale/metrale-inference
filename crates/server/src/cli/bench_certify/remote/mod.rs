@@ -343,12 +343,6 @@ fn work(
             if b.campaign.stopped() {
                 return;
             }
-            // 2026-10-15: Held as a peer of a multi-node unit: take nothing until it ends.
-            if b.slots[k] == gang::Slot::Busy {
-                drop(b);
-                std::thread::sleep(Duration::from_secs(2));
-                continue;
-            }
             let pending: Vec<bool> = b
                 .campaign
                 .phase
@@ -374,7 +368,7 @@ fn work(
                     b.held[i] = peers;
                     Some((i, b.campaign.units[i].clone()))
                 }
-                // 2026-10-15: A multi-node unit is waiting for boxes; this one stays free.
+                // 2026-10-15: Held as a peer, or a multi-node unit is waiting for boxes.
                 Some(gang::Take::Wait) => None,
                 None => {
                     // 2026-09-26: Nothing this node may take. If something is still
