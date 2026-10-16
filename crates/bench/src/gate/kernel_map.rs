@@ -93,6 +93,20 @@ pub fn changed_paths(root: &Path, base: &str, head: &str) -> Result<Vec<String>,
     Ok(text.lines().map(str::to_string).collect())
 }
 
+/// 2026-10-15: The commit `head` and `base` last shared, so a change is what `head` adds and
+/// not what `base` gained since.
+pub fn merge_base(root: &Path, base: &str, head: &str) -> Result<String, String> {
+    let repo = GitRepo {
+        root: root.to_path_buf(),
+        rev: head.to_string(),
+    };
+    let sha = repo.git(&["merge-base", base, head])?.trim().to_string();
+    if sha.is_empty() {
+        return Err(format!("git merge-base {base} {head}: no common commit"));
+    }
+    Ok(sha)
+}
+
 /// 2026-10-15: The kernel → model map of the tree `repo` reads.
 pub fn load(repo: &dyn Repo) -> KernelMap {
     match instance_uses(repo) {

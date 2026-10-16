@@ -266,24 +266,11 @@ fn check_gate(
     (status, owed, standings)
 }
 
-/// 2026-10-15: The commit `sha` and `base` last shared, so a change is what `sha` adds and not
-/// what `base` gained since. None when git cannot answer.
-pub fn merge_base(root: &Path, base: &str, sha: &str) -> Option<String> {
-    let out = std::process::Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["merge-base", base, sha])
-        .stdin(std::process::Stdio::null())
-        .output()
-        .ok()?;
-    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    (out.status.success() && !s.is_empty()).then_some(s)
-}
-
 /// 2026-10-15: Every required gate's verdict for `sha` as a change from `base`, and what the
 /// change leaves owed on the required gates and the promotion candidates.
 pub fn check_models(root: &Path, sha: &str, base: &str, map: &KernelMap) -> ModelCheck {
-    let base = merge_base(root, base, sha);
+    // 2026-10-15: No merge base reads as no base: every registered model is reached.
+    let base = super::kernel_map::merge_base(root, base, sha).ok();
     let base = base.as_deref();
     let mut statuses = BTreeMap::new();
     let mut owed = Vec::new();

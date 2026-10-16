@@ -5,13 +5,10 @@
 //! head revision.
 //!
 //! Owner: server CLI.
-//! The `///` comments on clap items below are the `--help` text and carry no date.
 //! Invariants:
 //! - Nothing here decides: `metrale_circuit::venn::affected_repo::affected_in` does, over the
 //!   head revision read through `gate::kernel_map::GitRepo`; the working tree is never read.
 //! - The change is `base...head`: what `head` added since it and `base` last shared a commit.
-
-use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
 use metrale_bench::gate::kernel_map::{GitRepo, changed_paths};
@@ -19,27 +16,6 @@ use metrale_circuit::venn::affected::Affected;
 use metrale_circuit::venn::affected_repo::affected_in;
 
 use super::circuit_venn::find_root;
-
-/// The models a change reaches through the kernel families it edits. A path under kernels/
-/// that no family lists is unmapped and reaches every model; a path outside kernels/ is not
-/// scoped by this map (the gate treats it as reaching every model).
-#[derive(clap::Args, Debug)]
-pub struct CircuitAffectedArgs {
-    /// The revision the change is measured from (a branch's merge target).
-    #[arg(long)]
-    pub base: String,
-    /// The revision whose kernels and plans are read, and whose change is reported.
-    #[arg(long)]
-    pub head: String,
-    /// Print JSON: {models: [{model, hw, checkpoint, reason: [{file, family, instance,
-    /// assumed}]}], unmapped, unused, non_kernel, assumed}.
-    #[arg(long)]
-    pub json: bool,
-    /// Repository root; by default the nearest directory above the working directory that has
-    /// kernels/circuits/INSTANCES.toml.
-    #[arg(long)]
-    pub root: Option<PathBuf>,
-}
 
 /// 2026-10-15: The plain-text listing.
 pub(crate) fn text(a: &Affected) -> String {
@@ -80,7 +56,7 @@ pub(crate) fn text(a: &Affected) -> String {
     out
 }
 
-pub(crate) fn run(a: CircuitAffectedArgs) -> Result<()> {
+pub(crate) fn run(a: super::circuit_args::CircuitAffectedArgs) -> Result<()> {
     let root = match a.root {
         Some(r) => r,
         None => find_root(&std::env::current_dir()?)?,

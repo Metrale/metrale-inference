@@ -12,7 +12,7 @@ use super::super::coverage_tests::scratch_repo::{
     branch, checkout_default, commit, current_branch, head, init,
 };
 use super::super::tests::tempdir;
-use super::{GitRepo, changed_paths};
+use super::{GitRepo, changed_paths, merge_base};
 
 #[test]
 fn git_repo_reads_the_revision_not_the_working_tree() {
@@ -44,6 +44,7 @@ fn a_change_is_what_the_head_added_since_the_merge_base() {
     let root = dir.path();
     init(root);
     let main = current_branch(root);
+    let fork = head(root);
     branch(root, "pr");
     commit(root, "kernels/gb10/pr.cu", "x", "pr");
     checkout_default(root, &main);
@@ -57,4 +58,10 @@ fn a_change_is_what_the_head_added_since_the_merge_base() {
         changed_paths(root, "no-such-rev", "pr").is_err(),
         "an unknown rev is an error"
     );
+    let base = merge_base(root, &main, "pr").expect("a merge base");
+    assert!(
+        base.starts_with(&fork),
+        "{base} is not the fork point {fork}"
+    );
+    assert!(merge_base(root, "no-such-rev", "pr").is_err());
 }

@@ -24,6 +24,7 @@ mod bench_serve_plan;
 pub mod bench_spec_cost;
 pub(crate) mod circuit;
 mod circuit_affected;
+mod circuit_args;
 mod circuit_diff;
 pub(crate) mod circuit_hw;
 pub(crate) mod circuit_hw_tree;
@@ -151,7 +152,7 @@ pub enum CircuitAction {
     Precision(Box<CircuitPrecisionArgs>),
     /// List the registered models a change (--base...--head) reaches through the kernel
     /// families its files belong to, with the file -> family -> instance chain for each.
-    Affected(Box<circuit_affected::CircuitAffectedArgs>),
+    Affected(Box<circuit_args::CircuitAffectedArgs>),
 }
 
 /// `met circuit memory` options. Serve settings come from `--recipe` (`recipes/<id>.yaml`) and the
