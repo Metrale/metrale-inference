@@ -555,14 +555,22 @@ the entry carries no bounds and baseline_for drops it from enforcement. Its floo
 from a measured run (two or more reps on one build, the noise measured), never from an older \
 build's ladder. The targets field holds the vLLM reference per rung; no verdict reads it. \
 J/tok is not a target: the vLLM run summed energy over three hosts, which no local rail \
-reading matches.\
+reading matches. The C=16 target, 115.73, is a single sample of that run and most likely a \
+stalled vLLM rep. vLLM's own three-rep ladder of the same build, run on a different instrument, \
+read that rung as 159.1, 101.0 and 158.5 tok/s: one rep in three stalls. Those reps come from \
+another instrument, are not comparable with this one and are not a target. A win at C=16 against \
+115.73 is not a clean win. Against a non-stalled vLLM C=16 (~159 tok/s), the internal target is \
+>= 164 tok/s (+3%).\
 """
 # 2026-10-16: The vLLM aggregate tok/s per rung on the same instrument (ISL 128, OSL 1024,
 # essay request, one warm-up, one sample per rung; vLLM 0.30.1rc1.dev193+gddd6fbca1, served
 # at max_model_len 262144, fp8_e4m3 KV, prefix caching on, gpu util 0.88; recorded
-# 2026-10-10T18:16:41Z). C=16 is one sample. A three-rep ladder of the same vLLM build on another
-# instrument read that rung as 159.1, 101.0 and 158.5: one rep in three stalls, so 115.73 is
-# most likely a stalled rep, and a win at C=16 against it is not a clean win.
+# 2026-10-10T18:16:41Z). C=16 is a single sample of that run and most likely a stalled vLLM rep.
+# vLLM's own three-rep ladder of the same build, run on a different instrument, read that rung
+# as 159.1, 101.0 and 158.5 tok/s: one rep in three stalls. Those reps come from another
+# instrument, are not comparable with this one and are not a target. A win at C=16 against 115.73
+# is not a clean win. Against a non-stalled vLLM C=16 (~159 tok/s), the internal target is
+# >= 164 tok/s (+3%).
 targets = { c1_aggregate_tok_s = 40.11, c2_aggregate_tok_s = 62.24, c4_aggregate_tok_s = 83.42, c8_aggregate_tok_s = 114.56, c12_aggregate_tok_s = 131.74, c16_aggregate_tok_s = 115.73 }
 
 [benchmarks.serve_overrides]
