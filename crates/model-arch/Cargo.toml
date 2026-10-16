@@ -355,6 +355,10 @@ name = "glm5next_c16_kernel_bench"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "glm5next_batchm_reg_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "glm5next_hc_fused_gate"
 required-features = ["cuda", "gpu-examples"]
 

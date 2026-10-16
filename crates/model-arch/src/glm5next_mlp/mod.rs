@@ -40,6 +40,7 @@
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::{GpuBackend, KernelHandle};
 
+mod batchm;
 pub mod build;
 pub mod build_w4a4;
 mod config;
@@ -117,6 +118,11 @@ pub struct Glm5NextMlpKernels {
     /// `gemv_f32`'s bits (`forward::router_logits`). `0` when absent: one GEMV per row.
     pub gemv_batchm_f32: KernelHandle,
     pub gemv_batchm_wide_f32: KernelHandle,
+    /// 2026-10-16: `dense_gemv_bf16_batchm_reg8` and its FP32-out twin: 2..=8 rows with the
+    /// accumulators in registers; `0` unless `METRALE_GLM_BATCHM_NARROW=1`
+    /// (`glm5next_layer::wide_gemv::resolve_reg8`).
+    pub gemv_batchm_reg8: KernelHandle,
+    pub gemv_batchm_reg8_f32: KernelHandle,
     /// 2026-09-25: NVFP4 `w4a16_gemm` tile GEMM. Resolved, but not launched by this module.
     pub w4a16: KernelHandle,
     /// 2026-09-25: NVFP4 `C[1, N] = A[1, K] @ B[N, K]^T`, the per-expert decode GEMV.
@@ -248,26 +254,6 @@ pub const W4A4_SWEEP_CTAS_PER_SM: u32 = 1;
 pub const DENSE_W4A4_CHUNK_ROWS: usize = 32;
 
 impl Glm5NextMlpKernels {
-    /// 2026-10-09: The BF16-out batched GEMV pair `glm_mm` takes.
-    pub(crate) fn batchm(&self) -> crate::glm5next_layer::wide_gemv::Batchm {
-        crate::glm5next_layer::wide_gemv::Batchm {
-            narrow: self.gemv_batchm,
-            wide: self.gemv_batchm_wide,
-            out_bytes: 2,
-        }
-    }
-
-    /// 2026-10-09: The FP32-out batched GEMV pair, for the router logits.
-    pub(crate) fn batchm_f32(&self) -> crate::glm5next_layer::wide_gemv::Batchm {
-        crate::glm5next_layer::wide_gemv::Batchm {
-            narrow: self.gemv_batchm_f32,
-            wide: self.gemv_batchm_wide_f32,
-            out_bytes: 4,
-        }
-    }
-}
-
-impl Glm5NextMlpKernels {
     pub fn resolve(gpu: &dyn GpuBackend) -> Result<Self> {
         Ok(Self {
             gemm: gpu.kernel(GEMM_MODULE, "dense_gemm_bf16")?,
@@ -298,6 +284,8 @@ impl Glm5NextMlpKernels {
                 "dense_gemv_bf16_batchm",
                 "dense_gemv_bf16_batchm_wide_fp32out",
             ),
+            gemv_batchm_reg8: crate::glm5next_layer::wide_gemv::resolve_reg8(gpu, false),
+            gemv_batchm_reg8_f32: crate::glm5next_layer::wide_gemv::resolve_reg8(gpu, true),
             w4a16: gpu.kernel(W4A16_MODULE, "w4a16_gemm")?,
             w4a16_gemv: gpu.kernel(W4A16_GEMV_MODULE, "w4a16_gemv")?,
             w4a16_gemv_sw: metrale_model_layers::layers::try_kernel(

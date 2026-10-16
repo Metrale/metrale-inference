@@ -133,7 +133,7 @@ pub struct TransformerModel {
     pub(super) dense_gemv_fp8w_batch2_kernel: KernelHandle,
     pub(super) dense_gemm_kernel: KernelHandle,
     /// 2026-09-25: Batched BF16 GEMV (M rows, one weight pass). 0 = absent.
-    pub(super) dense_gemv_batchm_kernel: KernelHandle,
+    pub(super) dense_gemv_batchm_kernel: metrale_model_layers::layers::ops::DenseGemvBatchmPair,
     /// 2026-09-25: Tensor-core BF16 GEMM with a 16-row M tile
     /// (`dense_gemm_m16_bf16`), the BF16 LM-head arm that
     /// `trait_impl/lm_head_batched.rs::lm_head_m16_tc_route` selects when the

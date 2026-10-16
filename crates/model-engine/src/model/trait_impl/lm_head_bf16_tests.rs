@@ -99,7 +99,8 @@ fn run_full(
     };
     let output = gpu.alloc((m * n * 2) as usize).unwrap();
     let allocated = gpu.alloc_count();
-    let batch = KernelHandle(if present { 0xBF16 } else { 0 });
+    let batch =
+        ops::DenseGemvBatchmPair::narrow_only(KernelHandle(if present { 0xBF16 } else { 0 }));
     project_bf16_lm_head(
         &gpu,
         KernelHandle(0xCAFE),
@@ -448,7 +449,7 @@ fn a_fixed_head_chunks_the_batched_gemv_at_every_row_count() {
     project_bf16_lm_head(
         &gpu,
         KernelHandle(0xCAFE),
-        KernelHandle(0xBF16),
+        ops::DenseGemvBatchmPair::narrow_only(KernelHandle(0xBF16)),
         input,
         &weight,
         output,

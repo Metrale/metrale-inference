@@ -285,6 +285,9 @@ impl Glm5NextKdaLayer {
             self.kernels.gemv,
             crate::glm5next_layer::wide_gemv::Batchm {
                 narrow: self.kernels.gemv_batchm,
+                // 2026-10-16: No reg8 entry: every KDA projection is in `dense_projections`, so
+                // under `--dense-quantization w4a16|fp8` `glm_mm` never reaches the GEMV here.
+                reg8: KernelHandle(0),
                 wide: self.kernels.gemv_batchm_wide,
                 out_bytes: 2,
             },

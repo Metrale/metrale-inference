@@ -34,7 +34,8 @@ pub use w8a16::{
 #[path = "gemm_quant_gemv.rs"]
 mod gemv;
 pub use gemv::{
-    DENSE_GEMV_BATCHM_DECODE_MAX_M, DENSE_GEMV_BATCHM_MAX_M, dense_gemv, dense_gemv_batch2,
+    DENSE_GEMV_BATCHM_DECODE_MAX_M, DENSE_GEMV_BATCHM_MAX_M, DENSE_GEMV_BATCHM_REG8_MAX,
+    DENSE_GEMV_BATCHM_WIDE_MIN, DenseGemvBatchmPair, dense_gemv, dense_gemv_batch2,
     dense_gemv_batchm, dense_gemv_batchm_split, dense_gemv_fp8w,
 };
 
