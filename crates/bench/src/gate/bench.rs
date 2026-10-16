@@ -106,6 +106,12 @@ pub struct BenchEntry {
     /// the normal case.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub target_caveats: BTreeMap<String, String>,
+    /// 2026-10-16: The context the reference run behind `targets` was served at
+    /// (`target_max_model_len = 262144`), so a page can say where that run was not made. Prose
+    /// only: no verdict, ratchet or battle reads it. [`load_all`] refuses it on an entry with
+    /// no `targets` and refuses a value that is not positive. Omitted is the normal case.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_max_model_len: Option<i64>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -332,6 +338,10 @@ mod bench_tests;
 #[path = "bench_serve_pin_tests.rs"]
 mod bench_serve_pin_tests;
 
+#[cfg(test)]
+#[path = "bench_target_tests.rs"]
+mod bench_target_tests;
+
 /// 2026-09-26: The largest `noise` an entry may declare, as a fraction of the
 /// bound's magnitude. `noise` widens a threshold at compare time
 /// (`scoring::compare`), so without a cap a large value would pass any record
@@ -416,7 +426,8 @@ fn validate_targets(path: &std::path::Path, entry: &BenchEntry) -> Result<()> {
 
 /// 2026-10-16: A caveat flags a published target, so it must name one; an empty caveat flags
 /// nothing; and the marker points at the entry's `note`, so an entry with a caveat must
-/// carry one.
+/// carry one. The reference run's context describes the targets, so it needs some, and a
+/// context is positive.
 fn validate_target_caveats(path: &std::path::Path, entry: &BenchEntry) -> Result<()> {
     for (name, text) in &entry.target_caveats {
         if !entry.targets.contains_key(name) {
@@ -443,6 +454,21 @@ fn validate_target_caveats(path: &std::path::Path, entry: &BenchEntry) -> Result
             entry.gate,
             entry.checkpoint,
         );
+    }
+    match entry.target_max_model_len {
+        Some(_) if entry.targets.is_empty() => bail!(
+            "{}: {} / {} declares target_max_model_len with no targets for it to describe",
+            path.display(),
+            entry.gate,
+            entry.checkpoint,
+        ),
+        Some(len) if len <= 0 => bail!(
+            "{}: {} / {} target_max_model_len must be positive, got {len}",
+            path.display(),
+            entry.gate,
+            entry.checkpoint,
+        ),
+        _ => {}
     }
     Ok(())
 }
