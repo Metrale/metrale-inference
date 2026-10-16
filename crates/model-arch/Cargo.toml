@@ -641,6 +641,10 @@ name = "glm5next_dsa_hb_bench"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "glm5next_dsa_host_rows_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "glm5next_dsa_prefill_pipe_gate"
 required-features = ["cuda", "gpu-examples"]
 

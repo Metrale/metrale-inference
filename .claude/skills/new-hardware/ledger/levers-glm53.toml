@@ -2167,6 +2167,30 @@ links = { pr = "", commit = "", evidence = "glm5next_mhc_tile_gate example outpu
 notes = "Variants measured and not shipped: eight tokens per block with three stages (tile8) ran 381 us at T=684 vs tile4's 350. Five or six stages gain 0-4% clean and 4-5% under SM-copy load at 684 rows, within spread; a split Sinkhorn tail gains about 1%. createpolicy.fractional.L2::evict_last with cp.async L2::cache_hint raised CUDA_ERROR_ILLEGAL_INSTRUCTION on GB10 at T=1, with or without applypriority. Not applied on the MHC_POST_PRE_FUSED path. A faster pre-norm may expose NCCL time it now hides"
 
 [[lever]]
+id = "gb10x3-glm53-dsa-host-rows-pinned"
+date = "2026-10-15"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_DSA_HOST_ROWS_PINNED=1 (default off)"
+symptom = "32k cold TTFT spread: a DSA host-path call (prefill sub-chunk without row metadata) uploads its row slots, positions, lengths and block table from pageable vectors; the slot array of an 8,208-row sub-chunk is 65,664 B, above the driver's 64 KiB pageable threshold, so the copy blocks the host until the stream drains and the host loses its whole lead once per DSA layer"
+diagnosis_tool = "nsys"
+root_cause_class = "host-bound"
+lever_type = "scheduling"
+lkb_effect = "none (no kernel change): the four uploads are staged in two page-locked regions allocated with the DSA workspace, each rewritten only after its event shows the device finished every copy from it; a call whose bytes equal the region's last write reuses it; same four copies, same bytes, same destinations, same order"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "held"
+verdict_reason = "Byte gate glm5next_dsa_host_rows_gate (dgx1, 2026-10-15 23:47Z, RESULT: PASS): staged == pageable device bytes at first 8208 (seq_len 0), cont 8192 (seq_len 8208), tail 335 (seq_len 16400) and prefix-hit 8208 (seq_len 4133); the negative control (seq_len+1) differs in all 4; 3 ring calls landed intact. Host time per upload call behind 4.98 ms of queued device work: pageable median 4977.8 us (p10 4962.5, p90 5071.9, max 5469.9, n=77) vs page-locked 46.4 us (p10 44.4, p90 48.0, max 62.3, n=77); per 11-call sub-chunk 54744.9 vs 481.8 us (n=7). The c32k mean effect is about -0.1 ms (the host regains its lead before the GPU drains); the gain is spread only, up to about 9 ms of boot-dependent exposed host stall (seen in 1 of 3 boots, pfDG1b nsys call #1). Held until a cold c32k serve A/B shows the spread"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 3.0
+transferability = "any per-call host-computed upload above 64 KiB from pageable memory on a stream with queued work"
+links = { pr = "", commit = "96efe3fc8", evidence = "/workspace/claude-state/glm/hostrows/gate_20261015T2347Z.log" }
+notes = "Lever off: zero bytes of page-locked memory (staging is not allocated). Load readback logs once per rank. Regions are sized from the workspace's rows and block-table capacity (16 B a row plus 4 B a block-table entry, two regions)"
+
+[[lever]]
 id = "gb10x3-glm53-moe-quant-early"
 date = "2026-10-16"
 hardware_class = "gb10"
