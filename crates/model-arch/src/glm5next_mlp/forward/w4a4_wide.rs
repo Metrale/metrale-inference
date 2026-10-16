@@ -16,12 +16,19 @@
 //! - 2026-10-15: Decode-only. The lever is read only at [`MoeCallSite::BatchedDecode`] (the
 //!   multi-sequence decode body); every other caller, prefill included, passes
 //!   [`MoeCallSite::General`] and keeps `w4a4_grouped::takes_grouped` unchanged.
+//! - 2026-10-16: `METRALE_GLM_WIDE_VERIFY_GRAPHS=1` lifts a batched verify's captured-row limit
+//!   from below the grouped floor to [`WIDE_SWEEP_MAX_ROWS`] ([`captured_batched_rows`]): the
+//!   wide sweep makes 17..=32 decode rows host-read free. It needs the wide sweep and a routed
+//!   plan that runs W4A4 from the floor to 32 rows, else the load is refused
+//!   ([`check_graphs_at_load`]). Off, every limit is the one before the lever.
 
 use anyhow::Result;
 
+use crate::glm5next_mlp::precision::{GroupPrecision, MlpKernel};
 use crate::glm5next_mlp::{Glm5NextMlpKernels, MOE_W4A4_MAX_ROWS};
 
 const LEVER: &str = "METRALE_GLM_MOE_W4A4_WIDE_SWEEP";
+const GRAPHS_LEVER: &str = "METRALE_GLM_WIDE_VERIFY_GRAPHS";
 
 /// 2026-10-14: The widest routed launch the wide sweep serves (`w4a4_gemv_mx32_moe_union_sweep`,
 /// four 8-token MMA tiles).
@@ -42,10 +49,16 @@ pub fn moe_w4a4_wide_sweep() -> Result<bool> {
 
 /// 2026-10-14: [`moe_w4a4_wide_sweep`]'s parse, pure.
 pub(crate) fn parse_wide_lever(v: Option<&str>) -> Result<bool, String> {
+    parse_switch(LEVER, v)
+}
+
+/// 2026-10-16: One switch lever's parse (`lever`'s value `v`): off when unset or `0`, on at `1`,
+/// else an error. Pure.
+pub(crate) fn parse_switch(lever: &str, v: Option<&str>) -> Result<bool, String> {
     match v {
         None | Some("0") => Ok(false),
         Some("1") => Ok(true),
-        Some(other) => Err(format!("{LEVER}={other:?}: expected 0 or 1")),
+        Some(other) => Err(format!("{lever}={other:?}: expected 0 or 1")),
     }
 }
 
@@ -118,6 +131,78 @@ pub fn check_at_load(k: &Glm5NextMlpKernels) -> Result<()> {
         return Ok(());
     }
     check_ready(super::moe_w4a4_grouped()?, wide_ready(k)).map_err(anyhow::Error::msg)
+}
+
+/// 2026-10-16: `METRALE_GLM_WIDE_VERIFY_GRAPHS`, read once: whether a batched verify of up to
+/// [`WIDE_SWEEP_MAX_ROWS`] rows is captured as a CUDA graph ([`captured_batched_rows`]). Off when
+/// unset or `0`; any other value than `1` is an error.
+pub fn wide_verify_graphs() -> Result<bool> {
+    static V: std::sync::OnceLock<Result<bool, String>> = std::sync::OnceLock::new();
+    V.get_or_init(|| parse_switch(GRAPHS_LEVER, std::env::var(GRAPHS_LEVER).ok().as_deref()))
+        .clone()
+        .map_err(anyhow::Error::msg)
+}
+
+/// 2026-10-16: The most rows a captured batched verify carries through a GLM layer: below
+/// `grouped_floor` (`grouped_row_floor`, from which the grouped GEMM sizes its tiles on the host,
+/// which a capture cannot run), or with `graphs` ([`wide_verify_graphs`], checked at load
+/// against the wide sweep and the routed plan) up to the wide sweep's rows, which the batched
+/// decode body launches with no host read. Never below the floor's limit. Pure.
+pub fn captured_batched_rows(grouped_floor: usize, graphs: bool) -> usize {
+    let below_floor = grouped_floor.saturating_sub(1);
+    if graphs {
+        below_floor.max(WIDE_SWEEP_MAX_ROWS)
+    } else {
+        below_floor
+    }
+}
+
+/// 2026-10-16: Whether `METRALE_GLM_WIDE_VERIFY_GRAPHS` can run on this load: `wide` is
+/// [`moe_w4a4_wide_sweep`], `w4a4_through` [`w4a4_through_wide`] (a W4A16 row count past the
+/// floor would take the grouped W4A16 GEMM, whose tile sizing is a host step).
+pub(crate) fn check_graphs(graphs: bool, wide: bool, w4a4_through: bool) -> Result<(), String> {
+    if !graphs {
+        return Ok(());
+    }
+    if !wide {
+        return Err(format!("{GRAPHS_LEVER}=1 needs {LEVER}=1"));
+    }
+    if !w4a4_through {
+        return Err(format!(
+            "{GRAPHS_LEVER}=1: the routed experts' precision plan leaves W4A4 below \
+             {WIDE_SWEEP_MAX_ROWS} rows"
+        ));
+    }
+    Ok(())
+}
+
+/// 2026-10-16: Whether `plan` runs the W4A4 kernels at every row count from `grouped_floor` to
+/// [`WIDE_SWEEP_MAX_ROWS`] (vacuously true when the floor is past it). Pure.
+pub(crate) fn w4a4_through_wide(plan: &GroupPrecision, grouped_floor: usize) -> bool {
+    (grouped_floor..=WIDE_SWEEP_MAX_ROWS).all(|r| plan.kernel(r) == MlpKernel::W4a4Static)
+}
+
+/// 2026-10-16: The load-time refusal of `METRALE_GLM_WIDE_VERIFY_GRAPHS`, from the routed
+/// experts' resolved plan, and its readback line when it runs.
+pub fn check_graphs_at_load(plan: &GroupPrecision) -> Result<()> {
+    let graphs = wide_verify_graphs()?;
+    let floor = super::grouped_row_floor();
+    check_graphs(
+        graphs,
+        moe_w4a4_wide_sweep()?,
+        w4a4_through_wide(plan, floor),
+    )
+    .map_err(anyhow::Error::msg)?;
+    static SAID: std::sync::Once = std::sync::Once::new();
+    if graphs {
+        SAID.call_once(|| {
+            tracing::info!(
+                "GLM verify graphs: {GRAPHS_LEVER}=1 -- batched verify captured up to {} rows",
+                captured_batched_rows(floor, true)
+            )
+        });
+    }
+    Ok(())
 }
 
 #[cfg(test)]

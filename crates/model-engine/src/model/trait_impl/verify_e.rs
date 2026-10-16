@@ -248,7 +248,7 @@ impl TransformerModel {
             && (self.comm.is_none() || self.levers.ep_graphs || self.layers_capture_with_comm())
             // 2026-10-10: No capture past a layer's captured-row limit (GLM-5.3: below the
             // routed-MoE grouped floor, whose host-side tile sizing a capture cannot run).
-            && self.rows_capturable(r_total);
+            && self.rows_capturable_batched(r_total);
         let graph_key = if graphs_on {
             self.verify_batched_graph_key(
                 &*seqs,

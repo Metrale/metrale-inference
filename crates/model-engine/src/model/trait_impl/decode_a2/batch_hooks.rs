@@ -39,6 +39,14 @@ impl TransformerModel {
             .all(|l| l.max_captured_rows().is_none_or(|m| rows <= m))
     }
 
+    /// 2026-10-16: `rows_capturable` for a batched multi-sequence verify (`verify_e.rs`),
+    /// against every layer's `max_captured_batched_rows`.
+    pub(crate) fn rows_capturable_batched(&self, rows: usize) -> bool {
+        self.layers
+            .iter()
+            .all(|l| l.max_captured_batched_rows().is_none_or(|m| rows <= m))
+    }
+
     pub(crate) fn layers_capture_with_comm(&self) -> bool {
         static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         let off =

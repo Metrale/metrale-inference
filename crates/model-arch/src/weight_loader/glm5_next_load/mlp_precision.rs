@@ -63,7 +63,7 @@ pub(super) fn group_precision(
         ["gate_proj", "up_proj", "down_proj"]
             .map(|p| policy.nvfp4_act(&qualify(layer, &format!("{base}.{p}")))),
     );
-    GroupPrecision::resolve(
+    let plan = GroupPrecision::resolve(
         group,
         metrale_model_layers::layers::activation_quantization()
             .ladder(family)
@@ -72,7 +72,13 @@ pub(super) fn group_precision(
         w4a4_rows,
         has_scales,
     )
-    .with_context(|| format!("glm5_next layer {layer}"))
+    .with_context(|| format!("glm5_next layer {layer}"))?;
+    // 2026-10-16: `METRALE_GLM_WIDE_VERIFY_GRAPHS` refuses a routed plan it cannot capture.
+    if group == MlpGroup::RoutedExperts {
+        crate::glm5next_mlp::forward::check_graphs_at_load(&plan)
+            .with_context(|| format!("glm5_next layer {layer}"))?;
+    }
+    Ok(plan)
 }
 
 /// 2026-10-08: Log each distinct plan description once per process (the 42 routed layers share

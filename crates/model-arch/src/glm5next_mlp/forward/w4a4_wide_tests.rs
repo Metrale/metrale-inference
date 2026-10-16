@@ -19,9 +19,11 @@ use super::super::w4a4::tests::{
 };
 use super::super::w4a4::{SweepEntries, sweep_kernel, w4a4_experts};
 use super::{
-    MoeCallSite, WIDE_SWEEP_MAX_IDS, WIDE_SWEEP_MAX_ROWS, check_ready, parse_wide_lever,
-    sweep_max_rows, takes_grouped_at, wide_at, wide_ready,
+    GRAPHS_LEVER as GRAPHS, MoeCallSite, WIDE_SWEEP_MAX_IDS, WIDE_SWEEP_MAX_ROWS,
+    captured_batched_rows, check_graphs, check_ready, parse_switch, parse_wide_lever,
+    sweep_max_rows, takes_grouped_at, w4a4_through_wide, wide_at, wide_ready,
 };
+use crate::glm5next_mlp::precision::{GroupPrecision, MlpGroup, MlpKernel};
 use crate::glm5next_mlp::{Glm5NextMlpConfig, MOE_W4A4_MAX_ROWS};
 
 #[test]
@@ -232,4 +234,84 @@ fn a_k64_slice_runs_the_k64_wide_twins() {
         assert_eq!((u32_arg(&l[2], 14), u32_arg(&l[2], 15)), (704, 4096));
         assert_eq!((u32_arg(&l[5], 14), u32_arg(&l[5], 15)), (4096, 704));
     }
+}
+
+/// 2026-10-16: A routed-experts plan under `--activation-quantization declared` on an A4-stamped
+/// checkpoint whose W4A4 kernels serve up to `cap` rows.
+fn routed_plan(cap: usize) -> GroupPrecision {
+    let ladder = metrale_config::ActivationQuantization::parse("declared")
+        .expect("flag parses")
+        .ladder(metrale_config::ProjFamily::Moe)
+        .clone();
+    GroupPrecision::resolve(
+        MlpGroup::RoutedExperts,
+        ladder,
+        metrale_config::Nvfp4Act::A4,
+        cap,
+        true,
+    )
+    .expect("resolves")
+}
+
+/// 2026-10-16: `METRALE_GLM_WIDE_VERIFY_GRAPHS` parses as the wide lever does, and names itself
+/// in the refusal.
+#[test]
+fn the_graphs_lever_is_off_unless_exactly_one() {
+    assert_eq!(parse_switch(GRAPHS, None), Ok(false));
+    assert_eq!(parse_switch(GRAPHS, Some("0")), Ok(false));
+    assert_eq!(parse_switch(GRAPHS, Some("1")), Ok(true));
+    for bad in ["", "true", "2", "1 ", "yes"] {
+        let e = parse_switch(GRAPHS, Some(bad)).unwrap_err();
+        assert!(e.starts_with(GRAPHS), "{bad:?}: {e}");
+    }
+}
+
+/// 2026-10-16: Off, the captured-row limit is exactly the layer's `max_captured_rows` (the
+/// grouped floor minus one) at every floor; on, it rises to 32 at the recipe's floor of 17 and
+/// never falls below the off limit (a floor past 33 keeps its own).
+#[test]
+fn the_graphs_lever_lifts_the_captured_rows_to_the_wide_sweep_only() {
+    assert_eq!(captured_batched_rows(17, false), 16);
+    assert_eq!(captured_batched_rows(17, true), WIDE_SWEEP_MAX_ROWS);
+    assert_eq!(captured_batched_rows(9, true), WIDE_SWEEP_MAX_ROWS);
+    assert_eq!(captured_batched_rows(65, true), 64);
+    for floor in 1..=4096 {
+        let off = captured_batched_rows(floor, false);
+        assert_eq!(off, floor - 1, "floor {floor}");
+        let on = captured_batched_rows(floor, true);
+        assert!(
+            on >= off && on <= off.max(WIDE_SWEEP_MAX_ROWS),
+            "floor {floor}"
+        );
+    }
+}
+
+/// 2026-10-16: The refusals: on without the wide sweep, or with a plan that leaves W4A4 inside
+/// 17..=32 rows (those rows would take the grouped W4A16 GEMM's host tile sizing); off never
+/// refuses.
+#[test]
+fn the_graphs_lever_needs_the_wide_sweep_and_w4a4_through_32_rows() {
+    for (wide, through) in [(false, false), (false, true), (true, false), (true, true)] {
+        assert_eq!(check_graphs(false, wide, through), Ok(()));
+    }
+    assert!(
+        check_graphs(true, false, true)
+            .unwrap_err()
+            .contains(super::LEVER)
+    );
+    assert!(check_graphs(true, true, false).is_err());
+    assert_eq!(check_graphs(true, true, true), Ok(()));
+}
+
+/// 2026-10-16: The W4A4 cap of a plain load (16 rows) leaves 17..=32 rows on W4A16, so the
+/// lever is refused there; the grouped load's cap covers them; a floor past 32 asks nothing.
+#[test]
+fn w4a4_through_wide_reads_the_routed_plan() {
+    let plain = routed_plan(MOE_W4A4_MAX_ROWS);
+    assert_eq!(plain.kernel(17), MlpKernel::W4a16);
+    assert!(!w4a4_through_wide(&plain, 17));
+    assert!(!w4a4_through_wide(&routed_plan(31), 17));
+    assert!(w4a4_through_wide(&routed_plan(WIDE_SWEEP_MAX_ROWS), 17));
+    assert!(w4a4_through_wide(&routed_plan(8208), 17));
+    assert!(w4a4_through_wide(&plain, WIDE_SWEEP_MAX_ROWS + 1));
 }

@@ -57,8 +57,9 @@ pub use w4a4_grouped_raster::{
 };
 pub use w4a4_slots::{CUDA_MAX_GRID_Y, W4a4SlotsCall, launch_w4a4_slots, slot_pieces};
 pub use w4a4_wide::{
-    MoeCallSite, WIDE_SWEEP_MAX_IDS, WIDE_SWEEP_MAX_ROWS,
-    check_at_load as check_wide_sweep_at_load, moe_w4a4_wide_sweep,
+    MoeCallSite, WIDE_SWEEP_MAX_IDS, WIDE_SWEEP_MAX_ROWS, captured_batched_rows,
+    check_at_load as check_wide_sweep_at_load, check_graphs_at_load, moe_w4a4_wide_sweep,
+    wide_verify_graphs,
 };
 pub use workspace::{mlp_ws_bytes, mlp_ws_total_bytes};
 

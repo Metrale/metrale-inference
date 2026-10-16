@@ -385,6 +385,16 @@ impl LayerCapabilities for Glm5NextLayer {
         Some(crate::glm5next_mlp::forward::grouped_row_floor() - 1)
     }
 
+    /// 2026-10-16: Up to the wide sweep's rows under `METRALE_GLM_WIDE_VERIFY_GRAPHS=1`
+    /// (`w4a4_wide::captured_batched_rows`); a lever the load refused never reaches here.
+    fn max_captured_batched_rows(&self) -> Option<usize> {
+        use crate::glm5next_mlp::forward::{
+            captured_batched_rows, grouped_row_floor, wide_verify_graphs,
+        };
+        let graphs = wide_verify_graphs().is_ok_and(|on| on);
+        Some(captured_batched_rows(grouped_row_floor(), graphs))
+    }
+
     /// 2026-10-08: True: a DSA row selects over its own sequence's indexer cache
     /// (`Glm5NextDsaLayer::decode_rows`) and a KDA layer has no index, so the model's mHC +
     /// sparse-index per-sequence rule does not apply to this layer.

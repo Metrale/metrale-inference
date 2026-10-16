@@ -45,6 +45,13 @@ pub trait LayerCapabilities {
         None
     }
 
+    /// 2026-10-16: The most rows a captured multi-sequence verify (`verify_e.rs`, the batched
+    /// decode body) may carry through this layer. Default: `max_captured_rows`; a layer whose
+    /// batched decode body takes no host-read path up to a wider count overrides it.
+    fn max_captured_batched_rows(&self) -> Option<usize> {
+        self.max_captured_rows()
+    }
+
     fn decode_graph_with_comm(&self) -> bool {
         false
     }
@@ -164,5 +171,29 @@ pub trait LayerCapabilities {
     /// pool-backed recurrent layer answers true.
     fn supports_ssm_replay(&self) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LayerCapabilities;
+
+    struct Unlimited;
+    impl LayerCapabilities for Unlimited {}
+
+    struct Below17;
+    impl LayerCapabilities for Below17 {
+        fn max_captured_rows(&self) -> Option<usize> {
+            Some(16)
+        }
+    }
+
+    /// 2026-10-16: A layer that declares only `max_captured_rows` keeps that limit on the
+    /// batched verify too, so `verify_e.rs`'s switch to `max_captured_batched_rows` leaves every
+    /// layer without its own override where it was.
+    #[test]
+    fn the_batched_limit_defaults_to_the_captured_limit() {
+        assert_eq!(Unlimited.max_captured_batched_rows(), None);
+        assert_eq!(Below17.max_captured_batched_rows(), Some(16));
     }
 }
