@@ -140,6 +140,73 @@ impl DenseGemvBatchmPair {
 /// this value decides which bits a decode of a given width produces.
 pub const DENSE_GEMV_BATCHM_DECODE_MAX_M: u32 = 8;
 
+/// 2026-10-16: The widest row count `METRALE_DENSE_BATCHM_32` adds to the batched BF16 GEMV's
+/// band ([`dense_batchm_band`]); those rows run as launches of at most
+/// `DENSE_GEMV_BATCHM_MAX_M` ([`dense_gemv_batchm_rows`]).
+pub const DENSE_GEMV_BATCHM_32_MAX_M: u32 = 32;
+
+/// 2026-10-16: `METRALE_DENSE_BATCHM_32`: only `1` turns it on.
+pub fn dense_batchm_32_from(value: Option<&str>) -> bool {
+    value == Some("1")
+}
+
+/// 2026-10-16: `METRALE_DENSE_BATCHM_32=1`: launches of 17..=32 rows of the GLM-5.3 BF16
+/// projections (`glm_mm`) and of the BF16 head run on the batched GEMV in 16-row launches, so
+/// every row keeps the bits it has at 1..=16 rows (a 24/32-row MTP verify otherwise takes
+/// cuBLASLt or the tile GEMM). Read once, so the route is the same at CUDA-graph capture and
+/// replay.
+pub fn dense_batchm_32() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        dense_batchm_32_from(std::env::var("METRALE_DENSE_BATCHM_32").ok().as_deref())
+    })
+}
+
+/// 2026-10-16: Whether `m` rows take the batched BF16 GEMV: `1..=band`, and with `rows32` also
+/// `DENSE_GEMV_BATCHM_MAX_M + 1..=DENSE_GEMV_BATCHM_32_MAX_M`.
+pub fn dense_batchm_band(band: u32, rows32: bool, m: u32) -> bool {
+    (1..=band).contains(&m)
+        || (rows32 && (DENSE_GEMV_BATCHM_MAX_M + 1..=DENSE_GEMV_BATCHM_32_MAX_M).contains(&m))
+}
+
+/// 2026-10-16: [`dense_gemv_batchm`] over `m >= 1` rows in launches of at most
+/// `DENSE_GEMV_BATCHM_MAX_M` rows, each on `pair.for_rows(rows)`: input rows `K` elements
+/// apart, output rows `out_stride` BF16 elements apart. Each row has the bits it has in a launch
+/// of any other width.
+#[allow(clippy::too_many_arguments)]
+pub fn dense_gemv_batchm_rows(
+    gpu: &dyn GpuBackend,
+    pair: DenseGemvBatchmPair,
+    input: DevicePtr,
+    weight: &DenseWeight,
+    output: DevicePtr,
+    m: u32,
+    n: u32,
+    k: u32,
+    out_stride: u32,
+    stream: u64,
+) -> Result<()> {
+    ensure!(m >= 1, "dense_gemv_batchm_rows: m = 0");
+    let mut done = 0u32;
+    while done < m {
+        let rows = (m - done).min(DENSE_GEMV_BATCHM_MAX_M);
+        dense_gemv_batchm(
+            gpu,
+            pair.for_rows(rows),
+            input.offset(done as usize * k as usize * 2),
+            weight,
+            output.offset(done as usize * out_stride as usize * 2),
+            rows,
+            n,
+            k,
+            out_stride,
+            stream,
+        )?;
+        done += rows;
+    }
+    Ok(())
+}
+
 /// 2026-09-25: Dense BF16 GEMV for M rows, `C[t] = A[t] @ B^T` for `t` in
 /// `[0, M)`, reading the weight once for all rows. Each row follows
 /// `dense_gemv_bf16`'s K order and reduction (gb10 kernels).

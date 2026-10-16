@@ -17,18 +17,21 @@ const OFF: SegPlan = SegPlan {
     sms: 0,
     gemv_rows: 0,
     one_row: false,
+    fill: 0,
 };
 const FUSE: SegPlan = SegPlan {
     mode: SegMode::Fuse,
     sms: 48,
     gemv_rows: 0,
     one_row: false,
+    fill: 0,
 };
 const SPLIT: SegPlan = SegPlan {
     mode: SegMode::Split,
     sms: 48,
     gemv_rows: 0,
     one_row: false,
+    fill: 0,
 };
 
 /// 2026-10-09: The KDA q/k/v, f_a, b, g_a, o and the shared expert go W4A16; KDA f_b/g_b and

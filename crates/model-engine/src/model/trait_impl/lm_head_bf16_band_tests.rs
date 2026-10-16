@@ -36,6 +36,20 @@ fn launches(
     batchm_max: u32,
     fixed: bool,
 ) -> Vec<(u64, [u32; 3], Vec<MockArg>)> {
+    launches_full(m, pair, batchm_max, false, fixed)
+        .into_iter()
+        .map(|l| (l.0, l.1, l.2[3..].to_vec()))
+        .collect()
+}
+
+/// 2026-10-16: As [`launches`] with `rows32`, returning every argument (A, C pointers first).
+fn launches_full(
+    m: u32,
+    pair: ops::DenseGemvBatchmPair,
+    batchm_max: u32,
+    rows32: bool,
+    fixed: bool,
+) -> Vec<(u64, [u32; 3], Vec<MockArg>)> {
     let gpu = MockGpuBackend::new();
     let (n, k) = (67_u32, 64_u32);
     let input = gpu.alloc((m * k * 2) as usize).unwrap();
@@ -53,6 +67,7 @@ fn launches(
         [m, n, k],
         true,
         batchm_max,
+        rows32,
         tc_off(),
         fixed,
         7,
@@ -60,7 +75,7 @@ fn launches(
     .unwrap();
     gpu.launches_snapshot()
         .into_iter()
-        .map(|l| (l.func, l.grid, l.args[3..].to_vec()))
+        .map(|l| (l.func, l.grid, l.args))
         .collect()
 }
 
@@ -115,4 +130,86 @@ fn fixed_head_chunks_pick_their_entry_by_chunk_rows() {
     assert_eq!(funcs(pair(true, true)), vec![WIDE, WIDE, REG8]);
     assert_eq!(funcs(pair(true, false)), vec![NARROW, NARROW, REG8]);
     assert_eq!(funcs(pair(false, false)), vec![NARROW, NARROW, NARROW]);
+}
+
+fn u32_bytes(v: u32) -> MockArg {
+    MockArg::Bytes(v.to_ne_bytes().to_vec())
+}
+
+/// 2026-10-16: `METRALE_DENSE_BATCHM_32` (`rows32`) runs exactly 17..=32 rows as 16-row launches
+/// plus the remainder, each on the entry its own row count picks, with A and C advanced by whole
+/// rows (A by K elements, C by N) and the runtime-M grid; 1..=16 rows are the same single launch
+/// either way. Off, or past 32 rows, the tile GEMM keeps 17+ rows.
+#[test]
+fn rows32_splits_exactly_17_to_32_rows_into_whole_row_launches() {
+    let p = pair(true, true);
+    for m in 1..=16_u32 {
+        assert_eq!(
+            launches_full(m, p, 16, true, false),
+            launches_full(m, p, 16, false, false),
+            "m={m}"
+        );
+    }
+    for m in 17..=32_u32 {
+        let l = launches_full(m, p, 16, true, false);
+        let tail = m - 16;
+        assert_eq!(l.len(), 2, "m={m}");
+        let tail_func = match tail {
+            1 => NARROW,
+            2..=8 => REG8,
+            _ => WIDE,
+        };
+        assert_eq!((l[0].0, l[1].0), (WIDE, tail_func), "m={m}");
+        let (a0, c0) = (&l[0].2[0], &l[0].2[2]);
+        let (MockArg::Buffer(a0), MockArg::Buffer(c0)) = (a0, c0) else {
+            panic!("expected buffers");
+        };
+        assert_eq!(
+            l[1].2[0],
+            MockArg::Buffer(a0.offset(16 * 64 * 2)),
+            "m={m} A"
+        );
+        assert_eq!(
+            l[1].2[2],
+            MockArg::Buffer(c0.offset(16 * 67 * 2)),
+            "m={m} C"
+        );
+        for (i, rows) in [(0, 16), (1, tail)] {
+            assert_eq!(l[i].1, [67_u32.div_ceil(4), 1, 1], "m={m}");
+            let want: Vec<MockArg> = [rows, 67, 64, 67].into_iter().map(u32_bytes).collect();
+            assert_eq!(l[i].2[3..], want[..], "m={m} launch {i}");
+        }
+        let off = launches_full(m, p, 16, false, false);
+        assert_eq!(off.len(), 1);
+        assert_eq!(off[0].0, FALLBACK, "m={m}: off keeps the tile GEMM");
+    }
+    for m in [33_u32, 40, 64] {
+        let l = launches_full(m, p, 16, true, false);
+        assert_eq!(
+            l.iter().map(|l| l.0).collect::<Vec<_>>(),
+            vec![FALLBACK],
+            "m={m}"
+        );
+    }
+}
+
+/// 2026-10-16: The band rule itself: `1..=band`, plus 17..=32 with `rows32`, whatever `band`.
+#[test]
+fn batchm_band_adds_exactly_17_to_32() {
+    for band in [0_u32, 8, 16] {
+        for m in 0..=40_u32 {
+            let base = (1..=band).contains(&m);
+            assert_eq!(
+                ops::dense_batchm_band(band, false, m),
+                base,
+                "band={band} m={m}"
+            );
+            let want = base || (17..=32).contains(&m);
+            assert_eq!(
+                ops::dense_batchm_band(band, true, m),
+                want,
+                "band={band} m={m}"
+            );
+        }
+    }
 }

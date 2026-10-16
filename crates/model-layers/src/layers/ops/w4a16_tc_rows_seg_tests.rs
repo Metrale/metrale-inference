@@ -31,7 +31,10 @@ fn launch_matches_the_kernel() {
             "seg_{r} is not ({nt}, {g})"
         );
     }
-    assert!(CU.contains("tr_block_split<Nvfp4G16, NT, G, true, S, typename TrSegMerge<S>::T>("));
+    assert!(
+        CU.contains("tr_block_split<Nvfp4G16, NT, G, true, S, typename TrSegMerge<S>::T, NW>(")
+    );
+    assert!(CU.contains("template <int NT, int G, int S, int NW = TR_WARPS>"));
     assert!(ROWS.contains(
         "    tr_block_split<P, NT, G, RAGGED, 1, TrWhole, WARPS>(A, W, C, M, N, K, lda, ldc, col_block, 0u);"
     ));
@@ -45,7 +48,11 @@ fn launch_matches_the_kernel() {
     }
     assert!(CU.contains("W4A16_SEG_ENTRY(R, NT, G, 1, )"));
     assert!(ROWS.contains(&format!("#define TR_SPLIT_K {W4A16_TC_ROWS_SPLIT_K}\n")));
-    assert_eq!(CU.matches("const unsigned char* p2,").count(), 2);
+    assert_eq!(
+        CU.matches("const unsigned char* p2,").count(),
+        3,
+        "seg block, split and narrow entries"
+    );
     assert_eq!(W4A16_TC_ROWS_SEG_MAX, 3);
 }
 

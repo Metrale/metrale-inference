@@ -120,6 +120,34 @@ pub fn w4a16_tc_rows_split_for(tiles: u64, k: u32, sms: u32) -> u32 {
         .unwrap_or(1)
 }
 
+/// 2026-10-16: The arguments after A every entry of the module takes: each segment's weight,
+/// scales, tensor scale, output and width (an absent segment's zeroed), then M, K and lda.
+pub(super) fn w4a16_tc_rows_seg_args<'a>(
+    mut launch: KernelLaunch<'a>,
+    segs: &[W4a16Seg],
+    m: u32,
+    k: u32,
+    lda: u32,
+) -> KernelLaunch<'a> {
+    for i in 0..W4A16_TC_ROWS_SEG_MAX {
+        launch = match segs.get(i) {
+            Some(g) => launch
+                .arg_ptr(g.weight.weight)
+                .arg_ptr(g.weight.weight_scale)
+                .arg_f32(g.weight.weight_scale_2)
+                .arg_ptr(g.output)
+                .arg_u32(g.n),
+            None => launch
+                .arg_ptr(DevicePtr::NULL)
+                .arg_ptr(DevicePtr::NULL)
+                .arg_f32(0.0)
+                .arg_ptr(DevicePtr::NULL)
+                .arg_u32(0),
+        };
+    }
+    launch.arg_u32(m).arg_u32(k).arg_u32(lda)
+}
+
 /// 2026-10-09: One launch of `segs` (1..=3) over `m` rows of `input` (pitch `lda`) with K-split
 /// `s`. Refuses a shape [`w4a16_tc_rows_seg_shape_ok`] refuses.
 #[allow(clippy::too_many_arguments)]
@@ -142,27 +170,11 @@ pub fn w4a16_tc_rows_seg(
     let kernel = gpu
         .op_cache()
         .kernel(gpu, W4A16_TC_ROWS_SEG_MODULE, entry)?;
-    let mut launch = KernelLaunch::new(gpu, kernel)
+    let launch = KernelLaunch::new(gpu, kernel)
         .grid([w4a16_tc_rows_seg_tiles(&ns) as u32, s, 1])
         .block([128, 1, 1])
         .arg_ptr(input);
-    for i in 0..W4A16_TC_ROWS_SEG_MAX {
-        launch = match segs.get(i) {
-            Some(g) => launch
-                .arg_ptr(g.weight.weight)
-                .arg_ptr(g.weight.weight_scale)
-                .arg_f32(g.weight.weight_scale_2)
-                .arg_ptr(g.output)
-                .arg_u32(g.n),
-            None => launch
-                .arg_ptr(DevicePtr::NULL)
-                .arg_ptr(DevicePtr::NULL)
-                .arg_f32(0.0)
-                .arg_ptr(DevicePtr::NULL)
-                .arg_u32(0),
-        };
-    }
-    launch.arg_u32(m).arg_u32(k).arg_u32(lda).launch(stream)
+    w4a16_tc_rows_seg_args(launch, segs, m, k, lda).launch(stream)
 }
 
 #[cfg(test)]

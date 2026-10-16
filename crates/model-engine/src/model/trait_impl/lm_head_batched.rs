@@ -141,6 +141,7 @@ fn project_bf16_lm_head(
     [m, n, k]: [u32; 3],
     batch_enabled: bool,
     batchm_max: u32,
+    rows32: bool,
     m16_tc: LmHeadM16Tc,
     fixed: bool,
     stream: u64,
@@ -149,25 +150,9 @@ fn project_bf16_lm_head(
     // row count, in chunks of its widest launch. Every row equals `dense_gemv_bf16`, the kernel
     // one row takes, whatever the row count.
     if fixed && batch_gemv.narrow.0 != 0 && k.is_multiple_of(8) {
-        let h = k as usize;
-        let mut done = 0u32;
-        while done < m {
-            let rows = (m - done).min(ops::DENSE_GEMV_BATCHM_MAX_M);
-            ops::dense_gemv_batchm(
-                gpu,
-                batch_gemv.for_rows(rows),
-                input.offset(done as usize * h * 2),
-                weight,
-                output.offset(done as usize * n as usize * 2),
-                rows,
-                n,
-                k,
-                n,
-                stream,
-            )?;
-            done += rows;
-        }
-        return Ok(());
+        return ops::dense_gemv_batchm_rows(
+            gpu, batch_gemv, input, weight, output, m, n, k, n, stream,
+        );
     }
     // 2026-09-25: The tensor-core arm goes first, at 5..=16 rows (`lm_head_m16_tc_route`). It
     // reassociates the K reduction, so it is not bit-identical to the batched GEMV; it runs
@@ -182,14 +167,29 @@ fn project_bf16_lm_head(
     }
     if batch_enabled
         && batch_gemv.narrow.0 != 0
-        && (1..=batchm_max).contains(&m)
+        && ops::dense_batchm_band(batchm_max, rows32, m)
         && k.is_multiple_of(8)
     {
-        let kernel = batch_gemv.for_rows(m);
-        ops::dense_gemv_batchm(gpu, kernel, input, weight, output, m, n, k, n, stream)
+        // 2026-10-16: One launch up to 16 rows; 17..=32 rows (`METRALE_DENSE_BATCHM_32`) as
+        // 16-row launches.
+        if m > ops::DENSE_GEMV_BATCHM_MAX_M {
+            log_head_rows32(m, false);
+        }
+        ops::dense_gemv_batchm_rows(gpu, batch_gemv, input, weight, output, m, n, k, n, stream)
     } else {
         ops::dense_gemm(gpu, fallback, input, weight, output, m, n, k, stream)
     }
+}
+
+/// 2026-10-16: The arm readback for `METRALE_DENSE_BATCHM_32` on the head, once per process.
+fn log_head_rows32(m: u32, sharded: bool) {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        tracing::info!(
+            "lm_head batchm: METRALE_DENSE_BATCHM_32=1 -- 17..=32-row BF16 head as 16-row \
+             batched-GEMV launches (first m={m} sharded={sharded})"
+        );
+    });
 }
 
 /// 2026-09-25: The route line's text, separate from the `Once` latch below so a test can
@@ -271,7 +271,7 @@ impl TransformerModel {
             lm_head_batchm_max()
         };
         if self.dense_gemv_batchm_kernel.narrow.0 == 0
-            || !(1..=band).contains(&m)
+            || !ops::dense_batchm_band(band, ops::dense_batchm_32(), m)
             || !h.is_multiple_of(8)
             || (!fixed
                 && (!lmhead_batch_gemv_enabled()
@@ -392,9 +392,12 @@ impl TransformerModel {
             // match the whole-vocab launch. GLM-5.3 at C1 (154,880 rows over 3 ranks): the
             // whole-vocab launch was 5.8 ms of a 46.7 ms step (nsys).
             self.gpu.memset_async(logits, 0, padded_n * v * 2, stream)?;
-            ops::dense_gemv_batchm(
+            if padded_n > ops::DENSE_GEMV_BATCHM_MAX_M as usize {
+                log_head_rows32(padded_n as u32, true);
+            }
+            ops::dense_gemv_batchm_rows(
                 self.gpu.as_ref(),
-                self.dense_gemv_batchm_kernel.for_rows(padded_n as u32),
+                self.dense_gemv_batchm_kernel,
                 normed,
                 &DenseWeight {
                     weight: self.lm_head_weight.weight.offset(begin * h * 2),
@@ -421,6 +424,7 @@ impl TransformerModel {
                 [padded_n as u32, v as u32, h as u32],
                 lmhead_batch_gemv_enabled(),
                 lm_head_batchm_max(),
+                ops::dense_batchm_32(),
                 self.lm_head_m16_tc(),
                 metrale_model_layers::layers::fixed_act(
                     metrale_config::ProjFamily::LmHead,

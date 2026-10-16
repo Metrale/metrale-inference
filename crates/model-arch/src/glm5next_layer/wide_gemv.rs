@@ -12,6 +12,8 @@
 //!   their handles; every other M takes the dispatch the DSA and MLP `gemm` helpers took before
 //!   (cuBLASLt above 16 rows, else `ops::dense_mm_bf16`), which other models share and which
 //!   is unchanged.
+//! - 2026-10-16: Under `METRALE_DENSE_BATCHM_32=1` exactly 17..=32 rows run as 16-row launches
+//!   ([`glm_mm_rows16`]) instead of cuBLASLt; off, nothing changes.
 //! - A register entry's row has the bits of the runtime-M batched GEMV's row
 //!   (`kernels/gb10/common/dense_gemv_bf16_batchm.cu`), which has `dense_gemv_bf16`'s.
 
@@ -104,6 +106,23 @@ impl Batchm {
     }
 }
 
+/// 2026-10-16: Whether `METRALE_DENSE_BATCHM_32` (`on`) sends an `m`-row `glm_mm` to
+/// [`glm_mm_rows16`]: exactly 17..=32 rows.
+fn rows32_takes(on: bool, m: usize) -> bool {
+    on && u32::try_from(m).is_ok_and(|m| ops::dense_batchm_band(0, true, m))
+}
+
+/// 2026-10-16: The arm readback for `METRALE_DENSE_BATCHM_32`, once per process.
+fn log_rows32(m: usize, n: usize, kk: usize) {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        tracing::info!(
+            "glm_mm: METRALE_DENSE_BATCHM_32=1 -- 17..=32-row BF16 projections as 16-row \
+             batched-GEMV launches (first m={m} n={n} k={kk})"
+        );
+    });
+}
+
 /// 2026-10-11: [`glm_mm`] in launches of at most `DENSE_GEMV_BATCHM_MAX_M` rows, each on the
 /// GEMV tiers (one row: the M = 1 GEMV; 2..=16: the batched GEMV), whose rows have the M = 1
 /// GEMV's bits; `C` rows are `n` elements of `batchm.out_bytes`. Errors when the batched handle
@@ -124,7 +143,8 @@ fn glm_mm_rows16(
 ) -> Result<()> {
     anyhow::ensure!(
         batchm.narrow.0 != 0 && gemv.0 != 0,
-        "METRALE_GLM_BATCH_INVARIANT=1: a {m}-row projection needs the GEMV tiers"
+        "METRALE_GLM_BATCH_INVARIANT=1 or METRALE_DENSE_BATCHM_32=1: a {m}-row projection needs the \
+         GEMV tiers"
     );
     let step = ops::DENSE_GEMV_BATCHM_MAX_M as usize;
     let c_elem = batchm.out_bytes;
@@ -169,6 +189,12 @@ pub(crate) fn glm_mm(
     // the row-invariant batched GEMV ([`glm_mm_rows16`]), never cuBLASLt or the tile GEMM.
     let wide_rows = m > ops::DENSE_GEMV_BATCHM_MAX_M as usize;
     if wide_rows && crate::glm5next_batch_inv::enabled()? {
+        return glm_mm_rows16(gpu, gemm, gemv, batchm, a, b, c, m, n, kk, stream);
+    }
+    // 2026-10-16: `METRALE_DENSE_BATCHM_32=1`: 17..=32 rows as the same 16-row launches (an MTP
+    // verify of 24 or 32 rows keeps the rows' 1..=16-row bits), ahead of cuBLASLt.
+    if rows32_takes(ops::dense_batchm_32(), m) {
+        log_rows32(m, n, kk);
         return glm_mm_rows16(gpu, gemm, gemv, batchm, a, b, c, m, n, kk, stream);
     }
     if wide_rows && crate::glm5next_layer::cublas_wide_proj() {
@@ -259,6 +285,20 @@ mod tests {
         };
         assert!(glm_mm_rows16(&gpu, gemm, gemv, no_batch, a, w, c, 40, n, kk, 7).is_err());
         assert_eq!(gpu.launches_snapshot().len(), 3);
+    }
+
+    /// 2026-10-16: `METRALE_DENSE_BATCHM_32` takes exactly 17..=32 rows, and none when off; only
+    /// `1` turns it on.
+    #[test]
+    fn rows32_takes_exactly_17_to_32_rows() {
+        let on: Vec<usize> = (0..=40).filter(|&m| rows32_takes(true, m)).collect();
+        assert_eq!(on, (17..=32).collect::<Vec<_>>());
+        assert!((0..=40).all(|m| !rows32_takes(false, m)));
+        assert!(!rows32_takes(true, usize::MAX));
+        assert!(ops::dense_batchm_32_from(Some("1")));
+        for v in [None, Some("0"), Some("true"), Some(""), Some("32")] {
+            assert!(!ops::dense_batchm_32_from(v), "{v:?}");
+        }
     }
 
     /// 2026-10-16: The default (wide only) takes the wide entry at exactly 9..=16 rows; a reg8
