@@ -10,9 +10,9 @@ use super::{RoundRecord, score, verdict};
 use crate::result::VerdictKind;
 
 /// 2026-09-26: A nonzero turn-1 cache count; the verdict only asks for nonzero.
-const WARM: Option<usize> = Some(992);
+const WARM: Option<u64> = Some(992);
 
-fn record(round: usize, verdict: RoundVerdict, turn1_cached: Option<usize>) -> RoundRecord {
+fn record(round: usize, verdict: RoundVerdict, turn1_cached: Option<u64>) -> RoundRecord {
     RoundRecord {
         round,
         verdict,
@@ -181,7 +181,7 @@ fn a_zero_cache_replay_fails_even_when_every_transcript_matched() {
     assert_eq!(v.kind, VerdictKind::Fail);
     assert_eq!(
         v.reason,
-        "replay round(s) [3] attested 0 cached prompt tokens on turn 1 — the prefix restore path this gate polices was never exercised, so their transcripts prove nothing about the poisoning class (is prefix caching enabled on the served recipe?)"
+        "replay round(s) [3] attested 0 cached prompt tokens, or reported none, on turn 1 — the prefix restore path this gate polices was never exercised, so their transcripts prove nothing about the poisoning class (is prefix caching enabled on the served recipe?)"
     );
 }
 
@@ -198,7 +198,7 @@ fn an_all_cold_run_fails_on_every_round() {
     assert_eq!(v.kind, VerdictKind::Fail);
     assert_eq!(
         v.reason,
-        "replay round(s) [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] attested 0 cached prompt tokens on turn 1 — the prefix restore path this gate polices was never exercised, so their transcripts prove nothing about the poisoning class (is prefix caching enabled on the served recipe?)"
+        "replay round(s) [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] attested 0 cached prompt tokens, or reported none, on turn 1 — the prefix restore path this gate polices was never exercised, so their transcripts prove nothing about the poisoning class (is prefix caching enabled on the served recipe?)"
     );
 }
 
@@ -237,4 +237,21 @@ fn unmeasured_rounds_carry_their_number_and_reason() {
     // unmeasured, and the server reported no figure.
     assert!(s.vacuous_rounds.is_empty());
     assert_eq!(s.min_turn1_cached, Some(992));
+}
+
+#[test]
+fn an_unreported_turn1_count_is_vacuous_not_a_pass() {
+    // 2026-10-16: A server that sends no `cached_tokens` attests nothing about
+    // the restore. The round is vacuous, and the minimum is unknown rather
+    // than the lowest of the rounds that did report.
+    let replays = vec![inv(1), record(2, RoundVerdict::Invariant, None), inv(3)];
+    let s = score(&replays);
+    assert_eq!(s.vacuous_rounds, vec![2]);
+    assert_eq!(s.min_turn1_cached, None);
+    let v = verdict(&s, 3);
+    assert_eq!(v.kind, VerdictKind::Fail);
+    assert!(
+        v.reason
+            .starts_with("replay round(s) [2] attested 0 cached prompt tokens, or reported none")
+    );
 }

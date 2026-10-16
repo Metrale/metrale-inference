@@ -346,10 +346,11 @@ impl Benchmark for SsmPoison {
             Phase::Replay => {
                 let n = self.replays.len() + 1;
                 // 2026-09-26: Turn 1's cached-token count is recorded;
-                // `score::verdict` fails a replay whose turn 1 reports 0.
+                // `score::verdict` fails a replay whose turn 1 reports 0 or,
+                // 2026-10-16, reports none.
                 let (v, turn1_cached) = match self.replay_script(&format!("replay {n}")).await {
                     Ok(replay) => {
-                        let cached = replay.first().map(|t| t.cached_prompt_tokens);
+                        let cached = replay.first().and_then(|t| t.cached_prompt_tokens);
                         (compare::compare_round(&self.reference, &replay), cached)
                     }
                     Err(e) => (
@@ -374,19 +375,21 @@ impl Benchmark for SsmPoison {
                 };
                 // 2026-09-26: A collapse or jitter line keeps priority; the
                 // vacuity line is logged only when there is no other line.
-                let line = if line.is_none() && turn1_cached == Some(0) {
+                let record = RoundRecord {
+                    round: n,
+                    verdict: v,
+                    turn1_cached,
+                };
+                let line = if line.is_none() && record.is_vacuous() {
                     Some(LogLine::error(format!(
-                        "replay {n} restored 0 cached prompt tokens on turn 1 — the round \
-                         never exercised the prefix restore path"
+                        "replay {n} restored {} cached prompt tokens on turn 1 — the round \
+                         never exercised the prefix restore path",
+                        http::cached_text(turn1_cached)
                     )))
                 } else {
                     line
                 };
-                self.replays.push(RoundRecord {
-                    round: n,
-                    verdict: v,
-                    turn1_cached,
-                });
+                self.replays.push(record);
                 if self.replays.len() >= self.rounds {
                     self.phase = Phase::ToolPath;
                 }

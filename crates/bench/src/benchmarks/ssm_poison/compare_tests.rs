@@ -21,7 +21,7 @@ fn t(text: &str, tokens: usize) -> Transcript {
 fn identical_rounds_are_invariant() {
     let reference = vec![t("one", 10), t("two", 20)];
     let mut replay = vec![t("one", 10), t("two", 20)];
-    replay[1].cached_prompt_tokens = 99;
+    replay[1].cached_prompt_tokens = Some(99);
     assert_eq!(compare_round(&reference, &replay), RoundVerdict::Invariant);
 }
 

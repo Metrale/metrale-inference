@@ -5,7 +5,8 @@
 //! measured requests agree about being warm.
 //!
 //! Owner: bench (concurrency).
-//! Invariants: with no warm-up rounds a cell is never cache-uncontrolled.
+//! Invariants: with no warm-up rounds a cell is never cache-uncontrolled
+//! or cache-cold.
 
 use super::RequestEvidence;
 
@@ -61,27 +62,101 @@ pub(super) fn warm_cache_capable(conc: usize, slots: Option<usize>, earlier: &[u
     slots.is_none_or(|slots| slots > slots_needed(conc, earlier))
 }
 
-/// 2026-09-26: A cell's cache state is uncontrolled when warm-up was requested
-/// and its measured requests disagree about it: some are warm (at least
-/// `WARM_CACHE_FLOOR` of the prompt cached) and some are not, or a request
-/// reported no prompt usage. A uniformly cold cell is controlled: below the
-/// server's restore threshold (`--marconi-min-tokens`, default
-/// `DEFAULT_MARCONI_MIN_TOKENS` = 256 in model-layers `mtp_carry.rs`) no
-/// snapshot is restored, so every request reports 0 cached.
-/// A mixture is two measurements reported as one.
+/// 2026-10-16: What a cell's measured requests say about the prefix cache.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum CacheState {
+    /// No warm-up round sent the measured prompts, so nothing was expected to
+    /// be cached. The rule does not apply.
+    NotWarmed,
+    /// Warmed, but the server reported no cached count for any request. There
+    /// is nothing to judge: an absent count is not a 0.
+    Unreported,
+    /// Every request had at least `WARM_CACHE_FLOOR` of its prompt cached.
+    Warm,
+    /// Warmed, and no request reached `WARM_CACHE_FLOOR`: the warmed prefix
+    /// was not restored. Labelled cache-cold and counted in
+    /// `cache_cold_cells`.
+    Cold,
+    /// The requests disagree, a request reported no prompt usage, or the cell
+    /// has no request: two measurements reported as one. Uncontrolled.
+    Mixed,
+}
+
+/// 2026-10-16: The cache state of a cell whose measured prompts were
+/// (`warmed`) or were not sent in a warm-up round first. A request with no
+/// cached count is not warm, so it splits a cell whose other requests are.
 ///
-/// The record still carries `min_cached_prompt_pct` and
+/// A uniformly cold cell is NOT a controlled warm measurement. It used to pass
+/// as one: below the server's restore threshold (`--marconi-min-tokens`,
+/// `DEFAULT_MARCONI_MIN_TOKENS` = 256 in model-layers `mtp_carry.rs`) no
+/// snapshot is restored and every request reports 0 cached, so a recipe whose
+/// restore threshold sat above the shared prefix measured a whole decode
+/// ladder cold while the record called it controlled. It is now [`Cold`]:
+/// still comparable (every request measured the same thing, so the verdict
+/// and the `cache_uncontrolled_cells` count are unchanged), but labelled
+/// cache-cold in the log and counted in `cache_cold_cells`. A gate that
+/// expects a warm ladder bounds that metric at `max = 0`; a gate that is cold
+/// by design leaves it unbounded.
+///
+/// The record also carries `min_cached_prompt_pct` and
 /// `min_cached_prompt_tokens`, and the evidence line prints each request's
 /// cached count.
-pub(super) fn cache_is_uncontrolled(requests: &[RequestEvidence], warmup: usize) -> bool {
-    if warmup == 0 {
-        return false;
+///
+/// [`Cold`]: CacheState::Cold
+pub(super) fn cache_state(requests: &[RequestEvidence], warmed: bool) -> CacheState {
+    if !warmed {
+        return CacheState::NotWarmed;
     }
-    if requests.iter().any(|request| request.prompt_tokens == 0) {
-        return true;
+    if requests.is_empty() || requests.iter().any(|r| r.prompt_tokens == 0) {
+        return CacheState::Mixed;
     }
-    let warm = |request: &RequestEvidence| {
-        (request.cached_prompt_tokens as f64) >= WARM_CACHE_FLOOR * request.prompt_tokens as f64
+    if requests.iter().all(|r| r.cached_prompt_tokens.is_none()) {
+        return CacheState::Unreported;
+    }
+    let warm = |r: &RequestEvidence| {
+        r.cached_prompt_tokens
+            .is_some_and(|c| c as f64 >= WARM_CACHE_FLOOR * r.prompt_tokens as f64)
     };
-    requests.iter().any(&warm) != requests.iter().all(&warm)
+    match (requests.iter().any(warm), requests.iter().all(warm)) {
+        (_, true) => CacheState::Warm,
+        (false, _) => CacheState::Cold,
+        _ => CacheState::Mixed,
+    }
+}
+
+/// 2026-10-16: The smallest cached count over `requests`, for a cell or a
+/// whole sweep. `None` when there is no request or any request reported no
+/// count: a minimum over the reporting requests only would read higher than
+/// what was measured.
+pub(super) fn min_cached_prompt<'a>(
+    requests: impl IntoIterator<Item = &'a RequestEvidence>,
+) -> Option<u64> {
+    requests
+        .into_iter()
+        .map(|r| r.cached_prompt_tokens)
+        .collect::<Option<Vec<u64>>>()?
+        .into_iter()
+        .min()
+}
+
+/// 2026-10-16: The smallest cached share of the prompt, in percent, over
+/// `requests`; `None` on the same terms as [`min_cached_prompt`]. A request
+/// with no prompt usage counts as 0%.
+pub(super) fn min_cached_prompt_pct<'a>(
+    requests: impl IntoIterator<Item = &'a RequestEvidence>,
+) -> Option<f64> {
+    requests
+        .into_iter()
+        .map(|r| {
+            r.cached_prompt_tokens.map(|c| {
+                if r.prompt_tokens == 0 {
+                    0.0
+                } else {
+                    c as f64 / r.prompt_tokens as f64 * 100.0
+                }
+            })
+        })
+        .collect::<Option<Vec<f64>>>()?
+        .into_iter()
+        .reduce(f64::min)
 }

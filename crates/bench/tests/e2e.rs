@@ -20,8 +20,8 @@ use futures::StreamExt;
 use metrale_bench::benchmarks::concurrency::ConcurrencySweep;
 use metrale_bench::benchmarks::ttft::TtftGate;
 use metrale_bench::{
-    ArtifactStore, Benchmark, BenchmarkResult, ParamValue, ParamValues, Plugin, PluginHandle,
-    RunStatus, TargetEndpoint, VerdictKind,
+    ArtifactStore, Benchmark, BenchmarkResult, LogLevel, ParamValue, ParamValues, Plugin,
+    PluginEvent, PluginHandle, RunStatus, TargetEndpoint, VerdictKind,
 };
 
 fn temp_store(name: &str) -> ArtifactStore {
@@ -356,4 +356,67 @@ async fn a_headless_run_persists_a_record_the_history_pane_can_read() {
     // 2026-09-26: Two coherence questions plus the single measured request.
     assert_eq!(mock.requests.load(Ordering::Relaxed), 3);
     assert_eq!(outcome.exit_code(), 0);
+}
+
+/// 2026-10-16: A warmed sweep's `cache_cold_cells` metric, driven end to end
+/// through the cell runner: a server that restores the warmed prefix counts no
+/// cold cell, one that reports 0 cached tokens after the warm-up counts each
+/// cell cold, and one that never reports the count counts none and leaves the
+/// cached-token metrics absent rather than 0.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_warmed_sweep_counts_cache_cold_cells_from_the_reported_usage() {
+    /// The final frame, and how many cache-cold warnings the run sent on the
+    /// handle's event channel, where a cell's log lines go.
+    async fn sweep(name: &str, cached: Option<u64>) -> (BenchmarkResult, usize) {
+        let mock = mock_endpoint::start_caching(
+            cached,
+            4,
+            Duration::from_millis(5),
+            Duration::from_millis(1),
+        )
+        .await;
+        let (tx, rx) = std::sync::mpsc::channel();
+        let h = PluginHandle::new(
+            1,
+            TargetEndpoint::local(mock.port, "mock"),
+            temp_store(name),
+            tx,
+            Arc::new(AtomicBool::new(false)),
+        );
+        let mut bench = ConcurrencySweep::default();
+        bench.load(h).await.expect("load");
+        let mut values = ParamValues::defaults(&bench.parameters());
+        values.set("concurrencies", ParamValue::IntList(vec![1, 2]));
+        values.set("isls", ParamValue::IntList(vec![64]));
+        values.set("osl", ParamValue::Int(4));
+        values.set("warmup", ParamValue::Int(1));
+        bench.configure(&values).expect("configure");
+        let frames = collect(&mut bench).await;
+        let last = frames.last().expect("at least one frame").clone();
+        assert_eq!(last.status, RunStatus::Completed, "{:?}", last.verdict);
+        let warned = rx
+            .try_iter()
+            .filter(|e| {
+                matches!(e, PluginEvent::Log(l)
+                    if l.level == LogLevel::Warn && l.text.contains("cache-cold"))
+            })
+            .count();
+        (last, warned)
+    }
+
+    let (warm, warned) = sweep("cache-warm", Some(40)).await;
+    assert_eq!(warned, 0);
+    assert_eq!(warm.metrics.get("cache_cold_cells"), Some(&0.0));
+    assert_eq!(warm.metrics.get("min_cached_prompt_tokens"), Some(&40.0));
+
+    let (cold, warned) = sweep("cache-cold", Some(0)).await;
+    assert_eq!(warned, 2, "each cold cell warns");
+    assert_eq!(cold.metrics.get("cache_cold_cells"), Some(&2.0));
+    assert_eq!(cold.metrics.get("min_cached_prompt_tokens"), Some(&0.0));
+
+    let (unreported, warned) = sweep("cache-unreported", None).await;
+    assert_eq!(warned, 0);
+    assert_eq!(unreported.metrics.get("cache_cold_cells"), Some(&0.0));
+    assert_eq!(unreported.metrics.get("min_cached_prompt_tokens"), None);
+    assert_eq!(unreported.metrics.get("min_cached_prompt_pct"), None);
 }

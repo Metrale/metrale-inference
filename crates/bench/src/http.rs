@@ -59,7 +59,11 @@ pub struct ChatOutcome {
     /// add to it.
     pub completion_tokens: usize,
     pub prompt_tokens: usize,
-    pub cached_prompt_tokens: usize,
+    /// 2026-10-16: `usage.prompt_tokens_details.cached_tokens`. `None` when the
+    /// server did not report it, which is not a cache miss: a server that never
+    /// sends the field must not read as uniformly cold. Rendered by
+    /// [`cached_text`].
+    pub cached_prompt_tokens: Option<u64>,
     /// 2026-09-26: `usage.time_to_first_token_ms`, on the server's clock.
     pub server_ttft_ms: Option<f64>,
     /// 2026-09-26: `usage."response_token/s"`, which this engine's server
@@ -270,7 +274,7 @@ fn apply_chunk(chunk: &Value, out: &mut ChatOutcome) -> bool {
             .and_then(|d| d.get("cached_tokens"))
             .and_then(Value::as_u64)
         {
-            out.cached_prompt_tokens = c as usize;
+            out.cached_prompt_tokens = Some(c);
         }
         if let Some(v) = usage.get("time_to_first_token_ms").and_then(Value::as_f64) {
             out.server_ttft_ms = Some(v);
@@ -341,6 +345,13 @@ fn apply_chunk(chunk: &Value, out: &mut ChatOutcome) -> bool {
         }
     }
     carried
+}
+
+/// 2026-10-16: How every report prints a cached-prompt count: the number when
+/// the server reported one, `unreported` when it did not, never a 0 it did not
+/// send.
+pub fn cached_text(cached: Option<u64>) -> String {
+    cached.map_or_else(|| "unreported".to_string(), |c| c.to_string())
 }
 
 /// 2026-09-26: The trimmed `error.message` of an OpenAI-shaped error body.

@@ -287,3 +287,27 @@ fn an_unmeasured_cache_is_absent_from_the_record_not_zero() {
         .collect();
     assert_eq!(metrics(&score(&vacuous))["min_cached_prompt_tokens"], 0.0);
 }
+
+/// 2026-10-16: A measured replay whose server sent no `cached_tokens` is not a
+/// zero: the record omits the key and the tile reads "unreported", in red.
+#[test]
+fn an_unreported_cache_is_absent_and_reads_unreported() {
+    let replays = vec![
+        rec(1, RoundVerdict::Invariant),
+        RoundRecord {
+            round: 2,
+            verdict: RoundVerdict::Invariant,
+            turn1_cached: None,
+        },
+    ];
+    let s = score(&replays);
+    assert!(!metrics(&s).contains_key("min_cached_prompt_tokens"));
+    let tile = summary(&s)
+        .into_iter()
+        .find(|stat| stat.label == "Min t1 cache")
+        .expect("cache tile");
+    assert_eq!(
+        (tile.value.as_str(), tile.style),
+        ("unreported", CellStyle::Bad)
+    );
+}

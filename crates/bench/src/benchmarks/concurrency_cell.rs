@@ -5,32 +5,20 @@
 //!
 //! Owner: bench (concurrency).
 //! Invariants: a row is comparable only when it has no errors, is not
-//! vacuous and is cache-controlled.
+//! vacuous and is cache-controlled. A cache-cold row stays comparable.
 
 use super::{
-    CellRow, ConcurrencySweep, Context, Delivery, GapSample, Instant, Percentiles, RequestEvidence,
-    Result, SSM_CACHE_SLOTS_KEY, WARM_CACHE_FLOOR, cache_is_uncontrolled, evidence_line,
-    prompt_plan, slots_needed, stats, warm_cache_capable,
+    CacheState, CellRow, ConcurrencySweep, Context, Delivery, GapSample, Instant, Percentiles,
+    RequestEvidence, Result, SSM_CACHE_SLOTS_KEY, WARM_CACHE_FLOOR, cache, cache_state,
+    evidence_line, prompt_plan, slots_needed, stats, warm_cache_capable,
 };
 
 impl CellRow {
     pub(super) fn min_completion(&self) -> Option<usize> {
         self.requests.iter().map(|r| r.completion_tokens).min()
     }
-    pub(super) fn min_cached_prompt(&self) -> Option<usize> {
-        self.requests.iter().map(|r| r.cached_prompt_tokens).min()
-    }
     pub(super) fn min_cached_prompt_pct(&self) -> Option<f64> {
-        self.requests
-            .iter()
-            .map(|request| {
-                if request.prompt_tokens == 0 {
-                    0.0
-                } else {
-                    request.cached_prompt_tokens as f64 / request.prompt_tokens as f64 * 100.0
-                }
-            })
-            .reduce(f64::min)
+        cache::min_cached_prompt_pct(&self.requests)
     }
     /// 2026-09-26: The minimum accept depth (`stats::accept_len`) across the
     /// cell's requests, or `None` when any request did not report it. The
@@ -63,6 +51,7 @@ impl ConcurrencySweep {
     pub(super) async fn run_cell(&mut self, isl: usize, conc: usize) -> Result<CellRow> {
         let handle = self.handle()?.clone();
         let plan = prompt_plan(conc, self.warmup, self.fixture);
+        let warmed = plan.measured_prompts_warmed();
         for (w, tags) in plan.warmup_rounds.iter().enumerate() {
             handle.check_cancelled()?;
             handle.status(format!(
@@ -149,7 +138,9 @@ impl ConcurrencySweep {
             .map(|(_, c)| *c)
             .collect();
         let warm_capable = warm_cache_capable(conc, slots, &earlier);
-        let cache_uncontrolled = warm_capable && cache_is_uncontrolled(&requests, self.warmup);
+        let state = cache_state(&requests, warmed);
+        let cache_uncontrolled = warm_capable && state == CacheState::Mixed;
+        let cache_cold = warm_capable && state == CacheState::Cold;
         handle.info(evidence_line(isl, conc, &requests));
         let energy = self.energy.window(batch_start, batch_end);
         if let Some(e) = &energy {
@@ -182,6 +173,16 @@ impl ConcurrencySweep {
                 WARM_CACHE_FLOOR * 100.0,
             ));
         }
+        // 2026-10-16: A label, not an exclusion: the cell is still comparable,
+        // and the verdict text is unchanged. `cache_cold_cells` counts it.
+        if cache_cold {
+            handle.warn(format!(
+                "isl {isl} conc {conc}: cache-cold — warm-up was requested but no measured \
+                 request reached {:.0}% of its prompt cached, so the warmed prefix was not \
+                 restored (is it below the server's restore threshold?)",
+                WARM_CACHE_FLOOR * 100.0,
+            ));
+        }
         Ok(CellRow {
             isl,
             conc,
@@ -195,6 +196,7 @@ impl ConcurrencySweep {
             requests,
             vacuous,
             cache_uncontrolled,
+            cache_cold,
             gaps: gaps.stats(),
             energy,
         })

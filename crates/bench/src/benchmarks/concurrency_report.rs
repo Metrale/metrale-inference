@@ -9,7 +9,7 @@
 
 use super::{
     BTreeMap, Cell, CellRow, CellStyle, Column, ConcurrencySweep, RequestEvidence, ResultTable,
-    Stat, stats,
+    Stat, cache, http, stats,
 };
 
 impl ConcurrencySweep {
@@ -53,11 +53,19 @@ impl ConcurrencySweep {
                         .map(|v| v.to_string())
                         .unwrap_or_else(|| "—".into()),
                 ),
-                Cell::new(
-                    r.min_cached_prompt_pct()
-                        .map(|v| format!("{v:.0}"))
-                        .unwrap_or_else(|| "—".into()),
-                ),
+                // 2026-10-16: "unreported" when a request sent no cached count;
+                // "—" only for a cell with no request.
+                Cell::new(r.min_cached_prompt_pct().map_or_else(
+                    || {
+                        if r.requests.is_empty() {
+                            "—"
+                        } else {
+                            "unreported"
+                        }
+                        .into()
+                    },
+                    |v| format!("{v:.0}"),
+                )),
                 Cell::styled(
                     r.errors.to_string(),
                     if r.errors == 0 {
@@ -147,20 +155,13 @@ impl ConcurrencySweep {
         if let Some(min) = self.rows.iter().filter_map(CellRow::min_completion).min() {
             m.insert("min_completion_tokens".to_string(), min as f64);
         }
-        if let Some(min) = self
-            .rows
-            .iter()
-            .filter_map(CellRow::min_cached_prompt)
-            .min()
-        {
+        // 2026-10-16: Over every request of the sweep, and absent (never 0)
+        // when any request reported no cached count.
+        let requests = || self.rows.iter().flat_map(|r| &r.requests);
+        if let Some(min) = cache::min_cached_prompt(requests()) {
             m.insert("min_cached_prompt_tokens".to_string(), min as f64);
         }
-        if let Some(min) = self
-            .rows
-            .iter()
-            .filter_map(CellRow::min_cached_prompt_pct)
-            .reduce(f64::min)
-        {
+        if let Some(min) = cache::min_cached_prompt_pct(requests()) {
             m.insert("min_cached_prompt_pct".to_string(), min);
         }
         m.insert(
@@ -170,6 +171,12 @@ impl ConcurrencySweep {
         m.insert(
             "cache_uncontrolled_cells".to_string(),
             self.rows.iter().filter(|r| r.cache_uncontrolled).count() as f64,
+        );
+        // 2026-10-16: Always written, like `cache_uncontrolled_cells`; a gate that
+        // expects a warm ladder bounds it at `max = 0` (`CacheState::Cold`).
+        m.insert(
+            "cache_cold_cells".to_string(),
+            self.rows.iter().filter(|r| r.cache_cold).count() as f64,
         );
         // 2026-09-26: Cells below the 1.5 accept depth (`arm_is_not_mtp`),
         // counted apart from `vacuous_cells`; they are not excluded.
@@ -191,7 +198,13 @@ pub(super) fn evidence_line(isl: usize, conc: usize, requests: &[RequestEvidence
         .collect();
     let cached: Vec<String> = requests
         .iter()
-        .map(|r| format!("{}/{}", r.cached_prompt_tokens, r.prompt_tokens))
+        .map(|r| {
+            format!(
+                "{}/{}",
+                http::cached_text(r.cached_prompt_tokens),
+                r.prompt_tokens
+            )
+        })
         .collect();
     let mut finish: BTreeMap<&str, usize> = BTreeMap::new();
     for r in requests {

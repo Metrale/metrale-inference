@@ -38,7 +38,7 @@ fn evidence_with_arm(
     RequestEvidence {
         completion_tokens,
         prompt_tokens: 512,
-        cached_prompt_tokens: 512,
+        cached_prompt_tokens: Some(512),
         finish_reason: Some("length".into()),
         server_ttft_ms: None,
         server_tps: None,
@@ -71,6 +71,7 @@ pub(super) fn row(
         requests,
         vacuous,
         cache_uncontrolled: false,
+        cache_cold: false,
         gaps: None,
         energy: None,
     }
@@ -276,42 +277,53 @@ fn the_warm_rule_applies_only_where_the_snapshot_pool_can_hold_the_cell() {
 fn a_requested_warm_path_requires_a_uniform_cache_state() {
     let osl = 128;
     let mut missed = row(4, 100.0, Some(50.0), vec![evidence(128); 4], osl);
-    missed.requests[2].cached_prompt_tokens = 0;
-    missed.cache_uncontrolled = cache_is_uncontrolled(&missed.requests, 1);
+    missed.requests[2].cached_prompt_tokens = Some(0);
+    missed.cache_uncontrolled = cache_state(&missed.requests, true) == CacheState::Mixed;
 
     assert!(missed.cache_uncontrolled);
     assert!(!missed.comparable());
-    assert_eq!(missed.min_cached_prompt(), Some(0));
+    assert_eq!(cache::min_cached_prompt(&missed.requests), Some(0));
     assert_eq!(missed.min_cached_prompt_pct(), Some(0.0));
     assert!(
         evidence_line(512, 4, &missed.requests).contains("cached [512/512,512/512,0/512,512/512]")
     );
 
-    assert!(!cache_is_uncontrolled(&missed.requests, 0));
-    assert!(!cache_is_uncontrolled(&[evidence(128), evidence(128)], 1));
+    assert_eq!(cache_state(&missed.requests, false), CacheState::NotWarmed);
+    assert_eq!(
+        cache_state(&[evidence(128), evidence(128)], true),
+        CacheState::Warm
+    );
 
     // 2026-09-26: `WARM_CACHE_FLOOR` decides which side a request is on
     // (80 of 100 is warm, 79 is not), and only a mixture is uncontrolled, so
     // the boundary is tested through a mixture.
     let mut boundary = evidence(128);
     boundary.prompt_tokens = 100;
-    boundary.cached_prompt_tokens = 80;
+    boundary.cached_prompt_tokens = Some(80);
     let mut cold = boundary.clone();
-    cold.cached_prompt_tokens = 79;
-    assert!(!cache_is_uncontrolled(&[boundary.clone()], 1));
-    assert!(cache_is_uncontrolled(&[boundary.clone(), cold.clone()], 1));
-    assert!(cache_is_uncontrolled(&[cold.clone(), boundary], 1));
+    cold.cached_prompt_tokens = Some(79);
+    assert_eq!(cache_state(&[boundary.clone()], true), CacheState::Warm);
+    assert_eq!(
+        cache_state(&[boundary.clone(), cold.clone()], true),
+        CacheState::Mixed
+    );
+    assert_eq!(
+        cache_state(&[cold.clone(), boundary], true),
+        CacheState::Mixed
+    );
 
-    assert!(!cache_is_uncontrolled(&[cold.clone()], 1));
-    assert!(!cache_is_uncontrolled(
-        &[cold.clone(), cold.clone(), cold],
-        1
-    ));
+    // 2026-10-16: A uniformly cold cell is not uncontrolled; it is labelled
+    // cache-cold (`concurrency_cache_tests.rs`).
+    assert_eq!(cache_state(&[cold.clone()], true), CacheState::Cold);
+    assert_eq!(
+        cache_state(&[cold.clone(), cold.clone(), cold], true),
+        CacheState::Cold
+    );
 
     let mut missing_usage = evidence(128);
     missing_usage.prompt_tokens = 0;
-    missing_usage.cached_prompt_tokens = 0;
-    assert!(cache_is_uncontrolled(&[missing_usage], 1));
+    missing_usage.cached_prompt_tokens = Some(0);
+    assert_eq!(cache_state(&[missing_usage], true), CacheState::Mixed);
 
     let mut b = configured(vec![4], vec![512]);
     b.rows.push(missed);
@@ -368,3 +380,6 @@ fn metrics_map_with_no_comparable_cells_still_reports_evidence() {
 
 #[path = "concurrency_instrument_tests.rs"]
 mod instrument;
+
+#[path = "concurrency_cache_tests.rs"]
+mod cache_state;

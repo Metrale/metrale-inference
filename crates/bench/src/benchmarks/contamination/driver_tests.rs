@@ -109,7 +109,7 @@ fn to_outcome_keeps_errors_as_errors() {
         }],
         finish_reason: Some("tool_calls".into()),
         completion_tokens: 21,
-        cached_prompt_tokens: 13,
+        cached_prompt_tokens: Some(13),
         ..Default::default()
     }));
     match &ok {
@@ -122,7 +122,7 @@ fn to_outcome_keeps_errors_as_errors() {
             );
             assert_eq!(t.finish_reason.as_deref(), Some("tool_calls"));
             assert_eq!(t.completion_tokens, 21);
-            assert_eq!(t.cached_prompt_tokens, 13);
+            assert_eq!(t.cached_prompt_tokens, Some(13));
         }
         RequestOutcome::Error(e) => panic!("a completed request read as an error: {e}"),
     }
