@@ -18,7 +18,7 @@ use super::super::decode_rows_tests::{
     CHUNK64_PREP, CHUNK64_SCAN, CONV_TOKENS, CONV_WINDOW, cfg, layer, seq_state, since,
 };
 use super::super::gate_at::GateAt;
-use super::{CHUNK64, CHUNK64_SLAB, parse_min_rows64};
+use super::{CHUNK64, CHUNK64_SLAB};
 
 fn ptr(l: &MockLaunch, i: usize) -> DevicePtr {
     match &l.args[i] {
@@ -194,16 +194,4 @@ fn rows_past_the_workspace_are_refused() {
             .is_err()
     );
     assert_eq!(gpu.launch_count(), from);
-}
-
-/// 2026-10-12: The lever: unset and `0` off, a floor of at least 64, anything else an error.
-#[test]
-fn the_lever_parses_strictly() {
-    assert_eq!(parse_min_rows64(None), Ok(None));
-    assert_eq!(parse_min_rows64(Some("0")), Ok(None));
-    assert_eq!(parse_min_rows64(Some("64")), Ok(Some(64)));
-    assert_eq!(parse_min_rows64(Some("2048")), Ok(Some(2048)));
-    for bad in ["63", "16", "on", "-4"] {
-        assert!(parse_min_rows64(Some(bad)).is_err(), "{bad}");
-    }
 }

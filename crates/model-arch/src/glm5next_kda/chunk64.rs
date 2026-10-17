@@ -56,28 +56,6 @@ pub const CHUNK64_SCAN_SMEM: u32 = ((3 * CHUNK64 * (CHUNK64_D + 8)
     * 2
     + CHUNK64_D * 4) as u32;
 
-/// 2026-10-12: `METRALE_GLM_KDA_CHUNK64`, read once: `None` when unset or `0`, else the narrowest
-/// prefill sub-chunk the 64-token scan takes. Below [`CHUNK64`], or unparsable, is an error.
-pub fn kda_chunk64_min_rows() -> Result<Option<usize>> {
-    static V: std::sync::OnceLock<Result<Option<usize>, String>> = std::sync::OnceLock::new();
-    V.get_or_init(|| parse_min_rows64(std::env::var("METRALE_GLM_KDA_CHUNK64").ok().as_deref()))
-        .clone()
-        .map_err(anyhow::Error::msg)
-}
-
-/// 2026-10-12: [`kda_chunk64_min_rows`]'s parse, pure.
-pub(crate) fn parse_min_rows64(v: Option<&str>) -> Result<Option<usize>, String> {
-    match v {
-        None | Some("0") => Ok(None),
-        Some(s) => match s.parse::<usize>() {
-            Ok(r) if r >= CHUNK64 => Ok(Some(r)),
-            _ => Err(format!(
-                "METRALE_GLM_KDA_CHUNK64={s:?}: expected 0 or a row count of at least {CHUNK64}"
-            )),
-        },
-    }
-}
-
 impl Glm5NextKdaLayer {
     /// 2026-10-12: Whether this target and config can run [`Self::stateful_chunk64`]: the
     /// per-sequence conv kernels, both chunk kernels, and head_dim 128.
@@ -92,7 +70,7 @@ impl Glm5NextKdaLayer {
     }
 
     /// 2026-10-12: Whether `k` rows of one sequence at floor `min_rows`
-    /// ([`kda_chunk64_min_rows`]) take [`Self::stateful_chunk64`] where no per-row snapshot is
+    /// (`levers.kda.chunk64`) take [`Self::stateful_chunk64`] where no per-row snapshot is
     /// asked for: the floor is set and reached, and [`Self::chunk64_ready`] holds. `decode_k_modes`
     /// and the prefill routing in `glm5next_layer` share this one predicate.
     pub fn chunk64_applies(&self, k: usize, min_rows: Option<usize>) -> bool {

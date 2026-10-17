@@ -43,6 +43,7 @@ mod decode_rows_tests;
 mod gate_at;
 mod gates_fused;
 mod kernels;
+pub mod levers;
 mod prefill;
 mod replay;
 mod rows;
@@ -73,64 +74,7 @@ const KDA_V_PER_BLOCK: usize = 32;
 /// launches the 2R+2W kernel instead.
 const KDA_SMEM_BUDGET: usize = 48 * 1024;
 
-/// 2026-10-09: `METRALE_GLM_KDA_ROWS_REG=1` runs the batched decode's KDA recurrence on the
-/// register-resident rows kernel; off until a measurement shows it faster. Read once.
-fn kda_rows_reg() -> bool {
-    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *F.get_or_init(|| std::env::var("METRALE_GLM_KDA_ROWS_REG").as_deref() == Ok("1"))
-}
-
-/// 2026-10-09: `METRALE_GLM_KDA_SEQ_TOKENS=1` steps the rows of one sequence that need no
-/// per-row snapshot (a prefill sub-chunk, a replay-mode verify) in one conv and one recurrent
-/// launch for all of them (`seq_tokens.rs`) instead of two launches per row; same bits. Off
-/// until measured end to end. Read once.
-fn kda_seq_tokens() -> bool {
-    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *F.get_or_init(|| std::env::var("METRALE_GLM_KDA_SEQ_TOKENS").as_deref() == Ok("1"))
-}
-
-/// 2026-10-11: `METRALE_GLM_KDA_VERIFY_TOKENS=1`: a K-row verify (2..=4 rows, one intermediate
-/// state per row but the last) steps its rows through the per-sequence token kernels too
-/// (`stateful_tokens_snap`): one conv launch and one recurrent launch that stores each
-/// intermediate as it passes, instead of a conv, a recurrent step and a state copy per row.
-/// The recurrent state is read once instead of once per row and never copied; at K=2 that is
-/// ~4.3 MB less traffic per KDA layer per rank at TP=3 (34 layers). Same bits. Off until
-/// measured end to end. Read once.
-fn kda_verify_tokens() -> bool {
-    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *F.get_or_init(|| std::env::var("METRALE_GLM_KDA_VERIFY_TOKENS").as_deref() == Ok("1"))
-}
-
-/// 2026-10-09: `METRALE_GLM_KDA_SEQ_ROWS`: `1` steps the batched decode and verify through the
-/// rows kernels (`rows.rs`), `decode` only the batched decode; unset (the default) steps row by
-/// row. On GB10 at C16 the verify arm measured ~24 us a row against ~8.6 us for the
-/// single-row launches: row by row, a verify steps one sequence's 1.4 MB state through its
-/// rows back to back, while L2 still holds it; row `t` of sixteen sequences (~23 MB) does not
-/// stay resident. A decode has one row per sequence and no such reuse. Read once.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum KdaSeqRows {
-    Off,
-    DecodeOnly,
-    All,
-}
-
-pub(crate) fn kda_seq_rows() -> KdaSeqRows {
-    static F: std::sync::OnceLock<KdaSeqRows> = std::sync::OnceLock::new();
-    *F.get_or_init(
-        || match std::env::var("METRALE_GLM_KDA_SEQ_ROWS").as_deref() {
-            Ok("1") => KdaSeqRows::All,
-            Ok("decode") => KdaSeqRows::DecodeOnly,
-            _ => KdaSeqRows::Off,
-        },
-    )
-}
-
-/// 2026-09-25: `METRALE_GLM_KDA_NO_SMEM=1` selects the 2R+2W recurrent kernel. Read once per
-/// process; it is checked on every decode row.
-fn kda_no_smem() -> bool {
-    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *F.get_or_init(|| std::env::var("METRALE_GLM_KDA_NO_SMEM").as_deref() == Ok("1"))
-}
+pub use levers::{KdaLevers, KdaSeqRows};
 
 /// 2026-09-25: The per-sequence state a KDA layer carries. The kernels update both buffers in place.
 ///

@@ -129,8 +129,8 @@ pub(crate) fn check_at_load(k: &crate::glm5next_mlp::Glm5NextMlpKernels) -> Resu
             && k.w4a4_expert_rows_grouped() == usize::MAX,
         dsa_batch_qidx: k.levers.dsa_batch_qidx,
         kda_chunked: k.levers.kda_chunk_prefill
-            || crate::glm5next_kda::chunk16::kda_chunk_scan_min_rows()?.is_some()
-            || crate::glm5next_kda::chunk64::kda_chunk64_min_rows()?.is_some(),
+            || k.levers.kda.chunk_scan.is_some()
+            || k.levers.kda.chunk64.is_some(),
     };
     check_levers(true, l).map_err(anyhow::Error::msg)
 }

@@ -31,37 +31,11 @@ pub(crate) enum GateAt {
     Prepare,
 }
 
-/// 2026-10-14: `METRALE_GLM_KDA_GATE_IN_PREPARE`, read once: `1` moves the gate, unset or `0`
-/// does not.
-pub(crate) fn kda_gate_in_prepare() -> Result<bool> {
-    static V: std::sync::OnceLock<Result<bool, String>> = std::sync::OnceLock::new();
-    V.get_or_init(|| {
-        parse_gate_in_prepare(
-            std::env::var("METRALE_GLM_KDA_GATE_IN_PREPARE")
-                .ok()
-                .as_deref(),
-        )
-    })
-    .clone()
-    .map_err(anyhow::Error::msg)
-}
-
-/// 2026-10-14: [`kda_gate_in_prepare`]'s parse, pure.
-pub(crate) fn parse_gate_in_prepare(v: Option<&str>) -> Result<bool, String> {
-    match v {
-        None | Some("0") => Ok(false),
-        Some("1") => Ok(true),
-        Some(s) => Err(format!(
-            "METRALE_GLM_KDA_GATE_IN_PREPARE={s:?}: expected 0 or 1"
-        )),
-    }
-}
-
 impl Glm5NextKdaLayer {
     /// 2026-10-14: Where a forward on the 64-token scan (`chunked64`) computes the gate: in the
     /// prepare when the lever is set (an error without the kernels), else in the front end.
     pub(crate) fn gate_at_for(&self, chunked64: bool) -> Result<GateAt> {
-        if !chunked64 || !kda_gate_in_prepare()? {
+        if !chunked64 || !self.levers.kda.gate_in_prepare {
             return Ok(GateAt::Kernel);
         }
         self.gate_in_prepare_check()?;
@@ -84,8 +58,7 @@ impl Glm5NextKdaLayer {
     /// lever is set and the 64-token scan applies. `record_verify_rows` refuses such a forward
     /// (it copies `ws.gate`).
     pub(crate) fn gate_in_prepare_skips_gate(&self, k: usize) -> Result<bool> {
-        Ok(kda_gate_in_prepare()?
-            && self.chunk64_applies(k, super::chunk64::kda_chunk64_min_rows()?))
+        Ok(self.levers.kda.gate_in_prepare && self.chunk64_applies(k, self.levers.kda.chunk64))
     }
 
     /// 2026-10-14: f_b (head_dim -> heads * head_dim) into `ws.g_raw`, then, at

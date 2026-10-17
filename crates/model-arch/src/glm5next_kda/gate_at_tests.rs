@@ -17,7 +17,7 @@ use super::super::decode_rows_tests::{
     seq_state, since,
 };
 use super::super::{Glm5NextKdaLayer, Glm5NextKdaWorkspace, Pack};
-use super::{GateAt, parse_gate_in_prepare};
+use super::GateAt;
 
 type Key = (u64, [u32; 3], [u32; 3], u32, Vec<MockArg>);
 
@@ -223,15 +223,4 @@ fn prepare_refuses_without_the_kernels_before_any_launch() {
 fn only_the_64_token_scan_moves_the_gate() {
     let gpu = MockGpuBackend::new();
     assert_eq!(layer(&gpu).gate_at_for(false).unwrap(), GateAt::Kernel);
-}
-
-/// 2026-10-14: The lever: unset and `0` off, `1` on, anything else an error.
-#[test]
-fn the_lever_parses_strictly() {
-    assert_eq!(parse_gate_in_prepare(None), Ok(false));
-    assert_eq!(parse_gate_in_prepare(Some("0")), Ok(false));
-    assert_eq!(parse_gate_in_prepare(Some("1")), Ok(true));
-    for bad in ["", "on", "true", "2", " 1"] {
-        assert!(parse_gate_in_prepare(Some(bad)).is_err(), "{bad:?}");
-    }
 }

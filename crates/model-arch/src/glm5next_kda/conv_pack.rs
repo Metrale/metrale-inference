@@ -32,23 +32,6 @@ pub(crate) enum Pack {
     InConv,
 }
 
-/// 2026-10-13: `METRALE_GLM_KDA_CONV_PACK`, read once: `1` fuses, unset or `0` does not.
-fn kda_conv_pack() -> Result<bool> {
-    static V: std::sync::OnceLock<Result<bool, String>> = std::sync::OnceLock::new();
-    V.get_or_init(|| parse_conv_pack(std::env::var("METRALE_GLM_KDA_CONV_PACK").ok().as_deref()))
-        .clone()
-        .map_err(anyhow::Error::msg)
-}
-
-/// 2026-10-13: [`kda_conv_pack`]'s parse, pure.
-pub(crate) fn parse_conv_pack(v: Option<&str>) -> Result<bool, String> {
-    match v {
-        None | Some("0") => Ok(false),
-        Some("1") => Ok(true),
-        Some(s) => Err(format!("METRALE_GLM_KDA_CONV_PACK={s:?}: expected 0 or 1")),
-    }
-}
-
 /// 2026-10-13: Grid y of the fused launch: enough row spans that `grid_x` channel blocks fill
 /// `sms` SMs at [`CONV_PACK_BLOCKS_PER_SM`]; at least one.
 pub(crate) fn conv_pack_spans(sms: u32, grid_x: u32) -> u32 {
@@ -62,7 +45,7 @@ impl Glm5NextKdaLayer {
     /// `conv_tokens_follows`, else the per-row or chunked-prefill conv (which read the pack).
     /// Refuses the lever without the fused kernel or at a conv width it does not take.
     pub(super) fn pack_for(&self, conv_tokens_follows: bool) -> Result<Pack> {
-        if !conv_tokens_follows || !kda_conv_pack()? {
+        if !conv_tokens_follows || !self.levers.kda.conv_pack {
             return Ok(Pack::InFrontEnd);
         }
         if self.kernels.seq.conv_tokens_parts.0 == 0 || !(1..=4).contains(&self.cfg.conv_kernel) {

@@ -29,31 +29,6 @@ use super::*;
 /// 2026-10-14: The conv width `kda_chunk64_prepare_conv` is instantiated for.
 pub(crate) const CHUNK64_CONV_WIDTH: usize = 4;
 
-/// 2026-10-14: `METRALE_GLM_KDA_CHUNK64_CONV`, read once: `1` fuses, unset or `0` does not.
-pub(crate) fn kda_chunk64_conv() -> Result<bool> {
-    static V: std::sync::OnceLock<Result<bool, String>> = std::sync::OnceLock::new();
-    V.get_or_init(|| {
-        parse_chunk64_conv(
-            std::env::var("METRALE_GLM_KDA_CHUNK64_CONV")
-                .ok()
-                .as_deref(),
-        )
-    })
-    .clone()
-    .map_err(anyhow::Error::msg)
-}
-
-/// 2026-10-14: [`kda_chunk64_conv`]'s parse, pure.
-pub(crate) fn parse_chunk64_conv(v: Option<&str>) -> Result<bool, String> {
-    match v {
-        None | Some("0") => Ok(false),
-        Some("1") => Ok(true),
-        Some(s) => Err(format!(
-            "METRALE_GLM_KDA_CHUNK64_CONV={s:?}: expected 0 or 1"
-        )),
-    }
-}
-
 /// 2026-10-14: The shapes the fused tile takes, pure: `None` when it takes them, else why not.
 pub(crate) fn chunk64_conv_shape_refusal(
     d_conv: usize,
@@ -79,7 +54,7 @@ impl Glm5NextKdaLayer {
     /// 2026-10-14: Whether the 64-token scan takes the fused conv: the lever is set and the
     /// kernels and shape allow it. The lever set where they do not is an error.
     pub(crate) fn chunk64_conv_on(&self) -> Result<bool> {
-        if !kda_chunk64_conv()? {
+        if !self.levers.kda.chunk64_conv {
             return Ok(false);
         }
         self.chunk64_conv_check()?;
@@ -105,8 +80,8 @@ impl Glm5NextKdaLayer {
     /// the 64-token scan applies with the fused conv, and the pack would have been the conv's.
     /// `record_verify_rows` refuses such a forward (it copies `qkv_proj`).
     pub(crate) fn chunk64_conv_skips_pack(&self, k: usize) -> Result<bool> {
-        Ok(kda_chunk64_conv()?
-            && self.chunk64_applies(k, kda_chunk64_min_rows()?)
+        Ok(self.levers.kda.chunk64_conv
+            && self.chunk64_applies(k, self.levers.kda.chunk64)
             && self.pack_for(true)? == Pack::InConv)
     }
 

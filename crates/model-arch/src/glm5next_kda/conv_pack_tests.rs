@@ -15,7 +15,7 @@ use super::super::decode_rows_tests::{
     CONV_TOKENS, CONV_TOKENS_PARTS, CONV_WINDOW, cfg, layer, seq_state, since,
 };
 use super::super::{GateAt, Glm5NextKdaWorkspace, Pack};
-use super::{conv_pack_spans, parse_conv_pack};
+use super::conv_pack_spans;
 
 /// 2026-10-13: `kda_pack_qkv_bf16`'s mock handle in `decode_rows_tests::layer`.
 const PACK: u64 = 0x312;
@@ -32,18 +32,6 @@ fn key(l: &MockLaunch) -> Key {
 
 fn funcs(l: &[MockLaunch]) -> Vec<u64> {
     l.iter().map(|x| x.func).collect()
-}
-
-/// 2026-10-13: Only `0`, `1` or unset are accepted; a typo fails instead of silently serving
-/// the unfused path.
-#[test]
-fn the_lever_takes_only_zero_or_one() {
-    assert_eq!(parse_conv_pack(None), Ok(false));
-    assert_eq!(parse_conv_pack(Some("0")), Ok(false));
-    assert_eq!(parse_conv_pack(Some("1")), Ok(true));
-    for bad in ["", "on", "true", "2", " 1"] {
-        assert!(parse_conv_pack(Some(bad)).is_err(), "{bad:?}");
-    }
 }
 
 /// 2026-10-13: GLM-5.3 at TP=3 (conv_dim 8448, 33 channel blocks) on 48 SMs runs six row

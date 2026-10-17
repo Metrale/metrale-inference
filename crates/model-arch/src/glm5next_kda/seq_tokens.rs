@@ -208,16 +208,6 @@ pub(super) fn snap_tokens_apply(k: usize, snapshots: usize) -> bool {
 /// head's 128 columns run as four blocks.
 const SEQ_VB: usize = 32;
 
-/// 2026-10-10: `METRALE_GLM_KDA_ROW_REG=1` runs each single-row recurrent step
-/// (`stateful_row`: the C1 decode and every per-row walk) on `kda_recurrent_decode_bf16_seq_reg`
-/// at one token instead of `kda_recurrent_decode_bf16_smem`: the same expressions in the same
-/// order, with all of a column's state loads in flight at once. Off until measured end to end.
-/// Read once.
-pub(super) fn kda_row_reg() -> bool {
-    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *F.get_or_init(|| std::env::var("METRALE_GLM_KDA_ROW_REG").as_deref() == Ok("1"))
-}
-
 impl Glm5NextKdaLayer {
     /// 2026-10-10: One recurrent step of the row buffers `io` on `state.recurrent` with
     /// `kda_recurrent_decode_bf16_seq_reg` at T = 1, as [`Self::stateful_tokens`] launches it for

@@ -19,7 +19,7 @@ use super::super::super::decode_rows_tests::{
 };
 use super::super::super::gate_at::GateAt;
 use super::super::{CHUNK64_PREP_SMEM, CHUNK64_SCAN_SMEM};
-use super::{chunk64_conv_shape_refusal, parse_chunk64_conv};
+use super::chunk64_conv_shape_refusal;
 
 fn ptr(l: &MockLaunch, i: usize) -> DevicePtr {
     match &l.args[i] {
@@ -238,16 +238,5 @@ fn the_shape_check_takes_only_the_tile_shapes() {
             chunk64_conv_shape_refusal(d_conv, hd, qk, part).is_some(),
             "{d_conv} {hd} {qk} {part}"
         );
-    }
-}
-
-/// 2026-10-14: The lever: unset and `0` off, `1` on, anything else an error.
-#[test]
-fn the_lever_parses_strictly() {
-    assert_eq!(parse_chunk64_conv(None), Ok(false));
-    assert_eq!(parse_chunk64_conv(Some("0")), Ok(false));
-    assert_eq!(parse_chunk64_conv(Some("1")), Ok(true));
-    for bad in ["on", "true", "2", ""] {
-        assert!(parse_chunk64_conv(Some(bad)).is_err(), "{bad}");
     }
 }

@@ -14,7 +14,6 @@ use super::super::decode_rows_tests::{
     CHUNK16_PREP, CHUNK16_SCAN, CONV_TOKENS, CONV_WINDOW, RECUR_SEQ, cfg, layer, seq_state, since,
 };
 use super::super::{Glm5NextKdaWorkspace, KdaSeqState, Pack};
-use super::parse_min_rows;
 
 fn ptr(l: &MockLaunch, i: usize) -> DevicePtr {
     match &l.args[i] {
@@ -161,16 +160,4 @@ fn narrow_unset_or_snapshotted_rows_keep_the_token_walk() {
     }
     let (l, _ws, _st) = stateful(15, Some(16), false);
     assert!(l.iter().any(|x| x.func == RECUR_SEQ));
-}
-
-/// 2026-10-10: The lever: unset and `0` off, a floor of at least 16, anything else an error.
-#[test]
-fn the_lever_parses_strictly() {
-    assert_eq!(parse_min_rows(None), Ok(None));
-    assert_eq!(parse_min_rows(Some("0")), Ok(None));
-    assert_eq!(parse_min_rows(Some("16")), Ok(Some(16)));
-    assert_eq!(parse_min_rows(Some("512")), Ok(Some(512)));
-    for bad in ["15", "1", "on", "-4"] {
-        assert!(parse_min_rows(Some(bad)).is_err(), "{bad}");
-    }
 }

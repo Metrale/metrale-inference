@@ -21,12 +21,6 @@ use metrale_model_layers::weight_map::Fp8Weight;
 
 use super::{Glm5NextKdaLayer, Glm5NextKdaWorkspace};
 
-/// 2026-10-10: `METRALE_GLM_KDA_GATES_FUSED=1`. Off until measured end to end. Read once.
-fn kda_gates_fused() -> bool {
-    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *F.get_or_init(|| std::env::var("METRALE_GLM_KDA_GATES_FUSED").as_deref() == Ok("1"))
-}
-
 /// 2026-10-10: The contract width the fused kernel is compiled for (the K <= 128 wxay entry).
 const GATES_K: usize = 128;
 /// 2026-10-10: Output rows per warp tile and warps per block of `kda_gates_w8a8_k128`.
@@ -44,7 +38,7 @@ impl Glm5NextKdaLayer {
         ws: &Glm5NextKdaWorkspace,
         stream: u64,
     ) -> Result<bool> {
-        if !kda_gates_fused() || t != 1 {
+        if !self.levers.kda.gates_fused || t != 1 {
             return Ok(false);
         }
         let weights = (

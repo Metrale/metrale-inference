@@ -28,29 +28,6 @@ pub const CHUNK16_D: usize = 128;
 const CHUNK16_VB: usize = 32;
 const CHUNK16_SCAN_THREADS: u32 = 256;
 
-/// 2026-10-10: `METRALE_GLM_KDA_CHUNK_SCAN`, read once: `None` when unset or `0`, else the
-/// narrowest prefill sub-chunk the chunked scan takes. Below [`CHUNK16`], or unparsable, is an
-/// error.
-pub fn kda_chunk_scan_min_rows() -> Result<Option<usize>> {
-    static V: std::sync::OnceLock<Result<Option<usize>, String>> = std::sync::OnceLock::new();
-    V.get_or_init(|| parse_min_rows(std::env::var("METRALE_GLM_KDA_CHUNK_SCAN").ok().as_deref()))
-        .clone()
-        .map_err(anyhow::Error::msg)
-}
-
-/// 2026-10-10: [`kda_chunk_scan_min_rows`]'s parse, pure.
-pub(crate) fn parse_min_rows(v: Option<&str>) -> Result<Option<usize>, String> {
-    match v {
-        None | Some("0") => Ok(None),
-        Some(s) => match s.parse::<usize>() {
-            Ok(r) if r >= CHUNK16 => Ok(Some(r)),
-            _ => Err(format!(
-                "METRALE_GLM_KDA_CHUNK_SCAN={s:?}: expected 0 or a row count of at least {CHUNK16}"
-            )),
-        },
-    }
-}
-
 impl Glm5NextKdaLayer {
     /// 2026-10-10: Whether this target and config can run [`Self::stateful_chunk16`]: the
     /// per-sequence conv kernels, both chunk kernels, and head_dim 128.

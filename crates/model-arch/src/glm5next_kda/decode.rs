@@ -132,8 +132,8 @@ impl Glm5NextKdaLayer {
         (self.kernels.recurrent_smem.0 != 0
             && d.is_multiple_of(vpb)
             && smem <= KDA_SMEM_BUDGET
-            && !kda_no_smem())
-        .then_some((vpb, smem))
+            && !self.levers.kda.no_smem)
+            .then_some((vpb, smem))
     }
 
     /// 2026-10-09: One recurrent step of the row buffers `io` on `state.recurrent`, the second half of
@@ -145,7 +145,7 @@ impl Glm5NextKdaLayer {
         state: &KdaSeqState,
         stream: u64,
     ) -> Result<()> {
-        if super::seq_tokens::kda_row_reg() {
+        if self.levers.kda.row_reg {
             return self.recurrent_row_reg(gpu, io, state, stream);
         }
         let c = &self.cfg;
@@ -237,7 +237,7 @@ impl Glm5NextKdaLayer {
             ws,
             snapshots,
             stream,
-            kda_seq_tokens(),
+            self.levers.kda.seq_tokens,
         )
     }
 
@@ -266,8 +266,8 @@ impl Glm5NextKdaLayer {
             snapshots,
             stream,
             tokens,
-            super::chunk16::kda_chunk_scan_min_rows()?,
-            super::chunk64::kda_chunk64_min_rows()?,
+            self.levers.kda.chunk_scan,
+            self.levers.kda.chunk64,
         )
     }
 
@@ -300,7 +300,7 @@ impl Glm5NextKdaLayer {
         let chunked = mode != ScanMode::None;
         let tokens = !chunked && tokens && k > 1 && snapshots.is_empty() && self.seq_tokens_ready();
         let snap_tokens = !chunked
-            && super::kda_verify_tokens()
+            && self.levers.kda.verify_tokens
             && super::seq_tokens::snap_tokens_apply(k, snapshots.len())
             && self.seq_tokens_ready()
             && self.kernels.seq.recurrent_snap.0 != 0;

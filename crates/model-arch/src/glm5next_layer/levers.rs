@@ -132,6 +132,8 @@ pub struct GlmLevers {
     pub dsa_alloc_per_step: bool,
     /// 2026-10-17: The mHC and SP-mHC levers (`crate::glm5next_mhc_levers`).
     pub mhc: crate::glm5next_mhc_levers::MhcLevers,
+    /// 2026-10-17: The KDA mixer levers (`crate::glm5next_kda::levers`).
+    pub kda: crate::glm5next_kda::KdaLevers,
 }
 
 impl GlmLevers {
@@ -165,6 +167,7 @@ impl GlmLevers {
             dsa_select_rows: s.runtime.dsa_select_rows,
             dsa_alloc_per_step: sc.glm_dsa_alloc_per_step,
             mhc: crate::glm5next_mhc_levers::MhcLevers::from_settings(s)?,
+            kda: crate::glm5next_kda::KdaLevers::from_settings(s)?,
         })
     }
 

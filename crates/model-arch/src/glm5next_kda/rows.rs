@@ -103,7 +103,7 @@ impl Glm5NextKdaLayer {
     ) -> Result<()> {
         // 2026-10-09: A group with one row per sequence is a batched decode.
         let decode = seqs.iter().all(|&(_, k)| k <= 1);
-        let use_rows = match kda_seq_rows() {
+        let use_rows = match self.levers.kda.seq_rows {
             KdaSeqRows::All => true,
             KdaSeqRows::DecodeOnly => decode,
             KdaSeqRows::Off => false,
@@ -204,7 +204,8 @@ impl Glm5NextKdaLayer {
         let c = &self.cfg;
         let (qkv, cd, d) = (c.qkv_dim(), c.conv_dim(), c.head_dim);
         let io = RowIo::workspace(c, ws, 0);
-        let reg = self.kernels.recurrent_rows_reg.0 != 0 && d == KDA_REG_D && kda_rows_reg();
+        let reg =
+            self.kernels.recurrent_rows_reg.0 != 0 && d == KDA_REG_D && self.levers.kda.rows_reg;
         let mut launch = if reg {
             KernelLaunch::new(gpu, self.kernels.recurrent_rows_reg)
                 .grid([c.heads as u32, 1, rows.len() as u32])

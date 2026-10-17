@@ -83,8 +83,7 @@ impl Glm5NextLayer {
                     && k > 1
                     && snaps.is_empty()
                     && self.levers.kda_chunk_prefill
-                    && !layer
-                        .chunk64_applies(k, crate::glm5next_kda::chunk64::kda_chunk64_min_rows()?)
+                    && !layer.chunk64_applies(k, self.levers.kda.chunk64)
                 {
                     layer.prefill(gpu, normed, k, kda, ws, stream)?;
                 } else {
