@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/core",
+    "crates/error",
     "crates/config",
     "crates/closure",
     "crates/circuit",
@@ -158,6 +159,7 @@ metrale-closure = { path = "crates/closure", version = "1.0.0-beta-preview", def
 metrale-comm = { path = "crates/comm", version = "1.0.0-beta-preview", default-features = false }
 metrale-config = { path = "crates/config", version = "1.0.0-beta-preview", default-features = false }
 metrale-core = { path = "crates/core", version = "1.0.0-beta-preview", default-features = false }
+metrale-error = { path = "crates/error", version = "1.0.0-beta-preview", default-features = false }
 metrale-governance = { path = "crates/governance", version = "1.0.0-beta-preview", default-features = false }
 metrale-gpu-runtime = { path = "crates/gpu-runtime", version = "1.0.0-beta-preview", default-features = false }
 metrale-gpu-sys = { path = "crates/gpu-sys", version = "1.0.0-beta-preview", default-features = false }

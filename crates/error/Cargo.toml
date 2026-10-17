@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "metrale-error"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metrale Engine: the CERF error registry (u16 ErrorCode, registered forms, pointer-sized Error). no_std + alloc, no dependencies."
+
+# 2026-10-17: No features. NSCC forbids `cfg(feature = "std")` in a core crate, so the optional
+# `From<std::io::Error>` is not offered here; a std host converts with `error!(ErrorCode::Io, ..)`.
+[features]
+
+[dependencies]
+
+[lints]
+workspace = true
