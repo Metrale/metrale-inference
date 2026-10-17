@@ -6,7 +6,6 @@ metrale-circuit->const-oid
 metrale-circuit->hybrid-array
 metrale-circuit->indexmap
 metrale-circuit->metrale-closure
-metrale-circuit->metrale-kernel-tree
 metrale-circuit->toml
 metrale-circuit->unicode-width
 metrale-circuit->zmij

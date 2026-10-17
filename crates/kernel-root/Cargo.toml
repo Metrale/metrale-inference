@@ -1,0 +1,27 @@
+[package]
+name = "metrale-kernel-root"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Locates the kernels/ tree (manifests and sources) for the Metrale Engine build scripts."
+# 2026-10-17: Hands the tree's root to direct dependents' build scripts as
+# `DEP_METRALE_KERNEL_TREE_ROOT` (metrale-kernels, metrale-kernel-tree, metrale-gpu-runtime,
+# metrale-storage, metrale-circuit, metrale-target-defaults, metrale-model-layers, met). The key
+# keeps the name it had on metrale-kernel-tree, so dependents read the same variable.
+links = "metrale_kernel_tree"
+
+# 2026-10-17: Split from metrale-kernel-tree, which embeds the tree's bytes and therefore rebuilds
+# on every edit under kernels/. This crate carries the tree (the `kernels` symlink, followed by
+# `cargo package`) but compiles nothing from it and reruns only when its build script changes, so
+# a dependent that needs only the location is not rebuilt by a kernel edit (cargo has no early
+# cutoff: a rebuilt dependency always rebuilds its dependents).
+
+[package.metadata.metrale]
+# 2026-10-17: Pure: an empty `no_std` library with no dependencies that builds for both wasm32
+# targets (its build script runs on the host). `core`, not `device`, so the `core` crates whose
+# build scripts need the location (metrale-circuit) may depend on it.
+role = "core"
+
+[lints]
+workspace = true

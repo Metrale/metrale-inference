@@ -9,6 +9,7 @@ members = [
     "crates/governance",
     "crates/kernels",
     "crates/target-defaults",
+    "crates/kernel-root",
     "crates/kernel-tree",
     "crates/gpu-sys",
     "crates/telemetry",
@@ -174,6 +175,7 @@ metrale-gpu-sys = { path = "crates/gpu-sys", version = "1.0.0-beta-preview", def
 metrale-grammar = { path = "crates/grammar", version = "1.0.0-beta-preview", default-features = false }
 metrale-io-host-mem = { path = "crates/io-hosts/mem", version = "1.0.0-beta-preview", default-features = false }
 metrale-io-host-std = { path = "crates/io-hosts/std", version = "1.0.0-beta-preview", default-features = false }
+metrale-kernel-root = { path = "crates/kernel-root", version = "1.0.0-beta-preview", default-features = false }
 metrale-kernel-tree = { path = "crates/kernel-tree", version = "1.0.0-beta-preview", default-features = false }
 metrale-kernels = { path = "crates/kernels", version = "1.0.0-beta-preview", default-features = false }
 metrale-model-arch = { path = "crates/model-arch", version = "1.0.0-beta-preview", default-features = false }

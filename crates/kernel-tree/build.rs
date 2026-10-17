@@ -31,27 +31,14 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
 }
 
 fn main() {
-    let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-    // 2026-10-17: The tree is `<crate>/kernels`: a directory in the published crate, and in a
-    // checkout the committed `kernels -> ../../kernels` symlink, which canonicalizes to the
-    // repository's own kernels/. A checkout made without symlinks (git `core.symlinks=false`
-    // leaves the link a plain file) names the repository's directly. The root is the tree's
-    // parent, so the packed paths start at `kernels/` and the digest is the same in all three.
-    let linked = manifest.join("kernels");
-    let kernels = if linked.is_dir() {
-        linked
-    } else {
-        manifest.join("../../kernels")
-    }
-    .canonicalize()
-    .expect("kernels/");
-    let root = kernels
-        .parent()
-        .expect("kernels/ has a parent")
-        .to_path_buf();
-    // 2026-10-17: Direct dependents' build scripts read the tree from here as
-    // `DEP_METRALE_KERNEL_TREE_ROOT` (the `links` key), so a published crate needs no repository.
-    println!("cargo:root={}", root.display());
+    // 2026-10-17: metrale-kernel-root's `links` metadata names the directory holding `kernels/`
+    // (the repository root in a checkout, that crate's own directory once published), so the
+    // packed paths start at `kernels/` and the digest is the same in both.
+    let root = PathBuf::from(
+        std::env::var("DEP_METRALE_KERNEL_TREE_ROOT")
+            .expect("DEP_METRALE_KERNEL_TREE_ROOT: metrale-kernel-root is a dependency"),
+    );
+    let kernels = root.join("kernels");
     println!("cargo:rerun-if-changed={}", kernels.display());
     let mut files = Vec::new();
     walk(&kernels, &mut files);

@@ -5,10 +5,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "The repository's kernels/ manifests and sources, embedded at build time."
-# 2026-10-17: Hands the tree's root to direct dependents' build scripts as
-# `DEP_METRALE_KERNEL_TREE_ROOT` (metrale-kernels, metrale-gpu-runtime, metrale-storage) and, through
-# their build scripts, to `include_str!` sites (metrale-model-layers, met).
-links = "metrale_kernel_tree"
+# 2026-10-17: The tree's location (`DEP_METRALE_KERNEL_TREE_ROOT`) comes from metrale-kernel-root,
+# which also carries the tree once published. This crate embeds the bytes, so it rebuilds on every
+# edit under kernels/; only `met` depends on it, and crates that need only the location depend on
+# metrale-kernel-root instead.
 
 # 2026-10-02: `met serve` plans its memory with `met circuit memory`'s own model, which reads
 # kernels/ (DEVICES.toml, the circuits, COPIES.toml, a class's HARDWARE.toml, KERNEL.toml,
@@ -17,6 +17,8 @@ links = "metrale_kernel_tree"
 # per content hash. A crate of its own, so an edit under kernels/ recompiles only this one.
 
 [dependencies]
+# 2026-10-17: Its `links` metadata (`DEP_METRALE_KERNEL_TREE_ROOT`) locates kernels/ for build.rs.
+metrale-kernel-root = { workspace = true }
 anyhow = { workspace = true, features = ["std"] }
 flate2 = { workspace = true, features = ["rust_backend", "runtime_detection"] }
 

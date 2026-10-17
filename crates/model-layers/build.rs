@@ -10,9 +10,9 @@
 
 fn main() {
     // 2026-10-17: `circuit_exec::sources` embeds kernels/ manifests through this root (see
-    // metrale-kernel-tree's `links`), so the published crate needs no repository.
+    // metrale-kernel-root's `links`), so the published crate needs no repository.
     let root = std::env::var("DEP_METRALE_KERNEL_TREE_ROOT")
-        .expect("DEP_METRALE_KERNEL_TREE_ROOT: metrale-kernel-tree is a dependency");
+        .expect("DEP_METRALE_KERNEL_TREE_ROOT: metrale-kernel-root is a dependency");
     println!("cargo:rustc-env=METRALE_KERNEL_TREE_ROOT={root}");
     println!("cargo:rerun-if-env-changed=METRALE_TARGET_HW");
     // 2026-09-25: `metrale_scale` is set for every `METRALE_TARGET_HW` that starts

@@ -12,7 +12,7 @@
 use anyhow::{Result, anyhow, bail};
 use metrale_circuit::{ArchShape, Instance, PrecisionSpec, Sources};
 
-/// 2026-10-17: A file under kernels/, read from metrale-kernel-tree's root (handed over by
+/// 2026-10-17: A file under kernels/, read from metrale-kernel-root's root (handed over by
 /// build.rs), so the published crate embeds the same texts as a checkout.
 macro_rules! kernel_file {
     ($path:literal) => {

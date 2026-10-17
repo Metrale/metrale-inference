@@ -41,6 +41,8 @@ metrale-grammar = { workspace = true }
 metrale-kernels = { workspace = true }
 metrale-model-arch = { workspace = true }
 metrale-kernel-tree = { workspace = true }
+# 2026-10-17: Its `links` metadata (`DEP_METRALE_KERNEL_TREE_ROOT`) locates kernels/ for build.rs.
+metrale-kernel-root = { workspace = true }
 metrale-model-engine = { workspace = true }
 metrale-model-layers = { workspace = true }
 metrale-model-weights = { workspace = true }

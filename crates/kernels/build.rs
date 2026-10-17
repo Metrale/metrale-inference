@@ -32,12 +32,12 @@ struct CompileJob {
 
 fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
-    // 2026-10-17: The directory holding `kernels/`, from metrale-kernel-tree's `links`
+    // 2026-10-17: The directory holding `kernels/`, from metrale-kernel-root's `links`
     // metadata: the repository root in a checkout, that crate's own directory once published.
     // Resolved before the skip branch because `target_defaults_literal` runs on both paths.
     let workspace_root_owned = PathBuf::from(
         env::var("DEP_METRALE_KERNEL_TREE_ROOT")
-            .expect("DEP_METRALE_KERNEL_TREE_ROOT: metrale-kernel-tree is a dependency"),
+            .expect("DEP_METRALE_KERNEL_TREE_ROOT: metrale-kernel-root is a dependency"),
     );
 
     println!("cargo:rerun-if-env-changed=METRALE_SKIP_BUILD");

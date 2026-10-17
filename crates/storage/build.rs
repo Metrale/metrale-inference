@@ -172,11 +172,11 @@ fn resolve_predictor_arch() -> String {
         return explicit;
     }
     let hw = std::env::var("METRALE_TARGET_HW").unwrap_or_else(|_| "gb10".to_string());
-    // 2026-10-17: metrale-kernel-tree's `links` metadata names the directory holding `kernels/`:
+    // 2026-10-17: metrale-kernel-root's `links` metadata names the directory holding `kernels/`:
     // the repository root in a checkout, that crate's own directory once published.
     let hardware_toml = std::path::PathBuf::from(
         std::env::var("DEP_METRALE_KERNEL_TREE_ROOT")
-            .expect("DEP_METRALE_KERNEL_TREE_ROOT: metrale-kernel-tree is a dependency"),
+            .expect("DEP_METRALE_KERNEL_TREE_ROOT: metrale-kernel-root is a dependency"),
     )
     .join("kernels")
     .join(&hw)

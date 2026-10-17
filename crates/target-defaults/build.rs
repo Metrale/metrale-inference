@@ -19,12 +19,13 @@ use metrale_closure::hardware_defaults::{DEFAULT_HW, generated_literal};
 fn main() {
     println!("cargo:rerun-if-env-changed=METRALE_TARGET_HW");
     println!("cargo:rerun-if-changed=build.rs");
-    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-    let workspace_root = manifest_dir
-        .parent()
-        .and_then(|p| p.parent())
-        .expect("crates/target-defaults sits two levels below the workspace root");
-    let kernels_root = workspace_root.join("kernels");
+    // 2026-10-17: metrale-kernel-root's `links` metadata names the directory holding `kernels/`:
+    // the repository root in a checkout, that crate's own directory once published.
+    let kernels_root = PathBuf::from(
+        env::var("DEP_METRALE_KERNEL_TREE_ROOT")
+            .expect("DEP_METRALE_KERNEL_TREE_ROOT: metrale-kernel-root is a dependency"),
+    )
+    .join("kernels");
     let hw = env::var("METRALE_TARGET_HW").unwrap_or_else(|_| DEFAULT_HW.into());
     let hw_toml = kernels_root.join(&hw).join("HARDWARE.toml");
     if hw_toml.exists() {

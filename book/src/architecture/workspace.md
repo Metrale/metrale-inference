@@ -40,6 +40,8 @@ members = [
     "crates/circuit",
     "crates/governance",
     "crates/kernels",
+    "crates/target-defaults",
+    "crates/kernel-root",
     "crates/kernel-tree",
     "crates/gpu-sys",
     "crates/telemetry",
@@ -69,7 +71,9 @@ Each is its own crate with its own `Cargo.toml`, its own unit tests, and its own
 | `metrale-closure` | Content hash of a kernel target's transitive include closure | `metrale-bench`, `metrale-kernels`, `metrale-model-layers` |
 | `metrale-circuit` | The circuit compiler: architecture circuits, the fuser, kernel families and per-hardware plans (see [The Circuit Compiler](./circuit-compiler.md)) | `metrale-model-engine`, `metrale-model-layers`, `met` |
 | `metrale-governance` | The PR journey ledger: an append-only record of how a change reached main | `metrale-bench` |
-| `metrale-kernels` | Metrale Engine CUDA kernel PTX — compiled from `kernels/{hw}/{model}/{quant}/*.cu` | `metrale-gpu-runtime`, `metrale-model-engine`, `metrale-model-layers`, `met` |
+| `metrale-kernels` | Metrale Engine CUDA kernel PTX — compiled from `kernels/{hw}/{model}/{quant}/*.cu`. A leaf: only the binary links it and hands the PTX to `MetraleCudaBackend::new`, so a `.cu` edit rebuilds this crate and `met` only (other crates take it as a dev-dependency) | `met`, `metrale-gpu-examples` |
+| `metrale-target-defaults` | The compiled hardware tree's serving defaults and SM count (`kernels/<hw>/HARDWARE.toml`) and the decode split-K policy | `metrale-gpu-runtime`, `metrale-model-layers`, `metrale-gpu-examples` |
+| `metrale-kernel-root` | Locates `kernels/` for build scripts (`DEP_METRALE_KERNEL_TREE_ROOT`); reads nothing under it, so a kernel edit does not rebuild its dependents | the build scripts of `metrale-kernels`, `metrale-kernel-tree`, `metrale-gpu-runtime`, `metrale-storage`, `metrale-circuit`, `metrale-target-defaults`, `metrale-model-layers`, `met` |
 | `metrale-kernel-tree` | The repository's `kernels/` manifests and sources embedded in the binary, for code that reads the kernel tree without a checkout | `met` |
 | `metrale-gpu-sys` | Raw FFI only — cuFile (GDS) and NVML dlopen wrappers, NCCL bindings, RDMA verbs C shim | `metrale-comm`, `metrale-model-weights`, `metrale-storage`, `metrale-telemetry` |
 | `metrale-telemetry` | Run metrics, kernel audit, launch trace, progress hooks, and the metal-up instruments (NVML device sampling, energy attribution, GPU spans, scheduler/request telemetry) with their exporters | `metrale-cache`, `metrale-gpu-runtime`, `metrale-model-arch`, `metrale-model-engine`, `metrale-model-weights`, `metrale-sampling`, `met` |

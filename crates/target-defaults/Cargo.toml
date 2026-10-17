@@ -12,6 +12,10 @@ description = "Metrale Engine: the compiled hardware tree's serving defaults and
 # build script and rebuilds that crate and the binary only. This build script reads one
 # HARDWARE.toml and never invokes a kernel compiler.
 
+[dependencies]
+# 2026-10-17: Its `links` metadata (`DEP_METRALE_KERNEL_TREE_ROOT`) locates kernels/ for build.rs.
+metrale-kernel-root = { workspace = true }
+
 [build-dependencies]
 # 2026-10-17: The HARDWARE.toml `[defaults]` parse the kernels build script hashes too.
 metrale-closure = { workspace = true }
