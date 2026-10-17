@@ -50,6 +50,13 @@ fn main() {
     // `build_target::NvidiaTarget::compile`, for kernel bisection (e.g.
     // `-DMETRALE_FAST_SOFTMAX_EXP=1`, an `#ifdef` in prefill_paged_compute.cuh).
     println!("cargo:rerun-if-env-changed=METRALE_EXTRA_NVCC_FLAGS");
+    // 2026-10-17: The other compile inputs read from the environment:
+    // `NvidiaTarget::argv` reads METRALE_KERNEL_NO_STRICT, `find_cuda_dir`
+    // reads CUDA_HOME; the PTX cache switch, its cap and the `NVCC_*` set
+    // come from `build_ptx_cache::emit_env_rerun`.
+    println!("cargo:rerun-if-env-changed=METRALE_KERNEL_NO_STRICT");
+    println!("cargo:rerun-if-env-changed=CUDA_HOME");
+    build_ptx_cache::emit_env_rerun();
     // 2026-09-25: Skip the kernel build on macOS unless `METRALE_TARGET_HW` is
     // set: the default `gb10` target needs nvcc, which a Mac does not have.
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
@@ -99,6 +106,8 @@ fn main() {
     let compute_target = resolve_compute_target(vendor_str);
     let output_ext = compute_target.output_extension();
     let uses_cuda_api = compute_target.uses_cuda_module_api();
+    // 2026-10-17: `None` unless METRALE_PTX_CACHE=1; see `build_ptx_cache`.
+    let ptx_cache = build_ptx_cache::PtxCache::from_env(&out_dir, compute_target.as_ref());
 
     let mut all_target_modules: Vec<Vec<(String, String)>> = Vec::new();
     // 2026-09-25: Per target, the (module, kernel) pairs its leaf-role files
@@ -162,7 +171,7 @@ fn main() {
     // <quant>/`, each holding the files its layer resolves to, so a source a
     // directory `use`s compiles with that directory's headers beside it.
     let stage_root = out_dir.join("stage");
-    build_stage::reset(&stage_root);
+    build_stage::reset(&stage_root, ptx_cache.as_ref().map(|c| c.root()));
     let mut staged: Vec<build_stage::Staged> = Vec::new();
 
     for (idx, target) in targets.iter().enumerate() {
@@ -221,6 +230,7 @@ fn main() {
 
     build_plan::run_plan(
         compute_target.as_ref(),
+        ptx_cache.as_ref(),
         &compile_jobs,
         &copy_jobs,
         is_hip,
@@ -452,3 +462,7 @@ use build_hip::{build_hip_shim_windows, hip_mirror_source};
 // beside the headers of the directory that uses it.
 #[path = "build_stage.rs"]
 mod build_stage;
+
+// 2026-10-17: The opt-in content-hashed PTX cache (METRALE_PTX_CACHE=1).
+#[path = "build_ptx_cache.rs"]
+mod build_ptx_cache;

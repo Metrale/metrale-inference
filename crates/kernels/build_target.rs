@@ -38,6 +38,10 @@ pub(super) trait ComputeTarget: Send + Sync {
     /// `build.rs` then attests to nothing (`{}`) rather than hash a
     /// placeholder that two toolchains would share.
     fn compiler_id(&self) -> Option<String>;
+
+    /// 2026-10-17: The NVIDIA target, for the PTX cache, which keys on nvcc's
+    /// exact argv; `None` for every other compiler, which the cache refuses.
+    fn as_nvidia(&self) -> Option<&NvidiaTarget>;
 }
 
 /// 2026-09-25: The last non-empty stdout line of `<binary> <args>`, with
@@ -59,32 +63,21 @@ const KERNEL_STRICT_DIAG_SUPPRESS: &[u32] = &[
     // 2026-09-25: Empty: no diagnostic is suppressed.
 ];
 
-struct NvidiaTarget {
+pub(super) struct NvidiaTarget {
     nvcc: PathBuf,
 }
 
-impl ComputeTarget for NvidiaTarget {
-    fn compiler_id(&self) -> Option<String> {
-        compiler_version(&self.nvcc, &["--version"])
-    }
-
-    fn source_extension(&self) -> &str {
-        "cu"
-    }
-    fn output_extension(&self) -> &str {
-        "ptx"
-    }
-    fn uses_cuda_module_api(&self) -> bool {
-        true
-    }
-
-    fn compile(
+impl NvidiaTarget {
+    /// 2026-10-17: The exact nvcc argv (program name excluded) a compile runs
+    /// with. The PTX cache keys on the Vec this returns and then runs that same
+    /// Vec through [`Self::run`], so the key and the compile cannot diverge.
+    pub(super) fn argv(
         &self,
         source: &std::path::Path,
         output: &std::path::Path,
         arch: &str,
         extra_flags: &[String],
-    ) -> Result<(), String> {
+    ) -> Vec<String> {
         let mut args = vec!["--ptx".into(), format!("-arch={arch}"), "-O3".into()];
         // 2026-09-25: A Windows target gets `-std=c++17` explicitly; other
         // targets get no `-std` flag.
@@ -115,9 +108,14 @@ impl ComputeTarget for NvidiaTarget {
         args.push(source.to_str().unwrap().into());
         args.push("-o".into());
         args.push(output.to_str().unwrap().into());
+        args
+    }
 
+    /// 2026-10-17: Run nvcc with an argv from [`Self::argv`]; `source` only
+    /// names the failure.
+    pub(super) fn run(&self, argv: &[String], source: &std::path::Path) -> Result<(), String> {
         let status = Command::new(&self.nvcc)
-            .args(&args)
+            .args(argv)
             .status()
             .map_err(|e| format!("Failed to run nvcc: {e}"))?;
         if status.success() {
@@ -125,6 +123,61 @@ impl ComputeTarget for NvidiaTarget {
         } else {
             Err(format!("nvcc --ptx failed for {}", source.display()))
         }
+    }
+
+    /// 2026-10-17: The PTX cache's compiler identity: the nvcc path, the path
+    /// it resolves to, and the whole `nvcc --version` stdout, `\x1f`-joined.
+    /// Fuller than [`ComputeTarget::compiler_id`] (one line, kept as is for the
+    /// closure attestation) because a false cache hit is served as PTX.
+    pub(super) fn identity(&self) -> Result<String, String> {
+        let resolved = self
+            .nvcc
+            .canonicalize()
+            .map_err(|e| format!("resolving {}: {e}", self.nvcc.display()))?;
+        let out = Command::new(&self.nvcc)
+            .arg("--version")
+            .output()
+            .map_err(|e| format!("running {} --version: {e}", self.nvcc.display()))?;
+        if !out.status.success() {
+            return Err(format!("{} --version failed", self.nvcc.display()));
+        }
+        Ok(format!(
+            "{}\x1f{}\x1f{}",
+            self.nvcc.display(),
+            resolved.display(),
+            String::from_utf8_lossy(&out.stdout)
+        ))
+    }
+}
+
+impl ComputeTarget for NvidiaTarget {
+    fn compiler_id(&self) -> Option<String> {
+        compiler_version(&self.nvcc, &["--version"])
+    }
+
+    fn as_nvidia(&self) -> Option<&NvidiaTarget> {
+        Some(self)
+    }
+
+    fn source_extension(&self) -> &str {
+        "cu"
+    }
+    fn output_extension(&self) -> &str {
+        "ptx"
+    }
+    fn uses_cuda_module_api(&self) -> bool {
+        true
+    }
+
+    fn compile(
+        &self,
+        source: &std::path::Path,
+        output: &std::path::Path,
+        arch: &str,
+        extra_flags: &[String],
+    ) -> Result<(), String> {
+        let argv = self.argv(source, output, arch, extra_flags);
+        self.run(&argv, source)
     }
 }
 
@@ -135,6 +188,10 @@ struct AppleTarget {
 }
 
 impl ComputeTarget for AppleTarget {
+    fn as_nvidia(&self) -> Option<&NvidiaTarget> {
+        None
+    }
+
     fn compiler_id(&self) -> Option<String> {
         compiler_version(&self.xcrun, &["metal", "--version"])
     }
@@ -215,6 +272,10 @@ struct ScaleTarget {
 }
 
 impl ComputeTarget for ScaleTarget {
+    fn as_nvidia(&self) -> Option<&NvidiaTarget> {
+        None
+    }
+
     /// 2026-09-25: Always `None`: SCALE's compiler lives under a per-arch
     /// directory this method is not given, and the install root is a path,
     /// not a version. SCALE targets therefore carry no attestation.
@@ -282,6 +343,10 @@ struct HipTarget {
 }
 
 impl ComputeTarget for HipTarget {
+    fn as_nvidia(&self) -> Option<&NvidiaTarget> {
+        None
+    }
+
     fn compiler_id(&self) -> Option<String> {
         compiler_version(&self.hipcc, &["--version"])
     }
