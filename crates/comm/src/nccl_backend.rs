@@ -6,11 +6,11 @@
 //!
 //! At `world_size == 2`, once the add kernel is set, all-reduce is a grouped
 //! `ncclSend`/`ncclRecv` into a registered receive buffer plus a local BF16
-//! add; at `world_size >= 3` with the one-shot path enabled, a payload of at most
-//! its bound is exchanged with every peer and summed in rank order
-//! (`sendrecv.rs`); otherwise it is `ncclAllReduce`. 2026-10-16: The one-shot is offered
-//! from `world_size >= 2`; at 2 it serves `exchange_partials` (the 2-rank all-reduce keeps
-//! priority for `all_reduce`). After each collective the backend
+//! add; at `world_size >= 2` (2026-10-16: was 3) with the one-shot path enabled, a payload
+//! of at most its bound is exchanged with every peer and summed in rank order
+//! (`sendrecv.rs`); otherwise it is `ncclAllReduce`. At 2 the one-shot serves
+//! `exchange_partials`, and `all_reduce` only when the add kernel is absent and the rank-sum
+//! kernel is set (`ar_path::ar_path`). After each collective the backend
 //! queries `ncclCommGetAsyncError`; a broadcast waits for completion for at
 //! most `COLLECTIVE_TIMEOUT_SECS` (a rendezvous broadcast `RENDEZVOUS_TIMEOUT_SECS`),
 //! an idle command receive without a deadline,
@@ -473,5 +473,6 @@ impl Drop for NcclBackend {
     }
 }
 
+mod ar_path;
 mod comm_impl;
 mod sendrecv;

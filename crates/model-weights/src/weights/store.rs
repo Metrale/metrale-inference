@@ -87,6 +87,22 @@ impl WeightStore {
         self.weights.keys().map(|s| s.as_str())
     }
 
+    /// 2026-10-16: Every tensor name the checkpoint gave this store: the resident ones, then the
+    /// deferred ones (in no particular order). A scan that must see the whole checkpoint, such as
+    /// preflight, walks this; [`Self::names`] misses whatever a defer hook kept off the device.
+    pub fn all_names(&self) -> impl Iterator<Item = &str> {
+        self.names().chain(self.deferred.keys().map(|s| s.as_str()))
+    }
+
+    /// 2026-10-16: The element count of a resident or a deferred tensor. Fails fast if neither.
+    pub fn element_count(&self, name: &str) -> Result<usize> {
+        match (self.weights.get(name), self.deferred.get(name)) {
+            (Some(t), _) => Ok(t.num_elements()),
+            (None, Some(d)) => Ok(d.shape.iter().product()),
+            (None, None) => anyhow::bail!("Weight '{name}' not found in store"),
+        }
+    }
+
     /// 2026-10-04: sha256 over the drafter's stored (pre-quantization, as-loaded) bytes: every
     /// `mtp.*` tensor, plus the embedding and the shared lm_head if this checkpoint has them —
     /// the `--spec-cost-model measured` drafter key. `None` when this checkpoint has no `mtp.*`

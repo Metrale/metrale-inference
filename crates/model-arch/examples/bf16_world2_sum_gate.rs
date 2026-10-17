@@ -10,7 +10,8 @@
 //! Invariants:
 //! - The run fails unless, on both ranks, every pair with finite inputs gives the same bytes
 //!   except `(-0, -0)`, which must differ in exactly the sign bit (+0 one-shot, -0 2-rank: the
-//!   FP32 accumulator starts at +0), and every pair with a NaN input gives a NaN on both arms.
+//!   FP32 accumulator starts at +0), and every pair with a NaN input gives the same NaN bits on
+//!   both arms (2026-10-16: was any NaN; a payload or sign difference now fails).
 //! - The `(-0, -0)` pair is the positive control that the comparison sees a one-bit difference;
 //!   a second control, the one-shot arm reading its peer one element off, must differ on most
 //!   pairs.
@@ -90,7 +91,13 @@ fn compare(t: &mut Tally, rank: usize, p0: &[u16], p1: &[u16], two: &[u16], one:
         let (a, b) = (p0[i], p1[i]);
         if is_nan(a) || is_nan(b) {
             t.nan_pairs += 1;
-            if !(is_nan(two[i]) && is_nan(one[i])) {
+            if !(is_nan(two[i]) && two[i] == one[i]) {
+                if t.bad < 8 {
+                    println!(
+                        "  rank {rank}: NaN pair {a:#06x} + {b:#06x}: 2-rank {:#06x} one-shot {:#06x}",
+                        two[i], one[i]
+                    );
+                }
                 t.bad += 1;
             }
             continue;
@@ -196,8 +203,8 @@ fn main() -> Result<()> {
         bail!("bf16 world-2 sum gate FAILED");
     }
     println!(
-        "\nPASS: every finite pair byte-identical on both ranks except (-0)+(-0) (+0 vs -0); NaN \
-         in, NaN out on both arms; the control differs"
+        "\nPASS: every finite pair byte-identical on both ranks except (-0)+(-0) (+0 vs -0); a NaN \
+         input gives the same NaN bits on both arms; the control differs"
     );
     Ok(())
 }

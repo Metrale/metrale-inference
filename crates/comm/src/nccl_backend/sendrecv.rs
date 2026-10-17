@@ -18,8 +18,10 @@
 //!   bytes do not move; the one-shot there serves `exchange_partials`, whose consumers sum the
 //!   two partials as `bf16_add_rank_sum` does. That FP32 sum rounded once equals `__hadd`'s
 //!   correctly rounded BF16 sum for every pair except two negative zeros (+0 from the FP32
-//!   accumulator's +0 start, -0 from `__hadd`): FP32 keeps 24 bits >= 2 * 8 + 2, so rounding
-//!   twice is innocuous for a sum (`world2_sum_tests`).
+//!   accumulator's +0 start, -0 from `__hadd`): FP32 keeps 24 bits >= 2 * 8 + 1, so rounding
+//!   twice is innocuous for a sum (`world2_sum_tests`). The two paths' bytes are therefore NOT
+//!   identical: they differ in the sign of the exact-zero sum of two -0 partials.
+//! - The path an all-reduce takes is `ar_path::ar_path`.
 
 use anyhow::Result;
 use std::ffi::c_void;
@@ -30,6 +32,7 @@ use metrale_gpu_sys::nccl::{self, NcclComm, NcclDataType, NcclResult};
 
 use crate::PeerPartials;
 
+use super::ar_path::{ArPath, ar_path};
 use super::{
     ALL_REDUCE_DTYPE_BYTES, NcclBackend, cuLaunchKernel, cuMemAlloc_v2, cuMemFree_v2,
     ensure_payload_fits,
@@ -149,6 +152,16 @@ impl NcclBackend {
         } else {
             0
         }
+    }
+
+    /// 2026-10-16: The path an all-reduce of `bytes` takes on this communicator.
+    pub(super) fn ar_path(&self, bytes: usize) -> ArPath {
+        ar_path(
+            self.world_size,
+            self.add_kernel.load(Ordering::Relaxed) != 0,
+            self.oneshot_applies(bytes),
+            self.oneshot.sum_kernel.load(Ordering::Relaxed) != 0,
+        )
     }
 
     pub(super) fn set_oneshot_sum_kernel(&self, handle: u64) {

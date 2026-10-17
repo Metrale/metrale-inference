@@ -224,10 +224,9 @@ type Seen = (
 
 fn seen(b: &Built) -> Seen {
     let src = LayerSource::collect(&b.gpu, &b.store, LAYER).unwrap();
-    let mut names = src.names.clone();
-    names.sort();
+    // 2026-10-16: No sort here: `collect` must give the resident and the streamed store one order.
     (
-        names,
+        src.names.iter().cloned().collect(),
         src.tensors.clone().into_iter().collect(),
         src.plan_cast.clone().into_iter().collect(),
     )

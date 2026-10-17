@@ -216,6 +216,21 @@ fn partners() -> Vec<u16> {
     v
 }
 
+/// 2026-10-16: The first terms the default (debug) run sweeps: every 61st pattern, plus both zeros,
+/// the 16-bit witness, the largest finite and the smallest subnormals. About 1,080 first terms
+/// against [`partners`] keep the default run near four million pairs; the exhaustive sweep is
+/// the ignored test.
+fn sampled_firsts() -> Vec<u16> {
+    let mut v: Vec<u16> = (0..=u16::MAX)
+        .step_by(61)
+        .chain([0x0000, 0x8000, 0x3f81, 0x7f7f, 0xff7f, 0x0001, 0x8001])
+        .filter(|&a| finite(a))
+        .collect();
+    v.sort_unstable();
+    v.dedup();
+    v
+}
+
 #[test]
 fn the_reference_rounds_known_values() {
     // 2026-10-16: 1 + 2^-8 is a tie between 1 and 1 + 2^-7 and goes to the even 1; 1 + 3 * 2^-8
@@ -280,10 +295,7 @@ fn the_reference_rounds_known_values() {
 fn the_one_shot_sum_of_two_partials_matches_the_2rank_add() {
     let partners = partners();
     let mut zeros = 0usize;
-    for a in 0..=u16::MAX {
-        if !finite(a) {
-            continue;
-        }
+    for a in sampled_firsts() {
         for &b in &partners {
             let (want, got) = (hadd(a, b), rank_sum(a, b));
             if want == got {
@@ -305,16 +317,15 @@ fn a_narrower_intermediate_does_move_bytes() {
     // 2026-10-16: The positive control at the bound: 17 bits (2p + 1) never moves a result, 16
     // does, so the comparison above is able to see a double-rounding error. The 16-bit witness:
     // 1 + 2^-7 plus 2^-8 - 2^-16 sits just under a tie, rounds up to the tie at 16 bits, and the
-    // tie then goes to the even 1 + 2^-6 instead of down to 1 + 2^-7. Every fifth first term
-    // keeps the sweep quick; the exhaustive comparison is the ignored test below.
+    // tie then goes to the even 1 + 2^-6 instead of down to 1 + 2^-7. The sampled first
+    // terms keep the sweep quick; the exhaustive comparison is the ignored test below.
     assert_eq!(hadd(0x3f81, 0x3b7f), round(bf16_exact(0x3f81), 8));
     assert_ne!(twice(0x3f81, 0x3b7f, 16), hadd(0x3f81, 0x3b7f));
     assert_eq!(twice(0x3f81, 0x3b7f, 17), hadd(0x3f81, 0x3b7f));
     let partners = partners();
     let count = |mid: u32| {
-        (0..=u16::MAX)
-            .step_by(5)
-            .filter(|&a| finite(a))
+        sampled_firsts()
+            .into_iter()
             .map(|a| {
                 partners
                     .iter()

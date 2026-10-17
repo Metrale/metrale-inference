@@ -68,6 +68,10 @@ impl Glm5NextLayer {
     /// highway at `streams` (the same buffer except after a folded post, `forward_one`), or, when
     /// `partials` is set, `glm_hc_post_rank_sum`, which first sums `x` with the peers' partials
     /// (writing the sum back to `x`), with the same bits as the all-reduce sum then `glm_hc_post`.
+    /// 2026-10-16: One exception at two ranks, where the all-reduce is `__hadd` and the rank sum
+    /// starts its FP32 accumulator at +0: an element whose two partials are both -0 sums to +0
+    /// here and -0 in the all-reduce (every other pair is the same bits, `world2_sum_tests`). At
+    /// three or more ranks the all-reduce is the same rank sum, so there is no exception.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::glm5next_layer) fn hc_post_reduced(
         &self,
