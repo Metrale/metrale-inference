@@ -1,6 +1,3 @@
 # 2026-10-17: Members whose role belongs in a manifest another change owns: `package role`.
 # Each entry turns stale, and `cargo xtask roles` fails until it is removed, once that manifest
 # declares the role; a manifest declaring a different role is refused.
-metrale-abstract-io abstract-io
-metrale-io-host-mem host-mem
-metrale-io-host-std host-std
