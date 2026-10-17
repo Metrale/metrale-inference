@@ -19,6 +19,7 @@ use super::flag_values::{
 };
 
 mod prompt_lookup;
+mod tokenizer_trim;
 pub(super) mod violation;
 use violation::{Violation, check_enum, format_violations};
 
@@ -269,6 +270,7 @@ pub fn validate_serve_args(args: &ServeArgs) -> Result<(), String> {
     }
 
     prompt_lookup::check(args, &mut v);
+    tokenizer_trim::check(args, &mut v);
 
     // 2026-10-02: The confidence stop shapes MTP draft chains, so it needs MTP;
     // DFlash drafts a whole block in one pass and has no chain to stop.

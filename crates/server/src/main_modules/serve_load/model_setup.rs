@@ -449,6 +449,9 @@ pub(super) fn load_tokenizer(
     // 2026-09-26: `supports_thinking` comes from `ModelCapabilities`.
     let caps = config.capabilities();
     let supports_thinking = caps.supports_thinking;
+    let heap_trim =
+        crate::tokenizer::HeapTrimPolicy::process_heap(args.chat_surface.tokenizer_trim_min_tokens)
+            .map_err(|e| anyhow::anyhow!("--tokenizer-trim-min-tokens: {e}"))?;
     let tokenizer = ChatTokenizer::from_model_dir(
         model_dir,
         eos_tokens[0],
@@ -456,6 +459,7 @@ pub(super) fn load_tokenizer(
         &config.model_type,
         Some(std::path::Path::new(".")),
         template_source(args),
+        heap_trim,
     )?;
     Ok((tokenizer, supports_thinking))
 }

@@ -35,7 +35,11 @@ use metrale_model_arch::glm5next_mhc_fused::{glm_hc_post_rank_sum, glm_hc_post_r
 
 /// 2026-10-10: `(hidden, hc_mult, tokens, world, rank)`. Rows 1, 4 and 16 at the GLM-5.3 shape on
 /// every rank of 3; then other widths, `hc_mult` and worlds.
-const CASES: [(usize, usize, usize, usize, usize); 10] = [
+const CASES: [(usize, usize, usize, usize, usize); 13] = [
+    // 2026-10-16: Two ranks (the one-shot is offered from world 2), both ranks and 16 rows.
+    (4096, 4, 1, 2, 0),
+    (4096, 4, 1, 2, 1),
+    (4096, 4, 16, 2, 1),
     (4096, 4, 1, 3, 0),
     (4096, 4, 1, 3, 1),
     (4096, 4, 1, 3, 2),
@@ -284,10 +288,15 @@ fn main() -> Result<()> {
         let b = upload(g, &h)?;
         fused(g, &k, &b, &partials(&b, world, rank), shape, 0)?;
         // 2026-10-10: Control 1: the fused kernel given half the slot stride, so every peer past
-        // the first is read from the wrong place.
+        // the first is read from the wrong place. 2026-10-16: Two ranks have one peer, which no
+        // stride moves: there the slot starts past the partial, in the zeroed tail.
         let c1 = upload(g, &h)?;
         let mut short = partials(&c1, world, rank);
-        short.slot_elems /= 2;
+        if world == 2 {
+            short.recv += (t * hid * 2) as u64;
+        } else {
+            short.slot_elems /= 2;
+        }
         fused(g, &k, &c1, &short, shape, 0)?;
         // 2026-10-10: Control 2: hc_post on the partial, no sum.
         let c2 = upload(g, &h)?;

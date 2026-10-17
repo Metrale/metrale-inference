@@ -13,6 +13,7 @@ use std::ptr;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
+use super::ar_path::ArPath;
 use super::{
     ALL_REDUCE_DTYPE_BYTES, COLLECTIVE_TIMEOUT_SECS, NcclBackend, RENDEZVOUS_TIMEOUT_SECS,
 };
@@ -23,11 +24,10 @@ use metrale_gpu_sys::nccl::{self, NcclDataType, NcclRedOp};
 impl CommBackend for NcclBackend {
     fn all_reduce(&self, ptr: u64, bytes: usize) -> Result<()> {
         self.begin_submission("all_reduce", Dtype::Bf16, bytes, self.legacy_stream, None)?;
-        if self.world_size == 2 && self.add_kernel.load(Ordering::Relaxed) != 0 {
-            return self.all_reduce_2rank(ptr, bytes, self.legacy_stream);
-        }
-        if self.oneshot_applies(bytes) {
-            return self.all_reduce_oneshot(ptr, bytes, self.legacy_stream);
+        match self.ar_path(bytes) {
+            ArPath::TwoRank => return self.all_reduce_2rank(ptr, bytes, self.legacy_stream),
+            ArPath::OneShot => return self.all_reduce_oneshot(ptr, bytes, self.legacy_stream),
+            ArPath::Nccl => {}
         }
         // 2026-09-26: In place on `ptr`; `recv_buffer` is not used, so its
         // capacity does not bound this path.
@@ -57,20 +57,15 @@ impl CommBackend for NcclBackend {
             self.comm_stream,
             None,
         )?;
-        if self.world_size == 2 && self.add_kernel.load(Ordering::Relaxed) != 0 {
+        let path = self.ar_path(bytes);
+        if path != ArPath::Nccl {
             nccl::record_event(self.compute_done_event, compute_stream)?;
             nccl::stream_wait_event(self.comm_stream, self.compute_done_event)?;
-
-            self.all_reduce_2rank(ptr, bytes, self.comm_stream)?;
-
-            nccl::record_event(self.comm_done_event, self.comm_stream)?;
-            nccl::stream_wait_event(compute_stream, self.comm_done_event)?;
-            return Ok(());
-        }
-        if self.oneshot_applies(bytes) {
-            nccl::record_event(self.compute_done_event, compute_stream)?;
-            nccl::stream_wait_event(self.comm_stream, self.compute_done_event)?;
-            self.all_reduce_oneshot(ptr, bytes, self.comm_stream)?;
+            if path == ArPath::TwoRank {
+                self.all_reduce_2rank(ptr, bytes, self.comm_stream)?;
+            } else {
+                self.all_reduce_oneshot(ptr, bytes, self.comm_stream)?;
+            }
             nccl::record_event(self.comm_done_event, self.comm_stream)?;
             nccl::stream_wait_event(compute_stream, self.comm_done_event)?;
             return Ok(());

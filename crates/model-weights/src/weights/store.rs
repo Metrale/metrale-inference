@@ -26,6 +26,12 @@ impl WeightStore {
         self.deferred.get(name)
     }
 
+    /// 2026-10-16: Every deferred tensor, in no particular order, for a scan that filters by
+    /// name ([`Self::deferred_sorted`] when the order matters).
+    pub fn deferred_iter(&self) -> impl Iterator<Item = (&str, &DeferredTensor)> {
+        self.deferred.iter().map(|(n, d)| (n.as_str(), d))
+    }
+
     /// Every deferred tensor, name-sorted (NUMERIC on a trailing index, so
     /// `embedders.10` sorts after `embedders.2` — a lexicographic sort here
     /// silently mis-maps the n-gram tables, which cost a real debugging
@@ -79,6 +85,22 @@ impl WeightStore {
     /// Iterator over all weight names.
     pub fn names(&self) -> impl Iterator<Item = &str> {
         self.weights.keys().map(|s| s.as_str())
+    }
+
+    /// 2026-10-16: Every tensor name the checkpoint gave this store: the resident ones, then the
+    /// deferred ones (in no particular order). A scan that must see the whole checkpoint, such as
+    /// preflight, walks this; [`Self::names`] misses whatever a defer hook kept off the device.
+    pub fn all_names(&self) -> impl Iterator<Item = &str> {
+        self.names().chain(self.deferred.keys().map(|s| s.as_str()))
+    }
+
+    /// 2026-10-16: The element count of a resident or a deferred tensor. Fails fast if neither.
+    pub fn element_count(&self, name: &str) -> Result<usize> {
+        match (self.weights.get(name), self.deferred.get(name)) {
+            (Some(t), _) => Ok(t.num_elements()),
+            (None, Some(d)) => Ok(d.shape.iter().product()),
+            (None, None) => anyhow::bail!("Weight '{name}' not found in store"),
+        }
     }
 
     /// 2026-10-04: sha256 over the drafter's stored (pre-quantization, as-loaded) bytes: every

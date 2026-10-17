@@ -30,14 +30,19 @@ use metrale_model_arch::glm5next_mhc::{
 use metrale_model_arch::glm5next_mhc_fused::glm_hc_pre_norm;
 use metrale_model_arch::glm5next_mhc_post_fold::{PostFoldIo, glm_hc_post_pre_norm};
 
-/// 2026-10-10: `(hidden, hc_mult, partials: Some(rank) of 3 ranks, or None)`.
-const CASES: [(usize, usize, Option<usize>); 6] = [
-    (4096, 4, Some(0)),
-    (4096, 4, Some(1)),
-    (4096, 4, Some(2)),
+/// 2026-10-10: `(hidden, hc_mult, partials: Some((world, rank)), or None)`.
+/// 2026-10-16: Two-rank cases (the one-shot is offered from world 2): both ranks at the GLM-5.3
+/// shape and one narrower width.
+const CASES: [(usize, usize, Option<(usize, usize)>); 9] = [
+    (4096, 4, Some((3, 0))),
+    (4096, 4, Some((3, 1))),
+    (4096, 4, Some((3, 2))),
     (4096, 4, None),
-    (1024, 2, Some(1)),
+    (1024, 2, Some((3, 1))),
     (256, 3, None),
+    (4096, 4, Some((2, 0))),
+    (4096, 4, Some((2, 1))),
+    (1024, 2, Some((2, 1))),
 ];
 const ITERS: u32 = 20;
 const EPS: [f32; 3] = [1e-5, 1e-6, 1e-5];
@@ -79,7 +84,8 @@ fn dn(g: &dyn GpuBackend, p: DevicePtr, n: usize) -> Result<Vec<u8>> {
 }
 
 /// 2026-10-10: One case's host data: the previous site's post/comb, the residual streams, this
-/// rank's partial and the peers' (two slots), and the next site's weights.
+/// rank's partial and the peers' (two slots; a two-rank case reads the first), and the next
+/// site's weights.
 struct Case {
     hid: usize,
     hc: usize,
@@ -153,19 +159,19 @@ fn reference(
     w: &Glm5NextMhcSiteWeights,
     norm_w: DevicePtr,
     a: &Arm,
-    peers: Option<(DevicePtr, usize)>,
+    peers: Option<(DevicePtr, usize, usize)>,
     hid: usize,
     hc: usize,
     s: u64,
 ) -> Result<()> {
-    if let Some((p, rank)) = peers {
+    if let Some((p, world, rank)) = peers {
         KernelLaunch::new(g, sum)
             .grid([hid.div_ceil(256) as u32, 1, 1])
             .block([256, 1, 1])
             .arg_ptr(a.own)
             .arg_ptr(p)
             .arg_u64(hid as u64)
-            .arg_i32(3)
+            .arg_i32(world as i32)
             .arg_i32(rank as i32)
             .arg_i32(hid as i32)
             .launch(s)?;
@@ -187,15 +193,15 @@ fn folded(
     w: &Glm5NextMhcSiteWeights,
     norm_w: DevicePtr,
     a: &Arm,
-    peers: Option<(DevicePtr, usize)>,
+    peers: Option<(DevicePtr, usize, usize)>,
     hid: usize,
     hc: usize,
     s: u64,
 ) -> Result<()> {
-    let partials = peers.map(|(p, rank)| PeerPartials {
+    let partials = peers.map(|(p, world, rank)| PeerPartials {
         recv: p.0,
         slot_elems: hid,
-        world_size: 3,
+        world_size: world,
         rank,
     });
     glm_hc_post_pre_norm(
@@ -231,7 +237,7 @@ fn main() -> Result<()> {
     let sum = g.kernel("bf16_add", "bf16_add_rank_sum")?;
     let mut rng = Lcg(0x6c6d_f01d_0001);
     println!("glm5next hc post fold gate: rank sum + hc_post + hc_pre_norm is the ORACLE");
-    for (hid, hc, rank) in CASES {
+    for (hid, hc, ranks) in CASES {
         let c = Case {
             hid,
             hc,
@@ -251,8 +257,8 @@ fn main() -> Result<()> {
                     .collect::<Vec<_>>(),
             ),
         )?;
-        let peers = match rank {
-            Some(r) => Some((up(g, &bf16b(&c.peers))?, r)),
+        let peers = match ranks {
+            Some((world, r)) => Some((up(g, &bf16b(&c.peers))?, world, r)),
             None => None,
         };
         let r = Arm::new(g, &c)?;
@@ -268,7 +274,7 @@ fn main() -> Result<()> {
             folded(g, &k, &w, norm_w, &f, peers, hid, hc, 0)?;
             for ((a, b), n) in want.iter().zip(f.outs(g, &c, f.out)?).zip(NAMES) {
                 if *a != b {
-                    bail!("H={hid} hc={hc} rank={rank:?} rep {rep}: {n} differs");
+                    bail!("H={hid} hc={hc} ranks={ranks:?} rep {rep}: {n} differs");
                 }
             }
         }
@@ -282,7 +288,7 @@ fn main() -> Result<()> {
             bail!("H={hid} hc={hc}: the comb control did not change the outputs");
         }
         println!(
-            "  H={hid:>5} hc={hc} partials={rank:?}  streams/y/post/comb/normed BYTE-IDENTICAL x3; control differs"
+            "  H={hid:>5} hc={hc} partials={ranks:?}  streams/y/post/comb/normed BYTE-IDENTICAL x3; control differs"
         );
     }
     timing(g, &k, sum, &mut rng)?;
@@ -311,7 +317,7 @@ fn timing(
         .map(|_| site(g, rng, hid, hc))
         .collect::<Result<Vec<_>>>()?;
     let norm_w = up(g, &bf16b(&vec![1.0; hid]))?;
-    let peers = Some((up(g, &bf16b(&c.peers))?, 1usize));
+    let peers = Some((up(g, &bf16b(&c.peers))?, 3usize, 1usize));
     let (ra, fa) = (Arm::new(g, &c)?, Arm::new(g, &c)?);
     let s = g.create_stream()?;
     let time = |f: &dyn Fn(usize, u64) -> Result<()>| -> Result<(f64, f64, f64)> {

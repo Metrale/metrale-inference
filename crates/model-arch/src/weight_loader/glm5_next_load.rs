@@ -47,6 +47,9 @@ mod expert_slab;
 mod expert_tp;
 #[cfg(test)]
 mod export_layout_tests;
+mod layer_stream;
+#[cfg(test)]
+mod layer_stream_tests;
 mod loader;
 mod mlp_precision;
 mod nvfp4_dequant;
@@ -158,9 +161,9 @@ fn upload_f32(gpu: &dyn GpuBackend, v: &[f32]) -> Result<DevicePtr> {
 }
 
 /// 2026-09-25: One layer's tensors under layer-relative names, copied to the
-/// host (routed experts by name only).
+/// host (routed experts by name only). 2026-10-16: Names sorted, so every run sees one order.
 pub(super) struct LayerSource {
-    names: Vec<String>,
+    names: std::collections::BTreeSet<String>,
     tensors: std::collections::BTreeMap<String, (WeightDtype, Vec<usize>, Vec<u8>)>,
     /// 2026-09-25: Copies, at the width the binders bind at, of the tensors
     /// stored at another width (see [`plan_dtype`]). Only
@@ -171,28 +174,45 @@ pub(super) struct LayerSource {
 impl LayerSource {
     pub(super) fn collect(gpu: &dyn GpuBackend, store: &WeightStore, layer: usize) -> Result<Self> {
         let prefix = format!("model.language_model.layers.{layer}.");
-        let mut names = Vec::new();
+        let mut names = std::collections::BTreeSet::new();
         let mut tensors = std::collections::BTreeMap::new();
         let mut plan_cast = std::collections::BTreeMap::new();
-        let rels: Vec<String> = store
+        let rels: std::collections::BTreeSet<String> = store
             .names()
             .filter_map(|n| n.strip_prefix(&prefix).map(|r| r.to_string()))
             .collect();
+        let mut put =
+            |rel: &str, dtype: WeightDtype, shape: &[usize], bytes: Vec<u8>| -> Result<()> {
+                if let Some(cast) = plan_dtype::cast_to_plan_dtype(rel, dtype, &bytes)? {
+                    plan_cast.insert(rel.to_string(), cast);
+                }
+                tensors.insert(rel.to_string(), (dtype, shape.to_vec(), bytes));
+                Ok(())
+            };
         for rel in rels {
             let rel = rel.as_str();
+            names.insert(rel.to_string());
             // 2026-09-25: Routed experts are listed but not copied: `bind_expert` reads
             // them from the store.
             if rel.starts_with("mlp.experts.") {
-                names.push(rel.to_string());
                 continue;
             }
-            names.push(rel.to_string());
             let t = store.get(&format!("{prefix}{rel}"))?;
-            let bytes = host_bytes(gpu, t)?;
-            if let Some(cast) = plan_dtype::cast_to_plan_dtype(rel, t.dtype, &bytes)? {
-                plan_cast.insert(rel.to_string(), cast);
+            put(rel, t.dtype, &t.shape, host_bytes(gpu, t)?)?;
+        }
+        // 2026-10-16: The tensors `METRALE_GLM_LAYER_STREAM` kept off the device, from their shard.
+        for (name, d) in store.deferred_sorted() {
+            let Some(rel) = name.strip_prefix(&prefix) else {
+                continue;
+            };
+            if !layer_stream::collected_from_shard(rel, name, d.dtype) {
+                continue;
             }
-            tensors.insert(rel.to_string(), (t.dtype, t.shape.clone(), bytes));
+            names.insert(rel.to_string());
+            let bytes = d
+                .read_host_bytes()
+                .with_context(|| format!("{name}: reading the streamed layer tensor"))?;
+            put(rel, d.dtype, &d.shape, bytes)?;
         }
         Ok(Self {
             names,
@@ -279,7 +299,7 @@ impl KdaTensorSource for LayerSource {
         })
     }
     fn names(&self) -> Vec<String> {
-        self.names.clone()
+        self.names.iter().cloned().collect()
     }
 }
 
