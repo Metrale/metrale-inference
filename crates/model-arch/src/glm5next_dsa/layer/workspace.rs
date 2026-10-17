@@ -75,6 +75,26 @@ pub fn select_scratch_rows(
     (max_rows * full / pools).max(floor_rows).min(max_rows)
 }
 
+/// 2026-10-17 (moved out of [`Glm5NextDsaWorkspace::new`]): The geometry the workspace's
+/// selection scratch is allocated for when it serves up to `max_rows` (at least 1) rows: planned
+/// at [`super::super::state::max_dsa_context`] tokens, its per-row regions at
+/// [`select_scratch_rows`] rows (raised to the batched decode's rows). Public so a test or gate
+/// sizes the serve's scratch from this one source.
+pub fn select_scratch_geometry(
+    cfg: &Glm5NextDsaConfig,
+    max_rows: usize,
+) -> Result<super::super::select::DsaSelectGeometry> {
+    let rows = max_rows.max(1);
+    let ceiling = super::super::state::max_dsa_context(cfg);
+    let full = super::super::select::DsaSelectGeometry::plan(cfg, ceiling, rows)?;
+    let floor_rows = crate::glm5next_layer::multi_seq_chunk_rows()
+        .max(metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M as usize);
+    Ok(super::super::select::DsaSelectGeometry {
+        q_rows: select_scratch_rows(rows, ceiling, cfg.index_kpool, floor_rows),
+        ..full
+    })
+}
+
 /// 2026-10-12: `METRALE_GLM_DSA_WS_SHARED`: on unless set to `0`. On, the loader builds ONE
 /// `Glm5NextDsaWorkspace` for every DSA layer of the text stack (the KDA and MLP workspaces are
 /// shared the same way); off, one per layer, the pre-2026-10-12 allocation, which at 8208
@@ -170,14 +190,7 @@ impl Glm5NextDsaWorkspace {
     /// it.
     pub fn new(gpu: &dyn GpuBackend, cfg: &Glm5NextDsaConfig, max_rows: usize) -> Result<Self> {
         let rows = max_rows.max(1);
-        let ceiling = super::super::state::max_dsa_context(cfg);
-        let full = super::super::select::DsaSelectGeometry::plan(cfg, ceiling, rows)?;
-        let floor_rows = crate::glm5next_layer::multi_seq_chunk_rows()
-            .max(metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M as usize);
-        let geom = super::super::select::DsaSelectGeometry {
-            q_rows: select_scratch_rows(rows, ceiling, cfg.index_kpool, floor_rows),
-            ..full
-        };
+        let geom = select_scratch_geometry(cfg, rows)?;
         let bt_cap = super::super::state::max_dsa_context(cfg).max(1);
         let persist = std::env::var("METRALE_GLM_DSA_ALLOC_PER_STEP").as_deref() != Ok("1");
         let batch_select = dsa_select_rows_enabled();

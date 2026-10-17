@@ -12,12 +12,13 @@ use std::sync::Mutex;
 
 use metrale_gpu_runtime::gpu::mock::{MockArg, MockGpuBackend, MockLaunch};
 
+use super::super::select;
 use super::super::select::passes_tests::{
     EXPAND, EXPAND_FOLDED, KPOOL_COMPRESS, SEL_FOLD, TOPK_POOLS, cfg, inputs, kernels,
 };
 use super::super::select::{DsaSelectGeometry, DsaSelectScratch, select_tokens_in_passes};
 use super::lever::Payload;
-use super::run::{SplitStreams, plan, run_split, select_with};
+use super::run::{SlabPlan, SplitStreams, plan, plan_with, run_split, select_with};
 use super::*;
 use crate::glm5next_sp_mhc::tests::Recorder;
 
@@ -74,18 +75,27 @@ fn a_pass_splits_only_on_prefill_with_the_lever_and_at_the_table() {
 
 /// 2026-10-15: A 1-row sub-pass, in the unsplit plan or in any rank's slab, keeps the pass
 /// unsplit; the same pass with every sub-pass at least 2 rows wide splits (the control).
+/// 2026-10-17: slabs take `slab_passes` (even sizes), so a slab ends in a 1-row sub-pass only
+/// at `per` 2 (or 1); the stepped plan's refusal at `per` 1367 is kept as the negative control.
 #[test]
 fn a_one_row_sub_pass_anywhere_keeps_the_pass_unsplit() {
-    let t = table("8208:2052");
-    let p = |per| plan(Some(&t), 3, 1, 8208, 4100, true, per).unwrap();
+    let t = table("4096:1024,8208:2052");
+    let p = |k, per| plan(Some(&t), 3, 1, k, 4100, true, per).unwrap();
     // 2026-10-15: 8207 + 1 rows unsplit.
-    assert_eq!(p(8207), None);
-    // 2026-10-15: every 1368-row slab as 1367 + 1.
-    assert_eq!(p(1367), None);
+    assert_eq!(p(8208, 8207), None);
+    // 2026-10-17: 8202 rows: 4101 x 2 unsplit, but every 1367-row slab as 683 x 2 + 1.
+    assert_eq!(p(8202, 2), None);
+    // 2026-10-17: controls: 2734 x 3 unsplit and 455 x 3 + 2 per slab; every 1368-row slab as
+    // 684 + 684, which the stepped plan ran as 1367 + 1 and refused.
+    assert_eq!(p(8202, 3), Some(owned(8202, 3, 1).unwrap()));
+    assert_eq!(p(8208, 1367), Some(owned(8208, 3, 1).unwrap()));
+    let stepped: SlabPlan = |slab, per| select::row_passes(&[slab], per);
+    let old = plan_with(stepped, Some(&t), 3, 1, 8208, 4100, true, 1367).unwrap();
+    assert_eq!(old, None);
     // 2026-10-15: controls: 1368-row sub-passes exactly; 1366 + 2 per slab and 6 x 1366 + 12
     // unsplit; 4104 + 4104 unsplit and whole slabs.
     for per in [1368, 1366, 4104] {
-        assert_eq!(p(per), Some(owned(8208, 3, 1).unwrap()), "per {per}");
+        assert_eq!(p(8208, per), Some(owned(8208, 3, 1).unwrap()), "per {per}");
     }
 }
 

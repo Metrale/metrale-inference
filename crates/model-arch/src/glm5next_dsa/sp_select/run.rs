@@ -12,8 +12,21 @@
 //!   pass and of every rank's slabs has at least 2 rows: a 1-row sub-pass takes other scores
 //!   kernels (`scores_mma_for` needs `q_rows > 1`) and so other bits, and a split that changed
 //!   the sub-pass plan that way would not select the unsplit pass's bytes.
+//! - 2026-10-17: a rank runs each slab in [`slab_passes`] (`even_row_passes`: as many
+//!   sub-passes as the unsplit plan's steps of `per` would take, sized evenly), not in steps of
+//!   `per`. A slab of `per * m + 1` rows stepped ends in a 1-row sub-pass, so [`plan`] refused
+//!   the split at every chunk whose slabs had that length (at 8,192-row chunks on 3 ranks under a
+//!   1,048,576-token ceiling: the chunks ending at 196,608 * m tokens) and every rank selected
+//!   all the chunk's rows. Even sizes leave every slab sub-pass at least 2 rows wide whenever
+//!   `per >= 3`. It is the default because it cannot change a row's bits: every kernel after the
+//!   compression reads and writes only its own row at its offset, and which kernels a sub-pass
+//!   launches depends on its row count only through `q_rows > 1` (`scores_mma_shape`,
+//!   `scores_tiled_for`, `fused_shape`; the top-k, the fold and the expansion not at all). The
+//!   split already relied on that: a slab's sub-passes start at the slab's first row, not at the
+//!   unsplit plan's boundaries, and the gate (`glm5next_dsa_sp_select_gate`) checks the bytes.
+//!   The unsplit pass keeps `row_passes`.
 //! - [`run_split`] writes this rank's owned rows exactly as the unsplit pass writes them (the
-//!   row sub-passes of `select_tokens_rows`), sends only those rows and receives every peer's
+//!   row sub-passes of `select_tokens_passes`), sends only those rows and receives every peer's
 //!   rows into their own places, so after it every rank's `[k, out_width]` tokens are the
 //!   unsplit pass's. The caller's stream waits for both gathers before it returns, and no
 //!   gather reads or writes a row a kernel of the pass is writing at the time (slab A is sent
@@ -33,8 +46,8 @@ use metrale_comm::CommBackend;
 use metrale_gpu_runtime::gpu::GpuBackend;
 
 use super::super::select::{
-    DsaSelectGeometry, DsaSelectInputs, DsaSelectScratch, expand_folded, folded_check, row_passes,
-    select_rows_folded, select_tokens_in_passes, select_tokens_rows,
+    DsaSelectGeometry, DsaSelectInputs, DsaSelectScratch, even_row_passes, expand_folded,
+    folded_check, row_passes, select_passes_folded, select_tokens_in_passes, select_tokens_passes,
 };
 use super::super::{Glm5NextDsaConfig, Glm5NextDsaKernels};
 use super::lever::Payload;
@@ -83,10 +96,36 @@ fn split_streams(gpu: &dyn GpuBackend) -> Result<SplitStreams> {
     Ok(s)
 }
 
+/// 2026-10-17: A slab's row sub-passes in a split pass: `even_row_passes` at `per` rows per
+/// sub-pass (the module's invariants say why the bits are the unsplit pass's).
+pub fn slab_passes(slab: (usize, usize), per: usize) -> Result<Vec<(usize, usize)>> {
+    even_row_passes(&[slab], per)
+}
+
+/// 2026-10-17: A planner of one slab's row sub-passes at `per` rows per sub-pass.
+pub type SlabPlan = fn((usize, usize), usize) -> Result<Vec<(usize, usize)>>;
+
 /// 2026-10-15: This rank's two owned slabs when a pass of `k` rows over `pools` pools splits,
 /// `None` when it runs unsplit: [`applies`] with the lever on (`table` given), and every
-/// sub-pass at `per` rows per sub-pass of at least [`MIN_SUBPASS_ROWS`] rows, unsplit and on every rank.
+/// sub-pass of at least [`MIN_SUBPASS_ROWS`] rows at `per` rows per sub-pass, the unsplit pass's
+/// (`row_passes`) and every rank's slabs' ([`slab_passes`], 2026-10-17).
 pub fn plan(
+    table: Option<&MinPoolsTable>,
+    world: usize,
+    rank: usize,
+    k: usize,
+    pools: usize,
+    is_prefill: bool,
+    per: usize,
+) -> Result<Option<[(usize, usize); SLABS_PER_RANK]>> {
+    plan_with(slab_passes, table, world, rank, k, pools, is_prefill, per)
+}
+
+/// 2026-10-17: [`plan`] with the slabs' sub-passes from `slab_plan`; the tests' negative control
+/// passes the steps of `per` the split ran before 2026-10-17.
+#[allow(clippy::too_many_arguments)]
+pub fn plan_with(
+    slab_plan: SlabPlan,
     table: Option<&MinPoolsTable>,
     world: usize,
     rank: usize,
@@ -101,17 +140,13 @@ pub fn plan(
     if per == 0 || !applies(true, world, k, pools, is_prefill, table) {
         return Ok(None);
     }
-    let wide = |ranges: &[(usize, usize)]| -> Result<bool> {
-        Ok(row_passes(ranges, per)?
-            .iter()
-            .all(|&(_, n)| n >= MIN_SUBPASS_ROWS))
-    };
-    if !wide(&[(0, k)])? {
+    let wide = |passes: Vec<(usize, usize)>| passes.iter().all(|&(_, n)| n >= MIN_SUBPASS_ROWS);
+    if !wide(row_passes(&[(0, k)], per)?) {
         return Ok(None);
     }
     for r in 0..world {
         for slab in owned(k, world, r)? {
-            if !wide(&[slab])? {
+            if !wide(slab_plan(slab, per)?) {
                 return Ok(None);
             }
         }
@@ -211,16 +246,17 @@ pub fn run_split(
     } else {
         (scratch.tokens(), cfg.out_width() * 4)
     };
+    let per = scratch.rows_per_pass(geom);
     let mut passes = 0;
     for (i, (slab, event)) in own.into_iter().zip([s.slab_a, s.slab_b]).enumerate() {
-        let (ranges, compress) = (&[slab], i == 0);
+        let (sub, compress) = (slab_passes(slab, per)?, i == 0);
         passes += if sel {
-            select_rows_folded(
-                gpu, kernels, cfg, geom, inputs, scratch, ranges, compress, main,
+            select_passes_folded(
+                gpu, kernels, cfg, geom, inputs, scratch, &sub, compress, main,
             )?
         } else {
-            select_tokens_rows(
-                gpu, kernels, cfg, geom, inputs, scratch, ranges, compress, main,
+            select_tokens_passes(
+                gpu, kernels, cfg, geom, inputs, scratch, &sub, compress, main,
             )?
         };
         gpu.record_event(event, main)?;
