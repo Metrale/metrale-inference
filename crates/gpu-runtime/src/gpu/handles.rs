@@ -53,3 +53,16 @@ impl fmt::Display for DevicePtr {
         write!(f, "DevicePtr(0x{:x})", self.0)
     }
 }
+
+/// 2026-10-17: One pitched device-to-device copy: `height` rows of `width_bytes`, source rows
+/// `src_pitch` bytes apart from `src` and destination rows `dst_pitch` bytes apart from `dst`.
+/// The argument of `GpuBackend::memcpy_2d_async`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Memcpy2d {
+    pub src: DevicePtr,
+    pub src_pitch: usize,
+    pub dst: DevicePtr,
+    pub dst_pitch: usize,
+    pub width_bytes: usize,
+    pub height: usize,
+}

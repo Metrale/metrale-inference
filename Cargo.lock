@@ -1693,6 +1693,7 @@ dependencies = [
  "metrale-config",
  "metrale-core",
  "metrale-cudarc",
+ "metrale-error",
  "metrale-kernel-tree",
  "metrale-kernels",
  "metrale-telemetry",

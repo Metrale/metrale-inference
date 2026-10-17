@@ -2,21 +2,22 @@
 
 //! 2026-09-26: Bodies the `GpuBackend` impl in `gpu_impl.rs` calls: the red-zone
 //! poisoning of a new `alloc`, and the pitched D2D copy of `copy_d2d_2d_async`.
+//! 2026-10-17: That copy is now `memcpy_2d_async`, on the driver API (`cuMemcpy2DAsync_v2`).
 //! 2026-10-01: Also `alloc_arena` and `free_arena`, moved here unchanged from `gpu_impl.rs`.
 //!
 //! Owner: gpu-runtime (CUDA backend).
 //! Invariants:
-//! - Each `unsafe` block is one call: `cuMemsetD8Async`, `cuMemAlloc_v2`, `cuMemGetInfo_v2`
-//!   or `cuMemFree_v2`, declared in `cuda_backend.rs`, or `cudaMemcpy2DAsync`. The caller
+//! - Each `unsafe` block is one call: `cuMemsetD8Async`, `cuMemAlloc_v2`, `cuMemGetInfo_v2`,
+//!   `cuMemFree_v2`, declared in `cuda_backend.rs`, or `cuMemcpy2DAsync_v2`, through cudarc's
+//!   dynamically loaded driver table (the CUDA 13 link stub does not export it). The caller
 //!   provides a current context and device pointers into live allocations with byte counts
 //!   that fit them.
 
-use std::ffi::c_void;
-
 use anyhow::{Result, bail};
+use metrale_error::{ErrorCode, error};
 
 use super::super::MetraleCudaBackend;
-use crate::gpu::DevicePtr;
+use crate::gpu::{DevicePtr, Memcpy2d};
 
 impl MetraleCudaBackend {
     /// 2026-09-26: Fill the `pad`-byte guard band after a new `bytes`-byte
@@ -48,47 +49,47 @@ impl MetraleCudaBackend {
     }
 }
 
-/// 2026-09-26: `copy_d2d_2d_async`: `height` rows of `width_bytes` from `src`
-/// (pitch `src_pitch`) to `dst` (pitch `dst_pitch`), enqueued on `stream`.
-pub(super) fn memcpy_2d_async(
-    src: DevicePtr,
-    src_pitch: usize,
-    dst: DevicePtr,
-    dst_pitch: usize,
-    width_bytes: usize,
-    height: usize,
-    stream: u64,
-) -> Result<()> {
-    // 2026-09-25: One pitched copy on the caller's stream through the
-    // runtime API; `kind` 3 is cudaMemcpyDeviceToDevice.
-    unsafe extern "C" {
-        fn cudaMemcpy2DAsync(
-            dst: *mut c_void,
-            dpitch: usize,
-            src: *const c_void,
-            spitch: usize,
-            width: usize,
-            height: usize,
-            kind: i32,
-            stream: u64,
-        ) -> i32;
-    }
-    let status = unsafe {
-        cudaMemcpy2DAsync(
-            dst.0 as *mut c_void,
-            dst_pitch,
-            src.0 as *const c_void,
-            src_pitch,
-            width_bytes,
-            height,
-            3,
-            stream,
-        )
+/// 2026-10-17: `GpuBackend::memcpy_2d_async`: one `cuMemcpy2DAsync_v2` of `copy`, both sides
+/// device memory, enqueued on `stream`.
+#[cfg(not(metrale_scale))]
+pub(super) fn memcpy_2d_async(copy: Memcpy2d, stream: u64) -> metrale_error::Result<()> {
+    use cudarc::driver::sys::{self, CUDA_MEMCPY2D, CUmemorytype};
+    let desc = CUDA_MEMCPY2D {
+        srcXInBytes: 0,
+        srcY: 0,
+        srcMemoryType: CUmemorytype::CU_MEMORYTYPE_DEVICE,
+        srcHost: std::ptr::null(),
+        srcDevice: copy.src.0,
+        srcArray: std::ptr::null_mut(),
+        srcPitch: copy.src_pitch,
+        dstXInBytes: 0,
+        dstY: 0,
+        dstMemoryType: CUmemorytype::CU_MEMORYTYPE_DEVICE,
+        dstHost: std::ptr::null_mut(),
+        dstDevice: copy.dst.0,
+        dstArray: std::ptr::null_mut(),
+        dstPitch: copy.dst_pitch,
+        WidthInBytes: copy.width_bytes,
+        Height: copy.height,
     };
-    if status != 0 {
-        bail!("cudaMemcpy2DAsync failed: status {status}");
+    let status = unsafe { sys::cuMemcpy2DAsync_v2(&desc, stream as sys::CUstream) };
+    if status != sys::CUresult::CUDA_SUCCESS {
+        return Err(error!(
+            ErrorCode::DeviceDriver,
+            "cuMemcpy2DAsync_v2", status as i32
+        ));
     }
     Ok(())
+}
+
+/// 2026-10-17: `cuMemcpy2DAsync_v2` is not verified on SCALE (its loader stubs missing symbols);
+/// `copy_d2d_2d_async` keeps the trait's per-row loop on SCALE.
+#[cfg(metrale_scale)]
+pub(super) fn memcpy_2d_async(_copy: Memcpy2d, _stream: u64) -> metrale_error::Result<()> {
+    Err(error!(
+        ErrorCode::NotImplemented,
+        "memcpy_2d_async", "SCALE"
+    ))
 }
 
 /// 2026-10-01: `GpuBackend::alloc_arena`: `bytes` of device memory off the allocation ledger.

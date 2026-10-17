@@ -12,7 +12,7 @@ use std::sync::atomic::Ordering;
 mod baseline;
 pub use baseline::{baseline_free_bytes, set_baseline_free_bytes};
 mod handles;
-pub use handles::{DevicePtr, GraphHandle, KernelArg, KernelHandle};
+pub use handles::{DevicePtr, GraphHandle, KernelArg, KernelHandle, Memcpy2d};
 
 pub use crate::gpu_args::pack_kernel_args;
 
@@ -274,10 +274,21 @@ pub trait GpuBackend: Send + Sync {
         self.copy_d2d(src, dst, bytes)
     }
 
+    /// 2026-10-17: One pitched device-to-device copy (`copy`) enqueued on `stream` as a single
+    /// driver operation. A backend without one returns `NotImplemented`; callers that need the
+    /// copy either way use `copy_d2d_2d_async`.
+    fn memcpy_2d_async(&self, _copy: Memcpy2d, _stream: u64) -> metrale_error::Result<()> {
+        Err(metrale_error::error!(
+            metrale_error::ErrorCode::NotImplemented,
+            "memcpy_2d_async",
+            std::any::type_name::<Self>()
+        ))
+    }
+
     /// 2026-09-25: Pitched device-to-device copy: `height` rows of `width_bytes`,
     /// source rows `src_pitch` apart and destination rows `dst_pitch` apart. The
-    /// default loops `copy_d2d_async` per row; the CUDA backend issues one
-    /// `cudaMemcpy2DAsync`.
+    /// default loops `copy_d2d_async` per row; the CUDA backend (outside SCALE)
+    /// issues one `memcpy_2d_async`.
     #[allow(clippy::too_many_arguments)]
     fn copy_d2d_2d_async(
         &self,

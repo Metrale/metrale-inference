@@ -38,11 +38,11 @@ fn main() {
         Ok("1") | Ok("true")
     ) {
         // 2026-09-25: With METRALE_SKIP_BUILD nothing is compiled with nvcc, but
-        // the crate's own FFI to libcuda, cuBLASLt and cudart still has to link.
+        // the crate's own FFI to libcuda and cuBLASLt still has to link. (2026-10-17: cudart is
+        // no longer needed: the pitched copy moved to the driver API.)
         if std::env::var_os("CARGO_FEATURE_CUDA").is_some() {
             println!("cargo:rustc-link-lib=dylib=cuda");
             println!("cargo:rustc-link-lib=dylib=cublasLt");
-            println!("cargo:rustc-link-lib=dylib=cudart");
             println!("cargo:rustc-link-search=native=/usr/local/cuda/lib64");
             println!("cargo:rustc-link-search=native=/usr/local/cuda/lib64/stubs");
             println!("cargo:rustc-link-search=native=/usr/lib/x86_64-linux-gnu");
@@ -58,9 +58,8 @@ fn main() {
 
     println!("cargo:rustc-link-lib=dylib=cuda");
     println!("cargo:rustc-link-lib=dylib=cublasLt");
-    // 2026-09-25: cudart is linked on every CUDA build, not only with the
-    // reference objects below: `copy_d2d_2d_async` calls `cudaMemcpy2DAsync`.
-    println!("cargo:rustc-link-lib=dylib=cudart");
+    // 2026-10-17: cudart is linked only with the reference objects below; the crate's own
+    // FFI is driver API only (the pitched copy is `cuMemcpy2DAsync_v2`).
 
     if let Ok(cuda_path) = std::env::var("CUDA_HOME") {
         println!("cargo:rustc-link-search=native={cuda_path}/lib64");

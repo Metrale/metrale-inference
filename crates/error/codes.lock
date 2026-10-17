@@ -30,3 +30,4 @@
 0x0171 SinkFull
 0x0180 HostConfig
 0x0181 HostUnavailable
+0x0280 DeviceDriver

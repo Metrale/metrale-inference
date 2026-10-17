@@ -5,7 +5,7 @@
 //! inherent methods in `gpu_copy.rs`, `gpu_impl_graph.rs` and `redzone.rs`.
 //!
 //! Each `unsafe` block is one call: a driver function declared in
-//! `cuda_backend.rs`, `cudaMemcpy2DAsync`, or the `unsafe fn`
+//! `cuda_backend.rs`, or the `unsafe fn`
 //! `MetraleRegistry::launch_on_stream`.
 //! The caller provides what they need and nothing here checks it: the
 //! backend's context current on the calling thread (`bind_to_thread`),
@@ -29,7 +29,7 @@ use super::{
     MetraleCudaBackend, cuMemAlloc_v2, cuMemAllocManaged, cuMemFree_v2, cuMemGetInfo_v2,
     cuMemcpyDtoDAsync_v2, cuMemcpyDtoHAsync_v2, cuStreamSynchronize,
 };
-use crate::gpu::{DevicePtr, GpuBackend, GraphHandle, KernelHandle};
+use crate::gpu::{DevicePtr, GpuBackend, GraphHandle, KernelHandle, Memcpy2d};
 
 mod d2h_trace;
 mod h2d;
@@ -340,6 +340,13 @@ impl GpuBackend for MetraleCudaBackend {
         Ok(())
     }
 
+    fn memcpy_2d_async(&self, copy: Memcpy2d, stream: u64) -> metrale_error::Result<()> {
+        raw::memcpy_2d_async(copy, stream)
+    }
+
+    // 2026-10-17: Off SCALE the pitched copy is one `memcpy_2d_async`; on SCALE (driver 2D copy
+    // not verified there) the trait default loops `copy_d2d_async` per row.
+    #[cfg(not(metrale_scale))]
     fn copy_d2d_2d_async(
         &self,
         src: DevicePtr,
@@ -350,7 +357,15 @@ impl GpuBackend for MetraleCudaBackend {
         height: usize,
         stream: u64,
     ) -> Result<()> {
-        raw::memcpy_2d_async(src, src_pitch, dst, dst_pitch, width_bytes, height, stream)
+        let copy = Memcpy2d {
+            src,
+            src_pitch,
+            dst,
+            dst_pitch,
+            width_bytes,
+            height,
+        };
+        Ok(self.memcpy_2d_async(copy, stream)?)
     }
 
     fn begin_capture(&self, stream: u64) -> Result<()> {

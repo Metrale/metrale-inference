@@ -81,7 +81,9 @@ error_registry! {
         HostUnavailable = 0x0181 => "host capability {} unavailable",
     }
     /// 2026-10-17: `0x0200–0x02FF`: sched-core (the `Device` trait, scheduler, lora) and the
-    /// device backends.
+    /// device backends. Sub-blocks: sched-core `0x0200–0x027F`, device backends `0x0280–0x02FF`.
     SchedDevice = 0x0200..=0x02FF {
+        /// 2026-10-17: A device driver call returned a failure status: (call, status).
+        DeviceDriver = 0x0280 => "{} failed: driver status {}",
     }
 }
