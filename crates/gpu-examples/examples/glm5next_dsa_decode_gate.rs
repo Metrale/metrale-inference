@@ -256,8 +256,11 @@ fn main() -> Result<()> {
         .context("Glm5NextDsaKernels")?;
     metrale_model_arch::glm5next_dsa::layer::Glm5NextDsaLayerKernels::resolve(&gpu)
         .context("Glm5NextDsaLayerKernels")?;
-    metrale_model_arch::glm5next_dsa::attend::Glm5NextDsaDecodeKernel::resolve(&gpu)
-        .context("Glm5NextDsaDecodeKernel")?;
+    metrale_model_arch::glm5next_dsa::attend::Glm5NextDsaDecodeKernel::resolve(
+        &gpu,
+        metrale_gpu_examples::glm_levers()?.dsa.decode_hb,
+    )
+    .context("Glm5NextDsaDecodeKernel")?;
     metrale_model_arch::glm5next_mhc::Glm5NextMhcKernels::resolve(
         &gpu,
         metrale_gpu_examples::glm_levers()?.mhc,

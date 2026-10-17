@@ -158,7 +158,12 @@ fn main() -> Result<()> {
     let c = cfg();
     let kern = Glm5NextDsaKernels::resolve(&gpu)?;
     let inp = inputs(&gpu, &c)?;
-    let scratch = DsaSelectScratch::alloc(&gpu, &c, &DsaSelectGeometry::plan(&c, CEILING, 1)?)?;
+    let scratch = DsaSelectScratch::alloc(
+        &gpu,
+        &c,
+        &DsaSelectGeometry::plan(&c, CEILING, 1)?,
+        metrale_gpu_examples::glm_levers()?.dsa.select,
+    )?;
     let sl = gpu.alloc(16)?;
     let n = c.out_width() * 4;
     let launch = DsaSelectLaunch::Ceiling {

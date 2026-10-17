@@ -119,7 +119,7 @@ fn the_indexer_rewind_only_shrinks() {
 /// one latent per token.
 #[test]
 fn k_and_v_are_the_same_latent_pool() {
-    let src = include_str!("../layer.rs");
+    let src = include_str!("attend_rows.rs");
     assert!(src.contains("v_cache: pool"));
     assert!(src.contains("K and V are the same latent"));
 }

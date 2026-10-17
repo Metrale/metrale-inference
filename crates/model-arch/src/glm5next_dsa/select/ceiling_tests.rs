@@ -13,6 +13,7 @@
 use super::launch::{index_scores_grid_x, kpool_compress_grid_x};
 use super::passes_tests::{INDEX_SCORES, KPOOL_COMPRESS, cfg, inputs, kernels};
 use super::*;
+use crate::glm5next_dsa::levers::DsaLevers;
 use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
 
 /// 2026-10-14: (kernel, grid, block, shared memory) of every launch of one replay-safe
@@ -28,7 +29,7 @@ fn ceiling_dims(msl: usize, live: usize) -> Vec<(u64, [u32; 3], [u32; 3], u32)> 
         geom_dev: gpu.alloc(5 * 4).unwrap(),
         ..inputs(&gpu, &c, live, 1)
     };
-    let scratch = DsaSelectScratch::alloc(&gpu, &c, &geom).unwrap();
+    let scratch = DsaSelectScratch::alloc(&gpu, &c, &geom, DsaLevers::declared().select).unwrap();
     let launch = DsaSelectLaunch::Ceiling {
         max_pools: contiguous_pool_count(c.index_kpool, msl),
     };
@@ -133,7 +134,7 @@ fn a_capped_ceiling_launch_writes_the_exact_launch_bytes() {
         })
         .collect()
     };
-    let exact = DsaSelectScratch::alloc(&gpu, &c, &geom).unwrap();
+    let exact = DsaSelectScratch::alloc(&gpu, &c, &geom, DsaLevers::declared().select).unwrap();
     select_tokens(&gpu, &k, &c, &geom, &inp, &exact, DsaSelectLaunch::Exact, 0).unwrap();
 
     let geom_dev = gpu.alloc(5 * 4).unwrap();
@@ -149,7 +150,7 @@ fn a_capped_ceiling_launch_writes_the_exact_launch_bytes() {
         .arg_u32(topk_tile() as u32)
         .launch(0)
         .unwrap();
-    let ceiling = DsaSelectScratch::alloc(&gpu, &c, &geom).unwrap();
+    let ceiling = DsaSelectScratch::alloc(&gpu, &c, &geom, DsaLevers::declared().select).unwrap();
     let launch = DsaSelectLaunch::Ceiling {
         max_pools: contiguous_pool_count(c.index_kpool, c.max_context),
     };

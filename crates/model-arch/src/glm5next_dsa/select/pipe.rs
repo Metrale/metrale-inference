@@ -23,13 +23,6 @@ pub const SCORES_PIPE_SMEM: u32 =
 /// 2026-10-14: Pools per block of `dsa_pool_prep_bf16` (32 threads of 4 channels per pool).
 const PREP_POOLS_PER_BLOCK: usize = 8;
 
-/// 2026-10-14: `METRALE_GLM_DSA_SCORES_PIPE=1`, read once: where the tensor-core scores run
-/// (`METRALE_GLM_DSA_SCORES_MMA`), run them streamed. Off unless `1`.
-pub fn scores_pipe() -> bool {
-    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *F.get_or_init(|| std::env::var("METRALE_GLM_DSA_SCORES_PIPE").as_deref() == Ok("1"))
-}
-
 /// 2026-10-15: The readback of the prefill selection levers as the first exact multi-row pass
 /// resolved them (lever set AND kernel resolved AND shape eligible), logged once per process so
 /// every rank's serve log shows which scores path its prefill ran.

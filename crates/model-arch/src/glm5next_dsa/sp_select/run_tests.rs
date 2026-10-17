@@ -8,6 +8,7 @@
 //! Owner: model-arch (GLM-5.3 DSA).
 //! Invariants: none beyond the types.
 
+use crate::glm5next_dsa::levers::DsaLevers;
 use std::sync::Mutex;
 
 use metrale_gpu_runtime::gpu::mock::{MockArg, MockGpuBackend, MockLaunch};
@@ -119,7 +120,7 @@ fn a_split_rank_selects_its_slabs_and_gathers_the_peers_in_place() {
     let geom = DsaSelectGeometry::plan(&c, 4096, 96).unwrap();
     let gpu = MockGpuBackend::new();
     let inp = inputs(&gpu, &c, 4096, 96);
-    let scratch = DsaSelectScratch::alloc(&gpu, &c, &geom).unwrap();
+    let scratch = DsaSelectScratch::alloc(&gpu, &c, &geom, DsaLevers::declared().select).unwrap();
     let comm = recorder(1, 3);
     let s = SplitStreams {
         comm: 99,
@@ -186,7 +187,8 @@ fn a_decode_pass_never_reaches_a_gather() {
     let geom = DsaSelectGeometry::plan(&c, 4096, 96).unwrap();
     let launches = |route: &dyn Fn(&MockGpuBackend, &DsaSelectScratch) -> usize| {
         let gpu = MockGpuBackend::new();
-        let scratch = DsaSelectScratch::alloc(&gpu, &c, &geom).unwrap();
+        let scratch =
+            DsaSelectScratch::alloc(&gpu, &c, &geom, DsaLevers::declared().select).unwrap();
         let n = route(&gpu, &scratch);
         (n, gpu.launches_snapshot())
     };
@@ -273,7 +275,8 @@ fn a_selected_payload_split_folds_its_slabs_gathers_pools_and_expands_every_row(
     let run = |payload| {
         let gpu = MockGpuBackend::new();
         let inp = inputs(&gpu, &c, 4096, 96);
-        let scratch = DsaSelectScratch::alloc(&gpu, &c, &geom).unwrap();
+        let scratch =
+            DsaSelectScratch::alloc(&gpu, &c, &geom, DsaLevers::declared().select).unwrap();
         let comm = recorder(1, 3);
         let k = &kernels();
         let n = run_split(

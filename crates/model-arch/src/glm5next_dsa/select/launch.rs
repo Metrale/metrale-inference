@@ -310,13 +310,13 @@ pub(super) fn run(
         ceiling.is_some(),
         geom,
         kernels.rows.scores_mma,
-        scores_mma(),
+        scratch.levers.scores_mma,
     );
     // 2026-10-14: `METRALE_GLM_DSA_SCORES_PIPE=1`: those scores streamed (`pipe`), from BF16
     // keys and visibility prepared once per compression.
-    let pipe = scores_pipe_for(mma, &kernels.rows, scores_pipe());
+    let pipe = scores_pipe_for(mma, &kernels.rows, scratch.levers.scores_pipe);
     if ceiling.is_none() && geom.q_rows > 1 {
-        pipe::readback_select_levers(mma, pipe, fused, topk_radix());
+        pipe::readback_select_levers(mma, pipe, fused, scratch.levers.topk_radix);
     }
     // 2026-10-17: The fused pass: the pipe's prepared pools, then scores, top-k and fold in one
     // kernel; `fused` implies an exact launch with pools.
@@ -339,7 +339,7 @@ pub(super) fn run(
             ceiling.is_some(),
             geom,
             kernels.rows.scores_tiled,
-            scores_tiled(),
+            scratch.levers.scores_tiled,
         );
     if has_pools && pipe {
         if compress {
@@ -429,7 +429,7 @@ pub(super) fn run(
             ceiling.is_some(),
             geom,
             kernels.rows.topk_radix,
-            topk_radix(),
+            scratch.levers.topk_radix,
         ) {
             KernelLaunch::new(gpu, kernels.rows.topk_radix)
                 .grid([geom.q_rows as u32, 1, 1])

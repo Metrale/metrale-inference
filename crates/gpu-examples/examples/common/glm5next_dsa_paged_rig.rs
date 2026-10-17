@@ -168,7 +168,12 @@ pub(crate) fn layer_rows(
         weights,
         kernels: Glm5NextDsaLayerKernels::resolve(gpu)?,
         select_kernels: Glm5NextDsaKernels::resolve(gpu)?,
-        decode_kernel: Glm5NextDsaDecodeKernel::resolve(gpu)?,
+        decode_kernel: Glm5NextDsaDecodeKernel::resolve(gpu, levers.dsa.decode_hb)?,
+        dsa_owned: std::sync::Arc::new(
+            metrale_model_arch::glm5next_dsa::levers::DsaOwnedLevers::from_settings(
+                &metrale_gpu_examples::process_settings()?,
+            )?,
+        ),
         workspace: std::sync::Arc::new(Glm5NextDsaWorkspace::new(gpu, cfg, rows, &levers)?),
         layer_idx: 1,
         attn_layer_idx: 0,

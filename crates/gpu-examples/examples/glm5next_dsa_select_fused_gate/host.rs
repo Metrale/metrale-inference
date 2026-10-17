@@ -130,7 +130,8 @@ pub(super) fn child(dir: &std::path::Path) -> Result<()> {
         let c = cfg(s, topk);
         let inp = inputs(&gpu, q, s, tie, &mut rng)?;
         let geom = DsaSelectGeometry::plan(&c, s, q)?;
-        let full = DsaSelectScratch::alloc(&gpu, &c, &geom)?;
+        let sel = metrale_gpu_examples::glm_levers()?.dsa.select;
+        let full = DsaSelectScratch::alloc(&gpu, &c, &geom, sel)?;
         let small = DsaSelectScratch::alloc_rows(
             &gpu,
             &c,
@@ -139,6 +140,7 @@ pub(super) fn child(dir: &std::path::Path) -> Result<()> {
                 ..geom
             },
             q,
+            sel,
         )?;
         let nt = q * c.out_width() * 4;
         let ns = q * geom.select_k * 4;

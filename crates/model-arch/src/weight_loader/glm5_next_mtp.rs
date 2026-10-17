@@ -78,7 +78,13 @@ pub fn load_glm5next_mtp_module(
         weights: build_dsa_weights(gpu, &dsa_cfg, &dsa_plan, &load)?,
         kernels: dsa_layer_kernels,
         select_kernels: dsa_kernels,
-        decode_kernel: crate::glm5next_dsa::attend::Glm5NextDsaDecodeKernel::resolve(gpu)?,
+        decode_kernel: crate::glm5next_dsa::attend::Glm5NextDsaDecodeKernel::resolve(
+            gpu,
+            levers.dsa.decode_hb,
+        )?,
+        dsa_owned: std::sync::Arc::new(crate::glm5next_dsa::levers::DsaOwnedLevers::from_settings(
+            lc.settings,
+        )?),
         // 2026-09-25: Single-row workspace: the drafter runs this layer one row at a time.
         // 2026-10-11: One row per sequence of the widest batched propose under its lever.
         // 2026-10-11: And a pass of drafter context rows (`ctx_rows`).

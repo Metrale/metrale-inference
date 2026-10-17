@@ -10,6 +10,7 @@
 
 use super::passes_tests::{cfg, inputs, kernels};
 use super::*;
+use crate::glm5next_dsa::levers::DsaLevers;
 use metrale_gpu_runtime::gpu::KernelHandle;
 use metrale_gpu_runtime::gpu::mock::{MockArg, MockGpuBackend};
 
@@ -58,8 +59,14 @@ fn a_fused_pass_is_bounded_by_its_selected_rows_only() {
     let c = cfg();
     let g = geom(8);
     let gpu = MockGpuBackend::new();
-    let mut s =
-        DsaSelectScratch::alloc_rows(&gpu, &c, &DsaSelectGeometry { q_rows: 3, ..g }, 8).unwrap();
+    let mut s = DsaSelectScratch::alloc_rows(
+        &gpu,
+        &c,
+        &DsaSelectGeometry { q_rows: 3, ..g },
+        8,
+        DsaLevers::declared().select,
+    )
+    .unwrap();
     assert!(!s.fused, "the lever is off unless set");
     assert_eq!(s.rows_per_pass(&g), 3);
     assert!(s.fits(&c, &g).is_err());
@@ -96,7 +103,8 @@ fn takes_fused_needs_its_kernels_and_host_geometry() {
     let g = geom(8);
     let gpu = MockGpuBackend::new();
     let inp = inputs(&gpu, &c, 4096, 8);
-    let mut s = DsaSelectScratch::alloc_rows(&gpu, &c, &g, 8).unwrap();
+    let mut s =
+        DsaSelectScratch::alloc_rows(&gpu, &c, &g, 8, DsaLevers::declared().select).unwrap();
     let mut k = kernels();
     let exact = DsaSelectLaunch::Exact;
     assert!(
@@ -145,7 +153,8 @@ fn fused_launch_matches_the_kernel_signature() {
     let g = geom(13);
     let gpu = MockGpuBackend::new();
     let inp = inputs(&gpu, &c, 4096, 13);
-    let mut s = DsaSelectScratch::alloc_rows(&gpu, &c, &g, 13).unwrap();
+    let mut s =
+        DsaSelectScratch::alloc_rows(&gpu, &c, &g, 13, DsaLevers::declared().select).unwrap();
     let mut k = kernels();
     k.rows.select_fused = KernelHandle(30);
     assert!(

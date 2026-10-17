@@ -40,13 +40,14 @@ use metrale_cache::kv_cache::PagedKvCache;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
-use super::attend::{DsaDecodeInputs, DsaDecodePaging, Glm5NextDsaDecodeKernel, decode_attention};
+use super::attend::Glm5NextDsaDecodeKernel;
 use super::paged::{IndexerCache, IndexerRowsDev};
 use super::select::{DsaSelectInputs, select_tokens};
 use super::state::Glm5NextDsaState;
 use super::{Glm5NextDsaConfig, Glm5NextDsaKernels};
 use metrale_model_layers::layer::{ForwardContext, LayerState, TransformerLayer};
 
+mod attend_rows;
 mod decode_k;
 mod decode_rows;
 mod drafter_rows;
@@ -125,6 +126,9 @@ pub struct Glm5NextDsaLayer {
     pub indexer_format: super::fp8_rows::IndexerRowFormat,
     /// 2026-10-17: The GLM layer levers this mixer reads, resolved at load.
     pub levers: crate::glm5next_layer::GlmLevers,
+    /// 2026-10-17: The DSA levers that own heap data, resolved once per load and shared by the
+    /// stack's DSA layers.
+    pub dsa_owned: std::sync::Arc<super::levers::DsaOwnedLevers>,
 }
 
 impl Glm5NextDsaLayer {
@@ -350,64 +354,6 @@ impl Glm5NextDsaLayer {
         )?;
         use crate::glm5next_layer::profile;
         profile::end(profile::DSA_SELECT, t, gpu, stream);
-        Ok(())
-    }
-
-    /// 2026-09-25: The gather-attend for all `rows` query rows in one launch.
-    ///
-    /// Grid y is the row. Each row reads the paged latent cache through its own `q_abs` row,
-    /// selection row and `seq_lens` entry, and the block-table row at stride
-    /// `max_blocks_per_seq` (0 when the rows share one table).
-    #[allow(clippy::too_many_arguments)]
-    fn attend_rows(
-        &self,
-        gpu: &dyn GpuBackend,
-        rows: usize,
-        state: &Glm5NextDsaState,
-        kv_cache: &PagedKvCache,
-        block_table_dev: DevicePtr,
-        seq_lens_dev: DevicePtr,
-        paging: &DsaDecodePaging,
-        // 2026-10-12: A prefill sub-chunk's attend (`Glm5NextDsaDecodeKernel::for_prefill`).
-        is_prefill: bool,
-        stream: u64,
-    ) -> Result<()> {
-        use crate::glm5next_layer::profile;
-        let w = &self.workspace;
-        // 2026-09-25: `decode_attention` reads only `out_width` and `q_rows` from it.
-        let geom = state.geometry(&self.cfg, rows)?;
-        let paging = DsaDecodePaging {
-            num_seqs: rows,
-            ..*paging
-        };
-        let t = profile::start();
-        let pool = kv_cache.k_pool_ptr(self.attn_layer_idx);
-        let kernel = if is_prefill {
-            self.decode_kernel.for_prefill_levers()?
-        } else {
-            self.decode_kernel
-        };
-        decode_attention(
-            gpu,
-            kernel,
-            &self.cfg,
-            &geom,
-            &paging,
-            &DsaDecodeInputs {
-                q: w.q_abs,
-                k_cache: pool,
-                v_cache: pool, // 2026-09-25: absorbed NoPE MLA: K and V are the same latent
-                out: w.attn_out,
-                block_tables: block_table_dev,
-                seq_lens: seq_lens_dev,
-                sel_indices: w.select.tokens(),
-                k_scale: self.kv_scale,
-                v_scale: self.kv_scale,
-                split_ws: w.split_ws,
-            },
-            stream,
-        )?;
-        profile::end(profile::DSA_ATTEND, t, gpu, stream);
         Ok(())
     }
 }

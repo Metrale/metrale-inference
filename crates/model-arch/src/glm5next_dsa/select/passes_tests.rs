@@ -11,6 +11,7 @@
 
 use super::*;
 use crate::glm5next_dsa::DsaRowsKernels;
+use crate::glm5next_dsa::levers::DsaLevers;
 use metrale_gpu_runtime::gpu::KernelHandle;
 use metrale_gpu_runtime::gpu::mock::{MockArg, MockGpuBackend, MockLaunch};
 
@@ -121,7 +122,8 @@ fn a_scratch_that_holds_every_row_runs_the_one_pass_launches() {
     let run = |passes: bool| {
         let gpu = MockGpuBackend::new();
         let inp = inputs(&gpu, &c, 4096, 8);
-        let scratch = DsaSelectScratch::alloc(&gpu, &c, &geom).unwrap();
+        let scratch =
+            DsaSelectScratch::alloc(&gpu, &c, &geom, DsaLevers::declared().select).unwrap();
         if passes {
             let n =
                 select_tokens_in_passes(&gpu, &kernels(), &c, &geom, &inp, &scratch, 7).unwrap();
@@ -164,7 +166,8 @@ fn sub_passes_cover_every_row_once_at_that_rows_offsets() {
     let gpu = MockGpuBackend::new();
     let inp = inputs(&gpu, &c, 4096, 8);
     let small = DsaSelectGeometry { q_rows: 3, ..geom };
-    let scratch = DsaSelectScratch::alloc_rows(&gpu, &c, &small, 8).unwrap();
+    let scratch =
+        DsaSelectScratch::alloc_rows(&gpu, &c, &small, 8, DsaLevers::declared().select).unwrap();
     assert_eq!(scratch.rows_per_pass(&geom), 3);
     let n = select_tokens_in_passes(&gpu, &kernels(), &c, &geom, &inp, &scratch, 7).unwrap();
     assert_eq!(n, 3);
@@ -220,9 +223,12 @@ fn the_output_must_hold_every_row() {
     let c = cfg();
     let geom = DsaSelectGeometry::plan(&c, 4096, 8).unwrap();
     let gpu = MockGpuBackend::new();
-    assert!(DsaSelectScratch::alloc_rows(&gpu, &c, &geom, 7).is_err());
+    assert!(
+        DsaSelectScratch::alloc_rows(&gpu, &c, &geom, 7, DsaLevers::declared().select).is_err()
+    );
     let small = DsaSelectGeometry { q_rows: 3, ..geom };
-    let scratch = DsaSelectScratch::alloc_rows(&gpu, &c, &small, 4).unwrap();
+    let scratch =
+        DsaSelectScratch::alloc_rows(&gpu, &c, &small, 4, DsaLevers::declared().select).unwrap();
     let inp = inputs(&gpu, &c, 4096, 8);
     let err = select_tokens_in_passes(&gpu, &kernels(), &c, &geom, &inp, &scratch, 7);
     assert!(err.is_err());
@@ -242,7 +248,8 @@ fn no_pools_is_one_pass() {
     let gpu = MockGpuBackend::new();
     let inp = inputs(&gpu, &c, 3, 8);
     let tiny = DsaSelectGeometry::plan(&c, 4096, 1).unwrap();
-    let scratch = DsaSelectScratch::alloc_rows(&gpu, &c, &tiny, 8).unwrap();
+    let scratch =
+        DsaSelectScratch::alloc_rows(&gpu, &c, &tiny, 8, DsaLevers::declared().select).unwrap();
     assert_eq!(scratch.rows_per_pass(&geom), usize::MAX);
     assert_eq!(
         select_tokens_in_passes(&gpu, &kernels(), &c, &geom, &inp, &scratch, 7).unwrap(),
@@ -277,11 +284,17 @@ fn sub_passes_select_the_one_pass_tokens_bit_for_bit() {
         gpu.copy_d2h(scratch.tokens(), &mut out).unwrap();
         out
     };
-    let whole = DsaSelectScratch::alloc(&gpu, &c, &geom).unwrap();
+    let whole = DsaSelectScratch::alloc(&gpu, &c, &geom, DsaLevers::declared().select).unwrap();
     select_tokens(&gpu, &k, &c, &geom, &inp, &whole, DsaSelectLaunch::Exact, 0).unwrap();
     gpu.synchronize(0).unwrap();
-    let parts = DsaSelectScratch::alloc_rows(&gpu, &c, &DsaSelectGeometry { q_rows: 5, ..geom }, q)
-        .unwrap();
+    let parts = DsaSelectScratch::alloc_rows(
+        &gpu,
+        &c,
+        &DsaSelectGeometry { q_rows: 5, ..geom },
+        q,
+        DsaLevers::declared().select,
+    )
+    .unwrap();
     let n = select_tokens_in_passes(&gpu, &k, &c, &geom, &inp, &parts, 0).unwrap();
     gpu.synchronize(0).unwrap();
     assert_eq!(n, 13);

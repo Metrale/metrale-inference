@@ -97,13 +97,7 @@ crates/model-arch/src/dflash_head/from_weights.rs
 crates/model-arch/src/dflash_head/from_weights/kernel_handles.rs
 crates/model-arch/src/glm5next_batch_inv.rs
 crates/model-arch/src/glm5next_dequant_persist.rs
-crates/model-arch/src/glm5next_dsa/attend/check.rs
-crates/model-arch/src/glm5next_dsa/attend/levers.rs
 crates/model-arch/src/glm5next_dsa/build.rs
-crates/model-arch/src/glm5next_dsa/select.rs
-crates/model-arch/src/glm5next_dsa/select/fused.rs
-crates/model-arch/src/glm5next_dsa/select/pipe.rs
-crates/model-arch/src/glm5next_dsa/sp_select/lever.rs
 crates/model-arch/src/glm5next_fp8_wide.rs
 crates/model-arch/src/glm5next_layer/l2_warm.rs
 crates/model-arch/src/glm5next_layer/profile.rs

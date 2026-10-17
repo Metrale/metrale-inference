@@ -341,7 +341,13 @@ fn shape(
 fn serve_scratch(gpu: &dyn GpuBackend, c: &Glm5NextDsaConfig) -> Result<DsaSelectScratch> {
     let geom = select_scratch_geometry(c, MAX_ROWS, metrale_gpu_examples::glm_levers()?.row_group)?;
     println!("scratch rows {} at {} tokens", geom.q_rows, c.max_context);
-    DsaSelectScratch::alloc_rows(gpu, c, &geom, MAX_ROWS)
+    DsaSelectScratch::alloc_rows(
+        gpu,
+        c,
+        &geom,
+        MAX_ROWS,
+        metrale_gpu_examples::glm_levers()?.dsa.select,
+    )
 }
 
 /// 2026-10-15: The 32k prompt's projected selection delta in ms (gathers exposed, hidden) over
@@ -388,6 +394,7 @@ fn main() -> Result<()> {
         &c,
         &DsaSelectGeometry { q_rows: 1, ..small },
         MAX_ROWS,
+        metrale_gpu_examples::glm_levers()?.dsa.select,
     )?;
     println!("world {WORLD}");
     let ks = [1024usize, 2048, 4096, 8192, 8208];

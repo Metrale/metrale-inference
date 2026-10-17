@@ -33,35 +33,6 @@ static CALLS: AtomicUsize = AtomicUsize::new(0);
 static BAD_CALLS: AtomicUsize = AtomicUsize::new(0);
 static SKIPPED: AtomicUsize = AtomicUsize::new(0);
 
-/// 2026-10-09: `METRALE_GLM_DSA_DECODE_HB_SERVE_REF=1` (diagnostic): after every head-batched
-/// launch, eager or captured, the per-head kernel runs on the same inputs and overwrites the
-/// output, so the serve keeps the head-batched launches, workspace and ordering but serves the
-/// per-head result. It separates "the head-batched output is wrong" from "something else the
-/// lever changes". Read once; any value but 1 or unset is an error.
-pub(super) fn serve_reference() -> Result<bool> {
-    static V: std::sync::OnceLock<Result<bool, String>> = std::sync::OnceLock::new();
-    V.get_or_init(|| {
-        match std::env::var("METRALE_GLM_DSA_DECODE_HB_SERVE_REF")
-            .ok()
-            .as_deref()
-        {
-            None => Ok(false),
-            Some("1") => {
-                tracing::warn!(
-                    "METRALE_GLM_DSA_DECODE_HB_SERVE_REF=1: every head-batched DSA decode is \
-                     overwritten by the per-head kernel's output"
-                );
-                Ok(true)
-            }
-            Some(v) => Err(format!(
-                "METRALE_GLM_DSA_DECODE_HB_SERVE_REF={v:?}: expected 1"
-            )),
-        }
-    })
-    .clone()
-    .map_err(anyhow::Error::msg)
-}
-
 /// 2026-10-09: A launch inside a graph capture is not checked; the first one is logged.
 pub(super) fn note_captured_skip(rows: usize) {
     if SKIPPED.fetch_add(1, Ordering::Relaxed) == 0 {
@@ -71,21 +42,15 @@ pub(super) fn note_captured_skip(rows: usize) {
     }
 }
 
-/// 2026-10-09: The check directory, read once; `None` when unset.
-pub(super) fn check_dir() -> Result<Option<&'static str>> {
-    static V: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-    let v = V.get_or_init(|| std::env::var("METRALE_GLM_DSA_DECODE_HB_CHECK").ok());
-    if let Some(d) = v {
-        std::fs::create_dir_all(d)
-            .with_context(|| format!("METRALE_GLM_DSA_DECODE_HB_CHECK={d}"))?;
-        static ANNOUNCED: std::sync::Once = std::sync::Once::new();
-        ANNOUNCED.call_once(|| {
-            tracing::warn!(
-                "METRALE_GLM_DSA_DECODE_HB_CHECK={d}: checking eager head-batched launches"
-            )
-        });
-    }
-    Ok(v.as_deref())
+/// 2026-10-09: The check directory `d` (`METRALE_GLM_DSA_DECODE_HB_CHECK`, resolved at load),
+/// created before each checked launch; the first call logs once.
+pub(super) fn ensure_dir(d: &str) -> Result<()> {
+    std::fs::create_dir_all(d).with_context(|| format!("METRALE_GLM_DSA_DECODE_HB_CHECK={d}"))?;
+    static ANNOUNCED: std::sync::Once = std::sync::Once::new();
+    ANNOUNCED.call_once(|| {
+        tracing::warn!("METRALE_GLM_DSA_DECODE_HB_CHECK={d}: checking eager head-batched launches")
+    });
+    Ok(())
 }
 
 fn bf16s(b: &[u8]) -> Vec<f32> {

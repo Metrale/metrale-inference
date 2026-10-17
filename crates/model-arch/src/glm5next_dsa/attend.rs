@@ -30,6 +30,7 @@ use anyhow::{Result, bail};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
+use super::levers::DsaPrefillLevers;
 use super::{Glm5NextDsaConfig, select::DsaSelectGeometry};
 
 /// 2026-09-25: Module name the DSA decode kernel resolves from. An unlisted `.cu`
@@ -66,11 +67,6 @@ const HB_HEADS: usize = 24;
 const HB_BLOCK: u32 = 256;
 const HB_MERGE_BLOCK: u32 = 128;
 
-mod levers;
-pub use levers::{
-    hb_prefill_one_split, hb_prefill_p_hi, hb_prefill_pipe, hb_prefill_tc, hb_splits_lever,
-    tc_nanor,
-};
 mod prefill_tc;
 pub use prefill_tc::{TC_BLOCK, TC_MAX_WIDTH, TC_SMEM_BYTES};
 
@@ -107,7 +103,8 @@ struct HeadBatched {
 }
 
 /// 2026-09-25: The selected-index MLA decode entry point. 2026-10-09: and, under
-/// [`hb_splits_lever`], the head-batched one, which `decode_attention` then launches instead.
+/// `METRALE_GLM_DSA_DECODE_HB` (`DsaLevers::decode_hb`), the head-batched one, which
+/// `decode_attention` then launches instead.
 #[derive(Clone, Copy)]
 pub struct Glm5NextDsaDecodeKernel {
     per_head: KernelHandle,
@@ -117,13 +114,8 @@ pub struct Glm5NextDsaDecodeKernel {
 impl Glm5NextDsaDecodeKernel {
     /// 2026-09-25: Resolved with `kernel()`, not `try_kernel`: a missing entry
     /// point is an error, with no dense fallback. 2026-10-09: with the head-batched kernel
-    /// when [`hb_splits_lever`] names a split count.
-    pub fn resolve(gpu: &dyn GpuBackend) -> Result<Self> {
-        Self::resolve_with(gpu, hb_splits_lever()?)
-    }
-
-    /// 2026-10-09: [`Self::resolve`] with the split count given (`None`: per-head kernel).
-    pub fn resolve_with(gpu: &dyn GpuBackend, hb_splits: Option<usize>) -> Result<Self> {
+    /// when `hb_splits` names a split count (`None`: the per-head kernel alone).
+    pub fn resolve(gpu: &dyn GpuBackend, hb_splits: Option<usize>) -> Result<Self> {
         let per_head = gpu.kernel(DSA_DECODE_MODULE, "glm5next_dsa_mla_decode_fp8")?;
         let head_batched = match hb_splits {
             None => None,
@@ -176,7 +168,7 @@ impl Glm5NextDsaDecodeKernel {
     }
 
     /// 2026-10-12: This kernel with the head-batched entry replaced by its P-hi twin when
-    /// `p_hi` ([`hb_prefill_p_hi`]) is set; unchanged when it is not. An error when it is set
+    /// `p_hi` ([`DsaPrefillLevers::p_hi`]) is set; unchanged when it is not. An error when it is set
     /// without the head-batched kernel (`METRALE_GLM_DSA_DECODE_HB`) or without the twin in the
     /// build, never a silent fallback.
     pub fn for_prefill_p_hi(self, p_hi: bool) -> Result<Self> {
@@ -202,7 +194,7 @@ impl Glm5NextDsaDecodeKernel {
     }
 
     /// 2026-10-14: This kernel with the P-hi entry replaced by its pipelined twin when `pipe`
-    /// ([`hb_prefill_pipe`]) is set; unchanged when it is not. An error when it is set but the
+    /// ([`DsaPrefillLevers::pipe`]) is set; unchanged when it is not. An error when it is set but the
     /// head-batched entry is not the P-hi one ([`Self::for_prefill_p_hi`] first), or the twin is
     /// not in the build.
     pub fn for_prefill_pipe(self, pipe: bool) -> Result<Self> {
@@ -232,24 +224,21 @@ impl Glm5NextDsaDecodeKernel {
     }
 
     /// 2026-10-14: This kernel for a prefill sub-chunk's attend under the prefill levers, in
-    /// order: [`hb_prefill_one_split`], [`hb_prefill_p_hi`], [`hb_prefill_pipe`],
-    /// [`hb_prefill_tc`], [`tc_nanor`].
-    /// Each process logs the resolved levers once ([`levers::readback_prefill_levers`]).
-    pub fn for_prefill_levers(self) -> Result<Self> {
-        let (one, p_hi) = (hb_prefill_one_split(), hb_prefill_p_hi()?);
-        let (pipe, tc, nanor) = (hb_prefill_pipe()?, hb_prefill_tc()?, tc_nanor()?);
+    /// order: `one_split`, `p_hi`, `pipe`, `tc`, `tc_nanor`.
+    /// Each process logs the levers once ([`DsaPrefillLevers::readback`]).
+    pub fn for_prefill_levers(self, l: DsaPrefillLevers) -> Result<Self> {
         let k = self
-            .for_prefill(one)
-            .for_prefill_p_hi(p_hi)?
-            .for_prefill_pipe(pipe)?
-            .for_prefill_tc(tc)?
-            .for_prefill_tc_nanor(nanor)?;
-        levers::readback_prefill_levers(one, p_hi, pipe, tc, nanor);
+            .for_prefill(l.one_split)
+            .for_prefill_p_hi(l.p_hi)?
+            .for_prefill_pipe(l.pipe)?
+            .for_prefill_tc(l.tc)?
+            .for_prefill_tc_nanor(l.tc_nanor)?;
+        l.readback();
         Ok(k)
     }
 
     /// 2026-10-12: This kernel for a prefill sub-chunk's attend: the head-batched one at one
-    /// split when `one_split` ([`hb_prefill_one_split`]) is set, else unchanged.
+    /// split when `one_split` ([`DsaPrefillLevers::one_split`]) is set, else unchanged.
     pub fn for_prefill(self, one_split: bool) -> Self {
         Self {
             head_batched: self.head_batched.map(|h| {
@@ -381,12 +370,21 @@ impl DsaDecodePaging {
     }
 }
 
+/// 2026-10-17: The head-batched decode's diagnostics (`attend::check`), from the DSA levers:
+/// `METRALE_GLM_DSA_DECODE_HB_CHECK`'s directory and `METRALE_GLM_DSA_DECODE_HB_SERVE_REF`.
+#[derive(Clone, Copy, Debug)]
+pub struct HbDiagnostics<'a> {
+    pub check_dir: Option<&'a str>,
+    pub serve_ref: bool,
+}
+
 /// 2026-09-25: Launch the selected-index decode. Enqueued on `stream`, not
 /// synchronised.
 ///
 /// `geom.q_rows` must equal `paging.num_seqs`: one query row per sequence. A
 /// mismatch would index the selection rows with the wrong stride, so it is an
 /// error.
+#[allow(clippy::too_many_arguments)]
 pub fn decode_attention(
     gpu: &dyn GpuBackend,
     kernel: Glm5NextDsaDecodeKernel,
@@ -394,6 +392,7 @@ pub fn decode_attention(
     geom: &DsaSelectGeometry,
     paging: &DsaDecodePaging,
     inputs: &DsaDecodeInputs,
+    diag: HbDiagnostics<'_>,
     stream: u64,
 ) -> Result<()> {
     paging.validate(cfg)?;
@@ -419,7 +418,8 @@ pub fn decode_attention(
 
     if let Some(hb) = kernel.head_batched {
         decode_head_batched(gpu, hb, cfg, geom, paging, inputs, stream)?;
-        if let Some(dir) = check::check_dir()? {
+        if let Some(dir) = diag.check_dir {
+            check::ensure_dir(dir)?;
             if gpu.stream_is_capturing(stream) {
                 check::note_captured_skip(paging.num_seqs);
             } else {
@@ -435,7 +435,7 @@ pub fn decode_attention(
                 )?;
             }
         }
-        if check::serve_reference()? {
+        if diag.serve_ref {
             launch_per_head(gpu, kernel.per_head, cfg, geom, paging, inputs, stream)?;
         }
         return Ok(());

@@ -43,6 +43,7 @@ mod act_scale;
 mod defer_hook_tests;
 mod dense_site;
 mod dense_tiers;
+mod dsa_stack;
 mod expert_quant;
 mod expert_scales;
 mod expert_slab;

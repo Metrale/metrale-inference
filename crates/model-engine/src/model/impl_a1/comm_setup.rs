@@ -76,10 +76,7 @@ pub(super) fn assert_rank_levers_agree(
             // 2026-10-15: The DSA SP selection's table decides which prefill passes enqueue
             // two all-gathers of selected rows, so every rank must hold the same table; the
             // payload sub-lever (`_SEL`, low bit) sets their row size.
-            (
-                "METRALE_GLM_DSA_SP_SELECT",
-                metrale_model_arch::glm5next_dsa::sp_select::lever::agreement_value()?,
-            ),
+            ("METRALE_GLM_DSA_SP_SELECT", glm.dsa.sp_agreement),
             // 2026-10-12: SP-mHC changes every prefill sub-chunk's collectives from one
             // all-reduce to a reduce-scatter and all-gathers, so every rank must take it alike.
             ("METRALE_GLM_SP_MHC", u64::from(glm.mhc.sp_mhc)),

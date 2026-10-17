@@ -25,7 +25,7 @@ use metrale_gpu_runtime::buffers::BufferArena;
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
 use metrale_gpu_runtime::gpu::GpuBackend;
 use metrale_model_arch::glm5next_dsa::Glm5NextDsaConfig;
-use metrale_model_arch::glm5next_dsa::attend::{Glm5NextDsaDecodeKernel, hb_splits_lever};
+use metrale_model_arch::glm5next_dsa::attend::Glm5NextDsaDecodeKernel;
 use metrale_model_arch::glm5next_dsa::layer::{Glm5NextDsaLayer, Glm5NextDsaWorkspace};
 use metrale_model_arch::glm5next_dsa::state::Glm5NextDsaState;
 use metrale_model_layers::layer::{AttnMetadataDev, LayerState};
@@ -162,7 +162,10 @@ fn check(what: &str, a: &[u8], b: &[u8], failed: &mut bool) {
 }
 
 fn main() -> Result<()> {
-    let splits = hb_splits_lever()?.context("set METRALE_GLM_DSA_DECODE_HB=<splits>")?;
+    let splits = metrale_gpu_examples::glm_levers()?
+        .dsa
+        .decode_hb
+        .context("set METRALE_GLM_DSA_DECODE_HB=<splits>")?;
     let sets = metrale_kernels::all_ptx_sets();
     let glm = sets
         .iter()
@@ -189,7 +192,7 @@ fn main() -> Result<()> {
     let c = cfg();
     let build = |hb: Option<usize>| -> Result<Glm5NextDsaLayer> {
         let mut l = layer(g, &c, &mut Lcg(0x6c6d_5e9d_0009))?;
-        l.decode_kernel = Glm5NextDsaDecodeKernel::resolve_with(g, hb)?;
+        l.decode_kernel = Glm5NextDsaDecodeKernel::resolve(g, hb)?;
         l.workspace = Glm5NextDsaWorkspace::new(g, &c, 64, &l.levers)?.into();
         Ok(l)
     };

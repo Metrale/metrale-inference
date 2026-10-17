@@ -109,37 +109,6 @@ fn the_score_scale_is_the_latent_width_not_the_v4_cache_width() {
     );
 }
 
-/// 2026-10-09: The lever is a split count in 1..=HB_MAX_SPLITS or unset; anything else is an
-/// error rather than a silent fallback to the per-head kernel.
-#[test]
-fn the_head_batched_lever_takes_a_split_count_or_nothing() {
-    use super::levers::parse_hb_splits;
-    assert_eq!(parse_hb_splits(None), Ok(None));
-    assert_eq!(parse_hb_splits(Some("8")), Ok(Some(8)));
-    assert_eq!(parse_hb_splits(Some("1")), Ok(Some(1)));
-    assert_eq!(parse_hb_splits(Some("64")), Ok(Some(HB_MAX_SPLITS)));
-    for bad in ["0", "65", "", "on", "-1", "8x"] {
-        assert!(
-            parse_hb_splits(Some(bad)).is_err(),
-            "{bad:?} must be refused"
-        );
-    }
-}
-
-/// 2026-10-14: The prefill switches (P_HI, PIPE) take unset, `0` or `1`; anything else is an
-/// error naming the lever, never a silent off.
-#[test]
-fn a_prefill_switch_takes_zero_one_or_nothing() {
-    use super::levers::parse_switch;
-    assert_eq!(parse_switch("X", None), Ok(false));
-    assert_eq!(parse_switch("X", Some("0")), Ok(false));
-    assert_eq!(parse_switch("X", Some("1")), Ok(true));
-    for bad in ["", "on", "true", " 1", "2"] {
-        let e = parse_switch("METRALE_X", Some(bad)).unwrap_err();
-        assert!(e.starts_with("METRALE_X="), "{bad:?}: {e}");
-    }
-}
-
 /// 2026-10-14: A head-batched kernel at 8 splits with every twin present.
 fn hb8() -> HeadBatched {
     HeadBatched {

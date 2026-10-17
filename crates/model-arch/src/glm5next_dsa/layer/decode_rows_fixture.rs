@@ -190,7 +190,12 @@ impl Rig {
                 },
                 fp8: crate::glm5next_dsa::fp8_rows::DsaFp8Kernels::NONE,
             },
-            decode_kernel: Glm5NextDsaDecodeKernel::resolve(&self.gpu).unwrap(),
+            decode_kernel: Glm5NextDsaDecodeKernel::resolve(
+                &self.gpu,
+                crate::glm5next_dsa::levers::DsaLevers::declared().decode_hb,
+            )
+            .unwrap(),
+            dsa_owned: std::sync::Arc::new(crate::glm5next_dsa::levers::DsaOwnedLevers::declared()),
             workspace: std::sync::Arc::new(
                 Glm5NextDsaWorkspace::new(
                     &self.gpu,

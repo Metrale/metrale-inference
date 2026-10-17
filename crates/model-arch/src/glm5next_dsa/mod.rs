@@ -49,6 +49,7 @@ pub mod build;
 pub mod fp8_rows;
 pub mod fp8_twin;
 pub mod layer;
+pub mod levers;
 pub mod paged;
 pub mod select;
 pub mod sp_select;

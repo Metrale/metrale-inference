@@ -51,9 +51,7 @@ use super::super::select::{
 };
 use super::super::{Glm5NextDsaConfig, Glm5NextDsaKernels};
 use super::lever::Payload;
-use super::{
-    MIN_SUBPASS_ROWS, MinPoolsTable, SLABS_PER_RANK, applies, gather_shards, lever, owned,
-};
+use super::{MIN_SUBPASS_ROWS, MinPoolsTable, SLABS_PER_RANK, applies, gather_shards, owned};
 use crate::glm5next_sp_mhc::all_gather_rows;
 
 static GATHERS: AtomicU64 = AtomicU64::new(0);
@@ -155,36 +153,8 @@ pub fn plan_with(
 }
 
 /// 2026-10-15: The batched prefill selection of one pass: split over the ranks of `comm` when
-/// [`plan`] says so under the lever's table, else `select_tokens_in_passes`. Returns the
-/// sub-passes this rank ran.
-#[allow(clippy::too_many_arguments)]
-pub fn select(
-    gpu: &dyn GpuBackend,
-    kernels: &Glm5NextDsaKernels,
-    cfg: &Glm5NextDsaConfig,
-    geom: &DsaSelectGeometry,
-    inputs: &DsaSelectInputs,
-    scratch: &DsaSelectScratch,
-    comm: Option<&dyn CommBackend>,
-    is_prefill: bool,
-    stream: u64,
-) -> Result<usize> {
-    select_with(
-        lever::table()?,
-        lever::payload()?,
-        gpu,
-        kernels,
-        cfg,
-        geom,
-        inputs,
-        scratch,
-        comm,
-        is_prefill,
-        stream,
-    )
-}
-
-/// 2026-10-15: [`select`] under an explicit `table` (`None` = lever off) and `payload`.
+/// [`plan`] says so under `table` (`None` = lever off), else `select_tokens_in_passes`, the
+/// split gathering `payload`. Returns the sub-passes this rank ran.
 #[allow(clippy::too_many_arguments)]
 pub fn select_with(
     table: Option<&MinPoolsTable>,

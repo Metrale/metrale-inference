@@ -13,7 +13,7 @@ use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
 use super::super::Glm5NextDsaConfig;
-use super::super::attend::{DsaSplitWorkspace, hb_splits_lever};
+use super::super::attend::DsaSplitWorkspace;
 use super::super::select::DsaSelectScratch;
 use super::super::state::Glm5NextDsaState;
 use crate::glm5next_layer::GlmLevers;
@@ -236,7 +236,7 @@ impl Glm5NextDsaWorkspace {
             stage_gate: gpu.alloc(rows * cfg.index_head_dim * 2)?,
             geom_dev: gpu.alloc(5 * 4)?,
             geom_rows: gpu.alloc(rows * 5 * 4)?,
-            select: DsaSelectScratch::alloc_rows(gpu, cfg, &geom, rows)?,
+            select: DsaSelectScratch::alloc_rows(gpu, cfg, &geom, rows, levers.dsa.select)?,
             pad_k: gpu.alloc(cfg.index_kpool * cfg.index_head_dim * 2)?,
             pad_gate: gpu.alloc(cfg.index_kpool * cfg.index_head_dim * 2)?,
             pad_valid: {
@@ -247,7 +247,7 @@ impl Glm5NextDsaWorkspace {
                 p
             },
             pad_rows: cfg.index_kpool,
-            split_ws: DsaSplitWorkspace::alloc_for(gpu, cfg, hb_splits_lever()?, rows)?,
+            split_ws: DsaSplitWorkspace::alloc_for(gpu, cfg, levers.dsa.decode_hb, rows)?,
         })
     }
 

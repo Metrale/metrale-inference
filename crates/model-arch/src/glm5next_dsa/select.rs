@@ -37,6 +37,7 @@ use anyhow::{Result, bail};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
+use super::levers::DsaSelectLevers;
 use super::{Glm5NextDsaConfig, Glm5NextDsaKernels};
 
 /// 2026-09-25: Shared-memory ceiling the top-k select is budgeted against; the same value
@@ -51,15 +52,6 @@ pub const SCORES_TILE_ROWS: usize = 32;
 pub const SCORES_TILE_D: usize = 128;
 pub const SCORES_TILE_SMEM: u32 =
     (SCORES_TILE_D * (SCORES_TILE_POOLS + SCORES_TILE_ROWS) * 4) as u32;
-
-/// 2026-10-10: `METRALE_GLM_DSA_SCORES_TILED=1`, read once: score the pools of a prefill
-/// sub-chunk's query rows with `dsa_index_scores_tiled` (each score `dsa_index_scores`'s bits,
-/// the keys and each head's query slice staged once per 32-row x 64-pool tile instead of once
-/// per (pool, query) block). Off unless `1`.
-pub fn scores_tiled() -> bool {
-    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *F.get_or_init(|| std::env::var("METRALE_GLM_DSA_SCORES_TILED").as_deref() == Ok("1"))
-}
 
 /// 2026-10-10: Whether a selection pass takes the tiled scores: the lever on, the kernel
 /// resolved, an exact (host-geometry) launch of more than one query row, and a shape inside the
@@ -78,14 +70,6 @@ pub fn scores_tiled_for(
 pub const SCORES_MMA_ROWS: usize = 8;
 pub const SCORES_MMA_HEADS: usize = 32;
 pub const SCORES_MMA_D: usize = 128;
-
-/// 2026-10-12: `METRALE_GLM_DSA_SCORES_MMA=1`, read once: score the pools of a prefill
-/// sub-chunk's query rows with `dsa_index_scores_mma` (BF16 tensor cores, FP32 accumulation;
-/// not `dsa_index_scores`'s bits). Off unless `1`. Takes precedence over the tiled scores.
-pub fn scores_mma() -> bool {
-    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *F.get_or_init(|| std::env::var("METRALE_GLM_DSA_SCORES_MMA").as_deref() == Ok("1"))
-}
 
 /// 2026-10-17: The pass shape the tensor-core scores are built for: more than one query row,
 /// and the kernel's head count and head dim. The one source of that shape for
@@ -107,14 +91,6 @@ pub fn scores_mma_for(
 
 /// 2026-10-12: The widest selection `dsa_topk_pools_radix` takes (`DSA_TR_MAX`).
 pub const TOPK_RADIX_MAX: usize = 512;
-
-/// 2026-10-12: `METRALE_GLM_DSA_TOPK_RADIX=1`, read once: select each row's top pools with
-/// `dsa_topk_pools_radix` (the same pools in the same order as `dsa_topk_pools`). Off unless
-/// `1`.
-pub fn topk_radix() -> bool {
-    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *F.get_or_init(|| std::env::var("METRALE_GLM_DSA_TOPK_RADIX").as_deref() == Ok("1"))
-}
 
 /// 2026-10-12: Whether a selection pass takes the radix top-k: the lever on, the kernel
 /// resolved, an exact launch, and a selection of at most [`TOPK_RADIX_MAX`] pools.
@@ -348,21 +324,24 @@ pub struct DsaSelectScratch {
     tokens: DevicePtr,
     /// 2026-10-14: The streamed scores' prepared pools (`pipe`); empty unless that lever is on.
     pipe: pipe::DsaPipeRegions,
-    /// 2026-10-17: `METRALE_GLM_DSA_SELECT_FUSED` with the streamed scores, read at allocation:
-    /// a pass of its shape writes no scores or candidacy row (`fused`).
+    /// 2026-10-17: `METRALE_GLM_DSA_SELECT_FUSED` with the streamed scores, as allocated: a
+    /// pass of its shape writes no scores or candidacy row (`fused`).
     fused: bool,
+    /// 2026-10-17: The selection levers this scratch was allocated under; the passes read these.
+    levers: DsaSelectLevers,
     capacity: [usize; 6],
     tokens_bytes: usize,
 }
 
 impl DsaSelectScratch {
-    /// 2026-09-25: Allocate for `geom`, the largest pass the caller will run.
+    /// 2026-09-25: Allocate for `geom`, the largest pass the caller will run, under `levers`.
     pub fn alloc(
         gpu: &dyn GpuBackend,
         cfg: &Glm5NextDsaConfig,
         geom: &DsaSelectGeometry,
+        levers: DsaSelectLevers,
     ) -> Result<Self> {
-        Self::alloc_rows(gpu, cfg, geom, geom.q_rows)
+        Self::alloc_rows(gpu, cfg, geom, geom.q_rows, levers)
     }
 
     /// 2026-10-11: Allocate the per-pass temporaries (pool regions, scores, candidacy, selected
@@ -375,6 +354,7 @@ impl DsaSelectScratch {
         cfg: &Glm5NextDsaConfig,
         geom: &DsaSelectGeometry,
         out_rows: usize,
+        levers: DsaSelectLevers,
     ) -> Result<Self> {
         if out_rows < geom.q_rows {
             bail!(
@@ -397,8 +377,9 @@ impl DsaSelectScratch {
             valid_cand: gpu.alloc(capacity[4])?,
             selected: gpu.alloc(capacity[5])?,
             tokens: gpu.alloc(tokens_bytes)?,
-            pipe: pipe::DsaPipeRegions::alloc(gpu, geom, scores_pipe() && scores_mma())?,
-            fused: fused::select_fused() && scores_pipe() && scores_mma(),
+            pipe: pipe::DsaPipeRegions::alloc(gpu, geom, levers.scores_pipe && levers.scores_mma)?,
+            fused: levers.select_fused && levers.scores_pipe && levers.scores_mma,
+            levers,
             capacity,
             tokens_bytes,
         })
@@ -467,9 +448,9 @@ pub use folded::{
 };
 mod fit;
 mod fused;
-pub use fused::{SELECT_FUSED_MAXK, SELECT_FUSED_SMEM, fused_shape, select_fused};
+pub use fused::{SELECT_FUSED_MAXK, SELECT_FUSED_SMEM, fused_shape};
 mod pipe;
-pub use pipe::{DsaPipeRegions, SCORES_PIPE_SMEM, scores_pipe, scores_pipe_for};
+pub use pipe::{DsaPipeRegions, SCORES_PIPE_SMEM, scores_pipe_for};
 
 #[cfg(test)]
 mod ceiling_tests;

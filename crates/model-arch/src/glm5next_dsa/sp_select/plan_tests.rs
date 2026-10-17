@@ -9,6 +9,7 @@
 //! Owner: model-arch (GLM-5.3 DSA).
 //! Invariants: none beyond the types.
 
+use crate::glm5next_dsa::levers::DsaLevers;
 use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
 
 use super::super::Glm5NextDsaConfig;
@@ -42,7 +43,8 @@ fn chunk_ends() -> Vec<(usize, usize, usize)> {
         crate::glm5next_layer::GlmLevers::declared().row_group,
     )
     .unwrap();
-    let s = DsaSelectScratch::alloc_rows(&gpu, &c, &geom, SERVE_ROWS).unwrap();
+    let s = DsaSelectScratch::alloc_rows(&gpu, &c, &geom, SERVE_ROWS, DsaLevers::declared().select)
+        .unwrap();
     (1..=CEILING / CHUNK)
         .map(|n| {
             let g = DsaSelectGeometry::plan(&c, n * CHUNK, CHUNK).unwrap();

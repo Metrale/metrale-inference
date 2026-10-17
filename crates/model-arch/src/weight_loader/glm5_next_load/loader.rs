@@ -117,17 +117,9 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
             gate_rank,
             crate::glm5next_w4a16_dense::kda_channel_unit(),
         )?;
-        let dsa_cfg = Glm5NextDsaConfig::from_config(config)?;
         let mlp_cfg = Glm5NextMlpConfig::from_config(config)?;
 
         let kda_kernels = Glm5NextKdaKernels::resolve(gpu)?;
-        let dsa_kernels = Glm5NextDsaKernels::resolve(gpu)?;
-        let indexer_format = crate::glm5next_dsa::fp8_rows::IndexerRowFormat::text_stack(
-            config,
-            &dsa_kernels.fp8,
-            crate::glm5next_dsa::paged::text_stack_indexer_cache(lc.settings),
-        )?;
-        let dsa_layer_kernels = Glm5NextDsaLayerKernels::resolve(gpu)?;
         let mlp_kernels = Glm5NextMlpKernels::resolve(gpu, levers)?;
         let mhc_kernels_probe = Glm5NextMhcKernels::resolve(gpu, levers.mhc)?;
         let rms_norm_k = gpu.kernel("rms_norm_vanilla", "rms_norm_vanilla")?;
@@ -177,26 +169,12 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
             None
         };
 
-        let dsa_plan = crate::glm5next_dsa::tp::DsaTpPlan::from_config(config, &dsa_cfg)?;
-        // 2026-10-12: One DSA workspace for the stack unless `METRALE_GLM_DSA_WS_SHARED=0`
-        // (`levers.dsa_ws_shared`); sized like the KDA and MLP ones, for `verify_k` rows.
-        let shared_dsa_ws = if levers.dsa_ws_shared {
-            tracing::info!(
-                "GLM DSA workspace: SHARED, 1 for {} DSA layers at {verify_k} rows",
-                skeleton
-                    .layers
-                    .iter()
-                    .filter(|l| l.mixer == Mixer::Dsa)
-                    .count()
-            );
-            Some(std::sync::Arc::new(
-                crate::glm5next_dsa::layer::Glm5NextDsaWorkspace::new(
-                    gpu, &dsa_cfg, verify_k, &levers,
-                )?,
-            ))
-        } else {
-            None
-        };
+        let dsa_layers = skeleton
+            .layers
+            .iter()
+            .filter(|l| l.mixer == Mixer::Dsa)
+            .count();
+        let dsa = dsa_stack::DsaStack::new(gpu, config, lc.settings, levers, verify_k, dsa_layers)?;
         let last = skeleton.layers.len() - 1;
         let mix_tokens = crate::glm5next_mhc::mhc_mix_max_tokens(levers.prefill_rows);
         let mut out: Vec<Box<dyn TransformerLayer>> = Vec::with_capacity(skeleton.layers.len());
@@ -236,38 +214,8 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                     }
                 }
                 Mixer::Dsa => {
-                    let load = |n: &str| src.f32(n);
-                    let w = build_dsa_weights(gpu, &dsa_cfg, &dsa_plan, &load)?;
-                    Glm5NextMixer::Dsa(Box::new(Glm5NextDsaLayer {
-                        persist_bt: !levers.dsa_alloc_per_step,
-                        levers,
-                        cfg: dsa_cfg,
-                        weights: w,
-                        kernels: dsa_layer_kernels,
-                        select_kernels: dsa_kernels,
-                        decode_kernel:
-                            crate::glm5next_dsa::attend::Glm5NextDsaDecodeKernel::resolve(gpu)?,
-                        workspace: match &shared_dsa_ws {
-                            Some(ws) => ws.clone(),
-                            None => std::sync::Arc::new(
-                                crate::glm5next_dsa::layer::Glm5NextDsaWorkspace::new(
-                                    gpu, &dsa_cfg, verify_k, &levers,
-                                )?,
-                            ),
-                        },
-                        layer_idx: idx,
-                        attn_layer_idx: {
-                            let a = attn_layer_idx;
-                            attn_layer_idx += 1;
-                            a
-                        },
-                        rms_eps: config.rms_norm_eps as f32,
-                        kv_scale: 1.0,
-                        indexer_cache: crate::glm5next_dsa::paged::text_stack_indexer_cache(
-                            lc.settings,
-                        ),
-                        indexer_format,
-                    }))
+                    attn_layer_idx += 1;
+                    Glm5NextMixer::Dsa(Box::new(dsa.layer(gpu, &src, idx, attn_layer_idx - 1)?))
                 }
             };
 
@@ -400,7 +348,7 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                 hidden: config.hidden_size,
                 mixer_all_reduce: match sl.mixer {
                     Mixer::Kda => kda_plan.needs_output_all_reduce(),
-                    Mixer::Dsa => dsa_plan.needs_output_all_reduce(),
+                    Mixer::Dsa => dsa.plan.needs_output_all_reduce(),
                 },
                 is_first: idx == 0,
                 is_last: idx == last,

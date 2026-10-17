@@ -33,13 +33,6 @@ const SELECT_FUSED_CAP: usize = SELECT_FUSED_MAXK + 192;
 pub const SELECT_FUSED_SMEM: u32 =
     SCORES_PIPE_SMEM + (SCORES_MMA_ROWS * SELECT_FUSED_CAP * 8) as u32;
 
-/// 2026-10-17: `METRALE_GLM_DSA_SELECT_FUSED=1`, read once: where the streamed scores run,
-/// select in the scoring kernel. Off unless `1`; read when the scratch is allocated.
-pub fn select_fused() -> bool {
-    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *F.get_or_init(|| std::env::var("METRALE_GLM_DSA_SELECT_FUSED").as_deref() == Ok("1"))
-}
-
 /// 2026-10-17: The passes the fused kernel takes: the tensor-core scores' shape
 /// ([`scores_mma_shape`]), pools to score, and 1 ..= [`SELECT_FUSED_MAXK`] selected.
 pub fn fused_shape(geom: &DsaSelectGeometry) -> bool {

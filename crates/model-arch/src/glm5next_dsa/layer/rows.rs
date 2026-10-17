@@ -180,7 +180,9 @@ impl Glm5NextDsaLayer {
         // row sub-passes when the scratch holds fewer rows at this context
         // (`select_scratch_rows`); each row's selection is the one-pass one. 2026-10-15: Or
         // split over the ranks, each row's bytes unchanged (`sp_select::run`).
-        super::super::sp_select::run::select(
+        super::super::sp_select::run::select_with(
+            self.dsa_owned.sp_table.as_ref(),
+            self.dsa_owned.sp_payload,
             gpu,
             &self.select_kernels,
             &self.cfg,
