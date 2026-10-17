@@ -11,6 +11,8 @@ description = "Metrale Engine: generic layers (attention, SSM, MoE, FFN, norm, M
 default = ["cuda"]
 cuda = ["metrale-core/cuda", "metrale-config/cuda", "metrale-gpu-runtime/cuda", "metrale-cache/cuda", "metrale-storage/cuda", "metrale-comm/cuda", "metrale-model-weights/cuda"]
 metal = ["metrale-core/metal", "metrale-config/metal", "metrale-gpu-runtime/metal", "metrale-cache/metal", "metrale-storage/metal", "metrale-comm/metal", "metrale-model-weights/metal"]
+# 2026-10-17: `lever_equivalence`, the settings-migration test support, for the dependent crates' tests.
+test-utils = ["dep:metrale-io-host-mem"]
 
 [dependencies]
 # 2026-10-17: Its `links` metadata (`DEP_METRALE_KERNEL_TREE_ROOT`) locates kernels/ for build.rs.
@@ -21,6 +23,8 @@ metrale-circuit = { workspace = true }
 metrale-closure = { workspace = true }
 metrale-comm = { workspace = true }
 metrale-config = { workspace = true }
+metrale-settings = { workspace = true }
+metrale-io-host-mem = { workspace = true, optional = true }
 metrale-core = { workspace = true }
 metrale-gpu-runtime = { workspace = true }
 metrale-model-weights = { workspace = true }
@@ -35,6 +39,7 @@ serde_json = { workspace = true, features = ["std", "preserve_order"] }
 tracing = { workspace = true, features = ["std", "attributes"] }
 
 [dev-dependencies]
+metrale-io-host-mem = { workspace = true }
 metrale-gpu-runtime = { workspace = true, features = ["test-utils"] }
 # 2026-10-17: GPU tests load real kernel tables (`ptx_for_exact_target`, `ptx_modules`);
 # production code never names this crate, so a kernel edit does not rebuild this one.

@@ -44,6 +44,7 @@ pub fn assemble_layer(
     config: &ModelConfig,
     gpu: &dyn GpuBackend,
     layer_kv_dtypes: &[KvCacheDtype],
+    lc: metrale_model_layers::load_context::LoadContext<'_>,
 ) -> Result<Box<dyn TransformerLayer>> {
     // 2026-09-25: `layer_prefix` is the tensor-name prefix: `layers.{idx}` for a
     // main layer, `mtp.0` for the MTP module. `layer_idx` indexes
@@ -323,6 +324,7 @@ pub fn assemble_layer(
         kv_dtype,
         0,
         config,
+        lc,
     )?;
     layer.set_mla_weights(mla);
 

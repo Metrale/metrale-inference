@@ -43,6 +43,7 @@ impl ModelWeightLoader for NllbWeightLoader {
         _config: &ModelConfig,
         _gpu: &dyn GpuBackend,
         _layer_kv_dtypes: &[KvCacheDtype],
+        _lc: metrale_model_layers::load_context::LoadContext<'_>,
     ) -> Result<Vec<Box<dyn TransformerLayer>>> {
         bail!(Self::unsupported())
     }

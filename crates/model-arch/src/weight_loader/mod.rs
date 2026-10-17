@@ -176,6 +176,7 @@ pub trait ModelWeightLoader {
         config: &ModelConfig,
         gpu: &dyn GpuBackend,
         layer_kv_dtypes: &[KvCacheDtype],
+        lc: metrale_model_layers::load_context::LoadContext<'_>,
     ) -> Result<Vec<Box<dyn TransformerLayer>>>;
 
     /// 2026-09-25: Drop store tensors this loader has finished with. `factory::build`
@@ -271,7 +272,12 @@ pub trait ModelWeightLoader {
     /// 2026-10-16: Bytes of one attention layer's V block when the model keeps something other
     /// than V there (the GLM-5.3 FP8 indexer cache), for KV blocks of `block_size` tokens. The
     /// default is `None`: the V block the KV geometry implies.
-    fn kv_v_block_bytes(&self, _config: &ModelConfig, _block_size: usize) -> Result<Option<usize>> {
+    fn kv_v_block_bytes(
+        &self,
+        _config: &ModelConfig,
+        _block_size: usize,
+        _settings: &metrale_settings::InferenceServerSettings,
+    ) -> Result<Option<usize>> {
         Ok(None)
     }
 
@@ -300,6 +306,7 @@ pub trait ModelWeightLoader {
         gpu: &dyn GpuBackend,
         max_loras: usize,
         max_lora_rank: usize,
+        expert: metrale_model_layers::lora::ExpertLoraPolicy,
     ) -> Result<Option<metrale_model_layers::lora::LoraWeights>> {
         metrale_model_layers::lora::load_lora_adapters_multi(
             adapters,
@@ -307,6 +314,7 @@ pub trait ModelWeightLoader {
             gpu,
             max_loras,
             max_lora_rank,
+            expert,
         )
         .map(Some)
     }

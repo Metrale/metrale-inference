@@ -75,7 +75,7 @@ impl BlockDiffusionDraftHead {
         let num_kv_heads = weights.config.num_key_value_heads;
         let head_dim = weights.config.head_dim;
         let vocab_size = weights.config.vocab_size;
-        let levers = super::levers::DFlashLevers::from_env();
+        let levers = super::levers::DFlashLevers::from_settings(settings);
         // Resolve handles and reject unsupported TP combinations before allocating the KV pool
         // or the head's scratch buffers.
         let kernels = kernel_handles::load_kernels(gpu)?;

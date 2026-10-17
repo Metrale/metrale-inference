@@ -94,8 +94,18 @@ pub fn build_model(
     #[cfg(not(feature = "cuda"))]
     let _ = (nllb_lang, nllb_lora_dir);
 
-    // 2026-09-25: Step 1: select the weight loader.
+    // 2026-09-25: Step 1: select the weight loader. 2026-10-17: The model levers are derived
+    // once here, for the loader and the model.
     let loader = loader_for_config(&config)?;
+    let levers = metrale_model_layers::layers::ops::ModelLevers::from_settings(
+        &settings,
+        metrale_model_layers::layers::ops::target_defaults::declared().decode_split_silu,
+        metrale_model_layers::layers::ops::ModelLevers::tq_plus_weight_rotation(),
+    );
+    let load_ctx = metrale_model_layers::load_context::LoadContext {
+        settings: &settings,
+        levers: &levers,
+    };
 
     // 2026-09-25: Free memory before the LoRA load and the buffer arena. The
     // baseline-free-bytes path of the KV budget subtracts the budget-time
@@ -115,6 +125,7 @@ pub fn build_model(
                 gpu.as_ref(),
                 la.max_loras,
                 la.max_lora_rank,
+                metrale_model_layers::lora::ExpertLoraPolicy::from_settings(&settings),
             )?
         } else {
             None
@@ -142,7 +153,8 @@ pub fn build_model(
     // construction.
     let mut mem = MemTrace::new(gpu.as_ref());
     let free_before_layers = gpu.free_memory().unwrap_or(0);
-    let mut layers = loader.load_layers(&store, &config, gpu.as_ref(), &attn_layer_dtypes)?;
+    let mut layers =
+        loader.load_layers(&store, &config, gpu.as_ref(), &attn_layer_dtypes, load_ctx)?;
     let free_after_layers = gpu.free_memory().unwrap_or(0);
     tracing::info!(
         "Layer construction: {:.2} GB consumed ({:.2} GB free -> {:.2} GB free) \
@@ -195,6 +207,7 @@ pub fn build_model(
         &config,
         gpu.as_ref(),
         use_speculative && dflash_args.is_none(),
+        load_ctx,
     );
     let glm_mtp_embed = embed;
     let glm_mtp_lm_head = lm_head;
@@ -206,6 +219,7 @@ pub fn build_model(
         gpu.as_ref(),
         &attn_layer_dtypes,
         use_speculative,
+        load_ctx,
     );
 
     // 2026-09-25: `--speculative` with no MTP module bound by any of the three
@@ -321,7 +335,7 @@ pub fn build_model(
         layer_dtypes: layer_dtypes.clone(),
         layer_dims: config.kv_layer_dims.clone(),
         cache_blocks_per_seq: hss_cache_blocks_per_seq,
-        v_block_bytes: loader.kv_v_block_bytes(&config, kv_block_size)?,
+        v_block_bytes: loader.kv_v_block_bytes(&config, kv_block_size, &settings)?,
     };
 
     if hss_cache_blocks_per_seq.is_some() {
@@ -407,6 +421,7 @@ pub fn build_model(
         ssm_cache_slots,
         ssm_checkpoint_interval,
         settings.clone(),
+        levers,
     )?;
 
     // 2026-09-25: A Q6_K `lm_head.weight` in the store (a DeepSeek-V4.1 GGUF,

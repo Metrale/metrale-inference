@@ -40,13 +40,18 @@ pub enum IndexerCache {
     Paged,
 }
 
-/// 2026-10-09: Where the text stack's DSA layers keep their indexer rows, from
-/// `metrale_config::glm_dsa_indexer_paged` (paged unless `METRALE_GLM_DSA_INDEXER_FLAT=1`).
-///
-/// The loader, the serve's per-sequence reserve and the prefix-cache gate read that one
-/// function, so the reserve charges the flat buffers exactly when the layers allocate them.
-pub fn text_stack_indexer_cache() -> IndexerCache {
-    if metrale_config::glm_dsa_indexer_paged() {
+/// 2026-10-09: Where the text stack's DSA layers keep their indexer rows: paged unless
+/// `cache.glm_dsa_indexer_flat` (`METRALE_GLM_DSA_INDEXER_FLAT`). 2026-10-17: From the resolved
+/// settings; the loader and its V block size read it here.
+pub fn text_stack_indexer_cache(s: &metrale_settings::InferenceServerSettings) -> IndexerCache {
+    text_stack_indexer_cache_given(!s.cache.glm_dsa_indexer_flat)
+}
+
+/// 2026-10-17: [`text_stack_indexer_cache`] for a resolved `paged` decision. The serve's
+/// per-sequence reserve passes `metrale_config::glm_dsa_indexer_paged()`, the reader the
+/// prefix-cache gate also uses, until the serve holds the settings.
+pub fn text_stack_indexer_cache_given(paged: bool) -> IndexerCache {
+    if paged {
         IndexerCache::Paged
     } else {
         IndexerCache::Flat
@@ -232,3 +237,7 @@ impl IndexerRowsDev {
 #[cfg(test)]
 #[path = "paged_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "paged_settings_tests.rs"]
+mod settings_tests;

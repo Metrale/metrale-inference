@@ -123,11 +123,14 @@ pub(super) fn post_load_yardstick(
     inputs: &PostLoadInputs<'_>,
     fixed_reserve: usize,
     arena: usize,
+    settings: &metrale_settings::InferenceServerSettings,
 ) -> Yardstick {
-    let route = metrale_model_arch::weight_loader::predicted_residency::Fp8RouteInputs::from_env(
-        config,
-        inputs.w8a8_prefill_kernels,
-    );
+    let route =
+        metrale_model_arch::weight_loader::predicted_residency::Fp8RouteInputs::from_settings(
+            config,
+            settings,
+            inputs.w8a8_prefill_kernels,
+        );
     let estimate = metrale_model_arch::weight_loader::predicted_residency::predicted_derived_bytes(
         config, &route,
     );

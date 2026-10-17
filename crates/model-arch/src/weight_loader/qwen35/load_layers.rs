@@ -34,8 +34,8 @@ use metrale_model_layers::weight_map::{
     Nvfp4MoeCopies, Nvfp4Variant, detect_nvfp4_variant, load_moe_qwen35, quantize_to_nvfp4,
 };
 use selectors::{
-    HoloFastMoeMode, holo_fast_moe_layer_selected, holo_fast_moe_mode, holo_moe_down_fp4,
-    holo_moe_gateup_fp4, is_holo_modelopt_mixed_precision, layer_dequant_selected,
+    HoloFastMoeMode, holo_fast_moe_layer_selected, holo_fast_moe_mode,
+    is_holo_modelopt_mixed_precision, layer_dequant_selected,
 };
 
 /// 2026-09-25: True when `{prefix}.weight` is FP8E4M3 with a block scale: a
@@ -60,6 +60,7 @@ pub(super) fn load_layers(
     config: &ModelConfig,
     gpu: &dyn GpuBackend,
     layer_kv_dtypes: &[KvCacheDtype],
+    lc: metrale_model_layers::load_context::LoadContext<'_>,
 ) -> Result<Vec<Box<dyn TransformerLayer>>> {
     let layer_types = if config.layer_types.is_empty() {
         (0..config.num_hidden_layers)
@@ -295,7 +296,9 @@ pub(super) fn load_layers(
         moe_layer.is_dflash_capture_layer = config.dflash_capture_layers.contains(&i);
         // 2026-10-02: The checkpoint's own NVFP4 experts under `declared`.
         declared.mark_nvfp4_experts(&mut moe_layer, &lp, i, variant, plan.fp8_experts)?;
-        if i == 0 && (holo_moe_gateup_fp4() || holo_moe_down_fp4()) && holo_fast_moe_mode.is_none()
+        if i == 0
+            && (lc.levers.holo_moe_gateup_fp4 || lc.levers.holo_moe_down_fp4)
+            && holo_fast_moe_mode.is_none()
         {
             tracing::warn!(
                 "METRALE_HOLO_MOE_GATEUP_FP4/_DOWN_FP4 set but METRALE_HOLO_FAST_MOE_MODE \
@@ -383,7 +386,7 @@ pub(super) fn load_layers(
 
         // 2026-10-04: Every load-time reader of the row-major NVFP4 experts ran above: repack them
         // in place for the lean tensor-core decode when the layer qualifies (byte-identical outputs).
-        if moe_layer.repack_nvfp4_experts_lean(gpu, config, stream)? && i == 0 {
+        if moe_layer.repack_nvfp4_experts_lean(gpu, config, stream, lc.levers)? && i == 0 {
             tracing::info!("NVFP4 experts repacked for the lean tensor-core decode");
         }
         let ffn = FfnComponent::Moe(moe_layer);
@@ -401,8 +404,9 @@ pub(super) fn load_layers(
                     post_attn_norm,
                     ffn,
                 };
-                let layer =
-                    fp8_attention_arms::build_bf16_dense_attention(&cx, &lp, i, attn_idx, parts)?;
+                let layer = fp8_attention_arms::build_bf16_dense_attention(
+                    &cx, &lp, i, attn_idx, parts, lc,
+                )?;
                 layers.push(Box::new(layer));
                 attn_idx += 1;
             }
@@ -421,8 +425,9 @@ pub(super) fn load_layers(
                     post_attn_norm,
                     ffn,
                 };
-                let layer =
-                    fp8_attention_arms::build_native_fp8_attention(&cx, &lp, i, attn_idx, parts)?;
+                let layer = fp8_attention_arms::build_native_fp8_attention(
+                    &cx, &lp, i, attn_idx, parts, lc,
+                )?;
                 layers.push(Box::new(layer));
                 attn_idx += 1;
             }
@@ -443,6 +448,7 @@ pub(super) fn load_layers(
                     input_norm,
                     post_attn_norm,
                     ffn,
+                    lc,
                 )?;
                 layers.push(layer);
                 attn_idx += 1;

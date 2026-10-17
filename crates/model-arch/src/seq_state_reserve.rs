@@ -74,7 +74,9 @@ pub fn per_sequence_state_bytes(
         config,
         max_seq_len,
         spec_on,
-        crate::glm5next_dsa::paged::text_stack_indexer_cache(),
+        crate::glm5next_dsa::paged::text_stack_indexer_cache_given(
+            metrale_config::glm_dsa_indexer_paged(),
+        ),
         crate::glm5next_mtp_head::drafter_context_cap()?,
     )
 }

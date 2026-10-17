@@ -246,6 +246,9 @@ pub struct ForwardContext<'a> {
     /// 2026-09-25: This model's kernel-path switches other than GEMM selection
     /// (`layers::ops::ModelLevers`).
     pub levers: &'a crate::layers::ops::ModelLevers,
+    /// 2026-10-17: The process's settings, resolved once at startup (`metrale_settings::resolve`):
+    /// the levers `levers` does not carry, read as plain fields.
+    pub settings: &'a metrale_settings::InferenceServerSettings,
     /// 2026-09-25: This model's diagnostic counters and one-shot latches
     /// (`layers::ops::ModelStats`). They belong to the model, so none spans a model swap.
     pub stats: &'a crate::layers::ops::ModelStats,

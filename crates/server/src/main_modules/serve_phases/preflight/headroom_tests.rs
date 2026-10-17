@@ -333,6 +333,8 @@ fn an_unpredictable_route_falls_back_to_pre_load_free_memory_and_says_so() {
         },
         gib(8.0),
         gib(3.5),
+        &crate::main_modules::serve_phases::build::lever_settings()
+            .expect("the process levers resolve"),
     );
     // 2026-09-26: Which reason comes back depends on `METRALE_DENSE_FP8` in
     // the process environment, so only its presence is asserted.

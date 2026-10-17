@@ -14,6 +14,7 @@ metrale-grammar->bitvec
 metrale-grammar->criterion
 metrale-grammar->rayon
 metrale-grammar->stats_alloc
+metrale-model-layers->metrale-io-host-mem
 metrale-sampling->anyhow
 metrale-sampling->metrale-gpu-runtime
 metrale-sampling->metrale-telemetry

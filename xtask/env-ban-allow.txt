@@ -95,7 +95,6 @@ crates/model-arch/src/deepseek_v41_layer/step_seg_run.rs
 crates/model-arch/src/dflash_head.rs
 crates/model-arch/src/dflash_head/from_weights.rs
 crates/model-arch/src/dflash_head/from_weights/kernel_handles.rs
-crates/model-arch/src/dflash_head/levers.rs
 crates/model-arch/src/glm5next_batch_inv.rs
 crates/model-arch/src/glm5next_dequant_persist.rs
 crates/model-arch/src/glm5next_dsa/attend/check.rs
@@ -183,7 +182,6 @@ crates/model-arch/src/weight_loader/qwen35/load_layers/linear_attn_arms/nvfp4.rs
 crates/model-arch/src/weight_loader/qwen35/load_layers/selectors.rs
 crates/model-arch/src/weight_loader/qwen35_dense.rs
 crates/model-arch/src/weight_loader/qwen35_dense/attn_layer.rs
-crates/model-arch/src/weight_loader/qwen35_dense/fp8_residency.rs
 crates/model-arch/src/weight_loader/qwen35_dense/gdn_dequant.rs
 crates/model-arch/src/weight_loader/qwen35_dense/gdn_layer.rs
 crates/model-arch/src/weight_loader/qwen35_dense/predicted_residency.rs
@@ -199,7 +197,6 @@ crates/model-engine/src/factory/m2_setup.rs
 crates/model-engine/src/kimi_k3_loader.rs
 crates/model-engine/src/model/device_argmax.rs
 crates/model-engine/src/model/gdn_carry.rs
-crates/model-engine/src/model/impl_a1.rs
 crates/model-engine/src/model/impl_a1/comm_setup.rs
 crates/model-engine/src/model/impl_a1/kernels.rs
 crates/model-engine/src/model/impl_a1/spec_buffers.rs
@@ -268,7 +265,6 @@ crates/model-engine/tests/k3_moe_batching_cuda_oracle.rs
 crates/model-engine/tests/k3_mxfp4_cuda_oracle.rs
 crates/model-engine/tests/k3_tp4_composed_cuda.rs
 crates/model-layers/src/circuit_exec/policy.rs
-crates/model-layers/src/drafter_context.rs
 crates/model-layers/src/ep_wire.rs
 crates/model-layers/src/forward/qwen3_5/full_attention.rs
 crates/model-layers/src/layers/dense_ffn.rs
@@ -293,7 +289,6 @@ crates/model-layers/src/layers/mtp_head/prefill.rs
 crates/model-layers/src/layers/mtp_head/row_dispatch.rs
 crates/model-layers/src/layers/ngram_embed/tests.rs
 crates/model-layers/src/layers/ops/dense_gemv_tc.rs
-crates/model-layers/src/layers/ops/dispatch_config.rs
 crates/model-layers/src/layers/ops/dispatch_helpers.rs
 crates/model-layers/src/layers/ops/dispatch_proj.rs
 crates/model-layers/src/layers/ops/dispatch_proj_decode.rs
@@ -330,8 +325,6 @@ crates/model-layers/src/layers/qwen3_attention/prefill/cache_skip.rs
 crates/model-layers/src/layers/qwen3_attention/prefill/cache_skip_qkv.rs
 crates/model-layers/src/layers/qwen3_attention/prefill/cache_skip_v4.rs
 crates/model-layers/src/layers/qwen3_attention/prefill/paged.rs
-crates/model-layers/src/layers/qwen3_attention/prefill/paged_oproj.rs
-crates/model-layers/src/layers/qwen3_attention/prefill/paged_qkv.rs
 crates/model-layers/src/layers/qwen3_attention/prefill_qkv_w8a8.rs
 crates/model-layers/src/layers/qwen3_attention/trait_impl/decode_inner/hc.rs
 crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/attn.rs

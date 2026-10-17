@@ -38,6 +38,7 @@ pub(crate) fn build_full_attention_nvfp4(
     input_norm: DenseWeight,
     post_attn_norm: DenseWeight,
     ffn: FfnComponent,
+    lc: metrale_model_layers::load_context::LoadContext<'_>,
 ) -> Result<Box<dyn TransformerLayer>> {
     let p = format!("{lp}.self_attn");
     let tp_rank = config.tp_rank;
@@ -119,7 +120,7 @@ pub(crate) fn build_full_attention_nvfp4(
                 // and head_dim 128, Q/K/V are rotated in place before quantization; O is not. A
                 // rotation error is discarded. At TP=1 the rotated buffer is also the BF16 weight
                 // kept below.
-                if metrale_model_layers::layers::ops::ModelLevers::get().weight_pre_rotated
+                if lc.levers.weight_pre_rotated
                     && (name == "q_proj" || name == "k_proj" || name == "v_proj")
                     && config.head_dim == 128
                 {
@@ -190,6 +191,7 @@ pub(crate) fn build_full_attention_nvfp4(
         layer_kv_dtype,
         config.fp8_kv_calibration_tokens,
         config,
+        lc,
     )?;
 
     let num_heads = config.num_attention_heads;

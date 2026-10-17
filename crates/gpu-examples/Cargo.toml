@@ -217,6 +217,7 @@ metrale-target-defaults = { workspace = true }
 metrale-model-arch = { workspace = true }
 metrale-model-layers = { workspace = true }
 metrale-settings = { workspace = true }
+metrale-io-host-std = { workspace = true }
 anyhow = { workspace = true, features = ["std"] }
 half = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std", "preserve_order"] }

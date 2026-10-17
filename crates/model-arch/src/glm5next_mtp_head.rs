@@ -125,6 +125,8 @@ pub struct Glm5NextMtpHead {
     kv_regions: kv_pool::DrafterKvRegions,
     /// 2026-10-14: Freed states kept for reuse (`METRALE_GLM_MTP_STATE_POOL`).
     state_pool: state_pool::StatePool,
+    /// 2026-10-17: `speculative.glm_mtp_state_pool` at construction: freed states go to `state_pool`.
+    state_pool_on: bool,
     rms_norm_k: KernelHandle,
     gemv_k: KernelHandle,
     argmax_k: KernelHandle,

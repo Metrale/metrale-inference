@@ -49,7 +49,7 @@ impl Qwen3AttentionLayer {
             && self.quantize_nvfp4_k.0 != 0
             && self.q_weight.as_ref().and_then(|w| w.as_nvfp4()).is_some()
             && ctx.buffers.fp8_act_bytes() >= (n as usize) * (h as usize)
-            && std::env::var("METRALE_ATTN_W4A4").is_ok();
+            && ctx.settings.kernels.attn_w4a4;
         let a4 = if w4a4 {
             let a4 = ctx.buffers.fp8_act();
             let a4_sf = a4.offset((n as usize) * (h as usize) / 2);
@@ -323,17 +323,7 @@ impl Qwen3AttentionLayer {
             }
         } else if let Some(nvfp4_t) = nvfp4_t {
             if n > 128 {
-                self.w4a16_gemm_m128_dispatch(
-                    ctx.gpu,
-                    ctx.dispatch,
-                    normed,
-                    nvfp4_t,
-                    out,
-                    n,
-                    out_dim,
-                    h,
-                    stream,
-                )?;
+                self.w4a16_gemm_m128_dispatch(ctx, normed, nvfp4_t, out, n, out_dim, h, stream)?;
             } else {
                 ops::w4a16_gemm_n128(
                     ctx.gpu,
@@ -450,7 +440,7 @@ impl Qwen3AttentionLayer {
                     )?;
                 } else if seq_slot.0 != 0
                     && let Some(route) = route
-                    && crate::lora::prefill_bgmv_forced()
+                    && crate::lora::prefill_bgmv_forced(ctx.settings)
                 {
                     // 2026-09-25: Opt-in (`METRALE_LORA_PREFILL_BGMV=1`), with a slot
                     // buffer and a route: the per-row bgmv.

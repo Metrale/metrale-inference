@@ -71,6 +71,7 @@ pub(super) fn install_glm_mtp_proposer(
             model.gpu_backend(),
             max_seq_len,
             max_batch_size,
+            model.levers_ref(),
         ) {
             Ok(head) => {
                 model.set_dflash_proposer(std::sync::Arc::new(head));

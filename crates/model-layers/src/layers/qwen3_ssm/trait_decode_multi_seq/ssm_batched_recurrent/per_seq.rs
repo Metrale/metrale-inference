@@ -89,7 +89,7 @@ impl Qwen3SsmLayer {
                 && nv == nk * 2
                 && kd == 128
                 && vd == 128
-                && crate::layers::ops::ModelLevers::get().gdn_fused_conv;
+                && ctx.levers.gdn_fused_conv;
             let sub_t0 = if detail_profile {
                 Some(std::time::Instant::now())
             } else {

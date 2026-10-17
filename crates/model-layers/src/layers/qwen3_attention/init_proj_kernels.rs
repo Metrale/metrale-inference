@@ -87,6 +87,7 @@ impl ProjKernels {
         probes: &ArchProbes,
         reshape_mod: &'static str,
         reshape_fn: &'static str,
+        levers: &crate::layers::ops::ModelLevers,
     ) -> Result<Self> {
         Ok(Self {
             sigmoid_gate_head_broadcast_k: super::super::try_kernel(
@@ -233,7 +234,7 @@ impl ProjKernels {
             // (`METRALE_FP8_ATTN_M32=1`), or (2026-09-27) under
             // `RowTiers::Canonical`. Every reader checks for a nonzero handle
             // before it uses it.
-            w8a16_gemm_pipelined_m32_k: if crate::layers::ops::ModelLevers::get().fp8_attn_m32
+            w8a16_gemm_pipelined_m32_k: if levers.fp8_attn_m32
                 || crate::layers::row_tiers() == crate::layers::RowTiers::Canonical
             {
                 super::super::try_target_kernel(
@@ -245,7 +246,7 @@ impl ProjKernels {
                 KernelHandle(0)
             },
             // 2026-09-26: The 64-row twin, for 33..=64 rows, under the same lever.
-            w8a16_gemm_pipelined_m64_k: if crate::layers::ops::ModelLevers::get().fp8_attn_m32
+            w8a16_gemm_pipelined_m64_k: if levers.fp8_attn_m32
                 || crate::layers::row_tiers() == crate::layers::RowTiers::Canonical
             {
                 super::super::try_target_kernel(

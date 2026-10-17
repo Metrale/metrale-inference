@@ -32,6 +32,12 @@ impl TransformerModel {
         &self.config
     }
 
+    /// 2026-10-17: Borrow the model levers (`ModelLevers::from_settings`, resolved once), for the
+    /// proposers installed after construction.
+    pub fn levers_ref(&self) -> &metrale_model_layers::layers::ops::ModelLevers {
+        &self.levers
+    }
+
     /// 2026-09-25: Install a proposer built after construction (the
     /// DeepSeek-V4 or GLM-5.3 MTP head, or a DFlash drafter), replacing any
     /// MTP proposer `TransformerModel::new` built. It also shrinks the MTP

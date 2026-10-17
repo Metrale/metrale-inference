@@ -185,6 +185,7 @@ fn run_tiled(m: u32, expect: Expect, tile: u32, configure: impl FnOnce(&mut Dens
     let dispatch = GemmDispatch::defaults();
     let derived = DerivedWeights::new();
     let levers = ModelLevers::defaults();
+    let settings = crate::lever_equivalence::defaults();
     let stats = ModelStats::new();
     let ctx = ForwardContext {
         buffers: &buffers,
@@ -194,6 +195,7 @@ fn run_tiled(m: u32, expect: Expect, tile: u32, configure: impl FnOnce(&mut Dens
         dispatch: &dispatch,
         derived: &derived,
         levers: &levers,
+        settings: &settings,
         stats: &stats,
         attn_metadata: None,
         profile: false,

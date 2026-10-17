@@ -162,6 +162,7 @@ pub fn load_lora_adapters_multi(
     gpu: &dyn GpuBackend,
     max_loras: usize,
     max_lora_rank: usize,
+    expert: ExpertLoraPolicy,
 ) -> Result<LoraWeights> {
     check_family(cfg)?;
     if adapters.is_empty() {
@@ -181,12 +182,12 @@ pub fn load_lora_adapters_multi(
     // 2026-09-25: Audit every adapter before any allocation.
     let mut audited: Vec<AuditedAdapter> = Vec::with_capacity(adapters.len());
     for a in adapters {
-        audited.push(audit_adapter(a.store, &a.peft, cfg, max_lora_rank)?);
+        audited.push(audit_adapter(a.store, &a.peft, cfg, max_lora_rank, expert)?);
     }
 
     // 2026-09-25: The expert/router pool is sized from each adapter's audited
-    // keys at `max_lora_expert_rank`, summed over adapters.
-    let expert_rank = max_lora_expert_rank();
+    // keys at `expert.max_rank`, summed over adapters.
+    let expert_rank = expert.max_rank;
     let expert_total: usize = adapters
         .iter()
         .zip(&audited)
@@ -379,6 +380,7 @@ pub fn pack_store_into_slot(
     peft: &PeftAdapterConfig,
     cfg: &ModelConfig,
     gpu: &dyn GpuBackend,
+    expert: ExpertLoraPolicy,
 ) -> Result<Vec<Option<LoraLayerWeights>>> {
     if slot >= lw.max_loras {
         bail!(
@@ -395,7 +397,7 @@ pub fn pack_store_into_slot(
         );
     }
     validate_peft_config(peft, lw.max_rank)?;
-    let audited = audit_adapter(store, peft, cfg, lw.max_rank)?;
+    let audited = audit_adapter(store, peft, cfg, lw.max_rank, expert)?;
     if expert_pack::present(&audited.router, &audited.experts) {
         bail!(
             "LoRA disk swap REFUSED: adapter '{name}' carries router/expert deltas \
@@ -446,11 +448,12 @@ pub fn load_lora_adapters_generic(
     gpu: &dyn GpuBackend,
     max_loras: usize,
     max_lora_rank: usize,
+    expert: ExpertLoraPolicy,
 ) -> Result<LoraWeights> {
     let inputs = [LoraAdapterInput {
         name: String::new(),
         store: adapter_store,
         peft: peft.clone(),
     }];
-    load_lora_adapters_multi(&inputs, cfg, gpu, max_loras, max_lora_rank)
+    load_lora_adapters_multi(&inputs, cfg, gpu, max_loras, max_lora_rank, expert)
 }

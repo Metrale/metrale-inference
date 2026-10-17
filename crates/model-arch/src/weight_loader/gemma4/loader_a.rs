@@ -59,6 +59,7 @@ pub(super) fn load_layers_impl(
     config: &ModelConfig,
     gpu: &dyn GpuBackend,
     layer_kv_dtypes: &[KvCacheDtype],
+    lc: metrale_model_layers::load_context::LoadContext<'_>,
 ) -> Result<Vec<Box<dyn TransformerLayer>>> {
     let mut layers: Vec<Box<dyn TransformerLayer>> = Vec::with_capacity(config.num_hidden_layers);
 
@@ -379,6 +380,7 @@ pub(super) fn load_layers_impl(
             layer_kv_dtype,
             config.fp8_kv_calibration_tokens,
             config,
+            lc,
         )?;
         let actual_head_dim = q_out_dim / config.num_attention_heads;
         let actual_kv_heads = kv_out_dim / actual_head_dim;

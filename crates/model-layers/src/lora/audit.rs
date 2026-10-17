@@ -47,6 +47,7 @@ pub(crate) fn audit_adapter(
     peft: &PeftAdapterConfig,
     cfg: &ModelConfig,
     max_lora_rank: usize,
+    expert: ExpertLoraPolicy,
 ) -> Result<AuditedAdapter> {
     validate_peft_config(peft, max_lora_rank)?;
 
@@ -127,7 +128,7 @@ pub(crate) fn audit_adapter(
         }
     }
 
-    expert_pack::validate(cfg, peft, &router, &experts)?;
+    expert_pack::validate(cfg, peft, &router, &experts, expert)?;
     if expert_pack::present(&router, &experts) {
         expert_pack::validate_shapes(adapter_store, cfg, peft, &router, &experts)?;
     }

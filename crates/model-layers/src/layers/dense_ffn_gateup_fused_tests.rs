@@ -138,6 +138,7 @@ struct Harness {
     buffers: BufferArena,
     config: ModelConfig,
     fp8: Fp8Weight,
+    settings: metrale_settings::InferenceServerSettings,
 }
 
 /// 2026-09-25: A dense config at the real FFN widths. With `armed`, the lever
@@ -220,6 +221,7 @@ fn harness(armed: bool) -> Harness {
         buffers,
         config,
         fp8,
+        settings: crate::lever_equivalence::defaults(),
     }
 }
 
@@ -236,6 +238,7 @@ fn ctx<'a>(
         levers,
         stats,
         buffers: &h.buffers,
+        settings: &h.settings,
         hc_row_offset: 0,
         gpu: &h.gpu,
         config: &h.config,

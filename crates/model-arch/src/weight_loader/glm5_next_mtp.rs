@@ -49,6 +49,7 @@ pub fn load_glm5next_mtp_module(
     store: &WeightStore,
     config: &ModelConfig,
     gpu: &dyn GpuBackend,
+    lc: metrale_model_layers::load_context::LoadContext<'_>,
 ) -> Result<Option<Glm5NextMtpModule>> {
     let idx = config.num_hidden_layers;
     let prefix = format!("model.language_model.layers.{idx}.");
@@ -148,6 +149,7 @@ pub fn load_glm5next_mtp_module(
             is_last: false,
             // 2026-10-10: The MTP block has no mHC reduce to hide a warm under.
             l2_warm: None,
+            keep_slot_graphs: lc.levers.glm_keep_slot_graphs,
         },
         eh_proj: DenseWeight {
             weight: store.get(&format!("{prefix}eh_proj.weight"))?.ptr,

@@ -367,7 +367,7 @@ impl Qwen3AttentionLayer {
                 mla_cache_dim,
                 mla_cache_dim,
                 stream,
-                ctx.graph_capture,
+                ctx,
             )
         })?;
 

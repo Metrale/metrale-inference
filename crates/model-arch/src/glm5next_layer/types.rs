@@ -79,6 +79,8 @@ pub struct Glm5NextLayer {
     /// 2026-10-10: The stack's L2 warm (`METRALE_GLM_AR_L2_PREFETCH`), shared by every text
     /// layer; `None` when the lever is off and for the MTP block.
     pub l2_warm: Option<Arc<l2_warm::L2Warm>>,
+    /// 2026-10-17: `scheduler.glm_keep_slot_graphs` at construction ([`Self::slot_graphs_stale`]).
+    pub keep_slot_graphs: bool,
 }
 
 impl Glm5NextLayer {
@@ -87,7 +89,7 @@ impl Glm5NextLayer {
     /// `alloc_state` buffers belong to one sequence; a paged state has no device buffers (its
     /// rows go through the decode metadata), and KDA state lives in the SSM pool.
     pub(crate) fn slot_graphs_stale(&self) -> bool {
-        !metrale_model_layers::layers::ops::ModelLevers::get().glm_keep_slot_graphs
+        !self.keep_slot_graphs
             || matches!(&self.mixer, Glm5NextMixer::Dsa(l) if l.indexer_cache == IndexerCache::Flat)
     }
 }

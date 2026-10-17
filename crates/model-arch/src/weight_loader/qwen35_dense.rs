@@ -250,6 +250,7 @@ impl ModelWeightLoader for Qwen35DenseWeightLoader {
         config: &ModelConfig,
         gpu: &dyn GpuBackend,
         layer_kv_dtypes: &[KvCacheDtype],
+        lc: metrale_model_layers::load_context::LoadContext<'_>,
     ) -> Result<Vec<Box<dyn TransformerLayer>>> {
         let layer_types = if config.layer_types.is_empty() {
             (0..config.num_hidden_layers)
@@ -303,9 +304,9 @@ impl ModelWeightLoader for Qwen35DenseWeightLoader {
         };
         log_free("dense-load-start");
 
-        // 2026-09-25: The routing levers are read once per load (`RouteEnv::from_env`,
+        // 2026-09-25: The routing levers are read once per load (`RouteEnv::from_settings`,
         // `fp8_residency.rs`).
-        let route_env = RouteEnv::from_env();
+        let route_env = RouteEnv::from_settings(lc.settings);
         let mut residency = DerivedResidency::default();
         let policy = load_cx::weight_quant_policy(config);
         let served = std::cell::RefCell::new(served_formats::ServedFormats::default());
@@ -349,6 +350,7 @@ impl ModelWeightLoader for Qwen35DenseWeightLoader {
                         &mut layers,
                         &mut attn_idx,
                         l,
+                        lc,
                     )? {
                         continue;
                     }

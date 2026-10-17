@@ -102,7 +102,7 @@ impl TransformerModel {
                         .as_ref()
                         .is_some_and(|v| ks.iter().sum::<usize>() as u64 <= v.max_rows)
                 })
-            && !(self.lora.is_some() && metrale_model_layers::lora::no_batch_verify())
+            && !(self.lora.is_some() && metrale_model_layers::lora::no_batch_verify(&self.settings))
             && !self.verify_hidden_stash.is_null()
             && !self
                 .layers
@@ -368,6 +368,7 @@ impl TransformerModel {
                     moe_lora_route: self.decode_moe_route(),
                     derived: &self.derived,
                     levers: &self.levers,
+                    settings: &self.settings,
                     stats: &self.stats,
                     attn_metadata: Some(metadata),
                     profile: false,

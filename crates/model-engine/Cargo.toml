@@ -41,6 +41,7 @@ sha2 = { workspace = true, features = ["alloc", "oid"] }
 tracing = { workspace = true, features = ["std", "attributes"] }
 
 [dev-dependencies]
+metrale-model-layers = { workspace = true, features = ["test-utils"] }
 metrale-gpu-runtime = { workspace = true, features = ["test-utils"] }
 # 2026-10-17: Tests load real kernel tables; production code never names this crate, so a
 # kernel edit does not rebuild this one.

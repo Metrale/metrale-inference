@@ -41,6 +41,7 @@ impl ModelWeightLoader for Qwen3VLWeightLoader {
         config: &ModelConfig,
         gpu: &dyn GpuBackend,
         layer_kv_dtypes: &[KvCacheDtype],
+        lc: metrale_model_layers::load_context::LoadContext<'_>,
     ) -> Result<Vec<Box<dyn TransformerLayer>>> {
         let mut layers: Vec<Box<dyn TransformerLayer>> =
             Vec::with_capacity(config.num_hidden_layers);
@@ -145,6 +146,7 @@ impl ModelWeightLoader for Qwen3VLWeightLoader {
                 layer_kv_dtypes[i],
                 config.fp8_kv_calibration_tokens,
                 config,
+                lc,
             )?));
 
             if (i + 1) % 10 == 0 {

@@ -31,6 +31,7 @@ serde_json = { workspace = true, features = ["std", "preserve_order"] }
 tracing = { workspace = true, features = ["std", "attributes"] }
 
 [dev-dependencies]
+metrale-model-layers = { workspace = true, features = ["test-utils"] }
 metrale-gpu-runtime = { workspace = true, features = ["test-utils"] }
 metrale-kernels = { workspace = true }
 

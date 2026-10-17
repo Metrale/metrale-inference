@@ -73,6 +73,7 @@ pub(super) struct Rig {
     dispatch: GemmDispatch,
     derived: DerivedWeights,
     levers: ModelLevers,
+    settings: metrale_settings::InferenceServerSettings,
     stats: ModelStats,
 }
 
@@ -94,6 +95,7 @@ impl Rig {
             dispatch: GemmDispatch::defaults(),
             derived: DerivedWeights::new(),
             levers: ModelLevers::defaults(),
+            settings: metrale_model_layers::lever_equivalence::defaults(),
             stats: ModelStats::new(),
         }
     }
@@ -107,6 +109,7 @@ impl Rig {
             dispatch: &self.dispatch,
             derived: &self.derived,
             levers: &self.levers,
+            settings: &self.settings,
             stats: &self.stats,
             attn_metadata: None,
             profile: false,

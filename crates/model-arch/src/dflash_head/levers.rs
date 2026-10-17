@@ -1,16 +1,19 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-09-25: DFlash drafter levers, resolved from the environment once per head and carried on it.
+//! 2026-09-25: DFlash drafter levers, resolved from the startup settings once per head and carried on it.
 //!
 //! Owner: model-arch (DFlash drafter).
 //! Invariants:
-//! - `DFlashLevers::from_env` is called only while a head is built (`from_weights.rs`),
+//! - `DFlashLevers::from_settings` is called only while a head is built (`from_weights.rs`),
 //!   so a head's levers are fixed for its lifetime.
-//! - Each field reads one `METRALE_*` variable, except `any_diagnostic_armed`, which
-//!   reads every name in `GRAPH_SUPPRESSING_DIAGNOSTICS`.
+//! - Each field reads one settings field, except `any_diagnostic_armed`, which asks whether any
+//!   name in `GRAPH_SUPPRESSING_DIAGNOSTICS` was set (the settings provenance).
 //!
 //! The levers live on the head rather than in a process-wide `OnceLock`, so a second
-//! model built in the same process resolves the environment again.
+//! model built in the same process with other settings resolves its own.
+
+use metrale_settings::InferenceServerSettings;
+use metrale_settings::provenance::Source;
 
 /// 2026-09-25: Diagnostic and A/B levers for one loaded DFlash drafter.
 // 2026-09-25: No `Eq`: `conf_tau` is an `f32`.
@@ -153,78 +156,76 @@ const GRAPH_SUPPRESSING_DIAGNOSTICS: [&str; 11] = [
     "METRALE_DFLASH_BLOCK_DUMP",
 ];
 
-fn from_values(
-    mut value: impl FnMut(&str) -> Option<String>,
-    mut present: impl FnMut(&str) -> bool,
-) -> DFlashLevers {
-    fn opt_in(value: Option<&str>) -> bool {
-        value == Some("1")
-    }
-    fn parsed<T: std::str::FromStr>(value: Option<&str>) -> Option<T> {
-        value.and_then(|v| v.parse().ok())
-    }
+/// 2026-10-17: The value of a numeric text lever; unset or unparseable is `None`, as before.
+fn parsed<T: core::str::FromStr>(value: Option<&str>) -> Option<T> {
+    value.and_then(|v| v.parse().ok())
+}
 
-    DFlashLevers {
-        any_diagnostic_armed: GRAPH_SUPPRESSING_DIAGNOSTICS.iter().any(|var| present(var)),
-
-        debug_dump: opt_in(value("METRALE_DFLASH_DEBUG_DUMP").as_deref()),
-        debug_dump_full: opt_in(value("METRALE_DFLASH_DEBUG_DUMP_FULL").as_deref()),
-        log_drafts: opt_in(value("METRALE_DFLASH_LOG_DRAFTS").as_deref()),
-        block_dump: opt_in(value("METRALE_DFLASH_BLOCK_DUMP").as_deref()),
-        block_dump_at_pos: parsed(value("METRALE_DFLASH_BLOCK_DUMP_AT_POS").as_deref())
-            .unwrap_or(0),
-        option_b_diag: opt_in(value("METRALE_DFLASH_OPTION_B_DIAG").as_deref()),
-
-        force_pattern: opt_in(value("METRALE_DFLASH_DEBUG_FORCE_PATTERN").as_deref()),
-        force_noise_pattern: opt_in(value("METRALE_DFLASH_DEBUG_FORCE_NOISE_PATTERN").as_deref()),
-        force_no_ctx: opt_in(value("METRALE_DFLASH_DEBUG_CTX_OFF").as_deref()),
-        force_ctx_used: parsed(value("METRALE_DFLASH_DEBUG_CTX_USED").as_deref()),
-
-        precompute: opt_in(value("METRALE_DFLASH_PRECOMPUTE").as_deref()),
-        precompute_commit: opt_in(value("METRALE_DFLASH_PRECOMPUTE_COMMIT").as_deref()),
-
-        option_b: super::option_b_from(value("METRALE_DFLASH_OPTION_B").as_deref()),
-        option_b_no_ctx: opt_in(value("METRALE_DFLASH_OPTION_B_NO_CTX").as_deref()),
-        dflash2: value("METRALE_DFLASH2").as_deref() != Some("0"),
-        topk16_split: value("METRALE_DFLASH2_TOPK_SPLIT").as_deref() != Some("0"),
-        tp_graphs: opt_in(value("METRALE_DFLASH_TP_GRAPHS").as_deref()),
-        batch_propose_width: parsed(value("METRALE_DFLASH_BATCH_PROPOSE").as_deref())
-            .unwrap_or(usize::MAX),
-        draft_cap: parsed(value("METRALE_DFLASH_DRAFT_CAP").as_deref()),
-        full_block: opt_in(value("METRALE_DFLASH_FULL_BLOCK").as_deref()),
-
-        verify_trace: opt_in(value("METRALE_DFLASH_VERIFY_TRACE").as_deref()),
-        precompute_dump: opt_in(value("METRALE_DFLASH_PRECOMPUTE_DUMP").as_deref()),
-        ctx_parity_dump: opt_in(value("METRALE_DFLASH_CTX_PARITY_DUMP").as_deref()),
-        no_decode_append: opt_in(value("METRALE_DFLASH_DEBUG_NO_DECODE_APPEND").as_deref()),
-        full_precompute: opt_in(value("METRALE_DFLASH_DEBUG_FULL_PRECOMPUTE").as_deref()),
-        ctxlen_probe: opt_in(value("METRALE_DFLASH_CTXLEN_PROBE").as_deref()),
-
-        dspark_markov: value("METRALE_DSPARK_MARKOV").as_deref() != Some("0"),
-        conf_tau: parsed(value("METRALE_DSPARK_CONF_TAU").as_deref()).unwrap_or(0.0),
-
-        propose_warmup_n: parsed(value("METRALE_DFLASH_PROPOSE_WARMUP_N").as_deref()).unwrap_or(2),
-
-        dspark_shift: match value("METRALE_DSPARK_SHIFT").as_deref() {
-            Some("1") => Some(true),
-            Some("0") => Some(false),
-            _ => None,
-        },
-        dspark_anchor_bias: value("METRALE_DSPARK_ANCHOR_BIAS").as_deref() != Some("0"),
-        dspark_conf_trace: opt_in(value("METRALE_DSPARK_CONF_TRACE").as_deref()),
-    }
+/// 2026-10-17: A lever in `GRAPH_SUPPRESSING_DIAGNOSTICS` was given a value by any source, so a
+/// resolved `0` still keeps `forward_block` off CUDA graphs (presence, not truth).
+fn diagnostic_set(s: &InferenceServerSettings) -> bool {
+    GRAPH_SUPPRESSING_DIAGNOSTICS.iter().any(|var| {
+        s.provenance
+            .source_of(var)
+            .is_some_and(|src| src != Source::Default)
+    })
 }
 
 impl DFlashLevers {
-    /// 2026-09-25: Resolve from the environment. The head calls it once, in
+    /// 2026-10-17: Resolve from the startup settings. The head calls it once, in
     /// `from_weights.rs`; per-step code reads the head's `levers` field.
-    pub fn from_env() -> Self {
-        from_values(metrale_config::levers::var, |var| {
-            metrale_config::levers::var_os(var).is_some()
-        })
+    pub fn from_settings(s: &InferenceServerSettings) -> Self {
+        let (sp, rt, tm) = (&s.speculative, &s.runtime, &s.telemetry);
+        Self {
+            any_diagnostic_armed: diagnostic_set(s),
+
+            debug_dump: tm.dflash_debug_dump,
+            debug_dump_full: tm.dflash_debug_dump_full,
+            log_drafts: tm.dflash_log_drafts,
+            block_dump: tm.dflash_block_dump,
+            block_dump_at_pos: parsed(tm.dflash_block_dump_at_pos.as_deref()).unwrap_or(0),
+            option_b_diag: tm.dflash_option_b_diag,
+
+            force_pattern: tm.dflash_debug_force_pattern,
+            force_noise_pattern: tm.dflash_debug_force_noise_pattern,
+            force_no_ctx: tm.dflash_debug_ctx_off,
+            force_ctx_used: parsed(tm.dflash_debug_ctx_used.as_deref()),
+
+            precompute: sp.dflash_precompute,
+            precompute_commit: sp.dflash_precompute_commit,
+
+            option_b: super::option_b_from(sp.dflash_option_b.as_deref()),
+            option_b_no_ctx: sp.dflash_option_b_no_ctx,
+            dflash2: sp.dflash2,
+            topk16_split: sp.dflash2_topk_split,
+            tp_graphs: sp.dflash_tp_graphs,
+            batch_propose_width: parsed(sp.dflash_batch_propose.as_deref()).unwrap_or(usize::MAX),
+            draft_cap: parsed(sp.dflash_draft_cap.as_deref()),
+            full_block: sp.dflash_full_block,
+
+            verify_trace: tm.dflash_verify_trace,
+            precompute_dump: tm.dflash_precompute_dump,
+            ctx_parity_dump: tm.dflash_ctx_parity_dump,
+            no_decode_append: tm.dflash_debug_no_decode_append,
+            full_precompute: tm.dflash_debug_full_precompute,
+            ctxlen_probe: sp.dflash_ctxlen_probe,
+
+            dspark_markov: sp.dspark_markov,
+            conf_tau: parsed(rt.dspark_conf_tau.as_deref()).unwrap_or(0.0),
+
+            propose_warmup_n: parsed(sp.dflash_propose_warmup_n.as_deref()).unwrap_or(2),
+
+            dspark_shift: match rt.dspark_shift.as_deref() {
+                Some("1") => Some(true),
+                Some("0") => Some(false),
+                _ => None,
+            },
+            dspark_anchor_bias: rt.dspark_anchor_bias,
+            dspark_conf_trace: tm.dspark_conf_trace,
+        }
     }
 
-    /// 2026-09-25: What `from_env` resolves to with none of these variables set
+    /// 2026-09-25: What `from_settings` resolves to with none of these variables set
     /// (checked by `nothing_set_resolves_to_defaults`).
     pub fn defaults() -> Self {
         Self {
@@ -250,3 +251,7 @@ impl DFlashLevers {
 #[cfg(test)]
 #[path = "levers_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "levers_settings_tests.rs"]
+mod settings_tests;

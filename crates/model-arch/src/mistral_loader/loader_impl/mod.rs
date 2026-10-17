@@ -56,8 +56,9 @@ impl ModelWeightLoader for MistralWeightLoader {
         config: &ModelConfig,
         gpu: &dyn GpuBackend,
         layer_kv_dtypes: &[KvCacheDtype],
+        lc: metrale_model_layers::load_context::LoadContext<'_>,
     ) -> Result<Vec<Box<dyn TransformerLayer>>> {
-        self.load_layers_inner(store, config, gpu, layer_kv_dtypes)
+        self.load_layers_inner(store, config, gpu, layer_kv_dtypes, lc)
     }
 
     fn load_embedding(
@@ -127,6 +128,7 @@ impl MistralWeightLoader {
         config: &ModelConfig,
         gpu: &dyn GpuBackend,
         layer_kv_dtypes: &[KvCacheDtype],
+        lc: metrale_model_layers::load_context::LoadContext<'_>,
     ) -> Result<Vec<Box<dyn TransformerLayer>>> {
         let n = config.num_hidden_layers;
         let q_lora = config.q_lora_rank;
@@ -157,7 +159,7 @@ impl MistralWeightLoader {
             phase_o_proj::load_o_proj(&mut ctx)?;
             let yarn_inv_freq =
                 ctx::ensure_yarn_inv_freq(&mut yarn_inv_freq_shared, config, rope, gpu)?;
-            let layer = phase_assemble::assemble_layer(ctx, yarn_inv_freq, layer_kv_dtypes)?;
+            let layer = phase_assemble::assemble_layer(ctx, yarn_inv_freq, layer_kv_dtypes, lc)?;
             layers.push(layer);
 
             if (i + 1) % 6 == 0 || i == n - 1 {

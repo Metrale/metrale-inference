@@ -109,6 +109,9 @@ pub struct Qwen3AttentionLayer {
     /// 2026-09-25: Gemma-4 `post_feedforward_layernorm_1` (dense FFN output norm).
     pub(crate) post_dense_ffn_norm: Option<DenseWeight>,
     pub(super) kv_dtype: KvCacheDtype,
+    /// 2026-10-17: `kernels.cutlass_nvfp4_gemm` at construction: the load-time FP8 prefill
+    /// passes (`transpose_fp8_for_prefill_selected`, `predequant_for_prefill`) are skipped under it.
+    pub(super) cutlass_nvfp4_gemm: bool,
     pub(super) sparse_v_threshold: f32,
     // 2026-09-25: Quantized q/k/v/o weights for decode; `None` uses the dense
     // `attn` weight.

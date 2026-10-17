@@ -59,6 +59,7 @@ impl ModelWeightLoader for LongcatWeightLoader {
         config: &ModelConfig,
         gpu: &dyn GpuBackend,
         layer_kv_dtypes: &[KvCacheDtype],
+        lc: metrale_model_layers::load_context::LoadContext<'_>,
     ) -> Result<Vec<Box<dyn TransformerLayer>>> {
         anyhow::ensure!(
             config.num_hidden_layers.is_multiple_of(2),
@@ -327,7 +328,7 @@ impl ModelWeightLoader for LongcatWeightLoader {
 
                 let mut layer = Qwen3AttentionLayer::new_ungated(
                     input_norm, attn, post_norm, ffn, global_idx, None, None, None, gpu, kv_dtype,
-                    0, config,
+                    0, config, lc,
                 )?;
                 layer.set_mla_weights(mla);
                 // 2026-09-25: Padding widened the head; the scale stays

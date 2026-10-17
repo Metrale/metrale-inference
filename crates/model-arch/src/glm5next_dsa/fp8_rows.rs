@@ -68,8 +68,13 @@ impl IndexerRowFormat {
     }
 
     /// 2026-10-16: The text stack's format, refusing FP8 on a target built without its kernels.
-    pub fn text_stack(config: &ModelConfig, kernels: &DsaFp8Kernels) -> Result<Self> {
-        let format = Self::for_text_stack(config, super::paged::text_stack_indexer_cache())?;
+    /// 2026-10-17: `cache` is `paged::text_stack_indexer_cache` of the load's settings.
+    pub fn text_stack(
+        config: &ModelConfig,
+        kernels: &DsaFp8Kernels,
+        cache: super::paged::IndexerCache,
+    ) -> Result<Self> {
+        let format = Self::for_text_stack(config, cache)?;
         ensure!(
             !format.is_fp8() || kernels.ready(),
             "--indexer-cache-dtype fp8: this build has no {DSA_FP8_MODULE} kernels"
@@ -82,8 +87,9 @@ impl IndexerRowFormat {
     pub fn text_stack_v_block_bytes(
         config: &ModelConfig,
         block_size: usize,
+        cache: super::paged::IndexerCache,
     ) -> Result<Option<usize>> {
-        Self::for_text_stack(config, super::paged::text_stack_indexer_cache())?.v_block_bytes(
+        Self::for_text_stack(config, cache)?.v_block_bytes(
             block_size,
             config.index_head_dim,
             config.index_kpool,

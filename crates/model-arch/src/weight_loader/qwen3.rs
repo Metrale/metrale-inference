@@ -39,6 +39,7 @@ impl ModelWeightLoader for Qwen3WeightLoader {
         config: &ModelConfig,
         gpu: &dyn GpuBackend,
         layer_kv_dtypes: &[KvCacheDtype],
+        lc: metrale_model_layers::load_context::LoadContext<'_>,
     ) -> Result<Vec<Box<dyn TransformerLayer>>> {
         let layer_types = if config.layer_types.is_empty() {
             (0..config.num_hidden_layers)
@@ -208,6 +209,7 @@ impl ModelWeightLoader for Qwen3WeightLoader {
                         layer_kv_dtype,
                         config.fp8_kv_calibration_tokens,
                         config,
+                        lc,
                     )?;
                     layer.set_fp8_weights(Some(q_fp8), Some(k_fp8), Some(v_fp8), Some(o_fp8));
                     if let Err(e) = layer.transpose_fp8_for_prefill(gpu, stream) {
@@ -320,6 +322,7 @@ impl ModelWeightLoader for Qwen3WeightLoader {
                         layer_kv_dtype,
                         config.fp8_kv_calibration_tokens,
                         config,
+                        lc,
                     )?;
                     let qt = q_nvfp4.transpose_for_gemm(
                         gpu,

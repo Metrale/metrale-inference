@@ -21,6 +21,10 @@ pub mod ep_wire;
 pub mod forward;
 pub mod layer;
 pub mod layers;
+/// 2026-10-17: Settings-migration test support (`MapEnv` resolve + old-reader equivalence).
+#[cfg(any(test, feature = "test-utils"))]
+pub mod lever_equivalence;
+pub mod load_context;
 pub mod lora;
 pub mod quant_format;
 pub mod speculative;

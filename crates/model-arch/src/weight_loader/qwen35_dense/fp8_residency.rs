@@ -18,7 +18,7 @@
 //! turns off the W8A8 arm of that macro, so it is not an input here.
 //!
 //! The loader runs before a `ForwardContext` exists, so the route comes from
-//! `GemmDispatch::from_env`, the constructor the model uses for the context's
+//! `GemmDispatch::from_settings`, the constructor the model uses for the context's
 //! dispatch. A lever that can send a native-FP8 layer to an NVFP4 kernel must
 //! be an input of [`DenseFp8Plan::resolve`] as well as of that dispatch site,
 //! or the loader skips a copy the site reads. `METRALE_DENSE_FP8_KEEP_NVFP4`
@@ -26,15 +26,6 @@
 
 use metrale_model_layers::layers::ops::GemmDispatch;
 use metrale_model_layers::layers::qwen3_attention::Fp8TwinSet;
-
-/// 2026-09-25: Whether `METRALE_DENSE_FP8_KEEP_NVFP4` is set, which makes the
-/// plan build every NVFP4 copy even where the dispatch cannot reach it.
-/// Presence, like `METRALE_FFN_W8A16_ONLY`: any value, including empty and
-/// `0`, turns it on. Read once per process.
-pub fn keep_nvfp4_fallback() -> bool {
-    static KEEP: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *KEEP.get_or_init(|| std::env::var_os("METRALE_DENSE_FP8_KEEP_NVFP4").is_some())
-}
 
 /// 2026-09-25: Which derived copies one dense layer builds beyond the
 /// checkpoint bytes. Each field means "build this copy".
@@ -53,7 +44,7 @@ pub struct DenseFp8Plan {
 
 /// 2026-09-25: The inputs of [`DenseFp8Plan::resolve`]. A plain struct, so the
 /// decision-table tests set every clause without the process environment,
-/// which `keep_nvfp4_fallback` caches in a `OnceLock`.
+/// which [`RouteEnv::from_settings`] reads from the resolved settings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DenseFp8Inputs {
     /// 2026-09-25: The native FP8 dense-FFN overlay is installed on this layer
@@ -62,9 +53,10 @@ pub struct DenseFp8Inputs {
     pub ffn_fp8: bool,
     /// 2026-09-25: The native FP8 attention overlay is installed on this layer.
     pub attn_fp8: bool,
-    /// 2026-09-25: `METRALE_DENSE_FP8_KEEP_NVFP4` (`keep_nvfp4_fallback`).
+    /// 2026-09-25: `kernels.dense_fp8_keep_nvfp4` (`METRALE_DENSE_FP8_KEEP_NVFP4`): build every NVFP4
+    /// copy even where the dispatch cannot reach it. Presence: any value, `0` included.
     pub keep_nvfp4: bool,
-    /// 2026-09-25: `GemmDispatch::from_env()`, the value the model stores as its
+    /// 2026-09-25: `GemmDispatch::from_settings`, the value the model stores as its
     /// dispatch.
     pub dispatch: GemmDispatch,
     /// 2026-09-25: Both W8A8 prefill kernels are loaded
@@ -73,14 +65,14 @@ pub struct DenseFp8Inputs {
     /// them those projections fall through to the transposed W8A16 kernels,
     /// which read the FP8 twins.
     pub w8a8_kernels: bool,
-    /// 2026-09-25: `METRALE_ATTN_W4A4` is set. The W4A4 arm of
+    /// 2026-09-25: `kernels.attn_w4a4`. The W4A4 arm of
     /// `prefill/paged_oproj.rs` checks no weight type and reads
     /// `self.attn.o_proj`, the NVFP4 o_proj, so this lever keeps the NVFP4
     /// attention weights under an FP8 overlay. The Q/K/V W4A4 arm in
     /// `prefill/paged_qkv.rs` requires an NVFP4 `q_weight`, so it never runs on
     /// an FP8 layer.
     pub attn_w4a4: bool,
-    /// 2026-09-25: `METRALE_ATTN_PREFILL_Q_T=1`. `prefill/cache_skip_qkv.rs` reads
+    /// 2026-09-25: `scheduler.attn_prefill_q_t`. `prefill/cache_skip_qkv.rs` reads
     /// it on every call and, when set, lets Q use `q_fp8w_t`.
     pub attn_prefill_q_t: bool,
 }
@@ -151,24 +143,23 @@ impl DenseFp8Plan {
 pub struct RouteEnv {
     pub keep_nvfp4: bool,
     pub dispatch: GemmDispatch,
-    /// 2026-09-25: The `METRALE_ATTN_W4A4` check of `prefill/paged_oproj.rs`
-    /// and `prefill/paged_qkv.rs`, which read the variable on every call.
+    /// 2026-09-25: `kernels.attn_w4a4`, which `prefill/paged_oproj.rs` and
+    /// `prefill/paged_qkv.rs` read from `ForwardContext::settings`.
     pub attn_w4a4: bool,
-    /// 2026-09-25: The `METRALE_ATTN_PREFILL_Q_T` check of
-    /// `prefill/cache_skip_qkv.rs`, also read on every call.
+    /// 2026-09-25: `scheduler.attn_prefill_q_t`, which `prefill/cache_skip_qkv.rs`
+    /// reads from `ForwardContext::settings`.
     pub attn_prefill_q_t: bool,
 }
 
 impl RouteEnv {
-    pub fn from_env() -> Self {
+    /// 2026-10-17: The route levers from the resolved settings: the same fields the dispatch
+    /// sites read (`kernels.attn_w4a4`, `scheduler.attn_prefill_q_t`).
+    pub fn from_settings(s: &metrale_settings::InferenceServerSettings) -> Self {
         Self {
-            keep_nvfp4: keep_nvfp4_fallback(),
-            dispatch: GemmDispatch::from_env(),
-            // 2026-09-25: The dispatch sites' predicates: `is_ok()` for W4A4,
-            // `== "1"` for the Q transpose.
-            attn_w4a4: std::env::var("METRALE_ATTN_W4A4").is_ok(),
-            attn_prefill_q_t: std::env::var("METRALE_ATTN_PREFILL_Q_T").ok().as_deref()
-                == Some("1"),
+            keep_nvfp4: s.kernels.dense_fp8_keep_nvfp4,
+            dispatch: GemmDispatch::from_settings(s),
+            attn_w4a4: s.kernels.attn_w4a4,
+            attn_prefill_q_t: s.scheduler.attn_prefill_q_t,
         }
     }
 
@@ -368,3 +359,7 @@ impl DerivedResidency {
 #[cfg(test)]
 #[path = "fp8_residency_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "route_env_settings_tests.rs"]
+mod settings_tests;

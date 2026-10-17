@@ -21,6 +21,13 @@ pub fn shadow_topk() -> usize {
         .min(8)
 }
 
+/// 2026-10-17: [`shadow_topk`] from the resolved `speculative.mtp_shadow_topk`: unset or
+/// negative is 0, capped at 8. `ModelLevers::from_settings` reads it here; the env-reading
+/// [`shadow_topk`] stays only for the server's `SchedLevers` until it holds the settings.
+pub fn shadow_topk_given(k: Option<i64>) -> usize {
+    k.and_then(|k| usize::try_from(k).ok()).unwrap_or(0).min(8)
+}
+
 /// 2026-09-25: True when the MTP dispatch cap is above one sequence. The
 /// catch-up ring, the refeed labels and the carry slot each hold one
 /// sequence's data, so [`mtp_catchup_enabled`], [`mtp_refeed_accepted_enabled`]

@@ -40,6 +40,7 @@ impl ModelWeightLoader for NemotronHWeightLoader {
         config: &ModelConfig,
         gpu: &dyn GpuBackend,
         layer_kv_dtypes: &[KvCacheDtype],
+        lc: metrale_model_layers::load_context::LoadContext<'_>,
     ) -> Result<Vec<Box<dyn TransformerLayer>>> {
         let layer_types = &config.layer_types;
         let mut layers: Vec<Box<dyn TransformerLayer>> =
@@ -352,6 +353,7 @@ impl ModelWeightLoader for NemotronHWeightLoader {
                         layer_kv_dtypes[attn_idx],
                         config.fp8_kv_calibration_tokens,
                         config,
+                        lc,
                     )?;
                     if let Some(od) = bf16_o_dense {
                         attn_layer.set_o_dense_bf16(od);

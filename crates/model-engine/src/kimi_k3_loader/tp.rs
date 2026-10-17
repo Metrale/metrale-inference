@@ -331,7 +331,13 @@ mod tests {
         let gpu = MockGpuBackend::new();
         let store = store_for_tp(&gpu, &c);
         let layers = KimiK3WeightLoader
-            .load_layers(&store, &c, &gpu, &[])
+            .load_layers(
+                &store,
+                &c,
+                &gpu,
+                &[],
+                metrale_model_layers::lever_equivalence::DefaultLoad::at_defaults().lc(),
+            )
             .expect("tp=2 bind");
         assert_eq!(layers.len(), 8);
         // 2026-09-25: Rank 0 and rank 1 each load half of layer 0's q_proj rows, and the two

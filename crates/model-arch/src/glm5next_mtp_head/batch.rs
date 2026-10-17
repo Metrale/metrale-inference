@@ -175,6 +175,7 @@ pub(super) fn drafter_ctx<'a>(
         dispatch: ctx.dispatch,
         derived: ctx.derived,
         levers: ctx.levers,
+        settings: ctx.settings,
         stats: ctx.stats,
         attn_metadata: Some(meta),
         profile: false,

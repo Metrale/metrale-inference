@@ -303,6 +303,7 @@ impl DeepseekV4MtpHead {
             dispatch: ctx.dispatch,
             derived: ctx.derived,
             levers: ctx.levers,
+            settings: ctx.settings,
             stats: ctx.stats,
             attn_metadata: Some(mtp_meta),
             profile: ctx.profile,

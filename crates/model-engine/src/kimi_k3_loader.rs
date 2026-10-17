@@ -62,6 +62,7 @@ impl ModelWeightLoader for KimiK3WeightLoader {
         config: &ModelConfig,
         gpu: &dyn GpuBackend,
         _layer_kv_dtypes: &[KvCacheDtype],
+        _lc: metrale_model_layers::load_context::LoadContext<'_>,
     ) -> Result<Vec<Box<dyn TransformerLayer>>> {
         refuse_mxfp4(store)?;
         bf16::load_layers(store, config, gpu)
@@ -142,7 +143,13 @@ mod tests {
             let loader = loader_for_config(&config).expect(ty);
             let store = WeightStore::empty();
             let gpu = metrale_gpu_runtime::gpu::mock::MockGpuBackend::new();
-            let err = match loader.load_layers(&store, &config, &gpu, &[]) {
+            let err = match loader.load_layers(
+                &store,
+                &config,
+                &gpu,
+                &[],
+                metrale_model_layers::lever_equivalence::DefaultLoad::at_defaults().lc(),
+            ) {
                 Ok(_) => panic!("{ty}: empty store must not bind"),
                 Err(e) => e.to_string(),
             };
@@ -169,7 +176,13 @@ mod tests {
             },
         )]));
         let loader = KimiK3WeightLoader;
-        let err = match loader.load_layers(&store, &config, &gpu, &[]) {
+        let err = match loader.load_layers(
+            &store,
+            &config,
+            &gpu,
+            &[],
+            metrale_model_layers::lever_equivalence::DefaultLoad::at_defaults().lc(),
+        ) {
             Ok(_) => panic!("packed MXFP4 must not bind layers"),
             Err(e) => e.to_string(),
         };
@@ -280,7 +293,13 @@ mod tests {
             refuse_mxfp4(&store).expect("K3_ALLOW_MXFP4=1 must skip S5 refuse");
             let loader = KimiK3WeightLoader;
             let layers = loader
-                .load_layers(&store, &config, &gpu, &[])
+                .load_layers(
+                    &store,
+                    &config,
+                    &gpu,
+                    &[],
+                    metrale_model_layers::lever_equivalence::DefaultLoad::at_defaults().lc(),
+                )
                 .expect("packed expert must land on DSV4 E8M0");
             assert_eq!(layers.len(), 8);
             return;
@@ -340,7 +359,15 @@ mod tests {
         }
         let store = WeightStore::from_map(map);
         let loader = KimiK3WeightLoader;
-        let layers = loader.load_layers(&store, &config, &gpu, &[]).unwrap();
+        let layers = loader
+            .load_layers(
+                &store,
+                &config,
+                &gpu,
+                &[],
+                metrale_model_layers::lever_equivalence::DefaultLoad::at_defaults().lc(),
+            )
+            .unwrap();
         assert_eq!(layers.len(), 8);
         for layer in &layers {
             assert!(layer.decode_graph_unsupported());

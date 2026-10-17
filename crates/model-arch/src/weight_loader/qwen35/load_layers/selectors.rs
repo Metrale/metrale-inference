@@ -45,18 +45,6 @@ pub(super) enum HoloFastMoeMode {
     Unified,
 }
 
-/// 2026-09-25: `ModelLevers::holo_moe_gateup_fp4` (`METRALE_HOLO_MOE_GATEUP_FP4=1` or `true`,
-/// any case), resolved once per process. Read here only for the layer-0 warning.
-pub(super) fn holo_moe_gateup_fp4() -> bool {
-    metrale_model_layers::layers::ops::ModelLevers::get().holo_moe_gateup_fp4
-}
-
-/// 2026-09-25: `ModelLevers::holo_moe_down_fp4` (`METRALE_HOLO_MOE_DOWN_FP4=1` or `true`, any
-/// case), resolved once per process. Read here only for the layer-0 warning.
-pub(super) fn holo_moe_down_fp4() -> bool {
-    metrale_model_layers::layers::ops::ModelLevers::get().holo_moe_down_fp4
-}
-
 pub(super) fn holo_fast_moe_mode() -> Option<HoloFastMoeMode> {
     // 2026-09-25: Read per call, like `layer_dequant_selected`.
     (|| -> Option<HoloFastMoeMode> {

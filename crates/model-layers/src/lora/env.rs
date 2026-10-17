@@ -5,81 +5,82 @@
 //! check that needs `--max-lora-rank`.
 //!
 //! Owner: model-layers (lora).
-//! Invariants: none beyond the types.
+//! Invariants: 2026-10-17: the model-crate readers take the resolved settings; the two
+//! `*_env` readers below are kept only for crates/server, which does not hold the settings yet.
 
 use anyhow::{Result, bail};
 use metrale_config::{LayerType, ModelConfig, PeftAdapterConfig};
+use metrale_settings::InferenceServerSettings;
 
 use super::LoraModule;
 
-/// 2026-09-25: `METRALE_LORA_EAGER` (`1` or `true`, any case), from the
-/// process-wide `ModelLevers::get()`. The model reads its own copy,
-/// `levers.lora_eager`, and runs decode and verify without CUDA graphs while an
-/// adapter is loaded.
-pub fn lora_eager_env() -> bool {
-    crate::layers::ops::ModelLevers::get().lora_eager
-}
-
-/// 2026-09-25: `METRALE_LORA_ROTATE` (`1` or `true`, any case), from the
-/// process-wide `ModelLevers::get()`. It, or `lora_peer_env`, sets the model's
-/// `lora_rotatable`, which permits runtime adapter rotation and swap whatever
-/// the number of resident adapters. It does not make decode eager; only
-/// `METRALE_LORA_EAGER` does. `met serve` refuses `--lora-stageable-disk`
-/// unless this or a peer is set.
+/// 2026-09-25: `METRALE_LORA_ROTATE` (`1` or `true`, any case). It, or `lora_peer_env`, sets the
+/// model's `lora_rotatable`, which permits runtime adapter rotation and swap whatever the number
+/// of resident adapters. It does not make decode eager; only `METRALE_LORA_EAGER` does.
+/// `met serve` refuses `--lora-stageable-disk` unless this or a peer is set. 2026-10-17: The
+/// model reads `model.lora_rotate`; this reader is the server's until it holds the settings.
 pub fn lora_rotate_env() -> bool {
-    crate::layers::ops::ModelLevers::get().lora_rotate
+    std::env::var("METRALE_LORA_ROTATE").is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
 }
 
 /// 2026-09-25: `METRALE_LORA_PEER`, the host:port of the weight peer that
 /// stages adapters, when set and non-empty. Setting it also sets the model's
-/// `lora_rotatable` (see `lora_rotate_env`).
+/// `lora_rotatable` (see `lora_rotate_env`). 2026-10-17: The server's reader; the model
+/// reads [`lora_peer`].
 pub fn lora_peer_env() -> Option<String> {
     std::env::var("METRALE_LORA_PEER")
         .ok()
         .filter(|s| !s.is_empty())
 }
 
-/// 2026-09-25: `METRALE_LORA_EXPERTS` (`1` or `true`, any case), read once:
-/// load routed-expert and router LoRA deltas. Unset, an adapter with expert or
-/// router tensors is refused at load (`expert_pack.rs`).
-pub fn lora_experts_env() -> bool {
-    static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *V.get_or_init(|| {
-        std::env::var("METRALE_LORA_EXPERTS")
-            .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-    })
+/// 2026-10-17: [`lora_peer_env`] from the resolved `storage.lora_peer`.
+pub fn lora_peer(s: &InferenceServerSettings) -> Option<&str> {
+    s.storage.lora_peer.as_deref().filter(|s| !s.is_empty())
 }
 
-/// 2026-09-25: The padded rank of the expert and router LoRA pools,
-/// `METRALE_LORA_EXPERT_RANK` (a positive integer; otherwise 16), read once.
-/// It is separate from `--max-lora-rank`, which sizes the slot pool. An
-/// adapter whose `r` exceeds it is refused at load (`expert_pack.rs`).
-pub fn max_lora_expert_rank() -> usize {
-    static V: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *V.get_or_init(|| {
-        std::env::var("METRALE_LORA_EXPERT_RANK")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .filter(|&r: &usize| r > 0)
-            .unwrap_or(16)
-    })
+/// 2026-10-17: The routed-expert and router LoRA policy, resolved once from the settings and
+/// passed to every adapter audit (`expert_pack::validate`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExpertLoraPolicy {
+    /// 2026-09-25: `METRALE_LORA_EXPERTS` (`kernels.lora_experts`): load routed-expert and router
+    /// LoRA deltas. Off, an adapter with expert or router tensors is refused at load.
+    pub enabled: bool,
+    /// 2026-09-25: The padded rank of the expert and router LoRA pools,
+    /// `METRALE_LORA_EXPERT_RANK` (a positive integer; otherwise 16). It is separate from
+    /// `--max-lora-rank`, which sizes the slot pool. An adapter whose `r` exceeds it is refused.
+    pub max_rank: usize,
 }
 
-/// 2026-09-25: `METRALE_LORA_PREFILL_BGMV=1`, read once: the attention QKV
+impl ExpertLoraPolicy {
+    /// 2026-10-17: The policy from `kernels.lora_experts` and `kernels.lora_expert_rank`.
+    #[must_use]
+    pub fn from_settings(s: &InferenceServerSettings) -> Self {
+        Self {
+            enabled: s.kernels.lora_experts,
+            max_rank: s
+                .kernels
+                .lora_expert_rank
+                .as_deref()
+                .and_then(|v| v.parse().ok())
+                .filter(|&r: &usize| r > 0)
+                .unwrap_or(16),
+        }
+    }
+}
+
+/// 2026-09-25: `METRALE_LORA_PREFILL_BGMV=1`: the attention QKV
 /// prefill applies LoRA with the per-row `apply_lora_bgmv` instead of
 /// `apply_lora_delta` when the call has a slot buffer and a route
 /// (`layers/qwen3_attention/prefill/paged_qkv.rs`).
-pub fn prefill_bgmv_forced() -> bool {
-    static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *V.get_or_init(|| std::env::var("METRALE_LORA_PREFILL_BGMV").as_deref() == Ok("1"))
+pub fn prefill_bgmv_forced(s: &InferenceServerSettings) -> bool {
+    s.scheduler.lora_prefill_bgmv
 }
 
-/// 2026-09-25: `METRALE_LORA_NO_BATCH_VERIFY=1`, read once: while an adapter
+/// 2026-09-25: `METRALE_LORA_NO_BATCH_VERIFY=1`: while an adapter
 /// is loaded, cross-sequence batched verify is not eligible (model-engine
 /// `trait_impl/verify_e.rs`).
-pub fn no_batch_verify() -> bool {
-    static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *V.get_or_init(|| std::env::var("METRALE_LORA_NO_BATCH_VERIFY").as_deref() == Ok("1"))
+pub fn no_batch_verify(s: &InferenceServerSettings) -> bool {
+    s.speculative.lora_no_batch_verify
 }
 
 pub fn full_attention_layers(cfg: &ModelConfig) -> Vec<usize> {
@@ -135,3 +136,7 @@ pub fn validate_peft_config(peft: &PeftAdapterConfig, max_lora_rank: usize) -> R
 /// Re-exported from metrale-config, whose parse-time check reads the same
 /// switch, so both checks see one value.
 pub use metrale_config::allow_partial_targets;
+
+#[cfg(test)]
+#[path = "env_settings_tests.rs"]
+mod settings_tests;

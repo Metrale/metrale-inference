@@ -121,8 +121,8 @@ impl TransformerModel {
             // 2026-09-25: `lora_rotatable` (the `lora_rotate` lever or
             // METRALE_LORA_PEER) is what permits rotate and swap. A pool with
             // several adapters does not set it by itself.
-            self.lora_rotatable =
-                self.levers.lora_rotate || metrale_model_layers::lora::lora_peer_env().is_some();
+            self.lora_rotatable = self.levers.lora_rotate
+                || metrale_model_layers::lora::lora_peer(&self.settings).is_some();
             let kernels = ops::lora_delta::LoraKernels::new(self.gpu.as_ref())?;
             let active = lw.active_layers().to_vec();
             let tables = lw.tables.clone();

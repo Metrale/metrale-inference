@@ -145,11 +145,13 @@ fn run_batched_verify(
     let dispatch = crate::layers::ops::GemmDispatch::defaults();
     let derived = crate::layers::ops::DerivedWeights::new();
     let levers = crate::layers::ops::ModelLevers::defaults();
+    let settings = crate::lever_equivalence::defaults();
     let stats = crate::layers::ops::ModelStats::new();
     let ctx = ForwardContext {
         dispatch: &dispatch,
         derived: &derived,
         levers: &levers,
+        settings: &settings,
         stats: &stats,
         buffers: &buffers,
         hc_row_offset: 0,

@@ -285,6 +285,7 @@ impl TransformerModel {
             dispatch: &self.dispatch,
             derived: &self.derived,
             levers: &self.levers,
+            settings: &self.settings,
             stats: &self.stats,
             // 2026-10-09: A `prefill_spans` layer stages its own per-row metadata.
             attn_metadata: None,

@@ -94,6 +94,8 @@ impl Glm5NextMtpHead {
         max_seq_len: usize,
         // 2026-10-11: Live proposer states the KV pool holds a region for (`--max-batch-size`).
         max_seqs: usize,
+        // 2026-10-17: The model levers; `glm_mtp_state_pool` is kept, the feed levers are logged.
+        levers: &metrale_model_layers::layers::ops::ModelLevers,
     ) -> Result<Self> {
         let dsa = match &module.layer.mixer {
             crate::glm5next_layer::Glm5NextMixer::Dsa(l) => l,
@@ -170,7 +172,7 @@ impl Glm5NextMtpHead {
 
         // 2026-10-11: The feed levers this drafter reads, and every path that applies them; each
         // path logs its first application (`hidden_half::note_applied`).
-        let lv = metrale_model_layers::layers::ops::ModelLevers::get();
+        let lv = levers;
         tracing::info!(
             "GLM MTP feed: target_postnorm={} accepted_rows={} zero_pos0={} (applied in: propose \
              eager + drafter graph, batched propose eager + graph, context and catch-up rows; \
@@ -186,6 +188,7 @@ impl Glm5NextMtpHead {
             kv_cache: Mutex::new(kv_cache),
             kv_regions: super::kv_pool::DrafterKvRegions::new(regions, per_seq),
             state_pool: super::state_pool::StatePool::new(),
+            state_pool_on: levers.glm_mtp_state_pool,
             batch: super::batch::ProposeBatch::new(
                 gpu,
                 config.hidden_size,

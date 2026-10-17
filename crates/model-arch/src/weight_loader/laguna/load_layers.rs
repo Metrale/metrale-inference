@@ -29,6 +29,7 @@ pub(super) fn load_layers(
     config: &ModelConfig,
     gpu: &dyn GpuBackend,
     layer_kv_dtypes: &[KvCacheDtype],
+    lc: metrale_model_layers::load_context::LoadContext<'_>,
 ) -> Result<Vec<Box<dyn TransformerLayer>>> {
     ensure!(
         layer_kv_dtypes.len() == config.num_hidden_layers,
@@ -88,6 +89,7 @@ pub(super) fn load_layers(
             yarn_inv_freq,
             sliding_inv_freq,
             i,
+            lc,
         )?;
         layers.push(Box::new(layer));
     }
@@ -245,6 +247,7 @@ fn load_attention(
     yarn_inv_freq: DevicePtr,
     sliding_inv_freq: DevicePtr,
     i: usize,
+    lc: metrale_model_layers::load_context::LoadContext<'_>,
 ) -> Result<Qwen3AttentionLayer> {
     let p = format!("{lp}.self_attn");
     let heads = config.num_attention_heads_per_layer[i];
@@ -298,6 +301,7 @@ fn load_attention(
         kv_dtype,
         config.fp8_kv_calibration_tokens,
         config,
+        lc,
     )?;
     layer.set_dimension_overrides(config.head_dim, heads, config.num_key_value_heads);
     layer.set_o_dense_bf16(o_proj);

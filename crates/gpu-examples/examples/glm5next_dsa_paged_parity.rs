@@ -364,6 +364,7 @@ fn main() -> Result<()> {
         dispatch: GemmDispatch::defaults(),
         derived: DerivedWeights::new(),
         levers: ModelLevers::defaults(),
+        settings: rig::process_settings()?,
         stats: ModelStats::new(),
     };
     let mut rng = Lcg(0x6c6d_5e9d_0009);

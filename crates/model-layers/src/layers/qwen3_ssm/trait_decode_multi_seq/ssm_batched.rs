@@ -142,8 +142,7 @@ impl Qwen3SsmLayer {
         // `deinterleaved`, and the FP32 conv writes `ssm_conv_out_f32`.
         let normed_out_base = ctx.buffers.ssm_qkvz();
         let ssm_out_base = ctx.buffers.moe_output();
-        let detail_profile =
-            crate::layers::ops::ModelLevers::get().ssm_detail_profile && !ctx.graph_capture;
+        let detail_profile = ctx.levers.ssm_detail_profile && !ctx.graph_capture;
         let mut detail_parts: Vec<(&'static str, u128)> = Vec::new();
         let mut detail_t0 = if detail_profile {
             ctx.gpu.synchronize(stream).ok();
@@ -184,7 +183,7 @@ impl Qwen3SsmLayer {
         detail_step!("input_norm");
 
         // 2026-09-25: `ssm_batched_proj.rs` picks the GEMM for this row count.
-        let tier = self.batched_proj_tier(n);
+        let tier = self.batched_proj_tier(n, ctx.levers.ssm_gemv_batch4);
         self.ms_batched_qkvz(
             ctx,
             &tier,

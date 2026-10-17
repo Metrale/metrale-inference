@@ -154,8 +154,8 @@ impl Qwen3AttentionLayer {
         stream: u64,
     ) -> Result<()> {
         // 2026-09-25: Q uses its transposed FP8 copy only with
-        // `METRALE_ATTN_PREFILL_Q_T=1`; K and V use theirs whenever present.
-        let use_q_t = std::env::var("METRALE_ATTN_PREFILL_Q_T").ok().as_deref() == Some("1");
+        // `scheduler.attn_prefill_q_t` (`METRALE_ATTN_PREFILL_Q_T`); K and V use theirs whenever present.
+        let use_q_t = ctx.settings.scheduler.attn_prefill_q_t;
         let (fp8w_t, weight_opt, fp8, nvfp4_t, dense, label) = match proj {
             SkipProj::Q => (
                 use_q_t.then_some(self.q_fp8w_t.as_ref()).flatten(),
@@ -314,17 +314,7 @@ impl Qwen3AttentionLayer {
             }
         } else if let Some(nvfp4_t) = nvfp4_t {
             if n > 128 {
-                self.w4a16_gemm_m128_dispatch(
-                    ctx.gpu,
-                    ctx.dispatch,
-                    normed,
-                    nvfp4_t,
-                    out,
-                    n,
-                    out_dim,
-                    h,
-                    stream,
-                )?;
+                self.w4a16_gemm_m128_dispatch(ctx, normed, nvfp4_t, out, n, out_dim, h, stream)?;
             } else {
                 ops::w4a16_gemm_n128(
                     ctx.gpu,

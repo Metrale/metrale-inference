@@ -183,6 +183,7 @@ fn main() -> Result<()> {
         dispatch: GemmDispatch::defaults(),
         derived: DerivedWeights::new(),
         levers: ModelLevers::defaults(),
+        settings: rig::process_settings()?,
         stats: ModelStats::new(),
     };
     let c = cfg();

@@ -60,6 +60,7 @@ pub fn load_v4_mtp_module(
     config: &ModelConfig,
     gpu: &dyn GpuBackend,
     layer_kv_dtypes: &[KvCacheDtype],
+    lc: metrale_model_layers::load_context::LoadContext<'_>,
 ) -> Result<Option<DeepseekV4MtpModule>> {
     if config.num_mtp_modules == 0 {
         return Ok(None);
@@ -153,6 +154,7 @@ pub fn load_v4_mtp_module(
         config,
         gpu,
         layer_kv_dtypes,
+        lc,
     )?;
 
     // 2026-09-25: The norms are loaded unchanged: the proposer applies them with

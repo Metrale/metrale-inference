@@ -81,7 +81,10 @@ impl TransformerModel {
         vision_encoder: Option<metrale_model_layers::layers::VisionTower>,
         ssm_cache_slots: usize,
         ssm_checkpoint_interval: usize,
+        // 2026-10-17: The startup settings, and the model levers `build_model` derived from them
+        // once (`ModelLevers::from_settings`) and handed its loader.
         settings: Arc<metrale_settings::InferenceServerSettings>,
+        mut levers: ops::ModelLevers,
     ) -> Result<Self> {
         // 2026-09-25: `rms_norm_kernel` is used only for `final_norm`, in
         // `final_norm_apply`.
@@ -116,14 +119,9 @@ impl TransformerModel {
             feed_resolve_kernel,
         } = kernels::resolve_model_kernels(&config, gpu.as_ref())?;
         let profile = config.profile;
-        let profile_first = std::env::var("METRALE_PROFILE_FIRST").is_ok();
-
-        // 2026-09-25: A fresh `ModelLevers::from_env()`, not the process-cached
-        // `ModelLevers::get()`, so a second model built in the same process
-        // resolves its own levers. `max_decode_seqs` pins the split-K attention
-        // split count to the configured max batch, so a sequence's attention
-        // reduction does not depend on how many others share its batch.
-        let mut levers = ops::ModelLevers::from_env();
+        let profile_first = settings.telemetry.profile_first;
+        // 2026-09-25: `max_decode_seqs` pins the split-K attention split count to the configured
+        // max batch, so a sequence's attention reduction does not depend on its batch.
         levers.max_decode_seqs = (max_batch_size as u32).max(1);
 
         tracing::info!(
@@ -178,7 +176,8 @@ impl TransformerModel {
             gpu.as_ref(),
         )?;
 
-        // 2026-09-25: Fixed per-sequence block-table stride, so captured CUDA graphs stay valid.
+        // 2026-09-25: Fixed per-sequence stride of the attention block-table
+        // metadata, so captured CUDA graphs stay valid.
         let max_blocks_per_seq = (max_seq_len / kv_cache.block_size() + 1) as u32;
 
         // 2026-09-25: Permanent KV block for padding rows and for block-table
@@ -252,9 +251,10 @@ impl TransformerModel {
         let ep_cmd_buf = gpu.alloc(metrale_model_layers::ep_wire::CMD_BLOCK_BYTES)?;
         let device_argmax = super::device_argmax::DeviceArgmax::new(gpu.as_ref())?;
 
-        // 2026-09-25: Fixed-address (CUDA-graph safe) batched decode MoE per-row adapter map, 4
-        // bytes a batch row, uploaded each decode step; allocated unconditionally because LoRA
-        // weights arrive after construction (`set_lora_weights`).
+        // 2026-09-25: Fixed-address buffer (CUDA-graph safe) for the batched
+        // decode MoE per-row adapter map, 4 bytes per batch row, uploaded each
+        // decode step. Allocated unconditionally because LoRA weights arrive
+        // after construction (`set_lora_weights`).
         let moe_row_adapter_buf = gpu.alloc(max_batch_size.max(1) * 4)?;
 
         // 2026-09-25: Secondary stream and its event, used by the asynchronous
@@ -338,7 +338,7 @@ impl TransformerModel {
             // (`adopt_weight_store`).
             weight_store: None,
             config,
-            dispatch: metrale_model_layers::layers::ops::GemmDispatch::from_env(),
+            dispatch: metrale_model_layers::layers::ops::GemmDispatch::from_settings(&settings),
             derived: metrale_model_layers::layers::ops::DerivedWeights::new(),
             levers,
             stats: ops::ModelStats::new(),
@@ -396,11 +396,11 @@ impl TransformerModel {
             batch_decode_graphs: Mutex::new((HashMap::new(), 0)),
             suppress_graphs: std::sync::atomic::AtomicBool::new(
                 has_fp8_calibration
-                    || std::env::var("METRALE_DIAG_GEMMA4").is_ok_and(|v| v == "1" || v == "true")
+                    || settings.telemetry.diag_gemma4
                     // 2026-09-25: Eager decode, so `METRALE_DEBUG_SYNC_KERNELS` can
                     // synchronize after each launch and report an async fault at
                     // the kernel that caused it.
-                    || std::env::var("METRALE_DEBUG_NO_GRAPH").as_deref() == Ok("1"),
+                    || settings.telemetry.debug_no_graph,
             ),
             ssm_pool,
             ssm_snapshots,

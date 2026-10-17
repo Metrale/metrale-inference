@@ -23,10 +23,11 @@ pub(super) fn load_glm_mtp_module(
     config: &ModelConfig,
     gpu: &dyn GpuBackend,
     use_speculative: bool,
+    lc: metrale_model_layers::load_context::LoadContext<'_>,
 ) -> Option<Glm5NextMtpModule> {
     if config.model_type == "glm5_next" && use_speculative {
         match metrale_model_arch::weight_loader::glm5_next_mtp::load_glm5next_mtp_module(
-            store, config, gpu,
+            store, config, gpu, lc,
         ) {
             Ok(Some(m)) => {
                 tracing::info!(target: "metrale_model_engine::factory::build", "GLM-5.3 MTP draft module loaded (layers.{})",
@@ -56,6 +57,7 @@ pub(super) fn load_v4_mtp_module(
     gpu: &dyn GpuBackend,
     attn_layer_dtypes: &[KvCacheDtype],
     use_speculative: bool,
+    lc: metrale_model_layers::load_context::LoadContext<'_>,
 ) -> Option<DeepseekV4MtpModule> {
     if config.model_type == "deepseek_v4" && use_speculative && config.ep_rank == 0 {
         match metrale_model_arch::weight_loader::deepseek_v4::mtp::load_v4_mtp_module(
@@ -63,6 +65,7 @@ pub(super) fn load_v4_mtp_module(
             config,
             gpu,
             attn_layer_dtypes,
+            lc,
         ) {
             Ok(Some(m)) => {
                 tracing::info!(target: "metrale_model_engine::factory::build", "DeepSeek-V4 MTP draft module loaded OK (num_mtp_modules={})",

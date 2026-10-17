@@ -209,8 +209,15 @@ pub(crate) fn preflight_reserve(
     // 2026-09-26: The auto-fit's yardstick: predicted post-load KV headroom
     // where the load's residency can be predicted, else pre-load free memory
     // (`headroom.rs`).
-    let yardstick =
-        headroom::post_load_yardstick(args, config, post_load, fixed_reserve, buffer_arena_bytes);
+    let settings = super::build::lever_settings()?;
+    let yardstick = headroom::post_load_yardstick(
+        args,
+        config,
+        post_load,
+        fixed_reserve,
+        buffer_arena_bytes,
+        &settings,
+    );
     let fit = decode_ring::autofit(
         args,
         ring_requested,

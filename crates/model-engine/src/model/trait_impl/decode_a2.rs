@@ -285,6 +285,7 @@ impl TransformerModel {
             moe_lora_route: self.decode_moe_route(),
             derived: &self.derived,
             levers: &self.levers,
+            settings: &self.settings,
             stats: &self.stats,
             attn_metadata: Some(metadata),
             profile: false,

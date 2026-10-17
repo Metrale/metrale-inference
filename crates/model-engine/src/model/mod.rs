@@ -64,3 +64,7 @@ pub mod nllb;
 mod nllb_host_tests;
 
 pub use types::TransformerModel;
+
+#[cfg(test)]
+#[path = "impl_a1/telemetry_settings_tests.rs"]
+mod impl_a1_telemetry_settings_tests;

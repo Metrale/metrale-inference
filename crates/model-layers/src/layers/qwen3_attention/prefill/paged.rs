@@ -220,7 +220,7 @@ impl Qwen3AttentionLayer {
         let (wht_k_dtype, wht_v_dtype) = self.kv_dtype.kv_pair();
         let k_is_turbo = wht_k_dtype.is_wht_rotated();
         let v_is_turbo = wht_v_dtype.is_wht_rotated();
-        let weight_pre_rotated = crate::layers::ops::ModelLevers::get().weight_pre_rotated;
+        let weight_pre_rotated = ctx.levers.weight_pre_rotated;
         let wht_runtime_active = !weight_pre_rotated && (hd == 128 || hd == 256 || hd == 512);
         if k_is_turbo && wht_runtime_active && self.wht_bf16_k.0 != 0 {
             use metrale_gpu_runtime::kernel_args::KernelLaunch;

@@ -23,6 +23,7 @@ pub fn load_all_layers(
     config: &ModelConfig,
     gpu: &dyn GpuBackend,
     layer_kv_dtypes: &[KvCacheDtype],
+    lc: metrale_model_layers::load_context::LoadContext<'_>,
 ) -> Result<Vec<Box<dyn TransformerLayer>>> {
     let n = config.num_hidden_layers;
     tracing::info!(
@@ -210,6 +211,7 @@ pub fn load_all_layers(
             config,
             gpu,
             layer_kv_dtypes,
+            lc,
         )?;
         layers.push(layer);
     }

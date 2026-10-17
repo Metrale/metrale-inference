@@ -33,6 +33,7 @@ pub(super) fn load_full_attention(
     layers: &mut Vec<Box<dyn TransformerLayer>>,
     attn_idx: &mut usize,
     l: LayerIn<'_>,
+    lc: metrale_model_layers::load_context::LoadContext<'_>,
 ) -> Result<Flow> {
     let LoadCx {
         store,
@@ -76,6 +77,7 @@ pub(super) fn load_full_attention(
                 post_attn_norm,
                 ffn,
             },
+            lc,
         )?;
         layers.push(Box::new(attn_layer));
         *attn_idx += 1;
@@ -133,6 +135,7 @@ pub(super) fn load_full_attention(
         layer_kv_dtypes[*attn_idx],
         config.fp8_kv_calibration_tokens,
         config,
+        lc,
     )?;
     // 2026-09-25: Transposed NVFP4 copies of q/k/v/o for the prefill GEMMs.
     if let (Some(qw), Some(kw), Some(vw)) = (q_nvfp4, k_nvfp4, v_nvfp4) {

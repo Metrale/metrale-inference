@@ -4,8 +4,7 @@
 //!
 //! Owner: model-layers ops.
 //! Invariants: none beyond the types. The tests check that in each file of `GUARDED`,
-//! `std::env::var` appears in code only inside the functions its allow list names, and that
-//! only the files in `ALLOWED` contain the call text for `ModelLevers::from_env`.
+//! `std::env::var` appears in code only inside the functions its allow list names.
 //!
 //! The checks read source text because "who may read the environment" is not observable at run
 //! time. To guard a new file, move its reads into [`super::ModelLevers`] (or the module's own
@@ -82,9 +81,12 @@ const GUARDED: [(&str, &[&str]); 49] = [
         "../../model-arch/src/nemotron_moe/prefill_shared_up.rs",
         &[],
     ),
-    // 2026-09-25: The `ModelLevers` resolution. It is listed, with `from_env` allowed, so that a
-    // read anywhere else in the file, a second resolution path, fails the test.
-    ("layers/ops/model_levers_resolve.rs", &["from_env"]),
+    // 2026-09-25: The `ModelLevers` resolution. 2026-10-17: It reads the settings; the one env read
+    // left is the TurboQuant+ rotation the server shares (`tq_plus_weight_rotation`).
+    (
+        "layers/ops/model_levers_resolve.rs",
+        &["tq_plus_weight_rotation"],
+    ),
     // 2026-09-25: DFlash drafter forward files. `dflash_head/from_weights.rs` is not listed: it
     // builds the head, which is where its reads belong.
     ("../../model-arch/src/dflash_head/forward_block.rs", &[]),
@@ -223,63 +225,5 @@ pub(super) fn hotter(&self) {
         vec![(2, "cold".to_string()), (9, "hotter".to_string())],
         "the comment inside `hot` must not count, and `var_os` inside \
          `hotter` must"
-    );
-}
-
-/// 2026-09-25: Only the files in `ALLOWED` may contain the call text for `ModelLevers::from_env`.
-/// `ModelLevers::get` (model_levers_resolve.rs) caches the resolution in a `OnceLock`; every
-/// other reader uses `get()` or the `levers` its context carries. The search covers every `.rs`
-/// file under `crates/`, skipping `target` directories.
-#[test]
-fn from_env_is_called_only_where_it_is_allowed() {
-    const ALLOWED: [&str; 3] = [
-        // 2026-09-25: Holds no such call. `ModelLevers::get` lives in model_levers_resolve.rs and
-        // passes `Self::from_env`, which this text search does not match.
-        "crates/model-layers/src/layers/ops/model_levers.rs",
-        // 2026-09-25: The model build resolves a fresh copy so it can overwrite `max_decode_seqs`.
-        "crates/model-engine/src/model/impl_a1.rs",
-        // 2026-09-25: This file, whose assert message contains the searched text.
-        "crates/model-layers/src/layers/ops/hot_path_env_guards.rs",
-    ];
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(|p| p.parent())
-        .expect("workspace root");
-    let mut offenders = Vec::new();
-    let mut stack = vec![root.join("crates")];
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                if path.file_name().is_some_and(|n| n == "target") {
-                    continue;
-                }
-                stack.push(path);
-            } else if path.extension().is_some_and(|e| e == "rs") {
-                let Ok(text) = std::fs::read_to_string(&path) else {
-                    continue;
-                };
-                if !text.contains("ModelLevers::from_env()") {
-                    continue;
-                }
-                let rel = path
-                    .strip_prefix(root)
-                    .unwrap_or(&path)
-                    .to_string_lossy()
-                    .replace('\\', "/");
-                if !ALLOWED.contains(&rel.as_str()) {
-                    offenders.push(rel);
-                }
-            }
-        }
-    }
-    offenders.sort();
-    assert!(
-        offenders.is_empty(),
-        "ModelLevers::from_env() re-reads ~40 env vars under a global lock. \
-         These call it instead of the once-resolved ModelLevers::get(): {offenders:?}"
     );
 }

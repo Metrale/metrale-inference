@@ -158,10 +158,7 @@ mod tests {
             None,
             None,
             None,
-            std::sync::Arc::new(
-                metrale_settings::groups::device::declared()
-                    .expect("the declared settings resolve"),
-            ),
+            std::sync::Arc::new(metrale_model_layers::lever_equivalence::defaults()),
         );
         match result {
             Err(e) => assert!(e.to_string().contains("Unsupported model type: 'llama'")),
@@ -221,7 +218,13 @@ mod tests {
 
         let errors = [
             loader
-                .load_layers(&store, &config, &gpu, &[])
+                .load_layers(
+                    &store,
+                    &config,
+                    &gpu,
+                    &[],
+                    metrale_model_layers::lever_equivalence::DefaultLoad::at_defaults().lc(),
+                )
                 .err()
                 .expect("generic layer load unexpectedly succeeded"),
             loader

@@ -236,6 +236,7 @@ pub struct Fwd {
     pub dispatch: GemmDispatch,
     pub derived: DerivedWeights,
     pub levers: ModelLevers,
+    pub settings: metrale_settings::InferenceServerSettings,
     pub stats: ModelStats,
 }
 
@@ -254,6 +255,7 @@ impl Fwd {
             dispatch: &self.dispatch,
             derived: &self.derived,
             levers: &self.levers,
+            settings: &self.settings,
             stats: &self.stats,
             attn_metadata: meta,
             profile: false,
@@ -289,6 +291,11 @@ impl Fwd {
             dispatch: GemmDispatch::defaults(),
             derived: DerivedWeights::new(),
             levers: ModelLevers::defaults(),
+            settings: {
+                use metrale_settings::sources::{CliLayer, RecipeLayer};
+                let env = metrale_io_host_std::ProcessEnv;
+                metrale_settings::resolve(&env, &CliLayer::empty(), &RecipeLayer::empty())?
+            },
             stats: ModelStats::new(),
         })
     }

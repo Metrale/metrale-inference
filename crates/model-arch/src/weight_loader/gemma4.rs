@@ -38,8 +38,9 @@ impl ModelWeightLoader for Gemma4WeightLoader {
         config: &ModelConfig,
         gpu: &dyn GpuBackend,
         layer_kv_dtypes: &[KvCacheDtype],
+        lc: metrale_model_layers::load_context::LoadContext<'_>,
     ) -> Result<Vec<Box<dyn TransformerLayer>>> {
-        loader_a::load_layers_impl(store, config, gpu, layer_kv_dtypes)
+        loader_a::load_layers_impl(store, config, gpu, layer_kv_dtypes, lc)
     }
 
     fn load_embedding(

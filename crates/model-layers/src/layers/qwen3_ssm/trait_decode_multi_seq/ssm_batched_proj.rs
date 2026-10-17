@@ -35,7 +35,7 @@ pub(super) struct BatchedProjTier {
 }
 
 impl Qwen3SsmLayer {
-    pub(super) fn batched_proj_tier(&self, n: usize) -> BatchedProjTier {
+    pub(super) fn batched_proj_tier(&self, n: usize, ssm_gemv_batch4: bool) -> BatchedProjTier {
         let w8a16_pipe = self.w8a16_gemm_pipelined_k.0 != 0;
         // 2026-09-25: `w8a16_gemv_batch4` serves up to 4 rows,
         // `w8a16_gemv_batch16` up to 16; the wrapper and handle are chosen
@@ -45,9 +45,7 @@ impl Qwen3SsmLayer {
         } else {
             (ops::w8a16_gemv_batch16, self.w8a16_gemv_batch16_k)
         };
-        let use_batch4 = gemv_batch_k.0 != 0
-            && n <= 16
-            && crate::layers::ops::ModelLevers::get().ssm_gemv_batch4;
+        let use_batch4 = gemv_batch_k.0 != 0 && n <= 16 && ssm_gemv_batch4;
         // 2026-09-25: NVFP4: the narrowest loaded `w4a16_batchm` tier covering
         // `n`, else `w4a16_gemv_batch16`.
         let narrow = self.w4a16_batchm.kernel(n as u32);

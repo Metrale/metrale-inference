@@ -114,6 +114,7 @@ impl ModelWeightLoader for Qwen4ExpWeightLoader {
         config: &ModelConfig,
         gpu: &dyn GpuBackend,
         layer_kv_dtypes: &[KvCacheDtype],
+        lc: metrale_model_layers::load_context::LoadContext<'_>,
     ) -> Result<Vec<Box<dyn TransformerLayer>>> {
         let report = audit_namespace(store, config);
         report.log();
@@ -232,7 +233,7 @@ impl ModelWeightLoader for Qwen4ExpWeightLoader {
                         .unwrap_or(KvCacheDtype::Bf16);
                     let l = crate::weight_loader::qwen35::load_layers::attention_arms::build_full_attention_nvfp4(
                         i, store, &lp, gpu, variant, config, h, absmax_k, quantize_k, stream,
-                        kv_dtype, attn_idx, input_norm, post_attn_norm, ffn,
+                        kv_dtype, attn_idx, input_norm, post_attn_norm, ffn, lc,
                     )
                     .with_context(|| format!("qwen4_exp: full-attention layer {i}"))?;
                     attn_idx += 1;

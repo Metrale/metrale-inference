@@ -163,19 +163,8 @@ impl Qwen3AttentionLayer {
         if n > 1 && batch_cache_write_enabled() && per_seq_qkv.is_multiple_of(bf16) {
             let row_stride = (per_seq_qkv / bf16) as u32;
             return self.write_kv_cache(
-                fwd.gpu,
-                k_out_0,
-                v_out_0,
-                kv_cache,
-                meta.slot,
-                n as u32,
-                nkv,
-                hd,
-                bs,
-                row_stride,
-                row_stride,
-                stream,
-                fwd.graph_capture,
+                fwd.gpu, k_out_0, v_out_0, kv_cache, meta.slot, n as u32, nkv, hd, bs, row_stride,
+                row_stride, stream, fwd,
             );
         }
         for i in 0..n {
@@ -184,19 +173,8 @@ impl Qwen3AttentionLayer {
             let v_out_i = k_out_i.offset((nkv * hd) as usize * bf16);
             let slot_i = meta.slot.offset(i * 8); // 2026-09-25: i64 slots
             self.write_kv_cache(
-                fwd.gpu,
-                k_out_i,
-                v_out_i,
-                kv_cache,
-                slot_i,
-                1,
-                nkv,
-                hd,
-                bs,
-                kv_stride,
-                kv_stride,
-                stream,
-                fwd.graph_capture,
+                fwd.gpu, k_out_i, v_out_i, kv_cache, slot_i, 1, nkv, hd, bs, kv_stride, kv_stride,
+                stream, fwd,
             )?;
         }
         Ok(())
@@ -238,15 +216,11 @@ impl Qwen3AttentionLayer {
         // `q_stride = per_seq_qkv / 2`, and no copy is made. Same kernel, same
         // values: only the addressing differs. Under TurboQuant Q is copied to
         // `ssm_qkvz` first, because the bookends rotate it in place. The in-place
-        // read is off when `METRALE_NO_ATTN_Q_INPLACE=1`, read once per process.
-        fn q_inplace_enabled() -> bool {
-            static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-            *ON.get_or_init(|| {
-                std::env::var("METRALE_NO_ATTN_Q_INPLACE").ok().as_deref() != Some("1")
-            })
-        }
-        let q_inplace =
-            !k_is_turbo && !v_is_turbo && q_inplace_enabled() && per_seq_qkv.is_multiple_of(bf16);
+        // read is off under `kernels.no_attn_q_inplace` (`METRALE_NO_ATTN_Q_INPLACE`).
+        let q_inplace = !k_is_turbo
+            && !v_is_turbo
+            && !fwd.settings.kernels.no_attn_q_inplace
+            && per_seq_qkv.is_multiple_of(bf16);
         let q_contiguous = if q_inplace {
             qkv_buf
         } else {
@@ -269,7 +243,7 @@ impl Qwen3AttentionLayer {
         };
         let attn_out = fwd.buffers.attn_output();
         let inv_sqrt_d = self.effective_attn_scale(hd);
-        let weight_pre_rotated = crate::layers::ops::ModelLevers::get().weight_pre_rotated;
+        let weight_pre_rotated = fwd.levers.weight_pre_rotated;
         let wht_runtime_active = !weight_pre_rotated && (hd == 128 || hd == 256 || hd == 512);
         if k_is_turbo && self.innerq_apply_q_k.0 != 0 && hd == 128 {
             use metrale_gpu_runtime::kernel_args::KernelLaunch;
@@ -326,3 +300,7 @@ mod o_proj;
 #[cfg(test)]
 #[path = "attn/rope_tests.rs"]
 mod rope_tests;
+
+#[cfg(test)]
+#[path = "attn/q_inplace_settings_tests.rs"]
+mod q_inplace_settings_tests;

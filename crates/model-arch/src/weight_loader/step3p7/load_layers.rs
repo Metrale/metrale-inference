@@ -32,6 +32,7 @@ pub(super) fn load_layers(
     config: &ModelConfig,
     gpu: &dyn GpuBackend,
     layer_kv_dtypes: &[KvCacheDtype],
+    lc: metrale_model_layers::load_context::LoadContext<'_>,
 ) -> Result<Vec<Box<dyn TransformerLayer>>> {
     let absmax_k = gpu.kernel("quantize_nvfp4", "nvfp4_global_absmax")?;
     let quantize_k = gpu.kernel("quantize_nvfp4", "quantize_bf16_to_nvfp4")?;
@@ -114,6 +115,7 @@ pub(super) fn load_layers(
             quantize_k,
             stream,
             i,
+            lc,
         )?;
 
         layers.push(Box::new(layer));
@@ -356,6 +358,7 @@ fn load_attention_layer(
     quantize_k: KernelHandle,
     stream: u64,
     i: usize,
+    lc: metrale_model_layers::load_context::LoadContext<'_>,
 ) -> Result<Qwen3AttentionLayer> {
     let p = format!("{lp}.self_attn");
     let q_proj = dense_auto(store, &format!("{p}.q_proj.weight"), gpu)?;
@@ -418,6 +421,7 @@ fn load_attention_layer(
         layer_kv_dtypes[attn_layer_idx],
         config.fp8_kv_calibration_tokens,
         config,
+        lc,
     )?;
 
     layer.set_dimension_overrides(config.head_dim, actual_q_heads, config.num_key_value_heads);

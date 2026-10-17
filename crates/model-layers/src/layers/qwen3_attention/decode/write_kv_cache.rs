@@ -36,7 +36,7 @@ impl Qwen3AttentionLayer {
         key_stride: u32,
         value_stride: u32,
         stream: u64,
-        graph_capture: bool,
+        ctx: &ForwardContext,
     ) -> Result<()> {
         match self.kv_dtype {
             KvCacheDtype::Nvfp4 => ops::reshape_and_cache_nvfp4(
@@ -65,7 +65,7 @@ impl Qwen3AttentionLayer {
                 // num_kv_heads, head_dim]` BF16 and the kernel runs one CTA per head row, so the
                 // grid covers every (token, kv_head) pair; a grid of `num_kv_heads` alone would
                 // rotate only the first token's heads.
-                let weight_pre_rotated = crate::layers::ops::ModelLevers::get().weight_pre_rotated;
+                let weight_pre_rotated = ctx.levers.weight_pre_rotated;
                 if !weight_pre_rotated
                     && self.wht_bf16_k.0 != 0
                     && (head_dim == 128 || head_dim == 256 || head_dim == 512)
@@ -127,7 +127,7 @@ impl Qwen3AttentionLayer {
             KvCacheDtype::Bf16KTurbo3V => {
                 // 2026-09-25: K as BF16, V as turbo3, in one write kernel with separate K and V
                 // block strides. Only V is rotated.
-                let weight_pre_rotated = crate::layers::ops::ModelLevers::get().weight_pre_rotated;
+                let weight_pre_rotated = ctx.levers.weight_pre_rotated;
                 if !weight_pre_rotated
                     && self.wht_bf16_k.0 != 0
                     && (head_dim == 128 || head_dim == 256 || head_dim == 512)
@@ -164,7 +164,7 @@ impl Qwen3AttentionLayer {
             KvCacheDtype::Bf16KTurbo4V => {
                 // 2026-09-25: K as BF16, V as turbo4, in one write kernel with separate K and V
                 // block strides. Only V is rotated.
-                let weight_pre_rotated = crate::layers::ops::ModelLevers::get().weight_pre_rotated;
+                let weight_pre_rotated = ctx.levers.weight_pre_rotated;
                 if !weight_pre_rotated
                     && self.wht_bf16_k.0 != 0
                     && (head_dim == 128 || head_dim == 256 || head_dim == 512)
@@ -200,7 +200,7 @@ impl Qwen3AttentionLayer {
             }
             KvCacheDtype::Bf16KTurbo2V => {
                 // 2026-09-25: K as BF16, V as turbo2. Only V is rotated.
-                let weight_pre_rotated = crate::layers::ops::ModelLevers::get().weight_pre_rotated;
+                let weight_pre_rotated = ctx.levers.weight_pre_rotated;
                 if !weight_pre_rotated
                     && self.wht_bf16_k.0 != 0
                     && (head_dim == 128 || head_dim == 256 || head_dim == 512)
@@ -239,7 +239,7 @@ impl Qwen3AttentionLayer {
             | KvCacheDtype::Turbo3KTurbo8V => {
                 // 2026-09-25: K and V are different turbo dtypes. Both are rotated, and the InnerQ
                 // K scale runs as in the symmetric turbo arm.
-                let weight_pre_rotated = crate::layers::ops::ModelLevers::get().weight_pre_rotated;
+                let weight_pre_rotated = ctx.levers.weight_pre_rotated;
                 if !weight_pre_rotated
                     && self.wht_bf16_k.0 != 0
                     && (head_dim == 128 || head_dim == 256 || head_dim == 512)
@@ -340,7 +340,7 @@ impl Qwen3AttentionLayer {
             KvCacheDtype::Fp8KTurbo3V | KvCacheDtype::Fp8KTurbo4V | KvCacheDtype::Fp8KTurbo2V => {
                 // 2026-09-25: K as FP8 with the per-tensor `k_scale`, V as turbo2, 3 or 4, in one
                 // write kernel. Only V is rotated.
-                let weight_pre_rotated = crate::layers::ops::ModelLevers::get().weight_pre_rotated;
+                let weight_pre_rotated = ctx.levers.weight_pre_rotated;
                 if !weight_pre_rotated
                     && self.wht_bf16_k.0 != 0
                     && (head_dim == 128 || head_dim == 256 || head_dim == 512)
@@ -456,7 +456,7 @@ impl Qwen3AttentionLayer {
                 key_stride,
                 value_stride,
                 stream,
-                graph_capture,
+                ctx.graph_capture,
             ),
         }
     }

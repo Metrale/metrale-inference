@@ -89,6 +89,7 @@ macro_rules! fwd_ctx {
             dispatch: $dispatch,
             derived: $derived,
             levers: $levers,
+            settings: &crate::lever_equivalence::defaults(),
             stats: $stats,
             attn_metadata: None,
             decode_step: false,

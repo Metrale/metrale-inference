@@ -244,12 +244,23 @@ pub(crate) fn meta_mb(
     })
 }
 
+/// 2026-10-17: The settings an example runs under: the process environment, as a serve resolves it.
+pub(crate) fn process_settings() -> anyhow::Result<metrale_settings::InferenceServerSettings> {
+    use metrale_settings::sources::{CliLayer, RecipeLayer};
+    Ok(metrale_settings::resolve(
+        &metrale_io_host_std::ProcessEnv,
+        &CliLayer::empty(),
+        &RecipeLayer::empty(),
+    )?)
+}
+
 pub(crate) struct Fwd {
     pub(crate) config: ModelConfig,
     pub(crate) buffers: BufferArena,
     pub(crate) dispatch: GemmDispatch,
     pub(crate) derived: DerivedWeights,
     pub(crate) levers: ModelLevers,
+    pub(crate) settings: metrale_settings::InferenceServerSettings,
     pub(crate) stats: ModelStats,
 }
 
@@ -269,6 +280,7 @@ impl Fwd {
             dispatch: &self.dispatch,
             derived: &self.derived,
             levers: &self.levers,
+            settings: &self.settings,
             stats: &self.stats,
             attn_metadata: meta,
             profile: false,

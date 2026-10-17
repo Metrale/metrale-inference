@@ -24,6 +24,7 @@ pub(super) fn build_bf16_dense_attention(
     i: usize,
     attn_idx: usize,
     parts: LayerIn,
+    lc: metrale_model_layers::load_context::LoadContext<'_>,
 ) -> Result<Qwen3AttentionLayer> {
     let LoadCx {
         store,
@@ -97,6 +98,7 @@ pub(super) fn build_bf16_dense_attention(
         layer_kv_dtype,
         config.fp8_kv_calibration_tokens,
         config,
+        lc,
     )?;
     layer.set_o_dense_bf16(o_bf16);
     Ok(layer)
@@ -109,6 +111,7 @@ pub(super) fn build_native_fp8_attention(
     i: usize,
     attn_idx: usize,
     parts: LayerIn,
+    lc: metrale_model_layers::load_context::LoadContext<'_>,
 ) -> Result<Qwen3AttentionLayer> {
     let LoadCx {
         store,
@@ -191,6 +194,7 @@ pub(super) fn build_native_fp8_attention(
         layer_kv_dtype,
         config.fp8_kv_calibration_tokens,
         config,
+        lc,
     )?;
 
     layer.set_fp8_weights(Some(q_fp8), Some(k_fp8), Some(v_fp8), Some(o_fp8));

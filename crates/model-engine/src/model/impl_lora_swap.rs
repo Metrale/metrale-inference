@@ -329,6 +329,7 @@ impl TransformerModel {
                 &peft,
                 &self.config,
                 self.gpu.as_ref(),
+                metrale_model_layers::lora::ExpertLoraPolicy::from_settings(&self.settings),
             )?
         };
         let active = self.lora.as_ref().unwrap().active;

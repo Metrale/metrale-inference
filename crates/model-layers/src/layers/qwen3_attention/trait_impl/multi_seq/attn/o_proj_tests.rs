@@ -249,6 +249,10 @@ fn check_dispatch_with(
         KvCacheDtype::Bf16,
         0,
         &config,
+        crate::load_context::LoadContext {
+            settings: &crate::lever_equivalence::defaults(),
+            levers: &crate::layers::ops::ModelLevers::defaults(),
+        },
     )
     .unwrap();
     layer.w8a16_gemv_k = KernelHandle(SCALAR_K);
@@ -271,6 +275,7 @@ fn check_dispatch_with(
     let dispatch = GemmDispatch::defaults();
     let derived = DerivedWeights::new();
     let levers = ModelLevers::defaults();
+    let settings = crate::lever_equivalence::defaults();
     let stats = ModelStats::new();
     let fwd = ForwardContext {
         buffers: &buffers,
@@ -280,6 +285,7 @@ fn check_dispatch_with(
         dispatch: &dispatch,
         derived: &derived,
         levers: &levers,
+        settings: &settings,
         stats: &stats,
         attn_metadata: None,
         profile: false,

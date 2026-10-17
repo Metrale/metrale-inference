@@ -30,8 +30,9 @@ impl ModelWeightLoader for LagunaWeightLoader {
         config: &ModelConfig,
         gpu: &dyn GpuBackend,
         layer_kv_dtypes: &[KvCacheDtype],
+        lc: metrale_model_layers::load_context::LoadContext<'_>,
     ) -> Result<Vec<Box<dyn TransformerLayer>>> {
-        load_layers::load_layers(store, config, gpu, layer_kv_dtypes)
+        load_layers::load_layers(store, config, gpu, layer_kv_dtypes, lc)
     }
 
     fn load_embedding(

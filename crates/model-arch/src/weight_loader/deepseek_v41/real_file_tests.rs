@@ -92,7 +92,16 @@ fn layer0_matches_the_cpu_reference_on_the_real_weights() {
         metrale_model_weights::weights::config_from_gguf_dir(dir).expect("config from gguf");
     let store = GgufLoader::new().load(dir, g, 0).expect("load gguf");
     let layers = DeepSeekV41WeightLoader
-        .load_layers(&store, &config, g, &[])
+        .load_layers(
+            &store,
+            &config,
+            g,
+            &[],
+            metrale_model_layers::load_context::LoadContext {
+                settings: &metrale_model_layers::lever_equivalence::defaults(),
+                levers: &metrale_model_layers::layers::ops::ModelLevers::defaults(),
+            },
+        )
         .expect("layers");
     assert_eq!(layers.len(), config.num_hidden_layers);
     let (dim, hc, hd, nh) = (

@@ -279,7 +279,7 @@ impl Qwen3AttentionLayer {
                 nkv * hd,
                 nkv * hd,
                 stream,
-                ctx.graph_capture,
+                ctx,
             )?;
         }
         aprof!("kv_cache_write", t0);

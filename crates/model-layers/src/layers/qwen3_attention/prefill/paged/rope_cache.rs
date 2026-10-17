@@ -175,7 +175,7 @@ impl Qwen3AttentionLayer {
                 nkv * hd,
                 nkv * hd,
                 stream,
-                ctx.graph_capture,
+                ctx,
             )?;
             // 2026-09-25: Fused K path: rewrite the K side of a BF16 cache from
             // the raw K copy, with k_norm and RoPE in FP32 and one BF16 rounding.

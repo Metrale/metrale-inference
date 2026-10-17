@@ -34,7 +34,7 @@ pub use knobs::{
     EP_CMD_DFLASH_PROPOSE, EP_CMD_MTP_PROPOSE, MTP_HIDDEN_FROM_STASH, hidden_fingerprint,
     mtp_accept_debug, mtp_catchup_enabled, mtp_ep_batch_verify_enabled, mtp_ep_propose_enabled,
     mtp_multi_seq_mode, mtp_refeed_accepted_enabled, mtp_refeed_debug, mtp_refeed_shift,
-    shadow_topk,
+    shadow_topk, shadow_topk_given,
 };
 pub use propose_batch_wire::{
     EP_CMD_MTP_PROPOSE_BATCH, PROPOSE_BATCH_MAX_DRAFTS, PROPOSE_BATCH_MAX_SEQS,

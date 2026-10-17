@@ -6,7 +6,7 @@
 //! Owner: model-arch weight loader (Qwen3.5 dense).
 //! Invariants:
 //! - `predicted_derived_bytes` reads no environment and allocates nothing;
-//!   `Fp8RouteInputs::from_env` does the reads.
+//!   `Fp8RouteInputs::from_settings` does the reads.
 //! - A route whose plan keeps an NVFP4 copy (`METRALE_DENSE_FP8_KEEP_NVFP4`,
 //!   a CUTLASS NVFP4 attention lever, `METRALE_ATTN_W4A4`) gets
 //!   [`DerivedBytesEstimate::Unavailable`].
@@ -118,10 +118,14 @@ pub struct Fp8RouteInputs {
 }
 
 impl Fp8RouteInputs {
-    /// 2026-09-25: Resolve each condition from the environment and the config.
+    /// 2026-09-25: Resolve each condition from the settings, the environment and the config.
     /// `w8a8_prefill_kernels` comes from the caller, which asks
     /// `qwen3_attention::w8a8_prefill_kernels_loaded` of the loaded kernel set.
-    pub fn from_env(config: &ModelConfig, w8a8_prefill_kernels: bool) -> Self {
+    pub fn from_settings(
+        config: &ModelConfig,
+        settings: &metrale_settings::InferenceServerSettings,
+        w8a8_prefill_kernels: bool,
+    ) -> Self {
         Self {
             // 2026-09-25: The predicate of `qwen35_dense::dense_fp8_enabled`.
             dense_fp8: std::env::var("METRALE_DENSE_FP8").as_deref() == Ok("1"),
@@ -130,7 +134,7 @@ impl Fp8RouteInputs {
             // 2026-09-25: The predicate of `gdn_fp8_arm_selected`.
             gdn_fp8: std::env::var_os("METRALE_NO_GDN_FP8").is_none(),
             w8a8_prefill_kernels,
-            route: RouteEnv::from_env(),
+            route: RouteEnv::from_settings(settings),
             ffn_gateup_fused:
                 metrale_model_layers::layers::dense_ffn::gateup_fused::ffn_gateup_fused(),
         }
