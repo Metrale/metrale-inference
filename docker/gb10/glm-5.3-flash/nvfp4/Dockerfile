@@ -51,7 +51,7 @@ ENV METRALE_TARGET_HW=gb10
 ENV METRALE_TARGET_MODEL=glm-5.3-flash
 ENV METRALE_TARGET_QUANT=nvfp4
 
-RUN cargo build --release -p met
+RUN cargo build --release -p met --features bench
 
 # ── Runtime stage ────────────────────────────────────────────────
 FROM nvidia/cuda:13.0.0-runtime-ubuntu24.04

@@ -225,7 +225,7 @@ jobs:
           # SM120/SM121 support so they compile to nothing for sm_90a and
           # sm_100a alike. Same choice as docker/{hopper,b200}/Dockerfile.
           cargo build --release -p met --bin met \
-            --no-default-features --features cuda,nccl
+            --no-default-features --features cuda,nccl,bench
 
       - name: Confirm real PTX went into the binary
         run: |
@@ -298,7 +298,7 @@ jobs:
             echo "target_model:   ${{ needs.plan.outputs.model }}"
             echo "target_quant:   nvfp4"
             echo "host_target:    x86_64-unknown-linux-gnu"
-            echo "cargo_features: --no-default-features --features cuda,nccl"
+            echo "cargo_features: --no-default-features --features cuda,nccl,bench"
             echo "container:      nvidia/cuda:13.0.2-devel-ubuntu24.04"
             echo "nvcc:           ${{ steps.toolchain.outputs.nvcc }}"
             echo "libnccl-dev:    ${{ steps.toolchain.outputs.nccl }} (link time; the host needs libnccl2 >= 2.28 at run time)"

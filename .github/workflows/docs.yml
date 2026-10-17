@@ -211,7 +211,7 @@ jobs:
       # docs.metrale.ai/api/.
       - name: Build rustdoc
         if: needs.changes.outputs.web_only != 'true'
-        run: cargo doc --workspace --no-deps
+        run: cargo doc --workspace --no-deps --features met/bench
 
       - name: Upload site artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

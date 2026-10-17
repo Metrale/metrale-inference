@@ -24,7 +24,7 @@ COPY tests/fixtures/ tests/fixtures/
 COPY docs/k3/fixtures/ docs/k3/fixtures/
 COPY docs/k3/official-weight-classes.tsv docs/k3/official-weight-classes.tsv
 RUN cargo build --locked --release -p met --bin met \
-      --no-default-features --features cuda,nccl
+      --no-default-features --features cuda,nccl,bench
 RUN mkdir -p /build/receipt && rustc --version > /build/receipt/rustc.txt && \
     nvcc --version > /build/receipt/nvcc.txt && \
     dpkg-query -W > /build/receipt/builder-packages.txt && \

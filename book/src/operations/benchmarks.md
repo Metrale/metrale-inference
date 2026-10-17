@@ -28,6 +28,8 @@ Different things; both are meaningful. The E2E number is what an operator sees. 
 
 ## Running end-to-end benchmarks
 
+`met benchmark` is compiled in only with the `bench` cargo feature (`cargo build --release -p met --features bench`). The published images and release binaries carry it. A `met` built without it still accepts `met benchmark` and exits with a message that names the rebuild.
+
 Start a server:
 
 ```bash

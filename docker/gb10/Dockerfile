@@ -38,7 +38,7 @@ ENV METRALE_TARGET_HW=gb10
 ENV METRALE_TARGET_MODEL=*
 ENV METRALE_TARGET_QUANT=*
 
-RUN cargo build --release -p met
+RUN cargo build --release -p met --features bench
 
 # ── Runtime stage ────────────────────────────────────────────────
 FROM nvidia/cuda:13.0.0-runtime-ubuntu24.04@sha256:95318efecfd68ab3d109da5277863257b06137c84f34a87f38de970d5cd035d3

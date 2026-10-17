@@ -73,7 +73,7 @@ ENV METRALE_CUTLASS_NVFP4_GEMM=1
 # CUDARC_CUDA_VERSION=13000: the vendored cudarc 0.19.2 tops out at 13.1 in its
 # nvcc-version table, so `nvcc --version` (13.2) panics without the pin. Same
 # value every CI workflow pins.
-RUN CUDARC_CUDA_VERSION=13000 cargo build --release -p met
+RUN CUDARC_CUDA_VERSION=13000 cargo build --release -p met --features bench
 
 # ── Runtime stage: serve image on CUDA 13.2 ──────────────────────────────────
 FROM nvidia/cuda:${CUDA_VER}-runtime-ubuntu24.04

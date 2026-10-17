@@ -93,7 +93,7 @@ IGNORE_REGEX='(^|/)vendor/|(^|/)target/|/build\.rs$|(^|/)crates/(kernels|comm)/|
 # dedicated target dir, so every object in it is already instrumented.
 cargo llvm-cov clean --profraw-only
 status=0
-cargo llvm-cov --no-report --workspace --locked --no-fail-fast "$@" || status=$?
+cargo llvm-cov --no-report --workspace --features met/bench --locked --no-fail-fast "$@" || status=$?
 
 # Both reports read the same profdata — no rebuild, no re-run.
 cargo llvm-cov report --ignore-filename-regex "$IGNORE_REGEX" \

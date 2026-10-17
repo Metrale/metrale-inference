@@ -99,7 +99,7 @@ ENV METRALE_TARGET_QUANT=${METRALE_TARGET_QUANT}
 # the shared object actually loaded is the runtime stage's, which the gate
 # below holds at >= 2.28.
 RUN cargo build --release -p met --bin met \
-      --no-default-features --features cuda,nccl
+      --no-default-features --features cuda,nccl,bench
 
 # ── Runtime stage ────────────────────────────────────────────────
 FROM nvidia/cuda:13.0.0-runtime-ubuntu24.04@sha256:95318efecfd68ab3d109da5277863257b06137c84f34a87f38de970d5cd035d3
