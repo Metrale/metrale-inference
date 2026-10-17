@@ -16,7 +16,8 @@ extern "C" __global__ void bf16_add_inplace(
     }
 }
 
-// 2026-10-08: `bf16_add_rank_sum`: the reduce step of the one-shot all-reduce at world >= 3.
+// 2026-10-08: `bf16_add_rank_sum`: the reduce step of the one-shot all-reduce at world >= 2
+// (2026-10-16: from 2; the two-rank bytes are `__hadd`'s but for the sign of (-0) + (-0)).
 // `dst` holds this rank's partial; `peers` holds the other ranks' partials, one slot of
 // `slot_elems` elements per peer, peer r in slot (r < my_rank ? r : r - 1). Every rank sums the
 // world's partials in rank order 0..n_ranks-1 in FP32 and rounds once, so all ranks write the same

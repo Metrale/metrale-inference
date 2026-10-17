@@ -174,7 +174,8 @@ pub trait CommBackend: Send + Sync {
     }
 
     /// 2026-10-08: Give the backend the `bf16_add_rank_sum` kernel handle, which the one-shot
-    /// all-reduce at `world_size >= 3` needs. A no-op on backends without that path.
+    /// all-reduce at `world_size >= 2` (2026-10-16: was 3) needs. A no-op on backends without
+    /// that path.
     fn set_rank_sum_kernel(&self, _handle: u64) {}
 
     /// 2026-09-26: Send `bytes` at `ptr` to `dest_rank`, enqueued on `stream`.
