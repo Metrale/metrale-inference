@@ -11,6 +11,9 @@
 //! - 2026-10-14: A ceiling launch's `dsa_kpool_compress` and `dsa_index_scores` grids stop at
 //!   [`POOL_GRID_MAX`] pools (the kernels stride over the live pools), so a single-row decode's
 //!   launches do not grow with `--max-seq-len`; an exact launch's grids are unchanged.
+//! - 2026-10-17: A pass the fused selection takes (`fused::takes_fused`) launches the pool prep
+//!   (when it compresses), `dsa_select_fused_pipe`, then the folded expansion unless the pass
+//!   is folded; it writes no scores or candidacy row. Every other pass launches as before.
 
 use super::*;
 use anyhow::ensure;
@@ -191,7 +194,10 @@ pub(super) fn run(
     fold: bool,
     stream: u64,
 ) -> Result<()> {
-    scratch.fits(cfg, geom)?;
+    // 2026-10-17: `METRALE_GLM_DSA_SELECT_FUSED`: decided first, as it sets which regions the
+    // pass needs (`fused`).
+    let fused = fused::takes_fused(kernels, geom, inputs, scratch, launch)?;
+    scratch.fits_for(cfg, geom, fused)?;
     ensure!(
         !fold || (matches!(launch, DsaSelectLaunch::Exact) && geom.n_pools > 0),
         "DSA select: a folded pass needs an exact launch with pools ({} pools)",
@@ -283,7 +289,23 @@ pub(super) fn run(
     // keys and visibility prepared once per compression.
     let pipe = scores_pipe_for(mma, &kernels.rows, scores_pipe());
     if ceiling.is_none() && geom.q_rows > 1 {
-        pipe::readback_select_levers(mma, pipe);
+        pipe::readback_select_levers(mma, pipe, fused);
+    }
+    // 2026-10-17: The fused pass: the pipe's prepared pools, then scores, top-k and fold in one
+    // kernel; `fused` implies an exact launch with pools.
+    if fused {
+        ensure!(
+            pipe,
+            "DSA select: the fused selection needs the streamed scores"
+        );
+        if compress {
+            pipe::launch_prep(gpu, kernels, geom, inputs, scratch, npools_a, seq_a, stream)?;
+        }
+        fused::launch(gpu, kernels, geom, inputs, scratch, stream)?;
+        if fold {
+            return Ok(());
+        }
+        return folded::launch_expand(gpu, kernels, cfg, geom, inputs, scratch, stream);
     }
     let tiled = !mma
         && scores_tiled_for(

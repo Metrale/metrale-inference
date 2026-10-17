@@ -346,6 +346,9 @@ pub struct DsaSelectScratch {
     tokens: DevicePtr,
     /// 2026-10-14: The streamed scores' prepared pools (`pipe`); empty unless that lever is on.
     pipe: pipe::DsaPipeRegions,
+    /// 2026-10-17: `METRALE_GLM_DSA_SELECT_FUSED` with the streamed scores, read at allocation:
+    /// a pass of its shape writes no scores or candidacy row (`fused`).
+    fused: bool,
     capacity: [usize; 6],
     tokens_bytes: usize,
 }
@@ -393,6 +396,7 @@ impl DsaSelectScratch {
             selected: gpu.alloc(capacity[5])?,
             tokens: gpu.alloc(tokens_bytes)?,
             pipe: pipe::DsaPipeRegions::alloc(gpu, geom, scores_pipe() && scores_mma())?,
+            fused: fused::select_fused() && scores_pipe() && scores_mma(),
             capacity,
             tokens_bytes,
         })
@@ -420,16 +424,6 @@ impl DsaSelectScratch {
         fits.then_some((self.scores, self.valid_cand, self.selected))
     }
 
-    /// 2026-10-11: The most query rows one pass over `geom`'s pools fits in the per-row regions
-    /// (scores, candidacy, selected pools); `usize::MAX` when `geom` has no pools to score. The
-    /// output rows and the pool regions are not counted: `fits` checks those.
-    pub fn rows_per_pass(&self, geom: &DsaSelectGeometry) -> usize {
-        let per = |cap: usize, row_bytes: usize| cap.checked_div(row_bytes).unwrap_or(usize::MAX);
-        per(self.capacity[3], geom.n_pools * 4)
-            .min(per(self.capacity[4], geom.n_pools))
-            .min(per(self.capacity[5], geom.select_k * 4))
-    }
-
     /// 2026-09-25: The same scratch with `tokens` pointing at row `row`.
     ///
     /// The per-row selector (`q_rows == 1`) writes each row's result into its own slot of
@@ -441,32 +435,6 @@ impl DsaSelectScratch {
             tokens_bytes: self.tokens_bytes - row * cfg.out_width() * 4,
             ..*self
         }
-    }
-
-    /// 2026-09-25: Whether `geom` fits what was allocated. `select_tokens` checks it on every
-    /// pass, so a pass larger than the allocation is an error rather than an overrun.
-    pub fn fits(&self, cfg: &Glm5NextDsaConfig, geom: &DsaSelectGeometry) -> Result<()> {
-        let want = geom.scratch_bytes();
-        for (i, (w, c)) in want.iter().zip(self.capacity.iter()).enumerate() {
-            if w > c {
-                bail!(
-                    "DSA select: scratch region {i} needs {w} B but only {c} B was \
-                     reserved ({} tokens, {} pools, {} query rows)",
-                    geom.seq,
-                    geom.n_pools,
-                    geom.q_rows
-                );
-            }
-        }
-        let want_tokens = geom.q_rows * cfg.out_width() * 4;
-        if want_tokens > self.tokens_bytes {
-            bail!(
-                "DSA select: selection output needs {want_tokens} B but only {} B was \
-                 reserved",
-                self.tokens_bytes
-            );
-        }
-        Ok(())
     }
 
     pub fn free(self, gpu: &dyn GpuBackend) -> Result<()> {
@@ -489,11 +457,16 @@ mod launch;
 pub use launch::{row_passes, select_tokens, select_tokens_in_passes, select_tokens_rows};
 mod folded;
 pub use folded::{expand_folded, folded_check, launch_fold, select_rows_folded};
+mod fit;
+mod fused;
+pub use fused::{SELECT_FUSED_MAXK, SELECT_FUSED_SMEM, fused_shape, select_fused};
 mod pipe;
 pub use pipe::{DsaPipeRegions, SCORES_PIPE_SMEM, scores_pipe, scores_pipe_for};
 
 #[cfg(test)]
 mod ceiling_tests;
+#[cfg(test)]
+mod fused_tests;
 #[cfg(test)]
 pub(crate) mod passes_tests;
 #[cfg(test)]

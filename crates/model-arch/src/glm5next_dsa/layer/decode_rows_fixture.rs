@@ -183,6 +183,7 @@ impl Rig {
                     scores_pipe: KernelHandle(0),
                     sel_fold: KernelHandle(0),
                     expand_folded: KernelHandle(0),
+                    select_fused: KernelHandle(0),
                 },
             },
             decode_kernel: Glm5NextDsaDecodeKernel::resolve(&self.gpu).unwrap(),

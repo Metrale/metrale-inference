@@ -102,6 +102,20 @@ pub fn expand_folded(
         "DSA select: a folded expansion of {} rows exceeds the output",
         geom.q_rows
     );
+    launch_expand(gpu, kernels, cfg, geom, inputs, scratch, stream)
+}
+
+/// 2026-10-17: The `dsa_expand_selection_folded` launch of [`expand_folded`], unchecked: also the
+/// expansion of an unfolded fused pass (`fused`), whose selected rows are folded.
+pub(super) fn launch_expand(
+    gpu: &dyn GpuBackend,
+    kernels: &Glm5NextDsaKernels,
+    cfg: &Glm5NextDsaConfig,
+    geom: &DsaSelectGeometry,
+    inputs: &DsaSelectInputs,
+    scratch: &DsaSelectScratch,
+    stream: u64,
+) -> Result<()> {
     KernelLaunch::new(gpu, kernels.rows.expand_folded)
         .grid([geom.q_rows as u32, 1, 1])
         .block([ROW_BLOCK, 1, 1])
