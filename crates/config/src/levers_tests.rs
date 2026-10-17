@@ -109,7 +109,10 @@ fn rust_reads() -> Vec<(String, String, bool)> {
     for p in rs {
         let r = rel(&p);
         // 2026-09-26: The tables spell every name; they are what is being checked.
-        if is_test_file(&r) || r.starts_with("crates/config/src/levers/") {
+        if is_test_file(&r)
+            || r.starts_with("crates/config/src/levers/")
+            || r.starts_with("crates/settings/src/groups/")
+        {
             continue;
         }
         let text = std::fs::read_to_string(&p).expect("readable source");

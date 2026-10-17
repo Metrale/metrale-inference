@@ -1549,6 +1549,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "metrale-abstract-io"
+version = "1.0.0-beta-preview"
+
+[[package]]
 name = "metrale-bench"
 version = "1.0.0-beta-preview"
 dependencies = [
@@ -1620,6 +1624,7 @@ version = "1.0.0-beta-preview"
 dependencies = [
  "anyhow",
  "metrale-core",
+ "metrale-settings",
  "regex",
  "serde",
  "serde_json",
@@ -1724,6 +1729,23 @@ dependencies = [
  "serde_json",
  "stats_alloc",
  "thiserror",
+]
+
+[[package]]
+name = "metrale-io-host-mem"
+version = "1.0.0-beta-preview"
+dependencies = [
+ "metrale-abstract-io",
+ "rand_chacha",
+]
+
+[[package]]
+name = "metrale-io-host-std"
+version = "1.0.0-beta-preview"
+dependencies = [
+ "getrandom 0.4.3",
+ "metrale-abstract-io",
+ "tokio",
 ]
 
 [[package]]
@@ -1861,6 +1883,14 @@ name = "metrale-scheduler"
 version = "1.0.0-beta-preview"
 dependencies = [
  "anyhow",
+]
+
+[[package]]
+name = "metrale-settings"
+version = "1.0.0-beta-preview"
+dependencies = [
+ "metrale-abstract-io",
+ "metrale-io-host-mem",
 ]
 
 [[package]]
