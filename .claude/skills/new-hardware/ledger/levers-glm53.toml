@@ -2154,17 +2154,17 @@ root_cause_class = "latency-bound"
 lever_type = "kernel-restructure"
 lkb_effect = "new tile4 kernel: one 256-thread block per SM streams four tokens' fp32 rows through a four-stage cp.async ring in 66068 B dynamic shared memory while hc_fn is read in 16-byte loads; each token keeps tok4's dot-product chains, reduction trees and Sinkhorn tail, so the bits are tok4's. tok4, fused and fold PTX unchanged"
 parity_tier_kept = "bit-identical"
-per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
-verdict = "held"
-verdict_reason = "Byte gate (in-tree example, two runs, and a standalone harness): identical bytes at T 1,2,3,4,5,17,684,2736 on synthetic and layer 0/3/22/44 attn/ffn inputs with two stream distributions; negative controls (stream + 1.0, one hc_fn bit) fire. Microbench, median of n=9 (min max): T=684 clean tok4 470.7 (461.7 531.8) us vs tile4 347.2 (344.7 406.1); beside an SM copy 668.7 vs 446.3; beside SM copy + copy engine 1158.6 vs 966.0. T=2736 clean 1888.0 vs 1245.3; SM copy 2572.8 vs 1588.7; SM + CE 3013.4 vs 2041.5. Projection over 1530 calls at 684 rows: about -189 ms clean, -340 ms under SM-copy load. Held until the cold c32k serve arm"
+per_rung = [{ rung = "ttft-cold-c256", tok_s_pct = 0, j_tok_pct = 0.0, n = 3 }, { rung = "ttft-cold-c1k", tok_s_pct = 0, j_tok_pct = 0.0, n = 3 }, { rung = "ttft-cold-c4k", tok_s_pct = 0, j_tok_pct = 0.0, n = 3 }, { rung = "ttft-cold-c32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 3 }]
+verdict = "kept"
+verdict_reason = "2026-10-16 22:50Z KEEP on a control-first adjacent pair at 512k (rule declared before data: PT minus control c32k client AND server p50 < 0, no TTFT cell beyond scatter, tf section unchanged, readbacks, agentic 10/10). PTC512 (K524288-kinv-1016T2210) minus CTLPT512 (K524288-kinv-1016T2134), same binary b35510c4b, the only env diff METRALE_GLM_MHC_PRE_TILE=1 (readback 1 hit per rank on the arm, 0 on the control): cold c32k client -187.4 ms (-1.9%, 9886.2 vs 10073.6, rep ranges disjoint), server -177.9 ms (-1.8%, disjoint); cold c256 / c1k / c4k client -6.2 / -7.9 / -24.5; warm c256 / c1k +2.3 / +2.2 (+2.9% / +2.0%, inside the 3% band), warm c4k / c32k -1.1 / -4.2; 128k cold -779, 256k cold -1497 (info). tf section 3a32f6cb77727a95 on both; agentic 10/10 webserver_ok and 10/10 directions (4.058 vs 4.122 s/turn); decode C1 41.63 vs 41.52 tok/s, C8 104.04 vs 103.04, not regressed. Earlier PT-first pairs (order-confounded, see gb10x3-glm53-mhc-pre-tile-winnpt-pair): c32k client 64k -111.5 / 256k -171.2 / 512k -206.3 ms, server -137.8 / -154.2 / -209.2; all three negative, none beyond noise on its own. Chunk attribution on the confirm pair: sum -167 ms (c0 -46, c1 -31, c2 -44, c3 -46). The confirm arm ranked #1 on c32k cold (9886 ms, 8 of 8 cells ahead of the vLLM bars). Pre-serve evidence (2026-10-15): byte gate identical at T 1,2,3,4,5,17,684,2736 with firing negative controls; microbench T=684 tok4 470.7 vs tile4 347.2 us clean, 668.7 vs 446.3 beside an SM copy; projection -189 ms clean, -340 ms under SM-copy load"
 failure_mode = ""
 caught_by = ""
 time_lost_hours = 1.5
 would_catch_earlier = "smoke every cache-policy variant at T=1 before a timing run: the L2 evict_last variant died on its first launch"
 effort_hours = 8.0
 transferability = "any per-token reduction kernel that re-reads a shared weight per small block: widen the block's work with a cp.async ring instead of adding tokens per block, and keep each token's summation order"
-links = { pr = "", commit = "", evidence = "glm5next_mhc_tile_gate example output and standalone harness, 2026-10-15" }
-notes = "Variants measured and not shipped: eight tokens per block with three stages (tile8) ran 381 us at T=684 vs tile4's 350. Five or six stages gain 0-4% clean and 4-5% under SM-copy load at 684 rows, within spread; a split Sinkhorn tail gains about 1%. createpolicy.fractional.L2::evict_last with cp.async L2::cache_hint raised CUDA_ERROR_ILLEGAL_INSTRUCTION on GB10 at T=1, with or without applypriority. Not applied on the MHC_POST_PRE_FUSED path. A faster pre-norm may expose NCCL time it now hides"
+links = { pr = "", commit = "8701b6131, b35510c4b, beff65e7b", evidence = "glm5next_mhc_tile_gate example output and standalone harness, 2026-10-15; serve pair K524288-kinv-1016T2134 (control) then K524288-kinv-1016T2210 (arm), campaign STATUS 2026-10-16T22:50Z" }
+notes = "Variants measured and not shipped: eight tokens per block with three stages (tile8) ran 381 us at T=684 vs tile4's 350. Five or six stages gain 0-4% clean and 4-5% under SM-copy load at 684 rows, within spread; a split Sinkhorn tail gains about 1%. createpolicy.fractional.L2::evict_last with cp.async L2::cache_hint raised CUDA_ERROR_ILLEGAL_INSTRUCTION on GB10 at T=1, with or without applypriority. Not applied on the MHC_POST_PRE_FUSED path. A faster pre-norm may expose NCCL time it now hides. Kept: PRE_TILE=1 is in the 512k recipe of record (beff65e7b, binary b35510c4b) and the frozen 512k agentic profile. Watch item, not blocking: warm c256 PT minus control across the four PT pairs -2.9 / +1.7 / +1.2 / +2.3 ms (higher in 3 of 4), warm c1k -0.1 / +1.5 / -0.3 / +2.2. The 16:51Z single-pair 'not KEEP' is the revision entry gb10x3-glm53-mhc-pre-tile-winnpt-pair"
 
 [[lever]]
 id = "gb10x3-glm53-w4a16-seg-fill"
@@ -2213,3 +2213,99 @@ effort_hours = 2.0
 transferability = "any per-rank cache whose restore needs all ranks to agree: never let one rank insert entries the others cannot hold"
 links = { pr = "", commit = "46e4e1267, e23cceeff", evidence = "/workspace/claude-state/glm/STATUS.md 2026-10-16T15:55:14Z DBF1 verdict; /workspace/claude-state/glm/decode-plan/ARMS_dd.md DD-DBF1; /workspace/claude-state/glm/decode-plan/f1_check.sh" }
 notes = "Branches: glm/f1-finish-leaf (46e4e1267, on the DB0 base) and glm/dd-f1 (e23cceeff, ad7970757 + F1). A once-per-process info line ('finish-leaf SSM snapshot: off on a multi-rank world') is the readback; it prints on rank 0 only. time_lost_hours (one invalid C16 rep plus diagnosis) and effort_hours are estimates"
+
+[[lever]]
+id = "gb10x3-glm53-mhc-pre-tile-winnpt-pair"
+date = "2026-10-16"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "revision of gb10x3-glm53-mhc-pre-tile: WINN recipe + METRALE_GLM_MHC_PRE_TILE=1 at 64k, one arm against a same-day control, arm run FIRST"
+symptom = "the 64k serve pair read c32k cold -111.5 ms client / -137.8 ms server, favourable but inside the 3% noise band"
+diagnosis_tool = "bench"
+root_cause_class = "measurement-methodology-error"
+lever_type = "process-fix"
+lkb_effect = "none (verdict revision; the kernel is the parent entry's)"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "ttft-cold-c256", tok_s_pct = 0, j_tok_pct = 0.0, n = 3 }, { rung = "ttft-cold-c1k", tok_s_pct = 0, j_tok_pct = 0.0, n = 3 }, { rung = "ttft-cold-c4k", tok_s_pct = 0, j_tok_pct = 0.0, n = 3 }, { rung = "ttft-cold-c32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 3 }]
+verdict = "held"
+verdict_reason = "2026-10-16 16:51Z NOT KEEP on one pair: WINNPT (K65536-kinv-1016T1554) minus CTLWINN (K65536-kinv-1016T1623), same binary b35510c4b, only token diff PRE_TILE=1 plus its readback. c32k cold client -111.5 ms vs band 302.9 (3%), server -137.8 vs band 552.2 (2x spread): within noise. Other cells client delta / band: cold c256 -9.4/33.2, c1k +2.9/65.6, c4k -16.9/76.6; warm c256 -2.0/7.6, c1k -0.1/4.2, c4k -0.6/5.2, c32k +5.5/33.8, all within noise; tf hash identical; decode C1 41.49/41.54 vs 41.02/41.03 tok/s, C8 103.47 vs 102.85; agentic 10/10 both. The lever stayed held and was superseded by the control-first 512k confirm (KEEP, parent entry)"
+failure_mode = "order confound: the arm ran before its control in this pair and in the 256k and 512k attribution pairs (PT minus control -171.2 and -206.3 ms client); the controls drifted upward over the afternoon (about 10006 to 10058 ms) while the PT arms held, so a PT-first delta could be drift, and a single pair inside the band could not separate the two"
+caught_by = "the declared 1(b) noise band on the KEEP condition, and a worker's drift read across the day's controls"
+time_lost_hours = 2.0
+would_catch_earlier = "run every attribution pair control-first and adjacent (standing rule from 2026-10-16 19:30Z): under upward drift a control-first negative delta is conservative"
+effort_hours = 0.5
+transferability = "any serve A/B judged on one pair while the box drifts: order the control first and keep the pair adjacent"
+links = { pr = "", commit = "b35510c4b", evidence = "serve pairs K65536-kinv-1016T1554/1623, K262144-kinv-1016T1709/1818, K524288-kinv-1016T1739/1848; campaign STATUS 2026-10-16T16:51:24Z and 19:29:32Z" }
+notes = "Kept as its own entry so the not-KEEP is not overwritten by the later KEEP. time_lost_hours counts the two attribution arms and the confirm pair that the order confound made necessary (estimate)"
+
+[[lever]]
+id = "gb10x3-glm53-wide-verify-graphs-drafter-refusal"
+date = "2026-10-16"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes, MTP drafter layer 45"
+recipe_or_tier = "DB5: decode recipe + METRALE_GLM_WIDE_VERIFY_GRAPHS=1 + METRALE_GLM_MOE_W4A4_WIDE_SWEEP=1 + METRALE_DENSE_BATCHM_32=1, MTP dispatch cap 16"
+symptom = "all three ranks logged 'GLM-5.3 MTP module load FAILED: glm5_next layer 45: METRALE_GLM_WIDE_VERIFY_GRAPHS=1: the routed experts' precision plan leaves W4A4 below 32 rows'; speculation silently disabled, mtp share 0.00 at every rung, and the arm ran to the end as serial decode"
+diagnosis_tool = "manual-inspection"
+root_cause_class = "wiring-defect"
+lever_type = "process-fix"
+lkb_effect = "none in this entry (the guard fix is d662d46fc, re-tested in 2f57285a3)"
+parity_tier_kept = "n/a"
+per_rung = [{ rung = "C1", tok_s_pct = -14.0, j_tok_pct = 8.0, n = 2 }, { rung = "C4", tok_s_pct = -3.9, j_tok_pct = -0.1, n = 2 }, { rung = "C8", tok_s_pct = 2.2, j_tok_pct = -2.5, n = 2 }, { rung = "C16", tok_s_pct = -0.2, j_tok_pct = 1.0, n = 2 }]
+verdict = "failed"
+verdict_reason = "2026-10-16 20:53Z DB5 (K65536-kinv-1016T2031, binary e49c7c1d3) VOID: no MTP, nothing on cap 16 judged. per_rung is the void arm against its control DB5B (K65536-kinv-1016T1929, MTP cap 8, MTP loaded), info only and confounded with the two extra levers: C1 35.94 vs 41.78, C4 75.95 vs 79.01, C8 103.66 vs 101.46, C16 141.93 vs 142.19 tok/s. db5_check and f1_check FAIL (the 17..=32-row levers never arm without MTP)"
+failure_mode = "the verify-graphs load guard refused every routed-experts plan that leaves W4A4 below 32 rows, the drafter's included; the drafter layer is declared 16-bit (W4A16 at every row) and runs at most 16 rows outside the batched verify capture, so the refusal protected nothing and disabled MTP; the load failure was logged but did not stop the arm"
+caught_by = "reading the serve log after an anomalous C1 (serial-decode rate with MTP requested)"
+time_lost_hours = 1.0
+would_catch_earlier = "fail closed at READY when --speculative is requested and the MTP module did not load (installed the same day: a boot-time abort in the chain runner plus a post-hook MTP-loaded readback on every queued decode arm)"
+effort_hours = 1.0
+transferability = "any load-time guard over a per-layer precision plan: scope it to the sites the guarded path actually runs, and make a disabled speculative path fail the arm, not degrade it"
+links = { pr = "", commit = "e49c7c1d3, d662d46fc", evidence = "serve pair K65536-kinv-1016T1929 (control) / K65536-kinv-1016T2031 (void arm); campaign STATUS 2026-10-16T20:53:36Z and 21:30:54Z" }
+notes = "Process fixes the same day: a fail-closed MTP-loaded readback (negative controls: trips on the void arm, passes its control, fails on a missing label) and a boot-time abort that exits before any bench when the MTP module did not load. A no-MTP C8 above the MTP C8 here (103.66 vs 101.46) became the MTP-at-width hypothesis; see gb10x3-glm53-mtp-dispatch-cap-4"
+
+[[lever]]
+id = "gb10x3-glm53-mtp-dispatch-cap-4"
+date = "2026-10-16"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "MTP_MAX_SEQS 4 (DC4) vs 8 (DC8): MTP drafts only while the live batch is at or below the cap"
+symptom = "a void no-MTP arm read C8 above its MTP control, suggesting MTP costs throughput at C8"
+diagnosis_tool = "bench"
+root_cause_class = "speculation-economics"
+lever_type = "config"
+lkb_effect = "none (scheduler cap only)"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C4", tok_s_pct = -0.25, j_tok_pct = -0.6, n = 2 }, { rung = "C8", tok_s_pct = -0.26, j_tok_pct = -1.5, n = 2 }, { rung = "C12", tok_s_pct = 0.3, j_tok_pct = -0.8, n = 2 }]
+verdict = "discarded"
+verdict_reason = "2026-10-16 23:58Z FAIL, cap 8 stays. Rule fixed before data: DC4 C8 >= DC8 C8 + noise band AND C4/C12 within noise AND MTP engaged at C4 in both. DC4 (K65536-kinv-1016T2319) vs DC8 (K65536-kinv-1016T2244), same binary e49c7c1d3, control first, adjacent, medians of 2: C4 78.30 vs 78.50 tok/s, C8 103.62 vs 103.89 (rep ranges disjoint: 103.52..103.73 vs 103.82..103.95), C12 126.33 vs 125.92 (info); J/tok C4 1.429 vs 1.438, C8 1.091 vs 1.108, C12 0.916 vs 0.923. MTP share at C8 0.11 (cap 4) vs 0.96 (cap 8); C4 share 0.96 and 10/10 drafted in both. Early-EOS (requests ending at 989 tokens) DC8 1-2 per rung, DC4 none, so the like-for-like read is per-request tok/s at N=1024: C8 16.16/16.14 (cap 4) vs 16.77/16.51 (cap 8), and C8 TPOT p50 0.7-0.8 ms lower with MTP on; it agrees with the aggregate. Validity: readbacks 14/14 incl. the cap line, MTP loaded on all ranks, F1 PASS, tf section 3a32f6cb77727a95, min_cached 192 every rep"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 1.5
+transferability = "MTP on a TP-sharded MoE at mid concurrency: the void no-MTP C8 lead was the confound of two extra levers, not MTP cost; measure the cap alone, control first"
+links = { pr = "", commit = "e49c7c1d3", evidence = "serve pair K65536-kinv-1016T2244 (cap 8, control) / K65536-kinv-1016T2319 (cap 4); per-rung MTP engagement by time window (mtp_win.sh sha16 b648038d3799eee5) on both arms; campaign STATUS 2026-10-16T23:25Z and 23:58Z" }
+notes = "DC4's only gain is C8 J/tok -1.5% with MTP off at C8. Both arms trail the vLLM bars (C4 83.42, C8 114.56) by about 6% and 9.4%. With cap 8 MTP disengages at C12 (share 0.07, preamble requests only). The first per-rung tool mis-bucketed 98 of 108 lines because early-EOS requests broke its count; the time-window tool replaced it for both arms"
+
+[[lever]]
+id = "gb10x3-glm53-wide-verify-guard-vacuous-test"
+date = "2026-10-17"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "dw6 (d662d46fc) -> dw7 (2f57285a3): the verify-graphs guard bounded by each site's workspace rows; build gate cargo test -p metrale-model-arch --lib"
+symptom = "build_dw6 failed its lib test gate (834 passed, 2 failed): both new guard tests asserted a cap-16 text plan is refused over rows 17..=PREFILL_ROWS, and the guard returned accept; nothing was staged, the boot smoke failed closed and both DB5 re-run arms were not run"
+diagnosis_tool = "code-read"
+root_cause_class = "test-range-vacuity"
+lever_type = "process-fix"
+lkb_effect = "none (tests only; the guard code of d662d46fc is unchanged in 2f57285a3)"
+parity_tier_kept = "n/a"
+per_rung = []
+verdict = "failed"
+verdict_reason = "process failure, 2026-10-17 00:01Z. The tests passed PREFILL_ROWS (16, the default sub-chunk) as a text site's rows, so the checked range 17..=16 was empty and the refusal could not be exercised; served text sites carry verify_k = max(16, prefill_rows(), multi_seq_chunk_rows()) rows (8208 on served loads). 2f57285a3 passes 8208, adds 'refused at 33 rows' and 'accepted at 16 rows' as a positive control at the bound, and corrects the claim. The d662d46fc message said the text-stack refusal was 'unchanged'; with every lever at its default (verify_k = 16) a cap-16 text plan is now accepted where it was refused (no 17..=32-row call reaches such a site). The coverage claim was made without running the targeted test. Fix reviewed and approved before the re-run; the rebuild must show both guard tests ok by name"
+failure_mode = "a bound argument that makes the range under test empty: the negative assertion holds vacuously on the old code, so the tests never pinned the refusal, and the commit's 'unchanged' claim went unexercised until the full lib gate ran on the build slot"
+caught_by = "the full cargo test -p metrale-model-arch --lib gate inside the staged build"
+time_lost_hours = 1.5
+would_catch_earlier = "a positive control at the bound (the same assertion at max_rows = floor - 1 and floor must flip) and running the targeted test through the build slot before claiming coverage"
+effort_hours = 0.5
+transferability = "any range-bounded guard test: assert both sides of the bound, and derive the bound from the value the served path uses, not a default constant"
+links = { pr = "", commit = "d662d46fc, 2f57285a3", evidence = "build_dw6 lib test gate (2 failed of 836); campaign STATUS 2026-10-17 00:01Z and 00:02Z" }
+notes = "Cost: the boot smoke and the two DB5 re-run arms were re-queued after the ONORM pair. time_lost_hours is an estimate of that delay"
