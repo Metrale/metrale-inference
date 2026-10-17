@@ -118,7 +118,11 @@ struct Arch {
 
 macro_rules! circuits_file {
     ($f:literal) => {
-        include_str!(concat!("../../../kernels/circuits/", $f))
+        include_str!(concat!(
+            env!("METRALE_KERNEL_TREE_ROOT"),
+            "/kernels/circuits/",
+            $f
+        ))
     };
 }
 
