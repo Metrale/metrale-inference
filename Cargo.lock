@@ -1642,6 +1642,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "metrale-error"
+version = "1.0.0-beta-preview"
+
+[[package]]
 name = "metrale-governance"
 version = "1.0.0-beta-preview"
 dependencies = [
