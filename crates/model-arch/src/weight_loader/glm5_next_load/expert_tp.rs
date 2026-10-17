@@ -18,8 +18,10 @@
 //! Invariants:
 //! - `ExpertShard::Whole` binds through `bind_expert`, unchanged.
 //! - A sliced projection keeps the expert's own `weight_scale_2` and `input_scale`.
+//! - 2026-10-17: A csf-encoded scale plane is refused sliced (its bytes have no pre-flight
+//!   charge under this layout); the whole layout binds it.
 
-use super::expert_scales::{decode_expert_block_scales, has_csf_plane};
+use super::expert_scales::has_csf_plane;
 use super::expert_slab::{CSF_SCALE_SLAB_LABEL, ExpertSlab, TP_SLAB_LABEL};
 use super::*;
 use crate::glm5next_mlp::expert_tp::{
@@ -180,37 +182,30 @@ fn sliced_proj(
                 );
             }
             let sname = qualify(layer, &format!("{base}.weight_scale"));
-            // 2026-10-17: A csf-encoded scale plane is decoded whole on the host and cut there.
-            let decoded = if has_csf_plane(store, layer, &base) {
-                Some(decode_expert_block_scales(gpu, store, layer, &base, n, k)?)
-            } else {
-                let (sd, sshape) = meta(store, &sname)?;
-                if sd != WeightDtype::FP8E4M3 || sshape != [n, k / 16] {
-                    bail!(
-                        "{base}.weight_scale is {sd:?} {sshape:?}, expected F8_E4M3 [{n}, {}]",
-                        k / 16
-                    );
-                }
-                None
-            };
+            // 2026-10-17: csf-encoded scale planes are refused under the tp layout: its experts
+            // are deferred without a pre-flight charge (`defer_charge`), so decoding them here
+            // would place bytes the pre-flight never counted. The whole (ep) layout binds them.
+            if has_csf_plane(store, layer, &base) {
+                bail!(
+                    "{base}: csf-encoded block scales are not supported under \
+                     --moe-expert-layout tp; use the ep layout for this checkpoint"
+                );
+            }
+            let (sd, sshape) = meta(store, &sname)?;
+            if sd != WeightDtype::FP8E4M3 || sshape != [n, k / 16] {
+                bail!(
+                    "{base}.weight_scale is {sd:?} {sshape:?}, expected F8_E4M3 [{n}, {}]",
+                    k / 16
+                );
+            }
             let (packed, scales) = if by_rows {
                 let rows = s.real_cols();
                 let cut = |name: &str, row_bytes: usize, r: TpSlice| {
                     read_range(gpu, store, name, r.start * row_bytes, r.len * row_bytes)
                 };
-                let scale_rows = match &decoded {
-                    Some(all) => all
-                        .get(rows.start * (k / 16)..(rows.start + rows.len) * (k / 16))
-                        .map(<[u8]>::to_vec)
-                        .with_context(|| format!("{sname}: rows past the decoded plane"))?,
-                    None => cut(&sname, k / 16, rows)?,
-                };
-                pad_expert_rows(cut(&wname, k / 2, rows)?, scale_rows, k, s)?
+                pad_expert_rows(cut(&wname, k / 2, rows)?, cut(&sname, k / 16, rows)?, k, s)?
             } else {
-                let scales = match decoded {
-                    Some(all) => all,
-                    None => read_all(gpu, store, &sname)?,
-                };
+                let scales = read_all(gpu, store, &sname)?;
                 slice_expert_cols(&read_all(gpu, store, &wname)?, &scales, n, s)?
             };
             (
