@@ -57,6 +57,11 @@ fn range_bounds_match_the_owner_confirmed_table() {
     let bounds: Vec<(u16, u16)> = CodeRange::ALL.iter().map(|r| r.bounds()).collect();
     assert_eq!(
         bounds,
-        vec![(0x0000, 0x00FF), (0x0100, 0x01FF), (0x0200, 0x02FF)],
+        vec![
+            (0x0000, 0x00FF),
+            (0x0100, 0x01FF),
+            (0x0200, 0x02FF),
+            (0x0300, 0x03FF)
+        ],
     );
 }

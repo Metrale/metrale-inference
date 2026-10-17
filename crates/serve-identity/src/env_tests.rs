@@ -107,21 +107,42 @@ fn a_declaration_is_validated() {
         ])
     );
 
-    for (bad, why) in [
-        (("CUDA_VISIBLE_DEVICES", "0"), "not a METRALE_* serve lever"),
-        (("METRALE_HOME", "/tmp/x"), "harness variable"),
-        (("METRALE_FP8_ROWWISE", "  "), "empty value"),
+    for (bad, why, code) in [
+        (
+            ("CUDA_VISIBLE_DEVICES", "0"),
+            "not a METRALE_* serve lever",
+            ErrorCode::ServeEnvNotALever,
+        ),
+        (
+            ("METRALE_HOME", "/tmp/x"),
+            "harness variable",
+            ErrorCode::ServeEnvHarness,
+        ),
+        (
+            ("METRALE_FP8_ROWWISE", "  "),
+            "empty value",
+            ErrorCode::ServeEnvEmpty,
+        ),
         // 2026-09-26: A name the lever table does not declare.
-        (("METRALE_FOO", "1"), "not a declared lever"),
-        (("METRALE_SKIP_BUILD", "1"), "harness variable"),
+        (
+            ("METRALE_FOO", "1"),
+            "not a declared lever",
+            ErrorCode::ServeEnvUndeclared,
+        ),
+        (
+            ("METRALE_SKIP_BUILD", "1"),
+            "harness variable",
+            ErrorCode::ServeEnvHarness,
+        ),
         (
             ("METRALE_BENCH_ITERS", "3"),
             "never reads (it is a dev variable)",
+            ErrorCode::ServeEnvNotRead,
         ),
     ] {
-        let e = declared("recipe q/x", &map(&[bad]))
-            .unwrap_err()
-            .to_string();
+        let err = declared("recipe q/x", &map(&[bad])).unwrap_err();
+        assert_eq!(err.code(), code, "{bad:?}: {err}");
+        let e = err.to_string();
         assert!(e.contains(why), "{bad:?}: {e}");
         assert!(e.contains(bad.0), "names the key: {e}");
     }
@@ -157,8 +178,9 @@ fn an_undeclared_lever_in_the_harness_is_refused_by_name() {
         &BTreeMap::new(),
         &node,
     )
-    .unwrap_err()
-    .to_string();
+    .unwrap_err();
+    assert_eq!(e.code(), ErrorCode::ServeEnvInherited, "{e}");
+    let e = e.to_string();
     assert!(e.contains("3 serve lever(s)"), "{e}");
     assert!(e.contains("METRALE_FP8_ROWWISE=1"), "{e}");
     assert!(
@@ -224,8 +246,9 @@ fn a_declared_lever_is_applied_and_a_contradicted_one_is_refused() {
             ("METRALE_MTP_DCUT_RATIO", "1.0"),
         ]),
     )
-    .unwrap_err()
-    .to_string();
+    .unwrap_err();
+    assert_eq!(e.code(), ErrorCode::ServeEnvContradicted, "{e}");
+    let e = e.to_string();
     assert!(e.contains("contradicts recipe r"), "{e}");
     assert!(
         e.contains("METRALE_FP8_ROWWISE: harness \"0\", recipe r declares \"1\""),
@@ -244,4 +267,51 @@ fn no_levers_anywhere_reconciles_to_nothing() {
     let r = reconcile("recipe r", &BTreeMap::new(), &BTreeMap::new()).unwrap();
     assert!(r.env.is_empty() && r.missing.is_empty());
     assert_eq!(fingerprint(&r.env), fingerprint(&BTreeMap::new()));
+}
+
+/// 2026-10-17: Moving the refusals onto the registry kept every message byte-identical to the
+/// text `EnvError` printed (frozen here from the pre-move build).
+#[test]
+fn every_refusal_renders_the_text_it_printed_before_the_registry_move() {
+    for ((name, value), want) in [
+        (
+            ("CUDA_VISIBLE_DEVICES", "0"),
+            "recipe r declares env CUDA_VISIBLE_DEVICES, which is not a METRALE_* serve lever. The gate applies exactly the levers a recipe declares and nothing else, so a variable the server does not read cannot be declared here.",
+        ),
+        (
+            ("METRALE_HOME", "/tmp/x"),
+            "recipe r declares env METRALE_HOME, which places, logs or builds rather than measuring (METRALE_HOME is a harness variable, not a serve lever) — it is the box's to set, never the recipe's.",
+        ),
+        (
+            ("METRALE_BENCH_ITERS", "3"),
+            "recipe r declares env METRALE_BENCH_ITERS, which the server never reads (it is a dev variable), so declaring it here would change nothing that is measured.",
+        ),
+        (
+            ("METRALE_FOO", "1"),
+            "recipe r declares env METRALE_FOO, which is not a declared lever: nothing reads it, so it is a typo or a lever that no longer exists, and `met serve` refuses to start with it set. `met dump-serve-options` lists every declared lever.",
+        ),
+        (
+            ("METRALE_FP8_ROWWISE", "  "),
+            "recipe r declares env METRALE_FP8_ROWWISE with an empty value. An exported-but-empty variable is how a shell spells \"unset\": declare a value or drop the key.",
+        ),
+    ] {
+        let got = declared("recipe r", &map(&[(name, value)])).unwrap_err();
+        assert_eq!(got.to_string(), want, "{name}");
+    }
+    let present = map(&[("METRALE_A", "1"), ("METRALE_B", "2")]);
+    let got = reconcile("recipe r", &BTreeMap::new(), &present).unwrap_err();
+    assert_eq!(
+        got.to_string(),
+        "the harness environment carries 2 serve lever(s) that recipe r does not declare: METRALE_A=1, METRALE_B=2. A lever the recipe did not ask for changes what the gate measures (METRALE_FP8_ROWWISE=1 builds FP8 twin weights that a 0.70-util serve cannot boot with — #1242), so it is refused rather than inherited. Unset it — on a node agent, remove it from bench.yaml `env:`, which reaches EVERY gate on the box — or declare it in the recipe's `env:` (or the gate's [benchmarks.serve_env]) if the gate is measured under it."
+    );
+    let got = reconcile(
+        "recipe r",
+        &map(&[("METRALE_A", "1")]),
+        &map(&[("METRALE_A", "0")]),
+    )
+    .unwrap_err();
+    assert_eq!(
+        got.to_string(),
+        "the harness environment contradicts recipe r on 1 serve lever(s): METRALE_A: harness \"0\", recipe r declares \"1\". Neither value wins silently: unset the variable so the declaration applies, or change the declaration."
+    );
 }

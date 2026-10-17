@@ -18,7 +18,8 @@
 //!
 //! 2026-10-17: Moved from metrale-bench (`serve_env`). Reading this process's
 //! environment moved to `metrale-host-probe::serve_identity::process_levers`;
-//! refusals are [`EnvError`], whose `Display` is the text `bail!` printed.
+//! refusals are registry errors (`ErrorCode::ServeEnv*`), whose `Display` is the text `bail!`
+//! printed.
 //!
 //! Owner: serve identity (serve environment).
 //! Invariants:
@@ -29,7 +30,7 @@
 use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use core::fmt;
+use metrale_error::{Error, ErrorCode, error};
 
 use metrale_settings::groups::lookup;
 use metrale_settings::spec::Class;
@@ -80,88 +81,6 @@ pub fn fingerprint(levers: &BTreeMap<String, String>) -> String {
     crate::hex_lower(&h.finalize())
 }
 
-/// 2026-10-17: Why a lever declaration or a harness environment was refused.
-/// `owner` names the declaring file; `name` the variable.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum EnvError {
-    /// 2026-10-17: A declared key outside the `METRALE_` prefix.
-    NotALever { owner: String, name: String },
-    /// 2026-10-17: A declared harness variable.
-    Harness { owner: String, name: String },
-    /// 2026-10-17: A declared build, dev or tool variable (`class` names which).
-    NotRead {
-        owner: String,
-        name: String,
-        class: &'static str,
-    },
-    /// 2026-10-17: A declared name the lever table does not declare.
-    Undeclared { owner: String, name: String },
-    /// 2026-10-17: A declared lever whose value is empty after trimming.
-    Empty { owner: String, name: String },
-    /// 2026-10-17: Levers the harness carries that `owner` does not declare, as `NAME=value`.
-    Inherited { owner: String, levers: Vec<String> },
-    /// 2026-10-17: Declared levers the harness carries at another value, one line each.
-    Contradicted { owner: String, levers: Vec<String> },
-}
-
-impl fmt::Display for EnvError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NotALever { owner, name } => write!(
-                f,
-                "{owner} declares env {name}, which is not a METRALE_* serve lever. The gate \
-                 applies exactly the levers a recipe declares and nothing else, so a variable \
-                 the server does not read cannot be declared here."
-            ),
-            Self::Harness { owner, name } => write!(
-                f,
-                "{owner} declares env {name}, which places, logs or builds rather than \
-                 measuring ({name} is a harness variable, not a serve lever) — it is the \
-                 box's to set, never the recipe's."
-            ),
-            Self::NotRead { owner, name, class } => write!(
-                f,
-                "{owner} declares env {name}, which the server never reads (it is a {} \
-                 variable), so declaring it here would change nothing that is measured.",
-                class
-            ),
-            Self::Undeclared { owner, name } => write!(
-                f,
-                "{owner} declares env {name}, which is not a declared lever: nothing reads it, \
-                 so it is a typo or a lever that no longer exists, and `met serve` refuses \
-                 to start with it set. `met dump-serve-options` lists every declared lever."
-            ),
-            Self::Empty { owner, name } => write!(
-                f,
-                "{owner} declares env {name} with an empty value. An exported-but-empty variable \
-                 is how a shell spells \"unset\": declare a value or drop the key."
-            ),
-            Self::Inherited { owner, levers } => write!(
-                f,
-                "the harness environment carries {} serve lever(s) that {owner} does not declare: \
-                 {}. A lever the recipe did not ask for changes what the gate measures \
-                 (METRALE_FP8_ROWWISE=1 builds FP8 twin weights that a 0.70-util serve cannot \
-                 boot with — #1242), so it is refused rather than inherited. Unset it — on a node \
-                 agent, remove it from bench.yaml `env:`, which reaches EVERY gate on the box — or \
-                 declare it in the recipe's `env:` (or the gate's [benchmarks.serve_env]) if the \
-                 gate is measured under it.",
-                levers.len(),
-                levers.join(", ")
-            ),
-            Self::Contradicted { owner, levers } => write!(
-                f,
-                "the harness environment contradicts {owner} on {} serve lever(s): {}. Neither value \
-                 wins silently: unset the variable so the declaration applies, or change the \
-                 declaration.",
-                levers.len(),
-                levers.join("; ")
-            ),
-        }
-    }
-}
-
-impl core::error::Error for EnvError {}
-
 /// 2026-09-26: Validate one declaration (a recipe's `env:` block or a
 /// BENCH.toml `[benchmarks.serve_env]` table) into the lever set it means.
 ///
@@ -174,27 +93,35 @@ impl core::error::Error for EnvError {}
 pub fn declared(
     owner: &str,
     raw: &BTreeMap<String, String>,
-) -> Result<BTreeMap<String, String>, EnvError> {
+) -> Result<BTreeMap<String, String>, Error> {
     let mut out = BTreeMap::new();
     for (name, value) in raw {
         let (owner, name) = (owner.to_string(), name.clone());
         if !name.starts_with(PREFIX) {
-            return Err(EnvError::NotALever { owner, name });
+            return Err(error!(ErrorCode::ServeEnvNotALever, owner, name));
         }
         match lookup(&name).map(|l| l.class) {
             Some(Class::Runtime) => {}
-            Some(Class::Harness) => return Err(EnvError::Harness { owner, name }),
+            Some(Class::Harness) => {
+                return Err(error!(
+                    ErrorCode::ServeEnvHarness,
+                    owner,
+                    name.clone(),
+                    name
+                ));
+            }
             Some(class) => {
-                return Err(EnvError::NotRead {
+                return Err(error!(
+                    ErrorCode::ServeEnvNotRead,
                     owner,
                     name,
-                    class: class.as_str(),
-                });
+                    class.as_str()
+                ));
             }
-            None => return Err(EnvError::Undeclared { owner, name }),
+            None => return Err(error!(ErrorCode::ServeEnvUndeclared, owner, name)),
         }
         if value.trim().is_empty() {
-            return Err(EnvError::Empty { owner, name });
+            return Err(error!(ErrorCode::ServeEnvEmpty, owner, name));
         }
         out.insert(name, value.clone());
     }
@@ -238,17 +165,19 @@ pub fn reconcile(
     owner: &str,
     declared: &BTreeMap<String, String>,
     present: &BTreeMap<String, String>,
-) -> Result<Reconciled, EnvError> {
+) -> Result<Reconciled, Error> {
     let undeclared: Vec<String> = present
         .iter()
         .filter(|(k, _)| !declared.contains_key(*k))
         .map(|(k, v)| alloc::format!("{k}={v}"))
         .collect();
     if !undeclared.is_empty() {
-        return Err(EnvError::Inherited {
-            owner: owner.to_string(),
-            levers: undeclared,
-        });
+        return Err(error!(
+            ErrorCode::ServeEnvInherited,
+            undeclared.len(),
+            owner.to_string(),
+            undeclared.join(", ")
+        ));
     }
     let mut missing = BTreeMap::new();
     let mut contradicted = Vec::new();
@@ -264,10 +193,12 @@ pub fn reconcile(
         }
     }
     if !contradicted.is_empty() {
-        return Err(EnvError::Contradicted {
-            owner: owner.to_string(),
-            levers: contradicted,
-        });
+        return Err(error!(
+            ErrorCode::ServeEnvContradicted,
+            owner.to_string(),
+            contradicted.len(),
+            contradicted.join("; ")
+        ));
     }
     Ok(Reconciled {
         env: declared.clone(),

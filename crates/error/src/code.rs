@@ -86,4 +86,40 @@ error_registry! {
         /// 2026-10-17: A device driver call returned a failure status: (call, status).
         DeviceDriver = 0x0280 => "{} failed: driver status {}",
     }
+    /// 2026-10-17: `0x0300–0x03FF`: serve-identity and host-probe (bench support). Sub-blocks:
+    /// serve env `0x0300–0x030F`.
+    ServeIdentity = 0x0300..=0x03FF {
+        /// 2026-10-17: A declared env key outside the `METRALE_` prefix (owner, name).
+        ServeEnvNotALever = 0x0300 => "{} declares env {}, which is not a METRALE_* serve lever. \
+            The gate applies exactly the levers a recipe declares and nothing else, so a variable \
+            the server does not read cannot be declared here.",
+        /// 2026-10-17: A declared harness variable (owner, name, name).
+        ServeEnvHarness = 0x0301 => "{} declares env {}, which places, logs or builds rather \
+            than measuring ({} is a harness variable, not a serve lever) — it is the box's to \
+            set, never the recipe's.",
+        /// 2026-10-17: A declared build, dev or tool variable (owner, name, class).
+        ServeEnvNotRead = 0x0302 => "{} declares env {}, which the server never reads (it is a \
+            {} variable), so declaring it here would change nothing that is measured.",
+        /// 2026-10-17: A declared name the lever table does not declare (owner, name).
+        ServeEnvUndeclared = 0x0303 => "{} declares env {}, which is not a declared lever: \
+            nothing reads it, so it is a typo or a lever that no longer exists, and `met serve` \
+            refuses to start with it set. `met dump-serve-options` lists every declared lever.",
+        /// 2026-10-17: A declared lever whose value is empty after trimming (owner, name).
+        ServeEnvEmpty = 0x0304 => "{} declares env {} with an empty value. An exported-but-empty \
+            variable is how a shell spells \"unset\": declare a value or drop the key.",
+        /// 2026-10-17: Levers the harness carries that the owner does not declare (count, owner,
+        /// `NAME=value` joined by ", ").
+        ServeEnvInherited = 0x0305 => "the harness environment carries {} serve lever(s) that {} \
+            does not declare: {}. A lever the recipe did not ask for changes what the gate \
+            measures (METRALE_FP8_ROWWISE=1 builds FP8 twin weights that a 0.70-util serve \
+            cannot boot with — #1242), so it is refused rather than inherited. Unset it — on a \
+            node agent, remove it from bench.yaml `env:`, which reaches EVERY gate on the box — \
+            or declare it in the recipe's `env:` (or the gate's [benchmarks.serve_env]) if the \
+            gate is measured under it.",
+        /// 2026-10-17: Declared levers the harness carries at another value (owner, count, one
+        /// line each joined by "; ").
+        ServeEnvContradicted = 0x0306 => "the harness environment contradicts {} on {} serve \
+            lever(s): {}. Neither value wins silently: unset the variable so the declaration \
+            applies, or change the declaration.",
+    }
 }

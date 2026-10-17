@@ -15,6 +15,7 @@
 //! | `0x0000–0x00FF` | general (any crate) | `Generic`, `Io`, `InvalidArgument`, `NotImplemented`, `Unavailable` |
 //! | `0x0100–0x01FF` | abstract-io ports and hosts | time `0x0100` (reserved), entropy `0x0110`, env `0x0118`, blob `0x0120–0x013F`, proc `0x0140`, http `0x0150`, transport `0x0170`, host construction `0x0180` |
 //! | `0x0200–0x02FF` | sched-core (`Device`, scheduler, lora) and device backends | sched-core `0x0200–0x027F`, device backends `0x0280–0x02FF` (`DeviceDriver`) |
+//! | `0x0300–0x03FF` | serve-identity and host-probe (bench support) | serve env `0x0300–0x030F` |
 //!
 //! A code is never renumbered or removed; `codes.lock` and its test enforce that.
 //!

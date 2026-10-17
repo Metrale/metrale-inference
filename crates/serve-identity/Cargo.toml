@@ -11,6 +11,7 @@ description = "Metrale Engine: what makes one `met serve` the same server as ano
 metrale-settings = { workspace = true }
 serde = { workspace = true, features = ["alloc", "derive"] }
 sha2 = { workspace = true }
+metrale-error = { workspace = true }
 
 [dev-dependencies]
 # 2026-10-17: parity of this crate's hex spelling with metrale-closure's, the workspace's

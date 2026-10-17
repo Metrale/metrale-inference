@@ -10,6 +10,5 @@
 
 pub use metrale_host_probe::serve_identity::process_levers;
 pub use metrale_serve_identity::env::{
-    EnvError, PREFIX, Reconciled, declared, fingerprint, is_lever, levers, merge_declared,
-    reconcile,
+    PREFIX, Reconciled, declared, fingerprint, is_lever, levers, merge_declared, reconcile,
 };
