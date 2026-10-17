@@ -41,12 +41,17 @@ use metrale_model_layers::weight_map::DenseWeight;
 mod act_scale;
 #[cfg(test)]
 mod defer_hook_tests;
+mod dense_site;
 mod dense_tiers;
 mod expert_quant;
+mod expert_scales;
 mod expert_slab;
 mod expert_tp;
+mod expert_whole;
 #[cfg(test)]
 mod export_layout_tests;
+mod fp8_head;
+mod fp8_widen;
 mod layer_stream;
 #[cfg(test)]
 mod layer_stream_tests;
@@ -57,12 +62,14 @@ mod nvfp4_quant;
 #[cfg(test)]
 mod plan_cast_tests;
 mod plan_dtype;
+mod prune;
 #[cfg(test)]
 mod tp_shapes_tests;
 
 use act_scale::input_scale;
 use act_scale::is_activation_scale;
 use expert_quant::{quantize_deferred_expert_proj, quantize_expert_proj};
+use expert_whole::bind_expert;
 
 pub struct Glm5NextWeightLoader;
 
@@ -164,7 +171,7 @@ fn upload_f32(gpu: &dyn GpuBackend, v: &[f32]) -> Result<DevicePtr> {
 /// host (routed experts by name only). 2026-10-16: Names sorted, so every run sees one order.
 pub(super) struct LayerSource {
     names: std::collections::BTreeSet<String>,
-    tensors: std::collections::BTreeMap<String, (WeightDtype, Vec<usize>, Vec<u8>)>,
+    tensors: fp8_widen::HostTensors,
     /// 2026-09-25: Copies, at the width the binders bind at, of the tensors
     /// stored at another width (see [`plan_dtype`]). Only
     /// [`KdaTensorSource::get`] reads them; [`Self::f32`] reads the stored bytes.
@@ -175,30 +182,20 @@ impl LayerSource {
     pub(super) fn collect(gpu: &dyn GpuBackend, store: &WeightStore, layer: usize) -> Result<Self> {
         let prefix = format!("model.language_model.layers.{layer}.");
         let mut names = std::collections::BTreeSet::new();
-        let mut tensors = std::collections::BTreeMap::new();
-        let mut plan_cast = std::collections::BTreeMap::new();
+        let mut tensors = fp8_widen::HostTensors::new();
         let rels: std::collections::BTreeSet<String> = store
             .names()
             .filter_map(|n| n.strip_prefix(&prefix).map(|r| r.to_string()))
             .collect();
-        let mut put =
-            |rel: &str, dtype: WeightDtype, shape: &[usize], bytes: Vec<u8>| -> Result<()> {
-                if let Some(cast) = plan_dtype::cast_to_plan_dtype(rel, dtype, &bytes)? {
-                    plan_cast.insert(rel.to_string(), cast);
-                }
-                tensors.insert(rel.to_string(), (dtype, shape.to_vec(), bytes));
-                Ok(())
-            };
         for rel in rels {
-            let rel = rel.as_str();
-            names.insert(rel.to_string());
+            names.insert(rel.clone());
             // 2026-09-25: Routed experts are listed but not copied: `bind_expert` reads
             // them from the store.
             if rel.starts_with("mlp.experts.") {
                 continue;
             }
             let t = store.get(&format!("{prefix}{rel}"))?;
-            put(rel, t.dtype, &t.shape, host_bytes(gpu, t)?)?;
+            tensors.insert(rel, (t.dtype, t.shape.clone(), host_bytes(gpu, t)?));
         }
         // 2026-10-16: The tensors `METRALE_GLM_LAYER_STREAM` kept off the device, from their shard.
         for (name, d) in store.deferred_sorted() {
@@ -212,7 +209,27 @@ impl LayerSource {
             let bytes = d
                 .read_host_bytes()
                 .with_context(|| format!("{name}: reading the streamed layer tensor"))?;
-            put(rel, d.dtype, &d.shape, bytes)?;
+            tensors.insert(rel.to_string(), (d.dtype, d.shape.clone(), bytes));
+        }
+        Self::from_host(names, tensors)
+    }
+
+    /// 2026-10-17: The source over one layer's listed names and host-copied tensors (`collect`
+    /// without the device reads). Block-scaled E4M3 linears are replaced by their BF16 widening
+    /// and their consumed scales leave both lists, so the binders see a 16-bit layer; then the
+    /// plan-width copies are made.
+    pub(super) fn from_host(
+        mut names: std::collections::BTreeSet<String>,
+        mut tensors: fp8_widen::HostTensors,
+    ) -> Result<Self> {
+        for scale in fp8_widen::widen_layer_fp8(&mut tensors)? {
+            names.remove(&scale);
+        }
+        let mut plan_cast = std::collections::BTreeMap::new();
+        for (rel, (dtype, _, bytes)) in &tensors {
+            if let Some(cast) = plan_dtype::cast_to_plan_dtype(rel, *dtype, bytes)? {
+                plan_cast.insert(rel.clone(), cast);
+            }
         }
         Ok(Self {
             names,
@@ -351,58 +368,6 @@ fn bind_mhc_site(
             gpu.memset(p, 0, bytes)?;
             p
         },
-    })
-}
-
-/// 2026-09-25: One routed expert's gate/up/down as NVFP4 triples. Each
-/// projection takes the first arm that applies:
-///
-/// 1. deferred by [`Glm5NextWeightLoader::defer_predicate`]: read from disk,
-///    quantised, uploaded;
-/// 2. resident U8: bound zero-copy with its `weight_scale` and scalar
-///    `weight_scale_2`, and its static activation scale when the checkpoint has one
-///    (2026-10-08, [`act_scale::input_scale`]);
-/// 3. resident BF16: read back and quantised; `prune_after_load` frees the
-///    source.
-///
-/// Any other dtype is an error.
-pub(super) fn bind_expert(
-    gpu: &dyn GpuBackend,
-    store: &WeightStore,
-    layer: usize,
-    id: usize,
-) -> Result<Glm5NextExpertWeights> {
-    let proj = |p: &str| -> Result<Nvfp4Proj> {
-        let base = format!("mlp.experts.{id}.{p}");
-        let wname = qualify(layer, &format!("{base}.weight"));
-        // 2026-09-25: Checked first: a deferred tensor has no store entry.
-        if let Some(d) = store.deferred(&wname) {
-            return quantize_deferred_expert_proj(gpu, store, d, &base);
-        }
-        let w = store.get(&wname)?;
-        match w.dtype {
-            WeightDtype::UInt8 => {
-                let scale = store.get(&qualify(layer, &format!("{base}.weight_scale")))?;
-                let s2 = store.get(&qualify(layer, &format!("{base}.weight_scale_2")))?;
-                let s2 = host_f32(gpu, s2, &format!("{base}.weight_scale_2"))?;
-                let [s2] = s2[..] else {
-                    bail!("{base}.weight_scale_2 is not a scalar");
-                };
-                Ok(Nvfp4Proj {
-                    packed: w.ptr,
-                    scale: scale.ptr,
-                    scale_2: s2,
-                    input_scale: input_scale(gpu, store, layer, &base)?,
-                })
-            }
-            WeightDtype::BF16 => quantize_expert_proj(gpu, store, w, &base),
-            other => bail!("{base}.weight is {other:?}, expected packed U8 NVFP4 or BF16"),
-        }
-    };
-    Ok(Glm5NextExpertWeights {
-        gate_proj: proj("gate_proj")?,
-        up_proj: proj("up_proj")?,
-        down_proj: proj("down_proj")?,
     })
 }
 

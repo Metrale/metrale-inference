@@ -112,3 +112,105 @@ fn tempdir_like() -> std::path::PathBuf {
     std::fs::create_dir_all(&p).unwrap();
     p
 }
+
+/// 2026-10-17: Write one safetensors file holding `entries` back to back.
+fn write_shard(path: &std::path::Path, entries: &[(&str, &str, Vec<usize>, Vec<u8>)]) {
+    let mut header = serde_json::Map::new();
+    let mut offset = 0usize;
+    for (name, dtype, shape, bytes) in entries {
+        header.insert(
+            name.to_string(),
+            serde_json::json!({
+                "dtype": dtype,
+                "shape": shape,
+                "data_offsets": [offset, offset + bytes.len()],
+            }),
+        );
+        offset += bytes.len();
+    }
+    let header_bytes = serde_json::to_vec(&serde_json::Value::Object(header)).unwrap();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let mut f = std::fs::File::create(path).unwrap();
+    f.write_all(&(header_bytes.len() as u64).to_le_bytes())
+        .unwrap();
+    f.write_all(&header_bytes).unwrap();
+    for (_, _, _, bytes) in entries {
+        f.write_all(bytes).unwrap();
+    }
+    f.sync_all().unwrap();
+}
+
+/// 2026-10-17: A checkpoint whose index routes tensors to a shard in a
+/// subdirectory, and whose scale planes carry U16 and U32 components, loads
+/// the same tensors with the same bytes through both loaders. The mmap loader
+/// is the reference: it already joined index values onto the model
+/// directory. Before the fix the fast loader routed nothing to the
+/// subdirectory shard and refused the U16/U32 header entries.
+#[test]
+fn subdirectory_shard_with_u16_u32_components_matches_baseline() {
+    let tmp = tempdir_like();
+    let u16s: Vec<u8> = [0x0102u16, 0xFFFF, 0, 0x8001]
+        .iter()
+        .flat_map(|v| v.to_le_bytes())
+        .collect();
+    let u32s: Vec<u8> = [7u32, 0xDEAD_BEEF]
+        .iter()
+        .flat_map(|v| v.to_le_bytes())
+        .collect();
+    write_shard(
+        &tmp.join("model-00001-of-00001.safetensors"),
+        &[("flat", "U8", vec![8], (0..8).collect())],
+    );
+    write_shard(
+        &tmp.join("tensors/side.safetensors"),
+        &[
+            ("plane.offsets", "U16", vec![4], u16s.clone()),
+            ("plane.page_bases", "U32", vec![2], u32s.clone()),
+        ],
+    );
+    let index = serde_json::json!({
+        "metadata": {},
+        "weight_map": {
+            "flat": "model-00001-of-00001.safetensors",
+            "plane.offsets": "tensors/side.safetensors",
+            "plane.page_bases": "tensors/side.safetensors",
+        }
+    });
+    std::fs::write(tmp.join("model.safetensors.index.json"), index.to_string()).unwrap();
+
+    let gpu_base = MockGpuBackend::new();
+    let base = SafetensorsLoader::new()
+        .load(&tmp, &gpu_base, 0)
+        .expect("baseline load");
+    let gpu_fast = MockGpuBackend::new();
+    let mut fast = FastSafetensorsLoader::new();
+    fast.try_direct_io = false;
+    let new = fast.load(&tmp, &gpu_fast, 0).expect("fast load");
+    assert_eq!(base.len(), 3);
+    assert_eq!(new.len(), 3);
+
+    use metrale_model_weights::weights::WeightDtype;
+    for (name, dtype, shape, bytes) in [
+        (
+            "flat",
+            WeightDtype::UInt8,
+            vec![8],
+            (0..8).collect::<Vec<u8>>(),
+        ),
+        ("plane.offsets", WeightDtype::UInt16, vec![4], u16s),
+        ("plane.page_bases", WeightDtype::UInt32, vec![2], u32s),
+    ] {
+        for (label, store, gpu) in [("baseline", &base, &gpu_base), ("fast", &new, &gpu_fast)] {
+            let w = store.get(name).unwrap();
+            assert_eq!(w.dtype, dtype, "{label} dtype for {name}");
+            assert_eq!(w.shape, shape, "{label} shape for {name}");
+            assert_eq!(w.byte_size(), bytes.len(), "{label} byte size for {name}");
+            assert_eq!(
+                gpu.read_alloc(w.ptr).unwrap(),
+                bytes,
+                "{label} bytes for {name}"
+            );
+        }
+    }
+    std::fs::remove_dir_all(&tmp).ok();
+}

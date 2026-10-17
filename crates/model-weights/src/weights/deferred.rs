@@ -73,7 +73,21 @@ use super::WeightDtype;
 /// pipeline is threaded.
 pub type DeferHook = std::sync::Arc<dyn Fn(&str, WeightDtype) -> bool + Send + Sync>;
 
+/// 2026-10-17: The device bytes a model's loader will allocate itself for a tensor it DEFERS,
+/// for the OOM pre-flight: `(tensor name, store dtype, shape) -> bytes`. Asked only about
+/// tensors the [`DeferHook`] claimed; a loader that decodes a deferred tensor into a device
+/// buffer of another size (a compressed scale plane decoded to its native bytes) states that
+/// size here, so the pre-flight does not count the buffer as zero. `None` on a loader means
+/// every deferred tensor costs the pre-flight nothing, today's rule.
+pub type DeferCharge = std::sync::Arc<dyn Fn(&str, WeightDtype, &[usize]) -> usize + Send + Sync>;
+
 /// Where a skipped tensor lives, so a consumer can read it in place.
+///
+/// 2026-10-17: The byte length is stored, not recomputed, and is private: a
+/// header's `shape` is untrusted, so a tensor is only ever built by a
+/// constructor that checks `shape × element size` without overflow and, where
+/// the header states a span, refuses a shape that disagrees with it. Before
+/// this a shape larger than its span read the neighbouring tensor's bytes.
 #[derive(Clone, Debug)]
 pub struct DeferredTensor {
     /// Shard file containing the tensor.
@@ -83,9 +97,60 @@ pub struct DeferredTensor {
     pub offset: u64,
     pub shape: Vec<usize>,
     pub dtype: WeightDtype,
+    len: usize,
 }
 
 impl DeferredTensor {
+    /// 2026-10-17: A tensor whose container states its byte span (a
+    /// safetensors header's `data_offsets`). Refuses a shape whose byte size
+    /// overflows or differs from `span`.
+    pub fn at_span(
+        path: std::path::PathBuf,
+        offset: u64,
+        span: u64,
+        shape: Vec<usize>,
+        dtype: WeightDtype,
+    ) -> Result<Self> {
+        let d = Self::from_shape(path, offset, shape, dtype)?;
+        if u64::try_from(d.len).ok() != Some(span) {
+            anyhow::bail!(
+                "deferred tensor at offset {offset} of {}: shape {:?} × {} B is {} B but its \
+                 span is {span} B",
+                d.path.display(),
+                d.shape,
+                d.dtype.byte_size(),
+                d.len
+            );
+        }
+        Ok(d)
+    }
+
+    /// 2026-10-17: A tensor whose container states no span (a GGUF entry, a
+    /// test fixture): its length is `shape × element size`, refused on overflow.
+    pub fn from_shape(
+        path: std::path::PathBuf,
+        offset: u64,
+        shape: Vec<usize>,
+        dtype: WeightDtype,
+    ) -> Result<Self> {
+        let len = shape
+            .iter()
+            .try_fold(dtype.byte_size(), |acc, &d| acc.checked_mul(d))
+            .with_context(|| {
+                format!(
+                    "deferred tensor at offset {offset} of {}: shape {shape:?} overflows",
+                    path.display()
+                )
+            })?;
+        Ok(DeferredTensor {
+            path,
+            offset,
+            shape,
+            dtype,
+            len,
+        })
+    }
+
     /// The tensor's on-disk footprint.
     ///
     /// Only the fixed-width dtypes a safetensors header can carry reach here,
@@ -93,8 +158,7 @@ impl DeferredTensor {
     /// ([`WeightDtype::PackedQ2_0`] and the K-quants) report 0 bytes/element
     /// and are never deferred by either rule.
     pub fn byte_size(&self) -> usize {
-        let numel: usize = self.shape.iter().product();
-        numel * self.dtype.byte_size()
+        self.len
     }
 
     /// Read the whole tensor's raw bytes into host memory.
@@ -128,7 +192,12 @@ impl DeferredTensor {
                     self.path.display()
                 )
             })?;
-        let at = self.offset + start as u64;
+        let at = self.offset.checked_add(start as u64).with_context(|| {
+            format!(
+                "deferred tensor: offset {} + {start} overflows",
+                self.offset
+            )
+        })?;
         let mut f = std::fs::File::open(&self.path)
             .with_context(|| format!("deferred tensor: opening {}", self.path.display()))?;
         f.seek(SeekFrom::Start(at))?;
@@ -156,12 +225,13 @@ mod tests {
 
     #[test]
     fn byte_size_is_the_on_disk_footprint() {
-        let d = DeferredTensor {
-            path: std::path::PathBuf::from("x"),
-            offset: 0,
-            shape: vec![2048, 4096],
-            dtype: WeightDtype::BF16,
-        };
+        let d = DeferredTensor::from_shape(
+            std::path::PathBuf::from("x"),
+            0,
+            vec![2048, 4096],
+            WeightDtype::BF16,
+        )
+        .unwrap();
         assert_eq!(d.byte_size(), 2048 * 4096 * 2);
     }
 
@@ -170,12 +240,7 @@ mod tests {
         // 8 filler bytes stand in for a header, then four BF16 values.
         let payload: Vec<u8> = vec![1, 2, 3, 4, 5, 6, 7, 8];
         let (_d, path) = write_shard(&[vec![0xFFu8; 8], payload.clone()].concat());
-        let d = DeferredTensor {
-            path,
-            offset: 8,
-            shape: vec![2, 2],
-            dtype: WeightDtype::BF16,
-        };
+        let d = DeferredTensor::from_shape(path, 8, vec![2, 2], WeightDtype::BF16).unwrap();
         assert_eq!(d.read_host_bytes().unwrap(), payload);
     }
 
@@ -185,18 +250,18 @@ mod tests {
     fn range_read_is_relative_to_the_tensor_and_bounded_by_it() {
         let payload: Vec<u8> = (10u8..26).collect();
         let (_d, path) = write_shard(&[vec![0xFFu8; 8], payload.clone(), vec![0xEE; 8]].concat());
-        let d = DeferredTensor {
-            path,
-            offset: 8,
-            shape: vec![4, 4],
-            dtype: WeightDtype::UInt8,
-        };
+        let d = DeferredTensor::from_shape(path, 8, vec![4, 4], WeightDtype::UInt8).unwrap();
         assert_eq!(d.read_host_range(4, 8).unwrap(), payload[4..12]);
         assert_eq!(d.read_host_range(0, 16).unwrap(), payload);
         assert_eq!(d.read_host_range(16, 0).unwrap(), Vec::<u8>::new());
         let e = d.read_host_range(12, 5).unwrap_err().to_string();
         assert!(e.contains("run past"), "{e}");
         assert!(d.read_host_range(usize::MAX, 2).is_err());
+    }
+
+    /// 2026-10-17: The pre-flight charge of a loader that sets no [`DeferCharge`].
+    fn no_charge(_: &str, _: WeightDtype, _: &[usize]) -> usize {
+        0
     }
 
     /// Write a one-tensor-per-entry safetensors file and return its path.
@@ -242,22 +307,63 @@ mod tests {
         );
         let files = [path];
 
-        let all = super::super::estimate_load_bytes(&files, &|_| false, &|_, _| false).unwrap();
+        let all = super::super::estimate_load_bytes(&files, &|_| false, &|_, _| false, &no_charge)
+            .unwrap();
         assert_eq!(all, 136);
 
-        let without = super::super::estimate_load_bytes(&files, &|_| false, &|n, d| {
-            n == "big.weight" && d == WeightDtype::BF16
-        })
+        let without = super::super::estimate_load_bytes(
+            &files,
+            &|_| false,
+            &|n, d| n == "big.weight" && d == WeightDtype::BF16,
+            &no_charge,
+        )
         .unwrap();
         assert_eq!(without, 8, "the deferred tensor must leave the peak");
 
         // 🪤 Keyed on the dtype too: the same NAME at a width the predicate
         // does not claim is still counted, because it is still uploaded.
-        let wrong_dtype = super::super::estimate_load_bytes(&files, &|_| false, &|n, d| {
-            n == "big.weight" && d == WeightDtype::UInt8
-        })
+        let wrong_dtype = super::super::estimate_load_bytes(
+            &files,
+            &|_| false,
+            &|n, d| n == "big.weight" && d == WeightDtype::UInt8,
+            &no_charge,
+        )
         .unwrap();
         assert_eq!(wrong_dtype, 136);
+    }
+
+    /// 2026-10-17: A deferred tensor adds what the loader's charge says it will allocate for it,
+    /// asked with its name, store dtype and shape; a skipped tensor is never charged, and a kept
+    /// one is never asked.
+    #[test]
+    fn the_preflight_estimate_adds_the_charge_of_deferred_tensors() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_safetensors(
+            dir.path(),
+            &[
+                ("plane.codes", "U8", vec![40], 40),
+                ("other.codes", "U8", vec![6], 6),
+                ("kept.weight", "BF16", vec![4], 8),
+            ],
+        );
+        let files = [path];
+        let asked = std::sync::Mutex::new(Vec::new());
+        let charge = |n: &str, d: WeightDtype, s: &[usize]| {
+            asked.lock().unwrap().push((n.to_string(), d, s.to_vec()));
+            s[0] * 2
+        };
+        let got = super::super::estimate_load_bytes(
+            &files,
+            &|n| n == "other.codes",
+            &|n, _| n.ends_with(".codes"),
+            &charge,
+        )
+        .unwrap();
+        assert_eq!(got, 8 + 80, "kept tensor at its size plus the charge");
+        assert_eq!(
+            *asked.lock().unwrap(),
+            vec![("plane.codes".to_string(), WeightDtype::UInt8, vec![40])]
+        );
     }
 
     /// F16 is rewritten on the way to the store, so it can never be served
@@ -267,19 +373,59 @@ mod tests {
     fn an_f16_tensor_is_counted_even_when_the_predicate_claims_everything() {
         let dir = tempfile::tempdir().unwrap();
         let path = write_safetensors(dir.path(), &[("h.weight", "F16", vec![8, 8], 128)]);
-        let got = super::super::estimate_load_bytes(&[path], &|_| false, &|_, _| true).unwrap();
+        let got = super::super::estimate_load_bytes(&[path], &|_| false, &|_, _| true, &no_charge)
+            .unwrap();
         assert_eq!(got, 128);
     }
 
     #[test]
     fn a_truncated_shard_is_an_error_not_a_short_tensor() {
         let (_d, path) = write_shard(&[0u8; 8]);
-        let d = DeferredTensor {
-            path,
-            offset: 0,
-            shape: vec![64, 64],
-            dtype: WeightDtype::BF16,
-        };
+        let d = DeferredTensor::from_shape(path, 0, vec![64, 64], WeightDtype::BF16).unwrap();
         assert!(d.read_host_bytes().is_err());
+    }
+
+    /// 2026-10-17: A header span that disagrees with `shape × element size` is refused in
+    /// both directions; a shape larger than its span used to read the next tensor's bytes.
+    #[test]
+    fn a_span_that_disagrees_with_the_shape_is_refused() {
+        let p = std::path::PathBuf::from("x");
+        let ok = DeferredTensor::at_span(p.clone(), 8, 32, vec![4, 4], WeightDtype::BF16).unwrap();
+        assert_eq!(ok.byte_size(), 32);
+        for span in [31u64, 33, 0, u64::MAX] {
+            let e = DeferredTensor::at_span(p.clone(), 8, span, vec![4, 4], WeightDtype::BF16)
+                .unwrap_err()
+                .to_string();
+            assert!(e.contains("span"), "span {span}: {e}");
+        }
+    }
+
+    /// 2026-10-17: A shape whose byte size overflows is refused by both constructors, and an
+    /// empty shape is one element.
+    #[test]
+    fn an_overflowing_shape_is_refused() {
+        let p = std::path::PathBuf::from("x");
+        let big = vec![usize::MAX / 2 + 1, 1];
+        let e = DeferredTensor::from_shape(p.clone(), 0, big.clone(), WeightDtype::BF16)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("overflows"), "{e}");
+        assert!(DeferredTensor::at_span(p.clone(), 0, 0, big, WeightDtype::BF16).is_err());
+        let scalar = DeferredTensor::from_shape(p, 0, vec![], WeightDtype::FP32).unwrap();
+        assert_eq!(scalar.byte_size(), 4);
+    }
+
+    /// 2026-10-17: An offset near `u64::MAX` is an error, not a wrapped seek.
+    #[test]
+    fn a_range_read_past_u64_offsets_is_an_error() {
+        let d = DeferredTensor::from_shape(
+            std::path::PathBuf::from("x"),
+            u64::MAX,
+            vec![4],
+            WeightDtype::UInt8,
+        )
+        .unwrap();
+        let e = d.read_host_range(2, 1).unwrap_err().to_string();
+        assert!(e.contains("overflows"), "{e}");
     }
 }

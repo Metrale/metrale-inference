@@ -9,23 +9,15 @@
 
 use super::*;
 
-/// 2026-09-25: Build a `LayerSource` the way `collect` does, without a GPU.
+/// 2026-09-25: Build a `LayerSource` the way `collect` does, without a GPU. 2026-10-17: Through
+/// `LayerSource::from_host`, the half of `collect` after the device reads.
 fn source(entries: &[(&str, WeightDtype, Vec<usize>, Vec<u8>)]) -> LayerSource {
-    let mut names = std::collections::BTreeSet::new();
-    let mut tensors = std::collections::BTreeMap::new();
-    let mut plan_cast = std::collections::BTreeMap::new();
-    for (rel, dt, shape, bytes) in entries {
-        names.insert((*rel).to_string());
-        if let Some(cast) = plan_dtype::cast_to_plan_dtype(rel, *dt, bytes).unwrap() {
-            plan_cast.insert((*rel).to_string(), cast);
-        }
-        tensors.insert((*rel).to_string(), (*dt, shape.clone(), bytes.clone()));
-    }
-    LayerSource {
-        names,
-        tensors,
-        plan_cast,
-    }
+    let names = entries.iter().map(|e| e.0.to_string()).collect();
+    let tensors = entries
+        .iter()
+        .map(|(rel, dt, shape, bytes)| ((*rel).to_string(), (*dt, shape.clone(), bytes.clone())))
+        .collect();
+    LayerSource::from_host(names, tensors).expect("from_host")
 }
 
 fn f32_blob(v: &[f32]) -> Vec<u8> {

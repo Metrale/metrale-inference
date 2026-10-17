@@ -234,7 +234,9 @@ fn validate_dtype(dtype: &str, tensor: &str) -> Result<()> {
     match dtype {
         // 2026-09-25: `F16` is for adapter shards: the LoRA client converts
         // F16 and F32 to BF16 (`weight_lora_rdma.rs`).
-        "F32" | "F16" | "BF16" | "U8" | "I8" | "F8_E4M3" | "F8_E8M0" | "I64" => Ok(()),
+        "F32" | "F16" | "BF16" | "U8" | "I8" | "U16" | "U32" | "F8_E4M3" | "F8_E8M0" | "I64" => {
+            Ok(())
+        }
         other => bail!("unsupported safetensors dtype '{other}' for tensor {tensor}"),
     }
 }

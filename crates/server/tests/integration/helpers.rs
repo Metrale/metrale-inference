@@ -67,6 +67,7 @@ pub(super) fn setup_model(
         skip_activation_scales: false,
         skip_mtp: false,
         defer: None,
+        defer_charge: None,
     };
     use metrale_model_weights::weights::WeightLoader;
     let store = loader.load(model_dir, gpu.as_ref(), 1024 * 1024 * 1024)?;
