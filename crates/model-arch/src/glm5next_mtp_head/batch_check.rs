@@ -73,9 +73,3 @@ impl Glm5NextMtpHead {
         Ok(())
     }
 }
-
-/// 2026-10-11: `METRALE_GLM_MTP_PROPOSE_BATCH_CHECK=1` (see `check_against_rows`). Read once.
-pub(super) fn propose_batch_check() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("METRALE_GLM_MTP_PROPOSE_BATCH_CHECK").as_deref() == Ok("1"))
-}

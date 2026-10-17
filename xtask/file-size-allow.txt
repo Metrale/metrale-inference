@@ -12,8 +12,8 @@ crates/gpu-runtime/src/buffers/sizes.rs 511
 crates/gpu-runtime/src/buffers/tests.rs 501
 crates/model-arch/src/glm5next_layer/mod.rs 581
 crates/model-arch/src/glm5next_mhc_fused.rs 632
-crates/model-arch/src/glm5next_mtp_head.rs 532
-crates/model-engine/src/model/trait_impl/device_step.rs 531
+crates/model-arch/src/glm5next_mtp_head.rs 517
+crates/model-engine/src/model/trait_impl/device_step.rs 525
 crates/model-engine/src/model/trait_impl/prefill_a.rs 501
 crates/model-engine/src/model/trait_impl/verify_e.rs 539
 crates/model-layers/src/layers/mod.rs 502

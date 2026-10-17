@@ -25,6 +25,7 @@ pub(super) fn assert_rank_levers_agree(
         metrale_model_layers::ep_wire::EpWire::get(),
     )?;
     let glm = metrale_model_arch::glm5next_layer::GlmLevers::from_settings(settings)?;
+    let mtp = metrale_model_arch::glm5next_mtp_head::MtpLevers::from_settings(settings)?;
     crate::rank_agree::assert_ranks_agree(
         gpu,
         comm.as_ref(),
@@ -52,27 +53,18 @@ pub(super) fn assert_rank_levers_agree(
             ),
             // 2026-10-11: The tensor-parallel drafter `eh_proj` adds an all-reduce to every
             // propose.
-            (
-                "METRALE_GLM_MTP_EH_TP",
-                u64::from(metrale_model_arch::glm5next_mtp_head::eh_tp_enabled()),
-            ),
+            ("METRALE_GLM_MTP_EH_TP", u64::from(mtp.eh_tp)),
             // 2026-10-13: The drafter's row space: a rank with another cap would restart its
             // drafter at another propose (`propose_start`) and draft other tokens.
-            (
-                "METRALE_GLM_MTP_CONTEXT_CAP",
-                metrale_model_arch::glm5next_mtp_head::drafter_context_cap()? as u64,
-            ),
+            ("METRALE_GLM_MTP_CONTEXT_CAP", mtp.context_cap as u64),
             // 2026-10-11: A device-step verify reads row 1 from each rank's own drafter cell, so
             // every rank must leave the draft there the same way.
             (
                 "METRALE_GLM_MTP_DEVICE_STEP",
-                u64::from(super::super::trait_impl::device_step::device_step_enabled()),
+                u64::from(settings.speculative.glm_mtp_device_step),
             ),
             // 2026-10-11: The device draft exchange moves an all-reduce into the drafter graph.
-            (
-                "METRALE_GLM_MTP_XCHG_DEVICE",
-                u64::from(std::env::var("METRALE_GLM_MTP_XCHG_DEVICE").as_deref() == Ok("1")),
-            ),
+            ("METRALE_GLM_MTP_XCHG_DEVICE", u64::from(mtp.xchg_device)),
             // 2026-10-15: The DSA SP selection's table decides which prefill passes enqueue
             // two all-gathers of selected rows, so every rank must hold the same table; the
             // payload sub-lever (`_SEL`, low bit) sets their row size.

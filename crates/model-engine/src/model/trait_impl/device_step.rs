@@ -95,12 +95,6 @@ pub(in crate::model) fn host_agrees(num_accepted: usize, k: usize, device_accept
     k == 2 && num_accepted == 1 + device_accepted as usize
 }
 
-/// 2026-10-11: The lever. Read once; every rank must agree (`comm_setup`).
-pub(crate) fn device_step_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("METRALE_GLM_MTP_DEVICE_STEP").as_deref() == Ok("1"))
-}
-
 /// 2026-10-11: Whether a propose of `num_drafts` drafts may leave its draft on the device:
 /// requested (`device`), the lever, one draft, and no grammar mask (a masked draft is chosen on
 /// the host).
@@ -137,7 +131,7 @@ impl TransformerModel {
         }
         if wants_device_draft(
             device,
-            device_step_enabled(),
+            self.settings.speculative.glm_mtp_device_step,
             num_drafts,
             grammar_bitmask.is_some(),
         ) && proposer.propose_device(

@@ -48,19 +48,15 @@ mod head_xchg;
 mod hidden_half;
 mod init;
 mod kv_pool;
+mod levers;
 mod proposer;
 mod rows;
 mod state_pool;
 
-/// 2026-10-11: The batched propose's lever, its row limit, and the block workspaces' rows.
-pub use batch::{PROPOSE_BATCH_MAX, drafter_block_rows, propose_batch_enabled};
-/// 2026-10-11: Rows the MTP block's DSA workspace is built for: the batched propose's rows and
-/// a context-row pass (`ctx_rows`).
-pub fn drafter_dsa_rows() -> usize {
-    drafter_block_rows().max(ctx_rows::CTX_ROWS_CHUNK)
-}
+/// 2026-10-11: The batched propose's row limit.
+pub use batch::PROPOSE_BATCH_MAX;
 /// 2026-10-13: The drafter's context cap (`METRALE_GLM_MTP_CONTEXT_CAP`, `context_cap`).
-pub use context_cap::{drafter_context_cap, drafter_dsa_config, drafter_max_context};
+pub use context_cap::{drafter_dsa_config, drafter_max_context};
 /// 2026-10-11: The drafter graph's per-state bytes, for the per-sequence reserve.
 pub use graph::state_bytes as graph_state_bytes;
 /// 2026-10-11: Bytes of the draft head's exchange buffer, one per sequence state.
@@ -71,10 +67,10 @@ pub use head_xchg::{
     pick as head_xchg_pick, pick_lp as head_xchg_pick_lp, xchg_bytes as head_xchg_bytes,
     xchg_lp_bytes as head_xchg_lp_bytes,
 };
-/// 2026-10-11: The `METRALE_GLM_MTP_EH_TP` lever, for the ranks' agreement check.
-pub use init::eh_tp_enabled;
 /// 2026-10-11: Bytes of one sequence's drafter KV region, for the per-sequence reserve.
 pub use kv_pool::drafter_kv_bytes_per_seq;
+/// 2026-10-17: The drafter's levers, resolved once from the startup settings.
+pub use levers::{MtpLevers, MtpSkip};
 
 /// 2026-09-25: Per-sequence drafter state: the block's own indexer cache and KV block table.
 pub struct Glm5NextMtpProposerState {
@@ -127,6 +123,8 @@ pub struct Glm5NextMtpHead {
     state_pool: state_pool::StatePool,
     /// 2026-10-17: `speculative.glm_mtp_state_pool` at construction: freed states go to `state_pool`.
     state_pool_on: bool,
+    /// 2026-10-17: The drafter levers, resolved at construction.
+    levers: MtpLevers,
     rms_norm_k: KernelHandle,
     gemv_k: KernelHandle,
     argmax_k: KernelHandle,
@@ -291,7 +289,7 @@ impl Glm5NextMtpHead {
         self.eh_proj(gpu, st, ctx, stream)?;
 
         // 2026-09-25: The block writes its output back over `st.x` (plain residual, in place).
-        if skip_block() {
+        if self.levers.skip_block() {
             st.seq_len += 1;
         } else {
             let mut kv = self.kv_cache.lock();
@@ -308,7 +306,7 @@ impl Glm5NextMtpHead {
             drop(kv);
             st.seq_len += 1;
         }
-        if skip_head() {
+        if self.levers.skip_head() {
             return Ok(());
         }
         // 2026-09-25: `shared_head.norm`, then the target's own `lm_head`: the MTP layer carries
@@ -512,21 +510,6 @@ impl Glm5NextMtpHead {
             _ => self.forward_body(embed, hidden_in, first, st, ctx, stream),
         }
     }
-}
-
-/// 2026-09-25: `METRALE_GLM_MTP_SKIP=head`: stop the drafter after the block, before
-/// `shared_head.norm`, the `lm_head` gemv, the argmax and the D2H. A timing arm; read once
-/// per process.
-fn skip_head() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("METRALE_GLM_MTP_SKIP").ok().as_deref() == Some("head"))
-}
-
-/// 2026-09-25: `METRALE_GLM_MTP_SKIP=block`: skip the MTP block itself and run only the
-/// head. A timing arm; read once per process.
-fn skip_block() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("METRALE_GLM_MTP_SKIP").ok().as_deref() == Some("block"))
 }
 
 #[cfg(test)]

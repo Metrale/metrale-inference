@@ -59,37 +59,41 @@ impl PerSequenceState {
 ///
 /// Returns zeros for any `model_type` other than `glm5_next`. The proposer term needs
 /// `spec_on` and a sparse-attention MTP layer. Errors when the GLM skeleton cannot be built
-/// from `config`.
+/// from `config`, or (2026-10-17) when the drafter levers in `settings` are refused.
 pub fn per_sequence_state_bytes(
     config: &ModelConfig,
     max_seq_len: usize,
     spec_on: bool,
+    settings: &metrale_settings::InferenceServerSettings,
 ) -> Result<PerSequenceState> {
     // 2026-10-13: The drafter cap is read only for a GLM serve; any other model is charged
     // nothing whatever the lever says.
     if config.model_type != "glm5_next" {
         return Ok(PerSequenceState::default());
     }
+    let mtp = crate::glm5next_mtp_head::MtpLevers::from_settings(settings)?;
     per_sequence_state_bytes_for(
         config,
         max_seq_len,
         spec_on,
-        crate::glm5next_dsa::paged::text_stack_indexer_cache_given(
-            metrale_config::glm_dsa_indexer_paged(),
-        ),
-        crate::glm5next_mtp_head::drafter_context_cap()?,
+        crate::glm5next_dsa::paged::text_stack_indexer_cache(settings),
+        mtp.context_cap,
+        mtp.graph,
     )
 }
 
 /// 2026-10-09: [`per_sequence_state_bytes`] with the text stack's indexer mode as an argument
 /// (env-free). 2026-10-13: And the drafter's context cap (`METRALE_GLM_MTP_CONTEXT_CAP`; 0 =
 /// none): the proposer's rows are `drafter_max_context(max_seq_len, drafter_cap)`.
+/// 2026-10-17: And whether the drafter graph is on (`METRALE_GLM_MTP_GRAPH`, `drafter_graph`),
+/// which adds its per-state metadata.
 pub fn per_sequence_state_bytes_for(
     config: &ModelConfig,
     max_seq_len: usize,
     spec_on: bool,
     text_indexer: IndexerCache,
     drafter_cap: usize,
+    drafter_graph: bool,
 ) -> Result<PerSequenceState> {
     if config.model_type != "glm5_next" {
         return Ok(PerSequenceState::default());
@@ -135,7 +139,11 @@ pub fn per_sequence_state_bytes_for(
             + config.vocab_size * 2
             + 8
             + crate::glm5next_mtp_head::HEAD_XCHG_BUFFER_BYTES
-            + crate::glm5next_mtp_head::graph_state_bytes(config.hidden_size, drafter_ctx)
+            + crate::glm5next_mtp_head::graph_state_bytes(
+                drafter_graph,
+                config.hidden_size,
+                drafter_ctx,
+            )
     } else {
         0
     };

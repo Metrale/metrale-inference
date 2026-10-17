@@ -16,7 +16,7 @@ impl Glm5NextMtpHead {
         let (_, v0, sharded) = self.head_range(ctx);
         // 2026-10-11: An unsplit head leaves the global id (`v0` is 0); a split one leaves a
         // local id unless the device exchange turns it global.
-        !skip_head()
+        !self.levers.skip_head()
             && if sharded {
                 self.device_xchg(ctx).is_some()
             } else {
@@ -36,7 +36,7 @@ impl Glm5NextMtpHead {
         let gpu = ctx.gpu;
         // 2026-09-25: Timing arm `METRALE_GLM_MTP_SKIP=head`: the head is skipped and the
         // draft is token 0, so `propose` times the block alone. `=block` skips the block instead.
-        if skip_head() {
+        if self.levers.skip_head() {
             return Ok((0, f32::NAN));
         }
         let (_, v0, sharded) = self.head_range(ctx);

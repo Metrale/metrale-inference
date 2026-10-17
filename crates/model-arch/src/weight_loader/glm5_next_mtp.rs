@@ -68,7 +68,8 @@ pub fn load_glm5next_mtp_module(
         crate::glm5next_w4a16_dense::enabled(),
         crate::glm5next_fp8_dense::enabled(),
     )?;
-    let dsa_cfg = crate::glm5next_mtp_head::drafter_dsa_config(config)?;
+    let mtp = crate::glm5next_mtp_head::MtpLevers::from_settings(lc.settings)?;
+    let dsa_cfg = crate::glm5next_mtp_head::drafter_dsa_config(config, mtp.context_cap)?;
     let mlp_cfg = Glm5NextMlpConfig::from_config(config)?;
     let dsa_plan = crate::glm5next_dsa::tp::DsaTpPlan::from_config(config, &dsa_cfg)?;
     let dsa_layer_kernels = Glm5NextDsaLayerKernels::resolve(gpu)?;
@@ -95,7 +96,7 @@ pub fn load_glm5next_mtp_module(
         workspace: std::sync::Arc::new(Glm5NextDsaWorkspace::new(
             gpu,
             &dsa_cfg,
-            crate::glm5next_mtp_head::drafter_dsa_rows(),
+            mtp.dsa_rows(),
             &levers,
         )?),
         layer_idx: idx,
@@ -122,7 +123,7 @@ pub fn load_glm5next_mtp_module(
         &load,
         &expert,
         &precision,
-        crate::glm5next_mtp_head::drafter_block_rows(),
+        mtp.block_rows(),
     )?));
     // 2026-10-11: The drafter's dense projections at the serve's tiers, as a text layer's. They
     // were left BF16: at TP=3 the drafter's DSA q_absorb and o_absorb alone read ~0.54 ms per
@@ -152,7 +153,7 @@ pub fn load_glm5next_mtp_module(
             mlp_ws: std::sync::Arc::new(crate::glm5next_mlp::forward::Glm5NextMlpWorkspace::new(
                 gpu,
                 &mlp_cfg,
-                crate::glm5next_mtp_head::drafter_block_rows(),
+                mtp.block_rows(),
                 &levers.mlp,
             )?),
             // 2026-09-25: No hyper-connection: nothing here binds `hc_*` tensors, and

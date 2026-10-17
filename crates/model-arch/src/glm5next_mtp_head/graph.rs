@@ -21,18 +21,12 @@ use super::*;
 use metrale_gpu_runtime::gpu::GraphHandle;
 use metrale_model_layers::layer::AttnMetadataDev;
 
-/// 2026-10-11: The lever; read once.
-pub(super) fn graph_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("METRALE_GLM_MTP_GRAPH").as_deref() == Ok("1"))
-}
-
-/// 2026-10-11: Device bytes `DrafterGraph::alloc` takes per proposer state (0 with the lever
-/// off), for the per-sequence reserve: the row metadata, the block table of a drafter sized
-/// for `max_seq_len` rows (an upper bound: the drafter caps its rows at the DSA reservation),
-/// and the embedding row.
-pub fn state_bytes(hidden: usize, max_seq_len: usize) -> usize {
-    if !graph_enabled() {
+/// 2026-10-11: Device bytes `DrafterGraph::alloc` takes per proposer state (0 with the lever,
+/// `graph`, off), for the per-sequence reserve: the row metadata, the block table of a drafter
+/// sized for `max_seq_len` rows (an upper bound: the drafter caps its rows at the DSA
+/// reservation), and the embedding row.
+pub fn state_bytes(graph: bool, hidden: usize, max_seq_len: usize) -> usize {
+    if !graph {
         return 0;
     }
     4 + 8 + 4 + (max_seq_len / 16 + 2) * 4 + hidden * 2
@@ -159,8 +153,8 @@ pub(super) fn staged_words(row: usize, table: &[u32]) -> Result<StagedWords> {
 pub(super) fn eligible(head: &Glm5NextMtpHead, st: &Glm5NextMtpProposerState, first: bool) -> bool {
     first
         && st.graph.is_some()
-        && !skip_block()
-        && !skip_head()
+        && !head.levers.skip_block()
+        && !head.levers.skip_head()
         && match &head.module.layer.mixer {
             crate::glm5next_layer::Glm5NextMixer::Dsa(l) => {
                 l.select_kernels.indexer_store.0 != 0 && l.select_kernels.write_geom.0 != 0

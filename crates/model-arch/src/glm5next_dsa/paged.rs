@@ -47,9 +47,7 @@ pub fn text_stack_indexer_cache(s: &metrale_settings::InferenceServerSettings) -
     text_stack_indexer_cache_given(!s.cache.glm_dsa_indexer_flat)
 }
 
-/// 2026-10-17: [`text_stack_indexer_cache`] for a resolved `paged` decision. The serve's
-/// per-sequence reserve passes `metrale_config::glm_dsa_indexer_paged()`, the reader the
-/// prefix-cache gate also uses, until the serve holds the settings.
+/// 2026-10-17: [`text_stack_indexer_cache`] for a resolved `paged` decision.
 pub fn text_stack_indexer_cache_given(paged: bool) -> IndexerCache {
     if paged {
         IndexerCache::Paged

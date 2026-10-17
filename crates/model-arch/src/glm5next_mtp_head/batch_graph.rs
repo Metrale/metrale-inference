@@ -58,10 +58,10 @@ impl Glm5NextMtpHead {
     /// earlier capture failure, no timing arm, and a DSA block whose rows are placed and planned
     /// on the device.
     pub(super) fn batch_graph_eligible(&self, sc: &BatchScratch) -> bool {
-        super::graph::graph_enabled()
+        self.levers.graph
             && !sc.graph_off
-            && !skip_block()
-            && !skip_head()
+            && !self.levers.skip_block()
+            && !self.levers.skip_head()
             && match &self.module.layer.mixer {
                 crate::glm5next_layer::Glm5NextMixer::Dsa(l) => {
                     l.select_kernels.indexer_store.0 != 0 && l.select_kernels.write_geom.0 != 0
@@ -147,7 +147,7 @@ impl Glm5NextMtpHead {
                 stream,
             )?,
         }
-        if !skip_block() {
+        if !self.levers.skip_block() {
             let mut kv = self.kv_cache.lock();
             let mut dsa: Vec<&mut (dyn LayerState + 'static)> = sts
                 .iter_mut()

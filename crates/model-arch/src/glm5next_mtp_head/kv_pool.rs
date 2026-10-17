@@ -48,7 +48,7 @@ pub fn drafter_kv_bytes_per_seq(
     max_seq_len: usize,
     cap: usize,
 ) -> Result<usize> {
-    let dsa = super::context_cap::drafter_dsa_config_capped(config, cap)?;
+    let dsa = super::context_cap::drafter_dsa_config(config, cap)?;
     let rows = drafter_context_rows(max_seq_len, &dsa);
     Ok(blocks_per_seq(rows) * drafter_kv_config(dsa.kv_lora_rank).block_bytes_kv_all_layers())
 }

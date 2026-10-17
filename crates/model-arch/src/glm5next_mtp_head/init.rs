@@ -32,16 +32,6 @@ pub(super) fn draft_head_shard(vocab: usize, world: usize, rank: usize) -> (usiz
     }
 }
 
-/// 2026-10-11: `METRALE_GLM_MTP_EH_TP=1`: each rank of a tensor-parallel propose computes its
-/// slice of the drafter's `eh_proj` output rows and one all-reduce of the hidden row assembles
-/// them (the other ranks' rows are zero, so the sum is exact). The `[hidden, 2 * hidden]` BF16
-/// projection (67 MB on GLM-5.3) was read whole on every rank. Every rank must agree (it adds a
-/// collective); `comm_setup` checks it. Read once.
-pub fn eh_tp_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("METRALE_GLM_MTP_EH_TP").as_deref() == Ok("1"))
-}
-
 /// 2026-10-11: Output rows of `eh_proj` per shard unit: a rank's first row and row count are
 /// multiples of it, so its output slice and weight rows start aligned for the GEMV's vector
 /// stores (a block computes four rows).
@@ -50,6 +40,12 @@ const EH_SHARD_ROWS: usize = 64;
 /// 2026-10-11: `(r0, n)`, the `eh_proj` output rows rank `rank` of `world` computes: whole
 /// [`EH_SHARD_ROWS`] units split as evenly as they go (the first ranks one unit more), the last
 /// rank taking any remainder rows. `None` for one rank or a world past the unit count.
+///
+/// 2026-10-11: Under `METRALE_GLM_MTP_EH_TP=1` (`MtpLevers::eh_tp`) each rank of a
+/// tensor-parallel propose computes this slice of the drafter's `eh_proj` output rows and one
+/// all-reduce of the hidden row assembles them (the other ranks' rows are zero, so the sum is
+/// exact). The `[hidden, 2 * hidden]` BF16 projection was read whole on every rank. Every rank
+/// must agree (it adds a collective); `comm_setup` checks it.
 pub(super) fn eh_shard(hidden: usize, world: usize, rank: usize) -> Option<(usize, usize)> {
     let units = hidden / EH_SHARD_ROWS;
     if world < 2 || rank >= world || units < world {
@@ -64,17 +60,12 @@ pub(super) fn eh_shard(hidden: usize, world: usize, rank: usize) -> Option<(usiz
     Some((r0, n))
 }
 
-/// 2026-10-11: `METRALE_GLM_MTP_XCHG_DEVICE=1`: run the vocab-sharded draft head's exchange on
-/// the device (`glm5next_mtp_xchg.cu`) instead of through the host (two reads, a write and four
-/// syncs per draft); same draft (the kernels compute `head_xchg::pack` / `pick`). Read once.
-fn xchg_device_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("METRALE_GLM_MTP_XCHG_DEVICE").as_deref() == Ok("1"))
-}
-
-/// 2026-10-11: The device exchange's kernels when the lever asks for them and the build has both.
-fn xchg_kernels(gpu: &dyn GpuBackend) -> Option<(KernelHandle, KernelHandle)> {
-    if !xchg_device_enabled() {
+/// 2026-10-11: The device exchange's kernels when the lever asks for them (`on`) and the build
+/// has both. `METRALE_GLM_MTP_XCHG_DEVICE=1` runs the vocab-sharded draft head's exchange on the
+/// device (`glm5next_mtp_xchg.cu`) instead of through the host (two reads, a write and four syncs
+/// per draft); same draft (the kernels compute `head_xchg::pack` / `pick`).
+fn xchg_kernels(gpu: &dyn GpuBackend, on: bool) -> Option<(KernelHandle, KernelHandle)> {
+    if !on {
         return None;
     }
     let k = |f| metrale_model_layers::layers::try_kernel(gpu, "glm5next_mtp_xchg", f);
@@ -96,7 +87,10 @@ impl Glm5NextMtpHead {
         max_seqs: usize,
         // 2026-10-17: The model levers; `glm_mtp_state_pool` is kept, the feed levers are logged.
         levers: &metrale_model_layers::layers::ops::ModelLevers,
+        // 2026-10-17: The startup settings, which the drafter levers resolve from.
+        settings: &metrale_settings::InferenceServerSettings,
     ) -> Result<Self> {
+        let mtp = super::MtpLevers::from_settings(settings)?;
         let dsa = match &module.layer.mixer {
             crate::glm5next_layer::Glm5NextMixer::Dsa(l) => l,
             _ => bail!("GLM MTP block is not a DSA layer"),
@@ -134,9 +128,7 @@ impl Glm5NextMtpHead {
         // the whole vocab. A failure here is not fatal; the head falls back to the BF16 sweep.
         let gemv_fp8w_k =
             metrale_model_layers::layers::try_kernel(gpu, "gemv_fp8w", "dense_gemv_fp8w");
-        let head_fp8 = if std::env::var("METRALE_GLM_MTP_HEAD_FP8").as_deref() == Ok("0")
-            || gemv_fp8w_k.0 == 0
-        {
+        let head_fp8 = if !mtp.head_fp8 || gemv_fp8w_k.0 == 0 {
             None
         } else {
             let shard = DenseWeight {
@@ -189,8 +181,10 @@ impl Glm5NextMtpHead {
             kv_regions: super::kv_pool::DrafterKvRegions::new(regions, per_seq),
             state_pool: super::state_pool::StatePool::new(),
             state_pool_on: levers.glm_mtp_state_pool,
+            levers: mtp,
             batch: super::batch::ProposeBatch::new(
                 gpu,
+                mtp.propose_batch,
                 config.hidden_size,
                 config.vocab_size,
                 per_seq,
@@ -203,7 +197,7 @@ impl Glm5NextMtpHead {
             max_seq_len,
             head_world,
             head_rank,
-            eh_shard: if eh_tp_enabled() {
+            eh_shard: if mtp.eh_tp {
                 eh_shard(config.hidden_size, head_world, head_rank)
             } else {
                 None
@@ -212,7 +206,7 @@ impl Glm5NextMtpHead {
             head_n,
             head_fp8,
             gemv_fp8w_k,
-            xchg_k: xchg_kernels(gpu),
+            xchg_k: xchg_kernels(gpu, mtp.xchg_device),
             lp_k: super::draft_lp::LpKernels::resolve(gpu),
             ctx_rows: super::ctx_rows::CtxRowsScratch::new(gpu, config.hidden_size)?
                 .map(Mutex::new),

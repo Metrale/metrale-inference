@@ -40,7 +40,7 @@ impl DraftProposer for Glm5NextMtpHead {
                 (None, Vec::new())
             }
         };
-        let graph = if super::graph::graph_enabled() {
+        let graph = if self.levers.graph {
             Some(super::graph::DrafterGraph::alloc(gpu, h, &block_table)?)
         } else {
             None
@@ -116,14 +116,7 @@ impl DraftProposer for Glm5NextMtpHead {
     /// `decode_one_for_drafter`) writes the shared scratch, so it always waits for the first
     /// propose.
     fn prefill_uses_shared_buffers(&self) -> bool {
-        prefill_waits(
-            std::env::var("METRALE_GLM_MTP_PREFILL_FULL")
-                .ok()
-                .as_deref(),
-            std::env::var("METRALE_GLM_MTP_EAGER_PREFILL")
-                .ok()
-                .as_deref(),
-        )
+        self.levers.prefill_waits()
     }
 
     fn drafter_rows(&self, state: &mut dyn ProposerState) -> usize {
@@ -374,27 +367,5 @@ impl Glm5NextMtpHead {
             );
         }
         Ok(true)
-    }
-}
-
-/// 2026-10-12: Whether the drafter prefill waits for the first propose, from
-/// `METRALE_GLM_MTP_PREFILL_FULL` and `METRALE_GLM_MTP_EAGER_PREFILL`: the full-block arm always
-/// waits; otherwise only an explicit `0` defers it.
-fn prefill_waits(full: Option<&str>, eager: Option<&str>) -> bool {
-    full == Some("1") || eager == Some("0")
-}
-
-#[cfg(test)]
-mod prefill_waits_tests {
-    use super::prefill_waits;
-
-    /// 2026-10-12: Eager by default; `0` defers; the full-block arm defers whatever the lever.
-    #[test]
-    fn the_eager_prefill_is_default_on_and_the_full_arm_always_defers() {
-        assert!(!prefill_waits(None, None));
-        assert!(!prefill_waits(None, Some("1")));
-        assert!(prefill_waits(None, Some("0")));
-        assert!(prefill_waits(Some("1"), None));
-        assert!(prefill_waits(Some("1"), Some("1")));
     }
 }

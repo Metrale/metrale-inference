@@ -461,6 +461,7 @@ pub fn build_model(
         glm_mtp_target_final_norm,
         max_seq_len,
         max_batch_size,
+        &settings,
     );
 
     // 2026-09-25: Step 7: the DFlash drafter, which uses the target's

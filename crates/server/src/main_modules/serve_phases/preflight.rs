@@ -178,9 +178,13 @@ pub(crate) fn preflight_reserve(
     // runtime headroom (`runtime_headroom.rs`, which replaced the flat 4 GiB / 512 MiB
     // `cuda_headroom`), the per-sequence state and the decode-rollback ring. The preflight checks
     // the slot ceiling; the build sizes KV at the count it resolves.
-    let per_sequence_bytes =
-        per_sequence_reserve(args, config, levers.prefix_cache_gate.glm_indexer_paged)
-            / ceiling.max(1);
+    let settings = super::lever_settings()?;
+    let per_sequence_bytes = per_sequence_reserve(
+        args,
+        config,
+        levers.prefix_cache_gate.glm_indexer_paged,
+        &settings,
+    ) / ceiling.max(1);
     let mut plan = reserve_plan::ReservePlan {
         config: config.clone(),
         spec: spec_on_pool,
@@ -209,7 +213,6 @@ pub(crate) fn preflight_reserve(
     // 2026-09-26: The auto-fit's yardstick: predicted post-load KV headroom
     // where the load's residency can be predicted, else pre-load free memory
     // (`headroom.rs`).
-    let settings = super::build::lever_settings()?;
     let yardstick = headroom::post_load_yardstick(
         args,
         config,

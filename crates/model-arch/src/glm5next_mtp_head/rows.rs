@@ -51,10 +51,7 @@ impl Glm5NextMtpHead {
         }
         let gpu = ctx.gpu;
         let dbg = metrale_model_layers::speculative::mtp_refeed_debug();
-        let prefill_full = std::env::var("METRALE_GLM_MTP_PREFILL_FULL")
-            .ok()
-            .as_deref()
-            == Some("1");
+        let prefill_full = self.levers.prefill_full;
         // 2026-10-11: Two rows or more run in passes (`ctx_rows.rs`); the per-row loop below
         // stays for one row and for the diagnostic arms (full block, per-row fingerprints).
         if rows >= 2 && !prefill_full && !dbg && self.ctx_rows_batched() {

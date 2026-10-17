@@ -118,7 +118,13 @@ fn the_source_derived_block_size_reproduces_both_measured_clamp_lines() {
 fn a_non_glm_config_is_charged_nothing() {
     let cfg = ModelConfig::qwen3_next_80b_nvfp4();
     assert_ne!(cfg.model_type, "glm5_next");
-    let s = per_sequence_state_bytes(&cfg, MSL, true).expect("non-GLM is inert, not an error");
+    let s = per_sequence_state_bytes(
+        &cfg,
+        MSL,
+        true,
+        &metrale_model_layers::lever_equivalence::defaults(),
+    )
+    .expect("non-GLM is inert, not an error");
     assert_eq!(s, PerSequenceState::default());
     assert_eq!(s.total(), 0);
 }
@@ -145,8 +151,9 @@ fn a_drafter_kv_region_is_1026_blocks_of_16_kib() {
 #[test]
 fn a_paged_text_indexer_is_not_charged_per_sequence() {
     let cfg = metrale_config::parse_config(GLM_CONFIG).expect("real config parses");
-    let flat = per_sequence_state_bytes_for(&cfg, MSL, true, IndexerCache::Flat, 0).unwrap();
-    let paged = per_sequence_state_bytes_for(&cfg, MSL, true, IndexerCache::Paged, 0).unwrap();
+    let flat = per_sequence_state_bytes_for(&cfg, MSL, true, IndexerCache::Flat, 0, false).unwrap();
+    let paged =
+        per_sequence_state_bytes_for(&cfg, MSL, true, IndexerCache::Paged, 0, false).unwrap();
     assert_eq!(flat.target_layers, 739_639_296);
     assert_eq!(paged.target_layers, 0);
     assert_eq!(paged.proposer, flat.proposer);
@@ -160,7 +167,7 @@ fn a_paged_text_indexer_is_not_charged_per_sequence() {
 fn proposer_at(msl: usize, cap: usize) -> usize {
     let mut cfg = metrale_config::parse_config(GLM_CONFIG).expect("real config parses");
     cfg.serve_max_seq_len = msl;
-    per_sequence_state_bytes_for(&cfg, msl, true, IndexerCache::Paged, cap)
+    per_sequence_state_bytes_for(&cfg, msl, true, IndexerCache::Paged, cap, false)
         .unwrap()
         .proposer
 }

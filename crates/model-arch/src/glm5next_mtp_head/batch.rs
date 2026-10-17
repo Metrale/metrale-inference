@@ -25,22 +25,6 @@ use metrale_model_layers::layer::AttnMetadataDev;
 /// 2026-10-11: The widest batch: the batched BF16 GEMV's and the FP8 batch head's row limit.
 pub const PROPOSE_BATCH_MAX: usize = 16;
 
-/// 2026-10-11: `METRALE_GLM_MTP_PROPOSE_BATCH=1`. Read once.
-pub fn propose_batch_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("METRALE_GLM_MTP_PROPOSE_BATCH").as_deref() == Ok("1"))
-}
-
-/// 2026-10-11: Rows the MTP block's DSA and MLP workspaces are built for: the widest batch
-/// under the lever, one row otherwise.
-pub fn drafter_block_rows() -> usize {
-    if propose_batch_enabled() {
-        PROPOSE_BATCH_MAX
-    } else {
-        1
-    }
-}
-
 /// 2026-10-11: The kernels the batched pass needs beyond the one-row ones.
 pub(super) struct BatchKernels {
     pub(super) gemv_batchm: KernelHandle,
@@ -80,14 +64,16 @@ pub(super) struct ProposeBatch {
 }
 
 impl ProposeBatch {
-    /// 2026-10-11: `None` with the lever off or a kernel missing (logged once).
+    /// 2026-10-11: `None` with the lever (`on`, `METRALE_GLM_MTP_PROPOSE_BATCH`) off or a kernel
+    /// missing (logged once).
     pub(super) fn new(
         gpu: &dyn GpuBackend,
+        on: bool,
         hidden: usize,
         vocab: usize,
         per_seq: usize,
     ) -> Result<Option<Self>> {
-        if !propose_batch_enabled() {
+        if !on {
             return Ok(None);
         }
         let k = |m, f| metrale_model_layers::layers::try_kernel(gpu, m, f);
@@ -423,7 +409,7 @@ impl Glm5NextMtpHead {
             st.last_drafted = steps;
         }
         drop(sc);
-        if super::batch_check::propose_batch_check() {
+        if self.levers.propose_batch_check {
             self.check_against_rows(
                 &drafts,
                 last_tokens,

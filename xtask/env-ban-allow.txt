@@ -99,14 +99,6 @@ crates/model-arch/src/glm5next_dsa/build.rs
 crates/model-arch/src/glm5next_layer/l2_warm.rs
 crates/model-arch/src/glm5next_layer/profile.rs
 crates/model-arch/src/glm5next_layer_dump.rs
-crates/model-arch/src/glm5next_mtp_head.rs
-crates/model-arch/src/glm5next_mtp_head/batch.rs
-crates/model-arch/src/glm5next_mtp_head/batch_check.rs
-crates/model-arch/src/glm5next_mtp_head/context_cap.rs
-crates/model-arch/src/glm5next_mtp_head/graph.rs
-crates/model-arch/src/glm5next_mtp_head/init.rs
-crates/model-arch/src/glm5next_mtp_head/proposer.rs
-crates/model-arch/src/glm5next_mtp_head/rows.rs
 crates/model-arch/src/glm5next_prefill_piece.rs
 crates/model-arch/src/kimi_k3/host_decode.rs
 crates/model-arch/src/mistral_loader/loader_impl/phase_assemble.rs
@@ -181,7 +173,6 @@ crates/model-engine/src/model/trait_impl/decode_checkpoint.rs
 crates/model-engine/src/model/trait_impl/decode_checkpoint/plan.rs
 crates/model-engine/src/model/trait_impl/decode_fed_ep.rs
 crates/model-engine/src/model/trait_impl/decode_graph_key.rs
-crates/model-engine/src/model/trait_impl/device_step.rs
 crates/model-engine/src/model/trait_impl/dflash_verify_capture.rs
 crates/model-engine/src/model/trait_impl/drafter_prefill.rs
 crates/model-engine/src/model/trait_impl/graph_borrow.rs

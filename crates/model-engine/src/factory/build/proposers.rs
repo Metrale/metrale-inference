@@ -60,6 +60,8 @@ pub(super) fn install_glm_mtp_proposer(
     glm_mtp_target_final_norm: DenseWeight,
     max_seq_len: usize,
     max_batch_size: usize,
+    // 2026-10-17: The startup settings, for the drafter's levers (`MtpLevers`).
+    settings: &metrale_settings::InferenceServerSettings,
 ) {
     if let Some(m) = glm_mtp_module {
         match metrale_model_arch::glm5next_mtp_head::Glm5NextMtpHead::new(
@@ -72,6 +74,7 @@ pub(super) fn install_glm_mtp_proposer(
             max_seq_len,
             max_batch_size,
             model.levers_ref(),
+            settings,
         ) {
             Ok(head) => {
                 model.set_dflash_proposer(std::sync::Arc::new(head));
