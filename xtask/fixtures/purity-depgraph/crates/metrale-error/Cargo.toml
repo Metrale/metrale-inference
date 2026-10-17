@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# 2026-10-17: Fixture: the leaf crate with a normal and a build dependency, both on PURE_ALLOWLIST,
+# so only the leaf rule refuses them.
+[package]
+name = "metrale-error"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+cfg-if = { path = "../../ext/cfg-if" }
+
+[build-dependencies]
+autocfg = { path = "../../ext/autocfg" }
+
+[package.metadata.metrale]
+role = "abstract-io"

@@ -5,6 +5,7 @@
 //! - Every member's normal workspace dependencies follow `Role::may_depend_on`; a pure crate's
 //!   dev-dependencies follow `Role::may_dev_depend_on`.
 //! - Only `device` and `tool` crates name a GPU vendor crate directly (VBOP).
+//! - A crate on LEAF_CRATES has no normal or build dependency at all.
 //! - A pure crate reaches, through its normal and dev dependencies, only external crates on
 //!   PURE_ALLOWLIST, and none on PURE_DENYLIST; the walk stops at the first offender on a path.
 //!   Workspace dependencies are not walked: each is judged as a member itself.
@@ -143,10 +144,21 @@ pub const VENDOR_CRATES: &[&str] = &[
     "objc2-metal",
 ];
 
+/// 2026-10-17: Members that may have no normal or build dependency, workspace or external: the
+/// design keeps `metrale-error` at the bottom of every graph, so each crate can depend on it.
+/// Dev-dependencies stay allowed. A name here that is not a member is an error, so a rename
+/// cannot retire the rule silently.
+pub const LEAF_CRATES: &[&str] = &["metrale-error"];
+
 /// 2026-10-17: Every depgraph offender across `graphs`, keyed `crate->dependency`. The first
 /// graph that shows an offender names it.
 pub fn findings(members: &[Member], graphs: &[Graph]) -> Result<Findings, String> {
     let roles: BTreeMap<&str, Role> = members.iter().map(|m| (m.name.as_str(), m.role)).collect();
+    if let Some(leaf) = LEAF_CRATES.iter().find(|l| !roles.contains_key(*l)) {
+        return Err(format!(
+            "depgraph: LEAF_CRATES names `{leaf}`, which is not a member"
+        ));
+    }
     let mut out = Findings::new();
     for graph in graphs {
         for m in members {
@@ -182,6 +194,18 @@ fn judge_member(
     let mut external = VecDeque::new();
     for edge in edges {
         let to = graph.name(&edge.to);
+        if LEAF_CRATES.contains(&m.name.as_str()) && (edge.normal || edge.build) {
+            let kind = if edge.normal { "normal" } else { "build" };
+            offend(
+                out,
+                &m.name,
+                to,
+                format!(
+                    "`{}` is a leaf and may have no normal or build dependency; `{to}` is a {kind} dependency ({platform})",
+                    m.name
+                ),
+            );
+        }
         let used = edge.normal || (edge.dev && m.role.is_pure());
         if !used {
             continue;
@@ -286,11 +310,11 @@ fn walk_pure(
 
 #[cfg(test)]
 mod tests {
-    use super::{PURE_ALLOWLIST, PURE_DENYLIST, VENDOR_CRATES};
+    use super::{LEAF_CRATES, PURE_ALLOWLIST, PURE_DENYLIST, VENDOR_CRATES};
 
     #[test]
     fn the_lists_are_sorted_disjoint_and_free_of_duplicates() {
-        for list in [PURE_ALLOWLIST, PURE_DENYLIST, VENDOR_CRATES] {
+        for list in [LEAF_CRATES, PURE_ALLOWLIST, PURE_DENYLIST, VENDOR_CRATES] {
             assert!(list.windows(2).all(|w| w[0] < w[1]), "{list:?}");
         }
         for name in PURE_ALLOWLIST {

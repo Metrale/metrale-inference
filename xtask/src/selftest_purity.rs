@@ -131,6 +131,16 @@ const PROBES: [Probe; 6] = [
                 "app->cudarc",
                 "VBOP: only `device` crates name the GPU vendor crate",
             ),
+            want(
+                Refused,
+                "metrale-error->cfg-if",
+                "is a leaf and may have no normal or build dependency; `cfg-if` is a normal",
+            ),
+            want(
+                Refused,
+                "metrale-error->autocfg",
+                "is a leaf and may have no normal or build dependency; `autocfg` is a build",
+            ),
             want(Stale, "core-c->rayon", "no longer offends"),
         ],
     },

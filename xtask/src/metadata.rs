@@ -12,6 +12,7 @@ pub struct Edge {
     pub to: String,
     pub normal: bool,
     pub dev: bool,
+    pub build: bool,
 }
 
 /// 2026-10-17: A resolved graph for one platform filter.
@@ -84,12 +85,13 @@ pub fn parse(platform: &str, json: &str) -> Result<Graph, String> {
                 to: str_field(dep, "pkg", id)?.to_owned(),
                 normal: false,
                 dev: false,
+                build: false,
             };
             for kind in array(dep, "dep_kinds", id)? {
                 match field(kind, "kind", id)? {
                     Value::Null => edge.normal = true,
                     Value::String(k) if k == "dev" => edge.dev = true,
-                    Value::String(k) if k == "build" => {}
+                    Value::String(k) if k == "build" => edge.build = true,
                     other => return Err(format!("cargo metadata: {id}: unknown dep kind {other}")),
                 }
             }
@@ -108,7 +110,7 @@ pub fn parse(platform: &str, json: &str) -> Result<Graph, String> {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn edges_keep_normal_and_dev_kinds_and_drop_build_only_ones() {
+    fn edges_keep_their_normal_dev_and_build_kinds() {
         let json = r#"{
             "packages": [
                 {"id": "a#a@1", "name": "a"}, {"id": "b#b@1", "name": "b"},
@@ -129,9 +131,9 @@ mod tests {
         let a = &g.edges["a#a@1"];
         assert_eq!(
             a.iter()
-                .map(|e| (g.name(&e.to), e.normal, e.dev))
+                .map(|e| (g.name(&e.to), e.normal, e.dev, e.build))
                 .collect::<Vec<_>>(),
-            vec![("b", true, true), ("c", false, false)]
+            vec![("b", true, true, false), ("c", false, false, true)]
         );
     }
 
