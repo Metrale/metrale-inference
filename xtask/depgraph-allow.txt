@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# 2026-10-17: Pure-crate dependency edges the roles forbid, as `crate->dependency`.
+# This list may only shrink: `cargo xtask depgraph` refuses a new offender, a grown count and a
+# stale entry, and asks for an entry to be tightened when its count falls.
+metrale-circuit->const-oid
+metrale-circuit->hybrid-array
+metrale-circuit->indexmap
+metrale-circuit->metrale-closure
+metrale-circuit->toml
+metrale-circuit->unicode-width
+metrale-circuit->zmij
+metrale-config->anyhow
+metrale-config->indexmap
+metrale-config->regex
+metrale-config->zmij
+metrale-core->anyhow
+metrale-core->cudarc
+metrale-core->indexmap
+metrale-core->zmij
+metrale-grammar->ahash
+metrale-grammar->bitvec
+metrale-grammar->criterion
+metrale-grammar->indexmap
+metrale-grammar->rayon
+metrale-grammar->stats_alloc
+metrale-grammar->zmij
+metrale-sampling->anyhow
+metrale-sampling->metrale-gpu-runtime
+metrale-sampling->metrale-telemetry
+metrale-sampling->rand
+metrale-scheduler->anyhow

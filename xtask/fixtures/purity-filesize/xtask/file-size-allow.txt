@@ -1,0 +1,5 @@
+# 2026-10-17: Fixture: an exact entry, one its file outgrew, one with slack, and a stale one.
+exact.sh 502
+grown.cu 502
+shrunk.py 600
+gone.rs 700

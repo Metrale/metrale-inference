@@ -10,19 +10,33 @@
 //! - `cargo xtask env-ban [--base <rev>]`: only the `ProcessEnv` host, build scripts and the
 //!   files listed in `xtask/env-ban-allow.txt` read the process environment; with `--base`, an
 //!   entry added since the merge-base needs an `Env-Ban-Allow:` trailer (see `env_ban`).
-//! - `cargo xtask selftest`: the deps gate refuses each known-bad fixture under
-//!   `xtask/fixtures/` for its named reason, and passes the clean one. The env-ban gate yields
-//!   exactly its expected violations on each `env-ban-*` fixture.
+//! - `cargo xtask selftest`: every gate refuses each known-bad fixture under `xtask/fixtures/`
+//!   for its named reason, and passes the clean code; the env-ban gate yields exactly its
+//!   expected violations on each `env-ban-*` fixture.
+//! - `cargo xtask <roles|depgraph|wasm|file-size|vendor-ban|lints>`: one purity gate (see
+//!   `gates.rs`); `cargo xtask purity` runs them all. Each reconciles its offenders with a
+//!   checked-in allowlist under `xtask/` that may only shrink.
 
+mod allow;
+mod depgraph;
 mod env_ban;
+mod filesize;
+mod gates;
+mod lints;
 mod manifest;
+mod metadata;
+mod purity_io;
+mod roles;
 mod rules;
+mod rust_text;
 mod selftest;
+mod selftest_purity;
 mod shell;
+mod vendor;
 
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: cargo xtask <deps|env-ban [--base <rev>]|selftest>";
+const USAGE: &str = "usage: cargo xtask <deps|env-ban [--base <rev>]|selftest|purity|roles|depgraph|wasm|file-size|vendor-ban|lints>";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -38,10 +52,12 @@ fn main() -> ExitCode {
             shell::repo_root().and_then(|root| env_ban::gate(&root, Some(base)))
         }
         ["selftest"] => selftest(),
-        _ => {
-            eprintln!("{USAGE}");
-            return ExitCode::from(2);
-        }
+        ["purity"] => purity(&gates::ALL),
+        [name] => match gates::Gate::parse(name) {
+            Some(gate) => purity(&[gate]),
+            None => return usage(),
+        },
+        _ => return usage(),
     };
     match outcome {
         Ok(()) => ExitCode::SUCCESS,
@@ -50,6 +66,11 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn usage() -> ExitCode {
+    eprintln!("{USAGE}");
+    ExitCode::from(2)
 }
 
 fn deps() -> Result<(), String> {
@@ -69,7 +90,9 @@ fn deps() -> Result<(), String> {
 }
 
 fn selftest() -> Result<(), String> {
-    match selftest::run(&shell::fixtures_dir())? {
+    let deps_failures = selftest::run(&shell::fixtures_dir())?;
+    let purity_failures = selftest_purity::run(&shell::fixtures_dir(), true)?;
+    match deps_failures.saturating_add(purity_failures) {
         0 => {
             println!("xtask selftest: every fixture was judged for its named reason");
             Ok(())
@@ -77,5 +100,36 @@ fn selftest() -> Result<(), String> {
         n => Err(format!(
             "xtask selftest: {n} probe(s) did not end as intended"
         )),
+    }
+}
+
+/// 2026-10-17: Run `which` on the repository; every gate runs even after one fails, so one
+/// run lists everything to fix.
+fn purity(which: &[gates::Gate]) -> Result<(), String> {
+    let root = shell::repo_root()?;
+    let mut failed = Vec::new();
+    for gate in which {
+        let outcome = gates::run(*gate, &root, None)?;
+        for p in &outcome.problems {
+            eprintln!("{p}");
+        }
+        let verdict = if outcome.problems.is_empty() {
+            "pass"
+        } else {
+            failed.push(gate.name());
+            "FAIL"
+        };
+        println!(
+            "xtask {}: {verdict}; {} lists {} entr{} (the shrinking work queue)",
+            gate.name(),
+            gate.allow_file(),
+            outcome.listed,
+            if outcome.listed == 1 { "y" } else { "ies" }
+        );
+    }
+    if failed.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("xtask: failed gate(s): {}", failed.join(", ")))
     }
 }

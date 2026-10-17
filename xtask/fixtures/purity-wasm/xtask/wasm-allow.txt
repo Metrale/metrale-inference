@@ -1,0 +1,5 @@
+# 2026-10-17: Fixture: a crate that is listed for both targets, and an entry for a crate that
+# now builds (stale).
+w-allowed:wasm32v1-none
+w-allowed:wasm32-unknown-unknown
+w-stale:wasm32v1-none

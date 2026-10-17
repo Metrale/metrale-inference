@@ -3773,6 +3773,7 @@ dependencies = [
 name = "xtask"
 version = "1.0.0-beta-preview"
 dependencies = [
+ "serde_json",
  "toml",
 ]
 

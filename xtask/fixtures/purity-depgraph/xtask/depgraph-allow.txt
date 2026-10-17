@@ -1,0 +1,3 @@
+# 2026-10-17: Fixture: one listed offender, and one entry that matches nothing (stale).
+core-e->tokio
+core-c->rayon
