@@ -8,7 +8,9 @@
 //! `ncclSend`/`ncclRecv` into a registered receive buffer plus a local BF16
 //! add; at `world_size >= 3` with the one-shot path enabled, a payload of at most
 //! its bound is exchanged with every peer and summed in rank order
-//! (`sendrecv.rs`); otherwise it is `ncclAllReduce`. After each collective the backend
+//! (`sendrecv.rs`); otherwise it is `ncclAllReduce`. 2026-10-16: The one-shot is offered
+//! from `world_size >= 2`; at 2 it serves `exchange_partials` (the 2-rank all-reduce keeps
+//! priority for `all_reduce`). After each collective the backend
 //! queries `ncclCommGetAsyncError`; a broadcast waits for completion for at
 //! most `COLLECTIVE_TIMEOUT_SECS` (a rendezvous broadcast `RENDEZVOUS_TIMEOUT_SECS`),
 //! an idle command receive without a deadline,
@@ -98,7 +100,8 @@ pub struct NcclBackend {
     recv_buffer: u64,
     /// 2026-09-26: Size of `recv_buffer` in bytes; 0 when `world_size != 2`.
     recv_capacity: usize,
-    /// 2026-10-08: The one-shot all-reduce at `world_size >= 3` (off unless serve enables it).
+    /// 2026-10-08: The one-shot all-reduce at `world_size >= 2` (2026-10-16: was 3; off unless serve
+    /// enables it).
     oneshot: sendrecv::OneShot,
     /// 2026-09-26: Handles from `register_buffer`, deregistered in `Drop` and
     /// dropped without deregistering on reconnect.
@@ -129,7 +132,7 @@ impl NcclBackend {
     /// and sends the unique id to `world_size - 1` connections; other ranks
     /// connect to `master_addr:master_port`, retrying once a second for up to
     /// 600 attempts. `oneshot_max_bytes` enables the one-shot all-reduce at
-    /// `world_size >= 3` (0 disables it; see `sendrecv.rs`). `recv_capacity` is the largest 2-rank all-reduce payload
+    /// `world_size >= 2` (0 disables it; see `sendrecv.rs`). `recv_capacity` is the largest 2-rank all-reduce payload
     /// in bytes (serve passes [`required_model_recv_bytes`]); it is used only
     /// when `world_size == 2`.
     ///

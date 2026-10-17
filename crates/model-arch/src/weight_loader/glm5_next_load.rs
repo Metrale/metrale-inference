@@ -47,6 +47,9 @@ mod expert_slab;
 mod expert_tp;
 #[cfg(test)]
 mod export_layout_tests;
+mod layer_stream;
+#[cfg(test)]
+mod layer_stream_tests;
 mod loader;
 mod mlp_precision;
 mod nvfp4_dequant;
@@ -178,21 +181,38 @@ impl LayerSource {
             .names()
             .filter_map(|n| n.strip_prefix(&prefix).map(|r| r.to_string()))
             .collect();
+        let mut put =
+            |rel: &str, dtype: WeightDtype, shape: &[usize], bytes: Vec<u8>| -> Result<()> {
+                if let Some(cast) = plan_dtype::cast_to_plan_dtype(rel, dtype, &bytes)? {
+                    plan_cast.insert(rel.to_string(), cast);
+                }
+                tensors.insert(rel.to_string(), (dtype, shape.to_vec(), bytes));
+                Ok(())
+            };
         for rel in rels {
             let rel = rel.as_str();
+            names.push(rel.to_string());
             // 2026-09-25: Routed experts are listed but not copied: `bind_expert` reads
             // them from the store.
             if rel.starts_with("mlp.experts.") {
-                names.push(rel.to_string());
+                continue;
+            }
+            let t = store.get(&format!("{prefix}{rel}"))?;
+            put(rel, t.dtype, &t.shape, host_bytes(gpu, t)?)?;
+        }
+        // 2026-10-16: The tensors `METRALE_GLM_LAYER_STREAM` kept off the device, from their shard.
+        for (name, d) in store.deferred_iter() {
+            let Some(rel) = name.strip_prefix(&prefix) else {
+                continue;
+            };
+            if !layer_stream::collected_from_shard(rel, name, d.dtype) {
                 continue;
             }
             names.push(rel.to_string());
-            let t = store.get(&format!("{prefix}{rel}"))?;
-            let bytes = host_bytes(gpu, t)?;
-            if let Some(cast) = plan_dtype::cast_to_plan_dtype(rel, t.dtype, &bytes)? {
-                plan_cast.insert(rel.to_string(), cast);
-            }
-            tensors.insert(rel.to_string(), (t.dtype, t.shape.clone(), bytes));
+            let bytes = d
+                .read_host_bytes()
+                .with_context(|| format!("{name}: reading the streamed layer tensor"))?;
+            put(rel, d.dtype, &d.shape, bytes)?;
         }
         Ok(Self {
             names,

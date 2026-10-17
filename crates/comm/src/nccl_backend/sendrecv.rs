@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-08: The send/recv all-reduces: the 2-rank exchange (moved here unchanged from
-//! `nccl_backend.rs`) and the one-shot exchange at `world_size >= 3`.
+//! `nccl_backend.rs`) and the one-shot exchange at `world_size >= 2` (2026-10-16: was `>= 3`).
 //!
 //! One-shot: each rank sends its BF16 partial to every peer and receives every peer's partial into
 //! its own slot of a registered buffer (one grouped NCCL call, one network hop), then
@@ -13,7 +13,13 @@
 //! Invariants:
 //! - The one-shot path never receives more than `max_bytes` per peer: `applies` admits only
 //!   payloads of at most `max_bytes`, and the buffer holds `world_size - 1` slots of `max_bytes`.
-//! - Enabled only at `world_size >= 3`; `world_size == 2` keeps its own exchange.
+//! - Enabled only at `world_size >= 2`. 2026-10-16: At `world_size == 2` a plain `all_reduce`
+//!   still takes the 2-rank exchange (`bf16_add_inplace`, checked first in `comm_impl`), so its
+//!   bytes do not move; the one-shot there serves `exchange_partials`, whose consumers sum the
+//!   two partials as `bf16_add_rank_sum` does. That FP32 sum rounded once equals `__hadd`'s
+//!   correctly rounded BF16 sum for every pair except two negative zeros (+0 from the FP32
+//!   accumulator's +0 start, -0 from `__hadd`): FP32 keeps 24 bits >= 2 * 8 + 2, so rounding
+//!   twice is innocuous for a sum (`world2_sum_tests`).
 
 use anyhow::Result;
 use std::ffi::c_void;
@@ -50,34 +56,44 @@ pub(super) fn peer_slot(rank: usize, peer: usize) -> Option<usize> {
 
 /// 2026-10-08: Whether a payload of `bytes` takes the one-shot path. A free function for the tests.
 pub(super) fn oneshot_applies(world_size: usize, max_bytes: usize, bytes: usize) -> bool {
-    world_size >= 3 && max_bytes > 0 && bytes > 0 && bytes <= max_bytes
+    world_size >= 2 && max_bytes > 0 && bytes > 0 && bytes <= max_bytes
+}
+
+/// 2026-10-16: Refuse a one-shot bound the communicator cannot use: a nonzero bound on a single
+/// rank (nothing to exchange) or one that is not a whole number of BF16 elements. A free function
+/// for the tests.
+pub(super) fn validate_oneshot(world_size: usize, max_bytes: usize) -> Result<()> {
+    if max_bytes == 0 {
+        return Ok(());
+    }
+    if world_size < 2 {
+        anyhow::bail!(
+            "the one-shot all-reduce needs world_size >= 2 (world_size {world_size}); \
+             a single rank has nothing to exchange"
+        );
+    }
+    if !max_bytes.is_multiple_of(ALL_REDUCE_DTYPE_BYTES) {
+        anyhow::bail!(
+            "one-shot all-reduce bound {max_bytes} B is not a whole number of BF16 elements"
+        );
+    }
+    Ok(())
 }
 
 impl OneShot {
     /// 2026-10-08: Allocate and register the receive slots when `max_bytes > 0`.
     ///
     /// # Errors
-    /// `max_bytes > 0` at `world_size < 3`, a `max_bytes` that is not a whole number of BF16
-    /// elements, or a failed allocation. A failed registration is only logged, as for the 2-rank
-    /// buffer.
+    /// What [`validate_oneshot`] refuses, or a failed allocation. A failed registration is only
+    /// logged, as for the 2-rank buffer.
     pub(super) fn new(comm: NcclComm, world_size: usize, max_bytes: usize) -> Result<Self> {
+        validate_oneshot(world_size, max_bytes)?;
         if max_bytes == 0 {
             return Ok(Self {
                 max_bytes: 0,
                 recv: 0,
                 sum_kernel: AtomicU64::new(0),
             });
-        }
-        if world_size < 3 {
-            anyhow::bail!(
-                "the one-shot all-reduce is for world_size >= 3 (world_size {world_size}); \
-                 world_size 2 has its own send/recv exchange"
-            );
-        }
-        if !max_bytes.is_multiple_of(ALL_REDUCE_DTYPE_BYTES) {
-            anyhow::bail!(
-                "one-shot all-reduce bound {max_bytes} B is not a whole number of BF16 elements"
-            );
         }
         let total = max_bytes
             .checked_mul(world_size - 1)
@@ -126,7 +142,7 @@ impl NcclBackend {
     }
 
     /// 2026-10-11: The largest payload the one-shot path takes here: its buffer size when it
-    /// applies on this communicator (three or more ranks, a nonzero buffer), else 0.
+    /// applies on this communicator (two or more ranks, a nonzero buffer), else 0.
     pub(super) fn oneshot_capacity(&self) -> usize {
         if self.oneshot_applies(self.oneshot.max_bytes) {
             self.oneshot.max_bytes
@@ -338,11 +354,11 @@ impl NcclBackend {
 
 #[cfg(test)]
 mod tests {
-    use super::{oneshot_applies, peer_slot};
+    use super::{oneshot_applies, peer_slot, validate_oneshot};
 
     #[test]
     fn every_peer_gets_a_distinct_slot_and_the_rank_none() {
-        for world in 3..=8 {
+        for world in 2..=8 {
             for rank in 0..world {
                 let mut slots: Vec<usize> = (0..world).filter_map(|p| peer_slot(rank, p)).collect();
                 assert_eq!(peer_slot(rank, rank), None);
@@ -374,22 +390,57 @@ mod tests {
         }
     }
 
+    /// 2026-10-16: Admitted from two ranks up (was three), each world at and over the bound.
     #[test]
-    fn oneshot_admits_only_small_payloads_at_three_or_more_ranks() {
-        assert!(oneshot_applies(3, 1024, 1024));
-        assert!(oneshot_applies(3, 1024, 2));
+    fn oneshot_admits_only_small_payloads_at_two_or_more_ranks() {
+        for world in [2, 3, 8] {
+            assert!(
+                oneshot_applies(world, 1024, 1024),
+                "world {world} at the bound"
+            );
+            assert!(
+                oneshot_applies(world, 1024, 2),
+                "world {world}, one element"
+            );
+            assert!(
+                !oneshot_applies(world, 1024, 1026),
+                "world {world}: over the bound goes to the 2-rank exchange or NCCL"
+            );
+            assert!(
+                !oneshot_applies(world, 1024, 0),
+                "world {world}: an empty payload sends nothing"
+            );
+            assert!(!oneshot_applies(world, 0, 512), "world {world}: disabled");
+        }
         assert!(
-            !oneshot_applies(3, 1024, 1026),
-            "over the bound goes to NCCL"
+            !oneshot_applies(1, 1024, 512),
+            "a single rank has no peer to exchange with"
         );
-        assert!(
-            !oneshot_applies(3, 1024, 0),
-            "an empty payload sends nothing"
-        );
-        assert!(
-            !oneshot_applies(2, 1024, 512),
-            "world 2 keeps its own exchange"
-        );
-        assert!(!oneshot_applies(3, 0, 512), "disabled");
+    }
+
+    /// 2026-10-16: A nonzero bound is refused on one rank and accepted from two up; a bound of 0
+    /// is accepted everywhere; a bound that splits a BF16 element is refused at every world.
+    #[test]
+    fn a_oneshot_bound_is_refused_only_where_it_cannot_run() {
+        assert!(validate_oneshot(1, 0).is_ok(), "disabled on one rank");
+        let one = validate_oneshot(1, 1024).expect_err("one rank has no peer");
+        assert!(one.to_string().contains("world_size >= 2"), "{one}");
+        for world in [2, 3, 8] {
+            assert!(validate_oneshot(world, 0).is_ok(), "world {world} disabled");
+            assert!(
+                validate_oneshot(world, 2).is_ok(),
+                "world {world}, one element"
+            );
+            assert!(
+                validate_oneshot(world, 1 << 20).is_ok(),
+                "world {world}, 1 MiB"
+            );
+            let odd = validate_oneshot(world, 1025).expect_err("half an element");
+            assert!(odd.to_string().contains("whole number"), "{odd}");
+        }
     }
 }
+
+#[cfg(test)]
+#[path = "world2_sum_tests.rs"]
+mod world2_sum_tests;

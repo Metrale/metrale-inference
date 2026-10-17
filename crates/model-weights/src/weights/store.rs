@@ -26,6 +26,12 @@ impl WeightStore {
         self.deferred.get(name)
     }
 
+    /// 2026-10-16: Every deferred tensor, in no particular order, for a scan that filters by
+    /// name ([`Self::deferred_sorted`] when the order matters).
+    pub fn deferred_iter(&self) -> impl Iterator<Item = (&str, &DeferredTensor)> {
+        self.deferred.iter().map(|(n, d)| (n.as_str(), d))
+    }
+
     /// Every deferred tensor, name-sorted (NUMERIC on a trailing index, so
     /// `embedders.10` sorts after `embedders.2` — a lexicographic sort here
     /// silently mis-maps the n-gram tables, which cost a real debugging
