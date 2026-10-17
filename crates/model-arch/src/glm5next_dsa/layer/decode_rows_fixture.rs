@@ -183,6 +183,7 @@ impl Rig {
                     scores_pipe: KernelHandle(0),
                     sel_fold: KernelHandle(0),
                     expand_folded: KernelHandle(0),
+                    select_fused: KernelHandle(0),
                 },
                 fp8: crate::glm5next_dsa::fp8_rows::DsaFp8Kernels::NONE,
             },

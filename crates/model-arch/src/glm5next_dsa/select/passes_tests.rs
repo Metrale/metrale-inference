@@ -69,6 +69,7 @@ pub(crate) fn kernels() -> Glm5NextDsaKernels {
             scores_pipe: h(0),
             sel_fold: h(SEL_FOLD),
             expand_folded: h(EXPAND_FOLDED),
+            select_fused: h(0),
         },
         fp8: crate::glm5next_dsa::fp8_rows::DsaFp8Kernels::NONE,
     }
