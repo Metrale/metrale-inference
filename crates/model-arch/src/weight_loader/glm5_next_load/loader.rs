@@ -39,7 +39,8 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
     /// on the host by `act_scale::input_scale` rather than given an allocation
     /// granule each. 2026-10-09: Under `--moe-expert-layout tp`, also every
     /// routed-expert tensor of every layer (`expert_tp::is_routed_expert_tensor`):
-    /// each rank uploads only its slices of them.
+    /// each rank uploads only its slices of them. 2026-10-17: Also csf scale planes and an 8-bit
+    /// head with its scales (`expert_scales`, `fp8_head`): decoded or widened on the host.
     fn defer_predicate(
         &self,
         config: &ModelConfig,
@@ -50,6 +51,8 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
             move |name: &str, dtype: WeightDtype| {
                 is_full_width_mtp_expert(name, dtype, num_layers)
                     || is_activation_scale(name, dtype)
+                    || expert_scales::is_csf_component(name)
+                    || fp8_head::is_fp8_head_tensor(name, dtype)
                     || (sliced && expert_tp::is_routed_expert_tensor(name))
             },
         ))
@@ -415,9 +418,9 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
         &self,
         store: &WeightStore,
         _config: &ModelConfig,
-        _gpu: &dyn GpuBackend,
+        gpu: &dyn GpuBackend,
     ) -> Result<DenseWeight> {
-        dense(store, "lm_head.weight")
+        fp8_head::head_weight(gpu, store)
     }
 
     /// 2026-09-25: `None`: the GLM-5.3 MTP layer is loaded by

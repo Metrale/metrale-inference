@@ -12,6 +12,7 @@
 
 pub mod arch;
 pub mod compute;
+pub mod csf_blocks;
 pub mod dtype;
 pub mod error;
 pub mod fault;

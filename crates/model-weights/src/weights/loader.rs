@@ -255,6 +255,8 @@ pub(crate) fn read_safetensor_header(
             "I16" => safetensors::Dtype::I16,
             "I8" => safetensors::Dtype::I8,
             "U8" => safetensors::Dtype::U8,
+            "U16" => safetensors::Dtype::U16,
+            "U32" => safetensors::Dtype::U32,
             "F8_E4M3" => safetensors::Dtype::F8_E4M3,
             "F8_E5M2" => safetensors::Dtype::F8_E5M2,
             _ => safetensors::Dtype::BF16,
