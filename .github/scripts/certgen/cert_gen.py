@@ -24,7 +24,7 @@ def corners(pts):
     out = []
     for x, y, sx, sy in pts:
         out.append(
-            f'  <g transform="translate({x} {y}) scale({sx} {sy})" stroke="#E4C070" fill="none">'
+            f'  <g transform="translate({x} {y}) scale({sx} {sy})" stroke="#D9774D" fill="none">'
             f'<path d="M 0 24 L 0 0 L 24 0" stroke-width="1.5"/>'
             f'<path d="M 0 34 L 0 28 M 28 0 L 34 0" stroke-width="1" opacity="0.7"/></g>')
     return "\n".join(out)
@@ -63,7 +63,7 @@ def cell(x, y, w, label, value, vid, clip=None, vfill="#D9D9DE", fs=13.5):
             if clip else "")
     return (
         f'  <rect x="{x}" y="{y}" width="{w}" height="84" rx="4" fill="#000000" stroke="#2F3742" stroke-width="1"/>\n'
-        f'  <rect x="{x}" y="{y}" width="3" height="84" fill="#E4C070"/>\n'
+        f'  <rect x="{x}" y="{y}" width="3" height="84" fill="#D9774D"/>\n'
         f'  <text x="{x+16}" y="{y+24}" font-size="10" fill="#8A8F99" font-weight="600" letter-spacing="1.5">{label}</text>\n'
         f'  <text x="{x+16}" y="{y+58}" font-size="{fs}" fill="{vfill}" font-family="{MONO}"{clipattr} id="{vid}">{value}</text>\n'
         + fade)
@@ -78,7 +78,7 @@ def author_slots(authors, x, y0, dy, fs, clip_prefix, fade_x, anchor="start"):
         yy = y0 + dy * i
         out.append(
             f'  <g id="field-cert-author-{i+1}"{hide}>\n'
-            f'    <text x="{x}" y="{yy}" font-size="{fs}" font-weight="700" fill="#F7F7F9"'
+            f'    <text x="{x}" y="{yy}" font-size="{fs}" font-weight="700" fill="#E6E6E9"'
             f'{anch} font-family="{MONO}" clip-path="url(#{clip_prefix}{i+1})" '
             f'id="value-cert-author-{i+1}">{a[i]}</text>\n'
             f'    <rect x="{fade_x}" y="{yy-27}" width="36" height="36" fill="url(#cert-fadeBg)"/>\n'
@@ -109,7 +109,7 @@ def merge_count_row(count, opener, x, y, anchor="end", fs=10):
     anch = f' text-anchor="{anchor}"' if anchor != "start" else ""
     return (
         f'  <g id="field-cert-merge-count"{hide}>\n'
-        f'    <text x="{x}" y="{y}" font-size="{fs}" fill="#E4C070" font-weight="600" '
+        f'    <text x="{x}" y="{y}" font-size="{fs}" fill="#D9774D" font-weight="600" '
         f'letter-spacing="1.5"{anch}>'
         f'<tspan id="value-cert-merge-count">{phrase}</tspan>'
         f'<tspan dx="6" letter-spacing="0" font-family="{MONO}" '
@@ -132,30 +132,30 @@ def certificate(authors, **kw):
     return (
         '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
         'viewBox="0 0 1200 675" width="1200" height="675" '
-        'font-family="Urbanist, Helvetica Neue, Helvetica, Arial, sans-serif" '
+        'font-family="Manrope, Helvetica Neue, Helvetica, Arial, sans-serif" '
         'role="img" aria-label="Metrale Engine certificate of certified merge">\n'
         '  <title>Metrale Engine — Certificate of Certified Merge</title>\n'
         + defs + GOLDCUT
         + '  <rect width="1200" height="675" fill="#0E1318"/>\n'
         + '  <rect x="14" y="14" width="1172" height="647" fill="none" stroke="#2F3742" stroke-width="1.5"/>\n'
-        + '  <rect x="24" y="24" width="1152" height="627" fill="none" stroke="#E4C070" stroke-width="0.8" opacity="0.55"/>\n'
-        + '  <g opacity="0.16" stroke="#E4C070" stroke-width="1" fill="none">\n'
+        + '  <rect x="24" y="24" width="1152" height="627" fill="none" stroke="#D9774D" stroke-width="0.8" opacity="0.55"/>\n'
+        + '  <g opacity="0.16" stroke="#D9774D" stroke-width="1" fill="none">\n'
         + f'    <path d="{wave_band(34, 1166, 47, 6.5, 46, 0)}"/>\n'
         + f'    <path d="{wave_band(34, 1166, 47, 6.5, 46, math.pi)}"/>\n'
         + '  </g>\n'
         + corners([(34, 34, 1, 1), (1166, 34, -1, 1), (34, 641, 1, -1), (1166, 641, -1, -1)]) + "\n"
         + LOGO.format(x=64, y=66, s=0.052)
         + '  <text x="126" y="88" font-size="11" fill="#8A8F99" font-weight="600" letter-spacing="3.5">METRALE ENGINEERING &#183; PULL REQUEST CERTIFICATION</text>\n'
-        + '  <text x="64" y="156" font-size="38" fill="#E4C070" font-weight="800" letter-spacing="4">CERTIFIED MERGE</text>\n'
-        + '  <line x1="64" y1="172" x2="474" y2="172" stroke="#E4C070" stroke-width="1" opacity="0.5"/>\n'
+        + '  <text x="64" y="156" font-size="38" fill="#D9774D" font-weight="800" letter-spacing="4">CERTIFIED MERGE</text>\n'
+        + '  <line x1="64" y1="172" x2="474" y2="172" stroke="#D9774D" stroke-width="1" opacity="0.5"/>\n'
         + '  <text x="64" y="204" font-size="13.5" fill="#D9D9DE">Verified, stamped, sealed by a codeowner, and merged to main &#8212;</text>\n'
-        + '  <text x="64" y="224" font-size="13.5" fill="#D9D9DE">with <tspan fill="#E4C070" font-weight="650">all required benchmark gates certified</tspan> on GB10 hardware.</text>\n'
+        + '  <text x="64" y="224" font-size="13.5" fill="#D9D9DE">with <tspan fill="#D9774D" font-weight="650">all required benchmark gates certified</tspan> on GB10 hardware.</text>\n'
         + '  <text x="64" y="274" font-size="10" fill="#8A8F99" font-weight="600" letter-spacing="2">AUTHORED BY</text>\n'
         + author_slots(authors, 64, 300, 44, 32, "cert-clip-a", 808)
         + '  <text x="64" y="436" font-size="10" fill="#8A8F99" font-weight="600" letter-spacing="2">PULL REQUEST</text>\n'
         + merge_count_row(o["merge_count"], authors[0], 848, 436)
         + f'  <text x="64" y="460" font-size="17" clip-path="url(#cert-clip-prline)">'
-          f'<tspan fill="#E4C070" font-weight="700" id="value-cert-pr">{o["pr"]}</tspan>'
+          f'<tspan fill="#D9774D" font-weight="700" id="value-cert-pr">{o["pr"]}</tspan>'
           f'<tspan dx="10" fill="#D9D9DE" id="value-cert-pr-title">{o["pr_title"]}</tspan></text>\n'
         + '  <rect x="812" y="441" width="36" height="26" fill="url(#cert-fadeBg)"/>\n'
         + cells
@@ -163,7 +163,7 @@ def certificate(authors, **kw):
         + '  <text x="964" y="612" font-size="9.5" fill="#8A8F99" font-weight="600" letter-spacing="1.5" text-anchor="end">THE MERGED PR</text>\n'
         + G.stamp_group(*o["stamp"], transform="translate(1078 352) rotate(-5) scale(1.15)")
         + G.seal_group(*o["seal"], transform="translate(952 150) rotate(3.5) scale(1.25)")
-        + '  <text x="520" y="642" font-size="10.5" fill="#8A8F99" text-anchor="middle">Issued by Metrale Corp. &#183; <tspan fill="#6FD9EC">metrale.ai</tspan></text>\n'
+        + '  <text x="520" y="642" font-size="10.5" fill="#8A8F99" text-anchor="middle">Issued by Metrale Corp. &#183; <tspan fill="#D9774D">metrale.ai</tspan></text>\n'
         + qr
         + '</svg>\n')
 
@@ -198,14 +198,14 @@ def certificate_square(authors, **kw):
     return (
         '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
         'viewBox="0 0 1200 1200" width="1200" height="1200" '
-        'font-family="Urbanist, Helvetica Neue, Helvetica, Arial, sans-serif" '
+        'font-family="Manrope, Helvetica Neue, Helvetica, Arial, sans-serif" '
         'role="img" aria-label="Metrale Engine certificate of certified merge">\n'
         '  <title>Metrale Engine — Certificate of Certified Merge</title>\n'
         + defs + GOLDCUT
         + '  <rect width="1200" height="1200" fill="#0E1318"/>\n'
         + '  <rect x="14" y="14" width="1172" height="1172" fill="none" stroke="#2F3742" stroke-width="1.5"/>\n'
-        + '  <rect x="24" y="24" width="1152" height="1152" fill="none" stroke="#E4C070" stroke-width="0.8" opacity="0.55"/>\n'
-        + '  <g opacity="0.16" stroke="#E4C070" stroke-width="1" fill="none">\n'
+        + '  <rect x="24" y="24" width="1152" height="1152" fill="none" stroke="#D9774D" stroke-width="0.8" opacity="0.55"/>\n'
+        + '  <g opacity="0.16" stroke="#D9774D" stroke-width="1" fill="none">\n'
         + f'    <path d="{wave_band(34, 1166, 47, 6.5, 46, 0)}"/>\n'
         + f'    <path d="{wave_band(34, 1166, 47, 6.5, 46, math.pi)}"/>\n'
         + f'    <path d="{wave_band(34, 1166, 1153, 6.5, 46, 0)}"/>\n'
@@ -214,21 +214,21 @@ def certificate_square(authors, **kw):
         + corners([(34, 34, 1, 1), (1166, 34, -1, 1), (34, 1166, 1, -1), (1166, 1166, -1, -1)]) + "\n"
         + LOGO.format(x=576, y=88, s=0.052)
         + '  <text x="600" y="180" font-size="11" fill="#8A8F99" font-weight="600" letter-spacing="3.5" text-anchor="middle">METRALE ENGINEERING &#183; PULL REQUEST CERTIFICATION</text>\n'
-        + '  <text x="600" y="252" font-size="44" fill="#E4C070" font-weight="800" letter-spacing="5" text-anchor="middle">CERTIFIED MERGE</text>\n'
-        + '  <line x1="380" y1="272" x2="820" y2="272" stroke="#E4C070" stroke-width="1" opacity="0.5"/>\n'
+        + '  <text x="600" y="252" font-size="44" fill="#D9774D" font-weight="800" letter-spacing="5" text-anchor="middle">CERTIFIED MERGE</text>\n'
+        + '  <line x1="380" y1="272" x2="820" y2="272" stroke="#D9774D" stroke-width="1" opacity="0.5"/>\n'
         + '  <text x="600" y="320" font-size="14.5" fill="#D9D9DE" text-anchor="middle">Verified, stamped, sealed by a codeowner, and merged to main &#8212;</text>\n'
-        + '  <text x="600" y="342" font-size="14.5" fill="#D9D9DE" text-anchor="middle">with <tspan fill="#E4C070" font-weight="650">all required benchmark gates certified</tspan> on GB10 hardware.</text>\n'
+        + '  <text x="600" y="342" font-size="14.5" fill="#D9D9DE" text-anchor="middle">with <tspan fill="#D9774D" font-weight="650">all required benchmark gates certified</tspan> on GB10 hardware.</text>\n'
         + '  <text x="600" y="438" font-size="10.5" fill="#8A8F99" font-weight="600" letter-spacing="2.5" text-anchor="middle">AUTHORED BY</text>\n'
         + slots
         + '  <text x="600" y="652" font-size="18" text-anchor="middle" clip-path="url(#certsq-clip-prline)">'
-          f'<tspan fill="#E4C070" font-weight="700" id="value-cert-pr">{o["pr"]}</tspan>'
+          f'<tspan fill="#D9774D" font-weight="700" id="value-cert-pr">{o["pr"]}</tspan>'
           f'<tspan dx="10" fill="#D9D9DE" id="value-cert-pr-title">{o["pr_title"]}</tspan></text>\n'
         + merge_count_row(o["merge_count"], authors[0], 600, 688, anchor="middle", fs=10.5)
         + G.seal_group(*o["seal"], transform="translate(420 810) rotate(3.5) scale(1.3)")
         + G.stamp_group(*o["stamp"], transform="translate(780 812) rotate(-5) scale(1.25)")
         + cells
         + '  <text x="1148" y="968" font-size="9.5" fill="#8A8F99" font-weight="600" letter-spacing="1.5" text-anchor="end">SCAN TO READ THE MERGED PR</text>\n'
-        + '  <text x="600" y="1132" font-size="10.5" fill="#8A8F99" text-anchor="middle">Issued by Metrale Corp. &#183; <tspan fill="#6FD9EC">metrale.ai</tspan></text>\n'
+        + '  <text x="600" y="1132" font-size="10.5" fill="#8A8F99" text-anchor="middle">Issued by Metrale Corp. &#183; <tspan fill="#D9774D">metrale.ai</tspan></text>\n'
         + qr
         + '</svg>\n')
 

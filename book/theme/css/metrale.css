@@ -18,6 +18,22 @@
     padding: 4px 10px;
 }
 
+/* The sidebar toggle is a button that needs script (theme/index.hbs); without
+   script, the <noscript> label beside it toggles the sidebar instead. */
+.no-js #sidebar-toggle { display: none; }
+
+/* FontAwesome is applied only once the page has loaded (theme/index.hbs). Until
+   then each menu-bar icon keeps the box FontAwesome 4.7 gives it (its glyph's
+   advance, 1536, 1664 or 1792 of 1792 units), so the title and the buttons
+   do not move when the icons appear. */
+#menu-bar .fa { display: inline-block; }
+#menu-bar .fa-bars,
+#menu-bar .fa-github { width: 0.857143em; }
+#menu-bar .fa-search,
+#menu-bar .fa-print { width: 0.928571em; }
+#menu-bar .fa-paint-brush,
+#menu-bar .fa-edit { width: 1em; }
+
 @media screen {
     html {
         font-family: var(--font-sans);
@@ -30,7 +46,7 @@
     /* ---- type: the blog's editorial scale ------------------------------- */
     .content h1, .content h2, .content h3, .content h4 {
         color: var(--t1);
-        font-weight: 600;
+        font-weight: var(--heading-weight);
     }
     .content h1 { letter-spacing: -0.03em; }
     .content h2 { letter-spacing: -0.024em; }
@@ -50,7 +66,7 @@
         text-decoration-color: color-mix(in srgb, var(--accent) 38%, transparent);
     }
     .content a:hover { text-decoration-color: var(--accent); }
-    :focus-visible { outline: 2.5px solid var(--accent); outline-offset: 3px; }
+    :focus-visible { outline: 2.5px solid var(--focus); outline-offset: 3px; }
 
     /* ---- the top bar: the marketing nav's blur and hairline -------------- */
     #menu-bar {
@@ -91,7 +107,7 @@
     }
     .content pre > code { line-height: 1.62; }
     .content :not(pre) > code {
-        background: color-mix(in srgb, var(--ch-cyan) 12%, transparent);
+        background: color-mix(in srgb, var(--t3) 16%, transparent);
         border-radius: 5px;
         padding: 2px 5px;
     }
@@ -101,14 +117,17 @@
        one. This file is linked after all of them, so equal-specificity rules
        here win on order regardless of which is active. Every colour sits on
        --sunk, which is darker than --bg, so anything that clears contrast on
-       the page ground clears it here too. */
+       the page ground clears it here too. Copper-led: keywords take the
+       accent, strings its lighter step, names the ink; green and red only mark
+       a diff's added and removed lines. */
     .hljs-comment, .hljs-quote { color: var(--t3); font-style: italic; }
-    .hljs-keyword, .hljs-selector-tag, .hljs-meta { color: var(--ch-violet); }
-    .hljs-string, .hljs-addition { color: var(--ch-green); }
-    .hljs-number, .hljs-literal, .hljs-built_in, .hljs-type { color: var(--ch-cyan); }
-    .hljs-title, .hljs-section, .hljs-name { color: var(--accent-deep); }
-    .hljs-attr, .hljs-attribute, .hljs-variable, .hljs-template-variable { color: var(--t1); }
+    .hljs-keyword, .hljs-selector-tag, .hljs-meta { color: var(--accent); }
+    .hljs-string { color: var(--accent-deep); }
+    .hljs-number, .hljs-literal, .hljs-built_in, .hljs-type { color: var(--t1); }
+    .hljs-title, .hljs-section, .hljs-name { color: var(--t1); font-weight: 600; }
+    .hljs-attr, .hljs-attribute, .hljs-variable, .hljs-template-variable { color: var(--t2); }
     .hljs-symbol, .hljs-bullet, .hljs-link { color: var(--accent); }
+    .hljs-addition { color: var(--green); }
     .hljs-deletion { color: var(--red); }
     .hljs-emphasis { font-style: italic; }
     .hljs-strong { font-weight: bold; }
@@ -136,7 +155,7 @@
     }
 
     /* mdBook gives <mark> a background variable but no colour, so the UA's
-       black MarkText would land on a dark violet wash. */
+       black MarkText would land on a dark copper wash. */
     mark {
         background-color: var(--accent-soft);
         color: var(--t1);

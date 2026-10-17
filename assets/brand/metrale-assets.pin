@@ -1,0 +1,16 @@
+tag=v2.0.0
+commit=e05c7a6bae28339efc2f806de40527267b3c934e
+13f1bb7c9b180aac1901d0b023fdfe8e3f625c92  tokens/brand.json
+511cf390a5f8b3bbb60a9c46f9fec7b9df432deb  svg/logo-horizontal.svg
+0c3287c7b5dff125046955c23f1a996782f699f2  svg/logo-horizontal-ondark.svg
+28c4f36a0866c229d438b330edc2abb366d39ffd  svg/mark-compact.svg
+03f1b34135aaf1b48ecb5cd43e113e4e45d9ef37  favicon.ico
+178703afceef136634fee1d6df4ddf47bae9d2c0  favicon.svg
+fd4ae71273a426a09a81f7160ec75bb00927139e  dark/favicon-16.png
+b6d3636a5ffacbda4206f04d4b944a2d70b5c3a5  dark/favicon-32.png
+ab27142d24f46af576b2c00c4227b74f6dd51477  dark/favicon-48.png
+e605dcd31b0a5331cbac2fdf82cce5918d658117  dark/apple-touch-icon-180.png
+b57ae6d8028b71fd0c6ec430b712be118486d297  dark/og-image-1200x630.png
+71eb731d558046199aa7f985adbf812890a093a1  fonts/manrope-latin-wght-normal.woff2
+462280f3e4037df1839fba6cdee11d0980d3f0a9  fonts/MANROPE-LICENSE.txt
+8eedf2a181667088a44f73e7c8eca7f5186ffb01  fonts/manrope-fallback.css

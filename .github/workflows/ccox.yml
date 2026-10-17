@@ -1,0 +1,64 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+name: CCOX
+
+# 2026-10-11: CCOX (Code Compliance Oracle) as a required check: the context
+# `CCOX compliance`. A language model judges the in-scope part of the diff
+# against the compliance definitions bundled with the pinned action and the
+# result is a pass, a violation count or an error (an error never reads as a
+# pass).
+#
+# `pull_request_target` runs this file as it exists on the base branch, with
+# secrets. That is safe only because CCOX never checks out, builds or runs the
+# pull request: it reads the diff as text through the API. Do NOT add a
+# checkout step or any `run:` step to this job.
+#
+# No `paths:` filter on any trigger: a path-filtered required check never
+# reports on a pull request that does not touch its paths, and the pull request
+# then waits on it forever. `merge_group` reports the same context for merge
+# queue entries. `workflow_dispatch` carries no diff, so a manual run ends in
+# status error (fail closed); it exists to prove the wiring and the secret.
+on:
+  pull_request_target:
+    branches: [main]
+  merge_group:
+    types: [checks_requested]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+# One group per pull request; a newer push supersedes the older run. Merge
+# queue entries are never cancelled: each has its own ref, and a cancelled
+# required check reads as a failure.
+concurrency:
+  group: ccox-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
+
+jobs:
+  compliance:
+    name: CCOX compliance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      # Pinned by commit; the report artifact is named ccox-report-<job>-<attempt>
+      # and kept 90 days (the action's defaults).
+      - uses: Avarok-Cybersecurity/ccox@86bf7cdd7eaf6eae106457e4fd12d153760a82db # v1.1.0
+        with:
+          provider: openrouter
+          endpoint: https://openrouter.ai/api/v1
+          api-key: ${{ secrets.OPENROUTER_API_KEY_FREE_CCOX }}
+          model: ${{ vars.OPENROUTER_DEFAULT_FREE_MODEL }}
+          structured-mode: tool_call
+          allowed-directories: |
+            ^crates/
+            ^kernels/
+            ^tests/
+          compliance-definitions-path: ''
+          max-diff-bytes: '60000'
+          seed: '42'
+          reasoning-effort: low
+          max-tokens: '8192'
+          request-timeout-ms: '300000'
+          max-retries: '3'
+          comment-on-pr: 'true'
