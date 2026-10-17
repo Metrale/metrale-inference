@@ -7,9 +7,13 @@
 //! - `cargo xtask deps`: every manifest follows the workspace dependency convention (the root
 //!   declares each dependency once with `default-features = false`; members inherit it with
 //!   `workspace = true` and name only their features). Exits non-zero on any violation.
+//! - `cargo xtask env-ban`: only the `ProcessEnv` host, build scripts and the files listed in
+//!   `xtask/env-ban-allow.txt` read the process environment (see `env_ban`).
 //! - `cargo xtask selftest`: the deps gate refuses each known-bad fixture under
-//!   `xtask/fixtures/` for its named reason, and passes the clean one.
+//!   `xtask/fixtures/` for its named reason, and passes the clean one. The env-ban gate yields
+//!   exactly its expected violations on each `env-ban-*` fixture.
 
+mod env_ban;
 mod manifest;
 mod rules;
 mod selftest;
@@ -17,7 +21,7 @@ mod shell;
 
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: cargo xtask <deps|selftest>";
+const USAGE: &str = "usage: cargo xtask <deps|env-ban|selftest>";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -28,6 +32,7 @@ fn main() -> ExitCode {
         .as_slice()
     {
         ["deps"] => deps(),
+        ["env-ban"] => shell::repo_root().and_then(|root| env_ban::gate(&root)),
         ["selftest"] => selftest(),
         _ => {
             eprintln!("{USAGE}");

@@ -361,6 +361,8 @@ jobs:
   # dependency once with `default-features = false`, and members inherit it with
   # `workspace = true` and name only their features. The selftest runs first, so a gate that
   # stopped refusing its known-bad fixtures fails here before its verdict on the tree is read.
+  # `cargo xtask env-ban` (xtask/src/env_ban): only the ProcessEnv host, build scripts and the
+  # files in xtask/env-ban-allow.txt read the process environment; the list may only shrink.
   # No `if:` and no `needs:`, so the job can become a required context unchanged.
   xtask-deps:
     name: xtask deps
@@ -374,6 +376,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - run: cargo xtask selftest
       - run: cargo xtask deps
+      - run: cargo xtask env-ban
 
   clippy:
     name: cargo clippy --tests

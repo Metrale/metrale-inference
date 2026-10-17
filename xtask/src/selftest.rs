@@ -86,6 +86,7 @@ pub fn run(fixtures: &Path) -> Result<usize, String> {
             failures = failures.saturating_add(1);
         }
     }
+    failures = failures.saturating_add(crate::env_ban::selftest(fixtures)?);
     Ok(failures)
 }
 

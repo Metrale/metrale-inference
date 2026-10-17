@@ -6,7 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Repository gates: cargo xtask deps | selftest."
+description = "Repository gates: cargo xtask deps | env-ban | selftest."
 # 2026-10-17: A repository tool, never a crates.io package.
 publish = false
 
