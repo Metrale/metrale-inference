@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-17: Tests of csf-encoded routed-expert scales on the mock device: a csf expert binds
-//! the bytes its native twin binds, sliced on every rank and whole; a corrupted plane changes
+//! the bytes its native twin binds whole and is refused sliced; a corrupted plane changes
 //! exactly the corrupted scale; incomplete, doubled or mistyped planes are refused; the defer
 //! hook keeps the components off the device and nothing else new.
 //!
@@ -234,10 +234,11 @@ fn store_width(store: &WeightStore) -> usize {
     }
 }
 
-/// 2026-10-17: Sliced on every rank (an even and an uneven split), a csf expert binds the codes,
-/// scales and global scales its native twin binds.
+/// 2026-10-17: Sliced (the tp layout), a csf expert is refused with the reason on every rank of
+/// an even and an uneven split, while its native twin binds: the tp layout defers experts
+/// without a pre-flight charge, so it never places decoded scales.
 #[test]
-fn a_csf_expert_binds_its_native_twins_slices() {
+fn a_sliced_csf_expert_is_refused_and_its_native_twin_binds() {
     for (full, tp) in [(256usize, 2usize), (640, 3)] {
         let gpu = MockGpuBackend::new();
         let native = shard(
@@ -249,9 +250,16 @@ fn a_csf_expert_binds_its_native_twins_slices() {
         let csf = shard(&format!("csf-{full}"), &expert(full, true), &gpu, |_| false);
         for r in 0..tp {
             let s = expert_slice(full, tp, r).unwrap();
-            let want = bind(&native.store, &gpu, ExpertShard::Sliced(s));
-            let got = bind(&csf.store, &gpu, ExpertShard::Sliced(s));
-            assert_eq!(got, want, "full {full} rank {r}/{tp}");
+            let kind = ExpertShard::Sliced(s);
+            assert_eq!(bind(&native.store, &gpu, kind).len(), 3, "rank {r}/{tp}");
+            let slab = ExpertSlab::new(ID..ID + 1, slab_label(kind));
+            let err = bind_routed_expert(&gpu, &csf.store, LAYER, ID, kind, &slab)
+                .err()
+                .unwrap_or_else(|| panic!("full {full} rank {r}/{tp} bound"));
+            assert!(
+                format!("{err:#}").contains("not supported under --moe-expert-layout tp"),
+                "full {full} rank {r}/{tp}: {err:#}"
+            );
         }
     }
 }
@@ -305,7 +313,7 @@ fn a_flipped_code_moves_exactly_one_scale() {
 }
 
 /// 2026-10-17: An incomplete plane, a plane beside a native scale, and a mistyped component are
-/// each refused with the reason, under both layouts.
+/// each refused with the reason under the whole layout (the tp layout refuses every csf plane).
 #[test]
 fn malformed_planes_are_refused() {
     let full = 128;
@@ -338,23 +346,12 @@ fn malformed_planes_are_refused() {
     ] {
         let gpu = MockGpuBackend::new();
         let resident = |name: &str| !is_csf_component(name);
-        for (layout, store_resident, shard_kind) in [
-            (
-                "sliced",
-                false,
-                ExpertShard::Sliced(expert_slice(full, 2, 0).unwrap()),
-            ),
-            ("whole", true, ExpertShard::Whole),
-        ] {
-            let sh = shard(&format!("{tag}-{layout}"), &t, &gpu, |n| {
-                store_resident && resident(n)
-            });
-            let slab = ExpertSlab::new(ID..ID + 1, slab_label(shard_kind));
-            let err = bind_routed_expert(&gpu, &sh.store, LAYER, ID, shard_kind, &slab)
-                .err()
-                .unwrap_or_else(|| panic!("{tag} {layout} bound"));
-            assert!(format!("{err:#}").contains(why), "{tag} {layout}: {err:#}");
-        }
+        let sh = shard(&format!("{tag}-whole"), &t, &gpu, resident);
+        let slab = ExpertSlab::new(ID..ID + 1, CSF_SCALE_SLAB_LABEL);
+        let err = bind_routed_expert(&gpu, &sh.store, LAYER, ID, ExpertShard::Whole, &slab)
+            .err()
+            .unwrap_or_else(|| panic!("{tag} bound"));
+        assert!(format!("{err:#}").contains(why), "{tag}: {err:#}");
     }
 }
 
