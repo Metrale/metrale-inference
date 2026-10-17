@@ -449,6 +449,7 @@ pub(super) fn load_tokenizer(
     config: &ModelConfig,
     model_dir: &Path,
     eos_tokens: &[u32],
+    settings: &metrale_settings::InferenceServerSettings,
 ) -> Result<(ChatTokenizer, bool)> {
     metrale_telemetry::progress::phase(8, "tokenizer");
     // 2026-09-26: `supports_thinking` comes from `ModelCapabilities`.
@@ -465,6 +466,7 @@ pub(super) fn load_tokenizer(
         Some(std::path::Path::new(".")),
         template_source(args),
         heap_trim,
+        crate::tokenizer::ToolJsonStyle::from_settings(settings),
     )?;
     Ok((tokenizer, supports_thinking))
 }

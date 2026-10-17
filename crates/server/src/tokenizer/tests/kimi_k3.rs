@@ -24,6 +24,7 @@ fn official_k3_chat_refuses_unimplemented_xtml_before_template_fallback() {
         None,
         OverrideDir,
         HeapTrimPolicy::off(),
+        crate::tokenizer::ToolJsonStyle::Compact,
     )
     .unwrap();
     assert!(tokenizer.uses_kimi_k3_xtml());
@@ -61,6 +62,7 @@ fn official_k3_xtml_detection_does_not_confuse_the_twin() {
         None,
         OverrideDir,
         HeapTrimPolicy::off(),
+        crate::tokenizer::ToolJsonStyle::Compact,
     )
     .unwrap();
     assert!(!twin.uses_kimi_k3_xtml());
@@ -87,6 +89,7 @@ fn official_k3_guard_also_covers_tool_requests_and_template_overrides() {
         Some(dir.path()),
         OverrideDir,
         HeapTrimPolicy::off(),
+        crate::tokenizer::ToolJsonStyle::Compact,
     )
     .unwrap();
     let error = tokenizer

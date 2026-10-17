@@ -35,6 +35,9 @@ mod hint_injector;
 mod identity;
 mod ids;
 mod ir;
+#[cfg(test)]
+mod lever_equivalence;
+mod lever_value;
 mod llmlingua;
 mod lookback_lens;
 mod loop_detector;

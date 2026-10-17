@@ -190,7 +190,7 @@ fn qwen3_coder_live_streams_multiple_fragments_before_end() {
     // 2026-09-26: Fed in 5-byte deltas with tool schemas and live streaming,
     // a call emits `ToolCallStart`, then several `ToolCallArgsFragment`s, all
     // before `ToolCallEnd`; the joined fragments equal the expected JSON value.
-    let mut det = StreamingToolDetector::new_with_tools(write_and_bash_tools());
+    let mut det = StreamingToolDetector::new_with_tools(write_and_bash_tools(), false);
     let full = "<tool_call>\n<function=Write>\n\
                 <parameter=file_path>\n/tmp/x.rs\n</parameter>\n\
                 <parameter=content>\nhello\n</parameter>\n\
@@ -242,7 +242,7 @@ fn qwen3_coder_live_streams_multiple_fragments_before_end() {
 fn qwen3_coder_live_flush_path_emits_closing_brace() {
     // 2026-09-26: No `</tool_call>` arrives, so `flush` emits the rest of the
     // arguments, closing `}` included. The joined fragments must be valid JSON.
-    let mut det = StreamingToolDetector::new_with_tools(write_and_bash_tools());
+    let mut det = StreamingToolDetector::new_with_tools(write_and_bash_tools(), false);
     let full = "<tool_call>\n<function=Bash>\n\
                 <parameter=command>\nls -lR /etc\n</parameter>\n\
                 <parameter=timeout>\n30\n</parameter>\n\
@@ -271,7 +271,7 @@ fn qwen3_coder_live_flush_path_emits_closing_brace() {
 fn qwen3_coder_live_coerces_integer_param() {
     // 2026-09-26: `timeout` is typed `integer`, so its live fragment carries
     // the number `30`: `coerce_kv` coerces through `coerce_all`.
-    let mut det = StreamingToolDetector::new_with_tools(write_and_bash_tools());
+    let mut det = StreamingToolDetector::new_with_tools(write_and_bash_tools(), false);
     let chunks = [
         "<tool_call>",
         "<function=Bash>",

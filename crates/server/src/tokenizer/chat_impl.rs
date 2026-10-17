@@ -48,6 +48,7 @@ impl ChatTokenizer {
         repo_root: Option<&Path>,
         source: super::TemplateSource<'_>,
         heap_trim: super::HeapTrimPolicy,
+        tool_json_style: super::ToolJsonStyle,
     ) -> Result<Self> {
         let official_k3 = super::kimi_k3::uses_xtml(model_dir, model_type)?;
         let tokenizer_path = model_dir.join("tokenizer.json");
@@ -86,7 +87,8 @@ impl ChatTokenizer {
             )
         };
 
-        let jinja_env = super::jinja_helpers::build_jinja_env(&chat_template)?;
+        let jinja_env =
+            super::jinja_helpers::build_jinja_env_with(&chat_template, tool_json_style)?;
 
         // 2026-09-26: A variant template that fails to compile is dropped without a log line.
         // 2026-10-08: A `--chat-template` file serves the OpenAI apply paths too.
@@ -98,7 +100,7 @@ impl ChatTokenizer {
         };
         let openai_jinja_env = openai_template.and_then(|tmpl| {
             tracing::info!("Loaded OpenAI-variant Jinja template for {model_type}");
-            super::jinja_helpers::build_jinja_env(&tmpl).ok()
+            super::jinja_helpers::build_jinja_env_with(&tmpl, tool_json_style).ok()
         });
         let chat_encoding = if official_k3 {
             ChatEncoding::KimiK3XtmlUnsupported

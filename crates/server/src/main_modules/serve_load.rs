@@ -84,7 +84,7 @@ pub(crate) fn load_model(
     } = serve_phases::load_sampling_defaults(&model_dir, &args, &sampling_presets.non_thinking);
 
     let (tokenizer, supports_thinking) =
-        model_setup::load_tokenizer(&args, &config, &model_dir, &eos_tokens)?;
+        model_setup::load_tokenizer(&args, &config, &model_dir, &eos_tokens, &settings)?;
 
     let serve_phases::TokenizerRuntime {
         vocab_masks,
@@ -174,11 +174,11 @@ pub(crate) fn load_model(
     let dflash_verify_raw_argmax = args.dflash;
     let watchdog_params = crate::scheduler::WatchdogParams::from_behavior(
         &ptx_set.behavior,
-        scheduler::levers::narrow_opt(
+        crate::lever_value::narrow_opt(
             "METRALE_MAX_INTER_TOOL_PROSE",
             settings.scheduler.max_inter_tool_prose,
         )?,
-        scheduler::levers::narrow_opt(
+        crate::lever_value::narrow_opt(
             "METRALE_CONTENT_LOOP_MIN_REPEATS",
             settings.scheduler.content_loop_min_repeats,
         )?,
@@ -317,9 +317,10 @@ pub(crate) fn load_model(
             Some(rotation_tx)
         },
         chat: crate::api::chat::levers::ChatLevers::resolve(
+            &settings,
             ptx_set.behavior.tscg,
             ptx_set.behavior.disable_cwd_hint_injection,
-        ),
+        )?,
         vision_config: config.vision.clone(),
         vision_max_pixels,
         remote_image_policy,

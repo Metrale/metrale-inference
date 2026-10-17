@@ -85,6 +85,7 @@ fn rendered(f: &Fixture, source: TemplateSource<'_>) -> (Vec<u32>, Vec<u32>) {
         Some(&f.repo),
         source,
         HeapTrimPolicy::off(),
+        crate::tokenizer::ToolJsonStyle::Compact,
     )
     .expect("tokenizer loads");
     let messages = [json!({"role": "user", "content": "hi"})];
@@ -125,6 +126,7 @@ fn an_unreadable_template_file_fails_the_load() {
         Some(&f.repo),
         TemplateSource::File(&missing),
         HeapTrimPolicy::off(),
+        crate::tokenizer::ToolJsonStyle::Compact,
     )
     .err()
     .expect("a missing --chat-template file must fail the load");
@@ -140,7 +142,9 @@ const GLM_EFFORT_HEADER: &str = "\
 
 fn effort(flags: RenderFlags<'_>) -> String {
     let converted = jinja_helpers::convert_python_jinja_to_minijinja(GLM_EFFORT_HEADER);
-    let env = jinja_helpers::build_jinja_env(&converted).expect("template compiles");
+    let env =
+        jinja_helpers::build_jinja_env_with(&converted, crate::tokenizer::ToolJsonStyle::Compact)
+            .expect("template compiles");
     render_chat(
         &env,
         &[json!({"role": "user", "content": "hi"})],

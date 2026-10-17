@@ -16,19 +16,12 @@ use crate::tool_parser;
 
 use super::chat_blocking::{extract_hoisted_tool_calls, merge_hoisted_tool_calls};
 
-/// 2026-10-09: `METRALE_LOG_TOOL_RAW=1`: log raw generated text. The blocking path logs
-/// each choice's text before the tool parse, and every chat response (blocking or
-/// streamed) is logged with special tokens kept (`log_raw_generation`).
-pub(super) fn log_tool_raw_on() -> bool {
-    std::env::var("METRALE_LOG_TOOL_RAW").as_deref() == Ok("1")
-}
-
-/// 2026-10-09: Under `METRALE_LOG_TOOL_RAW=1`, log `tokens` decoded with special tokens
+/// 2026-10-09: Under `ChatLevers::log_tool_raw`, log `tokens` decoded with special tokens
 /// kept, so a turn's role and stop markers show. `what` names the response. Only the
 /// tokens the response received are here: a streamed EOS and an EOS the scheduler held
 /// back never reach it (the `metrale::eos` debug target logs the held-back ones).
 pub(super) fn log_raw_generation(state: &AppState, tokens: &[u32], what: &str) {
-    if !log_tool_raw_on() {
+    if !state.chat.log_tool_raw {
         return;
     }
     match state.tokenizer.decode_with_special(tokens) {
@@ -107,7 +100,7 @@ pub(super) fn build_choice_message(
             }
         }
     } else if tools_active {
-        if log_tool_raw_on() {
+        if state.chat.log_tool_raw {
             tracing::info!(
                 target: "metrale::tool_debug",
                 "raw pre-parse output (tools_active, choice {choice_idx}): {output_text_i:?}"
@@ -149,7 +142,11 @@ pub(super) fn build_choice_message(
             if let Some(cwd) = cwd_hint {
                 tool_parser::normalize_paths(&mut tool_calls_i, cwd);
             }
-            let validated = tool_parser::validate_tool_calls(tool_calls_i, &tools_ref);
+            let validated = tool_parser::validate_tool_calls(
+                tool_calls_i,
+                &tools_ref,
+                state.chat.toolcall_debug,
+            );
             if !validated.errors.is_empty() {
                 for err in &validated.errors {
                     tracing::warn!("Tool call validation error: {err}");
@@ -205,6 +202,7 @@ pub(super) fn build_choice_message(
     // 2026-09-26: With no tool call, content that opens with a known refusal pattern
     // (`refusal::detect`) moves to `refusal` and `content` becomes `None`.
     if msg_tool_calls.is_none()
+        && state.chat.refusal_detection
         && let Some(content_text) = msg_content.as_deref()
         && let Some(refusal_sentence) = crate::refusal::detect(content_text)
     {

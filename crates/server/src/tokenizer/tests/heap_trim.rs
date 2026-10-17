@@ -57,6 +57,7 @@ fn tokenizer(policy: HeapTrimPolicy) -> (tempfile::TempDir, ChatTokenizer) {
         None,
         TemplateSource::Checkpoint,
         policy,
+        crate::tokenizer::ToolJsonStyle::Compact,
     )
     .unwrap();
     (dir, t)

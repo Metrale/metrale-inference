@@ -17,26 +17,7 @@ use super::super::stream_guards::bump_f12_tool_call_count;
 use super::ctx::StreamCtx;
 use super::state::StreamState;
 
-/// 2026-09-26: Read once per process. `METRALE_SIMHASH_LOOP=0` turns the SimHash
-/// semantic-loop guard off; unset or any other value leaves it on.
-fn simhash_loop_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("METRALE_SIMHASH_LOOP").as_deref() != Ok("0"))
-}
-
-/// 2026-09-26: Read once per process. `METRALE_DISABLE_WATCHDOGS` (`1` or `true`) turns
-/// the token loop watchdog off too.
-fn watchdogs_disabled() -> bool {
-    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *OFF.get_or_init(|| {
-        crate::scheduler::parse_disable_watchdogs(
-            std::env::var("METRALE_DISABLE_WATCHDOGS").ok().as_deref(),
-        )
-    })
-}
-use super::strip::{
-    maybe_log_decode_trace, strip_all_preserving_boundary, strip_preserving_boundary,
-};
+use super::strip::{log_decode_trace, strip_all_preserving_boundary, strip_preserving_boundary};
 use super::tool_dispatch::{dispatch_tool_output, push_keepalive_if_due};
 
 mod close_reasoning;
@@ -206,7 +187,9 @@ fn handle_token_inner(state: &mut StreamState, ctx: &StreamCtx, tok: u32) -> Del
                         cleaned = cleaned.replace(&nl_form, "\n");
                     }
                 }
-                maybe_log_decode_trace(&raw, &cleaned, stable_end, stable_end - raw.len());
+                if ctx.state.chat.thinking_decode_trace {
+                    log_decode_trace(&raw, &cleaned, stable_end, stable_end - raw.len());
+                }
                 // 2026-09-26: In-think tool-call leak scanner, for requests with tools. A
                 // 256-byte rolling tail of cleaned reasoning finds an opener split across
                 // deltas. Each opener counts once; at `ChatLevers::in_think_leak_openers`

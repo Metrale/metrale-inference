@@ -155,7 +155,9 @@ pub(super) fn handle_done(
     );
 
     // 2026-09-26: The refusal classifier runs only when the detector saw no tool call.
-    let refusal_signal = if state.detector.as_ref().is_none_or(|d| !d.has_tool_calls()) {
+    let refusal_signal = if ctx.state.chat.refusal_detection
+        && state.detector.as_ref().is_none_or(|d| !d.has_tool_calls())
+    {
         crate::refusal::detect(&state.refusal_scan_buf)
     } else {
         None

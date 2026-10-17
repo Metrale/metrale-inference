@@ -34,7 +34,7 @@ fn tools() -> Vec<ToolDefinition> {
 }
 
 fn detector() -> StreamingToolDetector {
-    let mut d = StreamingToolDetector::new_with_tools(tools());
+    let mut d = StreamingToolDetector::new_with_tools(tools(), false);
     d.set_promote_bare_names(true);
     d.set_fail_closed(true);
     d
@@ -215,7 +215,7 @@ fn only_the_glm_envelope_is_a_call() {
     assert_eq!(content, text);
     assert!(calls.is_empty());
     // 2026-10-08: Negative control: the shared detector makes a call of it.
-    let mut shared = StreamingToolDetector::new_with_tools(tools());
+    let mut shared = StreamingToolDetector::new_with_tools(tools(), false);
     let mut out = shared.process(text);
     out.extend(shared.flush());
     assert!(out.iter().any(|o| !matches!(o, DetectorOutput::Content(_))));

@@ -4,12 +4,12 @@
 //!
 //! Owner: server API.
 //! Invariants:
-//! - `detect` returns `None` whenever `METRALE_DISABLE_REFUSAL_DETECTION=1`.
 //! - A returned sentence is a leading slice of the input, trimmed, in the
 //!   model's original case.
 //!
 //! It fills `message.refusal` on the blocking chat path and the refusal delta
-//! on the streaming path, both only when no tool call was found. It is not a
+//! on the streaming path, both only when no tool call was found and
+//! `ChatLevers::refusal_detection` is on. It is not a
 //! safety classifier: it misses refusals that open differently and fires on
 //! content that opens by quoting one. `/v1/moderations` answers 501.
 
@@ -43,12 +43,8 @@ const REFUSAL_PREFIXES: &[&str] = &[
 
 /// 2026-09-26: Returns the refusal sentence when `content` opens with one of the
 /// known patterns, else `None`. The sentence ends at the first `.`, `?` or `!`
-/// within 512 characters, else at the first newline, and is trimmed. When
-/// `METRALE_DISABLE_REFUSAL_DETECTION=1`, always returns `None`.
+/// within 512 characters, else at the first newline, and is trimmed.
 pub fn detect(content: &str) -> Option<String> {
-    if std::env::var("METRALE_DISABLE_REFUSAL_DETECTION").as_deref() == Ok("1") {
-        return None;
-    }
     let trimmed = content.trim_start();
     if trimmed.is_empty() {
         return None;
@@ -84,60 +80,33 @@ pub fn detect(content: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    // 2026-09-26: Unit tests run in parallel threads of one process, and env vars
-    // are process-wide. `kill_switch_returns_none` sets
-    // METRALE_DISABLE_REFUSAL_DETECTION, so every test here that calls `detect()`
-    // holds this lock.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn matches_canonical_refusal() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let r = detect("I cannot help with that request. Here is why…").unwrap();
         assert_eq!(r, "I cannot help with that request.");
     }
 
     #[test]
     fn matches_with_leading_whitespace() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let r = detect("   I'm sorry, but I can't assist with weapons design.").unwrap();
         assert_eq!(r, "I'm sorry, but I can't assist with weapons design.");
     }
 
     #[test]
     fn mixed_case_matches() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         assert!(detect("As AN ai, I cannot provide that.").is_some());
     }
 
     #[test]
     fn non_refusal_returns_none() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         assert!(detect("Sure, here's how to do that.").is_none());
         assert!(detect("").is_none());
         assert!(detect("I can do that for you.").is_none());
     }
 
     #[test]
-    fn kill_switch_returns_none() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        // 2026-09-26: SAFETY: serialized by ENV_LOCK against this module's tests only.
-        unsafe {
-            std::env::set_var("METRALE_DISABLE_REFUSAL_DETECTION", "1");
-        }
-        let got = detect("I cannot help with that.");
-        // 2026-09-26: SAFETY: serialized by ENV_LOCK against this module's tests only.
-        unsafe {
-            std::env::remove_var("METRALE_DISABLE_REFUSAL_DETECTION");
-        }
-        assert!(got.is_none());
-    }
-
-    #[test]
     fn no_terminator_falls_back_to_line() {
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let r = detect("I cannot answer that\nnext paragraph").unwrap();
         assert_eq!(r, "I cannot answer that");
     }

@@ -32,7 +32,9 @@ pub(crate) fn render_fixture(
     );
     let raw = std::fs::read_to_string(&path).expect("checkpoint template fixture present");
     let converted = jinja_helpers::convert_python_jinja_to_minijinja(&raw);
-    let env = jinja_helpers::build_jinja_env(&converted).expect("template compiles");
+    let env =
+        jinja_helpers::build_jinja_env_with(&converted, crate::tokenizer::ToolJsonStyle::Compact)
+            .expect("template compiles");
     render_chat(&env, messages, tools, flags)
 }
 

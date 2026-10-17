@@ -19,7 +19,7 @@ use super::streaming_frag::write_and_bash_tools;
 fn stream_through_pipeline(chunks: &[&str]) -> (Vec<(String, String)>, String) {
     use crate::tool_parser::LeakMarkers;
     let markers: LeakMarkers = Qwen3CoderParser.leak_markers();
-    let mut det = StreamingToolDetector::new_with_tools(write_and_bash_tools());
+    let mut det = StreamingToolDetector::new_with_tools(write_and_bash_tools(), false);
 
     let mut tag_scan_buf = String::new();
     let mut suppressing = false;

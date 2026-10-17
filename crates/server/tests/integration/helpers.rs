@@ -215,6 +215,7 @@ pub(super) fn chat_tokenizer(
         None,
         metrale_server::tokenizer::TemplateSource::OverrideDir,
         metrale_server::tokenizer::HeapTrimPolicy::off(),
+        metrale_server::tokenizer::ToolJsonStyle::Compact,
     )?;
     Ok(tokenizer)
 }

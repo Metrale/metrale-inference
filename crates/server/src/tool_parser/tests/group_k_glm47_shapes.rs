@@ -83,7 +83,7 @@ fn every_shape_is_one_accepted_call_on_the_streaming_path() {
             .into_parser()
             .extract_thinking(&output, true);
         for chunk in [1, 5, 64] {
-            let mut d = StreamingToolDetector::new_with_tools(tools());
+            let mut d = StreamingToolDetector::new_with_tools(tools(), false);
             d.set_promote_bare_names(true);
             d.set_fail_closed(true);
             let mut outs = Vec::new();

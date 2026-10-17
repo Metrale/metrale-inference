@@ -12,6 +12,7 @@
 //! - A run holds its levers behind an `Arc` (`SchedCtx::levers`), so only
 //!   `loop_watchdog` changes after construction.
 
+use crate::lever_value::{narrow, narrow_opt};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// 2026-09-25: Decode / verify / speculation levers for one run.
@@ -210,31 +211,6 @@ pub struct SchedLevers {
     /// 2026-09-25: Loop watchdog; the TUI ops REPL toggles it while
     /// serving.
     loop_watchdog: AtomicBool,
-}
-
-/// 2026-10-17: A resolved integer lever narrowed to the width its reader holds.
-///
-/// # Errors
-/// When `value` does not fit `T` (a negative count, say): the lever is malformed for this
-/// reader, which fails the load instead of substituting a default.
-pub(crate) fn narrow<T: TryFrom<i64>>(env: &str, value: i64) -> anyhow::Result<T> {
-    T::try_from(value).map_err(|_| {
-        anyhow::anyhow!(
-            "{env}={value} does not fit a {}",
-            std::any::type_name::<T>()
-        )
-    })
-}
-
-/// 2026-10-17: [`narrow`] for an optional lever; `None` stays `None`.
-///
-/// # Errors
-/// As [`narrow`].
-pub(crate) fn narrow_opt<T: TryFrom<i64>>(
-    env: &str,
-    value: Option<i64>,
-) -> anyhow::Result<Option<T>> {
-    value.map(|v| narrow(env, v)).transpose()
 }
 
 impl SchedLevers {

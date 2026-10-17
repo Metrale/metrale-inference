@@ -60,6 +60,7 @@ pub use chat_render::ThinkingVars;
 mod deepseek_v4;
 mod heap_trim;
 pub use heap_trim::HeapTrimPolicy;
+pub use jinja_helpers::ToolJsonStyle;
 pub(crate) mod jinja_helpers;
 mod kimi_k3;
 mod message_preprocess;

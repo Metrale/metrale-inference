@@ -134,7 +134,7 @@ fn native_qwen_tool_prompt_preserves_fallback_tscg_and_other_parsers() {
         &HermesParser,
     ] {
         for (native, tscg) in [(false, false), (false, true), (true, true)] {
-            let levers = PromptLevers::new(tscg);
+            let levers = PromptLevers::new(tscg, false);
             assert_eq!(
                 parser_tool_prompt(parser, &tools(), &choice, &levers, native),
                 parser.system_prompt(&tools(), &choice, &levers)
@@ -185,6 +185,7 @@ fn native_qwen_tool_prompt_ownership_tracks_actual_template_selection() {
             Some(&repo),
             OverrideDir,
             HeapTrimPolicy::off(),
+            crate::tokenizer::ToolJsonStyle::Compact,
         )
         .unwrap()
     };

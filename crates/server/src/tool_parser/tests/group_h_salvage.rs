@@ -126,7 +126,7 @@ fn buffered_salvage_does_not_clobber_populated_target() {
 #[test]
 fn streaming_live_fragments_recover_echoed_key() {
     // 2026-09-26: The same shape through live argument streaming (`coerce_kv`).
-    let mut det = StreamingToolDetector::new_with_tools(vec![write_tool()]);
+    let mut det = StreamingToolDetector::new_with_tools(vec![write_tool()], false);
     let full = "<tool_call>\n<function=write>\n\
                 <parameter=parameter>filePath>\n/tmp/x/session.rs\n</parameter>\n\
                 <parameter=content>\nuse axum::Json;\n</parameter>\n\
@@ -172,7 +172,7 @@ fn buffered_recovers_garbled_close_reopen() {
 
 #[test]
 fn streaming_recovers_garbled_close_reopen() {
-    let mut det = StreamingToolDetector::new_with_tools(vec![write_tool()]);
+    let mut det = StreamingToolDetector::new_with_tools(vec![write_tool()], false);
     let full = "<tool_call>\n<function=write>\n\
                 <parameter=content>use axum::Json;\n</parameter<parameter=filePath>\n/tmp/x/+page.svelte\n</parameter>\n\
                 </function>\n</tool_call>";

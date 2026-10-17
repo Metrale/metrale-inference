@@ -267,7 +267,7 @@ fn the_watchdog_levers_resolve_as_their_old_readers_did_except_the_recorded_chan
                 "METRALE_CONTENT_LOOP_MIN_REPEATS" => (
                     format!("{:?}", old_min_repeats(value)),
                     settings.and_then(|s| {
-                        crate::scheduler::levers::narrow_opt::<u32>(
+                        crate::lever_value::narrow_opt::<u32>(
                             var,
                             s.scheduler.content_loop_min_repeats,
                         )
@@ -277,11 +277,8 @@ fn the_watchdog_levers_resolve_as_their_old_readers_did_except_the_recorded_chan
                 _ => (
                     format!("{:?}", old_inter_tool_prose(value)),
                     settings.and_then(|s| {
-                        crate::scheduler::levers::narrow_opt::<u32>(
-                            var,
-                            s.scheduler.max_inter_tool_prose,
-                        )
-                        .map(|n| format!("{n:?}"))
+                        crate::lever_value::narrow_opt::<u32>(var, s.scheduler.max_inter_tool_prose)
+                            .map(|n| format!("{n:?}"))
                     }),
                 ),
             };

@@ -41,8 +41,8 @@ pub struct StreamingToolDetector {
     /// stream as JSON strings.
     pub(super) tools: Vec<ToolDefinition>,
     /// 2026-09-26: When true, arguments are not streamed as fragments; they
-    /// go out whole at the close. True when `METRALE_BUFFER_TOOL_ARGS` is `1`
-    /// or `true` (`new_with_tools`).
+    /// go out whole at the close (`new_with_tools`, from
+    /// `ChatLevers::buffer_tool_args`).
     pub(super) buffer_args: bool,
     /// 2026-09-26: Whether the open call's argument `{` has been emitted.
     pub(super) args_open: bool,

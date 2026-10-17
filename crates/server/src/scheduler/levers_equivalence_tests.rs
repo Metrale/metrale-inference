@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-17: Old reader vs new resolver, per scheduler lever. The readers that
-//! `SchedLevers::from_env` used are frozen here as pure functions; each lever is resolved
+//! `SchedLevers::from_env` used are frozen as [`Old`] rules; each lever is resolved
 //! through `metrale_settings` + `SchedLevers::from_settings` over the same value and the
-//! outcomes compared. Every difference must appear in [`CHANGES`], which is the record of
-//! the behaviour this migration changed on purpose; an unlisted difference, or a listed one
-//! that no longer differs, fails.
+//! outcomes compared (`crate::lever_equivalence`). Every difference must appear in
+//! [`CHANGES`], which is the record of the behaviour this migration changed on purpose.
 //!
 //! Owner: scheduler.
 //! Invariants: [`CHANGES`] lists exactly the (rule, value) pairs whose outcome changed.
@@ -13,124 +12,10 @@
 use std::borrow::Cow;
 
 use super::resolved;
+use crate::lever_equivalence::{Old, Out, Row, assert_old_readers_hold, num};
 use crate::scheduler::levers::SchedLevers;
 
-/// 2026-10-17: One lever value: a switch, a number (as printed), or a load-stopping error.
-#[derive(Clone, Debug, PartialEq)]
-enum Out {
-    B(bool),
-    N(Cow<'static, str>),
-    Err,
-}
-
-/// 2026-10-17: The readers `from_env` called, by name, with their shipped defaults.
-#[derive(Clone, Copy, Debug)]
-enum Old {
-    /// `== "1"`.
-    OptIn,
-    /// `!= "0"`.
-    OnUnlessZero,
-    /// `!= "1"`.
-    OnUnless,
-    /// Any value, `0` included.
-    Present,
-    /// `!present`: the kill switches spelled `NO_*`.
-    Absent,
-    /// `1`, or `true` in any ASCII case; untrimmed.
-    OptInWord,
-    /// `1`, or `true` after a Unicode lowercase; untrimmed.
-    OptInLowercase,
-    /// `helpers::parse_flag_default_on`: trimmed, off on `0`/`false` (any case).
-    DefaultOn,
-    /// `METRALE_BEAM_CODISPATCH`: off on `0`/`false` (any case); untrimmed.
-    Beam,
-    /// `helpers::parse_disable_watchdogs`: trimmed, on for `1`/`true` (any case).
-    DisableWatchdogs,
-    /// `helpers::parse_forced_token_fastpath`: trimmed, off for `1`/`true` (any case).
-    ForcedToken,
-    /// `num::<f32>`: the parse, or the default when unparsable.
-    NumF32(f32),
-    /// `num::<u32|u64|usize>`, widened: the parse, or the default when unparsable.
-    NumUint(u64),
-    /// `mtp_dcut::resolve_dcut_ratio(None, _)`: `f32` parse or 0.75, then snapped.
-    DcutRatio,
-}
-
-impl Old {
-    fn eval(self, v: Option<&str>) -> Out {
-        let word = |v: &str, w: &str| v.eq_ignore_ascii_case(w);
-        match self {
-            Self::OptIn => Out::B(v == Some("1")),
-            Self::OnUnlessZero => Out::B(v != Some("0")),
-            Self::OnUnless => Out::B(v != Some("1")),
-            Self::Present => Out::B(v.is_some()),
-            Self::Absent => Out::B(v.is_none()),
-            Self::OptInWord => Out::B(v.is_some_and(|v| v == "1" || word(v, "true"))),
-            Self::OptInLowercase => {
-                Out::B(v.is_some_and(|v| v == "1" || v.to_lowercase() == "true"))
-            }
-            Self::DefaultOn => Out::B(
-                v.map(str::trim)
-                    .is_none_or(|v| !(v == "0" || word(v, "false"))),
-            ),
-            Self::Beam => Out::B(v.is_none_or(|v| v != "0" && !word(v, "false"))),
-            Self::DisableWatchdogs => Out::B(
-                v.map(str::trim)
-                    .is_some_and(|v| v == "1" || word(v, "true")),
-            ),
-            Self::ForcedToken => Out::B(
-                v.map(str::trim)
-                    .is_none_or(|v| !(v == "1" || word(v, "true"))),
-            ),
-            Self::NumF32(d) => num(v.and_then(|v| v.parse::<f32>().ok()).unwrap_or(d)),
-            Self::NumUint(d) => num(v.and_then(|v| v.parse::<u64>().ok()).unwrap_or(d)),
-            Self::DcutRatio => num(crate::scheduler::mtp_dcut::snap_ratio(
-                v.and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.75),
-            )),
-        }
-    }
-
-    /// 2026-10-17: Rules whose changes are identical share a class.
-    fn class(self) -> &'static str {
-        match self {
-            Self::NumUint(_) => "uint",
-            Self::NumF32(_) => "f32",
-            Self::OptIn => "opt_in",
-            Self::OnUnlessZero => "on_unless_zero",
-            Self::OnUnless => "on_unless",
-            Self::Present => "present",
-            Self::Absent => "absent",
-            Self::OptInWord => "opt_in_word",
-            Self::OptInLowercase => "opt_in_lowercase",
-            Self::DefaultOn => "default_on",
-            Self::Beam => "beam",
-            Self::DisableWatchdogs => "disable_watchdogs",
-            Self::ForcedToken => "forced_token",
-            Self::DcutRatio => "dcut_ratio",
-        }
-    }
-}
-
-const VALUES: [Option<&str>; 14] = [
-    None,
-    Some("1"),
-    Some("true"),
-    Some("TRUE"),
-    Some("yes"),
-    Some("0"),
-    Some("false"),
-    Some("off"),
-    Some("no"),
-    Some(""),
-    Some(" 1 "),
-    Some("garbage"),
-    Some("7"),
-    Some("-1"),
-];
-
-type Get = fn(&SchedLevers) -> Out;
-
-fn levers() -> Vec<(&'static str, Old, Get)> {
+fn levers() -> Vec<Row<SchedLevers>> {
     use Old::*;
     vec![
         ("METRALE_DISABLE_FAST_GREEDY", OnUnless, |l| {
@@ -268,7 +153,11 @@ fn levers() -> Vec<(&'static str, Old, Get)> {
         ("METRALE_MTP_DCUT_MAX_SEQS", NumUint(8), |l| {
             num(l.dcut_width_cap)
         }),
-        ("METRALE_MTP_DCUT_RATIO", DcutRatio, |l| num(l.dcut_ratio)),
+        (
+            "METRALE_MTP_DCUT_RATIO",
+            DcutRatio(crate::scheduler::mtp_dcut::snap_ratio),
+            |l| num(l.dcut_ratio),
+        ),
     ]
 }
 
@@ -366,62 +255,5 @@ const CHANGES: &[(&str, &str, Out)] = &[
 
 #[test]
 fn every_lever_resolves_as_its_old_reader_did_except_the_recorded_changes() {
-    let mut actual: Vec<(&str, &str, Out)> = Vec::new();
-    let mut per_lever: Vec<(&str, Vec<(&str, Out)>)> = Vec::new();
-    for (var, old, get) in levers() {
-        let mut diffs = Vec::new();
-        for value in VALUES {
-            let env: Vec<(&str, &str)> = value.map(|v| (var, v)).into_iter().collect();
-            let new = resolved(&env, &[]).map_or(Out::Err, |l| get(&l));
-            let was = old.eval(value);
-            if new != was {
-                diffs.push((value.unwrap_or("<unset>"), new));
-            }
-        }
-        for (value, new) in &diffs {
-            if !actual
-                .iter()
-                .any(|(c, v, o)| *c == old.class() && v == value && o == new)
-            {
-                actual.push((old.class(), value, new.clone()));
-            }
-        }
-        per_lever.push((var, diffs));
-    }
-    let report: String = actual
-        .iter()
-        .map(|(c, v, o)| format!("    ({c:?}, {v:?}, Out::{o:?}),\n"))
-        .collect();
-    assert_eq!(
-        actual.len(),
-        CHANGES.len(),
-        "the changed (rule, value) pairs differ from CHANGES; actual:\n{report}"
-    );
-    for change in CHANGES {
-        assert!(
-            actual.contains(change),
-            "{change:?} is recorded but no longer differs; actual:\n{report}"
-        );
-    }
-    // 2026-10-17: A class's changes hold for every lever in it, so one row per class is
-    // the whole record.
-    for (var, diffs) in per_lever {
-        let (_, old, _) = levers()
-            .into_iter()
-            .find(|(v, _, _)| *v == var)
-            .expect("listed");
-        let mut expected: Vec<(&str, Out)> = CHANGES
-            .iter()
-            .filter(|(c, _, _)| *c == old.class())
-            .map(|(_, v, o)| (*v, o.clone()))
-            .collect();
-        let mut diffs = diffs;
-        diffs.sort_by_key(|(v, _)| *v);
-        expected.sort_by_key(|(v, _)| *v);
-        assert_eq!(diffs, expected, "{var}");
-    }
-}
-
-fn num(v: impl ToString) -> Out {
-    Out::N(Cow::Owned(v.to_string()))
+    assert_old_readers_hold(&levers(), |env| resolved(env, &[]), CHANGES);
 }

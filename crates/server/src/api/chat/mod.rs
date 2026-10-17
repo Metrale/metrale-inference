@@ -299,7 +299,7 @@ pub(crate) async fn chat_completions_inner(
     let loop_detect::LoopDetectOut {
         suppress_tool_call,
         tool_call_repeat_count,
-    } = loop_detect::check_loops(&req.messages, tools_active);
+    } = loop_detect::check_loops(&req.messages, tools_active, state.chat.loop_suppress);
     let us_loop_detect = _t_seg.elapsed().as_micros() - us_prepare;
 
     let session_hash = crate::session_manager::compute_session_hash(&prompt_tokens);

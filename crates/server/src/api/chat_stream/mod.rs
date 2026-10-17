@@ -180,10 +180,7 @@ pub(crate) async fn run_chat_stream(
         .map(|p| p.leak_markers())
         .unwrap_or(tool_parser::LeakMarkers::EMPTY);
 
-    let max_tool_calls_per_response: usize = std::env::var("METRALE_MAX_TOOL_CALLS_PER_RESPONSE")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(12);
+    let max_tool_calls_per_response = state.chat.max_tool_calls_per_response;
 
     // 2026-09-26: Hold back the longest stop string's byte length minus one, so a stop
     // string split across two decoded chunks is not sent in part; 0 without stop
@@ -240,6 +237,7 @@ pub(crate) async fn run_chat_stream(
         enable_thinking,
         cancel_flag.clone(),
         ctx.tool_defs_for_backfill.clone(),
+        &state.chat,
     );
     if let Some(detector) = stream_state.detector.as_mut() {
         // 2026-09-26: Only `poolside_v1` promotes a bare name inside `<tool_call>` to a

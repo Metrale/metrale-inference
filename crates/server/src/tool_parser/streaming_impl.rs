@@ -12,18 +12,14 @@ use super::*;
 
 impl StreamingToolDetector {
     pub fn new() -> Self {
-        Self::new_with_tools(Vec::new())
+        Self::new_with_tools(Vec::new(), false)
     }
 
     /// 2026-09-26: Build a detector that holds the request's tool schemas; live
     /// argument streaming uses them to name and coerce XML parameters. With
-    /// `METRALE_BUFFER_TOOL_ARGS` set to `1` or `true`, arguments are not
-    /// streamed: one `ToolCallDelta` carries them when the call closes.
-    pub fn new_with_tools(tools: Vec<ToolDefinition>) -> Self {
-        let buffer_args = matches!(
-            std::env::var("METRALE_BUFFER_TOOL_ARGS").as_deref(),
-            Ok("1") | Ok("true")
-        );
+    /// `buffer_args` (`ChatLevers::buffer_tool_args`), arguments are not streamed: one
+    /// `ToolCallDelta` carries them when the call closes.
+    pub fn new_with_tools(tools: Vec<ToolDefinition>, buffer_args: bool) -> Self {
         Self {
             buffer: String::new(),
             inside_tag: false,
