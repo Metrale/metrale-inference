@@ -2381,3 +2381,99 @@ effort_hours = 0.5
 transferability = "any cross-rank cache agreement over rank-local eviction: either size every rank's pool to the cross-rank minimum or make eviction itself cross-rank agreed"
 links = { pr = "", commit = "2f57285a3", evidence = "serve pair K65536-kinv-1017T0057 / K65536-kinv-1017T0159 F1 readbacks; campaign STATUS 2026-10-17" }
 notes = "Candidate fixes, unscheduled: (a) cap each rank's pool at the cross-rank minimum block count; (b) cross-rank-agreed eviction of snapshot leaves"
+
+[[lever]]
+id = "gb10x3-glm53-ctx-tp3-maxpool-1m-util085"
+date = "2026-10-17"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes, MTP drafter layer 45"
+recipe_or_tier = "frozen 512k recipe of record (binary b35510c4b) with exactly two flag changes: --gpu-memory-utilization 0.82 -> 0.85, --max-seq-len 524288 -> 1048576; label ctx-tp3max-1017T0319"
+symptom = "the context plan needs the largest KV pool the 512k recipe can admit on three boxes, and whether msl 1M is accepted at all"
+diagnosis_tool = "bench"
+root_cause_class = "config-gap"
+lever_type = "config"
+lkb_effect = "none (capacity readback, no kernel change)"
+parity_tier_kept = "bit-identical"
+per_rung = []
+verdict = "kept"
+verdict_reason = "2026-10-17 03:35Z msl 1048576 accepted, READY in 4.6 min. KV pool per rank r0 104305 blocks = 1,668,880 tokens (binding), r1 1,685,344, r2 2,329,552; measured 11 layers x 16384 B/block / 16 = 11,264 B/token, matching the model to 0.1% (pool -1.3% vs the 1.69M prediction). Rank-0 reserve 13,596 MB (ssm 2682, marconi 5726 at 112 slots, gdn two-phase 221, runtime headroom 3422, per-sequence 1542, decode ring 0); outside it arena 3670 MB, dequant-persist 5.66 GB, OOM guard 1024 MB. Host MemAvailable after boot 11.5/12.6/11.6 GiB, after a 512k request 11.3/11.2/11.3. Needles (cold, temp 0): 262,659 tokens PASS 3/3, server TTFT 88.2 s, decode 11.0 tok/s; 525,111 tokens PASS 3/3, TTFT 194.9 s, decode 6.7 tok/s (MTP share 0.26 past the 64k MTP context cap). Prefill chunk time grows roughly linearly, about +0.23 s per 100k tokens of depth (2.37 s -> 3.56 s per 8k chunk across 512k)"
+failure_mode = "the first 512k needle FAILED BY TRUNCATION, not retrieval: the probe's fixed max_tokens 64 was spent on 49 reasoning tokens and the answer was cut mid-code (finish=length)"
+caught_by = "manual-inspection of finish_reason and the cut answer"
+time_lost_hours = 0.2
+would_catch_earlier = "a needle probe whose max_tokens covers reasoning plus the answer (256), and which reports finish_reason beside found/missing"
+effort_hours = 0.5
+transferability = "a retrieval probe on a reasoning model must budget for reasoning tokens and treat finish=length as invalid, never as a miss; and a 1M-capable pool readback needs only the msl and util flags changed, so it is cheap to take before planning context work"
+links = { pr = "", commit = "b35510c4b", evidence = "serve ctx-tp3max-1017T0319; campaign STATUS 2026-10-17T03:35Z" }
+notes = "The 10-16 1M attempt that saw 90-110 s per 8k chunk at 400k used an unpinned binary at mbs 1; the frozen recipe does not show that pathology. r2 has about 0.66M tokens more pool than rank 0 can use (smaller pre-KV), a footprint lever"
+
+[[lever]]
+id = "gb10x2-glm53-ctx-tp2-throughput-recipe-build-floor"
+date = "2026-10-17"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=2 over two boxes, no MTP"
+recipe_or_tier = "TP2 throughput serve recipe (binary 4271e4495) at util 0.85 with --max-seq-len 1048576, then 262144; host MemAvailable watchdog at 6 GiB, sampled every 3 s"
+symptom = "three boots were stopped by the 6 GiB host-memory watchdog during layer build, before KV sizing: msl 1M at rank-1 layer 37 (a large copy to that box overlapped) and again at layer 40/45 on clean boxes (5.45 GiB), and msl 262k at rank-1 layer 43 (5.91 GiB)"
+diagnosis_tool = "manual-inspection"
+root_cause_class = "config-gap"
+lever_type = "config"
+lkb_effect = "none"
+parity_tier_kept = "n/a"
+per_rung = []
+verdict = "failed"
+verdict_reason = "2026-10-17 03:52Z. Layer build is the host-memory peak on these boxes (unified memory); util cannot help because KV is sized after the build, so a lower-util fallback would trip identically. Rank 0 fell about 2.9 GiB per layer during build. The earlier 10-12 boot of the same recipe at msl 262k completed only because it ran without a floor watchdog (its rank-1 build trough is not recorded). Readback before the stop, rank 0: weights 16.36 GB, actual free 95.9 GB, reserve 5429 MB (ssm 669, marconi 1190 at 16 slots, gdn 322 at msl 1M, headroom 3248), arena 4325 MB. A larger msl adds build-time memory (msl 1M ran out about 3 layers earlier than 262k)"
+failure_mode = "the throughput recipe's build transient exceeds the host floor on rank 1's box at any tested msl"
+caught_by = "host MemAvailable watchdog (3 s sampling; 15 s sampling missed a ~7 GiB-per-interval descent)"
+time_lost_hours = 0.4
+would_catch_earlier = "a floor watchdog on every boot, including interactive ones, so a recipe that only builds unwatched is flagged the first time"
+effort_hours = 0.5
+transferability = "on unified-memory boxes the weight-build transient, not the KV pool, sets the host-memory floor margin; measure the build trough per box with a fast sampler before choosing msl/util, since util changes nothing there"
+links = { pr = "", commit = "4271e4495", evidence = "serves ctx-tp2max-1017T0335 / ctx-tp2max-1017T0343 / ctx-tp2max-1017T0348-262k; campaign STATUS 2026-10-17T03:43Z-03:52Z" }
+notes = "The lean lever set (next entry) builds under the same floor at msl 1M"
+
+[[lever]]
+id = "gb10x2-glm53-ctx-tp2-lean-1m-host-floor"
+date = "2026-10-17"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=2 over two boxes, no MTP"
+recipe_or_tier = "ZNG-fit lean env (52 METRALE_ levers incl. lean arena and grouped W4A4 MoE), binary 9a8799342, --max-seq-len 1048576, util 0.85; host MemAvailable watchdog 6 GiB / 3 s; label ctx-tp2lean-1017T0353-1m"
+symptom = "a TP2 serve at msl 1M is wanted for long-context work; the open question is whether the KV pool or the host floor binds first"
+diagnosis_tool = "bench"
+root_cause_class = "config-gap"
+lever_type = "config"
+lkb_effect = "none"
+parity_tier_kept = "bit-identical"
+per_rung = []
+verdict = "held"
+verdict_reason = "2026-10-17 13:24Z. Boot OK: build trough 6.22 GiB on rank 0's box; pool 49,120 blocks = 785,920 tokens (clamped from 49,268), pre-KV 89.9 GB; served 9 h with steady MemAvailable 6.9 -> 6.7 GiB (rank 0) and 7.2 -> 6.8 (rank 1), drifting about -0.03 GiB/h. Needles on the live serve (seed 42, max_tokens 256): 256,489 tokens PASS 3/3, TTFT 182.4 s, decode 12.1 tok/s (47 tokens), watchdog min 6.08/6.57 GiB. 512,763 tokens: the watchdog tripped 3.6 s after chunked-prefill start (rank 0 at 5.72 GiB, before any chunk completed); not retried by rule; 760k not run. So the host floor, not the 786k pool, caps this TP2 config at about 256-400k prompt tokens"
+failure_mode = "each request takes an unlogged host-visible step at prefill start that scales with prompt length: rank 0 -0.28 GiB at 256k (~1.17 KB/token, held for the whole prefill), -0.63 GiB at 512k (~1.32 KB/token); rank 1 -0.17 GiB at 256k (~0.71 KB/token). About 0.21 GiB of the 256k step was still held after the request finished"
+caught_by = "host MemAvailable watchdog (3 s sampling) correlated with rank-0 log timestamps"
+time_lost_hours = 0
+would_catch_earlier = "a per-request log line that names and sizes every allocation made at prefill start, so its scaling with prompt length is read from one request instead of inferred from watchdog steps"
+effort_hours = 1.0
+transferability = "under a host floor, a serve's steady-state margin is not its long-context margin: budget a per-request step proportional to prompt length (here ~1.2-1.3 KB/token on rank 0) on top of steady state before quoting a max servable prompt"
+links = { pr = "", commit = "9a8799342", evidence = "serve ctx-tp2lean-1017T0353-1m; campaign STATUS 2026-10-17T13:24Z and the CTX-JOB3 entries" }
+notes = "Projection from the measured slope: about 0.9 GiB at 760k and 1.3 GiB at 1.04M on rank 0, so the margin needed at 1M is about 1.3 GiB above steady state. The allocation is not named in the log; the TP3 1M chunk curve shows periodic per-chunk spikes every 196,608 tokens, a candidate for a buffer re-grown with depth"
+
+[[lever]]
+id = "gb10x3-glm53-ctx-tp3-1m-single-request"
+date = "2026-10-17"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes, MTP drafter layer 45"
+recipe_or_tier = "frozen 512k recipe of record (binary b35510c4b) with --max-seq-len 1048576 and --max-batch-size 1, util 0.82, request timeout off, DSA fused selection off (control arm); label ctx-tp3-1m-1017T1324"
+symptom = "a single 1M-token request had never completed on three boxes; the 10-16 attempt measured 90-110 s per 8k chunk at 400k on an unpinned binary"
+diagnosis_tool = "bench"
+root_cause_class = "latency-bound"
+lever_type = "config"
+lkb_effect = "none (capability readback on the frozen binary)"
+parity_tier_kept = "bit-identical"
+per_rung = []
+verdict = "kept"
+verdict_reason = "2026-10-17 13:37Z. Needle (seed 42, max_tokens 256) of 1,041,903 prompt tokens PASS 3/3; engine TTFT 445.3 s against a ~470 s prediction (client 465.7 s); decode at depth 3.9 tok/s over 74 tokens against ~3.8 predicted (MTP p1 0.714, 1.714 tokens/step). Pools r0 1,697,504 (binding) / r1 1,713,968 / r2 2,336,912 tokens; pre-KV 72.6/72.4/66.4 GB; rank-0 reserve 9,550 MB (ssm 315, marconi 5726 at 112 slots, gdn 221, headroom 3190), arena 3670 MB. Host MemAvailable minimum 11.96/13.41/14.88 GiB, about 6 GiB above the 6 GiB floor. Per-8k-chunk prefill time 2.46 s at 16k, 2.82 at 262k, 3.41 at 524k, 3.68 at 762k, 4.65 s at 1.04M. No illegal-instruction fault on any rank"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.5
+transferability = "prefill per-chunk time at 1M grows ~1.9x from the first chunk to the last on this recipe, with spikes every 196,608 tokens (3.09/4.20/5.84/6.11/7.72 s at 192k/384k/576k/768k/960k vs neighbours of 2.6-4.3 s); a 1M TTFT prediction built from the 512k chunk-slope extrapolation landed within 5%"
+links = { pr = "", commit = "b35510c4b", evidence = "serve ctx-tp3-1m-1017T1324; campaign STATUS 2026-10-17 CTX-JOB3" }
+notes = "The 1M needle generator's tokens-per-N ratio is about 1.0015-1.002 (N=1,040,000 gave 1,041,903 tokens); an assumed 1.0256 would overshoot the planned depth estimate. The fused-selection arm (FUSED=1) is not yet run"
