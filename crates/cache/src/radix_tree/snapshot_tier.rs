@@ -64,7 +64,7 @@ impl SsmSnapshotIndex {
             self.last_lookup_session = session_hash;
             self.evictions_since_lookup = 0;
         }
-        let hermetic = metrale_gpu_runtime::hermetic_enabled();
+        let hermetic = self.tuning.hermetic;
         let mut best: Option<usize> = None;
         let mut best_depth = 0usize;
         for (i, entry) in self.entries.iter().enumerate() {

@@ -15,6 +15,7 @@ metal = ["metrale-gpu-runtime/metal"]
 [dependencies]
 metrale-core = { workspace = true }
 metrale-gpu-runtime = { workspace = true }
+metrale-settings = { workspace = true }
 metrale-telemetry = { workspace = true }
 anyhow = { workspace = true, features = ["std"] }
 half = { workspace = true, features = ["std"] }
@@ -23,6 +24,7 @@ tracing = { workspace = true, features = ["std", "attributes"] }
 
 [dev-dependencies]
 metrale-gpu-runtime = { workspace = true, features = ["test-utils"] }
+metrale-settings = { workspace = true, features = ["test-utils"] }
 
 [lints]
 workspace = true

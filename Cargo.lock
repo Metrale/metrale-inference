@@ -1593,6 +1593,7 @@ dependencies = [
  "half",
  "metrale-core",
  "metrale-gpu-runtime",
+ "metrale-settings",
  "metrale-telemetry",
  "parking_lot",
  "tracing",

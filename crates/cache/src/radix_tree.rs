@@ -17,6 +17,7 @@
 
 use parking_lot::Mutex;
 
+use metrale_settings::groups::device_cache::CacheTuning;
 use metrale_telemetry::prefix_cache::{EvictedBlocks, PrefixCache, PrefixMatch};
 
 mod inner;
@@ -57,6 +58,7 @@ pub struct RadixTree {
     snapshot_index: Mutex<SsmSnapshotIndex>,
 }
 
+// 2026-10-17: LEGACY: `RadixTree::new` reads the environment (`crate::legacy_env`).
 impl Default for RadixTree {
     fn default() -> Self {
         Self::new()
@@ -64,10 +66,11 @@ impl Default for RadixTree {
 }
 
 impl RadixTree {
-    pub fn new() -> Self {
+    /// 2026-10-17: An empty tree and snapshot index, read at `tuning` for their lifetime.
+    pub fn with_tuning(tuning: &CacheTuning) -> Self {
         Self {
-            inner: Mutex::new(RadixTreeInner::new()),
-            snapshot_index: Mutex::new(SsmSnapshotIndex::new()),
+            inner: Mutex::new(RadixTreeInner::new(tuning.prefix_subblock)),
+            snapshot_index: Mutex::new(SsmSnapshotIndex::new(*tuning)),
         }
     }
 }

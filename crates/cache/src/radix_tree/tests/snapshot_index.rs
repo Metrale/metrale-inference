@@ -6,6 +6,7 @@
 //! Invariants: none beyond the types.
 
 use super::*;
+use crate::radix_tree::tests::declared_tuning;
 use metrale_telemetry::prefix_cache::TierEvict;
 
 #[path = "snapshot_lease.rs"]
@@ -54,6 +55,7 @@ fn index(entries: Vec<SnapshotEntry>, live: u64) -> SsmSnapshotIndex {
         access_counter: 1000,
         last_lookup_session: live,
         evictions_since_lookup: 0,
+        tuning: declared_tuning(),
         stats: SnapshotStats::default(),
     }
 }
@@ -89,7 +91,7 @@ fn deep_tail_evicted_without_tail_protect() {
 /// lookup, `lookup_tiered`.
 #[test]
 fn eviction_ignores_hit_history() {
-    let mut idx = SsmSnapshotIndex::new();
+    let mut idx = SsmSnapshotIndex::new(declared_tuning());
     let toks: Vec<u32> = (0..100).collect();
     let ph = super::hash_token_prefix(&toks, 40, 0);
     idx.insert(ph, 1, 7, 40);
@@ -115,7 +117,7 @@ fn eviction_ignores_hit_history() {
 /// candidate's, in both `lookup_tiered` and `lookup`.
 #[test]
 fn lookup_bumps_winner_only() {
-    let mut idx = SsmSnapshotIndex::new();
+    let mut idx = SsmSnapshotIndex::new(declared_tuning());
     let toks: Vec<u32> = (0..100).collect();
     let ph40 = super::hash_token_prefix(&toks, 40, 0);
     let ph80 = super::hash_token_prefix(&toks, 80, 0);
@@ -154,7 +156,7 @@ fn lookup_bumps_winner_only() {
 /// session and resets the lease's eviction count; session 0 does not latch.
 #[test]
 fn lookup_tracks_live_session() {
-    let mut idx = SsmSnapshotIndex::new();
+    let mut idx = SsmSnapshotIndex::new(declared_tuning());
     assert_eq!(idx.last_lookup_session, 0);
     // 2026-09-25: The index is empty; the lookup misses and still latches.
     let _ = idx.lookup(&[1, 2, 3], 3, 42, 0);
@@ -177,7 +179,7 @@ fn lookup_tracks_live_session() {
 /// match point to `recompute_tokens_on_hit`.
 #[test]
 fn stats_track_hits_and_recompute() {
-    let mut idx = SsmSnapshotIndex::new();
+    let mut idx = SsmSnapshotIndex::new(declared_tuning());
     let toks: Vec<u32> = (0..100).collect();
 
     assert!(
@@ -280,7 +282,7 @@ fn deep_victim_is_spilled_under_the_gate() {
 /// slot; `lookup_tiered` finds it as `Tier(key)`.
 #[test]
 fn spilled_entry_lookup_semantics() {
-    let mut idx = SsmSnapshotIndex::new();
+    let mut idx = SsmSnapshotIndex::new(declared_tuning());
     let toks: Vec<u32> = (0..50).collect();
     let ph = super::hash_token_prefix(&toks, 50, 0);
     idx.insert(ph, 4, 7, 50);
@@ -301,7 +303,7 @@ fn spilled_entry_lookup_semantics() {
 
 #[test]
 fn promote_rehomes_to_hbm() {
-    let mut idx = SsmSnapshotIndex::new();
+    let mut idx = SsmSnapshotIndex::new(declared_tuning());
     let toks: Vec<u32> = (0..30).collect();
     let ph = super::hash_token_prefix(&toks, 30, 0);
     idx.insert(ph, 1, 7, 30);
@@ -316,7 +318,7 @@ fn promote_rehomes_to_hbm() {
 
 #[test]
 fn evict_to_tier_none_when_all_spilled() {
-    let mut idx = SsmSnapshotIndex::new();
+    let mut idx = SsmSnapshotIndex::new(declared_tuning());
     idx.insert(10, 0, 7, 5);
     idx.insert(20, 1, 7, 6);
     assert!(idx.evict_to_tier(0).is_some());
@@ -327,7 +329,7 @@ fn evict_to_tier_none_when_all_spilled() {
 
 #[test]
 fn reinsert_unspills() {
-    let mut idx = SsmSnapshotIndex::new();
+    let mut idx = SsmSnapshotIndex::new(declared_tuning());
     idx.insert(0xAA, 1, 7, 40);
     idx.evict_to_tier(0).unwrap();
     idx.insert(0xAA, 5, 7, 40);
@@ -336,7 +338,7 @@ fn reinsert_unspills() {
 
 #[test]
 fn test_snapshot_index_insert_lookup_roundtrip() {
-    let mut idx = SsmSnapshotIndex::new();
+    let mut idx = SsmSnapshotIndex::new(declared_tuning());
     let tokens: Vec<u32> = (0..48).collect();
     let prefix_hash = super::hash_token_prefix(&tokens, 32, 0);
 
@@ -351,7 +353,7 @@ fn test_snapshot_index_insert_lookup_roundtrip() {
 
 #[test]
 fn test_snapshot_index_lru_eviction() {
-    let mut idx = SsmSnapshotIndex::new();
+    let mut idx = SsmSnapshotIndex::new(declared_tuning());
     let tokens_a: Vec<u32> = (0..16).collect();
     let tokens_b: Vec<u32> = (100..116).collect();
     let ha = super::hash_token_prefix(&tokens_a, 16, 0);
@@ -376,7 +378,7 @@ fn test_snapshot_index_session_isolation() {
     // 2026-09-25: Outside `--hermetic`, `session_gate_blocks` gates only tail
     // entries: a plain entry matches any session, including 0, and a tail
     // matches only its own non-zero session.
-    let mut idx = SsmSnapshotIndex::new();
+    let mut idx = SsmSnapshotIndex::new(declared_tuning());
     let tokens: Vec<u32> = (0..16).collect();
     let prefix_hash = super::hash_token_prefix(&tokens, 16, 0);
 
@@ -394,7 +396,7 @@ fn test_snapshot_index_session_isolation() {
 
 #[test]
 fn test_snapshot_index_overwrite_existing() {
-    let mut idx = SsmSnapshotIndex::new();
+    let mut idx = SsmSnapshotIndex::new(declared_tuning());
     let tokens: Vec<u32> = (0..16).collect();
     let prefix_hash = super::hash_token_prefix(&tokens, 16, 0);
 
@@ -411,7 +413,7 @@ fn test_snapshot_index_overwrite_existing() {
 
 #[test]
 fn test_snapshot_index_deepest_match() {
-    let mut idx = SsmSnapshotIndex::new();
+    let mut idx = SsmSnapshotIndex::new(declared_tuning());
     let tokens: Vec<u32> = (0..64).collect();
 
     let h16 = super::hash_token_prefix(&tokens, 16, 0);

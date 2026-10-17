@@ -74,13 +74,13 @@ pub(super) struct RadixTreeInner {
     /// 2026-09-25: Whether `walk` may end a match inside a block, handing the
     /// requester a block another owner still writes (see
     /// [`super::partial_tail`]). Set in `new()` from
-    /// `METRALE_PREFIX_SUBBLOCK`, and a field rather than a read at the match
-    /// site so a test can set it on one tree.
+    /// `CacheTuning::prefix_subblock`, and a field so a test can set it on one
+    /// tree.
     pub(super) partial_tail_sharing: bool,
 }
 
 impl RadixTreeInner {
-    pub(super) fn new() -> Self {
+    pub(super) fn new(partial_tail_sharing: bool) -> Self {
         let root = RadixNode {
             children: HashMap::new(),
             block_idx: u32::MAX,
@@ -99,7 +99,7 @@ impl RadixTreeInner {
             free_nodes: Vec::new(),
             roots,
             access_counter: 0,
-            partial_tail_sharing: super::partial_tail::partial_tail_sharing_enabled(),
+            partial_tail_sharing,
         }
     }
 

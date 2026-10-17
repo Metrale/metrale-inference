@@ -19,9 +19,8 @@ use super::snapshot::SnapshotEntry;
 /// state computed by another request.
 ///
 /// `--hermetic` gates every entry, so a known-answer test never restores
-/// another request's state. It is a parameter rather than a read of
-/// `hermetic_enabled()`, which is cached in a `OnceLock`, so a test can reach
-/// both answers in one process.
+/// another request's state. It is a parameter (the index's
+/// `CacheTuning::hermetic`), so a test can reach both answers in one process.
 pub(super) fn session_gate_blocks(
     entry: &SnapshotEntry,
     session_hash: u64,

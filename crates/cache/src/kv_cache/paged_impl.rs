@@ -12,13 +12,20 @@ use anyhow::{Result, bail};
 use super::block_trace::BlockTrace;
 use super::{KvCacheConfig, KvCacheDtype, LayerPool, PagedKvCache};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
+use metrale_settings::groups::device_cache::CacheTuning;
 
 mod diagnostics;
 
 impl PagedKvCache {
     /// 2026-09-25: Allocate a K pool and a V pool of `num_blocks` blocks for
-    /// every attention layer. All blocks start free with count 0.
-    pub fn new(config: KvCacheConfig, num_blocks: usize, gpu: &dyn GpuBackend) -> Result<Self> {
+    /// every attention layer. All blocks start free with count 0. `tuning.kv_trace` turns on the
+    /// per-block refcount history (`block_trace`).
+    pub fn with_tuning(
+        config: KvCacheConfig,
+        num_blocks: usize,
+        gpu: &dyn GpuBackend,
+        tuning: &CacheTuning,
+    ) -> Result<Self> {
         let mut layers = Vec::with_capacity(config.num_layers);
         let mut total_bytes: usize = 0;
         for i in 0..config.num_layers {
@@ -75,7 +82,7 @@ impl PagedKvCache {
             free_blocks,
             block_ref_counts,
             config,
-            trace: BlockTrace::new(num_blocks),
+            trace: BlockTrace::new(num_blocks, tuning.kv_trace),
         })
     }
 

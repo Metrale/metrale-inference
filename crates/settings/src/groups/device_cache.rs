@@ -8,7 +8,7 @@
 //! Invariants: reads only `InferenceServerSettings`; every Text lever keeps the parse of the
 //! reader it replaced.
 
-use crate::resolve::InferenceServerSettings;
+use crate::resolve::{InferenceServerSettings, SettingsError};
 
 /// 2026-10-17: `METRALE_SSM_TAIL_LEASE_TTL` when unset or not a `u32`.
 pub const TAIL_LEASE_TTL_BUILT_IN: u32 = 64;
@@ -38,6 +38,16 @@ pub struct CacheTuning {
     /// 2026-10-17: Hermetic mode (`--hermetic`, carried in the CLI layer as `METRALE_HERMETIC=1`,
     /// or `METRALE_HERMETIC=1`): snapshot lookups miss.
     pub hermetic: bool,
+}
+
+impl CacheTuning {
+    /// 2026-10-17: The tuning of an empty environment, no CLI and no recipe: the declared defaults.
+    ///
+    /// # Errors
+    /// The resolver's error, should a declared default fail to parse.
+    pub fn declared() -> Result<Self, SettingsError> {
+        Ok(Self::from(&super::device::declared()?))
+    }
 }
 
 impl From<&InferenceServerSettings> for CacheTuning {

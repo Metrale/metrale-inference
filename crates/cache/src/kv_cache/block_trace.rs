@@ -15,7 +15,6 @@
 //! Invariants: a ring holds at most `RING_LEN` events.
 
 use std::panic::Location;
-use std::sync::OnceLock;
 
 /// 2026-09-25: Events kept per block; the oldest is dropped first.
 const RING_LEN: usize = 24;
@@ -34,14 +33,10 @@ pub(super) struct BlockTrace {
     rings: Vec<Vec<BlockEvent>>,
 }
 
-pub(super) fn enabled() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var("METRALE_KV_TRACE").as_deref() == Ok("1"))
-}
-
 impl BlockTrace {
-    pub(super) fn new(num_blocks: usize) -> Self {
-        if enabled() {
+    /// 2026-10-17: Rings for `num_blocks` blocks when `on` (`CacheTuning::kv_trace`), else none.
+    pub(super) fn new(num_blocks: usize, on: bool) -> Self {
+        if on {
             tracing::info!(
                 "METRALE_KV_TRACE=1: recording per-block refcount history \
                  ({RING_LEN} events x {num_blocks} blocks)"

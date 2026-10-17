@@ -10,9 +10,7 @@
 crates/bench/src/bin/record_agreement.rs
 crates/bench/src/gate/record.rs
 crates/bench/src/gate/record_env.rs
-crates/cache/src/kv_cache/block_trace.rs
-crates/cache/src/radix_tree/partial_tail.rs
-crates/cache/src/radix_tree/snapshot.rs
+crates/cache/src/legacy_env.rs
 crates/comm/src/nccl_backend.rs
 crates/config/src/legacy_env.rs
 crates/config/src/levers.rs
