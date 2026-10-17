@@ -456,9 +456,15 @@ impl DsaSelectScratch {
 }
 
 mod launch;
-pub use launch::{row_passes, select_tokens, select_tokens_in_passes, select_tokens_rows};
+pub use launch::{
+    select_tokens, select_tokens_in_passes, select_tokens_passes, select_tokens_rows,
+};
+mod subpass;
+pub use subpass::{even_row_passes, row_passes};
 mod folded;
-pub use folded::{expand_folded, folded_check, launch_fold, select_rows_folded};
+pub use folded::{
+    expand_folded, folded_check, launch_fold, select_passes_folded, select_rows_folded,
+};
 mod fit;
 mod fused;
 pub use fused::{SELECT_FUSED_MAXK, SELECT_FUSED_SMEM, fused_shape, select_fused};

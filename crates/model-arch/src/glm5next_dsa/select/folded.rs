@@ -12,11 +12,14 @@
 //!   (the same scores and top-k launches, each row's inputs at its offset), except that each
 //!   sub-pass writes its selected pools at their own rows instead of region row 0 and ends with
 //!   the fold instead of the expansion. Its rows' selected pools are the unsplit pass's, folded.
+//!   2026-10-17: likewise [`select_passes_folded`] and `select_tokens_passes` for the same
+//!   sub-passes.
 //! - [`expand_folded`] over the folded rows of a whole pass writes the token rows
 //!   `select_tokens_in_passes` writes (`dsa_sel_fold.cu`'s invariants); it reads no candidacy
 //!   row, so it needs only the gathered selected pools and the compressed pools.
 //! - Both are for an exact host-geometry pass (`geom_dev` NULL), the batched prefill's.
 
+use super::subpass::{check_passes, row_passes};
 use super::*;
 use anyhow::ensure;
 
@@ -38,10 +41,7 @@ impl DsaSelectScratch {
 }
 
 /// 2026-10-15: The rows `ranges` of an exact pass, scored and ranked in the sub-passes
-/// `select_tokens_rows` plans, their selected pools folded and left at their own rows of
-/// [`DsaSelectScratch::selected`]; no token row is written. `compress` as in
-/// `select_tokens_rows`. Returns the number of sub-passes. Errors before any launch when the
-/// selected region cannot hold the pass's rows, the pass has no pools, or `geom_dev` is set.
+/// `select_tokens_rows` plans ([`select_passes_folded`]). Returns the number of sub-passes.
 #[allow(clippy::too_many_arguments)]
 pub fn select_rows_folded(
     gpu: &dyn GpuBackend,
@@ -62,6 +62,31 @@ pub fn select_rows_folded(
         geom.q_rows
     );
     let passes = row_passes(ranges, per)?;
+    select_passes_folded(
+        gpu, kernels, cfg, geom, inputs, scratch, &passes, compress, stream,
+    )
+}
+
+/// 2026-10-17 (was the body of `select_rows_folded`, 2026-10-15): The row sub-passes `passes`
+/// of an exact pass (as `select_tokens_passes` takes them), scored and ranked, their selected
+/// pools folded and left at their own rows of [`DsaSelectScratch::selected`]; no token row is
+/// written. `compress` as in `select_tokens_passes`. Returns the number of sub-passes. Errors
+/// before any launch when the selected region cannot hold the pass's rows, the pass has no
+/// pools, `geom_dev` is set, or a sub-pass is empty, wider than the scratch or outside the pass.
+#[allow(clippy::too_many_arguments)]
+pub fn select_passes_folded(
+    gpu: &dyn GpuBackend,
+    kernels: &Glm5NextDsaKernels,
+    cfg: &Glm5NextDsaConfig,
+    geom: &DsaSelectGeometry,
+    inputs: &DsaSelectInputs,
+    scratch: &DsaSelectScratch,
+    passes: &[(usize, usize)],
+    compress: bool,
+    stream: u64,
+) -> Result<usize> {
+    folded_fits(geom, inputs, scratch)?;
+    check_passes(scratch, geom, passes)?;
     for (i, &(r0, rows)) in passes.iter().enumerate() {
         let sub = DsaSelectGeometry {
             q_rows: rows,

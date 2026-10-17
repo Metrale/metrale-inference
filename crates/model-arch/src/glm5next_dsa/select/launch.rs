@@ -15,6 +15,7 @@
 //!   (when it compresses), `dsa_select_fused_pipe`, then the folded expansion unless the pass
 //!   is folded; it writes no scores or candidacy row. Every other pass launches as before.
 
+use super::subpass::{check_passes, row_passes, sub_pass_rows};
 use super::*;
 use anyhow::ensure;
 
@@ -89,24 +90,9 @@ pub fn select_tokens_in_passes(
     )
 }
 
-/// 2026-10-15: The row sub-passes `(first_row, rows)` that cover `ranges` (each `(lo, hi)`, in
-/// order) at most `per` rows at a time: every range from its first row in steps of `per`, the
-/// plan `select_tokens_rows` launches. Errors on `per == 0`.
-pub fn row_passes(ranges: &[(usize, usize)], per: usize) -> Result<Vec<(usize, usize)>> {
-    ensure!(per > 0, "DSA select: a sub-pass of no rows");
-    Ok(ranges
-        .iter()
-        .flat_map(|&(lo, hi)| (lo..hi).step_by(per).map(move |r0| (r0, per.min(hi - r0))))
-        .collect())
-}
-
 /// 2026-10-15: The rows `ranges` of an exact pass of `geom.q_rows` rows, in the sub-passes
-/// [`row_passes`] plans at [`DsaSelectScratch::rows_per_pass`]: each row's inputs and output
-/// at its offset, so each row's selection is the one-pass selection's bits (see
-/// [`select_tokens_in_passes`]); rows outside `ranges` are not written. `compress` runs the
-/// pool compression on the first sub-pass; false reads pools an earlier launch on `stream`
-/// compressed. Returns the number of sub-passes. 2026-10-15: the sequence-parallel selection
-/// (`sp_select`) runs each rank's owned slabs through it.
+/// [`row_passes`] plans at [`DsaSelectScratch::rows_per_pass`] ([`select_tokens_passes`]).
+/// Returns the number of sub-passes.
 #[allow(clippy::too_many_arguments)]
 pub fn select_tokens_rows(
     gpu: &dyn GpuBackend,
@@ -119,19 +105,39 @@ pub fn select_tokens_rows(
     compress: bool,
     stream: u64,
 ) -> Result<usize> {
-    let per = scratch.rows_per_pass(geom);
-    if per == 0 {
-        bail!(
-            "DSA select: the scratch holds no query row at {} pools ({} tokens)",
-            geom.n_pools,
-            geom.seq
-        );
-    }
+    let per = sub_pass_rows(scratch, geom)?;
     ensure!(
         ranges.iter().all(|&(lo, hi)| lo < hi && hi <= geom.q_rows),
         "DSA select: row ranges {ranges:?} outside a {}-row pass",
         geom.q_rows
     );
+    let passes = row_passes(ranges, per)?;
+    select_tokens_passes(
+        gpu, kernels, cfg, geom, inputs, scratch, &passes, compress, stream,
+    )
+}
+
+/// 2026-10-17 (was the body of `select_tokens_rows`, 2026-10-15): The row sub-passes `passes`
+/// (`(first_row, rows)`, each at most [`DsaSelectScratch::rows_per_pass`] rows) of an exact
+/// pass of `geom.q_rows` rows: each row's inputs and output at its offset, so each row's
+/// selection is the one-pass selection's bits (see [`select_tokens_in_passes`]); rows outside
+/// `passes` are not written. `compress` runs the pool compression on the first sub-pass; false
+/// reads pools an earlier launch on `stream` compressed. Returns the number of sub-passes.
+/// 2026-10-15: the sequence-parallel selection (`sp_select`) runs each rank's owned slabs
+/// through it.
+#[allow(clippy::too_many_arguments)]
+pub fn select_tokens_passes(
+    gpu: &dyn GpuBackend,
+    kernels: &Glm5NextDsaKernels,
+    cfg: &Glm5NextDsaConfig,
+    geom: &DsaSelectGeometry,
+    inputs: &DsaSelectInputs,
+    scratch: &DsaSelectScratch,
+    passes: &[(usize, usize)],
+    compress: bool,
+    stream: u64,
+) -> Result<usize> {
+    check_passes(scratch, geom, passes)?;
     let want_tokens = geom.q_rows * cfg.out_width() * 4;
     if want_tokens > scratch.tokens_bytes {
         bail!(
@@ -139,7 +145,6 @@ pub fn select_tokens_rows(
             scratch.tokens_bytes
         );
     }
-    let passes = row_passes(ranges, per)?;
     for (i, &(r0, rows)) in passes.iter().enumerate() {
         let sub = DsaSelectGeometry {
             q_rows: rows,

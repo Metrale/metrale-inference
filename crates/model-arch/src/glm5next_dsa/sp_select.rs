@@ -140,4 +140,7 @@ mod tests;
 mod run_tests;
 
 #[cfg(test)]
+mod plan_tests;
+
+#[cfg(test)]
 mod tie_tests;
