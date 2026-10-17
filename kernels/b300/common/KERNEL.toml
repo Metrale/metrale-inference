@@ -161,6 +161,8 @@ use = [
   "../gb10/common/dense_gemm_bf16.cu",
   "../gb10/common/dense_gemm_splitk.cu",
   "../gb10/common/dense_gemm_tc.cu",
+  "../gb10/common/dense_gemm_tc_body.cuh",
+  "../gb10/common/dense_gemm_tc_mainloop.cuh",
   "../gb10/common/dense_gemv_bf16_batch2.cu",
   "../gb10/common/dense_gemv_bf16_batchm.cu",
   "../gb10/common/dense_gemv_bf16.cu",

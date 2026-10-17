@@ -148,6 +148,9 @@ mod ops_levers;
 // 2026-09-25: Tensor-core routing of the MTP drafter's BF16 GEMV.
 #[path = "ops/dense_gemv_tc.rs"]
 pub mod dense_gemv_tc;
+// 2026-10-17: In-tree BF16 x BF16 -> FP32 projection (dense_gemm_tc_f32out.cu).
+#[path = "ops/dense_gemm_tc_f32.rs"]
+pub mod dense_gemm_tc_f32;
 #[path = "ops/gdn_prefill_plan.rs"]
 mod gdn_prefill_plan;
 #[path = "ops/gemv_tc.rs"]

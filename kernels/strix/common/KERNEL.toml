@@ -211,6 +211,8 @@ use = [
   "../gb10/common/dense_gemm_bf16.cu",
   "../gb10/common/dense_gemm_splitk.cu",
   "../gb10/common/dense_gemm_tc.cu",
+  "../gb10/common/dense_gemm_tc_body.cuh",
+  "../gb10/common/dense_gemm_tc_mainloop.cuh",
   "../gb10/common/dense_gemv_bf16.cu",
   "../gb10/common/dense_gemv_fp8w.cu",
   "../gb10/common/dequant_fp8_blockscaled_bf16.cu",
