@@ -1274,6 +1274,11 @@ kernels = [
   # launch (the GU instantiations of the same body, w4a4_grouped_core.cuh).
   "w4a4_grouped_mx::w4a4_grouped_gu_m32", "w4a4_grouped_mx::w4a4_grouped_gu_m64",
   "w4a4_grouped_mx::w4a4_grouped_gu_m128",
+  # 2026-10-14: The m128 down and gate/up entries with a raster group (same bytes, another CTA walk).
+  "w4a4_grouped_mx::w4a4_grouped_mx_m128_r", "w4a4_grouped_mx::w4a4_grouped_mx_m128_k64_r",
+  "w4a4_grouped_mx::w4a4_grouped_gu_m128_r",
+  # 2026-10-15: The m128 down entries with nc column tiles per CTA (same bytes, one load stream).
+  "w4a4_grouped_mx::w4a4_grouped_mx_m128_n", "w4a4_grouped_mx::w4a4_grouped_mx_m128_k64_n",
 ]
 kernel_compute."w4a4_grouped_mx::w4a4_grouped_tiles" = { compute = "memory" }
 kernel_compute."w4a4_grouped_mx::w4a4_grouped_one_group" = { compute = "memory" }
@@ -2052,7 +2057,9 @@ kernels = [
   "glm5next_mhc_fused::glm5next_hc_pre_norm_sk64",
   "glm5next_mhc_tok::glm5next_hc_pre_norm_tok4",
   "glm5next_mhc_tok::glm5next_hc_post_pre_norm_tok4",
+  "glm5next_mhc_tile::glm5next_hc_pre_norm_tile4",
   "glm5next_hc_post_sum::glm5next_hc_post_rank_sum",
+  "glm5next_hc_post_sum::glm5next_hc_post_rank_sum_vec8",
 ]
 kernel_compute."glm5next_mhc::glm5next_hc_mix" = { compute = "cuda_core" }
 kernel_compute."glm5next_mhc::glm5next_hc_mix_bf16" = { compute = "cuda_core" }
@@ -2072,9 +2079,16 @@ kernel_compute."glm5next_mhc_tok::glm5next_hc_pre_norm_tok4" = { compute = "cuda
 # 2026-10-14: glm5next_hc_post_rank_sum and the next site's glm5next_hc_pre_norm_tok4 in one launch
 # (opt-in METRALE_GLM_MHC_POST_PRE_FUSED, SP-mHC); both halves' expressions in order, so the same bits.
 kernel_compute."glm5next_mhc_tok::glm5next_hc_post_pre_norm_tok4" = { compute = "cuda_core" }
+# 2026-10-15: glm5next_hc_pre_norm_tok4 with each k step of hc_fn and the streams staged through a
+# four-stage cp.async ring, four tokens per block (opt-in METRALE_GLM_MHC_PRE_TILE); tok4's
+# chains, trees and tails, so the same bits.
+kernel_compute."glm5next_mhc_tile::glm5next_hc_pre_norm_tile4" = { compute = "cuda_core" }
 # 2026-10-10: The one-shot all-reduce's rank-order sum (bf16_add_rank_sum's arithmetic) fused
 # ahead of hc_post (opt-in METRALE_GLM_AR_FUSED_POST); the post-mix arithmetic is hc_post's.
 kernel_compute."glm5next_hc_post_sum::glm5next_hc_post_rank_sum" = { compute = "cuda_core" }
+# 2026-10-15: glm5next_hc_post_rank_sum with eight columns per thread in 16-byte accesses and the
+# summed-row store optional (opt-in METRALE_GLM_MHC_POST_VEC, SP-mHC); every expression in order.
+kernel_compute."glm5next_hc_post_sum::glm5next_hc_post_rank_sum_vec8" = { compute = "cuda_core" }
 rows = [1, 256]
 pipeline."linear:hc_mix" = { in = ["f32"], act = "f32", weight = "bf16->f32", mma = "f32*f32", accumulate = "f32", scale = "none", out = ["f32"] }
 pipeline.hc_pre = { in = ["f32", "f32"], compute = "f32", out = ["bf16", "f32", "f32"] }
@@ -2088,7 +2102,7 @@ op = [
 [[family.point]]
 values = {}
 how = "instantiation"
-files = ["kernels/gb10/common/glm5next_mhc.cu", "kernels/gb10/common/glm5next_mhc_fused.cu", "kernels/gb10/common/glm5next_hc_post_sum.cu", "kernels/gb10/common/glm5next_mhc_tok.cu"]
+files = ["kernels/gb10/common/glm5next_mhc.cu", "kernels/gb10/common/glm5next_mhc_fused.cu", "kernels/gb10/common/glm5next_hc_post_sum.cu", "kernels/gb10/common/glm5next_mhc_tok.cu", "kernels/gb10/common/glm5next_mhc_tile.cu"]
 
 # 2026-10-08: The KDA gates: the decay
 # `linear_lower_bound * sigmoid(exp(A_log[h]) * (g + dt_bias))` per channel from the BF16 `f_b`
@@ -2214,6 +2228,10 @@ kernels = [
   # streamed through a cp.async ring (METRALE_GLM_DSA_SCORES_PIPE).
   "dsa_index_scores_pipe::dsa_pool_prep_bf16",
   "dsa_index_scores_pipe::dsa_index_scores_mma_pipe",
+  # 2026-10-15: the SP-split selection's selected-pools payload: a split rank folds its rows'
+  # candidacy into them; every rank expands the gathered rows (METRALE_GLM_DSA_SP_SELECT_SEL).
+  "dsa_sel_fold::dsa_sel_fold",
+  "dsa_sel_fold::dsa_expand_selection_folded",
 ]
 kernel_compute."dsa_indexer::dsa_indexer_store" = { compute = "memory" }
 kernel_compute."dsa_indexer::dsa_write_geom" = { compute = "memory" }
@@ -2231,7 +2249,7 @@ values = {}
 how = "instantiation"
 # 2026-10-09: The bodies live in dsa_indexer_body.cuh; dsa_indexer_rows.cu runs them for one
 # sequence per grid row (the batched decode's paged rows, METRALE_GLM_DSA_INDEXER_ROWS).
-files = ["kernels/gb10/common/dsa_indexer.cu", "kernels/gb10/common/dsa_indexer_body.cuh", "kernels/gb10/common/dsa_indexer_rows.cu", "kernels/gb10/common/dsa_scores_mma.cuh", "kernels/gb10/common/dsa_index_scores_pipe.cu"]
+files = ["kernels/gb10/common/dsa_indexer.cu", "kernels/gb10/common/dsa_indexer_body.cuh", "kernels/gb10/common/dsa_indexer_rows.cu", "kernels/gb10/common/dsa_scores_mma.cuh", "kernels/gb10/common/dsa_index_scores_pipe.cu", "kernels/gb10/common/dsa_sel_fold.cu"]
 
 # 2026-10-08: NoPE latent decode attention over the selected tokens of an FP8 latent cache, one
 # CTA per (head, row). Its query is already in latent space and its output stays there: the
@@ -2270,7 +2288,9 @@ files = ["kernels/gb10/glm-5.3-flash/nvfp4/glm5next_dsa_mla_decode.cu"]
 # (METRALE_GLM_DSA_HB_PREFILL_PIPE); both files take their per-tile steps from
 # glm5next_dsa_mla_hb_tile.cuh. 2026-10-14: `glm5next_dsa_mla_prefill_tc_phi` is `_phi` at one
 # split on one warp-specialized CTA per (row, head group) (producer warps gather + widen, consumer
-# warps QK + softmax + PV), byte-identical per row (METRALE_GLM_DSA_HB_PREFILL_TC).
+# warps QK + softmax + PV), byte-identical per row (METRALE_GLM_DSA_HB_PREFILL_TC). 2026-10-15:
+# `glm5next_dsa_mla_prefill_tc_phi_nanor` is the same with one NaN-byte test per producer share
+# of a tile instead of one per word, same bytes (METRALE_GLM_DSA_TC_NANOR).
 [[family]]
 id = "glm_mla_decode_hb"
 description = "GLM-5 sparse NoPE MLA decode, head-batched on tensor cores, split + merge (latent 512)"
@@ -2282,6 +2302,7 @@ kernels = [
   "glm5next_dsa_mla_decode_hb::glm5next_dsa_mla_merge",
   "glm5next_dsa_mla_prefill_pipe::glm5next_dsa_mla_prefill_pipe_phi",
   "glm5next_dsa_mla_prefill_tc::glm5next_dsa_mla_prefill_tc_phi",
+  "glm5next_dsa_mla_prefill_tc::glm5next_dsa_mla_prefill_tc_phi_nanor",
 ]
 rows = [1, 4096]
 pipeline.mla_attention = { in = ["bf16", "i32"], act = "bf16", weight = "bf16->bf16", cache = "fp8", scores = "f32", softmax = "f32", accumulate = "f32", out = ["bf16"] }
@@ -2381,11 +2402,12 @@ files = ["kernels/gb10/common/glm5next_ffn.cu"]
 
 # 2026-10-08: The routed outputs weighted and summed with the ungated shared expert, BF16 out,
 # from slot order or the expert-sorted order (glm5next_ffn.cu:209-263).
+# 2026-10-14: the _vec8 entries are the same bytes at eight elements per thread.
 [[family]]
 id = "glm_moe_combine"
 description = "Weighted routed sum plus the ungated shared expert"
 compute = "memory"
-kernels = ["glm5next_ffn::glm5next_moe_combine", "glm5next_ffn::glm5next_moe_combine_indexed"]
+kernels = ["glm5next_ffn::glm5next_moe_combine", "glm5next_ffn::glm5next_moe_combine_indexed", "glm5next_ffn::glm5next_moe_combine_vec8", "glm5next_ffn::glm5next_moe_combine_indexed_vec8"]
 rows = [1, 65536]
 pipeline.blend = { in = ["bf16", "f32", "bf16"], scatter = "f32", combine = "f32", out = ["bf16"] }
 op = [{ op = "blend" }]
@@ -2456,7 +2478,7 @@ layer_kind = "deepseek_sparse_attention"
 per_sequence = ["multi_seq"]
 sites = ["dsa.idx_k", "dsa.idx_k_norm", "dsa.idx_gate", "dsa.pool", "dsa.select"]
 rows_above = 1
-cite = "crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:341"
+cite = "crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:301"
 holds = "for r in paged_rows..n {"
 note = "DSA batched decode: indexer key, pool store and selection one row per launch unless METRALE_GLM_DSA_INDEXER_ROWS (2026-10-09: staged projections; captured paged rows store and select one launch per stage)"
 
@@ -2469,7 +2491,7 @@ layer_kind = "linear_attention"
 per_sequence = ["verify"]
 sites = ["kda.short_conv", "kda.conv_ckpt", "kda.l2", "kda.recur"]
 rows_above = 1
-cite = "crates/model-arch/src/glm5next_kda/decode.rs:353"
+cite = "crates/model-arch/src/glm5next_kda/decode.rs:451"
 holds = "for row in 0..k {"
 note = "KDA verify: conv and recurrence one row per launch (stateful_row); 2026-10-09: without per-row snapshots, one conv and one recurrent launch under METRALE_GLM_KDA_SEQ_TOKENS"
 
@@ -2479,6 +2501,6 @@ layer_kind = "deepseek_sparse_attention"
 per_sequence = ["verify"]
 sites = ["dsa.kv_norm", "dsa.kv_write", "dsa.idx_k", "dsa.idx_k_norm", "dsa.idx_gate", "dsa.pool", "dsa.idx_w", "dsa.idx_q", "dsa.select"]
 rows_above = 1
-cite = "crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:169"
+cite = "crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:190"
 holds = "for row in 0..k {"
 note = "DSA verify: latent write, indexer projections, store and selection one row per launch"

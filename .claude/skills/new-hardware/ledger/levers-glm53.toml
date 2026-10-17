@@ -1973,3 +1973,195 @@ effort_hours = 3.0
 transferability = "any multi-query scoring GEMM whose B operand is converted and masked per CTA when it could be prepared once per pass"
 links = { pr = "", commit = "", evidence = "glm5next_dsa_scores_pipe_gate" }
 notes = "Extra memory: 260 B per pool of DsaSelectScratch (BF16 key 256 B + i32 position), allocated only with the lever on: 34.1 MB at a 512k context (131,072 pools) per scratch; the shared DSA workspace plus the MTP drafter's makes ~68 MB. Projected before the gate: 385 -> 180-235 ms at c32k cold; the gate times (verdict_reason) put it at ~180 ms (-0.20 s), the middle sub-chunks P=4100/6148 interpolated linearly in P. Scoring is replicated per rank (the indexer is replicated under TP); splitting score + top-k + expand over the ranks is the next lever."
+
+[[lever]]
+id = "gb10x3-glm53-moe-w4a4-raster"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_MOE_W4A4_RASTER=0,4 (default) under METRALE_GLM_MOE_W4A4_GROUPED=1"
+symptom = "32k cold TTFT behind vLLM; the routed down GEMM is about 6.3 ms per 8208-row call and its m128 CTAs walk the grid row-major, so each expert's weight panel leaves L2 before its next row tile needs it"
+diagnosis_tool = "microbench"
+root_cause_class = "memory-bound"
+lever_type = "scheduling"
+lkb_effect = "w4a4_grouped_core.cuh gains a raster template parameter: the m128 `_r` twins map blockIdx to (row tile, column tile) in bands of G slot tiles, every column tile of a band before the next; the tile body and its K order are unchanged"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "kept"
+verdict_reason = "glm5next_moe_epi_bench ab_2 (dgx1): byte-identical across rows 17..8208, zipf 0/1.2, n 704/640, groups 1/3/4/16/4096, and the negative control differs. Down raster 4 at rows=8208 n=704: -519.8 us per call (zipf 0) and -224.8 us (zipf 1.2), so -38 to -87 ms over the 168 down calls of a 32k prefill. Gate/up raster 16 is mixed (+0.2%/-0.8% at zipf 0, +6.7%/+5.1% at zipf 1.2), so it stays off. The cold c32k serve A/B is pending"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 6.0
+transferability = "any grouped GEMM whose B operand is selected per row tile (MoE experts) and outsizes L2 across one row-major sweep"
+links = { pr = "", commit = "", evidence = "/workspace/claude-state/glm/moegemm/ab_2.txt" }
+notes = "Only which CTA computes each tile moves. Raster 4 suits the down GEMM (K=2048 per expert, weights reused across 4 row tiles). Gate/up raster 16 helps only under skewed routing, and a per-zipf choice is not taken because the routing skew is not known at launch"
+
+[[lever]]
+id = "gb10x3-glm53-moe-w4a4-cpasync-hoist"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "G5: hoist the per-stage cp.async source/destination address arithmetic of every w4a4_grouped body out of the K loop"
+symptom = "routed gate/up GEMM about 7.4 ms per 8208-row call; the per-stage load issues recompute row/column addresses each K step"
+diagnosis_tool = "microbench"
+root_cause_class = "latency-bound"
+lever_type = "kernel-restructure"
+lkb_effect = "none kept; the core was reverted"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "discarded"
+verdict_reason = "Measured negative; do not adopt. Old -> G5 interleaved harness timing (3 iterations, quiet dgx1): prod gate/up +493/+516 us per call (7.43 -> 7.93 ms), prod_r gate/up r16 +787/+588 us, prod_r down r4 +171/+118 us, prod down about 0. ptxas: G5 spills at the 128-register cap (8 B stack, 16 B stores / 24 B loads) on gu_m128 and both mx_m128_k64 twins, where the old core had 0"
+failure_mode = "register spills at the 128-register launch bound"
+caught_by = "interleaved harness timing; ptxas -v spill table"
+time_lost_hours = 0
+would_catch_earlier = "run the ptxas spill table per entry before any GPU time"
+effort_hours = 3.0
+transferability = "any multi-stage cp.async tile body under a 128-register bound: hoisting live addresses trades ALU for registers"
+links = { pr = "", commit = "", evidence = "/workspace/claude-state/glm/moegemm/g5h_1.txt" }
+notes = "An earlier -130 us down / -250 us gate/up figure compared prod with the harness 'pre' diag variant inside the old binary, not old with G5; it is void. G6-lite (G5 plus a shared per-CTA load plan) spilled more and was never timed: gu_m128 32 B stack 28/28, gu_m128_r 16 B 32/48, the down k64 twins 16/24. The register-neutral form (plan on the fused gate/up bodies only) is tracked separately"
+
+[[lever]]
+id = "gb10x3-glm53-moe-w4a4-gu-load-plan"
+date = "2026-10-15"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "always on (no lever): the fused gate/up w4a4_grouped bodies compute their cp.async load plan once per CTA"
+symptom = "routed fused gate/up GEMM about 7.4 ms per 8208-row call; each pipeline stage recomputed every copy's source and shared destination"
+diagnosis_tool = "microbench"
+root_cause_class = "latency-bound"
+lever_type = "kernel-restructure"
+lkb_effect = "w4g_body under `if constexpr (GU)` hoists the per-slot source, stage-0 destination and live/tail predicates out of the K loop and issues each copy through one predicated cp.async (w4g_cpi); every non-GU body is PTX-identical to before"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "kept"
+verdict_reason = "Harness g5ch_1 (dgx1): bytes identical to the old core on 7 fixture/routing variants, and the negative control (chunk-1 activation offset +16) differs on all 7. Old vs G5c interleaved, 3 iterations x 2 blocks, each pair normalized by an identical-code control in the same block: prod gate/up (raster 0, shipped) -238 us per call (median, 5 of 6 pairs negative), prod_r gate/up raster 16 -311 us (6 of 6). Over the 168 gate/up calls of a 32k prefill that is about -40 ms (-31 ms against the median of all 9 controls). ptxas: the 4 gate/up entries spill 0 (the old core spilled 8/16 and 8/8 on two of them); the 3 old spills on the mx entries are unchanged. The cold c32k serve A/B is pending"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 5.0
+transferability = "any multi-stage cp.async tile body with spare registers: hoist the address plan, but gate it per body on a 0-spill ptxas check"
+links = { pr = "", commit = "", evidence = "/workspace/claude-state/glm/moegemm/g5ch_1.txt" }
+notes = "Not applied to the down/plain bodies: there the same plan (G5b) spills on the k64 twins (16/24, 4/4, 12/12). The register-unconstrained 'pre' harness variant suggests about -40 us on down r4 if a spill-free form is found. Raw pairs show a +140 to +250 us drift in iteration 3 on identical code, hence the control normalization"
+
+[[lever]]
+id = "gb10x3-glm53-moe-w4a4-nc"
+date = "2026-10-15"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_MOE_W4A4_NC=8 under METRALE_GLM_MOE_W4A4_GROUPED=1 (default off)"
+symptom = "32k cold TTFT behind vLLM; the routed m128 down GEMM (K=704 per expert) runs only 11 K chunks per CTA, so every CTA pays a full pipeline prologue, slot table walk and epilogue for very little MMA work (about 66-69 useful TFLOP/s)"
+diagnosis_tool = "microbench"
+root_cause_class = "latency-bound"
+lever_type = "scheduling"
+lkb_effect = "new w4a4_grouped_nc.cuh: the m128 down `_n` twins loop each CTA over N consecutive column tiles of one row tile (with the raster band mapping), reusing the slot table and row bookkeeping; each output tile keeps the same body, K order and accumulation chain"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "kept"
+verdict_reason = "Byte gate: glm5next_moe_epi_bench (epi_nc, dgx1) identical across rows 17/64/512/1036/8208, zipf 0/1.2, n 704/640, nc 1/3/4/8/65 x raster 0/3/4/4096, and the negative controls (globals x2, raster 16, nc 4) differ in all 20 cases; harness nc1 identical for nc 1/2/3/4/8/64 x raster 0/1/3/4/16/4096 on 7 fixture/routing variants. Production PTX is identical to the gated harness module (17 of 17 entries). Timing at rows 8208, n 704, down per call vs production raster 4: real-routing fixtures nc8 -222/-420 us (harness, median of 9, 2 rounds), fx44 -163/-262 us; epi zipf 1.2 nc8 -308 us (median of 9, p10-max spread about 230 us); epi zipf 0 nc8 +229 us (loss). Over the 168 down calls of a 32k prefill: about -35 to -70 ms on real routing, +38 ms worst case under uniform routing. The cold c32k serve A/B is pending"
+failure_mode = "uniform routing (zipf 0) is slower at nc 4/8; nc 2 is neutral there"
+caught_by = "epi bench zipf 0 timing"
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 6.0
+transferability = "any grouped GEMM with a short per-expert K loop where per-CTA fixed cost rivals the MMA work"
+links = { pr = "", commit = "", evidence = "/workspace/claude-state/glm/moe2/epi_nc.txt" }
+notes = "Only the m128 down tile switches; m32/m64 (rows <= 1036 use m32) and the gate/up are untouched, so c1k is unaffected. At m128 with rows <= 1036 (not a production tile choice) nc costs 3-9%. ptxas: the _n twins spill 4 B, the same as the production plain m128 entry, outside the K loop. NC=2 is the conservative fallback (epi rows 8208: -12 us zipf 0, +134 us zipf 1.2 at raster 4)"
+
+[[lever]]
+id = "gb10x3-glm53-mhc-post-vec"
+date = "2026-10-15"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_MHC_POST_VEC=1 with METRALE_GLM_SP_MHC=1 (SP-mHC prefill post-mix of every row piece; composes with METRALE_GLM_SP_OVERLAP)"
+symptom = "at a 32k cold prefill glm5next_hc_post_rank_sum runs about 420 launches per rank at 0.53 ms clean and 0.71 ms beside NCCL; each thread moves one column in 2- and 4-byte accesses and writes the summed row back although only a dump tap reads it"
+diagnosis_tool = "nsys"
+root_cause_class = "bandwidth-underutilization"
+lever_type = "kernel-rewrite"
+lkb_effect = "glm5next_hc_post_rank_sum_vec8 in glm5next_hc_post_sum.cu: the scalar kernel's expressions in order, eight columns per thread in 16-byte loads and stores, 128-thread blocks (an 86-row piece keeps 344 blocks), the summed-row store behind a write_x flag"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "held"
+verdict_reason = "2026-10-15 single-GPU gate: glm5next_hc_post_vec_gate byte-identical to the scalar kernel at rows 1/86/341/684/2736/8208 x ranks 0-2 (H4096 hc4 world 3) plus five odd shapes, write_x 0 and 1, exponent-flip control fires everywhere; graph-replayed median of 7, us per launch, clean: 86 rows 13.6 -> 11.5, 684 rows 522 -> 488, 2736 rows 2088 -> 1937; beside 2 co-running copy CTAs: 684 rows 594 -> 518, 2736 rows 2514 -> 2139. Held until the 32k cold TTFT A/B"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 3.0
+transferability = "any element-wise BF16/FP32 epilogue whose rows are a multiple of eight elements and 16-byte aligned"
+links = { pr = "", commit = "", evidence = "glm5next_hc_post_vec_gate" }
+notes = "write_x is tap.is_some() at both SP-mHC sites (the mixer reduce's MixerRed and the MLP reduce's MlpRed dump points are the only readers of the summed row); the pipelined SP body has no tap and passes 0. The decode path (reduce_post.rs) keeps the scalar kernel. METRALE_GLM_MHC_POST_SUM_CTAS caps only the scalar kernel."
+
+[[lever]]
+id = "gb10x3-glm53-moe-combine-vec8"
+date = "2026-10-15"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_MOE_COMBINE_VEC8=1 (the MoE combine of every prefill sub-chunk and decode step; composes with METRALE_GLM_MOE_COMBINE_SPLIT)"
+symptom = "the scalar glm5next_moe_combine_indexed moves one BF16 element per thread per routed slot, about 3.3 ms per 8192-row prefill piece, near but short of the memory floor"
+diagnosis_tool = "microbench"
+root_cause_class = "bandwidth-underutilization"
+lever_type = "kernel-rewrite"
+lkb_effect = "glm5next_moe_combine[_indexed]_vec8 in glm5next_ffn.cu: the scalar kernels' expressions in the same slot order, eight elements per thread in 16-byte loads and stores"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "held"
+verdict_reason = "2026-10-15 single-GPU gate (glm5next_c1_fuse_microtest, C1_FUSE_ONLY=combine_vec8, two runs): byte-identical to the scalar combine at 1/16/17/287/341/1036/8192/8208 rows in slot and expert-sorted order at four grids; the slot-swap control fires at every row count. Graph-replayed median of 7, us per indexed launch: 8192 rows about 3280 (one block per row) and 3115-3135 (split grid) -> 3025-3045; 8208 rows about 3275 and 3097-3173 -> 2935-2970; 1 row 1.4 -> 2.2, hence the 1024-row floor. Held until the 32k cold TTFT A/B"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 2.0
+transferability = "any BF16 weighted gather-sum whose rows are a multiple of eight elements and 16-byte aligned"
+links = { pr = "", commit = "", evidence = "glm5next_c1_fuse_microtest" }
+notes = "Only combines of COMBINE_VEC8_MIN_ROWS (1024) rows or more take it; decode and short prefills keep the scalar kernel. Refused where it cannot run (kernel absent, hidden not a multiple of 8, unaligned buffer); the serve log line 'GLM MoE: combine_vec8 kernels launched' proves a launch."
+
+[[lever]]
+id = "gb10x3-glm53-dsa-tc-nanor"
+date = "2026-10-15"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "Z recipe + METRALE_GLM_DSA_HB_PREFILL_TC=1 + METRALE_GLM_DSA_TC_NANOR=1 (prefill sub-chunks only)"
+symptom = "the tc prefill attend (glm5next_dsa_mla_prefill_tc_phi) ran ~20.3 ms per 8208-row sub-chunk while the prototype it was ported from ran ~16.3 ms in the same harness run, byte-identical; 55 launches = 887 ms of rank 0's cold 32k profile, none of it under comm"
+diagnosis_tool = "microbench"
+root_cause_class = "latency-bound"
+lever_type = "kernel-rewrite"
+lkb_effect = "glm5next_dsa_mla_prefill_tc_phi_nanor (same file, same launch shape): each producer ORs a carry-free per-byte NaN test ((w & 0x7f7f7f7f) + 0x01010101) & 0x80808080 over its whole 128-byte share of a tile and, with no NaN byte, widens every chunk on the unguarded finite converts; a share holding one takes the old per-word path. The old entry keeps its per-word test (vcmpeq4 + branch per 32-bit word, 32 branches per producer per tile)"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "held"
+verdict_reason = "2026-10-15 measured (glm5next_dsa_prefill_tc_nanor_gate, 22 heads, one split): the twin gate vs phi passes (0 of 8208 rows differ, sub-chunks, neighbours, stride 640, edge rows, NaN pool, 0.82-1.15 ulp from f64); 0 rows differ from the tc entry at 8192/8208 rows of a 32k sequence and 1040/1056 rows of a 32k and of a 1k sequence over three pools (every one of the 256 E4M3 bytes at every token position, all present in the selected tokens; the 254 finite bytes; NaN-dense tokens); control: the tc entry with NaN read as the same-sign max-finite code differs in every row. Medians of 9 interleaved, ms phi / tc / nanor: 8192 rows 25.26 / 20.48 / 16.76 (x0.818), 8208 rows 24.57 / 19.73 / 15.79 (x0.800); c1k 1040 rows 0.898 / 0.849 / 0.711, 1056 rows 0.916 / 0.841 / 0.710. Same-run scratch harness: proto 16.28, repo tc 20.32, this design 16.46 ms at 8208 rows. Held until the cold serve A/B; projected -160..-177 ms per cold 32k prefill (18-20% of 887 ms, serial)"
+failure_mode = "the port of the prototype lost 4.0-4.5 ms per launch to a NaN guard added during the port; nothing timed the repo kernel against the prototype until a same-run three-way harness did"
+caught_by = "same-run three-way harness (phi, prototype, repo tc) at the serve rows"
+time_lost_hours = 1.0
+would_catch_earlier = "time the repo kernel against the prototype it ports in the same harness run before wiring it"
+effort_hours = 3.0
+transferability = "any FP8 widen that guards a rare special value per word: test a whole per-thread share once and branch once"
+links = { pr = "", commit = "", evidence = "glm5next_dsa_prefill_tc_nanor_gate" }
+notes = "ptxas: both entries 164 registers, 0 spills; the old entry keeps its 8-byte stack frame, the new one has none. The old entry's SASS changed in scheduling only (28 of 4096 lines: an OR as an add of zero-low-bit offsets, reordered zeroing and shared loads), output bytes unchanged (its own gate passes on the same build: 20.22 ms vs phi 25.11). A pool with a NaN byte every 4096 bytes makes this design slower than the tc entry at c1k (0.883 vs 0.835 ms): every share holding one pays the test and the fallback; a quantized latent cache holds no NaN bytes unless its input did. A per-16-byte guard was slower (17.55 ms), a warp vote no faster (16.40)."
+
+[[lever]]
+id = "gb10x3-glm53-mhc-pre-tile"
+date = "2026-10-15"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_MHC_PRE_TILE=1 (default off) on top of METRALE_GLM_MHC_PRE_TOK=1: wide hc 4 pre-norms run glm5next_hc_pre_norm_tile4"
+symptom = "glm5next_hc_pre_norm_tok4 about 0.61 ms per call at 684 rows, 1530 calls per rank in a 32k cold prefill (about 933 ms); 3.7x over the DRAM floor of its 44.8 MB of streams, and x1.47 slower when NCCL/copy traffic runs beside it"
+diagnosis_tool = "microbench"
+root_cause_class = "latency-bound"
+lever_type = "kernel-restructure"
+lkb_effect = "new tile4 kernel: one 256-thread block per SM streams four tokens' fp32 rows through a four-stage cp.async ring in 66068 B dynamic shared memory while hc_fn is read in 16-byte loads; each token keeps tok4's dot-product chains, reduction trees and Sinkhorn tail, so the bits are tok4's. tok4, fused and fold PTX unchanged"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "held"
+verdict_reason = "Byte gate (in-tree example, two runs, and a standalone harness): identical bytes at T 1,2,3,4,5,17,684,2736 on synthetic and layer 0/3/22/44 attn/ffn inputs with two stream distributions; negative controls (stream + 1.0, one hc_fn bit) fire. Microbench, median of n=9 (min max): T=684 clean tok4 470.7 (461.7 531.8) us vs tile4 347.2 (344.7 406.1); beside an SM copy 668.7 vs 446.3; beside SM copy + copy engine 1158.6 vs 966.0. T=2736 clean 1888.0 vs 1245.3; SM copy 2572.8 vs 1588.7; SM + CE 3013.4 vs 2041.5. Projection over 1530 calls at 684 rows: about -189 ms clean, -340 ms under SM-copy load. Held until the cold c32k serve arm"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 1.5
+would_catch_earlier = "smoke every cache-policy variant at T=1 before a timing run: the L2 evict_last variant died on its first launch"
+effort_hours = 8.0
+transferability = "any per-token reduction kernel that re-reads a shared weight per small block: widen the block's work with a cp.async ring instead of adding tokens per block, and keep each token's summation order"
+links = { pr = "", commit = "", evidence = "glm5next_mhc_tile_gate example output and standalone harness, 2026-10-15" }
+notes = "Variants measured and not shipped: eight tokens per block with three stages (tile8) ran 381 us at T=684 vs tile4's 350. Five or six stages gain 0-4% clean and 4-5% under SM-copy load at 684 rows, within spread; a split Sinkhorn tail gains about 1%. createpolicy.fractional.L2::evict_last with cp.async L2::cache_hint raised CUDA_ERROR_ILLEGAL_INSTRUCTION on GB10 at T=1, with or without applypriority. Not applied on the MHC_POST_PRE_FUSED path. A faster pre-norm may expose NCCL time it now hides"

@@ -4,6 +4,7 @@
 //! routing over a seeded expert permutation (exponent 0 = uniform), the two expert widths the
 //! fused gate/up launch must serve (704, the TP=3 slice with the `_k64` down, and 640, a plain
 //! multiple of 128) and the separate and fused gate/up segments.
+//! 2026-10-15: and the down GEMM on any entry (the `_n` twins).
 //!
 //! Owner: model-arch examples (GLM-5.3).
 //! Invariants: none beyond the types.
@@ -12,12 +13,12 @@ use anyhow::Result;
 use half::bf16;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::{KernelLaunch, div_ceil};
-use metrale_model_arch::glm5next_mlp::forward::{W4a4GuCall, launch_w4a4_gu};
+use metrale_model_arch::glm5next_mlp::forward::{GroupedEntry, W4a4GuCall, launch_w4a4_gu};
 use metrale_model_arch::glm5next_mlp::weights::Glm5NextExpertPtrTable;
 
 use crate::device::Rng;
 use crate::launch::{Bufs, EXPERTS, GS_DOWN, GS_GATE_UP, HIDDEN, Kern, TOP_K, Table};
-use crate::launch::{grouped, quant};
+use crate::launch::{grouped, grouped_entry, quant};
 
 /// 2026-10-14: GLM-5.3's `swiglu_limit`.
 pub const LIMIT: f32 = 10.0;
@@ -68,19 +69,30 @@ pub fn max_load(ids: &[i32]) -> usize {
 
 /// 2026-10-14: One expert width: its tables, the down input's stored width, the down
 /// quantizer and the down entry per tile (the plain ones at `mi % 128 == 0`, else the `_k64`
-/// twins), as `w4a4_grouped::down_entry` picks them.
+/// twins), as `w4a4_grouped::down_entry` picks them; 2026-10-14: and the m128 down's `_r` twin.
 pub struct Width {
     pub mi: usize,
     pub k_store: usize,
     pub down_quant: KernelHandle,
     pub down: [KernelHandle; 3],
+    pub down_r: KernelHandle,
+    /// 2026-10-15: The m128 down's `_n` twin (`w4a4_grouped_mx_m128[_k64]_n`).
+    pub down_n: KernelHandle,
     pub gate: Table,
     pub up: Table,
     pub dn: Table,
 }
 
 impl Width {
-    pub fn new(kn: &Kern, mi: usize, t: [Table; 3]) -> Self {
+    /// 2026-10-14: `down_r` = `w4a4_grouped_mx_m128_r` and `_m128_k64_r`; 2026-10-15: `down_n`
+    /// = `w4a4_grouped_mx_m128_n` and `_m128_k64_n`.
+    pub fn new(
+        kn: &Kern,
+        mi: usize,
+        t: [Table; 3],
+        down_r: [KernelHandle; 2],
+        down_n: [KernelHandle; 2],
+    ) -> Self {
         let plain = mi.is_multiple_of(128);
         let [gate, up, dn] = t;
         Self {
@@ -92,6 +104,8 @@ impl Width {
             } else {
                 [kn.mx_k64[0], kn.mx_k64[1], kn.mx_k64[2]]
             },
+            down_r: down_r[usize::from(!plain)],
+            down_n: down_n[usize::from(!plain)],
             gate,
             up,
             dn,
@@ -167,7 +181,7 @@ pub fn separate(
 #[allow(clippy::too_many_arguments)]
 pub fn fused(
     gpu: &dyn GpuBackend,
-    gu: KernelHandle,
+    gu: GroupedEntry,
     w: &Width,
     b: &Bufs,
     dq: [DevicePtr; 3],
@@ -195,7 +209,9 @@ pub fn fused(
     launch_w4a4_gu(gpu, gu, &call, s)
 }
 
-/// 2026-10-14: The down GEMM on entry `ti` reading its input from `act` into `out`.
+/// 2026-10-14: The down GEMM on entry `ti` reading its input from `act` into `out`; with a
+/// raster group, the m128 `_r` twin (`ti` must be 2).
+#[allow(clippy::too_many_arguments)]
 pub fn down(
     gpu: &dyn GpuBackend,
     w: &Width,
@@ -203,6 +219,30 @@ pub fn down(
     act: [DevicePtr; 3],
     out: DevicePtr,
     ti: usize,
+    raster: Option<u32>,
+    s: u64,
+) -> Result<()> {
+    anyhow::ensure!(
+        raster.is_none() || ti == 2,
+        "the raster twins are m128 only"
+    );
+    let e = match raster {
+        Some(g) => GroupedEntry::raster(w.down_r, g),
+        None => GroupedEntry::plain(w.down[ti]),
+    };
+    down_entry(gpu, w, b, act, out, ti, e, s)
+}
+
+/// 2026-10-15: [`down`] on a given entry of tile `ti` (an `_n` twin is m128).
+#[allow(clippy::too_many_arguments)]
+pub fn down_entry(
+    gpu: &dyn GpuBackend,
+    w: &Width,
+    b: &Bufs,
+    act: [DevicePtr; 3],
+    out: DevicePtr,
+    ti: usize,
+    e: GroupedEntry,
     s: u64,
 ) -> Result<()> {
     let v = Bufs {
@@ -211,9 +251,9 @@ pub fn down(
         ag: act[2],
         ..*b
     };
-    grouped(
+    grouped_entry(
         gpu,
-        w.down[ti],
+        e,
         ti,
         &v,
         &w.dn,

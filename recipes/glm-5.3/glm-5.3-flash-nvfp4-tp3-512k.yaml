@@ -5,9 +5,9 @@ recipe_version: "2"
 # download metadata names revision da920bb0b9f4a06727223a349e55468e38352348.
 model: nvidia/GLM-5.3-Flash-NVFP4
 runtime: metrale
-# The measured engine is commit 3b3874954 (glm/cold-scores-arm); this branch carries
-# the same tree. The GLM levers in `env:` below exist only in an engine that carries this
-# branch; until a published :dev image does, serve with a `met` built from it.
+# The measured engine is commit b35510c4b (glm/cold-int). The GLM levers in `env:`
+# below exist only in an engine that carries this branch; until a published :dev
+# image does, serve with a `met` built from it.
 container: metrale/metrale-inference-gb10:dev
 min_nodes: 3
 max_nodes: 3
@@ -18,24 +18,19 @@ metadata:
     tensor-parallel across three GB10 nodes (TP=3, EP=1, expert layout tp),
     with MTP speculative decoding at one draft.
 
-    This is the measured S512D arm of chainK K524288-kinv-1015T1323
-    (2026-10-15T13:23Z), engine commit 3b3874954. `defaults:` is that run's
-    rank-0 command line and `env:` its METRALE_* levers, each at the value
-    the run used (the env file assigned seven names more than once; the last
-    assignment is the one that took effect and the one written here).
+    This is the measured configuration of the 2026-10-16 run on engine
+    commit b35510c4b. `defaults:` is that run's rank-0 command line and
+    `env:` its levers, each at the value the run used (the env file assigned
+    some names more than once; the last assignment is the one that took
+    effect and the one written here).
 
-    Measured, client p50 in ms, against same-box vLLM bars:
+    Validation: the agentic-webserver accuracy check passed on this
+    configuration. It is a single boot, so nothing here is a repeated
+    measurement.
 
-      cold   c256 / c1k / c4k / c32k   434 / 657 / 1575 / 11193
-             vLLM                      488 / 679 / 1705 / 10479
-             -> wins 3 of 4; c32k LOSES by ~0.71 s
-      warm   c256 / c1k / c4k / c32k    82 / 114 /   98 /   152
-             vLLM                      133 / 140 /  147 /   207
-             -> wins 4 of 4
-      agentic-webserver 10/10 webserver_ok, 10/10 followed_directions,
-      4.157 s/turn
-
-    The c32k cold loss is real and is not hidden here.
+    Attribution: METRALE_GLM_MHC_PRE_TILE is on, as measured. Whether it
+    contributes to performance is still open; its paired control is pending.
+    It does not change the output tokens.
 
     Numerics: `prefill_tail_mode: merge` folds the prefill tail into the
     last chunk. Its output is numerics class N against the split-tail
@@ -53,7 +48,7 @@ metadata:
   model_dtype: nvfp4
   quantization: NVFP4 experts, W4A16 dense, W8A8 DSA projections
   kv_dtype: fp8
-  updated: "2026-10-15"
+  updated: "2026-10-16"
 
 # Not expressible here, so not in `defaults:` (each is per-node launch plumbing):
 #   --model-from-path /srv/models/glm-5.3-flash-nvfp4  the box-local copy of `model:`
@@ -101,6 +96,8 @@ defaults:
   mtp_gate: force
   mtp_max_seqs: 8
   prefill_tail_mode: merge
+  marconi_min_tokens: 64
+  ssm_cache_slots: 112
 
 env:
   # Assigned v2, then v3.
@@ -145,7 +142,6 @@ env:
   METRALE_GLM_DSA_TOPK_RADIX: "1"
   METRALE_GLM_DSA_IDX_PROJ_WHOLE: "1"
   METRALE_GLM_DSA_SCORES_MMA: "1"
-  METRALE_GLM_DSA_SCORES_PIPE: "1"
   METRALE_GLM_DSA_HB_PREFILL_ONE_SPLIT: "1"
   METRALE_GLM_FP8_DEQUANT_GEMM_MIN_ROWS: "1024"
   METRALE_GLM_SP_MHC: "1"
@@ -165,3 +161,13 @@ env:
   METRALE_GLM_KDA_CHUNK64_CONV: "1"
   METRALE_GLM_KDA_GATE_IN_PREPARE: "1"
   METRALE_GLM_DSA_HB_PREFILL_TC: "1"
+  METRALE_GLM_DSA_SCORES_PIPE: "1"
+  METRALE_MAIN_STREAM_UNDER_GREATEST: "1"
+  METRALE_GLM_DENSE_W4A4_GROUPED_MIN_ROWS: "33"
+  NCCL_NET_GDR_LEVEL: LOC
+  METRALE_GLM_DEQUANT_PERSIST: all
+  METRALE_GLM_DSA_SP_SELECT: "8192:4100,8208:2052"
+  METRALE_GLM_DSA_SP_SELECT_SEL: "1"
+  METRALE_GLM_DSA_TC_NANOR: "1"
+  METRALE_GLM_MHC_PRE_TILE: "1"
+  METRALE_LM_HEAD_BATCHM_MAX: "16"

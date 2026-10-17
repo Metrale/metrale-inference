@@ -46,6 +46,7 @@
 #ifndef METRALE_NO_WARP_BLOCKSCALE_MMA
 
 #include "w4a4_grouped_core.cuh"
+#include "w4a4_grouped_nc.cuh"
 
 extern "C" __global__ void __launch_bounds__(W4G_THREADS) w4a4_grouped_tiles(
     const int* __restrict__ expert_offsets, int* __restrict__ tile_off, unsigned int num_experts,
@@ -110,6 +111,27 @@ extern "C" __global__ void __launch_bounds__(W4G_THREADS) w4a4_grouped_mx_m128_s
 extern "C" __global__ void __launch_bounds__(W4G_THREADS, 2) w4a4_grouped_mx_m128_k64(W4G_ARGS) {
     w4g_body<128, 64, 3, true>(W4G_PASS);
 }
+// 2026-10-14: The m128 entries with a raster group (w4g_body `raster`; 0 is the plain entry's
+// order): same grid, same bytes, a different CTA-to-tile walk (lever METRALE_GLM_MOE_W4A4_RASTER).
+extern "C" __global__ void __launch_bounds__(W4G_THREADS, 2) w4a4_grouped_mx_m128_r(
+    W4G_ARGS, unsigned int raster) {
+    w4g_body<128, 64, 3, false>(W4G_PASS, W4gGu{}, raster);
+}
+extern "C" __global__ void __launch_bounds__(W4G_THREADS, 2) w4a4_grouped_mx_m128_k64_r(
+    W4G_ARGS, unsigned int raster) {
+    w4g_body<128, 64, 3, true>(W4G_PASS, W4gGu{}, raster);
+}
+// 2026-10-15: The m128 one-projection entries with `nc` column tiles per CTA (w4n_body,
+// w4a4_grouped_nc.cuh): grid (ceil(ceil(N / 64) / nc), ceil(slots / 128) + E, 1), same bytes as the
+// entries above at every nc and raster (lever METRALE_GLM_MOE_W4A4_NC).
+extern "C" __global__ void __launch_bounds__(W4G_THREADS, 2) w4a4_grouped_mx_m128_n(
+    W4G_ARGS, unsigned int raster, unsigned int nc) {
+    w4n_body<128, 64, 3, false>(W4G_PASS, raster, nc);
+}
+extern "C" __global__ void __launch_bounds__(W4G_THREADS, 2) w4a4_grouped_mx_m128_k64_n(
+    W4G_ARGS, unsigned int raster, unsigned int nc) {
+    w4n_body<128, 64, 3, true>(W4G_PASS, raster, nc);
+}
 
 // 2026-10-14: Gate, up, the clamped SwiGLU and the down input's static NVFP4 quantization in one
 // launch (w4g_body GU): each CTA's NT weight rows are NT / 2 columns of gate and of up
@@ -142,6 +164,10 @@ extern "C" __global__ void __launch_bounds__(W4G_THREADS, 2) w4a4_grouped_gu_m64
 }
 extern "C" __global__ void __launch_bounds__(W4G_THREADS, 2) w4a4_grouped_gu_m128(W4G_GU_ARGS) {
     w4g_body<128, 64, 3, false, true>(W4G_GU_PASS);
+}
+extern "C" __global__ void __launch_bounds__(W4G_THREADS, 2) w4a4_grouped_gu_m128_r(
+    W4G_GU_ARGS, unsigned int raster) {
+    w4g_body<128, 64, 3, false, true>(W4G_GU_PASS, raster);
 }
 
 #endif // METRALE_NO_WARP_BLOCKSCALE_MMA

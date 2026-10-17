@@ -10,7 +10,7 @@
 //! Invariants: none beyond the types.
 
 use super::super::super::w4a4_grouped_gu::{check_ready, parse_gu_lever};
-use super::super::{smem_bytes_of, w4a4_grouped_experts_with};
+use super::super::smem_bytes_of;
 use super::*;
 
 /// 2026-10-14: The routed experts over `rows` rows on a grouped workspace, the fused lever as
@@ -34,7 +34,7 @@ fn run_fused(
         ws: &ws,
         stream: 5,
     };
-    let r = w4a4_grouped_experts_with(&site, SCALES, fused);
+    let r = w4a4_grouped_experts_with(&site, SCALES, fused, None, None);
     (r, gpu.launches_snapshot(), ws)
 }
 

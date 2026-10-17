@@ -181,7 +181,22 @@ pub fn reduce_scatter_rows(
     stream: u64,
 ) -> Result<metrale_comm::PeerPartials> {
     let (rank, world) = (comm.rank(), comm.world_size());
-    let (lo, hi) = shards[rank];
+    fits(ws, world, shards[rank], slot_row, row_bytes)?;
+    let slot_off = slot_row * row_bytes;
+    let plan = reduce_scatter_plan(rank, shards, row_bytes, ws.slot_bytes, slot_off);
+    exchange(comm, &plan, p, ws.recv, stream)?;
+    Ok(partials_at(received(ws, world, rank), slot_off))
+}
+
+/// 2026-10-12: Refuses a shard `(lo, hi)` that, from `slot_row`, does not fit `ws`'s slots, or
+/// a workspace reserved at another world size.
+fn fits(
+    ws: &SpWorkspace,
+    world: usize,
+    (lo, hi): (usize, usize),
+    slot_row: usize,
+    row_bytes: usize,
+) -> Result<()> {
     ensure!(
         world == ws.world && (slot_row + hi - lo) * row_bytes <= ws.slot_bytes,
         "SP-mHC: a shard of {} rows from slot row {slot_row} x {row_bytes} B at {world} ranks \
@@ -190,18 +205,104 @@ pub fn reduce_scatter_rows(
         ws.slot_bytes,
         ws.world
     );
-    let slot_off = slot_row * row_bytes;
-    let plan = reduce_scatter_plan(rank, shards, row_bytes, ws.slot_bytes, slot_off);
-    exchange(comm, &plan, p, ws.recv, stream)?;
-    Ok(partials_at(
-        metrale_comm::PeerPartials {
-            recv: ws.recv.0,
-            slot_elems: ws.slot_bytes / 2,
-            world_size: world,
-            rank,
-        },
-        slot_off,
-    ))
+    Ok(())
+}
+
+/// 2026-10-12: The peers' partials of this rank's whole shard as the reduce-scatter leaves them
+/// in `ws`.
+fn received(ws: &SpWorkspace, world: usize, rank: usize) -> metrale_comm::PeerPartials {
+    metrale_comm::PeerPartials {
+        recv: ws.recv.0,
+        slot_elems: ws.slot_bytes / 2,
+        world_size: world,
+        rank,
+    }
+}
+
+/// 2026-10-14: Ring step `step` (`1..world`) of a whole-shard reduce-scatter on `rank`: the send
+/// of shard `to = (rank + step) % world` to `to`, and the receive of peer
+/// `from = (rank + world - step) % world`'s partial of this rank's shard into `from`'s slot.
+/// Steps `1..world` together are [`reduce_scatter_plan`]'s transfers (offsets taken from it), and
+/// at step `s` peer `to` receives from this rank, so every rank enqueuing the steps in order
+/// pairs every send with its receive.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RingStep {
+    pub to: usize,
+    pub send_off: usize,
+    pub send_bytes: usize,
+    pub from: usize,
+    pub recv_off: usize,
+    pub recv_bytes: usize,
+}
+
+/// 2026-10-14: [`RingStep`] `step` on `rank` for `shards` (one per rank), `slot_bytes` per slot.
+pub fn ring_step_plan(
+    rank: usize,
+    shards: &[(usize, usize)],
+    row_bytes: usize,
+    slot_bytes: usize,
+    step: usize,
+) -> Result<RingStep> {
+    let world = shards.len();
+    ensure!(
+        rank < world && (1..world).contains(&step),
+        "SP-mHC: ring step {step} on rank {rank} of {world}: steps are 1..{world}"
+    );
+    let (to, from) = ((rank + step) % world, (rank + world - step) % world);
+    let plan = reduce_scatter_plan(rank, shards, row_bytes, slot_bytes, 0);
+    let at = |peer: usize| {
+        plan.iter()
+            .find(|x| x.peer == peer)
+            .context("SP-mHC: ring peer missing from the reduce-scatter plan")
+    };
+    let (s, r) = (at(to)?, at(from)?);
+    Ok(RingStep {
+        to,
+        send_off: s.send_off,
+        send_bytes: s.send_bytes,
+        from,
+        recv_off: r.recv_off,
+        recv_bytes: r.recv_bytes,
+    })
+}
+
+/// 2026-10-14: Enqueue ring step `step` of the whole-shard reduce-scatter of the partial at `p`
+/// on `stream`, as one group of a send and a receive: the step needs only shard
+/// `(rank + step) % world` of `p` written, so a producer that finishes the shards in ring order
+/// (that shard first, this rank's own last) can start each step behind its shard. Every rank
+/// must enqueue steps `1..world` in order. Returns the peers' partials (as
+/// [`reduce_scatter_rows`] does) after the last step, `None` before it.
+pub fn reduce_scatter_step(
+    comm: &dyn CommBackend,
+    ws: &SpWorkspace,
+    p: DevicePtr,
+    shards: &[(usize, usize)],
+    step: usize,
+    row_bytes: usize,
+    stream: u64,
+) -> Result<Option<metrale_comm::PeerPartials>> {
+    let (rank, world) = (comm.rank(), comm.world_size());
+    ensure!(
+        shards.len() == world,
+        "SP-mHC: {} shards at {world} ranks",
+        shards.len()
+    );
+    fits(ws, world, shards[rank], 0, row_bytes)?;
+    let st = ring_step_plan(rank, shards, row_bytes, ws.slot_bytes, step)?;
+    ensure!(
+        st.send_bytes > 0 && st.recv_bytes > 0,
+        "SP-mHC: an exchange with an empty shard"
+    );
+    comm.group_start()?;
+    comm.send_to(p.0 + st.send_off as u64, st.send_bytes, st.to, stream)?;
+    comm.recv_from(
+        ws.recv.0 + st.recv_off as u64,
+        st.recv_bytes,
+        st.from,
+        stream,
+    )?;
+    comm.group_end()?;
+    Ok((step + 1 == world).then(|| received(ws, world, rank)))
 }
 
 /// 2026-10-14: `p` advanced `off` bytes into every slot: the partials of rows that start `off`

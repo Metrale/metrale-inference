@@ -15,7 +15,8 @@ use metrale_gpu_runtime::gpu::{DevicePtr, KernelHandle};
 use super::super::Glm5NextMlpWorkspace;
 use super::super::moe_experts::MoeSite;
 use super::super::w4a4::w4a4_experts;
-use super::{parse_lever, takes_grouped, tile_index, zeroes_expert_out};
+use super::super::w4a4_grouped_raster::RasterGroups;
+use super::{parse_lever, takes_grouped, tile_index, w4a4_grouped_experts_with, zeroes_expert_out};
 use crate::glm5next_mlp::precision::{GroupPrecision, MlpGroup, MlpKernel};
 use crate::glm5next_mlp::weights::{
     Glm5NextDenseMlpWeights, Glm5NextExpertPtrTable, Glm5NextMoePtrTables, Glm5NextMoeWeights,
@@ -40,6 +41,11 @@ const G128_K64: u64 = 0x6F;
 const GU32: u64 = 0x71;
 const GU64: u64 = 0x73;
 const GU128: u64 = 0x75;
+const R128: u64 = 0x77;
+const R128_K64: u64 = 0x79;
+const RGU128: u64 = 0x7B;
+const N128: u64 = 0x7D;
+const N128_K64: u64 = 0x7F;
 
 const SCALES: W4a4ActScales = W4a4ActScales {
     gate_up: 0.000642,
@@ -102,6 +108,12 @@ fn kernels(gpu: &MockGpuBackend) -> Glm5NextMlpKernels {
             KernelHandle(G128_K64),
         ],
         gu: [KernelHandle(GU32), KernelHandle(GU64), KernelHandle(GU128)],
+        raster: [
+            KernelHandle(R128),
+            KernelHandle(R128_K64),
+            KernelHandle(RGU128),
+        ],
+        nc: [KernelHandle(N128), KernelHandle(N128_K64)],
     };
     k
 }
@@ -295,9 +307,10 @@ fn a_wide_k64_slice_runs_sort_tiles_and_three_grouped_gemms() {
 
 /// 2026-10-10: At 48 routed slots per expert on average the 128-slot entries run (plain down at
 /// K 2048: the plain quantizer and entry); at 47 the 32-slot ones.
+/// 2026-10-14: The m128 down is its raster twin under the lever's default (`0,4`).
 #[test]
 fn the_tile_follows_the_average_slots_per_expert() {
-    for (rows, mt, gu, dn) in [(48usize, 128u32, G128, G128), (47, 32, G32, G32)] {
+    for (rows, mt, gu, dn) in [(48usize, 128u32, G128, R128), (47, 32, G32, G32)] {
         let (r, l, ws) = run(cfg_small(), rows, true);
         r.unwrap();
         let funcs: Vec<u64> = l.iter().map(|l| l.func).collect();
@@ -413,5 +426,54 @@ fn the_lever_parses_strictly() {
     assert_eq!(tile_index(8192, 288), 0);
 }
 
+/// 2026-10-14: 1728 rows x top 8 over 288 experts = 48 slots per expert, the first m128 launch.
+const M128_ROWS: usize = 1728;
+
+/// 2026-10-14: The routed experts' launches over `rows` rows on a fresh mock (so two runs see
+/// the same buffer addresses), the fused and raster levers as given. 2026-10-15: and the nc lever.
+fn plan(
+    c: Glm5NextMlpConfig,
+    rows: usize,
+    fused: bool,
+    raster: Option<RasterGroups>,
+    nc: Option<u32>,
+) -> Vec<MockLaunch> {
+    let gpu = MockGpuBackend::new();
+    let k = kernels(&gpu);
+    let ws = Glm5NextMlpWorkspace::new_with(&gpu, &c, rows, true).unwrap();
+    let w = moe_weights(usize::MAX);
+    let site = MoeSite {
+        gpu: &gpu,
+        k: &k,
+        cfg: &c,
+        w: &w,
+        x: X,
+        rows,
+        ws: &ws,
+        stream: 5,
+    };
+    w4a4_grouped_experts_with(&site, SCALES, fused, raster, nc).unwrap();
+    gpu.launches_snapshot()
+}
+
+/// 2026-10-14: Two launch lists equal field for field (`MockLaunch` has no `PartialEq`).
+fn assert_same(got: &[MockLaunch], want: &[MockLaunch]) {
+    assert_eq!(got.len(), want.len());
+    for (g, w) in got.iter().zip(want) {
+        assert_eq!(
+            (g.func, g.grid, g.block, g.shared_mem, g.stream, &g.args),
+            (w.func, w.grid, w.block, w.shared_mem, w.stream, &w.args)
+        );
+    }
+}
+
+fn funcs(l: &[MockLaunch]) -> Vec<u64> {
+    l.iter().map(|l| l.func).collect()
+}
+
 #[path = "w4a4_grouped_gu_tests.rs"]
 mod gu;
+#[path = "w4a4_grouped_nc_tests.rs"]
+mod nc;
+#[path = "w4a4_grouped_raster_tests.rs"]
+mod raster;

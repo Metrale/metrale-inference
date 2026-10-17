@@ -23,7 +23,7 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 use crate::glm5next_mhc::{
-    Glm5NextMhcKernels, Glm5NextMhcSiteWeights, HC_MIX_ROWS, MHC_MIX_MAX_TOKENS, collapse_blocks,
+    Glm5NextMhcKernels, Glm5NextMhcSiteWeights, HC_MIX_ROWS, MHC_MIX_MAX_TOKENS,
     mhc_mix_max_tokens, mix_hc,
 };
 
@@ -89,6 +89,21 @@ pub fn glm_hc_pre_norm(
     rms_eps: f32,
     stream: u64,
 ) -> Result<()> {
+    // 2026-10-15: The cp.async-ring tile kernel takes its own launch (`glm5next_mhc_tile`).
+    if crate::glm5next_mhc_tile::try_launch_tile(
+        gpu,
+        kernels,
+        streams,
+        w,
+        norm_w,
+        [y_out, post_out, comb_out, normed_out],
+        num_tokens,
+        [hidden_size, hc_mult, sinkhorn_iters],
+        [norm_eps, hc_eps, rms_eps],
+        stream,
+    )? {
+        return Ok(());
+    }
     glm_hc_pre_norm_with(
         gpu,
         kernels,
@@ -199,6 +214,30 @@ pub fn splitk_kernel(
     .then_some((kernels.hc_pre_norm_sk, HC_PRE_NORM_SK_SLICES))
 }
 
+/// 2026-10-15: What every pre-norm launch refuses: a shape `hc_pre_norm_refusal` names, an FP32
+/// `hc_fn`, more tokens than the site's `mix` scratch. Returns that scratch's token bound.
+pub(crate) fn pre_norm_checks(
+    w: &Glm5NextMhcSiteWeights,
+    num_tokens: u32,
+    hidden_size: u32,
+    hc_mult: u32,
+) -> Result<usize> {
+    if let Some(why) = hc_pre_norm_refusal(hidden_size, hc_mult) {
+        bail!("glm_hc_pre_norm: {why}");
+    }
+    if !w.hc_fn_bf16 {
+        bail!("glm_hc_pre_norm: the site's hc_fn is FP32; the fused kernel reads BF16 only");
+    }
+    let mix_cap = mhc_mix_max_tokens();
+    if num_tokens as usize > mix_cap {
+        bail!(
+            "glm_hc_pre_norm: {num_tokens} tokens exceeds the {mix_cap}-token `mix` and `done` \
+             scratch (floor {MHC_MIX_MAX_TOKENS})"
+        );
+    }
+    Ok(mix_cap)
+}
+
 /// 2026-10-11: [`glm_hc_pre_norm`] with the prefetching kernel's choice explicit (`prefetch`;
 /// the bit-identity gate runs both arms).
 #[allow(clippy::too_many_arguments)]
@@ -224,19 +263,7 @@ pub fn glm_hc_pre_norm_with(
     tok: bool,
     stream: u64,
 ) -> Result<()> {
-    if let Some(why) = hc_pre_norm_refusal(hidden_size, hc_mult) {
-        bail!("glm_hc_pre_norm: {why}");
-    }
-    if !w.hc_fn_bf16 {
-        bail!("glm_hc_pre_norm: the site's hc_fn is FP32; the fused kernel reads BF16 only");
-    }
-    let mix_cap = mhc_mix_max_tokens();
-    if num_tokens as usize > mix_cap {
-        bail!(
-            "glm_hc_pre_norm: {num_tokens} tokens exceeds the {mix_cap}-token `mix` and `done` \
-             scratch (floor {MHC_MIX_MAX_TOKENS})"
-        );
-    }
+    let mix_cap = pre_norm_checks(w, num_tokens, hidden_size, hc_mult)?;
     // 2026-10-12: The token-tiled grid takes its own launch (`glm5next_mhc_tok`).
     if let Some(kernel) = crate::glm5next_mhc_tok::tok_kernel(kernels, num_tokens, tok) {
         return crate::glm5next_mhc_tok::launch_tok(
@@ -287,6 +314,7 @@ pub fn glm_hc_pre_norm_with(
 /// the other ranks' landed (`CommBackend::exchange_partials`). Writes the reduced row back to
 /// `block_out` and the post-mix to `out`, both byte-identical to `bf16_add_rank_sum` followed by
 /// `glm_hc_post`. Errors when the kernel is not loaded or the rows exceed a peer slot.
+/// 2026-10-14: The grid is `METRALE_GLM_MHC_POST_SUM_CTAS`'s (`glm5next_hc_post_sum_grid`).
 #[allow(clippy::too_many_arguments)]
 pub fn glm_hc_post_rank_sum(
     gpu: &dyn GpuBackend,
@@ -302,6 +330,32 @@ pub fn glm_hc_post_rank_sum(
     hc_mult: u32,
     stream: u64,
 ) -> Result<()> {
+    let ctas = crate::glm5next_hc_post_sum_grid::ctas()?;
+    glm_hc_post_rank_sum_with(
+        gpu,
+        kernel,
+        block_out,
+        partials,
+        [residual, post, comb, out],
+        [num_tokens, hidden_size, hc_mult],
+        ctas,
+        stream,
+    )
+}
+
+/// 2026-10-14: [`glm_hc_post_rank_sum`] at an explicit block cap (`None`: the uncapped grid);
+/// `streams` is `[residual, post, comb, out]`, `dims` `[num_tokens, hidden_size, hc_mult]`.
+#[allow(clippy::too_many_arguments)]
+pub fn glm_hc_post_rank_sum_with(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    block_out: DevicePtr,
+    partials: &metrale_comm::PeerPartials,
+    [residual, post, comb, out]: [DevicePtr; 4],
+    [num_tokens, hidden_size, hc_mult]: [u32; 3],
+    ctas: Option<u32>,
+    stream: u64,
+) -> Result<()> {
     anyhow::ensure!(
         kernel.0 != 0,
         "glm5next_hc_post_rank_sum is not loaded on this target"
@@ -312,9 +366,11 @@ pub fn glm_hc_post_rank_sum(
         "{elems} elements exceed the one-shot peer slot of {}",
         partials.slot_elems
     );
+    let (grid, block) =
+        crate::glm5next_hc_post_sum_grid::launch_shape(num_tokens, hidden_size, ctas);
     KernelLaunch::new(gpu, kernel)
-        .grid([num_tokens, collapse_blocks(hidden_size), 1])
-        .block([256, 1, 1])
+        .grid(grid)
+        .block(block)
         .arg_ptr(block_out)
         .arg_ptr(DevicePtr(partials.recv))
         .arg_u64(partials.slot_elems as u64)
@@ -326,6 +382,7 @@ pub fn glm_hc_post_rank_sum(
         .arg_ptr(out)
         .arg_u32(hidden_size)
         .arg_u32(hc_mult)
+        .arg_u32(num_tokens)
         .launch(stream)
 }
 
@@ -349,8 +406,10 @@ mod tests {
             hc_pre_norm_pf: k(if fused { 13 } else { 0 }),
             hc_pre_norm_sk: k(if fused { 14 } else { 0 }),
             hc_pre_norm_tok: k(if fused { 15 } else { 0 }),
+            hc_pre_norm_tile: k(if fused { 17 } else { 0 }),
             hc_post: k(7),
             hc_post_rank_sum: k(11),
+            hc_post_rank_sum_vec8: k(18),
             hc_post_pre_norm: k(12),
             hc_post_pre_norm_tok: k(if fused { 16 } else { 0 }),
             hc_head: k(8),
@@ -542,6 +601,7 @@ mod tests {
                 MockArg::Buffer(res),
                 b(&4096u32.to_le_bytes()),
                 b(&4u32.to_le_bytes()),
+                b(&2u32.to_le_bytes()),
             ]
         );
         assert!(

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-14: The warp-specialized prefill twin of the P-hi DSA attend
-//! (`glm5next_dsa_mla_prefill_tc_phi`, lever `METRALE_GLM_DSA_HB_PREFILL_TC`): its launch shape
+//! (`glm5next_dsa_mla_prefill_tc_phi`, lever `METRALE_GLM_DSA_HB_PREFILL_TC`; 2026-10-15: and its
+//! `_nanor` entry, lever `METRALE_GLM_DSA_TC_NANOR`): its launch shape
 //! and the swap that selects it.
 //!
 //! Owner: model-arch (GLM-5.3 DSA).
@@ -63,6 +64,43 @@ impl Glm5NextDsaDecodeKernel {
                 smem: TC_SMEM_BYTES,
                 block: TC_BLOCK,
                 offset_table: true,
+                ..h
+            }),
+            ..self
+        })
+    }
+
+    /// 2026-10-15: This kernel with the tc entry replaced by `glm5next_dsa_mla_prefill_tc_phi_nanor`
+    /// (the same launch shape and bytes, one NaN-byte test per producer share of a tile) when
+    /// `nanor` ([`super::tc_nanor`]) is set; unchanged when it is not. An error when it is set but
+    /// the entry is not the tc one ([`Self::for_prefill_tc`] first) or the twin is not in the
+    /// build.
+    pub fn for_prefill_tc_nanor(self, nanor: bool) -> Result<Self> {
+        if !nanor {
+            return Ok(self);
+        }
+        let Some(h) = self.head_batched else {
+            bail!("METRALE_GLM_DSA_TC_NANOR=1 needs METRALE_GLM_DSA_DECODE_HB");
+        };
+        if h.prefill_tc.0 == 0 || h.decode.0 != h.prefill_tc.0 {
+            bail!("METRALE_GLM_DSA_TC_NANOR=1 needs METRALE_GLM_DSA_HB_PREFILL_TC=1");
+        }
+        if h.prefill_tc_nanor.0 == 0 {
+            bail!(
+                "METRALE_GLM_DSA_TC_NANOR=1: glm5next_dsa_mla_prefill_tc_phi_nanor is not in this \
+                 target's kernels"
+            );
+        }
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            tracing::info!(
+                "METRALE_GLM_DSA_TC_NANOR=1: DSA prefill attend on \
+                 glm5next_dsa_mla_prefill_tc_phi_nanor (one NaN-byte test per producer share)"
+            )
+        });
+        Ok(Self {
+            head_batched: Some(HeadBatched {
+                decode: h.prefill_tc_nanor,
                 ..h
             }),
             ..self
