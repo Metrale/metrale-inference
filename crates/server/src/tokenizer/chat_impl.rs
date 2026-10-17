@@ -47,6 +47,7 @@ impl ChatTokenizer {
         model_type: &str,
         repo_root: Option<&Path>,
         source: super::TemplateSource<'_>,
+        heap_trim: super::HeapTrimPolicy,
     ) -> Result<Self> {
         let official_k3 = super::kimi_k3::uses_xtml(model_dir, model_type)?;
         let tokenizer_path = model_dir.join("tokenizer.json");
@@ -126,6 +127,7 @@ impl ChatTokenizer {
             chat_template,
             jinja_env,
             openai_jinja_env,
+            heap_trim,
         })
     }
 
@@ -138,12 +140,18 @@ impl ChatTokenizer {
         &self.tokenizer
     }
 
+    /// 2026-10-17: The token ids of `text`, no special tokens added. When the policy's
+    /// threshold is reached, the heap is trimmed after the `Encoding` is dropped (`heap_trim`).
     pub fn encode(&self, text: &str) -> Result<Vec<u32>> {
-        let encoding = self
-            .tokenizer
-            .encode(text, false)
-            .map_err(|e| anyhow::anyhow!("Tokenizer encode error: {e}"))?;
-        Ok(encoding.get_ids().to_vec())
+        let ids = {
+            let encoding = self
+                .tokenizer
+                .encode(text, false)
+                .map_err(|e| anyhow::anyhow!("Tokenizer encode error: {e}"))?;
+            encoding.get_ids().to_vec()
+        };
+        self.heap_trim.after_encode(ids.len());
+        Ok(ids)
     }
 
     pub fn decode(&self, ids: &[u32]) -> Result<String> {

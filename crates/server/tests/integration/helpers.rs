@@ -212,6 +212,7 @@ pub(super) fn chat_tokenizer(
         &config.model_type,
         None,
         metrale_server::tokenizer::TemplateSource::OverrideDir,
+        metrale_server::tokenizer::HeapTrimPolicy::off(),
     )?;
     Ok(tokenizer)
 }

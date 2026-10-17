@@ -10,6 +10,7 @@
 use super::*;
 
 mod deepseek_v4;
+mod heap_trim;
 mod kimi_k3;
 use serde_json::json;
 

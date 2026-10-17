@@ -2,6 +2,7 @@
 
 //! 2026-10-08: The chat-surface serve flags (flattened last into `ServeServiceArgs`):
 //! the chat template file, the per-request media caps and uncapped thinking.
+//! 2026-10-17: Also the tokenizer heap trim after a long prompt.
 //!
 //! Owner: server CLI.
 //! Invariants: the `///` text on the struct's fields is the `--help` output and
@@ -46,4 +47,15 @@ pub struct ServeChatSurfaceArgs {
     /// `--max-thinking-budget` budget. Refused with `--disable-thinking`.
     #[arg(long, default_value_t = false, conflicts_with = "disable_thinking")]
     pub uncapped_thinking: bool,
+
+    /// Give the heap the tokenizer freed back to the operating system (glibc
+    /// `malloc_trim`) after encoding any prompt of N tokens or more. Encoding keeps
+    /// per-token offsets and masks beside the ids, and glibc holds on to those pages
+    /// once they are freed, so a very long prompt leaves host memory resident that a
+    /// unified-memory GPU shares. The trim runs after the ids are copied out (they are
+    /// unchanged) and takes longer the larger the prompt. 0 (the default) never trims.
+    /// Refused above --max-seq-len, where no prompt could reach it, and on a build
+    /// whose allocator is not glibc's.
+    #[arg(long, default_value_t = 0, value_name = "N")]
+    pub tokenizer_trim_min_tokens: usize,
 }

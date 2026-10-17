@@ -350,3 +350,24 @@ fn hermetic_refuses_the_shared_prompt_lookup_cache() {
     assert!(validate_serve_args(&parse(&[&pl[..], &cache[..]].concat())).is_ok());
     assert!(validate_serve_args(&parse(&[&pl[..], &["--hermetic"]].concat())).is_ok());
 }
+
+// 2026-10-17: A threshold no prompt can reach is refused; one at the limit is a real policy.
+#[test]
+fn a_tokenizer_trim_threshold_above_max_seq_len_is_refused() {
+    let at = |n: &str| parse(&["--max-seq-len", "65536", "--tokenizer-trim-min-tokens", n]);
+    let err = validate_serve_args(&at("65537")).expect_err("no prompt can reach 65537");
+    assert!(
+        err.contains("--tokenizer-trim-min-tokens 65537 is above --max-seq-len 65536"),
+        "{err}"
+    );
+    assert!(validate_serve_args(&at("0")).is_ok(), "0 is off");
+    assert_eq!(parse(&[]).chat_surface.tokenizer_trim_min_tokens, 0);
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    assert!(validate_serve_args(&at("65536")).is_ok());
+    #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+    assert!(
+        validate_serve_args(&at("65536"))
+            .expect_err("no malloc_trim off glibc")
+            .contains("not glibc's")
+    );
+}
