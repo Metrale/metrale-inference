@@ -33,14 +33,23 @@ pub fn scores_pipe() -> bool {
 /// 2026-10-15: The readback of the prefill selection levers as the first exact multi-row pass
 /// resolved them (lever set AND kernel resolved AND shape eligible), logged once per process so
 /// every rank's serve log shows which scores path its prefill ran.
-pub fn readback_select_levers(mma: bool, pipe: bool, fused: bool) {
+/// 2026-10-17: `radix` is `METRALE_GLM_DSA_TOPK_RADIX` as set; a fused pass selects in its own
+/// kernel, so the line says when the radix lever is set but unused there.
+pub fn readback_select_levers(mma: bool, pipe: bool, fused: bool, radix: bool) {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
+        let note = if fused && radix {
+            " (topk_radix unused: the fused pass selects)"
+        } else {
+            ""
+        };
         tracing::info!(
-            "DSA select levers: scores_mma={} scores_pipe={} select_fused={}",
+            "DSA select levers: scores_mma={} scores_pipe={} select_fused={} topk_radix={}{}",
             u8::from(mma),
             u8::from(pipe),
-            u8::from(fused)
+            u8::from(fused),
+            u8::from(radix),
+            note
         )
     });
 }

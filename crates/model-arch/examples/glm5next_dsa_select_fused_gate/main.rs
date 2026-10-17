@@ -11,16 +11,19 @@
 //!    folded (a non-candidate, a slot past `min((q_pos + 1) / kpool, select_k)` or a masked row
 //!    is -1). Shapes: random keys; keys repeated in 7 classes (ties at every score); zero keys
 //!    (a row scores +0.0 everywhere, or -0.0 where its head weights are all negative); a ramp
-//!    (scores rising with the pool, the order that compacts the streaming buffer most); fewer
-//!    pools than `select_k`; pools not a multiple of 64; rows not a multiple of 8; shuffled
+//!    (scores rising with the pool, the order that compacts the streaming buffer most); k = 1,
+//!    257, P = k = 300, P = 513 at k = 512; k > P (a launch only this gate sends: the launcher
+//!    caps select_k at the pools); pools not a multiple of 64; rows not a multiple of 8; shuffled
 //!    positions; masked rows; leading invisible pools.
 //! 2. The tie shapes must cut through a tie in some row (equal scores selected and not
 //!    selected), so the tie-break is exercised, not assumed.
 //! 3. Negative controls: one selected pool made invisible, and one unselected candidate given
-//!    twice the best key, each change the fused output.
+//!    twice the best key, each change the fused output; the k-th and (k + 1)-th pools' keys
+//!    swapped change slot k - 1 only (`order::control`).
 //! 4. Timing at a 32k / 256k / 512k / 1M-token context (2,048 causal rows at the context's end,
 //!    median of 7 with min..max): the reference in the row sub-passes a 1M-ceiling scratch
 //!    allows (256 x 262,144 scores), then fused in one launch; both outputs compared in full.
+//! 5. The whole host launcher with the lever off and on, under both top-k levers (`host`).
 //!
 //! Owner: model-arch examples.
 //! Invariants: exits with an error unless every check holds; the last line reads
@@ -40,6 +43,8 @@ use metrale_model_arch::glm5next_dsa::{
 };
 
 mod bench;
+mod host;
+mod order;
 
 const H: usize = 32;
 const D: usize = 128;
@@ -84,20 +89,6 @@ fn read_i32(gpu: &dyn GpuBackend, p: DevicePtr, n: usize) -> Result<Vec<i32>> {
     Ok(b.chunks_exact(4)
         .map(|c| i32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect())
-}
-
-/// 2026-10-17: `dsa_tk`, the kernels' order-preserving key (-0.0 keyed as +0.0).
-fn tk(f: f32) -> u32 {
-    let u = if f.to_bits() == 0x8000_0000 {
-        0
-    } else {
-        f.to_bits()
-    };
-    if u & 0x8000_0000 != 0 {
-        !u
-    } else {
-        u | 0x8000_0000
-    }
 }
 
 struct Kernels {
@@ -314,43 +305,6 @@ fn selected(
     read_i32(gpu, io.sel, io.rows * io.k)
 }
 
-/// 2026-10-17: The host selection over one row's reference scores, in the defined order, folded;
-/// and whether the cut went through a tie (an equal score on both sides of it).
-fn oracle_row(io: &Io, r: usize, scores: &[f32]) -> (Vec<i32>, bool) {
-    let cand = |p: usize| io.h_vis[p] >= 0 && io.h_vis[p] <= io.h_qpos[r];
-    let key = |p: usize| {
-        if cand(p) {
-            tk(scores[p])
-        } else {
-            tk(-f32::MAX)
-        }
-    };
-    let mut order: Vec<usize> = (0..io.pools).collect();
-    let cmp = |a: &usize, b: &usize| key(*b).cmp(&key(*a)).then(a.cmp(b));
-    let take = io.k.min(io.pools);
-    if take < io.pools {
-        order.select_nth_unstable_by(take - 1, cmp);
-    }
-    order[..take].sort_by(cmp);
-    let tie = take < io.pools && {
-        let cut = key(order[take - 1]);
-        order[take..].iter().any(|&p| key(p) == cut && cand(p)) && cand(order[take - 1])
-    };
-    let row_k = ((io.h_qpos[r] + 1) as usize / KP).min(io.k);
-    let on = io.h_qmask[r] != 0;
-    let sel = (0..io.k)
-        .map(|j| {
-            let p = if j < take { order[j] } else { usize::MAX };
-            if on && j < row_k && p != usize::MAX && cand(p) {
-                p as i32
-            } else {
-                -1
-            }
-        })
-        .collect();
-    (sel, tie)
-}
-
 /// 2026-10-17: Rows where `a` and `b` differ.
 fn rows_differ(a: &[i32], b: &[i32], k: usize) -> usize {
     a.chunks(k).zip(b.chunks(k)).filter(|(x, y)| x != y).count()
@@ -365,7 +319,9 @@ fn free(gpu: &dyn GpuBackend, io: &Io) -> Result<()> {
     Ok(())
 }
 
-fn equivalence(gpu: &dyn GpuBackend, k: &Kernels, sh: &Shape, rng: &mut Rng) -> Result<()> {
+/// 2026-10-17: Returns whether the key and the cut controls ran: the key control needs an
+/// unselected candidate, the cut control a full row with more than k candidates.
+fn equivalence(gpu: &dyn GpuBackend, k: &Kernels, sh: &Shape, rng: &mut Rng) -> Result<[bool; 2]> {
     let io = build(gpu, sh, sh.q, rng)?;
     let want = selected(gpu, &io, 0x00, || reference(gpu, k, &io))?;
     let got = selected(gpu, &io, 0x5A, || fused(gpu, k, &io))?;
@@ -378,15 +334,16 @@ fn equivalence(gpu: &dyn GpuBackend, k: &Kernels, sh: &Shape, rng: &mut Rng) -> 
         .collect();
     let (mut bad_ref, mut ties) = (0usize, 0usize);
     for r in 0..io.rows {
-        let (o, tie) = oracle_row(&io, r, &scores[r * io.pools..(r + 1) * io.pools]);
+        let (o, tie) = order::oracle_row(&io, r, &scores[r * io.pools..(r + 1) * io.pools]);
         bad_ref += usize::from(o[..] != want[r * io.k..(r + 1) * io.k]);
         ties += usize::from(tie);
     }
     let bad = rows_differ(&got, &want, io.k);
     let live = want.iter().filter(|&&p| p >= 0).count();
     let negz = scores.iter().filter(|s| s.to_bits() == 0x8000_0000).count();
-    let (mut vis_ctl, mut key_ctl) = (true, true);
+    let (mut vis_ctl, mut key_ctl, mut cut_ctl) = (true, None, None);
     if sh.keys == Keys::Random && sh.p > sh.k {
+        cut_ctl = order::control(gpu, k, &io, &scores, &want)?;
         // 2026-10-17: 3. Row 0's first selected pool made invisible; then an unselected candidate
         // of row 0 given twice the key of that row's best pool.
         let r = (0..io.rows).find(|&r| want[r * io.k] >= 0).unwrap_or(0);
@@ -408,28 +365,33 @@ fn equivalence(gpu: &dyn GpuBackend, k: &Kernels, sh: &Shape, rng: &mut Rng) -> 
             }
             let kb: Vec<u8> = keys.iter().flat_map(|h| h.to_le_bytes()).collect();
             gpu.copy_h2d(&kb, io.keys)?;
-            key_ctl = selected(gpu, &io, 0x5A, || fused(gpu, k, &io))? != got;
-        } else {
-            key_ctl = false;
+            key_ctl = Some(selected(gpu, &io, 0x5A, || fused(gpu, k, &io))? != got);
         }
     }
     println!(
         "Q={:5} P={:6} k={:3} {:?}{} first_key={}: fused rows differ {bad}, reference vs host \
          {bad_ref}, {live} live slots, {ties} rows cut through a tie, {negz} scores -0.0; \
-         controls vis={vis_ctl} key={key_ctl}",
+         controls vis={vis_ctl} key={} cut={}{}",
         sh.q,
         sh.p,
         sh.k,
         sh.keys,
         if sh.shuffled { " shuffled" } else { "" },
-        sh.first_key
+        sh.first_key,
+        na(key_ctl),
+        na(cut_ctl),
+        if sh.k > sh.p {
+            " (k > P: a launch only this gate sends)"
+        } else {
+            ""
+        }
     );
     free(gpu, &io)?;
     ensure!(bad == 0, "fused differs from the reference");
     ensure!(bad_ref == 0, "the reference differs from the host order");
     ensure!(live > 0, "no live selected slot");
     ensure!(
-        vis_ctl && key_ctl,
+        vis_ctl && key_ctl != Some(false) && cut_ctl != Some(false),
         "a negative control left the fused output unchanged"
     );
     if matches!(sh.keys, Keys::Dup | Keys::Zero | Keys::Ramp) {
@@ -438,7 +400,12 @@ fn equivalence(gpu: &dyn GpuBackend, k: &Kernels, sh: &Shape, rng: &mut Rng) -> 
     if sh.keys == Keys::Zero {
         ensure!(negz > 0, "the zero-key shape produced no -0.0 score");
     }
-    Ok(())
+    Ok([key_ctl.is_some(), cut_ctl.is_some()])
+}
+
+/// 2026-10-17: A control's verdict, `n/a` when the shape has nothing for it to move.
+fn na(c: Option<bool>) -> String {
+    c.map_or("n/a".to_string(), |c| c.to_string())
 }
 
 fn i32_bytes(v: &[i32]) -> Vec<u8> {
@@ -446,6 +413,10 @@ fn i32_bytes(v: &[i32]) -> Vec<u8> {
 }
 
 fn main() -> Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() == 3 && args[1] == "--host-child" {
+        return host::child(std::path::Path::new(&args[2]));
+    }
     let gpu = MetraleCudaBackend::new(0, &metrale_kernels::ptx_modules())?;
     let k = Kernels {
         pipe: gpu.kernel(DSA_SCORES_PIPE_MODULE, "dsa_index_scores_mma_pipe")?,
@@ -471,11 +442,23 @@ fn main() -> Result<()> {
         sh(256, 2000, 512, Keys::Zero, 0, false),
         sh(512, 8192, 512, Keys::Ramp, 0, false),
         sh(203, 1030, 512, Keys::Random, 1001, true),
+        sh(150, 300, 300, Keys::Random, 0, false),
+        sh(150, 513, 512, Keys::Random, 0, true),
+        sh(400, 4000, 1, Keys::Random, 0, true),
+        sh(400, 4000, 257, Keys::Dup, 0, true),
     ];
     let mut rng = Rng(0x3c6e_f372_fe94_f82b);
+    let mut ran = [0usize; 2];
     for s in &shapes {
-        equivalence(&gpu, &k, s, &mut rng)?;
+        let r = equivalence(&gpu, &k, s, &mut rng)?;
+        ran[0] += usize::from(r[0]);
+        ran[1] += usize::from(r[1]);
     }
+    ensure!(
+        ran[0] > 0 && ran[1] > 0,
+        "the key or the cut control ran on no shape: {ran:?}"
+    );
+    host::leg()?;
     for ctx in [32_768, 262_144, 524_288, 1_048_576] {
         bench::bench(&gpu, &k, ctx, Keys::Random, &mut rng)?;
     }

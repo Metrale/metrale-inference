@@ -289,7 +289,7 @@ pub(super) fn run(
     // keys and visibility prepared once per compression.
     let pipe = scores_pipe_for(mma, &kernels.rows, scores_pipe());
     if ceiling.is_none() && geom.q_rows > 1 {
-        pipe::readback_select_levers(mma, pipe, fused);
+        pipe::readback_select_levers(mma, pipe, fused, topk_radix());
     }
     // 2026-10-17: The fused pass: the pipe's prepared pools, then scores, top-k and fold in one
     // kernel; `fused` implies an exact launch with pools.

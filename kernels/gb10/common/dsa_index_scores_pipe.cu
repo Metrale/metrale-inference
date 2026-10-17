@@ -22,8 +22,9 @@
 //   pool past it is a non-candidate of every row of the CTA, so its -FLT_MAX / 0 bytes are written
 //   directly, which are the bytes the MMA path writes for a non-candidate.
 // - 2026-10-17 (dsa_select_fused_pipe): the same walk, the same score bits; each tile's scores
-//   go to a per-warp streaming top-k (dsa_topk_stream.cuh) instead of memory, and the row's
-//   folded selection is written once at the end.
+//   go to a per-warp streaming top-k (dsa_topk_stream.cuh: one warp per row, in-warp compaction,
+//   no cross-warp merge) instead of memory, and the row's folded selection is written once at
+//   the end.
 
 #include "dsa_indexer_body.cuh"
 #include "dsa_scores_mma.cuh"
@@ -106,15 +107,18 @@ __device__ __forceinline__ void dsa_sp_walk(const float* __restrict__ q,
                                             const float* __restrict__ weights,
                                             const int* __restrict__ vis,
                                             const int* __restrict__ q_pos, unsigned int Q,
-                                            unsigned int P, float scale, unsigned char* smem,
-                                            Sink& sink) {
+                                            unsigned int P, float scale, Sink& sink) {
+    // 2026-10-17: Declared here, not passed in, so every access below is a shared-space access
+    // (LDS, cp.async to a shared address) as in the single-kernel form; each extern __shared__
+    // array of a kernel names the same dynamic shared memory.
+    extern __shared__ __align__(16) unsigned char dsa_sp_smem[];
     const unsigned int warp = threadIdx.x >> 5, lane = threadIdx.x & 31u;
     const unsigned int g = lane >> 2, tig = lane & 3u;
     const unsigned int r = blockIdx.x * DSA_SM_QPC + warp;
     const bool live = r < Q;
     const int qp = live ? q_pos[r] : -1;
-    const int* sV = (const int*)(smem + DSA_SP_STAGES * DSA_SP_TILE_BYTES);
-    const uint32_t sbase = (uint32_t)__cvta_generic_to_shared(smem);
+    const int* sV = (const int*)(dsa_sp_smem + DSA_SP_STAGES * DSA_SP_TILE_BYTES);
+    const uint32_t sbase = (uint32_t)__cvta_generic_to_shared(dsa_sp_smem);
     const uint32_t vbase = sbase + DSA_SP_STAGES * DSA_SP_TILE_BYTES;
 
     __shared__ int s_qmax, s_pmax;
@@ -215,10 +219,9 @@ extern "C" __global__ void __launch_bounds__(256) dsa_index_scores_mma_pipe(
     unsigned int D,
     float scale
 ) {
-    extern __shared__ __align__(16) unsigned char dsa_sp_smem[];
     if (H != DSA_SM_H || D != DSA_SM_D) return;
     DsaScoresSink sink{out, valid_cand, P};
-    dsa_sp_walk(q, keys_bf16, weights, vis, q_pos, Q, P, scale, dsa_sp_smem, sink);
+    dsa_sp_walk(q, keys_bf16, weights, vis, q_pos, Q, P, scale, sink);
 }
 
 // 2026-10-17: The row's top select_k kept while it is scored (dsa_topk_stream.cuh): each tile
@@ -264,7 +267,8 @@ struct DsaFusedSink {
 // above every number here, while the reference's float sort compares it false both ways).
 // Launch: grid (ceil(Q / 8), 1, 1), block 256, dynamic shared memory
 // DSA_SP_STAGES x (DSA_SP_TILE_BYTES + 256) + 8 x DSA_STK_CAP x 8 = 98,048 B; H = 32, D = 128 and
-// 1 <= select_k <= DSA_STK_MAXK only (else nothing is written; the launcher never sends another).
+// 1 <= select_k <= DSA_STK_MAXK only (else its rows are written DSA_INVALID; the launcher never
+// sends another).
 extern "C" __global__ void __launch_bounds__(256) dsa_select_fused_pipe(
     const float* __restrict__ q,
     const __nv_bfloat16* __restrict__ keys_bf16,
@@ -282,12 +286,20 @@ extern "C" __global__ void __launch_bounds__(256) dsa_select_fused_pipe(
     float scale
 ) {
     extern __shared__ __align__(16) unsigned char dsa_sf_smem[];
-    if (H != DSA_SM_H || D != DSA_SM_D || select_k == 0u || select_k > DSA_STK_MAXK) return;
+    if (H != DSA_SM_H || D != DSA_SM_D || select_k == 0u || select_k > DSA_STK_MAXK) {
+        // 2026-10-17: A shape the kernel does not take leaves its rows all DSA_INVALID, never a
+        // previous pass's pools (select_k == 0 has no slots).
+        for (unsigned int i = threadIdx.x; i < DSA_SM_QPC * select_k; i += blockDim.x) {
+            const unsigned int r = blockIdx.x * DSA_SM_QPC + i / select_k;
+            if (r < Q) selected[(size_t)r * select_k + i % select_k] = DSA_INVALID;
+        }
+        return;
+    }
     const unsigned int warp = threadIdx.x >> 5;
     unsigned char* buf = dsa_sf_smem + DSA_SP_STAGES * (DSA_SP_TILE_BYTES + DSA_SM_PT * 4u);
     unsigned int* keys = (unsigned int*)buf + warp * DSA_STK_CAP;
     int* idx = (int*)buf + (DSA_SM_QPC + warp) * DSA_STK_CAP;
     DsaFusedSink sink{DsaStk{keys, idx, 0u, 0u, false}, vis, q_pos, q_mask, selected, P, KP,
                       select_k};
-    dsa_sp_walk(q, keys_bf16, weights, vis, q_pos, Q, P, scale, dsa_sf_smem, sink);
+    dsa_sp_walk(q, keys_bf16, weights, vis, q_pos, Q, P, scale, sink);
 }

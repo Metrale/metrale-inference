@@ -2176,7 +2176,7 @@ symptom = "a 1M-token single-request TP=3 prefill: per-chunk time grows linearly
 diagnosis_tool = "microbench"
 root_cause_class = "memory-bound"
 lever_type = "kernel-fusion"
-lkb_effect = "dsa_indexer family: new dsa_select_fused_pipe (the dsa_index_scores_mma_pipe walk as template dsa_sp_walk<Sink>, scores sink unchanged) with a per-warp streaming top-k in shared memory (dsa_topk_stream.cuh, 704 entries per warp, cut by bitwise radix compaction, strict > acceptance); writes the folded selected pools directly; dsa_tk moved to the shared header"
+lkb_effect = "dsa_indexer family: new dsa_select_fused_pipe (the dsa_index_scores_mma_pipe walk as template dsa_sp_walk<Sink>, scores sink unchanged) with a per-warp streaming top-k in shared memory (dsa_topk_stream.cuh, 704 entries per warp; when full, a bitwise search for the select_k-th key, then in-warp compaction: one warp per row, no cross-warp merge; strict > acceptance); writes the folded selected pools directly; dsa_tk moved to the shared header"
 parity_tier_kept = "bit-identical"
 per_rung = [{ rung = "prefill-1m", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
 verdict = "held"
@@ -2186,6 +2186,6 @@ caught_by = ""
 time_lost_hours = 0.5
 would_catch_earlier = "build the -0.0 gate shape from the score formula (all-negative head weights) instead of zero keys alone: zero keys with positive weights give +0.0 only"
 effort_hours = 10.0
-transferability = "any top-k over a scored row that is produced tile by tile: keep a per-warp candidate buffer with a radix cut instead of materializing the row"
+transferability = "any top-k over a scored row that is produced tile by tile: keep a per-warp candidate buffer, cut by a bitwise search for the k-th key and compacted in-warp, instead of materializing the row"
 links = { pr = "", commit = "", evidence = "glm5next_dsa_select_fused_gate + glm5next_dsa_scores_pipe_gate, 2026-10-17" }
-notes = "Loses below ~128k pools-context (x0.53 at 32k: one pass already fits, and the per-row fixed cost of the buffer finish dominates); the early-chunk loss over a 1M run totals under ~0.5 s, so the lever stays a Switch. Worst case is scores rising with pool index (every tile beats the cut, a compaction per 3 tiles); a descending tile walk with key-then-index compaction would remove it. Not done: shrinking the scores/candidacy scratch when fused."
+notes = "Loses below ~128k pools-context (x0.53 at 32k: one pass already fits, and the per-row fixed cost of the buffer finish dominates); the early-chunk loss over a 1M run totals under ~0.5 s, so the lever stays a Switch. Worst case is scores rising with pool index (every tile beats the cut, a compaction per 3 tiles); a descending tile walk with key-then-index compaction would remove it. Not done: shrinking the scores/candidacy scratch when fused. 2026-10-17 review fixup: host-path gate (the serve's select path, lever off vs on in child processes, token and folded rows byte-compared, TOPK_RADIX on and off); negative controls at the cut (slot k - 1 swap changes only that slot), on visibility and on a key, each n/a only when the shape has nothing to move and required to run on some shape; shapes P = k, P = k + 1, k = 1, k = 257 with ties, k > P labelled as a gate-only launch; fused_shape is the one predicate both the launch and the scratch read; TOPK_RADIX under FUSED is reported, not silently dropped; SASS: the scores kernel's shared-memory reads stay LDS (no generic LD), base vs fix differ in scheduling only; a refused launch sentinel-fills its output."
