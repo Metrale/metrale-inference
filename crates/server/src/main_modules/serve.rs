@@ -124,11 +124,14 @@ fn startup(
     if let Err(msg) = cli::validate_serve_args(&args) {
         anyhow::bail!("{msg}");
     }
+    // 2026-10-17: Resolved here so a malformed lever stops the boot before any model work,
+    // a modelless boot included.
+    let settings = super::serve_settings::resolve(&metrale_io_host_std::ProcessEnv, &args)?;
 
     // 2026-09-26: Publish the kernel-path flags before anything reads their
     // cells. An absent flag publishes nothing, so its `METRALE_*` variable
     // still decides (`serve_flags`).
-    super::serve_flags::publish_kernel_flags(&args);
+    super::serve_flags::publish_kernel_flags(&args, &settings);
     // 2026-09-26: Process-scoped, like the flags: started before the first
     // load and kept across swaps.
     super::telemetry_boot::start(&args)?;
@@ -152,7 +155,7 @@ fn startup(
     let carried = host
         .process()
         .expect("process-scoped state is installed before startup");
-    match super::serve_load::load_model(args, tui_handles_tx, carried)? {
+    match super::serve_load::load_model(args, settings, tui_handles_tx, carried)? {
         Some(prepared) => Ok(Startup::Serve(prepared)),
         None => Ok(Startup::Worker),
     }

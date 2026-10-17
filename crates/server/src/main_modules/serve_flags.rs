@@ -16,7 +16,10 @@ use crate::cli;
 /// 2026-09-26: Publish the command line's kernel-path selections to the crates
 /// that dispatch on them, then log the resolved values. Called once per
 /// process, from `startup`, before the first model is built.
-pub(crate) fn publish_kernel_flags(args: &cli::ServeArgs) {
+pub(crate) fn publish_kernel_flags(
+    args: &cli::ServeArgs,
+    settings: &metrale_settings::InferenceServerSettings,
+) {
     let plan = super::kernel_flag_plan::KernelFlagPlan::from_args(args);
     // 2026-09-26: The GDN cell (`GdnFlags`) is one `OnceLock` fed by four flags:
     // `--ssm-h-dtype`, `--gdn-fused-norm`, `--ssm-batched-recurrent` and
@@ -257,7 +260,7 @@ pub(crate) fn publish_kernel_flags(args: &cli::ServeArgs) {
         // 2026-10-01: `--exact-verify` as given; the fixed-format verify is in `serve_resolved`.
         gdn.verify_exact_active(),
         metrale_gpu_runtime::ssm_tail_midchunk_enabled(),
-        if crate::scheduler::levers::resolve_mtp_gate_force(args.mtp_gate_force()) {
+        if settings.speculative.mtp_gate_force {
             "force"
         } else {
             "auto"

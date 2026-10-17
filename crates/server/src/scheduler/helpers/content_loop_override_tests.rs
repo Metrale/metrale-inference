@@ -1,27 +1,16 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-09-25: Tests for the content-loop watchdog's arming precedence and
-//! its repeat-threshold overrides (operator and per-request).
+//! 2026-09-25: Tests for the content-loop watchdog's repeat-threshold overrides (operator
+//! and per-request). Its arming precedence is a settings resolution (`serve_settings`).
 //!
 //! Owner: scheduler.
 //! Invariants: none beyond the types.
 
 use super::{
     CONTENT_LOOP_MIN_REPEATS, CONTENT_LOOP_PERIOD_MAX, CONTENT_LOOP_PERIOD_MIN, WatchdogParams,
-    detect_content_token_loop_with, resolve_content_loop_watchdog,
+    detect_content_token_loop_with,
 };
 use crate::api::inference_types::RepetitionDetectionParams;
-
-#[test]
-fn watchdog_arming_precedence_is_cli_env_toml() {
-    assert!(resolve_content_loop_watchdog(true, None, None));
-    assert!(!resolve_content_loop_watchdog(false, None, None));
-    assert!(!resolve_content_loop_watchdog(true, Some("0"), None));
-    assert!(resolve_content_loop_watchdog(false, Some("true"), None));
-    assert!(!resolve_content_loop_watchdog(true, Some("1"), Some(false)));
-    assert!(resolve_content_loop_watchdog(false, Some("0"), Some(true)));
-    assert!(resolve_content_loop_watchdog(true, Some("banana"), None));
-}
 
 #[test]
 fn min_repeats_cli_reaches_the_resolved_params() {

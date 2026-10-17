@@ -216,3 +216,27 @@ fn borrow_streak_switch_default_matches_the_lever() {
         );
     }
 }
+
+/// 2026-10-17: Every perf control is a declared lever, and an unset one discloses that
+/// lever's declared default: the two co-dispatch timings as numbers, the switches as
+/// `unset`.
+#[test]
+fn every_perf_control_discloses_its_declared_default_when_unset() {
+    let resolved = super::resolve_perf_env(|_| None);
+    assert_eq!(resolved.len(), super::PERF_CONTROLS.len());
+    for key in super::PERF_CONTROLS {
+        let lever = metrale_config::levers::lookup(key)
+            .unwrap_or_else(|| panic!("{key} is not a declared lever"));
+        assert_eq!(resolved.get(key).map(String::as_str), Some(lever.default), "{key}");
+    }
+    assert_eq!(
+        resolved
+            .get("METRALE_PREFILL_CODISPATCH_SETTLE_MS")
+            .map(String::as_str),
+        Some("10")
+    );
+    assert_eq!(
+        resolved.get("METRALE_NO_MTP_TC").map(String::as_str),
+        Some("unset")
+    );
+}

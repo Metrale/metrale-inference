@@ -441,7 +441,6 @@ crates/server/src/grammar/tests/native_prewarm.rs
 crates/server/src/main.rs
 crates/server/src/main_modules/serve.rs
 crates/server/src/main_modules/serve_flags.rs
-crates/server/src/main_modules/serve_load.rs
 crates/server/src/main_modules/serve_load/lora_verify_gpu_tests.rs
 crates/server/src/main_modules/serve_load/model_setup.rs
 crates/server/src/main_modules/serve_phases/build.rs
@@ -460,16 +459,10 @@ crates/server/src/model_resolver.rs
 crates/server/src/rate_limiter.rs
 crates/server/src/refusal.rs
 crates/server/src/response_store/store_impl.rs
-crates/server/src/scheduler/admission.rs
 crates/server/src/scheduler/dumps.rs
-crates/server/src/scheduler/helpers/watchdog.rs
-crates/server/src/scheduler/levers.rs
-crates/server/src/scheduler/mod_helpers.rs
 crates/server/src/scheduler/mod_helpers/send.rs
 crates/server/src/scheduler/mtp_accept_debug.rs
-crates/server/src/scheduler/mtp_dcut.rs
 crates/server/src/scheduler/mtp_timing.rs
-crates/server/src/scheduler/phase_continue_prefills/spec_mixing.rs
 crates/server/src/tokenizer/jinja_helpers.rs
 crates/server/src/tool_parser/qwen3_coder.rs
 crates/server/src/tool_parser/streaming_impl.rs

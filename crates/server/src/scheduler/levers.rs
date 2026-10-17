@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-09-25: Scheduler levers, resolved from the environment when a run
+//! 2026-09-25: Scheduler levers, derived from the load's resolved settings when a run
 //! starts and carried on `SchedCtx`; the scheduler's counterpart to
 //! `metrale_model_layers::layers::ops::ModelLevers`.
 //!
@@ -175,6 +175,11 @@ pub struct SchedLevers {
     /// 2026-10-03: `--mtp-dcut-ratio`, else `METRALE_MTP_DCUT_RATIO`, snapped to the nearest D-Cut
     /// bucket (default 0.75).
     pub dcut_ratio: f32,
+    /// 2026-10-17: `METRALE_KV_ADMIT_WATERMARK`: the operator's KV admission depth; `None`
+    /// keeps the honest bound (`admission::resolve_admit_watermark`).
+    pub kv_admit_watermark: Option<usize>,
+    /// 2026-10-17: `METRALE_HIGH_SPEED_SWAP_REPLACE` (presence): only warned about at install.
+    pub high_speed_swap_replace: bool,
     /// 2026-10-04: `--spec-cost-model measured`'s loaded, boot-checked state; `None` when the
     /// mode is off (the default) or the model has no `mtp.*` drafter. When `Some`, it replaces
     /// the static K-ladder and D-Cut (`validate_serve_args` refuses them together). `SchedLevers`
@@ -189,6 +194,9 @@ pub struct SchedLevers {
     /// the model layer resolved it (the model factory sizes the MTP KV pool
     /// with the same value).
     pub mtp_max_seqs: usize,
+    /// 2026-10-17: `--draft-confidence-stop`, as the load published it: read once here so the
+    /// planner and the step paths never consult the process cell (ROTI).
+    pub draft_stop: Option<metrale_model_layers::speculative::draft_stop::StopRule>,
     /// 2026-09-25: `METRALE_SPEC_ENTRY_PIN` (default 8): while a batch row
     /// has emitted fewer post-`</think>` tokens than this, the MTP gate is
     /// pinned to verify (`mtp_gate::entry_pin_forces_verify`).
@@ -204,169 +212,145 @@ pub struct SchedLevers {
     loop_watchdog: AtomicBool,
 }
 
-/// 2026-09-25: `METRALE_FOO=1` enables.
-fn opt_in(var: &str) -> bool {
-    metrale_config::levers::var(var).as_deref() == Some("1")
-}
-
-/// 2026-09-25: `METRALE_FOO=0` disables: a default-on lever whose off
-/// switch is an explicit zero. Not interchangeable with [`on_unless`]:
-/// swapping them inverts the switch, so `=0` would leave the lever on and
-/// `=1` would turn it off.
-fn on_unless_zero(var: &str) -> bool {
-    metrale_config::levers::var(var).as_deref() != Some("0")
-}
-
-/// 2026-09-25: `METRALE_FOO=1` disables — the flag names a negative, the
-/// field stores the positive, so the inversion happens here instead of at
-/// every read site.
-fn on_unless(var: &str) -> bool {
-    metrale_config::levers::var(var).as_deref() != Some("1")
-}
-
-/// 2026-09-25: A numeric tunable: the parsed value, or `default` when
-/// unset or unparsable.
-fn num<T: std::str::FromStr>(var: &str, default: T) -> T {
-    metrale_config::levers::var(var)
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
-}
-
-/// 2026-09-25: Presence-gated: any value enables, including `0`.
-fn present(var: &str) -> bool {
-    metrale_config::levers::var(var).is_some()
-}
-
-/// 2026-09-25: The `--mtp-gate force` decision in force: the flag when it
-/// was given (`Some`), the `METRALE_MTP_GATE_FORCE` variable otherwise.
+/// 2026-10-17: A resolved integer lever narrowed to the width its reader holds.
 ///
-/// `None` means the flag was not given, which keeps the variable reachable;
-/// an explicit `--mtp-gate auto` (`Some(false)`) overrides it.
-/// `SchedLevers::from_env` and the startup log (`serve_flags.rs`) both call
-/// it, so the log prints the value in force.
-pub fn resolve_mtp_gate_force(cli: Option<bool>) -> bool {
-    cli.unwrap_or_else(|| opt_in("METRALE_MTP_GATE_FORCE"))
+/// # Errors
+/// When `value` does not fit `T` (a negative count, say): the lever is malformed for this
+/// reader, which fails the load instead of substituting a default.
+pub(crate) fn narrow<T: TryFrom<i64>>(env: &str, value: i64) -> anyhow::Result<T> {
+    T::try_from(value).map_err(|_| {
+        anyhow::anyhow!(
+            "{env}={value} does not fit a {}",
+            std::any::type_name::<T>()
+        )
+    })
 }
 
-/// 2026-09-25: `METRALE_FOO=1|true` enables (the loop-shape levers' parse).
-fn opt_in_word(var: &str) -> bool {
-    metrale_config::levers::var(var).is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-}
-
-/// 2026-09-25: The bisect levers' parse: `1`, or `true` after a Unicode
-/// lowercase. Kept distinct from [`opt_in_word`] so neither lever changes
-/// what it accepts.
-fn opt_in_lowercase(var: &str) -> bool {
-    metrale_config::levers::var(var).is_some_and(|v| v == "1" || v.to_lowercase() == "true")
+/// 2026-10-17: [`narrow`] for an optional lever; `None` stays `None`.
+///
+/// # Errors
+/// As [`narrow`].
+pub(crate) fn narrow_opt<T: TryFrom<i64>>(
+    env: &str,
+    value: Option<i64>,
+) -> anyhow::Result<Option<T>> {
+    value.map(|v| narrow(env, v)).transpose()
 }
 
 impl SchedLevers {
-    /// 2026-09-25: Resolve from the environment; serve calls it once per
-    /// run. `mtp_gate_force_cli` is the command line's `--mtp-gate` as
-    /// `ServeArgs::mtp_gate_force` resolved it; `dcut_ratio_cli` is
-    /// `--mtp-dcut-ratio`. `spec_cost` is `--spec-cost-model measured`'s state, already loaded
-    /// and checked against this serve's key (`spec_cost_boot::resolve`); there is no environment
-    /// fallback for it (CLI flags only, PCND).
-    pub fn from_env(
-        mtp_gate_force_cli: Option<bool>,
-        dcut_ratio_cli: Option<f32>,
+    /// 2026-10-17: The run's levers from the load's resolved settings; serve calls it once per
+    /// run. `--mtp-gate` and `--mtp-dcut-ratio` are already folded into `settings` (the CLI
+    /// layer outranks the variables). `spec_cost` is `--spec-cost-model measured`'s state,
+    /// already loaded and checked against this serve's key (`spec_cost_boot::resolve`); there
+    /// is no environment fallback for it (CLI flags only, PCND).
+    ///
+    /// The `NO_*` / `DISABLE_*` levers name a negative; the fields store the positive, so the
+    /// inversion happens here instead of at every read site.
+    ///
+    /// # Errors
+    /// An integer lever whose value does not fit its field ([`narrow`]).
+    pub fn from_settings(
+        settings: &metrale_settings::InferenceServerSettings,
         spec_cost: Option<metrale_speculative::spec_cost::SpecCostState>,
-    ) -> Self {
-        Self {
-            fast_greedy_grammar: on_unless("METRALE_DISABLE_FAST_GREEDY"),
-            fast_masked: on_unless("METRALE_DISABLE_FAST_MASKED"),
-            fast_greedy_chat: on_unless("METRALE_NO_FAST_GREEDY_CHAT"),
-            force_temp_zero: opt_in("METRALE_FORCE_TEMP_ZERO"),
-            // 2026-09-25: `parse_flag_default_on` turns these off on "0" or
-            // "false" (trimmed, any case); a bare `!= "1"` test would
-            // ignore `=false`.
-            tool_response_stop: crate::scheduler::helpers::parse_flag_default_on(
-                metrale_config::levers::var("METRALE_TOOL_RESPONSE_STOP").as_deref(),
-            ),
-            tool_eos_escape: crate::scheduler::helpers::parse_flag_default_on(
-                metrale_config::levers::var("METRALE_TOOL_EOS_ESCAPE").as_deref(),
-            ),
-            mtp_minp: on_unless("METRALE_NO_MTP_MINP"),
-            mtp_verify_sample: on_unless("METRALE_NO_MTP_VERIFY_SAMPLE"),
+    ) -> anyhow::Result<Self> {
+        let sampling = &settings.sampling;
+        let spec = &settings.speculative;
+        let sched = &settings.scheduler;
+        let telemetry = &settings.telemetry;
+        Ok(Self {
+            fast_greedy_grammar: !sampling.disable_fast_greedy,
+            fast_masked: !sampling.disable_fast_masked,
+            fast_greedy_chat: !sampling.no_fast_greedy_chat,
+            force_temp_zero: sampling.force_temp_zero,
+            tool_response_stop: sampling.tool_response_stop,
+            tool_eos_escape: sampling.tool_eos_escape,
+            mtp_minp: !spec.no_mtp_minp,
+            mtp_verify_sample: !spec.no_mtp_verify_sample,
 
-            dflash_eagle_fix: on_unless_zero("METRALE_DFLASH_EAGLE_FIX"),
-            dflash_step_timing: opt_in("METRALE_DFLASH_STEP_TIMING"),
-            vision_timing: present("METRALE_VISION_TIMING"),
-            dflash_masked_verify: on_unless_zero("METRALE_DFLASH_MASKED_VERIFY"),
-            dflash_seam_serial: on_unless_zero("METRALE_DFLASH_SEAM_SERIAL"),
-            dflash_adaptive: opt_in("METRALE_DFLASH_ADAPTIVE"),
-            dflash_serial_append: opt_in("METRALE_DFLASH_SERIAL_APPEND"),
-            dflash_unified_ctx: on_unless_zero("METRALE_DFLASH_UNIFIED_CTX"),
+            dflash_eagle_fix: spec.dflash_eagle_fix,
+            dflash_step_timing: telemetry.dflash_step_timing,
+            vision_timing: telemetry.vision_timing,
+            dflash_masked_verify: spec.dflash_masked_verify,
+            dflash_seam_serial: spec.dflash_seam_serial,
+            dflash_adaptive: spec.dflash_adaptive,
+            dflash_serial_append: spec.dflash_serial_append,
+            dflash_unified_ctx: spec.dflash_unified_ctx,
             // 2026-09-25: Opt-in. `mtp_gate::spec_dispatch_eligible` reads it
             // on both lanes (`if inside_thinking && !spec_think { return
             // false; }`), so turning it on lets plain MTP speculate inside
             // `<think>` too.
-            dflash_spec_think: opt_in("METRALE_DFLASH_SPEC_THINK"),
-            dflash_gate_pin_c2: on_unless_zero("METRALE_DFLASH_GATE_PIN_C2"),
-            dflash_batch_verify: on_unless_zero("METRALE_DFLASH_BATCH_VERIFY"),
-            dflash_adaptive_min: num("METRALE_DFLASH_ADAPTIVE_MIN", 2.0),
-            dflash_adaptive_reprobe: num("METRALE_DFLASH_ADAPTIVE_REPROBE", 256),
-            dflash_resume_guard: num("METRALE_DFLASH_RESUME_GUARD", 0),
+            dflash_spec_think: spec.dflash_spec_think,
+            dflash_gate_pin_c2: spec.dflash_gate_pin_c2,
+            dflash_batch_verify: spec.dflash_batch_verify,
+            dflash_adaptive_min: spec.dflash_adaptive_min as f32,
+            dflash_adaptive_reprobe: narrow(
+                "METRALE_DFLASH_ADAPTIVE_REPROBE",
+                spec.dflash_adaptive_reprobe,
+            )?,
+            dflash_resume_guard: narrow("METRALE_DFLASH_RESUME_GUARD", spec.dflash_resume_guard)?,
             shadow_topk: metrale_model_layers::speculative::shadow_topk(),
 
-            // 2026-09-25: The `helpers` parsers accept "1" or "true"
-            // (trimmed, any case); a bare `== "1"` test would ignore
-            // `=true`.
-            disable_watchdogs: crate::scheduler::helpers::parse_disable_watchdogs(
-                metrale_config::levers::var("METRALE_DISABLE_WATCHDOGS").as_deref(),
-            ),
-            forced_token_fastpath: crate::scheduler::helpers::parse_forced_token_fastpath(
-                metrale_config::levers::var("METRALE_DISABLE_FORCED_TOKEN").as_deref(),
-            ),
+            disable_watchdogs: sched.disable_watchdogs,
+            forced_token_fastpath: !sampling.disable_forced_token,
 
-            // 2026-09-25: Presence-gated, not value-gated.
-            decode_timing: present("METRALE_DECODE_TIMING"),
-            mtp_timing: opt_in("METRALE_MTP_TIMING"),
-            // 2026-09-25: `--mtp-gate`, falling back to
-            // `METRALE_MTP_GATE_FORCE` when the flag is absent.
-            mtp_gate_force: resolve_mtp_gate_force(mtp_gate_force_cli),
-            adadec_diagnostic: present("METRALE_ADADEC_DIAGNOSTIC"),
+            decode_timing: telemetry.decode_timing,
+            mtp_timing: telemetry.mtp_timing,
+            mtp_gate_force: spec.mtp_gate_force,
+            // 2026-10-17: The variable names the trace's directory; any value arms it.
+            adadec_diagnostic: telemetry.adadec_diagnostic.is_some(),
 
-            holo_always_mixed: opt_in_word("METRALE_HOLO_ALWAYS_MIXED"),
+            holo_always_mixed: settings.kernels.holo_always_mixed,
             prefill_codispatch: metrale_model_layers::layers::ops::prefill_codispatch_enabled(),
             prefill_varlen: metrale_model_layers::layers::ops::prefill_varlen_enabled(),
-            ep_prefill_batch: opt_in("METRALE_EP_PREFILL_BATCH"),
-            codispatch_window_ms: num("METRALE_PREFILL_CODISPATCH_WINDOW_MS", 100),
-            codispatch_settle_ms: num("METRALE_PREFILL_CODISPATCH_SETTLE_MS", 10),
-            vision_codispatch: opt_in_word("METRALE_VISION_CODISPATCH"),
-            beam_codispatch: metrale_config::levers::var("METRALE_BEAM_CODISPATCH")
-                .is_none_or(|v| v != "0" && !v.eq_ignore_ascii_case("false")),
-            bisect_q12_disable: opt_in_lowercase("METRALE_BISECT_Q12_DISABLE"),
-            bisect_no_mix: opt_in_lowercase("METRALE_BISECT_NO_MIX"),
-            mixed_slice_tokens: num("METRALE_MIXED_SLICE_TOKENS", 0),
-            grammar_budget_close: crate::scheduler::helpers::parse_flag_default_on(
-                metrale_config::levers::var("METRALE_GRAMMAR_BUDGET_CLOSE").as_deref(),
-            ),
-            think_ended_gpu_argmax: on_unless("METRALE_NO_THINKENDED_GPU_ARGMAX"),
-            parallel_sample: on_unless_zero("METRALE_PARALLEL_SAMPLE"),
-            mtp_batch_bootstrap: !present("METRALE_NO_MTP_BATCH_BOOTSTRAP"),
-            mtp_boot_argmax: !present("METRALE_NO_MTP_BOOT_ARGMAX"),
-            mtp_batch_verify: !present("METRALE_NO_MTP_BATCH_VERIFY"),
-            mtp_batch_propose: !present("METRALE_NO_MTP_BATCH_PROPOSE"),
-            dcut_enabled: !present("METRALE_NO_MTP_DCUT"),
-            dcut_width_cap: num("METRALE_MTP_DCUT_MAX_SEQS", 8),
-            dcut_ratio: crate::scheduler::mtp_dcut::dcut_ratio_resolved(dcut_ratio_cli),
+            ep_prefill_batch: sched.ep_prefill_batch,
+            codispatch_window_ms: narrow(
+                "METRALE_PREFILL_CODISPATCH_WINDOW_MS",
+                sched.prefill_codispatch_window_ms,
+            )?,
+            codispatch_settle_ms: narrow(
+                "METRALE_PREFILL_CODISPATCH_SETTLE_MS",
+                sched.prefill_codispatch_settle_ms,
+            )?,
+            vision_codispatch: sched.vision_codispatch,
+            beam_codispatch: sched.beam_codispatch,
+            bisect_q12_disable: settings.kernels.bisect_q12_disable,
+            bisect_no_mix: settings.runtime.bisect_no_mix,
+            mixed_slice_tokens: narrow(
+                "METRALE_MIXED_SLICE_TOKENS",
+                settings.server.mixed_slice_tokens,
+            )?,
+            grammar_budget_close: sampling.grammar_budget_close,
+            think_ended_gpu_argmax: !sampling.no_thinkended_gpu_argmax,
+            parallel_sample: sampling.parallel_sample,
+            mtp_batch_bootstrap: !spec.no_mtp_batch_bootstrap,
+            mtp_boot_argmax: !spec.no_mtp_boot_argmax,
+            mtp_batch_verify: !spec.no_mtp_batch_verify,
+            mtp_batch_propose: !spec.no_mtp_batch_propose,
+            dcut_enabled: !spec.no_mtp_dcut,
+            dcut_width_cap: narrow("METRALE_MTP_DCUT_MAX_SEQS", spec.mtp_dcut_max_seqs)?,
+            dcut_ratio: crate::scheduler::mtp_dcut::snap_ratio(spec.mtp_dcut_ratio as f32),
+            kv_admit_watermark: narrow_opt(
+                "METRALE_KV_ADMIT_WATERMARK",
+                settings.cache.kv_admit_watermark,
+            )?,
+            high_speed_swap_replace: settings.runtime.high_speed_swap_replace,
             spec_cost,
-            mtp_accept_fold_at_16: present("METRALE_MTP_ACCEPT_FOLD_AT_16"),
+            mtp_accept_fold_at_16: spec.mtp_accept_fold_at_16,
             mtp_accept_debug: metrale_model_layers::speculative::mtp_accept_debug(),
             mtp_max_seqs: metrale_model_layers::speculative::mtp_max_seqs(),
+            draft_stop: metrale_model_layers::speculative::draft_stop::draft_stop_rule(),
             spec_entry_pin_tokens: metrale_speculative::mtp_gate::entry_pin_tokens_from_env(),
             ssm_tail_ckpt: metrale_gpu_runtime::ssm_tail_ckpt_enabled(),
             ssm_tail_midchunk: metrale_gpu_runtime::ssm_tail_midchunk_enabled(),
 
             loop_watchdog: AtomicBool::new(false),
-        }
+        })
     }
 
     /// 2026-09-25: Lever values for tests, without reading the environment.
-    /// They match `from_env` with no `METRALE_*` set except
+    /// They match `from_settings` on an empty environment except
     /// `dflash_masked_verify` and `dflash_seam_serial`, which are off here
-    /// and on in `from_env`.
+    /// and on in `from_settings`.
     pub fn defaults() -> Self {
         Self {
             fast_greedy_grammar: true,
@@ -419,11 +403,14 @@ impl SchedLevers {
             dcut_enabled: true,
             dcut_width_cap: 8,
             dcut_ratio: 0.75,
+            kv_admit_watermark: None,
+            high_speed_swap_replace: false,
             spec_cost: None,
             mtp_accept_fold_at_16: false,
             mtp_accept_debug: false,
             // 2026-09-25: `mtp_max_seqs()` with the variable unset.
             mtp_max_seqs: 32,
+            draft_stop: None,
             spec_entry_pin_tokens: 8,
             ssm_tail_ckpt: false,
             ssm_tail_midchunk: true,

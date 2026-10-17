@@ -3,7 +3,8 @@
 //! 2026-09-26: Every `METRALE_*` environment variable the repository reads, declared once.
 //!
 //! 2026-10-17: The table is derived from the `metrale-settings` groups (one `lever_group!`
-//! file per group); `table_a`/`table_b` stay as the frozen copy `parity_tests` compares it to.
+//! file per group). The frozen hand-written copy it was checked against is gone: rows now
+//! change on purpose (lane 2b retyped the mistyped ones).
 //!
 //! `met` refuses to start with an undeclared `METRALE_*` name in its environment ([`check`],
 //! called first in `serve_main`). The bench crate's `serve_env` takes the harness set from the
@@ -15,39 +16,6 @@
 //!
 //! Owner: config.
 //! Invariants: none beyond the types.
-
-#[cfg(test)]
-macro_rules! lever {
-    ($env:literal, $path:literal, $ty:ident, $default:literal, None, $class:ident, $reader:literal, $doc:literal) => {
-        $crate::levers::LeverSpec {
-            env: $env,
-            path: $path,
-            ty: $crate::levers::Ty::$ty,
-            default: $default,
-            flag: None,
-            class: $crate::levers::Class::$class,
-            reader: $reader,
-            doc: $doc,
-        }
-    };
-    ($env:literal, $path:literal, $ty:ident, $default:literal, $flag:literal, $class:ident, $reader:literal, $doc:literal) => {
-        $crate::levers::LeverSpec {
-            env: $env,
-            path: $path,
-            ty: $crate::levers::Ty::$ty,
-            default: $default,
-            flag: Some($flag),
-            class: $crate::levers::Class::$class,
-            reader: $reader,
-            doc: $doc,
-        }
-    };
-}
-
-#[cfg(test)]
-mod table_a;
-#[cfg(test)]
-mod table_b;
 
 pub use metrale_settings::spec::{Class, LeverSpec, PREFIX, Ty};
 
@@ -148,7 +116,3 @@ fn declared_or_foreign(name: &str) -> bool {
 #[cfg(test)]
 #[path = "levers_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "levers_parity_tests.rs"]
-mod parity_tests;

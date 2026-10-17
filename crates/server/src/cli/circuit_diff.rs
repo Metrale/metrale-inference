@@ -253,7 +253,11 @@ pub(crate) fn run_diff(args: CircuitDiffArgs) -> Result<()> {
     if let Err(msg) = crate::cli::validate_serve_args(&args.serve) {
         bail!("{msg}");
     }
-    crate::main_modules::serve_flags::publish_kernel_flags(&args.serve);
+    let settings = crate::main_modules::serve_settings::resolve(
+        &metrale_io_host_std::ProcessEnv,
+        &args.serve,
+    )?;
+    crate::main_modules::serve_flags::publish_kernel_flags(&args.serve, &settings);
     let num_drafts = args.serve.resolved_num_drafts();
     let Some(engine) = load_engine(args.serve)? else {
         bail!("this rank is an expert-parallel worker; run the diff on the head");

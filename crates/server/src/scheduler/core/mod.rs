@@ -252,7 +252,10 @@ impl SchedulerCore {
         }
 
         // 2026-09-25: The KV admission watermark; see the `admission` module docs.
-        let admit_watermark = admission::resolve_admit_watermark(sched.limits.max_seq_len);
+        let admit_watermark = admission::resolve_admit_watermark(
+            sched.limits.max_seq_len,
+            sched.levers.kv_admit_watermark,
+        );
 
         let pending = PendingQueue::new();
 
@@ -273,7 +276,11 @@ impl SchedulerCore {
         let prefilling: Vec<PrefillInProgress> = Vec::new();
         let swapped: Vec<SwappedSeq> = Vec::new();
         let preempted: Vec<PreemptedSeq> = Vec::new();
-        install_high_speed_swap(sched.io.dev.model(), high_speed_swap_cfg);
+        install_high_speed_swap(
+            sched.io.dev.model(),
+            high_speed_swap_cfg,
+            sched.levers.high_speed_swap_replace,
+        );
 
         Self {
             ctx: sched,

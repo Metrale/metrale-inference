@@ -12,13 +12,11 @@ use std::collections::BTreeMap;
 
 use super::record::GateRecord;
 
-/// 2026-09-26: The performance controls a gate record discloses, each with
-/// the value recorded when it is unset.
+/// 2026-09-26: The performance controls a gate record discloses. Each one's
+/// value when unset is its declared default in the lever table
+/// (`metrale_config::levers`), the same row the server resolves (2026-10-17).
 ///
-/// - The two co-dispatch timing controls carry the defaults the scheduler
-///   passes to `num` in `SchedLevers::from_env`. They are copied because
-///   `metrale-bench` does not depend on `met`;
-///   `perf_env_defaults_match_the_scheduler` reads the scheduler's source.
+/// - The two co-dispatch timing controls default to a number.
 /// - `METRALE_NO_W4A16_TC`, `METRALE_NO_MTP_TC` and
 ///   `METRALE_NO_BORROW_STREAK_LIMIT` are presence kill switches: any
 ///   non-empty value, `0` included, turns the path off, so the default is the
@@ -30,13 +28,13 @@ use super::record::GateRecord;
 /// `record_env_tests` pins each switch rule against its lever's source. The
 /// `--prefill-codispatch` and `--w4a4-downcast` flags are disclosed in
 /// `serve_resolved` instead.
-const PERF_CONTROLS: [(&str, &str); 6] = [
-    ("METRALE_PREFILL_CODISPATCH_WINDOW_MS", "100"),
-    ("METRALE_PREFILL_CODISPATCH_SETTLE_MS", "10"),
-    ("METRALE_NO_W4A16_TC", "unset"),
-    ("METRALE_W4A16_TC_WIDE", "unset"),
-    ("METRALE_NO_MTP_TC", "unset"),
-    ("METRALE_NO_BORROW_STREAK_LIMIT", "unset"),
+const PERF_CONTROLS: [&str; 6] = [
+    "METRALE_PREFILL_CODISPATCH_WINDOW_MS",
+    "METRALE_PREFILL_CODISPATCH_SETTLE_MS",
+    "METRALE_NO_W4A16_TC",
+    "METRALE_W4A16_TC_WIDE",
+    "METRALE_NO_MTP_TC",
+    "METRALE_NO_BORROW_STREAK_LIMIT",
 ];
 
 /// 2026-09-26: Resolve `PERF_CONTROLS` through `lookup`, substituting each
@@ -45,14 +43,22 @@ const PERF_CONTROLS: [(&str, &str); 6] = [
 pub fn resolve_perf_env(lookup: impl Fn(&str) -> Option<String>) -> BTreeMap<String, String> {
     PERF_CONTROLS
         .iter()
-        .map(|(key, default)| {
+        .map(|key| {
             let value = lookup(key).filter(|v| !v.trim().is_empty());
             (
                 (*key).to_string(),
-                value.unwrap_or_else(|| (*default).to_string()),
+                value.unwrap_or_else(|| declared_default(key).to_string()),
             )
         })
         .collect()
+}
+
+/// 2026-10-17: A perf control's declared default. Every `PERF_CONTROLS` name is a
+/// declared lever (`record_env_tests`), so a missing row is a build-time table bug.
+fn declared_default(key: &str) -> &'static str {
+    metrale_config::levers::lookup(key)
+        .unwrap_or_else(|| panic!("{key} is a PERF_CONTROLS name and must be a declared lever"))
+        .default
 }
 
 impl GateRecord {

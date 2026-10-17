@@ -95,18 +95,18 @@ impl WatchdogParams {
     /// 2026-09-25: Resolve this model's watchdog tunables from its
     /// MODEL.toml `[behavior]` table, then the overrides that outrank it.
     ///
-    /// `max_inter_tool_prose_cli` is `--max-inter-tool-prose`; see
-    /// [`resolve_max_inter_tool_prose`] for the precedence chain.
-    /// `content_loop_min_repeats_cli` is `--content-loop-min-repeats`;
-    /// precedence CLI -> `METRALE_CONTENT_LOOP_MIN_REPEATS` -> `None` (the
-    /// built-in [`CONTENT_LOOP_MIN_REPEATS`]).
+    /// `max_inter_tool_prose` and `content_loop_min_repeats` are the operator overrides as the
+    /// serve's settings resolved them (`--max-inter-tool-prose` /
+    /// `METRALE_MAX_INTER_TOOL_PROSE`, `--content-loop-min-repeats` /
+    /// `METRALE_CONTENT_LOOP_MIN_REPEATS`, flag first). `None` keeps MODEL.toml's budget and
+    /// the built-in [`CONTENT_LOOP_MIN_REPEATS`].
     pub fn from_behavior(
         b: &metrale_kernels::ModelBehavior,
-        max_inter_tool_prose_cli: Option<u32>,
-        content_loop_min_repeats_cli: Option<u32>,
+        max_inter_tool_prose: Option<u32>,
+        content_loop_min_repeats: Option<u32>,
     ) -> Self {
         let steering = b.thinking_steering;
-        let mut p = Self {
+        Self {
             min_reasoning_floor: if steering {
                 b.min_reasoning_floor_tokens
             } else {
@@ -117,38 +117,16 @@ impl WatchdogParams {
             confidence_early_stop: b.confidence_early_stop && steering,
             confidence_run_length: b.confidence_run_length,
             fuzzy_repeat_tolerance_div: b.fuzzy_repeat_tolerance_div as usize,
-            max_inter_tool_prose: b.max_inter_tool_prose,
+            max_inter_tool_prose: resolve_max_inter_tool_prose(
+                b.max_inter_tool_prose,
+                max_inter_tool_prose,
+            ),
             max_post_think_content_tokens: b.max_post_think_content_tokens,
             rollback_resteer: b.rollback_resteer,
             enable_think_loop_watchdog: b.enable_think_loop_watchdog && steering,
-            content_loop_min_repeats: None,
+            content_loop_min_repeats,
             thinking_steering: steering,
-        };
-        let env = match std::env::var("METRALE_MAX_INTER_TOOL_PROSE") {
-            Ok(v) => match v.parse::<u32>() {
-                Ok(n) => Some(n),
-                Err(_) => {
-                    // 2026-09-25: A set but unparseable override is a config
-                    // error: warn, so the fallback to the lower-precedence
-                    // value is visible.
-                    tracing::warn!(
-                        value = %v,
-                        "METRALE_MAX_INTER_TOOL_PROSE is set but not a u32; ignoring it"
-                    );
-                    None
-                }
-            },
-            Err(_) => None,
-        };
-        p.max_inter_tool_prose =
-            resolve_max_inter_tool_prose(p.max_inter_tool_prose, env, max_inter_tool_prose_cli);
-        p.content_loop_min_repeats = content_loop_min_repeats_cli.or(parse_env_u32(
-            "METRALE_CONTENT_LOOP_MIN_REPEATS",
-            std::env::var("METRALE_CONTENT_LOOP_MIN_REPEATS")
-                .ok()
-                .as_deref(),
-        ));
-        p
+        }
     }
 
     /// 2026-09-25: The content-loop detector params in force for one
@@ -172,62 +150,18 @@ impl WatchdogParams {
     }
 }
 
-/// 2026-09-25: Parse an optional numeric env override. A set but
-/// unparseable value logs a warning and returns `None`.
-fn parse_env_u32(name: &str, v: Option<&str>) -> Option<u32> {
-    let v = v?;
-    match v.trim().parse::<u32>() {
-        Ok(n) => Some(n),
-        Err(_) => {
-            tracing::warn!(value = %v, "{name} is set but not a u32; ignoring it");
-            None
-        }
-    }
-}
-
-/// 2026-09-25: Resolve whether the content-loop watchdog is armed for this
-/// run.
-///
-/// Precedence, highest wins: `--content-loop-watchdog` (CLI) ->
-/// `METRALE_CONTENT_LOOP_WATCHDOG` (env, `1`/`true`/`0`/`false`) ->
-/// MODEL.toml `[behavior].enable_loop_watchdog`. Any other env value logs a
-/// warning and keeps the MODEL.toml value.
-pub fn resolve_content_loop_watchdog(toml: bool, env: Option<&str>, cli: Option<bool>) -> bool {
-    if let Some(cli) = cli {
-        return cli;
-    }
-    match env {
-        None => toml,
-        Some(v) => {
-            let v = v.trim();
-            if v == "1" || v.eq_ignore_ascii_case("true") {
-                true
-            } else if v == "0" || v.eq_ignore_ascii_case("false") {
-                false
-            } else {
-                tracing::warn!(
-                    value = %v,
-                    "METRALE_CONTENT_LOOP_WATCHDOG is set but not 1/true/0/false; \
-                     keeping the MODEL.toml value"
-                );
-                toml
-            }
-        }
-    }
-}
-
 /// 2026-09-25: Resolve the effective inter-tool prose budget.
 ///
-/// Precedence, highest wins: `--max-inter-tool-prose` (CLI) ->
-/// `METRALE_MAX_INTER_TOOL_PROSE` (env) -> MODEL.toml `[behavior].max_inter_tool_prose` -> the shared default
-/// (`metrale_kernels::DEFAULT_MAX_INTER_TOOL_PROSE`, already folded into
-/// `toml` by the build-time parse).
+/// The operator override (`--max-inter-tool-prose`, else `METRALE_MAX_INTER_TOOL_PROSE`, as the
+/// serve's settings resolved it) wins over MODEL.toml `[behavior].max_inter_tool_prose`, which
+/// already holds the shared default (`metrale_kernels::DEFAULT_MAX_INTER_TOOL_PROSE`) for an
+/// unset key.
 ///
 /// 0 means "guard disabled" and maps to `u32::MAX`: the check sites fire
 /// on `prose_tokens_since_last_tool > max`, so a literal 0 would end a tool
 /// request at its first free-text token.
-pub fn resolve_max_inter_tool_prose(toml: u32, env: Option<u32>, cli: Option<u32>) -> u32 {
-    let v = cli.or(env).unwrap_or(toml);
+pub fn resolve_max_inter_tool_prose(toml: u32, operator: Option<u32>) -> u32 {
+    let v = operator.unwrap_or(toml);
     if v == 0 { u32::MAX } else { v }
 }
 

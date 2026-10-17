@@ -82,8 +82,8 @@ pub const CONTENT_LOOP_NORM_MIN_REPEATS: usize = 4;
 pub const NUMERIC_SENTINEL: u32 = u32::MAX;
 
 /// 2026-09-25: Parse of `METRALE_DISABLE_WATCHDOGS`: true for `1` or `true`
-/// (trimmed, case-insensitive), false otherwise. `SchedLevers` resolves
-/// `disable_watchdogs` with it.
+/// (trimmed, case-insensitive), false otherwise. Used by the run-time readers that do not yet take
+/// resolved settings.
 pub(crate) fn parse_disable_watchdogs(env: Option<&str>) -> bool {
     match env {
         Some(v) => {
@@ -91,35 +91,6 @@ pub(crate) fn parse_disable_watchdogs(env: Option<&str>) -> bool {
             v == "1" || v.eq_ignore_ascii_case("true")
         }
         None => false,
-    }
-}
-
-/// 2026-09-25: Parse of `METRALE_DISABLE_FORCED_TOKEN` into "forced-token
-/// fast path enabled": unset → true; `1` or `true` (trimmed,
-/// case-insensitive) → false; anything else → true.
-///
-/// `SchedLevers::forced_token_fastpath` holds the result, and
-/// `ForcedTokenFastPath` (`logit_processors/forced_token.rs`) reads it:
-/// when the grammar admits exactly one next token, that token is emitted
-/// without sampling.
-pub(crate) fn parse_forced_token_fastpath(env: Option<&str>) -> bool {
-    match env {
-        Some(v) => {
-            let v = v.trim();
-            !(v == "1" || v.eq_ignore_ascii_case("true"))
-        }
-        None => true,
-    }
-}
-
-/// 2026-09-25: The default-on rule: unset → true; `0` or `false` (trimmed,
-/// case-insensitive) → false; anything else → true. `SchedLevers` resolves
-/// `tool_response_stop`, `tool_eos_escape` and `grammar_budget_close` with
-/// it.
-pub(crate) fn parse_flag_default_on(env: Option<&str>) -> bool {
-    match env.map(str::trim) {
-        Some(v) => !(v == "0" || v.eq_ignore_ascii_case("false")),
-        None => true,
     }
 }
 

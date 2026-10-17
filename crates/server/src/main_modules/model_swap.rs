@@ -238,6 +238,8 @@ pub(crate) fn swap(host: &Arc<ModelHost>, next: cli::ServeArgs) -> Result<SwapOu
 
     // 2026-09-26: The refusals below run before anything is torn down.
     cli::validate_serve_args(&next).map_err(|e| anyhow::anyhow!("{e}"))?;
+    // 2026-10-17: Levers resolve per load, against this argv, before anything is torn down.
+    let next_settings = super::serve_settings::resolve(&metrale_io_host_std::ProcessEnv, &next)?;
 
     refuse_if_shutting_down(crate::tui::shutdown::requested())?;
 
@@ -269,7 +271,7 @@ pub(crate) fn swap(host: &Arc<ModelHost>, next: cli::ServeArgs) -> Result<SwapOu
 
     let next_args = next.clone();
     let tui_handles_tx = host.tui_handles();
-    let load_err = match load_model(next, tui_handles_tx.clone(), carried.clone()) {
+    let load_err = match load_model(next, next_settings, tui_handles_tx.clone(), carried.clone()) {
         Ok(Some(prepared)) => {
             host.set_scheduler(prepared.scheduler);
             host.set_args(next_args);
@@ -289,7 +291,9 @@ pub(crate) fn swap(host: &Arc<ModelHost>, next: cli::ServeArgs) -> Result<SwapOu
             .context("the new model failed to load and there was no previous model to restore"));
     };
     tracing::warn!("load failed, restoring the previous model: {load_err:#}");
-    match load_model(previous.clone(), tui_handles_tx, carried) {
+    let restored = super::serve_settings::resolve(&metrale_io_host_std::ProcessEnv, &previous)
+        .and_then(|settings| load_model(previous.clone(), settings, tui_handles_tx, carried));
+    match restored {
         Ok(Some(prepared)) => {
             host.set_scheduler(prepared.scheduler);
             host.set_args(previous);

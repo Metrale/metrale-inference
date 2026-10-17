@@ -57,7 +57,9 @@ metrale-kernel-root = { workspace = true }
 metrale-model-engine = { workspace = true }
 metrale-model-layers = { workspace = true }
 metrale-model-weights = { workspace = true }
+metrale-io-host-std = { workspace = true }
 metrale-sampling = { workspace = true }
+metrale-settings = { workspace = true }
 metrale-speculative = { workspace = true }
 metrale-scheduler = { workspace = true }
 # 2026-10-17: The serve identity, lease and `/forward` `/memory` wire shapes (pure), shared with
@@ -104,6 +106,7 @@ unicode-width = { workspace = true, features = ["cjk"] }
 ureq = { workspace = true, features = ["rustls", "gzip", "json"] }
 
 [dev-dependencies]
+metrale-io-host-mem = { workspace = true }
 tempfile = { workspace = true, features = ["getrandom"] }
 
 [[bin]]

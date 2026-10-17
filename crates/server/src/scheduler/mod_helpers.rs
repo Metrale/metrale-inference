@@ -22,6 +22,7 @@ use crate::scheduling_policy::{ActiveSeqTiming, PendingRequestInfo, SchedulingPo
 pub(super) fn install_high_speed_swap(
     model: &dyn Model,
     cfg: Option<metrale_storage::HighSpeedSwapConfig>,
+    replace: bool,
 ) {
     let Some(cfg) = cfg else { return };
     match model.high_speed_swap_dims() {
@@ -45,9 +46,9 @@ pub(super) fn install_high_speed_swap(
                 tracing::error!("--high-speed-swap install failed: {e:#}");
             } else {
                 tracing::info!("--high-speed-swap orchestrator installed on scheduler thread");
-                if std::env::var("METRALE_HIGH_SPEED_SWAP_REPLACE").is_ok() {
+                if replace {
                     tracing::warn!(
-                        "METRALE_HIGH_SPEED_SWAP_REPLACE=1: per-layer attention will route \
+                        "METRALE_HIGH_SPEED_SWAP_REPLACE is set: per-layer attention will route \
                          through HighSpeedSwap. UNTESTED on real models — requires real-load \
                          validation before production use."
                     );

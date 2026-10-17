@@ -40,6 +40,7 @@ pub(crate) use carried::Carried;
 /// for the async tail to serve.
 pub(crate) fn load_model(
     args: cli::ServeArgs,
+    settings: Arc<metrale_settings::InferenceServerSettings>,
     tui_handles_tx: Option<std::sync::mpsc::Sender<crate::tui::RunHandles>>,
     carried: Carried,
 ) -> Result<Option<Prepared>> {
@@ -173,8 +174,14 @@ pub(crate) fn load_model(
     let dflash_verify_raw_argmax = args.dflash;
     let watchdog_params = crate::scheduler::WatchdogParams::from_behavior(
         &ptx_set.behavior,
-        args.max_inter_tool_prose,
-        args.content_loop_min_repeats,
+        scheduler::levers::narrow_opt(
+            "METRALE_MAX_INTER_TOOL_PROSE",
+            settings.scheduler.max_inter_tool_prose,
+        )?,
+        scheduler::levers::narrow_opt(
+            "METRALE_CONTENT_LOOP_MIN_REPEATS",
+            settings.scheduler.content_loop_min_repeats,
+        )?,
     );
     // 2026-10-04: `--spec-cost-model measured`'s table, calibration and slack, loaded and
     // checked against this serve's own key; an error here stops the boot (`load_model`'s
@@ -187,20 +194,17 @@ pub(crate) fn load_model(
     )?;
     // 2026-09-26: The run's levers, shared with the dashboard so `/watchdog
     // on|off` toggles this run's flag. Its starting value is
-    // `--content-loop-watchdog`, else `METRALE_CONTENT_LOOP_WATCHDOG`, else
-    // MODEL.toml `[behavior].enable_loop_watchdog`.
-    let sched_levers = std::sync::Arc::new(crate::scheduler::levers::SchedLevers::from_env(
-        args.mtp_gate_force(),
-        args.mtp_shape.mtp_dcut_ratio,
-        spec_cost,
-    ));
-    sched_levers.set_loop_watchdog(crate::scheduler::resolve_content_loop_watchdog(
-        ptx_set.behavior.enable_loop_watchdog,
-        std::env::var("METRALE_CONTENT_LOOP_WATCHDOG")
-            .ok()
-            .as_deref(),
-        crate::cli::flag_values::Tristate::validated(&args.content_loop_watchdog).pinned(),
-    ));
+    // `--content-loop-watchdog`, else `METRALE_CONTENT_LOOP_WATCHDOG` (both in `settings`),
+    // else MODEL.toml `[behavior].enable_loop_watchdog`.
+    let sched_levers = std::sync::Arc::new(crate::scheduler::levers::SchedLevers::from_settings(
+        &settings, spec_cost,
+    )?);
+    sched_levers.set_loop_watchdog(
+        settings
+            .scheduler
+            .content_loop_watchdog
+            .unwrap_or(ptx_set.behavior.enable_loop_watchdog),
+    );
     // 2026-09-26: The run's snapshot cell, shared with the dashboard the same
     // way.
     let sched_snapshot =
@@ -291,6 +295,7 @@ pub(crate) fn load_model(
     let default_kwargs = model_setup::parse_default_kwargs(&args)?;
 
     let state = Arc::new(AppState {
+        settings: settings.clone(),
         tokenizer,
         model_name,
         adapter_name: nllb_adapter_name

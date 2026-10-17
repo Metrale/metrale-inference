@@ -47,7 +47,8 @@ pub(crate) fn prefix_caching_enabled(requested: bool, hermetic: bool) -> bool {
     requested && !hermetic
 }
 
-/// 2026-09-26: The MTP gate setting passed to `scheduler::levers::resolve_mtp_gate_force`.
+/// 2026-09-26: The MTP gate setting the command-line lever layer carries
+/// (`main_modules::serve_settings`, 2026-10-17).
 ///
 /// `None` means no flag was given, so `METRALE_MTP_GATE_FORCE` decides. Under
 /// `--hermetic` it is `Some(true)`, so the environment cannot re-arm the gate outside

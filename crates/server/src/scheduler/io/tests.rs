@@ -136,7 +136,12 @@ const SEAM_ALLOW: &[&str] = &[
 ];
 
 /// 2026-09-25: A business file must reach these through `SchedIo` / `LogitsContext`.
+/// 2026-10-17: Levers too: a business file reads `SchedLevers`, which the load resolved
+/// once from its settings, never the environment.
 const SEAM_FORBIDDEN: &[&str] = &[
+    "env::var(",
+    "env::var_os(",
+    "levers::var(",
     "Instant::now()",
     ".elapsed()",
     "blocking_send(",

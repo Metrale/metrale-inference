@@ -25,36 +25,27 @@
 
 use super::*;
 
-/// 2026-09-25: Resolve the admission watermark once at scheduler start.
-pub(super) fn resolve_admit_watermark(max_seq_len: usize) -> usize {
+/// 2026-09-25: Resolve the admission watermark once at scheduler start: `operator`
+/// (`SchedLevers::kv_admit_watermark`, 2026-10-17) when set, else the honest bound.
+pub(super) fn resolve_admit_watermark(max_seq_len: usize, operator: Option<usize>) -> usize {
     let default = if max_seq_len > 0 {
         max_seq_len
     } else {
         usize::MAX
     };
-    match std::env::var("METRALE_KV_ADMIT_WATERMARK") {
-        Err(_) => default,
-        Ok(v) => match v.parse::<usize>() {
-            Ok(w) => {
-                if w < default {
-                    tracing::warn!(
-                        "METRALE_KV_ADMIT_WATERMARK={w} < the honest bound ({default}): \
+    let Some(w) = operator else {
+        return default;
+    };
+    if w < default {
+        tracing::warn!(
+            "METRALE_KV_ADMIT_WATERMARK={w} < the honest bound ({default}): \
                          admission may OVERCOMMIT the KV pool; sequences past the \
                          watermark depth will hit decode-time preemption (resume, \
                          not kill — but pure overhead). 0 = legacy prompt-only \
                          reservation."
-                    );
-                }
-                w
-            }
-            Err(_) => {
-                tracing::warn!(
-                    "METRALE_KV_ADMIT_WATERMARK={v:?} is not an integer; using default {default}"
-                );
-                default
-            }
-        },
+        );
     }
+    w
 }
 
 /// 2026-09-25: Blocks for `tokens` tokens: `tokens / block_size + 1` (a `block_size`

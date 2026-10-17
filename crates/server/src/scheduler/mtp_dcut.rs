@@ -42,29 +42,13 @@ pub(super) const WIDTH_CAP: usize = metrale_model_layers::layer::VERIFY_WY_TABLE
 
 /// 2026-09-25: Expected default of `SchedLevers::dcut_width_cap`, the widest
 /// verify batch (in sequences) that D-Cut prunes. The run's value comes from
-/// `METRALE_MTP_DCUT_MAX_SEQS` in `SchedLevers::from_env`, which repeats the
-/// 8 as a literal; `mtp_dcut_tests` pins this constant to it. 0 disables
+/// `METRALE_MTP_DCUT_MAX_SEQS` (declared default 8 in the settings table);
+/// `levers_tests` pins this constant to the resolved default. 0 disables
 /// pruning. Above the cap, [`plan`] returns the uniform ladder shape.
 pub(super) const DCUT_WIDTH_CAP_DEFAULT: usize = 8;
 
-/// 2026-10-03: Retention ratio in force: `--mtp-dcut-ratio` when given, else
-/// `METRALE_MTP_DCUT_RATIO`, else 0.75; snapped to the nearest [`BUCKETS`] entry.
-/// `SchedLevers::from_env` reads it once per run.
-pub(crate) fn dcut_ratio_resolved(cli: Option<f32>) -> f32 {
-    resolve_dcut_ratio(cli, std::env::var("METRALE_MTP_DCUT_RATIO").ok().as_deref())
-}
-
-/// 2026-10-03: Pure core of [`dcut_ratio_resolved`]: the flag wins over the
-/// environment value, an unparseable environment value is ignored, and the
-/// result is snapped.
-pub(super) fn resolve_dcut_ratio(cli: Option<f32>, env: Option<&str>) -> f32 {
-    snap_ratio(
-        cli.or_else(|| env.and_then(|v| v.parse::<f32>().ok()))
-            .unwrap_or(0.75),
-    )
-}
-
-/// 2026-09-25: The nearest [`BUCKETS`] entry to `raw` (clamped to `0..=1`).
+/// 2026-09-25: The nearest [`BUCKETS`] entry to `raw` (clamped to `0..=1`). `--mtp-dcut-ratio`,
+/// else `METRALE_MTP_DCUT_RATIO`, else 0.75 (the resolved setting) is snapped with it.
 pub(super) fn snap_ratio(raw: f32) -> f32 {
     let raw = raw.clamp(0.0, 1.0);
     {
@@ -173,7 +157,7 @@ pub(super) fn plan(
         batchable,
         ladder_nd,
         rows,
-        metrale_model_layers::speculative::draft_stop::draft_stop_rule(),
+        sched.levers.draft_stop,
     )
 }
 

@@ -36,6 +36,9 @@ pub struct AppState {
     /// 2026-10-01: The built model's KV pool and slots and the serve's memory budget, as
     /// `GET /memory` reports them with the readings it takes per request.
     pub memory: crate::main_modules::memory_probe::MemoryFacts,
+    /// 2026-10-17: Every Runtime lever for this load, resolved once before it began
+    /// (`serve_settings::resolve`), with where each value came from.
+    pub settings: std::sync::Arc<metrale_settings::InferenceServerSettings>,
     pub tokenizer: ChatTokenizer,
     pub model_name: String,
     /// 2026-09-26: The first `--lora-adapter`'s name, if any. No handler reads

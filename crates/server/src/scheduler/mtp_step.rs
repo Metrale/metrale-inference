@@ -284,12 +284,11 @@ pub fn step_mtp(
     {
         // 2026-10-02: Under `--draft-confidence-stop` a chain may end before
         // `ladder_nd`; it still joins the batch, at its own depth (`plan`).
-        let min_held =
-            if metrale_model_layers::speculative::draft_stop::draft_stop_logprob().is_some() {
-                1
-            } else {
-                ladder_nd
-            };
+        let min_held = if sched.levers.draft_stop.is_some() {
+            1
+        } else {
+            ladder_nd
+        };
         for &idx in &verify_idxs {
             let a = &mut active[idx];
             if a.grammar_state.is_none() && copy_in_flight(a) > 0 {
