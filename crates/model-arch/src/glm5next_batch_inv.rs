@@ -163,7 +163,12 @@ pub(crate) fn one_row(
 /// `row_bytes` takes: `[(0, rows)]` when the lever is off or at most two ranks reduce (a sum of
 /// two partials has one order); else slices of the most rows that fit `oneshot_max_bytes`, so
 /// every slice takes the one-shot path. Errors when the lever is on with more than two ranks and
-/// no one-shot buffer holds a row.
+/// no one-shot buffer holds a row. 2026-10-16: At two ranks the whole payload stays one
+/// collective, whichever path it takes (`ar_path`): the 2-rank `__hadd`, or, without the add
+/// kernel, the one-shot rank sum (`ncclAllReduce` without either). The first two are the same
+/// bits except the sign of an element whose two partials are both -0 (+0 from the rank sum's
+/// +0-seeded FP32 accumulator, -0 from `__hadd`), so batch invariance at two ranks holds per
+/// path, not across paths.
 pub(crate) fn ar_slices(
     on: bool,
     world_size: usize,

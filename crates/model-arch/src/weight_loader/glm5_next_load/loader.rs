@@ -40,17 +40,22 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
     /// granule each. 2026-10-09: Under `--moe-expert-layout tp`, also every
     /// routed-expert tensor of every layer (`expert_tp::is_routed_expert_tensor`):
     /// each rank uploads only its slices of them.
+    /// 2026-10-16: Under `METRALE_GLM_LAYER_STREAM=1`, also every text layer's non-expert
+    /// tensor (`layer_stream::streams`): `LayerSource::collect` reads them from their shard.
     fn defer_predicate(
         &self,
         config: &ModelConfig,
     ) -> Option<metrale_model_weights::weights::DeferHook> {
         let num_layers = config.num_hidden_layers;
         let sliced = config.moe_expert_layout == metrale_config::MoeExpertLayout::Tp;
+        // 2026-10-16: `load_layers` refuses an invalid `METRALE_GLM_LAYER_STREAM` value.
+        let stream = matches!(layer_stream::enabled(), Ok(true));
         Some(std::sync::Arc::new(
             move |name: &str, dtype: WeightDtype| {
                 is_full_width_mtp_expert(name, dtype, num_layers)
                     || is_activation_scale(name, dtype)
                     || (sliced && expert_tp::is_routed_expert_tensor(name))
+                    || (stream && layer_stream::streams(name, dtype, num_layers))
             },
         ))
     }
@@ -82,14 +87,16 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
         let skeleton = Glm5NextTextSkeleton::from_config(config)?;
         let kda_cfg = Glm5NextKdaConfig::from_model_config(config);
         kda_cfg.validate()?;
+        // 2026-10-16: Refuses a bad `METRALE_GLM_LAYER_STREAM` before any layer is built.
+        layer_stream::enabled()?;
         // 2026-09-25: `gate_rank` is the row count of layer 0's `f_a_proj`; the
-        // config has no such key.
+        // config has no such key. 2026-10-16: Deferred under `METRALE_GLM_LAYER_STREAM`.
         let gate_rank = {
             let n = qualify(0, "self_attn.f_a_proj.weight");
-            let t = store.get(&n).with_context(|| {
+            let (_, shape) = expert_tp::meta(store, &n).with_context(|| {
                 format!("glm5_next: {n} is needed to size the KDA gate bottleneck")
             })?;
-            *t.shape.first().context("f_a_proj has no rows")?
+            *shape.first().context("f_a_proj has no rows")?
         };
         let kda_plan = KdaTpPlan::from_config(
             config,

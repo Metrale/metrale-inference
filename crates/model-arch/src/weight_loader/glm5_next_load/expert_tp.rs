@@ -79,7 +79,7 @@ pub(super) fn bind_routed_expert(
 }
 
 /// 2026-10-09: A tensor's on-disk or store dtype and shape, deferred or resident.
-fn meta(store: &WeightStore, name: &str) -> Result<(WeightDtype, Vec<usize>)> {
+pub(super) fn meta(store: &WeightStore, name: &str) -> Result<(WeightDtype, Vec<usize>)> {
     if let Some(d) = store.deferred(name) {
         return Ok((d.dtype, d.shape.clone()));
     }

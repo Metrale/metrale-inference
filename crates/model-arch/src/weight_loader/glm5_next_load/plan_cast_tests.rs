@@ -11,11 +11,11 @@ use super::*;
 
 /// 2026-09-25: Build a `LayerSource` the way `collect` does, without a GPU.
 fn source(entries: &[(&str, WeightDtype, Vec<usize>, Vec<u8>)]) -> LayerSource {
-    let mut names = Vec::new();
+    let mut names = std::collections::BTreeSet::new();
     let mut tensors = std::collections::BTreeMap::new();
     let mut plan_cast = std::collections::BTreeMap::new();
     for (rel, dt, shape, bytes) in entries {
-        names.push((*rel).to_string());
+        names.insert((*rel).to_string());
         if let Some(cast) = plan_dtype::cast_to_plan_dtype(rel, *dt, bytes).unwrap() {
             plan_cast.insert((*rel).to_string(), cast);
         }

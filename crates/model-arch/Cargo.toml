@@ -363,6 +363,10 @@ name = "glm5next_hc_post_sum_gate"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "bf16_world2_sum_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "glm5next_hc_post_vec_gate"
 required-features = ["cuda", "gpu-examples"]
 

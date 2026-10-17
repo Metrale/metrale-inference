@@ -2,6 +2,7 @@
 
 //! 2026-10-09: The vocab-parallel FP8 LM head (`layers::fp8_row_head` with a shard window) at
 //! GLM-5.3's shape on three simulated TP ranks, against the whole FP8 head, and timed.
+//! 2026-10-16: `--world2` runs the two-rank split instead (see [`SHARDS2`]).
 //!
 //! Owner: model-arch examples (GLM-5.3).
 //! Invariants:
@@ -24,7 +25,7 @@
 //! Run (GB10, ~1.2 GB of device memory):
 //!   METRALE_TARGET_HW=gb10 METRALE_TARGET_MODEL=glm-5.3-flash METRALE_TARGET_QUANT=nvfp4 \
 //!   cargo run --release -p metrale-model-arch --features cuda,gpu-examples \
-//!     --example glm53_lmhead_fp8_shard_microtest
+//!     --example glm53_lmhead_fp8_shard_microtest   # append `-- --world2` for two ranks
 
 use anyhow::{Result, ensure};
 use half::bf16;
@@ -38,7 +39,19 @@ use metrale_model_layers::weight_map::{DenseWeight, Fp8DenseWeight};
 
 const K: usize = 4096;
 const V: usize = 154_856;
-const SHARDS: [(usize, usize); 3] = [(0, 51_648), (51_648, 51_648), (103_296, 51_560)];
+const SHARDS3: [(usize, usize); 3] = [(0, 51_648), (51_648, 51_648), (103_296, 51_560)];
+/// 2026-10-16: `lmhead_vocab_split(154_856, 2, r)`: the vocab divides by two, so the even split
+/// applies and rank 1 starts at a row that is not 64-aligned (its output 8-byte aligned).
+const SHARDS2: [(usize, usize); 2] = [(0, 77_428), (77_428, 77_428)];
+
+/// 2026-10-16: The three-rank split, or with `--world2` the two-rank one.
+fn shards() -> &'static [(usize, usize)] {
+    if std::env::args().any(|a| a == "--world2") {
+        &SHARDS2
+    } else {
+        &SHARDS3
+    }
+}
 const ROWS: [usize; 4] = [1, 2, 4, 16];
 const MAX_ROWS: usize = 16;
 const SENTINEL: u8 = 0x5a;
@@ -129,7 +142,7 @@ fn gate(gpu: &dyn GpuBackend, s: &Setup, w8a8: bool, rows: usize) -> Result<Vec<
     let whole = read(gpu, s.whole, bytes)?;
     let route = if w8a8 { "W8A8" } else { "W8A16" };
     let mut zeroed = Vec::new();
-    for (r, &(begin, len)) in SHARDS.iter().enumerate() {
+    for (r, &(begin, len)) in shards().iter().enumerate() {
         let win = HeadWindow { begin, len, ldc: V };
         gpu.memset(s.rank[r], SENTINEL, bytes)?;
         head(gpu, s, w8a8, rows, s.rank[r], win)?;
@@ -153,7 +166,8 @@ fn gate(gpu: &dyn GpuBackend, s: &Setup, w8a8: bool, rows: usize) -> Result<Vec<
         "{route} rows={rows}: rank sum differs from the whole head at {diff} logits"
     );
     println!(
-        "  {route:5} rows={rows:2}: 3 windows + rank sum == whole head, {} logits byte-identical",
+        "  {route:5} rows={rows:2}: {} windows + rank sum == whole head, {} logits byte-identical",
+        shards().len(),
         rows * V
     );
     Ok(whole)
@@ -161,7 +175,7 @@ fn gate(gpu: &dyn GpuBackend, s: &Setup, w8a8: bool, rows: usize) -> Result<Vec<
 
 /// 2026-10-09: Rank 1's window at 16 rows through the dense-pitch launcher must be caught.
 fn negative_control(gpu: &dyn GpuBackend, s: &Setup, whole16: &[u8]) -> Result<()> {
-    let (begin, len) = SHARDS[1];
+    let (begin, len) = shards()[1];
     let bytes = MAX_ROWS * V * 2;
     gpu.memset(s.rank[1], SENTINEL, bytes)?;
     let shard = Fp8DenseWeight {
@@ -202,7 +216,7 @@ fn median_us(gpu: &dyn GpuBackend, mut f: impl FnMut() -> Result<()>) -> Result<
 }
 
 fn timing(gpu: &dyn GpuBackend, s: &Setup, rng: &mut Rng) -> Result<()> {
-    let (begin, len) = SHARDS[0];
+    let (begin, len) = shards()[0];
     // 2026-10-09: Rank 0's BF16 rows only (the sharded BF16 head reads no others).
     let w: Vec<u8> = (0..len * K)
         .flat_map(|_| {
@@ -319,7 +333,11 @@ fn main() -> Result<()> {
     if s.w8a8.is_none() {
         println!("W8A8 kernels not compiled for this target: W8A8 route skipped");
     }
-    println!("byte gate: vocab {V}, hidden {K}, 3 ranks {SHARDS:?}");
+    println!(
+        "byte gate: vocab {V}, hidden {K}, {} ranks {:?}",
+        shards().len(),
+        shards()
+    );
     let mut whole16 = Vec::new();
     for rows in ROWS {
         whole16 = gate(gpu, &s, false, rows)?;
