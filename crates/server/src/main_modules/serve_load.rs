@@ -339,7 +339,7 @@ pub(crate) fn load_model(
         auto_compact_threshold: args.auto_compact,
         request_timeout: args.request_timeout,
         effective_context: 0,
-        forward: metrale_bench::gate::record_serve::LiveForward {
+        forward: metrale_serve_identity::wire::LiveForward {
             forward: forward.forward.to_string(),
             plan_digest: forward.plan_digest,
             auto_max_batch_size,

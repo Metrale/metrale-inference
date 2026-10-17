@@ -2,7 +2,7 @@
 
 //! 2026-09-26: The Stats thermal panel: GPU temperature and SM clock, the
 //! thermally throttled fraction of the last window
-//! (`metrale_bench::hardware::throttle_monitor`), the flip count over the
+//! (`metrale_host_probe::hardware::throttle_monitor`), the flip count over the
 //! retained samples, and the power-cap fraction. Each row renders `—` for a
 //! value it has no reading for, so an unreadable box does not look healthy.
 //!

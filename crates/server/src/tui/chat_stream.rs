@@ -146,7 +146,7 @@ pub(super) async fn stream_chat(
                     }
                     // 2026-09-26: `error_message_from_response` takes the whole
                     // response, headers included, and de-chunks the body itself.
-                    let msg = metrale_bench::http::error_message_from_response(&buf)
+                    let msg = metrale_host_probe::http_wire::error_message_from_response(&buf)
                         .map(|m| format!("{status} — {m}"))
                         .unwrap_or(status);
                     let _ = tx.send(ChatDelta::Error(msg));

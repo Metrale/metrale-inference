@@ -210,9 +210,9 @@ pub async fn health_live() -> Response {
 /// provenance, probed on each request because it includes the live SM clock.
 /// The probe runs vendor tools as blocking subprocesses, hence `spawn_blocking`.
 pub async fn hardware() -> Response {
-    let hw = tokio::task::spawn_blocking(metrale_bench::hardware::Hardware::probe)
+    let hw = tokio::task::spawn_blocking(metrale_host_probe::hardware::Hardware::probe)
         .await
-        .unwrap_or_else(|_| metrale_bench::hardware::Hardware::unknown());
+        .unwrap_or_else(|_| metrale_host_probe::hardware::Hardware::unknown());
     Json(hw).into_response()
 }
 
@@ -222,7 +222,8 @@ pub async fn hardware() -> Response {
 /// reuses a running server.
 pub async fn serve_config() -> Response {
     let id =
-        tokio::task::spawn_blocking(|| metrale_bench::serve_identity::this_process().clone()).await;
+        tokio::task::spawn_blocking(|| metrale_host_probe::serve_identity::this_process().clone())
+            .await;
     match id {
         Ok(id) => Json(id).into_response(),
         Err(e) => (

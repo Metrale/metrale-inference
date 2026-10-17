@@ -16,6 +16,9 @@ description = "Metrale Engine: plugin + benchmark abstraction and registry drive
 # `ledger_harvest` binaries.
 metrale-governance = { workspace = true }
 metrale-closure = { workspace = true }
+# 2026-10-17: The serve identity (pure) and the host probes met serve shares.
+metrale-serve-identity = { workspace = true }
+metrale-host-probe = { workspace = true }
 # 2026-09-26: The METRALE_* lever table: which names are serve levers and which are the box's.
 metrale-config = { workspace = true }
 # 2026-09-26: Parses BENCH.toml and HARDWARE.toml.

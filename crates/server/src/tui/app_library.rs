@@ -120,7 +120,7 @@ impl App {
     /// and `HOME`, so a retry in the same process fails the same way. The
     /// `rebuild` still lists the locally scanned models.
     pub(super) fn attach_recipes(&mut self) {
-        match metrale_bench::ArtifactStore::discover() {
+        match metrale_host_probe::artifacts::ArtifactStore::discover() {
             Ok(store) => {
                 self.lib.attach(store.root().to_path_buf(), &self.library);
                 self.lib.refresh();

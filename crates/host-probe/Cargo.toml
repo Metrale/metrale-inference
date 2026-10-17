@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "metrale-host-probe"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metrale Engine: host probes shared by met serve and the benchmark harness (artifact home, hardware fingerprint and state, HTTP/1.1 response wire, this process's serve identity)."
+
+# 2026-10-17: Split out of metrale-bench so `met` serves `/hardware` and
+# `/serve-config` without the `bench` feature. No GPU, model, TLS or crypto
+# dependency.
+[dependencies]
+metrale-serve-identity = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
+serde = { workspace = true, features = ["std", "derive"] }
+serde_json = { workspace = true, features = ["std", "preserve_order"] }
+sha2 = { workspace = true, features = ["alloc"] }
+
+[lints]
+workspace = true

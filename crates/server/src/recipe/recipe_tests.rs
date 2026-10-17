@@ -278,6 +278,8 @@ fn the_commit_date_fallback_resolves_against_the_real_repo() {
 /// Validation refuses `--hermetic` beside a flag it closes, and a recipe's
 /// defaults can set such a flag, so `hermetic::expand` must override it before
 /// rendering. `serve_args` validates internally, so rendering is the whole check.
+/// 2026-10-17: Bench feature only: `CLOSED_KEYS` and `expand` live in metrale-bench.
+#[cfg(feature = "bench")]
 #[test]
 fn every_recipe_can_be_served_hermetically() {
     // 2026-09-26: Only `runtime: metrale` recipes can be served at all; a
@@ -370,7 +372,7 @@ fn the_env_block_is_read_verbatim_and_absent_means_none() {
             .starts_with("deepseek-v4.1/deepseek-v4.1-flash-q2k-b200")
         {
             assert_eq!(r.env, ds41, "{}", r.id);
-            metrale_bench::serve_env::declared(&r.id, &r.env)
+            metrale_serve_identity::env::declared(&r.id, &r.env)
                 .unwrap_or_else(|e| panic!("{} declares a block the gate refuses: {e:#}", r.id));
         } else {
             assert!(r.env.is_empty(), "{} declares {:?}", r.id, r.env);

@@ -8,7 +8,7 @@
 //! that cannot be read, leave the fields they would have filled at their
 //! defaults, with one exception: a compute-apps query that gives no output is
 //! recorded as an empty list when `nvidia-smi --list-gpus` answers.
-//! [`super::policy`] decides what a missing reading means.
+//! The bench's `policy` module decides what a missing reading means.
 //!
 //! [`collect`] blocks: it runs subprocesses, and `std::process` has no
 //! timeout. The bench executor calls it through `spawn_blocking`

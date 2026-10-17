@@ -36,10 +36,15 @@ mod app_nav;
 pub mod app_quit;
 pub mod app_scroll;
 mod app_types;
+#[cfg(feature = "bench")]
 pub mod bench_host;
+#[cfg(feature = "bench")]
 pub mod bench_keys;
+#[cfg(feature = "bench")]
 pub mod bench_preflight;
+#[cfg(feature = "bench")]
 pub mod bench_state;
+#[cfg(feature = "bench")]
 pub mod bench_variants;
 pub mod commands;
 pub mod download_state;
@@ -106,32 +111,13 @@ pub fn start(
     match std::thread::Builder::new()
         .name("metrale-tui".into())
         .spawn(move || {
-            let port = args.port;
-            let model = args
-                .model_name
-                .clone()
-                .or_else(|| args.model.clone())
-                .unwrap_or_default();
-            let cache_dir = args.cache_dir.clone();
+            #[cfg(feature = "bench")]
+            let bench = bench_host::Wiring::from_args(&args);
             let mut app = app::App::new(args);
-            // 2026-09-26: The serve matrix boots checkpoints through this
-            // process; without an installed host it refuses to load with
-            // `serve_matrix::host::NO_HOST`.
-            metrale_bench::benchmarks::serve_matrix::host::install(std::sync::Arc::new(
-                bench_host::TuiServeHost::new(host.clone(), cache_dir),
-            ));
+            #[cfg(feature = "bench")]
+            bench.attach(&mut app, &host, runtime.clone());
             app.host = Some(host);
-            app.chat.set_runtime(runtime.clone());
-            // 2026-09-26: Benchmarks target this server. When
-            // `ArtifactStore::discover` fails (no usable `METRALE_HOME` or
-            // `HOME`) the dashboard still starts, with a warning.
-            match metrale_bench::ArtifactStore::discover() {
-                Ok(store) => app.bench.attach(
-                    metrale_bench::BenchmarkExecutor::new(runtime, store),
-                    metrale_bench::TargetEndpoint::local(port, model),
-                ),
-                Err(e) => tracing::warn!("benchmarks unavailable: {e:#}"),
-            }
+            app.chat.set_runtime(runtime);
             events::run(app, progress_rx, levers_rx);
         }) {
         Ok(handle) => {

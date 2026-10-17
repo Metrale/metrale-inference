@@ -94,6 +94,11 @@ async fn serve_main() -> Result<()> {
         std::env::vars_os().map(|(name, _)| name.to_string_lossy().into_owned()),
     )?;
 
+    // 2026-10-17: A build without the `bench` feature refuses `benchmark` and `doctor` here,
+    // with a message naming the feature, before anything is installed.
+    #[cfg(not(feature = "bench"))]
+    cli::no_bench::refuse_if_bench_only(&cli.command);
+
     // 2026-09-26: Prints the serve-option manifest as JSON and returns before
     // any subscriber, TUI or GPU exists; a dashboard would garble that output.
     if matches!(cli.command, Command::DumpServeOptions) {
@@ -113,6 +118,7 @@ async fn serve_main() -> Result<()> {
 
     // 2026-09-26: `doctor` prints its findings and exits with status 1 when it
     // found a problem; no subscriber, TUI or GPU.
+    #[cfg(feature = "bench")]
     if matches!(cli.command, Command::Doctor) {
         let code = cli::doctor::dispatch()?;
         std::process::exit(code);
@@ -138,10 +144,14 @@ async fn serve_main() -> Result<()> {
 
     // 2026-09-26: `benchmark certify --json` writes JSON lines on stdout, so
     // the log moves to stderr for that command only.
+    #[cfg(feature = "bench")]
     let logs_to_stderr = matches!(
         &cli.command,
         Command::Benchmark(b) if b.json_stdout()
     );
+    // 2026-10-17: Without `bench` the only JSON-stdout command was refused above.
+    #[cfg(not(feature = "bench"))]
+    let logs_to_stderr = false;
     let tui_channels = if tui::plain_mode(no_tui) {
         let fmt = tracing_subscriber::fmt().with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
@@ -172,12 +182,16 @@ async fn serve_main() -> Result<()> {
         | Command::Circuit(_) => {
             unreachable!("handled before initialisation")
         }
+        #[cfg(feature = "bench")]
         Command::Benchmark(args) => {
             // 2026-09-26: Benchmarks load no model and do not use the startup
             // escape.
             drop(shutdown_rx);
             cli::bench_run::dispatch(args).await
         }
+        // 2026-10-17: Refused before initialisation (`cli::no_bench`).
+        #[cfg(not(feature = "bench"))]
+        Command::Benchmark(_) => unreachable!("refused before initialisation"),
         Command::Serve(args) => {
             let serving = serve(args, tui_channels);
             tokio::pin!(serving);

@@ -6,7 +6,7 @@
 //! Invariants: none beyond the types.
 
 use super::*;
-use crate::tui::app::{BenchSub, Focus};
+use crate::tui::app::Focus;
 use crossterm::event::{KeyCode, KeyEvent};
 
 fn app() -> App {
@@ -178,12 +178,13 @@ fn the_ops_wheel_moves_ops_output_and_never_the_main_log() {
     assert_eq!(a.log_scroll, None, "the Main log did not");
 }
 
+#[cfg(feature = "bench")]
 #[test]
 fn the_wheel_moves_the_benchmark_selection_and_stops_at_the_ends() {
     let n = metrale_bench::registry::all().len();
     let mut a = app();
     a.section = Section::Benchmarks;
-    a.bench_sub = BenchSub::Suite;
+    a.bench_sub = crate::tui::app::BenchSub::Suite;
     for _ in 0..(n + 5) {
         a.scroll(1);
     }

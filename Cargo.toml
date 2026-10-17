@@ -33,6 +33,8 @@ members = [
     "crates/io-hosts/mem",
     "crates/io-hosts/std",
     "crates/settings",
+    "crates/serve-identity",
+    "crates/host-probe",
 ]
 
 # 2026-10-17: A bare `cargo build` builds `met` only; CI and scripts name `--workspace` or `-p`.
@@ -173,6 +175,7 @@ metrale-governance = { path = "crates/governance", version = "1.0.0-beta-preview
 metrale-gpu-runtime = { path = "crates/gpu-runtime", version = "1.0.0-beta-preview", default-features = false }
 metrale-gpu-sys = { path = "crates/gpu-sys", version = "1.0.0-beta-preview", default-features = false }
 metrale-grammar = { path = "crates/grammar", version = "1.0.0-beta-preview", default-features = false }
+metrale-host-probe = { path = "crates/host-probe", version = "1.0.0-beta-preview", default-features = false }
 metrale-io-host-mem = { path = "crates/io-hosts/mem", version = "1.0.0-beta-preview", default-features = false }
 metrale-io-host-std = { path = "crates/io-hosts/std", version = "1.0.0-beta-preview", default-features = false }
 metrale-kernel-root = { path = "crates/kernel-root", version = "1.0.0-beta-preview", default-features = false }
@@ -184,6 +187,7 @@ metrale-model-layers = { path = "crates/model-layers", version = "1.0.0-beta-pre
 metrale-model-weights = { path = "crates/model-weights", version = "1.0.0-beta-preview", default-features = false }
 metrale-sampling = { path = "crates/sampling", version = "1.0.0-beta-preview", default-features = false }
 metrale-scheduler = { path = "crates/scheduler", version = "1.0.0-beta-preview", default-features = false }
+metrale-serve-identity = { path = "crates/serve-identity", version = "1.0.0-beta-preview", default-features = false }
 metrale-settings = { path = "crates/settings", version = "1.0.0-beta-preview", default-features = false }
 metrale-speculative = { path = "crates/speculative", version = "1.0.0-beta-preview", default-features = false }
 metrale-storage = { path = "crates/storage", version = "1.0.0-beta-preview", default-features = false }

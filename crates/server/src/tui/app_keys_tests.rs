@@ -199,6 +199,7 @@ fn esc_outside_a_text_field_drops_focus_and_resumes_following() {
     assert_eq!(a.log_scroll, None, "and the log pane follows again");
 }
 
+#[cfg(feature = "bench")]
 #[test]
 fn esc_in_the_benchmarks_section_steps_back_instead_of_dropping_focus() {
     // 2026-09-26: Benchmarks, Library and Help own Esc (one step back); their arms in `App::on_key`

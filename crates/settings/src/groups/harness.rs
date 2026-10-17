@@ -10,7 +10,7 @@ lever_group! {
     pub struct HarnessSettings { group: "harness", class: Harness }
     harness_port: Text = "unset", None, "METRALE_HARNESS_PORT", "crates/bench/src/benchmarks/agentic/warm.rs", "The agentic benchmark's harness port; read by the process driving requests, never by the server.";
     hipcc: Text = "unset", None, "METRALE_HIPCC", "crates/kernels/build.rs", "The HIP compiler the AMD kernel build invokes.";
-    home: Text = "unset", None, "METRALE_HOME", "crates/bench/src/artifacts/home.rs", "The artifact store root (records, runs and the serve lease), `$HOME/.metrale` when unset.";
+    home: Text = "unset", None, "METRALE_HOME", "crates/host-probe/src/artifacts/home.rs", "The artifact store root (records, runs and the serve lease), `$HOME/.metrale` when unset.";
     skip_build: Text = "unset", None, "METRALE_SKIP_BUILD", "crates/kernels/build.rs", "Skip the kernel build (CI, `cargo check`): the binary carries no PTX.";
     target_hw: Presence = "off", None, "METRALE_TARGET_HW", "crates/kernels/build.rs", "Kernel target hardware class to compile (`kernels/<hw>`). Any value turns it on, `0` included.";
     target_model: Text = "unset", None, "METRALE_TARGET_MODEL", "crates/kernels/build.rs", "Kernel target model directory to compile (`kernels/<hw>/<model>`).";

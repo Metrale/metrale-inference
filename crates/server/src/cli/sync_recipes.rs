@@ -57,7 +57,7 @@ pub fn verdict(
 /// # Errors
 /// If the artifact store cannot be located, or [`verdict`] refuses the fetch.
 pub fn run() -> Result<()> {
-    let store = metrale_bench::ArtifactStore::discover()
+    let store = metrale_host_probe::artifacts::ArtifactStore::discover()
         .context("locating the artifact store that holds the recipe cache")?;
     let root = store.root();
 

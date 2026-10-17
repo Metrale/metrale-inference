@@ -41,7 +41,7 @@ fn message_with_hint_appends_for_known_types() {
 #[test]
 fn the_hint_survives_a_round_trip_through_a_real_response_body() {
     // 2026-09-26: The server puts the hint in `message` and
-    // `metrale_bench::http::message_from_body` reads `message` back; this
+    // `metrale_host_probe::http_wire::message_from_body` reads `message` back; this
     // checks both halves together.
     let body = serde_json::json!({
         "error": {
@@ -52,7 +52,8 @@ fn the_hint_survives_a_round_trip_through_a_real_response_body() {
     })
     .to_string();
 
-    let seen = metrale_bench::http::message_from_body(&body).expect("a well-formed body parses");
+    let seen =
+        metrale_host_probe::http_wire::message_from_body(&body).expect("a well-formed body parses");
     assert!(
         seen.contains("Library"),
         "hint must survive the round trip: {seen}"

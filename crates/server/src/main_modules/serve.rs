@@ -56,6 +56,7 @@ pub(crate) async fn serve(
     // 2026-09-26: Installed in every process that serves, so the
     // scheduler-equivalence gate can re-serve this checkpoint under each
     // device router.
+    #[cfg(feature = "bench")]
     metrale_bench::benchmarks::scheduler_equivalence::host::install(Arc::new(
         crate::tui::bench_host::TuiServeHost::new(host.clone(), args.cache_dir.clone()),
     ));

@@ -4,7 +4,7 @@
 //! declaration means, and what the harness may inherit (nothing it did not
 //! declare).
 //!
-//! Owner: bench (serve environment).
+//! Owner: serve identity (serve environment).
 //! Invariants: none beyond the types.
 
 use super::*;
@@ -23,8 +23,9 @@ fn a_lever_is_any_metrale_name_that_is_not_a_harness_variable() {
     assert!(is_lever("METRALE_PREFILL_CODISPATCH"));
     // 2026-09-26: A name the lever table does not declare is still a lever.
     assert!(is_lever("METRALE_SOMETHING_NEW"));
-    let harness: Vec<&str> = metrale_config::levers::all()
-        .filter(|l| l.class == metrale_config::levers::Class::Harness)
+    let harness: Vec<&str> = metrale_settings::groups::by_name()
+        .into_iter()
+        .filter(|l| l.class == Class::Harness)
         .map(|l| l.env)
         .collect();
     assert!(harness.contains(&"METRALE_HOME"), "{harness:?}");

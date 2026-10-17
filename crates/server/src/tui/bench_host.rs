@@ -35,6 +35,55 @@ use crate::main_modules::model_host::ModelHost;
 /// next round's swap waits behind it on `ModelHost::swap_guard`.
 const BOOT_TIMEOUT: Duration = Duration::from_secs(600);
 
+/// 2026-10-17: What the Benchmarks tab needs from the serve arguments, taken before
+/// `App::new` consumes them.
+pub struct Wiring {
+    port: u16,
+    model: String,
+    cache_dir: Option<std::path::PathBuf>,
+}
+
+impl Wiring {
+    pub fn from_args(args: &crate::cli::ServeArgs) -> Self {
+        Self {
+            port: args.port,
+            model: args
+                .model_name
+                .clone()
+                .or_else(|| args.model.clone())
+                .unwrap_or_default(),
+            cache_dir: args.cache_dir.clone(),
+        }
+    }
+
+    /// 2026-10-17: Install this process as the serve matrix's host and point the Benchmarks
+    /// tab at this server.
+    pub fn attach(
+        self,
+        app: &mut super::app::App,
+        host: &Arc<ModelHost>,
+        runtime: tokio::runtime::Handle,
+    ) {
+        // 2026-09-26: The serve matrix boots checkpoints through this
+        // process; without an installed host it refuses to load with
+        // `serve_matrix::host::NO_HOST`.
+        metrale_bench::benchmarks::serve_matrix::host::install(Arc::new(TuiServeHost::new(
+            host.clone(),
+            self.cache_dir,
+        )));
+        // 2026-09-26: Benchmarks target this server. When
+        // `ArtifactStore::discover` fails (no usable `METRALE_HOME` or
+        // `HOME`) the dashboard still starts, with a warning.
+        match metrale_bench::ArtifactStore::discover() {
+            Ok(store) => app.bench.attach(
+                metrale_bench::BenchmarkExecutor::new(runtime, store),
+                TargetEndpoint::local(self.port, self.model),
+            ),
+            Err(e) => tracing::warn!("benchmarks unavailable: {e:#}"),
+        }
+    }
+}
+
 pub struct TuiServeHost {
     host: Arc<ModelHost>,
     /// 2026-09-26: The argv that was serving at the first round, so `restore` can put the box back.

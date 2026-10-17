@@ -18,12 +18,14 @@
 /// because `gate::bench` also reads it, to refuse a BENCH.toml entry that pins
 /// `hermetic=true` without these keys, and metrale-bench cannot depend on this crate.
 /// `hermetic_closures_match_the_resolvers` checks the table against the resolvers.
+#[cfg(feature = "bench")]
 pub(crate) use metrale_bench::gate::hermetic::CLOSED_KEYS;
 
 /// 2026-09-26: When `requested` asks for `hermetic=true`, add each `CLOSED_KEYS` entry
 /// the map does not already hold. A key already present keeps its value, so an explicit
 /// contradiction still reaches `validate_serve_args` and is refused there.
 /// `bench_serve_plan.rs` calls this before the recipe renders.
+#[cfg(feature = "bench")]
 pub(crate) fn expand(
     mut requested: std::collections::BTreeMap<String, String>,
 ) -> std::collections::BTreeMap<String, String> {
@@ -84,3 +86,7 @@ impl super::ServeArgs {
 #[cfg(test)]
 #[path = "hermetic_tests.rs"]
 mod tests;
+
+#[cfg(all(test, feature = "bench"))]
+#[path = "hermetic_expand_tests.rs"]
+mod expand_tests;

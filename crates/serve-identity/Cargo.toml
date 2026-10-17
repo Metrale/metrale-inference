@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "metrale-serve-identity"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metrale Engine: what makes one `met serve` the same server as another (argv, binary and lever digests, the serve lease, the /forward and /memory wire shapes). Pure: no_std + alloc."
+
+[dependencies]
+metrale-settings = { workspace = true }
+serde = { workspace = true, features = ["alloc", "derive"] }
+sha2 = { workspace = true }
+
+[dev-dependencies]
+# 2026-10-17: parity of this crate's hex spelling with metrale-closure's, the workspace's
+# other spelling of a recorded digest.
+metrale-closure = { workspace = true }
+serde_json = { workspace = true, features = ["std"] }
+
+[lints]
+workspace = true

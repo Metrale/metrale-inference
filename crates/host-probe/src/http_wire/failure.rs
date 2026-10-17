@@ -2,7 +2,7 @@
 
 //! 2026-09-26: Why a streamed chat request failed, as data a caller can classify.
 //!
-//! Owner: bench (HTTP client).
+//! Owner: host-probe (HTTP wire).
 //! Invariants:
 //! - `Display` prints `message` and nothing else.
 //! - A `body` set through `with_body` holds at most `BODY_EXCERPT` bytes and is

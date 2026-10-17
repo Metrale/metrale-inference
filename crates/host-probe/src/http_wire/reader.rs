@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-09-26: Incremental response reader for the streaming chat client:
+//! 2026-09-26: Incremental response reader for the streaming chat clients:
 //! chunked or raw framing, and error-body collection.
 //!
-//! Owner: bench (HTTP client).
+//! Owner: host-probe (HTTP wire).
 //! Invariants:
 //! - An error body is kept to at most `MAX_ERROR_BODY` bytes.
 //! - `push` returns only whole lines; a partial line or chunk stays buffered.
@@ -18,15 +18,15 @@ use super::{
 /// 2026-09-26: Incremental HTTP response reader: status/header parse, chunked
 /// decode, then complete lines out.
 #[derive(Default)]
-pub(super) struct Reader {
+pub struct Reader {
     raw: Vec<u8>,
     header_end: Option<usize>,
     chunked: bool,
-    pub(super) body: Vec<u8>,
+    pub body: Vec<u8>,
     consumed: usize,
     /// 2026-09-26: Set once a non-200 status line is seen. The reader then
     /// collects the body instead of failing at once (see `push`).
-    pub(super) error_status: Option<String>,
+    pub error_status: Option<String>,
     error_len: Option<usize>,
     /// 2026-09-26: The terminal zero-length chunk has been consumed.
     chunks_done: bool,
@@ -34,7 +34,7 @@ pub(super) struct Reader {
 
 impl Reader {
     /// 2026-09-26: Feed socket bytes, get back the body lines they completed.
-    pub(super) fn push(&mut self, bytes: &[u8]) -> Result<Vec<String>> {
+    pub fn push(&mut self, bytes: &[u8]) -> Result<Vec<String>> {
         self.raw.extend_from_slice(bytes);
         // 2026-09-26: Already known to be an error: keep collecting its body.
         if self.error_status.is_some() {
@@ -102,7 +102,7 @@ impl Reader {
 
     /// 2026-09-26: Report a pending error with whatever body arrived. Called
     /// at EOF.
-    pub(super) fn finish(&self) -> Result<()> {
+    pub fn finish(&self) -> Result<()> {
         if self.error_status.is_some() {
             self.fail()?;
         }

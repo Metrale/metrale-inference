@@ -7,7 +7,6 @@
 # read behind the Env port or the settings resolver instead of adding a file here. Exempt
 # without an entry: the ProcessEnv host (crates/io-hosts/std/src/env.rs) and build scripts
 # (build.rs, build_*.rs beside a Cargo.toml).
-crates/bench/src/artifacts/home.rs
 crates/bench/src/benchmarks/agentic/agent.rs
 crates/bench/src/benchmarks/agentic/agent_history.rs
 crates/bench/src/benchmarks/agentic/warm.rs
@@ -17,7 +16,6 @@ crates/bench/src/gate/record.rs
 crates/bench/src/gate/record_env.rs
 crates/bench/src/hardware/policy.rs
 crates/bench/src/python.rs
-crates/bench/src/serve_env.rs
 crates/cache/src/kv_cache/block_trace.rs
 crates/cache/src/radix_tree/partial_tail.rs
 crates/cache/src/radix_tree/snapshot.rs
@@ -111,6 +109,8 @@ crates/gpu-runtime/src/metal_backend/tests/real_model_vision.rs
 crates/gpu-sys/src/env.rs
 crates/gpu-sys/tests/env_chains.rs
 crates/grammar/tests/qwen_toolcall_mask.rs
+crates/host-probe/src/artifacts/home.rs
+crates/host-probe/src/serve_identity.rs
 crates/model-arch/src/attn_v41/decode.rs
 crates/model-arch/src/deepseek_v41_layer.rs
 crates/model-arch/src/deepseek_v41_layer/step.rs

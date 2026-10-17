@@ -25,9 +25,17 @@ gpu-examples = []
 otlp = ["metrale-telemetry/otlp"]
 # 2026-09-26: NVTX ranges around serve lanes at --telemetry kernel.
 nvtx = ["metrale-telemetry/nvtx"]
+# 2026-10-17: The `benchmark` subcommand, the TUI Benchmarks tab, `doctor` and the
+# scheduler-equivalence serve host: everything that pulls the benchmark harness
+# (metrale-bench, and through it ring, metrale-governance and latticedb-core) into the
+# binary. Off by default (PCND): a serving binary carries no harness. A build without it
+# still parses `met benchmark` and `met doctor` and refuses them with a message naming
+# this feature (cli/no_bench.rs). Every gate, certify and release build passes
+# `--features bench`.
+bench = ["dep:metrale-bench"]
 
 [dependencies]
-metrale-bench = { workspace = true }
+metrale-bench = { workspace = true, optional = true }
 metrale-cache = { workspace = true }
 metrale-comm = { workspace = true }
 metrale-config = { workspace = true }
@@ -38,6 +46,9 @@ metrale-closure = { workspace = true }
 metrale-core = { workspace = true }
 metrale-gpu-runtime = { workspace = true }
 metrale-grammar = { workspace = true }
+# 2026-10-17: The host probes the serve path shares with the harness: `/hardware`, the artifact
+# home, the TUI chat's error-body reader and this process's `/serve-config` identity.
+metrale-host-probe = { workspace = true }
 metrale-kernels = { workspace = true }
 metrale-model-arch = { workspace = true }
 metrale-kernel-tree = { workspace = true }
@@ -49,6 +60,9 @@ metrale-model-weights = { workspace = true }
 metrale-sampling = { workspace = true }
 metrale-speculative = { workspace = true }
 metrale-scheduler = { workspace = true }
+# 2026-10-17: The serve identity, lease and `/forward` `/memory` wire shapes (pure), shared with
+# the harness so the server publishes what the bench checks (SSOT).
+metrale-serve-identity = { workspace = true }
 metrale-storage = { workspace = true }
 metrale-telemetry = { workspace = true }
 anyhow = { workspace = true, features = ["std"] }
@@ -95,6 +109,11 @@ tempfile = { workspace = true, features = ["getrandom"] }
 [[bin]]
 name = "met"
 path = "src/main.rs"
+
+# 2026-10-17: Attests gate-record closures through metrale-bench.
+[[test]]
+name = "closure_attestation"
+required-features = ["bench"]
 
 [[example]]
 name = "k3_tokenizer_check"

@@ -117,7 +117,7 @@ pub async fn chat_completions(
             // 2026-09-26: The catalogue read and the load both block, so both
             // run on the blocking pool.
             let outcome = tokio::task::spawn_blocking(move || {
-                let catalogue = metrale_bench::ArtifactStore::discover()
+                let catalogue = metrale_host_probe::artifacts::ArtifactStore::discover()
                     .ok()
                     .map(|s| crate::recipe::fetch::cached(s.root()).recipes)
                     .unwrap_or_default();

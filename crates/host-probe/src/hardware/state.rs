@@ -51,7 +51,7 @@ pub struct ThrottleCounters {
 
 /// 2026-09-26: Throttle reasons asserted at the instant of capture.
 ///
-/// The pre-run check ([`super::policy::precheck`]) reads these; the post-run
+/// The pre-run check (the bench's `policy::precheck`) reads these; the post-run
 /// check reads the counters' delta.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ThrottleActive {
@@ -187,7 +187,7 @@ impl HardwareState {
     /// 2026-09-26: GPU compute processes other than this process, so a server
     /// running in this process is not counted and a separate server process is.
     /// `None` when the list could not be read. The precheck refuses a Speed run
-    /// above [`super::policy::MAX_FOREIGN_COMPUTE_APPS`].
+    /// above the bench's `policy::MAX_FOREIGN_COMPUTE_APPS`.
     pub fn foreign_compute_apps(&self) -> Option<usize> {
         let own = std::process::id();
         Some(

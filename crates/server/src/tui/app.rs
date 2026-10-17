@@ -14,6 +14,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 pub use super::app_types::{OpsState, Toast};
 pub use super::section::Section;
 
+#[cfg(feature = "bench")]
 use super::bench_state::BenchState;
 use super::chat::ChatState;
 use super::data::kernels::KernelTableModel;
@@ -108,6 +109,7 @@ pub struct App {
     pub network_selected: usize,
     pub ops: OpsState,
     pub chat: ChatState,
+    #[cfg(feature = "bench")]
     pub bench: BenchState,
     /// 2026-09-26: The Help section: the guide pane and the issue-report pipeline.
     pub help: crate::tui::help_state::HelpState,
@@ -181,6 +183,7 @@ impl App {
             network_selected: 0,
             ops: OpsState::default(),
             chat: ChatState::default(),
+            #[cfg(feature = "bench")]
             bench: BenchState::default(),
             help: Default::default(),
             toasts: Vec::new(),
@@ -232,6 +235,7 @@ impl App {
         }
 
         // 2026-09-26: Keep the benchmark target on the model that is actually serving.
+        #[cfg(feature = "bench")]
         if let Some(name) = self
             .host
             .as_ref()
@@ -266,9 +270,13 @@ impl App {
 
     /// 2026-09-26: True when a text input owns the keyboard.
     fn in_input(&self) -> bool {
+        #[cfg(feature = "bench")]
+        let bench_editing = self.section == Section::Benchmarks && self.bench.is_editing();
+        #[cfg(not(feature = "bench"))]
+        let bench_editing = false;
         self.log_filter_editing
             || (self.section == Section::Library && self.lib.is_editing())
-            || (self.section == Section::Benchmarks && self.bench.is_editing())
+            || bench_editing
             || (self.section == Section::Help && self.help.is_editing())
             || (self.section == Section::Terminal && self.focus == Focus::Input)
     }
@@ -388,7 +396,10 @@ impl App {
             Section::Terminal if self.term_sub == TermSub::Chat => self.on_chat_content_key(key),
             // 2026-09-26: Ops scrolls its own output (`app_scroll`).
             Section::Terminal => self.on_ops_content_key(key),
+            #[cfg(feature = "bench")]
             Section::Benchmarks => self.on_bench_key(key),
+            #[cfg(not(feature = "bench"))]
+            Section::Benchmarks => {}
             Section::Stats | Section::Help => {}
         }
     }
@@ -409,6 +420,7 @@ impl App {
     }
 
     /// 2026-09-26: Route into the Benchmarks reducer and surface whatever it wants said.
+    #[cfg(feature = "bench")]
     pub(super) fn on_bench_key(&mut self, key: KeyEvent) {
         if let super::bench_keys::Outcome::Toast { text, error } =
             self.bench.on_key(key, self.bench_sub)
