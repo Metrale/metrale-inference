@@ -188,12 +188,9 @@ fn build(
     let mut deferred = Vec::new();
     for (name, dtype, shape, bytes) in tensors {
         if defer(name, *dtype) {
-            let d = DeferredTensor {
-                path: path.clone(),
-                offset: blob.len() as u64,
-                shape: shape.clone(),
-                dtype: *dtype,
-            };
+            let d =
+                DeferredTensor::from_shape(path.clone(), blob.len() as u64, shape.clone(), *dtype)
+                    .unwrap();
             deferred.push((name.clone(), d));
             blob.extend_from_slice(bytes);
         } else {

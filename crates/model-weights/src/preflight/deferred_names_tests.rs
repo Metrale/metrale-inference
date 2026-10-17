@@ -57,12 +57,13 @@ fn store(deferred: &[(String, Vec<usize>)], mtp: bool) -> WeightStore {
     }
     let mut s = WeightStore::from_map(map);
     for (name, shape) in deferred {
-        let d = DeferredTensor {
-            path: "unused.safetensors".into(),
-            offset: 0,
-            shape: shape.clone(),
-            dtype: WeightDtype::BF16,
-        };
+        let d = DeferredTensor::from_shape(
+            "unused.safetensors".into(),
+            0,
+            shape.clone(),
+            WeightDtype::BF16,
+        )
+        .unwrap();
         s.defer(name.clone(), d);
     }
     s
