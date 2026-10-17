@@ -119,6 +119,8 @@ pub(super) fn closure_attestation(
     let mut map = serde_json::Map::new();
     // 2026-09-28: The circuit TOMLs are read here and nowhere else in the build, so a file
     // added under kernels/circuits/ has to rerun the script for its hash to be attested.
+    // 2026-10-17: Only the toml-only subtrees are watched, so regenerating the plans or a doc
+    // does not rerun it; see `circuit_dirs` for the one case that waits for the next rerun.
     for dir in metrale_closure::circuit_dirs(workspace_root) {
         println!("cargo:rerun-if-changed={}", dir.display());
     }
