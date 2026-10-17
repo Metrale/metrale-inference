@@ -35,12 +35,17 @@ pub(super) struct TensorMeta {
 /// Discover which safetensor files to load. Mirrors the resolution order in
 /// `crate::weights::SafetensorsLoader::load`.
 ///
-/// Returns `(shard_files, Some(tensor→shard))` when an index is present and
+/// Returns `(shard_files, Some(shard→tensors))` when an index is present and
 /// `(shard_files, None)` when we're loading everything in the listed files.
+///
+/// 2026-10-17: The map is keyed by the same `model_dir.join(value)` path that
+/// names each shard file, so an index value with a directory component
+/// (`tensors/x.safetensors`) routes its tensors to that file. Keyed by file
+/// name, such a shard matched no index value and loaded zero tensors.
 #[allow(clippy::type_complexity)]
 pub(super) fn resolve_shards(
     model_dir: &Path,
-) -> Result<(Vec<PathBuf>, Option<HashMap<String, String>>)> {
+) -> Result<(Vec<PathBuf>, Option<HashMap<PathBuf, Vec<String>>>)> {
     let index_path = model_dir.join("model.safetensors.index.json");
     let consolidated_index = model_dir.join("consolidated.safetensors.index.json");
 
@@ -56,16 +61,16 @@ pub(super) fn resolve_shards(
         let json = std::fs::read_to_string(&ip)
             .with_context(|| format!("Failed to read {}", ip.display()))?;
         let index: SafetensorsIndex = serde_json::from_str(&json)?;
-        let mut shards: Vec<String> = index
-            .weight_map
-            .values()
-            .cloned()
-            .collect::<std::collections::HashSet<_>>()
-            .into_iter()
-            .collect();
-        shards.sort();
-        let files: Vec<PathBuf> = shards.iter().map(|s| model_dir.join(s)).collect();
-        return Ok((files, Some(index.weight_map)));
+        let mut by_shard: HashMap<PathBuf, Vec<String>> = HashMap::new();
+        for (tensor, shard) in index.weight_map {
+            by_shard
+                .entry(model_dir.join(shard))
+                .or_default()
+                .push(tensor);
+        }
+        let mut files: Vec<PathBuf> = by_shard.keys().cloned().collect();
+        files.sort();
+        return Ok((files, Some(by_shard)));
     }
 
     let single = model_dir.join("model.safetensors");
@@ -136,6 +141,8 @@ pub(super) fn parse_header(file: &mut File) -> Result<Vec<TensorMeta>> {
             "I8" => (WeightDtype::UInt8, false),
             "F8_E4M3" => (WeightDtype::FP8E4M3, false),
             "F8_E8M0" => (WeightDtype::FP8E8M0, false),
+            "U16" => (WeightDtype::UInt16, false),
+            "U32" => (WeightDtype::UInt32, false),
             "I64" => (WeightDtype::Int64, false),
             other => bail!("Unsupported safetensors dtype '{other}' for tensor {name}"),
         };
@@ -169,3 +176,7 @@ pub(super) fn parse_header(file: &mut File) -> Result<Vec<TensorMeta>> {
     out.sort_by_key(|t| t.abs_offset);
     Ok(out)
 }
+
+#[cfg(test)]
+#[path = "header_tests.rs"]
+mod tests;

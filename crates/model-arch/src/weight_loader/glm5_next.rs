@@ -99,6 +99,10 @@ pub fn classify(name: &str) -> Option<TensorRole> {
     let n = normalize(name);
     let s = n.as_str();
 
+    // 2026-10-17: The block scales of an 8-bit linear (`{weight}_scale`) take its weight's role.
+    if let Some(weight) = s.strip_suffix("_scale").filter(|w| w.ends_with(".weight")) {
+        return classify(weight);
+    }
     if s == "lm_head.weight" {
         return Some(TensorRole::LmHead);
     }
@@ -221,11 +225,13 @@ pub fn account<'a, I>(names: I) -> Accounting
 where
     I: IntoIterator<Item = (&'a str, usize)>,
 {
+    let names: Vec<(&str, usize)> = names.into_iter().collect();
+    let present: std::collections::HashSet<&str> = names.iter().map(|(n, _)| *n).collect();
     let mut acc = Accounting::default();
     let mut mtp = std::collections::BTreeSet::new();
     for (name, count) in names {
         acc.total += count;
-        match classify(name) {
+        match classify(name).filter(|_| scale_has_weight(name, &present)) {
             Some(role) => {
                 *acc.by_role.entry(format!("{role:?}")).or_insert(0) += count;
             }
@@ -239,6 +245,14 @@ where
     }
     acc.mtp_layers = mtp.into_iter().collect();
     acc
+}
+
+/// 2026-10-17: A `{weight}_scale` is accounted only beside its weight: [`classify`] reads names
+/// alone, so a stray scale would otherwise take the role of a weight the checkpoint lacks.
+fn scale_has_weight(name: &str, present: &std::collections::HashSet<&str>) -> bool {
+    name.strip_suffix("_scale")
+        .filter(|w| w.ends_with(".weight"))
+        .is_none_or(|w| present.contains(w))
 }
 
 /// 2026-09-25: The number after the first `layers` segment, or `None` when it
@@ -281,6 +295,48 @@ mod tests {
             layer_index("model.language_model.layers.45.eh_proj.weight"),
             Some(45)
         );
+    }
+
+    /// 2026-10-17: An 8-bit linear's scales land in its weight's role; a scale of an unknown
+    /// weight, or a scale not of a `.weight`, stays unknown.
+    #[test]
+    fn block_scales_take_their_weights_role() {
+        for (name, role) in [
+            ("lm_head.weight_scale", TensorRole::LmHead),
+            (
+                "model.language_model.layers.3.self_attn.q_proj.weight_scale",
+                TensorRole::KdaProjection,
+            ),
+            (
+                "model.language_model.layers.5.self_attn.o_proj.weight_scale",
+                TensorRole::MlaProjection,
+            ),
+        ] {
+            assert_eq!(classify(name), Some(role), "{name}");
+        }
+        assert_eq!(
+            classify("model.language_model.layers.4.self_attn.wat.weight_scale"),
+            None
+        );
+        assert_eq!(
+            classify("model.language_model.layers.4.self_attn.q_proj.bias_scale"),
+            None
+        );
+    }
+
+    /// 2026-10-17: A scale without its weight is unknown in the accounting; beside its weight
+    /// (positive control) it takes the weight's role.
+    #[test]
+    fn a_stray_block_scale_is_unknown() {
+        let (w, s) = (
+            "model.language_model.layers.3.self_attn.q_proj.weight",
+            "model.language_model.layers.3.self_attn.q_proj.weight_scale",
+        );
+        let stray = account([(s, 1)]);
+        assert_eq!(stray.unknown, [s]);
+        let paired = account([(w, 1), (s, 1)]);
+        assert!(paired.unknown.is_empty(), "{:?}", paired.unknown);
+        assert_eq!(paired.by_role.get("KdaProjection"), Some(&2));
     }
 
     #[test]

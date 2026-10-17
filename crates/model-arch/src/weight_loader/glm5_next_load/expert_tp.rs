@@ -18,8 +18,11 @@
 //! Invariants:
 //! - `ExpertShard::Whole` binds through `bind_expert`, unchanged.
 //! - A sliced projection keeps the expert's own `weight_scale_2` and `input_scale`.
+//! - 2026-10-17: A csf-encoded scale plane is refused sliced (its bytes have no pre-flight
+//!   charge under this layout); the whole layout binds it.
 
-use super::expert_slab::ExpertSlab;
+use super::expert_scales::has_csf_plane;
+use super::expert_slab::{CSF_SCALE_SLAB_LABEL, ExpertSlab, TP_SLAB_LABEL};
 use super::*;
 use crate::glm5next_mlp::expert_tp::{
     ExpertShard, ExpertSlice, pad_expert_rows, slice_expert_cols, slice_expert_rows,
@@ -35,19 +38,32 @@ pub(super) fn is_routed_expert_tensor(name: &str) -> bool {
 }
 
 /// 2026-10-14: The `build_moe` expert binder of MoE layer `layer` under `cfg`'s shard:
-/// [`bind_routed_expert`] into one [`ExpertSlab`] over `cfg.local_expert_range()`.
+/// [`bind_routed_expert`] into one [`ExpertSlab`] over `cfg.local_expert_range()`, labelled by
+/// [`slab_label`].
 pub(super) fn routed_expert_binder<'a>(
     gpu: &'a dyn GpuBackend,
     store: &'a WeightStore,
     layer: usize,
     cfg: &Glm5NextMlpConfig,
 ) -> impl Fn(usize) -> Result<Glm5NextExpertWeights> + 'a {
-    let (shard, slab) = (cfg.expert_shard, ExpertSlab::new(cfg.local_expert_range()));
+    let (shard, slab) = (
+        cfg.expert_shard,
+        ExpertSlab::new(cfg.local_expert_range(), slab_label(cfg.expert_shard)),
+    );
     move |id| bind_routed_expert(gpu, store, layer, id, shard, &slab)
 }
 
+/// 2026-10-17: The ledger label of a layer's slab under `shard`: what that layout places in it.
+pub(super) fn slab_label(shard: ExpertShard) -> &'static str {
+    match shard {
+        ExpertShard::Whole => CSF_SCALE_SLAB_LABEL,
+        ExpertShard::Sliced(_) => TP_SLAB_LABEL,
+    }
+}
+
 /// 2026-10-09: Routed expert `id` of `layer` as this rank holds it under `shard`. 2026-10-14: A
-/// sliced expert's six buffers go into `id`'s slot of `slab`; a whole one ignores it.
+/// sliced expert's six buffers go into `id`'s slot of `slab`. 2026-10-17: A whole one places only
+/// block scales decoded from csf planes there ([`bind_expert`]).
 pub(super) fn bind_routed_expert(
     gpu: &dyn GpuBackend,
     store: &WeightStore,
@@ -57,7 +73,7 @@ pub(super) fn bind_routed_expert(
     slab: &ExpertSlab,
 ) -> Result<Glm5NextExpertWeights> {
     let s = match shard {
-        ExpertShard::Whole => return bind_expert(gpu, store, layer, id),
+        ExpertShard::Whole => return bind_expert(gpu, store, layer, id, slab),
         ExpertShard::Sliced(s) => s,
     };
     let g = sliced_proj(gpu, store, layer, id, "gate_proj", &s)?;
@@ -108,7 +124,7 @@ fn read_range(
 }
 
 /// 2026-10-09: A whole tensor's bytes, deferred or resident.
-fn read_all(gpu: &dyn GpuBackend, store: &WeightStore, name: &str) -> Result<Vec<u8>> {
+pub(super) fn read_all(gpu: &dyn GpuBackend, store: &WeightStore, name: &str) -> Result<Vec<u8>> {
     if let Some(d) = store.deferred(name) {
         return d
             .read_host_bytes()
@@ -149,7 +165,9 @@ fn sliced_proj(
     let (dtype, shape) = meta(store, &wname)?;
     Ok(match (dtype, &shape[..]) {
         (WeightDtype::UInt8, &[n, half_k]) => {
-            let k = half_k * 2;
+            let k = half_k
+                .checked_mul(2)
+                .with_context(|| format!("{base}.weight: packed width {half_k} overflows"))?;
             let (want_n, want_k) = if by_rows { (s.full, k) } else { (n, s.full) };
             if n != want_n || k != want_k || !k.is_multiple_of(16) {
                 bail!(
@@ -164,6 +182,15 @@ fn sliced_proj(
                 );
             }
             let sname = qualify(layer, &format!("{base}.weight_scale"));
+            // 2026-10-17: csf-encoded scale planes are refused under the tp layout: its experts
+            // are deferred without a pre-flight charge (`defer_charge`), so decoding them here
+            // would place bytes the pre-flight never counted. The whole (ep) layout binds them.
+            if has_csf_plane(store, layer, &base) {
+                bail!(
+                    "{base}: csf-encoded block scales are not supported under \
+                     --moe-expert-layout tp; use the ep layout for this checkpoint"
+                );
+            }
             let (sd, sshape) = meta(store, &sname)?;
             if sd != WeightDtype::FP8E4M3 || sshape != [n, k / 16] {
                 bail!(
@@ -178,12 +205,8 @@ fn sliced_proj(
                 };
                 pad_expert_rows(cut(&wname, k / 2, rows)?, cut(&sname, k / 16, rows)?, k, s)?
             } else {
-                slice_expert_cols(
-                    &read_all(gpu, store, &wname)?,
-                    &read_all(gpu, store, &sname)?,
-                    n,
-                    s,
-                )?
+                let scales = read_all(gpu, store, &sname)?;
+                slice_expert_cols(&read_all(gpu, store, &wname)?, &scales, n, s)?
             };
             (
                 packed,

@@ -188,6 +188,10 @@ impl DeclaredPrecisionPlan {
     /// Ignored modules are unquantized. Otherwise the compressed-tensors precedence
     /// applies: exact names first, then patterns ordered by their text, then class
     /// targets (`Linear`), and the first match wins.
+    ///
+    /// 2026-10-17: An expert projection no rule names is declared by its fused-experts module
+    /// ([`expert_container`]), as a ModelOpt `quantized_layers` entry naming `...mlp.experts`
+    /// covers every projection under it. A projection that matches any rule keeps that answer.
     pub fn resolve(&self, module: &str) -> LayerPrecision {
         if self.ignore.iter().any(|t| t.matches_name(module)) {
             return LayerPrecision::UNQUANTIZED;
@@ -204,13 +208,31 @@ impl DeclaredPrecisionPlan {
                 }
             }
         }
-        best.map_or(LayerPrecision::UNQUANTIZED, |(_, _, p)| p)
+        match (best, expert_container(module)) {
+            (Some((_, _, p)), _) => p,
+            (None, Some(container)) => self.resolve(container),
+            (None, None) => LayerPrecision::UNQUANTIZED,
+        }
     }
 
     /// 2026-09-28: True when no module declares anything.
     pub fn is_undeclared(&self) -> bool {
         self.source == PlanSource::Undeclared
     }
+}
+
+/// 2026-10-02: The fused-experts module an expert projection belongs to: `<p>.experts` for
+/// `<p>.experts.<i>.<proj>`. A checkpoint that quantizes the routed experts as one module (a
+/// ModelOpt `quantized_layers` entry naming `...mlp.experts`) declares every expert projection
+/// through it.
+///
+/// 2026-10-17: Moved here from the circuit crate so the plan's own resolve uses it.
+pub fn expert_container(module: &str) -> Option<&str> {
+    let at = module.rfind(".experts.")?;
+    let rest = &module[at + ".experts.".len()..];
+    let (index, proj) = rest.split_once('.')?;
+    (!index.is_empty() && index.bytes().all(|b| b.is_ascii_digit()) && !proj.is_empty())
+        .then(|| &module[..at + ".experts".len()])
 }
 
 #[cfg(test)]

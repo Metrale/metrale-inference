@@ -7,9 +7,7 @@
 
 use super::*;
 use crate::glm5next_layer::l2_warm;
-use crate::glm5next_mlp::Glm5NextDenseSite;
-use crate::glm5next_mlp::build_w4a4::{act_scales_of, build_dense_nvfp4};
-use crate::glm5next_mlp::precision::{MlpGroup, MlpKernel};
+use crate::glm5next_mlp::precision::MlpGroup;
 
 impl ModelWeightLoader for Glm5NextWeightLoader {
     /// 2026-09-25: True only when `metrale_config::glm_vision_enabled()`
@@ -42,6 +40,8 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
     /// each rank uploads only its slices of them.
     /// 2026-10-16: Under `METRALE_GLM_LAYER_STREAM=1`, also every text layer's non-expert
     /// tensor (`layer_stream::streams`): `LayerSource::collect` reads them from their shard.
+    /// 2026-10-17: Also csf scale planes and an 8-bit head with its scales (`expert_scales`,
+    /// `fp8_head`): decoded or widened on the host.
     fn defer_predicate(
         &self,
         config: &ModelConfig,
@@ -54,10 +54,20 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
             move |name: &str, dtype: WeightDtype| {
                 is_full_width_mtp_expert(name, dtype, num_layers)
                     || is_activation_scale(name, dtype)
+                    || expert_scales::is_csf_component(name)
+                    || fp8_head::is_fp8_head_tensor(name, dtype)
                     || (sliced && expert_tp::is_routed_expert_tensor(name))
                     || (stream && layer_stream::streams(name, dtype, num_layers))
             },
         ))
+    }
+
+    /// 2026-10-17: The decoded csf scales of the whole layout (`expert_scales::defer_charge`).
+    fn defer_charge(
+        &self,
+        config: &ModelConfig,
+    ) -> Option<metrale_model_weights::weights::DeferCharge> {
+        expert_scales::defer_charge(config)
     }
 
     /// 2026-10-09: The MLP plan slices every routed expert over TP under
@@ -247,7 +257,7 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
 
             let load = |n: &str| src.f32(n);
             let mut mlp = match sl.mlp {
-                Mlp::Dense => Glm5NextMlpSite::Dense(Box::new(build_dense_site(
+                Mlp::Dense => Glm5NextMlpSite::Dense(Box::new(dense_site::build_dense_site(
                     gpu,
                     store,
                     config,
@@ -425,9 +435,9 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
         &self,
         store: &WeightStore,
         _config: &ModelConfig,
-        _gpu: &dyn GpuBackend,
+        gpu: &dyn GpuBackend,
     ) -> Result<DenseWeight> {
-        dense(store, "lm_head.weight")
+        fp8_head::head_weight(gpu, store)
     }
 
     /// 2026-09-25: `None`: the GLM-5.3 MTP layer is loaded by
@@ -448,107 +458,14 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
         )
     }
 
-    /// 2026-09-25: Free the store tensors `is_reuploaded` matches, then those
-    /// `is_quantized_expert_weight` matches.
+    /// 2026-09-25: Free what the binders re-uploaded or quantised. 2026-10-17: See
+    /// `prune::prune_after_load`.
     fn prune_after_load(
         &self,
         store: &mut WeightStore,
         config: &ModelConfig,
         gpu: &dyn GpuBackend,
     ) -> Result<()> {
-        let n = config.num_hidden_layers;
-        let (count, bytes) = store.free_matching(gpu, |name| is_reuploaded(name, n))?;
-        tracing::info!(
-            "glm5_next: released {count} store tensors ({:.2} GB) already re-uploaded by the \
-             binders; routed experts and the MTP block kept",
-            bytes as f64 / 1e9,
-        );
-        let quantized: std::collections::BTreeSet<String> = store
-            .names()
-            .filter(|n| {
-                store
-                    .get(n)
-                    .is_ok_and(|t| is_quantized_expert_weight(n, t.dtype))
-            })
-            .map(str::to_string)
-            .collect();
-        if !quantized.is_empty() {
-            let (qcount, qbytes) = store.free_matching(gpu, |name| quantized.contains(name))?;
-            tracing::info!(
-                "glm5_next: released {qcount} full-width BF16 routed-expert tensors \
-                 ({:.2} GB) quantised to NVFP4 at bind time",
-                qbytes as f64 / 1e9,
-            );
-        }
-        Ok(())
+        prune::prune_after_load(store, config, gpu)
     }
-}
-
-/// 2026-10-08: One dense MLP site: its precision plan, then the weight forms the plan reaches
-/// within `max_rows`: the checkpoint's packed NVFP4, TP-sliced, for W4A4, and the BF16
-/// dequantization for the 16-bit path (both when a ladder mixes them).
-#[allow(clippy::too_many_arguments)]
-fn build_dense_site(
-    gpu: &dyn GpuBackend,
-    store: &WeightStore,
-    config: &ModelConfig,
-    mlp_cfg: &Glm5NextMlpConfig,
-    kernels: &Glm5NextMlpKernels,
-    src: &LayerSource,
-    idx: usize,
-    max_rows: usize,
-) -> Result<Glm5NextDenseSite> {
-    let act = ["gate_proj", "up_proj", "down_proj"]
-        .map(|p| input_scale(gpu, store, idx, &format!("mlp.{p}")))
-        .into_iter()
-        .collect::<Result<Vec<_>>>()?;
-    let act = [act[0], act[1], act[2]];
-    let precision = mlp_precision::group_precision(
-        config,
-        kernels,
-        idx,
-        MlpGroup::DenseMlp,
-        0,
-        act.iter().all(Option::is_some),
-    )?;
-    mlp_precision::announce(&precision, max_rows);
-    let nvfp4 = if precision.reaches(MlpKernel::W4a4Static, max_rows) {
-        let scales = act_scales_of(act, &format!("layer {idx} dense MLP"))?;
-        let raw = |n: &str| src.raw(n);
-        let w = build_dense_nvfp4(
-            gpu,
-            mlp_cfg.hidden,
-            config.intermediate_size,
-            mlp_cfg.dense_slice(),
-            "mlp",
-            &raw,
-            scales,
-        )?;
-        Some((w, scales))
-    } else {
-        None
-    };
-    let bf16 = if precision.reaches(MlpKernel::Bf16, max_rows) {
-        let load = |n: &str| src.f32(n);
-        Some(mlp_build::build_dense_mlp(
-            gpu,
-            mlp_cfg,
-            config.intermediate_size,
-            mlp_cfg.dense_slice(),
-            "mlp",
-            &load,
-        )?)
-    } else {
-        None
-    };
-    let grouped = match &nvfp4 {
-        Some((w, _)) => crate::glm5next_mlp::forward::DenseGroupedTables::build(gpu, kernels, w)?,
-        None => None,
-    };
-    Ok(Glm5NextDenseSite {
-        bf16,
-        nvfp4,
-        precision,
-        grouped,
-    })
 }

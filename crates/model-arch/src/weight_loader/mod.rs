@@ -59,7 +59,7 @@ use anyhow::Result;
 use metrale_cache::kv_cache::KvCacheDtype;
 use metrale_config::ModelConfig;
 use metrale_gpu_runtime::gpu::GpuBackend;
-use metrale_model_weights::weights::{DeferHook, WeightStore};
+use metrale_model_weights::weights::{DeferCharge, DeferHook, WeightStore};
 
 use metrale_model_layers::layer::TransformerLayer;
 use metrale_model_layers::layers::VisionTower;
@@ -347,6 +347,14 @@ pub trait ModelWeightLoader {
     /// `WeightStore::deferred`, and the loader that asked reads it. See
     /// [`metrale_model_weights::weights::DeferHook`] for the contract.
     fn defer_predicate(&self, _config: &ModelConfig) -> Option<DeferHook> {
+        None
+    }
+
+    /// 2026-10-17: The device bytes this loader allocates at bind time for each tensor its
+    /// [`Self::defer_predicate`] claims, for the load's OOM pre-flight. Default `None`: a
+    /// deferred tensor costs the pre-flight nothing. See
+    /// [`metrale_model_weights::weights::DeferCharge`].
+    fn defer_charge(&self, _config: &ModelConfig) -> Option<DeferCharge> {
         None
     }
 

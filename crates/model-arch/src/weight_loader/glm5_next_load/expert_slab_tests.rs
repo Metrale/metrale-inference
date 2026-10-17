@@ -13,7 +13,7 @@ use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_model_weights::weights::WeightStore;
 
-use super::{ExpertSlab, SLAB_ALIGN, slot_layout};
+use super::{ExpertSlab, SLAB_ALIGN, TP_SLAB_LABEL, slot_layout};
 
 /// 2026-10-14: GLM-5.3 at TP=3: codes and scales of gate, up, down for slice widths 704 (ranks 0
 /// and 1) and 640 (rank 2) at hidden 4096.
@@ -83,7 +83,7 @@ fn read(gpu: &MockGpuBackend, p: DevicePtr, len: usize) -> Vec<u8> {
 fn a_layer_is_one_allocation_adopted_once() {
     let gpu = MockGpuBackend::new();
     let st = store();
-    let slab = ExpertSlab::new(10..13);
+    let slab = ExpertSlab::new(10..13, TP_SLAB_LABEL);
     let mut got = Vec::new();
     for id in [12, 10, 11] {
         let b = blobs(id);
@@ -113,7 +113,7 @@ fn a_layer_is_one_allocation_adopted_once() {
 fn an_expert_outside_the_slab_or_placed_twice_is_refused() {
     let gpu = MockGpuBackend::new();
     let st = store();
-    let slab = ExpertSlab::new(4..6);
+    let slab = ExpertSlab::new(4..6, TP_SLAB_LABEL);
     let b = blobs(4);
     let e = slab.place(&gpu, &st, 6, [&b[0][..]]).unwrap_err();
     assert!(e.to_string().contains("outside"), "{e}");
@@ -127,7 +127,7 @@ fn an_expert_outside_the_slab_or_placed_twice_is_refused() {
 fn an_expert_of_other_sizes_is_refused() {
     let gpu = MockGpuBackend::new();
     let st = store();
-    let slab = ExpertSlab::new(0..2);
+    let slab = ExpertSlab::new(0..2, TP_SLAB_LABEL);
     let b = blobs(0);
     slab.place(&gpu, &st, 0, [&b[0][..], &b[1]]).unwrap();
     let e = slab.place(&gpu, &st, 1, [&b[0][..], &b[2]]).unwrap_err();

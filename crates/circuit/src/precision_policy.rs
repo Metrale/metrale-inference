@@ -143,14 +143,9 @@ impl EdgePrecision for PolicyPrecision<'_> {
         if let Some((_, f)) = self.engine.iter().find(|(p, _)| glob(p, module)) {
             return *f;
         }
-        // 2026-10-02: As `DeclaredPrecision`: an expert projection the plan does not name is
-        // declared by its experts module (`precision::expert_container`).
-        let mut declared = self.policy.declared(module);
-        if declared.weight.is_none()
-            && let Some(container) = crate::precision::expert_container(module)
-        {
-            declared = self.policy.declared(container);
-        }
+        // 2026-10-17: The plan's own resolve reaches an expert projection's fused-experts entry
+        // and keeps an ignored projection 16-bit (`DeclaredPrecisionPlan::resolve`).
+        let declared = self.policy.declared(module);
         let Some(w) = declared.weight else {
             return BF16;
         };

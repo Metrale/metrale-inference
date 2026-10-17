@@ -154,12 +154,12 @@ pub fn load_pass(
             hf_shape.reverse();
             deferred.insert(
                 store_name,
-                crate::weights::DeferredTensor {
-                    path: shard_path.to_path_buf(),
-                    offset: gguf.tensor_abs_offset(tensor) as u64,
-                    shape: hf_shape,
-                    dtype: WeightDtype::BF16,
-                },
+                crate::weights::DeferredTensor::from_shape(
+                    shard_path.to_path_buf(),
+                    gguf.tensor_abs_offset(tensor) as u64,
+                    hf_shape,
+                    WeightDtype::BF16,
+                )?,
             );
             continue;
         }

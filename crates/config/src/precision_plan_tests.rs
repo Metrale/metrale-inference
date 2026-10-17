@@ -15,6 +15,7 @@ fn fixture(name: &str) -> serde_json::Value {
         "ct_all" => include_str!("precision_plan/fixtures/kbenkhaled_qwen3_5_27b_nvfp4.json"),
         "next80" => include_str!("precision_plan/fixtures/nvidia_qwen3_next_80b_nvfp4.json"),
         "glm53" => include_str!("precision_plan/fixtures/glm_5_3_flash_nvfp4.json"),
+        "fp4local" => include_str!("precision_plan/fixtures/glm_5_3_flash_fp4_local.json"),
         other => panic!("no fixture {other}"),
     };
     serde_json::from_str(text).expect("fixture parses")
@@ -403,3 +404,6 @@ fn glm53_declares_static_w4a4_experts_and_dense_mlp_bf16_elsewhere() {
         assert_eq!(p.resolve(&m), LayerPrecision::UNQUANTIZED, "{m}");
     }
 }
+
+#[path = "precision_plan_mixed_tests.rs"]
+mod mixed;
