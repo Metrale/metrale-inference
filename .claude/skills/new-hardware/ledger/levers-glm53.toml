@@ -2309,3 +2309,27 @@ effort_hours = 0.5
 transferability = "any range-bounded guard test: assert both sides of the bound, and derive the bound from the value the served path uses, not a default constant"
 links = { pr = "", commit = "d662d46fc, 2f57285a3", evidence = "build_dw6 lib test gate (2 failed of 836); campaign STATUS 2026-10-17 00:01Z and 00:02Z" }
 notes = "Cost: the boot smoke and the two DB5 re-run arms were re-queued after the ONORM pair. time_lost_hours is an estimate of that delay"
+
+[[lever]]
+id = "gb10x3-glm53-kda-scan-onorm-fused"
+date = "2026-10-17"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "KDA chunked scan with the output o_norm fused into the scan epilogue (METRALE_GLM_KDA_SCAN_ONORM=1), K65536 serve, on the onorm base 5c6678592"
+symptom = "cold prefill: the separate o_norm pass after each KDA chunk scan was a per-chunk launch plus a full re-read of the scan output; kernel-level chunk medians showed it as removable"
+diagnosis_tool = "nsys"
+root_cause_class = "launch-overhead"
+lever_type = "fusion"
+lkb_effect = "removes one launch and one activation round trip per KDA chunk on chunks 0..2; the merged tail chunk is unaffected"
+parity_tier_kept = "tf-section-identical"
+per_rung = [{ rung = "ttft-cold-c256", tok_s_pct = 0, j_tok_pct = 0.0, n = 3 }, { rung = "ttft-cold-c1k", tok_s_pct = 0, j_tok_pct = 0.0, n = 3 }, { rung = "ttft-cold-c4k", tok_s_pct = 0, j_tok_pct = 0.0, n = 3 }, { rung = "ttft-cold-c32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 3 }]
+verdict = "held"
+verdict_reason = "2026-10-17 00:49Z neutral, re-measured in round 2. Pair ONORM (K65536-kinv-1017T0016) vs CTLONORM (K65536-kinv-1016T2356), same binary, only the lever env differs, control first and adjacent, medians of 3. Client delta arm minus control, cold c256/c1k/c4k/c32k: +1.2/-1.5/-30.4/+1.0 ms; server: -0.1/-1.4/-5.1/-10.5 ms; warm client +0.9/+2.6/-0.2/-3.0 ms. All inside the noise band; c32k server -0.1%. The kernel-level projection was about -74 ms at c32k (floor -54); the end-to-end server delta is -10.5, so most of the projected saving did not reach TTFT. Validity: tf section 3a32f6cb77727a95 on both arms, readbacks 12/12, agentic 10/10 followed with 0 turn-cap hits (control ran no agentic by spec), decode C1 +0.7% and C8 -0.8% tok/s with C8 J/tok +1.1% (single reps, noise level)"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 2
+transferability = "a fusion whose kernel-level saving sits on non-critical-path chunks can measure near zero end-to-end; project against the overlapped critical path, not the chunk-sum"
+links = { pr = "", commit = "5c6678592", evidence = "serve pair K65536-kinv-1016T2356 (control) / K65536-kinv-1017T0016 (lever); campaign STATUS 2026-10-17T00:49Z" }
+notes = "Chunk 3 sees no change because the tail-merge folds the last rows into the previous chunk. The c4k client lean (-30.4, server -5.1) is the only cell to watch in the round-2 re-run. Not in the 512k recipe of record"
