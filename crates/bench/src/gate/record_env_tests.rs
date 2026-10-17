@@ -227,7 +227,11 @@ fn every_perf_control_discloses_its_declared_default_when_unset() {
     for key in super::PERF_CONTROLS {
         let lever = metrale_config::levers::lookup(key)
             .unwrap_or_else(|| panic!("{key} is not a declared lever"));
-        assert_eq!(resolved.get(key).map(String::as_str), Some(lever.default), "{key}");
+        assert_eq!(
+            resolved.get(key).map(String::as_str),
+            Some(lever.default),
+            "{key}"
+        );
     }
     assert_eq!(
         resolved
