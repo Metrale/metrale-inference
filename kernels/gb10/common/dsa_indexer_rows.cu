@@ -26,6 +26,7 @@
 
 #include "dsa_indexer_body.cuh"
 #include "dsa_scores_mma.cuh"
+#include "dsa_topk_stream.cuh"
 #include <stdint.h>
 
 // 2026-10-09: grid (1, rows), block >= 1: dsa_indexer_store per row.
@@ -437,12 +438,6 @@ extern "C" __global__ void __launch_bounds__(256) dsa_index_scores_mma(
 // Launch: grid (Q, 1, 1), block 256; select_k <= DSA_TR_MAX.
 #define DSA_TR_MAX 512u
 #define DSA_TR_WARPS 8u
-
-__device__ __forceinline__ unsigned int dsa_tk(float f) {
-    unsigned int u = __float_as_uint(f);
-    if (u == 0x80000000u) u = 0u;
-    return (u & 0x80000000u) ? ~u : (u | 0x80000000u);
-}
 
 extern "C" __global__ void __launch_bounds__(256) dsa_topk_pools_radix(
     const float* __restrict__ scores,

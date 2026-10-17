@@ -319,6 +319,10 @@ name = "glm5next_dsa_scores_pipe_gate"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "glm5next_dsa_select_fused_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "glm5next_dsa_sp_select_gate"
 required-features = ["cuda", "gpu-examples"]
 
