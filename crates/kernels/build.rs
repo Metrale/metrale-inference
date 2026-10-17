@@ -31,13 +31,13 @@ struct CompileJob {
 
 fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
-    // 2026-09-25: Two levels up from `crates/kernels`. Resolved before the skip
-    // branch because `target_defaults_literal` runs on both paths.
-    let workspace_root_owned = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap())
-        .parent()
-        .and_then(|p| p.parent())
-        .expect("crates/kernels is two levels below the workspace root")
-        .to_path_buf();
+    // 2026-10-17: The directory holding `kernels/`, from metrale-kernel-tree's `links`
+    // metadata: the repository root in a checkout, that crate's own directory once published.
+    // Resolved before the skip branch because `target_defaults_literal` runs on both paths.
+    let workspace_root_owned = PathBuf::from(
+        env::var("DEP_METRALE_KERNEL_TREE_ROOT")
+            .expect("DEP_METRALE_KERNEL_TREE_ROOT: metrale-kernel-tree is a dependency"),
+    );
 
     println!("cargo:rerun-if-env-changed=METRALE_SKIP_BUILD");
     // 2026-09-25: Without these, cargo reuses the previous build-script output
@@ -72,7 +72,7 @@ fn main() {
     }
 
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let workspace_root = manifest_dir.parent().unwrap().parent().unwrap();
+    let workspace_root = workspace_root_owned.as_path();
 
     let targets = resolve_targets(workspace_root);
 

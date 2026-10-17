@@ -1348,8 +1348,9 @@ dependencies = [
 
 [[package]]
 name = "latticedb-core"
-version = "0.3.3"
-source = "git+https://github.com/Avarok-Cybersecurity/lattice-db?rev=e722d71#e722d71b2d958cf372aba4a5a496775eda97964b"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e9ebcb813da64b339f1ac5173237a357bdffa87c0e90d8fd5be9dd2e97d207f4"
 dependencies = [
  "async-trait",
  "bumpalo",
@@ -1686,6 +1687,7 @@ dependencies = [
  "memmap2",
  "metrale-config",
  "metrale-core",
+ "metrale-kernel-tree",
  "metrale-kernels",
  "metrale-telemetry",
  "objc2",
@@ -1738,6 +1740,7 @@ version = "1.0.0-beta-preview"
 dependencies = [
  "metrale-closure",
  "metrale-core",
+ "metrale-kernel-tree",
  "serde_json",
  "toml",
 ]
@@ -1807,6 +1810,7 @@ dependencies = [
  "metrale-config",
  "metrale-core",
  "metrale-gpu-runtime",
+ "metrale-kernel-tree",
  "metrale-kernels",
  "metrale-model-weights",
  "metrale-storage",
@@ -1881,6 +1885,7 @@ dependencies = [
  "libc",
  "metrale-core",
  "metrale-gpu-sys",
+ "metrale-kernel-tree",
  "rand",
  "rand_chacha",
  "rand_distr",

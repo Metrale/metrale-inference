@@ -14,6 +14,8 @@ metal = ["dep:objc2", "dep:objc2-metal", "dep:objc2-foundation", "dep:dispatch2"
 test-utils = []
 
 [dependencies]
+# 2026-10-17: Its `links` metadata (`DEP_METRALE_KERNEL_TREE_ROOT`) locates kernels/ for build.rs.
+metrale-kernel-tree = { workspace = true }
 metrale-config = { workspace = true }
 metrale-core = { workspace = true }
 metrale-kernels = { workspace = true }

@@ -12,84 +12,79 @@
 use anyhow::{Result, anyhow, bail};
 use metrale_circuit::{ArchShape, Instance, PrecisionSpec, Sources};
 
+/// 2026-10-17: A file under kernels/, read from metrale-kernel-tree's root (handed over by
+/// build.rs), so the published crate embeds the same texts as a checkout.
+macro_rules! kernel_file {
+    ($path:literal) => {
+        include_str!(concat!(
+            env!("METRALE_KERNEL_TREE_ROOT"),
+            "/kernels/",
+            $path
+        ))
+    };
+}
+
 /// 2026-09-28: kernels/circuits/INSTANCES.toml as built.
-pub const INSTANCES: &str = include_str!("../../../../kernels/circuits/INSTANCES.toml");
+pub const INSTANCES: &str = kernel_file!("circuits/INSTANCES.toml");
 
 /// 2026-09-28: Every circuit an instance can name, by arch.
 pub const CIRCUITS: [(&str, &str); 4] = [
-    (
-        "qwen3_5",
-        include_str!("../../../../kernels/circuits/qwen3_5.toml"),
-    ),
-    (
-        "qwen3_6_moe",
-        include_str!("../../../../kernels/circuits/qwen3_6_moe.toml"),
-    ),
-    (
-        "nemotron_h",
-        include_str!("../../../../kernels/circuits/nemotron_h.toml"),
-    ),
+    ("qwen3_5", kernel_file!("circuits/qwen3_5.toml")),
+    ("qwen3_6_moe", kernel_file!("circuits/qwen3_6_moe.toml")),
+    ("nemotron_h", kernel_file!("circuits/nemotron_h.toml")),
     // 2026-10-08: GLM-5 (not an executor target; `met circuit` plans and the Venn read it).
-    (
-        "glm5_next",
-        include_str!("../../../../kernels/circuits/glm5_next.toml"),
-    ),
+    ("glm5_next", kernel_file!("circuits/glm5_next.toml")),
 ];
 
 /// 2026-09-28: Every precision table an instance can name.
 pub const PRECISION: [(&str, &str); 4] = [
     (
         "qwen3.6-35b-a3b-fp8-bf16head",
-        include_str!("../../../../kernels/circuits/precision/qwen3.6-35b-a3b-fp8-bf16head.toml"),
+        kernel_file!("circuits/precision/qwen3.6-35b-a3b-fp8-bf16head.toml"),
     ),
     (
         "qwen3.6-35b-a3b-nvfp4-declared",
-        include_str!("../../../../kernels/circuits/precision/qwen3.6-35b-a3b-nvfp4-declared.toml"),
+        kernel_file!("circuits/precision/qwen3.6-35b-a3b-nvfp4-declared.toml"),
     ),
     (
         "nemotron-3.5-lightning-30b-a3b-nvfp4",
-        include_str!(
-            "../../../../kernels/circuits/precision/nemotron-3.5-lightning-30b-a3b-nvfp4.toml"
-        ),
+        kernel_file!("circuits/precision/nemotron-3.5-lightning-30b-a3b-nvfp4.toml"),
     ),
     (
         "glm-5.3-flash-nvfp4",
-        include_str!("../../../../kernels/circuits/precision/glm-5.3-flash-nvfp4.toml"),
+        kernel_file!("circuits/precision/glm-5.3-flash-nvfp4.toml"),
     ),
 ];
 
 /// 2026-09-28: Every checkpoint plan fixture an instance can name.
 pub const CHECKPOINTS: [(&str, &str); 1] = [(
     "unsloth--Qwen3.8-27B-NVFP4",
-    include_str!("../../../../kernels/circuits/checkpoints/unsloth--Qwen3.8-27B-NVFP4.toml"),
+    kernel_file!("circuits/checkpoints/unsloth--Qwen3.8-27B-NVFP4.toml"),
 )];
 
 /// 2026-09-28: Every block library a circuit can include.
 pub const BLOCKS: [(&str, &str); 4] = [
     (
         "qwen3_hybrid",
-        include_str!("../../../../kernels/circuits/blocks/qwen3_hybrid.toml"),
+        kernel_file!("circuits/blocks/qwen3_hybrid.toml"),
     ),
     // 2026-10-08: The GLM-5 block libraries (kernels/circuits/glm5_next.toml includes them).
     (
         "glm5_next_kda",
-        include_str!("../../../../kernels/circuits/blocks/glm5_next_kda.toml"),
+        kernel_file!("circuits/blocks/glm5_next_kda.toml"),
     ),
     (
         "glm5_next_dsa",
-        include_str!("../../../../kernels/circuits/blocks/glm5_next_dsa.toml"),
+        kernel_file!("circuits/blocks/glm5_next_dsa.toml"),
     ),
     (
         "glm5_next_ffn",
-        include_str!("../../../../kernels/circuits/blocks/glm5_next_ffn.toml"),
+        kernel_file!("circuits/blocks/glm5_next_ffn.toml"),
     ),
 ];
 
 /// 2026-09-28: FUSIONS.toml per hardware.
-pub const FUSIONS: [(&str, &str); 1] = [(
-    "gb10",
-    include_str!("../../../../kernels/gb10/common/FUSIONS.toml"),
-)];
+pub const FUSIONS: [(&str, &str); 1] = [("gb10", kernel_file!("gb10/common/FUSIONS.toml"))];
 
 /// 2026-09-28: The entry `key` of `table`; `what` names the table in the error.
 pub fn lookup<'a>(table: &[(&str, &'a str)], key: &str, what: &str) -> Result<&'a str> {

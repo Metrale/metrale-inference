@@ -172,14 +172,15 @@ fn resolve_predictor_arch() -> String {
         return explicit;
     }
     let hw = std::env::var("METRALE_TARGET_HW").unwrap_or_else(|_| "gb10".to_string());
-    let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-    let hardware_toml = manifest
-        .parent()
-        .and_then(|crates| crates.parent())
-        .expect("crates/<crate> sits two levels below the workspace root")
-        .join("kernels")
-        .join(&hw)
-        .join("HARDWARE.toml");
+    // 2026-10-17: metrale-kernel-tree's `links` metadata names the directory holding `kernels/`:
+    // the repository root in a checkout, that crate's own directory once published.
+    let hardware_toml = std::path::PathBuf::from(
+        std::env::var("DEP_METRALE_KERNEL_TREE_ROOT")
+            .expect("DEP_METRALE_KERNEL_TREE_ROOT: metrale-kernel-tree is a dependency"),
+    )
+    .join("kernels")
+    .join(&hw)
+    .join("HARDWARE.toml");
     println!("cargo:rerun-if-changed={}", hardware_toml.display());
     match hardware_arch(&hardware_toml) {
         Some(arch) => arch,

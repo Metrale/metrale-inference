@@ -3,6 +3,7 @@ name = "metrale-governance"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "The PR journey ledger: an append-only record of how a change reached main."
 
 # 2026-09-26: Host-only: no dependency below reaches CUDA or a GPU.

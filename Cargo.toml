@@ -106,9 +106,9 @@ hyper = { version = "1", default-features = false }
 hyper-util = { version = "0.1", default-features = false }
 image = { version = "0.25", default-features = false }
 io-uring = { version = "0.7", default-features = false }
-# 2026-09-26: The package at this rev is named `latticedb-core` and its lib target `lattice_core`,
-# so the key differs from the package name and `package` is required.
-lattice-core = { git = "https://github.com/Avarok-Cybersecurity/lattice-db", rev = "e722d71", package = "latticedb-core", default-features = false }
+# 2026-10-17: latticedb-core is published on crates.io (0.3.4 = lattice-db main e94ccad); the
+# package is named `latticedb-core` and its lib target `lattice_core`, so `package` is required.
+lattice-core = { version = "0.3.4", package = "latticedb-core", default-features = false }
 lazy_static = { version = "1", default-features = false }
 libc = { version = "0.2", default-features = false }
 libloading = { version = "0.9", default-features = false }
