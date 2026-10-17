@@ -30,6 +30,8 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+use metrale_settings::groups::device_drafter::DrafterSettings;
+
 /// 2026-09-25: The batch widths the controller adapts. Every other width
 /// keeps the static ladder's count.
 const BAND: std::ops::RangeInclusive<usize> = 9..=16;
@@ -63,11 +65,10 @@ const P1_TRIGGER: f64 = 0.08;
 /// `AdaptiveRung`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RungParams {
-    /// 2026-09-25: Pins the static ladder. `from_env` sets it when
+    /// 2026-09-25: Pins the static ladder. [`RungParams::from_settings`] sets it when
     /// `METRALE_MTP_STATIC_RUNG` is present (any value) or the serve runs an explicit
-    /// ladder (`speculative::mtp_ladder_pinned`: `--mtp-k-ladder` or
-    /// `METRALE_MTP_K_LADDER`): an operator who spells out the rungs gets exactly those
-    /// rungs.
+    /// ladder (`--mtp-k-ladder` or `METRALE_MTP_K_LADDER`): an operator who spells out the
+    /// rungs gets exactly those rungs.
     pub disabled: bool,
     pub enter: f64,
     pub leave: f64,
@@ -89,30 +90,20 @@ impl RungParams {
         p1_trigger: P1_TRIGGER,
     };
 
-    /// 2026-09-25: Reads the environment. A tunable whose value does not
-    /// parse as a finite positive number keeps its constant (`tunable`).
-    pub fn from_env() -> Self {
+    /// 2026-10-17: The constants with the `METRALE_MTP_RUNG_*` overrides of `d` applied (the two
+    /// EWMA weights capped at 1), pinned when `d` sets the static rung or an explicit ladder.
+    pub fn from_settings(d: &DrafterSettings) -> Self {
+        let t = &d.mtp_rung;
         Self {
-            disabled: std::env::var_os("METRALE_MTP_STATIC_RUNG").is_some()
-                || metrale_model_layers::speculative::mtp_ladder_pinned(),
-            enter: tunable("METRALE_MTP_RUNG_ENTER", ENTER),
-            leave: tunable("METRALE_MTP_RUNG_LEAVE", LEAVE),
-            alpha: tunable("METRALE_MTP_RUNG_ALPHA", ALPHA).min(1.0),
-            alpha_slow: tunable("METRALE_MTP_RUNG_ALPHA_SLOW", ALPHA_SLOW).min(1.0),
-            probe_ticks: tunable("METRALE_MTP_RUNG_PROBE_TICKS", PROBE_TICKS as f64) as u64,
-            p1_trigger: tunable("METRALE_MTP_RUNG_P1_TRIGGER", P1_TRIGGER),
+            disabled: d.mtp_static_rung || d.mtp_ladder_set,
+            enter: t.enter.unwrap_or(ENTER),
+            leave: t.leave.unwrap_or(LEAVE),
+            alpha: t.alpha.unwrap_or(ALPHA).min(1.0),
+            alpha_slow: t.alpha_slow.unwrap_or(ALPHA_SLOW).min(1.0),
+            probe_ticks: t.probe_ticks.unwrap_or(PROBE_TICKS as f64) as u64,
+            p1_trigger: t.p1_trigger.unwrap_or(P1_TRIGGER),
         }
     }
-}
-
-/// 2026-09-25: `var` parsed as `f64` when it is finite and positive,
-/// otherwise `default`.
-fn tunable(var: &str, default: f64) -> f64 {
-    std::env::var(var)
-        .ok()
-        .and_then(|v| v.parse::<f64>().ok())
-        .filter(|v| v.is_finite() && *v > 0.0)
-        .unwrap_or(default)
 }
 
 /// 2026-09-25: Expected tokens per verify step at two drafts relative to one:
@@ -204,8 +195,9 @@ impl AdaptiveRung {
         }
     }
 
-    pub fn from_env() -> Self {
-        Self::new(RungParams::from_env())
+    /// 2026-10-17: A controller at [`RungParams::from_settings`].
+    pub fn with_settings(d: &DrafterSettings) -> Self {
+        Self::new(RungParams::from_settings(d))
     }
 
     pub fn params(&self) -> &RungParams {

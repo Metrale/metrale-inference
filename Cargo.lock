@@ -1950,6 +1950,7 @@ version = "1.0.0-beta-preview"
 dependencies = [
  "anyhow",
  "metrale-model-layers",
+ "metrale-settings",
  "parking_lot",
  "serde",
  "toml",

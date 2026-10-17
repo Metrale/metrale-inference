@@ -9,11 +9,15 @@ description = "Metrale Engine: speculative-decoding policy — MTP gate, adaptiv
 
 [dependencies]
 metrale-model-layers = { workspace = true }
+metrale-settings = { workspace = true }
 anyhow = { workspace = true, features = ["std"] }
 parking_lot = { workspace = true }
 serde = { workspace = true, features = ["std", "derive"] }
 toml = { workspace = true, features = ["std", "serde", "parse", "display"] }
 tracing = { workspace = true, features = ["std", "attributes"] }
+
+[dev-dependencies]
+metrale-settings = { workspace = true, features = ["test-utils"] }
 
 [lints]
 workspace = true

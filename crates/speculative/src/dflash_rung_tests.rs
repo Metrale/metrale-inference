@@ -48,7 +48,7 @@ fn widths_never_exceed_the_cap() {
 /// set) the C >= 2 rung is the cap; the C = 1 rungs are unaffected.
 #[test]
 fn no_woa_pins_the_multi_rung_at_the_cap() {
-    let r = Rungs::from_env(10, false);
+    let r = Rungs::with_tuning(10, false, &DflashRungTuning::default());
     assert_eq!(r.multi, 10);
     assert_eq!(r.narrow, Rungs::defaults(10).narrow);
     assert_eq!(r.wide, 10);
@@ -314,4 +314,63 @@ fn the_adaptive_count_applies_to_a_single_stream_only() {
     assert_eq!(seq.steps, 1, "a batch step records nothing");
     r.set_adaptive_k(None);
     assert!(!r.adaptive_k_on());
+}
+
+/// 2026-10-17: Overrides replace the defaults, the widths clamped to `2..=cap`; the C >= 2
+/// override applies only with the write-on-accept kernel.
+#[test]
+fn overrides_replace_the_defaults_and_clamp_to_the_cap() {
+    let t = DflashRungTuning {
+        multi: Some(3),
+        narrow: Some(1),
+        wide: Some(99),
+        dwell: Some(8),
+        enter: Some(50),
+        leave: Some(40),
+    };
+    let r = Rungs::with_tuning(10, true, &t);
+    assert_eq!(
+        r,
+        Rungs {
+            multi: 3,
+            narrow: 2,
+            wide: 10,
+            enter: 50,
+            leave: 40,
+            dwell: 8,
+        }
+    );
+    assert_eq!(Rungs::with_tuning(10, false, &t).multi, 10);
+    assert_eq!(
+        Rungs::with_tuning(10, true, &DflashRungTuning::default()),
+        Rungs::defaults(10)
+    );
+}
+
+/// 2026-10-17: `METRALE_DFLASH_STATIC_GAMMA` pins the resolver; an explicit `--dflash-gamma`
+/// pins it unless `METRALE_DFLASH_GAMMA_RESOLVER` keeps it on.
+#[test]
+fn configure_pins_on_static_gamma_or_an_unoverridden_explicit_flag() {
+    let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let declared = DrafterSettings::declared().expect("the declared drafter settings project");
+    for (static_gamma, resolver, explicit, armed) in [
+        (false, false, false, true),
+        (false, false, true, false),
+        (false, true, true, true),
+        (true, true, false, false),
+        (true, true, true, false),
+    ] {
+        let d = DrafterSettings {
+            dflash_static_gamma: static_gamma,
+            dflash_gamma_resolver: resolver,
+            ..declared
+        };
+        let rung = DflashRung::new();
+        rung.configure_with_settings(10, explicit, true, &d);
+        assert_eq!(
+            rung.armed(),
+            armed,
+            "static {static_gamma}, resolver {resolver}, explicit {explicit}"
+        );
+    }
 }

@@ -413,9 +413,7 @@ crates/server/src/tui/theme.rs
 crates/server/tests/glm_dflash_window.rs
 crates/server/tests/integration.rs
 crates/server/tests/integration/helpers.rs
-crates/speculative/src/adaptive_rung.rs
-crates/speculative/src/dflash_rung.rs
-crates/speculative/src/mtp_gate.rs
+crates/speculative/src/legacy_env.rs
 crates/storage/examples/snapshot_paging_smoke.rs
 crates/storage/src/legacy_env.rs
 crates/storage/src/rdma_kv_backend/tests.rs

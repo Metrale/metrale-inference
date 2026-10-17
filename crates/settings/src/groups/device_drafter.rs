@@ -11,7 +11,7 @@
 //! Invariants: reads only `InferenceServerSettings`; every Text lever keeps the parse of the
 //! reader it replaced.
 
-use crate::groups::device::{ProjectionError, non_negative};
+use crate::groups::device::{DeviceSettingsError, ProjectionError, declared, non_negative};
 use crate::resolve::InferenceServerSettings;
 
 /// 2026-10-17: `METRALE_SPEC_ENTRY_PIN` when unset or not a `u32`.
@@ -73,6 +73,16 @@ fn width(env: &'static str, v: Option<i64>) -> Result<Option<usize>, ProjectionE
 
 fn text_u32(v: Option<&str>) -> Option<u32> {
     v.and_then(|v| v.parse().ok())
+}
+
+impl DrafterSettings {
+    /// 2026-10-17: [`declared`], projected: what an empty environment, no CLI and no recipe give.
+    ///
+    /// # Errors
+    /// A declared default that does not parse or project.
+    pub fn declared() -> Result<Self, DeviceSettingsError> {
+        Ok(Self::try_from(&declared()?)?)
+    }
 }
 
 impl TryFrom<&InferenceServerSettings> for DrafterSettings {
