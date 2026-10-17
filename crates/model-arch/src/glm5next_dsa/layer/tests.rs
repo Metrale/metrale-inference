@@ -352,6 +352,7 @@ fn forward_k_has_two_callers_and_the_verify_one_is_not_prefill() {
         [
             "l2_warm.rs",
             "levers.rs",
+            "levers_settings_tests.rs",
             "mod.rs",
             "profile.rs",
             "state.rs",

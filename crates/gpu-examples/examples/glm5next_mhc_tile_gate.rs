@@ -135,6 +135,7 @@ impl Site {
             hc_base: self.hc_base,
             mix: o.0[4],
             done: DevicePtr(0),
+            mix_tokens: TMAX + PAD,
         }
     }
 }

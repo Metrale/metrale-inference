@@ -56,7 +56,7 @@ impl Glm5NextDsaLayer {
             ctx,
             stream,
             is_prefill,
-            crate::glm5next_layer::dsa_indexer_rows(),
+            self.levers.dsa_indexer_rows,
         )
     }
 
@@ -167,7 +167,7 @@ impl Glm5NextDsaLayer {
         // rows in one launch each, and the indexer key, gate and key norm in one pass; each row
         // is then placed from its staging row and selected with its precomputed query.
         let verify_rows = verify_rows_apply(
-            crate::glm5next_layer::dsa_verify_rows(),
+            self.levers.dsa_verify_rows,
             is_prefill,
             k,
             ctx.graph_capture && meta.is_some(),

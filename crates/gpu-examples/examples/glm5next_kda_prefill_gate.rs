@@ -183,6 +183,7 @@ fn main() -> Result<()> {
             c,
             load(g, &dir, idx, &c)?,
             Glm5NextKdaKernels::resolve(g)?,
+            metrale_gpu_examples::glm_levers()?,
         )?;
         // 2026-10-09: A carried state: HISTORY tokens per token from zero.
         let st0 = KdaSeqState {

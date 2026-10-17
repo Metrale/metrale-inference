@@ -31,7 +31,7 @@ use crate::glm5next_kda::tp::KdaTpPlan;
 use crate::glm5next_kda::tp_bind::KdaShardedSource;
 use crate::glm5next_kda::{Glm5NextKdaConfig, Glm5NextKdaKernels, Glm5NextKdaLayer};
 use crate::glm5next_layer::{Glm5NextLayer, Glm5NextMhc, Glm5NextMixer, Glm5NextMlpSite};
-use crate::glm5next_mhc::{Glm5NextMhcKernels, Glm5NextMhcSiteWeights, mhc_mix_max_tokens, mix_hc};
+use crate::glm5next_mhc::{Glm5NextMhcKernels, Glm5NextMhcSiteWeights, mix_hc};
 use crate::glm5next_mlp::weights::{Glm5NextExpertWeights, Nvfp4Proj};
 use crate::glm5next_mlp::{Glm5NextMlpConfig, Glm5NextMlpKernels, build as mlp_build};
 use crate::glm5next_skeleton::{Glm5NextTextSkeleton, Mixer, Mlp};
@@ -329,6 +329,7 @@ fn bind_mhc_site(
     site: &str,
     hc_mult: usize,
     hidden: usize,
+    mix_tokens: usize,
 ) -> Result<Glm5NextMhcSiteWeights> {
     let f = src.f32(&format!("hc_{site}_fn"))?;
     let want = mix_hc(hc_mult) * hc_mult * hidden;
@@ -360,14 +361,15 @@ fn bind_mhc_site(
         hc_base: upload_f32(gpu, &base)?,
         // 2026-09-25: The `hc_mix` to `hc_finish` scratch; one per site, so a
         // layer's two sites never share it.
-        mix: gpu.alloc(mhc_mix_max_tokens() * mix_hc(hc_mult) * 4)?,
+        mix: gpu.alloc(mix_tokens * mix_hc(hc_mult) * 4)?,
         // 2026-10-09: `glm5next_hc_pre_norm` requires its counters zero before the first launch.
         done: {
-            let bytes = mhc_mix_max_tokens() * 4;
+            let bytes = mix_tokens * 4;
             let p = gpu.alloc(bytes)?;
             gpu.memset(p, 0, bytes)?;
             p
         },
+        mix_tokens,
     })
 }
 

@@ -7,8 +7,8 @@
 //! Invariants:
 //! - Every kernel resolves from `GLM5NEXT_MHC_MODULE`, none from DeepSeek-V4's
 //!   `hyper_connection` module.
-//! - `glm_hc_pre` refuses more tokens than `mhc_mix_max_tokens()`, the bound the loader sizes
-//!   each site's `mix` scratch from.
+//! - `glm_hc_pre` refuses more tokens than the site's `mix_tokens`, the bound the loader sized
+//!   the site's `mix` scratch from.
 
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
@@ -227,13 +227,16 @@ pub struct Glm5NextMhcSiteWeights {
     pub hc_scale: DevicePtr,
     /// 2026-09-25: `[mix_hc]` FP32.
     pub hc_base: DevicePtr,
-    /// 2026-09-25: `[mhc_mix_max_tokens(), mix_hc]` FP32 scratch that `hc_mix` writes and
+    /// 2026-09-25: `[mix_tokens, mix_hc]` FP32 scratch that `hc_mix` writes and
     /// `hc_finish` reads; the loader allocates one per site.
     pub mix: DevicePtr,
-    /// 2026-10-09: `[mhc_mix_max_tokens()]` u32, zeroed at allocation: the per-token arrival
+    /// 2026-10-09: `[mix_tokens]` u32, zeroed at allocation: the per-token arrival
     /// counters of `glm5next_hc_pre_norm`, whose last block for a token zeroes its counter
     /// again. One per site, like `mix`.
     pub done: DevicePtr,
+    /// 2026-10-17: Token rows of `mix` and `done`, [`mhc_mix_max_tokens`] of the prefill width
+    /// the loader allocated them for; every launcher refuses more tokens.
+    pub mix_tokens: usize,
 }
 
 /// 2026-10-09: `#define GLM_HC_MIX_ROWS` in `glm5next_mhc.cu`: mixing rows per block of
@@ -245,30 +248,20 @@ pub const HC_MIX_ROWS: usize = 8;
 /// T x 24 blocks keep the SMs busier. Not yet measured; the C16 bench times both.
 pub const HC_MIX_ROWS_MIN_TOKENS: usize = 32;
 
-/// 2026-09-25: The lower bound of `mhc_mix_max_tokens()`.
+/// 2026-09-25: The lower bound of [`mhc_mix_max_tokens`].
 pub const MHC_MIX_MAX_TOKENS: usize = 256;
 
-/// 2026-09-25: Token bound of each site's `mix` scratch, `max(prefill_rows(), MHC_MIX_MAX_TOKENS)`,
-/// read once. The loader allocates the scratch from it and `glm_hc_pre` refuses more tokens
-/// than it, so the allocation and the check read one value.
-pub fn mhc_mix_max_tokens() -> usize {
-    static T: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *T.get_or_init(|| {
-        let t = crate::glm5next_layer::prefill_rows().max(MHC_MIX_MAX_TOKENS);
-        if t != MHC_MIX_MAX_TOKENS {
-            tracing::warn!(
-                "GLM mHC `mix` scratch widened to {t} tokens (floor {MHC_MIX_MAX_TOKENS}) to \
-                 match METRALE_GLM_PREFILL_ROWS"
-            );
-        }
-        t
-    })
+/// 2026-09-25: Token bound of each site's `mix` scratch, `max(prefill_rows, MHC_MIX_MAX_TOKENS)`.
+/// 2026-10-17: The loader allocates the scratch from it and stores it as the site's
+/// `mix_tokens`, which `glm_hc_pre` checks, so the allocation and the check read one value.
+pub fn mhc_mix_max_tokens(prefill_rows: usize) -> usize {
+    prefill_rows.max(MHC_MIX_MAX_TOKENS)
 }
 
 /// 2026-09-25: Collapse each token's `hc_mult` FP32 streams to one BF16 row in `y_out`, and write
 /// this site's `post` and `comb`, by launching `hc_mix` (or `hc_mix_bf16`) then `hc_finish`.
 /// `streams` is read, not written, so `glm_hc_post` can take it as its residual. Errors when
-/// `num_tokens` exceeds `mhc_mix_max_tokens()`.
+/// `num_tokens` exceeds the site's `mix_tokens`.
 #[allow(clippy::too_many_arguments)]
 pub fn glm_hc_pre(
     gpu: &dyn GpuBackend,
@@ -287,7 +280,7 @@ pub fn glm_hc_pre(
     stream: u64,
 ) -> Result<()> {
     let mix_hc = (2 + hc_mult) * hc_mult;
-    let mix_cap = mhc_mix_max_tokens();
+    let mix_cap = w.mix_tokens;
     if num_tokens as usize > mix_cap {
         anyhow::bail!(
             "glm_hc_pre: {num_tokens} tokens exceeds the {mix_cap}-token `mix` scratch \

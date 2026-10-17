@@ -25,7 +25,7 @@ const SHAPES: [(&str, u32, u32); 3] = [
 ];
 
 pub fn run(g: &dyn GpuBackend, s: u64, rng: &mut Rng) -> Result<()> {
-    let k = Glm5NextMlpKernels::resolve(g)?;
+    let k = Glm5NextMlpKernels::resolve(g, metrale_gpu_examples::glm_levers()?)?;
     ensure!(
         k.gemv_f32.0 != 0 && k.gemv_batchm_f32.0 != 0,
         "the FP32-out GEMV tiers did not resolve"

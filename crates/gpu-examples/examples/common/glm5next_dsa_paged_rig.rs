@@ -162,18 +162,20 @@ pub(crate) fn layer_rows(
         weights_proj: bf(cfg.index_heads * h, 0.03)?,
         ape: up(gpu, &ape)?,
     };
+    let levers = metrale_gpu_examples::glm_levers()?;
     Ok(Glm5NextDsaLayer {
         cfg: *cfg,
         weights,
         kernels: Glm5NextDsaLayerKernels::resolve(gpu)?,
         select_kernels: Glm5NextDsaKernels::resolve(gpu)?,
         decode_kernel: Glm5NextDsaDecodeKernel::resolve(gpu)?,
-        workspace: std::sync::Arc::new(Glm5NextDsaWorkspace::new(gpu, cfg, rows)?),
+        workspace: std::sync::Arc::new(Glm5NextDsaWorkspace::new(gpu, cfg, rows, &levers)?),
         layer_idx: 1,
         attn_layer_idx: 0,
         rms_eps: 1e-6,
         kv_scale: 1.0,
         persist_bt: true,
+        levers,
         // 2026-10-09: Only `alloc_dsa_state` reads it; every state here is built explicitly.
         indexer_cache: IndexerCache::Paged,
         indexer_format: metrale_model_arch::glm5next_dsa::fp8_rows::IndexerRowFormat::Bf16,
@@ -244,15 +246,7 @@ pub(crate) fn meta_mb(
     })
 }
 
-/// 2026-10-17: The settings an example runs under: the process environment, as a serve resolves it.
-pub(crate) fn process_settings() -> anyhow::Result<metrale_settings::InferenceServerSettings> {
-    use metrale_settings::sources::{CliLayer, RecipeLayer};
-    Ok(metrale_settings::resolve(
-        &metrale_io_host_std::ProcessEnv,
-        &CliLayer::empty(),
-        &RecipeLayer::empty(),
-    )?)
-}
+pub(crate) use metrale_gpu_examples::process_settings;
 
 pub(crate) struct Fwd {
     pub(crate) config: ModelConfig,

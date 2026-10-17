@@ -19,7 +19,7 @@ use metrale_model_layers::layer::{ForwardContext, LayerState};
 
 use super::super::paged::IndexerCache;
 use super::super::state::Glm5NextDsaState;
-use super::{Glm5NextDsaLayer, gemm};
+use super::Glm5NextDsaLayer;
 
 impl Glm5NextDsaLayer {
     /// 2026-10-11: The widest batch `write_kv_rows_flat` takes: the workspace's rows (its
@@ -75,7 +75,7 @@ impl Glm5NextDsaLayer {
         st.ensure_room(m)?;
         let (k, c) = (&self.kernels, &self.cfg);
         let proj = |a: DevicePtr, w: DevicePtr, out: DevicePtr, n: usize| {
-            gemm(
+            self.gemm(
                 gpu,
                 k.gemm,
                 k.gemv,
@@ -135,7 +135,7 @@ impl Glm5NextDsaLayer {
         stream: u64,
     ) -> Result<()> {
         let k = &self.kernels;
-        gemm(
+        self.gemm(
             gpu,
             k.gemm,
             k.gemv,

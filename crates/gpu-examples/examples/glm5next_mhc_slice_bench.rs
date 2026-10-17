@@ -245,6 +245,7 @@ fn main() -> Result<()> {
         hc_base: up(&gpu, &f32b(&base))?,
         mix: gpu.alloc(tmax * MIX * 4)?,
         done: up(&gpu, &vec![0u8; tmax * 4])?,
+        mix_tokens: tmax,
     };
     let norm: Vec<f32> = (0..H).map(|_| 1.0 + 0.2 * rng.unit()).collect();
     let norm_w = up(&gpu, &bf16b(&norm))?;

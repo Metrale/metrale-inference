@@ -78,7 +78,7 @@ fn site(
 pub fn run(gpu: &MetraleCudaBackend, s: &Setup, st: u64) -> Result<()> {
     let g: &dyn GpuBackend = gpu;
     let c = config();
-    let k = Glm5NextMlpKernels::resolve(g)?;
+    let k = Glm5NextMlpKernels::resolve(g, metrale_gpu_examples::glm_levers()?)?;
     ensure!(
         k.w4a4_expert_rows_grouped() == usize::MAX,
         "the grouped W4A4 GEMM, the sort or the indexed combine did not resolve"

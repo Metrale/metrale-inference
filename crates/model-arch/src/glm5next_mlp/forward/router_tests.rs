@@ -46,7 +46,8 @@ fn cfg() -> Glm5NextMlpConfig {
 }
 
 fn kernels(gpu: &MockGpuBackend) -> Glm5NextMlpKernels {
-    let mut k = Glm5NextMlpKernels::resolve(gpu).expect("mock resolves every kernel");
+    let mut k = Glm5NextMlpKernels::resolve(gpu, crate::glm5next_layer::GlmLevers::declared())
+        .expect("mock resolves every kernel");
     k.gemv_f32 = KernelHandle(GEMV_F32);
     k.gemv_batchm_f32 = KernelHandle(NARROW_F32);
     k.gemv_batchm_wide_f32 = KernelHandle(WIDE_F32);

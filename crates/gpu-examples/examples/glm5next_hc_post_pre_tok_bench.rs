@@ -36,9 +36,7 @@ use half::bf16;
 use metrale_comm::PeerPartials;
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
-use metrale_model_arch::glm5next_mhc::{
-    Glm5NextMhcKernels, Glm5NextMhcSiteWeights, mhc_mix_max_tokens,
-};
+use metrale_model_arch::glm5next_mhc::{Glm5NextMhcKernels, Glm5NextMhcSiteWeights};
 use metrale_model_arch::glm5next_mhc_fused::{glm_hc_post_rank_sum, glm_hc_pre_norm_with};
 use metrale_model_arch::glm5next_mhc_post_pre_tok::{PostPreTok, kernel_for, launch};
 
@@ -92,6 +90,7 @@ impl Arm {
             site: Glm5NextMhcSiteWeights {
                 mix: g.alloc(TMAX * MIX * 4)?,
                 done: up(g, &vec![0u8; TMAX * 4])?,
+                mix_tokens: TMAX,
                 ..*shared
             },
         })
@@ -274,11 +273,6 @@ fn compulsory_bytes(t: usize) -> f64 {
 fn main() -> Result<()> {
     let gpu = MetraleCudaBackend::new(0, &metrale_kernels::ptx_modules())?;
     let g: &dyn GpuBackend = &gpu;
-    ensure!(
-        mhc_mix_max_tokens() >= TMAX,
-        "the mHC mix scratch bound is {} tokens; run with METRALE_GLM_PREFILL_ROWS={TMAX}",
-        mhc_mix_max_tokens()
-    );
     let k = Glm5NextMhcKernels::resolve(g)?;
     ensure!(
         k.hc_post_rank_sum.0 != 0,
@@ -303,6 +297,7 @@ fn main() -> Result<()> {
         hc_base: up_f32(g, &base)?,
         mix: DevicePtr(0),
         done: DevicePtr(0),
+        mix_tokens: 0,
     };
     let peers = up_bf16(g, &peers_h)?;
     let b = Bench {

@@ -178,7 +178,10 @@ pub(crate) fn load_engine(
     if let Some(piece) = metrale_model_arch::glm5next_prefill_piece::piece_rows()? {
         metrale_model_arch::glm5next_prefill_piece::check_piece_budget(
             piece,
-            metrale_model_arch::glm5next_layer::prefill_rows(),
+            metrale_model_arch::glm5next_layer::GlmLevers::from_settings(
+                &serve_phases::lever_settings()?,
+            )?
+            .prefill_rows,
             prefill_budget,
             max_batch_tokens,
         )

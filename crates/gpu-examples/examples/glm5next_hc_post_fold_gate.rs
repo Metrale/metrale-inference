@@ -25,7 +25,7 @@ use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 use metrale_model_arch::glm5next_mhc::{
-    Glm5NextMhcKernels, Glm5NextMhcSiteWeights, glm_hc_post, mhc_mix_max_tokens, mix_hc,
+    Glm5NextMhcKernels, Glm5NextMhcSiteWeights, glm_hc_post, mix_hc,
 };
 use metrale_model_arch::glm5next_mhc_fused::glm_hc_pre_norm;
 use metrale_model_arch::glm5next_mhc_post_fold::{PostFoldIo, glm_hc_post_pre_norm};
@@ -146,8 +146,9 @@ fn site(
         hc_fn_bf16: true,
         hc_scale: up(g, &f32b(&[0.7, 1.3, 0.9]))?,
         hc_base: up(g, &f32b(&rng.vec(m, 1.0)))?,
-        mix: g.alloc(mhc_mix_max_tokens() * m * 4)?,
-        done: up(g, &vec![0u8; mhc_mix_max_tokens() * 4])?,
+        mix: g.alloc(metrale_gpu_examples::mhc_mix_tokens()? * m * 4)?,
+        mix_tokens: metrale_gpu_examples::mhc_mix_tokens()?,
+        done: up(g, &vec![0u8; metrale_gpu_examples::mhc_mix_tokens()? * 4])?,
     })
 }
 

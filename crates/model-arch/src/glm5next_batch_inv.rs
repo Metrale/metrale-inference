@@ -127,8 +127,8 @@ pub(crate) fn check_at_load(k: &crate::glm5next_mlp::Glm5NextMlpKernels) -> Resu
         fp8_dequant_gemm: crate::glm5next_fp8_wide::min_rows()?.is_some(),
         w4a4_grouped_ready: crate::glm5next_mlp::forward::moe_w4a4_grouped()?
             && k.w4a4_expert_rows_grouped() == usize::MAX,
-        dsa_batch_qidx: crate::glm5next_layer::dsa_batch_qidx(),
-        kda_chunked: crate::glm5next_layer::levers::kda_chunk_prefill()
+        dsa_batch_qidx: k.levers.dsa_batch_qidx,
+        kda_chunked: k.levers.kda_chunk_prefill
             || crate::glm5next_kda::chunk16::kda_chunk_scan_min_rows()?.is_some()
             || crate::glm5next_kda::chunk64::kda_chunk64_min_rows()?.is_some(),
     };

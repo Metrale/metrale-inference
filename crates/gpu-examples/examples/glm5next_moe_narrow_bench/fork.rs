@@ -84,7 +84,7 @@ fn moe(
 pub fn run(gpu: &MetraleCudaBackend, s: &Setup, st: u64) -> Result<()> {
     let g: &dyn GpuBackend = gpu;
     let c = config();
-    let k = Glm5NextMlpKernels::resolve(g)?;
+    let k = Glm5NextMlpKernels::resolve(g, metrale_gpu_examples::glm_levers()?)?;
     let w = moe(g, s, &c, &k, 0x510e_527f_ade6_82d1, 0x1f83_d9ab_fb41_bd6b)?;
     let mut rng = Rng(0x5be0_cd19_137e_2179);
     let ws = Glm5NextMlpWorkspace::new_forked(g, &c, MAX_ROWS, false, 0)?;

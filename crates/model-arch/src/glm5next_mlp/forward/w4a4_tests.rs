@@ -62,7 +62,8 @@ pub(crate) fn cfg() -> Glm5NextMlpConfig {
 }
 
 pub(crate) fn kernels(gpu: &MockGpuBackend) -> Glm5NextMlpKernels {
-    let mut k = Glm5NextMlpKernels::resolve(gpu).expect("mock resolves every kernel");
+    let mut k = Glm5NextMlpKernels::resolve(gpu, crate::glm5next_layer::GlmLevers::declared())
+        .expect("mock resolves every kernel");
     k.w4a4_quant_static = KernelHandle(QUANT);
     k.w4a4_moe_slots = KernelHandle(SLOTS);
     k.w4a4_mx = [KernelHandle(MX8), KernelHandle(MX16), KernelHandle(MX32)];

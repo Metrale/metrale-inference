@@ -37,6 +37,7 @@
 //! * `num_experts` is the full routed-expert count; `local_experts` is this rank's share.
 //!   `glm5next_router_topk` must be given the full count.
 
+use crate::glm5next_layer::GlmLevers;
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::{GpuBackend, KernelHandle};
 
@@ -194,6 +195,8 @@ pub struct Glm5NextMlpKernels {
     /// 2026-10-10: The grouped W4A4 expert GEMM for routed launches wider than
     /// [`MOE_W4A4_MAX_ROWS`] (`forward::w4a4_grouped`).
     pub w4a4_grouped: W4a4GroupedKernels,
+    /// 2026-10-17: The GLM layer levers the MLP forward reads, resolved at load.
+    pub levers: GlmLevers,
 }
 
 /// 2026-10-10: `w4a4_grouped_tiles` and `w4a4_grouped_mx_m{32,64,128}[_k64]`
@@ -268,7 +271,7 @@ impl Glm5NextMlpKernels {
 }
 
 impl Glm5NextMlpKernels {
-    pub fn resolve(gpu: &dyn GpuBackend) -> Result<Self> {
+    pub fn resolve(gpu: &dyn GpuBackend, levers: GlmLevers) -> Result<Self> {
         Ok(Self {
             gemm: gpu.kernel(GEMM_MODULE, "dense_gemm_bf16")?,
             gemm_f32: gpu.kernel(GEMM_MODULE, "dense_gemm_bf16_f32out")?,
@@ -452,6 +455,7 @@ impl Glm5NextMlpKernels {
                 nc: ["w4a4_grouped_mx_m128_n", "w4a4_grouped_mx_m128_k64_n"]
                     .map(|e| metrale_model_layers::layers::try_kernel(gpu, W4A4_GROUPED_MODULE, e)),
             },
+            levers,
         })
     }
 

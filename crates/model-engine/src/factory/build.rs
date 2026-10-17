@@ -307,6 +307,7 @@ pub fn build_model(
         slots.request.ceiling(),
         &arena_levers,
         gpu.as_ref(),
+        &settings,
     )?;
 
     // 2026-09-25: Step 5: size the KV cache. With MLA (`kv_lora_rank > 0`) it

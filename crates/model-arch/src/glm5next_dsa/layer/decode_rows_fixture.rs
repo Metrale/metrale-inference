@@ -191,12 +191,21 @@ impl Rig {
                 fp8: crate::glm5next_dsa::fp8_rows::DsaFp8Kernels::NONE,
             },
             decode_kernel: Glm5NextDsaDecodeKernel::resolve(&self.gpu).unwrap(),
-            workspace: std::sync::Arc::new(Glm5NextDsaWorkspace::new(&self.gpu, &c, 16).unwrap()),
+            workspace: std::sync::Arc::new(
+                Glm5NextDsaWorkspace::new(
+                    &self.gpu,
+                    &c,
+                    16,
+                    &crate::glm5next_layer::GlmLevers::declared(),
+                )
+                .unwrap(),
+            ),
             layer_idx: 3,
             attn_layer_idx: 0,
             rms_eps: 1e-6,
             kv_scale: 1.0,
             persist_bt: true,
+            levers: crate::glm5next_layer::GlmLevers::declared(),
             indexer_cache: crate::glm5next_dsa::paged::IndexerCache::Flat,
             indexer_format: crate::glm5next_dsa::fp8_rows::IndexerRowFormat::Bf16,
         }

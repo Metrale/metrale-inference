@@ -145,7 +145,13 @@ fn fixture(gpu: &dyn GpuBackend, heads: usize, seed: u64) -> Result<Fixture<'_>>
         o_proj: dw(gpu, &mut rng, hid * qkv, 1.0 / (qkv as f32).sqrt())?,
     };
     let kernels = Glm5NextKdaKernels::resolve(gpu)?;
-    let layer = Glm5NextKdaLayer::new(0, cfg, weights, kernels)?;
+    let layer = Glm5NextKdaLayer::new(
+        0,
+        cfg,
+        weights,
+        kernels,
+        metrale_gpu_examples::glm_levers()?,
+    )?;
     let ws = Glm5NextKdaWorkspace::new(gpu, &cfg, K)?;
     let hidden = up_bf16(gpu, &rng.scaled(K * hid, 1.0))?;
     let h0: Vec<u8> = rng

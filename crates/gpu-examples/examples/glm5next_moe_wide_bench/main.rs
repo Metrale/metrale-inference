@@ -207,7 +207,7 @@ fn digests(gpu: &MetraleCudaBackend, s: &Setup, rng: &mut Rng, stream: u64) -> R
         ep_world_size: 3,
         expert_shard: metrale_model_arch::glm5next_mlp::ExpertShard::Whole,
     };
-    let k = Glm5NextMlpKernels::resolve(gpu)?;
+    let k = Glm5NextMlpKernels::resolve(gpu, metrale_gpu_examples::glm_levers()?)?;
     let router: Vec<f32> = (0..EXPERTS * HIDDEN).map(|_| rng.unit() * 0.05).collect();
     let shared: Vec<f32> = (0..HIDDEN * 688 * 3).map(|_| rng.unit() * 0.02).collect();
     let load = |n: &str| -> Result<Vec<f32>> {

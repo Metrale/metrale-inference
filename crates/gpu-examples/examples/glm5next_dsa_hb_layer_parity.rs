@@ -190,7 +190,7 @@ fn main() -> Result<()> {
     let build = |hb: Option<usize>| -> Result<Glm5NextDsaLayer> {
         let mut l = layer(g, &c, &mut Lcg(0x6c6d_5e9d_0009))?;
         l.decode_kernel = Glm5NextDsaDecodeKernel::resolve_with(g, hb)?;
-        l.workspace = Glm5NextDsaWorkspace::new(g, &c, 64)?.into();
+        l.workspace = Glm5NextDsaWorkspace::new(g, &c, 64, &l.levers)?.into();
         Ok(l)
     };
     let (lo, lh) = (build(None)?, build(Some(splits))?);

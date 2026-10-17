@@ -243,6 +243,8 @@ pub struct Glm5NextKdaLayer {
     pub cfg: Glm5NextKdaConfig,
     pub weights: Glm5NextKdaWeights,
     pub kernels: Glm5NextKdaKernels,
+    /// 2026-10-17: The GLM layer levers this mixer reads, resolved at load.
+    pub levers: crate::glm5next_layer::GlmLevers,
 }
 
 impl Glm5NextKdaLayer {
@@ -251,6 +253,7 @@ impl Glm5NextKdaLayer {
         cfg: Glm5NextKdaConfig,
         weights: Glm5NextKdaWeights,
         kernels: Glm5NextKdaKernels,
+        levers: crate::glm5next_layer::GlmLevers,
     ) -> Result<Self> {
         cfg.validate()?;
         Ok(Self {
@@ -258,6 +261,7 @@ impl Glm5NextKdaLayer {
             cfg,
             weights,
             kernels,
+            levers,
         })
     }
 
@@ -281,6 +285,7 @@ impl Glm5NextKdaLayer {
         // `glm_mm`'s, with the register-resident batched GEMV at 9..=16 rows.
         crate::glm5next_layer::wide_gemv::glm_mm(
             gpu,
+            self.levers.cublas_wide_proj,
             self.kernels.gemm,
             self.kernels.gemv,
             crate::glm5next_layer::wide_gemv::Batchm {

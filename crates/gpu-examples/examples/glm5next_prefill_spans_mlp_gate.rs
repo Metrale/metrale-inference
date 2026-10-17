@@ -180,7 +180,10 @@ fn main() -> Result<()> {
         .context("glm-5.3-flash nvfp4 target")?;
     let gpu = MetraleCudaBackend::new(ordinal, &target.modules)?;
     let stream = gpu.create_stream()?;
-    let (c, k) = (cfg(), Glm5NextMlpKernels::resolve(&gpu)?);
+    let (c, k) = (
+        cfg(),
+        Glm5NextMlpKernels::resolve(&gpu, metrale_gpu_examples::glm_levers()?)?,
+    );
     let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
     let experts: Vec<Glm5NextExpertWeights> = (0..c.local_experts)
         .map(|_| -> Result<_> {

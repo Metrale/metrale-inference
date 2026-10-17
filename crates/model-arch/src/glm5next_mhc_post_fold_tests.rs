@@ -29,6 +29,7 @@ fn site(bf16: bool) -> Glm5NextMhcSiteWeights {
         hc_base: DevicePtr(0x300),
         mix: DevicePtr(0x400),
         done: DevicePtr(0x480),
+        mix_tokens: crate::glm5next_mhc::MHC_MIX_MAX_TOKENS,
     }
 }
 

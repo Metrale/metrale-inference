@@ -28,7 +28,7 @@ use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 use metrale_model_arch::glm5next_mhc::{
-    Glm5NextMhcKernels, Glm5NextMhcSiteWeights, glm_hc_pre, mhc_mix_max_tokens, mix_hc,
+    Glm5NextMhcKernels, Glm5NextMhcSiteWeights, glm_hc_pre, mix_hc,
 };
 use metrale_model_arch::glm5next_mhc_fused::{
     glm_hc_pre_norm_with, pre_norm_kernel, splitk_kernel,
@@ -142,7 +142,7 @@ fn site(g: &dyn GpuBackend, hid: usize, hc: usize, t: usize, salt: u64) -> Resul
     let hc_fn: Vec<f32> = (0..m * hc_dim).map(|_| lcg(&mut seed) * 0.02).collect();
     let hc_base: Vec<f32> = (0..m).map(|_| lcg(&mut seed)).collect();
     let norm_w: Vec<f32> = (0..hid).map(|_| 1.0 + 0.5 * lcg(&mut seed)).collect();
-    let done = vec![0u8; mhc_mix_max_tokens() * 4];
+    let done = vec![0u8; metrale_gpu_examples::mhc_mix_tokens()? * 4];
     Ok(Site {
         streams: up(g, &f32_bytes(&streams))?,
         norm_w: up(g, &bf16_bytes(&norm_w))?,
@@ -151,7 +151,8 @@ fn site(g: &dyn GpuBackend, hid: usize, hc: usize, t: usize, salt: u64) -> Resul
             hc_fn_bf16: true,
             hc_scale: up(g, &f32_bytes(&[0.7, 1.3, 0.9]))?,
             hc_base: up(g, &f32_bytes(&hc_base))?,
-            mix: g.alloc(mhc_mix_max_tokens() * m * 4)?,
+            mix: g.alloc(metrale_gpu_examples::mhc_mix_tokens()? * m * 4)?,
+            mix_tokens: metrale_gpu_examples::mhc_mix_tokens()?,
             done: up(g, &done)?,
         },
     })
@@ -399,7 +400,7 @@ fn main() -> Result<()> {
             hid as u32,
             hc as u32,
             true,
-            metrale_model_arch::glm5next_mhc::mhc_mix_max_tokens(),
+            metrale_gpu_examples::mhc_mix_tokens()?,
         )
         .is_some();
         let mut sk_err = [0f64; 4];
@@ -583,7 +584,7 @@ fn main() -> Result<()> {
                 hid as u32,
                 hc as u32,
                 true,
-                metrale_model_arch::glm5next_mhc::mhc_mix_max_tokens(),
+                metrale_gpu_examples::mhc_mix_tokens()?,
             )
             .is_some()
             {

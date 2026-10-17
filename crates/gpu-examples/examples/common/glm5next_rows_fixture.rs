@@ -131,7 +131,13 @@ pub fn kda_fixture(
         },
         o_proj: w(rng, HIDDEN * qkv)?,
     };
-    let layer = Glm5NextKdaLayer::new(0, cfg, weights, Glm5NextKdaKernels::resolve(gpu)?)?;
+    let layer = Glm5NextKdaLayer::new(
+        0,
+        cfg,
+        weights,
+        Glm5NextKdaKernels::resolve(gpu)?,
+        metrale_gpu_examples::glm_levers()?,
+    )?;
     let ws = Glm5NextKdaWorkspace::new(gpu, &cfg, 16)?;
     Ok((cfg, layer, ws))
 }
@@ -185,18 +191,20 @@ pub fn dsa_layer(
         weights_proj: bf(cfg.index_heads * h, 0.03)?,
         ape,
     };
+    let levers = metrale_gpu_examples::glm_levers()?;
     Ok(Glm5NextDsaLayer {
         cfg: *cfg,
         weights,
         kernels: Glm5NextDsaLayerKernels::resolve(gpu)?,
         select_kernels: Glm5NextDsaKernels::resolve(gpu)?,
         decode_kernel: Glm5NextDsaDecodeKernel::resolve(gpu)?,
-        workspace: Glm5NextDsaWorkspace::new(gpu, cfg, 16)?.into(),
+        workspace: Glm5NextDsaWorkspace::new(gpu, cfg, 16, &levers)?.into(),
         layer_idx: 1,
         attn_layer_idx: 0,
         rms_eps: 1e-6,
         kv_scale: 1.0,
         persist_bt: true,
+        levers,
         indexer_cache: metrale_model_arch::glm5next_dsa::paged::IndexerCache::Flat,
         indexer_format: metrale_model_arch::glm5next_dsa::fp8_rows::IndexerRowFormat::Bf16,
     })
@@ -291,11 +299,7 @@ impl Fwd {
             dispatch: GemmDispatch::defaults(),
             derived: DerivedWeights::new(),
             levers: ModelLevers::defaults(),
-            settings: {
-                use metrale_settings::sources::{CliLayer, RecipeLayer};
-                let env = metrale_io_host_std::ProcessEnv;
-                metrale_settings::resolve(&env, &CliLayer::empty(), &RecipeLayer::empty())?
-            },
+            settings: metrale_gpu_examples::process_settings()?,
             stats: ModelStats::new(),
         })
     }

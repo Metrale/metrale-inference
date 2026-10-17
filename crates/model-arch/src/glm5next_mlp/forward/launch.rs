@@ -17,11 +17,12 @@ use crate::glm5next_mlp::weights::{Glm5NextExpertPtrTable, Nvfp4Proj};
 const W4_TILE: u32 = 64;
 
 /// 2026-09-25: `C[M, N] = A[M, K] @ B[N, K]^T`, BF16 in and out. With `M` above
-/// `DENSE_GEMV_BATCHM_MAX_M` and `cublas_wide_proj()` it runs on cuBLASLt; otherwise
+/// `DENSE_GEMV_BATCHM_MAX_M` and `GlmLevers::cublas_wide_proj` it runs on cuBLASLt; otherwise
 /// `ops::dense_mm_bf16` picks the GEMV (M=1), the batched GEMV (M=2..=16) or the tile GEMM.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn gemm(
     gpu: &dyn GpuBackend,
+    cublas_wide: bool,
     k: KernelHandle,
     gemv: KernelHandle,
     batchm: impl Into<Batchm>,
@@ -34,7 +35,20 @@ pub(super) fn gemm(
     stream: u64,
 ) -> Result<()> {
     // 2026-10-09: The dispatch lives in `glm_mm`, shared with the DSA and KDA blocks.
-    glm_mm(gpu, k, gemv, batchm.into(), a, b, c, m, n, kk, stream)
+    glm_mm(
+        gpu,
+        cublas_wide,
+        k,
+        gemv,
+        batchm.into(),
+        a,
+        b,
+        c,
+        m,
+        n,
+        kk,
+        stream,
+    )
 }
 
 /// 2026-09-25: `C[1, N] = A[1, K] @ dequant(B)[N, K]^T` for one NVFP4 projection, on the

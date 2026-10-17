@@ -53,7 +53,7 @@ pub(super) fn router_logits(
             x.offset(r0 * cfg.hidden * 2),
             ws.logits.offset(r0 * cfg.num_experts * 4),
             n,
-            crate::glm5next_layer::router_rows(),
+            k.levers.router_rows,
             stream,
         )?;
         r0 += n;

@@ -110,7 +110,14 @@ pub(super) fn layer(gpu: &MockGpuBackend) -> Glm5NextKdaLayer {
         pack: k(0x312),
         gates_fused: k(GATES_FUSED),
     };
-    Glm5NextKdaLayer::new(3, cfg(), weights, kernels).unwrap()
+    Glm5NextKdaLayer::new(
+        3,
+        cfg(),
+        weights,
+        kernels,
+        crate::glm5next_layer::GlmLevers::declared(),
+    )
+    .unwrap()
 }
 
 pub(super) fn seq_state(gpu: &MockGpuBackend) -> KdaSeqState {

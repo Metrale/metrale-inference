@@ -129,7 +129,7 @@ impl Glm5NextDsaLayer {
             meta_row_base,
             ctx,
             stream,
-            crate::glm5next_layer::dsa_indexer_rows(),
+            self.levers.dsa_indexer_rows,
         )
     }
 
@@ -249,7 +249,7 @@ impl Glm5NextDsaLayer {
             // 2026-10-11: Not under `METRALE_GLM_BATCH_INVARIANT` (`glm_mm` splits instead).
             let wide = n > metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M as usize
                 && !crate::glm5next_batch_inv::enabled()?
-                && crate::glm5next_layer::cublas_wide_proj();
+                && self.levers.cublas_wide_proj;
             self.selector_query_rows(gpu, hidden, n, wide, stream)?;
         }
         // 2026-10-09: `indexer_rows` (`METRALE_GLM_DSA_INDEXER_ROWS=1`): the indexer key and

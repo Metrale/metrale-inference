@@ -17,7 +17,7 @@ use metrale_model_layers::layer::{ForwardContext, LayerState};
 use super::super::paged::{IndexerCache, IndexerRowsDev};
 use super::super::select::DsaSelectInputs;
 use super::super::state::Glm5NextDsaState;
-use super::{Glm5NextDsaLayer, IndexerPlace, gemm};
+use super::{Glm5NextDsaLayer, IndexerPlace};
 
 impl Glm5NextDsaLayer {
     /// 2026-09-26: `indexer_forward`'s last step: places the projected `k_normed` and `gate`
@@ -119,7 +119,7 @@ impl Glm5NextDsaLayer {
         // different order from the M = 1 GEMV, so near-tied index scores can select other
         // pools; that is why it is opt-in. Decode and the speculative verify never reach this
         // function (`batch_select_enabled`).
-        if crate::glm5next_layer::dsa_batch_qidx() {
+        if self.levers.dsa_batch_qidx {
             metrale_model_layers::layers::ops::cublas_bf16_proj_dense_f32_out(
                 w.q_resid,
                 self.weights.wq_b,
@@ -142,7 +142,7 @@ impl Glm5NextDsaLayer {
             )?;
         } else {
             for row in 0..k {
-                gemm(
+                self.gemm(
                     gpu,
                     self.kernels.gemm_f32,
                     self.kernels.gemv_f32,
@@ -239,7 +239,7 @@ impl Glm5NextDsaLayer {
             std::cmp::Ordering::Equal => {}
         }
         let w = &self.workspace;
-        gemm(
+        self.gemm(
             gpu,
             self.kernels.gemm,
             self.kernels.gemv,

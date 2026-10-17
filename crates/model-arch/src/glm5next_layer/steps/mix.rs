@@ -82,7 +82,7 @@ impl Glm5NextLayer {
                 } else if is_prefill
                     && k > 1
                     && snaps.is_empty()
-                    && crate::glm5next_layer::levers::kda_chunk_prefill()
+                    && self.levers.kda_chunk_prefill
                     && !layer
                         .chunk64_applies(k, crate::glm5next_kda::chunk64::kda_chunk64_min_rows()?)
                 {

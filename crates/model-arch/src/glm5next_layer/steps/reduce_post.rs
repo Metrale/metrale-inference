@@ -14,10 +14,11 @@ impl Glm5NextLayer {
     /// site's pre-norm (`METRALE_GLM_MHC_POST_FOLD=1`); an error when the lever is on without the
     /// fused pre-norm, the kernel or the layer's `fold_streams`.
     pub(in crate::glm5next_layer) fn post_fold(&self, mhc: &Glm5NextMhc) -> Result<bool> {
-        if !mhc_post_fold() {
+        if !self.levers.mhc_post_fold {
             return Ok(false);
         }
-        if !mhc_fused() || mhc.kernels.hc_post_pre_norm.0 == 0 || mhc.fold_streams.0 == 0 {
+        if !self.levers.mhc_fused || mhc.kernels.hc_post_pre_norm.0 == 0 || mhc.fold_streams.0 == 0
+        {
             bail!(
                 "GLM layer {}: METRALE_GLM_MHC_POST_FOLD=1 needs METRALE_GLM_MHC_FUSED=1, \
                  glm5next_hc_post_pre_norm and the layer's fold streams",
@@ -28,7 +29,7 @@ impl Glm5NextLayer {
     }
 
     pub(in crate::glm5next_layer) fn fused_post(&self, mhc: &Glm5NextMhc) -> Result<bool> {
-        if !ar_fused_post() {
+        if !self.levers.ar_fused_post {
             return Ok(false);
         }
         if mhc.kernels.hc_post_rank_sum.0 == 0 {

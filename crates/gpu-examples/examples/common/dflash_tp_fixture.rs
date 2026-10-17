@@ -255,7 +255,7 @@ impl Tensors {
             1,
             tp,
             quant,
-            &metrale_settings::groups::device::declared()?,
+            &metrale_gpu_examples::process_settings()?,
         )
     }
 }

@@ -2,12 +2,12 @@
 
 //! 2026-09-26: [`Glm5NextDsaWorkspace`], the per-layer scratch `decode_k` reuses, with the
 //! two switches that decide whether its batched-selector buffers exist and are used
-//! ([`dsa_select_rows_enabled`], [`batch_select_enabled`]).
+//! (`GlmLevers::dsa_select_rows`, [`batch_select_enabled`]).
 //!
 //! Owner: model-arch (GLM-5.3 DSA).
 //! Invariants:
-//! - The batched-selector buffers are NULL exactly when [`dsa_select_rows_enabled`] is off,
-//!   and `bt`/`sl` exactly when `METRALE_GLM_DSA_ALLOC_PER_STEP=1`.
+//! - The batched-selector buffers are NULL exactly when `GlmLevers::dsa_select_rows` is off,
+//!   and `bt`/`sl` exactly when `GlmLevers::dsa_alloc_per_step` is on.
 
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
@@ -16,11 +16,12 @@ use super::super::Glm5NextDsaConfig;
 use super::super::attend::{DsaSplitWorkspace, hb_splits_lever};
 use super::super::select::DsaSelectScratch;
 use super::super::state::Glm5NextDsaState;
+use crate::glm5next_layer::GlmLevers;
 
 /// 2026-09-25: Whether one selection pass covers all `k` rows (`select_rows_batched`) or each
 /// row selects on its own (`select_row`). All four terms must hold:
 ///
-/// * `workspace_ready`: the `[max_rows]` selector buffers exist. [`dsa_select_rows_enabled`]
+/// * `workspace_ready`: the `[max_rows]` selector buffers exist. `GlmLevers::dsa_select_rows`
 ///   off (`METRALE_DSA_SELECT_ROWS=0`) leaves them unallocated.
 /// * `is_prefill`: stated by the caller, because `ForwardContext` does not separate a
 ///   prefill from a speculative verify: both have `decode_step` false, and `verify_a` sets
@@ -78,46 +79,22 @@ pub fn select_scratch_rows(
 /// 2026-10-17 (moved out of [`Glm5NextDsaWorkspace::new`]): The geometry the workspace's
 /// selection scratch is allocated for when it serves up to `max_rows` (at least 1) rows: planned
 /// at [`super::super::state::max_dsa_context`] tokens, its per-row regions at
-/// [`select_scratch_rows`] rows (raised to the batched decode's rows). Public so a test or gate
+/// [`select_scratch_rows`] rows (raised to the batched decode's `row_group` rows). Public so a test or gate
 /// sizes the serve's scratch from this one source.
 pub fn select_scratch_geometry(
     cfg: &Glm5NextDsaConfig,
     max_rows: usize,
+    row_group: usize,
 ) -> Result<super::super::select::DsaSelectGeometry> {
     let rows = max_rows.max(1);
     let ceiling = super::super::state::max_dsa_context(cfg);
     let full = super::super::select::DsaSelectGeometry::plan(cfg, ceiling, rows)?;
-    let floor_rows = crate::glm5next_layer::multi_seq_chunk_rows()
-        .max(metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M as usize);
+    let floor_rows =
+        row_group.max(metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M as usize);
     Ok(super::super::select::DsaSelectGeometry {
         q_rows: select_scratch_rows(rows, ceiling, cfg.index_kpool, floor_rows),
         ..full
     })
-}
-
-/// 2026-10-12: `METRALE_GLM_DSA_WS_SHARED`: on unless set to `0`. On, the loader builds ONE
-/// `Glm5NextDsaWorkspace` for every DSA layer of the text stack (the KDA and MLP workspaces are
-/// shared the same way); off, one per layer, the pre-2026-10-12 allocation, which at 8208
-/// prefill rows is 11 x 0.67 GB on GLM-5.3. Safe because the layers run in sequence on one
-/// stream and every field is per-call scratch (`decode_k` re-uploads its metadata each call).
-pub fn dsa_ws_shared() -> bool {
-    static S: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *S.get_or_init(|| {
-        let shared = std::env::var("METRALE_GLM_DSA_WS_SHARED").as_deref() != Ok("0");
-        if !shared {
-            tracing::warn!(
-                "GLM DSA workspace: PER-LAYER (METRALE_GLM_DSA_WS_SHARED=0), one scratch per \
-                 DSA layer"
-            );
-        }
-        shared
-    })
-}
-
-/// 2026-09-25: `METRALE_DSA_SELECT_ROWS`: on unless set to `0`. When off,
-/// `Glm5NextDsaWorkspace::new` does not allocate the batched-selector buffers.
-pub(crate) fn dsa_select_rows_enabled() -> bool {
-    std::env::var("METRALE_DSA_SELECT_ROWS").as_deref() != Ok("0")
 }
 
 /// 2026-09-25: Scratch reused across `decode_k` calls; each layer owns one.
@@ -134,7 +111,7 @@ pub struct Glm5NextDsaWorkspace {
     pub(super) q_pos: DevicePtr,
     pub(super) q_mask: DevicePtr,
     /// 2026-09-25: `[max_rows, ...]` copies of `q_idx` / `head_weights` / `q_pos` / `q_mask`
-    /// for the batched prefill selector. NULL when [`dsa_select_rows_enabled`] is off.
+    /// for the batched prefill selector. NULL when `GlmLevers::dsa_select_rows` is off.
     pub(super) q_idx_rows: DevicePtr,
     pub(super) head_weights_rows: DevicePtr,
     pub(super) q_pos_rows: DevicePtr,
@@ -142,7 +119,7 @@ pub struct Glm5NextDsaWorkspace {
     pub(super) slot: DevicePtr,
     pub(super) attn_out: DevicePtr,
     /// 2026-09-25: Block table for the paged gather, `bt_cap` i32 entries. NULL when
-    /// `METRALE_GLM_DSA_ALLOC_PER_STEP=1`; `decode_k` then allocates one per call.
+    /// `levers.dsa_alloc_per_step` is on; `decode_k` then allocates one per call.
     pub(super) bt: DevicePtr,
     /// 2026-09-25: `seq_lens` for the paged gather, `[max_rows]` i32; NULL under the same
     /// setting as `bt`.
@@ -187,13 +164,19 @@ impl Glm5NextDsaWorkspace {
     /// selection scratch, which is planned at [`super::super::state::max_dsa_context`] tokens,
     /// its output at `max_rows` rows and (2026-10-11) its per-row temporaries at
     /// [`select_scratch_rows`] rows, and (2026-10-09) the staging rows. `bt` does not depend on
-    /// it.
-    pub fn new(gpu: &dyn GpuBackend, cfg: &Glm5NextDsaConfig, max_rows: usize) -> Result<Self> {
+    /// it. 2026-10-17: `levers` decides the batched-selector buffers, `bt`/`sl` and the scratch's
+    /// row group.
+    pub fn new(
+        gpu: &dyn GpuBackend,
+        cfg: &Glm5NextDsaConfig,
+        max_rows: usize,
+        levers: &GlmLevers,
+    ) -> Result<Self> {
         let rows = max_rows.max(1);
-        let geom = select_scratch_geometry(cfg, rows)?;
+        let geom = select_scratch_geometry(cfg, rows, levers.row_group)?;
         let bt_cap = super::super::state::max_dsa_context(cfg).max(1);
-        let persist = std::env::var("METRALE_GLM_DSA_ALLOC_PER_STEP").as_deref() != Ok("1");
-        let batch_select = dsa_select_rows_enabled();
+        let persist = !levers.dsa_alloc_per_step;
+        let batch_select = levers.dsa_select_rows;
         Ok(Self {
             q_a: gpu.alloc(rows * (cfg.q_lora_rank * 2))?,
             q_resid: gpu.alloc(rows * (cfg.q_lora_rank * 2))?,

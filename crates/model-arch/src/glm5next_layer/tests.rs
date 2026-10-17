@@ -103,13 +103,15 @@ fn multi_seq_groups_cover_every_row_once_in_order() {
 /// the mHC `mix` scratch and the workspaces the loader sizes for `PREFILL_ROWS` rows.
 #[test]
 fn the_group_width_is_the_bit_identical_gemv_width_and_fits_every_launcher() {
-    use super::multi_seq_chunk_rows;
-    let w = multi_seq_chunk_rows();
+    let levers =
+        super::GlmLevers::from_settings(&metrale_model_layers::lever_equivalence::defaults())
+            .expect("the declared defaults resolve");
+    let w = levers.row_group;
     assert_eq!(
         w,
         metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M as usize
     );
-    assert!(w <= crate::glm5next_mhc::mhc_mix_max_tokens());
+    assert!(w <= crate::glm5next_mhc::mhc_mix_max_tokens(levers.prefill_rows));
     let loader = include_str!("../weight_loader/glm5_next_load/loader.rs");
     assert!(
         loader.contains(

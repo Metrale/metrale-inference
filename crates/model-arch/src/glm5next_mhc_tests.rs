@@ -17,12 +17,18 @@ fn the_kernels_mix_bound_is_hc_mult_four() {
     assert!(mix_hc(5) > 24, "hc_mult 5 would exceed the kernel's bound");
 }
 
-/// 2026-09-25: Without `METRALE_GLM_PREFILL_ROWS`, `prefill_rows()` is `PREFILL_ROWS` (16), so
-/// the bound is the 256-token floor.
+/// 2026-09-25: At the shipped `PREFILL_ROWS` (16) the bound is the 256-token floor.
+/// 2026-10-17: A wider prefill width raises it to that width, and nothing lowers it.
 #[test]
 fn the_mix_bound_never_goes_below_the_shipped_floor() {
-    assert_eq!(mhc_mix_max_tokens(), MHC_MIX_MAX_TOKENS);
-    assert!(mhc_mix_max_tokens() >= MHC_MIX_MAX_TOKENS);
+    let floor = MHC_MIX_MAX_TOKENS;
+    assert_eq!(
+        mhc_mix_max_tokens(crate::glm5next_layer::PREFILL_ROWS),
+        floor
+    );
+    assert_eq!(mhc_mix_max_tokens(1), floor);
+    assert_eq!(mhc_mix_max_tokens(floor), floor);
+    assert_eq!(mhc_mix_max_tokens(floor + 1), floor + 1);
 }
 
 /// 2026-09-25: Total `mix` scratch over 90 sites (45 text layers, 2 sites each) at
@@ -74,6 +80,7 @@ fn wide_token_counts_take_the_grouped_mix_kernel() {
         hc_base: DevicePtr(0x300),
         mix: DevicePtr(0x400),
         done: DevicePtr(0x480),
+        mix_tokens: crate::glm5next_mhc::MHC_MIX_MAX_TOKENS,
     };
     let first_mix = |t: u32, bf16: bool| {
         let from = gpu.launch_count();

@@ -63,12 +63,8 @@ pub(crate) mod levers;
 mod steps;
 mod types;
 pub(crate) mod wide_gemv;
-pub(crate) use levers::{
-    PREFILL_ROWS, ar_fused_post, cublas_wide_proj, dsa_batch_qidx, dsa_idx_proj_whole,
-    dsa_indexer_rows, dsa_verify_rows, mhc_fused, mhc_post_fold, moe_combine_split,
-    moe_combine_vec8, multi_seq_chunk_rows, multi_seq_chunks, router_rows, router_topk_rank,
-};
-pub use levers::{arena_lean, prefill_rows};
+pub use levers::{GlmLevers, arena_lean};
+pub(crate) use levers::{PREFILL_ROWS, multi_seq_chunks};
 pub use steps::{GroupSpan, SpanPiece, group_spans, prefill_span_groups};
 pub use types::{Glm5NextLayer, Glm5NextMhc, Glm5NextMixer, Glm5NextMlpSite};
 
@@ -220,11 +216,11 @@ impl TransformerLayer for Glm5NextLayer {
                 self.layer_idx
             );
         }
-        // 2026-09-25: A text layer runs the prompt in sub-chunks of `prefill_rows()` tokens
+        // 2026-09-25: A text layer runs the prompt in sub-chunks of `levers.prefill_rows` tokens
         // through `forward_k`. The MTP block (`mhc: None`) walks token by token, because
         // `forward_k` refuses a layer without a highway.
         let rows = if self.mhc.is_some() {
-            prefill_rows().min(cap)
+            self.levers.prefill_rows.min(cap)
         } else {
             1
         };
@@ -404,10 +400,10 @@ impl LayerCapabilities for Glm5NextLayer {
         true
     }
 
-    /// 2026-10-09: `prefill_rows()` for a text layer (`steps/prefill_spans.rs`); `None` for the
+    /// 2026-10-09: `levers.prefill_rows` for a text layer (`steps/prefill_spans.rs`); `None` for the
     /// MTP block.
     fn prefill_spans_rows(&self) -> Option<usize> {
-        self.mhc.is_some().then(prefill_rows)
+        self.mhc.is_some().then_some(self.levers.prefill_rows)
     }
 
     /// 2026-10-14: [`Glm5NextLayer::slot_graphs_stale`] (`types.rs`).

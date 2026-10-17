@@ -90,7 +90,8 @@ fn cfg_small() -> Glm5NextMlpConfig {
 }
 
 fn kernels(gpu: &MockGpuBackend) -> Glm5NextMlpKernels {
-    let mut k = Glm5NextMlpKernels::resolve(gpu).expect("mock resolves every kernel");
+    let mut k = Glm5NextMlpKernels::resolve(gpu, crate::glm5next_layer::GlmLevers::declared())
+        .expect("mock resolves every kernel");
     k.w4a4_quant_static = KernelHandle(QUANT);
     k.swiglu = KernelHandle(SWIGLU);
     k.moe_sort_by_expert = KernelHandle(SORT);

@@ -14,7 +14,7 @@ use metrale_cache::kv_cache::PagedKvCache;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
-use super::{Glm5NextDsaLayer, gemm};
+use super::Glm5NextDsaLayer;
 
 impl Glm5NextDsaLayer {
     /// 2026-10-08: `q_a_proj`, its RMSNorm into `q_resid`, `q_absorb` into `q_abs`, and
@@ -27,7 +27,7 @@ impl Glm5NextDsaLayer {
         stream: u64,
     ) -> Result<()> {
         let w = &self.workspace;
-        gemm(
+        self.gemm(
             gpu,
             self.kernels.gemm,
             self.kernels.gemv,
@@ -51,7 +51,7 @@ impl Glm5NextDsaLayer {
             .arg_u32(self.cfg.q_lora_rank as u32)
             .arg_f32(self.rms_eps)
             .launch(stream)?;
-        gemm(
+        self.gemm(
             gpu,
             self.kernels.gemm,
             self.kernels.gemv,
@@ -64,7 +64,7 @@ impl Glm5NextDsaLayer {
             self.cfg.q_lora_rank,
             stream,
         )?;
-        gemm(
+        self.gemm(
             gpu,
             self.kernels.gemm,
             self.kernels.gemv,
@@ -134,7 +134,7 @@ impl Glm5NextDsaLayer {
     ) -> Result<()> {
         use crate::glm5next_layer::profile;
         let t_proj = profile::start();
-        gemm(
+        self.gemm(
             gpu,
             self.kernels.gemm,
             self.kernels.gemv,
@@ -199,7 +199,7 @@ impl Glm5NextDsaLayer {
                     stream,
                 )?;
             } else {
-                gemm(
+                self.gemm(
                     gpu,
                     k.gemm_f32,
                     k.gemv_f32,
@@ -254,7 +254,7 @@ impl Glm5NextDsaLayer {
         let (d, h) = (self.cfg.index_head_dim, self.cfg.hidden);
         let group = metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M as usize;
         let _stable = crate::glm5next_fp8_dense::stable_input(hidden);
-        let whole = crate::glm5next_layer::dsa_idx_proj_whole();
+        let whole = self.levers.dsa_idx_proj_whole;
         for (weight, out) in [
             (self.weights.wk, w.stage_k),
             (self.weights.compress_gate, w.stage_gate),
@@ -273,7 +273,7 @@ impl Glm5NextDsaLayer {
                 crate::glm5next_layer::multi_seq_chunks(n, group)
             };
             for (r0, m) in chunks {
-                gemm(
+                self.gemm(
                     gpu,
                     self.kernels.gemm,
                     self.kernels.gemv,

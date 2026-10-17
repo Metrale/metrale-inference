@@ -61,6 +61,14 @@ const TOP_K: usize = 4;
 /// 2026-10-09: 128 is the grouped prefill GEMM's default row floor.
 const MAX_ROWS: usize = 128;
 
+/// 2026-10-17: The GLM levers at their declared defaults, from a fixed map, not the process
+/// environment.
+fn glm_levers() -> Result<metrale_model_arch::glm5next_layer::GlmLevers> {
+    metrale_model_arch::glm5next_layer::GlmLevers::from_settings(
+        &metrale_model_layers::lever_equivalence::defaults(),
+    )
+}
+
 fn gpu() -> Result<MetraleCudaBackend> {
     let ordinal = std::env::var("GLM_EXPERT_TP_GPU_ORDINAL")?.parse()?;
     let target = metrale_kernels::ptx_for_exact_target("glm-5.3-flash", "nvfp4")
@@ -284,7 +292,7 @@ impl Site<'_> {
 #[ignore = "requires an explicitly selected idle CUDA device and the glm-5.3-flash nvfp4 kernels"]
 fn tp_sliced_experts_sum_to_the_whole() -> Result<()> {
     let gpu = gpu()?;
-    let k = Glm5NextMlpKernels::resolve(&gpu)?;
+    let k = Glm5NextMlpKernels::resolve(&gpu, glm_levers()?)?;
     ensure!(
         k.w4a4_expert_rows() >= 16,
         "the W4A4 slot kernels did not resolve"

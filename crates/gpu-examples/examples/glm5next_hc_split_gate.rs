@@ -24,9 +24,7 @@ use anyhow::{Result, bail};
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
-use metrale_model_arch::glm5next_mhc::{
-    Glm5NextMhcKernels, Glm5NextMhcSiteWeights, glm_hc_pre, mhc_mix_max_tokens,
-};
+use metrale_model_arch::glm5next_mhc::{Glm5NextMhcKernels, Glm5NextMhcSiteWeights, glm_hc_pre};
 
 /// 2026-09-25: `(hidden, hc_mult, tokens)`. The first case uses GLM-5.3's hidden size and
 /// `hc_mult`, and it is the only case the timing block runs.
@@ -114,8 +112,8 @@ fn main() -> Result<()> {
     );
 
     for (hid, hc, t) in CASES {
-        if t > mhc_mix_max_tokens() {
-            bail!("case T={t} exceeds mhc_mix_max_tokens()");
+        if t > metrale_gpu_examples::mhc_mix_tokens()? {
+            bail!("case T={t} exceeds the mHC mix bound");
         }
         let m = mix_hc(hc);
         let hc_dim = hc * hid;
@@ -169,7 +167,8 @@ fn main() -> Result<()> {
             hc_fn_bf16: false,
             hc_scale: d_scale,
             hc_base: d_base,
-            mix: gpu.alloc(mhc_mix_max_tokens() * m * 4)?,
+            mix: gpu.alloc(metrale_gpu_examples::mhc_mix_tokens()? * m * 4)?,
+            mix_tokens: metrale_gpu_examples::mhc_mix_tokens()?,
             // 2026-10-09: Read only by the fused kernel, which this gate does not launch.
             done: DevicePtr(0),
         };
@@ -259,7 +258,8 @@ fn main() -> Result<()> {
             hc_fn_bf16: true,
             hc_scale: d_scale,
             hc_base: d_base,
-            mix: gpu.alloc(mhc_mix_max_tokens() * m * 4)?,
+            mix: gpu.alloc(metrale_gpu_examples::mhc_mix_tokens()? * m * 4)?,
+            mix_tokens: metrale_gpu_examples::mhc_mix_tokens()?,
             // 2026-10-09: Read only by the fused kernel, which this gate does not launch.
             done: DevicePtr(0),
         };

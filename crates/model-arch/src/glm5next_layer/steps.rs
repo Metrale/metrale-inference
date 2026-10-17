@@ -120,7 +120,7 @@ impl Glm5NextLayer {
     ) -> Result<()> {
         let (kt, ht, hct) = (k as u32, self.hidden as u32, mhc.hc_mult as u32);
         let iters = mhc.sinkhorn_iters as u32;
-        if mhc_fused() {
+        if self.levers.mhc_fused {
             crate::glm5next_mhc_fused::glm_hc_pre_norm(
                 gpu,
                 &mhc.kernels,

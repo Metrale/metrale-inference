@@ -99,9 +99,7 @@ impl Glm5NextKdaLayer {
         if !self.seq_tokens_ready() {
             bail!("--prefill-tail-mode merge: the per-sequence token kernels cannot run here");
         }
-        if super::chunk16::kda_chunk_scan_min_rows()?.is_some()
-            || crate::glm5next_layer::levers::kda_chunk_prefill()
-        {
+        if super::chunk16::kda_chunk_scan_min_rows()?.is_some() || self.levers.kda_chunk_prefill {
             bail!(
                 "--prefill-tail-mode merge (the default): not beside METRALE_GLM_KDA_CHUNK_SCAN \
                  or METRALE_GLM_KDA_CHUNK_PREFILL; pass --prefill-tail-mode split beside them"

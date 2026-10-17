@@ -71,7 +71,7 @@ pub(super) fn router_topk(
     rows: usize,
     stream: u64,
 ) -> Result<()> {
-    let (func, block) = topk_launch(k, cfg, crate::glm5next_layer::router_topk_rank())?;
+    let (func, block) = topk_launch(k, cfg, k.levers.router_topk_rank)?;
     KernelLaunch::new(gpu, func)
         .grid([rows as u32, 1, 1])
         .block([block, 1, 1])
@@ -169,7 +169,7 @@ pub(super) fn combine(
     indexed: bool,
     stream: u64,
 ) -> Result<()> {
-    let on = crate::glm5next_layer::moe_combine_vec8();
+    let on = k.levers.moe_combine_vec8;
     if on {
         // 2026-10-15: The readback at the first combine of any size, so a run that never
         // reaches the row floor still shows the lever armed.
@@ -181,10 +181,7 @@ pub(super) fn combine(
             )
         });
     }
-    let levers = (
-        crate::glm5next_layer::moe_combine_split(),
-        vec8_for(on, rows),
-    );
+    let levers = (k.levers.moe_combine_split, vec8_for(on, rows));
     combine_with(gpu, k, cfg, ws, out, rows, indexed, levers, stream)
 }
 

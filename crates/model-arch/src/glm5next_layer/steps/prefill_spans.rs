@@ -7,11 +7,11 @@
 //!
 //! Owner: model-arch (GLM-5.3).
 //! Invariants:
-//! - Each sequence is cut into the pieces its own `prefill` runs: `prefill_rows()` rows from its
+//! - Each sequence is cut into the pieces its own `prefill` runs: `GlmLevers::prefill_rows` rows from its
 //!   first row on, the last piece shorter. A piece is never split across groups, so its mixer
 //!   call (KDA `decode_k` or the chunked scan, DSA `decode_k` with `is_prefill`) has the same
 //!   rows, position and state as in the single-sequence prefill.
-//! - Groups hold whole pieces in pass order, at most `prefill_rows()` rows, so a sequence's
+//! - Groups hold whole pieces in pass order, at most `GlmLevers::prefill_rows` rows, so a sequence's
 //!   pieces step its state in order and every group fits the mHC `mix` scratch and the MLP
 //!   workspace the single-sequence prefill fits.
 //! - Pieces share a group only where the layer's MLP computes a row the same whatever its
@@ -33,7 +33,6 @@
 
 use super::prefill_capture::{CapturePoint, capture_points, kda_ordinal};
 use super::*;
-use crate::glm5next_layer::levers::kda_chunk_prefill;
 use metrale_model_layers::layer::PrefillSpan;
 
 /// 2026-10-09: One piece of a multi-sequence prefill pass: rows `t0..t0 + rows` of sequence
@@ -159,9 +158,10 @@ impl Glm5NextLayer {
             .iter()
             .map(|p| p.iter().map(|&(at, _)| at).collect())
             .collect();
-        for (chunk, group) in prefill_span_groups(&rows, &cuts, prefill_rows().min(cap), share)
-            .into_iter()
-            .enumerate()
+        for (chunk, group) in
+            prefill_span_groups(&rows, &cuts, self.levers.prefill_rows.min(cap), share)
+                .into_iter()
+                .enumerate()
         {
             let base = group[0].row;
             let m: usize = group.iter().map(|p| p.rows).sum();
@@ -278,7 +278,7 @@ impl Glm5NextLayer {
                     conv: st.conv_state,
                     recurrent: st.h_state,
                 };
-                if k > 1 && kda_chunk_prefill() {
+                if k > 1 && self.levers.kda_chunk_prefill {
                     layer.prefill(ctx.gpu, x, k, &kda, ws, stream)?;
                 } else {
                     layer.decode_k(ctx.gpu, x, k, &kda, ws, &[], stream)?;

@@ -96,6 +96,9 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
         lc: metrale_model_layers::load_context::LoadContext<'_>,
     ) -> Result<Vec<Box<dyn TransformerLayer>>> {
         let skeleton = Glm5NextTextSkeleton::from_config(config)?;
+        // 2026-10-17: The GLM levers, resolved once and stored on every layer built here.
+        let levers = crate::glm5next_layer::GlmLevers::from_settings(lc.settings)?;
+        levers.announce();
         let kda_cfg = Glm5NextKdaConfig::from_model_config(config);
         kda_cfg.validate()?;
         // 2026-10-16: Refuses a bad `METRALE_GLM_LAYER_STREAM` before any layer is built.
@@ -125,7 +128,7 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
             crate::glm5next_dsa::paged::text_stack_indexer_cache(lc.settings),
         )?;
         let dsa_layer_kernels = Glm5NextDsaLayerKernels::resolve(gpu)?;
-        let mlp_kernels = Glm5NextMlpKernels::resolve(gpu)?;
+        let mlp_kernels = Glm5NextMlpKernels::resolve(gpu, levers)?;
         let mhc_kernels_probe = Glm5NextMhcKernels::resolve(gpu)?;
         let rms_norm_k = gpu.kernel("rms_norm_vanilla", "rms_norm_vanilla")?;
         // 2026-09-25: Only a layer without mHC (the MTP layer) uses `add_k`, and it
@@ -135,13 +138,13 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
 
         // 2026-09-25: Every KDA layer shares one workspace (one `kda_cfg`). The
         // workspaces are sized for `verify_k` rows, the largest of the batched
-        // GEMV's `DENSE_GEMV_BATCHM_MAX_M`, `PREFILL_ROWS` and `prefill_rows()`
+        // GEMV's `DENSE_GEMV_BATCHM_MAX_M`, `PREFILL_ROWS` and `levers.prefill_rows`
         // (`METRALE_GLM_PREFILL_ROWS`).
         let verify_k = (metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M as usize)
             .max(crate::glm5next_layer::PREFILL_ROWS)
-            .max(crate::glm5next_layer::prefill_rows())
+            .max(levers.prefill_rows)
             // 2026-10-09: `METRALE_GLM_ROW_GROUP`, the batched decode/verify group width.
-            .max(crate::glm5next_layer::multi_seq_chunk_rows());
+            .max(levers.row_group);
         let kda_ws = std::sync::Arc::new(crate::glm5next_kda::Glm5NextKdaWorkspace::new(
             gpu, &kda_cfg, verify_k,
         )?);
@@ -154,7 +157,7 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
             verify_k,
             crate::glm5next_mlp::forward::moe_w4a4_grouped()?,
         );
-        let shared_mlp_ws = if crate::glm5next_mlp::forward::mlp_ws_shared() {
+        let shared_mlp_ws = if levers.mlp_ws_shared {
             tracing::info!(
                 "GLM MLP workspace: SHARED, 1 x {:.1} MB for {} layers at {verify_k} rows \
                  (per-layer would be {:.1} MB)",
@@ -176,8 +179,8 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
 
         let dsa_plan = crate::glm5next_dsa::tp::DsaTpPlan::from_config(config, &dsa_cfg)?;
         // 2026-10-12: One DSA workspace for the stack unless `METRALE_GLM_DSA_WS_SHARED=0`
-        // (`dsa_ws_shared`); sized like the KDA and MLP ones, for `verify_k` rows.
-        let shared_dsa_ws = if crate::glm5next_dsa::layer::dsa_ws_shared() {
+        // (`levers.dsa_ws_shared`); sized like the KDA and MLP ones, for `verify_k` rows.
+        let shared_dsa_ws = if levers.dsa_ws_shared {
             tracing::info!(
                 "GLM DSA workspace: SHARED, 1 for {} DSA layers at {verify_k} rows",
                 skeleton
@@ -187,12 +190,15 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                     .count()
             );
             Some(std::sync::Arc::new(
-                crate::glm5next_dsa::layer::Glm5NextDsaWorkspace::new(gpu, &dsa_cfg, verify_k)?,
+                crate::glm5next_dsa::layer::Glm5NextDsaWorkspace::new(
+                    gpu, &dsa_cfg, verify_k, &levers,
+                )?,
             ))
         } else {
             None
         };
         let last = skeleton.layers.len() - 1;
+        let mix_tokens = crate::glm5next_mhc::mhc_mix_max_tokens(levers.prefill_rows);
         let mut out: Vec<Box<dyn TransformerLayer>> = Vec::with_capacity(skeleton.layers.len());
 
         // 2026-09-25: The KV pool has `num_attention_layers()` slots, which counts
@@ -218,7 +224,13 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                     let sharded = KdaShardedSource::new(&src, &kda_plan)?;
                     let (w, _report) = bind_kda_weights(gpu, &kda_cfg, idx, &sharded)?;
                     Glm5NextMixer::Kda {
-                        layer: Box::new(Glm5NextKdaLayer::new(idx, kda_cfg, w, kda_kernels)?),
+                        layer: Box::new(Glm5NextKdaLayer::new(
+                            idx,
+                            kda_cfg,
+                            w,
+                            kda_kernels,
+                            levers,
+                        )?),
                         ws: kda_ws.clone(),
                         cfg: kda_cfg,
                     }
@@ -227,8 +239,8 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                     let load = |n: &str| src.f32(n);
                     let w = build_dsa_weights(gpu, &dsa_cfg, &dsa_plan, &load)?;
                     Glm5NextMixer::Dsa(Box::new(Glm5NextDsaLayer {
-                        persist_bt: std::env::var("METRALE_GLM_DSA_ALLOC_PER_STEP").as_deref()
-                            != Ok("1"),
+                        persist_bt: !levers.dsa_alloc_per_step,
+                        levers,
                         cfg: dsa_cfg,
                         weights: w,
                         kernels: dsa_layer_kernels,
@@ -239,7 +251,7 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                             Some(ws) => ws.clone(),
                             None => std::sync::Arc::new(
                                 crate::glm5next_dsa::layer::Glm5NextDsaWorkspace::new(
-                                    gpu, &dsa_cfg, verify_k,
+                                    gpu, &dsa_cfg, verify_k, &levers,
                                 )?,
                             ),
                         },
@@ -320,12 +332,26 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
             let mhc = if sl.hyper_connection {
                 Some(Glm5NextMhc {
                     kernels: mhc_kernels_probe,
-                    attn: bind_mhc_site(gpu, &src, "attn", config.hc_mult, config.hidden_size)?,
-                    ffn: bind_mhc_site(gpu, &src, "ffn", config.hc_mult, config.hidden_size)?,
+                    attn: bind_mhc_site(
+                        gpu,
+                        &src,
+                        "attn",
+                        config.hc_mult,
+                        config.hidden_size,
+                        mix_tokens,
+                    )?,
+                    ffn: bind_mhc_site(
+                        gpu,
+                        &src,
+                        "ffn",
+                        config.hc_mult,
+                        config.hidden_size,
+                        mix_tokens,
+                    )?,
                     hc_mult: config.hc_mult,
                     sinkhorn_iters: config.hc_sinkhorn_iters,
                     hc_eps: config.hc_eps,
-                    fold_streams: if crate::glm5next_layer::mhc_post_fold() {
+                    fold_streams: if levers.mhc_post_fold {
                         gpu.alloc(config.hc_mult * config.hidden_size * 4)?
                     } else {
                         DevicePtr::NULL
@@ -339,7 +365,7 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
             // prefill sub-chunk at this TP width (a no-op once reserved).
             crate::glm5next_sp_mhc::reserve(
                 gpu,
-                crate::glm5next_layer::prefill_rows(),
+                levers.prefill_rows,
                 config.hidden_size,
                 mlp_cfg.tp_world_size,
             )?;
@@ -379,6 +405,7 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                 is_last: idx == last,
                 l2_warm: l2.clone(),
                 keep_slot_graphs: lc.levers.glm_keep_slot_graphs,
+                levers,
             }));
         }
         if let Some(l2) = &l2 {

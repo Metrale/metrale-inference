@@ -31,7 +31,7 @@ use metrale_comm::PeerPartials;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
-use crate::glm5next_mhc::{Glm5NextMhcKernels, Glm5NextMhcSiteWeights, mhc_mix_max_tokens};
+use crate::glm5next_mhc::{Glm5NextMhcKernels, Glm5NextMhcSiteWeights};
 use crate::glm5next_mhc_fused::{HC_PRE_NORM_ROWS_MIN_TOKENS, hc_pre_norm_refusal};
 use crate::glm5next_mhc_tok::HC_PRE_NORM_TOK;
 
@@ -141,7 +141,7 @@ pub fn launch(
         a.site.hc_fn_bf16,
         "glm5next_hc_post_pre_norm_tok4: the site's hc_fn is FP32; the kernel reads BF16 only"
     );
-    let mix_cap = mhc_mix_max_tokens();
+    let mix_cap = a.site.mix_tokens;
     ensure!(
         a.num_tokens as usize <= mix_cap,
         "glm5next_hc_post_pre_norm_tok4: {} tokens exceed the {mix_cap}-token `mix` scratch",

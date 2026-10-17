@@ -127,22 +127,6 @@ pub struct Glm5NextMlpWorkspace {
     shared_fork: Option<shared_fork::SharedFork>,
 }
 
-/// 2026-09-25: Whether the text layers share one MLP workspace: yes unless
-/// `METRALE_GLM_MLP_WS_SHARED=0`. Read once.
-pub fn mlp_ws_shared() -> bool {
-    static S: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *S.get_or_init(|| {
-        let shared = std::env::var("METRALE_GLM_MLP_WS_SHARED").as_deref() != Ok("0");
-        if !shared {
-            tracing::warn!(
-                "GLM MLP workspace: PER-LAYER (METRALE_GLM_MLP_WS_SHARED=0) — the pre-P2 \
-                 allocation, one scratch per layer"
-            );
-        }
-        shared
-    })
-}
-
 impl Glm5NextMlpWorkspace {
     /// 2026-10-11: The gate, up and activated buffers of a dense pass (`forward_dense`).
     pub(super) fn dense_scratch(&self) -> DenseScratch {

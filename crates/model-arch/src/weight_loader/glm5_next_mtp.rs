@@ -62,15 +62,18 @@ pub fn load_glm5next_mtp_module(
 
     // 2026-10-13: The drafter block's context is capped (`METRALE_GLM_MTP_CONTEXT_CAP`), so its
     // indexer cache, workspace and ceiling grids are sized at the cap, not `--max-seq-len`.
+    // 2026-10-17: The GLM levers, resolved from the same settings as the text stack's.
+    let levers = crate::glm5next_layer::GlmLevers::from_settings(lc.settings)?;
     let dsa_cfg = crate::glm5next_mtp_head::drafter_dsa_config(config)?;
     let mlp_cfg = Glm5NextMlpConfig::from_config(config)?;
     let dsa_plan = crate::glm5next_dsa::tp::DsaTpPlan::from_config(config, &dsa_cfg)?;
     let dsa_layer_kernels = Glm5NextDsaLayerKernels::resolve(gpu)?;
     let dsa_kernels = Glm5NextDsaKernels::resolve(gpu)?;
-    let mlp_kernels = Glm5NextMlpKernels::resolve(gpu)?;
+    let mlp_kernels = Glm5NextMlpKernels::resolve(gpu, levers)?;
 
     let mut mixer = Glm5NextMixer::Dsa(Box::new(Glm5NextDsaLayer {
-        persist_bt: std::env::var("METRALE_GLM_DSA_ALLOC_PER_STEP").as_deref() != Ok("1"),
+        persist_bt: !levers.dsa_alloc_per_step,
+        levers,
         cfg: dsa_cfg,
         weights: build_dsa_weights(gpu, &dsa_cfg, &dsa_plan, &load)?,
         kernels: dsa_layer_kernels,
@@ -83,6 +86,7 @@ pub fn load_glm5next_mtp_module(
             gpu,
             &dsa_cfg,
             crate::glm5next_mtp_head::drafter_dsa_rows(),
+            &levers,
         )?),
         layer_idx: idx,
         // 2026-09-25: Sole consumer of its own one-layer KV pool.
@@ -150,6 +154,7 @@ pub fn load_glm5next_mtp_module(
             // 2026-10-10: The MTP block has no mHC reduce to hide a warm under.
             l2_warm: None,
             keep_slot_graphs: lc.levers.glm_keep_slot_graphs,
+            levers,
         },
         eh_proj: DenseWeight {
             weight: store.get(&format!("{prefix}eh_proj.weight"))?.ptr,

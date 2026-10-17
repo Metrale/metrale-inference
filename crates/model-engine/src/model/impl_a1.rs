@@ -270,7 +270,7 @@ impl TransformerModel {
         // wrong extent. `rank_agree::assert_ranks_agree` checks them before the
         // first token.
         if let Some(ref comm) = comm {
-            comm_setup::assert_rank_levers_agree(gpu.as_ref(), comm)?;
+            comm_setup::assert_rank_levers_agree(gpu.as_ref(), comm, &settings)?;
         }
 
         // 2026-09-25: At world size 2, register the reduce targets

@@ -53,7 +53,7 @@ pub struct Glm5NextLayer {
     pub mlp_cfg: Glm5NextMlpConfig,
     pub mlp_kernels: Glm5NextMlpKernels,
     /// 2026-09-25: MLP scratch. The text layers share one workspace unless
-    /// `METRALE_GLM_MLP_WS_SHARED=0` (`mlp_ws_shared`); the MTP block builds its own.
+    /// `METRALE_GLM_MLP_WS_SHARED=0` (`GlmLevers::mlp_ws_shared`); the MTP block builds its own.
     pub mlp_ws: Arc<Glm5NextMlpWorkspace>,
     /// 2026-09-25: `None` for the MTP block, which runs `forward_one_plain`. Every text layer has
     /// one: the skeleton marks every text layer `hyper_connection`.
@@ -81,6 +81,8 @@ pub struct Glm5NextLayer {
     pub l2_warm: Option<Arc<l2_warm::L2Warm>>,
     /// 2026-10-17: `scheduler.glm_keep_slot_graphs` at construction ([`Self::slot_graphs_stale`]).
     pub keep_slot_graphs: bool,
+    /// 2026-10-17: The GLM layer levers, resolved once at load ([`GlmLevers::from_settings`]).
+    pub levers: super::GlmLevers,
 }
 
 impl Glm5NextLayer {

@@ -45,7 +45,8 @@ fn cfg(num_experts: usize) -> Glm5NextMlpConfig {
 
 fn kernels(rank: u64) -> Glm5NextMlpKernels {
     let gpu = MockGpuBackend::new();
-    let mut k = Glm5NextMlpKernels::resolve(&gpu).expect("mock resolves every kernel");
+    let mut k = Glm5NextMlpKernels::resolve(&gpu, crate::glm5next_layer::GlmLevers::declared())
+        .expect("mock resolves every kernel");
     k.router = KernelHandle(BASE);
     k.router_rank = KernelHandle(rank);
     k

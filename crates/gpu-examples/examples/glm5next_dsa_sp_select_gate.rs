@@ -339,7 +339,7 @@ fn shape(
 /// ceiling's geometry at `select_scratch_rows` rows, the output at `MAX_ROWS`. 2026-10-17: the
 /// geometry from the workspace's own `select_scratch_geometry`.
 fn serve_scratch(gpu: &dyn GpuBackend, c: &Glm5NextDsaConfig) -> Result<DsaSelectScratch> {
-    let geom = select_scratch_geometry(c, MAX_ROWS)?;
+    let geom = select_scratch_geometry(c, MAX_ROWS, metrale_gpu_examples::glm_levers()?.row_group)?;
     println!("scratch rows {} at {} tokens", geom.q_rows, c.max_context);
     DsaSelectScratch::alloc_rows(gpu, c, &geom, MAX_ROWS)
 }

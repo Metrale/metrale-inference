@@ -49,7 +49,7 @@ pub fn config() -> Glm5NextMlpConfig {
 pub fn run(gpu: &MetraleCudaBackend, s: &Setup, f: &Fixture, st: u64) -> Result<()> {
     let g: &dyn GpuBackend = gpu;
     let c = config();
-    let new = Glm5NextMlpKernels::resolve(g)?;
+    let new = Glm5NextMlpKernels::resolve(g, metrale_gpu_examples::glm_levers()?)?;
     ensure!(
         new.w4a4_moe_slots_sweep.0 != 0,
         "w4a4_gemv_mx8_moe_slots_sweep did not resolve"

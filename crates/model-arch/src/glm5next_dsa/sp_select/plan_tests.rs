@@ -36,7 +36,12 @@ fn chunk_ends() -> Vec<(usize, usize, usize)> {
         ..passes_tests::cfg()
     };
     let gpu = MockGpuBackend::new();
-    let geom = select_scratch_geometry(&c, SERVE_ROWS).unwrap();
+    let geom = select_scratch_geometry(
+        &c,
+        SERVE_ROWS,
+        crate::glm5next_layer::GlmLevers::declared().row_group,
+    )
+    .unwrap();
     let s = DsaSelectScratch::alloc_rows(&gpu, &c, &geom, SERVE_ROWS).unwrap();
     (1..=CEILING / CHUNK)
         .map(|n| {

@@ -39,7 +39,7 @@ pub(super) fn router_logits(
     // 2026-10-11: Under `METRALE_GLM_BATCH_INVARIANT` every row count takes the batched GEMV
     // (`glm_mm` splits a wider launch into 16-row launches), never cuBLASLt.
     let bi = crate::glm5next_batch_inv::enabled()?;
-    if rows > max_m && !bi && crate::glm5next_layer::cublas_wide_proj() {
+    if rows > max_m && !bi && k.levers.cublas_wide_proj {
         return metrale_model_layers::layers::ops::cublas_bf16_proj_dense_f32_out(
             x,
             router,
@@ -62,6 +62,7 @@ pub(super) fn router_logits(
     if batch {
         return gemm(
             gpu,
+            k.levers.cublas_wide_proj,
             k.gemm_f32,
             k.gemv_f32,
             k.batchm_f32(),
@@ -77,6 +78,7 @@ pub(super) fn router_logits(
     for r in 0..rows {
         gemm(
             gpu,
+            k.levers.cublas_wide_proj,
             k.gemm_f32,
             k.gemv_f32,
             KernelHandle(0),

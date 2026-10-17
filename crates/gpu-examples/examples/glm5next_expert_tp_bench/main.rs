@@ -194,7 +194,7 @@ fn main() -> Result<()> {
     let gpu = MetraleCudaBackend::new(ordinal, &target.modules)?;
     let g: &dyn GpuBackend = &gpu;
     let stream = g.create_stream()?;
-    let k = Glm5NextMlpKernels::resolve(g)?;
+    let k = Glm5NextMlpKernels::resolve(g, metrale_gpu_examples::glm_levers()?)?;
     let kern = |quant, slots, sweep| Kern {
         quant,
         row_union: k.moe_row_union,

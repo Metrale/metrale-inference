@@ -250,7 +250,13 @@ fn main() -> Result<()> {
     };
     ok &= run_suite(
         gpu,
-        Glm5NextKdaLayer::new(usize::MAX, cfg, syn, kernels)?,
+        Glm5NextKdaLayer::new(
+            usize::MAX,
+            cfg,
+            syn,
+            kernels,
+            metrale_gpu_examples::glm_levers()?,
+        )?,
         &ws,
         dm,
         cfg,
@@ -305,7 +311,10 @@ fn main() -> Result<()> {
         tot_unknown += rep.unknown_self_attn.len();
         tot_bytes += rep.bytes;
         tot_nonattn += rep.non_attn_seen;
-        family.push((l, Glm5NextKdaLayer::new(l, cfg, w, kernels)?));
+        family.push((
+            l,
+            Glm5NextKdaLayer::new(l, cfg, w, kernels, metrale_gpu_examples::glm_levers()?)?,
+        ));
     }
     println!(
         "  bound {tot_bound}/{} self_attn tensors across {} layers · UNKNOWN {tot_unknown} · \
@@ -347,7 +356,7 @@ fn main() -> Result<()> {
         }
         ok &= run_suite(
             gpu,
-            Glm5NextKdaLayer::new(l, cfg, w, kernels)?,
+            Glm5NextKdaLayer::new(l, cfg, w, kernels, metrale_gpu_examples::glm_levers()?)?,
             &ws,
             dm,
             cfg,

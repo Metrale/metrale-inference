@@ -126,7 +126,10 @@ fn expert_proj(
 }
 
 fn routed(gpu: &MetraleCudaBackend, stream: u64) -> Result<()> {
-    let (c, k) = (cfg(), Glm5NextMlpKernels::resolve(gpu)?);
+    let (c, k) = (
+        cfg(),
+        Glm5NextMlpKernels::resolve(gpu, metrale_gpu_examples::glm_levers()?)?,
+    );
     let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
     let experts: Vec<Glm5NextExpertWeights> = (0..c.local_experts)
         .map(|_| -> Result<_> {

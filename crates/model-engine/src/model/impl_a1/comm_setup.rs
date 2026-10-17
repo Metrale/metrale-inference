@@ -18,6 +18,7 @@ use metrale_gpu_runtime::gpu::GpuBackend;
 pub(super) fn assert_rank_levers_agree(
     gpu: &dyn GpuBackend,
     comm: &Arc<dyn metrale_comm::CommBackend>,
+    settings: &metrale_settings::InferenceServerSettings,
 ) -> Result<()> {
     metrale_model_layers::speculative::check_k2_fused_wire(
         metrale_model_layers::speculative::k2_fused_requested(),
@@ -31,7 +32,8 @@ pub(super) fn assert_rank_levers_agree(
             // sub-chunk issues its own collectives.
             (
                 "METRALE_GLM_PREFILL_ROWS",
-                metrale_model_arch::glm5next_layer::prefill_rows() as u64,
+                metrale_model_arch::glm5next_layer::GlmLevers::from_settings(settings)?.prefill_rows
+                    as u64,
             ),
             // 2026-09-25: Performance only (the MLP reduces once per site
             // whichever arm runs); checked because the check is free.

@@ -4,7 +4,7 @@
 //! that shape the collective schedule.
 //!
 //! Such a scalar is read independently on each rank. For example,
-//! [`metrale_model_arch::glm5next_layer::prefill_rows`] (`METRALE_GLM_PREFILL_ROWS`) sets the row
+//! `GlmLevers::prefill_rows` (`METRALE_GLM_PREFILL_ROWS`) sets the row
 //! count of each prefill sub-chunk, and each sub-chunk issues its own `reduce_partial`, so a skew
 //! between ranks is a hang or a reduce over the wrong extent rather than a perf difference.
 //! Rank 0 broadcasts its values, every rank compares them with its own, and a mismatch fails

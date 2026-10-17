@@ -102,7 +102,13 @@ fn the_workspace_outputs_every_row_and_passes_the_capped_rows() {
         v_head_dim: 256,
         max_context: 262_144,
     };
-    let w = Glm5NextDsaWorkspace::new(&gpu, &c, 2048).unwrap();
+    let w = Glm5NextDsaWorkspace::new(
+        &gpu,
+        &c,
+        2048,
+        &crate::glm5next_layer::GlmLevers::declared(),
+    )
+    .unwrap();
     let at_ceiling = DsaSelectGeometry::plan(&c, 262_144, 2048).unwrap();
     assert_eq!(w.select.rows_per_pass(&at_ceiling), 256);
     let at_32k = DsaSelectGeometry::plan(&c, 32_768, 2048).unwrap();

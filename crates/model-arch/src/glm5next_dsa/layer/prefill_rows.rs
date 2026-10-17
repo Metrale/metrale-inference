@@ -19,7 +19,7 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 use super::super::state::Glm5NextDsaState;
-use super::{Glm5NextDsaLayer, gemm};
+use super::Glm5NextDsaLayer;
 
 impl Glm5NextDsaLayer {
     /// 2026-10-09: `out[r] = a[r] @ wt^T` (FP32 out, `n_out` wide, K = `kk`, `a` rows `kk` BF16
@@ -40,7 +40,7 @@ impl Glm5NextDsaLayer {
         let group = metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M as usize;
         let k = &self.kernels;
         for (r0, m) in crate::glm5next_layer::multi_seq_chunks(n, group) {
-            gemm(
+            self.gemm(
                 gpu,
                 k.gemm_f32,
                 k.gemv_f32,
@@ -90,7 +90,7 @@ impl Glm5NextDsaLayer {
         // 2026-10-10: Under `METRALE_GLM_DSA_BATCH_QIDX=1` the head weights of the sub-chunk take
         // one cuBLASLt FP32-out GEMM too, as the selector query does (`select_rows_batched`);
         // another summation order than the per-row GEMV, so it rides on that opt-in lever.
-        if crate::glm5next_layer::dsa_batch_qidx() {
+        if self.levers.dsa_batch_qidx {
             metrale_model_layers::layers::ops::cublas_bf16_proj_dense_f32_out(
                 hidden,
                 self.weights.weights_proj,

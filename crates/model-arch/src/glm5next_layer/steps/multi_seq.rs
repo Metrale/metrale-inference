@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-08: `forward_multi`, the batched multi-sequence decode body: one token for each of
-//! `n` sequences through the layer, the rows in groups of at most `multi_seq_chunk_rows()`.
+//! `n` sequences through the layer, the rows in groups of at most `GlmLevers::row_group`.
 //! 2026-10-09: Both it and the batched speculative verify (`verify_multi.rs`, `ks[i]` rows for
 //! sequence `i`) run through `forward_spans`; the decode is the case of one row per sequence.
 //!
@@ -87,7 +87,7 @@ pub(in crate::glm5next_layer) enum KdaRowKeep {
 
 impl Glm5NextLayer {
     /// 2026-10-08: One decode token for each of `num_seqs` sequences, in groups of
-    /// `multi_seq_chunk_rows()` rows, each group through `forward_rows_with` with a per-row
+    /// `GlmLevers::row_group` rows, each group through `forward_rows_with` with a per-row
     /// mixer. A DSA layer reads each row's position, KV slot, `seq_len` and block table from
     /// `ctx.attn_metadata`, which must hold at least `num_seqs` rows; a KDA layer reads each
     /// row's pool state. Errors on a layer without a hyper-connection.
@@ -125,7 +125,7 @@ impl Glm5NextLayer {
 
     /// 2026-10-09: `ks[s]` rows for each sequence `s`, sequence-major in `hidden`: row `t` of
     /// sequence `s` is its token at position `seq_lens[s] + t`. The rows run in groups of
-    /// `multi_seq_chunk_rows()` through `forward_rows_with`. A KDA layer steps each sequence's
+    /// `GlmLevers::row_group` through `forward_rows_with`. A KDA layer steps each sequence's
     /// state through its rows in order and keeps what `keep[s]` asks (`None`: nothing); a DSA
     /// layer runs `decode_spans` over the group's sequences. Errors on a layer without a
     /// hyper-connection or when the rows pass the highway. 2026-10-13: `path` names the caller
@@ -194,7 +194,7 @@ impl Glm5NextLayer {
             Glm5NextMixer::Dsa(_) => Vec::new(),
         };
         let row_bytes = self.hidden * 2;
-        for (chunk, (base, m)) in multi_seq_chunks(total, multi_seq_chunk_rows())
+        for (chunk, (base, m)) in multi_seq_chunks(total, self.levers.row_group)
             .into_iter()
             .enumerate()
         {

@@ -64,6 +64,7 @@ pub fn forward_dense(
     if !crate::glm5next_w4a16_dense::proj_group(gpu, &group, x, m, cfg.hidden, stream)? {
         gemm(
             gpu,
+            k.levers.cublas_wide_proj,
             k.gemm,
             k.gemv,
             k.batchm(),
@@ -77,6 +78,7 @@ pub fn forward_dense(
         )?;
         gemm(
             gpu,
+            k.levers.cublas_wide_proj,
             k.gemm,
             k.gemv,
             k.batchm(),
@@ -103,6 +105,7 @@ pub fn forward_dense(
     )?;
     gemm(
         gpu,
+        k.levers.cublas_wide_proj,
         k.gemm,
         k.gemv,
         k.batchm(),

@@ -5,6 +5,7 @@
 //! checked on a GPU by `examples/glm5next_hc_post_pre_tok_bench.rs`.
 
 use super::*;
+use crate::glm5next_mhc::MHC_MIX_MAX_TOKENS;
 use metrale_gpu_runtime::gpu::mock::{MockArg, MockGpuBackend};
 
 const FUSED: u64 = 0x99;
@@ -23,6 +24,7 @@ fn site(bf16: bool) -> Glm5NextMhcSiteWeights {
         hc_base: DevicePtr(0x300),
         mix: DevicePtr(0x400),
         done: DevicePtr(0x500),
+        mix_tokens: crate::glm5next_mhc::MHC_MIX_MAX_TOKENS,
     }
 }
 
@@ -162,7 +164,7 @@ fn the_launch_refuses_what_the_pair_refuses() {
         ..PEERS
     };
     assert!(refused(args(&bf16, &lone, 256)).contains("ranks"));
-    let wide = mhc_mix_max_tokens() as u32 + 1;
+    let wide = MHC_MIX_MAX_TOKENS as u32 + 1;
     let roomy = PeerPartials {
         slot_elems: wide as usize * 4096,
         ..PEERS

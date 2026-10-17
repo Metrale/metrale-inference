@@ -25,8 +25,9 @@ pub(super) fn buffer_arena(
     slot_ceiling: usize,
     arena_levers: &ArenaLevers,
     gpu: &dyn GpuBackend,
+    settings: &metrale_settings::InferenceServerSettings,
 ) -> Result<BufferArena> {
-    let arena_lean = metrale_model_arch::glm5next_layer::arena_lean()?;
+    let arena_lean = metrale_model_arch::glm5next_layer::arena_lean(settings);
     anyhow::ensure!(
         !arena_lean || config.model_type == "glm5_next",
         "METRALE_GLM_ARENA_LEAN=1 is for glm5_next models, not {:?}",

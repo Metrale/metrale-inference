@@ -64,6 +64,7 @@ pub(crate) fn takes_wide(wide: KernelHandle, m: usize) -> bool {
 #[allow(clippy::too_many_arguments)]
 fn glm_mm_rows16(
     gpu: &dyn GpuBackend,
+    cublas_wide: bool,
     gemm: KernelHandle,
     gemv: KernelHandle,
     batchm: Batchm,
@@ -85,7 +86,20 @@ fn glm_mm_rows16(
     while r0 < m {
         let rows = step.min(m - r0);
         let (ar, cr) = (a.offset(r0 * kk * 2), c.offset(r0 * n * c_elem));
-        glm_mm(gpu, gemm, gemv, batchm, ar, b, cr, rows, n, kk, stream)?;
+        glm_mm(
+            gpu,
+            cublas_wide,
+            gemm,
+            gemv,
+            batchm,
+            ar,
+            b,
+            cr,
+            rows,
+            n,
+            kk,
+            stream,
+        )?;
         r0 += rows;
     }
     Ok(())
@@ -98,6 +112,7 @@ fn glm_mm_rows16(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn glm_mm(
     gpu: &dyn GpuBackend,
+    cublas_wide: bool,
     gemm: KernelHandle,
     gemv: KernelHandle,
     batchm: Batchm,
@@ -122,9 +137,22 @@ pub(crate) fn glm_mm(
     // the row-invariant batched GEMV ([`glm_mm_rows16`]), never cuBLASLt or the tile GEMM.
     let wide_rows = m > ops::DENSE_GEMV_BATCHM_MAX_M as usize;
     if wide_rows && crate::glm5next_batch_inv::enabled()? {
-        return glm_mm_rows16(gpu, gemm, gemv, batchm, a, b, c, m, n, kk, stream);
+        return glm_mm_rows16(
+            gpu,
+            cublas_wide,
+            gemm,
+            gemv,
+            batchm,
+            a,
+            b,
+            c,
+            m,
+            n,
+            kk,
+            stream,
+        );
     }
-    if wide_rows && crate::glm5next_layer::cublas_wide_proj() {
+    if wide_rows && cublas_wide {
         return ops::cublas_bf16_proj_dense(a, b, c, m as u32, n as u32, kk as u32, stream);
     }
     if takes_wide(batchm.wide, m) {
@@ -195,7 +223,7 @@ mod tests {
             DevicePtr(0x3000_0000),
         );
         let (n, kk) = (288usize, 4096usize);
-        glm_mm_rows16(&gpu, gemm, gemv, b, a, w, c, 40, n, kk, 7).unwrap();
+        glm_mm_rows16(&gpu, true, gemm, gemv, b, a, w, c, 40, n, kk, 7).unwrap();
         let l = gpu.launches_snapshot();
         assert_eq!(l.len(), 3);
         for (i, (rows, r0)) in [(16u32, 0usize), (16, 16), (8, 32)].into_iter().enumerate() {
@@ -209,7 +237,7 @@ mod tests {
             narrow: KernelHandle(0),
             ..b
         };
-        assert!(glm_mm_rows16(&gpu, gemm, gemv, no_batch, a, w, c, 40, n, kk, 7).is_err());
+        assert!(glm_mm_rows16(&gpu, true, gemm, gemv, no_batch, a, w, c, 40, n, kk, 7).is_err());
         assert_eq!(gpu.launches_snapshot().len(), 3);
     }
 }

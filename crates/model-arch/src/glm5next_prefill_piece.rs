@@ -20,7 +20,7 @@
 //!   scan's 256-row slabs, whose state carries in FP32 either way.
 //! - [`plan_calls`] covers `0..k` once, in order, with every piece `P` rows except the last.
 //! - At load ([`check_piece_budget`]) the scheduler's chunk is a multiple of `P` wider than `P`,
-//!   and `prefill_rows()` covers the highway, so the layer never re-splits a chunk off the grid.
+//!   and `GlmLevers::prefill_rows` covers the highway, so the layer never re-splits a chunk off the grid.
 
 use std::sync::OnceLock;
 

@@ -76,7 +76,14 @@ fn fixture() -> Fixture {
         o_proj: w(&gpu),
     };
     let kernels = Glm5NextKdaKernels::resolve(&gpu).unwrap();
-    let layer = Glm5NextKdaLayer::new(7, c, weights, kernels).unwrap();
+    let layer = Glm5NextKdaLayer::new(
+        7,
+        c,
+        weights,
+        kernels,
+        crate::glm5next_layer::GlmLevers::declared(),
+    )
+    .unwrap();
     let ws = Glm5NextKdaWorkspace::new(&gpu, &c, K).unwrap();
     let st = |gpu: &MockGpuBackend| KdaSeqState {
         conv: gpu.alloc(c.conv_state_elems() * 4).unwrap(),

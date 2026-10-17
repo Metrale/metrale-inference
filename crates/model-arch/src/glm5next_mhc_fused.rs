@@ -23,8 +23,7 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 use crate::glm5next_mhc::{
-    Glm5NextMhcKernels, Glm5NextMhcSiteWeights, HC_MIX_ROWS, MHC_MIX_MAX_TOKENS,
-    mhc_mix_max_tokens, mix_hc,
+    Glm5NextMhcKernels, Glm5NextMhcSiteWeights, HC_MIX_ROWS, MHC_MIX_MAX_TOKENS, mix_hc,
 };
 
 /// 2026-10-09: `#define GLM_HCF_MAX_H` in `glm5next_mhc_fused.cu`: the widest hidden row the
@@ -68,7 +67,7 @@ pub const HC_PRE_NORM_ROWS_MIN_TOKENS: usize = 64;
 /// one launch of `glm5next_hc_pre_norm` (or `_rows` from `HC_PRE_NORM_ROWS_MIN_TOKENS` tokens).
 /// `norm_eps` is the stream RMS epsilon `glm_hc_pre` takes; `rms_eps` the norm's. Errors on a
 /// shape `hc_pre_norm_refusal` names, an FP32 `hc_fn`, a kernel the build lacks, or more tokens
-/// than `mhc_mix_max_tokens()`.
+/// than the site's `mix_tokens`.
 #[allow(clippy::too_many_arguments)]
 pub fn glm_hc_pre_norm(
     gpu: &dyn GpuBackend,
@@ -154,7 +153,7 @@ pub fn pre_splitk() -> bool {
 pub const HC_PRE_NORM_SK_SLICES: u32 = 64;
 pub const HC_PRE_NORM_SK_VALS: usize = 25;
 
-/// 2026-10-11: Whether the site's `mix` scratch (`mhc_mix_max_tokens() * mix_rows` floats) holds
+/// 2026-10-11: Whether the site's `mix` scratch (`mix_tokens * mix_rows` floats) holds
 /// the split-k partials of `num_tokens` tokens.
 pub fn splitk_fits(num_tokens: u32, mix_rows: u32, mix_cap_tokens: usize) -> bool {
     num_tokens as usize * HC_PRE_NORM_SK_SLICES as usize * HC_PRE_NORM_SK_VALS
@@ -228,7 +227,7 @@ pub(crate) fn pre_norm_checks(
     if !w.hc_fn_bf16 {
         bail!("glm_hc_pre_norm: the site's hc_fn is FP32; the fused kernel reads BF16 only");
     }
-    let mix_cap = mhc_mix_max_tokens();
+    let mix_cap = w.mix_tokens;
     if num_tokens as usize > mix_cap {
         bail!(
             "glm_hc_pre_norm: {num_tokens} tokens exceeds the {mix_cap}-token `mix` and `done` \
@@ -478,6 +477,7 @@ mod tests {
             hc_base: DevicePtr(0x300),
             mix: DevicePtr(0x400),
             done: DevicePtr(0x480),
+            mix_tokens: crate::glm5next_mhc::MHC_MIX_MAX_TOKENS,
         }
     }
 
@@ -523,7 +523,7 @@ mod tests {
     fn unsupported_shapes_fail_before_launching() {
         let gpu = MockGpuBackend::new();
         let on = kernels(true);
-        let cap = mhc_mix_max_tokens() as u32;
+        let cap = MHC_MIX_MAX_TOKENS as u32;
         let cases: [(&Glm5NextMhcKernels, bool, u32, u32, u32); 7] = [
             (&on, false, 1, 4096, 4),
             (&kernels(false), true, 1, 4096, 4),

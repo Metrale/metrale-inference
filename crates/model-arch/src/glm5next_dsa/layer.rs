@@ -63,10 +63,9 @@ mod workspace;
 pub use decode_rows::DsaRowSpan;
 pub use indexer_place::IndexerPlace;
 pub use kernels::Glm5NextDsaLayerKernels;
-use proj_gemm::gemm;
 pub use workspace::Glm5NextDsaWorkspace;
 pub(crate) use workspace::batch_select_enabled;
-pub use workspace::{dsa_ws_shared, select_scratch_geometry, select_scratch_rows};
+pub use workspace::{select_scratch_geometry, select_scratch_rows};
 
 /// 2026-09-25: One DSA block's weights on the device, already sharded for this rank.
 pub struct Glm5NextDsaWeights {
@@ -104,7 +103,7 @@ pub struct Glm5NextDsaLayer {
     pub select_kernels: Glm5NextDsaKernels,
     pub decode_kernel: Glm5NextDsaDecodeKernel,
     /// 2026-10-12: One per layer, or (`METRALE_GLM_DSA_WS_SHARED`, the default) the one the
-    /// whole stack shares (`workspace::dsa_ws_shared`): layers run in sequence on one stream and
+    /// whole stack shares (`GlmLevers::dsa_ws_shared`): layers run in sequence on one stream and
     /// nothing in it carries across layers.
     pub workspace: std::sync::Arc<Glm5NextDsaWorkspace>,
     /// 2026-09-25: Index in the model's layer stack; used only in error messages.
@@ -117,18 +116,19 @@ pub struct Glm5NextDsaLayer {
     /// 2026-09-25: FP8 latent-cache scale. The decode reads with it and the latent write
     /// takes `1/scale`.
     pub kv_scale: f32,
-    /// 2026-09-25: Use the workspace's `bt`/`sl` rather than allocating them per call. The
-    /// loaders set it true unless `METRALE_GLM_DSA_ALLOC_PER_STEP=1`.
+    /// 2026-09-25: Use the workspace's `bt`/`sl`, not per-call ones (`!levers.dsa_alloc_per_step`).
     pub persist_bt: bool,
     /// 2026-10-09: Where `alloc_state` puts a sequence's indexer rows. The text stack's
     /// loader sets `paged::text_stack_indexer_cache()`; the MTP drafter's layer is flat.
     pub indexer_cache: IndexerCache,
     /// 2026-10-16: How a paged state keeps its rows (`--indexer-cache-dtype`); flat layers are BF16.
     pub indexer_format: super::fp8_rows::IndexerRowFormat,
+    /// 2026-10-17: The GLM layer levers this mixer reads, resolved at load.
+    pub levers: crate::glm5next_layer::GlmLevers,
 }
 
 impl Glm5NextDsaLayer {
-    /// 2026-10-09: Every BF16-output projection this layer launches through `proj_gemm::gemm`,
+    /// 2026-10-09: Every BF16-output projection this layer launches through `Self::gemm`,
     /// as `(weight, n, k, name)` with the shapes the forward passes, for
     /// `--dense-quantization fp8`. The FP32-output `wq_b` and `weights_proj` are not listed.
     pub fn dense_projections(&self) -> Vec<(DevicePtr, usize, usize, &'static str)> {
@@ -195,7 +195,7 @@ impl Glm5NextDsaLayer {
             }
         };
 
-        gemm(
+        self.gemm(
             gpu,
             self.kernels.gemm,
             self.kernels.gemv,
@@ -220,7 +220,7 @@ impl Glm5NextDsaLayer {
             .arg_f32(self.rms_eps)
             .launch(stream)?;
 
-        gemm(
+        self.gemm(
             gpu,
             self.kernels.gemm,
             self.kernels.gemv,
@@ -240,7 +240,7 @@ impl Glm5NextDsaLayer {
         // (`glm5next_dsa_ref/gen_dsa_indexer_golden.py`), and the scale is already in the
         // weight (`build.rs` transform 2).
         if head_weights {
-            gemm(
+            self.gemm(
                 gpu,
                 self.kernels.gemm_f32,
                 self.kernels.gemv_f32,
@@ -286,7 +286,7 @@ impl Glm5NextDsaLayer {
             Some(p) => p,
             None => {
                 // 2026-09-25: The selector query `q_idx`, FP32 out.
-                gemm(
+                self.gemm(
                     gpu,
                     self.kernels.gemm_f32,
                     self.kernels.gemv_f32,

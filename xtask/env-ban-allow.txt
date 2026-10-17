@@ -100,7 +100,6 @@ crates/model-arch/src/glm5next_dequant_persist.rs
 crates/model-arch/src/glm5next_dsa/attend/check.rs
 crates/model-arch/src/glm5next_dsa/attend/levers.rs
 crates/model-arch/src/glm5next_dsa/build.rs
-crates/model-arch/src/glm5next_dsa/layer/workspace.rs
 crates/model-arch/src/glm5next_dsa/select.rs
 crates/model-arch/src/glm5next_dsa/select/fused.rs
 crates/model-arch/src/glm5next_dsa/select/pipe.rs
@@ -117,7 +116,6 @@ crates/model-arch/src/glm5next_kda/gates_fused.rs
 crates/model-arch/src/glm5next_kda/mod.rs
 crates/model-arch/src/glm5next_kda/seq_tokens.rs
 crates/model-arch/src/glm5next_layer/l2_warm.rs
-crates/model-arch/src/glm5next_layer/levers.rs
 crates/model-arch/src/glm5next_layer/profile.rs
 crates/model-arch/src/glm5next_layer/steps/mhc_slice.rs
 crates/model-arch/src/glm5next_layer/wide_gemv.rs
@@ -166,8 +164,6 @@ crates/model-arch/src/weight_loader/deepseek_v41/load_layers.rs
 crates/model-arch/src/weight_loader/gemma4/loader_a.rs
 crates/model-arch/src/weight_loader/glm5_next_load.rs
 crates/model-arch/src/weight_loader/glm5_next_load/layer_stream.rs
-crates/model-arch/src/weight_loader/glm5_next_load/loader.rs
-crates/model-arch/src/weight_loader/glm5_next_mtp.rs
 crates/model-arch/src/weight_loader/laguna/load_layers.rs
 crates/model-arch/src/weight_loader/longcat/ffn.rs
 crates/model-arch/src/weight_loader/longcat/mod.rs
