@@ -10,7 +10,6 @@ use alloc::string::String;
 use core::fmt;
 
 use crate::Env;
-use crate::EnvError;
 use crate::groups::cache::CacheSettings;
 use crate::groups::kernels::KernelsSettings;
 use crate::groups::model::ModelSettings;
@@ -24,6 +23,7 @@ use crate::groups::telemetry::TelemetrySettings;
 use crate::provenance::{Provenance, Source};
 use crate::sources::{CliLayer, RecipeLayer, Sources};
 use crate::spec::{Class, Rule};
+use metrale_error::Error;
 
 /// 2026-10-17: A raw value or declared default did not parse; `pick` names the lever.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -264,7 +264,7 @@ pub enum SettingsError {
         from: Layer,
         env: &'static str,
     },
-    Env(EnvError),
+    Env(Error),
 }
 
 /// 2026-10-17: Values may be paths; a long one is shown by its first 64 bytes only.
@@ -322,8 +322,8 @@ impl fmt::Display for SettingsError {
 
 impl core::error::Error for SettingsError {}
 
-impl From<EnvError> for SettingsError {
-    fn from(e: EnvError) -> Self {
+impl From<Error> for SettingsError {
+    fn from(e: Error) -> Self {
         Self::Env(e)
     }
 }

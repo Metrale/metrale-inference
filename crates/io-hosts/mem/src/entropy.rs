@@ -8,7 +8,7 @@
 
 use std::sync::Mutex;
 
-use metrale_abstract_io::{Entropy, EntropyError};
+use metrale_abstract_io::{Entropy, Result};
 use rand_chacha::ChaCha20Rng;
 use rand_chacha::rand_core::{RngCore, SeedableRng};
 
@@ -28,7 +28,7 @@ impl SeededEntropy {
 }
 
 impl Entropy for SeededEntropy {
-    fn fill(&self, buf: &mut [u8]) -> Result<(), EntropyError> {
+    fn fill(&self, buf: &mut [u8]) -> Result<()> {
         self.rng
             .lock()
             .expect("SeededEntropy lock poisoned")

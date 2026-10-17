@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 
-use metrale_abstract_io::{Env, EnvError};
+use metrale_abstract_io::{Env, Result};
 
 /// 2026-10-17: A fixed set of variables. Names come back in byte order (`BTreeMap`).
 #[derive(Clone, Debug)]
@@ -38,7 +38,7 @@ impl MapEnv {
 }
 
 impl Env for MapEnv {
-    fn var(&self, name: &str) -> Result<Option<String>, EnvError> {
+    fn var(&self, name: &str) -> Result<Option<String>> {
         Ok(self.map.get(name).cloned())
     }
 

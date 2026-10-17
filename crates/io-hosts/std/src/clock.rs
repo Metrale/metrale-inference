@@ -1,29 +1,35 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-10-17: The system wall clock, a monotonic clock from `Instant`, and a
-//! tokio sleep, as a [`Clock`].
+//! 2026-10-17: The system wall clock and the process monotonic clock as a [`Clock`].
 //!
 //! Owner: metrale-io-host-std.
 //! Invariants:
-//! - `monotonic_ns` counts from the instant the clock was created and never decreases.
+//! - `monotonic_ns` counts from one process origin (the first read by any `SystemClock` or
+//!   `TokioTimer`), so every clock in the process agrees and none decreases.
 //! - A wall clock before the Unix epoch is a host fault and panics.
+//! - No tokio here: reading time needs no runtime (waiting lives in `timer.rs`).
 
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::sync::OnceLock;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use metrale_abstract_io::Clock;
+use metrale_abstract_io::{Clock, MonoNs, UnixMs};
 
-/// 2026-10-17: The host's clocks; `origin` anchors `monotonic_ns`.
-#[derive(Clone, Copy, Debug)]
-pub struct SystemClock {
-    origin: Instant,
+/// 2026-10-17: The instant `MonoNs(0)` names, fixed once per process.
+pub(crate) fn origin() -> Instant {
+    static ORIGIN: OnceLock<Instant> = OnceLock::new();
+    *ORIGIN.get_or_init(Instant::now)
 }
 
+/// 2026-10-17: The host's clocks; every instance reads the same process origin.
+#[derive(Clone, Copy, Debug)]
+pub struct SystemClock;
+
 impl SystemClock {
+    /// 2026-10-17: Fixes the process origin if no clock or timer has yet.
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            origin: Instant::now(),
-        }
+        let _ = origin();
+        Self
     }
 }
 
@@ -35,20 +41,19 @@ impl Default for SystemClock {
 }
 
 impl Clock for SystemClock {
-    fn now_unix_ms(&self) -> i64 {
+    fn now_unix_ms(&self) -> UnixMs {
         let since_epoch = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("SystemClock: wall clock is before the Unix epoch");
-        i64::try_from(since_epoch.as_millis()).expect("SystemClock: wall clock overflows i64 ms")
+        UnixMs(
+            i64::try_from(since_epoch.as_millis())
+                .expect("SystemClock: wall clock overflows i64 ms"),
+        )
     }
 
-    fn monotonic_ns(&self) -> u64 {
+    fn monotonic_ns(&self) -> MonoNs {
         // 2026-10-17: Saturates; u64 nanoseconds cover ~584 years of uptime.
-        u64::try_from(self.origin.elapsed().as_nanos()).unwrap_or(u64::MAX)
-    }
-
-    async fn sleep_ms(&self, ms: u64) {
-        tokio::time::sleep(Duration::from_millis(ms)).await;
+        MonoNs(u64::try_from(origin().elapsed().as_nanos()).unwrap_or(u64::MAX))
     }
 }
 

@@ -39,3 +39,12 @@ fn different_stream_differs() {
         draw(&SeededEntropy::new(7, 1))
     );
 }
+
+/// Catches: a `seed32` that returns zeros or a fixed array instead of drawing, or that draws
+/// more or less than 32 bytes (the next draw would then differ from the reference stream).
+#[test]
+fn seed32_is_the_next_32_bytes_of_the_stream() {
+    let (a, b) = (SeededEntropy::new(7, 0), SeededEntropy::new(7, 0));
+    assert_eq!(a.seed32().expect("SeededEntropy never errors"), draw(&b));
+    assert_eq!(draw(&a), draw(&b), "seed32 consumed exactly 32 bytes");
+}

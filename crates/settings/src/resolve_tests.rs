@@ -14,7 +14,8 @@ use crate::provenance::{Provenance, Source};
 use crate::resolve::{FromLever, Layer, pick};
 use crate::sources::{CliLayer, RecipeLayer, Sources};
 use crate::spec::{Class, LeverSpec, PREFIX, Rule};
-use crate::{Env, EnvError, SettingsError, resolve};
+use crate::{Env, SettingsError, resolve};
+use metrale_error::{ErrArg, ErrorCode, error};
 
 fn no_env() -> MapEnv {
     MapEnv::new([] as [(&str, &str); 0])
@@ -296,10 +297,8 @@ fn build_layer(layer: Layer, pairs: &[(&str, &str)]) -> Result<(), SettingsError
 struct NotUnicodeEnv;
 
 impl Env for NotUnicodeEnv {
-    fn var(&self, name: &str) -> Result<Option<String>, EnvError> {
-        Err(EnvError::NotUnicode {
-            name: String::from(name),
-        })
+    fn var(&self, name: &str) -> metrale_error::Result<Option<String>> {
+        Err(error!(ErrorCode::EnvNotUnicode, String::from(name)))
     }
 
     fn names(&self) -> Vec<String> {
@@ -312,10 +311,13 @@ fn an_unreadable_env_value_is_a_settings_error() {
     let err = resolve(&NotUnicodeEnv, &CliLayer::empty(), &RecipeLayer::empty())
         .expect_err("the env cannot be read");
     let first_runtime = crate::groups::cache::CacheSettings::LEVERS[0].env;
-    assert_eq!(
-        err,
-        SettingsError::Env(EnvError::NotUnicode {
-            name: String::from(first_runtime)
-        })
+    let SettingsError::Env(env_err) = err else {
+        panic!("expected SettingsError::Env, got {err:?}");
+    };
+    assert_eq!(env_err.code(), ErrorCode::EnvNotUnicode);
+    assert!(
+        matches!(env_err.args(), [ErrArg::String(name)] if name == first_runtime),
+        "the error names the first runtime lever read: {:?}",
+        env_err.args()
     );
 }

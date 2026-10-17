@@ -1551,6 +1551,9 @@ dependencies = [
 [[package]]
 name = "metrale-abstract-io"
 version = "1.0.0-beta-preview"
+dependencies = [
+ "metrale-error",
+]
 
 [[package]]
 name = "metrale-bench"
@@ -1746,6 +1749,7 @@ version = "1.0.0-beta-preview"
 dependencies = [
  "getrandom 0.4.3",
  "metrale-abstract-io",
+ "metrale-error",
  "tokio",
 ]
 
@@ -1891,6 +1895,7 @@ name = "metrale-settings"
 version = "1.0.0-beta-preview"
 dependencies = [
  "metrale-abstract-io",
+ "metrale-error",
  "metrale-io-host-mem",
 ]
 

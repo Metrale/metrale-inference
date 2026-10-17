@@ -3,28 +3,19 @@
 //! 2026-10-17: The randomness port.
 //!
 //! Owner: metrale-abstract-io.
-//! Invariants: `fill` either fills the whole buffer or returns an error.
+//! Invariants: `fill` either fills the whole buffer or returns `EntropyUnavailable`.
 
-use core::fmt;
-
-/// 2026-10-17: Why an entropy source could not fill a buffer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EntropyError {
-    /// The host's source of randomness failed or does not exist.
-    Unavailable,
-}
-
-impl fmt::Display for EntropyError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Unavailable => f.write_str("entropy source unavailable"),
-        }
-    }
-}
-
-impl core::error::Error for EntropyError {}
+use crate::Result;
 
 /// 2026-10-17: A source of random bytes, supplied by a host.
 pub trait Entropy {
-    fn fill(&self, buf: &mut [u8]) -> Result<(), EntropyError>;
+    /// Fills all of `buf`, or fails with `ErrorCode::EntropyUnavailable`.
+    fn fill(&self, buf: &mut [u8]) -> Result<()>;
+
+    /// 2026-10-17: One 32-byte seed: the single draw per unseeded request at admission (BPPT).
+    fn seed32(&self) -> Result<[u8; 32]> {
+        let mut seed = [0u8; 32];
+        self.fill(&mut seed)?;
+        Ok(seed)
+    }
 }

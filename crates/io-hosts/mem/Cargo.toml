@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 description = "Metrale Engine: deterministic in-memory hosts for the abstract-io ports."
 
+[package.metadata.metrale]
+role = "host-mem"
+
 [dependencies]
 metrale-abstract-io = { workspace = true }
 rand_chacha = { workspace = true }

@@ -9,31 +9,14 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::fmt;
 
-/// 2026-10-17: Why a set variable could not be read.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum EnvError {
-    /// The variable is set but its value is not valid UTF-8.
-    NotUnicode { name: String },
-}
-
-impl fmt::Display for EnvError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NotUnicode { name } => {
-                write!(f, "environment variable {name} is not valid UTF-8")
-            }
-        }
-    }
-}
-
-impl core::error::Error for EnvError {}
+use crate::Result;
 
 /// 2026-10-17: Read access to a set of named string variables, supplied by a host.
 pub trait Env {
-    /// `Ok(None)` when unset. Never trims or rewrites the value.
-    fn var(&self, name: &str) -> Result<Option<String>, EnvError>;
+    /// `Ok(None)` when unset. Never trims or rewrites the value. A set value that is not
+    /// valid unicode fails with `ErrorCode::EnvNotUnicode`.
+    fn var(&self, name: &str) -> Result<Option<String>>;
     /// Every variable name present, lossily decoded, sorted ascending (byte order), unique.
     fn names(&self) -> Vec<String>;
 }

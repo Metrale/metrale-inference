@@ -5,7 +5,13 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Metrale Engine: the Clock, Entropy and Env port traits; no_std, no I/O."
+description = "Metrale Engine: the Clock, Timer, Entropy and Env port traits; no_std, no I/O."
+
+[package.metadata.metrale]
+role = "abstract-io"
+
+[dependencies]
+metrale-error = { workspace = true }
 
 [lints]
 workspace = true

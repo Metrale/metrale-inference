@@ -28,7 +28,7 @@ pub mod resolve;
 pub mod sources;
 pub mod spec;
 
-pub use metrale_abstract_io::{Env, EnvError};
+pub use metrale_abstract_io::Env;
 pub use resolve::{InferenceServerSettings, SettingsError, resolve};
 
 /// 2026-10-17: Paths the exported `lever_group!` helpers name through `$crate`; re-exports the

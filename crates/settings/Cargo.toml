@@ -9,6 +9,7 @@ description = "Metrale Engine: every METRALE_* lever declared once, as typed set
 
 [dependencies]
 metrale-abstract-io = { workspace = true }
+metrale-error = { workspace = true }
 
 [dev-dependencies]
 metrale-io-host-mem = { workspace = true }
