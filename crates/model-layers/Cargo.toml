@@ -41,3 +41,6 @@ serde = { workspace = true, features = ["std", "derive"] }
 
 [lints]
 workspace = true
+
+[package.metadata.metrale]
+role = "device"

@@ -16,3 +16,6 @@ serde_json = { workspace = true, features = ["std", "preserve_order"] }
 # 2026-09-26: The graph engine `ledger::materialize` builds in.
 lattice-core = { workspace = true }
 
+
+[package.metadata.metrale]
+role = "tool"

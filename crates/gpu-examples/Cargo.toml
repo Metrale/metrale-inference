@@ -224,3 +224,6 @@ safetensors = { workspace = true, optional = true, features = ["std"] }
 
 [lints]
 workspace = true
+
+[package.metadata.metrale]
+role = "bin"

@@ -30,3 +30,6 @@ serde_json = { workspace = true, features = ["std", "preserve_order"] }
 
 [lints]
 workspace = true
+
+[package.metadata.metrale]
+role = "device"

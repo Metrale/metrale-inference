@@ -55,3 +55,6 @@ path = "examples/long_context_bench.rs"
 
 [lints]
 workspace = true
+
+[package.metadata.metrale]
+role = "device"

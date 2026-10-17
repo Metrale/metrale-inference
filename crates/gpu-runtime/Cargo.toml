@@ -113,3 +113,6 @@ toml = { workspace = true, features = ["std", "serde", "parse", "display"] }
 
 [lints]
 workspace = true
+
+[package.metadata.metrale]
+role = "device"

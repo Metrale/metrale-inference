@@ -34,3 +34,6 @@ unicode-width = { workspace = true, features = ["cjk"] }
 
 [lints]
 workspace = true
+
+[package.metadata.metrale]
+role = "core"

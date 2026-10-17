@@ -39,3 +39,6 @@ harness = false
 
 [lints.rust]
 unsafe_code = "forbid"
+
+[package.metadata.metrale]
+role = "core"

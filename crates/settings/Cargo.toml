@@ -16,3 +16,6 @@ metrale-io-host-mem = { workspace = true }
 
 [lints]
 workspace = true
+
+[package.metadata.metrale]
+role = "core"

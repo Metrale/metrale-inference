@@ -19,3 +19,8 @@ toml = { workspace = true, features = ["std", "serde", "parse", "display"] }
 
 [lints]
 workspace = true
+
+[package.metadata.metrale]
+# 2026-10-17: Kernel-build infrastructure the `device` crates link (model-layers, the kernels
+# build script), so it sits in their layer rather than with the unconstrained tools.
+role = "device"

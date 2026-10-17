@@ -22,3 +22,6 @@ regex = { workspace = true, features = ["std", "perf", "unicode"] }
 
 [lints]
 workspace = true
+
+[package.metadata.metrale]
+role = "core"

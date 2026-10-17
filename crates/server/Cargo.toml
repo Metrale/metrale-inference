@@ -100,3 +100,6 @@ required-features = ["gpu-examples"]
 
 [lints]
 workspace = true
+
+[package.metadata.metrale]
+role = "bin"

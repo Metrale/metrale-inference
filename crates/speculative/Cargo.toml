@@ -17,3 +17,6 @@ tracing = { workspace = true, features = ["std", "attributes"] }
 
 [lints]
 workspace = true
+
+[package.metadata.metrale]
+role = "device"
