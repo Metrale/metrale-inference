@@ -17,6 +17,14 @@ use metrale_settings::groups::device_cache::CacheTuning;
 mod diagnostics;
 
 impl PagedKvCache {
+    /// 2026-10-17: [`Self::with_tuning`] at the declared `CacheTuning`, for tests and tools.
+    ///
+    /// # Errors
+    /// As [`Self::with_tuning`].
+    pub fn new(config: KvCacheConfig, num_blocks: usize, gpu: &dyn GpuBackend) -> Result<Self> {
+        Self::with_tuning(config, num_blocks, gpu, &CacheTuning::declared()?)
+    }
+
     /// 2026-09-25: Allocate a K pool and a V pool of `num_blocks` blocks for
     /// every attention layer. All blocks start free with count 0. `tuning.kv_trace` turns on the
     /// per-block refcount history (`block_trace`).

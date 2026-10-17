@@ -4,7 +4,7 @@
 //! recipe plus `met serve` flags, through the serve's own parser and validation) and the counts
 //! the engine derives from them, each by the engine's own function: the SSM pool's unit counts
 //! (`ssm_reserve::pool_counts_with`), the MTP verify slots, the Marconi and decode-ring slots, the
-//! carried-state verify's slots, and the legacy buffer arena (`BufferSizes::from_config`).
+//! carried-state verify's slots, and the legacy buffer arena (`BufferSizes::from_config_with`).
 //!
 //! Owner: server CLI.
 //! Invariants:
@@ -283,12 +283,18 @@ pub(crate) fn engine_facts(
     );
     let m = budget.max_batch_tokens;
     let gdn = gdn_two_phase_bytes(config, m.min(args.max_seq_len));
-    let arena = metrale_gpu_runtime::buffers::BufferSizes::from_config(
+    let levers = metrale_gpu_runtime::buffers::ArenaLevers::from(
+        &metrale_settings::groups::device::DeviceSettings::try_from(
+            &crate::main_modules::serve_phases::lever_settings()?,
+        )?,
+    );
+    let arena = metrale_gpu_runtime::buffers::BufferSizes::from_config_with(
         config,
         m,
         args.max_seq_len,
         args.block_size,
         slots,
+        &levers,
     )
     .total_bytes()
         + gdn;

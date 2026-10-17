@@ -13,12 +13,29 @@ impl WeightStore {
             prepartitioned_tp: None,
             deferred: HashMap::new(),
             derived: DerivedStore::default(),
+            weights_settings: None,
         }
     }
 
     /// Record a tensor that was skipped at load, with its on-disk location.
     pub fn defer(&mut self, name: String, t: DeferredTensor) {
         self.deferred.insert(name, t);
+    }
+
+    /// 2026-10-17: Record the levers the loader resolved, for [`Self::weights_settings`].
+    pub fn record_weights_settings(
+        &mut self,
+        settings: metrale_settings::groups::device_weights::WeightsSettings,
+    ) {
+        self.weights_settings = Some(settings);
+    }
+
+    /// 2026-10-17: The levers the GGUF loader that built this store resolved; `None` from a
+    /// loader that takes none.
+    pub fn weights_settings(
+        &self,
+    ) -> Option<&metrale_settings::groups::device_weights::WeightsSettings> {
+        self.weights_settings.as_ref()
     }
 
     /// Look up a deferred (not-uploaded) tensor's on-disk location.
@@ -51,6 +68,7 @@ impl WeightStore {
             prepartitioned_tp: None,
             deferred: HashMap::new(),
             derived: DerivedStore::default(),
+            weights_settings: None,
         }
     }
 

@@ -1692,6 +1692,7 @@ dependencies = [
  "metrale-kernels",
  "metrale-model-arch",
  "metrale-model-layers",
+ "metrale-settings",
  "metrale-target-defaults",
  "safetensors",
  "serde_json",
@@ -1820,6 +1821,7 @@ dependencies = [
  "metrale-kernels",
  "metrale-model-layers",
  "metrale-model-weights",
+ "metrale-settings",
  "metrale-storage",
  "metrale-telemetry",
  "parking_lot",
@@ -1847,6 +1849,7 @@ dependencies = [
  "metrale-model-weights",
  "metrale-sampling",
  "metrale-scheduler",
+ "metrale-settings",
  "metrale-storage",
  "metrale-telemetry",
  "parking_lot",
@@ -1989,7 +1992,6 @@ version = "1.0.0-beta-preview"
 dependencies = [
  "metrale-closure",
  "metrale-kernel-root",
- "metrale-settings",
  "toml",
 ]
 

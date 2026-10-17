@@ -10,7 +10,6 @@
 crates/bench/src/bin/record_agreement.rs
 crates/bench/src/gate/record.rs
 crates/bench/src/gate/record_env.rs
-crates/cache/src/legacy_env.rs
 crates/comm/src/nccl_backend.rs
 crates/config/src/legacy_env.rs
 crates/config/src/levers.rs
@@ -79,7 +78,6 @@ crates/gpu-examples/examples/w4a16_lmhead_716_repro.rs
 crates/gpu-examples/examples/w4a16_m17_bench.rs
 crates/gpu-examples/examples/w8a16_gemm_pipe128_microtest.rs
 crates/gpu-examples/examples/w8a8_decode_microtest.rs
-crates/gpu-runtime/src/legacy_env.rs
 crates/gpu-runtime/src/metal_backend/tests/helpers.rs
 crates/gpu-runtime/src/metal_backend/tests/real_model_attention.rs
 crates/gpu-runtime/src/metal_backend/tests/real_model_gemv.rs
@@ -389,7 +387,6 @@ crates/model-weights/src/kimi_k3_host/expert_backend.rs
 crates/model-weights/src/kimi_k3_host/kda.rs
 crates/model-weights/src/kimi_k3_host/mla.rs
 crates/model-weights/src/kimi_k3_host/mxfp4.rs
-crates/model-weights/src/legacy_env.rs
 crates/server/src/cli/bench_certify/mod.rs
 crates/server/src/cli/circuit.rs
 crates/server/src/grammar/tests/cold_compile.rs
@@ -408,9 +405,7 @@ crates/server/src/tui/theme.rs
 crates/server/tests/glm_dflash_window.rs
 crates/server/tests/integration.rs
 crates/server/tests/integration/helpers.rs
-crates/speculative/src/legacy_env.rs
 crates/storage/examples/snapshot_paging_smoke.rs
 crates/storage/src/legacy_env.rs
 crates/storage/src/rdma_kv_backend/tests.rs
 crates/storage/tests/direct_swap.rs
-crates/target-defaults/src/legacy_env.rs

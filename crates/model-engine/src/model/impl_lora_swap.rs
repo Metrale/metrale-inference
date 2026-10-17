@@ -76,9 +76,10 @@ impl TransformerModel {
         let slot_bytes = rdma_stage::slot_bytes(&self.config, max_rank);
         let slot_base = DevicePtr(pool.0 + (slot * slot_bytes) as u64);
         self.gpu.memset(slot_base, 0, slot_bytes)?;
-        let loader = metrale_model_weights::weight_lora_rdma::RdmaLoraLoader::new(
+        let loader = metrale_model_weights::weight_lora_rdma::RdmaLoraLoader::with_settings(
             peer_addr.to_string(),
             adapter_id.to_string(),
+            &metrale_settings::groups::device_weights::WeightsSettings::try_from(&*self.settings)?,
         );
         loader.stage_into_slot(self.gpu.as_ref(), &targets)?;
 

@@ -11,11 +11,10 @@
 //! Invariants: reads only `InferenceServerSettings`; every Text lever keeps the parse of the
 //! reader it replaced.
 
-use crate::groups::device::{DeviceSettingsError, ProjectionError, declared, non_negative};
-use crate::resolve::InferenceServerSettings;
+use metrale_error::Error;
 
-/// 2026-10-17: `METRALE_SPEC_ENTRY_PIN` when unset or not a `u32`.
-pub const SPEC_ENTRY_PIN_BUILT_IN: u32 = 8;
+use crate::groups::device::{DeviceSettingsError, declared, in_u32, non_negative};
+use crate::resolve::InferenceServerSettings;
 
 /// 2026-10-17: MTP adaptive-rung overrides (`METRALE_MTP_RUNG_*`). A value that is not
 /// positive is ignored, as the old reader ignored it.
@@ -67,7 +66,7 @@ fn positive(v: Option<f64>) -> Option<f64> {
     v.filter(|v| *v > 0.0)
 }
 
-fn width(env: &'static str, v: Option<i64>) -> Result<Option<usize>, ProjectionError> {
+fn width(env: &'static str, v: Option<i64>) -> Result<Option<usize>, Error> {
     v.map(|v| non_negative(env, v)).transpose()
 }
 
@@ -86,9 +85,9 @@ impl DrafterSettings {
 }
 
 impl TryFrom<&InferenceServerSettings> for DrafterSettings {
-    type Error = ProjectionError;
+    type Error = Error;
 
-    fn try_from(s: &InferenceServerSettings) -> Result<Self, ProjectionError> {
+    fn try_from(s: &InferenceServerSettings) -> Result<Self, Error> {
         let sp = &s.speculative;
         Ok(Self {
             mtp_static_rung: sp.mtp_static_rung,
@@ -113,8 +112,7 @@ impl TryFrom<&InferenceServerSettings> for DrafterSettings {
             },
             mtp_gate_reprobe: non_negative("METRALE_MTP_GATE_REPROBE", sp.mtp_gate_reprobe)?,
             mtp_gate_refresh: non_negative("METRALE_MTP_GATE_REFRESH", sp.mtp_gate_refresh)?,
-            spec_entry_pin_tokens: text_u32(sp.spec_entry_pin.as_deref())
-                .unwrap_or(SPEC_ENTRY_PIN_BUILT_IN),
+            spec_entry_pin_tokens: in_u32("METRALE_SPEC_ENTRY_PIN", sp.spec_entry_pin)?,
         })
     }
 }

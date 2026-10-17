@@ -16,9 +16,6 @@ serde = { workspace = true, features = ["std", "derive"] }
 toml = { workspace = true, features = ["std", "serde", "parse", "display"] }
 tracing = { workspace = true, features = ["std", "attributes"] }
 
-[dev-dependencies]
-metrale-settings = { workspace = true, features = ["test-utils"] }
-
 [lints]
 workspace = true
 

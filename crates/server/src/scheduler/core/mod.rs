@@ -146,6 +146,7 @@ impl SchedulerCore {
             crate::scheduler::mtp_timing::RunTiming::new(levers.mtp_timing),
             crate::scheduler::dumps::RunDumps::open(&run_io),
         );
+        let rung = metrale_speculative::adaptive_rung::AdaptiveRung::with_settings(&levers.drafter);
         let mut sched = crate::scheduler::sched_ctx::SchedCtx::new(
             vocab_masks,
             levers,
@@ -157,7 +158,7 @@ impl SchedulerCore {
             ),
             limits,
             watchdog,
-            metrale_speculative::adaptive_rung::AdaptiveRung::from_env(),
+            rung,
             dflash_rung,
         );
         sched
@@ -201,7 +202,10 @@ impl SchedulerCore {
         // Armed whenever MTP is on, unless `--mtp-gate force` (or
         // `METRALE_MTP_GATE_FORCE`) disarms it.
         let mtp_gate = if use_mtp && !sched.levers.mtp_gate_force {
-            Some(metrale_speculative::mtp_gate::MtpGate::new(num_drafts))
+            Some(metrale_speculative::mtp_gate::MtpGate::with_settings(
+                num_drafts,
+                &sched.levers.drafter,
+            ))
         } else {
             if use_mtp && sched.levers.mtp_gate_force {
                 tracing::warn!(

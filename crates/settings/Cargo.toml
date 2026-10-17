@@ -7,15 +7,9 @@ license.workspace = true
 repository.workspace = true
 description = "Metrale Engine: every METRALE_* lever declared once, as typed settings groups with a CLI > recipe > env > default resolver."
 
-[features]
-# 2026-10-17: The resolution-equivalence harness (`groups::equivalence`), for the device crates'
-# tests that compare their legacy env readers with the projections.
-test-utils = ["dep:metrale-io-host-mem"]
-
 [dependencies]
 metrale-abstract-io = { workspace = true }
 metrale-error = { workspace = true }
-metrale-io-host-mem = { workspace = true, optional = true }
 
 [dev-dependencies]
 metrale-io-host-mem = { workspace = true }

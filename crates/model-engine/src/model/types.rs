@@ -43,10 +43,9 @@ pub(super) const MTP_CATCHUP_RING_ROWS: usize = 512;
 /// SSM pools and CUDA-graph caches. `trait_impl` implements `Model` for it.
 pub struct TransformerModel {
     pub(super) config: ModelConfig,
-    /// 2026-09-25: Which GEMM implementation each projection takes, resolved
-    /// from the environment when this model was built
-    /// (`GemmDispatch::from_env`). Every `ForwardContext` this model creates
-    /// borrows it.
+    /// 2026-10-17: The settings this model was built with; every `ForwardContext` borrows them.
+    pub(super) settings: std::sync::Arc<metrale_settings::InferenceServerSettings>,
+    /// 2026-09-25: Each projection's GEMM implementation (`GemmDispatch::from_settings`).
     pub(super) dispatch: metrale_model_layers::layers::ops::GemmDispatch,
     /// 2026-09-25: Per-model memo of derived weight encodings, released by
     /// `release_pools`.

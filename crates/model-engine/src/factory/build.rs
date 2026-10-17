@@ -13,7 +13,6 @@
 use anyhow::Result;
 use metrale_cache::kv_cache::{KvCacheConfig, KvCacheDtype, PagedKvCache};
 use metrale_config::ModelConfig;
-use metrale_gpu_runtime::buffers::BufferArena;
 use metrale_gpu_runtime::gpu::GpuBackend;
 use metrale_model_weights::weights::WeightStore;
 use metrale_telemetry::prefix_cache::PrefixCache;
@@ -25,12 +24,15 @@ use crate::model::TransformerModel;
 use metrale_model_layers::layers::MtpQuantization;
 
 mod alloc_digest;
+mod arena;
 mod kv_blocks;
 mod kv_budget;
 mod kv_sizing;
 mod kv_summary;
 mod mem_trace;
 mod mtp_modules;
+#[cfg(feature = "cuda")]
+mod nllb;
 mod proposers;
 pub mod slots;
 mod weights_prep;
@@ -74,45 +76,20 @@ pub fn build_model(
     // 2026-09-25: NLLB / M2M-100 PEFT LoRA adapter directory; `None` for the
     // base model.
     nllb_lora_dir: Option<std::path::PathBuf>,
+    // 2026-10-17: The startup settings; the model and its loader read every lever from them.
+    settings: std::sync::Arc<metrale_settings::InferenceServerSettings>,
 ) -> Result<slots::BuiltModel> {
-    // 2026-09-25: NLLB / M2M-100 is an encoder-decoder model, served by
-    // `NllbGpuModel` from the same `store`. This returns before
-    // `loader_for_config`, so the decoder-only loader never runs for it.
     #[cfg(feature = "cuda")]
-    if matches!(config.model_type.as_str(), "m2m_100" | "nllb") {
-        let (src, tgt) = nllb_lang.ok_or_else(|| {
-            anyhow::anyhow!(
-                "NLLB serving requires --src-lang and --tgt-lang (translation language pair)"
-            )
-        })?;
-        let lang = crate::model::nllb::NllbLang {
-            src_lang_id: src,
-            tgt_lang_id: tgt,
-            decoder_start_id: config.eos_token_id,
-            eos_id: config.eos_token_id,
-            pad_id: 1,
-        };
-        let nllb_slots = match slots.request {
-            slots::SlotRequest::Count(n) => n,
-            slots::SlotRequest::Auto => anyhow::bail!(
-                "--max-batch-size auto balances recurrent-state slots against the KV pool; \
-                 an encoder-decoder model has neither. Pass a count."
-            ),
-        };
-        let model = crate::model::nllb::NllbGpuModel::new(
+    if nllb::is_nllb(&config) {
+        return nllb::build(
             &config,
             &store,
             gpu,
-            lang,
+            nllb_lang,
             max_seq_len,
-            nllb_slots,
+            &slots.request,
             nllb_lora_dir.as_deref(),
-        )?;
-        return Ok(slots::BuiltModel {
-            max_batch_size: nllb_slots,
-            model: Box::new(model),
-            drafter_weights_sha256: None,
-        });
+        );
     }
     #[cfg(not(feature = "cuda"))]
     let _ = (nllb_lang, nllb_lora_dir);
@@ -304,43 +281,19 @@ pub fn build_model(
         store.resident_bytes() as f64 / (1024.0 * 1024.0 * 1024.0),
     );
 
-    // 2026-09-25: Step 4: the buffer arena. 2026-10-01: Sized for the slot ceiling (`auto` resolves
-    // after it, at KV sizing); the preflight sized the arena reserve for the same ceiling.
-    // 2026-10-12: `METRALE_GLM_ARENA_LEAN=1`: a `glm5_next` stack gets the arena with the other
-    // architectures' regions at 256 B (`BufferSizes::lean_hc_stack`); on another model type the
-    // lever is refused rather than ignored.
-    let arena_lean = metrale_model_arch::glm5next_layer::arena_lean()?;
-    anyhow::ensure!(
-        !arena_lean || config.model_type == "glm5_next",
-        "METRALE_GLM_ARENA_LEAN=1 is for glm5_next models, not {:?}",
-        config.model_type
+    // 2026-09-25: Step 4: the buffer arena (`arena.rs`).
+    let arena_levers = metrale_gpu_runtime::buffers::ArenaLevers::from(
+        &metrale_settings::groups::device::DeviceSettings::try_from(&*settings)?,
     );
-    let buffers = if arena_lean {
-        let sizes = metrale_gpu_runtime::buffers::BufferSizes::from_config(
-            &config,
-            max_batch_tokens,
-            max_seq_len,
-            kv_block_size,
-            slots.request.ceiling(),
-        )
-        .lean_hc_stack();
-        BufferArena::from_sizes(
-            &config,
-            sizes,
-            max_batch_tokens,
-            slots.request.ceiling(),
-            gpu.as_ref(),
-        )?
-    } else {
-        BufferArena::new(
-            &config,
-            max_batch_tokens,
-            max_seq_len,
-            kv_block_size,
-            slots.request.ceiling(),
-            gpu.as_ref(),
-        )?
-    };
+    let buffers = arena::buffer_arena(
+        &config,
+        max_batch_tokens,
+        max_seq_len,
+        kv_block_size,
+        slots.request.ceiling(),
+        &arena_levers,
+        gpu.as_ref(),
+    )?;
 
     // 2026-09-25: Step 5: size the KV cache. With MLA (`kv_lora_rank > 0`) it
     // caches one head of `kv_lora_rank + qk_rope_head_dim` dims per token, the
@@ -409,7 +362,8 @@ pub fn build_model(
     let (max_batch_size, num_kv_blocks) = (sized.slots, sized.num_kv_blocks);
     let total_mem = gpu.total_memory()?;
     let total_budget = (total_mem as f64 * gpu_memory_utilization) as usize;
-    let kv_cache = PagedKvCache::new(kv_config, num_kv_blocks, gpu.as_ref())?;
+    let tuning = metrale_settings::groups::device_cache::CacheTuning::try_from(&*settings)?;
+    let kv_cache = PagedKvCache::with_tuning(kv_config, num_kv_blocks, gpu.as_ref(), &tuning)?;
 
     // 2026-09-25: Step 6: assemble the model. The DFlash drafter shares the
     // target's embedding and LM head, so their pointers are copied first.
@@ -452,6 +406,7 @@ pub fn build_model(
         vision_encoder,
         ssm_cache_slots,
         ssm_checkpoint_interval,
+        settings.clone(),
     )?;
 
     // 2026-09-25: A Q6_K `lm_head.weight` in the store (a DeepSeek-V4.1 GGUF,
@@ -504,6 +459,7 @@ pub fn build_model(
         target_hidden_for_dflash,
         max_seq_len,
         max_batch_size,
+        &settings,
     )?;
 
     // 2026-09-25: Step 8: the n-gram embedding, and the LoRA adapters loaded

@@ -8,10 +8,11 @@
 //! Invariants: reads only `InferenceServerSettings`; every Text lever keeps the parse of the
 //! reader it replaced.
 
-use crate::resolve::{InferenceServerSettings, SettingsError};
+use metrale_error::Error;
 
-/// 2026-10-17: `METRALE_SSM_TAIL_LEASE_TTL` when unset or not a `u32`.
-pub const TAIL_LEASE_TTL_BUILT_IN: u32 = 64;
+use crate::groups::device::{DeviceSettingsError, in_u32};
+use crate::resolve::InferenceServerSettings;
+
 /// 2026-10-17: The range `METRALE_SNAP_EVICT_ALPHA` is clamped to.
 pub const SNAP_EVICT_ALPHA_MAX: f64 = 8.0;
 
@@ -44,27 +45,25 @@ impl CacheTuning {
     /// 2026-10-17: The tuning of an empty environment, no CLI and no recipe: the declared defaults.
     ///
     /// # Errors
-    /// The resolver's error, should a declared default fail to parse.
-    pub fn declared() -> Result<Self, SettingsError> {
-        Ok(Self::from(&super::device::declared()?))
+    /// A declared default that does not parse or project.
+    pub fn declared() -> Result<Self, DeviceSettingsError> {
+        Ok(Self::try_from(&super::device::declared()?)?)
     }
 }
 
-impl From<&InferenceServerSettings> for CacheTuning {
-    fn from(s: &InferenceServerSettings) -> Self {
+impl TryFrom<&InferenceServerSettings> for CacheTuning {
+    type Error = Error;
+
+    fn try_from(s: &InferenceServerSettings) -> Result<Self, Error> {
         let sched = &s.scheduler;
-        Self {
+        Ok(Self {
             prefix_subblock: s.cache.prefix_subblock,
             kv_trace: s.telemetry.kv_trace,
             tail_lease: !matches!(
                 sched.disable_ssm_tail_protect.as_deref(),
                 Some("1" | "on" | "true")
             ),
-            tail_lease_ttl: sched
-                .ssm_tail_lease_ttl
-                .as_deref()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(TAIL_LEASE_TTL_BUILT_IN),
+            tail_lease_ttl: in_u32("METRALE_SSM_TAIL_LEASE_TTL", sched.ssm_tail_lease_ttl)?,
             snap_evict_alpha: s
                 .runtime
                 .snap_evict_alpha
@@ -73,7 +72,7 @@ impl From<&InferenceServerSettings> for CacheTuning {
             ssm_snap_stats: s.telemetry.ssm_snap_stats,
             snap_evict_legacy: s.runtime.snap_evict_legacy,
             hermetic: s.server.hermetic.as_deref() == Some("1"),
-        }
+        })
     }
 }
 

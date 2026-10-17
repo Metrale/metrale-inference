@@ -11,7 +11,6 @@ pub mod adaptive_rung;
 pub mod dflash_adaptive_k;
 pub mod dflash_ladder;
 pub mod dflash_rung;
-pub mod legacy_env;
 pub mod mtp_gate;
 pub mod ngram;
 pub mod prompt_lookup;

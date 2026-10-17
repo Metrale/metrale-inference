@@ -19,7 +19,7 @@ use crate::cli;
 pub(crate) fn publish_kernel_flags(
     args: &cli::ServeArgs,
     settings: &metrale_settings::InferenceServerSettings,
-) {
+) -> anyhow::Result<()> {
     let plan = super::kernel_flag_plan::KernelFlagPlan::from_args(args);
     // 2026-09-26: The GDN cell (`GdnFlags`) is one `OnceLock` fed by four flags:
     // `--ssm-h-dtype`, `--gdn-fused-norm`, `--ssm-batched-recurrent` and
@@ -235,12 +235,13 @@ pub(crate) fn publish_kernel_flags(
             );
         }
     }
-    // 2026-09-26: `None` unless `--no-ssm-tail-midchunk` was given. `None`
-    // publishes nothing, so `METRALE_SSM_TAIL_MIDCHUNK` decides.
-    metrale_gpu_runtime::set_ssm_tail_midchunk(plan.ssm_tail_midchunk);
-    // 2026-09-26: Published before any prefill: `hermetic_enabled` caches its
-    // first answer. Only `true` is published.
-    metrale_gpu_runtime::set_hermetic(plan.hermetic);
+    // 2026-09-26: `Some(false)` under `--no-ssm-tail-midchunk`. 2026-10-17: Otherwise the
+    // resolved `METRALE_SSM_TAIL_MIDCHUNK` decides, published here before any prefill.
+    let midchunk = &settings.scheduler.ssm_tail_midchunk;
+    metrale_gpu_runtime::set_ssm_tail_midchunk(
+        plan.ssm_tail_midchunk
+            .unwrap_or_else(|| metrale_gpu_runtime::ssm_tail_midchunk_on(midchunk.as_deref())),
+    );
     // 2026-09-26: Both lines below log resolved values, not the raw arguments,
     // because most of them can also come from the environment. `summary_line`
     // names each per-target serving default, its value, and ` (env)` when the
@@ -275,6 +276,7 @@ pub(crate) fn publish_kernel_flags(
         // 2026-09-26: Resolved, so it may come from the environment.
         metrale_model_layers::layers::ops::prefill_varlen_enabled(),
     );
+    Ok(())
 }
 
 /// 2026-09-26: Environment variables `warn_shadowed_env` reports as overridden

@@ -128,6 +128,11 @@ pub(super) fn setup_model(
         None,
         None,
         None,
+        std::sync::Arc::new(metrale_settings::resolve(
+            &metrale_io_host_std::ProcessEnv,
+            &metrale_settings::sources::CliLayer::empty(),
+            &metrale_settings::sources::RecipeLayer::empty(),
+        )?),
     )?
     .model;
 

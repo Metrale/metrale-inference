@@ -102,6 +102,7 @@ pub(super) fn install_dflash_drafter(
     target_hidden_for_dflash: usize,
     max_seq_len: usize,
     max_batch_size: usize,
+    settings: &metrale_settings::InferenceServerSettings,
 ) -> Result<()> {
     if let Some(args) = dflash_args {
         let weights = load_dflash_weights(
@@ -135,6 +136,7 @@ pub(super) fn install_dflash_drafter(
                 max_batch_size,
                 tp,
                 args.weight_quant,
+                settings,
             )?;
             // 2026-10-10: The tensor-parallel propose runs the paged DFlash2 path only.
             anyhow::ensure!(

@@ -81,6 +81,7 @@ impl TransformerModel {
         vision_encoder: Option<metrale_model_layers::layers::VisionTower>,
         ssm_cache_slots: usize,
         ssm_checkpoint_interval: usize,
+        settings: Arc<metrale_settings::InferenceServerSettings>,
     ) -> Result<Self> {
         // 2026-09-25: `rms_norm_kernel` is used only for `final_norm`, in
         // `final_norm_apply`.
@@ -177,8 +178,7 @@ impl TransformerModel {
             gpu.as_ref(),
         )?;
 
-        // 2026-09-25: Fixed per-sequence stride of the attention block-table
-        // metadata, so captured CUDA graphs stay valid.
+        // 2026-09-25: Fixed per-sequence block-table stride, so captured CUDA graphs stay valid.
         let max_blocks_per_seq = (max_seq_len / kv_cache.block_size() + 1) as u32;
 
         // 2026-09-25: Permanent KV block for padding rows and for block-table
@@ -252,10 +252,9 @@ impl TransformerModel {
         let ep_cmd_buf = gpu.alloc(metrale_model_layers::ep_wire::CMD_BLOCK_BYTES)?;
         let device_argmax = super::device_argmax::DeviceArgmax::new(gpu.as_ref())?;
 
-        // 2026-09-25: Fixed-address buffer (CUDA-graph safe) for the batched
-        // decode MoE per-row adapter map, 4 bytes per batch row, uploaded each
-        // decode step. Allocated unconditionally because LoRA weights arrive
-        // after construction (`set_lora_weights`).
+        // 2026-09-25: Fixed-address (CUDA-graph safe) batched decode MoE per-row adapter map, 4
+        // bytes a batch row, uploaded each decode step; allocated unconditionally because LoRA
+        // weights arrive after construction (`set_lora_weights`).
         let moe_row_adapter_buf = gpu.alloc(max_batch_size.max(1) * 4)?;
 
         // 2026-09-25: Secondary stream and its event, used by the asynchronous
@@ -495,6 +494,7 @@ impl TransformerModel {
             overlay_route_slot: std::sync::atomic::AtomicI32::new(-1),
             decode_moe_route: std::sync::atomic::AtomicI32::new(1), // 2026-09-25: `MoeLoraRoute::Fold`
             circuit: parking_lot::RwLock::new(None),
+            settings,
         })
     }
 }

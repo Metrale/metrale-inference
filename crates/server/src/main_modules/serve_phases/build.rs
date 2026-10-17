@@ -16,14 +16,14 @@ pub(crate) fn build_prefix_cache(
     args: &cli::ServeArgs,
     config: &ModelConfig,
     gate: metrale_config::PrefixCacheGate,
-) -> Box<dyn metrale_telemetry::prefix_cache::PrefixCache> {
+) -> Result<Box<dyn metrale_telemetry::prefix_cache::PrefixCache>> {
     if args.prefix_caching_enabled() && !config.kv_only_prefix_cache_is_safe(gate) {
         tracing::warn!(
             model_type = %config.model_type,
             "Prefix caching: DISABLED because this model builds per-sequence state outside KV; \
              the KV-only cache cannot resume it exactly"
         );
-        return Box::new(metrale_telemetry::prefix_cache::NoPrefixCaching);
+        return Ok(Box::new(metrale_telemetry::prefix_cache::NoPrefixCaching));
     }
     if args.prefix_caching_enabled() {
         // 2026-10-09: GLM-5.3 opens the gate only with its indexer rows paged into the KV
@@ -42,10 +42,14 @@ pub(crate) fn build_prefix_cache(
         } else {
             tracing::info!("Prefix caching: ENABLED (radix tree)");
         }
-        Box::new(metrale_cache::radix_tree::RadixTree::new())
+        // 2026-10-17: `--hermetic` builds no tree, so `METRALE_HERMETIC` alone sets the tuning.
+        let settings = lever_settings()?;
+        let tuning = metrale_settings::groups::device_cache::CacheTuning::try_from(&settings)?;
+        let tree = metrale_cache::radix_tree::RadixTree::with_tuning(&tuning);
+        Ok(Box::new(tree))
     } else {
         tracing::info!("Prefix caching: disabled");
-        Box::new(metrale_telemetry::prefix_cache::NoPrefixCaching)
+        Ok(Box::new(metrale_telemetry::prefix_cache::NoPrefixCaching))
     }
 }
 
@@ -65,6 +69,21 @@ pub(crate) fn resolve_swap_space_gb(args: &cli::ServeArgs, config: &ModelConfig)
         return 0;
     }
     args.swap_space_gb
+}
+
+/// 2026-10-17: The lever settings from the process environment, CLI and recipe layers empty: the
+/// model build and the post-load yardstick read their levers from it. Lane 2b replaces it with the
+/// serve's startup resolve.
+///
+/// # Errors
+/// The first lever whose value does not parse under its rule.
+pub(crate) fn lever_settings() -> Result<metrale_settings::InferenceServerSettings> {
+    metrale_settings::resolve(
+        &metrale_io_host_std::ProcessEnv,
+        &metrale_settings::sources::CliLayer::empty(),
+        &metrale_settings::sources::RecipeLayer::empty(),
+    )
+    .context("Invalid METRALE_* lever value")
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -138,6 +157,7 @@ pub(crate) fn build_model(
         lora_args,
         nllb_lang,
         nllb_lora_dir,
+        std::sync::Arc::new(lever_settings()?),
     )
     .context("Failed to build model")
 }
@@ -345,13 +365,14 @@ mod prefix_cache_tests {
     fn build_prefix_cache(
         args: &ServeArgs,
         config: &ModelConfig,
-    ) -> Box<dyn metrale_telemetry::prefix_cache::PrefixCache> {
+    ) -> anyhow::Result<Box<dyn metrale_telemetry::prefix_cache::PrefixCache>> {
         super::build_prefix_cache(args, config, PrefixCacheGate::DECLARED)
     }
 
     #[test]
     fn safe_model_keeps_requested_prefix_cache() {
-        let cache = build_prefix_cache(&enabled_args(), &ModelConfig::qwen3_next_80b_nvfp4());
+        let cache = build_prefix_cache(&enabled_args(), &ModelConfig::qwen3_next_80b_nvfp4())
+            .expect("the process levers resolve");
         assert!(cache.is_active());
     }
 
@@ -371,7 +392,8 @@ mod prefix_cache_tests {
             config.kv_only_prefix_cache_is_safe(PrefixCacheGate::DECLARED),
             "this model's predicate is the open case the flag has to gate"
         );
-        assert!(!build_prefix_cache(&args, &config).is_active());
+        let cache = build_prefix_cache(&args, &config).expect("the process levers resolve");
+        assert!(!cache.is_active());
     }
 
     #[test]
@@ -380,7 +402,8 @@ mod prefix_cache_tests {
         config.model_type = "deepseek_v4".to_string();
         config.compress_ratios = vec![0, 4, 128];
 
-        let cache = build_prefix_cache(&enabled_args(), &config);
+        let cache =
+            build_prefix_cache(&enabled_args(), &config).expect("the process levers resolve");
         assert!(!cache.is_active());
     }
 
@@ -391,7 +414,8 @@ mod prefix_cache_tests {
         let mut config = ModelConfig::qwen3_next_80b_nvfp4();
         config.model_type = "glm5_next".to_string();
 
-        let cache = build_prefix_cache(&enabled_args(), &config);
+        let cache =
+            build_prefix_cache(&enabled_args(), &config).expect("the process levers resolve");
         assert!(cache.is_active());
     }
 
@@ -406,7 +430,8 @@ mod prefix_cache_tests {
             ..PrefixCacheGate::DECLARED
         };
 
-        let cache = super::build_prefix_cache(&enabled_args(), &config, flat);
+        let cache = super::build_prefix_cache(&enabled_args(), &config, flat)
+            .expect("the process levers resolve");
         assert!(!cache.is_active());
     }
 }
@@ -464,30 +489,5 @@ mod swap_space_tests {
 }
 
 #[cfg(test)]
-mod ep_worker_loop_tests {
-    /// 2026-09-26: The worker loop keeps running after an `EpCommandFailed` and
-    /// exits on any other error. Asserted on the source: the `EpCommandFailed`
-    /// arm comes before the catch-all `break`.
-    #[test]
-    fn a_command_failure_keeps_the_worker_up_and_a_link_failure_does_not() {
-        let src = include_str!("build.rs");
-        let loop_body = src
-            .split_once("match model_owned.ep_worker_step(&mut slots)")
-            .expect("the EP worker loop must exist")
-            .1;
-        let recoverable = loop_body
-            .find("EpCommandFailed")
-            .expect("the loop must classify command failures");
-        let stays_up = loop_body
-            .find("worker STAYS UP")
-            .expect("the recoverable arm must say so in the log");
-        let fatal = loop_body
-            .find("break;\n                }\n            }\n        }")
-            .expect("the fatal arm must still break");
-        assert!(
-            recoverable < stays_up && stays_up < fatal,
-            "the EpCommandFailed arm must come BEFORE the catch-all break, or every command \
-             failure is fatal again"
-        );
-    }
-}
+#[path = "build_ep_worker_tests.rs"]
+mod ep_worker_loop_tests;

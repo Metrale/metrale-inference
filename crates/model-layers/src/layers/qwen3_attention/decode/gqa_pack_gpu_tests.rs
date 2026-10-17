@@ -7,8 +7,9 @@
 //!
 //! The test also asserts that the comparison is not vacuous:
 //! - the shape is one [`attn_splitk::gqa_pack_shape_ok`] accepts;
-//! - [`attn_splitk::gqa_pack_enabled`] is true in this process (it is false unless
-//!   `METRALE_ATTN_DECODE_GQA_PACK` arms it), so the run fails rather than passing vacuously;
+//! - [`attn_splitk::gqa_pack_enabled`] is true in this process after the test publishes the
+//!   switch (2026-10-17: before the backend, whose publish would otherwise win), so the run fails
+//!   rather than passing vacuously;
 //! - all four entry points resolve to non-zero handles, and the packed and unpacked handles differ;
 //! - [`splitk_dispatch::gqa_pack_kernel`], the production route, returns the packed handle for this
 //!   shape and refuses a head ratio the kernel cannot index;
@@ -18,7 +19,7 @@
 //!
 //! `#[ignore]`: it needs a GPU and a built PTX set. Run with:
 //! ```text
-//! METRALE_ATTN_DECODE_GQA_PACK=1 cargo test -p metrale-model-layers --release \
+//! cargo test -p metrale-model-layers --release \
 //!   gqa_packed_decode_is_byte_identical -- --ignored --nocapture
 //! ```
 //!
@@ -74,13 +75,13 @@ fn gqa_packed_decode_is_byte_identical_to_unpacked() {
     );
 
     // 2026-09-25: The lever. Unarmed, `gqa_pack_kernel` returns None and the comparisons below
-    // would test nothing.
+    // would test nothing. 2026-10-17: Published here, as `MetraleCudaBackend::with_settings`
+    // publishes it at serve start; the first publish wins.
+    attn_splitk::publish_gqa_pack(true);
     assert!(
         attn_splitk::gqa_pack_enabled(),
-        "METRALE_ATTN_DECODE_GQA_PACK is not armed in this process — re-run with \
-         METRALE_ATTN_DECODE_GQA_PACK=1. Without it the packed kernel is never \
-         the one production would pick and this test would be measuring a route \
-         nobody takes.",
+        "the packed-decode switch was published off before this test: the packed kernel is \
+         not the one production would pick, so this test would measure a route nobody takes.",
     );
 
     let gpu = metrale_gpu_runtime::cuda_backend::MetraleCudaBackend::new(0, &set.modules)

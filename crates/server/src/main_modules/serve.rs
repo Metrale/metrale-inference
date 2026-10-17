@@ -163,7 +163,7 @@ fn startup(
     // 2026-09-26: Publish the kernel-path flags before anything reads their
     // cells. An absent flag publishes nothing, so its `METRALE_*` variable
     // still decides (`serve_flags`).
-    super::serve_flags::publish_kernel_flags(&args, &settings);
+    super::serve_flags::publish_kernel_flags(&args, &settings)?;
     // 2026-09-26: Process-scoped, like the flags: started before the first
     // load and kept across swaps.
     super::telemetry_boot::start(&args)?;

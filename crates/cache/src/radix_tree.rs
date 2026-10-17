@@ -58,7 +58,6 @@ pub struct RadixTree {
     snapshot_index: Mutex<SsmSnapshotIndex>,
 }
 
-// 2026-10-17: LEGACY: `RadixTree::new` reads the environment (`crate::legacy_env`).
 impl Default for RadixTree {
     fn default() -> Self {
         Self::new()
@@ -66,6 +65,12 @@ impl Default for RadixTree {
 }
 
 impl RadixTree {
+    /// 2026-10-17: [`Self::with_tuning`] at the declared `CacheTuning`, for tests and tools; a
+    /// serve passes the tuning it resolved at startup.
+    pub fn new() -> Self {
+        Self::with_tuning(&CacheTuning::declared().expect("the declared cache table projects"))
+    }
+
     /// 2026-10-17: An empty tree and snapshot index, read at `tuning` for their lifetime.
     pub fn with_tuning(tuning: &CacheTuning) -> Self {
         Self {

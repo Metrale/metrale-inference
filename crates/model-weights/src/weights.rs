@@ -208,6 +208,9 @@ pub struct WeightStore {
     /// quantize-on-load or straight off NVMe by `NgramRowCache`, both of
     /// which need only this (path, offset) locator.
     deferred: HashMap<String, DeferredTensor>,
+    /// 2026-10-17: The levers the loader that built this store resolved, for the model code that
+    /// streams from the same files after it (`None` from a loader that takes none).
+    weights_settings: Option<metrale_settings::groups::device_weights::WeightsSettings>,
 }
 
 mod deferred;

@@ -4,23 +4,26 @@
 //! weights, projected once from the resolved [`InferenceServerSettings`] and passed to the
 //! loader (ROTI). The RDMA fallback chains (`METRALE_WEIGHT_*` falling back to
 //! `METRALE_EXPERT_*`) are resolved here, so a loader sees one device name and one GID per rail.
+//! The built-in devices and GID are the declared defaults of the `METRALE_EXPERT_*` and
+//! `METRALE_LORA_RDMA_GID` rows.
 //!
 //! Owner: settings.
-//! Invariants: reads only `InferenceServerSettings`; every Text lever keeps the parse of the
-//! reader it replaced.
+//! Invariants: reads only `InferenceServerSettings`; a value the loader cannot use is a
+//! `ProjectionOutOfRange` error, never a silent default.
 
 use alloc::string::String;
 
-use crate::resolve::{InferenceServerSettings, SettingsError};
+use metrale_error::Error;
 
-/// 2026-10-17: Rail-0 RDMA device when no `*_RDMA_DEV` is set.
-pub const RDMA_DEV_BUILT_IN: &str = "roceP2p1s0f1";
-/// 2026-10-17: Rail-1 RDMA device when no `*_RAIL2_DEV` is set.
-pub const RAIL2_DEV_BUILT_IN: &str = "rocep1s0f1";
-/// 2026-10-17: RoCE GID index when no GID lever parses.
-pub const RDMA_GID_BUILT_IN: u32 = 3;
-/// 2026-10-17: `METRALE_DS41_EVICT_RANDOM_PCT` when unset or not a percentage.
-pub const EVICT_RANDOM_PCT_BUILT_IN: usize = 8;
+use crate::groups::device::{DeviceSettingsError, in_u32, out_of_range, row_default};
+use crate::groups::kernels::KernelsSettings;
+use crate::groups::storage::StorageSettings;
+use crate::resolve::InferenceServerSettings;
+
+/// 2026-10-17: The rail-0 device an empty `*_RDMA_DEV` value falls back to.
+const RAIL0_DEV_DECLARED: &str = row_default(StorageSettings::LEVERS, "METRALE_EXPERT_RDMA_DEV");
+/// 2026-10-17: The rail-1 device an empty `*_RAIL2_DEV` value falls back to.
+const RAIL1_DEV_DECLARED: &str = row_default(KernelsSettings::LEVERS, "METRALE_EXPERT_RAIL2_DEV");
 
 /// 2026-10-17: One verbs rail: the RDMA device and its GID index.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -34,7 +37,7 @@ pub struct Rail {
 pub struct WeightsSettings {
     /// 2026-10-17: `METRALE_GGUF_NATIVE_Q2`.
     pub gguf_native_q2: bool,
-    /// 2026-10-17: `METRALE_GGUF_Q2_GROUP`: 64 only for exactly `64`, else 128.
+    /// 2026-10-17: `METRALE_GGUF_Q2_GROUP`: 64 or 128.
     pub q2_group: usize,
     /// 2026-10-17: `METRALE_GGUF_FORCE_CPU`.
     pub gguf_force_cpu: bool,
@@ -42,14 +45,14 @@ pub struct WeightsSettings {
     pub keep_page_cache: bool,
     /// 2026-10-17: `METRALE_DS41_DIRECT_READS`.
     pub direct_reads: bool,
-    /// 2026-10-17: `METRALE_DS41_KQUANT_RESIDENT`: off only for exactly `0`.
+    /// 2026-10-17: `METRALE_DS41_KQUANT_RESIDENT`.
     pub kquant_resident: bool,
-    /// 2026-10-17: `METRALE_DS41_Q6K_HEAD`: off only for exactly `0`.
+    /// 2026-10-17: `METRALE_DS41_Q6K_HEAD`.
     pub q6k_head: bool,
     /// 2026-10-17: `METRALE_DS41_EVICT_RANDOM_PCT`, 0..=100.
     pub evict_random_pct: usize,
     /// 2026-10-17: Weight-tier rail 0 (`METRALE_WEIGHT_RDMA_*`, then `METRALE_EXPERT_RDMA_*`;
-    /// an empty device name is skipped).
+    /// an empty device name is skipped, and the first GID set is the one used).
     pub weight_rail0: Rail,
     /// 2026-10-17: Weight-tier rail 1 when `METRALE_WEIGHT_DUAL_RAIL` is on
     /// (`METRALE_WEIGHT_RAIL2_*`, then `METRALE_EXPERT_RAIL2_*`).
@@ -64,98 +67,89 @@ impl WeightsSettings {
     /// defaults.
     ///
     /// # Errors
-    /// The resolver's error, should a declared default fail to parse.
-    pub fn declared() -> Result<Self, SettingsError> {
-        Ok(Self::from(&super::device::declared()?))
+    /// A declared default that does not parse or project.
+    pub fn declared() -> Result<Self, DeviceSettingsError> {
+        Ok(Self::try_from(&super::device::declared()?)?)
     }
 }
 
-/// 2026-10-17: The first set, non-empty value, else `default`.
-fn first_nonempty(chain: &[Option<&str>], default: &str) -> String {
+/// 2026-10-17: The first set, non-empty device name, else `declared`.
+fn first_nonempty(chain: &[Option<&str>], declared: &str) -> String {
     chain
         .iter()
-        .find_map(|v| v.filter(|v| !v.is_empty()))
-        .unwrap_or(default)
+        .flatten()
+        .copied()
+        .find(|v| !v.is_empty())
+        .unwrap_or(declared)
         .into()
 }
 
-/// 2026-10-17: The first set value (empty included), else `default`.
-fn first_set(chain: &[Option<&str>], default: &str) -> String {
-    chain.iter().find_map(|v| *v).unwrap_or(default).into()
-}
+impl TryFrom<&InferenceServerSettings> for WeightsSettings {
+    type Error = Error;
 
-/// 2026-10-17: The first value that is a `u32` (others are skipped), else `default`.
-fn first_u32(chain: &[Option<u32>], default: u32) -> u32 {
-    chain.iter().find_map(|v| *v).unwrap_or(default)
-}
-
-/// 2026-10-18: A Text GID row as the old lenient parse read it.
-fn text_u32(v: &Option<String>) -> Option<u32> {
-    v.as_deref().and_then(|v| v.parse().ok())
-}
-
-/// 2026-10-18: An Int GID row; a value outside `u32` is skipped, as the old parse skipped it.
-fn int_u32(v: i64) -> Option<u32> {
-    u32::try_from(v).ok()
-}
-
-impl From<&InferenceServerSettings> for WeightsSettings {
-    fn from(s: &InferenceServerSettings) -> Self {
+    fn try_from(s: &InferenceServerSettings) -> Result<Self, Error> {
         let (st, m, k) = (&s.storage, &s.model, &s.kernels);
-        let not_zero = |v: &Option<String>| v.as_deref() != Some("0");
-        Self {
+        let q2_group = match k.gguf_q2_group {
+            64 => 64,
+            128 => 128,
+            v => return Err(out_of_range("METRALE_GGUF_Q2_GROUP", v, "64 or 128")),
+        };
+        let evict_random_pct = match usize::try_from(m.ds41_evict_random_pct) {
+            Ok(p) if p <= 100 => p,
+            _ => {
+                return Err(out_of_range(
+                    "METRALE_DS41_EVICT_RANDOM_PCT",
+                    m.ds41_evict_random_pct,
+                    "0..=100",
+                ));
+            }
+        };
+        let (weight_gid, weight_gid_env) = match st.weight_rdma_gid {
+            Some(g) => (g, "METRALE_WEIGHT_RDMA_GID"),
+            None => (st.expert_rdma_gid, "METRALE_EXPERT_RDMA_GID"),
+        };
+        let weight_rail1 = if m.weight_dual_rail {
+            let (gid, env) = match m.weight_rail2_gid {
+                Some(g) => (g, "METRALE_WEIGHT_RAIL2_GID"),
+                None => (k.expert_rail2_gid, "METRALE_EXPERT_RAIL2_GID"),
+            };
+            Some(Rail {
+                dev: first_nonempty(
+                    &[m.weight_rail2_dev.as_deref(), Some(&k.expert_rail2_dev)],
+                    RAIL1_DEV_DECLARED,
+                ),
+                gid: in_u32(env, gid)?,
+            })
+        } else {
+            None
+        };
+        Ok(Self {
             gguf_native_q2: m.gguf_native_q2,
-            q2_group: if k.gguf_q2_group.as_deref() == Some("64") {
-                64
-            } else {
-                128
-            },
+            q2_group,
             gguf_force_cpu: s.runtime.gguf_force_cpu,
             keep_page_cache: s.cache.ds41_keep_page_cache,
             direct_reads: st.ds41_direct_reads,
-            kquant_resident: not_zero(&m.ds41_kquant_resident),
-            q6k_head: not_zero(&m.ds41_q6k_head),
-            evict_random_pct: m
-                .ds41_evict_random_pct
-                .as_deref()
-                .and_then(|v| v.parse().ok())
-                .filter(|p| *p <= 100)
-                .unwrap_or(EVICT_RANDOM_PCT_BUILT_IN),
+            kquant_resident: m.ds41_kquant_resident,
+            q6k_head: m.ds41_q6k_head,
+            evict_random_pct,
             weight_rail0: Rail {
                 dev: first_nonempty(
                     &[st.weight_rdma_dev.as_deref(), Some(&st.expert_rdma_dev)],
-                    RDMA_DEV_BUILT_IN,
+                    RAIL0_DEV_DECLARED,
                 ),
-                gid: first_u32(
-                    &[
-                        st.weight_rdma_gid.and_then(int_u32),
-                        int_u32(st.expert_rdma_gid),
-                    ],
-                    RDMA_GID_BUILT_IN,
-                ),
+                gid: in_u32(weight_gid_env, weight_gid)?,
             },
-            weight_rail1: m.weight_dual_rail.then(|| Rail {
-                dev: first_nonempty(
-                    &[m.weight_rail2_dev.as_deref(), Some(&k.expert_rail2_dev)],
-                    RAIL2_DEV_BUILT_IN,
-                ),
-                gid: first_u32(
-                    &[text_u32(&m.weight_rail2_gid), int_u32(k.expert_rail2_gid)],
-                    RDMA_GID_BUILT_IN,
-                ),
-            }),
+            weight_rail1,
             lora_rail: Rail {
-                dev: first_set(
-                    &[
-                        st.lora_rdma_dev.as_deref(),
-                        st.weight_rdma_dev.as_deref(),
-                        Some(&st.expert_rdma_dev),
-                    ],
-                    RDMA_DEV_BUILT_IN,
-                ),
-                gid: first_u32(&[text_u32(&st.lora_rdma_gid)], RDMA_GID_BUILT_IN),
+                dev: st
+                    .lora_rdma_dev
+                    .as_deref()
+                    .or(st.weight_rdma_dev.as_deref())
+                    .unwrap_or(&st.expert_rdma_dev)
+                    .into(),
+                gid: in_u32("METRALE_LORA_RDMA_GID", st.lora_rdma_gid)?,
             },
-        }
+        })
     }
 }
 

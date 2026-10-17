@@ -5,6 +5,10 @@
 //! K3-DECISION: KDA is a new backend. Do not copy GDN / Mamba-2 /
 //! Qwen3-Next / glm5next_kda kernels into `kernels/gb10/kimi-k3/`.
 //! CUDA: `kda_decode.cu` (default; `K3_CUDA_KDA=0` CPU escape).
+//!
+//! 2026-10-17: The `K3_*` variables are read from the environment directly, at their use sites.
+//! They are outside the settings table until a `kimi_k3` group lands, and belong on the env-ban
+//! allowlist until then.
 
 pub mod attnres;
 pub mod binding_memory;

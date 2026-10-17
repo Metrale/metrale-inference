@@ -24,7 +24,6 @@ tracing = { workspace = true, features = ["std", "attributes"] }
 
 [dev-dependencies]
 metrale-gpu-runtime = { workspace = true, features = ["test-utils"] }
-metrale-settings = { workspace = true, features = ["test-utils"] }
 
 [lints]
 workspace = true

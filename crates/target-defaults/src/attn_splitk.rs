@@ -220,23 +220,30 @@ pub fn parse_gqa_pack(spelling: &str) -> Option<bool> {
 }
 
 /// 2026-09-25: `declared`, overridden by a parseable
-/// `METRALE_ATTN_DECODE_GQA_PACK` value. Pure; [`gqa_pack_enabled`] supplies
-/// the environment.
+/// `METRALE_ATTN_DECODE_GQA_PACK` setting. Pure; the backend publishes the
+/// answer ([`publish_gqa_pack`]).
 pub fn resolve_gqa_pack(declared: bool, env_raw: Option<&str>) -> bool {
     env_raw.and_then(parse_gqa_pack).unwrap_or(declared)
 }
 
-/// 2026-09-25: Whether the packed kernels are armed in this process, resolved
-/// once. The dispatch reads it on every non-split BF16 and FP8 paged-decode
-/// launch, and a fixed answer keeps a captured CUDA graph consistent with
-/// later launches.
+/// 2026-09-25: Whether the packed kernels are armed in this process. The dispatch reads it on
+/// every non-split BF16 and FP8 paged-decode launch.
 ///
-/// 2026-10-17: LEGACY: the process environment is read in
-/// [`crate::legacy_env::legacy_env_gqa_pack_enabled`] until the dispatch receives the resolved
-/// `DeviceSettings::attn_decode_gqa_pack` and calls [`resolve_gqa_pack`] itself.
+/// 2026-10-17: The switch [`publish_gqa_pack`] published, else [`DECODE_GQA_PACK_DECLARED`].
 pub fn gqa_pack_enabled() -> bool {
-    crate::legacy_env::legacy_env_gqa_pack_enabled()
+    GQA_PACK.get().copied().unwrap_or(DECODE_GQA_PACK_DECLARED)
 }
+
+/// 2026-10-17: Publish the process's packed-kernel switch, [`resolve_gqa_pack`] of the resolved
+/// `METRALE_ATTN_DECODE_GQA_PACK` setting; `MetraleCudaBackend::with_settings` does, before any
+/// launch. The first publish wins, so every launch and every captured CUDA graph sees one answer.
+///
+/// ROTI: a startup static, until the dispatch receives the resolved setting itself.
+pub fn publish_gqa_pack(armed: bool) {
+    let _ = GQA_PACK.set(armed);
+}
+
+static GQA_PACK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 
 /// 2026-09-25: Whether this launch's shape is one the packed kernels can
 /// serve. Each condition is a precondition of the kernel:

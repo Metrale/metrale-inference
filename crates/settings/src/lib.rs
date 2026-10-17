@@ -18,9 +18,6 @@
 #![deny(clippy::all)]
 
 extern crate alloc;
-// 2026-10-17: `groups::equivalence::var_in` returns a `std::env::var`-shaped lookup.
-#[cfg(all(feature = "test-utils", not(test)))]
-extern crate std;
 
 #[macro_use]
 mod macros;

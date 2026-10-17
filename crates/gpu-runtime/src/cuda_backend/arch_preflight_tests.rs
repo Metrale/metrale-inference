@@ -9,13 +9,21 @@
 
 use super::{
     DeviceQuery, DriverDeviceQuery, check_arch, check_sm_count, device_compute_capability_of,
-    preflight_arch, preflight_device_arch, preflight_device_arch_with,
+    preflight_arch, preflight_device_arch_for, preflight_device_arch_with,
 };
 use anyhow::{Result, bail};
 use metrale_core::target::KernelTarget;
 use metrale_kernels::{ModelBehavior, SamplingPresets, TargetPtxSet};
+use metrale_settings::groups::device::{DeviceSettings, StreamPriority};
 use std::sync::Mutex;
 use std::thread::{self, ThreadId};
+
+/// 2026-10-17: The stream priority a serve runs with when no priority lever is set.
+fn declared_priority() -> StreamPriority {
+    DeviceSettings::declared()
+        .expect("the declared device table projects")
+        .stream_priority
+}
 
 /// 2026-09-25: A `TargetPtxSet` for a hopper target: `KernelTarget.arch` is
 /// the stripped base SM `sm_90`, `ptx_arch` is the given `[hardware].arch`.
@@ -74,7 +82,7 @@ fn a_target_that_records_no_arch_selects_nothing_to_check() {
     let stub = a_hopper_target("");
     assert_eq!(preflight_arch(stub.ptx_arch), None);
     // 2026-09-25: The chain as `kernel_gate::gate_device_arch` runs it.
-    preflight_device_arch(0, preflight_arch(stub.ptx_arch))
+    preflight_device_arch_for(0, preflight_arch(stub.ptx_arch), declared_priority())
         .expect("a stub build has nothing to check");
 }
 
@@ -227,7 +235,7 @@ fn the_ordinal_addressed_query_preflights_from_any_thread() {
 #[ignore = "requires a free CUDA device"]
 fn the_real_preflight_runs_on_a_thread_that_did_not_make_the_host() {
     DriverDeviceQuery {
-        priority: crate::legacy_env::legacy_env_stream_priority(),
+        priority: declared_priority(),
     }
     .init_host(0)
     .expect("this thread creates the process CUDA host");
@@ -237,7 +245,7 @@ fn the_real_preflight_runs_on_a_thread_that_did_not_make_the_host() {
         assert!(major > 0, "driver reported CC {major}.{minor}");
         // 2026-09-25: The device's own arch, so the test passes on any card.
         let arch = format!("sm_{major}{minor}");
-        preflight_device_arch(0, Some(arch.as_str()))
+        preflight_device_arch_for(0, Some(arch.as_str()), declared_priority())
     })
     .join()
     .expect("the preflight thread must not panic")
@@ -248,7 +256,8 @@ fn the_real_preflight_runs_on_a_thread_that_did_not_make_the_host() {
 /// so this passes without a GPU.
 #[test]
 fn a_build_that_recorded_no_arch_skips_the_check_without_a_gpu() {
-    preflight_device_arch(0, None).expect("a stub build has nothing to check");
+    preflight_device_arch_for(0, None, declared_priority())
+        .expect("a stub build has nothing to check");
 }
 
 /// 2026-09-25: Equal SM counts produce no warning.

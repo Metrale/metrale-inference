@@ -158,6 +158,10 @@ mod tests {
             None,
             None,
             None,
+            std::sync::Arc::new(
+                metrale_settings::groups::device::declared()
+                    .expect("the declared settings resolve"),
+            ),
         );
         match result {
             Err(e) => assert!(e.to_string().contains("Unsupported model type: 'llama'")),

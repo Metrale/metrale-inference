@@ -126,8 +126,9 @@ pub(crate) fn load_model(
     };
     let max_batch_size =
         scheduler_setup::resolve_max_batch_size(&args, world_size, scheduler_model.as_ref())?;
+    let drafter = metrale_settings::groups::device_drafter::DrafterSettings::try_from(&*settings)?;
     let (use_speculative, use_self_spec, use_ngram_spec, num_drafts, dflash_rung) =
-        scheduler_setup::resolve_speculation(&args, scheduler_model.as_ref());
+        scheduler_setup::resolve_speculation(&args, scheduler_model.as_ref(), &drafter);
     let prompt_lookup = args.prompt_lookup_config();
     // 2026-10-04: The cross-request cache is keyed by the model and the
     // tokenizer this serve loaded (`scheduler::shared_lookup_step`).

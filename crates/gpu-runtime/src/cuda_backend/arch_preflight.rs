@@ -17,13 +17,9 @@
 //!   preflight.
 
 use anyhow::{Result, bail};
-use metrale_core::error::MetraleError;
 use metrale_settings::groups::device::StreamPriority;
 
 use super::{cuCtxGetDevice, cuDeviceGet, cuDeviceGetAttribute};
-
-// 2026-10-17: LEGACY: the env-reading form, until the server passes the resolved priority.
-pub use crate::legacy_env::preflight_device_arch;
 
 const CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR: u32 = 75;
 const CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR: u32 = 76;
@@ -162,9 +158,7 @@ pub fn preflight_device_arch_for(
     compiled_arch: Option<&str>,
     priority: StreamPriority,
 ) -> Result<()> {
-    let query = DriverDeviceQuery {
-        priority: Ok(priority),
-    };
+    let query = DriverDeviceQuery { priority };
     preflight_device_arch_with(ordinal, compiled_arch, &query)
 }
 
@@ -189,19 +183,13 @@ pub(crate) trait DeviceQuery {
 /// 2026-09-25: The production `DeviceQuery`: `cuda_host::host`, then
 /// ordinal-addressed attribute queries (`cuDeviceGet`).
 pub(crate) struct DriverDeviceQuery {
-    /// 2026-10-17: The process stream's priority for `cuda_host::host`, or why
-    /// it could not be read; the error is returned from `init_host`, where the
-    /// host would have been created.
-    pub(crate) priority: std::result::Result<StreamPriority, String>,
+    /// 2026-10-17: The process stream's priority for `cuda_host::host`.
+    pub(crate) priority: StreamPriority,
 }
 
 impl DeviceQuery for DriverDeviceQuery {
     fn init_host(&self, ordinal: usize) -> Result<()> {
-        let priority = self
-            .priority
-            .clone()
-            .map_err(|msg| anyhow::anyhow!("{}", MetraleError::ModuleLoad(msg)))?;
-        crate::cuda_host::host(ordinal, priority).map_err(|e| anyhow::anyhow!("{e}"))?;
+        crate::cuda_host::host(ordinal, self.priority).map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(())
     }
 
@@ -214,7 +202,7 @@ impl DeviceQuery for DriverDeviceQuery {
     }
 }
 
-/// 2026-09-25: [`preflight_device_arch`] against an injected driver.
+/// 2026-09-25: [`preflight_device_arch_for`] against an injected driver.
 pub(crate) fn preflight_device_arch_with(
     ordinal: usize,
     compiled_arch: Option<&str>,

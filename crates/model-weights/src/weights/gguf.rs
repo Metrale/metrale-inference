@@ -410,6 +410,7 @@ impl super::WeightLoader for GgufLoader {
         check_oom_guard(gpu, oom_reserve_bytes, "weight loading (GGUF)")?;
         tracing::info!("Loaded {} weight tensors (GGUF → BF16)", weights.len());
         let mut store = WeightStore::from_map(weights);
+        store.record_weights_settings(self.settings.clone());
         for (name, t) in deferred {
             store.defer(name, t);
         }

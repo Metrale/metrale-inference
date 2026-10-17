@@ -12,14 +12,14 @@ mod snapshot;
 mod snapshot_reap;
 
 /// 2026-10-17: The declared `CacheTuning`, which the env-free index tests build with; it equals
-/// what the deleted readers gave an empty environment (cache `legacy_env_tests.rs`).
+/// what the deleted readers gave an empty environment (pre-wire equivalence evidence).
 pub(crate) fn declared_tuning() -> metrale_settings::groups::device_cache::CacheTuning {
     metrale_settings::groups::device_cache::CacheTuning::declared().expect("declared defaults")
 }
 
 /// 2026-09-25: Turn on the sub-block tail arms of `walk` on this tree only.
 ///
-/// `RadixTree::new` copies `METRALE_PREFIX_SUBBLOCK` into
+/// `RadixTree::with_tuning` copies `CacheTuning::prefix_subblock` into
 /// `partial_tail_sharing` (off when unset), so a test sets the field on its
 /// own tree instead of the environment. `walk` reads the
 /// same field in production.

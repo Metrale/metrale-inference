@@ -58,6 +58,7 @@ pub(super) fn resolve_max_batch_size(
 pub(super) fn resolve_speculation(
     args: &cli::ServeArgs,
     scheduler_model: &dyn metrale_model_engine::traits::Model,
+    drafter: &metrale_settings::groups::device_drafter::DrafterSettings,
 ) -> (
     bool,
     bool,
@@ -81,10 +82,11 @@ pub(super) fn resolve_speculation(
     if args.dflash {
         // 2026-09-26: The head's gamma is the cap; `--dflash-gamma` pins it
         // unless `METRALE_DFLASH_GAMMA_RESOLVER` is set.
-        dflash_rung.configure(
+        dflash_rung.configure_with_settings(
             num_drafts + 1,
             args.dflash_gamma.is_some(),
             metrale_model_layers::layers::qwen3_ssm::gdn_flags::gdn_woa_enabled(),
+            drafter,
         );
         dflash_rung.set_ladder(args.dflash_draft_ladder_resolved.clone());
         dflash_rung.set_adaptive_k(

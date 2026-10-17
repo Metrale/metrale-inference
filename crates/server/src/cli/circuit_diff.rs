@@ -257,7 +257,7 @@ pub(crate) fn run_diff(args: CircuitDiffArgs) -> Result<()> {
         &metrale_io_host_std::ProcessEnv,
         &args.serve,
     )?;
-    crate::main_modules::serve_flags::publish_kernel_flags(&args.serve, &settings);
+    crate::main_modules::serve_flags::publish_kernel_flags(&args.serve, &settings)?;
     let num_drafts = args.serve.resolved_num_drafts();
     // 2026-10-17: Each report's graph label, from the settings the engine loads with (until now
     // the tool's own environment was read at report time).

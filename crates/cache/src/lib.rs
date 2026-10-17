@@ -9,5 +9,4 @@
 pub mod kv_cache;
 pub mod kv_dequant;
 pub mod kv_spill;
-pub mod legacy_env;
 pub mod radix_tree;

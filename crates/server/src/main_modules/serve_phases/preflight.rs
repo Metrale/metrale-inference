@@ -120,12 +120,16 @@ pub(crate) fn preflight_reserve(
         args.max_seq_len
     };
     let max_batch_tokens_pre = prefill_budget_pre.max(spec_tokens_pre).max(ceiling);
-    let buffer_arena_bytes = metrale_gpu_runtime::buffers::BufferSizes::from_config(
+    let arena_levers = metrale_gpu_runtime::buffers::ArenaLevers::from(
+        &metrale_settings::groups::device::DeviceSettings::try_from(&super::lever_settings()?)?,
+    );
+    let buffer_arena_bytes = metrale_gpu_runtime::buffers::BufferSizes::from_config_with(
         config,
         max_batch_tokens_pre,
         args.max_seq_len,
         args.block_size,
         ceiling,
+        &arena_levers,
     )
     .total_bytes();
     // 2026-09-26: Marconi snapshot slots, from

@@ -42,6 +42,8 @@ impl BlockDiffusionDraftHead {
         tp: Option<super::tp::DflashTp>,
         // 2026-10-10: `--draft-weight-quantization`: the copies of the GEMM weights to build.
         weight_quant: super::DraftWeightQuantization,
+        // 2026-10-17: The startup settings the head resolves its levers from.
+        settings: &metrale_settings::InferenceServerSettings,
     ) -> Result<Self> {
         let nb = max_batch_size.max(1);
         let target_layer_ids = weights
@@ -138,7 +140,12 @@ impl BlockDiffusionDraftHead {
             per_seq_blocks,
             max_batch_size.max(1)
         );
-        let kv_cache = PagedKvCache::new(kv_config, num_blocks, gpu)?;
+        let kv_cache = PagedKvCache::with_tuning(
+            kv_config,
+            num_blocks,
+            gpu,
+            &metrale_settings::groups::device_cache::CacheTuning::try_from(settings)?,
+        )?;
 
         // 2026-09-25: Scratch, allocated once. The row buffers hold `rows_max` rows: the
         // non-paged path's `ctx_window` ctx rows plus `gamma` block rows, or `nb` bands of

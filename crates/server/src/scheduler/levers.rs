@@ -198,10 +198,10 @@ pub struct SchedLevers {
     /// 2026-10-17: `--draft-confidence-stop`, as the load published it: read once here so the
     /// planner and the step paths never consult the process cell (ROTI).
     pub draft_stop: Option<metrale_model_layers::speculative::draft_stop::StopRule>,
-    /// 2026-09-25: `METRALE_SPEC_ENTRY_PIN` (default 8): while a batch row
-    /// has emitted fewer post-`</think>` tokens than this, the MTP gate is
-    /// pinned to verify (`mtp_gate::entry_pin_forces_verify`).
-    pub spec_entry_pin_tokens: u32,
+    /// 2026-10-17: The drafter levers: the rung and gate tunings, and `spec_entry_pin_tokens`
+    /// (`METRALE_SPEC_ENTRY_PIN`, default 8): while a batch row has emitted fewer post-`</think>`
+    /// tokens than this, the MTP gate is pinned to verify (`mtp_gate::entry_pin_forces_verify`).
+    pub drafter: metrale_settings::groups::device_drafter::DrafterSettings,
     /// 2026-09-25: `METRALE_SSM_TAIL_CKPT=1`, as the runtime resolved it.
     pub ssm_tail_ckpt: bool,
     /// 2026-09-25: `--no-ssm-tail-midchunk` / `METRALE_SSM_TAIL_MIDCHUNK`,
@@ -224,7 +224,8 @@ impl SchedLevers {
     /// inversion happens here instead of at every read site.
     ///
     /// # Errors
-    /// An integer lever whose value does not fit its field ([`narrow`]).
+    /// An integer lever whose value does not fit its field ([`narrow`]), or a drafter lever that
+    /// does not project.
     pub fn from_settings(
         settings: &metrale_settings::InferenceServerSettings,
         spec_cost: Option<metrale_speculative::spec_cost::SpecCostState>,
@@ -233,6 +234,10 @@ impl SchedLevers {
         let spec = &settings.speculative;
         let sched = &settings.scheduler;
         let telemetry = &settings.telemetry;
+        let mut drafter =
+            metrale_settings::groups::device_drafter::DrafterSettings::try_from(settings)?;
+        // 2026-10-17: `--mtp-k-ladder` is also published to the model layer; either pins it.
+        drafter.mtp_ladder_set |= metrale_model_layers::speculative::mtp_ladder_pinned();
         Ok(Self {
             fast_greedy_grammar: !sampling.disable_fast_greedy,
             fast_masked: !sampling.disable_fast_masked,
@@ -315,8 +320,8 @@ impl SchedLevers {
             mtp_accept_debug: metrale_model_layers::speculative::mtp_accept_debug(),
             mtp_max_seqs: metrale_model_layers::speculative::mtp_max_seqs(),
             draft_stop: metrale_model_layers::speculative::draft_stop::draft_stop_rule(),
-            spec_entry_pin_tokens: metrale_speculative::mtp_gate::entry_pin_tokens_from_env(),
-            ssm_tail_ckpt: metrale_gpu_runtime::ssm_tail_ckpt_enabled(),
+            drafter,
+            ssm_tail_ckpt: settings.scheduler.ssm_tail_ckpt,
             ssm_tail_midchunk: metrale_gpu_runtime::ssm_tail_midchunk_enabled(),
 
             loop_watchdog: AtomicBool::new(false),
@@ -387,7 +392,8 @@ impl SchedLevers {
             // 2026-09-25: `mtp_max_seqs()` with the variable unset.
             mtp_max_seqs: 32,
             draft_stop: None,
-            spec_entry_pin_tokens: 8,
+            drafter: metrale_settings::groups::device_drafter::DrafterSettings::declared()
+                .expect("the declared drafter levers project"),
             ssm_tail_ckpt: false,
             ssm_tail_midchunk: true,
             loop_watchdog: AtomicBool::new(false),

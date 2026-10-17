@@ -21,6 +21,7 @@ mod tokenizer_runtime;
 mod topology;
 mod weights;
 
+pub(crate) use build::lever_settings;
 pub(super) use build::{
     build_high_speed_swap_config, build_model, build_prefix_cache, maybe_run_ep_worker,
     resolve_swap_space_gb, validate_head_high_speed_swap,

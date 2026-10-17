@@ -229,7 +229,8 @@ static CTX: OnceLock<Ctx> = OnceLock::new();
 #[cfg(metrale_cutlass)]
 /// 2026-10-17: The workspace size (`DeviceSettings::cutlass_workspace_bytes`), fixed by the
 /// first backend built (`MetraleCudaBackend::with_settings`). Static for the same reason as
-/// [`CTX`], which is allocated at this size.
+/// [`CTX`], which is allocated at this size. ROTI: a startup static, accepted until the CUTLASS
+/// context is owned by the backend instead of the process.
 static WORKSPACE_BYTES: OnceLock<usize> = OnceLock::new();
 
 #[cfg(metrale_cutlass)]

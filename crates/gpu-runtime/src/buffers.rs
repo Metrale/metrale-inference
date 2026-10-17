@@ -104,6 +104,8 @@ pub struct BufferArena {
 
 impl BufferArena {
     /// 2026-09-25: Size the buffers with [`BufferSizes::from_config`] and allocate them.
+    /// 2026-10-17: That is [`BufferArena::new_with`] at the declared levers, for tests and
+    /// examples.
     pub fn new(
         config: &ModelConfig,
         max_batch_tokens: usize,
@@ -112,23 +114,45 @@ impl BufferArena {
         max_batch_size: usize,
         gpu: &dyn GpuBackend,
     ) -> Result<Self> {
-        let sizes = BufferSizes::from_config(
+        Self::new_with(
             config,
             max_batch_tokens,
             max_seq_len,
             kv_block_size,
             max_batch_size,
+            &ArenaLevers::declared(),
+            gpu,
+        )
+    }
+
+    /// 2026-10-17: Size the buffers with [`BufferSizes::from_config_with`] at `levers` and
+    /// allocate them.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with(
+        config: &ModelConfig,
+        max_batch_tokens: usize,
+        max_seq_len: usize,
+        kv_block_size: usize,
+        max_batch_size: usize,
+        levers: &ArenaLevers,
+        gpu: &dyn GpuBackend,
+    ) -> Result<Self> {
+        let sizes = BufferSizes::from_config_with(
+            config,
+            max_batch_tokens,
+            max_seq_len,
+            kv_block_size,
+            max_batch_size,
+            levers,
         );
         Self::from_sizes(config, sizes, max_batch_tokens, max_batch_size, gpu)
     }
 
     /// 2026-09-25: [`BufferArena::new`] with the sizes passed in.
     ///
-    /// `BufferSizes::from_config` reads the environment for the env-gated
-    /// entries (`q2_*`, `ssm_rowwise_w_bf16`), so a test that needs one of
-    /// them sized builds the sizes itself and calls this instead of setting a
-    /// process-global variable. On an allocation error the buffers already
-    /// allocated are not freed.
+    /// A test that needs a lever-gated entry (`q2_*`, `ssm_rowwise_w_bf16`) sized builds the
+    /// sizes itself and calls this. On an allocation error the buffers already allocated are not
+    /// freed.
     pub fn from_sizes(
         config: &ModelConfig,
         sizes: BufferSizes,

@@ -27,7 +27,6 @@ pub use target_defaults::TargetDefaults;
 // (`sizes.rs`) that sizes the split-K workspace. A workspace sized by a
 // different rule than the dispatch would let the grid index past it.
 pub mod attn_splitk;
-pub mod legacy_env;
 pub use attn_splitk::{MAX_DECODE_SPLITS, SplitkPolicy};
 
 // 2026-10-17: The generated `TARGET_DEFAULTS` and `TARGET_SM_COUNT`.

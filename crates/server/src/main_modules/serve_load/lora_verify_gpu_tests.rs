@@ -198,7 +198,7 @@ fn an_active_adapter_verify_applies_its_attention_lora_as_decode_does() -> Resul
     }
     let settings =
         crate::main_modules::serve_settings::resolve(&metrale_io_host_std::ProcessEnv, &serve)?;
-    crate::main_modules::serve_flags::publish_kernel_flags(&serve, &settings);
+    crate::main_modules::serve_flags::publish_kernel_flags(&serve, &settings)?;
     let engine = load_engine(serve, &settings)?.context("rank 0")?;
     let model = engine.model.as_ref();
     model.bind_gpu_to_thread()?;

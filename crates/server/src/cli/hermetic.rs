@@ -9,8 +9,8 @@
 //!   `no_production_code_reads_the_raw_fields_behind_hermetic` scans `src/` for other reads.
 //!
 //! The resolvers close two channels: the radix KV prefix cache and the MTP gate's
-//! probes. `serve_flags.rs` also publishes the flag to `metrale_gpu_runtime::set_hermetic`,
-//! and under it the SSM snapshot lookup session-gates every entry
+//! probes. The prefix cache is also built with the flag in its `CacheTuning`
+//! (`serve_phases/build.rs`), and under it the SSM snapshot lookup session-gates every entry
 //! (`radix_tree/snapshot_session.rs`).
 
 /// 2026-09-26: The serve keys `--hermetic` forces and the values it forces them to,

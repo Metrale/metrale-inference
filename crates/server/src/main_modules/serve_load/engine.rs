@@ -184,7 +184,7 @@ pub(crate) fn load_engine(
         )
         .map_err(anyhow::Error::msg)?;
     }
-    let prefix_cache = serve_phases::build_prefix_cache(&args, &config, levers.prefix_cache_gate);
+    let prefix_cache = serve_phases::build_prefix_cache(&args, &config, levers.prefix_cache_gate)?;
     let comm = serve_phases::init_nccl_comm(
         &args,
         settings,

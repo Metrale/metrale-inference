@@ -38,3 +38,4 @@
 0x0304 ServeEnvEmpty
 0x0305 ServeEnvInherited
 0x0306 ServeEnvContradicted
+0x0400 ProjectionOutOfRange

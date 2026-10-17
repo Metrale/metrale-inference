@@ -56,7 +56,10 @@ pub fn load_layers(
         .deferred("model.layers.0.ffn.experts_stack.gate")
         .context("deepseek-v4.1: the routed expert stacks were not deferred by the GGUF loader")?;
     let model_dir = anchor.path.parent().context("shard path has no parent")?;
-    let files = Arc::new(ShardFiles::open_dir(model_dir)?);
+    let weights_settings = store
+        .weights_settings()
+        .context("deepseek-v4.1: the GGUF loader records the weights settings it loaded with")?;
+    let files = Arc::new(ShardFiles::open_dir_with(model_dir, weights_settings)?);
     let slices = Arc::new(ExpertSliceMap::new(files.clone())?);
     let rows = EngramRowReader::new(files.clone())?;
     ensure!(
@@ -189,8 +192,14 @@ pub fn load_layers(
     // the GPU reads in place.
     let arena_device = !std::env::var("METRALE_DS41_ARENA_DEVICE").is_ok_and(|v| v == "0");
     let staging_slots = env_usize("METRALE_DS41_STAGING_SLOTS", 16);
-    let (arena, mut lru) =
-        ExpertArena::alloc(gpu, cache_bytes, layout, arena_device, staging_slots)?;
+    let (arena, mut lru) = ExpertArena::alloc_with(
+        gpu,
+        cache_bytes,
+        layout,
+        arena_device,
+        staging_slots,
+        weights_settings,
+    )?;
     tracing::info!(
         "DeepSeek-V4.1: expert arena {}; MemAvailable now {}",
         arena.describe(),

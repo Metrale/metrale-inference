@@ -76,15 +76,17 @@ pub(crate) fn load_weight_store(
     // 2026-09-26: Any `.gguf` file in the directory selects `GgufLoader`.
     if metrale_model_weights::weights::find_gguf(model_dir).is_some() {
         tracing::info!("Detected GGUF weights; using GgufLoader (GPU dequant → BF16)");
-        let mut loader = if ep_size > 1 {
-            metrale_model_weights::weights::GgufLoader::with_ep(
-                ep_rank,
-                ep_size,
-                config.num_experts,
-            )
+        let (rank, world, experts) = if ep_size > 1 {
+            (ep_rank, ep_size, config.num_experts)
         } else {
-            metrale_model_weights::weights::GgufLoader::new()
+            (0, 1, 0)
         };
+        let weights = metrale_settings::groups::device_weights::WeightsSettings::try_from(
+            &super::build::lever_settings()?,
+        )?;
+        let mut loader = metrale_model_weights::weights::GgufLoader::with_settings(
+            rank, world, experts, weights,
+        );
         loader.peak_memory_multiplier = mult;
         let store = loader
             .load(model_dir, gpu, oom_reserve_bytes)

@@ -163,7 +163,7 @@ impl SchedulerCore {
                     if (dflash_pin
                         || metrale_speculative::mtp_gate::entry_pin_forces_verify(
                             min_post_think_emitted,
-                            sched.levers.spec_entry_pin_tokens,
+                            sched.levers.drafter.spec_entry_pin_tokens,
                         ))
                         && gate.next_step()
                             == metrale_speculative::mtp_gate::GateStep::MeasureDecode

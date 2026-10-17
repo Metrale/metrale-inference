@@ -255,6 +255,7 @@ impl Tensors {
             1,
             tp,
             quant,
+            &metrale_settings::groups::device::declared()?,
         )
     }
 }

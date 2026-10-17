@@ -28,15 +28,15 @@ pub(crate) fn gate_device_arch(
     checking: bool,
     ptx_set: &metrale_kernels::TargetPtxSet,
     gpu_ordinal: usize,
+    // 2026-10-17: The resolved stream priority the probe context is created at.
+    priority: metrale_settings::groups::device::StreamPriority,
 ) -> Result<()> {
     use metrale_gpu_runtime::cuda_backend::arch_preflight;
+    let arch = arch_preflight::preflight_arch(ptx_set.ptx_arch);
     gate_arch_preflight(
         checking,
         ptx_set,
-        arch_preflight::preflight_device_arch(
-            gpu_ordinal,
-            arch_preflight::preflight_arch(ptx_set.ptx_arch),
-        ),
+        arch_preflight::preflight_device_arch_for(gpu_ordinal, arch, priority),
     )
 }
 

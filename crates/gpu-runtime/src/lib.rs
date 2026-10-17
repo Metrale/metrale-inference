@@ -2,8 +2,8 @@
 
 //! 2026-09-25: GPU runtime: the `GpuBackend` trait with its CUDA, Metal and mock
 //! implementations, device buffers, streams, the kernel registry, the cuBLASLt,
-//! CUTLASS and FlashInfer bridges, and the process-wide SSM tail-snapshot and
-//! hermetic switches.
+//! CUTLASS and FlashInfer bridges, and the process-wide mid-chunk SSM tail-capture
+//! switch.
 //!
 //! Owner: gpu-runtime.
 //! Invariants: none beyond the types.
@@ -39,7 +39,6 @@ pub mod graph_hoist;
 pub mod host_heap;
 pub mod host_sync_counts;
 pub mod kernel_args;
-pub mod legacy_env;
 #[cfg(feature = "metal")]
 pub mod metal_backend;
 pub mod op_cache;
@@ -51,7 +50,7 @@ pub mod timing;
 /// `None` when `block_size` is 0 or `total_tokens <= block_size`.
 ///
 /// The SSM tail snapshot is placed here: in-pass by `prepare_midchunk_capture`
-/// (metrale-model-engine), or, with `ssm_tail_ckpt_enabled` on and
+/// (metrale-model-engine), or, with the `scheduler.ssm_tail_ckpt` setting on and
 /// `ssm_tail_midchunk_enabled` off, by ending a prefill chunk here
 /// (`run_standard` and `run_batched_mixed` in met).
 pub fn ssm_tail_boundary(total_tokens: usize, block_size: usize) -> Option<usize> {
@@ -62,60 +61,30 @@ pub fn ssm_tail_boundary(total_tokens: usize, block_size: usize) -> Option<usize
     (boundary > 0).then_some(boundary)
 }
 
-/// 2026-09-25: Tail-checkpoint chunk split, on only with `METRALE_SSM_TAIL_CKPT=1`
-/// (see `ssm_tail_boundary`). Resolved on first call and cached.
+/// 2026-10-17: The mid-chunk SSM tail capture switch from its resolved setting text
+/// (`scheduler.ssm_tail_midchunk`, `METRALE_SSM_TAIL_MIDCHUNK`): on unless `0`.
+pub fn ssm_tail_midchunk_on(setting: Option<&str>) -> bool {
+    setting != Some("0")
+}
+
+/// 2026-09-25: Publish the serve's mid-chunk capture switch before the first
+/// `ssm_tail_midchunk_enabled` read. 2026-10-17: The serve publishes `false` for
+/// `--no-ssm-tail-midchunk`, else [`ssm_tail_midchunk_on`] of its resolved setting. The cell is
+/// set once: the first published value, or the first read, wins.
 ///
-/// Off by default: an A/B measured 2026-07-10 (174 samples per arm) found it
-/// perf-neutral, because the extra chunk split (median 868 ms) cancelled the SSM
-/// replay it saved (about 1374 ms).
-pub fn ssm_tail_ckpt_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(legacy_env::legacy_env_ssm_tail_ckpt)
-}
-
-/// 2026-09-25: Publish `met serve --hermetic`, before the first `hermetic_enabled`
-/// call, which caches its answer. Only `true` is published, so without the flag
-/// `METRALE_HERMETIC=1` still decides.
-pub fn set_hermetic(on: bool) {
-    if on {
-        let _ = HERMETIC.set(true);
-    }
-}
-
-static HERMETIC: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-
-/// 2026-09-25: Whether hermetic mode is on: `set_hermetic(true)` was called or
-/// `METRALE_HERMETIC=1`. Resolved on first call and cached; read by the SSM
-/// snapshot lookups in metrale-cache (`snapshot.rs`, `snapshot_tier.rs`).
-pub fn hermetic_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| {
-        HERMETIC
-            .get()
-            .copied()
-            .unwrap_or_else(legacy_env::legacy_env_hermetic)
-    })
-}
-
-/// 2026-09-25: Publish `--no-ssm-tail-midchunk`: the serve plan passes
-/// `Some(false)` when the flag is given and `None` otherwise. `None` publishes
-/// nothing, so `METRALE_SSM_TAIL_MIDCHUNK` still decides. The cell is set once:
-/// the first published value, or the first `ssm_tail_midchunk_enabled` read, wins.
-pub fn set_ssm_tail_midchunk(on: Option<bool>) {
-    if let Some(on) = on {
-        let _ = SSM_TAIL_MIDCHUNK.set(on);
-    }
+/// ROTI: a startup static, until the model reads the switch from its startup settings.
+pub fn set_ssm_tail_midchunk(on: bool) {
+    let _ = SSM_TAIL_MIDCHUNK.set(on);
 }
 
 static SSM_TAIL_MIDCHUNK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 
-/// 2026-09-25: Mid-chunk SSM tail capture: on unless `--no-ssm-tail-midchunk` or
-/// `METRALE_SSM_TAIL_MIDCHUNK=0`. While it is on the scheduler does not end chunks
+/// 2026-09-25: Mid-chunk SSM tail capture: the published switch, or the declared on when
+/// nothing was published. While it is on the scheduler does not end chunks
 /// at `ssm_tail_boundary`, and `prepare_midchunk_capture` (metrale-model-engine)
 /// plans an in-pass capture there, which it does only on `metrale_scale` builds.
-/// Resolved on first call and cached.
 pub fn ssm_tail_midchunk_enabled() -> bool {
-    *SSM_TAIL_MIDCHUNK.get_or_init(legacy_env::legacy_env_ssm_tail_midchunk)
+    *SSM_TAIL_MIDCHUNK.get_or_init(|| ssm_tail_midchunk_on(None))
 }
 
 #[cfg(test)]
@@ -123,20 +92,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn an_absent_flag_does_not_seal_the_midchunk_cell() {
-        // 2026-09-25: `None` must leave the cell unset so a later `Some` applies.
-        // The cell is process-global with no reset, so no other test in this
-        // crate may touch it.
-        for _ in 0..3 {
-            set_ssm_tail_midchunk(None);
-        }
-        set_ssm_tail_midchunk(Some(false));
-        assert!(
-            !ssm_tail_midchunk_enabled(),
-            "an absent flag must leave the cell open for the next writer"
-        );
-        set_ssm_tail_midchunk(Some(true));
-        assert!(!ssm_tail_midchunk_enabled(), "and a SET one is final");
+    fn only_a_zero_setting_turns_the_midchunk_capture_off() {
+        // 2026-10-17: The deleted environment reader's rule: anything but `0` is on.
+        assert!(ssm_tail_midchunk_on(None));
+        assert!(!ssm_tail_midchunk_on(Some("0")));
+        assert!(ssm_tail_midchunk_on(Some("1")));
+        assert!(ssm_tail_midchunk_on(Some("off")));
+    }
+
+    #[test]
+    fn the_first_published_midchunk_switch_is_final() {
+        // 2026-09-25: The cell is process-global with no reset, so no other test
+        // in this crate may touch it.
+        set_ssm_tail_midchunk(false);
+        assert!(!ssm_tail_midchunk_enabled());
+        set_ssm_tail_midchunk(true);
+        assert!(!ssm_tail_midchunk_enabled(), "a published switch is final");
     }
 
     #[test]

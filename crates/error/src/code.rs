@@ -122,4 +122,11 @@ error_registry! {
             lever(s): {}. Neither value wins silently: unset the variable so the declaration \
             applies, or change the declaration.",
     }
+    /// 2026-10-17: `0x0400–0x04FF`: the device settings projections (`metrale-settings`
+    /// `groups::device*`: what gpu-runtime, kernels, cache, speculative and model-weights read).
+    DeviceProjection = 0x0400..=0x04FF {
+        /// 2026-10-17: A resolved lever value the device-side type cannot hold (env, value,
+        /// accepted range).
+        ProjectionOutOfRange = 0x0400 => "{}: {} is outside {}",
+    }
 }

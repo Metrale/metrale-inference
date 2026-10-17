@@ -16,6 +16,7 @@ metal = ["metrale-model-layers/metal"]
 metrale-cache = { workspace = true }
 metrale-comm = { workspace = true }
 metrale-config = { workspace = true }
+metrale-settings = { workspace = true }
 metrale-core = { workspace = true }
 metrale-gpu-runtime = { workspace = true }
 metrale-model-layers = { workspace = true }

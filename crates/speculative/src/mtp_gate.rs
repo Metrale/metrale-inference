@@ -53,9 +53,6 @@ const TPS_ALPHA: f64 = 0.3;
 /// current mode's estimate and half the sum of the two deviation EWMAs.
 const MARGIN_REL_FLOOR: f64 = 0.05;
 
-// 2026-10-17: LEGACY: the env-reading pin width, until the scheduler passes the resolved one.
-pub use crate::legacy_env::entry_pin_tokens_from_env;
-
 /// 2026-09-25: Whether the spec-entry pin overrides a Serial gate decision
 /// for this step. `min_post_think_emitted` is the minimum over the active
 /// batch, so one entering sequence pins the whole (already spec-eligible)
