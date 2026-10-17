@@ -26,6 +26,9 @@ members = [
     "crates/server",
 ]
 
+# 2026-10-17: A bare `cargo build` builds `met` only; CI and scripts name `--workspace` or `-p`.
+default-members = ["crates/server"]
+
 # AMD/SCALE + native-HIP: the vendored cudarc 0.19.2 is byte-identical to
 # crates.io except its driver `Lib` loader resolves CUDA-driver symbols that
 # don't exist on SCALE/gfx1151 (e.g. cuArrayGetMemoryRequirements) to a
@@ -114,3 +117,15 @@ doc_overindented_list_items = "allow"
 type_complexity = "allow"
 ptr_arg = "allow"
 if_same_then_else = "allow"
+
+# 2026-10-17: Line tables keep backtraces readable at a fraction of full debug info's
+# compile and link cost. `release` is untouched: it is the parity reference.
+[profile.dev]
+debug = "line-tables-only"
+
+# 2026-10-17: Release codegen for the edit-run loop: incremental, many codegen units.
+# Opt-in by name (`--profile iter`); never used for gate, certify or release builds.
+[profile.iter]
+inherits = "release"
+incremental = true
+codegen-units = 256

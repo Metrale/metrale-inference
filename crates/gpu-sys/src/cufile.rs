@@ -107,7 +107,7 @@ impl CuFile {
     pub fn load() -> Result<Self, String> {
         let mut last_err = String::new();
         for path in SEARCH_PATHS {
-            match unsafe { Library::new(path) } {
+            match unsafe { Library::new(*path) } {
                 Ok(lib) => return Self::resolve(lib).map_err(|e| format!("{path}: {e}")),
                 Err(e) => last_err = format!("{path}: {e}"),
             }
