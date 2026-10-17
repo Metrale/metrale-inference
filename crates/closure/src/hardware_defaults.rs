@@ -1,25 +1,42 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-09-25: `kernels/<hw>/HARDWARE.toml` `[defaults]` and `[hardware] sm_count`, parsed for build.rs and baked into `metrale_kernels::TARGET_DEFAULTS` / `TARGET_SM_COUNT`.
+//! 2026-09-25: `kernels/<hw>/HARDWARE.toml` `[defaults]` and `[hardware] sm_count`, parsed at build time and baked into `metrale_target_defaults::TARGET_DEFAULTS` / `TARGET_SM_COUNT`.
 //!
-//! Owner: metrale-kernels build.
+//! Owner: metrale-closure (shared by the metrale-target-defaults and metrale-kernels build scripts).
 //! Invariants:
 //! - An unknown `[defaults]` key, a mistyped value or a non-positive
 //!   `sm_count` panics; an absent key takes the [`baseline`] value.
+//! - [`generated_literal`] is the one text both build scripts derive from a tree:
+//!   metrale-target-defaults compiles it, metrale-kernels hashes it into
+//!   `METRALE_KERNEL_SET_HASH`.
 //!
-//! Included via `#[path = "build_defaults.rs"] mod build_defaults;`. Its own
-//! file, with no `super::` dependencies, so `tests/target_defaults.rs` can
-//! compile the same code against the real `kernels/*/HARDWARE.toml`: cargo
-//! never runs a build script's `#[cfg(test)]` modules.
+//! 2026-10-17: Moved here from `crates/kernels/build_defaults.rs` so the constants can live in a
+//! crate that does not carry the PTX table, while the kernels build still hashes the same text.
+//! The panics are the build-time contract (both callers are build scripts); this module does no
+//! I/O beyond reading the HARDWARE.toml it is given and prints nothing.
+
+/// 2026-09-25: Hardware target compiled when `METRALE_TARGET_HW` is unset. One value for both
+/// build scripts that select a `kernels/<hw>` tree.
+pub const DEFAULT_HW: &str = "gb10";
+
+/// 2026-10-17: The generated `TARGET_DEFAULTS` and `TARGET_SM_COUNT` initialisers for
+/// `kernels_root/<hw>`, in that order: [`literal`] then [`sm_count_literal`].
+pub fn generated_literal(kernels_root: &std::path::Path, hw: &str) -> String {
+    format!(
+        "{}{}",
+        literal(&read_defaults(kernels_root, hw)),
+        sm_count_literal(read_sm_count(kernels_root, hw)),
+    )
+}
 
 /// 2026-09-25: One target's `[defaults]` table, owned (build-time shape).
 ///
-/// Mirrors `metrale_kernels::TargetDefaults` field for field; [`literal`] emits
+/// Mirrors `metrale_target_defaults::TargetDefaults` field for field; [`literal`] emits
 /// that type's `const` initialiser. Two shapes rather than one because the
 /// runtime type holds `&'static str` (it is a baked constant) and a parser
 /// needs `String`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Defaults {
+pub struct Defaults {
     pub hw: String,
     pub lm_head_batchm_max: u32,
     pub ssm_batched_recurrent: bool,
@@ -42,14 +59,14 @@ pub(crate) struct Defaults {
 ///
 /// `kernels/metal`, `kernels/strix` and `kernels/strix-hip` declare no table.
 /// `kernels/gb10` declares these values explicitly except the two W8A8
-/// prefill ceilings, which `tests/target_defaults.rs`
+/// prefill ceilings, which metrale-target-defaults `tests/target_defaults.rs`
 /// (`gb10_declares_the_baseline_apart_from_the_measured_w8a8_ceiling`) pins.
-pub(crate) fn baseline(hw: &str) -> Defaults {
+pub fn baseline(hw: &str) -> Defaults {
     Defaults {
         hw: hw.to_string(),
         // 2026-09-25: Equal to `ops::DENSE_GEMV_BATCHM_DECODE_MAX_M` in
         // metrale-model-layers, which this crate sits below and cannot name.
-        // Tested as a chain: `tests/target_defaults.rs` pins gb10's table to
+        // Tested as a chain: metrale-target-defaults `tests/target_defaults.rs` pins gb10's table to
         // this baseline, and model-layers'
         // `target_defaults_tests::the_baseline_band_is_the_frozen_one` pins
         // gb10's value to that constant.
@@ -59,7 +76,7 @@ pub(crate) fn baseline(hw: &str) -> Defaults {
         ssm_ba_gates_hopper: false,
         fp8_act_quant_hopper: false,
         decode_split_silu: true,
-        // 2026-09-25: `metrale_kernels::attn_splitk::SplitkPolicy::Legacy`.
+        // 2026-09-25: `metrale_target_defaults::attn_splitk::SplitkPolicy::Legacy`.
         attn_decode_splitk: "legacy".to_string(),
         ffn_m16_tc: false,
         attn_m16_tc: false,
@@ -79,14 +96,14 @@ pub(crate) fn baseline(hw: &str) -> Defaults {
 /// 2026-09-25: What a target that declares no `[hardware] sm_count` gets: 48,
 /// the value of `metrale_core::device::sm121::NUM_SMS` (GB10). gb10, metal,
 /// strix and strix-hip declare none, so all four resolve to 48.
-pub(crate) const BASELINE_SM_COUNT: u32 = 48;
+pub const BASELINE_SM_COUNT: u32 = 48;
 
 /// 2026-09-25: `[hardware] sm_count`, or [`BASELINE_SM_COUNT`].
 ///
 /// A non-positive or non-integer declaration panics: a zero SM count would
 /// divide a grid-sizing rule by nothing, and a string must not read as
 /// "absent".
-pub(crate) fn parse_sm_count(hw: &str, hw_toml: &toml::Value) -> u32 {
+pub fn parse_sm_count(hw: &str, hw_toml: &toml::Value) -> u32 {
     let Some(value) = hw_toml.get("hardware").and_then(|h| h.get("sm_count")) else {
         return BASELINE_SM_COUNT;
     };
@@ -103,7 +120,7 @@ pub(crate) fn parse_sm_count(hw: &str, hw_toml: &toml::Value) -> u32 {
 /// Missing or unparseable file falls back to the baseline, exactly as
 /// [`read_defaults`] does and for the same reason (the `METRALE_SKIP_BUILD` path
 /// may have no `kernels/` tree at all).
-pub(crate) fn read_sm_count(kernels_root: &std::path::Path, hw: &str) -> u32 {
+pub fn read_sm_count(kernels_root: &std::path::Path, hw: &str) -> u32 {
     let path = kernels_root.join(hw).join("HARDWARE.toml");
     let Ok(text) = std::fs::read_to_string(&path) else {
         return BASELINE_SM_COUNT;
@@ -116,7 +133,7 @@ pub(crate) fn read_sm_count(kernels_root: &std::path::Path, hw: &str) -> u32 {
 
 /// 2026-09-25: The generated `TARGET_SM_COUNT` initialiser, appended beside
 /// [`literal`]'s.
-pub(crate) fn sm_count_literal(sm_count: u32) -> String {
+pub fn sm_count_literal(sm_count: u32) -> String {
     format!(
         "// Auto-generated by build.rs from kernels/<hw>/HARDWARE.toml [hardware] sm_count.\n\
          /// Streaming multiprocessors on the hardware this binary's kernels were\n\
@@ -135,7 +152,7 @@ pub(crate) fn sm_count_literal(sm_count: u32) -> String {
 /// Every key is optional and falls back to [`baseline`]. An unknown key
 /// panics: a mistyped lever name would otherwise read as "this target agrees
 /// with the baseline".
-pub(crate) fn parse_defaults(hw: &str, hw_toml: &toml::Value) -> Defaults {
+pub fn parse_defaults(hw: &str, hw_toml: &toml::Value) -> Defaults {
     let mut out = baseline(hw);
     let Some(table) = hw_toml.get("defaults").and_then(|d| d.as_table()) else {
         return out;
@@ -183,8 +200,8 @@ pub(crate) fn parse_defaults(hw: &str, hw_toml: &toml::Value) -> Defaults {
             other => panic!(
                 "kernels/{hw}/HARDWARE.toml: [defaults] has no key `{other}`. \
                  The lever list is the field list of `TargetDefaults` \
-                 (crates/kernels/src/target_defaults.rs); adding a lever \
-                 means adding it there, in `build_defaults.rs`, in the \
+                 (crates/target-defaults/src/target_defaults.rs); adding a lever \
+                 means adding it there, in metrale-closure `hardware_defaults.rs`, in the \
                  metrale-model-layers resolver and in every target's table, in the one \
                  commit that lands the arm which reads it."
             ),
@@ -198,7 +215,7 @@ pub(crate) fn parse_defaults(hw: &str, hw_toml: &toml::Value) -> Defaults {
 /// Emitted even under `METRALE_SKIP_BUILD=1` (which returns before any kernel
 /// is compiled): the constant is configuration, not a kernel blob, and
 /// CPU-only builds such as `scripts/check.sh` set that flag.
-pub(crate) fn literal(d: &Defaults) -> String {
+pub fn literal(d: &Defaults) -> String {
     format!(
         "// Auto-generated by build.rs from kernels/{hw}/HARDWARE.toml [defaults] — do not edit.\n\
          pub const TARGET_DEFAULTS: TargetDefaults = TargetDefaults {{\n\
@@ -242,7 +259,7 @@ pub(crate) fn literal(d: &Defaults) -> String {
 /// panicking, because this runs on the `METRALE_SKIP_BUILD` path too, where
 /// the `kernels/` tree may not be present. The compiling build already panics
 /// on a missing or bad HARDWARE.toml before it gets here.
-pub(crate) fn read_defaults(kernels_root: &std::path::Path, hw: &str) -> Defaults {
+pub fn read_defaults(kernels_root: &std::path::Path, hw: &str) -> Defaults {
     let path = kernels_root.join(hw).join("HARDWARE.toml");
     let Ok(text) = std::fs::read_to_string(&path) else {
         return baseline(hw);

@@ -19,7 +19,7 @@ metrale-kernel-tree = { workspace = true }
 metrale-config = { workspace = true }
 metrale-core = { workspace = true }
 metrale-error = { workspace = true }
-metrale-kernels = { workspace = true }
+metrale-target-defaults = { workspace = true }
 metrale-telemetry = { workspace = true }
 anyhow = { workspace = true, features = ["std"] }
 libc = { workspace = true, features = ["std"] }
@@ -105,6 +105,9 @@ objc2-foundation = { workspace = true, optional = true, features = [
 dispatch2 = { workspace = true, optional = true, features = ["std", "block2", "libc", "objc2"] }
 
 [dev-dependencies]
+# 2026-10-17: The tests build `TargetPtxSet` rows and load real kernel tables; production code
+# receives the modules at construction (`MetraleCudaBackend::new`) and never names this crate.
+metrale-kernels = { workspace = true }
 half = { workspace = true, features = ["std"] }
 memmap2 = { workspace = true }
 

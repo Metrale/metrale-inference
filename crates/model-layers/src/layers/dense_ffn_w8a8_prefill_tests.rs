@@ -365,7 +365,7 @@ fn with_ctx<R>(h: &Harness, dispatch: GemmDispatch, f: impl FnOnce(&ForwardConte
 /// 2026-09-25: The layer reads the ceiling the compiled target declares, so the
 /// test asserts the relationship (selected at the ceiling or at
 /// `PROMPT_TOKENS`, declined one row above the ceiling) rather than a value.
-/// The per-target values are pinned by `crates/kernels/tests/target_defaults.rs`.
+/// The per-target values are pinned by `crates/target-defaults/tests/target_defaults.rs`.
 #[test]
 fn layer_selects_w8a8_on_a_dense_config() {
     let h = harness(0, 2048);

@@ -14,6 +14,7 @@ pub mod arch;
 pub mod compute;
 pub mod csf_blocks;
 pub mod csf_rows;
+pub mod decode_ring;
 pub mod dtype;
 pub mod error;
 pub mod fault;

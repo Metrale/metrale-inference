@@ -23,9 +23,9 @@ metrale-comm = { workspace = true }
 metrale-config = { workspace = true }
 metrale-core = { workspace = true }
 metrale-gpu-runtime = { workspace = true }
-metrale-kernels = { workspace = true }
 metrale-model-weights = { workspace = true }
 metrale-storage = { workspace = true }
+metrale-target-defaults = { workspace = true }
 anyhow = { workspace = true, features = ["std"] }
 base64 = { workspace = true, features = ["std", "simd-unsafe"] }
 half = { workspace = true, features = ["std"] }
@@ -36,6 +36,9 @@ tracing = { workspace = true, features = ["std", "attributes"] }
 
 [dev-dependencies]
 metrale-gpu-runtime = { workspace = true, features = ["test-utils"] }
+# 2026-10-17: GPU tests load real kernel tables (`ptx_for_exact_target`, `ptx_modules`);
+# production code never names this crate, so a kernel edit does not rebuild this one.
+metrale-kernels = { workspace = true }
 metrale-model-weights = { workspace = true, features = ["test-utils"] }
 serde = { workspace = true, features = ["std", "derive"] }
 

@@ -34,7 +34,7 @@ pub struct DecodeRingDecision {
 }
 
 /// 2026-09-25: Depths the preflight fit may choose, largest first. The first equals
-/// [`metrale_kernels::DECODE_ROLLBACK_RING_SLOTS`] (8); each next depth halves
+/// [`metrale_core::decode_ring::DECODE_ROLLBACK_RING_SLOTS`] (8); each next depth halves
 /// the ring's share of the reserve.
 pub const DECODE_RING_FIT_LADDER: [usize; 5] = [8, 4, 2, 1, 0];
 
@@ -68,10 +68,10 @@ pub fn parse_decode_ring_slots(s: &str) -> Result<Option<usize>, String> {
     let n: usize = s
         .parse()
         .map_err(|_| format!("unknown ssm-decode-ring-slots '{s}' (valid: auto, 0..=8)"))?;
-    if n > metrale_kernels::DECODE_ROLLBACK_RING_SLOTS {
+    if n > metrale_core::decode_ring::DECODE_ROLLBACK_RING_SLOTS {
         return Err(format!(
             "ssm-decode-ring-slots {n} exceeds the {} the ring is sized for",
-            metrale_kernels::DECODE_ROLLBACK_RING_SLOTS
+            metrale_core::decode_ring::DECODE_ROLLBACK_RING_SLOTS
         ));
     }
     Ok(Some(n))
@@ -153,7 +153,7 @@ pub fn decode_rollback_ring_slots_with(
     }
     match ring_override {
         Some("1") => DecodeRingDecision {
-            slots: metrale_kernels::DECODE_ROLLBACK_RING_SLOTS,
+            slots: metrale_core::decode_ring::DECODE_ROLLBACK_RING_SLOTS,
             skip_reason: None,
         },
         Some("0") => DecodeRingDecision {
@@ -169,7 +169,7 @@ pub fn decode_rollback_ring_slots_with(
             }),
         },
         _ => DecodeRingDecision {
-            slots: metrale_kernels::DECODE_ROLLBACK_RING_SLOTS,
+            slots: metrale_core::decode_ring::DECODE_ROLLBACK_RING_SLOTS,
             skip_reason: None,
         },
     }

@@ -8,20 +8,20 @@
 //! lets a parseable environment variable override it and formats the
 //! `target defaults (<hw>): …` line naming every resolved value.
 //!
-//! Owner: kernels crate (target defaults).
+//! Owner: target-defaults crate.
 //! Invariants:
-//! - A `[defaults]` key with no arm in `build_defaults::parse_defaults`
+//! - A `[defaults]` key with no arm in `metrale_closure::hardware_defaults::parse_defaults`
 //!   panics the build.
 //! - A target without a `[defaults]` table, or a key it omits, gets
-//!   `build_defaults::baseline`.
+//!   `metrale_closure::hardware_defaults::baseline`.
 
 /// 2026-09-25: One compiled target's serving defaults. A `const` that
-/// `build.rs` writes into `OUT_DIR/target_ptx.rs` and `lib.rs` `include!`s,
+/// `build.rs` writes into `OUT_DIR/target_defaults.rs` and `lib.rs` `include!`s,
 /// so [`crate::TARGET_DEFAULTS`] is known at compile time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TargetDefaults {
     /// 2026-09-25: The `kernels/<hw>` directory this binary was built for
-    /// (`METRALE_TARGET_HW`, else `build_diagnose::DEFAULT_HW`). It is set even
+    /// (`METRALE_TARGET_HW`, else `metrale_closure::hardware_defaults::DEFAULT_HW`). It is set even
     /// when that tree has no HARDWARE.toml: `read_defaults` then returns
     /// `baseline(hw)`.
     pub hw: &'static str,

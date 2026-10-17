@@ -119,7 +119,7 @@ pub(super) fn build_ssm_snapshots(
     if let Some(reason) = ring.skip_reason {
         let per_seq = (ssm_pool.h_bytes + ssm_pool.conv_bytes)
             * ssm_pool.num_ssm_layers
-            * metrale_kernels::DECODE_ROLLBACK_RING_SLOTS;
+            * metrale_core::decode_ring::DECODE_ROLLBACK_RING_SLOTS;
         tracing::info!(target: "metrale_model_engine::model::impl_a1", "SSM decode-rollback ring: SKIPPED ({}) — the ring's save/rollback \
              path only runs on plain decode with watchdogs enabled. Saves {:.1} GB \
              ({} seqs x {} slots x full SSM blob). If plain-decode loop re-steer is \
@@ -128,7 +128,7 @@ pub(super) fn build_ssm_snapshots(
             reason,
             (per_seq * max_batch_size) as f64 / 1e9,
             max_batch_size,
-            metrale_kernels::DECODE_ROLLBACK_RING_SLOTS,
+            metrale_core::decode_ring::DECODE_ROLLBACK_RING_SLOTS,
         );
     }
     let decode_ring_slots = ring.slots;

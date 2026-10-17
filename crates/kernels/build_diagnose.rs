@@ -14,8 +14,9 @@
 use std::path::Path;
 use std::sync::Once;
 
-/// 2026-09-25: Hardware target compiled when `METRALE_TARGET_HW` is unset.
-pub const DEFAULT_HW: &str = "gb10";
+/// 2026-09-25: Hardware target compiled when `METRALE_TARGET_HW` is unset. 2026-10-17: declared
+/// once in metrale-closure, which the metrale-target-defaults build script reads too.
+pub use metrale_closure::hardware_defaults::DEFAULT_HW;
 
 /// 2026-09-25: Read `vendor = "..."` out of a HARDWARE.toml by hand.
 ///

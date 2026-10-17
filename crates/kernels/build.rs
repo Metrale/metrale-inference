@@ -6,8 +6,9 @@
 //! Invariants:
 //! - Both paths, the skip stub (`METRALE_SKIP_BUILD`, or macOS without an
 //!   explicit `METRALE_TARGET_HW`) and the compiling build, write
-//!   `target_ptx.rs` with `TARGET_DEFAULTS` and `TARGET_SM_COUNT` appended and
-//!   emit `METRALE_KERNEL_SET_HASH` over that file's content.
+//!   `target_ptx.rs` and emit `METRALE_KERNEL_SET_HASH` over that file's content followed
+//!   by the target-defaults text (`metrale_closure::hardware_defaults::generated_literal`),
+//!   which metrale-target-defaults compiles.
 //! - A failed kernel compile panics the build, after every compile job has run.
 
 use std::collections::HashMap;
@@ -417,12 +418,6 @@ mod build_arch;
 // file as `build_arch.rs`: `tests/kernel_build_flags.rs` compiles it directly.
 #[path = "build_flags.rs"]
 mod build_flags;
-
-// 2026-09-25: The per-target serving defaults (`[defaults]` in HARDWARE.toml) and the
-// `[hardware] sm_count`. Same reason for its own file:
-// `tests/target_defaults.rs` compiles it against the real kernels/ tree.
-#[path = "build_defaults.rs"]
-mod build_defaults;
 
 // 2026-09-25: The one summary line a build prints per kernel target. Same reason for its
 // own file: `tests/build_summary.rs` compiles it directly.

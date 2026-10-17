@@ -8,6 +8,7 @@ members = [
     "crates/circuit",
     "crates/governance",
     "crates/kernels",
+    "crates/target-defaults",
     "crates/kernel-tree",
     "crates/gpu-sys",
     "crates/telemetry",
@@ -184,6 +185,7 @@ metrale-scheduler = { path = "crates/scheduler", version = "1.0.0-beta-preview",
 metrale-settings = { path = "crates/settings", version = "1.0.0-beta-preview", default-features = false }
 metrale-speculative = { path = "crates/speculative", version = "1.0.0-beta-preview", default-features = false }
 metrale-storage = { path = "crates/storage", version = "1.0.0-beta-preview", default-features = false }
+metrale-target-defaults = { path = "crates/target-defaults", version = "1.0.0-beta-preview", default-features = false }
 metrale-telemetry = { path = "crates/telemetry", version = "1.0.0-beta-preview", default-features = false }
 
 # W7: the `[patch.crates-io] xgrammar-rs` entry was removed — Metrale Engine now

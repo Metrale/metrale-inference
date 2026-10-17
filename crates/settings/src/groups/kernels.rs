@@ -10,8 +10,8 @@ lever_group! {
     pub struct KernelsSettings { group: "kernels", class: Runtime }
     attn_512_tc: Switch = "on", None, "METRALE_ATTN_512_TC", "crates/model-layers/src/layers/ops/wide_prefill.rs", "RESOLVE WITH A FALLBACK, NOT A FIXED NAME. `0` turns it off.";
     attn_dbg: Presence = "off", None, "METRALE_ATTN_DBG", "crates/model-layers/src/layers/qwen3_attention/decode/splitk_dispatch.rs", "`METRALE_ATTN_DBG`: the split structure this layer resolved, printed once per layer per step when a batch is co-batched. Any value turns it on, `0` included.";
-    attn_decode_gqa_pack: Text = "unset", None, "METRALE_ATTN_DECODE_GQA_PACK", "crates/kernels/src/attn_splitk.rs", "`METRALE_ATTN_DECODE_GQA_PACK=1` is how that A/B is run — the same mechanism `METRALE_ATTN_DECODE_SPLITK=auto` uses for the policy above.";
-    attn_decode_splitk: Text = "unset", None, "METRALE_ATTN_DECODE_SPLITK", "crates/kernels/src/attn_splitk.rs", "The target's declaration, overridden by `METRALE_ATTN_DECODE_SPLITK`.";
+    attn_decode_gqa_pack: Text = "unset", None, "METRALE_ATTN_DECODE_GQA_PACK", "crates/target-defaults/src/attn_splitk.rs", "`METRALE_ATTN_DECODE_GQA_PACK=1` is how that A/B is run — the same mechanism `METRALE_ATTN_DECODE_SPLITK=auto` uses for the policy above.";
+    attn_decode_splitk: Text = "unset", None, "METRALE_ATTN_DECODE_SPLITK", "crates/target-defaults/src/attn_splitk.rs", "The target's declaration, overridden by `METRALE_ATTN_DECODE_SPLITK`.";
     attn_m16_tc: Switch = "target-declared", None, "METRALE_ATTN_M16_TC", "crates/model-layers/src/layers/ops/target_defaults.rs", "Read in `crates/model-layers/src/layers/ops/target_defaults.rs`.";
     attn_ncol_gemv: Switch = "target-declared", None, "METRALE_ATTN_NCOL_GEMV", "crates/model-layers/src/layers/ops/target_defaults.rs", "Read in `crates/model-layers/src/layers/ops/target_defaults.rs`.";
     attn_ncol_width: Text = "unset", None, "METRALE_ATTN_NCOL_WIDTH", "crates/model-layers/src/layers/qwen3_attention/attn_ncol_gemv.rs", "`METRALE_ATTN_NCOL_WIDTH=4` picks the 4-column instantiation; anything else (including unset) keeps 2, the conservative register choice.";

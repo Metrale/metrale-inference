@@ -76,7 +76,7 @@ pub struct ModelLevers {
     pub k2_diag: bool,
 
     /// 2026-09-25: On when the compiled target's `[defaults] decode_split_silu` is on (a target
-    /// that does not declare it inherits on, `crates/kernels/build_defaults.rs`), unless
+    /// that does not declare it inherits on, `crates/closure/src/hardware_defaults.rs`), unless
     /// `METRALE_NO_DECODE_SPLIT_SILU` is present with any value. Decode runs `silu_mul` and then
     /// a separate down GEMV instead of the fused SiLU+down kernel. An installed LoRA adapter takes
     /// the split path whatever this says (`levers.decode_split_silu || self.lora.is_some()` in

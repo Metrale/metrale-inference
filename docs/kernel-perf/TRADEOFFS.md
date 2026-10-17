@@ -758,14 +758,14 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/common/paged_decode_attn.cu](../../kernels/gb10/common/paged_decode_attn.cu)
 
-- *whole file*: One 8-warp CTA per (q_head, seq): each CTA of a GQA group re-reads its KV head's whole K and V. Positions go BC = 4 at a time inside a physical block and the block tail singly. The split-K pair takes no sliding window; blockDim 256 and head_dim == HDIM are assumed, never checked. — source: kernels/gb10/common/paged_decode_attn.cu:7; crates/kernels/src/attn_splitk.rs:188
-- *paged_decode_attn_splitk*: The online-softmax split merge is not associative, so the split count must not follow the co-batched sequence count; under auto/pinned it depends only on (sm_count, num_q_heads). Outputs are not bit-identical across split counts. Head dims other than 256 get one split except under legacy. — source: crates/kernels/src/attn_splitk.rs:7; crates/model-layers/src/layers/qwen3_attention/decode/splitk_dispatch.rs:60
+- *whole file*: One 8-warp CTA per (q_head, seq): each CTA of a GQA group re-reads its KV head's whole K and V. Positions go BC = 4 at a time inside a physical block and the block tail singly. The split-K pair takes no sliding window; blockDim 256 and head_dim == HDIM are assumed, never checked. — source: kernels/gb10/common/paged_decode_attn.cu:7; crates/target-defaults/src/attn_splitk.rs:188
+- *paged_decode_attn_splitk*: The online-softmax split merge is not associative, so the split count must not follow the co-batched sequence count; under auto/pinned it depends only on (sm_count, num_q_heads). Outputs are not bit-identical across split counts. Head dims other than 256 get one split except under legacy. — source: crates/target-defaults/src/attn_splitk.rs:7; crates/model-layers/src/layers/qwen3_attention/decode/splitk_dispatch.rs:60
 
 <a id="to-kernels-gb10-common-paged-decode-attn-bf16-gqa-cu"></a>
 
 ### [kernels/gb10/common/paged_decode_attn_bf16_gqa.cu](../../kernels/gb10/common/paged_decode_attn_bf16_gqa.cu)
 
-- *whole file*: GQA-packed twin of paged_decode_attn: PD_GQA = 6 query heads per CTA so each K/V row is loaded once per group. Same per-head operation order, so with --fmad=false the output is bit-identical; only ratio 6 at head_dim 256 is admitted, the lever is off for every target, and it is used only on the non-split arm. — source: kernels/gb10/common/paged_decode_attn_bf16_gqa.cu:3; crates/kernels/src/attn_splitk.rs:196
+- *whole file*: GQA-packed twin of paged_decode_attn: PD_GQA = 6 query heads per CTA so each K/V row is loaded once per group. Same per-head operation order, so with --fmad=false the output is bit-identical; only ratio 6 at head_dim 256 is admitted, the lever is off for every target, and it is used only on the non-split arm. — source: kernels/gb10/common/paged_decode_attn_bf16_gqa.cu:3; crates/target-defaults/src/attn_splitk.rs:196
 
 <a id="to-kernels-gb10-common-paged-decode-attn-bf16k-turbo2v-cu"></a>
 
@@ -816,7 +816,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/common/paged_decode_attn_fp8_gqa.cu](../../kernels/gb10/common/paged_decode_attn_fp8_gqa.cu)
 
-- *whole file*: Packing cuts CTAs 6-fold (num_kv_heads \* num_seqs): with 4 KV heads on gb10's 48 SMs the grid covers the SMs only from num_seqs = 12. Not used under split-K, since packing would change the split count and the merge tree. — source: crates/kernels/src/attn_splitk.rs:188; crates/kernels/src/attn_splitk.rs:266
+- *whole file*: Packing cuts CTAs 6-fold (num_kv_heads \* num_seqs): with 4 KV heads on gb10's 48 SMs the grid covers the SMs only from num_seqs = 12. Not used under split-K, since packing would change the split count and the merge tree. — source: crates/target-defaults/src/attn_splitk.rs:188; crates/target-defaults/src/attn_splitk.rs:266
 - *whole file*: __launch_bounds__(256, 1) gives each thread the full register budget for q_reg/o_reg (PD_GQA \* VEC_BF16 floats each). Heads merge one at a time through one smem buffer because PD_GQA copies of smem_o (8 KB each) plus m/l exceed the 48 KB static limit. Byte-identical to paged_decode_attn_fp8 only under --fmad=false. — source: kernels/gb10/common/paged_decode_attn_fp8_gqa.cu:107; kernels/gb10/common/paged_decode_attn_fp8_gqa.cu:334
 
 <a id="to-kernels-gb10-common-paged-decode-attn-fp8k-turbo2v-cu"></a>

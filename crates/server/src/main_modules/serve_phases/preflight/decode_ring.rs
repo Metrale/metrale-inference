@@ -49,7 +49,7 @@ pub(super) struct RingFit {
 pub(super) fn requested_slots(args: &cli::ServeArgs, config: &ModelConfig) -> usize {
     if std::env::var("METRALE_SSM_RESERVE_RING_FULL").is_ok() {
         return if config.num_ssm_layers() > 0 {
-            metrale_kernels::DECODE_ROLLBACK_RING_SLOTS
+            metrale_core::decode_ring::DECODE_ROLLBACK_RING_SLOTS
         } else {
             0
         };

@@ -12,14 +12,14 @@
 use super::splitk_dispatch::{
     ROUTE_NONSPLIT_BF16, ROUTE_NONSPLIT_FP8, ROUTE_SPLITK_BF16, ROUTE_SPLITK_FP8, route_line,
 };
-use metrale_kernels::attn_splitk::SplitkPolicy;
+use metrale_target_defaults::attn_splitk::SplitkPolicy;
 
 /// 2026-09-25: The whole line for the FP8 Hopper split-K kernel under `auto`. `sm_count` is
-/// expected as `metrale_kernels::TARGET_SM_COUNT`, the compiled target's, so the test holds on
+/// expected as `metrale_target_defaults::TARGET_SM_COUNT`, the compiled target's, so the test holds on
 /// every target.
 #[test]
 fn the_fp8_route_line_names_the_kernel_the_split_count_and_the_policy() {
-    let sm = metrale_kernels::TARGET_SM_COUNT;
+    let sm = metrale_target_defaults::TARGET_SM_COUNT;
     assert_eq!(
         route_line(ROUTE_SPLITK_FP8, 11, SplitkPolicy::Auto),
         format!(
@@ -50,7 +50,7 @@ fn the_zero_control_reports_the_non_split_kernel_at_one_split() {
         format!(
             "paged decode attention: paged_decode_attn_fp8 num_splits=1 sm_count={} \
              policy=1 (METRALE_ATTN_DECODE_SPLITK)",
-            metrale_kernels::TARGET_SM_COUNT,
+            metrale_target_defaults::TARGET_SM_COUNT,
         ),
     );
     // 2026-09-25: The policy field uses `SplitkPolicy::label`, the boot line's spelling.
@@ -105,11 +105,11 @@ fn the_packed_route_needs_the_lever_the_shape_and_the_handle() {
     let handle = Some(KernelHandle(7));
 
     // 2026-09-25: The lever. Declared off, so a default build takes the unpacked kernel.
-    const { assert!(!metrale_kernels::attn_splitk::DECODE_GQA_PACK_DECLARED) };
+    const { assert!(!metrale_target_defaults::attn_splitk::DECODE_GQA_PACK_DECLARED) };
     assert!(gqa_pack_route(false, handle, 24, 4, 256).is_none());
     assert_eq!(
         gqa_pack_kernel(handle, 24, 4, 256).is_some(),
-        metrale_kernels::attn_splitk::gqa_pack_enabled(),
+        metrale_target_defaults::attn_splitk::gqa_pack_enabled(),
         "the public entry must be the route function at the resolved lever"
     );
 

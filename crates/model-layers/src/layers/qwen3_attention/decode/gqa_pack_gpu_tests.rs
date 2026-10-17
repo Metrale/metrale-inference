@@ -26,7 +26,7 @@
 //! Invariants: none beyond the types.
 
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
-use metrale_kernels::attn_splitk;
+use metrale_target_defaults::attn_splitk;
 
 use super::gqa_pack_fixture::{
     BANDS, BLOCK_SIZE, Band, CASES, Case, Fixture, HD, K_SCALE, NKV, NQ, UNWRITTEN, V_SCALE,

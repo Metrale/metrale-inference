@@ -10,7 +10,7 @@
 //!   `METRALE_ATTN_DECODE_SPLITK`.
 
 use metrale_config::ModelConfig;
-use metrale_kernels::attn_splitk;
+use metrale_target_defaults::attn_splitk;
 
 mod regions;
 mod total;
@@ -278,7 +278,7 @@ impl BufferSizes {
         // accepts.
         let splitk_slots = attn_splitk::workspace_slots(
             attn_splitk::policy_from_env(),
-            metrale_kernels::TARGET_SM_COUNT,
+            metrale_target_defaults::TARGET_SM_COUNT,
             q_heads as u32,
             decode_meta.rows() as u32,
             (max_batch_size as u32).max(1),

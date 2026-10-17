@@ -27,7 +27,7 @@ fn decode_ring_decision_matrix() {
             decode_rollback_ring_slots_with(layers, spec, None, override_value, watchdogs);
         (decision.slots, decision.skip_reason)
     };
-    let ring = metrale_kernels::DECODE_ROLLBACK_RING_SLOTS;
+    let ring = metrale_core::decode_ring::DECODE_ROLLBACK_RING_SLOTS;
 
     for value in ["1", "true", " TRUE "] {
         assert!(
@@ -62,7 +62,7 @@ fn decode_ring_decision_matrix() {
 /// see the depth preflight reserved for.
 #[test]
 fn a_published_depth_outranks_the_default_the_env_and_the_skips() {
-    let ring = metrale_kernels::DECODE_ROLLBACK_RING_SLOTS;
+    let ring = metrale_core::decode_ring::DECODE_ROLLBACK_RING_SLOTS;
     let d = decode_rollback_ring_slots_with(48, false, Some(2), None, false);
     assert_eq!((d.slots, d.skip_reason), (2, None));
     // 2026-09-25: Against `METRALE_SSM_DECODE_RING=1` (depth 8).
@@ -94,7 +94,7 @@ fn parse_accepts_auto_and_zero_through_eight() {
     assert_eq!(parse_decode_ring_slots("0"), Ok(Some(0)));
     assert_eq!(
         parse_decode_ring_slots("8"),
-        Ok(Some(metrale_kernels::DECODE_ROLLBACK_RING_SLOTS))
+        Ok(Some(metrale_core::decode_ring::DECODE_ROLLBACK_RING_SLOTS))
     );
     // 2026-09-25: Above the ring's ceiling, or not `auto` or a number, is an
     // error, not a clamp to 8.
@@ -157,7 +157,7 @@ fn autofit_is_zero_when_even_a_ringless_reserve_does_not_fit() {
 fn the_fit_ladder_is_descending_and_starts_at_the_wired_default() {
     assert_eq!(
         DECODE_RING_FIT_LADDER[0],
-        metrale_kernels::DECODE_ROLLBACK_RING_SLOTS
+        metrale_core::decode_ring::DECODE_ROLLBACK_RING_SLOTS
     );
     assert_eq!(*DECODE_RING_FIT_LADDER.last().unwrap(), 0);
     assert!(

@@ -46,12 +46,12 @@ fn a_hopper_target(ptx_arch: &'static str) -> TargetPtxSet {
 fn the_preflight_judges_the_verbatim_arch_not_the_stripped_base_sm() {
     let hopper = a_hopper_target("sm_90a");
     assert_eq!(
-        preflight_arch(&hopper),
+        preflight_arch(hopper.ptx_arch),
         Some("sm_90a"),
         "the preflight must be handed the arch nvcc compiled for"
     );
     let err = check_arch(
-        preflight_arch(&hopper).expect("hopper records an arch"),
+        preflight_arch(hopper.ptx_arch).expect("hopper records an arch"),
         (10, 0),
     )
     .expect_err("sm_90a cannot load on CC 10.0");
@@ -72,9 +72,10 @@ fn the_preflight_judges_the_verbatim_arch_not_the_stripped_base_sm() {
 #[test]
 fn a_target_that_records_no_arch_selects_nothing_to_check() {
     let stub = a_hopper_target("");
-    assert_eq!(preflight_arch(&stub), None);
+    assert_eq!(preflight_arch(stub.ptx_arch), None);
     // 2026-09-25: The chain as `kernel_gate::gate_device_arch` runs it.
-    preflight_device_arch(0, preflight_arch(&stub)).expect("a stub build has nothing to check");
+    preflight_device_arch(0, preflight_arch(stub.ptx_arch))
+        .expect("a stub build has nothing to check");
 }
 
 /// 2026-09-25: `kernels/gb10/HARDWARE.toml` declares `arch = "sm_121f"` and

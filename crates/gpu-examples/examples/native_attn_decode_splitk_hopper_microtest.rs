@@ -341,9 +341,11 @@ fn main() -> Result<()> {
     eprintln!(
         "native_attn_decode_splitk_hopper_microtest: nq={NQ} nkv={NKV} hd={HD} block={BLOCK} \
          sm_count={sms} auto_splits={auto}",
-        sms = metrale_kernels::TARGET_SM_COUNT,
-        auto =
-            metrale_kernels::attn_splitk::auto_splits(metrale_kernels::TARGET_SM_COUNT, NQ as u32),
+        sms = metrale_target_defaults::TARGET_SM_COUNT,
+        auto = metrale_target_defaults::attn_splitk::auto_splits(
+            metrale_target_defaults::TARGET_SM_COUNT,
+            NQ as u32
+        ),
     );
 
     let mut failures: Vec<String> = Vec::new();

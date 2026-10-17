@@ -5,20 +5,20 @@
 //! declaration with every value sourced from the target, and each lever is
 //! overridable from the environment and says so.
 //!
-//! This file tests the resolver. `crates/kernels/tests/target_defaults.rs`
+//! This file tests the resolver. `crates/target-defaults/tests/target_defaults.rs`
 //! parses the real `kernels/*/HARDWARE.toml` with the build-script parser.
 //!
 //! Owner: model-layers ops (target serving defaults).
 //! Invariants: none beyond the types.
 
 use super::*;
-use metrale_kernels::TargetDefaults;
+use metrale_target_defaults::TargetDefaults;
 
 /// 2026-09-25: A copy of `kernels/gb10/HARDWARE.toml` `[defaults]`. Apart from
 /// `ssm_ba_gates_hopper` (on since 2026-09-28), `ssm_batched_recurrent` (on since 2026-09-29)
-/// and the two `w8a8_prefill_max_m_*` rows it equals `build_defaults::baseline`,
+/// and the two `w8a8_prefill_max_m_*` rows it equals `hardware_defaults::baseline`,
 /// which `gb10_declares_the_baseline_apart_from_the_measured_w8a8_ceiling`
-/// (`crates/kernels/tests/target_defaults.rs`) checks on the real file.
+/// (`crates/target-defaults/tests/target_defaults.rs`) checks on the real file.
 const GB10: TargetDefaults = TargetDefaults {
     hw: "gb10",
     lm_head_batchm_max: 8,
@@ -147,7 +147,7 @@ fn gb10_with_an_empty_environment_is_todays_behaviour() {
 }
 
 /// 2026-09-25: [`BASELINE_BATCHM_MAX`] is `DENSE_GEMV_BATCHM_DECODE_MAX_M` and the
-/// gb10 copy's band. `build_defaults::baseline` repeats the value as a literal
+/// gb10 copy's band. `hardware_defaults::baseline` repeats the value as a literal
 /// because `metrale-kernels` cannot depend on this crate.
 #[test]
 fn the_baseline_band_is_the_frozen_one() {
@@ -336,7 +336,7 @@ fn the_process_resolution_reads_this_binarys_declaration() {
     assert_eq!(resolved().hw, declared().hw);
     assert_eq!(
         resolved().hw,
-        metrale_kernels::TARGET_DEFAULTS.hw,
+        metrale_target_defaults::TARGET_DEFAULTS.hw,
         "one table, one resolution"
     );
 }

@@ -107,8 +107,8 @@ fn every_inherited_hardware_toml_carries_the_same_key_set_as_gb10() {
 
 /// 2026-09-25: Each overlay's `[defaults]` names the same levers as gb10's,
 /// even where the value agrees. A key left out would take its value from
-/// `build_defaults::baseline`, which the file would not show. The values are
-/// asserted in `tests/target_defaults.rs`.
+/// `metrale_closure::hardware_defaults::baseline`, which the file would not show. The values are
+/// asserted in metrale-target-defaults `tests/target_defaults.rs`.
 #[test]
 fn every_inherited_hardware_toml_declares_the_same_serving_levers_as_gb10() {
     let gb10_path = gb10_dir().join("HARDWARE.toml");

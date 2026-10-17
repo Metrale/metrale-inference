@@ -123,7 +123,7 @@ fn decode_isolation_main(addr: &str, blob: usize, slots: usize, n: u64) -> anyho
     // 2026-09-25: The formula of `derive_decode_ns_salted`
     // (metrale-model-engine ssm_tier/fingerprint.rs) without its zero fallbacks:
     // ns = mix64(mix64(fp, DECODE_DOMAIN), salt), wire key = mix64(key, ns).
-    // The literal equals `metrale_kernels::DECODE_DOMAIN`, which this crate
+    // The literal equals `metrale_core::decode_ring::DECODE_DOMAIN`, which this crate
     // cannot import (no metrale-kernels dependency).
     const DECODE_DOMAIN_LIT: u64 = 0xD3C0_DE12_A5B6_C7D8;
     const FP: u64 = 0xFEED_FACE_CAFE_BEEF;

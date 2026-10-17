@@ -66,7 +66,7 @@ pub fn validate_required_kv_kernels(
 }
 
 /// 2026-09-25: The reference sequence count that the `Legacy` split-K rule
-/// (`metrale_kernels::attn_splitk::legacy_splits`) divides the SM count by:
+/// (`metrale_target_defaults::attn_splitk::legacy_splits`) divides the SM count by:
 /// the configured max decode batch (`ModelLevers::max_decode_seqs`), raised to
 /// `num_seqs` when the live batch is wider.
 ///

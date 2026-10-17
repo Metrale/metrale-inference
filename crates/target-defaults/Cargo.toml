@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "metrale-target-defaults"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metrale Engine: the compiled hardware tree's serving defaults and SM count (kernels/<hw>/HARDWARE.toml), and the decode split-K policy."
+
+# 2026-10-17: Split out of metrale-kernels so the crates that read the defaults (gpu-runtime,
+# model-layers) do not depend on the embedded kernel table: a kernel edit reruns the kernels
+# build script and rebuilds that crate and the binary only. This build script reads one
+# HARDWARE.toml and never invokes a kernel compiler.
+
+[build-dependencies]
+# 2026-10-17: The HARDWARE.toml `[defaults]` parse the kernels build script hashes too.
+metrale-closure = { workspace = true }
+
+[dev-dependencies]
+# 2026-10-17: `tests/target_defaults.rs` parses every real `kernels/*/HARDWARE.toml` with the
+# same module the build script uses.
+metrale-closure = { workspace = true }
+toml = { workspace = true, features = ["std", "serde", "parse", "display"] }
+
+[package.metadata.metrale]
+# 2026-10-17: Not pure: the split-K and GQA-pack policies read the process environment
+# (`std::env`) and cache it in a `std::sync::OnceLock`, so the crate needs `std` and does not
+# build for wasm32v1-none. It moves to `core` once those reads move behind the settings port.
+role = "device"
+
+[lints]
+workspace = true

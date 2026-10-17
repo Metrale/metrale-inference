@@ -213,6 +213,7 @@ metrale-comm = { workspace = true }
 metrale-config = { workspace = true }
 metrale-gpu-runtime = { workspace = true }
 metrale-kernels = { workspace = true }
+metrale-target-defaults = { workspace = true }
 metrale-model-arch = { workspace = true }
 metrale-model-layers = { workspace = true }
 anyhow = { workspace = true, features = ["std"] }

@@ -1679,6 +1679,7 @@ dependencies = [
  "metrale-kernels",
  "metrale-model-arch",
  "metrale-model-layers",
+ "metrale-target-defaults",
  "safetensors",
  "serde_json",
  "tokenizers",
@@ -1699,6 +1700,7 @@ dependencies = [
  "metrale-error",
  "metrale-kernel-tree",
  "metrale-kernels",
+ "metrale-target-defaults",
  "metrale-telemetry",
  "objc2",
  "objc2-foundation",
@@ -1842,6 +1844,7 @@ dependencies = [
  "metrale-kernels",
  "metrale-model-weights",
  "metrale-storage",
+ "metrale-target-defaults",
  "parking_lot",
  "serde",
  "serde_json",
@@ -1931,6 +1934,14 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "metrale-target-defaults"
+version = "1.0.0-beta-preview"
+dependencies = [
+ "metrale-closure",
+ "toml",
 ]
 
 [[package]]

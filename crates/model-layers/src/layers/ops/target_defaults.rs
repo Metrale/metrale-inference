@@ -3,10 +3,10 @@
 //! 2026-09-25: The compiled target's serving defaults, resolved against the
 //! environment: the target's declaration first, a `METRALE_*` override second.
 //!
-//! The declaration is [`metrale_kernels::TARGET_DEFAULTS`], which `build.rs`
+//! The declaration is [`metrale_target_defaults::TARGET_DEFAULTS`], which `build.rs`
 //! bakes from the `[defaults]` table of the compiled target's
 //! `kernels/<hw>/HARDWARE.toml`. A target with no table gets
-//! `build_defaults::baseline` (`crates/kernels/build_defaults.rs`).
+//! `hardware_defaults::baseline` (`crates/closure/src/hardware_defaults.rs`).
 //!
 //! # The override grammar (boolean levers, [`resolve_toggle`])
 //!
@@ -33,9 +33,9 @@
 //!
 //! # Adding a lever
 //!
-//! A lever needs all of: the field in `metrale_kernels::TargetDefaults`
-//! (`crates/kernels/src/target_defaults.rs`), the parse arm in
-//! `crates/kernels/build_defaults.rs`, the row in every
+//! A lever needs all of: the field in `metrale_target_defaults::TargetDefaults`
+//! (`crates/target-defaults/src/target_defaults.rs`), the parse arm in
+//! `crates/closure/src/hardware_defaults.rs`, the row in every
 //! `kernels/<hw>/HARDWARE.toml` that has a `[defaults]` table, the
 //! [`TargetLevers`] field and its arm in [`resolve`], its entry in
 //! [`format_levers`], and a test. `parse_defaults` panics on an unknown key,
@@ -48,7 +48,7 @@
 //! - A value is tagged [`Source::Env`] exactly when an environment variable
 //!   decided it.
 
-use metrale_kernels::attn_splitk::{self, SplitkPolicy};
+use metrale_target_defaults::attn_splitk::{self, SplitkPolicy};
 
 use super::gemm_quant::{DENSE_GEMV_BATCHM_DECODE_MAX_M, DENSE_GEMV_BATCHM_MAX_M};
 
@@ -177,7 +177,7 @@ pub struct TargetLevers {
 /// variable lookup, so tests resolve any target's table without touching the
 /// process environment.
 pub fn resolve(
-    defaults: &metrale_kernels::TargetDefaults,
+    defaults: &metrale_target_defaults::TargetDefaults,
     mut var: impl FnMut(&str) -> Option<String>,
 ) -> TargetLevers {
     let split_silu_off = var("METRALE_NO_DECODE_SPLIT_SILU").is_some();
@@ -230,7 +230,7 @@ pub fn resolve(
         // `METRALE_NO_DECODE_SPLIT_SILU`; there is no positive variable.
         decode_split_silu: resolve_toggle(defaults.decode_split_silu, None, split_silu_off),
         // 2026-09-25: The paged-decode split-K policy. The rule is
-        // `metrale_kernels::attn_splitk::resolve_policy`, which the buffer arena
+        // `metrale_target_defaults::attn_splitk::resolve_policy`, which the buffer arena
         // (`gpu-runtime/src/buffers/sizes.rs`, through `policy_from_env`) also
         // calls to size the split-K workspace, so the split count a launch uses
         // and the one the workspace was sized for come from one function.
@@ -299,7 +299,7 @@ pub fn resolved() -> &'static TargetLevers {
     static LEVERS: std::sync::OnceLock<TargetLevers> = std::sync::OnceLock::new();
     LEVERS.get_or_init(|| {
         resolve(
-            &metrale_kernels::TARGET_DEFAULTS,
+            &metrale_target_defaults::TARGET_DEFAULTS,
             metrale_config::levers::var,
         )
     })
@@ -307,8 +307,8 @@ pub fn resolved() -> &'static TargetLevers {
 
 /// 2026-09-25: The baked declaration this binary carries, for callers that
 /// resolve from their own inputs (`ModelLevers`).
-pub fn declared() -> &'static metrale_kernels::TargetDefaults {
-    &metrale_kernels::TARGET_DEFAULTS
+pub fn declared() -> &'static metrale_target_defaults::TargetDefaults {
+    &metrale_target_defaults::TARGET_DEFAULTS
 }
 
 /// 2026-09-25: `target defaults (<hw>): …`, the one line naming every resolved
@@ -345,7 +345,7 @@ pub fn format_levers(l: &TargetLevers) -> String {
         hw = if l.hw.is_empty() { "unknown" } else { l.hw },
         // 2026-09-25: Not a lever: the target's `[hardware] sm_count`, which
         // `arch_preflight::check_sm_count` compares with the device at boot.
-        sms = metrale_kernels::TARGET_SM_COUNT,
+        sms = metrale_target_defaults::TARGET_SM_COUNT,
         batchm = l.lm_head_batchm_max.value,
         batchm_src = l.lm_head_batchm_max.source.tag(),
         recurrent = onoff(l.ssm_batched_recurrent),
@@ -369,12 +369,12 @@ pub fn format_levers(l: &TargetLevers) -> String {
 }
 
 /// 2026-09-25: The head band a target without a `[defaults]` table gets.
-/// `build_defaults::baseline` (`crates/kernels/build_defaults.rs`) repeats it
+/// `hardware_defaults::baseline` (`crates/closure/src/hardware_defaults.rs`) repeats it
 /// as a literal. `target_defaults_tests::the_baseline_band_is_the_frozen_one`
 /// checks this constant against `DENSE_GEMV_BATCHM_DECODE_MAX_M` and the test
 /// file's copy of the gb10 declaration;
 /// `gb10_declares_the_baseline_apart_from_the_measured_w8a8_ceiling`
-/// (`crates/kernels/tests/target_defaults.rs`) checks the real gb10
+/// (`crates/target-defaults/tests/target_defaults.rs`) checks the real gb10
 /// declaration against the literal.
 pub const BASELINE_BATCHM_MAX: u32 = DENSE_GEMV_BATCHM_DECODE_MAX_M;
 

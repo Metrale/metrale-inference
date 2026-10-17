@@ -1367,19 +1367,19 @@ source = "kernels/gb10/common/nllb_encoder.cu:512"
 match = "kernels/gb10/common/paged_decode_attn.cu"
 text = "One 8-warp CTA per (q_head, seq): each CTA of a GQA group re-reads its KV head's whole K and V. Positions go BC = 4 at a time inside a physical block and the block tail singly. The split-K pair takes no sliding window; blockDim 256 and head_dim == HDIM are assumed, never checked."
 prs = []
-source = "kernels/gb10/common/paged_decode_attn.cu:7; crates/kernels/src/attn_splitk.rs:188"
+source = "kernels/gb10/common/paged_decode_attn.cu:7; crates/target-defaults/src/attn_splitk.rs:188"
 
 [[t]]
 match = "kernels/gb10/common/paged_decode_attn.cu::paged_decode_attn_splitk"
 text = "The online-softmax split merge is not associative, so the split count must not follow the co-batched sequence count; under auto/pinned it depends only on (sm_count, num_q_heads). Outputs are not bit-identical across split counts. Head dims other than 256 get one split except under legacy."
 prs = []
-source = "crates/kernels/src/attn_splitk.rs:7; crates/model-layers/src/layers/qwen3_attention/decode/splitk_dispatch.rs:60"
+source = "crates/target-defaults/src/attn_splitk.rs:7; crates/model-layers/src/layers/qwen3_attention/decode/splitk_dispatch.rs:60"
 
 [[t]]
 match = "kernels/gb10/common/paged_decode_attn_bf16_gqa.cu"
 text = "GQA-packed twin of paged_decode_attn: PD_GQA = 6 query heads per CTA so each K/V row is loaded once per group. Same per-head operation order, so with --fmad=false the output is bit-identical; only ratio 6 at head_dim 256 is admitted, the lever is off for every target, and it is used only on the non-split arm."
 prs = []
-source = "kernels/gb10/common/paged_decode_attn_bf16_gqa.cu:3; crates/kernels/src/attn_splitk.rs:196"
+source = "kernels/gb10/common/paged_decode_attn_bf16_gqa.cu:3; crates/target-defaults/src/attn_splitk.rs:196"
 
 [[t]]
 match = "kernels/gb10/common/paged_decode_attn_bf16k_turbo2v.cu"
@@ -1445,7 +1445,7 @@ source = "kernels/hopper/common/paged_decode_splitk_hopper.cuh:27; docs/perf/hop
 match = "kernels/gb10/common/paged_decode_attn_fp8_gqa.cu"
 text = "Packing cuts CTAs 6-fold (num_kv_heads * num_seqs): with 4 KV heads on gb10's 48 SMs the grid covers the SMs only from num_seqs = 12. Not used under split-K, since packing would change the split count and the merge tree."
 prs = []
-source = "crates/kernels/src/attn_splitk.rs:188; crates/kernels/src/attn_splitk.rs:266"
+source = "crates/target-defaults/src/attn_splitk.rs:188; crates/target-defaults/src/attn_splitk.rs:266"
 
 [[t]]
 match = "kernels/gb10/common/paged_decode_attn_fp8_gqa.cu"

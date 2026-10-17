@@ -217,10 +217,11 @@ fn decode_client_salt() -> Result<u64> {
 /// separates processes. A zero from the first fold falls back to `DECODE_DOMAIN`, a
 /// zero from the second to the first fold's value, so the result is never zero.
 pub(crate) fn derive_decode_ns_salted(fp: u64, salt: u64) -> NonZeroU64 {
-    let base = NonZeroU64::new(mix64(fp, metrale_kernels::DECODE_DOMAIN)).unwrap_or_else(|| {
-        NonZeroU64::new(metrale_kernels::DECODE_DOMAIN)
-            .expect("DECODE_DOMAIN is a non-zero constant")
-    });
+    let base =
+        NonZeroU64::new(mix64(fp, metrale_core::decode_ring::DECODE_DOMAIN)).unwrap_or_else(|| {
+            NonZeroU64::new(metrale_core::decode_ring::DECODE_DOMAIN)
+                .expect("DECODE_DOMAIN is a non-zero constant")
+        });
     NonZeroU64::new(mix64(base.get(), salt)).unwrap_or(base)
 }
 

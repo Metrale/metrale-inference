@@ -188,10 +188,10 @@ new target:
    override or a duplicate regular copy.
 2. Declare the target's SERVING levers in `kernels/<hardware>/HARDWARE.toml`
    `[defaults]`, and its `[hardware] sm_count`. `build.rs` bakes them into
-   `metrale_kernels::TARGET_DEFAULTS` / `TARGET_SM_COUNT` and every resolver in
+   `metrale_target_defaults::TARGET_DEFAULTS` / `TARGET_SM_COUNT` and every resolver in
    `metrale-model-layers` reads the declaration before the environment, so a target's
    measured configuration is a reviewable file rather than a launch script.
-   `crates/kernels/build_defaults.rs` panics on an unknown key. Adding a
+   `crates/closure/src/hardware_defaults.rs` panics on an unknown key. Adding a
    LEVER is one commit across four places — the `TargetDefaults` field, the
    parse arm, the resolver and every target's table — and that commit is the one
    landing the arm which reads it.

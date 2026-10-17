@@ -111,7 +111,6 @@ crates/gpu-runtime/src/metal_backend/tests/real_model_vision.rs
 crates/gpu-sys/src/env.rs
 crates/gpu-sys/tests/env_chains.rs
 crates/grammar/tests/qwen_toolcall_mask.rs
-crates/kernels/src/attn_splitk.rs
 crates/model-arch/src/attn_v41/decode.rs
 crates/model-arch/src/deepseek_v41_layer.rs
 crates/model-arch/src/deepseek_v41_layer/step.rs
@@ -499,3 +498,4 @@ crates/storage/src/rdma_kv_backend/tests.rs
 crates/storage/src/rdma_snapshot.rs
 crates/storage/src/snapshot_swap/wire.rs
 crates/storage/tests/direct_swap.rs
+crates/target-defaults/src/attn_splitk.rs

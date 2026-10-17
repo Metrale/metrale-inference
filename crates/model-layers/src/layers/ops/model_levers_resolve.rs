@@ -74,7 +74,7 @@ pub(super) fn from_values(
         moe_fp8_grouped_decode_target: opt_in(value("METRALE_FP8_MOE_GROUPED_DECODE").as_deref()),
         fp8_attn_m32: opt_in(value("METRALE_FP8_ATTN_M32").as_deref()),
         // 2026-09-25: The target's declaration (`kernels/<hw>/HARDWARE.toml` `[defaults]
-        // decode_split_silu`; undeclared is on, `crates/kernels/build_defaults.rs`) arrives as
+        // decode_split_silu`; undeclared is on, `crates/closure/src/hardware_defaults.rs`) arrives as
         // `default_split_silu`. The presence of `METRALE_NO_DECODE_SPLIT_SILU`, any value,
         // turns it off (`resolve_toggle`'s `legacy_off`).
         decode_split_silu: crate::layers::ops::target_defaults::resolve_toggle(

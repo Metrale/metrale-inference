@@ -110,7 +110,7 @@ pub fn check_sm_count(device_sms: u32, declared_sms: u32) -> Option<String> {
              (kernels/{hw}/HARDWARE.toml [hardware] sm_count) but the device \
              reports {device_sms} — grid sizing that reads it will be off; \
              serving is unaffected",
-            hw = metrale_kernels::TARGET_DEFAULTS.hw,
+            hw = metrale_target_defaults::TARGET_DEFAULTS.hw,
         )
     })
 }
@@ -136,8 +136,11 @@ pub fn check_arch(compiled_arch: &str, device_cc: (u32, u32)) -> Result<String> 
 /// `sm_90a` does not (`ptx_arch_runs_on_device`).
 ///
 /// `None` when `ptx_arch` is empty; the preflight then warns and skips.
-pub fn preflight_arch(ptx_set: &metrale_kernels::TargetPtxSet) -> Option<&'static str> {
-    Some(ptx_set.ptx_arch).filter(|a| !a.is_empty())
+///
+/// 2026-10-17: Takes the string, not the `TargetPtxSet`, so this crate needs no
+/// normal dependency on `metrale-kernels` and a `.cu` edit does not rebuild it.
+pub fn preflight_arch(ptx_arch: &'static str) -> Option<&'static str> {
+    Some(ptx_arch).filter(|a| !a.is_empty())
 }
 
 /// 2026-09-25: Fail if kernels built for `compiled_arch` cannot run on GPU
@@ -212,7 +215,9 @@ pub(crate) fn preflight_device_arch_with(
     // debug level and the preflight still returns `Ok`.
     match query.sm_count(ordinal) {
         Ok(device_sms) => {
-            if let Some(warning) = check_sm_count(device_sms, metrale_kernels::TARGET_SM_COUNT) {
+            if let Some(warning) =
+                check_sm_count(device_sms, metrale_target_defaults::TARGET_SM_COUNT)
+            {
                 tracing::warn!("{warning}");
             }
         }

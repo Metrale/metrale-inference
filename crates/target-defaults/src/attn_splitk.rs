@@ -8,7 +8,7 @@
 //! moved with the co-batched sequence count would change a sequence's output
 //! bytes depending on what it is batched with.
 //!
-//! Owner: kernels crate (paged-decode attention policy).
+//! Owner: target-defaults crate (paged-decode attention policy).
 //! Invariants:
 //! - Under [`SplitkPolicy::Auto`] and [`SplitkPolicy::Pinned`] the split count
 //!   depends only on `(sm_count, num_q_heads)` and the pin; only

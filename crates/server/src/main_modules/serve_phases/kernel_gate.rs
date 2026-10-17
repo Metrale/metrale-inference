@@ -33,7 +33,10 @@ pub(crate) fn gate_device_arch(
     gate_arch_preflight(
         checking,
         ptx_set,
-        arch_preflight::preflight_device_arch(gpu_ordinal, arch_preflight::preflight_arch(ptx_set)),
+        arch_preflight::preflight_device_arch(
+            gpu_ordinal,
+            arch_preflight::preflight_arch(ptx_set.ptx_arch),
+        ),
     )
 }
 

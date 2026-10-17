@@ -34,6 +34,8 @@ use std::path::{Path, PathBuf};
 
 mod circuits;
 mod hex;
+// 2026-10-17: The HARDWARE.toml `[defaults]` parse both kernel-tree build scripts share.
+pub mod hardware_defaults;
 pub mod layout;
 mod layout_manifest;
 mod layout_scan;

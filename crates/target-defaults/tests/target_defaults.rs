@@ -2,19 +2,16 @@
 
 //! 2026-09-25: Tests the checked-in HARDWARE.toml `[defaults]` and
 //! `[hardware] sm_count` values, parsed with the build script's own
-//! `build_defaults.rs`, and the constants build.rs generates from them.
+//! `metrale_closure::hardware_defaults`, and the constants build.rs generates from them.
 //!
-//! Owner: metrale-kernels tests.
+//! Owner: metrale-target-defaults tests.
 //! Invariants: none beyond the types.
 //!
 //! metrale-model-layers' `target_defaults_tests` test the runtime resolver
 //! instead. This is an integration test because cargo does not run a build
 //! script's own unit tests.
 
-#[path = "../build_defaults.rs"]
-mod build_defaults;
-
-use build_defaults::{
+use metrale_closure::hardware_defaults::{
     BASELINE_SM_COUNT, Defaults, baseline, literal, parse_defaults, read_defaults, read_sm_count,
     sm_count_literal,
 };
@@ -28,7 +25,7 @@ fn kernels_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(|p| p.parent())
-        .expect("crates/kernels is two levels below the workspace root")
+        .expect("crates/target-defaults is two levels below the workspace root")
         .join("kernels")
 }
 
@@ -250,7 +247,7 @@ fn every_target_declares_the_sm_count_of_its_own_part() {
 #[should_panic(expected = "sm_count = 0 is not a positive u32")]
 fn a_zero_sm_count_fails_the_build() {
     let toml: toml::Value = toml::from_str("[hardware]\nsm_count = 0\n").unwrap();
-    let _ = build_defaults::parse_sm_count("fictional", &toml);
+    let _ = metrale_closure::hardware_defaults::parse_sm_count("fictional", &toml);
 }
 
 /// 2026-09-25: `sm_count_literal` emits `TARGET_SM_COUNT` as a `u32` const.
@@ -345,7 +342,7 @@ fn the_generated_constant_names_every_field() {
 /// binary equal what its own hardware tree declares.
 #[test]
 fn the_baked_constant_matches_its_own_hardware_tree() {
-    let baked = metrale_kernels::TARGET_DEFAULTS;
+    let baked = metrale_target_defaults::TARGET_DEFAULTS;
     // 2026-09-25: Without `METRALE_TARGET_HW` build.rs bakes the default
     // tree, gb10; the check holds for whichever tree it is.
     let declared = read_defaults(&kernels_root(), baked.hw);
@@ -367,7 +364,7 @@ fn the_baked_constant_matches_its_own_hardware_tree() {
         declared.w8a8_prefill_max_m_narrowing
     );
     assert_eq!(
-        metrale_kernels::TARGET_SM_COUNT,
+        metrale_target_defaults::TARGET_SM_COUNT,
         read_sm_count(&kernels_root(), baked.hw),
         "the baked SM count and the baked defaults must come from ONE tree"
     );

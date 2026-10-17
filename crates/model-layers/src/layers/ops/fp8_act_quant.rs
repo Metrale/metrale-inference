@@ -100,7 +100,7 @@ impl Fp8ActQuant {
             super::fp8_act_quant_hopper_enabled(),
             m,
             k,
-            metrale_kernels::TARGET_SM_COUNT,
+            metrale_target_defaults::TARGET_SM_COUNT,
         )
     }
 
