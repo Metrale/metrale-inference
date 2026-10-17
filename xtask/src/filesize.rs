@@ -15,9 +15,11 @@ const EXTENSIONS: [&str; 11] = [
     "c", "cc", "cpp", "cu", "cuh", "h", "hpp", "metal", "py", "rs", "sh",
 ];
 
-/// 2026-10-17: Directories outside the cap: vendored upstream code, the root `bench/` tree of
-/// experiment scripts and upstream source snapshots (not engine code), and the gate's own
-/// fixtures (one of which is over the cap on purpose).
+/// 2026-10-17: Directories outside the cap. `vendor/` holds forks of upstream crates (the
+/// `metrale-cudarc` fork, with its own `.rustfmt.toml`): they keep upstream's file layout so
+/// each upstream release still rebases, and splitting a file there would fork the layout too.
+/// The root `bench/` tree holds experiment scripts and upstream source snapshots, not engine
+/// code. The gate's own fixtures hold a file over the cap on purpose.
 const EXCLUDED: [&str; 3] = ["bench/", "vendor/", "xtask/fixtures/"];
 
 /// 2026-10-17: Whether `path` (relative, `/`-separated) is under the cap.

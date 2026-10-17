@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# 2026-10-17: A vendored fork outside the workspace: it is the vendor binding, so naming the
+# vendor is its job and vendor-ban must not scan it.
+[package]
+name = "fork"
+version = "0.1.0"
+edition = "2024"

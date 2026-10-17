@@ -2,3 +2,4 @@
 [workspace]
 resolver = "3"
 members = ["crates/v-bin", "crates/v-core", "crates/v-dev", "crates/v-tool"]
+exclude = ["vendor/fork"]

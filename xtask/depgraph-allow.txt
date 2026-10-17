@@ -6,6 +6,7 @@ metrale-circuit->const-oid
 metrale-circuit->hybrid-array
 metrale-circuit->indexmap
 metrale-circuit->metrale-closure
+metrale-circuit->metrale-kernel-tree
 metrale-circuit->toml
 metrale-circuit->unicode-width
 metrale-circuit->zmij
@@ -14,8 +15,8 @@ metrale-config->indexmap
 metrale-config->regex
 metrale-config->zmij
 metrale-core->anyhow
-metrale-core->cudarc
 metrale-core->indexmap
+metrale-core->metrale-cudarc
 metrale-core->zmij
 metrale-grammar->ahash
 metrale-grammar->bitvec

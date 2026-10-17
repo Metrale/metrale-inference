@@ -90,6 +90,7 @@ pub const PURE_DENYLIST: &[&str] = &[
     "libc",
     "log",
     "memmap2",
+    "metrale-cudarc",
     "mio",
     "nix",
     "onig",
@@ -126,6 +127,9 @@ pub const PURE_DENYLIST: &[&str] = &[
 pub const PURE_VIA: &[(&str, &str)] = &[("cpufeatures", "libc")];
 
 /// 2026-10-17: GPU vendor bindings; only `device` (and unconstrained `tool`) crates name one.
+/// `metrale-cudarc` is the cudarc fork under `vendor/cudarc`: outside the workspace, so cargo
+/// reports it as an external package under that name, and this rule is how it is held to
+/// `device` crates.
 pub const VENDOR_CRATES: &[&str] = &[
     "cuda-sys",
     "cudarc",
@@ -133,6 +137,7 @@ pub const VENDOR_CRATES: &[&str] = &[
     "hip-runtime-sys",
     "hip-sys",
     "metal",
+    "metrale-cudarc",
     "nvml-wrapper",
     "nvml-wrapper-sys",
     "objc2-metal",

@@ -5,6 +5,10 @@
 //! file of every other crate except `tool` crates is scanned as code only (comments and literal
 //! contents blanked, so prose and log text never count); each identifier naming a vendor counts.
 //! Offenders are keyed by path with their count in `xtask/vendor-ban-allow.txt`.
+//!
+//! Files no workspace member owns are not scanned. That is deliberate for `vendor/cudarc` (the
+//! `metrale-cudarc` fork, excluded from the workspace): it IS the vendor binding, so naming the
+//! vendor is its job, and depgraph's VBOP rule holds every crate that links it to `device`.
 
 use crate::allow::{Finding, Findings};
 use crate::rust_text;
