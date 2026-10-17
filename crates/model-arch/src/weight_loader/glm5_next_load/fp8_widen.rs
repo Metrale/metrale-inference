@@ -18,7 +18,9 @@
 //! Owner: model-arch weight loader.
 //! Invariants:
 //! - Any other scale dtype or shape is refused; nothing is guessed.
-//! - A NaN weight byte (`0x7F`/`0xFF`), a NaN scale or a non-finite product is refused.
+//! - A NaN weight byte (`0x7F`/`0xFF`), a NaN UE8M0 scale, an F32 tile scale that is not finite
+//!   and positive, or a product whose BF16 rounding is not finite is refused (2026-10-17).
+//! - Every length derived from an untrusted shape is a checked product (2026-10-17).
 
 use anyhow::{Result, bail};
 use metrale_cache::kv_dequant::e4m3_lut;
@@ -73,7 +75,7 @@ fn classify<'a>(
                     k / MX_BLOCK
                 );
             }
-            if bytes.len() != n * (k / MX_BLOCK) {
+            if n.checked_mul(k / MX_BLOCK) != Some(bytes.len()) {
                 bail!("{what}: {} B of UE8M0 scales for {shape:?}", bytes.len());
             }
             if let Some(i) = bytes.iter().position(|&e| e == E8M0_NAN) {
@@ -91,15 +93,18 @@ fn classify<'a>(
                      (expected [{tn}, 1, {tk}, 1] or [{tn}, {tk}])"
                 );
             }
-            if bytes.len() != tn * tk * 4 {
+            if tn.checked_mul(tk).and_then(|t| t.checked_mul(4)) != Some(bytes.len()) {
                 bail!("{what}: {} B of F32 tile scales for {shape:?}", bytes.len());
             }
             let values: Vec<f32> = bytes
                 .chunks_exact(4)
                 .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
                 .collect();
-            if let Some(i) = values.iter().position(|v| v.is_nan()) {
-                bail!("{what}: tile scale {i} is NaN");
+            if let Some(i) = values.iter().position(|v| !(v.is_finite() && *v > 0.0)) {
+                bail!(
+                    "{what}: tile scale {i} is {}, not finite and positive",
+                    values[i]
+                );
             }
             Ok(Scales::Tile {
                 values,
@@ -126,20 +131,23 @@ pub(super) fn widen_fp8_to_bf16(
     let [n, k] = shape[..] else {
         bail!("{what}: an F8_E4M3 weight must be 2-D, got {shape:?}");
     };
-    if weight.len() != n * k {
+    if n.checked_mul(k) != Some(weight.len()) {
         bail!("{what}: {} B of E4M3 for [{n}, {k}]", weight.len());
     }
     let scales = classify(what, n, k, scale_dtype, scale_shape, scale)?;
     let lut = e4m3_lut();
-    let mut out = Vec::with_capacity(n * k * 2);
+    let mut out = Vec::with_capacity(weight.len().saturating_mul(2));
     for r in 0..n {
         for c in 0..k {
             let w = weight[r * k + c];
             let v = lut[usize::from(w)] * scales.at(r, c);
-            if !v.is_finite() {
-                bail!("{what}: weight [{r}, {c}] (byte {w:#04x}) widens to {v}");
+            // 2026-10-17: The rounded value is checked, not the product: a finite `f32` above
+            // the largest BF16 rounds to infinity.
+            let b = half::bf16::from_f32(v);
+            if !b.is_finite() {
+                bail!("{what}: weight [{r}, {c}] (byte {w:#04x}) widens to {v} ({b} in BF16)");
             }
-            out.extend_from_slice(&half::bf16::from_f32(v).to_bits().to_le_bytes());
+            out.extend_from_slice(&b.to_bits().to_le_bytes());
         }
     }
     Ok(out)

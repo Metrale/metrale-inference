@@ -46,6 +46,7 @@ mod expert_quant;
 mod expert_scales;
 mod expert_slab;
 mod expert_tp;
+mod expert_whole;
 #[cfg(test)]
 mod export_layout_tests;
 mod fp8_head;
@@ -57,12 +58,14 @@ mod nvfp4_quant;
 #[cfg(test)]
 mod plan_cast_tests;
 mod plan_dtype;
+mod prune;
 #[cfg(test)]
 mod tp_shapes_tests;
 
 use act_scale::input_scale;
 use act_scale::is_activation_scale;
 use expert_quant::{quantize_deferred_expert_proj, quantize_expert_proj};
+use expert_whole::bind_expert;
 
 pub struct Glm5NextWeightLoader;
 
@@ -347,59 +350,6 @@ fn bind_mhc_site(
             gpu.memset(p, 0, bytes)?;
             p
         },
-    })
-}
-
-/// 2026-09-25: One routed expert's gate/up/down as NVFP4 triples. Each
-/// projection takes the first arm that applies:
-///
-/// 1. deferred by [`Glm5NextWeightLoader::defer_predicate`]: read from disk,
-///    quantised, uploaded;
-/// 2. resident U8: bound zero-copy with its `weight_scale` and scalar
-///    `weight_scale_2`, and its static activation scale when the checkpoint has one
-///    (2026-10-08, [`act_scale::input_scale`]); 2026-10-17: a csf-encoded scale plane is
-///    decoded on the host and uploaded ([`expert_scales`]);
-/// 3. resident BF16: read back and quantised; `prune_after_load` frees the
-///    source.
-///
-/// Any other dtype is an error.
-pub(super) fn bind_expert(
-    gpu: &dyn GpuBackend,
-    store: &WeightStore,
-    layer: usize,
-    id: usize,
-) -> Result<Glm5NextExpertWeights> {
-    let proj = |p: &str| -> Result<Nvfp4Proj> {
-        let base = format!("mlp.experts.{id}.{p}");
-        let wname = qualify(layer, &format!("{base}.weight"));
-        // 2026-09-25: Checked first: a deferred tensor has no store entry.
-        if let Some(d) = store.deferred(&wname) {
-            return quantize_deferred_expert_proj(gpu, store, d, &base);
-        }
-        let w = store.get(&wname)?;
-        match w.dtype {
-            WeightDtype::UInt8 => {
-                let scale = expert_scales::block_scale_ptr(gpu, store, layer, &base, w)?;
-                let s2 = store.get(&qualify(layer, &format!("{base}.weight_scale_2")))?;
-                let s2 = host_f32(gpu, s2, &format!("{base}.weight_scale_2"))?;
-                let [s2] = s2[..] else {
-                    bail!("{base}.weight_scale_2 is not a scalar");
-                };
-                Ok(Nvfp4Proj {
-                    packed: w.ptr,
-                    scale,
-                    scale_2: s2,
-                    input_scale: input_scale(gpu, store, layer, &base)?,
-                })
-            }
-            WeightDtype::BF16 => quantize_expert_proj(gpu, store, w, &base),
-            other => bail!("{base}.weight is {other:?}, expected packed U8 NVFP4 or BF16"),
-        }
-    };
-    Ok(Glm5NextExpertWeights {
-        gate_proj: proj("gate_proj")?,
-        up_proj: proj("up_proj")?,
-        down_proj: proj("down_proj")?,
     })
 }
 

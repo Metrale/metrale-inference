@@ -123,8 +123,10 @@ impl CsfGeometry {
         ensure!(columns > 0, "csf: columns must be positive");
         ensure!(
             rows.checked_mul(columns)
+                .and_then(|n| n.checked_mul(width.bits()))
                 .is_some_and(|n| n <= isize::MAX as usize),
-            "csf: {rows} x {columns} overflows"
+            "csf: {rows} x {columns} x {} bits overflows",
+            width.bits()
         );
         let row_blocks = rows / BLOCK_ROWS;
         let column_blocks = columns.div_ceil(BLOCK_COLUMNS);
@@ -146,7 +148,8 @@ impl CsfGeometry {
         self.row_blocks * self.column_blocks
     }
 
-    /// 2026-10-17: Exact byte length of `.csf32_codes`.
+    /// 2026-10-17: Exact byte length of `.csf32_codes`. Cannot overflow: [`Self::new`] bounds
+    /// `rows x columns x bits` by `isize::MAX`.
     pub fn codes_len(&self) -> usize {
         self.rows * self.columns * self.width.bits() / 8
     }

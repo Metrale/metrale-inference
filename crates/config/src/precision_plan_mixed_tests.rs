@@ -102,3 +102,85 @@ fn an_unknown_scale_encoding_is_refused() {
         .remove("weight_scale_encoding");
     assert!(DeclaredPrecisionPlan::from_quantization_config(&raw).is_ok());
 }
+
+// 2026-10-02: An expert projection's fused-experts module; anything else has none. Mutation:
+// accepting a non-numeric expert index would make `shared_expert.gate_proj`-like paths match.
+// 2026-10-17: Moved here from the circuit crate with `expert_container`.
+#[test]
+fn an_expert_projection_names_its_experts_module() {
+    assert_eq!(
+        expert_container("model.layers.3.mlp.experts.0.gate_proj"),
+        Some("model.layers.3.mlp.experts")
+    );
+    assert_eq!(
+        expert_container("mtp.layers.0.mlp.experts.17.down_proj"),
+        Some("mtp.layers.0.mlp.experts")
+    );
+    for none in [
+        "model.layers.3.mlp.experts",
+        "model.layers.3.mlp.experts.0",
+        "model.layers.3.mlp.experts.x.gate_proj",
+        "model.layers.3.mlp.shared_expert.gate_proj",
+        "model.layers.3.mlp.experts..gate_proj",
+    ] {
+        assert_eq!(expert_container(none), None, "{none}");
+    }
+}
+
+/// 2026-10-17: Projection-level pins for the two NVFP4 checkpoints the container fallback must
+/// not move: what `resolve` and the policy's `nvfp4_act` / `fp8_decode_act` answer for expert
+/// 0's projections and for an excluded MTP expert projection. nvidia/Qwen3.6-35B-A3B-NVFP4
+/// declares its experts only through the fused `...mlp.experts` entry (W4A16), so its
+/// projections resolve W4A16 (before the fallback: unquantized) while the policy answers stay
+/// what they were (`Wide`, no FP8 decode); GLM-5.3-Flash-NVFP4 names them through its `Linear`
+/// class target (W4A4) and ignores the whole MTP layer 45.
+#[test]
+fn nvfp4_checkpoint_expert_projections_keep_their_policy_answers() {
+    use crate::weight_quantization::{
+        KernelCaps, Nvfp4Act, W4a4Downcast, WeightQuantPolicy, WeightQuantTier, WeightQuantization,
+    };
+    let tier = WeightQuantTier::new(WeightQuantization::Declared, W4a4Downcast::Off).expect("tier");
+    let caps = KernelCaps {
+        w8a8_decode: true,
+        w8a8_moe_decode: true,
+        w8a8_block_scaled_decode: true,
+        fp8_lm_head_batched: true,
+    };
+    let cases: [(&str, String, &str, Nvfp4Act); 2] = [
+        (
+            "nvidia35",
+            format!("{L}.3.mlp.experts.0"),
+            "W4A16",
+            Nvfp4Act::Wide,
+        ),
+        (
+            "glm53",
+            format!("{L}.3.mlp.experts.0"),
+            "W4A4",
+            Nvfp4Act::A4,
+        ),
+    ];
+    for (name, expert, label, act) in cases {
+        let p = plan(name);
+        let pol = WeightQuantPolicy::new(tier, &p, caps);
+        for proj in ["gate_proj", "up_proj", "down_proj"] {
+            let m = format!("{expert}.{proj}");
+            assert_eq!(p.resolve(&m).label(), label, "{name} {m}");
+            assert_eq!(pol.nvfp4_act(&m), act, "{name} {m}");
+            assert_eq!(pol.fp8_decode_act(&m), None, "{name} {m}");
+        }
+    }
+    for (name, excluded) in [
+        (
+            "nvidia35",
+            "mtp.layers.0.mlp.experts.0.gate_proj".to_string(),
+        ),
+        ("glm53", format!("{L}.45.mlp.experts.0.gate_proj")),
+    ] {
+        let p = plan(name);
+        let pol = WeightQuantPolicy::new(tier, &p, caps);
+        assert_eq!(p.resolve(&excluded), LayerPrecision::UNQUANTIZED, "{name}");
+        assert_eq!(pol.nvfp4_act(&excluded), Nvfp4Act::Wide, "{name}");
+        assert_eq!(pol.fp8_decode_act(&excluded), None, "{name}");
+    }
+}

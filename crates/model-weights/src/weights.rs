@@ -211,7 +211,7 @@ pub struct WeightStore {
 }
 
 mod deferred;
-pub use deferred::{DeferHook, DeferredTensor};
+pub use deferred::{DeferCharge, DeferHook, DeferredTensor};
 mod kv_scale_keys;
 pub use kv_scale_keys::{
     KvScaleCensus, KvScaleKeys, KvScaleSpelling, kv_scale_census, resolve_kv_scale_keys,
@@ -265,6 +265,9 @@ pub struct SafetensorsLoader {
     /// loader must record their location instead of uploading them. See
     /// [`DeferHook`] for the contract and why a loader asks for it.
     pub defer: Option<DeferHook>,
+    /// 2026-10-17: The device bytes the model's loader allocates for each tensor it defers, for
+    /// the pre-flight ([`DeferCharge`]). `None`: deferred tensors cost it nothing.
+    pub defer_charge: Option<DeferCharge>,
 }
 
 impl Default for SafetensorsLoader {
@@ -284,6 +287,7 @@ impl SafetensorsLoader {
             skip_activation_scales: false,
             skip_mtp: false,
             defer: None,
+            defer_charge: None,
         }
     }
 
@@ -297,6 +301,7 @@ impl SafetensorsLoader {
             skip_activation_scales: false,
             skip_mtp: false,
             defer: None,
+            defer_charge: None,
         }
     }
 
@@ -308,6 +313,14 @@ impl SafetensorsLoader {
     /// location in the store and invite a binder to read it.
     pub fn is_deferred(&self, name: &str, dtype: WeightDtype) -> bool {
         self.defer.as_ref().is_some_and(|f| f(name, dtype))
+    }
+
+    /// 2026-10-17: The pre-flight bytes of a tensor the model's loader deferred; 0 when no
+    /// [`DeferCharge`] is set.
+    pub fn deferred_charge(&self, name: &str, dtype: WeightDtype, shape: &[usize]) -> usize {
+        self.defer_charge
+            .as_ref()
+            .map_or(0, |f| f(name, dtype, shape))
     }
 
     /// Check if a tensor should be skipped under EP.

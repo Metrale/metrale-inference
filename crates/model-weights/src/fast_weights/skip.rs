@@ -35,6 +35,14 @@ impl FastSafetensorsLoader {
     pub fn is_deferred(&self, name: &str, dtype: WeightDtype) -> bool {
         self.defer.as_ref().is_some_and(|f| f(name, dtype))
     }
+
+    /// 2026-10-17: The pre-flight bytes of a tensor the model's loader deferred; 0 when no
+    /// [`crate::weights::DeferCharge`] is set.
+    pub fn deferred_charge(&self, name: &str, dtype: WeightDtype, shape: &[usize]) -> usize {
+        self.defer_charge
+            .as_ref()
+            .map_or(0, |f| f(name, dtype, shape))
+    }
 }
 
 impl FastSafetensorsLoader {

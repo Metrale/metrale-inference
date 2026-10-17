@@ -13,7 +13,9 @@ use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_model_weights::weights::{DeferredTensor, WeightDtype, WeightStore, WeightTensor};
 
-use super::super::expert_slab::{ExpertSlab, SLAB_ALIGN, slot_layout};
+use super::super::expert_slab::{
+    CSF_SCALE_SLAB_LABEL, ExpertSlab, SLAB_ALIGN, TP_SLAB_LABEL, slot_layout,
+};
 use super::{bind_routed_expert, is_routed_expert_tensor};
 use crate::glm5next_mlp::expert_tp::{
     ExpertShard, ExpertSlice, expert_slice, slice_expert_cols, slice_expert_rows,
@@ -55,12 +57,8 @@ fn shard(tag: &str, tensors: &[(String, WeightDtype, Vec<usize>, Vec<u8>)]) -> S
     for (name, dtype, shape, bytes) in tensors {
         store.defer(
             name.clone(),
-            DeferredTensor {
-                path: path.clone(),
-                offset: blob.len() as u64,
-                shape: shape.clone(),
-                dtype: *dtype,
-            },
+            DeferredTensor::from_shape(path.clone(), blob.len() as u64, shape.clone(), *dtype)
+                .unwrap(),
         );
         blob.extend_from_slice(bytes);
     }
@@ -77,7 +75,12 @@ fn read(gpu: &MockGpuBackend, p: DevicePtr, len: usize) -> Vec<u8> {
 
 /// 2026-10-14: A slab for expert `id` alone.
 fn one(id: usize) -> ExpertSlab {
-    ExpertSlab::new(id..id + 1)
+    ExpertSlab::new(id..id + 1, TP_SLAB_LABEL)
+}
+
+/// 2026-10-17: A whole-layout slab for expert `id` alone.
+fn one_whole(id: usize) -> ExpertSlab {
+    ExpertSlab::new(id..id + 1, CSF_SCALE_SLAB_LABEL)
 }
 
 /// 2026-10-09: A packed expert of width `full`: gate/up `[full, HIDDEN]`, down `[HIDDEN, full]`,
@@ -241,7 +244,7 @@ fn bf16_expert_slices_its_whole_quantization() {
     .collect();
     let sh = shard("bf16", &t);
     let gpu_w = MockGpuBackend::new();
-    let whole = super::bind_expert(&gpu_w, &sh.store, LAYER, 2).unwrap();
+    let whole = super::bind_expert(&gpu_w, &sh.store, LAYER, 2, &one_whole(2)).unwrap();
     for r in 0..2 {
         let s: ExpertSlice = expert_slice(full, 2, r).unwrap();
         let gpu = MockGpuBackend::new();
@@ -297,7 +300,7 @@ fn a_layers_sliced_experts_share_one_slab() {
     let sh = shard("slab", &t);
     let s = expert_slice(full, 3, 2).unwrap();
     let gpu = MockGpuBackend::new();
-    let slab = ExpertSlab::new(7..9);
+    let slab = ExpertSlab::new(7..9, TP_SLAB_LABEL);
     let bound: Vec<_> = [8, 7]
         .map(|id| {
             let e = bind_routed_expert(&gpu, &sh.store, LAYER, id, ExpertShard::Sliced(s), &slab);

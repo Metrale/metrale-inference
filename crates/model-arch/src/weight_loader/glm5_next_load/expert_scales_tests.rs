@@ -16,8 +16,8 @@ use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_model_weights::weights::{DeferredTensor, WeightDtype, WeightStore, WeightTensor};
 
-use super::super::expert_slab::ExpertSlab;
-use super::super::expert_tp::bind_routed_expert;
+use super::super::expert_slab::{CSF_SCALE_SLAB_LABEL, ExpertSlab, SLAB_ALIGN, slot_layout};
+use super::super::expert_tp::{bind_routed_expert, slab_label};
 use super::is_csf_component;
 use crate::glm5next_mlp::expert_tp::{ExpertShard, expert_slice};
 use crate::weight_loader::ModelWeightLoader;
@@ -179,12 +179,7 @@ fn shard(tag: &str, t: &[Tensor], gpu: &MockGpuBackend, resident: impl Fn(&str) 
             let (shape, dtype) = (shape.clone(), *dtype);
             deferred.push((
                 name.clone(),
-                DeferredTensor {
-                    path,
-                    offset,
-                    shape,
-                    dtype,
-                },
+                DeferredTensor::from_shape(path, offset, shape, dtype).unwrap(),
             ));
             blob.extend_from_slice(bytes);
         }
@@ -209,7 +204,7 @@ fn bind(
     gpu: &MockGpuBackend,
     shard: ExpertShard,
 ) -> Vec<(Vec<u8>, Vec<u8>, f32)> {
-    let slab = ExpertSlab::new(ID..ID + 1);
+    let slab = ExpertSlab::new(ID..ID + 1, slab_label(shard));
     let e = bind_routed_expert(gpu, store, LAYER, ID, shard, &slab).unwrap();
     let (rows, cols) = match shard {
         ExpertShard::Sliced(s) => (s.len, s.len),
@@ -274,7 +269,7 @@ fn a_whole_csf_expert_uploads_the_native_scales() {
         bind(&csf.store, &gpu, ExpertShard::Whole),
         bind(&native.store, &gpu, ExpertShard::Whole)
     );
-    let slab = ExpertSlab::new(ID..ID + 1);
+    let slab = ExpertSlab::new(ID..ID + 1, CSF_SCALE_SLAB_LABEL);
     let e = bind_routed_expert(&gpu, &csf.store, LAYER, ID, ExpertShard::Whole, &slab).unwrap();
     let codes = qualified(&format!("mlp.experts.{ID}.down_proj.weight"));
     assert_eq!(e.down_proj.packed, csf.store.get(&codes).unwrap().ptr);
@@ -354,7 +349,7 @@ fn malformed_planes_are_refused() {
             let sh = shard(&format!("{tag}-{layout}"), &t, &gpu, |n| {
                 store_resident && resident(n)
             });
-            let slab = ExpertSlab::new(ID..ID + 1);
+            let slab = ExpertSlab::new(ID..ID + 1, slab_label(shard_kind));
             let err = bind_routed_expert(&gpu, &sh.store, LAYER, ID, shard_kind, &slab)
                 .err()
                 .unwrap_or_else(|| panic!("{tag} {layout} bound"));
@@ -383,3 +378,6 @@ fn the_defer_hook_keeps_csf_components_off_the_device() {
         assert!(!hook(&name, dtype), "{name}");
     }
 }
+
+#[path = "expert_scales_slab_tests.rs"]
+mod slab_tests;

@@ -83,8 +83,12 @@ impl WeightLoader for SafetensorsLoader {
         // (always) and whatever the model's own loader claimed (opt-in).
         let preflight_skip = |name: &str| skip_fn(name) || super::is_ngram_table(name);
         let defer_fn = |name: &str, dtype: super::WeightDtype| self.is_deferred(name, dtype);
+        let charge_fn = |name: &str, dtype: super::WeightDtype, shape: &[usize]| {
+            self.deferred_charge(name, dtype, shape)
+        };
         {
-            let estimated = estimate_load_bytes(&shard_files, &preflight_skip, &defer_fn)?;
+            let estimated =
+                estimate_load_bytes(&shard_files, &preflight_skip, &defer_fn, &charge_fn)?;
             let has_fp8 = estimate_has_fp8(&shard_files, &preflight_skip, &defer_fn)?;
             let overhead_multiplier: f64 =
                 self.peak_memory_multiplier
@@ -128,6 +132,7 @@ impl WeightLoader for SafetensorsLoader {
         let rules = load_fns::TensorRules {
             skip: &skip_fn,
             defer: &defer_fn,
+            charge: &charge_fn,
         };
         let mut weight_map = if use_index {
             load_sharded(
@@ -176,6 +181,7 @@ impl WeightLoader for SafetensorsLoader {
         // Extra weights (MTP) are always fully loaded — they have their own expert lists.
         let no_skip = |_: &str| false;
         let no_defer = |_: &str, _: super::WeightDtype| false;
+        let no_charge = |_: &str, _: super::WeightDtype, _: &[usize]| 0;
         let extra = model_dir.join("extra_weights.safetensors");
         if extra.exists() {
             let mut extra_deferred = HashMap::new();
@@ -186,6 +192,7 @@ impl WeightLoader for SafetensorsLoader {
                 &load_fns::TensorRules {
                     skip: &no_skip,
                     defer: &no_defer,
+                    charge: &no_charge,
                 },
                 &mut extra_deferred,
             )?;
@@ -298,15 +305,25 @@ fn defers(
 /// 🔴 `defer_fn` is separate from `skip_fn` and not folded into it: a deferred
 /// tensor is withheld on `(name, dtype)`, and counting it at its on-disk size
 /// would refuse a load that fits. See [`super::DeferHook`].
+///
+/// 2026-10-17: A deferred tensor adds `charge_fn(name, store dtype, shape)` instead: the device
+/// bytes its model's loader allocates for it at bind time ([`super::DeferCharge`]).
 pub(crate) fn estimate_load_bytes(
     files: &[std::path::PathBuf],
     skip_fn: &dyn Fn(&str) -> bool,
     defer_fn: &dyn Fn(&str, super::WeightDtype) -> bool,
+    charge_fn: &dyn Fn(&str, super::WeightDtype, &[usize]) -> usize,
 ) -> Result<usize> {
     let mut total = 0usize;
     for path in files {
         for (name, shape, dtype) in read_safetensor_header(path)? {
-            if skip_fn(&name) || defers(&name, dtype, defer_fn) {
+            if skip_fn(&name) {
+                continue;
+            }
+            if defers(&name, dtype, defer_fn) {
+                if let Ok(d) = super::WeightDtype::from_safetensors(dtype) {
+                    total = total.saturating_add(charge_fn(&name, d, &shape));
+                }
                 continue;
             }
             let numel: usize = shape.iter().product();

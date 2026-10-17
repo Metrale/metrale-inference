@@ -130,9 +130,6 @@ impl EdgePrecision for PrecisionTable {
     }
 }
 
-/// 2026-10-17: The fused-experts module of an expert projection; the plan owns it.
-pub(crate) use metrale_config::precision_plan::expert_container;
-
 /// 2026-09-28: `*` matches any run of characters, dots included; everything else is literal.
 pub(crate) fn glob(pattern: &str, text: &str) -> bool {
     let parts: Vec<&str> = pattern.split('*').collect();
