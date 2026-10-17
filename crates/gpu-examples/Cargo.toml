@@ -208,19 +208,19 @@ metal-example = ["metal", "dep:tokenizers", "dep:memmap2", "dep:safetensors"]
 gpu-examples = []
 
 [dependencies]
-metrale-cache = { path = "../cache", default-features = false }
-metrale-comm = { path = "../comm", default-features = false }
-metrale-config = { path = "../config", default-features = false }
-metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false }
+metrale-cache = { workspace = true }
+metrale-comm = { workspace = true }
+metrale-config = { workspace = true }
+metrale-gpu-runtime = { workspace = true }
 metrale-kernels = { workspace = true }
-metrale-model-arch = { path = "../model-arch", default-features = false }
-metrale-model-layers = { path = "../model-layers", default-features = false }
-anyhow = { workspace = true }
-half = "2"
-serde_json = { workspace = true }
-tokenizers = { version = "0.23", optional = true, default-features = false, features = ["onig"] }
-memmap2 = { version = "0.9", optional = true }
-safetensors = { version = "0.8", optional = true }
+metrale-model-arch = { workspace = true }
+metrale-model-layers = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
+half = { workspace = true, features = ["std"] }
+serde_json = { workspace = true, features = ["std", "preserve_order"] }
+tokenizers = { workspace = true, optional = true, features = ["onig"] }
+memmap2 = { workspace = true, optional = true }
+safetensors = { workspace = true, optional = true, features = ["std"] }
 
 [lints]
 workspace = true

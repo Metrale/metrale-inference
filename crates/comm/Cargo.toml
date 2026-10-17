@@ -14,10 +14,10 @@ nccl = ["cuda", "metrale-gpu-sys/nccl"]
 metal = []
 
 [dependencies]
-metrale-gpu-sys = { path = "../gpu-sys", default-features = false }
-anyhow = { workspace = true }
+metrale-gpu-sys = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
 parking_lot = { workspace = true }
-tracing = "0.1"
+tracing = { workspace = true, features = ["std", "attributes"] }
 
 [lints]
 workspace = true

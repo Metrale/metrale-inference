@@ -16,12 +16,12 @@ nccl = ["cuda"]
 nvtx = []
 
 [dependencies]
-anyhow = { workspace = true }
-libc = "0.2"
-libloading = "0.9"
+anyhow = { workspace = true, features = ["std"] }
+libc = { workspace = true, features = ["std"] }
+libloading = { workspace = true, features = ["std"] }
 
 [build-dependencies]
-cc = "1"
+cc = { workspace = true }
 
 [lints]
 workspace = true

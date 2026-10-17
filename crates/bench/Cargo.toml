@@ -14,37 +14,37 @@ description = "Metrale Engine: plugin + benchmark abstraction and registry drive
 [dependencies]
 # 2026-09-26: The PR journey ledger, written by the `ledger_append` and
 # `ledger_harvest` binaries.
-metrale-governance = { path = "../governance" }
-metrale-closure = { path = "../closure" }
+metrale-governance = { workspace = true }
+metrale-closure = { workspace = true }
 # 2026-09-26: The METRALE_* lever table: which names are serve levers and which are the box's.
-metrale-config = { path = "../config", default-features = false }
+metrale-config = { workspace = true }
 # 2026-09-26: Parses BENCH.toml and HARDWARE.toml.
-toml = "1.1"
-anyhow = { workspace = true }
+toml = { workspace = true, features = ["std", "serde", "parse", "display"] }
+anyhow = { workspace = true, features = ["std"] }
 # 2026-09-26: SHA-256 for dataset digests, provisioning stamps and record
 # fingerprints; the workspace pin.
-sha2 = { workspace = true }
+sha2 = { workspace = true, features = ["alloc", "oid"] }
 # 2026-09-26: Ed25519 for gate-record signatures (gate::signing). ring is
 # already in Cargo.lock through rustls, which ureq uses, so this adds an edge and
 # no new package. Its licence, `Apache-2.0 AND ISC`, is covered by deny.toml's
 # allow-list. ring's build script compiles C with `cc`, so building this crate
 # needs a C toolchain.
-ring = "0.17"
+ring = { workspace = true, features = ["alloc", "dev_urandom_fallback"] }
 
-serde = { workspace = true }
-serde_json = { workspace = true }
+serde = { workspace = true, features = ["std", "derive"] }
+serde_json = { workspace = true, features = ["std", "preserve_order"] }
 parking_lot = { workspace = true }
-tracing = "0.1"
+tracing = { workspace = true, features = ["std", "attributes"] }
 # 2026-09-26: `Stream` for `Benchmark::run`, `BoxFuture` for `DynBenchmark`.
-futures = "0.3"
+futures = { workspace = true, features = ["std", "async-await", "executor"] }
 # 2026-09-26: Media fixtures reach the API as base64 `data:` URIs, since the
 # server refuses remote image URLs unless started with
-# `--vision-allow-remote-images`. The same 0.22 the other crates use.
-base64 = "0.23"
+# `--vision-allow-remote-images`.
+base64 = { workspace = true, features = ["std", "simd-unsafe"] }
 # 2026-09-26: TCP to the endpoint, child processes for provisioned artifacts,
 # timers. No `rt-multi-thread`: the executor spawns onto a runtime the caller
 # owns.
-tokio = { version = "1", features = [
+tokio = { workspace = true, features = [
     "io-util",
     "macros",
     "net",
@@ -55,7 +55,7 @@ tokio = { version = "1", features = [
 ] }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
 
 [lints]
 workspace = true

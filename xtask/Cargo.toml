@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "xtask"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Repository gates: cargo xtask deps | selftest."
+# 2026-10-17: A repository tool, never a crates.io package.
+publish = false
+
+[dependencies]
+toml = { workspace = true, features = ["std", "serde", "parse"] }
+
+[lints]
+workspace = true
