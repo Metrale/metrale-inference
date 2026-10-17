@@ -93,6 +93,7 @@ macro_rules! __lever_ty {
     (Int "built-in") => { ::core::option::Option<i64> };
     (Int $d:literal) => { i64 };
     (Float "unset") => { ::core::option::Option<f64> };
+    (Float "built-in") => { ::core::option::Option<f64> };
     (Float $d:literal) => { f64 };
     (Text "unset") => { ::core::option::Option<$crate::__rt::String> };
     (Path "unset") => { ::core::option::Option<$crate::__rt::String> };

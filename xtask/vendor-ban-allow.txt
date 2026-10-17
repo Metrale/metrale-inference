@@ -216,6 +216,7 @@ crates/server/src/tui/data/mod.rs 2
 crates/server/tests/integration/helpers.rs 2
 crates/settings/src/groups/build.rs 2
 crates/settings/src/groups/dev.rs 2
+crates/settings/src/groups/device.rs 3
 crates/settings/src/groups/harness.rs 1
 crates/settings/src/groups/kernels.rs 2
 crates/settings/src/groups/model.rs 1

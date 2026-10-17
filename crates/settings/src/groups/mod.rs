@@ -13,6 +13,10 @@ use crate::spec::{LeverSpec, Rule};
 pub mod build;
 pub mod cache;
 pub mod dev;
+pub mod device;
+pub mod device_cache;
+pub mod device_drafter;
+pub mod device_weights;
 pub mod harness;
 pub mod kernels;
 pub mod model;
@@ -24,6 +28,9 @@ pub mod speculative;
 pub mod storage;
 pub mod telemetry;
 pub mod tool;
+
+#[cfg(test)]
+mod equivalence;
 
 /// 2026-10-17: Group order is alphabetical by group name; `by_name` restores the table order.
 pub const GROUPS: &[&[LeverSpec]] = &[

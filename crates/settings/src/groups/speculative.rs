@@ -86,12 +86,12 @@ lever_group! {
     mtp_pool_full_width: Presence = "off", None, "METRALE_MTP_POOL_FULL_WIDTH", "crates/model-layers/src/ssm_reserve.rs", "Env contract (read HERE and nowhere else): * `METRALE_MTP_POOL_FULL_WIDTH` (presence, house convention — `=0` is NOT off): restore full-width pools (`max_batch_size` slots) and make the scheduler. Any value turns it on, `0` included.";
     mtp_refeed_accepted: Switch = "off", None, "METRALE_MTP_REFEED_ACCEPTED", "crates/model-layers/src/speculative/knobs.rs", "Re-feed ACCEPTED draft rows with the target's TRUE hidden state (`METRALE_MTP_REFEED_ACCEPTED=1`, default OFF). `1` turns it on.";
     mtp_refeed_shift: Int = "unset", None, "METRALE_MTP_REFEED_SHIFT", "crates/model-layers/src/speculative/knobs.rs", "Deliberate off-by-N perturbation of the re-feed's ring LABEL (`METRALE_MTP_REFEED_SHIFT`, default 0 = the derived mapping).";
-    mtp_rung_alpha: Int = "built-in", None, "METRALE_MTP_RUNG_ALPHA", "crates/speculative/src/adaptive_rung.rs", "Override with `METRALE_MTP_RUNG_ALPHA`.";
-    mtp_rung_alpha_slow: Int = "built-in", None, "METRALE_MTP_RUNG_ALPHA_SLOW", "crates/speculative/src/adaptive_rung.rs", "Override with `METRALE_MTP_RUNG_ALPHA_SLOW`.";
-    mtp_rung_enter: Int = "built-in", None, "METRALE_MTP_RUNG_ENTER", "crates/speculative/src/adaptive_rung.rs", "See the module doc for the placement argument; override with `METRALE_MTP_RUNG_ENTER`.";
-    mtp_rung_leave: Int = "built-in", None, "METRALE_MTP_RUNG_LEAVE", "crates/speculative/src/adaptive_rung.rs", "Override with `METRALE_MTP_RUNG_LEAVE`.";
-    mtp_rung_p1_trigger: Int = "built-in", None, "METRALE_MTP_RUNG_P1_TRIGGER", "crates/speculative/src/adaptive_rung.rs", "Override with `METRALE_MTP_RUNG_P1_TRIGGER`.";
-    mtp_rung_probe_ticks: Int = "built-in", None, "METRALE_MTP_RUNG_PROBE_TICKS", "crates/speculative/src/adaptive_rung.rs", "Override with `METRALE_MTP_RUNG_PROBE_TICKS`.";
+    mtp_rung_alpha: Float = "built-in", None, "METRALE_MTP_RUNG_ALPHA", "crates/speculative/src/adaptive_rung.rs", "Override with `METRALE_MTP_RUNG_ALPHA`.";
+    mtp_rung_alpha_slow: Float = "built-in", None, "METRALE_MTP_RUNG_ALPHA_SLOW", "crates/speculative/src/adaptive_rung.rs", "Override with `METRALE_MTP_RUNG_ALPHA_SLOW`.";
+    mtp_rung_enter: Float = "built-in", None, "METRALE_MTP_RUNG_ENTER", "crates/speculative/src/adaptive_rung.rs", "See the module doc for the placement argument; override with `METRALE_MTP_RUNG_ENTER`.";
+    mtp_rung_leave: Float = "built-in", None, "METRALE_MTP_RUNG_LEAVE", "crates/speculative/src/adaptive_rung.rs", "Override with `METRALE_MTP_RUNG_LEAVE`.";
+    mtp_rung_p1_trigger: Float = "built-in", None, "METRALE_MTP_RUNG_P1_TRIGGER", "crates/speculative/src/adaptive_rung.rs", "Override with `METRALE_MTP_RUNG_P1_TRIGGER`.";
+    mtp_rung_probe_ticks: Float = "built-in", None, "METRALE_MTP_RUNG_PROBE_TICKS", "crates/speculative/src/adaptive_rung.rs", "Override with `METRALE_MTP_RUNG_PROBE_TICKS`.";
     mtp_shadow_topk: Int = "unset", None, "METRALE_MTP_SHADOW_TOPK", "crates/model-layers/src/speculative/knobs.rs", "Shadow top-k draft instrumentation (`METRALE_MTP_SHADOW_TOPK=k`, default 0 = off, clamp k ≤ 8).";
     mtp_static_rung: Presence = "off", None, "METRALE_MTP_STATIC_RUNG", "crates/speculative/src/adaptive_rung.rs", "PRESENCE check for `METRALE_MTP_STATIC_RUNG` (house convention — `=0` is NOT off): pins the static ladder, restoring the pre-wave-28 behaviour. Any value turns it on, `0` included.";
     mtp_target_postnorm: Switch = "off", None, "METRALE_MTP_TARGET_POSTNORM", "crates/model-layers/src/layers/ops/model_levers_resolve.rs", "Sets `mtp_target_postnorm` (read in `crates/model-layers/src/layers/ops/model_levers_resolve.rs`). `1` turns it on.";
