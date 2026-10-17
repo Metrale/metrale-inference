@@ -24,7 +24,9 @@
 //! them.
 //!
 //! build.rs wipes the stage before staging any target, so a copy of a header
-//! that has since been removed cannot keep resolving.
+//! that has since been removed cannot keep resolving. 2026-10-17: Only the
+//! stage: the PTX cache lives under the target directory, outside `OUT_DIR`,
+//! and `reset` refuses a stage that would contain it.
 
 use std::path::{Path, PathBuf};
 
@@ -57,7 +59,19 @@ impl Staged {
 }
 
 /// 2026-09-25: Empty the stage. build.rs calls it once, before staging any target.
-pub(crate) fn reset(stage_root: &Path) {
+///
+/// 2026-10-17: `keep` is the PTX cache root when the cache is on. The cache
+/// outlives every build by design, so a stage that would contain it is a
+/// layout bug and panics before anything is removed.
+pub(crate) fn reset(stage_root: &Path, keep: Option<&Path>) {
+    if let Some(keep) = keep {
+        assert!(
+            !keep.starts_with(stage_root),
+            "PTX cache {} lies inside the stage {}, which every build wipes",
+            keep.display(),
+            stage_root.display()
+        );
+    }
     if stage_root.exists() {
         std::fs::remove_dir_all(stage_root)
             .unwrap_or_else(|e| panic!("clear stage {}: {e}", stage_root.display()));
