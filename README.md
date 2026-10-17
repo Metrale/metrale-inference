@@ -230,6 +230,7 @@ build takes 15 to 30 minutes):
 ```bash
 git clone https://github.com/Metrale/metrale-inference.git
 cd metrale-inference
+git submodule update --init kernels               # private: needs read access to MachZero
 export PATH=/usr/local/cuda/bin:$PATH
 cargo build --release --bin met
 pip install -U huggingface_hub                     # provides the `hf` CLI

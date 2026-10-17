@@ -43,11 +43,12 @@ on:
   # Filtered, unlike kernel-compile.yml, precisely BECAUSE this is advisory:
   # a full release link of metrale-server is far more expensive than that job's
   # `cargo build -p metrale-kernels`, and nothing outside these trees can change
-  # what the datacentre binary contains.
+  # what the datacentre binary contains. kernels/ is a private submodule now, so
+  # a change to it arrives as a bump of the `kernels` gitlink, which cannot be
+  # narrowed to the hopper/ or b200/ overlays: any bump runs this job.
   pull_request:
     paths:
-      - 'kernels/hopper/**'
-      - 'kernels/b200/**'
+      - 'kernels'
       - 'crates/kernels/**'
       - '.github/workflows/datacenter-binaries.yml'
 
@@ -138,6 +139,9 @@ jobs:
       RUST_BACKTRACE: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: ./.github/actions/checkout-kernels
+        with:
+          token: ${{ secrets.MACHZERO_READ_TOKEN }}
 
       - name: Disk budget
         run: |

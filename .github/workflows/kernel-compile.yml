@@ -30,7 +30,8 @@ on:
   push:
     branches: [main]
     paths:
-      - 'kernels/**'
+      # kernels/ is a submodule: a pin bump changes the gitlink `kernels`.
+      - 'kernels'
       - 'crates/kernels/**'
   # Merge queue: queue commits (temporary gh-readonly-queue/** merge-commits)
   # fire none of the events above, and this check is required — without this
@@ -132,6 +133,9 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: ./.github/actions/checkout-kernels
+        with:
+          token: ${{ secrets.MACHZERO_READ_TOKEN }}
 
       - name: Install Rust
         run: |
@@ -246,6 +250,9 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: ./.github/actions/checkout-kernels
+        with:
+          token: ${{ secrets.MACHZERO_READ_TOKEN }}
 
       - name: Install Rust
         run: |
@@ -330,6 +337,9 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: ./.github/actions/checkout-kernels
+        with:
+          token: ${{ secrets.MACHZERO_READ_TOKEN }}
 
       - name: Install Rust
         run: |

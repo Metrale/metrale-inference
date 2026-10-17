@@ -61,6 +61,7 @@ You only need to build from source if you are modifying Metrale Engine. `rust-to
 ```bash
 git clone https://github.com/Metrale/metrale-inference.git
 cd metrale-inference
+git submodule update --init kernels   # private repository: needs read access to MachZero
 
 # Full build — compiles every (gb10, model, quant) target (~6 min)
 docker build -f docker/gb10/Dockerfile -t metrale-inference-gb10 .

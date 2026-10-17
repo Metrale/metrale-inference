@@ -10,7 +10,6 @@ name: CodeRAG
 # 100 MB. Each corpus is built by .github/workflows/coderag-corpus.yml:
 #   metrale-code-crates        crates/** except the model-* crates   (code profile)
 #   metrale-code-crates-model  crates/model-*                        (code profile)
-#   metrale-code-kernels       kernels/** (CUDA, Metal, HIP)         (code profile)
 #   metrale-docs               book/src, docs/ and the root *.md     (prose profile)
 #   books-rust                 The Rust Programming Language, pinned (prose profile)
 #
@@ -26,11 +25,14 @@ name: CodeRAG
 # was not enough and crates/ is cut again by crate name. The two crates halves
 # are one glob and its complement, so a new crate lands in exactly one of them;
 # assert-coderag-code-partition.py fails CI if any file falls in none or two.
+# 2026-10-17: kernels/ is a private submodule now and is NOT published: the
+# metrale-code-kernels corpus is no longer built, and dropping it from the
+# publish list removes its copy from gh-pages on the next publish.
 #
-# `metrale-coderag` (the old unsplit corpus) is no longer built. Its last
-# published copy stays on gh-pages, listed in RETIRED_CORPORA below, until the
-# consumers have moved to the three code corpora; dropping the name from that
-# list removes the files on the next publish.
+# `metrale-coderag` (the old unsplit corpus) is no longer built. It embedded
+# kernels/ too, so it is no longer kept either (2026-10-17): RETIRED_CORPORA is
+# empty and the next publish removes its files. A future retired corpus is kept
+# by naming it there; dropping the name removes the files on the next publish.
 #
 # Stable URLs this produces (no TTL, fetchable directly from the browser):
 #   https://metrale.github.io/metrale-inference/coderag/<corpus>.jsonl.gz
@@ -61,7 +63,6 @@ on:
     branches: [main]
     paths:
       - 'crates/**'
-      - 'kernels/**'
       - 'book/**'
       - 'docs/**'
       - '*.md'
@@ -95,7 +96,7 @@ env:
   # is meant to leave (>= 25%) is gone, not after the build is over the cap.
   SIZE_WARN_PERCENT: '75'
   # Corpora no longer built whose last published copy is kept on gh-pages.
-  RETIRED_CORPORA: metrale-coderag
+  RETIRED_CORPORA: ''
 
 jobs:
   config:
@@ -190,34 +191,9 @@ jobs:
     secrets:
       OPENROUTER_API_KEY_FREE: ${{ secrets.OPENROUTER_API_KEY_FREE }}
 
-  code_kernels:
-    name: Code corpus (kernels)
-    needs: [config, code_crates_model]
-    if: ${{ !cancelled() && needs.config.result == 'success' }}
-    uses: ./.github/workflows/coderag-corpus.yml
-    with:
-      base: metrale-code-kernels
-      profile: code
-      paths: |
-        kernels/**/*.cu
-        kernels/**/*.cuh
-        kernels/**/*.h
-        kernels/**/*.metal
-      exclude: |
-        **/target/**
-        **/*_tests.rs
-        crates/**/tests/**
-      embed_model: ${{ needs.config.outputs.embed_model }}
-      endpoint_base: ${{ needs.config.outputs.endpoint_base }}
-      pages_base: ${{ needs.config.outputs.pages_base }}
-      size_cap_bytes: ${{ needs.config.outputs.size_cap_bytes }}
-      size_warn_percent: ${{ needs.config.outputs.size_warn_percent }}
-    secrets:
-      OPENROUTER_API_KEY_FREE: ${{ secrets.OPENROUTER_API_KEY_FREE }}
-
   docs:
     name: Docs corpus
-    needs: [config, code_kernels]
+    needs: [config, code_crates_model]
     if: ${{ !cancelled() && needs.config.result == 'success' }}
     uses: ./.github/workflows/coderag-corpus.yml
     with:
@@ -287,7 +263,7 @@ jobs:
 
   publish:
     name: Publish to gh-pages
-    needs: [config, code_crates, code_crates_model, code_kernels, docs, books_preflight, books]
+    needs: [config, code_crates, code_crates_model, docs, books_preflight, books]
     # Only main publishes: a dispatch from a branch validates the build and
     # stops. Nothing to publish when no corpus was built this run (a skipped
     # book alone is not news).
@@ -321,7 +297,6 @@ jobs:
           CORPORA: >-
             metrale-code-crates:${{ needs.code_crates.outputs.status || 'failed' }}
             metrale-code-crates-model:${{ needs.code_crates_model.outputs.status || 'failed' }}
-            metrale-code-kernels:${{ needs.code_kernels.outputs.status || 'failed' }}
             metrale-docs:${{ needs.docs.outputs.status || 'failed' }}
             books-rust:${{ needs.books.outputs.status || (needs.books_preflight.outputs.skip == 'true' && 'skipped' || 'failed') }}
           INCOMING: incoming

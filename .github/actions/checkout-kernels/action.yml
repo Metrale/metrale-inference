@@ -1,0 +1,43 @@
+name: Check out kernels (private submodule)
+description: >-
+  `kernels/` is a git submodule of a PRIVATE repository, which the job's
+  GITHUB_TOKEN cannot read. This checks that repository out into ./kernels at
+  exactly the commit the superproject's `kernels` gitlink pins, using a
+  read-only token over HTTPS (container jobs have no ssh client). The
+  repository is derived from `.gitmodules` (a URL relative to this
+  repository's owner), so the pin and the URL each have one source. Run it
+  after the superproject checkout. It fails, rather than building without
+  kernels, when the token is unavailable (a fork PR, or the secret is missing).
+inputs:
+  token:
+    description: Token with read-only Contents access to the kernels repository (secrets.MACHZERO_READ_TOKEN).
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Resolve the pinned kernels commit
+      id: pin
+      shell: bash
+      env:
+        READ_TOKEN: ${{ inputs.token }}
+        OWNER: ${{ github.repository_owner }}
+      run: |
+        set -euo pipefail
+        if [ -z "$READ_TOKEN" ]; then
+          echo "::error::the kernels read token is unavailable (fork PR or missing MACHZERO_READ_TOKEN); kernels/ is a private submodule and cannot be checked out" >&2
+          exit 1
+        fi
+        url=$(git config -f .gitmodules --get submodule.kernels.url)
+        case "$url" in
+          ../*.git) repo="$OWNER/$(basename "$url" .git)" ;;
+          *) echo "::error::.gitmodules submodule.kernels.url must be relative (../<name>.git), got: $url" >&2; exit 1 ;;
+        esac
+        echo "repo=$repo" >> "$GITHUB_OUTPUT"
+        echo "sha=$(git rev-parse HEAD:kernels)" >> "$GITHUB_OUTPUT"
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        repository: ${{ steps.pin.outputs.repo }}
+        ref: ${{ steps.pin.outputs.sha }}
+        path: kernels
+        token: ${{ inputs.token }}
+        persist-credentials: false
