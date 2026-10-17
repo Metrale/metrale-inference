@@ -101,7 +101,7 @@ The SBIO pattern makes the following blocks fully testable on CI without any GPU
 
 The things that still require a GPU:
 
-- Kernel correctness vs a PyTorch/reference implementation (covered by the `*_microtest` and parity examples in `crates/model-arch/examples/` and the integration tests in `tests/`).
+- Kernel correctness vs a PyTorch/reference implementation (covered by the `*_microtest` and parity examples in `crates/gpu-examples/examples/` and the integration tests in `tests/`).
 - End-to-end model coherence (covered by `tests/run_all_models.py`).
 - Multi-node collective ops (covered by `scripts/test-minimax-ep2.sh` and the EP=2 test harness).
 

@@ -243,7 +243,7 @@ pub(super) const TQP_SIGNS2_256: [f32; 256] = [
 
 /// 2026-09-25: The minimum cosine, and norm ratio, that `real_model_gemv.rs`
 /// asserts; the same value as `COSINE_GATE` in
-/// `crates/model-arch/examples/gdn_regresident_microtest.rs`.
+/// `crates/gpu-examples/examples/gdn_regresident_microtest.rs`.
 /// Unlike an absolute difference bound it does not depend on the output's scale,
 /// and it rejects an all-zero output (see [`cosine_bf16`]).
 pub(super) const COSINE_GATE: f64 = 0.9999;
@@ -296,7 +296,7 @@ pub(super) fn norm_ratio_bf16(a: &[half::bf16], b: &[half::bf16]) -> f64 {
 
 /// 2026-09-25: One BF16 ulp at magnitude `x`: 8 significand bits, so
 /// ulp = 2^(exp-7). The same rule as `bf16_ulp` in
-/// `crates/model-arch/examples/glm5next_ffn_microtest.rs`, which this crate
+/// `crates/gpu-examples/examples/glm5next_ffn_microtest.rs`, which this crate
 /// cannot import.
 pub(super) fn bf16_ulp(x: f32) -> f32 {
     if x == 0.0 {

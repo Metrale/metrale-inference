@@ -14,7 +14,7 @@
 //! through the grouped FP8 down kernel instead. Every step computes a row independently of
 //! the other rows, so a row's output bits do not depend on `m`: the path serves every width
 //! from one row up, and a row-invariant tier policy (`row_tiers.rs`) holds with it on.
-//! `model-arch/examples/nvfp4_moe_grouped_microtest.rs` checks this.
+//! `gpu-examples/examples/nvfp4_moe_grouped_microtest.rs` checks this.
 //!
 //! Owner: model-layers (MoE).
 //! Invariants: `forward_nvfp4_grouped_decode` launches nothing unless

@@ -8,8 +8,8 @@ name: CodeRAG
 #
 # One corpus per source slice, because GitHub rejects any pushed file over
 # 100 MB. Each corpus is built by .github/workflows/coderag-corpus.yml:
-#   metrale-code-crates        crates/** except the model-* crates   (code profile)
-#   metrale-code-crates-model  crates/model-*                        (code profile)
+#   metrale-code-crates        crates/** except model-*, gpu-examples (code profile)
+#   metrale-code-crates-model  crates/model-*, crates/gpu-examples   (code profile)
 #   metrale-code-kernels       kernels/** (CUDA, Metal, HIP)         (code profile)
 #   metrale-docs               book/src, docs/ and the root *.md     (prose profile)
 #   books-rust                 The Rust Programming Language, pinned (prose profile)
@@ -26,6 +26,8 @@ name: CodeRAG
 # was not enough and crates/ is cut again by crate name. The two crates halves
 # are one glob and its complement, so a new crate lands in exactly one of them;
 # assert-coderag-code-partition.py fails CI if any file falls in none or two.
+# 2026-10-17: crates/gpu-examples held 74k lines as model-arch/examples, so it stays
+# on the model side of the cut; the model corpus lists it by name.
 #
 # `metrale-coderag` (the old unsplit corpus) is no longer built. Its last
 # published copy stays on gh-pages, listed in RETIRED_CORPORA below, until the
@@ -158,6 +160,7 @@ jobs:
         **/*_tests.rs
         crates/**/tests/**
         crates/model-*/**
+        crates/gpu-examples/**
       embed_model: ${{ needs.config.outputs.embed_model }}
       endpoint_base: ${{ needs.config.outputs.endpoint_base }}
       pages_base: ${{ needs.config.outputs.pages_base }}
@@ -178,6 +181,9 @@ jobs:
         crates/model-*/**/*.rs
         crates/model-*/**/*.cu
         crates/model-*/**/*.cuh
+        crates/gpu-examples/**/*.rs
+        crates/gpu-examples/**/*.cu
+        crates/gpu-examples/**/*.cuh
       exclude: |
         **/target/**
         **/*_tests.rs

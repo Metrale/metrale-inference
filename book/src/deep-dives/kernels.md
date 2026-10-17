@@ -102,7 +102,7 @@ Turning graphs off (`--profile`) disables capture — useful when you are profil
 3. **Decide the module name.** Default is the file stem (`your_kernel`). Override in `KERNEL.toml` if you want a short name.
 4. **Call it from the layer.** In `crates/model-layers/src/layers/<your_layer>.rs`, `gpu.kernel("your_kernel_module", "your_kernel_function")` returns a `KernelHandle`. Store it in the layer struct at load time, not per-step.
 5. **Wire the launch** with the typed launch helpers the layer's ops use (`crates/model-layers/src/layers/ops/`, `crates/gpu-runtime/src/gpu_args.rs`): grid, block, shared memory, the argument list and the stream, then `GpuBackend::launch`.
-6. **Benchmark.** Add a shape to a `met benchmark` benchmark (`crates/bench`) or a micro-benchmark: a `*_microtest` example in `crates/model-arch/examples/`, or a Criterion bench in the relevant crate. A kernel without a benchmark is not allowed to claim "faster".
+6. **Benchmark.** Add a shape to a `met benchmark` benchmark (`crates/bench`) or a micro-benchmark: a `*_microtest` example in `crates/gpu-examples/examples/`, or a Criterion bench in the relevant crate. A kernel without a benchmark is not allowed to claim "faster".
 7. **Verify correctness** against a PyTorch reference on a fixture tensor. Numerical diff tolerance: for BF16 outputs, abs-tol 1e-3 / rel-tol 1e-2 is a typical starting point.
 
 ## Anti-patterns
