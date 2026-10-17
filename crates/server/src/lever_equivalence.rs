@@ -12,6 +12,10 @@
 
 use std::borrow::Cow;
 
+use metrale_io_host_mem::MapEnv;
+use metrale_settings::InferenceServerSettings;
+use metrale_settings::sources::{CliLayer, RecipeLayer};
+
 /// 2026-10-17: One lever value: a switch, a number (as printed), or a load-stopping error.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Out {
@@ -56,6 +60,9 @@ pub(crate) enum Old {
     OptInOneOrTrue,
     /// 2026-10-17: `u32`/`u64` parse after a trim, or the default when unparsable.
     UintTrimmed(u64),
+    /// 2026-10-17: Off on `0`, `false`, `off` or `no` (trimmed, any case); on otherwise,
+    /// unset included.
+    OnUnlessOffWord,
 }
 
 impl Old {
@@ -91,6 +98,10 @@ impl Old {
             }
             Self::OptInOneOrTrue => Out::B(matches!(v, Some("1" | "true"))),
             Self::UintTrimmed(d) => num(v.and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(d)),
+            Self::OnUnlessOffWord => Out::B(!v.is_some_and(|v| {
+                let v = v.trim();
+                ["0", "false", "off", "no"].iter().any(|w| word(v, w))
+            })),
         }
     }
 
@@ -113,6 +124,7 @@ impl Old {
             Self::DcutRatio(_) => "dcut_ratio",
             Self::OptInOneOrTrue => "opt_in_one_or_true",
             Self::UintTrimmed(_) => "uint_trimmed",
+            Self::OnUnlessOffWord => "on_unless_off_word",
         }
     }
 }
@@ -201,4 +213,23 @@ pub(crate) fn assert_old_readers_hold<T>(
 
 pub(crate) fn num(v: impl ToString) -> Out {
     Out::N(Cow::Owned(v.to_string()))
+}
+
+/// 2026-10-17: The settings one load resolves from `env` alone, with no flag and no recipe.
+///
+/// # Errors
+/// A value in `env` that does not parse as its lever's type.
+pub(crate) fn settings_from(
+    env: &[(&str, &str)],
+) -> Result<InferenceServerSettings, metrale_settings::SettingsError> {
+    metrale_settings::resolve(
+        &MapEnv::new(env.iter().copied()),
+        &CliLayer::empty(),
+        &RecipeLayer::empty(),
+    )
+}
+
+/// 2026-10-17: Every lever at its declared default.
+pub(crate) fn default_settings() -> InferenceServerSettings {
+    settings_from(&[]).expect("the declared defaults resolve")
 }

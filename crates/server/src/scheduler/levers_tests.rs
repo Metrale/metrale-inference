@@ -196,84 +196,6 @@ fn two_runs_hold_independent_levers() {
     assert!(!b.loop_watchdog(), "and independent runtime state");
 }
 
-/// 2026-09-25: The scheduler thread must not read the environment per token.
-///
-/// `emit_step` and `decode_logits_step` run once per generated token per
-/// sequence. An `std::env::var` call there allocates and takes the
-/// process-wide environment lock, once per token per sequence instead of
-/// once per run. The levers this path needs are `SchedLevers` fields.
-///
-/// A source-level check because the property is "who may read the
-/// environment", which no runtime assertion can observe. The sibling table
-/// for `metrale-model-layers` lives in `layers/ops/hot_path_env_guards.rs`.
-#[test]
-fn the_per_token_scheduler_path_does_not_read_the_environment() {
-    // 2026-09-26: (module, functions still allowed to read). A module is
-    // its `<module>.rs` plus every non-test `.rs` file under `<module>/`, so
-    // code that a split moves into a child file stays scanned.
-    const GUARDED: [(&str, &[&str]); 7] = [
-        ("emit_step", &[]),
-        // 2026-09-25: Per verify step.
-        ("verify_dflash_step", &[]),
-        ("verify_k2_step", &[]),
-        // 2026-09-25: Per prefill chunk.
-        ("prefill_a_step", &[]),
-        (
-            // 2026-09-25: Per sequence per decode step.
-            "decode_logits_seq",
-            &["process_seq_logits"],
-        ),
-        // 2026-09-25: Every lever this module needs is a `SchedLevers`
-        // field, so the whole module is on the no-read list.
-        ("decode_logits_step", &[]),
-        // 2026-10-17: `WatchdogParams::from_behavior` takes its operator
-        // overrides as arguments now, so nothing here reads.
-        ("helpers", &[]),
-    ];
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/scheduler");
-    let mut offenders = Vec::new();
-    let mut scanned = 0usize;
-    for (module, allowed) in GUARDED {
-        for path in module_files(&dir, module) {
-            scanned += 1;
-            let file = path.strip_prefix(&dir).unwrap_or(&path).display();
-            let text = std::fs::read_to_string(&path)
-                .unwrap_or_else(|e| panic!("{} is a guarded path: {e}", path.display()));
-            let mut current = "<file scope>".to_string();
-            for (i, line) in text.lines().enumerate() {
-                let trimmed = line.trim_start();
-                for prefix in ["pub(crate) fn ", "pub(super) fn ", "pub fn ", "fn "] {
-                    if let Some(rest) = trimmed.strip_prefix(prefix) {
-                        current = rest
-                            .split(['(', '<'])
-                            .next()
-                            .unwrap_or("?")
-                            .trim()
-                            .to_string();
-                        break;
-                    }
-                }
-                // 2026-09-25: Comments name these variables throughout; only
-                // code counts.
-                let code = line.split("//").next().unwrap_or("");
-                if code.contains("std::env::var") && !allowed.contains(&current.as_str()) {
-                    offenders.push(format!("{file}:{} in `{current}`", i + 1));
-                }
-            }
-        }
-    }
-    // 2026-09-26: 16 files hold these modules today. A lower count means a
-    // module moved out from under this table, not that the path got smaller.
-    assert!(scanned >= 16, "only {scanned} guarded files were found");
-    assert!(
-        offenders.is_empty(),
-        "environment reads on the per-token scheduler path. Resolve the \
-         variable ONCE into `SchedLevers` and read `sched.levers` instead — \
-         and reuse the parser in `helpers`, do not re-spell the rule: \
-         {offenders:?}"
-    );
-}
-
 /// 2026-09-25: The verify-step levers' polarities. `dflash_eagle_fix` is
 /// asserted against `from_settings()` as well as `defaults()`, for the reason
 /// `spec_think_is_off_in_the_resolver_the_server_actually_uses` exists.
@@ -289,30 +211,6 @@ fn the_verify_step_levers_hold_their_polarities() {
          server actually uses — `defaults()` is a hand-written literal and \
          cannot catch a change here"
     );
-}
-
-/// 2026-09-26: `<module>.rs` and every `.rs` file below `<module>/` whose
-/// name does not end in `tests.rs`. The module file itself must exist.
-fn module_files(dir: &std::path::Path, module: &str) -> Vec<std::path::PathBuf> {
-    let root = dir.join(format!("{module}.rs"));
-    assert!(root.is_file(), "{} is a guarded path", root.display());
-    let mut files = vec![root];
-    let mut pending = vec![dir.join(module)];
-    while let Some(d) = pending.pop() {
-        if !d.is_dir() {
-            continue;
-        }
-        for entry in std::fs::read_dir(&d).expect("readable scheduler directory") {
-            let path = entry.expect("readable scheduler directory").path();
-            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if path.is_dir() {
-                pending.push(path);
-            } else if name.ends_with(".rs") && !name.ends_with("tests.rs") {
-                files.push(path);
-            }
-        }
-    }
-    files
 }
 
 #[path = "levers_equivalence_tests.rs"]

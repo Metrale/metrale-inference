@@ -84,13 +84,19 @@ pub struct SysTelemetry {
 }
 
 impl SysTelemetry {
-    /// 2026-09-25: Sinks opened from this run's environment, feeding `tel`.
-    pub fn from_env(tel: &'static Telemetry, snapshot: std::sync::Arc<SnapshotCell>) -> Self {
+    /// 2026-10-17: This run's `timing` and `dumps` (resolved from its settings by the
+    /// caller), feeding `tel`.
+    pub fn new(
+        tel: &'static Telemetry,
+        snapshot: std::sync::Arc<SnapshotCell>,
+        timing: RunTiming,
+        dumps: RunDumps,
+    ) -> Self {
         Self {
             tel,
-            timing: RunTiming::from_env(),
+            timing,
             stats: SpecStats::new(),
-            dumps: RunDumps::from_env(),
+            dumps,
             snapshot,
         }
     }

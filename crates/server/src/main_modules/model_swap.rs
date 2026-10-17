@@ -155,13 +155,17 @@ fn wait_for_sole_owner<T>(state: &Arc<T>, grace: std::time::Duration) -> usize {
 /// A reference that outlives `grace` would keep `request_tx` open, so the
 /// scheduler join would never return; the model is then republished and the
 /// swap refused.
-fn release_state(host: &Arc<ModelHost>, grace: std::time::Duration) -> Result<Carried> {
+fn release_state(
+    host: &Arc<ModelHost>,
+    settings: &metrale_settings::InferenceServerSettings,
+    grace: std::time::Duration,
+) -> Result<Carried> {
     let Some(state) = host.take() else {
         // 2026-09-26: `serve` installs the process state before the listener
-        // binds, so `None` is not expected; the environment is read again then.
+        // binds, so `None` is not expected; the incoming load's settings build it then.
         return match host.process() {
             Some(carried) => Ok(carried),
-            None => Carried::from_env().map_err(|e| anyhow::anyhow!("{e}")),
+            None => Carried::from_settings(settings).map_err(|e| anyhow::anyhow!("{e}")),
         };
     };
     let carried = Carried::from_previous(&state);
@@ -261,7 +265,7 @@ pub(crate) fn swap(host: &Arc<ModelHost>, next: cli::ServeArgs) -> Result<SwapOu
     // checks that need only the argv.
     preflight_kernel_target(&next)?;
 
-    let carried = release_state(host, DRAIN_GRACE)?;
+    let carried = release_state(host, &next_settings, DRAIN_GRACE)?;
 
     if let Some(handle) = host.take_scheduler() {
         handle

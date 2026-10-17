@@ -62,6 +62,7 @@ mod prefill_timing_tests;
 mod prompt_lookup_step;
 mod repetition;
 mod rollback;
+pub mod run_io;
 mod sample_step;
 pub mod sched_ctx;
 pub(crate) mod shared_lookup_step;

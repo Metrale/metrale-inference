@@ -424,10 +424,6 @@ crates/server/src/cli/circuit_diff.rs
 crates/server/src/cli/circuit_diff_verify.rs
 crates/server/src/cli/circuit_diff_verify_batch.rs
 crates/server/src/cli/doctor_tests.rs
-crates/server/src/conversation_store.rs
-crates/server/src/grammar/compile_tools.rs
-crates/server/src/grammar/mask_cache.rs
-crates/server/src/grammar/prewarm.rs
 crates/server/src/grammar/tests/cold_compile.rs
 crates/server/src/grammar/tests/native_prewarm.rs
 crates/server/src/main.rs
@@ -447,12 +443,6 @@ crates/server/src/main_modules/serve_router.rs
 crates/server/src/main_modules/telemetry_otlp.rs
 crates/server/src/model_download/hf.rs
 crates/server/src/model_resolver.rs
-crates/server/src/rate_limiter.rs
-crates/server/src/response_store/store_impl.rs
-crates/server/src/scheduler/dumps.rs
-crates/server/src/scheduler/mod_helpers/send.rs
-crates/server/src/scheduler/mtp_accept_debug.rs
-crates/server/src/scheduler/mtp_timing.rs
 crates/server/src/tui/init.rs
 crates/server/src/tui/init_tests.rs
 crates/server/src/tui/mod.rs

@@ -8,7 +8,7 @@
 lever_group! {
     /// 2026-10-17: The `telemetry` group, resolved by `crate::resolve()`.
     pub struct TelemetrySettings { group: "telemetry", class: Runtime }
-    adadec_diagnostic: Text = "unset", None, "METRALE_ADADEC_DIAGNOSTIC", "crates/server/src/scheduler/dumps.rs", "`METRALE_ADADEC_DIAGNOSTIC=dir` — the adaptive-decode entropy trace.";
+    adadec_diagnostic: Text = "unset", None, "METRALE_ADADEC_DIAGNOSTIC", "crates/server/src/scheduler/run_io.rs", "`METRALE_ADADEC_DIAGNOSTIC=dir` — the adaptive-decode entropy trace.";
     chat_phase_timing: Switch = "off", None, "METRALE_CHAT_PHASE_TIMING", "crates/server/src/api/chat/levers.rs", "`METRALE_CHAT_PHASE_TIMING=1` — emit per-phase `CHAT_PHASE` timing lines for the handler and the prepare stage. `1` turns it on.";
     comm_diagnostics: Text = "unset", None, "METRALE_COMM_DIAGNOSTICS", "crates/comm/src/collective_diagnostics.rs", "Read in `crates/comm/src/collective_diagnostics.rs`.";
     d2h_trace: Text = "unset", None, "METRALE_D2H_TRACE", "crates/gpu-runtime/src/cuda_backend/gpu_impl/d2h_trace.rs", "D2H call counter + one-shot caller identification (`METRALE_D2H_TRACE=<N>`: log a backtrace on the Nth call, and the running count on every 10000th).";
@@ -64,7 +64,7 @@ lever_group! {
     k2_diag: Switch = "off", None, "METRALE_K2_DIAG", "crates/model-engine/src/model/trait_impl/verify_b.rs", "METRALE_K2_DIAG=1 arms per-stage synchronize checkpoints inside forward_k2 to localize any illegal access on the batch2 verify path. `1` turns it on.";
     k4_diag: Switch = "off", None, "METRALE_K4_DIAG", "crates/model-engine/src/model/trait_impl/verify_c2.rs", "METRALE_K4_DIAG=1: run the K=4 verify EAGERLY (no CUDA graph) with a stream-synchronize checkpoint after every layer, so an illegal access is attributed to the exact layer instead of surfacing as. `1` turns it on.";
     kv_trace: Switch = "off", None, "METRALE_KV_TRACE", "crates/cache/src/kv_cache/block_trace.rs", "With `METRALE_KV_TRACE=1`, every `alloc`, `try_alloc`, `inc`, `dec` and `evict_return` on a block is recorded in a ring for that block, with the caller's file and line (the `PagedKvCache` methods. `1` turns it on.";
-    logit_dump: Text = "unset", None, "METRALE_LOGIT_DUMP", "crates/server/src/scheduler/dumps.rs", "`METRALE_LOGIT_DUMP=path` — per-position logits.";
+    logit_dump: Text = "unset", None, "METRALE_LOGIT_DUMP", "crates/server/src/scheduler/run_io.rs", "`METRALE_LOGIT_DUMP=path` — per-position logits.";
     log_tool_raw: Switch = "off", None, "METRALE_LOG_TOOL_RAW", "crates/server/src/api/chat_blocking_choice.rs", "Read in `crates/server/src/api/chat_blocking_choice.rs`. `1` turns it on.";
     mem_profile: Presence = "off", None, "METRALE_MEM_PROFILE", "crates/model-arch/src/weight_loader/qwen35_dense.rs", "METRALE_MEM_PROFILE: per-phase GPU-free trace to pin the strix/APU load-time footprint (FP8-source persistence vs NVFP4 steady-state vs BF16 requant transients). Any value turns it on, `0` included.";
     moe_union_stats: Switch = "off", None, "METRALE_MOE_UNION_STATS", "crates/model-layers/src/layers/ops/model_levers_resolve.rs", "Sets `moe_union_stats` (read in `crates/model-layers/src/layers/ops/model_levers_resolve.rs`). `1` turns it on.";

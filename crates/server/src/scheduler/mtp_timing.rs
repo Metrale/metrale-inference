@@ -85,14 +85,14 @@ pub(crate) const NAMES: [&str; NUM_PHASES] = [
 ];
 
 /// 2026-09-25: Per-phase microsecond accumulators. `SysTelemetry`
-/// (io/telemetry.rs) owns the one [`RunTiming::from_env`] builds.
+/// (io/telemetry.rs) owns the one the scheduler core arms from `SchedLevers::mtp_timing`.
 /// `GrammarState` (grammar/state.rs) records `GrammarFill` and `ForcedTok`
 /// into its own `timing`, which is always disarmed: its builder sets
 /// `Arc::default()`, and the only `with_timing` caller passes the same.
 #[derive(Debug)]
 pub struct RunTiming {
-    /// 2026-09-25: True when [`RunTiming::from_env`] saw
-    /// `METRALE_MTP_TIMING=1`. When false, `record` returns at once.
+    /// 2026-09-25: True when the run was built with `METRALE_MTP_TIMING` on
+    /// (`SchedLevers::mtp_timing`). When false, `record` returns at once.
     pub armed: bool,
     sum_us: [AtomicU64; NUM_PHASES],
     count: [AtomicU64; NUM_PHASES],
@@ -116,10 +116,6 @@ pub struct RunTiming {
 }
 
 impl RunTiming {
-    pub fn from_env() -> Self {
-        Self::new(std::env::var("METRALE_MTP_TIMING").ok().as_deref() == Some("1"))
-    }
-
     pub fn new(armed: bool) -> Self {
         Self {
             armed,

@@ -2,7 +2,8 @@
 
 //! 2026-09-26: Tool-call grammars whose body is raw EBNF over `<parameter=…>` or
 //! `<arg_key>`/`<arg_value>` pairs: qwen3_coder and poolside_v1. The EBNF
-//! builders and env switches they use are in the parent `compile_tools`.
+//! builders they use are in the parent `compile_tools`; their switches are the engine's
+//! `levers`.
 //!
 //! Owner: server grammar.
 //! Invariants:
@@ -20,7 +21,7 @@ use super::super::schema::{enforce_min_length_on_required_strings, sanitize_sche
 
 use super::{
     ebnf_until_close_ladder, ebnf_until_close_ladder_no_leading_ws, schema_param_names,
-    short_tool_trigger_enabled, xml_param_value_body_ebnf,
+    xml_param_value_body_ebnf,
 };
 
 impl GrammarEngine {
@@ -80,7 +81,8 @@ impl GrammarEngine {
             let begin = format!("<tool_call>\n<function={}>\n", st.name);
             let end = "\n</function>\n</tool_call>";
             let param_names = schema_param_names(&st.schema);
-            let body_ebnf = xml_param_value_body_ebnf(value_close, param_names.as_deref());
+            let body_ebnf =
+                xml_param_value_body_ebnf(value_close, param_names.as_deref(), &self.levers);
             tag_entries.push(serde_json::json!({
                 "type": "tag",
                 "begin": begin,
@@ -93,12 +95,12 @@ impl GrammarEngine {
             return Err(GrammarError::NoTools);
         }
 
-        // 2026-09-26: With `use_triggers` (and `METRALE_TOOL_SHORT_TRIGGER` off), one
+        // 2026-09-26: With `use_triggers` (and `levers.short_trigger` off), one
         // trigger per tool, `<tool_call>\n<function=NAME>`, so text stays free until a
         // whole trigger has been emitted. The converter rejects a grammar in which one tag's
         // `begin` starts with two triggers; the closing `>` keeps the set prefix-free when
         // one tool name is a prefix of another. Otherwise the one trigger is `<tool_call>`.
-        let triggers: Vec<String> = if use_triggers && !short_tool_trigger_enabled() {
+        let triggers: Vec<String> = if use_triggers && !self.levers.short_trigger {
             // 2026-09-26: Deduplicate: two tools with one name would give two equal
             // triggers, which the converter rejects the same way.
             let mut seen = HashMap::<String, bool>::new();
@@ -137,8 +139,11 @@ impl GrammarEngine {
                     .iter()
                     .map(|st| {
                         let param_names = schema_param_names(&st.schema);
-                        let body_ebnf =
-                            xml_param_value_body_ebnf(value_close, param_names.as_deref());
+                        let body_ebnf = xml_param_value_body_ebnf(
+                            value_close,
+                            param_names.as_deref(),
+                            &self.levers,
+                        );
                         serde_json::json!({
                             "type": "tag",
                             "begin": format!("<tool_call>\n<function={}>\n", st.name),

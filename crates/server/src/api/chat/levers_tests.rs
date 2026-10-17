@@ -9,11 +9,10 @@
 
 use std::borrow::Cow;
 
-use metrale_io_host_mem::MapEnv;
-use metrale_settings::sources::{CliLayer, RecipeLayer};
-
 use super::*;
-use crate::lever_equivalence::{Old, Out, Row, assert_old_readers_hold, num};
+use crate::lever_equivalence::{
+    Old, Out, Row, assert_old_readers_hold, default_settings, num, settings_from,
+};
 use crate::tokenizer::ToolJsonStyle;
 
 /// 2026-10-17: What one load resolves for the chat path: its levers and the template's
@@ -21,11 +20,7 @@ use crate::tokenizer::ToolJsonStyle;
 type Resolved = (ChatLevers, ToolJsonStyle);
 
 fn resolved(env: &[(&str, &str)]) -> anyhow::Result<Resolved> {
-    let settings = metrale_settings::resolve(
-        &MapEnv::new(env.iter().copied()),
-        &CliLayer::empty(),
-        &RecipeLayer::empty(),
-    )?;
+    let settings = settings_from(env)?;
     Ok((
         ChatLevers::resolve(&settings, false, false)?,
         ToolJsonStyle::from_settings(&settings),
@@ -48,12 +43,7 @@ fn off_is_what_an_empty_environment_resolves_to() {
 fn the_model_behavior_reaches_the_renderer() {
     // 2026-09-26: `resolve` takes `tscg` and `disable_cwd_hint_injection` from its caller
     // (MODEL.toml `[behavior]`), not from the settings.
-    let settings = metrale_settings::resolve(
-        &MapEnv::new(std::iter::empty::<(&str, &str)>()),
-        &CliLayer::empty(),
-        &RecipeLayer::empty(),
-    )
-    .expect("defaults resolve");
+    let settings = default_settings();
     let with = |tscg, cwd| ChatLevers::resolve(&settings, tscg, cwd).expect("resolves");
     assert!(with(true, false).prompt.tscg);
     assert!(!with(false, false).prompt.tscg);

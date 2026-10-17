@@ -54,7 +54,7 @@ fn ebnf_literal_escape(c: char) -> String {
 /// With `force_close` and a `close` longer than one char, the last arm
 /// (`"c0…c{n-2}" [^c{n-1}]`, for qwen3_coder `"</parameter" [^>]`) is left out, so no
 /// arm continues the longest proper prefix of `close` with another byte.
-/// [`xml_param_value_body_ebnf`] sets `force_close` from `METRALE_GRAMMAR_FORCE_CLOSE=1`.
+/// [`xml_param_value_body_ebnf`] sets `force_close` from `GrammarLevers::force_close`.
 fn ebnf_until_close_ladder_opts(close: &str, force_close: bool) -> String {
     let chars: Vec<char> = close.chars().collect();
     debug_assert!(!chars.is_empty(), "close delimiter must be non-empty");
@@ -115,61 +115,42 @@ fn ebnf_until_close_ladder_no_leading_ws(close: &str) -> String {
     alts.join(" | ")
 }
 
-/// 2026-09-26: `METRALE_GRAMMAR_ALLOW_EMPTY_VALUE` and `METRALE_GRAMMAR_FORCE_CLOSE`; each
-/// is on only when exactly `1`, and is read on every call.
-fn grammar_allow_empty_value() -> bool {
-    std::env::var("METRALE_GRAMMAR_ALLOW_EMPTY_VALUE").as_deref() == Ok("1")
-}
-fn grammar_force_close() -> bool {
-    std::env::var("METRALE_GRAMMAR_FORCE_CLOSE").as_deref() == Ok("1")
-}
-
 /// 2026-09-26: Most `rest_part` repetitions in a parameter value when
-/// `METRALE_GRAMMAR_VALUE_HARDEN=1`: the rule becomes `rest ::= rest_part{0,6000}`
+/// `GrammarLevers::value_harden`: the rule becomes `rest ::= rest_part{0,6000}`
 /// instead of `rest ::= rest_part*`, so a value whose close never matches cannot grow
 /// without end. A `rest_part` is one byte or a proper prefix of the close plus one byte.
 const VALUE_REST_MAX_REPEAT: u32 = 6000;
-
-/// 2026-09-26: Whether `METRALE_GRAMMAR_VALUE_HARDEN` is exactly `1`; read on every call.
-fn value_harden_enabled() -> bool {
-    std::env::var("METRALE_GRAMMAR_VALUE_HARDEN").as_deref() == Ok("1")
-}
-
-/// 2026-09-26: Whether `METRALE_TOOL_SHORT_TRIGGER` is exactly `1`; read on every call.
-/// When it is, qwen3_coder with `use_triggers` has the one trigger `<tool_call>` instead
-/// of one `<tool_call>\n<function=NAME>` trigger per tool.
-fn short_tool_trigger_enabled() -> bool {
-    std::env::var("METRALE_TOOL_SHORT_TRIGGER").as_deref() == Ok("1")
-}
 
 /// 2026-09-26: EBNF for an XML-style tool-call body: one or more
 /// `<parameter=NAME>VALUE{value_close}` blocks separated by newlines. `value_close`
 /// comes from the format's [`crate::tool_parser::ToolCallParser::param_value_close_delim`].
 /// NAME is one of `param_names` when that is non-empty (see [`schema_param_names`]), and
 /// any identifier otherwise. VALUE is built from [`ebnf_until_close_ladder_opts`]. The
-/// opt-ins come from `METRALE_GRAMMAR_ALLOW_EMPTY_VALUE` and `METRALE_GRAMMAR_FORCE_CLOSE`.
+/// opt-ins are the engine's `levers` (`allow_empty_value`, `force_close`, `value_harden`).
 pub(crate) fn xml_param_value_body_ebnf(
     value_close: &str,
     param_names: Option<&[String]>,
+    levers: &super::GrammarLevers,
 ) -> String {
     xml_param_value_body_ebnf_opts(
         value_close,
         param_names,
-        grammar_allow_empty_value(),
-        grammar_force_close(),
+        levers.allow_empty_value,
+        levers.force_close,
+        levers.value_harden,
     )
 }
 
-/// 2026-09-26: [`xml_param_value_body_ebnf`] with the two opt-ins as parameters. It still
-/// reads `METRALE_GRAMMAR_VALUE_HARDEN` itself (the `rest` rule).
+/// 2026-09-26: [`xml_param_value_body_ebnf`] with the three opt-ins as parameters.
 pub(crate) fn xml_param_value_body_ebnf_opts(
     value_close: &str,
     param_names: Option<&[String]>,
     allow_empty_value: bool,
     force_close: bool,
+    value_harden: bool,
 ) -> String {
     let ladder = ebnf_until_close_ladder_opts(value_close, force_close);
-    let rest_rule = if value_harden_enabled() {
+    let rest_rule = if value_harden {
         format!("rest ::= rest_part{{0,{VALUE_REST_MAX_REPEAT}}}")
     } else {
         "rest ::= rest_part*".to_string()
@@ -189,7 +170,7 @@ pub(crate) fn xml_param_value_body_ebnf_opts(
     // ladder's quoted arms (a proper prefix of `value_close` and a byte that breaks it,
     // `ladder_lt_arms`), then `rest`. Excluding `=` and `>` stops a token such as `>=`
     // from closing the NAME with its `>` and starting the value with `=`. With
-    // `allow_empty_value` (`METRALE_GRAMMAR_ALLOW_EMPTY_VALUE=1`) `nonempty_value` is
+    // `allow_empty_value` (`GrammarLevers::allow_empty_value`) `nonempty_value` is
     // optional.
     let value_rule = if allow_empty_value {
         "value ::= leading_ws nonempty_value?"

@@ -67,10 +67,17 @@ pub(crate) async fn serve(
     // 2026-09-26: Before any load, so the policy is in force from the moment
     // the listener is up, also while no model is loaded.
     host.set_auth(build_auth_config(&args)?);
+    // 2026-10-17: Resolved before the process state is built from it, so a malformed lever
+    // stops the boot before any model work, a modelless boot included.
+    let settings = super::serve_settings::resolve(&metrale_io_host_std::ProcessEnv, &args)?;
     // 2026-09-26: Process-scoped too, and installed before the first model.
-    host.set_process(super::serve_load::Carried::from_env().map_err(|e| anyhow::anyhow!("{e}"))?);
+    host.set_process(
+        super::serve_load::Carried::from_settings(&settings).map_err(|e| anyhow::anyhow!("{e}"))?,
+    );
     let startup_host = host.clone();
-    match tokio::task::spawn_blocking(move || startup(args, tui_progress, startup_host)).await?? {
+    match tokio::task::spawn_blocking(move || startup(args, settings, tui_progress, startup_host))
+        .await??
+    {
         Startup::Serve(prepared) => {
             host.publish(prepared.state);
             // 2026-09-26: The host owns the first load's scheduler thread too,
@@ -91,6 +98,7 @@ pub(crate) async fn serve(
 
 fn startup(
     args: cli::ServeArgs,
+    settings: Arc<metrale_settings::InferenceServerSettings>,
     tui_progress: Option<std::sync::mpsc::Receiver<crate::tui::capture_layer::ProgressEvent>>,
     host: Arc<crate::main_modules::model_host::ModelHost>,
 ) -> Result<Startup> {
@@ -124,9 +132,6 @@ fn startup(
     if let Err(msg) = cli::validate_serve_args(&args) {
         anyhow::bail!("{msg}");
     }
-    // 2026-10-17: Resolved here so a malformed lever stops the boot before any model work,
-    // a modelless boot included.
-    let settings = super::serve_settings::resolve(&metrale_io_host_std::ProcessEnv, &args)?;
 
     // 2026-09-26: Publish the kernel-path flags before anything reads their
     // cells. An absent flag publishes nothing, so its `METRALE_*` variable

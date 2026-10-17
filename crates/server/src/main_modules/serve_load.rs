@@ -44,6 +44,8 @@ pub(crate) fn load_model(
     tui_handles_tx: Option<std::sync::mpsc::Sender<crate::tui::RunHandles>>,
     carried: Carried,
 ) -> Result<Option<Prepared>> {
+    // 2026-10-17: Resolved before the model loads, so a malformed value stops the load at once.
+    let run_io = scheduler::run_io::RunIoSettings::from_settings(&settings)?;
     let Some(engine::Engine {
         args,
         model,
@@ -103,6 +105,7 @@ pub(crate) fn load_model(
         &mut eos_tokens,
         supports_thinking,
         &model_dir,
+        &settings,
     );
 
     metrale_telemetry::progress::phase(9, "scheduler");
@@ -268,6 +271,7 @@ pub(crate) fn load_model(
                 snapshot: run_snapshot,
                 telemetry: metrale_telemetry::global(),
                 pipeline_faults: scheduler::PipelineFaults::NONE,
+                run_io,
                 dflash_rung,
             },
         );

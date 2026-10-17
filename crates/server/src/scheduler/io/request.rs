@@ -80,17 +80,23 @@ pub type LoraRotationAck = tokio::sync::oneshot::Sender<Result<LoraAck, String>>
 pub struct TokioRequestIo {
     queue: Mutex<Arrivals>,
     cv: Condvar,
+    /// 2026-10-17: How long a frame waits on a full stream channel
+    /// (`RunIoSettings::stream_send_deadline`).
+    send_deadline: std::time::Duration,
 }
 
 impl TokioRequestIo {
-    /// 2026-09-25: Forward `request_rx` and `rotation_rx` into the inbox.
+    /// 2026-09-25: Forward `request_rx` and `rotation_rx` into the inbox; frames wait at
+    /// most `send_deadline` on a full stream channel.
     pub fn new(
         request_rx: tokio::sync::mpsc::Receiver<InferenceRequest>,
         rotation_rx: tokio::sync::mpsc::Receiver<LoraRotation>,
+        send_deadline: std::time::Duration,
     ) -> Arc<Self> {
         let io = Arc::new(Self {
             queue: Mutex::new(Arrivals::default()),
             cv: Condvar::new(),
+            send_deadline,
         });
         let p = Arc::clone(&io);
         std::thread::spawn(move || {
@@ -114,13 +120,14 @@ impl TokioRequestIo {
     }
 
     /// 2026-09-25: An inbox nothing feeds, already closed.
-    pub fn closed() -> Self {
+    pub fn closed(send_deadline: std::time::Duration) -> Self {
         Self {
             queue: Mutex::new(Arrivals {
                 closed: true,
                 ..Arrivals::default()
             }),
             cv: Condvar::new(),
+            send_deadline,
         }
     }
 }
@@ -156,7 +163,7 @@ impl RequestIo for TokioRequestIo {
         let ResponseSink::Streaming(tx) = sink else {
             return true;
         };
-        bounded_stream_send(tx, event, what)
+        bounded_stream_send(tx, event, what, self.send_deadline)
     }
 
     fn finish(&self, sink: &mut ResponseSink, f: FinishFrame<'_>) {
@@ -180,6 +187,7 @@ impl RequestIo for TokioRequestIo {
                         guard_stop: f.guard_stop,
                     },
                     "done frame",
+                    self.send_deadline,
                 );
             }
             ResponseSink::Blocking(tx) => {
@@ -216,7 +224,12 @@ impl RequestIo for TokioRequestIo {
     fn error(&self, sink: &mut ResponseSink, msg: &str, what: &'static str) {
         match sink {
             ResponseSink::Streaming(tx) => {
-                spawn_terminal_send(tx, StreamEvent::Error(msg.to_string()), what);
+                spawn_terminal_send(
+                    tx,
+                    StreamEvent::Error(msg.to_string()),
+                    what,
+                    self.send_deadline,
+                );
             }
             ResponseSink::Blocking(tx) => {
                 if let Some(tx) = tx.take()

@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use metrale_settings::InferenceServerSettings;
 use parking_lot::Mutex;
 
 use super::{
@@ -21,7 +22,7 @@ use super::{
 };
 
 impl ResponseStore {
-    /// 2026-09-26: Build from env.
+    /// 2026-10-17: Build from the resolved settings.
     /// - `METRALE_STORE_MAX_ENTRIES` (default 10 000, minimum 1)
     /// - `METRALE_STORE_TTL_SECONDS` (default 86 400, minimum 1)
     /// - `METRALE_STORE_DIR`: when set and non-empty, enable filesystem
@@ -29,19 +30,19 @@ impl ResponseStore {
     ///   be set up, a warning is logged and the store stays in memory.
     ///
     /// # Errors
-    /// When `METRALE_STORE_MAX_ENTRIES` or `METRALE_STORE_TTL_SECONDS` is set to
+    /// When the `METRALE_STORE_MAX_ENTRIES` or `METRALE_STORE_TTL_SECONDS` value is
     /// something that is not a whole number at or above its minimum.
-    pub fn from_env() -> Result<Arc<Self>, String> {
+    pub fn from_settings(settings: &InferenceServerSettings) -> Result<Arc<Self>, String> {
         let max_entries = crate::env_config::parse_min(
             "METRALE_STORE_MAX_ENTRIES",
-            std::env::var("METRALE_STORE_MAX_ENTRIES").ok().as_deref(),
+            settings.server.store_max_entries.as_deref(),
             1_usize,
             "how many stored responses to keep before evicting the coldest",
         )?
         .unwrap_or(10_000);
         let ttl_secs = crate::env_config::parse_min(
             "METRALE_STORE_TTL_SECONDS",
-            std::env::var("METRALE_STORE_TTL_SECONDS").ok().as_deref(),
+            settings.server.store_ttl_seconds.as_deref(),
             1_u64,
             "how long a stored response stays retrievable, in seconds",
         )?
@@ -49,8 +50,10 @@ impl ResponseStore {
         let ttl = Duration::from_secs(ttl_secs);
 
         let (backend, persistent, persist_dir): (Box<dyn StoreBackend>, bool, Option<PathBuf>) =
-            match std::env::var("METRALE_STORE_DIR")
-                .ok()
+            match settings
+                .storage
+                .store_dir
+                .as_deref()
                 .filter(|s| !s.is_empty())
             {
                 Some(dir) => {

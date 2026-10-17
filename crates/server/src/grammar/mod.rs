@@ -15,6 +15,7 @@
 mod compile_misc;
 mod compile_tools;
 mod engine;
+mod levers;
 mod mask_cache;
 mod prewarm;
 mod schema;
@@ -24,6 +25,7 @@ mod state;
 pub(crate) mod tests;
 
 pub use engine::{GrammarEngine, GrammarError};
+pub use levers::GrammarLevers;
 pub use mask_cache::PrewarmHook;
 pub use schema::augment_schema_with_tafc_think;
 pub use state::{GrammarState, grammar_blocks_stop};

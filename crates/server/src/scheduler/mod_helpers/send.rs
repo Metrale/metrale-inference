@@ -8,22 +8,6 @@
 //! Owner: scheduler.
 //! Invariants: none beyond the types.
 
-/// 2026-09-25: Deadline for a scheduler-thread send into a full stream channel:
-/// `METRALE_STREAM_SEND_DEADLINE_MS`, or 5000 ms when it is unset or not an
-/// integer. A default exists because an unbounded send would never time out.
-fn stream_send_deadline() -> std::time::Duration {
-    // 2026-09-25: Read once per process. It configures the transport, not the
-    // model, and its two readers (`bounded_stream_send`,
-    // `spawn_terminal_send`) take no scheduler context.
-    static MS: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-    std::time::Duration::from_millis(*MS.get_or_init(|| {
-        std::env::var("METRALE_STREAM_SEND_DEADLINE_MS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(5000)
-    }))
-}
-
 /// 2026-09-25: Bounded send from the scheduler thread into a per-request stream
 /// channel.
 ///
@@ -31,14 +15,15 @@ fn stream_send_deadline() -> std::time::Duration {
 /// until a stalled client reads would stall every sequence. The API's stream
 /// channels hold 1024 events (`api/chat_stream`, `api/completions`).
 ///
-/// Tries once; on a full channel, retries every 1 ms until
-/// [`stream_send_deadline`]. Returns `true` when the event was queued, and
+/// Tries once; on a full channel, retries every 1 ms until `deadline`
+/// (`RunIoSettings::stream_send_deadline`). Returns `true` when the event was queued, and
 /// `false` when the receiver is gone or the deadline passed; a caller cannot
 /// tell the two apart.
 pub(in crate::scheduler) fn bounded_stream_send(
     tx: &tokio::sync::mpsc::Sender<crate::api::inference_types::StreamEvent>,
     event: crate::api::inference_types::StreamEvent,
     what: &str,
+    deadline: std::time::Duration,
 ) -> bool {
     use tokio::sync::mpsc::error::TrySendError;
     let mut event = match tx.try_send(event) {
@@ -51,7 +36,7 @@ pub(in crate::scheduler) fn bounded_stream_send(
         }
         Err(TrySendError::Full(ev)) => ev,
     };
-    let deadline = std::time::Instant::now() + stream_send_deadline();
+    let give_up = std::time::Instant::now() + deadline;
     loop {
         std::thread::sleep(std::time::Duration::from_millis(1));
         match tx.try_send(event) {
@@ -64,10 +49,9 @@ pub(in crate::scheduler) fn bounded_stream_send(
                 return false;
             }
             Err(TrySendError::Full(ev)) => {
-                if std::time::Instant::now() >= deadline {
+                if std::time::Instant::now() >= give_up {
                     tracing::warn!(
-                        "stream consumer stalled past {:?} with a full channel — abandoning ({what})",
-                        stream_send_deadline()
+                        "stream consumer stalled past {deadline:?} with a full channel — abandoning ({what})"
                     );
                     return false;
                 }
@@ -98,7 +82,7 @@ pub fn capture_runtime_handle() {
 /// before it, whenever the task runs. A spawned mid-stream send could be
 /// overtaken by the next event's `try_send`.
 ///
-/// The spawned task still applies [`stream_send_deadline`] via
+/// The spawned task still applies `deadline` via
 /// `tokio::time::timeout`, so a stalled consumer cannot keep the task alive;
 /// on timeout the frame is dropped. Without a captured runtime handle this
 /// uses the synchronous [`bounded_stream_send`].
@@ -106,10 +90,10 @@ pub(in crate::scheduler) fn spawn_terminal_send(
     tx: &tokio::sync::mpsc::Sender<crate::api::inference_types::StreamEvent>,
     event: crate::api::inference_types::StreamEvent,
     what: &'static str,
+    deadline: std::time::Duration,
 ) {
     if let Some(h) = RUNTIME_HANDLE.get() {
         let tx = tx.clone();
-        let deadline = stream_send_deadline();
         h.spawn(async move {
             match tokio::time::timeout(deadline, tx.send(event)).await {
                 Ok(Ok(())) => {}
@@ -119,7 +103,7 @@ pub(in crate::scheduler) fn spawn_terminal_send(
                 ),
             }
         });
-    } else if !bounded_stream_send(tx, event, what) {
+    } else if !bounded_stream_send(tx, event, what, deadline) {
         tracing::debug!("terminal send failed synchronously ({what})");
     }
 }

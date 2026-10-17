@@ -69,4 +69,7 @@ pub struct SchedulerConfig {
     /// 2026-09-25: Fault injection for the pipelined decode lane; `PipelineFaults::NONE`
     /// when serving.
     pub pipeline_faults: super::PipelineFaults,
+    /// 2026-10-17: The stream-send deadline and diagnostic sink paths, resolved from the load's
+    /// settings.
+    pub run_io: crate::scheduler::run_io::RunIoSettings,
 }

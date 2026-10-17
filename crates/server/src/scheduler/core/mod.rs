@@ -118,6 +118,7 @@ impl SchedulerCore {
             dflash_rung,
             telemetry,
             pipeline_faults,
+            run_io,
         } = cfg;
         let spill: Option<Box<dyn io::SpillIo>> = if swap_space_gb > 0 {
             let max_bytes = swap_space_gb as u64 * 1024 * 1024 * 1024;
@@ -139,14 +140,19 @@ impl SchedulerCore {
         } else {
             None
         };
+        let tel = io::SysTelemetry::new(
+            telemetry,
+            snapshot,
+            crate::scheduler::mtp_timing::RunTiming::new(levers.mtp_timing),
+            crate::scheduler::dumps::RunDumps::open(&run_io),
+        );
         let mut sched = crate::scheduler::sched_ctx::SchedCtx::new(
             vocab_masks,
             levers,
             io::SchedIo::serving(
                 dev,
-                telemetry,
-                snapshot,
-                io::TokioRequestIo::new(request_rx, rotation_rx),
+                tel,
+                io::TokioRequestIo::new(request_rx, rotation_rx, run_io.stream_send_deadline),
                 spill,
             ),
             limits,

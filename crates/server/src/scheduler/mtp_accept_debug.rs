@@ -281,12 +281,10 @@ mod tests {
     }
 
     // 2026-09-25: No two widths up to the dispatch cap share a bucket, checked
-    // on `bucket_idx`. Skipped when either override is set.
+    // on `bucket_idx`, which takes the fold switch as an argument (2026-10-17: so the
+    // process environment no longer skips it).
     #[test]
     fn widths_up_to_the_cap_do_not_alias() {
-        if std::env::var_os("METRALE_MTP_ACCEPT_FOLD_AT_16").is_some() {
-            return;
-        }
         for n in 0..=metrale_model_layers::speculative::MAX_MTP_MAX_SEQS {
             assert_eq!(
                 bucket_idx(n, false),

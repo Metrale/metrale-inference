@@ -362,6 +362,10 @@ fn run_scenario_inner(sc: &Scenario, build: DeviceBuilder) -> Vec<String> {
                 },
                 telemetry: opts.telemetry,
                 pipeline_faults: opts.pipeline_faults,
+                run_io: crate::scheduler::run_io::RunIoSettings::from_settings(
+                    &crate::lever_equivalence::default_settings(),
+                )
+                .expect("the declared defaults resolve"),
             },
         );
     });

@@ -54,6 +54,7 @@ fn value_entry_content_tokens_need_no_contextual_trials() {
                 Some(&["city".to_owned()]),
                 allow_empty,
                 force_close,
+                false,
             );
             let compiled = compile(&ebnf);
             let mut matcher = GrammarMatcher::new(compiled.clone(), None, false, -1);
@@ -93,6 +94,7 @@ fn value_entry_factoring_preserves_masks_rejections_and_rollback() {
                 Some(&["city".to_owned()]),
                 allow_empty,
                 force_close,
+                false,
             );
             // 2026-09-26: Reference grammar: the same value rule with
             // `nonempty_value` written inline.
