@@ -225,11 +225,13 @@ pub fn account<'a, I>(names: I) -> Accounting
 where
     I: IntoIterator<Item = (&'a str, usize)>,
 {
+    let names: Vec<(&str, usize)> = names.into_iter().collect();
+    let present: std::collections::HashSet<&str> = names.iter().map(|(n, _)| *n).collect();
     let mut acc = Accounting::default();
     let mut mtp = std::collections::BTreeSet::new();
     for (name, count) in names {
         acc.total += count;
-        match classify(name) {
+        match classify(name).filter(|_| scale_has_weight(name, &present)) {
             Some(role) => {
                 *acc.by_role.entry(format!("{role:?}")).or_insert(0) += count;
             }
@@ -243,6 +245,14 @@ where
     }
     acc.mtp_layers = mtp.into_iter().collect();
     acc
+}
+
+/// 2026-10-17: A `{weight}_scale` is accounted only beside its weight: [`classify`] reads names
+/// alone, so a stray scale would otherwise take the role of a weight the checkpoint lacks.
+fn scale_has_weight(name: &str, present: &std::collections::HashSet<&str>) -> bool {
+    name.strip_suffix("_scale")
+        .filter(|w| w.ends_with(".weight"))
+        .is_none_or(|w| present.contains(w))
 }
 
 /// 2026-09-25: The number after the first `layers` segment, or `None` when it
@@ -312,6 +322,21 @@ mod tests {
             classify("model.language_model.layers.4.self_attn.q_proj.bias_scale"),
             None
         );
+    }
+
+    /// 2026-10-17: A scale without its weight is unknown in the accounting; beside its weight
+    /// (positive control) it takes the weight's role.
+    #[test]
+    fn a_stray_block_scale_is_unknown() {
+        let (w, s) = (
+            "model.language_model.layers.3.self_attn.q_proj.weight",
+            "model.language_model.layers.3.self_attn.q_proj.weight_scale",
+        );
+        let stray = account([(s, 1)]);
+        assert_eq!(stray.unknown, [s]);
+        let paired = account([(w, 1), (s, 1)]);
+        assert!(paired.unknown.is_empty(), "{:?}", paired.unknown);
+        assert_eq!(paired.by_role.get("KdaProjection"), Some(&2));
     }
 
     #[test]

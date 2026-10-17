@@ -155,7 +155,14 @@ fn a_deferred_expert_quantises_to_the_same_bytes_as_a_resident_one() {
             },
         );
     }
-    let resident = bind_expert(&gpu_a, &WeightStore::from_map(map), LAYERS, 0).unwrap();
+    let resident = bind_expert(
+        &gpu_a,
+        &WeightStore::from_map(map),
+        LAYERS,
+        0,
+        &whole_slab(0),
+    )
+    .unwrap();
 
     let path = stage_shard("expert", 137, &bytes);
     let gpu_b = MockGpuBackend::new();
@@ -163,15 +170,11 @@ fn a_deferred_expert_quantises_to_the_same_bytes_as_a_resident_one() {
     for p in ["gate_proj", "up_proj", "down_proj"] {
         store.defer(
             qualified(LAYERS, &format!("mlp.experts.0.{p}.weight")),
-            DeferredTensor {
-                path: path.clone(),
-                offset: 137,
-                shape: vec![rows, cols],
-                dtype: WeightDtype::BF16,
-            },
+            DeferredTensor::from_shape(path.clone(), 137, vec![rows, cols], WeightDtype::BF16)
+                .unwrap(),
         );
     }
-    let deferred = bind_expert(&gpu_b, &store, LAYERS, 0).unwrap();
+    let deferred = bind_expert(&gpu_b, &store, LAYERS, 0, &whole_slab(0)).unwrap();
 
     for (a, b, what) in [
         (&resident.gate_proj, &deferred.gate_proj, "gate"),
@@ -212,14 +215,9 @@ fn a_deferred_expert_at_an_unsupported_width_is_refused() {
     let mut store = WeightStore::from_map(std::collections::HashMap::new());
     store.defer(
         qualified(LAYERS, "mlp.experts.0.gate_proj.weight"),
-        DeferredTensor {
-            path: path.clone(),
-            offset: 0,
-            shape: vec![2, 8],
-            dtype: WeightDtype::UInt8,
-        },
+        DeferredTensor::from_shape(path.clone(), 0, vec![2, 8], WeightDtype::UInt8).unwrap(),
     );
-    let err = bind_expert(&gpu, &store, LAYERS, 0)
+    let err = bind_expert(&gpu, &store, LAYERS, 0, &whole_slab(0))
         .unwrap_err()
         .to_string();
     assert!(err.contains("deferred"), "{err}");
@@ -301,16 +299,17 @@ fn packed_expert_store(tag: &str, gpu: &MockGpuBackend, scales: Option<[&[u8]; 3
             let path = stage_shard(&format!("input-scale-{tag}-{p}-{}", bytes.len()), 9, bytes);
             store.defer(
                 qualified(4, &format!("mlp.experts.0.{p}.input_scale")),
-                DeferredTensor {
+                DeferredTensor::from_shape(
                     path,
-                    offset: 9,
-                    shape: if bytes.len() == 4 {
+                    9,
+                    if bytes.len() == 4 {
                         vec![]
                     } else {
                         vec![bytes.len() / 4]
                     },
-                    dtype: WeightDtype::FP32,
-                },
+                    WeightDtype::FP32,
+                )
+                .unwrap(),
             );
         }
     }
@@ -329,7 +328,7 @@ fn a_packed_expert_binds_its_deferred_activation_scales() {
         0.0372f32.to_le_bytes(),
     );
     let store = packed_expert_store("bind", &gpu, Some([&g, &u, &d]));
-    let e = bind_expert(&gpu, &store, 4, 0).unwrap();
+    let e = bind_expert(&gpu, &store, 4, 0, &whole_slab(0)).unwrap();
     assert_eq!(e.gate_proj.input_scale, Some(0.25));
     assert_eq!(e.up_proj.input_scale, Some(0.5));
     assert_eq!(e.down_proj.input_scale, Some(0.0372));
@@ -339,7 +338,14 @@ fn a_packed_expert_binds_its_deferred_activation_scales() {
     );
 
     let gpu = MockGpuBackend::new();
-    let none = bind_expert(&gpu, &packed_expert_store("none", &gpu, None), 4, 0).unwrap();
+    let none = bind_expert(
+        &gpu,
+        &packed_expert_store("none", &gpu, None),
+        4,
+        0,
+        &whole_slab(0),
+    )
+    .unwrap();
     assert_eq!(none.gate_proj.input_scale, None);
 }
 
@@ -358,7 +364,14 @@ fn a_malformed_activation_scale_is_refused() {
     ] {
         let gpu = MockGpuBackend::new();
         let store = packed_expert_store(&format!("bad{}", bad.len()), &gpu, Some([&ok, &ok, &bad]));
-        let err = bind_expert(&gpu, &store, 4, 0).unwrap_err().to_string();
+        let err = bind_expert(&gpu, &store, 4, 0, &whole_slab(0))
+            .unwrap_err()
+            .to_string();
         assert!(err.contains(want), "{err}");
     }
+}
+
+/// 2026-10-17: The whole-layout slab of a layer whose only expert is `id`.
+fn whole_slab(id: usize) -> super::expert_slab::ExpertSlab {
+    super::expert_slab::ExpertSlab::new(id..id + 1, super::expert_slab::CSF_SCALE_SLAB_LABEL)
 }

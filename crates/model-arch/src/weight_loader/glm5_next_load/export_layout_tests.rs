@@ -243,7 +243,7 @@ fn a_packed_expert_is_still_bound_zero_copy() {
     let ptrs = put_expert(&mut b, 0, true);
     let (gpu, store) = b.finish();
 
-    let e = bind_expert(&gpu, &store, LAYER, 0).unwrap();
+    let e = bind_expert(&gpu, &store, LAYER, 0, &whole_slab(0)).unwrap();
     assert_eq!(e.gate_proj.packed, ptrs[0]);
     assert_eq!(e.up_proj.packed, ptrs[1]);
     assert_eq!(e.down_proj.packed, ptrs[2]);
@@ -262,7 +262,7 @@ fn a_bf16_expert_is_quantised_into_a_fresh_smaller_buffer() {
     let ptrs = put_expert(&mut b, 0, false);
     let (gpu, store) = b.finish();
 
-    let e = bind_expert(&gpu, &store, LAYER, 0).unwrap();
+    let e = bind_expert(&gpu, &store, LAYER, 0, &whole_slab(0)).unwrap();
     assert_ne!(
         e.gate_proj.packed, ptrs[0],
         "a BF16 expert cannot be bound in place"
@@ -295,7 +295,9 @@ fn an_expert_at_an_unsupported_width_is_refused() {
         WeightDtype::FP8E4M3,
     );
     let (gpu, store) = b.finish();
-    let err = bind_expert(&gpu, &store, LAYER, 0).unwrap_err().to_string();
+    let err = bind_expert(&gpu, &store, LAYER, 0, &whole_slab(0))
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("expected packed U8 NVFP4 or BF16"), "{err}");
 }
 
@@ -327,4 +329,9 @@ fn only_a_bf16_expert_weight_is_prunable() {
         "model.layers.7.mlp.experts.3.down_proj.weight",
         WeightDtype::BF16
     ));
+}
+
+/// 2026-10-17: The whole-layout slab of a layer whose only expert is `id`.
+fn whole_slab(id: usize) -> super::expert_slab::ExpertSlab {
+    super::expert_slab::ExpertSlab::new(id..id + 1, super::expert_slab::CSF_SCALE_SLAB_LABEL)
 }

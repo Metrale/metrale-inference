@@ -391,3 +391,41 @@ fn the_layer_pass_is_an_identity_without_pairs_and_fails_on_a_bad_one() {
     t.remove("d.weight");
     assert_eq!(t, before, "the other tensors are untouched");
 }
+
+/// 2026-10-17: A tile scale must be finite and positive; a product that is finite in `f32` but
+/// rounds to infinity in BF16 is refused (the largest finite BF16 is the positive control); and a
+/// shape whose element count overflows is refused, not wrapped.
+#[test]
+fn tile_scales_bf16_overflow_and_shape_overflow_are_refused() {
+    let tile = |s: f32| {
+        widen_fp8_to_bf16(
+            "t",
+            &[0x38],
+            &[1, 1],
+            WeightDtype::FP32,
+            &[1, 1],
+            &f32_bytes(&[s]),
+        )
+    };
+    for s in [f32::INFINITY, f32::NEG_INFINITY, 0.0, -0.0, -1.0, f32::NAN] {
+        let e = tile(s).unwrap_err().to_string();
+        assert!(e.contains("finite and positive"), "{s}: {e}");
+    }
+    assert!(
+        tile(f32::from_bits(1)).is_ok(),
+        "smallest positive subnormal"
+    );
+    let bf16_max = f32::from_bits(0x7F7F_0000);
+    assert_eq!(bf16_bits(&tile(bf16_max).unwrap())[0], 0x7F7F);
+    let e = tile(f32::MAX).unwrap_err().to_string();
+    assert!(
+        e.contains("in BF16"),
+        "f32::MAX rounds to BF16 infinity: {e}"
+    );
+
+    let huge = [usize::MAX / 2 + 1, 2];
+    let e = widen_fp8_to_bf16("t", &[0x38; 4], &huge, WeightDtype::UInt8, &[1, 1], &[127])
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("E4M3 for"), "{e}");
+}

@@ -71,6 +71,13 @@ fn geometry_rejects_bad_extents() {
             "{rows}x{columns}"
         );
     }
+    // 2026-10-17: Elements that fit `isize` but whose code bits do not: refused at the
+    // NVFP4 width, accepted at the one-bit width (positive control for the bound).
+    let columns = isize::MAX as usize / 32 / 2;
+    let err = CsfGeometry::new(32, columns, NV).unwrap_err().to_string();
+    assert!(err.contains("overflows"), "{err}");
+    let g = CsfGeometry::new(32, columns, CsfOffsetWidth::Mxfp4).unwrap();
+    assert_eq!(g.codes_len(), 32 * columns / 8);
 }
 
 /// 2026-10-17: One 32x2 block, codes written by hand: byte `lr` holds

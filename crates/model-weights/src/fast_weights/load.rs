@@ -15,6 +15,9 @@ impl WeightLoader for FastSafetensorsLoader {
         let skip_fn = |name: &str| self.should_skip_tensor(name);
         let defer_fn =
             |name: &str, dtype: crate::weights::WeightDtype| self.is_deferred(name, dtype);
+        let charge_fn = |name: &str, dtype: crate::weights::WeightDtype, shape: &[usize]| {
+            self.deferred_charge(name, dtype, shape)
+        };
 
         // Resolve shard list (sharded index, single file, or unindexed shards).
         let (shard_files, tensor_to_shard): (Vec<PathBuf>, Option<HashMap<PathBuf, Vec<String>>>) =
@@ -35,7 +38,8 @@ impl WeightLoader for FastSafetensorsLoader {
         // to prevent.
         let preflight_skip = |name: &str| skip_fn(name) || crate::weights::is_ngram_table(name);
         {
-            let estimated = estimate_load_bytes(&shard_files, &preflight_skip, &defer_fn)?;
+            let estimated =
+                estimate_load_bytes(&shard_files, &preflight_skip, &defer_fn, &charge_fn)?;
             let has_fp8 = estimate_has_fp8(&shard_files, &preflight_skip, &defer_fn)?;
             let mult = self
                 .peak_memory_multiplier

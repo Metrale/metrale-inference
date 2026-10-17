@@ -13,6 +13,7 @@
 //! - A projection has either a native `weight_scale` or a complete csf plane, never both.
 //! - Component dtypes and shapes are checked before decoding; the decoder checks the rest.
 
+use super::expert_slab::{ExpertSlab, SLAB_ALIGN};
 use super::expert_tp::{meta, read_all};
 use super::*;
 use metrale_core::csf_blocks::{
@@ -85,20 +86,26 @@ pub(super) fn decode_expert_block_scales(
     .with_context(|| format!("{native}: decoding the csf_32x2_v1 plane"))
 }
 
+/// 2026-10-17: A whole-bound projection's block scales: a device pointer it already has (the
+/// store's native tensor, or the scales a quantising bind produced), or bytes decoded from a csf
+/// plane that [`place_block_scales`] still has to upload.
+pub(super) enum BlockScales {
+    Resident(DevicePtr),
+    Decoded(Vec<u8>),
+}
+
 /// 2026-10-17: For the whole-expert bind: the block scales of the resident packed projection
-/// `w` (`base` of `layer`): the store's own tensor when native, else a device copy of the
-/// decoded csf plane.
-pub(super) fn block_scale_ptr(
+/// `w` (`base` of `layer`): the store's own tensor when native, else the decoded csf plane.
+pub(super) fn block_scales(
     gpu: &dyn GpuBackend,
     store: &WeightStore,
     layer: usize,
     base: &str,
     w: &WeightTensor,
-) -> Result<DevicePtr> {
+) -> Result<BlockScales> {
     if !has_csf_plane(store, layer, base) {
-        return Ok(store
-            .get(&qualify(layer, &format!("{base}.weight_scale")))?
-            .ptr);
+        let native = store.get(&qualify(layer, &format!("{base}.weight_scale")))?;
+        return Ok(BlockScales::Resident(native.ptr));
     }
     let [n, half_k] = w.shape[..] else {
         bail!(
@@ -106,10 +113,65 @@ pub(super) fn block_scale_ptr(
             w.shape
         );
     };
-    let decoded = decode_expert_block_scales(gpu, store, layer, base, n, half_k * 2)?;
-    let p = gpu.alloc(decoded.len())?;
-    gpu.copy_h2d(&decoded, p)?;
-    Ok(p)
+    let k = half_k
+        .checked_mul(2)
+        .with_context(|| format!("{base}.weight: packed width {half_k} overflows"))?;
+    Ok(BlockScales::Decoded(decode_expert_block_scales(
+        gpu, store, layer, base, n, k,
+    )?))
+}
+
+/// 2026-10-17: The gate, up and down block-scale pointers of whole expert `id`. Decoded scales
+/// go into `id`'s slot of the layer's `slab`, one allocation per layer that the store's
+/// derived-weight ledger owns, never one per projection. An expert whose projections mix decoded
+/// and resident scales is refused: the checkpoint encodes an expert's scales one way.
+pub(super) fn place_block_scales(
+    gpu: &dyn GpuBackend,
+    store: &WeightStore,
+    slab: &ExpertSlab,
+    id: usize,
+    scales: [BlockScales; 3],
+) -> Result<[DevicePtr; 3]> {
+    use BlockScales::{Decoded, Resident};
+    match scales {
+        [Resident(g), Resident(u), Resident(d)] => Ok([g, u, d]),
+        [Decoded(g), Decoded(u), Decoded(d)] => slab.place(gpu, store, id, [&g, &u, &d]),
+        _ => bail!(
+            "expert {id}: some projections store csf scale planes and some native scales; an \
+             expert's scales are encoded one way"
+        ),
+    }
+}
+
+/// 2026-10-17: The loader's pre-flight charge under `config`: [`whole_layout_charge`] under the
+/// whole (default) layout. The `tp` layout states none: every routed-expert tensor is deferred
+/// there, and its slab was never charged.
+pub(super) fn defer_charge(
+    config: &ModelConfig,
+) -> Option<metrale_model_weights::weights::DeferCharge> {
+    if config.moe_expert_layout == metrale_config::MoeExpertLayout::Tp {
+        return None;
+    }
+    Some(std::sync::Arc::new(
+        |name: &str, _: WeightDtype, shape: &[usize]| whole_layout_charge(name, shape),
+    ))
+}
+
+/// 2026-10-17: The device bytes the whole-layout bind allocates for the deferred tensor `name`
+/// of `shape`, for the load's pre-flight: the decoded scales of a csf plane, charged on its codes
+/// component (two scale bytes per code byte, rounded up to the slab alignment as
+/// [`ExpertSlab`] places them). Every other component, and every other deferred tensor, is read
+/// on the host and charged nothing. An overflowing shape charges `usize::MAX`, which the
+/// pre-flight refuses.
+pub(super) fn whole_layout_charge(name: &str, shape: &[usize]) -> usize {
+    if !name.ends_with(&format!(".weight_scale{SUFFIX_CODES}")) {
+        return 0;
+    }
+    shape
+        .iter()
+        .try_fold(2usize, |acc, &d| acc.checked_mul(d))
+        .and_then(|b| b.checked_next_multiple_of(SLAB_ALIGN))
+        .unwrap_or(usize::MAX)
 }
 
 #[cfg(test)]

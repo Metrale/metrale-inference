@@ -37,8 +37,12 @@ use metrale_model_weights::weights::WeightStore;
 /// no padding there.
 pub(super) const SLAB_ALIGN: usize = 4096;
 
-/// 2026-10-14: The ledger label of every slab.
-const SLAB_LABEL: &str = "glm5_next routed experts, one slab per layer (tp layout)";
+/// 2026-10-14: The ledger label of a `tp`-layout slab: every routed-expert buffer of a layer.
+pub(super) const TP_SLAB_LABEL: &str = "glm5_next routed experts, one slab per layer (tp layout)";
+/// 2026-10-17: The ledger label of a whole-layout slab: the block scales decoded from csf planes
+/// (`expert_scales`), the only routed-expert bytes that layout uploads rather than binds.
+pub(super) const CSF_SCALE_SLAB_LABEL: &str =
+    "glm5_next decoded csf block scales, one slab per layer (whole layout)";
 
 /// 2026-10-14: Where each of one expert's buffers sits in its slot, and the slot's size.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,14 +90,17 @@ struct Placed {
 /// 2026-10-14: The slab of the experts `ids` of one MoE layer: one slot per id, in id order.
 pub(super) struct ExpertSlab {
     ids: Range<usize>,
+    label: &'static str,
     placed: RefCell<Option<Placed>>,
 }
 
 impl ExpertSlab {
-    /// 2026-10-14: An empty slab for the experts `ids`; nothing is allocated yet.
-    pub(super) fn new(ids: Range<usize>) -> Self {
+    /// 2026-10-14: An empty slab for the experts `ids`; nothing is allocated yet. 2026-10-17: Its
+    /// allocation is adopted under `label`.
+    pub(super) fn new(ids: Range<usize>, label: &'static str) -> Self {
         Self {
             ids,
+            label,
             placed: RefCell::new(None),
         }
     }
@@ -125,7 +132,7 @@ impl ExpertSlab {
                 .checked_mul(self.ids.len())
                 .ok_or_else(|| anyhow::anyhow!("expert slab: {} slots overflow", self.ids.len()))?;
             let base = gpu.alloc(total.max(1))?;
-            store.derived().adopt(SLAB_LABEL, base, total);
+            store.derived().adopt(self.label, base, total);
             *placed = Some(Placed {
                 base,
                 layout,

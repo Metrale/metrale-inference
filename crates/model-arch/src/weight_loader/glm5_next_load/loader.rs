@@ -58,6 +58,14 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
         ))
     }
 
+    /// 2026-10-17: The decoded csf scales of the whole layout (`expert_scales::defer_charge`).
+    fn defer_charge(
+        &self,
+        config: &ModelConfig,
+    ) -> Option<metrale_model_weights::weights::DeferCharge> {
+        expert_scales::defer_charge(config)
+    }
+
     /// 2026-10-09: The MLP plan slices every routed expert over TP under
     /// `--moe-expert-layout tp` (`glm5next_mlp::expert_tp`).
     fn slices_experts_over_tp(&self) -> bool {
@@ -434,39 +442,15 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
         Ok(None)
     }
 
-    /// 2026-09-25: Free the store tensors `is_reuploaded` matches, then those
-    /// `is_quantized_expert_weight` matches.
+    /// 2026-09-25: Free what the binders re-uploaded or quantised. 2026-10-17: See
+    /// `prune::prune_after_load`.
     fn prune_after_load(
         &self,
         store: &mut WeightStore,
         config: &ModelConfig,
         gpu: &dyn GpuBackend,
     ) -> Result<()> {
-        let n = config.num_hidden_layers;
-        let (count, bytes) = store.free_matching(gpu, |name| is_reuploaded(name, n))?;
-        tracing::info!(
-            "glm5_next: released {count} store tensors ({:.2} GB) already re-uploaded by the \
-             binders; routed experts and the MTP block kept",
-            bytes as f64 / 1e9,
-        );
-        let quantized: std::collections::BTreeSet<String> = store
-            .names()
-            .filter(|n| {
-                store
-                    .get(n)
-                    .is_ok_and(|t| is_quantized_expert_weight(n, t.dtype))
-            })
-            .map(str::to_string)
-            .collect();
-        if !quantized.is_empty() {
-            let (qcount, qbytes) = store.free_matching(gpu, |name| quantized.contains(name))?;
-            tracing::info!(
-                "glm5_next: released {qcount} full-width BF16 routed-expert tensors \
-                 ({:.2} GB) quantised to NVFP4 at bind time",
-                qbytes as f64 / 1e9,
-            );
-        }
-        Ok(())
+        prune::prune_after_load(store, config, gpu)
     }
 }
 

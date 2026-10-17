@@ -120,6 +120,7 @@ pub(crate) fn load_weight_store(
                 );
             }
             loader.defer = defer_hook(config);
+            loader.defer_charge = defer_charge(config);
             loader.prefetch_shards = args.fast_load_prefetch_shards
                 || std::env::var("METRALE_FAST_LOAD_PREFETCH_SHARDS")
                     .ok()
@@ -149,6 +150,7 @@ pub(crate) fn load_weight_store(
         loader.skip_activation_scales = skip_activation_scales(config);
         loader.skip_mtp = skip_mtp(config);
         loader.defer = defer_hook(config);
+        loader.defer_charge = defer_charge(config);
         loader
             .load(model_dir, gpu, oom_reserve_bytes)
             .context("Failed to load model weights")?
@@ -433,4 +435,13 @@ fn defer_hook(config: &ModelConfig) -> Option<metrale_model_weights::weights::De
         config.model_type,
     );
     Some(hook)
+}
+
+/// 2026-10-17: The device bytes the model's weight loader allocates for the tensors it defers
+/// (`defer_charge`), so the pre-flight counts them. `None` when the model type does not resolve
+/// or the loader states none, the trait default.
+fn defer_charge(config: &ModelConfig) -> Option<metrale_model_weights::weights::DeferCharge> {
+    metrale_model_engine::factory::loader_for_config(config)
+        .ok()?
+        .defer_charge(config)
 }

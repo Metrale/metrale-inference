@@ -88,12 +88,7 @@ fn shard(tag: &str, t: &[Tensor], gpu: &MockGpuBackend, deferred: impl Fn(&str) 
             let path = path.clone();
             later.push((
                 name.to_string(),
-                DeferredTensor {
-                    path,
-                    offset,
-                    shape,
-                    dtype,
-                },
+                DeferredTensor::from_shape(path, offset, shape, dtype).unwrap(),
             ));
             blob.extend_from_slice(bytes);
         } else {
