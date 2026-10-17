@@ -45,7 +45,7 @@ pub(crate) fn run() -> Result<()> {
     let k_post_v4: KernelHandle = gpu.kernel("hyper_connection", "hc_post")?;
     // 2026-09-25: Gate 0: `Glm5NextMhcKernels::resolve` takes every GLM mHC kernel from
     // `GLM5NEXT_MHC_MODULE` alone.
-    let glm = Glm5NextMhcKernels::resolve(&gpu)?;
+    let glm = Glm5NextMhcKernels::resolve(&gpu, metrale_gpu_examples::glm_levers()?.mhc)?;
     println!(
         "gate 0: GLM mHC resolves hc_pre + hc_post + hc_head from module '{}' alone",
         metrale_model_arch::glm5next_mhc::GLM5NEXT_MHC_MODULE

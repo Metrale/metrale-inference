@@ -13,29 +13,10 @@
 //!
 //! Owner: model-arch (GLM-5.3).
 //! Invariants:
-//! - Unset or `0`: one call over all rows, as before.
+//! - Unset or `0`: one call over all rows, as before (resolved once at startup,
+//!   `glm5next_mhc_levers`).
 
 use super::*;
-
-/// 2026-10-10: `METRALE_GLM_MHC_PRE_SLICE`, read once: `None` when unset or `0`, else the most
-/// rows one pre-mix launch takes. Unparsable is an error.
-pub(crate) fn mhc_pre_slice() -> Result<Option<usize>> {
-    static V: std::sync::OnceLock<Result<Option<usize>, String>> = std::sync::OnceLock::new();
-    V.get_or_init(|| parse_slice(std::env::var("METRALE_GLM_MHC_PRE_SLICE").ok().as_deref()))
-        .clone()
-        .map_err(anyhow::Error::msg)
-}
-
-/// 2026-10-10: [`mhc_pre_slice`]'s parse, pure.
-fn parse_slice(v: Option<&str>) -> Result<Option<usize>, String> {
-    match v {
-        None | Some("0") => Ok(None),
-        Some(s) => s
-            .parse::<usize>()
-            .map(Some)
-            .map_err(|_| format!("METRALE_GLM_MHC_PRE_SLICE={s:?}: expected a row count")),
-    }
-}
 
 /// 2026-10-10: The `(start, rows)` launches of `k` rows under the slice `slice`.
 fn slices(k: usize, slice: Option<usize>) -> Vec<(usize, usize)> {
@@ -46,7 +27,7 @@ fn slices(k: usize, slice: Option<usize>) -> Vec<(usize, usize)> {
 }
 
 impl Glm5NextLayer {
-    /// 2026-10-10: [`Self::mhc_pre_norm_one`] per slice of `mhc_pre_slice()` rows: row `r` of the
+    /// 2026-10-10: [`Self::mhc_pre_norm_one`] per slice of `MhcLevers::pre_slice` rows: row `r` of the
     /// streams, `y`, `post`, `comb` and `normed` is row `r - start` of its slice's call. The
     /// caller's `profile::MHC` span ends with the last slice.
     #[allow(clippy::too_many_arguments)]
@@ -65,7 +46,7 @@ impl Glm5NextLayer {
         t_mhc: Option<std::time::Instant>,
         stream: u64,
     ) -> Result<()> {
-        let parts = slices(k, mhc_pre_slice()?);
+        let parts = slices(k, self.levers.mhc.pre_slice);
         let (h, hc) = (self.hidden, mhc.hc_mult);
         let last = parts.len() - 1;
         for (i, &(r0, n)) in parts.iter().enumerate() {
@@ -103,9 +84,5 @@ mod tests {
             slices(600, Some(256)),
             vec![(0, 256), (256, 256), (512, 88)]
         );
-        assert_eq!(parse_slice(None), Ok(None));
-        assert_eq!(parse_slice(Some("0")), Ok(None));
-        assert_eq!(parse_slice(Some("256")), Ok(Some(256)));
-        assert!(parse_slice(Some("x")).is_err());
     }
 }

@@ -51,6 +51,8 @@ fn from_values(mut value: impl FnMut(&str) -> Option<String>) -> GlmLevers {
         mlp_ws_shared,
         dsa_select_rows,
         dsa_alloc_per_step: opt_in("METRALE_GLM_DSA_ALLOC_PER_STEP"),
+        // 2026-10-17: Probed in `glm5next_mhc_levers_tests.rs`; at its defaults here.
+        mhc: crate::glm5next_mhc_levers::MhcLevers::declared(),
     }
 }
 

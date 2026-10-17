@@ -16,9 +16,9 @@
 //!
 //! Owner: model-arch (GLM-5.3).
 //! Invariants:
-//! - Off unless the lever is `1`; then it needs `METRALE_GLM_SP_MHC=1` (the only body that runs
-//!   the pair), or the load fails (`glm5next_sp_mhc::reserve` reads the lever), and the kernel
-//!   in the build, or the first SP-mHC forward fails.
+//! - Off unless `MhcLevers::post_pre_fused`; on, it needs `METRALE_GLM_SP_MHC=1` (the only body
+//!   that runs the pair), or the startup resolve fails (`glm5next_mhc_levers`), and the kernel in
+//!   the build, or the first SP-mHC forward fails.
 //! - Taken per piece from `HC_PRE_NORM_ROWS_MIN_TOKENS` rows, where the unfused pre-norm runs the
 //!   wide grids; narrower pieces keep the two launches.
 //! - One launch per piece whatever `METRALE_GLM_MHC_PRE_SLICE` says. Slicing keeps the bytes,
@@ -34,51 +34,6 @@ use metrale_gpu_runtime::kernel_args::KernelLaunch;
 use crate::glm5next_mhc::{Glm5NextMhcKernels, Glm5NextMhcSiteWeights};
 use crate::glm5next_mhc_fused::{HC_PRE_NORM_ROWS_MIN_TOKENS, hc_pre_norm_refusal};
 use crate::glm5next_mhc_tok::HC_PRE_NORM_TOK;
-
-/// 2026-10-14: `METRALE_GLM_MHC_POST_PRE_FUSED`, read once: unset or `0` off, `1` on (which needs
-/// `METRALE_GLM_SP_MHC=1`); another value is an error.
-pub fn enabled() -> Result<bool> {
-    static V: std::sync::OnceLock<Result<bool, String>> = std::sync::OnceLock::new();
-    V.get_or_init(|| {
-        let sp_mhc = crate::glm5next_sp_mhc::enabled().map_err(|e| e.to_string())?;
-        let on = parse(
-            std::env::var("METRALE_GLM_MHC_POST_PRE_FUSED")
-                .ok()
-                .as_deref(),
-            sp_mhc,
-        )?;
-        if on {
-            tracing::warn!(
-                "METRALE_GLM_MHC_POST_PRE_FUSED=1: SP-mHC runs the attention post-mix and the FFN \
-                 pre-norm of each piece as one launch (glm5next_hc_post_pre_norm_tok4, same bits)"
-            );
-        }
-        Ok(on)
-    })
-    .clone()
-    .map_err(anyhow::Error::msg)
-}
-
-/// 2026-10-14: [`enabled`]'s parse, pure: `sp_mhc` is `METRALE_GLM_SP_MHC`'s value.
-pub(crate) fn parse(v: Option<&str>, sp_mhc: bool) -> Result<bool, String> {
-    let on = match v {
-        None | Some("0") => false,
-        Some("1") => true,
-        Some(other) => {
-            return Err(format!(
-                "METRALE_GLM_MHC_POST_PRE_FUSED={other:?}: expected 0 or 1"
-            ));
-        }
-    };
-    if on && !sp_mhc {
-        return Err(
-            "METRALE_GLM_MHC_POST_PRE_FUSED=1 needs METRALE_GLM_SP_MHC=1 (the fused pair is the \
-             SP-mHC body's)"
-                .into(),
-        );
-    }
-    Ok(on)
-}
 
 /// 2026-10-14: The fused kernel for a `num_tokens`-row piece: `None` when the lever is off or the
 /// piece is narrower than `HC_PRE_NORM_ROWS_MIN_TOKENS` (the caller runs the pair); an error

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-10-15: Unit tests of `glm5next_mhc_tile`'s selection, lever parsing and launch shape.
+//! 2026-10-15: Unit tests of `glm5next_mhc_tile`'s selection and launch shape (2026-10-17: the
+//! levers are in `glm5next_mhc_levers`).
 
 use super::*;
 use metrale_gpu_runtime::gpu::mock::{MockArg, MockGpuBackend};
@@ -17,20 +18,6 @@ fn site() -> Glm5NextMhcSiteWeights {
     }
 }
 
-/// 2026-10-15: Only `1` turns the lever on; a typo must not silently keep it off.
-#[test]
-fn the_lever_takes_one_or_zero_and_refuses_anything_else() {
-    assert!(!parse_pre_tile(None).unwrap());
-    assert!(!parse_pre_tile(Some("0")).unwrap());
-    assert!(parse_pre_tile(Some("1")).unwrap());
-    for bad in ["", "true", "on", "2", " 1"] {
-        assert!(
-            parse_pre_tile(Some(bad)).is_err(),
-            "{bad:?} must be refused"
-        );
-    }
-}
-
 /// 2026-10-15: `GlmHctLayout<1>` at four stages: the ring (4 x (24 x 256 x 2 + 4 x 256 x 4))
 /// outgrows the trees (25 x 256 x 4) and the tail (8192 x 2), then 4 x 24 mixes, 4 pre weights
 /// and 33 warp sums, all FP32. The kernel traps on less.
@@ -44,7 +31,8 @@ fn the_shared_memory_is_the_kernel_layouts_sum() {
 #[test]
 fn the_tile_kernel_needs_every_condition() {
     let gpu = MockGpuBackend::new();
-    let k = Glm5NextMhcKernels::resolve(&gpu).expect("mock resolves every kernel");
+    let k = Glm5NextMhcKernels::resolve(&gpu, crate::glm5next_mhc_levers::MhcLevers::declared())
+        .expect("mock resolves every kernel");
     let (s, w) = (DevicePtr(0x1000), DevicePtr(0x2000));
     let min = HC_PRE_NORM_ROWS_MIN_TOKENS as u32;
     let pick = |k: &Glm5NextMhcKernels, t, h, hc, s, w, on| {
@@ -99,7 +87,8 @@ fn the_tile_kernel_needs_every_condition() {
 #[test]
 fn the_launch_passes_tok4s_arguments_on_the_tile_grid() {
     let gpu = MockGpuBackend::new();
-    let k = Glm5NextMhcKernels::resolve(&gpu).expect("mock resolves every kernel");
+    let k = Glm5NextMhcKernels::resolve(&gpu, crate::glm5next_mhc_levers::MhcLevers::declared())
+        .expect("mock resolves every kernel");
     let outs = [
         DevicePtr(0x3000),
         DevicePtr(0x5000),

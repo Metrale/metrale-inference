@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-10-14: CPU tests of `glm5next_mhc_post_pre_tok`: the lever's parse, the per-piece kernel
+//! 2026-10-14: CPU tests of `glm5next_mhc_post_pre_tok`: the per-piece kernel
 //! choice and the launch's argument list against the mock backend. The kernel's bytes are
 //! checked on a GPU by `examples/glm5next_hc_post_pre_tok_bench.rs`.
 
@@ -11,7 +11,8 @@ use metrale_gpu_runtime::gpu::mock::{MockArg, MockGpuBackend};
 const FUSED: u64 = 0x99;
 
 fn kernels(gpu: &MockGpuBackend) -> Glm5NextMhcKernels {
-    let mut k = Glm5NextMhcKernels::resolve(gpu).expect("mock resolves every kernel");
+    let mut k = Glm5NextMhcKernels::resolve(gpu, crate::glm5next_mhc_levers::MhcLevers::declared())
+        .expect("mock resolves every kernel");
     k.hc_post_pre_norm_tok = KernelHandle(FUSED);
     k
 }
@@ -52,20 +53,6 @@ fn args<'a>(site: &'a Glm5NextMhcSiteWeights, peers: &'a PeerPartials, t: u32) -
         num_tokens: t,
         dims: [4096, 4, 20],
         eps: [1e-6, 1e-6, 1e-5],
-    }
-}
-
-/// 2026-10-14: Unset or `0` is off and `1` on, but only beside `METRALE_GLM_SP_MHC=1`; any other
-/// value is refused, never read as off.
-#[test]
-fn the_lever_is_zero_or_one_and_needs_sp_mhc() {
-    assert_eq!(parse(None, false), Ok(false));
-    assert_eq!(parse(Some("0"), false), Ok(false));
-    assert_eq!(parse(Some("1"), true), Ok(true));
-    let no_sp = parse(Some("1"), false).unwrap_err();
-    assert!(no_sp.contains("METRALE_GLM_SP_MHC=1"), "{no_sp}");
-    for bad in ["2", "on", "true", ""] {
-        assert!(parse(Some(bad), true).is_err(), "{bad:?} must be refused");
     }
 }
 

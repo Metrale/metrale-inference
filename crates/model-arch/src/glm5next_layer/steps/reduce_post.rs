@@ -91,7 +91,7 @@ impl Glm5NextLayer {
         match partials {
             Some(p) => glm_hc_post_rank_sum(
                 gpu,
-                mhc.kernels.hc_post_rank_sum,
+                &mhc.kernels,
                 x,
                 &p,
                 residual,

@@ -130,6 +130,8 @@ pub struct GlmLevers {
     /// 2026-09-25: `METRALE_GLM_DSA_ALLOC_PER_STEP`: a DSA layer allocates its `bt`/`sl` per call
     /// instead of using the workspace's (`Glm5NextDsaLayer::persist_bt` is its negation).
     pub dsa_alloc_per_step: bool,
+    /// 2026-10-17: The mHC and SP-mHC levers (`crate::glm5next_mhc_levers`).
+    pub mhc: crate::glm5next_mhc_levers::MhcLevers,
 }
 
 impl GlmLevers {
@@ -162,6 +164,7 @@ impl GlmLevers {
             mlp_ws_shared: m.glm_mlp_ws_shared,
             dsa_select_rows: s.runtime.dsa_select_rows,
             dsa_alloc_per_step: sc.glm_dsa_alloc_per_step,
+            mhc: crate::glm5next_mhc_levers::MhcLevers::from_settings(s)?,
         })
     }
 
@@ -226,6 +229,7 @@ impl GlmLevers {
                  recurrent walk."
             );
         }
+        self.mhc.announce();
     }
 }
 

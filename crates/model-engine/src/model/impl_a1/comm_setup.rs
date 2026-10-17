@@ -24,17 +24,14 @@ pub(super) fn assert_rank_levers_agree(
         metrale_model_layers::speculative::k2_fused_requested(),
         metrale_model_layers::ep_wire::EpWire::get(),
     )?;
+    let glm = metrale_model_arch::glm5next_layer::GlmLevers::from_settings(settings)?;
     crate::rank_agree::assert_ranks_agree(
         gpu,
         comm.as_ref(),
         &[
             // 2026-09-25: Splits a prefill chunk into sub-chunks, and each
             // sub-chunk issues its own collectives.
-            (
-                "METRALE_GLM_PREFILL_ROWS",
-                metrale_model_arch::glm5next_layer::GlmLevers::from_settings(settings)?.prefill_rows
-                    as u64,
-            ),
+            ("METRALE_GLM_PREFILL_ROWS", glm.prefill_rows as u64),
             // 2026-09-25: Performance only (the MLP reduces once per site
             // whichever arm runs); checked because the check is free.
             (
@@ -85,22 +82,13 @@ pub(super) fn assert_rank_levers_agree(
             ),
             // 2026-10-12: SP-mHC changes every prefill sub-chunk's collectives from one
             // all-reduce to a reduce-scatter and all-gathers, so every rank must take it alike.
-            (
-                "METRALE_GLM_SP_MHC",
-                u64::from(metrale_model_arch::glm5next_sp_mhc::enabled()?),
-            ),
+            ("METRALE_GLM_SP_MHC", u64::from(glm.mhc.sp_mhc)),
             // 2026-10-14: SP overlap cuts every SP-mHC exchange into row pieces on a comm
             // stream, so every rank must enqueue the same pieces.
-            (
-                "METRALE_GLM_SP_OVERLAP",
-                u64::from(metrale_model_arch::glm5next_sp_overlap::enabled()?),
-            ),
+            ("METRALE_GLM_SP_OVERLAP", u64::from(glm.mhc.sp_overlap)),
             // 2026-10-14: The SP pipeline reorders a layer's SP-mHC exchanges across its
             // sub-chunks, so every rank must enqueue the same program.
-            (
-                "METRALE_GLM_SP_PIPELINE",
-                u64::from(metrale_model_arch::glm5next_sp_pipeline::enabled()?),
-            ),
+            ("METRALE_GLM_SP_PIPELINE", u64::from(glm.mhc.sp_pipeline)),
             // 2026-10-10: The resolved context window determines DFlash context-broadcast
             // chunking, so every rank must use the same value.
             (

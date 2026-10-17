@@ -72,6 +72,7 @@ fn wide_token_counts_take_the_grouped_mix_kernel() {
         hc_post_pre_norm: k(12),
         hc_post_pre_norm_tok: k(16),
         hc_head: k(8),
+        levers: crate::glm5next_mhc_levers::MhcLevers::declared(),
     };
     let site = |bf16| Glm5NextMhcSiteWeights {
         hc_fn: DevicePtr(0x100),

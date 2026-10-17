@@ -234,7 +234,7 @@ fn main() -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("glm-5.3-flash kernel target not built"))?;
     let gpu = MetraleCudaBackend::new(0, &glm.modules)?;
     let g: &dyn GpuBackend = &gpu;
-    let k = Glm5NextMhcKernels::resolve(g)?;
+    let k = Glm5NextMhcKernels::resolve(g, metrale_gpu_examples::glm_levers()?.mhc)?;
     let sum = g.kernel("bf16_add", "bf16_add_rank_sum")?;
     let mut rng = Lcg(0x6c6d_f01d_0001);
     println!("glm5next hc post fold gate: rank sum + hc_post + hc_pre_norm is the ORACLE");

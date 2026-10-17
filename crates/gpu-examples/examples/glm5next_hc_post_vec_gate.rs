@@ -167,17 +167,7 @@ fn launch(
     let dims = [t as u32, hid as u32, hc as u32];
     match arm {
         None => glm_hc_post_rank_sum(
-            g,
-            k.hc_post_rank_sum,
-            d.own,
-            &p,
-            d.streams,
-            d.post,
-            d.comb,
-            d.streams,
-            dims[0],
-            dims[1],
-            dims[2],
+            g, k, d.own, &p, d.streams, d.post, d.comb, d.streams, dims[0], dims[1], dims[2],
             stream,
         ),
         Some(write_x) => vec8::launch(
@@ -258,7 +248,7 @@ fn main() -> Result<()> {
     let timing = !std::env::args().any(|a| a == "--no-timing");
     let gpu = MetraleCudaBackend::new(0, &metrale_kernels::ptx_modules())?;
     let g: &dyn GpuBackend = &gpu;
-    let k = Glm5NextMhcKernels::resolve(g)?;
+    let k = Glm5NextMhcKernels::resolve(g, metrale_gpu_examples::glm_levers()?.mhc)?;
     ensure!(
         k.hc_post_rank_sum.0 != 0 && k.hc_post_rank_sum_vec8.0 != 0,
         "glm5next_hc_post_rank_sum or its vec8 twin is missing from this build"

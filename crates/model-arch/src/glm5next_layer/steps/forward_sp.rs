@@ -38,7 +38,7 @@ impl Glm5NextLayer {
         }
         let world = ctx.comm.map_or(1, |c| c.world_size());
         Ok(crate::glm5next_sp_mhc::applies(
-            crate::glm5next_sp_mhc::enabled()?,
+            self.levers.mhc.sp_mhc,
             world,
             k,
         ))
@@ -85,7 +85,7 @@ impl Glm5NextLayer {
         let shards = sp::shards(k, world);
         // 2026-10-14: `METRALE_GLM_SP_OVERLAP=1`: the shards in row pieces whose exchanges
         // overlap the mHC launches (`glm5next_sp_overlap`); one piece is the serial body.
-        let m = ov::piece_count(ov::enabled()?, k, world);
+        let m = ov::piece_count(self.levers.mhc.sp_overlap, k, world);
         let pieces = ov::pieces(&shards, m);
         let overlap = if m >= 2 {
             Some(ov::streams_get()?)
@@ -94,7 +94,7 @@ impl Glm5NextLayer {
         };
         // 2026-10-14: `METRALE_GLM_MHC_POST_PRE_FUSED=1`: section 2's post-mix and FFN pre-norm
         // as one launch per wide piece (`glm5next_mhc_post_pre_tok`, same bytes).
-        let post_pre = crate::glm5next_mhc_post_pre_tok::enabled()?;
+        let post_pre = self.levers.mhc.post_pre_fused;
 
         // 2026-10-12: Full-chunk views at the sub-chunk's slots ([`SpRows`]).
         let normed = ctx.buffers.norm_output();

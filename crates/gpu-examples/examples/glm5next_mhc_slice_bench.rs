@@ -233,7 +233,7 @@ fn median_us(gpu: &dyn GpuBackend, f: impl Fn() -> Result<()>) -> Result<f64> {
 
 fn main() -> Result<()> {
     let gpu = MetraleCudaBackend::new(0, &metrale_kernels::ptx_modules())?;
-    let k = Glm5NextMhcKernels::resolve(&gpu)?;
+    let k = Glm5NextMhcKernels::resolve(&gpu, metrale_gpu_examples::glm_levers()?.mhc)?;
     let mut rng = Rng(0x3c6e_f372_fe94_f82b);
     let tmax = 4096usize;
     let hc_fn: Vec<f32> = (0..MIX * HC * H).map(|_| rng.unit() * 0.05).collect();

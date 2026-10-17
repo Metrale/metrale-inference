@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-10-14: SP overlap: the lever's parse, the pieces, the piece exchanges against the
+//! 2026-10-14: SP overlap: the pieces, the piece exchanges against the
 //! whole-shard ones on simulated ranks, the schedule's cross-stream ordering under a
 //! happens-before model, and the enqueued section on a recording communicator.
 //!
@@ -15,19 +15,6 @@ use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
 use super::*;
 use crate::glm5next_sp_mhc::tests::Recorder;
 use crate::glm5next_sp_mhc::{all_gather_plan, reduce_scatter_plan, shards};
-
-/// 2026-10-14: 0/unset off, 1 on only with SP-mHC on, anything else refused.
-#[test]
-fn parses_and_needs_sp_mhc() {
-    assert_eq!(parse(None, false), Ok(false));
-    assert_eq!(parse(Some("0"), true), Ok(false));
-    assert_eq!(parse(Some("1"), true), Ok(true));
-    let e = parse(Some("1"), false).unwrap_err();
-    assert!(e.contains("METRALE_GLM_SP_MHC=1"), "{e}");
-    for bad in ["", "on", "2", "4"] {
-        assert!(parse(Some(bad), true).is_err(), "{bad:?}");
-    }
-}
 
 /// 2026-10-14: Off is one piece; on, the narrowest shard over `MIN_PIECE_ROWS`, clamped to
 /// `1..=MAX_PIECES`, so a pipelined piece never has fewer than `MIN_PIECE_ROWS` rows.

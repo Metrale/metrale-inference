@@ -120,31 +120,11 @@ pub fn glm_hc_pre_norm(
         norm_eps,
         hc_eps,
         rms_eps,
-        pre_prefetch(),
-        pre_splitk(),
-        crate::glm5next_mhc_tok::pre_tok(),
+        kernels.levers.pre_prefetch,
+        kernels.levers.pre_splitk,
+        kernels.levers.pre_tok,
         stream,
     )
-}
-
-/// 2026-10-11: `METRALE_GLM_MHC_PRE_PREFETCH=1`: the per-row pre-norm takes
-/// `glm5next_hc_pre_norm_pf64` where the shape allows (`pre_norm_kernel`): each thread issues all
-/// 64 of its stream loads and its 64 `hc_fn` loads before accumulating them in the same order,
-/// instead of eight at a time, so the 24-block launch at one token stops waiting on load
-/// latency. Same bits (`glm5next_hc_fused_gate` checks it). Off until measured. Read once.
-pub fn pre_prefetch() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("METRALE_GLM_MHC_PRE_PREFETCH").as_deref() == Ok("1"))
-}
-
-/// 2026-10-11: `METRALE_GLM_MHC_PRE_SPLITK=1`: below `HC_PRE_NORM_ROWS_MIN_TOKENS` the pre-norm
-/// takes `glm5next_hc_pre_norm_sk64` where the shape allows and the site's `mix` scratch holds
-/// the slice partials (`pre_norm_kernel`): the mix runs on 64 blocks per token (k split) instead
-/// of 24 (one per mix row). Reorders the mix sums, so it is accuracy class RO. Off until
-/// measured. Read once.
-pub fn pre_splitk() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("METRALE_GLM_MHC_PRE_SPLITK").as_deref() == Ok("1"))
 }
 
 /// 2026-10-11: k slices per token of `glm5next_hc_pre_norm_sk64` (`GLM_HCF_SK_SLICES`) and the
@@ -314,10 +294,11 @@ pub fn glm_hc_pre_norm_with(
 /// `block_out` and the post-mix to `out`, both byte-identical to `bf16_add_rank_sum` followed by
 /// `glm_hc_post`. Errors when the kernel is not loaded or the rows exceed a peer slot.
 /// 2026-10-14: The grid is `METRALE_GLM_MHC_POST_SUM_CTAS`'s (`glm5next_hc_post_sum_grid`).
+/// 2026-10-17: Launches `kernels.hc_post_rank_sum` at `kernels.levers.post_sum_ctas`.
 #[allow(clippy::too_many_arguments)]
 pub fn glm_hc_post_rank_sum(
     gpu: &dyn GpuBackend,
-    kernel: KernelHandle,
+    kernels: &Glm5NextMhcKernels,
     block_out: DevicePtr,
     partials: &metrale_comm::PeerPartials,
     residual: DevicePtr,
@@ -329,15 +310,14 @@ pub fn glm_hc_post_rank_sum(
     hc_mult: u32,
     stream: u64,
 ) -> Result<()> {
-    let ctas = crate::glm5next_hc_post_sum_grid::ctas()?;
     glm_hc_post_rank_sum_with(
         gpu,
-        kernel,
+        kernels.hc_post_rank_sum,
         block_out,
         partials,
         [residual, post, comb, out],
         [num_tokens, hidden_size, hc_mult],
-        ctas,
+        kernels.levers.post_sum_ctas,
         stream,
     )
 }
@@ -412,6 +392,7 @@ mod tests {
             hc_post_pre_norm: k(12),
             hc_post_pre_norm_tok: k(if fused { 16 } else { 0 }),
             hc_head: k(8),
+            levers: crate::glm5next_mhc_levers::MhcLevers::declared(),
         }
     }
 
@@ -567,7 +548,7 @@ mod tests {
         );
         glm_hc_post_rank_sum(
             &gpu,
-            KernelHandle(11),
+            &kernels(true),
             x,
             &p,
             res,
@@ -607,7 +588,10 @@ mod tests {
         assert!(
             glm_hc_post_rank_sum(
                 &gpu,
-                KernelHandle(0),
+                &Glm5NextMhcKernels {
+                    hc_post_rank_sum: KernelHandle(0),
+                    ..kernels(true)
+                },
                 x,
                 &p,
                 res,
@@ -624,7 +608,7 @@ mod tests {
         assert!(
             glm_hc_post_rank_sum(
                 &gpu,
-                KernelHandle(11),
+                &kernels(true),
                 x,
                 &p,
                 res,

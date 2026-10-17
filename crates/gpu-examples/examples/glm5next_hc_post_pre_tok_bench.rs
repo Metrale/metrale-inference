@@ -186,7 +186,7 @@ impl Bench<'_> {
         let (tt, ht, hct) = (t as u32, H as u32, HC as u32);
         glm_hc_post_rank_sum(
             self.g,
-            self.k.hc_post_rank_sum,
+            &self.k,
             a.own,
             &self.peers,
             a.streams,
@@ -273,7 +273,7 @@ fn compulsory_bytes(t: usize) -> f64 {
 fn main() -> Result<()> {
     let gpu = MetraleCudaBackend::new(0, &metrale_kernels::ptx_modules())?;
     let g: &dyn GpuBackend = &gpu;
-    let k = Glm5NextMhcKernels::resolve(g)?;
+    let k = Glm5NextMhcKernels::resolve(g, metrale_gpu_examples::glm_levers()?.mhc)?;
     ensure!(
         k.hc_post_rank_sum.0 != 0,
         "glm5next_hc_post_rank_sum is not in this build"

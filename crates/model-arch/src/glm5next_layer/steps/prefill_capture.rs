@@ -175,7 +175,7 @@ impl Glm5NextLayer {
         // pieces (`steps/forward_pieces.rs`); not beside the SP pipeline, which plans its own
         // sub-chunks, and neither under the merged tail (one `forward_k` per merged sub-chunk).
         let piece = crate::glm5next_prefill_piece::piece_rows()?;
-        let pipeline = crate::glm5next_sp_pipeline::enabled()?;
+        let pipeline = self.levers.mhc.sp_pipeline;
         if piece.is_some() && pipeline {
             bail!(
                 "GLM layer {}: {} and METRALE_GLM_SP_PIPELINE=1 cannot both be set",

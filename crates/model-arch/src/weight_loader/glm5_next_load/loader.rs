@@ -129,7 +129,7 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
         )?;
         let dsa_layer_kernels = Glm5NextDsaLayerKernels::resolve(gpu)?;
         let mlp_kernels = Glm5NextMlpKernels::resolve(gpu, levers)?;
-        let mhc_kernels_probe = Glm5NextMhcKernels::resolve(gpu)?;
+        let mhc_kernels_probe = Glm5NextMhcKernels::resolve(gpu, levers.mhc)?;
         let rms_norm_k = gpu.kernel("rms_norm_vanilla", "rms_norm_vanilla")?;
         // 2026-09-25: Only a layer without mHC (the MTP layer) uses `add_k`, and it
         // fails there if the kernel is missing; `try_kernel` lets a target without
@@ -368,6 +368,7 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                 levers.prefill_rows,
                 config.hidden_size,
                 mlp_cfg.tp_world_size,
+                &levers.mhc,
             )?;
             if l2.is_some() {
                 anyhow::ensure!(idx == l2_ranges.len(), "layer {idx} out of order");

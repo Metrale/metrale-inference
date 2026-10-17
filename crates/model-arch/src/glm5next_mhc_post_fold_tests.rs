@@ -16,7 +16,8 @@ use super::*;
 const FOLD: u64 = 0x77;
 
 fn kernels(gpu: &MockGpuBackend) -> Glm5NextMhcKernels {
-    let mut k = Glm5NextMhcKernels::resolve(gpu).expect("mock resolves every kernel");
+    let mut k = Glm5NextMhcKernels::resolve(gpu, crate::glm5next_mhc_levers::MhcLevers::declared())
+        .expect("mock resolves every kernel");
     k.hc_post_pre_norm = KernelHandle(FOLD);
     k
 }

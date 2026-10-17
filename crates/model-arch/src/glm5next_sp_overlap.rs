@@ -44,36 +44,6 @@ pub const MIN_PIECE_ROWS: usize = 256;
 /// of a whole shard's, and a section enqueues at most 8 grouped exchanges.
 pub const MAX_PIECES: usize = 4;
 
-/// 2026-10-14: `METRALE_GLM_SP_OVERLAP`, read once: unset or `0` off, `1` on (which needs
-/// `METRALE_GLM_SP_MHC=1`); another value is an error.
-pub fn enabled() -> Result<bool> {
-    static V: OnceLock<Result<bool, String>> = OnceLock::new();
-    V.get_or_init(|| {
-        let sp_mhc = sp::enabled().map_err(|e| e.to_string())?;
-        parse(
-            std::env::var("METRALE_GLM_SP_OVERLAP").ok().as_deref(),
-            sp_mhc,
-        )
-    })
-    .clone()
-    .map_err(anyhow::Error::msg)
-}
-
-/// 2026-10-14: [`enabled`]'s parse, pure: `sp_mhc` is `METRALE_GLM_SP_MHC`'s value.
-pub(crate) fn parse(v: Option<&str>, sp_mhc: bool) -> Result<bool, String> {
-    let on = match v {
-        None | Some("0") => false,
-        Some("1") => true,
-        Some(other) => {
-            return Err(format!("METRALE_GLM_SP_OVERLAP={other:?}: expected 0 or 1"));
-        }
-    };
-    if on && !sp_mhc {
-        return Err("METRALE_GLM_SP_OVERLAP=1 needs METRALE_GLM_SP_MHC=1".into());
-    }
-    Ok(on)
-}
-
 /// 2026-10-14: The row pieces of a `k`-row sub-chunk at `world` ranks: 1 when off, else the
 /// narrowest shard over [`MIN_PIECE_ROWS`], between 1 and [`MAX_PIECES`]. Every rank derives
 /// it from `k` and `world` alone.
@@ -230,8 +200,8 @@ fn streams() -> &'static Mutex<Option<OverlapStreams>> {
 /// 2026-10-14: Create the comm stream and events once when this lever or
 /// `METRALE_GLM_SP_PIPELINE` is on (the pipeline's exchanges run on the same stream); a no-op
 /// otherwise. Called from `glm5next_sp_mhc::reserve` at load.
-pub fn reserve(gpu: &dyn GpuBackend) -> Result<()> {
-    if !(enabled()? || crate::glm5next_sp_pipeline::enabled()?) {
+pub fn reserve(gpu: &dyn GpuBackend, levers: &crate::glm5next_mhc_levers::MhcLevers) -> Result<()> {
+    if !(levers.sp_overlap || levers.sp_pipeline) {
         return Ok(());
     }
     let mut g = streams().lock().unwrap_or_else(|e| e.into_inner());

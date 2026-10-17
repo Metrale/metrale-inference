@@ -12,7 +12,7 @@
 //!
 //! Owner: model-arch (GLM-5.3).
 //! Invariants:
-//! - Off unless the lever is `1`; any other value but `0` or unset fails the first post-mix.
+//! - Off unless `MhcLevers::post_vec` (resolved once at startup, `glm5next_mhc_levers`).
 //! - On, a build without the kernel fails the first post-mix (no silent fallback).
 //! - `write_x = false` leaves `block_out` holding this rank's partial. The SP prefill body reads
 //!   the summed row after the post-mix only through a dump tap, so its callers pass
@@ -47,32 +47,6 @@ pub const MAX_HC: u32 = 4;
 /// `Glm5NextMhcKernels::resolve`.
 pub fn resolve(gpu: &dyn GpuBackend) -> KernelHandle {
     metrale_model_layers::layers::try_kernel(gpu, GLM5NEXT_HC_POST_SUM_MODULE, KERNEL)
-}
-
-/// 2026-10-15: The lever, read once: unset or `0` off, `1` on; another value is an error.
-pub fn enabled() -> Result<bool> {
-    static V: std::sync::OnceLock<Result<bool, String>> = std::sync::OnceLock::new();
-    V.get_or_init(|| {
-        let on = parse(std::env::var(LEVER).ok().as_deref())?;
-        if on {
-            tracing::info!(
-                "{LEVER}=1: the SP-mHC post-mix runs {KERNEL} (eight columns per thread, \
-                 {BLOCK}-thread blocks, summed row written back only for a dump tap; same bytes)"
-            );
-        }
-        Ok(on)
-    })
-    .clone()
-    .map_err(anyhow::Error::msg)
-}
-
-/// 2026-10-15: [`enabled`]'s parse, pure.
-pub(crate) fn parse(v: Option<&str>) -> Result<bool, String> {
-    match v {
-        None | Some("0") => Ok(false),
-        Some("1") => Ok(true),
-        Some(s) => Err(format!("{LEVER}={s:?}: expected 0 (off) or 1 (on)")),
-    }
 }
 
 /// 2026-10-15: The kernel to launch: `None` off, the vectorized kernel on; on without it in the
@@ -112,7 +86,7 @@ pub fn post_rank_sum(
     write_x: bool,
     stream: u64,
 ) -> Result<()> {
-    match kernel_for(kernels, enabled()?)? {
+    match kernel_for(kernels, kernels.levers.post_vec)? {
         Some(kernel) => launch(
             gpu, kernel, block_out, partials, streams, dims, write_x, stream,
         ),
@@ -121,7 +95,7 @@ pub fn post_rank_sum(
             let [num_tokens, hidden_size, hc_mult] = dims;
             glm_hc_post_rank_sum(
                 gpu,
-                kernels.hc_post_rank_sum,
+                kernels,
                 block_out,
                 partials,
                 residual,

@@ -258,8 +258,11 @@ fn main() -> Result<()> {
         .context("Glm5NextDsaLayerKernels")?;
     metrale_model_arch::glm5next_dsa::attend::Glm5NextDsaDecodeKernel::resolve(&gpu)
         .context("Glm5NextDsaDecodeKernel")?;
-    metrale_model_arch::glm5next_mhc::Glm5NextMhcKernels::resolve(&gpu)
-        .context("Glm5NextMhcKernels")?;
+    metrale_model_arch::glm5next_mhc::Glm5NextMhcKernels::resolve(
+        &gpu,
+        metrale_gpu_examples::glm_levers()?.mhc,
+    )
+    .context("Glm5NextMhcKernels")?;
     println!("  every DSA-layer + mHC kernel module resolves");
 
     // 2026-09-25: Layer weights from the packet, the projections rounded to BF16.

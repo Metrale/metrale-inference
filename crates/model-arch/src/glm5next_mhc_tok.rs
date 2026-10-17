@@ -26,22 +26,6 @@ use crate::glm5next_mhc_fused::HC_PRE_NORM_ROWS_MIN_TOKENS;
 /// 2026-10-12: `#define GLM_HCF_TOK` in `glm5next_mhc_tok.cu`: tokens per block.
 pub const HC_PRE_NORM_TOK: u32 = 4;
 
-/// 2026-10-12: `METRALE_GLM_MHC_PRE_TOK=1` takes the token-tiled grid from
-/// `HC_PRE_NORM_ROWS_MIN_TOKENS` tokens (same bits). Off until measured in a serve. Read once.
-pub fn pre_tok() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| {
-        let on = std::env::var("METRALE_GLM_MHC_PRE_TOK").as_deref() == Ok("1");
-        if on {
-            tracing::warn!(
-                "METRALE_GLM_MHC_PRE_TOK=1: wide GLM mHC pre-norms run {HC_PRE_NORM_TOK} tokens \
-                 per block (glm5next_hc_pre_norm_tok4, same bits)"
-            );
-        }
-        on
-    })
-}
-
 /// 2026-10-12: The token-tiled kernel for `num_tokens` tokens when `tok` is asked, the tokens
 /// reach `HC_PRE_NORM_ROWS_MIN_TOKENS` and the build has it; `None` otherwise.
 pub fn tok_kernel(
@@ -150,7 +134,9 @@ mod tests {
     #[test]
     fn the_token_tiled_grid_needs_the_lever_the_kernel_and_wide_rows() {
         let gpu = MockGpuBackend::new();
-        let k = Glm5NextMhcKernels::resolve(&gpu).expect("mock resolves every kernel");
+        let k =
+            Glm5NextMhcKernels::resolve(&gpu, crate::glm5next_mhc_levers::MhcLevers::declared())
+                .expect("mock resolves every kernel");
         let min = HC_PRE_NORM_ROWS_MIN_TOKENS as u32;
         let rows = k.hc_pre_norm_rows.0;
         assert_eq!(run(&gpu, &k, 250, true), (k.hc_pre_norm_tok.0, [63, 1, 1]));
@@ -170,7 +156,9 @@ mod tests {
     #[test]
     fn the_token_tiled_launch_passes_the_pre_norm_arguments_then_the_tokens() {
         let gpu = MockGpuBackend::new();
-        let k = Glm5NextMhcKernels::resolve(&gpu).expect("mock resolves every kernel");
+        let k =
+            Glm5NextMhcKernels::resolve(&gpu, crate::glm5next_mhc_levers::MhcLevers::declared())
+                .expect("mock resolves every kernel");
         let from = gpu.launch_count();
         run(&gpu, &k, 130, true);
         let l = gpu.launches_snapshot()[from].clone();

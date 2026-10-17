@@ -301,7 +301,7 @@ fn main() -> Result<()> {
     let timing = !std::env::args().any(|a| a == "--no-timing");
     let gpu = MetraleCudaBackend::new(0, &metrale_kernels::ptx_modules())?;
     let g: &dyn GpuBackend = &gpu;
-    let k = Glm5NextMhcKernels::resolve(g)?;
+    let k = Glm5NextMhcKernels::resolve(g, metrale_gpu_examples::glm_levers()?.mhc)?;
     if k.hc_pre_norm.0 == 0 || k.hc_pre_norm_rows.0 == 0 {
         bail!("glm5next_mhc_fused kernels missing from this build");
     }

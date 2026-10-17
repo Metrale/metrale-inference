@@ -81,6 +81,8 @@ pub struct Glm5NextMhcKernels {
     /// (`glm5next_mhc_post_pre_tok`). Optional (`try_kernel`, 0 when absent).
     pub hc_post_pre_norm_tok: KernelHandle,
     pub hc_head: KernelHandle,
+    /// 2026-10-17: The mHC launch levers, resolved once at startup (`GlmLevers::mhc`).
+    pub levers: crate::glm5next_mhc_levers::MhcLevers,
 }
 
 /// 2026-09-25: The kernel module every GLM mHC kernel resolves from.
@@ -102,7 +104,11 @@ pub const GLM5NEXT_HC_POST_SUM_MODULE: &str = "glm5next_hc_post_sum";
 impl Glm5NextMhcKernels {
     /// 2026-09-25: Resolve the kernels. A missing one is an error, except `hc_mix_bf16`, which is
     /// 0 when absent.
-    pub fn resolve(gpu: &dyn GpuBackend) -> Result<Self> {
+    /// 2026-10-17: `levers` rides along for the launchers.
+    pub fn resolve(
+        gpu: &dyn GpuBackend,
+        levers: crate::glm5next_mhc_levers::MhcLevers,
+    ) -> Result<Self> {
         Ok(Self {
             hc_expand: gpu.kernel(GLM5NEXT_MHC_MODULE, "glm5next_hc_expand")?,
             hc_pre: gpu.kernel(GLM5NEXT_MHC_MODULE, "glm5next_hc_pre")?,
@@ -166,6 +172,7 @@ impl Glm5NextMhcKernels {
                 "glm5next_hc_post_pre_norm_tok4",
             ),
             hc_head: gpu.kernel(GLM5NEXT_MHC_MODULE, "glm5next_hc_head")?,
+            levers,
         })
     }
 }

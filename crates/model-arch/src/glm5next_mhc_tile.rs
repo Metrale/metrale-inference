@@ -23,10 +23,6 @@ use metrale_gpu_runtime::kernel_args::KernelLaunch;
 use crate::glm5next_mhc::{Glm5NextMhcKernels, Glm5NextMhcSiteWeights};
 use crate::glm5next_mhc_fused::{HC_PRE_NORM_MAX_HIDDEN, HC_PRE_NORM_ROWS_MIN_TOKENS};
 
-/// 2026-10-15: The lever; `1` takes the tile kernel, unset or `0` keeps the lever-off path,
-/// anything else is refused at the first wide pre-norm.
-pub const PRE_TILE_ENV: &str = "METRALE_GLM_MHC_PRE_TILE";
-
 /// 2026-10-15: The kernel this lever launches.
 pub const HC_PRE_TILE_KERNEL: &str = "glm5next_hc_pre_norm_tile4";
 /// 2026-10-15: Its `NG`: one group of 256 threads, four tokens.
@@ -53,35 +49,6 @@ pub const fn tile_smem_bytes() -> u32 {
         + HC_PRE_TILE_TOKENS * mix * 4
         + HC_PRE_TILE_GROUPS * HC_PRE_TILE_MULT * 4
         + HC_PRE_TILE_GROUPS * 33 * 4
-}
-
-/// 2026-10-15: Parse the lever's value: `Ok(true)` for `1`, `Ok(false)` unset or `0`.
-pub fn parse_pre_tile(value: Option<&str>) -> Result<bool> {
-    match value {
-        None | Some("0") => Ok(false),
-        Some("1") => Ok(true),
-        Some(other) => anyhow::bail!("{PRE_TILE_ENV}={other}: expected 1 or 0"),
-    }
-}
-
-/// 2026-10-15: The lever, read once, with a one-time readback line when on.
-pub fn pre_tile() -> Result<bool> {
-    static ON: std::sync::OnceLock<std::result::Result<bool, String>> = std::sync::OnceLock::new();
-    ON.get_or_init(|| {
-        let on = parse_pre_tile(std::env::var(PRE_TILE_ENV).ok().as_deref())
-            .map_err(|e| e.to_string())?;
-        if on {
-            tracing::info!(
-                "{PRE_TILE_ENV}=1: wide GLM mHC pre-norms (hc 4) run {HC_PRE_TILE_TOKENS} \
-                 tokens per block through a {HC_PRE_TILE_STAGES}-stage cp.async ring \
-                 ({HC_PRE_TILE_KERNEL}, {} B shared, same bits as tok4)",
-                tile_smem_bytes()
-            );
-        }
-        Ok(on)
-    })
-    .clone()
-    .map_err(anyhow::Error::msg)
 }
 
 /// 2026-10-15: The tile kernel for this launch when `tile` is asked and every condition of the
@@ -153,7 +120,7 @@ pub fn launch_tile(
 
 /// 2026-10-15: `glm_hc_pre_norm`'s tile branch: when the lever is on and `tile_kernel` takes the
 /// launch, run the pre-norm refusals and launch it (`Ok(true)`); otherwise `Ok(false)` and the
-/// caller takes its lever-off path. A bad lever value is an error.
+/// caller takes its lever-off path.
 #[allow(clippy::too_many_arguments)]
 pub fn try_launch_tile(
     gpu: &dyn GpuBackend,
@@ -168,7 +135,7 @@ pub fn try_launch_tile(
     stream: u64,
 ) -> Result<bool> {
     let [hidden_size, hc_mult, _] = dims;
-    let tile = pre_tile()?;
+    let tile = kernels.levers.pre_tile;
     let Some(kernel) = tile_kernel(
         kernels,
         num_tokens,

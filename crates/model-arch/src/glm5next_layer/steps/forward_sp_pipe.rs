@@ -84,8 +84,8 @@ impl Glm5NextLayer {
             pipe::workspace_get()?,
             ov::streams_get()?,
         );
-        let overlap_on = ov::enabled()?;
-        let post_pre = crate::glm5next_mhc_post_pre_tok::enabled()?;
+        let overlap_on = self.levers.mhc.sp_overlap;
+        let post_pre = self.levers.mhc.post_pre_fused;
         let reduce = self.mlp_cfg.needs_all_reduce();
         let ffn_out = ctx.buffers.moe_output();
         let mut subs = Vec::with_capacity(ks.len());

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-10-14: SP pipeline: the lever's parse, the sub-chunk split, the order, the deferred
+//! 2026-10-14: SP pipeline: the sub-chunk split, the order, the deferred
 //! section form and the workspace routing. The program's happens-before model is
 //! `glm5next_sp_pipeline_hb_tests.rs`.
 //!
@@ -9,21 +9,6 @@
 
 use super::*;
 use crate::glm5next_sp_overlap::{self as ov, Ev, Op};
-
-/// 2026-10-14: 0/unset off; 1 on only with SP-mHC on and no layer dump; anything else refused.
-#[test]
-fn parses_and_needs_sp_mhc_without_the_dump() {
-    assert_eq!(parse(None, false, true), Ok(false));
-    assert_eq!(parse(Some("0"), true, true), Ok(false));
-    assert_eq!(parse(Some("1"), true, false), Ok(true));
-    let e = parse(Some("1"), false, false).unwrap_err();
-    assert!(e.contains("METRALE_GLM_SP_MHC=1"), "{e}");
-    let e = parse(Some("1"), true, true).unwrap_err();
-    assert!(e.contains("METRALE_GLM_LAYER_DUMP"), "{e}");
-    for bad in ["", "on", "2", "true"] {
-        assert!(parse(Some(bad), true, false).is_err(), "{bad:?}");
-    }
-}
 
 /// 2026-10-14: The split is `prefill_segments`' (`rows.min(end - t)` until the end), and only
 /// a leading run of two or more SP sub-chunks pipelines; a narrow tail stays serial.

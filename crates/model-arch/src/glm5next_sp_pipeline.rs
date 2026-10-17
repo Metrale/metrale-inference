@@ -37,8 +37,8 @@
 //! - Every deferred event is waited before it is recorded again, in host order.
 //! - The pass ends with the main stream waiting for the comm stream (`Join`), so nothing
 //!   overlaps across layers or segments.
-//! - Refused at the first read without `METRALE_GLM_SP_MHC=1`, and under the layer dump (whose
-//!   taps read buffers by the serial order).
+//! - Refused at the startup resolve (`glm5next_mhc_levers`) without `METRALE_GLM_SP_MHC=1`, and
+//!   under the layer dump (whose taps read buffers by the serial order).
 
 use std::sync::{Mutex, OnceLock};
 
@@ -53,50 +53,6 @@ pub const NORMED_SLOTS: usize = 3;
 
 /// 2026-10-14: The fewest sub-chunks a pipeline runs: one sub-chunk has nothing to overlap.
 pub const MIN_SUBS: usize = 2;
-
-/// 2026-10-14: `METRALE_GLM_SP_PIPELINE`, read once: unset or `0` off, `1` on (which needs
-/// `METRALE_GLM_SP_MHC=1` and no `METRALE_GLM_LAYER_DUMP`); another value is an error.
-pub fn enabled() -> Result<bool> {
-    static V: OnceLock<Result<bool, String>> = OnceLock::new();
-    V.get_or_init(|| {
-        let sp_mhc = sp::enabled().map_err(|e| e.to_string())?;
-        let dump = crate::glm5next_layer_dump::config()
-            .map_err(|e| e.to_string())?
-            .is_some();
-        parse(
-            std::env::var("METRALE_GLM_SP_PIPELINE").ok().as_deref(),
-            sp_mhc,
-            dump,
-        )
-    })
-    .clone()
-    .map_err(anyhow::Error::msg)
-}
-
-/// 2026-10-14: [`enabled`]'s parse, pure: `sp_mhc` is `METRALE_GLM_SP_MHC`'s value, `dump`
-/// whether the layer dump is on.
-pub(crate) fn parse(v: Option<&str>, sp_mhc: bool, dump: bool) -> Result<bool, String> {
-    let on = match v {
-        None | Some("0") => false,
-        Some("1") => true,
-        Some(other) => {
-            return Err(format!(
-                "METRALE_GLM_SP_PIPELINE={other:?}: expected 0 or 1"
-            ));
-        }
-    };
-    if on && !sp_mhc {
-        return Err("METRALE_GLM_SP_PIPELINE=1 needs METRALE_GLM_SP_MHC=1".into());
-    }
-    if on && dump {
-        return Err(
-            "METRALE_GLM_SP_PIPELINE=1 with METRALE_GLM_LAYER_DUMP: the dump taps read the \
-             serial order"
-                .into(),
-        );
-    }
-    Ok(on)
-}
 
 /// 2026-10-14: The sub-chunk sizes of `len` rows at `rows` per sub-chunk, in order: what
 /// `prefill_segments` runs one `forward_k` each.
@@ -351,8 +307,9 @@ pub fn reserve(
     normed_bytes: usize,
     slot_bytes: usize,
     world: usize,
+    levers: &crate::glm5next_mhc_levers::MhcLevers,
 ) -> Result<()> {
-    if !enabled()? || world < 2 {
+    if !levers.sp_pipeline || world < 2 {
         return Ok(());
     }
     let mut g = workspace().lock().unwrap_or_else(|e| e.into_inner());

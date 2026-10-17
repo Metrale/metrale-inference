@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-10-12: SP-mHC: the lever's parse, the shards, the exchange plans against the one-shot
+//! 2026-10-12: SP-mHC: the shards, the exchange plans against the one-shot
 //! slot layout and the ring's byte count, and the enqueued exchange on a recording communicator.
 //!
 //! Owner: model-arch (GLM-5.3).
@@ -12,15 +12,9 @@ use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
 
 use super::*;
 
-/// 2026-10-12: 0/unset off, 1 on, anything else refused.
+/// 2026-10-12: The SP body takes a sub-chunk only with the lever on, two ranks and `SP_MIN_ROWS`.
 #[test]
-fn parses_and_refuses() {
-    assert_eq!(parse(None), Ok(false));
-    assert_eq!(parse(Some("0")), Ok(false));
-    assert_eq!(parse(Some("1")), Ok(true));
-    for bad in ["", "on", "2", "192"] {
-        assert!(parse(Some(bad)).is_err(), "{bad:?}");
-    }
+fn applies_needs_the_lever_two_ranks_and_the_rows() {
     assert!(applies(true, 3, SP_MIN_ROWS));
     assert!(!applies(true, 3, SP_MIN_ROWS - 1));
     assert!(!applies(true, 1, 8208));
@@ -326,12 +320,19 @@ fn the_ring_steps_enqueue_one_pair_each_and_the_last_returns_the_partials() {
     assert!(comm.ops.lock().unwrap().is_empty(), "nothing enqueued");
 }
 
-/// 2026-10-12: Off, `reserve` allocates nothing (the lever is unset in tests) and
+/// 2026-10-12: Off, `reserve` allocates nothing (the declared levers) and
 /// `workspace_get` reports that nothing was reserved.
 #[test]
 fn off_nothing_is_reserved() {
     let gpu = MockGpuBackend::new();
-    reserve(&gpu, 8208, 4096, 3).unwrap();
+    reserve(
+        &gpu,
+        8208,
+        4096,
+        3,
+        &crate::glm5next_mhc_levers::MhcLevers::declared(),
+    )
+    .unwrap();
     let e = workspace_get().unwrap_err();
     assert!(e.to_string().contains("no receive workspace"), "{e}");
 }

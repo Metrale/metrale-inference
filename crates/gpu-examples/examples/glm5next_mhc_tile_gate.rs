@@ -267,7 +267,7 @@ fn main() -> Result<()> {
     let dir = std::env::var("MHC_PACKET_DIR")
         .context("MHC_PACKET_DIR (the checkpoint mHC packets) is required")?;
     let gpu = MetraleCudaBackend::new(0, &metrale_kernels::ptx_modules())?;
-    let k = Glm5NextMhcKernels::resolve(&gpu)?;
+    let k = Glm5NextMhcKernels::resolve(&gpu, metrale_gpu_examples::glm_levers()?.mhc)?;
     ensure!(
         k.hc_pre_norm_tok.0 != 0,
         "glm5next_hc_pre_norm_tok4 is not in this build"

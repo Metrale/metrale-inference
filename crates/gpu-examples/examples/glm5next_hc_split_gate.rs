@@ -106,7 +106,7 @@ fn time_us(g: &dyn GpuBackend, reps: usize, mut f: impl FnMut() -> Result<()>) -
 
 fn main() -> Result<()> {
     let gpu = MetraleCudaBackend::new(0, &metrale_kernels::ptx_modules())?;
-    let k = Glm5NextMhcKernels::resolve(&gpu)?;
+    let k = Glm5NextMhcKernels::resolve(&gpu, metrale_gpu_examples::glm_levers()?.mhc)?;
     println!(
         "glm5next hc split gate — fused glm5next_hc_pre is the ORACLE, split must be byte-identical\n"
     );

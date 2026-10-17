@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-10-15: CPU tests of `glm5next_hc_post_vec`: the lever's parse, the kernel choice, the
+//! 2026-10-15: CPU tests of `glm5next_hc_post_vec`: the kernel choice, the
 //! launch shape and the argument list against the mock backend. The kernel's bytes are checked
 //! against the scalar kernel on a GPU by `examples/glm5next_hc_post_sum_gate.rs`.
 
@@ -10,7 +10,8 @@ use metrale_gpu_runtime::gpu::mock::{MockArg, MockGpuBackend};
 const VEC8: u64 = 0x77;
 
 fn kernels(gpu: &MockGpuBackend) -> Glm5NextMhcKernels {
-    let mut k = Glm5NextMhcKernels::resolve(gpu).expect("mock resolves every kernel");
+    let mut k = Glm5NextMhcKernels::resolve(gpu, crate::glm5next_mhc_levers::MhcLevers::declared())
+        .expect("mock resolves every kernel");
     k.hc_post_rank_sum_vec8 = KernelHandle(VEC8);
     k
 }
@@ -28,18 +29,6 @@ const STREAMS: [DevicePtr; 4] = [
     DevicePtr(0x4000),
     DevicePtr(0x5000),
 ];
-
-/// 2026-10-15: Unset or `0` is off and `1` on; any other value is refused, never read as off.
-#[test]
-fn the_lever_is_zero_or_one() {
-    assert_eq!(parse(None), Ok(false));
-    assert_eq!(parse(Some("0")), Ok(false));
-    assert_eq!(parse(Some("1")), Ok(true));
-    for bad in ["2", "on", "true", ""] {
-        let err = parse(Some(bad)).unwrap_err();
-        assert!(err.contains(LEVER), "{bad:?}: {err}");
-    }
-}
 
 /// 2026-10-15: Off keeps the scalar kernel; on takes the vectorized one, and on without it in the
 /// build is an error rather than a silent fallback.

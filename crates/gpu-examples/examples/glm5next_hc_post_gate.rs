@@ -88,7 +88,7 @@ fn time_us(g: &dyn GpuBackend, reps: usize, mut f: impl FnMut() -> Result<()>) -
 
 fn main() -> Result<()> {
     let gpu = MetraleCudaBackend::new(0, &metrale_kernels::ptx_modules())?;
-    let k = Glm5NextMhcKernels::resolve(&gpu)?;
+    let k = Glm5NextMhcKernels::resolve(&gpu, metrale_gpu_examples::glm_levers()?.mhc)?;
     let k_ref = gpu.kernel("glm5next_mhc", "glm5next_hc_post_ref")?;
     println!(
         "glm5next hc_post gate — glm5next_hc_post_ref is the ORACLE, the widened kernel must be byte-identical\n"

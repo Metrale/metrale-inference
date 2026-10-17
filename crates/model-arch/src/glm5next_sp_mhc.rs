@@ -35,24 +35,6 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 /// (a measured choice to revisit).
 pub const SP_MIN_ROWS: usize = 192;
 
-/// 2026-10-12: `METRALE_GLM_SP_MHC`, read once: unset or `0` off, `1` on; another value is an
-/// error.
-pub fn enabled() -> Result<bool> {
-    static V: OnceLock<Result<bool, String>> = OnceLock::new();
-    V.get_or_init(|| parse(std::env::var("METRALE_GLM_SP_MHC").ok().as_deref()))
-        .clone()
-        .map_err(anyhow::Error::msg)
-}
-
-/// 2026-10-12: [`enabled`]'s parse, pure.
-pub(crate) fn parse(v: Option<&str>) -> Result<bool, String> {
-    match v {
-        None | Some("0") => Ok(false),
-        Some("1") => Ok(true),
-        Some(other) => Err(format!("METRALE_GLM_SP_MHC={other:?}: expected 0 or 1")),
-    }
-}
-
 /// 2026-10-12: Whether a sub-chunk of `k` rows at `world` ranks takes the sequence-parallel
 /// body: the lever on, two or more ranks, and at least [`SP_MIN_ROWS`] rows.
 pub fn applies(on: bool, world: usize, k: usize) -> bool {
@@ -345,16 +327,20 @@ fn workspace() -> &'static Mutex<Option<SpWorkspace>> {
 /// it. Called at load, as each layer builds. 2026-10-14: also the overlap's comm stream and
 /// events under `METRALE_GLM_SP_OVERLAP=1` (`glm5next_sp_overlap::reserve`), and the
 /// pipeline's buffers under `METRALE_GLM_SP_PIPELINE=1` (`glm5next_sp_pipeline::reserve`).
-/// 2026-10-14: and first reads `METRALE_GLM_MHC_POST_PRE_FUSED`, so a bad value or `1` without this lever fails
-/// the load, not the first prefill.
-pub fn reserve(gpu: &dyn GpuBackend, max_rows: usize, hidden: usize, world: usize) -> Result<()> {
-    crate::glm5next_mhc_post_pre_tok::enabled()?;
-    if !enabled()? || world < 2 {
+/// 2026-10-17: The levers are the startup-resolved `levers` (`glm5next_mhc_levers`).
+pub fn reserve(
+    gpu: &dyn GpuBackend,
+    max_rows: usize,
+    hidden: usize,
+    world: usize,
+    levers: &crate::glm5next_mhc_levers::MhcLevers,
+) -> Result<()> {
+    if !levers.sp_mhc || world < 2 {
         return Ok(());
     }
-    crate::glm5next_sp_overlap::reserve(gpu)?;
+    crate::glm5next_sp_overlap::reserve(gpu, levers)?;
     let slot_bytes = max_shard(max_rows, world) * hidden * 2;
-    crate::glm5next_sp_pipeline::reserve(gpu, max_rows * hidden * 2, slot_bytes, world)?;
+    crate::glm5next_sp_pipeline::reserve(gpu, max_rows * hidden * 2, slot_bytes, world, levers)?;
     let mut g = workspace().lock().unwrap_or_else(|e| e.into_inner());
     if g.is_some_and(|w| w.world == world && w.slot_bytes >= slot_bytes) {
         return Ok(());
