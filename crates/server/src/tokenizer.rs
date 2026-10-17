@@ -58,6 +58,8 @@ mod chat_impl;
 pub(crate) mod chat_render;
 pub use chat_render::ThinkingVars;
 mod deepseek_v4;
+mod heap_trim;
+pub use heap_trim::HeapTrimPolicy;
 pub(crate) mod jinja_helpers;
 mod kimi_k3;
 mod message_preprocess;
@@ -106,6 +108,8 @@ pub struct ChatTokenizer {
     /// 2026-09-26: Environment for `jinja-templates/openai/{model_type}.jinja` when that file
     /// exists and compiles; without it the OpenAI apply paths use `jinja_env`.
     openai_jinja_env: Option<minijinja::Environment<'static>>,
+    /// 2026-10-17: Heap trim after a long encode (`--tokenizer-trim-min-tokens`).
+    heap_trim: HeapTrimPolicy,
 }
 
 /// 2026-09-26: `tokenizers::DecodeStream` with its generic parameters fixed.

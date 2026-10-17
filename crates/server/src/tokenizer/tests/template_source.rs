@@ -10,7 +10,7 @@
 
 use super::super::chat_render::{RenderFlags, render_chat};
 use super::super::jinja_helpers;
-use super::super::{ChatTokenizer, TemplateSource};
+use super::super::{ChatTokenizer, HeapTrimPolicy, TemplateSource};
 use serde_json::json;
 
 /// 2026-10-08: A model dir whose tokenizer maps each source's marker word to its own
@@ -77,8 +77,16 @@ fn fixture() -> Fixture {
 
 /// 2026-10-08: The ids the Jinja and the OpenAI apply paths render to.
 fn rendered(f: &Fixture, source: TemplateSource<'_>) -> (Vec<u32>, Vec<u32>) {
-    let t = ChatTokenizer::from_model_dir(&f.model, 0, true, KIND, Some(&f.repo), source)
-        .expect("tokenizer loads");
+    let t = ChatTokenizer::from_model_dir(
+        &f.model,
+        0,
+        true,
+        KIND,
+        Some(&f.repo),
+        source,
+        HeapTrimPolicy::off(),
+    )
+    .expect("tokenizer loads");
     let messages = [json!({"role": "user", "content": "hi"})];
     (
         t.apply_chat_template_jinja(&messages, None, true, false)
@@ -116,6 +124,7 @@ fn an_unreadable_template_file_fails_the_load() {
         KIND,
         Some(&f.repo),
         TemplateSource::File(&missing),
+        HeapTrimPolicy::off(),
     )
     .err()
     .expect("a missing --chat-template file must fail the load");
