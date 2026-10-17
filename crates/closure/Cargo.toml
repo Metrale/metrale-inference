@@ -13,6 +13,8 @@ description = "Content hash of a kernel target's transitive include closure."
 
 [dependencies]
 sha2 = { workspace = true, features = ["alloc", "oid"] }
+# 2026-10-17: `hex_lower`, the one hex spelling of a recorded digest.
+metrale-serve-identity = { workspace = true }
 # 2026-09-26: For the three manifests `layout` reads (HARDWARE.toml,
 # MODEL.toml, KERNEL.toml).
 toml = { workspace = true, features = ["std", "serde", "parse", "display"] }

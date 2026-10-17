@@ -1612,6 +1612,7 @@ dependencies = [
 name = "metrale-closure"
 version = "1.0.0-beta-preview"
 dependencies = [
+ "metrale-serve-identity",
  "sha2",
  "toml",
 ]
@@ -1918,7 +1919,6 @@ dependencies = [
 name = "metrale-serve-identity"
 version = "1.0.0-beta-preview"
 dependencies = [
- "metrale-closure",
  "metrale-error",
  "metrale-settings",
  "serde",

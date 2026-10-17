@@ -208,14 +208,15 @@ fn finish_reason_is_captured() {
     assert_eq!(out.finish_reason.as_deref(), Some("stop"));
 }
 
-const NO_MODEL_BODY: &str = r#"{"error":{"message":"no model is loaded — Open the Library (press 4), choose a model and a recipe, and start it; then retry this request.","type":"model_not_loaded"}}"#;
-
+/// 2026-10-17: The decoding itself is metrale-host-probe's (its `http_wire` tests own the full
+/// no-model body); this pins that the blocking client routes a chunked error body through it.
 #[tokio::test]
 async fn blocking_client_reports_the_decoded_openai_error() {
+    let body = r#"{"error":{"message":"no model is loaded — Open the Library","type":"model_not_loaded"}}"#;
     let response = format!(
         "HTTP/1.1 503 Service Unavailable\r\nTransfer-Encoding: chunked\r\n\
-         Connection: close\r\n\r\n{:X}\r\n{NO_MODEL_BODY}\r\n0\r\n\r\n",
-        NO_MODEL_BODY.len()
+         Connection: close\r\n\r\n{:X}\r\n{body}\r\n0\r\n\r\n",
+        body.len()
     );
     let target = endpoint_answering(response).await;
     let err = chat_blocking(

@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-10-17: Lower-case hex for the digests this crate computes, spelled exactly as
-//! `metrale_closure::hex_lower` spells them (closure needs `std`, so this crate cannot reach
-//! it; the parity test pins the two together).
+//! 2026-10-17: Lower-case hex, the one spelling every SHA-256 this workspace records uses.
+//! `metrale_closure::hex_lower` re-exports it, so a digest from either crate compares equal.
+//!
+//! 2026-10-17: Moved from metrale-closure (2026-09-30), which needs `std`, into this no_std
+//! crate, the lowest one that hashes. sha2 0.11's output (`hybrid_array::Array`) has no
+//! `LowerHex`, so `format!("{:x}", ..)` does not compile on a digest; every recorded digest
+//! keeps the spelling it had under 0.10 by going through here.
 //!
 //! Owner: serve identity.
 //! Invariants: two lower-case digits per byte, no separator, no prefix.
@@ -26,16 +30,15 @@ mod tests {
     use super::hex_lower;
     use sha2::{Digest, Sha256};
 
-    /// 2026-10-17: FIPS 180-2's "abc" vector, and every byte value spelled as metrale-closure
-    /// spells it, so a digest from either crate compares equal.
+    /// 2026-10-17: FIPS 180-2's "abc" vector, so a record digest is spelled exactly as before;
+    /// a leading zero nibble keeps its digit and letters are lower case.
     #[test]
-    fn the_spelling_matches_the_published_vector_and_metrale_closure() {
+    fn a_sha256_digest_reads_as_the_published_vector() {
         assert_eq!(
             hex_lower(&Sha256::digest(b"abc")),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
-        let every: Vec<u8> = (0..=255u8).collect();
-        assert_eq!(hex_lower(&every), metrale_closure::hex_lower(&every));
+        assert_eq!(hex_lower(&[0x00, 0x0f, 0xa0, 0xff]), "000fa0ff");
         assert_eq!(hex_lower(&[]), "");
     }
 }

@@ -33,7 +33,6 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 mod circuits;
-mod hex;
 // 2026-10-17: The HARDWARE.toml `[defaults]` parse both kernel-tree build scripts share.
 pub mod hardware_defaults;
 pub mod layout;
@@ -41,7 +40,9 @@ mod layout_manifest;
 mod layout_scan;
 pub mod ptx_cache;
 
-pub use hex::hex_lower;
+// 2026-10-17: The one lower-case hex spelling, owned by the lowest crate that hashes
+// (metrale-serve-identity, no_std); re-exported so every recorded digest keeps one spelling.
+pub use metrale_serve_identity::hex_lower;
 
 use sha2::{Digest, Sha256};
 
