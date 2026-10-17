@@ -244,9 +244,13 @@ pub(crate) fn engine_facts(
         ),
     )
     .slots;
-    let ring_slots = ssm_reserve::decode_rollback_ring_slots(
+    // 2026-10-17: The what-if's own `--ssm-decode-ring-slots` is the published depth, as
+    // `serve_flags` publishes it; the process-global cell belongs to a serve, not to this model.
+    let ring_slots = ssm_reserve::decode_rollback_ring_slots_given(
         config.num_ssm_layers(),
         args.speculative || args.dflash,
+        ssm_reserve::parse_decode_ring_slots(&args.ssm_decode_ring_slots)
+            .map_err(anyhow::Error::msg)?,
     )
     .slots;
     // 2026-10-02: The carried-state verify binds exactly when the reserve plans its stash

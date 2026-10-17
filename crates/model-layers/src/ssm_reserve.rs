@@ -16,8 +16,9 @@
 mod decode_ring;
 pub use decode_ring::{
     DECODE_RING_FIT_LADDER, DecodeRingDecision, decode_rollback_ring_slots,
-    decode_rollback_ring_slots_with, fit_decode_ring_slots, parse_decode_ring_slots,
-    published_decode_ring_slots, set_decode_ring_slots, watchdogs_disabled_from_value,
+    decode_rollback_ring_slots_given, decode_rollback_ring_slots_with, fit_decode_ring_slots,
+    parse_decode_ring_slots, published_decode_ring_slots, set_decode_ring_slots,
+    watchdogs_disabled_from_value,
 };
 
 mod copy_tier;
