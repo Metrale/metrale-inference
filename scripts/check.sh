@@ -38,8 +38,13 @@ CARGO="${CARGO:-cargo}"
 # Otherwise default to `check` and forward all args (e.g. `check.sh -p
 # metrale-server` runs `cargo check -p metrale-server`).
 case "${1:-}" in
-  ""|build|check|clippy|test|fmt|doc|run|tree|metadata|update|fix)
-    exec "$CARGO" "${@:-check}"
+  "")
+    # 2026-10-17: `default-members` is the server alone; the no-argument run keeps
+    # checking the whole workspace, as documented above.
+    exec "$CARGO" check --workspace
+    ;;
+  build|check|clippy|test|fmt|doc|run|tree|metadata|update|fix)
+    exec "$CARGO" "$@"
     ;;
   *)
     exec "$CARGO" check "$@"

@@ -580,7 +580,7 @@ dependencies = [
 name = "cudarc"
 version = "0.19.2"
 dependencies = [
- "libloading 0.9.0",
+ "libloading",
 ]
 
 [[package]]
@@ -665,20 +665,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b1e3a325bc115f096c8b77bbf027a7c2592230e70be2d985be950d3d5e60ebe"
 dependencies = [
  "serde",
-]
-
-[[package]]
-name = "dashmap"
-version = "6.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6361d5c062261c78a176addb82d4c821ae42bed6089de0e12603cd25de2059c"
-dependencies = [
- "cfg-if",
- "crossbeam-utils",
- "hashbrown 0.14.5",
- "lock_api",
- "once_cell",
- "parking_lot_core",
 ]
 
 [[package]]
@@ -1015,12 +1001,6 @@ dependencies = [
  "crunchy",
  "zerocopy",
 ]
-
-[[package]]
-name = "hashbrown"
-version = "0.14.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
 
 [[package]]
 name = "hashbrown"
@@ -1402,16 +1382,6 @@ checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
 name = "libloading"
-version = "0.8.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
-dependencies = [
- "cfg-if",
- "windows-link",
-]
-
-[[package]]
-name = "libloading"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "754ca22de805bb5744484a5b151a9e1a8e837d5dc232c2d7d8c2e3492edc8b60"
@@ -1577,7 +1547,6 @@ dependencies = [
 name = "metrale-closure"
 version = "1.0.0-beta-preview"
 dependencies = [
- "anyhow",
  "sha2",
  "toml",
 ]
@@ -1656,7 +1625,7 @@ dependencies = [
  "anyhow",
  "cc",
  "libc",
- "libloading 0.8.9",
+ "libloading",
 ]
 
 [[package]]
@@ -1666,7 +1635,6 @@ dependencies = [
  "ahash",
  "bitvec",
  "criterion",
- "dashmap",
  "rayon",
  "serde",
  "serde_json",
@@ -1786,7 +1754,7 @@ dependencies = [
  "metrale-storage",
  "metrale-telemetry",
  "parking_lot",
- "rand 0.8.8",
+ "rand",
  "safetensors",
  "serde",
  "serde_json",
@@ -1802,7 +1770,7 @@ dependencies = [
  "anyhow",
  "metrale-gpu-runtime",
  "metrale-telemetry",
- "rand 0.9.5",
+ "rand",
 ]
 
 [[package]]
@@ -1893,8 +1861,8 @@ dependencies = [
  "libc",
  "metrale-core",
  "metrale-gpu-sys",
- "rand 0.9.5",
- "rand_chacha 0.9.0",
+ "rand",
+ "rand_chacha",
  "rand_distr",
  "serde",
  "serde_json",
@@ -2406,33 +2374,12 @@ dependencies = [
 
 [[package]]
 name = "rand"
-version = "0.8.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e058c7de0b26af77780c769414d6257830bb240f3c38477dbc2c16e5f54d6d4c"
-dependencies = [
- "libc",
- "rand_chacha 0.3.1",
- "rand_core 0.6.4",
-]
-
-[[package]]
-name = "rand"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9ef1d0d795eb7d84685bca4f72f3649f064e6641543d3a8c415898726a57b41"
 dependencies = [
- "rand_chacha 0.9.0",
- "rand_core 0.9.5",
-]
-
-[[package]]
-name = "rand_chacha"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6c10a63a0fa32252be49d21e7709d4d4baf8d231c2dbce1eaa8141b9b127d88"
-dependencies = [
- "ppv-lite86",
- "rand_core 0.6.4",
+ "rand_chacha",
+ "rand_core",
 ]
 
 [[package]]
@@ -2442,16 +2389,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3022b5f1df60f26e1ffddd6c66e8aa15de382ae63b3a0c1bfc0e4d3e3f325cb"
 dependencies = [
  "ppv-lite86",
- "rand_core 0.9.5",
-]
-
-[[package]]
-name = "rand_core"
-version = "0.6.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
-dependencies = [
- "getrandom 0.2.17",
+ "rand_core",
 ]
 
 [[package]]
@@ -2470,7 +2408,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a8615d50dcf34fa31f7ab52692afec947c4dd0ab803cc87cb3b0b4570ff7463"
 dependencies = [
  "num-traits",
- "rand 0.9.5",
+ "rand",
 ]
 
 [[package]]
@@ -3120,7 +3058,7 @@ dependencies = [
  "monostate",
  "onig",
  "paste",
- "rand 0.9.5",
+ "rand",
  "rayon",
  "rayon-cond",
  "regex",

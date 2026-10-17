@@ -146,7 +146,7 @@ impl NvmlLibrary {
             // 2026-09-26: SAFETY: loading runs the object's initialisers; NVML
             // itself is initialised only by the `nvmlInit_v2` call in
             // `Nvml::init`.
-            match unsafe { Library::new(name) } {
+            match unsafe { Library::new(*name) } {
                 Ok(lib) => {
                     let fns = resolve(&lib)?;
                     return Ok(Self { fns, _lib: lib });
@@ -172,7 +172,7 @@ fn optional<T: Copy>(lib: &Library, name: &str) -> Option<T> {
     sym.push(0);
     // 2026-09-26: SAFETY: `resolve` calls this with each `name`'s signature
     // from nvml.h.
-    unsafe { lib.get::<T>(&sym).ok().map(|s| *s) }
+    unsafe { lib.get::<T>(sym.as_slice()).ok().map(|s| *s) }
 }
 
 fn resolve(lib: &Library) -> Result<NvmlFns, NvmlUnavailable> {
