@@ -94,19 +94,19 @@ fn a_zero_group_and_the_narrow_tiles_keep_the_plain_plan() {
 #[test]
 fn the_raster_lever_parses_strictly_and_needs_its_entries() {
     assert_eq!(
-        parse_raster(None),
+        parse_raster("0,4"),
         Ok(Some(RasterGroups { gu: 0, down: 4 }))
     );
-    assert_eq!(parse_raster(Some("0")), Ok(None));
-    assert_eq!(parse_raster(Some("16,4")), Ok(Some(G)));
+    assert_eq!(parse_raster("0"), Ok(None));
+    assert_eq!(parse_raster("16,4"), Ok(Some(G)));
     assert_eq!(
-        parse_raster(Some("0,4096")),
+        parse_raster("0,4096"),
         Ok(Some(RasterGroups { gu: 0, down: 4096 }))
     );
     for bad in [
         "1", "16", "16,4097", "16,-4", "16;4", "16,4,2", " 16,4", "a,b", "",
     ] {
-        let e = parse_raster(Some(bad)).unwrap_err();
+        let e = parse_raster(bad).unwrap_err();
         assert!(e.contains("METRALE_GLM_MOE_W4A4_RASTER"), "{bad}: {e}");
     }
     assert_eq!(check_ready(true, true), Ok(()));

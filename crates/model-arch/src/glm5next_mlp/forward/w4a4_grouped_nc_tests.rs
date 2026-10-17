@@ -9,7 +9,7 @@
 //! Owner: model-arch (GLM-5.3).
 //! Invariants: none beyond the types.
 
-use super::super::super::w4a4_grouped_nc::{check_ready, parse_nc, readback};
+use super::super::super::w4a4_grouped_nc::{check_ready, readback};
 use super::*;
 
 const G: RasterGroups = RasterGroups { gu: 16, down: 4 };
@@ -81,17 +81,9 @@ fn the_separate_gate_up_and_the_narrow_tiles_keep_their_entries() {
     assert_eq!(funcs(&narrow), vec![SORT, TILES, QUANT, GU32, G32_K64]);
 }
 
-/// 2026-10-15: The lever parses strictly; on the grouped path it needs both `_n` entries.
+/// 2026-10-15: On the grouped path the lever needs both `_n` entries.
 #[test]
-fn the_nc_lever_parses_strictly_and_needs_its_entries() {
-    assert_eq!(parse_nc(None), Ok(None));
-    assert_eq!(parse_nc(Some("0")), Ok(None));
-    assert_eq!(parse_nc(Some("1")), Ok(Some(1)));
-    assert_eq!(parse_nc(Some("4096")), Ok(Some(4096)));
-    for bad in ["4097", "-1", "2,4", " 4", "4 ", "x", ""] {
-        let e = parse_nc(Some(bad)).unwrap_err();
-        assert!(e.contains("METRALE_GLM_MOE_W4A4_NC"), "{bad}: {e}");
-    }
+fn the_nc_lever_needs_its_entries() {
     assert_eq!(check_ready(true, true), Ok(()));
     assert_eq!(check_ready(false, false), Ok(()));
     let e = check_ready(true, false).unwrap_err();

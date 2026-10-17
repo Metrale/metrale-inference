@@ -179,7 +179,7 @@ fn vec8_launch_passes_the_scalar_arguments() {
     let gpu = MockGpuBackend::new();
     let c = cfg(288);
     let k = combine_kernels([VEC8, VEC8_IDX]);
-    let ws = Glm5NextMlpWorkspace::new(&gpu, &c, 4).unwrap();
+    let ws = Glm5NextMlpWorkspace::new(&gpu, &c, 4, &k.levers.mlp).unwrap();
     let out = gpu.alloc(4 * c.hidden * 2).unwrap();
     for indexed in [false, true] {
         let before = gpu.launches_snapshot().len();

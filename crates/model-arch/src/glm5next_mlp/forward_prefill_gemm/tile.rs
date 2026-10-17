@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-09-25: The grouped-GEMM tiles the GLM-5.3 routed-MoE prefill can launch, and the env
-//! levers of that path: tile, width floor, exact grid height, and on/off.
+//! 2026-09-25: The grouped-GEMM tiles the GLM-5.3 routed-MoE prefill can launch, and the log
+//! lines of that path's levers (tile, width floor, exact grid height, on/off), which are
+//! `MlpLevers` fields.
 //!
 //! Owner: model-arch (GLM-5.3).
 //! Invariants:
-//! - Each lever is read once per process.
+//! - The levers are resolved once at startup (`forward::levers`); nothing here reads the
+//!   environment.
 //! - `GEMM_TILES[0]` is the base kernel, `moe_w4a16_grouped_gemm_ptrtable`.
 
 /// 2026-09-25: `M_TILE` of the base kernel (`#define M_TILE 64` in
@@ -15,7 +17,7 @@
 pub(crate) const GROUPED_M_TILE: usize = 64;
 
 /// 2026-09-25: One grouped-GEMM kernel entry point and the launch geometry it is built for.
-/// `METRALE_GLM_MOE_GEMM_TILE` picks one (`gemm_tile`).
+/// `METRALE_GLM_MOE_GEMM_TILE` picks one (`MlpLevers::gemm_tile`).
 ///
 /// Measured 2026-09-22 with `examples/glm5next_moe_grouped_tile_bench` on one GB10, at the
 /// EP=2 production shape and 256 rows: `bt_m16_k128` moved 156.2 GB/s on gate/up and 161.8 on
@@ -97,93 +99,47 @@ pub(crate) fn select_gemm_tile(v: &str) -> Option<GemmTile> {
         .find(|t| t.name == v || t.name.strip_prefix("moe_w4a16_grouped_gemm_ptrtable_") == Some(v))
 }
 
-/// 2026-09-25: The tile for this process, from `METRALE_GLM_MOE_GEMM_TILE`, read once: unset
-/// gives `DEFAULT_GEMM_TILE`, and an unknown name logs an error and gives `DEFAULT_GEMM_TILE`.
-pub(crate) fn gemm_tile() -> GemmTile {
-    static T: std::sync::OnceLock<GemmTile> = std::sync::OnceLock::new();
-    *T.get_or_init(|| match std::env::var("METRALE_GLM_MOE_GEMM_TILE") {
-        Ok(v) => match select_gemm_tile(&v) {
-            Some(t) => {
-                tracing::warn!(
-                    "GLM routed-MoE prefill grouped GEMM tile overridden to `{}` \
-                     (M_TILE {}, N_TILE {}, {} threads); default is `{}`",
-                    t.name,
-                    t.m_tile,
-                    t.n_tile,
-                    t.threads,
-                    DEFAULT_GEMM_TILE.name
-                );
-                t
-            }
-            None => {
-                tracing::error!(
-                    "METRALE_GLM_MOE_GEMM_TILE=`{v}` is not a known tile — using the default \
-                     `{}`. Known: {:?}",
-                    DEFAULT_GEMM_TILE.name,
-                    GEMM_TILES.iter().map(|t| t.name).collect::<Vec<_>>()
-                );
-                DEFAULT_GEMM_TILE
-            }
-        },
-        Err(_) => DEFAULT_GEMM_TILE,
-    })
-}
-
-/// 2026-09-25: Whether the routed-expert prefill may take the grouped GEMM: yes unless
-/// `METRALE_GLM_MOE_PREFILL_GEMM=0`. Read once.
-pub(crate) fn prefill_gemm_enabled() -> bool {
-    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *F.get_or_init(|| {
-        let off = std::env::var("METRALE_GLM_MOE_PREFILL_GEMM").as_deref() == Ok("0");
-        if off {
+impl crate::glm5next_mlp::forward::MlpLevers {
+    /// 2026-10-17: The log lines the prefill-GEMM readers used to print at their first read,
+    /// printed once at load (`MlpLevers::announce`). The tile line prints when the tile is not
+    /// `DEFAULT_GEMM_TILE`.
+    pub(crate) fn announce_prefill_gemm(&self) {
+        let t = self.gemm_tile;
+        if t != DEFAULT_GEMM_TILE {
+            tracing::warn!(
+                "GLM routed-MoE prefill grouped GEMM tile overridden to `{}` \
+                 (M_TILE {}, N_TILE {}, {} threads); default is `{}`",
+                t.name,
+                t.m_tile,
+                t.n_tile,
+                t.threads,
+                DEFAULT_GEMM_TILE.name
+            );
+        }
+        if !self.prefill_gemm {
             tracing::warn!(
                 "GLM routed-MoE prefill grouped GEMM DISABLED \
                  (METRALE_GLM_MOE_PREFILL_GEMM=0) — row-batched GEMV path"
             );
         }
-        !off
-    })
-}
-
-/// 2026-09-25: Narrowest row group the grouped GEMM takes: `METRALE_GLM_MOE_PREFILL_GEMM_MIN_ROWS`,
-/// or `DEFAULT_GEMM_MIN_ROWS` when unset or not a number; at least 1. Read once.
-pub(crate) fn prefill_gemm_min_rows() -> usize {
-    static M: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *M.get_or_init(|| {
-        let m = std::env::var("METRALE_GLM_MOE_PREFILL_GEMM_MIN_ROWS")
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(DEFAULT_GEMM_MIN_ROWS)
-            .max(1);
+        let m = self.prefill_gemm_min_rows;
         if m != DEFAULT_GEMM_MIN_ROWS {
             tracing::warn!(
                 "GLM routed-MoE prefill grouped GEMM width floor overridden to {m} rows \
                  (default {DEFAULT_GEMM_MIN_ROWS}; MEASURED 0.40x at 16, 0.74x at 64, 1.09x at 128, 1.56x at 256)"
             );
         }
-        m
-    })
-}
-
-/// 2026-09-25: The default of `prefill_gemm_min_rows`.
-pub(crate) const DEFAULT_GEMM_MIN_ROWS: usize = 128;
-
-/// 2026-09-25: Whether the grid height comes from the real expert histogram, one
-/// stream-synchronising read of `expert_offsets` per call, rather than the worst case: yes
-/// unless `METRALE_GLM_MOE_PREFILL_GEMM_EXACT_TILES=0`. Read once.
-pub(crate) fn prefill_gemm_exact_tiles() -> bool {
-    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *F.get_or_init(|| {
-        let off = std::env::var("METRALE_GLM_MOE_PREFILL_GEMM_EXACT_TILES").as_deref() == Ok("0");
-        if off {
+        if !self.exact_tiles {
             tracing::warn!(
                 "GLM routed-MoE prefill grouped GEMM: WORST-CASE grid height \
                  (METRALE_GLM_MOE_PREFILL_GEMM_EXACT_TILES=0) — no per-layer expert_offsets D2H"
             );
         }
-        !off
-    })
+    }
 }
+
+/// 2026-09-25: The default of `MlpLevers::prefill_gemm_min_rows`.
+pub(crate) const DEFAULT_GEMM_MIN_ROWS: usize = 128;
 
 /// 2026-09-25: Grid height of the grouped GEMM: tiles of `m_tile` rows that the busiest expert
 /// in the host copy of `expert_offsets` needs, at least 1 and at most `worst_case`.

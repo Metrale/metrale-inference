@@ -16,7 +16,8 @@
 //!
 //! Owner: model-arch (GLM-5.3).
 //! Invariants:
-//! - Unset is [`DEFAULT`]. On the grouped path an active lever needs the three `_r` entries,
+//! - Unset is the value the settings row declares (`kernels.glm_moe_w4a4_raster`), parsed by
+//!   [`parse_raster`] as any other. On the grouped path an active lever needs the three `_r` entries,
 //!   else the load is refused ([`check_at_load`]).
 
 use anyhow::Result;
@@ -27,10 +28,7 @@ use crate::glm5next_mlp::Glm5NextMlpKernels;
 
 const LEVER: &str = "METRALE_GLM_MOE_W4A4_RASTER";
 /// 2026-10-14: The widest group the lever takes (a whole 8192-row chunk is 800 m128 tiles).
-const MAX_GROUP: u32 = 4096;
-/// 2026-10-14: The lever's value when unset: down raster 4, gate/up off. ab_2 at rows=8208 m128
-/// measured down -520/-225 us per call (n 704, zipf 0/1.2) and a mixed fused gate/up (-0.8%..+6.7%).
-const DEFAULT: Option<RasterGroups> = Some(RasterGroups { gu: 0, down: 4 });
+pub(super) const MAX_GROUP: u32 = 4096;
 /// 2026-10-14: The m128 tile entry (`W4A4_GROUPED_MT[2]`), the only one with `_r` twins.
 const TILE: usize = 2;
 
@@ -87,23 +85,12 @@ impl GroupedEntry {
     }
 }
 
-/// 2026-10-14: `METRALE_GLM_MOE_W4A4_RASTER`, read once.
-pub fn moe_w4a4_raster() -> Result<Option<RasterGroups>> {
-    static V: std::sync::OnceLock<Result<Option<RasterGroups>, String>> =
-        std::sync::OnceLock::new();
-    V.get_or_init(|| parse_raster(std::env::var(LEVER).ok().as_deref()))
-        .clone()
-        .map_err(anyhow::Error::msg)
-}
-
-/// 2026-10-14: [`moe_w4a4_raster`]'s parse, pure: unset is [`DEFAULT`], `0` is off,
-/// `<gu>,<down>` with each in 0..=4096 is on; anything else is an error.
-pub(crate) fn parse_raster(v: Option<&str>) -> Result<Option<RasterGroups>, String> {
-    let s = match v {
-        None => return Ok(DEFAULT),
-        Some("0") => return Ok(None),
-        Some(s) => s,
-    };
+/// 2026-10-14: The lever's parse, pure: `0` is off, `<gu>,<down>` with each in 0..=4096 is on;
+/// anything else is an error. 2026-10-17: the settings row supplies the unset value.
+pub(crate) fn parse_raster(s: &str) -> Result<Option<RasterGroups>, String> {
+    if s == "0" {
+        return Ok(None);
+    }
     let bad = || format!("{LEVER}={s:?}: expected 0 or <gu>,<down> with each in 0..={MAX_GROUP}");
     let (gu, down) = s.split_once(',').ok_or_else(bad)?;
     let group = |t: &str| {
@@ -149,8 +136,8 @@ pub(crate) fn readback(r: Option<RasterGroups>, grouped: bool) -> String {
 /// 2026-10-14: The load-time readback and refusal of a lever this load cannot run.
 pub fn check_at_load(k: &Glm5NextMlpKernels) -> Result<()> {
     static LOGGED: std::sync::Once = std::sync::Once::new();
-    let r = moe_w4a4_raster()?;
-    let grouped = super::moe_w4a4_grouped()?;
+    let r = k.levers.mlp.raster;
+    let grouped = k.levers.mlp.w4a4_grouped;
     LOGGED.call_once(|| tracing::info!("{}", readback(r, grouped)));
     if r.is_none() {
         return Ok(());

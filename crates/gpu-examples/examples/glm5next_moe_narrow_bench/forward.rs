@@ -60,7 +60,7 @@ pub fn run(gpu: &MetraleCudaBackend, s: &Setup, f: &Fixture, st: u64) -> Result<
     };
     let mut rng = Rng(0x6a09_e667_f3bc_c908);
     let shared: Vec<f32> = (0..HIDDEN * 688 * 3).map(|_| rng.unit() * 0.02).collect();
-    let ws = Glm5NextMlpWorkspace::new(g, &c, MAX_ROWS)?;
+    let ws = Glm5NextMlpWorkspace::new(g, &c, MAX_ROWS, &new.levers.mlp)?;
     let (o_new, o_old) = (s.out[0], s.out[1]);
     let row_bytes = HIDDEN * 2;
     let n = env_or("GLM_BENCH_ITERS", ITERS);

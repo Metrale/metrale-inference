@@ -9,7 +9,7 @@
 //! Owner: model-arch (GLM-5.3).
 //! Invariants: none beyond the types.
 
-use super::super::super::w4a4_grouped_gu::{check_ready, parse_gu_lever};
+use super::super::super::w4a4_grouped_gu::check_ready;
 use super::super::smem_bytes_of;
 use super::*;
 
@@ -22,7 +22,7 @@ fn run_fused(
     fused: bool,
 ) -> (anyhow::Result<()>, Vec<MockLaunch>, Glm5NextMlpWorkspace) {
     let gpu = MockGpuBackend::new();
-    let ws = Glm5NextMlpWorkspace::new_with(&gpu, &c, rows, true).unwrap();
+    let ws = Glm5NextMlpWorkspace::new_forked(&gpu, &c, rows, true, 0).unwrap();
     let w = moe_weights(usize::MAX);
     let site = MoeSite {
         gpu: &gpu,
@@ -147,14 +147,9 @@ fn a_missing_fused_entry_is_refused_before_launching() {
     r.unwrap();
 }
 
-/// 2026-10-14: The lever parses strictly; on, it needs the grouped workspace and every fused
-/// entry.
+/// 2026-10-14: On, the lever needs the grouped workspace and every fused entry.
 #[test]
-fn the_fused_lever_parses_strictly_and_needs_the_grouped_path() {
-    assert_eq!(parse_gu_lever(None), Ok(false));
-    assert_eq!(parse_gu_lever(Some("0")), Ok(false));
-    assert_eq!(parse_gu_lever(Some("1")), Ok(true));
-    assert!(parse_gu_lever(Some("true")).is_err());
+fn the_fused_lever_needs_the_grouped_path() {
     assert_eq!(check_ready(true, true), Ok(()));
     let e = check_ready(false, true).unwrap_err();
     assert!(e.contains("METRALE_GLM_MOE_W4A4_GROUPED=1"), "{e}");

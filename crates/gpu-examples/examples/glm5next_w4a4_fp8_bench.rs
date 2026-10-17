@@ -177,7 +177,7 @@ fn routed(gpu: &MetraleCudaBackend, stream: u64) -> Result<()> {
         )
     };
     let (w4a4, w4a16) = (build(Nvfp4Act::A4)?, build(Nvfp4Act::Unstamped)?);
-    let ws = Glm5NextMlpWorkspace::new(gpu, &c, 16)?;
+    let ws = Glm5NextMlpWorkspace::new(gpu, &c, 16, &k.levers.mlp)?;
     let out = gpu.alloc(16 * c.hidden * 2)?;
     let one: Vec<f32> = (0..c.hidden).map(|_| rng.unit() * 3.0).collect();
     let spread: Vec<f32> = (0..16 * c.hidden).map(|_| rng.unit() * 3.0).collect();

@@ -243,7 +243,7 @@ fn digests(gpu: &MetraleCudaBackend, s: &Setup, rng: &mut Rng, stream: u64) -> R
         },
         MAX_ROWS,
     )?;
-    let ws = Glm5NextMlpWorkspace::new(gpu, &c, MAX_ROWS)?;
+    let ws = Glm5NextMlpWorkspace::new(gpu, &c, MAX_ROWS, &k.levers.mlp)?;
     let x: Vec<f32> = (0..MAX_ROWS * HIDDEN).map(|_| rng.unit() * 3.0).collect();
     let xd = up_bf16(gpu, &x)?;
     for rows in [1usize, 4, 8, 16] {

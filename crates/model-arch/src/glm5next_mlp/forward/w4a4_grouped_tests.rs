@@ -16,7 +16,7 @@ use super::super::Glm5NextMlpWorkspace;
 use super::super::moe_experts::MoeSite;
 use super::super::w4a4::w4a4_experts;
 use super::super::w4a4_grouped_raster::RasterGroups;
-use super::{parse_lever, takes_grouped, tile_index, w4a4_grouped_experts_with, zeroes_expert_out};
+use super::{takes_grouped, tile_index, w4a4_grouped_experts_with, zeroes_expert_out};
 use crate::glm5next_mlp::precision::{GroupPrecision, MlpGroup, MlpKernel};
 use crate::glm5next_mlp::weights::{
     Glm5NextDenseMlpWeights, Glm5NextExpertPtrTable, Glm5NextMoePtrTables, Glm5NextMoeWeights,
@@ -183,7 +183,7 @@ fn run(
 ) -> (anyhow::Result<()>, Vec<MockLaunch>, Glm5NextMlpWorkspace) {
     let gpu = MockGpuBackend::new();
     let k = kernels(&gpu);
-    let ws = Glm5NextMlpWorkspace::new_with(&gpu, &c, rows, grouped).unwrap();
+    let ws = Glm5NextMlpWorkspace::new_forked(&gpu, &c, rows, grouped, 0).unwrap();
     let w = moe_weights(usize::MAX);
     let site = MoeSite {
         gpu: &gpu,
@@ -352,7 +352,7 @@ fn a_missing_entry_is_refused_before_launching() {
     let mut k = kernels(&gpu);
     k.w4a4_grouped.mx_k64[0] = KernelHandle(0);
     let c = cfg_tp();
-    let ws = Glm5NextMlpWorkspace::new_with(&gpu, &c, 32, true).unwrap();
+    let ws = Glm5NextMlpWorkspace::new_forked(&gpu, &c, 32, true, 0).unwrap();
     let w = moe_weights(usize::MAX);
     let site = MoeSite {
         gpu: &gpu,
@@ -416,13 +416,10 @@ fn expert_out_is_zeroed_unless_every_slot_is_written() {
     assert!(zeroes_expert_out(true, &ep));
 }
 
-/// 2026-10-10: The lever: unset and `0` off, `1` on, anything else an error.
+/// 2026-10-10: The tile from the routed slots per expert (the lever's parse moved to
+/// `levers_tests.rs` on 2026-10-17).
 #[test]
-fn the_lever_parses_strictly() {
-    assert_eq!(parse_lever(None), Ok(false));
-    assert_eq!(parse_lever(Some("0")), Ok(false));
-    assert_eq!(parse_lever(Some("1")), Ok(true));
-    assert!(parse_lever(Some("on")).is_err());
+fn the_tile_follows_the_slots_per_expert() {
     assert_eq!(tile_index(16384, 288), 2);
     assert_eq!(tile_index(8192, 288), 0);
 }
@@ -441,7 +438,7 @@ fn plan(
 ) -> Vec<MockLaunch> {
     let gpu = MockGpuBackend::new();
     let k = kernels(&gpu);
-    let ws = Glm5NextMlpWorkspace::new_with(&gpu, &c, rows, true).unwrap();
+    let ws = Glm5NextMlpWorkspace::new_forked(&gpu, &c, rows, true, 0).unwrap();
     let w = moe_weights(usize::MAX);
     let site = MoeSite {
         gpu: &gpu,

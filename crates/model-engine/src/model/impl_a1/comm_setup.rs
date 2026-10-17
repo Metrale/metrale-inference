@@ -36,7 +36,7 @@ pub(super) fn assert_rank_levers_agree(
             // whichever arm runs); checked because the check is free.
             (
                 "METRALE_GLM_MOE_ROW_BATCH_MAX",
-                metrale_model_arch::glm5next_mlp::forward::row_batch_max() as u64,
+                glm.mlp.row_batch_max as u64,
             ),
             // 2026-09-25: The EP command protocol (`ep_protocol_v2`), which
             // both ranks must share. 2026-10-10: the whole wire (v1, v2 or v3).

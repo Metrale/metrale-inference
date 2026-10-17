@@ -268,7 +268,7 @@ impl Site<'_> {
             &|_| plan(stamp, self.k.w4a4_expert_rows()),
             MAX_ROWS,
         )?;
-        let ws = Glm5NextMlpWorkspace::new(gpu, cfg, MAX_ROWS)?;
+        let ws = Glm5NextMlpWorkspace::new(gpu, cfg, MAX_ROWS, &self.k.levers.mlp)?;
         forward_moe(
             gpu,
             &self.k,

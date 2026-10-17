@@ -147,7 +147,7 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
         let mlp_ws_bytes = crate::glm5next_mlp::forward::mlp_ws_total_bytes(
             &mlp_cfg,
             verify_k,
-            crate::glm5next_mlp::forward::moe_w4a4_grouped()?,
+            levers.mlp.w4a4_grouped,
         );
         let shared_mlp_ws = if levers.mlp_ws_shared {
             tracing::info!(
@@ -158,7 +158,12 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                 (mlp_ws_bytes * skeleton.layers.len()) as f64 / 1e6,
             );
             Some(std::sync::Arc::new(
-                crate::glm5next_mlp::forward::Glm5NextMlpWorkspace::new(gpu, &mlp_cfg, verify_k)?,
+                crate::glm5next_mlp::forward::Glm5NextMlpWorkspace::new(
+                    gpu,
+                    &mlp_cfg,
+                    verify_k,
+                    &levers.mlp,
+                )?,
             ))
         } else {
             tracing::warn!(
@@ -332,7 +337,10 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                     Some(ws) => ws.clone(),
                     None => std::sync::Arc::new(
                         crate::glm5next_mlp::forward::Glm5NextMlpWorkspace::new(
-                            gpu, &mlp_cfg, verify_k,
+                            gpu,
+                            &mlp_cfg,
+                            verify_k,
+                            &levers.mlp,
                         )?,
                     ),
                 },

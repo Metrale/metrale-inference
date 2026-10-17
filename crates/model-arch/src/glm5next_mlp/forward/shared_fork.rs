@@ -13,8 +13,6 @@
 //!   every output byte is unchanged; only the order of independent launches changes.
 //! - The side stream and both events exist from load (never created inside a capture).
 
-use std::sync::OnceLock;
-
 use anyhow::{Result, ensure};
 use metrale_gpu_runtime::gpu::GpuBackend;
 
@@ -23,28 +21,6 @@ use crate::glm5next_mlp::Glm5NextMlpConfig;
 
 /// 2026-10-11: The widest launch the lever may name.
 pub const SHARED_FORK_MAX_ROWS: usize = 64;
-
-/// 2026-10-11: `METRALE_GLM_SHARED_FORK`, read once: 0 (off) when unset or `0`, else the widest
-/// launch, 1..=[`SHARED_FORK_MAX_ROWS`], whose shared expert forks. Another value is an error.
-pub fn shared_fork_rows() -> Result<usize> {
-    static V: OnceLock<Result<usize, String>> = OnceLock::new();
-    V.get_or_init(|| parse_shared_fork(std::env::var("METRALE_GLM_SHARED_FORK").ok().as_deref()))
-        .clone()
-        .map_err(anyhow::Error::msg)
-}
-
-/// 2026-10-11: [`shared_fork_rows`]'s parse, pure.
-pub(crate) fn parse_shared_fork(v: Option<&str>) -> Result<usize, String> {
-    match v {
-        None | Some("0") => Ok(0),
-        Some(s) => match s.parse::<usize>() {
-            Ok(r) if (1..=SHARED_FORK_MAX_ROWS).contains(&r) => Ok(r),
-            _ => Err(format!(
-                "METRALE_GLM_SHARED_FORK={s:?}: expected 0 or 1..={SHARED_FORK_MAX_ROWS}"
-            )),
-        },
-    }
-}
 
 /// 2026-10-11: The side stream, the fork and join events, and the shared expert's own scratch
 /// for up to `max_rows` rows.
@@ -170,17 +146,5 @@ mod tests {
             .unwrap()
             .to_string();
         assert!(e.contains("no side stream"), "{e}");
-    }
-
-    /// 2026-10-11: 0/unset off, 1..=64 rows, anything else refused.
-    #[test]
-    fn parses_rows_and_refuses_the_rest() {
-        assert_eq!(parse_shared_fork(None), Ok(0));
-        assert_eq!(parse_shared_fork(Some("0")), Ok(0));
-        assert_eq!(parse_shared_fork(Some("1")), Ok(1));
-        assert_eq!(parse_shared_fork(Some("64")), Ok(64));
-        for bad in ["65", "", "-1", "on", "1.5"] {
-            assert!(parse_shared_fork(Some(bad)).is_err(), "{bad:?}");
-        }
     }
 }

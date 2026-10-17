@@ -10,7 +10,7 @@
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::GpuBackend;
 
-use super::Glm5NextMlpWorkspace;
+use super::{Glm5NextMlpWorkspace, MlpLevers};
 use crate::glm5next_mlp::{DENSE_W4A4_CHUNK_ROWS, Glm5NextMlpConfig, MOE_W4A4_MAX_ROWS};
 
 use super::MOE_ROW_BATCH_MAX_ROWS;
@@ -101,26 +101,22 @@ pub fn mlp_ws_total_bytes(cfg: &Glm5NextMlpConfig, max_rows: usize, grouped: boo
 }
 
 impl Glm5NextMlpWorkspace {
-    /// 2026-10-10: [`Self::new_with`] under `METRALE_GLM_MOE_W4A4_GROUPED`.
-    pub fn new(gpu: &dyn GpuBackend, cfg: &Glm5NextMlpConfig, max_rows: usize) -> Result<Self> {
-        Self::new_with(gpu, cfg, max_rows, super::moe_w4a4_grouped()?)
-    }
-
-    /// 2026-10-10: The workspace of `max_rows` rows; `grouped` sizes the W4A4 scratch for every
-    /// routed slot (the grouped W4A4 GEMM). 2026-10-11: The shared-expert fork follows
-    /// `METRALE_GLM_SHARED_FORK` ([`Self::new_forked`]).
-    pub fn new_with(
+    /// 2026-10-10: The workspace of `max_rows` rows under the resolved levers: the W4A4 scratch
+    /// sized for every routed slot under `METRALE_GLM_MOE_W4A4_GROUPED` (the grouped W4A4 GEMM).
+    /// 2026-10-11: The shared-expert fork follows `METRALE_GLM_SHARED_FORK`
+    /// ([`Self::new_forked`]).
+    pub fn new(
         gpu: &dyn GpuBackend,
         cfg: &Glm5NextMlpConfig,
         max_rows: usize,
-        grouped: bool,
+        levers: &MlpLevers,
     ) -> Result<Self> {
-        let fork_rows = super::shared_fork::shared_fork_rows()?;
-        Self::new_forked(gpu, cfg, max_rows, grouped, fork_rows)
+        Self::new_forked(gpu, cfg, max_rows, levers.w4a4_grouped, levers.shared_fork)
     }
 
-    /// 2026-10-11: [`Self::new_with`] with the shared-expert fork for launches of up to
-    /// `fork_rows` rows (0: none), whatever the lever says (parity examples build both).
+    /// 2026-10-11: The workspace of `max_rows` rows, `grouped` sizing the W4A4 scratch for every
+    /// routed slot, with the shared-expert fork for launches of up to `fork_rows` rows (0: none),
+    /// whatever the levers say (parity examples build both).
     pub fn new_forked(
         gpu: &dyn GpuBackend,
         cfg: &Glm5NextMlpConfig,

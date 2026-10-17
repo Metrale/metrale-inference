@@ -142,6 +142,7 @@ pub fn load_glm5next_mtp_module(
                 gpu,
                 &mlp_cfg,
                 crate::glm5next_mtp_head::drafter_block_rows(),
+                &levers.mlp,
             )?),
             // 2026-09-25: No hyper-connection: nothing here binds `hc_*` tensors, and
             // `mhc: None` selects the plain residual path.

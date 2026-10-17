@@ -261,7 +261,7 @@ fn routed_w4a4_tracks_w4a16_and_is_row_invariant() -> Result<()> {
         )
     };
     let (w4a4, w4a16) = (build(Nvfp4Act::A4)?, build(Nvfp4Act::Unstamped)?);
-    let ws = Glm5NextMlpWorkspace::new(&gpu, &c, 16)?;
+    let ws = Glm5NextMlpWorkspace::new(&gpu, &c, 16, &k.levers.mlp)?;
     let xd = upload(&gpu, &bf16_bytes(&x))?;
     let out = gpu.alloc(16 * c.hidden * 2)?;
     let run = |w: &Glm5NextMoeWeights, rows: usize| -> Result<Vec<f32>> {
@@ -336,7 +336,7 @@ fn dense_w4a4_tracks_bf16_and_is_row_invariant() -> Result<()> {
         })
     };
     let (w4a4, wide16) = (site(Nvfp4Act::A4)?, site(Nvfp4Act::Unstamped)?);
-    let ws = Glm5NextMlpWorkspace::new(&gpu, &c, 40)?;
+    let ws = Glm5NextMlpWorkspace::new(&gpu, &c, 40, &k.levers.mlp)?;
     let xd = upload(&gpu, &bf16_bytes(&x))?;
     let out = gpu.alloc(40 * h * 2)?;
     let run = |s: &Glm5NextDenseSite, x: DevicePtr, rows: usize| -> Result<Vec<f32>> {

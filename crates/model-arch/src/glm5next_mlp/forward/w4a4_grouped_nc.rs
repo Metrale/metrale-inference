@@ -15,7 +15,7 @@
 //!
 //! Owner: model-arch (GLM-5.3).
 //! Invariants:
-//! - Unset or `0` is off. On the grouped path an active lever needs both `_n` entries, else the
+//! - Unset or `0` is off (`MlpLevers::nc`). On the grouped path an active lever needs both `_n` entries, else the
 //!   load is refused ([`check_at_load`]).
 
 use anyhow::Result;
@@ -25,33 +25,9 @@ use crate::glm5next_mlp::Glm5NextMlpKernels;
 
 const LEVER: &str = "METRALE_GLM_MOE_W4A4_NC";
 /// 2026-10-15: The most column tiles one CTA takes (GLM-5.3's hidden 4096 is 64 tiles of 64).
-const MAX_NC: u32 = 4096;
+pub(super) const MAX_NC: u32 = 4096;
 /// 2026-10-15: The m128 tile entry (`W4A4_GROUPED_MT[2]`), the only one with `_n` twins.
 const TILE: usize = 2;
-
-/// 2026-10-15: `METRALE_GLM_MOE_W4A4_NC`, read once.
-pub fn moe_w4a4_nc() -> Result<Option<u32>> {
-    static V: std::sync::OnceLock<Result<Option<u32>, String>> = std::sync::OnceLock::new();
-    V.get_or_init(|| parse_nc(std::env::var(LEVER).ok().as_deref()))
-        .clone()
-        .map_err(anyhow::Error::msg)
-}
-
-/// 2026-10-15: [`moe_w4a4_nc`]'s parse, pure: unset or `0` is off, `1..=4096` is on; anything
-/// else is an error.
-pub(crate) fn parse_nc(v: Option<&str>) -> Result<Option<u32>, String> {
-    match v {
-        None | Some("0") => Ok(None),
-        Some(s) => s
-            .parse::<u32>()
-            .ok()
-            .filter(|n| (1..=MAX_NC).contains(n))
-            .map(Some)
-            .ok_or_else(|| {
-                format!("{LEVER}={s:?}: expected 0 or a column tile count 1..={MAX_NC}")
-            }),
-    }
-}
 
 /// 2026-10-15: Whether the lever can run on this load: `grouped` is
 /// `METRALE_GLM_MOE_W4A4_GROUPED`, `ready` whether both `_n` entries resolved.
@@ -78,8 +54,8 @@ pub(crate) fn readback(nc: Option<u32>, grouped: bool) -> String {
 /// 2026-10-15: The load-time readback and refusal of a lever this load cannot run.
 pub fn check_at_load(k: &Glm5NextMlpKernels) -> Result<()> {
     static LOGGED: std::sync::Once = std::sync::Once::new();
-    let nc = moe_w4a4_nc()?;
-    let grouped = super::moe_w4a4_grouped()?;
+    let nc = k.levers.mlp.nc;
+    let grouped = k.levers.mlp.w4a4_grouped;
     LOGGED.call_once(|| tracing::info!("{}", readback(nc, grouped)));
     if nc.is_none() {
         return Ok(());

@@ -6,7 +6,7 @@
 //!
 //! The GEMM stages each dequantised weight as BF16 for `mma.sync`; the GEMV path keeps it in
 //! FP32, so the two paths do not produce the same bits. `forward_moe` takes this path only for
-//! row groups wider than `MOE_ROW_BATCH_MAX_ROWS` and at least `prefill_gemm_min_rows()` wide.
+//! row groups wider than `MOE_ROW_BATCH_MAX_ROWS` and at least `MlpLevers::prefill_gemm_min_rows` wide.
 //! Measured 2026-09-22 with `examples/glm5next_moe_grouped_prefill_microtest.rs` (M=64, top_k=8,
 //! 16 experts, N=256, K=512): against an FP32 reference that rounds each dequantised weight to
 //! BF16 first, the grouped GEMM's max_rel was 0.003888; the GEMV's against the exact FP32

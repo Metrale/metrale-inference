@@ -58,34 +58,6 @@ pub fn smem_bytes(mt: usize, nt: usize, stages: usize) -> u32 {
 pub const W4A4_GROUPED_M128_MIN_AVG: usize = 48;
 const BLOCK: u32 = 256;
 
-/// 2026-10-10: `METRALE_GLM_MOE_W4A4_GROUPED=1`, read once: the loader then caps the routed
-/// experts' W4A4 rows with `Glm5NextMlpKernels::w4a4_expert_rows_grouped`, and the workspace
-/// holds a quantization of every routed slot. Off when unset or `0`; any other value is an
-/// error.
-pub fn moe_w4a4_grouped() -> Result<bool> {
-    static V: std::sync::OnceLock<Result<bool, String>> = std::sync::OnceLock::new();
-    V.get_or_init(|| {
-        parse_lever(
-            std::env::var("METRALE_GLM_MOE_W4A4_GROUPED")
-                .ok()
-                .as_deref(),
-        )
-    })
-    .clone()
-    .map_err(anyhow::Error::msg)
-}
-
-/// 2026-10-10: [`moe_w4a4_grouped`]'s parse, pure.
-pub(crate) fn parse_lever(v: Option<&str>) -> Result<bool, String> {
-    match v {
-        None | Some("0") => Ok(false),
-        Some("1") => Ok(true),
-        Some(other) => Err(format!(
-            "METRALE_GLM_MOE_W4A4_GROUPED={other:?}: expected 0 or 1"
-        )),
-    }
-}
-
 /// 2026-10-10: Whether a W4A4 routed launch of `rows` rows runs the grouped GEMM: wider than
 /// the slot GEMV and sweeps serve.
 pub fn takes_grouped(rows: usize) -> bool {
@@ -228,9 +200,9 @@ pub(super) fn w4a4_grouped_experts(site: &MoeSite<'_>, scales: W4a4ActScales) ->
     w4a4_grouped_experts_with(
         site,
         scales,
-        super::w4a4_grouped_gu::moe_w4a4_gu_fused()?,
-        super::w4a4_grouped_raster::moe_w4a4_raster()?,
-        super::w4a4_grouped_nc::moe_w4a4_nc()?,
+        site.k.levers.mlp.gu_fused,
+        site.k.levers.mlp.raster,
+        site.k.levers.mlp.nc,
     )
 }
 

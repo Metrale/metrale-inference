@@ -18,15 +18,13 @@
 //!
 //! Owner: model-arch (GLM-5.3).
 //! Invariants:
-//! - The lever is read once, at load: [`DenseGroupedTables::build`] refuses it without
-//!   `METRALE_GLM_MOE_W4A4_GROUPED=1` (the workspace then quantizes every row of a sub-chunk at
-//!   once) or without the grouped kernels in the target's PTX; a launch wider than the workspace
-//!   is an error, never a fallback.
+//! - The lever is resolved once at startup (`MlpLevers::dense_grouped_min_rows`), and
+//!   [`DenseGroupedTables::build`] refuses it without `METRALE_GLM_MOE_W4A4_GROUPED=1` (the
+//!   workspace then quantizes every row of a sub-chunk at once) or without the grouped kernels
+//!   in the target's PTX; a launch wider than the workspace is an error, never a fallback.
 //! - No host buffer in a forward: `w4a4_grouped_one_group` writes the offsets [0, m] and the
 //!   tile offsets from m passed by value, so a captured launch replays its own m.
 //! - Unset or `0` launches exactly what the dense site launched before this lever.
-
-use std::sync::OnceLock;
 
 use anyhow::{Result, ensure};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
@@ -48,36 +46,6 @@ pub(super) const TILE: usize = 2;
 /// 2026-10-13: The widest K the grouped kernel takes (`w4a4_grouped_mx.cu`: the class-order
 /// table).
 const MAX_K: usize = 8192;
-
-/// 2026-10-12: `METRALE_GLM_DENSE_W4A4_GROUPED_MIN_ROWS`, read once: `None` when unset or `0`,
-/// else the narrowest dense launch that takes the one-group GEMM. A value below
-/// [`MIN_ROWS_FLOOR`] or an unparsable one is an error.
-pub fn min_rows() -> Result<Option<usize>> {
-    static V: OnceLock<Result<Option<usize>, String>> = OnceLock::new();
-    V.get_or_init(|| {
-        parse_min_rows(
-            std::env::var("METRALE_GLM_DENSE_W4A4_GROUPED_MIN_ROWS")
-                .ok()
-                .as_deref(),
-        )
-    })
-    .clone()
-    .map_err(anyhow::Error::msg)
-}
-
-/// 2026-10-12: [`min_rows`]'s parse, pure.
-pub(crate) fn parse_min_rows(v: Option<&str>) -> Result<Option<usize>, String> {
-    match v {
-        None | Some("0") => Ok(None),
-        Some(s) => match s.parse::<usize>() {
-            Ok(r) if r >= MIN_ROWS_FLOOR => Ok(Some(r)),
-            _ => Err(format!(
-                "METRALE_GLM_DENSE_W4A4_GROUPED_MIN_ROWS={s:?}: expected 0 or a row count of at \
-                 least {MIN_ROWS_FLOOR}"
-            )),
-        },
-    }
-}
 
 /// 2026-10-13: Whether the lever value `min` can run on this load: `grouped_ws` is
 /// `METRALE_GLM_MOE_W4A4_GROUPED` (the workspace quantizes every row of a sub-chunk), `ready`
@@ -133,13 +101,13 @@ impl DenseGroupedTables {
         k: &Glm5NextMlpKernels,
         w: &Glm5NextDenseNvfp4Weights,
     ) -> Result<Option<Self>> {
-        let Some(min_rows) = min_rows()? else {
+        let Some(min_rows) = k.levers.mlp.dense_grouped_min_rows else {
             return Ok(None);
         };
         let g = k.w4a4_grouped;
         check_ready(
             min_rows,
-            super::moe_w4a4_grouped()?,
+            k.levers.mlp.w4a4_grouped,
             g.one_group.0 != 0 && g.mx[TILE].0 != 0,
         )
         .map_err(anyhow::Error::msg)?;
@@ -236,19 +204,6 @@ mod launch_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// 2026-10-12: Unset and `0` are off; from 33 rows on; 32 and below, text and negatives are
-    /// errors.
-    #[test]
-    fn the_lever_parses_strictly() {
-        assert_eq!(parse_min_rows(None), Ok(None));
-        assert_eq!(parse_min_rows(Some("0")), Ok(None));
-        assert_eq!(parse_min_rows(Some("33")), Ok(Some(33)));
-        assert_eq!(parse_min_rows(Some("1024")), Ok(Some(1024)));
-        for bad in ["32", "1", "x", "-5", ""] {
-            assert!(parse_min_rows(Some(bad)).is_err(), "{bad:?}");
-        }
-    }
 
     /// 2026-10-13: The lever needs the grouped workspace and the kernels; each missing one is
     /// named.

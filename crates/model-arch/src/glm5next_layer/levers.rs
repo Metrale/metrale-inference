@@ -23,7 +23,7 @@ use metrale_settings::InferenceServerSettings;
 /// per token at M = 16 than at M = 8 in 11 of 12 (N4096 K128: 0.77x).
 ///
 /// The routed MoE does not follow the width: `glm5next_mlp::forward::forward_moe` splits a wider
-/// row group into even sub-groups of at most `row_batch_max()`, whose default and ceiling is
+/// row group into even sub-groups of at most `MlpLevers::row_batch_max`, whose default and ceiling is
 /// `MOE_ROW_BATCH_MAX_ROWS` (8).
 pub(crate) const PREFILL_ROWS: usize = 16;
 
@@ -136,6 +136,9 @@ pub struct GlmLevers {
     pub kda: crate::glm5next_kda::KdaLevers,
     /// 2026-10-17: The DSA mixer levers (`crate::glm5next_dsa::levers`).
     pub dsa: crate::glm5next_dsa::levers::DsaLevers,
+    /// 2026-10-17: The MLP routed-expert and dense launch levers
+    /// (`crate::glm5next_mlp::forward::MlpLevers`).
+    pub mlp: crate::glm5next_mlp::forward::MlpLevers,
 }
 
 impl GlmLevers {
@@ -171,6 +174,7 @@ impl GlmLevers {
             mhc: crate::glm5next_mhc_levers::MhcLevers::from_settings(s)?,
             kda: crate::glm5next_kda::KdaLevers::from_settings(s)?,
             dsa: crate::glm5next_dsa::levers::DsaLevers::from_settings(s)?,
+            mlp: crate::glm5next_mlp::forward::MlpLevers::from_settings(s)?,
         })
     }
 
@@ -237,6 +241,7 @@ impl GlmLevers {
         }
         self.mhc.announce();
         self.dsa.announce();
+        self.mlp.announce();
     }
 }
 

@@ -45,7 +45,7 @@ pub(super) fn group_precision(
         MlpGroup::RoutedExperts => (
             format!("mlp.experts.{expert0}"),
             ProjFamily::Moe,
-            if crate::glm5next_mlp::forward::moe_w4a4_grouped()? {
+            if kernels.levers.mlp.w4a4_grouped {
                 kernels.w4a4_expert_rows_grouped()
             } else {
                 kernels.w4a4_expert_rows()

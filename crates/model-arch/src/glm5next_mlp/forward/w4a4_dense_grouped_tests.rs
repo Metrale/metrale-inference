@@ -78,7 +78,7 @@ fn run(
 ) {
     let gpu = MockGpuBackend::new();
     let (c, k) = (cfg(), grouped_kernels(&gpu));
-    let ws = Glm5NextMlpWorkspace::new_with(&gpu, &c, max_rows, grouped).unwrap();
+    let ws = Glm5NextMlpWorkspace::new_forked(&gpu, &c, max_rows, grouped, 0).unwrap();
     let r = forward_dense_w4a4(
         &gpu,
         &k,

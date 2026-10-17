@@ -12,8 +12,7 @@ use super::super::precision::MlpKernel;
 use super::super::weights::Glm5NextMoeWeights;
 use super::super::{Glm5NextMlpConfig, Glm5NextMlpKernels};
 use super::{
-    Glm5NextMlpWorkspace, MOE_ROW_BATCH_MAX_ROWS, MOE_ROW_UNION_MAX_IDS, forward_prefill_gemm,
-    host_dispatch_forced, moe_row_groups, row_batch_disabled, row_batch_max,
+    Glm5NextMlpWorkspace, MOE_ROW_BATCH_MAX_ROWS, MOE_ROW_UNION_MAX_IDS, MlpLevers, moe_row_groups,
 };
 
 /// 2026-10-09: The routed experts' path for one `forward_moe` call.
@@ -23,20 +22,21 @@ pub enum ExpertRoute {
     W4a4,
     /// 2026-10-09: The grouped tensor-core GEMM over all rows (`forward_prefill_gemm`).
     Grouped,
-    /// 2026-10-09: The row-union GEMV over sub-groups of `row_batch_max()` rows.
+    /// 2026-10-09: The row-union GEMV over sub-groups of `MlpLevers::row_batch_max` rows.
     RowBatched,
     /// 2026-10-09: One row at a time.
     PerRow,
 }
 
 /// 2026-10-10: The fewest rows the grouped GEMM takes: wider than `MOE_ROW_BATCH_MAX_ROWS`
-/// and at least `prefill_gemm_min_rows()`. Fewer rows never reach its host-side tile sizing.
-pub fn grouped_row_floor() -> usize {
-    (MOE_ROW_BATCH_MAX_ROWS + 1).max(forward_prefill_gemm::prefill_gemm_min_rows())
+/// and at least `MlpLevers::prefill_gemm_min_rows`. Fewer rows never reach its host-side tile
+/// sizing.
+pub fn grouped_row_floor(l: &MlpLevers) -> usize {
+    (MOE_ROW_BATCH_MAX_ROWS + 1).max(l.prefill_gemm_min_rows)
 }
 
 /// 2026-10-09: The path a `forward_moe` of `rows` rows takes: the precision plan first, then the
-/// grouped GEMM above `MOE_ROW_BATCH_MAX_ROWS` rows and from `prefill_gemm_min_rows()`, then
+/// grouped GEMM above `MOE_ROW_BATCH_MAX_ROWS` rows and from `MlpLevers::prefill_gemm_min_rows`, then
 /// the row-union GEMV, else per row.
 pub fn expert_route(
     k: &Glm5NextMlpKernels,
@@ -49,9 +49,10 @@ pub fn expert_route(
     if w.precision.kernel(rows) == MlpKernel::W4a4Static {
         return ExpertRoute::W4a4;
     }
-    let grouped = rows >= grouped_row_floor()
-        && forward_prefill_gemm::prefill_gemm_enabled()
-        && !host_dispatch_forced()
+    let l = &k.levers.mlp;
+    let grouped = rows >= grouped_row_floor(l)
+        && l.prefill_gemm
+        && !l.host_dispatch
         && !profile::trace_on()
         && k.moe_sort_by_expert.0 != 0
         && k.moe_grouped_gemm.0 != 0
@@ -61,11 +62,11 @@ pub fn expert_route(
         return ExpertRoute::Grouped;
     }
     let batched = rows >= 2
-        && !host_dispatch_forced()
-        && !row_batch_disabled()
+        && !l.host_dispatch
+        && !l.row_batch_off
         && !profile::trace_on()
         && k.moe_row_union.0 != 0
-        && moe_row_groups(rows, row_batch_max()).iter().all(|&(_, w)| {
+        && moe_row_groups(rows, l.row_batch_max).iter().all(|&(_, w)| {
             w >= 2
                 && w * cfg.top_k <= MOE_ROW_UNION_MAX_IDS
                 && k.w4a16_gemv_sw_moe_batchm[w - 2].0 != 0

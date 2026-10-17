@@ -15,7 +15,7 @@
 //! Owner: model-arch (GLM-5.3).
 //! Invariants:
 //! - Every check runs before the routed experts' first launch ([`GuPlan::new`]).
-//! - Off unless the lever is `1`; the lever needs `METRALE_GLM_MOE_W4A4_GROUPED=1` and the three
+//! - Off unless the lever is on (`MlpLevers::gu_fused`); the lever needs `METRALE_GLM_MOE_W4A4_GROUPED=1` and the three
 //!   fused entries, else the load is refused ([`check_at_load`]).
 
 use anyhow::{Result, ensure};
@@ -30,24 +30,6 @@ use crate::glm5next_mlp::weights::Glm5NextExpertPtrTable;
 
 const BLOCK: u32 = 256;
 const LEVER: &str = "METRALE_GLM_MOE_W4A4_GU_FUSED";
-
-/// 2026-10-14: `METRALE_GLM_MOE_W4A4_GU_FUSED`, read once. Off when unset or `0`; any other
-/// value than `1` is an error.
-pub fn moe_w4a4_gu_fused() -> Result<bool> {
-    static V: std::sync::OnceLock<Result<bool, String>> = std::sync::OnceLock::new();
-    V.get_or_init(|| parse_gu_lever(std::env::var(LEVER).ok().as_deref()))
-        .clone()
-        .map_err(anyhow::Error::msg)
-}
-
-/// 2026-10-14: [`moe_w4a4_gu_fused`]'s parse, pure.
-pub(crate) fn parse_gu_lever(v: Option<&str>) -> Result<bool, String> {
-    match v {
-        None | Some("0") => Ok(false),
-        Some("1") => Ok(true),
-        Some(other) => Err(format!("{LEVER}={other:?}: expected 0 or 1")),
-    }
-}
 
 /// 2026-10-14: Whether the lever can run on this load: `grouped` is
 /// `METRALE_GLM_MOE_W4A4_GROUPED`, `ready` whether every fused entry resolved.
@@ -66,11 +48,11 @@ pub(crate) fn check_ready(grouped: bool, ready: bool) -> Result<(), String> {
 /// 2026-10-14: The load-time refusal of a lever this load cannot run, from the routed experts'
 /// precision plan.
 pub fn check_at_load(k: &Glm5NextMlpKernels) -> Result<()> {
-    if !moe_w4a4_gu_fused()? {
+    if !k.levers.mlp.gu_fused {
         return Ok(());
     }
     check_ready(
-        super::moe_w4a4_grouped()?,
+        k.levers.mlp.w4a4_grouped,
         k.w4a4_grouped.gu.iter().all(|h| h.0 != 0),
     )
     .map_err(anyhow::Error::msg)

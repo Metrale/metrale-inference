@@ -13,7 +13,7 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 use super::launch::{swiglu, w4a16_gemv, w4a16_gemv_moe, w4a16_gemv_moe_batchm};
-use super::{Glm5NextMlpWorkspace, announce_dispatch, host_dispatch_forced};
+use super::{Glm5NextMlpWorkspace, announce_dispatch};
 use crate::glm5next_layer::profile;
 use crate::glm5next_mlp::weights::Glm5NextMoeWeights;
 use crate::glm5next_mlp::{Glm5NextMlpConfig, Glm5NextMlpKernels};
@@ -55,7 +55,7 @@ pub(super) fn per_row_experts(
         let ids_r = ws.ids.offset(r * cfg.top_k * 4);
         let expert_out_r = ws.expert_out.offset(r * cfg.top_k * cfg.hidden * 2);
 
-        let grouped = !host_dispatch_forced() && k.w4a16_gemv_sw_moe.0 != 0;
+        let grouped = !k.levers.mlp.host_dispatch && k.w4a16_gemv_sw_moe.0 != 0;
         announce_dispatch(grouped);
         if grouped {
             // 2026-09-25: Device-dispatched: the kernels read `ids` on the GPU, so nothing

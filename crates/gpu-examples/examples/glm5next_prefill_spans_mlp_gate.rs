@@ -228,7 +228,7 @@ fn main() -> Result<()> {
         },
         MAX_ROWS,
     )?;
-    let ws = Glm5NextMlpWorkspace::new(&gpu, &c, MAX_ROWS)?;
+    let ws = Glm5NextMlpWorkspace::new(&gpu, &c, MAX_ROWS, &k.levers.mlp)?;
     let row_bytes = c.hidden * 2;
     let out_one = gpu.alloc(MAX_ROWS * row_bytes)?;
     let out_all = gpu.alloc(MAX_ROWS * row_bytes)?;

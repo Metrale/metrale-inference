@@ -103,14 +103,6 @@ crates/model-arch/src/glm5next_layer/l2_warm.rs
 crates/model-arch/src/glm5next_layer/profile.rs
 crates/model-arch/src/glm5next_layer/wide_gemv.rs
 crates/model-arch/src/glm5next_layer_dump.rs
-crates/model-arch/src/glm5next_mlp/forward.rs
-crates/model-arch/src/glm5next_mlp/forward/shared_fork.rs
-crates/model-arch/src/glm5next_mlp/forward/w4a4_dense_grouped.rs
-crates/model-arch/src/glm5next_mlp/forward/w4a4_grouped.rs
-crates/model-arch/src/glm5next_mlp/forward/w4a4_grouped_gu.rs
-crates/model-arch/src/glm5next_mlp/forward/w4a4_grouped_nc.rs
-crates/model-arch/src/glm5next_mlp/forward/w4a4_grouped_raster.rs
-crates/model-arch/src/glm5next_mlp/forward_prefill_gemm/tile.rs
 crates/model-arch/src/glm5next_mtp_head.rs
 crates/model-arch/src/glm5next_mtp_head/batch.rs
 crates/model-arch/src/glm5next_mtp_head/batch_check.rs

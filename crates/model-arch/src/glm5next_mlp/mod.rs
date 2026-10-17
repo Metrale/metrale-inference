@@ -340,10 +340,10 @@ impl Glm5NextMlpKernels {
                 "moe_sort_by_expert",
             ),
             // 2026-09-25: Each tile is its own entry point, so the tile
-            // (`METRALE_GLM_MOE_GEMM_TILE`) is read before resolving. A missing tile
+            // (`METRALE_GLM_MOE_GEMM_TILE`, `levers.mlp`) is known here. A missing tile
             // other than the base falls back to `GEMM_TILES[0]`, with a warning.
             moe_grouped_gemm: {
-                let tile = forward_prefill_gemm::gemm_tile();
+                let tile = levers.mlp.gemm_tile;
                 let h =
                     metrale_model_layers::layers::try_kernel(gpu, MOE_GROUPED_MODULE, tile.name);
                 if h.0 == 0 && tile.name != forward_prefill_gemm::GEMM_TILES[0].name {

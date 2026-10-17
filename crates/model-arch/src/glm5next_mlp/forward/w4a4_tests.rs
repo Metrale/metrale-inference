@@ -132,7 +132,7 @@ pub(crate) const SCALES: W4a4ActScales = W4a4ActScales {
 fn dense_rows_run_in_chunks_with_the_right_scales_and_shapes() {
     let gpu = MockGpuBackend::new();
     let (c, k) = (cfg(), kernels(&gpu));
-    let ws = Glm5NextMlpWorkspace::new(&gpu, &c, 64).unwrap();
+    let ws = Glm5NextMlpWorkspace::new(&gpu, &c, 64, &k.levers.mlp).unwrap();
     let w = Glm5NextDenseNvfp4Weights {
         gate_proj: proj(0x1000),
         up_proj: proj(0x2000),
@@ -230,7 +230,7 @@ fn run_experts_on(
     let gpu = MockGpuBackend::new();
     let mut k = kernels(&gpu);
     edit(&mut k);
-    let ws = Glm5NextMlpWorkspace::new(&gpu, &c, 16).unwrap();
+    let ws = Glm5NextMlpWorkspace::new(&gpu, &c, 16, &k.levers.mlp).unwrap();
     let w = moe_weights();
     let site = MoeSite {
         gpu: &gpu,
@@ -385,7 +385,7 @@ fn rows_past_the_scratch_are_refused_before_launching() {
     let (c, k) = (cfg(), kernels(&gpu));
     // 2026-10-08: A 2-row workspace: its scratch holds 2 x 8 = 16 rows, so 3 routed rows (24
     // slots) do not fit.
-    let ws = Glm5NextMlpWorkspace::new(&gpu, &c, 2).unwrap();
+    let ws = Glm5NextMlpWorkspace::new(&gpu, &c, 2, &k.levers.mlp).unwrap();
     let w = moe_weights();
     let site = MoeSite {
         gpu: &gpu,
@@ -453,7 +453,7 @@ fn a_k64_slice_without_the_twins_is_refused_before_launching() {
     let c = cfg_tp();
     let mut k = kernels(&gpu);
     k.w4a4_moe_k64.quant = KernelHandle(0);
-    let ws = Glm5NextMlpWorkspace::new(&gpu, &c, 16).unwrap();
+    let ws = Glm5NextMlpWorkspace::new(&gpu, &c, 16, &k.levers.mlp).unwrap();
     let w = moe_weights();
     let site = MoeSite {
         gpu: &gpu,

@@ -125,8 +125,7 @@ pub(crate) fn check_at_load(k: &crate::glm5next_mlp::Glm5NextMlpKernels) -> Resu
         gemv_rows: crate::glm5next_w4a16_seg::gemv_rows()?,
         dequant_gemm: crate::glm5next_w4a16_wide::min_rows()?.is_some(),
         fp8_dequant_gemm: crate::glm5next_fp8_wide::min_rows()?.is_some(),
-        w4a4_grouped_ready: crate::glm5next_mlp::forward::moe_w4a4_grouped()?
-            && k.w4a4_expert_rows_grouped() == usize::MAX,
+        w4a4_grouped_ready: k.levers.mlp.w4a4_grouped && k.w4a4_expert_rows_grouped() == usize::MAX,
         dsa_batch_qidx: k.levers.dsa_batch_qidx,
         kda_chunked: k.levers.kda_chunk_prefill
             || k.levers.kda.chunk_scan.is_some()

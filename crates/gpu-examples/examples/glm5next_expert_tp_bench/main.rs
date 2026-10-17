@@ -166,7 +166,7 @@ fn site(
     Ok(Site {
         name: name.to_string(),
         w: build_moe(gpu, &c, SHARED * 3, &load, expert, &prec, MAX_ROWS)?,
-        ws: Glm5NextMlpWorkspace::new(gpu, &c, MAX_ROWS)?,
+        ws: Glm5NextMlpWorkspace::new(gpu, &c, MAX_ROWS, &k.levers.mlp)?,
         c,
     })
 }
