@@ -14,3 +14,6 @@ pub mod model;
 pub mod prefill_plan;
 pub mod rank_agree;
 pub mod traits;
+
+#[cfg(test)]
+mod test_pair_comm;

@@ -307,11 +307,50 @@ impl BufferArena {
     /// token-major buffer: for a buffer whose size is a multiple of
     /// `max_batch_tokens`, `size / max_batch_tokens * tokens` bytes; any other
     /// buffer, and every buffer when `tokens >= max_batch_tokens`, is zeroed
-    /// whole. `splitk_workspace`, `logits` and `scratch` are zeroed whole. The
-    /// caller must read only rows `0..tokens`. Measured 2026-08-28 on
-    /// GLM-5.3-Flash (nsys, `max_batch_tokens = 4096`): `zero_all` took 8.01 ms
-    /// of an 85 ms decode step.
+    /// whole. `logits` is zeroed for its first `tokens` rows (whole when `tokens >=
+    /// logits_rows`); `splitk_workspace` and `scratch` are zeroed whole. The caller
+    /// must read only rows `0..tokens`. Measured 2026-08-28 on GLM-5.3-Flash (nsys,
+    /// `max_batch_tokens = 4096`): `zero_all` took 8.01 ms of an 85 ms decode step.
+    /// 2026-10-09: The whole-`logits` zero (256 rows of a 154856-entry vocabulary,
+    /// 79 MB) took 355 us of GPU time per GLM-5.3 decode step, ahead of the graph on
+    /// the same stream; a decode step writes and reads only logits row 0.
     pub fn zero_all_rows(
+        &self,
+        gpu: &dyn GpuBackend,
+        stream: u64,
+        tokens: usize,
+    ) -> anyhow::Result<()> {
+        let mut cached = self.zero_rows_graph.lock();
+        if let Some((rows, graph)) = *cached
+            && rows == tokens
+        {
+            return gpu.launch_graph(graph, stream);
+        }
+        // 2026-10-10: Capture the memsets once and replay them as one graph: one launch instead
+        // of eighteen memset calls per decode step (85 us of host time per step on one GB10
+        // rank, 117 us on another). If capture cannot begin (the stream is already capturing,
+        // or the backend has none) they are issued directly, as before. A backend that runs
+        // captured work at once returns a null graph; then nothing is replayed or cached.
+        if let Err(e) = gpu.begin_capture(stream) {
+            tracing::debug!("zero_all_rows: no capture ({e:#}); issuing the memsets");
+            return self.zero_all_rows_ops(gpu, stream, tokens);
+        }
+        if let Err(e) = self.zero_all_rows_ops(gpu, stream, tokens) {
+            gpu.abort_capture_if_active(stream);
+            return Err(e);
+        }
+        let graph = gpu.end_capture(stream)?;
+        if graph.0 == 0 {
+            return Ok(());
+        }
+        if let Some((_, stale)) = cached.replace((tokens, graph)) {
+            gpu.destroy_graph(stale)?;
+        }
+        gpu.launch_graph(graph, stream)
+    }
+
+    /// 2026-10-10: The memsets of [`Self::zero_all_rows`].
+    fn zero_all_rows_ops(
         &self,
         gpu: &dyn GpuBackend,
         stream: u64,
@@ -350,7 +389,13 @@ impl BufferArena {
             self.sizes.splitk_workspace,
             stream,
         )?;
-        gpu.memset_async(self.logits, 0, self.sizes.logits, stream)?;
+        let logits_rows = self.sizes.logits_rows.max(1);
+        let logits_head = if tokens >= logits_rows {
+            self.sizes.logits
+        } else {
+            self.sizes.logits / logits_rows * tokens
+        };
+        gpu.memset_async(self.logits, 0, logits_head, stream)?;
         gpu.memset_async(self.scratch, 0, self.sizes.scratch, stream)?;
         Ok(())
     }

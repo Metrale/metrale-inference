@@ -68,6 +68,9 @@ pub(crate) fn forward_moe_grouped_prefill(
     x: DevicePtr,
     rows: usize,
     ws: &Glm5NextMlpWorkspace,
+    // 2026-10-09: Whether the grid height may come from the expert histogram read back to the
+    // host (`prefill_gemm_exact_tiles`); false under a graph capture, which cannot sync.
+    host_tiles: bool,
     stream: u64,
 ) -> Result<()> {
     let te = rows * cfg.top_k;
@@ -102,7 +105,7 @@ pub(crate) fn forward_moe_grouped_prefill(
     // output. Otherwise it is the worst case, `ceil(rows * top_k / m_tile)`.
     let tile = gemm_tile();
     let worst_case = te.div_ceil(tile.m_tile).max(1) as u32;
-    let max_m_tiles = if prefill_gemm_exact_tiles() {
+    let max_m_tiles = if host_tiles && prefill_gemm_exact_tiles() {
         let mut off_raw = vec![0u8; (cfg.num_experts + 1) * 4];
         gpu.copy_d2h_on_stream(ws.expert_offsets(), &mut off_raw, stream)?;
         let offsets: Vec<i32> = off_raw

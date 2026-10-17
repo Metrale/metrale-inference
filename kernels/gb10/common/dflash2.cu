@@ -113,6 +113,192 @@ extern "C" __global__ void dflash2_topk16(
     }
 }
 
+// 2026-10-10: dflash2_topk16 in two stages over many blocks, with the same result and the
+// same writes to `logits`. dflash2_topk16 runs 16 block-argmax passes on one 1024-thread
+// block per row, ~440 us for 8 rows of a 154880 vocabulary on GB10 (8 SMs busy). Its passes
+// select, in order, the 16 greatest eligible entries (value > -1e30f; NaN never qualifies)
+// under one total order: the value descending, then, among equal values, the entry its
+// reduction keeps. Thread tid scans i = tid, tid + 1024, ... keeping the first of equal
+// maxima (lowest i / 1024), and the tree (off = 512 .. 1, replace only on a strictly greater
+// value) keeps the lower position at every level, which prefers the smaller bit-reversed
+// 10-bit tid. topk16_tie below is that order's key (smaller first). The selected entries are
+// overwritten with bf16(-1e30), which reads back below -1e30f, so a pass never re-selects
+// one. When fewer than 16 entries qualify, a pass yields (-1e30f, 0) and writes index 0.
+//
+// Stage 1, dflash2_topk16_part: grid (rows, parts), block TOPK16_PART_THREADS; block (r, p)
+// takes the 16 best of its TOPK16_PART_SPAN entries of row r under that order into
+// cand_vals / cand_idx [rows, parts, 16] (an unfilled slot is (-inf, 0xFFFFFFFF)). Stage 2,
+// dflash2_topk16_merge: grid (rows), block TOPK16_PART_THREADS; the 16 best of a row's
+// parts * 16 candidates, written as dflash2_topk16 writes them. parts * 16 must be at most
+// TOPK16_PART_THREADS * TOPK16_PER_THREAD (the host checks it).
+//
+// 2026-10-10: For a vocab split across ranks (tensor-parallel drafter), a row of `n` logits
+// holds global entries [base, base + n): the part kernel ranks and records global indices
+// (the same order, the same ties). The merge reads candidate c of a row at
+// row * row_stride + (c / 16) * part_stride + c % 16 (16 and parts * 16 for the part kernel's
+// layout; a rank-major all-gather has its own), and with pad = 0 writes the 16 best raw,
+// (-inf, 0xFFFFFFFF) where none is left, so ranks' lists merge again; pad = 1 writes
+// dflash2_topk16's output and its -1e30 overwrites of the selected entries this row holds
+// (none when logits is null).
+
+#define TOPK16_PART_THREADS 256u
+#define TOPK16_PER_THREAD 8u
+#define TOPK16_PART_SPAN (TOPK16_PART_THREADS * TOPK16_PER_THREAD)
+#define TOPK16_NEG_INF __int_as_float(0xff800000)
+
+// 2026-10-10: dflash2_topk16's tie key of entry i (1024-thread block): the bit-reversed
+// lane, then the stride index. Smaller wins among equal values.
+__device__ __forceinline__ unsigned int topk16_tie(unsigned int i) {
+    return ((__brev(i & 1023u) >> 22) << 22) | (i >> 10);
+}
+
+// 2026-10-10: (va, ta) ranks before (vb, tb).
+__device__ __forceinline__ bool topk16_before(float va, unsigned int ta, float vb, unsigned int tb) {
+    return va > vb || (va == vb && ta < tb);
+}
+
+// 2026-10-10: The block's best (value, entry) of every thread's TOPK16_PER_THREAD slots, 16
+// times; each pass's winner is removed from its owner's slots. Ineligible slots hold
+// (-inf, tie 0xFFFFFFFF, entry 0xFFFFFFFF), which every eligible value beats; a removed winner
+// becomes one. out_v / out_i get the 16 winners in order, (-inf, 0xFFFFFFFF) where none was
+// left.
+__device__ __forceinline__ void topk16_block_select(
+    float (&v)[TOPK16_PER_THREAD],
+    unsigned int (&t)[TOPK16_PER_THREAD],
+    unsigned int (&ix)[TOPK16_PER_THREAD],
+    float* out_v,
+    unsigned int* out_i
+) {
+    __shared__ float s_v[TOPK16_PART_THREADS / 32u];
+    __shared__ unsigned int s_t[TOPK16_PART_THREADS / 32u];
+    __shared__ unsigned int s_i[TOPK16_PART_THREADS / 32u];
+    __shared__ unsigned int s_win;
+    const unsigned int lane = threadIdx.x & 31u;
+    const unsigned int warp = threadIdx.x >> 5;
+    for (unsigned int k = 0; k < 16u; ++k) {
+        float bv = v[0];
+        unsigned int bt = t[0], bi = ix[0];
+        #pragma unroll
+        for (unsigned int j = 1; j < TOPK16_PER_THREAD; ++j) {
+            if (topk16_before(v[j], t[j], bv, bt)) { bv = v[j]; bt = t[j]; bi = ix[j]; }
+        }
+        #pragma unroll
+        for (unsigned int off = 16; off > 0; off >>= 1) {
+            const float ov = __shfl_down_sync(0xffffffffu, bv, off);
+            const unsigned int ot = __shfl_down_sync(0xffffffffu, bt, off);
+            const unsigned int oi = __shfl_down_sync(0xffffffffu, bi, off);
+            if (topk16_before(ov, ot, bv, bt)) { bv = ov; bt = ot; bi = oi; }
+        }
+        if (lane == 0u) { s_v[warp] = bv; s_t[warp] = bt; s_i[warp] = bi; }
+        __syncthreads();
+        if (threadIdx.x == 0u) {
+            float wv = s_v[0];
+            unsigned int wt = s_t[0], wi = s_i[0];
+            for (unsigned int w = 1; w < TOPK16_PART_THREADS / 32u; ++w) {
+                if (topk16_before(s_v[w], s_t[w], wv, wt)) { wv = s_v[w]; wt = s_t[w]; wi = s_i[w]; }
+            }
+            out_v[k] = wv;
+            out_i[k] = wi;
+            s_win = wt;
+        }
+        __syncthreads();
+        // 2026-10-10: Remove the winner (ties are unique per entry); an ineligible winner
+        // leaves every slot ineligible already.
+        const unsigned int win = s_win;
+        #pragma unroll
+        for (unsigned int j = 0; j < TOPK16_PER_THREAD; ++j) {
+            if (t[j] == win && win != 0xFFFFFFFFu) {
+                v[j] = TOPK16_NEG_INF;
+                t[j] = 0xFFFFFFFFu;
+                ix[j] = 0xFFFFFFFFu;
+            }
+        }
+        __syncthreads();
+    }
+}
+
+extern "C" __global__ void __launch_bounds__(TOPK16_PART_THREADS) dflash2_topk16_part(
+    const __nv_bfloat16* __restrict__ logits,
+    float* __restrict__ cand_vals,
+    unsigned int* __restrict__ cand_idx,
+    unsigned int n,
+    unsigned int base
+) {
+    const unsigned int row = blockIdx.x;
+    const unsigned int part = blockIdx.y;
+    const unsigned int parts = gridDim.y;
+    const __nv_bfloat16* lrow = logits + (size_t)row * n;
+    const unsigned int lo = part * TOPK16_PART_SPAN;
+    float v[TOPK16_PER_THREAD];
+    unsigned int t[TOPK16_PER_THREAD], ix[TOPK16_PER_THREAD];
+    #pragma unroll
+    for (unsigned int j = 0; j < TOPK16_PER_THREAD; ++j) {
+        const unsigned int i = lo + j * TOPK16_PART_THREADS + threadIdx.x;
+        const float x = i < n ? __bfloat162float(lrow[i]) : TOPK16_NEG_INF;
+        const bool ok = i < n && x > -1e30f;
+        v[j] = ok ? x : TOPK16_NEG_INF;
+        t[j] = ok ? topk16_tie(base + i) : 0xFFFFFFFFu;
+        ix[j] = ok ? base + i : 0xFFFFFFFFu;
+    }
+    __shared__ float o_v[16];
+    __shared__ unsigned int o_i[16];
+    topk16_block_select(v, t, ix, o_v, o_i);
+    if (threadIdx.x < 16u) {
+        const size_t o = ((size_t)row * parts + part) * 16u + threadIdx.x;
+        cand_vals[o] = o_v[threadIdx.x];
+        cand_idx[o] = o_i[threadIdx.x];
+    }
+}
+
+extern "C" __global__ void __launch_bounds__(TOPK16_PART_THREADS) dflash2_topk16_merge(
+    __nv_bfloat16* __restrict__ logits,
+    const float* __restrict__ cand_vals,
+    const unsigned int* __restrict__ cand_idx,
+    float* __restrict__ top_vals,
+    unsigned int* __restrict__ top_idx,
+    unsigned int n,
+    unsigned int parts,
+    unsigned int base,
+    unsigned int part_stride,
+    unsigned int row_stride,
+    unsigned int pad
+) {
+    const unsigned int row = blockIdx.x;
+    const unsigned int m = parts * 16u;
+    const float* cv = cand_vals + (size_t)row * row_stride;
+    const unsigned int* ci = cand_idx + (size_t)row * row_stride;
+    float v[TOPK16_PER_THREAD];
+    unsigned int t[TOPK16_PER_THREAD], ix[TOPK16_PER_THREAD];
+    #pragma unroll
+    for (unsigned int j = 0; j < TOPK16_PER_THREAD; ++j) {
+        const unsigned int c = j * TOPK16_PART_THREADS + threadIdx.x;
+        const size_t at = (size_t)(c / 16u) * part_stride + (c % 16u);
+        const unsigned int i = c < m ? ci[at] : 0xFFFFFFFFu;
+        const bool ok = i != 0xFFFFFFFFu;
+        v[j] = ok ? cv[at] : TOPK16_NEG_INF;
+        t[j] = ok ? topk16_tie(i) : 0xFFFFFFFFu;
+        ix[j] = i;
+    }
+    __shared__ float o_v[16];
+    __shared__ unsigned int o_i[16];
+    topk16_block_select(v, t, ix, o_v, o_i);
+    if (threadIdx.x < 16u) {
+        const size_t o = (size_t)row * 16u + threadIdx.x;
+        if (pad == 0u) {
+            top_vals[o] = o_v[threadIdx.x];
+            top_idx[o] = o_i[threadIdx.x];
+            return;
+        }
+        const bool ok = o_i[threadIdx.x] != 0xFFFFFFFFu;
+        const unsigned int i = ok ? o_i[threadIdx.x] : 0u;
+        top_vals[o] = ok ? o_v[threadIdx.x] : -1e30f;
+        top_idx[o] = i;
+        if (logits != nullptr && i >= base && i - base < n) {
+            logits[(size_t)row * n + (i - base)] = __float2bfloat16(-1e30f);
+        }
+    }
+}
+
 // 2026-09-25: Candidate-selector chain walk, one block per sequence band:
 //   S_t(a, b) = U_t(b) + sum_r pred[a][r] * hproj[t][r] * succ[b][r]
 // U_t is top_vals and the candidates b are top_idx. Block i walks rows first_row..rows-1

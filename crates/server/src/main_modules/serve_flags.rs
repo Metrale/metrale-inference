@@ -109,6 +109,69 @@ pub(crate) fn publish_kernel_flags(args: &cli::ServeArgs) {
             plan.expert_quantization.name()
         );
     }
+    // 2026-10-09: `--dense-quantization`, always published; below declared when not `declared`,
+    // which the boot log states loudly.
+    let dense =
+        metrale_model_layers::layers::set_dense_quantization_from_cli(plan.dense_quantization);
+    if dense != plan.dense_quantization {
+        tracing::warn!(
+            "dense-quantization was already resolved ({}); the command line's ({}) did NOT \
+             take effect",
+            dense.name(),
+            plan.dense_quantization.name()
+        );
+    }
+    if dense.below_declared() {
+        tracing::warn!(
+            "--dense-quantization {}: the 16-bit dense projections run BELOW the checkpoint's \
+             declared precision ({}); outputs differ from the declared model",
+            dense.name(),
+            {
+                use metrale_model_layers::layers::DenseQuantization as D;
+                match dense {
+                    D::W4a16 => {
+                        "NVFP4 weights with 16-bit activations for the loader's W4A16 set, FP8 \
+                         per-channel weights with per-token FP8 activations for the rest"
+                    }
+                    D::Fp8 => "FP8 per-channel weights, per-token FP8 activations",
+                    D::Declared => "the checkpoint's",
+                }
+            }
+        );
+    }
+    // 2026-10-11: `--dsa-quantization`, always published (owner decision B3): the GLM DSA q_a /
+    // absorbed q / absorbed o tier, independent of the dense tier; disclosed on every boot.
+    let dsa = metrale_model_layers::layers::set_dsa_quantization_from_cli(plan.dsa_quantization);
+    if dsa != plan.dsa_quantization {
+        tracing::warn!(
+            "dsa-quantization was already resolved ({}); the command line's ({}) did NOT \
+             take effect",
+            dsa.name(),
+            plan.dsa_quantization.name()
+        );
+    }
+    tracing::info!("{}", super::kernel_flag_plan::precision_line(dense, dsa));
+    if dsa.below_declared() {
+        tracing::warn!(
+            "--dsa-quantization {}: the DSA q_a, absorbed q and absorbed o projections run BELOW \
+             the checkpoint's declared precision ({}); outputs differ from the declared model",
+            dsa.name(),
+            dsa.describe()
+        );
+    }
+    // 2026-10-14: `--prefill-tail-mode`, always published and read back on every rank.
+    let tail = metrale_gpu_runtime::prefill_tail_mode::set_prefill_tail_mode_from_cli(
+        plan.prefill_tail_mode,
+    );
+    if tail != plan.prefill_tail_mode {
+        tracing::warn!(
+            "prefill-tail-mode was already resolved ({}); the command line's ({}) did NOT \
+             take effect",
+            tail.name(),
+            plan.prefill_tail_mode.name()
+        );
+    }
+    tracing::info!("prefill tail mode: {} ({})", tail.name(), tail.describe());
     // 2026-09-26: Published only when given; otherwise
     // `prefill_codispatch_enabled()` reads `METRALE_PREFILL_CODISPATCH` on
     // first use.

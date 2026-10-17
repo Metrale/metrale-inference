@@ -84,11 +84,7 @@ impl TransformerModel {
             .max()
             .unwrap_or(chunk_len);
 
-        let stream = if self.multi_rank_protocol_active() {
-            self.gpu.default_stream()
-        } else {
-            stream
-        };
+        let stream = self.forward_stream(stream);
 
         let mut kv_cache = self.kv_cache.lock();
 

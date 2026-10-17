@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-09-25: The KDA recurrent path: single-token `decode` and K-row `decode_k`.
+//! 2026-09-25: The KDA recurrent path: single-token `decode`, K-row `decode_k`, and
+//! (2026-10-08) `decode_rows`, one row per sequence.
 //!
 //! Owner: model-arch (GLM-5.3-Flash KDA).
 //! Invariants:
@@ -8,9 +9,73 @@
 
 use super::*;
 
+/// 2026-10-08: The buffers one `stateful_row` step reads and writes: the row's pre-conv q|k|v
+/// input (`[conv_dim]` BF16), the conv output it writes (`[conv_dim]` BF16), the bounded
+/// log-decay (`[heads, head_dim]` FP32), beta (`[heads]` FP32) and the core output it writes
+/// (`[heads, head_dim]` FP32). A forward row points all five into the workspace; a replay row
+/// (`replay.rs`) reads its inputs from the verify record.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct RowIo {
+    pub qkv_in: DevicePtr,
+    pub conv_out: DevicePtr,
+    pub gate: DevicePtr,
+    pub beta: DevicePtr,
+    pub core: DevicePtr,
+}
+
+impl RowIo {
+    /// 2026-10-08: Workspace row `row`, the buffers the forward paths use.
+    pub(super) fn workspace(
+        cfg: &Glm5NextKdaConfig,
+        ws: &Glm5NextKdaWorkspace,
+        row: usize,
+    ) -> Self {
+        let (cd, qkv) = (cfg.conv_dim(), cfg.qkv_dim());
+        Self {
+            qkv_in: ws.qkv_proj.offset(row * cd * 2),
+            conv_out: ws.conv_out.offset(row * cd * 2),
+            gate: ws.gate.offset(row * qkv * 4),
+            beta: ws.beta.offset(row * cfg.heads * 4),
+            core: ws.core.offset(row * qkv * 4),
+        }
+    }
+}
+
+/// 2026-10-12: Which chunked scan `k` rows of one sequence take in `decode_k_modes`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ScanMode {
+    /// The 64-token tensor-core scan (`chunk64.rs`).
+    Chunk64,
+    /// The 16-token FP32 scan (`chunk16.rs`).
+    Chunk16,
+    /// Neither: the per-token paths.
+    None,
+}
+
+/// 2026-10-12: The chunked-scan choice, pure: with no per-row snapshot asked for
+/// (`unsnapshotted`), the 64-token scan where its floor `chunk64_min` is set and reached, else
+/// the 16-token scan where `chunk_min` is; otherwise none. Callers pass a floor only where that
+/// scan's kernels are bound (`chunk16_ready` / `chunk64_ready`).
+pub(super) fn scan_mode(
+    k: usize,
+    unsnapshotted: bool,
+    chunk_min: Option<usize>,
+    chunk64_min: Option<usize>,
+) -> ScanMode {
+    if !unsnapshotted {
+        ScanMode::None
+    } else if chunk64_min.is_some_and(|r| k >= r) {
+        ScanMode::Chunk64
+    } else if chunk_min.is_some_and(|r| k >= r) {
+        ScanMode::Chunk16
+    } else {
+        ScanMode::None
+    }
+}
+
 impl Glm5NextKdaLayer {
     /// 2026-09-25: The stateful half of one KDA token: the conv window update (SiLU and L2 fused),
-    /// then one recurrent step, both on row `row` of the workspace, updating `state` in place.
+    /// then one recurrent step, both on the row buffers `io`, updating `state` in place.
     ///
     /// The state after row `t + 1` depends on the state after row `t`, so [`Self::decode_k`] calls
     /// this once per row, in order, and batches only the projections around it. The chunked
@@ -19,25 +84,34 @@ impl Glm5NextKdaLayer {
     ///
     /// `q`/`k` reach `kda_recurrent` already L2-normalised by the conv, which is the input that
     /// kernel expects; normalising them again would change the bf16-rounded values.
-    fn stateful_row(
+    pub(super) fn stateful_row(
         &self,
         gpu: &dyn GpuBackend,
-        row: usize,
+        io: RowIo,
         state: &KdaSeqState,
-        ws: &Glm5NextKdaWorkspace,
+        stream: u64,
+    ) -> Result<()> {
+        self.conv_row(gpu, io, state, stream)?;
+        self.recurrent_row(gpu, io, state, stream)
+    }
+
+    /// 2026-10-09: The conv window update (SiLU and L2 fused) of the row buffers `io` on `state.conv`, the
+    /// first half of [`Self::stateful_row`].
+    pub(super) fn conv_row(
+        &self,
+        gpu: &dyn GpuBackend,
+        io: RowIo,
+        state: &KdaSeqState,
         stream: u64,
     ) -> Result<()> {
         let c = &self.cfg;
-        let qkv = c.qkv_dim();
-        let cd = c.conv_dim();
-
         ops::conv1d_update_l2norm(
             gpu,
             self.kernels.conv_decode,
             state.conv,
-            ws.qkv_proj.offset(row * cd * 2),
+            io.qkv_in,
             &self.weights.conv,
-            ws.conv_out.offset(row * cd * 2),
+            io.conv_out,
             c.conv_dim() as u32,
             c.conv_kernel as u32,
             1,
@@ -45,30 +119,53 @@ impl Glm5NextKdaLayer {
             c.head_dim as u32,
             c.l2_eps,
             stream,
-        )?;
+        )
+    }
 
+    /// 2026-10-09: The 1R+1W kernel's launch geometry for this config, `(vpb, shared bytes)`,
+    /// or `None` when the 2R+2W kernel runs instead (no 1R+1W kernel, a `head_dim` the slice
+    /// does not divide, a request over `KDA_SMEM_BUDGET`, or `METRALE_GLM_KDA_NO_SMEM=1`).
+    pub(super) fn smem_geometry(&self) -> Option<(usize, usize)> {
+        let d = self.cfg.head_dim;
+        let vpb = KDA_V_PER_BLOCK.min(d);
+        let smem = (3 * d + vpb * (d + 1)) * 4;
+        (self.kernels.recurrent_smem.0 != 0
+            && d.is_multiple_of(vpb)
+            && smem <= KDA_SMEM_BUDGET
+            && !kda_no_smem())
+        .then_some((vpb, smem))
+    }
+
+    /// 2026-10-09: One recurrent step of the row buffers `io` on `state.recurrent`, the second half of
+    /// [`Self::stateful_row`].
+    fn recurrent_row(
+        &self,
+        gpu: &dyn GpuBackend,
+        io: RowIo,
+        state: &KdaSeqState,
+        stream: u64,
+    ) -> Result<()> {
+        if super::seq_tokens::kda_row_reg() {
+            return self.recurrent_row_reg(gpu, io, state, stream);
+        }
+        let c = &self.cfg;
+        let qkv = c.qkv_dim();
         let d = c.head_dim;
         // 2026-09-25: 1R+1W when the target has the shared-memory kernel. Each block owns `vpb`
         // V columns and grid.y covers the rest; the request is `3 * d` floats plus
         // `vpb * (d + 1)` floats of column scratch.
-        let vpb = KDA_V_PER_BLOCK.min(d);
-        let smem_smem = (3 * d + vpb * (d + 1)) * 4;
-        if self.kernels.recurrent_smem.0 != 0
-            && d.is_multiple_of(vpb)
-            && smem_smem <= KDA_SMEM_BUDGET
-            && !kda_no_smem()
-        {
+        if let Some((vpb, smem_smem)) = self.smem_geometry() {
             KernelLaunch::new(gpu, self.kernels.recurrent_smem)
                 .grid([c.heads as u32, (d / vpb) as u32, 1])
                 .block([vpb as u32, 1, 1])
                 .shared_mem(smem_smem as u32)
-                .arg_ptr(ws.conv_out.offset(row * cd * 2))
-                .arg_ptr(ws.conv_out.offset(row * cd * 2 + qkv * 2))
-                .arg_ptr(ws.conv_out.offset(row * cd * 2 + qkv * 4))
-                .arg_ptr(ws.gate.offset(row * qkv * 4))
-                .arg_ptr(ws.beta.offset(row * c.heads * 4))
+                .arg_ptr(io.conv_out)
+                .arg_ptr(io.conv_out.offset(qkv * 2))
+                .arg_ptr(io.conv_out.offset(qkv * 4))
+                .arg_ptr(io.gate)
+                .arg_ptr(io.beta)
                 .arg_ptr(state.recurrent)
-                .arg_ptr(ws.core.offset(row * qkv * 4))
+                .arg_ptr(io.core)
                 .arg_u32(c.heads as u32)
                 .arg_u32(d as u32)
                 .arg_f32(1.0 / (d as f32).sqrt())
@@ -79,13 +176,13 @@ impl Glm5NextKdaLayer {
                 .grid([c.heads as u32, 1, 1])
                 .block([BLOCK.min(d as u32), 1, 1])
                 .shared_mem((3 * d * 4) as u32)
-                .arg_ptr(ws.conv_out.offset(row * cd * 2))
-                .arg_ptr(ws.conv_out.offset(row * cd * 2 + qkv * 2))
-                .arg_ptr(ws.conv_out.offset(row * cd * 2 + qkv * 4))
-                .arg_ptr(ws.gate.offset(row * qkv * 4))
-                .arg_ptr(ws.beta.offset(row * c.heads * 4))
+                .arg_ptr(io.conv_out)
+                .arg_ptr(io.conv_out.offset(qkv * 2))
+                .arg_ptr(io.conv_out.offset(qkv * 4))
+                .arg_ptr(io.gate)
+                .arg_ptr(io.beta)
                 .arg_ptr(state.recurrent)
-                .arg_ptr(ws.core.offset(row * qkv * 4))
+                .arg_ptr(io.core)
                 .arg_u32(c.heads as u32)
                 .arg_u32(d as u32)
                 .arg_f32(1.0 / (d as f32).sqrt())
@@ -105,8 +202,8 @@ impl Glm5NextKdaLayer {
         ws: &Glm5NextKdaWorkspace,
         stream: u64,
     ) -> Result<()> {
-        self.front_end(gpu, hidden, 1, ws, stream)?;
-        self.stateful_row(gpu, 0, state, ws, stream)?;
+        self.front_end(gpu, hidden, 1, ws, Pack::InFrontEnd, GateAt::Kernel, stream)?;
+        self.stateful_row(gpu, RowIo::workspace(&self.cfg, ws, 0), state, stream)?;
         self.back_end(gpu, 1, ws, stream)
     }
 
@@ -132,28 +229,229 @@ impl Glm5NextKdaLayer {
         snapshots: &[(DevicePtr, DevicePtr)],
         stream: u64,
     ) -> Result<()> {
+        self.decode_k_with(
+            gpu,
+            hidden,
+            k,
+            state,
+            ws,
+            snapshots,
+            stream,
+            kda_seq_tokens(),
+        )
+    }
+
+    /// 2026-10-09: [`Self::decode_k`] with the per-sequence token kernels
+    /// (`METRALE_GLM_KDA_SEQ_TOKENS`) explicit: with `tokens`, rows that take no snapshot step
+    /// in one conv and one recurrent launch for all of them (`stateful_tokens`, same bits),
+    /// where the target and config allow it; otherwise row by row.
+    #[allow(clippy::too_many_arguments)]
+    pub fn decode_k_with(
+        &self,
+        gpu: &dyn GpuBackend,
+        hidden: DevicePtr,
+        k: usize,
+        state: &KdaSeqState,
+        ws: &Glm5NextKdaWorkspace,
+        snapshots: &[(DevicePtr, DevicePtr)],
+        stream: u64,
+        tokens: bool,
+    ) -> Result<()> {
+        self.decode_k_modes(
+            gpu,
+            hidden,
+            k,
+            state,
+            ws,
+            snapshots,
+            stream,
+            tokens,
+            super::chunk16::kda_chunk_scan_min_rows()?,
+            super::chunk64::kda_chunk64_min_rows()?,
+        )
+    }
+
+    /// 2026-10-10: [`Self::decode_k_with`] with the chunked scans' floors
+    /// (`METRALE_GLM_KDA_CHUNK_SCAN`, `METRALE_GLM_KDA_CHUNK64`) explicit: rows that take no
+    /// snapshot, at least a floor of them, run the conv and that chunked recurrence
+    /// ([`scan_mode`]: `chunk64.rs` ahead of `chunk16.rs`); otherwise as `decode_k_with`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn decode_k_modes(
+        &self,
+        gpu: &dyn GpuBackend,
+        hidden: DevicePtr,
+        k: usize,
+        state: &KdaSeqState,
+        ws: &Glm5NextKdaWorkspace,
+        snapshots: &[(DevicePtr, DevicePtr)],
+        stream: u64,
+        tokens: bool,
+        chunk_min: Option<usize>,
+        // 2026-10-12: `METRALE_GLM_KDA_CHUNK64`'s floor (`chunk64.rs`), ahead of `chunk_min`.
+        chunk64_min: Option<usize>,
+    ) -> Result<()> {
+        let mode = scan_mode(
+            k,
+            snapshots.is_empty(),
+            chunk_min.filter(|_| self.chunk16_ready()),
+            chunk64_min.filter(|_| self.chunk64_ready()),
+        );
+        let chunked64 = mode == ScanMode::Chunk64;
+        let chunked = mode != ScanMode::None;
+        let tokens = !chunked && tokens && k > 1 && snapshots.is_empty() && self.seq_tokens_ready();
+        let snap_tokens = !chunked
+            && super::kda_verify_tokens()
+            && super::seq_tokens::snap_tokens_apply(k, snapshots.len())
+            && self.seq_tokens_ready()
+            && self.kernels.seq.recurrent_snap.0 != 0;
+        // 2026-10-13: The verify that snapshots reads the packed rows before its conv, so only
+        // the chunked and token paths may take the fused pack.
+        let pack = self.pack_for(tokens || chunked)?;
+        // 2026-10-14: One gate decision for the front end and the scan (`gate_at.rs`).
+        let gate = self.gate_at_for(chunked64)?;
+        self.rows_with(
+            gpu,
+            hidden,
+            k,
+            ws,
+            pack,
+            gate,
+            stream,
+            |row| {
+                if tokens || chunked || snap_tokens {
+                    return Ok(());
+                }
+                self.stateful_row(gpu, RowIo::workspace(&self.cfg, ws, row), state, stream)?;
+                match snapshots.get(row) {
+                    Some(dst) => self.snapshot_state(gpu, state, *dst, stream),
+                    None => Ok(()),
+                }
+            },
+            || {
+                if chunked64 {
+                    self.stateful_chunk64(gpu, k, state, ws, pack, gate, stream)
+                } else if chunked {
+                    self.stateful_chunk16(gpu, k, state, ws, pack, stream)
+                } else if snap_tokens {
+                    self.stateful_tokens_snap(gpu, k, state, ws, snapshots, stream)
+                } else if tokens {
+                    self.stateful_tokens(gpu, k, state, ws, pack, stream)
+                } else {
+                    Ok(())
+                }
+            },
+        )
+    }
+
+    /// 2026-10-09: Copy `state` (recurrent, then conv) to `(h_dst, conv_dst)`: the per-row
+    /// snapshot a verify takes when the pool keeps one state per verify row.
+    pub fn snapshot_state(
+        &self,
+        gpu: &dyn GpuBackend,
+        state: &KdaSeqState,
+        (h_dst, conv_dst): (DevicePtr, DevicePtr),
+        stream: u64,
+    ) -> Result<()> {
+        let c = &self.cfg;
+        gpu.copy_d2d_async(
+            state.recurrent,
+            h_dst,
+            c.recurrent_state_elems() * 4,
+            stream,
+        )?;
+        gpu.copy_d2d_async(state.conv, conv_dst, c.conv_state_elems() * 4, stream)
+    }
+
+    /// 2026-10-08: One token for each of `states.len()` sequences: row `r` of `hidden` advances
+    /// `states[r]`. The projections run once over all rows, as in [`Self::decode_k`], and each
+    /// row's conv and recurrent step is [`Self::decode`]'s own arithmetic on that row's state
+    /// (2026-10-09: from two rows on, with the 1R+1W kernel present, the recurrent steps of
+    /// all rows run as one `kda_recurrent_decode_bf16_smem_rows` launch, block for block the
+    /// single-row kernel's), so
+    /// for up to `DENSE_GEMV_BATCHM_MAX_M` rows a row's output and state equal a lone
+    /// [`Self::decode`] of its sequence bit for bit (the argument in [`Self::decode_k`]).
+    /// Refuses no rows or more rows than the workspace holds.
+    pub fn decode_rows(
+        &self,
+        gpu: &dyn GpuBackend,
+        hidden: DevicePtr,
+        states: &[KdaSeqState],
+        ws: &Glm5NextKdaWorkspace,
+        stream: u64,
+    ) -> Result<()> {
+        // 2026-10-09: One row per sequence; `decode_seq_rows` steps them with the rows
+        // kernels (conv and recurrence, one launch per 16 rows) when the target has them.
+        let seqs: Vec<(KdaSeqState, usize)> = states.iter().map(|s| (*s, 1)).collect();
+        self.decode_seq_rows(gpu, hidden, &seqs, ws, stream, |_| Ok(()))
+    }
+
+    /// 2026-10-09: [`Self::decode_rows`] one row at a time, with `after_row(row)` called after
+    /// row `row`'s recurrent step and before the next row's. A batched verify hands one
+    /// sequence's state to several consecutive rows, which then step it in row order as
+    /// [`Self::decode_k`] does (the one-launch recurrence of `decode_rows` would run them
+    /// concurrently on one state), and takes that sequence's per-row snapshots in `after_row`.
+    pub fn decode_rows_then(
+        &self,
+        gpu: &dyn GpuBackend,
+        hidden: DevicePtr,
+        states: &[KdaSeqState],
+        ws: &Glm5NextKdaWorkspace,
+        stream: u64,
+        mut after_row: impl FnMut(usize) -> Result<()>,
+    ) -> Result<()> {
+        self.rows_with(
+            gpu,
+            hidden,
+            states.len(),
+            ws,
+            Pack::InFrontEnd,
+            GateAt::Kernel,
+            stream,
+            |row| {
+                self.stateful_row(
+                    gpu,
+                    RowIo::workspace(&self.cfg, ws, row),
+                    &states[row],
+                    stream,
+                )?;
+                after_row(row)
+            },
+            || Ok(()),
+        )
+    }
+
+    /// 2026-10-08: `front_end` over `k` rows, `per_row(row)` for each row in order,
+    /// (2026-10-09) `after_rows`, then `back_end`, each span in its profile bucket. Refuses `k == 0` or `k` above the
+    /// workspace before any launch.
+    pub(super) fn rows_with(
+        &self,
+        gpu: &dyn GpuBackend,
+        hidden: DevicePtr,
+        k: usize,
+        ws: &Glm5NextKdaWorkspace,
+        pack: Pack,
+        gate: GateAt,
+        stream: u64,
+        mut per_row: impl FnMut(usize) -> Result<()>,
+        after_rows: impl FnOnce() -> Result<()>,
+    ) -> Result<()> {
         if k == 0 || k > ws.max_tokens {
             bail!(
-                "KDA decode_k of {k} tokens does not fit a workspace built for {}",
+                "KDA decode of {k} rows does not fit a workspace built for {}",
                 ws.max_tokens
             );
         }
         use crate::glm5next_layer::profile;
-        let c = &self.cfg;
-        let (h_bytes, conv_bytes) = (c.recurrent_state_elems() * 4, c.conv_state_elems() * 4);
         // 2026-09-25: Three profile buckets (front, recurrence, back), each closed where its span
         // ends.
         let t_front = profile::start();
-        self.front_end(gpu, hidden, k, ws, stream)?;
+        self.front_end(gpu, hidden, k, ws, pack, gate, stream)?;
         profile::end(profile::KDA_FRONT, t_front, gpu, stream);
         let t_recur = profile::start();
         for row in 0..k {
-            self.stateful_row(gpu, row, state, ws, stream)?;
-            if let Some((h_dst, conv_dst)) = snapshots.get(row) {
-                gpu.copy_d2d_async(state.recurrent, *h_dst, h_bytes, stream)?;
-                gpu.copy_d2d_async(state.conv, *conv_dst, conv_bytes, stream)?;
-            }
+            per_row(row)?;
         }
+        after_rows()?;
         profile::end(profile::KDA_RECUR, t_recur, gpu, stream);
         let t_back = profile::start();
         let r = self.back_end(gpu, k, ws, stream);

@@ -1,0 +1,2167 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-08: The lever journal of the GLM Campaign (GLM-5.3 Flash on 3×GB10 with DFlash2). One
+# [[lever]] per optimization attempt, kept OR discarded OR failed, with the schema and the
+# root_cause_class vocabulary of the kit's ledger/levers.toml (the Hardware Beachhead Campaign:
+# H100 PR). Kept as its own file so the two PRs do not conflict; its entries are appended to
+# levers.toml once the kit merges.
+
+[[lever]]
+id = "gb10x3-glm53-ep-only-layout-garbage"
+date = "2026-10-08"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE, declared)"
+recipe_or_tier = "world 3, --ep-size 3 --tp-size 1"
+symptom = "first three-box serve: greedy output word salad (' the the known asthe of France is the now...'); TP=3/EP=3 on the same binary answers 'Paris. In French, Paris is pronounced...'"
+diagnosis_tool = "manual-inspection"
+root_cause_class = "numerics-path-mismatch"
+lever_type = "process-fix"
+lkb_effect = "none"
+parity_tier_kept = "n/a"
+per_rung = []
+verdict = "parity-broken"
+verdict_reason = "EP without TP replicates the dense layers and the shared expert, and the MLP all-reduce then sums them once per rank; the layout is now refused at config time"
+failure_mode = "Glm5NextMlpConfig::needs_all_reduce is true for any ep > 1, but at tp = 1 the dense and shared outputs are full (not partial) on every rank"
+caught_by = "the fixed greedy probe set, first request after boot"
+time_lost_hours = 0.1
+would_catch_earlier = "a CPU test that the MLP site's per-rank contributions sum to the single-rank output for every legal (tp, ep); the existing tests only covered tp = ep = 2"
+effort_hours = 0.2
+transferability = "any MoE with replicated dense or shared-expert paths under expert-only parallelism"
+links = { pr = "", commit = "", evidence = "same-box greedy probes, EP=3/TP=1 vs TP=3/EP=3, one binary" }
+notes = "EP-only was also the bandwidth-worst layout (dense BF16 read on every rank), so nothing is lost by refusing it"
+
+[[lever]]
+id = "gb10x3-glm53-launch-env-leak-and-stub-libraries"
+date = "2026-10-08"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4"
+recipe_or_tier = "three-node bare-binary launch"
+symptom = "head rank: CUDA_ERROR_NO_DEVICE at module load, then a segfault in ncclGetUniqueId, then every collective involving that box hung or failed (bootstrap 'Message truncated', CUDA error 700) while the other two boxes' pair worked"
+diagnosis_tool = "manual-inspection"
+root_cause_class = "measurement-methodology-error"
+lever_type = "process-fix"
+lkb_effect = "none"
+parity_tier_kept = "n/a"
+per_rung = []
+verdict = "failed"
+verdict_reason = "environment, not engine: unversioned stub libraries shadowed the driver and NCCL on one box, and the launching shell exported its own NCCL_* settings into the rank; fixed by a bundled library directory and a clean environment (env -i) per rank"
+failure_mode = "(1) unversioned libcuda.so / libnccl.so / libcudart.so / libcublasLt.so stub files on one box; the binary links the unversioned names; (2) NCCL_IB_GID_INDEX, NCCL_IB_HCA, NCCL_NSOCKS_PERTHREAD, NCCL_SOCKET_NTHREADS, NCCL_IB_QPS_PER_CONNECTION inherited from the launching shell on one rank only; (3) NCCL 2.29 lacks subnet-aware routing, which a switchless triangle needs"
+caught_by = "a ctypes 3-rank NCCL test (broadcast + all-reduce) run pairwise, which isolated the box and then the environment"
+time_lost_hours = 0.9
+would_catch_earlier = "a pre-launch check that diffs `ldd` resolution and the NCCL_* environment of the rank process across boxes, plus the 3-rank NCCL test before loading 190 GB of weights"
+effort_hours = 1.0
+transferability = "any multi-node launch from an agent shell; any box carrying build stubs in the system library path"
+links = { pr = "", commit = "", evidence = "pairwise NCCL tests on the reference boxes" }
+notes = "the switchless triangle also needs the same NCCL build on every rank: mixing 2.29 and 2.30 fails the bootstrap with a size mismatch"
+
+[[lever]]
+id = "gb10x3-glm53-oneshot-allreduce-unarmed"
+date = "2026-10-08"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4"
+recipe_or_tier = "TP=3/EP=3, --all-reduce-oneshot-max-kb 512"
+symptom = "first prefill refused: 'bf16_add_rank_sum kernel not set'"
+diagnosis_tool = "manual-inspection"
+root_cause_class = "silent-gate-bypass"
+lever_type = "process-fix"
+lkb_effect = "none"
+parity_tier_kept = "n/a"
+per_rung = []
+verdict = "failed"
+verdict_reason = "the kernel handover ran only at world size 2; the fail-fast in the one-shot path turned what would have been a silent NCCL fallback into an immediate error"
+failure_mode = "TransformerModel registered the reduce buffers and kernels only when world_size == 2"
+caught_by = "the one-shot path's own refusal without its kernel"
+time_lost_hours = 0.05
+would_catch_earlier = "a test that every comm capability a flag arms has its setup reached at every world size the flag accepts"
+effort_hours = 0.1
+transferability = "any lever whose setup is gated on a different predicate than its dispatch"
+links = { pr = "", commit = "", evidence = "" }
+notes = "timing of the one-shot path is still unmeasured"
+
+[[lever]]
+id = "gb10-dense-gemv-bf16-load-pipelining"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (BF16 dense projections, declared)"
+recipe_or_tier = "declared"
+symptom = "nsys, TP=3 C1 decode: dense_gemv_bf16 27 ms of a 55 ms GPU step (499 calls/step)"
+diagnosis_tool = "microbench"
+root_cause_class = "bandwidth-underutilization"
+lever_type = "parameterization"
+lkb_effect = "none (not kept)"
+parity_tier_kept = "1"
+per_rung = []
+verdict = "discarded"
+verdict_reason = "four 16-byte loads in flight per thread (same accumulation order, bit-identical) moved the kernel by -3..+6 % across the GLM shapes: the existing kernel already reads 210-233 GB/s, about 80 % of the box's ~273 GB/s"
+failure_mode = "the hypothesis (one outstanding load per thread limits bandwidth) was wrong at these shapes"
+caught_by = "standalone microbench, old vs new kernel, bit comparison + timing over L2-defeating weight copies"
+time_lost_hours = 0.2
+would_catch_earlier = "computing achieved GB/s from the nsys per-call times before writing a variant"
+effort_hours = 0.2
+transferability = "any BF16 decode GEMV on gb10"
+links = { pr = "", commit = "", evidence = "same-box standalone microbench" }
+notes = "the BF16 dense floor at declared precision is therefore ~23 ms per TP=3 step; C1 needs speculation or the matched tier to pass the reference"
+
+[[lever]]
+id = "gb10x3-glm53-oneshot-allreduce"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "comm one-shot all-reduce at world 3 (grouped send/recv + rank-ordered FP32 sum)"
+symptom = "nsys TP3 C1: reduce barriers 34 ms of a 92 ms profiled step; 3-rank NCCL microbench 26.5 us all-reduce vs 19.2 us one-shot at 8 KB"
+diagnosis_tool = "microbench"
+root_cause_class = "launch-overhead"
+lever_type = "new-kernel"
+lkb_effect = "new kernel bf16_add_rank_sum (residual)"
+parity_tier_kept = "1"
+per_rung = [{ rung = "C1", tok_s_pct = 12.0, j_tok_pct = 0.0, n = 1 }]
+verdict = "kept"
+verdict_reason = "C1 14 -> 15.7 tok/s; fail-fast without its kernel; default off, recipe sets 1024 KB"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 1.0
+transferability = "multi-node hybrid MoE serving on gb10"
+links = { pr = "", commit = "", evidence = "quick same-box serve probes (n = 1, not the official ladder) and nsys on rank 0" }
+notes = "j_tok not measured for these quick probes; per_rung tok_s_pct from n = 1 probes"
+
+[[lever]]
+id = "gb10x3-glm53-lmhead-vocab-uneven"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "vocab-parallel LM head at a vocab that does not divide by world size"
+symptom = "nsys: 5.7 ms/step replicated BF16 head (154,880 rows) on every rank"
+diagnosis_tool = "nsys"
+root_cause_class = "duplicate-materialization"
+lever_type = "parameterization"
+lkb_effect = "tp_split reused"
+parity_tier_kept = "1"
+per_rung = []
+verdict = "kept"
+verdict_reason = "logits bit-identical (zeros summed exactly); ~3.7 ms/step less"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 1.0
+transferability = "multi-node hybrid MoE serving on gb10"
+links = { pr = "", commit = "", evidence = "quick same-box serve probes (n = 1, not the official ladder) and nsys on rank 0" }
+notes = "j_tok not measured for these quick probes; per_rung tok_s_pct from n = 1 probes"
+
+[[lever]]
+id = "gb10x3-glm53-batched-decode"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "batched multi-sequence GLM decode (per-row states, one weight read per 16-row group)"
+symptom = "per-sequence decode fallback: C4 15.4 tok/s = C1"
+diagnosis_tool = "bench"
+root_cause_class = "phase-serialization"
+lever_type = "parameterization"
+lkb_effect = "multi-row points of existing GEMV/MoE families"
+parity_tier_kept = "1"
+per_rung = [{ rung = "C4", tok_s_pct = 147.0, j_tok_pct = 0.0, n = 1 }, { rung = "C16", tok_s_pct = 280.0, j_tok_pct = 0.0, n = 1 }]
+verdict = "kept"
+verdict_reason = "C4 15 -> 38, C16 ~15 -> 58 tok/s; 4/4 prompts byte-identical solo vs batched"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 1.0
+transferability = "multi-node hybrid MoE serving on gb10"
+links = { pr = "", commit = "", evidence = "quick same-box serve probes (n = 1, not the official ladder) and nsys on rank 0" }
+notes = "j_tok not measured for these quick probes; per_rung tok_s_pct from n = 1 probes"
+
+[[lever]]
+id = "gb10x3-glm53-dflash2"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "DFlash2 on GLM across 3 ranks (completed-output mHC tap, K=gamma verify opcode, KDA replay)"
+symptom = "no speculation: C1 16 tok/s vs reference 47.5"
+diagnosis_tool = "bench"
+root_cause_class = "phase-serialization"
+lever_type = "new-kernel"
+lkb_effect = "drafter reuse; verify opcodes"
+parity_tier_kept = "accuracy-gated"
+per_rung = [{ rung = "C1", tok_s_pct = 130.0, j_tok_pct = 0.0, n = 1 }]
+verdict = "kept"
+verdict_reason = "C1 16 -> 34-37 tok/s (prose); greedy identity vs plain decode still to gate"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 1.0
+transferability = "multi-node hybrid MoE serving on gb10"
+links = { pr = "", commit = "", evidence = "quick same-box serve probes (n = 1, not the official ladder) and nsys on rank 0" }
+notes = "j_tok not measured for these quick probes; per_rung tok_s_pct from n = 1 probes"
+
+[[lever]]
+id = "gb10x3-glm53-moe-m16-union"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "MoE union tier up to 16 rows (one sweep instead of two 8-row sweeps)"
+symptom = "C16 nsys: w4a16_gemv_sw_moe_batchm_m8 95 ms/step in two 8-row halves"
+diagnosis_tool = "microbench"
+root_cause_class = "bandwidth-underutilization"
+lever_type = "parameterization"
+lkb_effect = "new points m9..m16"
+parity_tier_kept = "1"
+per_rung = []
+verdict = "discarded"
+verdict_reason = "microbench: one m16 sweep 2.0 ms vs two m8 sweeps 1.1 ms (140 registers, one block per SM); serve runs with METRALE_GLM_MOE_ROW_BATCH_MAX=8"
+failure_mode = "microbench: one m16 sweep 2.0 ms vs two m8 sweeps 1.1 ms (140 registers, one block per SM); serve runs with METRALE_GLM_MOE_ROW_BATCH_MAX=8"
+caught_by = "same-box serve probes / microbench"
+time_lost_hours = 0.5
+would_catch_earlier = "a microbench at the serving shape before wiring it as the default"
+effort_hours = 1.0
+transferability = "multi-node hybrid MoE serving on gb10"
+links = { pr = "", commit = "", evidence = "quick same-box serve probes (n = 1, not the official ladder) and nsys on rank 0" }
+notes = "j_tok not measured for these quick probes; per_rung tok_s_pct from n = 1 probes"
+
+[[lever]]
+id = "gb10x3-glm53-dense-batchm-wide"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "register-resident BF16 batched GEMV at 9-16 rows"
+symptom = "bench: runtime-M batchm keeps acc[16] in local memory, M=16 2.3x the M=1 call"
+diagnosis_tool = "microbench"
+root_cause_class = "bandwidth-underutilization"
+lever_type = "parameterization"
+lkb_effect = "new compile-time-M points"
+parity_tier_kept = "1"
+per_rung = []
+verdict = "kept"
+verdict_reason = "2816x4096 M=16 155 -> 98 us, byte-identical"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 1.0
+transferability = "multi-node hybrid MoE serving on gb10"
+links = { pr = "", commit = "", evidence = "quick same-box serve probes (n = 1, not the official ladder) and nsys on rank 0" }
+notes = "j_tok not measured for these quick probes; per_rung tok_s_pct from n = 1 probes"
+
+[[lever]]
+id = "gb10x3-glm53-wide-row-groups"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "verify/decode row groups up to 128 (grouped TC MoE + cuBLASLt dense above 16 rows)"
+symptom = "C16 DFlash: verify time linear in rows (16x8 rows 1695 ms)"
+diagnosis_tool = "bench"
+root_cause_class = "bandwidth-underutilization"
+lever_type = "scheduling"
+lkb_effect = "none yet"
+parity_tier_kept = "accuracy-gated"
+per_rung = [{ rung = "C16", tok_s_pct = 80.0, j_tok_pct = 0.0, n = 1 }]
+verdict = "kept"
+verdict_reason = "opt-in METRALE_GLM_ROW_GROUP=128: C16 34 -> 61-65; >16-row bits depend on batch-mates"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 1.0
+transferability = "multi-node hybrid MoE serving on gb10"
+links = { pr = "", commit = "", evidence = "quick same-box serve probes (n = 1, not the official ladder) and nsys on rank 0" }
+notes = "j_tok not measured for these quick probes; per_rung tok_s_pct from n = 1 probes"
+
+[[lever]]
+id = "gb10x3-glm53-lmhead-wide-cublaslt"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "GLM BF16 head over a wide verify on cuBLASLt"
+symptom = "nsys: dense_gemm_bf16 118 ms per C16 verify step (full-vocab SIMT tile GEMM, 128 rows)"
+diagnosis_tool = "nsys"
+root_cause_class = "bandwidth-underutilization"
+lever_type = "data-row"
+lkb_effect = "none"
+parity_tier_kept = "accuracy-gated"
+per_rung = []
+verdict = "kept"
+verdict_reason = "118 ms -> 6.4 ms per step"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 1.0
+transferability = "multi-node hybrid MoE serving on gb10"
+links = { pr = "", commit = "", evidence = "quick same-box serve probes (n = 1, not the official ladder) and nsys on rank 0" }
+notes = "j_tok not measured for these quick probes; per_rung tok_s_pct from n = 1 probes"
+
+[[lever]]
+id = "gb10x3-glm53-kda-seq-rows"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "KDA rows kernels stepping row t of every sequence in one launch (verify)"
+symptom = "nsys: 157k single-row KDA launches per 25 s at C16 verify"
+diagnosis_tool = "nsys"
+root_cause_class = "launch-overhead"
+lever_type = "new-kernel"
+lkb_effect = "new rows kernels (opt-in)"
+parity_tier_kept = "1"
+per_rung = []
+verdict = "regressed"
+verdict_reason = "verify KDA 1.35 s -> 2.57 s per window (L2 reuse lost); now opt-in METRALE_GLM_KDA_SEQ_ROWS"
+failure_mode = "verify KDA 1.35 s -> 2.57 s per window (L2 reuse lost); now opt-in METRALE_GLM_KDA_SEQ_ROWS"
+caught_by = "same-box serve probes / microbench"
+time_lost_hours = 0.5
+would_catch_earlier = "a microbench at the serving shape before wiring it as the default"
+effort_hours = 1.0
+transferability = "multi-node hybrid MoE serving on gb10"
+links = { pr = "", commit = "", evidence = "quick same-box serve probes (n = 1, not the official ladder) and nsys on rank 0" }
+notes = "j_tok not measured for these quick probes; per_rung tok_s_pct from n = 1 probes"
+
+[[lever]]
+id = "gb10x3-glm53-declared-w4a4-slots"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "declared W4A4 experts on a static-scale slot GEMV"
+symptom = "precision: checkpoint declares W4A4, engine ran W4A16"
+diagnosis_tool = "parity-oracle"
+root_cause_class = "below-declared-precision"
+lever_type = "new-kernel"
+lkb_effect = "new slot kernel"
+parity_tier_kept = "accuracy-gated"
+per_rung = [{ rung = "C1", tok_s_pct = -24.0, j_tok_pct = 0.0, n = 1 }]
+verdict = "regressed"
+verdict_reason = "C1 37 -> 28 tok/s: weights read once per (row, slot); union kernels written, unmeasured; serve uses --weight-quantization nvfp4 (W4A16, above declared, disclosed)"
+failure_mode = "C1 37 -> 28 tok/s: weights read once per (row, slot); union kernels written, unmeasured; serve uses --weight-quantization nvfp4 (W4A16, above declared, disclosed)"
+caught_by = "same-box serve probes / microbench"
+time_lost_hours = 0.5
+would_catch_earlier = "a microbench at the serving shape before wiring it as the default"
+effort_hours = 1.0
+transferability = "multi-node hybrid MoE serving on gb10"
+links = { pr = "", commit = "", evidence = "quick same-box serve probes (n = 1, not the official ladder) and nsys on rank 0" }
+notes = "j_tok not measured for these quick probes; per_rung tok_s_pct from n = 1 probes"
+
+[[lever]]
+id = "gb10x3-glm53-matched-fp8-dense"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "matched below-declared FP8 dense tier (opt-in)"
+symptom = "dense BF16 27 ms of a 55 ms C1 step"
+diagnosis_tool = "nsys"
+root_cause_class = "bandwidth-underutilization"
+lever_type = "precision-fix"
+lkb_effect = "none (existing W8A8 family)"
+parity_tier_kept = "accuracy-gated"
+per_rung = [{ rung = "C1", tok_s_pct = -25.0, j_tok_pct = 0.0, n = 1 }]
+verdict = "regressed"
+verdict_reason = "C1 28 -> 21, C4/C16 unchanged: per-call quantize launches; quantize reuse written, unmeasured"
+failure_mode = "C1 28 -> 21, C4/C16 unchanged: per-call quantize launches; quantize reuse written, unmeasured"
+caught_by = "same-box serve probes / microbench"
+time_lost_hours = 0.5
+would_catch_earlier = "a microbench at the serving shape before wiring it as the default"
+effort_hours = 1.0
+transferability = "multi-node hybrid MoE serving on gb10"
+links = { pr = "", commit = "", evidence = "quick same-box serve probes (n = 1, not the official ladder) and nsys on rank 0" }
+notes = "j_tok not measured for these quick probes; per_rung tok_s_pct from n = 1 probes"
+
+[[lever]]
+id = "gb10x3-glm53-fp8-drafter"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "FP8 drafter GEMMs on the GLM target (shared kernels from the 27B leaf)"
+symptom = "propose 29-40 ms per step on the BF16 drafter"
+diagnosis_tool = "bench"
+root_cause_class = "bandwidth-underutilization"
+lever_type = "data-row"
+lkb_effect = "cross-leaf include, no new kernel"
+parity_tier_kept = "accuracy-gated"
+per_rung = [{ rung = "C1", tok_s_pct = 12.0, j_tok_pct = 0.0, n = 1 }]
+verdict = "kept"
+verdict_reason = "C1 25 -> 28 tok/s vs BF16 drafter (same build)"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 1.0
+transferability = "multi-node hybrid MoE serving on gb10"
+links = { pr = "", commit = "", evidence = "quick same-box serve probes (n = 1, not the official ladder) and nsys on rank 0" }
+notes = "j_tok not measured for these quick probes; per_rung tok_s_pct from n = 1 probes"
+
+[[lever]]
+id = "gb10x3-glm53-prefill-rows-512"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_PREFILL_ROWS=512"
+symptom = "TTFT p50 4.5 s at C1, 23.9 s at C8 on the official ladder"
+diagnosis_tool = "bench"
+root_cause_class = "serialization"
+lever_type = "config"
+lkb_effect = "no kernel change"
+parity_tier_kept = "bit-identical-not-claimed"
+per_rung = [{ rung = "C1", tok_s_pct = 3.4, j_tok_pct = 0.0, n = 1 }, { rung = "C8", tok_s_pct = 9.8, j_tok_pct = 0.0, n = 1 }]
+verdict = "kept"
+verdict_reason = "TTFT C1 4.5 s -> 0.74 s, C8 23.9 s -> 0.43 s"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.2
+transferability = "multi-node hybrid MoE serving on gb10"
+links = { pr = "", commit = "", evidence = "chat-prose quick probes, OSL 512, same boxes (n = 1); not the official ladder" }
+notes = "wide sub-chunk changes projection numerics (documented on the lever)"
+
+[[lever]]
+id = "gb10x3-glm53-dflash-off-chat-prose"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "no DFlash (K=0) vs DFlash2 g8 vLLM draft ladder"
+symptom = "DFlash2 slower than plain decode on chat prose"
+diagnosis_tool = "bench"
+root_cause_class = "speculation-acceptance"
+lever_type = "config"
+lkb_effect = "no kernel change"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 27, j_tok_pct = 0.0, n = 1 }, { rung = "C8", tok_s_pct = 33, j_tok_pct = 0.0, n = 1 }, { rung = "C16", tok_s_pct = 31, j_tok_pct = 0.0, n = 1 }]
+verdict = "kept"
+verdict_reason = "K=0 beats DFlash at every rung probed: C1 17.0 vs 13.4, C8 56.0 vs 42.2 (nvfp4 tier); C1 21.2 vs 16.3, C8 68.7 vs 46.6, C16 85.7 vs 53.4 (declared + fp8 dense, FULL_BLOCK)"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.2
+transferability = "multi-node hybrid MoE serving on gb10"
+links = { pr = "", commit = "", evidence = "chat-prose quick probes, OSL 512, same boxes (n = 1); not the official ladder" }
+notes = "acceptance p1 0.44, mean accepted 0.63/step; vLLM reaches 47 tok/s C1 with the same drafter so a drafter-input defect is still suspected"
+
+[[lever]]
+id = "gb10x3-glm53-dflash-full-block"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "METRALE_DFLASH_FULL_BLOCK=1"
+symptom = "short ladder drafts accept less than the full block"
+diagnosis_tool = "bench"
+root_cause_class = "speculation-acceptance"
+lever_type = "config"
+lkb_effect = "no kernel change"
+parity_tier_kept = "bit-identical"
+per_rung = []
+verdict = "discarded"
+verdict_reason = "not isolated (no same-build run without it); with it DFlash still loses to K=0 by 23% at C1, so it is moot for the recipe"
+failure_mode = "undeclared lever refused startup"
+caught_by = "lever registry"
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.2
+transferability = "multi-node hybrid MoE serving on gb10"
+links = { pr = "", commit = "", evidence = "chat-prose quick probes, OSL 512, same boxes (n = 1); not the official ladder" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-declared-w4a4-union"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "--weight-quantization declared (W4A4 slot + union kernels)"
+symptom = "declared W4A4 C1 37 -> 28 before the union kernels"
+diagnosis_tool = "bench"
+root_cause_class = "kernel-efficiency"
+lever_type = "kernel"
+lkb_effect = "union kernels in the existing family"
+parity_tier_kept = "declared"
+per_rung = [{ rung = "C1", tok_s_pct = 0.6, j_tok_pct = 0.0, n = 1 }, { rung = "C8", tok_s_pct = 5.7, j_tok_pct = 0.0, n = 1 }, { rung = "C16", tok_s_pct = 12.7, j_tok_pct = 0.0, n = 1 }]
+verdict = "kept"
+verdict_reason = "K=0: C1 17.1 vs 17.0, C8 59.2 vs 56.0, C16 79.0 vs 70.1 vs the nvfp4 (W4A16) tier"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.2
+transferability = "multi-node hybrid MoE serving on gb10"
+links = { pr = "", commit = "", evidence = "chat-prose quick probes, OSL 512, same boxes (n = 1); not the official ladder" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-dense-fp8-matched"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "--dense-quantization fp8 (matched tier, opt-in, disclosed)"
+symptom = "BF16 dense dominates the C1 step"
+diagnosis_tool = "bench"
+root_cause_class = "bandwidth-underutilization"
+lever_type = "config"
+lkb_effect = "FP8 quantize reuse, no new kernel"
+parity_tier_kept = "accuracy-gated"
+per_rung = [{ rung = "C1", tok_s_pct = 24, j_tok_pct = 0.0, n = 1 }, { rung = "C8", tok_s_pct = 16, j_tok_pct = 0.0, n = 1 }, { rung = "C16", tok_s_pct = 8.5, j_tok_pct = 0.0, n = 1 }]
+verdict = "kept"
+verdict_reason = "declared experts + fp8 dense, K=0: C1 21.2, C8 68.7, C16 85.7 vs declared-only 17.1/59.2/79.0"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.2
+transferability = "multi-node hybrid MoE serving on gb10"
+links = { pr = "", commit = "", evidence = "chat-prose quick probes, OSL 512, same boxes (n = 1); not the official ladder" }
+notes = "matched tier: below the checkpoint's declared precision, disclosed; accuracy not yet gated"
+
+[[lever]]
+id = "gb10x3-glm53-lmhead-vocab-shard"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "vocab-parallel BF16 head (batched decode route + unaligned vocab split)"
+symptom = "5.8 ms full-vocab head on every rank at C1"
+diagnosis_tool = "nsys"
+root_cause_class = "redundant-work"
+lever_type = "code"
+lkb_effect = "no new kernel"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 9.9, j_tok_pct = 0.0, n = 1 }, { rung = "C8", tok_s_pct = 6.5, j_tok_pct = 0.0, n = 1 }, { rung = "C16", tok_s_pct = 3.9, j_tok_pct = 0.0, n = 1 }]
+verdict = "kept"
+verdict_reason = "tokenizer caps vocab to 154,856 (not 64-aligned) so the split returned None; fixed + sharded the batched head; head 5.8 -> 1.8 ms"
+failure_mode = "silent fallback to whole-vocab head"
+caught_by = "nsys"
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.5
+transferability = "any TP serve with a vocab that is not a multiple of the split unit; GLM mHC/DSA kernels"
+links = { pr = "", commit = "", evidence = "chat-prose quick probes (OSL 512, n = 1) and C1 nsys --cuda-graph-trace=node on rank 0" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-dsa-decode-ilp"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "DSA MLA decode: 4 tokens in flight per warp + per-lane merge"
+symptom = "234 us per DSA decode launch, 22 CTAs, latency-bound"
+diagnosis_tool = "nsys"
+root_cause_class = "latency-bound"
+lever_type = "kernel"
+lkb_effect = "same kernel, restructured loop"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 0, j_tok_pct = 0.0, n = 1 }]
+verdict = "kept"
+verdict_reason = "234 -> 200 us per launch; greedy identical 8/8 at C1 and C4; end-to-end within noise"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.5
+transferability = "any TP serve with a vocab that is not a multiple of the split unit; GLM mHC/DSA kernels"
+links = { pr = "", commit = "", evidence = "chat-prose quick probes (OSL 512, n = 1) and C1 nsys --cuda-graph-trace=node on rank 0" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-hc-finish-warp-sinkhorn"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "hc_finish Sinkhorn in one warp with warp barriers"
+symptom = "hc_finish 15.7 us x 90 per step"
+diagnosis_tool = "nsys"
+root_cause_class = "sync-overhead"
+lever_type = "kernel"
+lkb_effect = "same kernel, barrier scope"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 0.9, j_tok_pct = 0.0, n = 1 }]
+verdict = "kept"
+verdict_reason = "greedy identical 8/8 at C1/C4; C1 23.3 -> 23.5"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.5
+transferability = "any TP serve with a vocab that is not a multiple of the split unit; GLM mHC/DSA kernels"
+links = { pr = "", commit = "", evidence = "chat-prose quick probes (OSL 512, n = 1) and C1 nsys --cuda-graph-trace=node on rank 0" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-expert-tp-layout"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "--moe-expert-layout tp (768/640/640 slices of every expert)"
+symptom = "post-MoE all-reduce waits 94.5 us vs 15 us (EP rank imbalance)"
+diagnosis_tool = "nsys"
+root_cause_class = "load-imbalance"
+lever_type = "code"
+lkb_effect = "existing MoE kernels at a narrower width"
+parity_tier_kept = "accuracy-gated"
+per_rung = [{ rung = "C1", tok_s_pct = 5.2, j_tok_pct = 0.0, n = 1 }, { rung = "C8", tok_s_pct = 0.3, j_tok_pct = 0.0, n = 1 }, { rung = "C16", tok_s_pct = -6.5, j_tok_pct = 0.0, n = 1 }]
+verdict = "held"
+verdict_reason = "helps C1, hurts C16; 7-min boot (buffered reads); rank 0 holds 20% more expert width (128-col units)"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "any TP serve with a vocab that is not a multiple of the split unit; GLM mHC/DSA kernels"
+links = { pr = "", commit = "", evidence = "chat-prose quick probes (OSL 512, n = 1) and C1 nsys --cuda-graph-trace=node on rank 0" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-dense-w4a16-tier"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "--dense-quantization w4a16 (KDA + shared expert NVFP4 W4A16, disclosed, below declared) + 1-row GEMV"
+symptom = "FP8 dense GEMVs ~13.8 ms/step at ~225 GB/s"
+diagnosis_tool = "nsys"
+root_cause_class = "bandwidth-bound"
+lever_type = "code"
+lkb_effect = "existing NVFP4 kernels (w4a16_tc_rows, w4a16_gemv)"
+parity_tier_kept = "accuracy-gated"
+per_rung = [{ rung = "C1", tok_s_pct = 9.4, j_tok_pct = 0.0, n = 1 }, { rung = "C8", tok_s_pct = -0.6, j_tok_pct = 0.0, n = 1 }, { rung = "C16", tok_s_pct = 1.1, j_tok_pct = 0.0, n = 1 }]
+verdict = "kept"
+verdict_reason = "vs fp8: C1 23.4 -> 25.6, C8 72.5 -> 72.1, C16 88.3 -> 89.3; row tile alone gave only C1 24.5 (44 CTAs), the GEMV at M=1 fixed it"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "any TP serve with a vocab that is not a multiple of the split unit; GLM mHC/DSA kernels"
+links = { pr = "", commit = "", evidence = "chat-prose quick probes (OSL 512, n = 1) and C1 nsys --cuda-graph-trace=node on rank 0" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-lmhead-fp8"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "--lm-head-dtype fp8"
+symptom = "head 1.8 ms/step"
+diagnosis_tool = "bench"
+root_cause_class = "bandwidth-bound"
+lever_type = "config"
+lkb_effect = "no kernel change"
+parity_tier_kept = "accuracy-gated"
+per_rung = [{ rung = "C1", tok_s_pct = -2.1, j_tok_pct = 0.0, n = 1 }, { rung = "C16", tok_s_pct = 0.5, j_tok_pct = 0.0, n = 1 }]
+verdict = "discarded"
+verdict_reason = "the FP8 head is not vocab-sharded, so it reads 634 MB vs the sharded BF16 head's 423 MB"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.1
+transferability = "any TP serve with a vocab that is not a multiple of the split unit; GLM mHC/DSA kernels"
+links = { pr = "", commit = "", evidence = "chat-prose quick probes (OSL 512, n = 1) and C1 nsys --cuda-graph-trace=node on rank 0" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-moe-wide-sweep"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "persistent fused gate+up union sweep + parallel row_union (default)"
+symptom = "MoE union sweep 91.5 ms + single-block row_union 8.5 ms per C16 step"
+diagnosis_tool = "nsys"
+root_cause_class = "occupancy-and-serial-kernel"
+lever_type = "kernel"
+lkb_effect = "same w4a4 mx family, persistent form"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 2.0, j_tok_pct = 0.0, n = 1 }, { rung = "C8", tok_s_pct = 9.6, j_tok_pct = 0.0, n = 1 }, { rung = "C16", tok_s_pct = 18.1, j_tok_pct = 0.0, n = 1 }]
+verdict = "kept"
+verdict_reason = "EXACT PASS; union build 260 -> 8 us; sweep 183-195 -> 211-236 GB/s"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "MoE serving on GB10 multi-rank; GLM kernels"
+links = { pr = "", commit = "", evidence = "chat-prose probes (OSL 512, n = 1), nsys rank 0, accuracy microtest (bench/glm53/accuracy_micro.py)" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-rowbatch"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "KDA rows-kernel arg fix + batched router + batched DSA indexer (opt-in levers, in recipe)"
+symptom = "550 KDA + 679 router + per-row DSA launches per C16 step"
+diagnosis_tool = "nsys"
+root_cause_class = "launch-bound"
+lever_type = "kernel"
+lkb_effect = "existing rows kernels fixed (local-memory arg array), batched GEMV entries"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = -3.1, j_tok_pct = 0.0, n = 1 }, { rung = "C8", tok_s_pct = 4.8, j_tok_pct = 0.0, n = 1 }, { rung = "C16", tok_s_pct = 7.1, j_tok_pct = 0.0, n = 1 }]
+verdict = "kept"
+verdict_reason = "EXACT PASS; C1 move is within probe noise"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "MoE serving on GB10 multi-rank; GLM kernels"
+links = { pr = "", commit = "", evidence = "chat-prose probes (OSL 512, n = 1), nsys rank 0, accuracy microtest (bench/glm53/accuracy_micro.py)" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-dsa-decode-hb"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "head-batched tensor-core DSA decode METRALE_GLM_DSA_DECODE_HB"
+symptom = "DSA decode 2.2 ms C1 / 6.9 ms C16, latency-bound"
+diagnosis_tool = "nsys"
+root_cause_class = "latency-bound"
+lever_type = "kernel"
+lkb_effect = "new family glm_mla_decode_hb"
+parity_tier_kept = "accuracy-gated"
+per_rung = [{ rung = "C1", tok_s_pct = 2.3, j_tok_pct = 0.0, n = 1 }, { rung = "C16", tok_s_pct = 2.1, j_tok_pct = 0.0, n = 1 }]
+verdict = "discarded"
+verdict_reason = "accuracy microtest FAIL: tf KL 0.0072 (HB=8), 0.0070 (HB=1, no merge); offline kernel parity passes; diagnostic lever committed for a serve repro"
+failure_mode = "serve-only numerics drift not seen offline"
+caught_by = "accuracy microtest"
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "MoE serving on GB10 multi-rank; GLM kernels"
+links = { pr = "", commit = "", evidence = "chat-prose probes (OSL 512, n = 1), nsys rank 0, accuracy microtest (bench/glm53/accuracy_micro.py)" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-dsa-w4a16"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_DSA_W4A16=1 (DSA q_a/q_absorb/o_absorb W4A16 under the w4a16 tier)"
+symptom = "DSA absorbed FP8 projections 2.6 ms/step C1"
+diagnosis_tool = "bench"
+root_cause_class = "bandwidth-bound"
+lever_type = "config"
+lkb_effect = "existing NVFP4 kernels"
+parity_tier_kept = "accuracy-gated"
+per_rung = [{ rung = "C1", tok_s_pct = 5.5, j_tok_pct = 0.0, n = 1 }, { rung = "C8", tok_s_pct = -1.8, j_tok_pct = 0.0, n = 1 }, { rung = "C16", tok_s_pct = -4.2, j_tok_pct = 0.0, n = 1 }]
+verdict = "held"
+verdict_reason = "tier change: vs declared tf KL 0.0315 (inside the w4a16 envelope 0.0343) but C16 regresses; not in recipe"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "MoE serving on GB10 multi-rank; GLM kernels"
+links = { pr = "", commit = "", evidence = "chat-prose probes (OSL 512, n = 1), nsys rank 0, accuracy microtest (bench/glm53/accuracy_micro.py)" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-dflash-ctx-commit"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "K=2/3/4 verify arms commit drafter context rows at their positions"
+symptom = "DFlash acceptance below the reference on the same drafter"
+diagnosis_tool = "code-read"
+root_cause_class = "wiring-defect"
+lever_type = "code"
+lkb_effect = "no kernel"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 0, j_tok_pct = 0.0, n = 1 }]
+verdict = "kept"
+verdict_reason = "7-draft mean accepted 0.73 -> ~0.85, p1 0.45 -> ~0.52 (ref 1.08/0.611); speculation still loses to K=0 at C1 (verify of 8 rows ~3x a decode step)"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "MoE serving on GB10 multi-rank; GLM kernels"
+links = { pr = "", commit = "", evidence = "chat-prose probes (OSL 512, n = 1), nsys rank 0, accuracy microtest (bench/glm53/accuracy_micro.py)" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-host-poll"
+date = "2026-10-10"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_COMM_POLL default 200:50 (spin then 50 us sleep) + row-0 logits memset"
+symptom = "~2.4 ms host gap per C1 step: two 1 ms sleep-polls on EP broadcasts + 79 MB memset"
+diagnosis_tool = "nsys"
+root_cause_class = "host-overhead"
+lever_type = "code"
+lkb_effect = "no kernel"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 5.2, j_tok_pct = 0.0, n = 3 }, { rung = "C8", tok_s_pct = 5.2, j_tok_pct = 0.0, n = 3 }]
+verdict = "kept"
+verdict_reason = "EXACT PASS"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "multi-rank MoE serving on GB10"
+links = { pr = "", commit = "", evidence = "exclusive same-box A/B (C1 x3, C8 x2, C16 x1, chat prose OSL 512) + accuracy microtest (per-lever pin and fixed declared anchor)" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-expert-tp-balanced"
+date = "2026-10-10"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "--moe-expert-layout tp, 704/704/640 with k64 kernels (+ startup lever-agreement deadline fix)"
+symptom = "post-MoE all-reduce waits on the EP rank with most experts (~5 ms/step C1)"
+diagnosis_tool = "nsys"
+root_cause_class = "load-imbalance"
+lever_type = "code"
+lkb_effect = "k64 twins in the w4a4 mx MoE family"
+parity_tier_kept = "accuracy-gated"
+per_rung = [{ rung = "C1", tok_s_pct = 8.1, j_tok_pct = 0.0, n = 3 }, { rung = "C8", tok_s_pct = 4.3, j_tok_pct = 0.0, n = 3 }, { rung = "C16", tok_s_pct = 3.1, j_tok_pct = 0.0, n = 3 }]
+verdict = "kept"
+verdict_reason = "numerics PASS tf KL 0.0104 vs pin; cumulative vs declared 0.0315"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "multi-rank MoE serving on GB10"
+links = { pr = "", commit = "", evidence = "exclusive same-box A/B (C1 x3, C8 x2, C16 x1, chat prose OSL 512) + accuracy microtest (per-lever pin and fixed declared anchor)" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-moe-1row-sweep"
+date = "2026-10-10"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "1-row own-slots persistent MoE sweep (default)"
+symptom = "1-row slot GEMV at ~180-210 GB/s"
+diagnosis_tool = "bench"
+root_cause_class = "bandwidth-underutilization"
+lever_type = "kernel"
+lkb_effect = "own-slots flag on the union sweep body"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 2.0, j_tok_pct = 0.0, n = 3 }, { rung = "C8", tok_s_pct = 2.8, j_tok_pct = 0.0, n = 3 }, { rung = "C16", tok_s_pct = 1.8, j_tok_pct = 0.0, n = 3 }]
+verdict = "kept"
+verdict_reason = "dec1 exact; dec4 0.125-margin batching tie"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "multi-rank MoE serving on GB10"
+links = { pr = "", commit = "", evidence = "exclusive same-box A/B (C1 x3, C8 x2, C16 x1, chat prose OSL 512) + accuracy microtest (per-lever pin and fixed declared anchor)" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-dsa-hb-recheck"
+date = "2026-10-10"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_DSA_DECODE_HB=8 under the recalibrated microtest"
+symptom = "DSA decode latency-bound at 22 CTAs"
+diagnosis_tool = "nsys"
+root_cause_class = "latency-bound"
+lever_type = "kernel"
+lkb_effect = "glm_mla_decode_hb family"
+parity_tier_kept = "accuracy-gated"
+per_rung = [{ rung = "C1", tok_s_pct = 2.2, j_tok_pct = 0.0, n = 3 }, { rung = "C8", tok_s_pct = 2.3, j_tok_pct = 0.0, n = 3 }, { rung = "C16", tok_s_pct = 6.0, j_tok_pct = 0.0, n = 3 }]
+verdict = "kept"
+verdict_reason = "old 0.002 gate was a false positive; per-lever tf KL 0.0085 (= benign K-split), cumulative 0.0335"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "multi-rank MoE serving on GB10"
+links = { pr = "", commit = "", evidence = "exclusive same-box A/B (C1 x3, C8 x2, C16 x1, chat prose OSL 512) + accuracy microtest (per-lever pin and fixed declared anchor)" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-dsa-w4a16-tier"
+date = "2026-10-10"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_DSA_W4A16=1 (DSA q_a/q_absorb/o_absorb NVFP4 W4A16, disclosed tier change)"
+symptom = "DSA absorbed FP8 GEMVs ~4 ms/step C1"
+diagnosis_tool = "nsys"
+root_cause_class = "bandwidth-bound"
+lever_type = "config"
+lkb_effect = "existing NVFP4 kernels"
+parity_tier_kept = "accuracy-gated"
+per_rung = [{ rung = "C1", tok_s_pct = 7.2, j_tok_pct = 0.0, n = 3 }, { rung = "C8", tok_s_pct = 2.9, j_tok_pct = 0.0, n = 3 }, { rung = "C16", tok_s_pct = 2.1, j_tok_pct = 0.0, n = 3 }]
+verdict = "kept"
+verdict_reason = "tier change judged on the fixed anchor: cumulative tf KL 0.0332 <= 0.040; per-lever 0.024; the reference engine keeps these FP8 (disclosed)"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "multi-rank MoE serving on GB10"
+links = { pr = "", commit = "", evidence = "exclusive same-box A/B (C1 x3, C8 x2, C16 x1, chat prose OSL 512) + accuracy microtest (per-lever pin and fixed declared anchor)" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-mhc-fused"
+date = "2026-10-10"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_MHC_FUSED=1 (hc_mix + hc_finish + norm in one last-block-done kernel)"
+symptom = "mHC ~2.7 ms/step at C1, Sinkhorn serial latency"
+diagnosis_tool = "nsys"
+root_cause_class = "latency-bound"
+lever_type = "kernel"
+lkb_effect = "new entry in glm_mhc family"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 6.6, j_tok_pct = 0.0, n = 3 }, { rung = "C8", tok_s_pct = 2.2, j_tok_pct = 0.0, n = 3 }, { rung = "C16", tok_s_pct = -1.2, j_tok_pct = 0.0, n = 3 }]
+verdict = "kept"
+verdict_reason = "tf+dec1 exact; C16 single run within noise"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "GLM mHC; multi-rank heads; MoE speculation economics"
+links = { pr = "", commit = "", evidence = "exclusive same-box A/B + accuracy microtest (pin + fixed anchor)" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-lmhead-fp8-sharded"
+date = "2026-10-10"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "--lm-head-dtype fp8 vocab-parallel (ldc-strided FP8 GEMV) + rank-local prompt-logprob head fix"
+symptom = "BF16 head 1.8 ms/step C1"
+diagnosis_tool = "nsys"
+root_cause_class = "bandwidth-bound"
+lever_type = "kernel"
+lkb_effect = "ldc parameter on existing FP8 GEMV family"
+parity_tier_kept = "accuracy-gated"
+per_rung = [{ rung = "C1", tok_s_pct = -0.6, j_tok_pct = 0.0, n = 3 }, { rung = "C8", tok_s_pct = -1.2, j_tok_pct = 0.0, n = 3 }, { rung = "C16", tok_s_pct = -5.6, j_tok_pct = 0.0, n = 3 }]
+verdict = "discarded"
+verdict_reason = "no gain on the fused-mHC base (accuracy PASS, tf KL 0.00076); the fix of a latent prompt-logprob all-reduce hang (BF16 head too) is kept"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "GLM mHC; multi-rank heads; MoE speculation economics"
+links = { pr = "", commit = "", evidence = "exclusive same-box A/B + accuracy microtest (pin + fixed anchor)" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-dflash-econ"
+date = "2026-10-10"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "GEMV_ROWS=4 + two-stage top-16 + AUX_FP8 drafter + adaptive K"
+symptom = "speculation loses to K=0 at C1-C4"
+diagnosis_tool = "nsys"
+root_cause_class = "speculation-economics"
+lever_type = "code"
+lkb_effect = "existing GEMV tiers"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = -5.9, j_tok_pct = 0.0, n = 3 }, { rung = "C2", tok_s_pct = -10.0, j_tok_pct = 0.0, n = 3 }, { rung = "C4", tok_s_pct = -5.8, j_tok_pct = 0.0, n = 3 }]
+verdict = "discarded"
+verdict_reason = "each extra verify row costs ~4.4 ms of expert reads plus ~9-12 ms drafter on rank 0; acceptance 0.47-0.56 at 2-draft ladders; top-16 split (395 -> 55 us) kept as default"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "GLM mHC; multi-rank heads; MoE speculation economics"
+links = { pr = "", commit = "", evidence = "exclusive same-box A/B + accuracy microtest (pin + fixed anchor)" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-prefill-head-shard"
+date = "2026-10-10"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "1-row prefill first-token head on the vocab-sharded GEMV"
+symptom = "14.4 ms whole-vocab tile GEMM per prompt in a prefill burst"
+diagnosis_tool = "nsys"
+root_cause_class = "redundant-work"
+lever_type = "code"
+lkb_effect = "no new kernel"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C16", tok_s_pct = 0, j_tok_pct = 0.0, n = 2 }]
+verdict = "kept"
+verdict_reason = "accuracy identical on all legs; C16 burst client TTFT median 7.5 -> 4.9 s"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "multi-rank serving; hybrid prefix caching"
+links = { pr = "", commit = "", evidence = "exclusive A/B + accuracy microtest + bring-up bench TTFT" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-tp-drafter-fp8"
+date = "2026-10-10"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "--draft-tp-size auto (TP drafter, FP8 + aux FP8)"
+symptom = "drafter propose 9-12 ms on rank 0 only"
+diagnosis_tool = "nsys"
+root_cause_class = "speculation-economics"
+lever_type = "code"
+lkb_effect = "no new kernel"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = -5.9, j_tok_pct = 0.0, n = 2 }, { rung = "C2", tok_s_pct = -13.1, j_tok_pct = 0.0, n = 2 }, { rung = "C4", tok_s_pct = -14.0, j_tok_pct = 0.0, n = 2 }]
+verdict = "discarded"
+verdict_reason = "correct but 4.1 ms/rank propose (bandwidth-bound FP8 weights) + ~4.4 ms of extra expert reads per verify row; NVFP4 drafter tier next"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "multi-rank serving; hybrid prefix caching"
+links = { pr = "", commit = "", evidence = "exclusive A/B + accuracy microtest + bring-up bench TTFT" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-prefix-cache-on"
+date = "2026-10-10"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "--enable-prefix-caching (hybrid: paged DSA indexer + KDA SSM snapshots)"
+symptom = "warm TTFT == cold TTFT (cache never enabled in the recipe)"
+diagnosis_tool = "nsys"
+root_cause_class = "config-gap"
+lever_type = "config"
+lkb_effect = "no new kernel"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 0, j_tok_pct = 0.0, n = 2 }]
+verdict = "kept"
+verdict_reason = "repeated 5.5k prompt warm TTFT 10.5 s -> 0.20 s (vLLM ~0.15 s)"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "multi-rank serving; hybrid prefix caching"
+links = { pr = "", commit = "", evidence = "exclusive A/B + accuracy microtest + bring-up bench TTFT" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-w4a16-gemv-seg"
+date = "2026-10-11"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_W4A16_GEMV_SEG=1 (dense w4a16 tier)"
+symptom = "1-row dense W4A16 projections run as separate small GEMVs"
+diagnosis_tool = "nsys"
+root_cause_class = "bandwidth"
+lever_type = "code"
+lkb_effect = "no new kernel"
+parity_tier_kept = "reordered (tf KL 0.0061, dec1 exact; anchor cumulative 0.0336)"
+per_rung = [{ rung = "C1", tok_s_pct = 4.8, j_tok_pct = 0.0, n = 3 }, { rung = "C8", tok_s_pct = -0.6, j_tok_pct = 0.0, n = 3 }, { rung = "C16", tok_s_pct = 2.0, j_tok_pct = 0.0, n = 3 }]
+verdict = "kept"
+verdict_reason = "interleaved WP0 A/B on 05001787a: C1 35.4 -> 37.1, C8 flat, C16 +2%; numerics PASS vs the w4a16 pin; exact tf/dec4 differ so the class is RO, not BI"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "1-row W4A16 dense GEMV on bandwidth-bound decode"
+links = { pr = "", commit = "", evidence = "logs/nightA.log interleaved n=3 + acc_check numerics + anchor" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-ar-fused-post"
+date = "2026-10-11"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_AR_FUSED_POST=1"
+symptom = "all-reduce epilogue (residual + norm) runs as separate kernels"
+diagnosis_tool = "nsys"
+root_cause_class = "launch-overhead"
+lever_type = "code"
+lkb_effect = "no new kernel"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 1.1, j_tok_pct = 0.0, n = 2 }, { rung = "C8", tok_s_pct = -1.0, j_tok_pct = 0.0, n = 2 }, { rung = "C16", tok_s_pct = 2.6, j_tok_pct = 0.0, n = 2 }]
+verdict = "discarded"
+verdict_reason = "within run-to-run noise (C1 +1%, C8 -1%) on the interleaved A/B"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "1-row W4A16 dense GEMV on bandwidth-bound decode"
+links = { pr = "", commit = "", evidence = "logs/nightA.log interleaved n=2" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-ar-l2-prefetch6"
+date = "2026-10-11"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_AR_L2_PREFETCH=6"
+symptom = "next layer's weights cold in L2 after the all-reduce"
+diagnosis_tool = "nsys"
+root_cause_class = "bandwidth"
+lever_type = "code"
+lkb_effect = "no new kernel"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 0.0, j_tok_pct = 0.0, n = 2 }, { rung = "C8", tok_s_pct = 0.4, j_tok_pct = 0.0, n = 2 }, { rung = "C16", tok_s_pct = 1.6, j_tok_pct = 0.0, n = 2 }]
+verdict = "discarded"
+verdict_reason = "within run-to-run noise on the interleaved A/B"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "1-row W4A16 dense GEMV on bandwidth-bound decode"
+links = { pr = "", commit = "", evidence = "logs/nightA.log interleaved n=2" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-w4a16-seg-hoist"
+date = "2026-10-11"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3, rank-0 dense W4A16 shapes"
+recipe_or_tier = "w4a16_gemv_seg R=1: step-0 weight and scale loads issued before the input-staging barrier"
+symptom = "each block stages the input row before its first weight load, so the first DRAM round trip starts after the barrier"
+diagnosis_tool = "microbench"
+root_cause_class = "latency-bound"
+lever_type = "kernel"
+lkb_effect = "w4a16 seg family: HOIST axis tried, not kept"
+parity_tier_kept = "bit-identical"
+per_rung = []
+verdict = "discarded"
+verdict_reason = "interleaved A/B (5 rounds, CUDA graph, cold weights): KDA q|k|v|f_a|b|g_a 82.6 vs 81.6 us (worse), shared gate|up 16.7 vs 17.8, per step -0.03 ms on the shapes the seg path serves; below the 2 us bar on the six-group, and o_absorb (3.5 us better) stays on w4a16_gemv"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.5
+transferability = "persistent GEMVs that stage a shared input: with 20+ warps per SM the first-load latency is already hidden"
+links = { pr = "", commit = "c83aa30ca, 65b100f3e", evidence = "glm5next_w4a16_gemv_seg_bench on dgx2 2026-10-11 01:02Z" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-w4a16-seg-m-rows"
+date = "2026-10-11"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3, rank-0 dense W4A16 shapes"
+recipe_or_tier = "METRALE_GLM_W4A16_GEMV_SEG=1 with METRALE_GLM_W4A16_GEMV_ROWS>=2: 2..=4 rows on w4a16_gemv_seg_m<M> (groups of up to six, lone projections below K 2048)"
+symptom = "the row-invariant CUDA-core tiers w4a16_gemv_batch<M> re-read A per output and run one launch per projection (KDA six-group at M=4: 118.9 us)"
+diagnosis_tool = "microbench"
+root_cause_class = "launch-overhead"
+lever_type = "parameterization"
+lkb_effect = "w4a16 seg family gains the M axis (rows staged once, each weight decoded once into M one-row-order chains)"
+parity_tier_kept = "bit-identical"
+per_rung = []
+verdict = "held"
+verdict_reason = "microbench only: per row bytes equal the one-row w4a16_gemv on every GLM shape and group at M=2..4 (row isolation and scale controls fire); dense per step vs the batch tiers ~8.16 -> ~7.22 ms (M=2), ~8.49 -> ~7.49 (M=3), ~8.98 -> ~7.79 (M=4) with KDA o, q_a and o_absorb kept on the tiers; end-to-end A/B pending (verify rows, C2-C4)"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 2.0
+transferability = "any row-invariant small-M GEMV tier over 4-bit weights"
+links = { pr = "", commit = "c83aa30ca, ea8e6a90f, 65b100f3e", evidence = "glm5next_w4a16_gemv_seg_rows_bench on dgx2 2026-10-11 01:05Z" }
+notes = "K 11264 at M=2 needed the >48 KB dynamic shared-memory opt-in; the E2M1 table moved to dynamic shared memory so the runtime opts in"
+
+[[lever]]
+id = "gb10x3-glm53-shared-fork"
+date = "2026-10-11"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3"
+recipe_or_tier = "METRALE_GLM_SHARED_FORK=<rows>: the shared expert on a side stream beside the router and routed experts, joined before the combine"
+symptom = "the shared expert (gate|up, swiglu, down) runs after the routed-expert sweep on the same stream, while the sweep (1 CTA/SM) leaves bandwidth and SMs idle"
+diagnosis_tool = "nsys"
+root_cause_class = "serialization"
+lever_type = "code"
+lkb_effect = "no new kernel"
+parity_tier_kept = "bit-identical"
+per_rung = []
+verdict = "held"
+verdict_reason = "forward_moe at 1..=4 rows byte-identical with and without the fork, eager and graph replay, negative control fires; one MoE site at 1 row 335.7 -> 306.8 us in the narrow bench (BF16 shared expert there; the serve's W4A16 shared is smaller, so expect less); end-to-end A/B pending"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 1.5
+transferability = "any MoE whose routed-expert kernel leaves bandwidth on the table: fork the independent shared expert onto a graph branch"
+links = { pr = "", commit = "3bc8511ad", evidence = "glm5next_moe_narrow_bench GLM_BENCH_FORK_ONLY=1 on dgx2 2026-10-11 01:02Z" }
+notes = "needed its own gate/up/act scratch: the W4A4 slot sweep also writes the workspace's a_gate/a_up/a_act"
+
+[[lever]]
+id = "gb10x3-glm53-kda-gates-fused"
+date = "2026-10-10"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_KDA_GATES_FUSED=1 (w4a16 dense tier, one-row low-rank group)"
+symptom = "KDA gate chain at C1: six launches (act-quant, f_b W8A8, kda_gate, sigmoid, act-quant, g_b W8A8) ~15 us per KDA layer for 0.7 MB of weights"
+diagnosis_tool = "nsys"
+root_cause_class = "latency-bound"
+lever_type = "new-kernel"
+lkb_effect = "WxAy engine K<=128 tile-per-warp entry (wxay::k128_tile); W8A8 policy, quantizer and KDA gate scalars moved to headers (PTX of the old modules byte-identical)"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "held"
+verdict_reason = "microbench 15.1 -> 3.7 us per KDA layer (median of 5 runs, graph replay, byte gate PASS incl. zero/NaN/spike rows); end-to-end A/B pending"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 3.0
+transferability = "any low-rank W8A8 projection pair with elementwise epilogues"
+links = { pr = "", commit = "", evidence = "glm5next_c1_fuse_microtest gates" }
+notes = "About -0.39 ms per C1 step expected from 34 KDA layers x 11.4 us"
+
+[[lever]]
+id = "gb10x3-glm53-router-gemv-topk-fused"
+date = "2026-10-10"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "router GEMV 48x384 with the rank top-k as a last-block-done tail (not wired)"
+symptom = "router GEMV 11-13 us plus top-k 2-3 us per MoE layer at C1"
+diagnosis_tool = "microbench"
+root_cause_class = "latency-bound"
+lever_type = "new-kernel"
+lkb_effect = "none kept"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "discarded"
+verdict_reason = "byte-identical but 13.4 us vs 13.0 us for GEMV + rank top-k (5 runs); 72x256 fused 13.3 us; the serial tail eats the saved launch gap"
+failure_mode = ""
+caught_by = "microbench"
+time_lost_hours = 0.5
+would_catch_earlier = "the 2026-10-10 prototype at 72x256 already showed no gain"
+effort_hours = 1.0
+transferability = "GEMV + small reduction fusions on GB10: graph launch gaps are ~0.5 us, a 1-block tail costs more"
+links = { pr = "", commit = "", evidence = "glm5next_c1_fuse_microtest routerf (removed)" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-mhc-pre-norm-split-bulk"
+date = "2026-10-10"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "hc_pre_norm with each mix row over 2 CTAs and cp.async.bulk staging (not wired)"
+symptom = "hc_pre_norm 10.4 us per site x 90 sites at C1, grid 24 on 48 SMs"
+diagnosis_tool = "microbench"
+root_cause_class = "latency-bound"
+lever_type = "new-kernel"
+lkb_effect = "none kept"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "discarded"
+verdict_reason = "byte-identical (y, post, comb, normed) but slower: 12.0 us (256-thread blocks) / 14.3 us (128-thread blocks) vs 10.4 us; mix phase alone 8.2 vs 9.7 us, lost again to the pair last-arriver step; 2 rows per CTA with full staging 11.5 us"
+failure_mode = ""
+caught_by = "microbench"
+time_lost_hours = 1.0
+would_catch_earlier = "time the mix phase and the tail separately first: the tail is 0.7 us, the mix 9.7 us, so a split can win at most ~1.5 us and the extra arrival step costs more"
+effort_hours = 2.0
+transferability = "low"
+links = { pr = "", commit = "", evidence = "standalone harness, 90 distinct sites in a graph" }
+notes = "Folding hc_post + rank-sum into the next pre needs ping-pong streams (post writes in place); not attempted"
+
+[[lever]]
+id = "gb10x3-glm53-moe-sweep-table-pointers-in-shared"
+date = "2026-10-11"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes, expert layout tp"
+recipe_or_tier = "w4a4 routed sweeps (all entries): table pointers and weight_scale_2 read once per CTA into shared memory"
+symptom = "down k64 sweep 64.5 us per layer at C1 in the serve vs ~57 us in isolation; every item and its prefetch waited on a global table load before its first weight byte"
+diagnosis_tool = "microbench"
+root_cause_class = "latency-bound"
+lever_type = "kernel-restructure"
+lkb_effect = "mx sweep family: setup-cached tables"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "kept"
+verdict_reason = "one row unchanged (all at the 222-227 GB/s copy reference); union down 704: 2 rows 120.9 -> 112.8 us, 16 rows 764.0 -> 726.6; down 640 2 rows 107.9 -> 103.3; gate+up 4 rows 439.6 -> 427.4; forward_moe digests unchanged"
+failure_mode = ""
+caught_by = "microbench"
+time_lost_hours = 0.0
+would_catch_earlier = ""
+effort_hours = 1.0
+transferability = "persistent sweeps over pointer tables"
+links = { pr = "", commit = "8882589e5", evidence = "glm5next_moe_narrow_bench GLM_BENCH_TP=1, median of 3 interleaved runs (9 graph replays of 20 routings each)" }
+notes = "serve A/B not yet run"
+
+[[lever]]
+id = "gb10x3-glm53-moe-one-row-memset-drop"
+date = "2026-10-11"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes, expert layout tp"
+recipe_or_tier = "one-row own-slots sweep zeroes dead slot rows; forward_moe skips the expert_out memset at one row"
+symptom = "a 64 KB memset per MoE layer at C1 (one graph node each)"
+diagnosis_tool = "profile"
+root_cause_class = "launch-overhead"
+lever_type = "kernel-epilogue"
+lkb_effect = "own-slots sweep: dead-row zero fill"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "kept"
+verdict_reason = "byte gate on rows with invalid ids from a sentinel: the sweep writes the same +0.0 the memset left; forward_moe digests unchanged"
+failure_mode = ""
+caught_by = "microbench"
+time_lost_hours = 0.0
+would_catch_earlier = ""
+effort_hours = 0.5
+transferability = "any routed path whose producer can own its zero rows"
+links = { pr = "", commit = "8882589e5", evidence = "glm5next_moe_narrow_bench GLM_BENCH_TP=1, median of 3 interleaved runs (9 graph replays of 20 routings each)" }
+notes = "end-to-end gain unmeasured (one memset node per layer)"
+
+[[lever]]
+id = "gb10x3-glm53-moe-down-tiles-per-item"
+date = "2026-10-11"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes, expert layout tp"
+recipe_or_tier = "down sweep at K <= 8 chunks: 2 or 4 adjacent tiles per work item (all 8 warps on tile x chunk pairs, chunk-order reduction)"
+symptom = "down k64 (2048 items of 6.3 KB) assumed per-item-overhead bound"
+diagnosis_tool = "microbench"
+root_cause_class = "latency-bound"
+lever_type = "kernel-restructure"
+lkb_effect = "none kept"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "discarded"
+verdict_reason = "byte-identical but no faster: one-row down 704 57.9 (base) / 59.1 (2 tiles) / 61.8 us (4 tiles); the isolated sweep was already at the copy ceiling, so the serve gap is not per-item overhead"
+failure_mode = ""
+caught_by = "microbench"
+time_lost_hours = 0.5
+would_catch_earlier = "time the isolated kernel against the copy reference before restructuring it: 227 GB/s left nothing to win"
+effort_hours = 2.0
+transferability = "low"
+links = { pr = "", commit = "", evidence = "glm5next_moe_narrow_bench GLM_BENCH_TP=1, median of 3 interleaved runs (9 graph replays of 20 routings each) (variants t2, t4)" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-moe-sweep-pf-minb"
+date = "2026-10-11"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes, expert layout tp"
+recipe_or_tier = "sweep prefetch 2 or 3 items ahead; 2 CTAs per SM at 128 registers (grid 96)"
+symptom = "as above"
+diagnosis_tool = "microbench"
+root_cause_class = "latency-bound"
+lever_type = "kernel-tuning"
+lkb_effect = "none"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "discarded"
+verdict_reason = "slower at one row: down 704 64.1 (PF 2) / 77.1 us (PF 3, one run) / 64.5 us (2 CTAs per SM) vs 57.9"
+failure_mode = ""
+caught_by = "microbench"
+time_lost_hours = 0.2
+would_catch_earlier = ""
+effort_hours = 0.3
+transferability = "low"
+links = { pr = "", commit = "", evidence = "glm5next_moe_narrow_bench GLM_BENCH_TP=1, median of 3 interleaved runs (9 graph replays of 20 routings each)" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-moe-glu-last-arriver"
+date = "2026-10-11"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes, expert layout tp"
+recipe_or_tier = "one-row gate+up own sweep: the last of each (slot, tile) arrival runs the clamped SwiGLU and the static NVFP4 group quantization of the down input"
+symptom = "swiglu (1.2 us) and quant_k64 (2.4 us) launches per MoE layer at C1"
+diagnosis_tool = "microbench"
+root_cause_class = "launch-overhead"
+lever_type = "fusion"
+lkb_effect = "none kept"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "discarded"
+verdict_reason = "byte-identical (codes, scales, globals, counters reset; forward_moe digests unchanged with the lever on) but slower: 137.7 us vs 119.2 us for sweep + swiglu + quant; the per-item fence + atomic + serial group on lane 0 costs more than the two launches"
+failure_mode = ""
+caught_by = "microbench"
+time_lost_hours = 1.0
+would_catch_earlier = "cost one arrival (fence + atomic) per item first: 704 items x ~25 ns of serialized tail per CTA exceeds two ~2 us launches"
+effort_hours = 3.0
+transferability = "last-arriver epilogues pay off only when items are few or the epilogue is wide"
+links = { pr = "", commit = "", evidence = "glm5next_moe_narrow_bench GLM_BENCH_TP=1, median of 3 interleaved runs (9 graph replays of 20 routings each)" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-moe-combine-last-arriver"
+date = "2026-10-11"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes, expert layout tp"
+recipe_or_tier = "one-row down own sweep: the arrival completing a hidden tile runs glm5next_moe_combine for it (shared expert first)"
+symptom = "combine launch 1.6 us per MoE layer at C1"
+diagnosis_tool = "microbench"
+root_cause_class = "launch-overhead"
+lever_type = "fusion"
+lkb_effect = "none kept"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "discarded"
+verdict_reason = "byte-identical (output, routed rows, all-dead row, counters reset; forward_moe digests unchanged with the lever on) but slower: 100.5 vs 60.9 us (one tile per item), 74.3 vs 61.6 us (2 tiles per item); a fence + two barriers + an atomic per item"
+failure_mode = ""
+caught_by = "microbench"
+time_lost_hours = 1.0
+would_catch_earlier = "as for the GLU epilogue"
+effort_hours = 2.5
+transferability = "low"
+links = { pr = "", commit = "", evidence = "glm5next_moe_narrow_bench GLM_BENCH_TP=1, median of 3 interleaved runs (9 graph replays of 20 routings each)" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-kda-state-store-hint"
+date = "2026-10-11"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes, expert layout tp"
+recipe_or_tier = "KDA register step (seq_reg) state written with streaming (.cs) or write-through stores"
+symptom = "gate+up ~13 us slower after a KDA layer than after a DSA layer in the serve"
+diagnosis_tool = "microbench"
+root_cause_class = "memory-traffic"
+lever_type = "store-hint"
+lkb_effect = "none kept"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "discarded"
+verdict_reason = "no change: KDA step + next gate+up sweep 136.5 (plain) / 136.2 (cs) / 136.5 us (wt), also with a 4 MB copy between; the 1.44 MB of dirty state still costs ~7 us of the following sweep, and neither hint moves its write-back earlier"
+failure_mode = ""
+caught_by = "microbench"
+time_lost_hours = 0.5
+would_catch_earlier = ""
+effort_hours = 1.0
+transferability = "low: GB10 L2 evict-first and write-through hints did not change when dirty lines reach DRAM"
+links = { pr = "", commit = "", evidence = "glm5next_moe_narrow_bench GLM_BENCH_TP=1, median of 3 interleaved runs (9 graph replays of 20 routings each)" }
+notes = "the outputs were byte-identical (glm5next_c1_fuse_microtest arms, removed)"
+
+[[lever]]
+id = "gb10x3-glm53-mhc-post-fold"
+date = "2026-10-11"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_MHC_POST_FOLD=1 with METRALE_GLM_MHC_FUSED=1 (one-token decode)"
+symptom = "between the attention all-reduce and the FFN pre-norm the decode runs bf16_add_rank_sum (1.3 us) and hc_post (1.2-1.9 us) per layer, plus their graph gaps"
+diagnosis_tool = "nsys"
+root_cause_class = "latency-bound"
+lever_type = "new-kernel"
+lkb_effect = "glm5next_hc_post_pre_norm: the fused pre-norm with a post-mix prologue; the pre-norm's device parts shared through glm5next_mhc_fused_parts.cuh (old entries PTX-identical)"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "held"
+verdict_reason = "GPU gate (glm5next_hc_post_fold_gate) and A/B pending"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 3.0
+transferability = "any residual-stream architecture whose post-mix feeds the next pre-mix"
+links = { pr = "", commit = "", evidence = "glm5next_hc_post_fold_gate" }
+notes = "Intra-layer only (attention post into the FFN pre): a cross-layer fold would leave the highway slot without the layer's output when the DFlash taps read it"
+
+[[lever]]
+id = "gb10x3-glm53-kda-conv-pack"
+date = "2026-10-13"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_KDA_CONV_PACK=1 (per-sequence conv: decode_k tokens/chunked and the chunked prefill)"
+symptom = "at a 32k prefill the KDA q/k/v pack (1.175 ms) and the per-sequence conv (2.27 ms, 49% of its bytes floor) run back to back per sub-chunk and layer; the conv re-reads the rows the pack just wrote"
+diagnosis_tool = "nsys"
+root_cause_class = "bandwidth-underutilization"
+lever_type = "fusion"
+lkb_effect = "causal_conv1d_update_l2norm_tokens_parts: the tokens variant of the causal_conv1d_l2norm family reading the three projections and storing the pack's copy; grid (channel blocks, SM-count row spans), never sized by rows"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "held"
+verdict_reason = "written without a GPU; the byte gate and timing (glm5next_kda_conv_pack_bench) are pending; fused bytes floor 1.67 ms vs 3.45 ms now per 32k layer pair (~187 ms per 32k prefill expected)"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 4.0
+transferability = "any linear-attention layer whose projections are packed only to feed a short causal conv"
+links = { pr = "", commit = "", evidence = "glm5next_kda_conv_pack_bench" }
+notes = "Default off until the byte gate passes; the per-row conv and the snapshot verify keep the pack in front_end because they read the packed rows"
+
+[[lever]]
+id = "gb10x3-glm53-mhc-post-pre-fused"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_MHC_POST_PRE_FUSED=1 with METRALE_GLM_SP_MHC=1 (SP-mHC prefill pieces of 64+ rows; composes with METRALE_GLM_SP_OVERLAP)"
+symptom = "at a 32k cold prefill the SP-mHC body runs glm5next_hc_post_rank_sum (~2.1 ms) then glm5next_hc_pre_norm_tok4 (~2.0 ms) per piece and layer; the pre-norm re-reads from DRAM the 64 KB/token of streams the post-mix just wrote"
+diagnosis_tool = "nsys"
+root_cause_class = "bandwidth-underutilization"
+lever_type = "fusion"
+lkb_effect = "glm5next_hc_post_pre_norm_tok4: the tok4 pre-norm body (now templated on an L2 read-back flag; the old entry PTX-identical) behind a four-token rank-sum post-mix prologue in glm5next_mhc_tok.cu"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "held"
+verdict_reason = "written without a GPU; the byte gate and timing (glm5next_hc_post_pre_tok_bench) and the 32k cold TTFT A/B are pending"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 4.0
+transferability = "any hyper-connection model whose post-mix feeds the next site's pre-mix on the same rows"
+links = { pr = "", commit = "", evidence = "glm5next_hc_post_pre_tok_bench" }
+notes = "In-layer pair only (attention post into the FFN pre). The cross-layer pair (FFN post into the next layer's attention pre) is not fused: the layer loop is layer-outer and sub-chunk-inner, the next layer's weights would have to be handed down, and the DFlash taps read the highway between layers. The common/ kernels compile with --fmad=false, so the prologue's plain expressions round as the rank-sum kernel's do."
+
+[[lever]]
+id = "gb10x3-glm53-one-row-prefill"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_ONE_ROW_PREFILL=1 on the Z recipe + MTP, --max-seq-len 65536"
+symptom = "K-invariance bit probe: the 1k prompt's prefix-cache hit leg differs from its miss leg (8k and 32k match); the hit leaves a one-row pass at start>0 that takes the layer decode path"
+diagnosis_tool = "kinv_probe"
+root_cause_class = "numerics-path-mismatch"
+lever_type = "process-fix"
+lkb_effect = "none"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "ttft-cold-1k", tok_s_pct = 0, j_tok_pct = 0.0, n = 3 }, { rung = "ttft-warm-4k", tok_s_pct = 0, j_tok_pct = 0.0, n = 3 }]
+verdict = "discarded"
+verdict_reason = "fixes 1k miss==hit (miss legs identical to R0; tf KL unchanged at 0.03122) but costs cold 1k 762 -> 818 ms, warm 4k 97 -> 142 ms, warm 256 123 -> 140 ms (same binary 8bff0c31a, same box, 3 reps); the miss-vs-hit defect needs a decode-path-equals-prefill-path fix instead"
+failure_mode = "routes every one-row tail through the prefill kernels, which are slower than the decode kernels at one row"
+caught_by = "bring-up bench A/B (R0 vs R1)"
+time_lost_hours = 0.5
+would_catch_earlier = ""
+effort_hours = 0.5
+transferability = "any engine whose prefix-cache hit leaves a short tail that a different (decode) path computes"
+links = { pr = "", commit = "8bff0c31a", evidence = "logs/chainK_K65536-kinv-1014T0359.txt" }
+notes = "Measured negative; do not adopt. The bit-exact fix belongs in the decode path (make the one-row layer path produce the prefill path's bytes), not in routing."
+
+[[lever]]
+id = "gb10x3-glm53-ssm-clamp-on-forward-stream"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes; also any multi-rank SSM model (Qwen GDN at EP/TP > 1)"
+recipe_or_tier = "every multi-rank chunked prefill (no lever: a correctness fix)"
+symptom = "nsys of a 32k cold prefill: ssm_state_clamp_norm_fused runs on the scheduler's prefill stream while the chunk's forward ran on the default stream, with no event between them"
+diagnosis_tool = "nsys"
+root_cause_class = "wiring-defect"
+lever_type = "code"
+lkb_effect = "none"
+parity_tier_kept = "bit-identical"
+per_rung = []
+verdict = "held"
+verdict_reason = "written without a GPU; the stream placement (nsys) and the kinv_probe base-vs-arm byte compare are pending"
+failure_mode = "prefill_chunk_pass remaps a multi-rank forward to the default stream, but normalize_ssm_states launched the clamp on the stream the scheduler passed, so the clamp was ordered neither after the chunk's state writes nor before the next chunk's reads"
+caught_by = "nsys stream column of a cold 32k prefill"
+time_lost_hours = 0
+would_catch_earlier = "one SSOT for the multi-rank stream remap (now TransformerModel::forward_stream); the remap was duplicated at four prefill entry points and missed at the clamp"
+effort_hours = 1.0
+transferability = "any engine that remaps a forward to another stream: every follow-on launch over the forward's outputs must use the remapped stream"
+links = { pr = "", commit = "", evidence = "" }
+notes = "Single-rank serves keep the caller's stream (unchanged launches); the other callers (worker loop, spans worker, decode) already pass the default stream, so the change is a no-op there. Not fixed: rank 0's multi-rank spans prefill never clamps while the workers do (spans.rs), and the eager drafter prefill (drafter_prefill.rs) may read mtp_prefill_hidden on the prefill stream without ordering on multi-rank. Both fixed since: gb10x3-glm53-spans-rank0-ssm-clamp and gb10x3-glm53-eager-drafter-forward-stream."
+
+[[lever]]
+id = "gb10x3-glm53-sp-subchunk-pipeline"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_SP_MHC=1 + METRALE_GLM_SP_OVERLAP=1, 32k cold prefill (4 SP sub-chunks per layer)"
+symptom = "about 3.15 of 10 ms per layer and sub-chunk is still exposed SP exchange under SP_OVERLAP: the edges and the comm-bound head (AG normed) and tail (RS ffn_out)"
+diagnosis_tool = "nsys"
+root_cause_class = "phase-serialization"
+lever_type = "scheduling"
+lkb_effect = "glm5next_sp_pipeline.rs: a pure stage order and program (Head, Mixer, Mid, Mlp, Tail per sub-chunk; prologue Head0 Mixer0 Head1, step s Mid(s) Mixer(s+1) Tail(s-1) Head(s+2) Mlp(s)) checked on a two-stream happens-before model with negative controls; glm5next_sp_overlap.rs run_section gains deferred sections and handed-in partials; driver glm5next_layer/steps/forward_sp_pipe.rs, taken from prefill_segments for a leading run of two or more SP sub-chunks"
+parity_tier_kept = "bit-identical (lever off); bit-identical to the serial SP-mHC body (lever on, to be proven on GPU)"
+per_rung = []
+verdict = "held"
+verdict_reason = "implemented as METRALE_GLM_SP_PIPELINE=1 (default off, composes with SP_OVERLAP), untested on GPU: the kinv byte gate against SP_MHC+SP_OVERLAP at 1k/8k/32k, an nsys of a 32k prefill and an unprofiled 32k cold TTFT A/B are pending. The two-compute-stream form stays rejected: it races the process-wide single-stream scratches (cuBLASLt, CUTLASS, GLM dequant) and the KDA final_out"
+failure_mode = ""
+caught_by = "design review before implementation; CPU happens-before model"
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 8.0
+transferability = "any layer-outer, sub-chunk-inner prefill whose recurrent mixer links sub-chunks only through its own state"
+links = { pr = "", commit = "", evidence = "" }
+notes = "Feasible form: ONE compute stream plus the SP comm stream, the host enqueue reordered across sub-chunks (X(s+1) before the post-mix of s, so the RS of s's mixer output overlaps X(s+1); the AG of a later head overlaps F(s)). Needs parity buffers for normed, the KDA final_out and the SP receive workspace, and run_section's closing wait deferred. Expected about 0.3-0.45 s per 32k cold prefill, nothing below 2 sub-chunks. 2026-10-14 build: the order puts Mid(s) before Mixer(s+1), so the all-gather after the post-mix also hides behind the next mixer; three normed slots, one KDA final_out and one MLP output (each rewritten only after the main stream waited for the reduce-scatter that read it), a second receive workspace for the MLP reduce-scatter; about 179 MB extra at 8208-row sub-chunks, hidden 4096, three ranks, reserved before the KV budget. Estimate refined to about 0.4-0.45 s of the 1.85 s per 32k; fill and drain (the first head all-gather, the last post-mix all-gather, the last MLP reduce-scatter and tail) stay exposed."
+
+[[lever]]
+id = "gb10x3-glm53-one-row-tail-decode"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_ONE_ROW_TAIL_DECODE=1 (any prefill pass the GLM layer splits at an in-pass capture whose last segment is one row past position 0)"
+symptom = "K-invariance probe at 1k: the miss and hit legs differ in the token bits; 8k and 32k match. The 1073-token miss splits its pass at the cut capture (1072) and runs the one-row tail through forward_k(k=1, prefill); the hit replays that row as a one-row pass, which takes each layer's decode path. A cold prompt of length 1 mod the prefill chunk hits the same split"
+diagnosis_tool = "kinv bit probe (miss vs hit legs)"
+root_cause_class = "path-divergence"
+lever_type = "routing"
+lkb_effect = "layer/one_row_path.rs split_segment_takes_decode_path: a one-row segment of a split pass after position 0 runs forward_one (the decode path) in glm5next_layer/steps/prefill_capture.rs prefill_segments, the path a separate one-row pass already takes; METRALE_ONE_ROW_PREFILL keeps precedence"
+parity_tier_kept = "bit-identical (lever off); miss == hit (lever on, to be proven on GPU)"
+per_rung = [{ rung = "prefill-1k-cold", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "held"
+verdict_reason = "written without a GPU; the 1k/8k/32k kinv probe (miss+hit), a cold 8209-token prompt at two chunk sizes and a cold 1k TTFT A/B are pending"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = "a bit probe whose prompt length is one past the capture cut, run with every new in-pass split"
+effort_hours = 3.0
+transferability = "any model whose layer splits a pass at an in-pass capture (splits_pass_at_capture); other models never call the segment loop"
+links = { pr = "", commit = "", evidence = "kinv bit probe 1k miss/hit" }
+notes = "Replaces METRALE_ONE_ROW_PREFILL=1 for this defect: that lever also fixed the bits but cost cold 1k +56 ms, warm 4k +45 ms and warm 256 +17 ms because it moves every one-row pass onto the prefill path. Gated to passes of more than one segment, so the fused decode+prefill path (no capture) is untouched."
+
+[[lever]]
+id = "gb10x3-glm53-mtp-adopt-capture"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_MTP_ADOPT_CAPTURE=1 with MTP on and the drafter carry off (the default at mtp_max_seqs > 1)"
+symptom = "on a prefix-cache hit the whole-prompt capture is short of the prompt, so the drafter prefill is skipped and the drafter proposes with no prompt context: 1k acceptance 0.409 on the hit vs 0.882 on the miss"
+diagnosis_tool = "MTP acceptance A/B (miss vs hit)"
+root_cause_class = "lost-context"
+lever_type = "state-reuse"
+lkb_effect = "mtp_adopt.rs CaptureRecord: the hit claims the capture rows a consumed capture left when they hold its matched tokens, writes its own rows from the match, and the drafter is prefilled over the whole prompt as on a miss; target passes untouched"
+parity_tier_kept = "bit-identical target tokens (the target verifies every draft; only the drafter's context changes)"
+per_rung = [{ rung = "warm-1k-hit", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "held"
+verdict_reason = "written without a GPU; the 1k hit acceptance A/B (expect ~0.88) and the warm TTFT cost (drafter prefill ~8-16 ms at 1k, ~59 ms at 8k, ~230 ms at 32k when eager) are pending"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = "report acceptance per leg in the kinv probe"
+effort_hours = 3.0
+transferability = "any MTP model with a dense-row drafter and a shared whole-prompt capture"
+links = { pr = "", commit = "", evidence = "MTP acceptance 1k miss/hit" }
+notes = "A windowed catch-up is not possible for GLM: its drafter is dense row space (RoPE position = row), so a catch-up must start at the drafter's row count. The drafter carry is session-keyed and off at mtp_max_seqs > 1. A match that runs into decoded tokens (a later turn) is refused, since decode hiddens are not in the capture; filling them from the catch-up ring is a possible extension."
+
+[[lever]]
+id = "gb10x3-glm53-spans-rank0-ssm-clamp"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes; also any multi-rank SSM model on the batched prefill"
+recipe_or_tier = "every multi-rank batched prefill (prefill_spans; no lever: a correctness fix)"
+symptom = "the worker ranks clamp each sequence's SSM state after a batched prefill pass and rank 0 does not, so the ranks' recurrent states can differ after a long prompt"
+diagnosis_tool = "code read (spans.rs)"
+root_cause_class = "wiring-defect"
+lever_type = "code"
+lkb_effect = "none"
+parity_tier_kept = "bit-identical on single-rank serves (path not taken); rank 0's state now takes the workers' clamp"
+per_rung = []
+verdict = "held"
+verdict_reason = "written without a GPU; a C>=2 batched prefill kinv probe on a multi-rank serve is pending"
+failure_mode = "ep_worker_prefill_spans normalised after prefill_spans_run; prefill_spans_dispatch (rank 0) did not, and the scheduler's batched prefill does not normalise either (its single-sequence path does)"
+caught_by = "audit of the forward-stream clamp fix"
+time_lost_hours = 0
+would_catch_earlier = "one helper for every rank's post-pass work, so a step cannot be added to one side only"
+effort_hours = 0.5
+transferability = "any multi-rank engine whose rank 0 and workers run separate wrappers around a shared pass"
+links = { pr = "", commit = "", evidence = "" }
+notes = "One helper (spans_normalize) now runs after each sub-batch on rank 0 and after the pass on the workers, on the default stream, logging a failure as the workers always did. The clamp only rescales a state whose norm passes the bound, so prompts below it are unchanged."
+
+[[lever]]
+id = "gb10x3-glm53-eager-drafter-forward-stream"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes; any multi-rank MTP serve"
+recipe_or_tier = "MTP on a multi-rank serve with the eager drafter prefill (the default; no lever: a correctness fix)"
+symptom = "the eager drafter prefill reads the whole-prompt hidden capture on the scheduler's prefill stream while the prefill and its capture copy ran on the default stream, with no event between them"
+diagnosis_tool = "code read (drafter_prefill.rs, impl_forward.rs)"
+root_cause_class = "wiring-defect"
+lever_type = "code"
+lkb_effect = "none"
+parity_tier_kept = "bit-identical on single-rank serves (forward_stream returns the caller's stream)"
+per_rung = []
+verdict = "held"
+verdict_reason = "written without a GPU; an nsys stream check of the drafter prefill and an MTP acceptance A/B on a multi-rank serve are pending"
+failure_mode = "the Model wrappers pass try_eager_drafter_prefill the caller's stream, but a multi-rank forward runs on the default stream (forward_stream), so the drafter could read capture rows before their copy landed"
+caught_by = "audit of the forward-stream clamp fix"
+time_lost_hours = 0
+would_catch_earlier = "the same SSOT as the clamp fix: every follow-on launch over the forward's outputs takes forward_stream"
+effort_hours = 0.5
+transferability = "any engine that remaps a forward to another stream"
+links = { pr = "", commit = "", evidence = "" }
+notes = "The batched spans path already passes the default stream; the change is in the one place every wrapper reaches."
+
+[[lever]]
+id = "gb10x3-glm53-moe-w4a4-gu-fused-epilogue"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_MOE_W4A4_GROUPED=1 METRALE_GLM_MOE_W4A4_GU_FUSED=1 (prefill, grouped W4A4 routed experts)"
+symptom = "32k cold prefill, per 8208-row layer-chunk on rank 0: grouped gate+up 7.85 ms, glm5next_swiglu_clamp 1.14-1.38 ms, w4a4_quant_rows_static_k64 0.50 ms; the gate and up BF16 tiles (2 x 92 MB) go to DRAM only to be read back by the SwiGLU, whose BF16 output is read back by the quantizer"
+diagnosis_tool = "nsys kernel table of a 32k prefill + bytes-floor arithmetic"
+root_cause_class = "duplicate-materialization"
+lever_type = "fusion"
+lkb_effect = "w4a4_grouped_core.cuh: the grouped W4A4 body takes a GU template flag; w4a4_grouped_gu_m32/_m64/_m128 run the gate and up halves of one column block in one CTA (same chunk order, same fragment rows), round each to BF16 in registers, apply glm5next_swiglu_clamp_f32 (shared header with the standalone SwiGLU) and quantize each 16-value group with w4a4_quant_group / w4a4_quant_pad_group (extracted from w4a4_quant_rows_impl), writing the down input's codes, block scales and globals; one launcher (launch_w4a4_gu) serves the forward and the bench"
+parity_tier_kept = "bit-identical by construction (same MMA chunk order and accumulator rows, the BF16 rounding, SwiGLU and quantizer code shared with the separate path; PTX of every pre-existing entry unchanged); GPU byte gate pending"
+per_rung = [{ rung = "prefill-32k-cold", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "held"
+verdict_reason = "written without a GPU; the byte gate (examples/glm5next_moe_epi_bench: rows 17/64/512/1036/8208, uniform and Zipf 1.2 routing, m32/m64/m128, widths 704 and 640, limits 10 and the routing's 3/4 quantile) and the 32k cold TTFT A/B are pending. Expected about 1.6-2.3 ms per 8208-row layer-chunk (SwiGLU + quantizer launches and 185 MB of BF16 store/reload gone), about 0.2-0.3 s per 32k request at 126 layer-chunks"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = "a bytes-floor pass over every elementwise kernel that sits between two GEMMs"
+effort_hours = 6.0
+transferability = "any NVFP4 W4A4 MoE with a gated activation and a static down input scale on the grouped path (the lever needs METRALE_GLM_MOE_W4A4_GROUPED=1)"
+links = { pr = "", commit = "", evidence = "examples/glm5next_moe_epi_bench" }
+notes = "The down input lands in the a_gate/a_up/a_act scratch, so the W4A4 scratch the fused launch reads stays intact. The combine is deliberately NOT fused into the down epilogue: the only deterministic way is a per-token owner, and atomics would break bit identity."
+
+[[lever]]
+id = "gb10x3-glm53-moe-w4a4-down-tile-candidate"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_MOE_W4A4_GROUPED=1, routed down GEMM (w4a4_grouped_mx_m128_k64, N 4096, K 704 stored at 768)"
+symptom = "per 8208-row layer-chunk the down GEMM runs 5.85 ms (about 65 TFLOPS) against gate+up's 7.85 ms (about 96 TFLOPS)"
+diagnosis_tool = "roofline arithmetic (bytes and MACs per launch)"
+root_cause_class = "bandwidth-bound"
+lever_type = "kernel"
+lkb_effect = "none yet: the candidates are the down's tile (m64 or a new m128 x NT128 _k64 entry, which halves the 64-fold L2 re-read of each A tile and the CTA count) and overlapping the BF16 output store with the next tile's main loop; the bits do not depend on the tile, and K order is untouched"
+parity_tier_kept = "n/a (analysis)"
+per_rung = [{ rung = "prefill-32k-cold", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "held"
+verdict_reason = "analysis only. The down moves about 1.03 GB per chunk (538 MB BF16 output, about 467 MB weights, 28 MB input) for 379 GFLOP: about 2x the bytes per FLOP of gate+up (1.14 GB for 757 GFLOP). Its bandwidth ceiling at 249-273 GB/s is about 3.8-4.1 ms, so it already runs at about 65% of DRAM bandwidth versus gate+up's 53%; the TFLOPS gap is the roofline, not the K loop. At most about 2 ms per chunk is left, and only by better store/load overlap. The k64 tail costs 1/12 extra MMAs (768 vs 704) but no DRAM bytes."
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = "compare TFLOPS only between launches of equal arithmetic intensity"
+effort_hours = 1.0
+transferability = "any grouped MoE down GEMM whose output is wider than its K"
+links = { pr = "", commit = "", evidence = "ncu --metrics dram__bytes_read.sum,dram__bytes_write.sum,lts__t_sectors_srcunit_tex_op_read.sum on w4a4_grouped_mx_m128_k64" }
+notes = "Weight-read amortization: the grid's x (column blocks) varies fastest and every expert's m-tiles are adjacent in y, so a weight tile's next reader is 11 CTAs later on gate/up (704/64) and 64 later on the down (4096/64), inside the about 96 resident CTAs: weights stream from DRAM about once per chunk, 3 x 467 MB = 1.4 GB per layer-chunk (82% of gate+up's bytes, 45% of the down's). Larger prefill chunks amortize them: at 126 layer-chunks per 32k request, halving the chunk count would save about 88 GB of weight reads, about 0.35 s at the floor or about 0.6 s at the measured efficiency, at the cost of a larger activation scratch."
+
+[[lever]]
+id = "gb10x3-glm53-dsa-prefill-pipe"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_DSA_HB_PREFILL_PIPE=1 with METRALE_GLM_DSA_DECODE_HB=N and METRALE_GLM_DSA_HB_PREFILL_P_HI=1 (prefill sub-chunks; ONE_SPLIT optional)"
+symptom = "at a 32k prefill the sparse-MLA attend (glm5next_dsa_mla_decode_hb_fp8_phi, one split) takes ~1.1 s over 44 launches at ~33 TFLOP/s; a 32-token tile costs ~5500 cycles against an MMA floor of ~1536: gather + widen, QK on 6 of 8 warps, softmax and PV run as four barrier-separated phases"
+diagnosis_tool = "nsys"
+root_cause_class = "latency-bound"
+lever_type = "new-kernel"
+lkb_effect = "glm5next_dsa_mla_prefill_pipe_phi: the phi kernel rescheduled (double-buffered tile in 79 KB of dynamic shared memory, QK on all 8 warps as the phi kernel's four accumulator chains, two barriers per tile, the widen of tile t+1 under the softmax of tile t, QK(t+1) beside PV(t)); the tile functions shared through glm5next_dsa_mla_hb_tile.cuh"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "discarded"
+verdict_reason = "2026-10-14 measured (glm5next_dsa_prefill_pipe_gate, 8208 rows x 22 heads, one split): byte-identical to the phi kernel (0 rows differ; 8 splits, sub-chunks, neighbours, stride 640 and the E4M3 NaN pool all exact) but 26.37 ms against phi's 25.66 ms (x0.973): one CTA per row still runs gather + widen inside the tile's critical path, so the overlap does not pay. Superseded by the warp-specialized twin (gb10x3-glm53-dsa-prefill-tc); the lever stays default-off"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 5.0
+transferability = "any sparse or paged attention whose per-tile phases are serialized by barriers in one CTA per row"
+links = { pr = "", commit = "", evidence = "glm5next_dsa_prefill_pipe_gate" }
+notes = "A grouped-query union kernel (several rows sharing one gathered tile, masked per row) was rejected: a row's summation grouping would depend on where its tokens land in the union, so its bytes would depend on its neighbours (a new numerics point and not K-invariant), and canonical tiles waste MMAs unless selections cluster, which no captured selection dump can confirm yet"
+
+[[lever]]
+id = "gb10x3-glm53-prefill-piece-rows"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_PREFILL_PIECE_ROWS=8192 + --max-prefill-tokens 16384 + METRALE_GLM_PREFILL_ROWS=16400"
+symptom = "32k cold TTFT 12258 ms vs vLLM 10479 ms; the routed-expert weights are read once per 8192-row chunk"
+diagnosis_tool = "code-read"
+root_cause_class = "redundant-work"
+lever_type = "scheduling"
+lkb_effect = "no kernel change; the M-dependent launches keep P-row shapes, the row-invariant ones widen"
+parity_tier_kept = "bit-identical-not-claimed"
+per_rung = []
+verdict = "held"
+verdict_reason = "built and CPU-tested; the GPU byte compare against the 8192-chunk serve and the TTFT A/B are not run yet"
+failure_mode = "the SSM state clamp (ssm_state_clamp_norm_fused, MAX_NORM 200) runs between scheduler chunks (rank 0 after chunks >= 1, EP workers after every chunk), so at 16384 it skips the 8192 and 24576 boundaries: bits differ only if a KDA head norm passes 200 there"
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 2.0
+transferability = "any chunked prefill whose M-dependent launches can be cut at the old chunk grid"
+links = { pr = "", commit = "", evidence = "code read; plain 16384 chunks change bits through cuBLASLt per-M algorithms (BF16 projections, router, dequant GEMMs) and NCCL ring sizes" }
+notes = "per-rank memory at 16400 rows vs 8208, pre-KV: MLP ws +994.7 MiB, KDA ws +1301.1 MiB, DSA ws ~+546 MiB, lean arena ~+792.6 MiB, GDN prefill buffers +222 MiB (unused by GLM), mHC scratch ~+70 MiB, SP-mHC receive +42.7 MiB: ~+3.9 GiB, taken from KV (~7.9 -> ~4 GB at MSL 64k). Sizing the KDA/DSA workspaces to P instead of PREFILL_ROWS would halve the delta (not done)."
+
+[[lever]]
+id = "gb10x3-glm53-sp-comm-overlap-transport"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_SP_INTERLEAVE=1/2, METRALE_GLM_SP_PIECES=1..4 (branch glm/comm, 9489350d9) + 13 NCCL transport configs (QPs, channels, npeer, buffer sizes)"
+symptom = "32k cold prefill: ncclDevKernel_SendRecv 3078 calls, 2139 ms on rank 0, ~1241 ms exposed; per-piece exchange 684 rows x 8 KB = 5.6 MB per peer in 0.644 ms (~8.7 GB/s per peer per direction, ~35% of the 200G link)"
+diagnosis_tool = "nsys"
+root_cause_class = "bandwidth"
+lever_type = "scheduling"
+lkb_effect = "none kept"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 1 }, { rung = "prefill-1k", tok_s_pct = 0, j_tok_pct = 0.0, n = 1 }]
+verdict = "discarded"
+verdict_reason = "cold 32k 12231 ms (control) vs 12199 ms (SP_INTERLEAVE=2), cold 1k 690 vs 696: neutral, inside the spread; bits identical to N0 including the 149- and 8358-token ncclAllReduce-path probes. Transport sweep: all 13 configs at 8.5-9 GB/s per peer per direction, message size irrelevant, no winner. With a concurrent 512 MB D2D stream the exchange falls from 8.56 to 1.79 GB/s per peer (4.8x slower): without GDR (never engages, even forced; nvidia-peermem not loaded) NCCL's net proxy stages through host DRAM, so comm and memory-bound compute share GB10's LPDDR5X and overlap buys little"
+failure_mode = "overlap assumes comm and compute use disjoint resources; on GB10 without GDR both are DRAM traffic"
+caught_by = "the comm worker's concurrent-D2D transport microbench (sect4mc)"
+time_lost_hours = 1.5
+would_catch_earlier = "run the transport microbench under a concurrent memory-bound stream before building an overlap lever on unified-memory parts"
+effort_hours = 4.0
+transferability = "any unified-memory part (GB10, GH200 C2C staging) where the NIC path stages through the same DRAM the kernels stream"
+links = { pr = "", commit = "9489350d9", evidence = "/workspace/claude-state/glm/comm/{bench_CMC-w1.txt,bench_CMX-w1.txt,bits_CM*-w1.json,sweep_w1.txt}" }
+notes = "Remaining comm ideas: fewer bytes per exchange (FP8 SP gather, which vLLM runs: class N, below declared) and fewer exchanges (merge layer L's tail reduce-scatter with layer L+1's head all-gather: ~180 ms by the comm worker's arithmetic, but the exchanges are bandwidth-bound, so a merge saves only per-call fixed cost). GDR (nvidia-peermem) is an owner question."
+
+[[lever]]
+id = "gb10x3-glm53-mtp-max-seqs-16"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "--mtp-max-seqs 16 vs the recipe's 8 (MTP drafting at C12/C16), M1L recipe, binary 331872ec1"
+symptom = "C12/C16 decode run without MTP under cap 8; MTP was 1.6 tok/step at C1-C8, so extending it to C12/C16 looked free"
+diagnosis_tool = "ladder (ISL 128 / OSL 1024, NVML energy on all 3 boxes) + mtp_rungs.py per-rung counters"
+root_cause_class = "compute"
+lever_type = "scheduling"
+lkb_effect = "none kept"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C12", tok_s_pct = -16.7, j_tok_pct = 17.0, n = 1 }, { rung = "C16", tok_s_pct = -17.4, j_tok_pct = 17.6, n = 1 }, { rung = "C8", tok_s_pct = 0.7, j_tok_pct = 1.1, n = 1 }]
+verdict = "discarded"
+verdict_reason = "MX16 (cap 16) vs M1L (cap 8): C12 103.77 vs 124.55 tok/s (1.088 vs 0.930 J/tok), C16 114.86 vs 139.13 (0.988 vs 0.840). Every rung drafted (mtp share 0.96, p1 0.607-0.638, ~1.61-1.64 tok/step), so the cap moved and MTP still lost: at width 12+ a 2-row verify costs more than the 1.6x token yield buys. C1-C8 identical config, within noise. --mtp-max-seqs 8 is now a measured recipe value; the C8 crossover (cap 4) is measured in LD2"
+failure_mode = "assuming acceptance rate alone decides MTP at width; the verify step's cost grows with rows x width"
+caught_by = "the MX16 A/B arm"
+time_lost_hours = 0.5
+would_catch_earlier = "bracket the cap at the widest MTP rung before declaring it"
+effort_hours = 0.5
+transferability = "any MoE + MTP serve on a bandwidth-bound part: re-measure the cap per width, not per acceptance rate"
+links = { pr = "", commit = "331872ec1", evidence = "/workspace/claude-state/glm/logs/{runR3_1014T1149.log,chainK_kinv-1014T1152.log}, /workspace/claude-state/glm/ladders/bring-up-K65536-kinv-1014T1152-lad-1791979181.json" }
+notes = "The C1 step breakdown (decode worker, w2 nsys): 38.9 ms/step = verify 34 ms kernel-busy (MoE W4A4 union sweep 14.7 ms) + MTP draft graph 3.0 + host gap 1.6 + comm 2.2."
+
+[[lever]]
+id = "gb10x3-glm53-num-drafts-2"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "--num-drafts 2 vs the recipe's 1, M1L recipe, --mtp-max-seqs 8, binary 331872ec1"
+symptom = "C1-C4 tok/s trails vLLM (C1 39.98 vs 40.11, C2 58.30 vs 62.24, C4 79.32 vs 83.42); C1 is weight-bandwidth bound, so more tokens per step looked like the lever"
+diagnosis_tool = "ladder (ISL 128 / OSL 1024, NVML energy on all 3 boxes) + mtp_rungs.py per-rung counters"
+root_cause_class = "bandwidth"
+lever_type = "scheduling"
+lkb_effect = "none kept"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = -8.7, j_tok_pct = 1.1, n = 1 }, { rung = "C2", tok_s_pct = -13.3, j_tok_pct = 18.5, n = 1 }, { rung = "C4", tok_s_pct = -52.8, j_tok_pct = 100.1, n = 1 }]
+verdict = "discarded"
+verdict_reason = "ND2 vs M1L: C1 36.50 vs 39.98 tok/s, C2 50.54 vs 58.30, C4 37.41 vs 79.32. tok/step rose (1.97 / 1.82 / 1.82 vs ~1.62) but the step cost rose more: C1 step 27.4 x 1.97 = 54.0 ms vs 25.4 x 1.62 = 41.1 ms (1.31x cost for 1.22x tokens), because a 3-row verify reads a near-disjoint third expert set (adjacent-token routing is near-independent, union ~15 of 16 experts for 2 rows). C4 (12 verify rows) TPOT 103.2 vs 50.4 ms: an unexplained cliff, not pursued. NUM_DRAFTS 1 is now a measured recipe value"
+failure_mode = "on an MoE whose weight bytes scale with the routed-expert union, each extra draft row is nearly a full extra MoE read; acceptance gains cannot pay for it"
+caught_by = "the ND2 A/B arm"
+time_lost_hours = 0.3
+would_catch_earlier = "price a draft row as the union growth in bytes (decode-worker roofline: U 14.5-15 of 16 for 2 rows) before arming k > 1"
+effort_hours = 0.3
+transferability = "any bandwidth-bound MoE with near-independent per-token routing"
+links = { pr = "", commit = "331872ec1", evidence = "/workspace/claude-state/glm/logs/chainK_kinv-1014T1226.log, /workspace/claude-state/glm/ladders/bring-up-K65536-kinv-1014T1226-lad-1791981269.json" }
+notes = "The C1 roofline (decode worker): step floor ~29.7 ms vs 38.9 measured; MoE union sweep at 92-100% of 226 GB/s."
+
+[[lever]]
+id = "gb10x3-glm53-dsa-unabsorb"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "planned: un-absorb W_UV from DSA o and W_UK from DSA q (plan WP8b), behind a default-off METRALE_NUMERICS=num2-style switch"
+symptom = "W8A8 o_absorb (4096 x 11264, 212 us/call) and q_absorb (11264 x 1536) run at 97% / 89% of roofline, but absorption doubles K (22 heads x 512 = 11264 vs 5632): ~285 MB/step of avoidable weight bytes"
+diagnosis_tool = "nsys (decode worker C1 roofline table, w2_dec1.sqlite)"
+root_cause_class = "bandwidth"
+lever_type = "algorithm"
+lkb_effect = "none yet"
+parity_tier_kept = "same-precision re-baseline (num2)"
+per_rung = []
+verdict = "held"
+verdict_reason = "Coordinator ruling 2026-10-14 12:39Z: neither B (the bits change) nor N (no precision drop, only re-association). Conditions: each un-absorbed GEMV uses the checkpoint's own W_UK/W_UV at declared dtype with fp32 accumulation and no requantized fused product (any piece that needs one is N, default-off); one default-off switch; ONE combined gate with every other ready same-precision reduction-order change (acc set incl. longdec with a tolerance vs num1 stated before the run, run-to-run determinism, K-invariance at 2 MSLs x 2 chunk sizes cold+warm, perf A/B expected -1.26 ms/step at C1 and C8); on a pass flip the default once and re-record kinv/acc_ref.txt as num2, earlier records stay num1. Sequenced after the bit-exact decode GEMV re-map (L1) so its A/B stays readable"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0.0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "any MLA/DSA model whose serve absorbs the up-projections into q/o at decode: absorption trades FLOPs for bytes, the wrong trade on a bandwidth-bound part at small batch"
+links = { pr = "", commit = "", evidence = "/workspace/claude-state/glm/STATUS.md (12:4xZ ND2 / DSA ruling section)" }
+notes = "Expected -1.26 ms/step at every decode width (C1 about +3% tok/s)."
+
+[[lever]]
+id = "gb10x3-glm53-lm-head-batchm-wide"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "planned arm L1+lmh (after decode L1): BF16 LM head takes dense_gemv_bf16_batchm_wide at 9..=16 rows (commit 6af90f757)"
+symptom = "at C8 under MTP (16 verify rows) the BF16 head runs the runtime-M narrow batchm at 3.04 ms vs a ~2.0 ms roofline (head shard 51627 x 4096); without LM_HEAD_BATCHM_MAX=16 it falls to cuBLAS at 5.74 ms"
+diagnosis_tool = "nsys (decode worker w2 C4/C8 traces) + glm5next_c16_kernel_bench"
+root_cause_class = "latency"
+lever_type = "kernel-selection"
+lkb_effect = "none: reuses the wide entry the dense layers already take at 9..=16 rows (BATCHM_WIDE_MIN=9)"
+parity_tier_kept = "bit-exact (class B)"
+per_rung = []
+verdict = "held"
+verdict_reason = "Coordinator 2026-10-14: class B, approved as its own arm right after L1 (never inside it, so L1's C8 delta stays readable). Evidence: kernels/gb10/common/dense_gemv_bf16_batchm.cu wide body (lines 315-383) equals the narrow body (160-228) except #pragma unroll and compile-time MM for runtime m; same per-row FP32 chain acc[t], same slab and 4-element inner loop, same scalar K tail, same shfl_down tree and 2-warp smem combine, same grid and args; the commit measured the real head shard byte-identical at M=16 (1.95 vs 3.04 ms). Gate: Tier-1 token-id byte identity plus an nsys check that dense_gemv_bf16_batchm_wide is the head launch at C8"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0.0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "any BF16 head on GB10 whose MTP verify width reaches 9..=16 rows"
+links = { pr = "", commit = "6af90f757", evidence = "decode worker L3 pricing message 2026-10-14 ~13:00Z; /workspace/claude-state/glm/STATUS.md" }
+notes = "Fires only at 9..=16 rows (C5-C8 with one draft), cannot move C1. Expected about -1.1 ms/step at C8."
+
+[[lever]]
+id = "gb10x3-glm53-mtp-eager-prefill-recipe"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "arm M8KE: winning recipe with METRALE_GLM_MTP_EAGER_PREFILL=1 (the recipe pins 0; the table default is on), MSL 16384, bin 331872ec1, chainK kinv-1014T1331"
+symptom = "at C >= 2 only the last-prefilled sequence has a drafter context at the first propose when the eager drafter prefill is off; expected higher early acceptance with it on"
+diagnosis_tool = "chainK ladder C1/C8 with per-rung MTP acceptance (mtp_rungs.py)"
+root_cause_class = "latency"
+lever_type = "runtime-config"
+lkb_effect = "none"
+parity_tier_kept = "bit-exact (class B): tf + anchor tf bit-equal to kinv/acc_ref.txt"
+per_rung = []
+verdict = "discarded"
+verdict_reason = "Coordinator 13:4xZ: DROPPED, bits-neutral with no demonstrated gain. C1 p1 identical (0.618); C8 p1 0.644 vs 0.607-0.638 across same-binary samples, and C8 tok/s inside the 96.6-103.6 control spread (M1L/LD2/M8K/M8KE). The recipe keeps METRALE_GLM_MTP_EAGER_PREFILL=0."
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0.0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "GLM MTP serves; re-test only with a C8 instrument whose spread is below the claimed gain"
+links = { pr = "", commit = "", evidence = "/workspace/claude-state/glm/logs/chainK_kinv-1014T1331.log; /workspace/claude-state/glm/STATUS.md 2026-10-14T13:45Z" }
+notes = "The table default (on) differs from the recipe (0); the recipe is fully explicit, so the serve runs 0."
+
+[[lever]]
+id = "gb10x3-glm53-prefill-tail-merge-default"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "--prefill-tail-mode merge becomes the default (af7c751e4 added it, default split); split stays selectable by the flag"
+symptom = "a cold prompt whose prefix-cache capture point falls inside its last sub-chunk ran its tail rows as a separate segment, reading every layer's weights a second time for up to one block of rows"
+diagnosis_tool = "bench"
+root_cause_class = "redundant-work"
+lever_type = "config"
+lkb_effect = "no kernel change"
+parity_tier_kept = "accuracy-gated (class N): disclosure PREFILL-TAILMERGE-1. A cold request is deterministic; the captured state equals split's; a warm request's replayed tail rows may differ from the cold pass's in low bits. Not bit-identical to split."
+per_rung = [{ rung = "ttft-cold-c256", tok_s_pct = 0, j_tok_pct = 0.0, n = 6 }, { rung = "ttft-cold-c1k", tok_s_pct = 0, j_tok_pct = 0.0, n = 6 }, { rung = "ttft-cold-c4k", tok_s_pct = 0, j_tok_pct = 0.0, n = 6 }, { rung = "ttft-cold-c32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 6 }]
+verdict = "kept"
+verdict_reason = "owner ruling 2026-10-14 ~23:25Z (merge becomes the default once a claim-grade 512k merge run passes); the 512k run (CL2MR, K524288-kinv-1014T2333, 3/3 pre-rep cool reads ok) met every condition, lead FLIP GO 2026-10-15 ~00:15Z. Server TTFT median, merge minus split, 64k: -48.6 / -63.8 / -66.0 / -46.4 ms at c256 / c1k / c4k / c32k (405.1/633.7/1585.1/11835.4 vs 453.7/697.5/1651.1/11881.8, n=6 cold per cell). Teacher-forced KL 0.0285 (merge, 64k) vs 0.03122 (split, the pinned baseline, bit-equal). agentic-webserver 10/10 webserver_ok and 10/10 followed_directions under merge at 256k (4.751 s/turn) and under split at 64k (4.659 s/turn). 512k merge: 10/10 webserver_ok, 10/10 followed_directions at 4.186 s/turn; server TTFT medians 398.4 / 630.1 / 1566.7 / 11731.5 ms at c256 / c1k / c4k / c32k (128k cold about 52.1 s, 256k about 120.7 s). Numerics on the amended criteria (the strict NUMERICS gate compares tf to the split pin, so it reports FAIL for merge by construction): dec1 and dec4 PASS on the 64k, 256k and 512k merge runs; teacher-forced tf bit-equal across MSL (sha256[:16] of canonical JSON over run[\"tf\"] = 2ab5bf5cc0e04e2a at 64k, 256k and 512k; split 3b2bad06482c1094); tf KL 0.0285 / top1 0.95841 vs split 0.03122 / 0.96014, and 0.04269 vs split 0.04628 against the declared anchor. lever readback \"prefill tail mode: merge\" PASS on all 3 ranks."
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0.0
+would_catch_earlier = ""
+effort_hours = 0.5
+transferability = "hybrid SSM/attention prefills that capture recurrent state mid-pass for a prefix cache"
+links = { pr = "", commit = "", evidence = "/workspace/claude-state/glm/ttft/split_K65536-kinv-1014T2104.txt vs split_K65536-kinv-1014T2254.txt; acc/run_K65536-kinv-1014T2104.json and run_K65536-kinv-1014T2254.json (KL, STATUS.md 2026-10-14 CL2/CL2S table); acc/agentic_K262144-kinv-1014T2141.json, acc/agentic_K65536-kinv-1014T2254.json; 512k: ttft/split_K524288-kinv-1014T2333.txt, acc/run_K524288-kinv-1014T2333.json, acc/agentic_K524288-kinv-1014T2333.json, logs/chainK_acc_K524288-kinv-1014T2333.txt, logs/chainK_kinv-1014T2333.log; readbacks kinv/readback_K65536-kinv-1014T2104.txt, kinv/readback_K262144-kinv-1014T2141.txt, kinv/readback_K524288-kinv-1014T2333.txt" }
+notes = "The 64k merge agentic leg failed at setup (HOME unset); 64k agentic is covered by the split control plus the tf bits, which are equal at 64k, 256k and 512k. The boot log and --help carry the disclosure (PrefillTailMode::describe). Merge refuses METRALE_GLM_SP_PIPELINE, METRALE_GLM_PREFILL_PIECE_ROWS, METRALE_GLM_KDA_CHUNK_SCAN and METRALE_GLM_KDA_CHUNK_PREFILL at the first captured prefill; serves that set them pass --prefill-tail-mode split. Option A (a bit-identical tail) stays preferred if it reaches equal speed."
+
+[[lever]]
+id = "gb10x3-glm53-dsa-prefill-tc"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "Z recipe (METRALE_GLM_DSA_DECODE_HB=8, METRALE_GLM_DSA_HB_PREFILL_P_HI=1, METRALE_GLM_DSA_HB_PREFILL_ONE_SPLIT=1) + METRALE_GLM_DSA_HB_PREFILL_TC=1 (prefill sub-chunks only)"
+symptom = "cold 32k TTFT 12.26 s against vLLM's 10.48 s; the sparse-MLA prefill attend (glm5next_dsa_mla_decode_hb_fp8_phi, one split, 44 launches) runs ~25-29 ms per 8208-row sub-chunk at ~26-30 TFLOP/s"
+diagnosis_tool = "microbench"
+root_cause_class = "latency-bound"
+lever_type = "new-kernel"
+lkb_effect = "glm5next_dsa_mla_prefill_tc_phi: one warp-specialized CTA per (row, head group), block 384: a prologue builds a per-row table of 16-byte KV offsets; 4 producer warps gather + widen 32-slot tiles into two bf16 buffers (named barriers FULL/EMPTY) two tiles ahead of 8 consumer warps that run the phi kernel's QK chains, softmax and PV (the shared glm5next_dsa_mla_hb_tile.cuh functions) in the same IEEE order; the widen is cvt E4M3x2 -> f16x2 -> f32 -> bf16 RN (exact for finite E4M3) with a per-word fallback to hb_e4m3x2_to_bf16x2 when a word holds an E4M3 NaN byte"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "kept"
+verdict_reason = "2026-10-14 measured (glm5next_dsa_prefill_tc_gate, 8208 rows of a 32768-token sequence x 22 heads, one split, 7fbc32f06 + the twin): byte-identical to the phi kernel (0 of 8208 rows differ; sub-chunks 1/7/512/2052/4104/uneven, permuted neighbours, stride 640, edge rows and the E4M3 NaN pool all exact; 0.93-1.15 ulp from f64) and 20.433 ms against phi's 25.313 ms in the same run (x1.239, 37.1 vs 29.9 TFLOP/s). Kept default-off until a cold serve A/B; expected -0.21 s per cold 32k prefill (4.88 ms x 44 launches; attend is serial on each rank)"
+failure_mode = "a first port (persistent CTAs, grid min(rows, SMs), row loop per CTA) was byte-exact but 35.6 ms against phi's 29.2 ms (x0.82): with one CTA per SM the 4 producer warps cannot keep the consumers fed (widen-bound; widen variants w0-w3 29.9-37.4 ms, a 2x grid no better)"
+caught_by = "glm5next_dsa_prefill_tc_gate (iv) timing"
+time_lost_hours = 1.0
+would_catch_earlier = "run the repo kernel in the same harness run as the prototype it ports before wiring it"
+effort_hours = 8.0
+transferability = "any per-row gather attention whose tile phases serialize in one CTA (sparse MLA, paged decode at prefill widths)"
+links = { pr = "", commit = "", evidence = "glm5next_dsa_prefill_tc_gate" }
+notes = "Harness (8208 rows, 22 heads, one split): phi 29.2 ms / 25.9 TF vs tc 19.26 ms / 39.4 TF in the same run (earlier run 25.6 vs 17.58 ms / 43.1 TF), 0 rows differ. Phi ablations (ms): no load 16.9, no widen 17.6, no QK 19.9, no PV 21.3, no QK+PV 11.6, skeleton 3.4. tc ablations: no producer 14.0, no MMA 11.9, no softmax 15.2, MMA only 10.7 (71 TF), prologue 2.24; L2 gather ~1950 GB/s. So 100 TF is not reachable byte-exact: the MMA-only floor is ~10.7 ms; beyond it needs a new numerics point (FP8 MMA on the latent). NaN: the phi widen maps E4M3 NaN (0x7f/0xff) to a finite bf16 (0x47ff class) while the cvt path gives NaN, hence the per-word fallback; the gate's NaN pool (one byte in 61) checks it. The pre-gate estimate (~7-10 ms x 44 launches = ~0.3-0.4 s) was high: the gate run measured 4.88 ms per launch, ~0.21 s per cold 32k prefill."
+
+[[lever]]
+id = "gb10x3-glm53-dsa-scores-pipe"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_DSA_SCORES_PIPE=1 with METRALE_GLM_DSA_SCORES_MMA=1 (prefill sub-chunks)"
+symptom = "at a 32k cold prefill dsa_index_scores_mma takes 385 ms over 55 calls (11 DSA layers x 5 sub-chunks) at ~31 TFLOP/s against a 71 TFLOP/s mma-only rate: 182 registers x 256 threads gives 1 CTA per SM, and a 64-pool tile costs ~5.5 us against ~2.8 us of MMA because each CTA converts the tile's FP32 keys to BF16 and gathers its candidacy (4 loads per pair) between two barriers before its MMAs"
+diagnosis_tool = "nsys"
+root_cause_class = "latency-bound"
+lever_type = "new-kernel"
+lkb_effect = "dsa_pool_prep_bf16 (once per pass after dsa_kpool_compress: BF16 keys + one visibility position per pool) and dsa_index_scores_mma_pipe (3-stage cp.async ring of prepared tiles, one barrier per tile, coalesced epilogue writes); the A load, tile MMAs and fold shared with dsa_index_scores_mma through dsa_scores_mma.cuh"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "kept"
+verdict_reason = "2026-10-14 measured (glm5next_dsa_scores_pipe_gate on 7fbc32f06 + the lever, gb10): bit-identical to dsa_index_scores_mma on all six shapes (keys, visibility, score and candidacy rows differ 0; causal, first_key=5 and shuffled-row cases; key and visibility negative controls both fire). prep+pipe vs mma: Q=8208/P=2052 1.427 vs 2.220 ms (x1.556), Q=8192/P=8198 6.683 vs 15.159 ms (x2.268), Q=288/P=8268 0.337 vs 0.594 ms (x1.763), Q=1024/P=256 x1.127, Q=37/P=257 x1.048, Q=300/P=2250 x1.528. Kept default-off until a cold serve A/B; expected -0.20 s per cold 32k prefill (scores 34.5 -> ~16.2 ms per layer over the four full sub-chunks, x11 layers; replicated on every rank)"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 3.0
+transferability = "any multi-query scoring GEMM whose B operand is converted and masked per CTA when it could be prepared once per pass"
+links = { pr = "", commit = "", evidence = "glm5next_dsa_scores_pipe_gate" }
+notes = "Extra memory: 260 B per pool of DsaSelectScratch (BF16 key 256 B + i32 position), allocated only with the lever on: 34.1 MB at a 512k context (131,072 pools) per scratch; the shared DSA workspace plus the MTP drafter's makes ~68 MB. Projected before the gate: 385 -> 180-235 ms at c32k cold; the gate times (verdict_reason) put it at ~180 ms (-0.20 s), the middle sub-chunks P=4100/6148 interpolated linearly in P. Scoring is replicated per rank (the indexer is replicated under TP); splitting score + top-k + expand over the ranks is the next lever."
+
+[[lever]]
+id = "gb10x3-glm53-moe-w4a4-raster"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_MOE_W4A4_RASTER=0,4 (default) under METRALE_GLM_MOE_W4A4_GROUPED=1"
+symptom = "32k cold TTFT behind vLLM; the routed down GEMM is about 6.3 ms per 8208-row call and its m128 CTAs walk the grid row-major, so each expert's weight panel leaves L2 before its next row tile needs it"
+diagnosis_tool = "microbench"
+root_cause_class = "memory-bound"
+lever_type = "scheduling"
+lkb_effect = "w4a4_grouped_core.cuh gains a raster template parameter: the m128 `_r` twins map blockIdx to (row tile, column tile) in bands of G slot tiles, every column tile of a band before the next; the tile body and its K order are unchanged"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "kept"
+verdict_reason = "glm5next_moe_epi_bench ab_2 (dgx1): byte-identical across rows 17..8208, zipf 0/1.2, n 704/640, groups 1/3/4/16/4096, and the negative control differs. Down raster 4 at rows=8208 n=704: -519.8 us per call (zipf 0) and -224.8 us (zipf 1.2), so -38 to -87 ms over the 168 down calls of a 32k prefill. Gate/up raster 16 is mixed (+0.2%/-0.8% at zipf 0, +6.7%/+5.1% at zipf 1.2), so it stays off. The cold c32k serve A/B is pending"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 6.0
+transferability = "any grouped GEMM whose B operand is selected per row tile (MoE experts) and outsizes L2 across one row-major sweep"
+links = { pr = "", commit = "", evidence = "/workspace/claude-state/glm/moegemm/ab_2.txt" }
+notes = "Only which CTA computes each tile moves. Raster 4 suits the down GEMM (K=2048 per expert, weights reused across 4 row tiles). Gate/up raster 16 helps only under skewed routing, and a per-zipf choice is not taken because the routing skew is not known at launch"
+
+[[lever]]
+id = "gb10x3-glm53-moe-w4a4-cpasync-hoist"
+date = "2026-10-14"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "G5: hoist the per-stage cp.async source/destination address arithmetic of every w4a4_grouped body out of the K loop"
+symptom = "routed gate/up GEMM about 7.4 ms per 8208-row call; the per-stage load issues recompute row/column addresses each K step"
+diagnosis_tool = "microbench"
+root_cause_class = "latency-bound"
+lever_type = "kernel-restructure"
+lkb_effect = "none kept; the core was reverted"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "discarded"
+verdict_reason = "Measured negative; do not adopt. Old -> G5 interleaved harness timing (3 iterations, quiet dgx1): prod gate/up +493/+516 us per call (7.43 -> 7.93 ms), prod_r gate/up r16 +787/+588 us, prod_r down r4 +171/+118 us, prod down about 0. ptxas: G5 spills at the 128-register cap (8 B stack, 16 B stores / 24 B loads) on gu_m128 and both mx_m128_k64 twins, where the old core had 0"
+failure_mode = "register spills at the 128-register launch bound"
+caught_by = "interleaved harness timing; ptxas -v spill table"
+time_lost_hours = 0
+would_catch_earlier = "run the ptxas spill table per entry before any GPU time"
+effort_hours = 3.0
+transferability = "any multi-stage cp.async tile body under a 128-register bound: hoisting live addresses trades ALU for registers"
+links = { pr = "", commit = "", evidence = "/workspace/claude-state/glm/moegemm/g5h_1.txt" }
+notes = "An earlier -130 us down / -250 us gate/up figure compared prod with the harness 'pre' diag variant inside the old binary, not old with G5; it is void. G6-lite (G5 plus a shared per-CTA load plan) spilled more and was never timed: gu_m128 32 B stack 28/28, gu_m128_r 16 B 32/48, the down k64 twins 16/24. The register-neutral form (plan on the fused gate/up bodies only) is tracked separately"
+
+[[lever]]
+id = "gb10x3-glm53-moe-w4a4-gu-load-plan"
+date = "2026-10-15"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "always on (no lever): the fused gate/up w4a4_grouped bodies compute their cp.async load plan once per CTA"
+symptom = "routed fused gate/up GEMM about 7.4 ms per 8208-row call; each pipeline stage recomputed every copy's source and shared destination"
+diagnosis_tool = "microbench"
+root_cause_class = "latency-bound"
+lever_type = "kernel-restructure"
+lkb_effect = "w4g_body under `if constexpr (GU)` hoists the per-slot source, stage-0 destination and live/tail predicates out of the K loop and issues each copy through one predicated cp.async (w4g_cpi); every non-GU body is PTX-identical to before"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "kept"
+verdict_reason = "Harness g5ch_1 (dgx1): bytes identical to the old core on 7 fixture/routing variants, and the negative control (chunk-1 activation offset +16) differs on all 7. Old vs G5c interleaved, 3 iterations x 2 blocks, each pair normalized by an identical-code control in the same block: prod gate/up (raster 0, shipped) -238 us per call (median, 5 of 6 pairs negative), prod_r gate/up raster 16 -311 us (6 of 6). Over the 168 gate/up calls of a 32k prefill that is about -40 ms (-31 ms against the median of all 9 controls). ptxas: the 4 gate/up entries spill 0 (the old core spilled 8/16 and 8/8 on two of them); the 3 old spills on the mx entries are unchanged. The cold c32k serve A/B is pending"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 5.0
+transferability = "any multi-stage cp.async tile body with spare registers: hoist the address plan, but gate it per body on a 0-spill ptxas check"
+links = { pr = "", commit = "", evidence = "/workspace/claude-state/glm/moegemm/g5ch_1.txt" }
+notes = "Not applied to the down/plain bodies: there the same plan (G5b) spills on the k64 twins (16/24, 4/4, 12/12). The register-unconstrained 'pre' harness variant suggests about -40 us on down r4 if a spill-free form is found. Raw pairs show a +140 to +250 us drift in iteration 3 on identical code, hence the control normalization"
+
+[[lever]]
+id = "gb10x3-glm53-moe-w4a4-nc"
+date = "2026-10-15"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_MOE_W4A4_NC=8 under METRALE_GLM_MOE_W4A4_GROUPED=1 (default off)"
+symptom = "32k cold TTFT behind vLLM; the routed m128 down GEMM (K=704 per expert) runs only 11 K chunks per CTA, so every CTA pays a full pipeline prologue, slot table walk and epilogue for very little MMA work (about 66-69 useful TFLOP/s)"
+diagnosis_tool = "microbench"
+root_cause_class = "latency-bound"
+lever_type = "scheduling"
+lkb_effect = "new w4a4_grouped_nc.cuh: the m128 down `_n` twins loop each CTA over N consecutive column tiles of one row tile (with the raster band mapping), reusing the slot table and row bookkeeping; each output tile keeps the same body, K order and accumulation chain"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "kept"
+verdict_reason = "Byte gate: glm5next_moe_epi_bench (epi_nc, dgx1) identical across rows 17/64/512/1036/8208, zipf 0/1.2, n 704/640, nc 1/3/4/8/65 x raster 0/3/4/4096, and the negative controls (globals x2, raster 16, nc 4) differ in all 20 cases; harness nc1 identical for nc 1/2/3/4/8/64 x raster 0/1/3/4/16/4096 on 7 fixture/routing variants. Production PTX is identical to the gated harness module (17 of 17 entries). Timing at rows 8208, n 704, down per call vs production raster 4: real-routing fixtures nc8 -222/-420 us (harness, median of 9, 2 rounds), fx44 -163/-262 us; epi zipf 1.2 nc8 -308 us (median of 9, p10-max spread about 230 us); epi zipf 0 nc8 +229 us (loss). Over the 168 down calls of a 32k prefill: about -35 to -70 ms on real routing, +38 ms worst case under uniform routing. The cold c32k serve A/B is pending"
+failure_mode = "uniform routing (zipf 0) is slower at nc 4/8; nc 2 is neutral there"
+caught_by = "epi bench zipf 0 timing"
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 6.0
+transferability = "any grouped GEMM with a short per-expert K loop where per-CTA fixed cost rivals the MMA work"
+links = { pr = "", commit = "", evidence = "/workspace/claude-state/glm/moe2/epi_nc.txt" }
+notes = "Only the m128 down tile switches; m32/m64 (rows <= 1036 use m32) and the gate/up are untouched, so c1k is unaffected. At m128 with rows <= 1036 (not a production tile choice) nc costs 3-9%. ptxas: the _n twins spill 4 B, the same as the production plain m128 entry, outside the K loop. NC=2 is the conservative fallback (epi rows 8208: -12 us zipf 0, +134 us zipf 1.2 at raster 4)"
+
+[[lever]]
+id = "gb10x3-glm53-mhc-post-vec"
+date = "2026-10-15"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_MHC_POST_VEC=1 with METRALE_GLM_SP_MHC=1 (SP-mHC prefill post-mix of every row piece; composes with METRALE_GLM_SP_OVERLAP)"
+symptom = "at a 32k cold prefill glm5next_hc_post_rank_sum runs about 420 launches per rank at 0.53 ms clean and 0.71 ms beside NCCL; each thread moves one column in 2- and 4-byte accesses and writes the summed row back although only a dump tap reads it"
+diagnosis_tool = "nsys"
+root_cause_class = "bandwidth-underutilization"
+lever_type = "kernel-rewrite"
+lkb_effect = "glm5next_hc_post_rank_sum_vec8 in glm5next_hc_post_sum.cu: the scalar kernel's expressions in order, eight columns per thread in 16-byte loads and stores, 128-thread blocks (an 86-row piece keeps 344 blocks), the summed-row store behind a write_x flag"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "held"
+verdict_reason = "2026-10-15 single-GPU gate: glm5next_hc_post_vec_gate byte-identical to the scalar kernel at rows 1/86/341/684/2736/8208 x ranks 0-2 (H4096 hc4 world 3) plus five odd shapes, write_x 0 and 1, exponent-flip control fires everywhere; graph-replayed median of 7, us per launch, clean: 86 rows 13.6 -> 11.5, 684 rows 522 -> 488, 2736 rows 2088 -> 1937; beside 2 co-running copy CTAs: 684 rows 594 -> 518, 2736 rows 2514 -> 2139. Held until the 32k cold TTFT A/B"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 3.0
+transferability = "any element-wise BF16/FP32 epilogue whose rows are a multiple of eight elements and 16-byte aligned"
+links = { pr = "", commit = "", evidence = "glm5next_hc_post_vec_gate" }
+notes = "write_x is tap.is_some() at both SP-mHC sites (the mixer reduce's MixerRed and the MLP reduce's MlpRed dump points are the only readers of the summed row); the pipelined SP body has no tap and passes 0. The decode path (reduce_post.rs) keeps the scalar kernel. METRALE_GLM_MHC_POST_SUM_CTAS caps only the scalar kernel."
+
+[[lever]]
+id = "gb10x3-glm53-moe-combine-vec8"
+date = "2026-10-15"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_MOE_COMBINE_VEC8=1 (the MoE combine of every prefill sub-chunk and decode step; composes with METRALE_GLM_MOE_COMBINE_SPLIT)"
+symptom = "the scalar glm5next_moe_combine_indexed moves one BF16 element per thread per routed slot, about 3.3 ms per 8192-row prefill piece, near but short of the memory floor"
+diagnosis_tool = "microbench"
+root_cause_class = "bandwidth-underutilization"
+lever_type = "kernel-rewrite"
+lkb_effect = "glm5next_moe_combine[_indexed]_vec8 in glm5next_ffn.cu: the scalar kernels' expressions in the same slot order, eight elements per thread in 16-byte loads and stores"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "held"
+verdict_reason = "2026-10-15 single-GPU gate (glm5next_c1_fuse_microtest, C1_FUSE_ONLY=combine_vec8, two runs): byte-identical to the scalar combine at 1/16/17/287/341/1036/8192/8208 rows in slot and expert-sorted order at four grids; the slot-swap control fires at every row count. Graph-replayed median of 7, us per indexed launch: 8192 rows about 3280 (one block per row) and 3115-3135 (split grid) -> 3025-3045; 8208 rows about 3275 and 3097-3173 -> 2935-2970; 1 row 1.4 -> 2.2, hence the 1024-row floor. Held until the 32k cold TTFT A/B"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 2.0
+transferability = "any BF16 weighted gather-sum whose rows are a multiple of eight elements and 16-byte aligned"
+links = { pr = "", commit = "", evidence = "glm5next_c1_fuse_microtest" }
+notes = "Only combines of COMBINE_VEC8_MIN_ROWS (1024) rows or more take it; decode and short prefills keep the scalar kernel. Refused where it cannot run (kernel absent, hidden not a multiple of 8, unaligned buffer); the serve log line 'GLM MoE: combine_vec8 kernels launched' proves a launch."
+
+[[lever]]
+id = "gb10x3-glm53-dsa-tc-nanor"
+date = "2026-10-15"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "Z recipe + METRALE_GLM_DSA_HB_PREFILL_TC=1 + METRALE_GLM_DSA_TC_NANOR=1 (prefill sub-chunks only)"
+symptom = "the tc prefill attend (glm5next_dsa_mla_prefill_tc_phi) ran ~20.3 ms per 8208-row sub-chunk while the prototype it was ported from ran ~16.3 ms in the same harness run, byte-identical; 55 launches = 887 ms of rank 0's cold 32k profile, none of it under comm"
+diagnosis_tool = "microbench"
+root_cause_class = "latency-bound"
+lever_type = "kernel-rewrite"
+lkb_effect = "glm5next_dsa_mla_prefill_tc_phi_nanor (same file, same launch shape): each producer ORs a carry-free per-byte NaN test ((w & 0x7f7f7f7f) + 0x01010101) & 0x80808080 over its whole 128-byte share of a tile and, with no NaN byte, widens every chunk on the unguarded finite converts; a share holding one takes the old per-word path. The old entry keeps its per-word test (vcmpeq4 + branch per 32-bit word, 32 branches per producer per tile)"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "held"
+verdict_reason = "2026-10-15 measured (glm5next_dsa_prefill_tc_nanor_gate, 22 heads, one split): the twin gate vs phi passes (0 of 8208 rows differ, sub-chunks, neighbours, stride 640, edge rows, NaN pool, 0.82-1.15 ulp from f64); 0 rows differ from the tc entry at 8192/8208 rows of a 32k sequence and 1040/1056 rows of a 32k and of a 1k sequence over three pools (every one of the 256 E4M3 bytes at every token position, all present in the selected tokens; the 254 finite bytes; NaN-dense tokens); control: the tc entry with NaN read as the same-sign max-finite code differs in every row. Medians of 9 interleaved, ms phi / tc / nanor: 8192 rows 25.26 / 20.48 / 16.76 (x0.818), 8208 rows 24.57 / 19.73 / 15.79 (x0.800); c1k 1040 rows 0.898 / 0.849 / 0.711, 1056 rows 0.916 / 0.841 / 0.710. Same-run scratch harness: proto 16.28, repo tc 20.32, this design 16.46 ms at 8208 rows. Held until the cold serve A/B; projected -160..-177 ms per cold 32k prefill (18-20% of 887 ms, serial)"
+failure_mode = "the port of the prototype lost 4.0-4.5 ms per launch to a NaN guard added during the port; nothing timed the repo kernel against the prototype until a same-run three-way harness did"
+caught_by = "same-run three-way harness (phi, prototype, repo tc) at the serve rows"
+time_lost_hours = 1.0
+would_catch_earlier = "time the repo kernel against the prototype it ports in the same harness run before wiring it"
+effort_hours = 3.0
+transferability = "any FP8 widen that guards a rare special value per word: test a whole per-thread share once and branch once"
+links = { pr = "", commit = "", evidence = "glm5next_dsa_prefill_tc_nanor_gate" }
+notes = "ptxas: both entries 164 registers, 0 spills; the old entry keeps its 8-byte stack frame, the new one has none. The old entry's SASS changed in scheduling only (28 of 4096 lines: an OR as an add of zero-low-bit offsets, reordered zeroing and shared loads), output bytes unchanged (its own gate passes on the same build: 20.22 ms vs phi 25.11). A pool with a NaN byte every 4096 bytes makes this design slower than the tc entry at c1k (0.883 vs 0.835 ms): every share holding one pays the test and the fallback; a quantized latent cache holds no NaN bytes unless its input did. A per-16-byte guard was slower (17.55 ms), a warp vote no faster (16.40)."
+
+[[lever]]
+id = "gb10x3-glm53-mhc-pre-tile"
+date = "2026-10-15"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_MHC_PRE_TILE=1 (default off) on top of METRALE_GLM_MHC_PRE_TOK=1: wide hc 4 pre-norms run glm5next_hc_pre_norm_tile4"
+symptom = "glm5next_hc_pre_norm_tok4 about 0.61 ms per call at 684 rows, 1530 calls per rank in a 32k cold prefill (about 933 ms); 3.7x over the DRAM floor of its 44.8 MB of streams, and x1.47 slower when NCCL/copy traffic runs beside it"
+diagnosis_tool = "microbench"
+root_cause_class = "latency-bound"
+lever_type = "kernel-restructure"
+lkb_effect = "new tile4 kernel: one 256-thread block per SM streams four tokens' fp32 rows through a four-stage cp.async ring in 66068 B dynamic shared memory while hc_fn is read in 16-byte loads; each token keeps tok4's dot-product chains, reduction trees and Sinkhorn tail, so the bits are tok4's. tok4, fused and fold PTX unchanged"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "held"
+verdict_reason = "Byte gate (in-tree example, two runs, and a standalone harness): identical bytes at T 1,2,3,4,5,17,684,2736 on synthetic and layer 0/3/22/44 attn/ffn inputs with two stream distributions; negative controls (stream + 1.0, one hc_fn bit) fire. Microbench, median of n=9 (min max): T=684 clean tok4 470.7 (461.7 531.8) us vs tile4 347.2 (344.7 406.1); beside an SM copy 668.7 vs 446.3; beside SM copy + copy engine 1158.6 vs 966.0. T=2736 clean 1888.0 vs 1245.3; SM copy 2572.8 vs 1588.7; SM + CE 3013.4 vs 2041.5. Projection over 1530 calls at 684 rows: about -189 ms clean, -340 ms under SM-copy load. Held until the cold c32k serve arm"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 1.5
+would_catch_earlier = "smoke every cache-policy variant at T=1 before a timing run: the L2 evict_last variant died on its first launch"
+effort_hours = 8.0
+transferability = "any per-token reduction kernel that re-reads a shared weight per small block: widen the block's work with a cp.async ring instead of adding tokens per block, and keep each token's summation order"
+links = { pr = "", commit = "", evidence = "glm5next_mhc_tile_gate example output and standalone harness, 2026-10-15" }
+notes = "Variants measured and not shipped: eight tokens per block with three stages (tile8) ran 381 us at T=684 vs tile4's 350. Five or six stages gain 0-4% clean and 4-5% under SM-copy load at 684 rows, within spread; a split Sinkhorn tail gains about 1%. createpolicy.fractional.L2::evict_last with cp.async L2::cache_hint raised CUDA_ERROR_ILLEGAL_INSTRUCTION on GB10 at T=1, with or without applypriority. Not applied on the MHC_POST_PRE_FUSED path. A faster pre-norm may expose NCCL time it now hides"

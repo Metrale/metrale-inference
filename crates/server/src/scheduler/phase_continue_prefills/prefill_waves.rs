@@ -68,9 +68,37 @@ pub(super) fn plan_prefill_waves(
     waves.into_iter().map(|(_, _, members)| members).collect()
 }
 
+/// 2026-10-09: How many leading streams one multi-rank batched prefill step takes: as many as
+/// fit `budget` rows together (`chunk_lens` in stream order), and the first one even when it
+/// alone is larger, so the queue always advances. 0 only for no streams.
+pub(super) fn budget_prefix(chunk_lens: &[usize], budget: usize) -> usize {
+    let mut rows = 0usize;
+    let mut n = 0usize;
+    for &len in chunk_lens {
+        if n > 0 && rows + len > budget {
+            break;
+        }
+        rows += len;
+        n += 1;
+    }
+    n
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{WaveGeom, plan_prefill_waves};
+    use super::{WaveGeom, budget_prefix, plan_prefill_waves};
+
+    /// 2026-10-09: The step takes the longest prefix within the budget, never skips ahead to a
+    /// shorter later stream, and always takes the head.
+    #[test]
+    fn the_budget_takes_a_prefix_and_always_the_head() {
+        assert_eq!(budget_prefix(&[77; 16], 2048), 16);
+        assert_eq!(budget_prefix(&[77; 16], 512), 6);
+        assert_eq!(budget_prefix(&[12, 9, 15], 22), 2);
+        assert_eq!(budget_prefix(&[600, 10], 512), 1);
+        assert_eq!(budget_prefix(&[300, 300, 10], 512), 1);
+        assert_eq!(budget_prefix(&[], 512), 0);
+    }
 
     fn g(chunk_start: usize, chunk_len: usize, is_last: bool) -> WaveGeom {
         WaveGeom {

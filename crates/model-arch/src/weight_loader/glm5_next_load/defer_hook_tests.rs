@@ -226,3 +226,139 @@ fn a_deferred_expert_at_an_unsupported_width_is_refused() {
 
     let _ = std::fs::remove_file(&path);
 }
+
+/// 2026-10-08: The hook also keeps every text layer's F32 activation scale off the device, and
+/// nothing else that ends in a scale: not `weight_scale_2`, not a 16-bit spelling, not a tensor
+/// outside the text layers.
+#[test]
+fn text_layer_activation_scales_are_deferred_and_nothing_else_new() {
+    let hook = super::Glm5NextWeightLoader
+        .defer_predicate(&ModelConfig::qwen3_next_80b_nvfp4())
+        .expect("glm5_next declares a defer predicate");
+    for leaf in [
+        "mlp.experts.7.down_proj.input_scale",
+        "mlp.gate_proj.input_scale",
+    ] {
+        assert!(hook(&qualified(5, leaf), WeightDtype::FP32), "{leaf}");
+    }
+    for (name, dtype) in [
+        (
+            qualified(5, "mlp.experts.7.down_proj.weight_scale_2"),
+            WeightDtype::FP32,
+        ),
+        (
+            qualified(5, "mlp.experts.7.down_proj.input_scale"),
+            WeightDtype::BF16,
+        ),
+        (
+            "model.visual.blocks.0.mlp.input_scale".to_string(),
+            WeightDtype::FP32,
+        ),
+        (
+            qualified(5, "mlp.experts.7.down_proj.weight"),
+            WeightDtype::UInt8,
+        ),
+    ] {
+        assert!(!hook(&name, dtype), "{name} {dtype:?}");
+    }
+}
+
+/// 2026-10-08: A resident U8 expert: per projection, packed codes, E4M3 block scales and a
+/// scalar `weight_scale_2`, with the given `input_scale` bytes deferred to a staged shard (or no
+/// `input_scale` at all for `None`).
+fn packed_expert_store(tag: &str, gpu: &MockGpuBackend, scales: Option<[&[u8]; 3]>) -> WeightStore {
+    let mut map = std::collections::HashMap::new();
+    let mut put = |name: String, bytes: &[u8], shape: Vec<usize>, dtype: WeightDtype| {
+        let ptr = gpu.alloc(bytes.len()).unwrap();
+        gpu.copy_h2d(bytes, ptr).unwrap();
+        map.insert(name, WeightTensor { ptr, shape, dtype });
+    };
+    let projs = ["gate_proj", "up_proj", "down_proj"];
+    for p in projs {
+        let base = format!("mlp.experts.0.{p}");
+        put(
+            qualified(4, &format!("{base}.weight")),
+            &[0x21; 16],
+            vec![2, 8],
+            WeightDtype::UInt8,
+        );
+        put(
+            qualified(4, &format!("{base}.weight_scale")),
+            &[0x38; 2],
+            vec![2, 1],
+            WeightDtype::FP8E4M3,
+        );
+        put(
+            qualified(4, &format!("{base}.weight_scale_2")),
+            &0.5f32.to_le_bytes(),
+            vec![],
+            WeightDtype::FP32,
+        );
+    }
+    let mut store = WeightStore::from_map(map);
+    if let Some(scales) = scales {
+        for (p, bytes) in projs.iter().zip(scales) {
+            let path = stage_shard(&format!("input-scale-{tag}-{p}-{}", bytes.len()), 9, bytes);
+            store.defer(
+                qualified(4, &format!("mlp.experts.0.{p}.input_scale")),
+                DeferredTensor {
+                    path,
+                    offset: 9,
+                    shape: if bytes.len() == 4 {
+                        vec![]
+                    } else {
+                        vec![bytes.len() / 4]
+                    },
+                    dtype: WeightDtype::FP32,
+                },
+            );
+        }
+    }
+    store
+}
+
+/// 2026-10-08: A packed expert binds each projection's own deferred activation scale, read from
+/// its shard (gate, up and down distinct here so a crossed wire shows), and none when the
+/// checkpoint has none.
+#[test]
+fn a_packed_expert_binds_its_deferred_activation_scales() {
+    let gpu = MockGpuBackend::new();
+    let (g, u, d) = (
+        0.25f32.to_le_bytes(),
+        0.5f32.to_le_bytes(),
+        0.0372f32.to_le_bytes(),
+    );
+    let store = packed_expert_store("bind", &gpu, Some([&g, &u, &d]));
+    let e = bind_expert(&gpu, &store, 4, 0).unwrap();
+    assert_eq!(e.gate_proj.input_scale, Some(0.25));
+    assert_eq!(e.up_proj.input_scale, Some(0.5));
+    assert_eq!(e.down_proj.input_scale, Some(0.0372));
+    assert_eq!(
+        e.down_proj.scale_2, 0.5,
+        "weight_scale_2 still binds beside it"
+    );
+
+    let gpu = MockGpuBackend::new();
+    let none = bind_expert(&gpu, &packed_expert_store("none", &gpu, None), 4, 0).unwrap();
+    assert_eq!(none.gate_proj.input_scale, None);
+}
+
+/// 2026-10-08: An activation scale that is zero, not finite, or not one scalar is refused.
+#[test]
+fn a_malformed_activation_scale_is_refused() {
+    let ok = 0.25f32.to_le_bytes();
+    let two: Vec<u8> = [0.25f32, 0.5]
+        .iter()
+        .flat_map(|x| x.to_le_bytes())
+        .collect();
+    for (bad, want) in [
+        (0.0f32.to_le_bytes().to_vec(), "finite and positive"),
+        (f32::NAN.to_le_bytes().to_vec(), "finite and positive"),
+        (two, "one scalar"),
+    ] {
+        let gpu = MockGpuBackend::new();
+        let store = packed_expert_store(&format!("bad{}", bad.len()), &gpu, Some([&ok, &ok, &bad]));
+        let err = bind_expert(&gpu, &store, 4, 0).unwrap_err().to_string();
+        assert!(err.contains(want), "{err}");
+    }
+}

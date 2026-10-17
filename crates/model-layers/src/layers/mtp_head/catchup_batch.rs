@@ -41,7 +41,10 @@ impl MtpHead {
             "catchup_batch: length mismatch"
         );
         let c: usize = tokens.iter().map(Vec::len).sum();
-        if c == 0 {
+        // 2026-10-11: This head's catch-up rows pair with its `kv_exact` trim (it keeps the
+        // verified input's row); the model also runs the catch-up for
+        // `METRALE_MTP_ACCEPTED_ROWS`, a dense-row drafter's lever, which this head does not take.
+        if c == 0 || !self.kv_exact {
             return Ok(0);
         }
         let Some(scratch) = self.prefill_scratch.as_ref() else {

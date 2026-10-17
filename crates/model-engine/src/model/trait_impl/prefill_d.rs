@@ -14,6 +14,7 @@ use anyhow::Result;
 use metrale_cache::kv_cache::PagedKvCache;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
+use super::super::lm_head_vocab_tp::HeadRanks;
 use super::super::types::TransformerModel;
 use crate::traits::SequenceState;
 use metrale_model_layers::layers::ops;
@@ -65,7 +66,9 @@ impl TransformerModel {
         let normed = self.buffers.norm_output();
         let eps = self.config.rms_norm_eps as f32;
         self.final_norm_apply(hidden, normed, 1, h, eps, stream)?;
-        self.lm_head(normed, stream)?;
+        // 2026-10-10: Rank-local: no layer runs here, so nothing ties this head call to the
+        // other ranks', and a vocab-parallel head's all-reduce could wait forever.
+        self.lm_head(normed, HeadRanks::Local, stream)?;
         // 2026-09-25: No layer ran, so the SSM state is unchanged and no snapshot is saved.
         if !self.tokens_have_vision_pad(tokens) && !self.hss_window_slid(seq) {
             let acquired = self.prefix_cache.insert(

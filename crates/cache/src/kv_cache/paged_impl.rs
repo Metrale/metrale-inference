@@ -122,6 +122,40 @@ impl PagedKvCache {
         Ok(())
     }
 
+    /// 2026-10-12: [`Self::zero_block`] for the `count` consecutive blocks from `first`: one
+    /// memset per layer per pool over the contiguous range (blocks are contiguous within a
+    /// pool at `k_block_stride` / `v_block_stride` each), so a prefill's fresh blocks cost two
+    /// memsets per layer per run instead of per block. Errors when the range is past the pool.
+    pub fn zero_blocks_run(
+        &self,
+        first: u32,
+        count: u32,
+        gpu: &dyn metrale_gpu_runtime::gpu::GpuBackend,
+        stream: u64,
+    ) -> anyhow::Result<()> {
+        let end = first as usize + count as usize;
+        anyhow::ensure!(
+            count > 0 && end <= self.num_blocks,
+            "zero_blocks_run: blocks {first}..{end} exceed the {} blocks of the pool",
+            self.num_blocks
+        );
+        for layer in &self.layers {
+            gpu.memset_async(
+                layer.k_pool.offset(first as usize * layer.k_block_stride),
+                0,
+                count as usize * layer.k_block_stride,
+                stream,
+            )?;
+            gpu.memset_async(
+                layer.v_pool.offset(first as usize * layer.v_block_stride),
+                0,
+                count as usize * layer.v_block_stride,
+                stream,
+            )?;
+        }
+        Ok(())
+    }
+
     /// 2026-09-25: Diagnostic twin of `zero_block` that fills with 0xFF.
     /// `0xFFFF` is a BF16 NaN and `0xFF` an FP8 E4M3 NaN, so attention over a
     /// slot nothing wrote yields NaN instead of zeros. The model engine

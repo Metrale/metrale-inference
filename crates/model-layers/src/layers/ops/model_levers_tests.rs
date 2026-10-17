@@ -110,6 +110,56 @@ fn exact_one_opt_ins_map_to_their_own_fields() {
     assert!(!resolve(&[("METRALE_K4_DIAG", "true")]).k4_diag);
 }
 
+/// 2026-10-14: The new-sequence levers are strict `=1` opt-ins, each on its own field only,
+/// off by default.
+#[test]
+fn new_sequence_levers_are_strict_opt_ins_on_their_own_fields() {
+    let cases: [(&str, fn(&mut ModelLevers) -> &mut bool); 3] = [
+        ("METRALE_SEQ_ALLOC_ASYNC", |l| &mut l.seq_alloc_async),
+        ("METRALE_GLM_KEEP_SLOT_GRAPHS", |l| {
+            &mut l.glm_keep_slot_graphs
+        }),
+        ("METRALE_GLM_MTP_STATE_POOL", |l| &mut l.glm_mtp_state_pool),
+    ];
+    for (name, field) in cases {
+        assert!(!*field(&mut resolve(&[])), "{name} on by default");
+        for off in ["0", "true", ""] {
+            assert!(
+                !*field(&mut resolve(&[(name, off)])),
+                "{name} armed at {off:?}"
+            );
+        }
+        let mut armed = resolve(&[(name, "1")]);
+        assert!(*field(&mut armed), "{name} did not arm at =1");
+        *field(&mut armed) = false;
+        assert_eq!(armed, resolve(&[]), "{name} moved another field");
+    }
+}
+
+#[test]
+fn new_sequence_readback_names_each_lever_with_its_own_state() {
+    let off = resolve(&[]).new_sequence_readback();
+    assert_eq!(
+        off,
+        "METRALE_SEQ_ALLOC_ASYNC=off METRALE_GLM_KEEP_SLOT_GRAPHS=off METRALE_GLM_MTP_STATE_POOL=off"
+    );
+    let l1 = resolve(&[("METRALE_SEQ_ALLOC_ASYNC", "1")]).new_sequence_readback();
+    assert_eq!(
+        l1,
+        "METRALE_SEQ_ALLOC_ASYNC=on METRALE_GLM_KEEP_SLOT_GRAPHS=off METRALE_GLM_MTP_STATE_POOL=off"
+    );
+    let l3 = resolve(&[("METRALE_GLM_KEEP_SLOT_GRAPHS", "1")]).new_sequence_readback();
+    assert_eq!(
+        l3,
+        "METRALE_SEQ_ALLOC_ASYNC=off METRALE_GLM_KEEP_SLOT_GRAPHS=on METRALE_GLM_MTP_STATE_POOL=off"
+    );
+    let l2 = resolve(&[("METRALE_GLM_MTP_STATE_POOL", "1")]).new_sequence_readback();
+    assert_eq!(
+        l2,
+        "METRALE_SEQ_ALLOC_ASYNC=off METRALE_GLM_KEEP_SLOT_GRAPHS=off METRALE_GLM_MTP_STATE_POOL=on"
+    );
+}
+
 #[test]
 fn truthy_opt_ins_map_independently_and_presence_is_distinct() {
     let cases = [

@@ -12,6 +12,7 @@
 pub(crate) mod echo;
 pub(crate) mod levers;
 mod loop_detect;
+pub(crate) mod media_limits;
 mod msg_entry;
 pub(crate) mod prepare;
 pub(crate) mod remote_image;
@@ -180,9 +181,12 @@ pub async fn chat_completions(
         ChatOutcome::Blocking(ir) => {
             crate::openai::encode_chat_response(&state, *ir, &echo, dump_seq)
         }
-        ChatOutcome::Streaming(deltas) => {
-            crate::openai::encode_sse_response(deltas, state.model_name.clone(), echo.include_usage)
-        }
+        ChatOutcome::Streaming(deltas) => crate::openai::encode_sse_response(
+            deltas,
+            state.model_name.clone(),
+            echo.include_usage,
+            state.reasoning_wire(),
+        ),
         ChatOutcome::Http(r) => r,
     }
 }

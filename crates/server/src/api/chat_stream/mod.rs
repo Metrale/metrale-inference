@@ -30,7 +30,11 @@ mod handle_token;
 mod state;
 mod strip;
 mod token_ids;
+mod tool_dispatch;
 mod tool_handlers;
+mod vllm_shape;
+#[cfg(test)]
+mod vllm_shape_tests;
 
 use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive};
@@ -194,6 +198,10 @@ pub(crate) async fn run_chat_stream(
     let prompt_vocab: Arc<std::collections::HashSet<String>> =
         Arc::new(std::collections::HashSet::new());
 
+    let call_policy = state
+        .tool_call_parser
+        .as_ref()
+        .map_or(tool_parser::CallPolicy::Repairing, |p| p.call_policy());
     let ctx = StreamCtx {
         state: state.clone(),
         model: model_name.clone(),
@@ -209,6 +217,11 @@ pub(crate) async fn run_chat_stream(
             .tool_call_parser
             .as_ref()
             .is_some_and(|p| p.wants_typed_arguments()),
+        call_policy,
+        tool_call_closes_reasoning: state
+            .reasoning_parser
+            .as_ref()
+            .is_some_and(|p| p.tool_call_closes_reasoning()),
         max_tool_calls_per_response,
         req_return_token_ids,
         req_ctx,
@@ -237,8 +250,19 @@ pub(crate) async fn run_chat_stream(
                 .as_ref()
                 .is_some_and(|p| p.promotes_bare_call_names()),
         );
+        detector.set_fail_closed(matches!(
+            call_policy,
+            tool_parser::CallPolicy::FailClosed { .. }
+        ));
     }
 
+    // 2026-10-14: vLLM's whitespace shaping, for a reasoning format that asks
+    // for it (`vllm_shape.rs`).
+    let mut vllm_shape = state
+        .reasoning_parser
+        .as_ref()
+        .is_some_and(|p| p.shapes_stream_whitespace())
+        .then(vllm_shape::VllmDeltaShape::default);
     // 2026-09-26: `terminated`: a stream the scheduler drops without Done/Error still
     // ends in an error frame (`stream_terminal.rs`).
     let events = super::stream_terminal::terminated(ReceiverStream::new(token_rx));
@@ -278,6 +302,10 @@ pub(crate) async fn run_chat_stream(
                 )
             }
             StreamEvent::Error(msg) => handle_error::handle_error(&ctx, msg),
+        };
+        let deltas = match vllm_shape.as_mut() {
+            Some(shape) => shape.apply(deltas),
+            None => deltas,
         };
 
         futures::stream::iter(deltas).boxed()

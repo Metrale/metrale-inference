@@ -39,6 +39,14 @@ metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false, featu
 metrale-kernels = { path = "../kernels", default-features = false }
 
 [[example]]
+name = "argmax_key_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "mtp_k2_verdict_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "residual_add_rms_norm_exact_microtest"
 required-features = ["cuda", "gpu-examples"]
 
@@ -80,6 +88,46 @@ required-features = ["cuda", "gpu-examples"]
 
 [[example]]
 name = "w8a16_tc_rows_microtest"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "w4a16_tc_rows_seg_microtest"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "dflash2_topk16_parity"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "dflash_tp_parity"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "dflash_tp_rank_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "dflash_aux_fp8_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "dflash_nvfp4_rows_check"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_w4a16_rows_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_w4a16_gemv_seg_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_w4a16_gemv_seg_rows_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_batch_inv_bench"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
@@ -203,11 +251,159 @@ name = "glm5next_ffn_microtest"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "glm5next_w4a4_fp8_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_moe_narrow_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm53_lmhead_fp8_shard_microtest"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm53_mtp_xchg_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_moe_wide_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_moe_prefill_w4a4_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_moe_epi_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_w4a16_wide_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_fp8_wide_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_dequant_persist_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_kda_chunk16_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_kda_chunk64_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_kda_chunk64_conv_parity"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_kda_gate_in_prepare_parity"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_dsa_scores_tiled_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_dsa_scores_mma_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_dsa_scores_pipe_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_dsa_sp_select_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_mhc_slice_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_mhc_tile_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_expert_tp_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_prefill_spans_mlp_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "glm5next_moe_grouped_prefill_microtest"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
 name = "glm5next_moe_microtest"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_multi_seq_decode_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_c16_kernel_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_hc_fused_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_hc_post_sum_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_hc_post_vec_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_l2_warm_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_rowbatch_microtest"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_kda_conv_pack_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_c1_fuse_microtest"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_hc_post_fold_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_hc_post_pre_tok_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_dsa_rows_microtest"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_kda_prefill_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_dsa_paged_parity"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_verify_spans_gate"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
@@ -236,6 +432,10 @@ required-features = ["cuda", "gpu-examples"]
 
 [[example]]
 name = "kda_layer_microtest"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "kda_replay_microtest"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
@@ -426,6 +626,34 @@ required-features = ["cuda", "gpu-examples"]
 
 [[example]]
 name = "w8a16t_microtest"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_dsa_hb_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_dsa_prefill_pipe_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_dsa_prefill_tc_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_dsa_prefill_tc_nanor_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_dsa_proj_tier_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_dsa_hb_layer_parity"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_dsa_hb_replay"
 required-features = ["cuda", "gpu-examples"]
 
 [lints]

@@ -238,19 +238,21 @@ pub struct TransformerModel {
     /// context cap. 0 when the buffer is NULL. The capture bounds check
     /// compares against this value.
     pub(super) mtp_prefill_capacity: usize,
-    /// 2026-09-25: Rows of `mtp_prefill_hidden` captured contiguously from
-    /// position 0 for the sequence that owns the capture. Reset to 0 by
-    /// `alloc_sequence`. A chunk that does not extend the contiguous range
-    /// leaves it short, and the propose-site coverage check then skips the
-    /// drafter prefill.
+    /// 2026-09-25: Rows of `mtp_prefill_hidden` captured contiguously from position 0 for the
+    /// sequence that owns the capture. Reset to 0 by `alloc_sequence`. A chunk that does not
+    /// extend the contiguous range leaves it short, and the propose-site coverage check then
+    /// skips the drafter prefill.
     pub(super) mtp_prefill_capture_len: std::sync::atomic::AtomicUsize,
-    /// 2026-09-25: Generation of the single-slot capture above. A chunk-0
-    /// prefill bumps it and stamps the new value on its sequence
-    /// (`SequenceState::mtp_capture_gen`). Appends and the drafter-prefill
-    /// consume require the sequence's stamp to equal the current value and to
-    /// be non-zero, so a sequence whose capture another sequence's prefill has
-    /// restarted skips the drafter prefill.
+    /// 2026-09-25: Generation of the single-slot capture above. A chunk-0 prefill bumps it and
+    /// stamps the new value on its sequence (`SequenceState::mtp_capture_gen`). Appends and the
+    /// drafter-prefill consume require the sequence's stamp to equal the current value and to be
+    /// non-zero, so a sequence whose capture another sequence's prefill has restarted skips the
+    /// drafter prefill. 2026-10-14: an adoption claim also bumps it (`mtp_capture_record`).
     pub(super) mtp_prefill_capture_gen: std::sync::atomic::AtomicU64,
+    /// 2026-10-14: Which tokens' hiddens the capture's leading rows hold, and the adoption claim
+    /// in flight (`METRALE_MTP_ADOPT_CAPTURE`, `mtp_adopt`). Untouched with the lever off.
+    pub(super) mtp_capture_record:
+        parking_lot::Mutex<metrale_model_layers::mtp_adopt::CaptureRecord>,
     /// 2026-09-25: Ticket counter for `mtp_store_range` ownership
     /// (`SequenceState::mtp_store_gen`), drawn once per `alloc_sequence`.
     ///
@@ -259,19 +261,17 @@ pub struct TransformerModel {
     /// capture generation to be unchanged between a sequence's capture and its
     /// propose.
     pub(super) mtp_store_gen_seq: std::sync::atomic::AtomicU64,
-    /// 2026-09-25: The previous turn's drafter KV, held so the next turn of the
-    /// same session can adopt it. Single slot: `mtp_carry::carry_armed_with`
-    /// turns the carry off in multi-sequence MTP mode. `None` when the carry is
-    /// off or nothing has been carried.
+    /// 2026-09-25: The previous turn's drafter KV, held so the next turn of the same session can
+    /// adopt it. Single slot: `mtp_carry::carry_armed_with` turns the carry off in multi-sequence
+    /// MTP mode. `None` when the carry is off or nothing has been carried.
     pub(super) mtp_carry:
         parking_lot::Mutex<Option<metrale_model_layers::mtp_carry::CarriedDrafter>>,
-    /// 2026-09-25: Absolute position interval of `mtp_prefill_hidden` rows and
-    /// the sequence ticket that wrote them. Updated only while the drafter
-    /// carry is armed.
+    /// 2026-09-25: Absolute position interval of `mtp_prefill_hidden` rows and the sequence
+    /// ticket that wrote them. Updated only while the drafter carry is armed.
     ///
-    /// The ticket (`owner`) is what ties the interval to one sequence:
-    /// `mtp_carry::stamped_merge` replaces rather than extends the interval
-    /// when a different owner writes. `alloc_sequence` also resets it.
+    /// The ticket (`owner`) is what ties the interval to one sequence: `mtp_carry::stamped_merge`
+    /// replaces rather than extends the interval when a different owner writes. `alloc_sequence`
+    /// also resets it.
     pub(super) mtp_store_range: parking_lot::Mutex<metrale_model_layers::mtp_carry::StoreRange>,
     /// 2026-09-25: DFlash per-layer hidden capture, allocated when the config
     /// names DFlash capture layers. Row-major: `dflash_hidden_save_rows` rows,
@@ -351,6 +351,12 @@ pub struct TransformerModel {
     /// 2026-09-25: CUDA graphs for the DFlash K=γ verify, keyed by
     /// `(seq.slot_idx, tokens.len())`.
     pub(super) verify_kgamma_graph: Mutex<std::collections::HashMap<(usize, usize), GraphHandle>>,
+    /// 2026-10-09: CUDA graphs for the replay-mode commit (`ssm_replay.rs`), keyed by
+    /// `(SSM slot, accepted rows, k)`. Everything such a commit reads and writes is
+    /// slot-addressed (the pool state, its checkpoint and verify record) or the layers' fixed
+    /// workspace, so a key's graph stays valid across the slot's sequences.
+    pub(super) replay_commit_graphs:
+        Mutex<std::collections::HashMap<(usize, usize, usize), GraphHandle>>,
     /// 2026-09-25: CUDA graphs for the DFlash decode+verify fused pass
     /// (`verify_fused.rs`), keyed by `(seq.slot_idx, M)` with
     /// `M = tokens.len()`.
@@ -371,16 +377,24 @@ pub struct TransformerModel {
     pub(super) comm: Option<std::sync::Arc<dyn metrale_comm::CommBackend>>,
     /// 2026-09-25: 4-byte device buffer for the EP token broadcast.
     pub(super) ep_cmd_buf: DevicePtr,
-    /// 2026-09-25: EP wire protocol: true when `METRALE_EP_PROTOCOL=v2`, which
+    /// 2026-09-25: EP wire protocol: true when `METRALE_EP_PROTOCOL=v2` (or, 2026-10-10, `v3`:
+    /// `metrale_model_layers::ep_wire`), which
     /// precedes every command broadcast with a `seq_id` broadcast so the
     /// worker can route slot-bound work to the right `SequenceState`. With a
     /// comm backend, `new` checks that the ranks agree on it
     /// (`rank_agree::assert_ranks_agree`).
     pub(super) ep_protocol_v2: bool,
+    /// 2026-10-10: The sharded device argmax that may end a one-row decode step
+    /// (`device_argmax.rs`).
+    pub(super) device_argmax: super::device_argmax::DeviceArgmax,
     pub(super) self_speculative: bool,
     /// 2026-09-25: Last token index `save_hidden_for_mtp` copied from, broadcast
     /// to the other EP rank before an MTP propose.
     pub(super) last_mtp_hidden_idx: std::sync::atomic::AtomicUsize,
+    /// 2026-10-11: Whether the last MTP target hidden was saved from the live `hidden_states`
+    /// rows (`save_hidden_for_mtp`), so rows `[last_mtp_hidden_idx - k, last_mtp_hidden_idx)` are
+    /// the same forward's; false after a save from the verify stash (`accepted_rows.rs`).
+    pub(super) mtp_hidden_live: std::sync::atomic::AtomicBool,
     pub(super) vision_encoder: Option<metrale_model_layers::layers::VisionTower>,
     /// 2026-09-25: Number of patches encoded by the last `prepare_vision_embed`
     /// call. 0 means no vision embeddings are pending.
@@ -426,12 +440,13 @@ pub struct TransformerModel {
     /// first use. The narrowing cannot run in place: output element `i` is
     /// written into the bytes that hold input element `i / 2`.
     pub(super) ssm_h_f16_scratch: std::sync::OnceLock<DevicePtr>,
-
     /// 2026-09-25: Fixed-address device buffer for the batched-decode MoE
     /// per-row adapter map, `[max_batch_size]` i32 (`< 0` = base row, `>= 0` =
     /// fold that adapter). Allocated in `new` and refreshed per decode step by
     /// `upload_moe_row_adapter`, which does not touch it when `lora` is `None`.
     pub(super) moe_row_adapter_buf: DevicePtr,
+    /// 2026-10-13: The batched decode/verify block tables (`block_tables.rs`).
+    pub(super) block_tables: super::block_tables::BlockTables,
 
     // 2026-09-25: Two-phase SSM prefill buffers, `gdn_buf_max_len` rows each,
     // shared by every layer and sequence. NULL when the model has no GDN

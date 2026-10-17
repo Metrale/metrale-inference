@@ -10,7 +10,7 @@
 //! Owner: model-arch weight loader.
 //! Invariants:
 //! - `load_layers`, `load_embedding`, `load_final_norm` and `load_lm_head` always return an
-//!   error; `load_mtp_weights` returns `Ok(None)` and `supports_tp` is false.
+//!   error; `load_mtp_weights` returns `Ok(None)` and `tp_support` is `Unsupported`.
 
 use anyhow::{Result, bail};
 use metrale_cache::kv_cache::KvCacheDtype;
@@ -33,8 +33,8 @@ impl NllbWeightLoader {
 }
 
 impl ModelWeightLoader for NllbWeightLoader {
-    fn supports_tp(&self) -> bool {
-        false
+    fn tp_support(&self) -> metrale_config::TpSupport {
+        metrale_config::TpSupport::Unsupported
     }
 
     fn load_layers(

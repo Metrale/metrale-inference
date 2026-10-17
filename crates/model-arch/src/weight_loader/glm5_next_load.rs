@@ -38,18 +38,27 @@ use crate::glm5next_skeleton::{Glm5NextTextSkeleton, Mixer, Mlp};
 use metrale_model_layers::layer::TransformerLayer;
 use metrale_model_layers::weight_map::DenseWeight;
 
+mod act_scale;
 #[cfg(test)]
 mod defer_hook_tests;
+mod dense_tiers;
 mod expert_quant;
+mod expert_slab;
+mod expert_tp;
 #[cfg(test)]
 mod export_layout_tests;
 mod loader;
+mod mlp_precision;
 mod nvfp4_dequant;
 mod nvfp4_quant;
 #[cfg(test)]
 mod plan_cast_tests;
 mod plan_dtype;
+#[cfg(test)]
+mod tp_shapes_tests;
 
+use act_scale::input_scale;
+use act_scale::is_activation_scale;
 use expert_quant::{quantize_deferred_expert_proj, quantize_expert_proj};
 
 pub struct Glm5NextWeightLoader;
@@ -192,6 +201,16 @@ impl LayerSource {
         })
     }
 
+    /// 2026-10-08: A tensor's stored dtype, shape and bytes, copied (the packed NVFP4 dense MLP
+    /// the W4A4 path slices).
+    pub(super) fn raw(&self, name: &str) -> Result<(WeightDtype, Vec<usize>, Vec<u8>)> {
+        let (dtype, shape, bytes) = self
+            .tensors
+            .get(name)
+            .with_context(|| format!("missing tensor {name}"))?;
+        Ok((*dtype, shape.clone(), bytes.clone()))
+    }
+
     pub(super) fn f32(&self, name: &str) -> Result<Vec<f32>> {
         let (dtype, shape, bytes) = self
             .tensors
@@ -305,6 +324,13 @@ fn bind_mhc_site(
         // 2026-09-25: The `hc_mix` to `hc_finish` scratch; one per site, so a
         // layer's two sites never share it.
         mix: gpu.alloc(mhc_mix_max_tokens() * mix_hc(hc_mult) * 4)?,
+        // 2026-10-09: `glm5next_hc_pre_norm` requires its counters zero before the first launch.
+        done: {
+            let bytes = mhc_mix_max_tokens() * 4;
+            let p = gpu.alloc(bytes)?;
+            gpu.memset(p, 0, bytes)?;
+            p
+        },
     })
 }
 
@@ -314,7 +340,8 @@ fn bind_mhc_site(
 /// 1. deferred by [`Glm5NextWeightLoader::defer_predicate`]: read from disk,
 ///    quantised, uploaded;
 /// 2. resident U8: bound zero-copy with its `weight_scale` and scalar
-///    `weight_scale_2`;
+///    `weight_scale_2`, and its static activation scale when the checkpoint has one
+///    (2026-10-08, [`act_scale::input_scale`]);
 /// 3. resident BF16: read back and quantised; `prune_after_load` frees the
 ///    source.
 ///
@@ -345,6 +372,7 @@ pub(super) fn bind_expert(
                     packed: w.ptr,
                     scale: scale.ptr,
                     scale_2: s2,
+                    input_scale: input_scale(gpu, store, layer, &base)?,
                 })
             }
             WeightDtype::BF16 => quantize_expert_proj(gpu, store, w, &base),
@@ -386,14 +414,60 @@ pub(super) fn layer_source(
     LayerSource::collect(gpu, store, layer)
 }
 
-/// 2026-09-25: [`bind_expert`], for the MTP loader.
-pub(super) fn bind_expert_at(
-    gpu: &dyn GpuBackend,
-    store: &WeightStore,
+/// 2026-09-25: [`bind_expert`], for the MTP loader. 2026-10-09: Under the MLP config's
+/// `shard` (`expert_tp::bind_routed_expert`). 2026-10-14: As the binder of all of `layer`'s
+/// experts (`expert_tp::routed_expert_binder`), one slab under the `tp` layout.
+pub(super) fn expert_binder_at<'a>(
+    gpu: &'a dyn GpuBackend,
+    store: &'a WeightStore,
     layer: usize,
-    id: usize,
-) -> Result<Glm5NextExpertWeights> {
-    bind_expert(gpu, store, layer, id)
+    cfg: &Glm5NextMlpConfig,
+) -> impl Fn(usize) -> Result<Glm5NextExpertWeights> + 'a {
+    expert_tp::routed_expert_binder(gpu, store, layer, cfg)
+}
+
+/// 2026-10-08: The routed-expert precision plan of the MTP layer `layer`, for the MTP loader.
+/// 2026-10-11: Register the MTP block's mixer and shared-expert projections under the published
+/// `--dense-quantization` and `--dsa-quantization`, as `loader.rs` registers a text layer's, so
+/// the drafter's DSA q_a / absorbed q / absorbed o follow the DSA tier and the rest of its dense
+/// projections the dense tier. Nothing to do when both are `declared`.
+pub(super) fn register_mtp_dense_tiers(
+    gpu: &dyn GpuBackend,
+    mixer: &mut crate::glm5next_layer::Glm5NextMixer,
+    mlp: &mut crate::glm5next_layer::Glm5NextMlpSite,
+    mlp_cfg: &crate::glm5next_mlp::Glm5NextMlpConfig,
+    idx: usize,
+) -> Result<()> {
+    // 2026-10-11: Opt-in (`METRALE_GLM_MTP_DRAFTER_TIERS=1`): the first measurement with the
+    // drafter on the serve's tiers saw p1 fall (0.64-0.70 -> 0.53-0.61), not yet separated from
+    // the device exchange; the drafter stays BF16 until it is.
+    if std::env::var("METRALE_GLM_MTP_DRAFTER_TIERS").as_deref() != Ok("1") {
+        return Ok(());
+    }
+    if !dense_tiers::any_below_declared(
+        metrale_model_layers::layers::dense_quantization(),
+        metrale_model_layers::layers::dsa_quantization(),
+    ) {
+        return Ok(());
+    }
+    dense_tiers::register_dense_tiers(gpu, mixer, mlp, mlp_cfg, idx)
+}
+
+pub(super) fn mtp_expert_precision(
+    config: &ModelConfig,
+    kernels: &Glm5NextMlpKernels,
+    layer: usize,
+    cfg: &Glm5NextMlpConfig,
+    has_scales: bool,
+) -> Result<crate::glm5next_mlp::precision::GroupPrecision> {
+    mlp_precision::group_precision(
+        config,
+        kernels,
+        layer,
+        crate::glm5next_mlp::precision::MlpGroup::RoutedExperts,
+        cfg.local_expert_range().start,
+        has_scales,
+    )
 }
 
 /// 2026-09-25: `upload_f32_as_bf16`, for the MTP loader.

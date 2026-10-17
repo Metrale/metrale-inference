@@ -43,11 +43,106 @@ use super::{Glm5NextDsaConfig, Glm5NextDsaKernels};
 /// as `SMEM_CEILING` in `examples/dsa_indexer_microtest.rs`.
 pub const TOPK_SMEM_CEILING: usize = 49_152;
 
+/// 2026-10-10: `DSA_ST_P`, `DSA_ST_R` and `DSA_ST_D` of `dsa_index_scores_tiled`
+/// (`dsa_indexer_rows.cu`): pools and query rows per 256-thread block, and the one index head
+/// dim it is built for; its dynamic shared memory holds both tiles, d-major.
+pub const SCORES_TILE_POOLS: usize = 64;
+pub const SCORES_TILE_ROWS: usize = 32;
+pub const SCORES_TILE_D: usize = 128;
+pub const SCORES_TILE_SMEM: u32 =
+    (SCORES_TILE_D * (SCORES_TILE_POOLS + SCORES_TILE_ROWS) * 4) as u32;
+
+/// 2026-10-10: `METRALE_GLM_DSA_SCORES_TILED=1`, read once: score the pools of a prefill
+/// sub-chunk's query rows with `dsa_index_scores_tiled` (each score `dsa_index_scores`'s bits,
+/// the keys and each head's query slice staged once per 32-row x 64-pool tile instead of once
+/// per (pool, query) block). Off unless `1`.
+pub fn scores_tiled() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| std::env::var("METRALE_GLM_DSA_SCORES_TILED").as_deref() == Ok("1"))
+}
+
+/// 2026-10-10: Whether a selection pass takes the tiled scores: the lever on, the kernel
+/// resolved, an exact (host-geometry) launch of more than one query row, and a shape inside the
+/// kernel's bounds. Anything else keeps `dsa_index_scores`.
+pub fn scores_tiled_for(
+    ceiling: bool,
+    geom: &DsaSelectGeometry,
+    kernel: metrale_gpu_runtime::gpu::KernelHandle,
+    lever: bool,
+) -> bool {
+    lever && kernel.0 != 0 && !ceiling && geom.q_rows > 1 && geom.index_head_dim == SCORES_TILE_D
+}
+
+/// 2026-10-12: Query rows per block of `dsa_index_scores_mma` (`DSA_SM_QPC`), and the index
+/// head count and head dim it is built for.
+pub const SCORES_MMA_ROWS: usize = 8;
+pub const SCORES_MMA_HEADS: usize = 32;
+pub const SCORES_MMA_D: usize = 128;
+
+/// 2026-10-12: `METRALE_GLM_DSA_SCORES_MMA=1`, read once: score the pools of a prefill
+/// sub-chunk's query rows with `dsa_index_scores_mma` (BF16 tensor cores, FP32 accumulation;
+/// not `dsa_index_scores`'s bits). Off unless `1`. Takes precedence over the tiled scores.
+pub fn scores_mma() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| std::env::var("METRALE_GLM_DSA_SCORES_MMA").as_deref() == Ok("1"))
+}
+
+/// 2026-10-12: Whether a selection pass takes the tensor-core scores: the lever on, the kernel
+/// resolved, an exact launch of more than one query row, and the kernel's head count and dim.
+pub fn scores_mma_for(
+    ceiling: bool,
+    geom: &DsaSelectGeometry,
+    kernel: metrale_gpu_runtime::gpu::KernelHandle,
+    lever: bool,
+) -> bool {
+    lever
+        && kernel.0 != 0
+        && !ceiling
+        && geom.q_rows > 1
+        && geom.index_head_dim == SCORES_MMA_D
+        && geom.index_heads == SCORES_MMA_HEADS
+}
+
+/// 2026-10-12: The widest selection `dsa_topk_pools_radix` takes (`DSA_TR_MAX`).
+pub const TOPK_RADIX_MAX: usize = 512;
+
+/// 2026-10-12: `METRALE_GLM_DSA_TOPK_RADIX=1`, read once: select each row's top pools with
+/// `dsa_topk_pools_radix` (the same pools in the same order as `dsa_topk_pools`). Off unless
+/// `1`.
+pub fn topk_radix() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| std::env::var("METRALE_GLM_DSA_TOPK_RADIX").as_deref() == Ok("1"))
+}
+
+/// 2026-10-12: Whether a selection pass takes the radix top-k: the lever on, the kernel
+/// resolved, an exact launch, and a selection of at most [`TOPK_RADIX_MAX`] pools.
+pub fn topk_radix_for(
+    ceiling: bool,
+    geom: &DsaSelectGeometry,
+    kernel: metrale_gpu_runtime::gpu::KernelHandle,
+    lever: bool,
+) -> bool {
+    lever && kernel.0 != 0 && !ceiling && geom.select_k <= TOPK_RADIX_MAX
+}
+
 /// 2026-09-25: Threads per block for `dsa_index_scores`, and the least shared memory it is
 /// given, in bytes (`select_tokens` requests `max(SCORES_BLOCK, 4 * index_heads)`).
-const SCORES_BLOCK: u32 = 128;
+pub(crate) const SCORES_BLOCK: u32 = 128;
 /// 2026-09-25: Threads per block for `dsa_topk_pools` and `dsa_expand_selection`.
-const ROW_BLOCK: u32 = 256;
+pub(crate) const ROW_BLOCK: u32 = 256;
+
+/// 2026-10-13: Widest grid x of a pool kernel launched at the context ceiling
+/// (`dsa_pool_scores_rows`; 2026-10-14: also `dsa_kpool_compress` and `dsa_index_scores` under
+/// [`DsaSelectLaunch::Ceiling`]). The kernels stride over pools (`p += gridDim.x`) up to the
+/// live count, so past this many pools a block takes several instead of the grid growing with
+/// `--max-seq-len` (one block per ceiling pool, almost all past the live count). 2,048 pools
+/// are an 8,192-token context at kpool 4.
+pub(crate) const POOL_GRID_MAX: usize = 2_048;
+
+/// 2026-10-13: Grid x of a ceiling-launched pool kernel whose one-block-per-pool grid is `pools`.
+pub(crate) fn pool_grid_x(pools: usize) -> u32 {
+    pools.min(POOL_GRID_MAX) as u32
+}
 
 /// 2026-09-25: Tile width `dsa_topk_pools` walks the pool axis in.
 ///
@@ -173,12 +268,10 @@ impl DsaSelectGeometry {
 /// 2026-09-25: Device-side inputs to a selection pass, all owned by the caller.
 #[derive(Debug, Clone, Copy)]
 pub struct DsaSelectInputs {
-    /// 2026-09-25: `[seq, index_head_dim]` BF16 indexer keys, after the `k_norm` LayerNorm.
-    pub k_normed: DevicePtr,
-    /// 2026-09-25: `[seq, index_head_dim]` BF16 `index_kpool_compress_gate` projection.
-    pub gate: DevicePtr,
-    /// 2026-09-25: `[seq]` u8 per-key validity.
-    pub valid: DevicePtr,
+    /// 2026-10-09: The indexer cache: BF16 keys (after the `k_norm` LayerNorm) and
+    /// `index_kpool_compress_gate` rows, the u8 per-key validity, and for a paged cache the
+    /// block table that addresses them (`super::paged`).
+    pub rows: super::paged::IndexerRowsDev,
     /// 2026-09-25: `[index_kpool, index_head_dim]` f32 APE table. The checkpoint stores BF16;
     /// `build_dsa_weights` uploads it as f32.
     pub ape: DevicePtr,
@@ -201,6 +294,22 @@ pub struct DsaSelectInputs {
     /// `select_k` grow with the context; the kernels read them from here when it is non-null.
     /// Only with `q_rows == 1`: `select_tokens` refuses a ceiling launch otherwise.
     pub geom_dev: DevicePtr,
+}
+
+impl DsaSelectInputs {
+    /// 2026-10-11: The same inputs starting at query row `r0`: `q`, `weights`, `q_pos` and
+    /// `q_mask` advanced by `r0` rows at the strides the kernels index them with (`q` and
+    /// `weights` by `r * H * D` and `r * H` f32, `q_pos` by `r` i32, `q_mask` by `r` u8); the
+    /// cache, the APE table and the device geometry are every row's.
+    pub fn from_row(&self, r0: usize, cfg: &Glm5NextDsaConfig) -> Self {
+        Self {
+            q: self.q.offset(r0 * cfg.index_heads * cfg.index_head_dim * 4),
+            weights: self.weights.offset(r0 * cfg.index_heads * 4),
+            q_pos: self.q_pos.offset(r0 * 4),
+            q_mask: self.q_mask.offset(r0),
+            ..*self
+        }
+    }
 }
 
 /// 2026-09-25: How a pass is launched: exactly, or at the context ceiling so one graph serves
@@ -235,20 +344,46 @@ pub struct DsaSelectScratch {
     /// 2026-09-25: `[q_rows, out_width]` i32 token ids, `-1` where nothing was selected. The
     /// result of the pass; `dsa_expand_selection` writes every slot of each row.
     tokens: DevicePtr,
+    /// 2026-10-14: The streamed scores' prepared pools (`pipe`); empty unless that lever is on.
+    pipe: pipe::DsaPipeRegions,
     capacity: [usize; 6],
     tokens_bytes: usize,
 }
 
 impl DsaSelectScratch {
-    /// 2026-09-25: Allocate for `geom`, the largest pass the caller will run
-    /// (`Glm5NextDsaWorkspace::new` plans it at `max_dsa_context`).
+    /// 2026-09-25: Allocate for `geom`, the largest pass the caller will run.
     pub fn alloc(
         gpu: &dyn GpuBackend,
         cfg: &Glm5NextDsaConfig,
         geom: &DsaSelectGeometry,
     ) -> Result<Self> {
-        let capacity = geom.scratch_bytes();
-        let tokens_bytes = geom.q_rows * cfg.out_width() * 4;
+        Self::alloc_rows(gpu, cfg, geom, geom.q_rows)
+    }
+
+    /// 2026-10-11: Allocate the per-pass temporaries (pool regions, scores, candidacy, selected
+    /// pools) for `geom` and the selection output for `out_rows` rows, at least `geom.q_rows`.
+    /// `Glm5NextDsaWorkspace::new` plans `geom` at `max_dsa_context` and fewer rows than it
+    /// selects for at a long context (`select_scratch_rows`); `select_tokens_in_passes` then
+    /// runs a larger group in row sub-passes into the one `[out_rows, out_width]` output.
+    pub fn alloc_rows(
+        gpu: &dyn GpuBackend,
+        cfg: &Glm5NextDsaConfig,
+        geom: &DsaSelectGeometry,
+        out_rows: usize,
+    ) -> Result<Self> {
+        if out_rows < geom.q_rows {
+            bail!(
+                "DSA select: {out_rows} output rows for a {}-row pass",
+                geom.q_rows
+            );
+        }
+        // 2026-10-12: The selected-pools region is `select_k` wide whatever the context, so it is
+        // sized for every output row (2,048 x 512 i32 = 4 MiB); only the context-wide scores and
+        // candidacy are capped at `geom.q_rows`. Sized at `geom.q_rows` it would cap every pass at
+        // those rows even where the scores fit them all.
+        let mut capacity = geom.scratch_bytes();
+        capacity[5] = out_rows * geom.select_k * 4;
+        let tokens_bytes = out_rows * cfg.out_width() * 4;
         Ok(Self {
             pool_keys: gpu.alloc(capacity[0])?,
             pool_indices: gpu.alloc(capacity[1])?,
@@ -257,6 +392,7 @@ impl DsaSelectScratch {
             valid_cand: gpu.alloc(capacity[4])?,
             selected: gpu.alloc(capacity[5])?,
             tokens: gpu.alloc(tokens_bytes)?,
+            pipe: pipe::DsaPipeRegions::alloc(gpu, geom, scores_pipe() && scores_mma())?,
             capacity,
             tokens_bytes,
         })
@@ -265,6 +401,33 @@ impl DsaSelectScratch {
     /// 2026-09-25: `[q_rows, out_width]` i32 selection produced by the last pass.
     pub fn tokens(&self) -> DevicePtr {
         self.tokens
+    }
+
+    /// 2026-10-09: The scores, candidacy and selected-pool regions for `rows` rows of
+    /// `pools` pools and `select_k` selected pools each (one region row per query row, at those
+    /// strides), or `None` when the allocation is smaller.
+    pub(crate) fn rows_regions(
+        &self,
+        cfg: &Glm5NextDsaConfig,
+        rows: usize,
+        pools: usize,
+        select_k: usize,
+    ) -> Option<(DevicePtr, DevicePtr, DevicePtr)> {
+        let fits = rows * pools * 4 <= self.capacity[3]
+            && rows * pools <= self.capacity[4]
+            && rows * select_k * 4 <= self.capacity[5]
+            && rows * cfg.out_width() * 4 <= self.tokens_bytes;
+        fits.then_some((self.scores, self.valid_cand, self.selected))
+    }
+
+    /// 2026-10-11: The most query rows one pass over `geom`'s pools fits in the per-row regions
+    /// (scores, candidacy, selected pools); `usize::MAX` when `geom` has no pools to score. The
+    /// output rows and the pool regions are not counted: `fits` checks those.
+    pub fn rows_per_pass(&self, geom: &DsaSelectGeometry) -> usize {
+        let per = |cap: usize, row_bytes: usize| cap.checked_div(row_bytes).unwrap_or(usize::MAX);
+        per(self.capacity[3], geom.n_pools * 4)
+            .min(per(self.capacity[4], geom.n_pools))
+            .min(per(self.capacity[5], geom.select_k * 4))
     }
 
     /// 2026-09-25: The same scratch with `tokens` pointing at row `row`.
@@ -318,12 +481,20 @@ impl DsaSelectScratch {
         ] {
             gpu.free(p)?;
         }
-        Ok(())
+        self.pipe.free(gpu)
     }
 }
 
 mod launch;
-pub use launch::select_tokens;
+pub use launch::{row_passes, select_tokens, select_tokens_in_passes, select_tokens_rows};
+mod folded;
+pub use folded::{expand_folded, folded_check, launch_fold, select_rows_folded};
+mod pipe;
+pub use pipe::{DsaPipeRegions, SCORES_PIPE_SMEM, scores_pipe, scores_pipe_for};
 
+#[cfg(test)]
+mod ceiling_tests;
+#[cfg(test)]
+pub(crate) mod passes_tests;
 #[cfg(test)]
 mod tests;

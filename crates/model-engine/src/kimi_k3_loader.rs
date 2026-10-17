@@ -46,10 +46,10 @@ pub fn refuse_mxfp4(store: &WeightStore) -> Result<()> {
 }
 
 impl ModelWeightLoader for KimiK3WeightLoader {
-    fn supports_tp(&self) -> bool {
+    fn tp_support(&self) -> metrale_config::TpSupport {
         // 2026-09-25: The split of each tensor is `tensor_plan` (see `tp.rs`). `lm_head` is bound
         // whole on every rank (`bf16::load_lm_head`).
-        true
+        metrale_config::TpSupport::Even
     }
 
     fn binds_vision_encoder(&self) -> bool {
@@ -119,7 +119,10 @@ mod tests {
 
     #[test]
     fn kimi_k3_supports_tp() {
-        assert!(KimiK3WeightLoader.supports_tp());
+        assert_eq!(
+            KimiK3WeightLoader.tp_support(),
+            metrale_config::TpSupport::Even
+        );
     }
 
     #[test]

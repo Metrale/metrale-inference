@@ -11,6 +11,7 @@
 
 #![allow(unused_imports, dead_code, clippy::too_many_arguments)]
 
+use super::super::lm_head_vocab_tp::HeadRanks;
 use anyhow::Result;
 use metrale_config::LayerType;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
@@ -22,6 +23,7 @@ use crate::traits::{ModelEp, ModelForward};
 use metrale_model_layers::layer::{ForwardContext, LayerState, SsmLayerState};
 use metrale_model_layers::layers::ops;
 
+mod batch_hooks;
 mod pad_states;
 mod perseq;
 
@@ -52,7 +54,8 @@ impl TransformerModel {
         // scheduler, so the per-sequence loop below can interleave announcements
         // with `decode()` calls.
         if n == 1 {
-            self.ep_broadcast_cmd_for_seq(seqs[0].slot_idx as u32, tokens[0])?;
+            // 2026-10-10: With the step's device-argmax arming, when it has one.
+            self.ep_broadcast_decode(seqs[0].slot_idx as u32, tokens[0])?;
             self.decode(tokens[0], seqs[0], stream)?;
             return Ok(self.decode_logits_ptr());
         }
@@ -63,7 +66,8 @@ impl TransformerModel {
         // worker from `ep_worker_decode_batch`), so each layer's collectives match
         // in shape and order across ranks.
         let mla_perseq_fallback = self.is_mla_dispatch() && self.levers.mla_perseq_fallback;
-        let qsa_active = self.config.index_topk > 0 && {
+        // 2026-10-08: Never active when every layer selects per row (`batch_hooks.rs`).
+        let qsa_active = self.config.index_topk > 0 && !self.layers_select_index_per_row() && {
             // 2026-09-25: `QsaIndexer::inert_bound`: below `index_topk +
             // index_compress_ratio - 1` visible tokens every block is selected,
             // so selection is inert.
@@ -298,9 +302,12 @@ impl TransformerModel {
         };
 
         if let Some(graph) = replay {
+            // 2026-10-08: Room before the launch, host bookkeeping after (`batch_hooks.rs`).
+            self.batch_replay_check_room(seqs)?;
             if graph.0 != 0 {
                 self.gpu.launch_graph(graph, stream)?;
             }
+            self.batch_replay_sync(seqs)?;
 
             if let Some(tokens) = input.host() {
                 for (i, seq) in seqs.iter_mut().enumerate() {
@@ -440,7 +447,7 @@ impl TransformerModel {
                 // mixed co-dispatch head `decode_b2::mixed_final_norm_lm_head` calls the
                 // same function. The returned pointer is dropped: the function ends
                 // with `decode_logits_ptr()`, the same buffer.
-                self.lm_head_project_batched(normed, padded_n, h, bf16, stream)?;
+                self.lm_head_project_batched(normed, padded_n, h, bf16, HeadRanks::Every, stream)?;
                 if let Some(t0) = lmhead_t0 {
                     self.gpu.synchronize(stream).ok();
                     let head_us = t0.elapsed().as_micros();

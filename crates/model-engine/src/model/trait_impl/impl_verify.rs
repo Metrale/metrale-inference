@@ -19,7 +19,7 @@ impl ModelVerify for TransformerModel {
         stream: u64,
     ) -> Result<Vec<u32>> {
         self.gdn_carry_flush_pending()?;
-        self.ssm_pool.require_verify_rollback_supported()?;
+        self.require_verify_rollback()?;
         let r = self.decode_verify_dispatch(tokens, seq, stream);
         self.release_verify_capture_on_err(r)
     }
@@ -31,7 +31,7 @@ impl ModelVerify for TransformerModel {
         _stream: u64,
     ) -> Result<[u32; 2]> {
         self.gdn_carry_flush_pending()?;
-        self.ssm_pool.require_verify_rollback_supported()?;
+        self.require_verify_rollback()?;
         let r = self.decode_verify_graphed_dispatch(tokens, seq, _stream);
         self.release_verify_capture_on_err(r)
     }
@@ -43,7 +43,7 @@ impl ModelVerify for TransformerModel {
         _stream: u64,
     ) -> Result<[u32; 3]> {
         self.gdn_carry_flush_pending()?;
-        self.ssm_pool.require_verify_rollback_supported()?;
+        self.require_verify_rollback()?;
         let r = self.decode_verify_graphed_k3_dispatch(tokens, seq, _stream);
         self.release_verify_capture_on_err(r)
     }
@@ -55,7 +55,7 @@ impl ModelVerify for TransformerModel {
         _stream: u64,
     ) -> Result<[u32; 4]> {
         self.gdn_carry_flush_pending()?;
-        self.ssm_pool.require_verify_rollback_supported()?;
+        self.require_verify_rollback()?;
         let r = self.decode_verify_graphed_k4_dispatch(tokens, seq, _stream);
         self.release_verify_capture_on_err(r)
     }
@@ -72,7 +72,7 @@ impl ModelVerify for TransformerModel {
         _stream: u64,
         opts: crate::traits::VerifyBatchedOpts,
     ) -> Result<Vec<u32>> {
-        self.ssm_pool.require_verify_rollback_supported()?;
+        self.require_verify_rollback()?;
         let r = self.decode_verify_batched_dispatch(tokens, ks, seqs, _stream, opts);
         self.release_verify_capture_on_err(r)
     }
@@ -84,7 +84,7 @@ impl ModelVerify for TransformerModel {
         _stream: u64,
     ) -> Result<Vec<u32>> {
         self.gdn_carry_flush_pending()?;
-        self.ssm_pool.require_verify_rollback_supported()?;
+        self.require_verify_rollback()?;
         let r = self.decode_verify_graphed_kgamma_dispatch(tokens, seq, _stream);
         self.release_verify_capture_on_err(r)
     }
@@ -96,7 +96,7 @@ impl ModelVerify for TransformerModel {
         _stream: u64,
     ) -> Result<Vec<u32>> {
         self.gdn_carry_flush_pending()?;
-        self.ssm_pool.require_verify_rollback_supported()?;
+        self.require_verify_rollback()?;
         let r = self.decode_and_verify_fused_dispatch(tokens, seq, _stream);
         self.release_verify_capture_on_err(r)
     }

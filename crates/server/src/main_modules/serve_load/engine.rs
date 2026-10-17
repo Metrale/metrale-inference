@@ -165,6 +165,17 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
         max_batch_tokens,
         spec_tokens: _spec_tokens,
     } = serve_phases::resolve_prefill_budget(&args, ssm_prefill_chunk);
+    // 2026-10-14: `METRALE_GLM_PREFILL_PIECE_ROWS`: refuse a prefill sizing the piece grid does
+    // not divide before the KV cache is sized (`glm5next_prefill_piece::check_piece_budget`).
+    if let Some(piece) = metrale_model_arch::glm5next_prefill_piece::piece_rows()? {
+        metrale_model_arch::glm5next_prefill_piece::check_piece_budget(
+            piece,
+            metrale_model_arch::glm5next_layer::prefill_rows(),
+            prefill_budget,
+            max_batch_tokens,
+        )
+        .map_err(anyhow::Error::msg)?;
+    }
     let prefix_cache = serve_phases::build_prefix_cache(&args, &config);
     let comm = serve_phases::init_nccl_comm(
         &args,
@@ -256,7 +267,12 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
     // boot's `--spec-cost-calibration` must agree on.
     match &drafter_weights_sha256 {
         Some(h) => tracing::info!("MTP drafter weights sha256: {h} (--spec-cost-model's key)"),
-        None => tracing::info!("No MTP drafter weights (checkpoint has no mtp.* tensors)"),
+        // 2026-10-14: None only means no `mtp.*` tensors were hashed. A drafter read from a
+        // next-n decoder layer (GLM-5.3: layers.45) still loads and drafts.
+        None => tracing::info!(
+            "MTP drafter weights sha256: none (no mtp.* tensors to hash for --spec-cost-model; \
+             a next-n layer drafter, if the model has one, is loaded separately)"
+        ),
     }
 
     // 2026-09-28: `--forward`, applied before the audit so the gate sees the executor's lookups.

@@ -31,6 +31,7 @@ impl RecordingModel {
         seq.seq_len += toks.len();
     }
     fn prefill_into(&self, seq: &mut SequenceState, toks: &[u32], start: usize, len: usize) {
+        self.recurrent_consume(seq, start, len);
         seq.tokens.extend_from_slice(&toks[start..start + len]);
         seq.seq_len = start + len;
         if start == 0 {
@@ -40,9 +41,10 @@ impl RecordingModel {
     }
     /// 2026-09-25: One decode-row forward: push the input, produce the next token.
     fn decode_row(&self, seq: &mut SequenceState, tok: u32) -> u32 {
+        let clean = self.recurrent_consume(seq, seq.seq_len, 1);
         Self::push_all(seq, &[tok]);
         self.grow_blocks(seq);
-        self.out_after(seq, seq.seq_len - 1)
+        self.recurrent_out(clean, self.out_after(seq, seq.seq_len - 1))
     }
     fn prefill_row(&self, sl: &mut PrefillSlice<'_>) -> u32 {
         self.prefill_into(sl.seq, sl.prompt_tokens, sl.chunk_start, sl.chunk_len);
@@ -55,6 +57,7 @@ impl RecordingModel {
 
     pub(super) fn verify_k(&self, name: &str, toks: &[u32], seq: &mut SequenceState) -> Vec<u32> {
         self.maybe_cancel(seq);
+        self.recurrent_consume(seq, seq.seq_len, toks.len());
         let out = self.verify_row(seq, seq.seq_len, toks);
         Self::push_all(seq, toks);
         self.grow_blocks(seq);

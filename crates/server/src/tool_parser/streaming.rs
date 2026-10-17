@@ -53,6 +53,12 @@ pub struct StreamingToolDetector {
     /// open call; the close then emits only the rest (remaining parameters,
     /// backfill, closing `}` or JSON tail) instead of the full arguments.
     pub(super) incremental_emitted: bool,
+    /// 2026-10-08: `CallPolicy::FailClosed` handling (`streaming_glm47.rs`), set
+    /// by `set_fail_closed`; `reset` keeps it.
+    pub(super) fail_closed: bool,
+    /// 2026-10-08: Fail-closed handling only: whether the open call's early
+    /// header was decided (sent, or refused because the name is not offered).
+    pub(super) header_decided: bool,
 }
 
 pub enum DetectorOutput {
@@ -78,6 +84,16 @@ pub enum DetectorOutput {
     ToolCallArgsFragment { fragment: String, idx: usize },
     /// 2026-09-26: The call with this index is complete.
     ToolCallEnd { idx: usize },
+    /// 2026-10-08: A complete call whose arguments the format's policy already
+    /// checked (`CallPolicy::FailClosed`); it is delivered as it stands. When
+    /// `header_sent`, a `ToolCallStart` with `call.id` went out for `idx`
+    /// before. `refused` marks a refusal (`glm47::Verdict::Refuse`).
+    CheckedToolCall {
+        call: ToolCall,
+        idx: usize,
+        header_sent: bool,
+        refused: bool,
+    },
 }
 
 impl StreamingToolDetector {

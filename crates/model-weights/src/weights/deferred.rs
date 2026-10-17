@@ -110,16 +110,32 @@ impl DeferredTensor {
     /// a message pointing at the wrong thing. Seek-then-read rather than
     /// `pread`, because `WeightStore` builds on Windows too.
     pub fn read_host_bytes(&self) -> Result<Vec<u8>> {
+        self.read_host_range(0, self.byte_size())
+    }
+
+    /// 2026-10-09: Read `len` raw bytes starting `start` bytes into the tensor, for a loader
+    /// that needs a contiguous part of it (the rows one tensor-parallel rank keeps). Errors when
+    /// the range runs past the tensor, and on a short read, as [`Self::read_host_bytes`].
+    pub fn read_host_range(&self, start: usize, len: usize) -> Result<Vec<u8>> {
         use std::io::{Read, Seek, SeekFrom};
-        let n = self.byte_size();
+        let total = self.byte_size();
+        let end = start
+            .checked_add(len)
+            .filter(|&e| e <= total)
+            .with_context(|| {
+                format!(
+                    "deferred tensor: bytes {start}..+{len} run past its {total} B in {}",
+                    self.path.display()
+                )
+            })?;
+        let at = self.offset + start as u64;
         let mut f = std::fs::File::open(&self.path)
             .with_context(|| format!("deferred tensor: opening {}", self.path.display()))?;
-        f.seek(SeekFrom::Start(self.offset))?;
-        let mut buf = vec![0u8; n];
+        f.seek(SeekFrom::Start(at))?;
+        let mut buf = vec![0u8; end - start];
         f.read_exact(&mut buf).with_context(|| {
             format!(
-                "deferred tensor: reading {n} B at offset {} of {}",
-                self.offset,
+                "deferred tensor: reading {len} B at offset {at} of {}",
                 self.path.display()
             )
         })?;
@@ -161,6 +177,26 @@ mod tests {
             dtype: WeightDtype::BF16,
         };
         assert_eq!(d.read_host_bytes().unwrap(), payload);
+    }
+
+    /// 2026-10-09: A range read returns exactly those bytes of the tensor (not of the file),
+    /// and a range past the tensor's end is refused even when the file has more bytes after it.
+    #[test]
+    fn range_read_is_relative_to_the_tensor_and_bounded_by_it() {
+        let payload: Vec<u8> = (10u8..26).collect();
+        let (_d, path) = write_shard(&[vec![0xFFu8; 8], payload.clone(), vec![0xEE; 8]].concat());
+        let d = DeferredTensor {
+            path,
+            offset: 8,
+            shape: vec![4, 4],
+            dtype: WeightDtype::UInt8,
+        };
+        assert_eq!(d.read_host_range(4, 8).unwrap(), payload[4..12]);
+        assert_eq!(d.read_host_range(0, 16).unwrap(), payload);
+        assert_eq!(d.read_host_range(16, 0).unwrap(), Vec::<u8>::new());
+        let e = d.read_host_range(12, 5).unwrap_err().to_string();
+        assert!(e.contains("run past"), "{e}");
+        assert!(d.read_host_range(usize::MAX, 2).is_err());
     }
 
     /// Write a one-tensor-per-entry safetensors file and return its path.

@@ -10,16 +10,22 @@
 //!   Before this, every row count but 2 ran one GEMV per row, reading the 1.27 GB head once
 //!   per row (4x at the decode-floor recipe's 4 verify rows).
 //!
+//! 2026-10-09: The row dispatch is `layers::fp8_row_head`. With a vocab-parallel head
+//! (`lmhead_vocab_shard`) each rank projects only its vocab rows into a zeroed logits buffer
+//! and the all-reduce the BF16 head uses sums the pieces, on every route above. Each logit is
+//! the whole head's bits (same kernel, same K order; adding zeros is exact).
+//!
 //! Owner: model-engine (LM head).
 //! Invariants: `lm_head_fp8_run` writes `logits[rows, vocab]` BF16 and returns `true` exactly
 //! when `lm_head_fp8` is set.
 
 use anyhow::{Context, Result, ensure};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
-use metrale_model_layers::layers::W8a8Ctx;
-use metrale_model_layers::layers::ops::{self, W8a8Weight};
+use metrale_model_layers::layers::ops::W8a8Weight;
+use metrale_model_layers::layers::{Fp8RowHeadKernels, HeadWindow, W8a8Ctx, fp8_row_head};
 use metrale_model_layers::weight_map::{Fp8Weight, WeightQuantFormat};
 
+use super::lm_head_vocab_tp::HeadRanks;
 use super::types::TransformerModel;
 
 /// 2026-09-28: The multi-row FP8 head kernels, and the W8A8 head when installed. 2026-10-02:
@@ -28,7 +34,7 @@ use super::types::TransformerModel;
 pub(crate) struct LmHeadRows {
     rt8: KernelHandle,
     rt16: KernelHandle,
-    w8a8: Option<(W8a8Ctx, W8a8Weight)>,
+    w8a8: Option<W8a8Ctx>,
     pub(super) nvfp4_rows: bool,
 }
 
@@ -82,96 +88,51 @@ impl TransformerModel {
             ctx.available(&w, 1),
             "W8A8 lm_head kernels or scratch unavailable"
         );
-        self.lm_head_rows.w8a8 = Some((ctx, w));
+        self.lm_head_rows.w8a8 = Some(ctx);
         Ok(())
     }
 
     /// 2026-09-28: `logits[rows, vocab]` from `hidden[rows, hidden]` through the FP8 head;
-    /// `Ok(false)`, launching nothing, when the model has no FP8 head.
+    /// `Ok(false)`, launching nothing, when the model has no FP8 head. 2026-10-09: Vocab-parallel
+    /// when `lmhead_vocab_shard` gives this rank a range, as the BF16 head is: on a
+    /// [`HeadRanks::Every`] call only (2026-10-10).
     pub(super) fn lm_head_fp8_run(
         &self,
         hidden: DevicePtr,
         rows: usize,
         logits: DevicePtr,
+        ranks: HeadRanks,
         stream: u64,
     ) -> Result<bool> {
         let Some(ref fp8) = self.lm_head_fp8 else {
             return Ok(false);
         };
-        let gpu = self.gpu.as_ref();
         let (h, v) = (self.config.hidden_size, self.config.vocab_size);
-        if let Some((ref ctx, ref w)) = self.lm_head_rows.w8a8 {
-            // 2026-09-28: Any row count: `W8A8_MAX_ROWS`-row calls (the scratch's capacity); the
-            // quantization is per row, so chunking does not change any row's bits.
-            let mut done = 0;
-            while done < rows {
-                let m = (rows - done).min(ops::W8A8_MAX_ROWS);
-                let (x, out) = (hidden.offset(done * h * 2), logits.offset(done * v * 2));
-                ensure!(
-                    ctx.proj(gpu, w, x, h as u32, m, out, v as u32, stream)?,
-                    "W8A8 lm_head: {m} rows not servable"
-                );
-                done += m;
+        let shard = self.lmhead_vocab_shard(v as u32, ranks);
+        let win = match shard {
+            Some((begin, len)) => {
+                // 2026-10-09: The other ranks' columns stay zero, so the all-reduce below adds
+                // exact zeros to this rank's logits.
+                self.gpu.memset_async(logits, 0, rows * v * 2, stream)?;
+                HeadWindow { begin, len, ldc: v }
             }
-            return Ok(true);
-        }
-        let k = &self.lm_head_rows;
-        let mut done = 0;
-        while done < rows {
-            let (x, out, left) = (
-                hidden.offset(done * h * 2),
-                logits.offset(done * v * 2),
-                rows - done,
-            );
-            let step = match left {
-                1 => {
-                    ops::dense_gemv_fp8w(
-                        gpu,
-                        self.dense_gemv_fp8w_kernel,
-                        x,
-                        fp8,
-                        out,
-                        v as u32,
-                        h as u32,
-                        stream,
-                    )?;
-                    1
-                }
-                2 if self.dense_gemv_fp8w_batch2_kernel.0 != 0 => {
-                    let kh = self.dense_gemv_fp8w_batch2_kernel;
-                    ops::dense_gemv_fp8w_batch2(gpu, kh, x, fp8, out, v as u32, h as u32, stream)?;
-                    2
-                }
-                3..=8 if k.rt8.0 != 0 => {
-                    let m = left as u32;
-                    ops::fp8_gemv_rowscale_batch8_rt2(
-                        gpu, k.rt8, x, fp8, out, m, v as u32, h as u32, stream,
-                    )?;
-                    left
-                }
-                _ if left > 2 && k.rt16.0 != 0 => {
-                    let m = left.min(16);
-                    let (mu, (vu, hu)) = (m as u32, (v as u32, h as u32));
-                    ops::fp8_gemv_rowscale_batch16_rt2(
-                        gpu, k.rt16, x, fp8, out, mu, vu, hu, stream,
-                    )?;
-                    m
-                }
-                _ => {
-                    ops::dense_gemv_fp8w(
-                        gpu,
-                        self.dense_gemv_fp8w_kernel,
-                        x,
-                        fp8,
-                        out,
-                        v as u32,
-                        h as u32,
-                        stream,
-                    )?;
-                    1
-                }
-            };
-            done += step;
+            None => HeadWindow::whole(v),
+        };
+        let kernels = Fp8RowHeadKernels {
+            gemv: self.dense_gemv_fp8w_kernel,
+            batch2: self.dense_gemv_fp8w_batch2_kernel,
+            rt8: self.lm_head_rows.rt8,
+            rt16: self.lm_head_rows.rt16,
+        };
+        let w8a8 = self.lm_head_rows.w8a8.as_ref();
+        let gpu = self.gpu.as_ref();
+        fp8_row_head(
+            gpu, &kernels, w8a8, fp8, hidden, h, rows, logits, win, stream,
+        )?;
+        if shard.is_some()
+            && let Some(comm) = self.comm_ref()
+        {
+            comm.all_reduce_async(logits.0, rows * v * 2, stream)?;
         }
         Ok(true)
     }

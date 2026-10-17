@@ -7,6 +7,7 @@
 //! Owner: model-engine decode.
 //! Invariants: none beyond the types.
 
+use super::super::lm_head_vocab_tp::HeadRanks;
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
@@ -41,7 +42,8 @@ impl TransformerModel {
         // 2026-09-25: The pure-decode head (`decode_batch_compute_main_with`) calls the same
         // function, so both heads pick the same kernel, and the same numerics, at a given
         // `padded_n`.
-        let logits = self.lm_head_project_batched(normed, padded_n, h, bf16, stream)?;
+        let logits =
+            self.lm_head_project_batched(normed, padded_n, h, bf16, HeadRanks::Every, stream)?;
         let v = self.config.vocab_size;
         let decode_logits = logits;
 

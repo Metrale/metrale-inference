@@ -366,6 +366,13 @@ pub trait GpuBackend: Send + Sync {
         Ok(0)
     }
 
+    /// 2026-10-14: Create a stream at the context's greatest priority, for short work that must
+    /// not queue behind a high-priority process stream's kernel waves (`create_stream` makes
+    /// side streams at the least). A backend without stream priorities makes a plain stream.
+    fn create_stream_greatest_priority(&self) -> Result<u64> {
+        self.create_stream()
+    }
+
     /// 2026-09-25: Make the backend's CUDA context current on this thread. Call it
     /// on any thread other than the one that built the backend before using the
     /// GPU. The default does nothing.

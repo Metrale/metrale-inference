@@ -80,13 +80,20 @@ fn quantize_and_upload(
         packed,
         scale,
         scale_2: blob.scale_2,
+        // 2026-10-08: Quantized here from 16-bit weights: the checkpoint declares no FP4
+        // activations for it, so it has no activation scale.
+        input_scale: None,
     })
 }
 
 /// 2026-09-25: The ledger label of every buffer `upload_bytes` adopts.
 const QUANTIZED_EXPERT_LABEL: &str = "glm5_next routed expert, NVFP4 at load";
 
-fn upload_bytes(gpu: &dyn GpuBackend, store: &WeightStore, b: &[u8]) -> Result<DevicePtr> {
+pub(super) fn upload_bytes(
+    gpu: &dyn GpuBackend,
+    store: &WeightStore,
+    b: &[u8],
+) -> Result<DevicePtr> {
     let p = gpu.alloc(b.len().max(1))?;
     gpu.copy_h2d(b, p)?;
     store.derived().adopt(QUANTIZED_EXPERT_LABEL, p, b.len());

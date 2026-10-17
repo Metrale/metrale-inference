@@ -12,6 +12,7 @@
 
 #![allow(unused_imports, dead_code, clippy::too_many_arguments)]
 
+use super::super::lm_head_vocab_tp::HeadRanks;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -335,10 +336,11 @@ impl TransformerModel {
                             stream,
                         )?;
                     }
-                    // 2026-09-25: DFlash: capture this layer's hidden at the last row (K-1) into
-                    // `dflash_hidden_save` for the next propose, inside the captured region. A
-                    // no-op without DFlash.
-                    self.try_dflash_capture(layer_idx, k - 1, stream)?;
+                    // 2026-09-25: DFlash: capture this layer's hidden for the next propose,
+                    // inside the captured region. A no-op without DFlash. 2026-10-09: Every row,
+                    // as the K=γ verify does (`dflash_verify_capture.rs`): the verdict commits
+                    // rows 0..=num_accepted.
+                    self.dflash_capture_verify_rows(layer_idx, k, k - 1, stream)?;
 
                     if k4_diag && let Err(e) = self.gpu.synchronize(stream) {
                         anyhow::bail!(
@@ -361,7 +363,13 @@ impl TransformerModel {
                     anyhow::bail!("K4_DIAG: CUDA error after final norm: {e:#}");
                 }
 
-                self.lm_head_batched(normed, k as u32, self.buffers.logits(), stream)?;
+                self.lm_head_batched(
+                    normed,
+                    k as u32,
+                    self.buffers.logits(),
+                    HeadRanks::Every,
+                    stream,
+                )?;
 
                 if k4_diag && let Err(e) = self.gpu.synchronize(stream) {
                     anyhow::bail!("K4_DIAG: CUDA error after lm_head_batched: {e:#}");

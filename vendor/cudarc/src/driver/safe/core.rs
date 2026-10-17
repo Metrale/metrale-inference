@@ -477,6 +477,27 @@ impl CudaContext {
             ctx: self.clone(),
         }))
     }
+
+    /// As [`CudaContext::new_stream`], at `priority` (numerically lower is higher; the range is
+    /// [`result::ctx::stream_priority_range`]).
+    pub fn new_stream_with_priority(
+        self: &Arc<Self>,
+        priority: i32,
+    ) -> Result<Arc<CudaStream>, DriverError> {
+        self.bind_to_thread()?;
+        let prev_num_streams = self.num_streams.fetch_add(1, Ordering::Relaxed);
+        if prev_num_streams == 0 && self.is_event_tracking() {
+            self.synchronize()?;
+        }
+        let cu_stream = result::stream::create_with_priority(
+            result::stream::StreamKind::NonBlocking,
+            priority,
+        )?;
+        Ok(Arc::new(CudaStream {
+            cu_stream,
+            ctx: self.clone(),
+        }))
+    }
 }
 
 impl CudaStream {

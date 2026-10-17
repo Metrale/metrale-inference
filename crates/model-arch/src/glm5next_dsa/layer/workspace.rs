@@ -13,7 +13,9 @@ use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
 use super::super::Glm5NextDsaConfig;
+use super::super::attend::{DsaSplitWorkspace, hb_splits_lever};
 use super::super::select::DsaSelectScratch;
+use super::super::state::Glm5NextDsaState;
 
 /// 2026-09-25: Whether one selection pass covers all `k` rows (`select_rows_batched`) or each
 /// row selects on its own (`select_row`). All four terms must hold:
@@ -43,6 +45,55 @@ pub(crate) fn batch_select_enabled(
     workspace_ready && is_prefill && !graph_capture && k > 1
 }
 
+/// 2026-10-11: Context, in tokens, up to which the selection scratch's per-row regions hold
+/// every one of a workspace's `max_rows` query rows. Their bytes are `rows * pools * 5 +
+/// rows * select_k * 4` per layer: sized for 2,048 prefill rows at a 262,144-token ceiling that
+/// is 644 MiB per DSA layer (6.9 GiB over GLM-5.3's 11), against 81 MiB at this context.
+/// Beyond it the regions hold `max_rows * pools(this context)` scores (at least
+/// `floor_rows` rows, [`select_scratch_rows`]) and a longer prefill sub-chunk selects in row
+/// sub-passes (`select_tokens_in_passes`), each row's bits unchanged.
+pub const SELECT_SCRATCH_FULL_ROWS_CONTEXT: usize = 32_768;
+
+/// 2026-10-11: The query rows the selection scratch's per-row regions are sized for, at a
+/// `ceiling`-token context and `index_kpool` `kpool` (at least 1): `max_rows` while the ceiling
+/// is at most [`SELECT_SCRATCH_FULL_ROWS_CONTEXT`] or has no complete pool; above it, the rows
+/// that `max_rows * pools(SELECT_SCRATCH_FULL_ROWS_CONTEXT)` scores hold at the ceiling's pool
+/// count, raised to `floor_rows` (the batched decode's rows at the ceiling's stride,
+/// `select_paged_rows`) and capped at `max_rows`.
+pub fn select_scratch_rows(
+    max_rows: usize,
+    ceiling: usize,
+    kpool: usize,
+    floor_rows: usize,
+) -> usize {
+    use super::super::select::contiguous_pool_count;
+    let pools = contiguous_pool_count(kpool, ceiling);
+    if pools == 0 {
+        return max_rows;
+    }
+    let full = contiguous_pool_count(kpool, ceiling.min(SELECT_SCRATCH_FULL_ROWS_CONTEXT));
+    (max_rows * full / pools).max(floor_rows).min(max_rows)
+}
+
+/// 2026-10-12: `METRALE_GLM_DSA_WS_SHARED`: on unless set to `0`. On, the loader builds ONE
+/// `Glm5NextDsaWorkspace` for every DSA layer of the text stack (the KDA and MLP workspaces are
+/// shared the same way); off, one per layer, the pre-2026-10-12 allocation, which at 8208
+/// prefill rows is 11 x 0.67 GB on GLM-5.3. Safe because the layers run in sequence on one
+/// stream and every field is per-call scratch (`decode_k` re-uploads its metadata each call).
+pub fn dsa_ws_shared() -> bool {
+    static S: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *S.get_or_init(|| {
+        let shared = std::env::var("METRALE_GLM_DSA_WS_SHARED").as_deref() != Ok("0");
+        if !shared {
+            tracing::warn!(
+                "GLM DSA workspace: PER-LAYER (METRALE_GLM_DSA_WS_SHARED=0), one scratch per \
+                 DSA layer"
+            );
+        }
+        shared
+    })
+}
+
 /// 2026-09-25: `METRALE_DSA_SELECT_ROWS`: on unless set to `0`. When off,
 /// `Glm5NextDsaWorkspace::new` does not allocate the batched-selector buffers.
 pub(crate) fn dsa_select_rows_enabled() -> bool {
@@ -57,6 +108,9 @@ pub struct Glm5NextDsaWorkspace {
     pub(super) kv_a: DevicePtr,
     pub(super) q_idx: DevicePtr,
     pub(super) head_weights: DevicePtr,
+    /// 2026-10-09: `[max_rows]` i32 query positions and (`slot`) `[max_rows]` i64 KV slots
+    /// of `decode_k`'s host path, uploaded once per call (`host_rows.rs`). Row 0 is the
+    /// single-row slot the drafter's `write_kv_row` uses.
     pub(super) q_pos: DevicePtr,
     pub(super) q_mask: DevicePtr,
     /// 2026-09-25: `[max_rows, ...]` copies of `q_idx` / `head_weights` / `q_pos` / `q_mask`
@@ -80,27 +134,50 @@ pub struct Glm5NextDsaWorkspace {
     /// 2026-09-25: `[index_head_dim]` BF16 staging rows at fixed addresses (`stage_k`,
     /// `stage_gate`). On the replay-safe path the indexer projections write here and
     /// `dsa_indexer_store` copies them to the row at a device-side position, which a
-    /// replayed graph reads live.
+    /// replayed graph reads live. 2026-10-09: `[max_rows, index_head_dim]`: the batched
+    /// indexer projections (`indexer_project_rows`) stage row `r` at row `r`; every other
+    /// path uses row 0.
     pub(super) stage_k: DevicePtr,
     pub(super) stage_gate: DevicePtr,
     /// 2026-09-25: `[5]` i32 selector geometry, written on the device by `dsa_write_geom`
     /// for each row on the replay-safe path.
     pub(super) geom_dev: DevicePtr,
+    /// 2026-10-09: `[max_rows, 5]` i32: one geometry per row for the rows selection
+    /// (`select_paged_rows`), written on the device by `dsa_write_geom_rows`.
+    pub(super) geom_rows: DevicePtr,
     pub(super) select: DsaSelectScratch,
+    /// 2026-10-08: `[index_kpool, index_head_dim]` BF16 `k_normed` and `gate` rows and
+    /// `[index_kpool]` u8 `valid`, the indexer cache every padding row of a batched decode
+    /// writes and selects over ([`Self::pad_state`]). One pool of rows is enough: a padding
+    /// row sits at position 0 with `seq_len` 1 (`upload_batch_metadata_fixed`), so it writes
+    /// row 0 and selects over one token, and the selection kernels read only rows below the
+    /// live length.
+    pub(super) pad_k: DevicePtr,
+    pub(super) pad_gate: DevicePtr,
+    pub(super) pad_valid: DevicePtr,
+    pad_rows: usize,
+    /// 2026-10-09: The head-batched decode's partials (`attend::DsaSplitWorkspace::alloc_for`),
+    /// `None` unless `METRALE_GLM_DSA_DECODE_HB` asks for two splits or more.
+    pub(super) split_ws: Option<DsaSplitWorkspace>,
 }
 
 impl Glm5NextDsaWorkspace {
     /// 2026-09-25: `max_rows` (at least 1) is the largest `k` this workspace serves. Sized by
     /// it: the projection outputs, `attn_out`, `sl`, the batched-selector buffers, and the
-    /// selection scratch, which is planned at [`super::super::state::max_dsa_context`] tokens and
-    /// `max_rows` query rows. The staging rows and `bt` do not depend on it.
+    /// selection scratch, which is planned at [`super::super::state::max_dsa_context`] tokens,
+    /// its output at `max_rows` rows and (2026-10-11) its per-row temporaries at
+    /// [`select_scratch_rows`] rows, and (2026-10-09) the staging rows. `bt` does not depend on
+    /// it.
     pub fn new(gpu: &dyn GpuBackend, cfg: &Glm5NextDsaConfig, max_rows: usize) -> Result<Self> {
         let rows = max_rows.max(1);
-        let geom = super::super::select::DsaSelectGeometry::plan(
-            cfg,
-            super::super::state::max_dsa_context(cfg),
-            rows,
-        )?;
+        let ceiling = super::super::state::max_dsa_context(cfg);
+        let full = super::super::select::DsaSelectGeometry::plan(cfg, ceiling, rows)?;
+        let floor_rows = crate::glm5next_layer::multi_seq_chunk_rows()
+            .max(metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M as usize);
+        let geom = super::super::select::DsaSelectGeometry {
+            q_rows: select_scratch_rows(rows, ceiling, cfg.index_kpool, floor_rows),
+            ..full
+        };
         let bt_cap = super::super::state::max_dsa_context(cfg).max(1);
         let persist = std::env::var("METRALE_GLM_DSA_ALLOC_PER_STEP").as_deref() != Ok("1");
         let batch_select = dsa_select_rows_enabled();
@@ -111,7 +188,7 @@ impl Glm5NextDsaWorkspace {
             kv_a: gpu.alloc(rows * (cfg.kv_lora_rank * 2))?,
             q_idx: gpu.alloc(cfg.index_heads * cfg.index_head_dim * 4)?,
             head_weights: gpu.alloc(cfg.index_heads * 4)?,
-            q_pos: gpu.alloc(4)?,
+            q_pos: gpu.alloc(rows * 4)?,
             q_idx_rows: if batch_select {
                 gpu.alloc(rows * cfg.index_heads * cfg.index_head_dim * 4)?
             } else {
@@ -143,7 +220,7 @@ impl Glm5NextDsaWorkspace {
                 gpu.synchronize(0)?;
                 p
             },
-            slot: gpu.alloc(8)?,
+            slot: gpu.alloc(rows * 8)?,
             attn_out: gpu.alloc(rows * (cfg.local_heads * cfg.kv_lora_rank * 2))?,
             bt: if persist {
                 gpu.alloc(bt_cap * 4)?
@@ -159,10 +236,58 @@ impl Glm5NextDsaWorkspace {
             },
             bt_cap,
             max_rows: rows,
-            stage_k: gpu.alloc(cfg.index_head_dim * 2)?,
-            stage_gate: gpu.alloc(cfg.index_head_dim * 2)?,
+            stage_k: gpu.alloc(rows * cfg.index_head_dim * 2)?,
+            stage_gate: gpu.alloc(rows * cfg.index_head_dim * 2)?,
             geom_dev: gpu.alloc(5 * 4)?,
-            select: DsaSelectScratch::alloc(gpu, cfg, &geom)?,
+            geom_rows: gpu.alloc(rows * 5 * 4)?,
+            select: DsaSelectScratch::alloc_rows(gpu, cfg, &geom, rows)?,
+            pad_k: gpu.alloc(cfg.index_kpool * cfg.index_head_dim * 2)?,
+            pad_gate: gpu.alloc(cfg.index_kpool * cfg.index_head_dim * 2)?,
+            pad_valid: {
+                // 2026-10-08: Zeroed once here; a padding row marks its own row valid.
+                let p = gpu.alloc(cfg.index_kpool)?;
+                gpu.memset_async(p, 0, cfg.index_kpool, 0)?;
+                gpu.synchronize(0)?;
+                p
+            },
+            pad_rows: cfg.index_kpool,
+            split_ws: DsaSplitWorkspace::alloc_for(gpu, cfg, hb_splits_lever()?, rows)?,
         })
     }
+
+    /// 2026-10-09: `[max_rows, local_heads * kv_lora_rank]` BF16: the latent attention output of
+    /// the last attend, before `o_absorb` (read by the decode-kernel parity example).
+    pub fn attn_out(&self) -> DevicePtr {
+        self.attn_out
+    }
+
+    /// 2026-10-08: The largest `k` `decode_k` and `decode_rows` accept.
+    pub fn max_rows(&self) -> usize {
+        self.max_rows
+    }
+
+    /// 2026-10-08: An empty indexer cache over the padding buffers, for a padding row of a
+    /// batched decode (`Glm5NextLayer::alloc_pad_state`). Every padding row of every step
+    /// shares these buffers; their outputs are discarded, and the workspace outlives every
+    /// graph that bakes the addresses.
+    pub fn pad_state(&self, cfg: &Glm5NextDsaConfig) -> Glm5NextDsaState {
+        Glm5NextDsaState::borrowed(
+            self.pad_k,
+            self.pad_gate,
+            self.pad_valid,
+            self.pad_rows,
+            cfg.index_head_dim,
+        )
+    }
+
+    /// 2026-10-13: The `[max_rows, out_width]` i32 selection the last `decode_k` /
+    /// `decode_spans` left, row `r` of its launch at `r * out_width * 4` (`-1` = unselected).
+    /// Read by the opt-in layer dump (`glm5next_layer_dump`) only.
+    pub fn selection_tokens(&self) -> DevicePtr {
+        self.select.tokens()
+    }
 }
+
+#[cfg(test)]
+#[path = "scratch_rows_tests.rs"]
+mod scratch_rows_tests;

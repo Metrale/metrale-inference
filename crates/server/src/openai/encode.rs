@@ -24,6 +24,7 @@ pub(crate) fn encode_chat_response(
     dump_seq: Option<u64>,
 ) -> Response {
     let usage = Usage::from(&ir.usage);
+    let reasoning_wire = state.reasoning_wire();
 
     let choices: Vec<ChatChoice> = ir
         .choices
@@ -53,7 +54,7 @@ pub(crate) fn encode_chat_response(
                 index: c.index,
                 message: ChatMessage {
                     role: "assistant".to_string(),
-                    reasoning_content: c.reasoning,
+                    reasoning: super::WireReasoning::message(reasoning_wire, c.reasoning),
                     content: c.content,
                     tool_calls,
                     annotations,

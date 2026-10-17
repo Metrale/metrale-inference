@@ -127,8 +127,8 @@ fn load_fused_nvfp4(
 }
 
 impl ModelWeightLoader for Step3p7WeightLoader {
-    fn supports_tp(&self) -> bool {
-        false
+    fn tp_support(&self) -> metrale_config::TpSupport {
+        metrale_config::TpSupport::Unsupported
     }
 
     fn load_layers(

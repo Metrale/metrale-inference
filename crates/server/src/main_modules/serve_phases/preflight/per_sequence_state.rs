@@ -25,6 +25,18 @@ pub(super) fn per_sequence_reserve(args: &cli::ServeArgs, config: &ModelConfig) 
     let spec_on = args.speculative || args.self_speculative || args.dflash;
     let per_seq = per_sequence_state_bytes(config, args.max_seq_len, spec_on).unwrap_or_default();
     let charge = per_seq.for_batch(args.max_batch_size.ceiling());
+    // 2026-10-09: The paged indexer's bytes are in the KV price, not this charge; say so once,
+    // with the per-token figure the pool sizing uses.
+    if matches!(config.model_type.as_str(), "glm5_next" | "glm5_next_text")
+        && metrale_config::glm_dsa_indexer_paged()
+    {
+        tracing::info!(
+            "GLM-5.3 DSA indexer: paged in the V side of each DSA layer's KV pool, {} B per \
+             token per DSA layer inside the KV price; nothing reserved per sequence \
+             (METRALE_GLM_DSA_INDEXER_FLAT=1 restores the flat cache)",
+            4 * config.index_head_dim
+        );
+    }
     if charge > 0 {
         tracing::info!(
             "Per-sequence state reserve: {} MB = {} seq x ({} MB target DSA layers + {} MB \

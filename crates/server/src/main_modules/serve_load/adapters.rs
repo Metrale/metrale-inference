@@ -66,6 +66,12 @@ pub(super) fn dflash_build_args<'a>(
         metrale_model_arch::weight_loader::DflashConfig,
     )>,
 ) -> Option<metrale_model_engine::factory::DflashBuildArgs<'a>> {
+    if let Some(warning) = dflash_drafter_state
+        .as_ref()
+        .and_then(|(_, c)| c.window_mismatch(args.dflash_window_size))
+    {
+        tracing::warn!("{warning}");
+    }
     dflash_drafter_state
         .as_ref()
         .map(|(s, c)| metrale_model_engine::factory::DflashBuildArgs {
@@ -78,6 +84,9 @@ pub(super) fn dflash_build_args<'a>(
             } else {
                 None
             },
+            // 2026-10-10: `--draft-tp-size`, resolved by `apply_dflash_gamma`.
+            tp_size: args.dflash_args.draft_tp_size_resolved.unwrap_or(1),
+            weight_quant: args.dflash_args.draft_weight_quantization,
         })
 }
 

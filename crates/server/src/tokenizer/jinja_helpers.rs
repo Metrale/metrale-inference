@@ -249,6 +249,20 @@ impl serde_json::ser::Formatter for PythonJsonFormatter {
     }
 }
 
+/// 2026-10-08: Load the template file `path` (`--chat-template`), converted like an override
+/// template. Unlike an override, a file that cannot be read is an error.
+pub(super) fn load_template_file(path: &Path) -> Result<String> {
+    let raw = std::fs::read_to_string(path)
+        .with_context(|| format!("Failed to read chat template {}", path.display()))?;
+    let converted = convert_python_jinja_to_minijinja(&raw);
+    tracing::info!(
+        "Using chat template from {} ({} chars)",
+        path.display(),
+        converted.len(),
+    );
+    Ok(converted)
+}
+
 /// 2026-09-26: Load `jinja-templates/{model_type}.jinja`, looking under `repo_root` first and
 /// then relative to the working directory. A file that exists but cannot be read is logged
 /// and skipped.

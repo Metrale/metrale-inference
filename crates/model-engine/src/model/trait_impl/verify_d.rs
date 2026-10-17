@@ -11,6 +11,7 @@
 
 #![allow(unused_imports, dead_code, clippy::too_many_arguments)]
 
+use super::super::lm_head_vocab_tp::HeadRanks;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -172,13 +173,21 @@ impl TransformerModel {
             == Some("1");
         // 2026-09-25: The `lora_eager` lever runs LoRA verifies without graphs.
         let lora_eager = self.lora.is_some() && self.levers.lora_eager;
-        let use_graphs = self.comm.is_none()
+        // 2026-10-09: With a comm backend under the decode graphs' rule (`decode_a.rs`):
+        // `METRALE_EP_GRAPHS`, or every layer capturable with a communicator
+        // (`layers_capture_with_comm`, GLM-5.3; `METRALE_COMM_DECODE_GRAPHS=0` turns it off).
+        // Every rank runs this verify, so every rank captures and replays the same collectives.
+        let use_graphs = (self.comm.is_none()
+            || self.levers.ep_graphs
+            || self.layers_capture_with_comm())
             && !self
                 .suppress_graphs
                 .load(std::sync::atomic::Ordering::Relaxed)
             && !hss_engaged
             && !force_eager
             && !lora_eager
+            // 2026-10-10: Within every layer's captured-row limit (`max_captured_rows`).
+            && self.rows_capturable(k)
             // 2026-09-25: Sliding-window layers use `verify_attention_per_token`, whose
             // per-token H2D uploads are illegal under capture.
             && !(0..self.layers.len())
@@ -220,7 +229,17 @@ impl TransformerModel {
         if let Some(graph) = cached_for_slot
             && graph.0 != 0
         {
+            // 2026-10-08: As in the K=2/3/4 verifies (`verify_c.rs`): refuse a replay whose
+            // GLM-5.3 DSA indexer row would land past its buffer before the graph runs, and
+            // after it reconcile the host-side indexer length to `seq_len + k`, which a replay
+            // (kernels only) does not advance. Every other layer's hooks do nothing.
+            for (i, layer) in self.layers.iter().enumerate() {
+                layer.check_replay_room(&*seq.layer_states[i], seq.seq_len, k)?;
+            }
             self.gpu.launch_graph(graph, stream)?;
+            for (i, layer) in self.layers.iter().enumerate() {
+                layer.sync_replayed_step(seq.layer_states[i].as_mut(), seq.seq_len, k)?;
+            }
         }
         let need_run = cached_for_slot.is_none();
         if need_run {
@@ -299,21 +318,11 @@ impl TransformerModel {
                     )?;
                 }
                 // 2026-09-25: DFlash: capture this layer's output while `hidden_states` still
-                // holds it, inside the captured region. By default every verify row is
-                // captured (`try_dflash_capture_all`), because the scheduler's `commit_ctx`
-                // copies rows 0..=num_accepted; `METRALE_DFLASH_EAGLE_FIX=0` or
-                // `METRALE_DFLASH_UNIFIED_CTX=0` captures only the last row. The env is read
-                // once, so a captured graph cannot bake a changed value.
-                static CAPTURE_ALL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-                let capture_all = *CAPTURE_ALL.get_or_init(|| {
-                    std::env::var("METRALE_DFLASH_EAGLE_FIX").ok().as_deref() != Some("0")
-                        && std::env::var("METRALE_DFLASH_UNIFIED_CTX").ok().as_deref() != Some("0")
-                });
-                if capture_all {
-                    self.try_dflash_capture_all(layer_idx, k, stream)?;
-                } else {
-                    self.try_dflash_capture(layer_idx, k - 1, stream)?;
-                }
+                // holds it, inside the captured region. 2026-10-09: The rule every verify width
+                // shares (`dflash_verify_capture.rs`): every row by default, because the
+                // scheduler's `commit_ctx` copies rows 0..=num_accepted; the last row only
+                // under the older context levers.
+                self.dflash_capture_verify_rows(layer_idx, k, k - 1, stream)?;
             }
 
             let normed = self.buffers.norm_output();
@@ -326,7 +335,13 @@ impl TransformerModel {
                 stream,
             )?;
 
-            self.lm_head_batched(normed, k as u32, self.buffers.logits(), stream)?;
+            self.lm_head_batched(
+                normed,
+                k as u32,
+                self.buffers.logits(),
+                HeadRanks::Every,
+                stream,
+            )?;
 
             // 2026-09-25: The argmax is part of the graph; it writes fixed scratch addresses.
             let vocab = self.config.vocab_size;

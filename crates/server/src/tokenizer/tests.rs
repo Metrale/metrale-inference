@@ -17,6 +17,7 @@ mod laguna;
 mod mistral_effort;
 mod qwen_dense;
 mod qwen_dense_parity;
+mod template_source;
 
 fn render_minimax_openai_template(
     messages: &[serde_json::Value],

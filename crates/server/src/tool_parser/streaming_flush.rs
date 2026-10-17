@@ -15,6 +15,9 @@ impl StreamingToolDetector {
     /// Otherwise, if this stream has produced no call yet, bare `<function>`
     /// calls and then unwrapped JSON calls are tried; the rest is content.
     pub fn flush(&mut self) -> Vec<DetectorOutput> {
+        if self.fail_closed {
+            return self.flush_fail_closed();
+        }
         if let Some(outputs) = self.flush_dsml() {
             return outputs;
         }

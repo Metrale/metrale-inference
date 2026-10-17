@@ -160,8 +160,8 @@ pub(super) fn hc_site(
 }
 
 impl ModelWeightLoader for DeepSeekV41WeightLoader {
-    fn supports_tp(&self) -> bool {
-        false
+    fn tp_support(&self) -> metrale_config::TpSupport {
+        metrale_config::TpSupport::Unsupported
     }
 
     fn load_layers(

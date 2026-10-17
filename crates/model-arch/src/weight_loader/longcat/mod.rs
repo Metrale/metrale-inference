@@ -48,9 +48,9 @@ pub struct LongcatWeightLoader;
 const CARRY_TOKENS: usize = 8192;
 
 impl ModelWeightLoader for LongcatWeightLoader {
-    fn supports_tp(&self) -> bool {
+    fn tp_support(&self) -> metrale_config::TpSupport {
         // 2026-09-25: Nothing here shards the MLA weights or the shortcut carry.
-        false
+        metrale_config::TpSupport::Unsupported
     }
 
     fn load_layers(

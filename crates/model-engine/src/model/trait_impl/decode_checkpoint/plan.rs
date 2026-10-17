@@ -22,8 +22,8 @@ pub(in crate::model) const EP_CMD_DECODE_CKPT: u32 = 0xFFFF_FFF8;
 
 // 2026-09-25: The worker dispatches any code it does not match as a decode token id, so a
 // command sits above `0xFFFF_FFEF`. It must also differ from the other codes, by last byte: E0 batched
-// decode, F0 prefill chunk, F1 alloc-slot, F2/F3/F4 verify K=2/3/4, F5 MTP propose, F6/F7
-// reserved, FF shutdown.
+// decode, F0 prefill chunk, F1 alloc-slot, F2/F3/F4 verify K=2/3/4, F5 MTP propose, F6 DFlash
+// K=γ verify, F7 reserved, FF shutdown.
 const _: () = assert!(
     EP_CMD_DECODE_CKPT > 0xFFFF_FFEF,
     "EP_CMD_DECODE_CKPT would be dispatched as a decode token id"
@@ -57,14 +57,167 @@ const _: () = assert!(
     "collides with MTP propose"
 );
 const _: () = assert!(
-    EP_CMD_DECODE_CKPT != 0xFFFF_FFF6,
-    "reserved: DFlash EP_CMD_VERIFY_KGAMMA (A113)"
+    EP_CMD_DECODE_CKPT != metrale_model_layers::speculative::EP_CMD_VERIFY_KGAMMA,
+    "collides with DFlash K=γ verify"
+);
+const _: () = assert!(
+    metrale_model_layers::speculative::EP_CMD_VERIFY_KGAMMA > 0xFFFF_FFEF,
+    "EP_CMD_VERIFY_KGAMMA would be dispatched as a decode token id"
+);
+const _: () = assert!(
+    EP_CMD_DECODE_CKPT != metrale_model_layers::speculative::EP_CMD_VERIFY_BATCH,
+    "collides with the batched DFlash verify"
+);
+const _: () = assert!(
+    metrale_model_layers::speculative::EP_CMD_VERIFY_BATCH > 0xFFFF_FFEF
+        && metrale_model_layers::speculative::EP_CMD_VERIFY_BATCH != 0xFFFF_FFF7
+        && metrale_model_layers::speculative::EP_CMD_VERIFY_BATCH != 0xFFFF_FFFF,
+    "EP_CMD_VERIFY_BATCH would be a decode token id, the reserved ctx-commit or shutdown"
 );
 const _: () = assert!(
     EP_CMD_DECODE_CKPT != 0xFFFF_FFF7,
     "reserved: DFlash ctx-commit (A113)"
 );
 const _: () = assert!(EP_CMD_DECODE_CKPT != 0xFFFF_FFFF, "collides with shutdown");
+// 2026-10-09: FA, the multi-sequence prefill, against every code above.
+const _: () = {
+    use crate::model::trait_impl::prefill_b::spans_wire::EP_CMD_PREFILL_SPANS as P;
+    use metrale_model_layers::speculative as sp;
+    assert!(
+        P > 0xFFFF_FFEF,
+        "EP_CMD_PREFILL_SPANS would be a decode token id"
+    );
+    let others = [
+        0xFFFF_FFE0,
+        0xFFFF_FFF0,
+        0xFFFF_FFF1,
+        0xFFFF_FFF2,
+        0xFFFF_FFF3,
+        0xFFFF_FFF4,
+        sp::EP_CMD_MTP_PROPOSE,
+        sp::EP_CMD_VERIFY_KGAMMA,
+        0xFFFF_FFF7,
+        EP_CMD_DECODE_CKPT,
+        sp::EP_CMD_VERIFY_BATCH,
+        0xFFFF_FFFF,
+    ];
+    let mut i = 0;
+    while i < others.len() {
+        assert!(
+            P != others[i],
+            "EP_CMD_PREFILL_SPANS collides with another worker opcode"
+        );
+        i += 1;
+    }
+};
+
+// 2026-10-10: FB, the tensor-parallel DFlash propose, against every code above and FA.
+const _: () = {
+    use crate::model::trait_impl::prefill_b::spans_wire::EP_CMD_PREFILL_SPANS;
+    use metrale_model_layers::speculative as sp;
+    let d = sp::EP_CMD_DFLASH_PROPOSE;
+    assert!(
+        d > 0xFFFF_FFEF,
+        "EP_CMD_DFLASH_PROPOSE would be a decode token id"
+    );
+    let others = [
+        0xFFFF_FFE0,
+        0xFFFF_FFF0,
+        0xFFFF_FFF1,
+        0xFFFF_FFF2,
+        0xFFFF_FFF3,
+        0xFFFF_FFF4,
+        sp::EP_CMD_MTP_PROPOSE,
+        sp::EP_CMD_VERIFY_KGAMMA,
+        0xFFFF_FFF7,
+        EP_CMD_DECODE_CKPT,
+        sp::EP_CMD_VERIFY_BATCH,
+        EP_CMD_PREFILL_SPANS,
+        0xFFFF_FFFF,
+    ];
+    let mut i = 0;
+    while i < others.len() {
+        assert!(
+            d != others[i],
+            "EP_CMD_DFLASH_PROPOSE collides with another worker opcode"
+        );
+        i += 1;
+    }
+};
+
+// 2026-10-11: FC, the fused K=2 verify (`speculative::k2_wire`), against every code above.
+const _: () = {
+    use crate::model::trait_impl::prefill_b::spans_wire::EP_CMD_PREFILL_SPANS;
+    use metrale_model_layers::speculative as sp;
+    let f = sp::EP_CMD_VERIFY_K2_FUSED;
+    assert!(
+        f > 0xFFFF_FFEF,
+        "EP_CMD_VERIFY_K2_FUSED would be a decode token id"
+    );
+    let others = [
+        0xFFFF_FFE0,
+        0xFFFF_FFE1,
+        0xFFFF_FFF0,
+        0xFFFF_FFF1,
+        0xFFFF_FFF2,
+        0xFFFF_FFF3,
+        0xFFFF_FFF4,
+        sp::EP_CMD_MTP_PROPOSE,
+        sp::EP_CMD_VERIFY_KGAMMA,
+        0xFFFF_FFF7,
+        EP_CMD_DECODE_CKPT,
+        sp::EP_CMD_VERIFY_BATCH,
+        EP_CMD_PREFILL_SPANS,
+        sp::EP_CMD_DFLASH_PROPOSE,
+        0xFFFF_FFFF,
+    ];
+    let mut i = 0;
+    while i < others.len() {
+        assert!(
+            f != others[i],
+            "EP_CMD_VERIFY_K2_FUSED collides with another worker opcode"
+        );
+        i += 1;
+    }
+};
+
+// 2026-10-11: FD, the batched MTP propose (`speculative::propose_batch_wire`), against every
+// code above.
+const _: () = {
+    use crate::model::trait_impl::prefill_b::spans_wire::EP_CMD_PREFILL_SPANS;
+    use metrale_model_layers::speculative as sp;
+    let p = sp::EP_CMD_MTP_PROPOSE_BATCH;
+    assert!(
+        p > 0xFFFF_FFEF,
+        "EP_CMD_MTP_PROPOSE_BATCH would be a decode token id"
+    );
+    let others = [
+        0xFFFF_FFE0,
+        0xFFFF_FFE1,
+        0xFFFF_FFF0,
+        0xFFFF_FFF1,
+        0xFFFF_FFF2,
+        0xFFFF_FFF3,
+        0xFFFF_FFF4,
+        sp::EP_CMD_MTP_PROPOSE,
+        sp::EP_CMD_VERIFY_KGAMMA,
+        0xFFFF_FFF7,
+        EP_CMD_DECODE_CKPT,
+        sp::EP_CMD_VERIFY_BATCH,
+        EP_CMD_PREFILL_SPANS,
+        sp::EP_CMD_DFLASH_PROPOSE,
+        sp::EP_CMD_VERIFY_K2_FUSED,
+        0xFFFF_FFFF,
+    ];
+    let mut i = 0;
+    while i < others.len() {
+        assert!(
+            p != others[i],
+            "EP_CMD_MTP_PROPOSE_BATCH collides with another worker opcode"
+        );
+        i += 1;
+    }
+};
 
 /// 2026-09-25: Payload width of [`EP_CMD_DECODE_CKPT`], in u32 words.
 pub(in crate::model) const EP_CKPT_WORDS: usize = 6;
@@ -177,4 +330,31 @@ pub(in crate::model) fn decode_ckpt_payload(w: &[u32]) -> Result<(CkptPlan, u64,
         w[2] as u64 | ((w[3] as u64) << 32),
         w[4] as u64 | ((w[5] as u64) << 32),
     ))
+}
+
+/// 2026-10-11: Default KV blocks between decode checkpoints on one rank (64 tokens at block
+/// size 16).
+pub(in crate::model) const DECODE_CKPT_BLOCKS_SINGLE: usize = 4;
+/// 2026-10-11: Default on a multi-rank serve, where each checkpoint also costs every rank an EP
+/// command and a full-state copy (GLM-5.3 at TP=3: 34 KDA layers, ~49 MB per rank), so a C16
+/// decode paid one every four steps. 256 tokens at block size 16.
+pub(in crate::model) const DECODE_CKPT_BLOCKS_MULTI_RANK: usize = 16;
+
+/// 2026-10-11: KV blocks between decode checkpoints: a positive `METRALE_DECODE_CKPT_BLOCKS`
+/// (`env`) overrides; otherwise [`DECODE_CKPT_BLOCKS_MULTI_RANK`] on a multi-rank serve and
+/// [`DECODE_CKPT_BLOCKS_SINGLE`] on one rank. Pure.
+pub(in crate::model) fn decode_ckpt_interval(env: Option<&str>, multi_rank: bool) -> usize {
+    match env.and_then(|s| s.parse::<usize>().ok()).filter(|&v| v > 0) {
+        Some(v) => v,
+        None if multi_rank => DECODE_CKPT_BLOCKS_MULTI_RANK,
+        None => DECODE_CKPT_BLOCKS_SINGLE,
+    }
+}
+
+/// 2026-10-11: `METRALE_DECODE_CKPT_BLOCKS`, read once per process (it was read per sequence
+/// per decode step).
+pub(in crate::model) fn decode_ckpt_blocks_env() -> Option<&'static str> {
+    static V: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    V.get_or_init(|| std::env::var("METRALE_DECODE_CKPT_BLOCKS").ok())
+        .as_deref()
 }

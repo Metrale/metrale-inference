@@ -41,6 +41,11 @@ impl TransformerModel {
         stream: u64,
         row_base: usize,
     ) -> Result<Vec<DevicePtr>> {
+        // 2026-10-09: A multi-rank serve must announce the pass to its workers; the per-stream
+        // loop below sends nothing, so every batch takes the multi-sequence pass (`spans.rs`).
+        if self.multi_rank_protocol_active() {
+            return self.prefill_spans_dispatch(streams, row_base);
+        }
         let n = streams.len();
         // 2026-09-25: `METRALE_NO_PREFILL_ROW_SHIFT` set to 1 or true forces
         // `row_base = 0`, which puts prefill logits on the decode lanes' rows.
@@ -173,11 +178,7 @@ impl TransformerModel {
             }
         }
 
-        let stream = if self.multi_rank_protocol_active() {
-            self.gpu.default_stream()
-        } else {
-            stream
-        };
+        let stream = self.forward_stream(stream);
 
         let mut kv_cache = self.kv_cache.lock();
 
@@ -198,7 +199,15 @@ impl TransformerModel {
 
                 // 2026-09-25: The same zeroing rule as `prefill_chunk_dispatch`.
                 if self.comm.is_some() {
-                    self.buffers.zero_all(self.gpu.as_ref(), stream)?;
+                    if super::super::super::prefill_zero::prefill_zero_rows()? {
+                        self.buffers.zero_all_rows(
+                            self.gpu.as_ref(),
+                            stream,
+                            chunk_len.next_multiple_of(16),
+                        )?;
+                    } else {
+                        self.buffers.zero_all(self.gpu.as_ref(), stream)?;
+                    }
                 } else if chunk_start == 0 {
                     self.buffers
                         .zero_prefill_essentials(self.gpu.as_ref(), stream)?;

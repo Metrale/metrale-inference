@@ -10,13 +10,25 @@ use anyhow::Result;
 use metrale_gpu_runtime::gpu::DevicePtr;
 
 use crate::model::types::TransformerModel;
-use crate::traits::{FeedSource, ModelDeviceFeed, RowMask, SequenceState};
+use crate::traits::{FedAheadPolicy, FeedSource, ModelDeviceFeed, RowMask, SequenceState};
 
 impl ModelDeviceFeed for TransformerModel {
     // 2026-09-25: Device token feed. The `_dispatch` helpers down to
     // `fed_step_settled_dispatch` are defined in `feed.rs`.
     fn supports_device_token_feed(&self) -> bool {
         self.supports_device_token_feed_dispatch()
+    }
+
+    fn fed_ahead_policy(&self) -> FedAheadPolicy {
+        self.fed_ahead_policy_dispatch()
+    }
+
+    fn arm_device_argmax(&self, masks: &[RowMask]) -> Result<bool> {
+        self.arm_device_argmax_dispatch(masks)
+    }
+
+    fn device_argmax_to_host(&self, dst: &mut [u8], event: Option<u64>) -> Result<()> {
+        self.device_argmax_to_host_dispatch(dst, event)
     }
 
     fn decode_batch_fed(

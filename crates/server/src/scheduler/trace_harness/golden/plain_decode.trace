@@ -19,7 +19,7 @@ ep_broadcast_cmd(0x5)
 ep_broadcast_tokens(n=5)
 ep_sync_vision_embeds(n=5)
 prefill(n=5, s1@0:len=5, stream=0)
-copy_logits_to_host(row=0, off=0, bytes=128)
+argmax_on_device(row=0, stream=0) -> 10
 alloc_sequence() -> slot 1
 adapter_id_for(-1)
 acquire_adapter_slot(-1)
@@ -30,7 +30,7 @@ ep_broadcast_cmd(0x5)
 ep_broadcast_tokens(n=5)
 ep_sync_vision_embeds(n=5)
 prefill(n=5, s2@1:len=5, stream=0)
-copy_logits_to_host(row=0, off=0, bytes=128)
+argmax_on_device(row=0, stream=0) -> 20
 alloc_sequence() -> slot 2
 adapter_id_for(-1)
 acquire_adapter_slot(-1)
@@ -41,7 +41,7 @@ ep_broadcast_cmd(0x7)
 ep_broadcast_tokens(n=7)
 ep_sync_vision_embeds(n=7)
 prefill(n=7, s3@2:len=7, stream=0)
-copy_logits_to_host(row=0, off=0, bytes=128)
+argmax_on_device(row=0, stream=0) -> 40
 alloc_sequence() -> slot 3
 adapter_id_for(-1)
 acquire_adapter_slot(-1)
@@ -52,7 +52,7 @@ ep_broadcast_cmd(0x6)
 ep_broadcast_tokens(n=6)
 ep_sync_vision_embeds(n=6)
 prefill(n=6, s4@3:len=6, stream=0)
-copy_logits_to_host(row=0, off=0, bytes=128)
+argmax_on_device(row=0, stream=0) -> 30
 fx launch Decode{n=4, ctx=Unified, readback=Argmax}
 decode_batch(tokens=[10, 20, 40, 30], seqs=["s1@0:len=5", "s2@1:len=5", "s3@2:len=7", "s4@3:len=6"], stream=0)
 commit_ctx(s1@0:len=6, n=1, base=5, row=0)

@@ -120,7 +120,8 @@ pub(super) struct PrefillInProgress {
     /// 2026-09-25: Per-server spontaneous-thinking budget: `--max-thinking-budget`, else
     /// MODEL.toml `[behavior].max_thinking_budget`. When the model opens
     /// `<think>` on its own, the sequence's thinking budget is set from it.
-    pub spontaneous_think_budget: u32,
+    /// 2026-10-14: `None` keeps the request's budget (`thinking_steering` off).
+    pub spontaneous_think_budget: Option<u32>,
     pub require_tool_call: bool,
     /// 2026-09-25: The request declared tools; moved to the `ActiveSeq` on promotion.
     pub tools_present: bool,

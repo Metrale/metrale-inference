@@ -8,6 +8,8 @@
 //! Invariants: none beyond the types.
 
 pub mod adaptive_rung;
+pub mod dflash_adaptive_k;
+pub mod dflash_ladder;
 pub mod dflash_rung;
 pub mod mtp_gate;
 pub mod ngram;

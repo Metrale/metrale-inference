@@ -17,10 +17,10 @@
 //! - `agree` returns `Some(T)` only when every proposal equals the same nonzero `T`.
 
 use anyhow::Result;
-use metrale_comm::CommBackend;
-use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
 use super::super::super::types::TransformerModel;
+// 2026-10-10: The gather moved to `rank_agree`, whose startup handshake uses it too.
+use crate::rank_agree::gather_u32_via_broadcast;
 
 /// 2026-09-25: The rank-local inputs to the restore decision, as plain values so the
 /// decision is testable without a GPU.
@@ -99,37 +99,6 @@ pub(in crate::model) fn skip_point(
     } else {
         0
     }
-}
-
-/// 2026-09-25: Collect one `u32` from every rank of `comm` with `world` rooted
-/// broadcasts (root `r` contributes element `r`). Every rank returns the same vector,
-/// so any pure function of it is a rank-agreed decision; `ep_min_u32` is its minimum.
-///
-/// `buf` is a rank-local 4-byte device buffer the broadcasts go through.
-pub(in crate::model) fn gather_u32_via_broadcast(
-    gpu: &dyn GpuBackend,
-    comm: &dyn CommBackend,
-    buf: DevicePtr,
-    world: usize,
-    val: u32,
-) -> Result<Vec<u32>> {
-    let stream = gpu.default_stream();
-    let mut out = Vec::with_capacity(world);
-    for root in 0..world {
-        let v = if comm.rank() == root {
-            gpu.copy_h2d(&val.to_le_bytes(), buf)?;
-            comm.broadcast(buf.0, 4, root)?;
-            val
-        } else {
-            comm.broadcast(buf.0, 4, root)?;
-            gpu.synchronize(stream)?;
-            let mut bytes = [0u8; 4];
-            gpu.copy_d2h(buf, &mut bytes)?;
-            u32::from_le_bytes(bytes)
-        };
-        out.push(v);
-    }
-    Ok(out)
 }
 
 impl TransformerModel {

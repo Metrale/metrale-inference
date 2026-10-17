@@ -12,6 +12,8 @@ use super::*;
 use crate::scheduler::io::{DecodeRows, Readback, StepOutcome};
 
 mod content_emit;
+#[cfg(test)]
+mod eos_hold_tests;
 mod host_sample;
 mod per_token;
 
@@ -41,6 +43,7 @@ fn logits_ctx<'a>(
         think_start_token,
         tool_call_start_token,
         tool_call_end_token,
+        thinking_closed_by: sched.limits.thinking_closed_by,
         verify_pos: 0,
         watchdog: sched.watchdog,
         scratch,
@@ -130,9 +133,12 @@ pub(super) fn argmax_readback_eligible<'a>(
         (a.inside_thinking || a.think_ended || a.grammar_state.is_some()) && !excused
     }) || any_logprobs
         || model_logits_fp32
-        // 2026-09-25: GPU argmax bypasses the pre-sampling EOS mask. Keep requests with
-        // an active minimum-token floor on the host pipeline.
-        || active.clone().any(|a| a.min_tokens > a.output_tokens.len());
+        // 2026-09-25: GPU argmax bypasses the pre-sampling EOS mask. 2026-10-14: Keep a
+        // row whose EOS is held (`eos_hold::presample_hold`: `min_tokens`, a required
+        // tool call) on the host pipeline, which masks it.
+        || active.clone().any(|a| {
+            crate::scheduler::eos_hold::presample_hold_for(a, a.output_tokens.len()).any()
+        });
     active.clone().all(|a| a.temperature == 0.0) && !any_grammar && !needs_host_logits
 }
 

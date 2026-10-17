@@ -15,7 +15,7 @@ use metrale_gpu_runtime::gpu::DevicePtr;
 
 use super::super::super::types::TransformerModel;
 use crate::traits::SequenceState;
-use metrale_model_layers::layer::{AttnMetadataDev, ForwardContext};
+use metrale_model_layers::layer::{AttnMetadataDev, ForwardContext, takes_decode_path};
 
 impl TransformerModel {
     pub(super) fn prefill_b_forward_layers(
@@ -91,18 +91,7 @@ impl TransformerModel {
         // prefill takes one ordinal from it, in model order, to index the plan's
         // per-layer destinations (qwen3_ssm/trait_prefill_block.rs).
         let midcap_counter = std::sync::atomic::AtomicUsize::new(0);
-        let midchunk_capture = midcap.map(|p| metrale_model_layers::layer::MidchunkCapture {
-            cap_local: p.cap_local,
-            h_dsts: &p.h_dsts,
-            conv_dsts: &p.conv_dsts,
-            h_bytes: p.h_bytes,
-            conv_bytes: p.conv_bytes,
-            ssm_layer_counter: &midcap_counter,
-            cap_local_early: p.cap_local_early,
-            h_dsts_early: &p.h_dsts_early,
-            conv_dsts_early: &p.conv_dsts_early,
-            replay_tail: p.replay_tail,
-        });
+        let midchunk_capture = midcap.map(|p| p.as_capture(&midcap_counter));
 
         let ctx = ForwardContext {
             buffers: &self.buffers,
@@ -133,8 +122,15 @@ impl TransformerModel {
         };
 
         // 2026-09-25: A single-token pass after position 0 (for example the last-token
-        // re-run in `proc_range`) runs each layer's decode path.
-        let use_decode_path = proc_count == 1 && effective_seq_len_start > 0;
+        // re-run in `proc_range`) runs each layer's decode path. 2026-10-14: unless
+        // `METRALE_ONE_ROW_PREFILL=1` and the layers split their pass at a capture
+        // (`takes_decode_path`).
+        let use_decode_path = takes_decode_path(
+            proc_count,
+            effective_seq_len_start,
+            self.levers.one_row_prefill,
+            self.splits_whole_pass_at_capture(),
+        );
         // 2026-09-25: After a snapshot restore this pass recomputes the positions between
         // the snapshot and `seq.cached_prefix_tokens` (the radix match), whose K/V already
         // sits in shared prefix-cache blocks. Their count within this pass is the layers'

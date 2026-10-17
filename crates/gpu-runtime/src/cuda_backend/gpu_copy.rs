@@ -28,7 +28,34 @@ use super::{
 use crate::gpu::DevicePtr;
 
 impl MetraleCudaBackend {
+    /// 2026-10-10: Refuse a host-blocking `what` on `stream` while it captures a CUDA graph.
+    /// The driver would invalidate the capture; on a multi-rank serve the collectives already
+    /// captured on the other ranks then never pair up, and the serve hangs instead of failing.
+    /// Refusing first names the call and leaves the capture to the caller's error path; the
+    /// message carries `STREAM_CAPTURE`, which the decode step's capture fallback recognises as
+    /// a capture fault, as it does the driver's own status.
+    pub(crate) fn refuse_host_sync_in_capture(&self, stream: u64, what: &str) -> Result<()> {
+        #[cfg(not(metrale_scale))]
+        {
+            // 2026-10-10: CU_STREAM_CAPTURE_STATUS_ACTIVE = 1. A failed query is not a refusal.
+            let mut status: u32 = 0;
+            let rc = unsafe { super::cuStreamIsCapturing(stream, &mut status) };
+            if rc == 0 && status == 1 {
+                bail!(
+                    "{what}: a host synchronisation on a stream that is capturing a CUDA graph \
+                     (STREAM_CAPTURE: the captured path must not read device results back)"
+                );
+            }
+        }
+        #[cfg(metrale_scale)]
+        let _ = (stream, what);
+        Ok(())
+    }
+
     pub(crate) fn copy_h2d_impl(&self, src: &[u8], dst: DevicePtr) -> Result<()> {
+        self.refuse_host_sync_in_capture(self.default_stream, "copy_h2d")?;
+        crate::host_sync_counts::h2d();
+        crate::host_sync_counts::sync();
         let status = unsafe {
             cuMemcpyHtoDAsync_v2(
                 dst.0,
@@ -52,7 +79,10 @@ impl MetraleCudaBackend {
     }
 
     pub(crate) fn copy_d2h_impl(&self, src: DevicePtr, dst: &mut [u8]) -> Result<()> {
+        self.refuse_host_sync_in_capture(self.default_stream, "copy_d2h")?;
         metrale_telemetry::global().blocking_d2h();
+        crate::host_sync_counts::d2h();
+        crate::host_sync_counts::sync();
         let status = unsafe {
             cuMemcpyDtoHAsync_v2(
                 dst.as_mut_ptr() as *mut c_void,
@@ -80,7 +110,10 @@ impl MetraleCudaBackend {
         dst: &mut [u8],
         stream: u64,
     ) -> Result<()> {
+        self.refuse_host_sync_in_capture(stream, "copy_d2h_on_stream")?;
         metrale_telemetry::global().blocking_d2h();
+        crate::host_sync_counts::d2h();
+        crate::host_sync_counts::sync();
         // 2026-09-25: On the caller's `stream`, so the copy is ordered after
         // the work already queued there.
         let status = unsafe {
@@ -131,6 +164,7 @@ impl MetraleCudaBackend {
             bail!("cuMemcpyDtoDAsync_v2 (sync copy_d2d) failed: status {status}");
         }
         // 2026-09-25: Wait, so work on other streams sees the copied bytes.
+        crate::host_sync_counts::sync();
         let sync = unsafe { cuStreamSynchronize(self.default_stream) };
         if sync != 0 {
             bail!(

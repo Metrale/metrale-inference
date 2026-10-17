@@ -11,6 +11,8 @@
 #![allow(unused_imports, dead_code)]
 
 pub(crate) mod block_mgmt;
+pub(crate) mod block_tables;
+pub(crate) mod device_argmax;
 pub(crate) mod drop;
 mod gdn_carry;
 pub(crate) mod impl_a1;
@@ -33,7 +35,9 @@ mod impl_ngram;
 pub(crate) mod lm_head_fp8_rows;
 pub(crate) mod lm_head_nvfp4_rows;
 pub(crate) mod lm_head_q6k;
+pub(crate) mod lm_head_vocab_tp;
 pub(crate) mod pinned_pack;
+pub(crate) mod prefill_zero;
 pub(crate) mod prefix_reclaim;
 pub(crate) mod seq_memtrace;
 pub(crate) mod ssm_batched_copy;

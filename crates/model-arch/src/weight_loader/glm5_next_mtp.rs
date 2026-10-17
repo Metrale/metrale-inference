@@ -17,9 +17,9 @@ use metrale_config::ModelConfig;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_model_weights::weights::WeightStore;
 
+use crate::glm5next_dsa::Glm5NextDsaKernels;
 use crate::glm5next_dsa::build::build_dsa_weights;
 use crate::glm5next_dsa::layer::{Glm5NextDsaLayer, Glm5NextDsaLayerKernels, Glm5NextDsaWorkspace};
-use crate::glm5next_dsa::{Glm5NextDsaConfig, Glm5NextDsaKernels};
 use crate::glm5next_layer::{Glm5NextLayer, Glm5NextMixer, Glm5NextMlpSite};
 use crate::glm5next_mlp::{Glm5NextMlpConfig, Glm5NextMlpKernels, build as mlp_build};
 use metrale_model_layers::weight_map::DenseWeight;
@@ -43,7 +43,8 @@ pub struct Glm5NextMtpModule {
 /// `layers.{num_hidden_layers}`.
 ///
 /// Runs on every rank: `build_moe` binds only this rank's `local_expert_range()`, so each
-/// rank holds its own share of the routed experts, as in the text stack.
+/// rank holds its own share of the routed experts, as in the text stack. 2026-10-09: Under
+/// `--moe-expert-layout tp`, its slice of every expert.
 pub fn load_glm5next_mtp_module(
     store: &WeightStore,
     config: &ModelConfig,
@@ -58,18 +59,16 @@ pub fn load_glm5next_mtp_module(
         .with_context(|| format!("glm5_next MTP: collecting layer {idx}"))?;
     let load = |n: &str| src.f32(n);
 
-    let dsa_cfg = Glm5NextDsaConfig::from_config(config)?;
+    // 2026-10-13: The drafter block's context is capped (`METRALE_GLM_MTP_CONTEXT_CAP`), so its
+    // indexer cache, workspace and ceiling grids are sized at the cap, not `--max-seq-len`.
+    let dsa_cfg = crate::glm5next_mtp_head::drafter_dsa_config(config)?;
     let mlp_cfg = Glm5NextMlpConfig::from_config(config)?;
-    let dsa_plan = crate::glm5next_dsa::tp::DsaTpPlan::new(
-        config.tp_rank,
-        config.tp_world_size.max(1),
-        &dsa_cfg,
-    )?;
+    let dsa_plan = crate::glm5next_dsa::tp::DsaTpPlan::from_config(config, &dsa_cfg)?;
     let dsa_layer_kernels = Glm5NextDsaLayerKernels::resolve(gpu)?;
     let dsa_kernels = Glm5NextDsaKernels::resolve(gpu)?;
     let mlp_kernels = Glm5NextMlpKernels::resolve(gpu)?;
 
-    let mixer = Glm5NextMixer::Dsa(Box::new(Glm5NextDsaLayer {
+    let mut mixer = Glm5NextMixer::Dsa(Box::new(Glm5NextDsaLayer {
         persist_bt: std::env::var("METRALE_GLM_DSA_ALLOC_PER_STEP").as_deref() != Ok("1"),
         cfg: dsa_cfg,
         weights: build_dsa_weights(gpu, &dsa_cfg, &dsa_plan, &load)?,
@@ -77,23 +76,43 @@ pub fn load_glm5next_mtp_module(
         select_kernels: dsa_kernels,
         decode_kernel: crate::glm5next_dsa::attend::Glm5NextDsaDecodeKernel::resolve(gpu)?,
         // 2026-09-25: Single-row workspace: the drafter runs this layer one row at a time.
-        workspace: Glm5NextDsaWorkspace::new(gpu, &dsa_cfg, 1)?,
+        // 2026-10-11: One row per sequence of the widest batched propose under its lever.
+        // 2026-10-11: And a pass of drafter context rows (`ctx_rows`).
+        workspace: std::sync::Arc::new(Glm5NextDsaWorkspace::new(
+            gpu,
+            &dsa_cfg,
+            crate::glm5next_mtp_head::drafter_dsa_rows(),
+        )?),
         layer_idx: idx,
         // 2026-09-25: Sole consumer of its own one-layer KV pool.
         attn_layer_idx: 0,
         rms_eps: config.rms_norm_eps as f32,
         kv_scale: 1.0,
+        // 2026-10-09: The drafter's one-layer pool is sized apart from the text stack's; its
+        // indexer stays flat.
+        indexer_cache: crate::glm5next_dsa::paged::IndexerCache::Flat,
     }));
 
-    let expert = |id: usize| super::glm5_next_load::bind_expert_at(gpu, store, idx, id);
-    let mlp = Glm5NextMlpSite::Moe(Box::new(mlp_build::build_moe(
+    let expert = super::glm5_next_load::expert_binder_at(gpu, store, idx, &mlp_cfg);
+    // 2026-10-08: The MTP layer's plan, as for a text layer; this checkpoint declares the layer
+    // 16-bit, so its experts (quantized at load) run W4A16. One row: its workspace is one row.
+    let precision = |has_scales: bool| {
+        super::glm5_next_load::mtp_expert_precision(config, &mlp_kernels, idx, &mlp_cfg, has_scales)
+    };
+    let mut mlp = Glm5NextMlpSite::Moe(Box::new(mlp_build::build_moe(
         gpu,
         &mlp_cfg,
-        config.tp_rank,
         config.shared_expert_intermediate_size,
         &load,
         &expert,
+        &precision,
+        crate::glm5next_mtp_head::drafter_block_rows(),
     )?));
+    // 2026-10-11: The drafter's dense projections at the serve's tiers, as a text layer's. They
+    // were left BF16: at TP=3 the drafter's DSA q_absorb and o_absorb alone read ~0.54 ms per
+    // propose in BF16. Draft tokens only; the target verifies every draft.
+    super::glm5_next_load::register_mtp_dense_tiers(gpu, &mut mixer, &mut mlp, &mlp_cfg, idx)
+        .with_context(|| format!("glm5_next MTP: dense tiers of layer {idx}"))?;
 
     let up =
         |n: &str| -> Result<DevicePtr> { super::glm5_next_load::upload_bf16(gpu, &src.f32(n)?) };
@@ -106,8 +125,11 @@ pub fn load_glm5next_mtp_module(
             mlp_kernels,
             // 2026-09-25: Its own one-row workspace, not the text stack's shared one, which
             // is sized for a prefill sub-chunk.
+            // 2026-10-11: As many rows as the DSA workspace above.
             mlp_ws: std::sync::Arc::new(crate::glm5next_mlp::forward::Glm5NextMlpWorkspace::new(
-                gpu, &mlp_cfg, 1,
+                gpu,
+                &mlp_cfg,
+                crate::glm5next_mtp_head::drafter_block_rows(),
             )?),
             // 2026-09-25: No hyper-connection: nothing here binds `hc_*` tensors, and
             // `mhc: None` selects the plain residual path.
@@ -123,6 +145,8 @@ pub fn load_glm5next_mtp_module(
             // 2026-09-25: No mHC highway to expand or collapse.
             is_first: false,
             is_last: false,
+            // 2026-10-10: The MTP block has no mHC reduce to hide a warm under.
+            l2_warm: None,
         },
         eh_proj: DenseWeight {
             weight: store.get(&format!("{prefix}eh_proj.weight"))?.ptr,

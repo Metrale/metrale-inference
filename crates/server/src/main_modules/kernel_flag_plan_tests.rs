@@ -5,11 +5,12 @@
 //! Owner: server startup (`met serve`).
 //! Invariants: none beyond the types.
 
-use super::{GdnPlan, KernelFlagPlan};
+use super::{GdnPlan, KernelFlagPlan, precision_line};
 use crate::cli::{Cli, Command, validate_serve_args};
 use clap::Parser;
 use metrale_config::{W4a4Downcast, WeightQuantTier, WeightQuantization};
-use metrale_model_layers::layers::ExpertQuantization;
+use metrale_gpu_runtime::prefill_tail_mode::PrefillTailMode;
+use metrale_model_layers::layers::{DenseQuantization, DsaQuantization, ExpertQuantization};
 
 fn plan(flags: &[&str]) -> KernelFlagPlan {
     let mut argv = vec![
@@ -37,6 +38,9 @@ fn an_empty_command_line_publishes_nothing_the_environment_owns() {
             gdn: None,
             weight_quant: WeightQuantTier::default(),
             expert_quantization: ExpertQuantization::Fp8,
+            dense_quantization: DenseQuantization::Declared,
+            dsa_quantization: DsaQuantization::Declared,
+            prefill_tail_mode: PrefillTailMode::Merge,
             prefill_codispatch: None,
             prefill_varlen: None,
             ssm_tail_midchunk: None,
@@ -190,4 +194,86 @@ fn a_bad_expert_quantization_value_is_refused() {
     ] {
         assert!(Cli::try_parse_from(&argv).is_err(), "{argv:?} parsed");
     }
+}
+
+/// 2026-10-09: `--dense-quantization fp8` and `w4a16` reach the plan; nothing else changes.
+#[test]
+fn the_dense_tier_reaches_the_plan() {
+    for (value, tier) in [
+        ("fp8", DenseQuantization::Fp8),
+        ("w4a16", DenseQuantization::W4a16),
+    ] {
+        let p = plan(&["--dense-quantization", value]);
+        assert_eq!(p.dense_quantization, tier);
+        assert_eq!(
+            KernelFlagPlan {
+                dense_quantization: DenseQuantization::Declared,
+                ..p
+            },
+            plan(&[])
+        );
+    }
+}
+
+/// 2026-10-11: `--dsa-quantization w8a8` and `w4a16` reach the plan and move nothing else,
+/// whatever `--dense-quantization` is; the two flags are independent cells.
+#[test]
+fn the_dsa_tier_reaches_the_plan_alone() {
+    for (value, tier) in [
+        ("declared", DsaQuantization::Declared),
+        ("w8a8", DsaQuantization::W8a8),
+        ("w4a16", DsaQuantization::W4a16),
+    ] {
+        let p = plan(&["--dsa-quantization", value]);
+        assert_eq!(p.dsa_quantization, tier);
+        assert_eq!(
+            KernelFlagPlan {
+                dsa_quantization: DsaQuantization::Declared,
+                ..p
+            },
+            plan(&[])
+        );
+        let both = plan(&["--dense-quantization", "w4a16", "--dsa-quantization", value]);
+        assert_eq!(
+            (both.dense_quantization, both.dsa_quantization),
+            (DenseQuantization::W4a16, tier)
+        );
+    }
+}
+
+/// 2026-10-11: The boot log names both tiers and what the DSA sites run as.
+#[test]
+fn the_precision_line_discloses_both_tiers() {
+    let l = precision_line(DenseQuantization::W4a16, DsaQuantization::W8a8);
+    assert!(l.contains("--dense-quantization w4a16"), "{l}");
+    assert!(l.contains("--dsa-quantization w8a8"), "{l}");
+    assert!(l.contains("W8A8"), "{l}");
+    let l = precision_line(DenseQuantization::Declared, DsaQuantization::Declared);
+    assert!(
+        l.contains("--dsa-quantization declared") && l.contains("BF16"),
+        "{l}"
+    );
+}
+
+/// 2026-10-14: `--prefill-tail-mode split` reaches the plan and moves nothing else; `merge`
+/// is the default and an unknown value is refused.
+#[test]
+fn the_prefill_tail_mode_reaches_the_plan_alone() {
+    assert_eq!(plan(&[]).prefill_tail_mode, PrefillTailMode::Merge);
+    for (value, mode) in [
+        ("split", PrefillTailMode::Split),
+        ("merge", PrefillTailMode::Merge),
+    ] {
+        let p = plan(&["--prefill-tail-mode", value]);
+        assert_eq!(p.prefill_tail_mode, mode);
+        assert_eq!(
+            KernelFlagPlan {
+                prefill_tail_mode: PrefillTailMode::Merge,
+                ..p
+            },
+            plan(&[])
+        );
+    }
+    let argv = ["met", "serve", "org/model", "--prefill-tail-mode", "fused"];
+    assert!(Cli::try_parse_from(argv).is_err());
 }

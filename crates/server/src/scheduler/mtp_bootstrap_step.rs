@@ -35,9 +35,9 @@ pub(super) fn log_propose_batched_err(prefix: &str, e: &anyhow::Error) {
 
 /// 2026-09-25: Whether [`step_mtp_bootstrap_batched`] can run for `n` sequences:
 /// at least two, not a DFlash serve, `mtp_batch_bootstrap` on (unless
-/// `METRALE_NO_MTP_BATCH_BOOTSTRAP` is set), an MTP dispatch cap above 1, the
-/// DFlash unified-ctx and serial-append modes off, BF16 decode logits, and the
-/// model's batched-verify envelope.
+/// `METRALE_NO_MTP_BATCH_BOOTSTRAP` is set), an MTP dispatch cap above 1, for a
+/// DFlash drafter the unified-ctx and serial-append modes off, BF16 decode logits,
+/// and the model's batched-verify envelope.
 pub(super) fn can_batch_bootstrap(
     model: &dyn Model,
     sched: &crate::scheduler::sched_ctx::SchedCtx,
@@ -48,8 +48,11 @@ pub(super) fn can_batch_bootstrap(
         && !dflash_verify_raw_argmax
         && sched.levers.mtp_batch_bootstrap
         && sched.levers.mtp_max_seqs > 1
-        && !sched.levers.dflash_unified_ctx
-        && !sched.levers.dflash_serial_append
+        // 2026-10-11: The DFlash context modes matter only to a DFlash drafter. They are on by
+        // default (`METRALE_DFLASH_UNIFIED_CTX`), so as a plain condition they kept every MTP
+        // serve's bootstrap per sequence.
+        && !(model.dflash_gamma().is_some()
+            && (sched.levers.dflash_unified_ctx || sched.levers.dflash_serial_append))
         // 2026-09-25: FP32 decode logits are excluded: `logits_ptr_is_fp32`
         // compares the pointer with the FP32 scratch buffer's start, so a
         // per-row offset pointer would be read as BF16.
@@ -139,6 +142,7 @@ pub(super) fn step_mtp_bootstrap_batched(
                 && verify_ctx.sampling.fast_greedy_grammar
                 && (a.temperature == 0.0 || verify_ctx.sampling.force_temp_zero)
                 && a.grammar_state.is_none()
+                && !crate::scheduler::eos_hold::presample_hold_for(a, a.output_tokens.len()).any()
                 && crate::scheduler::fast_greedy::classify_penalties(p)
                     == crate::scheduler::fast_greedy::PenaltyGate::Neutral
         })
@@ -184,13 +188,16 @@ pub(super) fn step_mtp_bootstrap_batched(
                     a.tool_call_end_token,
                 )
                 .to_vec();
+                // 2026-10-14: the EOS ids `eos_hold::presample_hold` holds.
+                let eos_mask =
+                    crate::scheduler::eos_hold::eos_mask_ids(a, a.output_tokens.len()).to_vec();
                 match sample_token_with_grammar(
                     model,
                     row_logits,
                     a.temperature,
                     a.top_k,
                     a.top_p,
-                    &[],
+                    &eos_mask,
                     a.grammar_state.as_mut(),
                     &pen[j],
                     &history,
@@ -224,11 +231,15 @@ pub(super) fn step_mtp_bootstrap_batched(
 
     // 2026-09-25: Stash every proposing row before any propose: a propose
     // overwrites the shared `hidden_states` buffer
-    // (`Model::stash_verify_hidden_rows`). Stash slot s <-> proposing[s].
+    // (`Model::stash_verify_hidden_rows`). 2026-10-11: Every decode row is stashed, slot j <->
+    // decode row j, as a multi-rank worker stashes after the same batched decode
+    // (`ep_worker_decode_batch`): which rows propose is decided here, after sampling, so the
+    // worker cannot know the subset, and its proposes read the slot rank 0 names.
     let proposing: Vec<usize> = (0..n).filter(|&j| propose_rows[j].is_some()).collect();
     let mut stash_ok = false;
     if !proposing.is_empty() {
-        match model.stash_verify_hidden_rows(&proposing, 0) {
+        let all_rows: Vec<usize> = (0..n).collect();
+        match model.stash_verify_hidden_rows(&all_rows, 0) {
             Ok(()) => stash_ok = true,
             Err(e) => tracing::error!("batched bootstrap stash_verify_hidden_rows: {e:#}"),
         }
@@ -276,7 +287,7 @@ pub(super) fn step_mtp_bootstrap_batched(
                     .iter()
                     .map(|&s| refs[proposing[s]].seq.seq_len)
                     .collect();
-                let stash_idx: Vec<usize> = group.to_vec();
+                let stash_idx: Vec<usize> = group.iter().map(|&s| proposing[s]).collect();
                 let result = {
                     let mut seq_refs: Vec<&mut SequenceState> = Vec::with_capacity(group.len());
                     let mut it = refs.iter_mut();
@@ -326,8 +337,8 @@ pub(super) fn step_mtp_bootstrap_batched(
             if done[s] {
                 continue;
             }
-            if let Err(e) = model.save_hidden_for_mtp_from_stash(s, 0) {
-                tracing::error!("batched bootstrap save_hidden_for_mtp_from_stash({s}): {e:#}");
+            if let Err(e) = model.save_hidden_for_mtp_from_stash(row, 0) {
+                tracing::error!("batched bootstrap save_hidden_for_mtp_from_stash({row}): {e:#}");
                 continue;
             }
             let a = &mut refs[row];

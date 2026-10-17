@@ -181,4 +181,12 @@ fn recurrent_states_follow_the_engine_model_type() {
     assert_eq!(crate::recurrent_states("gemma4", &dims).unwrap(), None);
     // 2026-09-30: A dim the declaration reads and the caller does not give is an error.
     assert!(crate::recurrent_states("nemotron_h", &dims).is_err());
+    // 2026-10-09: GLM-5's KDA layers hold the pool state; the sparse-attention layers' indexer
+    // pool tail (also `recurrent`) is not a recurrent layer kind's, so it is not the pool's.
+    let mut glm = dims.clone();
+    glm.insert("conv_kernel".into(), 4);
+    let s = crate::recurrent_states("glm5_next", &glm).unwrap().unwrap();
+    let ids: Vec<&str> = s.iter().map(|d| d.id.as_str()).collect();
+    assert_eq!(ids, ["kda.h", "kda.conv"]);
+    assert_eq!(s[1].elements, (16 * 128 * 2 + 32 * 128) * 4);
 }

@@ -10,7 +10,7 @@
 //!  * `top_logprobs` is not requested (logprobs need the distribution);
 //!  * `ctx.sampling.forced_token_fastpath` is set;
 //!  * the sequence has a grammar state, and it reports exactly one legal token;
-//!  * the token is not an EOS id while the `min_tokens` floor is unmet.
+//!  * the token is not an EOS that `eos_hold::presample_hold` holds.
 //!
 //! Owner: scheduler.
 //! Invariants:
@@ -36,10 +36,10 @@ impl LogitsProcessor for ForcedTokenFastPath {
         {
             let forced = forced as u32;
             // 2026-09-25: The fast path skips sampling, so a grammar-forced EOS
-            // would be emitted before the `min_tokens` floor. Continue instead,
+            // would be emitted while the pre-sample hold masks it. Continue instead,
             // and let the rest of the pipeline handle it.
-            let effective_len = a.output_tokens.len().saturating_add(ctx.verify_pos);
-            if effective_len < a.min_tokens && a.eos_tokens.contains(&forced) {
+            let generated_before = a.output_tokens.len().saturating_add(ctx.verify_pos);
+            if crate::scheduler::eos_hold::eos_masked_at(a, forced, generated_before) {
                 return ProcessorOutcome::Continue;
             }
             return ProcessorOutcome::EmitToken(forced);

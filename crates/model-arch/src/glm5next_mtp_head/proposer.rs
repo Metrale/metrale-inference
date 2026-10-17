@@ -17,25 +17,48 @@ impl DraftProposer for Glm5NextMtpHead {
     }
 
     fn alloc_state(&self, gpu: &dyn GpuBackend) -> Result<Box<dyn ProposerState>> {
+        // 2026-10-14: `METRALE_GLM_MTP_STATE_POOL=1`: a freed state, reset to zero rows, before
+        // a fresh allocation (`state_pool`).
+        if metrale_model_layers::layers::ops::ModelLevers::get().glm_mtp_state_pool
+            && let Some(st) = self.state_pool.take()?
+        {
+            return Ok(Box::new(st));
+        }
         let dsa = match &self.module.layer.mixer {
             crate::glm5next_layer::Glm5NextMixer::Dsa(l) => Glm5NextDsaState::alloc(gpu, &l.cfg)?,
             _ => bail!("GLM MTP block is not a DSA layer"),
         };
         let h = self.hidden;
-        // 2026-09-25: Claims every block of the private pool, which `new` sizes for one
-        // sequence of `max_seq_len` rows.
-        let blocks = (self.max_seq_len / 16 + 2) as u32;
+        // 2026-10-11: A region of the pool of its own (`kv_pool`); before, every state claimed
+        // the same single-sequence pool and live sequences overwrote each other's rows. The
+        // pool holds one region per `--max-batch-size` sequence, so a miss means a state was
+        // not freed; the sequence then drafts nothing instead of failing.
+        let (kv_region, block_table) = match self.kv_regions.claim() {
+            Ok((r, t)) => (Some(r), t),
+            Err(e) => {
+                tracing::warn!("{e:#}; this sequence proposes no drafts");
+                (None, Vec::new())
+            }
+        };
+        let graph = if super::graph::graph_enabled() {
+            Some(super::graph::DrafterGraph::alloc(gpu, h, &block_table)?)
+        } else {
+            None
+        };
         Ok(Box::new(Glm5NextMtpProposerState {
             dsa,
             seq_len: 0,
-            block_table: (0..blocks).collect(),
+            block_table,
             last_drafted: 0,
             concat: gpu.alloc(2 * h * 2)?,
             x: gpu.alloc(h * 2)?,
             logits: gpu.alloc(self.vocab * 2)?,
-            arg: gpu.alloc(4)?,
-            head_xchg: gpu.alloc(16)?,
+            // 2026-10-11: The draft id, then its log-probability (`draft_lp`).
+            arg: gpu.alloc(8)?,
+            head_xchg: gpu.alloc(super::head_xchg::BUFFER_BYTES)?,
             released: false,
+            kv_region,
+            graph,
         }))
     }
 
@@ -50,14 +73,27 @@ impl DraftProposer for Glm5NextMtpHead {
         if st.released {
             return Ok(());
         }
+        // 2026-10-14: `METRALE_GLM_MTP_STATE_POOL=1`: the buffers, region and graph go to the
+        // pool for the next sequence. A state without a region drafts nothing; it is freed.
+        if metrale_model_layers::layers::ops::ModelLevers::get().glm_mtp_state_pool
+            && st.kv_region.is_some()
+            && let crate::glm5next_layer::Glm5NextMixer::Dsa(l) = &self.module.layer.mixer
+        {
+            return self.state_pool.keep(&l.cfg, st);
+        }
         st.released = true;
         st.dsa.free(gpu)?;
         for p in [st.concat, st.x, st.logits, st.arg, st.head_xchg] {
             gpu.free(p)?;
         }
-        // 2026-09-25: The drafter's private pool is claimed whole by `alloc_state`
-        // (`(0..blocks).collect()`), not drawn from an allocator, so there is
-        // nothing to hand back; clearing it stops a freed state from looking live.
+        if let Some(mut g) = st.graph.take() {
+            g.free(gpu)?;
+        }
+        // 2026-10-11: The region goes back to the pool; clearing the table stops a freed state
+        // from looking live.
+        if let Some(r) = st.kv_region.take() {
+            self.kv_regions.release(r)?;
+        }
         st.block_table.clear();
         st.seq_len = 0;
         Ok(())
@@ -70,9 +106,24 @@ impl DraftProposer for Glm5NextMtpHead {
         metrale_model_layers::speculative::mtp_ep_propose_enabled()
     }
 
-    /// 2026-09-25: True: a context row normalises into `ctx.buffers` (`drafter_write_kv_row`).
+    /// 2026-10-11: A context row normalises into the state's own `concat`
+    /// (`drafter_write_kv_row`), so the drafter prefill can run at the end of each sequence's
+    /// target prefill, while the shared capture is still its own; at the first propose instead,
+    /// at C >= 2 every sequence but the last-prefilled drafts without its prompt. 2026-10-12: On
+    /// by default now that the context rows run in passes (`ctx_rows.rs`, ~0.04 ms per prompt
+    /// row measured, down from ~0.35); `METRALE_GLM_MTP_EAGER_PREFILL=0` defers it to the first
+    /// propose. The diagnostic full-block arm (`METRALE_GLM_MTP_PREFILL_FULL=1`,
+    /// `decode_one_for_drafter`) writes the shared scratch, so it always waits for the first
+    /// propose.
     fn prefill_uses_shared_buffers(&self) -> bool {
-        true
+        prefill_waits(
+            std::env::var("METRALE_GLM_MTP_PREFILL_FULL")
+                .ok()
+                .as_deref(),
+            std::env::var("METRALE_GLM_MTP_EAGER_PREFILL")
+                .ok()
+                .as_deref(),
+        )
     }
 
     fn drafter_rows(&self, state: &mut dyn ProposerState) -> usize {
@@ -127,6 +178,20 @@ impl DraftProposer for Glm5NextMtpHead {
         self.rows_impl(tokens, hiddens, row_base, state, ctx, stream)
     }
 
+    /// 2026-10-11: The batched-verify catch-up (`METRALE_MTP_ACCEPTED_ROWS` or `_KV_EXACT`): each
+    /// sequence's accepted drafts as context rows (`catchup.rs`).
+    fn catchup_batch(
+        &self,
+        tokens: &[Vec<u32>],
+        hiddens: &[Vec<DevicePtr>],
+        first_pos: &[usize],
+        states: &mut [&mut dyn ProposerState],
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<usize> {
+        self.catchup_rows(tokens, hiddens, first_pos, states, ctx, stream)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn propose(
         &self,
@@ -145,30 +210,27 @@ impl DraftProposer for Glm5NextMtpHead {
             .as_any_mut()
             .downcast_mut::<Glm5NextMtpProposerState>()
             .ok_or_else(|| anyhow::anyhow!("not a GLM MTP proposer state"))?;
-        // 2026-09-25: A drafter ahead of the target's `position` is rewound to it, so its
-        // indexer does not select over rows past the target's context.
-        if st.seq_len > position {
-            st.dsa.rewind_to(position)?;
-            st.seq_len = position;
-        }
-        if metrale_model_layers::speculative::mtp_refeed_debug() {
-            let fp = metrale_model_layers::speculative::hidden_fingerprint(
-                ctx.gpu,
-                target_hidden,
-                self.hidden,
-            );
-            tracing::info!(
-                "GLM_MTP_DBG propose position={position} drafter_rows={} tok={last_token} \
-                 fp_target={fp:016x}",
-                st.seq_len,
-            );
+        if !self.begin_propose(st, last_token, target_hidden, position, num_drafts, ctx)? {
+            return Ok(Vec::new());
         }
         let mut drafts = Vec::with_capacity(num_drafts);
         let mut token = last_token;
         let mut hidden = target_hidden;
+        // 2026-10-11: `--draft-confidence-stop`: the chain ends with the first draft whose top-1
+        // probability is below tau (`speculative::draft_stop`); an unmeasured draft (NaN) never
+        // ends it.
+        // 2026-10-11: The published rule, either form (`draft_stop::StopRule`).
+        let mut stop =
+            metrale_model_layers::speculative::draft_stop::draft_stop_rule().map(|r| r.chain());
         for i in 0..num_drafts {
-            let d = self.forward_one(token, hidden, position + i, st, ctx, stream)?;
+            let (d, lp) = self.forward_one(token, hidden, i == 0, position + i, st, ctx, stream)?;
             drafts.push(d);
+            if let Some(stop) = stop.as_mut()
+                && !lp.is_nan()
+                && !stop.continues(lp)
+            {
+                break;
+            }
             token = d;
             // 2026-09-25: Draft 1 consumes the target's verified hidden; every later draft
             // consumes the drafter's own block output.
@@ -176,6 +238,75 @@ impl DraftProposer for Glm5NextMtpHead {
         }
         st.last_drafted = drafts.len();
         Ok(drafts)
+    }
+
+    /// 2026-10-11: One draft left in `st.arg` (`DraftProposer::propose_device`), when the id
+    /// ends there on every rank (`draft_stays_on_device`): the same launches as `propose` with one
+    /// draft, without the readback.
+    fn propose_device(
+        &self,
+        last_token: u32,
+        target_hidden: DevicePtr,
+        position: usize,
+        state: &mut dyn ProposerState,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<bool> {
+        if !self.draft_stays_on_device(ctx) {
+            return Ok(false);
+        }
+        let st = state
+            .as_any_mut()
+            .downcast_mut::<Glm5NextMtpProposerState>()
+            .ok_or_else(|| anyhow::anyhow!("not a GLM MTP proposer state"))?;
+        if !self.begin_propose(st, last_token, target_hidden, position, 1, ctx)? {
+            return Ok(false);
+        }
+        self.draft_on_device(last_token, target_hidden, true, position, st, ctx, stream)?;
+        st.last_drafted = 1;
+        Ok(true)
+    }
+
+    /// 2026-10-11: `st.arg`, where `propose_device` leaves the draft.
+    fn device_draft(&self, state: &mut dyn ProposerState) -> Option<DevicePtr> {
+        state
+            .as_any_mut()
+            .downcast_mut::<Glm5NextMtpProposerState>()
+            .map(|st| st.arg)
+    }
+
+    /// 2026-10-11: The batched propose (`batch.rs`); `Ok(None)` without it. Each draft's top-1
+    /// log-probability goes to `out_conf` when asked for (`draft_lp`).
+    #[allow(clippy::too_many_arguments)]
+    fn propose_batch(
+        &self,
+        last_tokens: &[u32],
+        target_hiddens: &[DevicePtr],
+        positions: &[usize],
+        num_drafts: usize,
+        states: &mut [&mut dyn ProposerState],
+        ctx: &ForwardContext,
+        stream: u64,
+        out_conf: Option<&mut Vec<Vec<f32>>>,
+    ) -> Result<Option<Vec<Vec<u32>>>> {
+        self.propose_rows(
+            last_tokens,
+            target_hiddens,
+            positions,
+            num_drafts,
+            states,
+            ctx,
+            stream,
+            out_conf,
+        )
+    }
+
+    fn propose_batch_max(
+        &self,
+        _buffers: &metrale_gpu_runtime::buffers::BufferArena,
+        _config: &metrale_config::ModelConfig,
+    ) -> usize {
+        self.batch_max()
     }
 
     fn after_verify(
@@ -203,5 +334,67 @@ impl DraftProposer for Glm5NextMtpHead {
             st.dsa.rewind_to(st.seq_len)?;
         }
         Ok(())
+    }
+}
+
+impl Glm5NextMtpHead {
+    /// 2026-10-11: The start of every propose: `false` (no drafts) without a KV region
+    /// (`alloc_state`); a drafter ahead of the target's `position` is rewound to it, so its
+    /// indexer does not select over rows past the target's context. 2026-10-13: One whose
+    /// `num_drafts` rows would pass its row space restarts at row 0 (`propose_start`).
+    #[allow(clippy::too_many_arguments)]
+    fn begin_propose(
+        &self,
+        st: &mut Glm5NextMtpProposerState,
+        last_token: u32,
+        target_hidden: DevicePtr,
+        position: usize,
+        num_drafts: usize,
+        ctx: &ForwardContext,
+    ) -> Result<bool> {
+        if st.kv_region.is_none() {
+            return Ok(false);
+        }
+        let start =
+            super::context_cap::propose_start(st.seq_len, position, num_drafts, self.max_seq_len);
+        if start < st.seq_len {
+            st.dsa.rewind_to(start)?;
+            st.seq_len = start;
+        }
+        if metrale_model_layers::speculative::mtp_refeed_debug() {
+            let fp = metrale_model_layers::speculative::hidden_fingerprint(
+                ctx.gpu,
+                target_hidden,
+                self.hidden,
+            );
+            tracing::info!(
+                "GLM_MTP_DBG propose position={position} drafter_rows={} tok={last_token} \
+                 fp_target={fp:016x}",
+                st.seq_len,
+            );
+        }
+        Ok(true)
+    }
+}
+
+/// 2026-10-12: Whether the drafter prefill waits for the first propose, from
+/// `METRALE_GLM_MTP_PREFILL_FULL` and `METRALE_GLM_MTP_EAGER_PREFILL`: the full-block arm always
+/// waits; otherwise only an explicit `0` defers it.
+fn prefill_waits(full: Option<&str>, eager: Option<&str>) -> bool {
+    full == Some("1") || eager == Some("0")
+}
+
+#[cfg(test)]
+mod prefill_waits_tests {
+    use super::prefill_waits;
+
+    /// 2026-10-12: Eager by default; `0` defers; the full-block arm defers whatever the lever.
+    #[test]
+    fn the_eager_prefill_is_default_on_and_the_full_arm_always_defers() {
+        assert!(!prefill_waits(None, None));
+        assert!(!prefill_waits(None, Some("1")));
+        assert!(prefill_waits(None, Some("0")));
+        assert!(prefill_waits(Some("1"), None));
+        assert!(prefill_waits(Some("1"), Some("1")));
     }
 }

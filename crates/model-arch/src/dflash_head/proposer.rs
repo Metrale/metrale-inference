@@ -15,6 +15,25 @@ impl DraftProposer for BlockDiffusionDraftHead {
         Some(self.gamma)
     }
 
+    /// 2026-10-10: The tensor-parallel drafter's forward reduces across ranks (`tp.rs`).
+    fn needs_comm(&self) -> bool {
+        self.tp.is_some()
+    }
+
+    /// 2026-10-10: Under tensor parallelism a propose is one collective step on every rank.
+    fn collective_propose(&self) -> bool {
+        self.tp.is_some()
+    }
+
+    fn propose_follower(
+        &self,
+        state: Option<&mut dyn ProposerState>,
+        ctx: &metrale_model_layers::layer::ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        self.propose_tp_follower(state, ctx, stream)
+    }
+
     fn alloc_state(&self, gpu: &dyn GpuBackend) -> Result<Box<dyn ProposerState>> {
         self.alloc_state_windowed(gpu, usize::MAX)
     }
@@ -63,7 +82,8 @@ impl DraftProposer for BlockDiffusionDraftHead {
         _buffers: &metrale_gpu_runtime::buffers::BufferArena,
         _config: &metrale_config::ModelConfig,
     ) -> usize {
-        if !self.dflash2_active() {
+        // 2026-10-10: The tensor-parallel drafter proposes one sequence per collective step.
+        if !self.dflash2_active() || self.tp.is_some() {
             return 1;
         }
         let want = self.levers.batch_propose_width;
@@ -98,6 +118,7 @@ impl DraftProposer for BlockDiffusionDraftHead {
             || positions.len() != n
             || states.len() != n
             || !self.dflash2_active()
+            || self.tp.is_some()
         {
             return Ok(None);
         }
@@ -174,7 +195,7 @@ impl DraftProposer for BlockDiffusionDraftHead {
 
         // 2026-09-25: Split the bands. As in `propose_drafts`, a drafter with a
         // mask token drops each band's row 0 (the anchor).
-        let cap = self.levers.draft_cap.unwrap_or(g);
+        let cap = self.drafts_to_return(num_drafts);
         let mut out: Vec<Vec<u32>> = Vec::with_capacity(n);
         for (i, st) in states.iter_mut().enumerate() {
             let band = &all[i * g..(i + 1) * g];
@@ -287,9 +308,16 @@ impl BlockDiffusionDraftHead {
             }
         }
         let total = window * ctx_slot_bytes;
-        let ctx_hidden_acc = gpu.alloc(total)?;
-        // 2026-09-25: Zeroed, so no earlier allocation's data is visible.
-        gpu.memset(ctx_hidden_acc, 0, total)?;
+        // 2026-10-10: A tensor-parallel drafter's other ranks hold no context accumulator:
+        // rank 0 sends them the `fc` rows of its context (`tp_propose.rs`).
+        let ctx_hidden_acc = if self.tp.is_some_and(|t| t.rank != 0) {
+            DevicePtr(0)
+        } else {
+            let p = gpu.alloc(total)?;
+            // 2026-09-25: Zeroed, so no earlier allocation's data is visible.
+            gpu.memset(p, 0, total)?;
+            p
+        };
         Ok(Box::new(DflashProposerState {
             block_table: Vec::with_capacity(64),
             seq_len: 0,

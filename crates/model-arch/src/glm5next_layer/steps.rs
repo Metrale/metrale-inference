@@ -7,11 +7,73 @@
 //! Invariants: none beyond the types.
 
 use super::*;
+use crate::glm5next_layer_dump::tap as dump;
 
 mod drafter;
 mod forward;
+mod forward_pieces;
+mod forward_sp;
+mod forward_sp_pipe;
+mod mhc_slice;
+mod mix;
+mod multi_seq;
+mod prefill_capture;
+pub use multi_seq::{GroupSpan, group_spans};
+mod prefill_spans;
+pub use prefill_spans::{SpanPiece, prefill_span_groups};
+mod reduce_post;
+mod replay;
+mod verify_multi;
 
 impl Glm5NextLayer {
+    /// 2026-10-13: This layer as the layer dump sees it (`glm5next_layer_dump`); `topk` when the
+    /// launch's rows own the DSA selection output (not a multi-piece mixer call).
+    pub(in crate::glm5next_layer) fn dump_layer(
+        &self,
+        mhc: &Glm5NextMhc,
+        topk: bool,
+    ) -> dump::Layer {
+        let topk = match (&self.mixer, topk) {
+            (Glm5NextMixer::Dsa(l), true) => {
+                Some((l.workspace.selection_tokens(), l.cfg.out_width()))
+            }
+            _ => None,
+        };
+        dump::Layer {
+            idx: self.layer_idx,
+            hidden: self.hidden,
+            hc: mhc.hc_mult,
+            topk,
+        }
+    }
+
+    /// 2026-10-13: The summed mixer output after the attention site's post-mix, when the layer
+    /// all-reduces it: the reduce sums in place, and the fused post-mix writes the sum back.
+    pub(in crate::glm5next_layer) fn dump_mixer_red(
+        &self,
+        tap: Option<&dump::Tap<'_>>,
+        attn_out: DevicePtr,
+    ) -> Result<()> {
+        if !self.mixer_all_reduce {
+            return Ok(());
+        }
+        dump::put(tap, dump::Point::MixerRed, attn_out)
+    }
+
+    /// 2026-10-13: After the FFN site's post-mix: the summed MLP output (when the MLP reduces)
+    /// and the layer's output streams.
+    pub(in crate::glm5next_layer) fn dump_layer_out(
+        &self,
+        tap: Option<&dump::Tap<'_>>,
+        ffn_out: DevicePtr,
+        streams: DevicePtr,
+    ) -> Result<()> {
+        if self.mlp_cfg.needs_all_reduce() {
+            dump::put(tap, dump::Point::MlpRed, ffn_out)?;
+        }
+        dump::put(tap, dump::Point::StreamsOut, streams)
+    }
+
     /// 2026-09-25: `rms_norm_vanilla` over `rows` contiguous `[hidden]` rows in one launch. The
     /// kernel runs one block per row (`token = blockIdx.x`) and the blocks share nothing, so the
     /// result equals `rows` single-row launches.
@@ -33,6 +95,74 @@ impl Glm5NextLayer {
             .arg_u32(self.hidden as u32)
             .arg_f32(self.rms_eps)
             .launch(stream)?;
+        Ok(())
+    }
+
+    /// 2026-10-09: One mHC site's pre-mix of `k` rows into `y` (with `post` and `comb`), then
+    /// the RMS norm of `y` with `norm_w` into `normed`: `glm_hc_pre` and `norm`, or with
+    /// `mhc_fused()` the single `glm_hc_pre_norm` launch that writes the same bytes. Ends the
+    /// caller's `profile::MHC` span `t_mhc`; the unfused norm keeps its `profile::NORM` span.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::glm5next_layer) fn mhc_pre_norm_one(
+        &self,
+        gpu: &dyn GpuBackend,
+        mhc: &Glm5NextMhc,
+        site: &Glm5NextMhcSiteWeights,
+        norm_w: DevicePtr,
+        streams: DevicePtr,
+        y: DevicePtr,
+        post: DevicePtr,
+        comb: DevicePtr,
+        normed: DevicePtr,
+        k: usize,
+        t_mhc: Option<std::time::Instant>,
+        stream: u64,
+    ) -> Result<()> {
+        let (kt, ht, hct) = (k as u32, self.hidden as u32, mhc.hc_mult as u32);
+        let iters = mhc.sinkhorn_iters as u32;
+        if mhc_fused() {
+            crate::glm5next_mhc_fused::glm_hc_pre_norm(
+                gpu,
+                &mhc.kernels,
+                streams,
+                site,
+                norm_w,
+                y,
+                normed,
+                post,
+                comb,
+                kt,
+                ht,
+                hct,
+                iters,
+                self.rms_eps,
+                mhc.hc_eps,
+                self.rms_eps,
+                stream,
+            )?;
+            profile::end(profile::MHC, t_mhc, gpu, stream);
+            return Ok(());
+        }
+        glm_hc_pre(
+            gpu,
+            &mhc.kernels,
+            streams,
+            site,
+            y,
+            post,
+            comb,
+            kt,
+            ht,
+            hct,
+            iters,
+            self.rms_eps,
+            mhc.hc_eps,
+            stream,
+        )?;
+        profile::end(profile::MHC, t_mhc, gpu, stream);
+        let t_norm = profile::start();
+        self.norm(gpu, y, norm_w, normed, k, stream)?;
+        profile::end(profile::NORM, t_norm, gpu, stream);
         Ok(())
     }
 
@@ -114,67 +244,126 @@ impl Glm5NextLayer {
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<()> {
-        if let Some(comm) = ctx.comm {
-            let bytes = rows * self.hidden * 2;
-            if ctx.graph_capture {
-                comm.all_reduce(p.0, bytes)?;
-            } else {
-                comm.all_reduce_async(p.0, bytes, stream)?;
-            }
+        // 2026-10-11: Sliced under `METRALE_GLM_BATCH_INVARIANT` (`glm5next_batch_inv`).
+        let Some(comm) = ctx.comm else { return Ok(()) };
+        let (h, cap) = (self.hidden * 2, ctx.graph_capture);
+        crate::glm5next_batch_inv::all_reduce_rows(comm, p, rows, h, cap, stream)
+    }
+
+    /// 2026-10-09: [`Self::reduce_partial`] once per piece of `row_pieces`, so each piece's
+    /// collective has the size its own pass gives it (NCCL may order an element's sum by the
+    /// message size); `[rows]` is one collective, as before.
+    fn reduce_pieces(
+        &self,
+        p: DevicePtr,
+        row_pieces: &[usize],
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        let mut r0 = 0usize;
+        for &n in row_pieces {
+            self.reduce_partial(p.offset(r0 * self.hidden * 2), n, ctx, stream)?;
+            r0 += n;
         }
         Ok(())
     }
 
+    /// 2026-10-10: Whether this mHC site sums its all-reduce inside the post-mix
+    /// (`METRALE_GLM_AR_FUSED_POST=1`). Errors when the lever is on and the target lacks
+    /// `glm5next_hc_post_rank_sum`, rather than silently running the unfused pair.
     /// 2026-09-25: The MLP over `rows` rows of `normed` into `out`, then one all-reduce of all
-    /// rows when `Glm5NextMlpConfig::needs_all_reduce`.
+    /// rows when `Glm5NextMlpConfig::needs_all_reduce`. 2026-10-09: `row_pieces` splits the rows
+    /// into consecutive pieces (`[rows]`: one) whose launches must not depend on each other: a
+    /// dense site runs once per piece, a routed site launches its router and shared expert once
+    /// per piece (`forward_moe_pieces`) and shares the rest, and the all-reduce runs per piece
+    /// (`reduce_pieces`).
+    /// 2026-10-10: `fused` hands the all-reduce's sum to the caller's post-mix
+    /// ([`Self::reduce_or_exchange`]); the returned partials are then `Some`.
+    /// 2026-10-13: `tap` dumps `out` between the MLP and the reduce (`glm5next_layer_dump`).
+    #[allow(clippy::too_many_arguments)]
     fn mlp_forward(
         &self,
         normed: DevicePtr,
         out: DevicePtr,
         rows: usize,
+        row_pieces: &[usize],
+        fused: bool,
         ctx: &ForwardContext,
         stream: u64,
-    ) -> Result<()> {
-        let t_dense = matches!(self.mlp, Glm5NextMlpSite::Dense(_))
-            .then(profile::start)
-            .flatten();
-        match &self.mlp {
-            Glm5NextMlpSite::Dense(w) => forward_dense(
-                ctx.gpu,
-                &self.mlp_kernels,
-                &self.mlp_cfg,
-                w,
-                self.mlp_cfg.local_dense_intermediate,
-                normed,
-                out,
-                rows,
-                &self.mlp_ws,
-                stream,
-            )?,
-            Glm5NextMlpSite::Moe(w) => forward_moe(
-                ctx.gpu,
-                &self.mlp_kernels,
-                &self.mlp_cfg,
-                w,
-                normed,
-                out,
-                rows,
-                &self.mlp_ws,
-                stream,
-            )?,
-        }
-        profile::end(profile::MLP_DENSE, t_dense, ctx.gpu, stream);
+        tap: Option<&dump::Tap<'_>>,
+    ) -> Result<Option<metrale_comm::PeerPartials>> {
+        self.mlp_compute(normed, out, rows, row_pieces, ctx, stream)?;
+        dump::put(tap, dump::Point::MlpOut, out)?;
         // 2026-09-25: One all-reduce covers both partial sums, the EP-split routed experts and
         // the TP-split shared expert: `forward_moe` adds them together before returning.
+        let mut partials = None;
         if self.mlp_cfg.needs_all_reduce() {
+            // 2026-10-10: Forked before the reduce is enqueued, so the warm runs beside it.
+            if let Some(l2) = &self.l2_warm {
+                l2.fork(ctx.gpu, self.layer_idx, rows, stream)?;
+            }
             self.reduce_probe(profile::REDUCE_MLP_BAR, "mlp", ctx, stream);
             let t = profile::start_hot();
-            self.reduce_partial(out, rows, ctx, stream)?;
+            partials = self.reduce_or_exchange(out, row_pieces, fused, ctx, stream)?;
             profile::end_nosync(profile::REDUCE_MLP_ENQ, t);
             // 2026-09-25: This span times only the `synchronize` in `profile::end`.
             let t = profile::start_hot();
             profile::end(profile::REDUCE_MLP, t, ctx.gpu, stream);
         }
+        Ok(partials)
+    }
+
+    /// 2026-10-12: The MLP launches of [`Self::mlp_forward`] without its all-reduce: `out`
+    /// holds this rank's partial (or the whole output when no reduce is needed). SP-mHC
+    /// (`forward_rows_sp`) reduce-scatters it instead.
+    pub(in crate::glm5next_layer) fn mlp_compute(
+        &self,
+        normed: DevicePtr,
+        out: DevicePtr,
+        rows: usize,
+        row_pieces: &[usize],
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        crate::glm5next_mlp::forward::check_pieces(rows, row_pieces)?;
+        let t_dense = matches!(self.mlp, Glm5NextMlpSite::Dense(_))
+            .then(profile::start)
+            .flatten();
+        match &self.mlp {
+            Glm5NextMlpSite::Dense(w) => {
+                let mut r0 = 0usize;
+                for &n in row_pieces {
+                    forward_dense_site(
+                        ctx.gpu,
+                        &self.mlp_kernels,
+                        &self.mlp_cfg,
+                        w,
+                        self.mlp_cfg.local_dense_intermediate,
+                        normed.offset(r0 * self.hidden * 2),
+                        out.offset(r0 * self.hidden * 2),
+                        n,
+                        &self.mlp_ws,
+                        stream,
+                    )?;
+                    r0 += n;
+                }
+            }
+            Glm5NextMlpSite::Moe(w) => forward_moe_pieces(
+                ctx.gpu,
+                &self.mlp_kernels,
+                &self.mlp_cfg,
+                w,
+                normed,
+                out,
+                rows,
+                row_pieces,
+                &self.mlp_ws,
+                // 2026-10-09: A capture cannot read the expert histogram back to the host.
+                ctx.graph_capture,
+                stream,
+            )?,
+        }
+        profile::end(profile::MLP_DENSE, t_dense, ctx.gpu, stream);
         Ok(())
     }
 
@@ -244,7 +433,8 @@ impl Glm5NextLayer {
         self.add_inplace(gpu, hidden, attn_out, h, stream)?;
 
         self.norm(gpu, hidden, self.post_attn_norm, normed, 1, stream)?;
-        self.mlp_forward(normed, ffn_out, 1, ctx, stream)?;
+        // 2026-10-10: No post-mix here to take the sum, so the all-reduce stays whole.
+        self.mlp_forward(normed, ffn_out, 1, &[1], false, ctx, stream, None)?;
         self.add_inplace(gpu, hidden, ffn_out, h, stream)
     }
 

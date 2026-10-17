@@ -168,6 +168,7 @@ impl GpuBackend for MetraleCudaBackend {
         // `copy_d2h_on_stream`. The caller must synchronise `stream` before
         // reading `dst`.
         d2h_trace_tick();
+        crate::host_sync_counts::d2h();
         let status = unsafe {
             cuMemcpyDtoHAsync_v2(dst.as_mut_ptr() as *mut c_void, src.0, dst.len(), stream)
         };
@@ -238,7 +239,9 @@ impl GpuBackend for MetraleCudaBackend {
     }
 
     fn synchronize(&self, stream: u64) -> Result<()> {
+        self.refuse_host_sync_in_capture(stream, "synchronize")?;
         metrale_telemetry::global().stream_sync();
+        crate::host_sync_counts::sync();
         let status = unsafe { cuStreamSynchronize(stream) };
         if status != 0 {
             bail!("cuStreamSynchronize failed: {}", cuda_error_text(status));
@@ -293,6 +296,7 @@ impl GpuBackend for MetraleCudaBackend {
     }
 
     fn copy_h2d_async(&self, src: &[u8], dst: DevicePtr, stream: u64) -> Result<()> {
+        crate::host_sync_counts::h2d();
         h2d_enqueue(src, dst, stream)?;
         // 2026-09-25: The trait lets the caller drop `src` on return. For a
         // page-locked source (`pinned_hosts::is_pinned`) the copy reads `src`
@@ -313,6 +317,7 @@ impl GpuBackend for MetraleCudaBackend {
     fn copy_h2d_async_retained(&self, src: &[u8], dst: DevicePtr, stream: u64) -> Result<()> {
         // 2026-09-25: The caller keeps `src` alive until its next sync on
         // `stream`, so no wait is added.
+        crate::host_sync_counts::h2d();
         h2d_enqueue(src, dst, stream)
     }
 
@@ -398,6 +403,9 @@ impl GpuBackend for MetraleCudaBackend {
     }
     fn create_stream(&self) -> Result<u64> {
         self.create_stream_cu()
+    }
+    fn create_stream_greatest_priority(&self) -> Result<u64> {
+        self.create_stream_greatest_priority_cu()
     }
     fn bind_to_thread(&self) -> Result<()> {
         self.bind_to_thread_cu()

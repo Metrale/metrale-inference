@@ -211,10 +211,17 @@ pub fn build_model(
     // proposer is built after the model (Steps 6b and 6c). The GLM-5.3 module
     // (`layers.{num_hidden_layers}`) is loaded on every EP rank; the
     // DeepSeek-V4 module only on rank 0.
-    let glm_mtp_module =
-        mtp_modules::load_glm_mtp_module(&store, &config, gpu.as_ref(), use_speculative);
+    // 2026-10-08: Not with DFlash: its drafter replaces the MTP proposer
+    // (`install_dflash_drafter`), so a module built here would stay resident unused.
+    let glm_mtp_module = mtp_modules::load_glm_mtp_module(
+        &store,
+        &config,
+        gpu.as_ref(),
+        use_speculative && dflash_args.is_none(),
+    );
     let glm_mtp_embed = embed;
     let glm_mtp_lm_head = lm_head;
+    let glm_mtp_target_final_norm = final_norm;
 
     let v4_mtp_module = mtp_modules::load_v4_mtp_module(
         &store,
@@ -287,6 +294,9 @@ pub fn build_model(
     // own copies of (the default is a no-op). This runs after every `load_*`
     // above and before the KV budget is computed, so the freed memory counts.
     loader.prune_after_load(&mut store, &config, gpu.as_ref())?;
+    if dflash_args.is_some() {
+        weights_prep::release_unused_glm_mtp_block(&mut store, gpu.as_ref(), &config)?;
+    }
     mem.mark("prune_after_load");
     tracing::info!(
         "WeightStore after prune: {} tensors, {:.3} GiB still resident",
@@ -296,14 +306,41 @@ pub fn build_model(
 
     // 2026-09-25: Step 4: the buffer arena. 2026-10-01: Sized for the slot ceiling (`auto` resolves
     // after it, at KV sizing); the preflight sized the arena reserve for the same ceiling.
-    let buffers = BufferArena::new(
-        &config,
-        max_batch_tokens,
-        max_seq_len,
-        kv_block_size,
-        slots.request.ceiling(),
-        gpu.as_ref(),
-    )?;
+    // 2026-10-12: `METRALE_GLM_ARENA_LEAN=1`: a `glm5_next` stack gets the arena with the other
+    // architectures' regions at 256 B (`BufferSizes::lean_hc_stack`); on another model type the
+    // lever is refused rather than ignored.
+    let arena_lean = metrale_model_arch::glm5next_layer::arena_lean()?;
+    anyhow::ensure!(
+        !arena_lean || config.model_type == "glm5_next",
+        "METRALE_GLM_ARENA_LEAN=1 is for glm5_next models, not {:?}",
+        config.model_type
+    );
+    let buffers = if arena_lean {
+        let sizes = metrale_gpu_runtime::buffers::BufferSizes::from_config(
+            &config,
+            max_batch_tokens,
+            max_seq_len,
+            kv_block_size,
+            slots.request.ceiling(),
+        )
+        .lean_hc_stack();
+        BufferArena::from_sizes(
+            &config,
+            sizes,
+            max_batch_tokens,
+            slots.request.ceiling(),
+            gpu.as_ref(),
+        )?
+    } else {
+        BufferArena::new(
+            &config,
+            max_batch_tokens,
+            max_seq_len,
+            kv_block_size,
+            slots.request.ceiling(),
+            gpu.as_ref(),
+        )?
+    };
 
     // 2026-09-25: Step 5: size the KV cache. With MLA (`kv_lora_rank > 0`) it
     // caches one head of `kv_lora_rank + qk_rope_head_dim` dims per token, the
@@ -449,7 +486,9 @@ pub fn build_model(
         glm_mtp_module,
         glm_mtp_embed,
         glm_mtp_lm_head,
+        glm_mtp_target_final_norm,
         max_seq_len,
+        max_batch_size,
     );
 
     // 2026-09-25: Step 7: the DFlash drafter, which uses the target's

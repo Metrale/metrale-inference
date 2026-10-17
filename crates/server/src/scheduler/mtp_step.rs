@@ -41,6 +41,14 @@ pub fn step_mtp(
     } else {
         num_drafts
     };
+    // 2026-10-11: A draft left on the device is read back unless this step verifies it from
+    // there (`mtp_device_draft`).
+    super::mtp_device_draft::resolve_device_drafts(
+        model,
+        active,
+        sched.prompt_lookup.is_some(),
+        dflash_verify_raw_argmax,
+    );
     let mut bootstrap_idxs: Vec<usize> = Vec::new();
     let mut verify_idxs: Vec<usize> = Vec::new();
     for (i, a) in active.iter().enumerate() {
@@ -323,7 +331,12 @@ pub fn step_mtp(
     for (lo, hi) in mtp_dcut::chunk_ranges(&ks) {
         let chunk = &batchable_idxs[lo..hi];
         let chunk_ks = &ks[lo..hi];
-        if chunk.len() >= 2 && model.can_batch_verify(chunk_ks) {
+        // 2026-10-11: Multi-rank only under `METRALE_EP_MTP_BATCH_VERIFY` and with one k for the
+        // chunk, the batched verify wire's shape (`step_verify_k4_batched` announces it).
+        let ep_ok = !model.is_ep()
+            || (metrale_model_layers::speculative::mtp_ep_batch_verify_enabled()
+                && chunk_ks.iter().all(|&k| k == chunk_ks[0]));
+        if chunk.len() >= 2 && ep_ok && model.can_batch_verify(chunk_ks) {
             // 2026-09-25: Disjoint `&mut` refs need an ascending walk, so
             // walk a sorted copy of the chunk (each index keeps its k); the
             // dispatch order is recomputed below.

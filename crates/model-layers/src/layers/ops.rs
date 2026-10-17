@@ -63,6 +63,11 @@ mod w8a8_decode;
 mod w8a16_tc_rows;
 // 2026-10-02: Its NVFP4 W4A16 point (`w4a16_tc_rows.cu`).
 mod w4a16_tc_rows;
+// 2026-10-09: The same point over up to three weight segments with a K-split
+// (`w4a16_tc_rows_seg.cu`).
+mod w4a16_tc_rows_seg;
+// 2026-10-10: The one-row NVFP4 GEMV over up to six weight segments (`w4a16_gemv_seg.cu`).
+mod w4a16_gemv_seg;
 // 2026-09-25: Tensor-core BF16 GEMM with a 16-row M tile (`dense_gemm_m16_bf16`).
 #[path = "ops/dense_gemm_m16_bf16.rs"]
 mod dense_gemm_m16_bf16;
@@ -308,7 +313,9 @@ pub use ssm_gdn_wyn::*;
 pub use ssm_mamba::*;
 pub use ssm_preproc::*;
 pub use ssm_ssd::*;
+pub use w4a16_gemv_seg::*;
 pub use w4a16_tc_rows::*;
+pub use w4a16_tc_rows_seg::*;
 pub use w8a8_decode::*;
 pub use w8a16_gemm_m16::*;
 pub use w8a16_gemm_pipelined_m32::*;

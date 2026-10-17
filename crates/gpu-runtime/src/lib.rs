@@ -35,12 +35,15 @@ pub mod flashinfer;
 pub mod gpu;
 #[path = "gpu_args.rs"]
 mod gpu_args;
+pub mod graph_hoist;
 pub mod host_heap;
+pub mod host_sync_counts;
 pub mod kernel_args;
 #[cfg(feature = "metal")]
 pub mod metal_backend;
 pub mod op_cache;
 pub mod pinned_hosts;
+pub mod prefill_tail_mode;
 pub mod timing;
 
 /// 2026-09-25: The last multiple of `block_size` strictly below `total_tokens`, or
@@ -158,6 +161,8 @@ pub mod cuda_host;
 #[cfg(feature = "cuda")]
 pub mod kernel;
 pub mod mlx_int8;
+#[cfg(feature = "cuda")]
+mod ptx_globals;
 #[cfg(feature = "cuda")]
 pub mod registry;
 #[cfg(feature = "cuda")]

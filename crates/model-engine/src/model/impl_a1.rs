@@ -25,9 +25,10 @@ use super::block_mgmt::{
     apply_evicted_blocks, ensure_blocks_through_decode, ensure_blocks_through_prefill,
     extract_layer_refs, reuse_prefix_match_disk_ids,
 };
+use super::block_tables::BlockTables;
 use super::ssm_pool::SsmStatePool;
 use super::ssm_snapshot::SsmSnapshotPool;
-use super::types::{PinnedMetaStaging, TransformerModel};
+use super::types::TransformerModel;
 use crate::traits::{ChunkedPrefillPageMetadata, Model, SequenceState};
 use metrale_model_layers::layer::{
     AttnMetadataDev, ForwardContext, GdnPrefillBuffers, LayerState, SsmLayerState, TransformerLayer,
@@ -125,7 +126,7 @@ impl TransformerModel {
         levers.max_decode_seqs = (max_batch_size as u32).max(1);
 
         tracing::info!(
-            "TransformerModel: {} layers, vocab={}, hidden={}{}{}",
+            "TransformerModel: {} layers, vocab={}, hidden={}{}{}; new-sequence levers: {}",
             layers.len(),
             config.vocab_size,
             config.hidden_size,
@@ -135,6 +136,7 @@ impl TransformerModel {
             } else {
                 ""
             },
+            levers.new_sequence_readback(),
         );
 
         let (dflash_kgamma, draft_lm_head_nvfp4, has_mtp, mtp_quant_fwd, num_intermediates) =
@@ -246,8 +248,9 @@ impl TransformerModel {
                 gpu.as_ref(),
             )?;
 
-        // 2026-09-25: One u32 for the EP command broadcast.
-        let ep_cmd_buf = gpu.alloc(4)?;
+        // 2026-09-25: The EP command broadcast; 2026-10-10: a whole v3 block (`ep_wire.rs`).
+        let ep_cmd_buf = gpu.alloc(metrale_model_layers::ep_wire::CMD_BLOCK_BYTES)?;
+        let device_argmax = super::device_argmax::DeviceArgmax::new(gpu.as_ref())?;
 
         // 2026-09-25: Fixed-address buffer (CUDA-graph safe) for the batched
         // decode MoE per-row adapter map, 4 bytes per batch row, uploaded each
@@ -275,9 +278,11 @@ impl TransformerModel {
         // (`moe_output`, `norm_output`, and `logits` for the vocab-parallel
         // lm_head) with the comm backend and give it the `bf16_add_inplace`
         // kernel for its send/recv path. Each step is best-effort: a failure is
-        // logged and construction continues.
+        // logged and construction continues. 2026-10-08: also at world size 3 and
+        // above, where it hands over `bf16_add_rank_sum` for the one-shot all-reduce
+        // (which refuses to run without it).
         if let Some(ref comm) = comm
-            && comm.world_size() == 2
+            && comm.world_size() >= 2
         {
             comm_setup::register_reduce_buffers(comm, &buffers, gpu.as_ref());
         }
@@ -292,18 +297,10 @@ impl TransformerModel {
                 feed_resolve_kernel,
                 gpu.as_ref(),
             )?;
-        let pinned_bytes = buffers.sizes().scratch.max(64 * 1024);
-        let pinned_ptr = gpu.alloc_host_pinned(pinned_bytes)?;
-        tracing::info!("Pinned metadata staging: {} KB", pinned_bytes / 1024);
         let max_batch_tokens = buffers.max_batch_tokens();
-        let pinned_staging = std::cell::UnsafeCell::new(PinnedMetaStaging {
-            ptr: pinned_ptr,
-            bytes: pinned_bytes,
-            positions: Vec::with_capacity(max_batch_tokens),
-            positions_h: Vec::with_capacity(max_batch_tokens),
-            positions_w: Vec::with_capacity(max_batch_tokens),
-            slots: Vec::with_capacity(max_batch_tokens),
-        });
+        let pinned_staging = kernels::alloc_pinned_staging(&buffers, gpu.as_ref())?;
+        // 2026-10-13: The batched decode/verify block tables, at a fixed address (`block_tables.rs`).
+        let block_tables = BlockTables::alloc(gpu.as_ref(), max_blocks_per_seq, &buffers)?;
 
         let AuxKernels {
             ssm_norm_k,
@@ -429,6 +426,7 @@ impl TransformerModel {
             },
             mtp_prefill_capture_len: std::sync::atomic::AtomicUsize::new(0),
             mtp_prefill_capture_gen: std::sync::atomic::AtomicU64::new(0),
+            mtp_capture_record: parking_lot::Mutex::new(Default::default()),
             mtp_store_gen_seq: std::sync::atomic::AtomicU64::new(0),
             mtp_carry: parking_lot::Mutex::new(None),
             mtp_store_range: parking_lot::Mutex::new(
@@ -453,6 +451,7 @@ impl TransformerModel {
             // uploads the tables.
             verify_wy_cache: Mutex::new(None),
             verify_kgamma_graph: Mutex::new(std::collections::HashMap::new()),
+            replay_commit_graphs: Mutex::new(std::collections::HashMap::new()),
             fused_graph: Mutex::new(std::collections::HashMap::new()),
             prefix_cache,
             secondary_stream,
@@ -460,9 +459,11 @@ impl TransformerModel {
             snapshot_event,
             comm,
             ep_cmd_buf,
-            ep_protocol_v2: matches!(std::env::var("METRALE_EP_PROTOCOL").as_deref(), Ok("v2")),
+            ep_protocol_v2: metrale_model_layers::ep_wire::EpWire::get().has_seq_preamble(),
+            device_argmax,
             self_speculative,
             last_mtp_hidden_idx: std::sync::atomic::AtomicUsize::new(0),
+            mtp_hidden_live: std::sync::atomic::AtomicBool::new(false),
             vision_encoder,
             vision_embed_patches: Mutex::new(0),
             vision_image_grids: Mutex::new(Vec::new()),
@@ -478,6 +479,7 @@ impl TransformerModel {
             ssm_h_f16_scratch: std::sync::OnceLock::new(),
             ssm_norm_ptrs_buf: ssm_norm_ptrs,
             moe_row_adapter_buf,
+            block_tables,
             gdn_buf_qkv: gdn_qkv,
             gdn_buf_gate_beta: gdn_gate_beta,
             gdn_buf_out: gdn_out,

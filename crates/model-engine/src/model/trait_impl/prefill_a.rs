@@ -9,6 +9,7 @@
 
 #![allow(unused_imports, dead_code, clippy::too_many_arguments)]
 
+use super::super::lm_head_vocab_tp::HeadRanks;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -476,7 +477,7 @@ impl TransformerModel {
         self.final_norm_apply(last_hidden, normed, 1, h as u32, eps, stream)?;
 
         // 2026-09-25: 6. LM head on the last token.
-        self.lm_head(normed, stream)?;
+        self.lm_head(normed, HeadRanks::Every, stream)?;
 
         // 2026-09-25: 7. Update the sequence state.
         seq.tokens.extend_from_slice(tokens);

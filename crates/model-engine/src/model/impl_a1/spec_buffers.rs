@@ -89,16 +89,18 @@ pub(super) fn alloc_verify_buffers(
     } else {
         DevicePtr::NULL
     };
-    let verify_catchup_stash = if proposer.is_some() && levers.mtp_kv_exact {
-        gpu.alloc(
-            metrale_model_layers::layer::VERIFY_WY_TABLE_SEQS
-                * metrale_model_layers::layer::MTP_CATCHUP_MAX
-                * config.hidden_size
-                * 2,
-        )?
-    } else {
-        DevicePtr::NULL
-    };
+    // 2026-10-11: Also for `mtp_accepted_rows`, whose batched-verify half is the same catch-up.
+    let verify_catchup_stash =
+        if proposer.is_some() && (levers.mtp_kv_exact || levers.mtp_accepted_rows) {
+            gpu.alloc(
+                metrale_model_layers::layer::VERIFY_WY_TABLE_SEQS
+                    * metrale_model_layers::layer::MTP_CATCHUP_MAX
+                    * config.hidden_size
+                    * 2,
+            )?
+        } else {
+            DevicePtr::NULL
+        };
     // 2026-09-25: Batched-verify WY pointer tables at a fixed address, so
     // captured CUDA graphs stay valid: one `VERIFY_WY_LAYER_STRIDE_BYTES`
     // slice per SSM layer. NULL without an MTP proposer or SSM layers.

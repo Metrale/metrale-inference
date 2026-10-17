@@ -6,7 +6,8 @@
 //! `-inf` when the previous output token is set in `ctx.mid_word_mask` (its
 //! text ends in an alphanumeric character), so thinking does not close in the
 //! middle of a word. With no mask, no previous token or no `</think>` id,
-//! nothing is masked.
+//! nothing is masked. 2026-10-14: Nothing is masked either when the model's
+//! `thinking_steering` is off (vLLM does not touch `</think>`).
 //!
 //! Owner: scheduler.
 //! Invariants: none beyond the types.
@@ -24,6 +25,7 @@ impl LogitsProcessor for MidWordThinkEndMask {
         ctx: &LogitsContext,
     ) -> ProcessorOutcome {
         if !ctx.sampling.disable_watchdogs
+            && ctx.watchdog.thinking_steering
             && a.inside_thinking
             && let Some(end_tok) = ctx.think_end_token
             && let Some(prev_tok) = a.output_tokens.last().copied()

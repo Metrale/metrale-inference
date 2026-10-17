@@ -17,6 +17,7 @@
 #![allow(clippy::type_complexity)]
 
 pub mod circuit_exec;
+pub mod ep_wire;
 pub mod forward;
 pub mod layer;
 pub mod layers;
@@ -129,4 +130,5 @@ mod norm_convention_tests {
 }
 
 pub mod drafter_context;
+pub mod mtp_adopt;
 pub mod mtp_carry;

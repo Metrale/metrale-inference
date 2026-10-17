@@ -18,7 +18,8 @@
 //!   * remote experts (`packed_ptrs == 0`), whose slots neither path writes;
 //!   * experts selected by one row and not another;
 //!   * the shared-input (gate/up, `a_slot_stride = 0`) and slot-major (down) input layouts;
-//!   * every tier 2..=8 at `top_k = 4` and `top_k = 8`, up to `rows * top_k = 64`, the most
+//!   * every tier 2..=16 (2026-10-09; was 2..=8) at `top_k = 4` and `top_k = 8`, up to
+//!     `rows * top_k = 128`, the most
 //!     ids `forward_moe` gives the single `glm5next_moe_row_union` block.
 //!
 //! The union table is checked separately from the arithmetic: a table that dropped ids could
@@ -35,14 +36,15 @@ use metrale_gpu_runtime::kernel_args::KernelLaunch;
 const N: usize = 2048;
 const K: usize = 1024;
 /// 2026-09-25: At `rows = 8`, `top_k = 8` the disjoint routing case needs 64 distinct ids.
-const NUM_EXPERTS: usize = 72;
+/// 2026-10-09: 136, for the 128 of `rows = 16`.
+const NUM_EXPERTS: usize = 136;
 /// 2026-09-25: 8 is GLM-5.3's routed top-k.
 const TOP_KS: [usize; 2] = [4, 8];
 /// 2026-09-25: The widest `w4a16_gemv_sw_moe_batchm_m<R>` that `w4a16_gemv.cu` compiles.
-const MAX_ROWS: usize = 8;
+const MAX_ROWS: usize = 16;
 /// 2026-09-25: `MOE_ROW_UNION_MAX_IDS` in `glm5next_mlp/forward.rs`: the most ids
 /// `forward_moe` gives the one-block `glm5next_moe_row_union`.
-const MAX_UNION_IDS: usize = 64;
+const MAX_UNION_IDS: usize = 128;
 
 /// 2026-09-25: Deterministic random bytes. A realistic NVFP4 packing is irrelevant to a
 /// bit-equality gate.

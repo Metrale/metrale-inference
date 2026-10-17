@@ -12,9 +12,9 @@
 //!   `accept_token` advances are rolled back by history delta, and the
 //!   thinking flags are restored (pick_all.rs, pick_positions.rs).
 //! - `a.output_tokens` does not grow during a pick, so every position sees
-//!   the step-start history. Only the two `min_tokens` checks
-//!   (`MinTokensEosMask`, `ForcedTokenFastPath`) and the sampling seed add
-//!   `verify_pos` to compensate.
+//!   the step-start history. Only the EOS hold checks (`EosHoldMask`,
+//!   `ForcedTokenFastPath`, `eos_masked_in_window`) and the sampling seed
+//!   add `verify_pos` to compensate.
 
 mod argmax;
 mod fast_masked;

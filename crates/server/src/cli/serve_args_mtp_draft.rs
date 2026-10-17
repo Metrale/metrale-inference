@@ -12,15 +12,17 @@ use clap::Args;
 
 #[derive(Args, Debug, Clone, PartialEq)]
 pub struct ServeMtpDraftArgs {
-    /// Per-position confidence stop for MTP draft chains (default: off). The
+    /// Confidence stop for MTP draft chains (default: off). With TAU, the
     /// drafter extends a chain past a draft only while that draft's top-1
     /// probability is at least TAU, so a chain of up to `--num-drafts` ends
-    /// with its first draft below TAU (still verified). Unconfident chains
-    /// cost fewer drafter steps and fewer verify rows; confident ones run to
-    /// full depth. It changes which drafts are verified, never the emitted
-    /// tokens. 0 < TAU < 1. Requires `--speculative`; not with `--dflash`.
-    #[arg(long, value_name = "TAU")]
-    pub draft_confidence_stop: Option<f32>,
+    /// with its first draft below TAU (still verified). With cum:TAU, it
+    /// extends the chain only while the product of the chain's top-1
+    /// probabilities so far is at least TAU. Unconfident chains cost fewer
+    /// drafter steps and fewer verify rows; confident ones run to full depth.
+    /// It changes which drafts are verified, never the emitted tokens.
+    /// 0 < TAU < 1. Requires `--speculative`; not with `--dflash`.
+    #[arg(long, value_name = "TAU|cum:TAU")]
+    pub draft_confidence_stop: Option<metrale_model_layers::speculative::draft_stop::DraftStopSpec>,
 
     /// Draft on NVFP4 copies of a BF16 MoE MTP head's experts (default: false).
     ///

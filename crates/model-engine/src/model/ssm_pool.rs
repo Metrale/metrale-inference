@@ -105,14 +105,19 @@ pub(crate) struct SsmStatePool {
     pub(super) h_inter_offsets: Vec<usize>,
     /// 2026-09-25: Verify-rollback mode (`--ssm-rollback-mode`, experimental).
     /// Under `Replay` the per-token intermediate pools are not allocated (the
-    /// per-slot checkpoints and the input rings are) and speculative verify
-    /// refuses through [`Self::require_verify_rollback_supported`].
+    /// per-slot checkpoints and the input rings are), and speculative verify
+    /// runs only when every pool-backed recurrent layer supports replay
+    /// ([`Self::require_verify_rollback_supported`]).
     pub(super) rollback_mode: metrale_model_layers::ssm_reserve::SsmRollbackMode,
     /// 2026-09-25: Replay-mode verify-window input ring, one region per SSM
-    /// layer: `(mtp_slots + 1) × (K-1)` rows of qkvz and gates
-    /// (`ssm_reserve::ssm_replay_ring_bytes` / `ssm_replay_row_bytes`). Empty in
-    /// snapshot mode. Nothing fills it: verify refuses in replay mode.
+    /// layer: `(mtp_slots + 1) × (K-1)` rows of verify inputs
+    /// (`ssm_reserve::ssm_replay_ring_bytes` / `ssm_replay_row_bytes_for`). Empty in
+    /// snapshot mode. A layer that supports replay fills its slot's region in a
+    /// verify and replays from it in the commit.
     pub(super) replay_input_rings: Vec<DevicePtr>,
+    /// 2026-10-08: Bytes of one slot's region in each `replay_input_rings` entry,
+    /// `(K-1)` rows; 0 in snapshot mode.
+    pub(super) replay_slot_bytes: usize,
     pub(super) free_slots: Mutex<Vec<usize>>,
 }
 
@@ -277,6 +282,7 @@ impl SsmStatePool {
         let mtp_slots = h_inter_counts.len().saturating_sub(1);
         let (h_inter_offsets, h_inter_total) = h_inter_layout(&h_inter_counts);
         let mut replay_input_rings = Vec::new();
+        let mut replay_slot_bytes = 0usize;
         if has_mtp {
             let ni = num_intermediates;
             let mtp_total = mtp_slots + 1;
@@ -300,10 +306,9 @@ impl SsmStatePool {
                 // snapshots, (mtp_total slots incl. dummy) × (K-1) rows of
                 // qkvz and gates per layer, sized by the function preflight
                 // also reserves through.
-                let row = metrale_model_layers::ssm_reserve::ssm_replay_row_bytes(
-                    config.ssm_qkvz_size(),
-                    config.linear_num_value_heads,
-                );
+                let row = metrale_model_layers::ssm_reserve::ssm_replay_row_bytes_for(config);
+                replay_slot_bytes =
+                    metrale_model_layers::ssm_reserve::ssm_replay_ring_bytes(1, row, ni, 1);
                 let ring =
                     metrale_model_layers::ssm_reserve::ssm_replay_ring_bytes(1, row, ni, mtp_total);
                 let (layers, allocations) = alloc_layer_pools(gpu, num_ssm_layers, ring)?;
@@ -387,6 +392,7 @@ impl SsmStatePool {
             h_inter_offsets,
             rollback_mode,
             replay_input_rings,
+            replay_slot_bytes,
             free_slots: Mutex::new(free_slots),
         })
     }

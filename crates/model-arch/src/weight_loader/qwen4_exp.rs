@@ -104,8 +104,8 @@ pub fn ple_shard_layout(snapshot: &str) -> Result<(Vec<(std::path::PathBuf, u64)
 pub struct Qwen4ExpWeightLoader;
 
 impl ModelWeightLoader for Qwen4ExpWeightLoader {
-    fn supports_tp(&self) -> bool {
-        false
+    fn tp_support(&self) -> metrale_config::TpSupport {
+        metrale_config::TpSupport::Unsupported
     }
 
     fn load_layers(

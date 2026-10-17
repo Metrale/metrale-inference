@@ -29,6 +29,46 @@ fn mixed_dense_moe_sizes_for_widest_ffn() {
 use crate::gpu::mock::MockGpuBackend;
 use std::collections::HashSet;
 
+/// 2026-10-12: The lean hc-stack sizes keep the regions the GLM stack reads at their size and
+/// shrink every other region to 256 B, so the arena loses the per-token regions of the other
+/// architectures and nothing else.
+#[test]
+fn lean_hc_stack_keeps_the_stack_regions_and_shrinks_the_rest() {
+    let mut cfg = ModelConfig::qwen3_next_80b_nvfp4();
+    cfg.hc_mult = 4;
+    let full = BufferSizes::from_config(&cfg, 4096, 4096, 16, 32);
+    let lean = full.clone().lean_hc_stack();
+    for (name, f, l) in [
+        ("hidden_states", full.hidden_states, lean.hidden_states),
+        ("residual", full.residual, lean.residual),
+        ("norm_output", full.norm_output, lean.norm_output),
+        ("moe_output", full.moe_output, lean.moe_output),
+        ("logits", full.logits, lean.logits),
+        ("token_ids", full.token_ids, lean.token_ids),
+        ("scratch", full.scratch, lean.scratch),
+        ("hc_streams", full.hc_streams, lean.hc_streams),
+        ("hc_post", full.hc_post, lean.hc_post),
+        ("hc_comb", full.hc_comb, lean.hc_comb),
+        ("lora_seq_slot", full.lora_seq_slot, lean.lora_seq_slot),
+    ] {
+        assert_eq!(f, l, "{name} is kept");
+    }
+    assert_eq!(lean.logits_rows, full.logits_rows);
+    for (name, l) in [
+        ("qkv_output", lean.qkv_output),
+        ("attn_output", lean.attn_output),
+        ("ssm_qkvz", lean.ssm_qkvz),
+        ("ssm_deinterleaved", lean.ssm_deinterleaved),
+        ("expert_gate_out", lean.expert_gate_out),
+        ("expert_up_out", lean.expert_up_out),
+        ("expert_down_out", lean.expert_down_out),
+        ("fp8_act", lean.fp8_act),
+        ("gate_logits", lean.gate_logits),
+    ] {
+        assert_eq!(l, 256, "{name} is shrunk");
+    }
+}
+
 #[test]
 fn test_buffer_sizes_qwen3() {
     let cfg = ModelConfig::qwen3_next_80b_nvfp4();
@@ -377,4 +417,85 @@ fn ssm_ba_and_gates_hold_a_full_width_propose() {
     let small = BufferSizes::from_config(&cfg, 16, 4096, 16, 128);
     assert!(small.ssm_ba >= 16 * 2 * h * 2);
     assert!(small.ssm_ba < super::DECODE_META_MAX_ROWS * 2 * h * 2);
+}
+
+/// 2026-10-09: A decode step zeroes the logits rows it reads and leaves the rest: the
+/// whole-buffer zero cost 355 us per GLM-5.3 decode step. Fails if row 0 is left stale,
+/// if the zero spills past the rows asked for, or if a full-width call stops covering
+/// the whole buffer.
+#[test]
+fn zero_all_rows_zeroes_only_the_read_logits_rows() {
+    let cfg = ModelConfig::qwen3_next_80b_nvfp4();
+    let gpu = MockGpuBackend::new();
+    let arena = BufferArena::new(&cfg, 4, 4096, 16, 32, &gpu).unwrap();
+    let s = arena.sizes();
+    assert_eq!(s.logits_rows, 4);
+    let row = s.logits / s.logits_rows;
+    assert_eq!(row, cfg.vocab_size * 2);
+    let read = |bytes: &mut Vec<u8>| gpu.copy_d2h(arena.logits(), bytes).unwrap();
+    let mut host = vec![0u8; s.logits];
+
+    gpu.memset(arena.logits(), 0xAB, s.logits).unwrap();
+    arena.zero_all_rows(&gpu, 0, 1).unwrap();
+    read(&mut host);
+    assert!(host[..row].iter().all(|&b| b == 0), "row 0 not zeroed");
+    assert!(host[row..].iter().all(|&b| b == 0xAB), "rows past 0 zeroed");
+
+    gpu.memset(arena.logits(), 0xAB, s.logits).unwrap();
+    arena.zero_all_rows(&gpu, 0, s.logits_rows).unwrap();
+    read(&mut host);
+    assert!(host.iter().all(|&b| b == 0), "full-width call left rows");
+}
+
+/// 2026-10-10: On CUDA, `zero_all_rows` captures its memsets on the first call and replays
+/// the graph after. Each of three calls, the first included, must leave every zeroed range at
+/// 0 and the logits rows past `tokens` as they were. Fails if the first call only records (the
+/// capture is not launched), if a replay zeroes nothing, or if the graph covers other bytes.
+#[cfg(feature = "cuda")]
+#[test]
+#[ignore = "requires a free CUDA device"]
+fn zero_all_rows_replays_its_captured_memsets_on_cuda() {
+    use crate::cuda_backend::MetraleCudaBackend;
+    let cfg = ModelConfig::qwen3_next_80b_nvfp4();
+    let gpu = MetraleCudaBackend::new(0, &[]).expect("CUDA device 0");
+    let arena = BufferArena::new(&cfg, 4, 4096, 16, 32, &gpu).unwrap();
+    let s = arena.sizes();
+    let row = s.logits / s.logits_rows;
+    let stream = gpu.default_stream();
+    let watched = [
+        (arena.hidden_states(), s.hidden_states / 4),
+        (arena.splitk_workspace(), s.splitk_workspace),
+        (arena.scratch(), s.scratch),
+    ];
+    for call in 0..3 {
+        for (p, n) in watched {
+            gpu.memset(p, 0xAB, n).unwrap();
+        }
+        gpu.memset(arena.logits(), 0xAB, s.logits).unwrap();
+        gpu.synchronize(stream).unwrap();
+        arena.zero_all_rows(&gpu, stream, 1).unwrap();
+        gpu.synchronize(stream).unwrap();
+        for (p, n) in watched {
+            let mut host = vec![1u8; n];
+            gpu.copy_d2h(p, &mut host).unwrap();
+            assert!(
+                host.iter().all(|&b| b == 0),
+                "call {call}: a range was not zeroed"
+            );
+        }
+        let mut logits = vec![0u8; s.logits];
+        gpu.copy_d2h(arena.logits(), &mut logits).unwrap();
+        assert!(
+            logits[..row].iter().all(|&b| b == 0),
+            "call {call}: logits row 0"
+        );
+        assert!(
+            logits[row..].iter().all(|&b| b == 0xAB),
+            "call {call}: logits rows 1.."
+        );
+    }
+    assert!(
+        arena.zero_rows_graph.lock().is_some(),
+        "the memsets were not captured"
+    );
 }

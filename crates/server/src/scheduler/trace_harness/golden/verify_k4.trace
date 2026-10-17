@@ -16,7 +16,7 @@ ep_broadcast_cmd(0x5)
 ep_broadcast_tokens(n=5)
 ep_sync_vision_embeds(n=5)
 prefill(n=5, s1@0:len=5, stream=0)
-copy_logits_to_host(row=0, off=0, bytes=128)
+argmax_on_device(row=0, stream=0) -> 10
 mtp_slot_draft_capacity(0)
 sync_secondary()
 ep_broadcast_cmd_for_seq(seq=0, cmd=0xa)

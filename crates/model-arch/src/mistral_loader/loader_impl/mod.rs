@@ -41,13 +41,13 @@ pub(crate) mod phase_qk_absorbed;
 mod yarn;
 
 impl ModelWeightLoader for MistralWeightLoader {
-    fn supports_tp(&self) -> bool {
+    fn tp_support(&self) -> metrale_config::TpSupport {
         // 2026-09-25: Under TP, `phase_lora_qkv` shards wq_b and wkv_b
         // column-parallel on the head axis; wq_a, wkv_a and the two latent
         // norms stay replicated. The per-head steps loop over
         // `num_key_value_heads`, which the server has already divided by the
         // TP size, so they build this rank's heads only.
-        true
+        metrale_config::TpSupport::Even
     }
 
     fn load_layers(

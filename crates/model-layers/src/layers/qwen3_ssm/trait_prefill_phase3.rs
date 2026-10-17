@@ -102,6 +102,7 @@ impl Qwen3SsmLayer {
             conv_state_checkpoint: None,
             h_state_intermediates: Vec::new(),
             conv_state_intermediates: Vec::new(),
+            replay_ring: None,
             h_is_f16: false,
             // 2026-09-25: This state owns a private FP32 `h_state_bytes` blob,
             // not a pool slot, so there is no staging blob to widen into.

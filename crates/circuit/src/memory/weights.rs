@@ -5,8 +5,9 @@
 //!
 //! Owner: metrale-circuit (memory).
 //! Invariants:
-//! - A weight is `out x k`: `k` the node's first input edge's dim, `out` the sum of its output
-//!   edges' dims. Routed experts hold `experts` such weights, whatever the rows routed to them.
+//! - A weight is `out x k` ([`Circuit::weight_shape`]): `k` the node's first input edge's dim,
+//!   `out` the sum of its output edges' dims (2026-10-08: latent attention's is `kv_b_proj`).
+//!   Routed experts hold `experts` such weights, whatever the rows routed to them.
 //! - The embedding table is `vocab x hidden` at its output edge's format, counted once: the draft
 //!   head reads the main table.
 //! - Stored bytes are the declared circuit's (the checkpoint's own formats); served bytes appear
@@ -52,13 +53,6 @@ pub(crate) fn sections(c: &Circuit) -> Vec<Section> {
         v[b.first..b.end].iter_mut().for_each(|s| *s = b.section);
     }
     v
-}
-
-/// 2026-10-02: `(out, k)` of a weight-reading node.
-pub(crate) fn weight_shape(c: &Circuit, n: &Node) -> (u64, u64) {
-    let k = n.inputs.first().map_or(0, |&e| c.edges[e].dim_value);
-    let out = n.outputs.iter().map(|&e| c.edges[e].dim_value).sum();
-    (out, k)
 }
 
 fn copies_per_node(c: &Circuit, n: &Node) -> Result<u64, MemoryError> {
@@ -123,7 +117,10 @@ pub fn node_weights(
             .get(n.id.as_str())
             .and_then(|d| d.weight)
             .unwrap_or(serve_fmt);
-        let (o, k) = weight_shape(served, n);
+        let (o, k) = served.weight_shape(n).ok_or_else(|| MemoryError::Size {
+            node: n.id.clone(),
+            what: "weight shape".into(),
+        })?;
         let copies = copies_per_node(served, n)?;
         let one = bytes_of(n, "stored weight", stored_fmt.weight_bytes(o, k))?;
         let draft_head = secs[i] == Section::Draft && n.op == OpKind::LmHead;

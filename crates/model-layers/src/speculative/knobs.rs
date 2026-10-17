@@ -91,9 +91,28 @@ pub fn hidden_fingerprint(gpu: &dyn GpuBackend, p: DevicePtr, h: usize) -> u64 {
     hash
 }
 
+/// 2026-10-11: `METRALE_EP_MTP_BATCH_VERIFY=1`: on a multi-rank serve, MTP sequences with drafts
+/// verify as one batched forward (`EP_CMD_VERIFY_BATCH`, the batched DFlash verify's wire) when
+/// they share one k, instead of one K-row verify per sequence. Rank 0 decides it alone; the
+/// workers follow the command. Read once.
+pub fn mtp_ep_batch_verify_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("METRALE_EP_MTP_BATCH_VERIFY").as_deref() == Ok("1"))
+}
+
+/// 2026-10-11: The bit `EP_CMD_MTP_PROPOSE`'s hidden-row word carries when the propose reads
+/// its target hidden from the batched-verify stash slot (`save_hidden_for_mtp_from_stash`)
+/// instead of a `hidden_states` row; the low bits are the slot.
+pub const MTP_HIDDEN_FROM_STASH: u32 = 0x8000_0000;
+
 /// 2026-09-25: EP worker command: run one MTP propose alongside rank 0. The
 /// code is followed by `last_token`, `position` and `num_drafts`, each a u32.
 pub const EP_CMD_MTP_PROPOSE: u32 = 0xFFFF_FFF5;
+
+/// 2026-10-10: EP worker command: run one tensor-parallel DFlash propose alongside rank 0
+/// (`DraftProposer::collective_propose`). The preamble's seq id is the sequence's slot; the
+/// drafter sends its own header and data after the code.
+pub const EP_CMD_DFLASH_PROPOSE: u32 = 0xFFFF_FFFB;
 
 /// 2026-09-25: Run the sharded drafter on every rank with the communicator.
 /// On unless `METRALE_NO_MTP_EP_PROPOSE=1`; read once per process. It is the

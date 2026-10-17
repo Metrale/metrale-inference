@@ -89,11 +89,11 @@ fn run(policy: FirstTokenPolicy, gs: Option<&mut GrammarState>) -> (u32, Vec<u32
 }
 
 fn thinking(tool_call_start: Option<u32>) -> FirstTokenPolicy {
-    FirstTokenPolicy::for_birth(true, Some(THINK_END), tool_call_start)
+    FirstTokenPolicy::for_birth(true, Some(THINK_END), tool_call_start, 0, false)
 }
 
 fn direct(tool_call_start: Option<u32>) -> FirstTokenPolicy {
-    FirstTokenPolicy::for_birth(false, Some(THINK_END), tool_call_start)
+    FirstTokenPolicy::for_birth(false, Some(THINK_END), tool_call_start, 0, false)
 }
 
 #[test]
@@ -117,7 +117,7 @@ fn required_tool_grammar_leaves_token0_alone_when_born_thinking() {
         ids.contains(&TOOL_CALL_OPEN),
         "<tool_call> suppressed in thinking"
     );
-    assert!(ids.contains(&EOS), "caller's suppress set preserved");
+    assert!(!ids.contains(&EOS), "EOS is free at token 0, as in vLLM");
     assert_eq!(tok, HELLO, "the model's free pick stands");
     assert_eq!(gs.num_history_steps(), 0, "grammar history must stay 0");
     assert!(allows(&mut gs, TOOL_CALL_OPEN), "grammar still pristine");
@@ -129,7 +129,7 @@ fn required_tool_grammar_still_forces_token0_when_born_direct() {
     let mut gs = required_tool_grammar();
     let (tok, ids, masked) = run(direct(Some(TOOL_CALL_OPEN)), Some(&mut gs));
     assert!(masked, "grammar masks token 0 outside <think>");
-    assert_eq!(ids, vec![EOS], "no extra suppression outside <think>");
+    assert!(ids.is_empty(), "no suppression outside <think>");
     assert_eq!(tok, TOOL_CALL_OPEN);
     assert!(gs.num_history_steps() >= 1, "matcher advanced past token 0");
     assert!(
@@ -168,8 +168,45 @@ fn json_schema_still_forces_token0_when_born_direct() {
 fn no_grammar_path_is_a_pass_through_even_when_thinking() {
     let (tok, ids, masked) = run(thinking(Some(TOOL_CALL_OPEN)), None);
     assert!(!masked);
-    assert_eq!(ids, vec![EOS]);
+    assert!(ids.is_empty());
     assert_eq!(tok, HELLO);
+}
+
+/// 2026-10-14: The ids the sampler sees for token 0 with no grammar.
+fn ids_for(policy: FirstTokenPolicy) -> Vec<u32> {
+    run(policy, None).1
+}
+
+#[test]
+fn min_tokens_masks_eos_at_token0_inside_and_outside_thinking() {
+    for born_thinking in [true, false] {
+        let policy = FirstTokenPolicy::for_birth(born_thinking, Some(THINK_END), None, 1, false);
+        assert_eq!(ids_for(policy), vec![EOS], "thinking={born_thinking}");
+    }
+    // 2026-10-14: Negative control: `min_tokens` 0 masks nothing.
+    let policy = FirstTokenPolicy::for_birth(false, Some(THINK_END), None, 0, false);
+    assert!(ids_for(policy).is_empty());
+}
+
+#[test]
+fn a_required_call_without_grammar_masks_eos_at_token0_only_outside_thinking() {
+    let required = |thinking| {
+        FirstTokenPolicy::for_birth(thinking, Some(THINK_END), Some(TOOL_CALL_OPEN), 0, true)
+    };
+    assert_eq!(ids_for(required(false)), vec![EOS]);
+    assert!(
+        !ids_for(required(true)).contains(&EOS),
+        "inside <think> only min_tokens holds an EOS"
+    );
+    // 2026-10-14: With a grammar the bitmask enforces the call, so the EOS
+    // ids are not added on top.
+    let mut gs = required_tool_grammar();
+    let (_, ids, masked) = run(required(false), Some(&mut gs));
+    assert!(masked);
+    assert!(ids.is_empty());
+    // 2026-10-14: No `<tool_call>` id means no legacy stand-in either.
+    let no_opener = FirstTokenPolicy::for_birth(false, Some(THINK_END), None, 0, true);
+    assert!(ids_for(no_opener).is_empty());
 }
 
 #[test]

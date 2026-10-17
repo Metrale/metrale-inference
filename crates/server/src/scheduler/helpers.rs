@@ -29,14 +29,6 @@ pub fn hard_ceiling_hit(remaining: usize, position: usize, max_seq_len: usize) -
     remaining == 0 || seqlen_force_stop(position, max_seq_len)
 }
 
-/// 2026-09-25: Whether thinking holds back a sampled EOS: inside `<think>`
-/// and no hard ceiling hit. At a ceiling the EOS is not held back by
-/// thinking.
-#[inline]
-pub fn eos_suppressed_by_thinking(inside_thinking: bool, hard_ceiling_hit: bool) -> bool {
-    inside_thinking && !hard_ceiling_hit
-}
-
 // 2026-09-25: sampling defaults for the `SamplingParams` the scheduler
 // builds.
 pub const DEFAULT_LZ_PENALTY: f32 = 0.0;
@@ -145,3 +137,5 @@ mod inter_tool_prose_tests;
 #[cfg(test)]
 #[path = "helpers_tests.rs"]
 mod thinking_loop_tests;
+#[cfg(test)]
+mod thinking_steering_tests;

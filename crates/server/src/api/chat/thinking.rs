@@ -8,6 +8,9 @@
 //!   3. MODEL.toml `[behavior].thinking_default`, which a tool turn overrides to off
 //!      when `thinking_in_tools` is false.
 //!
+//! 2026-10-08: With `--uncapped-thinking` only an explicit token budget becomes a budget
+//! (`Policy::uncapped`).
+//!
 //! Owner: server chat API.
 //! Invariants:
 //! - A disabled result carries no budget: `enable_thinking == false` implies `None`.
@@ -32,6 +35,7 @@ pub(super) fn resolve_thinking(
             max_thinking_budget: state.behavior.max_thinking_budget,
             effort_capped_at_ceiling: state.behavior.effort_capped_at_ceiling,
             cap_at_max_tokens: state.behavior.cap_thinking_at_max_tokens,
+            uncapped: state.uncapped_thinking,
         },
         max_tokens,
         tools_active,
@@ -70,6 +74,9 @@ struct Policy {
     /// budget (the client's, or `max_thinking_budget`) is not clamped to 90% of
     /// `max_tokens`.
     cap_at_max_tokens: bool,
+    /// 2026-10-08: `--uncapped-thinking`: no budget but an explicit token budget
+    /// (`ThinkingDirective::On { budget: Some(_) }`), and that one unclamped.
+    uncapped: bool,
 }
 
 fn resolve(
@@ -105,7 +112,14 @@ fn resolve(
     } else {
         et
     };
-    let budget = if et {
+    let budget = if et && policy.uncapped {
+        // 2026-10-08: The effort ladder and the model default are the server's caps;
+        // only a stated token budget survives.
+        match directive {
+            ThinkingDirective::On { budget } => budget,
+            _ => None,
+        }
+    } else if et {
         let b = tb.unwrap_or(policy.max_thinking_budget);
         if !policy.cap_at_max_tokens {
             Some(b)
@@ -162,6 +176,7 @@ mod tests {
             max_thinking_budget: 2048,
             effort_capped_at_ceiling: false,
             cap_at_max_tokens: true,
+            uncapped: false,
         }
     }
 
@@ -422,5 +437,47 @@ mod tests {
         assert!(et);
         assert_eq!(tb, Some(230));
         assert!(tb.unwrap() < 256);
+    }
+
+    #[test]
+    fn uncapped_arms_no_server_budget_but_keeps_a_stated_one_unclamped() {
+        use crate::ir::EffortLevel::Low;
+        let uncapped = Policy {
+            uncapped: true,
+            model_default: true,
+            ..policy()
+        };
+        // 2026-10-08: Negative control first: the same requests capped.
+        let (_, capped_low) = resolve(ThinkingDirective::OnEffort(Low), policy(), 4096, false);
+        assert_eq!(
+            capped_low,
+            Some(1024),
+            "low effort is half the 2048 ceiling"
+        );
+        for directive in [
+            ThinkingDirective::OnEffort(Low),
+            ThinkingDirective::On { budget: None },
+            ThinkingDirective::Unspecified,
+        ] {
+            assert_eq!(
+                resolve(directive, uncapped, 4096, false),
+                (true, None),
+                "{directive:?}"
+            );
+        }
+        assert_eq!(
+            resolve(
+                ThinkingDirective::On { budget: Some(4096) },
+                uncapped,
+                1000,
+                false
+            ),
+            (true, Some(4096)),
+            "a stated budget applies, without the 90%-of-max_tokens clamp"
+        );
+        assert_eq!(
+            resolve(ThinkingDirective::Off, uncapped, 4096, false),
+            (false, None)
+        );
     }
 }

@@ -210,13 +210,53 @@ pub struct ModelLevers {
     /// 2026-09-25: `METRALE_MTP_TARGET_POSTNORM=1`: drafter rows built from a target hidden (the
     /// first draft, drafter prefill, the exact-KV catch-up) go through the target's final norm
     /// before `pre_fc_norm_hidden` (`MtpHead::target_postnorm_rows`). No effect when the head holds
-    /// no target final-norm weight.
+    /// no target final-norm weight. 2026-10-11: The GLM-5.3 drafter reads it too: its target rows
+    /// go through the target's final norm before `hnorm` (`glm5next_mtp_head/hidden_half.rs`), the
+    /// feed vLLM's GLM MTP layer gets.
     pub mtp_target_postnorm: bool,
     /// 2026-09-25: `METRALE_MTP_KV_EXACT=1`: after a verify, the MTP drafter keeps the KV row built
     /// from the verified input token and trims only the chain rows (`draft_proposer.rs`); the
     /// model then appends one catch-up row per accepted draft from the verify forward's stashed
     /// hidden (`model/trait_impl/speculative_mtp.rs`).
     pub mtp_kv_exact: bool,
+    /// 2026-10-11: `METRALE_MTP_ACCEPTED_ROWS=1`: before a propose, a dense-row drafter (GLM-5.3)
+    /// whose rows stop short of this propose's pair key gets the missing rows written from the
+    /// verify forward's live `hidden_states` rows: one per accepted draft, which no propose
+    /// writes (`model/trait_impl/accepted_rows.rs`). vLLM's drafter runs every accepted position.
+    pub mtp_accepted_rows: bool,
+    /// 2026-10-14: `METRALE_MTP_ADOPT_CAPTURE=1`: a prefix-cache hit adopts the capture rows a
+    /// consumed capture of the same matched tokens left, so the drafter is prefilled over the
+    /// whole prompt as on a miss (`mtp_adopt.rs`). Off while the drafter carry is armed.
+    pub mtp_adopt_capture: bool,
+    /// 2026-10-11: `METRALE_MTP_ZERO_POS0=1`: the GLM-5.3 drafter row at position 0 (pair key 0)
+    /// gets a zero embedding half, as vLLM's GLM MTP layer always gives it
+    /// (`glm5next_mtp_head/hidden_half.rs` `zeroes_embedding`).
+    pub mtp_zero_pos0: bool,
+    /// 2026-10-14: `METRALE_ONE_ROW_PREFILL=1`: a one-row prefill pass after position 0 runs
+    /// each layer's prefill path, not its decode path, when the layers split their pass at an
+    /// in-pass capture (GLM-5.3), so a warm one-token replay carries the cold pass's bits
+    /// (`layer/one_row_path.rs`). Changes those passes' numerics.
+    pub one_row_prefill: bool,
+    /// 2026-10-14: `METRALE_ONE_ROW_TAIL_DECODE=1`: a layer that splits its pass at an in-pass
+    /// capture (GLM-5.3) runs a one-row segment of a split pass after position 0 (the cold
+    /// prompt's tail one row past the capture point) through its decode path, the path a warm
+    /// one-row replay of that row takes, so the cold row and its replay carry the same bits
+    /// (`layer/one_row_path.rs`). `one_row_prefill` takes precedence. Changes that row's numerics.
+    pub one_row_tail_decode: bool,
+    /// 2026-10-14: `METRALE_SEQ_ALLOC_ASYNC=1`: a new sequence zeroes its SSM slot once, with
+    /// every memset enqueued on the default stream and one synchronise after them, instead of a
+    /// first zeroing pass and then a synchronise per memset (`model/trait_impl/meta.rs`). The
+    /// same bytes reach zero before the prefill; only the host time differs.
+    pub seq_alloc_async: bool,
+    /// 2026-10-14: `METRALE_GLM_KEEP_SLOT_GRAPHS=1`: a GLM-5.3 layer reports its slot's decode
+    /// and verify graphs stale on a new sequence only when it keeps per-sequence buffers (a
+    /// flat-indexer DSA layer), so a paged-indexer stack replays them instead of capturing again
+    /// (`glm5next_layer/mod.rs`). Verify-graph borrowing stays off for GLM-5.3 either way.
+    pub glm_keep_slot_graphs: bool,
+    /// 2026-10-14: `METRALE_GLM_MTP_STATE_POOL=1`: a freed GLM-5.3 drafter state keeps its device
+    /// buffers, KV region and drafter graph for the next sequence instead of freeing them, so a
+    /// new sequence allocates nothing (`glm5next_mtp_head/state_pool.rs`). Drafts are unchanged.
+    pub glm_mtp_state_pool: bool,
     /// 2026-09-25: `METRALE_FP8_MOE_GROUPED_DECODE=1`: the target model's multi-row FP8 MoE decode
     /// runs through the cross-row grouped kernels (`FfnComponent::fp8_grouped_decode_ok`). The MTP
     /// drafter calls `MoeLayer::fp8_grouped_decode_ok` directly and does not read this lever;

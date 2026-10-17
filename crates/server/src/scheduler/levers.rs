@@ -103,10 +103,6 @@ pub struct SchedLevers {
     /// 2026-09-25: `METRALE_DISABLE_WATCHDOGS=1`/`true`: disarm the
     /// generation watchdogs that check it.
     pub disable_watchdogs: bool,
-    /// 2026-09-25: Parsed from `METRALE_EOS_SUPPRESS_THINKING=1` but read
-    /// nowhere; EOS suppression inside thinking is
-    /// `helpers::eos_suppressed_by_thinking`.
-    pub eos_suppressed_by_thinking: bool,
     /// 2026-09-25: The forced-token fast path (`logit_processors::forced_token`).
     /// `METRALE_DISABLE_FORCED_TOKEN=1`/`true` turns it off.
     pub forced_token_fastpath: bool,
@@ -127,6 +123,10 @@ pub struct SchedLevers {
     /// 2026-09-25: `METRALE_PREFILL_VARLEN`, as the model layer resolved it
     /// (`prefill_varlen_enabled`).
     pub prefill_varlen: bool,
+    /// 2026-10-09: `METRALE_EP_PREFILL_BATCH=1` (default off): the batched-prefill paths also
+    /// run on a multi-rank serve whose model answers `ep_prefill_batch_rows`
+    /// (`phase_start_prefills::batched_prefill_allowed`).
+    pub ep_prefill_batch: bool,
     /// 2026-09-25: `METRALE_PREFILL_CODISPATCH_WINDOW_MS` (default 100).
     pub codispatch_window_ms: u64,
     /// 2026-09-25: `METRALE_PREFILL_CODISPATCH_SETTLE_MS` (default 10).
@@ -315,7 +315,6 @@ impl SchedLevers {
             disable_watchdogs: crate::scheduler::helpers::parse_disable_watchdogs(
                 metrale_config::levers::var("METRALE_DISABLE_WATCHDOGS").as_deref(),
             ),
-            eos_suppressed_by_thinking: opt_in("METRALE_EOS_SUPPRESS_THINKING"),
             forced_token_fastpath: crate::scheduler::helpers::parse_forced_token_fastpath(
                 metrale_config::levers::var("METRALE_DISABLE_FORCED_TOKEN").as_deref(),
             ),
@@ -331,6 +330,7 @@ impl SchedLevers {
             holo_always_mixed: opt_in_word("METRALE_HOLO_ALWAYS_MIXED"),
             prefill_codispatch: metrale_model_layers::layers::ops::prefill_codispatch_enabled(),
             prefill_varlen: metrale_model_layers::layers::ops::prefill_varlen_enabled(),
+            ep_prefill_batch: opt_in("METRALE_EP_PREFILL_BATCH"),
             codispatch_window_ms: num("METRALE_PREFILL_CODISPATCH_WINDOW_MS", 100),
             codispatch_settle_ms: num("METRALE_PREFILL_CODISPATCH_SETTLE_MS", 10),
             vision_codispatch: opt_in_word("METRALE_VISION_CODISPATCH"),
@@ -393,7 +393,6 @@ impl SchedLevers {
             dflash_resume_guard: 0,
             shadow_topk: 0,
             disable_watchdogs: false,
-            eos_suppressed_by_thinking: false,
             forced_token_fastpath: true,
             decode_timing: false,
             mtp_timing: false,
@@ -402,6 +401,7 @@ impl SchedLevers {
             holo_always_mixed: false,
             prefill_codispatch: false,
             prefill_varlen: false,
+            ep_prefill_batch: false,
             codispatch_window_ms: 100,
             codispatch_settle_ms: 10,
             vision_codispatch: false,

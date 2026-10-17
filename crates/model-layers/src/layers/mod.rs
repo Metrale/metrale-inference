@@ -183,8 +183,14 @@ pub fn k64_n64_wins(m: u32, n: u32) -> bool {
 mod moe_grouped_decode;
 pub use moe_grouped_decode::*;
 
+mod dense_quantization;
+mod dsa_quantization;
 mod expert_quantization;
 mod moe_expert_tables;
+pub use dense_quantization::{
+    DenseQuantization, dense_quantization, set_dense_quantization_from_cli,
+};
+pub use dsa_quantization::{DsaQuantization, dsa_quantization, set_dsa_quantization_from_cli};
 pub use expert_quantization::{
     ExpertQuantization, expert_quantization, set_expert_quantization_from_cli,
 };
@@ -209,6 +215,8 @@ pub use kernel_probe::{try_kernel, try_target_kernel};
 
 mod w8a8_layer;
 pub use w8a8_layer::{W8a8Ctx, W8a8Ffn, W8a8Mixer};
+mod fp8_row_head;
+pub use fp8_row_head::{Fp8RowHeadKernels, HeadWindow, fp8_row_head};
 
 /// 2026-09-25: A layer's FFN: MoE, dense, or none.
 #[allow(clippy::large_enum_variant)]

@@ -56,6 +56,7 @@ fn normalize_tool_call_arguments(messages: &[serde_json::Value]) -> Vec<serde_js
 
 mod chat_impl;
 pub(crate) mod chat_render;
+pub use chat_render::ThinkingVars;
 mod deepseek_v4;
 pub(crate) mod jinja_helpers;
 mod kimi_k3;
@@ -64,6 +65,22 @@ mod message_preprocess;
 pub(crate) use message_preprocess::{
     autoclose_assistant_think, remap_developer_role, resolve_think_control,
 };
+
+/// 2026-10-08: Where `ChatTokenizer::from_model_dir` takes the chat template from. Each
+/// variant falls back to the checkpoint's own template, then to ChatML, when it finds no
+/// file of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TemplateSource<'a> {
+    /// 2026-10-08: `jinja-templates/{model_type}.jinja` (and `jinja-templates/openai/` for
+    /// the OpenAI apply paths) when present: the default.
+    OverrideDir,
+    /// 2026-10-08: The checkpoint's own template; only the `openai/` variant directory is
+    /// still read (`--disable-template-overrides`).
+    Checkpoint,
+    /// 2026-10-08: This file, for every apply path; neither override directory is read
+    /// (`--chat-template`). A file that cannot be read fails the load.
+    File(&'a std::path::Path),
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ChatEncoding {

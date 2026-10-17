@@ -18,6 +18,7 @@
 
 use anyhow::{Result, ensure};
 
+use super::super::super::lm_head_vocab_tp::HeadRanks;
 use super::super::super::types::TransformerModel;
 use crate::traits::{SequenceState, extract_bf16};
 use metrale_model_layers::layers::ops;
@@ -75,7 +76,11 @@ impl TransformerModel {
             let batch_hidden = hidden.offset((start) * h * elem);
             let normed = self.buffers.norm_output();
             self.final_norm_apply(batch_hidden, normed, count as u32, h as u32, eps, stream)?;
-            self.lm_head_batched(normed, count as u32, self.buffers.logits(), stream)?;
+            // 2026-10-10: Rank-local: only rank 0 collects (a worker's sequence never sets
+            // `collect_prompt_logprobs`), so a vocab-parallel head's all-reduce here hung the
+            // request with no partner on the other ranks.
+            let logits = self.buffers.logits();
+            self.lm_head_batched(normed, count as u32, logits, HeadRanks::Local, stream)?;
             self.gpu.synchronize(stream)?;
             let bytes = &mut host[..count * v * 2];
             self.gpu.copy_d2h(self.buffers.logits(), bytes)?;

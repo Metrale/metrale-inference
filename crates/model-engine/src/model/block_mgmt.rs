@@ -376,16 +376,26 @@ pub(crate) fn ensure_blocks_through_prefill(
     kv_poison: bool,
 ) -> Result<()> {
     let cap = kv_cache.config().cache_blocks_per_seq.map(|c| c as usize);
+    // 2026-10-12: `METRALE_KV_ZERO_BLOCKS=range` (not under poison): the call's fresh blocks
+    // are zeroed after the loop as runs of consecutive indices (`coalesce_runs`), two memsets
+    // per layer per run instead of per block.
+    let coalesce = !kv_poison
+        && super::prefill_zero::kv_zero_blocks()? == super::prefill_zero::KvZeroBlocks::Range;
+    let mut fresh: Vec<u32> = Vec::new();
     loop {
         let ws = seq.hss_window_start();
         let bt_len = seq.block_table.len();
         let in_window = bt_len > 0 && abs_block_idx < ws + bt_len;
         if in_window {
-            return Ok(());
+            break;
         }
         let blk = alloc_block_evicting(kv_cache, prefix_cache)
             .ok_or_else(|| anyhow::anyhow!("KV cache exhausted: no free blocks"))?;
-        fill_fresh_block(kv_cache, blk, gpu, stream, kv_poison)?;
+        if coalesce {
+            fresh.push(blk);
+        } else {
+            fill_fresh_block(kv_cache, blk, gpu, stream, kv_poison)?;
+        }
         seq.block_table.push(blk);
         if cap.is_some() {
             let id = metrale_storage::with_local(|hss| {
@@ -404,6 +414,10 @@ pub(crate) fn ensure_blocks_through_prefill(
             seq.disk_block_ids.push(id);
         }
     }
+    for (first, count) in super::prefill_zero::coalesce_runs(&fresh) {
+        kv_cache.zero_blocks_run(first, count, gpu, stream)?;
+    }
+    Ok(())
 }
 
 /// 2026-09-25: Borrow layer `layer_idx`'s state mutably from each sequence, in

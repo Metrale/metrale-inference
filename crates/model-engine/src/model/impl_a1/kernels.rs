@@ -292,3 +292,25 @@ pub(super) fn start_innerq(
                 }
             })
 }
+
+/// 2026-10-10: The pinned metadata staging buffer, at least 64 KB and as large as the scratch
+/// buffer (moved here from `TransformerModel::new` unchanged).
+pub(super) fn alloc_pinned_staging(
+    buffers: &metrale_gpu_runtime::buffers::BufferArena,
+    gpu: &dyn GpuBackend,
+) -> Result<std::cell::UnsafeCell<super::super::types::PinnedMetaStaging>> {
+    let pinned_bytes = buffers.sizes().scratch.max(64 * 1024);
+    let pinned_ptr = gpu.alloc_host_pinned(pinned_bytes)?;
+    tracing::info!("Pinned metadata staging: {} KB", pinned_bytes / 1024);
+    let max_batch_tokens = buffers.max_batch_tokens();
+    Ok(std::cell::UnsafeCell::new(
+        super::super::types::PinnedMetaStaging {
+            ptr: pinned_ptr,
+            bytes: pinned_bytes,
+            positions: Vec::with_capacity(max_batch_tokens),
+            positions_h: Vec::with_capacity(max_batch_tokens),
+            positions_w: Vec::with_capacity(max_batch_tokens),
+            slots: Vec::with_capacity(max_batch_tokens),
+        },
+    ))
+}

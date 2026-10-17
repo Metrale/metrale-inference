@@ -125,6 +125,7 @@ fn mk_state(gpu: &MockGpuBackend, layer: &Qwen3SsmLayer, n_inter: usize) -> SsmL
         conv_state_intermediates: (0..n_inter)
             .map(|i| conv_slab.offset(i * conv_bytes))
             .collect(),
+        replay_ring: None,
         h_is_f16: false,
         h_prefill_stage: None,
         ple: None,
@@ -189,6 +190,8 @@ fn run_batched_verify(
         buffers.residual(),
         ks.len(),
         ks,
+        // 2026-10-09: The GDN layer does not read the lengths.
+        &vec![0; ks.len()],
         &mut states,
         &mut kv,
         DevicePtr::NULL,

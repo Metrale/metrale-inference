@@ -284,7 +284,10 @@ pub async fn tokenize(
             None,
             // 2026-09-26: The model's `preserve_thinking`, which chat also uses
             // when the request sets none (`chat/prepare.rs`).
-            state.behavior.preserve_thinking,
+            crate::tokenizer::ThinkingVars {
+                preserve_thinking: state.behavior.preserve_thinking,
+                thinking: None,
+            },
         ) {
             Ok(t) => t,
             Err(e) => {
