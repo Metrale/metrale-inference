@@ -11,7 +11,7 @@
 
 use alloc::string::String;
 
-use crate::resolve::InferenceServerSettings;
+use crate::resolve::{InferenceServerSettings, SettingsError};
 
 /// 2026-10-17: Rail-0 RDMA device when no `*_RDMA_DEV` is set.
 pub const RDMA_DEV_BUILT_IN: &str = "roceP2p1s0f1";
@@ -57,6 +57,17 @@ pub struct WeightsSettings {
     /// 2026-10-17: The LoRA rail: device `METRALE_LORA_RDMA_DEV`, then the weight and expert
     /// devices (an empty name counts as set); GID from `METRALE_LORA_RDMA_GID` only.
     pub lora_rail: Rail,
+}
+
+impl WeightsSettings {
+    /// 2026-10-17: The settings of an empty environment, no CLI and no recipe: the declared
+    /// defaults.
+    ///
+    /// # Errors
+    /// The resolver's error, should a declared default fail to parse.
+    pub fn declared() -> Result<Self, SettingsError> {
+        Ok(Self::from(&super::device::declared()?))
+    }
 }
 
 /// 2026-10-17: The first set, non-empty value, else `default`.

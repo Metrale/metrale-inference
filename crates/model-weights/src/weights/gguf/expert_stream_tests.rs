@@ -12,6 +12,7 @@ use anyhow::{Result, bail};
 use super::expert_lru::ExpertLru;
 use super::expert_stream::{ExpertSource, SlotLayout};
 use metrale_gpu_runtime::gpu::DevicePtr;
+use metrale_settings::groups::device_weights::WeightsSettings;
 
 const LAYOUT: SlotLayout = SlotLayout {
     gate_off: 0,
@@ -22,6 +23,10 @@ const LAYOUT: SlotLayout = SlotLayout {
     down_bytes: 24,
     bytes: 56,
 };
+
+fn declared() -> WeightsSettings {
+    WeightsSettings::declared().expect("declared weights settings")
+}
 
 /// Deterministic bytes for (layer, expert, byte index).
 fn expected(layer: u32, expert: u32, i: usize) -> u8 {
@@ -73,7 +78,7 @@ impl Arena {
     }
     fn lru(&mut self) -> ExpertLru {
         let p = self.0.as_mut_ptr();
-        ExpertLru::new(p, DevicePtr(p as u64), self.0.len(), LAYOUT).unwrap()
+        ExpertLru::with_settings(p, DevicePtr(p as u64), self.0.len(), LAYOUT, &declared()).unwrap()
     }
 }
 

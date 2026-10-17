@@ -33,6 +33,7 @@ use super::expert_direct::{StagedRead, direct_plan, ring_slot_bytes};
 use super::expert_lru::{ExpertLru, ExpertSlot, PinnedArena, SlotPtr};
 use super::expert_stream::{DirectSeg, ExpertSource, SlotLayout, pread_at_least};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
+use metrale_settings::groups::device_weights::WeightsSettings;
 
 /// One device arena plus its page-locked staging ring.
 pub struct DeviceArena {
@@ -75,6 +76,7 @@ impl DeviceArena {
         bytes: usize,
         layout: SlotLayout,
         ring_slots: usize,
+        w: &WeightsSettings,
     ) -> Result<(Self, ExpertLru)> {
         let ring_slots = ring_slots.max(2).next_multiple_of(2);
         let dev = gpu.alloc_arena(bytes)?;
@@ -88,7 +90,7 @@ impl DeviceArena {
             }
         };
         let events = [gpu.create_event()?, gpu.create_event()?];
-        let mut lru = ExpertLru::new(std::ptr::null_mut(), dev, bytes, layout)?;
+        let mut lru = ExpertLru::with_settings(std::ptr::null_mut(), dev, bytes, layout, w)?;
         lru.staging = Some(Staging {
             ring,
             ring_slots,
@@ -137,19 +139,20 @@ pub enum ExpertArena {
 impl ExpertArena {
     /// The arena of `bytes` and the cache over it: device slots with a
     /// `ring_slots` staging ring when `device`, the page-locked arena otherwise.
-    pub fn alloc(
+    pub fn alloc_with(
         gpu: &dyn GpuBackend,
         bytes: usize,
         layout: SlotLayout,
         device: bool,
         ring_slots: usize,
+        w: &WeightsSettings,
     ) -> Result<(Self, ExpertLru)> {
         if device {
-            let (a, lru) = DeviceArena::alloc(gpu, bytes, layout, ring_slots)?;
+            let (a, lru) = DeviceArena::alloc(gpu, bytes, layout, ring_slots, w)?;
             return Ok((ExpertArena::Device(a), lru));
         }
         let a = PinnedArena::alloc(gpu, bytes)?;
-        let lru = ExpertLru::new(a.host(), a.dev(), a.bytes(), layout)?;
+        let lru = ExpertLru::with_settings(a.host(), a.dev(), a.bytes(), layout, w)?;
         Ok((ExpertArena::Pinned(a), lru))
     }
 

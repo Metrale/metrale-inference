@@ -18,9 +18,9 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
 
+use crate::Env;
 use crate::resolve::{InferenceServerSettings, SettingsError};
 use crate::sources::{CliLayer, RecipeLayer};
-use crate::Env;
 
 /// 2026-10-17: A resolved value the device-side type cannot hold.
 #[derive(Clone, Debug, PartialEq, Eq)]

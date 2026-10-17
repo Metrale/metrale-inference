@@ -32,12 +32,19 @@ pub fn pread(file: &File, offset: u64, dst: &mut [u8]) -> Result<()> {
 /// the arena and the cache copy is dead weight. With a 100 GiB page-locked
 /// arena on a 121 GiB DGX Spark, leaving 12 MiB of cache behind every miss made
 /// the kernel reclaim into swap in the middle of a step (single steps of 2 to
-/// 18 s on the 09-19 standard). `METRALE_DS41_KEEP_PAGE_CACHE=1` keeps the old
-/// behaviour.
-pub fn pread_uncached(file: &File, offset: u64, dst: &mut [u8]) -> Result<()> {
+/// 18 s on the 09-19 standard). `keep_page_cache` (`METRALE_DS41_KEEP_PAGE_CACHE`) keeps the
+/// old behaviour.
+pub fn pread_uncached(
+    file: &File,
+    offset: u64,
+    dst: &mut [u8],
+    keep_page_cache: bool,
+) -> Result<()> {
     pread(file, offset, dst)?;
+    #[cfg(not(target_os = "linux"))]
+    let _ = keep_page_cache;
     #[cfg(target_os = "linux")]
-    if !keep_page_cache() {
+    if !keep_page_cache {
         use std::os::unix::io::AsRawFd;
         // SAFETY: an advisory call on an open descriptor; the kernel checks
         // the range.
@@ -53,17 +60,11 @@ pub fn pread_uncached(file: &File, offset: u64, dst: &mut [u8]) -> Result<()> {
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
-fn keep_page_cache() -> bool {
-    static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *V.get_or_init(|| std::env::var("METRALE_DS41_KEEP_PAGE_CACHE").is_ok_and(|v| v == "1"))
-}
-
 /// Open `path` for direct reads (offsets, lengths and buffers aligned to
-/// the 512 B logical block by the caller). `METRALE_DS41_DIRECT_READS=0`
-/// keeps every read on the page cache.
-pub(super) fn open_direct(path: &Path) -> Option<File> {
-    if std::env::var("METRALE_DS41_DIRECT_READS").is_ok_and(|v| v == "0") {
+/// the 512 B logical block by the caller). `direct_reads` off
+/// (`METRALE_DS41_DIRECT_READS=0`) keeps every read on the page cache.
+pub(super) fn open_direct(path: &Path, direct_reads: bool) -> Option<File> {
+    if !direct_reads {
         return None;
     }
     #[cfg(target_os = "linux")]

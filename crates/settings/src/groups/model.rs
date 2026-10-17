@@ -9,9 +9,9 @@ lever_group! {
     /// 2026-10-17: The `model` group, resolved by `crate::resolve()`.
     pub struct ModelSettings { group: "model", class: Runtime }
     ds41_candidate_source: Int = "built-in", None, "METRALE_DS41_CANDIDATE_SOURCE", "crates/model-arch/src/weight_loader/deepseek_v41/load_layers.rs", "Read in `crates/model-arch/src/weight_loader/deepseek_v41/load_layers.rs`.";
-    ds41_evict_random_pct: Text = "unset", None, "METRALE_DS41_EVICT_RANDOM_PCT", "crates/model-weights/src/weights/gguf/expert_lru.rs", "The victim is drawn from the oldest this-many percent (0 = strict LRU).";
-    ds41_kquant_resident: Text = "unset", None, "METRALE_DS41_KQUANT_RESIDENT", "crates/model-weights/src/weights/gguf/sidecar.rs", "DeepSeek-V4.1 attention projections and shared expert stay Q2_K / Q3_K (ggml types 10 / 11) on the device; METRALE_DS41_KQUANT_RESIDENT=0 restores the bf16 expansion.";
-    ds41_q6k_head: Text = "unset", None, "METRALE_DS41_Q6K_HEAD", "crates/model-weights/src/weights/gguf/sidecar.rs", "The DeepSeek-V4.1 tensors that stay K-quant on the device, by ggml type id and HF name: the attention projections and shared expert as Q2_K / Q3_K (10 / 11; `METRALE_DS41_KQUANT_RESIDENT=0`...";
+    ds41_evict_random_pct: Text = "unset", None, "METRALE_DS41_EVICT_RANDOM_PCT", "crates/model-weights/src/legacy_env.rs", "The victim is drawn from the oldest this-many percent (0 = strict LRU).";
+    ds41_kquant_resident: Text = "unset", None, "METRALE_DS41_KQUANT_RESIDENT", "crates/model-weights/src/legacy_env.rs", "DeepSeek-V4.1 attention projections and shared expert stay Q2_K / Q3_K (ggml types 10 / 11) on the device; METRALE_DS41_KQUANT_RESIDENT=0 restores the bf16 expansion.";
+    ds41_q6k_head: Text = "unset", None, "METRALE_DS41_Q6K_HEAD", "crates/model-weights/src/legacy_env.rs", "The DeepSeek-V4.1 tensors that stay K-quant on the device, by ggml type id and HF name: the attention projections and shared expert as Q2_K / Q3_K (10 / 11; `METRALE_DS41_KQUANT_RESIDENT=0`...";
     ds41_reader_pool: Switch = "off", None, "METRALE_DS41_READER_POOL", "crates/model-arch/src/weight_loader/deepseek_v41/load_layers.rs", "`METRALE_DS41_READER_POOL=1`: the persistent reader pool (misses and predicted experts in flight together; what `METRALE_DS41_PREFETCH_K` needs). `1` turns it on.";
     ds41_router_staged: Switch = "on", None, "METRALE_DS41_ROUTER_STAGED", "crates/model-arch/src/moe_v41/route.rs", "The staged single-token router GEMV; `METRALE_DS41_ROUTER_STAGED=0` selects the products form. `0` turns it off.";
     ds41_shared_side: Switch = "on", None, "METRALE_DS41_SHARED_SIDE", "crates/model-arch/src/moe_v41.rs", "At one token the shared expert runs on a side stream while the main stream runs the router; the accumulation order does not change. `0` turns it off.";
@@ -32,7 +32,7 @@ lever_group! {
     qwen4exp_no_ple: Switch = "off", None, "METRALE_QWEN4EXP_NO_PLE", "crates/model-arch/src/weight_loader/qwen4_exp.rs", "With PLE disabled for bisection, skip the 21 MB arena and the 128-shard open entirely rather than building what we will not run. `1` turns it on.";
     vision_max_pixels: Int = "0", "--vision-max-pixels", "METRALE_VISION_MAX_PIXELS", "crates/server/src/main_modules/serve_phases/load_levers.rs", "The pixel cap on one image; `0` leaves the model's own cap.";
     vision_posinterp: Switch = "on", None, "METRALE_VISION_POSINTERP", "crates/model-layers/src/layers/vision_encoder/enc_impl/forward.rs", "1. `0` turns it off.";
-    weight_dual_rail: Switch = "off", None, "METRALE_WEIGHT_DUAL_RAIL", "crates/model-weights/src/weight_tier_rdma.rs", "Rail 0 defaults to the shared expert CX7 link; dual-rail is opt-in (METRALE_WEIGHT_DUAL_RAIL=1). `1` turns it on.";
-    weight_rail2_dev: Text = "unset", None, "METRALE_WEIGHT_RAIL2_DEV", "crates/model-weights/src/weight_tier_rdma.rs", "Read in `crates/model-weights/src/weight_tier_rdma.rs`.";
-    weight_rail2_gid: Text = "unset", None, "METRALE_WEIGHT_RAIL2_GID", "crates/model-weights/src/weight_tier_rdma.rs", "Read in `crates/model-weights/src/weight_tier_rdma.rs`.";
+    weight_dual_rail: Switch = "off", None, "METRALE_WEIGHT_DUAL_RAIL", "crates/model-weights/src/legacy_env.rs", "Rail 0 defaults to the shared expert CX7 link; dual-rail is opt-in (METRALE_WEIGHT_DUAL_RAIL=1). `1` turns it on.";
+    weight_rail2_dev: Text = "unset", None, "METRALE_WEIGHT_RAIL2_DEV", "crates/model-weights/src/legacy_env.rs", "Read in `crates/model-weights/src/legacy_env.rs`.";
+    weight_rail2_gid: Text = "unset", None, "METRALE_WEIGHT_RAIL2_GID", "crates/model-weights/src/legacy_env.rs", "Read in `crates/model-weights/src/legacy_env.rs`.";
 }

@@ -389,12 +389,7 @@ crates/model-weights/src/kimi_k3_host/expert_backend.rs
 crates/model-weights/src/kimi_k3_host/kda.rs
 crates/model-weights/src/kimi_k3_host/mla.rs
 crates/model-weights/src/kimi_k3_host/mxfp4.rs
-crates/model-weights/src/weight_lora_rdma.rs
-crates/model-weights/src/weight_tier_rdma.rs
-crates/model-weights/src/weights/gguf.rs
-crates/model-weights/src/weights/gguf/expert_lru.rs
-crates/model-weights/src/weights/gguf/expert_reads.rs
-crates/model-weights/src/weights/gguf/sidecar.rs
+crates/model-weights/src/legacy_env.rs
 crates/server/src/cli/bench_certify/mod.rs
 crates/server/src/cli/circuit.rs
 crates/server/src/grammar/tests/cold_compile.rs

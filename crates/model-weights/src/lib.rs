@@ -5,6 +5,7 @@
 #[cfg(unix)]
 pub mod fast_weights;
 pub mod kimi_k3_host;
+pub mod legacy_env;
 pub mod mtp_layout;
 pub mod preflight;
 pub mod weight_lora_rdma;

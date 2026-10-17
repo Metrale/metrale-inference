@@ -1895,6 +1895,7 @@ dependencies = [
  "metrale-gpu-runtime",
  "metrale-gpu-sys",
  "metrale-kernels",
+ "metrale-settings",
  "metrale-storage",
  "metrale-telemetry",
  "parking_lot",

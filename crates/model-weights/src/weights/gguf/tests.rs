@@ -51,9 +51,14 @@ fn loads_single_tensor_cpu_fallback() {
     std::fs::write(dir.join("model.gguf"), &bytes).unwrap();
 
     let gpu = MockGpuBackend::new();
-    let store = GgufLoader::new()
-        .load(&dir, &gpu, 1024 * 1024)
-        .expect("GGUF load");
+    let store = GgufLoader::with_settings(
+        0,
+        1,
+        0,
+        WeightsSettings::declared().expect("declared weights settings"),
+    )
+    .load(&dir, &gpu, 1024 * 1024)
+    .expect("GGUF load");
 
     assert_eq!(store.len(), 1);
     assert!(store.contains("model.embed_tokens.weight"));

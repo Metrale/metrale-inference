@@ -17,11 +17,18 @@ use super::expert_lru::ExpertLru;
 use super::expert_stream::{EngramRowReader, ExpertSliceMap, ExpertSource, ShardFiles};
 use super::sidecar;
 use metrale_gpu_runtime::gpu::DevicePtr;
+use metrale_settings::groups::device_weights::WeightsSettings;
 
 const MODEL_DIR: &str = "/home/rstesiak/models/dsv41-q2k";
 
+fn declared() -> WeightsSettings {
+    WeightsSettings::declared().expect("declared weights settings")
+}
+
 fn files() -> Arc<ShardFiles> {
-    Arc::new(ShardFiles::open_dir(Path::new(MODEL_DIR)).expect("open the shard set"))
+    Arc::new(
+        ShardFiles::open_dir_with(Path::new(MODEL_DIR), &declared()).expect("open the shard set"),
+    )
 }
 
 /// The mmap bytes of `[off, off + len)` in shard `shard`, the loader's own path.
@@ -38,7 +45,7 @@ impl HeapArena {
     }
     fn lru(&mut self, layout: super::expert_stream::SlotLayout) -> ExpertLru {
         let p = self.0.as_mut_ptr();
-        ExpertLru::new(p, DevicePtr(p as u64), self.0.len(), layout).unwrap()
+        ExpertLru::with_settings(p, DevicePtr(p as u64), self.0.len(), layout, &declared()).unwrap()
     }
 }
 

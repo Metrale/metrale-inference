@@ -19,6 +19,7 @@ metrale-config = { workspace = true }
 metrale-core = { workspace = true }
 metrale-gpu-runtime = { workspace = true }
 metrale-gpu-sys = { workspace = true }
+metrale-settings = { workspace = true }
 metrale-storage = { workspace = true }
 metrale-telemetry = { workspace = true }
 anyhow = { workspace = true, features = ["std"] }
@@ -38,6 +39,7 @@ libc = { workspace = true, features = ["std"] }
 [dev-dependencies]
 metrale-gpu-runtime = { workspace = true, features = ["test-utils"] }
 metrale-kernels = { workspace = true }
+metrale-settings = { workspace = true, features = ["test-utils"] }
 tempfile = { workspace = true, features = ["getrandom"] }
 
 [[bin]]

@@ -14,6 +14,7 @@ use super::expert_lru::{ExpertLru, ExpertSlot};
 use super::expert_stream::{ExpertSource, SlotLayout};
 use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
+use metrale_settings::groups::device_weights::WeightsSettings;
 
 const LAYOUT: SlotLayout = SlotLayout {
     gate_off: 0,
@@ -24,6 +25,10 @@ const LAYOUT: SlotLayout = SlotLayout {
     down_bytes: 24,
     bytes: 56,
 };
+
+fn declared() -> WeightsSettings {
+    WeightsSettings::declared().expect("declared weights settings")
+}
 
 fn expected(layer: u32, expert: u32, i: usize) -> u8 {
     (layer as usize * 131 + expert as usize * 17 + i * 7 + 3) as u8
@@ -77,7 +82,8 @@ fn staged_misses_land_in_device_slots_through_a_small_ring() {
     let gpu = MockGpuBackend::default();
     let g: &dyn GpuBackend = &gpu;
     // 6 slots, a 2-slot ring (one slot a half): five misses = five batches
-    let (arena, mut lru) = ExpertArena::alloc(g, 6 * LAYOUT.bytes, LAYOUT, true, 2).unwrap();
+    let (arena, mut lru) =
+        ExpertArena::alloc_with(g, 6 * LAYOUT.bytes, LAYOUT, true, 2, &declared()).unwrap();
     assert!(matches!(arena, ExpertArena::Device(_)));
     assert!(lru.is_device());
     let src = MemSource {
@@ -119,7 +125,8 @@ fn staged_misses_land_in_device_slots_through_a_small_ring() {
 fn staged_read_failure_unmaps_only_the_failed_slot() {
     let gpu = MockGpuBackend::default();
     let g: &dyn GpuBackend = &gpu;
-    let (arena, mut lru) = ExpertArena::alloc(g, 8 * LAYOUT.bytes, LAYOUT, true, 4).unwrap();
+    let (arena, mut lru) =
+        ExpertArena::alloc_with(g, 8 * LAYOUT.bytes, LAYOUT, true, 4, &declared()).unwrap();
     let src = MemSource {
         poison: vec![(2, 3)],
         reads: Mutex::new(0),
@@ -152,7 +159,8 @@ fn plain_fetches_refuse_a_device_cache_and_the_pinned_path_is_unchanged() {
         poison: Vec::new(),
         reads: Mutex::new(0),
     };
-    let (arena, mut lru) = ExpertArena::alloc(g, 4 * LAYOUT.bytes, LAYOUT, true, 2).unwrap();
+    let (arena, mut lru) =
+        ExpertArena::alloc_with(g, 4 * LAYOUT.bytes, LAYOUT, true, 2, &declared()).unwrap();
     assert!(lru.fetch(&src, 1, 1).is_err());
     assert!(lru.fetch_many(&src, &[(1, 1)], 2).is_err());
     arena.free(g).unwrap();
@@ -160,7 +168,8 @@ fn plain_fetches_refuse_a_device_cache_and_the_pinned_path_is_unchanged() {
     // `fetch_many_on` is the scoped-thread gather, the slots have a host side
     let mut buf = vec![0u8; 4 * LAYOUT.bytes];
     let p = buf.as_mut_ptr();
-    let mut lru = ExpertLru::new(p, DevicePtr(p as u64), buf.len(), LAYOUT).unwrap();
+    let mut lru =
+        ExpertLru::with_settings(p, DevicePtr(p as u64), buf.len(), LAYOUT, &declared()).unwrap();
     assert!(!lru.is_device());
     lru.begin_token();
     let s = lru
