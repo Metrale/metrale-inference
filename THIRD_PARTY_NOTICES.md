@@ -15,9 +15,10 @@ repository's own SPDX header is never stamped over them (see `paths-ignore` in
 ## 1. cudarc — MIT OR Apache-2.0
 
 Rust bindings to the CUDA driver and NVRTC APIs, vendored at upstream version
-0.19.2. The root `Cargo.toml` `[patch.crates-io]` entry explains the one local
-change: CUDA-driver symbols that a non-NVIDIA runtime lacks resolve to a stub
-instead of panicking at init.
+0.19.2 and published from `vendor/cudarc/` as `metrale-cudarc`. The root
+`Cargo.toml` `cudarc` workspace dependency lists the local changes: stream
+priorities, a raw module handle, and CUDA-driver symbols that a non-NVIDIA
+runtime lacks resolve to a stub instead of panicking at init.
 
 - **License**: MIT OR Apache-2.0, at the recipient's option.
 - **License texts**: shipped in place at

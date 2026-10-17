@@ -36,7 +36,7 @@ WORKDIR /build
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates/ crates/
 COPY kernels/ kernels/
-# Vendored cudarc 0.19.2 is a `path = "vendor/cudarc"` workspace dependency.
+# The cudarc fork (`metrale-cudarc`) is a `path = "vendor/cudarc"` workspace dependency.
 COPY vendor/ vendor/
 # Per-model chat templates (resolved at serve time by model_type, e.g.
 # jinja-templates/deepseek_v4.jinja). Without this the runtime finds no

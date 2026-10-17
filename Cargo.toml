@@ -32,13 +32,9 @@ members = [
 # 2026-10-17: A bare `cargo build` builds `met` only; CI and scripts name `--workspace` or `-p`.
 default-members = ["crates/server"]
 
-# AMD/SCALE + native-HIP: the vendored cudarc 0.19.2 is byte-identical to
-# crates.io except its driver `Lib` loader resolves CUDA-driver symbols that
-# don't exist on SCALE/gfx1151 (e.g. cuArrayGetMemoryRequirements) to a
-# `__metrale_missing_cuda_sym` stub instead of panicking at init. On NVIDIA all
-# symbols resolve normally, so the patch is a no-op there (same version).
-[patch.crates-io]
-cudarc = { path = "vendor/cudarc" }
+# 2026-10-17: The vendored cudarc fork is a dependency, not a member: workspace-wide fmt, clippy
+# and tests do not run over vendored code.
+exclude = ["vendor/cudarc"]
 
 [workspace.package]
 version = "1.0.0-beta-preview"
@@ -66,7 +62,13 @@ categories = ["science", "command-line-utilities"]
 # name `std`, `driver`, `nvrtc`, `fallback-dynamic-loading` and
 # `cuda-version-from-build-system`. `fallback-dynamic-loading` is required:
 # cudarc's build.rs derives the `dynamic-loading` cfg from it.
-cudarc = { version = "0.19", default-features = false }
+# 2026-10-17: The fork is published as `metrale-cudarc` (a `[patch]` does not reach published
+# crates) and is used under the name `cudarc`. Its changes from upstream 0.19.2:
+# `result::ctx::stream_priority_range`, `result::stream::create_with_priority` and
+# `CudaContext::new_stream_with_priority`; `CudaModule::cu_module_raw`; and the driver `Lib` loader
+# resolves a CUDA-driver symbol the runtime lacks (SCALE/gfx1151, e.g.
+# cuArrayGetMemoryRequirements) to a `__metrale_missing_cuda_sym` stub instead of panicking at init.
+cudarc = { package = "metrale-cudarc", path = "vendor/cudarc", version = "0.19.2", default-features = false }
 
 # Serialization (HF config.json). `serde_json`'s `preserve_order` (IndexMap key order) is named
 # by the members that rely on it; see crates/server/Cargo.toml for why the server needs it.

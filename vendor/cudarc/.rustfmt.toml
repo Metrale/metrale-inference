@@ -1,0 +1,4 @@
+# 2026-10-17: Vendored fork, outside the workspace members. `cargo fmt --all` still reaches it as
+# a path dependency of the workspace, so formatting is switched off here rather than rewriting
+# upstream code.
+disable_all_formatting = true
