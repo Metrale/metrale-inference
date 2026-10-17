@@ -152,9 +152,7 @@ fn file_size(root: &Path) -> Result<Findings, String> {
             files.push((path, bytes));
         }
     }
-    Ok(filesize::findings(
-        files.iter().map(|(p, b)| (p.as_str(), b.as_slice())),
-    ))
+    filesize::findings(files.iter().map(|(p, b)| (p.as_str(), b.as_slice())))
 }
 
 /// 2026-10-17: The member that owns `path`: the one with the longest directory prefix.

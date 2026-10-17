@@ -2,6 +2,8 @@
 # 2026-10-17: Source files over the 500-line cap, as `path lines`: the split work queue.
 # This list may only shrink: `cargo xtask file-size` refuses a new offender, a grown count and a
 # stale entry, and asks for an entry to be tightened when its count falls.
+# Carried from the retired check-file-size-cap.sh list: coverage.rs is a BOUNDARY_FILE, so any
+# edit to it, a pure split included, invalidates every standing gate record.
 crates/bench/src/gate/coverage.rs 1239
 crates/gpu-examples/examples/glm5next_hc_fused_gate.rs 618
 crates/gpu-runtime/cuda/cutlass_nvfp4_gemm.cu 543
@@ -21,7 +23,7 @@ crates/model-layers/src/layers/qwen3_ssm/trait_layer.rs 501
 crates/server/src/cli/serve_args.rs 502
 crates/server/src/cli/serve_args/scheduling.rs 517
 crates/server/src/scheduler/verify_k2_step.rs 534
-.github/scripts/certification-selftest.sh 2792
+.github/scripts/certification-selftest.sh 2778
 kernels/b300/common/dsa_indexer.cu 607
 kernels/b300/common/moe_w4a16_grouped_gemm.cu 589
 kernels/gb10/common/attn_prefill.cu 990

@@ -37,10 +37,16 @@ pub fn line_count(bytes: &[u8]) -> u64 {
     u64::try_from(newlines.saturating_add(unterminated)).unwrap_or(u64::MAX)
 }
 
-/// 2026-10-17: The files among `files` (path, contents) over the cap.
-pub fn findings<'a>(files: impl IntoIterator<Item = (&'a str, &'a [u8])>) -> Findings {
+/// 2026-10-17: The files among `files` (path, contents) over the cap. Every workspace member
+/// has a source file, so no file in scope means the listing failed, not that the tree is clean:
+/// that is an error, never a pass.
+pub fn findings<'a>(
+    files: impl IntoIterator<Item = (&'a str, &'a [u8])>,
+) -> Result<Findings, String> {
     let mut out = Findings::new();
+    let mut scanned = 0_u64;
     for (path, bytes) in files {
+        scanned = scanned.saturating_add(1);
         let lines = line_count(bytes);
         if lines > MAX_LINES {
             out.insert(
@@ -52,12 +58,29 @@ pub fn findings<'a>(files: impl IntoIterator<Item = (&'a str, &'a [u8])>) -> Fin
             );
         }
     }
-    out
+    if scanned == 0 {
+        return Err(
+            "file-size: no source file was in scope, so the cap scanned nothing".to_owned(),
+        );
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{in_scope, line_count};
+    use super::{findings, in_scope, line_count};
+
+    #[test]
+    fn an_empty_scan_is_an_error_and_a_clean_one_is_not() {
+        assert!(findings([]).is_err());
+        let small: &[u8] = b"fn main() {}\n";
+        assert!(findings([("a.rs", small)]).unwrap().is_empty());
+        let big = b"x\n".repeat(501);
+        assert_eq!(
+            findings([("b.rs", big.as_slice())]).unwrap()["b.rs"].count,
+            Some(501)
+        );
+    }
 
     #[test]
     fn lines_count_like_wc_plus_an_unterminated_tail() {
