@@ -656,5 +656,9 @@ required-features = ["cuda", "gpu-examples"]
 name = "glm5next_dsa_hb_replay"
 required-features = ["cuda", "gpu-examples"]
 
+[[example]]
+name = "dsa_fp8_indexer_gpu"
+required-features = ["cuda", "gpu-examples"]
+
 [lints]
 workspace = true

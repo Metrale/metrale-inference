@@ -70,6 +70,7 @@ pub(crate) fn kernels() -> Glm5NextDsaKernels {
             sel_fold: h(SEL_FOLD),
             expand_folded: h(EXPAND_FOLDED),
         },
+        fp8: crate::glm5next_dsa::fp8_rows::DsaFp8Kernels::NONE,
     }
 }
 

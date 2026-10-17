@@ -15,7 +15,7 @@
 // - dsa_mla_masked_attn has no rope section: q and k share one head dim qd, and `scale` is
 //   an argument, never derived here.
 
-#include "dsa_indexer_body.cuh"
+#include "dsa_indexer_pools.cuh"
 
 __device__ __forceinline__ float dsa_block_sum(float v, float* smem, unsigned tid, unsigned nthreads) {
     for (int off = 16; off > 0; off >>= 1) v += __shfl_down_sync(0xffffffff, v, off);
@@ -37,6 +37,7 @@ __device__ __forceinline__ float dsa_block_sum(float v, float* smem, unsigned ti
 // be <= 8 (lg[8]); config validation refuses a larger index_kpool (KERNEL_MAX_KPOOL).
 // 2026-10-09: The geometry slots, dsa_write_geom's body and the per-channel and per-slot
 // halves of the compression are in dsa_indexer_body.cuh, shared with dsa_indexer_rows.cu.
+// 2026-10-16: The compression body is in dsa_indexer_pools.cuh (dsa_kpool_compress_body).
 
 // 2026-09-25: One thread. Fills the geom slots from seq_len[0].
 extern "C" __global__ void dsa_write_geom(
@@ -86,33 +87,10 @@ extern "C" __global__ void dsa_kpool_compress(
     unsigned int bs,
     unsigned int blk_elems
 ) {
-    const unsigned int tid = threadIdx.x;
-    // 2026-10-14: Pools [0, n) are written, block x taking x, x + gridDim.x, ... With no geom
-    // n is the grid (one pool per block, as before). Under a ceiling launch (geom set, S the
-    // ceiling's max_pools * KP) n is the live pool count clamped to the ceiling's
-    // max_pools + 1, the old one-block-per-pool grid, so the host may cap the grid without
-    // changing which pools are written or how: each pool's writes come from one block running
-    // the code below on the same inputs.
-    unsigned int n = gridDim.x;
-    if (geom) {
-        n = min((unsigned int)geom[DSA_GEOM_NPOOLS_F], S / KP + 1u);
-        S = (unsigned int)geom[DSA_GEOM_S];
-    }
-
-    for (unsigned int p = blockIdx.x; p < n; p += gridDim.x) {
-        // 2026-09-25: Slot bookkeeping is the same for every channel, so thread 0 writes it.
-        bool all_valid = true;
-        for (unsigned int s = 0; s < KP; ++s) {
-            const int idx = dsa_pool_slot(first_key, p, KP, s, S, valid);
-            all_valid &= idx != DSA_INVALID;
-            if (tid == 0) pool_indices[p * KP + s] = idx;
-        }
-        if (tid == 0) pool_valid[p] = all_valid ? 1 : 0;
-
-        for (unsigned int d = tid; d < D; d += blockDim.x)
-            pool_keys[p * D + d] =
-                dsa_pool_key(k, gate, valid, ape, S, D, KP, first_key, bt, bs, blk_elems, p, d);
-    }
+    // 2026-10-16: The body is in dsa_indexer_pools.cuh, shared with the FP8 cache's entry.
+    const DsaBf16Pools src{k, gate, valid, ape, D, KP, first_key, bs, blk_elems};
+    dsa_kpool_compress_body(src, valid, pool_keys, pool_indices, pool_valid, S, D, KP, first_key,
+                            geom, bt);
 }
 
 // 2026-09-25: 2. Per-(query, pool) index score, one block per (pool, query). `weights` must

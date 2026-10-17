@@ -368,6 +368,7 @@ pub fn build_model(
         layer_dtypes: layer_dtypes.clone(),
         layer_dims: config.kv_layer_dims.clone(),
         cache_blocks_per_seq: hss_cache_blocks_per_seq,
+        v_block_bytes: loader.kv_v_block_bytes(&config, kv_block_size)?,
     };
 
     if hss_cache_blocks_per_seq.is_some() {

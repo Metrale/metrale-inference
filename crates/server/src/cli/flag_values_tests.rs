@@ -31,6 +31,7 @@ const ENUMERATED: &[&str] = &[
     "weight-quantization",
     "dense-quantization",
     "moe-expert-layout",
+    "indexer-cache-dtype",
 ];
 
 /// 2026-09-26: Flags a value needs beside it to validate: `--ssm-h-dtype f16`

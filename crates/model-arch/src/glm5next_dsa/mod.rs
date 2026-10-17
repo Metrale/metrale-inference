@@ -46,6 +46,8 @@ pub mod attend;
 pub mod aux_state;
 pub mod binding;
 pub mod build;
+pub mod fp8_rows;
+pub mod fp8_twin;
 pub mod layer;
 pub mod paged;
 pub mod select;
@@ -102,6 +104,9 @@ pub struct Glm5NextDsaKernels {
     /// several sequences (`dsa_indexer_rows.cu`); all `KernelHandle(0)` on a target without
     /// them.
     pub rows: DsaRowsKernels,
+    /// 2026-10-16: The FP8 indexer cache's store and readers (`fp8_rows`); all
+    /// `KernelHandle(0)` on a target without them.
+    pub fp8: fp8_rows::DsaFp8Kernels,
 }
 
 /// 2026-10-09: Module of the rows kernels: `dsa_indexer_rows.cu`, named by its file stem.
@@ -208,7 +213,18 @@ impl Glm5NextDsaKernels {
             topk_to_mask: gpu.kernel(DSA_MODULE, "dsa_topk_to_mask")?,
             mla_masked_attn: gpu.kernel(DSA_MODULE, "dsa_mla_masked_attn")?,
             rows: DsaRowsKernels::resolve(gpu),
+            fp8: fp8_rows::DsaFp8Kernels::resolve(gpu),
         })
+    }
+
+    /// 2026-10-16: The single-row indexer store for a state's row format: the FP8 twin for a
+    /// state that guards a ring, else `indexer_store`.
+    pub fn store_for(&self, fp8: bool) -> KernelHandle {
+        if fp8 {
+            self.fp8.store
+        } else {
+            self.indexer_store
+        }
     }
 }
 

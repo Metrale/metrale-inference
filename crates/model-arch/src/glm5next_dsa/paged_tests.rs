@@ -121,23 +121,34 @@ fn the_device_descriptors_match_the_layout() {
 
 /// 2026-10-09: [`row_elem`] is the host twin of the kernels' `dsa_row_elem`; both kernel
 /// sources must carry the same two arms, and the reads they replaced must be gone. On gb10 the
-/// helpers live in `dsa_indexer_body.cuh` (2026-10-09), which `dsa_indexer.cu` and
-/// `dsa_indexer_rows.cu` include; none of the three may read a row unpaged.
+/// helpers live in `dsa_indexer_body.cuh` (2026-10-09). 2026-10-16: the body reaches the entry
+/// sources through `dsa_indexer_pools.cuh`, which `dsa_indexer.cu`, `dsa_indexer_rows.cu` and
+/// `dsa_indexer_fp8.cu` include; none of them may read a row unpaged.
 #[test]
 fn both_kernel_sources_carry_the_same_address_formula() {
     let gb10_body = include_str!("../../../../kernels/gb10/common/dsa_indexer_body.cuh");
+    let gb10_pools = include_str!("../../../../kernels/gb10/common/dsa_indexer_pools.cuh");
     let gb10_entries = include_str!("../../../../kernels/gb10/common/dsa_indexer.cu");
     let gb10_rows = include_str!("../../../../kernels/gb10/common/dsa_indexer_rows.cu");
+    let gb10_fp8 = include_str!("../../../../kernels/gb10/common/dsa_indexer_fp8.cu");
     let b300 = include_str!("../../../../kernels/b300/common/dsa_indexer.cu");
     for src in [gb10_body, b300] {
         assert!(src.contains("if (bt == nullptr) return (size_t)raw * D;"));
         assert!(src.contains("return (size_t)bt[raw / bs] * blk_elems + (size_t)(raw % bs) * D;"));
         assert!(src.contains("return valid == nullptr || valid[raw] != 0;"));
     }
-    for src in [gb10_entries, gb10_rows] {
-        assert!(src.contains("#include \"dsa_indexer_body.cuh\""));
+    assert!(gb10_pools.contains("#include \"dsa_indexer_body.cuh\""));
+    for src in [gb10_entries, gb10_rows, gb10_fp8] {
+        assert!(src.contains("#include \"dsa_indexer_pools.cuh\""));
     }
-    for src in [gb10_body, gb10_entries, gb10_rows, b300] {
+    for src in [
+        gb10_body,
+        gb10_pools,
+        gb10_entries,
+        gb10_rows,
+        gb10_fp8,
+        b300,
+    ] {
         assert!(
             !src.contains("gate[(size_t)raw * D + d]"),
             "an unpaged gate read is left"

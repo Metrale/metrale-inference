@@ -106,21 +106,38 @@ __device__ __forceinline__ int dsa_pool_slot(int first_key, unsigned int p, unsi
     return ok ? (int)raw : DSA_INVALID;
 }
 
+// 2026-10-16: Indexer rows of a paged or flat BF16 cache, as dsa_pool_key_rows reads them: the
+// key and gate of row `raw` at channel d, through dsa_row_elem.
+struct DsaBf16RowView {
+    const __nv_bfloat16* __restrict__ k;
+    const __nv_bfloat16* __restrict__ gate;
+    const int* __restrict__ bt;
+    unsigned int D;
+    unsigned int bs;
+    unsigned int blk_elems;
+    __device__ __forceinline__ __nv_bfloat16 gate_at(long long raw, unsigned int d) const {
+        return gate[dsa_row_elem(raw, D, bt, bs, blk_elems) + d];
+    }
+    __device__ __forceinline__ __nv_bfloat16 key_at(long long raw, unsigned int d) const {
+        return k[dsa_row_elem(raw, D, bt, bs, blk_elems) + d];
+    }
+};
+
 // 2026-09-25: Channel d of pool p's key: a softmax over the pool's slots of gate + ape,
 // weighting the slots' keys. Invalid slots weigh 0; a pool with no valid slot has sum 0, so
 // its key is 0. KP must be <= 8 (lg[8]).
-__device__ __forceinline__ float dsa_pool_key(
-    const __nv_bfloat16* __restrict__ k,
-    const __nv_bfloat16* __restrict__ gate,
+// 2026-10-16: Parameterized over where the slot rows are read (`Rows`: gate_at / key_at), so
+// the FP8 store computes a pool's key from staged and ring rows with these expressions in this
+// order; dsa_pool_key is the BF16 cache's instance.
+template <class Rows>
+__device__ __forceinline__ float dsa_pool_key_rows(
+    const Rows& rows,
     const unsigned char* __restrict__ valid,
     const float* __restrict__ ape,
     unsigned int S,
     unsigned int D,
     unsigned int KP,
     int first_key,
-    const int* __restrict__ bt,
-    unsigned int bs,
-    unsigned int blk_elems,
     unsigned int p,
     unsigned int d
 ) {
@@ -130,8 +147,7 @@ __device__ __forceinline__ float dsa_pool_key(
         long long raw = (long long)first_key + (long long)p * KP + s;
         bool in_range = raw >= 0 && raw < (long long)S;
         bool ok = in_range && dsa_row_valid(valid, raw);
-        lg[s] = ok ? (__bfloat162float(gate[dsa_row_elem(raw, D, bt, bs, blk_elems) + d])
-                     + ape[s * D + d])
+        lg[s] = ok ? (__bfloat162float(rows.gate_at(raw, d)) + ape[s * D + d])
                    : -CUDART_INF_F;
         mx = fmaxf(mx, lg[s]);
     }
@@ -148,10 +164,29 @@ __device__ __forceinline__ float dsa_pool_key(
         bool in_range = raw >= 0 && raw < (long long)S;
         bool ok = in_range && dsa_row_valid(valid, raw);
         if (ok)
-            acc += lg[s] * inv
-                   * __bfloat162float(k[dsa_row_elem(raw, D, bt, bs, blk_elems) + d]);
+            acc += lg[s] * inv * __bfloat162float(rows.key_at(raw, d));
     }
     return acc;
+}
+
+// 2026-10-16: dsa_pool_key_rows over a BF16 cache (flat, or paged through bt).
+__device__ __forceinline__ float dsa_pool_key(
+    const __nv_bfloat16* __restrict__ k,
+    const __nv_bfloat16* __restrict__ gate,
+    const unsigned char* __restrict__ valid,
+    const float* __restrict__ ape,
+    unsigned int S,
+    unsigned int D,
+    unsigned int KP,
+    int first_key,
+    const int* __restrict__ bt,
+    unsigned int bs,
+    unsigned int blk_elems,
+    unsigned int p,
+    unsigned int d
+) {
+    const DsaBf16RowView rows{k, gate, bt, D, bs, blk_elems};
+    return dsa_pool_key_rows(rows, valid, ape, S, D, KP, first_key, p, d);
 }
 
 // 2026-09-25: The score of one (query, pool): sum_h weights[h] * relu(scale * dot(q_h, key)).

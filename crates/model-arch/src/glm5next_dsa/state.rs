@@ -23,6 +23,7 @@ use anyhow::{Result, bail};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
 use super::Glm5NextDsaConfig;
+use super::fp8_rows::{Fp8Ring, IndexerRowFormat};
 use super::paged::{IndexerCache, IndexerRowsDev};
 use super::select::DsaSelectGeometry;
 use metrale_model_layers::layer::LayerState;
@@ -78,6 +79,9 @@ pub struct Glm5NextDsaState {
     /// 2026-10-09: Flat buffers above, or rows in the sequence's KV blocks (the three
     /// pointers are then NULL).
     cache: IndexerCache,
+    /// 2026-10-16: `Some` when the paged rows are FP8 (`super::fp8_rows`): rewinds and
+    /// adoptions its ring cannot serve are refused.
+    fp8_ring: Option<Fp8Ring>,
 }
 
 impl Glm5NextDsaState {
@@ -97,6 +101,7 @@ impl Glm5NextDsaState {
             released: false,
             owned: true,
             cache: IndexerCache::Flat,
+            fp8_ring: None,
         })
     }
 
@@ -114,7 +119,20 @@ impl Glm5NextDsaState {
             released: false,
             owned: false,
             cache: IndexerCache::Paged,
+            fp8_ring: None,
         })
+    }
+
+    /// 2026-10-16: [`Self::paged`] in `format`: an FP8 state keeps its ring geometry.
+    pub fn paged_as(cfg: &Glm5NextDsaConfig, format: IndexerRowFormat) -> Result<Self> {
+        let mut st = Self::paged(cfg)?;
+        st.fp8_ring = format.ring(cfg.index_kpool);
+        Ok(st)
+    }
+
+    /// 2026-10-16: The FP8 ring of a paged FP8 state; `None` for BF16 rows.
+    pub fn fp8_ring(&self) -> Option<Fp8Ring> {
+        self.fp8_ring
     }
 
     pub fn cache(&self) -> IndexerCache {
@@ -139,6 +157,9 @@ impl Glm5NextDsaState {
                  cache cannot adopt rows it never wrote",
                 self.len
             );
+        }
+        if let Some(ring) = self.fp8_ring {
+            ring.check_adopt(self.len, seq_len)?;
         }
         self.ensure_room_through(seq_len)?;
         self.len = self.len.max(seq_len);
@@ -165,6 +186,7 @@ impl Glm5NextDsaState {
             released: false,
             owned: false,
             cache: IndexerCache::Flat,
+            fp8_ring: None,
         }
     }
 
@@ -235,6 +257,9 @@ impl Glm5NextDsaState {
                  means the caller lost the sequence position",
                 self.len
             );
+        }
+        if let Some(ring) = self.fp8_ring {
+            ring.check_rewind(self.len, n)?;
         }
         self.len = n;
         Ok(())

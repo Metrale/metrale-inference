@@ -24,7 +24,7 @@
 //   dsa_index_scores does. dsa_expand_selection_rows recomputes the selected pools' token ids
 //   (dsa_pool_slot) instead of reading the pool_indices dsa_kpool_compress would have stored.
 
-#include "dsa_indexer_body.cuh"
+#include "dsa_indexer_pools.cuh"
 #include "dsa_scores_mma.cuh"
 #include <stdint.h>
 
@@ -88,46 +88,11 @@ extern "C" __global__ void dsa_pool_scores_rows(
     unsigned int blk_elems,
     unsigned int sc_stride
 ) {
-    const unsigned int row = blockIdx.z;
-    const unsigned int tid = threadIdx.x;
-    const int* g = geom + (size_t)row * DSA_GEOM_SLOTS;
-    const unsigned int S = (unsigned int)g[DSA_GEOM_S];
-    const unsigned int P = (unsigned int)g[DSA_GEOM_NPOOLS];
-    const int* btr = bt + (size_t)row * bt_stride;
-    float* out_r = out + (size_t)row * sc_stride;
     extern __shared__ float sh_rows[];
-    float* key = sh_rows;
-    float* heads = sh_rows + D;
-
-    // 2026-10-13: p, and so cand, is the same for every thread of the block: the `continue`
-    // is uniform and every thread reaches each __syncthreads.
-    for (unsigned int p = blockIdx.x; p < P; p += gridDim.x) {
-        // 2026-10-09: dsa_kpool_compress's slot bookkeeping, then dsa_index_scores' candidacy.
-        bool all_valid = true;
-        int end = DSA_INVALID;
-        for (unsigned int s = 0; s < KP; ++s) {
-            end = dsa_pool_slot(first_key, p, KP, s, S, nullptr);
-            all_valid &= end != DSA_INVALID;
-        }
-        int end_c = end < 0 ? 0 : (end >= (int)S ? (int)S - 1 : end);
-        bool vis = (end_c <= q_pos[row]) && dsa_row_valid(nullptr, end_c);
-        bool cand = all_valid && vis;
-        if (tid == 0) valid_cand[(size_t)row * sc_stride + p] = cand ? 1 : 0;
-        if (!cand) {
-            if (tid == 0) out_r[p] = -FLT_MAX;
-            continue;
-        }
-
-        for (unsigned int d = tid; d < D; d += blockDim.x)
-            key[d] = dsa_pool_key(k, gate, nullptr, ape, S, D, KP, first_key, btr, bs,
-                                  blk_elems, p, d);
-        __syncthreads();
-        const float acc = dsa_score_heads(q + (size_t)row * H * D, key,
-                                          weights + (size_t)row * H, H, D, scale, heads, tid);
-        if (tid == 0) out_r[p] = acc;
-        // 2026-10-13: The next pool overwrites `key` and `heads`.
-        __syncthreads();
-    }
+    // 2026-10-16: The body is in dsa_indexer_pools.cuh, shared with the FP8 cache's entry.
+    const DsaBf16Pools src{k, gate, nullptr, ape, D, KP, first_key, bs, blk_elems};
+    dsa_pool_scores_rows_body(src, q, weights, q_pos, out, valid_cand, H, D, KP, first_key, scale,
+                              geom, bt, bt_stride, sc_stride, sh_rows, sh_rows + D);
 }
 
 // 2026-10-09: grid (1, rows), block ROW_BLOCK: dsa_topk_pools per row, over scores row

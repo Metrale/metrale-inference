@@ -71,6 +71,8 @@ impl ModelConfig {
             tp_rank: 0,
             tp_world_size: 1,
             moe_expert_layout: crate::MoeExpertLayout::Ep,
+            indexer_cache_dtype: crate::IndexerCacheDtype::Bf16,
+            indexer_rewind_rows: 0,
             tp_pre_shard_heads: None,
             serve_max_seq_len: 0,
             hybrid_override_pattern: String::new(),

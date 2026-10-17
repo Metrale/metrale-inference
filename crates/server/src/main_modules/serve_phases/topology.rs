@@ -97,6 +97,7 @@ pub(crate) fn resolve_topology(
     // that does not slice experts over TP.
     config.moe_expert_layout = args.moe_expert_layout.0;
     config.moe_expert_layout.check_topology(tp_size, ep_size)?;
+    set_indexer_cache_dtype(args, config)?;
     if tp_size > 1 {
         let loader = metrale_model_engine::factory::loader_for_config(config)?;
         let support = loader.tp_support();
@@ -158,6 +159,36 @@ pub(crate) fn resolve_topology(
         tp_rank,
         ep_rank,
     })
+}
+
+/// 2026-10-16: `--indexer-cache-dtype` and the rewind depth its FP8 tail ring is sized for: the
+/// widest verify pass (`verify_pool_drafts`) when any drafter runs, else 0. `fp8` is refused off
+/// its scope (`IndexerCacheDtype::check_serve`).
+fn set_indexer_cache_dtype(args: &cli::ServeArgs, config: &mut ModelConfig) -> Result<()> {
+    let dtype = args.indexer_cache_dtype.0;
+    let kv_paging = metrale_storage::kv_paging::ns::kv_paging_selected(
+        std::env::var("METRALE_KV_PAGING").ok().as_deref(),
+    )?;
+    dtype.check_serve(
+        &config.model_type,
+        metrale_config::glm_dsa_indexer_paged(),
+        kv_paging,
+    )?;
+    let drafting = args.speculative || args.prompt_lookup_config().is_some();
+    config.indexer_cache_dtype = dtype;
+    config.indexer_rewind_rows = if drafting {
+        args.verify_pool_drafts()
+    } else {
+        0
+    };
+    if dtype != metrale_config::IndexerCacheDtype::Bf16 {
+        tracing::info!(
+            "indexer cache dtype {}: tail ring sized for a rewind of {} rows",
+            dtype.name(),
+            config.indexer_rewind_rows
+        );
+    }
+    Ok(())
 }
 
 /// 2026-09-26: The NCCL communicator, or `None` when `world_size <= 1`. The

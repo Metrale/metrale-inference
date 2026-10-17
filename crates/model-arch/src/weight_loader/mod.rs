@@ -268,6 +268,13 @@ pub trait ModelWeightLoader {
         Vec::new()
     }
 
+    /// 2026-10-16: Bytes of one attention layer's V block when the model keeps something other
+    /// than V there (the GLM-5.3 FP8 indexer cache), for KV blocks of `block_size` tokens. The
+    /// default is `None`: the V block the KV geometry implies.
+    fn kv_v_block_bytes(&self, _config: &ModelConfig, _block_size: usize) -> Result<Option<usize>> {
+        Ok(None)
+    }
+
     /// 2026-09-25: Load DFlash drafter weights from the drafter's own
     /// `WeightStore`. The default returns `None`, and no loader overrides it:
     /// `factory::build` loads the drafter with the free function

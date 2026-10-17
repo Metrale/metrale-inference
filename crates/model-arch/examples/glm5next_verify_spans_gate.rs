@@ -195,6 +195,7 @@ fn dsa_gate(gpu: &dyn GpuBackend, fwd: &Fwd, rng: &mut Lcg, capture: bool) -> Re
                 layer_dtypes: vec![],
                 layer_dims: vec![],
                 cache_blocks_per_seq: None,
+                v_block_bytes: None,
             },
             c * MB,
             gpu,

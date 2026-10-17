@@ -91,6 +91,7 @@ pub fn load_glm5next_mtp_module(
         // 2026-10-09: The drafter's one-layer pool is sized apart from the text stack's; its
         // indexer stays flat.
         indexer_cache: crate::glm5next_dsa::paged::IndexerCache::Flat,
+        indexer_format: crate::glm5next_dsa::fp8_rows::IndexerRowFormat::Bf16,
     }));
 
     let expert = super::glm5_next_load::expert_binder_at(gpu, store, idx, &mlp_cfg);

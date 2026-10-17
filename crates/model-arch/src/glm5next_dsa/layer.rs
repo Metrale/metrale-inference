@@ -123,6 +123,8 @@ pub struct Glm5NextDsaLayer {
     /// 2026-10-09: Where `alloc_state` puts a sequence's indexer rows. The text stack's
     /// loader sets `paged::text_stack_indexer_cache()`; the MTP drafter's layer is flat.
     pub indexer_cache: IndexerCache,
+    /// 2026-10-16: How a paged state keeps its rows (`--indexer-cache-dtype`); flat layers are BF16.
+    pub indexer_format: super::fp8_rows::IndexerRowFormat,
 }
 
 impl Glm5NextDsaLayer {

@@ -42,6 +42,11 @@ impl Glm5NextDsaLayer {
             // 2026-09-25: Placement and the validity mark both use the device-side position;
             // a memset at `valid.offset(pos)` would fix a host address in a captured graph.
             IndexerPlace::Device { pos: pd, bt } => {
+                let rows = self.indexer_rows(state, kv_cache, bt)?;
+                if rows.fp8.is_some() {
+                    self.store_fp8_rows(gpu, &rows, stage_row, pd, bt, 0, 1, 1, stream)?;
+                    return state.advance(1);
+                }
                 if self.select_kernels.indexer_store.0 == 0 {
                     bail!(
                         "DSA layer {}: a device-placed indexer row needs dsa_indexer_store, \
@@ -51,7 +56,6 @@ impl Glm5NextDsaLayer {
                 }
                 // 2026-10-09: A flat state's rows are its own buffers and `bt` is unused (the
                 // launch passes NULL, 0, 0); a paged state's go through `bt`.
-                let rows = self.indexer_rows(state, kv_cache, bt)?;
                 KernelLaunch::new(gpu, self.select_kernels.indexer_store)
                     .grid([1, 1, 1])
                     .block([d.min(1024) as u32, 1, 1])
@@ -69,6 +73,10 @@ impl Glm5NextDsaLayer {
             }
             // 2026-10-09: A paged cache has no validity bytes: every row below the length is
             // valid.
+            IndexerPlace::Host { .. } if state.fp8_ring().is_some() => bail!(
+                "DSA layer {}: an FP8 indexer row needs a device placement",
+                self.layer_idx
+            ),
             IndexerPlace::Host { .. } if state.cache() == IndexerCache::Paged => {}
             IndexerPlace::Host { .. } => gpu.memset_async(state.valid.offset(pos), 1, 1, stream)?,
         }

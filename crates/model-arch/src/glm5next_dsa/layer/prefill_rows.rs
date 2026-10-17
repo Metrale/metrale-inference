@@ -119,6 +119,11 @@ impl Glm5NextDsaLayer {
                 self.layer_idx
             );
         }
+        if rows.fp8.is_some() {
+            // 2026-10-16: One sequence's consecutive rows: a segment of `k`, two phases.
+            self.store_fp8_rows(gpu, &rows, 0, pos0, bt0, bt_rows, k, k, stream)?;
+            return st.advance(k);
+        }
         let d = c.index_head_dim;
         KernelLaunch::new(gpu, self.select_kernels.rows.store)
             .grid([1, k as u32, 1])

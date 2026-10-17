@@ -211,10 +211,17 @@ impl Glm5NextDsaLayer {
                 && self.select_kernels.write_geom.0 != 0;
             // 2026-10-09: The device placement carries the row's block table (`bt_stride` is
             // the metadata's, so this is the row's own table); a flat state ignores it.
-            let place = match meta {
-                Some(m) if replay_safe => IndexerPlace::Device {
+            // 2026-10-16: An FP8 row is always placed by its store kernel: with metadata at its
+            // row, else at the host path's uploaded position through its one table.
+            let fp8 = st.fp8_ring().is_some();
+            let place = match (meta, &host) {
+                (Some(m), _) if replay_safe || fp8 => IndexerPlace::Device {
                     pos: m.positions.offset(row * 4),
                     bt: m.block_table.offset(row * bt_stride),
+                },
+                (None, Some(h)) if fp8 => IndexerPlace::Device {
+                    pos: h.q_pos.offset(row * 4),
+                    bt: h.bt,
                 },
                 _ => IndexerPlace::Host {
                     block_table: block_table.as_slice(),

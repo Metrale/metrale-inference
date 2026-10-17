@@ -101,6 +101,8 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
 
         let kda_kernels = Glm5NextKdaKernels::resolve(gpu)?;
         let dsa_kernels = Glm5NextDsaKernels::resolve(gpu)?;
+        let indexer_format =
+            crate::glm5next_dsa::fp8_rows::IndexerRowFormat::text_stack(config, &dsa_kernels.fp8)?;
         let dsa_layer_kernels = Glm5NextDsaLayerKernels::resolve(gpu)?;
         let mlp_kernels = Glm5NextMlpKernels::resolve(gpu)?;
         let mhc_kernels_probe = Glm5NextMhcKernels::resolve(gpu)?;
@@ -229,6 +231,7 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                         rms_eps: config.rms_norm_eps as f32,
                         kv_scale: 1.0,
                         indexer_cache: crate::glm5next_dsa::paged::text_stack_indexer_cache(),
+                        indexer_format,
                     }))
                 }
             };
@@ -429,6 +432,13 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
         _gpu: &dyn GpuBackend,
     ) -> Result<Option<crate::weight_loader::MtpWeights>> {
         Ok(None)
+    }
+
+    /// 2026-10-16: The FP8 indexer cache resizes the V block; see `IndexerRowFormat`.
+    fn kv_v_block_bytes(&self, config: &ModelConfig, block_size: usize) -> Result<Option<usize>> {
+        crate::glm5next_dsa::fp8_rows::IndexerRowFormat::text_stack_v_block_bytes(
+            config, block_size,
+        )
     }
 
     /// 2026-09-25: Free the store tensors `is_reuploaded` matches, then those
