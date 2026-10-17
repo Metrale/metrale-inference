@@ -2333,3 +2333,51 @@ effort_hours = 2
 transferability = "a lever with a real per-chunk saving can measure flat at the median when single-chunk spikes land on most samples; read per-sample chunk timelines before calling a fusion inert or off the critical path"
 links = { pr = "", commit = "5c6678592", evidence = "serve pair K65536-kinv-1016T2356 (control) / K65536-kinv-1017T0016 (lever); campaign STATUS 2026-10-17T00:49Z" }
 notes = "Chunk 3 sees no change because the tail-merge folds the last rows into the previous chunk. The c4k client lean (-30.4, server -5.1) is the only cell to watch in the round-2 re-run. Not in the 512k recipe of record"
+
+[[lever]]
+id = "gb10x3-glm53-db5-wide-verify-cap16"
+date = "2026-10-17"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes, MTP drafter layer 45"
+recipe_or_tier = "DB5F: decode recipe + METRALE_GLM_WIDE_VERIFY_GRAPHS=1 + METRALE_GLM_MOE_W4A4_WIDE_SWEEP=1 + METRALE_DENSE_BATCHM_32=1, MTP dispatch cap 16, binary 2f57285a3, K65536, no PRE_TILE; control DB5B2 = same binary, cap 8, none of the three levers"
+symptom = "with MTP cap 8 the scheduler refuses speculation above 8 active sequences, so C12/C16 run serial; DB5 lifts the cap to 16 and adds wide (17..32-row) verify graphs, a wide MoE sweep and 16-row batched-GEMV dense/head launches so the 24/32-row verify steps at C12/C16 stay efficient"
+diagnosis_tool = "bench"
+root_cause_class = "wiring-defect"
+lever_type = "config"
+lkb_effect = "MoE wide sweep and 32-row verify capture armed (routed launches logged at 18..32 rows during the C12/C16 rungs); the dense and lm_head 17..32-row batched-GEMV lever never armed"
+parity_tier_kept = "tf-section-identical"
+per_rung = [{ rung = "C1", tok_s_pct = -0.7, j_tok_pct = -0.1, n = 2 }, { rung = "C4", tok_s_pct = 0.6, j_tok_pct = 0.4, n = 2 }, { rung = "ttft-cold-c256", tok_s_pct = 0, j_tok_pct = 0.0, n = 3 }, { rung = "ttft-cold-c1k", tok_s_pct = 0, j_tok_pct = 0.0, n = 3 }, { rung = "ttft-cold-c32k", tok_s_pct = 0, j_tok_pct = 0.0, n = 3 }]
+verdict = "failed"
+verdict_reason = "2026-10-17 03:1xZ not KEEP. Pair DB5B2 (K65536-kinv-1017T0057, control, first) / DB5F (K65536-kinv-1017T0159), adjacent, same binary. The verdict rests on C1 + C8 (+C4) + the TTFT cells only: the control's C2 and C16 reps were all parked, so C2/C16 are not judged for this pair, C4 is judged only against the control's r2 (78.69), and C12 is info. Judged: C1 41.17/41.55 vs 41.66/41.68 tok/s (-0.7%), C4 78.31/79.95 vs 78.69 (+0.6%). C8: insufficient judged reps; both DB5F C8 reps were parked by the chassis rule (102.36/103.34, info) against a judged control 102.18/101.42, so the C8 >= control condition cannot be evaluated. db5_check FAIL: neither 17..32-row DENSE_BATCHM_32 readback (dense projections, lm_head) appears anywhere in the rank-0 log, although mtp_rungs shows speculation at C12/C16 (share 0.95-0.96, 1.61 tok/step, 24 and 32 verify rows) and the wide MoE sweep logged 18..32-row launches, so one of the three levers was never exercised. The C16 bar of 163.8 is also missed by the one judged C16 rep (137.48). Info only, mixed validity: C12 121.47 (both parked) vs 125.47 (judged), C16 136.62 vs a parked 140.93, i.e. speculation at width with two of three levers armed ran about 2.5-3% below serial decode at C12/C16. Validity otherwise PASS: MTP loaded on all ranks, cap readback 16 on all ranks (control 8), kv_admit PASS, stop_on_fault 0/0/0, F1 PASS (finish-leaf saves 0 on every rank, readback hit; snap-agree None 0 vs Some 194, control None 3 vs Some 191 with all 3 in its excluded C16 r2), tf section 3a32f6cb77727a95, min cached prompt tokens 192 on every rep. Server cold TTFT c256/c1k/c32k 380.6/582.9/10219.7 vs 378.5/586.1/10195.8 ms (+0.6%/-0.5%/+0.2%), client medians 412/615/10245 vs 412/616/10246, warm 82/114/143 vs 82/112/150: within noise"
+failure_mode = "the dense and lm_head 17..32-row path is not reached by the verify steps that do run at 24/32 rows, while the MoE lever of the same arm is; cause open (candidate: the 17..32-row dense/head sites in the verify path take a different launch path than the one carrying the readback)"
+caught_by = "db5_check post-hook (fail-closed call-site readback after the first ladder request and first decode marker)"
+time_lost_hours = 1.0
+would_catch_earlier = "a boot-time probe that drives one 17..32-row verify step and asserts all three wide-lever readbacks before the TTFT and ladder legs"
+effort_hours = 1.0
+transferability = "when the levers under test act only above a row threshold, the rungs that cross it (here C12/C16 with one draft) carry the whole signal; a judged set made only of rungs below the threshold (C1/C4/C8 at <= 16 verify rows) cannot show a gain or a loss, and parking at the wide rungs leaves such a pair undecidable"
+links = { pr = "", commit = "2f57285a3", evidence = "serve pair K65536-kinv-1017T0057 (control) / K65536-kinv-1017T0159 (lever); campaign STATUS 2026-10-17T03:1xZ" }
+notes = "Parking came from one box's chassis temperature (>= 80 C) on 5 of 12 control rungs and 6 of 12 lever rungs; a re-run needs a longer rung cool-down, and only after the dense/head arming is root-caused. The DB5 + PRE_TILE 512k confirmation boot is not triggered (no KEEP). Queue paused after this pair by owner ruling"
+
+[[lever]]
+id = "gb10x3-glm53-snap-agree-asymmetric-pools"
+date = "2026-10-17"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "prefix-cache snapshot restore with cross-rank agreement (snap-agree), K65536 serve"
+symptom = "at wide ladder rungs the cross-rank snapshot vote returns None (no rank restores the preamble snapshot, all recompute): 3 None votes in one C16 rep of the DB5B2 control, 0 in the DB5F lever arm (Some 191 vs 194)"
+diagnosis_tool = "manual-inspection"
+root_cause_class = "load-imbalance"
+lever_type = "code"
+lkb_effect = "none yet (defect recorded, no fix scheduled)"
+parity_tier_kept = "bit-identical"
+per_rung = []
+verdict = "held"
+verdict_reason = "2026-10-17 open defect, perf only. The per-rank KV pools differ in size (84522 / 85551 / 125814 blocks of 16 tokens) so the ranks evict the shared preamble snapshot at different times; when any rank has evicted it the vote fails and every rank recomputes. Output stays bit-identical (all ranks take the same recompute path); the cost is extra prefill at wide rungs. Pair rule in force: None votes are recorded with rung, rep and time; votes only in excluded rungs do not affect a verdict, and a None vote in any judged ladder rung or TTFT cell makes the pair not comparable and it re-runs control-first"
+failure_mode = "per-rank pool sizes derived from each box's free memory, so eviction order is rank-local while restore requires all ranks"
+caught_by = "the F1 post-hook snap-agree counter"
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.5
+transferability = "any cross-rank cache agreement over rank-local eviction: either size every rank's pool to the cross-rank minimum or make eviction itself cross-rank agreed"
+links = { pr = "", commit = "2f57285a3", evidence = "serve pair K65536-kinv-1017T0057 / K65536-kinv-1017T0159 F1 readbacks; campaign STATUS 2026-10-17" }
+notes = "Candidate fixes, unscheduled: (a) cap each rank's pool at the cross-rank minimum block count; (b) cross-rank-agreed eviction of snapshot leaves"
