@@ -2,21 +2,21 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 #
 # Every Dockerfile under docker/ that compiles met must COPY the
-# repo-root inputs the release build reads. `metrale-bench` (a dependency of
-# met) include_str!s tests/fixtures/bench_prompt_*.txt, so an image
-# without tests/fixtures fails at compile time with "couldn't read", after the
-# CUDA kernels have already built. No Docker daemon, no GPU: a structural check
+# repo-root inputs the release build reads; a missing one fails at compile time,
+# after the CUDA kernels have already built. (2026-10-17: the benchmark prompts
+# metrale-bench embeds moved into crates/bench/fixtures, so tests/ is no longer
+# one.) No Docker daemon, no GPU: a structural check
 # over the checked-in files.
 #
 # Usage: bash docker/dockerfile_context_test.sh
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-REQUIRED=(Cargo.toml Cargo.lock crates/ vendor/ kernels/ tests/fixtures/)
+REQUIRED=(Cargo.toml Cargo.lock crates/ vendor/ kernels/)
 
 instructions() { sed -e 's/[[:space:]]*#.*$//' -e '/^[[:space:]]*$/d' "$1"; }
 
-# `COPY tests/ tests/` also satisfies `tests/fixtures/`.
+# A directory COPY (`COPY crates/ crates/`) also satisfies a path beneath it.
 copies() {
   local f="$1" want="$2"
   instructions "$f" | grep -E '^[[:space:]]*COPY[[:space:]]' | grep -v -- '--from=' \

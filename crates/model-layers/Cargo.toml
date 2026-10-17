@@ -13,6 +13,8 @@ cuda = ["metrale-core/cuda", "metrale-config/cuda", "metrale-gpu-runtime/cuda", 
 metal = ["metrale-core/metal", "metrale-config/metal", "metrale-gpu-runtime/metal", "metrale-cache/metal", "metrale-storage/metal", "metrale-comm/metal", "metrale-model-weights/metal"]
 
 [dependencies]
+# 2026-10-17: Its `links` metadata (`DEP_METRALE_KERNEL_TREE_ROOT`) locates kernels/ for build.rs.
+metrale-kernel-tree = { workspace = true }
 metrale-cache = { workspace = true }
 # 2026-09-28: The circuit plans the executor (`circuit_exec`) compiles into launches.
 metrale-circuit = { workspace = true }
