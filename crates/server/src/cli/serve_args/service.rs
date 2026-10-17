@@ -15,7 +15,8 @@ use clap::Args;
 use metrale_model_layers::layers::{DenseQuantization, DsaQuantization};
 
 use super::super::flag_values::{
-    DenseQuantizationArg, DsaQuantizationArg, MoeExpertLayoutArg, PrefillTailModeArg,
+    DenseQuantizationArg, DsaQuantizationArg, IndexerCacheDtypeArg, MoeExpertLayoutArg,
+    PrefillTailModeArg,
 };
 use super::{DEFAULT_REQUEST_TIMEOUT_SECS, parse_lora_adapter_spec, parse_lora_stageable_spec};
 use metrale_gpu_runtime::prefill_tail_mode::PrefillTailMode;
@@ -174,6 +175,18 @@ pub struct ServeServiceArgs {
     /// model refuses it. Unmeasured.
     #[arg(long, value_enum, default_value_t = MoeExpertLayoutArg(metrale_config::MoeExpertLayout::Ep))]
     pub moe_expert_layout: MoeExpertLayoutArg,
+
+    /// How a sparse-attention indexer stores its rows in the paged KV blocks.
+    ///
+    /// `bf16` (the default) keeps a bf16 key row and a bf16 gate row for every token. `fp8`
+    /// keeps, for each complete pool of `index_kpool` tokens, the pool's compressed key rotated
+    /// by a 128-point Walsh-Hadamard transform and quantized to FP8 E4M3 with one power-of-two
+    /// scale, plus a bf16 ring holding the tokens of the pool still being filled (sized from the
+    /// verify draft count). That shrinks each indexer layer's share of a KV block, so the same
+    /// pool holds more tokens; pool scores are computed from the dequantized keys. GLM-5.3
+    /// (`glm5_next`) with the paged indexer cache only; any other model refuses it.
+    #[arg(long, value_enum, default_value_t = IndexerCacheDtypeArg(metrale_config::IndexerCacheDtype::Bf16))]
+    pub indexer_cache_dtype: IndexerCacheDtypeArg,
 
     /// Vision input area bound in pixels, applied before patching. A non-zero
     /// value overrides the checkpoint in both directions: it may raise the bound

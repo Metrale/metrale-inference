@@ -180,6 +180,10 @@ pub struct KvCacheConfig {
     /// sequence's window at `N` blocks (`ensure_blocks_through_decode`);
     /// `None` means no cap.
     pub cache_blocks_per_seq: Option<u32>,
+    /// 2026-10-16: V-side bytes per block of every layer, overriding the size its format and
+    /// dims give; `None` keeps that size. A model whose V side holds something other than V
+    /// rows sets it (the FP8 sparse-attention indexer layout).
+    pub v_block_bytes: Option<usize>,
 }
 
 impl KvCacheConfig {
@@ -265,8 +269,12 @@ impl KvCacheConfig {
     }
 
     /// 2026-09-25: V-side bytes per block of attention layer `layer_idx`.
-    /// Equals `k_block_bytes_for_layer` for a symmetric format.
+    /// Equals `k_block_bytes_for_layer` for a symmetric format. 2026-10-16: `v_block_bytes`
+    /// when set.
     pub fn v_block_bytes_for_layer(&self, layer_idx: usize) -> usize {
+        if let Some(bytes) = self.v_block_bytes {
+            return bytes;
+        }
         let (nkv, hd) = self.dims_for_layer(layer_idx);
         let (_, v) = self.dtype_for_layer(layer_idx).kv_pair();
         self.block_bytes_dims(v, nkv, hd)

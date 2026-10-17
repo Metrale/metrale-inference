@@ -18,7 +18,7 @@
 //! Owner: server CLI (`met serve`).
 //! Invariants: none beyond the types.
 
-use metrale_config::{MoeExpertLayout, WeightQuantization};
+use metrale_config::{IndexerCacheDtype, MoeExpertLayout, WeightQuantization};
 use metrale_gpu_runtime::prefill_tail_mode::PrefillTailMode;
 use metrale_model_layers::layers::{DenseQuantization, DsaQuantization, ExpertQuantization};
 
@@ -272,6 +272,32 @@ impl clap::ValueEnum for PrefillTailModeArg {
     }
 }
 
+/// 2026-10-16: `--indexer-cache-dtype`: a clap value enum over the config crate's values
+/// (`metrale_config::IndexerCacheDtype`), which own the names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IndexerCacheDtypeArg(pub IndexerCacheDtype);
+
+impl clap::ValueEnum for IndexerCacheDtypeArg {
+    fn value_variants<'a>() -> &'a [Self] {
+        const VARIANTS: [IndexerCacheDtypeArg; 2] = [
+            IndexerCacheDtypeArg(IndexerCacheDtype::ALL[0]),
+            IndexerCacheDtypeArg(IndexerCacheDtype::ALL[1]),
+        ];
+        &VARIANTS
+    }
+
+    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
+        let help = match self.0 {
+            IndexerCacheDtype::Bf16 => "a bf16 key row and gate row per token",
+            IndexerCacheDtype::Fp8 => {
+                "one FP8 E4M3 compressed key per complete pool plus a bf16 ring for the pool \
+                 being filled; more context per KV byte (glm5_next only)"
+            }
+        };
+        Some(clap::builder::PossibleValue::new(self.0.name()).help(help))
+    }
+}
+
 /// 2026-10-09: `--moe-expert-layout`: a clap value enum over the config crate's layouts
 /// (`metrale_config::MoeExpertLayout`), which own the names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -367,6 +393,12 @@ pub(crate) fn options_for_flag(flag: &str) -> Option<Vec<String>> {
             MoeExpertLayout::ALL
                 .iter()
                 .map(|l| l.name().to_string())
+                .collect(),
+        ),
+        "indexer-cache-dtype" => Some(
+            IndexerCacheDtype::ALL
+                .iter()
+                .map(|d| d.name().to_string())
                 .collect(),
         ),
         "expert-quantization" => Some(

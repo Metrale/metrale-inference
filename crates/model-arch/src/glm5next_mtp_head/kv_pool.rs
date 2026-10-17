@@ -29,6 +29,7 @@ pub(super) fn drafter_kv_config(kv_lora_rank: usize) -> KvCacheConfig {
         layer_dtypes: vec![],
         layer_dims: vec![],
         cache_blocks_per_seq: None,
+        v_block_bytes: None,
     }
 }
 

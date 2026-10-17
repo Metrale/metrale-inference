@@ -163,6 +163,7 @@ fn a_v_side_too_small_is_refused_before_any_launch() {
             layer_dtypes: vec![],
             layer_dims: vec![],
             cache_blocks_per_seq: None,
+            v_block_bytes: None,
         },
         8,
         &rig.gpu,

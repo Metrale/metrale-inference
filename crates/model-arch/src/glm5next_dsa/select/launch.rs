@@ -246,7 +246,29 @@ pub(super) fn run(
 
     // 2026-09-25: Pool compression over the full pool count; the trailing partial pool is
     // written and marked invalid, and no later kernel reads it.
-    if compress {
+    // 2026-10-16: An FP8 cache's pool keys come from its pooled entries (`dsa_kpool_compress_fp8`).
+    if compress && let Some(f) = inputs.rows.fp8 {
+        ensure!(
+            inputs.first_key == 0 && d == super::super::fp8_rows::FP8_INDEX_HEAD_DIM,
+            "DSA select: the FP8 indexer cache needs first_key 0 and D 128 (first_key {}, D {d})",
+            inputs.first_key
+        );
+        KernelLaunch::new(gpu, kernels.fp8.compress)
+            .grid([kpool_compress_grid_x(geom, ceiling), 1, 1])
+            .block([d as u32, 1, 1])
+            .arg_ptr(inputs.rows.k)
+            .arg_ptr(scratch.pool_keys)
+            .arg_ptr(scratch.pool_indices)
+            .arg_ptr(scratch.pool_valid)
+            .arg_u32(seq_a as u32)
+            .arg_u32(kp as u32)
+            .arg_u32(f.tail_sets)
+            .arg_ptr(gd)
+            .arg_ptr(inputs.rows.bt)
+            .arg_u32(inputs.rows.block_size)
+            .arg_u32(f.blk_bytes)
+            .launch(stream)?;
+    } else if compress {
         KernelLaunch::new(gpu, kernels.kpool_compress)
             .grid([kpool_compress_grid_x(geom, ceiling), 1, 1])
             .block([d.min(1024) as u32, 1, 1])

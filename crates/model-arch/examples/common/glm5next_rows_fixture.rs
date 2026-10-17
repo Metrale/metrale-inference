@@ -198,6 +198,7 @@ pub fn dsa_layer(
         kv_scale: 1.0,
         persist_bt: true,
         indexer_cache: metrale_model_arch::glm5next_dsa::paged::IndexerCache::Flat,
+        indexer_format: metrale_model_arch::glm5next_dsa::fp8_rows::IndexerRowFormat::Bf16,
     })
 }
 

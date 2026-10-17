@@ -2232,6 +2232,11 @@ kernels = [
   # candidacy into them; every rank expands the gathered rows (METRALE_GLM_DSA_SP_SELECT_SEL).
   "dsa_sel_fold::dsa_sel_fold",
   "dsa_sel_fold::dsa_expand_selection_folded",
+  # 2026-10-16: the store, compression and fused scores over an FP8 indexer cache (pooled E4M3
+  # keys in a Walsh-Hadamard basis, a BF16 ring for open pools; --indexer-cache-dtype fp8).
+  "dsa_indexer_fp8::dsa_indexer_store_fp8",
+  "dsa_indexer_fp8::dsa_kpool_compress_fp8",
+  "dsa_indexer_fp8::dsa_pool_scores_rows_fp8",
 ]
 kernel_compute."dsa_indexer::dsa_indexer_store" = { compute = "memory" }
 kernel_compute."dsa_indexer::dsa_write_geom" = { compute = "memory" }
@@ -2240,6 +2245,7 @@ kernel_compute."dsa_indexer_rows::dsa_write_geom_rows" = { compute = "memory" }
 kernel_compute."dsa_indexer_rows::dsa_index_scores_mma" = { compute = "tensor_core", mma = "mma.sync.m16n8k16.bf16" }
 kernel_compute."dsa_index_scores_pipe::dsa_pool_prep_bf16" = { compute = "memory" }
 kernel_compute."dsa_index_scores_pipe::dsa_index_scores_mma_pipe" = { compute = "tensor_core", mma = "mma.sync.m16n8k16.bf16" }
+kernel_compute."dsa_indexer_fp8::dsa_indexer_store_fp8" = { compute = "memory" }
 rows = [1, 1]
 pipeline.kpool_compress = { in = ["bf16", "bf16"], state = "bf16", compute = "f32", out = [] }
 pipeline.index_select = { in = ["f32", "f32"], scores = "f32", score = "f32", out = ["i32"] }
@@ -2249,7 +2255,7 @@ values = {}
 how = "instantiation"
 # 2026-10-09: The bodies live in dsa_indexer_body.cuh; dsa_indexer_rows.cu runs them for one
 # sequence per grid row (the batched decode's paged rows, METRALE_GLM_DSA_INDEXER_ROWS).
-files = ["kernels/gb10/common/dsa_indexer.cu", "kernels/gb10/common/dsa_indexer_body.cuh", "kernels/gb10/common/dsa_indexer_rows.cu", "kernels/gb10/common/dsa_scores_mma.cuh", "kernels/gb10/common/dsa_index_scores_pipe.cu", "kernels/gb10/common/dsa_sel_fold.cu"]
+files = ["kernels/gb10/common/dsa_indexer.cu", "kernels/gb10/common/dsa_indexer_body.cuh", "kernels/gb10/common/dsa_indexer_pools.cuh", "kernels/gb10/common/dsa_indexer_rows.cu", "kernels/gb10/common/dsa_indexer_fp8.cu", "kernels/gb10/common/dsa_scores_mma.cuh", "kernels/gb10/common/dsa_index_scores_pipe.cu", "kernels/gb10/common/dsa_sel_fold.cu"]
 
 # 2026-10-08: NoPE latent decode attention over the selected tokens of an FP8 latent cache, one
 # CTA per (head, row). Its query is already in latent space and its output stays there: the

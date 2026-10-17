@@ -221,6 +221,7 @@ pub(super) fn kv_bytes_per_token(
         layer_dtypes: Vec::new(),
         layer_dims: Vec::new(),
         cache_blocks_per_seq: None,
+        v_block_bytes: None,
     };
     kv.block_bytes_kv_all_layers() / block_size
 }

@@ -168,7 +168,7 @@ pub(crate) fn layer_rows(
         kernels: Glm5NextDsaLayerKernels::resolve(gpu)?,
         select_kernels: Glm5NextDsaKernels::resolve(gpu)?,
         decode_kernel: Glm5NextDsaDecodeKernel::resolve(gpu)?,
-        workspace: Glm5NextDsaWorkspace::new(gpu, cfg, rows)?,
+        workspace: std::sync::Arc::new(Glm5NextDsaWorkspace::new(gpu, cfg, rows)?),
         layer_idx: 1,
         attn_layer_idx: 0,
         rms_eps: 1e-6,
@@ -176,10 +176,21 @@ pub(crate) fn layer_rows(
         persist_bt: true,
         // 2026-10-09: Only `alloc_dsa_state` reads it; every state here is built explicitly.
         indexer_cache: IndexerCache::Paged,
+        indexer_format: metrale_model_arch::glm5next_dsa::fp8_rows::IndexerRowFormat::Bf16,
     })
 }
 
 pub(crate) fn kv(gpu: &dyn GpuBackend, blocks: usize) -> Result<PagedKvCache> {
+    kv_with_v(gpu, blocks, None)
+}
+
+/// 2026-10-16: [`kv`] with an explicit V block size (the FP8 indexer cache's), `None` for the
+/// KV cache's own.
+pub(crate) fn kv_with_v(
+    gpu: &dyn GpuBackend,
+    blocks: usize,
+    v_block_bytes: Option<usize>,
+) -> Result<PagedKvCache> {
     PagedKvCache::new(
         KvCacheConfig {
             block_size: BLOCK,
@@ -190,6 +201,7 @@ pub(crate) fn kv(gpu: &dyn GpuBackend, blocks: usize) -> Result<PagedKvCache> {
             layer_dtypes: vec![],
             layer_dims: vec![],
             cache_blocks_per_seq: None,
+            v_block_bytes,
         },
         blocks,
         gpu,

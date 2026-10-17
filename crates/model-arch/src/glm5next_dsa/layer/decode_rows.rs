@@ -194,14 +194,14 @@ impl Glm5NextDsaLayer {
             // 2026-10-09: A paged row is always placed on the device, at its metadata
             // position through its metadata block-table row: this call has no host tables.
             if st.cache() == IndexerCache::Paged {
-                if self.select_kernels.indexer_store.0 == 0 {
+                if self.select_kernels.store_for(st.fp8_ring().is_some()).0 == 0 {
                     bail!(
-                        "DSA layer {}: a paged batched decode needs dsa_indexer_store, which \
-                         this target lacks",
+                        "DSA layer {}: a paged batched decode needs dsa_indexer_store (or its \
+                         FP8 twin), which this target lacks",
                         self.layer_idx
                     );
                 }
-                self.paged_layout(kv_cache)?;
+                self.check_paged_room(st, kv_cache)?;
             }
         }
         let bt_stride = meta.max_blocks_per_seq as usize * 4;

@@ -155,6 +155,17 @@ pub struct IndexerRowsDev {
     pub bt: DevicePtr,
     pub block_size: u32,
     pub blk_elems: u32,
+    /// 2026-10-16: `Some` for an FP8 cache (`super::fp8_rows`): `k` is then the V pool's base,
+    /// `gate` NULL and `blk_elems` 0, and only the FP8 kernels may read the rows.
+    pub fp8: Option<Fp8RowsDev>,
+}
+
+/// 2026-10-16: The FP8 cache's geometry as its kernels take it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Fp8RowsDev {
+    pub blk_bytes: u32,
+    pub kp: u32,
+    pub tail_sets: u32,
 }
 
 impl IndexerRowsDev {
@@ -167,6 +178,7 @@ impl IndexerRowsDev {
             bt: DevicePtr::NULL,
             block_size: 0,
             blk_elems: 0,
+            fp8: None,
         }
     }
 
@@ -183,6 +195,32 @@ impl IndexerRowsDev {
             bt,
             block_size: u32::try_from(layout.block_size)?,
             blk_elems: u32::try_from(layout.blk_elems())?,
+            fp8: None,
+        })
+    }
+
+    /// 2026-10-16: FP8 rows in `v_pool` through the device block table `bt`.
+    pub fn paged_fp8(
+        layout: &super::fp8_rows::Fp8IndexerLayout,
+        v_pool: DevicePtr,
+        bt: DevicePtr,
+    ) -> Result<Self> {
+        ensure!(
+            bt.0 != 0,
+            "FP8 DSA indexer: no device block table to address the rows through"
+        );
+        Ok(Self {
+            k: v_pool,
+            gate: DevicePtr::NULL,
+            valid: DevicePtr::NULL,
+            bt,
+            block_size: u32::try_from(layout.block_size)?,
+            blk_elems: 0,
+            fp8: Some(Fp8RowsDev {
+                blk_bytes: u32::try_from(layout.block_stride_bytes)?,
+                kp: u32::try_from(layout.kp)?,
+                tail_sets: u32::try_from(layout.tail_sets)?,
+            }),
         })
     }
 

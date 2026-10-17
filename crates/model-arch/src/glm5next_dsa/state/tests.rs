@@ -302,3 +302,61 @@ fn only_a_paged_state_may_adopt_rows_behind_it() {
     assert_eq!(f.len(), 0);
     f.free(&gpu).unwrap();
 }
+
+/// 2026-10-16: A BF16-format paged state is exactly [`Glm5NextDsaState::paged`]; an FP8 one
+/// keeps its ring geometry.
+#[test]
+fn paged_as_carries_the_ring_only_for_fp8() {
+    let b = Glm5NextDsaState::paged_as(&cfg(), IndexerRowFormat::Bf16).unwrap();
+    assert_eq!(b.fp8_ring(), None);
+    assert_eq!(b.cache(), IndexerCache::Paged);
+    let f = Glm5NextDsaState::paged_as(&cfg(), IndexerRowFormat::Fp8 { tail_sets: 2 }).unwrap();
+    assert_eq!(
+        f.fp8_ring(),
+        Some(Fp8Ring {
+            kp: 4,
+            tail_sets: 2
+        })
+    );
+    assert_eq!(f.capacity(), b.capacity());
+}
+
+/// 2026-10-16: An FP8 state refuses a rewind that reopens a pool older than its ring, on the
+/// eager path (`rewind_to`) and the replay path (`sync_to`), and moves nothing; a BF16 state
+/// (the control) takes the same rewind.
+#[test]
+fn an_fp8_state_refuses_a_rewind_past_its_ring() {
+    let mut f = Glm5NextDsaState::paged_as(&cfg(), IndexerRowFormat::Fp8 { tail_sets: 1 }).unwrap();
+    let mut b = Glm5NextDsaState::paged(&cfg()).unwrap();
+    for s in [&mut f, &mut b] {
+        s.advance(13).unwrap();
+    }
+    // 2026-10-16: 13 -> 7 reopens pool 1 while row 12 sits in pool 3: two pools back.
+    let e = f.rewind_to(7).unwrap_err().to_string();
+    assert!(e.contains("reopens pool 1"), "{e}");
+    assert_eq!(f.len(), 13, "a refused rewind moves nothing");
+    let e = f.sync_to(7, 1).unwrap_err().to_string();
+    assert!(e.contains("reopens pool 1"), "{e}");
+    assert_eq!(f.len(), 13);
+    b.rewind_to(7).unwrap();
+    assert_eq!(b.len(), 7);
+    // 2026-10-16: Within the newest pool, or onto a pool boundary, the ring holds every row.
+    f.rewind_to(12).unwrap();
+    f.rewind_to(8).unwrap();
+    assert_eq!(f.len(), 8);
+}
+
+/// 2026-10-16: An empty FP8 state adopts a shared prefix only at a pool boundary (the open
+/// rows of a pool are in the owner's ring, not this sequence's); a BF16 state adopts any.
+#[test]
+fn an_fp8_state_adopts_only_whole_pools() {
+    let mut f = Glm5NextDsaState::paged_as(&cfg(), IndexerRowFormat::Fp8 { tail_sets: 1 }).unwrap();
+    let e = f.adopt_kv_rows(4_097).unwrap_err().to_string();
+    assert!(e.contains("ends inside a pool"), "{e}");
+    assert_eq!(f.len(), 0);
+    f.adopt_kv_rows(4_096).unwrap();
+    assert_eq!(f.len(), 4_096);
+    let mut b = Glm5NextDsaState::paged(&cfg()).unwrap();
+    b.adopt_kv_rows(4_097).unwrap();
+    assert_eq!(b.len(), 4_097);
+}

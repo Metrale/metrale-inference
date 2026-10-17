@@ -262,6 +262,7 @@ pub mod activation_quantization;
 mod dispatch;
 mod factory;
 mod gguf;
+pub mod indexer_cache_dtype;
 mod kv_completeness;
 #[cfg(test)]
 mod kv_completeness_tests;
@@ -281,6 +282,7 @@ pub mod weight_quantization;
 pub use activation_quantization::{ActQuantFormat, ActivationQuantization, ProjFamily};
 pub use dispatch::parse_config;
 pub use gguf::{GgufConfigInputs, GgufMeta, config_from_gguf};
+pub use indexer_cache_dtype::IndexerCacheDtype;
 pub use kv_completeness::glm_dsa_indexer_paged;
 pub use model_config::ModelConfig;
 pub use moe_expert_layout::MoeExpertLayout;
