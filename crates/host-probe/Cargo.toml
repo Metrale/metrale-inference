@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 description = "Metrale Engine: host probes shared by met serve and the benchmark harness (artifact home, hardware fingerprint and state, HTTP/1.1 response wire, this process's serve identity)."
 
+# 2026-10-17: The host side of serve identity: reads files, sockets and the process env.
+[package.metadata.metrale]
+role = "host-std"
+
 # 2026-10-17: Split out of metrale-bench so `met` serves `/hardware` and
 # `/serve-config` without the `bench` feature. No GPU, model, TLS or crypto
 # dependency.

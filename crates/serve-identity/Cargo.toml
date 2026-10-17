@@ -7,6 +7,11 @@ license.workspace = true
 repository.workspace = true
 description = "Metrale Engine: what makes one `met serve` the same server as another (argv, binary and lever digests, the serve lease, the /forward and /memory wire shapes). Pure: no_std + alloc."
 
+# 2026-10-17: Pure (no_std + alloc, builds for both wasm32 targets): judged by the depgraph, wasm,
+# vendor-ban and lints gates.
+[package.metadata.metrale]
+role = "core"
+
 [dependencies]
 metrale-settings = { workspace = true }
 serde = { workspace = true, features = ["alloc", "derive"] }

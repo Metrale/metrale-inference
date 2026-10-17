@@ -19,6 +19,12 @@
 #![forbid(unsafe_code)]
 #![deny(warnings)]
 #![deny(clippy::all)]
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_lossless,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss
+)]
 
 extern crate alloc;
 

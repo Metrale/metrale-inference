@@ -28,6 +28,8 @@ pub const PURE_ALLOWLIST: &[&str] = &[
     "block-buffer",
     "byteorder",
     "cfg-if",
+    // 2026-10-18: no_std OID constants that digest 0.11 names; no I/O, builds for wasm32v1-none.
+    "const-oid",
     "cpufeatures",
     "crypto-common",
     "digest",
@@ -38,6 +40,10 @@ pub const PURE_ALLOWLIST: &[&str] = &[
     "hash32",
     "hashbrown",
     "heapless",
+    // 2026-10-18: The sha2 0.11 output array type (block-buffer); no_std, no I/O.
+    "hybrid-array",
+    // 2026-10-18: serde_json's ordered map; no_std + alloc over hashbrown and equivalent.
+    "indexmap",
     "itoa",
     "memchr",
     "num-traits",
@@ -64,6 +70,8 @@ pub const PURE_ALLOWLIST: &[&str] = &[
     "unicode-ident",
     "zerocopy",
     "zerocopy-derive",
+    // 2026-10-18: serde_json's float formatter (the ryu successor); no_std, no I/O.
+    "zmij",
 ];
 
 /// 2026-10-17: External crates a pure crate must never reach: std-only, I/O, GPU, blocking, and
