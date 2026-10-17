@@ -424,12 +424,13 @@ pub(super) fn register_mtp_dense_tiers(
     mixer: &mut crate::glm5next_layer::Glm5NextMixer,
     mlp: &mut crate::glm5next_layer::Glm5NextMlpSite,
     mlp_cfg: &crate::glm5next_mlp::Glm5NextMlpConfig,
+    dense: &crate::glm5next_dense_levers::DenseLevers,
     idx: usize,
 ) -> Result<()> {
     // 2026-10-11: Opt-in (`METRALE_GLM_MTP_DRAFTER_TIERS=1`): the first measurement with the
     // drafter on the serve's tiers saw p1 fall (0.64-0.70 -> 0.53-0.61), not yet separated from
     // the device exchange; the drafter stays BF16 until it is.
-    if std::env::var("METRALE_GLM_MTP_DRAFTER_TIERS").as_deref() != Ok("1") {
+    if !dense.mtp_drafter_tiers {
         return Ok(());
     }
     if !dense_tiers::any_below_declared(
@@ -438,7 +439,7 @@ pub(super) fn register_mtp_dense_tiers(
     ) {
         return Ok(());
     }
-    dense_tiers::register_dense_tiers(gpu, mixer, mlp, mlp_cfg, idx)
+    dense_tiers::register_dense_tiers(gpu, mixer, mlp, mlp_cfg, dense, idx)
 }
 
 pub(super) fn mtp_expert_precision(

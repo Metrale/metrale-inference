@@ -208,7 +208,10 @@ fn dense(gpu: &MetraleCudaBackend, stream: u64) -> Result<()> {
         batchm: gpu.kernel("dense_gemv_bf16_batchm", "dense_gemv_bf16_batchm")?,
     };
     let quantize = gpu.kernel("gemv_fp8w", "quantize_bf16_to_fp8")?;
-    glm5next_fp8_dense::prepare(gpu, 11264)?;
+    let wide = metrale_gpu_examples::glm_levers()?
+        .dense
+        .fp8_dequant_min_rows;
+    glm5next_fp8_dense::prepare(gpu, 11264, wide)?;
     let mut rng = Rng(0x2545_f491_4f6c_dd1d);
     println!("dense projections, us per call (GB/s of weight bytes):");
     for (n, k, what) in [

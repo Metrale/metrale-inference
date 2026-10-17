@@ -247,7 +247,15 @@ impl Glm5NextLayer {
         // 2026-10-11: Sliced under `METRALE_GLM_BATCH_INVARIANT` (`glm5next_batch_inv`).
         let Some(comm) = ctx.comm else { return Ok(()) };
         let (h, cap) = (self.hidden * 2, ctx.graph_capture);
-        crate::glm5next_batch_inv::all_reduce_rows(comm, p, rows, h, cap, stream)
+        crate::glm5next_batch_inv::all_reduce_rows(
+            comm,
+            self.levers.dense.batch_invariant,
+            p,
+            rows,
+            h,
+            cap,
+            stream,
+        )
     }
 
     /// 2026-10-09: [`Self::reduce_partial`] once per piece of `row_pieces`, so each piece's

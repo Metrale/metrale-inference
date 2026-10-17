@@ -76,7 +76,7 @@ fn width(env: &str, v: Option<i64>, default: usize) -> Result<usize> {
 
 /// 2026-10-17: A count lever: unset or `0` off, else a value `ok` accepts; another value is an
 /// error that names what was `expected`.
-fn count(
+pub(crate) fn count(
     env: &str,
     v: Option<i64>,
     ok: impl Fn(usize) -> bool,

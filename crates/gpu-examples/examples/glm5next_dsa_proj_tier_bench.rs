@@ -147,8 +147,9 @@ fn main() -> Result<()> {
         batchm: g.kernel("dense_gemv_bf16_batchm", "dense_gemv_bf16_batchm")?,
     };
     let quant8 = g.kernel("gemv_fp8w", "quantize_bf16_to_fp8")?;
-    let quant4 = w4::Nvfp4QuantKernels::load(g)?;
-    fp8::prepare(g, HEADS * kvl)?;
+    let dense = metrale_gpu_examples::glm_levers()?.dense;
+    let quant4 = w4::Nvfp4QuantKernels::load(g, &dense)?;
+    fp8::prepare(g, HEADS * kvl, dense.fp8_dequant_min_rows)?;
     let mut seed = 0x9E37_79B9_7F4A_7C15u64;
     let mut unit = move || {
         seed ^= seed << 13;
@@ -191,7 +192,7 @@ fn main() -> Result<()> {
             })?;
             let e8 = err(&down_bf16(g, out, m * n)?, &r);
             let t4 = time(g, |i| {
-                w4::proj(g, w4key[i % COPIES], xd, out, m, n, k, 0).map(|_| ())
+                w4::proj(g, &dense, w4key[i % COPIES], xd, out, m, n, k, 0).map(|_| ())
             })?;
             let e4 = err(&down_bf16(g, out, m * n)?, &r);
             println!(

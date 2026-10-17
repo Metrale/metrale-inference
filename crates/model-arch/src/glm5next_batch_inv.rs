@@ -14,6 +14,8 @@
 //! - Every tensor-parallel all-reduce takes the one-shot path (FP32 sum in rank order, one BF16
 //!   rounding), cut into whole-row slices that fit its buffer ([`ar_slices`]).
 //!
+//! 2026-10-17: The lever is `DenseLevers::batch_invariant`, resolved once at startup.
+//!
 //! Owner: model-arch (GLM-5.3).
 //! Invariants:
 //! - Unset or `0`: nothing changes anywhere.
@@ -23,33 +25,11 @@
 //!   prefill all-reduces above the one-shot bound change from NCCL to the rank-order sum. So the
 //!   lever is accuracy-gated (class RO against the w4a16 pin).
 
-use std::sync::OnceLock;
-
 use anyhow::{Result, ensure};
 use metrale_comm::CommBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_model_layers::layers::ops;
 use metrale_model_layers::weight_map::QuantizedWeight;
-
-/// 2026-10-11: `METRALE_GLM_BATCH_INVARIANT`, read once: unset or `0` off, `1` on; another value
-/// is an error.
-pub fn enabled() -> Result<bool> {
-    static V: OnceLock<Result<bool, String>> = OnceLock::new();
-    V.get_or_init(|| parse(std::env::var("METRALE_GLM_BATCH_INVARIANT").ok().as_deref()))
-        .clone()
-        .map_err(anyhow::Error::msg)
-}
-
-/// 2026-10-11: [`enabled`]'s parse, pure.
-pub(crate) fn parse(v: Option<&str>) -> Result<bool, String> {
-    match v {
-        None | Some("0") => Ok(false),
-        Some("1") => Ok(true),
-        Some(other) => Err(format!(
-            "METRALE_GLM_BATCH_INVARIANT={other:?}: expected 0 or 1"
-        )),
-    }
-}
 
 /// 2026-10-11: The other levers' values the canonical tiers depend on, read by the loader.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -117,14 +97,15 @@ pub(crate) fn check_levers(on: bool, l: Levers) -> Result<(), String> {
 /// 2026-10-11: At load (the routed experts' precision plan, once its kernels resolved): under the
 /// lever, refuse the levers [`check_levers`] names. Off, nothing.
 pub(crate) fn check_at_load(k: &crate::glm5next_mlp::Glm5NextMlpKernels) -> Result<()> {
-    if !enabled()? {
+    let d = &k.levers.dense;
+    if !d.batch_invariant {
         return Ok(());
     }
     let l = Levers {
-        gemv_seg: crate::glm5next_w4a16_seg::gemv_seg()?,
-        gemv_rows: crate::glm5next_w4a16_seg::gemv_rows()?,
-        dequant_gemm: crate::glm5next_w4a16_wide::min_rows()?.is_some(),
-        fp8_dequant_gemm: crate::glm5next_fp8_wide::min_rows()?.is_some(),
+        gemv_seg: d.gemv_seg,
+        gemv_rows: d.gemv_rows,
+        dequant_gemm: d.dequant_min_rows.is_some(),
+        fp8_dequant_gemm: d.fp8_dequant_min_rows.is_some(),
         w4a4_grouped_ready: k.levers.mlp.w4a4_grouped && k.w4a4_expert_rows_grouped() == usize::MAX,
         dsa_batch_qidx: k.levers.dsa_batch_qidx,
         kda_chunked: k.levers.kda_chunk_prefill
@@ -192,10 +173,11 @@ pub(crate) fn ar_slices(
 }
 
 /// 2026-10-11: The tensor-parallel all-reduce of `rows` rows of `row_bytes` at `p`: one
-/// collective, or under the lever the slices of [`ar_slices`]; synchronous while a graph is
-/// captured, else enqueued behind `stream`.
+/// collective, or under the lever (`on`) the slices of [`ar_slices`]; synchronous while a graph
+/// is captured, else enqueued behind `stream`.
 pub(crate) fn all_reduce_rows(
     comm: &dyn CommBackend,
+    on: bool,
     p: DevicePtr,
     rows: usize,
     row_bytes: usize,
@@ -203,7 +185,7 @@ pub(crate) fn all_reduce_rows(
     stream: u64,
 ) -> Result<()> {
     let slices = ar_slices(
-        enabled()?,
+        on,
         comm.world_size(),
         comm.oneshot_max_bytes(),
         rows,

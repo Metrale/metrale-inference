@@ -57,7 +57,7 @@ fn registered_weights_run_w8a8_and_everything_else_declines_or_errors() {
         assert!(e.contains("before prepare"), "{e}");
     }
 
-    prepare(&gpu, 4096).unwrap();
+    prepare(&gpu, 4096, None).unwrap();
     register(&gpu, quant, w, 64, 4096, "q", 0).unwrap();
     let quantized = gpu
         .launches_snapshot()
@@ -127,7 +127,7 @@ fn a_stable_input_is_quantized_once_until_another_input_takes_the_scratch() {
     let _serial = crate::glm5next_fp8_dense::lock_registries_for_test();
     let gpu = MockGpuBackend::new();
     let quant = KernelHandle(0x78);
-    prepare(&gpu, 4096).unwrap();
+    prepare(&gpu, 4096, None).unwrap();
     let (w1, w2) = (DevicePtr(0x5100_0000), DevicePtr(0x5200_0000));
     for w in [w1, w2] {
         register(&gpu, quant, w, 32, 4096, "stable", 0).unwrap();

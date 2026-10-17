@@ -139,6 +139,8 @@ pub struct GlmLevers {
     /// 2026-10-17: The MLP routed-expert and dense launch levers
     /// (`crate::glm5next_mlp::forward::MlpLevers`).
     pub mlp: crate::glm5next_mlp::forward::MlpLevers,
+    /// 2026-10-17: The dense-projection tier levers (`crate::glm5next_dense_levers`).
+    pub dense: crate::glm5next_dense_levers::DenseLevers,
 }
 
 impl GlmLevers {
@@ -175,6 +177,7 @@ impl GlmLevers {
             kda: crate::glm5next_kda::KdaLevers::from_settings(s)?,
             dsa: crate::glm5next_dsa::levers::DsaLevers::from_settings(s)?,
             mlp: crate::glm5next_mlp::forward::MlpLevers::from_settings(s)?,
+            dense: crate::glm5next_dense_levers::DenseLevers::from_settings(s)?,
         })
     }
 

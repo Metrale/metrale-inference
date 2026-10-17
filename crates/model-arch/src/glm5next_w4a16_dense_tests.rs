@@ -10,6 +10,7 @@ use metrale_gpu_runtime::gpu::mock::{MockArg, MockGpuBackend};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
 use super::*;
+use crate::glm5next_dense_levers::DenseLevers;
 
 /// 2026-10-09: The plans the dispatch tests run under (48 SMs: GB10).
 const OFF: SegPlan = SegPlan {
@@ -17,18 +18,27 @@ const OFF: SegPlan = SegPlan {
     sms: 0,
     gemv_rows: 0,
     one_row: false,
+    tc_min_rows: None,
+    dequant_min_rows: None,
+    batch_invariant: false,
 };
 const FUSE: SegPlan = SegPlan {
     mode: SegMode::Fuse,
     sms: 48,
     gemv_rows: 0,
     one_row: false,
+    tc_min_rows: None,
+    dequant_min_rows: None,
+    batch_invariant: false,
 };
 const SPLIT: SegPlan = SegPlan {
     mode: SegMode::Split,
     sms: 48,
     gemv_rows: 0,
     one_row: false,
+    tc_min_rows: None,
+    dequant_min_rows: None,
+    batch_invariant: false,
 };
 
 /// 2026-10-09: The KDA q/k/v, f_a, b, g_a, o and the shared expert go W4A16; KDA f_b/g_b and
@@ -139,12 +149,12 @@ fn retarget_moves_exactly_one_slot() {
 fn missing_kernels_are_refused_at_load() {
     let gpu = MockGpuBackend::new();
     gpu.deny_kernel(W4A16_TC_ROWS_MODULE, "w4a16_tc_rows_64");
-    let e = Nvfp4QuantKernels::load(&gpu).unwrap_err();
+    let e = Nvfp4QuantKernels::load(&gpu, &DenseLevers::declared()).unwrap_err();
     assert!(format!("{e:#}").contains("w4a16_tc_rows_64"), "{e:#}");
     let gpu = MockGpuBackend::new();
     gpu.deny_kernel("quantize_nvfp4", "quantize_bf16_to_nvfp4");
-    assert!(Nvfp4QuantKernels::load(&gpu).is_err());
-    assert!(Nvfp4QuantKernels::load(&MockGpuBackend::new()).is_ok());
+    assert!(Nvfp4QuantKernels::load(&gpu, &DenseLevers::declared()).is_err());
+    assert!(Nvfp4QuantKernels::load(&MockGpuBackend::new(), &DenseLevers::declared()).is_ok());
 }
 
 fn u32_arg(a: &MockArg) -> u32 {
@@ -169,7 +179,7 @@ fn ptr_arg(a: &MockArg) -> DevicePtr {
 fn registered_weights_run_in_whole_row_chunks_and_everything_else_declines_or_errors() {
     let _serial = crate::glm5next_fp8_dense::lock_registries_for_test();
     let gpu = MockGpuBackend::new();
-    let kernels = Nvfp4QuantKernels::load(&gpu).unwrap();
+    let kernels = Nvfp4QuantKernels::load(&gpu, &DenseLevers::declared()).unwrap();
     let before = registered();
     let (n, k) = (96usize, 512usize);
     let bf16 = gpu.alloc(n * k * 2).unwrap();
@@ -232,32 +242,14 @@ fn registered_weights_run_in_whole_row_chunks_and_everything_else_declines_or_er
         .to_string();
     assert!(e.contains("launched as [96, 256]"), "{e}");
     assert!(
-        !proj(&gpu, key, a, c, 1, n, k, 0).unwrap(),
+        !proj(&gpu, &DenseLevers::declared(), key, a, c, 1, n, k, 0).unwrap(),
         "the published tier (declared in tests) declines"
     );
 }
 
-/// 2026-10-09: `METRALE_GLM_W4A16_SEG` takes 0, fuse or split, and fuse/split only with the tier.
-#[test]
-fn the_seg_lever_parses_three_values_and_needs_the_tier() {
-    use crate::glm5next_w4a16_seg::parse_seg;
-    assert_eq!(parse_seg(None, false), Ok(SegMode::Off));
-    assert_eq!(parse_seg(Some("0"), false), Ok(SegMode::Off));
-    assert_eq!(parse_seg(Some("fuse"), true), Ok(SegMode::Fuse));
-    assert_eq!(parse_seg(Some("split"), true), Ok(SegMode::Split));
-    assert!(
-        parse_seg(Some("split"), false)
-            .unwrap_err()
-            .contains("w4a16")
-    );
-    for v in ["1", "on", "Split", ""] {
-        assert!(parse_seg(Some(v), true).is_err(), "{v:?}");
-    }
-}
-
 /// 2026-10-09: Register `[n, k]` weights on `gpu`, returning their keys.
 fn register_all(gpu: &MockGpuBackend, shapes: &[(usize, usize)]) -> Vec<DevicePtr> {
-    let kernels = Nvfp4QuantKernels::load(gpu).unwrap();
+    let kernels = Nvfp4QuantKernels::load(gpu, &DenseLevers::declared()).unwrap();
     shapes
         .iter()
         .map(|&(n, k)| {
@@ -358,28 +350,9 @@ fn a_group_is_one_launch_or_declines_whole() {
         .to_string();
     assert!(e.contains("launched as [20, 4096]"), "{e}");
     assert!(
-        !proj_group(&gpu, &members, a, 16, k, 0).unwrap(),
+        !proj_group(&gpu, &DenseLevers::declared(), &members, a, 16, k, 0).unwrap(),
         "the published tier (declared in tests) declines"
     );
-}
-
-/// 2026-10-10: `METRALE_GLM_W4A16_GEMV_ROWS` parses 0 or 2..=8 under the tier; anything else,
-/// or a row count without the tier, is refused.
-#[test]
-fn gemv_rows_lever_parses_and_refuses() {
-    use crate::glm5next_w4a16_seg::parse_gemv_rows;
-    assert_eq!(parse_gemv_rows(None, true), Ok(0));
-    assert_eq!(parse_gemv_rows(Some("0"), false), Ok(0));
-    for r in 2..=8u32 {
-        assert_eq!(parse_gemv_rows(Some(&r.to_string()), true), Ok(r));
-    }
-    for bad in ["1", "9", "", "four", "-2"] {
-        assert!(
-            parse_gemv_rows(Some(bad), true).is_err(),
-            "{bad:?} accepted"
-        );
-    }
-    assert!(parse_gemv_rows(Some("4"), false).is_err());
 }
 
 /// 2026-10-10: With GEMV rows 4, launches of 2, 3 and 4 rows take `w4a16_gemv_batch{m}` (one

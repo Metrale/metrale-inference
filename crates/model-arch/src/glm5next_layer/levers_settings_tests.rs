@@ -52,12 +52,13 @@ fn from_values(mut value: impl FnMut(&str) -> Option<String>) -> GlmLevers {
         dsa_select_rows,
         dsa_alloc_per_step: opt_in("METRALE_GLM_DSA_ALLOC_PER_STEP"),
         // 2026-10-17: Probed in `glm5next_mhc_levers_tests.rs`, `glm5next_kda/levers_tests.rs`,
-        // `glm5next_dsa/levers_tests.rs` and `glm5next_mlp/forward/levers_tests.rs`; at their
-        // defaults here.
+        // `glm5next_dsa/levers_tests.rs`, `glm5next_mlp/forward/levers_tests.rs` and
+        // `glm5next_dense_levers_tests.rs`; at their defaults here.
         mhc: crate::glm5next_mhc_levers::MhcLevers::declared(),
         kda: crate::glm5next_kda::KdaLevers::declared(),
         dsa: crate::glm5next_dsa::levers::DsaLevers::declared(),
         mlp: crate::glm5next_mlp::forward::MlpLevers::declared(),
+        dense: crate::glm5next_dense_levers::DenseLevers::declared(),
     }
 }
 

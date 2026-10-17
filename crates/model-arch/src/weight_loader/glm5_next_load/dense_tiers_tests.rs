@@ -84,7 +84,16 @@ fn w4a16_retargets_and_frees_exactly_its_set() {
         );
         {
             let mut slots: Vec<&mut DevicePtr> = fields.iter_mut().collect();
-            register_projections(&gpu, projs.clone(), &mut slots, dense, D, 5).unwrap();
+            register_projections(
+                &gpu,
+                projs.clone(),
+                &mut slots,
+                dense,
+                D,
+                &DenseLevers::declared(),
+                5,
+            )
+            .unwrap();
         }
         let w4_new = crate::glm5next_w4a16_dense::registered().0 - w4_before;
         let fp8_new = crate::glm5next_fp8_dense::registered().0 - fp8_before;
@@ -114,6 +123,7 @@ fn an_unsupported_width_is_refused_before_anything_is_freed() {
         &mut [&mut field],
         DenseQuantization::W4a16,
         D,
+        &DenseLevers::declared(),
         9,
     )
     .unwrap_err()
@@ -156,7 +166,16 @@ fn each_flag_moves_exactly_its_own_projections() {
             let fp8_before = crate::glm5next_fp8_dense::registered().0;
             {
                 let mut slots: Vec<&mut DevicePtr> = fields.iter_mut().collect();
-                register_projections(&gpu, projs.clone(), &mut slots, dense, dsa, 3).unwrap();
+                register_projections(
+                    &gpu,
+                    projs.clone(),
+                    &mut slots,
+                    dense,
+                    dsa,
+                    &DenseLevers::declared(),
+                    3,
+                )
+                .unwrap();
             }
             let mut fp8_expected = 0;
             for (i, p) in projs.iter().enumerate() {

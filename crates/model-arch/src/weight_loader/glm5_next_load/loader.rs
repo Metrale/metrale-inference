@@ -99,6 +99,10 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
         // 2026-10-17: The GLM levers, resolved once and stored on every layer built here.
         let levers = crate::glm5next_layer::GlmLevers::from_settings(lc.settings)?;
         levers.announce();
+        levers.dense.check_tiers(
+            crate::glm5next_w4a16_dense::enabled(),
+            crate::glm5next_fp8_dense::enabled(),
+        )?;
         let kda_cfg = Glm5NextKdaConfig::from_model_config(config);
         kda_cfg.validate()?;
         // 2026-10-16: Refuses a bad `METRALE_GLM_LAYER_STREAM` before any layer is built.
@@ -268,7 +272,14 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                 metrale_model_layers::layers::dense_quantization(),
                 metrale_model_layers::layers::dsa_quantization(),
             ) {
-                dense_tiers::register_dense_tiers(gpu, &mut mixer, &mut mlp, &mlp_cfg, idx)?;
+                dense_tiers::register_dense_tiers(
+                    gpu,
+                    &mut mixer,
+                    &mut mlp,
+                    &mlp_cfg,
+                    &levers.dense,
+                    idx,
+                )?;
             }
 
             let t_mlp = t_layer.elapsed();
@@ -400,7 +411,7 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                 bf16 as f64 / 1e9
             );
         }
-        crate::glm5next_dequant_persist::log_readback()?;
+        crate::glm5next_dequant_persist::log_readback(levers.dense.persist);
         Ok(out)
     }
 

@@ -52,6 +52,7 @@ use metrale_model_layers::layers::ops::{
 };
 use metrale_model_layers::weight_map::{DenseWeight, QuantizedWeight, quantize_to_nvfp4};
 
+use crate::glm5next_dense_levers::DenseLevers;
 use crate::glm5next_w4a16_seg::{self as seg, SegMode, SegPlan};
 
 /// 2026-10-09: The row-tile kernel's K unit (`w4a16_tc_rows_shape_ok`: K a multiple of 256).
@@ -131,18 +132,20 @@ pub fn tier_of(name: &str) -> Result<ProjTier> {
 }
 
 /// 2026-10-09: The two load-time NVFP4 quantization kernels `quantize_to_nvfp4` takes.
+/// 2026-10-17: and `DenseLevers::dequant_min_rows`, for [`register`]'s scratch reserve.
 #[derive(Clone, Copy, Debug)]
 pub struct Nvfp4QuantKernels {
     pub absmax: KernelHandle,
     pub quantize: KernelHandle,
+    pub dequant_min_rows: Option<usize>,
 }
 
 impl Nvfp4QuantKernels {
     /// 2026-10-09: Resolve them, and the row-tile entry points [`proj`] launches (the
     /// segmented ones too under `METRALE_GLM_W4A16_SEG`), failing when any is not in this
     /// target's kernels: the operator asked for the tier.
-    pub fn load(gpu: &dyn GpuBackend) -> Result<Self> {
-        seg::prepare(gpu)?;
+    pub fn load(gpu: &dyn GpuBackend, l: &DenseLevers) -> Result<Self> {
+        seg::prepare(gpu, l)?;
         for rows in [16, 32, 64] {
             let entry = w4a16_tc_rows_entry(rows);
             gpu.op_cache()
@@ -158,6 +161,7 @@ impl Nvfp4QuantKernels {
             quantize: gpu
                 .kernel("quantize_nvfp4", "quantize_bf16_to_nvfp4")
                 .context("--dense-quantization w4a16")?,
+            dequant_min_rows: l.dequant_min_rows,
         })
     }
 }
@@ -226,7 +230,7 @@ pub fn register(
     );
     g.insert(w.weight.0, Entry { w, n, k });
     drop(g);
-    crate::glm5next_w4a16_wide::reserve(gpu, n, k)?;
+    crate::glm5next_w4a16_wide::reserve(gpu, kernels.dequant_min_rows, n, k)?;
     Ok(w.weight)
 }
 
@@ -275,6 +279,7 @@ pub fn retarget(slots: &mut [&mut DevicePtr], from: DevicePtr, to: DevicePtr) ->
 #[allow(clippy::too_many_arguments)]
 pub fn proj(
     gpu: &dyn GpuBackend,
+    l: &DenseLevers,
     b: DevicePtr,
     a: DevicePtr,
     c: DevicePtr,
@@ -286,7 +291,7 @@ pub fn proj(
     if !registry_in_use() {
         return Ok(false);
     }
-    proj_registered(gpu, seg::plan()?, b, a, c, m, n, k, stream)
+    proj_registered(gpu, seg::plan(l)?, b, a, c, m, n, k, stream)
 }
 
 /// 2026-10-09: The registered entry under `b`, checked against the launch shape `[n, k]`.
@@ -334,17 +339,17 @@ fn proj_registered(
         return Ok(true);
     }
     // 2026-10-12: `METRALE_GLM_W4A16_TC_GEMM_MIN_ROWS`: one launch of the row tiles' bits.
-    if crate::glm5next_w4a16_tc::takes(crate::glm5next_w4a16_tc::min_rows()?, m) {
+    if crate::glm5next_w4a16_tc::takes(plan.tc_min_rows, m) {
         crate::glm5next_w4a16_tc::proj(gpu, &e.w, a, c, m, n, k, stream)?;
         return Ok(true);
     }
-    if crate::glm5next_w4a16_wide::takes(crate::glm5next_w4a16_wide::min_rows()?, m) {
+    if crate::glm5next_w4a16_wide::takes(plan.dequant_min_rows, m) {
         crate::glm5next_w4a16_wide::proj(gpu, &e.w, a, c, m, n, k, stream)?;
         return Ok(true);
     }
     if m == 1 {
         // 2026-10-11: Under `METRALE_GLM_BATCH_INVARIANT`, the row tile's order (as 2+ rows).
-        if crate::glm5next_batch_inv::enabled()? {
+        if plan.batch_invariant {
             return crate::glm5next_batch_inv::one_row(gpu, &e.w, a, c, n32, k32, stream)
                 .map(|()| true);
         }
@@ -412,6 +417,7 @@ fn proj_registered(
 /// `Ok(false)` at a row count `METRALE_GLM_W4A16_GEMV_ROWS` covers.
 pub fn proj_group(
     gpu: &dyn GpuBackend,
+    l: &DenseLevers,
     members: &[(DevicePtr, DevicePtr, usize)],
     a: DevicePtr,
     m: usize,
@@ -421,24 +427,24 @@ pub fn proj_group(
     if !enabled() {
         return Ok(false);
     }
-    proj_group_registered(gpu, seg::plan()?, members, a, m, k, stream)
+    proj_group_registered(gpu, seg::plan(l)?, members, a, m, k, stream)
 }
 
 /// 2026-10-11: Whether a group of `m` rows runs as one `w4a16_gemv_seg` launch under `plan`
 /// (`SegPlan::seg_gemv`, unless the dequantize + cuBLASLt path takes the rows); then up to six
 /// members, else at most the row tiles' three.
-fn seg_gemv_group(plan: SegPlan, m: usize) -> Result<bool> {
-    Ok(plan.seg_gemv(m)
+fn seg_gemv_group(plan: SegPlan, m: usize) -> bool {
+    plan.seg_gemv(m)
         && (m == 1
-            || !(crate::glm5next_w4a16_wide::takes(crate::glm5next_w4a16_wide::min_rows()?, m)
-                || crate::glm5next_w4a16_tc::takes(crate::glm5next_w4a16_tc::min_rows()?, m))))
+            || !(crate::glm5next_w4a16_wide::takes(plan.dequant_min_rows, m)
+                || crate::glm5next_w4a16_tc::takes(plan.tc_min_rows, m)))
 }
 
 /// 2026-10-11: Whether a group of `m` rows would run as one launch of up to six members (the KDA
 /// front end then groups q/k/v/f_a/b/g_a): the tier is on and [`seg_gemv_group`] holds under the
-/// published plan.
-pub fn group_of_six(m: usize) -> Result<bool> {
-    Ok(enabled() && seg_gemv_group(seg::plan()?, m)?)
+/// plan of `l`.
+pub fn group_of_six(l: &DenseLevers, m: usize) -> Result<bool> {
+    Ok(enabled() && seg_gemv_group(seg::plan(l)?, m))
 }
 
 /// 2026-10-09: [`proj_group`] whatever the published tier, under `plan`.
@@ -457,13 +463,13 @@ fn proj_group_registered(
     // run one by one there (`proj`).
     // 2026-10-11: Under `METRALE_GLM_W4A16_GEMV_SEG` a group of 1..=4 GEMV-tier rows is one
     // `w4a16_gemv_seg` launch ([`seg_gemv_group`]).
-    let seg_gemv = seg_gemv_group(plan, m)?;
+    let seg_gemv = seg_gemv_group(plan, m);
     if !seg_gemv
         && (plan.mode == SegMode::Off
-            || (m < 2 && !crate::glm5next_batch_inv::enabled()?)
+            || (m < 2 && !plan.batch_invariant)
             || plan.gemv_tier(m)
-            || crate::glm5next_w4a16_wide::takes(crate::glm5next_w4a16_wide::min_rows()?, m)
-            || crate::glm5next_w4a16_tc::takes(crate::glm5next_w4a16_tc::min_rows()?, m))
+            || crate::glm5next_w4a16_wide::takes(plan.dequant_min_rows, m)
+            || crate::glm5next_w4a16_tc::takes(plan.tc_min_rows, m))
     {
         return Ok(false);
     }

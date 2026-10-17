@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-10-10: `METRALE_GLM_W4A16_GEMV_SEG`: its parse, and the one-row launches it moves to
+//! 2026-10-10: `METRALE_GLM_W4A16_GEMV_SEG`: the one-row launches it moves to
 //! `w4a16_gemv_seg` (a lone projection, a group of up to six), on a recording mock backend.
 //!
 //! Owner: model-arch (GLM-5.3).
@@ -11,7 +11,6 @@ use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
 
 use super::super::*;
 use super::{OFF, ptr_arg, register_all, u32_arg};
-use crate::glm5next_w4a16_seg::parse_gemv_seg;
 use metrale_model_layers::layers::ops::w4a16_gemv_seg_policy;
 
 /// 2026-10-10: The plan the lever publishes on GB10 (48 SMs), seg mode off.
@@ -20,19 +19,6 @@ const ONE_ROW: SegPlan = SegPlan {
     sms: 48,
     ..OFF
 };
-
-/// 2026-10-10: `0`/unset off, `1` on under the tier; `1` without the tier or another value is
-/// refused.
-#[test]
-fn gemv_seg_lever_parses_and_refuses() {
-    assert_eq!(parse_gemv_seg(None, false), Ok(false));
-    assert_eq!(parse_gemv_seg(Some("0"), true), Ok(false));
-    assert_eq!(parse_gemv_seg(Some("1"), true), Ok(true));
-    assert!(parse_gemv_seg(Some("1"), false).is_err());
-    for bad in ["", "on", "2", "fuse"] {
-        assert!(parse_gemv_seg(Some(bad), true).is_err(), "{bad:?} accepted");
-    }
-}
 
 /// 2026-10-10: `(segment pointers, scale2, output, n)` of launch argument slot `i`, then K.
 fn seg_args(
@@ -232,7 +218,7 @@ fn six_member_groups_run_at_gemv_tier_rows() {
             ..ROWS4
         },
     ] {
-        assert!(!seg_gemv_group(plan, 3).unwrap());
+        assert!(!seg_gemv_group(plan, 3));
         assert!(!proj_group_registered(&gpu, plan, &members, a, 3, k, 0).unwrap());
     }
     assert_eq!(
@@ -240,8 +226,8 @@ fn six_member_groups_run_at_gemv_tier_rows() {
         start,
         "declines launch nothing"
     );
-    assert!(seg_gemv_group(ROWS4, 3).unwrap());
-    assert!(!seg_gemv_group(ROWS4, 5).unwrap());
+    assert!(seg_gemv_group(ROWS4, 3));
+    assert!(!seg_gemv_group(ROWS4, 5));
     assert!(proj_group_registered(&gpu, ROWS4, &members, a, 3, k, 0).unwrap());
     let l = gpu.launches_snapshot()[start..].to_vec();
     assert_eq!(l.len(), 1);

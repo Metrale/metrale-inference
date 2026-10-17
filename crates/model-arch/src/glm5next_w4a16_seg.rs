@@ -44,7 +44,10 @@ use metrale_model_layers::layers::ops::{
 };
 use metrale_model_layers::weight_map::QuantizedWeight;
 
-/// 2026-10-09: What [`seg_mode`] selects.
+use crate::glm5next_dense_levers::DenseLevers;
+
+/// 2026-10-09: What `METRALE_GLM_W4A16_SEG` selects (`DenseLevers::seg`): unset or `0` is
+/// [`SegMode::Off`], `fuse` and `split` the others.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SegMode {
     /// 2026-10-09: The tier's launches as before the lever.
@@ -55,81 +58,9 @@ pub enum SegMode {
     Split,
 }
 
-/// 2026-10-09: `METRALE_GLM_W4A16_SEG`, read once: unset or `0` is [`SegMode::Off`], `fuse` and
-/// `split` the others; another value, or `fuse`/`split` without `--dense-quantization w4a16`,
-/// is an error.
-pub fn seg_mode() -> Result<SegMode> {
-    static V: OnceLock<Result<SegMode, String>> = OnceLock::new();
-    V.get_or_init(|| {
-        parse_seg(
-            std::env::var("METRALE_GLM_W4A16_SEG").ok().as_deref(),
-            crate::glm5next_w4a16_dense::enabled(),
-        )
-    })
-    .clone()
-    .map_err(anyhow::Error::msg)
-}
-
-/// 2026-10-09: [`seg_mode`]'s parse, pure: the value and whether the tier is on.
-pub(crate) fn parse_seg(v: Option<&str>, tier_on: bool) -> Result<SegMode, String> {
-    let mode = match v {
-        None | Some("0") => return Ok(SegMode::Off),
-        Some("fuse") => SegMode::Fuse,
-        Some("split") => SegMode::Split,
-        Some(other) => {
-            return Err(format!(
-                "METRALE_GLM_W4A16_SEG={other:?}: expected 0, fuse or split"
-            ));
-        }
-    };
-    if !tier_on {
-        return Err(format!(
-            "METRALE_GLM_W4A16_SEG={} needs --dense-quantization w4a16",
-            v.unwrap_or_default()
-        ));
-    }
-    Ok(mode)
-}
-
 /// 2026-10-10: The widest row count `METRALE_GLM_W4A16_GEMV_ROWS` may name: the widest
 /// CUDA-core tier `w4a16_gemv_batch8`.
 pub const GEMV_ROWS_MAX: u32 = 8;
-
-/// 2026-10-10: `METRALE_GLM_W4A16_GEMV_ROWS`, read once: 0 (off) when unset or `0`, else the
-/// widest launch, 2..=[`GEMV_ROWS_MAX`], that runs on the GEMV tiers. Another value, or a value
-/// without `--dense-quantization w4a16`, is an error.
-pub fn gemv_rows() -> Result<u32> {
-    static V: OnceLock<Result<u32, String>> = OnceLock::new();
-    V.get_or_init(|| {
-        parse_gemv_rows(
-            std::env::var("METRALE_GLM_W4A16_GEMV_ROWS").ok().as_deref(),
-            crate::glm5next_w4a16_dense::enabled(),
-        )
-    })
-    .clone()
-    .map_err(anyhow::Error::msg)
-}
-
-/// 2026-10-10: [`gemv_rows`]'s parse, pure: the value and whether the tier is on.
-pub(crate) fn parse_gemv_rows(v: Option<&str>, tier_on: bool) -> Result<u32, String> {
-    let r = match v {
-        None | Some("0") => return Ok(0),
-        Some(s) => match s.parse::<u32>() {
-            Ok(r) if (2..=GEMV_ROWS_MAX).contains(&r) => r,
-            _ => {
-                return Err(format!(
-                    "METRALE_GLM_W4A16_GEMV_ROWS={s:?}: expected 0 or 2..={GEMV_ROWS_MAX}"
-                ));
-            }
-        },
-    };
-    if !tier_on {
-        return Err(format!(
-            "METRALE_GLM_W4A16_GEMV_ROWS={r} needs --dense-quantization w4a16"
-        ));
-    }
-    Ok(r)
-}
 
 /// 2026-10-10: The CUDA-core GEMV tier of exactly `m` rows (2..=8): `w4a16_gemv_batch2` and
 /// `_batch3` take no row argument, `_batch4`..`_batch8` take `m`. Never the tensor-core route
@@ -179,32 +110,6 @@ pub(crate) fn launch_gemv_rows(
     }
 }
 
-/// 2026-10-10: `METRALE_GLM_W4A16_GEMV_SEG`, read once: unset or `0` is off, `1` on; another
-/// value, or `1` without `--dense-quantization w4a16`, is an error.
-pub fn gemv_seg() -> Result<bool> {
-    static V: OnceLock<Result<bool, String>> = OnceLock::new();
-    V.get_or_init(|| {
-        parse_gemv_seg(
-            std::env::var("METRALE_GLM_W4A16_GEMV_SEG").ok().as_deref(),
-            crate::glm5next_w4a16_dense::enabled(),
-        )
-    })
-    .clone()
-    .map_err(anyhow::Error::msg)
-}
-
-/// 2026-10-10: [`gemv_seg`]'s parse, pure: the value and whether the tier is on.
-pub(crate) fn parse_gemv_seg(v: Option<&str>, tier_on: bool) -> Result<bool, String> {
-    match v {
-        None | Some("0") => Ok(false),
-        Some("1") if tier_on => Ok(true),
-        Some("1") => Err("METRALE_GLM_W4A16_GEMV_SEG=1 needs --dense-quantization w4a16".into()),
-        Some(other) => Err(format!(
-            "METRALE_GLM_W4A16_GEMV_SEG={other:?}: expected 0 or 1"
-        )),
-    }
-}
-
 /// 2026-10-11: `segs[i].output [m, n_i] = a [m, k] @ W_i^T` (contiguous rows) in one
 /// `w4a16_gemv_seg` launch: [`launch_one_row`] at one row, the M-row point at 2..=4 (each row the
 /// one-row kernel's bytes for that row alone).
@@ -251,12 +156,12 @@ static SMS: OnceLock<u32> = OnceLock::new();
 /// 2026-10-09: At load, under a mode other than `off`: resolve every entry point (a missing one
 /// is refused here, not at the first launch) and record the SM count. Never inside a capture.
 /// 2026-10-10: Under `METRALE_GLM_W4A16_GEMV_ROWS`, also the GEMV tiers it reaches.
-pub(crate) fn prepare(gpu: &dyn GpuBackend) -> Result<()> {
+pub(crate) fn prepare(gpu: &dyn GpuBackend, l: &DenseLevers) -> Result<()> {
     // 2026-10-10: The GEMV tiers `METRALE_GLM_W4A16_GEMV_ROWS` reaches, resolved here so a
     // missing one is refused at load.
     for &name in GEMV_ROW_TIERS
         .iter()
-        .take(gemv_rows()?.saturating_sub(1) as usize)
+        .take(l.gemv_rows.saturating_sub(1) as usize)
     {
         gpu.op_cache()
             .kernel(gpu, "w4a16_gemv", name)
@@ -264,8 +169,8 @@ pub(crate) fn prepare(gpu: &dyn GpuBackend) -> Result<()> {
     }
     // 2026-10-10: Every one-row entry `METRALE_GLM_W4A16_GEMV_SEG` may reach. 2026-10-11: and the
     // M-row points of the GEMV-tier row counts (2..=min(4, METRALE_GLM_W4A16_GEMV_ROWS)).
-    if gemv_seg()? {
-        let rows = (2..=gemv_rows()?.min(W4A16_GEMV_SEG_MAX_ROWS)).map(W4a16GemvSegPoint::Rows);
+    if l.gemv_seg {
+        let rows = (2..=l.gemv_rows.min(W4A16_GEMV_SEG_MAX_ROWS)).map(W4a16GemvSegPoint::Rows);
         for pt in W4A16_GEMV_SEG_TILES
             .into_iter()
             .map(W4a16GemvSegPoint::Tile)
@@ -281,10 +186,10 @@ pub(crate) fn prepare(gpu: &dyn GpuBackend) -> Result<()> {
                 })?;
         }
     }
-    if SMS.get().is_none() && (gemv_seg()? || seg_mode()? != SegMode::Off) {
+    if SMS.get().is_none() && (l.gemv_seg || l.seg != SegMode::Off) {
         let _ = SMS.set(gpu.sm_count()?);
     }
-    if seg_mode()? == SegMode::Off {
+    if l.seg == SegMode::Off {
         return Ok(());
     }
     for entry in w4a16_tc_rows_seg_entries() {
@@ -298,14 +203,19 @@ pub(crate) fn prepare(gpu: &dyn GpuBackend) -> Result<()> {
 }
 
 /// 2026-10-09: The mode and the SM count its split rule reads. 2026-10-10: `gemv_rows`, the
-/// widest launch on the GEMV tiers ([`gemv_rows`]; 0 = none). 2026-10-10: `one_row`, whether
-/// one-row launches take `w4a16_gemv_seg` ([`gemv_seg`]).
+/// widest launch on the GEMV tiers (`DenseLevers::gemv_rows`; 0 = none). 2026-10-10: `one_row`,
+/// whether one-row launches take `w4a16_gemv_seg` (`DenseLevers::gemv_seg`). 2026-10-17: the
+/// row floors of the wide dequant GEMM and the tensor-core GEMM (`None` off) and whether the
+/// batch-invariant mode is on, copied from the same levers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SegPlan {
     pub mode: SegMode,
     pub sms: u32,
     pub gemv_rows: u32,
     pub one_row: bool,
+    pub tc_min_rows: Option<usize>,
+    pub dequant_min_rows: Option<usize>,
+    pub batch_invariant: bool,
 }
 
 impl SegPlan {
@@ -330,11 +240,10 @@ impl SegPlan {
     }
 }
 
-/// 2026-10-09: The published plan: [`seg_mode`] and, unless it is `off`, the SM count
+/// 2026-10-09: The published plan: the mode of `l` and, unless it is `off`, the SM count
 /// [`prepare`] recorded (an error when it did not run).
-pub(crate) fn plan() -> Result<SegPlan> {
-    let mode = seg_mode()?;
-    let one_row = gemv_seg()?;
+pub(crate) fn plan(l: &DenseLevers) -> Result<SegPlan> {
+    let (mode, one_row) = (l.seg, l.gemv_seg);
     let sms = if mode == SegMode::Off && !one_row {
         0
     } else {
@@ -344,8 +253,11 @@ pub(crate) fn plan() -> Result<SegPlan> {
     Ok(SegPlan {
         mode,
         sms,
-        gemv_rows: gemv_rows()?,
+        gemv_rows: l.gemv_rows,
         one_row,
+        tc_min_rows: l.tc_min_rows,
+        dequant_min_rows: l.dequant_min_rows,
+        batch_invariant: l.batch_invariant,
     })
 }
 

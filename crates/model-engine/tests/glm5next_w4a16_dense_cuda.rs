@@ -41,6 +41,14 @@ const MAX_REL_L2_BF16: f64 = 0.17;
 /// BF16 output rounding (2^-9 relative) only.
 const MAX_REL_L2_DEQUANT: f64 = 0.01;
 
+/// 2026-10-17: The GLM dense tier levers at their declared defaults, from a fixed map, not the
+/// process environment.
+fn dense_levers() -> Result<metrale_model_arch::glm5next_dense_levers::DenseLevers> {
+    metrale_model_arch::glm5next_dense_levers::DenseLevers::from_settings(
+        &metrale_model_layers::lever_equivalence::defaults(),
+    )
+}
+
 fn upload(gpu: &dyn GpuBackend, v: &[f32]) -> Result<DevicePtr> {
     let b: Vec<u8> = v
         .iter()
@@ -121,7 +129,8 @@ fn w4a16_dense_projections_match_their_nvfp4_weights_and_are_row_invariant() -> 
         gemv: gpu.kernel("gemv", "dense_gemv_bf16")?,
         batchm: gpu.kernel("dense_gemv_bf16_batchm", "dense_gemv_bf16_batchm")?,
     };
-    let kernels = Nvfp4QuantKernels::load(&gpu)?;
+    let levers = dense_levers()?;
+    let kernels = Nvfp4QuantKernels::load(&gpu, &levers)?;
     const ROWS: usize = 150;
     let mut seed = 0x51ed_270b_27d1_9a3fu64;
     for (n, k, what) in [
@@ -154,7 +163,9 @@ fn w4a16_dense_projections_match_their_nvfp4_weights_and_are_row_invariant() -> 
         let x = upload(&gpu, &xs)?;
         let (w4_out, bf_out) = (gpu.alloc(ROWS * n * 2)?, gpu.alloc(ROWS * n * 2)?);
         for rows in [1usize, 16, 64] {
-            ensure!(w4a16::proj(&gpu, key, x, w4_out, rows, n, k, stream)?);
+            ensure!(w4a16::proj(
+                &gpu, &levers, key, x, w4_out, rows, n, k, stream
+            )?);
             dense_mm_bf16(&gpu, &bf, x, w, bf_out, rows, n, k, stream)?;
             gpu.synchronize(stream)?;
             let got = read(&gpu, w4_out, rows * n)?;
@@ -185,12 +196,15 @@ fn w4a16_dense_projections_match_their_nvfp4_weights_and_are_row_invariant() -> 
                 "{what} rows={rows}: {cos} / {rel} vs BF16"
             );
         }
-        ensure!(w4a16::proj(&gpu, key, x, w4_out, ROWS, n, k, stream)?);
+        ensure!(w4a16::proj(
+            &gpu, &levers, key, x, w4_out, ROWS, n, k, stream
+        )?);
         gpu.synchronize(stream)?;
         let wide = read(&gpu, w4_out, ROWS * n)?;
         for r in [0usize, 63, 64, 127, 128, 149] {
             ensure!(w4a16::proj(
                 &gpu,
+                &levers,
                 key,
                 x.offset(r * k * 2),
                 w4_out,

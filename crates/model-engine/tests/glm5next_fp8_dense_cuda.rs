@@ -92,7 +92,7 @@ fn fp8_dense_projections_track_bf16_and_are_row_invariant() -> Result<()> {
         batchm: gpu.kernel("dense_gemv_bf16_batchm", "dense_gemv_bf16_batchm")?,
     };
     let quantize = gpu.kernel("gemv_fp8w", "quantize_bf16_to_fp8")?;
-    glm5next_fp8_dense::prepare(&gpu, 11264)?;
+    glm5next_fp8_dense::prepare(&gpu, 11264, None)?;
     let mut seed = 0x51ed_270b_27d1_9a3fu64;
     for (n, k, what) in [
         (2816usize, 4096usize, "kda.q_proj tp3"),

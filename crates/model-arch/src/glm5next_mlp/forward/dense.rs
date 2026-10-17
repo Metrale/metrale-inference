@@ -61,10 +61,18 @@ pub fn forward_dense(
     let stable = crate::glm5next_fp8_dense::stable_input(x);
     // 2026-10-09: One launch under `METRALE_GLM_W4A16_SEG` (`proj_group`), else one each.
     let group = [(w.gate_proj, ws.gate, inter), (w.up_proj, ws.up, inter)];
-    if !crate::glm5next_w4a16_dense::proj_group(gpu, &group, x, m, cfg.hidden, stream)? {
+    if !crate::glm5next_w4a16_dense::proj_group(
+        gpu,
+        &k.levers.dense,
+        &group,
+        x,
+        m,
+        cfg.hidden,
+        stream,
+    )? {
         gemm(
             gpu,
-            k.levers.cublas_wide_proj,
+            &k.levers,
             k.gemm,
             k.gemv,
             k.batchm(),
@@ -78,7 +86,7 @@ pub fn forward_dense(
         )?;
         gemm(
             gpu,
-            k.levers.cublas_wide_proj,
+            &k.levers,
             k.gemm,
             k.gemv,
             k.batchm(),
@@ -105,7 +113,7 @@ pub fn forward_dense(
     )?;
     gemm(
         gpu,
-        k.levers.cublas_wide_proj,
+        &k.levers,
         k.gemm,
         k.gemv,
         k.batchm(),

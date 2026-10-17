@@ -95,13 +95,9 @@ crates/model-arch/src/deepseek_v41_layer/step_seg_run.rs
 crates/model-arch/src/dflash_head.rs
 crates/model-arch/src/dflash_head/from_weights.rs
 crates/model-arch/src/dflash_head/from_weights/kernel_handles.rs
-crates/model-arch/src/glm5next_batch_inv.rs
-crates/model-arch/src/glm5next_dequant_persist.rs
 crates/model-arch/src/glm5next_dsa/build.rs
-crates/model-arch/src/glm5next_fp8_wide.rs
 crates/model-arch/src/glm5next_layer/l2_warm.rs
 crates/model-arch/src/glm5next_layer/profile.rs
-crates/model-arch/src/glm5next_layer/wide_gemv.rs
 crates/model-arch/src/glm5next_layer_dump.rs
 crates/model-arch/src/glm5next_mtp_head.rs
 crates/model-arch/src/glm5next_mtp_head/batch.rs
@@ -112,9 +108,6 @@ crates/model-arch/src/glm5next_mtp_head/init.rs
 crates/model-arch/src/glm5next_mtp_head/proposer.rs
 crates/model-arch/src/glm5next_mtp_head/rows.rs
 crates/model-arch/src/glm5next_prefill_piece.rs
-crates/model-arch/src/glm5next_w4a16_seg.rs
-crates/model-arch/src/glm5next_w4a16_tc.rs
-crates/model-arch/src/glm5next_w4a16_wide.rs
 crates/model-arch/src/kimi_k3/host_decode.rs
 crates/model-arch/src/mistral_loader/loader_impl/phase_assemble.rs
 crates/model-arch/src/mistral_loader/loader_impl/phase_qk_absorbed.rs
@@ -130,7 +123,6 @@ crates/model-arch/src/weight_loader/deepseek_v41.rs
 crates/model-arch/src/weight_loader/deepseek_v41/engram_q2k.rs
 crates/model-arch/src/weight_loader/deepseek_v41/load_layers.rs
 crates/model-arch/src/weight_loader/gemma4/loader_a.rs
-crates/model-arch/src/weight_loader/glm5_next_load.rs
 crates/model-arch/src/weight_loader/glm5_next_load/layer_stream.rs
 crates/model-arch/src/weight_loader/laguna/load_layers.rs
 crates/model-arch/src/weight_loader/longcat/ffn.rs

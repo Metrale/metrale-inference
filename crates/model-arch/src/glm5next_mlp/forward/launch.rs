@@ -22,7 +22,7 @@ const W4_TILE: u32 = 64;
 #[allow(clippy::too_many_arguments)]
 pub(super) fn gemm(
     gpu: &dyn GpuBackend,
-    cublas_wide: bool,
+    levers: &crate::glm5next_layer::GlmLevers,
     k: KernelHandle,
     gemv: KernelHandle,
     batchm: impl Into<Batchm>,
@@ -37,7 +37,7 @@ pub(super) fn gemm(
     // 2026-10-09: The dispatch lives in `glm_mm`, shared with the DSA and KDA blocks.
     glm_mm(
         gpu,
-        cublas_wide,
+        levers,
         k,
         gemv,
         batchm.into(),

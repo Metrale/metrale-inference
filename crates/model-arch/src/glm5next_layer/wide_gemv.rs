@@ -17,6 +17,8 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::{KernelLaunch, div_ceil};
 use metrale_model_layers::layers::ops;
 
+use super::GlmLevers;
+
 /// 2026-10-09: `#define BATCHM_WIDE_MIN` in `dense_gemv_bf16_batchm.cu`: the narrowest M the
 /// wide entries take.
 pub(crate) const BATCHM_WIDE_MIN: usize = 9;
@@ -43,18 +45,11 @@ impl From<KernelHandle> for Batchm {
     }
 }
 
-/// 2026-10-09: `METRALE_GLM_BATCHM_WIDE=0` keeps the runtime-M batched GEMV at 9..=16 rows
-/// (an A/B of the speed; the bits are the same). On otherwise. Read once.
-fn wide_enabled() -> bool {
-    static E: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *E.get_or_init(|| std::env::var("METRALE_GLM_BATCHM_WIDE").as_deref() != Ok("0"))
-}
-
-/// 2026-10-09: Whether `glm_mm` takes the wide entry for `m` rows with handle `wide`.
-pub(crate) fn takes_wide(wide: KernelHandle, m: usize) -> bool {
-    wide.0 != 0
-        && (BATCHM_WIDE_MIN..=ops::DENSE_GEMV_BATCHM_MAX_M as usize).contains(&m)
-        && wide_enabled()
+/// 2026-10-09: Whether `glm_mm` takes the wide entry for `m` rows with handle `wide`. `on` is
+/// `METRALE_GLM_BATCHM_WIDE` (`DenseLevers::batchm_wide`): off keeps the runtime-M batched GEMV at
+/// 9..=16 rows (an A/B of the speed; the bits are the same).
+pub(crate) fn takes_wide(wide: KernelHandle, m: usize, on: bool) -> bool {
+    wide.0 != 0 && (BATCHM_WIDE_MIN..=ops::DENSE_GEMV_BATCHM_MAX_M as usize).contains(&m) && on
 }
 
 /// 2026-10-11: [`glm_mm`] in launches of at most `DENSE_GEMV_BATCHM_MAX_M` rows, each on the
@@ -64,7 +59,7 @@ pub(crate) fn takes_wide(wide: KernelHandle, m: usize) -> bool {
 #[allow(clippy::too_many_arguments)]
 fn glm_mm_rows16(
     gpu: &dyn GpuBackend,
-    cublas_wide: bool,
+    levers: &GlmLevers,
     gemm: KernelHandle,
     gemv: KernelHandle,
     batchm: Batchm,
@@ -87,18 +82,7 @@ fn glm_mm_rows16(
         let rows = step.min(m - r0);
         let (ar, cr) = (a.offset(r0 * kk * 2), c.offset(r0 * n * c_elem));
         glm_mm(
-            gpu,
-            cublas_wide,
-            gemm,
-            gemv,
-            batchm,
-            ar,
-            b,
-            cr,
-            rows,
-            n,
-            kk,
-            stream,
+            gpu, levers, gemm, gemv, batchm, ar, b, cr, rows, n, kk, stream,
         )?;
         r0 += rows;
     }
@@ -106,13 +90,13 @@ fn glm_mm_rows16(
 }
 
 /// 2026-10-09: `C[M, N] = A[M, K] @ B[N, K]^T` with BF16 inputs (the output element is the
-/// kernels'): the W4A16 or FP8 dense path for a registered weight, then cuBLASLt above `DENSE_GEMV_BATCHM_MAX_M` rows when `cublas_wide_proj` is on (BF16
-/// out), the wide batched GEMV at 9..=16 rows when `batchm.wide` is set, else
+/// kernels'): the W4A16 or FP8 dense path for a registered weight, then cuBLASLt above
+/// `DENSE_GEMV_BATCHM_MAX_M` rows when `levers.cublas_wide_proj` is on (BF16 out), the wide batched GEMV at 9..=16 rows when `batchm.wide` is set, else
 /// `ops::dense_mm_bf16` (GEMV at one row, `batchm.narrow` at 2..=16, the tile GEMM otherwise).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn glm_mm(
     gpu: &dyn GpuBackend,
-    cublas_wide: bool,
+    levers: &GlmLevers,
     gemm: KernelHandle,
     gemv: KernelHandle,
     batchm: Batchm,
@@ -127,7 +111,7 @@ pub(crate) fn glm_mm(
     // 2026-10-09: `--dense-quantization fp8` serves registered weights W8A8; only BF16-output
     // projections are registered (each block's `dense_projections`). Under `w4a16` the W4A16
     // registry answers first, then the FP8 one for the rest of the set.
-    if crate::glm5next_w4a16_dense::proj(gpu, b, a, c, m, n, kk, stream)? {
+    if crate::glm5next_w4a16_dense::proj(gpu, &levers.dense, b, a, c, m, n, kk, stream)? {
         return Ok(());
     }
     if crate::glm5next_fp8_dense::proj(gpu, b, a, c, m, n, kk, stream)? {
@@ -136,26 +120,13 @@ pub(crate) fn glm_mm(
     // 2026-10-11: Under `METRALE_GLM_BATCH_INVARIANT`, wider launches run as 16-row launches of
     // the row-invariant batched GEMV ([`glm_mm_rows16`]), never cuBLASLt or the tile GEMM.
     let wide_rows = m > ops::DENSE_GEMV_BATCHM_MAX_M as usize;
-    if wide_rows && crate::glm5next_batch_inv::enabled()? {
-        return glm_mm_rows16(
-            gpu,
-            cublas_wide,
-            gemm,
-            gemv,
-            batchm,
-            a,
-            b,
-            c,
-            m,
-            n,
-            kk,
-            stream,
-        );
+    if wide_rows && levers.dense.batch_invariant {
+        return glm_mm_rows16(gpu, levers, gemm, gemv, batchm, a, b, c, m, n, kk, stream);
     }
-    if wide_rows && cublas_wide {
+    if wide_rows && levers.cublas_wide_proj {
         return ops::cublas_bf16_proj_dense(a, b, c, m as u32, n as u32, kk as u32, stream);
     }
-    if takes_wide(batchm.wide, m) {
+    if takes_wide(batchm.wide, m, levers.dense.batchm_wide) {
         return KernelLaunch::new(gpu, batchm.wide)
             .grid([div_ceil(n as u32, 4), 1, 1])
             .block([256, 1, 1])
@@ -223,7 +194,8 @@ mod tests {
             DevicePtr(0x3000_0000),
         );
         let (n, kk) = (288usize, 4096usize);
-        glm_mm_rows16(&gpu, true, gemm, gemv, b, a, w, c, 40, n, kk, 7).unwrap();
+        let levers = GlmLevers::declared();
+        glm_mm_rows16(&gpu, &levers, gemm, gemv, b, a, w, c, 40, n, kk, 7).unwrap();
         let l = gpu.launches_snapshot();
         assert_eq!(l.len(), 3);
         for (i, (rows, r0)) in [(16u32, 0usize), (16, 16), (8, 32)].into_iter().enumerate() {
@@ -237,7 +209,7 @@ mod tests {
             narrow: KernelHandle(0),
             ..b
         };
-        assert!(glm_mm_rows16(&gpu, true, gemm, gemv, no_batch, a, w, c, 40, n, kk, 7).is_err());
+        assert!(glm_mm_rows16(&gpu, &levers, gemm, gemv, no_batch, a, w, c, 40, n, kk, 7).is_err());
         assert_eq!(gpu.launches_snapshot().len(), 3);
     }
 }

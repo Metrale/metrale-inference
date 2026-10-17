@@ -20,6 +20,7 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_model_layers::layers::{DenseQuantization, DsaQuantization};
 use metrale_model_layers::weight_map::QuantizedWeight;
 
+use crate::glm5next_dense_levers::DenseLevers;
 use crate::glm5next_layer::{Glm5NextMixer, Glm5NextMlpSite};
 use crate::glm5next_mlp::Glm5NextMlpConfig;
 use crate::glm5next_w4a16_dense::{self as w4a16, ProjTier};
@@ -89,6 +90,7 @@ pub(super) fn register_dense_tiers(
     mixer: &mut Glm5NextMixer,
     mlp: &mut Glm5NextMlpSite,
     mlp_cfg: &Glm5NextMlpConfig,
+    levers: &DenseLevers,
     idx: usize,
 ) -> Result<()> {
     let mut projs = match &*mixer {
@@ -107,6 +109,7 @@ pub(super) fn register_dense_tiers(
         &mut weight_slots(mixer, mlp),
         metrale_model_layers::layers::dense_quantization(),
         metrale_model_layers::layers::dsa_quantization(),
+        levers,
         idx,
     )
 }
@@ -114,20 +117,23 @@ pub(super) fn register_dense_tiers(
 /// 2026-10-09: Register `projs` (layer `idx`): FP8 for the FP8 part of [`split_by_tier`], with
 /// the BF16 kept; W4A16 for the rest, each retargeted in `slots` to its NVFP4 key and its BF16
 /// freed. 2026-10-15: each projection `METRALE_GLM_DEQUANT_PERSIST` names also keeps its BF16
-/// dequantized copy (`glm5next_dequant_persist`).
+/// dequantized copy (`glm5next_dequant_persist`). 2026-10-17: `levers` are the resolved dense
+/// tier levers.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn register_projections(
     gpu: &dyn GpuBackend,
     projs: Vec<Proj>,
     slots: &mut [&mut DevicePtr],
     dense: DenseQuantization,
     dsa: DsaQuantization,
+    levers: &DenseLevers,
     idx: usize,
 ) -> Result<()> {
     let (fp8, w4) = split_by_tier(projs, dense, dsa)?;
-    let persist = crate::glm5next_dequant_persist::mode()?;
+    let persist = levers.persist;
     if !fp8.is_empty() {
         let max_k = fp8.iter().map(|p| p.2).max().unwrap_or(0);
-        crate::glm5next_fp8_dense::prepare(gpu, max_k)?;
+        crate::glm5next_fp8_dense::prepare(gpu, max_k, levers.fp8_dequant_min_rows)?;
         let quantize = gpu.kernel("gemv_fp8w", "quantize_bf16_to_fp8")?;
         for (w, n, k, name) in fp8 {
             let what = format!("layer {idx} {name}");
@@ -142,7 +148,7 @@ pub(super) fn register_projections(
     if w4.is_empty() {
         return Ok(());
     }
-    let kernels = w4a16::Nvfp4QuantKernels::load(gpu)?;
+    let kernels = w4a16::Nvfp4QuantKernels::load(gpu, levers)?;
     for (w, n, k, name) in w4 {
         let what = format!("layer {idx} {name}");
         let key = w4a16::register(gpu, &kernels, w, n, k, &what, 0)?;

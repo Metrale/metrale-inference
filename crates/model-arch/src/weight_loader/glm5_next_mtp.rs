@@ -64,6 +64,10 @@ pub fn load_glm5next_mtp_module(
     // indexer cache, workspace and ceiling grids are sized at the cap, not `--max-seq-len`.
     // 2026-10-17: The GLM levers, resolved from the same settings as the text stack's.
     let levers = crate::glm5next_layer::GlmLevers::from_settings(lc.settings)?;
+    levers.dense.check_tiers(
+        crate::glm5next_w4a16_dense::enabled(),
+        crate::glm5next_fp8_dense::enabled(),
+    )?;
     let dsa_cfg = crate::glm5next_mtp_head::drafter_dsa_config(config)?;
     let mlp_cfg = Glm5NextMlpConfig::from_config(config)?;
     let dsa_plan = crate::glm5next_dsa::tp::DsaTpPlan::from_config(config, &dsa_cfg)?;
@@ -123,8 +127,15 @@ pub fn load_glm5next_mtp_module(
     // 2026-10-11: The drafter's dense projections at the serve's tiers, as a text layer's. They
     // were left BF16: at TP=3 the drafter's DSA q_absorb and o_absorb alone read ~0.54 ms per
     // propose in BF16. Draft tokens only; the target verifies every draft.
-    super::glm5_next_load::register_mtp_dense_tiers(gpu, &mut mixer, &mut mlp, &mlp_cfg, idx)
-        .with_context(|| format!("glm5_next MTP: dense tiers of layer {idx}"))?;
+    super::glm5_next_load::register_mtp_dense_tiers(
+        gpu,
+        &mut mixer,
+        &mut mlp,
+        &mlp_cfg,
+        &levers.dense,
+        idx,
+    )
+    .with_context(|| format!("glm5_next MTP: dense tiers of layer {idx}"))?;
 
     let up =
         |n: &str| -> Result<DevicePtr> { super::glm5_next_load::upload_bf16(gpu, &src.f32(n)?) };

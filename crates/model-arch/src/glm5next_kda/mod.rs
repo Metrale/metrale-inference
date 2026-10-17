@@ -229,7 +229,7 @@ impl Glm5NextKdaLayer {
         // `glm_mm`'s, with the register-resident batched GEMV at 9..=16 rows.
         crate::glm5next_layer::wide_gemv::glm_mm(
             gpu,
-            self.levers.cublas_wide_proj,
+            &self.levers,
             self.kernels.gemm,
             self.kernels.gemv,
             crate::glm5next_layer::wide_gemv::Batchm {
@@ -299,12 +299,28 @@ impl Glm5NextKdaLayer {
         ];
         // 2026-10-10: One row under `METRALE_GLM_W4A16_GEMV_SEG`: all six in one launch.
         // 2026-10-11: Also 2..=4 GEMV-tier rows (`glm5next_w4a16_dense::group_of_six`).
-        let front = crate::glm5next_w4a16_dense::group_of_six(t)? && {
+        let front = crate::glm5next_w4a16_dense::group_of_six(&self.levers.dense, t)? && {
             let all: Vec<_> = qkv_group.iter().chain(&low_group).copied().collect();
-            crate::glm5next_w4a16_dense::proj_group(gpu, &all, hidden, t, hid, stream)?
+            crate::glm5next_w4a16_dense::proj_group(
+                gpu,
+                &self.levers.dense,
+                &all,
+                hidden,
+                t,
+                hid,
+                stream,
+            )?
         };
         let grouped = front
-            || crate::glm5next_w4a16_dense::proj_group(gpu, &qkv_group, hidden, t, hid, stream)?;
+            || crate::glm5next_w4a16_dense::proj_group(
+                gpu,
+                &self.levers.dense,
+                &qkv_group,
+                hidden,
+                t,
+                hid,
+                stream,
+            )?;
         for (i, w) in [
             &self.weights.q_proj,
             &self.weights.k_proj,
@@ -333,7 +349,15 @@ impl Glm5NextKdaLayer {
         // 2026-10-09: f_a, b_proj and g_a read `hidden` too: one launch under
         // `METRALE_GLM_W4A16_SEG`, with g_a(h) in its own buffer; else one each, as below.
         let low = front
-            || crate::glm5next_w4a16_dense::proj_group(gpu, &low_group, hidden, t, hid, stream)?;
+            || crate::glm5next_w4a16_dense::proj_group(
+                gpu,
+                &self.levers.dense,
+                &low_group,
+                hidden,
+                t,
+                hid,
+                stream,
+            )?;
         if !low {
             self.gemm(
                 gpu,

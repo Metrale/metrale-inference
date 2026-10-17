@@ -51,6 +51,8 @@ struct Fp8Dense {
     quantized: Option<(u64, usize, usize, u64)>,
     /// 2026-10-09: The input a [`StableInput`] guard declares unchanged while it lives.
     stable: Option<u64>,
+    /// 2026-10-17: `DenseLevers::fp8_dequant_min_rows`, from [`prepare`] (`glm5next_fp8_wide`).
+    wide_min_rows: Option<usize>,
 }
 
 /// 2026-10-09: While alive, the caller promises that the BF16 rows at the guarded address do
@@ -147,9 +149,12 @@ fn shared_split_unit_for(
 /// 2026-10-09: Resolve the W8A8 kernels and allocate the activation scratch for K up to
 /// `max_k`, once, before the first [`register`]. Errors when the per-row W8A8 family is not in
 /// this target's PTX: the operator asked for the tier, so it is never quietly dropped.
-pub fn prepare(gpu: &dyn GpuBackend, max_k: usize) -> Result<()> {
+/// 2026-10-17: `wide_min_rows` is `DenseLevers::fp8_dequant_min_rows`, kept for [`register`] and
+/// the launches.
+pub fn prepare(gpu: &dyn GpuBackend, max_k: usize, wide_min_rows: Option<usize>) -> Result<()> {
     let mut g = state().lock().unwrap_or_else(|e| e.into_inner());
-    if g.as_ref().is_some_and(|s| s.max_k as usize >= max_k) {
+    if let Some(s) = g.as_mut().filter(|s| s.max_k as usize >= max_k) {
+        s.wide_min_rows = wide_min_rows;
         return Ok(());
     }
     let kernels = W8a8Kernels::load(gpu);
@@ -167,6 +172,7 @@ pub fn prepare(gpu: &dyn GpuBackend, max_k: usize) -> Result<()> {
         weights,
         quantized: None,
         stable: None,
+        wide_min_rows,
     });
     Ok(())
 }
@@ -220,8 +226,9 @@ pub fn register(
         scale_format: WeightQuantFormat::Fp8PerRow,
     }])?;
     s.weights.insert(bf16.0, w);
+    let wide = s.wide_min_rows;
     drop(g);
-    crate::glm5next_fp8_wide::reserve(gpu, n, k)
+    crate::glm5next_fp8_wide::reserve(gpu, wide, n, k)
 }
 
 /// 2026-10-10: The FP8 copy registered for the BF16 weight at `bf16` when this registry is in use
@@ -312,7 +319,7 @@ fn proj_registered(
         w.n(),
         w.k()
     );
-    if crate::glm5next_fp8_wide::takes(crate::glm5next_fp8_wide::min_rows()?, m) {
+    if crate::glm5next_fp8_wide::takes(s.wide_min_rows, m) {
         // 2026-10-12: The lever's path reads neither the activation scratch nor its record.
         let [seg] = w.segment_weights() else {
             bail!(

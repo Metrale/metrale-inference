@@ -39,7 +39,7 @@ impl super::Glm5NextDsaLayer {
         // 2026-10-09: The dispatch lives in `glm_mm`, shared with the MLP and KDA blocks.
         glm_mm(
             gpu,
-            self.levers.cublas_wide_proj,
+            &self.levers,
             k,
             gemv,
             batchm.into(),

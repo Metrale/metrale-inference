@@ -24,8 +24,6 @@
 //! - A launch here is not row-invariant (cuBLASLt picks its order by M), so
 //!   `METRALE_GLM_BATCH_INVARIANT` refuses the lever (`glm5next_batch_inv`).
 
-use std::sync::OnceLock;
-
 use anyhow::{Context, Result, ensure};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
@@ -44,56 +42,16 @@ const WHAT: &str = "FP8 dequant GEMM";
 /// groups, which the W8A8 family serves bit-identically at every row count up to 16.
 pub const MIN_ROWS_FLOOR: usize = 17;
 
-/// 2026-10-12: `METRALE_GLM_FP8_DEQUANT_GEMM_MIN_ROWS`, read once: `None` when unset or `0`,
-/// else the narrowest launch that takes the dequantize + cuBLASLt path. A value below
-/// [`MIN_ROWS_FLOOR`], an unparsable one, or one while the FP8 registry is not in use is an
-/// error.
-pub fn min_rows() -> Result<Option<usize>> {
-    static V: OnceLock<Result<Option<usize>, String>> = OnceLock::new();
-    V.get_or_init(|| {
-        parse_min_rows(
-            std::env::var("METRALE_GLM_FP8_DEQUANT_GEMM_MIN_ROWS")
-                .ok()
-                .as_deref(),
-            crate::glm5next_fp8_dense::enabled(),
-        )
-    })
-    .clone()
-    .map_err(anyhow::Error::msg)
-}
-
-/// 2026-10-12: [`min_rows`]'s parse, pure: the value and whether the FP8 registry is in use.
-pub(crate) fn parse_min_rows(v: Option<&str>, registry_on: bool) -> Result<Option<usize>, String> {
-    let r = match v {
-        None | Some("0") => return Ok(None),
-        Some(s) => match s.parse::<usize>() {
-            Ok(r) if r >= MIN_ROWS_FLOOR => r,
-            _ => {
-                return Err(format!(
-                    "METRALE_GLM_FP8_DEQUANT_GEMM_MIN_ROWS={s:?}: expected 0 or a row count of \
-                     at least {MIN_ROWS_FLOOR}"
-                ));
-            }
-        },
-    };
-    if !registry_on {
-        return Err(format!(
-            "METRALE_GLM_FP8_DEQUANT_GEMM_MIN_ROWS={r} needs --dense-quantization fp8 or w4a16, \
-             or --dsa-quantization w8a8"
-        ));
-    }
-    Ok(Some(r))
-}
-
 /// 2026-10-12: Whether a launch of `m` rows takes this path under the lever value `min`.
 pub fn takes(min: Option<usize>, m: usize) -> bool {
     min.is_some_and(|r| m >= r)
 }
 
 /// 2026-10-12: Reserve the shared BF16 scratch (`glm5next_dequant_scratch`) for an `[n, k]`
-/// weight when the lever is on; a no-op when it is off. Called at load, as each weight registers.
-pub fn reserve(gpu: &dyn GpuBackend, n: usize, k: usize) -> Result<()> {
-    if min_rows()?.is_none() {
+/// weight when the lever (`min_rows`, `DenseLevers::fp8_dequant_min_rows`) is on; a no-op when it
+/// is off. Called at load, as each weight registers.
+pub fn reserve(gpu: &dyn GpuBackend, min_rows: Option<usize>, n: usize, k: usize) -> Result<()> {
+    if min_rows.is_none() {
         return Ok(());
     }
     crate::glm5next_dequant_scratch::reserve(gpu, n, k, WHAT)
@@ -198,21 +156,6 @@ fn gemm(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// 2026-10-12: Unset and `0` are off; a row count from 17 is on; 16 and below, text, and any
-    /// value while the registry is not in use are errors.
-    #[test]
-    fn the_lever_parses_strictly() {
-        assert_eq!(parse_min_rows(None, true), Ok(None));
-        assert_eq!(parse_min_rows(Some("0"), false), Ok(None));
-        assert_eq!(parse_min_rows(Some("17"), true), Ok(Some(17)));
-        assert_eq!(parse_min_rows(Some("256"), true), Ok(Some(256)));
-        for bad in ["16", "1", "x", "-3", ""] {
-            assert!(parse_min_rows(Some(bad), true).is_err(), "{bad:?}");
-        }
-        let e = parse_min_rows(Some("256"), false).unwrap_err();
-        assert!(e.contains("needs --dense-quantization"), "{e}");
-    }
 
     /// 2026-10-12: Only launches of at least the lever's rows take the path.
     #[test]

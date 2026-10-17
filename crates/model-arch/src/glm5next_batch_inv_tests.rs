@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-10-11: `METRALE_GLM_BATCH_INVARIANT`: its parse, the levers it refuses, and the all-reduce
+//! 2026-10-11: `METRALE_GLM_BATCH_INVARIANT`: the levers it refuses and the all-reduce
 //! slices.
 //!
 //! Owner: model-arch (GLM-5.3).
@@ -18,17 +18,6 @@ const OK: Levers = Levers {
     dsa_batch_qidx: false,
     kda_chunked: false,
 };
-
-/// 2026-10-11: 0/unset off, 1 on, anything else refused.
-#[test]
-fn parses_and_refuses() {
-    assert_eq!(parse(None), Ok(false));
-    assert_eq!(parse(Some("0")), Ok(false));
-    assert_eq!(parse(Some("1")), Ok(true));
-    for bad in ["", "on", "2", "true"] {
-        assert!(parse(Some(bad)).is_err(), "{bad:?}");
-    }
-}
 
 /// 2026-10-11: Off, any combination passes; on, each conflicting lever is refused by name, and
 /// a missing grouped W4A4 GEMM too.

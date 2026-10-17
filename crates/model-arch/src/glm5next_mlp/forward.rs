@@ -39,6 +39,7 @@ mod workspace;
 pub use dense::{DenseScratch, forward_dense, forward_dense_site};
 use launch::swiglu;
 pub use levers::MlpLevers;
+pub(crate) use levers::count;
 pub(crate) use pieces::check_pieces;
 pub use route::{ExpertRoute, expert_route, grouped_row_floor};
 pub use shared_fork::SHARED_FORK_MAX_ROWS;

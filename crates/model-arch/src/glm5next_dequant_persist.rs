@@ -68,29 +68,9 @@ impl Persist {
     }
 }
 
-/// 2026-10-15: `METRALE_GLM_DEQUANT_PERSIST`, read once (see the module invariants for what is
-/// refused).
-pub fn mode() -> Result<Persist> {
-    static V: OnceLock<Result<Persist, String>> = OnceLock::new();
-    V.get_or_init(|| {
-        let v = std::env::var(ENV).ok();
-        if matches!(v.as_deref(), None | Some("0")) {
-            return Ok(Persist::Off);
-        }
-        let on = |r: Result<Option<usize>>| r.map(|m| m.is_some()).map_err(|e| format!("{e:#}"));
-        parse(
-            v.as_deref(),
-            on(crate::glm5next_w4a16_wide::min_rows())?,
-            on(crate::glm5next_w4a16_tc::min_rows())?,
-            on(crate::glm5next_fp8_wide::min_rows())?,
-        )
-    })
-    .clone()
-    .map_err(anyhow::Error::msg)
-}
-
-/// 2026-10-15: [`mode`]'s parse, pure: the value and whether the W4A16 dequant GEMM, the W4A16
-/// full-M tensor-core GEMM and the FP8 dequant GEMM levers are on.
+/// 2026-10-15: The lever's parse, pure (see the module invariants for what is refused): the value
+/// and whether the W4A16 dequant GEMM, the W4A16 full-M tensor-core GEMM and the FP8 dequant GEMM
+/// levers are on. 2026-10-17: resolved once into `DenseLevers::persist`.
 pub(crate) fn parse(
     v: Option<&str>,
     w4a16_wide: bool,
@@ -220,11 +200,10 @@ pub fn kept() -> (usize, usize) {
 }
 
 /// 2026-10-15: The one-time load readback (nothing when the lever is off): the value, the
-/// copies, and the device bytes they hold.
-pub fn log_readback() -> Result<()> {
-    let m = mode()?;
+/// copies, and the device bytes they hold, under the resolved value `m`.
+pub fn log_readback(m: Persist) {
     if m == Persist::Off {
-        return Ok(());
+        return;
     }
     let (count, bytes) = kept();
     tracing::info!(
@@ -233,7 +212,6 @@ pub fn log_readback() -> Result<()> {
         m.name(),
         bytes as f64 / 1e9
     );
-    Ok(())
 }
 
 #[cfg(test)]

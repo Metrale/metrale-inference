@@ -248,7 +248,7 @@ impl Glm5NextDsaLayer {
             // the FP32-out cuBLASLt call instead.
             // 2026-10-11: Not under `METRALE_GLM_BATCH_INVARIANT` (`glm_mm` splits instead).
             let wide = n > metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M as usize
-                && !crate::glm5next_batch_inv::enabled()?
+                && !self.levers.dense.batch_invariant
                 && self.levers.cublas_wide_proj;
             self.selector_query_rows(gpu, hidden, n, wide, stream)?;
         }

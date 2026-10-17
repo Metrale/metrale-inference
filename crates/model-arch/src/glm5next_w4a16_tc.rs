@@ -16,8 +16,6 @@
 //! - Unset or `0` launches exactly what the tier launched before this lever.
 //! - A launch below `r` rows is unchanged.
 
-use std::sync::OnceLock;
-
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_model_layers::layers::ops;
@@ -27,45 +25,6 @@ use metrale_model_layers::weight_map::QuantizedWeight;
 /// the row tiles serve (the GEMM is one launch of the same bits; below 17 rows it only changes
 /// the grid).
 pub const MIN_ROWS_FLOOR: usize = 17;
-
-/// 2026-10-12: `METRALE_GLM_W4A16_TC_GEMM_MIN_ROWS`, read once: `None` when unset or `0`, else
-/// the narrowest launch that takes the GEMM. A value below [`MIN_ROWS_FLOOR`], an unparsable
-/// one, or one without `--dense-quantization w4a16` is an error.
-pub fn min_rows() -> Result<Option<usize>> {
-    static V: OnceLock<Result<Option<usize>, String>> = OnceLock::new();
-    V.get_or_init(|| {
-        parse_min_rows(
-            std::env::var("METRALE_GLM_W4A16_TC_GEMM_MIN_ROWS")
-                .ok()
-                .as_deref(),
-            crate::glm5next_w4a16_dense::enabled(),
-        )
-    })
-    .clone()
-    .map_err(anyhow::Error::msg)
-}
-
-/// 2026-10-12: [`min_rows`]'s parse, pure.
-pub(crate) fn parse_min_rows(v: Option<&str>, tier_on: bool) -> Result<Option<usize>, String> {
-    let r = match v {
-        None | Some("0") => return Ok(None),
-        Some(s) => match s.parse::<usize>() {
-            Ok(r) if r >= MIN_ROWS_FLOOR => r,
-            _ => {
-                return Err(format!(
-                    "METRALE_GLM_W4A16_TC_GEMM_MIN_ROWS={s:?}: expected 0 or a row count of at \
-                     least {MIN_ROWS_FLOOR}"
-                ));
-            }
-        },
-    };
-    if !tier_on {
-        return Err(format!(
-            "METRALE_GLM_W4A16_TC_GEMM_MIN_ROWS={r} needs --dense-quantization w4a16"
-        ));
-    }
-    Ok(Some(r))
-}
 
 /// 2026-10-12: Whether a launch of `m` rows takes the GEMM under the lever value `min`.
 pub fn takes(min: Option<usize>, m: usize) -> bool {
@@ -93,18 +52,9 @@ pub fn proj(
 mod tests {
     use super::*;
 
-    /// 2026-10-12: Unset and `0` are off; a row count from 17 is on; 16 and below, text, and any
-    /// value without the tier are errors.
+    /// 2026-10-12: Unset is off; a launch takes the GEMM from the lever value up.
     #[test]
-    fn the_lever_parses_strictly() {
-        assert_eq!(parse_min_rows(None, true), Ok(None));
-        assert_eq!(parse_min_rows(Some("0"), false), Ok(None));
-        assert_eq!(parse_min_rows(Some("17"), true), Ok(Some(17)));
-        assert_eq!(parse_min_rows(Some("1024"), true), Ok(Some(1024)));
-        for bad in ["16", "1", "x", "-3", ""] {
-            assert!(parse_min_rows(Some(bad), true).is_err(), "{bad:?}");
-        }
-        assert!(parse_min_rows(Some("256"), false).is_err());
+    fn only_launches_from_the_lever_value_take_the_gemm() {
         assert!(!takes(None, 8208));
         assert!(!takes(Some(256), 255));
         assert!(takes(Some(256), 1036));

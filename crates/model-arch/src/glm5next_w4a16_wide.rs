@@ -19,8 +19,6 @@
 //!   one `glm5next_dequant_scratch` shares with `METRALE_GLM_FP8_DEQUANT_GEMM_MIN_ROWS`.
 //! - Unset or `0` launches exactly what the tier launched before this lever.
 
-use std::sync::OnceLock;
-
 use anyhow::{Context, Result, ensure};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
@@ -37,55 +35,16 @@ const WHAT: &str = "W4A16 dequant GEMM";
 /// groups the row tiles serve bit-identically at every row count up to 16.
 pub const MIN_ROWS_FLOOR: usize = 17;
 
-/// 2026-10-10: `METRALE_GLM_W4A16_DEQUANT_GEMM_MIN_ROWS`, read once: `None` when unset or `0`,
-/// else the narrowest launch that takes the dequantize + cuBLASLt path. A value below
-/// [`MIN_ROWS_FLOOR`], an unparsable one, or one without `--dense-quantization w4a16` is an
-/// error.
-pub fn min_rows() -> Result<Option<usize>> {
-    static V: OnceLock<Result<Option<usize>, String>> = OnceLock::new();
-    V.get_or_init(|| {
-        parse_min_rows(
-            std::env::var("METRALE_GLM_W4A16_DEQUANT_GEMM_MIN_ROWS")
-                .ok()
-                .as_deref(),
-            crate::glm5next_w4a16_dense::enabled(),
-        )
-    })
-    .clone()
-    .map_err(anyhow::Error::msg)
-}
-
-/// 2026-10-10: [`min_rows`]'s parse, pure: the value and whether the tier is on.
-pub(crate) fn parse_min_rows(v: Option<&str>, tier_on: bool) -> Result<Option<usize>, String> {
-    let r = match v {
-        None | Some("0") => return Ok(None),
-        Some(s) => match s.parse::<usize>() {
-            Ok(r) if r >= MIN_ROWS_FLOOR => r,
-            _ => {
-                return Err(format!(
-                    "METRALE_GLM_W4A16_DEQUANT_GEMM_MIN_ROWS={s:?}: expected 0 or a row count \
-                     of at least {MIN_ROWS_FLOOR}"
-                ));
-            }
-        },
-    };
-    if !tier_on {
-        return Err(format!(
-            "METRALE_GLM_W4A16_DEQUANT_GEMM_MIN_ROWS={r} needs --dense-quantization w4a16"
-        ));
-    }
-    Ok(Some(r))
-}
-
 /// 2026-10-10: Whether a launch of `m` rows takes this path under the lever value `min`.
 pub fn takes(min: Option<usize>, m: usize) -> bool {
     min.is_some_and(|r| m >= r)
 }
 
 /// 2026-10-10: Reserve the shared BF16 scratch (`glm5next_dequant_scratch`) for an `[n, k]`
-/// weight when the lever is on; a no-op when it is off. Called at load, as each weight registers.
-pub fn reserve(gpu: &dyn GpuBackend, n: usize, k: usize) -> Result<()> {
-    if min_rows()?.is_none() {
+/// weight when the lever (`min_rows`, `DenseLevers::dequant_min_rows`) is on; a no-op when it is
+/// off. Called at load, as each weight registers.
+pub fn reserve(gpu: &dyn GpuBackend, min_rows: Option<usize>, n: usize, k: usize) -> Result<()> {
+    if min_rows.is_none() {
         return Ok(());
     }
     crate::glm5next_dequant_scratch::reserve(gpu, n, k, WHAT)
@@ -184,20 +143,6 @@ fn gemm(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// 2026-10-10: Unset and `0` are off; a row count from 17 is on; 16 and below, text, and any
-    /// value without the tier are errors.
-    #[test]
-    fn the_lever_parses_strictly() {
-        assert_eq!(parse_min_rows(None, true), Ok(None));
-        assert_eq!(parse_min_rows(Some("0"), false), Ok(None));
-        assert_eq!(parse_min_rows(Some("17"), true), Ok(Some(17)));
-        assert_eq!(parse_min_rows(Some("256"), true), Ok(Some(256)));
-        for bad in ["16", "1", "x", "-3"] {
-            assert!(parse_min_rows(Some(bad), true).is_err(), "{bad}");
-        }
-        assert!(parse_min_rows(Some("256"), false).is_err());
-    }
 
     /// 2026-10-10: Only launches of at least the lever's rows take the path.
     #[test]
