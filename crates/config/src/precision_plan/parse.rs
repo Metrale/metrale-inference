@@ -214,6 +214,20 @@ fn modelopt_algo(algo: &str, group: Option<u32>) -> Option<LayerPrecision> {
     })
 }
 
+/// 2026-10-17: A `quantized_layers` entry's `weight_scale_encoding`, when present, must be one
+/// the loaders decode (`metrale_core::csf_blocks::ENCODING_NAME`); any other would be read as
+/// raw scales.
+fn scale_encoding(spec: &Value) -> Result<()> {
+    match str_field(spec, "weight_scale_encoding")? {
+        None => Ok(()),
+        Some(e) if e == metrale_core::csf_blocks::ENCODING_NAME => Ok(()),
+        Some(e) => bail!(
+            "weight_scale_encoding {e:?} is not supported (only {:?})",
+            metrale_core::csf_blocks::ENCODING_NAME
+        ),
+    }
+}
+
 fn modelopt(qc: &Value) -> Result<DeclaredPrecisionPlan> {
     let mut rules = Vec::new();
     // 2026-09-28: `quantized_layers` names every layer with its algorithm and is what the
@@ -231,6 +245,7 @@ fn modelopt(qc: &Value) -> Result<DeclaredPrecisionPlan> {
                     .get("group_size")
                     .and_then(Value::as_u64)
                     .map(|g| g as u32);
+                scale_encoding(spec).with_context(|| format!("quantized_layers.{name}"))?;
                 if let Some(precision) = modelopt_algo(&algo, group) {
                     rules.push(Rule {
                         targets: vec![Target::Exact(name.clone())],

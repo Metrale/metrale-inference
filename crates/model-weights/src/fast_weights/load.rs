@@ -17,7 +17,7 @@ impl WeightLoader for FastSafetensorsLoader {
             |name: &str, dtype: crate::weights::WeightDtype| self.is_deferred(name, dtype);
 
         // Resolve shard list (sharded index, single file, or unindexed shards).
-        let (shard_files, tensor_to_shard): (Vec<PathBuf>, Option<HashMap<String, String>>) =
+        let (shard_files, tensor_to_shard): (Vec<PathBuf>, Option<HashMap<PathBuf, Vec<String>>>) =
             resolve_shards(model_dir)?;
 
         // Pre-flight OOM estimate (identical to SafetensorsLoader).
@@ -80,12 +80,9 @@ impl WeightLoader for FastSafetensorsLoader {
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or_default();
-            let tensor_filter: Option<Vec<String>> = tensor_to_shard.as_ref().map(|map| {
-                map.iter()
-                    .filter(|(_, s)| *s == shard_name)
-                    .map(|(t, _)| t.clone())
-                    .collect()
-            });
+            let tensor_filter: Option<Vec<String>> = tensor_to_shard
+                .as_ref()
+                .map(|map| map.get(shard_path).cloned().unwrap_or_default());
 
             tracing::info!(
                 "Fast-loading shard {}/{}: {}{}",

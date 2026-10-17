@@ -18,6 +18,7 @@ gpu-examples = []
 metrale-cache = { path = "../cache", default-features = false }
 metrale-comm = { path = "../comm", default-features = false }
 metrale-config = { path = "../config", default-features = false }
+metrale-core = { path = "../core", default-features = false }
 metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false }
 metrale-model-layers = { path = "../model-layers", default-features = false }
 metrale-model-weights = { path = "../model-weights", default-features = false }
@@ -34,7 +35,6 @@ memmap2 = { version = "0.9", optional = true }
 safetensors = { version = "0.8", optional = true }
 
 [dev-dependencies]
-metrale-core = { path = "../core", default-features = false }
 metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false, features = ["test-utils"] }
 metrale-kernels = { path = "../kernels", default-features = false }
 

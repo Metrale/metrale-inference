@@ -139,6 +139,8 @@ mod from_str_tests {
             ("I8", UInt8), // packed NVFP4 raw container
             ("F8_E4M3", FP8E4M3),
             ("F8_E8M0", FP8E8M0),
+            ("U16", UInt16),
+            ("U32", UInt32),
             ("I64", Int64),
         ] {
             assert_eq!(

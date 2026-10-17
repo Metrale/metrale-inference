@@ -43,10 +43,13 @@ mod act_scale;
 mod defer_hook_tests;
 mod dense_tiers;
 mod expert_quant;
+mod expert_scales;
 mod expert_slab;
 mod expert_tp;
 #[cfg(test)]
 mod export_layout_tests;
+mod fp8_head;
+mod fp8_widen;
 mod loader;
 mod mlp_precision;
 mod nvfp4_dequant;
@@ -161,7 +164,7 @@ fn upload_f32(gpu: &dyn GpuBackend, v: &[f32]) -> Result<DevicePtr> {
 /// host (routed experts by name only).
 pub(super) struct LayerSource {
     names: Vec<String>,
-    tensors: std::collections::BTreeMap<String, (WeightDtype, Vec<usize>, Vec<u8>)>,
+    tensors: fp8_widen::HostTensors,
     /// 2026-09-25: Copies, at the width the binders bind at, of the tensors
     /// stored at another width (see [`plan_dtype`]). Only
     /// [`KdaTensorSource::get`] reads them; [`Self::f32`] reads the stored bytes.
@@ -172,27 +175,40 @@ impl LayerSource {
     pub(super) fn collect(gpu: &dyn GpuBackend, store: &WeightStore, layer: usize) -> Result<Self> {
         let prefix = format!("model.language_model.layers.{layer}.");
         let mut names = Vec::new();
-        let mut tensors = std::collections::BTreeMap::new();
-        let mut plan_cast = std::collections::BTreeMap::new();
+        let mut tensors = fp8_widen::HostTensors::new();
         let rels: Vec<String> = store
             .names()
             .filter_map(|n| n.strip_prefix(&prefix).map(|r| r.to_string()))
             .collect();
         for rel in rels {
-            let rel = rel.as_str();
+            names.push(rel.clone());
             // 2026-09-25: Routed experts are listed but not copied: `bind_expert` reads
             // them from the store.
             if rel.starts_with("mlp.experts.") {
-                names.push(rel.to_string());
                 continue;
             }
-            names.push(rel.to_string());
             let t = store.get(&format!("{prefix}{rel}"))?;
-            let bytes = host_bytes(gpu, t)?;
-            if let Some(cast) = plan_dtype::cast_to_plan_dtype(rel, t.dtype, &bytes)? {
-                plan_cast.insert(rel.to_string(), cast);
+            tensors.insert(rel, (t.dtype, t.shape.clone(), host_bytes(gpu, t)?));
+        }
+        Self::from_host(names, tensors)
+    }
+
+    /// 2026-10-17: The source over one layer's listed names and host-copied tensors (`collect`
+    /// without the device reads). Block-scaled E4M3 linears are replaced by their BF16 widening
+    /// and their consumed scales leave both lists, so the binders see a 16-bit layer; then the
+    /// plan-width copies are made.
+    pub(super) fn from_host(
+        mut names: Vec<String>,
+        mut tensors: fp8_widen::HostTensors,
+    ) -> Result<Self> {
+        for scale in fp8_widen::widen_layer_fp8(&mut tensors)? {
+            names.retain(|n| *n != scale);
+        }
+        let mut plan_cast = std::collections::BTreeMap::new();
+        for (rel, (dtype, _, bytes)) in &tensors {
+            if let Some(cast) = plan_dtype::cast_to_plan_dtype(rel, *dtype, bytes)? {
+                plan_cast.insert(rel.clone(), cast);
             }
-            tensors.insert(rel.to_string(), (t.dtype, t.shape.clone(), bytes));
         }
         Ok(Self {
             names,
@@ -341,7 +357,8 @@ fn bind_mhc_site(
 ///    quantised, uploaded;
 /// 2. resident U8: bound zero-copy with its `weight_scale` and scalar
 ///    `weight_scale_2`, and its static activation scale when the checkpoint has one
-///    (2026-10-08, [`act_scale::input_scale`]);
+///    (2026-10-08, [`act_scale::input_scale`]); 2026-10-17: a csf-encoded scale plane is
+///    decoded on the host and uploaded ([`expert_scales`]);
 /// 3. resident BF16: read back and quantised; `prune_after_load` frees the
 ///    source.
 ///
@@ -362,7 +379,7 @@ pub(super) fn bind_expert(
         let w = store.get(&wname)?;
         match w.dtype {
             WeightDtype::UInt8 => {
-                let scale = store.get(&qualify(layer, &format!("{base}.weight_scale")))?;
+                let scale = expert_scales::block_scale_ptr(gpu, store, layer, &base, w)?;
                 let s2 = store.get(&qualify(layer, &format!("{base}.weight_scale_2")))?;
                 let s2 = host_f32(gpu, s2, &format!("{base}.weight_scale_2"))?;
                 let [s2] = s2[..] else {
@@ -370,7 +387,7 @@ pub(super) fn bind_expert(
                 };
                 Ok(Nvfp4Proj {
                     packed: w.ptr,
-                    scale: scale.ptr,
+                    scale,
                     scale_2: s2,
                     input_scale: input_scale(gpu, store, layer, &base)?,
                 })
