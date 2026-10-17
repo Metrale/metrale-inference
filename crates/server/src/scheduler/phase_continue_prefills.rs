@@ -54,6 +54,42 @@ pub(super) fn poll_innerq(model: &dyn Model) {
     model.poll_innerq();
 }
 
+/// 2026-10-17: How the head of `prefilling` advances this tick. Decided once, on the head, and
+/// carried to the workers by the path itself: `Chunked` (`run_standard_chunk_loop`) announces
+/// each chunk's bounds (`0xFFFFFFF0`) before running it, so a worker runs what the head chose and
+/// derives nothing. `TwoPhase` (`Model::prefill_twophase`) has no worker command, so a
+/// multi-rank model (`Model::is_ep`) never takes it: its first collective (the prefix-lookup
+/// agreement) would wait on workers still parked in their command receive.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HeadPrefillPath {
+    TwoPhase,
+    Chunked,
+}
+
+impl HeadPrefillPath {
+    /// 2026-10-17: Two-phase for a single-rank prompt longer than one chunk that has not started
+    /// chunking; it runs the whole prompt with no decode fused, so under `always_mixed` only when
+    /// no decode is active.
+    fn plan(
+        multi_rank: bool,
+        always_mixed: bool,
+        decode_active: bool,
+        chunk_offset: usize,
+        prompt_len: usize,
+        max_prefill_tokens: usize,
+    ) -> Self {
+        let whole_prompt = !multi_rank
+            && (!always_mixed || !decode_active)
+            && chunk_offset == 0
+            && prompt_len > max_prefill_tokens;
+        if whole_prompt {
+            Self::TwoPhase
+        } else {
+            Self::Chunked
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn continue_in_progress_prefills(
     model: &dyn Model,
@@ -277,14 +313,17 @@ pub(super) fn continue_in_progress_prefills(
         let idx = 0usize;
 
         // 2026-09-25: Two-phase prefill (`Model::prefill_twophase`, where the
-        // SSM recurrence sees the whole prompt in one launch) for a prompt
-        // longer than one chunk that has not started chunking. It runs the
-        // whole prompt in one call with no decode fused, so under
-        // `always_mixed` it runs only when no decode is active.
-        let use_twophase = (!always_mixed || active.is_empty())
-            && p.chunk_offset == 0
-            && p.prompt_tokens.len() > max_prefill_tokens;
-        if use_twophase {
+        // SSM recurrence sees the whole prompt in one launch); see
+        // `HeadPrefillPath::plan` for when.
+        let path = HeadPrefillPath::plan(
+            model.is_ep(),
+            always_mixed,
+            !active.is_empty(),
+            p.chunk_offset,
+            p.prompt_tokens.len(),
+            max_prefill_tokens,
+        );
+        if path == HeadPrefillPath::TwoPhase {
             tracing::info!(
                 "Two-phase prefill: {} tokens, chunk_size={}",
                 p.prompt_tokens.len(),
