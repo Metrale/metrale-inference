@@ -17,7 +17,7 @@ Generalization is the point: shared code at a shape nobody measured is not share
 optimization, and a per-model copy of a kernel is a parameterization nobody did yet.
 
 Read before starting, and apply throughout:
-- `AGENTS.md`: the core directives and the "Big Three" invariants (SSOT, PCND, SBIO), the
+- `AGENTS.md`: the core directives, the "Big Three" invariants (SSOT, PCND, SBIO) and the decoupling principles, the
   500-line cap, the local checks, and the certification rules for perf paths.
 - `CONTRIBUTING.md`: the PR loop and its gates.
 - `KERNEL-PERF.md`: the roofline floors, the GB10 peaks and how a kernel's "% of floor" is

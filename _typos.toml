@@ -160,6 +160,9 @@ byt = "byt"
 # `let pn = format!(...)`, `let (dts, shs, ..) = p.meta(&sn)?`). Not `on`/`ssh`.
 pn = "pn"
 shs = "shs"
+# 2026-10-17: `CLER` — the CLosed ERrors at crate edges decoupling principle, named in
+# AGENTS.md and docs/principles/decoupling.md beside SSOT, PCND and SBIO. Not `CLEAR`.
+CLER = "CLER"
 
 [default.extend-identifiers]
 # `PNGs` — the plural of PNG, in the vision-fixture provisioning commentary.
