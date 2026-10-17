@@ -46,7 +46,10 @@ pub(crate) struct Engine {
 
 /// 2026-09-28: Build the model `args` names. `Ok(None)` means this rank is an EP worker: it ran
 /// its command loop and has nothing to serve.
-pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
+pub(crate) fn load_engine(
+    mut args: cli::ServeArgs,
+    settings: &metrale_settings::InferenceServerSettings,
+) -> Result<Option<Engine>> {
     metrale_telemetry::progress::phase(1, "model resolve");
     let model_dir = serve_phases::resolve_model_dir(&args)?;
 
@@ -73,17 +76,17 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
     let ptx_set = model_setup::select_kernel_target(&args, &config, &model_dir)?;
     let sampling_presets = ptx_set.sampling;
     model_setup::check_kernel_target(&ptx_set, &mut config)?;
-    model_setup::publish_row_tiers(&args, &config);
+    model_setup::publish_row_tiers(&args, &config, settings);
     act_quant_support::check(&config, &args.lm_head_dtype)?;
     model_setup::publish_moe_expert_act(&config);
 
     // 2026-09-26: After this call `args.num_drafts` is `Some`, so
     // `args.resolved_num_drafts()` is valid.
     serve_phases::apply_model_default_num_drafts(&mut args, &ptx_set);
-    serve_phases::publish_mtp_max_seqs(&args, &ptx_set)?;
+    serve_phases::publish_mtp_max_seqs(&args, &ptx_set, settings)?;
     serve_phases::publish_copy_tier(&args)?;
     serve_phases::publish_draft_confidence_stop(&args)?;
-    serve_phases::publish_mtp_k_ladder(&args)?;
+    serve_phases::publish_mtp_k_ladder(settings)?;
     // 2026-09-30: One γ for the reserve, the pools and the scheduler.
     serve_phases::apply_dflash_gamma(&mut args, serve_phases::model_default_drafter(&ptx_set))?;
 

@@ -259,7 +259,7 @@ pub(crate) fn run_diff(args: CircuitDiffArgs) -> Result<()> {
     )?;
     crate::main_modules::serve_flags::publish_kernel_flags(&args.serve, &settings);
     let num_drafts = args.serve.resolved_num_drafts();
-    let Some(engine) = load_engine(args.serve)? else {
+    let Some(engine) = load_engine(args.serve, &settings)? else {
         bail!("this rank is an expert-parallel worker; run the diff on the head");
     };
     let model = engine.model.as_ref();

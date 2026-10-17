@@ -52,6 +52,9 @@ fn cli_layer(args: &cli::ServeArgs) -> Result<CliLayer> {
     if let Some(on) = watchdog.pinned() {
         pairs.push(("METRALE_CONTENT_LOOP_WATCHDOG", switch(on)));
     }
+    if let Some(ladder) = args.mtp_shape.mtp_k_ladder.as_deref() {
+        pairs.push(("METRALE_MTP_K_LADDER", ladder.to_string()));
+    }
     if let Some(n) = args.content_loop_min_repeats {
         pairs.push(("METRALE_CONTENT_LOOP_MIN_REPEATS", n.to_string()));
     }

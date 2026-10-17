@@ -65,7 +65,7 @@ pub(crate) fn load_model(
         auto_max_batch_size,
         device_budget,
         drafter_weights_sha256,
-    }) = engine::load_engine(args)?
+    }) = engine::load_engine(args, &settings)?
     else {
         // 2026-09-26: An EP worker rank ran its command loop and the head has
         // exited: nothing to serve.

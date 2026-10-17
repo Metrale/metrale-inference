@@ -323,7 +323,12 @@ pub(super) fn check_kernel_target(
 /// policy serves at declared FP8 weights (nvidia/Qwen3.6-35B-A3B-NVFP4 under `declared`) counts
 /// as FP8 here: its W8A16 projections take the tile order the FP8 MoE validated, and its NVFP4
 /// experts are row-invariant on the grouped decode either way.
-pub(super) fn publish_row_tiers(args: &cli::ServeArgs, config: &ModelConfig) {
+/// 2026-10-17: The two levers come from the resolved settings (ROTI).
+pub(super) fn publish_row_tiers(
+    args: &cli::ServeArgs,
+    config: &ModelConfig,
+    settings: &metrale_settings::InferenceServerSettings,
+) {
     use metrale_model_layers::layers::{RowTiers, publish_row_tiers, resolve_row_tiers};
     if metrale_model_layers::layers::any_fixed() {
         publish_row_tiers(RowTiers::Canonical);
@@ -349,8 +354,8 @@ pub(super) fn publish_row_tiers(args: &cli::ServeArgs, config: &ModelConfig) {
     });
     publish_row_tiers(resolve_row_tiers(
         args.no_canonical_tiers,
-        std::env::var_os("METRALE_ROW_EXACT_TIERS").is_some(),
-        std::env::var_os("METRALE_CANONICAL_TIERS").is_some(),
+        settings.kernels.row_exact_tiers,
+        settings.kernels.canonical_tiers,
         config.num_experts > 0 && (canonicalize_model_quant(config) == "fp8" || fp8_projections),
     ));
 }

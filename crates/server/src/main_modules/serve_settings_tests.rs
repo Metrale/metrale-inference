@@ -56,6 +56,13 @@ fn forwarded() -> Vec<(
             "0.5",
         ),
         (
+            "METRALE_MTP_K_LADDER",
+            &["--mtp-k-ladder", "4:2,8:1"],
+            "16:1",
+            |s| format!("{:?}", s.speculative.mtp_k_ladder),
+            "Some(\"4:2,8:1\")",
+        ),
+        (
             "METRALE_CONTENT_LOOP_WATCHDOG",
             &["--content-loop-watchdog", "off"],
             "1",
