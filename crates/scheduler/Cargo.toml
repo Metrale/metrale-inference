@@ -8,7 +8,7 @@ repository.workspace = true
 description = "Metrale Engine: the scheduler's I/O contract — step plans, effects, the device/clock/spill router traits, the effect-trace decorator and the one driver loop. No model dependency."
 
 [dependencies]
-anyhow = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
 
 [lints]
 workspace = true

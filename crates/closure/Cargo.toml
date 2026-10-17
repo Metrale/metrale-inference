@@ -11,10 +11,10 @@ description = "Content hash of a kernel target's transitive include closure."
 # can depend on.
 
 [dependencies]
-sha2 = "0.11"
+sha2 = { workspace = true, features = ["alloc", "oid"] }
 # 2026-09-26: For the three manifests `layout` reads (HARDWARE.toml,
-# MODEL.toml, KERNEL.toml). Same pin as `metrale-kernels` and `metrale-bench`.
-toml = "1.1"
+# MODEL.toml, KERNEL.toml).
+toml = { workspace = true, features = ["std", "serde", "parse", "display"] }
 
 [lints]
 workspace = true

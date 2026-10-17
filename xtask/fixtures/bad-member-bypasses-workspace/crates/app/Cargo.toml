@@ -1,0 +1,24 @@
+# 2026-10-17: Six ways past the root declaration, across every kind of table: its own version
+# without `workspace = true`, a bare version string, a `version` beside `workspace = true`, the
+# `default` feature beside `workspace = true`, a path of its own, and `default-features` beside
+# `workspace = true`. `cc` is correct.
+[package]
+name = "fixture-app"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+anyhow = { version = "1", features = ["std"] }
+serde = "1"
+
+[dev-dependencies]
+thiserror = { workspace = true, version = "2" }
+tempfile = { workspace = true, features = ["default"] }
+
+[build-dependencies]
+cc = { workspace = true }
+fixture-lib = { path = "../lib" }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true, default-features = true }

@@ -8,12 +8,12 @@ repository.workspace = true
 description = "Metrale Engine: speculative-decoding policy — MTP gate, adaptive and DFlash rungs, n-gram proposer, spec capacity and stats, scheduler snapshots."
 
 [dependencies]
-metrale-model-layers = { path = "../model-layers", default-features = false }
-anyhow = { workspace = true }
+metrale-model-layers = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
 parking_lot = { workspace = true }
-serde = { workspace = true }
-toml = "1.1"
-tracing = "0.1"
+serde = { workspace = true, features = ["std", "derive"] }
+toml = { workspace = true, features = ["std", "serde", "parse", "display"] }
+tracing = { workspace = true, features = ["std", "attributes"] }
 
 [lints]
 workspace = true

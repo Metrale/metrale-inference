@@ -1,0 +1,15 @@
+# 2026-10-17: selftest fixture for rule a. Five root entries enable features: a bare version
+# string, a table without `default-features`, `default-features = true`, a path crate without
+# it, and a `features` list beside `default-features = false`. `libc` is correct and must not be
+# named.
+[workspace]
+resolver = "2"
+members = ["crates/app", "crates/lib"]
+
+[workspace.dependencies]
+anyhow = { version = "1" }
+cc = { version = "1", default-features = false, features = ["parallel"] }
+libc = { version = "0.2", default-features = false }
+serde = "1"
+thiserror = { version = "2", default-features = true }
+fixture-lib = { path = "crates/lib", version = "0.0.0" }

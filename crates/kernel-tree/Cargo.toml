@@ -12,12 +12,12 @@ description = "The repository's kernels/ manifests and sources, embedded at buil
 # per content hash. A crate of its own, so an edit under kernels/ recompiles only this one.
 
 [dependencies]
-anyhow.workspace = true
-flate2 = "1.1"
+anyhow = { workspace = true, features = ["std"] }
+flate2 = { workspace = true, features = ["rust_backend", "runtime_detection"] }
 
 [build-dependencies]
-flate2 = "1.1"
-sha2 = "0.11"
+flate2 = { workspace = true, features = ["rust_backend", "runtime_detection"] }
+sha2 = { workspace = true, features = ["alloc", "oid"] }
 
 [lints]
 workspace = true
