@@ -14,11 +14,13 @@ struct Probe {
 }
 
 const LIB: &str = "crates/app/src/lib.rs";
+const ALIAS: &str = "crates/app/src/alias.rs";
 
 const PROBES: [Probe; 4] = [
     // 2026-10-17: Unlisted reads in every shape fail at their exact lines; comments, strings,
-    // chars and other receivers do not; a crate-root build.rs, a build_*.rs helper and the
-    // host env file pass; a src/build.rs module is not a build script and fails.
+    // chars and other receivers do not; renamed imports and gpu-sys env helpers resolve; a
+    // crate-root build.rs, a build_*.rs helper and the host env file pass; a src/build.rs
+    // module is not a build script and fails.
     Probe {
         fixture: "env-ban-unlisted",
         want: &[
@@ -27,6 +29,10 @@ const PROBES: [Probe; 4] = [
             ("unlisted", LIB, 9),
             ("unlisted", LIB, 13),
             ("unlisted", LIB, 15),
+            ("unlisted", ALIAS, 3),
+            ("unlisted", ALIAS, 4),
+            ("unlisted", ALIAS, 7),
+            ("unlisted", ALIAS, 9),
             ("unlisted", "crates/app/src/build.rs", 4),
         ],
     },
@@ -62,7 +68,7 @@ const PROBES: [Probe; 4] = [
 pub fn run(fixtures: &Path) -> Result<usize, String> {
     let mut failures: usize = 0;
     for probe in &PROBES {
-        let (_, got) = check(&fixtures.join(probe.fixture))?;
+        let (_, _, got) = check(&fixtures.join(probe.fixture))?;
         let mut have: Vec<(&str, &str, usize)> = got.iter().map(|v| v.key()).collect();
         let mut want = probe.want.to_vec();
         have.sort_unstable();

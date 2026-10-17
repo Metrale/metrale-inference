@@ -2,24 +2,30 @@
 
 //! 2026-10-17: Finds runtime environment reads in Rust source text. Comments, string literals
 //! and char literals are blanked first, so a read named in a doc comment or a message is not a
-//! read. Pure: text in, findings out.
-//!
-//! A read is a path ending `env::{var, var_os, vars, vars_os}` or `levers::{var, var_os, vars,
-//! vars_os}`, including a brace list (`use std::env::{self, var}`). `env!`/`option_env!` are
-//! compile-time and are not reads. An alias (`use std::env as e;`) is not seen; review catches
-//! it, and the allowlist names the files that still read the environment.
+//! read. The rest is split into tokens, and `resolve` decides which paths are reads. Pure: text
+//! in, findings out.
 
-/// 2026-10-17: One read: the 1-based line and the call as written, e.g. `env::var`.
+/// 2026-10-17: One read: the 1-based line and the call it resolves to, e.g. `env::var`.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Read {
     pub line: usize,
     pub call: String,
 }
 
-/// 2026-10-17: Modules whose `var*` functions read the process environment.
-const MODULES: [&str; 2] = ["env", "levers"];
-const FUNCTIONS: [&str; 4] = ["var", "var_os", "vars", "vars_os"];
+/// 2026-10-17: A token of blanked source: an identifier or keyword, a `::`, or any other
+/// character.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Tok {
+    Ident(String),
+    Sep,
+    Punct(char),
+}
 
+/// 2026-10-17: A token and the char index it starts at.
+pub struct Token {
+    pub kind: Tok,
+    pub pos: usize,
+}
 fn is_ident(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
@@ -132,94 +138,40 @@ pub fn blank(src: &str) -> Vec<char> {
     out
 }
 
-fn skip_ws(c: &[char], mut j: usize) -> usize {
-    while j < c.len() && c[j].is_whitespace() {
-        j += 1;
+/// 2026-10-17: The tokens of blanked source, whitespace dropped.
+pub fn tokens(c: &[char]) -> Vec<Token> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < c.len() {
+        let (kind, len) = match c[i] {
+            x if x.is_whitespace() => {
+                i += 1;
+                continue;
+            }
+            x if is_ident(x) => {
+                let len = c[i..].iter().take_while(|&&x| is_ident(x)).count();
+                (Tok::Ident(c[i..i + len].iter().collect()), len)
+            }
+            ':' if c.get(i + 1) == Some(&':') => (Tok::Sep, 2),
+            x => (Tok::Punct(x), 1),
+        };
+        out.push(Token { kind, pos: i });
+        i += len;
     }
-    j
-}
-
-fn ident_at(c: &[char], j: usize) -> &[char] {
-    let len = c[j..].iter().take_while(|&&x| is_ident(x)).count();
-    &c[j..j + len]
-}
-
-fn is_function(ident: &[char]) -> Option<&'static str> {
-    FUNCTIONS
-        .into_iter()
-        .find(|f| f.chars().eq(ident.iter().copied()))
+    out
 }
 
 /// 2026-10-17: Every read in `src`, in source order.
 pub fn reads(src: &str) -> Vec<Read> {
     let c = blank(src);
-    let line_of = |pos: usize| 1 + c[..pos].iter().filter(|&&x| x == '\n').count();
-    let mut found = Vec::new();
-    for i in 0..c.len() {
-        if i > 0 && is_ident(c[i - 1]) {
-            continue;
-        }
-        let ident = ident_at(&c, i);
-        let Some(module) = MODULES
-            .into_iter()
-            .find(|m| m.chars().eq(ident.iter().copied()))
-        else {
-            continue;
-        };
-        let j = skip_ws(&c, i + module.len());
-        if c.get(j) != Some(&':') || c.get(j + 1) != Some(&':') {
-            continue;
-        }
-        let j = skip_ws(&c, j + 2);
-        if c.get(j) == Some(&'{') {
-            brace_list(&c, j, module, &line_of, &mut found);
-        } else if let Some(f) = c.get(j).and_then(|_| is_function(ident_at(&c, j))) {
-            found.push(Read {
-                line: line_of(j),
-                call: format!("{module}::{f}"),
-            });
-        }
-    }
-    found
-}
-
-/// 2026-10-17: Reads named directly in a brace list opening at `open` (`env::{self, var}`); a
-/// nested path such as `env::{consts::var}` is not a direct item and is not counted.
-fn brace_list(
-    c: &[char],
-    open: usize,
-    module: &str,
-    line_of: &impl Fn(usize) -> usize,
-    found: &mut Vec<Read>,
-) {
-    let (mut j, mut depth, mut item_start) = (open + 1, 1usize, true);
-    while j < c.len() && depth > 0 {
-        match c[j] {
-            '{' => depth += 1,
-            '}' => depth -= 1,
-            ',' if depth == 1 => item_start = true,
-            x if x.is_whitespace() => {}
-            x if is_ident(x) => {
-                let ident = ident_at(c, j);
-                let after = skip_ws(c, j + ident.len());
-                let ends_item = matches!(c.get(after), Some(',' | '}'))
-                    || (after < c.len() && ident_at(c, after) == ['a', 's']);
-                if let Some(f) =
-                    is_function(ident).filter(|_| item_start && depth == 1 && ends_item)
-                {
-                    found.push(Read {
-                        line: line_of(j),
-                        call: format!("{module}::{f}"),
-                    });
-                }
-                item_start = false;
-                j += ident.len();
-                continue;
-            }
-            _ => item_start = false,
-        }
-        j += 1;
-    }
+    let newlines: Vec<usize> = (0..c.len()).filter(|&i| c[i] == '\n').collect();
+    super::resolve::reads(&tokens(&c))
+        .into_iter()
+        .map(|(pos, call)| Read {
+            line: 1 + newlines.partition_point(|&n| n < pos),
+            call,
+        })
+        .collect()
 }
 
 #[cfg(test)]

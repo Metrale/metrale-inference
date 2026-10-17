@@ -114,17 +114,23 @@ fn well_formed(entry: &str) -> bool {
             .all(|seg| !seg.is_empty() && seg != "." && seg != "..")
 }
 
+/// 2026-10-17: The entries of an allowlist: `(1-based line, trimmed entry)`, without blank
+/// lines and `#` comments.
+pub fn entries(allowlist: &str) -> impl Iterator<Item = (usize, &str)> {
+    allowlist
+        .lines()
+        .enumerate()
+        .map(|(idx, raw)| (idx + 1, raw.trim()))
+        .filter(|(_, entry)| !entry.is_empty() && !entry.starts_with('#'))
+}
+
 /// 2026-10-17: Every violation in `sources` under `allowlist`, sorted.
 pub fn judge(sources: &[Source], allowlist: &str) -> Vec<Violation> {
     let mut out = Vec::new();
     let by_path: BTreeMap<&str, &Source> = sources.iter().map(|s| (s.path.as_str(), s)).collect();
     let mut listed = BTreeSet::new();
     let mut prev: Option<&str> = None;
-    for (idx, raw) in allowlist.lines().enumerate() {
-        let (line, entry) = (idx + 1, raw.trim());
-        if entry.is_empty() || entry.starts_with('#') {
-            continue;
-        }
+    for (line, entry) in entries(allowlist) {
         let owned = entry.to_owned();
         if !well_formed(entry) {
             out.push(Violation::Malformed { line, entry: owned });

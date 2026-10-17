@@ -362,7 +362,11 @@ jobs:
   # `workspace = true` and name only their features. The selftest runs first, so a gate that
   # stopped refusing its known-bad fixtures fails here before its verdict on the tree is read.
   # `cargo xtask env-ban` (xtask/src/env_ban): only the ProcessEnv host, build scripts and the
-  # files in xtask/env-ban-allow.txt read the process environment; the list may only shrink.
+  # files in xtask/env-ban-allow.txt read the process environment. On a pull request the list
+  # may also only shrink: an entry added since the merge-base with the base branch needs an
+  # `Env-Ban-Allow: <reason>` trailer on the commit that added it (full history for the
+  # merge-base). A merge group or push may be a squash, whose message no longer carries the
+  # PR's trailers as trailers, so those events run the tree check alone; the gate says so.
   # No `if:` and no `needs:`, so the job can become a required context unchanged.
   xtask-deps:
     name: xtask deps
@@ -372,11 +376,24 @@ jobs:
           && vars.MACOS_RUNNER_LABEL || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - run: cargo xtask selftest
       - run: cargo xtask deps
-      - run: cargo xtask env-ban
+      - name: cargo xtask env-ban
+        env:
+          # Through the environment, never interpolated into the script text.
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = pull_request ]; then
+            git fetch --no-tags origin "${PR_BASE_REF}"
+            cargo xtask env-ban --base "origin/${PR_BASE_REF}"
+          else
+            cargo xtask env-ban
+          fi
 
   clippy:
     name: cargo clippy --tests

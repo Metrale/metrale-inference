@@ -2,9 +2,11 @@
 #
 # One repository-relative path per line, sorted and unique, no line numbers. This list may only
 # shrink: a file that stops reading the environment must leave it (the gate fails on a stale
-# entry), and a new entry needs CODEOWNERS review. Move a read behind the Env port or the
-# settings resolver instead of adding a file here. Exempt without an entry: the ProcessEnv host
-# (crates/io-hosts/std/src/env.rs) and build scripts (build.rs, build_*.rs beside a Cargo.toml).
+# entry), and a new entry needs an `Env-Ban-Allow: <reason>` trailer on the commit that adds it
+# (`cargo xtask env-ban --base <rev>`, run on every pull request) and CODEOWNERS review. Move a
+# read behind the Env port or the settings resolver instead of adding a file here. Exempt
+# without an entry: the ProcessEnv host (crates/io-hosts/std/src/env.rs) and build scripts
+# (build.rs, build_*.rs beside a Cargo.toml).
 crates/bench/src/artifacts/home.rs
 crates/bench/src/benchmarks/agentic/agent.rs
 crates/bench/src/benchmarks/agentic/agent_history.rs
@@ -107,6 +109,7 @@ crates/gpu-runtime/src/metal_backend/tests/real_model_gemv.rs
 crates/gpu-runtime/src/metal_backend/tests/real_model_misc.rs
 crates/gpu-runtime/src/metal_backend/tests/real_model_vision.rs
 crates/gpu-sys/src/env.rs
+crates/gpu-sys/tests/env_chains.rs
 crates/grammar/tests/qwen_toolcall_mask.rs
 crates/kernels/src/attn_splitk.rs
 crates/model-arch/src/attn_v41/decode.rs
@@ -409,6 +412,7 @@ crates/model-weights/src/kimi_k3_host/expert_backend.rs
 crates/model-weights/src/kimi_k3_host/kda.rs
 crates/model-weights/src/kimi_k3_host/mla.rs
 crates/model-weights/src/kimi_k3_host/mxfp4.rs
+crates/model-weights/src/weight_lora_rdma.rs
 crates/model-weights/src/weight_tier_rdma.rs
 crates/model-weights/src/weights/gguf.rs
 crates/model-weights/src/weights/gguf/expert_lru.rs
