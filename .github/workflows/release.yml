@@ -121,6 +121,8 @@ jobs:
   ci:
     name: ci
     uses: ./.github/workflows/ci.yml
+    secrets:
+      MACHZERO_READ_TOKEN: ${{ secrets.MACHZERO_READ_TOKEN }}
 
   # The identical matrix every PR runs.
   build:
@@ -132,6 +134,8 @@ jobs:
       ref: ${{ github.event.inputs.ref }}
       pr_mode: false
       retention_days: 90
+    secrets:
+      MACHZERO_READ_TOKEN: ${{ secrets.MACHZERO_READ_TOKEN }}
 
 
   # ---------------------------------------------------------------------

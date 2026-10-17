@@ -149,6 +149,8 @@ jobs:
       # artifact is only a handoff between two jobs in this run.
       retention_days: 7
       publishing: true
+    secrets:
+      MACHZERO_READ_TOKEN: ${{ secrets.MACHZERO_READ_TOKEN }}
 
   publish:
     name: publish b-release
@@ -307,6 +309,9 @@ jobs:
           # The whole history: the pinned commit is compared with this one.
           fetch-depth: 0
           persist-credentials: false
+      - uses: ./.github/actions/checkout-kernels
+        with:
+          token: ${{ secrets.MACHZERO_READ_TOKEN }}
 
       # recipes_lib imports yaml; ci.yml's recipes job installs it the same way.
       - run: python3 -m pip install --quiet PyYAML

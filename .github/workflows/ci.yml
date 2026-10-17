@@ -24,6 +24,10 @@ on:
   # a fmt or clippy failure costs one cheap runner instead of eight toolchain
   # installs. Defined once here; release.yml calls it rather than copying it.
   workflow_call:
+    secrets:
+      # kernels/ is a private submodule; .github/actions/checkout-kernels reads it.
+      MACHZERO_READ_TOKEN:
+        required: true
 
 # Least privilege: CI only reads the repo. Without an explicit block the
 # GITHUB_TOKEN inherits the repository default, which can be write — flagged by
@@ -377,6 +381,9 @@ jobs:
           && vars.MACOS_RUNNER_LABEL || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: ./.github/actions/checkout-kernels
+        with:
+          token: ${{ secrets.MACHZERO_READ_TOKEN }}
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
           # rustfmt as well as clippy: the formatter runs as this job's first
@@ -439,6 +446,9 @@ jobs:
           && vars.MACOS_RUNNER_LABEL || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: ./.github/actions/checkout-kernels
+        with:
+          token: ${{ secrets.MACHZERO_READ_TOKEN }}
       # The Mac pool's system python3 is not the hosted one; pin it so a check's
       # verdict does not depend on which runner picked it up.
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -530,6 +540,9 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: ./.github/actions/checkout-kernels
+        with:
+          token: ${{ secrets.MACHZERO_READ_TOKEN }}
       # The Mac pool's system python3 is not the hosted one; pin it so a check's
       # verdict does not depend on which runner picked it up.
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -627,6 +640,9 @@ jobs:
           && vars.MACOS_RUNNER_LABEL || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: ./.github/actions/checkout-kernels
+        with:
+          token: ${{ secrets.MACHZERO_READ_TOKEN }}
       - uses: crate-ci/typos@512fc24f32f44ab01972217aaaf3dc86ec234d53 # master
 
   # 2026-09-25: Comment time-to-live. Every comment must open with the date it
@@ -656,6 +672,9 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: ./.github/actions/checkout-kernels
+        with:
+          token: ${{ secrets.MACHZERO_READ_TOKEN }}
       # 2026-09-25: The reader needs tomllib (3.11+); the Mac's system python3 is older.
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
@@ -703,6 +722,9 @@ jobs:
           && vars.MACOS_RUNNER_LABEL || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: ./.github/actions/checkout-kernels
+        with:
+          token: ${{ secrets.MACHZERO_READ_TOKEN }}
       # The Mac pool's system python3 is not the hosted one; pin it so a check's
       # verdict does not depend on which runner picked it up.
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -755,6 +777,9 @@ jobs:
           # Full history: the check reads file bytes at HEAD (layout
           # resolution, lexical include walk) and needs the base to diff.
           fetch-depth: 0
+      - uses: ./.github/actions/checkout-kernels
+        with:
+          token: ${{ secrets.MACHZERO_READ_TOKEN }}
       # The Mac pool's system python3 is not the hosted one; pin it so a check's
       # verdict does not depend on which runner picked it up.
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -877,6 +902,9 @@ jobs:
           && vars.MACOS_RUNNER_LABEL || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: ./.github/actions/checkout-kernels
+        with:
+          token: ${{ secrets.MACHZERO_READ_TOKEN }}
       # The Mac pool's system python3 is not the hosted one; pin it so a check's
       # verdict does not depend on which runner picked it up.
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -992,6 +1020,9 @@ jobs:
           || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: ./.github/actions/checkout-kernels
+        with:
+          token: ${{ secrets.MACHZERO_READ_TOKEN }}
       - name: Generate no-GPU library stubs
         # libcuda / libnccl / libcublasLt / libcudart fail-fast stubs, so the
         # workspace links on a runner with no GPU. Extracted to a script so the
@@ -1029,6 +1060,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: ./.github/actions/checkout-kernels
+        with:
+          token: ${{ secrets.MACHZERO_READ_TOKEN }}
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version-file: .github/python-version
@@ -1108,6 +1142,9 @@ jobs:
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'macos-14' || vars.MACOS_RUNNER_LABEL || 'macos-14' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: ./.github/actions/checkout-kernels
+        with:
+          token: ${{ secrets.MACHZERO_READ_TOKEN }}
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       # FAIL FAST on a runner without the Metal compiler. Without this the
@@ -1268,6 +1305,9 @@ jobs:
     runs-on: [self-hosted, macOS, ARM64, metal-gpu]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: ./.github/actions/checkout-kernels
+        with:
+          token: ${{ secrets.MACHZERO_READ_TOKEN }}
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
       - name: report what this box can do
         run: |
@@ -1391,6 +1431,8 @@ jobs:
       web_only: ${{ needs.changes.outputs.web_only == 'true' }}
       stack_layer: ${{ needs.changes.outputs.is_stack_layer == 'true' }}
       builds_binaries: ${{ needs.changes.outputs.builds_binaries != 'false' }}
+    secrets:
+      MACHZERO_READ_TOKEN: ${{ secrets.MACHZERO_READ_TOKEN }}
 
   # OBSERVE-ONLY, and structurally incapable of being anything else.
   #
@@ -1431,6 +1473,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+      - uses: ./.github/actions/checkout-kernels
+        with:
+          token: ${{ secrets.MACHZERO_READ_TOKEN }}
       # This job runs TWO cargo binaries (`ledger_append`, `implied_benches`)
       # and had no cache, so both paid a cold build on every PR. metrale-bench is
       # host-only and CUDA-free, so the workflow-level METRALE_SKIP_BUILD=1 is all
@@ -2032,6 +2077,9 @@ jobs:
           # earlier sha still covers HEAD, so a shallow clone would make every
           # record look uncovered.
           fetch-depth: 0
+      - uses: ./.github/actions/checkout-kernels
+        with:
+          token: ${{ secrets.MACHZERO_READ_TOKEN }}
       - name: Fetch the queue entry's originating PR head (merge_group only)
         # Failure mode (measured on #1103, run 35250645035): under
         # `merge_group` this job's checkout above is the queue's synthetic

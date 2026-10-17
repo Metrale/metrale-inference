@@ -113,6 +113,9 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
+      - uses: ./.github/actions/checkout-kernels
+        with:
+          token: ${{ secrets.MACHZERO_READ_TOKEN }}
 
       # Same warm target/ as pr-categorize (both build only metrale-bench's
       # host-only bins), so neither job pays the other's cold build.
