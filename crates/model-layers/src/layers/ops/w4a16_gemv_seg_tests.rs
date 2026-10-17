@@ -28,7 +28,10 @@ fn host_constants_match_the_kernel() {
         "one parameter set per segment, plus the macro's definition"
     );
     for r in W4A16_GEMV_SEG_TILES {
-        assert!(CU.contains(&format!("SEG1_ENTRY({r})\n")), "tile {r}");
+        assert!(
+            CU.contains(&format!("SEG1_ENTRY_NAMED(w4a16_gemv_seg_r{r}, {r}, 1)\n")),
+            "tile {r}"
+        );
         assert_eq!(
             w4a16_gemv_seg_entry(r),
             Some(format!("w4a16_gemv_seg_r{r}")).as_deref()
@@ -37,20 +40,22 @@ fn host_constants_match_the_kernel() {
     assert_eq!(w4a16_gemv_seg_entry(3), None);
     assert!(CU.contains("sm[256u * j + 64u * (2u * (r & 1u) + h) + (r >> 1)] = A4[u];"));
     assert!(CU.contains("const unsigned int J = (K16 + 127) / 128;"));
-    assert!(CU.contains("#define SEG1_ROWS_ENTRY(M) SEG1_ENTRY_NAMED(w4a16_gemv_seg_m##M, 1, M)"));
     assert!(
         CU.contains("float* s_lut = (float*)(s_a + 256u * J * M);"),
         "the table follows the staged rows"
     );
     assert!(!CU.contains("__shared__ float"), "no static shared memory");
     for m in 2..=W4A16_GEMV_SEG_MAX_ROWS {
-        assert!(CU.contains(&format!("SEG1_ROWS_ENTRY({m})\n")), "rows {m}");
+        assert!(
+            CU.contains(&format!("SEG1_ENTRY_NAMED(w4a16_gemv_seg_m{m}, 1, {m})\n")),
+            "rows {m}"
+        );
         assert_eq!(
             W4a16GemvSegPoint::Rows(m).entry(),
             Some(format!("w4a16_gemv_seg_m{m}")).as_deref()
         );
     }
-    assert!(!CU.contains(&format!("SEG1_ROWS_ENTRY({})", W4A16_GEMV_SEG_MAX_ROWS + 1)));
+    assert!(!CU.contains(&format!("w4a16_gemv_seg_m{}", W4A16_GEMV_SEG_MAX_ROWS + 1)));
     assert!(
         CU.contains("uint4* sm = s_a + 256u * J * m;"),
         "row m staged at 256 J m"
