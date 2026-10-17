@@ -3,10 +3,10 @@
 //! 2026-10-17: `METRALE_GLM_DSA_SELECT_FUSED`: the streamed tensor-core scores
 //! (`METRALE_GLM_DSA_SCORES_PIPE`), the radix top-k and the selected-pools fold in one kernel,
 //! `dsa_select_fused_pipe` (`dsa_index_scores_pipe.cu`, `dsa_topk_stream.cuh`). Each warp keeps
-//! its row's running top `select_k` in shared memory while the row is scored, so the
-//! `[rows, pools]` scores and candidacy are neither written nor read back: at a long context
-//! those rows dominate the selection's memory traffic and, through the scratch they need, cap a
-//! pass at a few hundred rows (a grid under one wave).
+//! its row's running top `select_k` in shared memory while the row is scored (in-warp
+//! compaction, no cross-warp merge), so the `[rows, pools]` scores and candidacy are neither
+//! written nor read back: at a long context those rows dominate the selection's memory traffic
+//! and, through the scratch they need, cap a pass at a few hundred rows (a grid under one wave).
 //!
 //! Owner: model-arch (GLM-5.3 DSA).
 //! Invariants:
@@ -40,14 +40,10 @@ pub fn select_fused() -> bool {
     *F.get_or_init(|| std::env::var("METRALE_GLM_DSA_SELECT_FUSED").as_deref() == Ok("1"))
 }
 
-/// 2026-10-17: The passes the fused kernel takes: the tensor-core scores' shape (more than one
-/// query row, 32 heads of 128), pools to score, and 1 ..= [`SELECT_FUSED_MAXK`] selected.
+/// 2026-10-17: The passes the fused kernel takes: the tensor-core scores' shape
+/// ([`scores_mma_shape`]), pools to score, and 1 ..= [`SELECT_FUSED_MAXK`] selected.
 pub fn fused_shape(geom: &DsaSelectGeometry) -> bool {
-    geom.q_rows > 1
-        && geom.n_pools > 0
-        && geom.index_head_dim == SCORES_MMA_D
-        && geom.index_heads == SCORES_MMA_HEADS
-        && (1..=SELECT_FUSED_MAXK).contains(&geom.select_k)
+    scores_mma_shape(geom) && geom.n_pools > 0 && (1..=SELECT_FUSED_MAXK).contains(&geom.select_k)
 }
 
 /// 2026-10-17: Whether this pass runs fused: an exact launch the scratch takes fused

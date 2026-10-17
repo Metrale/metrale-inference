@@ -87,20 +87,22 @@ pub fn scores_mma() -> bool {
     *F.get_or_init(|| std::env::var("METRALE_GLM_DSA_SCORES_MMA").as_deref() == Ok("1"))
 }
 
+/// 2026-10-17: The pass shape the tensor-core scores are built for: more than one query row,
+/// and the kernel's head count and head dim. The one source of that shape for
+/// [`scores_mma_for`] and the fused selection (`select::fused::fused_shape`).
+pub fn scores_mma_shape(geom: &DsaSelectGeometry) -> bool {
+    geom.q_rows > 1 && geom.index_head_dim == SCORES_MMA_D && geom.index_heads == SCORES_MMA_HEADS
+}
+
 /// 2026-10-12: Whether a selection pass takes the tensor-core scores: the lever on, the kernel
-/// resolved, an exact launch of more than one query row, and the kernel's head count and dim.
+/// resolved, an exact launch, and [`scores_mma_shape`].
 pub fn scores_mma_for(
     ceiling: bool,
     geom: &DsaSelectGeometry,
     kernel: metrale_gpu_runtime::gpu::KernelHandle,
     lever: bool,
 ) -> bool {
-    lever
-        && kernel.0 != 0
-        && !ceiling
-        && geom.q_rows > 1
-        && geom.index_head_dim == SCORES_MMA_D
-        && geom.index_heads == SCORES_MMA_HEADS
+    lever && kernel.0 != 0 && !ceiling && scores_mma_shape(geom)
 }
 
 /// 2026-10-12: The widest selection `dsa_topk_pools_radix` takes (`DSA_TR_MAX`).
