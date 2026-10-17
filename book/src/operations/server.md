@@ -1,6 +1,6 @@
 # OpenAI-Compatible Server
 
-Metrale Engine serves via `metrale-server` — an OpenAI and Anthropic compatible HTTP API over axum. This chapter is the operator's reference for CLI flags, protocols supported, and the knobs that matter in production. The authoritative flag list is always `met serve --help`; the headings below match the groupings in the CLI so cross-referencing is easy.
+Metrale Engine serves via `met` — an OpenAI and Anthropic compatible HTTP API over axum. This chapter is the operator's reference for CLI flags, protocols supported, and the knobs that matter in production. The authoritative flag list is always `met serve --help`; the headings below match the groupings in the CLI so cross-referencing is easy.
 
 ## CLI structure
 

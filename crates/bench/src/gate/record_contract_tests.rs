@@ -242,7 +242,7 @@ fn a_set_control_wins_and_an_empty_one_does_not() {
 
 /// 2026-09-26: The co-dispatch defaults in `PERF_CONTROLS` are copied from
 /// `crates/server/src/scheduler/levers.rs`, because `metrale-bench` does not
-/// depend on `metrale-server`. This reads that source and fails when a
+/// depend on `met`. This reads that source and fails when a
 /// default moves there.
 #[test]
 fn perf_env_defaults_match_the_scheduler() {

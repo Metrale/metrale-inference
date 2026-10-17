@@ -37,7 +37,7 @@ export CUDA_PATH="$SCALE_HOME/targets/gfx1151" CUDA_HOME="$CUDA_PATH"
 export PATH="$SCALE_HOME/targets/gfx1151/bin:/opt/rocm/bin:$PATH"
 export LD_LIBRARY_PATH="/opt/rocm/lib:$SCALE_HOME/targets/gfx1151/lib:$LD_LIBRARY_PATH"
 export CUDARC_CUDA_VERSION=12080
-cargo build --release -p metrale-server --no-default-features --features cuda
+cargo build --release -p met --no-default-features --features cuda
 
 # Serve — one runtime shim on gfx1151 (see §4). METRALE_FORCE_GLOBAL_GDN and
 # METRALE_NO_FP8_PREDEQUANT, which §4 also describes, are read by no code in
@@ -290,7 +290,7 @@ export PATH="$SCALE_HOME/targets/gfx1151/bin:/opt/rocm/bin:$PATH"
 export LD_LIBRARY_PATH="/opt/rocm/lib:$SCALE_HOME/targets/gfx1151/lib:$LD_LIBRARY_PATH"
 export CUDARC_CUDA_VERSION=12080
 rm -rf target/release/build/metrale-kernels-*      # stale-cache guard on .cu change
-cargo build --release -p metrale-server --no-default-features --features cuda
+cargo build --release -p met --no-default-features --features cuda
 
 # Serve — gfx1151 shims (§4) + SCALE libs first so /opt/rocm can't shadow libhsa:
 export METRALE_W4A16_VARIANT=v1

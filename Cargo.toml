@@ -150,6 +150,7 @@ ureq = { version = "3", default-features = false }
 # cudarc through a `cuda` default.
 # 2026-10-17: `version` is required to publish a crate whose dependencies are path dependencies;
 # it must equal `[workspace.package] version` above.
+met = { path = "crates/server", version = "1.0.0-beta-preview", default-features = false }
 metrale-bench = { path = "crates/bench", version = "1.0.0-beta-preview", default-features = false }
 metrale-cache = { path = "crates/cache", version = "1.0.0-beta-preview", default-features = false }
 metrale-circuit = { path = "crates/circuit", version = "1.0.0-beta-preview", default-features = false }
@@ -169,7 +170,6 @@ metrale-model-layers = { path = "crates/model-layers", version = "1.0.0-beta-pre
 metrale-model-weights = { path = "crates/model-weights", version = "1.0.0-beta-preview", default-features = false }
 metrale-sampling = { path = "crates/sampling", version = "1.0.0-beta-preview", default-features = false }
 metrale-scheduler = { path = "crates/scheduler", version = "1.0.0-beta-preview", default-features = false }
-metrale-server = { path = "crates/server", version = "1.0.0-beta-preview", default-features = false }
 metrale-speculative = { path = "crates/speculative", version = "1.0.0-beta-preview", default-features = false }
 metrale-storage = { path = "crates/storage", version = "1.0.0-beta-preview", default-features = false }
 metrale-telemetry = { path = "crates/telemetry", version = "1.0.0-beta-preview", default-features = false }

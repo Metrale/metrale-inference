@@ -2,7 +2,7 @@
 
 Build with `METRALE_TARGET_HW=b200 METRALE_TARGET_MODEL=kimi-k3
 METRALE_TARGET_QUANT=mxfp4 CARGO_TARGET_DIR=target/k3-b200 cargo build
---locked --release -p metrale-server --features nccl` (one shell command).
+--locked --release -p met --features nccl` (one shell command).
 The B200 hardware declaration selects `sm_100a` and disables unsupported
 warp-level blockscaled MMA. Do not reuse B300 or DGX Spark binaries.
 

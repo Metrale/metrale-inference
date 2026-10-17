@@ -10,7 +10,7 @@
 # Usage:
 #   scripts/coverage.sh lcov.info                  # write LCOV + print the summary
 #   COVERAGE_HTML=1 scripts/coverage.sh lcov.info  # ...also target/llvm-cov/html
-#   scripts/coverage.sh lcov.info -p metrale-server  # extra args go to the run
+#   scripts/coverage.sh lcov.info -p met  # extra args go to the run
 #
 # HTML is an env var rather than a passed-through flag on purpose: cargo-llvm-cov
 # rejects `--html` alongside `--lcov` ("--html may not be used together with

@@ -57,7 +57,7 @@ smem loads (correctness-first; lose pipelining). For the NVFP4 **dense** model:
   - `output_extension()="co"`; the registry codegen (build_codegen.rs) embeds the
     `.co` objects — verify it treats them like the SCALE `.o` path.
 
-**C. Build + link:** `cargo build --release -p metrale-server --no-default-features
+**C. Build + link:** `cargo build --release -p met --no-default-features
 --features cuda` with the HIP env; link/LD against the shim `libcuda.so`
 (`-L.../hip` first) + `libamdhip64`.
 

@@ -86,7 +86,7 @@ Qwen3.5/3.6 family), the mechanical recipe is:
 
 5. **Build with the wildcard target**:
    ```
-   METRALE_TARGET_MODEL='*' cargo build --release -p metrale-server
+   METRALE_TARGET_MODEL='*' cargo build --release -p met
    ```
    The new target compiles into the binary; runtime selects it via
    `model_type` + `hidden_size` matching, with `match_names` breaking any

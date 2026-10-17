@@ -7,7 +7,7 @@
 # Usage:
 #   scripts/check.sh                       # cargo check on the workspace
 #   scripts/check.sh clippy --tests        # cargo clippy --tests
-#   scripts/check.sh clippy -p metrale-server
+#   scripts/check.sh clippy -p met
 #
 # Anything that needs to actually launch a kernel (Docker build, perf
 # tests, runtime smoke) MUST go through the real build path — the stub
@@ -36,7 +36,7 @@ CARGO="${CARGO:-cargo}"
 
 # If the first arg is a known cargo subcommand, pass through verbatim.
 # Otherwise default to `check` and forward all args (e.g. `check.sh -p
-# metrale-server` runs `cargo check -p metrale-server`).
+# met` runs `cargo check -p met`).
 case "${1:-}" in
   "")
     # 2026-10-17: `default-members` is the server alone; the no-argument run keeps

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT OR Apache-2.0
 #
-# Every Dockerfile under docker/ that compiles metrale-server must COPY the
+# Every Dockerfile under docker/ that compiles met must COPY the
 # repo-root inputs the release build reads. `metrale-bench` (a dependency of
-# metrale-server) include_str!s tests/fixtures/bench_prompt_*.txt, so an image
+# met) include_str!s tests/fixtures/bench_prompt_*.txt, so an image
 # without tests/fixtures fails at compile time with "couldn't read", after the
 # CUDA kernels have already built. No Docker daemon, no GPU: a structural check
 # over the checked-in files.
@@ -29,7 +29,7 @@ copies() {
 checked=0
 failed=0
 while IFS= read -r f; do
-  instructions "$f" | grep -qE 'cargo build .*-p metrale-server' || continue
+  instructions "$f" | grep -qE 'cargo build .*-p met( |$)' || continue
   checked=$((checked + 1))
   for want in "${REQUIRED[@]}"; do
     if ! copies "$f" "$want"; then
@@ -39,6 +39,6 @@ while IFS= read -r f; do
   done
 done < <(find "$ROOT/docker" -type f -name 'Dockerfile*' ! -name '*.dockerignore' | sort)
 
-[ "$checked" -gt 0 ] || { echo "FAIL: no Dockerfile builds metrale-server" >&2; exit 1; }
+[ "$checked" -gt 0 ] || { echo "FAIL: no Dockerfile builds met" >&2; exit 1; }
 [ "$failed" -eq 0 ] || exit 1
 echo "ok: $checked Dockerfiles copy ${REQUIRED[*]}"

@@ -46,7 +46,7 @@ hardware. CI runs all of these on a standard `ubuntu-latest` runner:
 METRALE_SKIP_BUILD=1 CUDARC_CUDA_VERSION=13000 cargo check --workspace
 METRALE_SKIP_BUILD=1 CUDARC_CUDA_VERSION=13000 cargo clippy --workspace --tests
 METRALE_SKIP_BUILD=1 CUDARC_CUDA_VERSION=13000 cargo clippy --workspace --examples --benches \
-  --features metrale-gpu-examples/gpu-examples,metrale-server/gpu-examples   # GPU microtests
+  --features metrale-gpu-examples/gpu-examples,met/gpu-examples   # GPU microtests
 METRALE_SKIP_BUILD=1 CUDARC_CUDA_VERSION=13000 cargo test --workspace
 cargo fmt --all -- --check          # formatting
 ```
@@ -71,7 +71,7 @@ hardware plus cached HuggingFace model weights:
 
 ```bash
 # Integration tests — needs GB10 + ~30 GB+ model cache.
-cargo test -p metrale-server --release -- --ignored
+cargo test -p met --release -- --ignored
 
 # End-to-end multi-model sweep (the canonical regression suite).
 # Requires Docker, NVIDIA Container Toolkit, optionally a 2-node

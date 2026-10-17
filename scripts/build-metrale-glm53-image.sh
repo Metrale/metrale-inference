@@ -22,7 +22,7 @@ NODES="${NODES:-10.10.10.1 10.10.10.2}"
 cd "$(dirname "$0")/.."
 RUSTFLAGS="-L $PWD/.ncclstub" \
 METRALE_TARGET_HW=gb10 METRALE_TARGET_MODEL=glm-5.3-flash METRALE_TARGET_QUANT=nvfp4 \
-  cargo build --release -p metrale-server
+  cargo build --release -p met
 
 for n in $NODES; do
   echo "=== $n"

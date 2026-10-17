@@ -9,7 +9,7 @@
 # Usage:
 #   scripts/dev-build.sh <model> [cargo build args...]
 #   scripts/dev-build.sh glm-5.3-flash
-#   scripts/dev-build.sh qwen3.6-27b -p metrale-server
+#   scripts/dev-build.sh qwen3.6-27b -p met
 #   METRALE_TARGET_HW=hopper scripts/dev-build.sh qwen3.6-27b
 #
 # <model> is required and has no default: it is exported as

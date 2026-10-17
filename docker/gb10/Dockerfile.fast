@@ -4,7 +4,7 @@
 # image's Ubuntu + CUDA runtime layers.
 #
 # Build (host must have `target/release/met` already built):
-#   cargo build --release -p metrale-server
+#   cargo build --release -p met
 #   cp target/release/met met-fastbin
 #   docker build -f docker/gb10/Dockerfile.fast -t metrale-gb10:fast .
 #

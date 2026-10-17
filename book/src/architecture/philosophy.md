@@ -71,14 +71,14 @@ Read the workspace `Cargo.toml` and you'll see twenty-three workspace members. G
 | *Quantization format* | `crates/model-layers/src/quant_format/` (per-format modules + runtime dispatch), `crates/core/src/numeric.rs` (host-side FP8/BF16 conversions) |
 | *Compiled kernels (one artifact per axis combination)* | `metrale-kernels` (embedded PTX modules, auto-generated from the kernel tree), `metrale-kernel-tree` (the kernel tree embedded in the binary, for code that reads it without a checkout) |
 | *Planning* | `metrale-circuit` (architecture circuits, the fuser, kernel families, plans per hardware class; see [The Circuit Compiler](./circuit-compiler.md)) |
-| *Request serving* | `metrale-server` (HTTP, tokenizer, tool parsing) |
+| *Request serving* | `met` (HTTP, tokenizer, tool parsing) |
 | *Measurement* | `metrale-bench` |
 
 Each crate has exactly one reason to change. A new GPU vendor never touches `metrale-model-layers`. A new model family never touches `metrale-gpu-runtime`. A new quantization scheme touches `metrale-model-layers`'s format modules and `metrale-kernels`, but not the layer code. This orthogonality is not a happy accident of the crate layout — it *is* the architectural consequence of the specialization thesis.
 
 ## Consequence 3: SBIO — business logic never touches I/O
 
-Business logic — the layer code in `metrale-model-layers`, the scheduler in `metrale-server` — never calls CUDA APIs, never opens a socket, never reads a file. Every such operation goes through a trait:
+Business logic — the layer code in `metrale-model-layers`, the scheduler in `met` — never calls CUDA APIs, never opens a socket, never reads a file. Every such operation goes through a trait:
 
 - GPU memory, launches, graphs → `GpuBackend`
 - Collective comms → `CommBackend`
@@ -97,7 +97,7 @@ This is what "embedded in the binary" means throughout the book. It is the concr
 
 ## Consequence 5: one binary per installation, N kernel sets
 
-You deploy one Docker image. It contains one `metrale-server` binary. It contains every `(gb10, model, quant)` PTX set embedded in that binary. At startup, the binary reads the model's `config.json`, computes the canonical `model_type`, looks up the matching `KernelTarget`, and uses that set.
+You deploy one Docker image. It contains one `met` binary. It contains every `(gb10, model, quant)` PTX set embedded in that binary. At startup, the binary reads the model's `config.json`, computes the canonical `model_type`, looks up the matching `KernelTarget`, and uses that set.
 
 The knobs that let this scale:
 

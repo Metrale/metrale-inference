@@ -33,7 +33,7 @@ fn tokenizer_json() -> Option<String> {
         .find_map(|p| std::fs::read_to_string(p).ok())
 }
 
-/// Build the ordered vocab exactly as metrale-server's
+/// Build the ordered vocab exactly as met's
 /// `extract_ordered_vocab` does (index = token id), from the raw
 /// tokenizer.json: `model.vocab` plus `added_tokens`.
 fn ordered_vocab(json: &serde_json::Value) -> Vec<String> {
@@ -62,7 +62,7 @@ fn ordered_vocab(json: &serde_json::Value) -> Vec<String> {
     ordered
 }
 
-/// Build a `TokenizerInfo` the way metrale-server's
+/// Build a `TokenizerInfo` the way met's
 /// `GrammarEngine::from_tokenizer` does: metadata auto-detection from
 /// the serialized tokenizer JSON + explicit stop ids (`<|im_end|>`).
 fn build_tokenizer_info(raw: &str) -> TokenizerInfo {

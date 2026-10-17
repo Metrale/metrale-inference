@@ -77,7 +77,7 @@ pub const REQUIRED_GATES: [&str; 17] = [
 ];
 
 /// 2026-09-26: The timeout for the endpoint's `/hardware` fetch when a gate record is
-/// written (`bench_record.rs` in `metrale-server`).
+/// written (`bench_record.rs` in `met`).
 pub const HARDWARE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// 2026-09-26: The paths a diff must touch to invalidate a gate record, before the

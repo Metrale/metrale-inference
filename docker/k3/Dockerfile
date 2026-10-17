@@ -23,7 +23,7 @@ COPY tests/fixtures/ tests/fixtures/
 # own ignore file admits these despite the repository-wide docs exclusion.
 COPY docs/k3/fixtures/ docs/k3/fixtures/
 COPY docs/k3/official-weight-classes.tsv docs/k3/official-weight-classes.tsv
-RUN cargo build --locked --release -p metrale-server --bin met \
+RUN cargo build --locked --release -p met --bin met \
       --no-default-features --features cuda,nccl
 RUN mkdir -p /build/receipt && rustc --version > /build/receipt/rustc.txt && \
     nvcc --version > /build/receipt/nvcc.txt && \

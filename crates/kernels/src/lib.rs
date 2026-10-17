@@ -180,7 +180,7 @@ pub struct ModelBehavior {
     pub thinking_in_tools: bool,
     /// 2026-09-25: Thinking budget (tokens) for a thinking-on request that
     /// names none, and the anchor E of the `reasoning_effort` ladder
-    /// (`effort_budget` in metrale-server's `api/chat/thinking.rs`).
+    /// (`effort_budget` in met's `api/chat/thinking.rs`).
     /// `--max-thinking-budget` outranks it. Default
     /// [`DEFAULT_MAX_THINKING_BUDGET`].
     pub max_thinking_budget: u32,

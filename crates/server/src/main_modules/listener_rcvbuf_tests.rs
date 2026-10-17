@@ -151,7 +151,7 @@ async fn slowest_post_ms(listener: tokio::net::TcpListener) -> f64 {
 /// `tcp_rmem` default is below the kernel's, which a CI runner is not, and it
 /// refuses to run anywhere else rather than pass without testing anything. Run
 /// it on such a host with
-/// `cargo test -p metrale-server listener_rcvbuf -- --ignored`.
+/// `cargo test -p met listener_rcvbuf -- --ignored`.
 #[cfg(target_os = "linux")]
 #[ignore = "needs net.ipv4.tcp_rmem default < 131072 on the host; see the doc comment"]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

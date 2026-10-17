@@ -19,7 +19,7 @@
 //! - `METRALE_GLM_SERVE_LOG` (concurrent test only): the DFlash serve's log file, read for its
 //!   `DFLASH BATCHED verify: n=` lines (logged at info level).
 //!
-//!   cargo test -p metrale-server --release --test glm_dflash_window -- --ignored --nocapture
+//!   cargo test -p met --release --test glm_dflash_window -- --ignored --nocapture
 
 use std::collections::BTreeMap;
 
