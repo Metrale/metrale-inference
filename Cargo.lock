@@ -577,13 +577,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cudarc"
-version = "0.19.2"
-dependencies = [
- "libloading",
-]
-
-[[package]]
 name = "daachorse"
 version = "3.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1636,10 +1629,17 @@ name = "metrale-core"
 version = "1.0.0-beta-preview"
 dependencies = [
  "anyhow",
- "cudarc",
+ "metrale-cudarc",
  "serde",
  "serde_json",
  "thiserror",
+]
+
+[[package]]
+name = "metrale-cudarc"
+version = "0.19.2"
+dependencies = [
+ "libloading",
 ]
 
 [[package]]
@@ -1676,13 +1676,13 @@ name = "metrale-gpu-runtime"
 version = "1.0.0-beta-preview"
 dependencies = [
  "anyhow",
- "cudarc",
  "dispatch2",
  "half",
  "libc",
  "memmap2",
  "metrale-config",
  "metrale-core",
+ "metrale-cudarc",
  "metrale-kernel-tree",
  "metrale-kernels",
  "metrale-telemetry",

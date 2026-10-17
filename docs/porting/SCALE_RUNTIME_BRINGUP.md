@@ -26,7 +26,7 @@ On native Ubuntu (the WSL `/dev/kfd` blocker is gone), `metrale-server`
    registry for it. `TargetPtxSet.modules` is `&[u8]`; the runtime
    detects PTX-vs-ELF per blob.
 4. **cudarc tolerant loader** — vendored cudarc 0.19.2
-   (`vendor/cudarc`, `[patch.crates-io]`). cudarc eagerly resolves the
+   (`vendor/cudarc`, published as `metrale-cudarc`). cudarc eagerly resolves the
    whole CUDA driver API and hard-panics on the first missing symbol;
    SCALE implements a subset. All 483 `.expect("Expected symbol…")`
    now fall back to a panic-stub — symbols Metrale Engine never calls are fine;
