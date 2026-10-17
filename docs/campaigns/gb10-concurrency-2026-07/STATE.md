@@ -1527,7 +1527,7 @@ is not (it is inherent). Separate the two before costing any "too many launches"
 
 ## 2026-07-28 — lm_head 716: THE TILE GEMM IS EXONERATED. The fault is in the WIRING.
 
-A standalone repro (`crates/model-arch/examples/w4a16_lmhead_716_repro.rs`) reproduces the serve's
+A standalone repro (`crates/gpu-examples/examples/w4a16_lmhead_716_repro.rs`) reproduces the serve's
 decode step exactly — created (non-NULL) streams, the SSM `gemm_t`/`_k64` sequence, `lm_head` gemm
 alternating `_t`/`_t_k64`, cross-stream `argmax_bf16_batch` (mirroring `meta.rs:298`, which launches
 on `default_stream()`), 4*M-byte D2H per step, M cycling the 2/4/8/12/16 ladder, a concurrent

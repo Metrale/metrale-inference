@@ -1594,6 +1594,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "metrale-gpu-examples"
+version = "1.0.0-beta-preview"
+dependencies = [
+ "anyhow",
+ "half",
+ "memmap2",
+ "metrale-cache",
+ "metrale-comm",
+ "metrale-config",
+ "metrale-gpu-runtime",
+ "metrale-kernels",
+ "metrale-model-arch",
+ "metrale-model-layers",
+ "safetensors",
+ "serde_json",
+ "tokenizers",
+]
+
+[[package]]
 name = "metrale-gpu-runtime"
 version = "1.0.0-beta-preview"
 dependencies = [
@@ -1667,7 +1686,6 @@ version = "1.0.0-beta-preview"
 dependencies = [
  "anyhow",
  "half",
- "memmap2",
  "metrale-cache",
  "metrale-comm",
  "metrale-config",
@@ -1679,10 +1697,8 @@ dependencies = [
  "metrale-storage",
  "metrale-telemetry",
  "parking_lot",
- "safetensors",
  "serde",
  "serde_json",
- "tokenizers",
  "tracing",
 ]
 

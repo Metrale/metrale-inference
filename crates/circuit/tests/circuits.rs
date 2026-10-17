@@ -339,11 +339,11 @@ fn the_kv_write_runs_before_attention_reads_it() {
 
 #[test]
 fn every_bit_identical_rule_names_a_registered_microtest() {
-    let manifest: toml::Table =
-        toml::from_str(&common::read("crates/model-arch/Cargo.toml")).expect("model-arch manifest");
+    let manifest: toml::Table = toml::from_str(&common::read("crates/gpu-examples/Cargo.toml"))
+        .expect("gpu-examples manifest");
     let examples: BTreeSet<String> = manifest["example"]
         .as_array()
-        .expect("[[example]] entries")
+        .expect("example entries")
         .iter()
         .filter_map(|e| e.get("name").and_then(|n| n.as_str()).map(str::to_string))
         .collect();
@@ -353,7 +353,7 @@ fn every_bit_identical_rule_names_a_registered_microtest() {
         let Numerics::BitIdentical { microtest } = &r.numerics else {
             continue;
         };
-        let path = common::root().join(format!("crates/model-arch/examples/{microtest}.rs"));
+        let path = common::root().join(format!("crates/gpu-examples/examples/{microtest}.rs"));
         assert!(
             path.is_file(),
             "rule `{}`: {} does not exist",
@@ -362,7 +362,7 @@ fn every_bit_identical_rule_names_a_registered_microtest() {
         );
         assert!(
             examples.contains(microtest),
-            "rule `{}`: example `{microtest}` is not registered in crates/model-arch/Cargo.toml",
+            "rule `{}`: example `{microtest}` is not registered in crates/gpu-examples/Cargo.toml",
             r.id
         );
         named += 1;

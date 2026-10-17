@@ -315,4 +315,4 @@ first comparison on a harness unit error (`take(full, rows, per)` re-applies
 are nsys, not the microtest — a better measurement of speed (the live engine at
 the real T) and no measurement at all of numerics, which live only in that
 example. The unit error is fixed and pinned by a host test at the microtest's
-own geometry (`crates/model-arch/examples/common/gdn_remnants.rs`).
+own geometry (`crates/gpu-examples/examples/common/gdn_remnants.rs`).

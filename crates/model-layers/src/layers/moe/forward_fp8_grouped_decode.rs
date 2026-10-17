@@ -12,7 +12,7 @@
 //! (`mtp_head/forward_batch_ffn.rs`).
 //!
 //! Given the same routing, the output equals a per-row loop of `forward`'s FP8
-//! kernels bit for bit; `model-arch/examples/fp8_moe_grouped_decode_microtest.rs`
+//! kernels bit for bit; `gpu-examples/examples/fp8_moe_grouped_decode_microtest.rs`
 //! checks this for M = 2, 3, 4, 8, 16 and 32 with the routing fed to both.
 //! The routing here is the batched gate GEMM and `moe_topk_*_batched`, which
 //! may choose differently from the per-token GEMV and top-k on a near-tie.

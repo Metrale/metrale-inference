@@ -20,6 +20,7 @@ members = [
     "crates/model-weights",
     "crates/model-layers",
     "crates/model-arch",
+    "crates/gpu-examples",
     "crates/model-engine",
     "crates/speculative",
     "crates/bench",

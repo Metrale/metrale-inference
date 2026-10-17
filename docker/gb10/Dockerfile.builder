@@ -12,7 +12,7 @@
 #   1. As a BUILD SANDBOX (mount the repo, run any cargo cmd — all env preset):
 #        docker build -f docker/gb10/Dockerfile.builder --target builder -t metrale-gb10:build .
 #        docker run --rm --gpus all -v "$PWD":/build -w /build metrale-gb10:build \
-#          cargo build --release -p metrale-model-arch --example fp8gemm_microtest \
+#          cargo build --release -p metrale-gpu-examples --example fp8gemm_microtest \
 #            --no-default-features --features "cuda gpu-examples"
 #   2. As a full SERVE image (compiles metrale-server):
 #        docker build -f docker/gb10/Dockerfile.builder -t metrale-gb10:cuda13.2-fp4 .

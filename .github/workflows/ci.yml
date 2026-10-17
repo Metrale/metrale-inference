@@ -419,10 +419,13 @@ jobs:
       # CUDARC_CUDA_VERSION, and `gpu-examples` only unlocks the targets. An example whose
       # required features are not enabled here (the Metal ones) is skipped by cargo; the macOS
       # jobs build those.
+      # 2026-10-17: The GPU microtests moved from metrale-model-arch to the non-default
+      # metrale-gpu-examples package; `--workspace` still reaches it, and its `gpu-examples`
+      # feature is the one named below.
       - name: cargo clippy --examples --benches (GPU microtests included)
         run: >-
           cargo clippy --workspace --examples --benches
-          --features metrale-model-arch/gpu-examples,metrale-server/gpu-examples
+          --features metrale-gpu-examples/gpu-examples,metrale-server/gpu-examples
           ${{ runner.os == 'macOS' && '--target x86_64-unknown-linux-gnu' || '' }}
       # 2026-09-26: The Metal build compiles metrale-storage without its `cuda`
       # feature. Checking that combination here, on Linux, catches a module
