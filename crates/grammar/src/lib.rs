@@ -8,7 +8,7 @@
 // `api` module exposes the exact public surface the vendored
 // `xgrammar-rs` crate provided, so this crate is a drop-in replacement.
 // The algorithmic core lives in the modules below; `api` is the
-// vendored-signature façade Metrale Engine's `metrale-server` links against.
+// vendored-signature façade Metrale Engine's `met` links against.
 
 // Index-based loops and same-named submodules (`fsm::fsm`,
 // `compiler::compiler`) are kept where they mirror the C++ source's

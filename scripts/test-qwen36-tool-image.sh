@@ -134,7 +134,7 @@ Build it from the feat/canonical-chat-ir branch first. Metrale Engine links NCCL
 linker needs a dir containing libnccl.so on LIBRARY_PATH (NCCL_DIR below is only
 the RUNTIME path):
     LIBRARY_PATH=\$NCCL_DIR METRALE_TARGET_MODEL=qwen3.6-35b-a3b \\
-        cargo build --release -p metrale-server
+        cargo build --release -p met
 (then re-run, or set MET_BIN=/path/to/met)"
 
   if [[ -n "${NCCL_DIR}" ]]; then

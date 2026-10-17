@@ -14,7 +14,7 @@
 #        docker run --rm --gpus all -v "$PWD":/build -w /build metrale-gb10:build \
 #          cargo build --release -p metrale-gpu-examples --example fp8gemm_microtest \
 #            --no-default-features --features "cuda gpu-examples"
-#   2. As a full SERVE image (compiles metrale-server):
+#   2. As a full SERVE image (compiles met):
 #        docker build -f docker/gb10/Dockerfile.builder -t metrale-gb10:cuda13.2-fp4 .
 #
 # Pinned versions (override with --build-arg):
@@ -57,7 +57,7 @@ ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/compat:${LD_LIBRARY_PATH}
 
 WORKDIR /build
 
-# ── Optional: compile a release metrale-server (skip when used as a build sandbox) ─
+# ── Optional: compile a release met (skip when used as a build sandbox) ─
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates/ crates/
 COPY vendor/ vendor/
@@ -76,7 +76,7 @@ ENV METRALE_CUTLASS_NVFP4_GEMM=1
 # CUDARC_CUDA_VERSION=13000: the vendored cudarc 0.19.2 tops out at 13.1 in its
 # nvcc-version table, so `nvcc --version` (13.2) panics without the pin. Same
 # value every CI workflow pins.
-RUN CUDARC_CUDA_VERSION=13000 cargo build --release -p metrale-server
+RUN CUDARC_CUDA_VERSION=13000 cargo build --release -p met
 
 # ── Runtime stage: serve image on CUDA 13.2 ──────────────────────────────────
 FROM nvidia/cuda:${CUDA_VER}-runtime-ubuntu24.04

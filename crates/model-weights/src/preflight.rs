@@ -26,7 +26,7 @@ mod deepseek_v4;
 
 /// Run all model-agnostic + model-type-specific pre-flight checks.
 ///
-/// Called by `metrale-server/src/main.rs` immediately after the
+/// Called by `crates/server/src/main.rs` immediately after the
 /// `WeightStore` is populated and before `metrale_comm::NcclBackend::new`
 /// runs, so a bad checkpoint aborts rank 0 before rank 1 even connects.
 ///

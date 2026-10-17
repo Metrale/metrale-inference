@@ -7,7 +7,7 @@ A 5-minute tour of the crate graph, the build pipeline, and the request lifecycl
 Metrale Engine is a single Cargo workspace with 23 crates (the root `Cargo.toml` `members` list):
 
 ```
-   HTTP / scheduling / CLI     metrale-server  (the `met` binary)
+   HTTP / scheduling / CLI     met  (the `met` binary)
                                metrale-scheduler (the scheduler's I/O contract)
                                metrale-bench     (benchmark suite + certification gate)
                                      │
@@ -61,7 +61,7 @@ Skip mode (`METRALE_SKIP_BUILD=1`) emits a stub registry. CI uses it for GPU-fre
 - `metrale-model-layers` — the `TransformerLayer` trait (`src/layer/`) and the generic layers (`src/layers/`: `qwen3_attention/`, `qwen3_ssm/`, `moe/`, `dense_ffn*`, `vision_encoder/`, MTP heads, `ops/` kernel launches), LoRA, the weight map and quant-format dispatch.
 - `metrale-model-weights` — the weight store, the `O_DIRECT` fast loader, the RDMA weight/LoRA tiers and the pre-construction checkpoint preflight.
 
-### `metrale-server`
+### `met`
 - `main_modules/serve.rs` — the `met serve` boot sequence (phases under `serve_load/` and `serve_phases/`), the router (`serve_router.rs`) and model hot-swap.
 - `scheduler/` — the scheduler loop (`scheduler/mod.rs::run`) and its per-step phases (prefill, decode, verify, MTP/n-gram/DFlash drafting, sampling, emission, lifecycle, rollback).
 - `api/` — OpenAI-compatible handlers (chat completions, responses, completions, conversations, LoRA control, tokenize).
@@ -87,7 +87,7 @@ Skip mode (`METRALE_SKIP_BUILD=1`) emits a stub registry. CI uses it for GPU-fre
 
 ```
 $ METRALE_TARGET_HW=gb10 METRALE_TARGET_MODEL=qwen3.6-35b-a3b METRALE_TARGET_QUANT=nvfp4 \
-    cargo build --release -p metrale-server
+    cargo build --release -p met
 ```
 
 1. Cargo runs `crates/kernels/build.rs`.

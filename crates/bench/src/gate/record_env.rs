@@ -17,7 +17,7 @@ use super::record::GateRecord;
 ///
 /// - The two co-dispatch timing controls carry the defaults the scheduler
 ///   passes to `num` in `SchedLevers::from_env`. They are copied because
-///   `metrale-bench` does not depend on `metrale-server`;
+///   `metrale-bench` does not depend on `met`;
 ///   `perf_env_defaults_match_the_scheduler` reads the scheduler's source.
 /// - `METRALE_NO_W4A16_TC`, `METRALE_NO_MTP_TC` and
 ///   `METRALE_NO_BORROW_STREAK_LIMIT` are presence kill switches: any

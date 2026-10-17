@@ -9,7 +9,7 @@ commands, and the invariants that matter.
 Metrale Engine is an MIT OR Apache-2.0 inference stack targeting NVIDIA GB10 / DGX Spark. The
 moving parts:
 
-- **`crates/server/`** (`metrale-server`, the `met` binary) — OpenAI- and
+- **`crates/server/`** (package `met`, the `met` binary) — OpenAI- and
   Anthropic-compatible HTTP server, request scheduling, tool-call parsing,
   streaming, TUI, CLI.
 - **`crates/model-engine/`** — the `Model` trait, the transformer model and
@@ -172,7 +172,7 @@ target. Runtime selects the correct target from the model's
 - One logical change per commit. Don't bundle an unrelated cleanup with a
   bug fix.
 - Message format: `<area>: <imperative summary>` — e.g.
-  `metrale-server: preserve template-forced thinking through EP=2`.
+  `server: preserve template-forced thinking through EP=2`.
 - If the change affects runtime behaviour, rebuild the Docker image from
   scratch and run the relevant slice of the validation suite
   (`tests/single_gpu_suite.py` for most cases) before opening the PR.

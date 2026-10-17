@@ -14,7 +14,7 @@ use super::streaming_frag::{args_from_outputs, collect_fragments, write_and_bash
 // `METRALE_BUFFER_TOOL_ARGS`, which `StreamingToolDetector::new_with_tools`
 // reads, and parallel tests that build detectors expect it unset. Run it
 // alone:
-//   cargo test -p metrale-server --bin met -- --ignored --test-threads=1 \
+//   cargo test -p met --bin met -- --ignored --test-threads=1 \
 //       tool_parser::tests::streaming_frag_env::kill_switch
 #[test]
 #[ignore = "mutates process-global METRALE_BUFFER_TOOL_ARGS; run serially with --ignored --test-threads=1"]

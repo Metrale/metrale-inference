@@ -13,7 +13,7 @@ Four kinds of I/O happen at runtime. Each goes through a dedicated trait:
 | GPU memory, kernel launch, streams, events, graphs | `GpuBackend` | `metrale-gpu-runtime` | `MetraleCudaBackend` (via `cudarc`) | `MockGpuBackend` — records launches, does not execute |
 | Collective comms (all-reduce, broadcast, send/recv) | `CommBackend` | `metrale-comm` | `NcclBackend` | `SingleGpuBackend` — every op is a no-op |
 | Weight-blob loading | `WeightStore` (implicit — wraps safetensors) | `metrale-model-weights::weights` | `fast_weights` (`O_DIRECT` + pipelined) or mmap fallback | `WeightStore` directly against an in-memory map |
-| HTTP | `axum::Router` handlers | `metrale-server` | `axum::serve(...)` over TCP | `axum::Router::into_make_service()` tested via `tower::ServiceExt::oneshot` |
+| HTTP | `axum::Router` handlers | `met` | `axum::serve(...)` over TCP | `axum::Router::into_make_service()` tested via `tower::ServiceExt::oneshot` |
 
 Everything above these traits — the scheduler, the engine, the layer assembly, the sampler, the tokenizer, the tool parser, the rate limiter — is pure Rust. It contains no `cudaXxx`, no socket call, no file-open, no `mpi_*`.
 
@@ -117,13 +117,13 @@ The only test category that *requires* CUDA is the ones marked `#[ignore]` in th
 - **No `cfg(test)` swaps.** The same code path runs in production and in tests — test doubles are first-class `impl`s, not conditional-compilation ghosts.
 - **No `Result<T, Cuda*>` leaking upward.** Every GpuBackend method returns `anyhow::Result<T>`. Callers can't depend on which driver error surfaced.
 
-SBIO is a discipline, not a mechanism. But because the trait surface is small, the discipline is easy to enforce in review: if you see `cudaXxx` or `socket` or `fs::open` inside `metrale-model-layers` or `metrale-server`, that is a bug.
+SBIO is a discipline, not a mechanism. But because the trait surface is small, the discipline is easy to enforce in review: if you see `cudaXxx` or `socket` or `fs::open` inside `metrale-model-layers` or `met`, that is a bug.
 
 ## When you're adding code
 
 The rule is: **I/O goes through a trait; business logic goes nowhere near a syscall.** Three concrete checks when you're about to merge:
 
-1. The file you edited — does it import `cudarc`, `nccl_sys`, `std::net`, or `std::fs`? If it's inside `metrale-model-layers`, `metrale-server`'s non-handler code, or any `metrale-*` primitive crate, the answer should be *no*. Route through the matching trait.
+1. The file you edited — does it import `cudarc`, `nccl_sys`, `std::net`, or `std::fs`? If it's inside `metrale-model-layers`, `met`'s non-handler code, or any `metrale-*` primitive crate, the answer should be *no*. Route through the matching trait.
 2. Is the function unit-tested *without* `#[ignore]`? If yes, it's on the SBIO side of the line. If no, either move it over or explain in the PR why not.
 3. If you're adding a new trait method, ask: is there a no-op mock impl that makes sense? If not, the method is probably the wrong shape.
 

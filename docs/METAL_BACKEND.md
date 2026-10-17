@@ -10,10 +10,10 @@ Metrale Engine can build and run on Apple Silicon (M1/M2/M3/M4) under the
 
 ```sh
 # Default (Linux/CUDA): unchanged.
-cargo build -p metrale-server --bin met
+cargo build -p met --bin met
 
 # Apple Silicon: opt out of cuda, opt into metal.
-cargo build -p metrale-server --bin met --features metal --no-default-features
+cargo build -p met --bin met --features metal --no-default-features
 
 # Sanity check — the binary should link no libcuda / libnccl.
 otool -L target/debug/met | grep -i cuda    # → no output
@@ -161,7 +161,7 @@ The tests skip gracefully if the model isn't at
 `.github/workflows/ci.yml::test-macos-metal` runs on `macos-14`
 on every PR:
 
-1. `cargo check -p metrale-server --features metal --no-default-features`.
+1. `cargo check -p met --features metal --no-default-features`.
 2. `cargo test -p metrale-gpu-runtime --features metal metal_backend`
    (every default-passing parity test).
 3. `otool -L target/debug/met` must list **no** `libcuda` or

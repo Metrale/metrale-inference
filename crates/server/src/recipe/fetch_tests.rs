@@ -179,7 +179,7 @@ fn the_cache_is_written_atomically() {
 
 /// 2026-09-26: A live fetch from the recipe repository, `#[ignore]` because it needs
 /// the network. Run it by hand after changing the fetch:
-/// `cargo test -p metrale-server --bins live_fetch -- --ignored --nocapture`
+/// `cargo test -p met --bins live_fetch -- --ignored --nocapture`
 #[test]
 #[ignore = "needs the network"]
 fn live_fetch_against_github() {

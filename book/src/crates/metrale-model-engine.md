@@ -82,7 +82,7 @@ During model construction, rank 0 broadcasts the environment-read scalars that s
 
 ## What's explicitly not here
 
-- **No HTTP.** That's `metrale-server`.
+- **No HTTP.** That's `met`.
 - **No GPU ops.** Every GPU touch is via `metrale-gpu-runtime::GpuBackend`.
 - **No collective ops.** Every multi-GPU touch is via `metrale-comm::CommBackend`.
 

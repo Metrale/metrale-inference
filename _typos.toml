@@ -108,7 +108,7 @@ parame = "parame"
 paramet = "paramet"
 para = "para"
 param = "param"
-# `ratatui` — the Rust TUI crate (`ratatui = "0.29"` in metrale-server), named in
+# `ratatui` — the Rust TUI crate (`ratatui = "0.29"` in met), named in
 # the campaign notes as "the ratatui TUI". Not a typo of "ratatouille".
 ratatui = "ratatui"
 # `oints` — the tail of "endpoints", left dangling by a real degeneration and

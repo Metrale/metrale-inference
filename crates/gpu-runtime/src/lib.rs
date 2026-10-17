@@ -52,7 +52,7 @@ pub mod timing;
 /// The SSM tail snapshot is placed here: in-pass by `prepare_midchunk_capture`
 /// (metrale-model-engine), or, with `ssm_tail_ckpt_enabled` on and
 /// `ssm_tail_midchunk_enabled` off, by ending a prefill chunk here
-/// (`run_standard` and `run_batched_mixed` in metrale-server).
+/// (`run_standard` and `run_batched_mixed` in met).
 pub fn ssm_tail_boundary(total_tokens: usize, block_size: usize) -> Option<usize> {
     if block_size == 0 || total_tokens <= block_size {
         return None;

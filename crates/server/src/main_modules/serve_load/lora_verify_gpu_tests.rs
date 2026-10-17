@@ -15,7 +15,7 @@
 //! with `METRALE_DEBUG_NO_GRAPH=1` (eager: it writes the steps' logits), then graphed (it requires
 //! every step equal to eager's). Until 2026-10-03 the graphed run failed: the slot-keyed graphs
 //! replayed the LoRA route they were captured with for the next sequence on the slot.
-//! `cargo test --release -p metrale-server --bin met lora_verify_gpu -- --ignored --nocapture`, on
+//! `cargo test --release -p met --bin met lora_verify_gpu -- --ignored --nocapture`, on
 //! a GPU box with `unsloth/Qwen3.8-27B-NVFP4` cached.
 //!
 //! Owner: server (LoRA).

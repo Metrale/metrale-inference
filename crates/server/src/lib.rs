@@ -9,9 +9,9 @@
 #![allow(clippy::doc_lazy_continuation)]
 #![allow(clippy::doc_overindented_list_items)]
 
-//! 2026-09-26: Library target of metrale-server: the modules that the
+//! 2026-09-26: Library target of met: the modules that the
 //! integration tests, the `k3_tokenizer_check` example and
-//! `cargo test -p metrale-server --lib` use without building the `met` binary.
+//! `cargo test -p met --lib` use without building the `met` binary.
 //!
 //! Owner: server.
 //! Invariants: every module declared here is also declared in `main.rs`.

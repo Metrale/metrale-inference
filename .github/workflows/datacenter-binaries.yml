@@ -41,7 +41,7 @@ on:
         type: string
         default: "*"
   # Filtered, unlike kernel-compile.yml, precisely BECAUSE this is advisory:
-  # a full release link of metrale-server is far more expensive than that job's
+  # a full release link of met is far more expensive than that job's
   # `cargo build -p metrale-kernels`, and nothing outside these trees can change
   # what the datacentre binary contains.
   pull_request:
@@ -224,7 +224,7 @@ jobs:
           # objects are optional, and the CUTLASS NVFP4 wrappers are gated on
           # SM120/SM121 support so they compile to nothing for sm_90a and
           # sm_100a alike. Same choice as docker/{hopper,b200}/Dockerfile.
-          cargo build --release -p metrale-server --bin met \
+          cargo build --release -p met --bin met \
             --no-default-features --features cuda,nccl
 
       - name: Confirm real PTX went into the binary

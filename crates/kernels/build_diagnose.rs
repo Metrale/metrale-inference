@@ -91,7 +91,7 @@ fn examples(kernels_root: &Path) -> String {
                 .into_iter()
                 .next()
                 .unwrap_or_else(|| "<quant>".to_string());
-            format!("   METRALE_TARGET_HW={hw} METRALE_TARGET_MODEL={model} METRALE_TARGET_QUANT={quant} cargo build --release -p metrale-server")
+            format!("   METRALE_TARGET_HW={hw} METRALE_TARGET_MODEL={model} METRALE_TARGET_QUANT={quant} cargo build --release -p met")
         })
         .collect();
     if lines.is_empty() {

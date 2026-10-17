@@ -26,7 +26,7 @@
 //! # One resolution, one log line
 //!
 //! [`resolved`] is the process-wide resolution. The dispatch sites read it,
-//! and `metrale-server` logs it once as [`summary_line`], which tags values
+//! and `met` logs it once as [`summary_line`], which tags values
 //! that came from the environment with ` (env)`. `ModelLevers` resolves
 //! `decode_split_silu` itself, from [`declared`] through the same
 //! [`resolve_toggle`].

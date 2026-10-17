@@ -5,7 +5,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Metrale Engine: plugin + benchmark abstraction and registry driven by the metrale-server TUI"
+description = "Metrale Engine: plugin + benchmark abstraction and registry driven by the met TUI"
 
 # 2026-09-26: No GPU, model or server dependency: this crate drives a served
 # endpoint over HTTP and runs provisioned artifacts as child processes, and it
