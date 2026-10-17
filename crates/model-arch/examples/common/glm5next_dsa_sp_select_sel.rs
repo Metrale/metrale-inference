@@ -5,7 +5,8 @@
 //! 1% of the query rows masked, so the fold has entries to drop.
 //!
 //! 1. Bytes: per chunk, the unsplit token rows; the raw selected pools of the unsplit sub-pass
-//!    plan (`row_passes`); each rank's `select_rows_folded` over its two slabs into a sentinel
+//!    plan (`row_passes`); each rank's `select_passes_folded` over its two slabs' sub-passes
+//!    (`sp_select::run::slab_passes`, 2026-10-17) into a sentinel
 //!    selected region (no foreign row written); every folded entry is its raw entry or -1, and
 //!    the drops are counted; the ranks' folded rows put together (the gathers' byte copy), then
 //!    `expand_folded` over all rows: 0 token rows differ from the unsplit rows.
@@ -21,7 +22,7 @@
 
 use super::*;
 use metrale_model_arch::glm5next_dsa::select::{
-    expand_folded, launch_fold, row_passes, select_rows_folded,
+    expand_folded, launch_fold, row_passes, select_passes_folded,
 };
 
 /// 2026-10-15: `inp` with about 3% of the `CEILING` keys invalid and about 1% of the
@@ -101,8 +102,9 @@ fn sel_chunk(
     for rank in 0..WORLD {
         let own = owned(k, WORLD, rank)?;
         gpu.memset(scratch.selected(), SENTINEL, k * sk)?;
-        select_rows_folded(gpu, kern, c, &geom, inp, scratch, &[own[0]], true, 0)?;
-        select_rows_folded(gpu, kern, c, &geom, inp, scratch, &[own[1]], false, 0)?;
+        let (a, b) = (slab_passes(own[0], per)?, slab_passes(own[1], per)?);
+        select_passes_folded(gpu, kern, c, &geom, inp, scratch, &a, true, 0)?;
+        select_passes_folded(gpu, kern, c, &geom, inp, scratch, &b, false, 0)?;
         let got = sel_bytes(gpu, scratch, k * sk)?;
         for (r, row) in got.chunks(sk).enumerate() {
             if own.iter().any(|&(lo, hi)| (lo..hi).contains(&r)) {
@@ -138,10 +140,11 @@ fn sel_chunk(
             let own = owned(k, WORLD, rank)?;
             let t = time_ms(gpu, &|| {
                 for (i, slab) in own.iter().enumerate() {
+                    let sub = slab_passes(*slab, per)?;
                     if folded {
-                        select_rows_folded(gpu, kern, c, &geom, inp, scratch, &[*slab], i == 0, 0)?;
+                        select_passes_folded(gpu, kern, c, &geom, inp, scratch, &sub, i == 0, 0)?;
                     } else {
-                        select_tokens_rows(gpu, kern, c, &geom, inp, scratch, &[*slab], i == 0, 0)?;
+                        select_tokens_passes(gpu, kern, c, &geom, inp, scratch, &sub, i == 0, 0)?;
                     }
                 }
                 Ok(())

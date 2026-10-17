@@ -66,7 +66,7 @@ pub use kernels::Glm5NextDsaLayerKernels;
 use proj_gemm::gemm;
 pub use workspace::Glm5NextDsaWorkspace;
 pub(crate) use workspace::batch_select_enabled;
-pub use workspace::{dsa_ws_shared, select_scratch_rows};
+pub use workspace::{dsa_ws_shared, select_scratch_geometry, select_scratch_rows};
 
 /// 2026-09-25: One DSA block's weights on the device, already sharded for this rank.
 pub struct Glm5NextDsaWeights {

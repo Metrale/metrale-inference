@@ -2165,3 +2165,27 @@ effort_hours = 8.0
 transferability = "any per-token reduction kernel that re-reads a shared weight per small block: widen the block's work with a cp.async ring instead of adding tokens per block, and keep each token's summation order"
 links = { pr = "", commit = "", evidence = "glm5next_mhc_tile_gate example output and standalone harness, 2026-10-15" }
 notes = "Variants measured and not shipped: eight tokens per block with three stages (tile8) ran 381 us at T=684 vs tile4's 350. Five or six stages gain 0-4% clean and 4-5% under SM-copy load at 684 rows, within spread; a split Sinkhorn tail gains about 1%. createpolicy.fractional.L2::evict_last with cp.async L2::cache_hint raised CUDA_ERROR_ILLEGAL_INSTRUCTION on GB10 at T=1, with or without applypriority. Not applied on the MHC_POST_PRE_FUSED path. A faster pre-norm may expose NCCL time it now hides"
+
+[[lever]]
+id = "gb10x3-glm53-dsa-select-fused"
+date = "2026-10-17"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_DSA_SELECT_FUSED=1 (default off) on top of METRALE_GLM_DSA_SCORES_MMA=1 + METRALE_GLM_DSA_SCORES_PIPE=1 (prefill selection passes)"
+symptom = "a 1M-token single-request TP=3 prefill: per-chunk time grows linearly in the context K; the indexer's [rows, pools] score row (scores + candidacy, ~25 B per row-pool pair written and re-read by the radix top-k) bounds a pass at 256 rows at a 1M ceiling, so a 2048-row selection runs 8 sub-passes, each re-reading the whole prepared key cache"
+diagnosis_tool = "microbench"
+root_cause_class = "memory-bound"
+lever_type = "kernel-fusion"
+lkb_effect = "dsa_indexer family: new dsa_select_fused_pipe (the dsa_index_scores_mma_pipe walk as template dsa_sp_walk<Sink>, scores sink unchanged) with a per-warp streaming top-k in shared memory (dsa_topk_stream.cuh, 704 entries per warp; when full, a bitwise search for the select_k-th key, then in-warp compaction: one warp per row, no cross-warp merge; strict > acceptance); writes the folded selected pools directly; dsa_tk moved to the shared header"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "prefill-1m", tok_s_pct = 0, j_tok_pct = 0.0, n = 0 }]
+verdict = "held"
+verdict_reason = "2026-10-17 measured (glm5next_dsa_select_fused_gate, gb10, single GPU, <3 GB): fused selected pools and token rows equal scores-pipe + radix + fold on all nine shapes (random, duplicate keys, zero keys with -0.0 scores, ascending ramp; up to 859 rows tied at the cut); key and fold negative controls fire; glm5next_dsa_scores_pipe_gate still byte-equal after the walk refactor with unchanged timings. 2048 causal rows, median of 7: K=32k 2.71 vs 5.10 ms (x0.53), 256k 27.63 vs 22.07 (x1.25), 512k 67.12 vs 39.06 (x1.72), 1M 137.19 vs 71.61 (x1.92); adversarial ascending-score ramp at 1M 135.12 vs 146.31 (x0.92). Projected 1M TP=3 prefill ~424 -> ~365 s. Held until MAIN's FUSED=0/1 1M serve A/B"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0.5
+would_catch_earlier = "build the -0.0 gate shape from the score formula (all-negative head weights) instead of zero keys alone: zero keys with positive weights give +0.0 only"
+effort_hours = 10.0
+transferability = "any top-k over a scored row that is produced tile by tile: keep a per-warp candidate buffer, cut by a bitwise search for the k-th key and compacted in-warp, instead of materializing the row"
+links = { pr = "", commit = "", evidence = "glm5next_dsa_select_fused_gate + glm5next_dsa_scores_pipe_gate, 2026-10-17" }
+notes = "Loses below ~128k pools-context (x0.53 at 32k: one pass already fits, and the per-row fixed cost of the buffer finish dominates); the early-chunk loss over a 1M run totals under ~0.5 s, so the lever stays a Switch. Worst case is scores rising with pool index (every tile beats the cut, a compaction per 3 tiles); a descending tile walk with key-then-index compaction would remove it. Not done: shrinking the scores/candidacy scratch when fused. 2026-10-17 review fixup: host-path gate (the serve's select path, lever off vs on in child processes, token and folded rows byte-compared, TOPK_RADIX on and off); negative controls at the cut (slot k - 1 swap changes only that slot), on visibility and on a key, each n/a only when the shape has nothing to move and required to run on some shape; shapes P = k, P = k + 1, k = 1, k = 257 with ties, k > P labelled as a gate-only launch; fused_shape is the one predicate both the launch and the scratch read; TOPK_RADIX under FUSED is reported, not silently dropped; SASS: the scores kernel's shared-memory reads stay LDS (no generic LD), base vs fix differ in scheduling only; a refused launch sentinel-fills its output."

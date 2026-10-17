@@ -140,6 +140,10 @@ pub struct DsaRowsKernels {
     /// part of [`Self::ready`].
     pub sel_fold: KernelHandle,
     pub expand_folded: KernelHandle,
+    /// 2026-10-17: `dsa_index_scores_pipe.cu`'s `dsa_select_fused_pipe`: [`Self::scores_pipe`]'s
+    /// scores, the radix top-k and the fold in one kernel (`select::select_fused`). Not part of
+    /// [`Self::ready`].
+    pub select_fused: KernelHandle,
 }
 
 /// 2026-10-14: Module of the streamed tensor-core scores: `dsa_index_scores_pipe.cu`.
@@ -169,6 +173,7 @@ impl DsaRowsKernels {
             scores_pipe: pipe("dsa_index_scores_mma_pipe"),
             sel_fold: fold("dsa_sel_fold"),
             expand_folded: fold("dsa_expand_selection_folded"),
+            select_fused: pipe("dsa_select_fused_pipe"),
         }
     }
 

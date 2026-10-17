@@ -5,8 +5,9 @@
 //! plans it (8,208 prefill rows at a 65,536-token ceiling), from a random flat indexer cache.
 //!
 //! 1. Bytes: per shape, the unsplit `select_tokens_in_passes` token rows; then for each rank,
-//!    with the output pre-filled with a sentinel, `select_tokens_rows` over its two zigzag
-//!    slabs (the first compressing the pools), as `sp_select::run::run_split` launches them.
+//!    with the output pre-filled with a sentinel, `select_tokens_passes` over its two zigzag
+//!    slabs' sub-passes (`slab_passes`, 2026-10-17; the first compressing the pools), as
+//!    `sp_select::run::run_split` launches them.
 //!    Each rank writes no row it does not own, and the rows the ranks own, put together (what
 //!    the two in-place all-gathers do: a byte copy), equal the unsplit rows: 0 rows differ.
 //! 2. Negative control: rank 1's first slab selected from inputs shifted by one row differs
@@ -24,6 +25,10 @@
 //! 6. 2026-10-15: The selected-pools payload (`METRALE_GLM_DSA_SP_SELECT_SEL`) on the same
 //!    chunks at both ceilings (`common/glm5next_dsa_sp_select_sel.rs`): its bytes, its
 //!    unfolded-input negative control, the fold launch, and both payloads' projections.
+//! 7. 2026-10-17: With the argument `spike`, only the chunks of a 1,048,576-token prefill that
+//!    end at 196,608 * m tokens, on the 1M serve's scratch
+//!    (`common/glm5next_dsa_sp_select_spike.rs`): the plan decisions and the bytes of item 1. A
+//!    separate run (its own 1M-key cache, < 3 GB of device memory).
 //!
 //! Owner: model-arch examples.
 //! Invariants: exits with an error unless every byte check and the negative control hold; the
@@ -33,17 +38,18 @@
 //! Run (GB10, < 1.5 GB of device memory):
 //!   METRALE_GLM_DSA_SCORES_MMA=1 METRALE_GLM_DSA_SCORES_PIPE=1 METRALE_GLM_DSA_TOPK_RADIX=1 \
 //!   cargo run --release -p metrale-model-arch --features cuda,gpu-examples \
-//!     --example glm5next_dsa_sp_select_gate
+//!     --example glm5next_dsa_sp_select_gate [-- spike]
 
 use anyhow::{Context, Result, ensure};
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
-use metrale_model_arch::glm5next_dsa::layer::select_scratch_rows;
+use metrale_model_arch::glm5next_dsa::layer::select_scratch_geometry;
 use metrale_model_arch::glm5next_dsa::paged::IndexerRowsDev;
 use metrale_model_arch::glm5next_dsa::select::{
     DsaSelectGeometry, DsaSelectInputs, DsaSelectScratch, select_tokens_in_passes,
-    select_tokens_rows,
+    select_tokens_passes, select_tokens_rows,
 };
+use metrale_model_arch::glm5next_dsa::sp_select::run::slab_passes;
 use metrale_model_arch::glm5next_dsa::sp_select::{MinPoolsTable, owned, run};
 use metrale_model_arch::glm5next_dsa::{Glm5NextDsaConfig, Glm5NextDsaKernels};
 
@@ -66,6 +72,8 @@ const SENTINEL: u8 = 0xEE;
 
 #[path = "common/glm5next_dsa_sp_select_sel.rs"]
 mod sel;
+#[path = "common/glm5next_dsa_sp_select_spike.rs"]
+mod spike;
 
 /// 2026-10-15: GLM-5.3's indexer geometry (the attention fields are not read by the selection).
 fn cfg(max_context: usize) -> Glm5NextDsaConfig {
@@ -111,15 +119,15 @@ fn bf16s(v: impl Iterator<Item = f32>) -> Vec<u8> {
         .collect()
 }
 
-/// 2026-10-15: Every input but `q_pos`, at the largest shape: a `CEILING`-token cache (all keys
-/// valid) and `MAX_ROWS` query rows.
-fn inputs(gpu: &dyn GpuBackend, c: &Glm5NextDsaConfig) -> Result<DsaSelectInputs> {
+/// 2026-10-15: Every input but `q_pos`, at the largest shape: a `keys`-token cache (all keys
+/// valid; 2026-10-17: `CEILING`, or the spike leg's longer one) and `MAX_ROWS` query rows.
+fn inputs(gpu: &dyn GpuBackend, c: &Glm5NextDsaConfig, keys: usize) -> Result<DsaSelectInputs> {
     let (d, h) = (c.index_head_dim, c.index_heads);
     let mut r = Rng(0x9e37_79b9_7f4a_7c15);
-    let k = up(gpu, &bf16s((0..CEILING * d).map(|_| r.unit())))?;
-    let gate = up(gpu, &bf16s((0..CEILING * d).map(|_| r.unit())))?;
+    let k = up(gpu, &bf16s((0..keys * d).map(|_| r.unit())))?;
+    let gate = up(gpu, &bf16s((0..keys * d).map(|_| r.unit())))?;
     Ok(DsaSelectInputs {
-        rows: IndexerRowsDev::flat(k, gate, up(gpu, &vec![1u8; CEILING])?),
+        rows: IndexerRowsDev::flat(k, gate, up(gpu, &vec![1u8; keys])?),
         ape: up(gpu, &f32s((0..c.index_kpool * d).map(|_| r.unit() * 0.1)))?,
         q: up(gpu, &f32s((0..MAX_ROWS * h * d).map(|_| r.unit())))?,
         weights: up(gpu, &f32s((0..MAX_ROWS * h).map(|_| r.unit().abs() * 0.2)))?,
@@ -173,7 +181,8 @@ impl Point {
     }
 }
 
-/// 2026-10-15: One shape: `k` causal rows ending at `4 * pools` tokens.
+/// 2026-10-15: One shape: `k` causal rows ending at `4 * pools` tokens. 2026-10-17: `timed` false
+/// skips the timing (the spike leg checks bytes only); its point then holds zero times.
 #[allow(clippy::too_many_arguments)]
 fn shape(
     gpu: &dyn GpuBackend,
@@ -184,6 +193,7 @@ fn shape(
     one_row: Option<&DsaSelectScratch>,
     k: usize,
     pools: usize,
+    timed: bool,
 ) -> Result<Point> {
     let seq = pools * c.index_kpool;
     let pos: Vec<u8> = (0..k)
@@ -210,8 +220,9 @@ fn shape(
     for rank in 0..WORLD {
         let own = owned(k, WORLD, rank)?;
         gpu.memset(scratch.tokens(), SENTINEL, n)?;
-        let a = select_tokens_rows(gpu, kern, c, &geom, inp, scratch, &[own[0]], true, 0)?;
-        let b = select_tokens_rows(gpu, kern, c, &geom, inp, scratch, &[own[1]], false, 0)?;
+        let (sa, sb) = (slab_passes(own[0], per)?, slab_passes(own[1], per)?);
+        let a = select_tokens_passes(gpu, kern, c, &geom, inp, scratch, &sa, true, 0)?;
+        let b = select_tokens_passes(gpu, kern, c, &geom, inp, scratch, &sb, false, 0)?;
         rank_passes.push(a + b);
         let got = tokens(gpu, scratch, n)?;
         for (r, row) in got.chunks(rb).enumerate() {
@@ -234,7 +245,8 @@ fn shape(
     let s1 = owned(k, WORLD, 1)?[0];
     gpu.memset(scratch.tokens(), SENTINEL, n)?;
     let shifted = inp.from_row(1, c);
-    select_tokens_rows(gpu, kern, c, &geom, &shifted, scratch, &[s1], true, 0)?;
+    let s1_passes = slab_passes(s1, per)?;
+    select_tokens_passes(gpu, kern, c, &geom, &shifted, scratch, &s1_passes, true, 0)?;
     let ctl = tokens(gpu, scratch, n)?;
     let ctl_rows = differ(&ctl[s1.0 * rb..s1.1 * rb], &want[s1.0 * rb..s1.1 * rb]);
     let one_row_rows = match one_row {
@@ -251,21 +263,25 @@ fn shape(
     };
 
     // 2026-10-15: 3. Timing.
-    let unsplit = time_ms(gpu, &|| {
-        select_tokens_in_passes(gpu, kern, c, &geom, inp, scratch, 0).map(|_| ())
-    })?;
+    let mut unsplit = (0.0f64, 0.0f64);
     let mut split = (0.0f64, 0.0f64);
-    let mut ranks = Vec::new();
-    for rank in 0..WORLD {
-        let own = owned(k, WORLD, rank)?;
-        let t = time_ms(gpu, &|| {
-            select_tokens_rows(gpu, kern, c, &geom, inp, scratch, &[own[0]], true, 0)?;
-            select_tokens_rows(gpu, kern, c, &geom, inp, scratch, &[own[1]], false, 0)?;
-            Ok(())
+    let mut ranks = [0.0f64; WORLD];
+    if timed {
+        unsplit = time_ms(gpu, &|| {
+            select_tokens_in_passes(gpu, kern, c, &geom, inp, scratch, 0).map(|_| ())
         })?;
-        ranks.push(t.0);
-        if t.0 > split.0 {
-            split = t;
+        for (rank, slot) in ranks.iter_mut().enumerate() {
+            let own = owned(k, WORLD, rank)?;
+            let (sa, sb) = (slab_passes(own[0], per)?, slab_passes(own[1], per)?);
+            let t = time_ms(gpu, &|| {
+                select_tokens_passes(gpu, kern, c, &geom, inp, scratch, &sa, true, 0)?;
+                select_tokens_passes(gpu, kern, c, &geom, inp, scratch, &sb, false, 0)?;
+                Ok(())
+            })?;
+            *slot = t.0;
+            if t.0 > split.0 {
+                split = t;
+            }
         }
     }
     let slab_rows = (0..WORLD)
@@ -292,20 +308,22 @@ fn shape(
         s1.1 - s1.0,
         one_row_rows.map_or("-".into(), |r| format!("{r}/{}", s1.1 - s1.0)),
     );
-    println!(
-        "  unsplit {:8.3} ms (spread {:.3}) | split max {:8.3} ms (spread {:.3}; ranks \
+    if timed {
+        println!(
+            "  unsplit {:8.3} ms (spread {:.3}) | split max {:8.3} ms (spread {:.3}; ranks \
          {:.3}/{:.3}/{:.3}) | xAG exposed {:.3} ms ({mb:.2} MB/peer x2) | net {:+.3} ms -> {}",
-        p.unsplit.0,
-        p.unsplit.1,
-        p.split.0,
-        p.split.1,
-        ranks[0],
-        ranks[1],
-        ranks[2],
-        p.xag,
-        p.net(),
-        if p.wins() { "SPLIT" } else { "keep" }
-    );
+            p.unsplit.0,
+            p.unsplit.1,
+            p.split.0,
+            p.split.1,
+            ranks[0],
+            ranks[1],
+            ranks[2],
+            p.xag,
+            p.net(),
+            if p.wins() { "SPLIT" } else { "keep" }
+        );
+    }
     ensure!(
         bad == 0 && foreign == 0,
         "k {k} P {pools}: the split selection differs from the unsplit one"
@@ -318,20 +336,12 @@ fn shape(
 }
 
 /// 2026-10-15: The serve's selection scratch (`Glm5NextDsaWorkspace::new`) at a ceiling: the
-/// ceiling's geometry at `select_scratch_rows` rows, the output at `MAX_ROWS`.
+/// ceiling's geometry at `select_scratch_rows` rows, the output at `MAX_ROWS`. 2026-10-17: the
+/// geometry from the workspace's own `select_scratch_geometry`.
 fn serve_scratch(gpu: &dyn GpuBackend, c: &Glm5NextDsaConfig) -> Result<DsaSelectScratch> {
-    let full = DsaSelectGeometry::plan(c, c.max_context, MAX_ROWS)?;
-    let rows = select_scratch_rows(MAX_ROWS, c.max_context, c.index_kpool, 16);
-    println!("scratch rows {rows} at {} tokens", c.max_context);
-    DsaSelectScratch::alloc_rows(
-        gpu,
-        c,
-        &DsaSelectGeometry {
-            q_rows: rows,
-            ..full
-        },
-        MAX_ROWS,
-    )
+    let geom = select_scratch_geometry(c, MAX_ROWS)?;
+    println!("scratch rows {} at {} tokens", geom.q_rows, c.max_context);
+    DsaSelectScratch::alloc_rows(gpu, c, &geom, MAX_ROWS)
 }
 
 /// 2026-10-15: The 32k prompt's projected selection delta in ms (gathers exposed, hidden) over
@@ -359,9 +369,18 @@ fn main() -> Result<()> {
     let set = metrale_kernels::ptx_for_exact_target("glm-5.3-flash", "nvfp4")
         .context("glm-5.3-flash nvfp4 target")?;
     let gpu = MetraleCudaBackend::new(0, &set.modules)?;
-    let c = cfg(CEILING);
     let kern = Glm5NextDsaKernels::resolve(&gpu)?;
-    let inp = inputs(&gpu, &c)?;
+    match std::env::args().nth(1).as_deref() {
+        None => {}
+        Some("spike") => {
+            spike::spike_gate(&gpu, &kern)?;
+            println!("RESULT: PASS");
+            return Ok(());
+        }
+        Some(a) => anyhow::bail!("argument {a:?}: expected none or `spike`"),
+    }
+    let c = cfg(CEILING);
+    let inp = inputs(&gpu, &c, CEILING)?;
     let scratch = serve_scratch(&gpu, &c)?;
     let small = DsaSelectGeometry::plan(&c, 4096, MAX_ROWS)?;
     let one_row = DsaSelectScratch::alloc_rows(
@@ -380,7 +399,7 @@ fn main() -> Result<()> {
                 continue;
             }
             let o = (k == 1024 && p == 1024).then_some(&one_row);
-            points.push(shape(&gpu, &kern, &c, &inp, &scratch, o, k, p)?);
+            points.push(shape(&gpu, &kern, &c, &inp, &scratch, o, k, p, true)?);
         }
     }
     let mut table = Vec::new();
@@ -411,7 +430,7 @@ fn main() -> Result<()> {
     let scratch512 = serve_scratch(&gpu, &c512)?;
     let mut at512 = Vec::new();
     for (k, p) in C32K {
-        let q = shape(&gpu, &kern, &c512, &inp, &scratch512, None, k, p)?;
+        let q = shape(&gpu, &kern, &c512, &inp, &scratch512, None, k, p, true)?;
         let base = points
             .iter()
             .find(|x| x.k == k && x.pools == p)
