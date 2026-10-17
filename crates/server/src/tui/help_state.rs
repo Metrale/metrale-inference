@@ -95,6 +95,9 @@ pub struct HelpState {
     pub(super) cancel: Option<Arc<AtomicBool>>,
     pub(super) workers: Box<dyn Workers + Send>,
     pub(super) last_message: Option<(String, bool)>,
+    /// 2026-10-17: Where reports go, resolved once from the settings by `tui::start`
+    /// (`report::target_from`); an `Err` is the refusal the Report tab shows.
+    pub target: Result<Target, &'static str>,
 }
 
 fn fresh_body() -> tui_textarea::TextArea<'static> {
@@ -125,6 +128,9 @@ impl Default for HelpState {
             cancel: None,
             workers: Box::new(LiveWorkers),
             last_message: None,
+            // 2026-10-17: The compiled-in identity, what `report::target_from` gives with no
+            // override; `tui::start` replaces it with the resolved settings.
+            target: super::report::target_from(None, None),
         }
     }
 }
@@ -228,7 +234,7 @@ impl HelpState {
     }
 
     pub(super) fn proceed(&mut self, composed: Composed) {
-        match super::report::target() {
+        match self.target.clone() {
             Err(m) => self.fail(m.to_string()),
             Ok(target) => {
                 self.pending = Some(Pending {

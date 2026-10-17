@@ -176,7 +176,12 @@ pub(crate) fn log_response_store_audit(
     }
 }
 
-pub(crate) fn log_behavior_audit(args: &cli::ServeArgs, ptx_set: &metrale_kernels::TargetPtxSet) {
+pub(crate) fn log_behavior_audit(
+    args: &cli::ServeArgs,
+    ptx_set: &metrale_kernels::TargetPtxSet,
+    // 2026-10-17: `METRALE_DISABLE_WATCHDOGS`, from the load's settings.
+    disable_watchdogs: bool,
+) {
     if !ptx_set.behavior.thinking_in_tools {
         tracing::info!("Model behavior: thinking disabled when tools active (MODEL.toml)");
     }
@@ -222,9 +227,7 @@ pub(crate) fn log_behavior_audit(args: &cli::ServeArgs, ptx_set: &metrale_kernel
             crate::scheduler::CONTENT_LOOP_PERIOD_MAX,
         );
     }
-    if crate::scheduler::parse_disable_watchdogs(
-        std::env::var("METRALE_DISABLE_WATCHDOGS").ok().as_deref(),
-    ) {
+    if disable_watchdogs {
         tracing::warn!(
             "Model behavior: ALL auto-watchdogs DISABLED via METRALE_DISABLE_WATCHDOGS=1 \
              (content-loop, inter-tool prose, F2 confidence early-stop, mid-word </think> \

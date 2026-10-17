@@ -23,6 +23,8 @@ pub(crate) struct PrefillBudget {
 pub(crate) fn resolve_prefill_budget(
     args: &cli::ServeArgs,
     ssm_prefill_chunk: usize,
+    // 2026-10-17: `METRALE_MAX_BATCH_TOKENS` (`LoadLevers::max_batch_tokens`).
+    max_batch_tokens_lever: Option<usize>,
 ) -> PrefillBudget {
     let spec_tokens = super::preflight::spec_reserve_tokens(args);
     let user_set_prefill = args.max_prefill_tokens != 8192;
@@ -89,34 +91,29 @@ pub(crate) fn resolve_prefill_budget(
     // 2026-09-26: `max_batch_tokens` defaults to `prefill_budget +
     // max_batch_size`, raised to `spec_tokens` when that is larger.
     // `METRALE_MAX_BATCH_TOKENS` can raise it further; a value below the
-    // default, or one that does not parse, is ignored with a warning.
+    // default is ignored with a warning (2026-10-17: one that does not parse stopped the
+    // load in `LoadLevers`).
     let default_max_batch_tokens = (prefill_budget + args.max_batch_size.ceiling())
         .max(spec_tokens)
         .max(args.max_batch_size.ceiling());
-    let max_batch_tokens = match std::env::var("METRALE_MAX_BATCH_TOKENS") {
-        Ok(v) => match v.parse::<usize>() {
-            Ok(n) if n >= default_max_batch_tokens => {
-                tracing::info!(
-                    "METRALE_MAX_BATCH_TOKENS override: {} (default would be {})",
-                    n,
-                    default_max_batch_tokens
-                );
-                n
-            }
-            Ok(n) => {
-                tracing::warn!(
-                    "METRALE_MAX_BATCH_TOKENS={} ignored — must be >= default {}",
-                    n,
-                    default_max_batch_tokens
-                );
+    let max_batch_tokens = match max_batch_tokens_lever {
+        Some(n) if n >= default_max_batch_tokens => {
+            tracing::info!(
+                "METRALE_MAX_BATCH_TOKENS override: {} (default would be {})",
+                n,
                 default_max_batch_tokens
-            }
-            Err(e) => {
-                tracing::warn!("METRALE_MAX_BATCH_TOKENS parse error: {e}");
+            );
+            n
+        }
+        Some(n) => {
+            tracing::warn!(
+                "METRALE_MAX_BATCH_TOKENS={} ignored — must be >= default {}",
+                n,
                 default_max_batch_tokens
-            }
-        },
-        Err(_) => default_max_batch_tokens,
+            );
+            default_max_batch_tokens
+        }
+        None => default_max_batch_tokens,
     };
     tracing::info!(
         "Prefill config: ssm_prefill_chunk={}, args.max_prefill_tokens={}, prefill_budget={}, max_batch_tokens={}",

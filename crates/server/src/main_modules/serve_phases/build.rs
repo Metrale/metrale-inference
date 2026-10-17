@@ -208,6 +208,8 @@ pub(crate) fn validate_head_high_speed_swap(
 
 pub(crate) fn maybe_run_ep_worker(
     args: &cli::ServeArgs,
+    // 2026-10-17: `METRALE_ALLOW_SPEC_MISMATCH` (`LoadLevers::allow_spec_mismatch`).
+    allow_spec_mismatch: bool,
     model: &mut Option<Box<dyn metrale_model_engine::traits::Model>>,
     early_high_speed_swap_cfg: &Option<metrale_storage::HighSpeedSwapConfig>,
 ) -> Result<bool> {
@@ -221,11 +223,7 @@ pub(crate) fn maybe_run_ep_worker(
     let worker_spec =
         args.speculative || args.self_speculative || args.ngram_speculative || args.dflash;
     if !worker_spec && model_has_proposer {
-        let override_set = matches!(
-            std::env::var("METRALE_ALLOW_SPEC_MISMATCH").as_deref(),
-            Ok("1") | Ok("true")
-        );
-        if !override_set {
+        if !allow_spec_mismatch {
             anyhow::bail!(
                 "EP worker (rank {rank}) started WITHOUT any --speculative flag, \
                  but this checkpoint has MTP weights and the head will likely use them. \

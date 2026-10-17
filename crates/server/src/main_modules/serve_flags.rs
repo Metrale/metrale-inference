@@ -47,7 +47,7 @@ pub(crate) fn publish_kernel_flags(
                  the command line's ({flags:?}) did NOT take effect"
             );
         }
-        warn_shadowed_env();
+        warn_shadowed_env(settings);
     }
     // 2026-09-28: `--weight-quantization` (with its `--w4a4-downcast` lever) is always
     // published: it has no environment fallback, and the model build reads it
@@ -227,7 +227,7 @@ pub(crate) fn publish_kernel_flags(
                  line's ({varlen}) did NOT take effect"
             );
         }
-        if std::env::var_os("METRALE_PREFILL_VARLEN").is_some() {
+        if lever_was_set(settings, "METRALE_PREFILL_VARLEN") {
             tracing::warn!(
                 "METRALE_PREFILL_VARLEN is set but was OVERRIDDEN: `--prefill-varlen-batch` \
                  on the command line owns the decision. Drop the flag to let the \
@@ -289,9 +289,9 @@ const SHADOWED_BY_CLI: &[(&str, &str)] = &[
     ("METRALE_SSM_BATCHED_RECURRENT", "--ssm-batched-recurrent"),
 ];
 
-fn warn_shadowed_env() {
+fn warn_shadowed_env(settings: &metrale_settings::InferenceServerSettings) {
     for (var, flag) in SHADOWED_BY_CLI {
-        if std::env::var_os(var).is_some() {
+        if lever_was_set(settings, var) {
             tracing::warn!(
                 "{var} is set but was OVERRIDDEN: a GDN flag on the command line publishes \
                  all three kernel selections at once, so this variable did not decide \
@@ -300,4 +300,16 @@ fn warn_shadowed_env() {
             );
         }
     }
+}
+
+/// 2026-10-17: `var` was set for this serve, in the environment or by the recipe (the settings'
+/// provenance; until now the process environment was read here).
+fn lever_was_set(settings: &metrale_settings::InferenceServerSettings, var: &str) -> bool {
+    matches!(
+        settings.provenance.source_of(var),
+        Some(
+            metrale_settings::provenance::Source::Env
+                | metrale_settings::provenance::Source::Recipe
+        )
+    )
 }

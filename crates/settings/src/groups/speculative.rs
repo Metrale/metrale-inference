@@ -8,7 +8,7 @@
 lever_group! {
     /// 2026-10-17: The `speculative` group, resolved by `crate::resolve()`.
     pub struct SpeculativeSettings { group: "speculative", class: Runtime }
-    allow_spec_mismatch: Text = "unset", None, "METRALE_ALLOW_SPEC_MISMATCH", "crates/server/src/main_modules/serve_phases/build.rs", "Read in `crates/server/src/main_modules/serve_phases/build.rs`.";
+    allow_spec_mismatch: Text = "unset", None, "METRALE_ALLOW_SPEC_MISMATCH", "crates/server/src/main_modules/serve_phases/load_levers.rs", "An EP worker started without speculative flags may load a checkpoint that carries MTP weights (the head must then not draft). A switch; `1` turns it on.";
     canonical_key_min_width: Text = "unset", None, "METRALE_CANONICAL_KEY_MIN_WIDTH", "crates/model-layers/src/speculative/verify_key.rs", "The env var name, named once so the parser and its tests cannot drift.";
     dflash2: Switch = "on", None, "METRALE_DFLASH2", "crates/model-arch/src/dflash_head/levers.rs", "Ships ON when the checkpoint carries the components; `METRALE_DFLASH2=0` disables. `0` turns it off.";
     dflash2_topk_split: Switch = "on", None, "METRALE_DFLASH2_TOPK_SPLIT", "crates/model-arch/src/dflash_head/levers.rs", "The DFlash2 per-row top-16 runs in two stages over many blocks, with the outputs and writes of the one-block kernel. `0` turns it off.";

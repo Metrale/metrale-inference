@@ -45,7 +45,8 @@ pub(crate) enum Old {
     DefaultOn,
     /// 2026-10-17: `METRALE_BEAM_CODISPATCH`: off on `0`/`false` (any case); untrimmed.
     Beam,
-    /// 2026-10-17: `helpers::parse_disable_watchdogs`: trimmed, on for `1`/`true` (any case).
+    /// 2026-10-17: The former `helpers::parse_disable_watchdogs`: trimmed, on for `1`/`true`
+    /// (any case).
     DisableWatchdogs,
     /// 2026-10-17: `helpers::parse_forced_token_fastpath`: trimmed, off for `1`/`true` (any case).
     ForcedToken,
@@ -63,6 +64,9 @@ pub(crate) enum Old {
     /// 2026-10-17: Off on `0`, `false`, `off` or `no` (trimmed, any case); on otherwise,
     /// unset included.
     OnUnlessOffWord,
+    /// 2026-10-17: Trimmed; blank and `0` are unset (shown as 0); a value that is not an
+    /// unsigned integer stops the load.
+    UintBlankZeroUnset,
 }
 
 impl Old {
@@ -102,6 +106,10 @@ impl Old {
                 let v = v.trim();
                 ["0", "false", "off", "no"].iter().any(|w| word(v, w))
             })),
+            Self::UintBlankZeroUnset => match v.map(str::trim) {
+                None | Some("" | "0") => num(0),
+                Some(t) => t.parse::<u64>().map_or(Out::Err, num),
+            },
         }
     }
 
@@ -125,6 +133,7 @@ impl Old {
             Self::OptInOneOrTrue => "opt_in_one_or_true",
             Self::UintTrimmed(_) => "uint_trimmed",
             Self::OnUnlessOffWord => "on_unless_off_word",
+            Self::UintBlankZeroUnset => "uint_blank_zero_unset",
         }
     }
 }

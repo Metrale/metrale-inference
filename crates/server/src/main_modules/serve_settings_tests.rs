@@ -104,6 +104,27 @@ fn forwarded() -> Vec<(
             |s| s.model.vision_max_pixels.to_string(),
             "1024",
         ),
+        (
+            "METRALE_NO_TUI",
+            &["--no-tui"],
+            "1",
+            |s| s.server.no_tui.to_string(),
+            "true",
+        ),
+        (
+            "METRALE_FAST_LOAD",
+            &["--no-fast-load"],
+            "0",
+            |s| s.storage.fast_load.to_string(),
+            "false",
+        ),
+        (
+            "METRALE_FAST_LOAD_PREFETCH_SHARDS",
+            &["--fast-load-prefetch-shards"],
+            "1",
+            |s| s.storage.fast_load_prefetch_shards.to_string(),
+            "true",
+        ),
     ]
 }
 
@@ -128,6 +149,22 @@ fn without_its_flag_each_variable_still_decides() {
         );
         assert_eq!(s.provenance.source_of(var), Some(Source::Env), "{var}");
     }
+}
+
+/// 2026-10-17: A one-way flag (`--no-fast-load`, `--fast-load-prefetch-shards`) beats its
+/// variable set the other way, as `load_weight_store`'s `flag || env` / `!flag && env` did.
+#[test]
+fn a_one_way_flag_beats_its_variable_set_the_other_way() {
+    let s = with_env(&[("METRALE_FAST_LOAD", "1")], &["--no-fast-load"]).expect("resolves");
+    assert!(!s.storage.fast_load);
+    let s = with_env(
+        &[("METRALE_FAST_LOAD_PREFETCH_SHARDS", "0")],
+        &["--fast-load-prefetch-shards"],
+    )
+    .expect("resolves");
+    assert!(s.storage.fast_load_prefetch_shards);
+    let s = with_env(&[("METRALE_NO_TUI", "0")], &["--no-tui"]).expect("resolves");
+    assert!(s.server.no_tui);
 }
 
 /// 2026-10-17: The flag spellings that mean "not given" add nothing to the CLI layer.
@@ -337,4 +374,55 @@ fn the_device_flags_compose_with_their_variables_as_the_published_cells_did() {
             );
         }
     }
+}
+
+/// 2026-10-17: The dashboard levers `main` reads before the TUI starts. `METRALE_NO_TUI` was
+/// `== "1"`; it now takes the switch grammar, so the other "on" spellings start plain and a
+/// value that is not a switch stops the boot.
+#[test]
+fn the_no_tui_lever_matches_its_old_reader_except_the_recorded_changes() {
+    use crate::lever_equivalence::{Old, Out, Row, assert_old_readers_hold, settings_from};
+    let rows: Vec<Row<InferenceServerSettings>> =
+        vec![("METRALE_NO_TUI", Old::OptIn, |s| Out::B(s.server.no_tui))];
+    let changes: &[(&str, &str, Out)] = &[
+        ("opt_in", "true", Out::B(true)),
+        ("opt_in", "TRUE", Out::B(true)),
+        ("opt_in", "yes", Out::B(true)),
+        ("opt_in", "", Out::Err),
+        ("opt_in", " 1 ", Out::B(true)),
+        ("opt_in", "garbage", Out::Err),
+        ("opt_in", "7", Out::Err),
+        ("opt_in", "-1", Out::Err),
+    ];
+    assert_old_readers_hold(&rows, |env| Ok(settings_from(env)?), changes);
+}
+
+/// 2026-10-17: The tee path and report identity were `std::env::var(..).ok()`; as text levers
+/// they keep the value verbatim, blank and padded values included (a blank report identity is
+/// refused later by `report::target_from`).
+#[test]
+fn the_text_dashboard_levers_keep_their_value_verbatim() {
+    for v in ["", " padded ", "/var/log/met.log"] {
+        let env = [
+            ("METRALE_TUI_LOG_FILE", v),
+            ("METRALE_REPORT_CLIENT_ID", v),
+            ("METRALE_REPORT_REPO", v),
+        ];
+        let s = with_env(&env, &[]).expect("text levers accept any value");
+        let h = resolve_harness(&MapEnv::new(env.iter().copied())).expect("harness resolves");
+        assert_eq!(h.tui_log_file.as_deref(), Some(v));
+        assert_eq!(s.telemetry.report_client_id.as_deref(), Some(v));
+        assert_eq!(s.telemetry.report_repo.as_deref(), Some(v));
+    }
+    let s = with_env(&[], &[]).expect("defaults resolve");
+    let h = resolve_harness(&MapEnv::new(std::iter::empty::<(&str, &str)>()))
+        .expect("harness resolves");
+    assert_eq!(
+        (
+            h.tui_log_file.as_deref(),
+            s.telemetry.report_client_id.as_deref(),
+            s.telemetry.report_repo.as_deref()
+        ),
+        (None, None, None)
+    );
 }

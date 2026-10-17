@@ -13,7 +13,8 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use metrale_settings::sources::{CliLayer, RecipeLayer};
+use metrale_settings::groups::harness::HarnessSettings;
+use metrale_settings::sources::{CliLayer, RecipeLayer, Sources};
 use metrale_settings::{Env, InferenceServerSettings};
 
 use crate::cli;
@@ -32,6 +33,25 @@ pub(crate) fn resolve(
     let settings = metrale_settings::resolve(env, &cli, &RecipeLayer::empty())
         .map_err(|e| anyhow::anyhow!("lever settings: {e}"))?;
     Ok(Arc::new(settings))
+}
+
+/// 2026-10-17: Resolve the Harness levers (`HarnessSettings`) a serve reads, from the
+/// environment alone: no flag or recipe names one.
+///
+/// # Errors
+/// A `METRALE_*` harness variable that does not parse as its lever's type.
+pub(crate) fn resolve_harness(env: &impl Env) -> Result<HarnessSettings> {
+    let (cli, recipe) = (CliLayer::empty(), RecipeLayer::empty());
+    let mut provenance = metrale_settings::provenance::Provenance::default();
+    HarnessSettings::resolve(
+        &Sources {
+            env,
+            cli: &cli,
+            recipe: &recipe,
+        },
+        &mut provenance,
+    )
+    .map_err(|e| anyhow::anyhow!("harness settings: {e}"))
 }
 
 /// 2026-10-17: The flags that set a lever, keyed by the lever's variable. An absent flag (or
@@ -68,6 +88,15 @@ fn cli_layer(args: &cli::ServeArgs) -> Result<CliLayer> {
     }
     if args.no_ssm_tail_midchunk {
         pairs.push(("METRALE_SSM_TAIL_MIDCHUNK", String::from("0")));
+    }
+    if args.no_fast_load {
+        pairs.push(("METRALE_FAST_LOAD", switch(false)));
+    }
+    if args.fast_load_prefetch_shards {
+        pairs.push(("METRALE_FAST_LOAD_PREFETCH_SHARDS", switch(true)));
+    }
+    if args.no_tui {
+        pairs.push(("METRALE_NO_TUI", switch(true)));
     }
     if args.vision_max_pixels > 0 {
         pairs.push((

@@ -31,28 +31,6 @@ use crate::cli;
 
 const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
 
-/// 2026-09-26: Default context length of the KV floor, in tokens per
-/// sequence. The floor keeps the fit from giving the ring the room a KV cache
-/// needs to admit `--max-batch-size` sequences. `METRALE_KV_FLOOR_TOKENS=<n>`
-/// overrides it; 0 disables the floor.
-pub(super) const DEFAULT_KV_FLOOR_TOKENS: usize = 4096;
-
-/// 2026-09-26: `METRALE_KV_FLOOR_TOKENS`, or [`DEFAULT_KV_FLOOR_TOKENS`] when
-/// unset. An unparseable value logs a warning and takes the default, so a
-/// typo does not remove the floor.
-pub(super) fn kv_floor_tokens() -> usize {
-    match std::env::var("METRALE_KV_FLOOR_TOKENS") {
-        Ok(v) => v.trim().parse().unwrap_or_else(|_| {
-            tracing::warn!(
-                "METRALE_KV_FLOOR_TOKENS='{v}' is not a token count — using the default {}",
-                DEFAULT_KV_FLOOR_TOKENS,
-            );
-            DEFAULT_KV_FLOOR_TOKENS
-        }),
-        Err(_) => DEFAULT_KV_FLOOR_TOKENS,
-    }
-}
-
 /// 2026-09-26: What `preflight_reserve` needs from its caller to build the
 /// post-load yardstick, beyond `args` and `config`.
 pub(crate) struct PostLoadInputs<'a> {
@@ -68,6 +46,9 @@ pub(crate) struct PostLoadInputs<'a> {
     /// With the prefill dispatch, it decides whether the loader builds the Q
     /// and O FP8 twins.
     pub(crate) w8a8_prefill_kernels: bool,
+    /// 2026-10-17: The KV floor context length in tokens per sequence
+    /// (`LoadLevers::kv_floor_tokens`); 0 disables the floor.
+    pub(crate) kv_floor_tokens: usize,
 }
 
 /// 2026-09-26: Every term of the post-load fit, kept so the decision line can
@@ -173,7 +154,7 @@ pub(super) fn post_load_yardstick(
         derived,
         arena,
         fixed: fixed_reserve,
-        kv_floor: kv_floor_bytes(args, config, inputs.kv_dtype),
+        kv_floor: kv_floor_bytes(args, config, inputs.kv_dtype, inputs.kv_floor_tokens),
         headroom: budget.saturating_sub(pre_kv),
     })
 }
@@ -184,8 +165,9 @@ pub(super) fn kv_floor_bytes(
     args: &cli::ServeArgs,
     config: &ModelConfig,
     kv_dtype: KvCacheDtype,
+    floor_tokens: usize,
 ) -> usize {
-    let tokens = kv_floor_tokens().min(args.max_seq_len);
+    let tokens = floor_tokens.min(args.max_seq_len);
     if tokens == 0 || args.max_batch_size.ceiling() == 0 {
         return 0;
     }

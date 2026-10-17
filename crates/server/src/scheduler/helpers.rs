@@ -81,19 +81,6 @@ pub const CONTENT_LOOP_NORM_MIN_REPEATS: usize = 4;
 /// real token id.
 pub const NUMERIC_SENTINEL: u32 = u32::MAX;
 
-/// 2026-09-25: Parse of `METRALE_DISABLE_WATCHDOGS`: true for `1` or `true`
-/// (trimmed, case-insensitive), false otherwise. Used by the run-time readers that do not yet take
-/// resolved settings.
-pub(crate) fn parse_disable_watchdogs(env: Option<&str>) -> bool {
-    match env {
-        Some(v) => {
-            let v = v.trim();
-            v == "1" || v.eq_ignore_ascii_case("true")
-        }
-        None => false,
-    }
-}
-
 mod detectors;
 mod watchdog;
 pub use detectors::*;

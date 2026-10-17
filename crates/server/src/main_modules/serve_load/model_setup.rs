@@ -97,6 +97,7 @@ fn lm_head_flags(
 
 pub(super) fn resolve_media_policies(
     args: &cli::ServeArgs,
+    levers: &serve_phases::LoadLevers,
     model_dir: &Path,
     config: &mut ModelConfig,
 ) -> Result<(
@@ -107,7 +108,7 @@ pub(super) fn resolve_media_policies(
     // 2026-09-26: The vision area bound is resolved once and installed on the
     // config before `build_model`, which builds the vision encoder; the
     // encoder sizes its patch buffers from it (`derive_max_patches`).
-    let vision_max_pixels = resolve_vision_max_pixels(args, model_dir)?;
+    let vision_max_pixels = resolve_vision_max_pixels(levers.vision_max_pixels, model_dir);
     if let Some(v) = config.vision.as_mut() {
         v.max_pixels = vision_max_pixels;
     }
@@ -115,12 +116,12 @@ pub(super) fn resolve_media_policies(
         Some(px) => {
             tracing::info!(target: "met::main_modules::serve_load", "Vision area bound: {} px ({})",
                 px,
-                if args.vision_max_pixels > 0 {
-                    "--vision-max-pixels"
+                if levers.vision_max_pixels.is_some() {
+                    "--vision-max-pixels / METRALE_VISION_MAX_PIXELS"
                 } else {
                     // 2026-09-26: Names no file: `read_preprocessor_max_pixels`
                     // logs the file and key it read.
-                    "checkpoint processor config / METRALE_VISION_MAX_PIXELS"
+                    "checkpoint processor config"
                 }
             )
         }

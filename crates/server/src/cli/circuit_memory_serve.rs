@@ -272,9 +272,12 @@ pub(crate) fn engine_facts(
         true => metrale_model_layers::layer::VERIFY_WY_TABLE_SEQS as u64,
         false => 0,
     };
+    // 2026-10-17: `None`: the what-if is a serve of these flags, and `METRALE_MAX_BATCH_TOKENS`
+    // lives in that serve's environment, not this tool's (it read the tool's own until now).
     let budget = crate::main_modules::serve_phases::kv_cache::resolve_prefill_budget(
         &args,
         ssm_prefill_chunk(&args, config),
+        None,
     );
     let m = budget.max_batch_tokens;
     let gdn = gdn_two_phase_bytes(config, m.min(args.max_seq_len));

@@ -30,7 +30,7 @@ lever_group! {
     ple_serial_fault: Switch = "off", None, "METRALE_PLE_SERIAL_FAULT", "crates/storage/src/ngram_cache_fault.rs", "`METRALE_PLE_SERIAL_FAULT=1` faults every batch serially. `1` turns it on.";
     qwen4exp_decode_prof: Switch = "off", None, "METRALE_QWEN4EXP_DECODE_PROF", "crates/model-layers/src/layers/qwen3_ssm/trait_decode_hc.rs", "METRALE_QWEN4EXP_DECODE_PROF=1: per-stage wall clock, first tokens only (the counter caps the log volume). `1` turns it on.";
     qwen4exp_no_ple: Switch = "off", None, "METRALE_QWEN4EXP_NO_PLE", "crates/model-arch/src/weight_loader/qwen4_exp.rs", "With PLE disabled for bisection, skip the 21 MB arena and the 128-shard open entirely rather than building what we will not run. `1` turns it on.";
-    vision_max_pixels: Int = "0", "--vision-max-pixels", "METRALE_VISION_MAX_PIXELS", "crates/server/src/main_modules/serve.rs", "The pixel cap on one image; `0` leaves the model's own cap.";
+    vision_max_pixels: Int = "0", "--vision-max-pixels", "METRALE_VISION_MAX_PIXELS", "crates/server/src/main_modules/serve_phases/load_levers.rs", "The pixel cap on one image; `0` leaves the model's own cap.";
     vision_posinterp: Switch = "on", None, "METRALE_VISION_POSINTERP", "crates/model-layers/src/layers/vision_encoder/enc_impl/forward.rs", "1. `0` turns it off.";
     weight_dual_rail: Switch = "off", None, "METRALE_WEIGHT_DUAL_RAIL", "crates/model-weights/src/weight_tier_rdma.rs", "Rail 0 defaults to the shared expert CX7 link; dual-rail is opt-in (METRALE_WEIGHT_DUAL_RAIL=1). `1` turns it on.";
     weight_rail2_dev: Text = "unset", None, "METRALE_WEIGHT_RAIL2_DEV", "crates/model-weights/src/weight_tier_rdma.rs", "Read in `crates/model-weights/src/weight_tier_rdma.rs`.";

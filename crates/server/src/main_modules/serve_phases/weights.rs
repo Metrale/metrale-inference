@@ -38,13 +38,16 @@ pub(crate) fn quant_multiplier(config: &ModelConfig) -> Option<f64> {
 }
 
 pub(crate) fn load_weight_store(
-    args: &cli::ServeArgs,
     config: &ModelConfig,
     model_dir: &Path,
     gpu: &dyn metrale_gpu_runtime::gpu::GpuBackend,
     ep_rank: usize,
     ep_size: usize,
     oom_reserve_bytes: usize,
+    // 2026-10-17: `--no-fast-load` / `METRALE_FAST_LOAD` and `--fast-load-prefetch-shards` /
+    // `METRALE_FAST_LOAD_PREFETCH_SHARDS`, resolved once in `LoadLevers`.
+    fast_load: bool,
+    prefetch_shards: bool,
 ) -> Result<metrale_model_weights::weights::WeightStore> {
     use metrale_model_weights::weights::WeightLoader;
     if matches!(
@@ -90,9 +93,7 @@ pub(crate) fn load_weight_store(
         return Ok(store);
     }
 
-    let use_fast_load =
-        !args.no_fast_load && std::env::var("METRALE_FAST_LOAD").ok().as_deref() != Some("0");
-    let store = if use_fast_load {
+    let store = if fast_load {
         #[cfg(unix)]
         {
             tracing::info!("Using fast weight loader (O_DIRECT + pipelined read/copy)");
@@ -121,10 +122,7 @@ pub(crate) fn load_weight_store(
             }
             loader.defer = defer_hook(config);
             loader.defer_charge = defer_charge(config);
-            loader.prefetch_shards = args.fast_load_prefetch_shards
-                || std::env::var("METRALE_FAST_LOAD_PREFETCH_SHARDS")
-                    .ok()
-                    .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+            loader.prefetch_shards = prefetch_shards;
             if loader.prefetch_shards {
                 tracing::info!("Fast weight loader shard prefetch/readahead enabled");
             }
@@ -134,6 +132,7 @@ pub(crate) fn load_weight_store(
         }
         #[cfg(not(unix))]
         {
+            let _ = prefetch_shards;
             anyhow::bail!("--fast-load requires a Unix host (needs O_DIRECT / posix_fadvise)");
         }
     } else {

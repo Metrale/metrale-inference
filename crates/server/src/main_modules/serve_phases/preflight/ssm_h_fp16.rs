@@ -19,7 +19,12 @@ use crate::cli;
 /// With `f16-pool` the h pools hold 2 bytes per element and prefill runs its
 /// FP32 kernels over a per-slot FP32 staging blob (`qwen3_ssm::ssm_h_fp16`);
 /// the refusals are the same for `f16` and `f16-pool`.
-pub(super) fn ssm_h_fp16_preconditions(args: &cli::ServeArgs, config: &ModelConfig) -> Result<()> {
+pub(super) fn ssm_h_fp16_preconditions(
+    args: &cli::ServeArgs,
+    config: &ModelConfig,
+    // 2026-10-17: `METRALE_GDN_FUSED_CONV` (`LoadLevers::gdn_fused_conv`).
+    gdn_fused_conv: bool,
+) -> Result<()> {
     // 2026-09-26: `ssm_h_fp16_enabled` is the resolution the kernels
     // dispatch on: `--ssm-h-dtype`, else `METRALE_SSM_H_FP16`.
     if !metrale_model_layers::layers::qwen3_ssm::ssm_h_fp16_enabled()
@@ -72,7 +77,7 @@ pub(super) fn ssm_h_fp16_preconditions(args: &cli::ServeArgs, config: &ModelConf
              (gated_delta_rule_decode, ..._decode_f32_strided) have no FP16 twin in stage 1."
         );
     }
-    if std::env::var("METRALE_GDN_FUSED_CONV").ok().as_deref() == Some("1") {
+    if gdn_fused_conv {
         anyhow::bail!(
             "--ssm-h-dtype f16 is incompatible with METRALE_GDN_FUSED_CONV=1 —              gated_delta_rule_decode_f32_conv_norm has no FP16 twin in stage 1."
         );

@@ -98,6 +98,7 @@ pub struct RunHandles {
 /// and the callers ignore the error.
 pub fn start(
     args: crate::cli::ServeArgs,
+    report_target: Result<report::Target, &'static str>,
     progress_rx: std::sync::mpsc::Receiver<capture_layer::ProgressEvent>,
     host: std::sync::Arc<crate::main_modules::model_host::ModelHost>,
 ) -> std::sync::mpsc::Sender<RunHandles> {
@@ -114,6 +115,7 @@ pub fn start(
             #[cfg(feature = "bench")]
             let bench = bench_host::Wiring::from_args(&args);
             let mut app = app::App::new(args);
+            app.help.target = report_target;
             #[cfg(feature = "bench")]
             bench.attach(&mut app, &host, runtime.clone());
             app.host = Some(host);
@@ -156,14 +158,11 @@ pub fn stop_and_join(timeout: std::time::Duration) {
 /// 2026-09-26: True when the TUI must not start and `main.rs` installs the
 /// plain fmt subscriber.
 ///
-/// True for `--no-tui`, `METRALE_NO_TUI=1`, stdout or stdin not a terminal,
+/// True for `no_tui_flag` (`--no-tui` or `METRALE_NO_TUI`, resolved by the caller), stdout or stdin not a terminal,
 /// or `TERM` unset or `dumb`. `serve` additionally starts the TUI only on
 /// rank 0.
 pub fn plain_mode(no_tui_flag: bool) -> bool {
     if no_tui_flag {
-        return true;
-    }
-    if std::env::var("METRALE_NO_TUI").as_deref() == Ok("1") {
         return true;
     }
     if !std::io::stdout().is_terminal() || !std::io::stdin().is_terminal() {

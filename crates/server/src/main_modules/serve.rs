@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 use crate::cli;
 use crate::main_modules::AppState;
@@ -45,6 +45,7 @@ enum Startup {
 /// a shutdown.
 pub(crate) async fn serve(
     args: cli::ServeArgs,
+    settings: Arc<metrale_settings::InferenceServerSettings>,
     tui_progress: Option<std::sync::mpsc::Receiver<crate::tui::capture_layer::ProgressEvent>>,
 ) -> Result<()> {
     // 2026-09-26: One host for the process lifetime, created before startup so
@@ -67,9 +68,7 @@ pub(crate) async fn serve(
     // 2026-09-26: Before any load, so the policy is in force from the moment
     // the listener is up, also while no model is loaded.
     host.set_auth(build_auth_config(&args)?);
-    // 2026-10-17: Resolved before the process state is built from it, so a malformed lever
-    // stops the boot before any model work, a modelless boot included.
-    let settings = super::serve_settings::resolve(&metrale_io_host_std::ProcessEnv, &args)?;
+    let body_limit = crate::main_modules::serve_router::max_body_bytes(&settings)?;
     // 2026-09-26: Process-scoped too, and installed before the first model.
     host.set_process(
         super::serve_load::Carried::from_settings(&settings).map_err(|e| anyhow::anyhow!("{e}"))?,
@@ -83,15 +82,23 @@ pub(crate) async fn serve(
             // 2026-09-26: The host owns the first load's scheduler thread too,
             // so the first swap can join it before tearing the model down.
             host.set_scheduler(prepared.scheduler);
-            crate::main_modules::serve_router::build_and_serve(host, &prepared.bind, prepared.port)
-                .await
+            crate::main_modules::serve_router::build_and_serve(
+                host,
+                &prepared.bind,
+                prepared.port,
+                body_limit,
+            )
+            .await
         }
         Startup::Worker => Ok(()),
         // 2026-09-26: Nothing to serve yet, but the listener still binds, so a
         // model chosen from the Library later has a port. Until one is
         // published, routes that need a model answer 503 `model_not_loaded`.
         Startup::AwaitingModel => {
-            crate::main_modules::serve_router::build_and_serve(host, &bind_addr, bind_port).await
+            crate::main_modules::serve_router::build_and_serve(
+                host, &bind_addr, bind_port, body_limit,
+            )
+            .await
         }
     }
 }
@@ -120,7 +127,15 @@ fn startup(
     if let Some(progress_rx) = tui_progress
         && args.rank == 0
     {
-        let tx = crate::tui::start(args.clone(), progress_rx, host.clone());
+        let tx = crate::tui::start(
+            args.clone(),
+            crate::tui::report::target_from(
+                settings.telemetry.report_client_id.clone(),
+                settings.telemetry.report_repo.clone(),
+            ),
+            progress_rx,
+            host.clone(),
+        );
         // 2026-09-26: Every later load sends its handles through this, so the
         // dashboard follows the model that is serving.
         host.set_tui_handles(tx.clone());
@@ -278,32 +293,15 @@ pub(super) fn build_auth_config(
     Ok(Some(Arc::new(cfg)))
 }
 
-/// 2026-09-26: The vision area bound, first match wins: `--vision-max-pixels`
-/// above 0, then a positive `METRALE_VISION_MAX_PIXELS`, then the checkpoint's
-/// processor config (`read_preprocessor_max_pixels`), else `None`.
-///
-/// # Errors
-/// When `METRALE_VISION_MAX_PIXELS` is set to something other than blank, `0`
-/// or an unsigned integer.
+/// 2026-09-26: The vision area bound, first match wins: `--vision-max-pixels` /
+/// `METRALE_VISION_MAX_PIXELS` above 0 (2026-10-17: `lever`, `LoadLevers::vision_max_pixels`,
+/// resolved once from the settings), then the checkpoint's processor config
+/// (`read_preprocessor_max_pixels`), else `None`.
 pub(super) fn resolve_vision_max_pixels(
-    args: &cli::ServeArgs,
+    lever: Option<usize>,
     model_dir: &std::path::Path,
-) -> Result<Option<usize>> {
-    if args.vision_max_pixels > 0 {
-        return Ok(Some(args.vision_max_pixels));
-    }
-    if let Ok(raw) = std::env::var("METRALE_VISION_MAX_PIXELS") {
-        let trimmed = raw.trim();
-        if !trimmed.is_empty() && trimmed != "0" {
-            let parsed = trimmed.parse::<usize>().with_context(|| {
-                format!("METRALE_VISION_MAX_PIXELS must be a positive integer, got {raw:?}")
-            })?;
-            if parsed > 0 {
-                return Ok(Some(parsed));
-            }
-        }
-    }
-    Ok(read_preprocessor_max_pixels(model_dir))
+) -> Option<usize> {
+    lever.or_else(|| read_preprocessor_max_pixels(model_dir))
 }
 
 /// 2026-09-26: The image area bound from the checkpoint's processor config,

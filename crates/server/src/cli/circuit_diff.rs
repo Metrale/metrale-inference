@@ -259,6 +259,9 @@ pub(crate) fn run_diff(args: CircuitDiffArgs) -> Result<()> {
     )?;
     crate::main_modules::serve_flags::publish_kernel_flags(&args.serve, &settings);
     let num_drafts = args.serve.resolved_num_drafts();
+    // 2026-10-17: Each report's graph label, from the settings the engine loads with (until now
+    // the tool's own environment was read at report time).
+    let label = |eager: bool| if eager { "eager" } else { "graphed" };
     let Some(engine) = load_engine(args.serve, &settings)? else {
         bail!("this rank is an expert-parallel worker; run the diff on the head");
     };
@@ -299,7 +302,7 @@ pub(crate) fn run_diff(args: CircuitDiffArgs) -> Result<()> {
             (&args.batch, args.fragment_slots),
             args.steps,
             &forwards,
-            &args.out,
+            (&args.out, label(settings.kernels.no_decode_graphs_multiseq)),
         );
     }
     if !args.verify_batch.is_empty() {
@@ -314,7 +317,7 @@ pub(crate) fn run_diff(args: CircuitDiffArgs) -> Result<()> {
             num_drafts,
             args.steps,
             &forwards,
-            &args.out,
+            (&args.out, label(settings.speculative.no_mtp_verify_graphs)),
         );
     }
     if !args.verify.is_empty() {
@@ -325,7 +328,7 @@ pub(crate) fn run_diff(args: CircuitDiffArgs) -> Result<()> {
             (&args.verify, args.mtp),
             args.steps,
             &forwards,
-            &args.out,
+            (&args.out, label(settings.telemetry.debug_no_graph)),
         );
     }
     let mut variants = Vec::new();
@@ -371,11 +374,7 @@ pub(crate) fn run_diff(args: CircuitDiffArgs) -> Result<()> {
     let control = control.context("no prompt ran")?;
     let reasons = failures(&per_prompt, &control);
     let report = Report {
-        graphs: if std::env::var("METRALE_DEBUG_NO_GRAPH").as_deref() == Ok("1") {
-            "eager"
-        } else {
-            "graphed"
-        },
+        graphs: label(settings.telemetry.debug_no_graph),
         steps: args.steps,
         variants,
         prompts: reports,
@@ -408,17 +407,13 @@ fn batch_report(
     (widths, fragment): (&[usize], bool),
     steps: usize,
     forwards: &[(&'static str, ForwardSelect)],
-    out: &Path,
+    (out, graphs): (&Path, &'static str),
 ) -> Result<()> {
     let variants = disclosed(model, forwards)?;
     let widths = batch::diff_widths(model, (widths, fragment), steps, forwards)?;
     let reasons = batch::batch_failures(&widths);
     let report = BatchReport {
-        graphs: if std::env::var("METRALE_NO_DECODE_GRAPHS_MULTISEQ").as_deref() == Ok("1") {
-            "eager"
-        } else {
-            "graphed"
-        },
+        graphs,
         fragment_slots: fragment,
         steps,
         variants,

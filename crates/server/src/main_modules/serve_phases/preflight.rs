@@ -54,13 +54,15 @@ pub(crate) fn preflight_reserve(
     // headroom (`headroom::post_load_yardstick`). The caller gathers it: none
     // of it is in `args` or `config`.
     post_load: &PostLoadInputs<'_>,
+    // 2026-10-17: The load's levers, resolved once at the top of `load_engine`.
+    levers: &super::LoadLevers,
 ) -> Result<ReservePreflight> {
     // 2026-09-26: `args.dflash` counts as speculative here because
     // `TransformerModel::new` allocates the SSM rollback pools whenever DFlash
     // capture layers exist (`has_mtp` includes `dflash_kgamma > 0`).
     let spec_on_pool = args.speculative_proposer_requested();
     refuse_speculation_over_mamba2(args, config)?;
-    ssm_h_fp16_preconditions(args, config)?;
+    ssm_h_fp16_preconditions(args, config, levers.gdn_fused_conv)?;
     // 2026-09-26: A DFlash serve's verify pools are γ + 1 rows wide on every
     // slot. 2026-09-30: γ is the one the build sizes them for
     // (`ServeArgs::serve_dflash_gamma`); until then this peeked the drafter's block
@@ -196,7 +198,7 @@ pub(crate) fn preflight_reserve(
     // depth that fits (`decode_ring::autofit`). A shrunk depth is published
     // (`set_decode_ring_slots`) so `TransformerModel::new` allocates the depth
     // reserved here.
-    let ring_requested = decode_ring::requested_slots(args, config);
+    let ring_requested = decode_ring::requested_slots(args, config, levers.ssm_reserve_ring_full);
     let ring_slot_bytes = decode_ring::slot_bytes(args, per_seq_blob);
     // 2026-09-26: The auto-fit's yardstick: predicted post-load KV headroom
     // where the load's residency can be predicted, else pre-load free memory

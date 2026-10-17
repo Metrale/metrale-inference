@@ -133,10 +133,24 @@ async fn serve_main() -> Result<()> {
         return cli::circuit::dispatch(args);
     }
 
+    // 2026-10-17: A serve's levers resolve here, once, before the dashboard decision reads
+    // them; `serve` takes this value. A malformed lever stops the boot before any subscriber
+    // or dashboard exists.
+    let serve_settings = match &cli.command {
+        Command::Serve(args) => Some(main_modules::serve_settings::resolve(
+            &metrale_io_host_std::ProcessEnv,
+            args,
+        )?),
+        _ => None,
+    };
     let no_tui = match &cli.command {
         // 2026-09-26: `--check-kernels` prints a report and one JSON line on
         // stdout and exits, so it runs without a dashboard.
-        Command::Serve(args) => args.no_tui || args.rank > 0 || args.check_kernels,
+        Command::Serve(args) => {
+            serve_settings.as_ref().is_some_and(|s| s.server.no_tui)
+                || args.rank > 0
+                || args.check_kernels
+        }
         // 2026-09-26: Benchmarks always log in plain mode.
         Command::Benchmark(_) => true,
         Command::DumpServeOptions
@@ -167,7 +181,10 @@ async fn serve_main() -> Result<()> {
         None
     } else {
         let (progress_tx, progress_rx) = std::sync::mpsc::channel();
-        tui::init::install_tty_subscriber(progress_tx);
+        // 2026-10-17: Only the dashboard reads a harness lever, so only this branch resolves them.
+        let harness =
+            main_modules::serve_settings::resolve_harness(&metrale_io_host_std::ProcessEnv)?;
+        tui::init::install_tty_subscriber(progress_tx, harness.tui_log_file.as_deref());
         Some(progress_rx)
     };
 
@@ -196,7 +213,10 @@ async fn serve_main() -> Result<()> {
         #[cfg(not(feature = "bench"))]
         Command::Benchmark(_) => unreachable!("refused before initialisation"),
         Command::Serve(args) => {
-            let serving = serve(args, tui_channels);
+            let Some(settings) = serve_settings else {
+                unreachable!("resolved above for every serve")
+            };
+            let serving = serve(args, settings, tui_channels);
             tokio::pin!(serving);
             // 2026-09-26: Only a send means shutdown. The sender stays parked in
             // `tui::shutdown` for the life of the process, and a closed channel

@@ -50,6 +50,9 @@ pub(crate) fn load_engine(
     mut args: cli::ServeArgs,
     settings: &metrale_settings::InferenceServerSettings,
 ) -> Result<Option<Engine>> {
+    // 2026-10-17: Every lever the load phases read, resolved before any model work so a
+    // malformed one stops the load first (ROTI, PCND).
+    let levers = serve_phases::LoadLevers::from_settings(settings)?;
     metrale_telemetry::progress::phase(1, "model resolve");
     let model_dir = serve_phases::resolve_model_dir(&args)?;
 
@@ -69,7 +72,7 @@ pub(crate) fn load_engine(
     let (mut config, config_json) = model_setup::configure_model(&args, &model_dir)?;
 
     let (vision_max_pixels, remote_image_policy, video_ffmpeg) =
-        model_setup::resolve_media_policies(&args, &model_dir, &mut config)?;
+        model_setup::resolve_media_policies(&args, &levers, &model_dir, &mut config)?;
 
     model_setup::log_model_config(&config);
 
@@ -106,7 +109,7 @@ pub(crate) fn load_engine(
         ep_size,
         tp_rank: _tp_rank,
         ep_rank,
-    } = serve_phases::resolve_topology(&args, &mut config)?;
+    } = serve_phases::resolve_topology(&args, levers.kv_paging, &mut config)?;
 
     let serve_phases::ReservePreflight {
         inference_reserve,
@@ -117,6 +120,7 @@ pub(crate) fn load_engine(
         plan: reserve_plan,
     } = load_phases::reserve_preflight(
         &args,
+        &levers,
         &config,
         gpu.as_ref(),
         free_mem,
@@ -149,6 +153,7 @@ pub(crate) fn load_engine(
 
     let store = load_phases::load_weights(
         &args,
+        &levers,
         &mut config,
         &model_dir,
         gpu.as_ref(),
@@ -167,7 +172,7 @@ pub(crate) fn load_engine(
         prefill_budget,
         max_batch_tokens,
         spec_tokens: _spec_tokens,
-    } = serve_phases::resolve_prefill_budget(&args, ssm_prefill_chunk);
+    } = serve_phases::resolve_prefill_budget(&args, ssm_prefill_chunk, levers.max_batch_tokens);
     // 2026-10-14: `METRALE_GLM_PREFILL_PIECE_ROWS`: refuse a prefill sizing the piece grid does
     // not divide before the KV cache is sized (`glm5next_prefill_piece::check_piece_budget`).
     if let Some(piece) = metrale_model_arch::glm5next_prefill_piece::piece_rows()? {
@@ -297,7 +302,12 @@ pub(crate) fn load_engine(
     let early_high_speed_swap_cfg = serve_phases::build_high_speed_swap_config(&args)?;
 
     let mut model_opt = Some(model);
-    if serve_phases::maybe_run_ep_worker(&args, &mut model_opt, &early_high_speed_swap_cfg)? {
+    if serve_phases::maybe_run_ep_worker(
+        &args,
+        levers.allow_spec_mismatch,
+        &mut model_opt,
+        &early_high_speed_swap_cfg,
+    )? {
         return Ok(None);
     }
     let model = model_opt.expect("head retains model on rank 0");

@@ -346,17 +346,14 @@ pub(crate) fn verify_report(
     (ks, mtp): (&[usize], bool),
     steps: usize,
     forwards: &[(&'static str, ForwardSelect)],
-    out: &Path,
+    // 2026-10-17: The report path and its graph label (`METRALE_DEBUG_NO_GRAPH`, from settings).
+    (out, graphs): (&Path, &'static str),
 ) -> Result<()> {
     let variants = super::disclosed(model, forwards)?;
     let verify = diff_verify(model, prompt, ks, steps, mtp, forwards)?;
     let reasons = verify_failures(&verify);
     let report = VerifyDiffReport {
-        graphs: if std::env::var("METRALE_DEBUG_NO_GRAPH").as_deref() == Ok("1") {
-            "eager"
-        } else {
-            "graphed"
-        },
+        graphs,
         mtp,
         steps,
         variants,

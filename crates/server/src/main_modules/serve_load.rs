@@ -380,7 +380,7 @@ pub(crate) fn load_model(
         lora_disk_stageable,
     });
 
-    serve_phases::log_behavior_audit(&args, &ptx_set);
+    serve_phases::log_behavior_audit(&args, &ptx_set, settings.scheduler.disable_watchdogs);
 
     // 2026-09-26: Phases 10 and 11 (router, listening) run on the async side
     // (`serve_router`).
