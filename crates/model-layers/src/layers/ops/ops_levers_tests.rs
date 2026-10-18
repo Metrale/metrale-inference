@@ -59,10 +59,11 @@ fn the_presence_opt_outs_read_as_before() {
 }
 
 /// 2026-10-17: The `== "1"` switches: the LoRA skips, the hyper-connection paths, the GEMM
-/// shape log, `q2_0_mmq::native_q2_mmq_enabled` and `gemv_tier::batch8_kernel`'s classic arm.
+/// shape log, `q2_0_mmq::native_q2_mmq_enabled`, `gemv_tier::batch8_kernel`'s classic arm and
+/// the dense FFN's two MMQ tile kill switches (`dense_ffn.rs`'s `mmq_*_enabled`).
 #[test]
 fn the_opt_in_switches_read_as_before_except_the_switch_spellings() {
-    let cases: [Field; 7] = [
+    let cases: [Field; 9] = [
         ("METRALE_GGUF_NATIVE_Q2_MMQ", |l| l.native_q2_mmq),
         ("METRALE_LORA_NO_APPLY", |l| l.lora.no_apply),
         ("METRALE_LORA_NO_FFN", |l| l.lora_no_ffn),
@@ -70,6 +71,8 @@ fn the_opt_in_switches_read_as_before_except_the_switch_spellings() {
         ("METRALE_HC_DECODE_SPLIT", |l| l.hc.decode_split_forced),
         ("METRALE_GEMM_SHAPE_LOG", |l| l.gemm_shape_log),
         ("METRALE_NO_BATCH8_RT", |l| !l.batch8_rt),
+        ("METRALE_NO_MMQ_SMALL_TILE", |l| !l.mmq_small_tile),
+        ("METRALE_NO_MMQ_TILE64", |l| !l.mmq_tile64),
     ];
     for (env, field) in cases {
         let changes = check(env, Old::OptIn, |p| p == Some("1"), |s| field(&ops(s)));
@@ -189,6 +192,8 @@ fn the_declared_defaults_are_the_old_unset_values() {
             mtp_tc: old_unset_or_empty(None),
             batch8_rt: true,
             gemv_exact_m_tiers: true,
+            mmq_small_tile: true,
+            mmq_tile64: true,
         }
     );
     assert_eq!(

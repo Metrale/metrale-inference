@@ -88,6 +88,12 @@ pub struct OpsLevers {
     /// 2026-09-25: On unless `METRALE_NO_MTP_TC` holds a non-empty value, `0` included: the MTP
     /// drafter's BF16 small-M GEMMs run on the tensor-core entries (`dense_gemv_tc.rs`).
     pub mtp_tc: bool,
+    /// 2026-09-25: On unless `METRALE_NO_MMQ_SMALL_TILE` is switched on: the dense FFN's 16-,
+    /// 32- and 64-row NVFP4 MMQ tiles are looked up (`DenseFfnLayer::new_with_activation`).
+    pub mmq_small_tile: bool,
+    /// 2026-09-25: On unless `METRALE_NO_MMQ_TILE64` is switched on: the 64-row tile is looked
+    /// up, when [`Self::mmq_small_tile`] is on too.
+    pub mmq_tile64: bool,
 }
 
 /// 2026-09-25: The rule of the tensor-core kill switches and the widening: a variable that is
@@ -140,6 +146,8 @@ impl OpsLevers {
             mtp_tc: unset_or_empty(s.speculative.no_mtp_tc.as_deref()),
             batch8_rt: !s.scheduler.no_batch8_rt,
             gemv_exact_m_tiers: !s.storage.no_gemv_exact_m_tiers,
+            mmq_small_tile: !k.no_mmq_small_tile,
+            mmq_tile64: !k.no_mmq_tile64,
         })
     }
 
@@ -180,6 +188,8 @@ impl OpsLevers {
             mtp_tc: true,
             batch8_rt: true,
             gemv_exact_m_tiers: true,
+            mmq_small_tile: true,
+            mmq_tile64: true,
         }
     }
 }

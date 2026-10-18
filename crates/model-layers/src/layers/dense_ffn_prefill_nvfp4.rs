@@ -12,8 +12,8 @@
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::DevicePtr;
 
+use super::DenseFfnLayer;
 use super::nvfp4_plan::Nvfp4PrefillPlan;
-use super::{DenseFfnLayer, mmq_small_tile_enabled, mmq_tile64_enabled};
 use crate::layer::ForwardContext;
 use crate::layers::ops;
 
@@ -70,21 +70,11 @@ impl DenseFfnLayer {
                             self.ensure_nvfp4_mmq_weight($fp4cell, ctx.gpu, $w, $n, $k, stream)?;
                         // 2026-09-25: Size the M tile to the batch: `grid.y = ceil(m / tile)`, and
                         // every extra M tile streams the whole weight again.
-                        let (tk_nc, tk_wc, tile) = if m <= 16
-                            && self.nvfp4_mmq16_nc_k.0 != 0
-                            && mmq_small_tile_enabled()
-                        {
+                        let (tk_nc, tk_wc, tile) = if m <= 16 && self.nvfp4_mmq16_nc_k.0 != 0 {
                             (self.nvfp4_mmq16_nc_k, self.nvfp4_mmq16_wc_k, 16u32)
-                        } else if m <= 32
-                            && self.nvfp4_mmq32_nc_k.0 != 0
-                            && mmq_small_tile_enabled()
-                        {
+                        } else if m <= 32 && self.nvfp4_mmq32_nc_k.0 != 0 {
                             (self.nvfp4_mmq32_nc_k, self.nvfp4_mmq32_wc_k, 32u32)
-                        } else if m <= 64
-                            && self.nvfp4_mmq64_nc_k.0 != 0
-                            && mmq_small_tile_enabled()
-                            && mmq_tile64_enabled()
-                        {
+                        } else if m <= 64 && self.nvfp4_mmq64_nc_k.0 != 0 {
                             (self.nvfp4_mmq64_nc_k, self.nvfp4_mmq64_wc_k, 64u32)
                         } else {
                             (self.nvfp4_mmq_nc_k, self.nvfp4_mmq_wc_k, 128u32)

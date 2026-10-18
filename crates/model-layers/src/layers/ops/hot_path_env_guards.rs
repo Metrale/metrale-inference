@@ -24,18 +24,7 @@ const GUARDED: [(&str, &[&str]); 49] = [
     ("layers/dense_ffn_prefill_fp8.rs", &[]),
     ("layers/dense_ffn_prefill_nvfp4.rs", &[]),
     ("layers/dense_ffn_nvfp4_plan.rs", &[]),
-    (
-        "layers/dense_ffn.rs",
-        &[
-            // 2026-09-25: Kernel-choice helpers cached in a `OnceLock`, so the choice is fixed after
-            // the first read, as CUDA graph capture needs.
-            "mmq_small_tile_enabled",
-            "mmq_tile64_enabled",
-            // 2026-09-25: Called by the weight loaders at load time.
-            "finalize_q4k_load",
-            "finalize_nvfp4_mmq_load",
-        ],
-    ),
+    ("layers/dense_ffn.rs", &[]),
     ("layers/moe/forward_prefill_routed.rs", &[]),
     (
         "../../model-engine/src/model/trait_impl/decode_a.rs",

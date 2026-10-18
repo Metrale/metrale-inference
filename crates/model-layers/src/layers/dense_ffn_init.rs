@@ -35,6 +35,17 @@ impl DenseFfnLayer {
         let dense_gemv_bf16_k = super::try_kernel(gpu, "gemv", "dense_gemv_bf16");
         let dense_gemm_bf16_k = super::try_kernel(gpu, "gemm", "dense_gemm_bf16");
         let dense_gemm_tc_k = super::try_kernel(gpu, "gemm_tc", "dense_gemm_tc");
+        // 2026-10-17: A small MMQ tile switched off keeps a zero handle, which the prefill
+        // dispatch reads as "use the 128-row tile" (`dense_ffn_prefill_nvfp4.rs`).
+        let small = lc.levers.ops.mmq_small_tile;
+        let tile64 = small && lc.levers.ops.mmq_tile64;
+        let mmq_tile = |armed: bool, func: &str| {
+            if armed {
+                super::try_kernel(gpu, "nvfp4_mmq", func)
+            } else {
+                KernelHandle(0)
+            }
+        };
 
         let layer = Self {
             weights,
@@ -87,12 +98,13 @@ impl DenseFfnLayer {
             q4k_down: std::sync::OnceLock::new(),
             nvfp4_mmq_nc_k: super::try_kernel(gpu, "nvfp4_mmq", "metrale_nvfp4_mmq128_nc"),
             nvfp4_mmq_wc_k: super::try_kernel(gpu, "nvfp4_mmq", "metrale_nvfp4_mmq128_wc"),
-            nvfp4_mmq16_nc_k: super::try_kernel(gpu, "nvfp4_mmq", "metrale_nvfp4_mmq16_nc"),
-            nvfp4_mmq16_wc_k: super::try_kernel(gpu, "nvfp4_mmq", "metrale_nvfp4_mmq16_wc"),
-            nvfp4_mmq32_nc_k: super::try_kernel(gpu, "nvfp4_mmq", "metrale_nvfp4_mmq32_nc"),
-            nvfp4_mmq32_wc_k: super::try_kernel(gpu, "nvfp4_mmq", "metrale_nvfp4_mmq32_wc"),
-            nvfp4_mmq64_nc_k: super::try_kernel(gpu, "nvfp4_mmq", "metrale_nvfp4_mmq64_nc"),
-            nvfp4_mmq64_wc_k: super::try_kernel(gpu, "nvfp4_mmq", "metrale_nvfp4_mmq64_wc"),
+            nvfp4_mmq16_nc_k: mmq_tile(small, "metrale_nvfp4_mmq16_nc"),
+            nvfp4_mmq16_wc_k: mmq_tile(small, "metrale_nvfp4_mmq16_wc"),
+            nvfp4_mmq32_nc_k: mmq_tile(small, "metrale_nvfp4_mmq32_nc"),
+            nvfp4_mmq32_wc_k: mmq_tile(small, "metrale_nvfp4_mmq32_wc"),
+            nvfp4_mmq64_nc_k: mmq_tile(tile64, "metrale_nvfp4_mmq64_nc"),
+            nvfp4_mmq64_wc_k: mmq_tile(tile64, "metrale_nvfp4_mmq64_wc"),
+            mmq_load: super::MmqLoadLevers::of(lc.levers),
             nvfp4_quant_act_k: super::try_kernel(gpu, "nvfp4_mmq", "metrale_nvfp4_quantize_bf16"),
             nvfp4_repack_k: super::try_kernel(gpu, "nvfp4_mmq", "metrale_nvfp4_repack"),
             nvfp4_silu_scaled_k: super::try_kernel(

@@ -205,7 +205,6 @@ crates/model-engine/tests/k3_tp4_composed_cuda.rs
 crates/model-layers/src/circuit_exec/policy.rs
 crates/model-layers/src/ep_wire.rs
 crates/model-layers/src/forward/qwen3_5/full_attention.rs
-crates/model-layers/src/layers/dense_ffn.rs
 crates/model-layers/src/layers/dense_ffn_batch16_decode.rs
 crates/model-layers/src/layers/dense_ffn_m16_tc.rs
 crates/model-layers/src/layers/dense_ffn_w8a8_prefill.rs

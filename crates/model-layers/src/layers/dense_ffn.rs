@@ -107,8 +107,8 @@ pub struct DenseFfnLayer {
     // `nvfp4_silu_mul_quant` or `nvfp4_scale_bf16`).
     nvfp4_mmq_nc_k: KernelHandle,
     nvfp4_mmq_wc_k: KernelHandle,
-    /// 2026-09-25: The 16-, 32- and 64-row MMQ tiles, chosen for m <= 16, 32 or 64
-    /// (`mmq_small_tile_enabled`, `mmq_tile64_enabled`). A zero handle keeps the 128-row tile.
+    /// 2026-09-25: The 16-, 32- and 64-row MMQ tiles, chosen for m <= 16, 32 or 64. A zero handle
+    /// keeps the 128-row tile; `OpsLevers::mmq_small_tile` and `mmq_tile64` off leave it zero.
     nvfp4_mmq16_nc_k: KernelHandle,
     nvfp4_mmq16_wc_k: KernelHandle,
     nvfp4_mmq32_nc_k: KernelHandle,
@@ -218,21 +218,10 @@ pub struct DenseFfnLayer {
     // prefill on the dequant path.
     q2_0_mmq_nc_k: KernelHandle,
     q2_0_mmq_wc_k: KernelHandle,
+    /// 2026-10-17: The levers `finalize_q4k_load` and `finalize_nvfp4_mmq_load` read.
+    mmq_load: MmqLoadLevers,
 }
 
-/// 2026-09-25: The 16/32/64-row MMQ tiles: on unless `METRALE_NO_MMQ_SMALL_TILE` is exactly `1`.
-/// Read once per process.
-fn mmq_small_tile_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("METRALE_NO_MMQ_SMALL_TILE").as_deref() != Ok("1"))
-}
-
-/// 2026-09-25: The 64-row MMQ tile: on unless `METRALE_NO_MMQ_TILE64` is exactly `1`;
-/// `METRALE_NO_MMQ_SMALL_TILE=1` also turns it off. Read once per process.
-fn mmq_tile64_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("METRALE_NO_MMQ_TILE64").as_deref() != Ok("1"))
-}
 impl DenseFfnLayer {
     pub fn new(
         weights: DenseFfnWeights,
@@ -244,7 +233,7 @@ impl DenseFfnLayer {
 
     /// 2026-09-25: Load-time setup for the Q4_K MMQ prefill arm. Returns at once for packed-Q2 or
     /// FP8 layers, when one of the four Q4_K kernels is missing, or when `METRALE_FFN_MMQ` is
-    /// unset. Otherwise it builds the gate/up Q4_K copies and the down copy (int8 when
+    /// unset (`MmqLoadLevers`). Otherwise it builds the gate/up Q4_K copies and the down copy (int8 when
     /// `int8_gemm_faith2` and `requant_a_bf16_int8` resolved and `METRALE_FFN_MMQ_DOWN_Q4K` is
     /// unset, Q4_K otherwise), synchronizes `stream`, and frees the transposed `_t` copies.
     pub fn finalize_q4k_load(
@@ -267,7 +256,7 @@ impl DenseFfnLayer {
             && self.q4k_quant_act_k.0 != 0
             && self.q4k_quant_w_k.0 != 0
             && self.dequant_nvfp4_bf16_k.0 != 0
-            && std::env::var_os("METRALE_FFN_MMQ").is_some();
+            && self.mmq_load.ffn_mmq;
         if !q4k_active {
             return Ok(());
         }
@@ -275,7 +264,7 @@ impl DenseFfnLayer {
         self.build_q4k_gate_up(gpu, h, inter, stream)?;
         let down_faith2 = self.int8_faith2_k.0 != 0
             && self.requant_a_int8_k.0 != 0
-            && std::env::var_os("METRALE_FFN_MMQ_DOWN_Q4K").is_none();
+            && !self.mmq_load.ffn_mmq_down_q4k;
         self.finish_q4k_load(gpu, h, inter, stream, down_faith2)
     }
 
@@ -305,12 +294,12 @@ impl DenseFfnLayer {
             && self.nvfp4_silu_scaled_k.0 != 0
             && matches!(self.activation, FfnActivation::SiLU)
             && self.mmq_gate_up_declared()
-            && std::env::var_os("METRALE_NO_FFN_NVFP4_MMQ").is_none();
+            && self.mmq_load.ffn_nvfp4_mmq;
         if !active {
             return Ok(());
         }
         self.build_nvfp4_mmq_gate_up(gpu, h, inter, stream)?;
-        let down_mmq = std::env::var_os("METRALE_NO_FFN_NVFP4_MMQ_DOWN").is_none();
+        let down_mmq = self.mmq_load.ffn_nvfp4_mmq_down;
         self.finish_nvfp4_mmq_load(gpu, h, inter, stream, down_mmq)
     }
 
@@ -419,6 +408,7 @@ mod w8a8;
 /// 2026-09-26: The `ensure_*_weight` builders and the steps of the `finalize_*_load` functions.
 #[path = "dense_ffn_load.rs"]
 mod load;
+use load::MmqLoadLevers;
 
 /// 2026-09-26: The weight-overlay installers and the LoRA delta launches.
 #[path = "dense_ffn_overlays.rs"]
