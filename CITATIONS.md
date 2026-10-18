@@ -161,7 +161,7 @@ canonical two-sided sign masks; attention dot product preserved since
 | `kernels/gb10/common/reshape_and_cache_turbo.cu` | TURBO4 + TURBO3 codebooks + bounds + MAX defines swapped to N(0,1/128); turbo4/turbo3/turbo8 write paths drop the per-group amax compute and write a unit FP8/BF16 scale for byte-layout compat |
 | `kernels/gb10/common/paged_decode_attn_turbo4{,_128,_512}.cu` | 16-level codebook → N(0,1/128) |
 | `kernels/gb10/common/paged_decode_attn_turbo3{,_128}.cu` | 8-level codebook → N(0,1/128) |
-| `kernels/gb10/common/paged_decode_attn_turbo8{,_128,_512}.cu` | 16-level codebook (used for outlier handling) → N(0,1/128) |
+| `kernels/gb10/common/paged_decode_attn_turbo8{,_128,_512}.cu` | No codebook change: turbo8 has no codebook. It stores one FP8 E4M3 byte per element and one BF16 scale per 16-element group (`crates/cache/src/kv_cache.rs` block sizing, `reshape_and_cache_flash_turbo8`). This row previously said "16-level codebook", which was wrong. |
 | `crates/cache/src/kv_dequant.rs` | `TURBO4_LUT`, `TURBO3_LUT` → N(0,1/128) |
 
 Behavior: post-WHT values feed the matching N(0,1/d) Lloyd-Max codebook
@@ -251,6 +251,22 @@ Remaining work for true asymmetric:
 - New write kernels per combo (`reshape_and_cache_flash_turbo4k_turbo3v` etc) that pack K with one layout and V with another in a single launch
 - New decode kernels (`paged_decode_attn_turbo4k_turbo3v`) that mix K-side and V-side dequant logic
 - Storage byte accounting for asym layouts in `kv_cache.rs` block-stride helpers
+
+### Trellis-coded KV cache (TCQ)
+
+The 128-group rotated codecs `turbo3_tcq`, `turbo2_tcq`, `turbo1_tcq` and
+`turbo4_n128` are derived from `spiritbuun/buun-llama-cpp` (MIT, pinned
+at `34ef0ef7c6ea`; licence in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) §7). Its
+codebooks are copied verbatim and credit spiritbuun, as upstream asks. The
+design is described in "Closing the Gap: Trellis-Coded Quantization for KV
+Cache at 2-3 Bits" (spiritbuun, 2026; Hugging Face dataset
+`spiritbuun/turboquant-tcq-kv-cache`, not on arXiv).
+
+| Paper | arXiv | What we take | Where |
+|---|---|---|---|
+| QTIP: Quantization with Trellises and Incoherence Processing — Tseng, Sun, Hou, De Sa | [2406.11235](https://arxiv.org/abs/2406.11235) | The bitshift trellis (a state is the last L bits of the stream, so any element decodes from two bytes) and its Viterbi encoder. | `crates/kv-tq128/src/trellis.rs` |
+| Optimal Quantization for Matrix Multiplication — Ordentlich, Polyanskiy | [2410.13780](https://arxiv.org/abs/2410.13780) | The product-aware distortion that upstream trained the TCQ codebooks against. We copy the trained books and do not retrain. | `crates/kv-tq128/src/codebooks/` |
+| TurboQuant: Online Vector Quantization with Near-optimal Distortion Rate — Zandieh, Daliri, Hadian, Mirrokni | [2504.19874](https://arxiv.org/abs/2504.19874) | Normalize, then randomized Hadamard rotation, then quantize the coordinates against a fixed codebook, with a norm-preserving stored scale. This covers all four codecs. `turbo4_n128` is the plain scalar form: upstream's 16-level codebook with one fp16 norm per 128 values. | `crates/kv-tq128/src/rotation.rs`, `crates/kv-tq128/src/group.rs` |
 
 ### Outstanding (not yet ported)
 

@@ -156,12 +156,23 @@ recorded in [`CITATIONS.md`](CITATIONS.md) and
 - **`TheTom/turboquant_plus`** — Apache-2.0. The research repository whose
   papers document the per-feature designs (asymmetric K/V, sparse V, InnerQ,
   layer-aware V, weight rotation). Upstream: https://github.com/TheTom/turboquant_plus
+- **`spiritbuun/buun-llama-cpp`** — MIT. Text at
+  [`LICENSES/MIT.txt`](LICENSES/MIT.txt). `Copyright (c) 2023-2026 The ggml
+  authors` (upstream root `LICENSE`, unchanged from llama.cpp). This is the
+  source of the TCQ trellis codebooks, the bitshift-trellis block layout, the
+  V decode scales (turbo1/2/3_tcq), and the 16-level codebook and midpoints of
+  `turbo4_n128`. The codebooks credit spiritbuun, as upstream asks. Pinned at
+  `34ef0ef7c6eaa58afd2011cf4385e8b2d76b225b`. Design report: "Closing the Gap:
+  Trellis-Coded Quantization for KV Cache at 2-3 Bits", Hugging Face dataset
+  `spiritbuun/turboquant-tcq-kv-cache` (Apache-2.0); it is cited, not vendored.
+  Upstream: https://github.com/spiritbuun/buun-llama-cpp
 - **In-repo paths**: `kernels/gb10/common/tq_plus_signs.cuh`,
   `kernels/gb10/common/tq_plus_innerq.cuh`,
   `kernels/gb10/common/tq_plus_innerq_apply.cu`,
   `kernels/gb10/common/paged_decode_attn_bf16k_turbo2v.cu` (sparse V),
   `crates/model-arch/src/weight_loader/qwen35/load_layers/tq_plus_weight_rotation.rs`,
-  `crates/cache/src/kv_cache/tests_tq_plus.rs`
+  `crates/cache/src/kv_cache/tests_tq_plus.rs`,
+  `crates/kv-tq128/` (from buun-llama-cpp)
 
 ---
 

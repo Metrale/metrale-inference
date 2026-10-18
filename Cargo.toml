@@ -35,6 +35,7 @@ members = [
     "crates/settings",
     "crates/serve-identity",
     "crates/kv-codec",
+    "crates/kv-tq128",
     "crates/host-probe",
 ]
 
@@ -190,6 +191,7 @@ metrale-sampling = { path = "crates/sampling", version = "1.0.0-beta-preview", d
 metrale-scheduler = { path = "crates/scheduler", version = "1.0.0-beta-preview", default-features = false }
 metrale-serve-identity = { path = "crates/serve-identity", version = "1.0.0-beta-preview", default-features = false }
 metrale-kv-codec = { path = "crates/kv-codec", version = "1.0.0-beta-preview", default-features = false }
+metrale-kv-tq128 = { path = "crates/kv-tq128", version = "1.0.0-beta-preview", default-features = false }
 metrale-settings = { path = "crates/settings", version = "1.0.0-beta-preview", default-features = false }
 metrale-speculative = { path = "crates/speculative", version = "1.0.0-beta-preview", default-features = false }
 metrale-storage = { path = "crates/storage", version = "1.0.0-beta-preview", default-features = false }
