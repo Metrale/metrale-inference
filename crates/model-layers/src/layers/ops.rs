@@ -148,6 +148,8 @@ mod ops_levers;
 // 2026-09-25: Tensor-core routing of the MTP drafter's BF16 GEMV.
 #[path = "ops/dense_gemv_tc.rs"]
 pub mod dense_gemv_tc;
+#[path = "ops/gdn_prefill_plan.rs"]
+mod gdn_prefill_plan;
 #[path = "ops/gemv_tc.rs"]
 pub mod gemv_tc;
 #[cfg(test)]
@@ -265,6 +267,7 @@ pub use gemv_sw::*;
 pub use n_tile::n_tile_blocks;
 pub use nvfp4_moe_grouped::*;
 
+pub use gdn_prefill_plan::GdnPrefillPlan;
 pub use gemv_tc::W4a16TcPlan;
 pub use hyper_connection::*;
 pub use hyper_connection_dispatch::*;

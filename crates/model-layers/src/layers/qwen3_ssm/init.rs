@@ -253,7 +253,11 @@ impl Qwen3SsmLayer {
                 "gated_delta_rule_chunk_delta_h_tc_vblock",
             ),
             gdn_prefill_fla_chunk_delta_h_tcfuse_k: gdn_tc_spine,
-            gdn_prefill_fla_chunk_delta_h_fused_k: fused_spine_kernel(gpu, gdn_tc_spine),
+            gdn_prefill_fla_chunk_delta_h_fused_k: fused_spine_kernel(
+                gpu,
+                gdn_tc_spine,
+                lc.levers.ops.gdn_prefill.spine,
+            ),
             gdn_prefill_fla_chunk_delta_h_tma_k: super::super::try_kernel(
                 gpu,
                 "gated_delta_rule_fla",

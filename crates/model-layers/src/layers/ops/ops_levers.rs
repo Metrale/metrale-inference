@@ -17,6 +17,7 @@
 //! - `METRALE_NO_W4A16_TC`, `METRALE_W4A16_TC_WIDE` and `METRALE_NO_MTP_TC` keep their readers'
 //!   text predicate: a non-empty value is set, an empty one reads as unset ([`unset_or_empty`]).
 
+use super::GdnPrefillPlan;
 use super::gemv_tc::W4a16TcPlan;
 use super::hyper_connection_lowrank::HcLevers;
 use super::lora_delta::LoraLevers;
@@ -94,6 +95,8 @@ pub struct OpsLevers {
     /// 2026-09-25: On unless `METRALE_NO_MMQ_TILE64` is switched on: the 64-row tile is looked
     /// up, when [`Self::mmq_small_tile`] is on too.
     pub mmq_tile64: bool,
+    /// 2026-10-17: The chunked GDN prefill levers (`gdn_prefill_plan.rs`).
+    pub gdn_prefill: GdnPrefillPlan,
 }
 
 /// 2026-09-25: The rule of the tensor-core kill switches and the widening: a variable that is
@@ -148,6 +151,7 @@ impl OpsLevers {
             gemv_exact_m_tiers: !s.storage.no_gemv_exact_m_tiers,
             mmq_small_tile: !k.no_mmq_small_tile,
             mmq_tile64: !k.no_mmq_tile64,
+            gdn_prefill: GdnPrefillPlan::from_settings(s),
         })
     }
 
@@ -190,6 +194,7 @@ impl OpsLevers {
             gemv_exact_m_tiers: true,
             mmq_small_tile: true,
             mmq_tile64: true,
+            gdn_prefill: GdnPrefillPlan::declared(),
         }
     }
 }

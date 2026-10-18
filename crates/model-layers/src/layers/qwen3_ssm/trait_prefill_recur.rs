@@ -216,6 +216,7 @@ impl Qwen3SsmLayer {
                 metrale_gpu_runtime::gpu::DevicePtr::NULL,
                 metrale_gpu_runtime::gpu::DevicePtr::NULL,
                 false,
+                ctx.levers.ops.gdn_prefill,
                 ctx.profile,
                 stream,
             )?;

@@ -227,9 +227,6 @@ crates/model-layers/src/layers/ngram_embed/tests.rs
 crates/model-layers/src/layers/ops/dispatch_helpers.rs
 crates/model-layers/src/layers/ops/hyper_connection_lowrank_tests.rs
 crates/model-layers/src/layers/ops/model_levers_resolve.rs
-crates/model-layers/src/layers/ops/ssm_gdn_a3.rs
-crates/model-layers/src/layers/ops/ssm_gdn_hopper_prefill.rs
-crates/model-layers/src/layers/ops/ssm_gdn_tc_route.rs
 crates/model-layers/src/layers/ops/target_defaults.rs
 crates/model-layers/src/layers/ple/dump.rs
 crates/model-layers/src/layers/qsa.rs

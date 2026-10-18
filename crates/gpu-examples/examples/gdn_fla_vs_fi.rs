@@ -147,6 +147,8 @@ fn main() -> Result<()> {
         DevicePtr::NULL,
         DevicePtr::NULL,
         false,
+        // 2026-10-17: The GDN prefill levers of this process's settings.
+        metrale_gpu_examples::ops_levers()?.gdn_prefill,
         false,
         0,
     )?;

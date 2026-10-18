@@ -194,6 +194,8 @@ fn the_declared_defaults_are_the_old_unset_values() {
             gemv_exact_m_tiers: true,
             mmq_small_tile: true,
             mmq_tile64: true,
+            // 2026-10-17: Pinned to the old unset values in `gdn_prefill_plan_tests.rs`.
+            gdn_prefill: GdnPrefillPlan::declared(),
         }
     );
     assert_eq!(
