@@ -30,7 +30,7 @@ impl MetraleCudaBackend {
         seq: usize,
     ) -> Result<()> {
         let st = unsafe {
-            super::super::cuMemsetD8Async(dptr + bytes as u64, super::super::redzone_fill(), pad, 0)
+            super::super::cuMemsetD8Async(dptr + bytes as u64, self.device.redzone.fill, pad, 0)
         };
         if st != 0 {
             bail!("METRALE_REDZONE: poisoning the guard band failed: status {st}");
@@ -40,7 +40,7 @@ impl MetraleCudaBackend {
         // index and size; `METRALE_REDZONE_TRACE_IDX` adds a backtrace for
         // one index.
         tracing::info!(target: "metrale_gpu_runtime::cuda_backend::gpu_impl", "redzone: alloc#{seq} bytes={bytes} ptr={dptr:#x}");
-        if super::super::redzone_trace_idx() == Some(seq) {
+        if self.device.redzone.trace_idx == Some(seq) {
             tracing::error!(target: "metrale_gpu_runtime::cuda_backend::gpu_impl", "redzone: alloc#{seq} bytes={bytes} backtrace:\n{}",
                 std::backtrace::Backtrace::force_capture()
             );

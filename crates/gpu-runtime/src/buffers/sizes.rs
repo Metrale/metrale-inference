@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-09-25: Byte size of every buffer in the GPU buffer arena, from the model config, the serve limits and four environment levers.
+//! 2026-09-25: Byte size of every buffer in the GPU buffer arena, from the model config, the serve limits and four levers ([`super::ArenaLevers`]).
 //!
 //! Owner: gpu-runtime.
 //! Invariants:
-//! - [`BufferSizes::from_config`] allocates nothing; besides its arguments it
-//!   reads only `METRALE_GGUF_NATIVE_Q2`, `METRALE_GGUF_NATIVE_Q2_MMQ`,
-//!   `METRALE_FP8_ROWWISE` and, through `attn_splitk::policy_from_env`,
-//!   `METRALE_ATTN_DECODE_SPLITK`.
+//! - [`BufferSizes::from_config_with`] allocates nothing and reads nothing but its arguments.
 
 use metrale_config::ModelConfig;
 use metrale_target_defaults::attn_splitk;
+
+use super::{ArenaLevers, sizes_q2, sizes_rowwise};
 
 mod regions;
 mod total;
@@ -83,7 +82,7 @@ pub struct BufferSizes {
     pub hc_comb: usize,
     /// 2026-09-25: Low-rank hyper-connection scratch: the larger of the decode
     /// split layout (T <= 64, FP32) and the prefill GEMM layout (slabs of at
-    /// most 2048 tokens, BF16); see the sizing in `from_config`. 256 bytes
+    /// most 2048 tokens, BF16); see the sizing in `from_config_with`. 256 bytes
     /// without a low-rank hyper-connection.
     pub hc_lowrank_scratch: usize,
     /// 2026-09-25: QSA prefill-selection scratch for 2048-row slabs, shared by
@@ -210,13 +209,14 @@ impl BufferSizes {
     /// 2026-09-25: Every buffer size, in bytes. `max_seq_len` and `kv_block_size`
     /// set the block-table width in `scratch` (`max_seq_len / kv_block_size + 1`
     /// blocks, 256 when `kv_block_size` is 0) and the QSA score width;
-    /// `max_batch_size` sets the decode-metadata rows.
-    pub fn from_config(
+    /// `max_batch_size` sets the decode-metadata rows; `levers` size the lever-gated entries.
+    pub fn from_config_with(
         config: &ModelConfig,
         max_batch_tokens: usize,
         max_seq_len: usize,
         kv_block_size: usize,
         max_batch_size: usize,
+        levers: &ArenaLevers,
     ) -> Self {
         let decode_meta = super::DecodeMetaLayout::for_max_batch_size(max_batch_size);
         let bf16 = 2;
@@ -273,11 +273,11 @@ impl BufferSizes {
         // 2026-09-25: Split-K decode workspace: one `[o[head_dim], m, l]` F32 slot
         // per (sequence, q head, split). A short workspace is an out-of-bounds
         // device write, so the slot count comes from `attn_splitk::workspace_slots`
-        // under the policy the dispatch resolves too (`policy_from_env`), for
+        // under the policy the dispatch resolves too (`levers.splitk`), for
         // `decode_meta.rows()` sequences, the widest batch the metadata upload
         // accepts.
         let splitk_slots = attn_splitk::workspace_slots(
-            attn_splitk::policy_from_env(),
+            levers.splitk,
             metrale_target_defaults::TARGET_SM_COUNT,
             q_heads as u32,
             decode_meta.rows() as u32,
@@ -317,9 +317,9 @@ impl BufferSizes {
 
         let (ssd_scratch, gdn_fla_scratch) = regions::ssm_scratch_bytes(config, m, bf16);
 
-        let (q2_dequant_scratch, q2_act_q8) = super::sizes_q2::q2_scratch_sizes(config, m, h, hd);
+        let (q2_dequant_scratch, q2_act_q8) = sizes_q2::q2_scratch_sizes(config, m, h, hd, levers);
 
-        let ssm_rowwise_w_bf16 = super::sizes_rowwise::ssm_rowwise_w_bf16_bytes(config);
+        let ssm_rowwise_w_bf16 = sizes_rowwise::ssm_rowwise_w_bf16_bytes(config, levers);
 
         // 2026-09-25: `ceil16` rows for the same cuBLASLt pad as `m_pad`.
         let ffn_gate_up_fused = if config.num_experts == 0 {

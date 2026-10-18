@@ -122,13 +122,10 @@ impl MetraleCudaBackend {
         if status != 0 {
             bail!("cuMemcpyDtoHAsync_v2 (on_stream) failed: status {status}");
         }
-        // 2026-09-25: METRALE_D2H_SPIN_SYNC=1 (read once) busy-polls
+        // 2026-09-25: METRALE_D2H_SPIN_SYNC (`DeviceSettings::d2h_spin_sync`) busy-polls
         // `cuStreamQuery` until it stops returning CUDA_ERROR_NOT_READY,
         // instead of blocking in `cuStreamSynchronize`.
-        let spin = {
-            static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-            *ON.get_or_init(|| std::env::var("METRALE_D2H_SPIN_SYNC").as_deref() == Ok("1"))
-        };
+        let spin = self.device.d2h_spin_sync;
         let sync = if spin {
             const CUDA_ERROR_NOT_READY: i32 = 600;
             loop {

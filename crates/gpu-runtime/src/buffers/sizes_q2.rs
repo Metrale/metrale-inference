@@ -5,10 +5,12 @@
 //! Owner: gpu-runtime.
 //! Invariants:
 //! - `q2_scratch_sizes` returns 0 for the dequant scratch unless
-//!   `METRALE_GGUF_NATIVE_Q2=1`, and 0 for the q8_1 scratch unless
-//!   `METRALE_GGUF_NATIVE_Q2_MMQ=1`.
+//!   `levers.gguf_native_q2`, and 0 for the q8_1 scratch unless
+//!   `levers.gguf_native_q2_mmq`.
 
 use metrale_config::ModelConfig;
+
+use super::ArenaLevers;
 
 /// 2026-09-25: Bytes of the keep-packed Q2_0 dequant scratch: `hidden_size`
 /// times the widest of intermediate, QKVZ, Mamba-2 in_proj, the q projection
@@ -34,10 +36,21 @@ pub fn q2_dequant_scratch_bytes(config: &ModelConfig) -> usize {
 /// `m * kpad * 4 + 1 MiB` for K = max(h, intermediate, q_heads * head_dim)
 /// rounded up to 256 as `kpad`, the formula of `q8_1_scratch_bytes` in
 /// metrale-model-layers.
-pub fn q2_scratch_sizes(config: &ModelConfig, m: usize, h: usize, hd: usize) -> (usize, usize) {
-    let dequant_enabled = std::env::var("METRALE_GGUF_NATIVE_Q2").ok().as_deref() == Some("1");
-    let mmq_enabled = std::env::var("METRALE_GGUF_NATIVE_Q2_MMQ").ok().as_deref() == Some("1");
-    q2_scratch_sizes_for(config, m, h, hd, dequant_enabled, mmq_enabled)
+pub fn q2_scratch_sizes(
+    config: &ModelConfig,
+    m: usize,
+    h: usize,
+    hd: usize,
+    levers: &ArenaLevers,
+) -> (usize, usize) {
+    q2_scratch_sizes_for(
+        config,
+        m,
+        h,
+        hd,
+        levers.gguf_native_q2,
+        levers.gguf_native_q2_mmq,
+    )
 }
 
 pub(super) fn q2_scratch_sizes_for(

@@ -5,9 +5,10 @@
 //!
 //! Owner: gpu-runtime.
 //! Invariants:
-//! - The process has at most one `CudaHost`, on the ordinal of the first `host`
-//!   call; a later call with another ordinal is an error, and a failed first
-//!   creation is returned as the same error to every later call.
+//! - The process has at most one `CudaHost`, on the ordinal and stream priority
+//!   of the first `host` call; a later call with another ordinal or priority is
+//!   an error, and a failed first creation is returned as the same error to
+//!   every later call.
 //! - `release` unloads nothing while another `Arc` to the registry is live.
 
 use std::sync::{Arc, OnceLock};
@@ -16,6 +17,7 @@ use cudarc::driver::{CudaContext, CudaStream};
 
 use crate::registry::MetraleRegistry;
 use metrale_core::error::{MetraleError, Result};
+use metrale_settings::groups::device::StreamPriority;
 
 /// 2026-09-25: The CUDA context and stream for the process. Each model's
 /// `MetraleRegistry` loads its modules into this one context.
@@ -23,6 +25,7 @@ pub struct CudaHost {
     pub ctx: Arc<CudaContext>,
     pub stream: Arc<CudaStream>,
     ordinal: usize,
+    priority: StreamPriority,
 }
 
 impl CudaHost {
@@ -42,17 +45,13 @@ unsafe impl Sync for CudaHost {}
 static HOST: OnceLock<std::result::Result<Arc<CudaHost>, String>> = OnceLock::new();
 
 /// 2026-09-25: Get, or on the first call create, the process CUDA host on
-/// `ordinal`. The first call fixes the ordinal; asking for another is an error.
-pub fn host(ordinal: usize) -> Result<Arc<CudaHost>> {
+/// `ordinal`, its stream at `priority`. The first call fixes both; asking for
+/// another ordinal or priority is an error.
+pub fn host(ordinal: usize, priority: StreamPriority) -> Result<Arc<CudaHost>> {
     let result = HOST.get_or_init(|| {
         let ctx = CudaContext::new(ordinal).map_err(|e| format!("{e}"))?;
-        let under = main_stream_under_greatest(
-            std::env::var("METRALE_MAIN_STREAM_UNDER_GREATEST")
-                .ok()
-                .as_deref(),
-            main_stream_high_priority(),
-        )?;
-        let stream = if main_stream_high_priority() {
+        let under = main_stream_under_greatest(priority)?;
+        let stream = if priority.high {
             let (least, greatest) =
                 cudarc::driver::result::ctx::stream_priority_range().map_err(|e| format!("{e}"))?;
             let prio = main_stream_priority(least, greatest, under)?;
@@ -71,10 +70,15 @@ pub fn host(ordinal: usize) -> Result<Arc<CudaHost>> {
             ctx,
             stream,
             ordinal,
+            priority,
         }))
     });
     match result {
-        Ok(h) if h.ordinal == ordinal => Ok(h.clone()),
+        Ok(h) if h.ordinal == ordinal && h.priority == priority => Ok(h.clone()),
+        Ok(h) if h.ordinal == ordinal => Err(MetraleError::ModuleLoad(format!(
+            "CUDA host stream already created at {:?} — cannot recreate it at {priority:?}",
+            h.priority
+        ))),
         Ok(h) => Err(MetraleError::ModuleLoad(format!(
             "CUDA host already bound to GPU {} — cannot rebind to {ordinal}",
             h.ordinal
@@ -87,26 +91,16 @@ pub fn host(ordinal: usize) -> Result<Arc<CudaHost>> {
 /// context's greatest priority; every other stream (`create_stream`) keeps the default, the
 /// least. Graphs launched on it run at its priority. On GB10 a large device-to-device copy on a
 /// side stream (the SSM rollback, 49 MB) holds every kernel launched after it until it ends; at
-/// a higher priority the process stream's kernels are dispatched ahead of the copy's.
-fn main_stream_high_priority() -> bool {
-    std::env::var("METRALE_MAIN_STREAM_HIGH_PRIORITY").as_deref() == Ok("1")
-}
-
-/// 2026-10-14: `METRALE_MAIN_STREAM_UNDER_GREATEST`'s parse: unset or `0` off, `1` on, which needs
-/// `METRALE_MAIN_STREAM_HIGH_PRIORITY=1` (`high`). On, the process stream sits one level under the
-/// greatest priority, so a stream made at the greatest (`create_stream_greatest_priority`: the
-/// GLM SP comm stream) is dispatched strictly ahead of it instead of tying with it.
-fn main_stream_under_greatest(v: Option<&str>, high: bool) -> std::result::Result<bool, String> {
-    let on = match v {
-        None | Some("0") => false,
-        Some("1") => true,
-        Some(other) => {
-            return Err(format!(
-                "METRALE_MAIN_STREAM_UNDER_GREATEST={other:?}: expected 0 or 1"
-            ));
-        }
-    };
-    if on && !high {
+/// a higher priority the process stream's kernels are dispatched ahead of the copy's. That is
+/// `priority.high`.
+///
+/// 2026-10-14: `METRALE_MAIN_STREAM_UNDER_GREATEST=1` (`priority.under_greatest`), which needs
+/// `high`: the process stream sits one level under the greatest priority, so a stream made at the
+/// greatest (`create_stream_greatest_priority`: the GLM SP comm stream) is dispatched strictly
+/// ahead of it instead of tying with it.
+fn main_stream_under_greatest(priority: StreamPriority) -> std::result::Result<bool, String> {
+    let on = priority.under_greatest;
+    if on && !priority.high {
         return Err(
             "METRALE_MAIN_STREAM_UNDER_GREATEST=1 needs METRALE_MAIN_STREAM_HIGH_PRIORITY=1".into(),
         );
@@ -166,12 +160,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn under_greatest_parses_and_needs_high_priority() {
-        assert_eq!(main_stream_under_greatest(None, false), Ok(false));
-        assert_eq!(main_stream_under_greatest(Some("0"), true), Ok(false));
-        assert_eq!(main_stream_under_greatest(Some("1"), true), Ok(true));
-        assert!(main_stream_under_greatest(Some("1"), false).is_err());
-        assert!(main_stream_under_greatest(Some("yes"), true).is_err());
+    fn under_greatest_needs_high_priority() {
+        let p = |high, under_greatest| StreamPriority {
+            high,
+            under_greatest,
+        };
+        assert_eq!(main_stream_under_greatest(p(false, false)), Ok(false));
+        assert_eq!(main_stream_under_greatest(p(true, false)), Ok(false));
+        assert_eq!(main_stream_under_greatest(p(true, true)), Ok(true));
+        assert_eq!(
+            main_stream_under_greatest(p(false, true)),
+            Err(
+                "METRALE_MAIN_STREAM_UNDER_GREATEST=1 needs METRALE_MAIN_STREAM_HIGH_PRIORITY=1"
+                    .into()
+            )
+        );
     }
 
     #[test]

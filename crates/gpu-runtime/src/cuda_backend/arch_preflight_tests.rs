@@ -226,9 +226,11 @@ fn the_ordinal_addressed_query_preflights_from_any_thread() {
 #[test]
 #[ignore = "requires a free CUDA device"]
 fn the_real_preflight_runs_on_a_thread_that_did_not_make_the_host() {
-    DriverDeviceQuery
-        .init_host(0)
-        .expect("this thread creates the process CUDA host");
+    DriverDeviceQuery {
+        priority: crate::legacy_env::legacy_env_stream_priority(),
+    }
+    .init_host(0)
+    .expect("this thread creates the process CUDA host");
     thread::spawn(|| {
         let (major, minor) =
             device_compute_capability_of(0).expect("cuDeviceGet needs no current context");

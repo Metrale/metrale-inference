@@ -131,3 +131,32 @@ pub fn eq_one_to_switch() -> [(Option<&'static str>, Want<bool>); 2] {
         (Some("garbage"), Want::Err),
     ]
 }
+
+/// 2026-10-17: A `std::env::var`-shaped lookup over `pairs`, for the device crates' legacy
+/// readers (`legacy_env_*_from`), which take one in place of the process environment.
+pub fn var_in(
+    pairs: &[(&str, &str)],
+) -> impl Fn(&str) -> Result<alloc::string::String, std::env::VarError> + use<> {
+    let owned: alloc::vec::Vec<(alloc::string::String, alloc::string::String)> = pairs
+        .iter()
+        .map(|(k, v)| ((*k).into(), (*v).into()))
+        .collect();
+    move |name| {
+        owned
+            .iter()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.clone())
+            .ok_or(std::env::VarError::NotPresent)
+    }
+}
+
+/// 2026-10-17: [`var_in`] with only `env` set to `v` (`None`: nothing set).
+pub fn var_one(
+    env: &str,
+    v: Option<&str>,
+) -> impl Fn(&str) -> Result<alloc::string::String, std::env::VarError> + use<> {
+    match v {
+        Some(raw) => var_in(&[(env, raw)]),
+        None => var_in(&[]),
+    }
+}

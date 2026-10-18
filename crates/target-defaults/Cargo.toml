@@ -25,6 +25,8 @@ metrale-closure = { workspace = true }
 # same module the build script uses.
 metrale-closure = { workspace = true }
 toml = { workspace = true, features = ["std", "serde", "parse", "display"] }
+# 2026-10-17: The equivalence harness, for the legacy env reader against the projection.
+metrale-settings = { workspace = true, features = ["test-utils"] }
 
 [package.metadata.metrale]
 # 2026-10-17: Not pure: the split-K and GQA-pack policies read the process environment

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-10: Applies the NCCL host-node hoist (`crate::graph_hoist`) to a captured graph
-//! before it is instantiated, when `METRALE_NCCL_HOST_HOIST=1`.
+//! before it is instantiated, when `METRALE_NCCL_HOST_HOIST` is on (`DeviceSettings::nccl_host_hoist`).
 //!
 //! The graph's nodes and edges are read with the driver's graph queries, the plan is made over
 //! node indices, and the edge removals and additions are applied with
@@ -10,12 +10,9 @@
 //!
 //! Owner: gpu-runtime (CUDA backend).
 //! Invariants:
-//! - Off unless the lever is `1`; a graph without host nodes is never touched.
+//! - Off unless the lever is on; a graph without host nodes is never touched.
 
 use anyhow::{Result, bail};
-
-/// 2026-10-10: The lever.
-const ENV: &str = "METRALE_NCCL_HOST_HOIST";
 
 /// 2026-10-10: `CU_GRAPH_NODE_TYPE_HOST`.
 const NODE_TYPE_HOST: u32 = 3;
@@ -91,12 +88,6 @@ unsafe fn remove_dependencies(
             num,
         ) as i32
     }
-}
-
-/// 2026-10-10: Whether the lever is on (read once per process).
-pub(super) fn enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var(ENV).as_deref() == Ok("1"))
 }
 
 fn check(rc: i32, what: &str) -> Result<()> {

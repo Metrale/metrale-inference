@@ -17,8 +17,13 @@
 //!   preflight.
 
 use anyhow::{Result, bail};
+use metrale_core::error::MetraleError;
+use metrale_settings::groups::device::StreamPriority;
 
 use super::{cuCtxGetDevice, cuDeviceGet, cuDeviceGetAttribute};
+
+// 2026-10-17: LEGACY: the env-reading form, until the server passes the resolved priority.
+pub use crate::legacy_env::preflight_device_arch;
 
 const CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR: u32 = 75;
 const CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR: u32 = 76;
@@ -144,14 +149,23 @@ pub fn preflight_arch(ptx_arch: &'static str) -> Option<&'static str> {
 }
 
 /// 2026-09-25: Fail if kernels built for `compiled_arch` cannot run on GPU
-/// `ordinal`. Call it before `MetraleCudaBackend::new`, which loads the
-/// modules (`init_gpu_backend` does, through `kernel_gate::gate_device_arch`).
+/// `ordinal`. Call it before `MetraleCudaBackend::with_settings`, which loads
+/// the modules (`init_gpu_backend` does, through `kernel_gate::gate_device_arch`).
+/// `priority` is the process stream's, the one the backend is built with:
+/// `cuda_host::host` fixes it on its first call.
 ///
 /// `compiled_arch` is `None` when the target records no architecture
 /// ([`preflight_arch`]); that is logged as a warning and returns `Ok` without
 /// a device query.
-pub fn preflight_device_arch(ordinal: usize, compiled_arch: Option<&str>) -> Result<()> {
-    preflight_device_arch_with(ordinal, compiled_arch, &DriverDeviceQuery)
+pub fn preflight_device_arch_for(
+    ordinal: usize,
+    compiled_arch: Option<&str>,
+    priority: StreamPriority,
+) -> Result<()> {
+    let query = DriverDeviceQuery {
+        priority: Ok(priority),
+    };
+    preflight_device_arch_with(ordinal, compiled_arch, &query)
 }
 
 /// 2026-09-25: The driver calls the preflight makes, behind a trait so a
@@ -174,11 +188,20 @@ pub(crate) trait DeviceQuery {
 
 /// 2026-09-25: The production `DeviceQuery`: `cuda_host::host`, then
 /// ordinal-addressed attribute queries (`cuDeviceGet`).
-pub(crate) struct DriverDeviceQuery;
+pub(crate) struct DriverDeviceQuery {
+    /// 2026-10-17: The process stream's priority for `cuda_host::host`, or why
+    /// it could not be read; the error is returned from `init_host`, where the
+    /// host would have been created.
+    pub(crate) priority: std::result::Result<StreamPriority, String>,
+}
 
 impl DeviceQuery for DriverDeviceQuery {
     fn init_host(&self, ordinal: usize) -> Result<()> {
-        crate::cuda_host::host(ordinal).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let priority = self
+            .priority
+            .clone()
+            .map_err(|msg| anyhow::anyhow!("{}", MetraleError::ModuleLoad(msg)))?;
+        crate::cuda_host::host(ordinal, priority).map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(())
     }
 

@@ -20,6 +20,7 @@ use cudarc::nvrtc::Ptx;
 
 pub use crate::cuda_host::{CudaHost, host, release};
 use metrale_core::error::{MetraleError, Result};
+use metrale_settings::groups::device::StreamPriority;
 
 unsafe extern "C" {
     fn cuModuleGetFunction(hfunc: *mut *mut c_void, hmod: *mut c_void, name: *const i8) -> i32;
@@ -142,12 +143,17 @@ impl MetraleRegistry {
     /// 2026-09-25: Load this model's kernel modules into the process CUDA context.
     ///
     /// Each call produces a fresh, independent module set; it shares only the
-    /// context and stream with a previously loaded model.
+    /// context and stream with a previously loaded model. `priority` is the
+    /// process stream's (`cuda_host::host`).
     pub fn load(
         ordinal: usize,
         kernel_blobs: &[(&'static str, &'static [u8])],
+        priority: StreamPriority,
     ) -> Result<Arc<Self>> {
-        Ok(Arc::new(Self::init(host(ordinal)?, kernel_blobs)?))
+        Ok(Arc::new(Self::init(
+            host(ordinal, priority)?,
+            kernel_blobs,
+        )?))
     }
 
     /// 2026-09-25: The process CUDA host this registry's modules live in.

@@ -39,6 +39,7 @@ pub mod graph_hoist;
 pub mod host_heap;
 pub mod host_sync_counts;
 pub mod kernel_args;
+pub mod legacy_env;
 #[cfg(feature = "metal")]
 pub mod metal_backend;
 pub mod op_cache;
@@ -69,7 +70,7 @@ pub fn ssm_tail_boundary(total_tokens: usize, block_size: usize) -> Option<usize
 /// replay it saved (about 1374 ms).
 pub fn ssm_tail_ckpt_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| matches!(std::env::var("METRALE_SSM_TAIL_CKPT").as_deref(), Ok("1")))
+    *ON.get_or_init(legacy_env::legacy_env_ssm_tail_ckpt)
 }
 
 /// 2026-09-25: Publish `met serve --hermetic`, before the first `hermetic_enabled`
@@ -92,7 +93,7 @@ pub fn hermetic_enabled() -> bool {
         HERMETIC
             .get()
             .copied()
-            .unwrap_or_else(|| matches!(std::env::var("METRALE_HERMETIC").as_deref(), Ok("1")))
+            .unwrap_or_else(legacy_env::legacy_env_hermetic)
     })
 }
 
@@ -114,12 +115,7 @@ static SSM_TAIL_MIDCHUNK: std::sync::OnceLock<bool> = std::sync::OnceLock::new()
 /// plans an in-pass capture there, which it does only on `metrale_scale` builds.
 /// Resolved on first call and cached.
 pub fn ssm_tail_midchunk_enabled() -> bool {
-    *SSM_TAIL_MIDCHUNK.get_or_init(|| {
-        !matches!(
-            std::env::var("METRALE_SSM_TAIL_MIDCHUNK").as_deref(),
-            Ok("0")
-        )
-    })
+    *SSM_TAIL_MIDCHUNK.get_or_init(legacy_env::legacy_env_ssm_tail_midchunk)
 }
 
 #[cfg(test)]

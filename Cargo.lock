@@ -1712,6 +1712,7 @@ dependencies = [
  "metrale-error",
  "metrale-kernel-root",
  "metrale-kernels",
+ "metrale-settings",
  "metrale-target-defaults",
  "metrale-telemetry",
  "objc2",
@@ -1985,6 +1986,7 @@ version = "1.0.0-beta-preview"
 dependencies = [
  "metrale-closure",
  "metrale-kernel-root",
+ "metrale-settings",
  "toml",
 ]
 

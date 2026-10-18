@@ -20,6 +20,7 @@ metrale-config = { workspace = true }
 metrale-core = { workspace = true }
 metrale-error = { workspace = true }
 metrale-target-defaults = { workspace = true }
+metrale-settings = { workspace = true }
 metrale-telemetry = { workspace = true }
 anyhow = { workspace = true, features = ["std"] }
 libc = { workspace = true, features = ["std"] }
@@ -110,6 +111,8 @@ dispatch2 = { workspace = true, optional = true, features = ["std", "block2", "l
 metrale-kernels = { workspace = true }
 half = { workspace = true, features = ["std"] }
 memmap2 = { workspace = true }
+# 2026-10-17: The equivalence harness, for the legacy env readers against the projections.
+metrale-settings = { workspace = true, features = ["test-utils"] }
 
 [build-dependencies]
 toml = { workspace = true, features = ["std", "serde", "parse", "display"] }

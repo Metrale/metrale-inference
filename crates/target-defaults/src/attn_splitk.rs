@@ -93,7 +93,7 @@ pub fn parse(spelling: &str) -> Option<SplitkPolicy> {
 ///
 /// Returns `(policy, came_from_env)`. Both the dispatch (metrale-model-layers
 /// `target_defaults::resolve`) and the workspace sizing (via
-/// [`policy_from_env`]) call this, so the split count a launch uses and the
+/// [`target_policy`]) call this, so the split count a launch uses and the
 /// one the workspace was sized for come from the same rule.
 pub fn resolve_policy(declared: &str, env_raw: Option<&str>) -> (SplitkPolicy, bool) {
     let declared = parse(declared).unwrap_or(SplitkPolicy::Legacy);
@@ -103,16 +103,12 @@ pub fn resolve_policy(declared: &str, env_raw: Option<&str>) -> (SplitkPolicy, b
     }
 }
 
-/// 2026-09-25: [`resolve_policy`] against the process environment and this
-/// binary's baked declaration. Used by the split-K workspace sizing in
-/// metrale-gpu-runtime (`sizes.rs`), which metrale-model-layers depends on and
-/// so cannot call the model-layers resolver.
-pub fn policy_from_env() -> SplitkPolicy {
-    resolve_policy(
-        crate::TARGET_DEFAULTS.attn_decode_splitk,
-        std::env::var("METRALE_ATTN_DECODE_SPLITK").ok().as_deref(),
-    )
-    .0
+/// 2026-10-17: [`resolve_policy`] against this binary's baked declaration, with `env_raw` the
+/// resolved `METRALE_ATTN_DECODE_SPLITK` (`DeviceSettings::attn_decode_splitk`). Used by the
+/// split-K workspace sizing in metrale-gpu-runtime (`sizes.rs`), which metrale-model-layers
+/// depends on and so cannot call the model-layers resolver.
+pub fn target_policy(env_raw: Option<&str>) -> SplitkPolicy {
+    resolve_policy(crate::TARGET_DEFAULTS.attn_decode_splitk, env_raw).0
 }
 
 /// 2026-09-25: `clamp(ceil(WAVES * sm_count / num_q_heads), 1,
@@ -234,16 +230,12 @@ pub fn resolve_gqa_pack(declared: bool, env_raw: Option<&str>) -> bool {
 /// once. The dispatch reads it on every non-split BF16 and FP8 paged-decode
 /// launch, and a fixed answer keeps a captured CUDA graph consistent with
 /// later launches.
+///
+/// 2026-10-17: LEGACY: the process environment is read in
+/// [`crate::legacy_env::legacy_env_gqa_pack_enabled`] until the dispatch receives the resolved
+/// `DeviceSettings::attn_decode_gqa_pack` and calls [`resolve_gqa_pack`] itself.
 pub fn gqa_pack_enabled() -> bool {
-    static ARMED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ARMED.get_or_init(|| {
-        resolve_gqa_pack(
-            DECODE_GQA_PACK_DECLARED,
-            std::env::var("METRALE_ATTN_DECODE_GQA_PACK")
-                .ok()
-                .as_deref(),
-        )
-    })
+    crate::legacy_env::legacy_env_gqa_pack_enabled()
 }
 
 /// 2026-09-25: Whether this launch's shape is one the packed kernels can

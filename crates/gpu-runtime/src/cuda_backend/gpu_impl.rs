@@ -47,11 +47,11 @@ impl GpuBackend for MetraleCudaBackend {
         // and only for creation indices >= `METRALE_REDZONE_MIN_IDX`):
         // allocate `pad` extra bytes after the buffer and return the base, so
         // the caller's pointer is what an unpadded allocation would give. The
-        // pad is filled with `redzone_fill()` here and checked by
+        // pad is filled with the configured fill here and checked by
         // `scan_redzones`.
         let seq = super::ALLOC_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let pad = if seq >= super::redzone_min_idx() {
-            super::redzone_bytes()
+        let pad = if seq >= self.device.redzone.min_idx {
+            self.device.redzone.bytes
         } else {
             0
         };
@@ -81,14 +81,14 @@ impl GpuBackend for MetraleCudaBackend {
     }
 
     fn scan_redzones(&self) -> Result<usize> {
-        if super::redzone_bytes() == 0 {
+        if self.device.redzone.bytes == 0 {
             return Ok(0);
         }
         MetraleCudaBackend::scan_redzones(self)
     }
 
     fn poison_redzones(&self, lo: usize, hi: usize) -> Result<()> {
-        if super::redzone_bytes() == 0 {
+        if self.device.redzone.bytes == 0 {
             return Ok(());
         }
         MetraleCudaBackend::poison_redzones(self, lo, hi)
@@ -117,7 +117,7 @@ impl GpuBackend for MetraleCudaBackend {
         // 2026-09-25: Off the ledger before the free: an entry left behind
         // would be freed again by `sweep_unreleased`.
         self.forget_alloc(ptr);
-        if super::redzone_bytes() > 0 {
+        if self.device.redzone.bytes > 0 {
             self.forget_redzone(ptr.0);
         }
         let status = unsafe { cuMemFree_v2(ptr.0) };
@@ -154,12 +154,12 @@ impl GpuBackend for MetraleCudaBackend {
     }
 
     fn copy_d2h(&self, src: DevicePtr, dst: &mut [u8]) -> Result<()> {
-        d2h_trace_tick();
+        d2h_trace_tick(self.device.d2h_trace);
         MetraleCudaBackend::copy_d2h_impl(self, src, dst)
     }
 
     fn copy_d2h_on_stream(&self, src: DevicePtr, dst: &mut [u8], stream: u64) -> Result<()> {
-        d2h_trace_tick();
+        d2h_trace_tick(self.device.d2h_trace);
         MetraleCudaBackend::copy_d2h_on_stream_impl(self, src, dst, stream)
     }
 
@@ -167,7 +167,7 @@ impl GpuBackend for MetraleCudaBackend {
         // 2026-09-25: No wait here, unlike `copy_d2h` and
         // `copy_d2h_on_stream`. The caller must synchronise `stream` before
         // reading `dst`.
-        d2h_trace_tick();
+        d2h_trace_tick(self.device.d2h_trace);
         crate::host_sync_counts::d2h();
         let status = unsafe {
             cuMemcpyDtoHAsync_v2(dst.as_mut_ptr() as *mut c_void, src.0, dst.len(), stream)

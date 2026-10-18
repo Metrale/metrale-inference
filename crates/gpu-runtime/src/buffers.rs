@@ -15,6 +15,7 @@ use anyhow::Result;
 use metrale_config::ModelConfig;
 
 mod accessors;
+mod arena_levers;
 mod debug_checksum;
 pub mod decode_meta;
 mod moe_fp8_scratch;
@@ -24,6 +25,7 @@ mod sizes;
 mod sizes_q12;
 mod sizes_q2;
 mod sizes_rowwise;
+pub use arena_levers::ArenaLevers;
 pub use decode_meta::{DECODE_META_MAX_ROWS, DECODE_META_MIN_ROWS, DecodeMetaLayout};
 pub use moe_fp8_scratch::MoeFp8Scratch;
 pub use sizes::{BufferSizes, GATEUP_FUSED_MAX_M, VERIFY_ROW_CAP};

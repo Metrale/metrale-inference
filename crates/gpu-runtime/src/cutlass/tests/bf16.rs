@@ -13,6 +13,7 @@ use super::*;
 #[test]
 #[ignore = "requires a free CUDA device and CUTLASS_HOME build"]
 fn cutlass_bf16_ffi_smoke_computes_row_major_act_by_weight_t() {
+    fix_declared_workspace();
     const M: usize = 128;
     const N: usize = 128;
     const K: usize = 32;
@@ -73,6 +74,7 @@ fn cutlass_bf16_ffi_smoke_computes_row_major_act_by_weight_t() {
 #[test]
 #[ignore = "requires a free CUDA device and CUTLASS_HOME build"]
 fn cutlass_bf16_ffi_computes_holo_ssm_qkvz_shape() {
+    fix_declared_workspace();
     const M: usize = 3537;
     const N: usize = 12288;
     const K: usize = 2048;
@@ -132,6 +134,7 @@ fn cutlass_bf16_ffi_computes_holo_ssm_qkvz_shape() {
 #[test]
 #[ignore = "requires a free CUDA device and CUTLASS_HOME build"]
 fn cutlass_bf16_holo_qkvz_bench_against_cublaslt() {
+    fix_declared_workspace();
     const ITERS: usize = 100;
 
     let shapes = [
@@ -248,6 +251,7 @@ fn cutlass_bf16_holo_qkvz_bench_against_cublaslt() {
 #[test]
 #[ignore = "requires a free CUDA device and CUTLASS_HOME build"]
 fn cutlass_bf16_holo_decode_route_batch_shapes() {
+    fix_declared_workspace();
     const ITERS: usize = 2000;
     let shapes = [
         ("moe_gate_up_routes_c1", 8usize, 1024usize, 2048usize),
@@ -366,6 +370,7 @@ fn cutlass_bf16_holo_decode_route_batch_shapes() {
 #[test]
 #[ignore = "requires a free CUDA device and CUTLASS_HOME build"]
 fn cublaslt_bf16_holo_route_batch_algo_sweep() {
+    fix_declared_workspace();
     const ITERS: usize = 2000;
     let shapes = [
         ("gate_up_c1", 8usize, 1024usize, 2048usize),

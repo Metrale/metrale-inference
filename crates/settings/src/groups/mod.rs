@@ -29,8 +29,8 @@ pub mod storage;
 pub mod telemetry;
 pub mod tool;
 
-#[cfg(test)]
-mod equivalence;
+#[cfg(any(test, feature = "test-utils"))]
+pub mod equivalence;
 
 /// 2026-10-17: Group order is alphabetical by group name; `by_name` restores the table order.
 pub const GROUPS: &[&[LeverSpec]] = &[

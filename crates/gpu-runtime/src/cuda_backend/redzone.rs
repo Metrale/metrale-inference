@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-09-25: Red-zone diagnostic: an opt-in guard band after each `alloc`, the
-//! `METRALE_REDZONE*` variables that configure it, and the passes that
-//! re-fill and check the bands.
+//! 2026-09-25: Red-zone diagnostic: an opt-in guard band after each `alloc`, and the passes
+//! that re-fill and check the bands. The `METRALE_REDZONE*` levers that configure it arrive
+//! resolved, as the backend's `DeviceSettings::redzone`.
 //!
 //! Owner: gpu-runtime (CUDA backend).
-//! Invariants:
-//! - Each `METRALE_REDZONE*` variable this module reads is read once per
-//!   process (one `OnceLock` each).
+//! Invariants: none beyond the types.
 
 use super::*;
 
@@ -21,66 +19,11 @@ pub(crate) struct RedZone {
     idx: usize,
 }
 
-/// 2026-09-25: `METRALE_REDZONE=<bytes>`: guard-band size, rounded up to a
-/// multiple of 16. Unset, unparsable or 0 disables the red zones.
-pub(crate) fn redzone_bytes() -> usize {
-    static N: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *N.get_or_init(|| {
-        std::env::var("METRALE_REDZONE")
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .map(|n| if n == 0 { 0 } else { n.next_multiple_of(16) })
-            .unwrap_or(0)
-    })
-}
-
-/// 2026-09-25: `METRALE_REDZONE_MIN_IDX=<n>`: pad only allocations whose
-/// creation index ([`ALLOC_SEQ`]) is `>= n`. Unset or unparsable is 0: every
-/// allocation.
-pub(crate) fn redzone_min_idx() -> usize {
-    static N: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *N.get_or_init(|| {
-        std::env::var("METRALE_REDZONE_MIN_IDX")
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(0)
-    })
-}
-
-/// 2026-09-25: `METRALE_REDZONE_TRACE_IDX=<n>`: log a backtrace when the
-/// padded allocation with creation index `n` is made.
-pub(crate) fn redzone_trace_idx() -> Option<usize> {
-    static N: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();
-    *N.get_or_init(|| {
-        std::env::var("METRALE_REDZONE_TRACE_IDX")
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-    })
-}
-
 /// 2026-09-25: Creation index source: incremented once per
 /// `MetraleCudaBackend::alloc` call, failed calls included, across every
 /// backend in the process.
 pub(crate) static ALLOC_SEQ: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
-
-/// 2026-09-25: `METRALE_REDZONE_FILL=<decimal byte>`: the byte written into
-/// new guard bands and expected by `scan_redzones`. Unset or unparsable is
-/// `0xEE`.
-///
-/// A configurable fill separates the two kinds of overrun: a write past the
-/// end changes the band and `scan_redzones` reports it, while a read past the
-/// end leaves the band intact but lets the fill reach the computation, so two
-/// runs with different fills can produce different tokens.
-pub(crate) fn redzone_fill() -> u8 {
-    static F: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
-    *F.get_or_init(|| {
-        std::env::var("METRALE_REDZONE_FILL")
-            .ok()
-            .and_then(|v| v.parse::<u8>().ok())
-            .unwrap_or(0xEE)
-    })
-}
 
 impl MetraleCudaBackend {
     /// 2026-09-25: Register one allocation's guard band.
@@ -126,12 +69,16 @@ impl MetraleCudaBackend {
     }
 
     /// 2026-09-25: Read every guard band back and count the ones holding a
-    /// byte other than `redzone_fill()`. Each is logged at ERROR with its
+    /// byte other than the configured fill (`METRALE_REDZONE_FILL`). Each is logged at ERROR with its
     /// creation index, size, the first and last changed pad offsets, how many
     /// pad bytes changed, and the first changed value, and is then re-filled,
     /// so a later scan reports only new writes.
     pub fn scan_redzones(&self) -> anyhow::Result<usize> {
-        let fill = redzone_fill();
+        // 2026-09-25: A configurable fill separates the two kinds of overrun: a write past the
+        // end changes the band and this scan reports it, while a read past the end leaves the
+        // band intact but lets the fill reach the computation, so two runs with different fills
+        // can produce different tokens.
+        let fill = self.device.redzone.fill;
         let zones: Vec<RedZone> = self.redzones.lock().clone();
         let mut bad = 0usize;
         let mut host = Vec::new();
