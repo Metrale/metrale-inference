@@ -205,6 +205,9 @@ pub struct MtpHead {
     /// 2026-10-17: `OpsLevers::mtp_tc`: the BF16 small-M GEMMs and the LM-head
     /// predicate take the tensor-core entries.
     mtp_tc: bool,
+    /// 2026-10-17: `MoeLevers::fp8_tc`, for the grouped decode's row range in
+    /// `propose_batch_max`, which has no `ForwardContext`.
+    moe_fp8_tc: bool,
     w4a16_gemv_qg_k: KernelHandle,
     w4a16_gemv_dual_k: KernelHandle,
     rope_k: KernelHandle,

@@ -15,29 +15,16 @@ mod ssm_batched_proj;
 mod ssm_batched_recurrent;
 
 /// 2026-09-25: Smallest batch that takes the batched dense FFN
-/// (`forward_prefill`): `METRALE_SSM_FFN_PREFILL_MIN_N`, default 5. A value
-/// below 2 or one that does not parse gives 5. Read once per process.
+/// (`forward_prefill`) when `METRALE_SSM_FFN_PREFILL_MIN_N` is unset. 2026-10-17:
+/// Resolved once into `SsmLevers::ffn_prefill_min_n`; a value below 2 or one that
+/// does not parse gives this one.
 ///
 /// Measured 2026-07-27 on GB10, Qwen3.6-27B NVFP4, decode tok/s, 2 reps per
 /// cell: MIN_N=9 gave C=4 37.7, C=8 53.4; MIN_N=5 gave 37.8, 57.8; MIN_N=4
 /// gave 36.2, 57.8.
-fn ssm_ffn_prefill_min_n() -> usize {
-    static N: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *N.get_or_init(|| {
-        std::env::var("METRALE_SSM_FFN_PREFILL_MIN_N")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .filter(|&v| v >= 2)
-            .unwrap_or(5)
-    })
-}
+pub(super) const SSM_FFN_PREFILL_MIN_N: usize = 5;
 
-/// 2026-09-25: The batched dense FFN arm is on unless
-/// `METRALE_NO_SSM_FFN_PREFILL` is exactly `1`. Read once per process.
-fn ssm_ffn_prefill_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("METRALE_NO_SSM_FFN_PREFILL").as_deref() != Ok("1"))
-}
+pub(super) use ssm_batched::SSM_TC_PROJ_MIN_N;
 
 impl Qwen3SsmLayer {
     #[allow(clippy::too_many_arguments)]
@@ -211,14 +198,14 @@ impl Qwen3SsmLayer {
                     )?;
                 }
             }
-            // 2026-09-25: Dense FFN at n >= `ssm_ffn_prefill_min_n()`: one
+            // 2026-09-25: Dense FFN at n >= `SsmLevers::ffn_prefill_min_n`: one
             // batched `forward_prefill` over all n rows, where the chunked arm
             // below reads gate/up/down once per 8 rows. Measured
             // 2026-07-27 on GB10 (METRALE_SSM_MS_PROFILE, Qwen3.6-27B): the
             // chunked arm cost 1023 us per layer at n=8 and 2022 us at n=16.
-            n if n >= ssm_ffn_prefill_min_n()
+            n if n >= ctx.levers.ssm.ffn_prefill_min_n
                 && self.ffn.is_dense()
-                && ssm_ffn_prefill_enabled() =>
+                && ctx.levers.ssm.ffn_prefill =>
             {
                 self.ffn.forward_prefill(normed_base, n, ctx, stream)?;
                 ops::residual_add(
@@ -276,9 +263,9 @@ impl Qwen3SsmLayer {
                         (n * h) as u32,
                         stream,
                     )?;
-                } else if crate::layers::moe_grouped_decode_for(n) {
+                } else if ctx.levers.moe.grouped_decode_for(n) {
                     // 2026-09-25: Grouped-GEMM MoE over all rows.
-                    // `moe_grouped_decode_for` turns it on at n >= 16 unless
+                    // `MoeLevers::grouped_decode_for` turns it on at n >= 16 unless
                     // METRALE_NO_MOE_GROUPED_DECODE is set;
                     // METRALE_MOE_GROUPED_DECODE=1 also runs it below 16.
                     self.ffn.forward_prefill(normed_base, n, ctx, stream)?;
@@ -291,12 +278,7 @@ impl Qwen3SsmLayer {
                         (n * h) as u32,
                         stream,
                     )?;
-                } else if n == 4
-                    && std::env::var("METRALE_MOE_ATOMIC_C4_DECODE")
-                        .ok()
-                        .as_deref()
-                        == Some("1")
-                {
+                } else if n == 4 && ctx.levers.moe.atomic_c4_decode {
                     // 2026-09-25: C=4 MoE decode that accumulates the routed
                     // down projections with FP32 atomic adds.
                     self.ffn
@@ -332,7 +314,7 @@ impl Qwen3SsmLayer {
                         (n * h) as u32,
                         stream,
                     )?;
-                } else if std::env::var("METRALE_MOE_BATCHED_DECODE").ok().as_deref() == Some("1") {
+                } else if ctx.levers.moe.batched_decode {
                     self.ffn.forward_batched(normed_base, n, ctx, stream)?;
                     let moe_out = ctx.buffers.moe_output();
                     ops::residual_add(

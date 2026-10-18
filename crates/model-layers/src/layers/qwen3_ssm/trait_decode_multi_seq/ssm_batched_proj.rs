@@ -15,7 +15,6 @@
 
 use super::super::decode_w8a8_proj::SsmDecodeProj;
 use super::super::*;
-use super::ssm_batched::ssm_tc_proj_min_n;
 
 /// 2026-09-25: The GEMV/GEMM handles this step's row count selects, resolved
 /// once (`batched_proj_tier`) and passed to both projections, which run at the
@@ -165,7 +164,7 @@ impl Qwen3SsmLayer {
                 )?;
             }
         } else if let Some(ref nvfp4) = self.qkvz_nvfp4 {
-            match (ssm_tc_proj_min_n(), self.qkvz_nvfp4_t.as_ref()) {
+            match (ctx.levers.ssm.tc_proj_min_n, self.qkvz_nvfp4_t.as_ref()) {
                 (Some(min_n), Some(nvfp4_t)) if n >= min_n => {
                     // 2026-09-25: Tile GEMM on the transposed twin. `ms_proj_gemm`
                     // takes the 128-row M-tile when `ssm_m128_min_m` admits `n`
@@ -333,7 +332,7 @@ impl Qwen3SsmLayer {
                 stream,
             )?;
         } else if self.qkvz_nvfp4.is_some() {
-            match (ssm_tc_proj_min_n(), self.out_proj_nvfp4_t.as_ref()) {
+            match (ctx.levers.ssm.tc_proj_min_n, self.out_proj_nvfp4_t.as_ref()) {
                 (Some(min_n), Some(nvfp4_t)) if n >= min_n => {
                     // 2026-09-25: Tile GEMM on the transposed twin, as in the
                     // QKVZ arm.

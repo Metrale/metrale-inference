@@ -2,20 +2,16 @@
 
 //! 2026-09-25: `METRALE_DUMP_EXPERT_IDS=1` diagnostic dumps of the MoE routing
 //! and outputs, called from the MoE prefill paths (`forward_prefill*.rs`) and
-//! the batched decode paths (`forward_batched*.rs`).
+//! the batched decode paths (`forward_batched*.rs`). 2026-10-17: Each helper
+//! takes the lever (`MoeLevers::dump_expert_ids`) as `on`.
 //!
 //! Owner: model-layers (MoE).
-//! Invariants: when the variable is not exactly `1`, every helper returns
-//! before synchronizing or copying. When it is, each synchronizes the stream
-//! before reading, so the values are post-kernel.
+//! Invariants: when `on` is false, every helper returns before synchronizing
+//! or copying. When it is true, each synchronizes the stream before reading,
+//! so the values are post-kernel.
 
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
-
-#[inline]
-pub fn enabled() -> bool {
-    std::env::var("METRALE_DUMP_EXPERT_IDS").ok().as_deref() == Some("1")
-}
 
 /// 2026-09-25: Read `num_elements` BF16 values at `ptr + offset_bytes` as `f32`.
 /// A failed copy is ignored and reads as zeros.
@@ -46,13 +42,14 @@ fn last_tok_stats(gpu: &dyn GpuBackend, ptr: DevicePtr, n: usize, width: usize) 
 
 /// 2026-09-25: Log the last token's router input: L2 norm and first five values.
 pub fn dump_gate_input(
+    on: bool,
     gpu: &dyn GpuBackend,
     stream: u64,
     router_in: DevicePtr,
     n: u32,
     h: u32,
 ) -> Result<()> {
-    if !enabled() {
+    if !on {
         return Ok(());
     }
     gpu.synchronize(stream)?;
@@ -68,13 +65,14 @@ pub fn dump_gate_input(
 /// 2026-09-25: Log the last token's top-10 BF16 gate logits, before top-k, with
 /// their mean and standard deviation.
 pub fn dump_gate_logits(
+    on: bool,
     gpu: &dyn GpuBackend,
     stream: u64,
     gate_logits: DevicePtr,
     n: u32,
     num_experts: u32,
 ) -> Result<()> {
-    if !enabled() {
+    if !on {
         return Ok(());
     }
     gpu.synchronize(stream)?;
@@ -96,6 +94,7 @@ pub fn dump_gate_logits(
 
 /// 2026-09-25: Log the last token's top-k expert indices and routing weights.
 pub fn dump_expert_ids(
+    on: bool,
     gpu: &dyn GpuBackend,
     stream: u64,
     indices_dev: DevicePtr,
@@ -103,7 +102,7 @@ pub fn dump_expert_ids(
     n: u32,
     top_k: u32,
 ) -> Result<()> {
-    if !enabled() {
+    if !on {
         return Ok(());
     }
     gpu.synchronize(stream)?;
@@ -133,6 +132,7 @@ pub fn dump_expert_ids(
 /// `GpuBackend`. `truncated` reports whether the busiest expert exceeds
 /// `max_m_tiles * 64` rows.
 pub fn dump_expert_load(
+    on: bool,
     gpu: &dyn GpuBackend,
     stream: u64,
     expert_offsets: DevicePtr,
@@ -141,7 +141,7 @@ pub fn dump_expert_load(
     avg_per_expert: usize,
     max_m_tiles: u32,
 ) {
-    if !enabled() {
+    if !on {
         return;
     }
     // 2026-09-25: `OpCache::once` latches per backend; a new backend logs again.
@@ -178,13 +178,14 @@ pub fn dump_expert_load(
 /// 2026-09-25: Log the last token's routed-only MoE output, before the shared
 /// expert is blended in.
 pub fn dump_routed_only(
+    on: bool,
     gpu: &dyn GpuBackend,
     stream: u64,
     output: DevicePtr,
     n: u32,
     h: u32,
 ) -> Result<()> {
-    if !enabled() {
+    if !on {
         return Ok(());
     }
     gpu.synchronize(stream)?;
@@ -199,13 +200,14 @@ pub fn dump_routed_only(
 
 /// 2026-09-25: Log the last token's shared-expert output, before its sigmoid gate.
 pub fn dump_shared_out(
+    on: bool,
     gpu: &dyn GpuBackend,
     stream: u64,
     shared_down_out: DevicePtr,
     n: u32,
     h: u32,
 ) -> Result<()> {
-    if !enabled() {
+    if !on {
         return Ok(());
     }
     gpu.synchronize(stream)?;
@@ -221,6 +223,7 @@ pub fn dump_shared_out(
 /// 2026-09-25: Log the last token's shared-expert gate: the dot product with
 /// `gate_weight` and its sigmoid, computed on the host.
 pub fn dump_shared_gate(
+    on: bool,
     gpu: &dyn GpuBackend,
     stream: u64,
     input: DevicePtr,
@@ -228,7 +231,7 @@ pub fn dump_shared_gate(
     n: u32,
     h: u32,
 ) -> Result<()> {
-    if !enabled() {
+    if !on {
         return Ok(());
     }
     gpu.synchronize(stream)?;
@@ -248,13 +251,14 @@ pub fn dump_shared_gate(
 /// 2026-09-25: Log the last token's MoE output, after the shared-expert blend
 /// when the pass runs one.
 pub fn dump_moe_out(
+    on: bool,
     gpu: &dyn GpuBackend,
     stream: u64,
     output: DevicePtr,
     n: u32,
     h: u32,
 ) -> Result<()> {
-    if !enabled() {
+    if !on {
         return Ok(());
     }
     gpu.synchronize(stream)?;
@@ -272,13 +276,14 @@ pub fn dump_moe_out(
 /// quantity its weight traffic scales with. Eager forwards only: under graph
 /// capture it returns at once.
 pub fn dump_grouped_active(
+    on: bool,
     gpu: &dyn GpuBackend,
     stream: u64,
     active_count: DevicePtr,
     m: usize,
     graph_capture: bool,
 ) -> Result<()> {
-    if !enabled() || graph_capture {
+    if !on || graph_capture {
         return Ok(());
     }
     gpu.synchronize(stream)?;

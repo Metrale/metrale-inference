@@ -47,14 +47,6 @@ impl Fp8GroupedTcKernels {
     }
 }
 
-/// 2026-09-28: The grouped FP8 MoE decode takes the tensor-core expert kernels unless
-/// `METRALE_NO_MOE_FP8_TC` is present (a debugging kill switch: the scalar kernels). Read once
-/// per process.
-fn fp8_grouped_tc_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("METRALE_NO_MOE_FP8_TC").is_none())
-}
-
 /// 2026-09-28: The gate+up and down launches of one grouped decode.
 pub(super) struct Fp8GroupedExpertKernels {
     pub gate_up: KernelHandle,
@@ -66,14 +58,15 @@ pub(super) struct Fp8GroupedExpertKernels {
 impl MoeLayer {
     /// 2026-09-28: Whether this layer's grouped FP8 decode runs the tensor-core expert
     /// kernels: not switched off, both kernels resolved, and gate+up (`inter` x `hidden`) and
-    /// down (`hidden` x `inter`) fit their tiles.
+    /// down (`hidden` x `inter`) fit their tiles. 2026-10-17: `tc` is `MoeLevers::fp8_tc`, on
+    /// unless `METRALE_NO_MOE_FP8_TC` is present (a debugging kill switch: the scalar kernels).
     ///
     /// 2026-09-28: Published FP8 expert activations (`super::moe_expert_fp8_act`) turn the
     /// tensor-core path on too: the W8A8 step is part of it, and its one-row delegation keeps
     /// a row's bits independent of the row count.
-    pub(super) fn fp8_grouped_tc_on(&self, hidden: usize, inter: usize) -> bool {
+    pub(super) fn fp8_grouped_tc_on(&self, hidden: usize, inter: usize, tc: bool) -> bool {
         let (h, i) = (hidden as u32, inter as u32);
-        (fp8_grouped_tc_enabled() || super::moe_expert_fp8_act())
+        (tc || super::moe_expert_fp8_act())
             && self.fp8_grouped_tc.gate_up.0 != 0
             && self.fp8_grouped_tc.down.0 != 0
             && ops::fp8_grouped_tc_shape_ok(i, h, ops::FP8_GROUPED_GATE_UP_TC)
@@ -85,8 +78,9 @@ impl MoeLayer {
         &self,
         hidden: usize,
         inter: usize,
+        tc: bool,
     ) -> Fp8GroupedExpertKernels {
-        if self.fp8_grouped_tc_on(hidden, inter) {
+        if self.fp8_grouped_tc_on(hidden, inter, tc) {
             Fp8GroupedExpertKernels {
                 gate_up: self.fp8_grouped_tc.gate_up,
                 gate_up_geometry: ops::FP8_GROUPED_GATE_UP_TC,
@@ -113,7 +107,8 @@ impl MoeLayer {
         stream: u64,
     ) -> Option<Result<DevicePtr>> {
         let per_row = GroupedRouting::PerRow;
-        (self.fp8_grouped_tc_on(ctx.config.hidden_size, ctx.config.moe_intermediate_size)
+        let (h, i) = (ctx.config.hidden_size, ctx.config.moe_intermediate_size);
+        (self.fp8_grouped_tc_on(h, i, ctx.levers.moe.fp8_tc)
             && self.fp8_grouped_routing_ok(1, per_row, ctx))
         .then(|| {
             self.forward_fp8_grouped_decode_routed(input, 1, per_row, ctx, stream)

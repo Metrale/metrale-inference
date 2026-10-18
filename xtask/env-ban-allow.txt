@@ -211,14 +211,8 @@ crates/model-layers/src/layers/dense_ffn_w8a8_prefill.rs
 crates/model-layers/src/layers/fp8_calibration.rs
 crates/model-layers/src/layers/glm_vit/forward.rs
 crates/model-layers/src/layers/mod.rs
-crates/model-layers/src/layers/moe/dump.rs
-crates/model-layers/src/layers/moe/forward_fp8_grouped_decode.rs
-crates/model-layers/src/layers/moe/forward_nvfp4_grouped_decode.rs
 crates/model-layers/src/layers/moe/forward_prefill_fp8/e4m3.rs
-crates/model-layers/src/layers/moe/fp8_grouped_tc.rs
 crates/model-layers/src/layers/moe/init.rs
-crates/model-layers/src/layers/moe/lora.rs
-crates/model-layers/src/layers/moe_grouped_decode.rs
 crates/model-layers/src/layers/mtp_head/batch_caps.rs
 crates/model-layers/src/layers/mtp_head/new.rs
 crates/model-layers/src/layers/mtp_head/prefill.rs
@@ -244,7 +238,6 @@ crates/model-layers/src/layers/qwen3_attention/prefill/paged.rs
 crates/model-layers/src/layers/qwen3_attention/prefill_qkv_w8a8.rs
 crates/model-layers/src/layers/qwen3_attention/trait_impl/decode_inner/hc.rs
 crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/attn.rs
-crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/ffn.rs
 crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/mla.rs
 crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/mod.rs
 crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/qkv.rs
@@ -260,8 +253,6 @@ crates/model-layers/src/layers/qwen3_ssm/trait_decode_batched_conv_gdn/wy_select
 crates/model-layers/src/layers/qwen3_ssm/trait_decode_batched_conv_gdn_multi.rs
 crates/model-layers/src/layers/qwen3_ssm/trait_decode_batched_conv_gdn_wyn.rs
 crates/model-layers/src/layers/qwen3_ssm/trait_decode_hc.rs
-crates/model-layers/src/layers/qwen3_ssm/trait_decode_multi_seq.rs
-crates/model-layers/src/layers/qwen3_ssm/trait_decode_multi_seq/ssm_batched.rs
 crates/model-layers/src/layers/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs
 crates/model-layers/src/layers/qwen3_ssm/trait_prefill.rs
 crates/model-layers/src/layers/qwen3_ssm/trait_prefill_hc.rs

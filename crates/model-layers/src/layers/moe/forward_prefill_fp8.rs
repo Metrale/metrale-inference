@@ -165,7 +165,14 @@ impl MoeLayer {
         }
 
         let router_in = self.router_input(input, n, h, ctx, stream)?;
-        super::dump::dump_gate_input(ctx.gpu, stream, router_in, n, h)?;
+        super::dump::dump_gate_input(
+            ctx.levers.moe.dump_expert_ids,
+            ctx.gpu,
+            stream,
+            router_in,
+            n,
+            h,
+        )?;
         let gate_logits = ctx.buffers.gate_logits();
         // 2026-09-25: The gate width is `router_logits_n`, which exceeds
         // num_experts when the router also scores zero-computation experts.
@@ -195,7 +202,14 @@ impl MoeLayer {
             )?;
         }
 
-        super::dump::dump_gate_logits(ctx.gpu, stream, gate_logits, n, num_experts)?;
+        super::dump::dump_gate_logits(
+            ctx.levers.moe.dump_expert_ids,
+            ctx.gpu,
+            stream,
+            gate_logits,
+            n,
+            num_experts,
+        )?;
 
         // 2026-09-25: Fold the router LoRA delta onto the logits before top-k; a
         // no-op without an installed router delta.
@@ -253,7 +267,15 @@ impl MoeLayer {
             )?;
         }
 
-        super::dump::dump_expert_ids(ctx.gpu, stream, indices_dev, weights_dev, n, top_k)?;
+        super::dump::dump_expert_ids(
+            ctx.levers.moe.dump_expert_ids,
+            ctx.gpu,
+            stream,
+            indices_dev,
+            weights_dev,
+            n,
+            top_k,
+        )?;
 
         let te = total_expanded as usize;
         let sorted_token_ids = gate_logits;
@@ -284,6 +306,7 @@ impl MoeLayer {
         let avg_per_expert = (num_tokens * top_k as usize).div_ceil(ne);
         let max_m_tiles = (num_tokens * top_k as usize).div_ceil(64).max(1) as u32;
         super::dump::dump_expert_load(
+            ctx.levers.moe.dump_expert_ids,
             ctx.gpu,
             stream,
             expert_offsets,
@@ -443,7 +466,14 @@ impl MoeLayer {
             &mut mt,
         )?;
 
-        super::dump::dump_moe_out(ctx.gpu, stream, output, n, h)?;
+        super::dump::dump_moe_out(
+            ctx.levers.moe.dump_expert_ids,
+            ctx.gpu,
+            stream,
+            output,
+            n,
+            h,
+        )?;
 
         Ok(())
     }

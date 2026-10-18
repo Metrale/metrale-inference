@@ -69,17 +69,6 @@ impl GroupedKernels {
     }
 }
 
-/// 2026-09-25: `METRALE_NO_FP8_MOE_GROUPED_DECODE`, set to any value, turns this
-/// path off. Read once per process. It covers the MTP drafter, which is on by
-/// default, and the target model's multi-row decode, which also needs the
-/// `ModelLevers::moe_fp8_grouped_decode_target` lever
-/// (`FfnComponent::fp8_grouped_decode_ok`). 2026-09-26: It also turns off the
-/// exact routings (`GroupedRouting::PerRow` / `PerToken`), which are on by default.
-fn fp8_grouped_decode_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("METRALE_NO_FP8_MOE_GROUPED_DECODE").is_none())
-}
-
 /// 2026-09-25: Shape admission for the scalar grouped kernels, without a GPU:
 /// `fp8_grouped_decode_rows_ok(m, false)` and `fp8_grouped_decode_dims_ok`.
 pub fn fp8_grouped_decode_shape_ok(m: usize, hidden: u32, inter: u32) -> bool {
@@ -148,12 +137,14 @@ impl MoeLayer {
     /// [`Self::fp8_grouped_decode_ok`], decidable without a `ForwardContext`,
     /// so the MTP batch cap (`mtp_head/batch_caps.rs`) can size a batch. Not
     /// sufficient alone: the kill switch, the FP32-routing lever and expert
-    /// parallelism are checked only by the full predicate.
+    /// parallelism are checked only by the full predicate. 2026-10-17: `tc` is
+    /// `MoeLevers::fp8_tc`.
     pub fn fp8_grouped_decode_arena_ok(
         &self,
         m: usize,
         cfg: &metrale_config::ModelConfig,
         b: &metrale_gpu_runtime::buffers::BufferArena,
+        tc: bool,
     ) -> bool {
         let h = cfg.hidden_size;
         let inter = cfg.moe_intermediate_size;
@@ -162,7 +153,7 @@ impl MoeLayer {
         // 2026-09-28: One row too under the tensor-core expert kernels, whose row bits do not
         // depend on the row count (`fp8_grouped_tc.rs`). 2026-09-29: And up to
         // `FP8_GROUPED_DECODE_TC_MAX_ROWS` rows.
-        fp8_grouped_decode_rows_ok(m, self.fp8_grouped_tc_on(h, inter))
+        fp8_grouped_decode_rows_ok(m, self.fp8_grouped_tc_on(h, inter, tc))
             && fp8_grouped_decode_dims_ok(h as u32, inter as u32)
             && self.fp8_gate_weight_ptrs.is_some()
             && self.fp8_up_weight_ptrs.is_some()
@@ -195,10 +186,18 @@ impl MoeLayer {
     /// 2026-09-25: Whether `forward_fp8_grouped_decode` serves `m` rows on this
     /// layer under `ctx`: [`Self::fp8_grouped_decode_arena_ok`], the kill
     /// switch, FP32 routing off and no expert parallelism.
+    ///
+    /// 2026-10-17: The kill switch is `MoeLevers::fp8_grouped_decode`
+    /// (`METRALE_NO_FP8_MOE_GROUPED_DECODE`, present at any value). It covers the MTP
+    /// drafter, which is on by default, and the target model's multi-row decode, which
+    /// also needs the `ModelLevers::moe_fp8_grouped_decode_target` lever
+    /// (`FfnComponent::fp8_grouped_decode_ok`). It also turns off the exact routings
+    /// (`GroupedRouting::PerRow` / `PerToken`), which are on by default.
     pub fn fp8_grouped_decode_ok(&self, m: usize, ctx: &ForwardContext) -> bool {
         let cfg = ctx.config;
-        fp8_grouped_decode_enabled()
-            && self.fp8_grouped_decode_arena_ok(m, cfg, ctx.buffers)
+        let moe = &ctx.levers.moe;
+        moe.fp8_grouped_decode
+            && self.fp8_grouped_decode_arena_ok(m, cfg, ctx.buffers, moe.fp8_tc)
             && !self.fp32_routing_active(ctx.levers)
             && !(ctx.comm.is_some() && cfg.ep_world_size > 1)
     }
@@ -253,11 +252,12 @@ impl MoeLayer {
             GroupedRouting::PerToken => "log:moe_fp8_grouped_decode_per_token",
         };
         if ctx.stats.once(log_key) {
-            let family = if self.fp8_grouped_tc_on(h as usize, inter as usize) {
-                "tensor-core"
-            } else {
-                "scalar"
-            };
+            let family =
+                if self.fp8_grouped_tc_on(h as usize, inter as usize, ctx.levers.moe.fp8_tc) {
+                    "tensor-core"
+                } else {
+                    "scalar"
+                };
             tracing::info!(
                 "MoE FP8 grouped decode: cross-row batched routed+shared expert dispatch \
                  active (first use M={m}, top_k={top_k}, experts={num_experts}, \
@@ -304,11 +304,19 @@ impl MoeLayer {
             top_k,
             stream,
         )?;
-        super::dump::dump_grouped_active(ctx.gpu, stream, active_count, m, ctx.graph_capture)?;
+        super::dump::dump_grouped_active(
+            ctx.levers.moe.dump_expert_ids,
+            ctx.gpu,
+            stream,
+            active_count,
+            m,
+            ctx.graph_capture,
+        )?;
         // 2026-09-26: The SiLU products are FP32: routed `[te, inter]` in
         // `expert_gate_out()`, shared `[m, inter]` in `logits()`
         // (`grouped_decode_buffer_need`); the W8A8 step keeps its E4M3 products there too.
-        let experts = self.fp8_grouped_expert_kernels(h as usize, inter as usize);
+        let tc = ctx.levers.moe.fp8_tc;
+        let experts = self.fp8_grouped_expert_kernels(h as usize, inter as usize, tc);
         let act = ctx.buffers.expert_gate_out();
         let expert_down_out = ctx.buffers.expert_down_out();
         let shared_act = ctx.buffers.logits();
@@ -316,7 +324,7 @@ impl MoeLayer {
         let output = ctx.buffers.moe_output();
 
         // 2026-09-28: The opt-in W8A8 expert step (`fp8_grouped_tc_w8a8.rs`).
-        if self.fp8_grouped_tc_w8a8_on(h as usize, inter as usize) {
+        if self.fp8_grouped_tc_w8a8_on(h as usize, inter as usize, tc) {
             let io = super::fp8_grouped_tc_w8a8::GroupedExpertIo {
                 input,
                 act,

@@ -89,11 +89,12 @@ impl Nvfp4GroupedKernels {
     /// 2026-10-02: The gate+up and down launches for an `inter` x `hidden` expert: the
     /// tensor-core twins when on and the shape fits them, else the CUDA-core kernels.
     /// 2026-10-04: Always the lean pair once the tables are lean (the repack checked the shape).
-    fn select(&self, hidden: u32, inter: u32) -> Nvfp4GroupedLaunch {
+    /// 2026-10-17: `tc` is `MoeLevers::nvfp4_tc`.
+    fn select(&self, hidden: u32, inter: u32, tc: bool) -> Nvfp4GroupedLaunch {
         if let Some(lean) = self.lean_launch() {
             return lean;
         }
-        if nvfp4_grouped_tc_enabled()
+        if tc
             && self.gate_up_tc.0 != 0
             && self.down_tc.0 != 0
             && ops::nvfp4_grouped_tc_shape_ok(inter, hidden, ops::NVFP4_GROUPED_GATE_UP_TC)
@@ -126,15 +127,6 @@ pub(super) struct Nvfp4GroupedLaunch {
     pub(super) down: KernelHandle,
     pub(super) down_geometry: ops::Fp8GroupedGeometry,
     pub(super) max_rows: usize,
-}
-
-/// 2026-10-02: The grouped NVFP4 decode takes the tensor-core expert kernels unless
-/// `METRALE_NO_MOE_NVFP4_TC` is present (a debugging kill switch: the CUDA-core kernels). Read
-/// once per process. The two pairs differ in summation order, and in the SiLU product's
-/// carrier (FP32 against BF16 hi + lo), so their bits differ; each is row-invariant.
-pub(super) fn nvfp4_grouped_tc_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("METRALE_NO_MOE_NVFP4_TC").is_none())
 }
 
 /// 2026-09-27: Shape admission without a GPU: `m` in `1..=max_rows` (2026-10-02: the selected
@@ -193,7 +185,9 @@ impl MoeLayer {
         let gate_up_ok =
             routed.is_some_and(|e| !e.gate_proj.weight.is_null() && !e.up_proj.weight.is_null());
         let native = self.nvfp4_grouped.declared_experts;
-        let launch = self.nvfp4_grouped.select(h as u32, inter as u32);
+        let launch = self
+            .nvfp4_grouped
+            .select(h as u32, inter as u32, ctx.levers.moe.nvfp4_tc);
         let down_ok = if tier.nvfp4_down() || native {
             !self.down_ptrs.packed_ptrs.is_null()
                 && routed.is_some_and(|e| !e.down_proj.weight.is_null())
@@ -408,7 +402,7 @@ impl MoeLayer {
             )?;
         }
         let nvfp4_shared_rows = if fp8_shared.is_some() { 0 } else { n };
-        let launch = self.nvfp4_grouped.select(h, inter);
+        let launch = self.nvfp4_grouped.select(h, inter, ctx.levers.moe.nvfp4_tc);
         ops::moe_expert_gate_up_act_nvfp4_grouped(
             ctx.gpu,
             launch.gate_up,

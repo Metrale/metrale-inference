@@ -77,10 +77,7 @@ impl MoeLayer {
                 "experts are not the checkpoint's declared NVFP4 alone (the FP8 kernels would read \
                  the lifted SiLU rows)",
             ),
-            (
-                super::forward_nvfp4_grouped_decode::nvfp4_grouped_tc_enabled(),
-                "METRALE_NO_MOE_NVFP4_TC",
-            ),
+            (levers.moe.nvfp4_tc, "METRALE_NO_MOE_NVFP4_TC"),
             (
                 k.gate_up_tc_lean.0 != 0 && k.down_tc_lean.0 != 0 && k.lean_repack.0 != 0,
                 "lean kernels not in the kernel set",
@@ -132,10 +129,7 @@ impl MoeLayer {
                 !levers.fp32_gate && !self.fp32_routing_active(levers),
                 "FP32 gate or routing",
             ),
-            (
-                crate::layers::moe_grouped_decode_enabled(),
-                "METRALE_NO_MOE_GROUPED_DECODE",
-            ),
+            (levers.moe.grouped_decode, "METRALE_NO_MOE_GROUPED_DECODE"),
             (self.lora.is_none(), "MoE LoRA"),
         ];
         checks.iter().find(|(ok, _)| !ok).map(|(_, why)| *why)

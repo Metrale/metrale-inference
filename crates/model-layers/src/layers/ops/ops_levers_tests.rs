@@ -16,6 +16,13 @@ fn old_gemv_max_m(v: Option<&str>) -> u32 {
     v.and_then(|v| v.parse().ok()).unwrap_or(48)
 }
 
+/// 2026-10-17: `moe/lora.rs::max_tokens`.
+fn old_expert_max_tokens(v: Option<&str>) -> u32 {
+    v.and_then(|v| v.parse().ok())
+        .filter(|&t: &u32| t > 0)
+        .unwrap_or(4096)
+}
+
 /// 2026-10-17: The levers of `env` at `probe` and nothing else; `None` when the settings refuse
 /// it.
 fn new_at(env: &str, probe: &str) -> Option<OpsLevers> {
@@ -126,6 +133,24 @@ fn the_lora_row_bound_reads_as_before() {
     }
 }
 
+/// 2026-10-17: The MoE LoRA scratch rows keep their reader's parse: an untrimmed positive
+/// `u32`, 4096 otherwise.
+#[test]
+fn the_moe_lora_scratch_rows_read_as_before() {
+    let env = "METRALE_LORA_EXPERT_MAX_TOKENS";
+    let changes = check(env, Old::Verbatim, old_expert_max_tokens, |s| {
+        ops(s).lora.expert_max_tokens
+    });
+    assert!(changes.is_empty(), "{changes:?}");
+    for probe in ["12", "0", "+7", " 12", "12 ", "-1", "1.5", "", "4294967296"] {
+        assert_eq!(
+            new_at(env, probe).map(|l| l.lora.expert_max_tokens),
+            Some(old_expert_max_tokens(Some(probe))),
+            "{probe:?}"
+        );
+    }
+}
+
 /// 2026-10-17: `dispatch_proj::cublas_scale_layout_kmajor`: k-major unless the variable is
 /// exactly `rowmajor`.
 fn old_kmajor(v: Option<&str>) -> bool {
@@ -169,6 +194,7 @@ fn the_declared_defaults_are_the_old_unset_values() {
             lora: LoraLevers {
                 no_apply: false,
                 gemv_max_m: old_gemv_max_m(None),
+                expert_max_tokens: old_expert_max_tokens(None),
             },
             hc: HcLevers {
                 gemm_disabled: false,

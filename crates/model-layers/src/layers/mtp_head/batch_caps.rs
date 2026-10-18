@@ -181,7 +181,8 @@ impl MtpHead {
         // the width too. `propose_batch` checks the context terms (kill switch,
         // FP32 routing, EP) and returns `None` to fall back per sequence.
         if let Some(moe) = self.moe_grouped.as_ref() {
-            while cap > 1 && !moe.any_grouped_decode_arena_ok(cap, config, buffers) {
+            while cap > 1 && !moe.any_grouped_decode_arena_ok(cap, config, buffers, self.moe_fp8_tc)
+            {
                 cap -= 1;
             }
         }

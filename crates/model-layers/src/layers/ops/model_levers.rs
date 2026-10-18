@@ -346,6 +346,10 @@ pub struct ModelLevers {
     pub drafter: crate::drafter_context::DrafterContext,
     /// 2026-10-17: The `layers::ops` launcher levers ([`super::OpsLevers`]).
     pub ops: super::OpsLevers,
+    /// 2026-10-17: The GDN layer's dispatch levers ([`crate::layers::qwen3_ssm::SsmLevers`]).
+    pub ssm: crate::layers::qwen3_ssm::SsmLevers,
+    /// 2026-10-17: The MoE dispatch levers ([`crate::layers::moe::MoeLevers`]).
+    pub moe: crate::layers::moe::MoeLevers,
 }
 
 /// 2026-09-25: How the levers are read: the `from_settings` and `defaults` constructors.

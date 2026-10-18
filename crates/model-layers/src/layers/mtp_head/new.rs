@@ -405,6 +405,7 @@ impl MtpHead {
                 std::env::var("METRALE_NO_GEMV_SW").ok().as_deref(),
             ),
             mtp_tc: levers.ops.mtp_tc,
+            moe_fp8_tc: levers.moe.fp8_tc,
             w4a16_gemv_qg_k: gpu.kernel("w4a16_gemv", "w4a16_gemv_qg")?,
             w4a16_gemv_dual_k: gpu.kernel("w4a16_gemv_fused", "w4a16_gemv_dual")?,
             rope_k: gpu.kernel("rope", "rope_forward")?,

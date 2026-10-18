@@ -61,6 +61,9 @@ pub struct LoraLevers {
     /// tiles 16 rows (`TC_TM` in dense_gemm_tc.cu) and reads all of B whatever `m` is, so a small
     /// `m` pays full B traffic for a partly empty tile.
     pub gemv_max_m: u32,
+    /// 2026-09-25: `METRALE_LORA_EXPERT_MAX_TOKENS`: the row capacity of a MoE layer's LoRA
+    /// apply scratch (`moe/lora.rs`).
+    pub expert_max_tokens: u32,
 }
 
 impl LoraKernels {

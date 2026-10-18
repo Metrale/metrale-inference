@@ -43,7 +43,7 @@ impl MoeLayer {
             && !ep
             && self.moe_unpermute_blend_k.0 != 0
             && h.is_multiple_of(8)
-            && !super::super::dump::enabled()
+            && !ctx.levers.moe.dump_expert_ids
         {
             ops::moe_unpermute_blend(
                 ctx.gpu,
@@ -86,9 +86,24 @@ impl MoeLayer {
         }
 
         if has_shared {
-            super::super::dump::dump_routed_only(ctx.gpu, stream, output, n, h)?;
-            super::super::dump::dump_shared_out(ctx.gpu, stream, shared_down_out, n, h)?;
+            super::super::dump::dump_routed_only(
+                ctx.levers.moe.dump_expert_ids,
+                ctx.gpu,
+                stream,
+                output,
+                n,
+                h,
+            )?;
+            super::super::dump::dump_shared_out(
+                ctx.levers.moe.dump_expert_ids,
+                ctx.gpu,
+                stream,
+                shared_down_out,
+                n,
+                h,
+            )?;
             super::super::dump::dump_shared_gate(
+                ctx.levers.moe.dump_expert_ids,
                 ctx.gpu,
                 stream,
                 input,

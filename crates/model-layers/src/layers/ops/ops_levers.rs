@@ -11,6 +11,8 @@
 //!   (`the_declared_defaults_are_the_old_unset_values`).
 //! - `METRALE_LORA_GEMV_MAX_M` keeps its reader's parse: an unsigned row count, and the declared
 //!   48 when unset or unparseable.
+//! - `METRALE_LORA_EXPERT_MAX_TOKENS` keeps its reader's parse: a positive `u32`, and the
+//!   declared 4096 otherwise.
 //! - `METRALE_CUBLAS_SCALE_LAYOUT` keeps its reader's text predicate: exactly `rowmajor` turns
 //!   the k-major layout off.
 //! - `from_settings` refuses exactly what [`W4a4Levers::from_settings`] refuses.
@@ -29,6 +31,10 @@ use metrale_settings::InferenceServerSettings;
 /// 2026-10-17: The rows at or below which a LoRA delta runs row-wise GEMVs when
 /// `METRALE_LORA_GEMV_MAX_M` is unset or unparseable.
 const LORA_GEMV_MAX_M: u32 = 48;
+
+/// 2026-10-17: The MoE LoRA scratch rows when `METRALE_LORA_EXPERT_MAX_TOKENS` is unset or not
+/// a positive count.
+const LORA_EXPERT_MAX_TOKENS: u32 = 4096;
 
 /// 2026-10-17: The `layers::ops` launcher levers. Each field names its variable; the launcher
 /// that takes it documents what it changes.
@@ -123,6 +129,13 @@ impl OpsLevers {
                     .as_deref()
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(LORA_GEMV_MAX_M),
+                expert_max_tokens: s
+                    .scheduler
+                    .lora_expert_max_tokens
+                    .as_deref()
+                    .and_then(|v| v.parse().ok())
+                    .filter(|&t: &u32| t > 0)
+                    .unwrap_or(LORA_EXPERT_MAX_TOKENS),
             },
             hc: HcLevers {
                 gemm_disabled: k.qwen4exp_no_hc_gemm,
@@ -175,6 +188,7 @@ impl OpsLevers {
             lora: LoraLevers {
                 no_apply: false,
                 gemv_max_m: LORA_GEMV_MAX_M,
+                expert_max_tokens: LORA_EXPERT_MAX_TOKENS,
             },
             hc: HcLevers {
                 gemm_disabled: false,
