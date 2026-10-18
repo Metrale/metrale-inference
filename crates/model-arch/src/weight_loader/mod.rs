@@ -23,6 +23,8 @@ mod qwen35_dense;
 mod qwen3_vl;
 #[cfg_attr(test, allow(unreachable_pub))]
 pub(crate) mod qwen4_exp;
+/// 2026-10-17: Loader levers read by more than one family (one predicate each).
+pub(crate) mod shared_levers;
 mod step3p7;
 
 pub use deepseek_v4::DeepSeekV4WeightLoader;
