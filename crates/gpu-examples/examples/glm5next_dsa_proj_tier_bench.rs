@@ -131,7 +131,15 @@ fn main() -> Result<()> {
     let o_local: Vec<f32> = (0..hid)
         .flat_map(|r| o_full[r * FULL_HEADS * vd..][..HEADS * vd].to_vec())
         .collect();
-    let q_abs = absorb_q(&cfg, &q_b, &kv_b, HEADS)?;
+    let q_abs = absorb_q(
+        &cfg,
+        &q_b,
+        &kv_b,
+        HEADS,
+        metrale_model_arch::mla_absorb::AbsorbThreads::from_settings(
+            &metrale_gpu_examples::process_settings()?,
+        ),
+    )?;
     let o_abs = absorb_o(&cfg, &o_local, &kv_b, HEADS)?;
 
     let sets = metrale_kernels::all_ptx_sets();

@@ -43,17 +43,13 @@ const BLOCKS_PER_SM: u32 = 2;
 pub type Range = (DevicePtr, usize);
 
 /// 2026-10-10: The lever's budget in bytes, `None` when off. Errors on a value that is not a
-/// whole number of MB.
-pub fn budget_from_env() -> Result<Option<usize>> {
-    parse_budget(std::env::var(L2_WARM_ENV).ok().as_deref())
-}
-
-fn parse_budget(v: Option<&str>) -> Result<Option<usize>> {
-    let Some(v) = v else { return Ok(None) };
-    let mb: usize = v
-        .trim()
-        .parse()
-        .with_context(|| format!("{L2_WARM_ENV}={v}: expected a whole number of MB"))?;
+/// whole number of MB. 2026-10-17: Read from the startup settings (`GlmLevers::l2_warm_budget`).
+pub fn budget(s: &metrale_settings::InferenceServerSettings) -> Result<Option<usize>> {
+    let Some(v) = s.kernels.glm_ar_l2_prefetch else {
+        return Ok(None);
+    };
+    let mb = usize::try_from(v)
+        .map_err(|_| anyhow::anyhow!("{L2_WARM_ENV}={v}: expected a whole number of MB"))?;
     Ok((mb > 0).then_some(mb << 20))
 }
 
@@ -215,13 +211,57 @@ mod tests {
     use super::*;
     use metrale_gpu_runtime::gpu::mock::{MockArg, MockGpuBackend};
 
+    /// 2026-10-17: The replaced `parse_budget`, unchanged.
+    fn old_budget(v: Option<&str>) -> Result<Option<usize>> {
+        let Some(v) = v else { return Ok(None) };
+        let mb: usize = v
+            .trim()
+            .parse()
+            .with_context(|| format!("{L2_WARM_ENV}={v}: expected a whole number of MB"))?;
+        Ok((mb > 0).then_some(mb << 20))
+    }
+
+    /// 2026-10-17: The budget at `probe` through the settings; `None` when refused.
+    fn new_budget(probe: Option<&str>) -> Option<Option<usize>> {
+        let pairs: Vec<(&str, &str)> = probe.map(|v| (L2_WARM_ENV, v)).into_iter().collect();
+        metrale_model_layers::lever_equivalence::settings_from(&pairs)
+            .ok()
+            .and_then(|s| budget(&s).ok())
+    }
+
+    /// 2026-10-17: MB in, bytes out, 0 off, garbage refused, as the replaced reader, but for
+    /// the listed probes: `-0` now reads as off and a count past `i64::MAX` is refused.
     #[test]
-    fn the_budget_parses_mb_and_refuses_garbage() {
-        assert_eq!(parse_budget(None).unwrap(), None);
-        assert_eq!(parse_budget(Some("0")).unwrap(), None);
-        assert_eq!(parse_budget(Some("6")).unwrap(), Some(6 << 20));
-        assert!(parse_budget(Some("6.5")).is_err());
-        assert!(parse_budget(Some("lots")).is_err());
+    fn the_budget_reads_as_before_except_signed_zero_and_past_i64() {
+        for probe in [
+            None,
+            Some("0"),
+            Some("6"),
+            Some(" 6 "),
+            Some("+6"),
+            Some("6.5"),
+            Some("lots"),
+            Some("-1"),
+            Some(""),
+            Some("1"),
+            Some("true"),
+            Some("off"),
+            Some("garbage"),
+        ] {
+            assert_eq!(new_budget(probe), old_budget(probe).ok(), "{probe:?}");
+        }
+        let past_i64 = (1u64 << 63).to_string();
+        for (probe, was, now) in [
+            ("-0", None, Some(None)),
+            // 2026-10-17: The old shift dropped every bit of 2^63 MB: a zero-byte budget.
+            (past_i64.as_str(), Some(Some(0)), None),
+        ] {
+            assert_eq!(
+                (old_budget(Some(probe)).ok(), new_budget(Some(probe))),
+                (was, now),
+                "{probe:?}"
+            );
+        }
     }
 
     #[test]

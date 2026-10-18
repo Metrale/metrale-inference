@@ -174,7 +174,7 @@ impl Glm5NextLayer {
         // 2026-10-14: `METRALE_GLM_PREFILL_PIECE_ROWS=P`: a wider sub-chunk runs as `P`-row
         // pieces (`steps/forward_pieces.rs`); not beside the SP pipeline, which plans its own
         // sub-chunks, and neither under the merged tail (one `forward_k` per merged sub-chunk).
-        let piece = crate::glm5next_prefill_piece::piece_rows()?;
+        let piece = self.levers.piece_rows;
         let pipeline = self.levers.mhc.sp_pipeline;
         if piece.is_some() && pipeline {
             bail!(

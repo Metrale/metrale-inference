@@ -81,6 +81,9 @@ pub struct Glm5NextLayer {
     pub l2_warm: Option<Arc<l2_warm::L2Warm>>,
     /// 2026-10-17: `scheduler.glm_keep_slot_graphs` at construction ([`Self::slot_graphs_stale`]).
     pub keep_slot_graphs: bool,
+    /// 2026-10-17: The layer dump lever (`crate::glm5next_layer_dump::config`), resolved once at
+    /// load and shared by every layer; `None` when off.
+    pub dump: Option<Arc<crate::glm5next_layer_dump::DumpConfig>>,
     /// 2026-10-17: The GLM layer levers, resolved once at load ([`GlmLevers::from_settings`]).
     pub levers: super::GlmLevers,
 }

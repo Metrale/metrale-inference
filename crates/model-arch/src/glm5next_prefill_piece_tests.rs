@@ -1,23 +1,82 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-10-14: Piece mode: the lever's parse, the call plan against the `P`-chunked serve's
+//! 2026-10-14: Piece mode: the lever's reading, the call plan against the `P`-chunked serve's
 //! sub-chunks, and the load-time budget check.
 //!
 //! Owner: model-arch (GLM-5.3).
-//! Invariants: none beyond the types.
+//! Invariants: the lever reads as its replaced environment reader (`old_parse`, frozen here)
+//! did, except the listed probes: a padded count is now read, and a count past `i64::MAX` is
+//! refused.
 
 use super::*;
+use metrale_model_layers::lever_equivalence::settings_from;
+
+/// 2026-10-17: The replaced `parse`, unchanged.
+fn old_parse(v: Option<&str>) -> Result<Option<usize>, String> {
+    let Some(s) = v else {
+        return Ok(None);
+    };
+    let p: usize = s
+        .parse()
+        .map_err(|_| format!("{PIECE_ROWS_ENV}={s:?}: expected a row count"))?;
+    if p == 0 || !p.is_multiple_of(PIECE_ALIGN) {
+        return Err(format!(
+            "{PIECE_ROWS_ENV}={p}: must be a positive multiple of {PIECE_ALIGN} (the KDA scan's \
+             slab), or unset"
+        ));
+    }
+    Ok(Some(p))
+}
+
+/// 2026-10-17: The lever at `probe` through the settings; `None` when the settings or the check
+/// refuse it.
+fn new_at(probe: Option<&str>) -> Option<Option<usize>> {
+    let pairs: Vec<(&str, &str)> = probe.map(|v| (PIECE_ROWS_ENV, v)).into_iter().collect();
+    settings_from(&pairs).ok().and_then(|s| piece_rows(&s).ok())
+}
 
 /// 2026-10-14: Unset is off; a positive multiple of 256 is taken; zero, an off-grid count and
-/// text are refused.
+/// text are refused. 2026-10-17: As the replaced reader, but for the listed probes.
 #[test]
-fn parses_and_refuses() {
-    assert_eq!(parse(None), Ok(None));
-    assert_eq!(parse(Some("8192")), Ok(Some(8192)));
-    assert_eq!(parse(Some("256")), Ok(Some(256)));
-    for bad in ["0", "8208", "64", "-8192", "", "8k", "1"] {
-        assert!(parse(Some(bad)).is_err(), "{bad:?} accepted");
+fn reads_as_before_except_padding_and_past_i64() {
+    for probe in [
+        None,
+        Some("8192"),
+        Some("256"),
+        Some("+512"),
+        Some("0"),
+        Some("8208"),
+        Some("64"),
+        Some("-8192"),
+        Some(""),
+        Some("8k"),
+        Some("1"),
+        Some("true"),
+        Some("off"),
+        Some("garbage"),
+    ] {
+        assert_eq!(new_at(probe), old_parse(probe).ok(), "{probe:?}");
     }
+    let past_i64 = (1u64 << 63).to_string();
+    for (probe, was, now) in [
+        (" 8192", None, Some(Some(8192))),
+        ("256 ", None, Some(Some(256))),
+        (past_i64.as_str(), Some(Some(1usize << 63)), None),
+    ] {
+        assert_eq!(
+            (old_parse(Some(probe)).ok(), new_at(Some(probe))),
+            (was, now),
+            "{probe:?}"
+        );
+    }
+    // 2026-10-17: A negative count resolves as settings and is refused here with the
+    // positive-multiple text, where the old parse said "expected a row count".
+    let s = settings_from(&[(PIECE_ROWS_ENV, "-8192")]).expect("an Int resolves");
+    let err = format!(
+        "{:#}",
+        piece_rows(&s).expect_err("a negative count is refused")
+    );
+    assert!(err.contains("must be a positive multiple of 256"), "{err}");
 }
 
 fn plan(k: usize, p: usize, share: impl Fn(usize) -> Option<u8>) -> Vec<Vec<usize>> {

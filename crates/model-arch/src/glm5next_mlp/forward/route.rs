@@ -45,7 +45,6 @@ pub fn expert_route(
     ws: &Glm5NextMlpWorkspace,
     rows: usize,
 ) -> ExpertRoute {
-    use crate::glm5next_layer::profile;
     if w.precision.kernel(rows) == MlpKernel::W4a4Static {
         return ExpertRoute::W4a4;
     }
@@ -53,7 +52,7 @@ pub fn expert_route(
     let grouped = rows >= grouped_row_floor(l)
         && l.prefill_gemm
         && !l.host_dispatch
-        && !profile::trace_on()
+        && !k.levers.profile.trace_on()
         && k.moe_sort_by_expert.0 != 0
         && k.moe_grouped_gemm.0 != 0
         && k.combine_indexed.0 != 0
@@ -64,7 +63,7 @@ pub fn expert_route(
     let batched = rows >= 2
         && !l.host_dispatch
         && !l.row_batch_off
-        && !profile::trace_on()
+        && !k.levers.profile.trace_on()
         && k.moe_row_union.0 != 0
         && moe_row_groups(rows, l.row_batch_max).iter().all(|&(_, w)| {
             w >= 2

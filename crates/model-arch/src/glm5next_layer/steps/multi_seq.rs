@@ -206,18 +206,26 @@ impl Glm5NextLayer {
                 chunk,
                 last_pos: None,
             };
-            let tap = dump::begin(ctx, stream, self.dump_layer(mhc, true), call, None, || {
-                spans
-                    .iter()
-                    .map(|sp| dump::Window {
-                        row0: sp.row0,
-                        rows: sp.rows,
-                        seq: sp.seq,
-                        first_pos: seq_lens[sp.seq] + sp.t0,
-                        last_pos: None,
-                    })
-                    .collect()
-            })?;
+            let tap = dump::begin(
+                ctx,
+                self.dump.as_deref(),
+                stream,
+                self.dump_layer(mhc, true),
+                call,
+                None,
+                || {
+                    spans
+                        .iter()
+                        .map(|sp| dump::Window {
+                            row0: sp.row0,
+                            rows: sp.rows,
+                            seq: sp.seq,
+                            first_pos: seq_lens[sp.seq] + sp.t0,
+                            last_pos: None,
+                        })
+                        .collect()
+                },
+            )?;
             let tap = tap.as_ref();
             match (&self.mixer, meta) {
                 (Glm5NextMixer::Kda { layer, ws, .. }, _) => {

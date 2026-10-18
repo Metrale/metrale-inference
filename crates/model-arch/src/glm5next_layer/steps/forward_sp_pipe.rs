@@ -118,7 +118,7 @@ impl Glm5NextLayer {
                 Prim::Wait(o, ev) => gpu.stream_wait_event(on(o), pw.event(ev))?,
                 Prim::Mixer(s) => {
                     let sub = &subs[s];
-                    let t = profile::start();
+                    let t = self.levers.profile.start();
                     let out = self.mix(
                         sub.normed,
                         sub.k,
@@ -149,7 +149,7 @@ impl Glm5NextLayer {
                         ),
                         RsKind::Mlp => (ffn_out, profile::REDUCE_MLP),
                     };
-                    let t = profile::start_hot();
+                    let t = self.levers.profile.start_hot();
                     let got = sp::reduce_scatter_rows(
                         comm,
                         &pw.recv_for(&ws, kind)?,
@@ -200,6 +200,7 @@ impl Glm5NextLayer {
                             row_bytes,
                             received,
                             defer: done.map(|d| pw.event(d)),
+                            prof: self.levers.profile,
                         },
                         &mut |a, b, partials| match stage {
                             Stage::Head => self.sp_head_piece(gpu, mhc, &sub.rows, a, b, stream),
@@ -224,7 +225,7 @@ impl Glm5NextLayer {
                         if let Some(l2) = &self.l2_warm {
                             l2.join(gpu, stream)?;
                         }
-                        profile::step();
+                        profile::step(self.levers.profile);
                     }
                 }
             }

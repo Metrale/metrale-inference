@@ -176,18 +176,26 @@ impl Glm5NextLayer {
                 chunk,
                 last_pos: None,
             };
-            let tap = dump::begin(ctx, stream, self.dump_layer(mhc, false), call, None, || {
-                group
-                    .iter()
-                    .map(|p| dump::Window {
-                        row0: p.row - base,
-                        rows: p.rows,
-                        seq: p.seq,
-                        first_pos: spans[p.seq].seq_len_start + p.t0,
-                        last_pos: Some(spans[p.seq].seq_len_start + spans[p.seq].rows - 1),
-                    })
-                    .collect()
-            })?;
+            let tap = dump::begin(
+                ctx,
+                self.dump.as_deref(),
+                stream,
+                self.dump_layer(mhc, false),
+                call,
+                None,
+                || {
+                    group
+                        .iter()
+                        .map(|p| dump::Window {
+                            row0: p.row - base,
+                            rows: p.rows,
+                            seq: p.seq,
+                            first_pos: spans[p.seq].seq_len_start + p.t0,
+                            last_pos: Some(spans[p.seq].seq_len_start + spans[p.seq].rows - 1),
+                        })
+                        .collect()
+                },
+            )?;
             let spans = &mut *spans;
             let kv = &mut *kv_cache;
             self.forward_rows_with(

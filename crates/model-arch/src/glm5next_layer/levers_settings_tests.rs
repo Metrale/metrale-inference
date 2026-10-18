@@ -59,6 +59,11 @@ fn from_values(mut value: impl FnMut(&str) -> Option<String>) -> GlmLevers {
         dsa: crate::glm5next_dsa::levers::DsaLevers::declared(),
         mlp: crate::glm5next_mlp::forward::MlpLevers::declared(),
         dense: crate::glm5next_dense_levers::DenseLevers::declared(),
+        // 2026-10-17: Probed in `profile_tests.rs`, `glm5next_prefill_piece_tests.rs` and
+        // `l2_warm.rs`'s tests; at their defaults here.
+        profile: crate::glm5next_layer::profile::Profile::from_settings(&defaults()),
+        piece_rows: None,
+        l2_warm_budget: None,
     }
 }
 

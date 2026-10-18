@@ -338,7 +338,7 @@ impl Glm5NextDsaLayer {
         } else {
             super::select::DsaSelectLaunch::Exact
         };
-        let t = crate::glm5next_layer::profile::start();
+        let t = self.levers.profile.start();
         // 2026-09-25: Row `row` of the `[max_rows, out_width]` selection output. The kernels
         // run one query row (`q_rows == 1`) into this row's slot, so `attend_rows` reads all
         // rows in one launch.

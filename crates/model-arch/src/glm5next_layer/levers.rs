@@ -141,6 +141,13 @@ pub struct GlmLevers {
     pub mlp: crate::glm5next_mlp::forward::MlpLevers,
     /// 2026-10-17: The dense-projection tier levers (`crate::glm5next_dense_levers`).
     pub dense: crate::glm5next_dense_levers::DenseLevers,
+    /// 2026-10-17: The per-section timing levers (`profile::Profile`).
+    pub profile: super::profile::Profile,
+    /// 2026-10-14: `METRALE_GLM_PREFILL_PIECE_ROWS` (`crate::glm5next_prefill_piece`); `None`
+    /// is off.
+    pub piece_rows: Option<usize>,
+    /// 2026-10-10: `METRALE_GLM_AR_L2_PREFETCH` in bytes (`l2_warm`); `None` is off.
+    pub l2_warm_budget: Option<usize>,
 }
 
 impl GlmLevers {
@@ -178,6 +185,9 @@ impl GlmLevers {
             dsa: crate::glm5next_dsa::levers::DsaLevers::from_settings(s)?,
             mlp: crate::glm5next_mlp::forward::MlpLevers::from_settings(s)?,
             dense: crate::glm5next_dense_levers::DenseLevers::from_settings(s)?,
+            profile: super::profile::Profile::from_settings(s),
+            piece_rows: crate::glm5next_prefill_piece::piece_rows(s)?,
+            l2_warm_budget: super::l2_warm::budget(s)?,
         })
     }
 

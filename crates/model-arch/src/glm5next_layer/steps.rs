@@ -160,7 +160,7 @@ impl Glm5NextLayer {
             stream,
         )?;
         profile::end(profile::MHC, t_mhc, gpu, stream);
-        let t_norm = profile::start();
+        let t_norm = self.levers.profile.start();
         self.norm(gpu, y, norm_w, normed, k, stream)?;
         profile::end(profile::NORM, t_norm, gpu, stream);
         Ok(())
@@ -188,7 +188,7 @@ impl Glm5NextLayer {
                     conv: ssm.conv_state,
                     recurrent: ssm.h_state,
                 };
-                let t = profile::start();
+                let t = self.levers.profile.start();
                 layer.decode(ctx.gpu, normed, &kda, ws, stream)?;
                 profile::end(profile::KDA, t, ctx.gpu, stream);
                 Ok(ws.final_out)
@@ -216,17 +216,18 @@ impl Glm5NextLayer {
     /// 2026-09-25: While profiling, a 2-byte all-reduce timed into bucket `bar`, then the
     /// route-trace line for `site`. No-op when profiling is off or there is no communicator.
     fn reduce_probe(&self, bar: usize, site: &str, ctx: &ForwardContext, stream: u64) {
-        if !profile::on() {
+        if !self.levers.profile.on() {
             return;
         }
         let Some(comm) = ctx.comm else { return };
-        let t = profile::start_hot();
+        let t = self.levers.profile.start_hot();
         let p = profile::probe_buf(ctx.gpu);
         if p != 0 {
             let _ = comm.all_reduce_async(p, 2, stream);
         }
         let us = profile::end_us(bar, t, ctx.gpu, stream);
         profile::trace_bar(
+            self.levers.profile,
             site,
             self.layer_idx,
             matches!(self.mlp, Glm5NextMlpSite::Moe(_)),
@@ -311,11 +312,11 @@ impl Glm5NextLayer {
                 l2.fork(ctx.gpu, self.layer_idx, rows, stream)?;
             }
             self.reduce_probe(profile::REDUCE_MLP_BAR, "mlp", ctx, stream);
-            let t = profile::start_hot();
+            let t = self.levers.profile.start_hot();
             partials = self.reduce_or_exchange(out, row_pieces, fused, ctx, stream)?;
             profile::end_nosync(profile::REDUCE_MLP_ENQ, t);
             // 2026-09-25: This span times only the `synchronize` in `profile::end`.
-            let t = profile::start_hot();
+            let t = self.levers.profile.start_hot();
             profile::end(profile::REDUCE_MLP, t, ctx.gpu, stream);
         }
         Ok(partials)
@@ -335,7 +336,7 @@ impl Glm5NextLayer {
     ) -> Result<()> {
         crate::glm5next_mlp::forward::check_pieces(rows, row_pieces)?;
         let t_dense = matches!(self.mlp, Glm5NextMlpSite::Dense(_))
-            .then(profile::start)
+            .then(|| self.levers.profile.start())
             .flatten();
         match &self.mlp {
             Glm5NextMlpSite::Dense(w) => {

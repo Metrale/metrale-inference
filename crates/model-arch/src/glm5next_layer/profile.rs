@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-09-25: Per-section decode timing for the GLM-5.3 layers, enabled by `METRALE_GLM_PROFILE`.
+//! 2026-10-17: The levers are a [`Profile`] resolved once from the startup settings and carried
+//! in `GlmLevers::profile`; the timing sink stays process-wide.
 //!
 //! Owner: model-arch (GLM-5.3).
 //! Invariants:
@@ -77,34 +79,55 @@ static NANOS: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
 static CALLS: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
 static STEPS: AtomicU64 = AtomicU64::new(0);
 
-/// 2026-09-25: `METRALE_GLM_PROFILE`: `1` times every span, `2` only the collective spans
-/// (`start_hot`), anything else is off. Read once.
-fn level() -> u8 {
-    static L: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
-    *L.get_or_init(|| match std::env::var("METRALE_GLM_PROFILE").as_deref() {
-        Ok("1") => 1,
-        Ok("2") => 2,
-        _ => 0,
-    })
+/// 2026-10-17: The profiling levers, resolved once from the startup settings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Profile {
+    /// 2026-09-25: `METRALE_GLM_PROFILE`: `1` times every span, `2` only the collective spans
+    /// (`start_hot`), anything else is off (0).
+    level: u8,
+    /// 2026-09-25: `METRALE_GLM_ROUTE_TRACE`: `trace_bar` logs one line per reduce site per
+    /// layer with the rendezvous time and the expert ids `stash_route` last saved. It logs only
+    /// while profiling is on too, because `trace_bar` is called from `reduce_probe`.
+    trace: bool,
 }
 
-pub fn on() -> bool {
-    level() != 0
-}
+impl Profile {
+    /// 2026-10-17: Resolve from the startup settings; `METRALE_GLM_PROFILE` keeps its reader's
+    /// text predicate (`1` or `2` exactly).
+    pub fn from_settings(s: &metrale_settings::InferenceServerSettings) -> Self {
+        Self {
+            level: match s.telemetry.glm_profile.as_deref() {
+                Some("1") => 1,
+                Some("2") => 2,
+                _ => 0,
+            },
+            trace: s.telemetry.glm_route_trace,
+        }
+    }
 
-/// 2026-09-25: True only at level 1, the per-kernel spans.
-pub fn full() -> bool {
-    level() == 1
-}
+    pub fn on(self) -> bool {
+        self.level != 0
+    }
 
-/// 2026-09-25: Open a span at level 1; `None` otherwise, which makes [`end`] a no-op.
-pub fn start() -> Option<Instant> {
-    full().then(Instant::now)
-}
+    /// 2026-09-25: True only at level 1, the per-kernel spans.
+    pub fn full(self) -> bool {
+        self.level == 1
+    }
 
-/// 2026-09-25: Open a span at level 1 or 2, for the collectives and their rendezvous probe.
-pub fn start_hot() -> Option<Instant> {
-    on().then(Instant::now)
+    /// 2026-09-25: Open a span at level 1; `None` otherwise, which makes [`end`] a no-op.
+    pub fn start(self) -> Option<Instant> {
+        self.full().then(Instant::now)
+    }
+
+    /// 2026-09-25: Open a span at level 1 or 2, for the collectives and their rendezvous probe.
+    pub fn start_hot(self) -> Option<Instant> {
+        self.on().then(Instant::now)
+    }
+
+    /// 2026-09-25: Whether `METRALE_GLM_ROUTE_TRACE` is on.
+    pub fn trace_on(self) -> bool {
+        self.trace
+    }
 }
 
 pub fn end(bucket: usize, t0: Option<Instant>, gpu: &dyn GpuBackend, stream: u64) {
@@ -121,22 +144,14 @@ pub fn end_us(bucket: usize, t0: Option<Instant>, gpu: &dyn GpuBackend, stream: 
     ns as f64 / 1e3
 }
 
-/// 2026-09-25: `METRALE_GLM_ROUTE_TRACE=1`: `trace_bar` logs one line per reduce site per layer
-/// with the rendezvous time and the expert ids `stash_route` last saved. Read once. It logs only
-/// while profiling is on too, because `trace_bar` is called from `reduce_probe`.
-pub fn trace_on() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("METRALE_GLM_ROUTE_TRACE").as_deref() == Ok("1"))
-}
-
 thread_local! {
     /// 2026-09-25: The ids `forward_moe` last read back to the host, for the next trace line.
     static ROUTE: std::cell::RefCell<Vec<i32>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// 2026-09-25: Called from `forward_moe` after the ids are read back. No-op unless tracing.
-pub fn stash_route(ids: &[i32]) {
-    if !trace_on() {
+pub fn stash_route(p: Profile, ids: &[i32]) {
+    if !p.trace_on() {
         return;
     }
     ROUTE.with(|r| {
@@ -148,8 +163,8 @@ pub fn stash_route(ids: &[i32]) {
 
 /// 2026-09-25: Log the trace line of one reduce site: `site` is `attn` or `mlp`, and `moe` says
 /// whether this layer's MLP is routed. No-op unless tracing.
-pub fn trace_bar(site: &str, layer: usize, moe: bool, us: f64) {
-    if !trace_on() {
+pub fn trace_bar(p: Profile, site: &str, layer: usize, moe: bool, us: f64) {
+    if !p.trace_on() {
         return;
     }
     let step = STEPS.load(Relaxed);
@@ -183,8 +198,8 @@ pub fn end_nosync(bucket: usize, t0: Option<Instant>) {
 
 /// 2026-09-25: Count one token. Every 8th token, log the cumulative time per token and calls per
 /// token of each bucket.
-pub fn step() {
-    if !on() {
+pub fn step(p: Profile) {
+    if !p.on() {
         return;
     }
     let s = STEPS.fetch_add(1, Relaxed) + 1;
@@ -215,3 +230,7 @@ pub fn step() {
     }
     tracing::warn!("{out}");
 }
+
+#[cfg(test)]
+#[path = "profile_tests.rs"]
+mod tests;

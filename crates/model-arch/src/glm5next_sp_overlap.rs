@@ -240,6 +240,8 @@ pub struct Section<'a> {
     pub row_bytes: usize,
     pub received: Option<PeerPartials>,
     pub defer: Option<u64>,
+    /// 2026-10-17: The profiling levers that time the bucketed collectives.
+    pub prof: crate::glm5next_layer::profile::Profile,
 }
 
 /// 2026-10-14: Enqueue `sec` by [`schedule`]: `compute(lo, hi, partials)` enqueues the mHC
@@ -296,7 +298,7 @@ pub fn run_section(
             Op::ReduceScatter(j, s) => {
                 let (src, bucket) = sec.rs.context("SP overlap: no partial to reduce")?;
                 let (stream, lo) = (on(s)?, sec.pieces[j][rank].0);
-                let t = bucket.and_then(|_| profile::start_hot());
+                let t = bucket.and_then(|_| sec.prof.start_hot());
                 partials[j] = Some(sp::reduce_scatter_rows(
                     comm,
                     ws,
@@ -321,7 +323,7 @@ pub fn run_section(
             Op::AllGather(j, s) => {
                 let (buf, bucket) = sec.ag.context("SP overlap: no buffer to gather")?;
                 let stream = on(s)?;
-                let t = bucket.and_then(|_| profile::start_hot());
+                let t = bucket.and_then(|_| sec.prof.start_hot());
                 sp::all_gather_rows(comm, buf, &sec.pieces[j], sec.row_bytes, stream)?;
                 if let Some(b) = bucket {
                     profile::end(b, t, gpu, stream);

@@ -174,7 +174,7 @@ impl Glm5NextDsaLayer {
             // (ceiling) launch at `q_rows > 1`.
             geom_dev: DevicePtr::NULL,
         };
-        let t = crate::glm5next_layer::profile::start();
+        let t = self.levers.profile.start();
         // 2026-09-25: The base of the `[max_rows, out_width]` output, not a row slice: the
         // kernels index rows themselves, so rows 0..k land in their own slots. 2026-10-11: In
         // row sub-passes when the scratch holds fewer rows at this context

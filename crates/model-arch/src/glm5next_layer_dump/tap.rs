@@ -21,7 +21,7 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_model_layers::layer::ForwardContext;
 
 pub use super::{Call, Path, Point, Window};
-use super::{DumpRow, Entry, config, select};
+use super::{DumpConfig, DumpRow, Entry, select};
 
 /// 2026-10-13: Where dumped rows go.
 pub trait Sink: Send + Sync {
@@ -101,16 +101,18 @@ pub struct Launch {
 }
 
 /// 2026-10-13: The tap of a layer call on `stream`, or `None` (module invariants). `windows`
-/// runs only with the lever on. `own` as in [`Tap`].
+/// runs only with the lever on. `own` as in [`Tap`]. 2026-10-17: `cfg` is the layer's
+/// resolved lever (`Glm5NextLayer::dump`), `None` when off.
 pub fn begin<'a>(
     ctx: &ForwardContext<'a>,
+    cfg: Option<&DumpConfig>,
     stream: u64,
     layer: Layer,
     call: Call,
     own: Option<(usize, usize)>,
     windows: impl FnOnce() -> Vec<Window>,
 ) -> Result<Option<Tap<'a>>> {
-    let Some(cfg) = config()? else {
+    let Some(cfg) = cfg else {
         return Ok(None);
     };
     if ctx.graph_capture {

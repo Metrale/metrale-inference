@@ -44,7 +44,7 @@ impl Glm5NextDsaLayer {
             num_seqs: rows,
             ..*paging
         };
-        let t = profile::start();
+        let t = self.levers.profile.start();
         let pool = kv_cache.k_pool_ptr(self.attn_layer_idx);
         let kernel = if is_prefill {
             self.decode_kernel

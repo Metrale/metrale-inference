@@ -21,8 +21,8 @@
 //! - [`plan_calls`] covers `0..k` once, in order, with every piece `P` rows except the last.
 //! - At load ([`check_piece_budget`]) the scheduler's chunk is a multiple of `P` wider than `P`,
 //!   and `GlmLevers::prefill_rows` covers the highway, so the layer never re-splits a chunk off the grid.
-
-use std::sync::OnceLock;
+//! - 2026-10-17: `P` is read from the startup settings ([`piece_rows`]), never the process
+//!   environment.
 
 use anyhow::Result;
 
@@ -33,30 +33,24 @@ pub const PIECE_ROWS_ENV: &str = "METRALE_GLM_PREFILL_PIECE_ROWS";
 /// piece boundary lands where the `P`-chunked serve's call boundary does in the scan's grid.
 pub const PIECE_ALIGN: usize = 256;
 
-/// 2026-10-14: [`PIECE_ROWS_ENV`], read once: unset is off (`None`); otherwise a positive
-/// multiple of [`PIECE_ALIGN`], anything else an error.
-pub fn piece_rows() -> Result<Option<usize>> {
-    static V: OnceLock<Result<Option<usize>, String>> = OnceLock::new();
-    V.get_or_init(|| parse(std::env::var(PIECE_ROWS_ENV).ok().as_deref()))
-        .clone()
-        .map_err(anyhow::Error::msg)
+/// 2026-10-17: [`PIECE_ROWS_ENV`] of the startup settings: unset is off (`None`); otherwise a
+/// positive multiple of [`PIECE_ALIGN`], anything else an error.
+pub fn piece_rows(s: &metrale_settings::InferenceServerSettings) -> Result<Option<usize>> {
+    checked(s.scheduler.glm_prefill_piece_rows).map_err(anyhow::Error::msg)
 }
 
-/// 2026-10-14: [`piece_rows`]'s parse, pure.
-pub(crate) fn parse(v: Option<&str>) -> Result<Option<usize>, String> {
-    let Some(s) = v else {
+/// 2026-10-17: [`piece_rows`]'s check of the resolved value, pure.
+fn checked(v: Option<i64>) -> Result<Option<usize>, String> {
+    let Some(p) = v else {
         return Ok(None);
     };
-    let p: usize = s
-        .parse()
-        .map_err(|_| format!("{PIECE_ROWS_ENV}={s:?}: expected a row count"))?;
-    if p == 0 || !p.is_multiple_of(PIECE_ALIGN) {
-        return Err(format!(
+    match usize::try_from(p) {
+        Ok(rows) if rows != 0 && rows.is_multiple_of(PIECE_ALIGN) => Ok(Some(rows)),
+        _ => Err(format!(
             "{PIECE_ROWS_ENV}={p}: must be a positive multiple of {PIECE_ALIGN} (the KDA scan's \
              slab), or unset"
-        ));
+        )),
     }
-    Ok(Some(p))
 }
 
 /// 2026-10-14: The calls a `k`-row sub-chunk runs as, each a list of piece row counts: `k` cut

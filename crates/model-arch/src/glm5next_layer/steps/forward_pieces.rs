@@ -118,23 +118,31 @@ impl Glm5NextLayer {
                 .map(|c| crate::glm5next_sp_mhc::shards(m, c.world_size())[c.rank()]);
             let first = seq_len + off;
             // 2026-10-14: The DSA selection output holds the last piece's rows only.
-            let tap = dump::begin(ctx, stream, self.dump_layer(mhc, false), call, own, || {
-                let mut r0 = 0usize;
-                pieces
-                    .iter()
-                    .map(|&n| {
-                        let w = dump::Window {
-                            row0: r0,
-                            rows: n,
-                            seq: 0,
-                            first_pos: first + r0,
-                            last_pos,
-                        };
-                        r0 += n;
-                        w
-                    })
-                    .collect()
-            })?;
+            let tap = dump::begin(
+                ctx,
+                self.dump.as_deref(),
+                stream,
+                self.dump_layer(mhc, false),
+                call,
+                own,
+                || {
+                    let mut r0 = 0usize;
+                    pieces
+                        .iter()
+                        .map(|&n| {
+                            let w = dump::Window {
+                                row0: r0,
+                                rows: n,
+                                seq: 0,
+                                first_pos: first + r0,
+                                last_pos,
+                            };
+                            r0 += n;
+                            w
+                        })
+                        .collect()
+                },
+            )?;
             let (st, kv, bt) = (&mut *state, &mut *kv_cache, &mut *block_table);
             let p = &pieces;
             let mixer = move |normed: DevicePtr| -> Result<DevicePtr> {

@@ -265,7 +265,7 @@ pub(super) fn w4a4_grouped_experts_with(
     let gu = fused
         .then(|| GuPlan::new(gu_entry(k, raster, ti, k.w4a4_grouped.gu[ti]), ti, k_store))
         .transpose()?;
-    let t = profile::start();
+    let t = k.levers.profile.start();
     KernelLaunch::new(gpu, k.moe_sort_by_expert)
         .grid([1, 1, 1])
         .block([BLOCK, 1, 1])

@@ -25,10 +25,11 @@
 //!   buffer: it adds host syncs, never a launch, so the dumped bits are the undumped run's.
 //! - A capturing stream is never dumped (a D2H wait is illegal inside a capture): decode dumps
 //!   need an eager decode.
+//! - 2026-10-17: The lever is read from the startup settings ([`config`]) once per load and
+//!   held by each layer (`Glm5NextLayer::dump`), never from the process environment.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
-use std::sync::OnceLock;
 
 use anyhow::Result;
 
@@ -47,31 +48,29 @@ pub struct DumpConfig {
     pub rows: Option<BTreeSet<usize>>,
 }
 
-/// 2026-10-13: The lever, read once; `None` when [`DIR_ENV`] is unset. A malformed value is an
-/// error on every call.
-pub fn config() -> Result<Option<&'static DumpConfig>> {
-    static V: OnceLock<Result<Option<DumpConfig>, String>> = OnceLock::new();
-    let v = V.get_or_init(|| {
-        let parsed = parse(
-            std::env::var(DIR_ENV).ok().as_deref(),
-            std::env::var(ROWS_ENV).ok().as_deref(),
-        );
-        if let Ok(Some(c)) = &parsed {
-            match &c.rows {
-                None => tracing::warn!(
-                    "{DIR_ENV}={}: {ROWS_ENV} unset, dumping only the last row of each prefill \
-                     pass",
-                    c.dir.display()
-                ),
-                Some(r) => tracing::warn!(
-                    "{DIR_ENV}={}: dumping each prefill pass's last row and positions {r:?}",
-                    c.dir.display()
-                ),
-            }
-        }
-        parsed
-    });
-    v.as_ref().map(Option::as_ref).map_err(anyhow::Error::msg)
+/// 2026-10-17: The lever of the startup settings; `None` when [`DIR_ENV`] is unset. A malformed
+/// value is an error.
+pub fn config(s: &metrale_settings::InferenceServerSettings) -> Result<Option<DumpConfig>> {
+    let t = &s.telemetry;
+    parse(
+        t.glm_layer_dump.as_deref(),
+        t.glm_layer_dump_rows.as_deref(),
+    )
+    .map_err(anyhow::Error::msg)
+}
+
+/// 2026-10-13: The line the lever logs once, printed by the text-stack loader.
+pub fn announce(c: &DumpConfig) {
+    match &c.rows {
+        None => tracing::warn!(
+            "{DIR_ENV}={}: {ROWS_ENV} unset, dumping only the last row of each prefill pass",
+            c.dir.display()
+        ),
+        Some(r) => tracing::warn!(
+            "{DIR_ENV}={}: dumping each prefill pass's last row and positions {r:?}",
+            c.dir.display()
+        ),
+    }
 }
 
 /// 2026-10-13: [`config`]'s parse, pure. An empty directory, an empty or malformed row list, or

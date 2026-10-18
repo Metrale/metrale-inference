@@ -80,7 +80,13 @@ pub fn load_glm5next_mtp_module(
         persist_bt: !levers.dsa_alloc_per_step,
         levers,
         cfg: dsa_cfg,
-        weights: build_dsa_weights(gpu, &dsa_cfg, &dsa_plan, &load)?,
+        weights: build_dsa_weights(
+            gpu,
+            &dsa_cfg,
+            &dsa_plan,
+            &load,
+            crate::mla_absorb::AbsorbThreads::from_settings(lc.settings),
+        )?,
         kernels: dsa_layer_kernels,
         select_kernels: dsa_kernels,
         decode_kernel: crate::glm5next_dsa::attend::Glm5NextDsaDecodeKernel::resolve(
@@ -173,6 +179,7 @@ pub fn load_glm5next_mtp_module(
             // 2026-10-10: The MTP block has no mHC reduce to hide a warm under.
             l2_warm: None,
             keep_slot_graphs: lc.levers.glm_keep_slot_graphs,
+            dump: crate::glm5next_layer_dump::config(lc.settings)?.map(std::sync::Arc::new),
             levers,
         },
         eh_proj: DenseWeight {

@@ -60,7 +60,7 @@ pub(super) fn per_row_experts(
         if grouped {
             // 2026-09-25: Device-dispatched: the kernels read `ids` on the GPU, so nothing
             // here synchronises except the route trace below.
-            let t = profile::start();
+            let t = k.levers.profile.start();
             let mi = cfg.moe_intermediate;
             w4a16_gemv_moe(
                 gpu,
@@ -118,7 +118,7 @@ pub(super) fn per_row_experts(
             )?;
             profile::end(profile::MOE_EXPERTS, t, gpu, stream);
 
-            if profile::trace_on() {
+            if k.levers.profile.trace_on() {
                 let mut ids = vec![0u8; cfg.top_k * 4];
                 gpu.synchronize(stream)?;
                 gpu.copy_d2h(ids_r, &mut ids)?;
@@ -132,18 +132,18 @@ pub(super) fn per_row_experts(
                         ])
                     })
                     .collect();
-                profile::stash_route(&decoded);
+                profile::stash_route(k.levers.profile, &decoded);
             }
         } else {
             // 2026-09-25: Host-dispatched: synchronise, read this row's `ids` back, and launch
             // the GEMVs of each local expert. The read is timed on its own (`MOE_HOSTSYNC`).
-            let t = profile::start();
+            let t = k.levers.profile.start();
             let mut ids = vec![0u8; cfg.top_k * 4];
             gpu.synchronize(stream)?;
             gpu.copy_d2h(ids_r, &mut ids)?;
             profile::end(profile::MOE_HOSTSYNC, t, gpu, stream);
 
-            if profile::trace_on() {
+            if k.levers.profile.trace_on() {
                 let decoded: Vec<i32> = (0..cfg.top_k)
                     .map(|k| {
                         i32::from_le_bytes([
@@ -154,10 +154,10 @@ pub(super) fn per_row_experts(
                         ])
                     })
                     .collect();
-                profile::stash_route(&decoded);
+                profile::stash_route(k.levers.profile, &decoded);
             }
 
-            let t = profile::start();
+            let t = k.levers.profile.start();
             for slot in 0..cfg.top_k {
                 let id = i32::from_le_bytes([
                     ids[slot * 4],
@@ -247,7 +247,7 @@ pub(super) fn row_batched_experts(site: &MoeSite<'_>, groups: &[(usize, usize)])
         stream,
         ..
     } = *site;
-    let t = profile::start();
+    let t = k.levers.profile.start();
     let mi = cfg.moe_intermediate;
     // 2026-09-25: One union build and one sweep per `moe_row_groups` sub-group; the
     // sub-groups cover disjoint row ranges.

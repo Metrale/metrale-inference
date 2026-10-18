@@ -108,6 +108,7 @@ impl Glm5NextLayer {
             row_bytes,
             received: None,
             defer: None,
+            prof: self.levers.profile,
         };
 
         if self.is_first
@@ -129,7 +130,7 @@ impl Glm5NextLayer {
         )?;
         dump::site(tap, false, [streams, rows.post, rows.comb, normed])?;
 
-        let t = profile::start();
+        let t = self.levers.profile.start();
         let attn_out = mixer(normed)?;
         profile::end(profile::KDA, t, gpu, stream);
         dump::put(tap, dump::Point::MixerOut, attn_out)?;
@@ -189,7 +190,7 @@ impl Glm5NextLayer {
             if let Some(l2) = &self.l2_warm {
                 l2.join(gpu, stream)?;
             }
-            profile::step();
+            profile::step(self.levers.profile);
         }
         Ok(())
     }
@@ -207,7 +208,7 @@ impl Glm5NextLayer {
         stream: u64,
     ) -> Result<()> {
         let (ht, hct) = (self.hidden as u32, mhc.hc_mult as u32);
-        let t_mhc = profile::start();
+        let t_mhc = self.levers.profile.start();
         let (st, po, co, hi, no) = rows.at(a);
         if self.is_first {
             glm_hc_expand(
@@ -262,7 +263,7 @@ impl Glm5NextLayer {
         if let Some(kernel) =
             crate::glm5next_mhc_post_pre_tok::kernel_for(&mhc.kernels, post_pre, n)?
         {
-            let t_mhc = profile::start();
+            let t_mhc = self.levers.profile.start();
             crate::glm5next_mhc_post_pre_tok::launch(
                 gpu,
                 kernel,
@@ -288,7 +289,7 @@ impl Glm5NextLayer {
             profile::end(profile::MHC, t_mhc, gpu, stream);
             return Ok(());
         }
-        let t_mhc_post = profile::start();
+        let t_mhc_post = self.levers.profile.start();
         crate::glm5next_hc_post_vec::post_rank_sum(
             gpu,
             &mhc.kernels,
@@ -303,7 +304,7 @@ impl Glm5NextLayer {
         if let Some(t) = tap {
             t.put_rows(dump::Point::MixerRed, attn_out, a..b)?;
         }
-        let t_mhc = profile::start();
+        let t_mhc = self.levers.profile.start();
         self.mhc_pre_norm(
             gpu,
             mhc,
@@ -342,7 +343,7 @@ impl Glm5NextLayer {
         let row_bytes = self.hidden * 2;
         let (st, po, co, hi, _) = rows.at(a);
         let n = (b - a) as u32;
-        let t_mhc_post = profile::start();
+        let t_mhc_post = self.levers.profile.start();
         if reduce {
             crate::glm5next_hc_post_vec::post_rank_sum(
                 gpu,

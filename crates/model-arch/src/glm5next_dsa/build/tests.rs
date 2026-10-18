@@ -7,6 +7,11 @@
 
 use super::*;
 
+/// 2026-10-17: The worker count of the declared defaults (the available parallelism).
+fn t() -> AbsorbThreads {
+    AbsorbThreads::from_settings(&metrale_model_layers::lever_equivalence::defaults())
+}
+
 fn cfg(local_heads: usize) -> Glm5NextDsaConfig {
     Glm5NextDsaConfig {
         hidden: 64,
@@ -40,7 +45,7 @@ fn absorb_q_matches_the_contraction() {
         .map(|i| 1.0 - (i as f32) * 0.125)
         .collect();
 
-    let got = absorb_q(&c, &q_b, &kv_b, heads).unwrap();
+    let got = absorb_q(&c, &q_b, &kv_b, heads, t()).unwrap();
     assert_eq!(got.len(), heads * kvl * ql);
     for h in 0..heads {
         for cc in 0..kvl {
@@ -65,9 +70,9 @@ fn absorb_q_refuses_mismatched_tensors() {
     c.kv_lora_rank = 4;
     let ok_q = vec![0f32; 2 * 3 * 6];
     let ok_kv = vec![0f32; 2 * (3 + 5) * 4];
-    assert!(absorb_q(&c, &ok_q, &ok_kv, 2).is_ok());
-    assert!(absorb_q(&c, &[0f32; 2 * 8 * 6], &ok_kv, 2).is_err());
-    assert!(absorb_q(&c, &ok_q, &[0f32; 2 * 3 * 4], 2).is_err());
+    assert!(absorb_q(&c, &ok_q, &ok_kv, 2, t()).is_ok());
+    assert!(absorb_q(&c, &[0f32; 2 * 8 * 6], &ok_kv, 2, t()).is_err());
+    assert!(absorb_q(&c, &ok_q, &[0f32; 2 * 3 * 4], 2, t()).is_err());
 }
 
 /// 2026-09-25: `absorb_q` refuses a nonzero `qk_rope_head_dim`.
@@ -76,7 +81,7 @@ fn absorb_q_refuses_a_rope_section() {
     let mut c = cfg(2);
     c.kv_lora_rank = 4;
     c.qk_rope_head_dim = 2;
-    assert!(absorb_q(&c, &vec![0f32; 2 * 5 * 6], &vec![0f32; 2 * 8 * 4], 2).is_err());
+    assert!(absorb_q(&c, &vec![0f32; 2 * 5 * 6], &vec![0f32; 2 * 8 * 4], 2, t()).is_err());
 }
 
 /// 2026-09-25: Rank 1's rows of the full absorption equal absorbing head 1 alone, so taking
@@ -90,12 +95,12 @@ fn absorbing_before_sharding_keeps_heads_paired() {
     let kv_b: Vec<f32> = (0..heads * (nope + vd) * kvl)
         .map(|i| (i as f32) * 0.5)
         .collect();
-    let full = absorb_q(&c, &q_b, &kv_b, heads).unwrap();
+    let full = absorb_q(&c, &q_b, &kv_b, heads, t()).unwrap();
 
     let rank1 = row_slice(&full, ql, kvl, 2 * kvl);
     let mut c1 = c;
     c1.local_heads = 1;
-    let solo = absorb_q(&c1, &q_b[nope * ql..], &kv_b[(nope + vd) * kvl..], 1).unwrap();
+    let solo = absorb_q(&c1, &q_b[nope * ql..], &kv_b[(nope + vd) * kvl..], 1, t()).unwrap();
     assert_eq!(rank1, solo, "head pairing must survive the shard");
 }
 
@@ -274,8 +279,8 @@ fn absorb_q_bit_exact() {
 
     let rows = full_heads * kvl;
     let mut got = vec![0f32; rows * ql];
-    // 2026-09-25: The split is done here rather than through `absorb_threads`, which reads
-    // the process environment.
+    // 2026-09-25: The split is done here at a fixed count rather than through
+    // `AbsorbThreads::for_rows`, whose default follows the machine.
     let threads = 4usize;
     let rows_per = rows.div_ceil(threads);
     std::thread::scope(|scope| {
@@ -350,14 +355,14 @@ fn uneven_ranks_absorb_exactly_their_heads() {
         })
     };
     let one = DsaTpPlan::new(0, 1, heads, &c).unwrap();
-    let (q_full, o_full) = absorb_for_rank(&c, &one, &load).unwrap();
+    let (q_full, o_full) = absorb_for_rank(&c, &one, &load, t()).unwrap();
 
     let mut starts = Vec::new();
     for rank in 0..3 {
         let local = metrale_config::tp_split(heads, 3, rank, 1).unwrap().len;
         let plan = DsaTpPlan::new(rank, 3, heads, &cfg(local)).unwrap();
         starts.push((plan.head_start, plan.local_heads));
-        let (q, o_abs) = absorb_for_rank(&cfg(local), &plan, &load).unwrap();
+        let (q, o_abs) = absorb_for_rank(&cfg(local), &plan, &load, t()).unwrap();
         let (h0, h1) = (plan.head_start, plan.head_start + plan.local_heads);
         assert_eq!(
             q,

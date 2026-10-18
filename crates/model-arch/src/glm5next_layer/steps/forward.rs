@@ -51,9 +51,15 @@ impl Glm5NextLayer {
             );
         };
         let hc = mhc.hc_mult;
-        let tap = dump::begin(ctx, stream, self.dump_layer(mhc, true), call, None, || {
-            vec![dump::Window::single(1, seq_len, call.last_pos)]
-        })?;
+        let tap = dump::begin(
+            ctx,
+            self.dump.as_deref(),
+            stream,
+            self.dump_layer(mhc, true),
+            call,
+            None,
+            || vec![dump::Window::single(1, seq_len, call.last_pos)],
+        )?;
         let tap = tap.as_ref();
         let streams = ctx.buffers.hc_streams().offset(slot * hc * h * 4);
         let post = ctx.buffers.hc_post().offset(slot * hc * 4);
@@ -61,7 +67,7 @@ impl Glm5NextLayer {
         let normed = ctx.buffers.norm_output();
         let ffn_out = ctx.buffers.moe_output();
 
-        let t_mhc = profile::start();
+        let t_mhc = self.levers.profile.start();
         if self.is_first
             && let Some(l2) = &self.l2_warm
         {
@@ -118,14 +124,14 @@ impl Glm5NextLayer {
         let mut partials = None;
         if self.mixer_all_reduce {
             self.reduce_probe(profile::REDUCE_ATTN_BAR, "attn", ctx, stream);
-            let t = profile::start_hot();
+            let t = self.levers.profile.start_hot();
             partials = self.reduce_or_exchange(attn_out, &[1], fused || fold, ctx, stream)?;
             profile::end_nosync(profile::REDUCE_ATTN_ENQ, t);
-            let t = profile::start_hot();
+            let t = self.levers.profile.start_hot();
             profile::end(profile::REDUCE_ATTN, t, ctx.gpu, stream);
         }
         let ffn_residual = if fold {
-            let t_mhc = profile::start();
+            let t_mhc = self.levers.profile.start();
             crate::glm5next_mhc_post_fold::glm_hc_post_pre_norm(
                 gpu,
                 &mhc.kernels,
@@ -150,14 +156,14 @@ impl Glm5NextLayer {
             dump::site(tap, true, [mhc.fold_streams, post, comb, normed])?;
             mhc.fold_streams
         } else {
-            let t_mhc_post = profile::start();
+            let t_mhc_post = self.levers.profile.start();
             self.hc_post_reduced(
                 gpu, mhc, attn_out, partials, streams, streams, post, comb, 1, stream,
             )?;
             profile::end(profile::MHC_POST, t_mhc_post, gpu, stream);
             self.dump_mixer_red(tap, attn_out)?;
 
-            let t_mhc = profile::start();
+            let t_mhc = self.levers.profile.start();
             self.mhc_pre_norm(
                 gpu,
                 mhc,
@@ -176,7 +182,7 @@ impl Glm5NextLayer {
             streams
         };
         let partials = self.mlp_forward(normed, ffn_out, 1, &[1], fused, ctx, stream, tap)?;
-        let t_mhc_post = profile::start();
+        let t_mhc_post = self.levers.profile.start();
         self.hc_post_reduced(
             gpu,
             mhc,
@@ -209,7 +215,7 @@ impl Glm5NextLayer {
             if let Some(l2) = &self.l2_warm {
                 l2.join(gpu, stream)?;
             }
-            profile::step();
+            profile::step(self.levers.profile);
         }
         Ok(())
     }
@@ -271,9 +277,15 @@ impl Glm5NextLayer {
             .comm
             .filter(|_| sp)
             .map(|c| crate::glm5next_sp_mhc::shards(k, c.world_size())[c.rank()]);
-        let tap = dump::begin(ctx, stream, self.dump_layer(mhc, true), call, own, || {
-            vec![dump::Window::single(k, seq_len, call.last_pos)]
-        })?;
+        let tap = dump::begin(
+            ctx,
+            self.dump.as_deref(),
+            stream,
+            self.dump_layer(mhc, true),
+            call,
+            own,
+            || vec![dump::Window::single(k, seq_len, call.last_pos)],
+        )?;
         if sp {
             return self.forward_rows_sp(
                 mhc,
@@ -336,7 +348,7 @@ impl Glm5NextLayer {
         let ffn_out = ctx.buffers.moe_output();
         let (kt, ht, hct) = (k as u32, h as u32, hc as u32);
 
-        let t_mhc = profile::start();
+        let t_mhc = self.levers.profile.start();
         if self.is_first
             && let Some(l2) = &self.l2_warm
         {
@@ -371,7 +383,7 @@ impl Glm5NextLayer {
             stream,
         )?;
         dump::site(tap, false, [streams, post, comb, normed])?;
-        let t = profile::start();
+        let t = self.levers.profile.start();
         let attn_out = mixer(normed)?;
         profile::end(profile::KDA, t, gpu, stream);
         dump::put(tap, dump::Point::MixerOut, attn_out)?;
@@ -380,20 +392,20 @@ impl Glm5NextLayer {
         let mut partials = None;
         if self.mixer_all_reduce {
             self.reduce_probe(profile::REDUCE_ATTN_BAR, "attn", ctx, stream);
-            let t = profile::start_hot();
+            let t = self.levers.profile.start_hot();
             partials = self.reduce_or_exchange(attn_out, row_pieces, fused, ctx, stream)?;
             profile::end_nosync(profile::REDUCE_ATTN_ENQ, t);
-            let t = profile::start_hot();
+            let t = self.levers.profile.start_hot();
             profile::end(profile::REDUCE_ATTN, t, ctx.gpu, stream);
         }
-        let t_mhc_post = profile::start();
+        let t_mhc_post = self.levers.profile.start();
         self.hc_post_reduced(
             gpu, mhc, attn_out, partials, streams, streams, post, comb, k, stream,
         )?;
         profile::end(profile::MHC_POST, t_mhc_post, gpu, stream);
         self.dump_mixer_red(tap, attn_out)?;
 
-        let t_mhc = profile::start();
+        let t_mhc = self.levers.profile.start();
         self.mhc_pre_norm(
             gpu,
             mhc,
@@ -410,7 +422,7 @@ impl Glm5NextLayer {
         )?;
         dump::site(tap, true, [streams, post, comb, normed])?;
         let partials = self.mlp_forward(normed, ffn_out, k, row_pieces, fused, ctx, stream, tap)?;
-        let t_mhc_post = profile::start();
+        let t_mhc_post = self.levers.profile.start();
         self.hc_post_reduced(
             gpu, mhc, ffn_out, partials, streams, streams, post, comb, k, stream,
         )?;
@@ -433,7 +445,7 @@ impl Glm5NextLayer {
             if let Some(l2) = &self.l2_warm {
                 l2.join(gpu, stream)?;
             }
-            profile::step();
+            profile::step(self.levers.profile);
         }
         Ok(())
     }

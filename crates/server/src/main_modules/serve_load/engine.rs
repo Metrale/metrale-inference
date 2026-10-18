@@ -175,13 +175,12 @@ pub(crate) fn load_engine(
     } = serve_phases::resolve_prefill_budget(&args, ssm_prefill_chunk, levers.max_batch_tokens);
     // 2026-10-14: `METRALE_GLM_PREFILL_PIECE_ROWS`: refuse a prefill sizing the piece grid does
     // not divide before the KV cache is sized (`glm5next_prefill_piece::check_piece_budget`).
-    if let Some(piece) = metrale_model_arch::glm5next_prefill_piece::piece_rows()? {
+    let lever_settings = serve_phases::lever_settings()?;
+    if let Some(piece) = metrale_model_arch::glm5next_prefill_piece::piece_rows(&lever_settings)? {
         metrale_model_arch::glm5next_prefill_piece::check_piece_budget(
             piece,
-            metrale_model_arch::glm5next_layer::GlmLevers::from_settings(
-                &serve_phases::lever_settings()?,
-            )?
-            .prefill_rows,
+            metrale_model_arch::glm5next_layer::GlmLevers::from_settings(&lever_settings)?
+                .prefill_rows,
             prefill_budget,
             max_batch_tokens,
         )

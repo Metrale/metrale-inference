@@ -444,16 +444,16 @@ impl Glm5NextKdaLayer {
         use crate::glm5next_layer::profile;
         // 2026-09-25: Three profile buckets (front, recurrence, back), each closed where its span
         // ends.
-        let t_front = profile::start();
+        let t_front = self.levers.profile.start();
         self.front_end(gpu, hidden, k, ws, pack, gate, stream)?;
         profile::end(profile::KDA_FRONT, t_front, gpu, stream);
-        let t_recur = profile::start();
+        let t_recur = self.levers.profile.start();
         for row in 0..k {
             per_row(row)?;
         }
         after_rows()?;
         profile::end(profile::KDA_RECUR, t_recur, gpu, stream);
-        let t_back = profile::start();
+        let t_back = self.levers.profile.start();
         let r = self.back_end(gpu, k, ws, stream);
         profile::end(profile::KDA_BACK, t_back, gpu, stream);
         r

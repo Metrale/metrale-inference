@@ -364,7 +364,7 @@ pub fn forward_moe_pieces(
         })?;
     }
 
-    let t = profile::start();
+    let t = k.levers.profile.start();
     pieces::router_logits(gpu, k, cfg, w, x, ws, row_pieces, stream)?;
     // 2026-09-25: One top-k launch for all rows, one block per row (`topk_combine`).
     topk_combine::router_topk(gpu, k, cfg, w, ws, rows, stream)?;
@@ -399,7 +399,7 @@ pub fn forward_moe_pieces(
     if grouped_prefill {
         // 2026-09-25: Leaves the routed outputs in expert-sorted order; the combine below reads
         // them through `token_to_perm`.
-        let t = profile::start();
+        let t = k.levers.profile.start();
         forward_prefill_gemm::forward_moe_grouped_prefill(
             gpu, k, cfg, w, x, rows, ws, !capturing, stream,
         )?;
@@ -410,7 +410,7 @@ pub fn forward_moe_pieces(
         moe_experts::row_batched_experts(&site, &groups)?;
     }
 
-    let t = profile::start();
+    let t = k.levers.profile.start();
     match fork {
         Some(f) => f.join(gpu, stream)?,
         None => pieces::shared_expert(
@@ -429,7 +429,7 @@ pub fn forward_moe_pieces(
     // 2026-09-25: The shared expert joins the routed sum in the combine, before the caller's
     // all-reduce, so one collective reduces both partial sums.
     profile::end(profile::MOE_SHARED, t, gpu, stream);
-    let t = profile::start();
+    let t = k.levers.profile.start();
     // 2026-09-25: One combine launch for all rows (row = `blockIdx.x`), reading the routed rows
     // in expert-sorted order after the grouped GEMM (`topk_combine`).
     topk_combine::combine(gpu, k, cfg, ws, out, rows, sorted_out, stream)?;

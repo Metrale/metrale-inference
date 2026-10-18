@@ -309,6 +309,9 @@ fn a_section_enqueues_piece_groups_on_the_comm_stream() {
         row_bytes: row,
         received: None,
         defer: None,
+        prof: crate::glm5next_layer::profile::Profile::from_settings(
+            &metrale_model_layers::lever_equivalence::defaults(),
+        ),
     };
     let mut compute = |lo: usize, hi: usize, p: Option<&PeerPartials>| -> Result<()> {
         comm.push("compute", p.unwrap().recv, hi - lo, lo, 7);

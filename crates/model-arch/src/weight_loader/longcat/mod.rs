@@ -116,6 +116,7 @@ impl ModelWeightLoader for LongcatWeightLoader {
         let quantize_k = gpu.kernel("quantize_nvfp4", "quantize_bf16_to_nvfp4")?;
         let stream = gpu.default_stream();
         let mut yarn_shared = DevicePtr::NULL;
+        let absorb = crate::mla_absorb::AbsorbThreads::from_settings(lc.settings);
         let mut layers: Vec<Box<dyn TransformerLayer>> =
             Vec::with_capacity(config.num_hidden_layers);
 
@@ -219,7 +220,7 @@ impl ModelWeightLoader for LongcatWeightLoader {
                     stream,
                 )?);
                 phase_per_head::build_per_head_views(&mut c)?;
-                phase_qk_absorbed::build_w_qk_absorbed(&mut c)?;
+                phase_qk_absorbed::build_w_qk_absorbed(&mut c, absorb)?;
                 phase_block_diag::build_block_diagonals(&mut c)?;
                 let o_nvfp4 = quantize_to_nvfp4(
                     &wo,

@@ -48,7 +48,7 @@ impl Glm5NextKdaLayer {
         let nchunks = t.div_ceil(c.chunk);
         let tp = nchunks * c.chunk;
         // 2026-09-25: The same three profile buckets as `decode_k`.
-        let t_front = crate::glm5next_layer::profile::start();
+        let t_front = self.levers.profile.start();
         let conv_tokens =
             self.kernels.seq.conv_tokens.0 != 0 && self.kernels.seq.conv_window.0 != 0;
         let pack = self.pack_for(conv_tokens)?;
@@ -59,7 +59,7 @@ impl Glm5NextKdaLayer {
             gpu,
             stream,
         );
-        let t_recur = crate::glm5next_layer::profile::start();
+        let t_recur = self.levers.profile.start();
 
         // 2026-10-09: The conv, SiLU and L2 as the decode computes them, one launch for the t
         // rows (`causal_conv1d_update_l2norm_tokens`, then the window advance): q|k are
@@ -171,7 +171,7 @@ impl Glm5NextKdaLayer {
             stream,
         );
 
-        let t_back = crate::glm5next_layer::profile::start();
+        let t_back = self.levers.profile.start();
         let r = self.back_end(gpu, t, ws, stream);
         crate::glm5next_layer::profile::end(
             crate::glm5next_layer::profile::KDA_BACK,

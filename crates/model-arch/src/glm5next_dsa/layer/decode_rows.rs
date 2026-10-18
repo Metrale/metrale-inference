@@ -213,7 +213,7 @@ impl Glm5NextDsaLayer {
 
         let gpu = ctx.gpu;
         let block_size = kv_cache.config().block_size;
-        let t_proj = profile::start();
+        let t_proj = self.levers.profile.start();
         // 2026-10-10: `hidden` is not written until `project_out`, so under the fp8 and w4a16
         // tiers `indexer_project_rows` reuses the activation quantization `kv_a_proj` made of it
         // (same bytes: the same kernel on the same rows).
@@ -266,7 +266,7 @@ impl Glm5NextDsaLayer {
                     .into_iter()
                     .all(|p| p));
         if staged {
-            let t = profile::start();
+            let t = self.levers.profile.start();
             self.indexer_project_rows(gpu, hidden, n, stream)?;
             profile::end(profile::DSA_INDEXER, t, gpu, stream);
         }
@@ -287,7 +287,7 @@ impl Glm5NextDsaLayer {
             0
         };
         if paged_rows > 0 {
-            let t = profile::start();
+            let t = self.levers.profile.start();
             let bt0 = meta.block_table.offset(meta_row_base * bt_stride);
             let rows0 = self.indexer_rows(dsa_row(states, 0)?, kv_cache, bt0)?;
             self.select_paged_rows(gpu, paged_rows, rows0, meta, meta_row_base, stream)?;
@@ -300,7 +300,7 @@ impl Glm5NextDsaLayer {
         }
         for r in paged_rows..n {
             let mr = meta_row_base + r;
-            let t = profile::start();
+            let t = self.levers.profile.start();
             let st = dsa_row(states, row_seq[r])?;
             let bt_row = meta.block_table.offset(mr * bt_stride);
             let place = if replay_safe || st.cache() == IndexerCache::Paged {

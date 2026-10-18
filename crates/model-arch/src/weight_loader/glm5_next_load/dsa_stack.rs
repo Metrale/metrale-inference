@@ -33,6 +33,7 @@ pub(super) struct DsaStack {
     verify_k: usize,
     rms_eps: f32,
     levers: GlmLevers,
+    absorb: crate::mla_absorb::AbsorbThreads,
 }
 
 impl DsaStack {
@@ -77,6 +78,7 @@ impl DsaStack {
             verify_k,
             rms_eps: config.rms_norm_eps as f32,
             levers,
+            absorb: crate::mla_absorb::AbsorbThreads::from_settings(settings),
         })
     }
 
@@ -94,7 +96,7 @@ impl DsaStack {
             persist_bt: !levers.dsa_alloc_per_step,
             levers,
             cfg: self.cfg,
-            weights: build_dsa_weights(gpu, &self.cfg, &self.plan, &load)?,
+            weights: build_dsa_weights(gpu, &self.cfg, &self.plan, &load, self.absorb)?,
             kernels: self.layer_kernels,
             select_kernels: self.kernels,
             decode_kernel: self.decode_kernel,

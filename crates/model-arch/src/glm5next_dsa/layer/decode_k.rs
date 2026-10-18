@@ -114,7 +114,7 @@ impl Glm5NextDsaLayer {
             .filter(|m| m.num_seqs as usize == k);
         let gpu = ctx.gpu;
         let w = &self.workspace;
-        let t_proj = crate::glm5next_layer::profile::start();
+        let t_proj = self.levers.profile.start();
 
         // 2026-10-10: `hidden` is not written until `project_out`, so under the fp8 and w4a16
         // tiers the indexer's `wk` and compress gate of a one-row step reuse the activation
@@ -201,7 +201,7 @@ impl Glm5NextDsaLayer {
 
             use crate::glm5next_layer::profile;
             profile::end(profile::DSA_PROJ, t_proj, gpu, stream);
-            let t = profile::start();
+            let t = self.levers.profile.start();
             // 2026-09-25: Replay-safe placement (device-side position and geometry) only while
             // capturing a graph, with metadata, and with both `dsa_indexer_store` and
             // `dsa_write_geom` resolved; otherwise the host-offset path.

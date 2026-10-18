@@ -95,14 +95,8 @@ crates/model-arch/src/deepseek_v41_layer/step_seg_run.rs
 crates/model-arch/src/dflash_head.rs
 crates/model-arch/src/dflash_head/from_weights.rs
 crates/model-arch/src/dflash_head/from_weights/kernel_handles.rs
-crates/model-arch/src/glm5next_dsa/build.rs
-crates/model-arch/src/glm5next_layer/l2_warm.rs
-crates/model-arch/src/glm5next_layer/profile.rs
-crates/model-arch/src/glm5next_layer_dump.rs
-crates/model-arch/src/glm5next_prefill_piece.rs
 crates/model-arch/src/kimi_k3/host_decode.rs
 crates/model-arch/src/mistral_loader/loader_impl/phase_assemble.rs
-crates/model-arch/src/mistral_loader/loader_impl/phase_qk_absorbed.rs
 crates/model-arch/src/moe_v41.rs
 crates/model-arch/src/moe_v41/device_route.rs
 crates/model-arch/src/moe_v41/forward.rs

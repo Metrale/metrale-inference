@@ -355,6 +355,7 @@ fn forward_k_has_two_callers_and_the_verify_one_is_not_prefill() {
             "levers_settings_tests.rs",
             "mod.rs",
             "profile.rs",
+            "profile_tests.rs",
             "state.rs",
             "steps.rs",
             "steps/drafter.rs",

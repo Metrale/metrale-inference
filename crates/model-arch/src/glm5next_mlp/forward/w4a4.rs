@@ -285,7 +285,7 @@ pub(super) fn w4a4_experts(site: &MoeSite<'_>, scales: W4a4ActScales) -> Result<
     );
     let sweep = sweep_kernel(k, k.w4a4_moe_slots_sweep, k.w4a4_moe_sweep, rows, cfg.top_k);
     let down_sweep = sweep_kernel(k, down.own, down.sweep, rows, cfg.top_k);
-    let t = profile::start();
+    let t = k.levers.profile.start();
     quant_static(
         gpu,
         k.w4a4_quant_static,

@@ -194,10 +194,15 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
         let mut attn_layer_idx = 0usize;
         // 2026-10-10: `METRALE_GLM_AR_L2_PREFETCH`: each layer's warmable ranges, planned after
         // the loop (`l2_warm::plan_next`).
-        let l2 = l2_warm::budget_from_env()?
+        let l2 = levers
+            .l2_warm_budget
             .map(|b| l2_warm::L2Warm::new(gpu, b).map(std::sync::Arc::new))
             .transpose()?;
         let mut l2_ranges: Vec<Vec<l2_warm::Range>> = Vec::new();
+        let dump = crate::glm5next_layer_dump::config(lc.settings)?.map(std::sync::Arc::new);
+        if let Some(d) = &dump {
+            crate::glm5next_layer_dump::announce(d);
+        }
 
         for sl in &skeleton.layers {
             let idx = sl.index;
@@ -373,6 +378,7 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                 is_last: idx == last,
                 l2_warm: l2.clone(),
                 keep_slot_graphs: lc.levers.glm_keep_slot_graphs,
+                dump: dump.clone(),
                 levers,
             }));
         }

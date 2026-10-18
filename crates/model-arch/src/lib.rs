@@ -46,6 +46,7 @@ pub mod glm5next_w4a16_tc;
 pub mod glm5next_w4a16_wide;
 pub mod kimi_k3;
 pub mod mistral_loader;
+pub mod mla_absorb;
 pub mod moe_v41;
 pub mod nemotron_mamba2;
 pub mod nemotron_moe;

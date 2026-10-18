@@ -133,7 +133,7 @@ impl Glm5NextDsaLayer {
         stream: u64,
     ) -> Result<()> {
         use crate::glm5next_layer::profile;
-        let t_proj = profile::start();
+        let t_proj = self.levers.profile.start();
         self.gemm(
             gpu,
             self.kernels.gemm,

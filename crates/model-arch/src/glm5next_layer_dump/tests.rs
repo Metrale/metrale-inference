@@ -16,6 +16,31 @@ fn set(v: &[usize]) -> BTreeSet<usize> {
     v.iter().copied().collect()
 }
 
+/// 2026-10-17: [`config`] over the settings reads every pair of directory and row-list probes
+/// as the replaced environment reader did (`parse` of the two variables' text): both are text,
+/// passed verbatim.
+#[test]
+fn config_reads_the_settings_as_the_environment_reader_did() {
+    use metrale_model_layers::lever_equivalence::{PROBES, settings_from};
+    let dirs = PROBES
+        .iter()
+        .copied()
+        .chain([Some("out"), Some(""), Some(" d ")]);
+    for dir in dirs {
+        let rows = PROBES
+            .iter()
+            .copied()
+            .chain([Some(" 7, 3,7 "), Some(""), Some("4,x")]);
+        for rows in rows {
+            let mut pairs = Vec::new();
+            pairs.extend(dir.map(|v| (DIR_ENV, v)));
+            pairs.extend(rows.map(|v| (ROWS_ENV, v)));
+            let s = settings_from(&pairs).expect("text levers resolve");
+            assert_eq!(config(&s).ok(), parse(dir, rows).ok(), "{dir:?} {rows:?}");
+        }
+    }
+}
+
 #[test]
 fn parse_accepts_dir_with_and_without_rows() {
     assert_eq!(parse(None, None), Ok(None));
