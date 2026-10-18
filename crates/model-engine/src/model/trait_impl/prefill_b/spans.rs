@@ -239,7 +239,7 @@ impl TransformerModel {
                 self.prefix_cache.as_ref(),
                 self.gpu.as_ref(),
                 stream,
-                self.levers.kv_poison,
+                self.prefill_block_fill(),
             )?;
             let range = match self.prefill_b_proc_range(
                 tokens,

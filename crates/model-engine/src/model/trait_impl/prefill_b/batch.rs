@@ -195,7 +195,7 @@ impl TransformerModel {
 
                 // 2026-09-25: The same zeroing rule as `prefill_chunk_dispatch`.
                 if self.comm.is_some() {
-                    if super::super::super::prefill_zero::prefill_zero_rows()? {
+                    if self.settings.runtime.prefill_zero_rows {
                         self.buffers.zero_all_rows(
                             self.gpu.as_ref(),
                             stream,
@@ -235,7 +235,7 @@ impl TransformerModel {
                     self.prefix_cache.as_ref(),
                     self.gpu.as_ref(),
                     stream,
-                    self.levers.kv_poison,
+                    self.prefill_block_fill(),
                 )?;
 
                 // 2026-09-25: Processing range; a fully cached non-last chunk

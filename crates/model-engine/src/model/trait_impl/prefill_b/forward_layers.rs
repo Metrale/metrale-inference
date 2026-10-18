@@ -279,7 +279,7 @@ impl TransformerModel {
                 let last_start = (proc_count - 1) * h;
                 let (vals, _) = self.readback_bf16(hidden.offset(last_start * elem_bytes), h)?;
                 let bytes: Vec<u8> = vals.iter().flat_map(|v| v.to_le_bytes()).collect();
-                std::fs::create_dir_all(&dir).ok();
+                std::fs::create_dir_all(dir).ok();
                 let path = std::path::Path::new(&dir).join(format!("metrale_L{i}.bin"));
                 std::fs::write(&path, &bytes).ok();
                 if i == self.layers.len() - 1 {

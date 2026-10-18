@@ -15,7 +15,7 @@
 //! borrow is declined, so that step captures the exact key. Kill switch:
 //! `METRALE_NO_BORROW_STREAK_LIMIT` (any non-empty value, `0` included,
 //! disables the guard; gate records disclose it in `PERF_CONTROLS`, default
-//! `unset`).
+//! `unset`), resolved once into `EngineLevers::borrow_streak_limit`.
 //!
 //! Owner: model-engine (CUDA-graph cache).
 //! Invariants: none beyond the types.
@@ -28,19 +28,6 @@ use std::sync::Mutex;
 /// costs one eager step.
 pub(super) const STEADY_BORROW_LIMIT: u32 = 8;
 
-/// 2026-09-25: The `METRALE_NO_BORROW_STREAK_LIMIT` rule: the guard is on unless
-/// the variable is set to a non-empty value.
-pub fn streak_limit_from(kill: Option<&std::ffi::OsStr>) -> bool {
-    kill.is_none_or(|v| v.is_empty())
-}
-
-fn guard_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| {
-        streak_limit_from(std::env::var_os("METRALE_NO_BORROW_STREAK_LIMIT").as_deref())
-    })
-}
-
 /// 2026-09-25: Consecutive-borrow counter for one graph family (decode or verify).
 pub(super) struct BorrowStreak(Mutex<(u64, u32)>);
 
@@ -52,11 +39,8 @@ impl BorrowStreak {
     /// 2026-09-25: Record one borrow the caller is about to make for `exact_key`.
     /// Returns false once this key has borrowed [`STEADY_BORROW_LIMIT`] times in
     /// a row: the caller then declines the borrow and captures the exact key.
-    pub(super) fn allow(&self, exact_key: &[u32]) -> bool {
-        self.allow_with(exact_key, guard_enabled())
-    }
-
-    fn allow_with(&self, exact_key: &[u32], enabled: bool) -> bool {
+    /// `enabled` is `EngineLevers::borrow_streak_limit`; false always allows.
+    pub(super) fn allow(&self, exact_key: &[u32], enabled: bool) -> bool {
         // 2026-09-25: FNV-1a-style hash over the length and values; 0 is reserved
         // for "no key yet".
         let mut h: u64 = 0xcbf2_9ce4_8422_2325;
@@ -88,11 +72,11 @@ mod tests {
         let s = BorrowStreak::new();
         let k = [0u32, 1, 1, 1, 2, 1, 9];
         for i in 1..=STEADY_BORROW_LIMIT {
-            assert!(s.allow_with(&k, true), "borrow {i} is within the limit");
+            assert!(s.allow(&k, true), "borrow {i} is within the limit");
         }
-        assert!(!s.allow_with(&k, true), "borrow limit+1 must be declined");
+        assert!(!s.allow(&k, true), "borrow limit+1 must be declined");
         assert!(
-            !s.allow_with(&k, true),
+            !s.allow(&k, true),
             "and stays declined while the key persists"
         );
     }
@@ -105,7 +89,7 @@ mod tests {
             let n = 2 + (i / (STEADY_BORROW_LIMIT - 1));
             let k: Vec<u32> = (0..n).collect();
             assert!(
-                s.allow_with(&k, true),
+                s.allow(&k, true),
                 "step {i}: a new composition restarts the count"
             );
         }
@@ -115,31 +99,16 @@ mod tests {
     fn keys_that_differ_only_at_the_pair_boundary_are_distinct() {
         let s = BorrowStreak::new();
         for _ in 0..STEADY_BORROW_LIMIT {
-            assert!(s.allow_with(&[1, 2, 3], true));
+            assert!(s.allow(&[1, 2, 3], true));
         }
-        assert!(
-            s.allow_with(&[1, 2], true),
-            "a different key resets the streak"
-        );
-    }
-
-    #[test]
-    fn the_kill_switch_rule_is_presence_of_a_non_empty_value() {
-        use std::ffi::OsStr;
-        assert!(streak_limit_from(None), "unset: guard on");
-        assert!(
-            streak_limit_from(Some(OsStr::new(""))),
-            "exported empty: guard on"
-        );
-        assert!(!streak_limit_from(Some(OsStr::new("1"))));
-        assert!(!streak_limit_from(Some(OsStr::new("0"))), "0 is NOT on");
+        assert!(s.allow(&[1, 2], true), "a different key resets the streak");
     }
 
     #[test]
     fn the_kill_switch_always_allows() {
         let s = BorrowStreak::new();
         for _ in 0..(3 * STEADY_BORROW_LIMIT) {
-            assert!(s.allow_with(&[4, 5, 6], false));
+            assert!(s.allow(&[4, 5, 6], false));
         }
     }
 }

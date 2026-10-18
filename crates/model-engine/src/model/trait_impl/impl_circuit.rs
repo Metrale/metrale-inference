@@ -195,7 +195,8 @@ impl TransformerModel {
                 verify_meta: self.verify_meta(0, 0, DevicePtr::NULL),
                 verify_batch_meta: self.verify_batch_meta_at(),
                 verify_wy_tables: self.verify_wy_tables,
-                verify_batch_tokens: super::verify_e::mapped_argmax_host_dev(self.gpu.as_ref())
+                verify_batch_tokens: self
+                    .mapped_argmax()
                     .map_or(self.buffers.scratch(), |(_, d)| d),
                 k_pools: (0..n).map(|i| cache.k_pool_ptr(i)).collect(),
                 v_pools: (0..n).map(|i| cache.v_pool_ptr(i)).collect(),

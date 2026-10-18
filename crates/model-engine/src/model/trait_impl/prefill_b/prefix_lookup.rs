@@ -161,7 +161,7 @@ impl TransformerModel {
                 total,
                 min_tokens: metrale_model_layers::mtp_carry::marconi_min_tokens(),
                 has_hidden: eff_snapshot.is_some_and(|s| self.ssm_snapshots.has_hidden(s)),
-                exact_enabled: super::exact_leaf::marconi_exact_enabled(),
+                exact_enabled: self.settings.server.marconi_exact,
                 is_tail: prefix_match.ssm_snapshot_is_tail,
                 session_ok: eff_snapshot
                     .is_some_and(|s| self.ssm_snapshots.session_matches(s, seq.session_hash)),
@@ -272,7 +272,7 @@ impl TransformerModel {
                 && restore.is_none()
                 && prefix_match.ssm_snapshot_tokens == matched
                 && matched == total
-                && !super::exact_leaf::marconi_exact_enabled()
+                && !self.settings.server.marconi_exact
             {
                 skip = false;
                 seq.marconi_exact_snap = None;

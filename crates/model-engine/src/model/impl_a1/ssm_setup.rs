@@ -96,6 +96,7 @@ pub(super) fn build_ssm_snapshots(
     max_batch_size: usize,
     ssm_checkpoint_interval: usize,
     kv_cache: &PagedKvCache,
+    settings: &metrale_settings::InferenceServerSettings,
     gpu: &dyn GpuBackend,
 ) -> Result<(SsmSnapshotPool, Option<Arc<dyn SnapshotBlobStore>>)> {
     // 2026-09-25: Fail at startup when an SSM tier variable
@@ -167,6 +168,11 @@ pub(super) fn build_ssm_snapshots(
         // (BF16, `hidden_size` elements), which an exact prefix hit feeds
         // to the lm_head instead of re-running the last token.
         config.hidden_size * 2,
+        crate::model::ssm_spill_gate::SsmTierGates::resolve(
+            settings.kernels.ssm_spill_min_tokens.as_deref(),
+            settings.kernels.ssm_fault_min_tokens.as_deref(),
+            settings.telemetry.ssm_tier_timing,
+        ),
         gpu,
     )?;
     let ssm_tier_store = super::super::impl_a1_init::build_ssm_tier_store(

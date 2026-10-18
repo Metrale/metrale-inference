@@ -169,7 +169,7 @@ impl TransformerModel {
             self.prefix_cache.as_ref(),
             self.gpu.as_ref(),
             stream,
-            self.levers.kv_poison,
+            self.prefill_block_fill(),
         )?;
 
         let (proc_start, proc_count) = if marconi_skip && kv_write_start > 0 {

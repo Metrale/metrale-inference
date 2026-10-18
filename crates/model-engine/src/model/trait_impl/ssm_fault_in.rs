@@ -19,15 +19,10 @@ use super::super::types::TransformerModel;
 /// the gate.
 pub(in crate::model) const DEFAULT_FAULT_MIN_TOKENS: usize = 256;
 
-/// 2026-09-25: The fault-in depth gate in effect. `model::ssm_spill_gate` clamps the spill
-/// gate to at least this value, so nothing is spilled that this gate would not read back.
-pub(in crate::model) fn fault_in_min_tokens() -> usize {
-    parse_fault_min_tokens(std::env::var("METRALE_SSM_FAULT_MIN_TOKENS").ok())
-}
-
 /// 2026-09-25: Parse `METRALE_SSM_FAULT_MIN_TOKENS`: an unset or unparseable value gives
-/// [`DEFAULT_FAULT_MIN_TOKENS`].
-fn parse_fault_min_tokens(raw: Option<String>) -> usize {
+/// [`DEFAULT_FAULT_MIN_TOKENS`]. `model::ssm_spill_gate::SsmTierGates` resolves it once and
+/// clamps the spill gate to at least this value.
+pub(in crate::model) fn parse_fault_min_tokens(raw: Option<&str>) -> usize {
     raw.and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(DEFAULT_FAULT_MIN_TOKENS)
 }
@@ -80,7 +75,7 @@ impl TransformerModel {
         let key = prefix_match.ssm_snapshot_tier_key?;
 
         let depth = prefix_match.ssm_snapshot_tier_tokens;
-        let min_depth = fault_in_min_tokens();
+        let min_depth = self.ssm_snapshots.gates.fault_min_tokens;
         if should_skip_fault_for_depth(depth, min_depth) {
             tracing::info!(
                 "SSM tier fault-in SKIPPED (cost gate): tier snapshot depth {depth} < \
@@ -112,19 +107,16 @@ mod tests {
     fn min_tokens_defaults_when_unset_or_garbage() {
         assert_eq!(parse_fault_min_tokens(None), DEFAULT_FAULT_MIN_TOKENS);
         assert_eq!(
-            parse_fault_min_tokens(Some("not-a-number".into())),
+            parse_fault_min_tokens(Some("not-a-number")),
             DEFAULT_FAULT_MIN_TOKENS
         );
-        assert_eq!(
-            parse_fault_min_tokens(Some("".into())),
-            DEFAULT_FAULT_MIN_TOKENS
-        );
+        assert_eq!(parse_fault_min_tokens(Some("")), DEFAULT_FAULT_MIN_TOKENS);
     }
 
     #[test]
     fn min_tokens_parses_explicit_values() {
-        assert_eq!(parse_fault_min_tokens(Some("0".into())), 0);
-        assert_eq!(parse_fault_min_tokens(Some("1024".into())), 1024);
+        assert_eq!(parse_fault_min_tokens(Some("0")), 0);
+        assert_eq!(parse_fault_min_tokens(Some("1024")), 1024);
     }
 
     #[test]

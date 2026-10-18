@@ -28,9 +28,6 @@ impl TransformerModel {
                 .all(|l| l.decode_multi_seq_selects_index_per_row())
     }
 
-    /// 2026-10-09: True when the model has layers, every one answers true to
-    /// `decode_graph_with_comm`, and `METRALE_COMM_DECODE_GRAPHS` is not `0` (read once per
-    /// process). `decode_a.rs` then captures the single-sequence decode with a communicator.
     /// 2026-10-10: Whether a captured step of `rows` rows stays within every layer's
     /// `max_captured_rows`.
     pub(crate) fn rows_capturable(&self, rows: usize) -> bool {
@@ -39,11 +36,14 @@ impl TransformerModel {
             .all(|l| l.max_captured_rows().is_none_or(|m| rows <= m))
     }
 
+    /// 2026-10-09: True when the model has layers, every one answers true to
+    /// `decode_graph_with_comm`, and the `kernels.comm_decode_graphs` setting is on
+    /// (`METRALE_COMM_DECODE_GRAPHS`). `decode_a.rs` then captures the single-sequence decode
+    /// with a communicator.
     pub(crate) fn layers_capture_with_comm(&self) -> bool {
-        static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        let off =
-            *OFF.get_or_init(|| std::env::var("METRALE_COMM_DECODE_GRAPHS").as_deref() == Ok("0"));
-        !off && !self.layers.is_empty() && self.layers.iter().all(|l| l.decode_graph_with_comm())
+        self.settings.kernels.comm_decode_graphs
+            && !self.layers.is_empty()
+            && self.layers.iter().all(|l| l.decode_graph_with_comm())
     }
 
     /// 2026-10-08: Every real row's `check_replay_room` for one step, before a batched graph

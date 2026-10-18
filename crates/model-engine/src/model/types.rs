@@ -47,8 +47,7 @@ pub struct TransformerModel {
     pub(super) settings: std::sync::Arc<metrale_settings::InferenceServerSettings>,
     /// 2026-09-25: Each projection's GEMM implementation (`GemmDispatch::from_settings`).
     pub(super) dispatch: metrale_model_layers::layers::ops::GemmDispatch,
-    /// 2026-09-25: Per-model memo of derived weight encodings, released by
-    /// `release_pools`.
+    /// 2026-09-25: Per-model memo of derived weight encodings, released by `release_pools`.
     pub(super) derived: metrale_model_layers::layers::ops::DerivedWeights,
     /// 2026-09-25: The weight ledger this model was built from, installed by
     /// `adopt_weight_store` after construction and held for teardown:
@@ -56,6 +55,8 @@ pub struct TransformerModel {
     /// adoption and after release.
     pub(super) weight_store: Option<metrale_model_weights::weights::WeightStore>,
     pub(super) levers: metrale_model_layers::layers::ops::ModelLevers,
+    /// 2026-10-17: Engine-local levers, resolved once from `settings` (`EngineLevers`).
+    pub(super) engine: super::engine_levers::EngineLevers,
     /// 2026-09-25: Diagnostic counters and one-shot dump latches for this model.
     pub(super) stats: metrale_model_layers::layers::ops::ModelStats,
     pub(super) embed_tokens: DenseWeight,

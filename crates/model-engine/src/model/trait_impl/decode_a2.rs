@@ -27,13 +27,6 @@ mod batch_hooks;
 mod pad_states;
 mod perseq;
 
-/// 2026-09-25: Multi-sequence decode CUDA graphs: on unless
-/// `METRALE_NO_DECODE_GRAPHS_MULTISEQ` is exactly `1`. Read once per process.
-fn multiseq_graphs_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("METRALE_NO_DECODE_GRAPHS_MULTISEQ").as_deref() != Ok("1"))
-}
-
 impl TransformerModel {
     pub(super) fn decode_batch_dispatch(
         &self,
@@ -181,7 +174,11 @@ impl TransformerModel {
         // 2026-09-25: The per-layer graph veto, as in `decode_a` (QSA's host top-k,
         // PLE's host hash on the hc multi-seq path).
         let layer_veto = self.decode_graph_veto;
-        let graph_key = if !ms_profile && !lora_eager && !layer_veto && multiseq_graphs_enabled() {
+        let graph_key = if !ms_profile
+            && !lora_eager
+            && !layer_veto
+            && !self.settings.kernels.no_decode_graphs_multiseq
+        {
             self.batch_decode_graph_key(&*seqs, padded_n)
         } else {
             None
@@ -210,7 +207,7 @@ impl TransformerModel {
             if let Some(e) = g.0.get_mut(key) {
                 e.1 = tick;
                 replay = Some(e.0);
-            } else if super::graph_borrow::graph_borrow_enabled()
+            } else if !self.settings.scheduler.no_graph_borrow
                 && self.comm.is_none()
                 && self.config.num_ssm_layers() > 0
             {
@@ -222,7 +219,8 @@ impl TransformerModel {
                 // 2026-09-25: A key that keeps borrowing has settled at its width:
                 // decline and capture it (`borrow_streak.rs`).
                 if let Some(bk) = borrowed
-                    && super::borrow_streak::DECODE_BORROW_STREAK.allow(key)
+                    && super::borrow_streak::DECODE_BORROW_STREAK
+                        .allow(key, self.engine.borrow_streak_limit)
                 {
                     dispatch_n = bk.len();
                     let e =

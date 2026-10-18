@@ -141,7 +141,7 @@ impl TransformerModel {
             self.gpu.synchronize(stream)?;
             let (vals, _) = self.readback_bf16(normed, h)?;
             let bytes: Vec<u8> = vals.iter().flat_map(|v| v.to_le_bytes()).collect();
-            std::fs::create_dir_all(&dir).ok();
+            std::fs::create_dir_all(dir).ok();
             std::fs::write(
                 std::path::Path::new(&dir).join("metrale_final_norm.bin"),
                 &bytes,
@@ -204,7 +204,7 @@ impl TransformerModel {
                 })
                 .collect();
             let lbytes: Vec<u8> = logit_vals.iter().flat_map(|v| v.to_le_bytes()).collect();
-            std::fs::create_dir_all(&dir).ok();
+            std::fs::create_dir_all(dir).ok();
             std::fs::write(
                 std::path::Path::new(&dir).join("metrale_logits.bin"),
                 &lbytes,
@@ -302,7 +302,7 @@ impl TransformerModel {
                     seq.tail_checkpoint_tokens,
                     tokens.len(),
                     bs,
-                    super::exact_leaf::marconi_exact_enabled(),
+                    self.settings.server.marconi_exact,
                 )
         {
             // 2026-09-25: A checkpoint within two blocks of the prompt end already exists
