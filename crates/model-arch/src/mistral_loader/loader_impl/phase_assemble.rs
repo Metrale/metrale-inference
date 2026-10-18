@@ -130,7 +130,7 @@ pub(super) fn assemble_layer(
 
     let input_norm = dense(ctx.store, &format!("{prefix}.attention_norm.weight"))?;
     let post_norm = dense(ctx.store, &format!("{prefix}.ffn_norm.weight"))?;
-    let kv_dtype = layer_kv_dtypes.get(i).copied().unwrap_or(KvCacheDtype::Fp8);
+    let kv_dtype = metrale_kv_codec::layer_entry(layer_kv_dtypes, i)?;
 
     let ffn = build_moe_ffn(ctx.store, i, gpu, config);
 

@@ -10,7 +10,9 @@
 //!   `registry.rs`).
 
 use crate::KvCodecId;
-use crate::spec::{AbiId, HostLutId, KvCodecSpec, Rotation, SideElem, SideKind, SideTensor};
+use crate::spec::{
+    AbiId, AutoBoundary, HostLutId, KvCodecSpec, Rotation, SideElem, SideKind, SideTensor,
+};
 
 /// 2026-10-18: Values per group of every block-scaled codec registered today.
 const GROUP16: u32 = 16;
@@ -50,6 +52,7 @@ pub(crate) const BF16: KvCodecSpec = KvCodecSpec {
     lossless: true,
     head_dims: &[128, 256, 512],
     online_calibration: false,
+    auto_boundary: AutoBoundary::None,
     citation: None,
 };
 
@@ -68,6 +71,7 @@ pub(crate) const FP8_E4M3_TENSOR: KvCodecSpec = KvCodecSpec {
     lossless: false,
     head_dims: &[128, 256, 512],
     online_calibration: true,
+    auto_boundary: AutoBoundary::None,
     citation: None,
 };
 
@@ -86,6 +90,7 @@ pub(crate) const NVFP4_E4M3X16: KvCodecSpec = KvCodecSpec {
     lossless: false,
     head_dims: &[128, 256],
     online_calibration: false,
+    auto_boundary: AutoBoundary::None,
     citation: None,
 };
 
@@ -104,6 +109,7 @@ pub(crate) const TURBO4: KvCodecSpec = KvCodecSpec {
     lossless: false,
     head_dims: &[128, 256, 512],
     online_calibration: false,
+    auto_boundary: AutoBoundary::OneThird,
     citation: TURBOQUANT,
 };
 
@@ -122,6 +128,7 @@ pub(crate) const TURBO3: KvCodecSpec = KvCodecSpec {
     lossless: false,
     head_dims: &[128, 256],
     online_calibration: false,
+    auto_boundary: AutoBoundary::OneThird,
     citation: TURBOQUANT,
 };
 
@@ -141,6 +148,7 @@ pub(crate) const TURBO2: KvCodecSpec = KvCodecSpec {
     lossless: false,
     head_dims: &[128],
     online_calibration: false,
+    auto_boundary: AutoBoundary::FourFifths,
     citation: TURBOQUANT,
 };
 
@@ -159,5 +167,6 @@ pub(crate) const TURBO8: KvCodecSpec = KvCodecSpec {
     lossless: false,
     head_dims: &[128, 256, 512],
     online_calibration: false,
+    auto_boundary: AutoBoundary::OneThird,
     citation: TURBOQUANT,
 };

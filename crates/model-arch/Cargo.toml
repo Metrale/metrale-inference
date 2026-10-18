@@ -19,6 +19,7 @@ metrale-config = { workspace = true }
 metrale-settings = { workspace = true }
 metrale-core = { workspace = true }
 metrale-error = { workspace = true }
+metrale-kv-codec = { workspace = true }
 metrale-gpu-runtime = { workspace = true }
 metrale-model-layers = { workspace = true }
 metrale-model-weights = { workspace = true }

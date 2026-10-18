@@ -132,6 +132,36 @@ pub enum HostLutId {
     E4m3Bf16Norm = 5,
 }
 
+/// 2026-10-18: How many leading and trailing attention layers a plan keeps at the boundary
+/// codec when `--kv-high-precision-layers` is left at auto. Lossy low-bit codecs accumulate
+/// quantization error across layers; the boundary layers bound it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum AutoBoundary {
+    /// 2026-10-18: No boundary layers.
+    None,
+    /// 2026-10-18: ceil(n / 3), at least 2.
+    OneThird,
+    /// 2026-10-18: ceil(4n / 5), at least 4.
+    FourFifths,
+}
+
+impl AutoBoundary {
+    /// 2026-10-18: The boundary count for `num_attention_layers` layers; `None` when the codec
+    /// asks for none.
+    pub const fn layers(self, num_attention_layers: u32) -> Option<u32> {
+        let n = num_attention_layers;
+        match self {
+            AutoBoundary::None => None,
+            AutoBoundary::OneThird => Some(max(n.div_ceil(3), 2)),
+            AutoBoundary::FourFifths => Some(max(n.saturating_mul(4).div_ceil(5), 4)),
+        }
+    }
+}
+
+const fn max(a: u32, b: u32) -> u32 {
+    if a > b { a } else { b }
+}
+
 /// 2026-10-18: The geometry of one side of one paged block.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct BlockGeometry {
@@ -180,6 +210,9 @@ pub struct KvCodecSpec {
     pub head_dims: &'static [u32],
     /// 2026-10-18: True when the scale is calibrated online per tensor (fp8).
     pub online_calibration: bool,
+    /// 2026-10-18: The boundary layers an auto `--kv-high-precision-layers` gives this codec
+    /// when it is served on both sides.
+    pub auto_boundary: AutoBoundary,
     /// 2026-10-18: The CITATIONS.md heading of the method the codec implements; `None` for a
     /// plain hardware number format, which no paper introduces.
     pub citation: Option<&'static str>,

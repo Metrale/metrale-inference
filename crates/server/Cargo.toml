@@ -44,6 +44,8 @@ metrale-circuit = { workspace = true }
 # kernels build compiles (metrale_closure::layout); it was a dev-dependency only before.
 metrale-closure = { workspace = true }
 metrale-core = { workspace = true }
+metrale-error = { workspace = true }
+metrale-kv-codec = { workspace = true }
 metrale-gpu-runtime = { workspace = true }
 metrale-grammar = { workspace = true }
 # 2026-10-17: The host probes the serve path shares with the harness: `/hardware`, the artifact

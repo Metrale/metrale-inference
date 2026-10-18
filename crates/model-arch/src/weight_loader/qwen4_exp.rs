@@ -223,10 +223,7 @@ impl ModelWeightLoader for Qwen4ExpWeightLoader {
                     .with_context(|| format!("qwen4_exp: GDN layer {i}"))?
                 }
                 LayerType::FullAttention => {
-                    let kv_dtype = layer_kv_dtypes
-                        .get(attn_idx)
-                        .copied()
-                        .unwrap_or(KvCacheDtype::Bf16);
+                    let kv_dtype = metrale_kv_codec::layer_entry(layer_kv_dtypes, attn_idx)?;
                     let l = crate::weight_loader::qwen35::load_layers::attention_arms::build_full_attention_nvfp4(
                         i, store, &lp, gpu, variant, config, h, absmax_k, quantize_k, stream,
                         kv_dtype, attn_idx, input_norm, post_attn_norm, ffn, lc,

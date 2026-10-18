@@ -15,8 +15,9 @@ use core::str::FromStr;
 
 use metrale_error::{Error, ErrorCode, error};
 
-use crate::KvCodecId;
 use crate::registry::{PAIR_ALIASES, PairAlias, const_str_eq};
+use crate::spec::AutoBoundary;
+use crate::{KvCodecId, spec};
 
 impl FromStr for KvCodecId {
     type Err = Error;
@@ -58,6 +59,11 @@ impl KvPair {
         }
     }
 
+    /// 2026-10-18: A pair already known to be accepted (it came out of a resolved plan).
+    pub(crate) const fn from_parts(k: KvCodecId, v: KvCodecId) -> Self {
+        KvPair { k, v }
+    }
+
     /// 2026-10-18: The K-side codec.
     pub const fn k(self) -> KvCodecId {
         self.k
@@ -66,6 +72,15 @@ impl KvPair {
     /// 2026-10-18: The V-side codec.
     pub const fn v(self) -> KvCodecId {
         self.v
+    }
+
+    /// 2026-10-18: The boundary layers an auto `--kv-high-precision-layers` gives this pair:
+    /// the pair alias row's policy when asymmetric, else the codec row's.
+    pub fn auto_boundary(self) -> AutoBoundary {
+        match alias_of(self.k, self.v) {
+            Some(alias) => alias.auto_boundary,
+            None => spec(self.k).auto_boundary,
+        }
     }
 
     /// 2026-10-18: True when K and V use different codecs.

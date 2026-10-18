@@ -12,7 +12,7 @@
 //! - A pair alias names two registered codecs; no alias spells a codec name.
 
 use crate::rows;
-use crate::spec::KvCodecSpec;
+use crate::spec::{AutoBoundary, KvCodecSpec};
 
 /// 2026-10-18: Generate the codec id enum, its tables and the pair alias table from one list.
 macro_rules! kv_codec_registry {
@@ -21,7 +21,7 @@ macro_rules! kv_codec_registry {
             $( $(#[$meta:meta])* $variant:ident = $disc:literal : $name:literal => $spec:path ),+ $(,)?
         }
         pairs {
-            $( $long:literal | $short:literal => ($k:ident, $v:ident) ),* $(,)?
+            $( $long:literal | $short:literal => ($k:ident, $v:ident) @ $ab:ident ),* $(,)?
         }
     ) => {
         /// 2026-10-18: A registered KV-cache codec. The discriminant is the wire and stored value
@@ -61,7 +61,13 @@ macro_rules! kv_codec_registry {
         /// 2026-10-18: The fused (K, V) pairs the CLI accepts by name. Each has a long and a
         /// short spelling; both parse to the same `(k, v)`.
         pub static PAIR_ALIASES: &[PairAlias] = &[
-            $( PairAlias { long: $long, short: $short, k: KvCodecId::$k, v: KvCodecId::$v } ),*
+            $( PairAlias {
+                long: $long,
+                short: $short,
+                k: KvCodecId::$k,
+                v: KvCodecId::$v,
+                auto_boundary: AutoBoundary::$ab,
+            } ),*
         ];
     };
 }
@@ -77,6 +83,8 @@ pub struct PairAlias {
     pub k: KvCodecId,
     /// 2026-10-18: The V-side codec.
     pub v: KvCodecId,
+    /// 2026-10-18: The boundary layers an auto `--kv-high-precision-layers` gives the pair.
+    pub auto_boundary: AutoBoundary,
 }
 
 kv_codec_registry! {
@@ -99,15 +107,15 @@ kv_codec_registry! {
         Turbo8 = 6 : "turbo8" => rows::TURBO8,
     }
     pairs {
-        "turbo4k_turbo3v" | "turbo4k3v" => (Turbo4, Turbo3),
-        "turbo4k_turbo8v" | "turbo4k8v" => (Turbo4, Turbo8),
-        "turbo3k_turbo8v" | "turbo3k8v" => (Turbo3, Turbo8),
-        "bf16k_turbo4v" | "bf16k4v" => (Bf16, Turbo4),
-        "bf16k_turbo3v" | "bf16k3v" => (Bf16, Turbo3),
-        "fp8k_turbo4v" | "fp8k4v" => (Fp8, Turbo4),
-        "fp8k_turbo3v" | "fp8k3v" => (Fp8, Turbo3),
-        "bf16k_turbo2v" | "bf16k2v" => (Bf16, Turbo2),
-        "fp8k_turbo2v" | "fp8k2v" => (Fp8, Turbo2),
+        "turbo4k_turbo3v" | "turbo4k3v" => (Turbo4, Turbo3) @ OneThird,
+        "turbo4k_turbo8v" | "turbo4k8v" => (Turbo4, Turbo8) @ OneThird,
+        "turbo3k_turbo8v" | "turbo3k8v" => (Turbo3, Turbo8) @ OneThird,
+        "bf16k_turbo4v" | "bf16k4v" => (Bf16, Turbo4) @ OneThird,
+        "bf16k_turbo3v" | "bf16k3v" => (Bf16, Turbo3) @ FourFifths,
+        "fp8k_turbo4v" | "fp8k4v" => (Fp8, Turbo4) @ OneThird,
+        "fp8k_turbo3v" | "fp8k3v" => (Fp8, Turbo3) @ OneThird,
+        "bf16k_turbo2v" | "bf16k2v" => (Bf16, Turbo2) @ OneThird,
+        "fp8k_turbo2v" | "fp8k2v" => (Fp8, Turbo2) @ OneThird,
     }
 }
 

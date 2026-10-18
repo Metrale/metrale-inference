@@ -318,10 +318,7 @@ impl ModelWeightLoader for LongcatWeightLoader {
                 let ffn = build_dense_ffn(store, &format!("{lp}.mlps.{s}"), config, gpu, lc)?;
                 let input_norm = dense(store, &format!("{lp}.input_layernorm.{s}.weight"))?;
                 let post_norm = dense(store, &format!("{lp}.post_attention_layernorm.{s}.weight"))?;
-                let kv_dtype = layer_kv_dtypes
-                    .get(global_idx)
-                    .copied()
-                    .unwrap_or(KvCacheDtype::Bf16);
+                let kv_dtype = metrale_kv_codec::layer_entry(layer_kv_dtypes, global_idx)?;
 
                 let mut layer = Qwen3AttentionLayer::new_ungated(
                     input_norm, attn, post_norm, ffn, global_idx, None, None, None, gpu, kv_dtype,

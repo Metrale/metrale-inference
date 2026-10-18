@@ -130,7 +130,7 @@ fn kv_high_precision_layers_resolves_against_the_attention_layer_count() {
     assert_eq!(K::Auto.resolve(48), AUTO_KV_HIGH_PRECISION_LAYERS);
     assert_eq!(K::Count(6).resolve(48), 6);
     // 2026-09-26: `0` stays 0, so `serve_phases::kv_cache` can defer to
-    // `auto_high_precision_layers`.
+    // the codec table's auto boundary (`KvPair::auto_boundary`).
     assert_eq!(K::Count(0).resolve(48), 0);
 }
 

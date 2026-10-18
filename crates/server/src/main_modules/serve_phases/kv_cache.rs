@@ -11,6 +11,7 @@
 use anyhow::Result;
 
 use metrale_config::ModelConfig;
+use metrale_kv_codec::{BlockGeometry, KvCachePlan, KvCodecId, KvPair, KvPlanInputs, spec};
 
 use crate::cli;
 
@@ -204,8 +205,11 @@ pub(crate) fn resolve_kv_cache_config(
             behavior_default_kv_dtype,
         ),
     }
-    let kv_dtype: metrale_cache::kv_cache::KvCacheDtype = effective_kv_dtype_str.parse()?;
-    if kv_dtype == metrale_cache::kv_cache::KvCacheDtype::Fp8 {
+    // 2026-10-18: The requested pair, then the plan, are resolved once here (ROTI); the legacy
+    // `kv_dtype` and per-layer list the loaders take are derived from them.
+    let requested: KvPair = effective_kv_dtype_str.parse()?;
+    let kv_dtype = crate::main_modules::legacy(requested)?;
+    if !requested.is_asymmetric() && spec(requested.k()).online_calibration {
         let source = super::fp8_kv_scale_source::fp8_kv_scale_source(
             config.fp8_kv_calibration_tokens,
             kv_scale_census.len(),
@@ -230,11 +234,13 @@ pub(crate) fn resolve_kv_cache_config(
             )
         })?
         .resolve(num_attn_layers);
-    let kv_hp_layers = match (
-        kv_hp_layers,
-        crate::main_modules::auto_high_precision_layers(kv_dtype, num_attn_layers),
-    ) {
+    // 2026-10-18: The auto boundary count is the codec table's policy for the pair.
+    let auto = requested
+        .auto_boundary()
+        .layers(u32::try_from(num_attn_layers)?);
+    let kv_hp_layers = match (kv_hp_layers, auto) {
         (0, Some(auto_hp)) => {
+            let auto_hp = usize::try_from(auto_hp)?;
             tracing::info!(
                 "Auto-enabling --kv-high-precision-layers {} for {} ({}/{} attn layers BF16; \
                  scaled with attn-layer count to keep accumulated turbo quant error tractable)",
@@ -247,7 +253,9 @@ pub(crate) fn resolve_kv_cache_config(
         }
         _ => kv_hp_layers,
     };
-    if kv_hp_layers == 0 && kv_dtype != metrale_cache::kv_cache::KvCacheDtype::Bf16 {
+    // 2026-10-18: Boundary layers hold bf16 on both sides.
+    let boundary = KvPair::symmetric(KvCodecId::Bf16);
+    if kv_hp_layers == 0 && requested != boundary {
         tracing::warn!(
             "⚠ --kv-high-precision-layers is 0: all KV cache layers use {} precision. \
              NVFP4 models may hallucinate or lose coherence at long context. \
@@ -255,12 +263,23 @@ pub(crate) fn resolve_kv_cache_config(
             effective_kv_dtype_str,
         );
     }
-    let layer_dtypes = crate::main_modules::build_layer_kv_dtypes(
-        kv_dtype,
-        num_attn_layers,
-        kv_hp_layers,
-        metrale_cache::kv_cache::KvCacheDtype::Bf16,
-    );
+    // 2026-10-18: One geometry per attention layer from the config's uniform head shape; the
+    // per-layer `layer_dims` overrides (Gemma) are still applied by the cache config.
+    let geometry = vec![
+        BlockGeometry {
+            block_size: u32::try_from(args.block_size)?,
+            num_kv_heads: u32::try_from(config.num_key_value_heads)?,
+            head_dim: u32::try_from(config.head_dim)?,
+        };
+        num_attn_layers
+    ];
+    let plan = KvCachePlan::resolve(&KvPlanInputs {
+        requested,
+        boundary_layers: u32::try_from(kv_hp_layers)?,
+        boundary,
+        geometry: &geometry,
+    });
+    let layer_dtypes = crate::main_modules::legacy_layer_dtypes(&plan, requested, boundary)?;
     let hss_cache_blocks_per_seq = if args.high_speed_swap {
         Some(args.high_speed_swap_cache_blocks_per_seq)
     } else {

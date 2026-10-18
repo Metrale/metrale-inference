@@ -32,6 +32,7 @@ mod label;
 mod pair;
 mod plan;
 mod registry;
+mod resolve;
 mod rows;
 mod spec;
 
@@ -43,7 +44,8 @@ pub use plan::{
     PressureTrigger, RungIx, VbrLadder,
 };
 pub use registry::{KvCodecId, PAIR_ALIASES, PairAlias, SPEC, spec};
+pub use resolve::{KvPlanInputs, layer_entry};
 pub use spec::{
-    AbiId, BlockGeometry, HostLutId, KvCodecSpec, Rotation, SideElem, SideKind, SideTensor,
-    TrellisSpec,
+    AbiId, AutoBoundary, BlockGeometry, HostLutId, KvCodecSpec, Rotation, SideElem, SideKind,
+    SideTensor, TrellisSpec,
 };

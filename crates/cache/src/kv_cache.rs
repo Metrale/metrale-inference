@@ -39,7 +39,7 @@ pub enum KvCacheDtype {
     Turbo3,
     /// 2026-09-25: WHT-rotated 4-level codebook, 4 values per byte plus one FP8
     /// scale byte per group: 2.5 bits per element, 6.4x smaller than `Bf16`.
-    /// The server's `auto_high_precision_layers` gives this dtype a larger
+    /// Its registry row (`AutoBoundary::FourFifths`) gives this dtype a larger
     /// high-precision boundary than the other symmetric turbo dtypes.
     Turbo2,
     /// 2026-09-25: WHT-rotated FP8 E4M3 data plus one BF16 scale per group: 9
@@ -110,7 +110,7 @@ impl KvCacheDtype {
     pub fn kv_pair(self) -> (KvCacheDtype, KvCacheDtype) {
         let (k, v) = self.pair();
         // 2026-10-18: Each side of a legacy variant is a legacy codec, which has a symmetric
-        // variant (`tests_registry.rs` checks every one).
+        // variant (`catalog.rs` `registry_tests` checks every one).
         let side =
             |c| Self::from_pair(c, c).expect("a legacy side codec has a symmetric legacy variant");
         (side(k), side(v))

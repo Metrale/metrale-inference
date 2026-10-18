@@ -37,7 +37,7 @@ pub(crate) enum KvHighPrecisionLayers {
     /// 2026-09-26: `auto`: [`AUTO_KV_HIGH_PRECISION_LAYERS`].
     Auto,
     /// 2026-09-26: An explicit first-N-and-last-N count. `0`, the flag's
-    /// default, defers to `auto_high_precision_layers` for the KV dtype.
+    /// default, defers to the codec table's auto boundary (`KvPair::auto_boundary`).
     Count(usize),
 }
 

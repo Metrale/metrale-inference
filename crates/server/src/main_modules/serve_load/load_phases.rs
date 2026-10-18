@@ -27,8 +27,8 @@ pub(super) fn reserve_preflight(
 ) -> Result<serve_phases::ReservePreflight> {
     // 2026-09-26: Inputs the preflight's decode-ring auto-fit needs. The KV
     // dtype comes from `resolve_kv_dtype_str`, the resolver the cache uses
-    // below; a value that does not parse is taken as BF16 here, and the
-    // cache's own parse reports the error.
+    // below. 2026-10-18: A value that does not parse stops the load here with the
+    // registry's coded error (PCND); it used to be taken as BF16 until the cache's own parse.
     let (preflight_kv_dtype_str, _) = serve_phases::kv_cache::resolve_kv_dtype_str(
         args.kv_cache_dtype.as_deref(),
         ptx_set.behavior.default_kv_dtype,
@@ -36,9 +36,7 @@ pub(super) fn reserve_preflight(
     let post_load_inputs = serve_phases::PostLoadInputs {
         total_mem: gpu.total_memory().unwrap_or(0),
         model_dir,
-        kv_dtype: preflight_kv_dtype_str
-            .parse()
-            .unwrap_or(metrale_cache::kv_cache::KvCacheDtype::Bf16),
+        kv_dtype: preflight_kv_dtype_str.parse()?,
         w8a8_prefill_kernels:
             metrale_model_layers::layers::qwen3_attention::w8a8_prefill_kernels_loaded(gpu),
         kv_floor_tokens: levers.kv_floor_tokens,

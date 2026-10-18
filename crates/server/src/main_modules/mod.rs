@@ -31,5 +31,5 @@ mod telemetry_otlp;
 mod tests;
 
 pub(crate) use app_state::AppState;
-pub(crate) use kv_dtypes::{auto_high_precision_layers, build_layer_kv_dtypes};
+pub(crate) use kv_dtypes::{legacy, legacy_layer_dtypes};
 pub(crate) use serve::serve;

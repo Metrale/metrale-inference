@@ -9,7 +9,10 @@
 use clap::Parser;
 
 use crate::cli::{Cli, Command};
-use crate::main_modules::build_layer_kv_dtypes;
+use metrale_cache::kv_cache::KvCacheDtype;
+use metrale_kv_codec::{BlockGeometry, KvCachePlan, KvCodecId, KvPair, KvPlanInputs};
+
+use crate::main_modules::legacy_layer_dtypes;
 
 #[test]
 fn test_cli_parse_positional_model() {
@@ -103,140 +106,65 @@ fn test_cli_parse_slai_policy() {
     }
 }
 
-#[test]
-fn test_build_layer_kv_dtypes_disabled() {
-    let dtypes = build_layer_kv_dtypes(
-        metrale_cache::kv_cache::KvCacheDtype::Nvfp4,
-        12,
-        0,
-        metrale_cache::kv_cache::KvCacheDtype::Bf16,
-    );
-    assert!(dtypes.is_empty());
+/// 2026-10-18: The boundary rule and auto count are tested in `metrale-kv-codec`
+/// (`tests/resolve.rs`); these pin the legacy list derived from a plan.
+fn legacy_list(requested: &str, n: usize, boundary_layers: u32) -> Vec<KvCacheDtype> {
+    let requested: KvPair = requested.parse().unwrap();
+    let boundary = KvPair::symmetric(KvCodecId::Bf16);
+    let geometry = vec![
+        BlockGeometry {
+            block_size: 16,
+            num_kv_heads: 4,
+            head_dim: 256,
+        };
+        n
+    ];
+    let plan = KvCachePlan::resolve(&KvPlanInputs {
+        requested,
+        boundary_layers,
+        boundary,
+        geometry: &geometry,
+    });
+    legacy_layer_dtypes(&plan, requested, boundary).unwrap()
 }
 
 #[test]
-fn test_build_layer_kv_dtypes_bf16_noop() {
-    // 2026-09-26: A base dtype equal to the boundary dtype needs no overlay.
-    let dtypes = build_layer_kv_dtypes(
-        metrale_cache::kv_cache::KvCacheDtype::Bf16,
-        12,
-        2,
-        metrale_cache::kv_cache::KvCacheDtype::Bf16,
-    );
-    assert!(dtypes.is_empty());
+fn a_plan_uniform_at_the_requested_pair_has_an_empty_legacy_list() {
+    assert!(legacy_list("nvfp4", 12, 0).is_empty());
+    assert!(legacy_list("bf16", 12, 2).is_empty());
+    assert!(legacy_list("turbo4", 0, 2).is_empty());
 }
 
 #[test]
-fn test_build_layer_kv_dtypes_basic() {
-    use metrale_cache::kv_cache::KvCacheDtype;
-    let dtypes = build_layer_kv_dtypes(
-        KvCacheDtype::Nvfp4,
-        12,
-        2,
-        metrale_cache::kv_cache::KvCacheDtype::Bf16,
-    );
-    assert_eq!(dtypes.len(), 12);
-    assert_eq!(dtypes[0], KvCacheDtype::Bf16);
-    assert_eq!(dtypes[1], KvCacheDtype::Bf16);
-    for i in 2..10 {
-        assert_eq!(dtypes[i], KvCacheDtype::Nvfp4, "layer {i}");
+fn a_boundary_plan_lists_every_layer() {
+    use KvCacheDtype as D;
+    let mut want = vec![D::Nvfp4; 12];
+    for i in [0, 1, 10, 11] {
+        want[i] = D::Bf16;
     }
-    assert_eq!(dtypes[10], KvCacheDtype::Bf16);
-    assert_eq!(dtypes[11], KvCacheDtype::Bf16);
-}
-
-#[test]
-fn test_build_layer_kv_dtypes_overlap() {
-    use metrale_cache::kv_cache::KvCacheDtype;
-    // 2026-09-26: With 4 layers, the first 3 and last 3 cover them all.
-    let dtypes = build_layer_kv_dtypes(
-        KvCacheDtype::Fp8,
-        4,
-        3,
-        metrale_cache::kv_cache::KvCacheDtype::Bf16,
-    );
-    assert_eq!(dtypes.len(), 4);
-    for d in &dtypes {
-        assert_eq!(*d, KvCacheDtype::Bf16);
-    }
-}
-
-#[test]
-fn test_build_layer_kv_dtypes_single_layer() {
-    use metrale_cache::kv_cache::KvCacheDtype;
-    let dtypes = build_layer_kv_dtypes(
-        KvCacheDtype::Nvfp4,
-        1,
-        1,
-        metrale_cache::kv_cache::KvCacheDtype::Bf16,
-    );
-    assert_eq!(dtypes.len(), 1);
-    assert_eq!(dtypes[0], KvCacheDtype::Bf16);
-}
-
-#[test]
-fn test_auto_high_precision_layers_non_turbo_none() {
-    use metrale_cache::kv_cache::KvCacheDtype;
-    for d in [KvCacheDtype::Bf16, KvCacheDtype::Fp8, KvCacheDtype::Nvfp4] {
-        assert_eq!(crate::main_modules::auto_high_precision_layers(d, 10), None);
-    }
-}
-
-#[test]
-fn test_auto_high_precision_layers_baseline_formula() {
-    use metrale_cache::kv_cache::KvCacheDtype;
-    // 2026-09-26: `ceil(n / 3)`, at least 2.
+    assert_eq!(legacy_list("nvfp4", 12, 2), want);
     assert_eq!(
-        crate::main_modules::auto_high_precision_layers(KvCacheDtype::Turbo8, 10),
-        Some(4),
-    );
-    assert_eq!(
-        crate::main_modules::auto_high_precision_layers(KvCacheDtype::Turbo4KTurbo8V, 3),
-        Some(2),
+        legacy_list("turbo4k3v", 3, 1),
+        [D::Bf16, D::Turbo4KTurbo3V, D::Bf16]
     );
 }
 
 #[test]
-fn test_auto_high_precision_layers_weak_dtypes_stronger_default() {
-    use metrale_cache::kv_cache::KvCacheDtype;
-    // 2026-09-26: `Turbo2` and `Bf16KTurbo3V` take `ceil(4n / 5)`, at least 4.
-    for d in [KvCacheDtype::Turbo2, KvCacheDtype::Bf16KTurbo3V] {
-        assert_eq!(
-            crate::main_modules::auto_high_precision_layers(d, 10),
-            Some(8)
-        );
-        assert_eq!(
-            crate::main_modules::auto_high_precision_layers(d, 2),
-            Some(4)
-        );
-    }
-}
-
-#[test]
-fn test_auto_high_precision_layers_every_turbo_dtype_covered() {
-    use metrale_cache::kv_cache::KvCacheDtype;
-    // 2026-09-26: Each turbo dtype listed gets at least 2 boundary layers;
-    // only `Bf16`, `Fp8` and `Nvfp4` return `None`.
-    for d in [
-        KvCacheDtype::Turbo2,
-        KvCacheDtype::Turbo3,
-        KvCacheDtype::Turbo4,
-        KvCacheDtype::Turbo8,
-        KvCacheDtype::Turbo4KTurbo3V,
-        KvCacheDtype::Turbo4KTurbo8V,
-        KvCacheDtype::Turbo3KTurbo8V,
-        KvCacheDtype::Bf16KTurbo4V,
-        KvCacheDtype::Bf16KTurbo3V,
-        KvCacheDtype::Fp8KTurbo4V,
-        KvCacheDtype::Fp8KTurbo3V,
-        KvCacheDtype::Bf16KTurbo2V,
-        KvCacheDtype::Fp8KTurbo2V,
-    ] {
-        assert!(
-            crate::main_modules::auto_high_precision_layers(d, 10).unwrap_or(0) >= 2,
-            "{d:?} must auto-enable high-precision boundary layers",
-        );
-    }
+fn a_boundary_covering_every_layer_still_lists_them() {
+    // 2026-10-18: turbo2's auto count on 16 attention layers is 13, so the first 13 and the
+    // last 13 cover all 16. The list must still be sent: an empty one would make every layer
+    // the base dtype (turbo2) instead of bf16.
+    let n = 16;
+    let auto = "turbo2"
+        .parse::<KvPair>()
+        .unwrap()
+        .auto_boundary()
+        .layers(n)
+        .unwrap();
+    assert_eq!(auto, 13);
+    let list = legacy_list("turbo2", 16, auto);
+    assert_eq!(list, vec![KvCacheDtype::Bf16; 16]);
+    assert_eq!(legacy_list("fp8", 4, 3), vec![KvCacheDtype::Bf16; 4]);
 }
 
 #[test]
