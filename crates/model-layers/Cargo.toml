@@ -26,6 +26,9 @@ metrale-config = { workspace = true }
 metrale-settings = { workspace = true }
 metrale-io-host-mem = { workspace = true, optional = true }
 metrale-core = { workspace = true }
+metrale-error = { workspace = true }
+# 2026-10-18: The codec kernel table (`kv_kernel_names`) names the KV kernels a layer loads.
+metrale-kv-codec = { workspace = true }
 metrale-gpu-runtime = { workspace = true }
 metrale-model-weights = { workspace = true }
 metrale-storage = { workspace = true }

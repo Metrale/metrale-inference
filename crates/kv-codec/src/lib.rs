@@ -28,6 +28,7 @@
 extern crate alloc;
 
 mod kernel_key;
+mod kernel_table;
 mod label;
 mod pair;
 mod plan;
@@ -37,6 +38,7 @@ mod rows;
 mod spec;
 
 pub use kernel_key::{HeadDimClass, KvKernelKey, KvKernelSet, KvOp, ResolvedKvKernels};
+pub use kernel_table::{KernelName, kv_kernel_names};
 pub use label::KvPlanLabel;
 pub use pair::{KvPair, accepted};
 pub use plan::{

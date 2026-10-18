@@ -87,11 +87,10 @@ crates/model-layers/src/layers/qwen3_attention/decode/splitk_route_tests.rs 5
 crates/model-layers/src/layers/qwen3_attention/decode/write_kv_cache_fp8_gpu_tests.rs 6
 crates/model-layers/src/layers/qwen3_attention/decode/write_kv_cache_fp8.rs 2
 crates/model-layers/src/layers/qwen3_attention/decode/write_kv_cache.rs 26
-crates/model-layers/src/layers/qwen3_attention/init_decode_kernels.rs 76
-crates/model-layers/src/layers/qwen3_attention/init_kernel_dispatch.rs 142
+crates/model-layers/src/layers/qwen3_attention/init_decode_kernels.rs 25
 crates/model-layers/src/layers/qwen3_attention/init_prefill_kernels.rs 54
 crates/model-layers/src/layers/qwen3_attention/init.rs 4
-crates/model-layers/src/layers/qwen3_attention/kernel_requirements.rs 112
+crates/model-layers/src/layers/qwen3_attention/kernel_requirements.rs 17
 crates/model-layers/src/layers/qwen3_attention/mod.rs 1
 crates/model-layers/src/layers/qwen3_attention/prefill/alloc_tests.rs 2
 crates/model-layers/src/layers/qwen3_attention/prefill/paged_attn_batched.rs 7

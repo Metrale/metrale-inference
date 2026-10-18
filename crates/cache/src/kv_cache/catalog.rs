@@ -46,10 +46,14 @@ impl KvCacheDtype {
     /// tests below check that round trip. 2026-10-18: Read from the registry: the codec name
     /// for a symmetric variant, the pair alias's long spelling otherwise.
     pub fn name(self) -> &'static str {
+        self.codec_pair().name()
+    }
+
+    /// 2026-10-18: The registry pair this variant names. Every variant is a registered codec or
+    /// pair alias (`the_legacy_catalogue_is_the_registry_in_order`).
+    pub fn codec_pair(self) -> KvPair {
         let (k, v) = self.pair();
-        KvPair::new(k, v)
-            .expect("every legacy pair is a registered pair alias")
-            .name()
+        KvPair::new(k, v).expect("every legacy pair is a registered pair alias")
     }
 }
 

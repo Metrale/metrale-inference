@@ -179,11 +179,7 @@ impl Qwen3AttentionLayer {
             return Bf16DecodeRoute::Gqa(gqa_k, num_splits);
         }
         // 2026-09-25: The HDIM=512 kernel for heads wider than 256, when loaded.
-        let kernel = if head_dim > 256 && self.paged_decode_512_k.0 != 0 {
-            self.paged_decode_512_k
-        } else {
-            self.paged_decode_k
-        };
+        let kernel = self.decode_kernel_for(head_dim);
         Bf16DecodeRoute::Plain(kernel, num_splits)
     }
 
@@ -320,11 +316,7 @@ impl Qwen3AttentionLayer {
                 num_splits,
             );
             // 2026-09-25: The HDIM=512 kernel for heads wider than 256, when loaded.
-            let fp8_kernel = if head_dim > 256 && self.paged_decode_512_k.0 != 0 {
-                self.paged_decode_512_k
-            } else {
-                self.paged_decode_k
-            };
+            let fp8_kernel = self.decode_kernel_for(head_dim);
             ops::paged_decode_attn_fp8(
                 gpu,
                 fp8_kernel,

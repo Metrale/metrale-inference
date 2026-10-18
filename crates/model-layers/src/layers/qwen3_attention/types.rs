@@ -267,7 +267,9 @@ pub struct Qwen3AttentionLayer {
     pub(super) innerq_apply_q_k: KernelHandle,
     pub(super) innerq_apply_k_k: KernelHandle,
     pub(super) paged_decode_k: KernelHandle,
-    pub(super) paged_decode_512_k: KernelHandle,
+    /// 2026-10-18: The head_dim-512 decode build of the layer's codec pair, from the codec
+    /// kernel table; `None` when the pair has none or the model's heads are not wider than 256.
+    pub(super) paged_decode_512_k: Option<KernelHandle>,
     pub(super) paged_decode_mla_k: KernelHandle,
     pub(super) mla_paged_decode_k: KernelHandle,
     pub(super) mla_paged_decode_fp8_k: KernelHandle,

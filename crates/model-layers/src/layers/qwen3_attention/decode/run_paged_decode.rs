@@ -16,7 +16,7 @@ use metrale_cache::kv_dequant::{
     NVFP4_E2M1_LUT, TURBO4_LUT, dequant_4bit_block_to_bf16, dequant_fp8_to_bf16,
     dequant_turbo3_block_to_bf16, dequant_turbo8_block_to_bf16,
 };
-use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
+use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 
 use super::super::Qwen3AttentionLayer;
 use crate::layer::ForwardContext;
@@ -26,6 +26,36 @@ mod bf16_fp8;
 mod nvfp4_turbo;
 
 impl Qwen3AttentionLayer {
+    /// 2026-10-18: The BF16/FP8 decode kernel for `head_dim`: the pair's head_dim-512 build for
+    /// heads wider than 256 when it is loaded, else `paged_decode_k`.
+    pub(super) fn decode_kernel_for(&self, head_dim: u32) -> KernelHandle {
+        if head_dim > 256 {
+            self.paged_decode_512_k.unwrap_or(self.paged_decode_k)
+        } else {
+            self.paged_decode_k
+        }
+    }
+
+    /// 2026-10-18: The turbo decode kernel for `head_dim`. `paged_decode_k` is a head_dim-256
+    /// build, so a wider head needs the pair's own head_dim-512 build; without one the pair is
+    /// refused (`KvPairUnsupported`). Turbo3 and Turbo2 used to run turbo4's 512 build here, and
+    /// every turbo dtype the 256 build when the 512 one was absent.
+    fn rotated_decode_kernel_for(&self, head_dim: u32) -> Result<KernelHandle> {
+        if head_dim <= 256 {
+            return Ok(self.paged_decode_k);
+        }
+        self.paged_decode_512_k.ok_or_else(|| {
+            let pair = self.kv_dtype.codec_pair();
+            metrale_error::error!(
+                metrale_error::ErrorCode::KvPairUnsupported,
+                pair.k().name(),
+                pair.v().name(),
+                head_dim
+            )
+            .into()
+        })
+    }
+
     pub(in super::super) fn run_paged_decode(
         &self,
         gpu: &dyn GpuBackend,
@@ -160,11 +190,7 @@ impl Qwen3AttentionLayer {
             // 2026-09-25: Turbo4, Turbo3 and Turbo2 use the NVFP4 paged-decode interface (block
             // stride and data-section size).
             KvCacheDtype::Turbo4 | KvCacheDtype::Turbo3 | KvCacheDtype::Turbo2 => {
-                let kernel = if head_dim > 256 && self.paged_decode_512_k.0 != 0 {
-                    self.paged_decode_512_k
-                } else {
-                    self.paged_decode_k
-                };
+                let kernel = self.rotated_decode_kernel_for(head_dim)?;
                 let data_bytes = match self.kv_dtype {
                     KvCacheDtype::Turbo3 => kv_cache.turbo3_data_bytes() as u64,
                     KvCacheDtype::Turbo2 => kv_cache.turbo2_data_bytes() as u64,
@@ -194,11 +220,7 @@ impl Qwen3AttentionLayer {
             }
             // 2026-09-25: Turbo8 (FP8 data with per-group BF16 scales), through the same interface.
             KvCacheDtype::Turbo8 => {
-                let kernel = if head_dim > 256 && self.paged_decode_512_k.0 != 0 {
-                    self.paged_decode_512_k
-                } else {
-                    self.paged_decode_k
-                };
+                let kernel = self.rotated_decode_kernel_for(head_dim)?;
                 ops::paged_decode_attn_nvfp4(
                     gpu,
                     kernel,

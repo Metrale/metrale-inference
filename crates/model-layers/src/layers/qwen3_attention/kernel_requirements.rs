@@ -1,129 +1,57 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-09-25: The startup kernel check for a `--kv-cache-dtype`: the
-//! reshape/decode pair from `init_kernel_dispatch`, plus the optional kernels
-//! the dtype's dispatch cannot run without (its chunked-prefill kernel and, for
-//! a WHT-rotated side, the WHT bookends).
+//! 2026-09-25: The startup kernel check for a `--kv-cache-dtype`. 2026-10-18: The names come
+//! from the codec kernel table (`init_kv_kernels`), the one source `init.rs` also resolves
+//! from: the write and decode kernels, plus the kernels a rotated side cannot run without (its
+//! chunked-prefill kernel and the WHT bookends).
 //!
 //! Owner: model-layers (attention).
-//! Invariants: none beyond the types.
+//! Invariants: no kernel name is spelled here.
 
 use metrale_cache::kv_cache::KvCacheDtype;
+use metrale_kv_codec::{KernelName, spec};
 
-/// 2026-09-25: The optional kernels (`init.rs` resolves them with
-/// `try_kernel`) that `kv_dtype` cannot run without: its chunked-prefill
-/// paged-attention kernel, and the WHT bookend pair when either side is
-/// WHT-rotated and `head_dim` is 128, 256 or 512. The reshape/decode pair is
-/// not in this list; `validate_required_kernels` adds it.
-pub(super) fn required_optional_kernels_for_dtype(
-    kv_dtype: KvCacheDtype,
-    head_dim: usize,
-) -> Vec<(&'static str, &'static str)> {
-    let mut req: Vec<(&'static str, &'static str)> = Vec::new();
-    match kv_dtype {
-        KvCacheDtype::Turbo2 => {
-            req.push(("prefill_paged_turbo2", "attn_prefill_paged_turbo2"));
-        }
-        KvCacheDtype::Turbo3 => {
-            req.push(("prefill_paged_turbo3", "attn_prefill_paged_turbo3_64"));
-        }
-        KvCacheDtype::Turbo4 => {
-            req.push(("prefill_paged_turbo4", "attn_prefill_paged_turbo4_64"));
-        }
-        KvCacheDtype::Turbo8 => {
-            req.push(("prefill_paged_turbo8", "attn_prefill_paged_turbo8_64"));
-        }
-        KvCacheDtype::Bf16KTurbo3V => {
-            req.push((
-                "prefill_paged_bf16k_turbo3v",
-                "attn_prefill_paged_bf16k_turbo3v_64",
-            ));
-        }
-        KvCacheDtype::Bf16KTurbo4V => {
-            req.push((
-                "prefill_paged_bf16k_turbo4v",
-                "attn_prefill_paged_bf16k_turbo4v_64",
-            ));
-        }
-        KvCacheDtype::Bf16KTurbo2V => {
-            req.push((
-                "prefill_paged_bf16k_turbo2v",
-                "attn_prefill_paged_bf16k_turbo2v_64",
-            ));
-        }
-        KvCacheDtype::Fp8KTurbo3V => {
-            req.push((
-                "prefill_paged_fp8k_turbo3v",
-                "attn_prefill_paged_fp8k_turbo3v_64",
-            ));
-        }
-        KvCacheDtype::Fp8KTurbo4V => {
-            req.push((
-                "prefill_paged_fp8k_turbo4v",
-                "attn_prefill_paged_fp8k_turbo4v_64",
-            ));
-        }
-        KvCacheDtype::Fp8KTurbo2V => {
-            req.push((
-                "prefill_paged_fp8k_turbo2v",
-                "attn_prefill_paged_fp8k_turbo2v_64",
-            ));
-        }
-        KvCacheDtype::Turbo4KTurbo3V => {
-            req.push((
-                "prefill_paged_turbo4k_turbo3v",
-                "attn_prefill_paged_turbo4k_turbo3v_64",
-            ));
-        }
-        KvCacheDtype::Turbo4KTurbo8V => {
-            req.push((
-                "prefill_paged_turbo4k_turbo8v",
-                "attn_prefill_paged_turbo4k_turbo8v_64",
-            ));
-        }
-        KvCacheDtype::Turbo3KTurbo8V => {
-            req.push((
-                "prefill_paged_turbo3k_turbo8v",
-                "attn_prefill_paged_turbo3k_turbo8v_64",
-            ));
-        }
-        KvCacheDtype::Bf16 | KvCacheDtype::Fp8 | KvCacheDtype::Nvfp4 => {}
-    }
-    // 2026-09-25: At these head dims the prefill path rotates the turbo side's
-    // cached-prefix rows and Q with `wht_bf16_inplace`, and un-rotates the
-    // output with `wht_bf16_inplace_inv`, unless the weights are pre-rotated
-    // (`prefill/cache_skip.rs`, `wht_runtime_active`).
-    let (k_dtype, v_dtype) = kv_dtype.kv_pair();
-    if (k_dtype.is_wht_rotated() || v_dtype.is_wht_rotated()) && matches!(head_dim, 128 | 256 | 512)
-    {
-        req.push(("wht_bf16", "wht_bf16_inplace"));
-        req.push(("wht_bf16", "wht_bf16_inplace_inv"));
-    }
-    req
+/// 2026-10-18: True when either side of `kv_dtype` stores rotated values. Such a pair has no
+/// dense prefill to fall back to, so its chunked-prefill kernel is required, and it is the
+/// experimental set the error note names.
+fn rotates(kv_dtype: KvCacheDtype) -> bool {
+    let pair = kv_dtype.codec_pair();
+    spec(pair.k()).rotates() || spec(pair.v()).rotates()
 }
 
-/// 2026-09-25: Resolves the reshape/decode pair and
-/// `required_optional_kernels_for_dtype` for one dtype, and returns an error
-/// naming every kernel that is missing.
+/// 2026-10-18: Every kernel `kv_dtype` at `head_dim` cannot run without: the write and decode
+/// kernels; for a rotated pair, its chunked-prefill kernel; and the WHT bookends when the table
+/// names them (a WHT-rotated side at a head dim its rotation covers).
+pub(super) fn required_kernels(
+    kv_dtype: KvCacheDtype,
+    head_dim: usize,
+) -> anyhow::Result<Vec<KernelName>> {
+    let names = super::init_kv_kernels::kv_kernel_names_for(kv_dtype.codec_pair(), head_dim)?;
+    let mut required = vec![names.write, names.decode];
+    if rotates(kv_dtype) {
+        required.extend(names.prefill);
+    }
+    required.extend(names.wht.into_iter().flat_map(|(fwd, inv)| [fwd, inv]));
+    Ok(required)
+}
+
+/// 2026-09-25: Resolves `required_kernels` for one dtype, and returns an error naming every
+/// kernel that is missing.
 pub(super) fn validate_required_kernels(
     gpu: &dyn metrale_gpu_runtime::gpu::GpuBackend,
     kv_dtype: KvCacheDtype,
     head_dim: usize,
 ) -> anyhow::Result<()> {
-    // 2026-09-25: The reshape/decode pair is checked here too.
+    // 2026-09-25: The write/decode pair is checked here too.
     // `Qwen3AttentionLayer::new` resolves it with `gpu.kernel(..)?`, whose
     // error ("Kernel lookup <module>::<fn>") does not name the dtype.
-    let (reshape_mod, reshape_fn, decode_mod, decode_fn) =
-        super::init_kernel_dispatch::kernel_modules_for_dtype(kv_dtype, head_dim);
-    let mut required = vec![(reshape_mod, reshape_fn), (decode_mod, decode_fn)];
-    required.extend(required_optional_kernels_for_dtype(kv_dtype, head_dim));
-    let missing: Vec<String> = required
+    let missing: Vec<String> = required_kernels(kv_dtype, head_dim)?
         .into_iter()
-        .filter(|(m, f)| gpu.kernel(m, f).is_err())
-        .map(|(m, f)| format!("{m}::{f}"))
+        .filter(|name| gpu.kernel(name.module, name.func).is_err())
+        .map(|name| name.to_string())
         .collect();
     if !missing.is_empty() {
-        let note = if is_experimental(kv_dtype) {
+        let note = if rotates(kv_dtype) {
             " This KV-cache dtype is EXPERIMENTAL and is not supported on this kernel target; \
              use --kv-cache-dtype fp8, bf16 or nvfp4."
         } else {
@@ -138,142 +66,64 @@ pub(super) fn validate_required_kernels(
     Ok(())
 }
 
-/// 2026-09-25: True when either side of `kv_dtype` is WHT-rotated: the turbo
-/// dtypes and the asymmetric pairs that contain one.
-fn is_experimental(kv_dtype: KvCacheDtype) -> bool {
-    let (k, v) = kv_dtype.kv_pair();
-    k.is_wht_rotated() || v.is_wht_rotated()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// 2026-09-25: Every dtype with a turbo side requires its chunked-prefill
-    /// kernel and, at head_dim 256, the WHT bookend pair; plain dtypes require
-    /// nothing; the bookends appear only at head_dim 128, 256 and 512.
-    #[test]
-    fn required_optional_kernels_cover_turbo_variants() {
-        const TURBO: &[(KvCacheDtype, &str, &str)] = &[
-            (
-                KvCacheDtype::Turbo2,
-                "prefill_paged_turbo2",
-                "attn_prefill_paged_turbo2",
-            ),
-            (
-                KvCacheDtype::Turbo3,
-                "prefill_paged_turbo3",
-                "attn_prefill_paged_turbo3_64",
-            ),
-            (
-                KvCacheDtype::Turbo4,
-                "prefill_paged_turbo4",
-                "attn_prefill_paged_turbo4_64",
-            ),
-            (
-                KvCacheDtype::Turbo8,
-                "prefill_paged_turbo8",
-                "attn_prefill_paged_turbo8_64",
-            ),
-            (
-                KvCacheDtype::Bf16KTurbo3V,
-                "prefill_paged_bf16k_turbo3v",
-                "attn_prefill_paged_bf16k_turbo3v_64",
-            ),
-            (
-                KvCacheDtype::Bf16KTurbo4V,
-                "prefill_paged_bf16k_turbo4v",
-                "attn_prefill_paged_bf16k_turbo4v_64",
-            ),
-            (
-                KvCacheDtype::Bf16KTurbo2V,
-                "prefill_paged_bf16k_turbo2v",
-                "attn_prefill_paged_bf16k_turbo2v_64",
-            ),
-            (
-                KvCacheDtype::Fp8KTurbo3V,
-                "prefill_paged_fp8k_turbo3v",
-                "attn_prefill_paged_fp8k_turbo3v_64",
-            ),
-            (
-                KvCacheDtype::Fp8KTurbo4V,
-                "prefill_paged_fp8k_turbo4v",
-                "attn_prefill_paged_fp8k_turbo4v_64",
-            ),
-            (
-                KvCacheDtype::Fp8KTurbo2V,
-                "prefill_paged_fp8k_turbo2v",
-                "attn_prefill_paged_fp8k_turbo2v_64",
-            ),
-            (
-                KvCacheDtype::Turbo4KTurbo3V,
-                "prefill_paged_turbo4k_turbo3v",
-                "attn_prefill_paged_turbo4k_turbo3v_64",
-            ),
-            (
-                KvCacheDtype::Turbo4KTurbo8V,
-                "prefill_paged_turbo4k_turbo8v",
-                "attn_prefill_paged_turbo4k_turbo8v_64",
-            ),
-            (
-                KvCacheDtype::Turbo3KTurbo8V,
-                "prefill_paged_turbo3k_turbo8v",
-                "attn_prefill_paged_turbo3k_turbo8v_64",
-            ),
-        ];
-        for &(d, prefill_mod, prefill_fn) in TURBO {
-            assert_eq!(
-                required_optional_kernels_for_dtype(d, 256),
-                vec![
-                    (prefill_mod, prefill_fn),
-                    ("wht_bf16", "wht_bf16_inplace"),
-                    ("wht_bf16", "wht_bf16_inplace_inv"),
-                ],
-                "{d:?}"
-            );
-        }
-        for d in [KvCacheDtype::Bf16, KvCacheDtype::Fp8, KvCacheDtype::Nvfp4] {
-            assert!(
-                required_optional_kernels_for_dtype(d, 256).is_empty(),
-                "{d:?}: plain dtype should require no optional kernels"
-            );
-        }
-        assert_eq!(
-            required_optional_kernels_for_dtype(KvCacheDtype::Turbo2, 64),
-            vec![("prefill_paged_turbo2", "attn_prefill_paged_turbo2")]
-        );
-        assert_eq!(
-            required_optional_kernels_for_dtype(KvCacheDtype::Turbo2, 128).len(),
-            3
-        );
-        assert_eq!(
-            required_optional_kernels_for_dtype(KvCacheDtype::Turbo2, 512).len(),
-            3
-        );
-        assert_eq!(
-            required_optional_kernels_for_dtype(KvCacheDtype::Turbo2, 513).len(),
-            1
-        );
+    fn funcs(kv_dtype: KvCacheDtype, head_dim: usize) -> Vec<&'static str> {
+        required_kernels(kv_dtype, head_dim)
+            .unwrap()
+            .into_iter()
+            .map(|n| n.func)
+            .collect()
     }
 
-    /// 2026-09-25: Turbo2/3/4/8 are WHT-rotated and Bf16/Fp8/Nvfp4 are not; an
-    /// asymmetric pair is judged per side.
+    /// 2026-10-18: A plain dtype requires only its write and decode kernels: its prefill has a
+    /// dense fallback, so a target without the paged prefill kernel still boots.
     #[test]
-    fn turbo2_is_wht_rotated() {
-        for d in [
-            KvCacheDtype::Turbo2,
-            KvCacheDtype::Turbo3,
-            KvCacheDtype::Turbo4,
-            KvCacheDtype::Turbo8,
-        ] {
-            assert!(d.is_wht_rotated(), "{d:?} must gate the WHT bookends");
-        }
+    fn plain_dtypes_require_write_and_decode_only() {
         for d in [KvCacheDtype::Bf16, KvCacheDtype::Fp8, KvCacheDtype::Nvfp4] {
-            assert!(!d.is_wht_rotated(), "{d:?} must not gate the WHT bookends");
+            for hd in [64, 128, 256, 512] {
+                assert_eq!(required_kernels(d, hd).unwrap().len(), 2, "{d} hd={hd}");
+            }
         }
-        let (k, v) = KvCacheDtype::Bf16KTurbo2V.kv_pair();
-        assert!(!k.is_wht_rotated() && v.is_wht_rotated());
-        let (k, v) = KvCacheDtype::Turbo4KTurbo8V.kv_pair();
-        assert!(k.is_wht_rotated() && v.is_wht_rotated());
+    }
+
+    /// 2026-10-18: Every dtype with a rotated side requires its chunked-prefill kernel, and the
+    /// WHT bookends exactly at head dims 128, 256 and 512.
+    #[test]
+    fn rotated_dtypes_require_prefill_and_the_bookends_at_wht_sizes() {
+        let rotated: Vec<KvCacheDtype> = KvCacheDtype::ALL
+            .into_iter()
+            .filter(|&d| rotates(d))
+            .collect();
+        assert_eq!(rotated.len(), 13, "four turbo codecs and nine pairs");
+        for d in rotated {
+            for hd in [128, 256, 512] {
+                let f = funcs(d, hd);
+                assert_eq!(f.len(), 5, "{d} hd={hd}: {f:?}");
+                assert!(
+                    f[2].starts_with("attn_prefill_paged_"),
+                    "{d} hd={hd}: {f:?}"
+                );
+                assert_eq!(&f[3..], ["wht_bf16_inplace", "wht_bf16_inplace_inv"]);
+            }
+            for hd in [64, 513] {
+                assert_eq!(funcs(d, hd).len(), 3, "{d} hd={hd}: no bookends");
+            }
+        }
+    }
+
+    /// 2026-10-18: Turbo2's prefill is its one non-`_64` build, at every head dim.
+    #[test]
+    fn turbo2_requires_its_plain_prefill() {
+        assert_eq!(
+            funcs(KvCacheDtype::Turbo2, 64)[2],
+            "attn_prefill_paged_turbo2"
+        );
+        assert_eq!(
+            funcs(KvCacheDtype::Turbo3, 64)[2],
+            "attn_prefill_paged_turbo3_64"
+        );
     }
 }

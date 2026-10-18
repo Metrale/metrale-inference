@@ -146,7 +146,7 @@ pub(crate) const TURBO2: KvCodecSpec = KvCodecSpec {
     abi: AbiId::BlockScaled,
     host_dequant: None,
     lossless: false,
-    head_dims: &[128],
+    head_dims: &[128, 256],
     online_calibration: false,
     auto_boundary: AutoBoundary::FourFifths,
     citation: TURBOQUANT,

@@ -105,8 +105,8 @@ impl Qwen3AttentionLayer {
         config: &metrale_config::ModelConfig,
         lc: crate::load_context::LoadContext<'_>,
     ) -> Result<Self> {
-        let (reshape_mod, reshape_fn, decode_mod, decode_fn) =
-            super::init_kernel_dispatch::kernel_modules_for_dtype(kv_dtype, config.head_dim);
+        let kv_names =
+            super::init_kv_kernels::kv_kernel_names_for(kv_dtype.codec_pair(), config.head_dim)?;
         // 2026-09-25: Which cross-architecture kernel families the config says
         // the model has. `gate` issues no lookup for a family the model lacks,
         // so it leaves no failed row in the boot audit. See `init_arch_gates`.
@@ -117,13 +117,10 @@ impl Qwen3AttentionLayer {
             gpu,
             config,
             &probes,
-            reshape_mod,
-            reshape_fn,
+            kv_names.write,
             lc.levers,
         )?;
-        let dec = super::init_decode_kernels::DecodeKernels::resolve(
-            gpu, kv_dtype, &probes, decode_mod, decode_fn,
-        )?;
+        let dec = super::init_decode_kernels::DecodeKernels::resolve(gpu, &probes, &kv_names)?;
         let pre = super::init_prefill_kernels::PrefillKernels::resolve(
             gpu,
             config,

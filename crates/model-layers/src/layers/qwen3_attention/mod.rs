@@ -23,7 +23,7 @@ pub mod helpers;
 mod init;
 mod init_arch_gates;
 mod init_decode_kernels;
-mod init_kernel_dispatch;
+mod init_kv_kernels;
 mod init_prefill_kernels;
 mod init_proj_kernels;
 mod kernel_requirements;

@@ -85,8 +85,7 @@ impl ProjKernels {
         gpu: &dyn GpuBackend,
         config: &metrale_config::ModelConfig,
         probes: &ArchProbes,
-        reshape_mod: &'static str,
-        reshape_fn: &'static str,
+        kv_write: metrale_kv_codec::KernelName,
         levers: &crate::layers::ops::ModelLevers,
     ) -> Result<Self> {
         Ok(Self {
@@ -285,7 +284,7 @@ impl ProjKernels {
                 "rope_forward_yarn_interleaved_inv",
             ),
             rope_proportional_k: super::super::try_kernel(gpu, "rope", "rope_forward_proportional"),
-            reshape_cache_k: gpu.kernel(reshape_mod, reshape_fn)?,
+            reshape_cache_k: gpu.kernel(kv_write.module, kv_write.func)?,
         })
     }
 }
