@@ -38,6 +38,12 @@ impl TransformerModel {
         &self.levers
     }
 
+    /// 2026-10-17: Borrow the startup settings the model was built from, for the factory steps
+    /// that run after construction.
+    pub(crate) fn settings_ref(&self) -> &metrale_settings::InferenceServerSettings {
+        &self.settings
+    }
+
     /// 2026-09-25: Install a proposer built after construction (the
     /// DeepSeek-V4 or GLM-5.3 MTP head, or a DFlash drafter), replacing any
     /// MTP proposer `TransformerModel::new` built. It also shrinks the MTP

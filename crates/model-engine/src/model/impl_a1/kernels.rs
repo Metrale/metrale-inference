@@ -46,6 +46,7 @@ pub(super) fn resolve_model_kernels(
     config: &ModelConfig,
     gpu: &dyn GpuBackend,
     ops: &metrale_model_layers::layers::ops::OpsLevers,
+    settings: &metrale_settings::InferenceServerSettings,
 ) -> Result<ModelKernels> {
     let dense_gemv_kernel = gpu.kernel("gemv", "dense_gemv_bf16")?;
     // 2026-09-25: Always 0. Its only launch site is the FP32-logits branch
@@ -60,10 +61,10 @@ pub(super) fn resolve_model_kernels(
     } else {
         KernelHandle(0)
     };
-    // 2026-09-25: Lossless BF16-MMA lm_head variant, loaded when
-    // `METRALE_LMHEAD_LOSSLESS` is set to any value. Otherwise 0, and the
+    // 2026-09-25: Lossless BF16-MMA lm_head variant, loaded when the `kernels.lmhead_lossless`
+    // setting is on (`METRALE_LMHEAD_LOSSLESS` set to any value). Otherwise 0, and the
     // lm_head uses `w4a16_gemm_t_kernel`.
-    let w4a16_gemm_t_bf16_kernel = if std::env::var("METRALE_LMHEAD_LOSSLESS").is_ok() {
+    let w4a16_gemm_t_bf16_kernel = if settings.kernels.lmhead_lossless {
         metrale_model_layers::layers::try_kernel(gpu, "w4a16", "w4a16_gemm_t_m128_bf16_v2")
     } else {
         metrale_gpu_runtime::gpu::KernelHandle(0)

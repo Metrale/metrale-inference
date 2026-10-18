@@ -89,14 +89,7 @@ crates/model-arch/src/ple_tests.rs
 crates/model-arch/src/weight_loader/glm5_next_load/layer_stream.rs
 crates/model-arch/src/weight_loader/qwen35/load_layers.rs
 crates/model-arch/src/weight_loader/qwen35/load_layers/selectors.rs
-crates/model-engine/src/factory/build/alloc_digest.rs
-crates/model-engine/src/factory/build/kv_blocks.rs
-crates/model-engine/src/factory/build/kv_budget.rs
-crates/model-engine/src/factory/m2_setup.rs
 crates/model-engine/src/kimi_k3_loader.rs
-crates/model-engine/src/model/impl_a1/comm_setup.rs
-crates/model-engine/src/model/impl_a1/kernels.rs
-crates/model-engine/src/model/impl_a1/spec_buffers.rs
 crates/model-engine/src/model/nllb/beam_compute.rs
 crates/model-engine/src/model/nllb/beam_multi.rs
 crates/model-engine/src/model/ssm_tier/capability.rs

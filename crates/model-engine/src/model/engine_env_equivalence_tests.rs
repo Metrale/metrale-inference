@@ -29,7 +29,8 @@ fn old_switch(kind: Old) -> impl Fn(Option<&str>) -> bool {
 }
 
 /// 2026-10-17: `== "1"` readers, now Switch rows.
-const OPT_IN: [(&str, Field); 22] = [
+const OPT_IN: [(&str, Field); 23] = [
+    ("METRALE_NO_LMHEAD_TGEMM", |s| s.kernels.no_lmhead_tgemm),
     ("METRALE_CODISPATCH_BTCHECK", |s| {
         s.scheduler.codispatch_btcheck
     }),
@@ -92,7 +93,9 @@ const OPT_OUT: [(&str, Field); 4] = [
 
 /// 2026-10-17: Set-at-any-value readers (`var_os(..).is_some()`, `var(..).is_ok()`), still
 /// Presence rows.
-const PRESENCE: [(&str, Field); 12] = [
+const PRESENCE: [(&str, Field); 14] = [
+    ("METRALE_LMHEAD_LOSSLESS", |s| s.kernels.lmhead_lossless),
+    ("METRALE_KV_POOL_UNCLAMPED", |s| s.cache.kv_pool_unclamped),
     ("METRALE_NO_GDN_CARRY", |s| s.speculative.no_gdn_carry),
     ("METRALE_NO_LMHEAD_BATCHED_WIDE", |s| {
         s.scheduler.no_lmhead_batched_wide
@@ -260,7 +263,10 @@ fn prefill_zero_rows_matches_its_strict_reader() {
 #[test]
 fn text_and_path_rows_are_verbatim() {
     type TextField = fn(&S) -> Option<String>;
-    let rows: [(&str, TextField); 3] = [
+    let rows: [(&str, TextField); 4] = [
+        ("METRALE_DEBUG_ALLOC_DIGEST", |s| {
+            s.telemetry.debug_alloc_digest.clone()
+        }),
         ("METRALE_DFLASH_DEBUG_NO_GRAPH", |s| {
             s.telemetry.dflash_debug_no_graph.clone()
         }),

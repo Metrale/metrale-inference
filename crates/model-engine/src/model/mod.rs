@@ -17,6 +17,7 @@ pub(crate) mod drop;
 mod engine_levers;
 mod gdn_carry;
 pub(crate) mod impl_a1;
+pub(crate) use impl_a1::build_lm_head_nvfp4_t;
 pub(crate) mod impl_a1_init;
 pub(crate) mod impl_a2;
 mod impl_a2_ep_broadcast;

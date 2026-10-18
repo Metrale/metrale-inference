@@ -116,7 +116,7 @@ impl TransformerModel {
             fill_slots_kernel,
             argmax_feed_kernel,
             feed_resolve_kernel,
-        } = kernels::resolve_model_kernels(&config, gpu.as_ref(), &levers.ops)?;
+        } = kernels::resolve_model_kernels(&config, gpu.as_ref(), &levers.ops, &settings)?;
         let profile = config.profile;
         let profile_first = settings.telemetry.profile_first;
         // 2026-09-25: `max_decode_seqs` pins the split-K attention split count to the configured

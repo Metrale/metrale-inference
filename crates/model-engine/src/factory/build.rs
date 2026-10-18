@@ -267,10 +267,9 @@ pub fn build_model(
     // embedding or lm_head tensor (`--spec-cost-model measured`'s drafter key).
     let drafter_weights_sha256 = store.drafter_weights_sha256(gpu.as_ref())?;
 
-    // 2026-10-01: Step 3a: the transposed twin of the NVFP4 LM head, built here rather than in
-    // `TransformerModel::new` so the KV sizing finds it on the allocation ledger.
+    // 2026-10-01: Step 3a: the NVFP4 head's transposed twin, on the ledger before KV sizing.
     let lm_head_nvfp4_t =
-        crate::model::impl_a1::build_lm_head_nvfp4_t(&lm_head_nvfp4, &config, gpu.as_ref())?;
+        crate::model::build_lm_head_nvfp4_t(&lm_head_nvfp4, &config, &settings, gpu.as_ref())?;
 
     // 2026-09-25: Copies (DenseWeight is `Copy`) of the embedding and the BF16
     // LM head for the DeepSeek-V4 MTP proposer, taken before both move into
@@ -280,7 +279,7 @@ pub fn build_model(
 
     // 2026-09-25: Step 3b: the post-load MoE prefill transpose for minimax_m2,
     // step3p7 and deepseek_v4 (m2_setup.rs); a no-op for other model types.
-    maybe_run_minimax_m2_moe_transpose(&config, gpu.as_ref(), &mut layers)?;
+    maybe_run_minimax_m2_moe_transpose(&config, gpu.as_ref(), &mut layers, &settings)?;
 
     // 2026-09-25: Step 3c: the loader drops store tensors it has uploaded its
     // own copies of (the default is a no-op). This runs after every `load_*`
@@ -372,6 +371,7 @@ pub fn build_model(
             kv_block_size,
             hss_cache_blocks_per_seq,
             gpu_memory_utilization,
+            levers: kv_sizing::KvPoolLevers::from_settings(&settings),
         },
         &slots,
     )?;

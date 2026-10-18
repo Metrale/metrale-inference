@@ -39,6 +39,31 @@ pub(super) struct KvInputs<'a> {
     pub kv_block_size: usize,
     pub hss_cache_blocks_per_seq: Option<u32>,
     pub gpu_memory_utilization: f64,
+    pub levers: KvPoolLevers,
+}
+
+/// 2026-10-17: The KV pool levers, resolved once from the startup settings.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct KvPoolLevers {
+    /// 2026-10-17: `METRALE_KV_POOL_UNCLAMPED` is present (any value): the pool fills its budget
+    /// even with the prefix cache inactive.
+    pub unclamped: bool,
+    /// 2026-10-17: A pool short of `--max-batch-size` full-length sequences only warns; off when
+    /// `METRALE_KV_OVERCOMMIT` is exactly `0` or `false`.
+    pub overcommit: bool,
+    /// 2026-10-17: `METRALE_KV_EXTERNAL_RESERVE_GB`, the co-tenant memory discounted from the
+    /// device usage (applied only when positive).
+    pub external_reserve_gb: Option<f64>,
+}
+
+impl KvPoolLevers {
+    pub(super) fn from_settings(s: &metrale_settings::InferenceServerSettings) -> Self {
+        Self {
+            unclamped: s.cache.kv_pool_unclamped,
+            overcommit: !matches!(s.cache.kv_overcommit.as_deref(), Some("0" | "false")),
+            external_reserve_gb: s.cache.kv_external_reserve_gb,
+        }
+    }
 }
 
 /// 2026-10-01: The resolved slot count and the pool's block count.
@@ -59,6 +84,7 @@ pub(super) fn size_kv(inp: &KvInputs<'_>, plan: &SlotPlan<'_>) -> Result<KvSized
         inp.build_entry_free,
         actual_free,
         total_mem.saturating_sub(actual_free),
+        inp.levers.external_reserve_gb,
         gib,
     );
     // 2026-10-01: The driver keeps whole 2 MiB chunks resident for allocations smaller than a
@@ -104,7 +130,7 @@ pub(super) fn size_kv(inp: &KvInputs<'_>, plan: &SlotPlan<'_>) -> Result<KvSized
         Ok(kv_blocks::pool_blocks(
             inp.kv_config,
             kv_budget,
-            inp.prefix_cache.is_active(),
+            inp.prefix_cache.is_active() || inp.levers.unclamped,
             inp.max_seq_len,
             inp.kv_block_size,
             slots,
@@ -148,7 +174,7 @@ pub(super) fn size_kv(inp: &KvInputs<'_>, plan: &SlotPlan<'_>) -> Result<KvSized
         None => kv_blocks::budget_kv_blocks(
             inp.kv_config,
             kv_budget,
-            inp.prefix_cache,
+            inp.prefix_cache.is_active() || inp.levers.unclamped,
             inp.max_seq_len,
             inp.kv_block_size,
             slots,
@@ -175,9 +201,14 @@ pub(super) fn size_kv(inp: &KvInputs<'_>, plan: &SlotPlan<'_>) -> Result<KvSized
         inp.kv_block_size,
         slots,
         balanced,
+        inp.levers.overcommit,
     )?;
     Ok(KvSized {
         slots,
         num_kv_blocks,
     })
 }
+
+#[cfg(test)]
+#[path = "kv_sizing_tests.rs"]
+mod tests;
