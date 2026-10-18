@@ -98,5 +98,5 @@ lever_group! {
     toolcall_debug: Switch = "off", None, "METRALE_TOOLCALL_DEBUG", "crates/server/src/api/chat/levers.rs", "Inert unless METRALE_TOOLCALL_DEBUG=1. `1` turns it on.";
     use_hf_ref_json_dumps: Switch = "off", None, "METRALE_USE_HF_REF_JSON_DUMPS", "crates/server/src/tokenizer/jinja_helpers.rs", "`ToolJsonStyle::from_settings` picks the spaced form when this is on; tests that need the spaced form ask for it by name. `1` turns it on.";
     vision_timing: Presence = "off", None, "METRALE_VISION_TIMING", "crates/model-engine/src/model/trait_impl/prefill_a/vision.rs", "Read in `crates/model-engine/src/model/trait_impl/prefill_a/vision.rs`. Any value turns it on, `0` included.";
-    w4a4_proj_audit: Switch = "off", None, "METRALE_W4A4_PROJ_AUDIT", "crates/model-layers/src/layers/ops/w4a4_proj.rs", "A diagnostic audit of the W4A4 projection route. Any non-empty value turns it on.";
+    w4a4_proj_audit: Switch = "off", None, "METRALE_W4A4_PROJ_AUDIT", "crates/model-layers/src/layers/ops/w4a4_proj/mx_plan.rs", "A diagnostic audit of the W4A4 projection route. Any non-empty value turns it on.";
 }

@@ -110,8 +110,8 @@ impl Default for W4a16BatchmTiers {
 
 impl W4a16BatchmTiers {
     /// 2026-09-25: Resolve every tier in the family. A missing kernel is a zero
-    /// handle, and `select_tier` skips it.
-    pub fn resolve(gpu: &dyn GpuBackend) -> Self {
+    /// handle, and `select_tier` skips it. `w4a4` reaches `w4a4_proj::prepare`.
+    pub fn resolve(gpu: &dyn GpuBackend, w4a4: crate::layers::ops::w4a4_proj::W4a4Levers) -> Self {
         let mut handles = [KernelHandle(0); W4A16_BATCHM_WIDTHS.len()];
         for (h, w) in handles.iter_mut().zip(W4A16_BATCHM_WIDTHS) {
             // 2026-09-25: Width 8 resolves through `batch8_kernel`, which prefers
@@ -125,7 +125,7 @@ impl W4a16BatchmTiers {
         let wide = super::try_kernel(gpu, "w4a16_gemv", "w4a16_gemv_batch16");
         // 2026-09-25: The only call of `w4a4_proj::prepare`, which allocates the
         // W4A4 activation scratch; `resolve` runs while layers are built.
-        if let Err(e) = crate::layers::ops::w4a4_proj::prepare(gpu) {
+        if let Err(e) = crate::layers::ops::w4a4_proj::prepare(gpu, w4a4) {
             tracing::warn!("w4a4 scratch/kernels unavailable, projections stay W4A16: {e:#}");
         }
         // 2026-09-28: `w4a16_gemv_batch32` is handed out only within a W4A4 edge above 16

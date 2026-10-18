@@ -22,6 +22,7 @@ pub(crate) fn build_linear_attention_nvfp4(
     input_norm: DenseWeight,
     post_attn_norm: DenseWeight,
     ffn: FfnComponent,
+    lc: metrale_model_layers::load_context::LoadContext<'_>,
 ) -> Result<Box<dyn TransformerLayer>> {
     // 2026-09-25: Each projection is sliced to this rank's heads while BF16, then quantized
     // to NVFP4. At TP=1 the `shard_gdn_*` slicers return their source pointer.
@@ -165,6 +166,7 @@ pub(crate) fn build_linear_attention_nvfp4(
         Some(out_proj_nvfp4_t),
         config,
         gpu,
+        lc,
     )?;
     // 2026-09-25: Under `metrale_hip` neither the FP8 pre-dequant nor the FP8 casts are
     // installed (kernels/strix-hip has no `fp8_gemm_n128`), so prefill uses the NVFP4

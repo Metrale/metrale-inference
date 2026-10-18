@@ -128,7 +128,7 @@ pub(super) fn build_dense_ffn(
         }
     };
     residency.twins.ffn_nvfp4 |= ffn_nvfp4;
-    let mut dffn = DenseFfnLayer::new(ffn_weights, gpu)?;
+    let mut dffn = DenseFfnLayer::new(ffn_weights, gpu, cx.lc)?;
     if ffn_q2 {
         dffn.set_q2_weights(
             packed_q2_from_store(store, &format!("{lp}.mlp.gate_proj"))?,

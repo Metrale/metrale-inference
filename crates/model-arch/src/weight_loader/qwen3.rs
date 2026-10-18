@@ -370,6 +370,7 @@ impl ModelWeightLoader for Qwen3WeightLoader {
                         Some(qkvz_nvfp4),
                         config,
                         gpu,
+                        lc,
                     )?));
                 }
                 LayerType::SlidingAttention => {

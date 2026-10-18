@@ -33,7 +33,6 @@ pub(super) fn load_full_attention(
     layers: &mut Vec<Box<dyn TransformerLayer>>,
     attn_idx: &mut usize,
     l: LayerIn<'_>,
-    lc: metrale_model_layers::load_context::LoadContext<'_>,
 ) -> Result<Flow> {
     let LoadCx {
         store,
@@ -42,6 +41,7 @@ pub(super) fn load_full_attention(
         layer_kv_dtypes,
         variant,
         route_env,
+        lc,
         ..
     } = *cx;
     let LayerIn {

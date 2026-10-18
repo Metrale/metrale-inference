@@ -24,7 +24,12 @@ fn unavailable_mmq_preserves_transposed_weights_without_repack_or_free() {
         up_proj_t: Some(weight),
         down_proj_t: Some(weight),
     };
-    let mut layer = DenseFfnLayer::new(weights, &gpu).unwrap();
+    let mut layer = DenseFfnLayer::new(
+        weights,
+        &gpu,
+        crate::lever_equivalence::DefaultLoad::at_defaults().lc(),
+    )
+    .unwrap();
     // 2026-09-25: `try_kernel` returns handle 0 for an absent entry point. The
     // other handles stay present: one missing handle disables the whole MMQ
     // load path, including the free of the transposed weights.
@@ -66,7 +71,12 @@ fn stamped_layer(gpu: &MockGpuBackend, acts: [metrale_config::Nvfp4Act; 3]) -> D
         up_proj_t: Some(w(acts[1])),
         down_proj_t: Some(w(acts[2])),
     };
-    DenseFfnLayer::new(weights, gpu).unwrap()
+    DenseFfnLayer::new(
+        weights,
+        gpu,
+        crate::lever_equivalence::DefaultLoad::at_defaults().lc(),
+    )
+    .unwrap()
 }
 
 /// 2026-09-28: The FP4 MMQ prefill arm quantizes activations to FP4, so it follows the

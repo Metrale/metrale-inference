@@ -322,6 +322,7 @@ impl ModelWeightLoader for Qwen35DenseWeightLoader {
             route_env: &route_env,
             policy,
             served: &served,
+            lc,
         };
 
         for (i, lt) in layer_types.iter().enumerate() {
@@ -348,7 +349,6 @@ impl ModelWeightLoader for Qwen35DenseWeightLoader {
                         &mut layers,
                         &mut attn_idx,
                         l,
-                        lc,
                     )? {
                         continue;
                     }

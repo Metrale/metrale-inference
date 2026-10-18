@@ -118,7 +118,8 @@ fn default_table_is_empty_and_declines() {
 fn width_table_and_resolver_stay_in_lockstep() {
     assert!(W4A16_BATCHM_WIDTHS.windows(2).all(|w| w[0] < w[1]));
     let gpu = MockGpuBackend::new();
-    let tiers = W4a16BatchmTiers::resolve(&gpu);
+    let tiers =
+        W4a16BatchmTiers::resolve(&gpu, crate::layers::ops::w4a4_proj::W4a4Levers::declared());
     assert!(tiers.handles.iter().all(|h| h.0 != 0));
     // 2026-09-28: Then `w4a16_gemv_batch16` and `w4a16_gemv_batch32`. Between them
     // `w4a4_proj::prepare` resolves the W4A4 kernels once per backend; its cache is keyed
@@ -167,7 +168,8 @@ fn the_row_edge_follows_the_weights_declared_activations() {
     };
     let declared = stamped(Nvfp4Act::A4);
     let gpu = MockGpuBackend::new();
-    let tiers = W4a16BatchmTiers::resolve(&gpu);
+    let tiers =
+        W4a16BatchmTiers::resolve(&gpu, crate::layers::ops::w4a4_proj::W4a4Levers::declared());
     assert_eq!(
         tiers.a4_rows,
         crate::layers::ops::w4a4_proj::W4A4_WIDE_MAX_M

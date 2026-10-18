@@ -167,6 +167,7 @@ fn harness(armed: bool) -> Harness {
             down_proj_t: None,
         },
         &gpu,
+        crate::lever_equivalence::DefaultLoad::at_defaults().lc(),
     )
     .unwrap();
     layer.per_token_group_quant_fp8_k =

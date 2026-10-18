@@ -16,7 +16,7 @@ use anyhow::{Result, ensure};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::{KernelLaunch, div_ceil};
 
-use super::{MxLaunch, W4a4State, mx_nt, mx_plan, mx_ps, state, w4a4_state_for};
+use super::{MxLaunch, W4a4State, mx_plan, state, w4a4_state_for};
 use crate::weight_map::QuantizedWeight;
 
 /// 2026-09-30: One NVFP4 activation of `m` rows: `[m, k / 2]` E2M1 and `[m, k / 16]` E4M3
@@ -80,7 +80,8 @@ impl W4a4Proj {
 
     /// 2026-09-30: The MX entry an `m`-row `[n, k]` launch takes.
     pub fn mx_kernel(&self, m: u32, n: u32, k: u32) -> KernelHandle {
-        match mx_plan(&self.0, m, n, k, mx_nt(), mx_ps()) {
+        let w = self.0.levers;
+        match mx_plan(&self.0, m, n, k, w.nt, w.ps) {
             MxLaunch::Tiles { kernel, .. } | MxLaunch::Persistent { kernel, .. } => kernel,
         }
     }
@@ -121,7 +122,7 @@ impl W4a4Proj {
         stream: u64,
     ) -> Result<()> {
         let s = &self.0;
-        let (mx, grid, smem, sst) = match mx_plan(s, m, n, k, mx_nt(), mx_ps()) {
+        let (mx, grid, smem, sst) = match mx_plan(s, m, n, k, s.levers.nt, s.levers.ps) {
             MxLaunch::Tiles {
                 kernel,
                 rows_per_cta,

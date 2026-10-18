@@ -21,7 +21,12 @@ fn old_gemv_max_m(v: Option<&str>) -> u32 {
 fn new_at(env: &str, probe: &str) -> Option<OpsLevers> {
     settings_from(&[(env, probe)])
         .ok()
-        .map(|s| OpsLevers::from_settings(&s))
+        .and_then(|s| OpsLevers::from_settings(&s).ok())
+}
+
+/// 2026-10-17: The levers of settings that hold one lever this file probes, which resolve.
+fn ops(s: &metrale_settings::InferenceServerSettings) -> OpsLevers {
+    OpsLevers::from_settings(s).expect("one non-W4A4 lever resolves")
 }
 
 type Field = (&'static str, fn(&OpsLevers) -> bool);
@@ -37,12 +42,7 @@ fn the_presence_opt_outs_read_as_before() {
         ("METRALE_NO_W8A8_DECODE_PROJ", |l| l.w8a8_decode_proj),
     ];
     for (env, field) in cases {
-        let changes = check(
-            env,
-            Old::Presence,
-            |p| p.is_none(),
-            |s| field(&OpsLevers::from_settings(s)),
-        );
+        let changes = check(env, Old::Presence, |p| p.is_none(), |s| field(&ops(s)));
         assert!(changes.is_empty(), "{changes:?}");
         for probe in ["", " ", "no"] {
             assert_eq!(
@@ -67,12 +67,7 @@ fn the_opt_in_switches_read_as_before_except_the_switch_spellings() {
         ("METRALE_GEMM_SHAPE_LOG", |l| l.gemm_shape_log),
     ];
     for (env, field) in cases {
-        let changes = check(
-            env,
-            Old::OptIn,
-            |p| p == Some("1"),
-            |s| field(&OpsLevers::from_settings(s)),
-        );
+        let changes = check(env, Old::OptIn, |p| p == Some("1"), |s| field(&ops(s)));
         assert_eq!(
             changes,
             [
@@ -95,12 +90,7 @@ fn the_opt_out_switches_read_as_before_except_the_switch_spellings() {
         ("METRALE_FP8_LDMAB", |l| l.fp8_ldmab),
     ];
     for (env, field) in cases {
-        let changes = check(
-            env,
-            Old::OptOut,
-            |p| p != Some("0"),
-            |s| field(&OpsLevers::from_settings(s)),
-        );
+        let changes = check(env, Old::OptOut, |p| p != Some("0"), |s| field(&ops(s)));
         assert_eq!(
             changes,
             [
@@ -116,7 +106,7 @@ fn the_opt_out_switches_read_as_before_except_the_switch_spellings() {
 fn the_lora_row_bound_reads_as_before() {
     let env = "METRALE_LORA_GEMV_MAX_M";
     let changes = check(env, Old::Verbatim, old_gemv_max_m, |s| {
-        OpsLevers::from_settings(s).lora.gemv_max_m
+        ops(s).lora.gemv_max_m
     });
     assert!(changes.is_empty(), "{changes:?}");
     for probe in ["12", "0", "+7", " 12", "12 ", "-1", "1.5", "", "4294967296"] {
@@ -138,9 +128,7 @@ fn old_kmajor(v: Option<&str>) -> bool {
 #[test]
 fn the_cublas_scale_layout_reads_as_before() {
     let env = "METRALE_CUBLAS_SCALE_LAYOUT";
-    let changes = check(env, Old::Verbatim, old_kmajor, |s| {
-        OpsLevers::from_settings(s).cublas_kmajor
-    });
+    let changes = check(env, Old::Verbatim, old_kmajor, |s| ops(s).cublas_kmajor);
     assert!(changes.is_empty(), "{changes:?}");
     for probe in [
         "rowmajor",
@@ -161,7 +149,7 @@ fn the_cublas_scale_layout_reads_as_before() {
 /// 2026-10-17: Every lever at the value its reader read unset as.
 #[test]
 fn the_declared_defaults_are_the_old_unset_values() {
-    assert_eq!(OpsLevers::from_settings(&defaults()), OpsLevers::declared());
+    assert_eq!(ops(&defaults()), OpsLevers::declared());
     assert_eq!(
         OpsLevers::declared(),
         OpsLevers {
@@ -184,6 +172,7 @@ fn the_declared_defaults_are_the_old_unset_values() {
             conv1d_tp: true,
             fp8_ldmab: true,
             cublas_kmajor: old_kmajor(None),
+            w4a4: crate::layers::ops::w4a4_proj::W4a4Levers::declared(),
         }
     );
     assert_eq!(

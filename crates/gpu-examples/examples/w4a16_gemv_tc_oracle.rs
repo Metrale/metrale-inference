@@ -174,7 +174,10 @@ fn main() -> Result<()> {
             b16
         }
     };
-    let sites = metrale_model_layers::layers::w4a16_gemv_tiers::W4a16BatchmTiers::resolve(g);
+    let sites = metrale_model_layers::layers::w4a16_gemv_tiers::W4a16BatchmTiers::resolve(
+        g,
+        metrale_gpu_examples::ops_levers()?.w4a4,
+    );
     let fixed_k = |m: u32| {
         g.kernel("w4a16_gemv", &format!("w4a16_gemv_batch{m}"))
             .expect("batch2/3")

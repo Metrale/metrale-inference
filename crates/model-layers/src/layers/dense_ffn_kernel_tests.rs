@@ -46,6 +46,7 @@ fn run_case(
             down_proj_t: None,
         },
         &gpu,
+        crate::lever_equivalence::DefaultLoad::at_defaults().lc(),
     )
     .unwrap();
     // 2026-09-25: The mock returns one placeholder handle for every kernel name;

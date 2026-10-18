@@ -124,6 +124,7 @@ pub(super) fn build_linear_attention_fp8(
     input_norm: DenseWeight,
     post_attn_norm: DenseWeight,
     ffn: FfnComponent,
+    lc: metrale_model_layers::load_context::LoadContext<'_>,
 ) -> Result<Box<dyn TransformerLayer>> {
     // 2026-09-25: TP=1 only: the `shard_gdn_*` slicers cut dense rows and have no form for
     // the block-scale grid.
@@ -187,6 +188,7 @@ pub(super) fn build_linear_attention_fp8(
         None,
         config,
         gpu,
+        lc,
     )?;
     layer.set_fp8_decode_weights(Some(qkvz_fp8), Some(out_fp8));
     tracing::info!("Layer {layer_idx}: SSM native FP8 — w8a16 decode + prefill");
@@ -205,6 +207,7 @@ pub(crate) fn build_linear_attention_dense_bf16(
     input_norm: DenseWeight,
     post_attn_norm: DenseWeight,
     ffn: FfnComponent,
+    lc: metrale_model_layers::load_context::LoadContext<'_>,
 ) -> Result<Box<dyn TransformerLayer>> {
     // 2026-09-25: `config` holds per-rank linear head counts; `TpGdnDims` rebuilds the full
     // on-disk sizes for the slicers. At TP=1 the `shard_gdn_*` slicers return their source
@@ -296,6 +299,7 @@ pub(crate) fn build_linear_attention_dense_bf16(
         None,
         config,
         gpu,
+        lc,
     )?;
     layer.out_proj_dense = Some(DenseWeight {
         weight: out_proj_ptr,

@@ -20,7 +20,7 @@ fn no_weight_reaches_w4a4_and_nothing_of_it_is_prepared() {
         tier
     );
     let gpu = MockGpuBackend::new();
-    let tiers = W4a16BatchmTiers::resolve(&gpu);
+    let tiers = W4a16BatchmTiers::resolve(&gpu, w4a4_proj::W4a4Levers::declared());
     assert_eq!(w4a4_proj::max_rows(&gpu), 0);
     for act in [Nvfp4Act::Unstamped, Nvfp4Act::A4, Nvfp4Act::Wide] {
         let w = QuantizedWeight {

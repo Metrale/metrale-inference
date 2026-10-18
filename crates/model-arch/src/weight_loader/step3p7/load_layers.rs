@@ -97,6 +97,7 @@ pub(super) fn load_layers(
                 quantize_k,
                 stream,
                 i,
+                lc,
             )?
         };
 
@@ -293,6 +294,7 @@ fn load_dense_ffn(
     quantize_k: KernelHandle,
     stream: u64,
     i: usize,
+    lc: metrale_model_layers::load_context::LoadContext<'_>,
 ) -> Result<FfnComponent> {
     tracing::info!("step3p7: layer {i} is dense FFN");
     let gate_w = dense_auto(store, &format!("{lp}.mlp.gate_proj.weight"), gpu)?;
@@ -335,7 +337,7 @@ fn load_dense_ffn(
         up_proj_t: Some(up_q.transpose_for_gemm(gpu, intermediate_size, h)?),
         down_proj_t: Some(down_q.transpose_for_gemm(gpu, h, intermediate_size)?),
     };
-    let mut dffn = DenseFfnLayer::new(dense_weights, gpu)?;
+    let mut dffn = DenseFfnLayer::new(dense_weights, gpu, lc)?;
     // 2026-09-25: With `METRALE_FFN_MMQ` and the Q4_K kernels, this builds the
     // Q4_K copies and frees the transposed ones before the KV cache is sized.
     dffn.finalize_q4k_load(gpu, h as u32, intermediate_size as u32, stream)?;

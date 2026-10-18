@@ -237,8 +237,6 @@ crates/model-layers/src/layers/ops/ssm_gdn_a3.rs
 crates/model-layers/src/layers/ops/ssm_gdn_hopper_prefill.rs
 crates/model-layers/src/layers/ops/ssm_gdn_tc_route.rs
 crates/model-layers/src/layers/ops/target_defaults.rs
-crates/model-layers/src/layers/ops/w4a4_proj.rs
-crates/model-layers/src/layers/ops/w4a4_proj/mx_plan.rs
 crates/model-layers/src/layers/ops/w8a16_tc_rows.rs
 crates/model-layers/src/layers/ple/dump.rs
 crates/model-layers/src/layers/qsa.rs

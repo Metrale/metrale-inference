@@ -177,6 +177,7 @@ pub(super) fn load_gdn_dequant(
             Some(out_proj_nvfp4_t),
             config,
             gpu,
+            cx.lc,
         )?;
         layer.predequant_for_prefill(gpu, config, stream)?;
         tracing::info!(target: "metrale_model_arch::weight_loader::qwen35_dense", "SSM[{lp}] native NVFP4 GDN: qkvz+out_proj loaded pre-quantized \
@@ -271,6 +272,7 @@ pub(super) fn load_gdn_dequant(
             None,
             config,
             gpu,
+            cx.lc,
         )?;
         layer.out_proj_dense = Some(out_proj_dense);
         layers.push(Box::new(layer));
@@ -308,6 +310,7 @@ pub(super) fn load_gdn_dequant(
             None,
             config,
             gpu,
+            cx.lc,
         )?;
         layer.out_proj_dense = Some(out_proj_dense);
         tracing::info!(target: "metrale_model_arch::weight_loader::qwen35_dense", "SSM[{lp}] METRALE_GDN_BF16_WEIGHTS: qkvz + out_proj kept BF16 \
@@ -416,6 +419,7 @@ pub(super) fn load_gdn_dequant(
         Some(out_proj_nvfp4_t),
         config,
         gpu,
+        cx.lc,
     )?;
     // 2026-09-25: The FP8 casts, when made, are the layer's `qkvz_fp8`/`out_proj_fp8`: they
     // feed the `fp8_gemm_n128` arms of prefill and of the batched decode/verify projections

@@ -62,6 +62,7 @@ fn state() -> W4a4State {
         a_scale: DevicePtr::NULL,
         a_gs: DevicePtr::NULL,
         audit_ref: DevicePtr::NULL,
+        levers: W4a4Levers::declared(),
     }
 }
 

@@ -138,6 +138,7 @@ fn run(m: u32, expect: Expect, configure: impl FnOnce(&mut DenseFfnLayer)) {
             down_proj_t: None,
         },
         &gpu,
+        crate::lever_equivalence::DefaultLoad::at_defaults().lc(),
     )
     .unwrap();
     layer.w8a16_gemv_batch4_k = KernelHandle(BATCH4_K);

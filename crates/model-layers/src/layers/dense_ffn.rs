@@ -234,8 +234,12 @@ fn mmq_tile64_enabled() -> bool {
     *ON.get_or_init(|| std::env::var("METRALE_NO_MMQ_TILE64").as_deref() != Ok("1"))
 }
 impl DenseFfnLayer {
-    pub fn new(weights: DenseFfnWeights, gpu: &dyn GpuBackend) -> Result<Self> {
-        Self::new_with_activation(weights, FfnActivation::SiLU, gpu)
+    pub fn new(
+        weights: DenseFfnWeights,
+        gpu: &dyn GpuBackend,
+        lc: crate::load_context::LoadContext<'_>,
+    ) -> Result<Self> {
+        Self::new_with_activation(weights, FfnActivation::SiLU, gpu, lc)
     }
 
     /// 2026-09-25: Load-time setup for the Q4_K MMQ prefill arm. Returns at once for packed-Q2 or

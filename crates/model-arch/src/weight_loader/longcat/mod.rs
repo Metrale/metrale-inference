@@ -319,7 +319,7 @@ impl ModelWeightLoader for LongcatWeightLoader {
                 };
 
                 // 2026-09-25: This sublayer's dense SwiGLU FFN.
-                let ffn = build_dense_ffn(store, &format!("{lp}.mlps.{s}"), config, gpu)?;
+                let ffn = build_dense_ffn(store, &format!("{lp}.mlps.{s}"), config, gpu, lc)?;
                 let input_norm = dense(store, &format!("{lp}.input_layernorm.{s}.weight"))?;
                 let post_norm = dense(store, &format!("{lp}.post_attention_layernorm.{s}.weight"))?;
                 let kv_dtype = layer_kv_dtypes

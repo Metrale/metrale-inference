@@ -20,19 +20,20 @@ impl ModelLevers {
     /// `default_split_silu` is the compiled target's `[defaults] decode_split_silu`
     /// (`target_defaults::declared()`), passed in so a test can choose it. `weight_pre_rotated` is
     /// `TQ_PLUS_WEIGHT_ROTATION`, a foreign name with no settings row (`tq_plus_weight_rotation`).
-    /// `max_decode_seqs` is 1; `TransformerModel::new` overwrites it.
+    /// `max_decode_seqs` is 1; `TransformerModel::new` overwrites it. Refuses what
+    /// `OpsLevers::from_settings` refuses.
     pub fn from_settings(
         s: &InferenceServerSettings,
         default_split_silu: bool,
         weight_pre_rotated: bool,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
         let (k, sch, sp, t) = (&s.kernels, &s.scheduler, &s.speculative, &s.telemetry);
-        ModelLevers {
+        Ok(ModelLevers {
             max_decode_seqs: 1,
             shadow_topk: crate::speculative::shadow_topk_given(sp.mtp_shadow_topk),
             kv_poison: s.cache.kv_poison,
             drafter: crate::drafter_context::from_settings(sp),
-            ops: OpsLevers::from_settings(s),
+            ops: OpsLevers::from_settings(s)?,
             gdn_regresident: !k.no_gdn_regresident,
             gdn_batched_fla: sch.gdn_batched_fla,
             gdn_wy17: k.gdn_wy17,
@@ -123,7 +124,7 @@ impl ModelLevers {
             ssm_gemv_batch4: sch.ssm_gemv_batch4,
             gdn_fused_conv: k.gdn_fused_conv,
             moe_legacy_pertoken_decode: k.moe_legacy_pertoken_decode,
-        }
+        })
     }
 
     /// 2026-10-14: The boot readback of the new-sequence levers, as `TransformerModel::new` logs

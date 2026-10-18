@@ -224,7 +224,7 @@ fn every_model_lever_resolves_as_its_old_reader_or_as_a_listed_change() {
             |probe| {
                 old_from_values(|name| (name == env).then(|| probe.map(str::to_owned)).flatten())
             },
-            |s| ModelLevers::from_settings(s, true, false),
+            |s| ModelLevers::from_settings(s, true, false).expect("one lever resolves"),
         ));
     }
     for (env, probe, outcome) in &changes {

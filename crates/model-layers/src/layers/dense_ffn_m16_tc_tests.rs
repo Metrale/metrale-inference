@@ -162,6 +162,7 @@ fn run_tiled(m: u32, expect: Expect, tile: u32, configure: impl FnOnce(&mut Dens
             down_proj_t: None,
         },
         &gpu,
+        crate::lever_equivalence::DefaultLoad::at_defaults().lc(),
     )
     .unwrap();
     layer.w8a16_gemv_batch4_k = KernelHandle(BATCH4_K);

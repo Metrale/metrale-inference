@@ -91,6 +91,7 @@ pub(super) fn native_fp8_gdn_layer(
         None,
         config,
         gpu,
+        crate::lever_equivalence::DefaultLoad::at_defaults().lc(),
     )
     .unwrap();
     let fp8 = |n: usize, k: usize| Fp8Weight {

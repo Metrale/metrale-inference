@@ -215,14 +215,14 @@ impl ModelWeightLoader for Qwen4ExpWeightLoader {
                 LayerType::LinearAttention if bf16_gdn => {
                     crate::weight_loader::qwen35::load_layers::linear_attn_arms::build_linear_attention_dense_bf16(
                         i, store, &lp, gpu, variant, config, h,
-                        input_norm, post_attn_norm, ffn,
+                        input_norm, post_attn_norm, ffn, lc,
                     )
                     .with_context(|| format!("qwen4_exp: GDN layer {i} (BF16)"))?
                 }
                 LayerType::LinearAttention => {
                     crate::weight_loader::qwen35::load_layers::linear_attn_arms::build_linear_attention_nvfp4(
                         store, &lp, gpu, variant, config, h, absmax_k, quantize_k, stream,
-                        input_norm, post_attn_norm, ffn,
+                        input_norm, post_attn_norm, ffn, lc,
                     )
                     .with_context(|| format!("qwen4_exp: GDN layer {i}"))?
                 }

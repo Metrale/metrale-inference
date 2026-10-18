@@ -455,6 +455,7 @@ pub(super) fn load_layers(
                     fp4_proj_decode,
                     declared_fp8_ssm,
                     parts,
+                    lc,
                 )?;
                 layers.push(layer);
             }

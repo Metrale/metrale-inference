@@ -16,7 +16,7 @@ fn resolve(values: &[(&str, &str)]) -> ModelLevers {
     let s = settings_from(values).unwrap_or_else(|e| panic!("{values:?}: {e:?}"));
     // 2026-09-25: The compiled target's `[defaults] decode_split_silu`, fixed on here;
     // `target_defaults_tests` checks the declarations. No pre-rotated weights.
-    ModelLevers::from_settings(&s, true, false)
+    ModelLevers::from_settings(&s, true, false).expect("the levers resolve")
 }
 
 /// 2026-10-17: True when the settings resolve refuses `name=value`.
@@ -197,8 +197,12 @@ fn truthy_opt_ins_map_independently_and_presence_is_distinct() {
     // 2026-10-17: `weight_pre_rotated` is the caller's (`TQ_PLUS_WEIGHT_ROTATION`, a foreign name
     // with no settings row): `from_settings` carries it and nothing else moves.
     let s = settings_from(&[]).unwrap();
-    assert!(!ModelLevers::from_settings(&s, true, false).weight_pre_rotated);
-    let mut rotated = ModelLevers::from_settings(&s, true, true);
+    assert!(
+        !ModelLevers::from_settings(&s, true, false)
+            .unwrap()
+            .weight_pre_rotated
+    );
+    let mut rotated = ModelLevers::from_settings(&s, true, true).unwrap();
     assert!(rotated.weight_pre_rotated);
     rotated.weight_pre_rotated = false;
     assert_eq!(rotated, resolve(&[]));

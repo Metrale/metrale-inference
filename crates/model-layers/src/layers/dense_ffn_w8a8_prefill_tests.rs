@@ -312,6 +312,7 @@ fn harness(num_experts: usize, max_batch_tokens: usize) -> Harness {
             down_proj_t: None,
         },
         &gpu,
+        crate::lever_equivalence::DefaultLoad::at_defaults().lc(),
     )
     .unwrap();
     layer.per_token_group_quant_fp8_k = QUANT_K;

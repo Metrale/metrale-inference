@@ -198,7 +198,7 @@ fn each_w4a4_launch_is_the_one_the_legacy_launcher_makes() {
         };
         let (h, inter) = (5120, 17408);
         let gpu = MockGpuBackend::new();
-        ops::w4a4_proj::prepare(&gpu).unwrap();
+        ops::w4a4_proj::prepare(&gpu, ops::w4a4_proj::W4a4Levers::declared()).unwrap();
         let (x, g, u, y) = (
             ptr(0xA000_0000),
             ptr(0xA100_0000),

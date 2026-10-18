@@ -434,7 +434,10 @@ pub(super) fn build_for(
     let draft = (mode == Mode::Draft).then(|| draft_binding(&loaded.circuit));
     let fixed = fixed(attn);
     let gpu = MockGpuBackend::new();
-    crate::layers::ops::w4a4_proj::prepare(&gpu)?;
+    crate::layers::ops::w4a4_proj::prepare(
+        &gpu,
+        crate::layers::ops::w4a4_proj::W4a4Levers::declared(),
+    )?;
     let cfg = config();
     let table = KernelTable::resolve(&gpu, &AvailableKernels::all_named_by(&loaded.rules));
     let program = compile::compile(

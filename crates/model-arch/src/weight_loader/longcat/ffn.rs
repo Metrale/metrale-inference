@@ -26,6 +26,7 @@ pub(super) fn build_dense_ffn(
     prefix: &str,
     config: &ModelConfig,
     gpu: &dyn GpuBackend,
+    lc: metrale_model_layers::load_context::LoadContext<'_>,
 ) -> Result<FfnComponent> {
     use metrale_model_layers::layers::dense_ffn::{DenseFfnLayer, DenseFfnWeights};
     let inter = config.intermediate_size;
@@ -45,7 +46,7 @@ pub(super) fn build_dense_ffn(
         up_proj_t: None,
         down_proj_t: None,
     };
-    let mut layer = DenseFfnLayer::new(weights, gpu)?;
+    let mut layer = DenseFfnLayer::new(weights, gpu, lc)?;
 
     // 2026-09-25: The three projections are quantized to NVFP4 above from
     // the store's weights. With the lever on, `set_bf16_weights` also installs

@@ -19,7 +19,7 @@ fn every_weight_takes_the_levers_64_row_edge() {
         tier
     );
     let gpu = MockGpuBackend::new();
-    let tiers = W4a16BatchmTiers::resolve(&gpu);
+    let tiers = W4a16BatchmTiers::resolve(&gpu, w4a4_proj::W4a4Levers::declared());
     assert_eq!(w4a4_proj::max_rows(&gpu), w4a4_proj::W4A4_WIDE_MAX_M);
     for act in [Nvfp4Act::Unstamped, Nvfp4Act::A4, Nvfp4Act::Wide] {
         let w = QuantizedWeight {

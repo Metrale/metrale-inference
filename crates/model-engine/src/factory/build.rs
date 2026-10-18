@@ -89,7 +89,7 @@ pub fn build_model(
             max_seq_len,
             &slots.request,
             nllb_lora_dir.as_deref(),
-            metrale_model_layers::layers::ops::OpsLevers::from_settings(&settings).lora,
+            metrale_model_layers::layers::ops::OpsLevers::from_settings(&settings)?.lora,
         );
     }
     #[cfg(not(feature = "cuda"))]
@@ -102,7 +102,7 @@ pub fn build_model(
         &settings,
         metrale_model_layers::layers::ops::target_defaults::declared().decode_split_silu,
         metrale_model_layers::layers::ops::ModelLevers::tq_plus_weight_rotation(),
-    );
+    )?;
     let load_ctx = metrale_model_layers::load_context::LoadContext {
         settings: &settings,
         levers: &levers,

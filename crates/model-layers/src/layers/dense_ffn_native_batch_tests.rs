@@ -39,6 +39,7 @@ fn run_batch(native_fp8: bool, rows: u32) {
             down_proj_t: None,
         },
         &gpu,
+        crate::lever_equivalence::DefaultLoad::at_defaults().lc(),
     )
     .unwrap();
     // 2026-09-25: The mock returns one placeholder handle for every kernel name;

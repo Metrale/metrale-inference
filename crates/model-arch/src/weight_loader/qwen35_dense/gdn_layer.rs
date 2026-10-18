@@ -246,6 +246,7 @@ fn build_gdn_q2(
         Some(out_proj_nvfp4_t),
         config,
         gpu,
+        cx.lc,
     )?;
     layer.set_packed_q2_qkvz(qkvz_q2, gpu);
     layer.predequant_for_prefill(gpu, config, stream)?;
@@ -339,6 +340,7 @@ fn build_gdn_fp8(
         None,
         config,
         gpu,
+        cx.lc,
     )?;
     layer.set_fp8_decode_weights(Some(qkvz_f), Some(out_f));
     tracing::info!(target: "metrale_model_arch::weight_loader::qwen35_dense", "SSM[{lp}] native FP8 GDN: qkvz+out_proj block-scaled FP8 \

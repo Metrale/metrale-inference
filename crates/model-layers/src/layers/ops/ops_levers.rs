@@ -13,9 +13,12 @@
 //!   48 when unset or unparseable.
 //! - `METRALE_CUBLAS_SCALE_LAYOUT` keeps its reader's text predicate: exactly `rowmajor` turns
 //!   the k-major layout off.
+//! - `from_settings` refuses exactly what [`W4a4Levers::from_settings`] refuses.
 
 use super::hyper_connection_lowrank::HcLevers;
 use super::lora_delta::LoraLevers;
+use super::w4a4_proj::W4a4Levers;
+use anyhow::Result;
 use metrale_settings::InferenceServerSettings;
 
 /// 2026-10-17: The rows at or below which a LoRA delta runs row-wise GEMVs when
@@ -66,13 +69,16 @@ pub struct OpsLevers {
     /// cuBLAS manual. Off passes the quantizer's `[M, K/128]` as is, a control arm
     /// (`dispatch_proj::cublas_fp8_proj_prequant`, `DecodeW8a8Scratch::kmajor`).
     pub cublas_kmajor: bool,
+    /// 2026-10-17: The W4A4 projection levers (`w4a4_proj::prepare`).
+    pub w4a4: W4a4Levers,
 }
 
 impl OpsLevers {
-    /// 2026-10-17: The levers of the settings resolved once at startup.
-    pub fn from_settings(s: &InferenceServerSettings) -> Self {
+    /// 2026-10-17: The levers of the settings resolved once at startup, refusing what
+    /// [`W4a4Levers::from_settings`] refuses.
+    pub fn from_settings(s: &InferenceServerSettings) -> Result<Self> {
         let (k, t) = (&s.kernels, &s.telemetry);
-        Self {
+        Ok(Self {
             fp8_gemm_pipe: !k.no_fp8_gemm_pipe,
             gemm_shape_log: t.gemm_shape_log,
             rms_norm_warp_row: k.rms_norm_warp_row,
@@ -96,7 +102,8 @@ impl OpsLevers {
             conv1d_tp: k.conv1d_tp,
             fp8_ldmab: k.fp8_ldmab,
             cublas_kmajor: s.runtime.cublas_scale_layout.as_deref() != Some("rowmajor"),
-        }
+            w4a4: W4a4Levers::from_settings(s)?,
+        })
     }
 
     /// 2026-10-17: The plan `gemm_quant::fp8_gemm_t_blockscaled` launches under.
@@ -130,6 +137,7 @@ impl OpsLevers {
             conv1d_tp: true,
             fp8_ldmab: true,
             cublas_kmajor: true,
+            w4a4: W4a4Levers::declared(),
         }
     }
 }

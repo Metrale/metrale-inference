@@ -46,6 +46,7 @@ fn native_fp8_layer(gpu: &MockGpuBackend) -> DenseFfnLayer {
             down_proj_t: None,
         },
         gpu,
+        crate::lever_equivalence::DefaultLoad::at_defaults().lc(),
     )
     .unwrap();
     layer.w8a16_gemm_k = KernelHandle(0xF08);
@@ -142,6 +143,7 @@ fn a_layer_with_neither_nvfp4_nor_fp8_weights_is_not_eligible() {
             down_proj_t: None,
         },
         &gpu,
+        crate::lever_equivalence::DefaultLoad::at_defaults().lc(),
     )
     .unwrap();
     layer.act_mul = KernelHandle(0xAC7);
