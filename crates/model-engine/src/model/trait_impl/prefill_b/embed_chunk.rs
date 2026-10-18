@@ -81,7 +81,7 @@ impl TransformerModel {
                     stream,
                 )?;
             }
-            if std::env::var("METRALE_DUMP_EMBED").ok().as_deref() == Some("1") {
+            if self.settings.telemetry.dump_embed {
                 self.gpu.synchronize(stream)?;
                 let offset = (chunk_len - 1) * h * 2;
                 let mut buf = vec![0u8; h * 2];
@@ -114,7 +114,7 @@ impl TransformerModel {
                 stream,
             )?;
             self.scale_embeddings(hidden_dst, chunk_len, stream)?;
-            if std::env::var("METRALE_DUMP_EMBED").ok().as_deref() == Some("1") {
+            if self.settings.telemetry.dump_embed {
                 self.gpu.synchronize(stream)?;
                 let offset = (chunk_len - 1) * h * 2;
                 let mut buf = vec![0u8; h * 2];

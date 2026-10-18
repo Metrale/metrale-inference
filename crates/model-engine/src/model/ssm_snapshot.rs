@@ -92,6 +92,8 @@ pub(crate) struct SsmSnapshotPool {
     /// paths ([`super::ssm_spill_staging::SpillStaging`]); `TransformerModel::drop`
     /// frees it through `free_staging`.
     pub(super) spill_staging: super::ssm_spill_staging::SpillStaging,
+    /// 2026-10-17: The tier cost gates and timing switch, resolved once at build.
+    pub(in crate::model) gates: super::ssm_spill_gate::SsmTierGates,
 }
 
 impl SsmSnapshotPool {

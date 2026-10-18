@@ -168,7 +168,7 @@ impl TransformerModel {
             // prefix is not embedded: `proc_range` re-embeds the uncached suffix
             // at this offset, and admission charged the arena for the suffix
             // only.
-            let embed_skip = if super::batch_kernel::eligible::effective_arena_charge_enabled() {
+            let embed_skip = if self.settings.kernels.q12_effective_arena {
                 let bs_probe = self.kv_cache.lock().block_size();
                 self.prefix_cache
                     .peek_matched_tokens(tokens, bs_probe, seq.adapter_id)
@@ -214,7 +214,7 @@ impl TransformerModel {
                 self.prefix_cache.as_ref(),
                 self.gpu.as_ref(),
                 stream,
-                self.levers.kv_poison,
+                self.prefill_block_fill(),
             )?;
 
             // 2026-09-25: Processing range. This stream's hidden offset is passed

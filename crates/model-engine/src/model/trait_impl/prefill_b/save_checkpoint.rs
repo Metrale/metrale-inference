@@ -55,7 +55,7 @@ impl TransformerModel {
             );
             return Ok(());
         }
-        if std::env::var("METRALE_SSM_SAVE_DUMP").is_ok() {
+        if self.settings.telemetry.ssm_save_dump {
             self.ssm_pool.debug_state_checksum(
                 seq.slot_idx,
                 self.gpu.as_ref(),
@@ -129,7 +129,7 @@ impl TransformerModel {
         let bs = kv_cache.block_size();
         let end_block = end_token / bs;
         let is_prompt_tail = crate::prefill_plan::is_prompt_tail_end(end_token, tokens.len(), bs);
-        if std::env::var("METRALE_SSM_SAVE_DUMP").is_ok() {
+        if self.settings.telemetry.ssm_save_dump {
             tracing::info!(
                 "ckpt_digest@{end_token} snap={snap_id} fnv64={:?}",
                 self.ssm_snapshots

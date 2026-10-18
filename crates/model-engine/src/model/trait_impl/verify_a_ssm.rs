@@ -76,7 +76,13 @@ impl TransformerModel {
                 });
             }
         }
-        run_ssm_state_copies(self.gpu.as_ref(), &h_plan, &conv_plan, stream)?;
+        run_ssm_state_copies(
+            self.gpu.as_ref(),
+            &h_plan,
+            &conv_plan,
+            !self.settings.scheduler.no_batched_ssm_rollback,
+            stream,
+        )?;
         self.gpu.synchronize(stream)?;
         Ok(())
     }
@@ -169,7 +175,13 @@ impl TransformerModel {
             }
         }
         // 2026-09-25: All copies are enqueued together, after every layer was planned.
-        run_ssm_state_copies(self.gpu.as_ref(), &h_plan, &conv_plan, stream)?;
+        run_ssm_state_copies(
+            self.gpu.as_ref(),
+            &h_plan,
+            &conv_plan,
+            !self.settings.scheduler.no_batched_ssm_rollback,
+            stream,
+        )?;
         Ok(())
     }
 

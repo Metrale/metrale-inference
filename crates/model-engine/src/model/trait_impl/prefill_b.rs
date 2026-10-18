@@ -68,7 +68,7 @@ impl TransformerModel {
         if self.config.num_ssm_layers() == 0
             || !self.ssm_snapshots.is_enabled()
             || !self.prefix_cache.is_active()
-            || std::env::var("METRALE_NO_TAIL_SPLIT").as_deref() == Ok("1")
+            || self.settings.scheduler.no_tail_split
             || self.tokens_have_vision_pad(tokens)
         {
             return None;
@@ -251,7 +251,7 @@ impl TransformerModel {
         // writing each buffer before it is read.
         // 2026-10-12: `METRALE_PREFILL_ZERO_ROWS=1`: the chunk's rows only (`zero_all_rows`).
         if self.comm.is_some() {
-            if super::super::prefill_zero::prefill_zero_rows()? {
+            if self.settings.runtime.prefill_zero_rows {
                 self.buffers.zero_all_rows(
                     self.gpu.as_ref(),
                     stream,
@@ -281,7 +281,7 @@ impl TransformerModel {
             None,
         )?;
 
-        if std::env::var("METRALE_SSM_SAVE_DUMP").is_ok() {
+        if self.settings.telemetry.ssm_save_dump {
             self.ssm_pool.debug_state_checksum(
                 seq.slot_idx,
                 self.gpu.as_ref(),
@@ -300,7 +300,7 @@ impl TransformerModel {
             self.prefix_cache.as_ref(),
             self.gpu.as_ref(),
             stream,
-            self.levers.kv_poison,
+            self.prefill_block_fill(),
         )?;
 
         // 2026-09-25: Processing range for this chunk; a fully cached chunk

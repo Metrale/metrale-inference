@@ -341,20 +341,15 @@ pub(in crate::model) const DECODE_CKPT_BLOCKS_SINGLE: usize = 4;
 pub(in crate::model) const DECODE_CKPT_BLOCKS_MULTI_RANK: usize = 16;
 
 /// 2026-10-11: KV blocks between decode checkpoints: a positive `METRALE_DECODE_CKPT_BLOCKS`
-/// (`env`) overrides; otherwise [`DECODE_CKPT_BLOCKS_MULTI_RANK`] on a multi-rank serve and
+/// (`blocks`, the settings row `cache.decode_ckpt_blocks`) overrides; otherwise [`DECODE_CKPT_BLOCKS_MULTI_RANK`] on a multi-rank serve and
 /// [`DECODE_CKPT_BLOCKS_SINGLE`] on one rank. Pure.
-pub(in crate::model) fn decode_ckpt_interval(env: Option<&str>, multi_rank: bool) -> usize {
-    match env.and_then(|s| s.parse::<usize>().ok()).filter(|&v| v > 0) {
+pub(in crate::model) fn decode_ckpt_interval(blocks: Option<i64>, multi_rank: bool) -> usize {
+    match blocks
+        .and_then(|v| usize::try_from(v).ok())
+        .filter(|&v| v > 0)
+    {
         Some(v) => v,
         None if multi_rank => DECODE_CKPT_BLOCKS_MULTI_RANK,
         None => DECODE_CKPT_BLOCKS_SINGLE,
     }
-}
-
-/// 2026-10-11: `METRALE_DECODE_CKPT_BLOCKS`, read once per process (it was read per sequence
-/// per decode step).
-pub(in crate::model) fn decode_ckpt_blocks_env() -> Option<&'static str> {
-    static V: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-    V.get_or_init(|| std::env::var("METRALE_DECODE_CKPT_BLOCKS").ok())
-        .as_deref()
 }

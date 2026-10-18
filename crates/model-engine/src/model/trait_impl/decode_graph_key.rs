@@ -76,21 +76,14 @@ pub(super) fn lru_insert_graph_pinned(
     drop
 }
 
-/// 2026-09-25: Whether batches other than slots `[0..n)` with `n == padded_n` (an MTP bootstrap
-/// subset, any `n < padded_n` batch) may be graphed. On unless `METRALE_NO_MTP_BOOT_GRAPH` is
-/// set to any value, `0` included; off, those batches run eager. Read once per process.
-pub(super) fn boot_graph_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("METRALE_NO_MTP_BOOT_GRAPH").is_none())
-}
-
 impl TransformerModel {
     /// 2026-09-25: Batched-decode graph key: each row's SSM pool slot in batch order,
     /// `padded_n` entries long (rows `n..padded_n` carry the dummy slot). A model with no
     /// SSM layers gets `[padded_n]`.
     ///
-    /// `None` means run eager: a row has no SSM pool slot, or [`boot_graph_enabled`] is off
-    /// and the batch is not slots `[0..n)` with `n == padded_n`.
+    /// `None` means run eager: a row has no SSM pool slot, or `METRALE_NO_MTP_BOOT_GRAPH` is
+    /// set (any value, `0` included) and the batch is not slots `[0..n)` with `n == padded_n`
+    /// (an MTP bootstrap subset).
     pub(super) fn batch_decode_graph_key(
         &self,
         seqs: &[&mut SequenceState],
@@ -120,7 +113,7 @@ impl TransformerModel {
         for _ in n..padded_n {
             key.push(dummy);
         }
-        if !boot_graph_enabled()
+        if self.settings.speculative.no_mtp_boot_graph
             && (n != padded_n || key.iter().enumerate().any(|(i, &s)| s != i as u32))
         {
             return None;

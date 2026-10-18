@@ -38,14 +38,6 @@ use metrale_model_layers::layers::ops;
 use metrale_model_layers::speculative::DraftProposer;
 use metrale_model_layers::weight_map::{DenseWeight, MtpWeights, QuantizedWeight};
 
-/// 2026-09-25: Whether the wide batched LM head arm runs. Setting
-/// `METRALE_NO_LMHEAD_BATCHED_WIDE` to any value, `0` included, turns it off
-/// and leaves those row counts on `w4a16_gemm`. Read once per process.
-fn lmhead_batched_wide_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("METRALE_NO_LMHEAD_BATCHED_WIDE").is_err())
-}
-
 impl TransformerModel {
     /// 2026-09-25: Wide batched LM head for the batched-verify row counts,
     /// called for `num_tokens` in 9..=`VERIFY_ROW_CAP`. It tries the same kernels
@@ -284,7 +276,7 @@ impl TransformerModel {
                 stream,
             )?;
         } else if (9..=super::trait_impl::verify_e2::VERIFY_ROW_CAP as u32).contains(&num_tokens)
-            && lmhead_batched_wide_enabled()
+            && !self.settings.scheduler.no_lmhead_batched_wide
             && self.lm_head_batched_wide(hidden, num_tokens, logits, stream)?
         {
             // 2026-09-25: The wide arm launched. When it returns `false` it

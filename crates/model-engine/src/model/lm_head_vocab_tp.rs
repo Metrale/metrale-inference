@@ -35,16 +35,14 @@ impl TransformerModel {
     ///
     /// `None` for a [`HeadRanks::Local`] call (2026-10-10: a rank-0-only call that shards waits
     /// forever in the all-reduce), without a communicator of at least 2 ranks, or when
-    /// `METRALE_NO_LMHEAD_VOCAB_TP=1` (read once per process). The BF16 dense-head paths and
+    /// `METRALE_NO_LMHEAD_VOCAB_TP=1` (resolved once into the settings). The BF16 dense-head paths and
     /// (2026-10-09) the FP8 head (`lm_head_fp8_run`) call it. 2026-10-08: the rows split with
     /// `tp_split` in [`LMHEAD_VOCAB_SPLIT_ALIGN`]-row units, so a vocab that does not divide by
     /// the world size (154,880 rows over 3 ranks) still shards; an evenly dividing vocab gets
     /// the same ranges as before. The pieces meet in a zeroed buffer summed by an all-reduce,
     /// so uneven lengths need nothing else, and adding the other ranks' zeros is exact.
     pub(super) fn lmhead_vocab_shard(&self, v: u32, ranks: HeadRanks) -> Option<(usize, usize)> {
-        static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        let off =
-            *OFF.get_or_init(|| std::env::var("METRALE_NO_LMHEAD_VOCAB_TP").as_deref() == Ok("1"));
+        let off = self.settings.kernels.no_lmhead_vocab_tp;
         let comm = self.comm_ref().map(|c| (c.world_size(), c.rank()));
         head_vocab_shard(v as usize, ranks, off, comm)
     }

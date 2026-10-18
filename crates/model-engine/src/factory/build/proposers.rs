@@ -256,7 +256,10 @@ pub(super) fn log_alloc_report(
         }
     }
     // 2026-10-02: A diagnostic: its failure is logged, never fatal to the serve.
-    if let Err(e) = super::alloc_digest::write_if_requested(model.gpu_backend()) {
+    if let Err(e) = super::alloc_digest::write_if_requested(
+        model.gpu_backend(),
+        model.settings_ref().telemetry.debug_alloc_digest.as_deref(),
+    ) {
         tracing::warn!("METRALE_DEBUG_ALLOC_DIGEST: {e:#}");
     }
     // 2026-09-25: Tracked-live bytes above the util budget mean an allocation

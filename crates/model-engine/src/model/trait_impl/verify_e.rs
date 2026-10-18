@@ -54,8 +54,6 @@ mod mapped_argmax;
 mod readback;
 mod stage;
 
-pub(super) use mapped_argmax::mapped_argmax_host_dev;
-
 impl TransformerModel {
     /// 2026-09-25: Whether `decode_verify_batched_dispatch` can take `ks.len()`
     /// sequences with `ks[i]` rows each. The scheduler verifies the sequences
@@ -140,7 +138,7 @@ impl TransformerModel {
         self.gdn_woa_eligible
             .store(false, std::sync::atomic::Ordering::Release);
         let t_launch = std::time::Instant::now();
-        let mapped_argmax = mapped_argmax_host_dev(self.gpu.as_ref());
+        let mapped_argmax = self.mapped_argmax();
         let stream = self.gpu.default_stream();
         let h = self.config.hidden_size;
         let bf16 = 2usize;
@@ -209,7 +207,7 @@ impl TransformerModel {
         // 2026-09-25: METRALE_K4_DIAG=1 synchronises the stream after every
         // layer so a fault names its layer. It also turns graphs off
         // (`graphs_on` below), because a synchronise cannot be captured.
-        let k4_diag = super::verify_e2::k4_diag_enabled();
+        let k4_diag = self.settings.telemetry.k4_diag;
 
         // 2026-09-25: Stage the per-GDN-layer WY pointer tables before any
         // replay, at the batch's widest row count `k_max`. Table strides do
@@ -242,7 +240,7 @@ impl TransformerModel {
         // intermediate pool must cover the ghost's depth (the closure in `pick_verify_graph`).
         // 2026-10-09: With a comm backend under the decode graphs' rule (`verify_d.rs`):
         // every rank runs this verify, so every rank captures and replays the same collectives.
-        let graphs_on = super::verify_e2::verify_graphs_enabled()
+        let graphs_on = !self.settings.speculative.no_mtp_verify_graphs
             && !k4_diag
             && (self.comm.is_none() || self.levers.ep_graphs || self.layers_capture_with_comm())
             // 2026-10-10: No capture past a layer's captured-row limit (GLM-5.3: below the
@@ -494,8 +492,7 @@ impl TransformerModel {
             static LAUNCH_US: AtomicU64 = AtomicU64::new(0);
             static D2H_US: AtomicU64 = AtomicU64::new(0);
             static N: AtomicU64 = AtomicU64::new(0);
-            static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-            if *ON.get_or_init(|| std::env::var("METRALE_MTP_TIMING").as_deref() == Ok("1")) {
+            if self.settings.telemetry.mtp_timing {
                 let d2h_us = t_d2h.elapsed().as_micros() as u64;
                 LAUNCH_US.fetch_add(launch_us, Ordering::Relaxed);
                 D2H_US.fetch_add(d2h_us, Ordering::Relaxed);

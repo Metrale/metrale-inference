@@ -26,16 +26,7 @@ const GUARDED: [(&str, &[&str]); 49] = [
     ("layers/dense_ffn_nvfp4_plan.rs", &[]),
     ("layers/dense_ffn.rs", &[]),
     ("layers/moe/forward_prefill_routed.rs", &[]),
-    (
-        "../../model-engine/src/model/trait_impl/decode_a.rs",
-        &[
-            // 2026-09-25: Both cache their read in a `OnceLock`, so it happens once per process. They
-            // are named one by one because the scanner does not recognise a `OnceLock`; a
-            // reviewer checks that and records it here.
-            "redzone_range_file",
-            "redzone_every",
-        ],
-    ),
+    ("../../model-engine/src/model/trait_impl/decode_a.rs", &[]),
     ("layers/moe/forward.rs", &[]),
     ("layers/moe/forward/debug_dumps.rs", &[]),
     ("layers/moe/forward/ep_reduce.rs", &[]),
@@ -48,14 +39,7 @@ const GUARDED: [(&str, &[&str]); 49] = [
     ("layers/mtp_head/forward/host_logits.rs", &[]),
     ("layers/mtp_head/draft_proposer.rs", &[]),
     ("../../model-engine/src/model/impl_b3.rs", &[]),
-    (
-        "../../model-engine/src/model/trait_impl/decode_a2.rs",
-        &[
-            // 2026-09-25: Caches its read of `METRALE_NO_DECODE_GRAPHS_MULTISEQ` in a `OnceLock`, so
-            // it happens once per process.
-            "multiseq_graphs_enabled",
-        ],
-    ),
+    ("../../model-engine/src/model/trait_impl/decode_a2.rs", &[]),
     (
         "../../model-engine/src/model/trait_impl/decode_a2/pad_states.rs",
         &[],

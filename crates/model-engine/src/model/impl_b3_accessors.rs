@@ -38,6 +38,12 @@ impl TransformerModel {
         &self.levers
     }
 
+    /// 2026-10-17: Borrow the startup settings the model was built from, for the factory steps
+    /// that run after construction.
+    pub(crate) fn settings_ref(&self) -> &metrale_settings::InferenceServerSettings {
+        &self.settings
+    }
+
     /// 2026-09-25: Install a proposer built after construction (the
     /// DeepSeek-V4 or GLM-5.3 MTP head, or a DFlash drafter), replacing any
     /// MTP proposer `TransformerModel::new` built. It also shrinks the MTP
@@ -131,7 +137,7 @@ impl TransformerModel {
     /// recomputes the whole prompt. `METRALE_MLA_PREFIX_SKIP=1` makes it
     /// return false.
     pub(crate) fn mla_prefill_needs_full_recompute(&self) -> bool {
-        if std::env::var("METRALE_MLA_PREFIX_SKIP").as_deref() == Ok("1") {
+        if self.settings.cache.mla_prefix_skip {
             return false;
         }
         self.layers.iter().any(|l| l.uses_local_mla_prefill())

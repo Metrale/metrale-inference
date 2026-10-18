@@ -92,9 +92,7 @@ impl NllbGpuModel {
         self.set_lora_active(slot0);
 
         let gpu = self.gpu.as_ref();
-        let prof = std::env::var("METRALE_NLLB_BEAM_PROFILE")
-            .map(|v| v == "1")
-            .unwrap_or(false);
+        let prof = self.levers.beam_profile;
         let t_enc = prof.then(std::time::Instant::now);
         // 2026-09-25: Run each encoder into its own cross-KV, kept until decode ends.
         let mut kvs: Vec<NllbSeqKv> = Vec::with_capacity(reqs.len());
@@ -238,18 +236,12 @@ impl NllbGpuModel {
         let (dec_start, eos) = (self.lang.decoder_start_id, self.lang.eos_id);
         // 2026-09-25: Candidate width k = 2·(largest num_beams); each request
         // uses the first 2·b of its rows' pairs. The on-device top-k runs when
-        // k ≤ NLLB_TOPK_KMAX, rows ≥ METRALE_NLLB_DEVICE_TOPK_MIN_ROWS (64 when
-        // unset) and METRALE_NLLB_HOST_TOPK is not `1`/`true`; otherwise the
-        // host scans the full vocab.
+        // k ≤ NLLB_TOPK_KMAX, rows ≥ `NllbLevers::device_topk_min_rows` and the host top-k
+        // switch is off; otherwise the host scans the full vocab.
         let k = 2 * states.iter().map(|s| s.b).max().unwrap_or(1);
-        let host_forced = std::env::var("METRALE_NLLB_HOST_TOPK")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
-        let min_rows = std::env::var("METRALE_NLLB_DEVICE_TOPK_MIN_ROWS")
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(64);
-        let use_device = k <= NLLB_TOPK_KMAX && rows >= min_rows && !host_forced;
+        let use_device = k <= NLLB_TOPK_KMAX
+            && rows >= self.levers.device_topk_min_rows
+            && !self.levers.host_topk;
 
         // 2026-09-25: Seed: step 0 = decoder_start (all rows), step 1 = per-request forced_bos.
         self.beam_forward_step(&vec![dec_start; rows], 0, rows, sk, sv, xb, buf)?;
@@ -272,9 +264,7 @@ impl NllbGpuModel {
                 .collect();
         }
 
-        let prof = std::env::var("METRALE_NLLB_BEAM_PROFILE")
-            .map(|v| v == "1")
-            .unwrap_or(false);
+        let prof = self.levers.beam_profile;
         let mut pf = BeamProf::default();
         super::beam_compute::LMHEAD_NS.with(|c| c.set(0));
 

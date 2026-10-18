@@ -19,12 +19,14 @@ use crate::factory::DflashBuildArgs;
 
 /// 2026-09-26: `used_so_far` as the bytes this process holds, from the first
 /// source that applies; the input is total minus free device memory.
+/// 2026-10-17: `external_reserve_gb` is the `cache.kv_external_reserve_gb` setting.
 pub(super) fn self_relative_used(
     gpu: &dyn GpuBackend,
     store: &WeightStore,
     build_entry_free: Option<usize>,
     actual_free: usize,
     mut used_so_far: usize,
+    external_reserve_gb: Option<f64>,
     gib: impl Fn(usize) -> f64,
 ) -> usize {
     // 2026-09-25: `used_so_far` (total − free) also counts other processes on
@@ -39,10 +41,7 @@ pub(super) fn self_relative_used(
     //      memory now, capped as described below.
     // The clamp to the free memory left after the reserves applies whichever
     // path set `used_so_far`.
-    let manual_reserve_gb = std::env::var("METRALE_KV_EXTERNAL_RESERVE_GB")
-        .ok()
-        .and_then(|v| v.parse::<f64>().ok())
-        .filter(|&gb| gb > 0.0);
+    let manual_reserve_gb = external_reserve_gb.filter(|&gb| gb > 0.0);
     if let Some(gb) = manual_reserve_gb {
         let ext = (gb * 1024.0 * 1024.0 * 1024.0) as usize;
         let discounted = used_so_far.saturating_sub(ext);

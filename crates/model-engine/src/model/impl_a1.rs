@@ -81,8 +81,7 @@ impl TransformerModel {
         vision_encoder: Option<metrale_model_layers::layers::VisionTower>,
         ssm_cache_slots: usize,
         ssm_checkpoint_interval: usize,
-        // 2026-10-17: The startup settings, and the model levers `build_model` derived from them
-        // once (`ModelLevers::from_settings`) and handed its loader.
+        // 2026-10-17: Startup settings; `build_model` derived `levers` from them once.
         settings: Arc<metrale_settings::InferenceServerSettings>,
         mut levers: ops::ModelLevers,
     ) -> Result<Self> {
@@ -117,7 +116,7 @@ impl TransformerModel {
             fill_slots_kernel,
             argmax_feed_kernel,
             feed_resolve_kernel,
-        } = kernels::resolve_model_kernels(&config, gpu.as_ref(), &levers.ops)?;
+        } = kernels::resolve_model_kernels(&config, gpu.as_ref(), &levers.ops, &settings)?;
         let profile = config.profile;
         let profile_first = settings.telemetry.profile_first;
         // 2026-09-25: `max_decode_seqs` pins the split-K attention split count to the configured
@@ -155,8 +154,7 @@ impl TransformerModel {
             has_mtp,
             num_intermediates,
             num_drafts,
-            // 2026-09-25: h pools sized at 2 bytes per element
-            // (`--ssm-h-dtype f16-pool`).
+            // 2026-09-25: h pools sized at 2 bytes per element (`--ssm-h-dtype f16-pool`).
             metrale_model_layers::layers::qwen3_ssm::ssm_h_f16_pool_enabled(),
             // 2026-09-25: `--ssm-rollback-mode`; `Snapshot` unless the server
             // published another mode.
@@ -173,6 +171,7 @@ impl TransformerModel {
             max_batch_size,
             ssm_checkpoint_interval,
             &kv_cache,
+            &settings,
             gpu.as_ref(),
         )?;
 
@@ -494,6 +493,7 @@ impl TransformerModel {
             overlay_route_slot: std::sync::atomic::AtomicI32::new(-1),
             decode_moe_route: std::sync::atomic::AtomicI32::new(1), // 2026-09-25: `MoeLoraRoute::Fold`
             circuit: parking_lot::RwLock::new(None),
+            engine: super::engine_levers::EngineLevers::from_settings(&settings)?,
             settings,
         })
     }

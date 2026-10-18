@@ -18,18 +18,12 @@
 //! borrowed width.
 //!
 //! Policy: borrow only graphs at most [`borrow_width_cap`] wide. `METRALE_NO_GRAPH_BORROW`
-//! (presence; `=0` also disables) turns borrowing off. Read once per process.
+//! (presence; `=0` also disables) turns borrowing off, read from the settings.
 //!
 //! Owner: model-engine decode graphs.
 //! Invariants:
 //! - A borrowed key is strictly wider than the batch, at most `borrow_width_cap(n)` wide, and
 //!   starts with the batch's own slots (and, for verify, its depths and sentinel).
-
-/// 2026-09-25: Borrowing enabled unless `METRALE_NO_GRAPH_BORROW` is present.
-pub(super) fn graph_borrow_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("METRALE_NO_GRAPH_BORROW").is_none())
-}
 
 /// 2026-09-25: Widest captured graph an `n`-active batch may borrow: twice its power-of-two
 /// width bucket (`n.next_power_of_two()`, the bucket the `mtp_gate` width regime uses).

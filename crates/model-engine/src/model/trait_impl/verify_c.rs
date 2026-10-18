@@ -173,11 +173,11 @@ impl TransformerModel {
         // `ep_graphs` lever of `decode_a`'s decode graph), so the two are gated apart.
         // `free_sequence_dispatch` drops this slot-keyed cache for layers that own
         // per-sequence state.
-        let ep_graphs = std::env::var("METRALE_GLM_VERIFY_GRAPHS").ok().as_deref() != Some("0");
+        let ep_graphs = self.settings.speculative.glm_verify_graphs;
         // 2026-09-25: `METRALE_GLM_VERIFY_GRAPH_TRACE=1` captures every step, never replays,
         // and logs the enqueued ops that differ from the previous step's (host values a
         // replay would freeze). It turns graphs on and caches none.
-        let graph_trace = std::env::var("METRALE_GLM_VERIFY_GRAPH_TRACE").is_ok_and(|v| v == "1");
+        let graph_trace = self.settings.telemetry.glm_verify_graph_trace;
         let ep_graphs = ep_graphs || graph_trace;
         // 2026-09-29: `suppress_graphs` (FP8 KV calibration, `METRALE_DEBUG_NO_GRAPH`) keeps
         // this verify eager, as it does the K=2 verify (`verify_b.rs`).
@@ -383,8 +383,7 @@ impl TransformerModel {
                     // step without caching, which separates a wrong capture from a stale replay.
                     if let Some(ref mut cache) = graph_cache
                         && !graph_trace
-                        && !std::env::var("METRALE_GLM_VERIFY_GRAPH_NOCACHE")
-                            .is_ok_and(|v| v == "1")
+                        && !self.settings.speculative.glm_verify_graph_nocache
                     {
                         cache.insert(graph_key, graph);
                     }

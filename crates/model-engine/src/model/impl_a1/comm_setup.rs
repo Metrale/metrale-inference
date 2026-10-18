@@ -13,6 +13,8 @@ use std::sync::Arc;
 use anyhow::Result;
 use metrale_gpu_runtime::buffers::BufferArena;
 use metrale_gpu_runtime::gpu::GpuBackend;
+// 2026-10-17: The DFlash context window every rank agrees on is the one the head is built with.
+use metrale_model_arch::dflash_head::dflash_ctx_window;
 
 /// 2026-09-26: Fail unless every rank resolved the same collective-shaping levers.
 pub(super) fn assert_rank_levers_agree(
@@ -82,10 +84,7 @@ pub(super) fn assert_rank_levers_agree(
             // chunking, so every rank must use the same value.
             (
                 "METRALE_DFLASH_CTX_WINDOW",
-                std::env::var("METRALE_DFLASH_CTX_WINDOW")
-                    .ok()
-                    .and_then(|s| s.parse::<usize>().ok())
-                    .unwrap_or(4096) as u64,
+                dflash_ctx_window(settings) as u64,
             ),
         ],
     )?;
@@ -144,3 +143,7 @@ pub(super) fn register_reduce_buffers(
         comm.set_rank_sum_kernel(k.0);
     }
 }
+
+#[cfg(test)]
+#[path = "comm_setup_tests.rs"]
+mod tests;

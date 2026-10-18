@@ -48,7 +48,14 @@ impl TransformerModel {
         // derived with the KV convention (`derive_kv`, blob_bytes = 0). When it cannot be
         // derived the field is `None` with a warning, and a `METRALE_KV_PAGING=1` connect then
         // fails unless `METRALE_KV_PAGING_NS` is set.
-        let model_fp = match crate::model::ssm_tier::ModelFingerprint::derive_kv(&self.config) {
+        let model_fp = match crate::model::ssm_tier::ModelFingerprint::derive_kv(
+            &self.config,
+            self.settings_ref()
+                .model
+                .model_id
+                .as_deref()
+                .unwrap_or_default(),
+        ) {
             Ok(fp) => Some(fp.nonzero()),
             Err(e) => {
                 tracing::warn!(
@@ -144,7 +151,7 @@ impl TransformerModel {
                 .copy_d2d_async(scratch, s.h_state, f16_bytes, stream)?;
             s.h_is_f16 = true;
         }
-        if std::env::var("METRALE_SSM_H_FP16_DEBUG").is_ok() {
+        if self.settings.telemetry.ssm_h_fp16_debug {
             tracing::info!(
                 "SSM_H_FP16_CONVERT slot={} seq_len={} prompt_len={} hptr={:#x}",
                 seq.slot_idx,
@@ -222,7 +229,11 @@ impl TransformerModel {
 
     pub(super) fn alloc_sequence_dispatch(&self, budget_tokens: usize) -> Result<SequenceState> {
         // 2026-09-25: `METRALE_SEQ_MEMTRACE`: the opening half of this sequence's memory bracket.
-        crate::model::seq_memtrace::trace(self.gpu.as_ref(), "alloc");
+        crate::model::seq_memtrace::trace(
+            self.settings.telemetry.seq_memtrace,
+            self.gpu.as_ref(),
+            "alloc",
+        );
         // 2026-09-25: Claimed through the RAII guard, which returns the slot to the pool when
         // it drops; the explicit `free_sequence` / `compact_sequence` paths take the index
         // out of the guard first, so the slot is released once. `slot_idx` comes from the guard.

@@ -19,16 +19,9 @@ use super::super::lm_head_vocab_tp::HeadRanks;
 use super::super::types::TransformerModel;
 use metrale_model_layers::layers::ops;
 
-/// 2026-09-25: Batched GEMV for the NVFP4 decode head: on unless
-/// `METRALE_NO_LM_HEAD_BATCH_GEMV` is exactly `1`. Read once per process.
-pub(super) fn lm_head_batch_gemv_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("METRALE_NO_LM_HEAD_BATCH_GEMV").as_deref() != Ok("1"))
-}
-
 /// 2026-09-25: `METRALE_LMHEAD_BATCH_GEMV` for the BF16 head: only the exact value `0`
-/// disables the batched GEMV.
-fn bf16_batch_gemv_from_value(value: Option<&str>) -> bool {
+/// disables the batched GEMV. Resolved once into `EngineLevers::lmhead_batch_gemv`.
+pub(in crate::model) fn bf16_batch_gemv_from_value(value: Option<&str>) -> bool {
     value != Some("0")
 }
 
@@ -61,27 +54,12 @@ pub(super) struct LmHeadM16Tc {
 
 /// 2026-09-25: `METRALE_LM_HEAD_M16_TC_NTILE`: 32 (default) or 64. Any other value
 /// falls back to 32 rather than failing the boot; the route log names the tile that ran.
-fn m16_tc_n_tile_from_value(value: Option<&str>) -> u32 {
+/// Resolved once into `EngineLevers::lm_head_m16_tc_n_tile`.
+pub(in crate::model) fn m16_tc_n_tile_from_value(value: Option<&str>) -> u32 {
     match value.map(str::trim) {
         Some("64") => ops::DENSE_GEMM_M16_BF16_N_TILE_WIDE,
         _ => ops::DENSE_GEMM_M16_BF16_N_TILE,
     }
-}
-
-/// 2026-09-25: Process-wide resolution of both, `OnceLock`-cached: the route must be constant
-/// across CUDA-graph replays, and a per-call `env::var` could change the launch set between
-/// capture and replay.
-fn lm_head_m16_tc_env() -> (bool, u32) {
-    static ENV: std::sync::OnceLock<(bool, u32)> = std::sync::OnceLock::new();
-    *ENV.get_or_init(|| {
-        let n_tile = std::env::var("METRALE_LM_HEAD_M16_TC_NTILE").ok();
-        (
-            // 2026-09-25: The target's `[defaults] lm_head_m16_tc` row, then
-            // `METRALE_LM_HEAD_M16_TC`; `=0` keeps the bit-exact tiers.
-            ops::target_defaults::resolved().lm_head_m16_tc.value,
-            m16_tc_n_tile_from_value(n_tile.as_deref()),
-        )
-    })
 }
 
 /// 2026-09-25: The whole selection rule for the tensor-core head arm, as a pure function of
@@ -120,13 +98,6 @@ fn lm_head_m16_tc_route(
         ));
     }
     None
-}
-
-fn lmhead_batch_gemv_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| {
-        bf16_batch_gemv_from_value(std::env::var("METRALE_LMHEAD_BATCH_GEMV").ok().as_deref())
-    })
 }
 
 /// 2026-09-25: Shared BF16-head dispatch for ordinary and mixed multi-sequence decode.
@@ -219,15 +190,13 @@ fn log_m16_tc_head_route(n_tile: u32, asked: u32) {
 
 impl TransformerModel {
     /// 2026-09-25: This model's tensor-core head arm: the handles this target carries, plus
-    /// the process-wide lever. Assembled per call so the env resolution stays in one
-    /// `OnceLock`.
+    /// the target default and the CTA width resolved once into `EngineLevers`.
     fn lm_head_m16_tc(&self) -> LmHeadM16Tc {
-        let (enabled, n_tile) = lm_head_m16_tc_env();
         LmHeadM16Tc {
             narrow: self.lm_head_m16_tc_kernel,
             wide: self.lm_head_m16_tc_n64_kernel,
-            enabled,
-            n_tile,
+            enabled: ops::target_defaults::resolved().lm_head_m16_tc.value,
+            n_tile: self.engine.lm_head_m16_tc_n_tile,
         }
     }
 
@@ -235,7 +204,7 @@ impl TransformerModel {
     /// batch it serves with the batched GEMV (0 when that arm is off), and whether the
     /// tensor-core arm is live (it takes 5..=16 rows ahead of the GEMV).
     pub(super) fn bf16_head_route(&self) -> (u32, bool) {
-        let batchm = if lmhead_batch_gemv_enabled() && self.dense_gemv_batchm_kernel.0 != 0 {
+        let batchm = if self.engine.lmhead_batch_gemv && self.dense_gemv_batchm_kernel.0 != 0 {
             lm_head_batchm_max()
         } else {
             0
@@ -269,7 +238,7 @@ impl TransformerModel {
             || !(1..=band).contains(&m)
             || !h.is_multiple_of(8)
             || (!fixed
-                && (!lmhead_batch_gemv_enabled()
+                && (!self.engine.lmhead_batch_gemv
                     || lm_head_m16_tc_route(self.lm_head_m16_tc(), m, h as u32).is_some()))
         {
             return None;
@@ -353,7 +322,7 @@ impl TransformerModel {
                 } else {
                     metrale_gpu_runtime::gpu::KernelHandle(0)
                 };
-                if gemv_k.0 != 0 && lm_head_batch_gemv_enabled() {
+                if gemv_k.0 != 0 && !self.settings.scheduler.no_lm_head_batch_gemv {
                     ops::w4a16_gemv_batchm(
                         self.gpu.as_ref(),
                         gemv_k,
@@ -415,7 +384,7 @@ impl TransformerModel {
                 &self.lm_head_weight,
                 logits,
                 [padded_n as u32, v as u32, h as u32],
-                lmhead_batch_gemv_enabled(),
+                self.engine.lmhead_batch_gemv,
                 lm_head_batchm_max(),
                 self.lm_head_m16_tc(),
                 metrale_model_layers::layers::fixed_act(

@@ -319,7 +319,11 @@ impl TransformerModel {
 
         // 2026-09-25: `METRALE_SEQ_MEMTRACE`: the closing half of this sequence's memory
         // bracket, after everything it owns has been released.
-        crate::model::seq_memtrace::trace(self.gpu.as_ref(), "free");
+        crate::model::seq_memtrace::trace(
+            self.settings.telemetry.seq_memtrace,
+            self.gpu.as_ref(),
+            "free",
+        );
 
         Ok(())
     }

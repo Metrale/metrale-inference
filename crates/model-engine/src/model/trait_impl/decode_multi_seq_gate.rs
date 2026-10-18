@@ -136,7 +136,7 @@ mod tests {
         let vote = block(&hooks, "fn layers_capture_with_comm", "\n    }\n");
         assert!(vote.contains(".all(|l| l.decode_graph_with_comm())"));
         assert!(vote.contains("!self.layers.is_empty()"));
-        assert!(vote.contains("\"METRALE_COMM_DECODE_GRAPHS\").as_deref() == Ok(\"0\")"));
+        assert!(vote.contains("self.settings.kernels.comm_decode_graphs"));
     }
 
     /// 2026-10-08: A replayed batched-decode graph checks every row's room before the launch

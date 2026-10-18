@@ -57,7 +57,7 @@ impl TransformerModel {
                 && !self
                     .suppress_graphs
                     .load(std::sync::atomic::Ordering::Relaxed)
-                && std::env::var_os("METRALE_NO_REPLAY_COMMIT_GRAPHS").is_none();
+                && !self.settings.speculative.no_replay_commit_graphs;
         let Some(key) = key.filter(|_| graphs_on) else {
             return self.commit_replay_layers(seq, num_accepted, k, stream);
         };

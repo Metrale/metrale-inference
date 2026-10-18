@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-09-25: Support for the batched verify in `verify_e.rs`: WY pointer-table staging, its cache, the graph key and the verify env switches.
+//! 2026-09-25: Support for the batched verify in `verify_e.rs`: WY pointer-table staging, its cache, the graph key and the graph key.
 //!
 //! Owner: model-engine (speculative verify).
 //! Invariants:
@@ -32,55 +32,6 @@ pub(super) const VERIFY_BATCHED_GRAPH_CAP: usize = 32;
 /// the logits floor and the scheduler's `VERIFY_ROW_BUDGET`. The sequence count is bounded
 /// separately, by `VERIFY_WY_TABLE_SEQS`.
 pub(in crate::model) const VERIFY_ROW_CAP: usize = metrale_gpu_runtime::buffers::VERIFY_ROW_CAP;
-
-/// 2026-09-25: Batched-verify CUDA graphs are on unless
-/// `METRALE_NO_MTP_VERIFY_GRAPHS` is present, whatever its value. Read once
-/// per process.
-pub(super) fn verify_graphs_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("METRALE_NO_MTP_VERIFY_GRAPHS").is_none())
-}
-
-/// 2026-09-25: A value switch is armed by the exact value `1` and nothing
-/// else; `0`, `true`, an empty value and absence leave it off. Used by
-/// `k4_diag_enabled`, `verify_d2h_default_stream` and `verify_d2h_no_pinned`.
-fn value_switch_armed(raw: Option<&str>) -> bool {
-    raw == Some("1")
-}
-
-fn read_value_switch(name: &str) -> bool {
-    value_switch_armed(std::env::var(name).ok().as_deref())
-}
-
-/// 2026-09-25: `METRALE_K4_DIAG=1`: synchronise after every layer of the
-/// batched verify. Read once per process.
-pub(super) fn k4_diag_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| read_value_switch("METRALE_K4_DIAG"))
-}
-
-/// 2026-09-25: `METRALE_VERIFY_D2H_DEFAULT_STREAM=1`: read the batched-verify
-/// argmax with `copy_d2h`. Read once per process.
-pub(super) fn verify_d2h_default_stream() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| read_value_switch("METRALE_VERIFY_D2H_DEFAULT_STREAM"))
-}
-
-/// 2026-09-25: `METRALE_NO_PINNED_VERIFY_D2H=1`: read the batched-verify argmax
-/// with an on-stream copy into pageable memory. Read once per process.
-pub(super) fn verify_d2h_no_pinned() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| read_value_switch("METRALE_NO_PINNED_VERIFY_D2H"))
-}
-
-/// 2026-09-25: The WY-table staging cache is on unless
-/// `METRALE_NO_VERIFY_WY_CACHE` is present, whatever its value. Off, every call
-/// of `upload_verify_wy_tables` rebuilds and uploads the tables. Read once per
-/// process.
-pub(super) fn verify_wy_cache_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("METRALE_NO_VERIFY_WY_CACHE").is_none())
-}
 
 /// 2026-09-25: Encode every input the tables staged by
 /// `upload_verify_wy_tables` depend on, so equal keys mean identical tables.
@@ -243,7 +194,7 @@ impl TransformerModel {
         }
         // 2026-09-25: A batch with a sequence that has no SSM slot has no
         // key; it is staged without the cache.
-        let cache_key: Option<Vec<u64>> = if verify_wy_cache_enabled() {
+        let cache_key: Option<Vec<u64>> = if !self.settings.speculative.no_verify_wy_cache {
             seqs.iter()
                 .map(|s| s.ssm_slot_idx().map(|v| v as u32))
                 .collect::<Option<Vec<u32>>>()

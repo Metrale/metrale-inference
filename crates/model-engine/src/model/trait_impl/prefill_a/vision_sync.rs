@@ -68,20 +68,6 @@ pub(crate) fn digest(bytes: &[u8]) -> u32 {
     h
 }
 
-/// 2026-09-25: Whether the cross-rank digest check runs: `METRALE_GLM_VISION_CHECK`
-/// set to 1, true, yes or on. When it runs, every rank copies its spliced rows to
-/// the host to digest them, and a worker whose digest differs from rank 0's
-/// returns an error.
-pub(crate) fn check_enabled() -> bool {
-    matches!(
-        std::env::var("METRALE_GLM_VISION_CHECK")
-            .ok()
-            .map(|v| v.trim().to_ascii_lowercase())
-            .as_deref(),
-        Some("1" | "true" | "yes" | "on")
-    )
-}
-
 impl TransformerModel {
     /// 2026-09-25: Rank 0 to workers: the merged vision rows for this prompt.
     ///
@@ -151,7 +137,7 @@ impl TransformerModel {
         self.verify_vision_rank_agreement(n_rows, src_row, bytes, is_head)
     }
 
-    /// 2026-09-25: Log the row count. When `check_enabled()`, also compare each
+    /// 2026-09-25: Log the row count. When `EngineLevers::glm_vision_check`, also compare each
     /// worker's digest of its rows with rank 0's and return an error on a
     /// mismatch.
     fn verify_vision_rank_agreement(
@@ -162,7 +148,7 @@ impl TransformerModel {
         is_head: bool,
     ) -> Result<()> {
         let comm = self.comm.as_ref().expect("multi_rank_protocol_active");
-        if !check_enabled() {
+        if !self.engine.glm_vision_check {
             tracing::debug!(
                 "vision sync: rank {} holds {n_rows} merged rows at base {src_row}",
                 comm.rank()
@@ -248,14 +234,5 @@ mod tests {
         assert_ne!(digest(&rows), digest(&one_off));
         // 2026-09-25: An empty payload and a zeroed one digest differently.
         assert_ne!(digest(&[]), digest(&[0u8; 8]));
-    }
-
-    /// 2026-09-25: The accepted values of the check switch.
-    #[test]
-    fn the_check_is_opt_in() {
-        // 2026-09-25: `check_enabled` reads the process environment, which this
-        // test does not mutate, so it asserts the match pattern instead.
-        assert!(!matches!(None::<&str>, Some("1" | "true" | "yes" | "on")));
-        assert!(matches!(Some("1"), Some("1" | "true" | "yes" | "on")));
     }
 }

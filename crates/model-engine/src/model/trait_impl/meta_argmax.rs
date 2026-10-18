@@ -83,13 +83,7 @@ impl TransformerModel {
         // serialise n single-SM scans. The batched kernel runs the same per-row
         // body, so ties resolve to the same index. The per-row loop runs when the
         // kernel set lacks `argmax_bf16_batch` or `METRALE_NO_ARGMAX_BATCH=1`.
-        fn argmax_batch_enabled() -> bool {
-            static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-            *ON.get_or_init(|| {
-                std::env::var("METRALE_NO_ARGMAX_BATCH").ok().as_deref() != Some("1")
-            })
-        }
-        if self.argmax_batch_kernel.0 != 0 && argmax_batch_enabled() {
+        if self.argmax_batch_kernel.0 != 0 && !self.settings.scheduler.no_argmax_batch {
             ops::argmax_bf16_batch(
                 self.gpu.as_ref(),
                 self.argmax_batch_kernel,

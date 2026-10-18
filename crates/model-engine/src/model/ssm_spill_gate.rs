@@ -5,10 +5,8 @@
 //!
 //! Owner: model-engine SSM snapshot pool.
 //! Invariants:
-//! - [`spill_min_tokens`] is 0 (gate disabled) or at least the fault-in gate
-//!   `fault_in_min_tokens()` (`trait_impl/ssm_fault_in.rs`).
-
-use std::sync::atomic::{AtomicBool, Ordering};
+//! - [`SsmTierGates::spill_min_tokens`] is 0 (gate disabled) or at least
+//!   [`SsmTierGates::fault_min_tokens`] (`trait_impl/ssm_fault_in.rs`).
 
 const SPILL_COST_MS: usize = 45;
 
@@ -16,29 +14,49 @@ const SPILL_COST_MS: usize = 45;
 /// not parse as a `usize`.
 const DEFAULT_SPILL_MIN_TOKENS: usize = 1024;
 
-/// 2026-09-25: Latch so the clamp warning is logged once per process.
-static CLAMP_WARNED: AtomicBool = AtomicBool::new(false);
+/// 2026-10-17: The SSM tier's cost gates and timing switch, resolved once when the
+/// snapshot pool is built (`kernels.ssm_spill_min_tokens`, `kernels.ssm_fault_min_tokens`,
+/// `telemetry.ssm_tier_timing`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::model) struct SsmTierGates {
+    /// 2026-10-17: Log per-spill and per-fault-in timing lines.
+    pub(in crate::model) timing: bool,
+    /// 2026-10-17: The effective spill gate, clamped by [`clamp_spill_to_fault`].
+    pub(in crate::model) spill_min_tokens: usize,
+    /// 2026-10-17: The fault-in depth gate.
+    pub(in crate::model) fault_min_tokens: usize,
+}
 
-/// 2026-09-25: The effective spill gate: the parsed value clamped by
-/// [`clamp_spill_to_fault`] against the fault-in gate, read from the env on every call.
-pub(in crate::model) fn spill_min_tokens() -> usize {
-    let raw = parse_spill_min_tokens(std::env::var("METRALE_SSM_SPILL_MIN_TOKENS").ok());
-    let fault = super::trait_impl::ssm_fault_in::fault_in_min_tokens();
-    let eff = clamp_spill_to_fault(raw, fault);
-    if eff != raw && !CLAMP_WARNED.swap(true, Ordering::Relaxed) {
-        tracing::warn!(
-            "METRALE_SSM_SPILL_MIN_TOKENS={raw} is below METRALE_SSM_FAULT_MIN_TOKENS={fault}; \
-             clamping the spill gate to {eff}. Spilling a snapshot the fault-in gate would \
-             then REFUSE to read back is a guaranteed pure loss — the spill cost is paid and \
-             the benefit can never be claimed."
-        );
+impl SsmTierGates {
+    /// 2026-10-17: Parse both gates, clamp the spill gate to the fault-in gate, and warn
+    /// once when the clamp changed it.
+    pub(in crate::model) fn resolve(
+        spill: Option<&str>,
+        fault: Option<&str>,
+        timing: bool,
+    ) -> Self {
+        let raw = parse_spill_min_tokens(spill);
+        let fault = super::trait_impl::ssm_fault_in::parse_fault_min_tokens(fault);
+        let eff = clamp_spill_to_fault(raw, fault);
+        if eff != raw {
+            tracing::warn!(
+                "METRALE_SSM_SPILL_MIN_TOKENS={raw} is below METRALE_SSM_FAULT_MIN_TOKENS={fault}; \
+                 clamping the spill gate to {eff}. Spilling a snapshot the fault-in gate would \
+                 then REFUSE to read back is a guaranteed pure loss — the spill cost is paid and \
+                 the benefit can never be claimed."
+            );
+        }
+        Self {
+            timing,
+            spill_min_tokens: eff,
+            fault_min_tokens: fault,
+        }
     }
-    eff
 }
 
 /// 2026-09-25: Parse `METRALE_SSM_SPILL_MIN_TOKENS`: unset or unparseable gives
 /// [`DEFAULT_SPILL_MIN_TOKENS`]; `0` disables the gate.
-pub(in crate::model) fn parse_spill_min_tokens(raw: Option<String>) -> usize {
+pub(in crate::model) fn parse_spill_min_tokens(raw: Option<&str>) -> usize {
     raw.and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(DEFAULT_SPILL_MIN_TOKENS)
 }
@@ -57,19 +75,16 @@ mod tests {
     fn parse_spill_min_defaults_when_unset_or_garbage() {
         assert_eq!(parse_spill_min_tokens(None), DEFAULT_SPILL_MIN_TOKENS);
         assert_eq!(
-            parse_spill_min_tokens(Some("twelve".into())),
+            parse_spill_min_tokens(Some("twelve")),
             DEFAULT_SPILL_MIN_TOKENS
         );
-        assert_eq!(
-            parse_spill_min_tokens(Some("".into())),
-            DEFAULT_SPILL_MIN_TOKENS
-        );
+        assert_eq!(parse_spill_min_tokens(Some("")), DEFAULT_SPILL_MIN_TOKENS);
     }
 
     #[test]
     fn parse_spill_min_parses_explicit_values() {
-        assert_eq!(parse_spill_min_tokens(Some("0".into())), 0);
-        assert_eq!(parse_spill_min_tokens(Some("2048".into())), 2048);
+        assert_eq!(parse_spill_min_tokens(Some("0")), 0);
+        assert_eq!(parse_spill_min_tokens(Some("2048")), 2048);
     }
 
     /// 2026-09-25: Never spill a snapshot the fault-in gate would refuse to read back.

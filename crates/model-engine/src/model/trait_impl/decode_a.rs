@@ -35,10 +35,6 @@ use metrale_model_layers::layers::ops;
 use metrale_model_layers::speculative::DraftProposer;
 use metrale_model_layers::weight_map::{DenseWeight, MtpWeights, QuantizedWeight};
 
-#[path = "decode_a_redzone.rs"]
-mod redzone;
-use redzone::{redzone_every, redzone_range_file};
-
 impl TransformerModel {
     /// 2026-09-25: Whether every layer that runs online FP8-KV calibration reports
     /// frozen (`graphs_ready_after_fp8_kv_cal`). True when no layer calibrates.
@@ -108,7 +104,7 @@ impl TransformerModel {
         // 2026-09-25: Red-zone bisection. The range is re-read and re-applied every
         // step, so it can be swept without a restart; `poison_redzones` allocates
         // and moves nothing, only the guard-band contents change.
-        if let Some(path) = redzone_range_file() {
+        if let Some(path) = self.settings.storage.redzone_range_file.as_deref() {
             let txt = std::fs::read_to_string(path).unwrap_or_default();
             let mut it = txt.split_whitespace();
             let lo: usize = it.next().and_then(|v| v.parse().ok()).unwrap_or(0);
@@ -467,7 +463,7 @@ impl TransformerModel {
 
         // 2026-09-25: Red-zone scan (`METRALE_REDZONE`), after the whole step with
         // the device drained, so a violation names the step that caused it.
-        if redzone_every() > 0 && seq.seq_len.is_multiple_of(redzone_every()) {
+        if self.engine.redzone_every > 0 && seq.seq_len.is_multiple_of(self.engine.redzone_every) {
             self.gpu.synchronize(stream)?;
             match self.gpu.scan_redzones() {
                 Ok(0) => {}

@@ -45,9 +45,9 @@ impl TransformerModel {
         // blocking copy.
         if filled {
             // 2026-09-25: The mapped path already read the results.
-        } else if super::super::verify_e2::verify_d2h_default_stream() {
+        } else if self.settings.speculative.verify_d2h_default_stream {
             self.gpu.copy_d2h(self.buffers.scratch(), &mut buf)?;
-        } else if super::super::verify_e2::verify_d2h_no_pinned() {
+        } else if self.settings.speculative.no_pinned_verify_d2h {
             self.gpu
                 .copy_d2h_on_stream(self.buffers.scratch(), &mut buf, stream)?;
         } else {

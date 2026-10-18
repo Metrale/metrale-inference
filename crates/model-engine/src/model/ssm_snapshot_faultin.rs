@@ -18,7 +18,6 @@ use metrale_telemetry::prefix_cache::{PrefixCache, TierEvict};
 use metrale_cache::kv_cache::PagedKvCache;
 
 use super::ssm_snapshot::SsmSnapshotPool;
-use super::ssm_spill_gate::spill_min_tokens;
 
 impl SsmSnapshotPool {
     /// 2026-09-25: Fault in the blob for `key` into Marconi slot `snap_slot`: read it
@@ -37,7 +36,7 @@ impl SsmSnapshotPool {
         if !self.is_enabled() {
             return Ok(false);
         }
-        let timing = std::env::var_os("METRALE_SSM_TIER_TIMING").is_some();
+        let timing = self.gates.timing;
         let t0 = std::time::Instant::now();
         let bytes = self.spill_blob_bytes();
         let mut guard = self.spill_staging.acquire(gpu, bytes)?;
@@ -69,7 +68,7 @@ impl SsmSnapshotPool {
 
     /// 2026-09-25: Free a Marconi slot by evicting a snapshot from the prefix cache's
     /// snapshot index; KV blocks are not evicted. With a `tier`, the victim comes from
-    /// `evict_snapshot_to_tier(spill_min_tokens())`: a `Spill` victim's bytes go to
+    /// `evict_snapshot_to_tier(self.gates.spill_min_tokens)`: a `Spill` victim's bytes go to
     /// the tier and its index entry stays findable, while a victim shallower than the
     /// gate ([`super::ssm_spill_gate`]) is dropped. Without a tier the LRU snapshot is
     /// dropped. Returns whether a slot was freed.
@@ -83,7 +82,8 @@ impl SsmSnapshotPool {
         if let Some(store) = tier {
             // 2026-09-25: `spill_slot` runs on the default stream and synchronises it
             // first, so a `save` queued there into the victim slot has landed.
-            let Some(evict) = prefix_cache.evict_snapshot_to_tier(spill_min_tokens()) else {
+            let Some(evict) = prefix_cache.evict_snapshot_to_tier(self.gates.spill_min_tokens)
+            else {
                 return false;
             };
             match evict {
@@ -104,7 +104,7 @@ impl SsmSnapshotPool {
                         }
                     }
                 }
-                TierEvict::Drop { .. } => log_spill_gate_skip(&evict),
+                TierEvict::Drop { .. } => log_spill_gate_skip(&evict, self.gates.spill_min_tokens),
             }
             self.free(evict.slot());
             return true;
@@ -139,13 +139,13 @@ pub(super) fn retire_refused_spill(
 }
 
 /// 2026-09-25: Log a spill skipped by the cost gate (`TierEvict::Drop`).
-pub(super) fn log_spill_gate_skip(evict: &TierEvict) {
+pub(super) fn log_spill_gate_skip(evict: &TierEvict, spill_min_tokens: usize) {
     if let TierEvict::Drop { depth, .. } = *evict {
         tracing::info!(
             "SSM spill SKIPPED (cost gate): victim depth {depth} < \
              METRALE_SSM_SPILL_MIN_TOKENS={} — dropped instead; a ~45ms spill cannot repay \
              {depth} tokens of prefill",
-            spill_min_tokens(),
+            spill_min_tokens,
         );
     }
 }

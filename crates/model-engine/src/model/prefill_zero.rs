@@ -10,26 +10,9 @@
 //! Owner: model-engine (prefill).
 //! Invariants:
 //! - Unset or `0` keeps today's behaviour exactly; another value than the ones named is an
-//!   error at first use, never a silent default.
-
-use std::sync::OnceLock;
-
-use anyhow::Result;
-
-/// 2026-10-12: `METRALE_PREFILL_ZERO_ROWS=1`: with a communicator, a prefill chunk zeroes the
-/// rows it will touch (`BufferArena::zero_all_rows` at the chunk length rounded up to 16, the
-/// cuBLASLt pad) instead of the whole arena. Read once.
-pub(crate) fn prefill_zero_rows() -> Result<bool> {
-    static V: OnceLock<Result<bool, String>> = OnceLock::new();
-    V.get_or_init(|| {
-        parse_switch(
-            "METRALE_PREFILL_ZERO_ROWS",
-            std::env::var("METRALE_PREFILL_ZERO_ROWS").ok().as_deref(),
-        )
-    })
-    .clone()
-    .map_err(anyhow::Error::msg)
-}
+//!   error when the model is built (`EngineLevers::from_settings`), never a silent default.
+//!   `METRALE_PREFILL_ZERO_ROWS` (with a communicator, zero only the chunk's rows) is the
+//!   settings switch `runtime.prefill_zero_rows`.
 
 /// 2026-10-12: How a prefill zeroes the KV blocks it allocates.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,25 +24,26 @@ pub(crate) enum KvZeroBlocks {
     Range,
 }
 
-/// 2026-10-12: `METRALE_KV_ZERO_BLOCKS=range`; unset, `0` or `block` keeps per-block zeroing.
-/// Read once. `METRALE_KV_POISON` keeps its per-block fill whatever this says.
-pub(crate) fn kv_zero_blocks() -> Result<KvZeroBlocks> {
-    static V: OnceLock<Result<KvZeroBlocks, String>> = OnceLock::new();
-    V.get_or_init(|| parse_kv_zero_blocks(std::env::var("METRALE_KV_ZERO_BLOCKS").ok().as_deref()))
-        .clone()
-        .map_err(anyhow::Error::msg)
+/// 2026-10-17: How [`super::block_mgmt::ensure_blocks_through_prefill`] fills the blocks it
+/// allocates: `ModelLevers::kv_poison` and `EngineLevers::kv_zero_blocks`, per model.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PrefillBlockFill {
+    pub kv_poison: bool,
+    pub zero_blocks: KvZeroBlocks,
 }
 
-/// 2026-10-12: A 0/1 switch, pure.
-pub(crate) fn parse_switch(name: &str, v: Option<&str>) -> Result<bool, String> {
-    match v {
-        None | Some("0") => Ok(false),
-        Some("1") => Ok(true),
-        Some(other) => Err(format!("{name}={other:?}: expected 0 or 1")),
+impl super::types::TransformerModel {
+    /// 2026-10-17: This model's [`PrefillBlockFill`].
+    pub(crate) fn prefill_block_fill(&self) -> PrefillBlockFill {
+        PrefillBlockFill {
+            kv_poison: self.levers.kv_poison,
+            zero_blocks: self.engine.kv_zero_blocks,
+        }
     }
 }
 
-/// 2026-10-12: [`kv_zero_blocks`]'s parse, pure.
+/// 2026-10-12: `METRALE_KV_ZERO_BLOCKS=range`; unset, `0` or `block` keeps per-block zeroing.
+/// `METRALE_KV_POISON` keeps its per-block fill whatever this says. Pure.
 pub(crate) fn parse_kv_zero_blocks(v: Option<&str>) -> Result<KvZeroBlocks, String> {
     match v {
         None | Some("0") | Some("block") => Ok(KvZeroBlocks::Block),
@@ -90,13 +74,10 @@ pub(crate) fn coalesce_runs(blocks: &[u32]) -> Vec<(u32, u32)> {
 mod tests {
     use super::*;
 
-    /// 2026-10-12: Both levers parse strictly: the switch takes 0/1, the block mode takes
-    /// 0/block/range; anything else is an error naming the variable.
+    /// 2026-10-12: The block mode parses strictly: 0/block/range; anything else is an error
+    /// naming the variable.
     #[test]
     fn the_zeroing_levers_parse_strictly() {
-        assert_eq!(parse_switch("X", None), Ok(false));
-        assert_eq!(parse_switch("X", Some("1")), Ok(true));
-        assert!(parse_switch("X", Some("yes")).unwrap_err().contains("X="));
         assert_eq!(parse_kv_zero_blocks(None), Ok(KvZeroBlocks::Block));
         assert_eq!(parse_kv_zero_blocks(Some("block")), Ok(KvZeroBlocks::Block));
         assert_eq!(parse_kv_zero_blocks(Some("range")), Ok(KvZeroBlocks::Range));

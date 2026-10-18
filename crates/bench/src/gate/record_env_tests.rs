@@ -177,25 +177,26 @@ fn tc_mtp_switch_default_matches_the_lever() {
 }
 
 /// 2026-09-26: The `unset` default for `METRALE_NO_BORROW_STREAK_LIMIT` is
-/// right only while `streak_limit_from` treats unset or empty as on. Reads
-/// `borrow_streak.rs`; a set value is recorded verbatim.
+/// right only while the guard treats unset or empty as on. Reads
+/// `engine_levers.rs` (2026-10-17: the rule moved there from `borrow_streak.rs`);
+/// a set value is recorded verbatim.
 #[test]
 fn borrow_streak_switch_default_matches_the_lever() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let path = root.join("crates/model-engine/src/model/trait_impl/borrow_streak.rs");
+    let path = root.join("crates/model-engine/src/model/engine_levers.rs");
     let src = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     let rule = src
-        .find("pub fn streak_limit_from(")
+        .find("borrow_streak_limit: s")
         .map(|at| src[at..].chars().take(200).collect::<String>())
         .expect("the borrow-streak rule is gone; PERF_CONTROLS discloses a dead variable");
     assert!(
-        rule.contains("kill.is_none_or(|v| v.is_empty())"),
+        rule.contains(".is_none_or(str::is_empty)"),
         "the METRALE_NO_BORROW_STREAK_LIMIT rule changed; the record's \"unset\" default \
          assumes unset or empty means the guard ran: {rule}"
     );
     assert!(
-        src.contains("streak_limit_from(std::env::var_os(\"METRALE_NO_BORROW_STREAK_LIMIT\")"),
-        "the guard no longer reads METRALE_NO_BORROW_STREAK_LIMIT through streak_limit_from"
+        rule.contains(".no_borrow_streak_limit"),
+        "the guard no longer reads the METRALE_NO_BORROW_STREAK_LIMIT setting"
     );
     assert_eq!(
         super::resolve_perf_env(|_| None)

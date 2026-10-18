@@ -373,14 +373,14 @@ pub(crate) fn ensure_blocks_through_prefill(
     prefix_cache: &dyn metrale_telemetry::prefix_cache::PrefixCache,
     gpu: &dyn GpuBackend,
     stream: u64,
-    kv_poison: bool,
+    fill: super::prefill_zero::PrefillBlockFill,
 ) -> Result<()> {
     let cap = kv_cache.config().cache_blocks_per_seq.map(|c| c as usize);
     // 2026-10-12: `METRALE_KV_ZERO_BLOCKS=range` (not under poison): the call's fresh blocks
     // are zeroed after the loop as runs of consecutive indices (`coalesce_runs`), two memsets
     // per layer per run instead of per block.
-    let coalesce = !kv_poison
-        && super::prefill_zero::kv_zero_blocks()? == super::prefill_zero::KvZeroBlocks::Range;
+    let kv_poison = fill.kv_poison;
+    let coalesce = !kv_poison && fill.zero_blocks == super::prefill_zero::KvZeroBlocks::Range;
     let mut fresh: Vec<u32> = Vec::new();
     loop {
         let ws = seq.hss_window_start();

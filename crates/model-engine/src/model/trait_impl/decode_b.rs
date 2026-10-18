@@ -172,7 +172,7 @@ impl TransformerModel {
             self.prefix_cache.as_ref(),
             self.gpu.as_ref(),
             stream,
-            self.levers.kv_poison,
+            self.prefill_block_fill(),
         )?;
 
         // 2026-09-25: Decode metadata goes in the logits buffer, unused until the
