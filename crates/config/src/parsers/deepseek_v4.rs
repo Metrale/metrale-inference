@@ -201,7 +201,10 @@ pub fn parse_deepseek_v4(json: &str) -> Result<ModelConfig> {
     Ok(config)
 }
 
-fn validate_dspark_contract(config: &ModelConfig, raw: &serde_json::Value) -> Result<()> {
+pub(super) fn validate_dspark_contract(
+    config: &ModelConfig,
+    raw: &serde_json::Value,
+) -> Result<()> {
     const DSPARK_FIELDS: [&str; 4] = [
         "dspark_block_size",
         "dspark_noise_token_id",

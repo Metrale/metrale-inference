@@ -12,7 +12,7 @@ use serde_json::Value;
 
 use super::{
     DeclaredPrecisionPlan, Granularity, LayerPrecision, NumKind, Operand, PlanSource, Rule,
-    ScaleTiming, Target,
+    ScaleFmt, ScaleTiming, Target,
 };
 
 pub(super) fn plan(qc: &Value) -> Result<DeclaredPrecisionPlan> {
@@ -175,6 +175,7 @@ fn compressed_tensors(qc: &Value) -> Result<DeclaredPrecisionPlan> {
         source,
         rules,
         ignore,
+        scale_fmt: None,
     })
 }
 
@@ -291,12 +292,15 @@ fn modelopt(qc: &Value) -> Result<DeclaredPrecisionPlan> {
         source,
         rules,
         ignore,
+        scale_fmt: None,
     })
 }
 
 /// 2026-09-28: The HF `fp8` method: E4M3 weights (block-scaled with `weight_block_size`,
 /// else per tensor) and E4M3 activations, dynamic per token group of the block width, or
 /// static per tensor.
+/// 2026-10-18: `expert_dtype: "fp4"` declares the routed experts MXFP4 and `scale_fmt:
+/// "ue8m0"` declares E8M0 block scales; any other value of either is an error.
 fn fp8(qc: &Value) -> Result<DeclaredPrecisionPlan> {
     let block = match qc.get("weight_block_size") {
         None | Some(Value::Null) => None,
@@ -346,15 +350,38 @@ fn fp8(qc: &Value) -> Result<DeclaredPrecisionPlan> {
             ignore.push(Target::hf_module(&entry)?);
         }
     }
-    Ok(DeclaredPrecisionPlan {
-        source: PlanSource::Fp8,
-        rules: vec![Rule {
-            targets: vec![Target::Class("Linear".into())],
+    let mut rules = vec![Rule {
+        targets: vec![Target::Class("Linear".into())],
+        precision: LayerPrecision {
+            weight: Some(weight),
+            activation: Some(activation),
+        },
+    }];
+    // 2026-10-18: `expert_dtype` declares the routed experts' weights in a different format
+    // from the other linears; their activations stay as declared above. A shared expert is
+    // not a routed expert (`...ffn.shared_experts.w1` has no `.experts.<i>.` segment).
+    match str_field(qc, "expert_dtype")?.as_deref() {
+        None => {}
+        Some("fp4") => rules.push(Rule {
+            targets: vec![Target::compressed_tensors(
+                r"re:(?:.*\.)?experts\.\d+\.[^.]+$",
+            )?],
             precision: LayerPrecision {
-                weight: Some(weight),
+                weight: Some(Operand::MXFP4),
                 activation: Some(activation),
             },
-        }],
+        }),
+        Some(other) => bail!("quantization_config.expert_dtype {other:?} is not fp4"),
+    }
+    let scale_fmt = match str_field(qc, "scale_fmt")?.as_deref() {
+        None => None,
+        Some("ue8m0") => Some(ScaleFmt::Ue8m0),
+        Some(other) => bail!("quantization_config.scale_fmt {other:?} is not ue8m0"),
+    };
+    Ok(DeclaredPrecisionPlan {
+        source: PlanSource::Fp8,
+        rules,
         ignore,
+        scale_fmt,
     })
 }

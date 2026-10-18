@@ -25,7 +25,12 @@
 
 use anyhow::{Result, bail};
 
-use crate::precision_plan::{DeclaredPrecisionPlan, LayerPrecision};
+use crate::precision_plan::{DeclaredPrecisionPlan, Granularity, LayerPrecision};
+
+/// 2026-10-18: The FP8 weight block the W8A8 block-scaled decode kernels
+/// ([`KernelCaps::w8a8_block_scaled_decode`]) read their scales in. A weight declared at any
+/// other block decodes at BF16 activations until a kernel for its block exists.
+pub const W8A8_BLOCK_SCALED_DECODE_BLOCK: Granularity = Granularity::Block(128, 128);
 
 /// 2026-09-28: The `--weight-quantization` tiers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -366,14 +371,20 @@ impl<'a> WeightQuantPolicy<'a> {
     }
 
     /// 2026-09-28: [`Self::fp8_decode_act`] for a non-expert `module` whose FP8 weight is
-    /// 128x128 block-scaled: FP8 only when [`KernelCaps::w8a8_block_scaled_decode`] is set as
-    /// well, BF16 (W8A16) otherwise. An expert module answers as `fp8_decode_act` does.
+    /// block-scaled: FP8 only when [`KernelCaps::w8a8_block_scaled_decode`] is set as well,
+    /// BF16 (W8A16) otherwise. An expert module answers as `fp8_decode_act` does. 2026-10-18:
+    /// BF16 too when the declared block is not [`W8A8_BLOCK_SCALED_DECODE_BLOCK`].
     pub fn fp8_block_scaled_decode_act(&self, module: &str) -> Option<ActFormat> {
         let act = self.fp8_decode_act(module)?;
+        let served_block = self
+            .plan
+            .resolve(module)
+            .weight
+            .is_some_and(|w| w.granularity == W8A8_BLOCK_SCALED_DECODE_BLOCK);
         Some(
             if act == ActFormat::Fp8
                 && !is_expert_module(module)
-                && !self.caps.w8a8_block_scaled_decode
+                && !(self.caps.w8a8_block_scaled_decode && served_block)
             {
                 ActFormat::Bf16
             } else {

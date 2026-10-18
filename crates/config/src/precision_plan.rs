@@ -88,6 +88,15 @@ impl Operand {
         timing: ScaleTiming::Static,
     };
 
+    /// 2026-10-18: MXFP4 as the OCP Microscaling Formats (MX) Specification v1.0 defines
+    /// it: E2M1, one power-of-two (E8M0) scale per 32 values along K, no per-tensor scale.
+    pub const MXFP4: Operand = Operand {
+        kind: NumKind::Float,
+        bits: 4,
+        granularity: Granularity::Group(32),
+        timing: ScaleTiming::Static,
+    };
+
     /// 2026-09-28: A 4-bit float (NVFP4 or MXFP4).
     pub fn is_fp4(&self) -> bool {
         self.kind == NumKind::Float && self.bits == 4
@@ -165,6 +174,48 @@ pub struct DeclaredPrecisionPlan {
     pub rules: Vec<Rule>,
     /// 2026-09-28: Modules left unquantized.
     pub ignore: Vec<Target>,
+    /// 2026-10-18: How the HF `fp8` block scales are stored (`scale_fmt`); `None` when the
+    /// block does not say, which for that dialect means F32 (`weight_scale_inv`).
+    pub scale_fmt: Option<ScaleFmt>,
+}
+
+/// 2026-10-18: The HF `fp8` `scale_fmt` values the plan reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScaleFmt {
+    /// 2026-10-18: `ue8m0`: each block scale is one unsigned E8M0 byte (a power of two).
+    Ue8m0,
+}
+
+/// 2026-10-18: The stored element type of a quantized weight.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoredElement {
+    /// 2026-10-18: One E4M3 byte per value.
+    E4m3,
+    /// 2026-10-18: Two E2M1 values per byte along K (safetensors writes I8 or U8).
+    E2m1Pair,
+}
+
+/// 2026-10-18: The stored element type of a weight's scales.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoredScale {
+    /// 2026-10-18: One F32 per block.
+    F32,
+    /// 2026-10-18: One E8M0 byte per block or group.
+    E8m0,
+}
+
+/// 2026-10-18: The on-disk tensors a declared weight format implies for a `[rows, cols]`
+/// (`[out, in]`) linear weight: the weight tensor and its scale tensor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WeightStorage {
+    /// 2026-10-18: Weight element type.
+    pub element: StoredElement,
+    /// 2026-10-18: Weight tensor shape.
+    pub shape: [u64; 2],
+    /// 2026-10-18: Scale element type.
+    pub scale: StoredScale,
+    /// 2026-10-18: Scale tensor shape.
+    pub scale_shape: [u64; 2],
 }
 
 impl DeclaredPrecisionPlan {
@@ -173,6 +224,7 @@ impl DeclaredPrecisionPlan {
         source: PlanSource::Undeclared,
         rules: Vec::new(),
         ignore: Vec::new(),
+        scale_fmt: None,
     };
 
     /// 2026-09-28: Parse the `quantization_config` object (the value, not the whole
@@ -215,6 +267,47 @@ impl DeclaredPrecisionPlan {
         }
     }
 
+    /// 2026-10-18: The tensors `module`'s declared weight format implies for a `[rows, cols]`
+    /// weight; `None` when the module is declared unquantized. An E4M3 block-scaled weight
+    /// has one scale per `[r, c]` block (ceil-divided); an MXFP4 weight packs two values per
+    /// byte along K and has one E8M0 scale per 32 values of each row. Any other declared
+    /// format is an error: its storage is not modelled here.
+    pub fn weight_storage(
+        &self,
+        module: &str,
+        rows: u64,
+        cols: u64,
+    ) -> Result<Option<WeightStorage>> {
+        let Some(w) = self.resolve(module).weight else {
+            return Ok(None);
+        };
+        let storage = match w.granularity {
+            Granularity::Block(r, c) if w.is_fp8() => WeightStorage {
+                element: StoredElement::E4m3,
+                shape: [rows, cols],
+                scale: match self.scale_fmt {
+                    Some(ScaleFmt::Ue8m0) => StoredScale::E8m0,
+                    None => StoredScale::F32,
+                },
+                scale_shape: [rows.div_ceil(u64::from(r)), cols.div_ceil(u64::from(c))],
+            },
+            Granularity::Group(g) if w == Operand::MXFP4 => {
+                anyhow::ensure!(
+                    cols.is_multiple_of(2),
+                    "{module}: an MXFP4 weight needs an even K, got {cols}"
+                );
+                WeightStorage {
+                    element: StoredElement::E2m1Pair,
+                    shape: [rows, cols / 2],
+                    scale: StoredScale::E8m0,
+                    scale_shape: [rows, cols.div_ceil(u64::from(g))],
+                }
+            }
+            _ => anyhow::bail!("{module}: the storage of a declared {w:?} weight is not modelled"),
+        };
+        Ok(Some(storage))
+    }
+
     /// 2026-09-28: True when no module declares anything.
     pub fn is_undeclared(&self) -> bool {
         self.source == PlanSource::Undeclared
@@ -238,3 +331,7 @@ pub fn expert_container(module: &str) -> Option<&str> {
 #[cfg(test)]
 #[path = "precision_plan_tests.rs"]
 mod precision_plan_tests;
+
+#[cfg(test)]
+#[path = "precision_plan_storage_tests.rs"]
+mod precision_plan_storage_tests;

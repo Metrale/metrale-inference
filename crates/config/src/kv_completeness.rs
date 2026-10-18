@@ -51,11 +51,14 @@ impl ModelConfig {
     /// 2026-09-26: Whether every byte of a sequence's per-layer state is held in its KV blocks.
     ///
     /// False for `glm5_next` / `glm5_next_text` (the DSA indexer rows, `Glm5NextDsaState`) and
-    /// for `deepseek_v4` when any `compress_ratios` entry is non-zero.
+    /// for `deepseek_v4` when any `compress_ratios` entry is non-zero. 2026-10-18: False for
+    /// `deepseek_v41` whatever its ratios: its sliding-window ring and its compressor and indexer
+    /// state live outside the per-sequence KV blocks.
     fn per_sequence_state_is_kv_complete(&self) -> bool {
         match self.model_type.as_str() {
             "glm5_next" | "glm5_next_text" => false,
             "deepseek_v4" => self.compress_ratios.iter().all(|&ratio| ratio == 0),
+            "deepseek_v41" => false,
             _ => true,
         }
     }

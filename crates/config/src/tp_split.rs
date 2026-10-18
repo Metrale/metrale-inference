@@ -93,6 +93,12 @@ pub enum TpSupport {
     /// so each rank's key channels are a multiple of `linear_channel_unit`; 1 splits head by
     /// head.
     Uneven { linear_channel_unit: usize },
+    /// 2026-10-18: One KV head serves every query head (MQA). The KV head is replicated on every
+    /// rank, not split; the query heads split by [`tp_split`] in units of one output group
+    /// (`num_attention_heads / o_groups` heads, since a grouped output projection reads a whole
+    /// group), or head by head when `o_groups` is 0. Refused for any other KV head count or with
+    /// linear-attention heads.
+    SharedKvHead,
 }
 
 /// 2026-10-09: The fewest whole heads of `head_dim` channels whose channel count is a multiple of
@@ -164,7 +170,8 @@ impl ModelConfig {
     /// no-op at `tp_world_size <= 1`.
     ///
     /// `Even` refuses a count that does not divide, as serve's topology always did; `Uneven`
-    /// splits by [`tp_split`]. Linear-attention counts are touched only when either is nonzero.
+    /// splits by [`tp_split`]; `SharedKvHead` replicates the one KV head. Linear-attention
+    /// counts are touched only when either is nonzero.
     /// Errors when called twice, or with [`TpSupport::Unsupported`] above one rank.
     pub fn shard_heads_for_tp(&mut self, support: TpSupport) -> Result<()> {
         let (tp_size, tp_rank) = (self.tp_world_size, self.tp_rank);
@@ -234,6 +241,7 @@ impl ModelConfig {
                 };
                 (q, kv, lk, lv)
             }
+            TpSupport::SharedKvHead => (self.shared_kv_query_heads()?, 1, 0, 0),
         };
         self.num_attention_heads = q;
         self.num_key_value_heads = kv;
@@ -241,6 +249,26 @@ impl ModelConfig {
         self.linear_num_value_heads = lv;
         self.tp_pre_shard_heads = Some(pre);
         Ok(())
+    }
+
+    /// 2026-10-18: This rank's query heads under [`TpSupport::SharedKvHead`].
+    fn shared_kv_query_heads(&self) -> Result<usize> {
+        let (q, kv) = (self.num_attention_heads, self.num_key_value_heads);
+        if kv != 1 {
+            bail!("TP with a shared KV head needs num_key_value_heads to be 1, not {kv}");
+        }
+        if self.linear_num_key_heads > 0 || self.linear_num_value_heads > 0 {
+            bail!("TP with a shared KV head does not split linear-attention heads");
+        }
+        let unit = match self.o_groups {
+            0 => 1,
+            g if q.is_multiple_of(g) => q / g,
+            g => bail!(
+                "TP with a shared KV head needs num_attention_heads ({q}) to be a multiple of \
+                 o_groups ({g}), so that a rank's query heads are whole output groups"
+            ),
+        };
+        Ok(tp_split(q, self.tp_world_size, self.tp_rank, unit)?.len)
     }
 
     /// 2026-10-08: The head counts before TP division: the recorded ones above one rank, the

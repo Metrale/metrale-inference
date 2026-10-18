@@ -367,3 +367,45 @@ fn combined_stamps() {
     assert_eq!(Nvfp4Act::combine([]), Unstamped);
     assert!(A4.allows_fp4_prefill() && Unstamped.allows_fp4_prefill());
 }
+
+/// 2026-10-18: The W8A8 block-scaled decode serves only the block its kernels read. The
+/// DeepSeek-V4.1 attention, declared FP8 at 32x32, keeps BF16 activations with every cap open,
+/// while the 128x128 FP8 35B attention gets FP8 under the same caps. The V4.1 routed experts
+/// are MXFP4, so no FP8 answer applies to them.
+#[test]
+fn block_scaled_w8a8_serves_only_its_kernel_block() {
+    let all = KernelCaps {
+        w8a8_decode: true,
+        w8a8_moe_decode: true,
+        w8a8_block_scaled_decode: true,
+        ..CAPS
+    };
+    let v41 = crate::parse_config(crate::tests::deepseek_v41::CONFIG)
+        .unwrap()
+        .quantization_config
+        .expect("V4.1 declares a quantization_config");
+    let p = WeightQuantPolicy::new(declared(), &v41.precision, all);
+    let attn = "layers.0.attn.wq_a";
+    assert_eq!(
+        p.declared(attn).weight.map(|w| w.granularity),
+        Some(Granularity::Block(32, 32))
+    );
+    assert_eq!(p.fp8_decode_act(attn), Some(ActFormat::Fp8));
+    assert_eq!(p.fp8_block_scaled_decode_act(attn), Some(ActFormat::Bf16));
+    assert_eq!(
+        p.fp8_block_scaled_decode_act("layers.0.ffn.experts.7.w1"),
+        None
+    );
+
+    let fp8 = plan("fp8_moe");
+    let q35 = WeightQuantPolicy::new(declared(), &fp8, all);
+    let attn35 = format!("{L}.3.self_attn.q_proj");
+    assert_eq!(
+        q35.declared(&attn35).weight.map(|w| w.granularity),
+        Some(W8A8_BLOCK_SCALED_DECODE_BLOCK)
+    );
+    assert_eq!(
+        q35.fp8_block_scaled_decode_act(&attn35),
+        Some(ActFormat::Fp8)
+    );
+}

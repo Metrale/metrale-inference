@@ -334,3 +334,82 @@ fn a_linear_channel_unit_splits_kda_heads_in_whole_units() {
     assert_eq!(linear_head_unit(0, 1).unwrap(), 1);
     assert!(linear_head_unit(128, 0).is_err());
 }
+
+fn v41_at(tp: usize, rank: usize) -> ModelConfig {
+    let mut c = parse_config(crate::tests::deepseek_v41::CONFIG).expect("the V4.1 config parses");
+    c.tp_world_size = tp;
+    c.tp_rank = rank;
+    c
+}
+
+/// 2026-10-18: DeepSeek-V4.1-Flash at TP=3: the one latent KV head is replicated and the 64
+/// query heads split in whole output groups of 8 (24/24/16). `Even` and `Uneven` refuse the
+/// single KV head as before, so the replication happens only where a loader opts in.
+#[test]
+fn a_shared_kv_head_is_replicated_and_queries_split_in_output_groups() {
+    let mut got = Vec::new();
+    for rank in 0..3 {
+        let mut c = v41_at(3, rank);
+        c.shard_heads_for_tp(TpSupport::SharedKvHead).unwrap();
+        let pre = c.pre_shard_heads().unwrap();
+        assert_eq!((pre.num_attention_heads, pre.num_key_value_heads), (64, 1));
+        got.push((c.num_attention_heads, c.num_key_value_heads));
+    }
+    assert_eq!(got, vec![(24, 1), (24, 1), (16, 1)]);
+
+    let at_two: Vec<_> = (0..2)
+        .map(|rank| {
+            let mut c = v41_at(2, rank);
+            c.shard_heads_for_tp(TpSupport::SharedKvHead).unwrap();
+            c.num_attention_heads
+        })
+        .collect();
+    assert_eq!(at_two, vec![32, 32]);
+
+    let err = v41_at(3, 0)
+        .shard_heads_for_tp(TpSupport::Even)
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("num_attention_heads (64)"),
+        "{err}"
+    );
+    let err = v41_at(2, 0)
+        .shard_heads_for_tp(TpSupport::Even)
+        .unwrap_err();
+    assert!(err.to_string().contains("num_key_value_heads (1)"), "{err}");
+    assert!(
+        v41_at(3, 0)
+            .shard_heads_for_tp(TpSupport::Uneven {
+                linear_channel_unit: 1,
+            })
+            .is_err()
+    );
+}
+
+/// 2026-10-18: `SharedKvHead` refuses what it cannot split: more than one KV head, query heads
+/// that are not whole output groups, more ranks than groups, and linear-attention heads. With
+/// `o_groups` 0 it splits head by head.
+#[test]
+fn a_shared_kv_head_refuses_what_it_cannot_split() {
+    let refuse = |edit: &dyn Fn(&mut ModelConfig), tp: usize, want: &str| {
+        let mut c = v41_at(tp, 0);
+        edit(&mut c);
+        let err = c.shard_heads_for_tp(TpSupport::SharedKvHead).unwrap_err();
+        assert!(err.to_string().contains(want), "{want}: {err}");
+        assert!(c.tp_pre_shard_heads.is_none(), "a refusal records nothing");
+    };
+    refuse(&|c| c.num_key_value_heads = 2, 3, "not 2");
+    refuse(&|c| c.num_attention_heads = 60, 3, "whole output groups");
+    refuse(&|_| {}, 9, "at least one rank would own nothing");
+    refuse(&|c| c.linear_num_key_heads = 4, 3, "linear-attention");
+
+    let heads: Vec<_> = (0..3)
+        .map(|rank| {
+            let mut c = v41_at(3, rank);
+            c.o_groups = 0;
+            c.shard_heads_for_tp(TpSupport::SharedKvHead).unwrap();
+            c.num_attention_heads
+        })
+        .collect();
+    assert_eq!(heads, vec![22, 21, 21]);
+}

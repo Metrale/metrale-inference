@@ -13,10 +13,11 @@ use anyhow::{Context, Result};
 
 use super::{
     AttnPositionEncoding, LayerType, ModelConfig, default_conv_kernel, default_partial_rotary,
-    default_rms_eps, default_rope_theta, finalize_config, parse_deepseek_v4, parse_gemma4_params,
-    parse_glm5_next, parse_kimi_k3, parse_laguna, parse_longcat_ngram, parse_minimax_m2,
-    parse_mistral_params, parse_quantization_config, parse_qwen4_exp, parse_step3p7,
-    parse_vision_config, resolve_attn_position_encoding, sanitize_kimi_k3_eos, validate_config,
+    default_rms_eps, default_rope_theta, finalize_config, parse_deepseek_v4, parse_deepseek_v41,
+    parse_gemma4_params, parse_glm5_next, parse_kimi_k3, parse_laguna, parse_longcat_ngram,
+    parse_minimax_m2, parse_mistral_params, parse_quantization_config, parse_qwen4_exp,
+    parse_step3p7, parse_vision_config, resolve_attn_position_encoding, sanitize_kimi_k3_eos,
+    validate_config,
 };
 
 fn required_u64(raw: &serde_json::Value, key: &str, model_type: &str) -> Result<u64> {
@@ -310,6 +311,8 @@ fn parse_config_dispatch(json: &str) -> Result<ModelConfig> {
         "minimax_m2" => parse_minimax_m2(&raw),
         "step3p7" => parse_step3p7(&raw),
         "deepseek_v4" => parse_deepseek_v4(json),
+        // 2026-10-18: DeepSeek-V4.1; its fields sit under `text_config`.
+        "deepseek_v41" => parse_deepseek_v41(json),
         // 2026-09-26: GLM-5.3-Flash; its fields sit under `text_config`.
         "glm5_next" | "glm5_next_text" => parse_glm5_next(json),
         // 2026-09-26: Kimi K3: the parser unwraps `text_config` when present (a flat

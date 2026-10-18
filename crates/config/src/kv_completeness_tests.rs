@@ -105,3 +105,21 @@ fn kv_complete_models_keep_both_capabilities() {
     assert!(config.kv_only_prefix_cache_is_safe(PrefixCacheGate::DECLARED));
     assert!(config.kv_only_swap_out_is_safe());
 }
+
+/// 2026-10-18: DeepSeek-V4.1 closes both gates whatever its ratios, and neither GLM lever opens
+/// them; the publisher's config, parsed, is refused too.
+#[test]
+fn deepseek_v41_is_never_kv_cache_complete() {
+    let mut config = ModelConfig::qwen3_next_80b_nvfp4();
+    config.model_type = "deepseek_v41".to_string();
+    for ratios in [vec![0; 3], vec![4, 0, 128]] {
+        config.compress_ratios = ratios;
+        for (override_on, paged) in [(false, false), (false, true), (true, false), (true, true)] {
+            assert!(!config.kv_only_prefix_cache_is_safe_given(override_on, paged));
+        }
+        assert!(!config.kv_only_swap_out_is_safe());
+    }
+    let parsed = crate::parse_config(crate::tests::deepseek_v41::CONFIG).unwrap();
+    assert!(!parsed.kv_only_prefix_cache_is_safe(PrefixCacheGate::DECLARED));
+    assert!(!parsed.kv_only_swap_out_is_safe());
+}

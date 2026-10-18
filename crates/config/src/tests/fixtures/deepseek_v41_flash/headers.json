@@ -1,0 +1,381 @@
+{
+  "layers.0.attn.attn_sink": {
+    "dtype": "F32",
+    "shape": [
+      64
+    ]
+  },
+  "layers.0.attn.kv_norm.weight": {
+    "dtype": "BF16",
+    "shape": [
+      512
+    ]
+  },
+  "layers.0.attn.q_norm.weight": {
+    "dtype": "BF16",
+    "shape": [
+      1280
+    ]
+  },
+  "layers.0.attn.wkv.scale": {
+    "dtype": "F8_E8M0",
+    "shape": [
+      16,
+      160
+    ]
+  },
+  "layers.0.attn.wkv.weight": {
+    "dtype": "F8_E4M3",
+    "shape": [
+      512,
+      5120
+    ]
+  },
+  "layers.0.attn.wo_a.scale": {
+    "dtype": "F8_E8M0",
+    "shape": [
+      256,
+      128
+    ]
+  },
+  "layers.0.attn.wo_a.weight": {
+    "dtype": "F8_E4M3",
+    "shape": [
+      8192,
+      4096
+    ]
+  },
+  "layers.0.attn.wo_b.scale": {
+    "dtype": "F8_E8M0",
+    "shape": [
+      160,
+      256
+    ]
+  },
+  "layers.0.attn.wo_b.weight": {
+    "dtype": "F8_E4M3",
+    "shape": [
+      5120,
+      8192
+    ]
+  },
+  "layers.0.attn.wq_a.scale": {
+    "dtype": "F8_E8M0",
+    "shape": [
+      40,
+      160
+    ]
+  },
+  "layers.0.attn.wq_a.weight": {
+    "dtype": "F8_E4M3",
+    "shape": [
+      1280,
+      5120
+    ]
+  },
+  "layers.0.attn.wq_b.scale": {
+    "dtype": "F8_E8M0",
+    "shape": [
+      1024,
+      40
+    ]
+  },
+  "layers.0.attn.wq_b.weight": {
+    "dtype": "F8_E4M3",
+    "shape": [
+      32768,
+      1280
+    ]
+  },
+  "layers.0.attn_norm.weight": {
+    "dtype": "BF16",
+    "shape": [
+      5120
+    ]
+  },
+  "layers.0.ffn.experts.0.w1.scale": {
+    "dtype": "F8_E8M0",
+    "shape": [
+      2304,
+      160
+    ]
+  },
+  "layers.0.ffn.experts.0.w1.weight": {
+    "dtype": "I8",
+    "shape": [
+      2304,
+      2560
+    ]
+  },
+  "layers.0.ffn.experts.0.w2.scale": {
+    "dtype": "F8_E8M0",
+    "shape": [
+      5120,
+      72
+    ]
+  },
+  "layers.0.ffn.experts.0.w2.weight": {
+    "dtype": "I8",
+    "shape": [
+      5120,
+      1152
+    ]
+  },
+  "layers.0.ffn.experts.0.w3.scale": {
+    "dtype": "F8_E8M0",
+    "shape": [
+      2304,
+      160
+    ]
+  },
+  "layers.0.ffn.experts.0.w3.weight": {
+    "dtype": "I8",
+    "shape": [
+      2304,
+      2560
+    ]
+  },
+  "layers.0.ffn.experts.383.w1.scale": {
+    "dtype": "F8_E8M0",
+    "shape": [
+      2304,
+      160
+    ]
+  },
+  "layers.0.ffn.experts.383.w1.weight": {
+    "dtype": "I8",
+    "shape": [
+      2304,
+      2560
+    ]
+  },
+  "layers.0.ffn.experts.383.w2.scale": {
+    "dtype": "F8_E8M0",
+    "shape": [
+      5120,
+      72
+    ]
+  },
+  "layers.0.ffn.experts.383.w2.weight": {
+    "dtype": "I8",
+    "shape": [
+      5120,
+      1152
+    ]
+  },
+  "layers.0.ffn.experts.383.w3.scale": {
+    "dtype": "F8_E8M0",
+    "shape": [
+      2304,
+      160
+    ]
+  },
+  "layers.0.ffn.experts.383.w3.weight": {
+    "dtype": "I8",
+    "shape": [
+      2304,
+      2560
+    ]
+  },
+  "layers.0.ffn.gate.bias": {
+    "dtype": "F32",
+    "shape": [
+      384
+    ]
+  },
+  "layers.0.ffn.gate.bias_vl": {
+    "dtype": "F32",
+    "shape": [
+      384
+    ]
+  },
+  "layers.0.ffn.gate.weight": {
+    "dtype": "BF16",
+    "shape": [
+      384,
+      5120
+    ]
+  },
+  "layers.0.ffn.shared_experts.w1.scale": {
+    "dtype": "F8_E8M0",
+    "shape": [
+      72,
+      160
+    ]
+  },
+  "layers.0.ffn.shared_experts.w1.weight": {
+    "dtype": "F8_E4M3",
+    "shape": [
+      2304,
+      5120
+    ]
+  },
+  "layers.0.ffn.shared_experts.w2.scale": {
+    "dtype": "F8_E8M0",
+    "shape": [
+      160,
+      72
+    ]
+  },
+  "layers.0.ffn.shared_experts.w2.weight": {
+    "dtype": "F8_E4M3",
+    "shape": [
+      5120,
+      2304
+    ]
+  },
+  "layers.0.ffn.shared_experts.w3.scale": {
+    "dtype": "F8_E8M0",
+    "shape": [
+      72,
+      160
+    ]
+  },
+  "layers.0.ffn.shared_experts.w3.weight": {
+    "dtype": "F8_E4M3",
+    "shape": [
+      2304,
+      5120
+    ]
+  },
+  "layers.0.ffn_norm.weight": {
+    "dtype": "BF16",
+    "shape": [
+      5120
+    ]
+  },
+  "layers.0.hc_attn_base": {
+    "dtype": "F32",
+    "shape": [
+      24
+    ]
+  },
+  "layers.0.hc_attn_fn": {
+    "dtype": "F32",
+    "shape": [
+      24,
+      20480
+    ]
+  },
+  "layers.0.hc_attn_scale": {
+    "dtype": "F32",
+    "shape": [
+      3
+    ]
+  },
+  "layers.0.hc_ffn_base": {
+    "dtype": "F32",
+    "shape": [
+      24
+    ]
+  },
+  "layers.0.hc_ffn_fn": {
+    "dtype": "F32",
+    "shape": [
+      24,
+      20480
+    ]
+  },
+  "layers.0.hc_ffn_scale": {
+    "dtype": "F32",
+    "shape": [
+      3
+    ]
+  },
+  "layers.1.engram.embed.scale": {
+    "dtype": "F8_E8M0",
+    "shape": [
+      384006168,
+      8
+    ]
+  },
+  "layers.1.engram.embed.weight": {
+    "dtype": "F8_E4M3",
+    "shape": [
+      384006168,
+      256
+    ]
+  },
+  "layers.1.engram.k_weight": {
+    "dtype": "BF16",
+    "shape": [
+      4,
+      5120
+    ]
+  },
+  "layers.1.engram.q_weight": {
+    "dtype": "BF16",
+    "shape": [
+      4,
+      5120
+    ]
+  },
+  "layers.1.engram.wkv.scale": {
+    "dtype": "F8_E8M0",
+    "shape": [
+      800,
+      192
+    ]
+  },
+  "layers.1.engram.wkv.weight": {
+    "dtype": "F8_E4M3",
+    "shape": [
+      25600,
+      6144
+    ]
+  },
+  "layers.2.attn.compressor.norm.weight": {
+    "dtype": "BF16",
+    "shape": [
+      512
+    ]
+  },
+  "layers.2.attn.compressor.wgate.weight": {
+    "dtype": "BF16",
+    "shape": [
+      512,
+      5120
+    ]
+  },
+  "layers.2.attn.compressor.wkv.weight": {
+    "dtype": "BF16",
+    "shape": [
+      512,
+      5120
+    ]
+  },
+  "layers.2.attn.indexer.k_norm.weight": {
+    "dtype": "BF16",
+    "shape": [
+      128
+    ]
+  },
+  "layers.2.attn.indexer.weights_proj.weight": {
+    "dtype": "BF16",
+    "shape": [
+      32,
+      5120
+    ]
+  },
+  "layers.2.attn.indexer.wk.weight": {
+    "dtype": "BF16",
+    "shape": [
+      128,
+      512
+    ]
+  },
+  "layers.2.attn.indexer.wq_b.scale": {
+    "dtype": "F8_E8M0",
+    "shape": [
+      128,
+      40
+    ]
+  },
+  "layers.2.attn.indexer.wq_b.weight": {
+    "dtype": "F8_E4M3",
+    "shape": [
+      4096,
+      1280
+    ]
+  }
+}
