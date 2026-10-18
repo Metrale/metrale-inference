@@ -15,8 +15,8 @@ use metrale_settings::InferenceServerSettings;
 use super::{proj_is_fp8_any_scale, proj_is_native_fp8, proj_q2_group};
 
 /// 2026-09-25: `METRALE_DENSE_FP8=1` enables the native FP8 dense-FFN and attention arms
-/// (`ffn_fp8_arm_selected`, `attn_fp8`); off by default. Measured 2026-06-29 on a 9B FP8
-/// checkpoint: correct text at ~30 tok/s against ~40 tok/s on the NVFP4 path.
+/// (`ffn_fp8_arm_selected`, `attn_fp8`); off by default: on an FP8 checkpoint it gives correct text
+/// but decodes slower than the NVFP4 path.
 pub(super) fn dense_fp8_enabled(s: &InferenceServerSettings) -> bool {
     s.kernels.dense_fp8
 }
