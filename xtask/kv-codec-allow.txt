@@ -1,7 +1,6 @@
 # 2026-10-18: kv-codec-ban (xtask/src/kv_codec_ban.rs): files that still decide on a KV codec
 # outside metrale-kv-codec, with their count. It may only shrink; the migration empties it.
 crates/cache/src/kv_cache/catalog.rs 27
-crates/cache/src/kv_cache/paged_impl/diagnostics.rs 2
 crates/cache/src/kv_cache/paged_impl.rs 3
 crates/cache/src/kv_cache.rs 72
 crates/cache/src/kv_cache/tests.rs 45
@@ -59,7 +58,6 @@ crates/model-arch/src/weight_loader/step3p7/load_layers.rs 3
 crates/model-arch/src/weight_loader/step3p7.rs 2
 crates/model-engine/src/engine/tests.rs 2
 crates/model-engine/src/factory/build/kv_blocks_tests.rs 2
-crates/model-engine/src/factory/build/kv_summary.rs 18
 crates/model-engine/src/factory/build/mtp_modules.rs 2
 crates/model-engine/src/factory/build.rs 4
 crates/model-engine/src/factory.rs 2

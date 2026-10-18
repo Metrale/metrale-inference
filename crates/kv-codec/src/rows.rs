@@ -39,6 +39,7 @@ const TURBOQUANT: Option<&str> = Some("TurboQuant+ KV cache");
 pub(crate) const BF16: KvCodecSpec = KvCodecSpec {
     id: KvCodecId::Bf16,
     name: "bf16",
+    label: "BF16",
     value_bits: 16,
     group: 0,
     side: &[],
@@ -56,6 +57,7 @@ pub(crate) const BF16: KvCodecSpec = KvCodecSpec {
 pub(crate) const FP8_E4M3_TENSOR: KvCodecSpec = KvCodecSpec {
     id: KvCodecId::Fp8,
     name: "fp8",
+    label: "FP8",
     value_bits: 8,
     group: 0,
     side: &[],
@@ -73,6 +75,7 @@ pub(crate) const FP8_E4M3_TENSOR: KvCodecSpec = KvCodecSpec {
 pub(crate) const NVFP4_E4M3X16: KvCodecSpec = KvCodecSpec {
     id: KvCodecId::Nvfp4,
     name: "nvfp4",
+    label: "NVFP4",
     value_bits: 4,
     group: GROUP16,
     side: E4M3_SCALE_PER_16,
@@ -90,6 +93,7 @@ pub(crate) const NVFP4_E4M3X16: KvCodecSpec = KvCodecSpec {
 pub(crate) const TURBO4: KvCodecSpec = KvCodecSpec {
     id: KvCodecId::Turbo4,
     name: "turbo4",
+    label: "Turbo4",
     value_bits: 4,
     group: GROUP16,
     side: E4M3_SCALE_PER_16,
@@ -107,6 +111,7 @@ pub(crate) const TURBO4: KvCodecSpec = KvCodecSpec {
 pub(crate) const TURBO3: KvCodecSpec = KvCodecSpec {
     id: KvCodecId::Turbo3,
     name: "turbo3",
+    label: "Turbo3",
     value_bits: 3,
     group: GROUP16,
     side: E4M3_SCALE_PER_16,
@@ -125,6 +130,7 @@ pub(crate) const TURBO3: KvCodecSpec = KvCodecSpec {
 pub(crate) const TURBO2: KvCodecSpec = KvCodecSpec {
     id: KvCodecId::Turbo2,
     name: "turbo2",
+    label: "Turbo2",
     value_bits: 2,
     group: GROUP16,
     side: E4M3_SCALE_PER_16,
@@ -142,6 +148,7 @@ pub(crate) const TURBO2: KvCodecSpec = KvCodecSpec {
 pub(crate) const TURBO8: KvCodecSpec = KvCodecSpec {
     id: KvCodecId::Turbo8,
     name: "turbo8",
+    label: "Turbo8",
     value_bits: 8,
     group: GROUP16,
     side: BF16_NORM_PER_16,

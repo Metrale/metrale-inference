@@ -158,6 +158,8 @@ pub struct KvCodecSpec {
     pub id: KvCodecId,
     /// 2026-10-18: The canonical `--kv-cache-dtype` spelling.
     pub name: &'static str,
+    /// 2026-10-18: The display label telemetry prints (e.g. `Turbo4`); distinct per codec.
+    pub label: &'static str,
     /// 2026-10-18: Bits per stored value.
     pub value_bits: u8,
     /// 2026-10-18: Values per quantization group; 0 when the codec has none.
@@ -191,6 +193,12 @@ impl KvCodecSpec {
             Rotation::None => false,
             Rotation::Wht { .. } | Rotation::Fwht { .. } => true,
         }
+    }
+
+    /// 2026-10-18: True when the stored values are plain bf16, so a host probe can read them
+    /// without dequantizing (the host LUT is a copy).
+    pub const fn stores_bf16(&self) -> bool {
+        matches!(self.host_dequant, Some(HostLutId::Copy))
     }
 
     /// 2026-10-18: Bytes of packed values: `values * value_bits / 8`.

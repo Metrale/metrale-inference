@@ -14,6 +14,7 @@ metal = ["metrale-model-arch/metal"]
 
 [dependencies]
 metrale-cache = { workspace = true }
+metrale-kv-codec = { workspace = true }
 metrale-comm = { workspace = true }
 metrale-config = { workspace = true }
 metrale-settings = { workspace = true }
