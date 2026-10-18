@@ -14,6 +14,7 @@ use metrale_config::ModelConfig;
 use metrale_gpu_runtime::gpu::GpuBackend;
 use metrale_model_weights::weights::WeightStore;
 
+mod levers;
 mod ssm_layer;
 
 use super::ModelWeightLoader;
@@ -67,6 +68,7 @@ impl ModelWeightLoader for NemotronHWeightLoader {
             .max(moe_input * max_moe_inter);
         let scratch_bytes = scratch_elems * 2;
         let scratch = gpu.alloc(scratch_bytes)?;
+        let levers = levers::NemotronLevers::from_settings(lc.settings);
 
         for (i, lt) in layer_types.iter().enumerate() {
             let lp = config.layer_prefix(i);
@@ -76,6 +78,7 @@ impl ModelWeightLoader for NemotronHWeightLoader {
                 metrale_config::LayerType::LinearAttention => {
                     let layer = Self::build_ssm_layer(
                         gpu, store, config, i, h, &lp, norm, quantize_k, absmax_k, scratch, stream,
+                        levers,
                     )?;
                     layers.push(Box::new(layer));
                 }
@@ -126,6 +129,7 @@ impl ModelWeightLoader for NemotronHWeightLoader {
                         gpu,
                         config,
                         crate::nemotron_moe::shared_expert_e4m3(),
+                        levers.shared_fp8_prefill,
                     );
                     layers.push(Box::new(moe_layer));
                 }
@@ -268,8 +272,7 @@ impl ModelWeightLoader for NemotronHWeightLoader {
                         // 2026-09-25: Dense attention stays BF16 unless
                         // `METRALE_NEMOTRON_BF16_ATTN=0`, which quantizes Q/K/V/O to
                         // NVFP4.
-                        let keep_bf16_attn =
-                            std::env::var("METRALE_NEMOTRON_BF16_ATTN").as_deref() != Ok("0");
+                        let keep_bf16_attn = levers.bf16_attn;
                         if keep_bf16_attn {
                             tracing::info!(
                                 "L{i} attention: keeping checkpoint BF16 Q/K/V/O (no NVFP4 requant)"

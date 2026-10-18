@@ -103,7 +103,7 @@ impl ModelWeightLoader for LongcatWeightLoader {
         if disable_nvfp4_mla {
             tracing::info!("LongCat: METRALE_NVFP4_MLA=0 — MLA projections stay BF16");
         }
-        if super::longcat::ffn::bf16_dense_ffn() {
+        if lc.settings.kernels.longcat_bf16_ffn {
             tracing::info!(
                 "LongCat: METRALE_LONGCAT_BF16_FFN=1 — per-sublayer dense FFN stays BF16"
             );
@@ -338,7 +338,13 @@ impl ModelWeightLoader for LongcatWeightLoader {
                 if s == 0 {
                     // 2026-09-25: Sublayer 0 owns the block's shortcut MoE; its
                     // output is stored and added at the end of sublayer 1.
-                    let moe = build_shortcut_moe(store, &lp, config, gpu)?;
+                    let moe = build_shortcut_moe(
+                        store,
+                        &lp,
+                        config,
+                        gpu,
+                        lc.settings.kernels.longcat_fp8_experts,
+                    )?;
                     layer.set_shortcut_moe(moe, carry, CARRY_TOKENS);
                 } else {
                     layer.set_shortcut_carry_in(carry, CARRY_TOKENS);
@@ -373,8 +379,9 @@ impl ModelWeightLoader for LongcatWeightLoader {
         config: &ModelConfig,
         gpu: &dyn GpuBackend,
         max_tokens: usize,
+        lc: metrale_model_layers::load_context::LoadContext<'_>,
     ) -> Result<Option<metrale_model_layers::layers::ngram_embed::NgramEmbedding>> {
-        ngram::build(store, config, gpu, max_tokens)
+        ngram::build(store, config, gpu, max_tokens, lc.settings)
     }
 
     fn load_final_norm(
@@ -422,3 +429,7 @@ impl ModelWeightLoader for LongcatWeightLoader {
 
 mod ffn;
 use ffn::{build_dense_ffn, build_shortcut_moe};
+
+#[cfg(all(test, feature = "cuda"))]
+#[path = "levers_tests.rs"]
+mod levers_tests;

@@ -75,11 +75,11 @@ pub fn assemble_layer(
     for e in 0..config.num_experts {
         if force_all_experts || config.is_local_expert(e) {
             let ep = format!("{p}.ffn.experts.{e}");
-            let gate_proj = load_expert_proj(store, &format!("{ep}.w1"), gpu, qctx)
+            let gate_proj = load_expert_proj(store, &format!("{ep}.w1"), gpu, qctx, lc.settings)
                 .with_context(|| format!("DeepSeek-V4 expert {e}: w1"))?;
-            let up_proj = load_expert_proj(store, &format!("{ep}.w3"), gpu, qctx)
+            let up_proj = load_expert_proj(store, &format!("{ep}.w3"), gpu, qctx, lc.settings)
                 .with_context(|| format!("DeepSeek-V4 expert {e}: w3"))?;
-            let down_proj = load_expert_proj(store, &format!("{ep}.w2"), gpu, qctx)
+            let down_proj = load_expert_proj(store, &format!("{ep}.w2"), gpu, qctx, lc.settings)
                 .with_context(|| format!("DeepSeek-V4 expert {e}: w2"))?;
             experts.push(ExpertWeight {
                 gate_proj,
@@ -94,11 +94,11 @@ pub fn assemble_layer(
     // With EP the decode MoE adds it once, after the routed all-reduce.
     let sep = format!("{p}.ffn.shared_experts");
     let shared_expert = ExpertWeight {
-        gate_proj: load_expert_proj(store, &format!("{sep}.w1"), gpu, qctx)
+        gate_proj: load_expert_proj(store, &format!("{sep}.w1"), gpu, qctx, lc.settings)
             .with_context(|| "DeepSeek-V4 shared expert: w1")?,
-        up_proj: load_expert_proj(store, &format!("{sep}.w3"), gpu, qctx)
+        up_proj: load_expert_proj(store, &format!("{sep}.w3"), gpu, qctx, lc.settings)
             .with_context(|| "DeepSeek-V4 shared expert: w3")?,
-        down_proj: load_expert_proj(store, &format!("{sep}.w2"), gpu, qctx)
+        down_proj: load_expert_proj(store, &format!("{sep}.w2"), gpu, qctx, lc.settings)
             .with_context(|| "DeepSeek-V4 shared expert: w2")?,
     };
 

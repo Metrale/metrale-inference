@@ -51,8 +51,8 @@ pub(super) fn build_dense_ffn(
     // 2026-09-25: The three projections are quantized to NVFP4 above from
     // the store's weights. With the lever on, `set_bf16_weights` also installs
     // those weights, and the forward paths dispatch to the BF16 kernels; the
-    // NVFP4 copy stays resident.
-    if bf16_dense_ffn() {
+    // NVFP4 copy stays resident. The lever is `METRALE_LONGCAT_BF16_FFN`.
+    if lc.settings.kernels.longcat_bf16_ffn {
         layer.set_bf16_weights(
             dense(store, &format!("{prefix}.gate_proj.weight"))?,
             dense(store, &format!("{prefix}.up_proj.weight"))?,
@@ -62,18 +62,16 @@ pub(super) fn build_dense_ffn(
     Ok(FfnComponent::Dense(layer))
 }
 
-/// 2026-09-25: `METRALE_LONGCAT_BF16_FFN=1` runs the per-sublayer dense FFN in BF16.
-pub(super) fn bf16_dense_ffn() -> bool {
-    std::env::var("METRALE_LONGCAT_BF16_FFN").as_deref() == Ok("1")
-}
-
 /// 2026-09-25: The block's shortcut MoE: `mlp.router.*` + `mlp.experts.{e}.*`.
 /// No shared-expert tensor is loaded; the shared slot is zero-filled.
+/// `fp8` (`METRALE_LONGCAT_FP8_EXPERTS`) quantizes the routed experts to block-scaled FP8 at
+/// load instead of NVFP4.
 pub(super) fn build_shortcut_moe(
     store: &WeightStore,
     layer_prefix: &str,
     config: &ModelConfig,
     gpu: &dyn GpuBackend,
+    fp8: bool,
 ) -> Result<FfnComponent> {
     let p = format!("{layer_prefix}.mlp");
     let h = config.hidden_size;
@@ -120,7 +118,6 @@ pub(super) fn build_shortcut_moe(
         quantize_k: gpu.kernel("quantize_nvfp4", "quantize_bf16_to_nvfp4")?,
         stream: gpu.default_stream(),
     };
-    let fp8 = fp8_experts();
     let mut experts = Vec::with_capacity(config.num_experts);
     let mut fp8_experts_vec = Vec::with_capacity(if fp8 { config.num_experts } else { 0 });
     let fp8_quant_k = if fp8 {
@@ -235,12 +232,6 @@ pub(super) fn build_shortcut_moe(
         .context("longcat: installing FP8 expert pointer tables")?;
     }
     Ok(FfnComponent::Moe(moe))
-}
-
-/// 2026-09-25: `METRALE_LONGCAT_FP8_EXPERTS=1` quantizes the routed experts to
-/// block-scaled FP8 at load instead of NVFP4.
-pub(super) fn fp8_experts() -> bool {
-    std::env::var("METRALE_LONGCAT_FP8_EXPERTS").as_deref() == Ok("1")
 }
 
 /// 2026-09-25: One expert projection: BF16 from the store to block-scaled FP8,

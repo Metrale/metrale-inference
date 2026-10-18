@@ -57,7 +57,7 @@ impl ModelWeightLoader for Qwen3VLWeightLoader {
         // 2026-09-25: Whether to build the MoE prefill copies, decided once for
         // every layer: `moe_prefill_copies_fit` reads free memory, which
         // shrinks as layers load.
-        let moe_prefill_copies = super::moe_prefill_copies_fit(config, gpu);
+        let moe_prefill_copies = super::moe_prefill_copies_fit(config, gpu, lc.settings);
         let absmax_k = gpu.kernel("quantize_nvfp4", "nvfp4_global_absmax")?;
         let quantize_k = gpu.kernel("quantize_nvfp4", "quantize_bf16_to_nvfp4")?;
         let stream = gpu.default_stream();

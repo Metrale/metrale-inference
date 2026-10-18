@@ -79,7 +79,7 @@ impl ModelWeightLoader for Qwen3WeightLoader {
 
         // 2026-09-25: `super::moe_prefill_copies_fit` decides whether the transposed MoE prefill
         // tables fit in free memory; `METRALE_MOE_PREFILL_COPIES=0` forces them off.
-        let skip_moe_transpose = !super::moe_prefill_copies_fit(config, gpu);
+        let skip_moe_transpose = !super::moe_prefill_copies_fit(config, gpu, lc.settings);
 
         for (i, lt) in layer_types.iter().enumerate() {
             let lp = config.layer_prefix(i);
@@ -93,7 +93,7 @@ impl ModelWeightLoader for Qwen3WeightLoader {
             };
             // 2026-09-25: `METRALE_BF16_ROUTER=1` keeps the router gate BF16 (`gate_nvfp4` None),
             // so the gate GEMM runs dense on `weights.gate` (`moe/forward_batched_gate.rs`).
-            let gate_nvfp4 = if std::env::var("METRALE_BF16_ROUTER").as_deref() == Ok("1") {
+            let gate_nvfp4 = if lc.settings.kernels.bf16_router {
                 None
             } else {
                 Some(quantize_to_nvfp4(

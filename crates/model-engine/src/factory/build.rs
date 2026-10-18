@@ -174,7 +174,7 @@ pub fn build_model(
     // 2026-09-25: n-gram fused embedding: LongCat's loader builds one, the
     // default returns `None`. Sized for `max_batch_tokens`, the widest embed.
     let ngram_embed =
-        loader.load_ngram_embedding(&store, &config, gpu.as_ref(), max_batch_tokens)?;
+        loader.load_ngram_embedding(&store, &config, gpu.as_ref(), max_batch_tokens, load_ctx)?;
     let final_norm = loader.load_final_norm(&store, &config, gpu.as_ref())?;
     mem.mark("load_final_norm");
     let lm_head = loader.load_lm_head(&store, &config, gpu.as_ref())?;

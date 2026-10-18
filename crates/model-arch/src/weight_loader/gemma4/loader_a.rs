@@ -24,14 +24,24 @@ use metrale_model_layers::weight_map::{
     quantized_any,
 };
 
+/// 2026-10-17: The rule of the Gemma-4 BF16 levers, kept from their environment reads: `0` is
+/// off, `1` is on, anything else (unset included) is the lever's default.
+pub(super) fn text_switch(v: Option<&str>, default: bool) -> bool {
+    match v {
+        Some("0") => false,
+        Some("1") => true,
+        _ => default,
+    }
+}
+
 /// 2026-09-25: Whether free memory, less 2 GiB, holds the transposed NVFP4 FFN
 /// copies for every layer. `METRALE_GEMMA4_FFN_TRANSPOSE=0` answers no.
-fn ffn_transpose_fits(config: &ModelConfig, gpu: &dyn GpuBackend) -> bool {
-    if std::env::var("METRALE_GEMMA4_FFN_TRANSPOSE")
-        .ok()
-        .as_deref()
-        == Some("0")
-    {
+fn ffn_transpose_fits(
+    config: &ModelConfig,
+    gpu: &dyn GpuBackend,
+    settings: &metrale_settings::InferenceServerSettings,
+) -> bool {
+    if settings.kernels.gemma4_ffn_transpose.as_deref() == Some("0") {
         tracing::info!("METRALE_GEMMA4_FFN_TRANSPOSE=0: dense FFN prefill uses the w4a16 fallback");
         return false;
     }
@@ -68,8 +78,8 @@ pub(super) fn load_layers_impl(
 
     // 2026-09-25: Decided once, before any layer allocates; see the
     // `moe_prefill_copies` parameter of `build_moe_ffn`.
-    let moe_prefill_copies =
-        config.num_experts > 0 && crate::weight_loader::moe_prefill_copies_fit(config, gpu);
+    let moe_prefill_copies = config.num_experts > 0
+        && crate::weight_loader::moe_prefill_copies_fit(config, gpu, lc.settings);
     let absmax_k = gpu.kernel("quantize_nvfp4", "nvfp4_global_absmax")?;
     let quantize_k = gpu.kernel("quantize_nvfp4", "quantize_bf16_to_nvfp4")?;
     let stream = gpu.default_stream();
@@ -164,19 +174,17 @@ pub(super) fn load_layers_impl(
         // and o_proj gets a BF16 copy. `METRALE_GEMMA4_BF16_ATTN=0` quantizes
         // them to NVFP4 instead.
         let bf16_attn_default = true;
-        let bf16_attn = match std::env::var("METRALE_GEMMA4_BF16_ATTN").ok().as_deref() {
-            Some("0") => false,
-            Some("1") => true,
-            _ => bf16_attn_default,
-        };
+        let bf16_attn = text_switch(
+            lc.settings.kernels.gemma4_bf16_attn.as_deref(),
+            bf16_attn_default,
+        );
         // 2026-09-25: `METRALE_GEMMA4_BF16_MLP=1` adds BF16 copies of an NVFP4
         // MLP (`build_bf16_mlp`), which the FFN then uses; off by default.
         let bf16_mlp_default = false;
-        let bf16_mlp = match std::env::var("METRALE_GEMMA4_BF16_MLP").ok().as_deref() {
-            Some("0") => false,
-            Some("1") => true,
-            _ => bf16_mlp_default,
-        };
+        let bf16_mlp = text_switch(
+            lc.settings.kernels.gemma4_bf16_mlp.as_deref(),
+            bf16_mlp_default,
+        );
         // 2026-09-25: Under TP, q/k/v are column-sharded and o row-sharded by
         // their per-layer on-disk dims before any quantization, which then
         // uses the per-rank dims. When V aliases K, V is re-pointed at the
@@ -313,7 +321,7 @@ pub(super) fn load_layers_impl(
         // an arm over the untransposed weights, down to plain `w4a16_gemm`. The
         // copies are skipped when `bf16_mlp` is on or `ffn_transpose_fits` says
         // they do not fit.
-        let want_ffn_t = !bf16_mlp && ffn_transpose_fits(config, gpu);
+        let want_ffn_t = !bf16_mlp && ffn_transpose_fits(config, gpu, lc.settings);
         let (gate_proj_t, up_proj_t, down_proj_t) = if want_ffn_t {
             (
                 Some(gate_proj.transpose_for_gemm(gpu, config.intermediate_size, h)?),

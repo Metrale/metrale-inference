@@ -83,3 +83,7 @@ impl ModelWeightLoader for Gemma4WeightLoader {
         loader_b::kv_layer_dims_impl(config)
     }
 }
+
+#[cfg(test)]
+#[path = "gemma4/levers_tests.rs"]
+mod levers_tests;

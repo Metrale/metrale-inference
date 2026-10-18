@@ -73,12 +73,15 @@ use metrale_model_layers::weight_map::{
 /// layer, and does the operator want them? Without them MoE prefill uses the
 /// fallback grouped GEMM. The qwen3, qwen3_vl and gemma4 loaders ask here.
 ///
-/// `METRALE_MOE_PREFILL_COPIES=0` forces the fallback. Any other value, or
-/// unset, builds them when their NVFP4 bytes for all `num_hidden_layers` fit in
-/// the measured free memory less 2 GiB; if free memory cannot be read, they are
-/// not built.
-pub(crate) fn moe_prefill_copies_fit(config: &ModelConfig, gpu: &dyn GpuBackend) -> bool {
-    if std::env::var("METRALE_MOE_PREFILL_COPIES").ok().as_deref() == Some("0") {
+/// `METRALE_MOE_PREFILL_COPIES` off forces the fallback. On, or unset, builds
+/// them when their NVFP4 bytes for all `num_hidden_layers` fit in the measured
+/// free memory less 2 GiB; if free memory cannot be read, they are not built.
+pub(crate) fn moe_prefill_copies_fit(
+    config: &ModelConfig,
+    gpu: &dyn GpuBackend,
+    settings: &metrale_settings::InferenceServerSettings,
+) -> bool {
+    if !settings.scheduler.moe_prefill_copies {
         tracing::info!("METRALE_MOE_PREFILL_COPIES=0: MoE prefill uses the fallback grouped GEMM");
         return false;
     }
@@ -225,6 +228,7 @@ pub trait ModelWeightLoader {
         _config: &ModelConfig,
         _gpu: &dyn GpuBackend,
         _max_tokens: usize,
+        _lc: metrale_model_layers::load_context::LoadContext<'_>,
     ) -> Result<Option<metrale_model_layers::layers::ngram_embed::NgramEmbedding>> {
         Ok(None)
     }
@@ -380,3 +384,7 @@ pub trait ModelWeightLoader {
         Ok(None)
     }
 }
+
+#[cfg(test)]
+#[path = "loader_levers_tests.rs"]
+mod loader_levers_tests;
