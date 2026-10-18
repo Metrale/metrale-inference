@@ -95,6 +95,7 @@ fn qsa_prefill_select_sets_match_reference() {
         scratch,
         g,
         stream,
+        crate::layers::qsa::QsaLevers::declared(),
     )
     .unwrap();
     g.synchronize(stream).unwrap();

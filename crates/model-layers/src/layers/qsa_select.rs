@@ -24,7 +24,7 @@ impl QsaIndexer {
     /// must already hold every prior chunk plus this one. Rows below the bound
     /// keep the dense output, which is identical there. `prefill_ingest` must
     /// have run for this chunk (`prefill_inner.rs` calls it before attention).
-    /// `METRALE_QSA_NO_PREFILL_SELECT=1` makes this a no-op.
+    /// `levers.prefill_select` off (`METRALE_QSA_NO_PREFILL_SELECT`) makes this a no-op.
     #[allow(clippy::too_many_arguments)]
     pub fn prefill_select(
         &self,
@@ -43,22 +43,17 @@ impl QsaIndexer {
         scratch: DevicePtr,
         gpu: &dyn GpuBackend,
         stream: u64,
+        levers: super::QsaLevers,
     ) -> Result<()> {
         let bound = self.inert_bound(); // 2026-09-25: first selective global position
         let total = seq_start + num_tokens;
         if total <= bound {
             return Ok(());
         }
-        static S2_OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if *S2_OFF
-            .get_or_init(|| std::env::var("METRALE_QSA_NO_PREFILL_SELECT").as_deref() == Ok("1"))
-        {
+        if !levers.prefill_select {
             return Ok(());
         }
-        let diag = {
-            static D: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-            *D.get_or_init(|| std::env::var("METRALE_QSA_S2_DIAG").as_deref() == Ok("1"))
-        };
+        let diag = levers.s2_diag;
         // 2026-09-25: METRALE_QSA_S2_DIAG=1: keep the dense context of the last
         // row before the overwrite, and log cosine(dense, selected) after.
         let q_row = nq as usize * self.hd_attn as usize;
@@ -186,12 +181,12 @@ impl QsaIndexer {
             // 2026-09-25: `n_blocks_max` is the last row's complete-block count.
             let n_blocks_max = (first_pos + rows) / ratio;
             // 2026-09-25: The tensor-core scorer is used when the target ships it and
-            // the shape is 4 heads x 128; METRALE_QSA_SCORE_SCALAR=1 forces the
-            // scalar kernel.
+            // the shape is 4 heads x 128; `levers.score_scalar`
+            // (METRALE_QSA_SCORE_SCALAR) forces the scalar kernel.
             let tc = self.k_score_rows_tc_k.0 != 0
                 && self.n_heads == 4
                 && self.hd == 128
-                && std::env::var("METRALE_QSA_SCORE_SCALAR").as_deref() != Ok("1");
+                && !levers.score_scalar;
             if tc {
                 ops::qsa_score_rows_tc(
                     gpu,

@@ -59,6 +59,8 @@ pub struct AttnLevers {
     /// 2026-10-18: `METRALE_FP8_KV_EMA_RECAL`: post-freeze EMA recalibration of the FP8 KV
     /// scales (`fp8_calibration.rs`), copied into each layer's calibrator.
     pub fp8_kv_ema_recal: bool,
+    /// 2026-10-18: The QSA indexer's prefill-selection levers (`qsa_levers.rs`).
+    pub qsa: crate::layers::qsa::QsaLevers,
 }
 
 impl AttnLevers {
@@ -84,6 +86,7 @@ impl AttnLevers {
             fused_kv: c.fused_kv,
             flashinfer_prefill: sc.flashinfer_prefill,
             fp8_kv_ema_recal: c.fp8_kv_ema_recal,
+            qsa: crate::layers::qsa::QsaLevers::from_settings(s),
         }
     }
 
@@ -104,6 +107,7 @@ impl AttnLevers {
             fused_kv: false,
             flashinfer_prefill: false,
             fp8_kv_ema_recal: false,
+            qsa: crate::layers::qsa::QsaLevers::declared(),
         }
     }
 }

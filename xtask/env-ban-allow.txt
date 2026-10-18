@@ -216,7 +216,6 @@ crates/model-layers/src/layers/ops/model_levers_resolve.rs
 crates/model-layers/src/layers/ops/target_defaults.rs
 crates/model-layers/src/layers/ple/dump.rs
 crates/model-layers/src/layers/qsa.rs
-crates/model-layers/src/layers/qsa_select.rs
 crates/model-layers/src/layers/qsa_tests.rs
 crates/model-layers/src/layers/qwen3_attention/innerq_driver.rs
 crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/attn.rs
