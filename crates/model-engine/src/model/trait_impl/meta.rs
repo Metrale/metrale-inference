@@ -48,7 +48,14 @@ impl TransformerModel {
         // derived with the KV convention (`derive_kv`, blob_bytes = 0). When it cannot be
         // derived the field is `None` with a warning, and a `METRALE_KV_PAGING=1` connect then
         // fails unless `METRALE_KV_PAGING_NS` is set.
-        let model_fp = match crate::model::ssm_tier::ModelFingerprint::derive_kv(&self.config) {
+        let model_fp = match crate::model::ssm_tier::ModelFingerprint::derive_kv(
+            &self.config,
+            self.settings_ref()
+                .model
+                .model_id
+                .as_deref()
+                .unwrap_or_default(),
+        ) {
             Ok(fp) => Some(fp.nonzero()),
             Err(e) => {
                 tracing::warn!(

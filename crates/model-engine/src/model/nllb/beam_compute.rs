@@ -228,10 +228,7 @@ impl NllbGpuModel {
             self.add(buf.dh, buf.proj, b * d)?;
         }
         self.layer_norm("model.decoder.layer_norm", buf.dh, b)?;
-        let t_lm = std::env::var("METRALE_NLLB_BEAM_PROFILE")
-            .map(|v| v == "1")
-            .unwrap_or(false)
-            .then(std::time::Instant::now);
+        let t_lm = self.levers.beam_profile.then(std::time::Instant::now);
         self.gemm(buf.dh, self.embed_table, buf.logits, b, self.vocab, d)?; // 2026-09-25: tied lm_head
         if let Some(t) = t_lm {
             self.gpu.synchronize(self.stream())?;

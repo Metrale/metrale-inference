@@ -15,19 +15,14 @@ use parking_lot::Mutex;
 
 use super::{BlobStoreStats, SnapshotBlobStore, SnapshotTransport};
 
-fn unified_flag_truthy(v: Option<&str>) -> bool {
+/// 2026-09-25: The `METRALE_SSM_TIER_UNIFIED` rule: `1`, `true`, `on` or `yes` after trimming
+/// (off when unset). When it holds, the selectors build [`UnifiedSnapshotStore`]s in place of
+/// `MemBlobStore` (FIFO eviction) and `RdmaSnapshotStore` (refuses a put when full).
+pub(super) fn unified_flag_truthy(v: Option<&str>) -> bool {
     matches!(
         v.map(str::trim),
         Some("1") | Some("true") | Some("on") | Some("yes")
     )
-}
-
-/// 2026-09-25: Whether `METRALE_SSM_TIER_UNIFIED` is `1`, `true`, `on` or `yes`
-/// (off when unset). When it is, the selectors build [`UnifiedSnapshotStore`]s
-/// in place of `MemBlobStore` (FIFO eviction) and `RdmaSnapshotStore` (refuses a
-/// put when full).
-pub(crate) fn ssm_tier_unified() -> bool {
-    unified_flag_truthy(std::env::var("METRALE_SSM_TIER_UNIFIED").ok().as_deref())
 }
 
 /// 2026-09-25: Adapts a [`SnapshotTransport`] to `metrale_storage::tier::SlotArena`.
@@ -222,21 +217,19 @@ pub(super) enum SwapBacking {
     HostRam,
 }
 
-/// 2026-09-25: The unified stores' swap tier. `METRALE_SSM_TIER_SWAP_DIR` selects an
-/// O_DIRECT swap file, which needs a 4 KiB-multiple blob. Otherwise, or when the
-/// file cannot be created, host-RAM records.
+/// 2026-09-25: The unified stores' swap tier. A non-empty `swap_dir`
+/// (`METRALE_SSM_TIER_SWAP_DIR`) selects an O_DIRECT swap file, which needs a 4 KiB-multiple
+/// blob. Otherwise, or when the file cannot be created, host-RAM records.
 pub(super) fn build_unified_swap(
     blob_bytes: usize,
     tag: &str,
+    swap_dir: Option<&str>,
 ) -> (Box<dyn metrale_storage::tier::SwapStore>, SwapBacking) {
-    if let Some(dir) = std::env::var("METRALE_SSM_TIER_SWAP_DIR")
-        .ok()
-        .filter(|s| !s.is_empty())
-    {
+    if let Some(dir) = super::levers::non_empty(swap_dir) {
         if blob_bytes > 0 && blob_bytes.is_multiple_of(4096) {
             let make = || -> Result<metrale_storage::tier::DirectSwapFile> {
-                std::fs::create_dir_all(&dir)?;
-                let path = std::path::Path::new(&dir)
+                std::fs::create_dir_all(dir)?;
+                let path = std::path::Path::new(dir)
                     .join(format!("metrale-ssm-{tag}.{}.swap", std::process::id()));
                 metrale_storage::tier::DirectSwapFile::create(&path, blob_bytes)
             };
@@ -263,37 +256,16 @@ pub(super) fn build_unified_swap(
     )
 }
 
-/// 2026-09-25: Hot-arena slot count for the host-RAM unified stores:
-/// `METRALE_SSM_TIER_SLOTS`, 64 when unset or unparsable, at least 1.
-pub(super) fn unified_hot_slots() -> usize {
-    std::env::var("METRALE_SSM_TIER_SLOTS")
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(64)
-        .max(1)
-}
-
 fn gib(records: usize, blob_bytes: usize) -> f64 {
     (records as f64) * (blob_bytes as f64) / (1024.0 * 1024.0 * 1024.0)
 }
 
 pub(super) const DISK_GB_VAR: &str = "METRALE_SSM_TIER_DISK_GB";
 
-/// 2026-09-25: Whether `METRALE_SSM_TIER_DISK_GB` is set and non-empty;
-/// `build_tier_store` warns when it is set without the unified arms.
-pub(super) fn disk_gb_requested() -> bool {
-    std::env::var_os(DISK_GB_VAR).is_some_and(|v| !v.is_empty())
-}
-
-/// 2026-09-25: Swap-record cap for the unified spill tier from [`DISK_GB_VAR`]
-/// (GiB, fractional accepted). Unset or `0` means uncapped (`0`).
-pub(super) fn ssm_tier_disk_slots(blob_bytes: usize) -> Result<usize> {
-    disk_slots_from(std::env::var(DISK_GB_VAR).ok().as_deref(), blob_bytes)
-}
-
-/// 2026-09-25: Env-free core of [`ssm_tier_disk_slots`].
+/// 2026-09-25: Swap-record cap for the unified spill tier from `raw`, the [`DISK_GB_VAR`]
+/// value (GiB, fractional accepted). Unset, empty or `0` means uncapped (`0`).
 ///
-/// A strict parse, unlike the lenient `unified_hot_slots`: a bad slot count only
+/// A strict parse, unlike the lenient hot-slot count: a bad slot count only
 /// mis-sizes an arena, but a misread budget here would mean uncapped.
 ///
 /// `Residency` caps records, not bytes, and checks that the swap record size

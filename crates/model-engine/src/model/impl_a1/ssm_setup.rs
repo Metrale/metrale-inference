@@ -100,8 +100,9 @@ pub(super) fn build_ssm_snapshots(
     gpu: &dyn GpuBackend,
 ) -> Result<(SsmSnapshotPool, Option<Arc<dyn SnapshotBlobStore>>)> {
     // 2026-09-25: Fail at startup when an SSM tier variable
-    // (`SSM_TIER_VARS`) is set on a model without recurrent state.
-    super::super::ssm_tier::ensure_ssm_tier_capability(config)?;
+    // (`SsmTierLevers::requested_tier_vars`) is set on a model without recurrent state.
+    let tier_levers = super::super::ssm_tier::SsmTierLevers::from_settings(settings);
+    super::super::ssm_tier::ensure_ssm_tier_capability(config, &tier_levers)?;
 
     // 2026-09-25: SSM snapshot pool: the prefix-cache (Marconi) slots and a
     // decode-rollback ring for each of `max_batch_size` sequences; both are
@@ -179,6 +180,7 @@ pub(super) fn build_ssm_snapshots(
         config,
         ssm_snapshots.spill_blob_bytes(),
         ssm_pool.num_ssm_layers,
+        &tier_levers,
     )?;
     if ssm_checkpoint_interval > 0 && ssm_cache_slots > 0 {
         tracing::info!(target: "metrale_model_engine::model::impl_a1", "Marconi intermediate checkpoints: every {} blocks ({} tokens at block_size={})",

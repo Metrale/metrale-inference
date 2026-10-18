@@ -90,13 +90,7 @@ crates/model-arch/src/weight_loader/glm5_next_load/layer_stream.rs
 crates/model-arch/src/weight_loader/qwen35/load_layers.rs
 crates/model-arch/src/weight_loader/qwen35/load_layers/selectors.rs
 crates/model-engine/src/kimi_k3_loader.rs
-crates/model-engine/src/model/nllb/beam_compute.rs
-crates/model-engine/src/model/nllb/beam_multi.rs
-crates/model-engine/src/model/ssm_tier/capability.rs
 crates/model-engine/src/model/ssm_tier/fingerprint.rs
-crates/model-engine/src/model/ssm_tier/selectors.rs
-crates/model-engine/src/model/ssm_tier/selectors_tests.rs
-crates/model-engine/src/model/ssm_tier/unified.rs
 crates/model-engine/tests/glm53_ep_residency.rs
 crates/model-engine/tests/glm5next_expert_tp_cuda.rs
 crates/model-engine/tests/glm5next_fp8_dense_cuda.rs
