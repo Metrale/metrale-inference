@@ -188,6 +188,7 @@ impl Qwen3AttentionLayer {
                 ops::fp8_gemm_n128(
                     ctx.gpu,
                     self.fp8_gemm_k,
+                    ctx.levers.ops.fp8_ldmab,
                     attn_out,
                     fp8,
                     o_out,

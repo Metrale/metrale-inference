@@ -43,6 +43,21 @@ pub struct OpsLevers {
     pub lora: LoraLevers,
     /// 2026-09-25: The low-rank hyper-connection collapse paths (`hyper_connection_lowrank.rs`).
     pub hc: HcLevers,
+    /// 2026-09-25: On unless `METRALE_NO_W8A8_DECODE_PROJ` is present at any value
+    /// (`dispatch_proj_decode::decode_w8a8_selected`).
+    pub w8a8_decode_proj: bool,
+    /// 2026-09-25: `METRALE_GGUF_NATIVE_Q2_MMQ`: packed Q2 prefill weights run through
+    /// `q2_0_mmq_gemm` where its kernels resolved (`q2_0_mmq.rs`).
+    pub native_q2_mmq: bool,
+    /// 2026-09-25: On unless `METRALE_ATTN_512_TC` is switched off
+    /// (`wide_prefill::wide_prefill_kernel`).
+    pub attn_512_tc: bool,
+    /// 2026-09-25: On unless `METRALE_CONV1D_TP` is switched off
+    /// (`ssm_mamba::conv1d_update_prefill`).
+    pub conv1d_tp: bool,
+    /// 2026-09-28: On unless `METRALE_FP8_LDMAB` is switched off
+    /// (`gemm_fp8_prefill::fp8_gemm_n128`).
+    pub fp8_ldmab: bool,
 }
 
 impl OpsLevers {
@@ -67,6 +82,11 @@ impl OpsLevers {
                 gemm_disabled: k.qwen4exp_no_hc_gemm,
                 decode_split_forced: k.hc_decode_split,
             },
+            w8a8_decode_proj: !k.no_w8a8_decode_proj,
+            native_q2_mmq: k.gguf_native_q2_mmq,
+            attn_512_tc: k.attn_512_tc,
+            conv1d_tp: k.conv1d_tp,
+            fp8_ldmab: k.fp8_ldmab,
         }
     }
 
@@ -95,6 +115,11 @@ impl OpsLevers {
                 gemm_disabled: false,
                 decode_split_forced: false,
             },
+            w8a8_decode_proj: true,
+            native_q2_mmq: false,
+            attn_512_tc: true,
+            conv1d_tp: true,
+            fp8_ldmab: true,
         }
     }
 }

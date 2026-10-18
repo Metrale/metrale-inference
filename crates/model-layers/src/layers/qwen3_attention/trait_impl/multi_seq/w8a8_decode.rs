@@ -51,7 +51,7 @@ impl Qwen3AttentionLayer {
     ) -> bool {
         ops::decode_w8a8_selected(
             attn_decode_family_armed(fwd.dispatch.cublas),
-            ops::w8a8_decode_proj_disabled(),
+            !fwd.levers.ops.w8a8_decode_proj,
             plan,
             fp8w.scale_format,
             &self.decode_w8a8_scratch(fwd),

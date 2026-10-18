@@ -45,7 +45,16 @@ impl Qwen3SsmLayer {
         if self.qkvz_q2.is_some() {
             let scratch = ctx.buffers.q2_dequant_scratch();
             let act_q8 = ctx.buffers.q2_act_q8();
-            self.qkvz_q2_prefill_gemm(ctx.gpu, normed, proj_dst, scratch, act_q8, k, stream)?;
+            self.qkvz_q2_prefill_gemm(
+                ctx.gpu,
+                ctx.levers.ops.native_q2_mmq,
+                normed,
+                proj_dst,
+                scratch,
+                act_q8,
+                k,
+                stream,
+            )?;
             return Ok(());
         }
         let force_bf16 = matches!(
@@ -275,6 +284,7 @@ impl Qwen3SsmLayer {
             ops::fp8_gemm_n128(
                 ctx.gpu,
                 self.fp8_gemm_k,
+                ctx.levers.ops.fp8_ldmab,
                 normed,
                 fp8,
                 proj_dst,

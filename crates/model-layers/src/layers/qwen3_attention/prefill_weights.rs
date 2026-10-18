@@ -146,10 +146,12 @@ impl Qwen3AttentionLayer {
     /// `q2_dequant_scratch`) and a BF16 GEMM runs; both are on `stream`, so
     /// the next projection's dequant cannot overwrite `scratch` before this GEMM
     /// reads it. Nothing is allocated. Errors if the dequant kernel is missing.
+    /// `native_mmq` is `OpsLevers::native_q2_mmq`.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn q2_prefill_gemm(
         &self,
         gpu: &dyn GpuBackend,
+        native_mmq: bool,
         w: &crate::weight_map::PackedQ2Weight,
         input: DevicePtr,
         out: DevicePtr,
@@ -160,12 +162,9 @@ impl Qwen3AttentionLayer {
     ) -> Result<()> {
         let (n, k) = (w.n, w.k);
 
-        // 2026-09-25: Native MMQ (`METRALE_GGUF_NATIVE_Q2_MMQ=1`, group 128 only):
+        // 2026-09-25: Native MMQ (`METRALE_GGUF_NATIVE_Q2_MMQ` on, group 128 only):
         // no BF16 weight dequant.
-        if self.q2_0_mmq_nc_k.0 != 0
-            && self.q4k_quant_act_k.0 != 0
-            && crate::layers::ops::native_q2_mmq_enabled()
-            && w.group == 128
+        if self.q2_0_mmq_nc_k.0 != 0 && self.q4k_quant_act_k.0 != 0 && native_mmq && w.group == 128
         {
             crate::layers::ops::quantize_act_q8_1(
                 gpu,
@@ -255,7 +254,17 @@ impl Qwen3AttentionLayer {
         );
         let scratch = ctx.buffers.q2_dequant_scratch();
         let act_q8 = ctx.buffers.q2_act_q8();
-        Some(self.q2_prefill_gemm(ctx.gpu, q2, input, out, scratch, act_q8, m, stream))
+        Some(self.q2_prefill_gemm(
+            ctx.gpu,
+            ctx.levers.ops.native_q2_mmq,
+            q2,
+            input,
+            out,
+            scratch,
+            act_q8,
+            m,
+            stream,
+        ))
     }
 
     /// 2026-09-25: Install the fused `[q | k | v]` transposed copy. Separate from

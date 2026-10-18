@@ -8,6 +8,11 @@
 //! size are Q4_K's ([`super::quantize_act_q8_1`], [`super::q8_1_scratch_bytes`]),
 //! in the DS4 layout.
 //!
+//! 2026-10-17: With `METRALE_GGUF_NATIVE_Q2_MMQ` on (`OpsLevers::native_q2_mmq`), the kernels
+//! resolved and group 128 on every weight it covers, a packed Q2 prefill runs through
+//! [`q2_0_mmq_gemm`] instead of dequantizing to BF16. Whether weights stay packed at all is
+//! `METRALE_GGUF_NATIVE_Q2`'s decision.
+//!
 //! Owner: model-layers ops.
 //! Invariants: none beyond the types.
 
@@ -21,15 +26,6 @@ use crate::weight_map::PackedQ2Weight;
 pub const QK2_0: u32 = 128;
 /// 2026-09-25: `sizeof(block_q2_0)`: an fp16 scale `d` and 128 codes at 4 per byte.
 pub const Q2_0_BLOCK_BYTES: usize = 34;
-
-/// 2026-09-25: True only when `METRALE_GGUF_NATIVE_Q2_MMQ` is exactly `1`. With
-/// it, and with the kernels resolved and group 128 on gate, up and down, the
-/// dense FFN prefill runs packed Q2 weights through [`q2_0_mmq_gemm`] instead of
-/// dequantizing them to BF16. Whether weights stay packed at all is
-/// `METRALE_GGUF_NATIVE_Q2`'s decision.
-pub fn native_q2_mmq_enabled() -> bool {
-    std::env::var("METRALE_GGUF_NATIVE_Q2_MMQ").ok().as_deref() == Some("1")
-}
 
 /// 2026-09-25: Bytes of the packed `block_q2_0` form of an `[n, k]` weight; `k`
 /// must be a multiple of 128.

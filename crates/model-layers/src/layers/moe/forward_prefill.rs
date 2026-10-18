@@ -142,6 +142,7 @@ impl MoeLayer {
             ops::fp8_gemm_n128(
                 ctx.gpu,
                 self.fp8_gemm_k,
+                ctx.levers.ops.fp8_ldmab,
                 router_in,
                 fp8,
                 gate_logits,

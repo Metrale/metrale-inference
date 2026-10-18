@@ -99,9 +99,11 @@ mod debug {
     fn the_fp8_activation_path_is_checked_without_a_declaration() {
         let gpu = gpu();
         let a = activation(&gpu, 600.0);
+        // 2026-10-17: `ldmab` on (`OpsLevers::fp8_ldmab`, declared on) selects that path.
         fp8_gemm_n128(
             &gpu,
             BF16_A,
+            true,
             a,
             DevicePtr::NULL,
             DevicePtr::NULL,

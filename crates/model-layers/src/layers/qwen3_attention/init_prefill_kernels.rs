@@ -147,15 +147,15 @@ impl PrefillKernels {
             prefill_attn_k: gpu.kernel("attn_prefill", "attn_prefill")?,
             // 2026-09-25: `ops::wide_prefill_kernel` returns both the kernel and
             // the BR its launcher builds the grid for: the tensor-core
-            // `attn_prefill_512tc` (BR=32) unless `METRALE_ATTN_512_TC=0` or the
-            // target lacks it, otherwise the scalar `attn_prefill_512` (BR=16).
+            // `attn_prefill_512tc` (BR=32) unless `METRALE_ATTN_512_TC` is switched off or
+            // the target lacks it, otherwise the scalar `attn_prefill_512` (BR=16).
             prefill_attn_512_k: if probes.wide_head_dim {
-                crate::layers::ops::wide_prefill_kernel(gpu).0
+                crate::layers::ops::wide_prefill_kernel(gpu, ops.attn_512_tc).0
             } else {
                 metrale_gpu_runtime::gpu::KernelHandle(0)
             },
             prefill_attn_512_is_tc: probes.wide_head_dim
-                && crate::layers::ops::wide_prefill_kernel(gpu).1 == 32,
+                && crate::layers::ops::wide_prefill_kernel(gpu, ops.attn_512_tc).1 == 32,
             // 2026-09-25: The compressed-attention kernels, looked up only when
             // the config's `compress_ratios` has a nonzero entry.
             csa_compress_k: gate(probes.compressed_attn, gpu, "csa_compress", "csa_compress"),

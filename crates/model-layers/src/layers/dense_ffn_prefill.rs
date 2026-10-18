@@ -193,12 +193,12 @@ impl DenseFfnLayer {
             );
         }
 
-        // 2026-09-25: Q2_0 MMQ, when `METRALE_GGUF_NATIVE_Q2_MMQ=1`, `q2_0_mmq_nc_k` and
+        // 2026-09-25: Q2_0 MMQ, when `METRALE_GGUF_NATIVE_Q2_MMQ` is on, `q2_0_mmq_nc_k` and
         // `q4k_quant_act_k` resolved and all three weights use 128-element groups. Gate and
         // up share one q8_1 quantization of `input`; down quantizes the activation.
         let q2_mmq = self.q2_0_mmq_nc_k.0 != 0
             && self.q4k_quant_act_k.0 != 0
-            && ops::native_q2_mmq_enabled()
+            && ctx.levers.ops.native_q2_mmq
             && q2w.gate_proj.group == 128
             && q2w.up_proj.group == 128
             && q2w.down_proj.group == 128;

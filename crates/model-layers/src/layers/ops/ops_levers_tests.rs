@@ -26,13 +26,15 @@ fn new_at(env: &str, probe: &str) -> Option<OpsLevers> {
 
 type Field = (&'static str, fn(&OpsLevers) -> bool);
 
-/// 2026-10-17: `gemm_quant::fp8_gemm_pipe_kernel` and `AttnFa128Kernels::resolve`: off when the
-/// variable is present at any value, `0` included.
+/// 2026-10-17: `gemm_quant::fp8_gemm_pipe_kernel`, `AttnFa128Kernels::resolve` and
+/// `dispatch_proj_decode::w8a8_decode_proj_disabled`: off when the variable is present at any
+/// value, `0` included.
 #[test]
 fn the_presence_opt_outs_read_as_before() {
-    let cases: [Field; 2] = [
+    let cases: [Field; 3] = [
         ("METRALE_NO_FP8_GEMM_PIPE", |l| l.fp8_gemm_pipe),
         ("METRALE_NO_ATTN_FA128", |l| l.attn_fa128),
+        ("METRALE_NO_W8A8_DECODE_PROJ", |l| l.w8a8_decode_proj),
     ];
     for (env, field) in cases {
         let changes = check(
@@ -52,11 +54,12 @@ fn the_presence_opt_outs_read_as_before() {
     }
 }
 
-/// 2026-10-17: The `== "1"` switches: the LoRA skips, the hyper-connection paths and the GEMM
-/// shape log.
+/// 2026-10-17: The `== "1"` switches: the LoRA skips, the hyper-connection paths, the GEMM
+/// shape log and `q2_0_mmq::native_q2_mmq_enabled`.
 #[test]
 fn the_opt_in_switches_read_as_before_except_the_switch_spellings() {
-    let cases: [Field; 5] = [
+    let cases: [Field; 6] = [
+        ("METRALE_GGUF_NATIVE_Q2_MMQ", |l| l.native_q2_mmq),
         ("METRALE_LORA_NO_APPLY", |l| l.lora.no_apply),
         ("METRALE_LORA_NO_FFN", |l| l.lora_no_ffn),
         ("METRALE_QWEN4EXP_NO_HC_GEMM", |l| l.hc.gemm_disabled),
@@ -80,23 +83,32 @@ fn the_opt_in_switches_read_as_before_except_the_switch_spellings() {
     }
 }
 
-/// 2026-10-17: `norm::rms_norm_short_row_eligible`'s `!= "0"`.
+/// 2026-10-17: The `!= "0"` switches: `norm::rms_norm_short_row_eligible`,
+/// `wide_prefill::wide_prefill_kernel`, `ssm_mamba::conv1d_update_prefill` and
+/// `gemm_fp8_prefill::fp8_gemm_n128`.
 #[test]
-fn the_warp_row_norm_reads_as_before_except_the_switch_spellings() {
-    let env = "METRALE_RMS_NORM_WARP_ROW";
-    let changes = check(
-        env,
-        Old::OptOut,
-        |p| p != Some("0"),
-        |s| OpsLevers::from_settings(s).rms_norm_warp_row,
-    );
-    assert_eq!(
-        changes,
-        [
-            (env, Some("off"), Outcome::Changed),
-            (env, Some("garbage"), Outcome::Rejected)
-        ]
-    );
+fn the_opt_out_switches_read_as_before_except_the_switch_spellings() {
+    let cases: [Field; 4] = [
+        ("METRALE_RMS_NORM_WARP_ROW", |l| l.rms_norm_warp_row),
+        ("METRALE_ATTN_512_TC", |l| l.attn_512_tc),
+        ("METRALE_CONV1D_TP", |l| l.conv1d_tp),
+        ("METRALE_FP8_LDMAB", |l| l.fp8_ldmab),
+    ];
+    for (env, field) in cases {
+        let changes = check(
+            env,
+            Old::OptOut,
+            |p| p != Some("0"),
+            |s| field(&OpsLevers::from_settings(s)),
+        );
+        assert_eq!(
+            changes,
+            [
+                (env, Some("off"), Outcome::Changed),
+                (env, Some("garbage"), Outcome::Rejected)
+            ]
+        );
+    }
 }
 
 /// 2026-10-17: The row bound keeps its reader's parse: an untrimmed unsigned count, 48 otherwise.
@@ -136,6 +148,11 @@ fn the_declared_defaults_are_the_old_unset_values() {
                 gemm_disabled: false,
                 decode_split_forced: false,
             },
+            w8a8_decode_proj: true,
+            native_q2_mmq: false,
+            attn_512_tc: true,
+            conv1d_tp: true,
+            fp8_ldmab: true,
         }
     );
     assert_eq!(

@@ -91,6 +91,7 @@ fn main() -> Result<()> {
             g,
             serial,
             tp_k,
+            true,
             ps,
             pi,
             &weight,

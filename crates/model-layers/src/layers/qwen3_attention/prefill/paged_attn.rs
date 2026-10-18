@@ -89,6 +89,7 @@ impl Qwen3AttentionLayer {
         if hd > 256 && self.prefill_attn_512_k.0 != 0 && seq_len_start == 0 {
             ops::prefill_attention(
                 ctx.gpu,
+                ctx.levers.ops.attn_512_tc,
                 self.prefill_attn_512_k,
                 q_contiguous,
                 args.k_contiguous,

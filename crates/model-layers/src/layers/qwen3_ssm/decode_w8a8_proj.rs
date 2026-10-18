@@ -76,7 +76,7 @@ impl Qwen3SsmLayer {
     ) -> bool {
         ops::decode_w8a8_selected(
             ssm_decode_family_armed(ctx.dispatch.cublas),
-            ops::w8a8_decode_proj_disabled(),
+            !ctx.levers.ops.w8a8_decode_proj,
             plan,
             fp8w.scale_format,
             &self.decode_w8a8_scratch(ctx),

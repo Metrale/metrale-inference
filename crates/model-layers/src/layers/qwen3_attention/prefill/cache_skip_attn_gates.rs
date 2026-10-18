@@ -86,6 +86,7 @@ impl Qwen3AttentionLayer {
             // with no sliding window (0).
             ops::prefill_attention(
                 ctx.gpu,
+                ctx.levers.ops.attn_512_tc,
                 self.prefill_attn_512_k,
                 q_contiguous,
                 k_contiguous,

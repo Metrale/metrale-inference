@@ -226,6 +226,7 @@ impl Qwen3SsmLayer {
                 ops::fp8_gemm_n128(
                     ctx.gpu,
                     self.fp8_gemm_k,
+                    ctx.levers.ops.fp8_ldmab,
                     normed_out_buf,
                     fp8,
                     out_proj_buf,
