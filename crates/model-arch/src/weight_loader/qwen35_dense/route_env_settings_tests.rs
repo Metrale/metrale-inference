@@ -2,7 +2,8 @@
 
 //! 2026-10-17: [`RouteEnv::from_settings`] against the readers `RouteEnv::from_env` used, for
 //! each of the three levers it reads itself (the dispatch half is `GemmDispatch::from_settings`,
-//! tested in model-layers).
+//! tested in model-layers), and for `METRALE_MEM_PROFILE`, which the dense loader reads from the
+//! same settings.
 //!
 //! Owner: model-arch (qwen35_dense).
 //! Invariants: the probes that read differently are exactly the listed behaviour changes.
@@ -56,6 +57,17 @@ fn keep_nvfp4_stays_presence() {
         Old::Presence,
         |p| p.is_some(),
         |s| RouteEnv::from_settings(s).keep_nvfp4,
+    );
+    assert!(changes.is_empty(), "{changes:?}");
+}
+
+#[test]
+fn mem_profile_stays_presence() {
+    let changes = check(
+        "METRALE_MEM_PROFILE",
+        Old::Presence,
+        |p| p.is_some(),
+        |s| s.telemetry.mem_profile,
     );
     assert!(changes.is_empty(), "{changes:?}");
 }

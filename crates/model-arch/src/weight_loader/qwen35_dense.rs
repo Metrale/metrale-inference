@@ -294,9 +294,8 @@ impl ModelWeightLoader for Qwen35DenseWeightLoader {
             None
         };
 
-        // 2026-09-25: `METRALE_MEM_PROFILE` (any value) logs free GPU memory at the start
-        // and at every 8th layer.
-        let mem_profile = std::env::var("METRALE_MEM_PROFILE").is_ok();
+        // 2026-09-25: `METRALE_MEM_PROFILE` (present) logs GPU-free at load start, every 8th layer.
+        let mem_profile = lc.settings.telemetry.mem_profile;
         let log_free = |tag: &str| {
             if mem_profile && let Ok(free) = gpu.free_memory() {
                 tracing::info!("MEM_PROFILE[{tag}]: {:.2} GB GPU-free", free as f64 / 1e9);
@@ -304,8 +303,7 @@ impl ModelWeightLoader for Qwen35DenseWeightLoader {
         };
         log_free("dense-load-start");
 
-        // 2026-09-25: The routing levers are read once per load (`RouteEnv::from_settings`,
-        // `fp8_residency.rs`).
+        // 2026-09-25: The routing levers, read once per load (`fp8_residency::RouteEnv`).
         let route_env = RouteEnv::from_settings(lc.settings);
         let mut residency = DerivedResidency::default();
         let policy = load_cx::weight_quant_policy(config);

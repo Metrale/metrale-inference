@@ -372,8 +372,7 @@ impl TransformerModel {
             // recurrence; the field's doc in layer.rs gives the reason.
             gdn_exact_replay: marconi_skip,
             gdn_write_on_accept: false,
-            // 2026-09-25: Hash-MoE token IDs for the processed tokens, uploaded
-            // above.
+            // 2026-09-25: Hash-MoE token IDs for the processed tokens, uploaded above.
             token_ids: Some(self.buffers.token_ids()),
             host_token_ids: None,
             // 2026-09-25: `Some` only when the request routes to a non-active

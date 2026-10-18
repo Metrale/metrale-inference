@@ -2,12 +2,14 @@
 
 //! 2026-09-26: The lever parsers and layer selectors `load_layers` reads: the
 //! `METRALE_FP8_DEQUANT_LAYERS` layer list, the Holo fast-MoE mode and layer list, and the
-//! Holo ModelOpt mixed-precision checkpoint test.
+//! Holo ModelOpt mixed-precision checkpoint test, and the native-FP8 projection test
+//! (`proj_is_native_fp8`).
 //!
 //! Owner: model-arch weight loader (Qwen3.5).
 //! Invariants: none beyond the types.
 
 use metrale_config::ModelConfig;
+use metrale_model_weights::weights::{WeightDtype, WeightStore};
 
 /// 2026-09-25: Whether layer `layer` is selected by `METRALE_FP8_DEQUANT_LAYERS`, a
 /// comma-separated list of indices and inclusive ranges (`"31-39"`, `"31,35,39"`). Unset
@@ -110,4 +112,20 @@ pub(super) fn is_holo_modelopt_mixed_precision(config: &ModelConfig) -> bool {
         && config.quantization_config.as_ref().is_some_and(|qc| {
             qc.quant_method == "modelopt" && qc.quant_algo.eq_ignore_ascii_case("MIXED_PRECISION")
         })
+}
+
+/// 2026-09-25: True when `{prefix}.weight` is FP8E4M3 with a block scale: a
+/// `.weight_scale_inv`, or a 2D `.weight_scale`. A scalar `.weight_scale` (per-tensor FP8)
+/// returns false.
+pub(super) fn proj_is_native_fp8(store: &WeightStore, prefix: &str) -> bool {
+    let is_fp8_weight = store
+        .get(&format!("{prefix}.weight"))
+        .map(|w| w.dtype == WeightDtype::FP8E4M3)
+        .unwrap_or(false);
+    let has_block_scale = store.contains(&format!("{prefix}.weight_scale_inv"))
+        || store
+            .get(&format!("{prefix}.weight_scale"))
+            .map(|s| s.shape.len() == 2)
+            .unwrap_or(false);
+    is_fp8_weight && has_block_scale
 }

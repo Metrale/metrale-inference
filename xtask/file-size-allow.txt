@@ -5,7 +5,7 @@
 # Carried from the retired check-file-size-cap.sh list: coverage.rs is a BOUNDARY_FILE, so any
 # edit to it, a pure split included, invalidates every standing gate record.
 crates/bench/src/gate/coverage.rs 1239
-crates/gpu-examples/examples/glm5next_hc_fused_gate.rs 618
+crates/gpu-examples/examples/glm5next_hc_fused_gate.rs 617
 crates/gpu-runtime/cuda/cutlass_nvfp4_gemm.cu 543
 crates/gpu-runtime/cuda/cutlass_nvfp4_grouped_gemm.cu 750
 crates/gpu-runtime/src/buffers/sizes.rs 511

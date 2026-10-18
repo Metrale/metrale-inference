@@ -27,9 +27,7 @@ use anyhow::{Result, bail};
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
-use metrale_model_arch::glm5next_mhc::{
-    Glm5NextMhcKernels, Glm5NextMhcSiteWeights, glm_hc_pre, mix_hc,
-};
+use metrale_model_arch::glm5next_mhc::{Glm5NextMhcKernels, Glm5NextMhcSiteWeights, glm_hc_pre};
 use metrale_model_arch::glm5next_mhc_fused::{
     glm_hc_pre_norm_with, pre_norm_kernel, splitk_kernel,
 };
@@ -133,7 +131,7 @@ struct Site {
 }
 
 fn site(g: &dyn GpuBackend, hid: usize, hc: usize, t: usize, salt: u64) -> Result<Site> {
-    let m = mix_hc(hc);
+    let m = metrale_model_arch::glm5next_mhc::mix_hc(hc);
     let hc_dim = hc * hid;
     let mut seed = 0x6c6d_7f00_u64 ^ (hid as u64) << 20 ^ (hc as u64) << 8 ^ t as u64 ^ salt << 40;
     let streams: Vec<f32> = (0..t * hc_dim).map(|_| lcg(&mut seed) * 3.0).collect();

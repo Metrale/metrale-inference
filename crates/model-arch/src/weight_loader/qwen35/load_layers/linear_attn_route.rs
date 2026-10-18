@@ -11,7 +11,7 @@ use metrale_model_layers::layer::TransformerLayer;
 use metrale_model_layers::weight_map::Nvfp4Variant;
 
 use super::load_cx::{LayerIn, LoadCx};
-use super::proj_is_native_fp8;
+use super::selectors::proj_is_native_fp8;
 
 /// 2026-09-26: Layer `i`'s linear-attention layer, from the builder the rules below select.
 pub(super) fn build_linear_attention(

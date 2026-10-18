@@ -23,7 +23,7 @@ use anyhow::{Context, Result};
 use metrale_cache::kv_cache::KvCacheDtype;
 use metrale_config::{LayerType, ModelConfig};
 use metrale_gpu_runtime::gpu::GpuBackend;
-use metrale_model_weights::weights::{WeightDtype, WeightStore};
+use metrale_model_weights::weights::WeightStore;
 
 use super::super::{ModelWeightLoader, QuantFormat, WeightFormat};
 use load_cx::{LayerIn, LoadCx};
@@ -35,24 +35,8 @@ use metrale_model_layers::weight_map::{
 };
 use selectors::{
     HoloFastMoeMode, holo_fast_moe_layer_selected, holo_fast_moe_mode,
-    is_holo_modelopt_mixed_precision, layer_dequant_selected,
+    is_holo_modelopt_mixed_precision, layer_dequant_selected, proj_is_native_fp8,
 };
-
-/// 2026-09-25: True when `{prefix}.weight` is FP8E4M3 with a block scale: a
-/// `.weight_scale_inv`, or a 2D `.weight_scale`. A scalar `.weight_scale` (per-tensor FP8)
-/// returns false.
-fn proj_is_native_fp8(store: &WeightStore, prefix: &str) -> bool {
-    let is_fp8_weight = store
-        .get(&format!("{prefix}.weight"))
-        .map(|w| w.dtype == WeightDtype::FP8E4M3)
-        .unwrap_or(false);
-    let has_block_scale = store.contains(&format!("{prefix}.weight_scale_inv"))
-        || store
-            .get(&format!("{prefix}.weight_scale"))
-            .map(|s| s.shape.len() == 2)
-            .unwrap_or(false);
-    is_fp8_weight && has_block_scale
-}
 
 pub(super) fn load_layers(
     loader: &dyn ModelWeightLoader,

@@ -239,8 +239,7 @@ impl TransformerModel {
         // batch's, so the active rows keep their `off[i]`. Its extra pairs
         // become ghost rows this step must feed: pad metadata, pad embeds and
         // WY entries. Each ghost slot must be free and, with WY tables, its
-        // intermediate pool must cover the ghost's depth (the closure in
-        // `pick_verify_graph`).
+        // intermediate pool must cover the ghost's depth (the closure in `pick_verify_graph`).
         // 2026-10-09: With a comm backend under the decode graphs' rule (`verify_d.rs`):
         // every rank runs this verify, so every rank captures and replays the same collectives.
         let graphs_on = super::verify_e2::verify_graphs_enabled()
