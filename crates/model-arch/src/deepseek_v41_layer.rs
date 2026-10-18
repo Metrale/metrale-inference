@@ -47,7 +47,7 @@
 //!   before any engram, attention or MoE work.
 
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 
@@ -67,16 +67,19 @@ use metrale_model_layers::weight_map::DenseWeight;
 
 mod graph;
 mod hc_launch;
+pub mod levers;
 mod step;
 mod step_ffn;
 mod step_seg;
 mod step_seg_run;
 mod trait_impl;
 
-pub use step_seg::{SegState, step_graph_on};
+pub use step_seg::SegState;
 
 /// 2026-09-25: Everything the layers share for the one sequence in flight.
 pub struct V41Runtime {
+    /// 2026-10-17: The per-step levers, resolved once at load.
+    pub levers: levers::Ds41Levers,
     pub attn_cfg: AttnV41Cfg,
     pub moe_cfg: MoeV41Cfg,
     pub attn: Mutex<AttnV41>,
@@ -133,7 +136,7 @@ pub struct V41Runtime {
     pub pred_trace: Mutex<Option<std::io::BufWriter<std::fs::File>>>,
 }
 
-/// 2026-09-25: How the single-token step runs, read once.
+/// 2026-09-25: How the single-token step runs (2026-10-17: `Ds41Levers::graph_mode`).
 /// `METRALE_DS41_GRAPH_ORACLE=1` runs every layer both ways and logs whether
 /// the highway, the delayed mix and the hidden match bit for bit;
 /// `METRALE_DS41_GRAPH=1` replays the captured segments; anything else is the
@@ -143,20 +146,6 @@ pub enum GraphMode {
     Off,
     On,
     Oracle,
-}
-
-pub fn graph_mode() -> GraphMode {
-    static MODE: OnceLock<GraphMode> = OnceLock::new();
-    *MODE.get_or_init(|| {
-        let is_one = |k: &str| std::env::var(k).is_ok_and(|v| v == "1");
-        if is_one("METRALE_DS41_GRAPH_ORACLE") {
-            GraphMode::Oracle
-        } else if is_one("METRALE_DS41_GRAPH") {
-            GraphMode::On
-        } else {
-            GraphMode::Off
-        }
-    })
 }
 
 /// 2026-09-25: The pointers a layer's captured segments bake that are not the

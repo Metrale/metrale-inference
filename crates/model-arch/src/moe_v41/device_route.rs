@@ -33,16 +33,6 @@ use super::{MoeV41, MoeV41LayerWeights, SLOT_TABLE_LAYERS, route_from_logits};
 const ROUTE_NR: usize = 384;
 const ROUTE_TOPK: usize = 6;
 
-fn device_route() -> bool {
-    static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *V.get_or_init(|| std::env::var("METRALE_DS41_DEVICE_ROUTE").is_ok_and(|v| v == "1"))
-}
-
-fn device_route_diag() -> bool {
-    static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *V.get_or_init(|| std::env::var("METRALE_DS41_DEVICE_ROUTE_DIAG").is_ok_and(|v| v == "1"))
-}
-
 static DIAG_CHECKED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 impl MoeV41 {
@@ -57,7 +47,7 @@ impl MoeV41 {
     /// 2026-09-25: Is the device selection on, and does this layer fit it?
     /// A layer that does not fit logs one warning per process.
     pub(super) fn device_route_ok(&self, w: &MoeV41LayerWeights) -> bool {
-        if !device_route() {
+        if !self.levers.device_route {
             return false;
         }
         let c = &self.cfg;
@@ -282,7 +272,7 @@ impl MoeV41 {
             );
             self.upload_expert_table(gpu, &plan, &slots, stream)?;
         }
-        if device_route_diag() {
+        if self.levers.device_route_diag {
             self.device_route_check(gpu, w, &indices, &weights, &slots, stream)?;
         }
         Ok((weights, indices))

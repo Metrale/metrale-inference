@@ -14,6 +14,7 @@
 //! Invariants: none beyond the types.
 
 use super::*;
+use crate::deepseek_v41_layer::levers::tests::at_defaults;
 use crate::deepseek_v41_ref::engram::EngramTables;
 use crate::deepseek_v41_ref::model::{ModelCfg, ModelState, ModelWeights, StepTrace, forward};
 use crate::deepseek_v41_ref::{Golden, fixed_int};
@@ -175,7 +176,7 @@ fn gpu_attention_matches_the_reference_on_every_layer_and_regime() {
     let g: &dyn GpuBackend = &gpu;
     let stream = g.default_stream();
     let cfg = cfg_of(&c);
-    let mut attn = AttnV41::new(g, cfg.clone()).unwrap();
+    let mut attn = AttnV41::new(g, cfg.clone(), at_defaults()).unwrap();
     let mut weights = Vec::new();
     let mut states = Vec::new();
     for l in 0..c.n_layers {

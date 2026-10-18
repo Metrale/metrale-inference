@@ -14,12 +14,13 @@ use anyhow::{Result, ensure};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
 use super::{GEMM_MODULE, Kernels, MODULE, MoeV41, MoeV41Cfg, MoeV41Timing, SLOT_TABLE_LAYERS};
+use crate::deepseek_v41_layer::levers::Ds41Levers;
 use metrale_model_layers::layers::ops::{
     KQUANT_MODULE, kquant_mmq_act_bytes, kquant_q8_1_rows_bytes,
 };
 
 impl MoeV41 {
-    pub fn new(gpu: &dyn GpuBackend, cfg: MoeV41Cfg) -> Result<Self> {
+    pub fn new(gpu: &dyn GpuBackend, cfg: MoeV41Cfg, levers: Ds41Levers) -> Result<Self> {
         ensure!(
             cfg.dim.is_multiple_of(256) && cfg.inter.is_multiple_of(256),
             "K-quant experts need dim and inter to be multiples of 256 (got {} / {})",
@@ -33,16 +34,12 @@ impl MoeV41 {
         // keep `m`.
         let me = m.max(cfg.topk);
         let alloc = |bytes: usize| gpu.alloc(bytes.max(16));
-        // 2026-09-25: Warps a block of the single-token expert GEMV batch,
-        // `METRALE_DS41_EXPERT_WARPS` in {2, 4, 8}: 8 (the `_w8` entries) when
-        // unset or any other value, 2 selects `_w2`, 4 the unsuffixed `_w`.
+        // 2026-09-25: Warps a block of the single-token expert GEMV batch
+        // (`Ds41Levers::expert_warps`): 8 selects the `_w8` entries, 2 `_w2`,
+        // 4 the unsuffixed `_w`.
         // Measured 2026-09-19 (hot decode): 8 was the fastest of the three,
         // 18.9 tok/s.
-        let experts_warps: u32 = std::env::var("METRALE_DS41_EXPERT_WARPS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .filter(|w| matches!(w, 2 | 4 | 8))
-            .unwrap_or(8);
+        let experts_warps = levers.expert_warps;
         let sfx = match experts_warps {
             2 => "2",
             8 => "8",
@@ -50,7 +47,7 @@ impl MoeV41 {
         };
         Ok(MoeV41 {
             last: std::cell::Cell::new(MoeV41Timing::default()),
-            timing_sync: std::env::var("METRALE_DS41_DIAG").is_ok_and(|v| v == "1"),
+            levers,
             k: Kernels {
                 gemm: gpu.kernel(GEMM_MODULE, "dense_gemm_bf16")?,
                 gemv: gpu.kernel("gemv", "dense_gemv_bf16")?,

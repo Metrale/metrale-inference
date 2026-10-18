@@ -273,6 +273,10 @@ struct Kernels {
 /// up to `max_tokens` positions per call.
 pub struct AttnV41 {
     pub cfg: AttnV41Cfg,
+    /// 2026-09-25: The blocks per (token, head) that `attn_v41_sparse_attn` splits the
+    /// output dimension across (`Ds41Levers::sparse_split`). Every block recomputes the same
+    /// scores and sums its outputs in the same order, so the bytes do not depend on the value.
+    sparse_split: u32,
     k: Kernels,
     fc_plain: DevicePtr,
     fc_yarn: DevicePtr,

@@ -15,27 +15,11 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 use metrale_model_weights::weights::expert_stream::{ExpertLru, ExpertSource};
 
-use super::{MoeV41, MoeV41LayerWeights, MoeV41Timing, RouterWeights, prefetch_k, shared_side};
+use super::{MoeV41, MoeV41LayerWeights, MoeV41Timing, RouterWeights};
 use metrale_model_layers::layers::ops::{
     self, Q2K_MMQ_SMEM, Q3K_MMQ_SMEM, Q8_1_BLOCK_BYTES, kquant_mmq_gemm, kquant_mmvq_w,
     kquant_q8_1_rows,
 };
-
-/// 2026-09-25: `METRALE_DS41_M1_LOOP=1`, read once: a single token runs
-/// through the per-expert group loop of `forward` (one-row groups on the
-/// decode GEMV) instead of the pointer-table arm (`routed_m1`).
-fn m1_loop() -> bool {
-    static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *V.get_or_init(|| std::env::var("METRALE_DS41_M1_LOOP").is_ok_and(|v| v == "1"))
-}
-
-/// 2026-09-25: `METRALE_DS41_PREFILL_GEMV=1`, read once: expert groups of
-/// more than eight rows run on the decode GEMV in chunks of at most eight rows
-/// instead of the MMQ arm (see `forward`).
-fn prefill_gemv() -> bool {
-    static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *V.get_or_init(|| std::env::var("METRALE_DS41_PREFILL_GEMV").is_ok_and(|v| v == "1"))
-}
 
 impl MoeV41 {
     pub(super) fn launch_n(
@@ -73,12 +57,12 @@ impl MoeV41 {
     ) -> Result<(DevicePtr, Vec<f32>, Vec<usize>)> {
         let c = &self.cfg;
         let t0 = std::time::Instant::now();
-        let m1_arm = m == 1 && !m1_loop();
+        let m1_arm = m == 1 && !self.levers.m1_loop;
         // 2026-09-25: On the single-token arm, unless `METRALE_DS41_SHARED_SIDE=0`,
         // the shared expert runs on `self.side` while this stream runs the
         // router and the host selects and fetches; this stream waits on
         // `ev_out` before the shared tail.
-        let side = m1_arm && shared_side();
+        let side = m1_arm && self.levers.shared_side;
         // 2026-09-25: The token's q8_1 rows, written once into `a_q8` and read
         // by the routed experts and the shared w1 / w3 projections (the side
         // stream after `ev_in`).
@@ -98,7 +82,8 @@ impl MoeV41 {
         // `device_route_ok` accepts: the single-token selection, plan and
         // pointer table are computed on the device (`device_route.rs`).
         let dev_route = m1_arm && self.device_route_ok(w);
-        let predict = next.filter(|_| m == 1 && !dev_route && prefetch_k() > 0 && lru.has_pool());
+        let predict =
+            next.filter(|_| m == 1 && !dev_route && self.levers.prefetch_k > 0 && lru.has_pool());
         if let Some(nw) = predict {
             self.predict_launch(gpu, nw, x, stream)?;
         }
@@ -112,7 +97,7 @@ impl MoeV41 {
         } else {
             let (weights, indices) = self.route_select(gpu, w, m, stream)?;
             let predicted = match predict {
-                Some(nw) => self.predict_select(gpu, nw, prefetch_k(), stream)?,
+                Some(nw) => self.predict_select(gpu, nw, self.levers.prefetch_k, stream)?,
                 None => Vec::new(),
             };
             let t1 = std::time::Instant::now();
@@ -148,7 +133,7 @@ impl MoeV41 {
         // block 64, for the Q2_K gate / up; D4, block 32, for the Q3_K down),
         // or with `METRALE_DS41_PREFILL_GEMV=1` the decode GEMV in chunks of
         // at most eight rows.
-        let prefill_gemv = prefill_gemv();
+        let prefill_gemv = self.levers.prefill_gemv;
         for &(a0, off, r) in plan.iter().filter(|_| !m1_arm) {
             let slot = slots[a0];
             let rows_ptr = DevicePtr(self.rows_dev.0 + (off * 4) as u64);
@@ -357,8 +342,8 @@ impl MoeV41 {
         } else {
             self.shared_expert(gpu, w, x, m, m1_arm, stream)?;
         }
-        if self.timing_sync {
-            // 2026-09-25: `METRALE_DS41_DIAG=1` (`init.rs`): the sync makes
+        if self.levers.diag {
+            // 2026-09-25: `METRALE_DS41_DIAG` (`Ds41Levers::diag`): the sync makes
             // `compute_ms` include the GPU time.
             gpu.synchronize(stream)?;
         }

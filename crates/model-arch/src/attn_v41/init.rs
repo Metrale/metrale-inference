@@ -11,6 +11,7 @@ use anyhow::{Result, ensure};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
 use super::{AttnV41, AttnV41Cfg, GEMM_MODULE, Kernels, MODULE, upload_f32};
+use crate::deepseek_v41_layer::levers::Ds41Levers;
 use crate::deepseek_v41_ref::attn::freqs_cis;
 use crate::deepseek_v41_ref::compress::yarn_freqs_cis;
 use metrale_model_layers::layers::ops::{
@@ -18,7 +19,7 @@ use metrale_model_layers::layers::ops::{
 };
 
 impl AttnV41 {
-    pub fn new(gpu: &dyn GpuBackend, cfg: AttnV41Cfg) -> Result<Self> {
+    pub fn new(gpu: &dyn GpuBackend, cfg: AttnV41Cfg, levers: Ds41Levers) -> Result<Self> {
         ensure!(
             cfg.rope_dim.is_multiple_of(2) && cfg.rope_dim / 2 <= 256,
             "rope_dim {} not supported",
@@ -84,6 +85,7 @@ impl AttnV41 {
             .max(cfg.groups * cfg.o_rank)
             .max(nh * hd);
         Ok(AttnV41 {
+            sparse_split: levers.sparse_split,
             a_q8: alloc(
                 kquant_q8_1_rows_bytes(8, kmax as u32)
                     .max(kquant_mmq_act_bytes(m as u32, kmax as u32)),

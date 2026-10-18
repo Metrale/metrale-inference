@@ -56,7 +56,7 @@ impl MoeV41 {
         // selects the direct form, one thread per logit. Above 8 rows the
         // tiled `dense_gemm_bf16_f32out`.
         let (kernel, grid, block, smem) = if m <= 8 {
-            if router_staged() {
+            if self.levers.router_staged {
                 (
                     self.k.router_gemv_staged,
                     [c.n_routed as u32, m as u32, 1],
@@ -132,7 +132,7 @@ impl MoeV41 {
         stream: u64,
     ) -> Result<()> {
         let c = &self.cfg;
-        let (kernel, grid, block, smem) = if router_staged() {
+        let (kernel, grid, block, smem) = if self.levers.router_staged {
             (
                 self.k.router_gemv_staged,
                 [c.n_routed as u32, 1, 1],
@@ -206,9 +206,4 @@ impl MoeV41 {
         wide.topk = k.min(c.n_routed);
         Ok(route_from_logits(&logits, 1, &w.gate_bias, &wide).1)
     }
-}
-
-fn router_staged() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| !std::env::var("METRALE_DS41_ROUTER_STAGED").is_ok_and(|v| v == "0"))
 }

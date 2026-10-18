@@ -13,13 +13,14 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_model_weights::weights::expert_stream::{ShardFiles, pread};
 
 /// 2026-09-25: `blk.{layer}.engram_wkv.weight` raw on the device, or null when
-/// the tensor is not Q2_K in these shards or `METRALE_DS41_ENGRAM_Q2K=0`.
+/// the tensor is not Q2_K in these shards or `q2k` (`METRALE_DS41_ENGRAM_Q2K`) is off.
 pub(super) fn engram_wkv_q2k(
     gpu: &dyn GpuBackend,
     files: &ShardFiles,
     layer: usize,
+    q2k: bool,
 ) -> Result<DevicePtr> {
-    if std::env::var("METRALE_DS41_ENGRAM_Q2K").is_ok_and(|v| v == "0") {
+    if !q2k {
         return Ok(DevicePtr(0));
     }
     let name = format!("blk.{layer}.engram_wkv.weight");

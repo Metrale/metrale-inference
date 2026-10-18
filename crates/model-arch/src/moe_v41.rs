@@ -80,20 +80,6 @@ pub struct RouterWeights {
     pub gate_bias: Vec<f32>,
 }
 
-/// 2026-09-25: `METRALE_DS41_PREFETCH_K`, read once (default 0, off): how
-/// many of the next layer's predicted experts to start reading while this
-/// layer computes. It acts only at one token, with the host selection, and
-/// with the reader pool (`METRALE_DS41_READER_POOL=1`).
-pub fn prefetch_k() -> usize {
-    static K: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *K.get_or_init(|| {
-        std::env::var("METRALE_DS41_PREFETCH_K")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0)
-    })
-}
-
 struct Kernels {
     gemm: KernelHandle,
     /// 2026-09-25: The bf16 shared expert at one token.
@@ -169,9 +155,8 @@ pub struct MoeV41Stage {
 pub struct MoeV41 {
     /// 2026-09-25: The last forward's timing.
     pub last: std::cell::Cell<MoeV41Timing>,
-    /// 2026-09-25: `METRALE_DS41_DIAG=1`: synchronise at the end of `forward`
-    /// so `compute_ms` is GPU time.
-    timing_sync: bool,
+    /// 2026-10-17: The settings levers, fixed at load (`Ds41Levers::from_settings`).
+    pub(crate) levers: crate::deepseek_v41_layer::levers::Ds41Levers,
     pub cfg: MoeV41Cfg,
     k: Kernels,
     logits: DevicePtr,
@@ -217,16 +202,6 @@ pub struct MoeV41 {
     side: u64,
     ev_in: u64,
     ev_out: u64,
-}
-
-/// 2026-09-25: `METRALE_DS41_SHARED_SIDE`, read once (default on; `0` turns it
-/// off): at one token the shared expert runs on a side stream while the main
-/// stream runs the router and the host picks the experts. Its output is added
-/// into `acc` after the routed experts, the same point as on the main stream,
-/// so the accumulation order does not change.
-pub fn shared_side() -> bool {
-    static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *V.get_or_init(|| !std::env::var("METRALE_DS41_SHARED_SIDE").is_ok_and(|v| v == "0"))
 }
 
 fn softplus(x: f32) -> f32 {
