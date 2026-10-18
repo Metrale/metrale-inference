@@ -160,7 +160,7 @@ fn equal_bytes(
 #[allow(clippy::too_many_arguments)]
 fn gemm(
     gpu: &dyn GpuBackend,
-    kmajor_k: KernelHandle,
+    kmajor: (bool, KernelHandle),
     a_fp8: DevicePtr,
     a_scale: DevicePtr,
     a_scale_kmajor: DevicePtr,
@@ -170,7 +170,8 @@ fn gemm(
 ) -> Result<()> {
     ops::cublas_fp8_proj_prequant(
         gpu,
-        kmajor_k,
+        kmajor.0,
+        kmajor.1,
         a_fp8,
         a_scale,
         a_scale_kmajor,
@@ -192,7 +193,11 @@ fn main() -> Result<()> {
         quant.available(),
         "per_token_group_quant_fp8 is not in this image"
     );
-    let kmajor = gpu.kernel("fp8_scale_transpose", "fp8_act_scale_to_kmajor")?;
+    // 2026-10-17: The scale layout (`OpsLevers::cublas_kmajor`) and its adapter kernel.
+    let kmajor = (
+        metrale_gpu_examples::ops_levers()?.cublas_kmajor,
+        gpu.kernel("fp8_scale_transpose", "fp8_act_scale_to_kmajor")?,
+    );
     let silu = gpu.kernel("moe_silu_mul", "moe_silu_mul")?;
     let silu_strided = gpu.kernel("silu_mul_strided", "silu_mul_strided")?;
     println!(

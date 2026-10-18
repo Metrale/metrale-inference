@@ -229,7 +229,6 @@ crates/model-layers/src/layers/mtp_head/row_dispatch.rs
 crates/model-layers/src/layers/ngram_embed/tests.rs
 crates/model-layers/src/layers/ops/dense_gemv_tc.rs
 crates/model-layers/src/layers/ops/dispatch_helpers.rs
-crates/model-layers/src/layers/ops/dispatch_proj.rs
 crates/model-layers/src/layers/ops/gemm_quant_w8a16.rs
 crates/model-layers/src/layers/ops/gemv_tc.rs
 crates/model-layers/src/layers/ops/hyper_connection_lowrank_tests.rs

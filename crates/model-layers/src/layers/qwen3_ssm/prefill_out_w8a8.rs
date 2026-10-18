@@ -48,7 +48,7 @@ pub(super) fn ssm_out_w8a16_only() -> bool {
 /// * Room for the padded rows (`m_pad = ceil16(m)`), which
 ///   `cublas_fp8_proj_prequant` writes: `m_pad * n` BF16 of output,
 ///   `m_pad * k` FP8 of activation and `m_pad * K/128` FP32 of scales.
-/// * The quantizer resolved, and under the default k-major scale layout the
+/// * The quantizer resolved, and under the k-major scale layout (`kmajor`) the
 ///   `fp8_act_scale_to_kmajor` kernel and a scratch of `m_pad * K/128` FP32.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn out_proj_cublas_selected(
@@ -63,6 +63,7 @@ pub(super) fn out_proj_cublas_selected(
     act_capacity_bytes: usize,
     act_scale_capacity_bytes: usize,
     quant_k: ops::Fp8ActQuant,
+    kmajor: bool,
     scale_kmajor_k: KernelHandle,
     scale_kmajor_buf: DevicePtr,
     scale_kmajor_capacity_bytes: usize,
@@ -84,7 +85,7 @@ pub(super) fn out_proj_cublas_selected(
         && m_pad * (k as usize) <= act_capacity_bytes
         && m_pad * kg * 4 <= act_scale_capacity_bytes
         && quant_k.available()
-        && (kmajor_ready || !ops::cublas_scale_layout_kmajor())
+        && (kmajor_ready || !kmajor)
 }
 
 impl Qwen3SsmLayer {
@@ -112,6 +113,7 @@ impl Qwen3SsmLayer {
             ctx.buffers.fp8_act_bytes(),
             ctx.buffers.fp8_act_scale_bytes(),
             self.per_token_group_quant_fp8_k,
+            ctx.levers.ops.cublas_kmajor,
             self.fp8_act_scale_kmajor_k,
             ctx.buffers.fp8_act_scale_kmajor(),
             ctx.buffers.fp8_act_scale_kmajor_bytes(),
@@ -160,6 +162,7 @@ impl Qwen3SsmLayer {
         )?;
         ops::cublas_fp8_proj_prequant(
             ctx.gpu,
+            ctx.levers.ops.cublas_kmajor,
             self.fp8_act_scale_kmajor_k,
             a_fp8,
             a_scale,

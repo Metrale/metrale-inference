@@ -51,7 +51,7 @@ impl Qwen3AttentionLayer {
             && k.is_multiple_of(128)
             && metrale_gpu_runtime::cublaslt::scale_layout::blk128x128_stride_ok(k as usize)
             && (m_pad as usize) * (n as usize) * 2 <= out_capacity_bytes
-            && (kmajor_ready || !ops::cublas_scale_layout_kmajor());
+            && (kmajor_ready || !ctx.levers.ops.cublas_kmajor);
         if ctx.stats.once("log:attn_w8a8_prefill") {
             let how = if cublas { "cuBLASLt" } else { "kernel" };
             tracing::info!(
@@ -63,6 +63,7 @@ impl Qwen3AttentionLayer {
         if cublas {
             return ops::cublas_fp8_proj_prequant(
                 ctx.gpu,
+                ctx.levers.ops.cublas_kmajor,
                 self.fp8_act_scale_kmajor_k,
                 a_fp8,
                 a_scale,

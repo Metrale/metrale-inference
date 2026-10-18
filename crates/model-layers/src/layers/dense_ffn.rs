@@ -180,7 +180,7 @@ pub struct DenseFfnLayer {
     per_token_group_quant_fp8_k: ops::Fp8ActQuant,
     fp8_gemm_t_blockscaled_k: KernelHandle,
     // 2026-09-25: Activation-scale layout adapter for the cuBLASLt arm of `w8a8_gemm`. When
-    // `ops::cublas_scale_layout_kmajor()` holds, a zero handle makes that arm decline and the
+    // `OpsLevers::cublas_kmajor` holds, a zero handle makes that arm decline and the
     // in-tree GEMM run.
     fp8_act_scale_kmajor_k: KernelHandle,
     /// 2026-09-25: The `[2*inter, hidden]` FP8 gate+up weight installed by `set_fp8_gate_up_fused`;

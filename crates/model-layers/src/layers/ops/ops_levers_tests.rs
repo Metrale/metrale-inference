@@ -6,7 +6,7 @@
 //! Owner: model-layers ops.
 //! Invariants: the probes that read differently are exactly the listed behaviour changes: a `1`
 //! or `0` switch now also reads the other switch spellings and refuses a value the switch rule
-//! cannot read; the presence levers and the LoRA row bound read as before.
+//! cannot read; the presence levers, the LoRA row bound and the scale layout read as before.
 
 use super::*;
 use crate::lever_equivalence::{Old, Outcome, check, defaults, settings_from};
@@ -128,6 +128,36 @@ fn the_lora_row_bound_reads_as_before() {
     }
 }
 
+/// 2026-10-17: `dispatch_proj::cublas_scale_layout_kmajor`: k-major unless the variable is
+/// exactly `rowmajor`.
+fn old_kmajor(v: Option<&str>) -> bool {
+    !matches!(v, Some("rowmajor"))
+}
+
+/// 2026-10-17: The scale layout keeps its reader's text predicate.
+#[test]
+fn the_cublas_scale_layout_reads_as_before() {
+    let env = "METRALE_CUBLAS_SCALE_LAYOUT";
+    let changes = check(env, Old::Verbatim, old_kmajor, |s| {
+        OpsLevers::from_settings(s).cublas_kmajor
+    });
+    assert!(changes.is_empty(), "{changes:?}");
+    for probe in [
+        "rowmajor",
+        "kmajor",
+        "RowMajor",
+        " rowmajor",
+        "rowmajor ",
+        "",
+    ] {
+        assert_eq!(
+            new_at(env, probe).map(|l| l.cublas_kmajor),
+            Some(old_kmajor(Some(probe))),
+            "{probe:?}"
+        );
+    }
+}
+
 /// 2026-10-17: Every lever at the value its reader read unset as.
 #[test]
 fn the_declared_defaults_are_the_old_unset_values() {
@@ -153,6 +183,7 @@ fn the_declared_defaults_are_the_old_unset_values() {
             attn_512_tc: true,
             conv1d_tp: true,
             fp8_ldmab: true,
+            cublas_kmajor: old_kmajor(None),
         }
     );
     assert_eq!(

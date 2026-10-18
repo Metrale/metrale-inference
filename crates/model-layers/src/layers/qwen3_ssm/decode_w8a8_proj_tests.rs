@@ -31,6 +31,7 @@ fn scratch() -> DecodeW8a8Scratch {
         act_scale_kmajor_bytes: 1 << 20,
         quant_k: ops::Fp8ActQuant::shared_only(KernelHandle(0xA1)),
         scale_kmajor_k: KernelHandle(0xA2),
+        kmajor: true,
     }
 }
 

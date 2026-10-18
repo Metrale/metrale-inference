@@ -200,11 +200,12 @@ impl DenseFfnLayer {
         let cublas = ctx.dispatch.cublas.ffn
             && padded_out_bytes <= out_capacity_bytes
             && metrale_gpu_runtime::cublaslt::scale_layout::blk128x128_stride_ok(k as usize)
-            && (scale_layout_ready || !ops::cublas_scale_layout_kmajor());
+            && (scale_layout_ready || !ctx.levers.ops.cublas_kmajor);
         self.log_w8a8_prefill_route(ctx, cublas);
         if cublas {
             return ops::cublas_fp8_proj_prequant(
                 ctx.gpu,
+                ctx.levers.ops.cublas_kmajor,
                 self.fp8_act_scale_kmajor_k,
                 a_fp8,
                 a_scale,

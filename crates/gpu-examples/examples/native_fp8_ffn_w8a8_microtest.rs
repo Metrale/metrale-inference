@@ -164,7 +164,7 @@ fn main() -> Result<()> {
     let w8a8_k = gpu.kernel("fp8_gemm_t_blockscaled", "fp8_gemm_t_blockscaled")?;
     let scale_kmajor_k = gpu.kernel("fp8_scale_transpose", "fp8_act_scale_to_kmajor")?;
     let want_cublas = std::env::var("METRALE_CUBLAS_GEMM").as_deref() == Ok("1");
-    let kmajor = ops::cublas_scale_layout_kmajor();
+    let kmajor = metrale_gpu_examples::ops_levers()?.cublas_kmajor;
     let rel_rms_gate = std::env::var("METRALE_W8A8_REL_RMS_GATE")
         .ok()
         .and_then(|v| v.parse::<f64>().ok())
@@ -312,6 +312,7 @@ fn main() -> Result<()> {
                 let cublas = || {
                     ops::cublas_fp8_proj_prequant(
                         &gpu,
+                        kmajor,
                         scale_kmajor_k,
                         a_fp8,
                         a_scale,

@@ -11,6 +11,8 @@
 //!   (`the_declared_defaults_are_the_old_unset_values`).
 //! - `METRALE_LORA_GEMV_MAX_M` keeps its reader's parse: an unsigned row count, and the declared
 //!   48 when unset or unparseable.
+//! - `METRALE_CUBLAS_SCALE_LAYOUT` keeps its reader's text predicate: exactly `rowmajor` turns
+//!   the k-major layout off.
 
 use super::hyper_connection_lowrank::HcLevers;
 use super::lora_delta::LoraLevers;
@@ -58,6 +60,12 @@ pub struct OpsLevers {
     /// 2026-09-28: On unless `METRALE_FP8_LDMAB` is switched off
     /// (`gemm_fp8_prefill::fp8_gemm_n128`).
     pub fp8_ldmab: bool,
+    /// 2026-09-25: On unless `METRALE_CUBLAS_SCALE_LAYOUT` is exactly `rowmajor`: the VEC128
+    /// activation scales go to the cuBLASLt block-scaled arm as `[K/128, ceil16(M)]`, tokens
+    /// contiguous, the layout `metrale_gpu_runtime::cublaslt::scale_layout` quotes from the
+    /// cuBLAS manual. Off passes the quantizer's `[M, K/128]` as is, a control arm
+    /// (`dispatch_proj::cublas_fp8_proj_prequant`, `DecodeW8a8Scratch::kmajor`).
+    pub cublas_kmajor: bool,
 }
 
 impl OpsLevers {
@@ -87,6 +95,7 @@ impl OpsLevers {
             attn_512_tc: k.attn_512_tc,
             conv1d_tp: k.conv1d_tp,
             fp8_ldmab: k.fp8_ldmab,
+            cublas_kmajor: s.runtime.cublas_scale_layout.as_deref() != Some("rowmajor"),
         }
     }
 
@@ -120,6 +129,7 @@ impl OpsLevers {
             attn_512_tc: true,
             conv1d_tp: true,
             fp8_ldmab: true,
+            cublas_kmajor: true,
         }
     }
 }

@@ -33,7 +33,7 @@ use crate::weight_map::{Fp8Weight, WeightQuantFormat};
 /// * `n` and `k` are multiples of 128, and `blk128x128_stride_ok(k)`
 ///   (`K/128` a multiple of 4, which cuBLAS requires of the scale stride).
 /// * `out` holds `m_pad * n` BF16: the helper writes the padded rows.
-/// * Under the default k-major scale layout (`cublas_scale_layout_kmajor`),
+/// * Under the default k-major scale layout (`kmajor`),
 ///   the `fp8_act_scale_to_kmajor` kernel and its scratch exist and the
 ///   scratch holds `m_pad * K/128` FP32. Without the transpose cuBLASLt reads
 ///   the scales in the wrong order: measured 2026-09-11 on H100, rel_rms
@@ -46,6 +46,7 @@ pub(super) fn qkvz_cublas_selected(
     n: u32,
     k: u32,
     out_capacity_bytes: usize,
+    kmajor: bool,
     scale_kmajor_k: KernelHandle,
     scale_kmajor_buf: DevicePtr,
     scale_kmajor_capacity_bytes: usize,
@@ -59,7 +60,7 @@ pub(super) fn qkvz_cublas_selected(
         && k.is_multiple_of(128)
         && metrale_gpu_runtime::cublaslt::scale_layout::blk128x128_stride_ok(k as usize)
         && (m_pad as usize) * (n as usize) * 2 <= out_capacity_bytes
-        && (kmajor_ready || !ops::cublas_scale_layout_kmajor())
+        && (kmajor_ready || !kmajor)
 }
 
 impl Qwen3SsmLayer {
@@ -91,6 +92,7 @@ impl Qwen3SsmLayer {
             n,
             k,
             out_capacity_bytes,
+            ctx.levers.ops.cublas_kmajor,
             self.fp8_act_scale_kmajor_k,
             ctx.buffers.fp8_act_scale_kmajor(),
             ctx.buffers.fp8_act_scale_kmajor_bytes(),
@@ -106,6 +108,7 @@ impl Qwen3SsmLayer {
         if cublas {
             return ops::cublas_fp8_proj_prequant(
                 ctx.gpu,
+                ctx.levers.ops.cublas_kmajor,
                 self.fp8_act_scale_kmajor_k,
                 a_fp8,
                 a_scale,

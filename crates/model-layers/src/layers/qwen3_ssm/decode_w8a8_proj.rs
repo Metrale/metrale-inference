@@ -64,6 +64,7 @@ impl Qwen3SsmLayer {
             act_scale_kmajor_bytes: ctx.buffers.fp8_act_scale_kmajor_bytes(),
             quant_k: self.per_token_group_quant_fp8_k,
             scale_kmajor_k: self.fp8_act_scale_kmajor_k,
+            kmajor: ctx.levers.ops.cublas_kmajor,
         }
     }
 

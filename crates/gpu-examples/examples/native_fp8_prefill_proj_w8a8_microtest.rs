@@ -95,6 +95,8 @@ struct Kernels {
     t_m128: KernelHandle,
     quant: ops::Fp8ActQuant,
     kmajor: KernelHandle,
+    /// 2026-10-17: `OpsLevers::cublas_kmajor`, the scale layout `kmajor` adapts to.
+    kmajor_layout: bool,
 }
 
 struct Scratch {
@@ -217,6 +219,7 @@ fn run_w8a8(
     )?;
     ops::cublas_fp8_proj_prequant(
         gpu,
+        k.kmajor_layout,
         k.kmajor,
         s.act_fp8,
         s.act_scale,
@@ -291,6 +294,7 @@ fn main() -> Result<()> {
         t_m128: gpu.kernel("w8a16_gemm_t_m128", "w8a16_gemm_t_m128")?,
         quant: ops::Fp8ActQuant::resolve(&gpu),
         kmajor: gpu.kernel("fp8_scale_transpose", "fp8_act_scale_to_kmajor")?,
+        kmajor_layout: metrale_gpu_examples::ops_levers()?.cublas_kmajor,
     };
     let gate: f64 = std::env::var("METRALE_W8A8_REL_RMS_GATE")
         .ok()

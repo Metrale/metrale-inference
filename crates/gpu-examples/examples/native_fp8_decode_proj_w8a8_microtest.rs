@@ -355,6 +355,7 @@ fn main() -> Result<()> {
         act_scale_kmajor_bytes: MAX_M * kg * 4,
         quant_k: k.quant,
         scale_kmajor_k: k.kmajor,
+        kmajor: metrale_gpu_examples::ops_levers()?.cublas_kmajor,
     };
 
     let mut failures = 0usize;

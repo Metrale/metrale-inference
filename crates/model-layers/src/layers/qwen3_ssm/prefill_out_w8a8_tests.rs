@@ -39,6 +39,7 @@ fn scale_bytes(m: u32) -> usize {
     m_pad(m) * (K as usize / 128) * 4
 }
 
+/// 2026-10-17: [`out_proj_cublas_selected`] in the declared k-major scale layout.
 #[allow(clippy::too_many_arguments)]
 fn selected(
     cublas_ssm: bool,
@@ -68,6 +69,7 @@ fn selected(
         act_capacity,
         act_scale_capacity,
         quant_k,
+        true,
         kmajor_k,
         kmajor_buf,
         kmajor_capacity,
@@ -273,8 +275,8 @@ fn an_unpadded_output_buffer_is_refused_when_m_is_not_a_multiple_of_16() {
 
 #[test]
 fn missing_handles_fall_back() {
-    let case = |quant: ops::Fp8ActQuant, kmajor: KernelHandle, buf: DevicePtr| {
-        selected(
+    let case = |layout: bool, quant: ops::Fp8ActQuant, kmajor: KernelHandle, buf: DevicePtr| {
+        out_proj_cublas_selected(
             true,
             true,
             false,
@@ -286,20 +288,29 @@ fn missing_handles_fall_back() {
             act_bytes(M),
             scale_bytes(M),
             quant,
+            layout,
             kmajor,
             buf,
             scale_bytes(M),
         )
     };
-    assert!(case(QUANT_K, KMAJOR_K, KMAJOR_BUF));
-    assert!(
-        !case(ops::Fp8ActQuant::default(), KMAJOR_K, KMAJOR_BUF),
-        "quantizer"
-    );
-    // 2026-09-25: The k-major clauses apply only under the default layout, so
-    // these asserts are skipped under `METRALE_CUBLAS_SCALE_LAYOUT=rowmajor`.
-    if crate::layers::ops::cublas_scale_layout_kmajor() {
-        assert!(!case(QUANT_K, KernelHandle(0), KMAJOR_BUF), "kmajor kernel");
-        assert!(!case(QUANT_K, KMAJOR_K, DevicePtr(0)), "kmajor scratch");
+    for layout in [true, false] {
+        assert!(case(layout, QUANT_K, KMAJOR_K, KMAJOR_BUF), "{layout}");
+        assert!(
+            !case(layout, ops::Fp8ActQuant::default(), KMAJOR_K, KMAJOR_BUF),
+            "quantizer {layout}"
+        );
+        // 2026-09-25: The k-major clauses apply only under the default layout;
+        // under `METRALE_CUBLAS_SCALE_LAYOUT=rowmajor` the adapter is not needed.
+        assert_eq!(
+            case(layout, QUANT_K, KernelHandle(0), KMAJOR_BUF),
+            !layout,
+            "kmajor kernel {layout}"
+        );
+        assert_eq!(
+            case(layout, QUANT_K, KMAJOR_K, DevicePtr(0)),
+            !layout,
+            "kmajor scratch {layout}"
+        );
     }
 }

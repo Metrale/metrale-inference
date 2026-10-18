@@ -74,7 +74,7 @@ pub(super) fn cache_skip_qkv_extents(m: u32, q_proj_dim: u32, kv_dim: u32) -> (u
 /// * room in both destination buffers for the padded extents above.
 /// * activation scratch for `ceil16(M) * K` FP8 and its scales, pad rows
 ///   included.
-/// * the quantizer kernel, and, when the k-major scale layout is in use, its
+/// * the quantizer kernel, and, when the k-major scale layout is in use (`kmajor`), its
 ///   adapter (kernel, scratch, capacity); `cublas_fp8_proj_prequant` refuses
 ///   to run without it. Measured 2026-09-11 on H100: without the transpose the
 ///   result was wrong (relative RMS 7.7e-2 on the same FP8 bytes).
@@ -93,6 +93,7 @@ pub(super) fn cache_skip_qkv_cublas_selected(
     act_capacity_bytes: usize,
     act_scale_capacity_bytes: usize,
     quant_k: ops::Fp8ActQuant,
+    kmajor: bool,
     scale_kmajor_k: KernelHandle,
     scale_kmajor_buf: DevicePtr,
     scale_kmajor_capacity_bytes: usize,
@@ -119,7 +120,7 @@ pub(super) fn cache_skip_qkv_cublas_selected(
         && m_pad * (k as usize) <= act_capacity_bytes
         && m_pad * kg * 4 <= act_scale_capacity_bytes
         && quant_k.available()
-        && (kmajor_ready || !ops::cublas_scale_layout_kmajor())
+        && (kmajor_ready || !kmajor)
 }
 
 impl Qwen3AttentionLayer {
@@ -155,6 +156,7 @@ impl Qwen3AttentionLayer {
             ctx.buffers.fp8_act_bytes(),
             ctx.buffers.fp8_act_scale_bytes(),
             self.per_token_group_quant_fp8_k,
+            ctx.levers.ops.cublas_kmajor,
             self.fp8_act_scale_kmajor_k,
             ctx.buffers.fp8_act_scale_kmajor(),
             ctx.buffers.fp8_act_scale_kmajor_bytes(),
@@ -204,6 +206,7 @@ impl Qwen3AttentionLayer {
     ) -> Result<()> {
         ops::cublas_fp8_proj_prequant(
             ctx.gpu,
+            ctx.levers.ops.cublas_kmajor,
             self.fp8_act_scale_kmajor_k,
             ctx.buffers.fp8_act(),
             ctx.buffers.fp8_act_scale(),

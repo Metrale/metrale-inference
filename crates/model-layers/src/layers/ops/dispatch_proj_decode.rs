@@ -10,19 +10,16 @@
 //!
 //! Owner: model-layers ops.
 //! Invariants:
-//! - [`decode_w8a8_selected`] reads the environment only through values cached
-//!   once per process (`cublas_scale_layout_kmajor`); its `disabled` input is
-//!   `OpsLevers::w8a8_decode_proj`, resolved once from the settings. So for the
-//!   same padded rows, shape, weight format and buffers it gives the same
+//! - [`decode_w8a8_selected`] reads no environment: its `disabled` input is
+//!   `OpsLevers::w8a8_decode_proj` and the scratch's `kmajor` is
+//!   `OpsLevers::cublas_kmajor`, both resolved once from the settings. So for
+//!   the same padded rows, shape, weight format and buffers it gives the same
 //!   answer on every step, CUDA-graph capture included.
 
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 
-use super::{
-    Fp8ActQuant, cublas_fp8_m_pad, cublas_scale_layout_kmajor, fp8_act_scale_to_kmajor,
-    per_token_group_quant_fp8,
-};
+use super::{Fp8ActQuant, cublas_fp8_m_pad, fp8_act_scale_to_kmajor, per_token_group_quant_fp8};
 
 /// 2026-09-25: The padded decode row counts this route takes. Any other count
 /// stays on the caller's own kernels.
@@ -107,8 +104,9 @@ impl DecodeW8a8Plan {
     }
 }
 
-/// 2026-09-25: The activation-quant scratch buffers with their capacities, and
-/// the quantizer and scale-layout adapter kernels.
+/// 2026-09-25: The activation-quant scratch buffers with their capacities, the
+/// quantizer and scale-layout adapter kernels, and the scale layout they run
+/// under.
 #[derive(Clone, Copy, Debug)]
 pub struct DecodeW8a8Scratch {
     pub act_fp8: DevicePtr,
@@ -119,6 +117,9 @@ pub struct DecodeW8a8Scratch {
     pub act_scale_kmajor_bytes: usize,
     pub quant_k: Fp8ActQuant,
     pub scale_kmajor_k: KernelHandle,
+    /// 2026-10-17: `OpsLevers::cublas_kmajor`: the scales go to cuBLASLt
+    /// transposed to `[K/128, ceil16(M)]`.
+    pub kmajor: bool,
 }
 
 impl DecodeW8a8Scratch {
@@ -132,7 +133,7 @@ impl DecodeW8a8Scratch {
             && self.quant_k.available()
             && self.act_fp8_bytes >= rows * k as usize
             && self.act_scale_bytes >= rows * kg * 4
-            && (!cublas_scale_layout_kmajor()
+            && (!self.kmajor
                 || (self.scale_kmajor_k.0 != 0
                     && self.act_scale_kmajor.0 != 0
                     && self.act_scale_kmajor_bytes >= rows * kg * 4))
@@ -198,7 +199,7 @@ pub fn decode_w8a8_quant_act(
             stream,
         )?;
     }
-    if cublas_scale_layout_kmajor() {
+    if scratch.kmajor {
         // 2026-09-25: Writes every `[K/128, m_pad]` slot, pad rows included.
         fp8_act_scale_to_kmajor(
             gpu,
@@ -236,7 +237,7 @@ pub fn decode_w8a8_gemm(
     plan: &DecodeW8a8Plan,
     stream: u64,
 ) -> Result<()> {
-    let b_scale = if cublas_scale_layout_kmajor() {
+    let b_scale = if scratch.kmajor {
         scratch.act_scale_kmajor
     } else {
         scratch.act_scale
