@@ -219,7 +219,7 @@ impl TransformerModel {
                 // prefill's tail checkpoint; `finalize_last` then skips an exact leaf within
                 // two blocks of it (`exact_leaf`).
                 seq.tail_checkpoint_tokens = Some(snap_tok);
-                if std::env::var("METRALE_SSM_SAVE_DUMP").is_ok() {
+                if self.settings.telemetry.ssm_save_dump {
                     self.ssm_pool.debug_state_checksum(
                         seq.slot_idx,
                         self.gpu.as_ref(),

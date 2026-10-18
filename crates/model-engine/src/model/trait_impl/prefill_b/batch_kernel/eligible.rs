@@ -129,7 +129,7 @@ impl TransformerModel {
     /// block or an SSM slot, and log each stream's slot and prompt shape. Runs
     /// only with `METRALE_CODISPATCH_BTCHECK=1`.
     pub(super) fn codispatch_btcheck(&self, streams: &[PrefillSlice<'_>], n: usize) {
-        if std::env::var("METRALE_CODISPATCH_BTCHECK").ok().as_deref() != Some("1") {
+        if !self.settings.scheduler.codispatch_btcheck {
             return;
         }
         let mut owner: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();

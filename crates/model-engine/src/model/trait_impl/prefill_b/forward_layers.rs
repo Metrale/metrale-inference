@@ -153,7 +153,7 @@ impl TransformerModel {
         let mut layer_times: Vec<u128> = Vec::new();
         // 2026-09-25: `METRALE_PREFILL_HOST_TIMING=1`: host wall-clock spans with no
         // synchronize, unlike `profile_now`, which synchronizes per layer.
-        let host_timing = std::env::var("METRALE_PREFILL_HOST_TIMING").as_deref() == Ok("1");
+        let host_timing = self.settings.telemetry.prefill_host_timing;
         let t_loop = host_timing.then(std::time::Instant::now);
         let mut t_in_prefill = std::time::Duration::ZERO;
         let mut t_dflash = std::time::Duration::ZERO;
@@ -222,9 +222,7 @@ impl TransformerModel {
             // 2026-09-25: `METRALE_DUMP_HYPER_RMS=1` (hyper-connection models): after each
             // layer, log the RMS of the FP32 `hc_streams` buffer, `[proc_count, hc_mult, H]`.
             // Debug only: one D2H copy per layer.
-            if std::env::var("METRALE_DUMP_HYPER_RMS").as_deref() == Ok("1")
-                && self.config.hc_mult > 0
-            {
+            if self.settings.telemetry.dump_hyper_rms && self.config.hc_mult > 0 {
                 let n = proc_count * self.config.hc_mult * self.config.hidden_size;
                 let mut buf = vec![0u8; n * 4];
                 self.gpu
@@ -274,7 +272,7 @@ impl TransformerModel {
             // the last token's hidden row as headerless little-endian f32 to
             // `<dir>/metrale_L{i}.bin`.
             if is_last_chunk
-                && let Ok(dir) = std::env::var("METRALE_NEMO_DUMP")
+                && let Some(dir) = self.settings.telemetry.nemo_dump.as_deref()
                 && !dir.is_empty()
             {
                 self.gpu.synchronize(stream)?;

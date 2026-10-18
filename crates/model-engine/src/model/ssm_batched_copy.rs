@@ -97,14 +97,6 @@ pub(crate) fn copy_plan_as_strided_run(plan: &[StateCopy]) -> Option<StridedRun>
     })
 }
 
-/// 2026-09-25: False when `METRALE_NO_BATCHED_SSM_ROLLBACK` is set, to any value
-/// including `0`; the per-copy loop then runs everywhere. Read once per
-/// process, since it is on the verify path.
-pub(crate) fn batched_ssm_copy_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("METRALE_NO_BATCHED_SSM_ROLLBACK").is_none())
-}
-
 /// 2026-09-25: Issue `plan` on `stream`, batched when `batched` is set and the
 /// plan collapses.
 ///
@@ -134,29 +126,21 @@ pub(crate) fn run_state_copies_with(
     Ok(())
 }
 
-/// 2026-09-25: [`run_state_copies_with`] at the process-wide kill-switch setting.
-pub(crate) fn run_state_copies(
-    gpu: &dyn GpuBackend,
-    plan: &[StateCopy],
-    stream: u64,
-) -> Result<()> {
-    run_state_copies_with(gpu, plan, batched_ssm_copy_enabled(), stream)
-}
-
 /// 2026-09-25: Issue an h plan and a conv plan back to back, on one stream.
 ///
 /// The families run separately because a 2-D copy has one width and the h and
 /// conv blob widths differ in general. Issuing every h copy before every conv
 /// copy is sound: [`super::ssm_pool::SsmStatePool`] allocates the h and conv
 /// pools separately (`alloc_layer_pools` per family), so no h copy touches a
-/// byte a conv copy touches.
+/// byte a conv copy touches. `batched` is the inverse of the presence switch
+/// `METRALE_NO_BATCHED_SSM_ROLLBACK` (`settings.scheduler.no_batched_ssm_rollback`).
 pub(crate) fn run_ssm_state_copies(
     gpu: &dyn GpuBackend,
     h_plan: &[StateCopy],
     conv_plan: &[StateCopy],
+    batched: bool,
     stream: u64,
 ) -> Result<()> {
-    let batched = batched_ssm_copy_enabled();
     run_state_copies_with(gpu, h_plan, batched, stream)?;
     run_state_copies_with(gpu, conv_plan, batched, stream)
 }

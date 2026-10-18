@@ -167,10 +167,7 @@ impl TransformerModel {
         let hss_engaged = kv_cache.config().cache_blocks_per_seq.is_some();
         // 2026-09-25: `METRALE_DFLASH_DEBUG_NO_GRAPH=1` runs the verify without a graph, so
         // `CUDA_LAUNCH_BLOCKING=1` can name the failing kernel.
-        let force_eager = std::env::var("METRALE_DFLASH_DEBUG_NO_GRAPH")
-            .ok()
-            .as_deref()
-            == Some("1");
+        let force_eager = self.settings.telemetry.dflash_debug_no_graph.as_deref() == Some("1");
         // 2026-09-25: The `lora_eager` lever runs LoRA verifies without graphs.
         let lora_eager = self.lora.is_some() && self.levers.lora_eager;
         // 2026-10-09: With a comm backend under the decode graphs' rule (`decode_a.rs`):

@@ -24,13 +24,6 @@ use super::super::types::TransformerModel;
 use crate::traits::SequenceState;
 use metrale_model_layers::layer::ForwardContext;
 
-/// 2026-09-25: True when `METRALE_NO_MTP_EAGER_DRAFTER` is set, to any value: the capture is
-/// then consumed only at the first propose. Read once per process.
-pub fn eager_drafter_disabled() -> bool {
-    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *OFF.get_or_init(|| std::env::var("METRALE_NO_MTP_EAGER_DRAFTER").is_ok())
-}
-
 impl TransformerModel {
     /// 2026-09-25: Copy this prefill chunk's hidden rows (`[proc_count, h]` BF16 at the head of
     /// the hidden buffer) into the whole-prompt capture at row `chunk_start`.
@@ -162,7 +155,10 @@ impl TransformerModel {
         is_last: bool,
         stream: u64,
     ) {
-        if !is_last || eager_drafter_disabled() || self.mtp_prefill_hidden.is_null() {
+        if !is_last
+            || self.settings.speculative.no_mtp_eager_drafter
+            || self.mtp_prefill_hidden.is_null()
+        {
             return;
         }
         let Some(proposer) = self.proposer.clone() else {

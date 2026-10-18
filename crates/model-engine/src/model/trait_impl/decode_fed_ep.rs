@@ -36,14 +36,6 @@ pub(in crate::model) const EP_CMD_DECODE_FED: u32 = 0xFFFF_FFE1;
 // 2026-10-10: Far above any vocabulary, so a worker never decodes it as a token id.
 const _: () = assert!(EP_CMD_DECODE_FED > 1 << 24);
 
-/// 2026-10-10: The lever. `1` turns the multi-rank fed decode on; read once per process.
-const ENV: &str = "METRALE_EP_DEVICE_FEED";
-
-fn lever_on() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var(ENV).as_deref() == Ok("1"))
-}
-
 /// 2026-10-10: Rank 0's half of a fed step, submitted on `stream` without a host wait. On the
 /// v3 wire (`one_block`) it is one broadcast of the block `[slot, EP_CMD_DECODE_FED, token,
 /// flags, m0, m1]`: the whole block from the host (with [`ep_wire::FLAG_DEVICE_ARGMAX`] and the
@@ -104,7 +96,9 @@ impl TransformerModel {
     /// 2026-10-10: Whether the multi-rank fed decode is on: the lever, a live multi-rank
     /// protocol, and the v2 wire (the slot word routes the step on the workers).
     pub(super) fn ep_device_feed_active(&self) -> bool {
-        lever_on() && self.multi_rank_protocol_active() && self.ep_protocol_v2
+        self.settings.runtime.ep_device_feed
+            && self.multi_rank_protocol_active()
+            && self.ep_protocol_v2
     }
 
     /// 2026-10-10: Rank 0, inside a fed launch: announce the step for `seq` and send the token

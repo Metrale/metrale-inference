@@ -68,7 +68,7 @@ impl TransformerModel {
         if self.config.num_ssm_layers() == 0
             || !self.ssm_snapshots.is_enabled()
             || !self.prefix_cache.is_active()
-            || std::env::var("METRALE_NO_TAIL_SPLIT").as_deref() == Ok("1")
+            || self.settings.scheduler.no_tail_split
             || self.tokens_have_vision_pad(tokens)
         {
             return None;
@@ -281,7 +281,7 @@ impl TransformerModel {
             None,
         )?;
 
-        if std::env::var("METRALE_SSM_SAVE_DUMP").is_ok() {
+        if self.settings.telemetry.ssm_save_dump {
             self.ssm_pool.debug_state_checksum(
                 seq.slot_idx,
                 self.gpu.as_ref(),

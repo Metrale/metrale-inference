@@ -63,7 +63,7 @@ impl TransformerModel {
         let hidden = self.buffers.hidden_states();
         let bs = kv_cache.block_size();
 
-        if std::env::var("METRALE_SSM_SAVE_DUMP").is_ok() {
+        if self.settings.telemetry.ssm_save_dump {
             self.ssm_pool.debug_state_checksum(
                 seq.slot_idx,
                 self.gpu.as_ref(),
@@ -126,7 +126,7 @@ impl TransformerModel {
         let eps = self.config.rms_norm_eps as f32;
         self.final_norm_apply(last_hidden, normed, 1, h as u32, eps, stream)?;
 
-        if std::env::var("METRALE_DIAG_GEMMA4").is_ok_and(|v| v == "1" || v == "true") {
+        if self.settings.telemetry.diag_gemma4 {
             self.gpu.synchronize(stream)?;
             let (vals, norm) = self.readback_bf16(normed, h.min(16))?;
             tracing::warn!(
@@ -135,7 +135,7 @@ impl TransformerModel {
             );
         }
 
-        if let Ok(dir) = std::env::var("METRALE_NEMO_DUMP")
+        if let Some(dir) = self.settings.telemetry.nemo_dump.as_deref()
             && !dir.is_empty()
         {
             self.gpu.synchronize(stream)?;
@@ -189,7 +189,7 @@ impl TransformerModel {
             dst
         };
 
-        if let Ok(dir) = std::env::var("METRALE_NEMO_DUMP")
+        if let Some(dir) = self.settings.telemetry.nemo_dump.as_deref()
             && !dir.is_empty()
         {
             self.gpu.synchronize(stream)?;
@@ -216,7 +216,7 @@ impl TransformerModel {
             tracing::info!("METRALE_NEMO_DUMP: top-10 logits = {top:?}");
         }
 
-        if std::env::var("METRALE_DIAG_GEMMA4").is_ok_and(|v| v == "1" || v == "true") {
+        if self.settings.telemetry.diag_gemma4 {
             self.gpu.synchronize(stream)?;
             let logits_ptr = self.buffers.logits();
             let n_logits = self.config.vocab_size;
@@ -324,7 +324,7 @@ impl TransformerModel {
                 super::super::super::block_mgmt::cache_acquires_refs(&acquired, kv_cache);
             }
         } else if self.ssm_snapshots.is_enabled() {
-            if std::env::var("METRALE_SSM_SAVE_DUMP").is_ok() {
+            if self.settings.telemetry.ssm_save_dump {
                 self.ssm_pool.debug_state_checksum(
                     seq.slot_idx,
                     self.gpu.as_ref(),

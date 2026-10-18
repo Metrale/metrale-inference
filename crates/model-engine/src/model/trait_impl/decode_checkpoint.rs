@@ -275,7 +275,7 @@ impl TransformerModel {
             snap_tokens.saturating_sub(end_token),
             seq.slot_idx,
         );
-        if std::env::var("METRALE_SSM_SAVE_DUMP").is_ok() {
+        if self.settings.telemetry.ssm_save_dump {
             self.ssm_pool.debug_state_checksum(
                 seq.slot_idx,
                 self.gpu.as_ref(),
@@ -356,7 +356,7 @@ impl TransformerModel {
                 id,
                 seq.tokens.len(),
             );
-            if std::env::var("METRALE_SSM_SAVE_DUMP").is_ok() {
+            if self.settings.telemetry.ssm_save_dump {
                 self.ssm_pool.debug_state_checksum(
                     seq.slot_idx,
                     self.gpu.as_ref(),

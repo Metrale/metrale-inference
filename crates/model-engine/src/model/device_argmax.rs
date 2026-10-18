@@ -34,14 +34,6 @@ use super::lm_head_vocab_tp::HeadRanks;
 use super::types::TransformerModel;
 use crate::traits::RowMask;
 
-/// 2026-10-10: The lever. `1` turns the sharded device argmax on; read once per process.
-const ENV: &str = "METRALE_EP_DEVICE_ARGMAX";
-
-fn lever_on() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var(ENV).as_deref() == Ok("1"))
-}
-
 /// 2026-10-10: Bytes of the key pair `[p, q]`.
 const KEY_BYTES: usize = 16;
 
@@ -105,7 +97,7 @@ impl TransformerModel {
     /// takes its vocab-sharded BF16 branch and leaves the slice's logits untouched afterwards.
     fn device_argmax_shard(&self) -> Option<(usize, usize)> {
         let da = &self.device_argmax;
-        let eligible = lever_on()
+        let eligible = self.settings.runtime.ep_device_argmax
             && EpWire::get().one_block()
             && self.multi_rank_protocol_active()
             && da.keys != DevicePtr::NULL

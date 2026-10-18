@@ -204,7 +204,7 @@ impl TransformerModel {
         let hss_engaged = kv_cache.config().cache_blocks_per_seq.is_some();
         // 2026-09-25: `METRALE_K2_DIAG=1` arms synchronize checkpoints in `forward_k2`, which
         // are illegal under capture, so the verify then runs eagerly.
-        let k2_diag_eager = std::env::var("METRALE_K2_DIAG").ok().as_deref() == Some("1");
+        let k2_diag_eager = self.settings.telemetry.k2_diag;
         // 2026-09-25: The `lora_eager` lever runs LoRA verifies without graphs.
         let lora_eager = self.lora.is_some() && self.levers.lora_eager;
         // 2026-09-25: With a communicator (EP), the verify is captured unless
@@ -212,11 +212,11 @@ impl TransformerModel {
         // `ep_graphs` lever of `decode_a`'s decode graph), so the two are gated apart.
         // `free_sequence_dispatch` drops this slot-keyed cache for layers that own
         // per-sequence state.
-        let ep_graphs = std::env::var("METRALE_GLM_VERIFY_GRAPHS").ok().as_deref() != Some("0");
+        let ep_graphs = self.settings.speculative.glm_verify_graphs;
         // 2026-09-25: `METRALE_GLM_VERIFY_GRAPH_TRACE=1` captures every step, never replays,
         // and logs the enqueued ops that differ from the previous step's (host values a
         // replay would freeze). It turns graphs on and caches none.
-        let graph_trace = std::env::var("METRALE_GLM_VERIFY_GRAPH_TRACE").is_ok_and(|v| v == "1");
+        let graph_trace = self.settings.telemetry.glm_verify_graph_trace;
         let ep_graphs = ep_graphs || graph_trace;
         let use_graphs = (self.comm.is_none() || ep_graphs)
             && !self
@@ -438,8 +438,7 @@ impl TransformerModel {
                     // step without caching, which separates a wrong capture from a stale replay.
                     if let Some(ref mut cache) = graph_cache
                         && !graph_trace
-                        && !std::env::var("METRALE_GLM_VERIFY_GRAPH_NOCACHE")
-                            .is_ok_and(|v| v == "1")
+                        && !self.settings.speculative.glm_verify_graph_nocache
                     {
                         cache.insert(graph_key, graph);
                     }

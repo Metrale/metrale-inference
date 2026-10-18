@@ -73,7 +73,13 @@ impl TransformerModel {
                 });
             }
         }
-        run_ssm_state_copies(self.gpu.as_ref(), &h_plan, &conv_plan, stream)?;
+        run_ssm_state_copies(
+            self.gpu.as_ref(),
+            &h_plan,
+            &conv_plan,
+            !self.settings.scheduler.no_batched_ssm_rollback,
+            stream,
+        )?;
         // 2026-09-25: The event `sync_secondary_dispatch` makes the default stream wait on.
         self.gpu.record_event(self.secondary_event, stream)?;
         Ok(())
@@ -171,8 +177,20 @@ impl TransformerModel {
                 ssm_layer_idx += 1;
             }
         }
-        run_ssm_state_copies(self.gpu.as_ref(), &h_back, &conv_back, stream)?;
-        run_ssm_state_copies(self.gpu.as_ref(), &h_ckpt, &conv_ckpt, stream)?;
+        run_ssm_state_copies(
+            self.gpu.as_ref(),
+            &h_back,
+            &conv_back,
+            !self.settings.scheduler.no_batched_ssm_rollback,
+            stream,
+        )?;
+        run_ssm_state_copies(
+            self.gpu.as_ref(),
+            &h_ckpt,
+            &conv_ckpt,
+            !self.settings.scheduler.no_batched_ssm_rollback,
+            stream,
+        )?;
         // 2026-09-25: The event `sync_secondary_dispatch` makes the default stream wait on.
         self.gpu.record_event(self.secondary_event, stream)?;
         Ok(())
@@ -287,7 +305,13 @@ impl TransformerModel {
 
         let stream = self.secondary_stream;
         let (h_plan, conv_plan) = self.ssm_commit_plan(seq, num_accepted - 1, !h_folded)?;
-        run_ssm_state_copies(self.gpu.as_ref(), &h_plan, &conv_plan, stream)?;
+        run_ssm_state_copies(
+            self.gpu.as_ref(),
+            &h_plan,
+            &conv_plan,
+            !self.settings.scheduler.no_batched_ssm_rollback,
+            stream,
+        )?;
         self.gpu.record_event(self.secondary_event, stream)?;
         Ok(())
     }

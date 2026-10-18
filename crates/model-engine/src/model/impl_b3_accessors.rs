@@ -131,7 +131,7 @@ impl TransformerModel {
     /// recomputes the whole prompt. `METRALE_MLA_PREFIX_SKIP=1` makes it
     /// return false.
     pub(crate) fn mla_prefill_needs_full_recompute(&self) -> bool {
-        if std::env::var("METRALE_MLA_PREFIX_SKIP").as_deref() == Ok("1") {
+        if self.settings.cache.mla_prefix_skip {
             return false;
         }
         self.layers.iter().any(|l| l.uses_local_mla_prefill())
