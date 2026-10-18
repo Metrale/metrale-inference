@@ -8,11 +8,11 @@
 use super::*;
 use metrale_model_layers::lever_equivalence::{Old, PROBES, check, settings_from};
 
-/// 2026-10-17: The probes plus the empty value, which every text lever reads as set.
+/// 2026-10-17: The probes plus the empty value (which every text lever reads as set), case and padding variants, and the `full` value laguna's old test refused.
 fn probes() -> impl Iterator<Item = Option<&'static str>> {
     PROBES
         .into_iter()
-        .chain([Some(""), Some(" OFF "), Some("TRUE")])
+        .chain([Some(""), Some(" OFF "), Some("TRUE"), Some("full")])
 }
 
 fn new_at<T>(env: &str, probe: Option<&str>, f: impl Fn(&InferenceServerSettings) -> T) -> T {

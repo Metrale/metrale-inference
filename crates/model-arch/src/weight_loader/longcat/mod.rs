@@ -98,12 +98,8 @@ impl ModelWeightLoader for LongcatWeightLoader {
 
         // 2026-09-25: `METRALE_NVFP4_MLA` set to 0/false/no/off keeps the MLA
         // projections in BF16, the same lever the Mistral MLA loader reads.
-        let disable_nvfp4_mla = std::env::var("METRALE_NVFP4_MLA")
-            .map(|v| {
-                let v = v.trim().to_ascii_lowercase();
-                matches!(v.as_str(), "0" | "false" | "no" | "off")
-            })
-            .unwrap_or(false);
+        let disable_nvfp4_mla =
+            crate::weight_loader::shared_levers::nvfp4_mla_disabled(lc.settings);
         if disable_nvfp4_mla {
             tracing::info!("LongCat: METRALE_NVFP4_MLA=0 — MLA projections stay BF16");
         }

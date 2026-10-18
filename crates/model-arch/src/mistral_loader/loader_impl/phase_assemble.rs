@@ -63,12 +63,7 @@ pub(super) fn assemble_layer(
     // 2026-09-25: The NVFP4 copies of wq_a, wq_b, wkv_a and wo are used
     // unless METRALE_NVFP4_MLA is 0, false, no or off (trimmed, any case);
     // then the layer gets the BF16 weights only.
-    let disable_nvfp4_mla = std::env::var("METRALE_NVFP4_MLA")
-        .map(|v| {
-            let v = v.trim().to_ascii_lowercase();
-            matches!(v.as_str(), "0" | "false" | "no" | "off")
-        })
-        .unwrap_or(false);
+    let disable_nvfp4_mla = crate::weight_loader::shared_levers::nvfp4_mla_disabled(lc.settings);
 
     // 2026-09-25: A field an earlier step left unset is an error naming the
     // field, not a panic.
