@@ -9,7 +9,7 @@
 //! value the switch rule cannot read is rejected at startup.
 
 use super::*;
-use metrale_model_layers::lever_equivalence::{Old, Outcome, check};
+use metrale_model_layers::lever_equivalence::{Old, Outcome, check, settings_from};
 
 /// 2026-10-17: The reader `from_settings` replaced, unchanged but for its paths: `value` is
 /// a variable's text, `present` whether it is set at all.
@@ -72,10 +72,19 @@ fn from_values(
         },
         dspark_anchor_bias: value("METRALE_DSPARK_ANCHOR_BIAS").as_deref() != Some("0"),
         dspark_conf_trace: opt_in(value("METRALE_DSPARK_CONF_TRACE").as_deref()),
+
+        batched_precompute: value("METRALE_DFLASH_NO_BATCHED_PRECOMPUTE").as_deref() != Some("1"),
+        fp8_rt: value("METRALE_NO_DFLASH_FP8_RT").as_deref() != Some("1"),
+        fp8_gemm_p2: opt_in(value("METRALE_DFLASH_FP8_GEMM_P2").as_deref()),
+        fp8_gemm_p4: opt_in(value("METRALE_DFLASH_FP8_GEMM_P4").as_deref()),
+        ctx_cap: parsed(value("METRALE_DFLASH_CTX_CAP").as_deref()).unwrap_or(16384),
     }
 }
 
-const OPT_IN: [&str; 20] = [
+const OPT_IN: [&str; 23] = [
+    "METRALE_NO_DFLASH_FP8_RT",
+    "METRALE_DFLASH_FP8_GEMM_P2",
+    "METRALE_DFLASH_FP8_GEMM_P4",
     "METRALE_DFLASH_TP_GRAPHS",
     "METRALE_DFLASH_DEBUG_DUMP",
     "METRALE_DFLASH_DEBUG_DUMP_FULL",
@@ -106,7 +115,8 @@ const OPT_OUT: [&str; 4] = [
 ];
 
 /// 2026-10-17: Text levers; the head applies the same parse to the text as before.
-const VERBATIM: [&str; 9] = [
+const VERBATIM: [&str; 10] = [
+    "METRALE_DFLASH_NO_BATCHED_PRECOMPUTE",
     "METRALE_DFLASH_BLOCK_DUMP_AT_POS",
     "METRALE_DFLASH_DEBUG_CTX_USED",
     "METRALE_DFLASH_OPTION_B",
@@ -117,6 +127,9 @@ const VERBATIM: [&str; 9] = [
     "METRALE_DSPARK_SHIFT",
     "METRALE_DFLASH_PROPOSE_NO_GRAPH",
 ];
+
+/// 2026-10-17: Int levers; an unparseable value is now refused at startup.
+const NUMBER: [&str; 1] = ["METRALE_DFLASH_CTX_CAP"];
 
 /// 2026-10-17: The whole lever set with `env` at `probe` and nothing else set, so a field read
 /// from the wrong lever, or a lost `any_diagnostic_armed`, shows as a difference.
@@ -159,6 +172,17 @@ fn every_lever_reads_as_before_except_the_switch_spellings() {
     for env in VERBATIM {
         assert_eq!(changes(env, Old::Verbatim), [], "{env}");
     }
+    for env in NUMBER {
+        assert_eq!(
+            changes(env, Old::Number),
+            [
+                (env, Some("true"), Outcome::Rejected),
+                (env, Some("off"), Outcome::Rejected),
+                (env, Some("garbage"), Outcome::Rejected)
+            ],
+            "{env}"
+        );
+    }
 }
 
 /// 2026-10-17: The three lists cover every variable the old reader read, so no lever is left
@@ -183,8 +207,48 @@ fn the_probe_lists_cover_every_lever_the_old_reader_read() {
         .iter()
         .chain(&OPT_OUT)
         .chain(&VERBATIM)
+        .chain(&NUMBER)
         .map(|v| (*v).to_string())
         .collect();
     listed.sort();
     assert_eq!(read, listed);
+}
+
+/// 2026-10-17: `dflash_ctx_window` against the construction-time reader it replaced (a `usize`
+/// parse, else 4096), over the probes and the values where a text row could differ.
+#[test]
+fn ctx_window_reads_as_before() {
+    const ENV: &str = "METRALE_DFLASH_CTX_WINDOW";
+    let old = |v: Option<&str>| v.and_then(|s| s.parse::<usize>().ok()).unwrap_or(4096);
+    assert_eq!(
+        check(
+            ENV,
+            Old::Verbatim,
+            old,
+            crate::dflash_head::dflash_ctx_window
+        ),
+        []
+    );
+    for v in ["", "-1", "8192", " 8192"] {
+        let s = settings_from(&[(ENV, v)]).expect("a text lever takes any value");
+        assert_eq!(
+            crate::dflash_head::dflash_ctx_window(&s),
+            old(Some(v)),
+            "{v:?}"
+        );
+    }
+}
+
+/// 2026-10-17: A negative cap still reads as unset and `0` stays uncapped, as under the `usize`
+/// parse; the empty value, which that parse read as unset, is now refused.
+#[test]
+fn ctx_cap_keeps_its_fallbacks_and_refuses_the_empty_value() {
+    let cap = |v: &str| {
+        settings_from(&[("METRALE_DFLASH_CTX_CAP", v)])
+            .map(|s| crate::dflash_head::dflash_ctx_cap(&s))
+    };
+    assert_eq!(cap("-5").expect("an integer resolves"), 16384);
+    assert_eq!(cap("0").expect("an integer resolves"), 0);
+    assert_eq!(cap("8192").expect("an integer resolves"), 8192);
+    assert!(cap("").is_err());
 }

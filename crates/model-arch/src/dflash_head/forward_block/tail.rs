@@ -82,7 +82,7 @@ impl BlockDiffusionDraftHead {
             if self.kernels.fp8_gemv_rt2.0 != 0
                 && g <= 8
                 && h_local.is_multiple_of(16)
-                && crate::dflash_head::fp8_rt_enabled()
+                && self.levers.fp8_rt
             {
                 ops::fp8_gemv_rowscale_batch8_rt2(
                     gpu,
@@ -98,7 +98,7 @@ impl BlockDiffusionDraftHead {
             } else if self.kernels.fp8_gemv_rt2_16.0 != 0
                 && rt2_16_covers_the_batch(g)
                 && h_local.is_multiple_of(16)
-                && crate::dflash_head::fp8_rt_enabled()
+                && self.levers.fp8_rt
             {
                 ops::fp8_gemv_rowscale_batch16_rt2(
                     gpu,

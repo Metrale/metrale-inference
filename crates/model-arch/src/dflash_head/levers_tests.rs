@@ -32,6 +32,9 @@ fn defaults_are_spelled_out_not_derived() {
     assert!(d.dflash2);
     assert!(d.topk16_split);
     assert!(d.dspark_markov);
+    assert!(d.batched_precompute);
+    assert!(d.fp8_rt);
+    assert_eq!(d.ctx_cap, 16384);
     assert!(!d.any_diagnostic_armed);
 }
 

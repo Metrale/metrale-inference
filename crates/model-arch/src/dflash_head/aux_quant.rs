@@ -58,7 +58,7 @@ impl BlockDiffusionDraftHead {
         k: u32,
         stream: u64,
     ) -> Result<()> {
-        let rt = k.is_multiple_of(16) && super::fp8_rt_enabled();
+        let rt = k.is_multiple_of(16) && self.levers.fp8_rt;
         if rt && self.kernels.fp8_gemv_rt2.0 != 0 && g <= 8 {
             return ops::fp8_gemv_rowscale_batch8_rt2(
                 gpu,

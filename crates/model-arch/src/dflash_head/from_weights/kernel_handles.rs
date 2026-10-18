@@ -29,7 +29,10 @@ fn fp8_row_scaled_kernel(
     h
 }
 
-pub(super) fn load_kernels(gpu: &dyn GpuBackend) -> Result<DflashKernels> {
+pub(super) fn load_kernels(
+    gpu: &dyn GpuBackend,
+    levers: &super::super::levers::DFlashLevers,
+) -> Result<DflashKernels> {
     let fp8_kernel = |name: &str| fp8_row_scaled_kernel(gpu, name);
     Ok(DflashKernels {
         // 2026-09-25: The drafter's norms use `rms_norm_vanilla`
@@ -91,8 +94,8 @@ pub(super) fn load_kernels(gpu: &dyn GpuBackend) -> Result<DflashKernels> {
         // none is present, and the FP8 drafter path then stays off (the
         // `fp8_kernels_present` check below).
         fp8_gemm_n128_row_scaled: {
-            let pin_p2 = std::env::var("METRALE_DFLASH_FP8_GEMM_P2").ok().as_deref() == Some("1");
-            let pin_p4 = std::env::var("METRALE_DFLASH_FP8_GEMM_P4").ok().as_deref() == Some("1");
+            let pin_p2 = levers.fp8_gemm_p2;
+            let pin_p4 = levers.fp8_gemm_p4;
             let mut h = metrale_gpu_runtime::gpu::KernelHandle(0);
             if !pin_p2 && !pin_p4 {
                 h = fp8_kernel("fp8_gemm_t_row_scaled_k64");

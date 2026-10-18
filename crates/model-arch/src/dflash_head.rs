@@ -193,7 +193,7 @@ pub struct BlockDiffusionDraftHead {
 
     pub kernels: DflashKernels,
 
-    /// 2026-09-25: The model's `max_seq_len`; with `dflash_ctx_cap()` and the
+    /// 2026-09-25: The model's `max_seq_len`; with `levers.ctx_cap` and the
     /// request's budget it bounds each sequence's ctx accumulator.
     pub max_seq_len: usize,
 
@@ -276,17 +276,6 @@ mod tp_propose;
 /// 2026-09-25: Rows the batched ctx precompute staging holds per step.
 pub(super) const PRECOMPUTE_BATCH_ROWS: usize = 256;
 
-/// 2026-09-25: Whether the batched ctx precompute (one fc + fused-KV pass over
-/// every sequence's uncommitted ctx rows) runs on the batched propose path:
-/// yes unless `METRALE_DFLASH_NO_BATCHED_PRECOMPUTE=1`, which runs the
-/// per-sequence loop.
-pub(super) fn batched_precompute_enabled() -> bool {
-    std::env::var("METRALE_DFLASH_NO_BATCHED_PRECOMPUTE")
-        .ok()
-        .as_deref()
-        != Some("1")
-}
-
 /// 2026-09-25: The `METRALE_DFLASH_OPTION_B` predicate (`DFlashLevers::option_b`):
 /// on unless the value is `0`. Pure over the raw value, so `option_b_tests`
 /// tests it without setting the process environment.
@@ -310,24 +299,31 @@ mod propose;
 mod proposer;
 mod state;
 
-/// 2026-09-25: Read once: false only when `METRALE_NO_DFLASH_FP8_RT=1`, so the
-/// kernel choice stays fixed across CUDA-graph captures.
-pub(crate) fn fp8_rt_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("METRALE_NO_DFLASH_FP8_RT").as_deref() != Ok("1"))
-}
-
 /// 2026-09-25: The DFlash context-window bound, in tokens: the most recent
 /// target positions the drafter may accumulate. Both the per-sequence ctx
 /// accumulator (`proposer.rs`) and the model's whole-prompt hidden capture
 /// (`metrale-model-engine`'s `impl_a1.rs`) are sized from it.
 ///
-/// `METRALE_DFLASH_CTX_CAP=<tokens>` (default 16384); `0` disables the cap.
-pub fn dflash_ctx_cap() -> usize {
-    std::env::var("METRALE_DFLASH_CTX_CAP")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
+/// `METRALE_DFLASH_CTX_CAP=<tokens>` (default 16384); `0` disables the cap. 2026-10-17: From
+/// the settings; a negative value reads as unset, as the `usize` parse it replaced did.
+pub fn dflash_ctx_cap(settings: &metrale_settings::InferenceServerSettings) -> usize {
+    settings
+        .speculative
+        .dflash_ctx_cap
+        .and_then(|v| usize::try_from(v).ok())
         .unwrap_or(16384)
+}
+
+/// 2026-10-17: The ctx rows the non-paged drafter path attends to and one ctx precompute call
+/// takes, read when a head is built. `METRALE_DFLASH_CTX_WINDOW=<rows>` (default 4096); a value
+/// that does not parse as a `usize` reads as unset. Public so every reader shares one parse.
+pub fn dflash_ctx_window(settings: &metrale_settings::InferenceServerSettings) -> usize {
+    settings
+        .speculative
+        .dflash_ctx_window
+        .as_deref()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(4096)
 }
 
 impl BlockDiffusionDraftHead {

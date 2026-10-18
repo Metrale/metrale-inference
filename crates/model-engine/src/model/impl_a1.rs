@@ -231,7 +231,7 @@ impl TransformerModel {
             &config,
             &proposer,
             max_seq_len,
-            dflash_kgamma,
+            (dflash_kgamma > 0).then(|| metrale_model_arch::dflash_head::dflash_ctx_cap(&settings)),
             has_mtp,
             mtp_quant_fwd,
             &levers,

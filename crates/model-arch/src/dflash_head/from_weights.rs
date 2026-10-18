@@ -78,7 +78,7 @@ impl BlockDiffusionDraftHead {
         let levers = super::levers::DFlashLevers::from_settings(settings);
         // Resolve handles and reject unsupported TP combinations before allocating the KV pool
         // or the head's scratch buffers.
-        let kernels = kernel_handles::load_kernels(gpu)?;
+        let kernels = kernel_handles::load_kernels(gpu, &levers)?;
         let dflash2_cfg = weights.config.dflash_config.as_ref();
         let dflash2_selector_active = weights.selector_pred.is_some()
             && weights.selector_succ.is_some()
@@ -154,11 +154,9 @@ impl BlockDiffusionDraftHead {
         let g = gamma_val;
         // 2026-09-25: `ctx_window` bounds the ctx rows the non-paged path attends to and
         // the rows one ctx precompute call takes. METRALE_DFLASH_CTX_WINDOW (default
-        // 4096), read here at construction. The row scratch grows linearly with it.
-        let ctx_window: usize = std::env::var("METRALE_DFLASH_CTX_WINDOW")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(4096);
+        // 4096), read here at construction (`dflash_ctx_window`). The row scratch grows
+        // linearly with it.
+        let ctx_window = super::dflash_ctx_window(settings);
         tracing::info!(
             "DFlash ctx_window = {} (set METRALE_DFLASH_CTX_WINDOW to override; \
              drafter trained on full captured prefix — larger is better, \

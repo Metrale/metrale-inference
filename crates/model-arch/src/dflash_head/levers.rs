@@ -138,6 +138,21 @@ pub struct DFlashLevers {
     /// 2026-10-10: `METRALE_DFLASH_TP_GRAPHS=1`: a tensor-parallel drafter's propose runs on its
     /// CUDA graphs, collectives captured (`tp.rs`). Opt-in; otherwise it runs eagerly.
     pub tp_graphs: bool,
+    /// 2026-10-17: The batched ctx precompute (one fc + fused-KV pass over every sequence's
+    /// uncommitted ctx rows) runs on the batched propose path, unless
+    /// `METRALE_DFLASH_NO_BATCHED_PRECOMPUTE=1`, which runs the per-sequence loop.
+    pub batched_precompute: bool,
+    /// 2026-10-17: The rt2 FP8 GEMVs may run; off under `METRALE_NO_DFLASH_FP8_RT=1`. Fixed for
+    /// the head's lifetime, so the kernel choice stays the same across CUDA-graph captures.
+    pub fp8_rt: bool,
+    /// 2026-10-17: `METRALE_DFLASH_FP8_GEMM_P2=1`: the row-scaled FP8 GEMM takes only the
+    /// 2-stage original.
+    pub fp8_gemm_p2: bool,
+    /// 2026-10-17: `METRALE_DFLASH_FP8_GEMM_P4=1`: the row-scaled FP8 GEMM skips `_k64`.
+    pub fp8_gemm_p4: bool,
+    /// 2026-10-17: The per-sequence ctx accumulator bound ([`super::dflash_ctx_cap`]); `0` is
+    /// uncapped.
+    pub ctx_cap: usize,
 }
 
 /// 2026-09-25: Variables whose presence, at any value, sets `any_diagnostic_armed`
@@ -222,6 +237,12 @@ impl DFlashLevers {
             },
             dspark_anchor_bias: rt.dspark_anchor_bias,
             dspark_conf_trace: tm.dspark_conf_trace,
+
+            batched_precompute: sp.dflash_no_batched_precompute.as_deref() != Some("1"),
+            fp8_rt: !sp.no_dflash_fp8_rt,
+            fp8_gemm_p2: sp.dflash_fp8_gemm_p2,
+            fp8_gemm_p4: sp.dflash_fp8_gemm_p4,
+            ctx_cap: super::dflash_ctx_cap(s),
         }
     }
 
@@ -238,6 +259,9 @@ impl DFlashLevers {
             batch_propose_width: usize::MAX,
             dspark_anchor_bias: true,
             propose_warmup_n: 2,
+            batched_precompute: true,
+            fp8_rt: true,
+            ctx_cap: 16384,
             ..Self::default()
         }
     }

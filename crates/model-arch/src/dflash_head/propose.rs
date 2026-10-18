@@ -95,7 +95,7 @@ impl BlockDiffusionDraftHead {
             // 2026-09-25: In a batched prep with batched precompute on,
             // `precompute_ctx_kv_batched` covers this tail after every
             // sequence's prep; `ctx_committed` stays put so that pass sees it.
-            let defer_to_batch = collect_prep.is_some() && super::batched_precompute_enabled();
+            let defer_to_batch = collect_prep.is_some() && self.levers.batched_precompute;
             if !defer_to_batch && dstate.ctx_len > 0 && new_count > 0 {
                 // 2026-09-25: The precompute scratch holds `ctx_window` rows
                 // and the tail can be longer, so it runs in chunks of at most

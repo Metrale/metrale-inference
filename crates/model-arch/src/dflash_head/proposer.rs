@@ -155,7 +155,7 @@ impl DraftProposer for BlockDiffusionDraftHead {
         // rows, which the prep deferred. A failure leaves `ctx_committed`
         // unchanged for every tail not yet written, so the per-sequence path
         // recomputes those.
-        if batched_precompute_enabled()
+        if self.levers.batched_precompute
             && let Err(e) = self.precompute_ctx_kv_batched(states, ctx, stream)
         {
             tracing::warn!("DFlash batched ctx precompute: {e:#} — per-seq path");
@@ -282,7 +282,7 @@ impl BlockDiffusionDraftHead {
         // uncapped) bounds it below the head's `max_seq_len`. When it fills,
         // model-engine's `commit_ctx` and `dflash_serial_ctx_append` slide it,
         // keeping the newest rows and their positions.
-        let cap = dflash_ctx_cap();
+        let cap = self.levers.ctx_cap;
         let ceiling = if cap == 0 {
             self.max_seq_len
         } else {

@@ -142,7 +142,8 @@ pub(super) fn alloc_prefill_capture(
     config: &ModelConfig,
     proposer: &Option<Arc<dyn DraftProposer>>,
     max_seq_len: usize,
-    dflash_kgamma: usize,
+    // 2026-10-17: `dflash_head::dflash_ctx_cap` with DFlash on (`dflash_kgamma > 0`), else `None`.
+    dflash_ctx_cap: Option<usize>,
     has_mtp: bool,
     mtp_quant_fwd: MtpQuantization,
     levers: &ModelLevers,
@@ -155,7 +156,7 @@ pub(super) fn alloc_prefill_capture(
     // forward (`supports_drafter_prefill`).
     //
     // Rows: the proposer's reachable context (`prefill_hidden_rows`, at
-    // most `max_seq_len`), further capped at `dflash_ctx_cap()` when DFlash
+    // most `max_seq_len`), further capped at `dflash_ctx_cap` when DFlash
     // is on (a cap of 0 means none). `capture_rows` is computed outside the
     // branch because it is also `mtp_prefill_capacity`, the bound the
     // capture guard checks.
@@ -163,15 +164,9 @@ pub(super) fn alloc_prefill_capture(
         .as_ref()
         .map_or(max_seq_len, |p| p.prefill_hidden_rows(max_seq_len))
         .min(max_seq_len);
-    let capture_rows = if dflash_kgamma > 0 {
-        let cap = metrale_model_arch::dflash_head::dflash_ctx_cap();
-        if cap == 0 {
-            mtp_prefill_rows
-        } else {
-            mtp_prefill_rows.min(cap)
-        }
-    } else {
-        mtp_prefill_rows
+    let capture_rows = match dflash_ctx_cap {
+        None | Some(0) => mtp_prefill_rows,
+        Some(cap) => mtp_prefill_rows.min(cap),
     };
     let mtp_prefill_hidden = if has_mtp
         && mtp_quant_fwd.supports_drafter_prefill()
