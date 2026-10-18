@@ -65,13 +65,6 @@ fn record_multi_rate(n: usize, kk: usize) {
     }
 }
 
-/// 2026-09-25: `METRALE_NO_VERIFY_GDN_BATCH` set to any value, `0` included, disables
-/// the batched path. Read once per process.
-fn verify_gdn_batch_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("METRALE_NO_VERIFY_GDN_BATCH").is_none())
-}
-
 impl Qwen3SsmLayer {
     /// 2026-09-25: Try the batched conv + WY for one run of a `GdnStates::Multi` verify.
     /// `args` holds the run's buffers, offset to its first row, with
@@ -441,7 +434,7 @@ impl Qwen3SsmLayer {
         // 2026-09-25: With an FP16 h-state a zero handle is an error here, not a decline.
         self.require_wy_f16(kk, wy_k)?;
         if n < 2
-            || !verify_gdn_batch_enabled()
+            || !self.levers.verify_gdn_batch
             || self.gdn_verify_fused_conv_kn_batched_k.0 == 0
             || wy_k.0 == 0
             || wy_tables.is_null()

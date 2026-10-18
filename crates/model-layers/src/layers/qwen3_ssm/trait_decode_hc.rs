@@ -54,10 +54,9 @@ impl Qwen3SsmLayer {
         // 2026-09-25: METRALE_QWEN4EXP_DECODE_PROF=1 logs per-stage wall clock
         // for the first 150 calls (`PROF_LEFT`). Each probe synchronises the
         // stream, so the mode is for measurement, not serving.
-        static PROF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        // 2026-10-17: The lever is `SsmLevers::hc_decode_prof`.
         static PROF_LEFT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(150);
-        let prof = *PROF
-            .get_or_init(|| std::env::var("METRALE_QWEN4EXP_DECODE_PROF").as_deref() == Ok("1"))
+        let prof = ctx.levers.ssm.hc_decode_prof
             && PROF_LEFT.fetch_sub(1, std::sync::atomic::Ordering::Relaxed) > 0;
         let mut t = if prof {
             ctx.gpu.synchronize(stream).ok();

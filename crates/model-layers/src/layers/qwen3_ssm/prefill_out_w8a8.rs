@@ -24,14 +24,6 @@ use crate::layer::ForwardContext;
 use crate::layers::ops;
 use crate::weight_map::{Fp8Weight, WeightQuantFormat};
 
-/// 2026-09-25: `METRALE_SSM_OUT_W8A16_ONLY`, read by presence (any value,
-/// empty and `0` included) once per process. When set, the SSM `out_proj`
-/// prefill never takes the cuBLASLt W8A8 arm.
-pub(super) fn ssm_out_w8a16_only() -> bool {
-    static ONLY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ONLY.get_or_init(|| std::env::var_os("METRALE_SSM_OUT_W8A16_ONLY").is_some())
-}
-
 /// 2026-09-25: Whether the SSM `out_proj` prefill takes the cuBLASLt arm. A
 /// pure function, so `prefill_out_w8a8_tests.rs` checks each clause without a
 /// GPU.
@@ -104,7 +96,7 @@ impl Qwen3SsmLayer {
         out_proj_cublas_selected(
             ctx.dispatch.cublas.ssm,
             ctx.dispatch.fp8_blockscaled_prefill,
-            ssm_out_w8a16_only(),
+            ctx.levers.ssm.out_w8a16_only,
             fp8w.scale_format,
             m,
             n,

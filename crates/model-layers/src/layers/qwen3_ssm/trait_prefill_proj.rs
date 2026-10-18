@@ -57,10 +57,7 @@ impl Qwen3SsmLayer {
             )?;
             return Ok(());
         }
-        let force_bf16 = matches!(
-            std::env::var("METRALE_GDN_BF16_WEIGHTS").ok().as_deref(),
-            Some("1")
-        );
+        let force_bf16 = ctx.levers.ssm.bf16_weights;
         // 2026-09-25: Per-row FP8 weights (`qkvz_fp8w_rowwise`), dequantised
         // once per layer to BF16 in the arena slab (`rowwise_bf16.rs`) and run
         // on cuBLASLt. FP8 E4M3 is exact in BF16, so this arm keeps the

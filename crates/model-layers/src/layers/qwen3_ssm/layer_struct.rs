@@ -236,6 +236,9 @@ pub struct Qwen3SsmLayer {
     pub(super) woa_dims: [usize; 4],
     /// 2026-09-26: Carried-state verify handles and binding (`carry.rs`).
     pub(super) carry: super::carry::CarryState,
+    /// 2026-10-17: `ModelLevers::ssm` at load, for the selectors the circuit executor asks
+    /// without a `ForwardContext` (`multi_run_arm` through `gdn_verify_run_batched`).
+    pub(super) levers: super::SsmLevers,
     /// 2026-09-25: FP16 h-state variants of the WY verify kernels, 0 when
     /// absent. Under `ssm_h_fp16_enabled()`, `wy2_kernel` and `wy3_kernel`
     /// return these, even when 0, and never the FP32 kernels.

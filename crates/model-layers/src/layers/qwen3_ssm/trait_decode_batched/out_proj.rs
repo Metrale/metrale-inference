@@ -174,7 +174,7 @@ impl Qwen3SsmLayer {
             }
         } else if num_tokens > VERIFY_TGEMM_MIN_TOKENS
             && let Some(ref nvfp4_t) = self.out_proj_nvfp4_t
-            && verify_outproj_tgemm_enabled()
+            && ctx.levers.ssm.verify_outproj_tgemm
         {
             // 2026-09-25: More than `VERIFY_TGEMM_MIN_TOKENS` rows with an NVFP4 transposed
             // twin: `ms_proj_gemm`, the call the multi-seq decode out_proj makes on this

@@ -283,7 +283,7 @@ impl Qwen3SsmLayer {
             self.qkvz_fp8.is_some(),
             self.qkvz_nvfp4_t.is_some(),
             self.deep_k_gemm(h as u32).0 != 0,
-            qkvz_nvfp4_decode_off(),
+            !ctx.levers.ssm.qkvz_nvfp4_decode,
         ) && let Some(ref nvfp4_t) = self.qkvz_nvfp4_t
         {
             // 2026-09-25: More than `VERIFY_TGEMM_MIN_TOKENS` rows with both copies: the

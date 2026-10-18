@@ -57,7 +57,7 @@ impl Qwen3SsmLayer {
         value_dim: usize,
         stream: u64,
     ) -> Result<()> {
-        let force_w8a8 = matches!(std::env::var("METRALE_FP8_W8A8").ok().as_deref(), Some("1"));
+        let force_w8a8 = ctx.levers.ssm.force_w8a8;
         // 2026-09-25: Per-row FP8 weights (`out_proj_fp8w_rowwise`), dequantised
         // once per layer to BF16 in the arena slab (`rowwise_bf16.rs`) and run
         // on cuBLASLt. First, because it is the only arm that does not

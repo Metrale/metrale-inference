@@ -222,27 +222,19 @@ impl Qwen3SsmLayer {
                 && crate::layers::qwen3_ssm::gdn_fused_norm_enabled()
             {
                 let z_base = deinterleaved.offset((key_dim * 2 + value_dim) * bf16);
-                fn gdn_half_reg_enabled() -> bool {
-                    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-                    *ON.get_or_init(|| {
-                        std::env::var("METRALE_NO_GDN_HALF_REG").ok().as_deref() != Some("1")
-                    })
-                }
                 // 2026-09-25: The SMEM-staged twin keeps the un-retained H
                 // columns in shared memory instead of re-reading them; it must
                 // match the half-register kernel bit for bit
                 // (`gdn_strided_norm_microtest` compares output and H state).
                 // Opt-in: METRALE_GDN_SMEM_STAGE is a presence check, so any
-                // value, `0` included, turns it on.
-                fn gdn_smem_stage_enabled() -> bool {
-                    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-                    *ON.get_or_init(|| std::env::var("METRALE_GDN_SMEM_STAGE").is_ok())
-                }
+                // value, `0` included, turns it on. 2026-10-17: The levers are
+                // `SsmLevers::smem_stage` and `SsmLevers::half_reg`.
+                let ssm = &ctx.levers.ssm;
                 let gdn_norm_k = if kd == 128
                     && vd == 128
                     && self.gdn_f32_strided_norm_smem_k.0 != 0
-                    && gdn_half_reg_enabled()
-                    && gdn_smem_stage_enabled()
+                    && ssm.half_reg
+                    && ssm.smem_stage
                 {
                     // 2026-09-25: The kernel's staging buffer is sized for
                     // k_dim == 128, which the kd/vd check above establishes.
@@ -250,7 +242,7 @@ impl Qwen3SsmLayer {
                 } else if kd == 128
                     && vd == 128
                     && self.gdn_f32_strided_norm_half_k.0 != 0
-                    && gdn_half_reg_enabled()
+                    && ssm.half_reg
                 {
                     self.gdn_f32_strided_norm_half_k
                 } else {

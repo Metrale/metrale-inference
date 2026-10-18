@@ -105,10 +105,7 @@ impl Qwen3SsmLayer {
             .all(|(t, p)| p.0 == conv_inter_base.0 + (t * conv_bytes) as u64);
         let fused_conv = self.gdn_verify_fused_conv_kn_k.0 != 0
             && inter_contiguous
-            && !matches!(
-                std::env::var("METRALE_GDN_FUSED_CONV17").ok().as_deref(),
-                Some("0")
-            );
+            && ctx.levers.ssm.fused_conv17;
         if fused_conv {
             ops::gdn_verify_fused_conv_kn(
                 ctx.gpu,
