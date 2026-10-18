@@ -10,7 +10,9 @@ use metrale_model_layers::lever_equivalence::{Old, PROBES, check, settings_from}
 
 /// 2026-10-17: The probes plus the empty value, which every text lever reads as set.
 fn probes() -> impl Iterator<Item = Option<&'static str>> {
-    PROBES.into_iter().chain([Some(""), Some(" OFF "), Some("TRUE")])
+    PROBES
+        .into_iter()
+        .chain([Some(""), Some(" OFF "), Some("TRUE")])
 }
 
 fn new_at<T>(env: &str, probe: Option<&str>, f: impl Fn(&InferenceServerSettings) -> T) -> T {
@@ -77,10 +79,26 @@ fn shared_text_levers_read_as_before() {
     assert!(changes.is_empty(), "{changes:?}");
     for p in probes() {
         let at = |env, f: fn(&InferenceServerSettings) -> bool| new_at(env, p, f);
-        assert_eq!(at("METRALE_HOLO_MOE_GROUPED_CUTLASS", grouped_cutlass), old_grouped_laguna(p), "{p:?}");
-        assert_eq!(at("METRALE_UNIFIED_MOE_LAYOUT", unified_moe_layout), old_unified(p), "{p:?}");
-        assert_eq!(at("METRALE_GDN_BF16_WEIGHTS", gdn_bf16_weights), old_gdn_bf16(p), "{p:?}");
-        assert_eq!(at("METRALE_NVFP4_MLA", nvfp4_mla_disabled), old_nvfp4_mla_disabled(p), "{p:?}");
+        assert_eq!(
+            at("METRALE_HOLO_MOE_GROUPED_CUTLASS", grouped_cutlass),
+            old_grouped_laguna(p),
+            "{p:?}"
+        );
+        assert_eq!(
+            at("METRALE_UNIFIED_MOE_LAYOUT", unified_moe_layout),
+            old_unified(p),
+            "{p:?}"
+        );
+        assert_eq!(
+            at("METRALE_GDN_BF16_WEIGHTS", gdn_bf16_weights),
+            old_gdn_bf16(p),
+            "{p:?}"
+        );
+        assert_eq!(
+            at("METRALE_NVFP4_MLA", nvfp4_mla_disabled),
+            old_nvfp4_mla_disabled(p),
+            "{p:?}"
+        );
     }
 }
 

@@ -128,11 +128,11 @@ impl Fp8RouteInputs {
     ) -> Self {
         Self {
             // 2026-09-25: The predicate of `qwen35_dense::dense_fp8_enabled`.
-            dense_fp8: std::env::var("METRALE_DENSE_FP8").as_deref() == Ok("1"),
+            dense_fp8: super::dense_fp8_enabled(settings),
             tp_size: config.tp_world_size.max(1),
             declared_variant: metrale_model_layers::weight_map::config_declared_variant(config),
             // 2026-09-25: The predicate of `gdn_fp8_arm_selected`.
-            gdn_fp8: std::env::var_os("METRALE_NO_GDN_FP8").is_none(),
+            gdn_fp8: !settings.kernels.no_gdn_fp8,
             w8a8_prefill_kernels,
             route: RouteEnv::from_settings(settings),
             ffn_gateup_fused:

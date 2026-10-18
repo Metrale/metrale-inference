@@ -24,11 +24,6 @@ use metrale_gpu_runtime::gpu::GpuBackend;
 use metrale_model_layers::weight_map::{Fp8Weight, WeightQuantFormat};
 use metrale_model_weights::weights::{WeightDtype, WeightStore};
 
-/// 2026-09-25: Whether `METRALE_FP8_ROWWISE=1`. Off unless set.
-pub(super) fn rowwise_fp8_enabled() -> bool {
-    std::env::var("METRALE_FP8_ROWWISE").as_deref() == Ok("1")
-}
-
 /// 2026-09-25: True when `{prefix}.weight` is a 2-D FP8 E4M3 tensor and
 /// `{prefix}.weight_scale` holds one multiplier per output row (`[N]` or
 /// `[N,1]`). For `N > 1`, no scale tensor passes both this and

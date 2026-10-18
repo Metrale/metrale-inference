@@ -480,6 +480,7 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
         store: &mut WeightStore,
         config: &ModelConfig,
         gpu: &dyn GpuBackend,
+        _lc: metrale_model_layers::load_context::LoadContext<'_>,
     ) -> Result<()> {
         prune::prune_after_load(store, config, gpu)
     }

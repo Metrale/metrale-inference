@@ -190,7 +190,7 @@ pub(super) fn load_gdn_dequant(
     // 2026-09-25: `METRALE_FP8_ROWWISE=1` with per-row FP8 `in_proj_qkv`,
     // `in_proj_z` and `out_proj` (TP=1): those are also loaded for the per-row
     // prefill arm; the NVFP4 build below still runs for decode.
-    let rowwise_gdn = rowwise_fp8::rowwise_fp8_enabled()
+    let rowwise_gdn = cx.lc.settings.kernels.fp8_rowwise
         && rowwise_fp8::proj_is_fp8_per_row(store, &format!("{la}.in_proj_qkv"))
         && rowwise_fp8::proj_is_fp8_per_row(store, &format!("{la}.in_proj_z"))
         && rowwise_fp8::proj_is_fp8_per_row(store, &format!("{la}.out_proj"));
@@ -283,10 +283,7 @@ pub(super) fn load_gdn_dequant(
 
     // 2026-09-25: `METRALE_GDN_BF16_WEIGHTS=1` keeps the BF16 `[Q|K|V|Z]` and
     // out_proj instead of quantizing them to NVFP4.
-    let gdn_bf16 = matches!(
-        std::env::var("METRALE_GDN_BF16_WEIGHTS").ok().as_deref(),
-        Some("1")
-    );
+    let gdn_bf16 = crate::weight_loader::shared_levers::gdn_bf16_weights(cx.lc.settings);
     if gdn_bf16 {
         cx.record_served(Group::Gdn, i, &format!("{la}.in_proj_qkv"), Served::Bf16);
         let ssm = SsmWeights {

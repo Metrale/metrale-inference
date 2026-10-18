@@ -188,12 +188,14 @@ pub trait ModelWeightLoader {
     /// The default keeps everything, which is right for a loader that binds
     /// the store's device pointers zero-copy. A loader that uploads its own
     /// copies (a TP shard, a host round-trip, a dtype conversion) overrides it
-    /// to free the originals.
+    /// to free the originals. 2026-10-17: `lc` carries the settings `load_layers` read, so a
+    /// predicate both evaluate reads the same levers.
     fn prune_after_load(
         &self,
         _store: &mut WeightStore,
         _config: &ModelConfig,
         _gpu: &dyn GpuBackend,
+        _lc: metrale_model_layers::load_context::LoadContext<'_>,
     ) -> Result<()> {
         Ok(())
     }

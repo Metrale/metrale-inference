@@ -64,7 +64,7 @@ pub(super) fn load_linear_attention(
     // out_proj is quantized to NVFP4. `gdn_fp8_arm_selected` tests the same
     // condition.
     let gdn_q2 = config.tp_world_size.max(1) == 1
-        && std::env::var_os("METRALE_NO_Q2_GDN").is_none()
+        && !cx.lc.settings.kernels.no_q2_gdn
         && proj_q2_group(store, &format!("{la}.in_proj_qkv")).is_some()
         && proj_q2_group(store, &format!("{la}.in_proj_z")).is_some();
     let qkv_module = format!("{la}.in_proj_qkv");
@@ -108,7 +108,7 @@ pub(super) fn load_linear_attention(
     // device into one block-scaled `[Q|K|V|Z]` FP8 weight and, with out_proj,
     // installed by `set_fp8_decode_weights`. Decode and prefill both read them
     // (`qkvz_fp8w` arms of `qwen3_ssm/trait_prefill_proj.rs`).
-    if gdn_fp8_arm_selected(store, &la, config.tp_world_size) {
+    if gdn_fp8_arm_selected(store, &la, config.tp_world_size, cx.lc.settings) {
         cx.record_served(Group::Gdn, i, &qkv_module, Served::Fp8);
         let layer = build_gdn_fp8(
             cx,

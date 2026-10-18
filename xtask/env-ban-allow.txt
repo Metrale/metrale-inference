@@ -119,12 +119,6 @@ crates/model-arch/src/weight_loader/qwen35/load_layers.rs
 crates/model-arch/src/weight_loader/qwen35/load_layers/linear_attn_arms.rs
 crates/model-arch/src/weight_loader/qwen35/load_layers/linear_attn_arms/nvfp4.rs
 crates/model-arch/src/weight_loader/qwen35/load_layers/selectors.rs
-crates/model-arch/src/weight_loader/qwen35_dense.rs
-crates/model-arch/src/weight_loader/qwen35_dense/attn_layer.rs
-crates/model-arch/src/weight_loader/qwen35_dense/gdn_dequant.rs
-crates/model-arch/src/weight_loader/qwen35_dense/gdn_layer.rs
-crates/model-arch/src/weight_loader/qwen35_dense/predicted_residency.rs
-crates/model-arch/src/weight_loader/qwen35_dense/rowwise_fp8.rs
 crates/model-arch/src/weight_loader/qwen4_exp.rs
 crates/model-arch/src/weight_loader/qwen4_exp/aux_sites.rs
 crates/model-arch/src/weight_loader/qwen4_exp/ffn.rs

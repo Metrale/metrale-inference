@@ -285,7 +285,7 @@ pub fn build_model(
     // 2026-09-25: Step 3c: the loader drops store tensors it has uploaded its
     // own copies of (the default is a no-op). This runs after every `load_*`
     // above and before the KV budget is computed, so the freed memory counts.
-    loader.prune_after_load(&mut store, &config, gpu.as_ref())?;
+    loader.prune_after_load(&mut store, &config, gpu.as_ref(), load_ctx)?;
     if dflash_args.is_some() {
         weights_prep::release_unused_glm_mtp_block(&mut store, gpu.as_ref(), &config)?;
     }
