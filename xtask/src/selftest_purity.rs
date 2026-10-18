@@ -31,7 +31,7 @@ struct Probe {
     wants: &'static [Want],
 }
 
-const PROBES: [Probe; 6] = [
+const PROBES: [Probe; 7] = [
     Probe {
         fixture: "purity-roles",
         gate: Gate::Roles,
@@ -72,6 +72,19 @@ const PROBES: [Probe; 6] = [
             ),
             want(Grown, "crates/v-core/src/grown.rs", "grew from 1 to 2"),
             want(Stale, "crates/v-core/src/gone.rs", "no longer offends"),
+        ],
+    },
+    Probe {
+        fixture: "purity-kvcodec",
+        gate: Gate::KvCodecBan,
+        wants: &[
+            want(
+                Refused,
+                "crates/k-app/src/main.rs",
+                "6 KV codec decision(s) outside the registry (first: line 3 `KvCacheDtype`)",
+            ),
+            want(Grown, "crates/k-app/src/grown.rs", "grew from 1 to 2"),
+            want(Stale, "crates/k-app/src/gone.rs", "no longer offends"),
         ],
     },
     Probe {

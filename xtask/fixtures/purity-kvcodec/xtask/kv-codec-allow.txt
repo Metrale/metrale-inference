@@ -1,0 +1,4 @@
+# 2026-10-18: Fixture: an exact entry, one its file outgrew, and a stale one.
+crates/k-app/src/exact.rs 3
+crates/k-app/src/grown.rs 1
+crates/k-app/src/gone.rs 4

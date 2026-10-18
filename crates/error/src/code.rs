@@ -129,4 +129,27 @@ error_registry! {
         /// accepted range).
         ProjectionOutOfRange = 0x0400 => "{}: {} is outside {}",
     }
+    /// 2026-10-18: `0x0500–0x05FF`: the KV-cache codec registry and plan (`metrale-kv-codec`).
+    KvCodec = 0x0500..=0x05FF {
+        /// 2026-10-18: A codec name no registry row or pair alias spells: (name, every accepted
+        /// spelling).
+        KvCodecUnknown = 0x0500 => "unknown KV-cache codec `{}`; accepted: {}",
+        /// 2026-10-18: A (K, V) codec pair with no fused kernels: (k, v, head_dim).
+        KvPairUnsupported = 0x0501 => "KV-cache pair k={} v={} is not supported at head_dim {}",
+        /// 2026-10-18: A VBR transition the ladder refuses: (layer, side, from rung, to rung,
+        /// reason).
+        KvTransitionNotPermitted = 0x0502 => "KV transition on layer {} side {} from rung {} to \
+            rung {} is not permitted: {}",
+        /// 2026-10-18: The model does not declare the capability a codec needs: (codec, what).
+        KvCapabilityMissing = 0x0503 => "KV-cache codec {} needs a capability the model does \
+            not declare: {}",
+        /// 2026-10-18: A spilled block read back under another layout: (written codec, written
+        /// digest, reading codec, reading digest).
+        KvSpillCodecMismatch = 0x0504 => "spilled KV block was written as {} (layout {}) but \
+            is read as {} (layout {})",
+        /// 2026-10-18: A KV plan input or entry that must be explicit is absent: (what).
+        KvPlanMissing = 0x0505 => "the KV-cache plan has no entry for {}",
+        /// 2026-10-18: A VBR ladder that breaks one of its construction rules: (rule).
+        KvLadderInvalid = 0x0506 => "the VBR ladder is invalid: {}",
+    }
 }

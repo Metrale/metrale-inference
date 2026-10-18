@@ -13,6 +13,8 @@ cuda = ["metrale-gpu-runtime/cuda"]
 metal = ["metrale-gpu-runtime/metal"]
 
 [dependencies]
+metrale-error = { workspace = true }
+metrale-kv-codec = { workspace = true }
 metrale-core = { workspace = true }
 metrale-gpu-runtime = { workspace = true }
 metrale-settings = { workspace = true }

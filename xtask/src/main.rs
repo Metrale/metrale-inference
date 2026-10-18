@@ -13,7 +13,7 @@
 //! - `cargo xtask selftest`: every gate refuses each known-bad fixture under `xtask/fixtures/`
 //!   for its named reason, and passes the clean code; the env-ban gate yields exactly its
 //!   expected violations on each `env-ban-*` fixture.
-//! - `cargo xtask <roles|depgraph|wasm|file-size|vendor-ban|lints>`: one purity gate (see
+//! - `cargo xtask <roles|depgraph|wasm|file-size|vendor-ban|kv-codec-ban|lints>`: one purity gate (see
 //!   `gates.rs`); `cargo xtask purity` runs them all. Each reconciles its offenders with a
 //!   checked-in allowlist under `xtask/` that may only shrink.
 
@@ -22,6 +22,7 @@ mod depgraph;
 mod env_ban;
 mod filesize;
 mod gates;
+mod kv_codec_ban;
 mod lints;
 mod manifest;
 mod metadata;
@@ -36,7 +37,7 @@ mod vendor;
 
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: cargo xtask <deps|env-ban [--base <rev>]|selftest|purity|roles|depgraph|wasm|file-size|vendor-ban|lints>";
+const USAGE: &str = "usage: cargo xtask <deps|env-ban [--base <rev>]|selftest|purity|roles|depgraph|wasm|file-size|vendor-ban|kv-codec-ban|lints>";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();

@@ -39,3 +39,10 @@
 0x0305 ServeEnvInherited
 0x0306 ServeEnvContradicted
 0x0400 ProjectionOutOfRange
+0x0500 KvCodecUnknown
+0x0501 KvPairUnsupported
+0x0502 KvTransitionNotPermitted
+0x0503 KvCapabilityMissing
+0x0504 KvSpillCodecMismatch
+0x0505 KvPlanMissing
+0x0506 KvLadderInvalid

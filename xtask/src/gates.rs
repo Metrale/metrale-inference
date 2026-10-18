@@ -7,6 +7,7 @@
 use crate::allow::{self, Finding, Findings, Problem};
 use crate::depgraph;
 use crate::filesize;
+use crate::kv_codec_ban;
 use crate::lints;
 use crate::purity_io::{self, Built};
 use crate::roles::{self, Member, Role};
@@ -25,14 +26,16 @@ pub enum Gate {
     Wasm,
     FileSize,
     VendorBan,
+    KvCodecBan,
     Lints,
 }
 
 /// 2026-10-17: Every gate, in the order `cargo xtask purity` runs them (cheap first).
-pub const ALL: [Gate; 6] = [
+pub const ALL: [Gate; 7] = [
     Gate::Roles,
     Gate::FileSize,
     Gate::VendorBan,
+    Gate::KvCodecBan,
     Gate::Lints,
     Gate::Depgraph,
     Gate::Wasm,
@@ -47,6 +50,7 @@ impl Gate {
             Self::Wasm => "wasm",
             Self::FileSize => "file-size",
             Self::VendorBan => "vendor-ban",
+            Self::KvCodecBan => "kv-codec-ban",
             Self::Lints => "lints",
         }
     }
@@ -64,12 +68,13 @@ impl Gate {
             Self::Wasm => "xtask/wasm-allow.txt",
             Self::FileSize => "xtask/file-size-allow.txt",
             Self::VendorBan => "xtask/vendor-ban-allow.txt",
+            Self::KvCodecBan => "xtask/kv-codec-allow.txt",
             Self::Lints => "xtask/lints-allow.txt",
         }
     }
 
     fn counted(self) -> bool {
-        matches!(self, Self::FileSize | Self::VendorBan)
+        matches!(self, Self::FileSize | Self::VendorBan | Self::KvCodecBan)
     }
 }
 
@@ -106,6 +111,7 @@ pub fn run(gate: Gate, root: &Path, target_dir: Option<&Path>) -> Result<Outcome
         Gate::Wasm => wasm(root, &members, target_dir)?,
         Gate::FileSize => file_size(root)?,
         Gate::VendorBan => vendor_ban(root, &members)?,
+        Gate::KvCodecBan => kv_codec(root, &members)?,
         Gate::Lints => lint_roots(root, &members)?,
     };
     let list = allow::parse(
@@ -185,6 +191,23 @@ fn vendor_ban(root: &Path, members: &[Member]) -> Result<Findings, String> {
         files
             .iter()
             .map(|(p, s, k, r)| (p.as_str(), s.as_str(), *k, *r)),
+    ))
+}
+
+fn kv_codec(root: &Path, members: &[Member]) -> Result<Findings, String> {
+    let mut files = Vec::new();
+    for path in purity_io::list_files(root)? {
+        if !kv_codec_ban::in_scope(&path)
+            || !purity_io::exists(root, &path)
+            || owner(members, &path).is_none()
+        {
+            continue;
+        }
+        let src = purity_io::read_text(root, &path)?;
+        files.push((path, src));
+    }
+    Ok(kv_codec_ban::findings(
+        files.iter().map(|(p, s)| (p.as_str(), s.as_str())),
     ))
 }
 

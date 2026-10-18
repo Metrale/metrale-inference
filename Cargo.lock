@@ -1593,7 +1593,9 @@ dependencies = [
  "anyhow",
  "half",
  "metrale-core",
+ "metrale-error",
  "metrale-gpu-runtime",
+ "metrale-kv-codec",
  "metrale-settings",
  "metrale-telemetry",
  "parking_lot",
@@ -1807,6 +1809,13 @@ dependencies = [
  "metrale-kernel-root",
  "serde_json",
  "toml",
+]
+
+[[package]]
+name = "metrale-kv-codec"
+version = "1.0.0-beta-preview"
+dependencies = [
+ "metrale-error",
 ]
 
 [[package]]

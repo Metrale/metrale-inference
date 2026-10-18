@@ -17,6 +17,7 @@
 //! | `0x0200–0x02FF` | sched-core (`Device`, scheduler, lora) and device backends | sched-core `0x0200–0x027F`, device backends `0x0280–0x02FF` (`DeviceDriver`) |
 //! | `0x0300–0x03FF` | serve-identity and host-probe (bench support) | serve env `0x0300–0x030F` |
 //! | `0x0400–0x04FF` | device settings projections (`metrale-settings` `groups::device*`) | out of range `0x0400` |
+//! | `0x0500–0x05FF` | KV-cache codec registry and plan (`metrale-kv-codec`) | unknown codec `0x0500`, pair `0x0501`, transition `0x0502`, capability `0x0503`, spill `0x0504`, plan `0x0505`, ladder `0x0506` |
 //!
 //! A code is never renumbered or removed; `codes.lock` and its test enforce that.
 //!
