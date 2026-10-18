@@ -353,6 +353,8 @@ pub struct ModelLevers {
     /// 2026-10-17: The full-attention layer's levers
     /// ([`crate::layers::qwen3_attention::AttnLevers`]).
     pub attn: crate::layers::qwen3_attention::AttnLevers,
+    /// 2026-10-18: The MTP head's levers ([`crate::layers::mtp_head::MtpLevers`]).
+    pub mtp: crate::layers::mtp_head::MtpLevers,
 }
 
 /// 2026-09-25: How the levers are read: the `from_settings` and `defaults` constructors.

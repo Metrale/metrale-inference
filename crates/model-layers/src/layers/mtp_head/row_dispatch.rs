@@ -76,25 +76,6 @@ pub(crate) fn drafter_row_kernel(
     }
 }
 
-/// 2026-09-25: `METRALE_NO_DRAFTER_SMALL_M_TIER=1` (exactly `1`) turns the
-/// batched-GEMV tier off. Read once per process.
-pub(crate) fn small_m_tier_off() -> bool {
-    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *OFF.get_or_init(|| {
-        std::env::var("METRALE_NO_DRAFTER_SMALL_M_TIER")
-            .ok()
-            .as_deref()
-            == Some("1")
-    })
-}
-
-/// 2026-09-25: `METRALE_MTP_KV_GEMV` set to any value keeps the small-N
-/// projections on the per-row GEMV loop. Read once per process.
-pub(crate) fn kv_gemv_pinned() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("METRALE_MTP_KV_GEMV").is_some())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

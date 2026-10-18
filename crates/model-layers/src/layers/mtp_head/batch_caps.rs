@@ -53,18 +53,18 @@ pub(crate) fn propose_meta_stride_bytes(max_seq_len: usize, kv_block_size: usize
 pub(crate) const PROPOSE_META_STRIDE_CAP: usize = 1 << 24;
 
 /// 2026-09-25: Stride for a new head: [`propose_meta_stride_bytes`], unless
-/// `METRALE_PROPOSE_META_STRIDE=<bytes>` parses as a `usize`. An override is
-/// aligned up to 8 and clamped to the floor and the cap; an empty or unparsable
-/// value is ignored.
-pub(crate) fn propose_meta_stride_env(max_seq_len: usize, kv_block_size: usize) -> usize {
-    let value = std::env::var("METRALE_PROPOSE_META_STRIDE").ok();
-    if let Some(stride) = parse_stride_override(value.as_deref()) {
-        return stride;
-    }
-    propose_meta_stride_bytes(max_seq_len, kv_block_size)
+/// `METRALE_PROPOSE_META_STRIDE=<bytes>` parsed (`MtpLevers::propose_meta_stride`).
+/// An override is aligned up to 8 and clamped to the floor and the cap; an empty or
+/// unparsable value is ignored.
+pub(crate) fn propose_meta_stride(
+    max_seq_len: usize,
+    kv_block_size: usize,
+    override_stride: Option<usize>,
+) -> usize {
+    override_stride.unwrap_or_else(|| propose_meta_stride_bytes(max_seq_len, kv_block_size))
 }
 
-fn parse_stride_override(value: Option<&str>) -> Option<usize> {
+pub(super) fn parse_stride_override(value: Option<&str>) -> Option<usize> {
     value?
         .trim()
         .parse::<usize>()

@@ -199,8 +199,8 @@ pub struct MtpHead {
     /// 2026-09-25: `w4a16_gemv_sw`; while it is 0, `w4a16_decode_gemv` runs the base
     /// GEMV.
     w4a16_gemv_sw_k: KernelHandle,
-    /// 2026-09-25: False when `METRALE_NO_GEMV_SW=1`; read at construction because
-    /// `gemv` has no `ForwardContext`.
+    /// 2026-09-25: False when `METRALE_NO_GEMV_SW=1` (`ModelLevers::gemv_sw`); copied at
+    /// construction because `gemv` has no `ForwardContext`.
     gemv_sw: bool,
     /// 2026-10-17: `OpsLevers::mtp_tc`: the BF16 small-M GEMMs and the LM-head
     /// predicate take the tensor-core entries.
@@ -276,7 +276,7 @@ pub struct MtpHead {
     /// Its own allocation, not part of the shared scratch arena.
     propose_meta: DevicePtr,
     /// 2026-09-25: Per-sequence stride of `propose_meta`, from
-    /// `batch_caps::propose_meta_stride_env` at construction.
+    /// `batch_caps::propose_meta_stride` at construction.
     propose_meta_stride: usize,
     /// 2026-09-25: `argmax_bf16_batch` for the batched propose; while it is 0, the
     /// propose runs `argmax_bf16` once per row.
@@ -292,6 +292,9 @@ pub struct MtpHead {
     /// its own step while installed (`--forward circuit`).
     circuit_draft:
         parking_lot::RwLock<Option<std::sync::Arc<dyn crate::circuit_exec::DraftRunner>>>,
+    /// 2026-10-18: `ModelLevers::mtp`, copied at construction for the paths without a
+    /// `ForwardContext` (the projection dispatch, the drafter prefill).
+    levers: MtpLevers,
 }
 
 impl MtpHead {
@@ -392,6 +395,8 @@ mod forward;
 mod forward_batch;
 pub(crate) use forward_batch::{LmHeadRowsArm, lm_head_rows_arm, tc_lm_head};
 mod forward_batch_ffn;
+mod levers;
+pub use levers::MtpLevers;
 mod moe_forward;
 mod new;
 mod new_bf16_moe;

@@ -38,11 +38,12 @@ fn old_from_values(value: impl Fn(&str) -> Option<String>) -> ModelLevers {
         // 2026-10-17: A field added after the freeze; the launchers read these variables
         // themselves then, and `ops_levers_tests.rs` probes them against those readers.
         ops: crate::layers::ops::OpsLevers::declared(),
-        // 2026-10-17: Likewise, probed in `qwen3_ssm/levers_tests.rs`, `moe/levers_tests.rs` and
-        // `qwen3_attention/levers_tests.rs`.
+        // 2026-10-17: Likewise, probed in `qwen3_ssm/levers_tests.rs`, `moe/levers_tests.rs`,
+        // `qwen3_attention/levers_tests.rs` and `mtp_head/levers_tests.rs`.
         ssm: crate::layers::qwen3_ssm::SsmLevers::declared(),
         moe: crate::layers::moe::MoeLevers::declared(),
         attn: crate::layers::qwen3_attention::AttnLevers::declared(),
+        mtp: crate::layers::mtp_head::MtpLevers::declared(),
         gdn_regresident: value("METRALE_NO_GDN_REGRESIDENT").as_deref() != Some("1"),
         gdn_batched_fla: opt_in(value("METRALE_GDN_BATCHED_FLA").as_deref()),
         gdn_wy17: opt_out(value("METRALE_GDN_WY17").as_deref()),

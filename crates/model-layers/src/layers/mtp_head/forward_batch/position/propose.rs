@@ -31,8 +31,8 @@ impl MtpHead {
             h as u32,
             (2 * h) as u32,
             self.dense_gemv_batchm_k.0 != 0,
-            row_dispatch::kv_gemv_pinned(),
-            row_dispatch::small_m_tier_off(),
+            self.levers.kv_gemv_pinned,
+            self.levers.small_m_tier_off,
         ) {
             row_dispatch::RowKernel::Batchm => "GEMV-BATCHM",
             row_dispatch::RowKernel::Pipelined => "PIPELINED-GEMM",

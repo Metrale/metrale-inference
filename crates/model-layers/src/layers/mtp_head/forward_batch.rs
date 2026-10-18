@@ -158,8 +158,8 @@ impl MtpHead {
             n,
             k,
             self.dense_gemv_batchm_k.0 != 0,
-            row_dispatch::kv_gemv_pinned(),
-            row_dispatch::small_m_tier_off(),
+            self.levers.kv_gemv_pinned,
+            self.levers.small_m_tier_off,
         ) {
             row_dispatch::RowKernel::Batchm => ops::dense_gemv_batchm(
                 gpu,

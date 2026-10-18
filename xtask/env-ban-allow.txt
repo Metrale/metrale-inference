@@ -213,10 +213,6 @@ crates/model-layers/src/layers/glm_vit/forward.rs
 crates/model-layers/src/layers/mod.rs
 crates/model-layers/src/layers/moe/forward_prefill_fp8/e4m3.rs
 crates/model-layers/src/layers/moe/init.rs
-crates/model-layers/src/layers/mtp_head/batch_caps.rs
-crates/model-layers/src/layers/mtp_head/new.rs
-crates/model-layers/src/layers/mtp_head/prefill.rs
-crates/model-layers/src/layers/mtp_head/row_dispatch.rs
 crates/model-layers/src/layers/ngram_embed/tests.rs
 crates/model-layers/src/layers/ops/dispatch_helpers.rs
 crates/model-layers/src/layers/ops/hyper_connection_lowrank_tests.rs
