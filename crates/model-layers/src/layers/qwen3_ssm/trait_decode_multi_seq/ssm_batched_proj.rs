@@ -167,7 +167,7 @@ impl Qwen3SsmLayer {
             match (ctx.levers.ssm.tc_proj_min_n, self.qkvz_nvfp4_t.as_ref()) {
                 (Some(min_n), Some(nvfp4_t)) if n >= min_n => {
                     // 2026-09-25: Tile GEMM on the transposed twin. `ms_proj_gemm`
-                    // takes the 128-row M-tile when `ssm_m128_min_m` admits `n`
+                    // takes the 128-row M-tile when `levers.m128_min_m` admits `n`
                     // and ceil(N/128) CTAs cover the SMs.
                     self.ms_proj_gemm(
                         ctx.gpu,

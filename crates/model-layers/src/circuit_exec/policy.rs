@@ -84,35 +84,14 @@ pub fn live_policy(levers: &ModelLevers, kv_cache_dtype: &str, lm_head_dtype: &s
 /// dispatch whose defaults the rules' row bands and arms encode, with the file that reads
 /// each.
 pub const MULTI_SEQ_ENV_SWITCHES: [(&str, &str); 16] = [
-    (
-        "METRALE_GDN_FUSED_VERIFY",
-        "qwen3_ssm/trait_decode_batched_conv_gdn.rs",
-    ),
-    (
-        "METRALE_NO_BATCHED_BA_GATES",
-        "qwen3_ssm/trait_decode_batched.rs",
-    ),
-    (
-        "METRALE_NO_BATCHED_GDN_NORM",
-        "qwen3_ssm/trait_decode_batched.rs",
-    ),
-    (
-        "METRALE_SSM_TC_PROJ",
-        "qwen3_ssm/trait_decode_multi_seq/ssm_batched.rs",
-    ),
-    ("METRALE_NO_SSM_M128", "qwen3_ssm/gdn_flags.rs"),
-    (
-        "METRALE_SSM_FFN_PREFILL_MIN_N",
-        "qwen3_ssm/trait_decode_multi_seq.rs",
-    ),
-    (
-        "METRALE_NO_SSM_FFN_PREFILL",
-        "qwen3_ssm/trait_decode_multi_seq.rs",
-    ),
-    (
-        "METRALE_NO_QK_NORM_STRIDED",
-        "qwen3_attention/trait_impl/multi_seq/qkv.rs",
-    ),
+    ("METRALE_GDN_FUSED_VERIFY", "qwen3_ssm/levers.rs"),
+    ("METRALE_NO_BATCHED_BA_GATES", "qwen3_ssm/levers.rs"),
+    ("METRALE_NO_BATCHED_GDN_NORM", "qwen3_ssm/levers.rs"),
+    ("METRALE_SSM_TC_PROJ", "qwen3_ssm/levers.rs"),
+    ("METRALE_NO_SSM_M128", "qwen3_ssm/levers.rs"),
+    ("METRALE_SSM_FFN_PREFILL_MIN_N", "qwen3_ssm/levers.rs"),
+    ("METRALE_NO_SSM_FFN_PREFILL", "qwen3_ssm/levers.rs"),
+    ("METRALE_NO_QK_NORM_STRIDED", "qwen3_attention/levers.rs"),
     (
         "METRALE_NO_ROPE_STRIDED",
         "qwen3_attention/trait_impl/multi_seq/attn.rs",
@@ -123,11 +102,11 @@ pub const MULTI_SEQ_ENV_SWITCHES: [(&str, &str); 16] = [
     ),
     ("METRALE_W4A16_K64_MIN_K", "layers/mod.rs (w4a16_k64_min_k)"),
     ("METRALE_NO_W4A16_K64", "layers/mod.rs (w4a16_k64_min_k)"),
-    ("METRALE_NO_MMQ_SMALL_TILE", "layers/dense_ffn.rs"),
-    ("METRALE_NO_MMQ_TILE64", "layers/dense_ffn.rs"),
-    ("METRALE_W4A16_TC_WIDE", "ops/gemv_tc.rs"),
+    ("METRALE_NO_MMQ_SMALL_TILE", "ops/ops_levers.rs"),
+    ("METRALE_NO_MMQ_TILE64", "ops/ops_levers.rs"),
+    ("METRALE_W4A16_TC_WIDE", "ops/ops_levers.rs"),
     // 2026-09-30: A diagnostic that runs the W4A16 twin of every W4A4 projection.
-    ("METRALE_W4A4_PROJ_AUDIT", "ops/w4a4_proj.rs"),
+    ("METRALE_W4A4_PROJ_AUDIT", "ops/w4a4_proj/mx_plan.rs"),
 ];
 
 /// 2026-09-28: Switches that change legacy decode which no rule reads, when they are set.

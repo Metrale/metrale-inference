@@ -42,7 +42,7 @@ type Field = (&'static str, fn(&SsmLevers) -> bool);
 /// `is_some()` / `is_ok()` opt-ins: set at any value, `0` and the empty string included.
 #[test]
 fn the_presence_levers_read_as_before() {
-    let kills: [Field; 7] = [
+    let kills: [Field; 8] = [
         ("METRALE_NO_GDN_WY2_RESIDENT", |l| l.wy2_resident),
         ("METRALE_NO_GDN_WY3_RESIDENT", |l| l.wy3_resident),
         ("METRALE_NO_BATCHED_BA_GATES", |l| l.batched_ba_gates),
@@ -52,6 +52,7 @@ fn the_presence_levers_read_as_before() {
             l.verify_outproj_tgemm
         }),
         ("METRALE_NO_VERIFY_GDN_BATCH", |l| l.verify_gdn_batch),
+        ("METRALE_NO_SSM_M128", |l| l.m128_min_m.is_some()),
     ];
     let opt_ins: [Field; 2] = [
         ("METRALE_SSM_OUT_W8A16_ONLY", |l| l.out_w8a16_only),
@@ -183,4 +184,5 @@ fn the_declared_defaults_are_the_old_unset_values() {
     assert_eq!(levers, SsmLevers::declared());
     assert_eq!(levers.ffn_prefill_min_n, old_ffn_prefill_min_n(None));
     assert_eq!(levers.tc_proj_min_n, old_tc_proj_min_n(None));
+    assert_eq!(levers.m128_min_m, Some(65));
 }

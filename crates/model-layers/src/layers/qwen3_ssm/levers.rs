@@ -16,6 +16,7 @@
 
 use metrale_settings::InferenceServerSettings;
 
+use super::gdn_flags::SSM_M128_MIN_M;
 use super::trait_decode_multi_seq::{SSM_FFN_PREFILL_MIN_N, SSM_TC_PROJ_MIN_N};
 
 /// 2026-10-17: The GDN layer's dispatch levers. Each field names its variable; the forward path
@@ -77,6 +78,9 @@ pub struct SsmLevers {
     /// 2026-09-25: `METRALE_GDN_SMEM_STAGE` is present at any value
     /// (`ssm_batched_recurrent.rs`).
     pub smem_stage: bool,
+    /// 2026-10-18: The multi-sequence projections' 128-row M-tile width, `None` when
+    /// `METRALE_NO_SSM_M128` is present at any value (`kernel_select::ms_proj_gemm`).
+    pub m128_min_m: Option<u32>,
 }
 
 /// 2026-10-17: `METRALE_SSM_FFN_PREFILL_MIN_N`: a count of at least 2, else 5.
@@ -122,6 +126,11 @@ impl SsmLevers {
             fused_conv17: k.gdn_fused_conv17.as_deref() != Some("0"),
             half_reg: !k.no_gdn_half_reg,
             smem_stage: k.gdn_smem_stage,
+            m128_min_m: if k.no_ssm_m128 {
+                None
+            } else {
+                Some(SSM_M128_MIN_M)
+            },
         }
     }
 
@@ -148,6 +157,7 @@ impl SsmLevers {
             fused_conv17: true,
             half_reg: true,
             smem_stage: false,
+            m128_min_m: Some(SSM_M128_MIN_M),
         }
     }
 }
