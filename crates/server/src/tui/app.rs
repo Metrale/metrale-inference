@@ -173,7 +173,7 @@ impl App {
             kernel_filter: String::new(),
             library: Vec::new(),
             library_dirty: true,
-            download: Default::default(),
+            download: crate::tui::download_state::DownloadState::new(crate::model_download::start),
             selection: None,
             lib_search_click: std::cell::Cell::new(None),
             log_scroll_max: std::cell::Cell::new(0),

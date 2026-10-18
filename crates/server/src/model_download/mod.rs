@@ -134,6 +134,20 @@ pub struct Handle {
 }
 
 impl Handle {
+    /// 2026-10-18: A handle and the worker's ends of it, the sender and the
+    /// cancel flag. `start` hands them to its thread; nothing runs until a
+    /// caller spawns something with them.
+    pub(crate) fn open(repo: &str) -> (Self, Sender<DownloadMsg>, Arc<AtomicBool>) {
+        let (tx, rx) = channel();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let handle = Self {
+            repo: repo.to_string(),
+            rx,
+            cancel: Arc::clone(&cancel),
+        };
+        (handle, tx, cancel)
+    }
+
     /// 2026-09-26: Ask the worker to stop. It takes effect within one 1 MiB
     /// chunk (`hf::fetch_file`), and the partial file stays for a resume.
     pub fn cancel(&self) {
@@ -146,15 +160,12 @@ impl Handle {
 /// progress arrives on the handle's channel, and a thread that cannot be
 /// spawned is reported there as `Failed`.
 pub fn start(repo: &str, cache_root: PathBuf) -> Handle {
-    let (tx, rx) = channel();
-    let cancel = Arc::new(AtomicBool::new(false));
-    let owned = repo.to_string();
+    let (handle, tx, cancel) = Handle::open(repo);
     let spawned = std::thread::Builder::new()
         .name("metrale-download".into())
         .spawn({
             let tx = tx.clone();
-            let cancel = Arc::clone(&cancel);
-            let repo = owned.clone();
+            let repo = repo.to_string();
             move || {
                 if let Err(e) = run(&repo, &cache_root, &tx, &cancel) {
                     let _ = tx.send(DownloadMsg::Failed(e));
@@ -166,11 +177,7 @@ pub fn start(repo: &str, cache_root: PathBuf) -> Handle {
             "could not start the download thread: {e}"
         ))));
     }
-    Handle {
-        repo: repo.to_string(),
-        rx,
-        cancel,
-    }
+    handle
 }
 
 fn run(

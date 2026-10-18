@@ -10,6 +10,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 fn library() -> App {
     let mut a = App::new(clap::Parser::parse_from(["met", "org/m"]));
+    a.download = crate::tui::download_state::fake::state();
     a.on_key(KeyEvent::from(KeyCode::Char('4')));
     a
 }

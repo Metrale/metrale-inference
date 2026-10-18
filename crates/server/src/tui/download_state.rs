@@ -40,8 +40,13 @@ impl Job {
     }
 }
 
-#[derive(Default)]
+/// 2026-10-18: The download port: begin a job for a repo under a cache root and
+/// return its handle at once. The dashboard passes `model_download::start`;
+/// tests pass an inert starter from `fake`.
+pub type Starter = fn(&str, std::path::PathBuf) -> Handle;
+
 pub struct DownloadState {
+    starter: Starter,
     pub job: Option<Job>,
     /// 2026-09-26: Freshness by model id, held in memory only.
     pub freshness: HashMap<String, Freshness>,
@@ -100,6 +105,18 @@ fn fmt_elapsed(secs: u64) -> String {
 }
 
 impl DownloadState {
+    /// 2026-10-18: No job, no check, nothing known; `starter` begins every download.
+    pub fn new(starter: Starter) -> Self {
+        Self {
+            starter,
+            job: None,
+            freshness: HashMap::new(),
+            checking: None,
+            pending_check: None,
+            last_message: None,
+        }
+    }
+
     /// 2026-09-26: `pump`'s handling of `DownloadMsg::Done` (set the message
     /// from `done_message`, clear the job), without a worker thread.
     #[cfg(test)]
@@ -125,7 +142,7 @@ impl DownloadState {
                 true,
             );
         }
-        let handle = crate::model_download::start(repo, cache_root);
+        let handle = (self.starter)(repo, cache_root);
         self.job = Some(Job {
             repo: repo.to_string(),
             handle,
@@ -315,6 +332,11 @@ fn checked_message(id: &str, f: &Freshness) -> (String, bool) {
         ),
     }
 }
+
+/// 2026-10-18: Inert starters for the tests that hold a `DownloadState`.
+#[cfg(test)]
+#[path = "download_state_fake.rs"]
+pub(crate) mod fake;
 
 #[cfg(test)]
 #[path = "download_state_tests.rs"]

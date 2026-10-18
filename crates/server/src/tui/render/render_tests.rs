@@ -16,10 +16,11 @@ use crate::tui::app::{App, Section};
 
 pub(super) fn app() -> App {
     use clap::Parser;
-    let app = App::new(crate::cli::ServeArgs::parse_from([
+    let mut app = App::new(crate::cli::ServeArgs::parse_from([
         "met",
         "nvidia/Qwen3.6-27B-NVFP4",
     ]));
+    app.download = crate::tui::download_state::fake::state();
     // 2026-09-26: No `attach` (it needs a `BenchmarkExecutor`); `select(0)`
     // loads the first benchmark's form, which `attach` would also do.
     #[cfg(feature = "bench")]
