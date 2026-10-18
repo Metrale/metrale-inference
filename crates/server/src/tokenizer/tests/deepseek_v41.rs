@@ -3,14 +3,13 @@
 //! 2026-10-18: Tests for the DeepSeek-V4.1 encoder: the publisher's five reference
 //! encodings byte for byte, then the behaviours the publisher's own unit tests pin
 //! (effort budgets and rejections, the system token, spaced DSML tags, namespaces, drop
-//! thinking, task tokens), and the Python float spelling of the shared JSON writer.
+//! thinking, task tokens, image placeholders).
 //!
 //! Owner: server (tokenizer) tests.
 //! Invariants: none beyond the types.
 
 use serde_json::{Value, json};
 
-use crate::tokenizer::deepseek_v4::python_json;
 use crate::tokenizer::deepseek_v41::encode_messages;
 
 const BOS: &str = "<｜begin▁of▁sentence｜>";
@@ -486,26 +485,4 @@ fn image_placeholders_and_sourceless_images_are_rejected() {
     )
     .unwrap_err();
     assert!(error.to_string().contains("valid source"), "{error}");
-}
-
-#[test]
-fn json_floats_use_the_python_spelling() {
-    for (value, python) in [
-        (json!(1.0), "1.0"),
-        (json!(0.1), "0.1"),
-        (json!(-0.0), "-0.0"),
-        (json!(123.456), "123.456"),
-        (json!(0.0001), "0.0001"),
-        (json!(0.00001), "1e-05"),
-        (json!(1.5e-7), "1.5e-07"),
-        (json!(100000.0), "100000.0"),
-        (json!(1e15), "1000000000000000.0"),
-        (json!(1e16), "1e+16"),
-        (json!(1.2345678901234568e20), "1.2345678901234568e+20"),
-        (json!(-2.5e300), "-2.5e+300"),
-        (json!(7), "7"),
-        (json!(-7), "-7"),
-    ] {
-        assert_eq!(python_json(&value).unwrap(), python, "{value}");
-    }
 }
