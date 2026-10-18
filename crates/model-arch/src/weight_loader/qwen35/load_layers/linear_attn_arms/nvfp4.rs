@@ -188,10 +188,7 @@ pub(crate) fn build_linear_attention_nvfp4(
     // 2026-09-25: `METRALE_GDN_BF16_WEIGHTS=1` also installs this rank's BF16 `out_proj`
     // (from `load_ssm_qwen35`) as `out_proj_dense`, whose prefill arm comes before the FP8
     // and NVFP4 arms (`qwen3_ssm/trait_prefill_helper.rs`).
-    if matches!(
-        std::env::var("METRALE_GDN_BF16_WEIGHTS").ok().as_deref(),
-        Some("1")
-    ) {
+    if crate::weight_loader::shared_levers::gdn_bf16_weights(lc.settings) {
         layer.out_proj_dense = Some(out_proj_local);
         tracing::info!(
             "SSM[{lp}] METRALE_GDN_BF16_WEIGHTS: out_proj routed through BF16 dense_gemm (overrides FP8/NVFP4)"

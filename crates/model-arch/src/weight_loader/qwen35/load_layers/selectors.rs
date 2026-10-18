@@ -11,33 +11,12 @@
 use metrale_config::ModelConfig;
 use metrale_model_weights::weights::{WeightDtype, WeightStore};
 
-/// 2026-09-25: Whether layer `layer` is selected by `METRALE_FP8_DEQUANT_LAYERS`, a
+/// 2026-09-25: Whether layer `layer` is selected by `METRALE_FP8_DEQUANT_LAYERS` (`spec`), a
 /// comma-separated list of indices and inclusive ranges (`"31-39"`, `"31,35,39"`). Unset
-/// selects every layer; parts that do not parse are skipped.
-pub(super) fn layer_dequant_selected(layer: usize) -> bool {
-    // 2026-09-25: Read per call, so a later model load sees the variable's current value.
-    let spec: Option<Vec<(usize, usize)>> = (|| -> Option<Vec<(usize, usize)>> {
-        let s = std::env::var("METRALE_FP8_DEQUANT_LAYERS").ok()?;
-        let mut ranges: Vec<(usize, usize)> = Vec::new();
-        for part in s.split(',') {
-            let part = part.trim();
-            if part.is_empty() {
-                continue;
-            }
-            if let Some((a, b)) = part.split_once('-') {
-                if let (Ok(a), Ok(b)) = (a.trim().parse::<usize>(), b.trim().parse::<usize>()) {
-                    ranges.push((a.min(b), a.max(b)));
-                }
-            } else if let Ok(a) = part.parse::<usize>() {
-                ranges.push((a, a));
-            }
-        }
-        Some(ranges)
-    })();
-    match spec {
-        None => true,
-        Some(ranges) => ranges.iter().any(|&(a, b)| layer >= a && layer <= b),
-    }
+/// selects every layer; parts that do not parse are skipped. 2026-10-17: The list parses as
+/// the fast-MoE list does (`parse_layer_ranges`), the parser its own copy duplicated.
+pub(super) fn layer_dequant_selected(spec: Option<&str>, layer: usize) -> bool {
+    spec.is_none_or(|s| holo_fast_moe_layer_selected(s, layer))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,8 +26,9 @@ pub(super) enum HoloFastMoeMode {
     Unified,
 }
 
-pub(super) fn holo_fast_moe_mode() -> Option<HoloFastMoeMode> {
-    // 2026-09-25: Read per call, like `layer_dequant_selected`.
+/// 2026-10-17: `unified_layout` is `METRALE_UNIFIED_MOE_LAYOUT` as the caller resolved it.
+pub(super) fn holo_fast_moe_mode(unified_layout: bool) -> Option<HoloFastMoeMode> {
+    // 2026-09-25: Read per call.
     (|| -> Option<HoloFastMoeMode> {
         let Ok(mode) = std::env::var("METRALE_HOLO_FAST_MOE_MODE") else {
             return None;
@@ -57,9 +37,6 @@ pub(super) fn holo_fast_moe_mode() -> Option<HoloFastMoeMode> {
             "gate_up" | "gate-up" => Some(HoloFastMoeMode::GateUp),
             "full" => Some(HoloFastMoeMode::Full),
             "unified" => {
-                let unified_layout = std::env::var("METRALE_UNIFIED_MOE_LAYOUT")
-                    .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-                    .unwrap_or(false);
                 if unified_layout {
                     Some(HoloFastMoeMode::Unified)
                 } else {

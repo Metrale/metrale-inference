@@ -97,8 +97,6 @@ crates/model-arch/src/weight_loader/nemotron.rs
 crates/model-arch/src/weight_loader/nemotron/ssm_layer.rs
 crates/model-arch/src/weight_loader/qwen3.rs
 crates/model-arch/src/weight_loader/qwen35/load_layers.rs
-crates/model-arch/src/weight_loader/qwen35/load_layers/linear_attn_arms.rs
-crates/model-arch/src/weight_loader/qwen35/load_layers/linear_attn_arms/nvfp4.rs
 crates/model-arch/src/weight_loader/qwen35/load_layers/selectors.rs
 crates/model-arch/src/weight_loader/qwen4_exp.rs
 crates/model-arch/src/weight_loader/qwen4_exp/aux_sites.rs

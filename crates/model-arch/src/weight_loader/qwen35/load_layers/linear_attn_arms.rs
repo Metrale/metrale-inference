@@ -308,7 +308,7 @@ pub(crate) fn build_linear_attention_dense_bf16(
     // FP8 QKVZ and out_proj with `set_fp8_decode_weights`. Decode reads them, and so do the
     // QKVZ prefill arms that test `qkvz_fp8w`, which come before the BF16 weights
     // (`qwen3_ssm/trait_prefill_proj.rs`). They are loaded unsharded, hence TP=1 only.
-    if tp_size == 1 && std::env::var("METRALE_HOLO_FP8_SSM_DECODE").ok().as_deref() == Some("1") {
+    if tp_size == 1 && lc.settings.kernels.holo_fp8_ssm_decode {
         let p = format!("{lp}.linear_attn");
         let (qkvz_fp8, out_fp8) = load_ssm_fp8_decode_weights(layer_idx, store, &p, gpu, h)?;
         layer.set_fp8_decode_weights(Some(qkvz_fp8), Some(out_fp8));
