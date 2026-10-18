@@ -11,7 +11,7 @@
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::{GpuBackend, KernelHandle};
 
-use super::{DenseFfnLayer, DenseFfnWeights, FfnActivation, batch16_decode, gateup_fused, m16_tc};
+use super::{DenseFfnLayer, DenseFfnWeights, FfnActivation, gateup_fused, m16_tc};
 use crate::layers::ops;
 use crate::layers::w4a16_gemv_tiers::W4a16BatchmTiers;
 
@@ -129,15 +129,15 @@ impl DenseFfnLayer {
             w8a16_gemm_k: super::try_kernel(gpu, "w8a16_gemm", "w8a16_gemm"),
             w8a16_gemv_batch4_k: super::try_kernel(gpu, "w8a16_gemv_batch4", "w8a16_gemv_batch4"),
             w8a16_gemv_batch16_k: super::try_kernel(gpu, "w8a16_gemv_batch4", "w8a16_gemv_batch16"),
-            batch16_enabled: batch16_decode::ffn_batch16_enabled(),
+            batch16_enabled: lc.levers.ffn.batch16,
             w8a16_gemm_m16_k: super::try_target_kernel(gpu, "w8a16_gemm_m16", "w8a16_gemm_m16"),
             w8a16_gemm_m16_n64_k: super::try_target_kernel(
                 gpu,
                 "w8a16_gemm_m16",
                 "w8a16_gemm_m16_n64",
             ),
-            m16_tc: m16_tc::m16_tc_levers().ffn,
-            m16_tc_n_tile: m16_tc::m16_tc_levers().ffn_n_tile,
+            m16_tc: m16_tc::M16TcLevers::of(lc.levers).ffn,
+            m16_tc_n_tile: m16_tc::M16TcLevers::of(lc.levers).ffn_n_tile,
             w8a16_gemm_pipelined_k: super::try_kernel(
                 gpu,
                 "w8a16_gemm_pipelined",

@@ -89,9 +89,8 @@ fn batch16_declines_when_the_kernel_is_absent() {
 }
 
 /// 2026-09-25: An unarmed tier declines every width in the band, handle present or
-/// not. `enabled` is passed in because `ffn_batch16_enabled` caches the variable in a
-/// process-wide `OnceLock`, so a test that set it would leak into every other test in
-/// this binary.
+/// not. `enabled` is the switch's value; how `METRALE_FFN_BATCH16` reads is
+/// `dense_ffn_levers_tests.rs`.
 #[test]
 fn unarmed_batch16_leaves_the_band_on_the_pre_927_arms() {
     for m in [5, 8, 16, 17, 32] {

@@ -37,14 +37,6 @@ use crate::layer::ForwardContext;
 use crate::layers::ops;
 use crate::weight_map::{Fp8Weight, WeightQuantFormat};
 
-/// 2026-09-25: `METRALE_FFN_W8A16_ONLY`, by presence (any value, including
-/// empty or `0`): no dense-FFN projection takes the W8A8 arm. Read once per
-/// process (`OnceLock`).
-pub fn ffn_w8a16_only() -> bool {
-    static ONLY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ONLY.get_or_init(|| std::env::var_os("METRALE_FFN_W8A16_ONLY").is_some())
-}
-
 /// 2026-09-25: The W8A8 upper M bound for a projection of shape `[n, k]`:
 /// `w8a8_prefill_max_m_widening` when `n > k` (gate/up) and
 /// `w8a8_prefill_max_m_narrowing` otherwise (down), from
@@ -120,7 +112,7 @@ impl DenseFfnLayer {
             ctx.dispatch.fp8_blockscaled_prefill,
             self.per_token_group_quant_fp8_k,
             self.fp8_gemm_t_blockscaled_k,
-            ffn_w8a16_only(),
+            ctx.levers.ffn.w8a16_only,
             max_m_for(n, k),
         ) && ctx.buffers.ffn_act_a().0 != 0
             && ctx.buffers.ffn_act_scale().0 != 0

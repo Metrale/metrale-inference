@@ -56,6 +56,9 @@ pub struct AttnLevers {
     pub fused_kv: bool,
     /// 2026-09-25: `METRALE_FLASHINFER_PREFILL` (`prefill/paged.rs`).
     pub flashinfer_prefill: bool,
+    /// 2026-10-18: `METRALE_FP8_KV_EMA_RECAL`: post-freeze EMA recalibration of the FP8 KV
+    /// scales (`fp8_calibration.rs`), copied into each layer's calibrator.
+    pub fp8_kv_ema_recal: bool,
 }
 
 impl AttnLevers {
@@ -80,6 +83,7 @@ impl AttnLevers {
             prefill_fused_qrope: is_one(&sc.attn_prefill_fused_qrope),
             fused_kv: c.fused_kv,
             flashinfer_prefill: sc.flashinfer_prefill,
+            fp8_kv_ema_recal: c.fp8_kv_ema_recal,
         }
     }
 
@@ -99,6 +103,7 @@ impl AttnLevers {
             prefill_fused_qrope: false,
             fused_kv: false,
             flashinfer_prefill: false,
+            fp8_kv_ema_recal: false,
         }
     }
 }

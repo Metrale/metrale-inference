@@ -150,9 +150,9 @@ pub struct DenseFfnLayer {
     /// 2026-09-25: `w8a16_gemv_batch16` for the opt-in 5..=32-row tier; zero when the target lacks
     /// it. Rule: `batch16_decode::batch16_plan`.
     w8a16_gemv_batch16_k: KernelHandle,
-    /// 2026-09-25: Whether the batch16 tier is armed (`METRALE_FFN_BATCH16=1`), copied from
-    /// `ffn_batch16_enabled()` at construction. A field, so the dispatch tests can set either
-    /// value without touching the process-wide `OnceLock`.
+    /// 2026-09-25: Whether the batch16 tier is armed (`METRALE_FFN_BATCH16`), copied from
+    /// `DenseFfnLevers::batch16` at construction. A field, so the dispatch tests can set either
+    /// value without building the levers.
     batch16_enabled: bool,
     /// 2026-09-25: `w8a16_gemm_m16`, the tensor-core tier `w8_gemm!` tries ahead of batch16 at
     /// 5..=32 rows when `m16_tc` is on; zero when the target lacks the module. Rule:
@@ -161,7 +161,7 @@ pub struct DenseFfnLayer {
     /// 2026-09-25: The 64-wide N tile twin, used when `METRALE_FFN_M16_TC_NTILE=64` and it
     /// resolved; otherwise the 32-wide kernel runs (`m16_tc::m16_tc_kernel`).
     w8a16_gemm_m16_n64_k: KernelHandle,
-    /// 2026-09-25: `m16_tc::m16_tc_levers().ffn`, copied at construction: the target's `[defaults]
+    /// 2026-09-25: `M16TcLevers::of(..).ffn`, copied at construction: the target's `[defaults]
     /// ffn_m16_tc`, overridden by `METRALE_FFN_M16_TC`, or by `METRALE_M16_TC` when that is
     /// unset. A field for the same reason as `batch16_enabled`.
     m16_tc: bool,
@@ -394,6 +394,11 @@ pub mod batch16_decode;
 /// 2026-09-25: The tensor-core 5..=32-row FP8 tier (`m16_tc`).
 #[path = "dense_ffn_m16_tc.rs"]
 pub mod m16_tc;
+
+/// 2026-10-18: The dense FFN's levers, resolved once from the settings (`ModelLevers::ffn`).
+#[path = "dense_ffn_levers.rs"]
+mod levers;
+pub use levers::DenseFfnLevers;
 
 /// 2026-09-25: The fused FP8 gate+up GEMM (`ffn_gateup_fused`).
 #[path = "dense_ffn_gateup_fused.rs"]

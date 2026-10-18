@@ -201,7 +201,7 @@ impl ProjKernels {
                 "w8a16_gemm_m16",
                 "w8a16_gemm_m16_strided",
             ),
-            m16_tc: crate::layers::dense_ffn::m16_tc::m16_tc_levers().attn,
+            m16_tc: crate::layers::dense_ffn::m16_tc::M16TcLevers::of(levers).attn,
             w8a16_gemv_ncol2_k: super::super::try_target_kernel(
                 gpu,
                 "w8a16_gemv_ncol",

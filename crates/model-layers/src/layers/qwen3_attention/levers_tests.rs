@@ -97,6 +97,27 @@ fn the_v4_diagnostics_read_as_before_except_the_switch_spellings() {
     }
 }
 
+/// 2026-10-18: `METRALE_FP8_KV_EMA_RECAL` was on at `1` or `true` in any case; the switch keeps
+/// both and refuses the garbage it read as off.
+#[test]
+fn the_ema_recal_reads_as_before_except_the_switch_spellings() {
+    const ENV: &str = "METRALE_FP8_KV_EMA_RECAL";
+    let changes = check(
+        ENV,
+        Old::Truthy,
+        |p| p.is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true")),
+        |s| AttnLevers::from_settings(s).fp8_kv_ema_recal,
+    );
+    assert_eq!(changes, [(ENV, Some("garbage"), Outcome::Rejected)]);
+    for probe in ["TRUE", "on", "yes"] {
+        assert_eq!(
+            new_at(ENV, probe).map(|l| l.fp8_kv_ema_recal),
+            Some(true),
+            "{probe:?}"
+        );
+    }
+}
+
 /// 2026-10-17: The text predicates: exactly `1` turns the fused Q-RoPE on, and exactly `4` picks
 /// the four-column width.
 #[test]

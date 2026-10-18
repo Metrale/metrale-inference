@@ -211,7 +211,7 @@ pub struct Qwen3AttentionLayer {
     /// GEMVs.
     pub(super) w8a16_gemm_m16_k: KernelHandle,
     pub(super) w8a16_gemm_m16_strided_k: KernelHandle,
-    /// 2026-09-25: The resolved `attn_m16_tc` setting (`m16_tc_levers().attn`:
+    /// 2026-09-25: The resolved `attn_m16_tc` setting (`M16TcLevers::of(..).attn`:
     /// the target's `[defaults]` row, overridden by `METRALE_ATTN_M16_TC`, else
     /// by `METRALE_M16_TC`). It covers the Q/K/V and o_proj arms only; the dense
     /// FFN reads `ffn_m16_tc`. Set at construction, so the route cannot change

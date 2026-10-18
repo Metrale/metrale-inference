@@ -369,6 +369,7 @@ impl Qwen3AttentionLayer {
                     attn_layer_idx,
                     fp8_calibration_tokens,
                     config.fp8_kv_headroom,
+                    lc.levers.attn.fp8_kv_ema_recal,
                     gpu,
                 )?)
             } else {
