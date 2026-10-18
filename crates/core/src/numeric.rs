@@ -57,6 +57,19 @@ pub fn fp8_e4m3_to_f32(bits: u8) -> f32 {
     FP8_E4M3_LUT[bits as usize]
 }
 
+/// 2026-10-17: The escape hatch's declared value: round to nearest even.
+pub const RNE_DISABLED_DECLARED: bool = false;
+
+static DISABLE_RNE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// 2026-10-17: Set the process's `METRALE_DISABLE_RNE` once, before the first
+/// conversion. Returns whether the installed value is `disabled`: true on the
+/// first install and on a repeat of the same value, false when an earlier
+/// install chose the other one (which stays in force).
+pub fn install_disable_rne(disabled: bool) -> bool {
+    *DISABLE_RNE.get_or_init(|| disabled) == disabled
+}
+
 /// 2026-09-25: Convert f32 to BF16 with IEEE-754 round-to-nearest-even.
 ///
 /// Truncation (`bits >> 16`) is biased toward zero; the tests below pin the
@@ -64,24 +77,19 @@ pub fn fp8_e4m3_to_f32(bits: u8) -> f32 {
 ///
 /// NaN maps to the canonical quiet-NaN pattern with the sign preserved.
 ///
-/// `METRALE_DISABLE_RNE` is a bisect escape hatch that reverts to
-/// truncation. It is a presence check, not a value check: `=0` disables RNE
-/// just as `=1` does.
+/// `METRALE_DISABLE_RNE` (`settings.sampling.disable_rne`) is a bisect escape
+/// hatch that reverts to truncation. `met serve` installs it once, before any
+/// load ([`install_disable_rne`]); a process that installs nothing rounds
+/// ([`RNE_DISABLED_DECLARED`]).
 ///
-/// The escape hatch is read once per process. Weight loaders call this once
-/// per element (`weight_map::quant_helpers`, `weight_map::fp8_lut`), and a
-/// `std::env::var` per call would allocate a `String` and take the
-/// process-wide environment lock each time.
-///
-/// Caching is safe because the test that varies the variable re-execs the
-/// test binary as a child process with it set
-/// (`disable_rne_presence_uses_truncation` below), so each process resolves
-/// it once at its own start. Do not convert that test to an in-process
-/// `set_var`.
+/// The installed value is set once per process: weight loaders call this once
+/// per element (`weight_map::quant_helpers`, `weight_map::fp8_lut`), and the
+/// read is one atomic load. The test that varies it re-execs the test binary
+/// as a child process that installs it (`disable_rne_presence_uses_truncation`
+/// below); do not convert that test to an in-process install.
 #[inline(always)]
 pub fn f32_to_bf16(val: f32) -> u16 {
-    static DISABLE_RNE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if *DISABLE_RNE.get_or_init(|| std::env::var("METRALE_DISABLE_RNE").is_ok()) {
+    if DISABLE_RNE.get().copied().unwrap_or(RNE_DISABLED_DECLARED) {
         return (val.to_bits() >> 16) as u16;
     }
     let bits = val.to_bits();
@@ -247,6 +255,15 @@ mod tests {
         const CHILD_MARKER: &str = "METRALE_NUMERIC_RNE_CHILD";
 
         if std::env::var_os(CHILD_MARKER).is_some() {
+            // 2026-10-17: The child installs the escape hatch as `met serve` does, from the
+            // lever's presence (`settings.sampling.disable_rne` is a presence switch).
+            assert!(install_disable_rne(
+                std::env::var_os("METRALE_DISABLE_RNE").is_some()
+            ));
+            assert!(
+                !install_disable_rne(false),
+                "the first install stays in force"
+            );
             assert_eq!(
                 f32_to_bf16(f32::from_bits(0x3F80_8001)),
                 0x3F80,

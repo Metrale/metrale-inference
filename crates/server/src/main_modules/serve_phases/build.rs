@@ -15,8 +15,9 @@ use crate::cli;
 pub(crate) fn build_prefix_cache(
     args: &cli::ServeArgs,
     config: &ModelConfig,
+    gate: metrale_config::PrefixCacheGate,
 ) -> Box<dyn metrale_telemetry::prefix_cache::PrefixCache> {
-    if args.prefix_caching_enabled() && !config.kv_only_prefix_cache_is_safe() {
+    if args.prefix_caching_enabled() && !config.kv_only_prefix_cache_is_safe(gate) {
         tracing::warn!(
             model_type = %config.model_type,
             "Prefix caching: DISABLED because this model builds per-sequence state outside KV; \
@@ -333,13 +334,19 @@ pub(crate) fn maybe_run_ep_worker(
 #[cfg(test)]
 mod prefix_cache_tests {
     use clap::Parser;
-    use metrale_config::ModelConfig;
+    use metrale_config::{ModelConfig, PrefixCacheGate};
 
-    use super::build_prefix_cache;
     use crate::cli::ServeArgs;
 
     fn enabled_args() -> ServeArgs {
         ServeArgs::parse_from(["met", "--enable-prefix-caching"])
+    }
+
+    fn build_prefix_cache(
+        args: &ServeArgs,
+        config: &ModelConfig,
+    ) -> Box<dyn metrale_telemetry::prefix_cache::PrefixCache> {
+        super::build_prefix_cache(args, config, PrefixCacheGate::DECLARED)
     }
 
     #[test]
@@ -361,7 +368,7 @@ mod prefix_cache_tests {
 
         let config = ModelConfig::qwen3_next_80b_nvfp4();
         assert!(
-            config.kv_only_prefix_cache_is_safe(),
+            config.kv_only_prefix_cache_is_safe(PrefixCacheGate::DECLARED),
             "this model's predicate is the open case the flag has to gate"
         );
         assert!(!build_prefix_cache(&args, &config).is_active());
@@ -378,9 +385,7 @@ mod prefix_cache_tests {
     }
 
     /// 2026-10-09: GLM-5.3's indexer rows are paged into the KV blocks by default, so the
-    /// requested cache stays on (the flat arm, which closes it, is the config crate's
-    /// env-free `glm_flat_indexer_state_is_not_kv_cache_complete`). Assumes
-    /// `METRALE_GLM_DSA_INDEXER_FLAT` is unset, as the sibling tests assume the override is.
+    /// requested cache stays on.
     #[test]
     fn glm5_next_with_the_paged_indexer_keeps_the_prefix_cache() {
         let mut config = ModelConfig::qwen3_next_80b_nvfp4();
@@ -388,6 +393,21 @@ mod prefix_cache_tests {
 
         let cache = build_prefix_cache(&enabled_args(), &config);
         assert!(cache.is_active());
+    }
+
+    /// 2026-10-17: `METRALE_GLM_DSA_INDEXER_FLAT` reaches the gate through the load's levers:
+    /// the flat layout closes the requested cache for GLM-5.3.
+    #[test]
+    fn glm5_next_with_the_flat_indexer_installs_no_prefix_caching() {
+        let mut config = ModelConfig::qwen3_next_80b_nvfp4();
+        config.model_type = "glm5_next".to_string();
+        let flat = PrefixCacheGate {
+            glm_indexer_paged: false,
+            ..PrefixCacheGate::DECLARED
+        };
+
+        let cache = super::build_prefix_cache(&enabled_args(), &config, flat);
+        assert!(!cache.is_active());
     }
 }
 

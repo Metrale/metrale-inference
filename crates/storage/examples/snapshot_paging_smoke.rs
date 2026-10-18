@@ -213,6 +213,7 @@ fn kv_main(addr: &str, blob: usize, slots: usize, n: u64, mode: &str) -> anyhow:
     assert_eq!(layout.block_bytes() as usize, blob);
     let arena_bytes = (slots * blob) as u64;
     let fp: u64 = 0xFEED_FACE_CAFE_BEEF;
+    let links = metrale_storage::legacy_env::storage_links();
     let connect = |salt: u64| -> anyhow::Result<KvPagingBackend> {
         KvPagingBackend::connect(
             addr,
@@ -221,6 +222,7 @@ fn kv_main(addr: &str, blob: usize, slots: usize, n: u64, mode: &str) -> anyhow:
                 arena_bytes,
                 ns: derive_kv_ns(fp, &layout, 2, 16, 128, salt),
             },
+            &links,
         )
     };
     let pat = |b: u32, tag: u8| -> Vec<u8> {

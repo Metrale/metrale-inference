@@ -20,6 +20,10 @@ serde = { workspace = true, features = ["std", "derive"] }
 serde_json = { workspace = true, features = ["std", "preserve_order"] }
 regex = { workspace = true, features = ["std", "perf", "unicode"] }
 
+[dev-dependencies]
+# 2026-10-17: `MapEnv`, the in-memory environment the lever tests resolve against.
+metrale-io-host-mem = { workspace = true }
+
 [lints]
 workspace = true
 

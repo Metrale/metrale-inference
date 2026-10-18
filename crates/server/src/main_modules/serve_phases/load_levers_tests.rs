@@ -31,6 +31,7 @@ fn an_empty_environment_gives_the_shipped_load() {
             fast_load: true,
             fast_load_prefetch_shards: false,
             kv_paging: false,
+            prefix_cache_gate: metrale_config::PrefixCacheGate::DECLARED,
         }
     );
 }
@@ -147,4 +148,36 @@ const CHANGES: &[(&str, &str, Out)] = &[
 #[test]
 fn the_load_levers_match_their_old_readers_except_the_recorded_changes() {
     assert_old_readers_hold(&rows(), resolved, CHANGES);
+}
+
+/// 2026-10-17: `init_nccl_comm` hands the backend the settings' `METRALE_COMM_POLL` and
+/// `METRALE_COMM_DIAGNOSTICS` text, which the backend read from the environment until now: the
+/// parsers see the same input for every value, and the poll's unset value is the backend's own
+/// declared default.
+#[cfg(feature = "nccl")]
+#[test]
+fn the_comm_levers_reach_the_backend_verbatim() {
+    for v in [
+        None,
+        Some(""),
+        Some("0"),
+        Some("1"),
+        Some("0:1000"),
+        Some(" 7 : 9 "),
+        Some("x"),
+    ] {
+        let pairs = |var| v.map(|v| (var, v)).into_iter().collect::<Vec<_>>();
+        let poll = settings_from(&pairs("METRALE_COMM_POLL")).expect("text resolves");
+        assert_eq!(
+            poll.runtime.comm_poll,
+            v.unwrap_or(metrale_comm::nccl_backend::POLL_DEFAULT),
+            "METRALE_COMM_POLL={v:?}"
+        );
+        let diag = settings_from(&pairs("METRALE_COMM_DIAGNOSTICS")).expect("text resolves");
+        assert_eq!(
+            diag.telemetry.comm_diagnostics.as_deref(),
+            v,
+            "METRALE_COMM_DIAGNOSTICS={v:?}"
+        );
+    }
 }

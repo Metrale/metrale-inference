@@ -118,15 +118,6 @@ pub struct QuantizationConfig {
     pub precision: precision_plan::DeclaredPrecisionPlan,
 }
 
-/// 2026-09-26: Whether GLM-5.3's vision tower is enabled for this process
-/// (`METRALE_GLM_VISION`, see [`glm_vision_enabled_from`]); off by default.
-///
-/// The glm5_next parser (which leaves `config.vision` `None` when off) and
-/// `Glm5NextWeightLoader::binds_vision_encoder` both call it, so they cannot disagree.
-pub fn glm_vision_enabled() -> bool {
-    glm_vision_enabled_from(std::env::var("METRALE_GLM_VISION").ok().as_deref())
-}
-
 /// 2026-09-26: The policy half of [`glm_vision_enabled`], taking the value instead of reading
 /// the environment, so tests need not set a variable. Only `1`, `true`, `yes` or `on`
 /// (trimmed, any case) enable; anything else, unset included, leaves the tower off.
@@ -266,6 +257,9 @@ pub mod indexer_cache_dtype;
 mod kv_completeness;
 #[cfg(test)]
 mod kv_completeness_tests;
+mod legacy_env;
+#[cfg(test)]
+mod legacy_env_tests;
 pub mod levers;
 mod methods;
 mod model_config;
@@ -283,7 +277,8 @@ pub use activation_quantization::{ActQuantFormat, ActivationQuantization, ProjFa
 pub use dispatch::parse_config;
 pub use gguf::{GgufConfigInputs, GgufMeta, config_from_gguf};
 pub use indexer_cache_dtype::IndexerCacheDtype;
-pub use kv_completeness::glm_dsa_indexer_paged;
+pub use kv_completeness::PrefixCacheGate;
+pub use legacy_env::{glm_dsa_indexer_paged, glm_vision_enabled};
 pub use model_config::ModelConfig;
 pub use moe_expert_layout::MoeExpertLayout;
 pub use parsers::{

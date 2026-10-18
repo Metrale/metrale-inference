@@ -21,15 +21,18 @@ use crate::cli;
 ///
 /// The batch multiplier is applied here, in the only non-test call to
 /// `for_batch`.
-pub(super) fn per_sequence_reserve(args: &cli::ServeArgs, config: &ModelConfig) -> usize {
+pub(super) fn per_sequence_reserve(
+    args: &cli::ServeArgs,
+    config: &ModelConfig,
+    // 2026-10-17: `!METRALE_GLM_DSA_INDEXER_FLAT`, from the load's levers.
+    glm_indexer_paged: bool,
+) -> usize {
     let spec_on = args.speculative || args.self_speculative || args.dflash;
     let per_seq = per_sequence_state_bytes(config, args.max_seq_len, spec_on).unwrap_or_default();
     let charge = per_seq.for_batch(args.max_batch_size.ceiling());
     // 2026-10-09: The paged indexer's bytes are in the KV price, not this charge; say so once,
     // with the per-token figure the pool sizing uses.
-    if matches!(config.model_type.as_str(), "glm5_next" | "glm5_next_text")
-        && metrale_config::glm_dsa_indexer_paged()
-    {
+    if matches!(config.model_type.as_str(), "glm5_next" | "glm5_next_text") && glm_indexer_paged {
         tracing::info!(
             "GLM-5.3 DSA indexer: paged in the V side of each DSA layer's KV pool, {} B per \
              token per DSA layer inside the KV price; nothing reserved per sequence \

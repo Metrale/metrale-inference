@@ -136,7 +136,7 @@ pub(crate) fn preflight_reserve(
         args.ssm_cache_slots,
         metrale_model_layers::ssm_reserve::prefix_caching_active(
             args.prefix_caching_enabled(),
-            config.kv_only_prefix_cache_is_safe(),
+            config.kv_only_prefix_cache_is_safe(levers.prefix_cache_gate),
         ),
     );
     if let Some(reason) = marconi.skip_reason {
@@ -174,7 +174,9 @@ pub(crate) fn preflight_reserve(
     // runtime headroom (`runtime_headroom.rs`, which replaced the flat 4 GiB / 512 MiB
     // `cuda_headroom`), the per-sequence state and the decode-rollback ring. The preflight checks
     // the slot ceiling; the build sizes KV at the count it resolves.
-    let per_sequence_bytes = per_sequence_reserve(args, config) / ceiling.max(1);
+    let per_sequence_bytes =
+        per_sequence_reserve(args, config, levers.prefix_cache_gate.glm_indexer_paged)
+            / ceiling.max(1);
     let mut plan = reserve_plan::ReservePlan {
         config: config.clone(),
         spec: spec_on_pool,

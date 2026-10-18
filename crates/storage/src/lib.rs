@@ -32,6 +32,10 @@ pub mod expert_pack;
 pub mod expert_peer;
 pub mod group;
 pub mod kv_paging;
+pub mod legacy_env;
+#[cfg(test)]
+mod legacy_env_tests;
+pub mod links;
 pub mod model_dims;
 pub mod predictor_ref;
 pub mod projection;
@@ -53,6 +57,7 @@ pub mod cache_peer;
 
 // 2026-09-25: Re-exported without the `cuda` feature: metrale-model-engine's
 // `high_speed_swap_dims` returns it on every build.
+pub use links::{KvPagingLinks, RailLink, StorageLinks};
 pub use model_dims::ModelDims;
 
 #[cfg(feature = "cuda")]

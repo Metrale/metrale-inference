@@ -109,7 +109,7 @@ pub(crate) fn load_engine(
         ep_size,
         tp_rank: _tp_rank,
         ep_rank,
-    } = serve_phases::resolve_topology(&args, levers.kv_paging, &mut config)?;
+    } = serve_phases::resolve_topology(&args, &levers, &mut config)?;
 
     let serve_phases::ReservePreflight {
         inference_reserve,
@@ -184,9 +184,10 @@ pub(crate) fn load_engine(
         )
         .map_err(anyhow::Error::msg)?;
     }
-    let prefix_cache = serve_phases::build_prefix_cache(&args, &config);
+    let prefix_cache = serve_phases::build_prefix_cache(&args, &config, levers.prefix_cache_gate);
     let comm = serve_phases::init_nccl_comm(
         &args,
+        settings,
         gpu.as_ref(),
         world_size,
         max_batch_tokens,

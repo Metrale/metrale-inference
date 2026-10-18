@@ -14,12 +14,8 @@ crates/cache/src/kv_cache/block_trace.rs
 crates/cache/src/radix_tree/partial_tail.rs
 crates/cache/src/radix_tree/snapshot.rs
 crates/comm/src/nccl_backend.rs
-crates/config/src/kv_completeness.rs
+crates/config/src/legacy_env.rs
 crates/config/src/levers.rs
-crates/config/src/lib.rs
-crates/config/src/methods.rs
-crates/config/src/parsers/gemma4.rs
-crates/config/src/parsers/lora.rs
 crates/config/src/parsers/qwen4_exp_tests.rs
 crates/core/src/compute.rs
 crates/core/src/numeric.rs
@@ -410,7 +406,6 @@ crates/model-weights/src/weights/gguf.rs
 crates/model-weights/src/weights/gguf/expert_lru.rs
 crates/model-weights/src/weights/gguf/expert_reads.rs
 crates/model-weights/src/weights/gguf/sidecar.rs
-crates/sampling/src/lib.rs
 crates/server/src/cli/bench_certify/mod.rs
 crates/server/src/cli/circuit.rs
 crates/server/src/grammar/tests/cold_compile.rs
@@ -433,14 +428,7 @@ crates/speculative/src/adaptive_rung.rs
 crates/speculative/src/dflash_rung.rs
 crates/speculative/src/mtp_gate.rs
 crates/storage/examples/snapshot_paging_smoke.rs
-crates/storage/src/expert_tier.rs
-crates/storage/src/expert_tier_rdma.rs
-crates/storage/src/kv_paging/backend.rs
-crates/storage/src/kv_paging/connect.rs
-crates/storage/src/ngram_cache_fault.rs
-crates/storage/src/rdma_kv_backend.rs
+crates/storage/src/legacy_env.rs
 crates/storage/src/rdma_kv_backend/tests.rs
-crates/storage/src/rdma_snapshot.rs
-crates/storage/src/snapshot_swap/wire.rs
 crates/storage/tests/direct_swap.rs
 crates/target-defaults/src/attn_splitk.rs

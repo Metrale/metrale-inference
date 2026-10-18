@@ -55,8 +55,8 @@ pub(crate) fn serve_world_size(args: &cli::ServeArgs) -> usize {
 
 pub(crate) fn resolve_topology(
     args: &cli::ServeArgs,
-    // 2026-10-17: `METRALE_KV_PAGING` selected the peer-paging backend (`LoadLevers::kv_paging`).
-    kv_paging: bool,
+    // 2026-10-17: `kv_paging` (the peer-paging backend) and the indexer layout.
+    levers: &super::LoadLevers,
     config: &mut ModelConfig,
 ) -> Result<Topology> {
     let (tp_size, ep_size, derived_world) = parallel_sizes(args);
@@ -99,7 +99,7 @@ pub(crate) fn resolve_topology(
     // that does not slice experts over TP.
     config.moe_expert_layout = args.moe_expert_layout.0;
     config.moe_expert_layout.check_topology(tp_size, ep_size)?;
-    set_indexer_cache_dtype(args, kv_paging, config)?;
+    set_indexer_cache_dtype(args, levers, config)?;
     if tp_size > 1 {
         let loader = metrale_model_engine::factory::loader_for_config(config)?;
         let support = loader.tp_support();
@@ -168,14 +168,14 @@ pub(crate) fn resolve_topology(
 /// its scope (`IndexerCacheDtype::check_serve`).
 fn set_indexer_cache_dtype(
     args: &cli::ServeArgs,
-    kv_paging: bool,
+    levers: &super::LoadLevers,
     config: &mut ModelConfig,
 ) -> Result<()> {
     let dtype = args.indexer_cache_dtype.0;
     dtype.check_serve(
         &config.model_type,
-        metrale_config::glm_dsa_indexer_paged(),
-        kv_paging,
+        levers.prefix_cache_gate.glm_indexer_paged,
+        levers.kv_paging,
     )?;
     let drafting = args.speculative || args.prompt_lookup_config().is_some();
     config.indexer_cache_dtype = dtype;
@@ -200,6 +200,7 @@ fn set_indexer_cache_dtype(
 #[cfg(feature = "nccl")]
 pub(crate) fn init_nccl_comm(
     args: &cli::ServeArgs,
+    settings: &metrale_settings::InferenceServerSettings,
     gpu: &dyn metrale_gpu_runtime::gpu::GpuBackend,
     world_size: usize,
     max_batch_tokens: usize,
@@ -236,9 +237,14 @@ pub(crate) fn init_nccl_comm(
         args.master_port,
         cuda_stream,
         recv_capacity,
-        args.all_reduce_oneshot_max_kb
-            .checked_mul(1024)
-            .context("--all-reduce-oneshot-max-kb overflows")?,
+        metrale_comm::nccl_backend::CommLevers {
+            oneshot_max_bytes: args
+                .all_reduce_oneshot_max_kb
+                .checked_mul(1024)
+                .context("--all-reduce-oneshot-max-kb overflows")?,
+            diagnostics: settings.telemetry.comm_diagnostics.as_deref(),
+            poll: &settings.runtime.comm_poll,
+        },
     )
     .context("Failed to initialize NCCL")?;
     tracing::info!("NCCL initialized: rank {}", backend.rank());
@@ -252,6 +258,7 @@ pub(crate) fn init_nccl_comm(
 #[cfg(all(feature = "cuda", not(feature = "nccl")))]
 pub(crate) fn init_nccl_comm(
     _args: &cli::ServeArgs,
+    _settings: &metrale_settings::InferenceServerSettings,
     _gpu: &dyn metrale_gpu_runtime::gpu::GpuBackend,
     world_size: usize,
     _max_batch_tokens: usize,
@@ -273,6 +280,7 @@ pub(crate) fn init_nccl_comm(
 #[cfg(all(feature = "metal", not(feature = "cuda")))]
 pub(crate) fn init_nccl_comm(
     _args: &cli::ServeArgs,
+    _settings: &metrale_settings::InferenceServerSettings,
     _gpu: &dyn metrale_gpu_runtime::gpu::GpuBackend,
     world_size: usize,
     _max_batch_tokens: usize,

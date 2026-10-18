@@ -58,7 +58,7 @@ fn test_sampler_with_mock() {
 
     let gpu = MockGpuBackend::new();
     let vocab_size = 4;
-    let mut sampler = Sampler::new(vocab_size);
+    let mut sampler = Sampler::new(vocab_size, None);
 
     // 2026-09-25: `Sampler::sample` reads the logits from the device as
     // BF16, 2 bytes per element, low byte first.

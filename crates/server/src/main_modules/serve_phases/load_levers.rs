@@ -48,6 +48,9 @@ pub(crate) struct LoadLevers {
     /// (`metrale_storage::kv_paging::ns::kv_paging_selected`), which `--indexer-cache-dtype`
     /// is checked against.
     pub(crate) kv_paging: bool,
+    /// 2026-10-17: `METRALE_GLM53_PREFIX_CACHE_UNPROVEN` and `METRALE_GLM_DSA_INDEXER_FLAT`:
+    /// the prefix-cache gate's validation override and the GLM DSA indexer layout.
+    pub(crate) prefix_cache_gate: metrale_config::PrefixCacheGate,
 }
 
 impl LoadLevers {
@@ -84,6 +87,7 @@ impl LoadLevers {
             kv_paging: metrale_storage::kv_paging::ns::kv_paging_selected(
                 settings.runtime.kv_paging.as_deref(),
             )?,
+            prefix_cache_gate: metrale_config::PrefixCacheGate::from_settings(&settings.cache),
         })
     }
 }

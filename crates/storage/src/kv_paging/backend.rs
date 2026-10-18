@@ -4,7 +4,7 @@
 //! Every op is synchronous, with one control op in flight:
 //!   PUT = ALLOC (control) → RDMA WRITE of the block → poll → COMMIT (control)
 //!   GET = GET (control) → RDMA READ of the block → poll
-//! With `METRALE_KV_ZERO_COPY=1`, a GET whose destination lies inside every
+//! With `StorageLinks::kv_zero_copy`, a GET whose destination lies inside every
 //! rail's registered landing region is read straight into it.
 //!
 //! Owner: metrale-storage KV tier.
@@ -25,13 +25,14 @@ use super::ns;
 use crate::backend::{BlockReadRequest, ReadRequest, StorageBackend};
 use crate::cuda_min::{PinnedBuffer, copy_h_to_d_async, stream_sync};
 use crate::group::{GroupKey, GroupLayout, KvKind};
+use crate::links::StorageLinks;
 use crate::snapshot_swap::{
     PagingKind, client_alloc, client_bye, client_commit, client_get, encode_paging_v2_header,
 };
 use metrale_gpu_sys::verbs::Verbs;
 
 /// 2026-09-25: Connect parameters. [`super::connect_kv_peer_backend`] fills
-/// them from the environment; `examples/snapshot_paging_smoke.rs` builds them
+/// them from `StorageLinks`; `examples/snapshot_paging_smoke.rs` builds them
 /// directly.
 #[derive(Clone, Copy, Debug)]
 pub struct KvPagingConnect {
@@ -76,12 +77,15 @@ unsafe impl Sync for KvPagingBackend {}
 impl KvPagingBackend {
     /// 2026-09-25: Connect to the paging peer at `addr`: send the v2 paging
     /// header (`PagingKind::KV`, `arena_bytes`, `blob_bytes = block_bytes()`),
-    /// bring up rail 0 from `METRALE_EXPERT_RDMA_DEV`/`GID` and, with
-    /// `METRALE_KV_DUAL_RAIL=1`, rail 1 from `METRALE_KV_RAIL2_DEV`/`GID`, and
-    /// register one block-sized bounce buffer per rail with `remote_read = false`.
-    /// Fails unless `cfg.arena_bytes` is a non-zero multiple of `block_bytes()`.
-    pub fn connect(addr: &str, layout: GroupLayout, cfg: KvPagingConnect) -> Result<Self> {
-        use metrale_gpu_sys::env::{first_set, first_set_u32};
+    /// bring up the KV rails of `links`, and register one block-sized bounce buffer
+    /// per rail with `remote_read = false`. Fails unless `cfg.arena_bytes` is a
+    /// non-zero multiple of `block_bytes()`.
+    pub fn connect(
+        addr: &str,
+        layout: GroupLayout,
+        cfg: KvPagingConnect,
+        links: &StorageLinks,
+    ) -> Result<Self> {
         use metrale_gpu_sys::railset::{RailSet, RailSpec};
 
         let block_bytes = layout.block_bytes();
@@ -91,24 +95,11 @@ impl KvPagingBackend {
                 cfg.arena_bytes
             );
         }
-        let spec =
-            |dev: String, gid: u32| RailSpec::new(dev, gid, rand::random::<u32>() & 0xff_ffff);
-        let rail0 = spec(
-            first_set(&["METRALE_EXPERT_RDMA_DEV"], "roceP2p1s0f1"),
-            first_set_u32(&["METRALE_EXPERT_RDMA_GID"], 3),
-        );
-        let dual = std::env::var("METRALE_KV_DUAL_RAIL").ok().as_deref() == Some("1");
-        let specs: Vec<RailSpec> = if dual {
-            vec![
-                rail0,
-                spec(
-                    first_set(&["METRALE_KV_RAIL2_DEV"], "rocep1s0f1"),
-                    first_set_u32(&["METRALE_KV_RAIL2_GID"], 3),
-                ),
-            ]
-        } else {
-            vec![rail0]
-        };
+        let specs: Vec<RailSpec> = links
+            .kv_rails()
+            .into_iter()
+            .map(|r| RailSpec::new(r.dev, r.gid, rand::random::<u32>() & 0xff_ffff))
+            .collect();
 
         let mut stream =
             TcpStream::connect(addr).with_context(|| format!("connect kv paging peer {addr}"))?;
@@ -152,7 +143,7 @@ impl KvPagingBackend {
                 region: None,
             })
             .collect();
-        let zero_copy = std::env::var("METRALE_KV_ZERO_COPY").ok().as_deref() == Some("1");
+        let zero_copy = links.kv_zero_copy;
         tracing::info!(
             "KvPagingBackend connected to {addr}: kind=KV, blob {block_bytes} B, arena {:.3} GiB, \
              ns {:#018x}, {} rail(s), zero_copy={zero_copy} (strictly synchronous MVP: 1 control \

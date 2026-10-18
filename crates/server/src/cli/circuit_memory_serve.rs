@@ -240,7 +240,9 @@ pub(crate) fn engine_facts(
         args.ssm_cache_slots,
         ssm_reserve::prefix_caching_active(
             args.prefix_caching_enabled(),
-            config.kv_only_prefix_cache_is_safe(),
+            // 2026-10-17: The declared gate: the what-if is a serve of these flags, and the
+            // validation override and the indexer layout are env levers it does not read.
+            config.kv_only_prefix_cache_is_safe(metrale_config::PrefixCacheGate::DECLARED),
         ),
     )
     .slots;

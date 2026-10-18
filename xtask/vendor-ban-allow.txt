@@ -208,9 +208,10 @@ crates/server/src/main_modules/serve_load/engine.rs 2
 crates/server/src/main_modules/serve_load/load_phases.rs 1
 crates/server/src/main_modules/serve_phases/kernel_gate.rs 3
 crates/server/src/main_modules/serve_phases/kv_cache.rs 4
+crates/server/src/main_modules/serve_phases/load_levers_tests.rs 1
 crates/server/src/main_modules/serve_phases/mod.rs 1
 crates/server/src/main_modules/serve_phases/preflight/gpu_backend.rs 4
-crates/server/src/main_modules/serve_phases/topology.rs 8
+crates/server/src/main_modules/serve_phases/topology.rs 9
 crates/server/src/tui/data/mod.rs 2
 crates/server/tests/integration/helpers.rs 2
 crates/settings/src/groups/build.rs 2

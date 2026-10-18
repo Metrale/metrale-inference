@@ -164,9 +164,7 @@ pub(crate) fn parse_gemma4_params(raw: &serde_json::Value) -> Result<ModelConfig
     if config.num_experts > 0 && config.model_type == "gemma4" {
         config.final_logit_softcapping = 0.0;
     }
-    if let Ok(v) = std::env::var("METRALE_SOFTCAP_OVERRIDE")
-        && let Ok(cap) = v.parse::<f32>()
-    {
+    if let Some(cap) = crate::legacy_env::softcap_override() {
         config.final_logit_softcapping = cap;
     }
     let _softcap_from_config = raw

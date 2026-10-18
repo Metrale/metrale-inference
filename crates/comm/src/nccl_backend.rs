@@ -60,8 +60,21 @@ unsafe extern "C" {
 }
 
 mod recv_buffer;
+pub use crate::collective_wait::POLL_DEFAULT;
 use recv_buffer::ensure_payload_fits;
 pub use recv_buffer::{ALL_REDUCE_DTYPE_BYTES, required_model_recv_bytes, required_recv_bytes};
+
+/// 2026-10-17: The resolved collective levers [`NcclBackend::new`] takes.
+#[derive(Clone, Copy, Debug)]
+pub struct CommLevers<'a> {
+    /// 2026-10-17: Largest payload, in bytes, of the one-shot all-reduce at
+    /// `world_size >= 2`; 0 disables it (see `sendrecv.rs`).
+    pub oneshot_max_bytes: usize,
+    /// 2026-10-17: The `METRALE_COMM_DIAGNOSTICS` text, `None` when unset.
+    pub diagnostics: Option<&'a str>,
+    /// 2026-10-17: The `METRALE_COMM_POLL` text; its declared default is [`POLL_DEFAULT`].
+    pub poll: &'a str,
+}
 
 /// 2026-09-26: Deadline, in seconds, for a broadcast to complete. It bounds
 /// only the completion polling, not an NCCL or driver call that hangs.
@@ -131,10 +144,9 @@ impl NcclBackend {
     /// 2026-09-26: Bootstrap the communicator. Rank 0 binds `0.0.0.0:master_port`
     /// and sends the unique id to `world_size - 1` connections; other ranks
     /// connect to `master_addr:master_port`, retrying once a second for up to
-    /// 600 attempts. `oneshot_max_bytes` enables the one-shot all-reduce at
-    /// `world_size >= 2` (0 disables it; see `sendrecv.rs`). `recv_capacity` is the largest 2-rank all-reduce payload
+    /// 600 attempts. `recv_capacity` is the largest 2-rank all-reduce payload
     /// in bytes (serve passes [`required_model_recv_bytes`]); it is used only
-    /// when `world_size == 2`.
+    /// when `world_size == 2`. `levers` are the resolved collective levers.
     ///
     /// # Errors
     /// An invalid `METRALE_COMM_DIAGNOSTICS` or `METRALE_COMM_POLL` value or
@@ -148,16 +160,11 @@ impl NcclBackend {
         master_port: u16,
         stream: u64,
         recv_capacity: usize,
-        oneshot_max_bytes: usize,
+        levers: CommLevers<'_>,
     ) -> Result<Self> {
-        let diagnostic_env = std::env::var(crate::collective_diagnostics::ENV).ok();
-        let diagnostics = crate::collective_diagnostics::Diagnostics::new(
-            diagnostic_env.as_deref(),
-            rank,
-            world_size,
-        )?;
-        let poll_env = std::env::var(crate::collective_wait::POLL_ENV).ok();
-        let poll = crate::collective_wait::PollPause::parse(poll_env.as_deref())?;
+        let diagnostics =
+            crate::collective_diagnostics::Diagnostics::new(levers.diagnostics, rank, world_size)?;
+        let poll = crate::collective_wait::PollPause::parse(Some(levers.poll))?;
         Self::log_nccl_env_vars();
 
         let unique_id = if rank == 0 {
@@ -206,7 +213,7 @@ impl NcclBackend {
             }
         }
 
-        let oneshot = sendrecv::OneShot::new(comm, world_size, oneshot_max_bytes)?;
+        let oneshot = sendrecv::OneShot::new(comm, world_size, levers.oneshot_max_bytes)?;
 
         Ok(Self {
             comm: Mutex::new(comm),

@@ -72,6 +72,11 @@ pub(crate) async fn serve(
     // the listener is up, also while no model is loaded.
     host.set_auth(build_auth_config(&args)?);
     let body_limit = crate::main_modules::serve_router::max_body_bytes(&settings)?;
+    // 2026-10-17: Before any weight conversion; a process serves under one rounding.
+    anyhow::ensure!(
+        metrale_core::numeric::install_disable_rne(settings.sampling.disable_rne),
+        "METRALE_DISABLE_RNE differs from the value this process already converts under"
+    );
     // 2026-09-26: Process-scoped too, and installed before the first model.
     host.set_process(
         super::serve_load::Carried::from_settings(&settings).map_err(|e| anyhow::anyhow!("{e}"))?,

@@ -16,7 +16,9 @@ metal = []
 # 2026-10-17: Its `links` metadata (`DEP_METRALE_KERNEL_TREE_ROOT`) locates kernels/ for build.rs.
 metrale-kernel-root = { workspace = true }
 metrale-core = { workspace = true }
+metrale-error = { workspace = true }
 metrale-gpu-sys = { workspace = true }
+metrale-settings = { workspace = true }
 anyhow = { workspace = true, features = ["std"] }
 half = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["std", "derive"] }
@@ -36,6 +38,7 @@ io-uring = { workspace = true }
 getrandom = { workspace = true }
 
 [dev-dependencies]
+metrale-io-host-mem = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["smallvec", "fmt", "ansi", "tracing-log", "std"] }
 
 [build-dependencies]
