@@ -70,28 +70,34 @@ impl NemotronMoeLayer {
             .as_ref()
             .filter(|_| self.w8a16_gemm_pipelined_k.0 != 0 || self.w8a16_gemm_k.0 != 0)
         {
-            let (kern, pipelined) = if self.w8a16_gemm_pipelined_k.0 != 0 {
-                (self.w8a16_gemm_pipelined_k, true)
+            if self.w8a16_gemm_pipelined_k.0 != 0 {
+                ops::w8a16_gemm_pipelined(
+                    ctx.gpu,
+                    self.w8a16_gemm_pipelined_k,
+                    ctx.levers.ops.w8a16.pipe128,
+                    normed,
+                    fp8w.weight,
+                    fp8w.row_scale,
+                    shared_up_out_base,
+                    n,
+                    shared_inter,
+                    h as u32,
+                    stream,
+                )?;
             } else {
-                (self.w8a16_gemm_k, false)
-            };
-            let f = if pipelined {
-                ops::w8a16_gemm_pipelined
-            } else {
-                ops::w8a16_gemm
-            };
-            f(
-                ctx.gpu,
-                kern,
-                normed,
-                fp8w.weight,
-                fp8w.row_scale,
-                shared_up_out_base,
-                n,
-                shared_inter,
-                h as u32,
-                stream,
-            )?;
+                ops::w8a16_gemm(
+                    ctx.gpu,
+                    self.w8a16_gemm_k,
+                    normed,
+                    fp8w.weight,
+                    fp8w.row_scale,
+                    shared_up_out_base,
+                    n,
+                    shared_inter,
+                    h as u32,
+                    stream,
+                )?;
+            }
         } else if let Some(w_fp8) = self.shared_up_pd_fp8 {
             ops::fp8_gemm_m128_mfast(
                 ctx.gpu,

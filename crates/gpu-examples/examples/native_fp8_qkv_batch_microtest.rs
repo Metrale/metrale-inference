@@ -119,45 +119,29 @@ fn check(observed: &[u8], baseline: &[u8], sentinel: &[u8], live: &[(usize, usiz
     Ok(())
 }
 
-/// 2026-09-25: The signature the three strided wrappers `run_batched` picks
-/// between share.
-type StridedBatchGemv = fn(
-    &dyn GpuBackend,
-    KernelHandle,
-    DevicePtr,
-    DevicePtr,
-    DevicePtr,
-    DevicePtr,
-    u32,
-    u32,
-    u32,
-    u32,
-    u32,
-    u64,
-) -> Result<()>;
-
 /// 2026-09-25: The tier's arm chain as `ms_qkv_batchm_fp8_gemv` walks it when
 /// neither `attn_m16_tc` nor `attn_ncol_gemv` is on: batch4 to 4 rows,
-/// batch16 to 16, the 32-row M-tile twin past 16.
+/// batch16 to 16, the 32-row M-tile twin past 16. 2026-10-17: `tiles` is the tile plan and
+/// the 32- and 64-row tile kernels.
 fn run_batched(
     gpu: &dyn GpuBackend,
     batch4: KernelHandle,
     batch16: KernelHandle,
-    tiles: (KernelHandle, KernelHandle),
+    tiles: (ops::W8a16Plan, KernelHandle, KernelHandle),
     input: DevicePtr,
     out: DevicePtr,
     p: &Proj,
     m: usize,
 ) -> Result<()> {
-    let (m32, m64) = tiles;
-    let (launch, kernel): (StridedBatchGemv, KernelHandle) = if m <= 4 {
+    let (w8, m32, m64) = tiles;
+    let (launch, kernel): (ops::StridedBatchGemv, KernelHandle) = if m <= 4 {
         (ops::w8a16_gemv_batch4_strided, batch4)
     } else if m <= 16 {
         (ops::w8a16_gemv_batch16_strided, batch16)
     } else if m <= 32 {
-        (ops::w8a16_gemm_pipelined_m32_strided, m32)
+        (w8.m32_strided_arm(), m32)
     } else {
-        (ops::w8a16_gemm_pipelined_m64_strided, m64)
+        (w8.m64_strided_arm(), m64)
     };
     launch(
         gpu,
@@ -206,6 +190,7 @@ fn main() -> Result<()> {
     let batch16 = gpu.kernel("w8a16_gemv_batch4", "w8a16_gemv_batch16_strided")?;
     let m32 = gpu.kernel("w8a16_gemm_pipelined_m32", "w8a16_gemm_pipelined_m32")?;
     let m64 = gpu.kernel("w8a16_gemm_pipelined_m32", "w8a16_gemm_pipelined_m64")?;
+    let w8 = metrale_gpu_examples::ops_levers()?.w8a16;
 
     let mut state = 0x0132_8a16_2026_u64;
     let mut random = move || {
@@ -287,7 +272,16 @@ fn main() -> Result<()> {
             gpu.copy_h2d(&sentinel, scalar_base)?;
             gpu.copy_h2d(&sentinel, batch_base)?;
             run_scalar(&gpu, scalar, input, scalar_out, p, m)?;
-            run_batched(&gpu, batch4, batch16, (m32, m64), input, batch_out, p, m)?;
+            run_batched(
+                &gpu,
+                batch4,
+                batch16,
+                (w8, m32, m64),
+                input,
+                batch_out,
+                p,
+                m,
+            )?;
             gpu.synchronize(0)?;
             let mut baseline = vec![0_u8; sentinel.len()];
             let mut observed = vec![0_u8; sentinel.len()];
@@ -338,7 +332,16 @@ fn main() -> Result<()> {
         gpu.copy_h2d(&sentinel, batch_base)?;
         for p in &projections {
             run_scalar(&gpu, scalar, input, scalar_out, p, m)?;
-            run_batched(&gpu, batch4, batch16, (m32, m64), input, batch_out, p, m)?;
+            run_batched(
+                &gpu,
+                batch4,
+                batch16,
+                (w8, m32, m64),
+                input,
+                batch_out,
+                p,
+                m,
+            )?;
         }
         gpu.synchronize(0)?;
         let mut baseline = vec![0_u8; sentinel.len()];

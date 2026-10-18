@@ -235,13 +235,13 @@ impl Qwen3AttentionLayer {
                 // count, 32 rows a launch up to 32, else 64.
                 if n <= 32 {
                     (
-                        ops::w8a16_gemm_pipelined_m32 as BatchGemv,
+                        fwd.levers.ops.w8a16.m32_arm() as BatchGemv,
                         self.w8a16_gemm_pipelined_m32_k,
                         32,
                     )
                 } else {
                     (
-                        ops::w8a16_gemm_pipelined_m64 as BatchGemv,
+                        fwd.levers.ops.w8a16.m64_arm() as BatchGemv,
                         self.w8a16_gemm_pipelined_m64_k,
                         64,
                     )
@@ -256,7 +256,7 @@ impl Qwen3AttentionLayer {
                 // 2026-09-26: 33 or more rows with the 64-row twin linked (same
                 // lever as the 32-row tile): one weight pass per 64 rows.
                 (
-                    ops::w8a16_gemm_pipelined_m64 as BatchGemv,
+                    fwd.levers.ops.w8a16.m64_arm() as BatchGemv,
                     self.w8a16_gemm_pipelined_m64_k,
                     n,
                 )
@@ -268,7 +268,7 @@ impl Qwen3AttentionLayer {
                 // holds here, which gives the kernel's `K % 128 == 0`. It is checked
                 // before `tc`, whose kernel takes at most 16 rows per launch.
                 (
-                    ops::w8a16_gemm_pipelined_m32 as BatchGemv,
+                    fwd.levers.ops.w8a16.m32_arm() as BatchGemv,
                     self.w8a16_gemm_pipelined_m32_k,
                     n,
                 )

@@ -31,15 +31,18 @@ fn ops(s: &metrale_settings::InferenceServerSettings) -> OpsLevers {
 
 type Field = (&'static str, fn(&OpsLevers) -> bool);
 
-/// 2026-10-17: `gemm_quant::fp8_gemm_pipe_kernel`, `AttnFa128Kernels::resolve` and
-/// `dispatch_proj_decode::w8a8_decode_proj_disabled`: off when the variable is present at any
-/// value, `0` included.
+/// 2026-10-17: `gemm_quant::fp8_gemm_pipe_kernel`, `AttnFa128Kernels::resolve`,
+/// `dispatch_proj_decode::w8a8_decode_proj_disabled`, `gemm_quant_w8a16::w8a16_pipe128_kernel`
+/// and `w8a16_tc_rows::w8a16_tc_rows_enabled`: off when the variable is present at any value,
+/// `0` included.
 #[test]
 fn the_presence_opt_outs_read_as_before() {
-    let cases: [Field; 3] = [
+    let cases: [Field; 5] = [
         ("METRALE_NO_FP8_GEMM_PIPE", |l| l.fp8_gemm_pipe),
         ("METRALE_NO_ATTN_FA128", |l| l.attn_fa128),
         ("METRALE_NO_W8A8_DECODE_PROJ", |l| l.w8a8_decode_proj),
+        ("METRALE_NO_W8A16_PIPE128", |l| l.w8a16.pipe128),
+        ("METRALE_NO_W8A16_TC_ROWS", |l| l.w8a16.tc_rows),
     ];
     for (env, field) in cases {
         let changes = check(env, Old::Presence, |p| p.is_none(), |s| field(&ops(s)));
@@ -173,6 +176,10 @@ fn the_declared_defaults_are_the_old_unset_values() {
             fp8_ldmab: true,
             cublas_kmajor: old_kmajor(None),
             w4a4: crate::layers::ops::w4a4_proj::W4a4Levers::declared(),
+            w8a16: crate::layers::ops::W8a16Plan {
+                pipe128: true,
+                tc_rows: true,
+            },
         }
     );
     assert_eq!(

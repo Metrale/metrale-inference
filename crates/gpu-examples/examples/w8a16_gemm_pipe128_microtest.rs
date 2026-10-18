@@ -53,10 +53,7 @@ fn main() -> Result<()> {
         gpu.has_module("w8a16_gemm_pipe128"),
         "this build lacks the twin module"
     );
-    ensure!(
-        std::env::var_os("METRALE_NO_W8A16_PIPE128").is_none(),
-        "unset METRALE_NO_W8A16_PIPE128: ops would launch the original on both legs"
-    );
+
     let original = gpu.kernel("w8a16_gemm_pipelined", "w8a16_gemm_pipelined")?;
     let mut state = 0x7738_6131_2026_0928u64;
     for (m, n, k) in SHAPES {
@@ -93,8 +90,12 @@ fn main() -> Result<()> {
                 .arg_u32(k32)
                 .launch(0)
         };
-        let run_twin =
-            || ops::w8a16_gemm_pipelined(&gpu, original, a_d, w_d, s_d, outs[1], m32, n32, k32, 0);
+        // 2026-10-17: The lever on, so the twin runs whatever the process settings say.
+        let run_twin = || {
+            ops::w8a16_gemm_pipelined(
+                &gpu, original, true, a_d, w_d, s_d, outs[1], m32, n32, k32, 0,
+            )
+        };
         run_original()?;
         run_twin()?;
         gpu.synchronize(0)?;

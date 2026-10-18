@@ -183,6 +183,7 @@ impl MoeLayer {
                 ops::w8a16_gemm_pipelined(
                     ctx.gpu,
                     self.w8a16_gemm_pipelined_k,
+                    ctx.levers.ops.w8a16.pipe128,
                     inp,
                     w,
                     sc,

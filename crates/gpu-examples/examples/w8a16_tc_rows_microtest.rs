@@ -106,6 +106,7 @@ fn main() -> Result<()> {
     let gpu = MetraleCudaBackend::new(0, &metrale_kernels::ptx_modules())?;
     let m32 = gpu.kernel("w8a16_gemm_pipelined_m32", "w8a16_gemm_pipelined_m32")?;
     let full = gpu.kernel("w8a16_gemm_pipelined", "w8a16_gemm_pipelined")?;
+    let w8 = metrale_gpu_examples::ops_levers()?.w8a16;
     let mut rng = Rng(0x7472_2d72_6f77_2028);
     let mut first = true;
     for (n, k) in SHAPES {
@@ -135,7 +136,7 @@ fn main() -> Result<()> {
                 ops::w8a16_tc_rows(&gpu, input, wd, sd, out, m, n, k, k, ldc, 0)?;
             } else {
                 ops::w8a16_gemm_pipelined_m32_strided(
-                    &gpu, m32, input, wd, sd, out, m, n, k, k, ldc, 0,
+                    &gpu, m32, w8.tc_rows, input, wd, sd, out, m, n, k, k, ldc, 0,
                 )?;
             }
             gpu.synchronize(0)?;
@@ -178,7 +179,7 @@ fn main() -> Result<()> {
                         ops::w8a16_tc_rows(&gpu, ad, wd, sd, out, m, n, k, k, ldc, 0)?;
                     } else {
                         ops::w8a16_gemm_pipelined_m32_strided(
-                            &gpu, m32, ad, wd, sd, out, m, n, k, k, ldc, 0,
+                            &gpu, m32, w8.tc_rows, ad, wd, sd, out, m, n, k, k, ldc, 0,
                         )?;
                     }
                 }
@@ -192,7 +193,7 @@ fn main() -> Result<()> {
                 gpu.synchronize(0)?;
                 let t = std::time::Instant::now();
                 for _ in 0..20 {
-                    ops::w8a16_gemm_pipelined(&gpu, full, ad, wd, sd, out, m, n, k, 0)?;
+                    ops::w8a16_gemm_pipelined(&gpu, full, w8.pipe128, ad, wd, sd, out, m, n, k, 0)?;
                 }
                 gpu.synchronize(0)?;
                 t.elapsed().as_secs_f64() * 1e6 / 20.0

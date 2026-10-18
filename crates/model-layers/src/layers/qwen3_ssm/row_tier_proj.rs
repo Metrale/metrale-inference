@@ -94,6 +94,7 @@ impl Qwen3SsmLayer {
                     self.w8a16_gemm_pipelined_k,
                     self.w8a16_gemm_pipelined_m32_k,
                     self.w8a16_gemm_pipelined_m64_k,
+                    ctx.levers.ops.w8a16,
                     input,
                     fp8.weight,
                     fp8.row_scale,

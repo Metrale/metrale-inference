@@ -140,6 +140,7 @@ impl Qwen3SsmLayer {
                 ops::w8a16_gemm_pipelined(
                     ctx.gpu,
                     self.w8a16_gemm_pipelined_k,
+                    ctx.levers.ops.w8a16.pipe128,
                     normed_base,
                     fp8.weight,
                     fp8.row_scale,
@@ -296,6 +297,7 @@ impl Qwen3SsmLayer {
                 ops::w8a16_gemm_pipelined(
                     ctx.gpu,
                     self.w8a16_gemm_pipelined_k,
+                    ctx.levers.ops.w8a16.pipe128,
                     normed_out_base,
                     fp8.weight,
                     fp8.row_scale,

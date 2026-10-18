@@ -97,6 +97,8 @@ struct Kernels {
     kmajor: KernelHandle,
     /// 2026-10-17: `OpsLevers::cublas_kmajor`, the scale layout `kmajor` adapts to.
     kmajor_layout: bool,
+    /// 2026-10-17: `W8a16Plan::pipe128`, the lever `pipelined` launches under.
+    pipe128: bool,
 }
 
 struct Scratch {
@@ -180,6 +182,7 @@ fn run_w8a16(gpu: &dyn GpuBackend, k: &Kernels, p: &Proj, out: DevicePtr, m: usi
         Ref::Pipelined => ops::w8a16_gemm_pipelined(
             gpu,
             k.pipelined,
+            k.pipe128,
             p.act,
             p.weight,
             p.scale,
@@ -295,6 +298,7 @@ fn main() -> Result<()> {
         quant: ops::Fp8ActQuant::resolve(&gpu),
         kmajor: gpu.kernel("fp8_scale_transpose", "fp8_act_scale_to_kmajor")?,
         kmajor_layout: metrale_gpu_examples::ops_levers()?.cublas_kmajor,
+        pipe128: metrale_gpu_examples::ops_levers()?.w8a16.pipe128,
     };
     let gate: f64 = std::env::var("METRALE_W8A8_REL_RMS_GATE")
         .ok()

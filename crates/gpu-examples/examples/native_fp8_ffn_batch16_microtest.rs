@@ -135,6 +135,7 @@ fn main() -> Result<()> {
     let scalar = gpu.kernel("w8a16_gemv", "w8a16_gemv")?;
     let batch16 = gpu.kernel("w8a16_gemv_batch4", "w8a16_gemv_batch16")?;
     let pipelined = gpu.kernel("w8a16_gemm_pipelined", "w8a16_gemm_pipelined")?;
+    let pipe128 = metrale_gpu_examples::ops_levers()?.w8a16.pipe128;
     let mut rng = Rng(0x927_8a16_2026);
     let mut failures = 0_usize;
 
@@ -220,8 +221,8 @@ fn main() -> Result<()> {
             })?;
             let tile_ms = time_ms(&gpu, || {
                 ops::w8a16_gemm_pipelined(
-                    &gpu, pipelined, input, weight, scale, tile_out, m as u32, n as u32, k as u32,
-                    0,
+                    &gpu, pipelined, pipe128, input, weight, scale, tile_out, m as u32, n as u32,
+                    k as u32, 0,
                 )
             })?;
             let batch_gbs = weight_gb * passes as f64 / (batch_ms / 1e3);

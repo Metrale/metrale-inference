@@ -18,6 +18,7 @@
 use super::hyper_connection_lowrank::HcLevers;
 use super::lora_delta::LoraLevers;
 use super::w4a4_proj::W4a4Levers;
+use super::w8a16_plan::W8a16Plan;
 use anyhow::Result;
 use metrale_settings::InferenceServerSettings;
 
@@ -71,6 +72,8 @@ pub struct OpsLevers {
     pub cublas_kmajor: bool,
     /// 2026-10-17: The W4A4 projection levers (`w4a4_proj::prepare`).
     pub w4a4: W4a4Levers,
+    /// 2026-10-17: The W8A16 tile levers (`w8a16_plan.rs`).
+    pub w8a16: W8a16Plan,
 }
 
 impl OpsLevers {
@@ -103,6 +106,10 @@ impl OpsLevers {
             fp8_ldmab: k.fp8_ldmab,
             cublas_kmajor: s.runtime.cublas_scale_layout.as_deref() != Some("rowmajor"),
             w4a4: W4a4Levers::from_settings(s)?,
+            w8a16: W8a16Plan {
+                pipe128: !k.no_w8a16_pipe128,
+                tc_rows: !k.no_w8a16_tc_rows,
+            },
         })
     }
 
@@ -138,6 +145,7 @@ impl OpsLevers {
             fp8_ldmab: true,
             cublas_kmajor: true,
             w4a4: W4a4Levers::declared(),
+            w8a16: W8a16Plan::declared(),
         }
     }
 }

@@ -24,11 +24,11 @@
 //!   and its replays at the same row count.
 //! - A width whose entry point is not loaded is declined, never replaced by the other width.
 
-use anyhow::Result;
-use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
+use metrale_gpu_runtime::gpu::KernelHandle;
 
 use super::Qwen3AttentionLayer;
 use crate::layers::ops;
+use crate::layers::ops::StridedBatchGemv;
 
 /// 2026-09-25: Output columns one thread owns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -107,23 +107,6 @@ pub(crate) fn log_route_once(width: NcolWidth, site: &str) {
         );
     });
 }
-
-/// 2026-09-25: The signature of `ops::w8a16_gemv_batch{4,16}_strided` and the `_ncol*_strided`
-/// entry points, so a tier choice is a function pointer rather than another call site.
-pub(crate) type StridedBatchGemv = fn(
-    &dyn GpuBackend,
-    KernelHandle,
-    DevicePtr,
-    DevicePtr,
-    DevicePtr,
-    DevicePtr,
-    u32,
-    u32,
-    u32,
-    u32,
-    u32,
-    u64,
-) -> Result<()>;
 
 impl Qwen3AttentionLayer {
     /// 2026-09-25: The strided rung for the multi-seq Q/K/V projections, or `None` to stay on

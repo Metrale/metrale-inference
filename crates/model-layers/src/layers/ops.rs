@@ -61,6 +61,8 @@ mod w8a16_gemm_pipelined_m32;
 mod w8a8_decode;
 // 2026-09-28: The tensor-core row-tile W8A16 projection (`w8a16_tc_rows.cu`).
 mod w8a16_tc_rows;
+// 2026-10-17: The W8A16 tile levers and the tiles as lever-free arms.
+mod w8a16_plan;
 // 2026-10-02: Its NVFP4 W4A16 point (`w4a16_tc_rows.cu`).
 mod w4a16_tc_rows;
 // 2026-10-09: The same point over up to three weight segments with a K-split
@@ -323,5 +325,6 @@ pub use w8a8_decode::*;
 pub use w8a16_gemm_m16::*;
 pub use w8a16_gemm_pipelined_m32::*;
 pub use w8a16_gemv_ncol::*;
+pub use w8a16_plan::{StridedBatchGemv, W8a16Plan};
 pub use w8a16_tc_rows::*;
 pub use wide_prefill::*;

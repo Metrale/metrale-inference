@@ -155,6 +155,7 @@ fn main() -> Result<()> {
     let gpu = MetraleCudaBackend::new(0, &metrale_kernels::ptx_modules())?;
     let stream = 0u64;
     let fp8_plan = metrale_gpu_examples::ops_levers()?.fp8_blockscaled();
+    let pipe128 = metrale_gpu_examples::ops_levers()?.w8a16.pipe128;
     let w8a16_k = gpu.kernel("w8a16_gemm_pipelined", "w8a16_gemm_pipelined")?;
     // 2026-09-25: `Fp8ActQuant::resolve` loads the Hopper twin too when the
     // image has it, and each launch picks the twin or the shared kernel as a
@@ -257,7 +258,7 @@ fn main() -> Result<()> {
             // 2026-09-25: W8A16 reference.
             let w8a16 = || {
                 ops::w8a16_gemm_pipelined(
-                    &gpu, w8a16_k, act, weight, scale, out_ref, mu, nu, ku, stream,
+                    &gpu, w8a16_k, pipe128, act, weight, scale, out_ref, mu, nu, ku, stream,
                 )
             };
             w8a16()?;

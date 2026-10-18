@@ -71,6 +71,7 @@ impl Qwen3AttentionLayer {
                 ctx.gpu,
                 self.w8a16_gemv_k,
                 self.w8a16_gemm_pipelined_m32_k,
+                ctx.levers.ops.w8a16.tc_rows,
                 attn_out,
                 fp8.weight,
                 fp8.row_scale,

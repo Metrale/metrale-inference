@@ -62,6 +62,7 @@ impl NemotronMamba2Layer {
                 ops::w8a16_gemm_pipelined(
                     ctx.gpu,
                     self.w8a16_gemm_pipelined_k,
+                    ctx.levers.ops.w8a16.pipe128,
                     normed,
                     fp8w.weight,
                     fp8w.row_scale,
@@ -229,6 +230,7 @@ impl NemotronMamba2Layer {
                 ops::w8a16_gemm_pipelined(
                     ctx.gpu,
                     self.w8a16_gemm_pipelined_k,
+                    ctx.levers.ops.w8a16.pipe128,
                     gated_out,
                     fp8w.weight,
                     fp8w.row_scale,

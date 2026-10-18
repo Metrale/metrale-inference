@@ -86,6 +86,7 @@ fn strided_launch_carries_both_pitches_and_tiles_m_by_32() {
     w8a16_gemm_pipelined_m32_strided(
         &f.gpu,
         KernelHandle(M32_K),
+        true,
         f.input,
         f.weight,
         f.scale,
@@ -127,6 +128,7 @@ fn skinny_rows_launch_one_block_per_eight_columns() {
         w8a16_gemm_pipelined_m32_strided(
             &f.gpu,
             KernelHandle(M32_K),
+            true,
             f.input,
             f.weight,
             f.scale,
@@ -159,6 +161,7 @@ fn strided_launch_above_32_rows_adds_m_tiles() {
         w8a16_gemm_pipelined_m32_strided(
             &f.gpu,
             KernelHandle(M32_K),
+            true,
             f.input,
             f.weight,
             f.scale,
@@ -182,6 +185,7 @@ fn contiguous_launch_derives_pitches_from_k_and_n() {
     w8a16_gemm_pipelined_m32(
         &f.gpu,
         KernelHandle(M32_K),
+        true,
         f.input,
         f.weight,
         f.scale,
@@ -211,6 +215,7 @@ fn by_m_flips_at_exactly_32_rows_and_on_a_missing_handle() {
             KernelHandle(FULL_K),
             KernelHandle(m32),
             KernelHandle(0),
+            crate::layers::ops::W8a16Plan::declared(),
             f.input,
             f.weight,
             f.scale,
@@ -252,6 +257,7 @@ fn by_m_flips_at_exactly_32_rows_and_on_a_missing_handle() {
         KernelHandle(FULL_K),
         KernelHandle(M32_K),
         KernelHandle(0),
+        crate::layers::ops::W8a16Plan::declared(),
         f.input,
         f.weight,
         f.scale,
@@ -287,6 +293,7 @@ fn guards_refuse_without_launching() {
         let err = w8a16_gemm_pipelined_m32_strided(
             &f.gpu,
             KernelHandle(M32_K),
+            true,
             f.input,
             f.weight,
             f.scale,
@@ -313,6 +320,7 @@ fn guards_refuse_without_launching() {
     let err = w8a16_gemm_pipelined_m32(
         &f.gpu,
         KernelHandle(M32_K),
+        true,
         f.input,
         f.weight,
         f.scale,
@@ -339,6 +347,7 @@ fn by_m_takes_the_64_row_twin_from_33_to_64_rows() {
             KernelHandle(FULL_K),
             KernelHandle(M32_K),
             KernelHandle(M64_K),
+            crate::layers::ops::W8a16Plan::declared(),
             f.input,
             f.weight,
             f.scale,

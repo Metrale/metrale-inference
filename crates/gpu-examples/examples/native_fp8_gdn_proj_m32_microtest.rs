@@ -229,7 +229,7 @@ fn main() -> Result<()> {
     let mut rng = Lcg(0x0323_8a16_2026_u64);
     let mut failures = 0usize;
     let mut controls_done = false;
-
+    let w8 = metrale_gpu_examples::ops_levers()?.w8a16;
     for (name, n, k) in SHAPES {
         // 2026-09-27: Every E4M3 code, the NaN codes 0x7F and 0xFF included.
         let weight: Vec<u8> = (0..n * k)
@@ -271,8 +271,8 @@ fn main() -> Result<()> {
                 o.reset(&gpu)?;
             }
             let (mu, nu, ku) = (m as u32, n as u32, k as u32);
-            ops::w8a16_gemm_pipelined(&gpu, full, a, w, s, out_full.ptr(), mu, nu, ku, 0)?;
-            ops::w8a16_gemm_pipelined_m32(&gpu, m32, a, w, s, out_m32.ptr(), mu, nu, ku, 0)?;
+            ops::w8a16_gemm_pipelined(&gpu, full, true, a, w, s, out_full.ptr(), mu, nu, ku, 0)?;
+            w8.m32_arm()(&gpu, m32, a, w, s, out_m32.ptr(), mu, nu, ku, 0)?;
             for r in 0..m {
                 ops::w8a16_gemv(
                     &gpu,
@@ -286,7 +286,7 @@ fn main() -> Result<()> {
                     0,
                 )?;
             }
-            ops::w8a16_gemm_pipelined_m32_strided(
+            w8.m32_strided_arm()(
                 &gpu,
                 m32,
                 a_s,
@@ -347,21 +347,21 @@ fn main() -> Result<()> {
             out_full.reset(&gpu)?;
             out_m32.reset(&gpu)?;
             let (mu, nu, ku) = (m as u32, n as u32, k as u32);
-            ops::w8a16_gemm_pipelined(&gpu, full, a, w, s, out_full.ptr(), mu, nu, ku, 0)?;
-            ops::w8a16_gemm_pipelined_m64(&gpu, m64, a, w, s, out_m32.ptr(), mu, nu, ku, 0)?;
+            ops::w8a16_gemm_pipelined(&gpu, full, true, a, w, s, out_full.ptr(), mu, nu, ku, 0)?;
+            w8.m64_arm()(&gpu, m64, a, w, s, out_m32.ptr(), mu, nu, ku, 0)?;
             gpu.synchronize(0)?;
             let (full_o, m64_o) = (out_full.read(&gpu)?, out_m32.read(&gpu)?);
             let live = rows(m, n, n);
             let verdict = check_extent(&m64_o, &out_m32.image, &live, "64-tile")
                 .and_then(|()| check_bits(&m64_o, &live, &full_o, &live, "64-tile vs 128-tile"));
             let t_full = time_launch(&gpu, || {
-                ops::w8a16_gemm_pipelined(&gpu, full, a, w, s, out_full.ptr(), mu, nu, ku, 0)
+                ops::w8a16_gemm_pipelined(&gpu, full, true, a, w, s, out_full.ptr(), mu, nu, ku, 0)
             })?;
             let t_m32 = time_launch(&gpu, || {
-                ops::w8a16_gemm_pipelined_m32(&gpu, m32, a, w, s, out_full.ptr(), mu, nu, ku, 0)
+                w8.m32_arm()(&gpu, m32, a, w, s, out_full.ptr(), mu, nu, ku, 0)
             })?;
             let t_m64 = time_launch(&gpu, || {
-                ops::w8a16_gemm_pipelined_m64(&gpu, m64, a, w, s, out_m32.ptr(), mu, nu, ku, 0)
+                w8.m64_arm()(&gpu, m64, a, w, s, out_m32.ptr(), mu, nu, ku, 0)
             })?;
             match verdict {
                 Ok(()) => println!(
@@ -413,7 +413,7 @@ fn main() -> Result<()> {
             let t_skinny = time_launch(&gpu, || {
                 i += 1;
                 let w = cold[i % copies];
-                ops::w8a16_gemm_pipelined_m32(&gpu, m32, a, w, s, out_m32.ptr(), mu, nu, ku, 0)
+                w8.m32_arm()(&gpu, m32, a, w, s, out_m32.ptr(), mu, nu, ku, 0)
             })?;
             println!(
                 "SKINNY {name} M={m}: gemv tier {t_gemv:.1} us ({:.0} GB/s)  skinny {t_skinny:.1} \
@@ -431,10 +431,10 @@ fn main() -> Result<()> {
         for m in [16usize, 32] {
             let (mu, nu, ku) = (m as u32, n as u32, k as u32);
             let t_full = time_launch(&gpu, || {
-                ops::w8a16_gemm_pipelined(&gpu, full, a, w, s, out_full.ptr(), mu, nu, ku, 0)
+                ops::w8a16_gemm_pipelined(&gpu, full, true, a, w, s, out_full.ptr(), mu, nu, ku, 0)
             })?;
             let t_m32 = time_launch(&gpu, || {
-                ops::w8a16_gemm_pipelined_m32(&gpu, m32, a, w, s, out_m32.ptr(), mu, nu, ku, 0)
+                w8.m32_arm()(&gpu, m32, a, w, s, out_m32.ptr(), mu, nu, ku, 0)
             })?;
             println!(
                 "TIME {name} M={m}: 128-tile {t_full:.1} us ({:.0} GB/s)  32-tile {t_m32:.1} us \
