@@ -121,7 +121,12 @@ impl Qwen3AttentionLayer {
                     stream,
                 )?;
             } else if !self.attn.q_norm.weight.is_null() {
-                if self.rms_norm_w_warp_row_k.0 != 0 && ops::rms_norm_short_row_eligible(nq * n, hd)
+                if self.rms_norm_w_warp_row_k.0 != 0
+                    && ops::rms_norm_short_row_eligible(
+                        ctx.levers.ops.rms_norm_warp_row,
+                        nq * n,
+                        hd,
+                    )
                 {
                     ops::rms_norm_warp_row(
                         ctx.gpu,
@@ -162,7 +167,9 @@ impl Qwen3AttentionLayer {
                 stream,
             )?;
         } else if !self.attn.k_norm.weight.is_null() {
-            if self.rms_norm_w_warp_row_k.0 != 0 && ops::rms_norm_short_row_eligible(nkv * n, hd) {
+            if self.rms_norm_w_warp_row_k.0 != 0
+                && ops::rms_norm_short_row_eligible(ctx.levers.ops.rms_norm_warp_row, nkv * n, hd)
+            {
                 ops::rms_norm_warp_row(
                     ctx.gpu,
                     self.rms_norm_w_warp_row_k,

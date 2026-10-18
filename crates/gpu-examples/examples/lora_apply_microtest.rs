@@ -16,7 +16,7 @@
 //!   cargo run --release -p metrale-gpu-examples --example lora_apply_microtest \
 //!       -- `[k_in] [n_out] [r] [max_rank] [m] [seed]`
 //! Defaults: k_in=1024 n_out=512 (the Holo-3.1-0.8B `k_proj` shape) r=8 max_rank=64 m=1.
-//! `apply_lora_delta` runs `dense_gemv` per row for `m <= lora_gemv_max_m()` and a GEMM path
+//! `apply_lora_delta` runs `dense_gemv` per row for `m <= LoraLevers::gemv_max_m` and a GEMM path
 //! above that.
 
 use anyhow::{Result, bail};
@@ -146,7 +146,7 @@ fn main() -> Result<()> {
     let backend = MetraleCudaBackend::new(0, &metrale_kernels::ptx_modules())?;
     let gpu: &dyn GpuBackend = &backend;
     let stream = gpu.create_stream()?;
-    let kernels = LoraKernels::new(gpu)?;
+    let kernels = LoraKernels::new(gpu, metrale_gpu_examples::ops_levers()?.lora)?;
 
     let x_ptr = upload(gpu, &x)?;
     let a_ptr = upload(gpu, &a_pool)?;

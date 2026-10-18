@@ -130,6 +130,7 @@ impl Qwen3AttentionLayer {
             ops::w8a16_gemm_t_pipelined(
                 ctx.gpu,
                 self.w8a16_gemm_t_pipelined_k,
+                ctx.levers.ops.gemm_shape_log,
                 attn_out,
                 fp8t.weight_t,
                 fp8t.scale_t,

@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-09-25: Model-side kernel-path levers: one `Copy` struct, resolved from the environment and carried on `ForwardContext`.
+//! 2026-09-25: Model-side kernel-path levers: one `Copy` struct, resolved from the startup
+//! settings and carried on `ForwardContext`.
 //!
 //! Owner: model-layers ops.
 //! Invariants:
-//! - [`ModelLevers::get`] resolves the environment once per process (a `OnceLock` in
-//!   `model_levers_resolve.rs`).
-//! - `from_values` reads nothing but its two closures and its arguments, so the tests drive the
-//!   production resolution without touching the process environment.
-//! - Every field but `max_decode_seqs` comes from `from_values`. It sets `max_decode_seqs` to 1,
+//! - 2026-10-17: [`ModelLevers::from_settings`] reads only the resolved settings and its
+//!   arguments, so the tests drive the production resolution without touching the process
+//!   environment.
+//! - Every field but `max_decode_seqs` comes from `from_settings`. It sets `max_decode_seqs` to 1,
 //!   and `TransformerModel::new` overwrites it with the configured max batch.
 //!
 //! Read a lever here once and pass the resolved field down; do not read `METRALE_*` in code that
@@ -19,8 +19,8 @@
 //! the GEMM implementation of each projection. [`ModelLevers`] holds every other kernel-path
 //! switch.
 
-/// 2026-09-25: Kernel-path levers for one loaded model. `TransformerModel::new` resolves its own
-/// copy with [`ModelLevers::from_env`]; other readers use the process-wide [`ModelLevers::get`].
+/// 2026-09-25: Kernel-path levers for one loaded model. `TransformerModel::new` resolves its copy
+/// with [`ModelLevers::from_settings`]; every other reader takes it from `ForwardContext::levers`.
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct ModelLevers {
     /// 2026-09-25: On unless `METRALE_NO_GDN_REGRESIDENT=1`. Allows the register-resident GDN
@@ -344,10 +344,11 @@ pub struct ModelLevers {
     /// (`METRALE_NO_MTP_DRAFTER_CONTEXT`, `METRALE_MTP_DRAFTER_CONTEXT_PREFILL_ONLY_UNSAFE`). One
     /// value, because its `carry` implies its `prefill`.
     pub drafter: crate::drafter_context::DrafterContext,
+    /// 2026-10-17: The `layers::ops` launcher levers ([`super::OpsLevers`]).
+    pub ops: super::OpsLevers,
 }
 
-/// 2026-09-25: How the levers are read: `from_values` and the `get`, `from_env` and `defaults`
-/// constructors.
+/// 2026-09-25: How the levers are read: the `from_settings` and `defaults` constructors.
 #[path = "model_levers_resolve.rs"]
 mod resolve;
 

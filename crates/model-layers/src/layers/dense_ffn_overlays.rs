@@ -86,7 +86,7 @@ impl DenseFfnLayer {
         m: u32,
         stream: u64,
     ) -> Result<()> {
-        if ops::lora_delta::lora_no_ffn() {
+        if ctx.levers.ops.lora_no_ffn {
             return Ok(());
         }
         let Some(ref lw) = self.lora else {
@@ -121,7 +121,7 @@ impl DenseFfnLayer {
         m: u32,
         stream: u64,
     ) -> Result<()> {
-        if ops::lora_delta::lora_no_ffn() {
+        if ctx.levers.ops.lora_no_ffn {
             return Ok(());
         }
         let Some(ref lw) = self.lora else {

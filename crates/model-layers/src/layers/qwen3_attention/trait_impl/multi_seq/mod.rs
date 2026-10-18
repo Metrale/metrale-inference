@@ -144,6 +144,7 @@ impl Qwen3AttentionLayer {
 
         ops::hc_pre_site(
             ctx.gpu,
+            ctx.levers.ops.hc,
             self.hc_pre_k,
             hc_streams,
             &hc.attn,
@@ -287,6 +288,7 @@ impl Qwen3AttentionLayer {
             if is_last_layer && let Some(ref head) = hc.head {
                 ops::hc_head_site(
                     ctx.gpu,
+                    ctx.levers.ops.hc,
                     self.hc_head_k,
                     hc_streams,
                     head,
@@ -318,6 +320,7 @@ impl Qwen3AttentionLayer {
 
         ops::hc_pre_site(
             ctx.gpu,
+            ctx.levers.ops.hc,
             self.hc_pre_k,
             hc_streams,
             &hc.ffn,
@@ -415,6 +418,7 @@ impl Qwen3AttentionLayer {
         if is_last_layer && let Some(ref head) = hc.head {
             ops::hc_head_site(
                 ctx.gpu,
+                ctx.levers.ops.hc,
                 self.hc_head_k,
                 hc_streams,
                 head,

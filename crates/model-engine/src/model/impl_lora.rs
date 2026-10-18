@@ -123,7 +123,8 @@ impl TransformerModel {
             // several adapters does not set it by itself.
             self.lora_rotatable = self.levers.lora_rotate
                 || metrale_model_layers::lora::lora_peer(&self.settings).is_some();
-            let kernels = ops::lora_delta::LoraKernels::new(self.gpu.as_ref())?;
+            let kernels =
+                ops::lora_delta::LoraKernels::new(self.gpu.as_ref(), self.levers.ops.lora)?;
             let active = lw.active_layers().to_vec();
             let tables = lw.tables.clone();
             let scale_table = lw.scale_table;

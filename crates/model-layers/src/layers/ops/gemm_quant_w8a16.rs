@@ -198,6 +198,7 @@ pub fn w8a16_gemm_t(
 pub fn w8a16_gemm_n128_m128(
     gpu: &dyn GpuBackend,
     kernel: KernelHandle,
+    shape_log: bool,
     input: DevicePtr,
     weight_t: DevicePtr,      // 2026-09-25: [K, N] FP8 transposed
     block_scale_t: DevicePtr, // 2026-09-25: [K/128, N/128] FP32 transposed
@@ -207,7 +208,7 @@ pub fn w8a16_gemm_n128_m128(
     k: u32,
     stream: u64,
 ) -> Result<()> {
-    super::super::log_gemm_shape(gpu, "w8a16_gemm_t_m128", m, n, k);
+    super::super::log_gemm_shape(gpu, shape_log, "w8a16_gemm_t_m128", m, n, k);
     KernelLaunch::new(gpu, kernel)
         .grid([div_ceil(n, 128), div_ceil(m, 128), 1])
         .block([256, 1, 1])
@@ -228,6 +229,7 @@ pub fn w8a16_gemm_n128_m128(
 pub fn w8a16_gemm_t_pipelined(
     gpu: &dyn GpuBackend,
     kernel: KernelHandle,
+    shape_log: bool,
     input: DevicePtr,
     weight_t: DevicePtr,
     block_scale_t: DevicePtr,
@@ -237,7 +239,7 @@ pub fn w8a16_gemm_t_pipelined(
     k: u32,
     stream: u64,
 ) -> Result<()> {
-    super::super::log_gemm_shape(gpu, "w8a16_gemm_t_pipelined", m, n, k);
+    super::super::log_gemm_shape(gpu, shape_log, "w8a16_gemm_t_pipelined", m, n, k);
     KernelLaunch::new(gpu, kernel)
         .grid([div_ceil(n, 32), div_ceil(m, 128), 1])
         .block([256, 1, 1])

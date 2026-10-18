@@ -12,7 +12,7 @@
 //!   (`the_opt_out_lever_is_on_by_default_and_every_opt_in_is_off`).
 
 use super::ModelLevers;
-use crate::layers::ops::gemv_sw;
+use crate::layers::ops::{OpsLevers, gemv_sw};
 use metrale_settings::InferenceServerSettings;
 
 impl ModelLevers {
@@ -32,6 +32,7 @@ impl ModelLevers {
             shadow_topk: crate::speculative::shadow_topk_given(sp.mtp_shadow_topk),
             kv_poison: s.cache.kv_poison,
             drafter: crate::drafter_context::from_settings(sp),
+            ops: OpsLevers::from_settings(s),
             gdn_regresident: !k.no_gdn_regresident,
             gdn_batched_fla: sch.gdn_batched_fla,
             gdn_wy17: k.gdn_wy17,
@@ -156,6 +157,7 @@ impl ModelLevers {
             shadow_topk: 0,
             kv_poison: false,
             drafter: crate::drafter_context::DrafterContext::BOTH,
+            ops: OpsLevers::declared(),
             gdn_regresident: true,
             gdn_wy17: true,
             gdn_wyn: true,

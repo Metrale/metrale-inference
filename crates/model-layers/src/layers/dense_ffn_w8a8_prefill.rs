@@ -220,6 +220,7 @@ impl DenseFfnLayer {
         ops::fp8_gemm_t_blockscaled(
             ctx.gpu,
             self.fp8_gemm_t_blockscaled_k,
+            ctx.levers.ops.fp8_blockscaled(),
             a_fp8,
             a_scale,
             w.weight,

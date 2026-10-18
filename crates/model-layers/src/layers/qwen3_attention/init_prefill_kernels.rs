@@ -102,6 +102,7 @@ impl PrefillKernels {
         gpu: &dyn GpuBackend,
         config: &metrale_config::ModelConfig,
         probes: &ArchProbes,
+        ops: &crate::layers::ops::OpsLevers,
     ) -> Result<Self> {
         Ok(Self {
             residual_add_k: gpu.kernel("residual_add", "bf16_residual_add")?,
@@ -181,7 +182,7 @@ impl PrefillKernels {
                 "attn_prefill_paged_turbo4",
             ),
             prefill_attn_paged_64_k: gpu.kernel("prefill_paged", "attn_prefill_paged_64")?,
-            prefill_attn_fa128: crate::layers::ops::AttnFa128Kernels::resolve(gpu),
+            prefill_attn_fa128: crate::layers::ops::AttnFa128Kernels::resolve(gpu, ops.attn_fa128),
             prefill_attn_paged_fp8_64_k: gpu
                 .kernel("prefill_paged_fp8", "attn_prefill_paged_fp8_64")?,
             prefill_attn_paged_nvfp4_64_k: gpu

@@ -106,6 +106,7 @@ impl Qwen3SsmLayer {
         // fallback read them.
         ops::hc_pre_site(
             ctx.gpu,
+            ctx.levers.ops.hc,
             self.hc_pre_k,
             streams,
             &hc.attn,
@@ -165,6 +166,7 @@ impl Qwen3SsmLayer {
         // the batched FFN kernels read their input.
         ops::hc_pre_site(
             ctx.gpu,
+            ctx.levers.ops.hc,
             self.hc_pre_k,
             streams,
             &hc.ffn,

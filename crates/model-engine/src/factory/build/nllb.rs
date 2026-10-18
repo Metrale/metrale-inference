@@ -28,6 +28,7 @@ pub(super) fn build(
     max_seq_len: usize,
     request: &slots::SlotRequest,
     nllb_lora_dir: Option<&std::path::Path>,
+    lora_levers: metrale_model_layers::layers::ops::lora_delta::LoraLevers,
 ) -> Result<slots::BuiltModel> {
     let (src, tgt) = nllb_lang.ok_or_else(|| {
         anyhow::anyhow!(
@@ -56,6 +57,7 @@ pub(super) fn build(
         max_seq_len,
         nllb_slots,
         nllb_lora_dir,
+        lora_levers,
     )?;
     Ok(slots::BuiltModel {
         max_batch_size: nllb_slots,

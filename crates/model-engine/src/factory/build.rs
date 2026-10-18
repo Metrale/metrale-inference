@@ -89,6 +89,7 @@ pub fn build_model(
             max_seq_len,
             &slots.request,
             nllb_lora_dir.as_deref(),
+            metrale_model_layers::layers::ops::OpsLevers::from_settings(&settings).lora,
         );
     }
     #[cfg(not(feature = "cuda"))]

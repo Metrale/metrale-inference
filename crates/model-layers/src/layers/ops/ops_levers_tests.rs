@@ -1,0 +1,159 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! 2026-10-17: `OpsLevers::from_settings` against the environment readers it replaced, frozen
+//! here (`old_*`, unchanged but for taking the raw value as a parameter).
+//!
+//! Owner: model-layers ops.
+//! Invariants: the probes that read differently are exactly the listed behaviour changes: a `1`
+//! or `0` switch now also reads the other switch spellings and refuses a value the switch rule
+//! cannot read; the presence levers and the LoRA row bound read as before.
+
+use super::*;
+use crate::lever_equivalence::{Old, Outcome, check, defaults, settings_from};
+
+/// 2026-10-17: `lora_delta::lora_gemv_max_m`.
+fn old_gemv_max_m(v: Option<&str>) -> u32 {
+    v.and_then(|v| v.parse().ok()).unwrap_or(48)
+}
+
+/// 2026-10-17: The levers of `env` at `probe` and nothing else; `None` when the settings refuse
+/// it.
+fn new_at(env: &str, probe: &str) -> Option<OpsLevers> {
+    settings_from(&[(env, probe)])
+        .ok()
+        .map(|s| OpsLevers::from_settings(&s))
+}
+
+type Field = (&'static str, fn(&OpsLevers) -> bool);
+
+/// 2026-10-17: `gemm_quant::fp8_gemm_pipe_kernel` and `AttnFa128Kernels::resolve`: off when the
+/// variable is present at any value, `0` included.
+#[test]
+fn the_presence_opt_outs_read_as_before() {
+    let cases: [Field; 2] = [
+        ("METRALE_NO_FP8_GEMM_PIPE", |l| l.fp8_gemm_pipe),
+        ("METRALE_NO_ATTN_FA128", |l| l.attn_fa128),
+    ];
+    for (env, field) in cases {
+        let changes = check(
+            env,
+            Old::Presence,
+            |p| p.is_none(),
+            |s| field(&OpsLevers::from_settings(s)),
+        );
+        assert!(changes.is_empty(), "{changes:?}");
+        for probe in ["", " ", "no"] {
+            assert_eq!(
+                new_at(env, probe).map(|l| field(&l)),
+                Some(false),
+                "{probe:?}"
+            );
+        }
+    }
+}
+
+/// 2026-10-17: The `== "1"` switches: the LoRA skips, the hyper-connection paths and the GEMM
+/// shape log.
+#[test]
+fn the_opt_in_switches_read_as_before_except_the_switch_spellings() {
+    let cases: [Field; 5] = [
+        ("METRALE_LORA_NO_APPLY", |l| l.lora.no_apply),
+        ("METRALE_LORA_NO_FFN", |l| l.lora_no_ffn),
+        ("METRALE_QWEN4EXP_NO_HC_GEMM", |l| l.hc.gemm_disabled),
+        ("METRALE_HC_DECODE_SPLIT", |l| l.hc.decode_split_forced),
+        ("METRALE_GEMM_SHAPE_LOG", |l| l.gemm_shape_log),
+    ];
+    for (env, field) in cases {
+        let changes = check(
+            env,
+            Old::OptIn,
+            |p| p == Some("1"),
+            |s| field(&OpsLevers::from_settings(s)),
+        );
+        assert_eq!(
+            changes,
+            [
+                (env, Some("true"), Outcome::Changed),
+                (env, Some("garbage"), Outcome::Rejected)
+            ]
+        );
+    }
+}
+
+/// 2026-10-17: `norm::rms_norm_short_row_eligible`'s `!= "0"`.
+#[test]
+fn the_warp_row_norm_reads_as_before_except_the_switch_spellings() {
+    let env = "METRALE_RMS_NORM_WARP_ROW";
+    let changes = check(
+        env,
+        Old::OptOut,
+        |p| p != Some("0"),
+        |s| OpsLevers::from_settings(s).rms_norm_warp_row,
+    );
+    assert_eq!(
+        changes,
+        [
+            (env, Some("off"), Outcome::Changed),
+            (env, Some("garbage"), Outcome::Rejected)
+        ]
+    );
+}
+
+/// 2026-10-17: The row bound keeps its reader's parse: an untrimmed unsigned count, 48 otherwise.
+#[test]
+fn the_lora_row_bound_reads_as_before() {
+    let env = "METRALE_LORA_GEMV_MAX_M";
+    let changes = check(env, Old::Verbatim, old_gemv_max_m, |s| {
+        OpsLevers::from_settings(s).lora.gemv_max_m
+    });
+    assert!(changes.is_empty(), "{changes:?}");
+    for probe in ["12", "0", "+7", " 12", "12 ", "-1", "1.5", "", "4294967296"] {
+        assert_eq!(
+            new_at(env, probe).map(|l| l.lora.gemv_max_m),
+            Some(old_gemv_max_m(Some(probe))),
+            "{probe:?}"
+        );
+    }
+}
+
+/// 2026-10-17: Every lever at the value its reader read unset as.
+#[test]
+fn the_declared_defaults_are_the_old_unset_values() {
+    assert_eq!(OpsLevers::from_settings(&defaults()), OpsLevers::declared());
+    assert_eq!(
+        OpsLevers::declared(),
+        OpsLevers {
+            fp8_gemm_pipe: true,
+            gemm_shape_log: false,
+            rms_norm_warp_row: true,
+            attn_fa128: true,
+            lora_no_ffn: false,
+            lora: LoraLevers {
+                no_apply: false,
+                gemv_max_m: old_gemv_max_m(None),
+            },
+            hc: HcLevers {
+                gemm_disabled: false,
+                decode_split_forced: false,
+            },
+        }
+    );
+    assert_eq!(
+        crate::layers::ops::ModelLevers::defaults().ops,
+        OpsLevers::declared()
+    );
+}
+
+/// 2026-10-17: The blockscaled plan carries the two levers it names, not each other's.
+#[test]
+fn the_blockscaled_plan_takes_its_two_levers() {
+    for (pipe, shape_log) in [(true, false), (false, true)] {
+        let l = OpsLevers {
+            fp8_gemm_pipe: pipe,
+            gemm_shape_log: shape_log,
+            ..OpsLevers::declared()
+        };
+        let plan = l.fp8_blockscaled();
+        assert_eq!((plan.pipe, plan.shape_log), (pipe, shape_log));
+    }
+}

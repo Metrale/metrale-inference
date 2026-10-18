@@ -141,6 +141,8 @@ pub mod moe_lora_grouped;
 mod moe_prefill;
 #[path = "ops/norm.rs"]
 mod norm;
+#[path = "ops/ops_levers.rs"]
+mod ops_levers;
 // 2026-09-25: Tensor-core routing of the MTP drafter's BF16 GEMV.
 #[path = "ops/dense_gemv_tc.rs"]
 pub mod dense_gemv_tc;
@@ -282,6 +284,7 @@ pub use moe_lora_grouped::*;
 pub use moe_prefill::*;
 pub use norm::*;
 pub use nvfp4_mmq::*;
+pub use ops_levers::OpsLevers;
 pub use ple::*;
 pub use prefill_attn_a::*;
 pub use prefill_attn_b::*;

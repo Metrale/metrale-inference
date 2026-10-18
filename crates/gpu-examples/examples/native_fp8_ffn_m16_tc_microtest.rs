@@ -358,8 +358,8 @@ fn main() -> Result<()> {
             })?;
             let tile_ms = time_ms(&gpu, || {
                 ops::w8a16_gemm_n128_m128(
-                    &gpu, tile_t, input, weight_t, scale_t, tile_out, m as u32, n as u32, k as u32,
-                    0,
+                    &gpu, tile_t, false, input, weight_t, scale_t, tile_out, m as u32, n as u32,
+                    k as u32, 0,
                 )
             })?;
             let timings = Timings {

@@ -103,6 +103,7 @@ impl Qwen3SsmLayer {
         // state between layers.
         ops::hc_pre_site(
             ctx.gpu,
+            ctx.levers.ops.hc,
             self.hc_pre_k,
             streams,
             &hc.attn,
@@ -138,6 +139,7 @@ impl Qwen3SsmLayer {
 
         ops::hc_pre_site(
             ctx.gpu,
+            ctx.levers.ops.hc,
             self.hc_pre_k,
             streams,
             &hc.ffn,

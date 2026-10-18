@@ -241,6 +241,7 @@ impl Qwen3AttentionLayer {
             ops::fp8_gemm_t_blockscaled(
                 ctx.gpu,
                 self.fp8_gemm_t_blockscaled_k,
+                ctx.levers.ops.fp8_blockscaled(),
                 a_fp8_buf,
                 a_scale_buf,
                 fp8w.weight,
@@ -259,6 +260,7 @@ impl Qwen3AttentionLayer {
             ops::w8a16_gemm_n128_m128(
                 ctx.gpu,
                 self.w8a16_gemm_t_m128_k,
+                ctx.levers.ops.gemm_shape_log,
                 normed,
                 fp8t.weight_t,
                 fp8t.scale_t,

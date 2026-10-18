@@ -24,19 +24,17 @@ use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 use crate::layers::qwen3_attention::HcLowRank;
 
-/// 2026-09-25: `METRALE_QWEN4EXP_NO_HC_GEMM` equal to `"1"`, read once per process: the large-T
-/// collapse runs the fused FP32 kernel instead of the GEMM path, which rounds `normed` to BF16
-/// before the projections (`hc_pre_stage_bf16`).
-fn hc_gemm_disabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("METRALE_QWEN4EXP_NO_HC_GEMM").as_deref() == Ok("1"))
-}
-
-/// 2026-09-25: `METRALE_HC_DECODE_SPLIT` equal to `"1"`, read once per process: at `T <= 64` run
-/// the three-launch split path instead of the cuBLASLt GEMM path.
-fn hc_decode_split_forced() -> bool {
-    static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *V.get_or_init(|| std::env::var("METRALE_HC_DECODE_SPLIT").as_deref() == Ok("1"))
+/// 2026-10-17: The collapse-path levers of [`hc_pre_lowrank`] and [`hc_head_lowrank`], resolved
+/// once (`OpsLevers::hc`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HcLevers {
+    /// 2026-09-25: `METRALE_QWEN4EXP_NO_HC_GEMM`: the large-T collapse runs the fused FP32
+    /// kernel instead of the GEMM path, which rounds `normed` to BF16 before the projections
+    /// (`hc_pre_stage_bf16`).
+    pub gemm_disabled: bool,
+    /// 2026-09-25: `METRALE_HC_DECODE_SPLIT`: at `T <= 64` run the three-launch split path
+    /// instead of the cuBLASLt GEMM path.
+    pub decode_split_forced: bool,
 }
 
 /// 2026-09-25: Collapse the `hc_mult` streams to one, and emit the per-stream injection weights
@@ -46,6 +44,7 @@ fn hc_decode_split_forced() -> bool {
 #[allow(clippy::too_many_arguments)]
 pub fn hc_pre_lowrank(
     gpu: &dyn GpuBackend,
+    levers: HcLevers,
     kernel: KernelHandle,
     streams: DevicePtr,
     w: &HcLowRank,
@@ -66,7 +65,7 @@ pub fn hc_pre_lowrank(
     // 2026-09-25: Small T: the fused kernel's grid is [T], a single block at T = 1, so small T
     // uses multi-block launches through the scratch instead.
     if num_tokens <= 64 && !scratch.is_null() {
-        if !hc_decode_split_forced() {
+        if !levers.decode_split_forced {
             return hc_pre_gemm(
                 gpu,
                 streams,
@@ -100,7 +99,7 @@ pub fn hc_pre_lowrank(
     }
     // 2026-09-25: Large T: the GEMM formulation on `dense_gemm_bf16_pipelined`, unless the kill
     // switch sends it to the fused kernel below.
-    if !scratch.is_null() && !hc_gemm_disabled() {
+    if !scratch.is_null() && !levers.gemm_disabled {
         return hc_pre_gemm(
             gpu,
             streams,
@@ -145,6 +144,7 @@ pub fn hc_pre_lowrank(
 #[allow(clippy::too_many_arguments)]
 pub fn hc_head_lowrank(
     gpu: &dyn GpuBackend,
+    levers: HcLevers,
     kernel: KernelHandle,
     streams: DevicePtr,
     w: &HcLowRank,
@@ -157,7 +157,7 @@ pub fn hc_head_lowrank(
     stream: u64,
 ) -> Result<()> {
     if num_tokens <= 64 && !scratch.is_null() {
-        if !hc_decode_split_forced() {
+        if !levers.decode_split_forced {
             return hc_pre_gemm(
                 gpu,
                 streams,
@@ -191,7 +191,7 @@ pub fn hc_head_lowrank(
     }
     // 2026-09-25: The GEMM path without the injection GEMM; `hc_pre_mix` skips the injection
     // when `inj_pre` is null.
-    if !scratch.is_null() && !hc_gemm_disabled() {
+    if !scratch.is_null() && !levers.gemm_disabled {
         return hc_pre_gemm(
             gpu,
             streams,

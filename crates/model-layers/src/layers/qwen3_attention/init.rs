@@ -124,7 +124,12 @@ impl Qwen3AttentionLayer {
         let dec = super::init_decode_kernels::DecodeKernels::resolve(
             gpu, kv_dtype, &probes, decode_mod, decode_fn,
         )?;
-        let pre = super::init_prefill_kernels::PrefillKernels::resolve(gpu, config, &probes)?;
+        let pre = super::init_prefill_kernels::PrefillKernels::resolve(
+            gpu,
+            config,
+            &probes,
+            &lc.levers.ops,
+        )?;
         Ok(Self {
             input_norm,
             attn,

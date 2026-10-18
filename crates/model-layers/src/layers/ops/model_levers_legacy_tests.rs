@@ -35,6 +35,9 @@ fn old_from_values(value: impl Fn(&str) -> Option<String>) -> ModelLevers {
         shadow_topk: 0,
         kv_poison: opt_in(value("METRALE_KV_POISON").as_deref()),
         drafter: crate::drafter_context::resolve(false, None),
+        // 2026-10-17: A field added after the freeze; the launchers read these variables
+        // themselves then, and `ops_levers_tests.rs` probes them against those readers.
+        ops: crate::layers::ops::OpsLevers::declared(),
         gdn_regresident: value("METRALE_NO_GDN_REGRESIDENT").as_deref() != Some("1"),
         gdn_batched_fla: opt_in(value("METRALE_GDN_BATCHED_FLA").as_deref()),
         gdn_wy17: opt_out(value("METRALE_GDN_WY17").as_deref()),

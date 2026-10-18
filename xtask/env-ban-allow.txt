@@ -16,7 +16,6 @@ crates/config/src/levers.rs
 crates/config/src/parsers/qwen4_exp_tests.rs
 crates/core/src/compute.rs
 crates/core/src/numeric.rs
-crates/gpu-examples/examples/attn_prefill_fa128_microtest.rs
 crates/gpu-examples/examples/attn_prefill_fp8_microtest.rs
 crates/gpu-examples/examples/batchm_bench/main.rs
 crates/gpu-examples/examples/common/gdn_carry_fixture.rs
@@ -32,7 +31,6 @@ crates/gpu-examples/examples/dflash_tp_rank_bench.rs
 crates/gpu-examples/examples/dsa_indexer_microtest.rs
 crates/gpu-examples/examples/exact_carry_microtest.rs
 crates/gpu-examples/examples/exact_chain_microtest.rs
-crates/gpu-examples/examples/fp8_gemm_blockscaled_pipe_microtest.rs
 crates/gpu-examples/examples/fp8gemm_microtest.rs
 crates/gpu-examples/examples/gdn_batched_repro.rs
 crates/gpu-examples/examples/gdn_carry_conv_microtest.rs
@@ -234,15 +232,10 @@ crates/model-layers/src/layers/ops/dispatch_helpers.rs
 crates/model-layers/src/layers/ops/dispatch_proj.rs
 crates/model-layers/src/layers/ops/dispatch_proj_decode.rs
 crates/model-layers/src/layers/ops/gemm_fp8_prefill.rs
-crates/model-layers/src/layers/ops/gemm_quant.rs
 crates/model-layers/src/layers/ops/gemm_quant_w8a16.rs
 crates/model-layers/src/layers/ops/gemv_tc.rs
-crates/model-layers/src/layers/ops/hyper_connection_lowrank.rs
 crates/model-layers/src/layers/ops/hyper_connection_lowrank_tests.rs
-crates/model-layers/src/layers/ops/lora_delta.rs
 crates/model-layers/src/layers/ops/model_levers_resolve.rs
-crates/model-layers/src/layers/ops/norm.rs
-crates/model-layers/src/layers/ops/prefill_attn_fa128.rs
 crates/model-layers/src/layers/ops/q2_0_mmq.rs
 crates/model-layers/src/layers/ops/ssm_gdn_a3.rs
 crates/model-layers/src/layers/ops/ssm_gdn_hopper_prefill.rs

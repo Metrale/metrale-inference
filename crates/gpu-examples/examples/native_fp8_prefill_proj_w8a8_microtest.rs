@@ -188,7 +188,8 @@ fn run_w8a16(gpu: &dyn GpuBackend, k: &Kernels, p: &Proj, out: DevicePtr, m: usi
             0,
         ),
         Ref::TransposedM128 => ops::w8a16_gemm_n128_m128(
-            gpu, k.t_m128, p.act, p.weight_t, p.scale_t, out, m as u32, p.n as u32, p.k as u32, 0,
+            gpu, k.t_m128, false, p.act, p.weight_t, p.scale_t, out, m as u32, p.n as u32,
+            p.k as u32, 0,
         ),
     }
 }

@@ -119,6 +119,7 @@ impl NllbGpuModel {
         max_seq_len: usize,
         max_batch: usize,
         lora_dir: Option<&std::path::Path>,
+        lora_levers: metrale_model_layers::layers::ops::lora_delta::LoraLevers,
     ) -> Result<Self> {
         let d = config.hidden_size;
         let heads = config.num_attention_heads;
@@ -161,7 +162,7 @@ impl NllbGpuModel {
         gpu.copy_h2d(util::bf16_bytes(&pos_host), pos_table)?;
 
         let lora = match lora_dir {
-            Some(dir) => Some(NllbLora::load(dir, gpu.as_ref(), cache_rows)?),
+            Some(dir) => Some(NllbLora::load(dir, gpu.as_ref(), cache_rows, lora_levers)?),
             None => None,
         };
 

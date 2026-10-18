@@ -154,6 +154,7 @@ struct Shape {
 fn main() -> Result<()> {
     let gpu = MetraleCudaBackend::new(0, &metrale_kernels::ptx_modules())?;
     let stream = 0u64;
+    let fp8_plan = metrale_gpu_examples::ops_levers()?.fp8_blockscaled();
     let w8a16_k = gpu.kernel("w8a16_gemm_pipelined", "w8a16_gemm_pipelined")?;
     // 2026-09-25: `Fp8ActQuant::resolve` loads the Hopper twin too when the
     // image has it, and each launch picks the twin or the shared kernel as a
@@ -269,7 +270,8 @@ fn main() -> Result<()> {
             gpu.synchronize(stream)?;
             let w8a8 = || {
                 ops::fp8_gemm_t_blockscaled(
-                    &gpu, w8a8_k, a_fp8, a_scale, weight, scale, out_w8a8, mu, nu, ku, stream,
+                    &gpu, w8a8_k, fp8_plan, a_fp8, a_scale, weight, scale, out_w8a8, mu, nu, ku,
+                    stream,
                 )
             };
             w8a8()?;

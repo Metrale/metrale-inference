@@ -259,7 +259,7 @@ impl TransformerModel {
                 lw.scale_table,
             )
         };
-        let kernels = ops::lora_delta::LoraKernels::new(self.gpu.as_ref())?;
+        let kernels = ops::lora_delta::LoraKernels::new(self.gpu.as_ref(), self.levers.ops.lora)?;
         let installed = self.install_lora_layers(&layers, kernels, &tables, scale_table)?;
         self.destroy_lora_decode_graphs();
         tracing::info!(

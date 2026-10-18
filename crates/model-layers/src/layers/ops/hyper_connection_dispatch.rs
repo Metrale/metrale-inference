@@ -62,6 +62,7 @@ impl HcVariant {
 #[allow(clippy::too_many_arguments)]
 pub fn hc_pre_site(
     gpu: &dyn GpuBackend,
+    levers: lowrank::HcLevers,
     kernel: KernelHandle,
     streams: DevicePtr,
     site: &HcSiteWeights,
@@ -78,6 +79,7 @@ pub fn hc_pre_site(
     match &site.lowrank {
         Some(w) => lowrank::hc_pre_lowrank(
             gpu,
+            levers,
             kernel,
             streams,
             w,
@@ -166,6 +168,7 @@ pub fn hc_post_site(
 #[allow(clippy::too_many_arguments)]
 pub fn hc_head_site(
     gpu: &dyn GpuBackend,
+    levers: lowrank::HcLevers,
     kernel: KernelHandle,
     streams: DevicePtr,
     head: &HcHeadWeights,
@@ -180,6 +183,7 @@ pub fn hc_head_site(
     match &head.lowrank {
         Some(w) => lowrank::hc_head_lowrank(
             gpu,
+            levers,
             kernel,
             streams,
             w,

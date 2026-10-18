@@ -99,11 +99,12 @@ fn time(gpu: &dyn GpuBackend, f: &dyn Fn() -> Result<()>) -> Result<f64> {
 
 fn main() -> Result<()> {
     let gpu = MetraleCudaBackend::new(0, &metrale_kernels::ptx_modules())?;
+    let on = metrale_gpu_examples::ops_levers()?.attn_fa128;
     ensure!(
-        std::env::var_os("METRALE_NO_ATTN_FA128").is_none(),
+        on,
         "unset METRALE_NO_ATTN_FA128: the twins would not launch"
     );
-    let twins = AttnFa128Kernels::resolve(&gpu);
+    let twins = AttnFa128Kernels::resolve(&gpu, on);
     let paged64 = gpu.kernel("prefill_paged", "attn_prefill_paged_64")?;
     let contig64 = gpu.kernel("attn_prefill", "attn_prefill_64")?;
     let mut rng = Rng(0x6661_3132_2026_0927);

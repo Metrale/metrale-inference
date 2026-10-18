@@ -115,7 +115,8 @@ impl TransformerModel {
             let installed_layers = self.lora.as_ref().unwrap().slots[slot].layers.clone();
             let tables = self.lora.as_ref().unwrap().tables.clone();
             let scale_table = self.lora.as_ref().unwrap().scale_table;
-            let kernels = ops::lora_delta::LoraKernels::new(self.gpu.as_ref())?;
+            let kernels =
+                ops::lora_delta::LoraKernels::new(self.gpu.as_ref(), self.levers.ops.lora)?;
             self.install_lora_layers(&installed_layers, kernels, &tables, scale_table)?;
             self.lora.as_mut().unwrap().name = adapter_name.to_string();
             self.destroy_lora_decode_graphs();
@@ -188,7 +189,8 @@ impl TransformerModel {
                     lw.scale_table,
                 )
             };
-            let kernels = ops::lora_delta::LoraKernels::new(self.gpu.as_ref())?;
+            let kernels =
+                ops::lora_delta::LoraKernels::new(self.gpu.as_ref(), self.levers.ops.lora)?;
             self.install_lora_layers(&layers, kernels, &tables, scale_table)?;
             self.destroy_lora_decode_graphs();
         }
@@ -256,7 +258,8 @@ impl TransformerModel {
                     lw.scale_table,
                 )
             };
-            let kernels = ops::lora_delta::LoraKernels::new(self.gpu.as_ref())?;
+            let kernels =
+                ops::lora_delta::LoraKernels::new(self.gpu.as_ref(), self.levers.ops.lora)?;
             self.install_lora_layers(&layers, kernels, &tables, scale_table)?;
             self.destroy_lora_decode_graphs();
         }
@@ -336,7 +339,8 @@ impl TransformerModel {
         if active == slot {
             let tables = self.lora.as_ref().unwrap().tables.clone();
             let scale_table = self.lora.as_ref().unwrap().scale_table;
-            let kernels = ops::lora_delta::LoraKernels::new(self.gpu.as_ref())?;
+            let kernels =
+                ops::lora_delta::LoraKernels::new(self.gpu.as_ref(), self.levers.ops.lora)?;
             self.install_lora_layers(&layers, kernels, &tables, scale_table)?;
             self.lora.as_mut().unwrap().name = name.to_string();
             self.destroy_lora_decode_graphs();

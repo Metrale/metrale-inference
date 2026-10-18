@@ -41,3 +41,13 @@ pub fn mhc_mix_tokens() -> anyhow::Result<usize> {
         glm_levers()?.prefill_rows,
     ))
 }
+
+/// 2026-10-17: The `layers::ops` launcher levers of [`process_settings`].
+///
+/// # Errors
+/// As [`process_settings`].
+pub fn ops_levers() -> anyhow::Result<metrale_model_layers::layers::ops::OpsLevers> {
+    Ok(metrale_model_layers::layers::ops::OpsLevers::from_settings(
+        &process_settings()?,
+    ))
+}

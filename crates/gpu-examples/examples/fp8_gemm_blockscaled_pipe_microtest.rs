@@ -67,10 +67,11 @@ fn main() -> Result<()> {
         gpu.has_module("fp8_gemm_blockscaled_pipe"),
         "this build lacks the pipelined module"
     );
-    ensure!(
-        std::env::var_os("METRALE_NO_FP8_GEMM_PIPE").is_none(),
-        "unset METRALE_NO_FP8_GEMM_PIPE: ops would launch the legacy kernel on both legs"
-    );
+    // 2026-10-17: The pipelined leg is chosen explicitly, whatever the process environment.
+    let plan = ops::Fp8BlockscaledPlan {
+        pipe: true,
+        shape_log: false,
+    };
     let legacy = gpu.kernel("fp8_gemm_t_blockscaled", "fp8_gemm_t_blockscaled")?;
     let mut rng = Rng(0x7069_7065_2026_0927);
     for (m, n, k) in SHAPES {
@@ -104,7 +105,9 @@ fn main() -> Result<()> {
                 .launch(0)
         };
         let run_pipe = || -> Result<()> {
-            ops::fp8_gemm_t_blockscaled(&gpu, legacy, a, a_s, b, b_s, outs[1], m32, n32, k32, 0)
+            ops::fp8_gemm_t_blockscaled(
+                &gpu, legacy, plan, a, a_s, b, b_s, outs[1], m32, n32, k32, 0,
+            )
         };
         run_legacy()?;
         run_pipe()?;
