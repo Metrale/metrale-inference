@@ -165,7 +165,7 @@ impl Qwen3AttentionLayer {
 
         // 2026-09-25: `METRALE_MLA_HSD=1` diagnostic, layer 0 only: logs each
         // row's count of non-finite values and its max |x|.
-        if std::env::var("METRALE_MLA_HSD").is_ok_and(|v| v == "1") && self.attn_layer_idx == 0 {
+        if self.levers.mla_hsd && self.attn_layer_idx == 0 {
             c.fwd.gpu.synchronize(stream)?;
             for i in 0..c.n {
                 let mut row = vec![0u8; c.h * bf16];

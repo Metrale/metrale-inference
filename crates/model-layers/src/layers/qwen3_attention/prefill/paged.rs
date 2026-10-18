@@ -125,7 +125,7 @@ impl Qwen3AttentionLayer {
         let fused_kv_enabled = self.mrope_interleaved
             && self.fused_k_norm_rope_mrope_cache_write_bf16_k.0 != 0
             && self.reshape_and_cache_flash_v_only_k.0 != 0
-            && std::env::var("METRALE_FUSED_KV").ok().as_deref() == Some("1");
+            && self.levers.fused_kv;
         let raw_k_scratch = if fused_kv_enabled {
             let scratch = ctx.buffers.attn_output();
             ctx.gpu
@@ -248,7 +248,7 @@ impl Qwen3AttentionLayer {
                 && !k_is_turbo
                 && !v_is_turbo
                 && metrale_gpu_runtime::flashinfer::available()
-                && std::env::var("METRALE_FLASHINFER_PREFILL").ok().as_deref() == Some("1");
+                && self.levers.flashinfer_prefill;
             if use_flashinfer {
                 // 2026-09-25: Per-stream `cu_seqlens` from the staged metadata,
                 // host and device copies. For first-chunk self-attention the Q
@@ -376,7 +376,7 @@ impl Qwen3AttentionLayer {
         if num_tokens > 0 {
             let nq_hd = (nq * hd) as usize;
             super::super::op_dump::dump_bf16(
-                ctx.gpu,
+                ctx,
                 attn_out,
                 (num_tokens - 1) * nq_hd * bf16,
                 nq_hd,
@@ -462,7 +462,7 @@ impl Qwen3AttentionLayer {
         if num_tokens > 0 {
             let nq_hd = (nq * hd) as usize;
             super::super::op_dump::dump_bf16(
-                ctx.gpu,
+                ctx,
                 attn_out,
                 (num_tokens - 1) * nq_hd * bf16,
                 nq_hd,

@@ -30,9 +30,11 @@ use super::Qwen3AttentionLayer;
 use crate::layers::ops;
 use crate::layers::ops::StridedBatchGemv;
 
-/// 2026-09-25: Output columns one thread owns.
+/// 2026-09-25: Output columns one thread owns. 2026-10-17: `METRALE_ATTN_NCOL_WIDTH=4` picks
+/// `Four`; any other value, or none, keeps `Two`, whose `acc[MAX_M][N_COLS]` accumulator array is
+/// half the size (`AttnLevers::ncol_width`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum NcolWidth {
+pub enum NcolWidth {
     Two,
     Four,
 }
@@ -57,19 +59,6 @@ pub fn ncol_gemv_enabled() -> bool {
     crate::layers::ops::target_defaults::resolved()
         .attn_ncol_gemv
         .value
-}
-
-/// 2026-09-25: `METRALE_ATTN_NCOL_WIDTH=4` picks the 4-column instantiation; any other value, or
-/// none, keeps 2, whose `acc[MAX_M][N_COLS]` accumulator array is half the size. Read once per
-/// process.
-pub fn ncol_gemv_width() -> NcolWidth {
-    static W: std::sync::OnceLock<NcolWidth> = std::sync::OnceLock::new();
-    *W.get_or_init(
-        || match std::env::var("METRALE_ATTN_NCOL_WIDTH").as_deref() {
-            Ok("4") => NcolWidth::Four,
-            _ => NcolWidth::Two,
-        },
-    )
 }
 
 /// 2026-09-25: The selection rule, as a pure function of the row count, the resolved width, the two

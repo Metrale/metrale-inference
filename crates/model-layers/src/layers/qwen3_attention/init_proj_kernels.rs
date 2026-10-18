@@ -222,8 +222,7 @@ impl ProjKernels {
                 "w8a16_gemv_ncol",
                 "w8a16_gemv_batch16_ncol4_strided",
             ),
-            attn_ncol: super::attn_ncol_gemv::ncol_gemv_enabled()
-                .then(super::attn_ncol_gemv::ncol_gemv_width),
+            attn_ncol: super::attn_ncol_gemv::ncol_gemv_enabled().then_some(levers.attn.ncol_width),
             w8a16_gemm_k: super::super::try_kernel(gpu, "w8a16_gemm", "w8a16_gemm"),
             w8a16_gemm_pipelined_k: super::super::try_kernel(
                 gpu,

@@ -143,6 +143,7 @@ impl Qwen3AttentionLayer {
             position_encoding,
             kv_dtype,
             cutlass_nvfp4_gemm: lc.settings.kernels.cutlass_nvfp4_gemm,
+            levers: lc.levers.attn,
             head_dim_override: None,
             num_q_heads_override: None,
             num_kv_heads_override: None,

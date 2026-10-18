@@ -8,7 +8,7 @@
 lever_group! {
     /// 2026-10-17: The `cache` group, resolved by `crate::resolve()`.
     pub struct CacheSettings { group: "cache", class: Runtime }
-    attn_qkv_w8a16_only: Presence = "off", None, "METRALE_ATTN_QKV_W8A16_ONLY", "crates/model-layers/src/layers/qwen3_attention/prefill_qkv_w8a8.rs", "Keeps the cache-skip Q/K/V prefill on W8A16, like `METRALE_FFN_W8A16_ONLY`. Any value turns it on, `0` included.";
+    attn_qkv_w8a16_only: Presence = "off", None, "METRALE_ATTN_QKV_W8A16_ONLY", "crates/model-layers/src/layers/qwen3_attention/levers.rs", "Keeps the cache-skip Q/K/V prefill on W8A16, like `METRALE_FFN_W8A16_ONLY`. Any value turns it on, `0` included.";
     cutlass_nvfp4_attn_kv: Switch = "off", None, "METRALE_CUTLASS_NVFP4_ATTN_KV", "crates/model-layers/src/layers/ops/dispatch_config.rs", "Sets `cutlass_nvfp4_attn_kv` (read in `crates/model-layers/src/layers/ops/dispatch_config.rs`). `1` turns it on.";
     cutlass_nvfp4_qkvz: Switch = "off", None, "METRALE_CUTLASS_NVFP4_QKVZ", "crates/model-layers/src/layers/ops/dispatch_config.rs", "The CUTLASS family next door already spells its projections out (`METRALE_CUTLASS_NVFP4_QKVZ`, `..._ATTN_Q`, `..._ATTN_KV`, `..._ATTN_O`, `..._SSM_OUT`); this gives cuBLASLt the same property in. `1` turns it on.";
     decode_ckpt_blocks: Int = "unset", None, "METRALE_DECODE_CKPT_BLOCKS", "crates/model-engine/src/model/trait_impl/decode_checkpoint.rs", "KV blocks between decode-time Marconi checkpoints of a sequence (prefix caching): a positive value overrides the default of 4 on one rank and 16 on a multi-rank serve (2026-10-11), where each checkpoint also costs every rank an EP command and a full SSM-state copy. Read once.";

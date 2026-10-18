@@ -80,7 +80,7 @@ impl Qwen3AttentionLayer {
         )?;
         prof_step!("q_proj", t0);
         super::super::op_dump::dump_bf16(
-            ctx.gpu,
+            ctx,
             qg_out,
             (num_tokens - 1) * q_proj_dim * bf16,
             q_proj_dim,
@@ -104,7 +104,7 @@ impl Qwen3AttentionLayer {
         )?;
         prof_step!("k_proj", t0);
         super::super::op_dump::dump_bf16(
-            ctx.gpu,
+            ctx,
             k_contiguous,
             (num_tokens - 1) * kv_dim * bf16,
             kv_dim,
@@ -128,7 +128,7 @@ impl Qwen3AttentionLayer {
         )?;
         prof_step!("v_proj", t0);
         super::super::op_dump::dump_bf16(
-            ctx.gpu,
+            ctx,
             v_contiguous,
             (num_tokens - 1) * kv_dim * bf16,
             kv_dim,
@@ -189,8 +189,7 @@ impl Qwen3AttentionLayer {
             return r;
         }
 
-        let use_t_pipelined =
-            std::env::var("METRALE_ATTN_PREFILL_T_PIPE").ok().as_deref() == Some("1");
+        let use_t_pipelined = self.levers.prefill_t_pipe;
         if ctx.dispatch.cutlass_nvfp4_attn_qkv(label)
             && let Some(nvfp4_t) = nvfp4_t
         {

@@ -112,6 +112,8 @@ pub struct Qwen3AttentionLayer {
     /// 2026-10-17: `kernels.cutlass_nvfp4_gemm` at construction: the load-time FP8 prefill
     /// passes (`transpose_fp8_for_prefill_selected`, `predequant_for_prefill`) are skipped under it.
     pub(super) cutlass_nvfp4_gemm: bool,
+    /// 2026-10-17: `ModelLevers::attn` at construction, read by every attention path.
+    pub(super) levers: super::AttnLevers,
     pub(super) sparse_v_threshold: f32,
     // 2026-09-25: Quantized q/k/v/o weights for decode; `None` uses the dense
     // `attn` weight.

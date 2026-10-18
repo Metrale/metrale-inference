@@ -350,6 +350,9 @@ pub struct ModelLevers {
     pub ssm: crate::layers::qwen3_ssm::SsmLevers,
     /// 2026-10-17: The MoE dispatch levers ([`crate::layers::moe::MoeLevers`]).
     pub moe: crate::layers::moe::MoeLevers,
+    /// 2026-10-17: The full-attention layer's levers
+    /// ([`crate::layers::qwen3_attention::AttnLevers`]).
+    pub attn: crate::layers::qwen3_attention::AttnLevers,
 }
 
 /// 2026-09-25: How the levers are read: the `from_settings` and `defaults` constructors.

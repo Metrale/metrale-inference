@@ -315,7 +315,7 @@ impl Qwen3AttentionLayer {
         // V0 and the layer result is V0 @ o_proj.
         if n > 0 {
             super::super::op_dump::dump_bf16(
-                ctx.gpu,
+                ctx,
                 v_contiguous,
                 (num_tokens - 1) * nkv as usize * hd as usize * 2,
                 nkv as usize * hd as usize,
@@ -345,7 +345,7 @@ impl Qwen3AttentionLayer {
         .map_err(|e| anyhow::anyhow!("MLA flash_attn_64 fallback: {e}"))?;
         if n > 0 {
             super::super::op_dump::dump_bf16(
-                ctx.gpu,
+                ctx,
                 attn_out_fb,
                 (num_tokens - 1) * nq as usize * hd as usize * 2,
                 nq as usize * hd as usize,

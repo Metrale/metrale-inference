@@ -31,14 +31,6 @@ use crate::layer::ForwardContext;
 use crate::layers::ops;
 use crate::weight_map::{Fp8Weight, WeightQuantFormat};
 
-/// 2026-09-25: `METRALE_ATTN_QKV_W8A16_ONLY`, a presence check (any value,
-/// empty and `0` included) read once per process, keeps the cache-skip Q/K/V
-/// prefill on W8A16, like `METRALE_FFN_W8A16_ONLY`.
-pub(super) fn attn_qkv_w8a16_only() -> bool {
-    static ONLY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ONLY.get_or_init(|| std::env::var_os("METRALE_ATTN_QKV_W8A16_ONLY").is_some())
-}
-
 /// 2026-09-25: The extents this chain writes, in BF16 elements, for `m` real
 /// rows and the cuBLASLt pad. The selector's capacity clauses use it.
 ///
@@ -141,7 +133,7 @@ impl Qwen3AttentionLayer {
         cache_skip_qkv_cublas_selected(
             ctx.dispatch.cublas.attn,
             ctx.dispatch.fp8_blockscaled_prefill,
-            attn_qkv_w8a16_only(),
+            self.levers.qkv_w8a16_only,
             [
                 fmt(self.q_weight.as_ref()),
                 fmt(self.k_weight.as_ref()),

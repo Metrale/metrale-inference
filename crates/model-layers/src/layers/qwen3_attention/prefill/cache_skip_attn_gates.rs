@@ -198,7 +198,7 @@ impl Qwen3AttentionLayer {
         if num_tokens > 0 {
             let nq_hd = (nq * hd) as usize;
             super::super::op_dump::dump_bf16(
-                ctx.gpu,
+                ctx,
                 attn_out,
                 (num_tokens - 1) * nq_hd * bf16,
                 nq_hd,

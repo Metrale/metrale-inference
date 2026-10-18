@@ -203,7 +203,7 @@ impl Qwen3AttentionLayer {
         if num_tokens > 0 {
             let kv_dim_e = (nkv * hd) as usize;
             super::super::op_dump::dump_bf16(
-                ctx.gpu,
+                ctx,
                 k_contiguous,
                 (num_tokens - 1) * kv_dim_e * bf16,
                 kv_dim_e,
@@ -336,7 +336,7 @@ impl Qwen3AttentionLayer {
             let kv_dim_e = (nkv * hd) as usize;
             let q_dim_e = (nq * hd) as usize;
             super::super::op_dump::dump_bf16(
-                ctx.gpu,
+                ctx,
                 k_contiguous,
                 (num_tokens - 1) * kv_dim_e * bf16,
                 kv_dim_e,
@@ -345,7 +345,7 @@ impl Qwen3AttentionLayer {
                 stream,
             )?;
             super::super::op_dump::dump_bf16(
-                ctx.gpu,
+                ctx,
                 q_contiguous,
                 (num_tokens - 1) * q_dim_e * bf16,
                 q_dim_e,

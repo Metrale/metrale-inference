@@ -57,8 +57,7 @@ impl Qwen3AttentionLayer {
         let comb = ctx.buffers.hc_comb();
         // 2026-09-25: Opt-in (`METRALE_DIAG_V4_ALL_LAYERS`): each diag
         // synchronizes the stream and copies to the host.
-        let diag_all =
-            std::env::var("METRALE_DIAG_V4_ALL_LAYERS").is_ok_and(|v| v == "1" || v == "true");
+        let diag_all = self.levers.diag_v4_all_layers;
         let diag_this = diag_all;
 
         if is_first_layer {

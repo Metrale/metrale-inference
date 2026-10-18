@@ -17,14 +17,6 @@ use crate::layers::ops::StridedBatchGemv;
 use crate::layers::qwen3_attention::Qwen3AttentionLayer;
 use crate::weight_map::{Fp8Weight, WeightQuantFormat};
 
-/// 2026-09-25: Kill switch for this tier: `METRALE_NO_FP8_QKV_BATCH` set to any
-/// value keeps the per-sequence scalar loop. Read once per process, so the
-/// choice cannot change between a CUDA-graph capture and its replays.
-pub(super) fn fp8_batchm_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("METRALE_NO_FP8_QKV_BATCH").is_none())
-}
-
 /// 2026-09-25: MAX_M of `w8a16_gemv_batch16_strided` (its wrapper refuses `m`
 /// outside `1..=16`): the widest batch the GEMV arms serve. Wider batches take
 /// the 32-row M-tile arm.
@@ -33,7 +25,9 @@ const FP8_QKV_GEMV_MAX_ROWS: usize = 16;
 impl Qwen3AttentionLayer {
     /// 2026-09-25: Whether the batched FP8 tier serves this step. `enabled` is the
     /// kill switch, passed in so tests can drive both arms without the
-    /// process-global `OnceLock` in [`fp8_batchm_enabled`].
+    /// layer's `AttnLevers::fp8_qkv_batch` (off when `METRALE_NO_FP8_QKV_BATCH` is set
+    /// at any value), fixed at construction so it cannot change between a capture and
+    /// its replays.
     ///
     /// Branch only on `c.n`, the row count the caller launched with. On the
     /// batched decode path that is `padded_n`, the width the decode graph cache

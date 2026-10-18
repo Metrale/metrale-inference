@@ -62,8 +62,7 @@ impl Qwen3AttentionLayer {
         let o_lora = mla.o_lora_rank as u32;
         let nkv = ctx.config.num_key_value_heads as u32;
         let profile = ctx.profile;
-        let diag_all =
-            std::env::var("METRALE_DIAG_V4_ALL_LAYERS").is_ok_and(|v| v == "1" || v == "true");
+        let diag_all = self.levers.diag_v4_all_layers;
         let diag_this = self.attn_layer_idx == 0 || diag_all;
         macro_rules! prof {
             ($label:expr, $body:expr) => {{

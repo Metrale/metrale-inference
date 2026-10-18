@@ -82,7 +82,7 @@ impl Qwen3AttentionLayer {
         // 2026-09-25: `METRALE_OP_DUMP`: the last token's q_proj row, all
         // `q_proj_dim` values (Q and gate interleaved on a gated layer).
         super::super::op_dump::dump_bf16(
-            ctx.gpu,
+            ctx,
             qg_out,
             (num_tokens - 1) * q_proj_dim * bf16,
             q_proj_dim,
@@ -104,7 +104,7 @@ impl Qwen3AttentionLayer {
             stream,
         )?;
         super::super::op_dump::dump_bf16(
-            ctx.gpu,
+            ctx,
             k_contiguous,
             (num_tokens - 1) * kv_dim * bf16,
             kv_dim,
@@ -126,7 +126,7 @@ impl Qwen3AttentionLayer {
             stream,
         )?;
         super::super::op_dump::dump_bf16(
-            ctx.gpu,
+            ctx,
             v_contiguous,
             (num_tokens - 1) * kv_dim * bf16,
             kv_dim,
