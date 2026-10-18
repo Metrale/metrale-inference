@@ -76,13 +76,16 @@ pub struct Fp8KvCalibration {
     attn_layer_idx: usize,
     /// 2026-09-25: Tokens the window was asked for, before the `MAX_STAGED_TOKENS` clamp.
     requested_tokens: usize,
+    /// 2026-10-18: `METRALE_FP8_KV_EMA_RECAL` (`AttnLevers::fp8_kv_ema_recal`): the frozen
+    /// scales keep following the observed amax.
+    ema_recal: bool,
     /// 2026-09-25: 8 device bytes: `[k_absmax: f32, v_absmax: f32]`.
     absmax_buf: DevicePtr,
     absmax_kernel: KernelHandle,
 }
 
 // 2026-09-25: SAFETY: every field is a `Mutex` or a plain integer handle
-// (`DevicePtr(u64)`, `KernelHandle(u64)`, `usize`), so no field is shared
+// (`DevicePtr(u64)`, `KernelHandle(u64)`, `usize`, `bool`), so no field is shared
 // through a raw pointer; the state that changes is behind the `Mutex`.
 unsafe impl Send for Fp8KvCalibration {}
 unsafe impl Sync for Fp8KvCalibration {}
@@ -96,7 +99,8 @@ impl Fp8KvCalibration {
     /// (`qwen3_attention/init.rs`).
     ///
     /// `headroom` is `--fp8-kv-headroom`; a value below 1.0 is clamped to 1.0
-    /// with a warning, because it would clip the window's own amax.
+    /// with a warning, because it would clip the window's own amax. `ema_recal`
+    /// turns on the post-freeze recalibration.
     ///
     /// Errors if the `bf16_absmax` kernel is missing or the 8-byte absmax
     /// buffer cannot be allocated or zeroed.
@@ -104,6 +108,7 @@ impl Fp8KvCalibration {
         attn_layer_idx: usize,
         window_tokens: usize,
         headroom: f32,
+        ema_recal: bool,
         gpu: &dyn GpuBackend,
     ) -> Result<Self> {
         let headroom = if headroom >= 1.0 {
@@ -133,6 +138,7 @@ impl Fp8KvCalibration {
             }),
             attn_layer_idx,
             requested_tokens: window_tokens,
+            ema_recal,
             absmax_buf,
             absmax_kernel,
         })
@@ -236,7 +242,7 @@ impl Fp8KvCalibration {
             }
             CalibrationStep::Frozen => {
                 if inner.state.tokens_seen % POST_FREEZE_OBSERVE_PERIOD < num_tokens as usize
-                    && ema_recal_enabled()
+                    && self.ema_recal
                 {
                     // 2026-09-25: Opt-in only (`METRALE_FP8_KV_EMA_RECAL`). Moving
                     // a frozen scale changes the basis every already-written entry
@@ -286,12 +292,6 @@ impl Fp8KvCalibration {
             f32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]),
         ))
     }
-}
-
-fn ema_recal_enabled() -> bool {
-    std::env::var("METRALE_FP8_KV_EMA_RECAL")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
 }
 
 #[cfg(test)]

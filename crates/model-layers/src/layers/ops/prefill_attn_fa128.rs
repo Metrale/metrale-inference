@@ -22,8 +22,8 @@ use metrale_gpu_runtime::kernel_args::{KernelLaunch, div_ceil};
 const ROWS: u32 = 128;
 const SMEM: u32 = (128 + 32 + 32) * 512;
 
-/// 2026-09-27: The two twins' handles; 0 when the target lacks the module or
-/// `METRALE_NO_ATTN_FA128` is present (the originals then run, for A/B measurement).
+/// 2026-09-27: The two twins' handles; 0 when the target lacks the module or `on` is false
+/// (`OpsLevers::attn_fa128`; the originals then run, for A/B measurement).
 #[derive(Clone, Copy, Debug)]
 pub struct AttnFa128Kernels {
     paged: KernelHandle,
@@ -32,9 +32,9 @@ pub struct AttnFa128Kernels {
 
 impl AttnFa128Kernels {
     #[track_caller]
-    pub fn resolve(gpu: &dyn GpuBackend) -> Self {
+    pub fn resolve(gpu: &dyn GpuBackend, on: bool) -> Self {
         const MODULE: &str = "attn_prefill_fa128";
-        if std::env::var_os("METRALE_NO_ATTN_FA128").is_some() {
+        if !on {
             return Self {
                 paged: KernelHandle(0),
                 contiguous: KernelHandle(0),

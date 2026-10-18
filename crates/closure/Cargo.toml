@@ -3,6 +3,7 @@ name = "metrale-closure"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Content hash of a kernel target's transitive include closure."
 
 # 2026-09-26: No CUDA dependency. The kernels build script (`metrale-kernels`)
@@ -11,11 +12,17 @@ description = "Content hash of a kernel target's transitive include closure."
 # can depend on.
 
 [dependencies]
-anyhow.workspace = true
-sha2 = "0.11"
+sha2 = { workspace = true, features = ["alloc", "oid"] }
+# 2026-10-17: `hex_lower`, the one hex spelling of a recorded digest.
+metrale-serve-identity = { workspace = true }
 # 2026-09-26: For the three manifests `layout` reads (HARDWARE.toml,
-# MODEL.toml, KERNEL.toml). Same pin as `metrale-kernels` and `metrale-bench`.
-toml = "1.1"
+# MODEL.toml, KERNEL.toml).
+toml = { workspace = true, features = ["std", "serde", "parse", "display"] }
 
 [lints]
 workspace = true
+
+[package.metadata.metrale]
+# 2026-10-17: Kernel-build infrastructure the `device` crates link (model-layers, the kernels
+# build script), so it sits in their layer rather than with the unconstrained tools.
+role = "device"

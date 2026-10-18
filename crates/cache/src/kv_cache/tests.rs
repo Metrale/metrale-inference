@@ -19,6 +19,7 @@ fn test_config() -> KvCacheConfig {
         layer_dtypes: vec![],
         layer_dims: vec![],
         cache_blocks_per_seq: None,
+        v_block_bytes: None,
     }
 }
 
@@ -355,6 +356,7 @@ fn test_mixed_dtype_pool_allocation() {
         layer_dtypes,
         layer_dims: vec![],
         cache_blocks_per_seq: None,
+        v_block_bytes: None,
     };
     let cache = PagedKvCache::new(cfg, 4, &gpu).unwrap();
 
@@ -376,6 +378,7 @@ fn sliding_window_recycles_blocks() {
     let gpu = MockGpuBackend::new();
     let cfg = KvCacheConfig {
         cache_blocks_per_seq: Some(4),
+        v_block_bytes: None,
         ..test_config()
     };
     let mut cache = PagedKvCache::new(cfg, 8, &gpu).unwrap();
@@ -447,4 +450,34 @@ fn alloc_after_free_round_trip_returns_same_block_lifo() {
     assert_eq!(cache.num_free_blocks(), 0);
     cache.free_block(b3);
     cache.free_block(recycled);
+}
+
+#[test]
+fn v_block_bytes_override_sizes_only_the_v_side() {
+    // 2026-10-16: The control: no override, the V side is the format's size (FP8 8192).
+    let base = test_config();
+    assert_eq!(base.v_block_bytes_for_layer(3), 8192);
+    // 2026-10-16: A 2064-byte override (the FP8 indexer layout at block 16) replaces the V
+    // size of every layer and leaves the K side alone.
+    let cfg = KvCacheConfig {
+        v_block_bytes: Some(2064),
+        ..test_config()
+    };
+    for layer in 0..12 {
+        assert_eq!(cfg.v_block_bytes_for_layer(layer), 2064);
+        assert_eq!(cfg.k_block_bytes_for_layer(layer), 8192);
+    }
+    assert_eq!(cfg.block_bytes_kv_all_layers(), 12 * (8192 + 2064));
+    // 2026-10-16: The planner fits more blocks in the same bytes, and the pool strides by the
+    // override.
+    let budget = 10_000_000;
+    let n_base = PagedKvCache::compute_num_blocks(&base, budget).unwrap();
+    let n = PagedKvCache::compute_num_blocks(&cfg, budget).unwrap();
+    assert_eq!(n_base, budget / (12 * 16384));
+    assert_eq!(n, budget / (12 * (8192 + 2064)));
+    assert!(n > n_base);
+    let gpu = MockGpuBackend::new();
+    let cache = PagedKvCache::new(cfg, 4, &gpu).unwrap();
+    assert_eq!(cache.v_block_stride_bytes_for_layer(0), 2064);
+    assert_eq!(cache.v_block_stride_bytes_for_layer(11), 2064);
 }

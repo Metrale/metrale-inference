@@ -18,21 +18,16 @@ use metrale_model_layers::layers::ops::ModelLevers;
 use metrale_model_layers::speculative::DraftProposer;
 use metrale_model_layers::weight_map::QuantizedWeight;
 
-/// 2026-09-25: Whether to build the transposed lm_head twin for the tile-GEMM
-/// decode path: on unless `METRALE_NO_LMHEAD_TGEMM` is exactly `1`. Read once,
-/// in `TransformerModel::new`, so changing it later has no effect.
-fn lmhead_tgemm_enabled() -> bool {
-    std::env::var("METRALE_NO_LMHEAD_TGEMM").ok().as_deref() != Some("1")
-}
-
 /// 2026-09-26: The padded transposed lm_head twin and its row stride, or `None`.
 /// 2026-10-01: Called by `factory::build` before the KV pool is sized, so the KV budget counts it.
+/// 2026-10-17: Built unless the `kernels.no_lmhead_tgemm` setting (`METRALE_NO_LMHEAD_TGEMM`) is on.
 pub(crate) fn build_lm_head_nvfp4_t(
     lm_head_nvfp4: &Option<QuantizedWeight>,
     config: &ModelConfig,
+    settings: &metrale_settings::InferenceServerSettings,
     gpu: &dyn GpuBackend,
 ) -> Result<Option<(QuantizedWeight, u32)>> {
-    Ok(match (lm_head_nvfp4, lmhead_tgemm_enabled()) {
+    Ok(match (lm_head_nvfp4, !settings.kernels.no_lmhead_tgemm) {
         (Some(w), true) => {
             let (t, stride) =
                     metrale_model_layers::weight_map::QuantizedWeight::transpose_concat_for_gemm_padded(
@@ -89,16 +84,18 @@ pub(super) fn alloc_verify_buffers(
     } else {
         DevicePtr::NULL
     };
-    let verify_catchup_stash = if proposer.is_some() && levers.mtp_kv_exact {
-        gpu.alloc(
-            metrale_model_layers::layer::VERIFY_WY_TABLE_SEQS
-                * metrale_model_layers::layer::MTP_CATCHUP_MAX
-                * config.hidden_size
-                * 2,
-        )?
-    } else {
-        DevicePtr::NULL
-    };
+    // 2026-10-11: Also for `mtp_accepted_rows`, whose batched-verify half is the same catch-up.
+    let verify_catchup_stash =
+        if proposer.is_some() && (levers.mtp_kv_exact || levers.mtp_accepted_rows) {
+            gpu.alloc(
+                metrale_model_layers::layer::VERIFY_WY_TABLE_SEQS
+                    * metrale_model_layers::layer::MTP_CATCHUP_MAX
+                    * config.hidden_size
+                    * 2,
+            )?
+        } else {
+            DevicePtr::NULL
+        };
     // 2026-09-25: Batched-verify WY pointer tables at a fixed address, so
     // captured CUDA graphs stay valid: one `VERIFY_WY_LAYER_STRIDE_BYTES`
     // slice per SSM layer. NULL without an MTP proposer or SSM layers.
@@ -140,7 +137,8 @@ pub(super) fn alloc_prefill_capture(
     config: &ModelConfig,
     proposer: &Option<Arc<dyn DraftProposer>>,
     max_seq_len: usize,
-    dflash_kgamma: usize,
+    // 2026-10-17: `dflash_head::dflash_ctx_cap` with DFlash on (`dflash_kgamma > 0`), else `None`.
+    dflash_ctx_cap: Option<usize>,
     has_mtp: bool,
     mtp_quant_fwd: MtpQuantization,
     levers: &ModelLevers,
@@ -153,7 +151,7 @@ pub(super) fn alloc_prefill_capture(
     // forward (`supports_drafter_prefill`).
     //
     // Rows: the proposer's reachable context (`prefill_hidden_rows`, at
-    // most `max_seq_len`), further capped at `dflash_ctx_cap()` when DFlash
+    // most `max_seq_len`), further capped at `dflash_ctx_cap` when DFlash
     // is on (a cap of 0 means none). `capture_rows` is computed outside the
     // branch because it is also `mtp_prefill_capacity`, the bound the
     // capture guard checks.
@@ -161,15 +159,9 @@ pub(super) fn alloc_prefill_capture(
         .as_ref()
         .map_or(max_seq_len, |p| p.prefill_hidden_rows(max_seq_len))
         .min(max_seq_len);
-    let capture_rows = if dflash_kgamma > 0 {
-        let cap = metrale_model_arch::dflash_head::dflash_ctx_cap();
-        if cap == 0 {
-            mtp_prefill_rows
-        } else {
-            mtp_prefill_rows.min(cap)
-        }
-    } else {
-        mtp_prefill_rows
+    let capture_rows = match dflash_ctx_cap {
+        None | Some(0) => mtp_prefill_rows,
+        Some(cap) => mtp_prefill_rows.min(cap),
     };
     let mtp_prefill_hidden = if has_mtp
         && mtp_quant_fwd.supports_drafter_prefill()

@@ -23,6 +23,8 @@ mod qwen35_dense;
 mod qwen3_vl;
 #[cfg_attr(test, allow(unreachable_pub))]
 pub(crate) mod qwen4_exp;
+/// 2026-10-17: Loader levers read by more than one family (one predicate each).
+pub(crate) mod shared_levers;
 mod step3p7;
 
 pub use deepseek_v4::DeepSeekV4WeightLoader;
@@ -59,7 +61,7 @@ use anyhow::Result;
 use metrale_cache::kv_cache::KvCacheDtype;
 use metrale_config::ModelConfig;
 use metrale_gpu_runtime::gpu::GpuBackend;
-use metrale_model_weights::weights::{DeferHook, WeightStore};
+use metrale_model_weights::weights::{DeferCharge, DeferHook, WeightStore};
 
 use metrale_model_layers::layer::TransformerLayer;
 use metrale_model_layers::layers::VisionTower;
@@ -71,12 +73,15 @@ use metrale_model_layers::weight_map::{
 /// layer, and does the operator want them? Without them MoE prefill uses the
 /// fallback grouped GEMM. The qwen3, qwen3_vl and gemma4 loaders ask here.
 ///
-/// `METRALE_MOE_PREFILL_COPIES=0` forces the fallback. Any other value, or
-/// unset, builds them when their NVFP4 bytes for all `num_hidden_layers` fit in
-/// the measured free memory less 2 GiB; if free memory cannot be read, they are
-/// not built.
-pub(crate) fn moe_prefill_copies_fit(config: &ModelConfig, gpu: &dyn GpuBackend) -> bool {
-    if std::env::var("METRALE_MOE_PREFILL_COPIES").ok().as_deref() == Some("0") {
+/// `METRALE_MOE_PREFILL_COPIES` off forces the fallback. On, or unset, builds
+/// them when their NVFP4 bytes for all `num_hidden_layers` fit in the measured
+/// free memory less 2 GiB; if free memory cannot be read, they are not built.
+pub(crate) fn moe_prefill_copies_fit(
+    config: &ModelConfig,
+    gpu: &dyn GpuBackend,
+    settings: &metrale_settings::InferenceServerSettings,
+) -> bool {
+    if !settings.scheduler.moe_prefill_copies {
         tracing::info!("METRALE_MOE_PREFILL_COPIES=0: MoE prefill uses the fallback grouped GEMM");
         return false;
     }
@@ -160,9 +165,11 @@ pub trait ModelWeightLoader {
     /// loader declares it.
     ///
     /// With `--tp-size > 1`, startup (`serve_phases/topology.rs`) refuses a
-    /// loader that returns `false`. `weight_loader/minimax.rs` is a loader
-    /// that returns `true`.
-    fn supports_tp(&self) -> bool;
+    /// loader that returns `Unsupported`. `weight_loader/minimax.rs` is a loader
+    /// that returns `Even`. 2026-10-08: `Uneven` lets head counts that do not
+    /// divide over TP split by `metrale_config::tp_split`; the GLM-5.3 loader
+    /// is the one that declares it.
+    fn tp_support(&self) -> metrale_config::TpSupport;
 
     /// 2026-09-25: Load all transformer layers from the weight store.
     ///
@@ -174,6 +181,7 @@ pub trait ModelWeightLoader {
         config: &ModelConfig,
         gpu: &dyn GpuBackend,
         layer_kv_dtypes: &[KvCacheDtype],
+        lc: metrale_model_layers::load_context::LoadContext<'_>,
     ) -> Result<Vec<Box<dyn TransformerLayer>>>;
 
     /// 2026-09-25: Drop store tensors this loader has finished with. `factory::build`
@@ -183,12 +191,14 @@ pub trait ModelWeightLoader {
     /// The default keeps everything, which is right for a loader that binds
     /// the store's device pointers zero-copy. A loader that uploads its own
     /// copies (a TP shard, a host round-trip, a dtype conversion) overrides it
-    /// to free the originals.
+    /// to free the originals. 2026-10-17: `lc` carries the settings `load_layers` read, so a
+    /// predicate both evaluate reads the same levers.
     fn prune_after_load(
         &self,
         _store: &mut WeightStore,
         _config: &ModelConfig,
         _gpu: &dyn GpuBackend,
+        _lc: metrale_model_layers::load_context::LoadContext<'_>,
     ) -> Result<()> {
         Ok(())
     }
@@ -218,6 +228,7 @@ pub trait ModelWeightLoader {
         _config: &ModelConfig,
         _gpu: &dyn GpuBackend,
         _max_tokens: usize,
+        _lc: metrale_model_layers::load_context::LoadContext<'_>,
     ) -> Result<Option<metrale_model_layers::layers::ngram_embed::NgramEmbedding>> {
         Ok(None)
     }
@@ -266,6 +277,18 @@ pub trait ModelWeightLoader {
         Vec::new()
     }
 
+    /// 2026-10-16: Bytes of one attention layer's V block when the model keeps something other
+    /// than V there (the GLM-5.3 FP8 indexer cache), for KV blocks of `block_size` tokens. The
+    /// default is `None`: the V block the KV geometry implies.
+    fn kv_v_block_bytes(
+        &self,
+        _config: &ModelConfig,
+        _block_size: usize,
+        _settings: &metrale_settings::InferenceServerSettings,
+    ) -> Result<Option<usize>> {
+        Ok(None)
+    }
+
     /// 2026-09-25: Load DFlash drafter weights from the drafter's own
     /// `WeightStore`. The default returns `None`, and no loader overrides it:
     /// `factory::build` loads the drafter with the free function
@@ -291,6 +314,7 @@ pub trait ModelWeightLoader {
         gpu: &dyn GpuBackend,
         max_loras: usize,
         max_lora_rank: usize,
+        expert: metrale_model_layers::lora::ExpertLoraPolicy,
     ) -> Result<Option<metrale_model_layers::lora::LoraWeights>> {
         metrale_model_layers::lora::load_lora_adapters_multi(
             adapters,
@@ -298,6 +322,7 @@ pub trait ModelWeightLoader {
             gpu,
             max_loras,
             max_lora_rank,
+            expert,
         )
         .map(Some)
     }
@@ -312,6 +337,14 @@ pub trait ModelWeightLoader {
     /// peak memory.
     fn binds_vision_encoder(&self) -> bool {
         true
+    }
+
+    /// 2026-10-09: Does this loader honour `ModelConfig::moe_expert_layout`'s `tp` value,
+    /// slicing every routed expert over the TP ranks? Startup refuses
+    /// `--moe-expert-layout tp` for a loader that returns `false`, which every loader that
+    /// does not override this does.
+    fn slices_experts_over_tp(&self) -> bool {
+        false
     }
 
     /// 2026-10-02: Does this loader read the serve's MoE expert-table decision
@@ -333,6 +366,14 @@ pub trait ModelWeightLoader {
         None
     }
 
+    /// 2026-10-17: The device bytes this loader allocates at bind time for each tensor its
+    /// [`Self::defer_predicate`] claims, for the load's OOM pre-flight. Default `None`: a
+    /// deferred tensor costs the pre-flight nothing. See
+    /// [`metrale_model_weights::weights::DeferCharge`].
+    fn defer_charge(&self, _config: &ModelConfig) -> Option<DeferCharge> {
+        None
+    }
+
     /// 2026-09-25: Load vision encoder weights; the default returns `None`.
     fn load_vision_encoder(
         &self,
@@ -343,3 +384,7 @@ pub trait ModelWeightLoader {
         Ok(None)
     }
 }
+
+#[cfg(test)]
+#[path = "loader_levers_tests.rs"]
+mod loader_levers_tests;

@@ -54,13 +54,15 @@ pub(crate) fn preflight_reserve(
     // headroom (`headroom::post_load_yardstick`). The caller gathers it: none
     // of it is in `args` or `config`.
     post_load: &PostLoadInputs<'_>,
+    // 2026-10-17: The load's levers, resolved once at the top of `load_engine`.
+    levers: &super::LoadLevers,
 ) -> Result<ReservePreflight> {
     // 2026-09-26: `args.dflash` counts as speculative here because
     // `TransformerModel::new` allocates the SSM rollback pools whenever DFlash
     // capture layers exist (`has_mtp` includes `dflash_kgamma > 0`).
     let spec_on_pool = args.speculative_proposer_requested();
     refuse_speculation_over_mamba2(args, config)?;
-    ssm_h_fp16_preconditions(args, config)?;
+    ssm_h_fp16_preconditions(args, config, levers.gdn_fused_conv)?;
     // 2026-09-26: A DFlash serve's verify pools are γ + 1 rows wide on every
     // slot. 2026-09-30: γ is the one the build sizes them for
     // (`ServeArgs::serve_dflash_gamma`); until then this peeked the drafter's block
@@ -118,12 +120,16 @@ pub(crate) fn preflight_reserve(
         args.max_seq_len
     };
     let max_batch_tokens_pre = prefill_budget_pre.max(spec_tokens_pre).max(ceiling);
-    let buffer_arena_bytes = metrale_gpu_runtime::buffers::BufferSizes::from_config(
+    let arena_levers = metrale_gpu_runtime::buffers::ArenaLevers::from(
+        &metrale_settings::groups::device::DeviceSettings::try_from(&super::lever_settings()?)?,
+    );
+    let buffer_arena_bytes = metrale_gpu_runtime::buffers::BufferSizes::from_config_with(
         config,
         max_batch_tokens_pre,
         args.max_seq_len,
         args.block_size,
         ceiling,
+        &arena_levers,
     )
     .total_bytes();
     // 2026-09-26: Marconi snapshot slots, from
@@ -134,7 +140,7 @@ pub(crate) fn preflight_reserve(
         args.ssm_cache_slots,
         metrale_model_layers::ssm_reserve::prefix_caching_active(
             args.prefix_caching_enabled(),
-            config.kv_only_prefix_cache_is_safe(),
+            config.kv_only_prefix_cache_is_safe(levers.prefix_cache_gate),
         ),
     );
     if let Some(reason) = marconi.skip_reason {
@@ -172,7 +178,13 @@ pub(crate) fn preflight_reserve(
     // runtime headroom (`runtime_headroom.rs`, which replaced the flat 4 GiB / 512 MiB
     // `cuda_headroom`), the per-sequence state and the decode-rollback ring. The preflight checks
     // the slot ceiling; the build sizes KV at the count it resolves.
-    let per_sequence_bytes = per_sequence_reserve(args, config) / ceiling.max(1);
+    let settings = super::lever_settings()?;
+    let per_sequence_bytes = per_sequence_reserve(
+        args,
+        config,
+        levers.prefix_cache_gate.glm_indexer_paged,
+        &settings,
+    ) / ceiling.max(1);
     let mut plan = reserve_plan::ReservePlan {
         config: config.clone(),
         spec: spec_on_pool,
@@ -196,13 +208,19 @@ pub(crate) fn preflight_reserve(
     // depth that fits (`decode_ring::autofit`). A shrunk depth is published
     // (`set_decode_ring_slots`) so `TransformerModel::new` allocates the depth
     // reserved here.
-    let ring_requested = decode_ring::requested_slots(args, config);
+    let ring_requested = decode_ring::requested_slots(args, config, levers.ssm_reserve_ring_full);
     let ring_slot_bytes = decode_ring::slot_bytes(args, per_seq_blob);
     // 2026-09-26: The auto-fit's yardstick: predicted post-load KV headroom
     // where the load's residency can be predicted, else pre-load free memory
     // (`headroom.rs`).
-    let yardstick =
-        headroom::post_load_yardstick(args, config, post_load, fixed_reserve, buffer_arena_bytes);
+    let yardstick = headroom::post_load_yardstick(
+        args,
+        config,
+        post_load,
+        fixed_reserve,
+        buffer_arena_bytes,
+        &settings,
+    );
     let fit = decode_ring::autofit(
         args,
         ring_requested,

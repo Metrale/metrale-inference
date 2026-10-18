@@ -21,7 +21,7 @@ use super::{ModelWeightLoader, WeightFormat};
 use metrale_model_layers::layer::TransformerLayer;
 use metrale_model_layers::weight_map::loaders_moe::load_mtp;
 use metrale_model_layers::weight_map::{
-    DenseWeight, Fp8Weight, MtpWeights, Nvfp4Variant, PackedQ2Weight, dense, detect_nvfp4_variant,
+    DenseWeight, Fp8Weight, MtpWeights, PackedQ2Weight, dense, detect_nvfp4_variant,
 };
 
 /// 2026-09-25: The Q2_0 group size when `{prefix}.weight` is a keep-packed ternary tensor
@@ -132,86 +132,6 @@ fn concat_fp8_block_scaled(
     })
 }
 
-/// 2026-09-25: `METRALE_DENSE_FP8=1` enables the native FP8 dense-FFN and attention arms
-/// (`ffn_fp8_arm_selected`, `attn_fp8`); off by default. Measured 2026-06-29 on a 9B FP8
-/// checkpoint: correct text at ~30 tok/s against ~40 tok/s on the NVFP4 path.
-fn dense_fp8_enabled() -> bool {
-    std::env::var("METRALE_DENSE_FP8").as_deref() == Ok("1")
-}
-
-/// 2026-09-25: Whether the native block-scaled FP8 GDN arm runs for this SSM layer.
-/// `load_layers` and `prune_after_load` both call it; the second frees the store tensors
-/// the first copied into the fused `[QKV|Z]` weight. The keep-packed Q2 arm is tested
-/// first in `load_layers`, so its condition is part of this one.
-fn gdn_fp8_arm_selected(store: &WeightStore, la: &str, tp_size: usize) -> bool {
-    let q2 = tp_size.max(1) == 1
-        && std::env::var_os("METRALE_NO_Q2_GDN").is_none()
-        && proj_q2_group(store, &format!("{la}.in_proj_qkv")).is_some()
-        && proj_q2_group(store, &format!("{la}.in_proj_z")).is_some();
-    !q2 && std::env::var_os("METRALE_NO_GDN_FP8").is_none()
-        && proj_is_fp8_any_scale(store, &format!("{la}.in_proj_qkv"))
-        && proj_is_fp8_any_scale(store, &format!("{la}.in_proj_z"))
-        && proj_is_fp8_any_scale(store, &format!("{la}.out_proj"))
-}
-
-/// 2026-09-25: The dense-FFN width: `intermediate_size`, or `moe_intermediate_size` when
-/// that is 0; the same order as `load_dense_ffn` (`weight_map/fp8_lut.rs`).
-fn ffn_inter(config: &ModelConfig) -> usize {
-    if config.intermediate_size > 0 {
-        config.intermediate_size
-    } else {
-        config.moe_intermediate_size
-    }
-}
-
-/// 2026-09-25: Whether the native FP8 dense-FFN arm runs for this layer:
-/// `METRALE_DENSE_FP8=1`, TP=1, the `Fp8Dequanted` variant and a block-scaled FP8
-/// `mlp.gate_proj`. `load_layers` calls it, and `prune_after_load` through
-/// `ffn_gateup_fused_selected`.
-fn ffn_fp8_arm_selected(
-    store: &WeightStore,
-    config: &ModelConfig,
-    variant: Nvfp4Variant,
-    lp: &str,
-) -> bool {
-    dense_fp8_enabled()
-        && config.tp_world_size.max(1) == 1
-        && matches!(variant, Nvfp4Variant::Fp8Dequanted)
-        && proj_is_native_fp8(store, &format!("{lp}.mlp.gate_proj"))
-}
-
-/// 2026-09-25: Whether this layer's gate and up are fused into one `[2*inter, hidden]`
-/// block-scaled FP8 weight: the FP8 FFN arm is selected, the target arms
-/// `ffn_gateup_fused` (`[defaults]`, or `METRALE_FFN_GATEUP_FUSED`), the model has no
-/// experts, both widths are multiples of 128 (so the concatenated scale grids meet on a
-/// block boundary), and both tensors are `[inter, hidden]`. `prune_after_load` frees
-/// the source tensors of exactly the layers this returns true for.
-fn ffn_gateup_fused_selected(
-    store: &WeightStore,
-    config: &ModelConfig,
-    variant: Nvfp4Variant,
-    lp: &str,
-) -> bool {
-    let inter = ffn_inter(config);
-    let hidden = config.hidden_size;
-    // 2026-09-25: Checked here rather than at the call site because `prune_after_load`
-    // frees on this answer: tensors whose shape is not `[inter, hidden]` from `config`
-    // are not fused, and so are not freed.
-    let on_disk = |name: &str| {
-        store
-            .get(&format!("{lp}.mlp.{name}.weight"))
-            .is_ok_and(|w| w.shape == [inter, hidden])
-    };
-    ffn_fp8_arm_selected(store, config, variant, lp)
-        && metrale_model_layers::layers::dense_ffn::gateup_fused::ffn_gateup_fused()
-        && config.num_experts == 0
-        && inter > 0
-        && inter.is_multiple_of(128)
-        && hidden.is_multiple_of(128)
-        && on_disk("gate_proj")
-        && on_disk("up_proj")
-}
-
 // 2026-09-25: `pub` because `weight_loader/mod.rs` re-exports them for the server's
 // preflight (`preflight/headroom.rs`), which reads `predicted_residency`; that module
 // prices its terms with `fp8_residency`'s shape helpers.
@@ -220,6 +140,7 @@ mod loaders_b;
 pub mod predicted_residency;
 mod rowwise_fp8;
 
+mod arm_select;
 mod attn_arms;
 mod attn_layer;
 mod ffn_arm;
@@ -230,18 +151,22 @@ mod prune;
 mod served_formats;
 mod w8a8_install;
 
+use arm_select::{
+    dense_fp8_enabled, ffn_fp8_arm_selected, ffn_gateup_fused_selected, ffn_inter,
+    gdn_fp8_arm_selected,
+};
 use fp8_residency::{DerivedResidency, RouteEnv};
 use load_cx::{Flow, LayerIn, LoadCx};
 
 pub struct Qwen35DenseWeightLoader;
 
 impl ModelWeightLoader for Qwen35DenseWeightLoader {
-    fn supports_tp(&self) -> bool {
+    fn tp_support(&self) -> metrale_config::TpSupport {
         // 2026-09-25: The NVFP4 and BF16 attention arms shard Q/K/V/O, and the GDN dequant
         // path shards by head (`shard_gdn_*`). The native FP8 attention and FFN arms, the
         // UInt8 attention weights and the keep-packed Q2 arms require TP=1; the native FP8
         // and pre-quantized NVFP4 GDN arms do not shard.
-        true
+        metrale_config::TpSupport::Even
     }
 
     fn load_layers(
@@ -250,6 +175,7 @@ impl ModelWeightLoader for Qwen35DenseWeightLoader {
         config: &ModelConfig,
         gpu: &dyn GpuBackend,
         layer_kv_dtypes: &[KvCacheDtype],
+        lc: metrale_model_layers::load_context::LoadContext<'_>,
     ) -> Result<Vec<Box<dyn TransformerLayer>>> {
         let layer_types = if config.layer_types.is_empty() {
             (0..config.num_hidden_layers)
@@ -278,7 +204,7 @@ impl ModelWeightLoader for Qwen35DenseWeightLoader {
 
         // 2026-09-25: Unless `METRALE_NO_GDN_FP8_PREFILL` is set, the GDN dequant path below
         // also builds FP8 casts of its BF16 `[Q|K|V|Z]` and out_proj (`bf16_to_fp8`).
-        let fp8_ssm_prefill = std::env::var_os("METRALE_NO_GDN_FP8_PREFILL").is_none();
+        let fp8_ssm_prefill = !lc.settings.scheduler.no_gdn_fp8_prefill;
         let bf16_to_fp8_k = if fp8_ssm_prefill {
             tracing::info!(
                 "SSM in_proj_qkv + out_proj via native FP8 prefill GEMM \
@@ -293,9 +219,8 @@ impl ModelWeightLoader for Qwen35DenseWeightLoader {
             None
         };
 
-        // 2026-09-25: `METRALE_MEM_PROFILE` (any value) logs free GPU memory at the start
-        // and at every 8th layer.
-        let mem_profile = std::env::var("METRALE_MEM_PROFILE").is_ok();
+        // 2026-09-25: `METRALE_MEM_PROFILE` (present) logs GPU-free at load start, every 8th layer.
+        let mem_profile = lc.settings.telemetry.mem_profile;
         let log_free = |tag: &str| {
             if mem_profile && let Ok(free) = gpu.free_memory() {
                 tracing::info!("MEM_PROFILE[{tag}]: {:.2} GB GPU-free", free as f64 / 1e9);
@@ -303,9 +228,8 @@ impl ModelWeightLoader for Qwen35DenseWeightLoader {
         };
         log_free("dense-load-start");
 
-        // 2026-09-25: The routing levers are read once per load (`RouteEnv::from_env`,
-        // `fp8_residency.rs`).
-        let route_env = RouteEnv::from_env();
+        // 2026-09-25: The routing levers, read once per load (`fp8_residency::RouteEnv`).
+        let route_env = RouteEnv::from_settings(lc.settings);
         let mut residency = DerivedResidency::default();
         let policy = load_cx::weight_quant_policy(config);
         let served = std::cell::RefCell::new(served_formats::ServedFormats::default());
@@ -323,6 +247,7 @@ impl ModelWeightLoader for Qwen35DenseWeightLoader {
             route_env: &route_env,
             policy,
             served: &served,
+            lc,
         };
 
         for (i, lt) in layer_types.iter().enumerate() {
@@ -417,8 +342,9 @@ impl ModelWeightLoader for Qwen35DenseWeightLoader {
         store: &mut WeightStore,
         config: &ModelConfig,
         gpu: &dyn GpuBackend,
+        lc: metrale_model_layers::load_context::LoadContext<'_>,
     ) -> Result<()> {
-        let doomed = prune::doomed_after_load(store, config);
+        let doomed = prune::doomed_after_load(store, config, lc.settings);
         if doomed.is_empty() {
             return Ok(());
         }

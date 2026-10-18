@@ -29,7 +29,7 @@
 //!
 //! At C = 16, K = 4 won both workloads. K = 4 is the width of the
 //! write-on-accept verify kernel, which is opt-in (`METRALE_GDN_WOA=1`,
-//! `gdn_flags::gdn_woa_enabled`); without it `Rungs::from_env` puts the
+//! `gdn_flags::gdn_woa_enabled`); without it `Rungs::with_tuning` puts the
 //! C >= 2 rung at the cap. At C = 1 prose preferred a narrow block and code
 //! the full block.
 //!
@@ -40,10 +40,10 @@
 //! low: at 46, a 64-step window of code at 0.875 has 46 hits or fewer with
 //! probability about 6.5e-4 (binomial), and one of prose at 0.76 about 0.26.
 //!
-//! `DflashRung::configure` leaves the resolver unarmed when the operator
+//! `DflashRung::configure_with_settings` leaves the resolver unarmed when the operator
 //! passes `--dflash-gamma` or sets `METRALE_DFLASH_STATIC_GAMMA` (presence);
 //! `METRALE_DFLASH_GAMMA_RESOLVER` (presence) arms it even under an explicit
-//! flag. It also reads the overrides, once, through `Rungs::from_env`:
+//! flag. It applies the overrides once, through `Rungs::with_tuning`:
 //! `METRALE_DFLASH_RUNG_MULTI` (K at C >= 2, default 4),
 //! `METRALE_DFLASH_RUNG_NARROW` (default 5) and `METRALE_DFLASH_RUNG_WIDE`
 //! (default the cap), each clamped to `2..=cap`; `METRALE_DFLASH_RUNG_ENTER`
@@ -51,6 +51,8 @@
 //! `METRALE_DFLASH_RUNG_DWELL` (64).
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+
+use metrale_settings::groups::device_drafter::{DflashRungTuning, DrafterSettings};
 
 /// 2026-09-25: Verify width K at C >= 2: the write-on-accept kernel's width.
 const MULTI_K: usize = 4;
@@ -74,21 +76,8 @@ const LEAVE: u32 = 46;
 /// switch.
 const DWELL: u64 = WINDOW as u64;
 
-fn env_usize(name: &str, default: usize) -> usize {
-    std::env::var(name)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
-}
-fn env_u32(name: &str, default: u32) -> u32 {
-    std::env::var(name)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
-}
-
 /// 2026-09-25: The resolver's widths and thresholds. `defaults` and
-/// `from_env` clamp each width to `2..=max(cap, 2)`.
+/// `with_tuning` clamp each width to `2..=max(cap, 2)`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Rungs {
     /// 2026-09-25: K at C >= 2.
@@ -119,21 +108,22 @@ impl Rungs {
         }
     }
 
-    /// 2026-09-25: The defaults with the environment overrides applied, and
+    /// 2026-09-25: The defaults with the `METRALE_DFLASH_RUNG_*` overrides of `t` applied, and
     /// the C >= 2 rung at the cap when the write-on-accept kernel is off.
-    pub fn from_env(cap: usize, woa_available: bool) -> Self {
+    pub fn with_tuning(cap: usize, woa_available: bool, t: &DflashRungTuning) -> Self {
         let d = Self::defaults(cap);
+        let hi = cap.max(2);
         Self {
             multi: if woa_available {
-                env_usize("METRALE_DFLASH_RUNG_MULTI", d.multi).clamp(2, cap.max(2))
+                t.multi.unwrap_or(d.multi).clamp(2, hi)
             } else {
-                cap.max(2)
+                hi
             },
-            narrow: env_usize("METRALE_DFLASH_RUNG_NARROW", d.narrow).clamp(2, cap.max(2)),
-            wide: env_usize("METRALE_DFLASH_RUNG_WIDE", d.wide).clamp(2, cap.max(2)),
-            enter: env_u32("METRALE_DFLASH_RUNG_ENTER", d.enter),
-            leave: env_u32("METRALE_DFLASH_RUNG_LEAVE", d.leave),
-            dwell: env_usize("METRALE_DFLASH_RUNG_DWELL", d.dwell as usize) as u64,
+            narrow: t.narrow.unwrap_or(d.narrow).clamp(2, hi),
+            wide: t.wide.unwrap_or(d.wide).clamp(2, hi),
+            enter: t.enter.unwrap_or(d.enter),
+            leave: t.leave.unwrap_or(d.leave),
+            dwell: t.dwell.map_or(d.dwell, |v| v as u64),
         }
     }
 }
@@ -170,6 +160,14 @@ struct Ctl {
 /// and the scheduler context holds it (`SchedCtx::dflash_rung`).
 pub struct DflashRung {
     ctl: Ctl,
+    /// 2026-10-09: An explicit per-concurrency ladder (`set_ladder`); when set it decides
+    /// `drafts_for` whether or not the resolver is armed.
+    ladder: std::sync::RwLock<Option<crate::dflash_ladder::DraftLadder>>,
+    /// 2026-10-10: The single-stream adaptive draft count (`set_adaptive_k`,
+    /// `--dflash-adaptive-k`); `None` leaves every count to the ladder or the resolver.
+    adaptive_k: std::sync::Mutex<Option<crate::dflash_adaptive_k::AdaptiveK>>,
+    /// 2026-10-10: `n_active` of the last `drafts_for` call, whatever decided it.
+    last_active: AtomicUsize,
 }
 
 impl Default for DflashRung {
@@ -198,7 +196,87 @@ impl DflashRung {
                 last_n: AtomicUsize::new(0),
                 flips: AtomicU64::new(0),
             },
+            ladder: std::sync::RwLock::new(None),
+            adaptive_k: std::sync::Mutex::new(None),
+            last_active: AtomicUsize::new(0),
         }
+    }
+
+    /// 2026-10-10: Install (or clear) the single-stream adaptive draft count.
+    pub fn set_adaptive_k(&self, k: Option<crate::dflash_adaptive_k::AdaptiveK>) {
+        if let Some(a) = &k {
+            tracing::info!(
+                "DFlash adaptive draft count: single stream, step costs {:?}",
+                a.costs
+            );
+        }
+        *self.adaptive_k.lock().unwrap_or_else(|e| e.into_inner()) = k;
+    }
+
+    /// 2026-10-10: Whether the adaptive draft count is installed.
+    pub fn adaptive_k_on(&self) -> bool {
+        self.adaptive_k
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some()
+    }
+
+    /// 2026-10-10: The adaptive controller, when installed and the last dispatched step had one
+    /// active sequence; `None` otherwise (a batch keeps its ladder width).
+    fn single_stream_k(
+        &self,
+    ) -> Option<std::sync::MutexGuard<'_, Option<crate::dflash_adaptive_k::AdaptiveK>>> {
+        if self.last_active.load(Ordering::Relaxed) != 1 {
+            return None;
+        }
+        let g = self.adaptive_k.lock().unwrap_or_else(|e| e.into_inner());
+        g.is_some().then_some(g)
+    }
+
+    /// 2026-10-10: The next step's drafts for `seq` under `cap` from the adaptive controller
+    /// (0: plain decode pays more), or `None` when it does not apply (not installed, or not a
+    /// single stream): the caller keeps `cap`.
+    pub fn adaptive_drafts(
+        &self,
+        seq: &crate::dflash_adaptive_k::SeqAdaptiveK,
+        cap: usize,
+    ) -> Option<usize> {
+        let g = self.single_stream_k()?;
+        g.as_ref().map(|k| k.drafts(seq, cap))
+    }
+
+    /// 2026-10-10: Record a single-stream verify of `drafts` that accepted `accepted`. Nothing
+    /// when the controller does not apply.
+    pub fn adaptive_observe(
+        &self,
+        seq: &mut crate::dflash_adaptive_k::SeqAdaptiveK,
+        drafts: usize,
+        accepted: usize,
+    ) {
+        if let Some(mut g) = self.single_stream_k()
+            && let Some(k) = g.as_mut()
+        {
+            k.observe(seq, drafts, accepted);
+        }
+    }
+
+    /// 2026-10-10: Fold the measured wall `ms` of a single-stream step that verified `drafts`
+    /// (the verify and the propose after it) into the cost scale. Nothing when the controller
+    /// does not apply.
+    pub fn adaptive_step_ms(&self, drafts: usize, ms: f64) {
+        if let Some(mut g) = self.single_stream_k()
+            && let Some(k) = g.as_mut()
+        {
+            k.costs.observe_step(drafts, ms);
+        }
+    }
+
+    /// 2026-10-09: Install (or clear) the explicit per-concurrency draft ladder.
+    pub fn set_ladder(&self, ladder: Option<crate::dflash_ladder::DraftLadder>) {
+        if let Some(l) = &ladder {
+            tracing::info!("DFlash draft ladder: {l:?}");
+        }
+        *self.ladder.write().unwrap_or_else(|e| e.into_inner()) = ladder;
     }
 
     fn rungs(&self) -> Rungs {
@@ -216,12 +294,18 @@ impl DflashRung {
     /// 2026-09-25: Serve-time configuration. `cap_k` is the head's widest
     /// verify width (its gamma); `explicit_flag` says the operator passed
     /// `--dflash-gamma`; `woa_available` says the K = 4 write-on-accept
-    /// kernel is on (otherwise the C >= 2 rung is the cap). Reads the
-    /// environment here.
-    pub fn configure(&self, cap_k: usize, explicit_flag: bool, woa_available: bool) {
-        let pinned = std::env::var_os("METRALE_DFLASH_STATIC_GAMMA").is_some()
-            || (explicit_flag && std::env::var_os("METRALE_DFLASH_GAMMA_RESOLVER").is_none());
-        self.configure_with(cap_k, pinned, Rungs::from_env(cap_k, woa_available));
+    /// kernel is on (otherwise the C >= 2 rung is the cap); `d` carries the pin levers and the
+    /// rung overrides.
+    pub fn configure_with_settings(
+        &self,
+        cap_k: usize,
+        explicit_flag: bool,
+        woa_available: bool,
+        d: &DrafterSettings,
+    ) {
+        let pinned = d.dflash_static_gamma || (explicit_flag && !d.dflash_gamma_resolver);
+        let rungs = Rungs::with_tuning(cap_k, woa_available, &d.dflash_rung);
+        self.configure_with(cap_k, pinned, rungs);
         if !self.armed() {
             tracing::info!(
                 "DFlash gamma PINNED at K={cap_k} ({})",
@@ -286,6 +370,16 @@ impl DflashRung {
     /// `num_drafts` is the serve's configured count (cap - 1) and is returned
     /// unchanged when the resolver is unarmed.
     pub fn drafts_for(&self, n_active: usize, num_drafts: usize) -> usize {
+        self.last_active.store(n_active, Ordering::Relaxed);
+        // 2026-10-09: An explicit ladder wins, capped at `num_drafts` like the resolver.
+        if let Some(l) = self
+            .ladder
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+        {
+            return l.drafts(n_active).min(num_drafts).max(1);
+        }
         if !self.armed() {
             return num_drafts;
         }

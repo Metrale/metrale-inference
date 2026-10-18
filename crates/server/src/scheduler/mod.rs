@@ -17,9 +17,8 @@ mod decode_logits_content;
 mod decode_logits_seq;
 mod decode_logits_step;
 mod decode_step;
-#[cfg(test)]
-mod emit_eos_thinking_tests;
 mod emit_step;
+mod eos_hold;
 mod fast_greedy;
 #[cfg(test)]
 mod finish_guard_tests;
@@ -42,6 +41,7 @@ pub mod limits;
 mod mtp_accept_debug;
 mod mtp_bootstrap_step;
 mod mtp_dcut;
+mod mtp_device_draft;
 mod mtp_step;
 pub(crate) mod mtp_timing;
 mod phase_continue_prefills;
@@ -62,6 +62,7 @@ mod prefill_timing_tests;
 mod prompt_lookup_step;
 mod repetition;
 mod rollback;
+pub mod run_io;
 mod sample_step;
 pub mod sched_ctx;
 pub(crate) mod shared_lookup_step;
@@ -75,6 +76,7 @@ mod swap_out_tests;
 mod teardown;
 #[cfg(test)]
 mod test_support;
+mod think_close;
 #[cfg(test)]
 mod think_skip_tests;
 #[cfg(test)]
@@ -82,6 +84,7 @@ mod trace_harness;
 mod types;
 mod verify_dflash_batch_step;
 mod verify_dflash_step;
+mod verify_k2_device_step;
 mod verify_k2_step;
 mod verify_k3_step;
 mod verify_k4_batch_step;
@@ -100,8 +103,6 @@ use decode_step::*;
 use emit_step::*;
 use first_token_policy::*;
 pub use helpers::WatchdogParams;
-pub(crate) use helpers::parse_disable_watchdogs;
-pub use helpers::resolve_content_loop_watchdog;
 use helpers::*;
 pub use helpers::{CONTENT_LOOP_PERIOD_MAX, CONTENT_LOOP_PERIOD_MIN};
 use lifecycle::*;

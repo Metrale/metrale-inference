@@ -25,7 +25,7 @@ We will acknowledge receipt within **48 hours** and provide an initial assessmen
 Metrale Engine is an inference server that runs locally with GPU access. The primary threat surface includes:
 
 - **CUDA kernel safety** — Out-of-bounds memory access, buffer overflows in GPU kernels
-- **HTTP API** — Input validation on the OpenAI-compatible endpoint (`metrale-server`)
+- **HTTP API** — Input validation on the OpenAI-compatible endpoint (`met`)
 - **Weight loading** — Malicious safetensor files, path traversal during model loading
 - **Unsafe Rust** — Metrale Engine uses `unsafe` blocks for CUDA FFI; these are high-priority review targets
 

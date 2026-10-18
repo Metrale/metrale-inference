@@ -16,18 +16,19 @@ use anyhow::{Result, bail};
 use std::sync::Arc;
 
 use crate::registry::MetraleRegistry;
+use metrale_settings::groups::device::DeviceSettings;
 
 pub mod arch_preflight;
 mod fault_probe;
 mod gpu_copy;
 mod gpu_impl;
 mod gpu_impl_graph;
+#[cfg(not(metrale_scale))]
+mod graph_hoist_cu;
 mod n_tile;
 mod redzone;
 pub mod tensormap;
-pub(crate) use redzone::{
-    ALLOC_SEQ, RedZone, redzone_bytes, redzone_fill, redzone_min_idx, redzone_trace_idx,
-};
+pub(crate) use redzone::{ALLOC_SEQ, RedZone};
 mod memory;
 pub use memory::{cuda_free_memory_bytes, spawn_oom_watchdog};
 pub(crate) use memory::{device_is_integrated, effective_free_bytes};
@@ -111,9 +112,9 @@ pub struct MetraleCudaBackend {
     /// 2026-09-25: This model's kernel modules. `registry()` and
     /// `kernel_registry()` hand out clones of the `Arc`.
     registry: Arc<MetraleRegistry>,
-    /// 2026-09-25: `METRALE_DEBUG_SYNC_KERNELS=1`: sync after every launch.
-    /// Read once, in `new`.
-    debug_sync_kernels: bool,
+    /// 2026-10-17: The device levers this backend was built with (`with_settings`): the
+    /// per-launch sync, the red zones, the D2H spin and trace, the NCCL host hoist.
+    device: DeviceSettings,
     /// 2026-09-25: This model's kernel handles and op scratch, dropped with
     /// the backend.
     op_cache: crate::op_cache::OpCache,
@@ -149,18 +150,39 @@ pub struct MetraleCudaBackend {
 }
 
 impl MetraleCudaBackend {
+    /// 2026-10-17: [`Self::with_settings`] at the declared device settings, for tests and examples;
+    /// a serve passes the settings it resolved at startup.
+    pub fn new(ordinal: usize, ptx_modules: &[(&'static str, &'static [u8])]) -> Result<Self> {
+        Self::with_settings(ordinal, ptx_modules, &DeviceSettings::declared()?)
+    }
+
     /// 2026-09-25: Load `ptx_modules` on GPU `ordinal` and build the backend.
     ///
     /// The module set (a `TargetPtxSet`'s `modules`, e.g. from
     /// `metrale_kernels::ptx_for_model`) is loaded afresh for each call; the
     /// CUDA context and stream are the process host's, shared by every
     /// backend (`cuda_host::host`). Fails if no context is current after the
-    /// load.
-    pub fn new(ordinal: usize, ptx_modules: &[(&'static str, &'static [u8])]) -> Result<Self> {
+    /// load. `device` is the process's resolved device settings: its stream priority must be the
+    /// one the process host was created with (`cuda_host::host`), and with CUTLASS built its
+    /// workspace size must match the first backend's (`cutlass::fix_workspace_bytes`). The
+    /// first backend also publishes the packed-decode switch (`attn_splitk::publish_gqa_pack`).
+    pub fn with_settings(
+        ordinal: usize,
+        ptx_modules: &[(&'static str, &'static [u8])],
+        device: &DeviceSettings,
+    ) -> Result<Self> {
+        #[cfg(metrale_cutlass)]
+        crate::cutlass::fix_workspace_bytes(device.cutlass_workspace_bytes)?;
+        metrale_target_defaults::attn_splitk::publish_gqa_pack(
+            metrale_target_defaults::attn_splitk::resolve_gqa_pack(
+                metrale_target_defaults::attn_splitk::DECODE_GQA_PACK_DECLARED,
+                device.attn_decode_gqa_pack.as_deref(),
+            ),
+        );
         // 2026-09-25: Reset the per-run telemetry before any kernel lookup,
         // so the kernel audit lists only this backend's lookups.
         metrale_telemetry::run_metrics::reset_for_new_run();
-        let registry = MetraleRegistry::load(ordinal, ptx_modules)
+        let registry = MetraleRegistry::load(ordinal, ptx_modules, device.stream_priority)
             .map_err(|e| anyhow::anyhow!("MetraleRegistry load failed: {e}"))?;
         let default_stream = registry.raw_stream();
         crate::timing::install_for_stream(default_stream);
@@ -180,7 +202,7 @@ impl MetraleCudaBackend {
             live_allocs: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
             redzones: parking_lot::Mutex::new(Vec::new()),
             registry,
-            debug_sync_kernels: std::env::var("METRALE_DEBUG_SYNC_KERNELS").as_deref() == Ok("1"),
+            device: device.clone(),
             op_cache: crate::op_cache::OpCache::new(),
             default_stream,
             cuda_ctx,
@@ -247,7 +269,7 @@ impl MetraleCudaBackend {
     }
 
     pub(crate) fn debug_sync_kernels(&self) -> bool {
-        self.debug_sync_kernels
+        self.device.debug_sync_kernels
     }
 }
 

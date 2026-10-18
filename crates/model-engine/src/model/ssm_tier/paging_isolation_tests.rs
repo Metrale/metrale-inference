@@ -135,7 +135,7 @@ fn distinct_fingerprints_do_not_cross_serve() {
 #[test]
 fn equal_namespaces_cross_serve_the_old_default_bug() {
     let peer = Arc::new(MockPagingPeer::new(BLOB, 8));
-    let shared = NonZeroU64::new(metrale_kernels::DECODE_DOMAIN).unwrap();
+    let shared = NonZeroU64::new(metrale_core::decode_ring::DECODE_DOMAIN).unwrap();
     let a = store(&peer, shared);
     let b = store(&peer, shared);
     a.put(K, &[0xAA; BLOB]).unwrap();

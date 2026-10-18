@@ -67,21 +67,17 @@ impl GrammarState {
         Self::with_timing(compiled, vocab_size, std::sync::Arc::default())
     }
 
-    /// 2026-09-26: [`Self::new`] plus the hook the prewarm calls once the
+    /// 2026-09-26: [`Self::new`] plus the engine's overlap switch
+    /// (`GrammarLevers::async_prewarm`) and the hook the prewarm calls once the
     /// masks are warm (the on-disk mask save). `compile_grammar_state` uses
     /// this constructor.
     pub fn new_with_hook(
         compiled: &CompiledGrammar,
         vocab_size: usize,
+        overlap: bool,
         on_warm: Option<super::PrewarmHook>,
     ) -> Result<Self, GrammarError> {
-        Self::build_with(
-            compiled,
-            vocab_size,
-            None,
-            super::prewarm::overlap_enabled_for_serve(),
-            on_warm,
-        )
+        Self::build_with(compiled, vocab_size, None, overlap, on_warm)
     }
 
     /// 2026-09-26: [`Self::new`] with a caller-supplied timing sink for the
@@ -102,7 +98,7 @@ impl GrammarState {
             compiled,
             vocab_size,
             None,
-            super::prewarm::overlap_enabled_for_serve(),
+            super::GrammarLevers::UNSET.async_prewarm,
             None,
         )
     }

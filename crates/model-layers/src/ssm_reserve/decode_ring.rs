@@ -34,7 +34,7 @@ pub struct DecodeRingDecision {
 }
 
 /// 2026-09-25: Depths the preflight fit may choose, largest first. The first equals
-/// [`metrale_kernels::DECODE_ROLLBACK_RING_SLOTS`] (8); each next depth halves
+/// [`metrale_core::decode_ring::DECODE_ROLLBACK_RING_SLOTS`] (8); each next depth halves
 /// the ring's share of the reserve.
 pub const DECODE_RING_FIT_LADDER: [usize; 5] = [8, 4, 2, 1, 0];
 
@@ -68,10 +68,10 @@ pub fn parse_decode_ring_slots(s: &str) -> Result<Option<usize>, String> {
     let n: usize = s
         .parse()
         .map_err(|_| format!("unknown ssm-decode-ring-slots '{s}' (valid: auto, 0..=8)"))?;
-    if n > metrale_kernels::DECODE_ROLLBACK_RING_SLOTS {
+    if n > metrale_core::decode_ring::DECODE_ROLLBACK_RING_SLOTS {
         return Err(format!(
             "ssm-decode-ring-slots {n} exceeds the {} the ring is sized for",
-            metrale_kernels::DECODE_ROLLBACK_RING_SLOTS
+            metrale_core::decode_ring::DECODE_ROLLBACK_RING_SLOTS
         ));
     }
     Ok(Some(n))
@@ -85,13 +85,28 @@ pub fn decode_rollback_ring_slots(
     num_ssm_layers: usize,
     use_speculative: bool,
 ) -> DecodeRingDecision {
+    decode_rollback_ring_slots_given(
+        num_ssm_layers,
+        use_speculative,
+        published_decode_ring_slots(),
+    )
+}
+
+/// 2026-10-17: [`decode_rollback_ring_slots`] with the published depth given, for a
+/// caller that resolves its own `--ssm-decode-ring-slots` (the circuit-memory what-if)
+/// instead of reading the process-global cell.
+pub fn decode_rollback_ring_slots_given(
+    num_ssm_layers: usize,
+    use_speculative: bool,
+    published: Option<usize>,
+) -> DecodeRingDecision {
     let watchdogs_value = std::env::var("METRALE_DISABLE_WATCHDOGS").ok();
     let watchdogs_disabled = watchdogs_disabled_from_value(watchdogs_value.as_deref());
     let ring_override = std::env::var("METRALE_SSM_DECODE_RING").ok();
     decode_rollback_ring_slots_with(
         num_ssm_layers,
         use_speculative,
-        published_decode_ring_slots(),
+        published,
         ring_override.as_deref(),
         watchdogs_disabled,
     )
@@ -138,7 +153,7 @@ pub fn decode_rollback_ring_slots_with(
     }
     match ring_override {
         Some("1") => DecodeRingDecision {
-            slots: metrale_kernels::DECODE_ROLLBACK_RING_SLOTS,
+            slots: metrale_core::decode_ring::DECODE_ROLLBACK_RING_SLOTS,
             skip_reason: None,
         },
         Some("0") => DecodeRingDecision {
@@ -154,7 +169,7 @@ pub fn decode_rollback_ring_slots_with(
             }),
         },
         _ => DecodeRingDecision {
-            slots: metrale_kernels::DECODE_ROLLBACK_RING_SLOTS,
+            slots: metrale_core::decode_ring::DECODE_ROLLBACK_RING_SLOTS,
             skip_reason: None,
         },
     }

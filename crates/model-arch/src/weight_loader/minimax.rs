@@ -34,10 +34,10 @@ use metrale_model_layers::weight_map::{
 pub struct MinimaxM2WeightLoader;
 
 impl ModelWeightLoader for MinimaxM2WeightLoader {
-    fn supports_tp(&self) -> bool {
+    fn tp_support(&self) -> metrale_config::TpSupport {
         // 2026-09-25: `load_layers` shards Q/K/V/O and the q/k norms by
         // `config.tp_rank` / `config.tp_world_size`.
-        true
+        metrale_config::TpSupport::Even
     }
 
     fn load_layers(
@@ -46,6 +46,7 @@ impl ModelWeightLoader for MinimaxM2WeightLoader {
         config: &ModelConfig,
         gpu: &dyn GpuBackend,
         layer_kv_dtypes: &[KvCacheDtype],
+        lc: metrale_model_layers::load_context::LoadContext<'_>,
     ) -> Result<Vec<Box<dyn TransformerLayer>>> {
         let absmax_k = gpu.kernel("quantize_nvfp4", "nvfp4_global_absmax")?;
         let quantize_k = gpu.kernel("quantize_nvfp4", "quantize_bf16_to_nvfp4")?;
@@ -224,6 +225,7 @@ impl ModelWeightLoader for MinimaxM2WeightLoader {
                 layer_kv_dtypes[i],
                 config.fp8_kv_calibration_tokens,
                 config,
+                lc,
             )?;
 
             // 2026-09-25: Transposed copies of the attention NVFP4 weights for

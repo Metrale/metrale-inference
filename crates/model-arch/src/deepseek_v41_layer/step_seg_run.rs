@@ -12,7 +12,7 @@
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, GraphHandle};
 
-use super::step_seg::{SegState, step_log_on};
+use super::step_seg::SegState;
 use super::{DeepSeekV41Layer, V41LayerState};
 use crate::engram_v41::ENGRAM_ROW_BYTES;
 use crate::moe_v41::MoeV41;
@@ -38,7 +38,7 @@ impl DeepSeekV41Layer {
         stream: u64,
     ) -> Result<()> {
         let rt = &self.rt;
-        if std::env::var("METRALE_DS41_NO_ENGRAM").is_ok_and(|v| v == "1") {
+        if self.rt.levers.no_engram {
             return Ok(());
         }
         let ids = self.step_token_ids(ctx, 1)?;
@@ -68,9 +68,7 @@ impl DeepSeekV41Layer {
         stream: u64,
     ) -> Result<()> {
         let rt = &self.rt;
-        if self.engram_index.is_some()
-            && !std::env::var("METRALE_DS41_NO_ENGRAM").is_ok_and(|v| v == "1")
-        {
+        if self.engram_index.is_some() && !self.rt.levers.no_engram {
             rt.engram
                 .lock()
                 .unwrap()
@@ -188,9 +186,7 @@ impl DeepSeekV41Layer {
         streams: DevicePtr,
         stream: u64,
     ) -> Result<()> {
-        if self.engram_index.is_some()
-            && !std::env::var("METRALE_DS41_NO_ENGRAM").is_ok_and(|v| v == "1")
-        {
+        if self.engram_index.is_some() && !self.rt.levers.no_engram {
             self.rt
                 .engram
                 .lock()
@@ -251,7 +247,7 @@ impl DeepSeekV41Layer {
         moe.slot_table_update(gpu, &changes, stream)?;
         let misses = lru.stats().misses - misses0;
         drop(lru);
-        if step_log_on()
+        if self.rt.levers.step_graph_log
             && let Some(k) = first
         {
             tracing::info!(

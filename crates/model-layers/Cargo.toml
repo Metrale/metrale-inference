@@ -11,31 +11,44 @@ description = "Metrale Engine: generic layers (attention, SSM, MoE, FFN, norm, M
 default = ["cuda"]
 cuda = ["metrale-core/cuda", "metrale-config/cuda", "metrale-gpu-runtime/cuda", "metrale-cache/cuda", "metrale-storage/cuda", "metrale-comm/cuda", "metrale-model-weights/cuda"]
 metal = ["metrale-core/metal", "metrale-config/metal", "metrale-gpu-runtime/metal", "metrale-cache/metal", "metrale-storage/metal", "metrale-comm/metal", "metrale-model-weights/metal"]
+# 2026-10-17: `lever_equivalence`, the settings-migration test support, for the dependent crates' tests.
+test-utils = ["dep:metrale-io-host-mem"]
 
 [dependencies]
-metrale-cache = { path = "../cache", default-features = false }
+# 2026-10-17: Its `links` metadata (`DEP_METRALE_KERNEL_TREE_ROOT`) locates kernels/ for build.rs.
+metrale-kernel-root = { workspace = true }
+metrale-cache = { workspace = true }
 # 2026-09-28: The circuit plans the executor (`circuit_exec`) compiles into launches.
-metrale-circuit = { path = "../circuit" }
-metrale-closure = { path = "../closure" }
-metrale-comm = { path = "../comm", default-features = false }
-metrale-config = { path = "../config", default-features = false }
-metrale-core = { path = "../core", default-features = false }
-metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false }
-metrale-kernels = { path = "../kernels" }
-metrale-model-weights = { path = "../model-weights", default-features = false }
-metrale-storage = { path = "../storage", default-features = false }
-anyhow = { workspace = true }
-base64 = "0.23"
-half = "2"
-image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif"] }
+metrale-circuit = { workspace = true }
+metrale-closure = { workspace = true }
+metrale-comm = { workspace = true }
+metrale-config = { workspace = true }
+metrale-settings = { workspace = true }
+metrale-io-host-mem = { workspace = true, optional = true }
+metrale-core = { workspace = true }
+metrale-gpu-runtime = { workspace = true }
+metrale-model-weights = { workspace = true }
+metrale-storage = { workspace = true }
+metrale-target-defaults = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
+base64 = { workspace = true, features = ["std", "simd-unsafe"] }
+half = { workspace = true, features = ["std"] }
+image = { workspace = true, features = ["jpeg", "png", "gif"] }
 parking_lot = { workspace = true }
-serde_json = { workspace = true }
-tracing = "0.1"
+serde_json = { workspace = true, features = ["std", "preserve_order"] }
+tracing = { workspace = true, features = ["std", "attributes"] }
 
 [dev-dependencies]
-metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false, features = ["test-utils"] }
-metrale-model-weights = { path = "../model-weights", default-features = false, features = ["test-utils"] }
-serde = { workspace = true }
+metrale-io-host-mem = { workspace = true }
+metrale-gpu-runtime = { workspace = true, features = ["test-utils"] }
+# 2026-10-17: GPU tests load real kernel tables (`ptx_for_exact_target`, `ptx_modules`);
+# production code never names this crate, so a kernel edit does not rebuild this one.
+metrale-kernels = { workspace = true }
+metrale-model-weights = { workspace = true, features = ["test-utils"] }
+serde = { workspace = true, features = ["std", "derive"] }
 
 [lints]
 workspace = true
+
+[package.metadata.metrale]
+role = "device"

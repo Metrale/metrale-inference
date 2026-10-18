@@ -6,7 +6,7 @@
 //! `Authorization: Bearer` token, the first `X-Forwarded-For` entry, then the
 //! peer IP. `X-Forwarded-For` is trusted as sent.
 //!
-//! Configuration, read once at startup (`RateLimitConfig::from_env`): unset
+//! Configuration, resolved once per process (`RateLimitConfig::from_settings`): unset
 //! `METRALE_RATE_LIMIT_RPM` and `METRALE_RATE_LIMIT_TPM` mean 0, which
 //! disables that bucket; `METRALE_RATE_LIMIT_BURST_RPM` and
 //! `METRALE_RATE_LIMIT_BURST_TPM` default to the matching rate. With both
@@ -23,6 +23,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use metrale_settings::InferenceServerSettings;
 use parking_lot::Mutex;
 
 /// 2026-09-26: Limiter configuration. A rate of 0 disables that bucket; bursts
@@ -36,29 +37,24 @@ pub struct RateLimitConfig {
 }
 
 impl RateLimitConfig {
-    /// 2026-09-26: Read the four `METRALE_RATE_LIMIT_*` variables.
+    /// 2026-10-17: The four `METRALE_RATE_LIMIT_*` values of the resolved settings.
     ///
     /// # Errors
-    /// When a variable is set to something that is not a whole number
-    /// (`env_config::parse_min`); unset or blank means the default.
-    pub fn from_env() -> Result<Self, String> {
+    /// When a value is not a whole number (`env_config::parse_min`); unset or blank means
+    /// the default.
+    pub fn from_settings(settings: &InferenceServerSettings) -> Result<Self, String> {
         Self::from_raw(
-            std::env::var("METRALE_RATE_LIMIT_RPM").ok().as_deref(),
-            std::env::var("METRALE_RATE_LIMIT_TPM").ok().as_deref(),
-            std::env::var("METRALE_RATE_LIMIT_BURST_RPM")
-                .ok()
-                .as_deref(),
-            std::env::var("METRALE_RATE_LIMIT_BURST_TPM")
-                .ok()
-                .as_deref(),
+            settings.server.rate_limit_rpm.as_deref(),
+            settings.server.rate_limit_tpm.as_deref(),
+            settings.server.rate_limit_burst_rpm.as_deref(),
+            settings.server.rate_limit_burst_tpm.as_deref(),
         )
     }
 
-    /// 2026-09-26: [`Self::from_env`] without the environment, so tests need not
-    /// set process variables.
+    /// 2026-09-26: Parse the four raw values.
     ///
     /// # Errors
-    /// As [`Self::from_env`].
+    /// As [`Self::from_settings`].
     pub fn from_raw(
         rpm: Option<&str>,
         tpm: Option<&str>,
@@ -256,13 +252,13 @@ const IDLE_EVICT: Duration = Duration::from_secs(600);
 const MAX_KEYS: usize = 100_000;
 
 impl RateLimiter {
-    /// 2026-09-26: A limiter configured from the environment.
+    /// 2026-10-17: A limiter configured from the resolved settings.
     ///
     /// # Errors
-    /// As [`RateLimitConfig::from_env`].
-    pub fn from_env() -> Result<Arc<Self>, String> {
+    /// As [`RateLimitConfig::from_settings`].
+    pub fn from_settings(settings: &InferenceServerSettings) -> Result<Arc<Self>, String> {
         Ok(Arc::new(Self {
-            cfg: RateLimitConfig::from_env()?,
+            cfg: RateLimitConfig::from_settings(settings)?,
             inner: Mutex::new(HashMap::new()),
             last_scrub: Mutex::new(Instant::now()),
         }))

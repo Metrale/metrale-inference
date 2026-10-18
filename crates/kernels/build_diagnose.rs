@@ -14,8 +14,9 @@
 use std::path::Path;
 use std::sync::Once;
 
-/// 2026-09-25: Hardware target compiled when `METRALE_TARGET_HW` is unset.
-pub const DEFAULT_HW: &str = "gb10";
+/// 2026-09-25: Hardware target compiled when `METRALE_TARGET_HW` is unset. 2026-10-17: declared
+/// once in metrale-closure, which the metrale-target-defaults build script reads too.
+pub use metrale_closure::hardware_defaults::DEFAULT_HW;
 
 /// 2026-09-25: Read `vendor = "..."` out of a HARDWARE.toml by hand.
 ///
@@ -91,7 +92,7 @@ fn examples(kernels_root: &Path) -> String {
                 .into_iter()
                 .next()
                 .unwrap_or_else(|| "<quant>".to_string());
-            format!("   METRALE_TARGET_HW={hw} METRALE_TARGET_MODEL={model} METRALE_TARGET_QUANT={quant} cargo build --release -p metrale-server")
+            format!("   METRALE_TARGET_HW={hw} METRALE_TARGET_MODEL={model} METRALE_TARGET_QUANT={quant} cargo build --release -p met")
         })
         .collect();
     if lines.is_empty() {

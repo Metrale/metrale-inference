@@ -17,7 +17,7 @@ impl TransformerModel {
     /// load (impl_a1.rs), so decode runs eagerly and the synchronise here is legal;
     /// FP8-KV calibration clears that flag once it freezes.
     pub(super) fn diag_gemma4_decode_logits(&self, token: u32, stream: u64) -> Result<()> {
-        if !std::env::var("METRALE_DIAG_GEMMA4").is_ok_and(|v| v == "1" || v == "true") {
+        if !self.settings.telemetry.diag_gemma4 {
             return Ok(());
         }
         self.gpu.synchronize(stream)?;

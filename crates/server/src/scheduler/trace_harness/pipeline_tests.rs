@@ -32,7 +32,7 @@ use crate::scheduler::io::{AsyncDeviceIo, TracingDeviceIo};
 /// scenarios keep `RunOptions::default()`'s `max_batch_size` of 8).
 const RING_ROWS: usize = 16;
 
-fn async_run(sc: &Scenario) -> Vec<String> {
+pub(super) fn async_run(sc: &Scenario) -> Vec<String> {
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let vocab = sc.cfg.vocab;
     run_scenario_with(
@@ -57,13 +57,13 @@ fn async_run(sc: &Scenario) -> Vec<String> {
     )
 }
 
-fn sync_run(sc: &Scenario) -> Vec<String> {
+pub(super) fn sync_run(sc: &Scenario) -> Vec<String> {
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     run_scenario(sc)
 }
 
 /// 2026-09-25: What the clients saw: the streams and the rotation ack.
-fn client_lines(lines: &[String]) -> Vec<String> {
+pub(super) fn client_lines(lines: &[String]) -> Vec<String> {
     lines
         .iter()
         .filter(|l| l.starts_with("out s") || l.starts_with("rotation ack"))
@@ -71,7 +71,7 @@ fn client_lines(lines: &[String]) -> Vec<String> {
         .collect()
 }
 
-fn count(lines: &[String], needle: &str) -> usize {
+pub(super) fn count(lines: &[String], needle: &str) -> usize {
     lines.iter().filter(|l| l.contains(needle)).count()
 }
 

@@ -8,19 +8,33 @@
 
 use clap::Parser;
 
+#[cfg(feature = "bench")]
 pub mod bench_aggregate;
+#[cfg(feature = "bench")]
 mod bench_args;
+#[cfg(feature = "bench")]
 pub mod bench_card;
+#[cfg(feature = "bench")]
 pub(crate) mod bench_cause;
+#[cfg(feature = "bench")]
 pub mod bench_certify;
+#[cfg(feature = "bench")]
 mod bench_gate_check;
+#[cfg(feature = "bench")]
 pub mod bench_lease;
+#[cfg(feature = "bench")]
 mod bench_print;
+#[cfg(feature = "bench")]
 pub mod bench_record;
+#[cfg(feature = "bench")]
 mod bench_resolve;
+#[cfg(feature = "bench")]
 pub mod bench_run;
+#[cfg(feature = "bench")]
 mod bench_selfstart;
+#[cfg(feature = "bench")]
 mod bench_serve_plan;
+#[cfg(feature = "bench")]
 pub mod bench_spec_cost;
 pub(crate) mod circuit;
 mod circuit_diff;
@@ -34,11 +48,14 @@ mod circuit_memory_weights;
 mod circuit_paint;
 mod circuit_precision;
 mod circuit_venn;
+#[cfg(feature = "bench")]
 pub(crate) mod doctor;
 pub(crate) mod flag_values;
 pub(crate) mod hermetic;
 pub(crate) mod manifest;
 mod serve_args;
+mod serve_args_chat_surface;
+pub(crate) mod serve_args_dflash;
 mod serve_args_mtp;
 mod serve_args_mtp_draft;
 mod serve_args_prompt_lookup;
@@ -46,7 +63,12 @@ pub(crate) mod serve_args_spec_cost;
 pub(crate) mod sync_recipes;
 mod validate;
 mod validate_spec_cost;
+#[cfg(feature = "bench")]
 pub use bench_args::BenchmarkArgs;
+#[cfg(not(feature = "bench"))]
+pub(crate) mod no_bench;
+#[cfg(not(feature = "bench"))]
+pub use no_bench::BenchmarkArgs;
 pub use serve_args::{DEFAULT_KV_CACHE_DTYPE, DEFAULT_NUM_DRAFTS, ServeArgs};
 pub use validate::validate_serve_args;
 
@@ -71,7 +93,10 @@ pub enum Command {
     /// Start the inference server.
     Serve(ServeArgs),
     /// Run and inspect the benchmark suite, without the dashboard.
+    // 2026-10-17: Hidden in a build without the `bench` feature, where it is refused with a
+    // message naming the feature (`cli/no_bench.rs`). A plain comment, so `--help` is unchanged.
     #[command(visible_alias = "bench")]
+    #[cfg_attr(not(feature = "bench"), command(hide = true))]
     Benchmark(BenchmarkArgs),
     /// Print the serve flag surface as JSON.
     ///
@@ -101,6 +126,7 @@ pub enum Command {
     ///
     /// Exits non-zero when anything is wrong, so a provisioning script can gate
     /// on it.
+    #[cfg_attr(not(feature = "bench"), command(hide = true))]
     Doctor,
     /// Show a recipe's architecture circuit and the fused kernel plan the engine runs.
     ///
@@ -454,26 +480,4 @@ pub enum ColorChoice {
 mod bool_surface_tests;
 
 #[cfg(test)]
-mod version_tests {
-    use super::*;
-
-    #[test]
-    fn version_flag_reports_the_packaged_version() {
-        // 2026-09-26: `--version` ends parsing early, so clap returns it as an error whose
-        // kind is DisplayVersion and whose rendering is the output.
-        let err = Cli::try_parse_from(["met", "--version"]).expect_err("exits early");
-        assert_eq!(err.kind(), clap::error::ErrorKind::DisplayVersion);
-        assert!(
-            err.to_string().contains(METRALE_VERSION),
-            "`--version` printed {:?}, which does not carry {METRALE_VERSION}",
-            err.to_string()
-        );
-    }
-
-    #[test]
-    fn the_reported_version_is_the_cargo_version() {
-        // 2026-09-26: The constant is the package version itself, not a literal copy.
-        assert_eq!(METRALE_VERSION, env!("CARGO_PKG_VERSION"));
-        assert!(!METRALE_VERSION.is_empty());
-    }
-}
+mod version_tests;

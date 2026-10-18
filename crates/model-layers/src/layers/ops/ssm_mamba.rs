@@ -142,14 +142,15 @@ pub fn conv1d_update_l2norm_strided(
 
 /// 2026-09-25: Conv1d update + SiLU over `seq_len` prefill tokens, with
 /// separate per-token input and output strides. Runs the token-parallel kernel
-/// (`conv1d_prefill_tp_k`) when its handle is non-zero and
-/// `METRALE_CONV1D_TP` is not `0`, else `causal_conv1d_update_prefill`, one
-/// thread per channel walking the tokens.
+/// (`conv1d_prefill_tp_k`) when its handle is non-zero and `tp_on`
+/// (`METRALE_CONV1D_TP`, `OpsLevers::conv1d_tp`), else
+/// `causal_conv1d_update_prefill`, one thread per channel walking the tokens.
 #[allow(clippy::too_many_arguments)]
 pub fn conv1d_update_prefill(
     gpu: &dyn GpuBackend,
     kernel: KernelHandle,
     conv1d_prefill_tp_k: KernelHandle,
+    tp_on: bool,
     conv_state: DevicePtr,
     input: DevicePtr,
     weight: &DenseWeight,
@@ -167,8 +168,7 @@ pub fn conv1d_update_prefill(
     // kernel a warp spans 32 channels, so the `[t * stride + ch]` loads
     // coalesce, and each thread produces 8 consecutive tokens: grid y is
     // `ceil(seq_len / 64)` for blocks of 8 thread rows.
-    let tp = std::env::var("METRALE_CONV1D_TP").ok().as_deref() != Some("0")
-        && conv1d_prefill_tp_k.0 != 0;
+    let tp = tp_on && conv1d_prefill_tp_k.0 != 0;
     let (k, grid, block) = if tp {
         (
             conv1d_prefill_tp_k,

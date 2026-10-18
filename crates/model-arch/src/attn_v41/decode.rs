@@ -21,22 +21,6 @@ use super::{
 use crate::deepseek_v41_ref::attn::window_topk_idxs;
 use metrale_model_layers::layers::ops::{kquant_mmvq_pair_w, kquant_q8_1_rows};
 
-/// 2026-09-25: `METRALE_DS41_SPARSE_SPLIT`, read once: the blocks per (token,
-/// head) that `attn_v41_sparse_attn` splits the output dimension across,
-/// 1..=8, default 2 (other values fall back to 2). Every block recomputes the
-/// same scores and sums its outputs in the same order, so the bytes do not
-/// depend on the value.
-fn sparse_split() -> u32 {
-    static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-    *V.get_or_init(|| {
-        std::env::var("METRALE_DS41_SPARSE_SPLIT")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .filter(|&s| (1..=8).contains(&s))
-            .unwrap_or(2)
-    })
-}
-
 impl AttnV41 {
     /// 2026-09-25: q (low-rank, normed, up-projected, rotated) and kv (one
     /// latent row per token, normed, rotated, fp8-rounded) from the normed
@@ -117,7 +101,7 @@ impl AttnV41 {
         let (nh, hd, dim) = (c.n_heads, c.head_dim, c.dim);
         let scale = (hd as f32).powf(-0.5);
         KernelLaunch::new(gpu, self.k.sparse_attn)
-            .grid([m as u32, nh as u32, sparse_split()])
+            .grid([m as u32, nh as u32, self.sparse_split])
             .block([256, 1, 1])
             .arg_ptr(self.q)
             .arg_ptr(rows_a)

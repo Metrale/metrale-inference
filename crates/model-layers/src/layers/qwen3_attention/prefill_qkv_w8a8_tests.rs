@@ -43,6 +43,7 @@ fn caps(m: u32) -> (usize, usize, usize, usize) {
     )
 }
 
+/// 2026-10-17: [`cache_skip_qkv_cublas_selected`] in the declared k-major scale layout.
 #[allow(clippy::too_many_arguments)]
 fn selected(
     cublas_attn: bool,
@@ -76,6 +77,7 @@ fn selected(
         act_cap,
         act_scale_cap,
         quant_k,
+        true,
         kmajor_k,
         kmajor_buf,
         kmajor_cap,
@@ -317,8 +319,8 @@ fn the_old_kv_sizing_is_refused_for_a_ragged_m() {
 #[test]
 fn missing_handles_fall_back() {
     let (q, kv, a, s) = caps(M);
-    let case = |quant: ops::Fp8ActQuant, kmajor: KernelHandle, buf: DevicePtr| {
-        selected(
+    let case = |layout: bool, quant: ops::Fp8ActQuant, kmajor: KernelHandle, buf: DevicePtr| {
+        cache_skip_qkv_cublas_selected(
             true,
             true,
             false,
@@ -332,18 +334,28 @@ fn missing_handles_fall_back() {
             a,
             s,
             quant,
+            layout,
             kmajor,
             buf,
             s,
         )
     };
-    assert!(case(QUANT_K, KMAJOR_K, KMAJOR_BUF));
-    assert!(
-        !case(ops::Fp8ActQuant::default(), KMAJOR_K, KMAJOR_BUF),
-        "quantizer"
-    );
-    if crate::layers::ops::cublas_scale_layout_kmajor() {
-        assert!(!case(QUANT_K, KernelHandle(0), KMAJOR_BUF), "kmajor kernel");
-        assert!(!case(QUANT_K, KMAJOR_K, DevicePtr(0)), "kmajor scratch");
+    for layout in [true, false] {
+        assert!(case(layout, QUANT_K, KMAJOR_K, KMAJOR_BUF), "{layout}");
+        assert!(
+            !case(layout, ops::Fp8ActQuant::default(), KMAJOR_K, KMAJOR_BUF),
+            "quantizer {layout}"
+        );
+        // 2026-10-17: The adapter binds only in the k-major layout.
+        assert_eq!(
+            case(layout, QUANT_K, KernelHandle(0), KMAJOR_BUF),
+            !layout,
+            "kmajor kernel {layout}"
+        );
+        assert_eq!(
+            case(layout, QUANT_K, KMAJOR_K, DevicePtr(0)),
+            !layout,
+            "kmajor scratch {layout}"
+        );
     }
 }

@@ -83,6 +83,7 @@ impl DenseFfnLayer {
                         ops::w8a16_gemm_n128_m128(
                             ctx.gpu,
                             self.w8a16_gemm_t_m128_k,
+                            ctx.levers.ops.gemm_shape_log,
                             $in,
                             wt.weight_t,
                             wt.scale_t,
@@ -96,6 +97,7 @@ impl DenseFfnLayer {
                     _ if self.w8a16_gemm_pipelined_k.0 != 0 => ops::w8a16_gemm_pipelined(
                         ctx.gpu,
                         self.w8a16_gemm_pipelined_k,
+                        ctx.levers.ops.w8a16.pipe128,
                         $in,
                         $w.weight,
                         $w.row_scale,

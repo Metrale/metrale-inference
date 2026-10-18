@@ -1,13 +1,19 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-09-25: Build script for metrale-model-layers: declares the AMD target cfgs
-//! and sets them from `METRALE_TARGET_HW`.
+//! and sets them from `METRALE_TARGET_HW`. 2026-10-17: also hands the crate the
+//! kernel tree's root as `METRALE_KERNEL_TREE_ROOT`.
 //!
 //! Owner: model-layers (build).
 //! Invariants:
 //! - `metrale_hip` is set only together with `metrale_scale`.
 
 fn main() {
+    // 2026-10-17: `circuit_exec::sources` embeds kernels/ manifests through this root (see
+    // metrale-kernel-root's `links`), so the published crate needs no repository.
+    let root = std::env::var("DEP_METRALE_KERNEL_TREE_ROOT")
+        .expect("DEP_METRALE_KERNEL_TREE_ROOT: metrale-kernel-root is a dependency");
+    println!("cargo:rustc-env=METRALE_KERNEL_TREE_ROOT={root}");
     println!("cargo:rerun-if-env-changed=METRALE_TARGET_HW");
     // 2026-09-25: `metrale_scale` is set for every `METRALE_TARGET_HW` that starts
     // with `strix` (the SCALE `strix` and native-HIP `strix-hip` targets), the same

@@ -75,22 +75,10 @@ pub const DESCRIPTOR: BenchmarkDescriptor = BenchmarkDescriptor {
 /// real text rather than a looped filler corpus. Any other ISL falls back to
 /// [`stats::make_prompt`]'s synthesized filler.
 const FIXTURES: &[(usize, &str)] = &[
-    (
-        128,
-        include_str!("../../../../tests/fixtures/bench_prompt_128.txt"),
-    ),
-    (
-        512,
-        include_str!("../../../../tests/fixtures/bench_prompt_512.txt"),
-    ),
-    (
-        1024,
-        include_str!("../../../../tests/fixtures/bench_prompt_1024.txt"),
-    ),
-    (
-        4096,
-        include_str!("../../../../tests/fixtures/bench_prompt_4096.txt"),
-    ),
+    (128, include_str!("../../fixtures/bench_prompt_128.txt")),
+    (512, include_str!("../../fixtures/bench_prompt_512.txt")),
+    (1024, include_str!("../../fixtures/bench_prompt_1024.txt")),
+    (4096, include_str!("../../fixtures/bench_prompt_4096.txt")),
 ];
 
 /// 2026-09-26: The counting instruction every prompt ends with (a fixture gets

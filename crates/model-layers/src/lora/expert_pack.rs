@@ -33,18 +33,19 @@ pub(crate) fn present(router: &RouterMap, experts: &ExpertMap) -> bool {
 }
 
 /// 2026-09-25: Store-free checks on the router and expert maps: refused when
-/// `METRALE_LORA_EXPERTS` is off or `r` exceeds `max_lora_expert_rank()`.
+/// `policy.enabled` is off or `r` exceeds `policy.max_rank`.
 /// Pair completeness and shapes are checked by `validate_shapes`.
 pub(crate) fn validate(
     cfg: &ModelConfig,
     peft: &PeftAdapterConfig,
     router: &RouterMap,
     experts: &ExpertMap,
+    policy: ExpertLoraPolicy,
 ) -> Result<()> {
     if !present(router, experts) {
         return Ok(());
     }
-    if !lora_experts_env() {
+    if !policy.enabled {
         bail!(
             "REJECT[expert-lora-disabled]: adapter targets {} router + {} expert \
              projection(s), but MoE expert/router LoRA is off. Set METRALE_LORA_EXPERTS=1 \
@@ -53,7 +54,7 @@ pub(crate) fn validate(
             experts.len()
         );
     }
-    let cap = max_lora_expert_rank();
+    let cap = policy.max_rank;
     if peft.r > cap {
         bail!(
             "REJECT[expert-rank-exceeds-cap]: r={} > METRALE_LORA_EXPERT_RANK={} \

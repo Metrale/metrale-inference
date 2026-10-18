@@ -95,11 +95,9 @@ pub(super) fn build_sampling(
     } else {
         &state.sampling_presets.non_thinking
     };
-    // 2026-09-26: `METRALE_FORCE_TEMP_ZERO` (`1` or `true`): greedy decoding
-    // whatever the request, preset or MODEL.toml floors say.
-    let force_temp_zero = std::env::var("METRALE_FORCE_TEMP_ZERO")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
+    // 2026-10-17: `ChatLevers::force_temp_zero`: greedy decoding whatever the request, preset
+    // or MODEL.toml floors say.
+    let force_temp_zero = state.chat.force_temp_zero;
 
     // 2026-09-26: A request value wins. Otherwise temperature, top_k and
     // top_p come from the preset when MODEL.toml sets

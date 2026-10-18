@@ -46,7 +46,11 @@ impl TransformerModel {
                 e.1 = tick;
                 replay = Some(e.0);
                 outcome = super::super::verify_e2::VerifyGraphOutcome::Replay;
-            } else if super::super::graph_borrow::graph_borrow_enabled() {
+            } else if !self.settings.scheduler.no_graph_borrow
+                // 2026-10-09: Not when a layer keeps per-sequence buffers outside the pool
+                // (GLM-5.3's DSA indexer cache): a ghost row has no such buffers to write.
+                && !self.layers.iter().any(|l| l.verify_graph_borrow_unsafe())
+            {
                 let wy_present = !wy_tables_base.is_null();
                 let borrowed = super::super::graph_borrow::find_borrowable_verify_key(
                     key,
@@ -64,7 +68,8 @@ impl TransformerModel {
                 if let Some(b) = borrowed
                     && r_total + b.ghosts.iter().map(|&(_, k)| k as usize).sum::<usize>()
                         <= super::super::verify_e2::VERIFY_ROW_CAP
-                    && super::super::borrow_streak::VERIFY_BORROW_STREAK.allow(key)
+                    && super::super::borrow_streak::VERIFY_BORROW_STREAK
+                        .allow(key, self.engine.borrow_streak_limit)
                 {
                     let e =
                         g.0.get_mut(&b.key)

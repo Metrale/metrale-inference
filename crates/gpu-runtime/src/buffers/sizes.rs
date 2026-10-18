@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-09-25: Byte size of every buffer in the GPU buffer arena, from the model config, the serve limits and four environment levers.
+//! 2026-09-25: Byte size of every buffer in the GPU buffer arena, from the model config, the serve limits and four levers ([`super::ArenaLevers`]).
 //!
 //! Owner: gpu-runtime.
 //! Invariants:
-//! - [`BufferSizes::from_config`] allocates nothing; besides its arguments it
-//!   reads only `METRALE_GGUF_NATIVE_Q2`, `METRALE_GGUF_NATIVE_Q2_MMQ`,
-//!   `METRALE_FP8_ROWWISE` and, through `attn_splitk::policy_from_env`,
-//!   `METRALE_ATTN_DECODE_SPLITK`.
+//! - [`BufferSizes::from_config_with`] allocates nothing and reads nothing but its arguments.
 
 use metrale_config::ModelConfig;
-use metrale_kernels::attn_splitk;
+use metrale_target_defaults::attn_splitk;
+
+use super::{ArenaLevers, sizes_q2, sizes_rowwise};
 
 mod regions;
 mod total;
@@ -48,6 +47,9 @@ pub struct BufferSizes {
     pub moe_router_in_f32: usize,
     pub moe_output: usize,
     pub logits: usize,
+    /// 2026-10-09: The rows `logits` holds (`logits / logits_rows` bytes each), so a
+    /// decode step can zero only the rows it reads.
+    pub logits_rows: usize,
     pub ssm_qkvz: usize,
     pub ssm_ba: usize,
     pub ssm_deinterleaved: usize,
@@ -80,7 +82,7 @@ pub struct BufferSizes {
     pub hc_comb: usize,
     /// 2026-09-25: Low-rank hyper-connection scratch: the larger of the decode
     /// split layout (T <= 64, FP32) and the prefill GEMM layout (slabs of at
-    /// most 2048 tokens, BF16); see the sizing in `from_config`. 256 bytes
+    /// most 2048 tokens, BF16); see the sizing in `from_config_with`. 256 bytes
     /// without a low-rank hyper-connection.
     pub hc_lowrank_scratch: usize,
     /// 2026-09-25: QSA prefill-selection scratch for 2048-row slabs, shared by
@@ -158,16 +160,63 @@ pub struct BufferSizes {
 }
 
 impl BufferSizes {
+    /// 2026-10-12: The sizes with every region a GLM-5.3 (`glm5_next`) layer stack never reads
+    /// shrunk to 256 B (`METRALE_GLM_ARENA_LEAN=1`, applied by the engine's factory). Kept at
+    /// their size: hidden_states, residual, norm_output, moe_output, logits (and its row count),
+    /// token_ids, scratch, norm_unit_w, the hc streams/post/comb and the LoRA regions; the stack
+    /// runs its mixers and MLP out of its own workspaces (`glm5next_kda`, `glm5next_dsa`,
+    /// `glm5next_mlp`). Pure.
+    pub fn lean_hc_stack(mut self) -> Self {
+        const MIN: usize = 256;
+        for b in [
+            &mut self.qkv_output,
+            &mut self.attn_output,
+            &mut self.gate_logits,
+            &mut self.gate_logits_f32,
+            &mut self.moe_router_in_f32,
+            &mut self.ssm_qkvz,
+            &mut self.ssm_ba,
+            &mut self.ssm_deinterleaved,
+            &mut self.ssm_gates,
+            &mut self.ssm_conv_out_f32,
+            &mut self.expert_gate_out,
+            &mut self.expert_up_out,
+            &mut self.expert_down_out,
+            &mut self.splitk_workspace,
+            &mut self.gdn_fla_scratch,
+            &mut self.ssd_scratch,
+            &mut self.o_latent,
+            &mut self.hc_lowrank_scratch,
+            &mut self.qsa_select_scratch,
+            &mut self.ffn_act_q8,
+            &mut self.ffn_act_a,
+            &mut self.ffn_act_scale,
+            &mut self.ffn_act_scale_kmajor,
+            &mut self.ffn_gate_up_fused,
+            &mut self.fp8_act,
+            &mut self.moe_fp8_scratch,
+            &mut self.fp8_act_scale,
+            &mut self.fp8_act_scale_kmajor,
+            &mut self.q2_dequant_scratch,
+            &mut self.q2_act_q8,
+            &mut self.ssm_rowwise_w_bf16,
+        ] {
+            *b = MIN;
+        }
+        self
+    }
+
     /// 2026-09-25: Every buffer size, in bytes. `max_seq_len` and `kv_block_size`
     /// set the block-table width in `scratch` (`max_seq_len / kv_block_size + 1`
     /// blocks, 256 when `kv_block_size` is 0) and the QSA score width;
-    /// `max_batch_size` sets the decode-metadata rows.
-    pub fn from_config(
+    /// `max_batch_size` sets the decode-metadata rows; `levers` size the lever-gated entries.
+    pub fn from_config_with(
         config: &ModelConfig,
         max_batch_tokens: usize,
         max_seq_len: usize,
         kv_block_size: usize,
         max_batch_size: usize,
+        levers: &ArenaLevers,
     ) -> Self {
         let decode_meta = super::DecodeMetaLayout::for_max_batch_size(max_batch_size);
         let bf16 = 2;
@@ -224,12 +273,12 @@ impl BufferSizes {
         // 2026-09-25: Split-K decode workspace: one `[o[head_dim], m, l]` F32 slot
         // per (sequence, q head, split). A short workspace is an out-of-bounds
         // device write, so the slot count comes from `attn_splitk::workspace_slots`
-        // under the policy the dispatch resolves too (`policy_from_env`), for
+        // under the policy the dispatch resolves too (`levers.splitk`), for
         // `decode_meta.rows()` sequences, the widest batch the metadata upload
         // accepts.
         let splitk_slots = attn_splitk::workspace_slots(
-            attn_splitk::policy_from_env(),
-            metrale_kernels::TARGET_SM_COUNT,
+            levers.splitk,
+            metrale_target_defaults::TARGET_SM_COUNT,
             q_heads as u32,
             decode_meta.rows() as u32,
             (max_batch_size as u32).max(1),
@@ -268,9 +317,9 @@ impl BufferSizes {
 
         let (ssd_scratch, gdn_fla_scratch) = regions::ssm_scratch_bytes(config, m, bf16);
 
-        let (q2_dequant_scratch, q2_act_q8) = super::sizes_q2::q2_scratch_sizes(config, m, h, hd);
+        let (q2_dequant_scratch, q2_act_q8) = sizes_q2::q2_scratch_sizes(config, m, h, hd, levers);
 
-        let ssm_rowwise_w_bf16 = super::sizes_rowwise::ssm_rowwise_w_bf16_bytes(config);
+        let ssm_rowwise_w_bf16 = sizes_rowwise::ssm_rowwise_w_bf16_bytes(config, levers);
 
         // 2026-09-25: `ceil16` rows for the same cuBLASLt pad as `m_pad`.
         let ffn_gate_up_fused = if config.num_experts == 0 {
@@ -337,6 +386,7 @@ impl BufferSizes {
             // projection writes its output here.
             moe_output: m.div_ceil(16) * 16 * h * bf16,
             logits: logits_tokens * config.vocab_size * bf16,
+            logits_rows: logits_tokens,
             // 2026-09-25: The SSM buffers are also scratch for other layers, so
             // each is the largest of its uses and at least 256 bytes. `ssm_qkvz`
             // holds the QKVZ projection (`ceil16(M)` rows for its cuBLASLt arm),

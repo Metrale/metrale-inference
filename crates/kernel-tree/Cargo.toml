@@ -3,7 +3,12 @@ name = "metrale-kernel-tree"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "The repository's kernels/ manifests and sources, embedded at build time."
+# 2026-10-17: The tree's location (`DEP_METRALE_KERNEL_TREE_ROOT`) comes from metrale-kernel-root,
+# which also carries the tree once published. This crate embeds the bytes, so it rebuilds on every
+# edit under kernels/; only `met` depends on it, and crates that need only the location depend on
+# metrale-kernel-root instead.
 
 # 2026-10-02: `met serve` plans its memory with `met circuit memory`'s own model, which reads
 # kernels/ (DEVICES.toml, the circuits, COPIES.toml, a class's HARDWARE.toml, KERNEL.toml,
@@ -12,12 +17,17 @@ description = "The repository's kernels/ manifests and sources, embedded at buil
 # per content hash. A crate of its own, so an edit under kernels/ recompiles only this one.
 
 [dependencies]
-anyhow.workspace = true
-flate2 = "1.1"
+# 2026-10-17: Its `links` metadata (`DEP_METRALE_KERNEL_TREE_ROOT`) locates kernels/ for build.rs.
+metrale-kernel-root = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
+flate2 = { workspace = true, features = ["rust_backend", "runtime_detection"] }
 
 [build-dependencies]
-flate2 = "1.1"
-sha2 = "0.11"
+flate2 = { workspace = true, features = ["rust_backend", "runtime_detection"] }
+sha2 = { workspace = true, features = ["alloc", "oid"] }
 
 [lints]
 workspace = true
+
+[package.metadata.metrale]
+role = "device"

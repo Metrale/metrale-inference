@@ -38,13 +38,16 @@ pub(crate) fn quant_multiplier(config: &ModelConfig) -> Option<f64> {
 }
 
 pub(crate) fn load_weight_store(
-    args: &cli::ServeArgs,
     config: &ModelConfig,
     model_dir: &Path,
     gpu: &dyn metrale_gpu_runtime::gpu::GpuBackend,
     ep_rank: usize,
     ep_size: usize,
     oom_reserve_bytes: usize,
+    // 2026-10-17: `--no-fast-load` / `METRALE_FAST_LOAD` and `--fast-load-prefetch-shards` /
+    // `METRALE_FAST_LOAD_PREFETCH_SHARDS`, resolved once in `LoadLevers`.
+    fast_load: bool,
+    prefetch_shards: bool,
 ) -> Result<metrale_model_weights::weights::WeightStore> {
     use metrale_model_weights::weights::WeightLoader;
     if matches!(
@@ -73,15 +76,17 @@ pub(crate) fn load_weight_store(
     // 2026-09-26: Any `.gguf` file in the directory selects `GgufLoader`.
     if metrale_model_weights::weights::find_gguf(model_dir).is_some() {
         tracing::info!("Detected GGUF weights; using GgufLoader (GPU dequant → BF16)");
-        let mut loader = if ep_size > 1 {
-            metrale_model_weights::weights::GgufLoader::with_ep(
-                ep_rank,
-                ep_size,
-                config.num_experts,
-            )
+        let (rank, world, experts) = if ep_size > 1 {
+            (ep_rank, ep_size, config.num_experts)
         } else {
-            metrale_model_weights::weights::GgufLoader::new()
+            (0, 1, 0)
         };
+        let weights = metrale_settings::groups::device_weights::WeightsSettings::try_from(
+            &super::build::lever_settings()?,
+        )?;
+        let mut loader = metrale_model_weights::weights::GgufLoader::with_settings(
+            rank, world, experts, weights,
+        );
         loader.peak_memory_multiplier = mult;
         let store = loader
             .load(model_dir, gpu, oom_reserve_bytes)
@@ -90,9 +95,7 @@ pub(crate) fn load_weight_store(
         return Ok(store);
     }
 
-    let use_fast_load =
-        !args.no_fast_load && std::env::var("METRALE_FAST_LOAD").ok().as_deref() != Some("0");
-    let store = if use_fast_load {
+    let store = if fast_load {
         #[cfg(unix)]
         {
             tracing::info!("Using fast weight loader (O_DIRECT + pipelined read/copy)");
@@ -120,10 +123,8 @@ pub(crate) fn load_weight_store(
                 );
             }
             loader.defer = defer_hook(config);
-            loader.prefetch_shards = args.fast_load_prefetch_shards
-                || std::env::var("METRALE_FAST_LOAD_PREFETCH_SHARDS")
-                    .ok()
-                    .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+            loader.defer_charge = defer_charge(config);
+            loader.prefetch_shards = prefetch_shards;
             if loader.prefetch_shards {
                 tracing::info!("Fast weight loader shard prefetch/readahead enabled");
             }
@@ -133,6 +134,7 @@ pub(crate) fn load_weight_store(
         }
         #[cfg(not(unix))]
         {
+            let _ = prefetch_shards;
             anyhow::bail!("--fast-load requires a Unix host (needs O_DIRECT / posix_fadvise)");
         }
     } else {
@@ -149,6 +151,7 @@ pub(crate) fn load_weight_store(
         loader.skip_activation_scales = skip_activation_scales(config);
         loader.skip_mtp = skip_mtp(config);
         loader.defer = defer_hook(config);
+        loader.defer_charge = defer_charge(config);
         loader
             .load(model_dir, gpu, oom_reserve_bytes)
             .context("Failed to load model weights")?
@@ -179,9 +182,10 @@ pub(crate) fn load_dflash_drafter(
     // 2026-09-26: The drafter allocates outside the KV budget, so its whole
     // footprint is estimated from the checkpoint before anything is allocated:
     // safetensors bytes on disk, the drafter KV cache, `fused_kv`, the
-    // DFlash2 selector's host copies, the FP8 mirrors (half the store plus
-    // twice `vocab x hidden`) unless `METRALE_DFLASH_DRAFTER_FP8=0`, and
-    // 300 MiB of scratch.
+    // DFlash2 selector's host copies, the weight copies (in FP8, half the store
+    // plus twice `vocab x hidden`; 2026-10-10: scaled to the
+    // `--draft-weight-quantization` tier, none on `declared`), and 300 MiB of
+    // scratch.
     let store_bytes: u64 = std::fs::read_dir(&drafter_dir)
         .ok()
         .into_iter()
@@ -207,16 +211,14 @@ pub(crate) fn load_dflash_drafter(
             2 * (c.vocab_size as u64) * (r as u64) * 2 + (r as u64) * (c.hidden_size as u64) * 2
         })
         .unwrap_or(0);
-    // 2026-09-26: The predicate `dflash_head/from_weights.rs` allocates the
-    // mirrors on: anything but `METRALE_DFLASH_DRAFTER_FP8=0`.
-    let fp8_mirrors = if std::env::var("METRALE_DFLASH_DRAFTER_FP8").ok().as_deref() != Some("0") {
-        let lm_head = (c.vocab_size as u64) * (c.hidden_size as u64);
-        store_bytes / 2 + 2 * lm_head
-    } else {
-        0
-    };
+    let lm_head = (c.vocab_size as u64) * (c.hidden_size as u64);
+    let weight_copies = args
+        .dflash_args
+        .draft_weight_quantization
+        .copy_bytes_from_fp8(store_bytes / 2 + 2 * lm_head);
     let scratch_est: u64 = 300 << 20;
-    let estimate = store_bytes + drafter_kv + fused_kv + selector_host + fp8_mirrors + scratch_est;
+    let estimate =
+        store_bytes + drafter_kv + fused_kv + selector_host + weight_copies + scratch_est;
 
     let free = gpu.free_memory().unwrap_or(0) as u64;
     let total = gpu.total_memory().unwrap_or(0) as u64;
@@ -225,13 +227,13 @@ pub(crate) fn load_dflash_drafter(
     let headroom = (total as f64 * (1.0 - args.gpu_memory_utilization)) as u64;
     if free < estimate + headroom {
         anyhow::bail!(
-            "DFlash drafter would over-commit unified memory: estimated footprint {:.2} GB              (weights {:.2} + drafter-KV {:.2} + fused_kv {:.2} + selector-host {:.2} +              fp8-mirrors {:.2} + scratch {:.2}) but only {:.2} GB free with {:.2} GB              headroom pledged by --gpu-memory-utilization {:.2}. On GB10 this would SWAP              the host, not error. Lower --max-seq-len, lower --gpu-memory-utilization              pressure elsewhere, or drop METRALE_DFLASH_DRAFTER_FP8.",
+            "DFlash drafter would over-commit unified memory: estimated footprint {:.2} GB              (weights {:.2} + drafter-KV {:.2} + fused_kv {:.2} + selector-host {:.2} +              weight-copies {:.2} + scratch {:.2}) but only {:.2} GB free with {:.2} GB              headroom pledged by --gpu-memory-utilization {:.2}. On GB10 this would SWAP              the host, not error. Lower --max-seq-len, lower --gpu-memory-utilization              pressure elsewhere, or a --draft-weight-quantization tier with smaller copies (nvfp4, or declared for none).",
             estimate as f64 / 1e9,
             store_bytes as f64 / 1e9,
             drafter_kv as f64 / 1e9,
             fused_kv as f64 / 1e9,
             selector_host as f64 / 1e9,
-            fp8_mirrors as f64 / 1e9,
+            weight_copies as f64 / 1e9,
             scratch_est as f64 / 1e9,
             free as f64 / 1e9,
             headroom as f64 / 1e9,
@@ -239,11 +241,11 @@ pub(crate) fn load_dflash_drafter(
         );
     }
     tracing::info!(
-        "DFlash footprint pre-flight: estimate {:.2} GB (weights {:.2}, drafter-KV {:.2},          fp8-mirrors {:.2}, selector-host {:.2}) vs {:.2} GB free, {:.2} GB headroom — OK",
+        "DFlash footprint pre-flight: estimate {:.2} GB (weights {:.2}, drafter-KV {:.2},          weight-copies {:.2}, selector-host {:.2}) vs {:.2} GB free, {:.2} GB headroom — OK",
         estimate as f64 / 1e9,
         store_bytes as f64 / 1e9,
         drafter_kv as f64 / 1e9,
-        fp8_mirrors as f64 / 1e9,
+        weight_copies as f64 / 1e9,
         selector_host as f64 / 1e9,
         free as f64 / 1e9,
         headroom as f64 / 1e9,
@@ -391,15 +393,17 @@ pub(crate) fn load_lora_adapters(
 }
 
 /// 2026-09-26: Whether the loaders skip the `*.input_scale` activation scales
-/// for this model: `qwen4_exp` and `glm5_next`.
+/// for this model: `qwen4_exp`.
 ///
 /// Both loaders skip exactly the names ending in `.input_scale`
 /// (`SafetensorsLoader`, `fast_weights::skip`), so `.weight_scale` and
 /// `.weight_scale_2` still load. The skip is listed per model because some
 /// loaders read `input_scale`: `step3p7` on its own path, and
-/// `weight_map/model_a.rs` whenever the tensor is present.
+/// `weight_map/model_a.rs` whenever the tensor is present. 2026-10-08:
+/// `glm5_next` reads them for its declared W4A4 path; its defer hook keeps
+/// them off the device instead (`glm5_next_load/act_scale.rs`).
 fn skip_activation_scales(config: &ModelConfig) -> bool {
-    matches!(config.model_type.as_str(), "qwen4_exp" | "glm5_next")
+    matches!(config.model_type.as_str(), "qwen4_exp")
 }
 
 /// 2026-09-26: Whether `mtp.*` is left unloaded: `qwen4_exp`, whose
@@ -432,4 +436,13 @@ fn defer_hook(config: &ModelConfig) -> Option<metrale_model_weights::weights::De
         config.model_type,
     );
     Some(hook)
+}
+
+/// 2026-10-17: The device bytes the model's weight loader allocates for the tensors it defers
+/// (`defer_charge`), so the pre-flight counts them. `None` when the model type does not resolve
+/// or the loader states none, the trait default.
+fn defer_charge(config: &ModelConfig) -> Option<metrale_model_weights::weights::DeferCharge> {
+    metrale_model_engine::factory::loader_for_config(config)
+        .ok()?
+        .defer_charge(config)
 }

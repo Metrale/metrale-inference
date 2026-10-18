@@ -398,7 +398,7 @@ pub fn paged_decode_attn_fp8(
 /// Preconditions: `num_q_heads == num_kv_heads * DECODE_GQA_PACK_WIDTH` and
 /// `head_dim == DECODE_GQA_PACK_HEAD_DIM`. The kernel derives its heads as
 /// `kv_head * PD_GQA + h` and sizes its register arrays from `PD_GQA`. The
-/// caller checks both with `metrale_kernels::attn_splitk::gqa_pack_shape_ok`
+/// caller checks both with `metrale_target_defaults::attn_splitk::gqa_pack_shape_ok`
 /// and uses the unpacked kernel when they fail.
 #[allow(clippy::too_many_arguments)]
 pub fn paged_decode_attn_bf16_gqa(

@@ -12,7 +12,9 @@
 
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::DevicePtr;
-use metrale_model_engine::traits::{FeedSource, RowMask, SequenceState};
+use metrale_model_engine::traits::{
+    FedAheadPolicy, FeedSource, ModelDeviceFeed, RowMask, SequenceState,
+};
 
 use super::model::{RecordingModel, fmt_ids};
 use super::model_forward::sid;
@@ -75,11 +77,60 @@ impl RecordingModel {
             // `decode_batch_fed` contract the core applies that
             // bookkeeping.
             self.grow_for_next_position(s);
-            rows.push(self.out_after(s, s.seq_len));
+            let clean = self.recurrent_consume(s, s.seq_len, 1);
+            rows.push(self.recurrent_out(clean, self.out_after(s, s.seq_len)));
         }
         self.set_rows(rows);
         self.rec(head);
         Ok(self.row_ptr(0))
+    }
+
+    /// 2026-10-10: The masked pick of row `row` of the last forward (`argmax_feed.cu`'s rule
+    /// over the fake's one-hot logits).
+    fn masked_pick(&self, row: usize, mask: RowMask) -> u32 {
+        let hit = self.row(row);
+        if hit == mask[0] || hit == mask[1] {
+            (0..self.cfg.vocab as u32)
+                .rev()
+                .find(|t| *t != mask[0] && *t != mask[1])
+                .unwrap_or(0)
+        } else {
+            hit
+        }
+    }
+
+    pub(super) fn fx_arm_device_argmax(&self, masks: &[RowMask]) -> Result<bool> {
+        let mut st = self.state.lock().unwrap();
+        st.armed = None;
+        if !self.cfg.device_argmax || masks.len() != 1 {
+            return Ok(false);
+        }
+        st.armed = Some(masks[0]);
+        drop(st);
+        rec!(self, "arm_device_argmax(masks={masks:?}) -> true");
+        Ok(true)
+    }
+
+    pub(super) fn fx_device_argmax_to_host(
+        &self,
+        dst: &mut [u8],
+        event: Option<u64>,
+    ) -> Result<()> {
+        let mask = self
+            .state
+            .lock()
+            .unwrap()
+            .armed
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("device_argmax_to_host without an armed step"))?;
+        let tok = self.masked_pick(0, mask);
+        self.state.lock().unwrap().feed_cells = vec![tok];
+        dst[..4].copy_from_slice(&tok.to_le_bytes());
+        if let Some(e) = event {
+            self.fx_record_event(e);
+        }
+        rec!(self, "device_argmax_to_host(event={event:?}) -> {tok}");
+        Ok(())
     }
 
     pub(super) fn fx_argmax_batch_to_feed(
@@ -194,5 +245,70 @@ impl RecordingModel {
         }
         st.pending_events.remove(pos);
         Ok(true)
+    }
+}
+
+// 2026-10-10: `impl ModelDeviceFeed`, moved here from `model_impl.rs` (size cap) with its
+// macro-generated methods written out; the trace lines are unchanged.
+impl ModelDeviceFeed for RecordingModel {
+    fn fed_ahead_policy(&self) -> FedAheadPolicy {
+        match self.cfg.recurrent_fed_rows {
+            Some(max_rows) => FedAheadPolicy::RepickOnly { max_rows },
+            None => FedAheadPolicy::Redo,
+        }
+    }
+    fn arm_device_argmax(&self, masks: &[RowMask]) -> Result<bool> {
+        self.fx_arm_device_argmax(masks)
+    }
+    fn device_argmax_to_host(&self, dst: &mut [u8], event: Option<u64>) -> Result<()> {
+        self.fx_device_argmax_to_host(dst, event)
+    }
+    fn decode_batch_fed(
+        &self,
+        sources: &[FeedSource],
+        seqs: &mut [&mut SequenceState],
+        stream: u64,
+    ) -> Result<DevicePtr> {
+        self.fx_decode_batch_fed(sources, seqs, stream)
+    }
+    fn argmax_batch_to_feed(
+        &self,
+        logits_ptr: DevicePtr,
+        masks: &[RowMask],
+        dst: *mut u32,
+        event: u64,
+        stream: u64,
+    ) -> Result<()> {
+        self.fx_argmax_batch_to_feed(logits_ptr, masks, dst, event, stream)
+    }
+    fn reserve_decode_block(&self, seq: &mut SequenceState) -> Result<usize> {
+        self.fx_reserve_decode_block(seq)
+    }
+    fn release_decode_blocks(&self, seq: &mut SequenceState, blocks: usize) -> Result<()> {
+        self.fx_release_decode_blocks(seq, blocks)
+    }
+    fn alloc_host_pinned(&self, bytes: usize) -> Result<*mut u8> {
+        metrale_gpu_runtime::host_heap::alloc_zeroed(bytes)
+    }
+    fn free_host_pinned(&self, ptr: *mut u8, bytes: usize) -> Result<()> {
+        metrale_gpu_runtime::host_heap::free(ptr, bytes)
+    }
+    fn supports_device_token_feed(&self) -> bool {
+        self.cfg.device_token_feed
+    }
+    fn event_query(&self, event: u64) -> Result<bool> {
+        self.fx_event_query(event)
+    }
+    fn event_synchronize(&self, event: u64) -> Result<()> {
+        rec!(self, "event_synchronize(event={event})");
+        self.fx_event_synchronize(event);
+        Ok(())
+    }
+    fn destroy_event(&self, event: u64) -> Result<()> {
+        rec!(self, "destroy_event(event={event})");
+        Ok(())
+    }
+    fn fed_step_settled(&self) {
+        rec!(self, "fed_step_settled()");
     }
 }

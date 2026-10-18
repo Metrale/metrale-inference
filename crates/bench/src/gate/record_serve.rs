@@ -99,28 +99,9 @@ pub const FORWARD: &str = "forward";
 /// present only when the server runs a circuit forward.
 pub const PLAN_DIGEST: &str = "plan_digest";
 
-/// 2026-09-28: What a server reports about its forward (`GET /forward`): the server fills it
-/// from its model, the harness reads it into the record.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct LiveForward {
-    /// 2026-09-28: `legacy`, `circuit` or `circuit-reference`.
-    pub forward: String,
-    /// 2026-09-28: The decode plan's digest; `None` under `legacy`.
-    #[serde(default)]
-    pub plan_digest: Option<String>,
-    /// 2026-10-01: The slot count `--max-batch-size auto` resolved to; `None` for an explicit
-    /// count (which the rendered serve already states).
-    #[serde(default)]
-    pub auto_max_batch_size: Option<usize>,
-    /// 2026-10-02: The MoE expert-table decision the serve's memory plan made before load
-    /// (`build` or `skip`); `None` when the loader reads none.
-    #[serde(default)]
-    pub moe_expert_tables: Option<String>,
-    /// 2026-10-03: SHA-256 of the kernel tree the serve's memory plan was computed from
-    /// (`metrale_kernel_tree::SHA256`); `None` when the serve made no plan.
-    #[serde(default)]
-    pub kernel_tree: Option<String>,
-}
+/// 2026-09-28: What a server reports about its forward (`GET /forward`); the wire shape lives in
+/// metrale-serve-identity so the server answers it without this crate.
+pub use metrale_serve_identity::wire::LiveForward;
 
 /// 2026-10-01: Key for the slot count `--max-batch-size auto` resolved to, written `auto:<n>`;
 /// present only for `auto`.

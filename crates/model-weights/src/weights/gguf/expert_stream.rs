@@ -34,6 +34,7 @@ use anyhow::{Context, Result, bail, ensure};
 use super::container::{GgufFile, Q2Group, TensorInfo};
 use super::sidecar;
 use crate::weights::{find_gguf, find_gguf_shards};
+use metrale_settings::groups::device_weights::WeightsSettings;
 
 pub use super::engram_rows::{EngramRowReader, EngramTable};
 pub use super::expert_arena::{DeviceArena, ExpertArena};
@@ -56,17 +57,20 @@ struct Shard {
 /// nothing here goes through the page cache but the reads we ask for.
 pub struct ShardFiles {
     shards: Vec<Shard>,
+    /// 2026-10-17: Leave a buffered miss in the page cache ([`pread_uncached`]).
+    keep_page_cache: bool,
 }
 
 impl ShardFiles {
-    /// Open the shard set that `first` (the `split.no == 0` file) names.
-    pub fn open(first: &Path) -> Result<Self> {
+    /// Open the shard set that `first` (the `split.no == 0` file) names, with an `O_DIRECT`
+    /// descriptor per shard unless `w.direct_reads` is off.
+    pub fn open_with(first: &Path, w: &WeightsSettings) -> Result<Self> {
         let set = find_gguf_shards(first)?;
         let mut shards = Vec::with_capacity(set.paths.len());
         for path in set.paths {
             let (file, mmap, gguf) = sidecar::open_gguf(&path)?;
             drop(mmap);
-            let direct = open_direct(&path);
+            let direct = open_direct(&path, w.direct_reads);
             shards.push(Shard {
                 path,
                 file,
@@ -79,13 +83,17 @@ impl ShardFiles {
             "GGUF shards: {} open, {n_direct} with an O_DIRECT descriptor for expert misses",
             shards.len()
         );
-        Ok(ShardFiles { shards })
+        Ok(ShardFiles {
+            shards,
+            keep_page_cache: w.keep_page_cache,
+        })
     }
 
     /// Open the model in `dir` (shard 0 found as the loader finds it).
-    pub fn open_dir(dir: &Path) -> Result<Self> {
+    /// 2026-10-17: [`Self::open_with`] on the first GGUF in `dir`.
+    pub fn open_dir_with(dir: &Path, w: &WeightsSettings) -> Result<Self> {
         let first = find_gguf(dir).with_context(|| format!("no GGUF in {}", dir.display()))?;
-        Self::open(&first)
+        Self::open_with(&first, w)
     }
 
     pub fn len(&self) -> usize {
@@ -394,8 +402,13 @@ impl ExpertSource for ExpertSliceMap {
             (&l.down, lay.down_off, lay.down_bytes),
         ] {
             let (shard, at) = self.slice_at(loc, expert as usize);
-            pread_uncached(self.files.file(shard), at, &mut dst[off..off + len])
-                .with_context(|| format!("layer {layer} expert {expert} shard {shard}"))?;
+            pread_uncached(
+                self.files.file(shard),
+                at,
+                &mut dst[off..off + len],
+                self.files.keep_page_cache,
+            )
+            .with_context(|| format!("layer {layer} expert {expert} shard {shard}"))?;
         }
         Ok(())
     }
@@ -430,6 +443,7 @@ impl ExpertSource for ExpertSliceMap {
                 self.files.file(shard),
                 at + (a - s_off) as u64,
                 &mut dst[a - lo..b - lo],
+                self.files.keep_page_cache,
             )
             .with_context(|| {
                 format!("layer {layer} expert {expert} shard {shard} range {a}..{b}")

@@ -139,16 +139,20 @@ pub struct Sampler {
     /// 2026-09-25: FP32 expansion of one row of `logits_host`.
     logits_f32: Vec<f32>,
     vocab_size: usize,
+    /// 2026-10-17: `METRALE_DUMP_LOGITS_PATH` (`settings.telemetry.dump_logits_path`), given by
+    /// the caller: where `fetch_logits_f32` appends each row.
+    dump_dir: Option<std::path::PathBuf>,
 }
 
 impl Sampler {
-    pub fn new(vocab_size: usize) -> Self {
+    pub fn new(vocab_size: usize, dump_dir: Option<std::path::PathBuf>) -> Self {
         let logits_host = vec![0u8; vocab_size * 2];
         let logits_f32 = vec![0.0f32; vocab_size];
         Self {
             logits_host,
             logits_f32,
             vocab_size,
+            dump_dir,
         }
     }
 
@@ -159,15 +163,13 @@ impl Sampler {
         for i in 0..self.vocab_size {
             self.logits_f32[i] = bf16_to_f32(self.logits_host[i * 2], self.logits_host[i * 2 + 1]);
         }
-        // 2026-09-25: With `METRALE_DUMP_LOGITS_PATH=<dir>`, append this row's
-        // FP32 logits to `<dir>/logits_fetch.bin`. The variable is read once per
-        // process. The server's `RunDumps` (scheduler/dumps.rs) reads the same
-        // variable and writes `logits_seq.bin` and `logits_stok.bin` in the same
-        // directory. Open and write errors are ignored.
-        static DUMP_DIR: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-        if let Some(dir) = DUMP_DIR.get_or_init(|| std::env::var("METRALE_DUMP_LOGITS_PATH").ok()) {
+        // 2026-09-25: With a dump directory, append this row's FP32 logits to
+        // `<dir>/logits_fetch.bin`. The server's `RunDumps` (scheduler/dumps.rs)
+        // writes `logits_seq.bin` and `logits_stok.bin` in the same directory.
+        // Open and write errors are ignored.
+        if let Some(dir) = &self.dump_dir {
             use std::io::Write;
-            let path = std::path::Path::new(&dir).join("logits_fetch.bin");
+            let path = dir.join("logits_fetch.bin");
             if let Ok(mut f) = std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
@@ -258,6 +260,10 @@ impl Sampler {
 }
 
 pub mod feed_argmax;
+pub mod feed_argmax_key;
+#[cfg(test)]
+#[path = "feed_argmax_key_tests.rs"]
+mod feed_argmax_key_tests;
 #[cfg(test)]
 #[path = "feed_argmax_tests.rs"]
 mod feed_argmax_tests;

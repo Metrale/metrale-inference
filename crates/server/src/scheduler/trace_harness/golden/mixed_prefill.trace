@@ -18,7 +18,7 @@ ep_sync_vision_embeds(n=4)
 prefill_chunk(start=0, len=4, last=true, s1@0:len=4, stream=1)
 record_event(event=2, stream=1)
 stream_wait_event(stream=0, event=2)
-copy_logits_to_host(row=0, off=0, bytes=128)
+argmax_on_device(row=0, stream=0) -> 10
 fx launch Decode{n=1, ctx=Unified, readback=Argmax}
 decode_batch(tokens=[10], seqs=["s1@0:len=4"], stream=0)
 commit_ctx(s1@0:len=5, n=1, base=4, row=0)
@@ -62,7 +62,7 @@ poll_innerq()
 mixed_forward(decode=[13], prefill=s2@1:len=20 start=16 len=4 last=true, stream=1)
 record_event(event=2, stream=1)
 stream_wait_event(stream=0, event=2)
-copy_logits_to_host(row=1, off=0, bytes=128)
+argmax_on_device(row=1, stream=0) -> 20
 record_event(event=2, stream=1)
 stream_wait_event(stream=0, event=2)
 argmax_batch(row=0, n=1, stream=0) -> [14]

@@ -36,7 +36,9 @@ fn native_qwen_prewarm_exactness_and_cpu_timing() {
     let stop = tokenizer.token_to_id("<|im_end|>").unwrap() as i32;
     let end = tokenizer.token_to_id("<|endoftext|>").unwrap() as i32;
     assert_eq!([stop, end], [248046, 248044]);
-    let mut engine = GrammarEngine::from_tokenizer(&tokenizer, Some(248320), &[stop, end]).unwrap();
+    let mut engine =
+        GrammarEngine::from_tokenizer(&tokenizer, Some(248320), &[stop, end], GrammarLevers::UNSET)
+            .unwrap();
     let tools: Vec<ToolDefinition> = serde_json::from_value(serde_json::json!([{
         "type":"function", "function": {"name":"get_weather",
         "description":"Look up the current weather for a city.",

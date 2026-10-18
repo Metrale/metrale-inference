@@ -19,6 +19,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 
+use crate::levers::BenchLevers;
 use crate::plugin::PluginHandle;
 
 /// 2026-09-26: Per `cargo` invocation; a guard so a wedged `cargo` cannot hang
@@ -75,7 +76,7 @@ async fn main() {
 
 /// 2026-09-26: Resolves `${VAR:-${HOME}/.cargo/<leaf>}` as the harness does: an
 /// empty `explicit` counts as unset, and a missing or empty `home` is an error.
-/// The callers read the environment.
+/// 2026-10-17: The callers pass the resolved levers.
 fn dir_from(explicit: Option<OsString>, home: Option<OsString>, leaf: &str) -> Result<PathBuf> {
     if let Some(p) = explicit.filter(|p| !p.is_empty()) {
         return Ok(PathBuf::from(p));
@@ -90,20 +91,20 @@ fn dir_from(explicit: Option<OsString>, home: Option<OsString>, leaf: &str) -> R
 /// `$HOME/.cargo/metrale-warm-target`: the variable and default path of
 /// `warm_cargo_cache.sh`, `run_tier.sh` and `score_run.py`'s
 /// `_warm_target_dir` (asserted in the tests).
-pub fn warm_target_dir() -> Result<PathBuf> {
+pub fn warm_target_dir(levers: &BenchLevers) -> Result<PathBuf> {
     dir_from(
-        std::env::var_os("METRALE_WARM_TARGET_DIR"),
-        std::env::var_os("HOME"),
+        levers.warm_target_dir.clone().map(OsString::from),
+        levers.user_home.clone().map(OsString::from),
         "metrale-warm-target",
     )
 }
 
 /// 2026-09-26: `METRALE_WARM_TEMPLATE_DIR`, else
 /// `$HOME/.cargo/metrale-warm-template`, as in `warm_cargo_cache.sh`.
-pub fn template_dir() -> Result<PathBuf> {
+pub fn template_dir(levers: &BenchLevers) -> Result<PathBuf> {
     dir_from(
-        std::env::var_os("METRALE_WARM_TEMPLATE_DIR"),
-        std::env::var_os("HOME"),
+        levers.warm_template_dir.clone().map(OsString::from),
+        levers.user_home.clone().map(OsString::from),
         "metrale-warm-template",
     )
 }
@@ -168,8 +169,8 @@ async fn cargo(args: &[&str], warm: &Path, manifest: &Path) -> Result<()> {
 /// an error rather than a fall back to a cold dir, which would show only as
 /// slow or timed-out builds.
 pub async fn prepare(handle: &PluginHandle) -> Result<PathBuf> {
-    let warm = warm_target_dir()?;
-    let template = template_dir()?;
+    let warm = warm_target_dir(handle.levers())?;
+    let template = template_dir(handle.levers())?;
     std::fs::create_dir_all(&warm)
         .with_context(|| format!("creating warm target dir {}", warm.display()))?;
     write_template(&template)?;

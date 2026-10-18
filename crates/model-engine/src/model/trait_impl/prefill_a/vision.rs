@@ -41,7 +41,7 @@ impl TransformerModel {
         }
         let _vt0 = std::time::Instant::now();
         let per_image = ve.forward_batched(&img_refs, self.gpu.as_ref(), stream)?;
-        if std::env::var("METRALE_VISION_TIMING").is_ok() {
+        if self.settings.telemetry.vision_timing {
             self.gpu.synchronize(stream).ok();
             tracing::info!(
                 "VIT_TIMING self-encode {} imgs: {:.1}ms",

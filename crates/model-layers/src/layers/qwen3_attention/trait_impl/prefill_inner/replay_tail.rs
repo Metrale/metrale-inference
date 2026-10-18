@@ -100,6 +100,7 @@ impl Qwen3AttentionLayer {
             dispatch: ctx.dispatch,
             derived: ctx.derived,
             levers: ctx.levers,
+            settings: ctx.settings,
             stats: ctx.stats,
             attn_metadata: Some(meta.rows_from(cl)),
             profile: ctx.profile,

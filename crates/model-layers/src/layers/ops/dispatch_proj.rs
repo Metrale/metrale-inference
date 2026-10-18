@@ -19,25 +19,6 @@ use super::*;
 mod cutlass;
 pub use cutlass::*;
 
-/// 2026-09-25: Which VEC128 activation-scale layout the cuBLASLt block-scaled
-/// arm passes, from `METRALE_CUBLAS_SCALE_LAYOUT`, read once per process.
-///
-/// * `true` (unset, or any value but `rowmajor`): `[K/128, ceil16(M)]`, tokens
-///   contiguous, the layout `metrale_gpu_runtime::cublaslt::scale_layout`
-///   quotes from the cuBLAS manual.
-/// * `false` (`rowmajor`): the quantizer's `[M, K/128]` passed as is. It is a
-///   measurement control: measured 2026-09-11 on H100, it gave rel_rms 7.7e-2
-///   against the in-tree kernel.
-pub fn cublas_scale_layout_kmajor() -> bool {
-    static KMAJOR: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *KMAJOR.get_or_init(|| {
-        !matches!(
-            std::env::var("METRALE_CUBLAS_SCALE_LAYOUT").as_deref(),
-            Ok("rowmajor")
-        )
-    })
-}
-
 /// 2026-09-25: Launch `fp8_act_scale_to_kmajor`: copy the quantizer's
 /// row-major `[M, K/128]` FP32 activation scales into `[K/128, M_pad]`, with
 /// zeros in the `M..M_pad` pad rows. `a_scale` is only read.
@@ -73,11 +54,12 @@ pub fn fp8_act_scale_to_kmajor(
 /// go to cuBLASLt as they are, with no dequant.
 ///
 /// The scratch buffers need the extents listed on
-/// [`cublas_fp8_proj_prequant`].
+/// [`cublas_fp8_proj_prequant`], which also documents `kmajor`.
 #[allow(clippy::too_many_arguments)]
 pub fn cublas_fp8_proj(
     gpu: &dyn metrale_gpu_runtime::gpu::GpuBackend,
     ptg_quant_k: Fp8ActQuant,
+    kmajor: bool,
     scale_kmajor_k: metrale_gpu_runtime::gpu::KernelHandle,
     act_bf16: metrale_gpu_runtime::gpu::DevicePtr,
     act_fp8_scratch: metrale_gpu_runtime::gpu::DevicePtr,
@@ -102,6 +84,7 @@ pub fn cublas_fp8_proj(
     )?;
     cublas_fp8_proj_prequant(
         gpu,
+        kmajor,
         scale_kmajor_k,
         act_fp8_scratch,
         act_scale_scratch,
@@ -119,9 +102,9 @@ pub fn cublas_fp8_proj(
 /// through `per_token_group_quant_fp8`, so one quantization can feed several
 /// projections (the dense FFN's gate and up share one).
 ///
-/// With [`cublas_scale_layout_kmajor`] on, the scales are first transposed
-/// into `act_scale_kmajor`; a zero kernel handle or scratch pointer is an
-/// error.
+/// `kmajor` is the VEC128 activation-scale layout (`OpsLevers::cublas_kmajor`).
+/// When it is on, the scales are first transposed into `act_scale_kmajor`; a
+/// zero kernel handle or scratch pointer is an error.
 ///
 /// cuBLASLt is handed `ceil16(M)` rows ([`cublas_fp8_m_pad`]), so:
 ///
@@ -133,6 +116,7 @@ pub fn cublas_fp8_proj(
 #[allow(clippy::too_many_arguments)]
 pub fn cublas_fp8_proj_prequant(
     gpu: &dyn metrale_gpu_runtime::gpu::GpuBackend,
+    kmajor: bool,
     scale_kmajor_k: metrale_gpu_runtime::gpu::KernelHandle,
     act_fp8: metrale_gpu_runtime::gpu::DevicePtr,
     act_scale: metrale_gpu_runtime::gpu::DevicePtr,
@@ -156,11 +140,11 @@ pub fn cublas_fp8_proj_prequant(
             stream,
         )?;
     }
-    let b_scale = if cublas_scale_layout_kmajor() {
+    let b_scale = if kmajor {
         if scale_kmajor_k.0 == 0 || act_scale_kmajor.0 == 0 {
             anyhow::bail!(
                 "cuBLASLt block-scaled FP8 needs the fp8_act_scale_to_kmajor adapter \
-                 (kernel={:#x}, scratch={:#x}) — see cublas_scale_layout_kmajor()",
+                 (kernel={:#x}, scratch={:#x}) — see METRALE_CUBLAS_SCALE_LAYOUT",
                 scale_kmajor_k.0,
                 act_scale_kmajor.0
             );

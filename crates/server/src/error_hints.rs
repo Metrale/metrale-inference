@@ -8,10 +8,10 @@
 //! that has no hint.
 //!
 //! The hint goes into `message` as well as into its own `hint` field. The
-//! error-body readers, `metrale_bench::http::message_from_body` and
+//! error-body readers, `metrale_host_probe::http_wire::message_from_body` and
 //! `error_message_from_response` (used by `tui/chat_stream.rs`), return only
 //! `message`, and `metrale-bench` cannot import this table because
-//! `metrale-server` depends on `metrale-bench`, not the reverse.
+//! `met` depends on `metrale-bench`, not the reverse.
 
 /// 2026-09-26: The hint for an `error.type`, or `None` for a type without one.
 /// Keyed on the type, not the status: `model_not_loaded` and `not_ready` are

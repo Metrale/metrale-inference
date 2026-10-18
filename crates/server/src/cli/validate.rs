@@ -19,6 +19,7 @@ use super::flag_values::{
 };
 
 mod prompt_lookup;
+mod tokenizer_trim;
 pub(super) mod violation;
 use violation::{Violation, check_enum, format_violations};
 
@@ -269,10 +270,12 @@ pub fn validate_serve_args(args: &ServeArgs) -> Result<(), String> {
     }
 
     prompt_lookup::check(args, &mut v);
+    tokenizer_trim::check(args, &mut v);
 
     // 2026-10-02: The confidence stop shapes MTP draft chains, so it needs MTP;
     // DFlash drafts a whole block in one pass and has no chain to stop.
-    if let Some(tau) = args.mtp_draft.draft_confidence_stop {
+    if let Some(spec) = args.mtp_draft.draft_confidence_stop {
+        let tau = spec.tau;
         if !(tau > 0.0 && tau < 1.0) {
             v.push(Violation::new(
                 format!("--draft-confidence-stop {tau} is outside (0, 1)."),
@@ -367,6 +370,24 @@ pub fn validate_serve_args(args: &ServeArgs) -> Result<(), String> {
             ),
             "expert parallelism cannot span more ranks than exist.",
             "raise --world-size to at least --ep-size, or lower --ep-size.",
+        ));
+    }
+    // 2026-10-09: The expert layout's topology rule, before any weight loads.
+    if let Err(e) = args
+        .moe_expert_layout
+        .0
+        .check_topology(args.tp_size, args.ep_size)
+    {
+        v.push(Violation::new(
+            format!(
+                "--moe-expert-layout {} does not fit --tp-size {} --ep-size {}.",
+                args.moe_expert_layout.0.name(),
+                args.tp_size,
+                args.ep_size
+            ),
+            format!("{e:#}"),
+            "use --moe-expert-layout tp with --ep-size 1 and --tp-size equal to the rank \
+             count, or --moe-expert-layout ep.",
         ));
     }
     if args.tp_size > args.world_size {

@@ -183,7 +183,10 @@ impl ChatCompletionResponse {
                 index: 0,
                 message: ChatMessage {
                     role: "assistant".to_string(),
-                    reasoning_content,
+                    reasoning: WireReasoning::message(
+                        crate::reasoning_parser::ReasoningWire::ReasoningContent,
+                        reasoning_content,
+                    ),
                     annotations: extract_url_annotations(&content),
                     refusal: None,
                     content: Some(content),
@@ -215,7 +218,10 @@ impl ChatCompletionResponse {
                 index: 0,
                 message: ChatMessage {
                     role: "assistant".to_string(),
-                    reasoning_content,
+                    reasoning: WireReasoning::message(
+                        crate::reasoning_parser::ReasoningWire::ReasoningContent,
+                        reasoning_content,
+                    ),
                     annotations: content.as_deref().and_then(extract_url_annotations),
                     refusal: None,
                     content,

@@ -12,6 +12,7 @@ use crate::tool_parser::ToolDefinition;
 mod cold_compile;
 mod engine_state;
 mod gemma4_required;
+mod levers;
 mod minimax;
 mod misc;
 mod native_prewarm;

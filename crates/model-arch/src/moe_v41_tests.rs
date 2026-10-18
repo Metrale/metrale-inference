@@ -21,6 +21,7 @@ use std::sync::Mutex;
 use anyhow::Result;
 
 use super::*;
+use crate::deepseek_v41_layer::levers::tests::at_defaults;
 use crate::deepseek_v41_ref::moe::{MoeCfg, MoeWeights, gate as ref_gate, moe as ref_moe};
 use metrale_model_weights::weights::dequant_cpu::{GgmlType, dequant_to_f32};
 use metrale_model_weights::weights::expert_stream::{ExpertLru, ExpertSource, SlotLayout};
@@ -219,7 +220,7 @@ fn run_case(tokens: usize) {
         shared_w3: ResidentMat::Bf16(up(&s3)),
     };
     let x_dev = up(&x);
-    let moe = MoeV41::new(g, cfg.clone()).unwrap();
+    let moe = MoeV41::new(g, cfg.clone(), at_defaults()).unwrap();
     let layout = ex.slot_layout();
     let arena = PinnedArena::alloc(g, N_ROUTED * layout.bytes).unwrap();
     let mut lru = ExpertLru::new(arena.host(), arena.dev(), arena.bytes(), layout).unwrap();
@@ -436,7 +437,7 @@ fn single_token_expert_sum_is_bit_identical_across_runs() {
         shared_w3: ResidentMat::Bf16(up(&s3)),
     };
     let x_dev = up(&x);
-    let moe = MoeV41::new(g, cfg).unwrap();
+    let moe = MoeV41::new(g, cfg, at_defaults()).unwrap();
     let layout = ex.slot_layout();
     let arena = PinnedArena::alloc(g, N_ROUTED * layout.bytes).unwrap();
     let mut lru = ExpertLru::new(arena.host(), arena.dev(), arena.bytes(), layout).unwrap();

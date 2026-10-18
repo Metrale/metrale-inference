@@ -15,6 +15,7 @@ use anyhow::Result;
 use metrale_config::ModelConfig;
 
 mod accessors;
+mod arena_levers;
 mod debug_checksum;
 pub mod decode_meta;
 mod moe_fp8_scratch;
@@ -24,6 +25,7 @@ mod sizes;
 mod sizes_q12;
 mod sizes_q2;
 mod sizes_rowwise;
+pub use arena_levers::ArenaLevers;
 pub use decode_meta::{DECODE_META_MAX_ROWS, DECODE_META_MIN_ROWS, DecodeMetaLayout};
 pub use moe_fp8_scratch::MoeFp8Scratch;
 pub use sizes::{BufferSizes, GATEUP_FUSED_MAX_M, VERIFY_ROW_CAP};
@@ -94,10 +96,16 @@ pub struct BufferArena {
     /// metrale-model-engine) takes its offsets from it.
     decode_meta: DecodeMetaLayout,
     sizes: BufferSizes,
+    /// 2026-10-10: `zero_all_rows`'s memsets for one row count, captured once and replayed as
+    /// one graph launch (`(tokens, graph)`); `None` until the first call, and on a backend
+    /// without graphs.
+    zero_rows_graph: parking_lot::Mutex<Option<(usize, crate::gpu::GraphHandle)>>,
 }
 
 impl BufferArena {
     /// 2026-09-25: Size the buffers with [`BufferSizes::from_config`] and allocate them.
+    /// 2026-10-17: That is [`BufferArena::new_with`] at the declared levers, for tests and
+    /// examples.
     pub fn new(
         config: &ModelConfig,
         max_batch_tokens: usize,
@@ -106,23 +114,45 @@ impl BufferArena {
         max_batch_size: usize,
         gpu: &dyn GpuBackend,
     ) -> Result<Self> {
-        let sizes = BufferSizes::from_config(
+        Self::new_with(
             config,
             max_batch_tokens,
             max_seq_len,
             kv_block_size,
             max_batch_size,
+            &ArenaLevers::declared(),
+            gpu,
+        )
+    }
+
+    /// 2026-10-17: Size the buffers with [`BufferSizes::from_config_with`] at `levers` and
+    /// allocate them.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with(
+        config: &ModelConfig,
+        max_batch_tokens: usize,
+        max_seq_len: usize,
+        kv_block_size: usize,
+        max_batch_size: usize,
+        levers: &ArenaLevers,
+        gpu: &dyn GpuBackend,
+    ) -> Result<Self> {
+        let sizes = BufferSizes::from_config_with(
+            config,
+            max_batch_tokens,
+            max_seq_len,
+            kv_block_size,
+            max_batch_size,
+            levers,
         );
         Self::from_sizes(config, sizes, max_batch_tokens, max_batch_size, gpu)
     }
 
     /// 2026-09-25: [`BufferArena::new`] with the sizes passed in.
     ///
-    /// `BufferSizes::from_config` reads the environment for the env-gated
-    /// entries (`q2_*`, `ssm_rowwise_w_bf16`), so a test that needs one of
-    /// them sized builds the sizes itself and calls this instead of setting a
-    /// process-global variable. On an allocation error the buffers already
-    /// allocated are not freed.
+    /// A test that needs a lever-gated entry (`q2_*`, `ssm_rowwise_w_bf16`) sized builds the
+    /// sizes itself and calls this. On an allocation error the buffers already allocated are not
+    /// freed.
     pub fn from_sizes(
         config: &ModelConfig,
         sizes: BufferSizes,
@@ -304,6 +334,7 @@ impl BufferArena {
             max_batch_tokens,
             decode_meta,
             sizes,
+            zero_rows_graph: parking_lot::Mutex::new(None),
         })
     }
 }

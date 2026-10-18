@@ -13,10 +13,18 @@ use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
 /// 2026-09-25: A small Marconi-only pool, with no decode-rollback ring.
 fn pool(gpu: &dyn GpuBackend, slots: usize, layers: usize) -> SsmSnapshotPool {
     SsmSnapshotPool::new(
-        slots, 32, 16, layers, 0,
+        slots,
+        32,
+        16,
+        layers,
+        0,
         // 2026-09-25: `spill_blob_bytes` counts only h and conv, so the hidden size is
         // not part of a blob.
-        0, 8, gpu,
+        0,
+        8,
+        // 2026-10-17: The shipped gate defaults (no override), as an unset environment gave.
+        crate::model::ssm_spill_gate::SsmTierGates::resolve(None, None, false),
+        gpu,
     )
     .unwrap()
 }

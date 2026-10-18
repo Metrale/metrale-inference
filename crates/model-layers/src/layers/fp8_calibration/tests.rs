@@ -49,7 +49,7 @@ fn target(gpu: &MockGpuBackend, slot: DevicePtr) -> Fp8KvWriteTarget {
 #[test]
 fn a_readiness_probe_does_not_end_a_256_token_window() {
     let gpu = MockGpuBackend::new();
-    let cal = Fp8KvCalibration::new(0, 256, 2.0, &gpu).expect("mock construct");
+    let cal = Fp8KvCalibration::new(0, 256, 2.0, false, &gpu).expect("mock construct");
     let k = gpu.alloc(1 << 16).expect("k buf");
     let v = gpu.alloc(1 << 16).expect("v buf");
     let slot = gpu.alloc(256 * 8).expect("slot buf");
@@ -78,7 +78,7 @@ fn a_readiness_probe_does_not_end_a_256_token_window() {
 #[test]
 fn the_freeze_replays_the_staged_window_and_releases_its_buffers() {
     let gpu = MockGpuBackend::new();
-    let cal = Fp8KvCalibration::new(3, 64, 1.0, &gpu).expect("mock construct");
+    let cal = Fp8KvCalibration::new(3, 64, 1.0, false, &gpu).expect("mock construct");
     let k = gpu.alloc(1 << 16).expect("k buf");
     let v = gpu.alloc(1 << 16).expect("v buf");
     let slot = gpu.alloc(64 * 8).expect("slot buf");
@@ -113,7 +113,7 @@ fn the_freeze_replays_the_staged_window_and_releases_its_buffers() {
 #[test]
 fn a_one_token_window_stages_nothing() {
     let gpu = MockGpuBackend::new();
-    let cal = Fp8KvCalibration::new(0, 1, 2.0, &gpu).expect("mock construct");
+    let cal = Fp8KvCalibration::new(0, 1, 2.0, false, &gpu).expect("mock construct");
     let k = gpu.alloc(1 << 16).expect("k buf");
     let v = gpu.alloc(1 << 16).expect("v buf");
     let slot = gpu.alloc(64 * 8).expect("slot buf");

@@ -127,6 +127,8 @@ pub async fn serve_for(
     hardware: Option<&str>,
     checkpoint: Option<&str>,
     overrides: BTreeMap<String, String>,
+    // 2026-10-17: This process's harness levers; the in-process server shares its environment.
+    levers: std::sync::Arc<metrale_bench::levers::BenchLevers>,
 ) -> Result<SelfServed> {
     let plan = super::bench_serve_plan::plan_serve(benchmark_id, hardware, checkpoint, overrides)?;
     // 2026-09-26: The server is a task in this process, so its levers are this
@@ -144,6 +146,13 @@ pub async fn serve_for(
         plan.limits.memory.min_free_fraction,
     )?;
 
+    // 2026-10-17: Resolved before the slot is claimed, so a malformed lever leaves the slot
+    // unused, as every other refusal above does.
+    let settings = crate::main_modules::serve_settings::resolve(
+        &metrale_io_host_std::ProcessEnv,
+        &serve_args,
+    )?;
+
     // 2026-09-26: Claimed immediately before the spawn, not on entry: a failure
     // above leaves no server and no tripped latch, so it must not use up the
     // process's one slot.
@@ -154,8 +163,9 @@ pub async fn serve_for(
         "gate: serving {model} from recipe {} on port {port}",
         plan.recipe_id
     );
-    let server =
-        tokio::spawn(async move { crate::main_modules::serve::serve(serve_args, None).await });
+    let server = tokio::spawn(async move {
+        crate::main_modules::serve::serve(serve_args, settings, None, levers).await
+    });
 
     // 2026-09-26: The handle goes into `SelfServed` before the wait, so an error
     // from the `?` below drops it through `Drop`, which aborts the task.

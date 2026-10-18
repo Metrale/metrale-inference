@@ -9,7 +9,8 @@
 //! `ssm_reserve` terms.
 //!
 //! Charged, per sequence:
-//!   * the target stack's DSA indexer caches (`Glm5NextDsaState`), one per text DSA layer;
+//!   * the target stack's DSA indexer caches (`Glm5NextDsaState`), one per text DSA layer,
+//!     when they are flat (2026-10-09: a paged cache lives in the KV pool and is not charged);
 //!   * the draft proposer's own state (what `Glm5NextMtpHead`'s `alloc_state` allocates),
 //!     in its own field: the proposer is not a `TransformerLayer` and is not in the layer list.
 //!
@@ -28,6 +29,7 @@
 use anyhow::Result;
 use metrale_config::{LayerType, ModelConfig};
 
+use crate::glm5next_dsa::paged::IndexerCache;
 use crate::glm5next_dsa::state::{dsa_capacity, indexer_state_bytes};
 use crate::glm5next_skeleton::{Glm5NextTextSkeleton, Mixer};
 
@@ -57,11 +59,41 @@ impl PerSequenceState {
 ///
 /// Returns zeros for any `model_type` other than `glm5_next`. The proposer term needs
 /// `spec_on` and a sparse-attention MTP layer. Errors when the GLM skeleton cannot be built
-/// from `config`.
+/// from `config`, or (2026-10-17) when the drafter levers in `settings` are refused.
 pub fn per_sequence_state_bytes(
     config: &ModelConfig,
     max_seq_len: usize,
     spec_on: bool,
+    settings: &metrale_settings::InferenceServerSettings,
+) -> Result<PerSequenceState> {
+    // 2026-10-13: The drafter cap is read only for a GLM serve; any other model is charged
+    // nothing whatever the lever says.
+    if config.model_type != "glm5_next" {
+        return Ok(PerSequenceState::default());
+    }
+    let mtp = crate::glm5next_mtp_head::MtpLevers::from_settings(settings)?;
+    per_sequence_state_bytes_for(
+        config,
+        max_seq_len,
+        spec_on,
+        crate::glm5next_dsa::paged::text_stack_indexer_cache(settings),
+        mtp.context_cap,
+        mtp.graph,
+    )
+}
+
+/// 2026-10-09: [`per_sequence_state_bytes`] with the text stack's indexer mode as an argument
+/// (env-free). 2026-10-13: And the drafter's context cap (`METRALE_GLM_MTP_CONTEXT_CAP`; 0 =
+/// none): the proposer's rows are `drafter_max_context(max_seq_len, drafter_cap)`.
+/// 2026-10-17: And whether the drafter graph is on (`METRALE_GLM_MTP_GRAPH`, `drafter_graph`),
+/// which adds its per-state metadata.
+pub fn per_sequence_state_bytes_for(
+    config: &ModelConfig,
+    max_seq_len: usize,
+    spec_on: bool,
+    text_indexer: IndexerCache,
+    drafter_cap: usize,
+    drafter_graph: bool,
 ) -> Result<PerSequenceState> {
     if config.model_type != "glm5_next" {
         return Ok(PerSequenceState::default());
@@ -79,19 +111,39 @@ pub fn per_sequence_state_bytes(
         .filter(|l| l.mixer == Mixer::Dsa)
         .count();
 
-    let target_layers = dsa_layers * per_layer;
+    // 2026-10-09: A paged indexer cache keeps the text stack's rows in the KV pool's blocks
+    // (`glm5next_dsa::paged`), which the KV budget already prices; nothing is owned per
+    // sequence.
+    let target_layers = match text_indexer {
+        IndexerCache::Flat => dsa_layers * per_layer,
+        IndexerCache::Paged => 0,
+    };
 
     // 2026-09-25: The GLM MTP head's `alloc_state` (`glm5next_mtp_head/proposer.rs`)
     // allocates one DSA indexer block for its drafter layer and five buffers: `concat`,
-    // `x`, `logits`, `arg`, `head_xchg`, in that order below. Its `block_table` is a host
-    // `Vec<u32>`, not device memory.
+    // `x`, `logits`, `arg` (2026-10-11: the id and its log-probability, 8 B), `head_xchg`, in
+    // that order below. Its `block_table` is a host
+    // `Vec<u32>`, not device memory. 2026-10-11: Plus its region of the drafter KV pool, which
+    // `Glm5NextMtpHead::new` allocates for `--max-batch-size` states up front.
+    // 2026-10-13: Its indexer cache and graph table at the drafter's capped context, the
+    // `max_context` its block is loaded with (`drafter_dsa_config`).
+    let drafter_ctx = crate::glm5next_mtp_head::drafter_max_context(max_seq_len, drafter_cap);
     let proposer = if spec_on && config.mtp_layer_types.contains(&LayerType::SparseAttention) {
-        per_layer
+        crate::glm5next_mtp_head::drafter_kv_bytes_per_seq(config, max_seq_len, drafter_cap)?
+            + indexer_state_bytes(
+                dsa_capacity(drafter_ctx, config.index_kpool),
+                config.index_head_dim,
+            )
             + 2 * config.hidden_size * 2
             + config.hidden_size * 2
             + config.vocab_size * 2
-            + 4
-            + 16
+            + 8
+            + crate::glm5next_mtp_head::HEAD_XCHG_BUFFER_BYTES
+            + crate::glm5next_mtp_head::graph_state_bytes(
+                drafter_graph,
+                config.hidden_size,
+                drafter_ctx,
+            )
     } else {
         0
     };

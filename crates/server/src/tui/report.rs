@@ -74,20 +74,15 @@ impl Drop for SecretString {
     }
 }
 
+#[derive(Clone)]
 pub struct Target {
     pub client_id: String,
     pub repo: String,
 }
 
-/// 2026-09-26: Where this process's reports go: the env overrides, else the
-/// compiled-in identity.
-pub fn target() -> Result<Target, &'static str> {
-    target_from(
-        std::env::var("METRALE_REPORT_CLIENT_ID").ok(),
-        std::env::var("METRALE_REPORT_REPO").ok(),
-    )
-}
-
+/// 2026-10-17: Where this process's reports go: the resolved `METRALE_REPORT_CLIENT_ID` /
+/// `METRALE_REPORT_REPO` settings, else the compiled-in identity.
+///
 /// 2026-09-26: A blank client_id or repo, whether from an override or from
 /// the constants, is refused with [`NOT_CONFIGURED`] before any request is
 /// made.

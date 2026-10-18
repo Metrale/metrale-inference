@@ -48,39 +48,51 @@ impl Glm5NextKdaLayer {
         let nchunks = t.div_ceil(c.chunk);
         let tp = nchunks * c.chunk;
         // 2026-09-25: The same three profile buckets as `decode_k`.
-        let t_front = crate::glm5next_layer::profile::start();
-        self.front_end(gpu, hidden, t, ws, stream)?;
+        let t_front = self.levers.profile.start();
+        let conv_tokens =
+            self.kernels.seq.conv_tokens.0 != 0 && self.kernels.seq.conv_window.0 != 0;
+        let pack = self.pack_for(conv_tokens)?;
+        self.front_end(gpu, hidden, t, ws, pack, GateAt::Kernel, stream)?;
         crate::glm5next_layer::profile::end(
             crate::glm5next_layer::profile::KDA_FRONT,
             t_front,
             gpu,
             stream,
         );
-        let t_recur = crate::glm5next_layer::profile::start();
+        let t_recur = self.levers.profile.start();
 
-        // 2026-09-25: The prefill conv is conv + SiLU only; L2 is a separate launch over q|k.
-        KernelLaunch::new(gpu, self.kernels.conv_prefill)
-            .grid([div_ceil(cd as u32, 256), 1, 1])
-            .block([256, 1, 1])
-            .arg_ptr(state.conv)
-            .arg_ptr(ws.qkv_proj)
-            .arg_ptr(self.weights.conv.weight)
-            .arg_ptr(DevicePtr::NULL)
-            .arg_ptr(ws.conv_out)
-            .arg_u32(cd as u32)
-            .arg_u32(c.conv_kernel as u32)
-            .arg_u32(t as u32)
-            .arg_u32(cd as u32)
-            .arg_u32(cd as u32)
-            .launch(stream)?;
-        KernelLaunch::new(gpu, self.kernels.l2)
-            .grid([(c.qk_channels() / hd) as u32, t as u32, 1])
-            .block([hd as u32, 1, 1])
-            .arg_ptr(ws.conv_out)
-            .arg_u32(hd as u32)
-            .arg_f32(c.l2_eps)
-            .arg_u32(cd as u32)
-            .launch(stream)?;
+        // 2026-10-09: The conv, SiLU and L2 as the decode computes them, one launch for the t
+        // rows (`causal_conv1d_update_l2norm_tokens`, then the window advance): q|k are
+        // normalised in FP32 and rounded to BF16 once, so the scan below reads the q/k/v the
+        // per-token path reads. Without those kernels, the older pair: conv + SiLU rounded to
+        // BF16, then `l2_norm_bf16` rounding again.
+        if conv_tokens {
+            self.conv_tokens(gpu, t, state, ws, pack, stream)?;
+        } else {
+            // 2026-09-25: The prefill conv is conv + SiLU only; L2 is a separate launch over q|k.
+            KernelLaunch::new(gpu, self.kernels.conv_prefill)
+                .grid([div_ceil(cd as u32, 256), 1, 1])
+                .block([256, 1, 1])
+                .arg_ptr(state.conv)
+                .arg_ptr(ws.qkv_proj)
+                .arg_ptr(self.weights.conv.weight)
+                .arg_ptr(DevicePtr::NULL)
+                .arg_ptr(ws.conv_out)
+                .arg_u32(cd as u32)
+                .arg_u32(c.conv_kernel as u32)
+                .arg_u32(t as u32)
+                .arg_u32(cd as u32)
+                .arg_u32(cd as u32)
+                .launch(stream)?;
+            KernelLaunch::new(gpu, self.kernels.l2)
+                .grid([(c.qk_channels() / hd) as u32, t as u32, 1])
+                .block([hd as u32, 1, 1])
+                .arg_ptr(ws.conv_out)
+                .arg_u32(hd as u32)
+                .arg_f32(c.l2_eps)
+                .arg_u32(cd as u32)
+                .launch(stream)?;
+        }
 
         // 2026-09-25: Zero the gate and beta pad tails, so only the q/k/v tails carry `pad_fill`.
         for (buf, real, padded) in [
@@ -159,7 +171,7 @@ impl Glm5NextKdaLayer {
             stream,
         );
 
-        let t_back = crate::glm5next_layer::profile::start();
+        let t_back = self.levers.profile.start();
         let r = self.back_end(gpu, t, ws, stream);
         crate::glm5next_layer::profile::end(
             crate::glm5next_layer::profile::KDA_BACK,

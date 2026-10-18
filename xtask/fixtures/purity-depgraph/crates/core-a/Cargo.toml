@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "core-a"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+tokio = { path = "../../ext/tokio" }
+
+[package.metadata.metrale]
+role = "core"

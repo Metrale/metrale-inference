@@ -32,6 +32,7 @@ pub(super) fn load_layers(
     config: &ModelConfig,
     gpu: &dyn GpuBackend,
     layer_kv_dtypes: &[KvCacheDtype],
+    lc: metrale_model_layers::load_context::LoadContext<'_>,
 ) -> Result<Vec<Box<dyn TransformerLayer>>> {
     let absmax_k = gpu.kernel("quantize_nvfp4", "nvfp4_global_absmax")?;
     let quantize_k = gpu.kernel("quantize_nvfp4", "quantize_bf16_to_nvfp4")?;
@@ -96,6 +97,7 @@ pub(super) fn load_layers(
                 quantize_k,
                 stream,
                 i,
+                lc,
             )?
         };
 
@@ -114,6 +116,7 @@ pub(super) fn load_layers(
             quantize_k,
             stream,
             i,
+            lc,
         )?;
 
         layers.push(Box::new(layer));
@@ -291,6 +294,7 @@ fn load_dense_ffn(
     quantize_k: KernelHandle,
     stream: u64,
     i: usize,
+    lc: metrale_model_layers::load_context::LoadContext<'_>,
 ) -> Result<FfnComponent> {
     tracing::info!("step3p7: layer {i} is dense FFN");
     let gate_w = dense_auto(store, &format!("{lp}.mlp.gate_proj.weight"), gpu)?;
@@ -333,7 +337,7 @@ fn load_dense_ffn(
         up_proj_t: Some(up_q.transpose_for_gemm(gpu, intermediate_size, h)?),
         down_proj_t: Some(down_q.transpose_for_gemm(gpu, h, intermediate_size)?),
     };
-    let mut dffn = DenseFfnLayer::new(dense_weights, gpu)?;
+    let mut dffn = DenseFfnLayer::new(dense_weights, gpu, lc)?;
     // 2026-09-25: With `METRALE_FFN_MMQ` and the Q4_K kernels, this builds the
     // Q4_K copies and frees the transposed ones before the KV cache is sized.
     dffn.finalize_q4k_load(gpu, h as u32, intermediate_size as u32, stream)?;
@@ -356,6 +360,7 @@ fn load_attention_layer(
     quantize_k: KernelHandle,
     stream: u64,
     i: usize,
+    lc: metrale_model_layers::load_context::LoadContext<'_>,
 ) -> Result<Qwen3AttentionLayer> {
     let p = format!("{lp}.self_attn");
     let q_proj = dense_auto(store, &format!("{p}.q_proj.weight"), gpu)?;
@@ -418,6 +423,7 @@ fn load_attention_layer(
         layer_kv_dtypes[attn_layer_idx],
         config.fp8_kv_calibration_tokens,
         config,
+        lc,
     )?;
 
     layer.set_dimension_overrides(config.head_dim, actual_q_heads, config.num_key_value_heads);

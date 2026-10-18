@@ -16,8 +16,8 @@ use metrale_model_layers::layer::TransformerLayer;
 use metrale_model_layers::weight_map::DenseWeight;
 
 /// 2026-09-25: Attach a QSA indexer to a layer whose store has
-/// `self_attn.indexer.index_qk_proj.weight`, when `index_topk > 0` and
-/// `METRALE_QSA_DISABLE` is not `1`. Other layers are left without one. An
+/// `self_attn.indexer.index_qk_proj.weight`, when `index_topk > 0`; the caller skips
+/// it when `METRALE_QSA_DISABLE` is on. Other layers are left without one. An
 /// error if such a layer is not a `Qwen3AttentionLayer`.
 pub(super) fn attach_qsa(
     layer: &mut Box<dyn TransformerLayer>,
@@ -28,7 +28,6 @@ pub(super) fn attach_qsa(
     gpu: &dyn GpuBackend,
 ) -> Result<()> {
     if config.index_topk > 0
-        && std::env::var("METRALE_QSA_DISABLE").as_deref() != Ok("1")
         && store.contains(&format!("{lp}.self_attn.indexer.index_qk_proj.weight"))
     {
         // 2026-09-25: The indexer holds the store's device pointers; it copies

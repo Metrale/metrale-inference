@@ -186,6 +186,7 @@ impl CircuitExec {
             layers: &layers,
             head: &b.head,
             draft: b.draft.as_ref(),
+            ops: b.levers.ops,
         };
         let shapes = std::iter::once((Mode::Decode, 1))
             .chain(b.multi_seq_rows.iter().map(|&r| (Mode::MultiSeq, r)))
@@ -337,6 +338,7 @@ impl CircuitExec {
                     layers: layers.clone(),
                     head: b.head.clone(),
                     config: b.config.clone(),
+                    ops: b.levers.ops,
                 },
                 workspace,
                 workspace_bytes,

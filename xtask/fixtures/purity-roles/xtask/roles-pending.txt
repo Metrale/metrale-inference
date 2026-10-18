@@ -1,0 +1,6 @@
+# 2026-10-17: Fixture: one live entry, one the manifest now declares, one the manifest
+# contradicts, and one for a package that is not a member.
+r-pending core
+r-stale device
+r-mismatch device
+r-gone core

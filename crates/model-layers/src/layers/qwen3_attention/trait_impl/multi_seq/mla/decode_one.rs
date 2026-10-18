@@ -268,7 +268,7 @@ impl Qwen3AttentionLayer {
             d.mla_cache_dim,
             d.mla_cache_dim,
             stream,
-            c.fwd.graph_capture,
+            c.fwd,
         )?;
 
         let attn_out = buffers.attn_output();

@@ -23,6 +23,62 @@ pub const W4A16_TC_ROWS_MAX_M: u32 = 64;
 /// 2026-10-02: The kernel module.
 pub const W4A16_TC_ROWS_MODULE: &str = "w4a16_tc_rows";
 
+/// 2026-10-12: The full-M GEMM twin's module and entry (`w4a16_tc_gemm.cu`): the row tile of 64
+/// rows x 128 columns per block over a 2-D grid, every row's bytes [`w4a16_tc_rows`]'s.
+pub const W4A16_TC_GEMM_MODULE: &str = "w4a16_tc_gemm";
+pub const W4A16_TC_GEMM_ENTRY: &str = "w4a16_tc_gemm_64x128";
+/// 2026-10-12: Rows and columns per block of [`w4a16_tc_gemm`].
+pub const W4A16_TC_GEMM_ROWS: u32 = 64;
+pub const W4A16_TC_GEMM_COLS: u32 = 128;
+
+/// 2026-10-12: [`w4a16_tc_rows`]'s contract for any `m >= 1` (the GEMM tiles the rows itself).
+pub fn w4a16_tc_gemm_shape_ok(m: u32, n: u32, k: u32, lda: u32, ldc: u32) -> bool {
+    m >= 1 && w4a16_tc_rows_shape_ok(m.min(W4A16_TC_ROWS_MAX_M), n, k, lda, ldc)
+}
+
+/// 2026-10-12: `output [m, ldc] = input [m, lda] x W^T` for any `m` in one launch
+/// (`w4a16_tc_gemm_64x128`, grid (ceil(n / 128), ceil(m / 64))), each row's bytes those of
+/// [`w4a16_tc_rows`]. Refuses a shape [`w4a16_tc_gemm_shape_ok`] refuses.
+#[allow(clippy::too_many_arguments)]
+pub fn w4a16_tc_gemm(
+    gpu: &dyn GpuBackend,
+    input: DevicePtr,
+    weight: &QuantizedWeight,
+    output: DevicePtr,
+    m: u32,
+    n: u32,
+    k: u32,
+    lda: u32,
+    ldc: u32,
+    stream: u64,
+) -> Result<()> {
+    anyhow::ensure!(
+        w4a16_tc_gemm_shape_ok(m, n, k, lda, ldc),
+        "w4a16_tc_gemm: m={m} n={n} k={k} lda={lda} ldc={ldc} outside the kernel's contract"
+    );
+    let kernel = gpu
+        .op_cache()
+        .kernel(gpu, W4A16_TC_GEMM_MODULE, W4A16_TC_GEMM_ENTRY)?;
+    KernelLaunch::new(gpu, kernel)
+        .grid([
+            n.div_ceil(W4A16_TC_GEMM_COLS),
+            m.div_ceil(W4A16_TC_GEMM_ROWS),
+            1,
+        ])
+        .block([W4A16_TC_GEMM_COLS * 2, 1, 1])
+        .arg_ptr(input)
+        .arg_ptr(weight.weight)
+        .arg_ptr(weight.weight_scale)
+        .arg_f32(weight.weight_scale_2)
+        .arg_ptr(output)
+        .arg_u32(m)
+        .arg_u32(n)
+        .arg_u32(k)
+        .arg_u32(lda)
+        .arg_u32(ldc)
+        .launch(stream)
+}
+
 /// 2026-10-02: The kernel's shape contract, without a GPU: 1..=64 rows, any positive N (the
 /// entry points are ragged: a partial last CTA loads zero weight rows and stores nothing past N),
 /// K a positive multiple of 256 (whole load groups of every entry point), and an A pitch that
@@ -35,6 +91,18 @@ pub fn w4a16_tc_rows_shape_ok(m: u32, n: u32, k: u32, lda: u32, ldc: u32) -> boo
         && lda >= k
         && lda.is_multiple_of(8)
         && ldc >= n
+}
+
+/// 2026-10-09: The entry point [`w4a16_tc_rows`] launches for `m` rows: the narrowest of the
+/// 16-, 32- and 64-row entries that covers `m`.
+pub fn w4a16_tc_rows_entry(m: u32) -> &'static str {
+    if m <= 16 {
+        "w4a16_tc_rows_16"
+    } else if m <= 32 {
+        "w4a16_tc_rows_32"
+    } else {
+        "w4a16_tc_rows_64"
+    }
 }
 
 /// 2026-10-02: `output [m, ldc] = input [m, lda] x W^T` for the row-major NVFP4 `weight` `[n, k]`
@@ -57,17 +125,86 @@ pub fn w4a16_tc_rows(
         w4a16_tc_rows_shape_ok(m, n, k, lda, ldc),
         "w4a16_tc_rows: m={m} n={n} k={k} lda={lda} ldc={ldc} outside the kernel's contract"
     );
-    let entry = if m <= 16 {
-        "w4a16_tc_rows_16"
-    } else if m <= 32 {
-        "w4a16_tc_rows_32"
-    } else {
-        "w4a16_tc_rows_64"
+    launch_rows(
+        gpu,
+        w4a16_tc_rows_entry(m),
+        W4A16_TC_ROWS_COLS,
+        input,
+        weight,
+        output,
+        [m, n, k, lda, ldc],
+        stream,
+    )
+}
+
+/// 2026-10-11: The widest row count of the narrow entry points (`w4a16_tc_rows_8_w<W>`).
+pub const W4A16_TC_ROWS_NARROW_MAX_M: u32 = 8;
+
+/// 2026-10-11: The narrow entry point with `warps` warps (16 columns each) per block, 1..=8 rows.
+pub fn w4a16_tc_rows_narrow_entry(warps: u32) -> Option<&'static str> {
+    match warps {
+        1 => Some("w4a16_tc_rows_8_w1"),
+        2 => Some("w4a16_tc_rows_8_w2"),
+        _ => None,
+    }
+}
+
+/// 2026-10-11: [`w4a16_tc_rows`] for 1..=8 rows on blocks of `warps` (1 or 2) warps: more blocks
+/// for a narrow launch, every row's bytes those of [`w4a16_tc_rows`] (`tc_rows.cuh`: the warps
+/// per block change no output's MMA sequence). Refuses more rows, another warp count, or a shape
+/// [`w4a16_tc_rows_shape_ok`] refuses.
+#[allow(clippy::too_many_arguments)]
+pub fn w4a16_tc_rows_narrow(
+    gpu: &dyn GpuBackend,
+    input: DevicePtr,
+    weight: &QuantizedWeight,
+    output: DevicePtr,
+    m: u32,
+    n: u32,
+    k: u32,
+    lda: u32,
+    ldc: u32,
+    warps: u32,
+    stream: u64,
+) -> Result<()> {
+    let entry = w4a16_tc_rows_narrow_entry(warps)
+        .filter(|_| m <= W4A16_TC_ROWS_NARROW_MAX_M && w4a16_tc_rows_shape_ok(m, n, k, lda, ldc));
+    let Some(entry) = entry else {
+        anyhow::bail!(
+            "w4a16_tc_rows_narrow: m={m} n={n} k={k} lda={lda} ldc={ldc} warps={warps} outside \
+             the kernel's contract"
+        );
     };
+    launch_rows(
+        gpu,
+        entry,
+        16 * warps,
+        input,
+        weight,
+        output,
+        [m, n, k, lda, ldc],
+        stream,
+    )
+}
+
+/// 2026-10-11: One launch of `entry` over blocks of `cols` columns (`cols / 16` warps); `dims` is
+/// `[m, n, k, lda, ldc]`.
+#[allow(clippy::too_many_arguments)]
+fn launch_rows(
+    gpu: &dyn GpuBackend,
+    entry: &'static str,
+    cols: u32,
+    input: DevicePtr,
+    weight: &QuantizedWeight,
+    output: DevicePtr,
+    dims: [u32; 5],
+    stream: u64,
+) -> Result<()> {
+    let [m, n, k, lda, ldc] = dims;
     let kernel = gpu.op_cache().kernel(gpu, W4A16_TC_ROWS_MODULE, entry)?;
     KernelLaunch::new(gpu, kernel)
-        .grid([n.div_ceil(W4A16_TC_ROWS_COLS), 1, 1])
-        .block([128, 1, 1])
+        .grid([n.div_ceil(cols), 1, 1])
+        .block([cols * 2, 1, 1])
         .arg_ptr(input)
         .arg_ptr(weight.weight)
         .arg_ptr(weight.weight_scale)
@@ -90,6 +227,26 @@ mod tests {
 
     /// 2026-10-02: The grid and the widest entry point match the kernel (`TR_WARPS` warps of 16
     /// columns, `tr_block<Nvfp4G16, 8, ...>` row tiles of 8), or columns or rows go unwritten.
+    /// 2026-10-11: The narrow entries are 8-row (NT = 1) points with 1 and 2 warps, launched with
+    /// 32 threads and 16 columns per warp; a third warp count has no entry.
+    #[test]
+    fn narrow_entries_match_the_kernel() {
+        for w in [1u32, 2] {
+            let name = w4a16_tc_rows_narrow_entry(w).unwrap();
+            assert!(
+                CU.contains(&format!("__launch_bounds__({}) {name}(", 32 * w)),
+                "{name}"
+            );
+            assert!(CU.contains(&format!(
+                "tr_block<Nvfp4G16, 1, 2, true, {w}>(A, {{packed, scale, s2}}, C, M, N, K, lda, ldc, blockIdx.x);"
+            )));
+        }
+        assert_eq!(w4a16_tc_rows_narrow_entry(4), None);
+        assert_eq!(W4A16_TC_ROWS_NARROW_MAX_M, 8);
+        assert!(ROWS.contains("constexpr int THREADS = NW * 32;"));
+        assert!(ROWS.contains("col_block * (NW * 16) + warp * 16"));
+    }
+
     #[test]
     fn launch_matches_the_kernel() {
         assert!(
@@ -108,6 +265,79 @@ mod tests {
         ] {
             assert!(CU.contains(entry), "{entry} missing from the kernel");
         }
+    }
+
+    /// 2026-10-13: The GEMM twin is `w4a16_tc_rows_64`'s template point (Nvfp4G16, NT 8, G 1,
+    /// RAGGED, unsplit) with only the warp count raised to 8, so its 256 threads cover the
+    /// launch's 128 columns and its 64-row tile the launch's row step; any other point would
+    /// change a row's bytes or leave rows or columns unwritten.
+    #[test]
+    fn gemm_launch_matches_the_kernel() {
+        const GEMM: &str = include_str!("../../../../../kernels/gb10/common/w4a16_tc_gemm.cu");
+        assert!(GEMM.contains(&format!(
+            "__launch_bounds__({}) {W4A16_TC_GEMM_ENTRY}(",
+            W4A16_TC_GEMM_COLS * 2
+        )));
+        assert!(GEMM.contains("tr_block_split<Nvfp4G16, 8, 1, true, 1, TrWhole, 8>("));
+        assert!(GEMM.contains("const unsigned int r0 = blockIdx.y * 64u;"));
+        assert_eq!(W4A16_TC_GEMM_COLS, 8 * 16);
+        assert_eq!(W4A16_TC_GEMM_ROWS, W4A16_TC_ROWS_MAX_M);
+        assert!(ROWS.contains("constexpr int ROWS = 8 * NT;"));
+        assert!(CU.contains("tr_block<Nvfp4G16, 8, 1, true>("));
+        assert!(ROWS.contains(
+            "tr_block_split<P, NT, G, RAGGED, 1, TrWhole, WARPS>(A, W, C, M, N, K, lda, ldc, col_block, 0u);"
+        ));
+    }
+
+    /// 2026-10-13: One launch for any M: 1036 rows of KDA q ([2816, 4096]) tile as 22 x 17
+    /// blocks of 256 threads (a ragged last tile both ways), the weight's three pieces and the
+    /// shape in the kernel's argument order; a shape outside the contract launches nothing.
+    #[test]
+    fn gemm_launch_tiles_every_row_and_column() {
+        use metrale_gpu_runtime::gpu::mock::{MockArg, MockGpuBackend};
+        let gpu = MockGpuBackend::new();
+        let w = QuantizedWeight {
+            weight: DevicePtr(0x1000),
+            weight_scale: DevicePtr(0x2000),
+            weight_scale_2: 0.375,
+            ..QuantizedWeight::null()
+        };
+        let (a, c) = (DevicePtr(0x5000), DevicePtr(0x9000));
+        w4a16_tc_gemm(&gpu, a, &w, c, 1036, 2816, 4096, 4096, 2816, 7).unwrap();
+        let l = gpu.launches_snapshot();
+        assert_eq!(l.len(), 1);
+        let l = &l[0];
+        assert_eq!((l.grid, l.block, l.stream), ([22, 17, 1], [256, 1, 1], 7));
+        let bytes = |v: &[u8]| MockArg::Bytes(v.to_vec());
+        assert_eq!(
+            l.args,
+            vec![
+                MockArg::Buffer(a),
+                MockArg::Buffer(w.weight),
+                MockArg::Buffer(w.weight_scale),
+                bytes(&0.375f32.to_le_bytes()),
+                MockArg::Buffer(c),
+                bytes(&1036u32.to_le_bytes()),
+                bytes(&2816u32.to_le_bytes()),
+                bytes(&4096u32.to_le_bytes()),
+                bytes(&4096u32.to_le_bytes()),
+                bytes(&2816u32.to_le_bytes()),
+            ]
+        );
+        let gpu = MockGpuBackend::new();
+        assert!(w4a16_tc_gemm(&gpu, a, &w, c, 1036, 2816, 4000, 4000, 2816, 7).is_err());
+        assert!(gpu.launches_snapshot().is_empty());
+    }
+
+    /// 2026-10-13: The GEMM admits any M from 1 and keeps the row contract's N, K and pitch bounds.
+    #[test]
+    fn gemm_shape_contract() {
+        assert!(w4a16_tc_gemm_shape_ok(1, 4096, 4096, 4096, 4096));
+        assert!(w4a16_tc_gemm_shape_ok(32768, 4096, 4096, 4096, 4096));
+        assert!(!w4a16_tc_gemm_shape_ok(0, 4096, 4096, 4096, 4096));
+        assert!(!w4a16_tc_gemm_shape_ok(4096, 4096, 4096 + 128, 4224, 4096));
+        assert!(!w4a16_tc_gemm_shape_ok(4096, 4096, 4096, 4092, 4096));
+        assert!(!w4a16_tc_gemm_shape_ok(4096, 4096, 4096, 4096, 4095));
     }
 
     /// 2026-10-02: The shape contract refuses each bound it names and admits the 35B head.

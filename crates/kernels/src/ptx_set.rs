@@ -25,7 +25,7 @@ pub struct ModelTypeMatch {
 /// the other keys default as noted.
 #[derive(Debug, Clone)]
 pub struct DflashConfig {
-    /// 2026-09-25: Drafter checkpoint id or path. metrale-server uses it for
+    /// 2026-09-25: Drafter checkpoint id or path. met uses it for
     /// `--dflash` when no `--draft-model` is given.
     pub draft_model: &'static str,
     /// 2026-09-25: Block size γ. Default 16.

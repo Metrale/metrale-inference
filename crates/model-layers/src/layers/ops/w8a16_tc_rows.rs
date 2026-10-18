@@ -29,13 +29,6 @@ pub const W8A16_TC_ROWS_MAX_M: u32 = 64;
 
 const MODULE: &str = "w8a16_tc_rows";
 
-/// 2026-09-28: On unless `METRALE_NO_W8A16_TC_ROWS` is present (a debugging kill switch: the
-/// tile twins). Read once per process.
-fn w8a16_tc_rows_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("METRALE_NO_W8A16_TC_ROWS").is_none())
-}
-
 /// 2026-09-28: The kernel's shape contract, without a GPU: at least one row, N a positive
 /// multiple of 128 (whole scale blocks, whole CTAs), K a positive multiple of 128, and an A
 /// pitch that keeps rows 16-byte aligned and covers K; the C pitch covers N.
@@ -57,9 +50,9 @@ pub fn w8a16_tc_rows_shape_ok(
 }
 
 /// 2026-09-28: Launches `[m, k] x [n, k]^T` through `w8a16_tc_rows_{16,32,64}` and returns true
-/// when the lever is on, the process runs `RowTiers::Canonical`, the shape passes
-/// [`w8a16_tc_rows_shape_ok`] and the target ships the module; otherwise returns false and
-/// launches nothing.
+/// when the process runs `RowTiers::Canonical`, the shape passes [`w8a16_tc_rows_shape_ok`]
+/// and the target ships the module; otherwise returns false and launches nothing. 2026-10-17:
+/// the tile twins call it only under [`super::W8a16Plan::tc_rows`].
 #[allow(clippy::too_many_arguments)]
 pub fn w8a16_tc_rows_launch(
     gpu: &dyn GpuBackend,
@@ -74,8 +67,7 @@ pub fn w8a16_tc_rows_launch(
     c_row_stride: u32,
     stream: u64,
 ) -> Result<bool> {
-    if !w8a16_tc_rows_enabled()
-        || crate::layers::row_tiers() != crate::layers::RowTiers::Canonical
+    if crate::layers::row_tiers() != crate::layers::RowTiers::Canonical
         || !w8a16_tc_rows_shape_ok(m, n, k, a_row_stride, c_row_stride)
         || !gpu.has_module(MODULE)
     {

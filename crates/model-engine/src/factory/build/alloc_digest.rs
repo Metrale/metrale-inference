@@ -21,8 +21,9 @@ use sha2::{Digest, Sha256};
 const CHUNK: usize = 64 << 20;
 
 /// 2026-10-02: Write the digest when `METRALE_DEBUG_ALLOC_DIGEST` names a path.
-pub(super) fn write_if_requested(gpu: &dyn GpuBackend) -> Result<()> {
-    let Some(path) = std::env::var_os("METRALE_DEBUG_ALLOC_DIGEST") else {
+/// 2026-10-17: `path` is the `telemetry.debug_alloc_digest` setting.
+pub(super) fn write_if_requested(gpu: &dyn GpuBackend, path: Option<&str>) -> Result<()> {
+    let Some(path) = path else {
         return Ok(());
     };
     let Some(allocs) = gpu.live_allocations() else {
@@ -45,15 +46,14 @@ pub(super) fn write_if_requested(gpu: &dyn GpuBackend) -> Result<()> {
         lines.push(format!("{site}\t{bytes}\t{hex}"));
     }
     lines.sort();
-    let mut f = std::fs::File::create(&path)
-        .with_context(|| format!("METRALE_DEBUG_ALLOC_DIGEST {}", path.to_string_lossy()))?;
+    let mut f = std::fs::File::create(path)
+        .with_context(|| format!("METRALE_DEBUG_ALLOC_DIGEST {path}"))?;
     for l in &lines {
         writeln!(f, "{l}")?;
     }
     tracing::info!(
-        "METRALE_DEBUG_ALLOC_DIGEST: {} allocations hashed into {}",
+        "METRALE_DEBUG_ALLOC_DIGEST: {} allocations hashed into {path}",
         lines.len(),
-        path.to_string_lossy()
     );
     Ok(())
 }

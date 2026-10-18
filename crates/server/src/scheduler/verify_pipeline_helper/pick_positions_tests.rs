@@ -85,6 +85,7 @@ fn with_ctx<R>(f: impl FnOnce(&LogitsContext) -> R) -> R {
         think_start_token: Some(THINK_START),
         tool_call_start_token: Some(TOOL_CALL_OPEN),
         tool_call_end_token: Some(TOOL_CALL_CLOSE),
+        thinking_closed_by: None,
         // 2026-09-25: unused: `verify_pick_with_pipeline` sets `verify_pos`
         // per position on its own copy of the context.
         verify_pos: 0,

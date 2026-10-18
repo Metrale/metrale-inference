@@ -293,7 +293,7 @@ pub fn free_bytes(path: &Path) -> Option<u64> {
 }
 
 /// 2026-09-26: Non-Unix targets have no `statvfs`; Windows builds of
-/// `metrale-server` (`.github/workflows/release-build.yml`) get `None` here.
+/// `met` (`.github/workflows/release-build.yml`) get `None` here.
 #[cfg(not(unix))]
 fn statvfs_avail(_path: &Path) -> Option<u64> {
     None

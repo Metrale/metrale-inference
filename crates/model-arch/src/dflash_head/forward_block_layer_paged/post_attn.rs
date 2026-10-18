@@ -34,64 +34,17 @@ impl BlockDiffusionDraftHead {
         // sequence in the batch.
         let g = self.block_g() as u32 * args.n_seq.max(1);
 
-        // 2026-09-25: The same FP8/BF16 GEMM choice as `forward_block_layer_pre_attn`.
-        let use_fp8 = matches!(
-            self.quant,
-            crate::dflash_head::DflashQuantization::Fp8Weights
-        );
+        // 2026-09-25: The same quantized/BF16 GEMM choice as `forward_block_layer_pre_attn`.
+        let use_copy = self.quant != crate::dflash_head::DflashQuantization::Bf16;
         let gemm_swap = |w_bf16: &metrale_model_layers::weight_map::DenseWeight,
-                         w_fp8: &Option<metrale_model_layers::weight_map::Fp8DenseWeight>,
+                         w_q: &Option<crate::dflash_head::DraftWeight>,
                          src: metrale_gpu_runtime::gpu::DevicePtr,
                          dst: metrale_gpu_runtime::gpu::DevicePtr,
                          n_out: u32,
                          k_in: u32|
          -> Result<()> {
-            if use_fp8 && let Some(fp8) = w_fp8 {
-                if self.kernels.fp8_gemv_rt2.0 != 0
-                    && g <= 8
-                    && k_in.is_multiple_of(16)
-                    && crate::dflash_head::fp8_rt_enabled()
-                {
-                    return ops::fp8_gemv_rowscale_batch8_rt2(
-                        gpu,
-                        self.kernels.fp8_gemv_rt2,
-                        src,
-                        fp8,
-                        dst,
-                        g,
-                        n_out,
-                        k_in,
-                        stream,
-                    );
-                }
-                if self.kernels.fp8_gemv_rt2_16.0 != 0
-                    && g <= 16
-                    && k_in.is_multiple_of(16)
-                    && crate::dflash_head::fp8_rt_enabled()
-                {
-                    return ops::fp8_gemv_rowscale_batch16_rt2(
-                        gpu,
-                        self.kernels.fp8_gemv_rt2_16,
-                        src,
-                        fp8,
-                        dst,
-                        g,
-                        n_out,
-                        k_in,
-                        stream,
-                    );
-                }
-                return ops::fp8_gemm_n128_row_scaled(
-                    gpu,
-                    self.kernels.fp8_gemm_n128_row_scaled,
-                    src,
-                    fp8,
-                    dst,
-                    g,
-                    n_out,
-                    k_in,
-                    stream,
-                );
+            if use_copy && let Some(w) = w_q {
+                return self.quant_rows(gpu, src, w, dst, g, n_out, k_in, stream);
             }
             ops::dense_gemm_bf16_pipelined(
                 gpu,
@@ -110,12 +63,15 @@ impl BlockDiffusionDraftHead {
         // input: pre_attn read it into norm_buf and did not write it.
         gemm_swap(
             &layer.o_proj,
-            &layer.o_proj_fp8,
+            &layer.o_proj_q,
             self.scratch.attn_out,
             self.scratch.stream_acc,
             h,
             q_dim,
         )?;
+        // 2026-10-10: Tensor-parallel: each rank's o_proj covers its heads; sum the partials
+        // (the conv finish below is linear in its input).
+        self.tp_all_reduce(ctx, self.scratch.stream_acc, (g * h) as usize * 2, stream)?;
 
         // 2026-09-25: DFlash2 attention conv finish on the o_proj output, with the
         // dynamic slice computed in pre_attn.
@@ -168,7 +124,7 @@ impl BlockDiffusionDraftHead {
         // into mlp_intermediate, down_proj into stream_acc.
         gemm_swap(
             &layer.gate_proj,
-            &layer.gate_proj_fp8,
+            &layer.gate_proj_q,
             mlp_src,
             self.scratch.mlp_intermediate,
             inter,
@@ -176,7 +132,7 @@ impl BlockDiffusionDraftHead {
         )?;
         gemm_swap(
             &layer.up_proj,
-            &layer.up_proj_fp8,
+            &layer.up_proj_q,
             mlp_src,
             self.scratch.mlp_up,
             inter,
@@ -193,12 +149,14 @@ impl BlockDiffusionDraftHead {
         )?;
         gemm_swap(
             &layer.down_proj,
-            &layer.down_proj_fp8,
+            &layer.down_proj_q,
             self.scratch.mlp_intermediate,
             self.scratch.stream_acc,
             h,
             inter,
         )?;
+        // 2026-10-10: Tensor-parallel: each rank's down covers its slice of the intermediate.
+        self.tp_all_reduce(ctx, self.scratch.stream_acc, (g * h) as usize * 2, stream)?;
 
         // 2026-09-25: DFlash2 MLP conv finish on the down_proj output.
         let mlp_res_src = self.conv_finish(

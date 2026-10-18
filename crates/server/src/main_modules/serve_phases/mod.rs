@@ -14,12 +14,14 @@ mod forward;
 pub(crate) mod fp8_kv_scale_source;
 mod kernel_gate;
 pub(crate) mod kv_cache;
+pub(crate) mod load_levers;
 pub(crate) mod preflight;
 mod runtime;
 mod tokenizer_runtime;
 mod topology;
 mod weights;
 
+pub(crate) use build::lever_settings;
 pub(super) use build::{
     build_high_speed_swap_config, build_model, build_prefix_cache, maybe_run_ep_worker,
     resolve_swap_space_gb, validate_head_high_speed_swap,
@@ -35,6 +37,7 @@ pub(super) use kernel_gate::audit_and_gate;
 pub(super) use kv_cache::{
     KvCacheConfig, PrefillBudget, resolve_kv_cache_config, resolve_prefill_budget,
 };
+pub(crate) use load_levers::LoadLevers;
 pub(super) use preflight::{
     PostLoadInputs, ReservePreflight, init_gpu_backend, post_load_memory_audit, preflight_reserve,
 };

@@ -18,6 +18,7 @@ use crate::main_modules::serve_phases;
 
 pub(super) fn reserve_preflight(
     args: &cli::ServeArgs,
+    levers: &serve_phases::LoadLevers,
     config: &ModelConfig,
     gpu: &dyn metrale_gpu_runtime::gpu::GpuBackend,
     free_mem: usize,
@@ -40,12 +41,14 @@ pub(super) fn reserve_preflight(
             .unwrap_or(metrale_cache::kv_cache::KvCacheDtype::Bf16),
         w8a8_prefill_kernels:
             metrale_model_layers::layers::qwen3_attention::w8a8_prefill_kernels_loaded(gpu),
+        kv_floor_tokens: levers.kv_floor_tokens,
     };
-    serve_phases::preflight_reserve(args, config, free_mem, &post_load_inputs)
+    serve_phases::preflight_reserve(args, config, free_mem, &post_load_inputs, levers)
 }
 
 pub(super) fn load_weights(
     args: &cli::ServeArgs,
+    levers: &serve_phases::LoadLevers,
     config: &mut ModelConfig,
     model_dir: &Path,
     gpu: &dyn metrale_gpu_runtime::gpu::GpuBackend,
@@ -62,13 +65,14 @@ pub(super) fn load_weights(
     let oom_reserve_bytes = args.oom_guard_mb * 1024 * 1024;
     tracing::info!(target: "met::main_modules::serve_load", "OOM guard reserve: {} MB", args.oom_guard_mb);
     let store = serve_phases::load_weight_store(
-        args,
         config,
         model_dir,
         gpu,
         ep_rank,
         ep_size,
         oom_reserve_bytes,
+        levers.fast_load,
+        levers.fast_load_prefetch_shards,
     )?;
 
     metrale_model_weights::weights::auto_detect_weight_prefix(&store, config);

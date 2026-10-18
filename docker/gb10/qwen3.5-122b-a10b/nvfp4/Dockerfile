@@ -40,7 +40,7 @@ ENV METRALE_TARGET_HW=gb10
 ENV METRALE_TARGET_MODEL=qwen3.5-122b-a10b
 ENV METRALE_TARGET_QUANT=nvfp4
 
-RUN cargo build --release -p metrale-server
+RUN cargo build --release -p met --features bench
 
 # ── Runtime stage ────────────────────────────────────────────────
 FROM nvidia/cuda:13.0.0-runtime-ubuntu24.04

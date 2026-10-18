@@ -11,7 +11,7 @@
 //! - A registry owns neither the context nor the stream; both belong to the
 //!   process-scoped [`CudaHost`].
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::{CString, c_void};
 use std::sync::{Arc, OnceLock};
 
@@ -20,6 +20,7 @@ use cudarc::nvrtc::Ptx;
 
 pub use crate::cuda_host::{CudaHost, host, release};
 use metrale_core::error::{MetraleError, Result};
+use metrale_settings::groups::device::StreamPriority;
 
 unsafe extern "C" {
     fn cuModuleGetFunction(hfunc: *mut *mut c_void, hmod: *mut c_void, name: *const i8) -> i32;
@@ -77,6 +78,9 @@ pub fn cuda_error_text(status: i32) -> String {
     format!("{name} ({status}): {msg}")
 }
 
+/// 2026-10-14: `CUDA_ERROR_NOT_FOUND`: no symbol of that name in the module.
+const CUDA_ERROR_NOT_FOUND: i32 = 500;
+
 /// 2026-09-25: `CUDA_ERROR_DEINITIALIZED`: the driver has already shut down. The
 /// free paths treat it as nothing to do (see [`is_teardown_noop`]).
 pub const CUDA_ERROR_DEINITIALIZED: i32 = 4;
@@ -109,6 +113,9 @@ pub struct MetraleRegistry {
     /// 2026-09-25: Raw `CUmodule` views of `modules`, for `cuModuleGetFunction` and
     /// `cuModuleGetGlobal_v2`.
     raw_modules: HashMap<&'static str, *mut c_void>,
+    /// 2026-10-14: The variables each PTX module defines (`ptx_globals`); `None` for a
+    /// binary module, whose definitions are not read.
+    globals: HashMap<&'static str, Option<HashSet<String>>>,
 }
 
 impl Drop for MetraleRegistry {
@@ -136,12 +143,17 @@ impl MetraleRegistry {
     /// 2026-09-25: Load this model's kernel modules into the process CUDA context.
     ///
     /// Each call produces a fresh, independent module set; it shares only the
-    /// context and stream with a previously loaded model.
+    /// context and stream with a previously loaded model. `priority` is the
+    /// process stream's (`cuda_host::host`).
     pub fn load(
         ordinal: usize,
         kernel_blobs: &[(&'static str, &'static [u8])],
+        priority: StreamPriority,
     ) -> Result<Arc<Self>> {
-        Ok(Arc::new(Self::init(host(ordinal)?, kernel_blobs)?))
+        Ok(Arc::new(Self::init(
+            host(ordinal, priority)?,
+            kernel_blobs,
+        )?))
     }
 
     /// 2026-09-25: The process CUDA host this registry's modules live in.
@@ -170,17 +182,20 @@ impl MetraleRegistry {
 
         let mut modules = HashMap::new();
         let mut raw_modules = HashMap::new();
+        let mut globals = HashMap::new();
         for &(name, blob) in kernel_blobs {
             let is_binary = blob.starts_with(b"\x7fELF")
                 || blob.starts_with(b"__CLANG_OFFLOAD_BUNDLE__")
                 || std::str::from_utf8(&blob[..blob.len().min(64)]).is_err();
 
             let ptx = if is_binary {
+                globals.insert(name, None);
                 Ptx::from_binary(blob.to_vec())
             } else {
                 let src = std::str::from_utf8(blob).map_err(|e| {
                     MetraleError::ModuleLoad(format!("{name}: PTX not valid UTF-8: {e}"))
                 })?;
+                globals.insert(name, Some(crate::ptx_globals::defined_globals(src)));
                 Ptx::from_src(src)
             };
             let module = ctx
@@ -198,6 +213,7 @@ impl MetraleRegistry {
             host,
             modules,
             raw_modules,
+            globals,
         })
     }
 
@@ -272,6 +288,7 @@ impl MetraleRegistry {
     pub(crate) fn unload_raw(&mut self) -> Vec<String> {
         self.raw_modules.drain().for_each(drop);
         self.modules.drain().for_each(drop);
+        self.globals.clear();
         Vec::new()
     }
 
@@ -286,6 +303,49 @@ impl MetraleRegistry {
     /// linker-visible name, so C++ namespace symbols are Itanium-mangled
     /// (`_ZN7tq_plus14d_innerq_scaleE`).
     pub fn device_symbol(&self, module_name: &str, symbol: &str) -> Result<(u64, usize)> {
+        self.get_global(module_name, symbol)?.map_err(|status| {
+            MetraleError::ModuleLoad(format!(
+                "{module_name}::{symbol}: cuModuleGetGlobal_v2 failed: {}",
+                cuda_error_text(status)
+            ))
+        })
+    }
+
+    /// 2026-10-14: [`Self::device_symbol`] for a symbol a module may not define: `None`,
+    /// without a driver call, when the module's PTX defines no variable named `symbol`, so
+    /// an absent symbol is not a failed `cuModuleGetGlobal_v2` (which compute-sanitizer
+    /// reports as an API error). A defined symbol the driver cannot resolve is an error. A
+    /// binary module's definitions are not read: the driver is asked, and only
+    /// `CUDA_ERROR_NOT_FOUND` means `None`.
+    pub fn device_symbol_if_defined(
+        &self,
+        module_name: &str,
+        symbol: &str,
+    ) -> Result<Option<(u64, usize)>> {
+        let defined = self.globals.get(module_name).ok_or_else(|| {
+            MetraleError::ModuleLoad(format!("Module '{module_name}' not loaded"))
+        })?;
+        match defined {
+            Some(names) if !names.contains(symbol) => Ok(None),
+            Some(_) => self.device_symbol(module_name, symbol).map(Some),
+            None => match self.get_global(module_name, symbol)? {
+                Ok(found) => Ok(Some(found)),
+                Err(CUDA_ERROR_NOT_FOUND) => Ok(None),
+                Err(status) => Err(MetraleError::ModuleLoad(format!(
+                    "{module_name}::{symbol}: cuModuleGetGlobal_v2 failed: {}",
+                    cuda_error_text(status)
+                ))),
+            },
+        }
+    }
+
+    /// 2026-10-14: `cuModuleGetGlobal_v2` on `module_name`: the pointer and byte length, or
+    /// the driver's status. The outer error is a module that is not loaded or a bad name.
+    fn get_global(
+        &self,
+        module_name: &str,
+        symbol: &str,
+    ) -> Result<std::result::Result<(u64, usize), i32>> {
         let raw_mod = self.raw_modules.get(module_name).ok_or_else(|| {
             MetraleError::ModuleLoad(format!("Module '{module_name}' not loaded"))
         })?;
@@ -296,13 +356,11 @@ impl MetraleRegistry {
         let mut bytes: usize = 0;
         let status =
             unsafe { cuModuleGetGlobal_v2(&mut dptr, &mut bytes, *raw_mod, c_sym.as_ptr().cast()) };
-        if status != 0 {
-            return Err(MetraleError::ModuleLoad(format!(
-                "{module_name}::{symbol}: cuModuleGetGlobal_v2 failed: {}",
-                cuda_error_text(status)
-            )));
-        }
-        Ok((dptr, bytes))
+        Ok(if status == 0 {
+            Ok((dptr, bytes))
+        } else {
+            Err(status)
+        })
     }
 
     /// 2026-09-25: Async H2D copy into a device pointer.

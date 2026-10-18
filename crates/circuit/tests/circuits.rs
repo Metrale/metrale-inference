@@ -156,19 +156,21 @@ fn moe_circuit_has_the_checkpoint_layers_formats_and_experts() {
     assert_eq!(inst.shape.dims["experts"], 256);
 }
 
+/// 2026-10-08: Compiled by the target of an instance (golden or not): a rule waiting for its
+/// circuit to turn golden (`glm_*`) names kernels only that model's target compiles.
 #[test]
-fn every_rule_kernel_is_compiled_by_a_golden_target() {
+fn every_rule_kernel_is_compiled_by_an_instance_target() {
     let mut modules = Vec::new();
     let mut rules = Vec::new();
-    for inst in common::instances().iter().filter(|i| i.golden) {
-        modules.push(common::target_modules(inst));
-        rules = common::load(inst).rules;
+    for inst in common::instances() {
+        modules.push(common::target_modules(&inst));
+        rules = common::load(&inst).rules;
     }
     for r in &rules {
         for k in &r.kernels {
             assert!(
                 modules.iter().any(|m| common::present(m, k)),
-                "rule `{}` names {k}, which no golden target compiles",
+                "rule `{}` names {k}, which no instance's target compiles",
                 r.id
             );
         }
@@ -248,6 +250,24 @@ fn every_reference_rule_is_used_by_a_golden_plan_and_every_lever_moves_one() {
                     .any(|(k, v)| i.policy.settings.get(k) != Some(v))
             })
     };
+    // 2026-10-08: A reference rule may wait for a circuit that is not golden yet (the `glm_*`
+    // rules): its first element heads a node of a non-golden circuit and no node of a golden
+    // one, so no golden plan could select it. A rule that heads a golden node stays checked.
+    let golden: Vec<metrale_circuit::Circuit> = common::instances()
+        .iter()
+        .filter(|i| i.golden)
+        .map(|i| common::load(i).circuit)
+        .collect();
+    let pending: Vec<metrale_circuit::Circuit> = common::instances()
+        .iter()
+        .filter(|i| !i.golden)
+        .map(|i| common::load(i).circuit)
+        .collect();
+    let heads = |r: &metrale_circuit::Rule, cs: &[metrale_circuit::Circuit]| {
+        cs.iter()
+            .any(|c| (0..c.nodes.len()).any(|n| r.heads_a_node(c, n)))
+    };
+    let waits = |r: &metrale_circuit::Rule| !heads(r, &golden) && heads(r, &pending);
     for r in &rules {
         match &r.numerics {
             Numerics::Differs { .. } => assert!(
@@ -264,7 +284,7 @@ fn every_reference_rule_is_used_by_a_golden_plan_and_every_lever_moves_one() {
                 r.id
             ),
             _ => assert!(
-                used.contains(&r.id) || legacy_used.contains(&r.id),
+                used.contains(&r.id) || legacy_used.contains(&r.id) || waits(r),
                 "rule `{}` is used by no golden plan and no legacy plan",
                 r.id
             ),
@@ -319,11 +339,11 @@ fn the_kv_write_runs_before_attention_reads_it() {
 
 #[test]
 fn every_bit_identical_rule_names_a_registered_microtest() {
-    let manifest: toml::Table =
-        toml::from_str(&common::read("crates/model-arch/Cargo.toml")).expect("model-arch manifest");
+    let manifest: toml::Table = toml::from_str(&common::read("crates/gpu-examples/Cargo.toml"))
+        .expect("gpu-examples manifest");
     let examples: BTreeSet<String> = manifest["example"]
         .as_array()
-        .expect("[[example]] entries")
+        .expect("example entries")
         .iter()
         .filter_map(|e| e.get("name").and_then(|n| n.as_str()).map(str::to_string))
         .collect();
@@ -333,7 +353,7 @@ fn every_bit_identical_rule_names_a_registered_microtest() {
         let Numerics::BitIdentical { microtest } = &r.numerics else {
             continue;
         };
-        let path = common::root().join(format!("crates/model-arch/examples/{microtest}.rs"));
+        let path = common::root().join(format!("crates/gpu-examples/examples/{microtest}.rs"));
         assert!(
             path.is_file(),
             "rule `{}`: {} does not exist",
@@ -342,7 +362,7 @@ fn every_bit_identical_rule_names_a_registered_microtest() {
         );
         assert!(
             examples.contains(microtest),
-            "rule `{}`: example `{microtest}` is not registered in crates/model-arch/Cargo.toml",
+            "rule `{}`: example `{microtest}` is not registered in crates/gpu-examples/Cargo.toml",
             r.id
         );
         named += 1;

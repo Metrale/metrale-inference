@@ -15,8 +15,7 @@ use crate::tool_parser;
 
 /// 2026-09-26: Add one to `count`; when `count` exceeds `max` and `stop` is not yet set,
 /// set it and log a warning. The chat stream passes `max` from
-/// `METRALE_MAX_TOOL_CALLS_PER_RESPONSE`, 12 when unset or unparsable
-/// (`chat_stream/mod.rs`).
+/// `ChatLevers::max_tool_calls_per_response` (`chat_stream/mod.rs`).
 pub fn bump_f12_tool_call_count(count: &mut usize, max: usize, stop: &mut bool) {
     *count += 1;
     if *count > max && !*stop {

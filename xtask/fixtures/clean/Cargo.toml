@@ -1,0 +1,14 @@
+# 2026-10-17: selftest fixture. Follows the dependency convention everywhere, in every kind of
+# dependency table; `cargo xtask deps` must pass it.
+[workspace]
+resolver = "2"
+members = ["crates/app", "crates/lib"]
+
+[workspace.dependencies]
+anyhow = { version = "1", default-features = false }
+cc = { version = "1", default-features = false }
+libc = { version = "0.2", default-features = false }
+serde = { version = "1", default-features = false }
+tempfile = { version = "3", default-features = false }
+thiserror = { version = "2", default-features = false }
+fixture-lib = { path = "crates/lib", version = "0.0.0", default-features = false }

@@ -28,6 +28,7 @@ use anyhow::{Result, bail, ensure};
 use super::expert_prefetch::{ReaderPool, Ticket};
 use super::expert_stream::{ExpertSource, SlotLayout};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
+use metrale_settings::groups::device_weights::WeightsSettings;
 
 /// One page-locked host arena with its device alias.
 pub struct PinnedArena {
@@ -172,8 +173,15 @@ unsafe impl Send for ExpertLru {}
 
 impl ExpertLru {
     /// `bytes / layout.bytes` slots over the arena at `host` (device alias
-    /// `dev`). Every slot starts empty and at the LRU end.
-    pub fn new(host: *mut u8, dev: DevicePtr, bytes: usize, layout: SlotLayout) -> Result<Self> {
+    /// `dev`). Every slot starts empty and at the LRU end; a victim is drawn from the oldest
+    /// `w.evict_random_pct` percent.
+    pub fn with_settings(
+        host: *mut u8,
+        dev: DevicePtr,
+        bytes: usize,
+        layout: SlotLayout,
+        w: &WeightsSettings,
+    ) -> Result<Self> {
         ensure!(layout.bytes > 0, "expert slot layout has zero bytes");
         let n_slots = bytes / layout.bytes;
         ensure!(
@@ -210,11 +218,7 @@ impl ExpertLru {
             stats: LruStats::default(),
             pool: None,
             in_flight: Vec::new(),
-            evict_pct: std::env::var("METRALE_DS41_EVICT_RANDOM_PCT")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .filter(|p| *p <= 100)
-                .unwrap_or(8),
+            evict_pct: w.evict_random_pct,
             rng: 0x9E37_79B9_7F4A_7C15,
             trace: None,
             t0: std::time::Instant::now(),

@@ -105,11 +105,11 @@ multiple lines\n\
 </tool_call>\n\n\
 ",
         );
-        // 2026-09-26: `METRALE_OFFICIAL_TOOL_PROMPT=1` uses the four-bullet
+        // 2026-09-26: `levers.official_tool_prompt` uses the four-bullet
         // `<IMPORTANT>` reminder of `jinja-templates/qwen3_5_moe.jinja`
         // (line 53); otherwise the `<IMMEDIATE_TOOL_USE>` block and the longer
         // `<IMPORTANT>` list below are used.
-        if std::env::var("METRALE_OFFICIAL_TOOL_PROMPT").as_deref() == Ok("1") {
+        if levers.official_tool_prompt {
             prompt.push_str("\
 <IMPORTANT>\n\
 Reminder:\n\

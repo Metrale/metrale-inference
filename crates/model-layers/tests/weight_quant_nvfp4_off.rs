@@ -7,8 +7,8 @@
 
 use metrale_config::{Nvfp4Act, W4a4Downcast, WeightQuantTier, WeightQuantization};
 use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
-use metrale_model_layers::layers::ops::gemv_tc::narrow_gemv_max_rows;
 use metrale_model_layers::layers::ops::w4a4_proj;
+use metrale_model_layers::layers::ops::{OpsLevers, W4a16TcPlan};
 use metrale_model_layers::layers::w4a16_gemv_tiers::W4a16BatchmTiers;
 use metrale_model_layers::weight_map::QuantizedWeight;
 
@@ -20,14 +20,18 @@ fn no_weight_reaches_w4a4_and_nothing_of_it_is_prepared() {
         tier
     );
     let gpu = MockGpuBackend::new();
-    let tiers = W4a16BatchmTiers::resolve(&gpu);
+    let tiers = W4a16BatchmTiers::resolve(&gpu, &OpsLevers::declared());
     assert_eq!(w4a4_proj::max_rows(&gpu), 0);
     for act in [Nvfp4Act::Unstamped, Nvfp4Act::A4, Nvfp4Act::Wide] {
         let w = QuantizedWeight {
             act,
             ..QuantizedWeight::null()
         };
-        assert_eq!(tiers.edge(&w), narrow_gemv_max_rows(), "{act:?}");
+        assert_eq!(
+            tiers.edge(&w),
+            W4a16TcPlan::declared().narrow_max_rows(),
+            "{act:?}"
+        );
         assert!(!tiers.declares_a4(&w), "{act:?}");
         assert_eq!(w4a4_proj::weight_rows(&gpu, &w), 0, "{act:?}");
         for m in 1..=70 {

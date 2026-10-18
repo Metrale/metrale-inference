@@ -1,0 +1,373 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-08: The GLM-5 (`glm5_next`) sparse-attention layers: NoPE multi-head latent attention
+# over the tokens the lightning indexer selects, under the attention-site hyper-connection
+# (`dsa`), and the same attention with a plain residual for the MTP layer (`mtp_dsa`). Split out
+# of kernels/circuits/glm5_next.toml to keep each file short; only that circuit includes it.
+#
+# Owner: metrale-circuit (schema: crates/circuit/src/circuit_toml.rs).
+# Invariants:
+# - MLA (`qk_rope_head_dim` 0): q = q_b(rmsnorm(q_a(x))) per head; the latent row
+#   c = rmsnorm(kv_a(x)) is the only thing cached (K and V are both c); `mla_attention` absorbs
+#   each head's query through `kv_b_proj`'s key half, attends the latent rows, and takes the
+#   result back through the value half (the absorbed decode form of the reference's
+#   kv_b_proj(c) keys and values).
+# - The indexer: k = layernorm(wk(x)) with a bias, a per-channel gate score
+#   (`index_kpool_compress_gate`, a parameter), pooled every `index_kpool` tokens by a softmax
+#   over the pool's slots of gate + `index_kpool_compress_ape`; the incomplete pool waits in a
+#   per-sequence tail. Per row, the scores sum over the heads of `weights_proj(x)` times
+#   relu(q_idx . pool key), with q_idx = wq_b(the normed query latent); the top
+#   `index_topk / index_kpool` pools are attended, and the tail always is.
+# - Declared precision: every tensor is BF16 (`self_attn*` is excluded from the NVFP4
+#   quantization); the latent cache is FP8 (`kv_cache_scheme`, static, no scale tensors: scale
+#   1.0); the pooled index keys are held BF16, the reference's model dtype.
+
+schema = 1
+description = "GLM-5 sparse latent attention: under the hyper-connection, and the MTP layer's plain one"
+
+[block.dsa]
+stream_in = "x"
+stream_out = "y"
+
+# 2026-10-08: The latent cache (one `kv_lora` row per token), the pooled index keys (one
+# `index_head_dim` key per `index_kpool` tokens, declared per token) and the pool tail (the raw
+# keys and gate scores of the incomplete pool, a window like a conv state).
+[[block.dsa.state]]
+id = "latent"
+kind = "paged_kv"
+lifetime = "model"
+format = "{kv_cache_dtype}"
+shape = "kv_lora"
+
+[[block.dsa.state]]
+id = "index"
+kind = "paged_kv"
+lifetime = "model"
+format = "bf16"
+shape = "index_head_dim/index_kpool"
+
+[[block.dsa.state]]
+id = "tail"
+kind = "recurrent"
+lifetime = "sequence"
+format = "bf16"
+shape = "index_kpool x index_head_dim*2"
+verify = "conv_steps"
+
+[[block.dsa.node]]
+id = "mix"
+op = "linear"
+role = "hc_mix"
+in = ["x"]
+out = [{ edge = "mix", format = "f32", shape = "n x hc*hc+hc*2" }]
+binding = ["{L}.hc_attn_fn"]
+unquantized = true
+
+[[block.dsa.node]]
+id = "pre"
+op = "hc_pre"
+in = ["x", "mix"]
+out = [
+  { edge = "u", format = "bf16", shape = "n x hidden" },
+  { edge = "post", format = "f32", shape = "n x hc" },
+  { edge = "comb", format = "f32", shape = "n x hc*hc" },
+]
+binding = ["{L}.hc_attn_scale", "{L}.hc_attn_base"]
+
+[[block.dsa.node]]
+id = "input_norm"
+op = "rms_norm"
+in = ["u"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.input_layernorm"]
+params = { weight_form = "plain" }
+
+[[block.dsa.node]]
+id = "q_a"
+op = "linear"
+role = "mla_q_a"
+in = ["xn"]
+out = [{ edge = "qa", format = "bf16", shape = "n x q_lora" }]
+binding = ["{L}.self_attn.q_a_proj"]
+
+[[block.dsa.node]]
+id = "q_a_norm"
+op = "rms_norm"
+in = ["qa"]
+out = [{ edge = "qan", format = "bf16", shape = "n x q_lora" }]
+binding = ["{L}.self_attn.q_a_layernorm"]
+params = { weight_form = "plain" }
+
+[[block.dsa.node]]
+id = "q_b"
+op = "linear"
+role = "mla_q_b"
+in = ["qan"]
+out = [{ edge = "q", format = "bf16", shape = "n x q_heads*mla_qk" }]
+binding = ["{L}.self_attn.q_b_proj"]
+
+[[block.dsa.node]]
+id = "kv_a"
+op = "linear"
+role = "mla_kv_a"
+in = ["xn"]
+out = [{ edge = "kva", format = "bf16", shape = "n x kv_lora" }]
+binding = ["{L}.self_attn.kv_a_proj_with_mqa"]
+
+[[block.dsa.node]]
+id = "kv_norm"
+op = "rms_norm"
+in = ["kva"]
+out = [{ edge = "c", format = "bf16", shape = "n x kv_lora" }]
+binding = ["{L}.self_attn.kv_a_layernorm"]
+params = { weight_form = "plain" }
+
+[[block.dsa.node]]
+id = "kv_write"
+op = "kv_write"
+state = { latent = "write" }
+in = ["c"]
+out = []
+params = { layout = "latent" }
+
+[[block.dsa.node]]
+id = "idx_k"
+op = "linear"
+role = "index_k"
+in = ["xn"]
+out = [{ edge = "ik", format = "bf16", shape = "n x index_head_dim" }]
+binding = ["{L}.self_attn.indexer.wk"]
+
+[[block.dsa.node]]
+id = "idx_k_norm"
+op = "layer_norm"
+in = ["ik"]
+out = [{ edge = "ikn", format = "bf16", shape = "n x index_head_dim" }]
+binding = ["{L}.self_attn.indexer.k_norm"]
+
+[[block.dsa.node]]
+id = "idx_gate"
+op = "linear"
+role = "index_gate"
+in = ["xn"]
+out = [{ edge = "ig", format = "bf16", shape = "n x index_head_dim" }]
+binding = ["{L}.self_attn.indexer.index_kpool_compress_gate"]
+unquantized = true
+
+[[block.dsa.node]]
+id = "pool"
+op = "kpool_compress"
+state = { tail = "update", index = "write" }
+in = ["ikn", "ig"]
+out = []
+binding = ["{L}.self_attn.indexer.index_kpool_compress_ape"]
+
+[[block.dsa.node]]
+id = "idx_w"
+op = "linear"
+role = "index_weights"
+in = ["xn"]
+out = [{ edge = "iw", format = "bf16", shape = "n x index_heads" }]
+binding = ["{L}.self_attn.indexer.weights_proj"]
+
+[[block.dsa.node]]
+id = "idx_q"
+op = "linear"
+role = "index_q"
+in = ["qan"]
+out = [{ edge = "iq", format = "bf16", shape = "n x index_heads*index_head_dim" }]
+binding = ["{L}.self_attn.indexer.wq_b"]
+
+[[block.dsa.node]]
+id = "select"
+op = "index_select"
+state = { index = "read" }
+in = ["iq", "iw"]
+out = [{ edge = "sel", format = "i32", shape = "n x index_topk/index_kpool" }]
+params = { tail = "always" }
+
+[[block.dsa.node]]
+id = "attend"
+op = "mla_attention"
+state = { latent = "read" }
+in = ["q", "sel"]
+out = [{ edge = "a", format = "bf16", shape = "n x q_heads*mla_v" }]
+binding = ["{L}.self_attn.kv_b_proj"]
+params = { selection = "index_topk" }
+
+[[block.dsa.node]]
+id = "o"
+op = "linear"
+role = "o"
+in = ["a"]
+out = [{ edge = "o", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.self_attn.o_proj"]
+
+[[block.dsa.node]]
+id = "post"
+op = "hc_post"
+in = ["o", "x", "post", "comb"]
+out = [{ edge = "y", format = "bf16", shape = "n x hc*hidden" }]
+
+# 2026-10-08: The MTP layer's attention (`layers.{num_hidden_layers}`): the same latent
+# attention and indexer with its own caches, on a plain residual (no hyper-connection).
+[block.mtp_dsa]
+stream_in = "x"
+stream_out = "y"
+
+[[block.mtp_dsa.state]]
+id = "latent"
+kind = "paged_kv"
+lifetime = "model"
+format = "{kv_cache_dtype}"
+shape = "kv_lora"
+
+[[block.mtp_dsa.state]]
+id = "index"
+kind = "paged_kv"
+lifetime = "model"
+format = "bf16"
+shape = "index_head_dim/index_kpool"
+
+[[block.mtp_dsa.state]]
+id = "tail"
+kind = "recurrent"
+lifetime = "sequence"
+format = "bf16"
+shape = "index_kpool x index_head_dim*2"
+verify = "conv_steps"
+
+[[block.mtp_dsa.node]]
+id = "input_norm"
+op = "rms_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.input_layernorm"]
+params = { weight_form = "plain" }
+
+[[block.mtp_dsa.node]]
+id = "q_a"
+op = "linear"
+role = "mla_q_a"
+in = ["xn"]
+out = [{ edge = "qa", format = "bf16", shape = "n x q_lora" }]
+binding = ["{L}.self_attn.q_a_proj"]
+
+[[block.mtp_dsa.node]]
+id = "q_a_norm"
+op = "rms_norm"
+in = ["qa"]
+out = [{ edge = "qan", format = "bf16", shape = "n x q_lora" }]
+binding = ["{L}.self_attn.q_a_layernorm"]
+params = { weight_form = "plain" }
+
+[[block.mtp_dsa.node]]
+id = "q_b"
+op = "linear"
+role = "mla_q_b"
+in = ["qan"]
+out = [{ edge = "q", format = "bf16", shape = "n x q_heads*mla_qk" }]
+binding = ["{L}.self_attn.q_b_proj"]
+
+[[block.mtp_dsa.node]]
+id = "kv_a"
+op = "linear"
+role = "mla_kv_a"
+in = ["xn"]
+out = [{ edge = "kva", format = "bf16", shape = "n x kv_lora" }]
+binding = ["{L}.self_attn.kv_a_proj_with_mqa"]
+
+[[block.mtp_dsa.node]]
+id = "kv_norm"
+op = "rms_norm"
+in = ["kva"]
+out = [{ edge = "c", format = "bf16", shape = "n x kv_lora" }]
+binding = ["{L}.self_attn.kv_a_layernorm"]
+params = { weight_form = "plain" }
+
+[[block.mtp_dsa.node]]
+id = "kv_write"
+op = "kv_write"
+state = { latent = "write" }
+in = ["c"]
+out = []
+params = { layout = "latent" }
+
+[[block.mtp_dsa.node]]
+id = "idx_k"
+op = "linear"
+role = "index_k"
+in = ["xn"]
+out = [{ edge = "ik", format = "bf16", shape = "n x index_head_dim" }]
+binding = ["{L}.self_attn.indexer.wk"]
+
+[[block.mtp_dsa.node]]
+id = "idx_k_norm"
+op = "layer_norm"
+in = ["ik"]
+out = [{ edge = "ikn", format = "bf16", shape = "n x index_head_dim" }]
+binding = ["{L}.self_attn.indexer.k_norm"]
+
+[[block.mtp_dsa.node]]
+id = "idx_gate"
+op = "linear"
+role = "index_gate"
+in = ["xn"]
+out = [{ edge = "ig", format = "bf16", shape = "n x index_head_dim" }]
+binding = ["{L}.self_attn.indexer.index_kpool_compress_gate"]
+unquantized = true
+
+[[block.mtp_dsa.node]]
+id = "pool"
+op = "kpool_compress"
+state = { tail = "update", index = "write" }
+in = ["ikn", "ig"]
+out = []
+binding = ["{L}.self_attn.indexer.index_kpool_compress_ape"]
+
+[[block.mtp_dsa.node]]
+id = "idx_w"
+op = "linear"
+role = "index_weights"
+in = ["xn"]
+out = [{ edge = "iw", format = "bf16", shape = "n x index_heads" }]
+binding = ["{L}.self_attn.indexer.weights_proj"]
+
+[[block.mtp_dsa.node]]
+id = "idx_q"
+op = "linear"
+role = "index_q"
+in = ["qan"]
+out = [{ edge = "iq", format = "bf16", shape = "n x index_heads*index_head_dim" }]
+binding = ["{L}.self_attn.indexer.wq_b"]
+
+[[block.mtp_dsa.node]]
+id = "select"
+op = "index_select"
+state = { index = "read" }
+in = ["iq", "iw"]
+out = [{ edge = "sel", format = "i32", shape = "n x index_topk/index_kpool" }]
+params = { tail = "always" }
+
+[[block.mtp_dsa.node]]
+id = "attend"
+op = "mla_attention"
+state = { latent = "read" }
+in = ["q", "sel"]
+out = [{ edge = "a", format = "bf16", shape = "n x q_heads*mla_v" }]
+binding = ["{L}.self_attn.kv_b_proj"]
+params = { selection = "index_topk" }
+
+[[block.mtp_dsa.node]]
+id = "o"
+op = "linear"
+role = "o"
+in = ["a"]
+out = [{ edge = "o", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.self_attn.o_proj"]
+
+[[block.mtp_dsa.node]]
+id = "add"
+op = "residual_add"
+in = ["x", "o"]
+out = [{ edge = "y", format = "bf16", shape = "n x hidden" }]

@@ -233,6 +233,7 @@ pub fn glow(tick: u64) -> Color {
 
 /// 2026-09-26: Map a benchmark's semantic cell style onto the palette; the
 /// only place `metrale_bench::CellStyle` becomes a colour.
+#[cfg(feature = "bench")]
 pub fn cell_style(style: metrale_bench::CellStyle) -> Style {
     use metrale_bench::CellStyle as S;
     match style {

@@ -162,6 +162,7 @@ pub struct ValidatedToolCalls {
 pub fn validate_tool_calls(
     mut calls: Vec<ToolCall>,
     tools: &[ToolDefinition],
+    debug_empty_path: bool,
 ) -> ValidatedToolCalls {
     let mut valid = Vec::new();
     let mut errors = Vec::new();
@@ -177,7 +178,7 @@ pub fn validate_tool_calls(
             );
             call.function.name = best;
         }
-        match assess_tool_call(call, tools) {
+        match assess_tool_call(call, tools, debug_empty_path) {
             Ok(()) => valid.push(call.clone()),
             Err(ToolCallIssue::MissingParam(msg)) => {
                 valid.push(call.clone());
@@ -221,13 +222,23 @@ impl ToolCallIssue {
 }
 
 /// 2026-09-26: [`assess_tool_call`] with the issue reduced to its message.
-pub fn validate_single_tool_call(call: &ToolCall, tools: &[ToolDefinition]) -> Result<(), String> {
-    assess_tool_call(call, tools).map_err(ToolCallIssue::into_message)
+pub fn validate_single_tool_call(
+    call: &ToolCall,
+    tools: &[ToolDefinition],
+    debug_empty_path: bool,
+) -> Result<(), String> {
+    assess_tool_call(call, tools, debug_empty_path).map_err(ToolCallIssue::into_message)
 }
 
 /// 2026-09-26: Validate one tool call. Returns `Ok(())`, or the first
-/// [`ToolCallIssue`] found; the caller decides delivery from its variant.
-pub fn assess_tool_call(call: &ToolCall, tools: &[ToolDefinition]) -> Result<(), ToolCallIssue> {
+/// [`ToolCallIssue`] found; the caller decides delivery from its variant. With
+/// `debug_empty_path` (`ChatLevers::toolcall_debug`), a write-family call with an empty path
+/// logs its argument shape.
+pub fn assess_tool_call(
+    call: &ToolCall,
+    tools: &[ToolDefinition],
+    debug_empty_path: bool,
+) -> Result<(), ToolCallIssue> {
     let name = &call.function.name;
 
     let tool_def = tools.iter().find(|t| t.function.name == *name);
@@ -293,9 +304,9 @@ pub fn assess_tool_call(call: &ToolCall, tools: &[ToolDefinition]) -> Result<(),
             if let Some(serde_json::Value::String(path)) = args.get(*key) {
                 let trimmed = path.trim();
                 if trimmed.is_empty() {
-                    // 2026-09-26: With `METRALE_TOOLCALL_DEBUG=1`, log each
-                    // argument's key with its string length or value.
-                    if std::env::var("METRALE_TOOLCALL_DEBUG").as_deref() == Ok("1") {
+                    // 2026-09-26: With `debug_empty_path`, log each argument's key with its
+                    // string length or value.
+                    if debug_empty_path {
                         let shape: Vec<String> = args
                             .iter()
                             .map(|(k, v)| match v {

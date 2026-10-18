@@ -64,6 +64,7 @@ impl Qwen3SsmLayer {
             act_scale_kmajor_bytes: ctx.buffers.fp8_act_scale_kmajor_bytes(),
             quant_k: self.per_token_group_quant_fp8_k,
             scale_kmajor_k: self.fp8_act_scale_kmajor_k,
+            kmajor: ctx.levers.ops.cublas_kmajor,
         }
     }
 
@@ -76,7 +77,7 @@ impl Qwen3SsmLayer {
     ) -> bool {
         ops::decode_w8a8_selected(
             ssm_decode_family_armed(ctx.dispatch.cublas),
-            ops::w8a8_decode_proj_disabled(),
+            !ctx.levers.ops.w8a8_decode_proj,
             plan,
             fp8w.scale_format,
             &self.decode_w8a8_scratch(ctx),

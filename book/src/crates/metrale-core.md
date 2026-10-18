@@ -80,7 +80,7 @@ A non-owning view of a device tensor: it neither allocates nor frees, and it is 
 - **No actual GPU allocation.** That's `metrale-gpu-runtime`.
 - **No model config.** That's `metrale-config`.
 - **No weight loader types.** Those are `metrale-model-weights` and `metrale-model-arch`.
-- **No HTTP types.** Those are `metrale-server`.
+- **No HTTP types.** Those are `met`.
 
 `metrale-core` is small on purpose. It contains only the vocabulary that *every* crate downstream needs.
 

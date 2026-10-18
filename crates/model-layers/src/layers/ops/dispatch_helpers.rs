@@ -121,10 +121,10 @@ pub fn log_cutlass_nvfp4_route(gpu: &dyn GpuBackend, name: &str, m: u32, n: u32,
     }
 }
 
-/// 2026-09-25: With `METRALE_GEMM_SHAPE_LOG=1`, log each (kernel, M, N, K) GEMM
-/// shape once per backend at warn level, with its FLOP count.
-pub fn log_gemm_shape(gpu: &dyn GpuBackend, name: &str, m: u32, n: u32, k: u32) {
-    if std::env::var("METRALE_GEMM_SHAPE_LOG").ok().as_deref() != Some("1") {
+/// 2026-09-25: With `on` (`OpsLevers::gemm_shape_log`, `METRALE_GEMM_SHAPE_LOG`), log each
+/// (kernel, M, N, K) GEMM shape once per backend at warn level, with its FLOP count.
+pub fn log_gemm_shape(gpu: &dyn GpuBackend, on: bool, name: &str, m: u32, n: u32, k: u32) {
+    if !on {
         return;
     }
     if gpu.op_cache().first_shape(name, m, n, k) {

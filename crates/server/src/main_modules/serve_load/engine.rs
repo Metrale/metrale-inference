@@ -46,7 +46,13 @@ pub(crate) struct Engine {
 
 /// 2026-09-28: Build the model `args` names. `Ok(None)` means this rank is an EP worker: it ran
 /// its command loop and has nothing to serve.
-pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
+pub(crate) fn load_engine(
+    mut args: cli::ServeArgs,
+    settings: &metrale_settings::InferenceServerSettings,
+) -> Result<Option<Engine>> {
+    // 2026-10-17: Every lever the load phases read, resolved before any model work so a
+    // malformed one stops the load first (ROTI, PCND).
+    let levers = serve_phases::LoadLevers::from_settings(settings)?;
     metrale_telemetry::progress::phase(1, "model resolve");
     let model_dir = serve_phases::resolve_model_dir(&args)?;
 
@@ -66,24 +72,24 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
     let (mut config, config_json) = model_setup::configure_model(&args, &model_dir)?;
 
     let (vision_max_pixels, remote_image_policy, video_ffmpeg) =
-        model_setup::resolve_media_policies(&args, &model_dir, &mut config)?;
+        model_setup::resolve_media_policies(&args, &levers, &model_dir, &mut config)?;
 
     model_setup::log_model_config(&config);
 
     let ptx_set = model_setup::select_kernel_target(&args, &config, &model_dir)?;
     let sampling_presets = ptx_set.sampling;
     model_setup::check_kernel_target(&ptx_set, &mut config)?;
-    model_setup::publish_row_tiers(&args, &config);
+    model_setup::publish_row_tiers(&args, &config, settings);
     act_quant_support::check(&config, &args.lm_head_dtype)?;
     model_setup::publish_moe_expert_act(&config);
 
     // 2026-09-26: After this call `args.num_drafts` is `Some`, so
     // `args.resolved_num_drafts()` is valid.
     serve_phases::apply_model_default_num_drafts(&mut args, &ptx_set);
-    serve_phases::publish_mtp_max_seqs(&args, &ptx_set)?;
+    serve_phases::publish_mtp_max_seqs(&args, &ptx_set, settings)?;
     serve_phases::publish_copy_tier(&args)?;
     serve_phases::publish_draft_confidence_stop(&args)?;
-    serve_phases::publish_mtp_k_ladder(&args)?;
+    serve_phases::publish_mtp_k_ladder(settings)?;
     // 2026-09-30: One γ for the reserve, the pools and the scheduler.
     serve_phases::apply_dflash_gamma(&mut args, serve_phases::model_default_drafter(&ptx_set))?;
 
@@ -103,7 +109,7 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
         ep_size,
         tp_rank: _tp_rank,
         ep_rank,
-    } = serve_phases::resolve_topology(&args, &mut config)?;
+    } = serve_phases::resolve_topology(&args, &levers, &mut config)?;
 
     let serve_phases::ReservePreflight {
         inference_reserve,
@@ -114,6 +120,7 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
         plan: reserve_plan,
     } = load_phases::reserve_preflight(
         &args,
+        &levers,
         &config,
         gpu.as_ref(),
         free_mem,
@@ -146,6 +153,7 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
 
     let store = load_phases::load_weights(
         &args,
+        &levers,
         &mut config,
         &model_dir,
         gpu.as_ref(),
@@ -164,10 +172,24 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
         prefill_budget,
         max_batch_tokens,
         spec_tokens: _spec_tokens,
-    } = serve_phases::resolve_prefill_budget(&args, ssm_prefill_chunk);
-    let prefix_cache = serve_phases::build_prefix_cache(&args, &config);
+    } = serve_phases::resolve_prefill_budget(&args, ssm_prefill_chunk, levers.max_batch_tokens);
+    // 2026-10-14: `METRALE_GLM_PREFILL_PIECE_ROWS`: refuse a prefill sizing the piece grid does
+    // not divide before the KV cache is sized (`glm5next_prefill_piece::check_piece_budget`).
+    let lever_settings = serve_phases::lever_settings()?;
+    if let Some(piece) = metrale_model_arch::glm5next_prefill_piece::piece_rows(&lever_settings)? {
+        metrale_model_arch::glm5next_prefill_piece::check_piece_budget(
+            piece,
+            metrale_model_arch::glm5next_layer::GlmLevers::from_settings(&lever_settings)?
+                .prefill_rows,
+            prefill_budget,
+            max_batch_tokens,
+        )
+        .map_err(anyhow::Error::msg)?;
+    }
+    let prefix_cache = serve_phases::build_prefix_cache(&args, &config, levers.prefix_cache_gate)?;
     let comm = serve_phases::init_nccl_comm(
         &args,
+        settings,
         gpu.as_ref(),
         world_size,
         max_batch_tokens,
@@ -256,7 +278,12 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
     // boot's `--spec-cost-calibration` must agree on.
     match &drafter_weights_sha256 {
         Some(h) => tracing::info!("MTP drafter weights sha256: {h} (--spec-cost-model's key)"),
-        None => tracing::info!("No MTP drafter weights (checkpoint has no mtp.* tensors)"),
+        // 2026-10-14: None only means no `mtp.*` tensors were hashed. A drafter read from a
+        // next-n decoder layer (GLM-5.3: layers.45) still loads and drafts.
+        None => tracing::info!(
+            "MTP drafter weights sha256: none (no mtp.* tensors to hash for --spec-cost-model; \
+             a next-n layer drafter, if the model has one, is loaded separately)"
+        ),
     }
 
     // 2026-09-28: `--forward`, applied before the audit so the gate sees the executor's lookups.
@@ -278,7 +305,12 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
     let early_high_speed_swap_cfg = serve_phases::build_high_speed_swap_config(&args)?;
 
     let mut model_opt = Some(model);
-    if serve_phases::maybe_run_ep_worker(&args, &mut model_opt, &early_high_speed_swap_cfg)? {
+    if serve_phases::maybe_run_ep_worker(
+        &args,
+        levers.allow_spec_mismatch,
+        &mut model_opt,
+        &early_high_speed_swap_cfg,
+    )? {
         return Ok(None);
     }
     let model = model_opt.expect("head retains model on rank 0");

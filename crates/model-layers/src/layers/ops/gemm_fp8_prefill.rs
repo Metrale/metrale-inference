@@ -21,14 +21,16 @@ use super::*;
 /// B_fp8 `[N, K]` FP8 E4M3 (from [`predequant_nvfp4_to_fp8`]), C `[M, N]`
 /// BF16.
 ///
-/// When `k` is a multiple of 32 and `METRALE_FP8_LDMAB` is not `0`, it casts A
-/// to FP8 into a scratch buffer ([`bf16_to_fp8`]) and launches
-/// `fp8_fp8_gemm_ldmab` (module `w4a16_fp8_ldmab`, 128x256 tiles, two 128-byte K
-/// stages) instead of `kernel`.
+/// When `k` is a multiple of 32 and `ldmab` (`METRALE_FP8_LDMAB`,
+/// `OpsLevers::fp8_ldmab`), it casts A to FP8 into a scratch buffer
+/// ([`bf16_to_fp8`]) and launches `fp8_fp8_gemm_ldmab` (module
+/// `w4a16_fp8_ldmab`, 128x256 tiles, two 128-byte K stages) instead of
+/// `kernel`.
 #[allow(clippy::too_many_arguments)]
 pub fn fp8_gemm_n128(
     gpu: &dyn GpuBackend,
     kernel: KernelHandle,
+    ldmab: bool,
     input: DevicePtr,
     b_fp8: DevicePtr,
     output: DevicePtr,
@@ -38,7 +40,7 @@ pub fn fp8_gemm_n128(
     stream: u64,
 ) -> Result<()> {
     check_e4m3_activation_range(gpu, kernel, input, m, k, stream)?;
-    if k.is_multiple_of(32) && std::env::var("METRALE_FP8_LDMAB").as_deref() != Ok("0") {
+    if k.is_multiple_of(32) && ldmab {
         return fp8_act_ldmab_gemm(gpu, input, b_fp8, output, m, n, k, stream);
     }
     KernelLaunch::new(gpu, kernel)

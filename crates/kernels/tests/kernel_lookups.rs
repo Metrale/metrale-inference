@@ -186,6 +186,25 @@ fn literal(arg: &str) -> Option<&str> {
     (!s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')).then_some(s)
 }
 
+/// 2026-10-17: Modules `text` registers itself, `modules.push(("name", ptx))`: a parity
+/// example loading PTX it compiled (`kda_chunk64_prepare_base`). They are declared by the
+/// file, not by a target, so a lookup of one is not checked against the tree.
+fn self_registered(text: &str) -> BTreeSet<String> {
+    const PUSH: &str = "modules.push((";
+    let mut out = BTreeSet::new();
+    let mut at = 0;
+    while let Some(i) = text[at..].find(PUSH) {
+        let open = at + i + PUSH.len() - 1;
+        at = open + 1;
+        if let Some([name, ..]) = call_args(text, open).as_deref()
+            && let Some(name) = literal(name)
+        {
+            out.insert(name.to_string());
+        }
+    }
+    out
+}
+
 fn is_const_name(arg: &str) -> bool {
     arg.starts_with(|c: char| c.is_ascii_uppercase())
         && arg
@@ -241,6 +260,7 @@ fn lookups(root: &Path) -> Vec<Lookup> {
         }
         for (file, text) in texts {
             let text = non_test_text(text);
+            let local = self_registered(text);
             for call in CALLS {
                 let mut at = 0;
                 while let Some(i) = text[at..].find(call) {
@@ -275,6 +295,9 @@ fn lookups(root: &Path) -> Vec<Lookup> {
                     } else {
                         continue;
                     };
+                    if modules.is_subset(&local) {
+                        continue;
+                    }
                     let line = text[..pos].matches('\n').count() + 1;
                     out.push(Lookup {
                         site: format!("{}:{line}", file.strip_prefix(root).unwrap().display()),

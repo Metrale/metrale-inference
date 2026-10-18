@@ -43,6 +43,7 @@ fn handle(port: u16, store: ArtifactStore) -> (PluginHandle, Arc<AtomicBool>) {
             store,
             tx,
             cancel.clone(),
+            unset_levers(),
         ),
         cancel,
     )
@@ -273,8 +274,11 @@ async fn a_headless_run_persists_a_record_the_history_pane_can_read() {
     )
     .await;
     let store = temp_store("headless");
-    let executor =
-        metrale_bench::BenchmarkExecutor::new(tokio::runtime::Handle::current(), store.clone());
+    let executor = metrale_bench::BenchmarkExecutor::new(
+        tokio::runtime::Handle::current(),
+        store.clone(),
+        unset_levers(),
+    );
     let descriptor = metrale_bench::registry::find("concurrency-sweep").expect("registered");
     let specs = descriptor.build().parameters();
     let values = ParamValues::from_overrides(
@@ -356,4 +360,14 @@ async fn a_headless_run_persists_a_record_the_history_pane_can_read() {
     // 2026-09-26: Two coherence questions plus the single measured request.
     assert_eq!(mock.requests.load(Ordering::Relaxed), 3);
     assert_eq!(outcome.exit_code(), 0);
+}
+
+/// 2026-10-17: The harness levers of an empty environment; these tests read no lever.
+fn unset_levers() -> std::sync::Arc<metrale_bench::levers::BenchLevers> {
+    std::sync::Arc::new(
+        metrale_bench::levers::BenchLevers::resolve(&metrale_io_host_mem::MapEnv::new(
+            std::iter::empty::<(&str, &str)>(),
+        ))
+        .expect("an empty environment resolves"),
+    )
 }

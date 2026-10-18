@@ -40,9 +40,12 @@ pub(crate) use carried::Carried;
 /// for the async tail to serve.
 pub(crate) fn load_model(
     args: cli::ServeArgs,
+    settings: Arc<metrale_settings::InferenceServerSettings>,
     tui_handles_tx: Option<std::sync::mpsc::Sender<crate::tui::RunHandles>>,
     carried: Carried,
 ) -> Result<Option<Prepared>> {
+    // 2026-10-17: Resolved before the model loads, so a malformed value stops the load at once.
+    let run_io = scheduler::run_io::RunIoSettings::from_settings(&settings)?;
     let Some(engine::Engine {
         args,
         model,
@@ -64,7 +67,7 @@ pub(crate) fn load_model(
         auto_max_batch_size,
         device_budget,
         drafter_weights_sha256,
-    }) = engine::load_engine(args)?
+    }) = engine::load_engine(args, &settings)?
     else {
         // 2026-09-26: An EP worker rank ran its command loop and the head has
         // exited: nothing to serve.
@@ -83,7 +86,7 @@ pub(crate) fn load_model(
     } = serve_phases::load_sampling_defaults(&model_dir, &args, &sampling_presets.non_thinking);
 
     let (tokenizer, supports_thinking) =
-        model_setup::load_tokenizer(&args, &config, &model_dir, &eos_tokens)?;
+        model_setup::load_tokenizer(&args, &config, &model_dir, &eos_tokens, &settings)?;
 
     let serve_phases::TokenizerRuntime {
         vocab_masks,
@@ -102,6 +105,7 @@ pub(crate) fn load_model(
         &mut eos_tokens,
         supports_thinking,
         &model_dir,
+        &settings,
     );
 
     metrale_telemetry::progress::phase(9, "scheduler");
@@ -122,8 +126,9 @@ pub(crate) fn load_model(
     };
     let max_batch_size =
         scheduler_setup::resolve_max_batch_size(&args, world_size, scheduler_model.as_ref())?;
+    let drafter = metrale_settings::groups::device_drafter::DrafterSettings::try_from(&*settings)?;
     let (use_speculative, use_self_spec, use_ngram_spec, num_drafts, dflash_rung) =
-        scheduler_setup::resolve_speculation(&args, scheduler_model.as_ref());
+        scheduler_setup::resolve_speculation(&args, scheduler_model.as_ref(), &drafter);
     let prompt_lookup = args.prompt_lookup_config();
     // 2026-10-04: The cross-request cache is keyed by the model and the
     // tokenizer this serve loaded (`scheduler::shared_lookup_step`).
@@ -159,10 +164,13 @@ pub(crate) fn load_model(
     let session_manager = session_manager::SessionSsmManager::new(600);
     // 2026-09-26: The thinking budget a sequence gets when the model opens
     // `<think>` on its own (`emit_step/token.rs`): `--max-thinking-budget`,
-    // else MODEL.toml `[behavior].max_thinking_budget`.
-    let scheduler_spontaneous_think_budget = args
-        .max_thinking_budget
-        .unwrap_or(ptx_set.behavior.max_thinking_budget);
+    // else MODEL.toml `[behavior].max_thinking_budget`. 2026-10-14: none when
+    // `[behavior].thinking_steering` is false; the sequence keeps the
+    // request's budget, as vLLM does.
+    let scheduler_spontaneous_think_budget = ptx_set.behavior.thinking_steering.then(|| {
+        args.max_thinking_budget
+            .unwrap_or(ptx_set.behavior.max_thinking_budget)
+    });
     // 2026-09-26: With `--dflash` the verify steps pick on raw argmax, without
     // the pre-sample pipeline. The `dflash_masked_verify` lever
     // (`METRALE_DFLASH_MASKED_VERIFY`, on unless `0`) sends the picks back
@@ -170,8 +178,14 @@ pub(crate) fn load_model(
     let dflash_verify_raw_argmax = args.dflash;
     let watchdog_params = crate::scheduler::WatchdogParams::from_behavior(
         &ptx_set.behavior,
-        args.max_inter_tool_prose,
-        args.content_loop_min_repeats,
+        crate::lever_value::narrow_opt(
+            "METRALE_MAX_INTER_TOOL_PROSE",
+            settings.scheduler.max_inter_tool_prose,
+        )?,
+        crate::lever_value::narrow_opt(
+            "METRALE_CONTENT_LOOP_MIN_REPEATS",
+            settings.scheduler.content_loop_min_repeats,
+        )?,
     );
     // 2026-10-04: `--spec-cost-model measured`'s table, calibration and slack, loaded and
     // checked against this serve's own key; an error here stops the boot (`load_model`'s
@@ -184,20 +198,17 @@ pub(crate) fn load_model(
     )?;
     // 2026-09-26: The run's levers, shared with the dashboard so `/watchdog
     // on|off` toggles this run's flag. Its starting value is
-    // `--content-loop-watchdog`, else `METRALE_CONTENT_LOOP_WATCHDOG`, else
-    // MODEL.toml `[behavior].enable_loop_watchdog`.
-    let sched_levers = std::sync::Arc::new(crate::scheduler::levers::SchedLevers::from_env(
-        args.mtp_gate_force(),
-        args.mtp_shape.mtp_dcut_ratio,
-        spec_cost,
-    ));
-    sched_levers.set_loop_watchdog(crate::scheduler::resolve_content_loop_watchdog(
-        ptx_set.behavior.enable_loop_watchdog,
-        std::env::var("METRALE_CONTENT_LOOP_WATCHDOG")
-            .ok()
-            .as_deref(),
-        crate::cli::flag_values::Tristate::validated(&args.content_loop_watchdog).pinned(),
-    ));
+    // `--content-loop-watchdog`, else `METRALE_CONTENT_LOOP_WATCHDOG` (both in `settings`),
+    // else MODEL.toml `[behavior].enable_loop_watchdog`.
+    let sched_levers = std::sync::Arc::new(crate::scheduler::levers::SchedLevers::from_settings(
+        &settings, spec_cost,
+    )?);
+    sched_levers.set_loop_watchdog(
+        settings
+            .scheduler
+            .content_loop_watchdog
+            .unwrap_or(ptx_set.behavior.enable_loop_watchdog),
+    );
     // 2026-09-26: The run's snapshot cell, shared with the dashboard the same
     // way.
     let sched_snapshot =
@@ -261,6 +272,7 @@ pub(crate) fn load_model(
                 snapshot: run_snapshot,
                 telemetry: metrale_telemetry::global(),
                 pipeline_faults: scheduler::PipelineFaults::NONE,
+                run_io,
                 dflash_rung,
             },
         );
@@ -288,6 +300,7 @@ pub(crate) fn load_model(
     let default_kwargs = model_setup::parse_default_kwargs(&args)?;
 
     let state = Arc::new(AppState {
+        settings: settings.clone(),
         tokenizer,
         model_name,
         adapter_name: nllb_adapter_name
@@ -309,12 +322,17 @@ pub(crate) fn load_model(
             Some(rotation_tx)
         },
         chat: crate::api::chat::levers::ChatLevers::resolve(
+            &settings,
             ptx_set.behavior.tscg,
             ptx_set.behavior.disable_cwd_hint_injection,
-        ),
+        )?,
         vision_config: config.vision.clone(),
         vision_max_pixels,
         remote_image_policy,
+        media_limits: crate::api::chat::media_limits::MediaLimits {
+            images: args.chat_surface.limit_images_per_prompt,
+            videos: args.chat_surface.limit_videos_per_prompt,
+        },
         video_ffmpeg,
         video_fps: args.video_fps,
         default_temperature,
@@ -332,7 +350,7 @@ pub(crate) fn load_model(
         auto_compact_threshold: args.auto_compact,
         request_timeout: args.request_timeout,
         effective_context: 0,
-        forward: metrale_bench::gate::record_serve::LiveForward {
+        forward: metrale_serve_identity::wire::LiveForward {
             forward: forward.forward.to_string(),
             plan_digest: forward.plan_digest,
             auto_max_batch_size,
@@ -346,6 +364,10 @@ pub(crate) fn load_model(
         // the CLI overrides below.
         behavior: model_setup::resolve_behavior(&ptx_set, &args, &default_kwargs),
         disable_thinking: args.disable_thinking,
+        // 2026-10-14: a model without thinking steering arms only a budget the
+        // client states, as vLLM's `thinking_token_budget` does.
+        uncapped_thinking: args.chat_surface.uncapped_thinking
+            || !ptx_set.behavior.thinking_steering,
         default_thinking: default_kwargs.thinking,
         default_reasoning_effort: default_kwargs.reasoning_effort,
         response_store,
@@ -359,7 +381,7 @@ pub(crate) fn load_model(
         lora_disk_stageable,
     });
 
-    serve_phases::log_behavior_audit(&args, &ptx_set);
+    serve_phases::log_behavior_audit(&args, &ptx_set, settings.scheduler.disable_watchdogs);
 
     // 2026-09-26: Phases 10 and 11 (router, listening) run on the async side
     // (`serve_router`).

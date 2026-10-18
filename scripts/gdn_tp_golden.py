@@ -37,7 +37,7 @@ TWO WAYS TO RUN
       export LIBRARY_PATH=/home/ms/nccl/build/lib CUDARC_CUDA_VERSION=12000 \
              METRALE_TARGET_HW=gb10 METRALE_TARGET_MODEL=qwen3.6-27b \
              METRALE_TARGET_QUANT=nvfp4
-      cargo build --release -p metrale-server --bin met
+      cargo build --release -p met --bin met
 
       python3 scripts/gdn_tp_golden.py --launch \
           --model <HF_ID_or_local_path_of_a_qwen3.5/3.6_SSM_model> \

@@ -28,26 +28,11 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use super::Glm5NextDsaConfig;
 use super::layer::Glm5NextDsaWeights;
 use super::tp::{DsaShard, DsaTpPlan};
+use crate::mla_absorb::AbsorbThreads;
 
 /// 2026-09-25: Returns a checkpoint tensor by layer-relative name: the full (unsharded)
 /// BF16 values, widened to f32 on the host.
 pub type LoadFn<'a> = &'a dyn Fn(&str) -> Result<Vec<f32>>;
-
-/// 2026-09-25: Worker threads for [`absorb_q`]: `METRALE_MLA_ABSORB_THREADS` when it parses
-/// to a positive integer, else the available parallelism, clamped to `1..=rows`.
-/// `mistral_loader::loader_impl::phase_qk_absorbed` reads the variable the same way.
-fn absorb_threads(rows: usize) -> usize {
-    let want = std::env::var("METRALE_MLA_ABSORB_THREADS")
-        .ok()
-        .and_then(|v| v.trim().parse::<usize>().ok())
-        .filter(|&n| n > 0)
-        .unwrap_or_else(|| {
-            std::thread::available_parallelism()
-                .map(|n| n.get())
-                .unwrap_or(1)
-        });
-    want.clamp(1, rows.max(1))
-}
 
 /// 2026-09-25: A disjoint span of `absorb_q` output rows, row `row0` onward.
 ///
@@ -86,12 +71,14 @@ fn absorb_q_rows(
 ///
 /// `q_b_proj` has `qk_head_dim` rows per head (256 on GLM-5.3) and `kv_b_proj` has
 /// `qk_nope_head_dim + v_head_dim` (512); the element-count checks refuse either tensor at
-/// the other's width. NoPE only: a nonzero `qk_rope_head_dim` is refused.
+/// the other's width. NoPE only: a nonzero `qk_rope_head_dim` is refused. `threads` sets the
+/// worker count; it does not change the result.
 pub fn absorb_q(
     cfg: &Glm5NextDsaConfig,
     q_b: &[f32],
     kv_b: &[f32],
     full_heads: usize,
+    threads: AbsorbThreads,
 ) -> Result<Vec<f32>> {
     let (nope, vd, kvl, ql) = (
         cfg.qk_nope_head_dim,
@@ -125,7 +112,7 @@ pub fn absorb_q(
 
     let rows = full_heads * kvl;
     let mut out = vec![0f32; rows * ql];
-    let threads = absorb_threads(rows);
+    let threads = threads.for_rows(rows);
     if threads <= 1 {
         absorb_q_rows(&mut out, 0, kv_b, q_b, kvl, ql, nope, vd);
     } else {
@@ -266,28 +253,29 @@ fn up_f32(gpu: &dyn GpuBackend, v: &[f32]) -> Result<DevicePtr> {
     Ok(p)
 }
 
-/// 2026-09-25: Load, transform, shard and upload one DSA block for this rank.
-pub fn build_dsa_weights(
-    gpu: &dyn GpuBackend,
+/// 2026-10-08: This rank's `(q_absorb, o_absorb)` host values: transforms 1 and 3 restricted to
+/// the plan's head range `[head_start, head_start + local_heads)`. `load` returns a checkpoint
+/// tensor by layer-relative name, as for [`build_dsa_weights`].
+pub fn absorb_for_rank(
     cfg: &Glm5NextDsaConfig,
     plan: &DsaTpPlan,
     load: LoadFn<'_>,
-) -> Result<Glm5NextDsaWeights> {
+    threads: AbsorbThreads,
+) -> Result<(Vec<f32>, Vec<f32>)> {
     let get = |n: &str| -> Result<Vec<f32>> { load(&format!("self_attn.{n}")) };
-    let shard = |n: &'static str, full: Vec<f32>| -> Result<Vec<f32>> {
-        let p = plan
-            .get(n)
-            .ok_or_else(|| anyhow::anyhow!("no shard plan for {n}"))?;
-        Ok(shard_host(p, &full))
-    };
-
     let kv_b = get("kv_b_proj.weight")?;
 
     // 2026-09-25: Transform 1 over all heads, then this rank's rows: heads
-    // `tp_rank * local_heads ..`, `kv_lora_rank` rows each.
-    let q_absorb_full = absorb_q(cfg, &get("q_b_proj.weight")?, &kv_b, plan.full_heads)?;
+    // `plan.head_start ..`, `kv_lora_rank` rows each.
+    let q_absorb_full = absorb_q(
+        cfg,
+        &get("q_b_proj.weight")?,
+        &kv_b,
+        plan.full_heads,
+        threads,
+    )?;
     let per_head = cfg.kv_lora_rank;
-    let start = plan.tp_rank * plan.local_heads * per_head;
+    let start = plan.head_start * per_head;
     let len = plan.local_heads * per_head;
     let q_absorb = row_slice(&q_absorb_full, cfg.q_lora_rank, start, start + len);
 
@@ -297,15 +285,31 @@ pub fn build_dsa_weights(
     let kv_b_local = row_slice(
         &kv_b,
         cfg.kv_lora_rank,
-        plan.tp_rank * plan.local_heads * kv_b_rows,
-        (plan.tp_rank + 1) * plan.local_heads * kv_b_rows,
+        plan.head_start * kv_b_rows,
+        (plan.head_start + plan.local_heads) * kv_b_rows,
     );
+    let o_plan = plan
+        .get("o_proj")
+        .ok_or_else(|| anyhow::anyhow!("no shard plan for o_proj"))?;
     let o_absorb = absorb_o(
         cfg,
-        &shard("o_proj", get("o_proj.weight")?)?,
+        &shard_host(o_plan, &get("o_proj.weight")?),
         &kv_b_local,
         plan.local_heads,
     )?;
+    Ok((q_absorb, o_absorb))
+}
+
+/// 2026-09-25: Load, transform, shard and upload one DSA block for this rank.
+pub fn build_dsa_weights(
+    gpu: &dyn GpuBackend,
+    cfg: &Glm5NextDsaConfig,
+    plan: &DsaTpPlan,
+    load: LoadFn<'_>,
+    threads: AbsorbThreads,
+) -> Result<Glm5NextDsaWeights> {
+    let get = |n: &str| -> Result<Vec<f32>> { load(&format!("self_attn.{n}")) };
+    let (q_absorb, o_absorb) = absorb_for_rank(cfg, plan, load, threads)?;
 
     // 2026-09-25: Transform 2: fold index_heads^-0.5 into weights_proj.
     let scale = (cfg.index_heads as f32).powf(-0.5);

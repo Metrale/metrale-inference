@@ -88,7 +88,7 @@ fn the_engine_default_is_not_something_a_qsa_checkpoint_can_use() {
         .expect_err("the resolved default must be refused, not waved through");
 }
 
-/// Spelled out rather than imported: `metrale-server` depends on this crate,
+/// Spelled out rather than imported: `met` depends on this crate,
 /// so the constant cannot come the other way. If the server's default ever
 /// changes, the assertion above fails here and names this comment.
 fn server_default_kv_dtype() -> &'static str {

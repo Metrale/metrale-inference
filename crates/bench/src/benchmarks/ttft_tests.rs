@@ -40,6 +40,7 @@ fn gate(mode: Mode, root: &str) -> TtftGate {
         ArtifactStore::with_root(dir),
         tx,
         Arc::new(AtomicBool::new(false)),
+        crate::levers::tests::unset(),
     ));
     g.started = Some(Instant::now());
     let v = ParamValues::defaults(&g.parameters());

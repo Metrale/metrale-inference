@@ -108,6 +108,7 @@ impl Qwen3SsmLayer {
             ops::w4a4_proj::nvfp4_proj_small_m(
                 ctx.gpu,
                 self.w4a16_batchm_kernel(num_tokens, &self.ssm.out_proj),
+                ctx.levers.ops.w4a16_tc,
                 normed_out_buf,
                 &self.ssm.out_proj,
                 out_proj_buf,
@@ -147,6 +148,7 @@ impl Qwen3SsmLayer {
                     self.w8a16_gemm_pipelined_k,
                     self.w8a16_gemm_pipelined_m32_k,
                     self.w8a16_gemm_pipelined_m64_k,
+                    ctx.levers.ops.w8a16,
                     normed_out_buf,
                     fp8.weight,
                     fp8.row_scale,
@@ -172,7 +174,7 @@ impl Qwen3SsmLayer {
             }
         } else if num_tokens > VERIFY_TGEMM_MIN_TOKENS
             && let Some(ref nvfp4_t) = self.out_proj_nvfp4_t
-            && verify_outproj_tgemm_enabled()
+            && ctx.levers.ssm.verify_outproj_tgemm
         {
             // 2026-09-25: More than `VERIFY_TGEMM_MIN_TOKENS` rows with an NVFP4 transposed
             // twin: `ms_proj_gemm`, the call the multi-seq decode out_proj makes on this
@@ -192,6 +194,7 @@ impl Qwen3SsmLayer {
             ops::w4a16_gemv_batch3(
                 ctx.gpu,
                 self.w4a16_gemv_batch3_k,
+                ctx.levers.ops.w4a16_tc,
                 normed_out_buf,
                 &self.ssm.out_proj,
                 out_proj_buf,
@@ -203,6 +206,7 @@ impl Qwen3SsmLayer {
             ops::w4a16_gemv_batch2(
                 ctx.gpu,
                 self.w4a16_gemv_batch2_k,
+                ctx.levers.ops.w4a16_tc,
                 normed_out_buf,
                 &self.ssm.out_proj,
                 out_proj_buf,
@@ -227,6 +231,7 @@ impl Qwen3SsmLayer {
                 ops::fp8_gemm_n128(
                     ctx.gpu,
                     self.fp8_gemm_k,
+                    ctx.levers.ops.fp8_ldmab,
                     normed_out_buf,
                     fp8,
                     out_proj_buf,

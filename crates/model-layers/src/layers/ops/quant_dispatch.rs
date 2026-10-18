@@ -126,6 +126,7 @@ pub fn w4a16_gemv(
 pub fn w4a16_gemv_batch2(
     gpu: &dyn GpuBackend,
     kernel: KernelHandle,
+    tc: super::W4a16TcPlan,
     input: DevicePtr,
     weight: &QuantizedWeight,
     output: DevicePtr,
@@ -133,7 +134,7 @@ pub fn w4a16_gemv_batch2(
     k: u32,
     stream: u64,
 ) -> Result<()> {
-    if super::gemv_tc::tc_fixed_m(gpu, input, weight, output, 2, n, k, stream)? {
+    if super::gemv_tc::tc_fixed_m(gpu, tc, input, weight, output, 2, n, k, stream)? {
         return Ok(());
     }
     KernelLaunch::new(gpu, kernel)
@@ -153,6 +154,7 @@ pub fn w4a16_gemv_batch2(
 pub fn w4a16_gemv_batch3(
     gpu: &dyn GpuBackend,
     kernel: KernelHandle,
+    tc: super::W4a16TcPlan,
     input: DevicePtr,
     weight: &QuantizedWeight,
     output: DevicePtr,
@@ -160,7 +162,7 @@ pub fn w4a16_gemv_batch3(
     k: u32,
     stream: u64,
 ) -> Result<()> {
-    if super::gemv_tc::tc_fixed_m(gpu, input, weight, output, 3, n, k, stream)? {
+    if super::gemv_tc::tc_fixed_m(gpu, tc, input, weight, output, 3, n, k, stream)? {
         return Ok(());
     }
     KernelLaunch::new(gpu, kernel)
@@ -183,6 +185,7 @@ pub fn w4a16_gemv_batch3(
 pub fn w4a16_gemv_batchm(
     gpu: &dyn GpuBackend,
     kernel: KernelHandle,
+    tc: super::W4a16TcPlan,
     input: DevicePtr,
     weight: &QuantizedWeight,
     output: DevicePtr,
@@ -199,7 +202,7 @@ pub fn w4a16_gemv_batchm(
     anyhow::ensure!(m <= 32, "w4a16_gemv_batchm caps at M=32 (batch32; m={m})");
     // 2026-09-25: The tensor-core kernel takes the same arguments with its own grid
     // and block (`gemv_tc`).
-    let (kernel, grid_x, block_x) = match super::gemv_tc::tc_kernel(gpu, m, n, k) {
+    let (kernel, grid_x, block_x) = match super::gemv_tc::tc_kernel(gpu, tc, m, n, k) {
         Some((tc, grid_x)) => (tc, grid_x, super::gemv_tc::TC_BLOCK),
         None => (kernel, div_ceil(n, 4), 256),
     };
@@ -348,6 +351,7 @@ pub fn w4a16_gemv_qg_batch3(
 pub fn w4a16_gemv_dual_batch3(
     gpu: &dyn GpuBackend,
     kernel: KernelHandle,
+    tc: super::W4a16TcPlan,
     input: DevicePtr,
     weight0: &QuantizedWeight,
     output0: DevicePtr,
@@ -358,10 +362,10 @@ pub fn w4a16_gemv_dual_batch3(
     stream: u64,
 ) -> Result<()> {
     // 2026-09-25: One tensor-core launch per projection. The route depends only on
-    // `(m, n, k)`, the cached handles and switches read once per process, all the
+    // `(m, n, k)`, the cached handles and `tc`, all the
     // same for both calls, so the second launches whenever the first did.
-    if super::gemv_tc::tc_fixed_m(gpu, input, weight0, output0, 3, n, k, stream)? {
-        super::gemv_tc::tc_fixed_m(gpu, input, weight1, output1, 3, n, k, stream)?;
+    if super::gemv_tc::tc_fixed_m(gpu, tc, input, weight0, output0, 3, n, k, stream)? {
+        super::gemv_tc::tc_fixed_m(gpu, tc, input, weight1, output1, 3, n, k, stream)?;
         return Ok(());
     }
     KernelLaunch::new(gpu, kernel)
@@ -386,6 +390,7 @@ pub fn w4a16_gemv_dual_batch3(
 pub fn w4a16_gemv_dual_batch2(
     gpu: &dyn GpuBackend,
     kernel: KernelHandle,
+    tc: super::W4a16TcPlan,
     input: DevicePtr,
     weight0: &QuantizedWeight,
     output0: DevicePtr,
@@ -396,10 +401,10 @@ pub fn w4a16_gemv_dual_batch2(
     stream: u64,
 ) -> Result<()> {
     // 2026-09-25: One tensor-core launch per projection. The route depends only on
-    // `(m, n, k)`, the cached handles and switches read once per process, all the
+    // `(m, n, k)`, the cached handles and `tc`, all the
     // same for both calls, so the second launches whenever the first did.
-    if super::gemv_tc::tc_fixed_m(gpu, input, weight0, output0, 2, n, k, stream)? {
-        super::gemv_tc::tc_fixed_m(gpu, input, weight1, output1, 2, n, k, stream)?;
+    if super::gemv_tc::tc_fixed_m(gpu, tc, input, weight0, output0, 2, n, k, stream)? {
+        super::gemv_tc::tc_fixed_m(gpu, tc, input, weight1, output1, 2, n, k, stream)?;
         return Ok(());
     }
     KernelLaunch::new(gpu, kernel)

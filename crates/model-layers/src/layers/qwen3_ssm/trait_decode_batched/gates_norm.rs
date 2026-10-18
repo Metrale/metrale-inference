@@ -34,7 +34,7 @@ impl Qwen3SsmLayer {
             stream,
             ..
         } = *d;
-        if batched_ba_gates_enabled() {
+        if ctx.levers.ssm.batched_ba_gates {
             // 2026-09-25: One launch for all rows: `dense_gemm_ba_gates_prefill`, which the
             // SSM prefill and the multi-seq batched-recurrent decode also call. It is not
             // bitwise the per-token pair below: that pair rounds the BA projection to BF16
@@ -119,7 +119,7 @@ impl Qwen3SsmLayer {
             // 2026-09-25: The exact arm (`decode_batched_conv_gdn_exact` and its batched
             // form) already wrote the normed rows to `normed_out_buf` at `value_dim`
             // stride, so no norm runs here.
-        } else if num_tokens == 2 && self.fused_verify_k2_enabled() {
+        } else if num_tokens == 2 && self.fused_verify_k2_enabled(ctx.levers.ssm.fused_verify) {
             ops::gdn_verify_fused_norm_k2(
                 ctx.gpu,
                 self.gdn_verify_fused_norm_k2_k,
@@ -135,7 +135,7 @@ impl Qwen3SsmLayer {
                 value_dim as u32,
                 stream,
             )?;
-        } else if batched_norm_enabled() {
+        } else if ctx.levers.ssm.batched_gdn_norm {
             // 2026-09-25: One launch for every (head, row) pair. `gated_rms_norm_prefill`
             // is `gated_rms_norm` with the row on blockIdx.y and explicit row strides; the
             // per-head arithmetic and block size are the same (kernels/gb10/common/

@@ -62,6 +62,8 @@ pub struct NgramRowCache {
     pinned: Vec<bool>,
     hand: usize,
     bounce: AlignedBlock,
+    /// 2026-10-17: Fault every batch serially (`METRALE_PLE_SERIAL_FAULT`).
+    serial_fault: bool,
     pub hits: u64,
     pub misses: u64,
     pub evictions: u64,
@@ -111,7 +113,9 @@ impl AlignedBlock {
 impl NgramRowCache {
     /// 2026-09-25: Open `path` as the backing store for a table of `rows_total` rows
     /// of `row_stride` bytes, caching `slots` of them in pinned GPU-addressable
-    /// memory. `scale_path` supplies the per-row f32 scales of an FP8 table.
+    /// memory. `scale_path` supplies the per-row f32 scales of an FP8 table. Every
+    /// constructor takes the serial-fault switch from the process environment
+    /// (`legacy_env::ple_serial_fault`); [`Self::with_serial_fault`] sets it.
     pub fn open(
         path: &Path,
         scale_path: Option<&Path>,
@@ -178,6 +182,7 @@ impl NgramRowCache {
             pinned: vec![false; slots],
             hand: 0,
             bounce: AlignedBlock::new(),
+            serial_fault: crate::legacy_env::ple_serial_fault(),
             hits: 0,
             misses: 0,
             evictions: 0,
@@ -228,6 +233,14 @@ impl NgramRowCache {
             rows_per: rows_per_shard,
         });
         Ok(c)
+    }
+
+    /// 2026-10-17: Fault every batch serially when `on`
+    /// (`StorageLinks::ple_serial_fault`).
+    #[must_use]
+    pub fn with_serial_fault(mut self, on: bool) -> Self {
+        self.serial_fault = on;
+        self
     }
 
     /// 2026-09-25: Device VA of the row arena, the table the gather kernels index by
@@ -318,6 +331,7 @@ impl NgramRowCache {
                 self.scales.as_ref().and_then(|sc| sc.file.as_ref()),
                 self.row_stride,
                 &mut self.bounce,
+                self.serial_fault,
             );
             if let Err(e) = r {
                 // 2026-09-25: Unmap and unpin every slot this batch faulted: any of

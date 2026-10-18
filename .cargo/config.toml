@@ -1,0 +1,3 @@
+# 2026-10-17: `cargo xtask <gate>` runs the repository gates in xtask/ (`deps`, `selftest`).
+[alias]
+xtask = "run -p xtask --"

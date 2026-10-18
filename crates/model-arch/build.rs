@@ -11,7 +11,8 @@ fn main() {
     println!("cargo:rerun-if-env-changed=METRALE_TARGET_HW");
     // 2026-09-25: `metrale_scale` is set for every `METRALE_TARGET_HW` that starts
     // with `strix` (`strix` and `strix-hip`), the same rule gpu-runtime's build.rs
-    // uses. In this crate only the `attn_prefill_microtest` example reads it.
+    // uses. 2026-10-17: Nothing in this crate reads it since the examples moved to
+    // metrale-gpu-examples; it stays declared and set beside `metrale_hip`.
     println!("cargo:rustc-check-cfg=cfg(metrale_scale)");
     // 2026-09-25: `metrale_hip` is set only for `strix-hip`, the native-HIP target.
     // The Qwen3.5 loader reads it to skip `predequant_for_prefill` and the FP8

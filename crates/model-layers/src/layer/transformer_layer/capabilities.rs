@@ -32,12 +32,39 @@ pub trait LayerCapabilities {
         false
     }
 
+    /// 2026-10-09: True when this layer's single-sequence decode may be captured into a CUDA
+    /// graph with a communicator (TP/EP): its collectives go through the same stream as its
+    /// kernels, and every per-step input it reads is uploaded before the replay. The model's
+    /// single-sequence decode (`decode_a.rs`) captures with a communicator when every layer
+    /// says so (unless `METRALE_COMM_DECODE_GRAPHS=0`), as it does under the `ep_graphs` and
+    /// `gdn_decode_graph` levers. Default false.
+    /// 2026-10-10: The most rows a captured multi-row step (a verify) may carry through this
+    /// layer: above it the layer takes a path that reads device results back to the host, which
+    /// a capture cannot do. `None`, the default: no limit.
+    fn max_captured_rows(&self) -> Option<usize> {
+        None
+    }
+
+    fn decode_graph_with_comm(&self) -> bool {
+        false
+    }
+
     /// 2026-09-25: True when this layer cannot serve a batched multi-sequence decode step.
     /// The batched decode ORs it across layers into `hc_perseq` (`decode_a2.rs`) and then
     /// runs each sequence through `decode`; the single-GPU fused decode+prefill ORs it into
     /// `hc_qsa_perseq` (`decode_b.rs`) and then runs the batched decode and the prefill
     /// separately.
     fn decode_multi_seq_unsupported(&self) -> bool {
+        false
+    }
+
+    /// 2026-10-08: True when this layer's batched multi-sequence decode needs no per-sequence
+    /// arm for a sparse-index selection: it has none, or it selects each row over that row's
+    /// own sequence (GLM-5.3's DSA mixer). The model skips its mHC + sparse-index
+    /// per-sequence rule (`hc_perseq` in `decode_a2.rs`, `hc_qsa_perseq` in `decode_b.rs`)
+    /// only when every layer returns true, so the default false keeps that rule for every
+    /// model that does not opt in.
+    fn decode_multi_seq_selects_index_per_row(&self) -> bool {
         false
     }
 
@@ -57,6 +84,22 @@ pub trait LayerCapabilities {
         false
     }
 
+    /// 2026-10-09: True when this layer's batched verify (`decode_verify_multi`) may run on a
+    /// multi-rank serve, every rank running it from the batch rank 0 announces
+    /// (`EP_CMD_VERIFY_BATCH`). The model admits a multi-rank batched verify only when every
+    /// layer says so; the default keeps it single-rank.
+    fn batch_verify_across_ranks(&self) -> bool {
+        false
+    }
+
+    /// 2026-10-09: `Some(rows)` when this layer implements `prefill_spans`, the multi-sequence
+    /// prefill pass, with the same collectives on every rank; `rows` is the widest row group it
+    /// runs, the size of one batched prefill step. The model runs a multi-rank batched prefill
+    /// (`EP_CMD_PREFILL_SPANS`) only when every layer answers `Some`. Default `None`.
+    fn prefill_spans_rows(&self) -> Option<usize> {
+        None
+    }
+
     #[allow(clippy::too_many_arguments)]
     /// 2026-09-25: True when a captured decode graph goes stale once a new sequence takes
     /// this slot. Decode graphs are keyed by `slot_idx`, which is safe only while every
@@ -66,6 +109,13 @@ pub trait LayerCapabilities {
     /// index past the SSM pool's `max_slots`.
     fn graph_stale_on_new_sequence(&self) -> bool {
         false
+    }
+
+    /// 2026-10-14: True when a verify graph captured with other slots' rows must not be
+    /// borrowed, because its ghost rows would run this layer without per-sequence state of
+    /// their own. By default the same answer as [`Self::graph_stale_on_new_sequence`].
+    fn verify_graph_borrow_unsafe(&self) -> bool {
+        self.graph_stale_on_new_sequence()
     }
 
     /// 2026-09-25: True for an SSM layer. The model's split prefill then runs
@@ -92,6 +142,27 @@ pub trait LayerCapabilities {
     /// (`TransformerModel::inpass_cut_capture_supported`); otherwise it keeps the
     /// two-pass tail split.
     fn supports_replay_tail_split(&self) -> bool {
+        false
+    }
+
+    /// 2026-10-11: True when this layer's `prefill` runs every launch of the pass, not only its
+    /// recurrence, as separate segments split at an in-pass capture's points (GLM-5.3,
+    /// `glm5next_layer/steps/prefill_capture.rs`), so each row and each captured state carries
+    /// the bytes of separate passes ending and starting there whatever the row-count dependence
+    /// of its kernels. When every layer says so the model captures in-pass without needing
+    /// `prefill_row_invariant` and on a multi-rank serve
+    /// (`TransformerModel::inpass_cut_capture_supported`).
+    fn splits_pass_at_capture(&self) -> bool {
+        false
+    }
+
+    /// 2026-10-08: True when this layer, a recurrent layer on the SSM pool, can roll a
+    /// speculative verify back under `--ssm-rollback-mode replay`: its K-row verify copies
+    /// the state to the slot's checkpoint and records each row's recurrent inputs in the
+    /// slot's `SsmLayerState::replay_ring`, and `LayerWriteOnAccept::ssm_replay_commit`
+    /// restores and replays. The model admits a replay-mode verify only when every
+    /// pool-backed recurrent layer answers true.
+    fn supports_ssm_replay(&self) -> bool {
         false
     }
 }

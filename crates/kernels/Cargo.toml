@@ -3,27 +3,33 @@ name = "metrale-kernels"
 version = "1.0.0-beta-preview"
 edition = "2024"
 license.workspace = true
+repository.workspace = true
 description = "Metrale Engine CUDA kernel PTX — compiled from kernels/{hw}/{model}/{quant}/*.cu"
 
 [dependencies]
+# 2026-10-17: Its `links` metadata (`DEP_METRALE_KERNEL_TREE_ROOT`) locates kernels/ for build.rs.
+metrale-kernel-root = { workspace = true }
 metrale-core = { workspace = true }
 
 [build-dependencies]
-toml = "1.1"
+toml = { workspace = true, features = ["std", "serde", "parse", "display"] }
 # 2026-09-25: The kernel-layout resolver and the closure hash. The hash is
 # computed in the build that produces the binary, so a benchmark record can
 # attest to what the binary was compiled from.
-metrale-closure = { path = "../closure" }
-serde_json.workspace = true
+metrale-closure = { workspace = true }
+serde_json = { workspace = true, features = ["std", "preserve_order"] }
 
 # 2026-09-25: `tests/kernel_shadow_detector.rs` reads the `[modules]` and
 # `[shadow_exempt]` tables out of the real KERNEL.toml files.
 [dev-dependencies]
-toml = "1.1"
+toml = { workspace = true, features = ["std", "serde", "parse", "display"] }
 # 2026-09-25: The kernel-layout resolver, for the structure tests that check the real tree.
-metrale-closure = { path = "../closure" }
+metrale-closure = { workspace = true }
 # 2026-09-25: `tests/layout_mirror.rs` compares the resolver with its Python mirror as JSON.
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["std", "preserve_order"] }
 
 [lints]
 workspace = true
+
+[package.metadata.metrale]
+role = "device"

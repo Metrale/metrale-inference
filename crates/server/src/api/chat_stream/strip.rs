@@ -37,14 +37,11 @@ pub(super) fn strip_all_preserving_boundary(s: &str, tag: &str) -> String {
     out
 }
 
-/// 2026-09-26: Diagnostic trace for the thinking-phase emit path. When
-/// `METRALE_THINKING_DECODE_TRACE` is present (any value), logs a DEBUG
+/// 2026-09-26: Diagnostic trace for the thinking-phase emit path, called only under
+/// `ChatLevers::thinking_decode_trace`. Logs a DEBUG
 /// `thinking-decode-trace` event with the lengths and first 64 characters of
 /// the raw delta and of the stripped text, and whether stripping changed it.
-pub(super) fn maybe_log_decode_trace(raw: &str, cleaned: &str, full_len: usize, emitted_in: usize) {
-    if std::env::var_os("METRALE_THINKING_DECODE_TRACE").is_none() {
-        return;
-    }
+pub(super) fn log_decode_trace(raw: &str, cleaned: &str, full_len: usize, emitted_in: usize) {
     let raw_head: String = raw.chars().take(64).collect();
     let cleaned_head: String = cleaned.chars().take(64).collect();
     tracing::debug!(

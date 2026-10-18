@@ -23,6 +23,9 @@ pub(super) struct TensorRules<'a> {
     /// The model's own loader will read it from disk: recorded, not uploaded.
     /// See [`crate::weights::DeferHook`].
     pub defer: &'a dyn Fn(&str, WeightDtype) -> bool,
+    /// 2026-10-17: The device bytes the model's loader allocates for a deferred tensor, for the
+    /// pre-flight. See [`crate::weights::DeferCharge`].
+    pub charge: &'a dyn Fn(&str, WeightDtype, &[usize]) -> usize,
 }
 
 pub(super) fn load_sharded(
@@ -56,7 +59,7 @@ pub(super) fn load_sharded(
     // Deferred tensors are never uploaded, so they must not count toward the
     // peak — see the note in `fast_weights` and `weights::deferred`.
     let preflight_skip = |name: &str| skip_fn(name) || crate::weights::is_ngram_table(name);
-    let estimated = estimate_load_bytes(&shard_files, &preflight_skip, defer_fn)?;
+    let estimated = estimate_load_bytes(&shard_files, &preflight_skip, defer_fn, rules.charge)?;
     let has_fp8 = estimate_has_fp8(&shard_files, &preflight_skip, defer_fn)?;
     let overhead_multiplier: f64 =
         peak_multiplier_override.unwrap_or(if has_fp8 { 1.5 } else { 1.3 });
@@ -125,12 +128,13 @@ pub(super) fn load_sharded(
                 let off = view.data().as_ptr() as usize - mmap.as_ptr() as usize;
                 deferred.insert(
                     name.to_string(),
-                    crate::weights::DeferredTensor {
-                        path: shard_path.clone(),
-                        offset: off as u64,
-                        shape: view.shape().to_vec(),
-                        dtype: WeightDtype::from_safetensors(view.dtype())?,
-                    },
+                    crate::weights::DeferredTensor::at_span(
+                        shard_path.clone(),
+                        off as u64,
+                        view.data().len() as u64,
+                        view.shape().to_vec(),
+                        WeightDtype::from_safetensors(view.dtype())?,
+                    )?,
                 );
                 skipped += 1;
                 continue;
@@ -144,12 +148,13 @@ pub(super) fn load_sharded(
                 let off = view.data().as_ptr() as usize - mmap.as_ptr() as usize;
                 deferred.insert(
                     name.to_string(),
-                    crate::weights::DeferredTensor {
-                        path: shard_path.clone(),
-                        offset: off as u64,
-                        shape: view.shape().to_vec(),
-                        dtype: WeightDtype::from_safetensors(view.dtype())?,
-                    },
+                    crate::weights::DeferredTensor::at_span(
+                        shard_path.clone(),
+                        off as u64,
+                        view.data().len() as u64,
+                        view.shape().to_vec(),
+                        WeightDtype::from_safetensors(view.dtype())?,
+                    )?,
                 );
                 skipped += 1;
                 continue;
@@ -250,12 +255,13 @@ pub(super) fn load_single(
             let off = view.data().as_ptr() as usize - mmap.as_ptr() as usize;
             deferred.insert(
                 name.clone(),
-                crate::weights::DeferredTensor {
-                    path: path.to_path_buf(),
-                    offset: off as u64,
-                    shape: view.shape().to_vec(),
-                    dtype: WeightDtype::from_safetensors(view.dtype())?,
-                },
+                crate::weights::DeferredTensor::at_span(
+                    path.to_path_buf(),
+                    off as u64,
+                    view.data().len() as u64,
+                    view.shape().to_vec(),
+                    WeightDtype::from_safetensors(view.dtype())?,
+                )?,
             );
             continue;
         }

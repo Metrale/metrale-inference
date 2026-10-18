@@ -6,7 +6,10 @@
 //
 // Owner: gb10 kernels.
 // Invariants:
-// - B is [N, K] FP8 E4M3 with a per-row f32 row_scale; A and C are row-major BF16.
+// - B is [N, K] FP8 E4M3 with a per-row f32 row_scale; A is row-major BF16 [M, K] and C is
+//   BF16 [M, ldc] (ldc >= N; ldc = N is the dense layout). 2026-10-09: ldc lets a
+//   vocab-parallel head write its column window of the full-vocab logits; it moves only the
+//   stores, never a sum.
 // - Launch: grid (ceil(N / 8), 1, 1), block (256, 1, 1): four 64-lane groups per block,
 //   each computing RT_T = 2 adjacent output rows, so one activation load feeds both.
 // - K % 16 == 0 and 1 <= M <= RT_MAXM (8 or 16): there is no K tail, rows past RT_MAXM are
@@ -51,7 +54,8 @@ __device__ __forceinline__ void fp8_gemv_rowscale_rt2_impl(
     __nv_bfloat16* __restrict__ C,
     unsigned int M,
     unsigned int N,
-    unsigned int K
+    unsigned int K,
+    unsigned int ldc
 ) {
     const unsigned int tpo = RT_BLOCK / RT_GROUPS;
     const unsigned int local_out = threadIdx.x / tpo;
@@ -147,7 +151,7 @@ __device__ __forceinline__ void fp8_gemv_rowscale_rt2_impl(
                 if ((unsigned int)t >= M) continue;
                 float r = s_red[t][(local_out * RT_T + o) * 2]
                         + s_red[t][(local_out * RT_T + o) * 2 + 1];
-                C[(unsigned long long)t * N + n] = __float2bfloat16(r * rs);
+                C[(unsigned long long)t * ldc + n] = __float2bfloat16(r * rs);
             }
         }
     }
@@ -160,9 +164,10 @@ extern "C" __global__ void fp8_gemv_rowscale_batch8_rt2(
     __nv_bfloat16* __restrict__ C,
     unsigned int M,
     unsigned int N,
-    unsigned int K
+    unsigned int K,
+    unsigned int ldc
 ) {
-    fp8_gemv_rowscale_rt2_impl<8>(A, B, row_scale, C, M, N, K);
+    fp8_gemv_rowscale_rt2_impl<8>(A, B, row_scale, C, M, N, K, ldc);
 }
 
 // 2026-09-25: RT_MAXM = 16 twin: acc grows to [2][16] and s_red to 16 rows (1 KB). Neither
@@ -177,7 +182,8 @@ extern "C" __global__ void fp8_gemv_rowscale_batch16_rt2(
     __nv_bfloat16* __restrict__ C,
     unsigned int M,
     unsigned int N,
-    unsigned int K
+    unsigned int K,
+    unsigned int ldc
 ) {
-    fp8_gemv_rowscale_rt2_impl<16>(A, B, row_scale, C, M, N, K);
+    fp8_gemv_rowscale_rt2_impl<16>(A, B, row_scale, C, M, N, K, ldc);
 }

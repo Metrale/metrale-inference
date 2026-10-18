@@ -245,7 +245,11 @@ fn decode_ns_mixes_fingerprint_domain_and_client_salt() {
     let other_client = derive_decode_ns_salted(fa.get(), 0x2222).get();
     let other_model = derive_decode_ns_salted(fb.get(), 0x1111).get();
     assert_ne!(da, fa.get(), "decode must not alias Marconi for one model");
-    assert_ne!(da, metrale_kernels::DECODE_DOMAIN, "model-blind constant");
+    assert_ne!(
+        da,
+        metrale_core::decode_ring::DECODE_DOMAIN,
+        "model-blind constant"
+    );
     assert_ne!(da, other_client, "client salt must partition processes");
     assert_ne!(da, other_model, "fingerprint must partition models");
 }

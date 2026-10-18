@@ -33,17 +33,12 @@ COPY crates/ crates/
 COPY vendor/ vendor/
 COPY kernels/ kernels/
 COPY jinja-templates/ jinja-templates/
-# quick-speed-bench (metrale-bench) include_str!'s its ISL prompt fixtures from
-# tests/fixtures — without this line the release build fails in-container
-# ("couldn't read ../../tests/fixtures/bench_prompt_128.txt") while every
-# full-tree local build succeeds. Copy just the fixtures, not all of tests/.
-COPY tests/fixtures/ tests/fixtures/
 
 ENV METRALE_TARGET_HW=gb10
 ENV METRALE_TARGET_MODEL=*
 ENV METRALE_TARGET_QUANT=*
 
-RUN cargo build --release -p metrale-server
+RUN cargo build --release -p met --features bench
 
 # ── Runtime stage ────────────────────────────────────────────────
 FROM nvidia/cuda:13.0.0-runtime-ubuntu24.04@sha256:95318efecfd68ab3d109da5277863257b06137c84f34a87f38de970d5cd035d3

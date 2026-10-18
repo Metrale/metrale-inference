@@ -53,6 +53,66 @@ pub fn poll_idle_command(
     }
 }
 
+/// 2026-10-09: The environment variable that sets [`PollPause`]: `<spin_us>:<sleep_us>`.
+pub const POLL_ENV: &str = "METRALE_COMM_POLL";
+
+/// 2026-10-09: The value [`POLL_ENV`] takes when unset: yield for 200 us, then sleep 50 us
+/// per poll. A rank-0 command broadcast completes within the yield window; a worker waiting
+/// for its next command through its own decode graph falls through to the short sleeps.
+pub const POLL_DEFAULT: &str = "200:50";
+
+/// 2026-10-09: What a completion wait does before its next `cuStreamQuery`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PauseAction {
+    Yield,
+    Sleep(Duration),
+}
+
+/// 2026-10-09: The pause between completion polls. While the wait is younger than `spin`
+/// the thread yields, so a broadcast that completes in microseconds is seen in
+/// microseconds; after that it sleeps `sleep` per poll. A fixed 1 ms sleep (`0:1000`, the
+/// policy before this one) cost about 1.05 ms per command word on every rank: two words
+/// per single-sequence decode step on rank 0, measured as 1.86 ms of a 36.6 ms step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PollPause {
+    pub spin: Duration,
+    pub sleep: Duration,
+}
+
+impl PollPause {
+    /// 2026-10-09: Parse a [`POLL_ENV`] value, [`POLL_DEFAULT`] when `value` is `None`.
+    ///
+    /// # Errors
+    /// A value that is not two whole numbers of microseconds joined by `:`, or a zero
+    /// `sleep` (a busy loop past the yield window must be asked for with a long `spin`).
+    pub fn parse(value: Option<&str>) -> Result<Self> {
+        let text = value.unwrap_or(POLL_DEFAULT);
+        let parsed = text.split_once(':').and_then(|(s, z)| {
+            Some((s.trim().parse::<u64>().ok()?, z.trim().parse::<u64>().ok()?))
+        });
+        let Some((spin_us, sleep_us)) = parsed else {
+            bail!("{POLL_ENV} must be <spin_us>:<sleep_us>, got {text:?}");
+        };
+        anyhow::ensure!(
+            sleep_us > 0,
+            "{POLL_ENV}: sleep_us must be > 0, got {text:?}"
+        );
+        Ok(Self {
+            spin: Duration::from_micros(spin_us),
+            sleep: Duration::from_micros(sleep_us),
+        })
+    }
+
+    /// 2026-10-09: The pause after a not-ready poll, `waited` into the wait.
+    pub fn action(&self, waited: Duration) -> PauseAction {
+        if waited < self.spin {
+            PauseAction::Yield
+        } else {
+            PauseAction::Sleep(self.sleep)
+        }
+    }
+}
+
 /// 2026-09-26: Set `unhealthy` when `result` is an error; return `result`.
 pub fn poison_on_error(result: Result<()>, unhealthy: &AtomicBool) -> Result<()> {
     if result.is_err() {
@@ -146,6 +206,33 @@ mod tests {
         // 2026-09-26: A later success leaves the flag set.
         assert!(poison_on_error(Ok(()), &unhealthy).is_ok());
         assert!(unhealthy.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn poll_pause_yields_inside_the_window_then_sleeps() {
+        let p = PollPause::parse(None).unwrap();
+        assert_eq!(p, PollPause::parse(Some(POLL_DEFAULT)).unwrap());
+        assert_eq!(p.action(Duration::ZERO), PauseAction::Yield);
+        assert_eq!(p.action(Duration::from_micros(199)), PauseAction::Yield);
+        assert_eq!(
+            p.action(Duration::from_micros(200)),
+            PauseAction::Sleep(Duration::from_micros(50))
+        );
+        // 2026-10-09: The pre-2026-10-09 policy: never yield, sleep 1 ms.
+        let legacy = PollPause::parse(Some("0:1000")).unwrap();
+        assert_eq!(
+            legacy.action(Duration::ZERO),
+            PauseAction::Sleep(Duration::from_millis(1))
+        );
+    }
+
+    #[test]
+    fn poll_pause_refuses_malformed_values() {
+        for bad in [
+            "", "200", "200:", ":50", "a:b", "200:0", "-1:50", "200:50:1",
+        ] {
+            assert!(PollPause::parse(Some(bad)).is_err(), "{bad:?} accepted");
+        }
     }
 
     #[test]

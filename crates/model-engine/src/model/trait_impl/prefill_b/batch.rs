@@ -41,14 +41,17 @@ impl TransformerModel {
         stream: u64,
         row_base: usize,
     ) -> Result<Vec<DevicePtr>> {
+        // 2026-10-09: A multi-rank serve must announce the pass to its workers; the per-stream
+        // loop below sends nothing, so every batch takes the multi-sequence pass (`spans.rs`).
+        if self.multi_rank_protocol_active() {
+            return self.prefill_spans_dispatch(streams, row_base);
+        }
         let n = streams.len();
         // 2026-09-25: `METRALE_NO_PREFILL_ROW_SHIFT` set to 1 or true forces
         // `row_base = 0`, which puts prefill logits on the decode lanes' rows.
         // When the logits buffer cannot hold rows `row_base..row_base + n`,
         // `row_base` falls back to 0 with a warning rather than writing past it.
-        let shift_disabled = std::env::var("METRALE_NO_PREFILL_ROW_SHIFT")
-            .map(|v| v == "1" || v.to_lowercase() == "true")
-            .unwrap_or(false);
+        let shift_disabled = self.settings.scheduler.no_prefill_row_shift;
         let row_base = if shift_disabled { 0 } else { row_base };
         let logits_rows = self.buffers.sizes().logits / (self.config.vocab_size * 2);
         let row_base = if row_base + n > logits_rows {
@@ -100,9 +103,7 @@ impl TransformerModel {
         // accepts the batch. `NotAdmitted` falls through to the per-stream loop
         // below; an error is returned to the caller. `METRALE_Q12_BATCHED` set
         // to 0 or false disables the path; unset or any other value leaves it on.
-        let q12_batched_enabled = std::env::var("METRALE_Q12_BATCHED")
-            .map(|v| v != "0" && v.to_lowercase() != "false")
-            .unwrap_or(true);
+        let q12_batched_enabled = self.settings.scheduler.q12_batched;
         if q12_batched_enabled && self.kernel_batched_eligible(streams) {
             tracing::debug!(
                 target: "metrale::q12",
@@ -173,11 +174,7 @@ impl TransformerModel {
             }
         }
 
-        let stream = if self.multi_rank_protocol_active() {
-            self.gpu.default_stream()
-        } else {
-            stream
-        };
+        let stream = self.forward_stream(stream);
 
         let mut kv_cache = self.kv_cache.lock();
 
@@ -198,7 +195,15 @@ impl TransformerModel {
 
                 // 2026-09-25: The same zeroing rule as `prefill_chunk_dispatch`.
                 if self.comm.is_some() {
-                    self.buffers.zero_all(self.gpu.as_ref(), stream)?;
+                    if self.settings.runtime.prefill_zero_rows {
+                        self.buffers.zero_all_rows(
+                            self.gpu.as_ref(),
+                            stream,
+                            chunk_len.next_multiple_of(16),
+                        )?;
+                    } else {
+                        self.buffers.zero_all(self.gpu.as_ref(), stream)?;
+                    }
                 } else if chunk_start == 0 {
                     self.buffers
                         .zero_prefill_essentials(self.gpu.as_ref(), stream)?;
@@ -230,7 +235,7 @@ impl TransformerModel {
                     self.prefix_cache.as_ref(),
                     self.gpu.as_ref(),
                     stream,
-                    self.levers.kv_poison,
+                    self.prefill_block_fill(),
                 )?;
 
                 // 2026-09-25: Processing range; a fully cached non-last chunk

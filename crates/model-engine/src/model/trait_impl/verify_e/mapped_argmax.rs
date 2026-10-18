@@ -9,17 +9,17 @@
 /// 2026-09-25: A 65_536-byte page-locked host blob and its device alias
 /// (`host_ptr_to_device`) for the mapped argmax. After the first success the
 /// same pair is returned for the rest of the process, so a captured graph
-/// keeps a valid address. Returns `None` when `METRALE_NO_MAPPED_ARGMAX=1`, or
-/// when the allocation or the mapping fails; callers then use scratch and a
-/// copy.
-pub(in super::super) fn mapped_argmax_host_dev(
+/// keeps a valid address. Returns `None` when `off` (the settings'
+/// `METRALE_NO_MAPPED_ARGMAX`), or when the allocation or the mapping fails;
+/// callers then use scratch and a copy.
+fn mapped_argmax_host_dev(
     gpu: &dyn metrale_gpu_runtime::gpu::GpuBackend,
+    off: bool,
 ) -> Option<(*mut u8, metrale_gpu_runtime::gpu::DevicePtr)> {
     use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
     static HOST: AtomicPtr<u8> = AtomicPtr::new(std::ptr::null_mut());
     static DEV: AtomicU64 = AtomicU64::new(0);
-    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if *OFF.get_or_init(|| std::env::var("METRALE_NO_MAPPED_ARGMAX").as_deref() == Ok("1")) {
+    if off {
         return None;
     }
     let mut h = HOST.load(Ordering::Acquire);
@@ -36,4 +36,13 @@ pub(in super::super) fn mapped_argmax_host_dev(
         return None;
     }
     Some((h, metrale_gpu_runtime::gpu::DevicePtr(d)))
+}
+
+impl super::super::super::types::TransformerModel {
+    /// 2026-10-17: [`mapped_argmax_host_dev`] on this model's GPU, off when the settings say so.
+    pub(in super::super) fn mapped_argmax(
+        &self,
+    ) -> Option<(*mut u8, metrale_gpu_runtime::gpu::DevicePtr)> {
+        mapped_argmax_host_dev(self.gpu.as_ref(), self.settings.runtime.no_mapped_argmax)
+    }
 }

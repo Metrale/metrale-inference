@@ -145,7 +145,15 @@ impl TransformerModel {
                     == self
                         .mtp_prefill_capture_gen
                         .load(std::sync::atomic::Ordering::Relaxed);
-            let cold_prefill_ok = p >= 2 && captured >= p && seq_tokens.len() >= p && owns_capture;
+            // 2026-10-14: `METRALE_MTP_ADOPT_CAPTURE`: a hit's capture claims the rows a consumed
+            // capture left, which holds only while they were computed for its matched tokens.
+            let adopted_ok = !self.levers.mtp_adopt_capture
+                || self
+                    .mtp_capture_record
+                    .lock()
+                    .covers(capture_gen, &seq_tokens[..p.min(seq_tokens.len())]);
+            let cold_prefill_ok =
+                p >= 2 && captured >= p && seq_tokens.len() >= p && owns_capture && adopted_ok;
             let carry_on = metrale_model_layers::mtp_carry::mtp_carry_drafter_enabled(&self.levers);
             // 2026-09-25: Both branches run only on the first propose: `prefill_drafter`
             // returns early once the drafter has rows, and the carry checks `first_propose`.
@@ -158,14 +166,29 @@ impl TransformerModel {
                 if carry_on && let Some(old) = self.mtp_carry.lock().take() {
                     proposer.free_drafter_kv(&old.block_table);
                 }
+                // 2026-10-12: `METRALE_MTP_ACCEPTED_ROWS` (every committed row absorbed): when the
+                // first generated token is already known (the first propose follows a bootstrap
+                // decode), the prefill also writes its key, `(hidden_{p-1}, token_p)`, from the
+                // capture's last prompt row; otherwise no propose ever writes it and every later
+                // row sits one key off its position.
+                let prefill_len = if self.levers.mtp_accepted_rows && seq_tokens.len() > p {
+                    p + 1
+                } else {
+                    p
+                };
                 if let Err(e) = proposer.prefill_drafter(
-                    &seq_tokens[..p],
+                    &seq_tokens[..prefill_len],
                     self.mtp_prefill_hidden,
                     prop_state.as_mut(),
                     ctx,
                     stream,
                 ) {
                     tracing::warn!("MTP drafter prefill failed (continuing without): {e:#}");
+                }
+                if self.levers.mtp_adopt_capture {
+                    self.mtp_capture_record
+                        .lock()
+                        .note_consumed(&seq_tokens[..p]);
                 }
             } else if carry_on && first_propose && p >= 2 {
                 let outcome = self.try_carry_drafter(
@@ -300,12 +323,24 @@ impl TransformerModel {
         // 2026-09-25: `hidden_states` rows are BF16 (2 bytes), despite the name below.
         let fp32 = 2usize;
         // 2026-09-25: Save the hidden state before the final norm: the MTP head applies
-        // its own `pre_fc_norm_hidden`.
-        let src = self.buffers.hidden_states().offset(token_idx * h * fp32);
-        self.gpu
-            .copy_d2d_async(src, self.mtp_hidden_save, h * fp32, stream)?;
+        // its own `pre_fc_norm_hidden`. 2026-10-11: After a device-step verify whose device
+        // verdict agrees, the row is selected on the device by its accept word
+        // (`select_mtp_hidden_on_device`, part 3); the same bytes.
+        match super::device_step::device_verdict_for(None, true) {
+            Some(acc) if token_idx == acc as usize => {
+                let verdict = self.device_verdict_buf()?;
+                self.select_mtp_hidden_on_device(verdict, stream)?;
+            }
+            _ => {
+                let src = self.buffers.hidden_states().offset(token_idx * h * fp32);
+                self.gpu
+                    .copy_d2d_async(src, self.mtp_hidden_save, h * fp32, stream)?;
+            }
+        }
         self.last_mtp_hidden_idx
             .store(token_idx, std::sync::atomic::Ordering::Relaxed);
+        self.mtp_hidden_live
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
@@ -362,6 +397,15 @@ impl TransformerModel {
         let src = self.verify_hidden_stash.offset(idx * h * bf16);
         self.gpu
             .copy_d2d_async(src, self.mtp_hidden_save, h * bf16, stream)?;
+        // 2026-10-11: Latch the stash slot, flagged, so a multi-rank propose
+        // (`EP_CMD_MTP_PROPOSE`) has its workers copy the same slot of their own stash
+        // (`ep_worker_mtp_propose`) instead of a `hidden_states` row.
+        self.last_mtp_hidden_idx.store(
+            idx | metrale_model_layers::speculative::MTP_HIDDEN_FROM_STASH as usize,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        self.mtp_hidden_live
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 

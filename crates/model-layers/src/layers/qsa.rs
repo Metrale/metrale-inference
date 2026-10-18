@@ -29,10 +29,14 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 
 use crate::layers::ops;
 
+/// 2026-10-18: The prefill-selection levers, resolved once from the settings.
+#[path = "qsa_levers.rs"]
+mod levers;
 #[path = "qsa_select.rs"]
 mod qsa_select;
 #[path = "qsa_snapshot.rs"]
 mod qsa_snapshot;
+pub use levers::QsaLevers;
 #[cfg(test)]
 #[path = "qsa_tests.rs"]
 mod tests;

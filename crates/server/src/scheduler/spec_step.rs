@@ -7,6 +7,33 @@
 
 use super::*;
 
+/// 2026-10-14: The bootstrap token: the device argmax, re-picked with the
+/// held EOS ids masked (`eos_hold::presample_hold`) when it lands on one, as
+/// every other path masks before it picks.
+fn bootstrap_argmax(
+    model: &dyn Model,
+    logits: DevicePtr,
+    a: &ActiveSeq,
+    sched: &crate::scheduler::sched_ctx::SchedCtx,
+) -> Result<u32> {
+    let tok = model.argmax_on_device(logits, 0)?;
+    let generated_before = a.output_tokens.len();
+    if !crate::scheduler::eos_hold::eos_masked_at(a, tok, generated_before) {
+        return Ok(tok);
+    }
+    sample_token(
+        model,
+        logits,
+        0.0,
+        0,
+        1.0,
+        0.0,
+        crate::scheduler::eos_hold::eos_mask_ids(a, generated_before),
+        &sched.levers.sampling(),
+        sched.io.tel.dumps(),
+    )
+}
+
 /// 2026-09-25: Self-speculative step for `active[0]`: drafts with `decode_draft`, which
 /// skips the SSM layers, then verifies with the full model, all in one call.
 ///
@@ -34,7 +61,7 @@ pub fn step_self_spec(
             return;
         }
     };
-    let token_0 = match model.argmax_on_device(logits, 0) {
+    let token_0 = match bootstrap_argmax(model, logits, a, sched) {
         Ok(t) => t,
         Err(e) => {
             tracing::error!("self-spec argmax error: {e:#}");
@@ -198,7 +225,7 @@ pub fn step_ngram(
                 return;
             }
         };
-        let tok = match model.argmax_on_device(logits, 0) {
+        let tok = match bootstrap_argmax(model, logits, a, sched) {
             Ok(t) => t,
             Err(e) => {
                 tracing::error!("ngram bootstrap argmax error: {e:#}");

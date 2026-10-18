@@ -15,30 +15,31 @@ metal = ["metrale-gpu-runtime/metal", "metrale-storage/metal", "metrale-core/met
 test-utils = ["metrale-gpu-runtime/test-utils"]
 
 [dependencies]
-metrale-config = { path = "../config", default-features = false }
-metrale-core = { path = "../core", default-features = false }
-metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false }
-metrale-gpu-sys = { path = "../gpu-sys", default-features = false }
-metrale-storage = { path = "../storage", default-features = false }
-metrale-telemetry = { path = "../telemetry" }
-anyhow = { workspace = true }
-half = "2"
-memmap2 = "0.9"
+metrale-config = { workspace = true }
+metrale-core = { workspace = true }
+metrale-gpu-runtime = { workspace = true }
+metrale-gpu-sys = { workspace = true }
+metrale-settings = { workspace = true }
+metrale-storage = { workspace = true }
+metrale-telemetry = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
+half = { workspace = true, features = ["std"] }
+memmap2 = { workspace = true }
 parking_lot = { workspace = true }
-rand = "0.8"
-safetensors = "0.8"
-serde = { workspace = true }
-serde_json = { workspace = true }
-sha2.workspace = true
-tracing = "0.1"
+rand = { workspace = true, features = ["std", "std_rng", "os_rng", "small_rng", "thread_rng"] }
+safetensors = { workspace = true, features = ["std"] }
+serde = { workspace = true, features = ["std", "derive"] }
+serde_json = { workspace = true, features = ["std", "preserve_order"] }
+sha2 = { workspace = true, features = ["alloc", "oid"] }
+tracing = { workspace = true, features = ["std", "attributes"] }
 
 [target.'cfg(unix)'.dependencies]
-libc = "0.2"
+libc = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
-metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false, features = ["test-utils"] }
-metrale-kernels = { path = "../kernels", default-features = false }
-tempfile = "3"
+metrale-gpu-runtime = { workspace = true, features = ["test-utils"] }
+metrale-kernels = { workspace = true }
+tempfile = { workspace = true, features = ["getrandom"] }
 
 [[bin]]
 name = "bench_fast_weights"
@@ -67,3 +68,6 @@ required-features = ["test-utils"]
 
 [lints]
 workspace = true
+
+[package.metadata.metrale]
+role = "device"

@@ -97,6 +97,7 @@ pub fn run(
             app.progress.apply(ev);
         }
         app.chat.pump();
+        #[cfg(feature = "bench")]
         app.bench.pump();
         app.help.pump();
         if let Some((text, error)) = app.help.take_message() {
@@ -170,11 +171,13 @@ pub fn run(
             }
             // 2026-09-26: `load_history` returns at once until
             // `history_loaded` is cleared.
+            #[cfg(feature = "bench")]
             if work.load_history {
                 app.bench.load_history();
             }
             // 2026-09-26: Whatever section is shown, so a pre-flight started in
             // Benchmarks still resolves elsewhere.
+            #[cfg(feature = "bench")]
             app.bench.poll_preflight();
         }
         if std::mem::take(&mut app.repaint) {

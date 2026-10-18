@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[workspace]
+resolver = "3"
+members = ["crates/w-std", "crates/w-clean", "crates/w-allowed", "crates/w-stale", "crates/w-dev"]

@@ -332,7 +332,14 @@ fn the_stop_caps_each_chain_at_its_first_unconfident_draft() {
         &[-3.0, -0.1, -0.1],
     ]);
     let mut batchable = vec![0, 1, 2];
-    let ks = plan_with_stop(&sched, &mut active, &mut batchable, 3, 4, Some(LN_HALF));
+    let ks = plan_with_stop(
+        &sched,
+        &mut active,
+        &mut batchable,
+        3,
+        4,
+        Some(metrale_model_layers::speculative::draft_stop::StopRule::per_position(LN_HALF)),
+    );
     // 2026-10-02: Deepest first (below the canonical width each keeps its own).
     assert_eq!(ks, vec![4, 3, 2]);
     assert_eq!(batchable, vec![0, 1, 2]);
@@ -361,7 +368,14 @@ fn the_stop_applies_above_the_d_cut_width_cap() {
         .collect();
     let mut active = seqs_with(&confs);
     let mut batchable: Vec<usize> = (0..n).collect();
-    let ks = plan_with_stop(&sched, &mut active, &mut batchable, 3, 4, Some(LN_HALF));
+    let ks = plan_with_stop(
+        &sched,
+        &mut active,
+        &mut batchable,
+        3,
+        4,
+        Some(metrale_model_layers::speculative::draft_stop::StopRule::per_position(LN_HALF)),
+    );
     let total: usize = ks.iter().sum();
     assert_eq!(
         total,
@@ -382,35 +396,19 @@ fn a_short_chain_joins_at_its_own_depth_when_re_pairing_cannot_hold_it() {
     let confs: Vec<&[f32]> = (0..n).map(|i| if i == 0 { one } else { full }).collect();
     let mut active = seqs_with(&confs);
     let mut batchable: Vec<usize> = (0..n).collect();
-    let ks = plan_with_stop(&sched, &mut active, &mut batchable, 3, 4, Some(LN_HALF));
+    let ks = plan_with_stop(
+        &sched,
+        &mut active,
+        &mut batchable,
+        3,
+        4,
+        Some(metrale_model_layers::speculative::draft_stop::StopRule::per_position(LN_HALF)),
+    );
     for (pos, &i) in batchable.iter().enumerate() {
         assert_eq!(ks[pos], active[i].pending_drafts.len() + 1);
     }
     assert_eq!(active[0].pending_drafts.len(), 1);
     assert_eq!(ks.iter().sum::<usize>(), 2 + (n - 1) * 4);
-}
-
-// 2026-10-03: `--mtp-dcut-ratio` resolution.
-
-#[test]
-fn the_dcut_flag_wins_over_the_environment_and_snaps() {
-    assert_eq!(resolve_dcut_ratio(None, None), 0.75, "default");
-    assert_eq!(
-        resolve_dcut_ratio(None, Some("1.0")),
-        1.0,
-        "environment fallback"
-    );
-    assert_eq!(
-        resolve_dcut_ratio(Some(1.0), Some("0.25")),
-        1.0,
-        "the flag wins"
-    );
-    assert_eq!(resolve_dcut_ratio(Some(0.3), None), 0.25, "snapped");
-    assert_eq!(
-        resolve_dcut_ratio(None, Some("junk")),
-        0.75,
-        "unparseable is ignored"
-    );
 }
 
 #[test]

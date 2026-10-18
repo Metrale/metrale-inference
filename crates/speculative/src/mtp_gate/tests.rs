@@ -8,6 +8,13 @@
 //! Invariants: none beyond the types.
 
 use super::*;
+use metrale_settings::groups::device_drafter::DrafterSettings;
+
+/// 2026-10-17: A gate at the declared probe and refresh intervals.
+fn declared_gate() -> MtpGate {
+    let d = DrafterSettings::declared().expect("the declared drafter settings project");
+    MtpGate::with_settings(1, &d)
+}
 
 fn ms(x: u64) -> Duration {
     Duration::from_millis(x)
@@ -71,14 +78,14 @@ fn switch_to_serial(g: &mut MtpGate) {
 
 #[test]
 fn starts_in_mtp_mode() {
-    let g = MtpGate::new(1);
+    let g = declared_gate();
     assert_eq!(g.next_step(), GateStep::MeasureVerify);
     assert!(!g.in_serial_mode());
 }
 
 #[test]
 fn no_switch_without_both_baselines() {
-    let mut g = MtpGate::new(1);
+    let mut g = declared_gate();
     // 2026-09-25: Serial was never measured, so there is no switch.
     drive_mtp(&mut g, 64, 1, ms(100));
     assert!(!g.in_serial_mode());
@@ -87,7 +94,7 @@ fn no_switch_without_both_baselines() {
 
 #[test]
 fn refresh_probe_opens_after_interval_and_returns() {
-    let mut g = MtpGate::new(1);
+    let mut g = declared_gate();
     // 2026-09-25: At 2 tokens per step, about 512 steps reach the default
     // 1024-token refresh interval.
     run_mtp_until_probe(&mut g, 2, ms(50));
@@ -104,7 +111,7 @@ fn refresh_probe_opens_after_interval_and_returns() {
 
 #[test]
 fn switches_to_serial_when_clearly_faster_with_dwell() {
-    let mut g = MtpGate::new(1);
+    let mut g = declared_gate();
     // 2026-09-25: MTP at 20 tok/s (2 tokens per 100 ms).
     run_mtp_until_probe(&mut g, 2, ms(100));
     // 2026-09-25: Serial probe at 100 tok/s, far past the margin.
@@ -139,7 +146,7 @@ fn switches_to_serial_when_clearly_faster_with_dwell() {
 /// repeat leaves the gate in Mtp and clears the loss.
 #[test]
 fn unconfirmed_serial_window_does_not_switch() {
-    let mut g = MtpGate::new(1);
+    let mut g = declared_gate();
     // 2026-09-26: MTP at 40 tok/s; the first serial probe reads 100 tok/s.
     run_mtp_until_probe(&mut g, 2, ms(50));
     drive_serial(&mut g, WINDOW_STEPS, ms(10));
@@ -157,7 +164,7 @@ fn unconfirmed_serial_window_does_not_switch() {
 
 #[test]
 fn hysteresis_blocks_within_margin_switches() {
-    let mut g = MtpGate::new(1);
+    let mut g = declared_gate();
     // 2026-09-25: MTP at 40 tok/s.
     run_mtp_until_probe(&mut g, 2, ms(50));
     // 2026-09-25: Serial probe at 41 tok/s, inside the 5% margin floor (a
@@ -178,7 +185,7 @@ fn hysteresis_blocks_within_margin_switches() {
 
 #[test]
 fn serial_mode_reprobes_mtp_and_recovers() {
-    let mut g = MtpGate::new(1);
+    let mut g = declared_gate();
     // 2026-09-25: MTP at 20 tok/s, serial at 100 tok/s: switch to Serial.
     switch_to_serial(&mut g);
     assert!(g.in_serial_mode());
@@ -200,7 +207,7 @@ fn serial_mode_reprobes_mtp_and_recovers() {
 
 #[test]
 fn depth_change_schedules_early_probe_without_state_wipe() {
-    let mut g = MtpGate::new(1);
+    let mut g = declared_gate();
     g.note_depth(600);
     drive_mtp(&mut g, WINDOW_STEPS * 2, 2, ms(50));
     let tps_before = g.mtp_tps_debug();
@@ -259,7 +266,7 @@ fn depth_change_schedules_early_probe_without_state_wipe() {
 
 #[test]
 fn bootstrap_steps_count_at_least_one_token() {
-    let mut g = MtpGate::new(1);
+    let mut g = declared_gate();
     // 2026-09-25: `emitted = 0` is charged as one token.
     for _ in 0..WINDOW_STEPS {
         g.record_verify_step(ms(10), 0, 1);
@@ -272,7 +279,7 @@ fn bootstrap_steps_count_at_least_one_token() {
 /// overrides a Serial verdict with the verify step.
 #[test]
 fn entry_pin_overrides_serial_mode_for_answer_openings() {
-    let mut g = MtpGate::new(1);
+    let mut g = declared_gate();
     // 2026-09-25: Switch the gate to Serial (MTP 20 tok/s, serial 100 tok/s).
     switch_to_serial(&mut g);
     assert!(g.in_serial_mode());
@@ -291,7 +298,7 @@ fn entry_pin_overrides_serial_mode_for_answer_openings() {
 /// estimates and the mode as they were.
 #[test]
 fn entry_pin_steps_do_not_touch_arbitration_state() {
-    let mut g = MtpGate::new(1);
+    let mut g = declared_gate();
     switch_to_serial(&mut g);
     assert!(g.in_serial_mode());
     g.take_fresh_decision();
@@ -305,20 +312,9 @@ fn entry_pin_steps_do_not_touch_arbitration_state() {
     assert!(g.in_serial_mode(), "pin must not flip the gate's mode");
 }
 
-/// 2026-09-25: `METRALE_SPEC_ENTRY_PIN` parses as a `u32`, default 8; `0`
-/// disables.
-#[test]
-fn entry_pin_env_parse() {
-    assert_eq!(parse_entry_pin_tokens(None), 8);
-    assert_eq!(parse_entry_pin_tokens(Some("0")), 0);
-    assert_eq!(parse_entry_pin_tokens(Some("12")), 12);
-    assert_eq!(parse_entry_pin_tokens(Some("garbage")), 8);
-    assert_eq!(parse_entry_pin_tokens(Some("-3")), 8);
-}
-
 #[test]
 fn stale_other_baseline_cannot_steal_mode() {
-    let mut g = MtpGate::new(1);
+    let mut g = declared_gate();
     run_mtp_until_probe(&mut g, 2, ms(50));
     drive_serial(&mut g, WINDOW_STEPS, ms(40));
     assert!(!g.in_serial_mode());
@@ -382,7 +378,7 @@ fn dflash_spec_think_opts_in() {
 /// share of the steps and never becomes the mode.
 #[test]
 fn think_budget_2048_two_crossings_do_not_dump_serial() {
-    let mut g = MtpGate::new(1);
+    let mut g = declared_gate();
     let mut depth = 64usize;
     g.note_depth(depth);
     let mut serial_steps = 0usize;

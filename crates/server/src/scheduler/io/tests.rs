@@ -13,6 +13,9 @@ use std::time::Duration;
 use super::{Arrivals, RequestIo, TokioRequestIo, WaitPolicy};
 use crate::scheduler::types::PendingQueue;
 
+/// 2026-10-17: These tests never fill a stream channel, so the deadline is never reached.
+const DEADLINE: Duration = Duration::from_millis(crate::scheduler::run_io::STREAM_SEND_DEADLINE_MS);
+
 fn inbox() -> (
     std::sync::Arc<TokioRequestIo>,
     tokio::sync::mpsc::Sender<crate::api::InferenceRequest>,
@@ -20,7 +23,7 @@ fn inbox() -> (
 ) {
     let (tx, rx) = tokio::sync::mpsc::channel(8);
     let (rtx, rrx) = tokio::sync::mpsc::channel(8);
-    (TokioRequestIo::new(rx, rrx), tx, rtx)
+    (TokioRequestIo::new(rx, rrx, DEADLINE), tx, rtx)
 }
 
 fn request() -> crate::api::InferenceRequest {
@@ -90,7 +93,7 @@ fn block_wakes_on_a_rotation_alone_and_on_close() {
 
 #[test]
 fn a_closed_inbox_never_waits() {
-    let io = TokioRequestIo::closed();
+    let io = TokioRequestIo::closed(DEADLINE);
     let t0 = std::time::Instant::now();
     assert!(io.recv(WaitPolicy::Block).closed);
     assert!(io.recv(WaitPolicy::Bounded(Duration::from_secs(5))).closed);
@@ -136,7 +139,12 @@ const SEAM_ALLOW: &[&str] = &[
 ];
 
 /// 2026-09-25: A business file must reach these through `SchedIo` / `LogitsContext`.
+/// 2026-10-17: Levers too: a business file reads `SchedLevers`, which the load resolved
+/// once from its settings, never the environment.
 const SEAM_FORBIDDEN: &[&str] = &[
+    "env::var(",
+    "env::var_os(",
+    "levers::var(",
     "Instant::now()",
     ".elapsed()",
     "blocking_send(",
@@ -199,6 +207,40 @@ fn no_scheduler_business_file_does_its_own_io() {
     assert!(
         hits.is_empty(),
         "raw I/O outside the routers:\n{}",
+        hits.join("\n")
+    );
+}
+
+/// 2026-10-17: No scheduler file reads the environment, the routers and sinks included:
+/// every lever, deadline and dump path arrives resolved in `SchedulerConfig` (`SchedLevers`,
+/// `RunIoSettings`). This replaces the per-token module list the scheduler had, which
+/// allowed reads elsewhere. Only the test files, which name the calls as data, are skipped.
+#[test]
+fn no_scheduler_file_reads_the_environment() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/scheduler");
+    let mut files = Vec::new();
+    walk(&root, &mut files);
+    assert!(files.len() > 50, "scan found {} files", files.len());
+    let mut hits = Vec::new();
+    for f in files {
+        let rel = format!("/{}", f.strip_prefix(&root).unwrap().to_string_lossy());
+        if rel.ends_with("_tests.rs") || rel.ends_with("/tests.rs") {
+            continue;
+        }
+        let src = std::fs::read_to_string(&f).unwrap();
+        for (n, line) in src.lines().enumerate() {
+            let code = line.split("//").next().unwrap_or("");
+            if ["env::var(", "env::var_os(", "levers::var("]
+                .iter()
+                .any(|t| code.contains(t))
+            {
+                hits.push(format!("{rel}:{}", n + 1));
+            }
+        }
+    }
+    assert!(
+        hits.is_empty(),
+        "environment reads in the scheduler; resolve them into `SchedulerConfig`:\n{}",
         hits.join("\n")
     );
 }

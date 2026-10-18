@@ -109,7 +109,10 @@ fn rust_reads() -> Vec<(String, String, bool)> {
     for p in rs {
         let r = rel(&p);
         // 2026-09-26: The tables spell every name; they are what is being checked.
-        if is_test_file(&r) || r.starts_with("crates/config/src/levers/") {
+        if is_test_file(&r)
+            || r.starts_with("crates/config/src/levers/")
+            || r.starts_with("crates/settings/src/groups/")
+        {
             continue;
         }
         let text = std::fs::read_to_string(&p).expect("readable source");
@@ -220,6 +223,18 @@ fn every_lever_the_code_reads_is_declared() {
     );
 }
 
+/// 2026-10-17: Whether `text` reads the lever through its resolved settings field: a code line
+/// with `.<field>` not followed by an identifier character, where `<field>` is the name after
+/// `METRALE_` in lower case (the settings tables name every field that way).
+fn reads_field(text: &str, env: &str) -> bool {
+    let field = format!(".{}", env[PREFIX.len()..].to_ascii_lowercase());
+    text.lines().map(code_of).any(|code| {
+        code.match_indices(&field).any(|(i, m)| {
+            !code[i + m.len()..].starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')
+        })
+    })
+}
+
 #[test]
 fn every_declared_lever_is_read_where_the_table_says() {
     let prod: std::collections::BTreeSet<String> = rust_reads()
@@ -231,13 +246,16 @@ fn every_declared_lever_is_read_where_the_table_says() {
     let mut bad = Vec::new();
     for l in all() {
         let text = std::fs::read_to_string(repo().join(l.reader)).unwrap_or_default();
-        if !text.contains(l.env) {
+        let via_settings = reads_field(&text, l.env);
+        if !text.contains(l.env) && !via_settings {
             bad.push(format!("{}: {} does not read it", l.env, l.reader));
             continue;
         }
         let crates = l.reader.starts_with("crates/");
         let placed = match l.class {
-            Class::Runtime => crates && !is_test_file(l.reader) && prod.contains(l.env),
+            Class::Runtime => {
+                crates && !is_test_file(l.reader) && (prod.contains(l.env) || via_settings)
+            }
             Class::Harness | Class::Build => crates && !is_test_file(l.reader),
             Class::Dev => is_test_file(l.reader) || is_dev_file(l.reader),
             Class::Tool => !crates,

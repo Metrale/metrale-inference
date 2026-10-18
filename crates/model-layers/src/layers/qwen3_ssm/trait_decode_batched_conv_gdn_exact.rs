@@ -13,7 +13,7 @@
 //! writes each h intermediate inline, and `gdn_verify_fused_conv_kn_f32` runs the conv
 //! for all rows and writes the conv intermediates. Where a twin's handle is zero the arm
 //! uses the parent kernel and a `copy_d2d_async` per row. The
-//! `verify_exact_microtest` example (metrale-model-arch) checks the twins byte for byte
+//! `verify_exact_microtest` example (metrale-gpu-examples) checks the twins byte for byte
 //! against the single-token chain. The arm writes the normed rows itself, and
 //! `decode_batched_inner` skips its norm when `verify_exact_enabled()`.
 

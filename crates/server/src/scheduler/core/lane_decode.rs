@@ -65,6 +65,7 @@ impl SchedulerCore {
                 think_start_token,
                 tool_call_start_token,
                 tool_call_end_token,
+                thinking_closed_by: sched.limits.thinking_closed_by,
                 verify_pos: 0,
                 boundary_mask: sched.masks.boundary.clone(),
                 mid_word_mask: sched.masks.mid_word.clone(),
@@ -162,7 +163,7 @@ impl SchedulerCore {
                     if (dflash_pin
                         || metrale_speculative::mtp_gate::entry_pin_forces_verify(
                             min_post_think_emitted,
-                            sched.levers.spec_entry_pin_tokens,
+                            sched.levers.drafter.spec_entry_pin_tokens,
                         ))
                         && gate.next_step()
                             == metrale_speculative::mtp_gate::GateStep::MeasureDecode

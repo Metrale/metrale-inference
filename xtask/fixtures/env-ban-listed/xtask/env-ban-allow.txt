@@ -1,0 +1,4 @@
+# env-ban fixture: both readers listed, sorted.
+
+crates/app/src/lib.rs
+crates/app/src/other.rs

@@ -9,6 +9,7 @@
 
 #![allow(unused_imports, dead_code, clippy::too_many_arguments)]
 
+use super::super::lm_head_vocab_tp::HeadRanks;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -91,11 +92,7 @@ impl TransformerModel {
 
         // 2026-09-25: A multi-rank world (EP or TP, see `multi_rank_protocol_active`)
         // runs on the backend's default stream; otherwise on the caller's stream.
-        let stream = if self.multi_rank_protocol_active() {
-            self.gpu.default_stream()
-        } else {
-            stream
-        };
+        let stream = self.forward_stream(stream);
         let h = self.config.hidden_size;
         let _bf16 = 2usize;
         let fp32 = 2usize;
@@ -172,7 +169,7 @@ impl TransformerModel {
             self.prefix_cache.as_ref(),
             self.gpu.as_ref(),
             stream,
-            self.levers.kv_poison,
+            self.prefill_block_fill(),
         )?;
 
         let (proc_start, proc_count) = if marconi_skip && kv_write_start > 0 {
@@ -362,6 +359,7 @@ impl TransformerModel {
             dispatch: &self.dispatch,
             derived: &self.derived,
             levers: &self.levers,
+            settings: &self.settings,
             stats: &self.stats,
             attn_metadata: Some(attn_metadata),
             profile: self.profile,
@@ -476,7 +474,7 @@ impl TransformerModel {
         let eps = self.config.rms_norm_eps as f32;
         self.final_norm_apply(last_hidden, normed, 1, h as u32, eps, stream)?;
 
-        self.lm_head(normed, stream)?;
+        self.lm_head(normed, HeadRanks::Every, stream)?;
 
         self.prefill_save_snapshot_and_insert(tokens, seq, &mut kv_cache, bs, stream);
 

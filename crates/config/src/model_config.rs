@@ -344,6 +344,25 @@ pub struct ModelConfig {
     pub tp_rank: usize,
     #[serde(skip)]
     pub tp_world_size: usize,
+    /// 2026-10-09: Serve's `--moe-expert-layout`: whole experts over EP ranks, or every expert
+    /// sliced over TP ranks (`MoeExpertLayout`). Only a loader whose
+    /// `ModelWeightLoader::slices_experts_over_tp` is true reads it.
+    #[serde(skip)]
+    pub moe_expert_layout: crate::MoeExpertLayout,
+    /// 2026-10-16: Serve's `--indexer-cache-dtype`: how a paged sparse-attention indexer
+    /// stores its rows (`IndexerCacheDtype`). Only the glm5_next loader reads it.
+    #[serde(skip)]
+    pub indexer_cache_dtype: crate::IndexerCacheDtype,
+    /// 2026-10-16: The most rows one rewind may drop (the verify pass's draft count under
+    /// speculative decoding, else 0). Serve sets it; the FP8 indexer cache sizes its tail ring
+    /// from it.
+    #[serde(skip)]
+    pub indexer_rewind_rows: usize,
+    /// 2026-10-08: The head counts before serve divided them for TP
+    /// (`ModelConfig::shard_heads_for_tp`); `None` until then. Read through
+    /// `ModelConfig::pre_shard_heads`.
+    #[serde(skip)]
+    pub tp_pre_shard_heads: Option<crate::TpPreShardHeads>,
 
     /// 2026-09-26: The serve's `--max-seq-len`, set at startup. It is 0 when nothing set it (a
     /// unit test, an offline tool), which readers must treat as unknown, not as zero context.

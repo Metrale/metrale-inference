@@ -171,5 +171,5 @@ settle it, the judgement is recorded here rather than guessed by a rule:
 |---|---|---|
 | 541 | `infrastructure/ci` | site E2E spec fix |
 | 542 | `infrastructure/ci` | CodeRAG workflow change |
-| 549 | `performance/speculation` | MTP accept-bucket accounting across `metrale-model-layers` and `metrale-server` |
+| 549 | `performance/speculation` | MTP accept-bucket accounting across `metrale-model-layers` and `met` |
 | 554, 556, 558 | `infrastructure/build-system` | Dependabot manifest and lockfile bumps |

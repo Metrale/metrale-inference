@@ -46,6 +46,7 @@ fn load_expert_proj(
     prefix: &str,
     gpu: &dyn GpuBackend,
     qctx: metrale_model_layers::weight_map::QuantizeCtx,
+    settings: &metrale_settings::InferenceServerSettings,
 ) -> Result<QuantizedWeight> {
     use metrale_model_weights::weights::WeightDtype;
     if store.contains(&format!("{prefix}.weight_packed")) {
@@ -76,7 +77,7 @@ fn load_expert_proj(
         // launches its E8M0 kernels.
         WeightDtype::UInt8 => {
             let qw = metrale_model_layers::weight_map::quantized_mxfp4_e8m0(store, prefix)?;
-            maybe_dump_expert0(prefix, &qw, gpu)?;
+            maybe_dump_expert0(prefix, &qw, gpu, settings)?;
             Ok(qw)
         }
         other => anyhow::bail!(
@@ -89,8 +90,13 @@ fn load_expert_proj(
 /// ending in `layers.0.ffn.experts.0.w1`: copies the device weight and scale
 /// bytes the MXFP4 arm landed to `/tmp/metrale_expert0_w1_{weight,scale}.bin`.
 /// The copy sizes are fixed (4194304 B and 262144 B), not taken from the tensor.
-fn maybe_dump_expert0(prefix: &str, qw: &QuantizedWeight, gpu: &dyn GpuBackend) -> Result<()> {
-    if std::env::var("METRALE_DUMP_EXPERT0").as_deref() != Ok("1") {
+fn maybe_dump_expert0(
+    prefix: &str,
+    qw: &QuantizedWeight,
+    gpu: &dyn GpuBackend,
+    settings: &metrale_settings::InferenceServerSettings,
+) -> Result<()> {
+    if !settings.telemetry.dump_expert0 {
         return Ok(());
     }
     if !prefix.ends_with("layers.0.ffn.experts.0.w1") {

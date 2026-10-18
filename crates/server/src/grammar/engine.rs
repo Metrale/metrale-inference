@@ -28,11 +28,14 @@ pub struct GrammarEngine {
     /// `None` until [`Self::attach_mask_cache`] runs, and when that finds
     /// persistence off or the rule cache absent. See [`super::mask_cache`].
     pub(super) snapshot: Option<super::mask_cache::MaskSnapshot>,
+    /// 2026-10-17: The switches every compile and the mask cache read; fixed when the
+    /// engine is built.
+    pub(super) levers: super::GrammarLevers,
 }
 
 // 2026-09-26: SAFETY: every field is already `Send` (`GrammarCompiler`,
-// `usize`, and `MaskSnapshot`'s `PathBuf`, `SnapshotIdentity`,
-// `RuleLevelCache` and `Arc` atomics), so this asserts nothing the auto
+// `usize`, `GrammarLevers` (bools and a `String`), and `MaskSnapshot`'s `PathBuf`,
+// `SnapshotIdentity`, `RuleLevelCache` and `Arc` atomics), so this asserts nothing the auto
 // trait does not.
 unsafe impl Send for GrammarEngine {}
 
@@ -57,6 +60,9 @@ impl GrammarEngine {
     /// (`Ġ` for a space, `Ċ` for `\n`) or with `<0xHH>` / `▁` byte-fallback
     /// pieces, which need decoding first. For a HuggingFace tokenizer use
     /// [`Self::from_tokenizer`], which detects the vocabulary type.
+    ///
+    /// Every switch is at [`super::GrammarLevers::UNSET`]; serving builds with
+    /// [`Self::from_tokenizer`], which takes the load's.
     pub fn new(vocab: &[String], stop_token_ids: &[i32]) -> Result<Self, GrammarError> {
         let stop: Option<Box<[i32]>> = if stop_token_ids.is_empty() {
             None
@@ -65,7 +71,7 @@ impl GrammarEngine {
         };
         let tokenizer_info = TokenizerInfo::new(vocab, VocabType::RAW, &stop, false)
             .map_err(GrammarError::Compilation)?;
-        Self::from_tokenizer_info(tokenizer_info)
+        Self::from_tokenizer_info(tokenizer_info, super::GrammarLevers::UNSET)
     }
 
     /// 2026-09-26: Build an engine from a HuggingFace tokenizer. The
@@ -77,10 +83,13 @@ impl GrammarEngine {
     /// `vocab_size`, when given (serving passes the model config's), wins
     /// over the tokenizer's count: the vocabulary is padded with empty
     /// strings or truncated to it.
+    ///
+    /// `levers` are the load's grammar switches ([`super::GrammarLevers::from_settings`]).
     pub fn from_tokenizer(
         tokenizer: &tokenizers::Tokenizer,
         vocab_size: Option<usize>,
         stop_token_ids: &[i32],
+        levers: super::GrammarLevers,
     ) -> Result<Self, GrammarError> {
         let backend_str = tokenizer
             .to_string(false)
@@ -125,10 +134,13 @@ impl GrammarEngine {
             metadata.add_prefix_space,
         )
         .map_err(GrammarError::Compilation)?;
-        Self::from_tokenizer_info(tokenizer_info)
+        Self::from_tokenizer_info(tokenizer_info, levers)
     }
 
-    fn from_tokenizer_info(tokenizer_info: TokenizerInfo) -> Result<Self, GrammarError> {
+    fn from_tokenizer_info(
+        tokenizer_info: TokenizerInfo,
+        levers: super::GrammarLevers,
+    ) -> Result<Self, GrammarError> {
         let vocab_size = tokenizer_info.vocab_size();
         // 2026-09-26: `max_threads = 1`, so `compile_top_k_masks` warms
         // masks on one thread. The budget is finite, not `-1` (unlimited),
@@ -141,6 +153,7 @@ impl GrammarEngine {
             compiler,
             vocab_size,
             snapshot: None,
+            levers,
         })
     }
 
@@ -148,5 +161,10 @@ impl GrammarEngine {
     /// bitmask holds `ceil(vocab_size / 32)` `i32` words.
     pub fn vocab_size(&self) -> usize {
         self.vocab_size
+    }
+
+    /// 2026-10-17: The switches this engine was built with.
+    pub fn levers(&self) -> &super::GrammarLevers {
+        &self.levers
     }
 }

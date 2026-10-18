@@ -9,6 +9,10 @@
 //!   used by `draw` here and by `events::on_mouse`.
 //! - Every frame resets `App::lib_search_click` before any pane draws.
 
+#[cfg(feature = "bench")]
+mod bench;
+#[cfg(not(feature = "bench"))]
+#[path = "bench_absent.rs"]
 mod bench;
 mod chat_lines;
 mod header;
@@ -156,7 +160,18 @@ fn draw_selection(f: &mut Frame, app: &App) {
 
 /// 2026-09-26: Paint the content ring and return the area inside it.
 fn draw_glow_ring(f: &mut Frame, app: &App, area: Rect) -> Rect {
-    let style = if app.bench.glow {
+    // 2026-10-17: The running benchmark's name while the ring glows; never in a build
+    // without the harness.
+    #[cfg(feature = "bench")]
+    let running = app.bench.glow.then(|| {
+        app.bench
+            .descriptor()
+            .map(|d| d.name)
+            .unwrap_or("benchmark")
+    });
+    #[cfg(not(feature = "bench"))]
+    let running: Option<&str> = None;
+    let style = if running.is_some() {
         Style::default().fg(theme::glow(app.tick))
     } else {
         theme::border(false)
@@ -164,15 +179,9 @@ fn draw_glow_ring(f: &mut Frame, app: &App, area: Rect) -> Rect {
     let mut block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(style);
-    if app.bench.glow {
+    if let Some(name) = running {
         block = block.title(Span::styled(
-            format!(
-                "─ ⏱ {} ─",
-                app.bench
-                    .descriptor()
-                    .map(|d| d.name)
-                    .unwrap_or("benchmark")
-            ),
+            format!("─ ⏱ {name} ─"),
             Style::default()
                 .fg(theme::glow(app.tick))
                 .add_modifier(Modifier::BOLD),
@@ -274,7 +283,10 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         Section::Stats => "⇥ cycle · 1-7 jump · ? help · q quit",
         Section::Network => "←/→ node · ⇥ cycle · 1-7 jump · ? help",
         Section::Library => hints::library_hints(app),
+        #[cfg(feature = "bench")]
         Section::Benchmarks => hints::bench_hints(app),
+        #[cfg(not(feature = "bench"))]
+        Section::Benchmarks => bench::HINTS,
         // 2026-09-26: `/detach` is the one command that leaves the dashboard
         // with the server still running, and this is the tab it is typed into.
         Section::Terminal => {
@@ -338,6 +350,14 @@ mod harness;
 #[cfg(test)]
 #[path = "render_tests.rs"]
 mod tests;
+
+#[cfg(all(test, feature = "bench"))]
+#[path = "bench_render_tests.rs"]
+mod bench_render_tests;
+
+#[cfg(all(test, not(feature = "bench")))]
+#[path = "bench_absent_tests.rs"]
+mod bench_absent_tests;
 
 #[cfg(test)]
 #[path = "chrome_tests.rs"]

@@ -124,6 +124,7 @@ pub(super) fn build_linear_attention_fp8(
     input_norm: DenseWeight,
     post_attn_norm: DenseWeight,
     ffn: FfnComponent,
+    lc: metrale_model_layers::load_context::LoadContext<'_>,
 ) -> Result<Box<dyn TransformerLayer>> {
     // 2026-09-25: TP=1 only: the `shard_gdn_*` slicers cut dense rows and have no form for
     // the block-scale grid.
@@ -187,6 +188,7 @@ pub(super) fn build_linear_attention_fp8(
         None,
         config,
         gpu,
+        lc,
     )?;
     layer.set_fp8_decode_weights(Some(qkvz_fp8), Some(out_fp8));
     tracing::info!("Layer {layer_idx}: SSM native FP8 — w8a16 decode + prefill");
@@ -205,6 +207,7 @@ pub(crate) fn build_linear_attention_dense_bf16(
     input_norm: DenseWeight,
     post_attn_norm: DenseWeight,
     ffn: FfnComponent,
+    lc: metrale_model_layers::load_context::LoadContext<'_>,
 ) -> Result<Box<dyn TransformerLayer>> {
     // 2026-09-25: `config` holds per-rank linear head counts; `TpGdnDims` rebuilds the full
     // on-disk sizes for the slicers. At TP=1 the `shard_gdn_*` slicers return their source
@@ -296,6 +299,7 @@ pub(crate) fn build_linear_attention_dense_bf16(
         None,
         config,
         gpu,
+        lc,
     )?;
     layer.out_proj_dense = Some(DenseWeight {
         weight: out_proj_ptr,
@@ -304,7 +308,7 @@ pub(crate) fn build_linear_attention_dense_bf16(
     // FP8 QKVZ and out_proj with `set_fp8_decode_weights`. Decode reads them, and so do the
     // QKVZ prefill arms that test `qkvz_fp8w`, which come before the BF16 weights
     // (`qwen3_ssm/trait_prefill_proj.rs`). They are loaded unsharded, hence TP=1 only.
-    if tp_size == 1 && std::env::var("METRALE_HOLO_FP8_SSM_DECODE").ok().as_deref() == Some("1") {
+    if tp_size == 1 && lc.settings.kernels.holo_fp8_ssm_decode {
         let p = format!("{lp}.linear_attn");
         let (qkvz_fp8, out_fp8) = load_ssm_fp8_decode_weights(layer_idx, store, &p, gpu, h)?;
         layer.set_fp8_decode_weights(Some(qkvz_fp8), Some(out_fp8));

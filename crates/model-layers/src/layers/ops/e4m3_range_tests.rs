@@ -9,10 +9,7 @@
 use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 
-use super::super::{
-    E4m3Saturation, MOE_ROUTED_DOWN_KNOWN, NEMOTRON_SHARED_EXPERT_E4M3, allow_e4m3_saturation,
-    e4m3_saturations, moe_w4a16_grouped_gemm_ptrtable_n128, w4a16_gemm, w4a16_gemm_n128,
-};
+use super::super::{moe_w4a16_grouped_gemm_ptrtable_n128, w4a16_gemm, w4a16_gemm_n128};
 use crate::weight_map::QuantizedWeight;
 
 const E4M3_A: KernelHandle = KernelHandle(0xE4);
@@ -102,9 +99,11 @@ mod debug {
     fn the_fp8_activation_path_is_checked_without_a_declaration() {
         let gpu = gpu();
         let a = activation(&gpu, 600.0);
+        // 2026-10-17: `ldmab` on (`OpsLevers::fp8_ldmab`, declared on) selects that path.
         fp8_gemm_n128(
             &gpu,
             BF16_A,
+            true,
             a,
             DevicePtr::NULL,
             DevicePtr::NULL,
@@ -179,16 +178,20 @@ fn a_grouped_launch_checks_only_the_rows_it_reads() {
     assert_eq!(gpu.launch_count(), before + 3);
 }
 
-/// 2026-09-30: A test-only disclosure, so the count is not shared with another test.
-const TEST_SITE: E4m3Saturation = E4m3Saturation {
-    site: "e4m3_range_tests",
-    why: "test",
-    bound: 600.0,
-};
-
 #[cfg(debug_assertions)]
 mod disclosed {
+    use super::super::super::{
+        E4m3Saturation, MOE_ROUTED_DOWN_KNOWN, NEMOTRON_SHARED_EXPERT_E4M3, allow_e4m3_saturation,
+        e4m3_saturations,
+    };
     use super::*;
+
+    /// 2026-09-30: A test-only disclosure, so the count is not shared with another test.
+    const TEST_SITE: E4m3Saturation = E4m3Saturation {
+        site: "e4m3_range_tests",
+        why: "test",
+        bound: 600.0,
+    };
 
     /// 2026-09-30: Inside a scope, a saturation up to the bound launches and is counted once
     /// per launch; the opt-in flag's entry covers any magnitude.

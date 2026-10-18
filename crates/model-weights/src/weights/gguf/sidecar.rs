@@ -154,12 +154,12 @@ pub fn load_pass(
             hf_shape.reverse();
             deferred.insert(
                 store_name,
-                crate::weights::DeferredTensor {
-                    path: shard_path.to_path_buf(),
-                    offset: gguf.tensor_abs_offset(tensor) as u64,
-                    shape: hf_shape,
-                    dtype: WeightDtype::BF16,
-                },
+                crate::weights::DeferredTensor::from_shape(
+                    shard_path.to_path_buf(),
+                    gguf.tensor_abs_offset(tensor) as u64,
+                    hf_shape,
+                    WeightDtype::BF16,
+                )?,
             );
             continue;
         }
@@ -184,7 +184,7 @@ pub fn load_pass(
         // restores the bf16 expansion.
         if arch == "deepseek41"
             && let names::GgufName::Direct(ref hf_name) = target
-            && let Some(dtype) = v41_kquant_resident_dtype(id, hf_name)
+            && let Some(dtype) = v41_kquant_resident_dtype(id, hf_name, &loader.settings)
         {
             let ptr = gpu.alloc(raw.len())?;
             gpu.copy_h2d(raw, ptr)?;
@@ -337,21 +337,20 @@ pub fn load_pass(
 /// (10 / 11; `METRALE_DS41_KQUANT_RESIDENT=0` restores the bf16 expansion), and
 /// the Q6_K output head (14; `METRALE_DS41_Q6K_HEAD=0` restores it). `None`
 /// means the tensor takes the ordinary dequant path.
-fn v41_kquant_resident_dtype(id: u32, hf_name: &str) -> Option<WeightDtype> {
-    let off = |var: &str| std::env::var(var).is_ok_and(|v| v == "0");
+fn v41_kquant_resident_dtype(
+    id: u32,
+    hf_name: &str,
+    s: &metrale_settings::groups::device_weights::WeightsSettings,
+) -> Option<WeightDtype> {
     match id {
-        10 | 11
-            if names::is_v41_kquant_resident(hf_name) && !off("METRALE_DS41_KQUANT_RESIDENT") =>
-        {
+        10 | 11 if names::is_v41_kquant_resident(hf_name) && s.kquant_resident => {
             Some(if id == 10 {
                 WeightDtype::Q2K
             } else {
                 WeightDtype::Q3K
             })
         }
-        14 if names::is_v41_q6k_resident(hf_name) && !off("METRALE_DS41_Q6K_HEAD") => {
-            Some(WeightDtype::Q6K)
-        }
+        14 if names::is_v41_q6k_resident(hf_name) && s.q6k_head => Some(WeightDtype::Q6K),
         _ => None,
     }
 }

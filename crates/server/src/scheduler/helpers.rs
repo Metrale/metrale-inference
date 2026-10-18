@@ -29,14 +29,6 @@ pub fn hard_ceiling_hit(remaining: usize, position: usize, max_seq_len: usize) -
     remaining == 0 || seqlen_force_stop(position, max_seq_len)
 }
 
-/// 2026-09-25: Whether thinking holds back a sampled EOS: inside `<think>`
-/// and no hard ceiling hit. At a ceiling the EOS is not held back by
-/// thinking.
-#[inline]
-pub fn eos_suppressed_by_thinking(inside_thinking: bool, hard_ceiling_hit: bool) -> bool {
-    inside_thinking && !hard_ceiling_hit
-}
-
 // 2026-09-25: sampling defaults for the `SamplingParams` the scheduler
 // builds.
 pub const DEFAULT_LZ_PENALTY: f32 = 0.0;
@@ -89,48 +81,6 @@ pub const CONTENT_LOOP_NORM_MIN_REPEATS: usize = 4;
 /// real token id.
 pub const NUMERIC_SENTINEL: u32 = u32::MAX;
 
-/// 2026-09-25: Parse of `METRALE_DISABLE_WATCHDOGS`: true for `1` or `true`
-/// (trimmed, case-insensitive), false otherwise. `SchedLevers` resolves
-/// `disable_watchdogs` with it.
-pub(crate) fn parse_disable_watchdogs(env: Option<&str>) -> bool {
-    match env {
-        Some(v) => {
-            let v = v.trim();
-            v == "1" || v.eq_ignore_ascii_case("true")
-        }
-        None => false,
-    }
-}
-
-/// 2026-09-25: Parse of `METRALE_DISABLE_FORCED_TOKEN` into "forced-token
-/// fast path enabled": unset → true; `1` or `true` (trimmed,
-/// case-insensitive) → false; anything else → true.
-///
-/// `SchedLevers::forced_token_fastpath` holds the result, and
-/// `ForcedTokenFastPath` (`logit_processors/forced_token.rs`) reads it:
-/// when the grammar admits exactly one next token, that token is emitted
-/// without sampling.
-pub(crate) fn parse_forced_token_fastpath(env: Option<&str>) -> bool {
-    match env {
-        Some(v) => {
-            let v = v.trim();
-            !(v == "1" || v.eq_ignore_ascii_case("true"))
-        }
-        None => true,
-    }
-}
-
-/// 2026-09-25: The default-on rule: unset → true; `0` or `false` (trimmed,
-/// case-insensitive) → false; anything else → true. `SchedLevers` resolves
-/// `tool_response_stop`, `tool_eos_escape` and `grammar_budget_close` with
-/// it.
-pub(crate) fn parse_flag_default_on(env: Option<&str>) -> bool {
-    match env.map(str::trim) {
-        Some(v) => !(v == "0" || v.eq_ignore_ascii_case("false")),
-        None => true,
-    }
-}
-
 mod detectors;
 mod watchdog;
 pub use detectors::*;
@@ -145,3 +95,5 @@ mod inter_tool_prose_tests;
 #[cfg(test)]
 #[path = "helpers_tests.rs"]
 mod thinking_loop_tests;
+#[cfg(test)]
+mod thinking_steering_tests;

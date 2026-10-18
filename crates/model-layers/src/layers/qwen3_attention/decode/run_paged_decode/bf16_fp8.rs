@@ -228,7 +228,13 @@ impl Qwen3AttentionLayer {
         // `splitk_dispatch::num_splits`.
         let num_splits =
             splitk_dispatch::num_splits(num_q_heads, head_dim, num_seqs, max_decode_seqs);
-        splitk_dispatch::trace_splits(self.attn_layer_idx, num_seqs, num_q_heads, num_splits);
+        splitk_dispatch::trace_splits(
+            self.levers.attn_dbg,
+            self.attn_layer_idx,
+            num_seqs,
+            num_q_heads,
+            num_splits,
+        );
 
         let (k_scale, v_scale) = self.effective_fp8_scales();
         let sliding = self.sliding_window.unwrap_or(0);

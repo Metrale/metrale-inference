@@ -80,8 +80,58 @@ pub fn fusions_chain(root: &Path, hardware: &str) -> Result<Vec<PathBuf>, Layout
 
 /// 2026-09-28: The directories [`circuit_configs`] reads, for `cargo:rerun-if-changed`, so a
 /// circuit file added or removed reruns the build script too.
+///
+/// 2026-10-17: Only the largest subtrees of `kernels/circuits` that hold nothing but `.toml`
+/// files (today `blocks/`, `checkpoints/`, `precision/`), sorted. Cargo watches a directory
+/// recursively, so watching `kernels/circuits` itself reran the kernels build (and recompiled
+/// every kernel) whenever the derived plans under `plans/` or a design `.md` was regenerated,
+/// though neither is hashed. Every existing circuit `.toml` keeps its own per-file
+/// `rerun-if-changed` from the closure attestation, so an edit still reruns; these directories
+/// add "a new `.toml` appeared". The embedding is unchanged: the same files are hashed.
+///
+/// 2026-10-17: Why not a finer trigger: cargo has no non-recursive directory watch, and a
+/// watch on a directory that also holds `.txt`/`.md` (the root, `plans/`, `venn/`) is the
+/// trigger this narrows away. So a NEW `.toml` placed directly in one of those directories
+/// waits for the next rerun of the build script (any kernel, manifest or env change). That
+/// fails closed, not open: the gate recomputes each closure from the working tree, the new file
+/// is in it and not in the binary's attestation, so `gate::closure::excuses` refuses the
+/// record. A subtree that gains a `.md` or `.txt` drops out of this list on the next rerun.
 pub fn circuit_dirs(root: &Path) -> Vec<PathBuf> {
-    vec![root.join("kernels").join("circuits")]
+    let circuits = root.join("kernels").join("circuits");
+    let mut out = Vec::new();
+    if toml_only_subtrees(&circuits, &mut out) {
+        out.push(circuits);
+    }
+    out.sort();
+    out
+}
+
+/// 2026-10-17: Whether `dir` holds only `.toml` files, at any depth. When it does not, the
+/// largest toml-only subtrees under it are appended to `out`; when it does, nothing is, and the
+/// caller decides whether `dir` itself is one. An unreadable directory counts as not toml-only,
+/// which narrows the watch; the circuit files in it keep their per-file triggers.
+fn toml_only_subtrees(dir: &Path, out: &mut Vec<PathBuf>) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    let mut whole = true;
+    let mut kept = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if toml_only_subtrees(&path, out) {
+                kept.push(path);
+            } else {
+                whole = false;
+            }
+        } else if path.extension().is_none_or(|e| e != "toml") {
+            whole = false;
+        }
+    }
+    if !whole {
+        out.extend(kept);
+    }
+    whole
 }
 
 fn tomls_under(dir: &Path, out: &mut Vec<PathBuf>) {

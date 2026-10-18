@@ -40,6 +40,8 @@ members = [
     "crates/circuit",
     "crates/governance",
     "crates/kernels",
+    "crates/target-defaults",
+    "crates/kernel-root",
     "crates/kernel-tree",
     "crates/gpu-sys",
     "crates/telemetry",
@@ -64,29 +66,31 @@ Each is its own crate with its own `Cargo.toml`, its own unit tests, and its own
 
 | Crate | Role | Consumed by |
 |---|---|---|
-| `metrale-core` | Shared types (dtype, tensor, arch, device, errors, fault scopes) | `metrale-cache`, `metrale-config`, `metrale-gpu-runtime`, `metrale-kernels`, `metrale-model-engine`, `metrale-model-layers`, `metrale-model-weights`, `metrale-server`, `metrale-storage` |
-| `metrale-config` | The typed model config tree (HF config.json parsing, GGUF metadata, capabilities) | `metrale-bench`, `metrale-gpu-runtime`, `metrale-model-arch`, `metrale-model-engine`, `metrale-model-layers`, `metrale-model-weights`, `metrale-server` |
+| `metrale-core` | Shared types (dtype, tensor, arch, device, errors, fault scopes) | `metrale-cache`, `metrale-config`, `metrale-gpu-runtime`, `metrale-kernels`, `metrale-model-engine`, `metrale-model-layers`, `metrale-model-weights`, `met`, `metrale-storage` |
+| `metrale-config` | The typed model config tree (HF config.json parsing, GGUF metadata, capabilities) | `metrale-bench`, `metrale-gpu-runtime`, `metrale-model-arch`, `metrale-model-engine`, `metrale-model-layers`, `metrale-model-weights`, `met` |
 | `metrale-closure` | Content hash of a kernel target's transitive include closure | `metrale-bench`, `metrale-kernels`, `metrale-model-layers` |
-| `metrale-circuit` | The circuit compiler: architecture circuits, the fuser, kernel families and per-hardware plans (see [The Circuit Compiler](./circuit-compiler.md)) | `metrale-model-engine`, `metrale-model-layers`, `metrale-server` |
+| `metrale-circuit` | The circuit compiler: architecture circuits, the fuser, kernel families and per-hardware plans (see [The Circuit Compiler](./circuit-compiler.md)) | `metrale-model-engine`, `metrale-model-layers`, `met` |
 | `metrale-governance` | The PR journey ledger: an append-only record of how a change reached main | `metrale-bench` |
-| `metrale-kernels` | Metrale Engine CUDA kernel PTX — compiled from `kernels/{hw}/{model}/{quant}/*.cu` | `metrale-gpu-runtime`, `metrale-model-engine`, `metrale-model-layers`, `metrale-server` |
-| `metrale-kernel-tree` | The repository's `kernels/` manifests and sources embedded in the binary, for code that reads the kernel tree without a checkout | `metrale-server` |
+| `metrale-kernels` | Metrale Engine CUDA kernel PTX — compiled from `kernels/{hw}/{model}/{quant}/*.cu`. A leaf: only the binary links it and hands the PTX to `MetraleCudaBackend::new`, so a `.cu` edit rebuilds this crate and `met` only (other crates take it as a dev-dependency) | `met`, `metrale-gpu-examples` |
+| `metrale-target-defaults` | The compiled hardware tree's serving defaults and SM count (`kernels/<hw>/HARDWARE.toml`) and the decode split-K policy | `metrale-gpu-runtime`, `metrale-model-layers`, `metrale-gpu-examples` |
+| `metrale-kernel-root` | Locates `kernels/` for build scripts (`DEP_METRALE_KERNEL_TREE_ROOT`); reads nothing under it, so a kernel edit does not rebuild its dependents | the build scripts of `metrale-kernels`, `metrale-kernel-tree`, `metrale-gpu-runtime`, `metrale-storage`, `metrale-circuit`, `metrale-target-defaults`, `metrale-model-layers`, `met` |
+| `metrale-kernel-tree` | The repository's `kernels/` manifests and sources embedded in the binary, for code that reads the kernel tree without a checkout | `met` |
 | `metrale-gpu-sys` | Raw FFI only — cuFile (GDS) and NVML dlopen wrappers, NCCL bindings, RDMA verbs C shim | `metrale-comm`, `metrale-model-weights`, `metrale-storage`, `metrale-telemetry` |
-| `metrale-telemetry` | Run metrics, kernel audit, launch trace, progress hooks, and the metal-up instruments (NVML device sampling, energy attribution, GPU spans, scheduler/request telemetry) with their exporters | `metrale-cache`, `metrale-gpu-runtime`, `metrale-model-arch`, `metrale-model-engine`, `metrale-model-weights`, `metrale-sampling`, `metrale-server` |
-| `metrale-gpu-runtime` | GpuBackend (CUDA/Metal), streams, buffers, op cache, pinned hosts, kernel registry, cuBLASLt/CUTLASS/FlashInfer bridges | `metrale-cache`, `metrale-model-arch`, `metrale-model-engine`, `metrale-model-layers`, `metrale-model-weights`, `metrale-sampling`, `metrale-server` |
-| `metrale-scheduler` | The scheduler's I/O contract — step plans, effects, the device/clock/spill router traits, the effect-trace decorator and the one driver loop. No model dependency | `metrale-model-engine`, `metrale-server` |
-| `metrale-cache` | KV cache, KV dequant, KV spill, radix-tree prefix cache | `metrale-model-arch`, `metrale-model-engine`, `metrale-model-layers`, `metrale-server` |
-| `metrale-sampling` | The sampler | `metrale-model-engine`, `metrale-server` |
-| `metrale-storage` | GDS/RDMA tiers, expert paging, cache peers, tiered-cache core (SlotArena/SwapStore/Residency) | `metrale-model-arch`, `metrale-model-engine`, `metrale-model-layers`, `metrale-model-weights`, `metrale-server` |
-| `metrale-comm` | Collective-operation backends (NCCL, single-GPU) | `metrale-model-arch`, `metrale-model-engine`, `metrale-model-layers`, `metrale-server` |
-| `metrale-grammar` | Pure-Rust grammar-constrained decoding (XGrammar port) | `metrale-server` |
-| `metrale-model-weights` | Weight store and loaders (safetensors, fast weights, RDMA weight/LoRA tiers, preflight) | `metrale-model-arch`, `metrale-model-engine`, `metrale-model-layers`, `metrale-server` |
-| `metrale-model-layers` | Generic layers (attention, SSM, MoE, FFN, norm, MTP heads, vision, ops), LoRA, weight map, the draft-proposer contract | `metrale-model-arch`, `metrale-model-engine`, `metrale-server`, `metrale-speculative` |
-| `metrale-model-arch` | Per-family architectures (GLM-5 Next, DeepSeek V4.1, Nemotron, Kimi K3, DFlash/MTP heads) and their weight loaders | `metrale-model-engine`, `metrale-server` |
-| `metrale-model-engine` | The Model trait, the transformer model (prefill, decode, verify, SSM state), the generate engine and the model factory | `metrale-server` |
-| `metrale-speculative` | Speculative-decoding policy — MTP gate, adaptive and DFlash rungs, n-gram proposer, spec capacity and stats, scheduler snapshots | `metrale-server` |
-| `metrale-bench` | Plugin + benchmark abstraction and registry driven by the metrale-server TUI | `metrale-server` |
-| `metrale-server` | Pure Rust LLM inference server (HTTP API, scheduler, TUI, CLI) | n/a — the deliverable (`met`) |
+| `metrale-telemetry` | Run metrics, kernel audit, launch trace, progress hooks, and the metal-up instruments (NVML device sampling, energy attribution, GPU spans, scheduler/request telemetry) with their exporters | `metrale-cache`, `metrale-gpu-runtime`, `metrale-model-arch`, `metrale-model-engine`, `metrale-model-weights`, `metrale-sampling`, `met` |
+| `metrale-gpu-runtime` | GpuBackend (CUDA/Metal), streams, buffers, op cache, pinned hosts, kernel registry, cuBLASLt/CUTLASS/FlashInfer bridges | `metrale-cache`, `metrale-model-arch`, `metrale-model-engine`, `metrale-model-layers`, `metrale-model-weights`, `metrale-sampling`, `met` |
+| `metrale-scheduler` | The scheduler's I/O contract — step plans, effects, the device/clock/spill router traits, the effect-trace decorator and the one driver loop. No model dependency | `metrale-model-engine`, `met` |
+| `metrale-cache` | KV cache, KV dequant, KV spill, radix-tree prefix cache | `metrale-model-arch`, `metrale-model-engine`, `metrale-model-layers`, `met` |
+| `metrale-sampling` | The sampler | `metrale-model-engine`, `met` |
+| `metrale-storage` | GDS/RDMA tiers, expert paging, cache peers, tiered-cache core (SlotArena/SwapStore/Residency) | `metrale-model-arch`, `metrale-model-engine`, `metrale-model-layers`, `metrale-model-weights`, `met` |
+| `metrale-comm` | Collective-operation backends (NCCL, single-GPU) | `metrale-model-arch`, `metrale-model-engine`, `metrale-model-layers`, `met` |
+| `metrale-grammar` | Pure-Rust grammar-constrained decoding (XGrammar port) | `met` |
+| `metrale-model-weights` | Weight store and loaders (safetensors, fast weights, RDMA weight/LoRA tiers, preflight) | `metrale-model-arch`, `metrale-model-engine`, `metrale-model-layers`, `met` |
+| `metrale-model-layers` | Generic layers (attention, SSM, MoE, FFN, norm, MTP heads, vision, ops), LoRA, weight map, the draft-proposer contract | `metrale-model-arch`, `metrale-model-engine`, `met`, `metrale-speculative` |
+| `metrale-model-arch` | Per-family architectures (GLM-5 Next, DeepSeek V4.1, Nemotron, Kimi K3, DFlash/MTP heads) and their weight loaders | `metrale-model-engine`, `met` |
+| `metrale-model-engine` | The Model trait, the transformer model (prefill, decode, verify, SSM state), the generate engine and the model factory | `met` |
+| `metrale-speculative` | Speculative-decoding policy — MTP gate, adaptive and DFlash rungs, n-gram proposer, spec capacity and stats, scheduler snapshots | `met` |
+| `metrale-bench` | Plugin + benchmark abstraction and registry driven by the met TUI | `met` |
+| `met` | Pure Rust LLM inference server (HTTP API, scheduler, TUI, CLI) | n/a — the deliverable (`met`) |
 
 The dependency graph runs strictly downward in the table above — `metrale-core` has no internal deps, every crate above it builds on crates below. There are no cycles.
 

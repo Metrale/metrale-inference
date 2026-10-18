@@ -22,11 +22,13 @@ And the kernel micro-benchmark summary: **Metrale Engine wins 32/32** against Py
 Metrale Engine has two benchmark surfaces:
 
 1. **End-to-end HTTP throughput** — `met benchmark` (the `metrale-bench` crate, `crates/bench`: benchmarks that drive a running server over HTTP). This is what "131 tok/s" means.
-2. **Per-kernel micro-benchmarks** — the GPU `*_microtest` examples in `crates/model-arch/examples/`, plus Criterion benches (`crates/grammar/benches/`) run with `cargo bench`. This is where "4.95× prefill attention" comes from.
+2. **Per-kernel micro-benchmarks** — the GPU `*_microtest` examples in `crates/gpu-examples/examples/`, plus Criterion benches (`crates/grammar/benches/`) run with `cargo bench`. This is where "4.95× prefill attention" comes from.
 
 Different things; both are meaningful. The E2E number is what an operator sees. The per-kernel number is what tells the kernel engineer where effort is paying back.
 
 ## Running end-to-end benchmarks
+
+`met benchmark` is compiled in only with the `bench` cargo feature (`cargo build --release -p met --features bench`). The published images and release binaries carry it. A `met` built without it still accepts `met benchmark` and exits with a message that names the rebuild.
 
 Start a server:
 
@@ -55,11 +57,11 @@ The `scripts/sweep_all_models.sh` helper boots each model in turn across both no
 
 ```bash
 cargo bench -p metrale-grammar      # grammar compile and token-mask micro
-cargo run --release -p metrale-model-arch --features gpu-examples \
+cargo run --release -p metrale-gpu-examples --features gpu-examples \
   --example attn_prefill_microtest  # one GPU kernel microtest
 ```
 
-Criterion benches live in a crate's `benches/` directory; the GPU kernel microtests are the `*_microtest` examples in `crates/model-arch/examples/`. Reference shapes come from Qwen3-Next-80B (hidden=2048, 16 Q-heads, 2 KV-heads, head_dim=256, intermediate=512, num_experts=256, topk=10).
+Criterion benches live in a crate's `benches/` directory; the GPU kernel microtests are the `*_microtest` examples in `crates/gpu-examples/examples/`. Reference shapes come from Qwen3-Next-80B (hidden=2048, 16 Q-heads, 2 KV-heads, head_dim=256, intermediate=512, num_experts=256, topk=10).
 
 The full kernel numbers table:
 
@@ -295,7 +297,7 @@ Machine-readable output goes to **stdout**, progress to **stderr**, so
 ## Files to read
 
 - `crates/bench/src/` — the benchmark suite and the certification gate (`met benchmark`).
-- `crates/model-arch/examples/*_microtest.rs`, `crates/grammar/benches/` — per-kernel micro.
+- `crates/gpu-examples/examples/*_microtest.rs`, `crates/grammar/benches/` — per-kernel micro.
 - `bench/` — tracked result sets and harnesses.
 - `scripts/sweep_all_models.sh`, `scripts/run_conc_benchmark.sh` — automation.
 - `docs/METRALE_JOURNEY.md` — benchmark journey and retrospective.

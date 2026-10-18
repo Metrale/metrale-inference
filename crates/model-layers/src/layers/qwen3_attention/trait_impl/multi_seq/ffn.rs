@@ -21,34 +21,6 @@ use super::ctx::MultiSeqCtx;
 use crate::layers::ops;
 use crate::layers::qwen3_attention::Qwen3AttentionLayer;
 
-/// 2026-09-25: The pairwise MoE decode arm is on unless
-/// `METRALE_MOE_PAIRWISE_DECODE=0`, read once per process.
-fn pairwise_moe_decode_enabled() -> bool {
-    use std::sync::OnceLock;
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var("METRALE_MOE_PAIRWISE_DECODE").as_deref() != Ok("0"))
-}
-
-/// 2026-09-25: The opt-in grouped routed MoE arm (`forward_prefill`),
-/// `METRALE_MOE_GROUPED_ROUTED_DECODE=1`, read once per process. It applies from
-/// `grouped_routed_decode_min()` rows: `METRALE_MOE_GROUPED_ROUTED_DECODE_MIN`,
-/// or 2 when unset or unparsable.
-fn grouped_routed_decode_enabled() -> bool {
-    use std::sync::OnceLock;
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var("METRALE_MOE_GROUPED_ROUTED_DECODE").as_deref() == Ok("1"))
-}
-fn grouped_routed_decode_min() -> usize {
-    use std::sync::OnceLock;
-    static M: OnceLock<usize> = OnceLock::new();
-    *M.get_or_init(|| {
-        std::env::var("METRALE_MOE_GROUPED_ROUTED_DECODE_MIN")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(2)
-    })
-}
-
 impl Qwen3AttentionLayer {
     pub(super) fn ms_phase_ffn(&self, c: &MultiSeqCtx<'_>, o_out: DevicePtr) -> Result<()> {
         // 2026-09-25: Only the one-row-at-a-time loop at the end runs the shortcut
@@ -87,10 +59,12 @@ impl Qwen3AttentionLayer {
         let force_seq_ffn = self.mla.is_some();
         // 2026-09-25: With the grouped routed arm on and eligible, the n = 2 and
         // n = 3 arms are skipped. The km, FP8 grouped and `forward_prefill` arms
-        // are still checked before it.
+        // are still checked before it. 2026-10-17: The opt-in arm (`forward_prefill`)
+        // and its row bound are `MoeLevers::grouped_routed_decode` /
+        // `grouped_routed_decode_min`.
         let use_grouped = !force_seq_ffn
-            && n >= grouped_routed_decode_min()
-            && grouped_routed_decode_enabled()
+            && n >= fwd.levers.moe.grouped_routed_decode_min
+            && fwd.levers.moe.grouped_routed_decode
             && self.ffn.moe_grouped_decode_ok();
         // 2026-09-27: Under a row-invariant tier policy the FP8 MoE takes the grouped
         // kernels with the per-row router at every row count (the bits of
@@ -192,7 +166,7 @@ impl Qwen3AttentionLayer {
                 (2 * h) as u32,
                 stream,
             )?;
-        } else if (4..=self.ffn.narrow_rows() as usize).contains(&n)
+        } else if (4..=self.ffn.narrow_rows(fwd.levers.ops.w4a16_tc) as usize).contains(&n)
             && !force_seq_ffn
             && self.ffn.can_forward_km(n as u32)
         {
@@ -255,12 +229,10 @@ impl Qwen3AttentionLayer {
                 (n * h) as u32,
                 stream,
             )?;
-        } else if !force_seq_ffn
-            && (self.ffn.is_dense() || crate::layers::moe_grouped_decode_for(n))
-        {
+        } else if !force_seq_ffn && (self.ffn.is_dense() || fwd.levers.moe.grouped_decode_for(n)) {
             // 2026-09-25: `forward_prefill` over all n rows, reading each weight
             // once instead of once per row: always for a dense FFN, and for MoE
-            // when `moe_grouped_decode_for(n)` holds (n >= 16 unless
+            // when `MoeLevers::grouped_decode_for(n)` holds (n >= 16 unless
             // `METRALE_NO_MOE_GROUPED_DECODE` is set; `METRALE_MOE_GROUPED_DECODE=1`
             // forces it below 16).
             let normed2 = fwd.buffers.norm_output();
@@ -316,7 +288,7 @@ impl Qwen3AttentionLayer {
                 (n * h) as u32,
                 stream,
             )?;
-        } else if !force_seq_ffn && n > 2 && n % 2 == 0 && pairwise_moe_decode_enabled() {
+        } else if !force_seq_ffn && n > 2 && n % 2 == 0 && fwd.levers.moe.pairwise_decode {
             // 2026-09-25: Even n above 2: walk the batch two rows at a time with
             // `forward_k2`, adding each pair's `moe_output` into the residual
             // before the next pair overwrites it. `forward_k2` falls back to
@@ -374,7 +346,7 @@ impl Qwen3AttentionLayer {
             // 2026-09-25: Each `forward()` returns the one-row `moe_output`, which
             // is added into the residual before the next row overwrites it.
             let normed_base = fwd.buffers.norm_output();
-            if std::env::var("METRALE_MOE_BATCHED_DECODE").ok().as_deref() == Some("1") {
+            if fwd.levers.moe.batched_decode {
                 // 2026-09-25: `METRALE_MOE_BATCHED_DECODE=1`: all n rows in one
                 // `forward_batched` call, whose per-row map folds a MoE LoRA
                 // adapter; the per-row `forward` refuses a routed adapter when the

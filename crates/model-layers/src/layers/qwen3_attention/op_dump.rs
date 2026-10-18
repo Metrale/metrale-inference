@@ -14,43 +14,45 @@
 //! the last token's row, and each call overwrites the file, so under chunked
 //! prefill the last chunk's row remains.
 //!
+//! 2026-10-17: The three variables are read from `ForwardContext::settings` (the `telemetry`
+//! group's `op_dump`, `op_dump_layers` and `op_dump_ops`), resolved once at startup.
+//!
 //! Owner: model-layers (attention).
 //! Invariants: none beyond the types.
 
 use anyhow::Result;
-use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
+use metrale_gpu_runtime::gpu::DevicePtr;
+use metrale_settings::groups::telemetry::TelemetrySettings;
 
-fn parse_csv(env: &str) -> Vec<String> {
-    std::env::var(env)
-        .ok()
-        .map(|s| {
-            s.split(',')
-                .filter(|p| !p.trim().is_empty())
-                .map(|p| p.trim().to_string())
-                .collect()
-        })
-        .unwrap_or_default()
+use crate::layer::ForwardContext;
+
+fn parse_csv(v: Option<&str>) -> Vec<String> {
+    v.map(|s| {
+        s.split(',')
+            .filter(|p| !p.trim().is_empty())
+            .map(|p| p.trim().to_string())
+            .collect()
+    })
+    .unwrap_or_default()
 }
 
-fn parse_csv_usize(env: &str) -> Vec<usize> {
-    std::env::var(env)
-        .ok()
-        .map(|s| s.split(',').filter_map(|p| p.trim().parse().ok()).collect())
+fn parse_csv_usize(v: Option<&str>) -> Vec<usize> {
+    v.map(|s| s.split(',').filter_map(|p| p.trim().parse().ok()).collect())
         .unwrap_or_default()
 }
 
 /// 2026-09-25: `Some(dir)` when `METRALE_OP_DUMP` is non-empty and both lists
 /// admit `layer_idx` and `op`; `None` otherwise.
-fn op_dump_dir(layer_idx: usize, op: &str) -> Option<String> {
-    let dir = std::env::var("METRALE_OP_DUMP").ok()?;
+fn op_dump_dir<'a>(t: &'a TelemetrySettings, layer_idx: usize, op: &str) -> Option<&'a str> {
+    let dir = t.op_dump.as_deref()?;
     if dir.is_empty() {
         return None;
     }
-    let layers = parse_csv_usize("METRALE_OP_DUMP_LAYERS");
+    let layers = parse_csv_usize(t.op_dump_layers.as_deref());
     if !layers.is_empty() && !layers.contains(&layer_idx) {
         return None;
     }
-    let ops = parse_csv("METRALE_OP_DUMP_OPS");
+    let ops = parse_csv(t.op_dump_ops.as_deref());
     if !ops.is_empty() && !ops.iter().any(|o| o == op) {
         return None;
     }
@@ -62,7 +64,7 @@ fn op_dump_dir(layer_idx: usize, op: &str) -> Option<String> {
 /// `<METRALE_OP_DUMP>/metrale_op_L{layer_idx}_{op}.bin`. Does nothing when
 /// `op_dump_dir` returns `None`.
 pub(crate) fn dump_bf16(
-    gpu: &dyn GpuBackend,
+    ctx: &ForwardContext<'_>,
     ptr: DevicePtr,
     byte_offset: usize,
     n_elements: usize,
@@ -70,9 +72,10 @@ pub(crate) fn dump_bf16(
     op: &str,
     stream: u64,
 ) -> Result<()> {
-    let Some(dir) = op_dump_dir(layer_idx, op) else {
+    let Some(dir) = op_dump_dir(&ctx.settings.telemetry, layer_idx, op) else {
         return Ok(());
     };
+    let gpu = ctx.gpu;
     gpu.synchronize(stream)?;
     let mut buf = vec![0u16; n_elements];
     // 2026-09-25: SAFETY: `buf` is `vec![0u16; n_elements]`, so the
@@ -87,8 +90,8 @@ pub(crate) fn dump_bf16(
         .map(|&b| f32::from_bits((b as u32) << 16))
         .collect();
     let bytes_f32: Vec<u8> = vals.iter().flat_map(|v| v.to_le_bytes()).collect();
-    let path = std::path::Path::new(&dir).join(format!("metrale_op_L{layer_idx}_{op}.bin"));
-    std::fs::create_dir_all(&dir).ok();
+    let path = std::path::Path::new(dir).join(format!("metrale_op_L{layer_idx}_{op}.bin"));
+    std::fs::create_dir_all(dir).ok();
     std::fs::write(&path, &bytes_f32)?;
     tracing::info!(
         "METRALE_OP_DUMP: wrote {} ({n_elements} f32, bf16-source)",
@@ -100,7 +103,7 @@ pub(crate) fn dump_bf16(
 /// 2026-09-25: `dump_bf16` for a tensor already stored as f32 on the device.
 #[allow(dead_code)]
 pub(crate) fn dump_f32(
-    gpu: &dyn GpuBackend,
+    ctx: &ForwardContext<'_>,
     ptr: DevicePtr,
     byte_offset: usize,
     n_elements: usize,
@@ -108,9 +111,10 @@ pub(crate) fn dump_f32(
     op: &str,
     stream: u64,
 ) -> Result<()> {
-    let Some(dir) = op_dump_dir(layer_idx, op) else {
+    let Some(dir) = op_dump_dir(&ctx.settings.telemetry, layer_idx, op) else {
         return Ok(());
     };
+    let gpu = ctx.gpu;
     gpu.synchronize(stream)?;
     let mut buf = vec![0f32; n_elements];
     // 2026-09-25: SAFETY: `buf` is `vec![0f32; n_elements]`, so the
@@ -121,8 +125,8 @@ pub(crate) fn dump_f32(
         unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, n_elements * 4) };
     gpu.copy_d2h(ptr.offset(byte_offset), bytes)?;
     let bytes_f32: Vec<u8> = buf.iter().flat_map(|v| v.to_le_bytes()).collect();
-    let path = std::path::Path::new(&dir).join(format!("metrale_op_L{layer_idx}_{op}.bin"));
-    std::fs::create_dir_all(&dir).ok();
+    let path = std::path::Path::new(dir).join(format!("metrale_op_L{layer_idx}_{op}.bin"));
+    std::fs::create_dir_all(dir).ok();
     std::fs::write(&path, &bytes_f32)?;
     tracing::info!(
         "METRALE_OP_DUMP: wrote {} ({n_elements} f32 native)",
@@ -130,3 +134,7 @@ pub(crate) fn dump_f32(
     );
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "op_dump_tests.rs"]
+mod tests;

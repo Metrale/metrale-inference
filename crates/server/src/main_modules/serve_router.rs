@@ -20,10 +20,30 @@ use crate::main_modules::middleware::{
     require_auth_middleware,
 };
 
+/// 2026-10-17: The request body limit when `METRALE_MAX_BODY_BYTES` is unset: 32 MiB, which
+/// covers multi-image and long-prompt requests.
+pub(crate) const DEFAULT_MAX_BODY_BYTES: usize = 32 * 1024 * 1024;
+
+/// 2026-10-17: The request body limit in bytes: `METRALE_MAX_BODY_BYTES`, else
+/// [`DEFAULT_MAX_BODY_BYTES`]. Resolved once at boot (ROTI), before any model work.
+///
+/// # Errors
+/// A value that does not fit a `usize`.
+pub(crate) fn max_body_bytes(
+    settings: &metrale_settings::InferenceServerSettings,
+) -> Result<usize> {
+    Ok(
+        crate::lever_value::narrow_opt("METRALE_MAX_BODY_BYTES", settings.runtime.max_body_bytes)?
+            .unwrap_or(DEFAULT_MAX_BODY_BYTES),
+    )
+}
+
 pub(crate) async fn build_and_serve(
     host: Arc<crate::main_modules::model_host::ModelHost>,
     bind: &str,
     port: u16,
+    // 2026-10-17: [`max_body_bytes`], resolved at boot.
+    body_limit: usize,
 ) -> Result<()> {
     metrale_telemetry::progress::phase(10, "router");
     host.set_bound(bind.to_string(), port);
@@ -111,14 +131,8 @@ pub(crate) async fn build_and_serve(
         .route("/health/live", get(api::health_live))
         .route("/metrics", get(api::metrics_handler))
         .route("/v1/events", get(api::telemetry_events))
-        // 2026-09-26: Request body limit: 32 MiB, or `METRALE_MAX_BODY_BYTES`
-        // in bytes; an unparseable value keeps 32 MiB.
-        .layer(axum::extract::DefaultBodyLimit::max(
-            std::env::var("METRALE_MAX_BODY_BYTES")
-                .ok()
-                .and_then(|s| s.parse::<usize>().ok())
-                .unwrap_or(32 * 1024 * 1024),
-        ))
+        // 2026-09-26: Request body limit (2026-10-17: [`max_body_bytes`]).
+        .layer(axum::extract::DefaultBodyLimit::max(body_limit))
         // 2026-09-26: The middleware state is the `ModelHost`, not an
         // `AppState`, whose clone would hold the model's `request_tx` open
         // across a swap. The last layer added runs first, so a request passes

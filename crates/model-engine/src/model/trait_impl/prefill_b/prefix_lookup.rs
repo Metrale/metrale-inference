@@ -161,7 +161,7 @@ impl TransformerModel {
                 total,
                 min_tokens: metrale_model_layers::mtp_carry::marconi_min_tokens(),
                 has_hidden: eff_snapshot.is_some_and(|s| self.ssm_snapshots.has_hidden(s)),
-                exact_enabled: super::exact_leaf::marconi_exact_enabled(),
+                exact_enabled: self.settings.server.marconi_exact,
                 is_tail: prefix_match.ssm_snapshot_is_tail,
                 session_ok: eff_snapshot
                     .is_some_and(|s| self.ssm_snapshots.session_matches(s, seq.session_hash)),
@@ -219,7 +219,7 @@ impl TransformerModel {
                 // prefill's tail checkpoint; `finalize_last` then skips an exact leaf within
                 // two blocks of it (`exact_leaf`).
                 seq.tail_checkpoint_tokens = Some(snap_tok);
-                if std::env::var("METRALE_SSM_SAVE_DUMP").is_ok() {
+                if self.settings.telemetry.ssm_save_dump {
                     self.ssm_pool.debug_state_checksum(
                         seq.slot_idx,
                         self.gpu.as_ref(),
@@ -272,7 +272,7 @@ impl TransformerModel {
                 && restore.is_none()
                 && prefix_match.ssm_snapshot_tokens == matched
                 && matched == total
-                && !super::exact_leaf::marconi_exact_enabled()
+                && !self.settings.server.marconi_exact
             {
                 skip = false;
                 seq.marconi_exact_snap = None;

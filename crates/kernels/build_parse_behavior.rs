@@ -39,11 +39,6 @@ pub(crate) struct ParsedBehavior {
     /// a forced `</think>` when it detects a periodic repeat in the reasoning
     /// tail (server `scheduler/decode_logits_step/per_token.rs`). Default true.
     pub enable_think_loop_watchdog: bool,
-    /// 2026-09-26: When thinking is the only reason an EOS is held back, let
-    /// that EOS close the `<think>` block. The EOS itself is still dropped
-    /// either way (server `scheduler/decode_logits_step/per_token.rs`). Default
-    /// false: opt in per model.
-    pub honor_eos_inside_thinking: bool,
     /// 2026-09-25: Cap the thinking budget at 90% of the request's `max_tokens`
     /// (true), or let `max_thinking_budget` be the sole cap (false).
     pub cap_thinking_at_max_tokens: bool,
@@ -63,6 +58,7 @@ pub(crate) struct ParsedBehavior {
     pub tscg: bool,
     pub disable_tool_grammar: bool,
     pub rollback_resteer: bool,
+    pub thinking_steering: bool,
     pub rom_head: String,
     pub tool_retry: bool,
     /// 2026-09-25: Tri-state `preserve_thinking` chat-template flag. `None` (key absent)
@@ -88,7 +84,6 @@ impl Default for ParsedBehavior {
             tool_call_parser: String::new(),
             enable_loop_watchdog: false,
             enable_think_loop_watchdog: true,
-            honor_eos_inside_thinking: false,
             cap_thinking_at_max_tokens: true,
             min_p_floor: 0.0,
             min_reasoning_floor_tokens: 16,
@@ -103,6 +98,7 @@ impl Default for ParsedBehavior {
             tscg: false,
             disable_tool_grammar: false,
             rollback_resteer: true,
+            thinking_steering: true,
             rom_head: String::new(),
             tool_retry: true,
             preserve_thinking: None,
@@ -186,10 +182,6 @@ pub(crate) fn parse_behavior(model_dir: &std::path::Path) -> ParsedBehavior {
         .and_then(|v| v.get("enable_think_loop_watchdog"))
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
-    let honor_eos_inside_thinking = b
-        .and_then(|v| v.get("honor_eos_inside_thinking"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
     let cap_thinking_at_max_tokens = b
         .and_then(|v| v.get("cap_thinking_at_max_tokens"))
         .and_then(|v| v.as_bool())
@@ -255,6 +247,10 @@ pub(crate) fn parse_behavior(model_dir: &std::path::Path) -> ParsedBehavior {
         .and_then(|v| v.get("rollback_resteer"))
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
+    let thinking_steering = b
+        .and_then(|v| v.get("thinking_steering"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
     let rom_head = b
         .and_then(|v| v.get("rom_head"))
         .and_then(|v| v.as_str())
@@ -283,7 +279,6 @@ pub(crate) fn parse_behavior(model_dir: &std::path::Path) -> ParsedBehavior {
         tool_call_parser,
         enable_loop_watchdog,
         enable_think_loop_watchdog,
-        honor_eos_inside_thinking,
         cap_thinking_at_max_tokens,
         min_p_floor,
         min_reasoning_floor_tokens,
@@ -298,6 +293,7 @@ pub(crate) fn parse_behavior(model_dir: &std::path::Path) -> ParsedBehavior {
         tscg,
         disable_tool_grammar,
         rollback_resteer,
+        thinking_steering,
         rom_head,
         tool_retry,
         preserve_thinking,

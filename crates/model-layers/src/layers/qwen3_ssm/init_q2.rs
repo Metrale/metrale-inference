@@ -32,7 +32,7 @@ impl Qwen3SsmLayer {
 
     /// 2026-09-25: `out[m, n] = input[m, k] @ W^T` for the packed qkvz.
     ///
-    /// With both MMQ handles resolved, `METRALE_GGUF_NATIVE_Q2_MMQ=1` and group
+    /// With both MMQ handles resolved, `native_mmq` (`OpsLevers::native_q2_mmq`) and group
     /// size 128, it quantizes `input` to q8_1 into `act_q8` and runs
     /// `q2_0_mmq_gemm`. Otherwise it dequantizes the weight to BF16 into
     /// `scratch` and runs `dense_gemm_bf16_pipelined` (or `dense_gemm` when that
@@ -42,6 +42,7 @@ impl Qwen3SsmLayer {
     pub(crate) fn qkvz_q2_prefill_gemm(
         &self,
         gpu: &dyn GpuBackend,
+        native_mmq: bool,
         input: DevicePtr,
         out: DevicePtr,
         scratch: DevicePtr,
@@ -55,10 +56,7 @@ impl Qwen3SsmLayer {
             .ok_or_else(|| anyhow::anyhow!("qkvz_q2_prefill_gemm: no packed qkvz installed"))?;
         let (n, k) = (w.n, w.k);
 
-        if self.q2_0_mmq_nc_k.0 != 0
-            && self.q4k_quant_act_k.0 != 0
-            && crate::layers::ops::native_q2_mmq_enabled()
-            && w.group == 128
+        if self.q2_0_mmq_nc_k.0 != 0 && self.q4k_quant_act_k.0 != 0 && native_mmq && w.group == 128
         {
             crate::layers::ops::quantize_act_q8_1(
                 gpu,

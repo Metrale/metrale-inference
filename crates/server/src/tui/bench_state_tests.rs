@@ -219,7 +219,11 @@ fn a_run_persisted_by_the_dashboard_is_readable_by_the_cli() {
     let dir = tempfile::tempdir().expect("scratch dir");
     let runtime = tokio::runtime::Runtime::new().expect("runtime");
     let store = metrale_bench::ArtifactStore::with_root(dir.path());
-    let executor = metrale_bench::BenchmarkExecutor::new(runtime.handle().clone(), store.clone());
+    let executor = metrale_bench::BenchmarkExecutor::new(
+        runtime.handle().clone(),
+        store.clone(),
+        unset_levers(),
+    );
 
     let mut s = state();
     let descriptor = metrale_bench::registry::find("concurrency-sweep").expect("registered");
@@ -274,7 +278,11 @@ fn a_run_is_recorded_once_even_if_the_terminal_frame_repeats() {
     let dir = tempfile::tempdir().expect("scratch dir");
     let runtime = tokio::runtime::Runtime::new().expect("runtime");
     let store = metrale_bench::ArtifactStore::with_root(dir.path());
-    let executor = metrale_bench::BenchmarkExecutor::new(runtime.handle().clone(), store.clone());
+    let executor = metrale_bench::BenchmarkExecutor::new(
+        runtime.handle().clone(),
+        store.clone(),
+        unset_levers(),
+    );
 
     let mut s = state();
     let descriptor = metrale_bench::registry::find("concurrency-sweep").expect("registered");
@@ -333,4 +341,14 @@ fn an_empty_live_model_does_not_blank_the_target() {
     };
     s.follow_live_model("");
     assert_eq!(s.target.model, "org/a");
+}
+
+/// 2026-10-17: The levers of an empty environment; these tests read no lever.
+fn unset_levers() -> std::sync::Arc<metrale_bench::levers::BenchLevers> {
+    std::sync::Arc::new(
+        metrale_bench::levers::BenchLevers::resolve(&metrale_io_host_mem::MapEnv::new(
+            std::iter::empty::<(&str, &str)>(),
+        ))
+        .expect("an empty environment resolves"),
+    )
 }

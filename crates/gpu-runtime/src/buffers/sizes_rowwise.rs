@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-09-25: Size of the row-wise FP8 GDN prefill BF16-weight slab: 0 unless `METRALE_FP8_ROWWISE=1`.
+//! 2026-09-25: Size of the row-wise FP8 GDN prefill BF16-weight slab: 0 unless `METRALE_FP8_ROWWISE` is on.
 //!
 //! The row-wise GDN prefill arms multiply BF16 copies of their per-row FP8
 //! weights. Sizing the copies here makes them one arena allocation that the
@@ -9,10 +9,12 @@
 //!
 //! Owner: gpu-runtime.
 //! Invariants:
-//! - [`ssm_rowwise_w_bf16_bytes`] reads the lever with the same predicate as
-//!   the loader's `rowwise_fp8_enabled` (`== "1"`).
+//! - [`ssm_rowwise_w_bf16_bytes`] takes the lever from `ArenaLevers::fp8_rowwise`, the
+//!   projection of the same `METRALE_FP8_ROWWISE` the loader's `rowwise_fp8_enabled` reads.
 
 use metrale_config::ModelConfig;
+
+use super::ArenaLevers;
 
 /// 2026-09-25: BF16 bytes of one GDN layer's row-wise copies: `in_proj_qkvz`
 /// `[ssm_qkvz_size, hidden]` and `out_proj` `[hidden, value_dim]`, the two
@@ -29,19 +31,15 @@ pub fn ssm_rowwise_w_bf16_layer_bytes(config: &ModelConfig) -> usize {
 }
 
 /// 2026-09-25: Slab bytes: the per-layer pair times `num_ssm_layers`, or 0
-/// unless `METRALE_FP8_ROWWISE=1`. The predicate is the one in the loader's
-/// `rowwise_fp8_enabled` (`weight_loader/qwen35_dense/rowwise_fp8.rs`): the
+/// unless `levers.fp8_rowwise`. The loader's `rowwise_fp8_enabled`
+/// (`weight_loader/qwen35_dense/rowwise_fp8.rs`) reads the same lever: the
 /// loader installs the row-wise weights on it and the arms then need this
 /// slab, so the two must agree.
-pub fn ssm_rowwise_w_bf16_bytes(config: &ModelConfig) -> usize {
-    ssm_rowwise_w_bf16_bytes_for(
-        config,
-        std::env::var("METRALE_FP8_ROWWISE").as_deref() == Ok("1"),
-    )
+pub fn ssm_rowwise_w_bf16_bytes(config: &ModelConfig, levers: &ArenaLevers) -> usize {
+    ssm_rowwise_w_bf16_bytes_for(config, levers.fp8_rowwise)
 }
 
-/// 2026-09-25: [`ssm_rowwise_w_bf16_bytes`] with the lever passed in, for tests
-/// that must not set the process environment.
+/// 2026-09-25: [`ssm_rowwise_w_bf16_bytes`] with only the lever passed in.
 pub fn ssm_rowwise_w_bf16_bytes_for(config: &ModelConfig, rowwise_enabled: bool) -> usize {
     if !rowwise_enabled {
         return 0;

@@ -22,6 +22,7 @@ pub(crate) mod serve_flags;
 pub(crate) mod serve_load;
 pub(crate) mod serve_phases;
 mod serve_router;
+pub(crate) mod serve_settings;
 pub(crate) mod telemetry_boot;
 #[cfg(feature = "otlp")]
 mod telemetry_otlp;

@@ -6,8 +6,8 @@
 //!
 //! Owner: metrale-kernels build.
 //! Invariants:
-//! - Both writers append `target_defaults_literal` to `target_ptx.rs` and
-//!   emit `METRALE_KERNEL_SET_HASH` over the written content.
+//! - Both writers emit `METRALE_KERNEL_SET_HASH` over the written `target_ptx.rs`
+//!   followed by `target_defaults_literal`, which is hashed but not written.
 //!
 //! Included via `#[path = "build_emit.rs"] mod build_emit;` so types from
 //! build.rs (`Target`) are reachable via `super::`.
@@ -16,19 +16,17 @@ use std::env;
 use std::path::{Path, PathBuf};
 
 use super::build_codegen::generate_target_ptx_rs;
-use super::{Target, build_defaults, build_diagnose, build_target, content_hash};
+use super::{Target, build_diagnose, build_target, content_hash};
 
-/// 2026-09-25: The `TARGET_DEFAULTS` and `TARGET_SM_COUNT` constants for the
-/// hardware tree this build selected.
+/// 2026-09-25: The `TARGET_DEFAULTS` and `TARGET_SM_COUNT` initialisers for
+/// the hardware tree this build selected.
 ///
-/// Appended to `target_ptx.rs` on both paths, the skip stub and the compiling
-/// build, rather than written to a file of its own:
-///
-/// * the constants are configuration, not kernel blobs, and builds under
-///   `METRALE_SKIP_BUILD=1` still need them;
-/// * cargo does not track an `include!`d generated file as a recompile input.
-///   One generated file behind one `include!` is covered by the one
-///   `METRALE_KERNEL_SET_HASH`.
+/// 2026-10-17: metrale-target-defaults compiles this text (its own build script
+/// calls the same `generated_literal`); this crate no longer embeds it, so a
+/// crate that reads the defaults does not rebuild when a kernel changes. It is
+/// still appended to the hashed text on both paths, the skip stub and the
+/// compiling build, so `METRALE_KERNEL_SET_HASH` keeps covering the defaults
+/// and keeps its value for an unchanged tree.
 fn target_defaults_literal(workspace_root: &std::path::Path) -> String {
     let hw = env::var("METRALE_TARGET_HW").unwrap_or_else(|_| build_diagnose::DEFAULT_HW.into());
     let kernels_root = workspace_root.join("kernels");
@@ -36,11 +34,7 @@ fn target_defaults_literal(workspace_root: &std::path::Path) -> String {
     if path.exists() {
         println!("cargo:rerun-if-changed={}", path.display());
     }
-    format!(
-        "{}{}",
-        build_defaults::literal(&build_defaults::read_defaults(&kernels_root, &hw)),
-        build_defaults::sm_count_literal(build_defaults::read_sm_count(&kernels_root, &hw)),
-    )
+    metrale_closure::hardware_defaults::generated_literal(&kernels_root, &hw)
 }
 
 /// 2026-09-26: The skip path: write a stub `target_ptx.rs` that compiles no
@@ -53,11 +47,11 @@ pub(super) fn write_skip_stub(out_dir: &Path, workspace_root_owned: &Path) {
         pub fn ptx_modules() -> Vec<(&'static str, &'static [u8])> { Vec::new() }\n\
         pub fn metallib_modules() -> Vec<(&'static str, &'static [u8])> { Vec::new() }\n\
         pub fn all_ptx_sets() -> Vec<TargetPtxSet> { Vec::new() }\n";
-    let stub = format!("{stub}{}", target_defaults_literal(workspace_root_owned));
-    std::fs::write(out_dir.join("target_ptx.rs"), &stub).expect("write skip stub target_ptx.rs");
+    std::fs::write(out_dir.join("target_ptx.rs"), stub).expect("write skip stub target_ptx.rs");
+    let hashed = format!("{stub}{}", target_defaults_literal(workspace_root_owned));
     println!(
         "cargo:rustc-env=METRALE_KERNEL_SET_HASH={}",
-        content_hash(&stub)
+        content_hash(&hashed)
     );
     println!("cargo:rustc-env=METRALE_PTX_DIR={}", out_dir.display());
     // 2026-09-25: No compiler ran, so this binary attests to no kernel
@@ -83,9 +77,6 @@ pub(super) fn emit_generated(
         output_ext,
         uses_cuda_api,
     );
-    // 2026-09-25: The per-target serving defaults ride in the same generated file: one
-    // `include!`, one content hash, one way to go stale.
-    let generated = format!("{generated}{}", target_defaults_literal(workspace_root));
     let gen_path = out_dir.join("target_ptx.rs");
     std::fs::write(&gen_path, &generated)
         .unwrap_or_else(|e| panic!("Failed to write {}: {e}", gen_path.display()));
@@ -94,9 +85,12 @@ pub(super) fn emit_generated(
     // recompile input, so the lib could embed a stale module set. The content
     // hash is passed as a rustc-env that lib.rs reads with `env!`; a changed
     // hash changes the crate's fingerprint and forces a rebuild.
+    // 2026-10-17: The serving defaults are hashed after the generated text, as when they
+    // were written into it, so an unchanged tree keeps its hash.
+    let hashed = format!("{generated}{}", target_defaults_literal(workspace_root));
     println!(
         "cargo:rustc-env=METRALE_KERNEL_SET_HASH={}",
-        content_hash(&generated)
+        content_hash(&hashed)
     );
     println!("cargo:rustc-env=METRALE_PTX_DIR={}", out_dir.display());
 }
@@ -119,6 +113,8 @@ pub(super) fn closure_attestation(
     let mut map = serde_json::Map::new();
     // 2026-09-28: The circuit TOMLs are read here and nowhere else in the build, so a file
     // added under kernels/circuits/ has to rerun the script for its hash to be attested.
+    // 2026-10-17: Only the toml-only subtrees are watched, so regenerating the plans or a doc
+    // does not rerun it; see `circuit_dirs` for the one case that waits for the next rerun.
     for dir in metrale_closure::circuit_dirs(workspace_root) {
         println!("cargo:rerun-if-changed={}", dir.display());
     }

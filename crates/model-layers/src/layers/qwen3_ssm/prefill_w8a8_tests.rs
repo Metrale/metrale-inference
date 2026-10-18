@@ -29,6 +29,7 @@ fn scale_bytes() -> usize {
     m_pad() as usize * (H as usize / 128) * 4
 }
 
+/// 2026-10-17: [`qkvz_cublas_selected`] in the declared k-major scale layout.
 #[allow(clippy::too_many_arguments)]
 fn selected(
     cublas_ssm: bool,
@@ -47,6 +48,7 @@ fn selected(
         n,
         k,
         out_capacity,
+        true,
         kmajor_k,
         kmajor_buf,
         kmajor_capacity,
@@ -165,44 +167,34 @@ fn not_selected_when_the_output_buffer_cannot_hold_the_padded_m() {
 }
 
 /// 2026-09-25: Under the k-major layout, a missing adapter kernel, a missing
-/// scratch, or a scratch too small for the padded M each make the arm decline.
+/// scratch, or a scratch too small for the padded M each make the arm decline;
+/// `METRALE_CUBLAS_SCALE_LAYOUT=rowmajor` needs no adapter, so there each is
+/// still selected.
 #[test]
 fn not_selected_without_a_usable_kmajor_scale_adapter() {
     let f = WeightQuantFormat::Fp8BlockScaled;
-    // 2026-09-25: `METRALE_CUBLAS_SCALE_LAYOUT=rowmajor` needs no adapter, and
-    // the layout is cached once per process, so this test checks only the
-    // default layout.
-    if !crate::layers::ops::cublas_scale_layout_kmajor() {
-        return;
+    let unusable = [
+        (KernelHandle(0), KMAJOR_BUF, scale_bytes()),
+        (KMAJOR_K, DevicePtr::NULL, scale_bytes()),
+        (KMAJOR_K, KMAJOR_BUF, scale_bytes() - 1),
+    ];
+    for (kernel, buf, cap) in unusable {
+        let at = |layout| {
+            qkvz_cublas_selected(
+                true,
+                f,
+                m_pad(),
+                QKVZ,
+                H,
+                out_bytes(),
+                layout,
+                kernel,
+                buf,
+                cap,
+            )
+        };
+        assert!(!selected(true, f, QKVZ, H, out_bytes(), kernel, buf, cap));
+        assert!(!at(true), "{kernel:?} {buf:?} {cap}");
+        assert!(at(false), "{kernel:?} {buf:?} {cap} under rowmajor");
     }
-    assert!(!selected(
-        true,
-        f,
-        QKVZ,
-        H,
-        out_bytes(),
-        KernelHandle(0),
-        KMAJOR_BUF,
-        scale_bytes()
-    ));
-    assert!(!selected(
-        true,
-        f,
-        QKVZ,
-        H,
-        out_bytes(),
-        KMAJOR_K,
-        DevicePtr::NULL,
-        scale_bytes()
-    ));
-    assert!(!selected(
-        true,
-        f,
-        QKVZ,
-        H,
-        out_bytes(),
-        KMAJOR_K,
-        KMAJOR_BUF,
-        scale_bytes() - 1
-    ));
 }

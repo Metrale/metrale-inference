@@ -89,6 +89,7 @@ impl NemotronMamba2Layer {
             ctx.gpu,
             self.conv1d_prefill_k,
             self.conv1d_prefill_tp_k,
+            ctx.levers.ops.conv1d_tp,
             ssm_state.conv_state,
             xbc_ptr,
             &self.ssm.conv1d_weight,

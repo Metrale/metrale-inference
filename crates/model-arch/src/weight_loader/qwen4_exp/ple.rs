@@ -30,14 +30,6 @@ use metrale_model_layers::layers::ple::{PleIdDims, PleWeights};
 #[cfg(feature = "cuda")]
 use metrale_model_layers::weight_map::dense;
 
-#[cfg(feature = "cuda")]
-fn slots_from_env() -> usize {
-    std::env::var("METRALE_PLE_CACHE_SLOTS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(65536)
-}
-
 /// 2026-09-25: Read an I64 device tensor back to the host; `PleIdDims` takes
 /// the id tables as host vectors.
 #[cfg(feature = "cuda")]
@@ -80,13 +72,14 @@ fn f32_scalar(store: &WeightStore, name: &str, gpu: &dyn GpuBackend) -> Result<f
 }
 
 /// 2026-09-25: The PLE layer for `layer_idx`, or `None` when `ple_layer_ids`
-/// does not list it.
+/// does not list it. `slots` is the row cache size (`METRALE_PLE_CACHE_SLOTS`).
 #[cfg(feature = "cuda")]
 pub(super) fn load(
     store: &WeightStore,
     config: &ModelConfig,
     layer_idx: usize,
     max_tokens: usize,
+    slots: usize,
     gpu: &dyn GpuBackend,
 ) -> Result<Option<PleLayer>> {
     if config.ple_layer_ids.is_empty() {
@@ -197,7 +190,6 @@ pub(super) fn load(
              gather kernel has a path for BF16 and FP8 E4M3 only"
         ),
     };
-    let slots = slots_from_env();
     let cache = metrale_storage::NgramRowCache::open_segmented(
         &shards,
         rows_per as u64,
@@ -279,6 +271,7 @@ pub(super) fn load(
     config: &ModelConfig,
     _layer_idx: usize,
     _max_tokens: usize,
+    _cache_slots: usize,
     _gpu: &dyn GpuBackend,
 ) -> Result<Option<PleLayer>> {
     if config.ple_layer_ids.is_empty() {

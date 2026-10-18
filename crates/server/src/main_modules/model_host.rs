@@ -42,6 +42,9 @@ pub struct ModelHost {
     /// 2026-09-26: The dashboard's run-handle channel. `swap` hands it to every
     /// load, so the dashboard follows the model now serving.
     tui_handles: parking_lot::RwLock<Option<std::sync::mpsc::Sender<crate::tui::RunHandles>>>,
+    /// 2026-10-17: The harness levers `main` resolved, which locate the recipe catalogue an
+    /// auto-swap reads.
+    bench_levers: parking_lot::RwLock<Option<Arc<metrale_host_probe::levers::BenchLevers>>>,
 }
 
 impl ModelHost {
@@ -58,6 +61,7 @@ impl ModelHost {
             auth: parking_lot::RwLock::new(None),
             process: parking_lot::RwLock::new(None),
             tui_handles: parking_lot::RwLock::new(None),
+            bench_levers: parking_lot::RwLock::new(None),
         }
     }
 
@@ -111,6 +115,15 @@ impl ModelHost {
 
     pub(crate) fn tui_handles(&self) -> Option<std::sync::mpsc::Sender<crate::tui::RunHandles>> {
         self.tui_handles.read().clone()
+    }
+
+    /// 2026-10-17: Install the harness levers. `serve` calls it once, before any load.
+    pub(crate) fn set_bench_levers(&self, levers: Arc<metrale_host_probe::levers::BenchLevers>) {
+        *self.bench_levers.write() = Some(levers);
+    }
+
+    pub(crate) fn bench_levers(&self) -> Option<Arc<metrale_host_probe::levers::BenchLevers>> {
+        self.bench_levers.read().clone()
     }
 
     pub fn set_bound(&self, addr: String, port: u16) {

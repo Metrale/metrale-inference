@@ -72,11 +72,10 @@ impl Qwen3SsmLayer {
             super::debug::SSM_LAYER_CALL_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         // 2026-09-25: METRALE_QWEN4EXP_PREFILL_PROF=1 logs per-stage µs for the
-        // first 400 calls (`PROF_LEFT`), synchronising the stream at each stage.
-        static PROF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        // first 400 calls (`PROF_LEFT`), synchronising the stream at each stage
+        // (`SsmLevers::hc_prefill_prof`).
         static PROF_LEFT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(400);
-        let prof = *PROF
-            .get_or_init(|| std::env::var("METRALE_QWEN4EXP_PREFILL_PROF").as_deref() == Ok("1"))
+        let prof = ctx.levers.ssm.hc_prefill_prof
             && PROF_LEFT.fetch_sub(1, std::sync::atomic::Ordering::Relaxed) > 0;
         let mut t = if prof {
             ctx.gpu.synchronize(stream).ok();
@@ -152,6 +151,7 @@ impl Qwen3SsmLayer {
         // state between layers.
         ops::hc_pre_site(
             ctx.gpu,
+            ctx.levers.ops.hc,
             self.hc_pre_k,
             streams,
             &hc.attn,
@@ -235,6 +235,7 @@ impl Qwen3SsmLayer {
         // into the highway, so that call must stay before the FFN.
         ops::hc_pre_site(
             ctx.gpu,
+            ctx.levers.ops.hc,
             self.hc_pre_k,
             streams,
             &hc.ffn,

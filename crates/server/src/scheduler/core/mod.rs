@@ -54,7 +54,7 @@ pub struct SchedulerCore {
     grammar_engine: Option<GrammarEngine>,
     adaptive_sampling: bool,
     session_manager: crate::session_manager::SessionSsmManager,
-    spontaneous_think_budget: u32,
+    spontaneous_think_budget: Option<u32>,
     use_mtp: bool,
     chunked: bool,
     mtp_gate: Option<metrale_speculative::mtp_gate::MtpGate>,
@@ -118,6 +118,7 @@ impl SchedulerCore {
             dflash_rung,
             telemetry,
             pipeline_faults,
+            run_io,
         } = cfg;
         let spill: Option<Box<dyn io::SpillIo>> = if swap_space_gb > 0 {
             let max_bytes = swap_space_gb as u64 * 1024 * 1024 * 1024;
@@ -139,19 +140,25 @@ impl SchedulerCore {
         } else {
             None
         };
+        let tel = io::SysTelemetry::new(
+            telemetry,
+            snapshot,
+            crate::scheduler::mtp_timing::RunTiming::new(levers.mtp_timing),
+            crate::scheduler::dumps::RunDumps::open(&run_io),
+        );
+        let rung = metrale_speculative::adaptive_rung::AdaptiveRung::with_settings(&levers.drafter);
         let mut sched = crate::scheduler::sched_ctx::SchedCtx::new(
             vocab_masks,
             levers,
             io::SchedIo::serving(
                 dev,
-                telemetry,
-                snapshot,
-                io::TokioRequestIo::new(request_rx, rotation_rx),
+                tel,
+                io::TokioRequestIo::new(request_rx, rotation_rx, run_io.stream_send_deadline),
                 spill,
             ),
             limits,
             watchdog,
-            metrale_speculative::adaptive_rung::AdaptiveRung::from_env(),
+            rung,
             dflash_rung,
         );
         sched
@@ -195,7 +202,10 @@ impl SchedulerCore {
         // Armed whenever MTP is on, unless `--mtp-gate force` (or
         // `METRALE_MTP_GATE_FORCE`) disarms it.
         let mtp_gate = if use_mtp && !sched.levers.mtp_gate_force {
-            Some(metrale_speculative::mtp_gate::MtpGate::new(num_drafts))
+            Some(metrale_speculative::mtp_gate::MtpGate::with_settings(
+                num_drafts,
+                &sched.levers.drafter,
+            ))
         } else {
             if use_mtp && sched.levers.mtp_gate_force {
                 tracing::warn!(
@@ -252,7 +262,10 @@ impl SchedulerCore {
         }
 
         // 2026-09-25: The KV admission watermark; see the `admission` module docs.
-        let admit_watermark = admission::resolve_admit_watermark(sched.limits.max_seq_len);
+        let admit_watermark = admission::resolve_admit_watermark(
+            sched.limits.max_seq_len,
+            sched.levers.kv_admit_watermark,
+        );
 
         let pending = PendingQueue::new();
 
@@ -273,7 +286,11 @@ impl SchedulerCore {
         let prefilling: Vec<PrefillInProgress> = Vec::new();
         let swapped: Vec<SwappedSeq> = Vec::new();
         let preempted: Vec<PreemptedSeq> = Vec::new();
-        install_high_speed_swap(sched.io.dev.model(), high_speed_swap_cfg);
+        install_high_speed_swap(
+            sched.io.dev.model(),
+            high_speed_swap_cfg,
+            sched.levers.high_speed_swap_replace,
+        );
 
         Self {
             ctx: sched,

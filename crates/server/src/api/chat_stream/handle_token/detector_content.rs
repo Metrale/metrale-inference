@@ -14,7 +14,7 @@ use crate::ir::StreamDelta;
 
 use super::super::ctx::StreamCtx;
 use super::super::state::StreamState;
-use super::{DeltaVec, simhash_loop_enabled, watchdogs_disabled};
+use super::DeltaVec;
 
 /// 2026-09-26: Run the SimHash and token loop watchdogs over an already-sanitized
 /// content chunk (both callers sanitize first). On a trip: name the guard, cancel, and
@@ -30,8 +30,8 @@ pub(super) fn process_detector_content(
     // 2026-09-26: SimHash semantic-loop guard (`loop_simhash`), checked at each sentence
     // boundary or every 1024 pending bytes. One chunk at bigram Jaccard >= 0.55 against
     // any of the last 16 trips it and ends the stream, which repetitive structured
-    // output can reach; `METRALE_SIMHASH_LOOP=0` turns it off.
-    let semantic_trip = if simhash_loop_enabled() && !state.loop_watchdog_triggered {
+    // output can reach; off with `ChatLevers::simhash_loop` off.
+    let semantic_trip = if ctx.state.chat.simhash_loop && !state.loop_watchdog_triggered {
         state.simhash_pending.push_str(sanitized);
         let mut dup = false;
         if crate::loop_simhash::ends_at_sentence_boundary(&state.simhash_pending).is_some()
@@ -49,7 +49,7 @@ pub(super) fn process_detector_content(
         false
     };
 
-    let token_trip = !watchdogs_disabled()
+    let token_trip = !ctx.state.chat.disable_watchdogs
         && check_loop_watchdog(
             sanitized,
             &mut state.loop_scan_buf,

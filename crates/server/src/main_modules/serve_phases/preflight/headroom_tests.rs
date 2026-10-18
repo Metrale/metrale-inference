@@ -11,6 +11,7 @@
 
 use super::super::decode_ring::{fit_ring, slot_bytes};
 use super::*;
+use crate::main_modules::serve_phases::load_levers::DEFAULT_KV_FLOOR_TOKENS;
 
 use clap::Parser as _;
 use metrale_config::{LayerType, QuantizationConfig};
@@ -96,7 +97,12 @@ fn round6_headroom(batch: usize, reserve_mib: usize, util: f64) -> Headroom {
         derived,
         arena,
         fixed,
-        kv_floor: kv_floor_bytes(&a, &qwen38_27b(), KvCacheDtype::Fp8),
+        kv_floor: kv_floor_bytes(
+            &a,
+            &qwen38_27b(),
+            KvCacheDtype::Fp8,
+            DEFAULT_KV_FLOOR_TOKENS,
+        ),
         headroom: budget.saturating_sub(weights + derived + arena + fixed),
     }
 }
@@ -130,13 +136,21 @@ fn the_kv_floor_is_the_cache_s_own_bytes_per_token() {
         kv_bytes_per_token(&args(16), &c, KvCacheDtype::Fp8),
         16 * 2 * 4 * 256,
     );
-    assert_eq!(kv_floor_tokens(), DEFAULT_KV_FLOOR_TOKENS);
-    assert_eq!(kv_floor_bytes(&args(16), &c, KvCacheDtype::Fp8), 2 << 30);
-    assert_eq!(kv_floor_bytes(&args(32), &c, KvCacheDtype::Fp8), 4 << 30);
-    assert_eq!(kv_floor_bytes(&args(64), &c, KvCacheDtype::Fp8), 8 << 30);
     assert_eq!(
-        kv_floor_bytes(&args(16), &c, KvCacheDtype::Bf16),
-        2 * kv_floor_bytes(&args(16), &c, KvCacheDtype::Fp8),
+        kv_floor_bytes(&args(16), &c, KvCacheDtype::Fp8, DEFAULT_KV_FLOOR_TOKENS),
+        2 << 30
+    );
+    assert_eq!(
+        kv_floor_bytes(&args(32), &c, KvCacheDtype::Fp8, DEFAULT_KV_FLOOR_TOKENS),
+        4 << 30
+    );
+    assert_eq!(
+        kv_floor_bytes(&args(64), &c, KvCacheDtype::Fp8, DEFAULT_KV_FLOOR_TOKENS),
+        8 << 30
+    );
+    assert_eq!(
+        kv_floor_bytes(&args(16), &c, KvCacheDtype::Bf16, DEFAULT_KV_FLOOR_TOKENS),
+        2 * kv_floor_bytes(&args(16), &c, KvCacheDtype::Fp8, DEFAULT_KV_FLOOR_TOKENS),
     );
 }
 
@@ -152,7 +166,12 @@ fn the_floor_never_exceeds_max_seq_len() {
         "1024",
     ]);
     assert_eq!(
-        kv_floor_bytes(&a, &qwen38_27b(), KvCacheDtype::Fp8),
+        kv_floor_bytes(
+            &a,
+            &qwen38_27b(),
+            KvCacheDtype::Fp8,
+            DEFAULT_KV_FLOOR_TOKENS
+        ),
         16 * 1024 * 16 * 2 * 4 * 256,
     );
 }
@@ -310,9 +329,12 @@ fn an_unpredictable_route_falls_back_to_pre_load_free_memory_and_says_so() {
             model_dir: std::path::Path::new("/nonexistent-checkpoint"),
             kv_dtype: KvCacheDtype::Fp8,
             w8a8_prefill_kernels: true,
+            kv_floor_tokens: DEFAULT_KV_FLOOR_TOKENS,
         },
         gib(8.0),
         gib(3.5),
+        &crate::main_modules::serve_phases::build::lever_settings()
+            .expect("the process levers resolve"),
     );
     // 2026-09-26: Which reason comes back depends on `METRALE_DENSE_FP8` in
     // the process environment, so only its presence is asserted.

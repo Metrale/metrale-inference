@@ -5,7 +5,7 @@
 //!
 //! The grouped expert kernels reproduce the per-row FP8 expert and blend
 //! kernels bit for bit given the same routing
-//! (`model-arch/examples/fp8_moe_grouped_decode_microtest.rs`). The routing is
+//! (`gpu-examples/examples/fp8_moe_grouped_decode_microtest.rs`). The routing is
 //! what differed: the batched gate GEMM and `moe_topk_softmax_batched` may pick
 //! differently from the per-row router on a near-tie. The two exact routings
 //! repeat the router of the path they replace, so the whole MoE output is the

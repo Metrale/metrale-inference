@@ -111,7 +111,7 @@ The test double lives in `gpu/mock.rs`, beside the trait in `gpu.rs`. Records ev
 ## What's explicitly not here
 
 - **No model layers.** That's `metrale-model-layers`.
-- **No HTTP.** That's `metrale-server`.
+- **No HTTP.** That's `met`.
 - **No collective ops.** That's `metrale-comm`.
 
 `metrale-gpu-runtime` is the bottom of the "things that move bits on a GPU" stack and the top of the "things a layer is allowed to call directly" stack.

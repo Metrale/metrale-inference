@@ -76,9 +76,10 @@ impl TransformerModel {
         let slot_bytes = rdma_stage::slot_bytes(&self.config, max_rank);
         let slot_base = DevicePtr(pool.0 + (slot * slot_bytes) as u64);
         self.gpu.memset(slot_base, 0, slot_bytes)?;
-        let loader = metrale_model_weights::weight_lora_rdma::RdmaLoraLoader::new(
+        let loader = metrale_model_weights::weight_lora_rdma::RdmaLoraLoader::with_settings(
             peer_addr.to_string(),
             adapter_id.to_string(),
+            &metrale_settings::groups::device_weights::WeightsSettings::try_from(&*self.settings)?,
         );
         loader.stage_into_slot(self.gpu.as_ref(), &targets)?;
 
@@ -114,7 +115,8 @@ impl TransformerModel {
             let installed_layers = self.lora.as_ref().unwrap().slots[slot].layers.clone();
             let tables = self.lora.as_ref().unwrap().tables.clone();
             let scale_table = self.lora.as_ref().unwrap().scale_table;
-            let kernels = ops::lora_delta::LoraKernels::new(self.gpu.as_ref())?;
+            let kernels =
+                ops::lora_delta::LoraKernels::new(self.gpu.as_ref(), self.levers.ops.lora)?;
             self.install_lora_layers(&installed_layers, kernels, &tables, scale_table)?;
             self.lora.as_mut().unwrap().name = adapter_name.to_string();
             self.destroy_lora_decode_graphs();
@@ -187,7 +189,8 @@ impl TransformerModel {
                     lw.scale_table,
                 )
             };
-            let kernels = ops::lora_delta::LoraKernels::new(self.gpu.as_ref())?;
+            let kernels =
+                ops::lora_delta::LoraKernels::new(self.gpu.as_ref(), self.levers.ops.lora)?;
             self.install_lora_layers(&layers, kernels, &tables, scale_table)?;
             self.destroy_lora_decode_graphs();
         }
@@ -255,7 +258,8 @@ impl TransformerModel {
                     lw.scale_table,
                 )
             };
-            let kernels = ops::lora_delta::LoraKernels::new(self.gpu.as_ref())?;
+            let kernels =
+                ops::lora_delta::LoraKernels::new(self.gpu.as_ref(), self.levers.ops.lora)?;
             self.install_lora_layers(&layers, kernels, &tables, scale_table)?;
             self.destroy_lora_decode_graphs();
         }
@@ -328,13 +332,15 @@ impl TransformerModel {
                 &peft,
                 &self.config,
                 self.gpu.as_ref(),
+                metrale_model_layers::lora::ExpertLoraPolicy::from_settings(&self.settings),
             )?
         };
         let active = self.lora.as_ref().unwrap().active;
         if active == slot {
             let tables = self.lora.as_ref().unwrap().tables.clone();
             let scale_table = self.lora.as_ref().unwrap().scale_table;
-            let kernels = ops::lora_delta::LoraKernels::new(self.gpu.as_ref())?;
+            let kernels =
+                ops::lora_delta::LoraKernels::new(self.gpu.as_ref(), self.levers.ops.lora)?;
             self.install_lora_layers(&layers, kernels, &tables, scale_table)?;
             self.lora.as_mut().unwrap().name = name.to_string();
             self.destroy_lora_decode_graphs();

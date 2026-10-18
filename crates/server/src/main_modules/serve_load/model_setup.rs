@@ -97,6 +97,7 @@ fn lm_head_flags(
 
 pub(super) fn resolve_media_policies(
     args: &cli::ServeArgs,
+    levers: &serve_phases::LoadLevers,
     model_dir: &Path,
     config: &mut ModelConfig,
 ) -> Result<(
@@ -107,7 +108,7 @@ pub(super) fn resolve_media_policies(
     // 2026-09-26: The vision area bound is resolved once and installed on the
     // config before `build_model`, which builds the vision encoder; the
     // encoder sizes its patch buffers from it (`derive_max_patches`).
-    let vision_max_pixels = resolve_vision_max_pixels(args, model_dir)?;
+    let vision_max_pixels = resolve_vision_max_pixels(levers.vision_max_pixels, model_dir);
     if let Some(v) = config.vision.as_mut() {
         v.max_pixels = vision_max_pixels;
     }
@@ -115,12 +116,12 @@ pub(super) fn resolve_media_policies(
         Some(px) => {
             tracing::info!(target: "met::main_modules::serve_load", "Vision area bound: {} px ({})",
                 px,
-                if args.vision_max_pixels > 0 {
-                    "--vision-max-pixels"
+                if levers.vision_max_pixels.is_some() {
+                    "--vision-max-pixels / METRALE_VISION_MAX_PIXELS"
                 } else {
                     // 2026-09-26: Names no file: `read_preprocessor_max_pixels`
                     // logs the file and key it read.
-                    "checkpoint processor config / METRALE_VISION_MAX_PIXELS"
+                    "checkpoint processor config"
                 }
             )
         }
@@ -323,7 +324,12 @@ pub(super) fn check_kernel_target(
 /// policy serves at declared FP8 weights (nvidia/Qwen3.6-35B-A3B-NVFP4 under `declared`) counts
 /// as FP8 here: its W8A16 projections take the tile order the FP8 MoE validated, and its NVFP4
 /// experts are row-invariant on the grouped decode either way.
-pub(super) fn publish_row_tiers(args: &cli::ServeArgs, config: &ModelConfig) {
+/// 2026-10-17: The two levers come from the resolved settings (ROTI).
+pub(super) fn publish_row_tiers(
+    args: &cli::ServeArgs,
+    config: &ModelConfig,
+    settings: &metrale_settings::InferenceServerSettings,
+) {
     use metrale_model_layers::layers::{RowTiers, publish_row_tiers, resolve_row_tiers};
     if metrale_model_layers::layers::any_fixed() {
         publish_row_tiers(RowTiers::Canonical);
@@ -349,8 +355,8 @@ pub(super) fn publish_row_tiers(args: &cli::ServeArgs, config: &ModelConfig) {
     });
     publish_row_tiers(resolve_row_tiers(
         args.no_canonical_tiers,
-        std::env::var_os("METRALE_ROW_EXACT_TIERS").is_some(),
-        std::env::var_os("METRALE_CANONICAL_TIERS").is_some(),
+        settings.kernels.row_exact_tiers,
+        settings.kernels.canonical_tiers,
         config.num_experts > 0 && (canonicalize_model_quant(config) == "fp8" || fp8_projections),
     ));
 }
@@ -424,23 +430,44 @@ pub(super) fn resolve_behavior(
     b
 }
 
+/// 2026-10-08: The chat-template source the flags select: `--chat-template FILE`, else
+/// `--disable-template-overrides`, else the override directory. clap refuses the two
+/// flags together.
+pub(super) fn template_source(args: &cli::ServeArgs) -> crate::tokenizer::TemplateSource<'_> {
+    use crate::tokenizer::TemplateSource;
+    match (
+        &args.chat_surface.chat_template,
+        args.disable_template_overrides,
+    ) {
+        (Some(path), _) => TemplateSource::File(path),
+        (None, true) => TemplateSource::Checkpoint,
+        (None, false) => TemplateSource::OverrideDir,
+    }
+}
+
 pub(super) fn load_tokenizer(
     args: &cli::ServeArgs,
     config: &ModelConfig,
     model_dir: &Path,
     eos_tokens: &[u32],
+    settings: &metrale_settings::InferenceServerSettings,
 ) -> Result<(ChatTokenizer, bool)> {
     metrale_telemetry::progress::phase(8, "tokenizer");
     // 2026-09-26: `supports_thinking` comes from `ModelCapabilities`.
     let caps = config.capabilities();
     let supports_thinking = caps.supports_thinking;
+    let heap_trim =
+        crate::tokenizer::HeapTrimPolicy::process_heap(args.chat_surface.tokenizer_trim_min_tokens)
+            .map_err(|e| anyhow::anyhow!("--tokenizer-trim-min-tokens: {e}"))?;
     let tokenizer = ChatTokenizer::from_model_dir(
         model_dir,
         eos_tokens[0],
         supports_thinking,
         &config.model_type,
         Some(std::path::Path::new(".")),
-        args.disable_template_overrides,
+        template_source(args),
+        heap_trim,
+        crate::tokenizer::ToolJsonStyle::from_settings(settings),
     )?;
     Ok((tokenizer, supports_thinking))
 }
@@ -460,3 +487,7 @@ pub(super) fn parse_default_kwargs(args: &cli::ServeArgs) -> Result<DefaultChatT
 #[cfg(test)]
 #[path = "model_setup_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "template_source_tests.rs"]
+mod template_source_tests;

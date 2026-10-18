@@ -408,7 +408,9 @@ pub(crate) fn verify_batch_report(
     num_drafts: usize,
     steps: usize,
     forwards: &[(&'static str, ForwardSelect)],
-    out: &Path,
+    // 2026-10-17: The report path and its graph label (`METRALE_NO_MTP_VERIFY_GRAPHS`, from
+    // settings).
+    (out, graphs): (&Path, &'static str),
 ) -> Result<()> {
     let variants = super::disclosed(model, forwards)?;
     let shapes = diff_verify_batch(model, shape, num_drafts, steps, forwards)?;
@@ -416,11 +418,7 @@ pub(crate) fn verify_batch_report(
     let report = VerifyBatchReport {
         // 2026-09-30: The batched verify's graphs are off when `METRALE_NO_MTP_VERIFY_GRAPHS` is
         // present (model-engine `verify_e2::verify_graphs_enabled`).
-        graphs: if std::env::var_os("METRALE_NO_MTP_VERIFY_GRAPHS").is_some() {
-            "eager"
-        } else {
-            "graphed"
-        },
+        graphs,
         fragment_slots: shape.2,
         drafter: shape.3,
         steps,

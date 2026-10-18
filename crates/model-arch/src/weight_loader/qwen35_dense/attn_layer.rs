@@ -41,6 +41,7 @@ pub(super) fn load_full_attention(
         layer_kv_dtypes,
         variant,
         route_env,
+        lc,
         ..
     } = *cx;
     let LayerIn {
@@ -59,7 +60,7 @@ pub(super) fn load_full_attention(
     // 2026-09-25: Keep-packed Q2_0 q/k/v/o (TP=1, unless `METRALE_NO_Q2_ATTN`) are
     // installed with `set_packed_q2_weights`; no NVFP4 copies are built.
     let attn_q2 = tp_size == 1
-        && std::env::var_os("METRALE_NO_Q2_ATTN").is_none()
+        && !lc.settings.kernels.no_q2_attn
         && proj_q2_group(store, &format!("{p}.q_proj")).is_some()
         && proj_q2_group(store, &format!("{p}.k_proj")).is_some()
         && proj_q2_group(store, &format!("{p}.v_proj")).is_some()
@@ -76,6 +77,7 @@ pub(super) fn load_full_attention(
                 post_attn_norm,
                 ffn,
             },
+            lc,
         )?;
         layers.push(Box::new(attn_layer));
         *attn_idx += 1;
@@ -88,7 +90,7 @@ pub(super) fn load_full_attention(
     // 2026-09-25: Whether the native FP8 overlay below replaces q/k/v/o; decided
     // before the NVFP4 build so `RouteEnv::attn_nvfp4` can skip building copies
     // nothing reads.
-    let attn_fp8 = dense_fp8_enabled()
+    let attn_fp8 = dense_fp8_enabled(lc.settings)
         && config.tp_world_size.max(1) == 1
         && matches!(variant, Nvfp4Variant::Fp8Dequanted)
         && proj_is_native_fp8(store, &format!("{p}.q_proj"));
@@ -133,6 +135,7 @@ pub(super) fn load_full_attention(
         layer_kv_dtypes[*attn_idx],
         config.fp8_kv_calibration_tokens,
         config,
+        lc,
     )?;
     // 2026-09-25: Transposed NVFP4 copies of q/k/v/o for the prefill GEMMs.
     if let (Some(qw), Some(kw), Some(vw)) = (q_nvfp4, k_nvfp4, v_nvfp4) {

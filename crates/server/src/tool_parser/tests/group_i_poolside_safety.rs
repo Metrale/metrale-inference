@@ -47,7 +47,7 @@ fn missing_write_path_is_not_executable_after_backfill() {
     let mut calls = vec![call(serde_json::json!({"content": "hello"}))];
     let tools = [write_file_tool()];
     backfill_required_params(&mut calls, &tools);
-    let validated = validate_tool_calls(calls, &tools);
+    let validated = validate_tool_calls(calls, &tools, false);
 
     assert!(validated.valid.is_empty());
     assert_eq!(validated.errors.len(), 1);
@@ -62,6 +62,7 @@ fn empty_write_path_is_not_executable() {
             "content": "hello"
         }))],
         &[write_file_tool()],
+        false,
     );
 
     assert!(validated.valid.is_empty());
@@ -77,6 +78,7 @@ fn empty_content_remains_schema_valid() {
             "content": ""
         }))],
         &[write_file_tool()],
+        false,
     );
 
     assert_eq!(validated.valid.len(), 1);

@@ -205,7 +205,11 @@ async fn executor_runs_the_lifecycle_and_always_cleans_up() {
     let store = ArtifactStore::with_root(
         std::env::temp_dir().join(format!("metrale-executor-lifecycle-{}", std::process::id())),
     );
-    let executor = BenchmarkExecutor::new(tokio::runtime::Handle::current(), store);
+    let executor = BenchmarkExecutor::new(
+        tokio::runtime::Handle::current(),
+        store,
+        crate::levers::tests::unset(),
+    );
     let run = executor.start(
         &LIFECYCLE_DESC,
         ParamValues::default(),

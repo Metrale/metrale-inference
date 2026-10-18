@@ -301,28 +301,34 @@ impl NemotronMoeLayer {
             && ctx.buffers.fp8_act_bytes() >= (p.shared_inter as usize) * (p.n as usize)
             && ctx.levers.shared_w4a4_down;
         if let Some(fp8w) = native_down {
-            let (kern, pipelined) = if self.w8a16_gemm_pipelined_k.0 != 0 {
-                (self.w8a16_gemm_pipelined_k, true)
+            if self.w8a16_gemm_pipelined_k.0 != 0 {
+                ops::w8a16_gemm_pipelined(
+                    ctx.gpu,
+                    self.w8a16_gemm_pipelined_k,
+                    ctx.levers.ops.w8a16.pipe128,
+                    p.shared_up_out_base,
+                    fp8w.weight,
+                    fp8w.row_scale,
+                    shared_down_out,
+                    p.n,
+                    p.h as u32,
+                    p.shared_inter,
+                    stream,
+                )?;
             } else {
-                (self.w8a16_gemm_k, false)
-            };
-            let f = if pipelined {
-                ops::w8a16_gemm_pipelined
-            } else {
-                ops::w8a16_gemm
-            };
-            f(
-                ctx.gpu,
-                kern,
-                p.shared_up_out_base,
-                fp8w.weight,
-                fp8w.row_scale,
-                shared_down_out,
-                p.n,
-                p.h as u32,
-                p.shared_inter,
-                stream,
-            )?;
+                ops::w8a16_gemm(
+                    ctx.gpu,
+                    self.w8a16_gemm_k,
+                    p.shared_up_out_base,
+                    fp8w.weight,
+                    fp8w.row_scale,
+                    shared_down_out,
+                    p.n,
+                    p.h as u32,
+                    p.shared_inter,
+                    stream,
+                )?;
+            }
         } else if w4a4_down {
             let a4 = ctx.buffers.fp8_act();
             let a4_sf = a4.offset((p.n as usize) * (p.shared_inter as usize) / 2);

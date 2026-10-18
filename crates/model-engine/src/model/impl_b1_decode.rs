@@ -10,6 +10,7 @@
 
 #![allow(unused_imports, dead_code)]
 
+use super::lm_head_vocab_tp::HeadRanks;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -71,6 +72,7 @@ impl TransformerModel {
                 dispatch: ctx.dispatch,
                 derived: ctx.derived,
                 levers: ctx.levers,
+                settings: ctx.settings,
                 stats: ctx.stats,
                 attn_metadata: ctx.attn_metadata,
                 profile: false,
@@ -143,7 +145,7 @@ impl TransformerModel {
         let h = self.config.hidden_size as u32;
         let eps = self.config.rms_norm_eps as f32;
         self.final_norm_apply(hidden, normed, 1, h, eps, stream)?;
-        self.lm_head(normed, stream)?;
+        self.lm_head(normed, HeadRanks::Every, stream)?;
         self.gpu.synchronize(stream)?;
         let head_us = t0.elapsed().as_micros() as u64;
 
@@ -275,6 +277,7 @@ impl TransformerModel {
             dispatch: &self.dispatch,
             derived: &self.derived,
             levers: &self.levers,
+            settings: &self.settings,
             stats: &self.stats,
             attn_metadata: Some(attn_metadata),
             profile: false,
@@ -314,7 +317,7 @@ impl TransformerModel {
         let h = self.config.hidden_size as u32;
         let eps = self.config.rms_norm_eps as f32;
         self.final_norm_apply(hidden, normed, 1, h, eps, stream)?;
-        self.lm_head(normed, stream)?;
+        self.lm_head(normed, HeadRanks::Every, stream)?;
 
         seq.tokens.push(token);
         seq.seq_len += 1;

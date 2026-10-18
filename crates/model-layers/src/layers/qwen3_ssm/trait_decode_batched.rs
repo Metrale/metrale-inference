@@ -32,36 +32,12 @@ fn k4_diag_checkpoint(ctx: &ForwardContext, phase: &str, stream: u64) -> Result<
     Ok(())
 }
 
-/// 2026-09-25: Kill switch for the single-launch BA projection + GDN gates:
-/// `METRALE_NO_BATCHED_BA_GATES` set to any value, `0` included, selects the per-token
-/// GEMV + `compute_gdn_gates` pair. Read once per process.
-fn batched_ba_gates_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("METRALE_NO_BATCHED_BA_GATES").is_err())
-}
-
-/// 2026-09-25: Kill switch for the single-launch gated RMS norm:
-/// `METRALE_NO_BATCHED_GDN_NORM` set to any value, `0` included, selects the per-token
-/// loop. Read once per process.
-fn batched_norm_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("METRALE_NO_BATCHED_GDN_NORM").is_err())
-}
-
 /// 2026-09-25: Row count above which the batched QKVZ and out_proj read the NVFP4
 /// transposed twin through a tile GEMM (`ms_proj_gemm`) ahead of the single-scale FP8
 /// prefill-copy arm (`qkvz_fp8` / `out_proj_fp8`). Both projections use this one value.
 /// It equals `ops::gemv_tc::NARROW_MAX_ROWS`, the default row edge of the NVFP4 GEMV arms
 /// earlier in the dispatch (`W4a16BatchmTiers::edge`).
 pub(super) const VERIFY_TGEMM_MIN_TOKENS: usize = 8;
-
-/// 2026-09-25: Kill switch for the NVFP4 QKVZ arm above `VERIFY_TGEMM_MIN_TOKENS` rows:
-/// `METRALE_NO_QKVZ_NVFP4_DECODE` set to any value, `0` included, keeps the FP8
-/// prefill-copy arm. Read once per process.
-fn qkvz_nvfp4_decode_off() -> bool {
-    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *OFF.get_or_init(|| std::env::var("METRALE_NO_QKVZ_NVFP4_DECODE").is_ok())
-}
 
 /// 2026-09-25: Whether the batched QKVZ projection reads the NVFP4 transposed twin instead
 /// of the single-scale FP8 prefill copy. Pure: the row count, which copies the layer holds
@@ -82,15 +58,6 @@ pub(super) fn qkvz_verify_nvfp4_wins(
         && has_nvfp4_t
         && has_tile_gemm
         && num_tokens > VERIFY_TGEMM_MIN_TOKENS
-}
-
-/// 2026-09-26: Whether the out_proj arm above `VERIFY_TGEMM_MIN_TOKENS` rows that reads the
-/// NVFP4 transposed twin through `ms_proj_gemm` may run.
-fn verify_outproj_tgemm_enabled() -> bool {
-    // 2026-09-25: `METRALE_NO_VERIFY_OUTPROJ_TGEMM` set to any value, `0`
-    // included, disables this arm. Read once per process.
-    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    !*OFF.get_or_init(|| std::env::var("METRALE_NO_VERIFY_OUTPROJ_TGEMM").is_ok())
 }
 
 /// 2026-09-25: GDN-state routing for [`Qwen3SsmLayer::decode_batched_inner`].
@@ -355,7 +322,7 @@ impl Qwen3SsmLayer {
                 (2 * h) as u32,
                 stream,
             )?;
-        } else if (4..=self.ffn.narrow_rows() as usize).contains(&num_tokens)
+        } else if (4..=self.ffn.narrow_rows(ctx.levers.ops.w4a16_tc) as usize).contains(&num_tokens)
             && self
                 .ffn
                 .try_forward_km(normed2_base, num_tokens as u32, ctx, stream)

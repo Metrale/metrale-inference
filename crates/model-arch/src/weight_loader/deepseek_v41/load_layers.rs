@@ -20,12 +20,14 @@ use metrale_model_weights::weights::WeightStore;
 use metrale_model_weights::weights::expert_stream::{
     EngramRowReader, ExpertArena, ExpertSliceMap, ExpertSource, ShardFiles,
 };
+use metrale_settings::InferenceServerSettings;
 
 use crate::attn_v41::{
     AttnV41, AttnV41Cfg, AttnV41LayerWeights, CompressorWeightsGpu, IndexerWeightsGpu, LayerRole,
     SharedV41,
 };
 use crate::deepseek_v41_layer::SegState;
+use crate::deepseek_v41_layer::levers::Ds41LoadLevers;
 use crate::deepseek_v41_layer::{DeepSeekV41Layer, V41Runtime};
 use crate::engram_v41::{EngramHashTables, EngramHasher, EngramLayerWeights, EngramV41};
 use crate::moe_v41::{MoeV41, MoeV41Cfg, MoeV41LayerWeights, RouterWeights};
@@ -34,7 +36,7 @@ use metrale_model_layers::weight_map::DenseWeight;
 
 use super::{
     DEFAULT_CANDIDATE_BLOCK, DEFAULT_CANDIDATE_SOURCE, DEFAULT_CANDIDATE_TOPK_BLOCKS, bf16_ptr,
-    download_f32, env_usize, f32_ptr, hc_site, resident_mat,
+    download_f32, f32_ptr, hc_site, resident_mat,
 };
 
 pub fn load_layers(
@@ -42,7 +44,9 @@ pub fn load_layers(
     config: &ModelConfig,
     gpu: &dyn GpuBackend,
     _layer_kv_dtypes: &[metrale_cache::kv_cache::KvCacheDtype],
+    settings: &InferenceServerSettings,
 ) -> Result<Vec<Box<dyn TransformerLayer>>> {
+    let levers = Ds41LoadLevers::from_settings(settings);
     let n_layers = config.num_hidden_layers;
     let (dim, hc) = (config.hidden_size, config.hc_mult);
     ensure!(
@@ -56,7 +60,10 @@ pub fn load_layers(
         .deferred("model.layers.0.ffn.experts_stack.gate")
         .context("deepseek-v4.1: the routed expert stacks were not deferred by the GGUF loader")?;
     let model_dir = anchor.path.parent().context("shard path has no parent")?;
-    let files = Arc::new(ShardFiles::open_dir(model_dir)?);
+    let weights_settings = store
+        .weights_settings()
+        .context("deepseek-v4.1: the GGUF loader records the weights settings it loaded with")?;
+    let files = Arc::new(ShardFiles::open_dir_with(model_dir, weights_settings)?);
     let slices = Arc::new(ExpertSliceMap::new(files.clone())?);
     let rows = EngramRowReader::new(files.clone())?;
     ensure!(
@@ -66,16 +73,11 @@ pub fn load_layers(
         config.num_experts
     );
 
-    let max_seq =
-        env_usize("METRALE_DS41_MAX_SEQ", 8192).min(config.max_position_embeddings.max(1));
-    let max_tokens = env_usize("METRALE_DS41_MAX_TOKENS", 2048).min(max_seq);
-    let cache_gib: f64 = std::env::var("METRALE_DS41_EXPERT_CACHE_GIB")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .filter(|g: &f64| g.is_finite() && *g > 0.0)
-        .unwrap_or(88.0);
+    let max_seq = levers.max_seq.min(config.max_position_embeddings.max(1));
+    let max_tokens = levers.max_tokens.min(max_seq);
+    let cache_gib = levers.expert_cache_gib;
     let cache_bytes = (cache_gib * (1u64 << 30) as f64) as usize;
-    let reader_threads = env_usize("METRALE_DS41_READER_THREADS", 16);
+    let reader_threads = levers.reader_threads;
     let ratios: Vec<usize> = config
         .compress_ratios
         .iter()
@@ -100,7 +102,8 @@ pub fn load_layers(
     );
     let cand_src = config
         .candidate_source_layer_id
-        .unwrap_or_else(|| env_usize("METRALE_DS41_CANDIDATE_SOURCE", DEFAULT_CANDIDATE_SOURCE));
+        .or(levers.candidate_source)
+        .unwrap_or(DEFAULT_CANDIDATE_SOURCE);
     let cand_topk_blocks = if config.candidate_topk_blocks > 0 {
         config.candidate_topk_blocks
     } else {
@@ -187,10 +190,15 @@ pub fn load_layers(
     // 2026-09-25: The expert slots are device memory behind a page-locked
     // staging ring; `METRALE_DS41_ARENA_DEVICE=0` selects a page-locked arena
     // the GPU reads in place.
-    let arena_device = !std::env::var("METRALE_DS41_ARENA_DEVICE").is_ok_and(|v| v == "0");
-    let staging_slots = env_usize("METRALE_DS41_STAGING_SLOTS", 16);
-    let (arena, mut lru) =
-        ExpertArena::alloc(gpu, cache_bytes, layout, arena_device, staging_slots)?;
+    let (arena_device, staging_slots) = (levers.arena_device, levers.staging_slots);
+    let (arena, mut lru) = ExpertArena::alloc_with(
+        gpu,
+        cache_bytes,
+        layout,
+        arena_device,
+        staging_slots,
+        weights_settings,
+    )?;
     tracing::info!(
         "DeepSeek-V4.1: expert arena {}; MemAvailable now {}",
         arena.describe(),
@@ -200,7 +208,7 @@ pub fn load_layers(
     // experts on persistent reader threads, which `METRALE_DS41_PREFETCH_K`
     // needs; otherwise each fetch uses scoped threads. The pool is only armed
     // with the page-locked arena.
-    if std::env::var("METRALE_DS41_READER_POOL").is_ok_and(|v| v == "1") {
+    if levers.reader_pool {
         if arena_device {
             tracing::warn!(
                 "DeepSeek-V4.1: METRALE_DS41_READER_POOL=1 ignored with the device arena (set METRALE_DS41_ARENA_DEVICE=0 for the pool)"
@@ -210,8 +218,8 @@ pub fn load_layers(
             tracing::info!("DeepSeek-V4.1: expert reader pool of {reader_threads} threads");
         }
     }
-    if let Ok(path) = std::env::var("METRALE_DS41_ROUTE_TRACE") {
-        lru.set_trace(&path)?;
+    if let Some(path) = &levers.route_trace {
+        lru.set_trace(path)?;
         tracing::info!("DeepSeek-V4.1: expert route trace -> {path}");
     }
     tracing::info!(
@@ -219,8 +227,8 @@ pub fn load_layers(
         lru.n_slots(),
         layout.bytes as f64 / 1048576.0
     );
-    let attn = AttnV41::new(gpu, attn_cfg.clone())?;
-    let moe = MoeV41::new(gpu, moe_cfg.clone())?;
+    let attn = AttnV41::new(gpu, attn_cfg.clone(), levers.run)?;
+    let moe = MoeV41::new(gpu, moe_cfg.clone(), levers.run)?;
     let mut engram = EngramV41::new(
         gpu,
         dim,
@@ -249,12 +257,13 @@ pub fn load_layers(
                 qk: EngramV41::upload_qk(gpu, &q, &k)?,
                 raw: DevicePtr(0),
                 rows: DevicePtr(0),
-                wkv_q2k: super::engram_q2k::engram_wkv_q2k(gpu, &files, l)?,
+                wkv_q2k: super::engram_q2k::engram_wkv_q2k(gpu, &files, l, levers.engram_q2k)?,
             },
         )?;
     }
     let alloc_f32 = |n: usize| gpu.alloc((n * 4).max(16));
     let rt = Arc::new(V41Runtime {
+        levers: levers.run,
         attn: Mutex::new(attn),
         moe: Mutex::new(moe),
         engram: Mutex::new(engram),
@@ -292,12 +301,12 @@ pub fn load_layers(
         step_start: Mutex::new(None),
         graph_disabled: std::sync::atomic::AtomicBool::new(false),
         pred_x: gpu.alloc(3 * dim * 2)?,
-        pred_trace: Mutex::new(match std::env::var("METRALE_DS41_PREDICT_TRACE") {
-            Ok(path) => {
+        pred_trace: Mutex::new(match &levers.predict_trace {
+            Some(path) => {
                 tracing::info!("DeepSeek-V4.1: routing prediction trace -> {path}");
-                Some(std::io::BufWriter::new(std::fs::File::create(&path)?))
+                Some(std::io::BufWriter::new(std::fs::File::create(path)?))
             }
-            Err(_) => None,
+            None => None,
         }),
     });
 

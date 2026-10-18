@@ -28,6 +28,7 @@ impl Qwen3SsmLayer {
         out_proj_nvfp4_t: Option<QuantizedWeight>,
         config: &metrale_config::ModelConfig,
         gpu: &dyn GpuBackend,
+        lc: crate::load_context::LoadContext<'_>,
     ) -> Result<Self> {
         let mut layer = Self::new(
             input_norm,
@@ -37,6 +38,7 @@ impl Qwen3SsmLayer {
             qkvz_nvfp4,
             config,
             gpu,
+            lc,
         )?;
         layer.sequential_qkvz = true;
         layer.qkvz_nvfp4_t = qkvz_nvfp4_t;

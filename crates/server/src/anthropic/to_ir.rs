@@ -225,6 +225,7 @@ impl From<MessagesRequest> for ir::ChatRequest {
             // 2026-09-26: This surface has no `chat_template_kwargs`;
             // `prepare_chat_prompt` falls back to `behavior.preserve_thinking`.
             preserve_thinking: None,
+            template_thinking: None,
             repetition_detection: None,
             adapter: None,
             src_lang: None,

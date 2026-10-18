@@ -11,19 +11,21 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 use super::ACT_BLOCK;
+use crate::glm5next_layer::wide_gemv::{Batchm, glm_mm};
 use crate::glm5next_mlp::weights::{Glm5NextExpertPtrTable, Nvfp4Proj};
 
 const W4_TILE: u32 = 64;
 
 /// 2026-09-25: `C[M, N] = A[M, K] @ B[N, K]^T`, BF16 in and out. With `M` above
-/// `DENSE_GEMV_BATCHM_MAX_M` and `cublas_wide_proj()` it runs on cuBLASLt; otherwise
+/// `DENSE_GEMV_BATCHM_MAX_M` and `GlmLevers::cublas_wide_proj` it runs on cuBLASLt; otherwise
 /// `ops::dense_mm_bf16` picks the GEMV (M=1), the batched GEMV (M=2..=16) or the tile GEMM.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn gemm(
     gpu: &dyn GpuBackend,
+    levers: &crate::glm5next_layer::GlmLevers,
     k: KernelHandle,
     gemv: KernelHandle,
-    batchm: KernelHandle,
+    batchm: impl Into<Batchm>,
     a: DevicePtr,
     b: DevicePtr,
     c: DevicePtr,
@@ -32,20 +34,13 @@ pub(super) fn gemm(
     kk: usize,
     stream: u64,
 ) -> Result<()> {
-    if m > metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M as usize
-        && crate::glm5next_layer::cublas_wide_proj()
-    {
-        return metrale_model_layers::layers::ops::cublas_bf16_proj_dense(
-            a, b, c, m as u32, n as u32, kk as u32, stream,
-        );
-    }
-    metrale_model_layers::layers::ops::dense_mm_bf16(
+    // 2026-10-09: The dispatch lives in `glm_mm`, shared with the DSA and KDA blocks.
+    glm_mm(
         gpu,
-        &metrale_model_layers::layers::ops::DenseMmKernels {
-            gemm: k,
-            gemv,
-            batchm,
-        },
+        levers,
+        k,
+        gemv,
+        batchm.into(),
         a,
         b,
         c,

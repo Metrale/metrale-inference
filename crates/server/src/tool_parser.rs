@@ -279,6 +279,29 @@ pub trait ToolCallParser: Send + Sync {
     fn promotes_bare_call_names(&self) -> bool {
         false
     }
+
+    /// 2026-10-08: How parsed calls are checked before delivery. The default,
+    /// [`CallPolicy::Repairing`], keeps the shared chain; `Glm47Parser` says
+    /// [`CallPolicy::FailClosed`].
+    fn call_policy(&self) -> CallPolicy {
+        CallPolicy::Repairing
+    }
+}
+
+/// 2026-10-08: What happens to a call between parsing and delivery.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CallPolicy {
+    /// 2026-10-08: The shared chain: every envelope and fallback shape is
+    /// parsed (`parse_tool_calls`, `StreamingToolDetector`), arguments are
+    /// backfilled, coerced and path-normalized, names fuzzy-matched, and a
+    /// call that fails `assess_tool_call` is dropped (blocking) or replaced by
+    /// a content chunk that ends the response (streaming).
+    Repairing,
+    /// 2026-10-08: Only GLM-4.7 envelopes are calls, and each is delivered
+    /// either as written or as a refusal (`glm47::judge`); arguments are held
+    /// until the call closes while streaming, with an empty argument chunk
+    /// every `keepalive` once the call's header is out.
+    FailClosed { keepalive: std::time::Duration },
 }
 
 impl std::fmt::Display for dyn ToolCallParser {
@@ -301,6 +324,7 @@ pub enum ToolCallFormat {
     DeepseekV4,
     BareJson,
     PoolsideV1,
+    Glm47,
 }
 
 impl std::str::FromStr for ToolCallFormat {
@@ -316,8 +340,9 @@ impl std::str::FromStr for ToolCallFormat {
             "deepseek_v4" | "deepseek_v41" | "dsml" => Ok(Self::DeepseekV4),
             "bare_json" => Ok(Self::BareJson),
             "poolside_v1" => Ok(Self::PoolsideV1),
+            "glm47" => Ok(Self::Glm47),
             other => Err(format!(
-                "Unknown tool call parser '{other}'. Supported: hermes, qwen3_coder, qwen3_xml, gemma4, mistral, minimax_xml, deepseek_v4, bare_json, poolside_v1",
+                "Unknown tool call parser '{other}'. Supported: hermes, qwen3_coder, qwen3_xml, gemma4, mistral, minimax_xml, deepseek_v4, bare_json, poolside_v1, glm47",
             )),
         }
     }
@@ -335,6 +360,7 @@ impl ToolCallFormat {
             Self::DeepseekV4 => Box::new(DeepseekV4DsmlParser),
             Self::BareJson => Box::new(BareJsonParser),
             Self::PoolsideV1 => Box::new(PoolsideV1Parser),
+            Self::Glm47 => Box::new(Glm47Parser),
         }
     }
 
@@ -357,6 +383,7 @@ impl ToolCallFormat {
             Self::DeepseekV4 => "deepseek_v4",
             Self::BareJson => "bare_json",
             Self::PoolsideV1 => "poolside_v1",
+            Self::Glm47 => "glm47",
         }
     }
 }
@@ -365,6 +392,7 @@ mod bare_json;
 mod deepseek_v4_dsml;
 mod fuzzy_match;
 mod gemma4;
+pub mod glm47;
 mod helpers_a;
 mod helpers_b;
 mod hermes;
@@ -383,6 +411,7 @@ mod qwen3_xml;
 mod streaming;
 mod streaming_emit;
 mod streaming_flush;
+mod streaming_glm47;
 mod streaming_impl;
 mod type_coerce;
 pub(crate) mod validation;
@@ -390,6 +419,7 @@ pub(crate) mod validation;
 pub use bare_json::*;
 pub use deepseek_v4_dsml::*;
 pub use gemma4::*;
+pub use glm47::{Glm47Parser, Verdict, parse_glm47_answer};
 use helpers_a::*;
 pub(crate) use helpers_b::append_tool_choice_instruction;
 use helpers_b::*;

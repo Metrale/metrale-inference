@@ -14,7 +14,7 @@ use anyhow::Result;
 use metrale_gpu_runtime::gpu::DevicePtr;
 
 use super::DeepSeekV41Layer;
-use super::step::{diag_on, diag_rms_bf16, trace_hash, trace_on};
+use super::step::{diag_rms_bf16, trace_hash};
 use metrale_model_layers::layer::ForwardContext;
 use metrale_model_layers::layers::ops;
 
@@ -35,7 +35,7 @@ impl DeepSeekV41Layer {
         let streams = ctx.buffers.hc_streams();
         let normed = ctx.buffers.norm_output();
         let (h, hc) = (rt.hidden, rt.hc_mult);
-        let diag = diag_on();
+        let diag = self.rt.levers.diag;
         let attn_out = rt.attn.lock().unwrap().out_ptr();
         self.hc_post(gpu, attn_out, streams, rt.post_s, rt.comb_s, m, stream)?;
         self.mixes_collapse(
@@ -59,7 +59,7 @@ impl DeepSeekV41Layer {
             rt.norm_eps,
             stream,
         )?;
-        if trace_on() {
+        if self.rt.levers.trace {
             gpu.synchronize(stream)?;
             tracing::info!(
                 "DS41 trace pos={} L{} moein={:016x} hwyin={:016x}",
@@ -89,7 +89,7 @@ impl DeepSeekV41Layer {
             if let Some((resident, preds)) = pred {
                 self.predict_log(start_pos, &resident, &preds, &i_);
             }
-            if trace_on() {
+            if self.rt.levers.trace {
                 let after = lru.stats();
                 let wb: Vec<u8> = w_.iter().flat_map(|x| x.to_le_bytes()).collect();
                 let mut hw: u64 = 0xcbf2_9ce4_8422_2325;
@@ -122,7 +122,7 @@ impl DeepSeekV41Layer {
         }
         self.hc_post(gpu, moe_out, streams, rt.post_s, rt.comb_s, m, stream)?;
         gpu.copy_d2d_async(rt.pre_f, rt.pre_prev, m * hc * 4, stream)?;
-        if trace_on() {
+        if self.rt.levers.trace {
             gpu.synchronize(stream)?;
             tracing::info!(
                 "DS41 trace pos={} L{} moe={:016x} hwy={:016x}",

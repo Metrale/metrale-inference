@@ -3,7 +3,7 @@
 //! 2026-09-26: A minimal OpenAI-compatible client over raw HTTP/1.1 on
 //! `tokio::net::TcpStream`, with no TLS: one streaming chat call, measured
 //! ([`chat_stream`]), plus the blocking, GET, gap and failure helpers in the
-//! submodules. Chunked transfer-encoding is decoded by the private `reader`
+//! submodules. Chunked transfer-encoding is decoded by the shared `Reader`
 //! module before SSE lines are split, so a chunk boundary inside a `data:`
 //! line does not lose a token.
 //!
@@ -343,55 +343,13 @@ fn apply_chunk(chunk: &Value, out: &mut ChatOutcome) -> bool {
     carried
 }
 
-/// 2026-09-26: The trimmed `error.message` of an OpenAI-shaped error body.
-/// `None` when the body is not JSON with a non-empty string there, so callers
-/// can fall back to the status line.
-pub fn message_from_body(body: &str) -> Option<String> {
-    let v: serde_json::Value = serde_json::from_str(body).ok()?;
-    let msg = v.get("error")?.get("message")?.as_str()?.trim();
-    (!msg.is_empty()).then(|| msg.to_string())
-}
-
-/// 2026-09-26: The message from a complete non-200 HTTP response (status
-/// line, headers and body), decoded by the same private reader as streams,
-/// chunked bodies included. `None` unless the response is a non-200 whose
-/// body [`message_from_body`] can read.
-pub fn error_message_from_response(raw: &[u8]) -> Option<String> {
-    let mut r = Reader::default();
-    // 2026-09-26: Both return the error being reported; only the decoded body
-    // is needed.
-    let _ = r.push(raw);
-    let _ = r.finish();
-    r.error_status.as_ref()?;
-    message_from_body(String::from_utf8_lossy(&r.body).trim())
-}
-
-/// 2026-09-26: Cap on how much of a non-200 body to buffer before reporting
-/// it.
-pub(super) const MAX_ERROR_BODY: usize = 64 * 1024;
-
-pub(super) fn is_chunked(head: &str) -> bool {
-    head.lines().any(|line| {
-        let line = line.to_ascii_lowercase();
-        line.starts_with("transfer-encoding:") && line.contains("chunked")
-    })
-}
-
-pub(super) fn status_is_success(status_line: &str) -> bool {
-    status_line.split_whitespace().nth(1) == Some("200")
-}
-
-/// 2026-09-26: `Content-Length` from a header block, if declared and
-/// parseable.
-pub(super) fn content_length(head: &str) -> Option<usize> {
-    head.lines()
-        .find(|l| l.to_ascii_lowercase().starts_with("content-length:"))
-        .and_then(|l| l.split_once(':'))
-        .and_then(|(_, v)| v.trim().parse().ok())
-}
-
-mod reader;
-use reader::Reader;
+// 2026-10-17: The response wire (reader, failure taxonomy, error-body
+// decoders) moved to `metrale-host-probe`, which the TUI chat shares without
+// the bench; re-exported so this client and its callers keep their paths.
+pub use metrale_host_probe::http_wire::failure;
+pub use metrale_host_probe::http_wire::failure::{FailureKind, RequestFailure, classify};
+use metrale_host_probe::http_wire::{Reader, status_is_success};
+pub use metrale_host_probe::http_wire::{error_message_from_response, message_from_body};
 
 mod blocking;
 pub use blocking::{BlockingOutcome, chat_blocking, responses_blocking};
@@ -401,13 +359,6 @@ pub use get::{fetch_hardware, get_json, get_text, list_models, probe};
 
 pub mod gaps;
 pub use gaps::{GapSample, GapStats, itl_ms};
-
-pub mod failure;
-pub use failure::{FailureKind, RequestFailure, classify};
-
-pub(super) fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
-    hay.windows(needle.len()).position(|w| w == needle)
-}
 
 #[cfg(test)]
 #[path = "http_tests.rs"]

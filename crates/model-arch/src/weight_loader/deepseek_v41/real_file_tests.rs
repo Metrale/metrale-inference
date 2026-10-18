@@ -13,6 +13,7 @@
 use super::*;
 use crate::attn_v41::AttnV41LayerState;
 use crate::attn_v41::{AttnV41, AttnV41Cfg, AttnV41LayerWeights, LayerRole, SharedV41};
+use crate::deepseek_v41_layer::levers::tests::at_defaults;
 use crate::deepseek_v41_ref::attn::{AttnWeights, freqs_cis};
 use crate::deepseek_v41_ref::compress::{
     CompAttnCfg, IndexerCfg, LayerAttnState, SharedRuntime, attention_any,
@@ -22,12 +23,11 @@ use crate::deepseek_v41_ref::moe::{MoeCfg, MoeWeights, gate as ref_gate, moe as 
 use crate::moe_v41::{MoeV41, MoeV41Cfg, MoeV41LayerWeights};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 use metrale_model_layers::layers::ops;
-use metrale_model_weights::weights::GgufLoader;
-use metrale_model_weights::weights::WeightLoader;
 use metrale_model_weights::weights::dequant_cpu::{GgmlType, dequant_to_f32};
 use metrale_model_weights::weights::expert_stream::{
     ExpertLru, ExpertSliceMap, ExpertSource, PinnedArena, ShardFiles,
 };
+use metrale_model_weights::weights::{GgufLoader, WeightLoader};
 use std::sync::Arc;
 
 const MODEL_DIR: &str = "/home/rstesiak/models/dsv41-q2k";
@@ -92,7 +92,16 @@ fn layer0_matches_the_cpu_reference_on_the_real_weights() {
         metrale_model_weights::weights::config_from_gguf_dir(dir).expect("config from gguf");
     let store = GgufLoader::new().load(dir, g, 0).expect("load gguf");
     let layers = DeepSeekV41WeightLoader
-        .load_layers(&store, &config, g, &[])
+        .load_layers(
+            &store,
+            &config,
+            g,
+            &[],
+            metrale_model_layers::load_context::LoadContext {
+                settings: &metrale_model_layers::lever_equivalence::defaults(),
+                levers: &metrale_model_layers::layers::ops::ModelLevers::defaults(),
+            },
+        )
         .expect("layers");
     assert_eq!(layers.len(), config.num_hidden_layers);
     let (dim, hc, hd, nh) = (
@@ -302,7 +311,7 @@ fn layer0_matches_the_cpu_reference_on_the_real_weights() {
         beta_slow: 1.0,
     };
     acfg.max_tokens = 16;
-    let attn = AttnV41::new(g, acfg.clone()).unwrap();
+    let attn = AttnV41::new(g, acfg.clone(), at_defaults()).unwrap();
     let role = LayerRole {
         ratio: 0,
         ..Default::default()
@@ -464,7 +473,7 @@ fn layer0_matches_the_cpu_reference_on_the_real_weights() {
         swiglu_limit: mc.swiglu_limit,
         max_tokens: 16,
     };
-    let moe = MoeV41::new(g, mcfg).unwrap();
+    let moe = MoeV41::new(g, mcfg, at_defaults()).unwrap();
     let mw_d = MoeV41LayerWeights {
         layer: 0,
         gate_w: bf16_ptr(&store, &format!("{lp}.ffn.gate.weight")).unwrap(),

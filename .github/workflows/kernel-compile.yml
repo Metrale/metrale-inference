@@ -32,6 +32,9 @@ on:
     paths:
       - 'kernels/**'
       - 'crates/kernels/**'
+      - 'crates/closure/**'
+      - 'crates/target-defaults/**'
+      - 'crates/kernel-root/**'
   # Merge queue: queue commits (temporary gh-readonly-queue/** merge-commits)
   # fire none of the events above, and this check is required — without this
   # trigger it is never reported and the entry hangs until the queue's

@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# 2026-10-17: Pure crates that do not yet build for a wasm target, as `crate:target`.
+# This list may only shrink: `cargo xtask wasm` refuses a new offender, a grown count and a
+# stale entry, and asks for an entry to be tightened when its count falls.
+metrale-circuit:wasm32v1-none
+metrale-config:wasm32-unknown-unknown
+metrale-config:wasm32v1-none
+metrale-core:wasm32-unknown-unknown
+metrale-core:wasm32v1-none
+metrale-grammar:wasm32-unknown-unknown
+metrale-grammar:wasm32v1-none
+metrale-sampling:wasm32-unknown-unknown
+metrale-sampling:wasm32v1-none
+metrale-scheduler:wasm32v1-none

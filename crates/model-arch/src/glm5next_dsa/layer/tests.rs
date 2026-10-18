@@ -34,7 +34,8 @@ fn cfg() -> Glm5NextDsaConfig {
 fn the_layer_takes_the_vanilla_rmsnorm_not_the_plus_one_variant() {
     let src = include_str!("../layer.rs");
     assert!(
-        src.contains(r#"gpu.kernel("rms_norm_vanilla", "rms_norm_vanilla")"#),
+        include_str!("kernels.rs")
+            .contains(r#"gpu.kernel("rms_norm_vanilla", "rms_norm_vanilla")"#),
         "GLM uses x*rms*w; `rms_norm` applies x*rms*(1+w) and would shift every norm"
     );
     for (file, text) in [
@@ -42,6 +43,7 @@ fn the_layer_takes_the_vanilla_rmsnorm_not_the_plus_one_variant() {
         ("layer/decode_k.rs", include_str!("decode_k.rs")),
         ("layer/rows.rs", include_str!("rows.rs")),
         ("layer/workspace.rs", include_str!("workspace.rs")),
+        ("layer/kernels.rs", include_str!("kernels.rs")),
         ("layer/proj_gemm.rs", include_str!("proj_gemm.rs")),
     ] {
         assert!(
@@ -78,10 +80,16 @@ fn q_is_absorbed_to_the_latent_width() {
 }
 
 /// 2026-09-25: `decode_k` rewinds an indexer cache that is ahead of the sequence (a rejected
-/// draft) and refuses one that is behind (rows never written).
+/// draft) and refuses one that is behind (rows never written). 2026-10-09: The guard moved to
+/// `layer/indexer_place.rs`; a paged cache behind its sequence adopts the KV blocks' rows
+/// (`state/tests.rs` checks both arms on a live state).
 #[test]
 fn a_lockstep_drift_is_refused_behind_and_rewound_ahead() {
-    let src = include_str!("../layer.rs");
+    let src = include_str!("indexer_place.rs");
+    assert!(
+        src.contains("Ordering::Less if st.cache() == IndexerCache::Paged"),
+        "only a PAGED cache may be behind; its rows are in the KV blocks"
+    );
     assert!(
         src.contains("must advance in lockstep"),
         "the drift guard must state why it exists"
@@ -111,7 +119,7 @@ fn the_indexer_rewind_only_shrinks() {
 /// one latent per token.
 #[test]
 fn k_and_v_are_the_same_latent_pool() {
-    let src = include_str!("../layer.rs");
+    let src = include_str!("attend_rows.rs");
     assert!(src.contains("v_cache: pool"));
     assert!(src.contains("K and V are the same latent"));
 }
@@ -309,48 +317,85 @@ fn only_a_multi_row_eager_prefill_takes_the_batched_selector() {
 }
 
 /// 2026-09-26: `forward_k` is `pub(in crate::glm5next_layer)`, so every caller is in a
-/// `glm5next_layer/` file. It has two call sites, both in `mod.rs`: the prefill sub-chunk
-/// loop (`is_prefill` true) and the speculative verify (`false`). A third caller in any
-/// module file fails this test and has to choose.
+/// `glm5next_layer/` file. It has two call sites: the prefill sub-chunk loop (`is_prefill`
+/// true; `steps/prefill_capture.rs` since 2026-10-11) and the speculative verify (`false`,
+/// `mod.rs`). A third caller in any module file fails this test and has to choose.
 #[test]
 fn forward_k_has_two_callers_and_the_verify_one_is_not_prefill() {
     let src = include_str!("../../glm5next_layer/mod.rs");
+    let prefill = include_str!("../../glm5next_layer/steps/prefill_capture.rs");
     let module = concat!(
         include_str!("../../glm5next_layer/mod.rs"),
+        include_str!("../../glm5next_layer/l2_warm.rs"),
         include_str!("../../glm5next_layer/levers.rs"),
         include_str!("../../glm5next_layer/profile.rs"),
         include_str!("../../glm5next_layer/state.rs"),
         include_str!("../../glm5next_layer/steps.rs"),
         include_str!("../../glm5next_layer/steps/drafter.rs"),
         include_str!("../../glm5next_layer/steps/forward.rs"),
+        include_str!("../../glm5next_layer/steps/forward_pieces.rs"),
+        include_str!("../../glm5next_layer/steps/forward_sp.rs"),
+        include_str!("../../glm5next_layer/steps/forward_sp_pipe.rs"),
+        include_str!("../../glm5next_layer/steps/mhc_slice.rs"),
+        include_str!("../../glm5next_layer/steps/mix.rs"),
+        include_str!("../../glm5next_layer/steps/multi_seq.rs"),
+        include_str!("../../glm5next_layer/steps/prefill_capture.rs"),
+        include_str!("../../glm5next_layer/steps/prefill_spans.rs"),
+        include_str!("../../glm5next_layer/steps/reduce_post.rs"),
+        include_str!("../../glm5next_layer/steps/replay.rs"),
+        include_str!("../../glm5next_layer/steps/verify_multi.rs"),
         include_str!("../../glm5next_layer/types.rs"),
+        include_str!("../../glm5next_layer/wide_gemv.rs"),
     );
     assert_eq!(
         glm5next_layer_files(),
         [
+            "l2_warm.rs",
             "levers.rs",
+            "levers_settings_tests.rs",
             "mod.rs",
             "profile.rs",
+            "profile_tests.rs",
             "state.rs",
             "steps.rs",
             "steps/drafter.rs",
             "steps/forward.rs",
+            "steps/forward_pieces.rs",
+            "steps/forward_sp.rs",
+            "steps/forward_sp_pipe.rs",
+            "steps/mhc_slice.rs",
+            "steps/mix.rs",
+            "steps/multi_seq.rs",
+            "steps/prefill_capture.rs",
+            "steps/prefill_spans.rs",
+            "steps/reduce_post.rs",
+            "steps/replay.rs",
+            "steps/verify_multi.rs",
             "tests.rs",
             "types.rs",
+            "wide_gemv.rs",
         ],
         "a new glm5next_layer file must join the scanned `concat!` above"
     );
     assert_eq!(
         module.matches("self.forward_k(").count(),
-        2,
+        3,
         "a new forward_k caller must decide its own `is_prefill`, not inherit one"
     );
     assert!(
-        src.contains(
+        prefill.contains(
             "// This IS the prefill sub-chunk caller.
-                    true,"
+                        true,"
         ),
         "the prefill sub-chunk must pass is_prefill = true"
+    );
+    // 2026-10-14: The third caller, `METRALE_GLM_PREFILL_PIECE_ROWS`'s one-piece call.
+    assert!(
+        include_str!("../../glm5next_layer/steps/forward_pieces.rs").contains(
+            "// 2026-10-14: A one-piece call IS a prefill sub-chunk (`is_prefill`).
+                    true,"
+        ),
+        "a prefill piece must pass is_prefill = true"
     );
     assert!(
         src.contains("// A speculative verify, NOT a prefill sub-chunk"),
@@ -367,7 +412,8 @@ fn forward_k_has_two_callers_and_the_verify_one_is_not_prefill() {
 /// token across a slice boundary differed, by up to 2 BF16 ulp.
 #[test]
 fn expand_selection_clamps_select_k_to_the_row() {
-    let src = include_str!("../../../../../kernels/gb10/common/dsa_indexer.cu");
+    // 2026-10-09: The body moved to dsa_indexer_body.cuh, which both entries use.
+    let src = include_str!("../../../../../kernels/gb10/common/dsa_indexer_body.cuh");
     assert!(
         src.contains("const unsigned int row_pools = (unsigned int)(q_pos[r] + 1) / KP;"),
         "the row's own pool count must come from its own q_pos"

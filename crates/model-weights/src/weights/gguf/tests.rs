@@ -41,7 +41,10 @@ fn build_single_f32_gguf(name: &str, vals: &[f32]) -> Vec<u8> {
 #[test]
 fn loads_single_tensor_cpu_fallback() {
     // Mock cannot execute kernels, so force the CPU reference dequant path.
-    unsafe { std::env::set_var("METRALE_GGUF_FORCE_CPU", "1") };
+    let settings = WeightsSettings {
+        gguf_force_cpu: true,
+        ..WeightsSettings::declared().expect("declared weights settings")
+    };
 
     let vals = [1.0f32, -2.0, 3.5, 0.0, 7.0, -0.25];
     let bytes = build_single_f32_gguf("token_embd.weight", &vals);
@@ -51,7 +54,7 @@ fn loads_single_tensor_cpu_fallback() {
     std::fs::write(dir.join("model.gguf"), &bytes).unwrap();
 
     let gpu = MockGpuBackend::new();
-    let store = GgufLoader::new()
+    let store = GgufLoader::with_settings(0, 1, 0, settings)
         .load(&dir, &gpu, 1024 * 1024)
         .expect("GGUF load");
 
@@ -70,7 +73,6 @@ fn loads_single_tensor_cpu_fallback() {
     assert_eq!(got, vals.to_vec());
 
     std::fs::remove_dir_all(&dir).ok();
-    unsafe { std::env::remove_var("METRALE_GGUF_FORCE_CPU") };
 }
 
 #[test]

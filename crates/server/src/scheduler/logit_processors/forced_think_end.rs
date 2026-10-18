@@ -17,6 +17,11 @@
 //! set but the injection does not happen, `seq.sentence_defer_count` is
 //! incremented, which bounds the deferral at `MAX_SENTENCE_DEFER_TOKENS` steps.
 //!
+//! 2026-10-14: When the model's `thinking_steering` is off, the only thing
+//! that arms `force_end_thinking` is a client thinking budget, and the close
+//! is injected on the next step with no deferral, as vLLM's thinking-budget
+//! processor does.
+//!
 //! Owner: scheduler.
 //! Invariants: none beyond the types.
 
@@ -50,7 +55,8 @@ impl LogitsProcessor for ForcedThinkEndInjector {
         let defer_hard_override = match a.thinking_budget {
             Some(b) => a.thinking_tokens >= b.saturating_mul(THINK_DEFER_BUDGET_FACTOR),
             None => a.thinking_tokens >= THINK_DEFER_ABS_CEILING,
-        } || a.sentence_defer_count >= MAX_SENTENCE_DEFER_TOKENS;
+        } || a.sentence_defer_count >= MAX_SENTENCE_DEFER_TOKENS
+            || !ctx.watchdog.thinking_steering;
         if a.inside_thinking
             && should_inject_think_end(
                 a.force_end_thinking,

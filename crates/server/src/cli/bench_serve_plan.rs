@@ -94,6 +94,7 @@ impl ServePlan {
             &self.serve_env,
             &serve_env::process_levers(),
         )
+        .map_err(anyhow::Error::from)
     }
 }
 

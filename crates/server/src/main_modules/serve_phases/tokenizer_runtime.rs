@@ -40,6 +40,8 @@ pub(crate) fn resolve_tokenizer_runtime(
     // 2026-09-26: The checkpoint directory; the grammar mask-cache snapshot
     // is kept under it unless `METRALE_GRAMMAR_CACHE_DIR` is set.
     model_dir: &std::path::Path,
+    // 2026-10-17: The load's settings; the grammar engine's switches come from them.
+    settings: &metrale_settings::InferenceServerSettings,
 ) -> TokenizerRuntime {
     use crate::{grammar, reasoning_parser};
 
@@ -249,8 +251,13 @@ pub(crate) fn resolve_tokenizer_runtime(
     let grammar_engine = {
         let stop_ids: Vec<i32> = eos_tokens.iter().map(|&id| id as i32).collect();
         let model_vocab_size = Some(config.vocab_size);
-        match grammar::GrammarEngine::from_tokenizer(tokenizer.inner(), model_vocab_size, &stop_ids)
-        {
+        let levers = grammar::GrammarLevers::from_settings(settings);
+        match grammar::GrammarEngine::from_tokenizer(
+            tokenizer.inner(),
+            model_vocab_size,
+            &stop_ids,
+            levers,
+        ) {
             Ok(mut engine) => {
                 tracing::info!(
                     "Grammar engine initialized (vocab_size={}, vocab_type=auto-detected from tokenizer)",
@@ -272,6 +279,12 @@ pub(crate) fn resolve_tokenizer_runtime(
         limits: crate::scheduler::limits::SchedLimits {
             im_start_hard_stop: im_start_id,
             tool_response_hard_stop: tool_response_id,
+            // 2026-10-09: The opener closes thinking only under a format that says so.
+            thinking_closed_by: tool_call_start_token.filter(|_| {
+                reasoning_parser_box
+                    .as_ref()
+                    .is_some_and(|p| p.tool_call_closes_reasoning())
+            }),
             max_seq_len: 0,
         },
         vocab_masks,

@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "dev-x"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+cudarc = { path = "../../ext/cudarc" }
+hstd = { path = "../hstd" }
+
+[package.metadata.metrale]
+role = "device"

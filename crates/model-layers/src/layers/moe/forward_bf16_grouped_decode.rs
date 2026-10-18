@@ -212,12 +212,14 @@ impl MoeLayer {
         }
     }
 
-    /// 2026-10-02: [`Self::any_grouped_decode_ok`]'s arena terms.
+    /// 2026-10-02: [`Self::any_grouped_decode_ok`]'s arena terms. 2026-10-17: `fp8_tc` is
+    /// `MoeLevers::fp8_tc`.
     pub fn any_grouped_decode_arena_ok(
         &self,
         m: usize,
         cfg: &metrale_config::ModelConfig,
         b: &metrale_gpu_runtime::buffers::BufferArena,
+        fp8_tc: bool,
     ) -> bool {
         if self.nvfp4_grouped.declared_experts {
             // 2026-10-02: The NVFP4 grouped decode's arena needs are the FP8 grouped decode's.
@@ -233,7 +235,7 @@ impl MoeLayer {
                     b,
                 )
         } else if self.fp8_gate_weight_ptrs.is_some() {
-            self.fp8_grouped_decode_arena_ok(m, cfg, b)
+            self.fp8_grouped_decode_arena_ok(m, cfg, b, fp8_tc)
         } else {
             self.bf16_grouped_decode_arena_ok(m, cfg, b)
         }

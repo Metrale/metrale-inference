@@ -89,6 +89,7 @@ async fn run_two_turns(first: &str, first_reason: &str) -> (Transcript, Vec<Stri
         ArtifactStore::with_root(&sandbox),
         events,
         Arc::new(AtomicBool::new(false)),
+        crate::levers::tests::unset(),
     );
     let mut config = super::tests::cfg(sandbox);
     config.max_turns = 2;

@@ -1,11 +1,17 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 [package]
-name = "metrale-server"
+name = "met"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Metrale Engine: pure Rust LLM inference server (HTTP API, scheduler, TUI, CLI)."
+
+# 2026-10-17: the package is published as `met` (crates.io); the library keeps its
+# `metrale_server` name so every `use metrale_server::` path is unchanged.
+[lib]
+name = "metrale_server"
+path = "src/lib.rs"
 
 [features]
 default = ["cuda", "nccl"]
@@ -19,74 +25,98 @@ gpu-examples = []
 otlp = ["metrale-telemetry/otlp"]
 # 2026-09-26: NVTX ranges around serve lanes at --telemetry kernel.
 nvtx = ["metrale-telemetry/nvtx"]
+# 2026-10-17: The `benchmark` subcommand, the TUI Benchmarks tab, `doctor` and the
+# scheduler-equivalence serve host: everything that pulls the benchmark harness
+# (metrale-bench, and through it ring, metrale-governance and latticedb-core) into the
+# binary. Off by default (PCND): a serving binary carries no harness. A build without it
+# still parses `met benchmark` and `met doctor` and refuses them with a message naming
+# this feature (cli/no_bench.rs). Every gate, certify and release build passes
+# `--features bench`.
+bench = ["dep:metrale-bench"]
 
 [dependencies]
-metrale-bench = { path = "../bench" }
-metrale-cache = { path = "../cache", default-features = false }
-metrale-comm = { path = "../comm", default-features = false }
-metrale-config = { path = "../config", default-features = false }
-metrale-circuit = { path = "../circuit" }
+metrale-bench = { workspace = true, optional = true }
+metrale-cache = { workspace = true }
+metrale-comm = { workspace = true }
+metrale-config = { workspace = true }
+metrale-circuit = { workspace = true }
 # 2026-09-30: `met circuit plan --hardware` resolves a class's kernel sources with the layout the
 # kernels build compiles (metrale_closure::layout); it was a dev-dependency only before.
-metrale-closure = { path = "../closure", default-features = false }
-metrale-core = { path = "../core", default-features = false }
-metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false }
-metrale-grammar = { path = "../grammar" }
-metrale-kernels = { path = "../kernels" }
-metrale-model-arch = { path = "../model-arch", default-features = false }
-metrale-kernel-tree = { path = "../kernel-tree" }
-metrale-model-engine = { path = "../model-engine", default-features = false }
-metrale-model-layers = { path = "../model-layers", default-features = false }
-metrale-model-weights = { path = "../model-weights", default-features = false }
-metrale-sampling = { path = "../sampling", default-features = false }
-metrale-speculative = { path = "../speculative" }
-metrale-scheduler = { path = "../scheduler" }
-metrale-storage = { path = "../storage", default-features = false }
-metrale-telemetry = { path = "../telemetry" }
-anyhow = { workspace = true }
-axum = { version = "0.8", features = ["json"] }
-base64 = "0.23"
-clap = { version = "4", features = ["derive"] }
-crossterm = "0.28"
-futures = "0.3"
-http-body = "1"
-hyper = { version = "1", features = ["server", "http1", "http2", "client"] }
-hyper-util = { version = "0.1", features = ["server-auto", "client-legacy", "http1", "tokio"] }
-lazy_static = "1"
-libc = "0.2"
+metrale-closure = { workspace = true }
+metrale-core = { workspace = true }
+metrale-gpu-runtime = { workspace = true }
+metrale-grammar = { workspace = true }
+# 2026-10-17: The host probes the serve path shares with the harness: `/hardware`, the artifact
+# home, the TUI chat's error-body reader and this process's `/serve-config` identity.
+metrale-host-probe = { workspace = true }
+metrale-kernels = { workspace = true }
+metrale-model-arch = { workspace = true }
+metrale-kernel-tree = { workspace = true }
+# 2026-10-17: Its `links` metadata (`DEP_METRALE_KERNEL_TREE_ROOT`) locates kernels/ for build.rs.
+metrale-kernel-root = { workspace = true }
+metrale-model-engine = { workspace = true }
+metrale-model-layers = { workspace = true }
+metrale-model-weights = { workspace = true }
+metrale-io-host-std = { workspace = true }
+metrale-sampling = { workspace = true }
+metrale-settings = { workspace = true }
+metrale-speculative = { workspace = true }
+metrale-scheduler = { workspace = true }
+# 2026-10-17: The serve identity, lease and `/forward` `/memory` wire shapes (pure), shared with
+# the harness so the server publishes what the bench checks (SSOT).
+metrale-serve-identity = { workspace = true }
+metrale-storage = { workspace = true }
+metrale-telemetry = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
+axum = { workspace = true, features = ["form", "http1", "json", "matched-path", "original-uri", "query", "tokio", "tower-log", "tracing"] }
+base64 = { workspace = true, features = ["std", "simd-unsafe"] }
+clap = { workspace = true, features = ["std", "color", "help", "usage", "error-context", "suggestions", "derive"] }
+crossterm = { workspace = true, features = ["bracketed-paste", "windows", "events"] }
+futures = { workspace = true, features = ["std", "async-await", "executor"] }
+http-body = { workspace = true }
+hyper = { workspace = true, features = ["server", "http1", "http2", "client"] }
+hyper-util = { workspace = true, features = ["server-auto", "client-legacy", "http1", "tokio"] }
+lazy_static = { workspace = true }
+libc = { workspace = true, features = ["std"] }
 # 2026-10-03: SO_RCVBUF on the serve listener (main_modules/listener_rcvbuf.rs).
-socket2 = "0.6"
-# 2026-09-30: Exactly 2.21.0. 2.22 changed how `none` and booleans render through `|string`
-# (to `None`/`True`/`False`), which changes the tool-call argument text inside the prompt the
-# model reads; `tokenizer::tests::qwen_dense_parity` pins today's rendering and fails on 2.24.
-# Raising it is a prompt-content change that needs its own certification, not a version bump
-# (Dependabot ignores it in .github/dependabot.yml).
-minijinja = { version = "=2.21.0", features = ["builtins", "adjacent_loop_items", "json", "loop_controls", "preserve_order"] }
+socket2 = { workspace = true }
+minijinja = { workspace = true, features = ["builtins", "debug", "deserialization", "macros", "multi_template", "adjacent_loop_items", "std_collections", "serde", "json", "loop_controls", "preserve_order"] }
 parking_lot = { workspace = true }
-prometheus = { version = "0.14", default-features = false }
-ratatui = "0.29"
-rayon = "1.12"
-serde = { workspace = true }
-serde_json = { workspace = true }
-thiserror = { workspace = true }
-tokenizers = { version = "0.23", default-features = false, features = ["onig"] }
-tokio = { version = "1", features = ["full", "parking_lot"] }
-tokio-stream = "0.1"
-toml = "1.1"
-tower = { version = "0.5", features = ["util"] }
-tower-http = { version = "0.7", features = ["catch-panic", "cors"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-tui-textarea = "0.7"
-unicode-width = "0.2"
-ureq = { version = "3", features = ["json"] }
+prometheus = { workspace = true }
+ratatui = { workspace = true, features = ["crossterm", "underline-color"] }
+rayon = { workspace = true }
+serde = { workspace = true, features = ["std", "derive"] }
+# `preserve_order`: keep JSON object keys in insertion/declaration order
+# (IndexMap, not BTreeMap). Required so `serde_json::to_value(ToolDefinition)`
+# and the nested `parameters` JSON-schema Value match transformers'
+# `tojson` (= `json.dumps(sort_keys=False)`) key order in the `<tools>`
+# prompt block. See crates/server/src/tokenizer/jinja_helpers.rs.
+serde_json = { workspace = true, features = ["std", "preserve_order"] }
+thiserror = { workspace = true, features = ["std"] }
+tokenizers = { workspace = true, features = ["onig"] }
+tokio = { workspace = true, features = ["full", "parking_lot"] }
+tokio-stream = { workspace = true, features = ["time"] }
+toml = { workspace = true, features = ["std", "serde", "parse", "display"] }
+tower = { workspace = true, features = ["util"] }
+tower-http = { workspace = true, features = ["catch-panic", "cors"] }
+tracing = { workspace = true, features = ["std", "attributes"] }
+tracing-subscriber = { workspace = true, features = ["smallvec", "fmt", "ansi", "tracing-log", "std", "env-filter"] }
+tui-textarea = { workspace = true, features = ["crossterm"] }
+unicode-width = { workspace = true, features = ["cjk"] }
+ureq = { workspace = true, features = ["rustls", "gzip", "json"] }
 
 [dev-dependencies]
-tempfile = "3"
+metrale-io-host-mem = { workspace = true }
+tempfile = { workspace = true, features = ["getrandom"] }
 
 [[bin]]
 name = "met"
 path = "src/main.rs"
+
+# 2026-10-17: Attests gate-record closures through metrale-bench.
+[[test]]
+name = "closure_attestation"
+required-features = ["bench"]
 
 [[example]]
 name = "k3_tokenizer_check"
@@ -94,3 +124,6 @@ required-features = ["gpu-examples"]
 
 [lints]
 workspace = true
+
+[package.metadata.metrale]
+role = "bin"

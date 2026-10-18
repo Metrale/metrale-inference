@@ -167,3 +167,33 @@ plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], 
 [instance.policy]
 opt_in_levers = []
 settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "nvfp4", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive" }
+
+# 2026-10-08: nvidia/GLM-5.3-Flash-NVFP4 (`glm5_next`), the GLM campaign's model, built by the
+# `new-model` method. The recipe id is the planned one: no recipe serves this checkpoint yet, and
+# the circuit is not an executor target (`golden = false`: FUSIONS.toml covers the GLM kernels'
+# single-sequence decode only; `met circuit venn` reads it).
+# - Shape: config.json `text_config` (verified 2026-10-08): `layer_types` (G = linear_attention,
+#   the KDA layers; S = deepseek_sparse_attention, the DSA layers 3, 7, ..., 43),
+#   `first_k_dense_replace`, `hc_mult`, the `linear_*` KDA dims, the MLA ranks and head widths,
+#   the `index_*` indexer dims, the MoE dims, `num_nextn_predict_layers` (kernels/circuits/
+#   glm5_next.config.toml maps each).
+# - kv_cache_dtype: fp8, as the checkpoint declares (`kv_cache_scheme`, static, no scale
+#   tensors); the engine's latent cache is FP8 at scale 1.0. lm_head_dtype: bf16, declared.
+# - ssm_h_dtype: f32, the only KDA state the engine runs (glm5next_layer/steps.rs refuses f16).
+# - row_tiers: by_rows, the default for a checkpoint that is not an FP8 MoE (ml/row_tiers.rs:64-78).
+#   The other settings are the flag defaults cited for the entries above; the GLM layer code
+#   reads none of them.
+[[instance]]
+recipe = "glm-5.3/glm-5.3-flash-nvfp4"
+checkpoint = "nvidia/GLM-5.3-Flash-NVFP4"
+arch = "glm5_next"
+precision = "glm-5.3-flash-nvfp4"
+target = "gb10/glm-5.3-flash/nvfp4"
+golden = false
+layer_kinds = "GGGS GGGS GGGS GGGS GGGS GGGS GGGS GGGS GGGS GGGS GGGS G"
+dims = { hidden = 4096, vocab = 154880, inter = 12288, first_dense = 3, hc = 4, lin_k_heads = 64, lin_k_dim = 128, lin_v_heads = 64, lin_v_dim = 128, conv_kernel = 4, q_heads = 64, q_lora = 1536, kv_lora = 512, mla_qk = 256, mla_v = 256, index_heads = 32, index_head_dim = 128, index_kpool = 4, index_topk = 2048, experts = 288, top_k = 8, moe_inter = 2048, shared_inter = 2048, mtp = 1 }
+plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], verify = [2, 3, 4, 8], draft = [1] }
+
+[instance.policy]
+opt_in_levers = []
+settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive" }

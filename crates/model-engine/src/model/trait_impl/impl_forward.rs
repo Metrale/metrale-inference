@@ -154,9 +154,14 @@ impl ModelForward for TransformerModel {
         self.prefill_batch_chunk_dispatch(streams, stream, row_base)
     }
 
+    /// 2026-10-14: On the stream the prefill forward wrote the state on (`forward_stream`): a
+    /// multi-rank world's forward runs on the default stream whatever stream the scheduler
+    /// passes, and a clamp on the scheduler's prefill stream was ordered neither after the
+    /// chunk's state writes nor before the next chunk's reads. A single-rank serve keeps the
+    /// caller's stream.
     fn normalize_ssm_states(&self, seq: &SequenceState, stream: u64) -> Result<()> {
         self.gdn_carry_flush_pending()?;
-        self.normalize_ssm_states_dispatch(seq, stream)
+        self.normalize_ssm_states_dispatch(seq, self.forward_stream(stream))
     }
 
     fn hc_mult(&self) -> usize {

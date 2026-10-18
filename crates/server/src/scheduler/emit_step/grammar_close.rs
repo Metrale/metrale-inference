@@ -109,7 +109,8 @@ pub fn compile_grammar_state(
             // the request's background prewarm finishes. `None` when
             // persistence is off.
             let on_warm = engine.mask_snapshot_hook();
-            match GrammarState::new_with_hook(&grammar, vocab_size, on_warm) {
+            let overlap = engine.levers().async_prewarm;
+            match GrammarState::new_with_hook(&grammar, vocab_size, overlap, on_warm) {
                 Ok(state) => {
                     tracing::info!("Grammar constrained decoding active: {label}");
                     // 2026-09-25: `accept_token` exempts these stop/EOS

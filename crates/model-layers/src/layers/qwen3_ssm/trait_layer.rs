@@ -84,6 +84,7 @@ impl TransformerLayer for Qwen3SsmLayer {
         residual: DevicePtr,
         n_seqs: usize,
         ks: &[usize],
+        _seq_lens: &[usize],
         states: &'a mut [&'b mut (dyn LayerState + 'static)],
         _kv_cache: &mut PagedKvCache,
         wy_tables: DevicePtr,

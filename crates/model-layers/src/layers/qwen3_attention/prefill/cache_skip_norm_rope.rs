@@ -121,7 +121,12 @@ impl Qwen3AttentionLayer {
                     stream,
                 )?;
             } else if !self.attn.q_norm.weight.is_null() {
-                if self.rms_norm_w_warp_row_k.0 != 0 && ops::rms_norm_short_row_eligible(nq * n, hd)
+                if self.rms_norm_w_warp_row_k.0 != 0
+                    && ops::rms_norm_short_row_eligible(
+                        ctx.levers.ops.rms_norm_warp_row,
+                        nq * n,
+                        hd,
+                    )
                 {
                     ops::rms_norm_warp_row(
                         ctx.gpu,
@@ -162,7 +167,9 @@ impl Qwen3AttentionLayer {
                 stream,
             )?;
         } else if !self.attn.k_norm.weight.is_null() {
-            if self.rms_norm_w_warp_row_k.0 != 0 && ops::rms_norm_short_row_eligible(nkv * n, hd) {
+            if self.rms_norm_w_warp_row_k.0 != 0
+                && ops::rms_norm_short_row_eligible(ctx.levers.ops.rms_norm_warp_row, nkv * n, hd)
+            {
                 ops::rms_norm_warp_row(
                     ctx.gpu,
                     self.rms_norm_w_warp_row_k,
@@ -196,7 +203,7 @@ impl Qwen3AttentionLayer {
         if num_tokens > 0 {
             let kv_dim_e = (nkv * hd) as usize;
             super::super::op_dump::dump_bf16(
-                ctx.gpu,
+                ctx,
                 k_contiguous,
                 (num_tokens - 1) * kv_dim_e * bf16,
                 kv_dim_e,
@@ -329,7 +336,7 @@ impl Qwen3AttentionLayer {
             let kv_dim_e = (nkv * hd) as usize;
             let q_dim_e = (nq * hd) as usize;
             super::super::op_dump::dump_bf16(
-                ctx.gpu,
+                ctx,
                 k_contiguous,
                 (num_tokens - 1) * kv_dim_e * bf16,
                 kv_dim_e,
@@ -338,7 +345,7 @@ impl Qwen3AttentionLayer {
                 stream,
             )?;
             super::super::op_dump::dump_bf16(
-                ctx.gpu,
+                ctx,
                 q_contiguous,
                 (num_tokens - 1) * q_dim_e * bf16,
                 q_dim_e,

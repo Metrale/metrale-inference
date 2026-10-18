@@ -48,3 +48,23 @@ extern "C" __global__ void __launch_bounds__(TR_THREADS) w4a16_tc_rows_64(
 ) {
     tr_block<Nvfp4G16, 8, 1, true>(A, {packed, scale, s2}, C, M, N, K, lda, ldc, blockIdx.x);
 }
+
+// 2026-10-11: 1..=8 rows on narrow blocks, for the batch-invariant tier's one-row decode: one or
+// two warps (16 or 32 columns) per block instead of four, so a 2816-column projection spreads
+// over 176 or 88 blocks instead of 44. Every row's bytes equal the entries above (tc_rows.cuh:
+// NW changes no output's MMA sequence). Grid ceil(N / (16 NW)), block 32 NW.
+extern "C" __global__ void __launch_bounds__(32) w4a16_tc_rows_8_w1(
+    const __nv_bfloat16* __restrict__ A, const unsigned char* __restrict__ packed,
+    const unsigned char* __restrict__ scale, float s2, __nv_bfloat16* __restrict__ C,
+    unsigned int M, unsigned int N, unsigned int K, unsigned int lda, unsigned int ldc
+) {
+    tr_block<Nvfp4G16, 1, 2, true, 1>(A, {packed, scale, s2}, C, M, N, K, lda, ldc, blockIdx.x);
+}
+
+extern "C" __global__ void __launch_bounds__(64) w4a16_tc_rows_8_w2(
+    const __nv_bfloat16* __restrict__ A, const unsigned char* __restrict__ packed,
+    const unsigned char* __restrict__ scale, float s2, __nv_bfloat16* __restrict__ C,
+    unsigned int M, unsigned int N, unsigned int K, unsigned int lda, unsigned int ldc
+) {
+    tr_block<Nvfp4G16, 1, 2, true, 2>(A, {packed, scale, s2}, C, M, N, K, lda, ldc, blockIdx.x);
+}

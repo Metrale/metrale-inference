@@ -35,6 +35,9 @@ mod hint_injector;
 mod identity;
 mod ids;
 mod ir;
+#[cfg(test)]
+mod lever_equivalence;
+mod lever_value;
 mod llmlingua;
 mod lookback_lens;
 mod loop_detector;
@@ -94,6 +97,11 @@ async fn serve_main() -> Result<()> {
         std::env::vars_os().map(|(name, _)| name.to_string_lossy().into_owned()),
     )?;
 
+    // 2026-10-17: A build without the `bench` feature refuses `benchmark` and `doctor` here,
+    // with a message naming the feature, before anything is installed.
+    #[cfg(not(feature = "bench"))]
+    cli::no_bench::refuse_if_bench_only(&cli.command);
+
     // 2026-09-26: Prints the serve-option manifest as JSON and returns before
     // any subscriber, TUI or GPU exists; a dashboard would garble that output.
     if matches!(cli.command, Command::DumpServeOptions) {
@@ -108,11 +116,14 @@ async fn serve_main() -> Result<()> {
     // 2026-09-26: Fetches the recipe index and prints two lines; no
     // subscriber, TUI or GPU.
     if matches!(cli.command, Command::SyncRecipes) {
-        return cli::sync_recipes::run();
+        return cli::sync_recipes::run(&metrale_host_probe::levers::BenchLevers::resolve(
+            &metrale_io_host_std::ProcessEnv,
+        )?);
     }
 
     // 2026-09-26: `doctor` prints its findings and exits with status 1 when it
     // found a problem; no subscriber, TUI or GPU.
+    #[cfg(feature = "bench")]
     if matches!(cli.command, Command::Doctor) {
         let code = cli::doctor::dispatch()?;
         std::process::exit(code);
@@ -124,10 +135,31 @@ async fn serve_main() -> Result<()> {
         return cli::circuit::dispatch(args);
     }
 
+    // 2026-10-17: A serve's levers resolve here, once, before the dashboard decision reads
+    // them: the serve settings, the harness group and the harness projection `serve` hands to
+    // the dashboard and the auto-swap catalogue. A malformed lever stops the boot before any
+    // subscriber or dashboard exists.
+    let serve_levers = match &cli.command {
+        Command::Serve(args) => {
+            let env = metrale_io_host_std::ProcessEnv;
+            let settings = main_modules::serve_settings::resolve(&env, args)?;
+            let harness = metrale_host_probe::levers::resolve_harness(&env)?;
+            let bench =
+                metrale_host_probe::levers::BenchLevers::from_settings(&settings, &harness, &env)?;
+            Some((settings, harness, std::sync::Arc::new(bench)))
+        }
+        _ => None,
+    };
     let no_tui = match &cli.command {
         // 2026-09-26: `--check-kernels` prints a report and one JSON line on
         // stdout and exits, so it runs without a dashboard.
-        Command::Serve(args) => args.no_tui || args.rank > 0 || args.check_kernels,
+        Command::Serve(args) => {
+            serve_levers
+                .as_ref()
+                .is_some_and(|(s, _, _)| s.server.no_tui)
+                || args.rank > 0
+                || args.check_kernels
+        }
         // 2026-09-26: Benchmarks always log in plain mode.
         Command::Benchmark(_) => true,
         Command::DumpServeOptions
@@ -138,10 +170,14 @@ async fn serve_main() -> Result<()> {
 
     // 2026-09-26: `benchmark certify --json` writes JSON lines on stdout, so
     // the log moves to stderr for that command only.
+    #[cfg(feature = "bench")]
     let logs_to_stderr = matches!(
         &cli.command,
         Command::Benchmark(b) if b.json_stdout()
     );
+    // 2026-10-17: Without `bench` the only JSON-stdout command was refused above.
+    #[cfg(not(feature = "bench"))]
+    let logs_to_stderr = false;
     let tui_channels = if tui::plain_mode(no_tui) {
         let fmt = tracing_subscriber::fmt().with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
@@ -154,7 +190,10 @@ async fn serve_main() -> Result<()> {
         None
     } else {
         let (progress_tx, progress_rx) = std::sync::mpsc::channel();
-        tui::init::install_tty_subscriber(progress_tx);
+        let Some((_, harness, _)) = &serve_levers else {
+            unreachable!("only a serve runs the dashboard")
+        };
+        tui::init::install_tty_subscriber(progress_tx, harness.tui_log_file.as_deref());
         Some(progress_rx)
     };
 
@@ -172,14 +211,23 @@ async fn serve_main() -> Result<()> {
         | Command::Circuit(_) => {
             unreachable!("handled before initialisation")
         }
+        #[cfg(feature = "bench")]
         Command::Benchmark(args) => {
             // 2026-09-26: Benchmarks load no model and do not use the startup
             // escape.
             drop(shutdown_rx);
-            cli::bench_run::dispatch(args).await
+            let levers =
+                metrale_host_probe::levers::BenchLevers::resolve(&metrale_io_host_std::ProcessEnv)?;
+            cli::bench_run::dispatch(args, std::sync::Arc::new(levers)).await
         }
+        // 2026-10-17: Refused before initialisation (`cli::no_bench`).
+        #[cfg(not(feature = "bench"))]
+        Command::Benchmark(_) => unreachable!("refused before initialisation"),
         Command::Serve(args) => {
-            let serving = serve(args, tui_channels);
+            let Some((settings, _, bench_levers)) = serve_levers else {
+                unreachable!("resolved above for every serve")
+            };
+            let serving = serve(args, settings, tui_channels, bench_levers);
             tokio::pin!(serving);
             // 2026-09-26: Only a send means shutdown. The sender stays parked in
             // `tui::shutdown` for the life of the process, and a closed channel

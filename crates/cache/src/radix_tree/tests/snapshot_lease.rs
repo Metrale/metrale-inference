@@ -6,7 +6,7 @@
 //! Invariants: none beyond the types.
 
 use super::super::*;
-use super::{entry, index, tail_entry};
+use super::{declared_tuning, entry, index, tail_entry};
 
 #[test]
 fn tail_lease_protects_live_session_is_tail() {
@@ -69,7 +69,7 @@ fn single_leased_entry_still_evictable() {
     assert_eq!(idx.entries[v].snapshot_id, 5);
 }
 
-/// 2026-09-25: The lease lapses after `tail_lease_ttl()` evictions with no
+/// 2026-09-25: The lease lapses after `tuning.tail_lease_ttl` evictions with no
 /// lookup from the live session; its tail is then an ordinary candidate.
 #[test]
 fn lease_expires_without_live_lookups() {
@@ -79,7 +79,7 @@ fn lease_expires_without_live_lookups() {
     assert_eq!(idx.evict_lru(), Some(7), "leased tail survives while fresh");
     idx.entries.push(entry(8, 2, 4000, 101));
     // 2026-09-25: Expire the lease; session 1 is now the stalest session.
-    idx.evictions_since_lookup = super::tail_lease_ttl();
+    idx.evictions_since_lookup = idx.tuning.tail_lease_ttl;
     assert_eq!(
         idx.evict_lru(),
         Some(9),
@@ -92,7 +92,7 @@ fn lease_expires_without_live_lookups() {
 /// session gate and the lease.
 #[test]
 fn insert_overwrite_clears_is_tail() {
-    let mut idx = SsmSnapshotIndex::new();
+    let mut idx = SsmSnapshotIndex::new(declared_tuning());
     let displaced = idx.insert_tail(0xAB, 1, 7, 500);
     assert!(displaced.is_empty());
     assert!(idx.entries[0].is_tail);
@@ -106,7 +106,7 @@ fn insert_overwrite_clears_is_tail() {
 
 #[test]
 fn lookup_tiered_tail_session_gate() {
-    let mut idx = SsmSnapshotIndex::new();
+    let mut idx = SsmSnapshotIndex::new(declared_tuning());
     let toks: Vec<u32> = (0..64).collect();
     let ph = super::hash_token_prefix(&toks, 64, 0);
     idx.insert_tail(ph, 4, 7, 64);
@@ -165,7 +165,7 @@ fn sibling_leased_with_live_session() {
 
 #[test]
 fn new_tail_sweeps_old_tail_and_sibling() {
-    let mut idx = SsmSnapshotIndex::new();
+    let mut idx = SsmSnapshotIndex::new(declared_tuning());
     idx.insert_tail(0xA1, 1, 7, 500);
     idx.insert_tail_sibling(0xA2, 2, 7, 484);
     let displaced = idx.insert_tail(0xB1, 3, 7, 1000);
@@ -180,7 +180,7 @@ fn new_tail_sweeps_old_tail_and_sibling() {
 /// in force, since with the lease off any pool yields a victim.
 #[test]
 fn all_leased_pool_still_evicts() {
-    let mut idx = SsmSnapshotIndex::new();
+    let mut idx = SsmSnapshotIndex::new(declared_tuning());
     idx.insert_tail(0xA1, 1, 7, 500);
     idx.insert_tail_sibling(0xA2, 2, 7, 484);
     // 2026-09-25: `matched_tokens = 0` matches no entry but latches session 7.
@@ -209,7 +209,7 @@ fn all_leased_pool_still_evicts() {
 /// match it (`session_gate_blocks` gates only `is_tail`).
 #[test]
 fn sibling_not_session_gated_in_lookup() {
-    let mut idx = SsmSnapshotIndex::new();
+    let mut idx = SsmSnapshotIndex::new(declared_tuning());
     let toks: Vec<u32> = (0..64).collect();
     let ph = super::hash_token_prefix(&toks, 64, 0);
     idx.insert_tail_sibling(ph, 4, 7, 64);
@@ -226,7 +226,7 @@ fn sibling_not_session_gated_in_lookup() {
 
 #[test]
 fn insert_overwrite_clears_sibling() {
-    let mut idx = SsmSnapshotIndex::new();
+    let mut idx = SsmSnapshotIndex::new(declared_tuning());
     idx.insert_tail_sibling(0xC1, 1, 7, 500);
     assert!(idx.entries[0].is_tail_sibling);
     idx.insert(0xC1, 2, 8, 500);

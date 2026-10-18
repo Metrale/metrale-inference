@@ -99,7 +99,7 @@ source = "kernels/gb10/common/attn_prefill_v47.cu:3"
 
 [[t]]
 match = "kernels/gb10/common/bf16_add.cu"
-text = "Scalar BF16 loads and one element per thread (no 32-bit packing as in the norm kernels); the add rounds once via __hadd. Used by the 2-rank all-reduce and the GLM-5-Next MTP residual add."
+text = "Scalar BF16 loads and one element per thread (no 32-bit packing as in the norm kernels); the add rounds once via __hadd. Used by the 2-rank all-reduce and the GLM-5-Next MTP residual add. bf16_add_rank_sum (world >= 3 one-shot all-reduce) sums all ranks in rank order in FP32, rounded once: same bytes on every rank."
 prs = []
 source = "kernels/gb10/common/bf16_add.cu:3"
 
@@ -311,7 +311,7 @@ source = "kernels/gb10/common/dflash2.cu:68"
 match = "kernels/gb10/common/dsa_indexer.cu"
 text = "Replay-safe geometry: under CUDA-graph capture the selector kernels read S, pool counts, select_k and the top-k tile from a device geom vector, and the grid is fixed at the context ceiling with blocks past the live pool count returning at once (idle blocks traded for graph replay)."
 prs = []
-source = "kernels/gb10/common/dsa_indexer.cu:53"
+source = "kernels/gb10/common/dsa_indexer.cu:57"
 
 [[t]]
 match = "kernels/gb10/common/dsa_indexer.cu::dsa_expand_selection"
@@ -323,7 +323,7 @@ source = "kernels/gb10/common/dsa_indexer.cu:413"
 match = "kernels/gb10/common/dsa_indexer.cu::dsa_kpool_compress"
 text = "Pool size KP must be <= 8 (per-channel lg[8] slot array); config validation refuses a larger index_kpool. A trailing partial pool is never valid."
 prs = []
-source = "kernels/gb10/common/dsa_indexer.cu:44"
+source = "kernels/gb10/common/dsa_indexer.cu:51"
 
 [[t]]
 match = "kernels/gb10/common/dsa_indexer.cu::dsa_mla_masked_attn"
@@ -335,7 +335,7 @@ source = "kernels/gb10/common/dsa_indexer.cu:509"
 match = "kernels/gb10/common/dsa_indexer.cu::dsa_topk_pools"
 text = "Tiled bitonic select with a running best list in 16 * NP2 bytes of shared memory whatever the context (NP2 <= 2048 fits 49,152 B); the score-desc / index-asc total order makes the result independent of tiling. select_k must be <= NP2."
 prs = []
-source = "kernels/gb10/common/dsa_indexer.cu:267; kernels/b300/common/dsa_indexer.cu:248"
+source = "kernels/gb10/common/dsa_indexer.cu:267; kernels/b300/common/dsa_indexer.cu:270"
 
 [[t]]
 match = "kernels/gb10/common/e2m1_branchless.cu"
@@ -1367,19 +1367,19 @@ source = "kernels/gb10/common/nllb_encoder.cu:512"
 match = "kernels/gb10/common/paged_decode_attn.cu"
 text = "One 8-warp CTA per (q_head, seq): each CTA of a GQA group re-reads its KV head's whole K and V. Positions go BC = 4 at a time inside a physical block and the block tail singly. The split-K pair takes no sliding window; blockDim 256 and head_dim == HDIM are assumed, never checked."
 prs = []
-source = "kernels/gb10/common/paged_decode_attn.cu:7; crates/kernels/src/attn_splitk.rs:188"
+source = "kernels/gb10/common/paged_decode_attn.cu:7; crates/target-defaults/src/attn_splitk.rs:188"
 
 [[t]]
 match = "kernels/gb10/common/paged_decode_attn.cu::paged_decode_attn_splitk"
 text = "The online-softmax split merge is not associative, so the split count must not follow the co-batched sequence count; under auto/pinned it depends only on (sm_count, num_q_heads). Outputs are not bit-identical across split counts. Head dims other than 256 get one split except under legacy."
 prs = []
-source = "crates/kernels/src/attn_splitk.rs:7; crates/model-layers/src/layers/qwen3_attention/decode/splitk_dispatch.rs:60"
+source = "crates/target-defaults/src/attn_splitk.rs:7; crates/model-layers/src/layers/qwen3_attention/decode/splitk_dispatch.rs:60"
 
 [[t]]
 match = "kernels/gb10/common/paged_decode_attn_bf16_gqa.cu"
 text = "GQA-packed twin of paged_decode_attn: PD_GQA = 6 query heads per CTA so each K/V row is loaded once per group. Same per-head operation order, so with --fmad=false the output is bit-identical; only ratio 6 at head_dim 256 is admitted, the lever is off for every target, and it is used only on the non-split arm."
 prs = []
-source = "kernels/gb10/common/paged_decode_attn_bf16_gqa.cu:3; crates/kernels/src/attn_splitk.rs:196"
+source = "kernels/gb10/common/paged_decode_attn_bf16_gqa.cu:3; crates/target-defaults/src/attn_splitk.rs:196"
 
 [[t]]
 match = "kernels/gb10/common/paged_decode_attn_bf16k_turbo2v.cu"
@@ -1445,7 +1445,7 @@ source = "kernels/hopper/common/paged_decode_splitk_hopper.cuh:27; docs/perf/hop
 match = "kernels/gb10/common/paged_decode_attn_fp8_gqa.cu"
 text = "Packing cuts CTAs 6-fold (num_kv_heads * num_seqs): with 4 KV heads on gb10's 48 SMs the grid covers the SMs only from num_seqs = 12. Not used under split-K, since packing would change the split count and the merge tree."
 prs = []
-source = "crates/kernels/src/attn_splitk.rs:188; crates/kernels/src/attn_splitk.rs:266"
+source = "crates/target-defaults/src/attn_splitk.rs:188; crates/target-defaults/src/attn_splitk.rs:266"
 
 [[t]]
 match = "kernels/gb10/common/paged_decode_attn_fp8_gqa.cu"

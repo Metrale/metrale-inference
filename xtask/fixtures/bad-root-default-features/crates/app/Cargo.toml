@@ -1,0 +1,12 @@
+[package]
+name = "fixture-app"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+anyhow = { workspace = true, features = ["std"] }
+fixture-lib = { workspace = true }
+libc = { workspace = true }
+serde = { workspace = true, features = ["std"] }
+thiserror = { workspace = true }

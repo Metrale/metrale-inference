@@ -154,11 +154,13 @@ pub(crate) fn gdn_hopper_remnant_log(name: &str, pick: &RemnantPick, requested: 
 ///
 /// `requested` is the resolved tensor-core prefill lever. The caller reads it
 /// once and uses the same value for the state spine, so the twins and the
-/// spine cannot disagree about it. The parents launch with 256
-/// (`recompute_wu`) and 512 (`chunk_fwd_o`) threads.
+/// spine cannot disagree about it. `killed` is
+/// [`super::GdnPrefillPlan::remnants_killed`], for both remnants. The parents
+/// launch with 256 (`recompute_wu`) and 512 (`chunk_fwd_o`) threads.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn gdn_hopper_remnants(
     requested: bool,
+    killed: bool,
     k_wu: KernelHandle,
     smem_wu: u32,
     k_fo: KernelHandle,
@@ -169,7 +171,6 @@ pub(crate) fn gdn_hopper_remnants(
     v_dim: u32,
     chunk: u32,
 ) -> (RemnantPick, RemnantPick) {
-    let killed = gdn_hopper_remnants_killed();
     let pick = |parent, pblock, psmem, twin, tsmem| {
         gdn_hopper_remnant_pick(
             requested, killed, parent, pblock, psmem, twin, tsmem, k_dim, v_dim, chunk,
@@ -190,15 +191,15 @@ pub(crate) fn gdn_hopper_remnants(
 /// sequential sum), 2.5x faster on GB10. Memoized in the backend's `OpCache`.
 pub(crate) fn gdn_fwd_o_mma8(
     gpu: &dyn GpuBackend,
+    // 2026-10-17: [`super::GdnPrefillPlan::fwd_o_mma8`]; off keeps `fo`.
+    on: bool,
     fo: RemnantPick,
     parent: KernelHandle,
     k_dim: u32,
     v_dim: u32,
 ) -> anyhow::Result<RemnantPick> {
     const MODULE: &str = "gdn_chunk_fwd_o_mma8";
-    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    let off = *OFF.get_or_init(|| std::env::var_os("METRALE_NO_GDN_FWD_O_MMA8").is_some());
-    if off || fo.kernel.0 != parent.0 || k_dim != 128 || v_dim != 128 || !gpu.has_module(MODULE) {
+    if !on || fo.kernel.0 != parent.0 || k_dim != 128 || v_dim != 128 || !gpu.has_module(MODULE) {
         return Ok(fo);
     }
     Ok(RemnantPick {
@@ -207,16 +208,6 @@ pub(crate) fn gdn_fwd_o_mma8(
             .kernel(gpu, MODULE, "gated_delta_rule_chunk_fwd_o_mma8")?,
         ..fo
     })
-}
-
-/// 2026-09-25: `METRALE_NO_GDN_PREFILL_TC_REMNANTS=1` pins both remnants to
-/// their parents. Only the value `1` counts. Read once per
-/// [`gdn_hopper_remnants`] call, for both remnants.
-pub(crate) fn gdn_hopper_remnants_killed() -> bool {
-    std::env::var("METRALE_NO_GDN_PREFILL_TC_REMNANTS")
-        .ok()
-        .as_deref()
-        == Some("1")
 }
 
 #[cfg(test)]

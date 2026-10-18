@@ -33,22 +33,19 @@ fn resolved_default_budget_is_plan_friendly() {
 }
 
 #[test]
-fn prose_budget_precedence_is_cli_env_toml() {
-    assert_eq!(resolve_max_inter_tool_prose(384, None, None), 384);
-    assert_eq!(resolve_max_inter_tool_prose(384, Some(8192), None), 8192);
+fn the_operator_override_outranks_model_toml() {
+    assert_eq!(resolve_max_inter_tool_prose(384, None), 384);
+    assert_eq!(resolve_max_inter_tool_prose(384, Some(8192)), 8192);
+    let p =
+        WatchdogParams::from_behavior(&metrale_kernels::ModelBehavior::default(), Some(4096), None);
     assert_eq!(
-        resolve_max_inter_tool_prose(384, Some(8192), Some(4096)),
-        4096
+        p.max_inter_tool_prose, 4096,
+        "from_behavior applies the override"
     );
-    assert_eq!(resolve_max_inter_tool_prose(384, None, Some(4096)), 4096);
 }
 
 #[test]
 fn prose_budget_zero_disables_instead_of_instant_firing() {
-    assert_eq!(resolve_max_inter_tool_prose(0, None, None), u32::MAX);
-    assert_eq!(resolve_max_inter_tool_prose(384, Some(0), None), u32::MAX);
-    assert_eq!(
-        resolve_max_inter_tool_prose(384, Some(8192), Some(0)),
-        u32::MAX
-    );
+    assert_eq!(resolve_max_inter_tool_prose(0, None), u32::MAX);
+    assert_eq!(resolve_max_inter_tool_prose(384, Some(0)), u32::MAX);
 }

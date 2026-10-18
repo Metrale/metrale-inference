@@ -66,15 +66,13 @@ fn advancing_past_the_cap_is_refused_not_clamped() {
     let c = cfg();
     let cap = max_dsa_context(&c);
     // 2026-09-25: Built by hand with null pointers: the length bookkeeping touches no memory.
-    let mut s = Glm5NextDsaState {
-        k_normed: metrale_gpu_runtime::gpu::DevicePtr(0),
-        gate: metrale_gpu_runtime::gpu::DevicePtr(0),
-        valid: metrale_gpu_runtime::gpu::DevicePtr(0),
-        len: 0,
-        capacity: cap,
-        index_head_dim: c.index_head_dim,
-        released: false,
-    };
+    let mut s = Glm5NextDsaState::borrowed(
+        metrale_gpu_runtime::gpu::DevicePtr(0),
+        metrale_gpu_runtime::gpu::DevicePtr(0),
+        metrale_gpu_runtime::gpu::DevicePtr(0),
+        cap,
+        c.index_head_dim,
+    );
     assert!(s.is_empty());
     s.advance(cap - 1).unwrap();
     assert_eq!(s.len(), cap - 1);
@@ -92,15 +90,13 @@ fn advancing_past_the_cap_is_refused_not_clamped() {
 #[test]
 fn row_offsets_are_flat_bf16_rows() {
     let c = cfg();
-    let s = Glm5NextDsaState {
-        k_normed: metrale_gpu_runtime::gpu::DevicePtr(0),
-        gate: metrale_gpu_runtime::gpu::DevicePtr(0),
-        valid: metrale_gpu_runtime::gpu::DevicePtr(0),
-        len: 0,
-        capacity: max_dsa_context(&c),
-        index_head_dim: c.index_head_dim,
-        released: false,
-    };
+    let s = Glm5NextDsaState::borrowed(
+        metrale_gpu_runtime::gpu::DevicePtr(0),
+        metrale_gpu_runtime::gpu::DevicePtr(0),
+        metrale_gpu_runtime::gpu::DevicePtr(0),
+        max_dsa_context(&c),
+        c.index_head_dim,
+    );
     assert_eq!(s.row_offset(0), 0);
     assert_eq!(s.row_offset(1), 128 * 2);
     assert_eq!(s.row_offset(1000), 1000 * 128 * 2);
@@ -126,15 +122,13 @@ fn the_reservation_is_small_enough_to_preallocate() {
 fn ensure_room_refuses_before_the_write_and_moves_nothing() {
     let c = cfg();
     let cap = max_dsa_context(&c);
-    let mut s = Glm5NextDsaState {
-        k_normed: metrale_gpu_runtime::gpu::DevicePtr(0),
-        gate: metrale_gpu_runtime::gpu::DevicePtr(0),
-        valid: metrale_gpu_runtime::gpu::DevicePtr(0),
-        len: 0,
-        capacity: cap,
-        index_head_dim: c.index_head_dim,
-        released: false,
-    };
+    let mut s = Glm5NextDsaState::borrowed(
+        metrale_gpu_runtime::gpu::DevicePtr(0),
+        metrale_gpu_runtime::gpu::DevicePtr(0),
+        metrale_gpu_runtime::gpu::DevicePtr(0),
+        cap,
+        c.index_head_dim,
+    );
     s.advance(cap).unwrap();
     assert!(
         s.ensure_room(0).is_ok(),
@@ -239,4 +233,130 @@ fn alloc_then_release_returns_the_ledger_to_baseline_in_count_and_bytes() {
         st.free(&gpu).expect("second free is a no-op");
         assert_eq!(gpu.live_bytes().expect("ledger"), base_bytes);
     }
+}
+
+/// 2026-10-08: A borrowed view's `free` releases nothing. The batched decode builds padding
+/// views over a layer workspace's buffers and drops them; a `release_state` reaching one must
+/// leave those buffers to their owner. The owner's own `free` of each buffer succeeding after
+/// the view's `free` is the proof: the mock refuses a pointer that is no longer allocated.
+#[test]
+fn freeing_a_borrowed_view_leaves_the_owners_buffers_live() {
+    use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
+    let gpu = MockGpuBackend::new();
+    let c = cfg();
+    let (k, g, v) = (
+        gpu.alloc(c.index_kpool * c.index_head_dim * 2).unwrap(),
+        gpu.alloc(c.index_kpool * c.index_head_dim * 2).unwrap(),
+        gpu.alloc(c.index_kpool).unwrap(),
+    );
+    let live = gpu.live_alloc_count();
+    let mut s = Glm5NextDsaState::borrowed(k, g, v, c.index_kpool, c.index_head_dim);
+    s.advance(1).unwrap();
+    s.free(&gpu).unwrap();
+    assert_eq!(
+        gpu.live_alloc_count(),
+        live,
+        "the view freed an owner's buffer"
+    );
+    assert_eq!(s.k_normed.0, 0, "a released view must not look live");
+    for p in [k, g, v] {
+        gpu.free(p).expect("the owner still holds every buffer");
+    }
+}
+
+/// 2026-10-09: A paged state allocates nothing, frees nothing, and has no flat rows.
+#[test]
+fn a_paged_state_owns_no_device_memory() {
+    use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
+    let gpu = MockGpuBackend::new();
+    let base = gpu.alloc_count();
+    let mut s = Glm5NextDsaState::paged(&cfg()).unwrap();
+    assert_eq!(gpu.alloc_count(), base);
+    assert_eq!(s.cache(), IndexerCache::Paged);
+    assert!(s.flat_rows().is_none());
+    assert_eq!(s.capacity(), max_dsa_context(&cfg()));
+    s.free(&gpu).unwrap();
+    assert_eq!(gpu.alloc_count(), base);
+}
+
+/// 2026-10-09: Behind its sequence, a paged state adopts the KV blocks' rows (a prefix-cache
+/// hit) and a flat one refuses (rows never written), on both the eager path
+/// (`adopt_kv_rows`) and the graph-replay path (`sync_to`). Past the cap both refuse.
+#[test]
+fn only_a_paged_state_may_adopt_rows_behind_it() {
+    use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
+    let gpu = MockGpuBackend::new();
+    let mut p = Glm5NextDsaState::paged(&cfg()).unwrap();
+    p.adopt_kv_rows(4_096).unwrap();
+    assert_eq!(p.len(), 4_096);
+    p.sync_to(8_192, 1).unwrap();
+    assert_eq!(p.len(), 8_193);
+    assert!(p.adopt_kv_rows(16_385).is_err(), "past the cap");
+    assert_eq!(p.len(), 8_193, "a refused adopt moves nothing");
+
+    let mut f = Glm5NextDsaState::alloc(&gpu, &cfg()).unwrap();
+    let e = f.adopt_kv_rows(4_096).unwrap_err().to_string();
+    assert!(e.contains("cannot adopt"), "{e}");
+    let e = f.sync_to(4_096, 1).unwrap_err().to_string();
+    assert!(e.contains("MISSING"), "{e}");
+    assert_eq!(f.len(), 0);
+    f.free(&gpu).unwrap();
+}
+
+/// 2026-10-16: A BF16-format paged state is exactly [`Glm5NextDsaState::paged`]; an FP8 one
+/// keeps its ring geometry.
+#[test]
+fn paged_as_carries_the_ring_only_for_fp8() {
+    let b = Glm5NextDsaState::paged_as(&cfg(), IndexerRowFormat::Bf16).unwrap();
+    assert_eq!(b.fp8_ring(), None);
+    assert_eq!(b.cache(), IndexerCache::Paged);
+    let f = Glm5NextDsaState::paged_as(&cfg(), IndexerRowFormat::Fp8 { tail_sets: 2 }).unwrap();
+    assert_eq!(
+        f.fp8_ring(),
+        Some(Fp8Ring {
+            kp: 4,
+            tail_sets: 2
+        })
+    );
+    assert_eq!(f.capacity(), b.capacity());
+}
+
+/// 2026-10-16: An FP8 state refuses a rewind that reopens a pool older than its ring, on the
+/// eager path (`rewind_to`) and the replay path (`sync_to`), and moves nothing; a BF16 state
+/// (the control) takes the same rewind.
+#[test]
+fn an_fp8_state_refuses_a_rewind_past_its_ring() {
+    let mut f = Glm5NextDsaState::paged_as(&cfg(), IndexerRowFormat::Fp8 { tail_sets: 1 }).unwrap();
+    let mut b = Glm5NextDsaState::paged(&cfg()).unwrap();
+    for s in [&mut f, &mut b] {
+        s.advance(13).unwrap();
+    }
+    // 2026-10-16: 13 -> 7 reopens pool 1 while row 12 sits in pool 3: two pools back.
+    let e = f.rewind_to(7).unwrap_err().to_string();
+    assert!(e.contains("reopens pool 1"), "{e}");
+    assert_eq!(f.len(), 13, "a refused rewind moves nothing");
+    let e = f.sync_to(7, 1).unwrap_err().to_string();
+    assert!(e.contains("reopens pool 1"), "{e}");
+    assert_eq!(f.len(), 13);
+    b.rewind_to(7).unwrap();
+    assert_eq!(b.len(), 7);
+    // 2026-10-16: Within the newest pool, or onto a pool boundary, the ring holds every row.
+    f.rewind_to(12).unwrap();
+    f.rewind_to(8).unwrap();
+    assert_eq!(f.len(), 8);
+}
+
+/// 2026-10-16: An empty FP8 state adopts a shared prefix only at a pool boundary (the open
+/// rows of a pool are in the owner's ring, not this sequence's); a BF16 state adopts any.
+#[test]
+fn an_fp8_state_adopts_only_whole_pools() {
+    let mut f = Glm5NextDsaState::paged_as(&cfg(), IndexerRowFormat::Fp8 { tail_sets: 1 }).unwrap();
+    let e = f.adopt_kv_rows(4_097).unwrap_err().to_string();
+    assert!(e.contains("ends inside a pool"), "{e}");
+    assert_eq!(f.len(), 0);
+    f.adopt_kv_rows(4_096).unwrap();
+    assert_eq!(f.len(), 4_096);
+    let mut b = Glm5NextDsaState::paged(&cfg()).unwrap();
+    b.adopt_kv_rows(4_097).unwrap();
+    assert_eq!(b.len(), 4_097);
 }

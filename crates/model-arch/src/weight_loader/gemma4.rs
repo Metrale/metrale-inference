@@ -25,11 +25,11 @@ mod loader_b;
 pub struct Gemma4WeightLoader;
 
 impl ModelWeightLoader for Gemma4WeightLoader {
-    fn supports_tp(&self) -> bool {
+    fn tp_support(&self) -> metrale_config::TpSupport {
         // 2026-09-25: Under TP the loader shards the attention projections
         // (see `loader_a::load_layers_impl`); the dense FFN weights are loaded
         // whole on every rank.
-        true
+        metrale_config::TpSupport::Even
     }
 
     fn load_layers(
@@ -38,8 +38,9 @@ impl ModelWeightLoader for Gemma4WeightLoader {
         config: &ModelConfig,
         gpu: &dyn GpuBackend,
         layer_kv_dtypes: &[KvCacheDtype],
+        lc: metrale_model_layers::load_context::LoadContext<'_>,
     ) -> Result<Vec<Box<dyn TransformerLayer>>> {
-        loader_a::load_layers_impl(store, config, gpu, layer_kv_dtypes)
+        loader_a::load_layers_impl(store, config, gpu, layer_kv_dtypes, lc)
     }
 
     fn load_embedding(
@@ -82,3 +83,7 @@ impl ModelWeightLoader for Gemma4WeightLoader {
         loader_b::kv_layer_dims_impl(config)
     }
 }
+
+#[cfg(test)]
+#[path = "gemma4/levers_tests.rs"]
+mod levers_tests;

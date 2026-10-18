@@ -24,8 +24,7 @@ impl Qwen3AttentionLayer {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn w4a16_gemm_m128_dispatch(
         &self,
-        gpu: &dyn GpuBackend,
-        dispatch: &crate::layers::ops::GemmDispatch,
+        ctx: &crate::layer::ForwardContext,
         input: DevicePtr,
         weight: &crate::weight_map::QuantizedWeight,
         output: DevicePtr,
@@ -34,14 +33,14 @@ impl Qwen3AttentionLayer {
         k: u32,
         stream: u64,
     ) -> anyhow::Result<()> {
+        let (gpu, dispatch) = (ctx.gpu, ctx.dispatch);
         // 2026-09-25: `GemmDispatch::w4a16_variant` (`METRALE_W4A16_VARIANT`):
         // 1, 2 or 3 pins a kernel, 0 is auto (v2).
         let v = dispatch.w4a16_variant;
         // 2026-09-25: Opt-in (`METRALE_BF16_TC_PROJ` present): the BF16-MMA
         // kernel, which `ops::w4a16_gemm_n128_m128_bf16` documents as the base
-        // `w4a16_gemm` arithmetic. The lever comes from the process-wide
-        // `ModelLevers::get()`, resolved once.
-        let bf16_proj = crate::layers::ops::ModelLevers::get().bf16_tc_proj;
+        // `w4a16_gemm` arithmetic.
+        let bf16_proj = ctx.levers.bf16_tc_proj;
         if bf16_proj && self.w4a16_gemm_t_m128_bf16_k.0 != 0 {
             return crate::layers::ops::w4a16_gemm_n128_m128_bf16(
                 gpu,
@@ -147,10 +146,12 @@ impl Qwen3AttentionLayer {
     /// `q2_dequant_scratch`) and a BF16 GEMM runs; both are on `stream`, so
     /// the next projection's dequant cannot overwrite `scratch` before this GEMM
     /// reads it. Nothing is allocated. Errors if the dequant kernel is missing.
+    /// `native_mmq` is `OpsLevers::native_q2_mmq`.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn q2_prefill_gemm(
         &self,
         gpu: &dyn GpuBackend,
+        native_mmq: bool,
         w: &crate::weight_map::PackedQ2Weight,
         input: DevicePtr,
         out: DevicePtr,
@@ -161,12 +162,9 @@ impl Qwen3AttentionLayer {
     ) -> Result<()> {
         let (n, k) = (w.n, w.k);
 
-        // 2026-09-25: Native MMQ (`METRALE_GGUF_NATIVE_Q2_MMQ=1`, group 128 only):
+        // 2026-09-25: Native MMQ (`METRALE_GGUF_NATIVE_Q2_MMQ` on, group 128 only):
         // no BF16 weight dequant.
-        if self.q2_0_mmq_nc_k.0 != 0
-            && self.q4k_quant_act_k.0 != 0
-            && crate::layers::ops::native_q2_mmq_enabled()
-            && w.group == 128
+        if self.q2_0_mmq_nc_k.0 != 0 && self.q4k_quant_act_k.0 != 0 && native_mmq && w.group == 128
         {
             crate::layers::ops::quantize_act_q8_1(
                 gpu,
@@ -256,7 +254,17 @@ impl Qwen3AttentionLayer {
         );
         let scratch = ctx.buffers.q2_dequant_scratch();
         let act_q8 = ctx.buffers.q2_act_q8();
-        Some(self.q2_prefill_gemm(ctx.gpu, q2, input, out, scratch, act_q8, m, stream))
+        Some(self.q2_prefill_gemm(
+            ctx.gpu,
+            ctx.levers.ops.native_q2_mmq,
+            q2,
+            input,
+            out,
+            scratch,
+            act_q8,
+            m,
+            stream,
+        ))
     }
 
     /// 2026-09-25: Install the fused `[q | k | v]` transposed copy. Separate from
@@ -360,9 +368,8 @@ impl Qwen3AttentionLayer {
         want: Fp8TwinSet,
         derived: Option<&metrale_model_weights::weights::DerivedStore>,
     ) -> anyhow::Result<()> {
-        // 2026-09-25: A load-time decision, made before a model exists to carry
-        // the dispatch, so it reads `GemmDispatch::from_env()`.
-        if crate::layers::ops::GemmDispatch::from_env().cutlass_nvfp4_gemm {
+        // 2026-09-25: A load-time decision; 2026-10-17: the dispatch captured at construction.
+        if self.cutlass_nvfp4_gemm {
             tracing::info!(
                 "Skipping attention FP8 prefill transposes because METRALE_CUTLASS_NVFP4_GEMM=1"
             );
@@ -418,9 +425,8 @@ impl Qwen3AttentionLayer {
         stream: u64,
     ) -> Result<()> {
         // 2026-09-25: Skipped under `METRALE_CUTLASS_NVFP4_GEMM=1`, as in
-        // `transpose_fp8_for_prefill_selected`, with the same load-time
-        // `GemmDispatch::from_env()`.
-        if crate::layers::ops::GemmDispatch::from_env().cutlass_nvfp4_gemm {
+        // `transpose_fp8_for_prefill_selected`, with the same captured dispatch.
+        if self.cutlass_nvfp4_gemm {
             tracing::info!(
                 "Skipping attention FP8 prefill predequant because METRALE_CUTLASS_NVFP4_GEMM=1"
             );

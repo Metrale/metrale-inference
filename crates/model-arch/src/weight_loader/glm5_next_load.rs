@@ -31,26 +31,46 @@ use crate::glm5next_kda::tp::KdaTpPlan;
 use crate::glm5next_kda::tp_bind::KdaShardedSource;
 use crate::glm5next_kda::{Glm5NextKdaConfig, Glm5NextKdaKernels, Glm5NextKdaLayer};
 use crate::glm5next_layer::{Glm5NextLayer, Glm5NextMhc, Glm5NextMixer, Glm5NextMlpSite};
-use crate::glm5next_mhc::{Glm5NextMhcKernels, Glm5NextMhcSiteWeights, mhc_mix_max_tokens, mix_hc};
+use crate::glm5next_mhc::{Glm5NextMhcKernels, Glm5NextMhcSiteWeights, mix_hc};
 use crate::glm5next_mlp::weights::{Glm5NextExpertWeights, Nvfp4Proj};
 use crate::glm5next_mlp::{Glm5NextMlpConfig, Glm5NextMlpKernels, build as mlp_build};
 use crate::glm5next_skeleton::{Glm5NextTextSkeleton, Mixer, Mlp};
 use metrale_model_layers::layer::TransformerLayer;
 use metrale_model_layers::weight_map::DenseWeight;
 
+mod act_scale;
 #[cfg(test)]
 mod defer_hook_tests;
+mod dense_site;
+mod dense_tiers;
+mod dsa_stack;
 mod expert_quant;
+mod expert_scales;
+mod expert_slab;
+mod expert_tp;
+mod expert_whole;
 #[cfg(test)]
 mod export_layout_tests;
+mod fp8_head;
+mod fp8_widen;
+mod layer_stream;
+#[cfg(test)]
+mod layer_stream_tests;
 mod loader;
+mod mlp_precision;
 mod nvfp4_dequant;
 mod nvfp4_quant;
 #[cfg(test)]
 mod plan_cast_tests;
 mod plan_dtype;
+mod prune;
+#[cfg(test)]
+mod tp_shapes_tests;
 
+use act_scale::input_scale;
+use act_scale::is_activation_scale;
 use expert_quant::{quantize_deferred_expert_proj, quantize_expert_proj};
+use expert_whole::bind_expert;
 
 pub struct Glm5NextWeightLoader;
 
@@ -149,10 +169,10 @@ fn upload_f32(gpu: &dyn GpuBackend, v: &[f32]) -> Result<DevicePtr> {
 }
 
 /// 2026-09-25: One layer's tensors under layer-relative names, copied to the
-/// host (routed experts by name only).
+/// host (routed experts by name only). 2026-10-16: Names sorted, so every run sees one order.
 pub(super) struct LayerSource {
-    names: Vec<String>,
-    tensors: std::collections::BTreeMap<String, (WeightDtype, Vec<usize>, Vec<u8>)>,
+    names: std::collections::BTreeSet<String>,
+    tensors: fp8_widen::HostTensors,
     /// 2026-09-25: Copies, at the width the binders bind at, of the tensors
     /// stored at another width (see [`plan_dtype`]). Only
     /// [`KdaTensorSource::get`] reads them; [`Self::f32`] reads the stored bytes.
@@ -162,34 +182,71 @@ pub(super) struct LayerSource {
 impl LayerSource {
     pub(super) fn collect(gpu: &dyn GpuBackend, store: &WeightStore, layer: usize) -> Result<Self> {
         let prefix = format!("model.language_model.layers.{layer}.");
-        let mut names = Vec::new();
-        let mut tensors = std::collections::BTreeMap::new();
-        let mut plan_cast = std::collections::BTreeMap::new();
-        let rels: Vec<String> = store
+        let mut names = std::collections::BTreeSet::new();
+        let mut tensors = fp8_widen::HostTensors::new();
+        let rels: std::collections::BTreeSet<String> = store
             .names()
             .filter_map(|n| n.strip_prefix(&prefix).map(|r| r.to_string()))
             .collect();
         for rel in rels {
-            let rel = rel.as_str();
+            names.insert(rel.clone());
             // 2026-09-25: Routed experts are listed but not copied: `bind_expert` reads
             // them from the store.
             if rel.starts_with("mlp.experts.") {
-                names.push(rel.to_string());
                 continue;
             }
-            names.push(rel.to_string());
             let t = store.get(&format!("{prefix}{rel}"))?;
-            let bytes = host_bytes(gpu, t)?;
-            if let Some(cast) = plan_dtype::cast_to_plan_dtype(rel, t.dtype, &bytes)? {
-                plan_cast.insert(rel.to_string(), cast);
+            tensors.insert(rel, (t.dtype, t.shape.clone(), host_bytes(gpu, t)?));
+        }
+        // 2026-10-16: The tensors `METRALE_GLM_LAYER_STREAM` kept off the device, from their shard.
+        for (name, d) in store.deferred_sorted() {
+            let Some(rel) = name.strip_prefix(&prefix) else {
+                continue;
+            };
+            if !layer_stream::collected_from_shard(rel, name, d.dtype) {
+                continue;
             }
-            tensors.insert(rel.to_string(), (t.dtype, t.shape.clone(), bytes));
+            names.insert(rel.to_string());
+            let bytes = d
+                .read_host_bytes()
+                .with_context(|| format!("{name}: reading the streamed layer tensor"))?;
+            tensors.insert(rel.to_string(), (d.dtype, d.shape.clone(), bytes));
+        }
+        Self::from_host(names, tensors)
+    }
+
+    /// 2026-10-17: The source over one layer's listed names and host-copied tensors (`collect`
+    /// without the device reads). Block-scaled E4M3 linears are replaced by their BF16 widening
+    /// and their consumed scales leave both lists, so the binders see a 16-bit layer; then the
+    /// plan-width copies are made.
+    pub(super) fn from_host(
+        mut names: std::collections::BTreeSet<String>,
+        mut tensors: fp8_widen::HostTensors,
+    ) -> Result<Self> {
+        for scale in fp8_widen::widen_layer_fp8(&mut tensors)? {
+            names.remove(&scale);
+        }
+        let mut plan_cast = std::collections::BTreeMap::new();
+        for (rel, (dtype, _, bytes)) in &tensors {
+            if let Some(cast) = plan_dtype::cast_to_plan_dtype(rel, *dtype, bytes)? {
+                plan_cast.insert(rel.clone(), cast);
+            }
         }
         Ok(Self {
             names,
             tensors,
             plan_cast,
         })
+    }
+
+    /// 2026-10-08: A tensor's stored dtype, shape and bytes, copied (the packed NVFP4 dense MLP
+    /// the W4A4 path slices).
+    pub(super) fn raw(&self, name: &str) -> Result<(WeightDtype, Vec<usize>, Vec<u8>)> {
+        let (dtype, shape, bytes) = self
+            .tensors
+            .get(name)
+            .with_context(|| format!("missing tensor {name}"))?;
+        Ok((*dtype, shape.clone(), bytes.clone()))
     }
 
     pub(super) fn f32(&self, name: &str) -> Result<Vec<f32>> {
@@ -260,7 +317,7 @@ impl KdaTensorSource for LayerSource {
         })
     }
     fn names(&self) -> Vec<String> {
-        self.names.clone()
+        self.names.iter().cloned().collect()
     }
 }
 
@@ -273,6 +330,7 @@ fn bind_mhc_site(
     site: &str,
     hc_mult: usize,
     hidden: usize,
+    mix_tokens: usize,
 ) -> Result<Glm5NextMhcSiteWeights> {
     let f = src.f32(&format!("hc_{site}_fn"))?;
     let want = mix_hc(hc_mult) * hc_mult * hidden;
@@ -304,57 +362,15 @@ fn bind_mhc_site(
         hc_base: upload_f32(gpu, &base)?,
         // 2026-09-25: The `hc_mix` to `hc_finish` scratch; one per site, so a
         // layer's two sites never share it.
-        mix: gpu.alloc(mhc_mix_max_tokens() * mix_hc(hc_mult) * 4)?,
-    })
-}
-
-/// 2026-09-25: One routed expert's gate/up/down as NVFP4 triples. Each
-/// projection takes the first arm that applies:
-///
-/// 1. deferred by [`Glm5NextWeightLoader::defer_predicate`]: read from disk,
-///    quantised, uploaded;
-/// 2. resident U8: bound zero-copy with its `weight_scale` and scalar
-///    `weight_scale_2`;
-/// 3. resident BF16: read back and quantised; `prune_after_load` frees the
-///    source.
-///
-/// Any other dtype is an error.
-pub(super) fn bind_expert(
-    gpu: &dyn GpuBackend,
-    store: &WeightStore,
-    layer: usize,
-    id: usize,
-) -> Result<Glm5NextExpertWeights> {
-    let proj = |p: &str| -> Result<Nvfp4Proj> {
-        let base = format!("mlp.experts.{id}.{p}");
-        let wname = qualify(layer, &format!("{base}.weight"));
-        // 2026-09-25: Checked first: a deferred tensor has no store entry.
-        if let Some(d) = store.deferred(&wname) {
-            return quantize_deferred_expert_proj(gpu, store, d, &base);
-        }
-        let w = store.get(&wname)?;
-        match w.dtype {
-            WeightDtype::UInt8 => {
-                let scale = store.get(&qualify(layer, &format!("{base}.weight_scale")))?;
-                let s2 = store.get(&qualify(layer, &format!("{base}.weight_scale_2")))?;
-                let s2 = host_f32(gpu, s2, &format!("{base}.weight_scale_2"))?;
-                let [s2] = s2[..] else {
-                    bail!("{base}.weight_scale_2 is not a scalar");
-                };
-                Ok(Nvfp4Proj {
-                    packed: w.ptr,
-                    scale: scale.ptr,
-                    scale_2: s2,
-                })
-            }
-            WeightDtype::BF16 => quantize_expert_proj(gpu, store, w, &base),
-            other => bail!("{base}.weight is {other:?}, expected packed U8 NVFP4 or BF16"),
-        }
-    };
-    Ok(Glm5NextExpertWeights {
-        gate_proj: proj("gate_proj")?,
-        up_proj: proj("up_proj")?,
-        down_proj: proj("down_proj")?,
+        mix: gpu.alloc(mix_tokens * mix_hc(hc_mult) * 4)?,
+        // 2026-10-09: `glm5next_hc_pre_norm` requires its counters zero before the first launch.
+        done: {
+            let bytes = mix_tokens * 4;
+            let p = gpu.alloc(bytes)?;
+            gpu.memset(p, 0, bytes)?;
+            p
+        },
+        mix_tokens,
     })
 }
 
@@ -386,14 +402,61 @@ pub(super) fn layer_source(
     LayerSource::collect(gpu, store, layer)
 }
 
-/// 2026-09-25: [`bind_expert`], for the MTP loader.
-pub(super) fn bind_expert_at(
-    gpu: &dyn GpuBackend,
-    store: &WeightStore,
+/// 2026-09-25: [`bind_expert`], for the MTP loader. 2026-10-09: Under the MLP config's
+/// `shard` (`expert_tp::bind_routed_expert`). 2026-10-14: As the binder of all of `layer`'s
+/// experts (`expert_tp::routed_expert_binder`), one slab under the `tp` layout.
+pub(super) fn expert_binder_at<'a>(
+    gpu: &'a dyn GpuBackend,
+    store: &'a WeightStore,
     layer: usize,
-    id: usize,
-) -> Result<Glm5NextExpertWeights> {
-    bind_expert(gpu, store, layer, id)
+    cfg: &Glm5NextMlpConfig,
+) -> impl Fn(usize) -> Result<Glm5NextExpertWeights> + 'a {
+    expert_tp::routed_expert_binder(gpu, store, layer, cfg)
+}
+
+/// 2026-10-08: The routed-expert precision plan of the MTP layer `layer`, for the MTP loader.
+/// 2026-10-11: Register the MTP block's mixer and shared-expert projections under the published
+/// `--dense-quantization` and `--dsa-quantization`, as `loader.rs` registers a text layer's, so
+/// the drafter's DSA q_a / absorbed q / absorbed o follow the DSA tier and the rest of its dense
+/// projections the dense tier. Nothing to do when both are `declared`.
+pub(super) fn register_mtp_dense_tiers(
+    gpu: &dyn GpuBackend,
+    mixer: &mut crate::glm5next_layer::Glm5NextMixer,
+    mlp: &mut crate::glm5next_layer::Glm5NextMlpSite,
+    mlp_cfg: &crate::glm5next_mlp::Glm5NextMlpConfig,
+    dense: &crate::glm5next_dense_levers::DenseLevers,
+    idx: usize,
+) -> Result<()> {
+    // 2026-10-11: Opt-in (`METRALE_GLM_MTP_DRAFTER_TIERS=1`): the first measurement with the
+    // drafter on the serve's tiers saw p1 fall (0.64-0.70 -> 0.53-0.61), not yet separated from
+    // the device exchange; the drafter stays BF16 until it is.
+    if !dense.mtp_drafter_tiers {
+        return Ok(());
+    }
+    if !dense_tiers::any_below_declared(
+        metrale_model_layers::layers::dense_quantization(),
+        metrale_model_layers::layers::dsa_quantization(),
+    ) {
+        return Ok(());
+    }
+    dense_tiers::register_dense_tiers(gpu, mixer, mlp, mlp_cfg, dense, idx)
+}
+
+pub(super) fn mtp_expert_precision(
+    config: &ModelConfig,
+    kernels: &Glm5NextMlpKernels,
+    layer: usize,
+    cfg: &Glm5NextMlpConfig,
+    has_scales: bool,
+) -> Result<crate::glm5next_mlp::precision::GroupPrecision> {
+    mlp_precision::group_precision(
+        config,
+        kernels,
+        layer,
+        crate::glm5next_mlp::precision::MlpGroup::RoutedExperts,
+        cfg.local_expert_range().start,
+        has_scales,
+    )
 }
 
 /// 2026-09-25: `upload_f32_as_bf16`, for the MTP loader.

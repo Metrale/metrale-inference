@@ -30,6 +30,7 @@ fn launches(encoding: AttnPositionEncoding) -> (usize, usize) {
             layer_dtypes: vec![],
             layer_dims: vec![],
             cache_blocks_per_seq: None,
+            v_block_bytes: None,
         },
         4,
         &rig.gpu,

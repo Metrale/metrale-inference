@@ -15,7 +15,7 @@
 //! drops the least recently used entry. With `METRALE_STORE_DIR` set, each
 //! `insert` writes a JSON file and each removal deletes it; at startup the
 //! directory is replayed, deleting files older than the TTL. The runtime
-//! values come from `ResponseStore::from_env` (`store_impl.rs`).
+//! values come from `ResponseStore::from_settings` (`store_impl.rs`).
 
 use std::collections::HashMap;
 use std::path::PathBuf;

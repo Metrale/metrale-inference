@@ -48,6 +48,7 @@ impl SsmSnapshotPool {
         decode_ring_slots: usize,
         decode_max_seqs: usize,
         hidden_bytes: usize,
+        gates: super::ssm_spill_gate::SsmTierGates,
         gpu: &dyn GpuBackend,
     ) -> Result<Self> {
         let decode_enabled = num_ssm_layers > 0 && decode_ring_slots > 0 && decode_max_seqs > 0;
@@ -74,6 +75,7 @@ impl SsmSnapshotPool {
                 h_f16_to_f32_k: KernelHandle(0),
                 h_f32_to_f16_k: KernelHandle(0),
                 spill_staging: Default::default(),
+                gates,
             });
         }
 
@@ -143,6 +145,7 @@ impl SsmSnapshotPool {
                 "ssm_h_state_f32_to_f16",
             ),
             spill_staging: Default::default(),
+            gates,
         })
     }
 }

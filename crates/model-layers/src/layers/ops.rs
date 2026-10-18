@@ -61,8 +61,15 @@ mod w8a16_gemm_pipelined_m32;
 mod w8a8_decode;
 // 2026-09-28: The tensor-core row-tile W8A16 projection (`w8a16_tc_rows.cu`).
 mod w8a16_tc_rows;
+// 2026-10-17: The W8A16 tile levers and the tiles as lever-free arms.
+mod w8a16_plan;
 // 2026-10-02: Its NVFP4 W4A16 point (`w4a16_tc_rows.cu`).
 mod w4a16_tc_rows;
+// 2026-10-09: The same point over up to three weight segments with a K-split
+// (`w4a16_tc_rows_seg.cu`).
+mod w4a16_tc_rows_seg;
+// 2026-10-10: The one-row NVFP4 GEMV over up to six weight segments (`w4a16_gemv_seg.cu`).
+mod w4a16_gemv_seg;
 // 2026-09-25: Tensor-core BF16 GEMM with a 16-row M tile (`dense_gemm_m16_bf16`).
 #[path = "ops/dense_gemm_m16_bf16.rs"]
 mod dense_gemm_m16_bf16;
@@ -136,9 +143,16 @@ pub mod moe_lora_grouped;
 mod moe_prefill;
 #[path = "ops/norm.rs"]
 mod norm;
+#[path = "ops/ops_levers.rs"]
+mod ops_levers;
 // 2026-09-25: Tensor-core routing of the MTP drafter's BF16 GEMV.
 #[path = "ops/dense_gemv_tc.rs"]
 pub mod dense_gemv_tc;
+// 2026-10-17: In-tree BF16 x BF16 -> FP32 projection (dense_gemm_tc_f32out.cu).
+#[path = "ops/dense_gemm_tc_f32.rs"]
+pub mod dense_gemm_tc_f32;
+#[path = "ops/gdn_prefill_plan.rs"]
+mod gdn_prefill_plan;
 #[path = "ops/gemv_tc.rs"]
 pub mod gemv_tc;
 #[cfg(test)]
@@ -256,6 +270,8 @@ pub use gemv_sw::*;
 pub use n_tile::n_tile_blocks;
 pub use nvfp4_moe_grouped::*;
 
+pub use gdn_prefill_plan::GdnPrefillPlan;
+pub use gemv_tc::W4a16TcPlan;
 pub use hyper_connection::*;
 pub use hyper_connection_dispatch::*;
 pub use hyper_connection_lowrank::*;
@@ -277,6 +293,7 @@ pub use moe_lora_grouped::*;
 pub use moe_prefill::*;
 pub use norm::*;
 pub use nvfp4_mmq::*;
+pub use ops_levers::OpsLevers;
 pub use ple::*;
 pub use prefill_attn_a::*;
 pub use prefill_attn_b::*;
@@ -308,10 +325,13 @@ pub use ssm_gdn_wyn::*;
 pub use ssm_mamba::*;
 pub use ssm_preproc::*;
 pub use ssm_ssd::*;
+pub use w4a16_gemv_seg::*;
 pub use w4a16_tc_rows::*;
+pub use w4a16_tc_rows_seg::*;
 pub use w8a8_decode::*;
 pub use w8a16_gemm_m16::*;
 pub use w8a16_gemm_pipelined_m32::*;
 pub use w8a16_gemv_ncol::*;
+pub use w8a16_plan::{StridedBatchGemv, W8a16Plan};
 pub use w8a16_tc_rows::*;
 pub use wide_prefill::*;

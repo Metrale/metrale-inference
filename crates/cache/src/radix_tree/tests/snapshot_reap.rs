@@ -6,6 +6,7 @@
 //! Invariants: none beyond the types.
 
 use super::super::*;
+use super::declared_tuning;
 use metrale_telemetry::prefix_cache::PrefixCache;
 
 /// 2026-09-25: Through the `PrefixCache` API a snapshot goes resident,
@@ -75,7 +76,7 @@ fn test_no_tier_default_impl() {
 /// 2026-09-25: An index with one entry for `tokens`, spilled by
 /// `evict_to_tier`. Returns the index and the tier key.
 fn spilled_index(tokens: &[u32], slot: usize) -> (SsmSnapshotIndex, u64) {
-    let mut idx = SsmSnapshotIndex::new();
+    let mut idx = SsmSnapshotIndex::new(declared_tuning());
     let ph = hash_token_prefix(tokens, tokens.len(), 0);
     idx.insert(ph, slot, 7, tokens.len());
     let ev = idx

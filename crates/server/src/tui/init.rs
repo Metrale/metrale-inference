@@ -80,10 +80,11 @@ pub fn tee_raw_fd() -> Option<i32> {
     }
 }
 
-/// 2026-09-26: `$METRALE_TUI_LOG_FILE`, else `$HOME/.cache/metrale/logs/met-serve-<pid>-<unix secs>.log`
-/// with `/tmp` standing in for an unset `HOME`.
-fn tee_path() -> PathBuf {
-    if let Ok(p) = std::env::var("METRALE_TUI_LOG_FILE") {
+/// 2026-09-26: `explicit` (the resolved `METRALE_TUI_LOG_FILE`), else
+/// `$HOME/.cache/metrale/logs/met-serve-<pid>-<unix secs>.log` with `/tmp` standing in for an
+/// unset `HOME`.
+fn tee_path(explicit: Option<&str>) -> PathBuf {
+    if let Some(p) = explicit {
         return PathBuf::from(p);
     }
     let base = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
@@ -145,8 +146,9 @@ fn env_filter() -> EnvFilter {
 }
 
 /// 2026-09-26: Open the tee file and install the dashboard-mode subscriber; progress events go to `progress_tx`.
-pub fn install_tty_subscriber(progress_tx: Sender<ProgressEvent>) {
-    let path = tee_path();
+/// 2026-10-17: `tee` is the resolved `METRALE_TUI_LOG_FILE` setting.
+pub fn install_tty_subscriber(progress_tx: Sender<ProgressEvent>, tee: Option<&str>) {
+    let path = tee_path(tee);
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }

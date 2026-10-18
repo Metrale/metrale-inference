@@ -20,3 +20,15 @@
 
 
 extra_nvcc_flags = ["--fmad=false"]
+
+
+# 2026-10-10: The DFlash2 drafter's paged attention (`attn_prefill_paged_indirect`) must be the
+# HDIM 128 build: the drafter's heads are 128 wide, and the common source defaults HDIM to 256.
+# The 256 build reads each 128-wide head together with its neighbour, so every score mixed two
+# heads and the drafts disagreed with the drafter's math from the first layer on. The qwen3.6-27b
+# tree's file is that build (HDIM 128, then the common source), so it is reused, not copied.
+[sources]
+use = ["qwen3.6-27b/nvfp4/attn_prefill_paged_indirect.cu"]
+
+[shadow]
+attn_prefill_paged_indirect = "HDIM 128 build of gb10/common/attn_prefill_paged_indirect.cu for the DFlash2 drafter's 128-wide heads (the common source defaults HDIM to 256)"

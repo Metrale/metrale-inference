@@ -1,54 +1,75 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-09-25: Which `w4a4_gemv_mx*` entry serves an `m`-row projection, and
-//! with what launch shape: the `METRALE_W4A4_MX_NT` / `METRALE_W4A4_MX_PS`
-//! levers and the pure planning in `mx_plan`.
+//! with what launch shape: the W4A4 levers ([`W4a4Levers`], resolved once from the
+//! startup settings) and the pure planning in `mx_plan`.
 //!
 //! Owner: model-layers ops.
-//! Invariants: none beyond the types.
+//! Invariants: `W4a4Levers::from_settings` refuses every value its readers panicked on, with
+//! the same message, and reads every other value as they did.
 
-use std::sync::OnceLock;
-
+use anyhow::{Result, bail};
 use metrale_gpu_runtime::gpu::KernelHandle;
+use metrale_settings::InferenceServerSettings;
 
 use super::{W4A4_MAX_M, W4a4State};
 
-/// 2026-09-25: `METRALE_W4A4_MX_NT` = 4 (default, also unset or empty) | 1; any
-/// other value panics. At 4 the 9..=64-row W4A4 GEMV runs the activation-reuse
-/// twins: 17..=32 rows take four 16-row weight tiles per CTA, 9..=16 and
-/// 33..=64 rows take two, and each warp feeds its activation fragments to
-/// every tile from registers, so the activation matrix is read from L2 that
-/// many times less. The twins keep the one-tile kernels' per-warp chunk order
-/// and warp-order reduction. At 1 every width runs the one-tile kernels.
-pub(super) fn mx_nt() -> u32 {
-    static NT: OnceLock<u32> = OnceLock::new();
-    *NT.get_or_init(
-        || match std::env::var("METRALE_W4A4_MX_NT").ok().as_deref() {
-            None | Some("") | Some("4") => 4,
-            Some("1") => 1,
-            Some(v) => panic!("METRALE_W4A4_MX_NT={v}: expected 1 or 4"),
-        },
-    )
+/// 2026-10-17: The W4A4 projection levers. The first [`super::prepare`] on a backend keeps the
+/// copy its launches run under.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct W4a4Levers {
+    /// 2026-09-25: `METRALE_W4A4_MX_NT` = 4 (default, also unset or empty) | 1. At 4 the
+    /// 9..=64-row W4A4 GEMV runs the activation-reuse twins: 17..=32 rows take four 16-row
+    /// weight tiles per CTA, 9..=16 and 33..=64 rows take two, and each warp feeds its
+    /// activation fragments to every tile from registers, so the activation matrix is read
+    /// from L2 that many times less. The twins keep the one-tile kernels' per-warp chunk order
+    /// and warp-order reduction. At 1 every width runs the one-tile kernels.
+    pub nt: u32,
+    /// 2026-09-25: `METRALE_W4A4_MX_PS` = 1 (default, also unset or empty) | 0. At 1, a
+    /// 9..=32-row launch whose whole activation stripe fits in [`PS_SMEM_MAX`] and whose weight
+    /// has at least [`PS_MIN_TILES_PER_SM`] 16-row tiles per SM runs the persistent
+    /// activation-staged entry (`w4a4_gemv_mx{16,32}_ps`): one CTA per SM pulls 16-row tiles
+    /// from a counter and reads the activations from shared memory. 0 routes those launches
+    /// back to the [`Self::nt`] kernels. It acts only when the tile factor is not 1, so
+    /// `METRALE_W4A4_MX_NT=1` selects the one-tile kernels at every width.
+    pub ps: bool,
+    /// 2026-09-25: `METRALE_W4A4_PROJ_AUDIT`, a diagnostic. Every W4A4 projection launched
+    /// outside a graph capture also runs the W4A16 path, synchronises, and accumulates
+    /// `||y_w4a4 - y_w4a16|| / ||y_w4a16||` per call site, logged every 64 samples. Captured
+    /// launches are not audited, so it needs graphs off (`METRALE_NO_MTP_VERIFY_GRAPHS=1
+    /// METRALE_NO_DECODE_GRAPHS_MULTISEQ=1`) to see the decode and verify steps.
+    pub audit: bool,
 }
 
-/// 2026-09-25: `METRALE_W4A4_MX_PS` = 1 (default, also unset or empty) | 0; any
-/// other value panics. At 1, a 9..=32-row launch whose whole activation stripe
-/// fits in [`PS_SMEM_MAX`] and whose weight has at least
-/// [`PS_MIN_TILES_PER_SM`] 16-row tiles per SM runs the persistent
-/// activation-staged entry (`w4a4_gemv_mx{16,32}_ps`): one CTA per SM pulls
-/// 16-row tiles from a counter and reads the activations from shared memory.
-/// 0 routes those launches back to the [`mx_nt`] kernels. It acts only when the
-/// tile factor is not 1, so `METRALE_W4A4_MX_NT=1` selects the one-tile kernels
-/// at every width.
-pub(super) fn mx_ps() -> bool {
-    static PS: OnceLock<bool> = OnceLock::new();
-    *PS.get_or_init(
-        || match std::env::var("METRALE_W4A4_MX_PS").ok().as_deref() {
+impl W4a4Levers {
+    /// 2026-10-17: Resolve from the startup settings, refusing a tile factor other than 1 or 4
+    /// and a persistent switch other than 0 or 1.
+    pub fn from_settings(s: &InferenceServerSettings) -> Result<Self> {
+        let nt = match s.kernels.w4a4_mx_nt.as_deref() {
+            None | Some("") | Some("4") => 4,
+            Some("1") => 1,
+            Some(v) => bail!("METRALE_W4A4_MX_NT={v}: expected 1 or 4"),
+        };
+        let ps = match s.kernels.w4a4_mx_ps.as_deref() {
             None | Some("") | Some("1") => true,
             Some("0") => false,
-            Some(v) => panic!("METRALE_W4A4_MX_PS={v}: expected 0 or 1"),
-        },
-    )
+            Some(v) => bail!("METRALE_W4A4_MX_PS={v}: expected 0 or 1"),
+        };
+        Ok(Self {
+            nt,
+            ps,
+            audit: s.telemetry.w4a4_proj_audit,
+        })
+    }
+
+    /// 2026-10-17: What [`Self::from_settings`] returns at the declared defaults.
+    pub const fn declared() -> Self {
+        Self {
+            nt: 4,
+            ps: true,
+            audit: false,
+        }
+    }
 }
 
 /// 2026-09-25: Largest dynamic shared memory, in bytes, one CTA may opt in to
@@ -125,3 +146,7 @@ pub(super) fn mx_pick(s: &W4a4State, m: u32, nt: u32) -> (KernelHandle, u32) {
         _ => (s.mx64_nt2, 32),
     }
 }
+
+#[cfg(test)]
+#[path = "w4a4_levers_tests.rs"]
+mod w4a4_levers_tests;

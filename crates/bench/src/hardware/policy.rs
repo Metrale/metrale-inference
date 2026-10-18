@@ -5,7 +5,7 @@
 //!
 //! Owner: bench hardware.
 //! Invariants:
-//! - No I/O; the only environment read is [`PolicyOptions::from_env`].
+//! - No I/O and no environment read; the switches arrive in [`PolicyOptions::from_levers`].
 //! - A Correctness run is never refused, and a Speed run is refused only while the
 //!   kill switch is off.
 //! - [`Validity::Valid`] only when all three thermal counters were read on both
@@ -90,8 +90,8 @@ pub struct Postcheck {
     pub concerns: Vec<String>,
 }
 
-/// 2026-09-26: The two operator switches, read from the environment only in
-/// [`PolicyOptions::from_env`], and the box class's temperature ceilings.
+/// 2026-09-26: The two operator switches and the box class's temperature ceilings.
+/// 2026-10-17: The switches come from the resolved levers ([`PolicyOptions::from_levers`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct PolicyOptions {
     /// 2026-09-26: `METRALE_NO_HW_PRECHECK=1`: never refuse. Every concern is still
@@ -128,7 +128,7 @@ impl TempCeilings {
     }
 }
 
-/// 2026-09-26: Env var that suppresses refusal. Read only by [`PolicyOptions::from_env`].
+/// 2026-09-26: Env var that suppresses refusal; named in the run log and the precheck concern.
 pub const KILL_SWITCH_ENV: &str = "METRALE_NO_HW_PRECHECK";
 /// 2026-09-26: Env var that makes the absolute-temperature ceilings refuse.
 pub const TEMP_GATE_ENV: &str = "METRALE_HW_TEMP_GATE";
@@ -139,20 +139,16 @@ pub const TEMP_GATE_ENV: &str = "METRALE_HW_TEMP_GATE";
 pub const MAX_FOREIGN_COMPUTE_APPS: usize = 1;
 
 impl PolicyOptions {
-    pub fn from_env() -> Self {
+    /// 2026-10-17: The switches from the resolved levers ([`crate::levers::hw_switch`] grammar),
+    /// without ceilings.
+    #[must_use]
+    pub fn from_levers(levers: &crate::levers::BenchLevers) -> Self {
         Self {
-            kill_switch: flag(KILL_SWITCH_ENV),
-            absolute_temp_gate: flag(TEMP_GATE_ENV),
+            kill_switch: levers.hw_kill_switch,
+            absolute_temp_gate: levers.hw_temp_gate,
             ceilings: None,
         }
     }
-}
-
-/// 2026-09-26: `1`/`true`/`yes`, trimmed and case-insensitive. Anything else,
-/// including an empty value, is off.
-fn flag(name: &str) -> bool {
-    std::env::var(name)
-        .is_ok_and(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
 }
 
 /// 2026-09-26: Worst wins, so a Refuse cannot be argued down by a later Proceed.

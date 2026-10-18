@@ -8,8 +8,10 @@ ART="/home/claude/e2e_conglom_${SHA:0:8}_${TS}"
 echo "[conglom] box=$BOX sha=$SHA art=$ART"
 # 1. build folded-wins binary at SHA (correct target)
 git -C "$WT" fetch origin 2>/dev/null; git -C "$WT" checkout "$SHA" 2>/dev/null || { echo FETCH_FIRST; exit 1; }
+# 2026-10-17: select the server by manifest path, not package name: SHA may predate the
+# metrale-server -> met package rename, and the path is the same on both sides of it.
 ( cd "$WT" && PATH=/usr/local/cuda/bin:$PATH METRALE_TARGET_HW=gb10 METRALE_TARGET_MODEL=qwen3.6-27b \
-   cargo build --release -p metrale-server --bin met --features cuda ) || { echo BUILD_FAIL; exit 1; }
+   cargo build --release --manifest-path crates/server/Cargo.toml --bin met --features cuda,bench ) || { echo BUILD_FAIL; exit 1; }
 grep -m1 'compiled .* kernels for target' "$WT"/build*.log 2>/dev/null || true
 # 2. serve (frozen c2final, ARM=bare/K=3) — mount fresh binary
 sudo docker rm -f metrale-conglom >/dev/null 2>&1; sleep 3

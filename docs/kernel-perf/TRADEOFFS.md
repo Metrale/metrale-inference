@@ -73,7 +73,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/common/bf16_add.cu](../../kernels/gb10/common/bf16_add.cu)
 
-- *whole file*: Scalar BF16 loads and one element per thread (no 32-bit packing as in the norm kernels); the add rounds once via __hadd. Used by the 2-rank all-reduce and the GLM-5-Next MTP residual add. — source: kernels/gb10/common/bf16_add.cu:3
+- *whole file*: Scalar BF16 loads and one element per thread (no 32-bit packing as in the norm kernels); the add rounds once via __hadd. Used by the 2-rank all-reduce and the GLM-5-Next MTP residual add. bf16_add_rank_sum (world >= 3 one-shot all-reduce) sums all ranks in rank order in FP32, rounded once: same bytes on every rank. — source: kernels/gb10/common/bf16_add.cu:3
 
 <a id="to-kernels-gb10-common-causal-conv1d-cu"></a>
 
@@ -183,11 +183,11 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/common/dsa_indexer.cu](../../kernels/gb10/common/dsa_indexer.cu)
 
-- *whole file*: Replay-safe geometry: under CUDA-graph capture the selector kernels read S, pool counts, select_k and the top-k tile from a device geom vector, and the grid is fixed at the context ceiling with blocks past the live pool count returning at once (idle blocks traded for graph replay). — source: kernels/gb10/common/dsa_indexer.cu:53
+- *whole file*: Replay-safe geometry: under CUDA-graph capture the selector kernels read S, pool counts, select_k and the top-k tile from a device geom vector, and the grid is fixed at the context ceiling with blocks past the live pool count returning at once (idle blocks traded for graph replay). — source: kernels/gb10/common/dsa_indexer.cu:57
 - *dsa_expand_selection*: Clamps select_k per row so each row's tail slot matches a single-row pass: glm5next_dsa_mla_decode_fp8 merges NUM_WARPS = 8 slices of the row, and measured 2026-09-06 without the clamp, 14 of 18 configurations where a tail token crossed a slice boundary differed by up to 2 BF16 ulp. — source: kernels/gb10/common/dsa_indexer.cu:413
-- *dsa_kpool_compress*: Pool size KP must be &lt;= 8 (per-channel lg[8] slot array); config validation refuses a larger index_kpool. A trailing partial pool is never valid. — source: kernels/gb10/common/dsa_indexer.cu:44
+- *dsa_kpool_compress*: Pool size KP must be &lt;= 8 (per-channel lg[8] slot array); config validation refuses a larger index_kpool. A trailing partial pool is never valid. — source: kernels/gb10/common/dsa_indexer.cu:51
 - *dsa_mla_masked_attn*: Test-oracle dense path, not on the serve path: the score row is S floats of dynamic shared memory, so at 49,152 B S is capped at 12,288 keys. Scores are parallel over keys and the value sum over dims to avoid a barrier per key. — source: kernels/gb10/common/dsa_indexer.cu:509
-- *dsa_topk_pools*: Tiled bitonic select with a running best list in 16 \* NP2 bytes of shared memory whatever the context (NP2 &lt;= 2048 fits 49,152 B); the score-desc / index-asc total order makes the result independent of tiling. select_k must be &lt;= NP2. — source: kernels/gb10/common/dsa_indexer.cu:267; kernels/b300/common/dsa_indexer.cu:248
+- *dsa_topk_pools*: Tiled bitonic select with a running best list in 16 \* NP2 bytes of shared memory whatever the context (NP2 &lt;= 2048 fits 49,152 B); the score-desc / index-asc total order makes the result independent of tiling. select_k must be &lt;= NP2. — source: kernels/gb10/common/dsa_indexer.cu:267; kernels/b300/common/dsa_indexer.cu:270
 
 <a id="to-kernels-gb10-common-e2m1-branchless-cu"></a>
 
@@ -758,14 +758,14 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/common/paged_decode_attn.cu](../../kernels/gb10/common/paged_decode_attn.cu)
 
-- *whole file*: One 8-warp CTA per (q_head, seq): each CTA of a GQA group re-reads its KV head's whole K and V. Positions go BC = 4 at a time inside a physical block and the block tail singly. The split-K pair takes no sliding window; blockDim 256 and head_dim == HDIM are assumed, never checked. — source: kernels/gb10/common/paged_decode_attn.cu:7; crates/kernels/src/attn_splitk.rs:188
-- *paged_decode_attn_splitk*: The online-softmax split merge is not associative, so the split count must not follow the co-batched sequence count; under auto/pinned it depends only on (sm_count, num_q_heads). Outputs are not bit-identical across split counts. Head dims other than 256 get one split except under legacy. — source: crates/kernels/src/attn_splitk.rs:7; crates/model-layers/src/layers/qwen3_attention/decode/splitk_dispatch.rs:60
+- *whole file*: One 8-warp CTA per (q_head, seq): each CTA of a GQA group re-reads its KV head's whole K and V. Positions go BC = 4 at a time inside a physical block and the block tail singly. The split-K pair takes no sliding window; blockDim 256 and head_dim == HDIM are assumed, never checked. — source: kernels/gb10/common/paged_decode_attn.cu:7; crates/target-defaults/src/attn_splitk.rs:188
+- *paged_decode_attn_splitk*: The online-softmax split merge is not associative, so the split count must not follow the co-batched sequence count; under auto/pinned it depends only on (sm_count, num_q_heads). Outputs are not bit-identical across split counts. Head dims other than 256 get one split except under legacy. — source: crates/target-defaults/src/attn_splitk.rs:7; crates/model-layers/src/layers/qwen3_attention/decode/splitk_dispatch.rs:60
 
 <a id="to-kernels-gb10-common-paged-decode-attn-bf16-gqa-cu"></a>
 
 ### [kernels/gb10/common/paged_decode_attn_bf16_gqa.cu](../../kernels/gb10/common/paged_decode_attn_bf16_gqa.cu)
 
-- *whole file*: GQA-packed twin of paged_decode_attn: PD_GQA = 6 query heads per CTA so each K/V row is loaded once per group. Same per-head operation order, so with --fmad=false the output is bit-identical; only ratio 6 at head_dim 256 is admitted, the lever is off for every target, and it is used only on the non-split arm. — source: kernels/gb10/common/paged_decode_attn_bf16_gqa.cu:3; crates/kernels/src/attn_splitk.rs:196
+- *whole file*: GQA-packed twin of paged_decode_attn: PD_GQA = 6 query heads per CTA so each K/V row is loaded once per group. Same per-head operation order, so with --fmad=false the output is bit-identical; only ratio 6 at head_dim 256 is admitted, the lever is off for every target, and it is used only on the non-split arm. — source: kernels/gb10/common/paged_decode_attn_bf16_gqa.cu:3; crates/target-defaults/src/attn_splitk.rs:196
 
 <a id="to-kernels-gb10-common-paged-decode-attn-bf16k-turbo2v-cu"></a>
 
@@ -816,7 +816,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/common/paged_decode_attn_fp8_gqa.cu](../../kernels/gb10/common/paged_decode_attn_fp8_gqa.cu)
 
-- *whole file*: Packing cuts CTAs 6-fold (num_kv_heads \* num_seqs): with 4 KV heads on gb10's 48 SMs the grid covers the SMs only from num_seqs = 12. Not used under split-K, since packing would change the split count and the merge tree. — source: crates/kernels/src/attn_splitk.rs:188; crates/kernels/src/attn_splitk.rs:266
+- *whole file*: Packing cuts CTAs 6-fold (num_kv_heads \* num_seqs): with 4 KV heads on gb10's 48 SMs the grid covers the SMs only from num_seqs = 12. Not used under split-K, since packing would change the split count and the merge tree. — source: crates/target-defaults/src/attn_splitk.rs:188; crates/target-defaults/src/attn_splitk.rs:266
 - *whole file*: __launch_bounds__(256, 1) gives each thread the full register budget for q_reg/o_reg (PD_GQA \* VEC_BF16 floats each). Heads merge one at a time through one smem buffer because PD_GQA copies of smem_o (8 KB each) plus m/l exceed the 48 KB static limit. Byte-identical to paged_decode_attn_fp8 only under --fmad=false. — source: kernels/gb10/common/paged_decode_attn_fp8_gqa.cu:107; kernels/gb10/common/paged_decode_attn_fp8_gqa.cu:334
 
 <a id="to-kernels-gb10-common-paged-decode-attn-fp8k-turbo2v-cu"></a>

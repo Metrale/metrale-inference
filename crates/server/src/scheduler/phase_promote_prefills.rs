@@ -179,7 +179,7 @@ fn build_active_seq_from_prefill(
         },
         enable_thinking: p.enable_thinking,
         thinking_budget: if !immediate_finish && spontaneous_think {
-            Some(p.spontaneous_think_budget)
+            p.spontaneous_think_budget.or(p.thinking_budget)
         } else {
             p.thinking_budget
         },

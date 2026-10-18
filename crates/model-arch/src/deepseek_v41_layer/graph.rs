@@ -14,7 +14,7 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, GraphHandle};
 
 use std::sync::atomic::Ordering;
 
-use super::step::{diag_on, diag_rms_bf16};
+use super::step::diag_rms_bf16;
 use super::{Baked, DeepSeekV41Layer, LayerGraphs, V41LayerState};
 use crate::attn_v41::{AttnV41, AttnV41LayerState};
 use crate::moe_v41::MoeV41;
@@ -199,7 +199,7 @@ impl DeepSeekV41Layer {
         let streams = ctx.buffers.hc_streams();
         let normed = ctx.buffers.norm_output();
         let h = rt.hidden;
-        let diag = diag_on();
+        let diag = self.rt.levers.diag;
         let V41LayerState {
             attn: st_attn,
             graphs,
@@ -406,7 +406,7 @@ impl DeepSeekV41Layer {
     /// 2026-09-25: The per-step diagnostic line (`METRALE_DS41_DIAG=1`), from
     /// the last layer.
     pub(super) fn step_line(&self, m: usize, start_pos: usize, how: &str) {
-        if !diag_on() {
+        if !self.rt.levers.diag {
             return;
         }
         let rt = &self.rt;

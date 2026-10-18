@@ -20,6 +20,7 @@ fn config() -> KvCacheConfig {
         layer_dtypes: Vec::new(),
         layer_dims: Vec::new(),
         cache_blocks_per_seq: None,
+        v_block_bytes: None,
     }
 }
 

@@ -37,7 +37,9 @@ fn main() -> Result<()> {
         true,
         &config.model_type,
         None,
-        true,
+        metrale_server::tokenizer::TemplateSource::Checkpoint,
+        metrale_server::tokenizer::HeapTrimPolicy::off(),
+        metrale_server::tokenizer::ToolJsonStyle::Compact,
     )?;
     ensure!(
         chat.eos_token_id() == 163586,

@@ -30,6 +30,7 @@ pub(crate) struct Rig {
     dispatch: GemmDispatch,
     derived: DerivedWeights,
     levers: ModelLevers,
+    settings: metrale_settings::InferenceServerSettings,
     stats: ModelStats,
 }
 
@@ -58,6 +59,7 @@ impl Rig {
             dispatch: GemmDispatch::defaults(),
             derived: DerivedWeights::new(),
             levers: ModelLevers::defaults(),
+            settings: crate::lever_equivalence::defaults(),
             stats: ModelStats::new(),
         }
     }
@@ -95,6 +97,10 @@ impl Rig {
             KvCacheDtype::Bf16,
             0,
             &self.config,
+            crate::load_context::LoadContext {
+                settings: &crate::lever_equivalence::defaults(),
+                levers: &crate::layers::ops::ModelLevers::defaults(),
+            },
         )
         .unwrap();
         layer.rope_k = KernelHandle(ROPE_K);
@@ -111,6 +117,7 @@ impl Rig {
             dispatch: &self.dispatch,
             derived: &self.derived,
             levers: &self.levers,
+            settings: &self.settings,
             stats: &self.stats,
             attn_metadata: None,
             profile: false,

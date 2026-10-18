@@ -41,80 +41,38 @@ impl BlockDiffusionDraftHead {
         // clamped by `set_block_g` to the head's gamma. `propose_batch` sets
         // the same value before its prep loop.
         self.set_block_g(num_drafts);
+
+        if self.tp.is_some() {
+            // 2026-10-10: The tensor-parallel propose is one collective step on every rank
+            // (`tp_propose.rs`); it serves no batched prep.
+            anyhow::ensure!(
+                collect_prep.is_none(),
+                "DFlash TP: the batched propose is declined, not prepared"
+            );
+            return self.propose_tp_root(
+                last_token,
+                position,
+                num_drafts,
+                state,
+                ctx,
+                _stream,
+                target_hidden_stack,
+            );
+        }
+
         let dstate = state
             .as_any_mut()
             .downcast_mut::<DflashProposerState>()
             .ok_or_else(|| anyhow::anyhow!("Invalid DFlash proposer state"))?;
 
-        // 2026-09-25: `METRALE_DFLASH_CTX_PARITY_DUMP=1`, one-shot per
-        // `ctx.stats`: the whole ctx accumulator (`ctx_len` rows of
-        // `ctx_slot_bytes`) to `/tmp/metrale_ctx_parity.bin`, and its shape to
-        // `/tmp/metrale_ctx_parity.json`.
-        {
-            if self.levers.ctx_parity_dump
-                && dstate.ctx_len > 0
-                && ctx.stats.dumped.keyed("dflash_ctx_parity")
-            {
-                let n_bytes = dstate.ctx_len * dstate.ctx_slot_bytes;
-                let mut buf = vec![0u8; n_bytes];
-                ctx.gpu.synchronize(_stream)?;
-                ctx.gpu.copy_d2h(dstate.ctx_hidden_acc, &mut buf)?;
-                match std::fs::write("/tmp/metrale_ctx_parity.bin", &buf) {
-                    Ok(()) => {
-                        let elems_per_slot = dstate.ctx_slot_bytes / 2;
-                        let meta = format!(
-                            "{{\"ctx_len\":{},\"ctx_slot_bytes\":{},\"elems_per_slot\":{},\"position\":{},\"last_token\":{},\"n_bytes\":{}}}",
-                            dstate.ctx_len,
-                            dstate.ctx_slot_bytes,
-                            elems_per_slot,
-                            position,
-                            last_token,
-                            n_bytes,
-                        );
-                        let _ = std::fs::write("/tmp/metrale_ctx_parity.json", meta);
-                        tracing::info!(
-                            "DFLASH CTX_PARITY: wrote {} bytes — ctx_len={} slots × {} BF16 elems/slot (position={}, last_token={}) to /tmp/metrale_ctx_parity.bin",
-                            n_bytes,
-                            dstate.ctx_len,
-                            dstate.ctx_slot_bytes / 2,
-                            position,
-                            last_token,
-                        );
-                    }
-                    Err(e) => {
-                        tracing::warn!("DFLASH CTX_PARITY: write failed: {e}");
-                    }
-                }
-            }
-        }
-
-        let _ = (ctx, position, last_token);
-
-        // 2026-09-25: Append the latest captured target hiddens as one ctx row,
-        // unless `METRALE_DFLASH_DEBUG_NO_DECODE_APPEND=1`, there is no capture,
-        // the accumulator is full, or the model already appended this capture
-        // (`skip_next_decode_append`, consumed here).
-        let eagle_skip = dstate.skip_next_decode_append;
-        dstate.skip_next_decode_append = false;
-        let skip_decode_append = self.levers.no_decode_append;
-        if !skip_decode_append
-            && !eagle_skip
-            && let Some(latest_ctx) = target_hidden_stack
-            && dstate.ctx_len < dstate.max_ctx_len
-        {
-            let dst_offset = dstate.ctx_len * dstate.ctx_slot_bytes;
-            ctx.gpu.copy_d2d_async(
-                latest_ctx,
-                dstate.ctx_hidden_acc.offset(dst_offset),
-                dstate.ctx_slot_bytes,
-                _stream,
-            )?;
-            // 2026-09-25: The row's RoPE position, stamped once as
-            // `position - 1`.
-            debug_assert_eq!(dstate.ctx_positions.len(), dstate.ctx_len);
-            dstate.ctx_positions.push(position.saturating_sub(1) as i32);
-            dstate.ctx_len += 1;
-        }
+        self.append_decode_ctx(
+            dstate,
+            last_token,
+            position,
+            ctx,
+            _stream,
+            target_hidden_stack,
+        )?;
 
         // 2026-09-25: The paged drafter cache (`METRALE_DFLASH_OPTION_B`, on
         // unless `0`). A sequence's block table is allocated on its first
@@ -123,52 +81,7 @@ impl BlockDiffusionDraftHead {
         let option_b_enabled = self.levers.option_b;
         let option_b_arg: Option<(DevicePtr, u32)> = if option_b_enabled {
             const BLOCK_SIZE: usize = 16;
-            let blocks_needed = (dstate.max_ctx_len + self.gamma + 1).div_ceil(BLOCK_SIZE);
-            if dstate.block_table_dev.is_none() {
-                let mut cache = self.kv_cache.lock();
-                dstate.block_table.clear();
-                for _ in 0..blocks_needed {
-                    match cache.try_alloc_block() {
-                        Some(b) => dstate.block_table.push(b),
-                        None => {
-                            // 2026-09-25: Free the partial grab before failing:
-                            // the next attempt starts with `block_table.clear()`,
-                            // which would drop these ids without freeing them.
-                            // provenance-id: 526f6e616c6420522e205374657369616b
-                            let got = dstate.block_table.len();
-                            cache.free_blocks(&dstate.block_table);
-                            dstate.block_table.clear();
-                            anyhow::bail!(
-                                "DFlash Option B: paged KV cache exhausted at block {}/{}",
-                                got,
-                                blocks_needed
-                            );
-                        }
-                    }
-                }
-                drop(cache);
-                // 2026-09-25: The pool's free list is a stack (`try_alloc_block`
-                // pops, `free_blocks` pushes in table order), so a freed table
-                // comes back reversed. Sorting gives every sequence ascending
-                // blocks. Measured 2026-08-29: the two orders alternated between
-                // runs at 68.1 and 60.6 tok/s with byte-identical output.
-                // provenance-id: 526f6e616c6420522e205374657369616b
-                dstate.block_table.sort_unstable();
-                let bt_bytes: Vec<u8> = dstate
-                    .block_table
-                    .iter()
-                    .flat_map(|b| b.to_le_bytes())
-                    .collect();
-                let bt_dev = ctx.gpu.alloc(bt_bytes.len())?;
-                ctx.gpu.copy_h2d(&bt_bytes, bt_dev)?;
-                dstate.block_table_dev = Some(bt_dev);
-                dstate.max_ctx_count_drafter = blocks_needed * BLOCK_SIZE;
-                tracing::info!(
-                    "DFlash Option B: allocated {} blocks ({} slots) for drafter paged cache",
-                    blocks_needed,
-                    dstate.max_ctx_count_drafter
-                );
-            }
+            self.ensure_block_table(dstate, ctx)?;
             // 2026-09-25: Only the tail `[ctx_committed, ctx_len)` needs K/V:
             // each committed row was roped at its own stamped position, so it
             // stays valid as `position` moves.
@@ -182,7 +95,7 @@ impl BlockDiffusionDraftHead {
             // 2026-09-25: In a batched prep with batched precompute on,
             // `precompute_ctx_kv_batched` covers this tail after every
             // sequence's prep; `ctx_committed` stays put so that pass sees it.
-            let defer_to_batch = collect_prep.is_some() && super::batched_precompute_enabled();
+            let defer_to_batch = collect_prep.is_some() && self.levers.batched_precompute;
             if !defer_to_batch && dstate.ctx_len > 0 && new_count > 0 {
                 // 2026-09-25: The precompute scratch holds `ctx_window` rows
                 // and the tail can be longer, so it runs in chunks of at most
@@ -290,7 +203,159 @@ impl BlockDiffusionDraftHead {
                 tracing::warn!("DFlash forward_block failed, falling back to no-spec: {e:#}");
                 e
             })?;
-        let cap = self.levers.draft_cap.unwrap_or(self.block_g());
+        Ok(self.finish_drafts(drafts, last_token, position, num_drafts, dstate))
+    }
+}
+
+impl BlockDiffusionDraftHead {
+    /// 2026-10-10: Append the current target capture and run the optional one-shot
+    /// ctx parity diagnostic. Tensor-parallel callers include every fallible
+    /// operation here in the root preflight agreement before sending a header.
+    pub(super) fn append_decode_ctx(
+        &self,
+        dstate: &mut DflashProposerState,
+        last_token: u32,
+        position: usize,
+        ctx: &ForwardContext,
+        stream: u64,
+        target_hidden_stack: Option<DevicePtr>,
+    ) -> Result<()> {
+        let eagle_skip = dstate.skip_next_decode_append;
+        dstate.skip_next_decode_append = false;
+        if !self.levers.no_decode_append
+            && !eagle_skip
+            && let Some(latest_ctx) = target_hidden_stack
+            && dstate.ctx_len < dstate.max_ctx_len
+        {
+            let dst_offset = dstate.ctx_len * dstate.ctx_slot_bytes;
+            ctx.gpu.copy_d2d_async(
+                latest_ctx,
+                dstate.ctx_hidden_acc.offset(dst_offset),
+                dstate.ctx_slot_bytes,
+                stream,
+            )?;
+            debug_assert_eq!(dstate.ctx_positions.len(), dstate.ctx_len);
+            dstate.ctx_positions.push(position.saturating_sub(1) as i32);
+            dstate.ctx_len += 1;
+        }
+
+        // 2026-09-25: Captures the exact ctx rows this propose attends, after
+        // the decode append, for the offline DFlash parity diagnostic.
+        if self.levers.ctx_parity_dump
+            && dstate.ctx_len > 0
+            && position >= self.levers.block_dump_at_pos
+            && ctx.stats.dumped.keyed("dflash_ctx_parity")
+        {
+            let n_bytes = dstate.ctx_len * dstate.ctx_slot_bytes;
+            let mut buf = vec![0u8; n_bytes];
+            ctx.gpu.synchronize(stream)?;
+            ctx.gpu.copy_d2h(dstate.ctx_hidden_acc, &mut buf)?;
+            match std::fs::write("/tmp/metrale_ctx_parity.bin", &buf) {
+                Ok(()) => {
+                    let meta = format!(
+                        "{{\"ctx_len\":{},\"ctx_slot_bytes\":{},\"elems_per_slot\":{},\"position\":{},\"last_token\":{},\"n_bytes\":{},\"ctx_positions\":{:?}}}",
+                        dstate.ctx_len,
+                        dstate.ctx_slot_bytes,
+                        dstate.ctx_slot_bytes / 2,
+                        position,
+                        last_token,
+                        n_bytes,
+                        dstate.ctx_positions,
+                    );
+                    if let Err(e) = std::fs::write("/tmp/metrale_ctx_parity.json", meta) {
+                        tracing::warn!("DFLASH CTX_PARITY: meta write failed: {e}");
+                    }
+                    tracing::info!(
+                        "DFLASH CTX_PARITY: wrote {} bytes — ctx_len={} slots × {} BF16 elems/slot (position={}, last_token={}) to /tmp/metrale_ctx_parity.bin",
+                        n_bytes,
+                        dstate.ctx_len,
+                        dstate.ctx_slot_bytes / 2,
+                        position,
+                        last_token,
+                    );
+                }
+                Err(e) => tracing::warn!("DFLASH CTX_PARITY: write failed: {e}"),
+            }
+        }
+        Ok(())
+    }
+
+    /// 2026-10-10: Allocate the sequence's drafter block table on its first propose
+    /// (`max_ctx_len + gamma + 1` slots of the paged cache, sorted, uploaded), and return its
+    /// device copy. Moved out of `propose_drafts` unchanged; the tensor-parallel propose
+    /// (`tp_propose.rs`) calls it on every rank.
+    pub(super) fn ensure_block_table(
+        &self,
+        dstate: &mut DflashProposerState,
+        ctx: &ForwardContext,
+    ) -> Result<DevicePtr> {
+        const BLOCK_SIZE: usize = 16;
+        let blocks_needed = (dstate.max_ctx_len + self.gamma + 1).div_ceil(BLOCK_SIZE);
+        if dstate.block_table_dev.is_none() {
+            let mut cache = self.kv_cache.lock();
+            dstate.block_table.clear();
+            for _ in 0..blocks_needed {
+                match cache.try_alloc_block() {
+                    Some(b) => dstate.block_table.push(b),
+                    None => {
+                        // 2026-09-25: Free the partial grab before failing:
+                        // the next attempt starts with `block_table.clear()`,
+                        // which would drop these ids without freeing them.
+                        // provenance-id: 526f6e616c6420522e205374657369616b
+                        let got = dstate.block_table.len();
+                        cache.free_blocks(&dstate.block_table);
+                        dstate.block_table.clear();
+                        anyhow::bail!(
+                            "DFlash Option B: paged KV cache exhausted at block {}/{}",
+                            got,
+                            blocks_needed
+                        );
+                    }
+                }
+            }
+            drop(cache);
+            // 2026-09-25: The pool's free list is a stack (`try_alloc_block`
+            // pops, `free_blocks` pushes in table order), so a freed table
+            // comes back reversed. Sorting gives every sequence ascending
+            // blocks. Measured 2026-08-29: the two orders alternated between
+            // runs at 68.1 and 60.6 tok/s with byte-identical output.
+            // provenance-id: 526f6e616c6420522e205374657369616b
+            dstate.block_table.sort_unstable();
+            let bt_bytes: Vec<u8> = dstate
+                .block_table
+                .iter()
+                .flat_map(|b| b.to_le_bytes())
+                .collect();
+            let bt_dev = ctx.gpu.alloc(bt_bytes.len())?;
+            ctx.gpu.copy_h2d(&bt_bytes, bt_dev)?;
+            dstate.block_table_dev = Some(bt_dev);
+            dstate.max_ctx_count_drafter = blocks_needed * BLOCK_SIZE;
+            tracing::info!(
+                "DFlash Option B: allocated {} blocks ({} slots) for drafter paged cache",
+                blocks_needed,
+                dstate.max_ctx_count_drafter
+            );
+        }
+        dstate
+            .block_table_dev
+            .ok_or_else(|| anyhow::anyhow!("DFlash: no drafter block table after allocation"))
+    }
+}
+
+impl BlockDiffusionDraftHead {
+    /// 2026-10-10: A block forward's tokens as the drafts the caller gets: the trace line, row
+    /// 0 (the anchor) dropped when the drafter has a mask token, at most `drafts_to_return`
+    /// kept, `last_num_drafted` updated. Moved out of `propose_drafts` unchanged; the
+    /// tensor-parallel propose shares it.
+    pub(super) fn finish_drafts(
+        &self,
+        drafts: Vec<u32>,
+        last_token: u32,
+        position: usize,
+        num_drafts: usize,
+        dstate: &mut DflashProposerState,
+    ) -> Vec<u32> {
+        let cap = self.drafts_to_return(num_drafts);
 
         if self.levers.verify_trace {
             tracing::info!(
@@ -313,6 +378,6 @@ impl BlockDiffusionDraftHead {
 
         let drafts = drafts.into_iter().take(cap).collect::<Vec<_>>();
         dstate.last_num_drafted = drafts.len();
-        Ok(drafts)
+        drafts
     }
 }

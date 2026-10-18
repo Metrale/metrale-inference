@@ -51,7 +51,14 @@ impl MoeLayer {
         }
 
         let router_in = self.router_input(input, n, h, ctx, stream)?;
-        super::dump::dump_gate_input(ctx.gpu, stream, router_in, n, h)?;
+        super::dump::dump_gate_input(
+            ctx.levers.moe.dump_expert_ids,
+            ctx.gpu,
+            stream,
+            router_in,
+            n,
+            h,
+        )?;
 
         let gate_logits = ctx.buffers.gate_logits();
         if let Some(ref nvfp4) = self.gate_nvfp4 {
@@ -72,7 +79,14 @@ impl MoeLayer {
             self.router_gate_gemm_dense(router_in, gate_logits, n, num_experts, h, ctx, stream)?;
         }
 
-        super::dump::dump_gate_logits(ctx.gpu, stream, gate_logits, n, num_experts)?;
+        super::dump::dump_gate_logits(
+            ctx.levers.moe.dump_expert_ids,
+            ctx.gpu,
+            stream,
+            gate_logits,
+            n,
+            num_experts,
+        )?;
 
         // 2026-09-25: Fold the router LoRA delta onto the logits before top-k; a
         // no-op without an installed router delta.
@@ -111,7 +125,15 @@ impl MoeLayer {
             )?;
         }
 
-        super::dump::dump_expert_ids(ctx.gpu, stream, indices_dev, weights_dev, n, top_k)?;
+        super::dump::dump_expert_ids(
+            ctx.levers.moe.dump_expert_ids,
+            ctx.gpu,
+            stream,
+            indices_dev,
+            weights_dev,
+            n,
+            top_k,
+        )?;
 
         let te = total_expanded as usize;
         let sorted_token_ids = gate_logits;
@@ -258,7 +280,14 @@ impl MoeLayer {
             )?;
         }
 
-        super::dump::dump_moe_out(ctx.gpu, stream, output, n, h)?;
+        super::dump::dump_moe_out(
+            ctx.levers.moe.dump_expert_ids,
+            ctx.gpu,
+            stream,
+            output,
+            n,
+            h,
+        )?;
 
         Ok(())
     }

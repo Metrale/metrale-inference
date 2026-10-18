@@ -152,7 +152,15 @@ impl MoeLayer {
             // 2026-09-25: Dump the last token's routing (no-op unless
             // `METRALE_DUMP_EXPERT_IDS=1`).
             if t == num_tokens - 1 {
-                super::dump::dump_expert_ids(ctx.gpu, stream, indices_dev, weights_dev, 1, top_k)?;
+                super::dump::dump_expert_ids(
+                    ctx.levers.moe.dump_expert_ids,
+                    ctx.gpu,
+                    stream,
+                    indices_dev,
+                    weights_dev,
+                    1,
+                    top_k,
+                )?;
             }
 
             let shared_out = ctx.buffers.attn_output();

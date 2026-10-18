@@ -12,24 +12,14 @@ use super::super::*;
 
 /// 2026-09-25: Smallest batch whose NVFP4 mixer projections run as a tile GEMM
 /// on the transposed twins (`qkvz_nvfp4_t`, `out_proj_nvfp4_t`) instead of the
-/// batched GEMV. `METRALE_SSM_TC_PROJ`: unset or `1` gives 9, `0` disables,
-/// a number >= 2 sets the threshold, and any other value disables. Read once
-/// per process.
+/// batched GEMV when `METRALE_SSM_TC_PROJ` is unset or `1`. 2026-10-17: Resolved
+/// once into `SsmLevers::tc_proj_min_n`: `0` disables, a number >= 2 sets the
+/// threshold, and any other value disables.
 ///
 /// Measured 2026-07-27 on GB10, Qwen3.6-27B NVFP4, decode tok/s, 2 reps per
 /// cell: GEMV gave C=8 57.8, C=16 79.6; threshold 9 gave 57.6, 86.9;
 /// threshold 5 gave 54.9, 86.4.
-pub(super) fn ssm_tc_proj_min_n() -> Option<usize> {
-    static N: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();
-    *N.get_or_init(
-        || match std::env::var("METRALE_SSM_TC_PROJ").ok().as_deref() {
-            None => Some(9),
-            Some("0") => None,
-            Some("1") => Some(9),
-            Some(v) => v.parse::<usize>().ok().filter(|&x| x >= 2),
-        },
-    )
-}
+pub(in crate::layers::qwen3_ssm) const SSM_TC_PROJ_MIN_N: usize = 9;
 
 impl Qwen3SsmLayer {
     /// 2026-09-25: Batched-projection GDN mixer for `n` concurrent decode rows.
@@ -59,10 +49,10 @@ impl Qwen3SsmLayer {
         let use_f32_gdn = self.gdn_f32_k.0 != 0 && self.gated_rms_norm_f32_k.0 != 0;
         // 2026-09-25: The NVFP4 batched GEMV serves at most 16 rows; the tile
         // GEMM on the transposed twins lifts that cap when both twins exist
-        // and `ssm_tc_proj_min_n` admits `n`.
+        // and `SsmLevers::tc_proj_min_n` admits `n`.
         let tc_wide_ok = self.qkvz_nvfp4_t.is_some()
             && self.out_proj_nvfp4_t.is_some()
-            && ssm_tc_proj_min_n().is_some_and(|min| n >= min);
+            && ctx.levers.ssm.tc_proj_min_n.is_some_and(|min| n >= min);
         // 2026-09-25: Without NVFP4 QKVZ, an FP8 build (`qkvz_fp8w`) needs
         // `w8a16_gemm_k`, the last arm `ms_batched_qkvz` can fall to. A BF16
         // build passes on `dense_gemm_k`, which `init.rs` always loads; its
@@ -142,8 +132,7 @@ impl Qwen3SsmLayer {
         // `deinterleaved`, and the FP32 conv writes `ssm_conv_out_f32`.
         let normed_out_base = ctx.buffers.ssm_qkvz();
         let ssm_out_base = ctx.buffers.moe_output();
-        let detail_profile =
-            crate::layers::ops::ModelLevers::get().ssm_detail_profile && !ctx.graph_capture;
+        let detail_profile = ctx.levers.ssm_detail_profile && !ctx.graph_capture;
         let mut detail_parts: Vec<(&'static str, u128)> = Vec::new();
         let mut detail_t0 = if detail_profile {
             ctx.gpu.synchronize(stream).ok();
@@ -184,7 +173,7 @@ impl Qwen3SsmLayer {
         detail_step!("input_norm");
 
         // 2026-09-25: `ssm_batched_proj.rs` picks the GEMM for this row count.
-        let tier = self.batched_proj_tier(n);
+        let tier = self.batched_proj_tier(n, ctx.levers.ssm_gemv_batch4);
         self.ms_batched_qkvz(
             ctx,
             &tier,

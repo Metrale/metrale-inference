@@ -9,7 +9,7 @@ commands, and the invariants that matter.
 Metrale Engine is an MIT OR Apache-2.0 inference stack targeting NVIDIA GB10 / DGX Spark. The
 moving parts:
 
-- **`crates/server/`** (`metrale-server`, the `met` binary) — OpenAI- and
+- **`crates/server/`** (package `met`, the `met` binary) — OpenAI- and
   Anthropic-compatible HTTP server, request scheduling, tool-call parsing,
   streaming, TUI, CLI.
 - **`crates/model-engine/`** — the `Model` trait, the transformer model and
@@ -172,7 +172,7 @@ target. Runtime selects the correct target from the model's
 - One logical change per commit. Don't bundle an unrelated cleanup with a
   bug fix.
 - Message format: `<area>: <imperative summary>` — e.g.
-  `metrale-server: preserve template-forced thinking through EP=2`.
+  `server: preserve template-forced thinking through EP=2`.
 - If the change affects runtime behaviour, rebuild the Docker image from
   scratch and run the relevant slice of the validation suite
   (`tests/single_gpu_suite.py` for most cases) before opening the PR.
@@ -215,8 +215,28 @@ To ensure high code quality, all agents contributing to Metrale Engine must stri
 
 ### The "Big Three" Invariants (Always Apply)
 - **SSOT (Single Source of Truth):** Every data item has exactly one authoritative source. Derive, don't duplicate.
-- **PCND (Production Code, No Defaults):** No implicit defaults in production code. Require explicit config or fail fast.
-- **SBIO (Strict Boundary for I/O):** Business logic never performs I/O directly. Route through an IORouter abstraction.
+- **PCND (Production Code, No Defaults):** No implicit defaults in production code. Require explicit config or fail fast. When a host capability is unavailable, switch to a mode declared in settings and reported, never a guessed fallback.
+- **SBIO (Strict Boundary for I/O):** Business logic never performs I/O directly. Route through an IORouter abstraction. Only host crates implement I/O ports, only the binary picks a host, and time comes only from the Clock port.
+
+### Decoupling Principles (Always Apply)
+SBIO is one kind of decoupling; these name the others. The full rule, violation response and enforcement gate for each one are in `docs/principles/decoupling.md`.
+- **ROTI (Resolve Once, Then Immutable):** Each decision input is resolved once, at a named phase, into a typed immutable value its consumer owns. No static written after startup; no second resolver.
+- **VBOP (Vendor Behind One Port):** CUDA, cuBLAS, NCCL, NVML, Metal and HIP appear only in `device` crates, behind a backend trait that names no vendor concept.
+- **FACE (Families Are Capabilities to the Engine):** Outside its own module a model family is never named; code asks a capability answered by a registered descriptor.
+- **PLEX (PLan, then EXecute):** Every kernel, tile, precision, K or eviction choice is a typed plan field built before execution. Executors match on it and never read a lever, string or shape threshold.
+- **TIDE (Typed Ids, Domain Edges):** Wire and persisted records stop at the adapter; engine ids are newtypes or enums, never strings or bare integers.
+- **ACNB (Async Core, Never Blocks):** The core is `async` wherever an operation can take time (receiving bytes, blob reads, HTTP, timers) and never blocks: no sleep, blocking lock, busy-wait or `block_on`. It names no runtime; the host supplies the executor.
+- **FILL (Fill Idle Latency with Live work):** Every wait (device completion, readback, collective, I/O) is split into issue and complete with other ready work in between. Wait only when nothing is ready, and measure and report that idle time.
+- **CLER (CLosed ERrors at crate edges):** Every crate edge returns the registry error (CERF). `anyhow` only in bin/tool/host crates; never branch on error text.
+- **CERF (Coded Errors, Registered Forms):** One `#[repr(u16)]` `ErrorCode` registry with append-only codes and one `{}` form template per variant. Errors are built with `error!(ErrorCode::X, args…)` and rendered lazily; the text is flexible, the code is the identity.
+- **OWAY (One-WAY observability):** Telemetry and benchmarking flow out of the core, never back in. Serve code never depends on bench code; verbosity never changes device behaviour; libraries never print.
+- **NSCC (No-Std Core Compiles):** Core crates are `no_std` + `alloc` with `forbid(unsafe_code)` and build for `wasm32v1-none` and `wasm32-unknown-unknown`.
+- **NDIC (No Dyn Inside the Core):** No trait objects in the core; ports and the device are generic parameters chosen once in the binary.
+- **BU64 (Bytes are U64):** Sizes, offsets and counts in wire or stored data are `u64`/`u32`; `usize` only for in-process indexing, converted with `try_from`.
+- **BPPT (Bounded Port calls Per Tick):** The hot loop calls ports O(1) per tick and zero per token.
+- **HPAR (Host PARity):** The same request, seed and virtual clock through any two hosts gives a byte-identical event stream.
+
+A principle without a gate is a wish: introduce each one together with its mechanical check and a shrinking allowlist.
 
 ### Triggered Principles
 - **SDD (Split Driven Design):** Use when multiple implementations are needed, breaking apart large files, or eliminating duplication.

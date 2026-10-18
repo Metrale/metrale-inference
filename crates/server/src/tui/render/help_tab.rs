@@ -19,7 +19,7 @@ use ratatui::widgets::Paragraph;
 use super::{panel, wrap};
 use crate::tui::app::App;
 use crate::tui::help_state::{ComposerField, HelpSub, ReportPhase};
-use crate::tui::{report, theme};
+use crate::tui::theme;
 
 pub(super) fn draw(f: &mut Frame, app: &App, area: Rect) {
     match app.help.sub {
@@ -28,13 +28,16 @@ pub(super) fn draw(f: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn draw_guide(f: &mut Frame, _app: &App, area: Rect) {
+fn draw_guide(f: &mut Frame, app: &App, area: Rect) {
     let block = panel("HELP ─ GUIDE".into(), false);
     let inner = block.inner(area);
     f.render_widget(block, area);
     let w = inner.width.saturating_sub(2) as usize;
-    let repo = report::target()
-        .map(|t| t.repo)
+    let repo = app
+        .help
+        .target
+        .as_ref()
+        .map(|t| t.repo.clone())
         .unwrap_or_else(|_| "(not configured)".into());
     let key = |k: &str, d: &str| {
         Line::from(vec![
@@ -93,8 +96,8 @@ fn draw_guide(f: &mut Frame, _app: &App, area: Rect) {
 fn draw_report(f: &mut Frame, app: &App, area: Rect) {
     // 2026-09-26: An empty client id or repo (`report::target_from`) renders
     // the refusal instead of a form whose submit cannot work.
-    let repo = match report::target() {
-        Ok(t) => t.repo,
+    let repo = match &app.help.target {
+        Ok(t) => t.repo.clone(),
         Err(m) => {
             let block = panel("REPORT ISSUE".into(), false);
             let inner = block.inner(area);

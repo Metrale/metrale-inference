@@ -8,6 +8,13 @@
 
 use super::*;
 use crate::http;
+use crate::levers::BenchLevers;
+use metrale_io_host_mem::MapEnv;
+
+/// 2026-10-17: The harness levers of an environment holding only `pairs`.
+fn levers(pairs: &[(&str, &str)]) -> BenchLevers {
+    BenchLevers::resolve(&MapEnv::new(pairs.iter().copied())).expect("the levers resolve")
+}
 
 /// 2026-09-26: A fresh directory under the temp dir, named by this process's id
 /// and `name`, so tests do not share one.
@@ -110,7 +117,7 @@ fn assistant_message_substitutes_empty_arguments_with_an_object() {
         }],
         ..Default::default()
     };
-    let m = assistant_message(&outcome, 0);
+    let m = assistant_message(&outcome, 0, false);
     assert_eq!(m["tool_calls"][0]["function"]["arguments"], "{}");
     assert_eq!(m["tool_calls"][0]["id"], "call_0_0");
     assert!(m["content"].is_null());
@@ -134,7 +141,7 @@ fn tool_call_ids_are_positional_and_never_the_servers() {
         ],
         ..Default::default()
     };
-    let m = assistant_message(&outcome, 3);
+    let m = assistant_message(&outcome, 3, false);
     assert_eq!(m["tool_calls"][0]["id"], "call_3_0");
     assert_eq!(m["tool_calls"][1]["id"], "call_3_1");
     // 2026-09-26: The assistant message's id is `call_id`, which the tool reply
@@ -170,7 +177,13 @@ fn the_system_prompt_is_the_harness_agent_prompt_plus_the_environment() {
 fn the_gate_request_pins_sampling_messages_and_tools() {
     const { assert!(TEMPERATURE == 0.0) };
     let messages = [json!({"role": "user", "content": "hi"})];
-    let body = request_body("Qwen/Qwen3.6-35B-A3B-FP8", &messages, &tool_schema(), 8192);
+    let body = request_body(
+        "Qwen/Qwen3.6-35B-A3B-FP8",
+        &messages,
+        &tool_schema(),
+        8192,
+        &levers(&[]),
+    );
     assert_eq!(body["temperature"], 0.0);
     assert_eq!(body["seed"], SEED);
     assert_eq!(body["model"], "Qwen/Qwen3.6-35B-A3B-FP8");
@@ -179,6 +192,44 @@ fn the_gate_request_pins_sampling_messages_and_tools() {
     assert_eq!(body["messages"], json!(messages));
     assert_eq!(body["tool_choice"], "auto");
     assert_eq!(body["tools"], tool_schema());
+}
+
+#[test]
+fn the_model_card_word_drops_the_greedy_pins_and_preserve_thinking_asks_for_reasoning() {
+    let messages = [json!({"role": "user", "content": "hi"})];
+    let l = levers(&[
+        ("METRALE_AGENTIC_SAMPLING", "model-card"),
+        ("METRALE_AGENTIC_PRESERVE_THINKING", "on"),
+    ]);
+    let body = request_body("m", &messages, &tool_schema(), 16, &l);
+    assert!(
+        body.get("temperature").is_none() && body.get("seed").is_none(),
+        "{body}"
+    );
+    assert_eq!(
+        body["chat_template_kwargs"],
+        json!({"preserve_thinking": true})
+    );
+    let pinned = request_body("m", &messages, &tool_schema(), 16, &levers(&[]));
+    assert!(pinned.get("chat_template_kwargs").is_none(), "{pinned}");
+}
+
+#[test]
+fn reasoning_is_echoed_only_when_preserve_thinking_is_on() {
+    let outcome = http::ChatOutcome {
+        reasoning: "plan".into(),
+        text: "done".into(),
+        ..Default::default()
+    };
+    assert_eq!(
+        assistant_message(&outcome, 0, true)["reasoning_content"],
+        "plan"
+    );
+    assert!(
+        assistant_message(&outcome, 0, false)
+            .get("reasoning_content")
+            .is_none()
+    );
 }
 
 #[test]

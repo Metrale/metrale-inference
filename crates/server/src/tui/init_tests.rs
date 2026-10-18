@@ -72,40 +72,41 @@ fn with_no_tee_installed_there_is_nothing_to_name_and_no_fd_to_redirect() {
 }
 
 #[test]
-fn the_tee_path_follows_its_environment_override_when_one_is_set() {
-    match std::env::var("METRALE_TUI_LOG_FILE") {
-        Ok(explicit) => assert_eq!(tee_path(), std::path::PathBuf::from(explicit)),
-        Err(_) => {
-            let p = tee_path();
-            let name = p.file_name().expect("a file name").to_string_lossy();
-            assert!(name.starts_with("met-serve-"), "{name}");
-            assert!(
-                name.contains(&std::process::id().to_string()),
-                "named by pid so concurrent runs do not collide: {name}"
-            );
-            assert!(name.ends_with(".log"), "{name}");
-            assert!(
-                p.parent()
-                    .expect("a parent")
-                    .ends_with(".cache/metrale/logs"),
-                "{}",
-                p.display()
-            );
-        }
-    }
+fn an_explicit_tee_path_is_used_as_given() {
+    assert_eq!(
+        tee_path(Some("/var/log/met/serve.log")),
+        std::path::PathBuf::from("/var/log/met/serve.log")
+    );
+}
+
+#[test]
+fn without_an_explicit_path_the_tee_is_named_by_pid_under_the_cache() {
+    let p = tee_path(None);
+    let name = p.file_name().expect("a file name").to_string_lossy();
+    assert!(name.starts_with("met-serve-"), "{name}");
+    assert!(
+        name.contains(&std::process::id().to_string()),
+        "named by pid so concurrent runs do not collide: {name}"
+    );
+    assert!(name.ends_with(".log"), "{name}");
+    assert!(
+        p.parent()
+            .expect("a parent")
+            .ends_with(".cache/metrale/logs"),
+        "{}",
+        p.display()
+    );
 }
 
 #[test]
 fn two_tee_paths_taken_in_the_same_second_are_the_same_file() {
-    if std::env::var("METRALE_TUI_LOG_FILE").is_err() {
-        let a = tee_path();
-        let b = tee_path();
-        assert_eq!(
-            a.parent(),
-            b.parent(),
-            "the directory is fixed even if the second ticks over"
-        );
-    }
+    let a = tee_path(None);
+    let b = tee_path(None);
+    assert_eq!(
+        a.parent(),
+        b.parent(),
+        "the directory is fixed even if the second ticks over"
+    );
 }
 
 #[test]

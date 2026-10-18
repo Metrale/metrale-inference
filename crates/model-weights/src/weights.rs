@@ -38,6 +38,12 @@ pub enum WeightDtype {
     FP8E4M3,
     FP8E8M0,
     UInt8,
+    /// 2026-10-17: Raw little-endian u16 elements (csf scale-plane
+    /// exception records and block offsets). Never a compute dtype.
+    UInt16,
+    /// 2026-10-17: Raw little-endian u32 elements (csf scale-plane page
+    /// bases). Never a compute dtype.
+    UInt32,
     Int64,
     /// Keep-packed PrismML ternary Q2_0 (ggml id 42): raw on-disk blocks stay
     /// 2-bit in VRAM (fp16 scale + 2-bit codes per group of `group` elements),
@@ -71,6 +77,8 @@ impl WeightDtype {
             Self::FP8E4M3 => 1,
             Self::FP8E8M0 => 1,
             Self::UInt8 => 1,
+            Self::UInt16 => 2,
+            Self::UInt32 => 4,
             Self::Int64 => 8,
             Self::PackedQ2_0 { .. } => 0,
             Self::Q2K => 0,
@@ -89,6 +97,8 @@ impl WeightDtype {
             safetensors::Dtype::I8 => Ok(Self::UInt8),
             safetensors::Dtype::F8_E4M3 => Ok(Self::FP8E4M3),
             safetensors::Dtype::F8_E8M0 => Ok(Self::FP8E8M0),
+            safetensors::Dtype::U16 => Ok(Self::UInt16),
+            safetensors::Dtype::U32 => Ok(Self::UInt32),
             safetensors::Dtype::I64 => Ok(Self::Int64),
             other => bail!("Unsupported safetensors dtype: {other:?}"),
         }
@@ -109,6 +119,8 @@ impl WeightDtype {
             "I8" => Self::UInt8,
             "F8_E4M3" => Self::FP8E4M3,
             "F8_E8M0" => Self::FP8E8M0,
+            "U16" => Self::UInt16,
+            "U32" => Self::UInt32,
             "I64" => Self::Int64,
             other => bail!("Unsupported safetensors dtype '{other}'"),
         })
@@ -196,10 +208,13 @@ pub struct WeightStore {
     /// quantize-on-load or straight off NVMe by `NgramRowCache`, both of
     /// which need only this (path, offset) locator.
     deferred: HashMap<String, DeferredTensor>,
+    /// 2026-10-17: The levers the loader that built this store resolved, for the model code that
+    /// streams from the same files after it (`None` from a loader that takes none).
+    weights_settings: Option<metrale_settings::groups::device_weights::WeightsSettings>,
 }
 
 mod deferred;
-pub use deferred::{DeferHook, DeferredTensor};
+pub use deferred::{DeferCharge, DeferHook, DeferredTensor};
 mod kv_scale_keys;
 pub use kv_scale_keys::{
     KvScaleCensus, KvScaleKeys, KvScaleSpelling, kv_scale_census, resolve_kv_scale_keys,
@@ -253,6 +268,9 @@ pub struct SafetensorsLoader {
     /// loader must record their location instead of uploading them. See
     /// [`DeferHook`] for the contract and why a loader asks for it.
     pub defer: Option<DeferHook>,
+    /// 2026-10-17: The device bytes the model's loader allocates for each tensor it defers, for
+    /// the pre-flight ([`DeferCharge`]). `None`: deferred tensors cost it nothing.
+    pub defer_charge: Option<DeferCharge>,
 }
 
 impl Default for SafetensorsLoader {
@@ -272,6 +290,7 @@ impl SafetensorsLoader {
             skip_activation_scales: false,
             skip_mtp: false,
             defer: None,
+            defer_charge: None,
         }
     }
 
@@ -285,6 +304,7 @@ impl SafetensorsLoader {
             skip_activation_scales: false,
             skip_mtp: false,
             defer: None,
+            defer_charge: None,
         }
     }
 
@@ -296,6 +316,14 @@ impl SafetensorsLoader {
     /// location in the store and invite a binder to read it.
     pub fn is_deferred(&self, name: &str, dtype: WeightDtype) -> bool {
         self.defer.as_ref().is_some_and(|f| f(name, dtype))
+    }
+
+    /// 2026-10-17: The pre-flight bytes of a tensor the model's loader deferred; 0 when no
+    /// [`DeferCharge`] is set.
+    pub fn deferred_charge(&self, name: &str, dtype: WeightDtype, shape: &[usize]) -> usize {
+        self.defer_charge
+            .as_ref()
+            .map_or(0, |f| f(name, dtype, shape))
     }
 
     /// Check if a tensor should be skipped under EP.

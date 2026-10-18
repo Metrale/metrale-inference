@@ -106,8 +106,10 @@ pub(in crate::scheduler) struct ActiveSeq {
     /// to the server's settings (`WatchdogParams::content_loop_params`).
     pub repetition_detection: Option<RepetitionDetectionParams>,
     /// 2026-09-25: Per-server spontaneous-thinking budget: `--max-thinking-budget`, else
-    /// MODEL.toml `[behavior].max_thinking_budget`.
-    pub spontaneous_think_budget: u32,
+    /// MODEL.toml `[behavior].max_thinking_budget`. 2026-10-14: `None` when the model's
+    /// `[behavior].thinking_steering` is false: a `<think>` the model opens keeps the
+    /// request's budget, as in vLLM.
+    pub spontaneous_think_budget: Option<u32>,
     /// 2026-09-25: Thinking tokens generated so far, not counting the closing `</think>`.
     pub thinking_tokens: u32,
     /// 2026-09-25: Armed when the thinking budget runs out, the thinking-loop watchdog
@@ -159,8 +161,8 @@ pub(in crate::scheduler) struct ActiveSeq {
     /// the sequence only when there is no grammar and the request declared no
     /// tools.
     pub tool_call_end_token: Option<u32>,
-    /// 2026-09-25: While true, EOS is suppressed; a `<tool_call>` outside thinking clears
-    /// it.
+    /// 2026-09-25: While true, EOS outside thinking is held back (`eos_hold`); a
+    /// `<tool_call>` outside thinking clears it.
     pub require_tool_call: bool,
     /// 2026-09-25: Sticky "this is a tool request" flag, set at birth when a grammar is
     /// attached or `use_legacy_tool_call` holds. Unlike

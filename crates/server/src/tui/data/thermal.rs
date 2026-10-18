@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-09-26: Thermal and throttle sampling for the Stats section. A detached
-//! thread runs `metrale_bench::hardware::collect::collect` (which spawns
+//! thread runs `metrale_host_probe::hardware::collect::collect` (which spawns
 //! `nvidia-smi -q -d PERFORMANCE` for the throttle counters) every
 //! `SAMPLE_EVERY`, differences the counters with a `ThrottleMonitor`, and
 //! stores the result in a mutex the render thread copies from.
@@ -14,7 +14,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use metrale_bench::hardware::throttle_monitor::{ThrottleMonitor, ThrottleWindow};
+use metrale_host_probe::hardware::throttle_monitor::{ThrottleMonitor, ThrottleWindow};
 
 /// 2026-09-26: How often the background thread re-reads the counters. A
 /// collection that takes longer delays the next one.
@@ -66,7 +66,7 @@ impl ThermalProbe {
                 let mut monitor = ThrottleMonitor::new();
                 loop {
                     let started = Instant::now();
-                    let state = metrale_bench::hardware::collect::collect();
+                    let state = metrale_host_probe::hardware::collect::collect();
                     let now_ms = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
                         .map(|d| d.as_millis() as u64)

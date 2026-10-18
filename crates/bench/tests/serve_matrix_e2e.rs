@@ -77,6 +77,7 @@ fn handle(port: u16, store: ArtifactStore) -> PluginHandle {
         store,
         tx,
         Arc::new(AtomicBool::new(false)),
+        unset_levers(),
     )
 }
 
@@ -231,4 +232,14 @@ async fn a_round_the_endpoint_serves_under_another_name_is_not_scored_as_that_mo
         5,
         "only the selected round reaches the endpoint"
     );
+}
+
+/// 2026-10-17: The harness levers of an empty environment; these tests read no lever.
+fn unset_levers() -> std::sync::Arc<metrale_bench::levers::BenchLevers> {
+    std::sync::Arc::new(
+        metrale_bench::levers::BenchLevers::resolve(&metrale_io_host_mem::MapEnv::new(
+            std::iter::empty::<(&str, &str)>(),
+        ))
+        .expect("an empty environment resolves"),
+    )
 }

@@ -244,7 +244,8 @@ fn rdma_tier_matches_oracle_over_loopback() {
     }
     connected.expect("peer never accepted a connection");
 
-    let mut rdma = RdmaTier::connect(&addr, LAYERS, EXPERTS, false).expect("rdma connect");
+    let links = metrale_storage::legacy_env::storage_links();
+    let mut rdma = RdmaTier::connect(&addr, LAYERS, EXPERTS, false, &links).expect("rdma connect");
     let mut posix = PosixTier::open(&dir, LAYERS, EXPERTS).expect("posix tier");
     for layer in 0..LAYERS {
         for expert in 0..EXPERTS {

@@ -177,7 +177,6 @@ pub(super) fn generate_target_ptx_rs(
              \x20               tool_call_parser: \"{}\",\n\
              \x20               enable_loop_watchdog: {},\n\
              \x20               enable_think_loop_watchdog: {},\n\
-             \x20               honor_eos_inside_thinking: {},\n\
              \x20               cap_thinking_at_max_tokens: {},\n\
              \x20               min_p_floor: {:?},\n\
              \x20               min_reasoning_floor_tokens: {},\n\
@@ -192,6 +191,7 @@ pub(super) fn generate_target_ptx_rs(
              \x20               tscg: {},\n\
              \x20               disable_tool_grammar: {},\n\
              \x20               rollback_resteer: {},\n\
+             \x20               thinking_steering: {},\n\
              \x20               rom_head: \"{}\",\n\
              \x20               tool_retry: {},\n\
              \x20               preserve_thinking: {:?},\n\
@@ -221,7 +221,6 @@ pub(super) fn generate_target_ptx_rs(
             target.behavior_tool_call_parser,
             target.behavior_enable_loop_watchdog,
             target.behavior_enable_think_loop_watchdog,
-            target.behavior_honor_eos_inside_thinking,
             target.behavior_cap_thinking_at_max_tokens,
             target.behavior_min_p_floor,
             target.behavior_min_reasoning_floor_tokens,
@@ -236,6 +235,7 @@ pub(super) fn generate_target_ptx_rs(
             target.behavior_tscg,
             target.behavior_disable_tool_grammar,
             target.behavior_rollback_resteer,
+            target.behavior_thinking_steering,
             target.behavior_rom_head,
             target.behavior_tool_retry,
             target.behavior_preserve_thinking,

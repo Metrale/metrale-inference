@@ -24,6 +24,7 @@ fn pool(gpu: &MockGpuBackend, blocks: usize) -> PagedKvCache {
         layer_dtypes: vec![],
         layer_dims: vec![],
         cache_blocks_per_seq: None,
+        v_block_bytes: None,
     };
     PagedKvCache::new(config, blocks, gpu).unwrap()
 }

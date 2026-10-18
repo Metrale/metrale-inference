@@ -30,6 +30,7 @@ use std::path::Path;
 use crate::weights::{WeightLoader, WeightStore, parse_expert_index};
 use metrale_gpu_runtime::gpu::GpuBackend;
 
+use metrale_settings::groups::device_weights::{Rail, WeightsSettings};
 use metrale_storage::weight_peer::WeightTensorRecord;
 
 /// Loads a model's resident weights from a `weight_peer` over one-sided RDMA.
@@ -47,26 +48,22 @@ pub struct RdmaWeightLoader {
     pub stream_all_experts: bool,
     /// Pre-flight OOM multiplier override (advisory; parity with disk loaders).
     pub peak_memory_multiplier: Option<f64>,
+    /// 2026-10-17: Verbs rail 0 (`WeightsSettings::weight_rail0`).
+    pub rail0: Rail,
+    /// 2026-10-17: Verbs rail 1, present only for a dual-rail fabric
+    /// (`WeightsSettings::weight_rail1`).
+    pub rail1: Option<Rail>,
 }
 
 impl RdmaWeightLoader {
-    pub fn new(peer_addr: String) -> Self {
-        Self {
-            peer_addr,
-            model_id: None,
-            ep_rank: 0,
-            ep_world_size: 1,
-            num_experts: 0,
-            stream_all_experts: false,
-            peak_memory_multiplier: None,
-        }
-    }
-
-    pub fn with_ep(
+    /// 2026-10-17: A loader for the peer at `peer_addr` over the weight-tier rails of `w`, with
+    /// EP-aware expert filtering when `ep_world_size > 1` (`0, 1, 0` loads every tensor).
+    pub fn with_settings(
         peer_addr: String,
         ep_rank: usize,
         ep_world_size: usize,
         num_experts: usize,
+        w: &WeightsSettings,
     ) -> Self {
         Self {
             peer_addr,
@@ -76,6 +73,8 @@ impl RdmaWeightLoader {
             num_experts,
             stream_all_experts: false,
             peak_memory_multiplier: None,
+            rail0: w.weight_rail0.clone(),
+            rail1: w.weight_rail1.clone(),
         }
     }
 
@@ -158,7 +157,6 @@ impl RdmaWeightLoader {
         use anyhow::{Context, bail};
 
         use crate::weights::{WeightDtype, WeightTensor};
-        use metrale_gpu_sys::env::{first_nonempty, first_set_u32};
         use metrale_gpu_sys::railset::{RailSet, RailSpec};
         use metrale_gpu_sys::verbs::Verbs;
         use metrale_storage::expert_peer::MODE_VERBS;
@@ -226,33 +224,13 @@ impl RdmaWeightLoader {
             }
         }
 
-        // 4. Verbs handshake via RailSet. Rail 0 defaults to the shared expert
-        // CX7 link; dual-rail is opt-in (METRALE_WEIGHT_DUAL_RAIL=1). METRALE_WEIGHT_*
-        // overrides fall back to the METRALE_EXPERT_* names so a single fabric
-        // config serves both tiers (weight semantics: an exported-but-EMPTY
-        // override is SKIPPED — `first_nonempty`). Fresh random 24-bit PSN/rail.
-        let spec =
-            |dev: String, gid: u32| RailSpec::new(dev, gid, rand::random::<u32>() & 0xff_ffff);
-        let rail0 = spec(
-            first_nonempty(
-                &["METRALE_WEIGHT_RDMA_DEV", "METRALE_EXPERT_RDMA_DEV"],
-                "roceP2p1s0f1",
-            ),
-            first_set_u32(&["METRALE_WEIGHT_RDMA_GID", "METRALE_EXPERT_RDMA_GID"], 3),
-        );
-        let dual = std::env::var("METRALE_WEIGHT_DUAL_RAIL").ok().as_deref() == Some("1");
-        let specs: Vec<RailSpec> = if dual {
-            let rail1 = spec(
-                first_nonempty(
-                    &["METRALE_WEIGHT_RAIL2_DEV", "METRALE_EXPERT_RAIL2_DEV"],
-                    "rocep1s0f1",
-                ),
-                first_set_u32(&["METRALE_WEIGHT_RAIL2_GID", "METRALE_EXPERT_RAIL2_GID"], 3),
-            );
-            vec![rail0, rail1]
-        } else {
-            vec![rail0]
-        };
+        // 4. Verbs handshake via RailSet over the rails `WeightsSettings` resolved (rail 0
+        // defaults to the shared expert CX7 link; dual-rail is opt-in). Fresh random 24-bit
+        // PSN/rail.
+        let specs: Vec<RailSpec> = std::iter::once(&self.rail0)
+            .chain(self.rail1.as_ref())
+            .map(|r| RailSpec::new(r.dev.clone(), r.gid, rand::random::<u32>() & 0xff_ffff))
+            .collect();
         let n_rails = specs.len();
 
         stream.write_all(&[MODE_VERBS]).context("send verbs mode")?;

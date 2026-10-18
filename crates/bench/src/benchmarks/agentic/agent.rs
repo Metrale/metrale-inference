@@ -31,7 +31,7 @@ pub mod shell;
 pub mod tools;
 #[path = "trace.rs"]
 pub mod trace;
-use history::{assistant_message, call_id, compact, preserve_thinking};
+use history::{assistant_message, call_id, compact};
 pub use path_guard::resolve;
 pub(crate) use shell::run_shell;
 pub use shell::truncate;
@@ -194,7 +194,13 @@ async fn agent_loop(
         handle.check_cancelled()?;
         handle.status(format!("agent turn {}/{}", turn + 1, cfg.max_turns));
         compact(&mut messages);
-        let body = request_body(&target.model, &messages, &tools, cfg.max_tokens);
+        let body = request_body(
+            &target.model,
+            &messages,
+            &tools,
+            cfg.max_tokens,
+            handle.levers(),
+        );
         let outcome = crate::http::chat_stream(target, &body, cfg.request_timeout).await?;
         transcript.turns = turn + 1;
         transcript.final_text = outcome.text.clone();
@@ -229,7 +235,11 @@ async fn agent_loop(
             return Ok(());
         }
 
-        messages.push(assistant_message(&outcome, turn));
+        messages.push(assistant_message(
+            &outcome,
+            turn,
+            handle.levers().preserve_thinking,
+        ));
         for (i, call) in outcome.tool_calls.iter().enumerate() {
             handle.check_cancelled()?;
             transcript.tool_calls += 1;
@@ -257,7 +267,13 @@ fn was_cut_off(outcome: &crate::http::ChatOutcome) -> bool {
 
 /// 2026-09-26: One chat request. `the_gate_request_pins_sampling_messages_and_tools`
 /// (agent_tests.rs) asserts its fields.
-fn request_body(model: &str, messages: &[Value], tools: &Value, max_tokens: usize) -> Value {
+fn request_body(
+    model: &str,
+    messages: &[Value],
+    tools: &Value,
+    max_tokens: usize,
+    levers: &crate::levers::BenchLevers,
+) -> Value {
     let mut body = json!({
         "model": model, "stream": true,
         "max_tokens": max_tokens, "messages": messages,
@@ -265,13 +281,13 @@ fn request_body(model: &str, messages: &[Value], tools: &Value, max_tokens: usiz
     });
     // 2026-09-26: With METRALE_AGENTIC_SAMPLING=model-card the request carries no
     // temperature or seed, so the server's defaults apply.
-    if std::env::var("METRALE_AGENTIC_SAMPLING").as_deref() != Ok("model-card") {
+    if !levers.model_card_sampling {
         body["temperature"] = json!(TEMPERATURE);
         body["seed"] = json!(SEED);
     }
     // 2026-09-26: Only `preserve_thinking` is sent; other template kwargs such as
     // `reasoning_effort` are left to the server.
-    if preserve_thinking() {
+    if levers.preserve_thinking {
         body["chat_template_kwargs"] = json!({"preserve_thinking": true});
     }
     body

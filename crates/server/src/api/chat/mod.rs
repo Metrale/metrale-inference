@@ -12,6 +12,7 @@
 pub(crate) mod echo;
 pub(crate) mod levers;
 mod loop_detect;
+pub(crate) mod media_limits;
 mod msg_entry;
 pub(crate) mod prepare;
 pub(crate) mod remote_image;
@@ -116,8 +117,11 @@ pub async fn chat_completions(
             // 2026-09-26: The catalogue read and the load both block, so both
             // run on the blocking pool.
             let outcome = tokio::task::spawn_blocking(move || {
-                let catalogue = metrale_bench::ArtifactStore::discover()
-                    .ok()
+                // 2026-10-17: Located by the levers `main` resolved; none, or no store, is an
+                // empty catalogue, as an undiscoverable store was.
+                let catalogue = swap_host
+                    .bench_levers()
+                    .and_then(|l| metrale_host_probe::artifacts::ArtifactStore::discover(&l).ok())
                     .map(|s| crate::recipe::fetch::cached(s.root()).recipes)
                     .unwrap_or_default();
                 match crate::main_modules::auto_swap::decide(&requested, &live, &catalogue) {
@@ -180,9 +184,12 @@ pub async fn chat_completions(
         ChatOutcome::Blocking(ir) => {
             crate::openai::encode_chat_response(&state, *ir, &echo, dump_seq)
         }
-        ChatOutcome::Streaming(deltas) => {
-            crate::openai::encode_sse_response(deltas, state.model_name.clone(), echo.include_usage)
-        }
+        ChatOutcome::Streaming(deltas) => crate::openai::encode_sse_response(
+            deltas,
+            state.model_name.clone(),
+            echo.include_usage,
+            state.reasoning_wire(),
+        ),
         ChatOutcome::Http(r) => r,
     }
 }
@@ -295,7 +302,7 @@ pub(crate) async fn chat_completions_inner(
     let loop_detect::LoopDetectOut {
         suppress_tool_call,
         tool_call_repeat_count,
-    } = loop_detect::check_loops(&req.messages, tools_active);
+    } = loop_detect::check_loops(&req.messages, tools_active, state.chat.loop_suppress);
     let us_loop_detect = _t_seg.elapsed().as_micros() - us_prepare;
 
     let session_hash = crate::session_manager::compute_session_hash(&prompt_tokens);

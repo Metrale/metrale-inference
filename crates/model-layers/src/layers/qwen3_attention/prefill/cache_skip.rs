@@ -165,7 +165,7 @@ impl Qwen3AttentionLayer {
         }
 
         // 2026-09-25: Q/K/V projection for non-MLA layers.
-        let ht = std::env::var("METRALE_PREFILL_HOST_TIMING").as_deref() == Ok("1");
+        let ht = self.levers.prefill_host_timing;
         let tp0 = ht.then(std::time::Instant::now);
         if self.mla.is_none() {
             self.prefill_attention_cache_skip_qkv(
@@ -196,10 +196,7 @@ impl Qwen3AttentionLayer {
             && !self.attn.q_norm.weight.is_null()
             && self.mrope_interleaved
             && !self.rope_proportional
-            && std::env::var("METRALE_ATTN_PREFILL_FUSED_QROPE")
-                .ok()
-                .as_deref()
-                == Some("1")
+            && self.levers.prefill_fused_qrope
             && self.deinterleave_qg_split_qnorm_mrope_k.0 != 0
             && self.rope_mrope_interleaved_k_only_k.0 != 0;
         self.cache_skip_qk_norms(
@@ -279,7 +276,7 @@ impl Qwen3AttentionLayer {
                 nkv * hd,
                 nkv * hd,
                 stream,
-                ctx.graph_capture,
+                ctx,
             )?;
         }
         aprof!("kv_cache_write", t0);
@@ -396,7 +393,7 @@ impl Qwen3AttentionLayer {
         if num_tokens > 0 {
             let nq_hd = (nq * hd) as usize;
             super::super::op_dump::dump_bf16(
-                ctx.gpu,
+                ctx,
                 attn_out,
                 (num_tokens - 1) * nq_hd * bf16,
                 nq_hd,

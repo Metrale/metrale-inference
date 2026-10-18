@@ -24,6 +24,7 @@ use crate::expert::{ExpertKey, ExpertLayout, ExpertRecordSpec};
 use crate::expert_arena::ExpertArena;
 use crate::expert_peer::{MODE_TCP, STATUS_OK, encode_request, read_manifest};
 use crate::expert_tier::{ArenaSlot, ExpertResidency, ExpertTier, TierKind, residency_from};
+use crate::links::StorageLinks;
 
 /// 2026-09-25: The peer transport. `Verbs` exists only with
 /// `cfg(metrale_rdma_verbs)`; a verbs fetch uses rail `expert % n_rails`.
@@ -56,12 +57,14 @@ pub struct RdmaTier {
 
 impl RdmaTier {
     /// 2026-09-25: Connect to the peer at `addr`, read its manifest, allocate
-    /// the arena with the manifest's record stride, and bring up the transport.
+    /// the arena with the manifest's record stride, and bring up the transport. The verbs
+    /// transport uses `links.expert_rails()`.
     pub fn connect(
         addr: &str,
         num_slabs: u32,
         slots_per_slab: u32,
         use_verbs: bool,
+        links: &StorageLinks,
     ) -> Result<Self> {
         let mut stream =
             TcpStream::connect(addr).with_context(|| format!("connect expert peer {addr}"))?;
@@ -74,12 +77,12 @@ impl RdmaTier {
         let transport = if use_verbs {
             #[cfg(metrale_rdma_verbs)]
             {
-                connect_verbs(&mut stream, &arena, index.num_moe_layers)?
+                connect_verbs(&mut stream, &arena, index.num_moe_layers, links)?
             }
             // 2026-09-25: Without `cfg(metrale_rdma_verbs)` only TCP exists.
             #[cfg(not(metrale_rdma_verbs))]
             {
-                let _ = &arena;
+                let _ = (&arena, links);
                 bail!(
                     "--expert-backend rdma-verbs needs a build with rdma-core \
                      (metrale_rdma_verbs cfg); use --expert-backend rdma (TCP) instead"
@@ -148,8 +151,8 @@ impl RdmaTier {
     }
 }
 
-/// 2026-09-25: Bring up the verbs transport through `RailSet`: one rail, or two
-/// with `METRALE_EXPERT_DUAL_RAIL=1`; register the whole arena on each; check
+/// 2026-09-25: Bring up the verbs transport through `RailSet` over
+/// `links.expert_rails()`; register the whole arena on each; check
 /// the peer's per-rail layer tables against the manifest; connect the rails and
 /// wait for the peer's ack.
 #[cfg(metrale_rdma_verbs)]
@@ -157,9 +160,9 @@ fn connect_verbs(
     stream: &mut TcpStream,
     arena: &ExpertArena,
     num_layers: u32,
+    links: &StorageLinks,
 ) -> Result<Transport> {
     use crate::expert_peer::MODE_VERBS;
-    use metrale_gpu_sys::env::{first_set, first_set_u32};
     use metrale_gpu_sys::railset::{RailSet, RailSpec};
 
     stream
@@ -167,21 +170,11 @@ fn connect_verbs(
         .context("send verbs transport mode")?;
 
     // 2026-09-25: Each rail gets a random 24-bit PSN.
-    let spec = |dev: String, gid: u32| RailSpec::new(dev, gid, rand::random::<u32>() & 0xff_ffff);
-    let rail0 = spec(
-        first_set(&["METRALE_EXPERT_RDMA_DEV"], "roceP2p1s0f1"),
-        first_set_u32(&["METRALE_EXPERT_RDMA_GID"], 3),
-    );
-    let dual = std::env::var("METRALE_EXPERT_DUAL_RAIL").ok().as_deref() == Some("1");
-    let specs: Vec<RailSpec> = if dual {
-        let rail1 = spec(
-            first_set(&["METRALE_EXPERT_RAIL2_DEV"], "rocep1s0f1"),
-            first_set_u32(&["METRALE_EXPERT_RAIL2_GID"], 3),
-        );
-        vec![rail0, rail1]
-    } else {
-        vec![rail0]
-    };
+    let specs: Vec<RailSpec> = links
+        .expert_rails()
+        .into_iter()
+        .map(|r| RailSpec::new(r.dev, r.gid, rand::random::<u32>() & 0xff_ffff))
+        .collect();
 
     // 2026-09-25: Each rail registers the whole arena with `remote_read = false`.
     let mut rs = RailSet::begin(stream, &specs)?;

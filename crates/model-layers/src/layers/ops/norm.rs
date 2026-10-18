@@ -104,13 +104,9 @@ pub fn rms_norm_warp_row(
         .launch(stream)
 }
 
-/// 2026-09-25: Gate for [`rms_norm_warp_row`]: `hidden_size <= 256` and even,
-/// and `num_rows >= 1024`. `METRALE_RMS_NORM_WARP_ROW=0` turns it off; the
-/// variable is read once per process.
-pub fn rms_norm_short_row_eligible(num_rows: u32, hidden_size: u32) -> bool {
-    use std::sync::OnceLock;
-    static ON: OnceLock<bool> = OnceLock::new();
-    let on = *ON.get_or_init(|| std::env::var("METRALE_RMS_NORM_WARP_ROW").as_deref() != Ok("0"));
+/// 2026-09-25: Gate for [`rms_norm_warp_row`]: `on` (`OpsLevers::rms_norm_warp_row`,
+/// `METRALE_RMS_NORM_WARP_ROW`), `hidden_size <= 256` and even, and `num_rows >= 1024`.
+pub fn rms_norm_short_row_eligible(on: bool, num_rows: u32, hidden_size: u32) -> bool {
     on && hidden_size <= 256 && hidden_size.is_multiple_of(2) && num_rows >= 1024
 }
 

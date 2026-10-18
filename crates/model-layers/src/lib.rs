@@ -17,9 +17,14 @@
 #![allow(clippy::type_complexity)]
 
 pub mod circuit_exec;
+pub mod ep_wire;
 pub mod forward;
 pub mod layer;
 pub mod layers;
+/// 2026-10-17: Settings-migration test support (`MapEnv` resolve + old-reader equivalence).
+#[cfg(any(test, feature = "test-utils"))]
+pub mod lever_equivalence;
+pub mod load_context;
 pub mod lora;
 pub mod quant_format;
 pub mod speculative;
@@ -129,4 +134,5 @@ mod norm_convention_tests {
 }
 
 pub mod drafter_context;
+pub mod mtp_adopt;
 pub mod mtp_carry;

@@ -48,7 +48,7 @@ fn widths_never_exceed_the_cap() {
 /// set) the C >= 2 rung is the cap; the C = 1 rungs are unaffected.
 #[test]
 fn no_woa_pins_the_multi_rung_at_the_cap() {
-    let r = Rungs::from_env(10, false);
+    let r = Rungs::with_tuning(10, false, &DflashRungTuning::default());
     assert_eq!(r.multi, 10);
     assert_eq!(r.narrow, Rungs::defaults(10).narrow);
     assert_eq!(r.wide, 10);
@@ -262,4 +262,115 @@ fn pinned_returns_num_drafts_unchanged() {
     assert!(rung.armed());
     assert_eq!(rung.drafts_for(16, 9), 3);
     assert_eq!(rung.drafts_for(1, 9), 9);
+}
+
+/// 2026-10-09: An installed ladder decides the drafts even on an unarmed (pinned) rung, capped
+/// at `num_drafts`; clearing it gives the pinned count back.
+#[test]
+fn an_explicit_ladder_decides_and_is_capped_at_num_drafts() {
+    let r = DflashRung::new();
+    r.set_ladder(Some(
+        crate::dflash_ladder::DraftLadder::parse("1:7,2:5,3:4,4:3,5:2,6:7").unwrap(),
+    ));
+    assert_eq!(r.drafts_for(3, 7), 4);
+    assert_eq!(r.drafts_for(16, 7), 7);
+    assert_eq!(r.drafts_for(1, 5), 5, "capped at num_drafts");
+    r.set_ladder(None);
+    assert_eq!(r.drafts_for(3, 7), 7);
+}
+
+/// 2026-10-10: The adaptive draft count applies only when installed and the last dispatched
+/// step had one active sequence; a batch step neither reads nor records it.
+#[test]
+fn the_adaptive_count_applies_to_a_single_stream_only() {
+    use crate::dflash_adaptive_k::{AdaptiveK, CostModel, SeqAdaptiveK};
+    let r = DflashRung::new();
+    let mut seq = SeqAdaptiveK::default();
+    assert_eq!(r.drafts_for(1, 7), 7);
+    assert_eq!(r.adaptive_drafts(&seq, 7), None, "not installed");
+    r.set_adaptive_k(Some(AdaptiveK::new(
+        CostModel::parse("0:32,1:44,2:50,3:56").unwrap(),
+    )));
+    assert!(r.adaptive_k_on());
+    assert_eq!(
+        r.adaptive_drafts(&seq, 7),
+        Some(7),
+        "nothing measured: the cap"
+    );
+    r.adaptive_observe(&mut seq, 3, 0);
+    assert_eq!(seq.steps, 1);
+    assert_eq!(
+        r.adaptive_drafts(&seq, 7),
+        Some(0),
+        "one draft rejected: plain decode pays"
+    );
+    assert_eq!(r.drafts_for(2, 7), 7);
+    assert_eq!(
+        r.adaptive_drafts(&seq, 7),
+        None,
+        "a batch step keeps its width"
+    );
+    r.adaptive_observe(&mut seq, 3, 3);
+    assert_eq!(seq.steps, 1, "a batch step records nothing");
+    r.set_adaptive_k(None);
+    assert!(!r.adaptive_k_on());
+}
+
+/// 2026-10-17: Overrides replace the defaults, the widths clamped to `2..=cap`; the C >= 2
+/// override applies only with the write-on-accept kernel.
+#[test]
+fn overrides_replace_the_defaults_and_clamp_to_the_cap() {
+    let t = DflashRungTuning {
+        multi: Some(3),
+        narrow: Some(1),
+        wide: Some(99),
+        dwell: Some(8),
+        enter: Some(50),
+        leave: Some(40),
+    };
+    let r = Rungs::with_tuning(10, true, &t);
+    assert_eq!(
+        r,
+        Rungs {
+            multi: 3,
+            narrow: 2,
+            wide: 10,
+            enter: 50,
+            leave: 40,
+            dwell: 8,
+        }
+    );
+    assert_eq!(Rungs::with_tuning(10, false, &t).multi, 10);
+    assert_eq!(
+        Rungs::with_tuning(10, true, &DflashRungTuning::default()),
+        Rungs::defaults(10)
+    );
+}
+
+/// 2026-10-17: `METRALE_DFLASH_STATIC_GAMMA` pins the resolver; an explicit `--dflash-gamma`
+/// pins it unless `METRALE_DFLASH_GAMMA_RESOLVER` keeps it on.
+#[test]
+fn configure_pins_on_static_gamma_or_an_unoverridden_explicit_flag() {
+    let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let declared = DrafterSettings::declared().expect("the declared drafter settings project");
+    for (static_gamma, resolver, explicit, armed) in [
+        (false, false, false, true),
+        (false, false, true, false),
+        (false, true, true, true),
+        (true, true, false, false),
+        (true, true, true, false),
+    ] {
+        let d = DrafterSettings {
+            dflash_static_gamma: static_gamma,
+            dflash_gamma_resolver: resolver,
+            ..declared
+        };
+        let rung = DflashRung::new();
+        rung.configure_with_settings(10, explicit, true, &d);
+        assert_eq!(
+            rung.armed(),
+            armed,
+            "static {static_gamma}, resolver {resolver}, explicit {explicit}"
+        );
+    }
 }

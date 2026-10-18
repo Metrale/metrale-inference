@@ -38,14 +38,14 @@ impl Qwen3AttentionLayer {
             return Ok(o_out);
         }
         let force_w8a8 = ctx.dispatch.fp8_blockscaled_prefill;
-        // 2026-09-25: Opt-in W4A4, under the same `METRALE_ATTN_W4A4` presence
-        // check as the Q/K/V projections (`paged_qkv.rs`): quantize `attn_out`
+        // 2026-09-25: Opt-in W4A4, under the same `kernels.attn_w4a4` switch
+        // (`METRALE_ATTN_W4A4`) as the Q/K/V projections (`paged_qkv.rs`): quantize `attn_out`
         // to NVFP4 and multiply by the NVFP4 `attn.o_proj`.
         let w4a4 = n >= 256
             && self.w4a4_gemm_k.0 != 0
             && self.quantize_nvfp4_k.0 != 0
             && ctx.buffers.fp8_act_bytes() >= (n as usize) * (nq as usize) * (hd as usize)
-            && std::env::var("METRALE_ATTN_W4A4").is_ok();
+            && ctx.settings.kernels.attn_w4a4;
         if w4a4 {
             let kd = nq * hd;
             let a4 = ctx.buffers.fp8_act();
@@ -130,6 +130,7 @@ impl Qwen3AttentionLayer {
             ops::w8a16_gemm_t_pipelined(
                 ctx.gpu,
                 self.w8a16_gemm_t_pipelined_k,
+                ctx.levers.ops.gemm_shape_log,
                 attn_out,
                 fp8t.weight_t,
                 fp8t.scale_t,
@@ -187,6 +188,7 @@ impl Qwen3AttentionLayer {
                 ops::fp8_gemm_n128(
                     ctx.gpu,
                     self.fp8_gemm_k,
+                    ctx.levers.ops.fp8_ldmab,
                     attn_out,
                     fp8,
                     o_out,
@@ -199,8 +201,7 @@ impl Qwen3AttentionLayer {
         } else if let Some(ref nvfp4_t) = self.o_nvfp4_t {
             if n > 128 {
                 self.w4a16_gemm_m128_dispatch(
-                    ctx.gpu,
-                    ctx.dispatch,
+                    ctx,
                     attn_out,
                     nvfp4_t,
                     o_out,
@@ -336,7 +337,7 @@ impl Qwen3AttentionLayer {
         let num_tokens = n as usize;
         if num_tokens > 0 {
             super::super::op_dump::dump_bf16(
-                ctx.gpu,
+                ctx,
                 o_out,
                 (num_tokens - 1) * h as usize * bf16,
                 h as usize,

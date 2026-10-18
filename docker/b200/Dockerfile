@@ -100,14 +100,14 @@ ENV METRALE_TARGET_HW=${METRALE_TARGET_HW}
 ENV METRALE_TARGET_MODEL=${METRALE_TARGET_MODEL}
 ENV METRALE_TARGET_QUANT=${METRALE_TARGET_QUANT}
 
-# `--no-default-features --features cuda,nccl` is the same set metrale-server's
+# `--no-default-features --features cuda,nccl` is the same set met's
 # `default` names today, spelled out so a change to that default cannot
 # silently drop NCCL out of a multi-GPU image. NCCL links here against the
 # libnccl-dev the CUDA devel base ships (2.27.7 on 13.0.0) — link-time only;
 # the shared object actually loaded is the runtime stage's, which the gate
 # below holds at >= 2.28.
-RUN cargo build --release -p metrale-server --bin met \
-      --no-default-features --features cuda,nccl
+RUN cargo build --release -p met --bin met \
+      --no-default-features --features cuda,nccl,bench
 
 # ── Runtime stage ────────────────────────────────────────────────
 FROM nvidia/cuda:13.0.0-runtime-ubuntu24.04@sha256:95318efecfd68ab3d109da5277863257b06137c84f34a87f38de970d5cd035d3

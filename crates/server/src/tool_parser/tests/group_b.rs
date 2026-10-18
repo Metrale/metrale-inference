@@ -204,7 +204,11 @@ fn tscg_is_decided_per_model_not_per_process() {
     }];
     let tc = ToolChoice::Mode("auto".into());
     let off = parser.system_prompt(&tools, &tc, &crate::tool_parser::PromptLevers::OFF);
-    let on = parser.system_prompt(&tools, &tc, &crate::tool_parser::PromptLevers::new(true));
+    let on = parser.system_prompt(
+        &tools,
+        &tc,
+        &crate::tool_parser::PromptLevers::new(true, false),
+    );
     assert!(
         off.contains("\"name\":\"test\""),
         "TSCG off keeps the JSON body"

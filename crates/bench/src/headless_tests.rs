@@ -96,7 +96,8 @@ fn run(dir: &Dir, options: HeadlessOptions, reporter: &mut dyn RunReporter) -> R
         .enable_all()
         .build()
         .expect("runtime");
-    let executor = BenchmarkExecutor::new(rt.handle().clone(), store);
+    let executor =
+        BenchmarkExecutor::new(rt.handle().clone(), store, crate::levers::tests::unset());
     run_blocking(&executor, request(options), reporter, &|| false).expect("drives")
 }
 
@@ -170,7 +171,8 @@ fn cancellation_is_recorded_and_returns_a_harness_failure() {
         .enable_all()
         .build()
         .expect("runtime");
-    let executor = BenchmarkExecutor::new(rt.handle().clone(), store);
+    let executor =
+        BenchmarkExecutor::new(rt.handle().clone(), store, crate::levers::tests::unset());
     let mut reporter = Counting::default();
 
     let outcome = run_blocking(
@@ -201,7 +203,11 @@ fn an_invalid_parameter_fails_before_anything_runs() {
         .enable_all()
         .build()
         .expect("runtime");
-    let executor = BenchmarkExecutor::new(rt.handle().clone(), store.clone());
+    let executor = BenchmarkExecutor::new(
+        rt.handle().clone(),
+        store.clone(),
+        crate::levers::tests::unset(),
+    );
 
     let descriptor = registry::find("concurrency-sweep").expect("registered");
     let mut values = ParamValues::defaults(&descriptor.build().parameters());

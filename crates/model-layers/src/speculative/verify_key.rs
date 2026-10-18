@@ -156,6 +156,14 @@ pub fn verify_graph_key(
     key
 }
 
+/// 2026-10-09: Whether a [`verify_graph_key`] holds a pair of SSM slot `slot`: the words before
+/// the sentinel, read as `(slot, k)` pairs. A graph keyed on a slot bakes that slot's
+/// per-sequence addresses, so it is dropped when the slot's sequence is freed.
+pub fn verify_graph_key_has_slot(key: &[u32], slot: u32) -> bool {
+    key.split_last()
+        .is_some_and(|(_, pairs)| pairs.chunks(2).any(|p| p[0] == slot))
+}
+
 #[cfg(test)]
 #[path = "verify_key_tests.rs"]
 mod tests;

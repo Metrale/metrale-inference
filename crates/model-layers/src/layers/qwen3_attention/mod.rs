@@ -27,6 +27,7 @@ mod init_kernel_dispatch;
 mod init_prefill_kernels;
 mod init_proj_kernels;
 mod kernel_requirements;
+mod levers;
 mod op_dump;
 // 2026-09-25: `innerq_driver` uses `metrale_gpu_runtime::registry`, which
 // exists only with the `cuda` feature, so the module carries the same gate.
@@ -45,6 +46,7 @@ mod w8a8_decode_arm;
 
 #[cfg(feature = "cuda")]
 pub use innerq_driver::InnerQDriver;
+pub use levers::AttnLevers;
 pub(crate) use types::HeadGateActivation;
 pub use types::Qwen3AttentionLayer;
 pub use types_weights::{
@@ -66,7 +68,7 @@ pub fn validate_required_kv_kernels(
 }
 
 /// 2026-09-25: The reference sequence count that the `Legacy` split-K rule
-/// (`metrale_kernels::attn_splitk::legacy_splits`) divides the SM count by:
+/// (`metrale_target_defaults::attn_splitk::legacy_splits`) divides the SM count by:
 /// the configured max decode batch (`ModelLevers::max_decode_seqs`), raised to
 /// `num_seqs` when the live batch is wider.
 ///

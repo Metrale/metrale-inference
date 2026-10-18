@@ -97,7 +97,7 @@ impl Qwen3AttentionLayer {
         {
             // 2026-09-25: One projection launch per weight for all n rows.
             self.ms_qkv_batchn(c)?;
-        } else if self.ms_qkv_batchm_fp8_selected(c, super::qkv_fp8_batch::fp8_batchm_enabled()) {
+        } else if self.ms_qkv_batchm_fp8_selected(c, self.levers.fp8_qkv_batch) {
             // 2026-09-25: Batched block-scaled FP8. It needs all three weights FP8
             // (`qkv_fp8_block_scaled`); the NVFP4 routes above need all three
             // NVFP4 and the BF16 route below needs neither, so their order does
@@ -239,16 +239,11 @@ impl Qwen3AttentionLayer {
         // apart and rows are `per_seq_qkv` apart, the (rows_per_group,
         // num_groups, row_stride) shape `rms_norm_strided` takes. Its kernel
         // header (`rms_norm.cu`) states it is bit-identical to `rms_norm`, one
-        // block per row. Off when `METRALE_NO_QK_NORM_STRIDED=1`, read once.
-        fn qk_norm_strided_enabled() -> bool {
-            static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-            *ON.get_or_init(|| {
-                std::env::var("METRALE_NO_QK_NORM_STRIDED").ok().as_deref() != Some("1")
-            })
-        }
+        // block per row. Off when `METRALE_NO_QK_NORM_STRIDED` is switched on
+        // (`AttnLevers::qk_norm_strided`).
         if n > 1
             && self.rms_norm_strided_k.0 != 0
-            && qk_norm_strided_enabled()
+            && self.levers.qk_norm_strided
             && per_seq_qkv.is_multiple_of(bf16)
         {
             let stride_e = (per_seq_qkv / bf16) as u32;
@@ -362,11 +357,29 @@ impl Qwen3AttentionLayer {
         if batchm.0 != 0 {
             return if same_input_as_previous {
                 ops::w4a4_proj::nvfp4_proj_small_m_same_input(
-                    gpu, batchm, input, w_base, output, m, n, k, stream,
+                    gpu,
+                    batchm,
+                    c.fwd.levers.ops.w4a16_tc,
+                    input,
+                    w_base,
+                    output,
+                    m,
+                    n,
+                    k,
+                    stream,
                 )
             } else {
                 ops::w4a4_proj::nvfp4_proj_small_m(
-                    gpu, batchm, input, w_base, output, m, n, k, stream,
+                    gpu,
+                    batchm,
+                    c.fwd.levers.ops.w4a16_tc,
+                    input,
+                    w_base,
+                    output,
+                    m,
+                    n,
+                    k,
+                    stream,
                 )
             };
         }

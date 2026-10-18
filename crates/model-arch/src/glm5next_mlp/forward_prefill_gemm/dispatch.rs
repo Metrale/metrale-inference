@@ -13,7 +13,7 @@ use metrale_gpu_runtime::kernel_args::KernelLaunch;
 use super::super::forward::Glm5NextMlpWorkspace;
 use super::super::weights::Glm5NextMoeWeights;
 use super::super::{Glm5NextMlpConfig, Glm5NextMlpKernels};
-use super::tile::{GemmTile, gemm_tile, max_m_tiles_from_offsets, prefill_gemm_exact_tiles};
+use super::tile::{GemmTile, max_m_tiles_from_offsets};
 
 /// 2026-09-25: `C = gather(A) @ dequant(W_expert)^T` for every expert in one launch: grid
 /// `(ceil(n_out / tile.n_tile), max_m_tiles, num_experts)`, `tile.threads` threads per block.
@@ -68,6 +68,9 @@ pub(crate) fn forward_moe_grouped_prefill(
     x: DevicePtr,
     rows: usize,
     ws: &Glm5NextMlpWorkspace,
+    // 2026-10-09: Whether the grid height may come from the expert histogram read back to the
+    // host (`MlpLevers::exact_tiles`); false under a graph capture, which cannot sync.
+    host_tiles: bool,
     stream: u64,
 ) -> Result<()> {
     let te = rows * cfg.top_k;
@@ -97,12 +100,12 @@ pub(crate) fn forward_moe_grouped_prefill(
         .arg_u32(cfg.top_k as u32)
         .launch(stream)?;
 
-    // 2026-09-25: With `prefill_gemm_exact_tiles()`, the grid height comes from the real expert
+    // 2026-09-25: With `MlpLevers::exact_tiles`, the grid height comes from the real expert
     // histogram; `copy_d2h_on_stream` synchronises the stream first, so the read sees the sort's
     // output. Otherwise it is the worst case, `ceil(rows * top_k / m_tile)`.
-    let tile = gemm_tile();
+    let tile = k.levers.mlp.gemm_tile;
     let worst_case = te.div_ceil(tile.m_tile).max(1) as u32;
-    let max_m_tiles = if prefill_gemm_exact_tiles() {
+    let max_m_tiles = if host_tiles && k.levers.mlp.exact_tiles {
         let mut off_raw = vec![0u8; (cfg.num_experts + 1) * 4];
         gpu.copy_d2h_on_stream(ws.expert_offsets(), &mut off_raw, stream)?;
         let offsets: Vec<i32> = off_raw

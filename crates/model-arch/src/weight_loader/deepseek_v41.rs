@@ -47,13 +47,6 @@ pub(super) const DEFAULT_CANDIDATE_SOURCE: usize = 20;
 pub(super) const DEFAULT_CANDIDATE_TOPK_BLOCKS: usize = 2048;
 pub(super) const DEFAULT_CANDIDATE_BLOCK: usize = 8;
 
-pub(super) fn env_usize(key: &str, default: usize) -> usize {
-    std::env::var(key)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
-}
-
 pub fn bf16_ptr(store: &WeightStore, name: &str) -> Result<DevicePtr> {
     let t = store.get(name)?;
     ensure!(
@@ -160,8 +153,8 @@ pub(super) fn hc_site(
 }
 
 impl ModelWeightLoader for DeepSeekV41WeightLoader {
-    fn supports_tp(&self) -> bool {
-        false
+    fn tp_support(&self) -> metrale_config::TpSupport {
+        metrale_config::TpSupport::Unsupported
     }
 
     fn load_layers(
@@ -170,8 +163,9 @@ impl ModelWeightLoader for DeepSeekV41WeightLoader {
         config: &ModelConfig,
         gpu: &dyn GpuBackend,
         layer_kv_dtypes: &[metrale_cache::kv_cache::KvCacheDtype],
+        lc: metrale_model_layers::load_context::LoadContext<'_>,
     ) -> Result<Vec<Box<dyn TransformerLayer>>> {
-        load_layers::load_layers(store, config, gpu, layer_kv_dtypes)
+        load_layers::load_layers(store, config, gpu, layer_kv_dtypes, lc.settings)
     }
 
     fn load_embedding(

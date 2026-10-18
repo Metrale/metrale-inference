@@ -4,8 +4,7 @@
 //! strided-output write extent.
 //!
 //! The selector takes the family switch, the kill switch, the shape and the
-//! capacities as arguments; only the scale layout comes from the process
-//! (`cublas_scale_layout_kmajor`).
+//! capacities as arguments, and the scale layout as the scratch's `kmajor`.
 //!
 //! Owner: model-layers ops.
 //! Invariants: none beyond the types.
@@ -34,6 +33,7 @@ fn scratch() -> DecodeW8a8Scratch {
         act_scale_kmajor_bytes: 1 << 20,
         quant_k: Fp8ActQuant::shared_only(KernelHandle(0xA1)),
         scale_kmajor_k: KernelHandle(0xA2),
+        kmajor: true,
     }
 }
 
@@ -228,14 +228,17 @@ fn a_missing_scale_layout_adapter_drops_the_arm() {
     for (what, apply) in mutate {
         let mut s = scratch();
         apply(&mut s);
-        // 2026-09-25: The two K-major clauses bind only in the K-major layout,
-        // the one used when `METRALE_CUBLAS_SCALE_LAYOUT` is unset.
-        if !cublas_scale_layout_kmajor() && what.contains("kmajor") {
-            continue;
-        }
         assert!(
             !decode_w8a8_selected(true, false, &plan, WeightQuantFormat::Fp8BlockScaled, &s),
             "{what}"
+        );
+        // 2026-10-17: The two K-major clauses bind only in the K-major layout:
+        // under `rowmajor` the same scratch is still selected.
+        s.kmajor = false;
+        assert_eq!(
+            decode_w8a8_selected(true, false, &plan, WeightQuantFormat::Fp8BlockScaled, &s),
+            what.contains("kmajor"),
+            "{what} under rowmajor"
         );
     }
 }

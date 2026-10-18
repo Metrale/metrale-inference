@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-09-25: Picks the KV peer backend from `METRALE_KV_PAGING`: the raw one-sided
-//! `RdmaKvBackend` or the peer-paging `KvPagingBackend`.
+//! 2026-09-25: Picks the KV peer backend from `METRALE_KV_PAGING` (`StorageLinks::kv_paging`):
+//! the raw one-sided `RdmaKvBackend` or the peer-paging `KvPagingBackend`.
 //!
 //! Owner: storage, KV paging tier.
 //! Invariants:
@@ -19,12 +19,13 @@ use super::backend::{KvPagingBackend, KvPagingConnect};
 use super::ns;
 use crate::backend::StorageBackend;
 use crate::group::GroupLayout;
+use crate::links::StorageLinks;
 use crate::model_dims::ModelDims;
 
 /// 2026-09-25: Connect the KV backend for `peer`. `METRALE_KV_PAGING` unset or `0`
-/// returns `RdmaKvBackend::connect(peer, layout)`, whose handshake is the v2 header
-/// with `blob_bytes == 0`. `1` resolves the arena size, namespace and salt from the
-/// environment and connects `KvPagingBackend`. The namespace override is logged, as
+/// returns `RdmaKvBackend::connect(peer, layout, links)`, whose handshake is the v2 header
+/// with `blob_bytes == 0`. `1` resolves the arena size, namespace and salt from
+/// `links.kv_paging` and connects `KvPagingBackend`. The namespace override is logged, as
 /// are the derived namespace, fingerprint and salt.
 pub fn connect_kv_peer_backend(
     peer: &str,
@@ -32,11 +33,12 @@ pub fn connect_kv_peer_backend(
     model: &ModelDims,
     elem_bytes: u32,
     coalesce_blocks: bool,
+    links: &StorageLinks,
 ) -> Result<Box<dyn StorageBackend>> {
-    let paging = ns::kv_paging_selected(std::env::var("METRALE_KV_PAGING").ok().as_deref())?;
+    let paging = ns::kv_paging_selected(links.kv_paging.selected.as_deref())?;
     if !paging {
         return Ok(Box::new(crate::rdma_kv_backend::RdmaKvBackend::connect(
-            peer, layout,
+            peer, layout, links,
         )?));
     }
     if !coalesce_blocks {
@@ -46,13 +48,11 @@ pub fn connect_kv_peer_backend(
              write path cannot be served by a peer-owned block arena"
         );
     }
-    let arena_bytes = ns::resolve_arena_bytes_from(
-        std::env::var("METRALE_KV_PAGING_ARENA_GB").ok().as_deref(),
-        layout.block_bytes(),
-    )?;
-    let ns = match std::env::var("METRALE_KV_PAGING_NS").ok() {
+    let arena_bytes =
+        ns::resolve_arena_bytes_from(links.kv_paging.arena_gb.as_deref(), layout.block_bytes())?;
+    let ns = match links.kv_paging.ns.as_deref() {
         Some(raw) => {
-            let ns = ns::resolve_kv_ns_from(Some(&raw), NonZeroU64::new(1).expect("nonzero"))?;
+            let ns = ns::resolve_kv_ns_from(Some(raw), NonZeroU64::new(1).expect("nonzero"))?;
             tracing::info!(
                 "kv-paging: namespace OVERRIDDEN via METRALE_KV_PAGING_NS={:#018x} — two clients \
                  sharing one explicit ns on one peer WILL cross-serve KV blocks",
@@ -70,9 +70,8 @@ pub fn connect_kv_peer_backend(
                      METRALE_KV_PAGING_NS to an explicit non-zero u64"
                 )
             })?;
-            let salt =
-                ns::resolve_salt_from(std::env::var("METRALE_KV_PAGING_SALT").ok().as_deref())?
-                    .unwrap_or_else(rand::random::<u64>);
+            let salt = ns::resolve_salt_from(links.kv_paging.salt.as_deref())?
+                .unwrap_or_else(rand::random::<u64>);
             let derived = ns::derive_kv_ns(
                 fp.get(),
                 &layout,
@@ -101,5 +100,6 @@ pub fn connect_kv_peer_backend(
         peer,
         layout,
         KvPagingConnect { arena_bytes, ns },
+        links,
     )?))
 }

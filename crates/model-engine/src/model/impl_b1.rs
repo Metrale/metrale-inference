@@ -26,6 +26,7 @@ use super::block_mgmt::{
     apply_evicted_blocks, ensure_blocks_through_decode, ensure_blocks_through_prefill,
     extract_layer_refs, reuse_prefix_match_disk_ids,
 };
+use super::block_tables::{Region, RowSpec};
 use super::ssm_pool::SsmStatePool;
 use super::ssm_snapshot::SsmSnapshotPool;
 use super::types::{PinnedMetaStaging, TransformerModel};
@@ -68,12 +69,8 @@ impl TransformerModel {
         let mut positions = Vec::with_capacity(padded_n);
         let mut slots = Vec::with_capacity(padded_n);
         let mut seq_lens_host = Vec::with_capacity(padded_n);
-        // 2026-09-25: Unset block-table entries point at the zeroed
-        // `dummy_kv_block`, so a read past a sequence's blocks lands on zeros.
-        let mut block_table_flat: Vec<i32> =
-            vec![self.dummy_kv_block as i32; padded_n * max_blocks as usize];
 
-        for (i, seq) in seqs.iter().enumerate() {
+        for seq in seqs.iter() {
             let pos = seq.seq_len as u32;
             positions.push(pos);
 
@@ -98,38 +95,42 @@ impl TransformerModel {
                 seq.block_table.len(),
                 (seq.seq_len / block_size) + 1,
             );
-
-            for (j, &block) in seq.block_table.iter().take(max_blocks as usize).enumerate() {
-                block_table_flat[i * max_blocks as usize + j] = block as i32;
-            }
         }
 
         // 2026-09-25: Padding rows write to the dummy block, with seq_len 1 at
         // position 0.
         let dummy_slot = (self.dummy_kv_block as i64) * (block_size as i64);
-        for i in n..padded_n {
+        for _ in n..padded_n {
             positions.push(0);
             slots.push(dummy_slot);
             seq_lens_host.push(1);
-            block_table_flat[i * max_blocks as usize] = self.dummy_kv_block as i32;
         }
 
         let meta_base = self.batch_meta_base();
         let pos_bytes: Vec<u8> = positions.iter().flat_map(|p| p.to_le_bytes()).collect();
         let slot_bytes: Vec<u8> = slots.iter().flat_map(|s| s.to_le_bytes()).collect();
         let sl_bytes: Vec<u8> = seq_lens_host.iter().flat_map(|s| s.to_le_bytes()).collect();
-        let bt_bytes: Vec<u8> = block_table_flat
-            .iter()
-            .flat_map(|b| b.to_le_bytes())
-            .collect();
 
         self.gpu.copy_h2d_async(&pos_bytes, meta_base, stream)?;
         self.gpu
             .copy_h2d_async(&slot_bytes, meta_base.offset(lay.slots_off()), stream)?;
         self.gpu
             .copy_h2d_async(&sl_bytes, meta_base.offset(lay.seq_lens_off()), stream)?;
-        self.gpu
-            .copy_h2d_async(&bt_bytes, meta_base.offset(lay.block_table_off()), stream)?;
+        // 2026-10-13: The block table, in its own region (`block_tables.rs`) with only the
+        // changed entries copied. A real row is its blocks and a padding row none, each then
+        // `dummy_kv_block` (zeroed, so a read past a sequence's blocks lands on zeros), as the
+        // full upload wrote them.
+        let rows: Vec<RowSpec<'_>> = seqs
+            .iter()
+            .map(|s| s.block_table.as_slice())
+            .chain(std::iter::repeat_n(&[][..], padded_n - n))
+            .map(|blocks| RowSpec {
+                blocks,
+                fill: self.dummy_kv_block as i32,
+            })
+            .collect();
+        self.block_tables
+            .upload(Region::Decode, self.gpu.as_ref(), &rows, stream)?;
 
         // 2026-09-25: Per-request LoRA routing slots, in the seq_slot region
         // `[4R, 8R)` between positions and KV slots: a fixed address with
@@ -143,13 +144,29 @@ impl TransformerModel {
         let moe_row_adapter =
             self.upload_moe_row_adapter(seqs, padded_n, self.moe_row_adapter_buf, stream)?;
 
-        Ok(self.batch_meta_at(
-            meta_base,
-            max_blocks,
-            padded_n as u32,
-            seq_slot,
-            moe_row_adapter,
-        ))
+        Ok(self.decode_batch_meta(max_blocks, padded_n as u32, seq_slot, moe_row_adapter))
+    }
+
+    /// 2026-10-13: The batched decode's metadata: `batch_meta_at(batch_meta_base())` with the
+    /// block table in its own region (`BlockTables`); what `upload_batch_metadata_fixed` fills
+    /// and the circuit executor's multi-sequence programs read.
+    pub(super) fn decode_batch_meta(
+        &self,
+        max_blocks: u32,
+        num_seqs: u32,
+        seq_slot: DevicePtr,
+        moe_row_adapter: DevicePtr,
+    ) -> AttnMetadataDev {
+        AttnMetadataDev {
+            block_table: self.block_tables.ptr(Region::Decode),
+            ..self.batch_meta_at(
+                self.batch_meta_base(),
+                max_blocks,
+                num_seqs,
+                seq_slot,
+                moe_row_adapter,
+            )
+        }
     }
 
     /// 2026-09-28: The fixed address of the batch metadata, `scratch + 32768`: what

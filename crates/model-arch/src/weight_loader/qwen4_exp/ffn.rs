@@ -22,6 +22,7 @@ pub(super) fn build_moe(
     config: &ModelConfig,
     gpu: &dyn GpuBackend,
     variant: Nvfp4Variant,
+    grouped_cutlass: bool,
 ) -> Result<FfnComponent> {
     let h = config.hidden_size;
     let absmax_k = gpu.kernel("quantize_nvfp4", "nvfp4_global_absmax")?;
@@ -57,12 +58,9 @@ pub(super) fn build_moe(
     // 2026-09-25: The grouped CUTLASS prefill arm runs only when
     // `cutlass_grouped_host` is set (`moe/forward_prefill_routed.rs`), and
     // `build_cutlass_grouped_sfb` is what sets it. Without transposed scales it
-    // reads the original N-major ones.
-    if std::env::var("METRALE_HOLO_MOE_GROUPED_CUTLASS")
-        .ok()
-        .as_deref()
-        == Some("1")
-    {
+    // reads the original N-major ones. `grouped_cutlass` is
+    // `METRALE_HOLO_MOE_GROUPED_CUTLASS` (`shared_levers::grouped_cutlass`).
+    if grouped_cutlass {
         moe.build_cutlass_grouped_sfb(gpu, config, stream)?;
     }
 

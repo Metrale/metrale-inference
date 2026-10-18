@@ -46,6 +46,7 @@ fn run_case(
             down_proj_t: None,
         },
         &gpu,
+        crate::lever_equivalence::DefaultLoad::at_defaults().lc(),
     )
     .unwrap();
     // 2026-09-25: The mock returns one placeholder handle for every kernel name;
@@ -64,6 +65,7 @@ fn run_case(
     let dispatch = GemmDispatch::defaults();
     let derived = DerivedWeights::new();
     let levers = ModelLevers::defaults();
+    let settings = crate::lever_equivalence::defaults();
     let stats = ModelStats::new();
     let ctx = ForwardContext {
         buffers: &buffers,
@@ -73,6 +75,7 @@ fn run_case(
         dispatch: &dispatch,
         derived: &derived,
         levers: &levers,
+        settings: &settings,
         stats: &stats,
         attn_metadata: None,
         profile: false,

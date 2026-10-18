@@ -2,6 +2,10 @@
 
 //! 2026-09-26: Every `METRALE_*` environment variable the repository reads, declared once.
 //!
+//! 2026-10-17: The table is derived from the `metrale-settings` groups (one `lever_group!`
+//! file per group). The frozen hand-written copy it was checked against is gone: rows now
+//! change on purpose (lane 2b retyped the mistyped ones).
+//!
 //! `met` refuses to start with an undeclared `METRALE_*` name in its environment ([`check`],
 //! called first in `serve_main`). The bench crate's `serve_env` takes the harness set from the
 //! table and validates a recipe's `env:` block against it, and `met dump-serve-options`
@@ -13,111 +17,16 @@
 //! Owner: config.
 //! Invariants: none beyond the types.
 
-macro_rules! lever {
-    ($env:literal, $path:literal, $ty:ident, $default:literal, None, $class:ident, $reader:literal, $doc:literal) => {
-        $crate::levers::LeverSpec {
-            env: $env,
-            path: $path,
-            ty: $crate::levers::Ty::$ty,
-            default: $default,
-            flag: None,
-            class: $crate::levers::Class::$class,
-            reader: $reader,
-            doc: $doc,
-        }
-    };
-    ($env:literal, $path:literal, $ty:ident, $default:literal, $flag:literal, $class:ident, $reader:literal, $doc:literal) => {
-        $crate::levers::LeverSpec {
-            env: $env,
-            path: $path,
-            ty: $crate::levers::Ty::$ty,
-            default: $default,
-            flag: Some($flag),
-            class: $crate::levers::Class::$class,
-            reader: $reader,
-            doc: $doc,
-        }
-    };
-}
-
-mod table_a;
-mod table_b;
-
-/// 2026-09-26: Who reads a lever. `levers_tests` checks each lever's `reader` against its class.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Class {
-    /// 2026-09-26: Read by a `met` process at run time (serve or bench). A recipe may declare
-    /// it in `env:`.
-    Runtime,
-    /// 2026-09-26: Places, logs or builds for the harness. A recipe may not declare it.
-    Harness,
-    /// 2026-09-26: Read when the binary is built (a build script or `option_env!`).
-    Build,
-    /// 2026-09-26: Read only by a test or a dev example/benchmark.
-    Dev,
-    /// 2026-09-26: Read only by an operator script or the site build, outside `crates/`.
-    Tool,
-}
-
-impl Class {
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Runtime => "runtime",
-            Self::Harness => "harness",
-            Self::Build => "build",
-            Self::Dev => "dev",
-            Self::Tool => "tool",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Ty {
-    /// 2026-09-26: On or off; `default` names the state when the variable is unset.
-    Switch,
-    Int,
-    Float,
-    Text,
-    Path,
-}
-
-impl Ty {
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Switch => "switch",
-            Self::Int => "int",
-            Self::Float => "float",
-            Self::Text => "text",
-            Self::Path => "path",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct LeverSpec {
-    pub env: &'static str,
-    /// 2026-09-26: `group.name`, ending in the variable's suffix in lower case.
-    pub path: &'static str,
-    pub ty: Ty,
-    /// 2026-09-26: The value in force when the variable is unset: `on`/`off` for a switch (of
-    /// the effect the name describes), a number, `unset`, `built-in`, or `target-declared`
-    /// (the `[defaults]` table of `kernels/<hw>/HARDWARE.toml`).
-    pub default: &'static str,
-    /// 2026-09-26: The `met serve` flag that sets the same thing.
-    pub flag: Option<&'static str>,
-    pub class: Class,
-    /// 2026-09-26: The repository file that reads it; `levers_tests` checks that it names it.
-    pub reader: &'static str,
-    pub doc: &'static str,
-}
-
-pub const PREFIX: &str = "METRALE_";
+pub use metrale_settings::spec::{Class, LeverSpec, PREFIX, Ty};
 
 /// 2026-09-26: Every lever, in name order (`levers_tests` checks the order).
 pub fn all() -> impl Iterator<Item = &'static LeverSpec> {
-    table_a::LEVERS.iter().chain(table_b::LEVERS)
+    // 2026-10-17: Declared per group in metrale-settings; sorted once to keep the table order.
+    static SORTED: std::sync::OnceLock<Vec<&'static LeverSpec>> = std::sync::OnceLock::new();
+    SORTED
+        .get_or_init(metrale_settings::groups::by_name)
+        .iter()
+        .copied()
 }
 
 #[must_use]

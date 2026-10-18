@@ -83,6 +83,7 @@ impl MoeLayer {
                 .unwrap_or(worst_case_m_tiles)
         };
         super::dump::dump_expert_load(
+            ctx.levers.moe.dump_expert_ids,
             ctx.gpu,
             stream,
             expert_offsets,

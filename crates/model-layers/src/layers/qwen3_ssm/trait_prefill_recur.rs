@@ -152,12 +152,9 @@ impl Qwen3SsmLayer {
         // differ from the pass that produced the cached state. The replay takes
         // the register-resident arm below when it applies, else WY4.
         let fla_scratch = ctx.buffers.gdn_fla_scratch();
-        // 2026-09-25: METRALE_NO_GDN_FLA=1 skips the FLA arm; a diagnostic lever,
-        // read once per process.
-        static NO_FLA: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        let no_fla =
-            *NO_FLA.get_or_init(|| std::env::var("METRALE_NO_GDN_FLA").as_deref() == Ok("1"));
-        if !no_fla
+        // 2026-09-25: METRALE_NO_GDN_FLA=1 skips the FLA arm; a diagnostic lever
+        // (`SsmLevers::fla`).
+        if ctx.levers.ssm.fla
             && !exact_replay
             && kd == 128
             && vd == 128
@@ -216,6 +213,7 @@ impl Qwen3SsmLayer {
                 metrale_gpu_runtime::gpu::DevicePtr::NULL,
                 metrale_gpu_runtime::gpu::DevicePtr::NULL,
                 false,
+                ctx.levers.ops.gdn_prefill,
                 ctx.profile,
                 stream,
             )?;
@@ -360,6 +358,7 @@ impl Qwen3SsmLayer {
                         ctx.gpu,
                         self.conv1d_prefill_k,
                         self.conv1d_prefill_tp_k,
+                        ctx.levers.ops.conv1d_tp,
                         conv_state,
                         input.offset(start * qkvz_size * bf16),
                         &self.ssm.conv1d,
@@ -398,6 +397,7 @@ impl Qwen3SsmLayer {
             ctx.gpu,
             self.conv1d_prefill_k,
             self.conv1d_prefill_tp_k,
+            ctx.levers.ops.conv1d_tp,
             conv_state,
             input,
             &self.ssm.conv1d,

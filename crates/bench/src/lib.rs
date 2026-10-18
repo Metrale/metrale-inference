@@ -31,6 +31,7 @@ pub mod hardware;
 pub mod headless;
 pub mod history;
 pub mod http;
+pub mod levers;
 pub mod metadata;
 pub mod param_text;
 pub mod params;

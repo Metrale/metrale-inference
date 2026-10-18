@@ -9,6 +9,7 @@
 use super::pipeline::{CommitTokens, Inflight, Pipeline, Settled, ahead_allowed, row_mask};
 use super::*;
 use crate::scheduler::io::{DecodeRows, Effect, EffectOutcome, StepOutcome, StepPlan};
+use metrale_model_engine::traits::FedAheadPolicy;
 use metrale_scheduler::{FeedSource, RowMask};
 
 /// 2026-09-25: The plain decode step of a tick when the router can run ahead.
@@ -265,14 +266,22 @@ pub(super) fn settle(
         &inf.discard,
     );
     if let Some(next) = pipeline.next.take() {
-        pipeline.inflight = Some(validate_next(
-            next,
-            active,
-            &device_tokens,
-            sched,
-            pipeline.faults,
-            toks,
-        ));
+        let (next, poisoned) =
+            validate_next(next, active, &device_tokens, sched, pipeline.faults, toks);
+        if poisoned {
+            // 2026-10-10: A `RepickOnly` model ran a continuing row from an input the host did
+            // not commit, and its recurrent state cannot be rewound. The step is awaited so the
+            // router's slot is released; its rows are failed rather than served from that state.
+            let _ = sched.io.dev.await_result(next.ticket);
+            let msg = "a decode step launched ahead was fed an input the host did not commit; \
+                       the model's recurrent state cannot be rewound";
+            tracing::error!("{msg}");
+            for mut a in active.drain(..) {
+                send_error(&sched.io, &mut a, msg);
+            }
+            return Settled::Failed;
+        }
+        pipeline.inflight = Some(next);
     }
     Settled::Done
 }
@@ -287,8 +296,14 @@ fn validate_next(
     sched: &crate::scheduler::sched_ctx::SchedCtx,
     faults: PipelineFaults,
     toks: &CommitTokens,
-) -> Inflight {
+) -> (Inflight, bool) {
     let inputs = next.inputs.as_ref().expect("a step launched ahead is fed");
+    // 2026-10-10: Under `RepickOnly` a launched step is never re-run (`FedAheadPolicy`).
+    let repick_only = matches!(
+        sched.io.dev.model().fed_ahead_policy(),
+        FedAheadPolicy::RepickOnly { .. }
+    );
+    let mut poisoned = false;
     assert!(
         rows_match(&next, active),
         "pipelined step validated against a different batch"
@@ -301,6 +316,8 @@ fn validate_next(
         };
         let over_run = a.finished || a.last_token != input || a.seq.seq_len != next.rows[i].1;
         next.discard[i] = over_run && !faults.keep_overrun;
+        // 2026-10-10: Only a finished row's over-run is harmless when a step cannot be re-run.
+        poisoned |= repick_only && next.discard[i] && !a.finished;
         expected.push(input);
     }
     // 2026-09-25: The bookkeeping `decode_batch` performs at launch, for the rows whose
@@ -322,12 +339,19 @@ fn validate_next(
     if !next.host_logits {
         // 2026-09-25: The masks were fixed at launch; if a survivor's mask has
         // changed, the step is redone.
-        next.discard_all = active
+        let stale_mask = active
             .iter()
             .enumerate()
             .any(|(i, a)| !next.discard[i] && row_mask(a, toks.think_end_token) != next.masks[i]);
+        // 2026-10-10: Under `RepickOnly` the forward stands (its input was right; only the
+        // masked pick went stale), and the host samples its logits instead.
+        if repick_only {
+            next.host_logits = stale_mask;
+        } else {
+            next.discard_all = stale_mask;
+        }
     }
-    next
+    (next, poisoned)
 }
 
 /// 2026-09-25: Settle everything in flight: what a tick that needs the device quiet

@@ -7,18 +7,12 @@
 //! Invariants: none beyond the types.
 
 use super::*;
-use std::collections::HashMap;
+use metrale_model_layers::lever_equivalence::settings_from;
 
-/// 2026-09-25: Resolve against a fixed map instead of the process environment.
-/// `set_var` is `unsafe` and process-global. `from_env` is `from_values` with
-/// closures over `metrale_config::levers::{var, var_os}`, so this runs the
-/// production resolution.
+/// 2026-10-17: Resolve from settings built over a fixed map (`MapEnv`), never the process
+/// environment, through the production `from_settings`.
 fn resolve(vars: &[(&str, &str)]) -> DFlashLevers {
-    let map: HashMap<&str, &str> = vars.iter().copied().collect();
-    from_values(
-        |var| map.get(var).map(|v| (*v).to_string()),
-        |var| map.contains_key(var),
-    )
+    DFlashLevers::from_settings(&settings_from(vars).expect("the test levers resolve"))
 }
 
 #[test]
@@ -36,15 +30,20 @@ fn defaults_are_spelled_out_not_derived() {
     assert!(d.dspark_anchor_bias);
     assert!(d.option_b);
     assert!(d.dflash2);
+    assert!(d.topk16_split);
     assert!(d.dspark_markov);
+    assert!(d.batched_precompute);
+    assert!(d.fp8_rt);
+    assert_eq!(d.ctx_cap, 16384);
     assert!(!d.any_diagnostic_armed);
 }
 
 #[test]
-fn every_opt_in_is_off_until_it_is_exactly_one() {
-    // 2026-09-25: `=1` arms and no other spelling does. One row per field, so
+fn every_opt_in_is_off_until_switched_on() {
+    // 2026-10-17: A switch: `1` and `true` arm, `0` does not, an unreadable value is refused. One row per field, so
     // a field read from the wrong variable fails its own row.
-    let cases: [(&str, fn(&DFlashLevers) -> bool); 14] = [
+    let cases: [(&str, fn(&DFlashLevers) -> bool); 15] = [
+        ("METRALE_DFLASH_TP_GRAPHS", |l| l.tp_graphs),
         ("METRALE_DFLASH_DEBUG_DUMP", |l| l.debug_dump),
         ("METRALE_DFLASH_DEBUG_DUMP_FULL", |l| l.debug_dump_full),
         ("METRALE_DFLASH_LOG_DRAFTS", |l| l.log_drafts),
@@ -67,20 +66,25 @@ fn every_opt_in_is_off_until_it_is_exactly_one() {
         assert!(read(&resolve(&[(var, "1")])), "{var} did not arm at =1");
         assert!(!read(&resolve(&[(var, "0")])), "{var} armed at =0");
         assert!(
-            !read(&resolve(&[(var, "true")])),
-            "{var} armed at =true; these levers are strict `1`"
+            read(&resolve(&[(var, "true")])),
+            "{var} did not arm at =true"
+        );
+        assert!(
+            settings_from(&[(var, "garbage")]).is_err(),
+            "{var}=garbage accepted"
         );
     }
 }
 
-/// 2026-09-25: Every opt-out lever is on when unset and only an exact `0`
-/// turns it off.
+/// 2026-09-25: Every opt-out lever is on when unset and `0` turns it off. 2026-10-17: The
+/// switches also turn off at `off` and refuse an empty value; `METRALE_DFLASH_OPTION_B` is
+/// text, so only `0` turns it off and empty leaves it on.
 #[test]
-fn every_opt_out_ships_on_and_only_zero_disables_it() {
+fn every_opt_out_ships_on_and_zero_disables_it() {
     let cases: [(&str, fn(&DFlashLevers) -> bool); 4] = [
         ("METRALE_DSPARK_ANCHOR_BIAS", |l| l.dspark_anchor_bias),
-        ("METRALE_DFLASH_OPTION_B", |l| l.option_b),
         ("METRALE_DFLASH2", |l| l.dflash2),
+        ("METRALE_DFLASH2_TOPK_SPLIT", |l| l.topk16_split),
         ("METRALE_DSPARK_MARKOV", |l| l.dspark_markov),
     ];
     for (var, read) in cases {
@@ -91,10 +95,21 @@ fn every_opt_out_ships_on_and_only_zero_disables_it() {
             "{var} is not disabled at =0"
         );
         assert!(
-            read(&resolve(&[(var, "")])),
-            "{var}: empty is not a kill switch"
+            !read(&resolve(&[(var, "off")])),
+            "{var} is not disabled at =off"
+        );
+        assert!(
+            settings_from(&[(var, "")]).is_err(),
+            "{var}= (empty) accepted"
         );
     }
+    let option_b = |v: &[(&str, &str)]| resolve(v).option_b;
+    assert!(option_b(&[]) && option_b(&[("METRALE_DFLASH_OPTION_B", "1")]));
+    assert!(!option_b(&[("METRALE_DFLASH_OPTION_B", "0")]));
+    assert!(
+        option_b(&[("METRALE_DFLASH_OPTION_B", "")])
+            && option_b(&[("METRALE_DFLASH_OPTION_B", "off")])
+    );
 }
 
 #[test]
@@ -110,6 +125,9 @@ fn the_numeric_path_levers_default_to_unbounded() {
         resolve(&[("METRALE_DFLASH_DRAFT_CAP", "1")]).draft_cap,
         Some(1)
     );
+    // 2026-10-09: The full-block lever is opt-in.
+    assert!(!resolve(&[]).full_block);
+    assert!(resolve(&[("METRALE_DFLASH_FULL_BLOCK", "1")]).full_block);
 }
 
 #[test]
@@ -167,7 +185,9 @@ fn numeric_levers_fall_back_when_unparseable() {
 }
 
 /// 2026-09-25: A graph-suppressing variable set to any value, `0` and empty
-/// included, sets `any_diagnostic_armed` although it arms no diagnostic.
+/// included, sets `any_diagnostic_armed` although it arms no diagnostic. 2026-10-17: An
+/// empty value of a switch is refused at startup, so empty still suppresses only for the
+/// two text levers.
 #[test]
 fn a_diagnostic_set_to_zero_still_suppresses_graphs() {
     for var in GRAPH_SUPPRESSING_DIAGNOSTICS {
@@ -175,10 +195,17 @@ fn a_diagnostic_set_to_zero_still_suppresses_graphs() {
             resolve(&[(var, "0")]).any_diagnostic_armed,
             "{var}=0 must still force the eager path"
         );
-        assert!(
-            resolve(&[(var, "")]).any_diagnostic_armed,
-            "{var}= (empty) must still force the eager path"
-        );
+        match settings_from(&[(var, "")]) {
+            Ok(s) => assert!(
+                DFlashLevers::from_settings(&s).any_diagnostic_armed,
+                "{var}= (empty) must still force the eager path"
+            ),
+            Err(_) => assert_eq!(
+                metrale_settings::groups::rule_of(var),
+                Some(metrale_settings::spec::Rule::Switch),
+                "{var}= (empty) refused but {var} is not a switch"
+            ),
+        }
     }
     // 2026-09-25: Variables outside the list do not: `METRALE_DFLASH2`,
     // `METRALE_DFLASH_OPTION_B` and the warm-up count are not diagnostics.

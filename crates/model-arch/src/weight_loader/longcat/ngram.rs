@@ -16,6 +16,7 @@ use anyhow::Result;
 use metrale_config::ModelConfig;
 use metrale_gpu_runtime::gpu::GpuBackend;
 use metrale_model_weights::weights::WeightStore;
+use metrale_settings::InferenceServerSettings;
 
 #[cfg(feature = "cuda")]
 use metrale_model_layers::layers::ngram_embed::NgramTable;
@@ -28,11 +29,12 @@ use metrale_model_layers::weight_map::dense;
 #[cfg(feature = "cuda")]
 const DEFAULT_SLOTS: usize = 65536;
 
+/// 2026-10-17: `METRALE_NGRAM_CACHE_SLOTS` when positive, else `DEFAULT_SLOTS`.
 #[cfg(feature = "cuda")]
-fn slots_from_env() -> usize {
-    std::env::var("METRALE_NGRAM_CACHE_SLOTS")
-        .ok()
-        .and_then(|s| s.trim().parse::<usize>().ok())
+pub(super) fn cache_slots(s: &InferenceServerSettings) -> usize {
+    s.speculative
+        .ngram_cache_slots
+        .and_then(|v| usize::try_from(v).ok())
         .filter(|v| *v > 0)
         .unwrap_or(DEFAULT_SLOTS)
 }
@@ -46,11 +48,12 @@ pub(super) fn build(
     config: &ModelConfig,
     gpu: &dyn GpuBackend,
     max_tokens: usize,
+    settings: &InferenceServerSettings,
 ) -> Result<Option<NgramEmbedding>> {
     // 2026-09-25: Diagnostic lever: `METRALE_NGRAM_DISABLE` with any value
     // serves the plain `embed_tokens` gather instead of the fused embedding,
     // which gives wrong output.
-    if std::env::var("METRALE_NGRAM_DISABLE").is_ok() {
+    if settings.speculative.ngram_disable {
         tracing::warn!(
             "METRALE_NGRAM_DISABLE set — n-gram embedding NOT installed;              output will be incorrect. Diagnostic use only."
         );
@@ -60,7 +63,7 @@ pub(super) fn build(
         return Ok(None);
     };
     let n_tables = dims.num_tables();
-    let slots = slots_from_env();
+    let slots = cache_slots(settings);
 
     let word = dense(store, "model.embed_tokens.weight").context("ngram: base embedding")?;
 
@@ -130,6 +133,7 @@ pub(super) fn build(
     config: &ModelConfig,
     _gpu: &dyn GpuBackend,
     _max_tokens: usize,
+    _settings: &InferenceServerSettings,
 ) -> Result<Option<NgramEmbedding>> {
     if NgramDims::from_config(config).is_none() {
         return Ok(None);

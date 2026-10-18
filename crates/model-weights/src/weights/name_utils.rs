@@ -98,12 +98,13 @@ mod ngram_defer_tests {
         for i in [0usize, 2, 10, 11, 9] {
             st.defer(
                 format!("model.ngram_embeddings.embedders.{i}.weight"),
-                DeferredTensor {
-                    path: std::path::PathBuf::from("x"),
-                    offset: i as u64,
-                    shape: vec![1, 1],
-                    dtype: WeightDtype::BF16,
-                },
+                DeferredTensor::from_shape(
+                    std::path::PathBuf::from("x"),
+                    i as u64,
+                    vec![1, 1],
+                    WeightDtype::BF16,
+                )
+                .unwrap(),
             );
         }
         let got: Vec<u64> = st.deferred_sorted().iter().map(|(_, d)| d.offset).collect();
@@ -139,6 +140,8 @@ mod from_str_tests {
             ("I8", UInt8), // packed NVFP4 raw container
             ("F8_E4M3", FP8E4M3),
             ("F8_E8M0", FP8E8M0),
+            ("U16", UInt16),
+            ("U32", UInt32),
             ("I64", Int64),
         ] {
             assert_eq!(

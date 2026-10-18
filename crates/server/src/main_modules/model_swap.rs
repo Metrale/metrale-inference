@@ -155,13 +155,17 @@ fn wait_for_sole_owner<T>(state: &Arc<T>, grace: std::time::Duration) -> usize {
 /// A reference that outlives `grace` would keep `request_tx` open, so the
 /// scheduler join would never return; the model is then republished and the
 /// swap refused.
-fn release_state(host: &Arc<ModelHost>, grace: std::time::Duration) -> Result<Carried> {
+fn release_state(
+    host: &Arc<ModelHost>,
+    settings: &metrale_settings::InferenceServerSettings,
+    grace: std::time::Duration,
+) -> Result<Carried> {
     let Some(state) = host.take() else {
         // 2026-09-26: `serve` installs the process state before the listener
-        // binds, so `None` is not expected; the environment is read again then.
+        // binds, so `None` is not expected; the incoming load's settings build it then.
         return match host.process() {
             Some(carried) => Ok(carried),
-            None => Carried::from_env().map_err(|e| anyhow::anyhow!("{e}")),
+            None => Carried::from_settings(settings).map_err(|e| anyhow::anyhow!("{e}")),
         };
     };
     let carried = Carried::from_previous(&state);
@@ -238,6 +242,8 @@ pub(crate) fn swap(host: &Arc<ModelHost>, next: cli::ServeArgs) -> Result<SwapOu
 
     // 2026-09-26: The refusals below run before anything is torn down.
     cli::validate_serve_args(&next).map_err(|e| anyhow::anyhow!("{e}"))?;
+    // 2026-10-17: Levers resolve per load, against this argv, before anything is torn down.
+    let next_settings = super::serve_settings::resolve(&metrale_io_host_std::ProcessEnv, &next)?;
 
     refuse_if_shutting_down(crate::tui::shutdown::requested())?;
 
@@ -259,7 +265,7 @@ pub(crate) fn swap(host: &Arc<ModelHost>, next: cli::ServeArgs) -> Result<SwapOu
     // checks that need only the argv.
     preflight_kernel_target(&next)?;
 
-    let carried = release_state(host, DRAIN_GRACE)?;
+    let carried = release_state(host, &next_settings, DRAIN_GRACE)?;
 
     if let Some(handle) = host.take_scheduler() {
         handle
@@ -269,7 +275,7 @@ pub(crate) fn swap(host: &Arc<ModelHost>, next: cli::ServeArgs) -> Result<SwapOu
 
     let next_args = next.clone();
     let tui_handles_tx = host.tui_handles();
-    let load_err = match load_model(next, tui_handles_tx.clone(), carried.clone()) {
+    let load_err = match load_model(next, next_settings, tui_handles_tx.clone(), carried.clone()) {
         Ok(Some(prepared)) => {
             host.set_scheduler(prepared.scheduler);
             host.set_args(next_args);
@@ -289,7 +295,9 @@ pub(crate) fn swap(host: &Arc<ModelHost>, next: cli::ServeArgs) -> Result<SwapOu
             .context("the new model failed to load and there was no previous model to restore"));
     };
     tracing::warn!("load failed, restoring the previous model: {load_err:#}");
-    match load_model(previous.clone(), tui_handles_tx, carried) {
+    let restored = super::serve_settings::resolve(&metrale_io_host_std::ProcessEnv, &previous)
+        .and_then(|settings| load_model(previous.clone(), settings, tui_handles_tx, carried));
+    match restored {
         Ok(Some(prepared)) => {
             host.set_scheduler(prepared.scheduler);
             host.set_args(previous);

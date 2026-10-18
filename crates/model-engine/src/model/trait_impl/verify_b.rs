@@ -11,6 +11,7 @@
 
 #![allow(unused_imports, dead_code, clippy::too_many_arguments)]
 
+use super::super::lm_head_vocab_tp::HeadRanks;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -28,6 +29,7 @@ use super::super::block_mgmt::{
 use super::super::ssm_pool::SsmStatePool;
 use super::super::ssm_snapshot::SsmSnapshotPool;
 use super::super::types::{PinnedMetaStaging, TransformerModel};
+use super::device_step::Stage;
 use crate::traits::{ChunkedPrefillPageMetadata, Model, SequenceState};
 use metrale_model_layers::layer::{
     AttnMetadataDev, ForwardContext, GdnPrefillBuffers, LayerState, SsmLayerState, TransformerLayer,
@@ -60,7 +62,12 @@ impl TransformerModel {
 
         // 2026-09-25: Everything up to the graph varies per step and is not captured.
         self.embed(tokens[0], hidden, stream)?;
-        self.embed(tokens[1], hidden.offset(h * fp32), stream)?;
+        // 2026-10-11: `METRALE_GLM_MTP_DEVICE_STEP`: a draft still on the device is gathered after
+        // the token upload below (`verify_device_row`).
+        let device_draft = tokens[1] == metrale_model_layers::speculative::DEVICE_DRAFT;
+        if !device_draft {
+            self.embed(tokens[1], hidden.offset(h * fp32), stream)?;
+        }
 
         let bs = kv_cache.block_size();
         for t in 0..k {
@@ -82,46 +89,54 @@ impl TransformerModel {
         let meta_base = self.buffers.scratch().offset(32768);
         let max_blocks = self.max_blocks_per_seq;
 
-        let positions = [seq.seq_len as u32, (seq.seq_len + 1) as u32];
-        // 2026-09-25: SAFETY: `positions` is the `[u32; 2]` literal on the line above, a
-        // fully-initialised local whose size is 2 * 4 = 8, exactly the byte
-        // length requested. `u32` is POD (no padding, every bit pattern
-        // valid), so the `&[u8]` view is sound, and `positions` is live for
-        // the whole function so the borrow outlives the H2D enqueue below.
-        let pos_bytes = unsafe { std::slice::from_raw_parts(positions.as_ptr() as *const u8, 8) };
-        self.gpu.copy_h2d_async(pos_bytes, meta_base, stream)?;
-
-        let mut slots = [0i64; 2];
-        for t in 0..k {
-            let pos = seq.seq_len + t;
-            let block_idx = pos / bs;
-            let block_offset = pos % bs;
-            // 2026-09-25: Fall back to the dummy block, not block 0: physical block 0 can be a
-            // live block, possibly shared through the prefix cache.
-            let physical_block = seq.physical_block_for(block_idx).unwrap_or_else(|| {
-                tracing::error!(
-                    "verify_k2: no physical block for pos {pos} (block_table len {}); \
-                     writing KV to dummy block",
-                    seq.block_table.len(),
-                );
-                self.dummy_kv_block
-            });
-            slots[t] = (physical_block as i64) * (bs as i64) + (block_offset as i64);
-        }
-        // 2026-09-25: SAFETY: `slots` is the `[0i64; 2]` declared above, zero at
-        // declaration and then overwritten by the `for t in 0..k` loop (`k == 2`). Its size
-        // is 2 * 8 = 16, exactly the byte length requested; `i64` is POD.
-        let slot_bytes = unsafe { std::slice::from_raw_parts(slots.as_ptr() as *const u8, 16) };
-        self.gpu
-            .copy_h2d_async(slot_bytes, meta_base.offset(256), stream)?;
-
-        let seq_lens = [(seq.seq_len + 1) as i32, (seq.seq_len + 2) as i32];
-        // 2026-09-25: SAFETY: `seq_lens` is the `[i32; 2]` literal on the line above, so
-        // its size is 2 * 4 = 8, exactly the byte length requested. `i32` is
-        // POD and the local outlives this borrow.
-        let sl_bytes = unsafe { std::slice::from_raw_parts(seq_lens.as_ptr() as *const u8, 8) };
-        self.gpu
-            .copy_h2d_async(sl_bytes, meta_base.offset(512), stream)?;
+        // 2026-10-11: One rule for the host metadata and the device step's
+        // (`speculative::device_step::k2_verify_meta`, `k2_verify_meta` in mtp_device_step.cu).
+        // A position past the table falls back to the dummy block, not block 0: physical block 0
+        // can be a live block, possibly shared through the prefix cache.
+        let meta = metrale_model_layers::speculative::device_step::k2_verify_meta(
+            seq.seq_len,
+            bs,
+            self.dummy_kv_block,
+            |i| {
+                let b = seq.physical_block_for(i);
+                if b.is_none() {
+                    tracing::error!(
+                        "verify_k2: no physical block for logical block {i} (block_table len \
+                         {}); writing KV to dummy block",
+                        seq.block_table.len(),
+                    );
+                }
+                b
+            },
+        );
+        let pos_bytes: Vec<u8> = meta
+            .positions
+            .iter()
+            .flat_map(|w| w.to_le_bytes())
+            .collect();
+        let slot_bytes: Vec<u8> = meta.slots.iter().flat_map(|w| w.to_le_bytes()).collect();
+        let sl_bytes: Vec<u8> = meta.seq_lens.iter().flat_map(|w| w.to_le_bytes()).collect();
+        self.k2_upload(
+            device_draft,
+            Stage::Positions,
+            &pos_bytes,
+            meta_base,
+            stream,
+        )?;
+        self.k2_upload(
+            device_draft,
+            Stage::Slots,
+            &slot_bytes,
+            meta_base.offset(256),
+            stream,
+        )?;
+        self.k2_upload(
+            device_draft,
+            Stage::SeqLens,
+            &sl_bytes,
+            meta_base.offset(512),
+            stream,
+        )?;
 
         // 2026-09-25: The block table repeats the sequence's table once per row.
         let mb = max_blocks as usize;
@@ -148,8 +163,13 @@ impl TransformerModel {
         // every byte read is initialised even when `block_table.len() < mb`.
         let bt_bytes =
             unsafe { std::slice::from_raw_parts(bt_buf.as_ptr() as *const u8, needed * 4) };
-        self.gpu
-            .copy_h2d_async(bt_bytes, meta_base.offset(768), stream)?;
+        self.k2_upload(
+            device_draft,
+            Stage::BlockTable,
+            bt_bytes,
+            meta_base.offset(768),
+            stream,
+        )?;
 
         // 2026-09-25: Request-scoped LoRA routing: one adapter for all K rows, as a [K]
         // buffer at +128, which fits below the slots at +256 for K <= 32. It is uploaded
@@ -184,7 +204,7 @@ impl TransformerModel {
         let hss_engaged = kv_cache.config().cache_blocks_per_seq.is_some();
         // 2026-09-25: `METRALE_K2_DIAG=1` arms synchronize checkpoints in `forward_k2`, which
         // are illegal under capture, so the verify then runs eagerly.
-        let k2_diag_eager = std::env::var("METRALE_K2_DIAG").ok().as_deref() == Some("1");
+        let k2_diag_eager = self.settings.telemetry.k2_diag;
         // 2026-09-25: The `lora_eager` lever runs LoRA verifies without graphs.
         let lora_eager = self.lora.is_some() && self.levers.lora_eager;
         // 2026-09-25: With a communicator (EP), the verify is captured unless
@@ -192,11 +212,11 @@ impl TransformerModel {
         // `ep_graphs` lever of `decode_a`'s decode graph), so the two are gated apart.
         // `free_sequence_dispatch` drops this slot-keyed cache for layers that own
         // per-sequence state.
-        let ep_graphs = std::env::var("METRALE_GLM_VERIFY_GRAPHS").ok().as_deref() != Some("0");
+        let ep_graphs = self.settings.speculative.glm_verify_graphs;
         // 2026-09-25: `METRALE_GLM_VERIFY_GRAPH_TRACE=1` captures every step, never replays,
         // and logs the enqueued ops that differ from the previous step's (host values a
         // replay would freeze). It turns graphs on and caches none.
-        let graph_trace = std::env::var("METRALE_GLM_VERIFY_GRAPH_TRACE").is_ok_and(|v| v == "1");
+        let graph_trace = self.settings.telemetry.glm_verify_graph_trace;
         let ep_graphs = ep_graphs || graph_trace;
         let use_graphs = (self.comm.is_none() || ep_graphs)
             && !self
@@ -214,8 +234,16 @@ impl TransformerModel {
         // 2026-09-25: Hash-routed MoE layers pick experts by token id (`tid2eid`), so the
         // verify tokens go to the fixed `token_ids` buffer before capture, as in `decode`.
         let tid_bytes: Vec<u8> = tokens.iter().flat_map(|t| t.to_le_bytes()).collect();
-        self.gpu
-            .copy_h2d_async(&tid_bytes, self.buffers.token_ids(), stream)?;
+        self.k2_upload(
+            device_draft,
+            Stage::TokenIds,
+            &tid_bytes,
+            self.buffers.token_ids(),
+            stream,
+        )?;
+        if device_draft {
+            self.verify_device_row(seq, hidden.offset(h * fp32), stream)?;
+        }
 
         let ctx = ForwardContext {
             buffers: &self.buffers,
@@ -225,6 +253,7 @@ impl TransformerModel {
             dispatch: &self.dispatch,
             derived: &self.derived,
             levers: &self.levers,
+            settings: &self.settings,
             stats: &self.stats,
             attn_metadata: Some(metadata),
             profile: false,
@@ -359,9 +388,10 @@ impl TransformerModel {
                             stream,
                         )?;
                     }
-                    // 2026-09-25: DFlash: capture this layer's hidden at the last row (K-1) into
-                    // `dflash_hidden_save` for the next propose. A no-op without DFlash.
-                    self.try_dflash_capture(layer_idx, k - 1, stream)?;
+                    // 2026-09-25: DFlash: capture this layer's hidden for the next propose. A
+                    // no-op without DFlash. 2026-10-09: Every row, as the K=γ verify does
+                    // (`dflash_verify_capture.rs`): the verdict commits rows 0..=num_accepted.
+                    self.dflash_capture_verify_rows(layer_idx, k, k - 1, stream)?;
                 }
 
                 let normed = self.buffers.norm_output();
@@ -374,7 +404,13 @@ impl TransformerModel {
                     stream,
                 )?;
 
-                self.lm_head_batched(normed, k as u32, self.buffers.logits(), stream)?;
+                self.lm_head_batched(
+                    normed,
+                    k as u32,
+                    self.buffers.logits(),
+                    HeadRanks::Every,
+                    stream,
+                )?;
 
                 // 2026-09-25: The argmax is part of the graph; it writes fixed scratch addresses.
                 let vocab = self.config.vocab_size;
@@ -402,8 +438,7 @@ impl TransformerModel {
                     // step without caching, which separates a wrong capture from a stale replay.
                     if let Some(ref mut cache) = graph_cache
                         && !graph_trace
-                        && !std::env::var("METRALE_GLM_VERIFY_GRAPH_NOCACHE")
-                            .is_ok_and(|v| v == "1")
+                        && !self.settings.speculative.glm_verify_graph_nocache
                     {
                         cache.insert(graph_key, graph);
                     }
@@ -417,14 +452,24 @@ impl TransformerModel {
 
         let out_ptr = self.buffers.scratch();
         let mut buf = [0u8; 8];
-        self.gpu.copy_d2h(out_ptr, &mut buf)?;
-        let tok0 = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
-        let tok1 = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
+        // 2026-10-11: A device-step verify reads its device verdict instead (`k2_device_readback`):
+        // one copy with both argmaxes and the draft row 1 verified.
+        let (tok0, tok1, row1) = if device_draft {
+            let w = self.k2_device_readback(seq.slot_idx)?;
+            (w[3], w[4], w[2])
+        } else {
+            self.gpu.copy_d2h(out_ptr, &mut buf)?;
+            (
+                u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]),
+                u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]),
+                tokens[1],
+            )
+        };
 
         // 2026-09-25: All K tokens, including `tokens[0]`, are appended and `seq_len` advances
         // by K: the scheduler passes `[last_token, draft]`, and `last_token` is not yet in
-        // `seq.tokens`.
-        for &t in tokens {
+        // `seq.tokens`. 2026-10-11: A device draft is recorded as the id row 1 verified.
+        for t in [tokens[0], row1] {
             seq.tokens.push(t);
         }
         seq.seq_len += k;

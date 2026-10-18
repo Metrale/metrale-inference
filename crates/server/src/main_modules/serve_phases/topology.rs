@@ -7,6 +7,8 @@
 //! Invariants:
 //! - A `Topology` from `resolve_topology` has `world_size == tp_size * ep_size`,
 //!   or `world_size == tp_size == ep_size > 1`.
+//! - Above one TP rank, `config`'s head counts are this rank's and its
+//!   `pre_shard_heads()` are the checkpoint's.
 
 #[cfg(feature = "nccl")]
 use anyhow::Context;
@@ -24,10 +26,10 @@ pub(crate) struct Topology {
     pub(crate) ep_rank: usize,
 }
 
-pub(crate) fn resolve_topology(
-    args: &cli::ServeArgs,
-    config: &mut ModelConfig,
-) -> Result<Topology> {
+/// 2026-10-10: `(tp_size, ep_size, derived_world)` from the flags: the parallel sizes as
+/// `resolve_topology` uses them, and the world size they imply when `--world-size` is left at
+/// 1. Moved out of `resolve_topology` unchanged, so `serve_world_size` derives the same world.
+fn parallel_sizes(args: &cli::ServeArgs) -> (usize, usize, usize) {
     let (tp_size, ep_size) = if args.tp_size == 1 && args.ep_size == 1 && args.world_size > 1 {
         (1usize, args.world_size)
     } else {
@@ -38,6 +40,26 @@ pub(crate) fn resolve_topology(
     } else {
         tp_size * ep_size
     };
+    (tp_size, ep_size, derived_world)
+}
+
+/// 2026-10-10: The serve's world size, as `resolve_topology` resolves it.
+pub(crate) fn serve_world_size(args: &cli::ServeArgs) -> usize {
+    let (tp_size, ep_size, derived_world) = parallel_sizes(args);
+    if args.world_size <= 1 && (tp_size > 1 || ep_size > 1) {
+        derived_world
+    } else {
+        args.world_size
+    }
+}
+
+pub(crate) fn resolve_topology(
+    args: &cli::ServeArgs,
+    // 2026-10-17: `kv_paging` (the peer-paging backend) and the indexer layout.
+    levers: &super::LoadLevers,
+    config: &mut ModelConfig,
+) -> Result<Topology> {
+    let (tp_size, ep_size, derived_world) = parallel_sizes(args);
     let world_size = if args.world_size <= 1 && (tp_size > 1 || ep_size > 1) {
         tracing::info!(
             "Auto-derived world_size={} from --tp-size {} --ep-size {} (rule: \
@@ -73,53 +95,36 @@ pub(crate) fn resolve_topology(
     config.serve_max_seq_len = args.max_seq_len;
     config.ep_rank = ep_rank;
     config.ep_world_size = ep_size;
+    // 2026-10-09: `--moe-expert-layout`; `tp` is refused off its topology and for a loader
+    // that does not slice experts over TP.
+    config.moe_expert_layout = args.moe_expert_layout.0;
+    config.moe_expert_layout.check_topology(tp_size, ep_size)?;
+    set_indexer_cache_dtype(args, levers, config)?;
     if tp_size > 1 {
         let loader = metrale_model_engine::factory::loader_for_config(config)?;
-        if !loader.supports_tp() {
+        let support = loader.tp_support();
+        let slices_experts = loader.slices_experts_over_tp();
+        drop(loader);
+        if config.moe_expert_layout == metrale_config::MoeExpertLayout::Tp && !slices_experts {
+            anyhow::bail!(
+                "--moe-expert-layout tp is not supported by the {} weight loader: it does not \
+                 slice routed experts over TP. Use --moe-expert-layout ep.",
+                config.model_type,
+            );
+        }
+        if support == metrale_config::TpSupport::Unsupported {
             anyhow::bail!(
                 "TP (--tp-size > 1) is not supported by the {} weight loader. \
                  Run with --tp-size 1 (EP-only). To extend TP to this architecture, \
                  wire `crate::tp_shard::slice_for_rank` per attention/MoE/SSM \
-                 tensor in the loader and override `ModelWeightLoader::supports_tp()` \
-                 to return true. See `weight_loader/minimax.rs` as the reference.",
+                 tensor in the loader and override `ModelWeightLoader::tp_support()` \
+                 to return `Even`. See `weight_loader/minimax.rs` as the reference.",
                 config.model_type,
             );
         }
-        drop(loader);
-        if !config.num_attention_heads.is_multiple_of(tp_size) {
-            anyhow::bail!(
-                "TP requires num_attention_heads ({}) divisible by tp_size ({})",
-                config.num_attention_heads,
-                tp_size,
-            );
-        }
-        if !config.num_key_value_heads.is_multiple_of(tp_size) {
-            anyhow::bail!(
-                "TP requires num_key_value_heads ({}) divisible by tp_size ({})",
-                config.num_key_value_heads,
-                tp_size,
-            );
-        }
-        config.num_attention_heads /= tp_size;
-        config.num_key_value_heads /= tp_size;
-        if config.linear_num_key_heads > 0 || config.linear_num_value_heads > 0 {
-            if !config.linear_num_key_heads.is_multiple_of(tp_size) {
-                anyhow::bail!(
-                    "TP requires linear_num_key_heads ({}) divisible by tp_size ({})",
-                    config.linear_num_key_heads,
-                    tp_size,
-                );
-            }
-            if !config.linear_num_value_heads.is_multiple_of(tp_size) {
-                anyhow::bail!(
-                    "TP requires linear_num_value_heads ({}) divisible by tp_size ({})",
-                    config.linear_num_value_heads,
-                    tp_size,
-                );
-            }
-            config.linear_num_key_heads /= tp_size;
-            config.linear_num_value_heads /= tp_size;
-        }
+        // 2026-10-08: `Even` refuses a head count that does not divide over `tp_size`, as
+        // this phase always did; `Uneven` (GLM-5.3) splits it with `metrale_config::tp_split`.
+        config.shard_heads_for_tp(support)?;
         tracing::info!(
             "TP-local head counts: num_attention_heads={}, num_key_value_heads={}, \
              linear_num_key_heads={}, linear_num_value_heads={}",
@@ -142,6 +147,12 @@ pub(crate) fn resolve_topology(
             start,
             end,
         );
+        if config.moe_expert_layout == metrale_config::MoeExpertLayout::Tp {
+            tracing::info!(
+                "MoE expert layout tp: every routed expert's intermediate width is sliced over \
+                 the {tp_size} TP ranks; all experts are local on every rank"
+            );
+        }
     }
     Ok(Topology {
         world_size,
@@ -152,12 +163,44 @@ pub(crate) fn resolve_topology(
     })
 }
 
+/// 2026-10-16: `--indexer-cache-dtype` and the rewind depth its FP8 tail ring is sized for: the
+/// widest verify pass (`verify_pool_drafts`) when any drafter runs, else 0. `fp8` is refused off
+/// its scope (`IndexerCacheDtype::check_serve`).
+fn set_indexer_cache_dtype(
+    args: &cli::ServeArgs,
+    levers: &super::LoadLevers,
+    config: &mut ModelConfig,
+) -> Result<()> {
+    let dtype = args.indexer_cache_dtype.0;
+    dtype.check_serve(
+        &config.model_type,
+        levers.prefix_cache_gate.glm_indexer_paged,
+        levers.kv_paging,
+    )?;
+    let drafting = args.speculative || args.prompt_lookup_config().is_some();
+    config.indexer_cache_dtype = dtype;
+    config.indexer_rewind_rows = if drafting {
+        args.verify_pool_drafts()
+    } else {
+        0
+    };
+    if dtype != metrale_config::IndexerCacheDtype::Bf16 {
+        tracing::info!(
+            "indexer cache dtype {}: tail ring sized for a rewind of {} rows",
+            dtype.name(),
+            config.indexer_rewind_rows
+        );
+    }
+    Ok(())
+}
+
 /// 2026-09-26: The NCCL communicator, or `None` when `world_size <= 1`. The
 /// receive buffer holds `max_batch_tokens x max(hidden_size, vocab_size)`
 /// elements of `ALL_REDUCE_DTYPE_BYTES` (`required_model_recv_bytes`).
 #[cfg(feature = "nccl")]
 pub(crate) fn init_nccl_comm(
     args: &cli::ServeArgs,
+    settings: &metrale_settings::InferenceServerSettings,
     gpu: &dyn metrale_gpu_runtime::gpu::GpuBackend,
     world_size: usize,
     max_batch_tokens: usize,
@@ -194,6 +237,14 @@ pub(crate) fn init_nccl_comm(
         args.master_port,
         cuda_stream,
         recv_capacity,
+        metrale_comm::nccl_backend::CommLevers {
+            oneshot_max_bytes: args
+                .all_reduce_oneshot_max_kb
+                .checked_mul(1024)
+                .context("--all-reduce-oneshot-max-kb overflows")?,
+            diagnostics: settings.telemetry.comm_diagnostics.as_deref(),
+            poll: &settings.runtime.comm_poll,
+        },
     )
     .context("Failed to initialize NCCL")?;
     tracing::info!("NCCL initialized: rank {}", backend.rank());
@@ -207,6 +258,7 @@ pub(crate) fn init_nccl_comm(
 #[cfg(all(feature = "cuda", not(feature = "nccl")))]
 pub(crate) fn init_nccl_comm(
     _args: &cli::ServeArgs,
+    _settings: &metrale_settings::InferenceServerSettings,
     _gpu: &dyn metrale_gpu_runtime::gpu::GpuBackend,
     world_size: usize,
     _max_batch_tokens: usize,
@@ -228,6 +280,7 @@ pub(crate) fn init_nccl_comm(
 #[cfg(all(feature = "metal", not(feature = "cuda")))]
 pub(crate) fn init_nccl_comm(
     _args: &cli::ServeArgs,
+    _settings: &metrale_settings::InferenceServerSettings,
     _gpu: &dyn metrale_gpu_runtime::gpu::GpuBackend,
     world_size: usize,
     _max_batch_tokens: usize,

@@ -18,8 +18,9 @@
 //! `W4a16BatchmTiers` and calls `kernel(m)`.
 //!
 //! `METRALE_NO_GEMV_EXACT_M_TIERS` (presence-checked: any value, including
-//! `0`, disables) hides widths 5/6/7 from the decision, leaving widths 4 and
-//! 8. It does not unload the kernels, so an A/B needs no rebuild.
+//! `0`, disables; `OpsLevers::gemv_exact_m_tiers`) hides widths 5/6/7 from the
+//! decision, leaving widths 4 and 8. It does not unload the kernels, so an A/B
+//! needs no rebuild.
 
 use metrale_gpu_runtime::gpu::{GpuBackend, KernelHandle};
 
@@ -38,22 +39,13 @@ const FIRST_EXACT_M: usize = 1;
 /// hides; width 8 stays.
 const EXACT_M_LAST: usize = 3;
 
-/// 2026-09-25: Are the exact-M tiers (5/6/7) allowed in the dispatch decision?
-///
-/// A presence check, read once per process: `kernel` consults it on every
-/// launch.
-pub fn exact_m_tiers_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("METRALE_NO_GEMV_EXACT_M_TIERS").is_none())
-}
-
 /// 2026-09-25: Pure tier decision: index into [`W4A16_BATCHM_WIDTHS`] of the
 /// narrowest tier that covers `m` rows and is present in the loaded target,
 /// or `None` when no such tier exists (or `m` is 0).
 ///
 /// `present[i]` is whether `W4A16_BATCHM_WIDTHS[i]` resolved. `exact_m` is
-/// [`exact_m_tiers_enabled`], passed in so both values are testable without
-/// the process environment or the latched `OnceLock`.
+/// `OpsLevers::gemv_exact_m_tiers`: whether the exact-M tiers (5/6/7) are
+/// allowed in the decision.
 ///
 /// Narrowest-that-covers, not exact-only: a target missing a tier still
 /// dispatches on the next wider one.
@@ -84,7 +76,7 @@ pub struct W4a16BatchmTiers {
     /// 2026-09-25: Parallel to [`W4A16_BATCHM_WIDTHS`].
     handles: [KernelHandle; W4A16_BATCHM_WIDTHS.len()],
     /// 2026-09-25: `w4a16_gemv_batch16`, handed out for 9..=16 rows when the
-    /// row edge exceeds 8: under `gemv_tc::wide_rows_enabled()`, or for a weight
+    /// row edge exceeds 8: under `W4a16TcPlan::wide`, or for a weight
     /// that declares FP4 activations. `ops::w4a16_gemv_batchm` launches the
     /// tensor-core kernel instead when `gemv_tc::tc_kernel` returns one.
     wide: KernelHandle,
@@ -93,6 +85,11 @@ pub struct W4a16BatchmTiers {
     /// 2026-09-28: `w4a4_proj::max_rows` for this backend: the widest the W4A4 kernels serve
     /// (0 when they are absent or the published tier does not prepare them).
     a4_rows: u32,
+    /// 2026-10-17: `OpsLevers::w4a16_tc`, which the launches over these tiers run under
+    /// ([`Self::tc`]) and which sets the W4A16 row edge.
+    tc: crate::layers::ops::W4a16TcPlan,
+    /// 2026-10-17: `OpsLevers::gemv_exact_m_tiers`, the `exact_m` of [`select_tier`].
+    exact_m: bool,
 }
 
 /// 2026-09-25: The "no NVFP4 kernels" state: an all-zero table, for which `kernel`
@@ -104,20 +101,22 @@ impl Default for W4a16BatchmTiers {
             wide: KernelHandle(0),
             wide32: KernelHandle(0),
             a4_rows: 0,
+            tc: crate::layers::ops::W4a16TcPlan::declared(),
+            exact_m: true,
         }
     }
 }
 
 impl W4a16BatchmTiers {
     /// 2026-09-25: Resolve every tier in the family. A missing kernel is a zero
-    /// handle, and `select_tier` skips it.
-    pub fn resolve(gpu: &dyn GpuBackend) -> Self {
+    /// handle, and `select_tier` skips it. `ops.w4a4` reaches `w4a4_proj::prepare`.
+    pub fn resolve(gpu: &dyn GpuBackend, ops: &crate::layers::ops::OpsLevers) -> Self {
         let mut handles = [KernelHandle(0); W4A16_BATCHM_WIDTHS.len()];
         for (h, w) in handles.iter_mut().zip(W4A16_BATCHM_WIDTHS) {
             // 2026-09-25: Width 8 resolves through `batch8_kernel`, which prefers
-            // `w4a16_gemv_batch8_rt2` unless `METRALE_NO_BATCH8_RT=1`.
+            // `w4a16_gemv_batch8_rt2` unless `METRALE_NO_BATCH8_RT` is switched on.
             *h = if w == 8 {
-                super::batch8_kernel(gpu)
+                super::batch8_kernel(gpu, ops.batch8_rt)
             } else {
                 super::try_kernel(gpu, "w4a16_gemv", &format!("w4a16_gemv_batch{w}"))
             };
@@ -125,7 +124,7 @@ impl W4a16BatchmTiers {
         let wide = super::try_kernel(gpu, "w4a16_gemv", "w4a16_gemv_batch16");
         // 2026-09-25: The only call of `w4a4_proj::prepare`, which allocates the
         // W4A4 activation scratch; `resolve` runs while layers are built.
-        if let Err(e) = crate::layers::ops::w4a4_proj::prepare(gpu) {
+        if let Err(e) = crate::layers::ops::w4a4_proj::prepare(gpu, ops.w4a4) {
             tracing::warn!("w4a4 scratch/kernels unavailable, projections stay W4A16: {e:#}");
         }
         // 2026-09-28: `w4a16_gemv_batch32` is handed out only within a W4A4 edge above 16
@@ -140,12 +139,20 @@ impl W4a16BatchmTiers {
             wide,
             wide32,
             a4_rows: crate::layers::ops::w4a4_proj::max_rows(gpu),
+            tc: ops.w4a16_tc,
+            exact_m: ops.gemv_exact_m_tiers,
         }
+    }
+
+    /// 2026-10-17: The W4A16 tensor-core levers these tiers were resolved under, for the
+    /// launchers that take them (`ops::w4a16_gemv_batchm`).
+    pub fn tc(&self) -> crate::layers::ops::W4a16TcPlan {
+        self.tc
     }
 
     /// 2026-09-28: Row edge of the narrow projection arms for a weight stamped `act`: the
     /// W4A4 edge the published tier gives it (`WeightQuantTier::w4a4_rows`), else the W4A16
-    /// edge `gemv_tc::narrow_gemv_max_rows`.
+    /// edge `W4a16TcPlan::narrow_max_rows`.
     fn edge_of(&self, act: metrale_config::Nvfp4Act) -> u32 {
         let rows = crate::layers::weight_quantization().w4a4_rows(
             act,
@@ -156,7 +163,7 @@ impl W4a16BatchmTiers {
         if rows > 0 {
             rows
         } else {
-            super::ops::gemv_tc::narrow_gemv_max_rows()
+            self.tc.narrow_max_rows()
         }
     }
 
@@ -204,14 +211,13 @@ impl W4a16BatchmTiers {
             // `ops::w4a16_gemv_batchm` refuses more than 32 rows.
             return if m <= 16 { self.wide } else { self.wide32 };
         }
-        select_tier(m, self.present(), exact_m_tiers_enabled())
-            .map_or(KernelHandle(0), |i| self.handles[i])
+        select_tier(m, self.present(), self.exact_m).map_or(KernelHandle(0), |i| self.handles[i])
     }
 
     /// 2026-09-25: Width of the tier `select_tier` picks for `m` (the narrow
     /// family only; `kernel` hands out `wide`/`wide32` above 8 rows).
     pub fn width(&self, m: u32) -> Option<u32> {
-        select_tier(m, self.present(), exact_m_tiers_enabled()).map(|i| W4A16_BATCHM_WIDTHS[i])
+        select_tier(m, self.present(), self.exact_m).map(|i| W4A16_BATCHM_WIDTHS[i])
     }
 
     /// 2026-09-25: Is the base `w4a16_gemv_batch4` tier resolved? Capability probes

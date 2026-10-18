@@ -212,3 +212,162 @@ pub fn feed_resolve(
         .arg_u32(n_rows)
         .launch(stream)
 }
+
+/// 2026-10-10: Threads per block of [`argmax_key_shard_bf16`].
+const ARGMAX_KEY_BLOCK: u32 = 256;
+
+/// 2026-10-10: Raise `keys` (`[p, q]` u64, zeroed before the first slice) to the sharded feed
+/// argmax keys of `n_local` BF16 logits at `shard`, whose first entry is global index `base`;
+/// `masks` is the row's `[m0, m1]` (`argmax_key.cu`, host spec
+/// `metrale_sampling::feed_argmax_key`). One block per 1024 entries, at most 128.
+#[allow(clippy::too_many_arguments)]
+pub fn argmax_key_shard_bf16(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    shard: DevicePtr,
+    masks: DevicePtr,
+    keys: DevicePtr,
+    base: u32,
+    n_local: u32,
+    stream: u64,
+) -> Result<()> {
+    let blocks = n_local.div_ceil(1024).clamp(1, 128);
+    KernelLaunch::new(gpu, kernel)
+        .grid([blocks, 1, 1])
+        .block([ARGMAX_KEY_BLOCK, 1, 1])
+        .arg_ptr(shard)
+        .arg_ptr(masks)
+        .arg_ptr(keys)
+        .arg_u32(base)
+        .arg_u32(n_local)
+        .launch(stream)
+}
+
+/// 2026-10-10: `cell[0]` = the token named by the max of `keys` and `n_peers` peer key pairs at
+/// `peers + slot * slot_bytes` (a one-shot exchange's slots; `n_peers` 0 when `keys` holds every
+/// slice), under `masks`.
+/// 2026-10-11: The K=2 MTP verdict on the device (`mtp_k2_verdict.cu`, host specification
+/// `speculative::k2_device_verdict`): from the verify's two argmaxes and its token ids (row 1 is
+/// the draft) into `out`'s `K2_DEVICE_VERDICT_WORDS` words.
+pub fn mtp_k2_verdict(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    argmax: DevicePtr,
+    token_ids: DevicePtr,
+    out: DevicePtr,
+    stream: u64,
+) -> Result<()> {
+    KernelLaunch::new(gpu, kernel)
+        .grid([1, 1, 1])
+        .block([32, 1, 1])
+        .arg_ptr(argmax)
+        .arg_ptr(token_ids)
+        .arg_ptr(out)
+        .launch(stream)
+}
+
+/// 2026-10-11: `predicated_copy_2d` (`mtp_device_step.cu`, host rule
+/// `speculative::device_step::predicated_copy_applies`): copy `height` rows of `width` bytes from
+/// `src + r * src_pitch` to `dst + r * dst_pitch` when the u32 at `flag` equals `match_value`.
+#[allow(clippy::too_many_arguments)]
+pub fn predicated_copy_2d(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    flag: DevicePtr,
+    match_value: u32,
+    src: DevicePtr,
+    src_pitch: usize,
+    dst: DevicePtr,
+    dst_pitch: usize,
+    width: usize,
+    height: usize,
+    stream: u64,
+) -> Result<()> {
+    // 2026-10-11: 16 bytes per thread at 256 threads per block; at most 64 blocks per row.
+    let blocks = width.div_ceil(256 * 16).clamp(1, 64) as u32;
+    KernelLaunch::new(gpu, kernel)
+        .grid([blocks, height as u32, 1])
+        .block([256, 1, 1])
+        .arg_ptr(flag)
+        .arg_u32(match_value)
+        .arg_ptr(src)
+        .arg_u64(src_pitch as u64)
+        .arg_ptr(dst)
+        .arg_u64(dst_pitch as u64)
+        .arg_u64(width as u64)
+        .arg_u32(height as u32)
+        .launch(stream)
+}
+
+/// 2026-10-11: `k2_verify_meta` (`mtp_device_step.cu`, host rule
+/// `speculative::device_step::k2_verify_meta`): the 2-row verify metadata for the length at
+/// `state`, into `positions` (`[2]` u32), `slots` (`[2]` i64) and `seq_lens` (`[2]` i32).
+#[allow(clippy::too_many_arguments)]
+pub fn k2_verify_meta(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    state: DevicePtr,
+    block_table: DevicePtr,
+    table_len: u32,
+    block_size: u32,
+    dummy_block: u32,
+    positions: DevicePtr,
+    slots: DevicePtr,
+    seq_lens: DevicePtr,
+    stream: u64,
+) -> Result<()> {
+    KernelLaunch::new(gpu, kernel)
+        .grid([1, 1, 1])
+        .block([32, 1, 1])
+        .arg_ptr(state)
+        .arg_ptr(block_table)
+        .arg_u32(table_len)
+        .arg_u32(block_size)
+        .arg_i32(dummy_block as i32)
+        .arg_ptr(positions)
+        .arg_ptr(slots)
+        .arg_ptr(seq_lens)
+        .launch(stream)
+}
+
+/// 2026-10-11: `k2_step_advance` (`mtp_device_step.cu`, host rule
+/// `speculative::device_step::k2_step_advance`): add the committed rows of the verdict at
+/// `verdict` to the length at `state`.
+pub fn k2_step_advance(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    verdict: DevicePtr,
+    state: DevicePtr,
+    stream: u64,
+) -> Result<()> {
+    KernelLaunch::new(gpu, kernel)
+        .grid([1, 1, 1])
+        .block([32, 1, 1])
+        .arg_ptr(verdict)
+        .arg_ptr(state)
+        .launch(stream)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn argmax_key_resolve(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    keys: DevicePtr,
+    peers: DevicePtr,
+    slot_bytes: u64,
+    n_peers: u32,
+    masks: DevicePtr,
+    cell: DevicePtr,
+    stream: u64,
+) -> Result<()> {
+    KernelLaunch::new(gpu, kernel)
+        .grid([1, 1, 1])
+        .block([32, 1, 1])
+        .arg_ptr(keys)
+        .arg_ptr(peers)
+        .arg_u64(slot_bytes)
+        .arg_u32(n_peers)
+        .arg_ptr(masks)
+        .arg_ptr(cell)
+        .launch(stream)
+}

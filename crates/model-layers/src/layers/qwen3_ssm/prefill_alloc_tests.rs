@@ -33,11 +33,13 @@ fn ssm_qkvz_prefill_allocates_nothing_with_the_cublas_lever_armed() {
     };
     let derived = crate::layers::ops::DerivedWeights::new();
     let levers = crate::layers::ops::ModelLevers::defaults();
+    let settings = crate::lever_equivalence::defaults();
     let stats = crate::layers::ops::ModelStats::new();
     let ctx = ForwardContext {
         dispatch: &dispatch,
         derived: &derived,
         levers: &levers,
+        settings: &settings,
         stats: &stats,
         buffers: &buffers,
         hc_row_offset: 0,

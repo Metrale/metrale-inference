@@ -47,7 +47,7 @@ pub struct SchedulerConfig {
     pub grammar_engine: Option<GrammarEngine>,
     pub adaptive_sampling: bool,
     pub session_manager: SessionSsmManager,
-    pub spontaneous_think_budget: u32,
+    pub spontaneous_think_budget: Option<u32>,
     /// 2026-09-25: Per-token masks for this model's vocabulary, indexed by token id.
     pub vocab_masks: VocabMasks,
     /// 2026-09-25: This model's hard stops: two tokenizer-resolved token ids and the
@@ -69,4 +69,7 @@ pub struct SchedulerConfig {
     /// 2026-09-25: Fault injection for the pipelined decode lane; `PipelineFaults::NONE`
     /// when serving.
     pub pipeline_faults: super::PipelineFaults,
+    /// 2026-10-17: The stream-send deadline and diagnostic sink paths, resolved from the load's
+    /// settings.
+    pub run_io: crate::scheduler::run_io::RunIoSettings,
 }

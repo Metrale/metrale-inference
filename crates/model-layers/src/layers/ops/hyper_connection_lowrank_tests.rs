@@ -204,7 +204,18 @@ fn hc_lowrank_matches_reference() {
         let want_inj = f.f32s(&format!("{site}_inj"));
 
         ops::hc_pre_lowrank(
-            g, k_pre, streams, &w, y_out, inj_out, scratch, t as u32, h as u32, hc as u32, f.eps,
+            g,
+            ops::OpsLevers::declared().hc,
+            k_pre,
+            streams,
+            &w,
+            y_out,
+            inj_out,
+            scratch,
+            t as u32,
+            h as u32,
+            hc as u32,
+            f.eps,
             stream,
         )
         .unwrap();
@@ -247,7 +258,18 @@ fn hc_lowrank_matches_reference() {
     // 2026-09-25: hc_head, the model-level mixer (`use_combine=False` in the reference).
     let w_head = site_weights(g, &f, "head", false);
     ops::hc_head_lowrank(
-        g, k_head, streams, &w_head, y_out, scratch, t as u32, h as u32, hc as u32, f.eps, stream,
+        g,
+        ops::OpsLevers::declared().hc,
+        k_head,
+        streams,
+        &w_head,
+        y_out,
+        scratch,
+        t as u32,
+        h as u32,
+        hc as u32,
+        f.eps,
+        stream,
     )
     .unwrap();
     g.synchronize(stream).unwrap();
@@ -355,6 +377,7 @@ fn hc_pre_gemm_matches_reference() {
         let w = site_weights(g, &f, site, true);
         ops::hc_pre_lowrank(
             g,
+            ops::OpsLevers::declared().hc,
             k_pre,
             streams,
             &w,
@@ -398,6 +421,7 @@ fn hc_pre_gemm_matches_reference() {
     let w_head = site_weights(g, &f, "head", false);
     ops::hc_head_lowrank(
         g,
+        ops::OpsLevers::declared().hc,
         k_head,
         streams,
         &w_head,

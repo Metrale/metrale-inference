@@ -53,31 +53,12 @@ const TPS_ALPHA: f64 = 0.3;
 /// current mode's estimate and half the sum of the two deviation EWMAs.
 const MARGIN_REL_FLOOR: f64 = 0.05;
 
-fn env_usize(name: &str, default: usize) -> usize {
-    std::env::var(name)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
-}
-
-/// 2026-09-25: Tokens between MTP probes in Serial mode:
-/// `METRALE_MTP_GATE_REPROBE`, default 256 (the same default as
-/// `METRALE_DFLASH_ADAPTIVE_REPROBE`).
-fn reprobe_tokens() -> usize {
-    env_usize("METRALE_MTP_GATE_REPROBE", 256)
-}
-
-/// 2026-09-25: Tokens between serial-estimate refreshes in Mtp mode:
-/// `METRALE_MTP_GATE_REFRESH`, default 1024. 2026-09-26: per sequence of the
-/// batch-width bucket, so the refresh comes after the same number of steps at
-/// every width (`MtpGate::event_interval`).
-fn serial_refresh_tokens() -> usize {
-    env_usize("METRALE_MTP_GATE_REFRESH", 1024)
-}
-
-/// 2026-09-25: The spec-entry verify pin, in tokens after `</think>`, from
-/// the value of `METRALE_SPEC_ENTRY_PIN`: 8 when unset or unparseable, and
-/// `0` disables it. While any active sequence is within it, the scheduler
+/// 2026-09-25: Whether the spec-entry pin overrides a Serial gate decision
+/// for this step. `min_post_think_emitted` is the minimum over the active
+/// batch, so one entering sequence pins the whole (already spec-eligible)
+/// batch. `pin_tokens` is `DrafterSettings::spec_entry_pin_tokens`
+/// (`METRALE_SPEC_ENTRY_PIN`, tokens after `</think>`; 8 when unset, and `0`
+/// disables it). While any active sequence is within it, the scheduler
 /// runs the MTP verify step even when the gate chose plain decode.
 ///
 /// The serial (one-row) and verify (batch-K) forwards can pick different
@@ -90,20 +71,6 @@ fn serial_refresh_tokens() -> usize {
 /// `METRALE_DFLASH_RESUME_GUARD` is checked earlier, in
 /// `spec_dispatch_eligible`: outside `<think>`, a sequence with fewer tokens
 /// after `</think>` than the guard does not reach the gate at all.
-pub(crate) fn parse_entry_pin_tokens(env: Option<&str>) -> u32 {
-    env.and_then(|v| v.parse().ok()).unwrap_or(8)
-}
-
-/// 2026-09-25: The pin width from `METRALE_SPEC_ENTRY_PIN`. The scheduler
-/// stores it in `SchedLevers::spec_entry_pin_tokens`.
-pub fn entry_pin_tokens_from_env() -> u32 {
-    parse_entry_pin_tokens(std::env::var("METRALE_SPEC_ENTRY_PIN").ok().as_deref())
-}
-
-/// 2026-09-25: Whether the spec-entry pin overrides a Serial gate decision
-/// for this step. `min_post_think_emitted` is the minimum over the active
-/// batch, so one entering sequence pins the whole (already spec-eligible)
-/// batch. `pin_tokens` is the run's [`entry_pin_tokens_from_env`] value.
 pub fn entry_pin_forces_verify(min_post_think_emitted: u32, pin_tokens: u32) -> bool {
     min_post_think_emitted < pin_tokens
 }
@@ -128,7 +95,7 @@ pub fn spec_dispatch_eligible(
         return false;
     }
     // 2026-09-25: Batch-K verify can pick a different low-margin token than
-    // serial decode at T=0 (see `parse_entry_pin_tokens`).
+    // serial decode at T=0 (see `entry_pin_forces_verify`).
     if inside_thinking && !spec_think {
         return false;
     }

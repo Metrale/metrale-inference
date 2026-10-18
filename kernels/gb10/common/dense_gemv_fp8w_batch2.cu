@@ -6,7 +6,9 @@
 // Owner: gb10 kernels.
 // Invariants:
 // - A is [2, K] BF16 contiguous, B is [N, K] FP8 E4M3 bytes row-major, row_scale is [N]
-//   FP32, C is [2, N] BF16 (row 1 starts at C + N).
+//   FP32, C is [2, ldc] BF16 (row 1 starts at C + ldc; ldc >= N, and ldc = N is the dense
+//   layout). 2026-10-09: ldc lets a vocab-parallel head write its column window of the
+//   full-vocab logits; it moves only the second row's store, never a sum.
 // - Launch: grid (ceil(N / 4), 1, 1), block (256, 1, 1); 64 threads (2 warps) per output.
 // - Assumes K % 16 == 0: there is no scalar tail.
 // - Not bit-identical to two dense_gemv_fp8w calls: mac4 adds four products together
@@ -75,7 +77,8 @@ extern "C" __global__ void dense_gemv_fp8w_batch2(
     const float* __restrict__ row_scale,
     __nv_bfloat16* __restrict__ C,
     unsigned int N,
-    unsigned int K
+    unsigned int K,
+    unsigned int ldc
 ) {
     const unsigned int threads_per_out = BLOCK_SIZE / N_PER_BLOCK;
     const unsigned int local_out = threadIdx.x / threads_per_out;
@@ -147,6 +150,6 @@ extern "C" __global__ void dense_gemv_fp8w_batch2(
         float r0 = smem0[local_out * 2] + smem0[local_out * 2 + 1];
         float r1 = smem1[local_out * 2] + smem1[local_out * 2 + 1];
         C[n] = __float2bfloat16(r0);
-        C[(unsigned long long)N + n] = __float2bfloat16(r1);
+        C[(unsigned long long)ldc + n] = __float2bfloat16(r1);
     }
 }

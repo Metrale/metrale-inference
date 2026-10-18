@@ -3,31 +3,37 @@ name = "metrale-circuit"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Architecture circuits: an op graph per model, the fusion rules that cover it, and the fused plan."
 
 # 2026-09-28: Pure logic. No GPU, no file I/O, no environment, no clock and no
 # randomness: callers read `kernels/circuits/*.toml`, `FUSIONS.toml` and the
 # kernel sources and pass their contents in. The server's `met circuit` and the
-# golden-plan tests are the two callers.
+# golden-plan tests are the two callers. 2026-10-17: `checkpoint` embeds the
+# architecture circuits at compile time, from the kernel tree build.rs locates.
 
 [dependencies]
+# 2026-10-17: Its `links` metadata (`DEP_METRALE_KERNEL_TREE_ROOT`) locates kernels/ for build.rs.
+metrale-kernel-root = { workspace = true }
 # 2026-09-28: `DeclaredPrecisionPlan` and `WeightQuantPolicy`, the engine's precision answers the
 # circuit's `PolicyPrecision` adapter asks. Pure: no environment, no I/O.
-metrale-config = { path = "../config", default-features = false }
-serde_json = { workspace = true }
-sha2.workspace = true
-thiserror.workspace = true
-serde = { workspace = true }
-# 2026-09-28: Same pin as `metrale-closure` and `metrale-kernels`.
-toml = "1.1"
+metrale-config = { workspace = true }
+serde_json = { workspace = true, features = ["std", "preserve_order"] }
+sha2 = { workspace = true, features = ["alloc", "oid"] }
+thiserror = { workspace = true, features = ["std"] }
+serde = { workspace = true, features = ["std", "derive"] }
+toml = { workspace = true, features = ["std", "serde", "parse", "display"] }
 
 [dev-dependencies]
 # 2026-09-28: The golden tests enumerate each target's kernel sources through
 # the same resolver the kernels build uses, so "available" means what the
 # build compiles.
-metrale-closure = { path = "../closure" }
+metrale-closure = { workspace = true }
 # 2026-09-28: The display tests measure lines as a terminal does; the renderer counts chars.
-unicode-width = "0.2"
+unicode-width = { workspace = true, features = ["cjk"] }
 
 [lints]
 workspace = true
+
+[package.metadata.metrale]
+role = "core"

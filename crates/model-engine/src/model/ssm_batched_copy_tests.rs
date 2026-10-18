@@ -260,7 +260,7 @@ fn batching_collapses_the_layer_loop_to_one_launch() {
     assert_eq!(h.len(), layers);
 
     const STREAM: u64 = 0x5a17;
-    run_ssm_state_copies(&gpu, &h, &c, STREAM).unwrap();
+    run_ssm_state_copies(&gpu, &h, &c, true, STREAM).unwrap();
     assert_eq!(
         (gpu.d2d_count(), gpu.d2d_2d_count()),
         (0, 2),
@@ -276,17 +276,6 @@ fn batching_collapses_the_layer_loop_to_one_launch() {
     run_state_copies_with(&off, &oc, false, STREAM).unwrap();
     assert_eq!((off.d2d_count(), off.d2d_2d_count()), (2 * layers, 0));
     assert_eq!(off.d2d_async_streams(), vec![STREAM; 2 * layers]);
-}
-
-#[test]
-fn kill_switch_default_is_batched() {
-    // 2026-09-25: The variable is a presence check latched in a `OnceLock`;
-    // under `cargo test`, with it unset, the production reader must report
-    // batched.
-    assert!(
-        batched_ssm_copy_enabled(),
-        "METRALE_NO_BATCHED_SSM_ROLLBACK is set in this environment"
-    );
 }
 
 // 2026-09-25: copy_plan_as_strided_run, the collapse predicate itself.

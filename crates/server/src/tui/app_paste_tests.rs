@@ -64,7 +64,11 @@ fn single_line_fields_get_the_paste_flattened() {
     a.lib.editing = true;
     a.on_paste("/models/custom-template.jinja".into());
     assert_eq!(a.lib.edit_buffer, "/models/custom-template.jinja");
+}
 
+#[cfg(feature = "bench")]
+#[test]
+fn a_benchmark_field_gets_the_paste_flattened() {
     let mut a = app();
     a.section = Section::Benchmarks;
     a.bench.select(0);

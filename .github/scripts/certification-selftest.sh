@@ -1604,28 +1604,14 @@ want_rc_msg 1 "must never poll a future" \
 # tree. Both were verified passing on a tree they could not see.
 #
 # `Enforce <=500 LoC per source file`: `find crates ...` on a missing directory
-# feeds the loop nothing, `violations` stays 0, and the step printed its tick
-# and exited 0 -- the cap unenforced repo-wide. `set -euo pipefail` does not
-# catch it: the find lives in a process substitution whose status is not the
-# command's.
-mkdir -p "$TMP/fs"
-# Same move: the cap now lives in `.github/scripts/check-file-size-cap.sh`.
-# The assertion that the workflow still CALLS it stays here, so a body
-# extracted and left unwired is caught instead of quietly untested.
-python3 - <<'PY'
-import pathlib, yaml
-d = yaml.safe_load(pathlib.Path(".github/workflows/file-size-cap.yml").read_text())
-steps = [s for s in d["jobs"]["check-file-sizes"]["steps"]
-         if "check-file-size-cap.sh" in (s.get("run") or "")]
-assert len(steps) == 1, f"expected one step calling the cap script, found {len(steps)}"
-PY
-cp .github/scripts/check-file-size-cap.sh "$TMP/fs/step.sh"
-want_rc 0 "the 500-LoC cap passes on the real tree" bash "$TMP/fs/step.sh"
-
-mkdir -p "$TMP/fs/nocrates"
-want_rc_msg 1 "the 500-line cap scanned nothing" \
-  "control: the 500-LoC cap refuses a tree with no crates/ to scan" \
-  env -C "$TMP/fs/nocrates" bash "$TMP/fs/step.sh"
+# fed the old shell cap nothing and it went green unenforced repo-wide. The cap
+# is `cargo xtask file-size` now (xtask/src/filesize.rs, the one implementation),
+# which errors when no file was in scope; that control and the over-cap, grown
+# and stale-entry controls are `cargo xtask selftest`'s purity-filesize probe and
+# xtask's unit tests. What stays here is that the required job still CALLS it, so
+# a gate left unwired is caught instead of quietly untested.
+want_rc 0 "the required file-size job runs cargo xtask file-size" \
+  grep -q '^        run: cargo xtask file-size$' .github/workflows/file-size-cap.yml
 
 # `CLI booleans are presence flags`: scans only the files that declare clap
 # arguments, so the two ways it could go green unenforced are finding no such

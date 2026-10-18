@@ -35,6 +35,7 @@ impl Qwen3AttentionLayer {
         kv_dtype: KvCacheDtype,
         fp8_calibration_tokens: usize,
         config: &metrale_config::ModelConfig,
+        lc: crate::load_context::LoadContext<'_>,
     ) -> Result<Self> {
         Self::new_with_gating(
             input_norm,
@@ -50,6 +51,7 @@ impl Qwen3AttentionLayer {
             kv_dtype,
             fp8_calibration_tokens,
             config,
+            lc,
         )
     }
 
@@ -66,6 +68,7 @@ impl Qwen3AttentionLayer {
         kv_dtype: KvCacheDtype,
         fp8_calibration_tokens: usize,
         config: &metrale_config::ModelConfig,
+        lc: crate::load_context::LoadContext<'_>,
     ) -> Result<Self> {
         Self::new_with_gating(
             input_norm,
@@ -81,6 +84,7 @@ impl Qwen3AttentionLayer {
             kv_dtype,
             fp8_calibration_tokens,
             config,
+            lc,
         )
     }
 
@@ -99,6 +103,7 @@ impl Qwen3AttentionLayer {
         kv_dtype: KvCacheDtype,
         fp8_calibration_tokens: usize,
         config: &metrale_config::ModelConfig,
+        lc: crate::load_context::LoadContext<'_>,
     ) -> Result<Self> {
         let (reshape_mod, reshape_fn, decode_mod, decode_fn) =
             super::init_kernel_dispatch::kernel_modules_for_dtype(kv_dtype, config.head_dim);
@@ -114,11 +119,17 @@ impl Qwen3AttentionLayer {
             &probes,
             reshape_mod,
             reshape_fn,
+            lc.levers,
         )?;
         let dec = super::init_decode_kernels::DecodeKernels::resolve(
             gpu, kv_dtype, &probes, decode_mod, decode_fn,
         )?;
-        let pre = super::init_prefill_kernels::PrefillKernels::resolve(gpu, config, &probes)?;
+        let pre = super::init_prefill_kernels::PrefillKernels::resolve(
+            gpu,
+            config,
+            &probes,
+            &lc.levers.ops,
+        )?;
         Ok(Self {
             input_norm,
             attn,
@@ -131,6 +142,8 @@ impl Qwen3AttentionLayer {
             mrope_interleaved,
             position_encoding,
             kv_dtype,
+            cutlass_nvfp4_gemm: lc.settings.kernels.cutlass_nvfp4_gemm,
+            levers: lc.levers.attn,
             head_dim_override: None,
             num_q_heads_override: None,
             num_kv_heads_override: None,
@@ -356,6 +369,7 @@ impl Qwen3AttentionLayer {
                     attn_layer_idx,
                     fp8_calibration_tokens,
                     config.fp8_kv_headroom,
+                    lc.levers.attn.fp8_kv_ema_recal,
                     gpu,
                 )?)
             } else {

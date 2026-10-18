@@ -29,15 +29,6 @@ use crate::layer::ForwardContext;
 use crate::layers::ops;
 use crate::weight_map::Fp8Weight;
 
-/// 2026-09-25: Whether `METRALE_FFN_BATCH16` is exactly `1`, which arms the tier; any
-/// other value, or none, leaves it off. Read once per process; each `DenseFfnLayer`
-/// copies it into `batch16_enabled` at construction, so the route cannot change between
-/// CUDA-graph replays.
-pub fn ffn_batch16_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("METRALE_FFN_BATCH16").as_deref() == Ok("1"))
-}
-
 /// 2026-09-25: How the batch16 tier serves `m` rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Batch16Plan {
@@ -51,8 +42,8 @@ pub(crate) enum Batch16Plan {
 
 /// 2026-09-25: The batch16 selection rule, pure over the row count, the handle's
 /// presence and the opt-in, so the CPU tests can cover it without a `ForwardContext`.
-/// `enabled` is a parameter because the process-wide `OnceLock` behind
-/// `ffn_batch16_enabled` cannot be toggled per test.
+/// `enabled` is the layer's `batch16_enabled`, the `METRALE_FFN_BATCH16` switch
+/// (`DenseFfnLevers::batch16`) copied at construction.
 pub(crate) fn batch16_plan(m: u32, batch16_loaded: bool, enabled: bool) -> Option<Batch16Plan> {
     if !enabled || !batch16_loaded {
         return None;

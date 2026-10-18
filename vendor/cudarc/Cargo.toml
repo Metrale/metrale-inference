@@ -11,7 +11,9 @@
 
 [package]
 edition = "2021"
-name = "cudarc"
+# 2026-10-17: Published as `metrale-cudarc` (crates.io has no `[patch]`); the library is still `cudarc`.
+# Upstream: cudarc 0.19.2, git 6e2c3615bae5ab5003cfa17e3e4b95ed0ef968cb.
+name = "metrale-cudarc"
 version = "0.19.2"
 authors = ["Chelsea Lowman <clowman1993@gmail.com>"]
 build = "build.rs"
@@ -20,10 +22,11 @@ autobins = false
 autoexamples = false
 autotests = false
 autobenches = false
-description = "Safe and minimal CUDA bindings"
+description = "Metrale Engine fork of cudarc 0.19.2 (driver + NVRTC only): stream priorities, raw module handles, and a stub for CUDA symbols a runtime lacks"
 homepage = "https://github.com/chelsea0x3b/cudarc"
-documentation = "https://docs.rs/cudarc"
+documentation = "https://docs.rs/metrale-cudarc"
 readme = "README.md"
+exclude = [".github/"]
 keywords = [
     "cuda",
     "nvidia",
@@ -39,7 +42,7 @@ categories = [
     "science",
 ]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/chelsea0x3b/cudarc"
+repository = "https://github.com/Metrale/metrale-inference"
 
 [package.metadata.docs.rs]
 features = [

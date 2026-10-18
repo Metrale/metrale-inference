@@ -11,33 +11,29 @@ use std::path::Path;
 
 pub(super) const TEMPLATE_OVERRIDE_DIR: &str = "jinja-templates";
 
-/// 2026-09-26: How the template's `tojson` filter serializes values. `build_jinja_env`
-/// picks it from `METRALE_USE_HF_REF_JSON_DUMPS`; tests pass it to `build_jinja_env_with`.
+/// 2026-09-26: How the template's `tojson` filter serializes values.
+/// 2026-10-17: A serve picks it once from the resolved `METRALE_USE_HF_REF_JSON_DUMPS`
+/// ([`ToolJsonStyle::from_settings`]) and hands it to `ChatTokenizer::from_model_dir`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ToolJsonStyle {
-    /// 2026-09-26: minijinja's builtin `tojson`, compact: `{"a":1}`. Used unless the env
-    /// var is `1`.
+pub enum ToolJsonStyle {
+    /// 2026-09-26: minijinja's builtin `tojson`, compact: `{"a":1}`. The default.
     Compact,
     /// 2026-09-26: `python_tojson`, spaced: `{"a": 1}`.
     HfSpaced,
 }
 
-/// 2026-09-26: Production entry point: `HfSpaced` when `METRALE_USE_HF_REF_JSON_DUMPS` is
-/// `1`, else `Compact`, then [`build_jinja_env_with`]. Reads the env var on every call.
-pub(super) fn build_jinja_env(chat_template: &str) -> Result<minijinja::Environment<'static>> {
-    let style = if std::env::var("METRALE_USE_HF_REF_JSON_DUMPS").as_deref() == Ok("1") {
-        ToolJsonStyle::HfSpaced
-    } else {
-        ToolJsonStyle::Compact
-    };
-    build_jinja_env_with(chat_template, style)
+impl ToolJsonStyle {
+    /// 2026-10-17: `HfSpaced` when the resolved `METRALE_USE_HF_REF_JSON_DUMPS` is on.
+    pub fn from_settings(settings: &metrale_settings::InferenceServerSettings) -> Self {
+        if settings.telemetry.use_hf_ref_json_dumps {
+            Self::HfSpaced
+        } else {
+            Self::Compact
+        }
+    }
 }
 
 /// 2026-09-26: Build a chat-template environment with an explicit tool-JSON style.
-///
-/// Tests call this instead of setting `METRALE_USE_HF_REF_JSON_DUMPS`: the test harness
-/// runs tests as threads of one process, so a `set_var` would change what concurrently
-/// running tests render.
 ///
 /// Each call leaks one copy of `chat_template` to get the `'static` lifetime the
 /// environment needs.
@@ -247,6 +243,20 @@ impl serde_json::ser::Formatter for PythonJsonFormatter {
     {
         writer.write_all(b": ")
     }
+}
+
+/// 2026-10-08: Load the template file `path` (`--chat-template`), converted like an override
+/// template. Unlike an override, a file that cannot be read is an error.
+pub(super) fn load_template_file(path: &Path) -> Result<String> {
+    let raw = std::fs::read_to_string(path)
+        .with_context(|| format!("Failed to read chat template {}", path.display()))?;
+    let converted = convert_python_jinja_to_minijinja(&raw);
+    tracing::info!(
+        "Using chat template from {} ({} chars)",
+        path.display(),
+        converted.len(),
+    );
+    Ok(converted)
 }
 
 /// 2026-09-26: Load `jinja-templates/{model_type}.jinja`, looking under `repo_root` first and

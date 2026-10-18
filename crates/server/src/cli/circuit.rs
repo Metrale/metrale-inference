@@ -219,7 +219,10 @@ pub(crate) fn dispatch(args: CircuitArgs) -> Result<()> {
 /// the compute unit of each group (`metrale_circuit::venn::compute`) as this binary declares it.
 const FAMILIES: [(&str, &str); 1] = [(
     "gb10",
-    include_str!("../../../../kernels/gb10/common/KERNEL_FAMILIES.toml"),
+    include_str!(concat!(
+        env!("METRALE_KERNEL_TREE_ROOT"),
+        "/kernels/gb10/common/KERNEL_FAMILIES.toml"
+    )),
 )];
 
 /// 2026-10-02: The kernel families of the instance's hardware (the first `target` segment).

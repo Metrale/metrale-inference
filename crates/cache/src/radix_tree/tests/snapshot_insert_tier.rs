@@ -13,7 +13,7 @@
 //! Invariants: none beyond the types.
 
 use super::super::*;
-use super::index;
+use super::{declared_tuning, index};
 use metrale_telemetry::prefix_cache::TierEvict;
 
 /// 2026-09-25: An index holding one spilled, non-tail entry of session 7.
@@ -156,7 +156,7 @@ fn the_tail_supersede_sweep_does_not_hand_back_a_spilled_tail() {
 /// live slot. An insert that never returned a slot would pass the tests above.
 #[test]
 fn insert_over_a_resident_entry_still_hands_back_its_slot() {
-    let mut idx = SsmSnapshotIndex::new();
+    let mut idx = SsmSnapshotIndex::new(declared_tuning());
     let toks: Vec<u32> = (0..40).collect();
     let ph = super::super::hash_token_prefix(&toks, 40, 0);
     idx.insert(ph, 21, 7, 40);
@@ -172,7 +172,7 @@ fn insert_over_a_resident_entry_still_hands_back_its_slot() {
 /// hands back its slot.
 #[test]
 fn insert_tail_still_displaces_a_resident_tail() {
-    let mut idx = SsmSnapshotIndex::new();
+    let mut idx = SsmSnapshotIndex::new(declared_tuning());
     idx.insert_tail(
         // 2026-09-25: Session 7's resident tail in slot 31.
         0xE5, 31, 7, 100,

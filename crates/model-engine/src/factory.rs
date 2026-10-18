@@ -36,6 +36,11 @@ pub struct DflashBuildArgs<'a> {
     pub drafter_config: DflashConfig,
     pub gamma: Option<usize>,
     pub window_size: Option<usize>,
+    /// 2026-10-10: The drafter's tensor-parallel degree (`--draft-tp-size`): 1, or the world
+    /// size to split the drafter over every rank (`dflash_head::tp`).
+    pub tp_size: usize,
+    /// 2026-10-10: The drafter's weight copies (`--draft-weight-quantization`).
+    pub weight_quant: metrale_model_arch::dflash_head::DraftWeightQuantization,
 }
 
 /// 2026-09-25: LoRA inputs for [`build_model`] (`--lora-adapter NAME=PATH`):
@@ -153,6 +158,7 @@ mod tests {
             None,
             None,
             None,
+            std::sync::Arc::new(metrale_model_layers::lever_equivalence::defaults()),
         );
         match result {
             Err(e) => assert!(e.to_string().contains("Unsupported model type: 'llama'")),
@@ -212,7 +218,13 @@ mod tests {
 
         let errors = [
             loader
-                .load_layers(&store, &config, &gpu, &[])
+                .load_layers(
+                    &store,
+                    &config,
+                    &gpu,
+                    &[],
+                    metrale_model_layers::lever_equivalence::DefaultLoad::at_defaults().lc(),
+                )
                 .err()
                 .expect("generic layer load unexpectedly succeeded"),
             loader

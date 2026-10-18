@@ -107,6 +107,7 @@ async fn a_failed_probe_warns_but_still_runs_the_benchmark() {
     let executor = BenchmarkExecutor::new(
         tokio::runtime::Handle::current(),
         ArtifactStore::with_root(&dir),
+        unset_levers(),
     );
     let request = RunRequest {
         descriptor,
@@ -180,4 +181,14 @@ async fn a_model_the_server_does_not_serve_is_reported() {
         "{:?}",
         report.answers
     );
+}
+
+/// 2026-10-17: The harness levers of an empty environment; these tests read no lever.
+fn unset_levers() -> std::sync::Arc<metrale_bench::levers::BenchLevers> {
+    std::sync::Arc::new(
+        metrale_bench::levers::BenchLevers::resolve(&metrale_io_host_mem::MapEnv::new(
+            std::iter::empty::<(&str, &str)>(),
+        ))
+        .expect("an empty environment resolves"),
+    )
 }

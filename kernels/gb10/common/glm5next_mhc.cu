@@ -342,6 +342,68 @@ extern "C" __global__ void glm5next_hc_mix_bf16(
 
 
 
+// 2026-10-09: glm5next_hc_mix_bf16 for many tokens: one block per (token, group of
+// GLM_HC_MIX_ROWS mixing rows) instead of one per (token, row). At 128 tokens the per-row
+// kernel's 3,072 blocks each re-read the token's hc*H streams twice (RMS and dot); here a
+// block reads them twice for GLM_HC_MIX_ROWS rows. Per mix row m the arithmetic is
+// glm5next_hc_mix_bf16's: the same RMS (same thread-strided partials, same tree), the same
+// thread-strided products and sums in the same k order, the same tree per row, one store, so
+// each mix keeps its bits. Grid (T, ceil(mix_hc / GLM_HC_MIX_ROWS), 1), block GLM_HC_BLOCK.
+#define GLM_HC_MIX_ROWS 8
+extern "C" __global__ void glm5next_hc_mix_bf16_rows(
+    const float* __restrict__ streams,
+    const __nv_bfloat16* __restrict__ hc_fn,
+    float* __restrict__ mix_out,
+    const unsigned int hidden_size,
+    const unsigned int hc_mult,
+    const float norm_eps
+) {
+    const unsigned int t = blockIdx.x;
+    const unsigned int m0 = blockIdx.y * GLM_HC_MIX_ROWS;
+    const unsigned int tid = threadIdx.x;
+    const unsigned int hc_dim = hc_mult * hidden_size;
+    const unsigned int mix_hc = (2 + hc_mult) * hc_mult;
+    if (m0 >= mix_hc) return;
+    const unsigned int rows = min((unsigned int)GLM_HC_MIX_ROWS, mix_hc - m0);
+
+    const float* x = streams + (size_t)t * hc_dim;
+    __shared__ float red[GLM_HC_BLOCK];
+
+    float ss = 0.f;
+    for (unsigned int k = tid; k < hc_dim; k += GLM_HC_BLOCK) {
+        float v = (float)x[k];
+        ss += v * v;
+    }
+    red[tid] = ss;
+    __syncthreads();
+    const float ssum = glm_hc_block_reduce(red, tid);
+    const float rsqrt = rsqrtf(ssum / (float)hc_dim + norm_eps);
+    __syncthreads();
+
+    float acc[GLM_HC_MIX_ROWS];
+    #pragma unroll
+    for (int j = 0; j < GLM_HC_MIX_ROWS; ++j) acc[j] = 0.f;
+    for (unsigned int k = tid; k < hc_dim; k += GLM_HC_BLOCK) {
+        const float xv = (float)x[k];
+        #pragma unroll
+        for (int j = 0; j < GLM_HC_MIX_ROWS; ++j) {
+            if ((unsigned int)j < rows) {
+                acc[j] += __bfloat162float(hc_fn[(size_t)(m0 + j) * hc_dim + k]) * xv;
+            }
+        }
+    }
+    #pragma unroll
+    for (int j = 0; j < GLM_HC_MIX_ROWS; ++j) {
+        if ((unsigned int)j >= rows) break;
+        red[tid] = acc[j];
+        __syncthreads();
+        const float r = glm_hc_block_reduce(red, tid);
+        if (tid == 0) mix_out[(size_t)t * mix_hc + m0 + j] = r * rsqrt;
+        // 2026-10-09: Every thread has read red[0] before the next row overwrites `red`.
+        __syncthreads();
+    }
+}
+
 // 2026-09-25: glm5next_hc_finish: mix [T, mix_hc] -> y_out [T, H], post_out [T, hc],
 // comb_out [T, hc, hc]; the part of glm5next_hc_pre after the mixes, read from global
 // memory. Grid (T, NB, 1): block y == 0 computes post, comb and the Sinkhorn, and the
@@ -401,7 +463,10 @@ extern "C" __global__ void glm5next_hc_finish(
     }
 
 
-    if (by == 0) {
+    // 2026-10-09: The Sinkhorn runs in warp 0 alone with warp barriers between its row and
+    // column passes: only hc <= 4 lanes work, and 2 * sinkhorn_iters block-wide barriers were
+    // most of this kernel's ~16 us. Same arithmetic in the same order.
+    if (by == 0 && tid < 32u) {
         if (lane) {
             const unsigned int i = tid;
             float po = s_mix[hc + i] * hc_scale[1] + hc_base[hc + i];
@@ -410,7 +475,7 @@ extern "C" __global__ void glm5next_hc_finish(
                 comb[i * hc + j] =
                     s_mix[2 * hc + i * hc + j] * hc_scale[2] + hc_base[2 * hc + i * hc + j];
         }
-        __syncthreads();
+        __syncwarp();
 
 
         if (lane) {
@@ -426,7 +491,7 @@ extern "C" __global__ void glm5next_hc_finish(
             for (unsigned int j = 0; j < hc; ++j)
                 comb[i * hc + j] = comb[i * hc + j] / sum + hc_eps;
         }
-        __syncthreads();
+        __syncwarp();
 
 
         if (lane) {
@@ -435,7 +500,7 @@ extern "C" __global__ void glm5next_hc_finish(
             for (unsigned int i = 0; i < hc; ++i) c += comb[i * hc + j];
             for (unsigned int i = 0; i < hc; ++i) comb[i * hc + j] /= c;
         }
-        __syncthreads();
+        __syncwarp();
 
 
         for (unsigned int it = 0; it + 1 < sinkhorn_iters; ++it) {
@@ -445,14 +510,14 @@ extern "C" __global__ void glm5next_hc_finish(
                 for (unsigned int j = 0; j < hc; ++j) r += comb[i * hc + j];
                 for (unsigned int j = 0; j < hc; ++j) comb[i * hc + j] /= r;
             }
-            __syncthreads();
+            __syncwarp();
             if (lane) {
                 const unsigned int j = tid;
                 float c = hc_eps;
                 for (unsigned int i = 0; i < hc; ++i) c += comb[i * hc + j];
                 for (unsigned int i = 0; i < hc; ++i) comb[i * hc + j] /= c;
             }
-            __syncthreads();
+            __syncwarp();
         }
         // 2026-09-25: No exact column projection after the loop, as in glm5next_hc_pre.
         for (unsigned int k = tid; k < hc * hc; k += GLM_HC_BLOCK)

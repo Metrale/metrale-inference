@@ -24,7 +24,7 @@
 
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
-use metrale_kernels::attn_splitk;
+use metrale_target_defaults::attn_splitk;
 
 use super::super::Qwen3AttentionLayer;
 use crate::layers::ops;
@@ -71,16 +71,22 @@ pub(super) fn num_splits(
     }
     attn_splitk::num_splits(
         policy,
-        metrale_kernels::TARGET_SM_COUNT,
+        metrale_target_defaults::TARGET_SM_COUNT,
         num_q_heads,
         super::super::split_ref_seqs(num_seqs, max_decode_seqs),
     )
 }
 
-/// 2026-09-25: With `METRALE_ATTN_DBG` set to any value, logs at debug level the split count this
-/// layer resolved, on every call with more than one sequence.
-pub(super) fn trace_splits(layer_idx: usize, num_seqs: u32, num_q_heads: u32, num_splits: u32) {
-    if num_seqs != 1 && std::env::var("METRALE_ATTN_DBG").is_ok() {
+/// 2026-09-25: With `attn_dbg` (`AttnLevers::attn_dbg`: `METRALE_ATTN_DBG` set to any value), logs
+/// at debug level the split count this layer resolved, on every call with more than one sequence.
+pub(super) fn trace_splits(
+    attn_dbg: bool,
+    layer_idx: usize,
+    num_seqs: u32,
+    num_q_heads: u32,
+    num_splits: u32,
+) {
+    if num_seqs != 1 && attn_dbg {
         tracing::debug!(
             "ATTN_DBG L{layer_idx} num_seqs={num_seqs} num_splits={num_splits} \
              (policy={} sm_count={} nq={num_q_heads})",
@@ -88,7 +94,7 @@ pub(super) fn trace_splits(layer_idx: usize, num_seqs: u32, num_q_heads: u32, nu
                 .attn_decode_splitk
                 .value
                 .label(),
-            metrale_kernels::TARGET_SM_COUNT,
+            metrale_target_defaults::TARGET_SM_COUNT,
         );
     }
 }
@@ -122,7 +128,7 @@ pub(super) fn route_line(
     format!(
         "paged decode attention: {kernel} num_splits={num_splits} sm_count={} policy={} \
          (METRALE_ATTN_DECODE_SPLITK)",
-        metrale_kernels::TARGET_SM_COUNT,
+        metrale_target_defaults::TARGET_SM_COUNT,
         policy.label(),
     )
 }

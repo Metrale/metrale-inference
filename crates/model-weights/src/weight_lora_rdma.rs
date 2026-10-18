@@ -26,6 +26,7 @@
 // runtime error.
 
 use anyhow::Result;
+use metrale_settings::groups::device_weights::{Rail, WeightsSettings};
 
 /// Which half of a LoRA pair a target lands. A is copied contiguous into the
 /// head of the padded `[max_rank, in]` region; B is row-repacked from stride
@@ -115,13 +116,17 @@ pub struct RdmaLoraLoader {
     pub peer_addr: String,
     /// Adapter dir id/path the peer staged (its `adapter_model.safetensors`).
     pub adapter_id: String,
+    /// 2026-10-17: The single verbs rail (`WeightsSettings::lora_rail`).
+    pub rail: Rail,
 }
 
 impl RdmaLoraLoader {
-    pub fn new(peer_addr: String, adapter_id: String) -> Self {
+    /// 2026-10-17: A loader for `adapter_id` on the peer at `peer_addr` over the LoRA rail of `w`.
+    pub fn with_settings(peer_addr: String, adapter_id: String, w: &WeightsSettings) -> Self {
         Self {
             peer_addr,
             adapter_id,
+            rail: w.lora_rail.clone(),
         }
     }
 }
@@ -158,7 +163,6 @@ impl RdmaLoraLoader {
 
         use anyhow::{Context, bail};
 
-        use metrale_gpu_sys::env::{first_set, first_set_u32};
         use metrale_gpu_sys::railset::{RailSet, RailSpec};
         use metrale_storage::expert_peer::MODE_VERBS;
         use metrale_storage::weight_peer::{
@@ -192,19 +196,11 @@ impl RdmaLoraLoader {
         }
 
         // 2. Single-rail verbs handshake via RailSet (adapter = one shard, few
-        // MB). LoRA env: DEV chains LORA→WEIGHT→EXPERT (an exported-but-EMPTY
-        // var counts as set — `first_set`); GID reads ONLY METRALE_LORA_RDMA_GID
-        // (no chain, deliberately). Always 1 rail; fresh random 24-bit PSN.
+        // MB) on the LoRA rail `WeightsSettings` resolved. Always 1 rail; fresh
+        // random 24-bit PSN.
         let specs = vec![RailSpec::new(
-            first_set(
-                &[
-                    "METRALE_LORA_RDMA_DEV",
-                    "METRALE_WEIGHT_RDMA_DEV",
-                    "METRALE_EXPERT_RDMA_DEV",
-                ],
-                "roceP2p1s0f1",
-            ),
-            first_set_u32(&["METRALE_LORA_RDMA_GID"], 3),
+            self.rail.dev.clone(),
+            self.rail.gid,
             rand::random::<u32>() & 0xff_ffff,
         )];
 

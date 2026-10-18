@@ -16,10 +16,12 @@
 
 use anyhow::{Context, Result, bail};
 use metrale_bench::headless::{HeadlessOptions, RunRequest, SilentReporter, run_blocking};
+use metrale_bench::levers::BenchLevers;
 use metrale_bench::{
     ArtifactStore, BenchmarkDescriptor, BenchmarkExecutor, ParamValues, TargetEndpoint, gate,
     history, registry,
 };
+use std::sync::Arc;
 
 use super::bench_args::{BenchmarkArgs, BenchmarkCommand, HistoryArgs, OutputFormat, RunArgs};
 use super::bench_print;
@@ -35,12 +37,13 @@ pub fn find(id: &str) -> Result<&'static BenchmarkDescriptor> {
     })
 }
 
-pub async fn dispatch(args: BenchmarkArgs) -> Result<()> {
+/// 2026-10-17: `levers` are this process's harness levers, resolved once by `main`.
+pub async fn dispatch(args: BenchmarkArgs, levers: Arc<BenchLevers>) -> Result<()> {
     if let Err(msg) = args.reject_orphan_pr() {
         bail!("{msg}");
     }
     if args.pull_request_gate_check {
-        let code = super::bench_gate_check::gate_check_cmd(args.pr)?;
+        let code = super::bench_gate_check::gate_check_cmd(args.pr, &levers)?;
         if code != 0 {
             std::process::exit(code);
         }
@@ -52,14 +55,14 @@ pub async fn dispatch(args: BenchmarkArgs) -> Result<()> {
             Some(id) => bench_print::print_schema(&id, a.format),
             None => bench_print::print_suite(a.format),
         },
-        BenchmarkCommand::History(a) => history_cmd(a),
+        BenchmarkCommand::History(a) => history_cmd(a, &levers),
         BenchmarkCommand::ServeRelease => {
-            let code = super::bench_lease::release_cmd()?;
+            let code = super::bench_lease::release_cmd(&levers)?;
             std::process::exit(code);
         }
         BenchmarkCommand::Card(a) => super::bench_card::card_cmd(a),
         BenchmarkCommand::Certify(a) => {
-            let code = super::bench_certify::certify_cmd(a).await?;
+            let code = super::bench_certify::certify_cmd(a, &levers).await?;
             if code != 0 {
                 std::process::exit(code);
             }
@@ -70,11 +73,11 @@ pub async fn dispatch(args: BenchmarkArgs) -> Result<()> {
             std::process::exit(code);
         }
         BenchmarkCommand::Aggregate(a) => {
-            let code = super::bench_aggregate::aggregate_cmd(a)?;
+            let code = super::bench_aggregate::aggregate_cmd(a, &levers)?;
             std::process::exit(code);
         }
         BenchmarkCommand::Run(a) => {
-            let code = run(a).await?;
+            let code = run(a, levers).await?;
             // 2026-09-26: `run` reports its own outcome; this passes its exit
             // code to the shell. Both exits here, the `exit` below and the `?`
             // above, skip whatever follows (`exit` skips destructors too), so
@@ -109,13 +112,16 @@ pub(crate) fn repo_root() -> Result<std::path::PathBuf> {
 /// the run so the warning comes before the hours are spent. A failure to read
 /// the dirty list is an error, before any model loads: an empty list on the
 /// record must mean a clean tree, never that git could not answer.
-fn capture_provenance() -> Result<(String, Vec<String>)> {
+fn capture_provenance(levers: &BenchLevers) -> Result<(String, Vec<String>)> {
     let root = repo_root()?;
-    capture_provenance_at(&root)
+    capture_provenance_at(&root, levers)
 }
 
-fn capture_provenance_at(root: &std::path::Path) -> Result<(String, Vec<String>)> {
-    let sha = gate::git_sha(root)?;
+fn capture_provenance_at(
+    root: &std::path::Path,
+    levers: &BenchLevers,
+) -> Result<(String, Vec<String>)> {
+    let sha = gate::git_sha(root, levers.gate_sha.as_deref())?;
     let dirty = gate::dirty_perf_paths(root)
         .context("reading the working tree state before the gate run")?;
     if !dirty.is_empty() {
@@ -133,7 +139,7 @@ fn capture_provenance_at(root: &std::path::Path) -> Result<(String, Vec<String>)
              reject it. Commit (or stash) and rebuild first."
         );
     }
-    warn_if_signer_is_not_committed(root);
+    warn_if_signer_is_not_committed(root, levers);
     Ok((sha, dirty))
 }
 
@@ -141,8 +147,8 @@ fn capture_provenance_at(root: &std::path::Path) -> Result<(String, Vec<String>)
 /// signing identity (one per metrale home) against the committed
 /// `.github/record-signers/`. `bench_record` registers the key only after the
 /// run. Never fails the run: a first record from a new box is legitimate.
-fn warn_if_signer_is_not_committed(root: &std::path::Path) {
-    let Ok(store) = ArtifactStore::discover() else {
+fn warn_if_signer_is_not_committed(root: &std::path::Path, levers: &BenchLevers) {
+    let Ok(store) = ArtifactStore::discover(levers) else {
         return;
     };
     let Ok(identity) = gate::signing::load_or_create(store.root()) else {
@@ -181,12 +187,8 @@ fn temp_ceilings(hardware: Option<&str>) -> Option<metrale_bench::hardware::poli
         .map(|l| metrale_bench::hardware::policy::TempCeilings::of(&l.thermal))
 }
 
-fn store() -> Result<ArtifactStore> {
-    ArtifactStore::discover()
-}
-
-fn history_cmd(args: HistoryArgs) -> Result<()> {
-    let store = store()?;
+fn history_cmd(args: HistoryArgs, levers: &BenchLevers) -> Result<()> {
+    let store = ArtifactStore::discover(levers)?;
     if let Some(run_id) = &args.run {
         let Some(record) = history::find(&store, run_id) else {
             bail!("no run {run_id:?} under {}", store.root().display());
@@ -204,7 +206,7 @@ fn history_cmd(args: HistoryArgs) -> Result<()> {
     bench_print::print_history(&records, args.format)
 }
 
-async fn run(args: RunArgs) -> Result<i32> {
+async fn run(args: RunArgs, levers: Arc<BenchLevers>) -> Result<i32> {
     if let Err(msg) = args.reject_orphan_checkpoint() {
         bail!("{msg}");
     }
@@ -232,13 +234,13 @@ async fn run(args: RunArgs) -> Result<i32> {
     // perf paths before the run, so the record names the commit that was
     // measured even if HEAD moves during it.
     let provenance = if args.pull_request_gate {
-        Some(capture_provenance()?)
+        Some(capture_provenance(&levers)?)
     } else {
         None
     };
     // 2026-09-26: Discovered before any server exists, so its failure needs no
     // teardown.
-    let store = store()?;
+    let store = ArtifactStore::discover(&levers)?;
     let served = if args.pull_request_gate && args.serve_reuse {
         let plan = super::bench_serve_plan::plan_serve(
             &args.id,
@@ -246,7 +248,7 @@ async fn run(args: RunArgs) -> Result<i32> {
             args.checkpoint.as_deref(),
             super::bench_resolve::parse_serve_overrides(&args.serve_override)?,
         )?;
-        Some(super::bench_lease::acquire(plan, args.serve_lease_owner).await?)
+        Some(super::bench_lease::acquire(plan, args.serve_lease_owner, &levers).await?)
     } else if args.pull_request_gate {
         Some(
             super::bench_selfstart::serve_for(
@@ -254,6 +256,7 @@ async fn run(args: RunArgs) -> Result<i32> {
                 args.hardware.as_deref(),
                 args.checkpoint.as_deref(),
                 super::bench_resolve::parse_serve_overrides(&args.serve_override)?,
+                levers.clone(),
             )
             .await?,
         )
@@ -295,7 +298,7 @@ async fn run(args: RunArgs) -> Result<i32> {
         }
     }
 
-    let executor = BenchmarkExecutor::new(tokio::runtime::Handle::current(), store);
+    let executor = BenchmarkExecutor::new(tokio::runtime::Handle::current(), store, levers.clone());
     // 2026-09-26: The merged baseline pin and `--serve-override` set goes onto
     // the run's target, and so onto the RunRecord the gate record is built from.
     let serve_overrides = served
@@ -403,6 +406,7 @@ async fn run(args: RunArgs) -> Result<i32> {
                 )),
                 None => None,
             },
+            &levers,
         )
         .await;
         if let Some(s) = served {
