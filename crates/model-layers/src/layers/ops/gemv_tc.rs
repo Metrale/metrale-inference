@@ -9,9 +9,10 @@
 //! - A launch routes only when `K % 128 == 0` and `1 <= m <= 16`; otherwise the caller keeps its
 //!   CUDA-core kernel ([`tc_route`]).
 //! - [`super::w4a16_gemv_batchm`] and [`tc_fixed_m`] both route through [`tc_kernel`].
-//! - `METRALE_NO_W4A16_TC` set to any non-empty value, read once per process, turns the
-//!   tensor-core path off ([`tc_enabled`]). The bench crate's `PERF_CONTROLS` discloses it,
-//!   and `record_env_tests` reads [`tc_enabled`] and [`wide_rows_enabled`] from this file.
+//! - `METRALE_NO_W4A16_TC` set to any non-empty value turns the tensor-core path off
+//!   ([`W4a16TcPlan::tc`], resolved once from the startup settings in
+//!   `OpsLevers::from_settings`). The bench crate's `PERF_CONTROLS` discloses it, and
+//!   `record_env_tests` reads its predicate and the widening's from `ops_levers.rs`.
 
 use std::sync::{Mutex, OnceLock};
 
@@ -73,37 +74,43 @@ pub fn tc_route(
     }
 }
 
-/// 2026-09-25: True when `METRALE_NO_W4A16_TC` is unset or empty. Any non-empty value, `0`
-/// included, turns the tensor-core path off. Read once per process, so every launch, including
-/// one captured in a CUDA graph, sees the same choice.
-pub fn tc_enabled() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("METRALE_NO_W4A16_TC").is_none_or(|v| v.is_empty()))
-}
-
 /// 2026-09-25: Row edges of the narrow-GEMV dispatch arms: `NARROW_MAX_ROWS` by default, and
-/// `WIDE_MAX_ROWS` (the `tc16` reach) when [`wide_rows_enabled`]. Read through
-/// [`narrow_gemv_max_rows`].
+/// `WIDE_MAX_ROWS` (the `tc16` reach) when [`W4a16TcPlan::wide`]. Read through
+/// [`W4a16TcPlan::narrow_max_rows`].
 pub const NARROW_MAX_ROWS: u32 = 8;
 pub const WIDE_MAX_ROWS: u32 = TC16_MAX_M;
 
-/// 2026-09-25: The opt-in widening: true when `METRALE_W4A16_TC_WIDE` is set to a non-empty value
-/// and [`tc_enabled`]. Read once per process. It raises [`narrow_gemv_max_rows`] to 16 and
-/// lets [`tc_fixed_m`] route the fixed-M launchers (`w4a16_gemv_batch2/3`,
-/// `w4a16_gemv_dual_batch2/3`) to the tensor-core kernels.
-pub fn wide_rows_enabled() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| {
-        tc_enabled() && std::env::var_os("METRALE_W4A16_TC_WIDE").is_some_and(|v| !v.is_empty())
-    })
+/// 2026-10-17: The W4A16 tensor-core levers, resolved once from the startup settings and carried
+/// on `OpsLevers::w4a16_tc`, so every launch, including one captured in a CUDA graph, sees the
+/// same choice.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct W4a16TcPlan {
+    /// 2026-09-25: On when `METRALE_NO_W4A16_TC` is unset or empty. Any non-empty value, `0`
+    /// included, turns the tensor-core path off.
+    pub tc: bool,
+    /// 2026-09-25: The opt-in widening: on when `METRALE_W4A16_TC_WIDE` is set to a non-empty
+    /// value and [`Self::tc`]. It raises [`Self::narrow_max_rows`] to 16 and lets [`tc_fixed_m`]
+    /// route the fixed-M launchers (`w4a16_gemv_batch2/3`, `w4a16_gemv_dual_batch2/3`) to the
+    /// tensor-core kernels.
+    pub wide: bool,
 }
 
-/// 2026-09-25: Row edge of the narrow-GEMV dispatch arms (see [`wide_rows_enabled`]).
-pub fn narrow_gemv_max_rows() -> u32 {
-    if wide_rows_enabled() {
-        WIDE_MAX_ROWS
-    } else {
-        NARROW_MAX_ROWS
+impl W4a16TcPlan {
+    /// 2026-10-17: The tensor-core path on and the widening off, as unset variables leave them.
+    pub const fn declared() -> Self {
+        Self {
+            tc: true,
+            wide: false,
+        }
+    }
+
+    /// 2026-09-25: Row edge of the narrow-GEMV dispatch arms (see [`Self::wide`]).
+    pub const fn narrow_max_rows(self) -> u32 {
+        if self.wide {
+            WIDE_MAX_ROWS
+        } else {
+            NARROW_MAX_ROWS
+        }
     }
 }
 
@@ -133,9 +140,15 @@ fn tc_handles(gpu: &dyn GpuBackend) -> TcHandles {
 }
 
 /// 2026-09-25: The tensor-core kernel and grid x for this launch, or `None` to keep the
-/// CUDA-core kernel. It does not consult [`wide_rows_enabled`]; the callers' row edges do.
-pub fn tc_kernel(gpu: &dyn GpuBackend, m: u32, n: u32, k: u32) -> Option<(KernelHandle, u32)> {
-    if !tc_enabled() {
+/// CUDA-core kernel. It does not consult [`W4a16TcPlan::wide`]; the callers' row edges do.
+pub fn tc_kernel(
+    gpu: &dyn GpuBackend,
+    plan: W4a16TcPlan,
+    m: u32,
+    n: u32,
+    k: u32,
+) -> Option<(KernelHandle, u32)> {
+    if !plan.tc {
         return None;
     }
     let h = tc_handles(gpu);
@@ -148,10 +161,11 @@ pub fn tc_kernel(gpu: &dyn GpuBackend, m: u32, n: u32, k: u32) -> Option<(Kernel
 }
 
 /// 2026-09-25: The tensor-core route of the fixed-M launchers, taken only when
-/// [`wide_rows_enabled`]: `Ok(true)` when it launched, `Ok(false)` to keep the CUDA-core kernel.
+/// [`W4a16TcPlan::wide`]: `Ok(true)` when it launched, `Ok(false)` to keep the CUDA-core kernel.
 #[allow(clippy::too_many_arguments)]
 pub fn tc_fixed_m(
     gpu: &dyn GpuBackend,
+    plan: W4a16TcPlan,
     input: DevicePtr,
     weight: &QuantizedWeight,
     output: DevicePtr,
@@ -160,10 +174,10 @@ pub fn tc_fixed_m(
     k: u32,
     stream: u64,
 ) -> Result<bool> {
-    if !wide_rows_enabled() {
+    if !plan.wide {
         return Ok(false);
     }
-    let Some((tc, grid_x)) = tc_kernel(gpu, m, n, k) else {
+    let Some((tc, grid_x)) = tc_kernel(gpu, plan, m, n, k) else {
         return Ok(false);
     };
     KernelLaunch::new(gpu, tc)

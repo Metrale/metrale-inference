@@ -53,7 +53,7 @@ impl DenseFfnLayer {
             w4a16_gemv_dual_batch3: gpu.kernel("w4a16_gemv", "w4a16_gemv_dual_batch3")?,
             w4a16_gemv_batch2: gpu.kernel("w4a16_gemv", "w4a16_gemv_batch2")?,
             w4a16_gemv_batch3: gpu.kernel("w4a16_gemv", "w4a16_gemv_batch3")?,
-            w4a16_batchm: W4a16BatchmTiers::resolve(gpu, lc.levers.ops.w4a4),
+            w4a16_batchm: W4a16BatchmTiers::resolve(gpu, &lc.levers.ops),
             w4a16_gemm: gpu.kernel("w4a16", "w4a16_gemm")?,
             w4a16_gemm_t_m128_k: super::try_kernel(gpu, "w4a16", "w4a16_gemm_t_m128"),
             w4a16_gemm_t_m128_v2_k: super::w4a16_v2_kernel(gpu),

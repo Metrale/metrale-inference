@@ -66,10 +66,7 @@ pub fn live_policy(levers: &ModelLevers, kv_cache_dtype: &str, lm_head_dtype: &s
             on_off(crate::layers::ops::ssm_ba_gates_hopper_enabled()),
         ),
         ("gemv_sw".to_string(), on_off(levers.gemv_sw)),
-        (
-            "w4a16_tc".to_string(),
-            on_off(crate::layers::ops::gemv_tc::tc_enabled()),
-        ),
+        ("w4a16_tc".to_string(), on_off(levers.ops.w4a16_tc.tc)),
         (
             "decode_split_silu".to_string(),
             on_off(levers.decode_split_silu),

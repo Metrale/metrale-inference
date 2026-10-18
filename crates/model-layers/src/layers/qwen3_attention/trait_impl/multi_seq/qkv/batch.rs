@@ -60,6 +60,7 @@ impl Qwen3AttentionLayer {
             ops::w4a16_gemv_batch3(
                 fwd.gpu,
                 self.w4a16_gemv_batch3_k,
+                fwd.levers.ops.w4a16_tc,
                 normed,
                 q_nvfp4,
                 q_scratch,
@@ -76,6 +77,7 @@ impl Qwen3AttentionLayer {
         ops::w4a16_gemv_dual_batch3(
             fwd.gpu,
             self.w4a16_gemv_dual_batch3_k,
+            fwd.levers.ops.w4a16_tc,
             normed,
             k_nvfp4,
             k_scratch,
@@ -149,6 +151,7 @@ impl Qwen3AttentionLayer {
             ops::w4a16_gemv_batch2(
                 fwd.gpu,
                 self.w4a16_gemv_batch2_k,
+                fwd.levers.ops.w4a16_tc,
                 normed,
                 q_nvfp4,
                 q_scratch,
@@ -165,6 +168,7 @@ impl Qwen3AttentionLayer {
         ops::w4a16_gemv_dual_batch2(
             fwd.gpu,
             self.w4a16_gemv_dual_batch2_k,
+            fwd.levers.ops.w4a16_tc,
             normed,
             k_nvfp4,
             k_scratch,

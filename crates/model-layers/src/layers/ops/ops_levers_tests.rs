@@ -9,7 +9,7 @@
 //! cannot read; the presence levers, the LoRA row bound and the scale layout read as before.
 
 use super::*;
-use crate::lever_equivalence::{Old, Outcome, check, defaults, settings_from};
+use crate::lever_equivalence::{Old, Outcome, PROBES, check, defaults, settings_from};
 
 /// 2026-10-17: `lora_delta::lora_gemv_max_m`.
 fn old_gemv_max_m(v: Option<&str>) -> u32 {
@@ -33,16 +33,17 @@ type Field = (&'static str, fn(&OpsLevers) -> bool);
 
 /// 2026-10-17: `gemm_quant::fp8_gemm_pipe_kernel`, `AttnFa128Kernels::resolve`,
 /// `dispatch_proj_decode::w8a8_decode_proj_disabled`, `gemm_quant_w8a16::w8a16_pipe128_kernel`
-/// and `w8a16_tc_rows::w8a16_tc_rows_enabled`: off when the variable is present at any value,
-/// `0` included.
+/// `w8a16_tc_rows::w8a16_tc_rows_enabled` and `w4a16_gemv_tiers::exact_m_tiers_enabled`: off
+/// when the variable is present at any value, `0` included.
 #[test]
 fn the_presence_opt_outs_read_as_before() {
-    let cases: [Field; 5] = [
+    let cases: [Field; 6] = [
         ("METRALE_NO_FP8_GEMM_PIPE", |l| l.fp8_gemm_pipe),
         ("METRALE_NO_ATTN_FA128", |l| l.attn_fa128),
         ("METRALE_NO_W8A8_DECODE_PROJ", |l| l.w8a8_decode_proj),
         ("METRALE_NO_W8A16_PIPE128", |l| l.w8a16.pipe128),
         ("METRALE_NO_W8A16_TC_ROWS", |l| l.w8a16.tc_rows),
+        ("METRALE_NO_GEMV_EXACT_M_TIERS", |l| l.gemv_exact_m_tiers),
     ];
     for (env, field) in cases {
         let changes = check(env, Old::Presence, |p| p.is_none(), |s| field(&ops(s)));
@@ -58,16 +59,17 @@ fn the_presence_opt_outs_read_as_before() {
 }
 
 /// 2026-10-17: The `== "1"` switches: the LoRA skips, the hyper-connection paths, the GEMM
-/// shape log and `q2_0_mmq::native_q2_mmq_enabled`.
+/// shape log, `q2_0_mmq::native_q2_mmq_enabled` and `gemv_tier::batch8_kernel`'s classic arm.
 #[test]
 fn the_opt_in_switches_read_as_before_except_the_switch_spellings() {
-    let cases: [Field; 6] = [
+    let cases: [Field; 7] = [
         ("METRALE_GGUF_NATIVE_Q2_MMQ", |l| l.native_q2_mmq),
         ("METRALE_LORA_NO_APPLY", |l| l.lora.no_apply),
         ("METRALE_LORA_NO_FFN", |l| l.lora_no_ffn),
         ("METRALE_QWEN4EXP_NO_HC_GEMM", |l| l.hc.gemm_disabled),
         ("METRALE_HC_DECODE_SPLIT", |l| l.hc.decode_split_forced),
         ("METRALE_GEMM_SHAPE_LOG", |l| l.gemm_shape_log),
+        ("METRALE_NO_BATCH8_RT", |l| !l.batch8_rt),
     ];
     for (env, field) in cases {
         let changes = check(env, Old::OptIn, |p| p == Some("1"), |s| field(&ops(s)));
@@ -180,6 +182,13 @@ fn the_declared_defaults_are_the_old_unset_values() {
                 pipe128: true,
                 tc_rows: true,
             },
+            w4a16_tc: crate::layers::ops::W4a16TcPlan {
+                tc: old_unset_or_empty(None),
+                wide: old_wide(None, None),
+            },
+            mtp_tc: old_unset_or_empty(None),
+            batch8_rt: true,
+            gemv_exact_m_tiers: true,
         }
     );
     assert_eq!(
@@ -199,5 +208,69 @@ fn the_blockscaled_plan_takes_its_two_levers() {
         };
         let plan = l.fp8_blockscaled();
         assert_eq!((plan.pipe, plan.shape_log), (pipe, shape_log));
+    }
+}
+
+/// 2026-10-17: `gemv_tc::tc_enabled` and `dense_gemv_tc::mtp_tc_from`, one predicate over the
+/// looked-up value.
+fn old_unset_or_empty(v: Option<&str>) -> bool {
+    v.is_none_or(|v| v.is_empty())
+}
+
+/// 2026-10-17: `gemv_tc::wide_rows_enabled`.
+fn old_wide(kill: Option<&str>, wide: Option<&str>) -> bool {
+    old_unset_or_empty(kill) && wide.is_some_and(|v| !v.is_empty())
+}
+
+/// 2026-10-17: `gemv_tc::narrow_gemv_max_rows`.
+fn old_narrow_rows(kill: Option<&str>, wide: Option<&str>) -> u32 {
+    if old_wide(kill, wide) { 16 } else { 8 }
+}
+
+/// 2026-10-17: The two tensor-core kill switches keep their text predicate: any non-empty value,
+/// `0` and the switch spellings included, turns the path off; an empty one leaves it on.
+#[test]
+fn the_tensor_core_kill_switches_keep_their_text_predicate() {
+    let cases: [Field; 2] = [
+        ("METRALE_NO_W4A16_TC", |l| l.w4a16_tc.tc),
+        ("METRALE_NO_MTP_TC", |l| l.mtp_tc),
+    ];
+    for (env, field) in cases {
+        let changes = check(env, Old::Verbatim, old_unset_or_empty, |s| field(&ops(s)));
+        assert!(changes.is_empty(), "{changes:?}");
+        for probe in ["", " ", "no", "unset"] {
+            assert_eq!(
+                new_at(env, probe).map(|l| field(&l)),
+                Some(old_unset_or_empty(Some(probe))),
+                "{probe:?}"
+            );
+        }
+    }
+}
+
+/// 2026-10-17: The widening and the narrow-GEMV row edge over every pair of the kill switch's and
+/// the widening's probes, the empty value included: as `wide_rows_enabled` and
+/// `narrow_gemv_max_rows` read them.
+#[test]
+fn the_widening_composes_with_the_kill_switch_as_before() {
+    const KILL: &str = "METRALE_NO_W4A16_TC";
+    const WIDE: &str = "METRALE_W4A16_TC_WIDE";
+    let probes = PROBES.into_iter().chain([Some("")]);
+    for kill in probes.clone() {
+        for wide in probes.clone() {
+            let mut pairs = Vec::new();
+            pairs.extend(kill.map(|v| (KILL, v)));
+            pairs.extend(wide.map(|v| (WIDE, v)));
+            let plan = settings_from(&pairs).ok().map(|s| ops(&s).w4a16_tc);
+            assert_eq!(
+                plan.map(|p| (p.tc, p.wide, p.narrow_max_rows())),
+                Some((
+                    old_unset_or_empty(kill),
+                    old_wide(kill, wide),
+                    old_narrow_rows(kill, wide)
+                )),
+                "{kill:?} {wide:?}"
+            );
+        }
     }
 }

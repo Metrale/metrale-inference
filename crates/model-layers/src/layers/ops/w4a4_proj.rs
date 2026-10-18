@@ -237,6 +237,7 @@ pub fn w4a4_route(m: u32, n: u32, k: u32, max_m: u32) -> bool {
 pub fn nvfp4_proj_small_m(
     gpu: &dyn GpuBackend,
     batch_kernel: KernelHandle,
+    tc: super::W4a16TcPlan,
     input: DevicePtr,
     weight: &QuantizedWeight,
     output: DevicePtr,
@@ -248,6 +249,7 @@ pub fn nvfp4_proj_small_m(
     proj(
         gpu,
         batch_kernel,
+        tc,
         input,
         weight,
         output,
@@ -270,6 +272,7 @@ pub fn nvfp4_proj_small_m(
 pub fn nvfp4_proj_small_m_same_input(
     gpu: &dyn GpuBackend,
     batch_kernel: KernelHandle,
+    tc: super::W4a16TcPlan,
     input: DevicePtr,
     weight: &QuantizedWeight,
     output: DevicePtr,
@@ -281,6 +284,7 @@ pub fn nvfp4_proj_small_m_same_input(
     proj(
         gpu,
         batch_kernel,
+        tc,
         input,
         weight,
         output,
@@ -327,6 +331,7 @@ fn last_quant() -> &'static Mutex<Option<QuantKey>> {
 fn proj(
     gpu: &dyn GpuBackend,
     batch_kernel: KernelHandle,
+    tc: super::W4a16TcPlan,
     input: DevicePtr,
     weight: &QuantizedWeight,
     output: DevicePtr,
@@ -356,6 +361,7 @@ fn proj(
             super::w4a16_gemv_batchm(
                 gpu,
                 batch_kernel,
+                tc,
                 input,
                 weight,
                 s.audit_ref,
@@ -387,7 +393,18 @@ fn proj(
         m <= W4A4_MAX_M,
         "w4a4: {m} rows reached the W4A16 fallback, which covers at most {W4A4_MAX_M}"
     );
-    super::w4a16_gemv_batchm(gpu, batch_kernel, input, weight, output, m, n, k, stream)
+    super::w4a16_gemv_batchm(
+        gpu,
+        batch_kernel,
+        tc,
+        input,
+        weight,
+        output,
+        m,
+        n,
+        k,
+        stream,
+    )
 }
 
 /// 2026-09-25: Per-site relative-error accumulator for [`W4a4Levers::audit`].

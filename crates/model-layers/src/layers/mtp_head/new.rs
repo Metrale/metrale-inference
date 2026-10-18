@@ -404,6 +404,7 @@ impl MtpHead {
             gemv_sw: crate::layers::ops::gemv_sw_from(
                 std::env::var("METRALE_NO_GEMV_SW").ok().as_deref(),
             ),
+            mtp_tc: levers.ops.mtp_tc,
             w4a16_gemv_qg_k: gpu.kernel("w4a16_gemv", "w4a16_gemv_qg")?,
             w4a16_gemv_dual_k: gpu.kernel("w4a16_gemv_fused", "w4a16_gemv_dual")?,
             rope_k: gpu.kernel("rope", "rope_forward")?,
@@ -459,7 +460,7 @@ impl MtpHead {
             ),
             w4a16_batchm: crate::layers::w4a16_gemv_tiers::W4a16BatchmTiers::resolve(
                 gpu,
-                levers.ops.w4a4,
+                &levers.ops,
             ),
             w4a16_gemv_batch16_k: crate::layers::try_kernel(
                 gpu,

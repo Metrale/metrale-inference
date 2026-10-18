@@ -45,7 +45,7 @@ pub(super) struct ModelKernels {
 pub(super) fn resolve_model_kernels(
     config: &ModelConfig,
     gpu: &dyn GpuBackend,
-    w4a4: metrale_model_layers::layers::ops::w4a4_proj::W4a4Levers,
+    ops: &metrale_model_layers::layers::ops::OpsLevers,
 ) -> Result<ModelKernels> {
     let dense_gemv_kernel = gpu.kernel("gemv", "dense_gemv_bf16")?;
     // 2026-09-25: Always 0. Its only launch site is the FP32-logits branch
@@ -75,7 +75,7 @@ pub(super) fn resolve_model_kernels(
     // dispatch takes the narrowest loaded tier that covers the rows, else
     // falls back to the GEMM.
     let w4a16_batchm =
-        metrale_model_layers::layers::w4a16_gemv_tiers::W4a16BatchmTiers::resolve(gpu, w4a4);
+        metrale_model_layers::layers::w4a16_gemv_tiers::W4a16BatchmTiers::resolve(gpu, ops);
     // 2026-09-25: Batched GEMV for lm_head calls of up to 16 rows; handle 0
     // when the target lacks it, and dispatch then falls back.
     let w4a16_gemv_batch16_kernel =

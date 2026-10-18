@@ -348,11 +348,11 @@ impl FfnComponent {
 
     /// 2026-09-28: Row edge of a dense FFN's narrow decode arms (`DenseFfnLayer::narrow_rows`:
     /// its W4A4 edge under the weight-quantization tier, capped at 32, else the W4A16 edge).
-    /// MoE and none answer the W4A16 edge; `can_forward_km` is false for them anyway.
-    pub fn narrow_rows(&self) -> u32 {
+    /// MoE and none answer the W4A16 edge of `tc`; `can_forward_km` is false for them anyway.
+    pub fn narrow_rows(&self, tc: ops::W4a16TcPlan) -> u32 {
         match self {
             Self::Dense(d) => d.narrow_rows(),
-            _ => ops::gemv_tc::narrow_gemv_max_rows().min(ops::w4a4_proj::W4A4_MAX_M),
+            _ => tc.narrow_max_rows().min(ops::w4a4_proj::W4A4_MAX_M),
         }
     }
 

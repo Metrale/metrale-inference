@@ -202,6 +202,9 @@ pub struct MtpHead {
     /// 2026-09-25: False when `METRALE_NO_GEMV_SW=1`; read at construction because
     /// `gemv` has no `ForwardContext`.
     gemv_sw: bool,
+    /// 2026-10-17: `OpsLevers::mtp_tc`: the BF16 small-M GEMMs and the LM-head
+    /// predicate take the tensor-core entries.
+    mtp_tc: bool,
     w4a16_gemv_qg_k: KernelHandle,
     w4a16_gemv_dual_k: KernelHandle,
     rope_k: KernelHandle,

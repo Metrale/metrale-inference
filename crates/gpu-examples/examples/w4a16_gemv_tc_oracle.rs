@@ -5,7 +5,7 @@
 //! CUDA-core `w4a16_gemv_batch{4,8,16}` tiers, for M in `MS` and every shape.
 //!
 //!   1. Armed: `gemv_tc::tc_kernel` resolves and `W4a16BatchmTiers::kernel(m)`
-//!      is nonzero, or the run exits 2. An M above `narrow_gemv_max_rows()`
+//!      is nonzero, or the run exits 2. An M above `W4a16TcPlan::narrow_max_rows`
 //!      (9..=16 unless `METRALE_W4A16_TC_WIDE` is set) is skipped, and so are
 //!      the fixed-M legs.
 //!   2. Against a CPU f64 reference over 64 sampled output features plus the
@@ -96,6 +96,8 @@ struct Case<'a> {
     c: DevicePtr,
     n: u32,
     k: u32,
+    /// 2026-10-17: The tensor-core levers the routed launches run under.
+    tc: ops::W4a16TcPlan,
 }
 
 impl Case<'_> {
@@ -135,7 +137,9 @@ impl Case<'_> {
         w: &QuantizedWeight,
     ) -> Result<Vec<u16>> {
         self.run(m_buf, |c| {
-            ops::w4a16_gemv_batchm(self.g, kh, self.a, w, c, m_launch, self.n, self.k, 0)
+            ops::w4a16_gemv_batchm(
+                self.g, kh, self.tc, self.a, w, c, m_launch, self.n, self.k, 0,
+            )
         })
     }
 }
@@ -176,8 +180,9 @@ fn main() -> Result<()> {
     };
     let sites = metrale_model_layers::layers::w4a16_gemv_tiers::W4a16BatchmTiers::resolve(
         g,
-        metrale_gpu_examples::ops_levers()?.w4a4,
+        &metrale_gpu_examples::ops_levers()?,
     );
+    let plan = sites.tc();
     let fixed_k = |m: u32| {
         g.kernel("w4a16_gemv", &format!("w4a16_gemv_batch{m}"))
             .expect("batch2/3")
@@ -227,20 +232,28 @@ fn main() -> Result<()> {
             weight_scale_2: SCALE2,
             ..QuantizedWeight::null()
         };
-        let case = Case { g, a, w, c, n, k };
+        let case = Case {
+            g,
+            a,
+            w,
+            c,
+            n,
+            k,
+            tc: plan,
+        };
 
         let rows: Vec<usize> = (0..64)
             .map(|r| (r * 2654435761usize) % nu)
             .chain([0, nu - 1])
             .collect();
         for m in MS {
-            if m > ops::gemv_tc::narrow_gemv_max_rows() {
+            if m > plan.narrow_max_rows() {
                 println!(
                     "{label} M={m:2}  skipped: 9..16-row edge is opt-in (METRALE_W4A16_TC_WIDE)"
                 );
                 continue;
             }
-            if ops::gemv_tc::tc_kernel(g, m, n, k).is_none() {
+            if ops::gemv_tc::tc_kernel(g, plan, m, n, k).is_none() {
                 eprintln!("NOT ARMED: tensor-core kernel did not resolve at m={m} n={n} k={k}");
                 std::process::exit(2);
             }
@@ -291,19 +304,15 @@ fn main() -> Result<()> {
 
         // 2026-09-25: Check 5. `ops::w4a16_gemv_batch2/3` and `dual_batch2/3` take
         // the tensor-core kernel only with the widening on (`gemv_tc::tc_fixed_m`).
-        let fixed_ms: &[u32] = if ops::gemv_tc::wide_rows_enabled() {
-            &[2, 3]
-        } else {
-            &[]
-        };
+        let fixed_ms: &[u32] = if plan.wide { &[2, 3] } else { &[] };
         for &m in fixed_ms {
             let tv = case.tier(tier_for(m), m)?;
             let (fixed, dual) = (fixed_k(m), dual_k(m));
             let one = case.run(m, |c| {
                 if m == 2 {
-                    ops::w4a16_gemv_batch2(g, fixed, a, &case.w, c, n, k, 0)
+                    ops::w4a16_gemv_batch2(g, fixed, plan, a, &case.w, c, n, k, 0)
                 } else {
-                    ops::w4a16_gemv_batch3(g, fixed, a, &case.w, c, n, k, 0)
+                    ops::w4a16_gemv_batch3(g, fixed, plan, a, &case.w, c, n, k, 0)
                 }
             })?;
             // 2026-09-25: The same weight twice: output1 goes to the sentinel-checked
@@ -311,9 +320,13 @@ fn main() -> Result<()> {
             let scratch = c.offset(((m as usize + 1) * nu * 2).next_multiple_of(256));
             let two = case.run(m, |c1| {
                 if m == 2 {
-                    ops::w4a16_gemv_dual_batch2(g, dual, a, &case.w, scratch, &case.w, c1, n, k, 0)
+                    ops::w4a16_gemv_dual_batch2(
+                        g, dual, plan, a, &case.w, scratch, &case.w, c1, n, k, 0,
+                    )
                 } else {
-                    ops::w4a16_gemv_dual_batch3(g, dual, a, &case.w, scratch, &case.w, c1, n, k, 0)
+                    ops::w4a16_gemv_dual_batch3(
+                        g, dual, plan, a, &case.w, scratch, &case.w, c1, n, k, 0,
+                    )
                 }
             })?;
             let (bad1, bad2) = (

@@ -103,6 +103,7 @@ impl MoeLayer {
             ops::w4a16_gemv_batch2(
                 ctx.gpu,
                 self.w4a16_gemv_batch2,
+                ctx.levers.ops.w4a16_tc,
                 router_in,
                 nvfp4,
                 gate_logits,

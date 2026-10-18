@@ -5,11 +5,11 @@
 //!
 //! Owner: model-layers ops.
 //! Invariants:
-//! - [`try_dense_gemv_tc`] launches only when `METRALE_NO_MTP_TC` is unset or
-//!   empty, `MIN_M <= m <= TC32_MAX_M`, `n > 0`, `k % K_STEP == 0` and a
-//!   covering entry resolved; otherwise it returns `Ok(false)` and launches
-//!   nothing.
-//! - `METRALE_NO_MTP_TC` is read once per process. Any non-empty value, `0`
+//! - [`try_dense_gemv_tc`] launches only when its `on` argument is set,
+//!   `MIN_M <= m <= TC32_MAX_M`, `n > 0`, `k % K_STEP == 0` and a covering
+//!   entry resolved; otherwise it returns `Ok(false)` and launches nothing.
+//! - `on` is `OpsLevers::mtp_tc`, resolved once from the startup settings: on
+//!   when `METRALE_NO_MTP_TC` is unset or empty. Any non-empty value, `0`
 //!   included, turns the path off.
 //!
 //! The entries take `dense_gemv_bf16_batchm`'s arguments in the same order:
@@ -81,19 +81,6 @@ pub fn route(m: u32, n: u32, k: u32, enabled: bool, have: [bool; 3]) -> Option<D
     .map(|((_, kind), _)| kind)
 }
 
-/// 2026-09-25: The `METRALE_NO_MTP_TC` rule over the looked-up value: the
-/// path is on unless the variable holds a non-empty value.
-pub fn mtp_tc_from(kill: Option<&std::ffi::OsStr>) -> bool {
-    kill.is_none_or(|v| v.is_empty())
-}
-
-/// 2026-09-25: Whether the path is on (`METRALE_NO_MTP_TC` unset or empty).
-/// Read once, so every launch in a process sees the same choice.
-pub fn mtp_tc_enabled() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| mtp_tc_from(std::env::var_os("METRALE_NO_MTP_TC").as_deref()))
-}
-
 /// 2026-09-25: Handles `[tc8, tc16, tc32]`, cached per backend, since a
 /// `KernelHandle` belongs to one backend's loaded module. A missing entry is
 /// the zero handle.
@@ -112,9 +99,15 @@ fn handles(gpu: &dyn GpuBackend) -> [KernelHandle; 3] {
 }
 
 /// 2026-09-25: The tensor-core kernel and grid-x for this launch when the path
-/// is on and an entry routes, else `None`.
-pub fn kernel_for(gpu: &dyn GpuBackend, m: u32, n: u32, k: u32) -> Option<(KernelHandle, u32)> {
-    if !mtp_tc_enabled() {
+/// is on (`on`) and an entry routes, else `None`.
+pub fn kernel_for(
+    gpu: &dyn GpuBackend,
+    on: bool,
+    m: u32,
+    n: u32,
+    k: u32,
+) -> Option<(KernelHandle, u32)> {
+    if !on {
         return None;
     }
     let h = handles(gpu);
@@ -157,11 +150,12 @@ pub fn launch(
 }
 
 /// 2026-09-25: Run `C[t] = A[t] @ W^T` on a tensor-core entry if the path is
-/// on and the shape routes. `Ok(false)` means nothing was launched and the
-/// caller must run its own kernel.
+/// on (`on`) and the shape routes. `Ok(false)` means nothing was launched and
+/// the caller must run its own kernel.
 #[allow(clippy::too_many_arguments)]
 pub fn try_dense_gemv_tc(
     gpu: &dyn GpuBackend,
+    on: bool,
     input: DevicePtr,
     weight: &DenseWeight,
     output: DevicePtr,
@@ -171,7 +165,7 @@ pub fn try_dense_gemv_tc(
     out_stride: u32,
     stream: u64,
 ) -> Result<bool> {
-    let Some((kernel, grid_x)) = kernel_for(gpu, m, n, k) else {
+    let Some((kernel, grid_x)) = kernel_for(gpu, on, m, n, k) else {
         return Ok(false);
     };
     launch(

@@ -107,6 +107,7 @@ impl TransformerModel {
             ops::w4a16_gemv_batchm(
                 self.gpu.as_ref(),
                 self.w4a16_gemv_batch16_kernel,
+                self.w4a16_batchm.tc(),
                 hidden,
                 nvfp4,
                 logits,
@@ -234,6 +235,7 @@ impl TransformerModel {
                 ops::w4a16_gemv_batch2(
                     self.gpu.as_ref(),
                     self.w4a16_gemv_batch2_kernel,
+                    self.w4a16_batchm.tc(),
                     hidden,
                     nvfp4,
                     logits,
@@ -263,7 +265,7 @@ impl TransformerModel {
                     stream,
                 )?;
             }
-        } else if (3..=ops::gemv_tc::narrow_gemv_max_rows()).contains(&num_tokens)
+        } else if (3..=self.w4a16_batchm.tc().narrow_max_rows()).contains(&num_tokens)
             && self.w4a16_batchm.kernel(num_tokens).0 != 0
             && let Some(ref nvfp4) = self.lm_head_nvfp4
         {
@@ -272,6 +274,7 @@ impl TransformerModel {
             ops::w4a16_gemv_batchm(
                 self.gpu.as_ref(),
                 self.w4a16_batchm.kernel(num_tokens),
+                self.w4a16_batchm.tc(),
                 hidden,
                 nvfp4,
                 logits,

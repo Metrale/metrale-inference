@@ -195,6 +195,7 @@ impl Qwen3SsmLayer {
                     ops::w4a4_proj::nvfp4_proj_small_m(
                         ctx.gpu,
                         fp4_gemv_batch_k,
+                        ctx.levers.ops.w4a16_tc,
                         normed_base,
                         nvfp4,
                         deinterleaved,
@@ -359,6 +360,7 @@ impl Qwen3SsmLayer {
                     ops::w4a4_proj::nvfp4_proj_small_m(
                         ctx.gpu,
                         fp4_gemv_batch_k,
+                        ctx.levers.ops.w4a16_tc,
                         normed_out_base,
                         &self.ssm.out_proj,
                         ssm_out_base,

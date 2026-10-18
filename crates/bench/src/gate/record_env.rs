@@ -22,7 +22,7 @@ use super::record::GateRecord;
 ///   non-empty value, `0` included, turns the path off, so the default is the
 ///   literal `unset`, under which the path ran.
 /// - `METRALE_W4A16_TC_WIDE` is a presence opt-in that raises
-///   `narrow_gemv_max_rows` to `WIDE_MAX_ROWS`, so `unset` means it did not
+///   `W4a16TcPlan::narrow_max_rows` to `WIDE_MAX_ROWS`, so `unset` means it did not
 ///   run.
 ///
 /// `record_env_tests` pins each switch rule against its lever's source. The

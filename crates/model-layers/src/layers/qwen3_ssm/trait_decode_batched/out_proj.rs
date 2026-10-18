@@ -108,6 +108,7 @@ impl Qwen3SsmLayer {
             ops::w4a4_proj::nvfp4_proj_small_m(
                 ctx.gpu,
                 self.w4a16_batchm_kernel(num_tokens, &self.ssm.out_proj),
+                ctx.levers.ops.w4a16_tc,
                 normed_out_buf,
                 &self.ssm.out_proj,
                 out_proj_buf,
@@ -193,6 +194,7 @@ impl Qwen3SsmLayer {
             ops::w4a16_gemv_batch3(
                 ctx.gpu,
                 self.w4a16_gemv_batch3_k,
+                ctx.levers.ops.w4a16_tc,
                 normed_out_buf,
                 &self.ssm.out_proj,
                 out_proj_buf,
@@ -204,6 +206,7 @@ impl Qwen3SsmLayer {
             ops::w4a16_gemv_batch2(
                 ctx.gpu,
                 self.w4a16_gemv_batch2_k,
+                ctx.levers.ops.w4a16_tc,
                 normed_out_buf,
                 &self.ssm.out_proj,
                 out_proj_buf,

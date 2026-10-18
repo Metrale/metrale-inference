@@ -362,11 +362,29 @@ impl Qwen3AttentionLayer {
         if batchm.0 != 0 {
             return if same_input_as_previous {
                 ops::w4a4_proj::nvfp4_proj_small_m_same_input(
-                    gpu, batchm, input, w_base, output, m, n, k, stream,
+                    gpu,
+                    batchm,
+                    c.fwd.levers.ops.w4a16_tc,
+                    input,
+                    w_base,
+                    output,
+                    m,
+                    n,
+                    k,
+                    stream,
                 )
             } else {
                 ops::w4a4_proj::nvfp4_proj_small_m(
-                    gpu, batchm, input, w_base, output, m, n, k, stream,
+                    gpu,
+                    batchm,
+                    c.fwd.levers.ops.w4a16_tc,
+                    input,
+                    w_base,
+                    output,
+                    m,
+                    n,
+                    k,
+                    stream,
                 )
             };
         }

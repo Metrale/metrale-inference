@@ -454,6 +454,7 @@ pub(super) fn build_for(
             layers: &layers,
             head: &head,
             draft: draft.as_ref(),
+            ops: crate::layers::ops::OpsLevers::declared(),
         },
     )?;
     Ok(Fixture {

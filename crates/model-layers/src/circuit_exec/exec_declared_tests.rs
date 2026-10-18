@@ -206,11 +206,23 @@ fn each_w4a4_launch_is_the_one_the_legacy_launcher_makes() {
             ptr(0xA300_0000),
         );
         let kh = KernelHandle(0xDEAD);
-        ops::w4a4_proj::nvfp4_proj_small_m(&gpu, kh, x, &w(WeightSlot::FfnGate), g, m, inter, h, 7)
-            .unwrap();
+        ops::w4a4_proj::nvfp4_proj_small_m(
+            &gpu,
+            kh,
+            ops::OpsLevers::declared().w4a16_tc,
+            x,
+            &w(WeightSlot::FfnGate),
+            g,
+            m,
+            inter,
+            h,
+            7,
+        )
+        .unwrap();
         ops::w4a4_proj::nvfp4_proj_small_m_same_input(
             &gpu,
             kh,
+            ops::OpsLevers::declared().w4a16_tc,
             x,
             &w(WeightSlot::FfnUp),
             u,
@@ -223,6 +235,7 @@ fn each_w4a4_launch_is_the_one_the_legacy_launcher_makes() {
         ops::w4a4_proj::nvfp4_proj_small_m(
             &gpu,
             kh,
+            ops::OpsLevers::declared().w4a16_tc,
             g,
             &w(WeightSlot::Linear(LinearRole::Down)),
             y,

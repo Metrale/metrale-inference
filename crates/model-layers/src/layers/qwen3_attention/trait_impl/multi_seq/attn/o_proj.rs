@@ -331,6 +331,7 @@ impl Qwen3AttentionLayer {
             ops::w4a16_gemv_batch3(
                 fwd.gpu,
                 self.w4a16_gemv_batch3_k,
+                fwd.levers.ops.w4a16_tc,
                 attn_out,
                 &self.attn.o_proj,
                 o_out,
@@ -342,6 +343,7 @@ impl Qwen3AttentionLayer {
             ops::w4a16_gemv_batch2(
                 fwd.gpu,
                 self.w4a16_gemv_batch2_k,
+                fwd.levers.ops.w4a16_tc,
                 attn_out,
                 &self.attn.o_proj,
                 o_out,

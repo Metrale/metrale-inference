@@ -62,6 +62,9 @@ const SHAPES: [(&str, u32, u32); 8] = [
 /// stored).
 const ODD: (&str, u32, u32) = ("odd N   ", 1001, 5120);
 const MS: [u32; 11] = [2, 3, 4, 5, 8, 9, 12, 16, 17, 24, 32];
+/// 2026-10-17: The `OpsLevers::mtp_tc` every launch here passes: `main` exits 2 before any
+/// launch when the settings turn the path off.
+const ARMED: bool = true;
 const PAD: u32 = 8;
 
 struct Rng(u64);
@@ -157,7 +160,7 @@ impl Case<'_> {
         self.run(m_buf, |c| {
             let s = self.stride();
             let ran = dense_gemv_tc::try_dense_gemv_tc(
-                self.g, self.a, &self.w, c, m_launch, self.n, self.k, s, 0,
+                self.g, ARMED, self.a, &self.w, c, m_launch, self.n, self.k, s, 0,
             )?;
             anyhow::ensure!(ran, "not routed at m={m_launch} n={} k={}", self.n, self.k);
             Ok(())
@@ -194,7 +197,7 @@ fn main() -> Result<()> {
         eprintln!("dense_gemv_bf16_batchm not in this target's module set");
         std::process::exit(2);
     };
-    if !dense_gemv_tc::mtp_tc_enabled() {
+    if !metrale_gpu_examples::ops_levers()?.mtp_tc {
         eprintln!("NOT ARMED: unset METRALE_NO_MTP_TC");
         std::process::exit(2);
     }
@@ -233,7 +236,7 @@ fn main() -> Result<()> {
             .chain([0, nu - 1])
             .collect();
         let widest = case.routed(32, 32)?;
-        if dense_gemv_tc::try_dense_gemv_tc(g, a, &case.w, c, 1, n, k, n + PAD, 0)? {
+        if dense_gemv_tc::try_dense_gemv_tc(g, ARMED, a, &case.w, c, 1, n, k, n + PAD, 0)? {
             println!("{label} M=1 was ROUTED: MIN_M is not enforced  FAIL");
             failures += 1;
         }
@@ -350,7 +353,7 @@ fn bench(g: &dyn GpuBackend, bm: KernelHandle) -> Result<()> {
     let routed = |m: u32| -> Result<()> {
         for (w, n, k) in &ws {
             anyhow::ensure!(dense_gemv_tc::try_dense_gemv_tc(
-                g, a, w, c, m, *n, *k, *n, 0
+                g, ARMED, a, w, c, m, *n, *k, *n, 0
             )?);
         }
         Ok(())

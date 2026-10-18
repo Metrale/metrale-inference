@@ -176,14 +176,16 @@ impl OpEmitter for DenseGemvTc {
         for (i, (slot, y, n)) in launches.into_iter().enumerate() {
             let w = dense(cx.weight(0, slot)?, role.name())?;
             let k = cx.handle(i)?;
-            let (routed, grid_x) = ops::dense_gemv_tc::kernel_for(cx.gpu, m, n, k_dim)
-                .with_context(|| {
-                    format!(
-                        "the head's {m}x{n}x{k_dim} {} projection takes no tensor-core GEMV \
+            let (routed, grid_x) =
+                ops::dense_gemv_tc::kernel_for(cx.gpu, cx.ops.mtp_tc, m, n, k_dim).with_context(
+                    || {
+                        format!(
+                            "the head's {m}x{n}x{k_dim} {} projection takes no tensor-core GEMV \
                          (METRALE_NO_MTP_TC, or K not a multiple of 64)",
-                        role.name()
-                    )
-                })?;
+                            role.name()
+                        )
+                    },
+                )?;
             ensure!(
                 routed.0 == k.0,
                 "the head's {m}x{n}x{k_dim} {} projection routes to another tensor-core entry \
@@ -238,7 +240,8 @@ impl OpEmitter for DraftLmHeadRows {
             "w4a16_gemv_batchm caps at 32 rows; the plan has {m}"
         );
         let n = m as usize;
-        let tc = crate::layers::mtp_head::tc_lm_head(cx.gpu, n, v, h);
+        let tc =
+            crate::layers::mtp_head::tc_lm_head(cx.gpu, cx.ops.mtp_tc, cx.ops.w4a16_tc, n, v, h);
         ensure!(
             crate::layers::mtp_head::lm_head_rows_arm(n, tc, facts.lm_head_twin)
                 == crate::layers::mtp_head::LmHeadRowsArm::Gemv,
@@ -251,16 +254,20 @@ impl OpEmitter for DraftLmHeadRows {
             .copied()
             .filter(|k| k.0 != 0)
             .with_context(|| format!("the head has no batched LM-head GEMV at {m} rows"))?;
-        let runs = ops::gemv_tc::tc_kernel(cx.gpu, m, v, h).map_or(gemv, |(t, _)| t);
+        let runs =
+            ops::gemv_tc::tc_kernel(cx.gpu, cx.ops.w4a16_tc, m, v, h).map_or(gemv, |(t, _)| t);
         ensure!(
             runs.0 == cx.handle(0)?.0,
             "at {m} rows the head's LM head launches another kernel than the plan's `{}`",
             cx.g.group.kernels[0].func
         );
         let (x, y) = (cx.ptr(inp)?, cx.ptr(out)?);
+        let w4a16_tc = cx.ops.w4a16_tc;
         cx.push(
             0,
-            Box::new(move |e| ops::w4a16_gemv_batchm(e.gpu, gemv, x, &w, y, m, v, h, e.stream)),
+            Box::new(move |e| {
+                ops::w4a16_gemv_batchm(e.gpu, gemv, w4a16_tc, x, &w, y, m, v, h, e.stream)
+            }),
         )
     }
 }

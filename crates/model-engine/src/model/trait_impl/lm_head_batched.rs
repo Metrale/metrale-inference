@@ -357,6 +357,7 @@ impl TransformerModel {
                     ops::w4a16_gemv_batchm(
                         self.gpu.as_ref(),
                         gemv_k,
+                        self.w4a16_batchm.tc(),
                         normed,
                         nvfp4,
                         logits,

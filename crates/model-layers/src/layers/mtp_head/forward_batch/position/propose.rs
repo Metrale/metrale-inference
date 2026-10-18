@@ -21,7 +21,9 @@ impl MtpHead {
         n: usize,
         h: usize,
     ) -> &'static str {
-        if ops::dense_gemv_tc::kernel_for(gpu, n as u32, h as u32, (2 * h) as u32).is_some() {
+        if ops::dense_gemv_tc::kernel_for(gpu, self.mtp_tc, n as u32, h as u32, (2 * h) as u32)
+            .is_some()
+        {
             return "TC-GEMV (kill: METRALE_NO_MTP_TC)";
         }
         match row_dispatch::drafter_row_kernel(

@@ -14,7 +14,10 @@
 //! - `METRALE_CUBLAS_SCALE_LAYOUT` keeps its reader's text predicate: exactly `rowmajor` turns
 //!   the k-major layout off.
 //! - `from_settings` refuses exactly what [`W4a4Levers::from_settings`] refuses.
+//! - `METRALE_NO_W4A16_TC`, `METRALE_W4A16_TC_WIDE` and `METRALE_NO_MTP_TC` keep their readers'
+//!   text predicate: a non-empty value is set, an empty one reads as unset ([`unset_or_empty`]).
 
+use super::gemv_tc::W4a16TcPlan;
 use super::hyper_connection_lowrank::HcLevers;
 use super::lora_delta::LoraLevers;
 use super::w4a4_proj::W4a4Levers;
@@ -74,6 +77,23 @@ pub struct OpsLevers {
     pub w4a4: W4a4Levers,
     /// 2026-10-17: The W8A16 tile levers (`w8a16_plan.rs`).
     pub w8a16: W8a16Plan,
+    /// 2026-10-17: The W4A16 tensor-core levers (`gemv_tc.rs`).
+    pub w4a16_tc: W4a16TcPlan,
+    /// 2026-09-25: On unless `METRALE_NO_BATCH8_RT` is switched on: the width-8 W4A16 tier
+    /// resolves `w4a16_gemv_batch8_rt2` where the target has it (`gemv_tier::batch8_kernel`).
+    pub batch8_rt: bool,
+    /// 2026-09-25: On unless `METRALE_NO_GEMV_EXACT_M_TIERS` is present at any value: the
+    /// exact-M W4A16 tiers 5/6/7 take part in the tier decision (`w4a16_gemv_tiers.rs`).
+    pub gemv_exact_m_tiers: bool,
+    /// 2026-09-25: On unless `METRALE_NO_MTP_TC` holds a non-empty value, `0` included: the MTP
+    /// drafter's BF16 small-M GEMMs run on the tensor-core entries (`dense_gemv_tc.rs`).
+    pub mtp_tc: bool,
+}
+
+/// 2026-09-25: The rule of the tensor-core kill switches and the widening: a variable that is
+/// unset or empty reads as unset.
+fn unset_or_empty(v: Option<&str>) -> bool {
+    v.is_none_or(str::is_empty)
 }
 
 impl OpsLevers {
@@ -110,6 +130,16 @@ impl OpsLevers {
                 pipe128: !k.no_w8a16_pipe128,
                 tc_rows: !k.no_w8a16_tc_rows,
             },
+            w4a16_tc: {
+                let tc = unset_or_empty(k.no_w4a16_tc.as_deref());
+                W4a16TcPlan {
+                    tc,
+                    wide: tc && !unset_or_empty(k.w4a16_tc_wide.as_deref()),
+                }
+            },
+            mtp_tc: unset_or_empty(s.speculative.no_mtp_tc.as_deref()),
+            batch8_rt: !s.scheduler.no_batch8_rt,
+            gemv_exact_m_tiers: !s.storage.no_gemv_exact_m_tiers,
         })
     }
 
@@ -146,6 +176,10 @@ impl OpsLevers {
             cublas_kmajor: true,
             w4a4: W4a4Levers::declared(),
             w8a16: W8a16Plan::declared(),
+            w4a16_tc: W4a16TcPlan::declared(),
+            mtp_tc: true,
+            batch8_rt: true,
+            gemv_exact_m_tiers: true,
         }
     }
 }

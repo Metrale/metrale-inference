@@ -265,6 +265,7 @@ pub use gemv_sw::*;
 pub use n_tile::n_tile_blocks;
 pub use nvfp4_moe_grouped::*;
 
+pub use gemv_tc::W4a16TcPlan;
 pub use hyper_connection::*;
 pub use hyper_connection_dispatch::*;
 pub use hyper_connection_lowrank::*;

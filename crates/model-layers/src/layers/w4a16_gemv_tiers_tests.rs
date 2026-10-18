@@ -118,8 +118,7 @@ fn default_table_is_empty_and_declines() {
 fn width_table_and_resolver_stay_in_lockstep() {
     assert!(W4A16_BATCHM_WIDTHS.windows(2).all(|w| w[0] < w[1]));
     let gpu = MockGpuBackend::new();
-    let tiers =
-        W4a16BatchmTiers::resolve(&gpu, crate::layers::ops::w4a4_proj::W4a4Levers::declared());
+    let tiers = W4a16BatchmTiers::resolve(&gpu, &crate::layers::ops::OpsLevers::declared());
     assert!(tiers.handles.iter().all(|h| h.0 != 0));
     // 2026-09-28: Then `w4a16_gemv_batch16` and `w4a16_gemv_batch32`. Between them
     // `w4a4_proj::prepare` resolves the W4A4 kernels once per backend; its cache is keyed
@@ -155,7 +154,6 @@ fn width_table_and_resolver_stay_in_lockstep() {
 /// instead fails the first pair of assertions.
 #[test]
 fn the_row_edge_follows_the_weights_declared_activations() {
-    use crate::layers::ops::gemv_tc::narrow_gemv_max_rows;
     use crate::weight_map::QuantizedWeight;
     use metrale_config::Nvfp4Act;
     assert_eq!(
@@ -168,8 +166,7 @@ fn the_row_edge_follows_the_weights_declared_activations() {
     };
     let declared = stamped(Nvfp4Act::A4);
     let gpu = MockGpuBackend::new();
-    let tiers =
-        W4a16BatchmTiers::resolve(&gpu, crate::layers::ops::w4a4_proj::W4a4Levers::declared());
+    let tiers = W4a16BatchmTiers::resolve(&gpu, &crate::layers::ops::OpsLevers::declared());
     assert_eq!(
         tiers.a4_rows,
         crate::layers::ops::w4a4_proj::W4A4_WIDE_MAX_M
@@ -180,10 +177,14 @@ fn the_row_edge_follows_the_weights_declared_activations() {
     for other in [Nvfp4Act::Wide, Nvfp4Act::Unstamped] {
         let w = stamped(other);
         assert!(!tiers.declares_a4(&w), "{other:?}");
-        assert_eq!(tiers.edge(&w), narrow_gemv_max_rows(), "{other:?}");
+        assert_eq!(
+            tiers.edge(&w),
+            crate::layers::ops::W4a16TcPlan::declared().narrow_max_rows(),
+            "{other:?}"
+        );
         for m in [9, 16, 17, 32, 33, 64] {
             assert_ne!(tiers.kernel_for(m, &declared).0, 0, "declared, m={m}");
-            if m > narrow_gemv_max_rows() {
+            if m > crate::layers::ops::W4a16TcPlan::declared().narrow_max_rows() {
                 assert_eq!(tiers.kernel_for(m, &w).0, 0, "{other:?}, m={m}");
                 assert_eq!(
                     tiers.kernel(m).0,
@@ -198,5 +199,8 @@ fn the_row_edge_follows_the_weights_declared_activations() {
     // served, so the weight keeps the W4A16 edge.
     let absent = W4a16BatchmTiers::default();
     assert!(!absent.declares_a4(&declared));
-    assert_eq!(absent.edge(&declared), narrow_gemv_max_rows());
+    assert_eq!(
+        absent.edge(&declared),
+        crate::layers::ops::W4a16TcPlan::declared().narrow_max_rows()
+    );
 }

@@ -192,7 +192,7 @@ impl Qwen3AttentionLayer {
                 (2 * h) as u32,
                 stream,
             )?;
-        } else if (4..=self.ffn.narrow_rows() as usize).contains(&n)
+        } else if (4..=self.ffn.narrow_rows(fwd.levers.ops.w4a16_tc) as usize).contains(&n)
             && !force_seq_ffn
             && self.ffn.can_forward_km(n as u32)
         {

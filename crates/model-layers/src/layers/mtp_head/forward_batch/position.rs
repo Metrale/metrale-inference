@@ -346,6 +346,7 @@ impl MtpHead {
             ops::w4a16_gemv_batchm(
                 gpu,
                 self.lm_head_batch_kernel(n),
+                self.w4a16_batchm.tc(),
                 final_normed,
                 &self.lm_head_nvfp4,
                 logits,
@@ -404,7 +405,7 @@ impl MtpHead {
     }
 
     /// 2026-09-25: True when the tensor-core drafter path is on
-    /// (`ops::dense_gemv_tc::mtp_tc_enabled`) and `gemv_tc::tc_kernel`
+    /// (`self.mtp_tc`) and `gemv_tc::tc_kernel`
     /// resolves a `w4a16_gemv_tc8`/`tc16` entry for this shape; the LM head
     /// then stays on `w4a16_gemv_batchm`, which launches that entry, instead
     /// of the tile twin. The dispatch and the propose log line both call it.
@@ -415,6 +416,6 @@ impl MtpHead {
         v: u32,
         h: u32,
     ) -> bool {
-        tc_lm_head(gpu, n, v, h)
+        tc_lm_head(gpu, self.mtp_tc, self.w4a16_batchm.tc(), n, v, h)
     }
 }
