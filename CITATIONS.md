@@ -255,8 +255,9 @@ Remaining work for true asymmetric:
 ### Trellis-coded KV cache (TCQ)
 
 The 128-group rotated codecs `turbo3_tcq`, `turbo2_tcq`, `turbo1_tcq` and
-`turbo4_n128` are derived from `spiritbuun/buun-llama-cpp` (MIT, pinned
-at `34ef0ef7c6ea`; licence in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) §7). Its
+`turbo4_n128` ([`docs/kv-cache-codecs.md`](docs/kv-cache-codecs.md)) are
+derived from `spiritbuun/buun-llama-cpp` (MIT, pinned at `34ef0ef7c6ea`;
+licence in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) §7). Its
 codebooks are copied verbatim and credit spiritbuun, as upstream asks. The
 design is described in "Closing the Gap: Trellis-Coded Quantization for KV
 Cache at 2-3 Bits" (spiritbuun, 2026; Hugging Face dataset
@@ -264,9 +265,9 @@ Cache at 2-3 Bits" (spiritbuun, 2026; Hugging Face dataset
 
 | Paper | arXiv | What we take | Where |
 |---|---|---|---|
-| QTIP: Quantization with Trellises and Incoherence Processing — Tseng, Sun, Hou, De Sa | [2406.11235](https://arxiv.org/abs/2406.11235) | The bitshift trellis (a state is the last L bits of the stream, so any element decodes from two bytes) and its Viterbi encoder. | `crates/kv-tq128/src/trellis.rs` |
+| QTIP: Quantization with Trellises and Incoherence Processing — Tseng, Sun, Hou, De Sa | [2406.11235](https://arxiv.org/abs/2406.11235) | The bitshift trellis (a state is the last L bits of the stream, so any element decodes from two bytes) and its Viterbi encoder. | `crates/kv-tq128/src/trellis.rs`, `kernels/gb10/common/reshape_and_cache_tcq.cu` |
 | Optimal Quantization for Matrix Multiplication — Ordentlich, Polyanskiy | [2410.13780](https://arxiv.org/abs/2410.13780) | The product-aware distortion that upstream trained the TCQ codebooks against. We copy the trained books and do not retrain. | `crates/kv-tq128/src/codebooks/` |
-| TurboQuant: Online Vector Quantization with Near-optimal Distortion Rate — Zandieh, Daliri, Hadian, Mirrokni | [2504.19874](https://arxiv.org/abs/2504.19874) | Normalize, then randomized Hadamard rotation, then quantize the coordinates against a fixed codebook, with a norm-preserving stored scale. This covers all four codecs. `turbo4_n128` is the plain scalar form: upstream's 16-level codebook with one fp16 norm per 128 values. | `crates/kv-tq128/src/rotation.rs`, `crates/kv-tq128/src/group.rs` |
+| TurboQuant: Online Vector Quantization with Near-optimal Distortion Rate — Zandieh, Daliri, Hadian, Mirrokni | [2504.19874](https://arxiv.org/abs/2504.19874) | Normalize, then randomized Hadamard rotation, then quantize the coordinates against a fixed codebook, with a norm-preserving stored scale. This covers all four codecs. `turbo4_n128` is the plain scalar form: upstream's 16-level codebook with one fp16 norm per 128 values. | `crates/kv-tq128/src/rotation.rs`, `crates/kv-tq128/src/group.rs`, `kernels/gb10/common/tq128_common.cuh`, `kernels/gb10/common/reshape_and_cache_turbo4_n128.cu`, `kernels/gb10/common/paged_decode_attn_tq128.cu` |
 
 ### Outstanding (not yet ported)
 

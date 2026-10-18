@@ -172,7 +172,11 @@ recorded in [`CITATIONS.md`](CITATIONS.md) and
   `kernels/gb10/common/paged_decode_attn_bf16k_turbo2v.cu` (sparse V),
   `crates/model-arch/src/weight_loader/qwen35/load_layers/tq_plus_weight_rotation.rs`,
   `crates/cache/src/kv_cache/tests_tq_plus.rs`,
-  `crates/kv-tq128/` (from buun-llama-cpp)
+  `crates/kv-tq128/` (from buun-llama-cpp), `kernels/gb10/common/tq128_common.cuh`,
+  `kernels/gb10/common/reshape_and_cache_tcq.cu`,
+  `kernels/gb10/common/reshape_and_cache_turbo4_n128.cu`,
+  `kernels/gb10/common/paged_decode_attn_tq128.cu`,
+  `kernels/gb10/common/tq128_dequant_bf16.cu`
 
 ---
 

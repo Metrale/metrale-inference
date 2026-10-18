@@ -1699,6 +1699,7 @@ dependencies = [
  "metrale-io-host-std",
  "metrale-kernels",
  "metrale-kv-codec",
+ "metrale-kv-tq128",
  "metrale-model-arch",
  "metrale-model-layers",
  "metrale-settings",
