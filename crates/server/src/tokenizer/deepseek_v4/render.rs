@@ -294,7 +294,10 @@ pub(super) fn python_json(value: &Value) -> Result<String> {
     Ok(match value {
         Value::Null => "null".to_string(),
         Value::Bool(v) => v.to_string(),
-        Value::Number(v) => v.to_string(),
+        Value::Number(v) => match v.as_f64().filter(|_| v.is_f64()) {
+            Some(float) => python_float_repr(float),
+            None => v.to_string(),
+        },
         Value::String(v) => serde_json::to_string(v)?,
         Value::Array(values) => format!(
             "[{}]",
@@ -317,4 +320,50 @@ pub(super) fn python_json(value: &Value) -> Result<String> {
                 .join(", ")
         ),
     })
+}
+
+/// 2026-10-18: Python's `repr(float)`, which `json.dumps` emits: the shortest round-trip
+/// digits, in positional notation for decimal exponents -4..=15 (with a trailing `.0` for
+/// a whole number) and in scientific notation otherwise, with a signed exponent of at
+/// least two digits (`1e+16`, `1e-05`). Rust's `{:e}` gives the same shortest digits.
+/// A JSON number is always finite, so the non-finite spellings never reach the split.
+pub(super) fn python_float_repr(value: f64) -> String {
+    let scientific = format!("{value:e}");
+    let Some((mantissa, exponent)) = scientific.split_once('e') else {
+        return scientific;
+    };
+    let Ok(exponent) = exponent.parse::<i32>() else {
+        return scientific;
+    };
+    let (sign, mantissa) = match mantissa.strip_prefix('-') {
+        Some(rest) => ("-", rest),
+        None => ("", mantissa),
+    };
+    let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
+    if !(-4..16).contains(&exponent) {
+        let (lead, rest) = digits.split_at(1);
+        let fraction = if rest.is_empty() {
+            String::new()
+        } else {
+            format!(".{rest}")
+        };
+        let exponent_sign = if exponent < 0 { '-' } else { '+' };
+        return format!(
+            "{sign}{lead}{fraction}e{exponent_sign}{:02}",
+            exponent.unsigned_abs()
+        );
+    }
+    let point = exponent + 1;
+    if point <= 0 {
+        let zeros = "0".repeat(point.unsigned_abs() as usize);
+        return format!("{sign}0.{zeros}{digits}");
+    }
+    let point = point as usize;
+    if digits.len() <= point {
+        let zeros = "0".repeat(point - digits.len());
+        format!("{sign}{digits}{zeros}.0")
+    } else {
+        let (whole, fraction) = digits.split_at(point);
+        format!("{sign}{whole}.{fraction}")
+    }
 }

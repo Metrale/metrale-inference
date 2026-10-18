@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-09-26: DeepSeek-V4 message encoding in Rust. `ChatTokenizer` uses it instead of a
-//! Jinja template for model types `deepseek_v4` and `deepseek_v41`; the tests compare it
-//! with the reference outputs in test_data/deepseek_v4_encoding.
+//! Jinja template for model type `deepseek_v4` (2026-10-18: `deepseek_v41` has its own
+//! encoder in `deepseek_v41.rs`); the tests compare it with the reference outputs in
+//! test_data/deepseek_v4_encoding.
 //!
 //! Owner: server (tokenizer).
 //! Invariants: none beyond the types.
@@ -11,6 +12,10 @@ use anyhow::{Result, bail};
 
 mod preprocess;
 mod render;
+
+/// 2026-10-18: Shared with the DeepSeek-V4.1 encoder, whose tool-result ordering is the
+/// same.
+pub(super) use preprocess::sort_tool_results_by_call_order;
 
 pub(super) const BOS: &str = "<｜begin▁of▁sentence｜>";
 pub(super) const EOS: &str = "<｜end▁of▁sentence｜>";

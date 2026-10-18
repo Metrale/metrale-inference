@@ -58,6 +58,7 @@ mod chat_impl;
 pub(crate) mod chat_render;
 pub use chat_render::ThinkingVars;
 mod deepseek_v4;
+mod deepseek_v41;
 mod heap_trim;
 pub use heap_trim::HeapTrimPolicy;
 pub use jinja_helpers::ToolJsonStyle;
@@ -89,6 +90,7 @@ pub enum TemplateSource<'a> {
 enum ChatEncoding {
     Jinja,
     DeepseekV4,
+    DeepseekV41,
     KimiK3XtmlUnsupported,
 }
 

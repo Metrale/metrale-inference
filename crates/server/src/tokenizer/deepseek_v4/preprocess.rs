@@ -109,7 +109,7 @@ fn user_content_blocks_mut(message: &mut Value) -> Option<&mut Vec<Value>> {
         .flatten()
 }
 
-pub(super) fn sort_tool_results_by_call_order(messages: &mut [Value]) {
+pub(in crate::tokenizer) fn sort_tool_results_by_call_order(messages: &mut [Value]) {
     let mut call_order: HashMap<String, usize> = HashMap::new();
     for message in messages {
         match role(message) {

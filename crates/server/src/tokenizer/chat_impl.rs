@@ -104,9 +104,12 @@ impl ChatTokenizer {
         });
         let chat_encoding = if official_k3 {
             ChatEncoding::KimiK3XtmlUnsupported
-        } else if model_type == "deepseek_v4" || model_type == "deepseek_v41" {
+        } else if model_type == "deepseek_v4" {
             tracing::info!("Using checkpoint-native DeepSeek-V4 message encoding");
             ChatEncoding::DeepseekV4
+        } else if model_type == "deepseek_v41" {
+            tracing::info!("Using checkpoint-native DeepSeek-V4.1 message encoding");
+            ChatEncoding::DeepseekV41
         } else {
             ChatEncoding::Jinja
         };
@@ -239,13 +242,22 @@ impl ChatTokenizer {
         thinking_vars: ThinkingVars,
     ) -> Result<Vec<u32>> {
         super::kimi_k3::require_chat_support(self.chat_encoding)?;
-        if self.chat_encoding == ChatEncoding::DeepseekV4 {
-            let rendered = super::deepseek_v4::encode_messages(
+        let native = match self.chat_encoding {
+            ChatEncoding::DeepseekV4 => Some(super::deepseek_v4::encode_messages(
                 messages,
                 tools,
                 enable_thinking,
                 reasoning_effort,
-            )?;
+            )?),
+            ChatEncoding::DeepseekV41 => Some(super::deepseek_v41::encode_messages(
+                messages,
+                tools,
+                enable_thinking,
+                reasoning_effort,
+            )?),
+            ChatEncoding::Jinja | ChatEncoding::KimiK3XtmlUnsupported => None,
+        };
+        if let Some(rendered) = native {
             return self.encode(&rendered);
         }
 
@@ -304,7 +316,7 @@ impl ChatTokenizer {
         thinking_vars: ThinkingVars,
     ) -> Result<Vec<u32>> {
         super::kimi_k3::require_chat_support(self.chat_encoding)?;
-        if self.chat_encoding == ChatEncoding::DeepseekV4 {
+        if self.uses_deepseek_v4_encoding() {
             return self.apply_chat_template_jinja_with_effort(
                 messages,
                 tools,
@@ -381,8 +393,27 @@ impl ChatTokenizer {
         self.supports_thinking
     }
 
+    /// 2026-10-18: True for both checkpoint-native DeepSeek encoders (V4 and V4.1): they
+    /// always take the request's tools and the tool-call ids of the history.
     pub fn uses_deepseek_v4_encoding(&self) -> bool {
+        matches!(
+            self.chat_encoding,
+            ChatEncoding::DeepseekV4 | ChatEncoding::DeepseekV41
+        )
+    }
+
+    /// 2026-10-18: The V4 encoder renders `developer` itself; every other encoding,
+    /// V4.1 included (it rejects unknown roles), gets `developer` as `system`.
+    pub fn preserves_developer_role(&self) -> bool {
         self.chat_encoding == ChatEncoding::DeepseekV4
+    }
+
+    /// 2026-10-18: True when `chat_template_kwargs.thinking` is the encoder's thinking
+    /// switch (the V4.1 encoder's alias for `enable_thinking`) rather than a template
+    /// variable. The chat path then lowers it into the thinking directive, so the prompt
+    /// and the reasoning parser agree.
+    pub fn thinking_kwarg_is_directive(&self) -> bool {
+        self.chat_encoding == ChatEncoding::DeepseekV41
     }
 }
 
