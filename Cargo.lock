@@ -1572,6 +1572,8 @@ dependencies = [
  "metrale-config",
  "metrale-governance",
  "metrale-host-probe",
+ "metrale-io-host-mem",
+ "metrale-io-host-std",
  "metrale-serve-identity",
  "parking_lot",
  "ring",
@@ -1752,6 +1754,7 @@ version = "1.0.0-beta-preview"
 dependencies = [
  "anyhow",
  "metrale-serve-identity",
+ "metrale-settings",
  "serde",
  "serde_json",
  "sha2",

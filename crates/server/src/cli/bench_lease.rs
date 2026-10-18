@@ -92,11 +92,15 @@ fn expected(plan: &ServePlan, port: u16) -> Result<Expected> {
 /// 2026-09-26: Take the leased server if it is the one `plan` would start,
 /// else stop it and start one. Either way the returned server is left
 /// running when dropped.
-pub async fn acquire(plan: ServePlan, owner_pid: Option<u32>) -> Result<SelfServed> {
+pub async fn acquire(
+    plan: ServePlan,
+    owner_pid: Option<u32>,
+    levers: &metrale_bench::levers::BenchLevers,
+) -> Result<SelfServed> {
     // 2026-09-26: Before the probe: a harness whose levers the plan does not
     // declare, or contradict it, gets no server, reused or fresh.
     let reconciled = plan.reconcile_env()?;
-    let store = ArtifactStore::discover()?;
+    let store = ArtifactStore::discover(levers)?;
     if let Some(lease) = read(&store)? {
         if pid_alive(lease.pid) {
             let target = TargetEndpoint::local(lease.port, &plan.model);
@@ -372,8 +376,8 @@ pub fn release_if_orphaned(store: &ArtifactStore) -> Result<Option<Lease>> {
 }
 
 /// 2026-09-26: `met benchmark serve-release`. Exits 0 with or without a lease.
-pub fn release_cmd() -> Result<i32> {
-    let store = ArtifactStore::discover()?;
+pub fn release_cmd(levers: &metrale_bench::levers::BenchLevers) -> Result<i32> {
+    let store = ArtifactStore::discover(levers)?;
     match release(&store)? {
         Some(l) => {
             eprintln!(

@@ -14,7 +14,10 @@ use metrale_bench::gate;
 
 use super::bench_args::{AggregateArgs, OutputFormat};
 
-pub fn aggregate_cmd(args: AggregateArgs) -> Result<i32> {
+pub fn aggregate_cmd(
+    args: AggregateArgs,
+    levers: &metrale_bench::levers::BenchLevers,
+) -> Result<i32> {
     let root = super::bench_run::repo_root()?;
     let Some(group) = gate::group::find(&args.id) else {
         let known: Vec<&str> = gate::group::GROUPS.iter().map(|g| g.id).collect();
@@ -26,7 +29,7 @@ pub fn aggregate_cmd(args: AggregateArgs) -> Result<i32> {
     };
     let sha = match &args.sha {
         Some(s) => s.clone(),
-        None => gate::git_sha(&root)?,
+        None => gate::git_sha(&root, levers.gate_sha.as_deref())?,
     };
 
     // 2026-09-26: Every readable shard record of this group at the commit (sha prefix

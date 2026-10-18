@@ -47,6 +47,8 @@ pub(crate) async fn serve(
     args: cli::ServeArgs,
     settings: Arc<metrale_settings::InferenceServerSettings>,
     tui_progress: Option<std::sync::mpsc::Receiver<crate::tui::capture_layer::ProgressEvent>>,
+    // 2026-10-17: The harness levers, resolved once by the caller with `settings`.
+    bench_levers: Arc<metrale_host_probe::levers::BenchLevers>,
 ) -> Result<()> {
     // 2026-09-26: One host for the process lifetime, created before startup so
     // the dashboard (`tui::start`) can hold it. The load publishes into it.
@@ -54,6 +56,7 @@ pub(crate) async fn serve(
     // 2026-09-26: Recorded before `args` moves into startup: a swap whose load
     // fails restores this argv.
     host.set_args(args.clone());
+    host.set_bench_levers(bench_levers.clone());
     // 2026-09-26: Installed in every process that serves, so the
     // scheduler-equivalence gate can re-serve this checkpoint under each
     // device router.
@@ -74,8 +77,10 @@ pub(crate) async fn serve(
         super::serve_load::Carried::from_settings(&settings).map_err(|e| anyhow::anyhow!("{e}"))?,
     );
     let startup_host = host.clone();
-    match tokio::task::spawn_blocking(move || startup(args, settings, tui_progress, startup_host))
-        .await??
+    match tokio::task::spawn_blocking(move || {
+        startup(args, settings, tui_progress, startup_host, bench_levers)
+    })
+    .await??
     {
         Startup::Serve(prepared) => {
             host.publish(prepared.state);
@@ -108,6 +113,7 @@ fn startup(
     settings: Arc<metrale_settings::InferenceServerSettings>,
     tui_progress: Option<std::sync::mpsc::Receiver<crate::tui::capture_layer::ProgressEvent>>,
     host: Arc<crate::main_modules::model_host::ModelHost>,
+    bench_levers: Arc<metrale_host_probe::levers::BenchLevers>,
 ) -> Result<Startup> {
     tracing::info!("Metrale Engine starting...");
     tracing::info!("Licensed under MIT OR Apache-2.0 — see /LICENSE-MIT and /LICENSE-APACHE");
@@ -135,6 +141,7 @@ fn startup(
             ),
             progress_rx,
             host.clone(),
+            bench_levers,
         );
         // 2026-09-26: Every later load sends its handles through this, so the
         // dashboard follows the model that is serving.

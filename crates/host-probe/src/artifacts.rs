@@ -34,16 +34,16 @@ impl ArtifactStore {
     /// 2026-09-26: The store at the resolved home: `METRALE_HOME` when set,
     /// otherwise `$HOME/.metrale`. Neither set is an error; there is no
     /// fallback directory. See [`MetraleHome::resolve`].
-    pub fn discover() -> Result<Self> {
+    pub fn discover(levers: &crate::levers::BenchLevers) -> Result<Self> {
         Ok(Self {
-            root: MetraleHome::resolve()?.root,
+            root: MetraleHome::resolve(levers)?.root,
         })
     }
 
     /// 2026-09-26: The resolved home together with where it came from
     /// ([`HomeSource`]).
-    pub fn discover_with_provenance() -> Result<MetraleHome> {
-        MetraleHome::resolve()
+    pub fn discover_with_provenance(levers: &crate::levers::BenchLevers) -> Result<MetraleHome> {
+        MetraleHome::resolve(levers)
     }
 
     /// 2026-09-26: Point the store at an explicit root, bypassing resolution.

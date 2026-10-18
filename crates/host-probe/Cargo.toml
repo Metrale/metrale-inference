@@ -16,6 +16,8 @@ role = "host-std"
 # dependency.
 [dependencies]
 metrale-serve-identity = { workspace = true }
+# 2026-10-17: The typed lever settings `levers::BenchLevers` projects.
+metrale-settings = { workspace = true }
 anyhow = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["std", "derive"] }
 serde_json = { workspace = true, features = ["std", "preserve_order"] }

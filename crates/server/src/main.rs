@@ -116,7 +116,9 @@ async fn serve_main() -> Result<()> {
     // 2026-09-26: Fetches the recipe index and prints two lines; no
     // subscriber, TUI or GPU.
     if matches!(cli.command, Command::SyncRecipes) {
-        return cli::sync_recipes::run();
+        return cli::sync_recipes::run(&metrale_host_probe::levers::BenchLevers::resolve(
+            &metrale_io_host_std::ProcessEnv,
+        )?);
     }
 
     // 2026-09-26: `doctor` prints its findings and exits with status 1 when it
@@ -134,20 +136,27 @@ async fn serve_main() -> Result<()> {
     }
 
     // 2026-10-17: A serve's levers resolve here, once, before the dashboard decision reads
-    // them; `serve` takes this value. A malformed lever stops the boot before any subscriber
-    // or dashboard exists.
-    let serve_settings = match &cli.command {
-        Command::Serve(args) => Some(main_modules::serve_settings::resolve(
-            &metrale_io_host_std::ProcessEnv,
-            args,
-        )?),
+    // them: the serve settings, the harness group and the harness projection `serve` hands to
+    // the dashboard and the auto-swap catalogue. A malformed lever stops the boot before any
+    // subscriber or dashboard exists.
+    let serve_levers = match &cli.command {
+        Command::Serve(args) => {
+            let env = metrale_io_host_std::ProcessEnv;
+            let settings = main_modules::serve_settings::resolve(&env, args)?;
+            let harness = metrale_host_probe::levers::resolve_harness(&env)?;
+            let bench =
+                metrale_host_probe::levers::BenchLevers::from_settings(&settings, &harness, &env)?;
+            Some((settings, harness, std::sync::Arc::new(bench)))
+        }
         _ => None,
     };
     let no_tui = match &cli.command {
         // 2026-09-26: `--check-kernels` prints a report and one JSON line on
         // stdout and exits, so it runs without a dashboard.
         Command::Serve(args) => {
-            serve_settings.as_ref().is_some_and(|s| s.server.no_tui)
+            serve_levers
+                .as_ref()
+                .is_some_and(|(s, _, _)| s.server.no_tui)
                 || args.rank > 0
                 || args.check_kernels
         }
@@ -181,9 +190,9 @@ async fn serve_main() -> Result<()> {
         None
     } else {
         let (progress_tx, progress_rx) = std::sync::mpsc::channel();
-        // 2026-10-17: Only the dashboard reads a harness lever, so only this branch resolves them.
-        let harness =
-            main_modules::serve_settings::resolve_harness(&metrale_io_host_std::ProcessEnv)?;
+        let Some((_, harness, _)) = &serve_levers else {
+            unreachable!("only a serve runs the dashboard")
+        };
         tui::init::install_tty_subscriber(progress_tx, harness.tui_log_file.as_deref());
         Some(progress_rx)
     };
@@ -207,16 +216,18 @@ async fn serve_main() -> Result<()> {
             // 2026-09-26: Benchmarks load no model and do not use the startup
             // escape.
             drop(shutdown_rx);
-            cli::bench_run::dispatch(args).await
+            let levers =
+                metrale_host_probe::levers::BenchLevers::resolve(&metrale_io_host_std::ProcessEnv)?;
+            cli::bench_run::dispatch(args, std::sync::Arc::new(levers)).await
         }
         // 2026-10-17: Refused before initialisation (`cli::no_bench`).
         #[cfg(not(feature = "bench"))]
         Command::Benchmark(_) => unreachable!("refused before initialisation"),
         Command::Serve(args) => {
-            let Some(settings) = serve_settings else {
+            let Some((settings, _, bench_levers)) = serve_levers else {
                 unreachable!("resolved above for every serve")
             };
-            let serving = serve(args, settings, tui_channels);
+            let serving = serve(args, settings, tui_channels, bench_levers);
             tokio::pin!(serving);
             // 2026-09-26: Only a send means shutdown. The sender stays parked in
             // `tui::shutdown` for the life of the process, and a closed channel

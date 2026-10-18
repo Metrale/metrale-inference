@@ -63,6 +63,7 @@ impl Wiring {
         app: &mut super::app::App,
         host: &Arc<ModelHost>,
         runtime: tokio::runtime::Handle,
+        levers: Arc<metrale_bench::levers::BenchLevers>,
     ) {
         // 2026-09-26: The serve matrix boots checkpoints through this
         // process; without an installed host it refuses to load with
@@ -74,9 +75,9 @@ impl Wiring {
         // 2026-09-26: Benchmarks target this server. When
         // `ArtifactStore::discover` fails (no usable `METRALE_HOME` or
         // `HOME`) the dashboard still starts, with a warning.
-        match metrale_bench::ArtifactStore::discover() {
+        match metrale_bench::ArtifactStore::discover(&levers) {
             Ok(store) => app.bench.attach(
-                metrale_bench::BenchmarkExecutor::new(runtime, store),
+                metrale_bench::BenchmarkExecutor::new(runtime, store, levers),
                 TargetEndpoint::local(self.port, self.model),
             ),
             Err(e) => tracing::warn!("benchmarks unavailable: {e:#}"),

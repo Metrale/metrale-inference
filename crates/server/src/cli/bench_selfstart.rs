@@ -127,6 +127,8 @@ pub async fn serve_for(
     hardware: Option<&str>,
     checkpoint: Option<&str>,
     overrides: BTreeMap<String, String>,
+    // 2026-10-17: This process's harness levers; the in-process server shares its environment.
+    levers: std::sync::Arc<metrale_bench::levers::BenchLevers>,
 ) -> Result<SelfServed> {
     let plan = super::bench_serve_plan::plan_serve(benchmark_id, hardware, checkpoint, overrides)?;
     // 2026-09-26: The server is a task in this process, so its levers are this
@@ -161,10 +163,9 @@ pub async fn serve_for(
         "gate: serving {model} from recipe {} on port {port}",
         plan.recipe_id
     );
-    let server =
-        tokio::spawn(
-            async move { crate::main_modules::serve::serve(serve_args, settings, None).await },
-        );
+    let server = tokio::spawn(async move {
+        crate::main_modules::serve::serve(serve_args, settings, None, levers).await
+    });
 
     // 2026-09-26: The handle goes into `SelfServed` before the wait, so an error
     // from the `?` below drops it through `Drop`, which aborts the task.

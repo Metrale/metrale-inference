@@ -139,13 +139,14 @@ pub fn git_rev_parse_toplevel(dir: &Path) -> Result<PathBuf> {
 }
 
 /// 2026-09-26: The short commit id of `HEAD` (`--short=10`), or the trimmed value of
-/// `METRALE_GATE_SHA` when that is set, for a checkout without git metadata.
+/// `explicit` (the resolved `METRALE_GATE_SHA`) when that is set, for a checkout without
+/// git metadata.
 ///
 /// # Errors
-/// If `METRALE_GATE_SHA` is set but empty, or git fails or prints nothing.
-pub fn git_sha(root: &Path) -> Result<String> {
-    if let Some(explicit) = std::env::var_os("METRALE_GATE_SHA") {
-        let sha = explicit.to_string_lossy().trim().to_string();
+/// If `explicit` is set but blank, or git fails or prints nothing.
+pub fn git_sha(root: &Path, explicit: Option<&str>) -> Result<String> {
+    if let Some(explicit) = explicit {
+        let sha = explicit.trim().to_string();
         if sha.is_empty() {
             bail!("METRALE_GATE_SHA is set but empty");
         }

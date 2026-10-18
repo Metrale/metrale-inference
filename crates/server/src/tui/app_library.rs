@@ -116,11 +116,16 @@ impl App {
     /// 2026-09-26: First entry into the Library: point it at the recipe store and start the recipe fetch.
     ///
     /// On failure it sets `recipes_unavailable`, which stops `tick_work` from
-    /// calling it again: `ArtifactStore::discover` reads only `METRALE_HOME`
-    /// and `HOME`, so a retry in the same process fails the same way. The
-    /// `rebuild` still lists the locally scanned models.
+    /// calling it again: `ArtifactStore::discover` reads only the resolved `METRALE_HOME`
+    /// and `HOME` (2026-10-17: the host's levers; an app with no host has no store), so a
+    /// retry in the same process fails the same way. The `rebuild` still lists the locally
+    /// scanned models.
     pub(super) fn attach_recipes(&mut self) {
-        match metrale_host_probe::artifacts::ArtifactStore::discover() {
+        let store = match self.host.as_ref().and_then(|h| h.bench_levers()) {
+            Some(levers) => metrale_host_probe::artifacts::ArtifactStore::discover(&levers),
+            None => Err(anyhow::anyhow!("no serve host holds the harness levers")),
+        };
+        match store {
             Ok(store) => {
                 self.lib.attach(store.root().to_path_buf(), &self.library);
                 self.lib.refresh();

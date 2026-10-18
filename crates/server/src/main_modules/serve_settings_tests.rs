@@ -8,6 +8,7 @@
 //! Owner: server startup.
 //! Invariants: none beyond the types.
 
+use metrale_host_probe::levers::resolve_harness;
 use metrale_io_host_mem::MapEnv;
 use metrale_settings::provenance::Source;
 

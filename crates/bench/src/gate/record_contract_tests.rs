@@ -350,7 +350,7 @@ fn the_record_carries_the_box_identity_the_frame_captured() {
     with_state.frame.hardware_state = Some(HardwareStateReport::opened(
         Sensitivity::Correctness,
         before,
-        None,
+        crate::hardware::policy::PolicyOptions::default(),
     ));
     let record = GateRecord::from_run(&with_state, hw(), SHA.into(), Vec::new(), None).unwrap();
     let machine = &record

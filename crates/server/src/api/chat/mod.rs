@@ -117,8 +117,11 @@ pub async fn chat_completions(
             // 2026-09-26: The catalogue read and the load both block, so both
             // run on the blocking pool.
             let outcome = tokio::task::spawn_blocking(move || {
-                let catalogue = metrale_host_probe::artifacts::ArtifactStore::discover()
-                    .ok()
+                // 2026-10-17: Located by the levers `main` resolved; none, or no store, is an
+                // empty catalogue, as an undiscoverable store was.
+                let catalogue = swap_host
+                    .bench_levers()
+                    .and_then(|l| metrale_host_probe::artifacts::ArtifactStore::discover(&l).ok())
                     .map(|s| crate::recipe::fetch::cached(s.root()).recipes)
                     .unwrap_or_default();
                 match crate::main_modules::auto_swap::decide(&requested, &live, &catalogue) {

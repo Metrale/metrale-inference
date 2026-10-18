@@ -101,6 +101,7 @@ pub fn start(
     report_target: Result<report::Target, &'static str>,
     progress_rx: std::sync::mpsc::Receiver<capture_layer::ProgressEvent>,
     host: std::sync::Arc<crate::main_modules::model_host::ModelHost>,
+    bench_levers: std::sync::Arc<metrale_host_probe::levers::BenchLevers>,
 ) -> std::sync::mpsc::Sender<RunHandles> {
     let (levers_tx, levers_rx) = std::sync::mpsc::channel::<RunHandles>();
     let runtime = tokio::runtime::Handle::current();
@@ -117,7 +118,9 @@ pub fn start(
             let mut app = app::App::new(args);
             app.help.target = report_target;
             #[cfg(feature = "bench")]
-            bench.attach(&mut app, &host, runtime.clone());
+            bench.attach(&mut app, &host, runtime.clone(), bench_levers);
+            #[cfg(not(feature = "bench"))]
+            let _ = bench_levers;
             app.host = Some(host);
             app.chat.set_runtime(runtime);
             events::run(app, progress_rx, levers_rx);

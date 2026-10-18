@@ -67,18 +67,21 @@ impl Emit {
     }
 }
 
-pub async fn certify_cmd(args: CertifyArgs) -> Result<i32> {
+pub async fn certify_cmd(
+    args: CertifyArgs,
+    levers: &metrale_bench::levers::BenchLevers,
+) -> Result<i32> {
     if let Err(msg) = args.validate() {
         bail!("{msg}");
     }
     let emit = Emit { json: args.json };
     let root = super::bench_run::repo_root()?;
-    let head = gate::git_sha(&root)?;
+    let head = gate::git_sha(&root, levers.gate_sha.as_deref())?;
     let anchor = args.anchor.clone().unwrap_or_else(|| head.clone());
 
     let statuses = gate::check_gates(&root, &anchor);
     let gates = plan::remaining(&statuses, &args.gates)?;
-    let store = ArtifactStore::discover().context("locating METRALE_HOME")?;
+    let store = ArtifactStore::discover(levers).context("locating METRALE_HOME")?;
     let measured = |id: &str| measured_secs(&store, id);
     let boxes = args.with_nodes.len() + usize::from(!args.remote_only);
     let wanted = args.shards.unwrap_or_else(|| plan::shard_count(boxes));
@@ -172,6 +175,7 @@ pub async fn certify_cmd(args: CertifyArgs) -> Result<i32> {
         args.yes,
         args.remote_only,
         limits.memory.min_free_fraction,
+        levers,
     )?;
     let findings = preflight::evaluate(&facts);
     emit.event(

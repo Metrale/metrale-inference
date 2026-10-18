@@ -21,6 +21,8 @@ metrale-serve-identity = { workspace = true }
 metrale-host-probe = { workspace = true }
 # 2026-09-26: The METRALE_* lever table: which names are serve levers and which are the box's.
 metrale-config = { workspace = true }
+# 2026-10-17: `ProcessEnv`, the host the `record_agreement` binary resolves its levers through.
+metrale-io-host-std = { workspace = true }
 # 2026-09-26: Parses BENCH.toml and HARDWARE.toml.
 toml = { workspace = true, features = ["std", "serde", "parse", "display"] }
 anyhow = { workspace = true, features = ["std"] }
@@ -58,6 +60,8 @@ tokio = { workspace = true, features = [
 ] }
 
 [dev-dependencies]
+# 2026-10-17: `MapEnv`, the in-memory environment the lever tests resolve against.
+metrale-io-host-mem = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
 
 [lints]

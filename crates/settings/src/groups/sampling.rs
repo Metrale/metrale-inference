@@ -8,7 +8,7 @@
 lever_group! {
     /// 2026-10-17: The `sampling` group, resolved by `crate::resolve()`.
     pub struct SamplingSettings { group: "sampling", class: Runtime }
-    agentic_preserve_thinking: Switch = "off", None, "METRALE_AGENTIC_PRESERVE_THINKING", "crates/bench/src/benchmarks/agentic/agent_history.rs", "`METRALE_AGENTIC_PRESERVE_THINKING=1`: echo each turn's non-empty reasoning as `reasoning_content` in its assistant message, and send `preserve_thinking: true` in `chat_template_kwargs`. `1` turns it on.";
+    agentic_preserve_thinking: Switch = "off", None, "METRALE_AGENTIC_PRESERVE_THINKING", "crates/host-probe/src/levers.rs", "`METRALE_AGENTIC_PRESERVE_THINKING=1`: echo each turn's non-empty reasoning as `reasoning_content` in its assistant message, and send `preserve_thinking: true` in `chat_template_kwargs`. `1` turns it on.";
     disable_fast_greedy: Switch = "off", None, "METRALE_DISABLE_FAST_GREEDY", "crates/server/src/scheduler/levers.rs", "Ships ON; `METRALE_DISABLE_FAST_GREEDY=1` opts out. `1` turns it on.";
     disable_fast_masked: Switch = "off", None, "METRALE_DISABLE_FAST_MASKED", "crates/server/src/scheduler/levers.rs", "Ships ON; `METRALE_DISABLE_FAST_MASKED=1` opts out. `1` turns it on.";
     disable_forced_token: Switch = "off", None, "METRALE_DISABLE_FORCED_TOKEN", "crates/server/src/scheduler/levers.rs", "Ships ON; `METRALE_DISABLE_FORCED_TOKEN=1` opts out. `1` turns it on.";
@@ -22,7 +22,7 @@ lever_group! {
     grammar_cache_dir: Path = "unset", None, "METRALE_GRAMMAR_CACHE_DIR", "crates/server/src/grammar/levers.rs", "Controls: `METRALE_GRAMMAR_CACHE=0` disables persistence entirely; `METRALE_GRAMMAR_CACHE_DIR` relocates the file (for a read-only model directory, or to share one warm cache across several model...";
     grammar_force_close: Switch = "off", None, "METRALE_GRAMMAR_FORCE_CLOSE", "crates/server/src/grammar/levers.rs", "P1-2 (2026-07-09, env `METRALE_GRAMMAR_FORCE_CLOSE=1`): with `force_close`, the DEEPEST arm (`\"</parameter\" [^>]` for qwen3_coder) is omitted, so once the value contains the full close-prefix the. `1` turns it on.";
     grammar_value_harden: Switch = "off", None, "METRALE_GRAMMAR_VALUE_HARDEN", "crates/server/src/grammar/levers.rs", "F2-2a (2026-06-02): structural ceiling on a parameter VALUE's `rest` repetition, applied ONLY when the `METRALE_GRAMMAR_VALUE_HARDEN` kill-switch is on. `1` turns it on.";
-    hw_temp_gate: Text = "unset", None, "METRALE_HW_TEMP_GATE", "crates/bench/src/hardware/policy.rs", "Env var that opts in to the absolute-temperature ceilings.";
+    hw_temp_gate: Text = "unset", None, "METRALE_HW_TEMP_GATE", "crates/host-probe/src/levers.rs", "Env var that opts in to the absolute-temperature ceilings.";
     inthink_tool_leak_openers: Text = "unset", None, "METRALE_INTHINK_TOOL_LEAK_OPENERS", "crates/server/src/api/chat/levers.rs", "`METRALE_INTHINK_TOOL_LEAK_OPENERS=N` — how many tool-call openers (`<tool_call>`, `<function=`, …) the in-think leak scanner tolerates in a stream's reasoning before cancelling the sequence.";
     kernel_set_hash: Text = "unset", None, "METRALE_KERNEL_SET_HASH", "crates/kernels/src/lib.rs", "Content fingerprint of the generated kernel set, emitted by `build.rs` as a `rustc-env`.";
     nllb_device_topk_min_rows: Int = "unset", None, "METRALE_NLLB_DEVICE_TOPK_MIN_ROWS", "crates/model-engine/src/model/nllb/beam_multi.rs", "So gate on the batch row count (METRALE_NLLB_DEVICE_TOPK_MIN_ROWS, default 64); METRALE_NLLB_HOST_TOPK=1 forces the host path (A/B + >16-beam requests).";

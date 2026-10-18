@@ -8,7 +8,7 @@
 lever_group! {
     /// 2026-10-17: The `server` group, resolved by `crate::resolve()`.
     pub struct ServerSettings { group: "server", class: Runtime }
-    agentic_sampling: Text = "unset", None, "METRALE_AGENTIC_SAMPLING", "crates/bench/src/benchmarks/agentic/agent.rs", "METRALE_AGENTIC_SAMPLING=model-card: omit the greedy pins so the server's card presets own sampling (A/B arm; the GATE default stays pinned-greedy per the rationale above TEMPERATURE).";
+    agentic_sampling: Text = "unset", None, "METRALE_AGENTIC_SAMPLING", "crates/host-probe/src/levers.rs", "METRALE_AGENTIC_SAMPLING=model-card: omit the greedy pins so the server's card presets own sampling (A/B arm; the GATE default stays pinned-greedy per the rationale above TEMPERATURE).";
     d2h_spin_sync: Switch = "off", None, "METRALE_D2H_SPIN_SYNC", "crates/gpu-runtime/src/cuda_backend/gpu_copy.rs", "METRALE_D2H_SPIN_SYNC=1 (read once) busy-polls `cuStreamQuery` until it stops returning CUDA_ERROR_NOT_READY, instead of blocking in `cuStreamSynchronize`. `1` turns it on.";
     hermetic: Text = "unset", "--hermetic", "METRALE_HERMETIC", "crates/gpu-runtime/src/lib.rs", "So absent leaves `METRALE_HERMETIC` live, and passing the flag wins.";
     host_transpose: Switch = "off", None, "METRALE_HOST_TRANSPOSE", "crates/model-layers/src/weight_map/quantized/transpose.rs", "`None` when the target's kernel set lacks it, or when `METRALE_HOST_TRANSPOSE=1` forces the host path (parity/debug kill switch). `1` turns it on.";

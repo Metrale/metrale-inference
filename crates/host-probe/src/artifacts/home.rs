@@ -81,11 +81,14 @@ impl std::fmt::Display for HomeFault {
 }
 
 impl MetraleHome {
-    /// 2026-09-26: Resolve from the environment: a non-empty `METRALE_HOME`
-    /// wins, then `$HOME/.metrale`. An empty `METRALE_HOME` is an error, and so
-    /// is having neither variable. Touches no file.
-    pub fn resolve() -> Result<Self> {
-        resolve_from(std::env::var_os("METRALE_HOME"), std::env::var_os("HOME"))
+    /// 2026-09-26: Resolve: a non-empty `METRALE_HOME` wins, then `$HOME/.metrale`. An empty
+    /// `METRALE_HOME` is an error, and so is having neither variable. Touches no file.
+    /// 2026-10-17: Both values come from the resolved levers.
+    pub fn resolve(levers: &crate::levers::BenchLevers) -> Result<Self> {
+        resolve_from(
+            levers.home.clone().map(std::ffi::OsString::from),
+            levers.user_home.clone().map(std::ffi::OsString::from),
+        )
     }
 
     /// 2026-09-26: Can this process use the home? `None` means yes.
