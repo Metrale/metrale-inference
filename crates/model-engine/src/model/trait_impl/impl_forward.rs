@@ -57,6 +57,14 @@ impl ModelForward for TransformerModel {
         chunk_size: usize,
         stream: u64,
     ) -> Result<DevicePtr> {
+        // 2026-10-17: No worker command carries a two-phase prefill, so on a multi-rank world
+        // the workers would never join its collectives. Refuse before any device work or
+        // collective; the scheduler then runs the prompt as announced chunks.
+        if self.multi_rank_protocol_active() {
+            anyhow::bail!(
+                "prefill_twophase has no worker command; a multi-rank world prefills in announced chunks"
+            );
+        }
         self.gdn_carry_flush_pending()?;
         self.stamp_overlay_route(seq.adapter_slot);
         let logits = self.prefill_twophase_dispatch(tokens, seq, chunk_size, stream)?;
