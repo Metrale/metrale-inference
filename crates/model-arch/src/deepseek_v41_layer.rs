@@ -38,7 +38,8 @@
 //! shards) with positional file reads. The arena is device memory behind a
 //! page-locked staging ring, or with `METRALE_DS41_ARENA_DEVICE=0` a
 //! page-locked arena the GPU reads in place. The engram tables are read by
-//! row (`EngramRowReader`).
+//! row (`EngramRowReader`). A safetensors checkpoint keeps every routed expert resident
+//! instead, sliced for tensor parallelism, and reads FP8 engram rows (`experts.rs`).
 //!
 //! Owner: model-arch, DeepSeek-V4.1.
 //! Invariants:
@@ -52,9 +53,6 @@ use std::sync::{Arc, Mutex};
 use anyhow::Result;
 
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, GraphHandle, KernelHandle};
-use metrale_model_weights::weights::expert_stream::{
-    EngramRowReader, ExpertArena, ExpertLru, ExpertSliceMap,
-};
 
 use crate::attn_v41::{
     AttnV41, AttnV41Cfg, AttnV41LayerState, AttnV41LayerWeights, LayerRole, SharedV41,
@@ -65,6 +63,7 @@ use metrale_model_layers::layer::LayerState;
 use metrale_model_layers::layers::qwen3_attention::HcSiteWeights;
 use metrale_model_layers::weight_map::DenseWeight;
 
+mod experts;
 mod graph;
 mod hc_launch;
 pub mod levers;
@@ -74,6 +73,7 @@ mod step_seg;
 mod step_seg_run;
 mod trait_impl;
 
+pub use experts::{ResidentSet, StreamedExperts, V41EngramRows, V41Experts, decode_fp8_rows};
 pub use step_seg::SegState;
 
 /// 2026-09-25: Everything the layers share for the one sequence in flight.
@@ -85,10 +85,9 @@ pub struct V41Runtime {
     pub attn: Mutex<AttnV41>,
     pub moe: Mutex<MoeV41>,
     pub engram: Mutex<EngramV41>,
-    pub lru: Mutex<ExpertLru>,
-    pub arena: ExpertArena,
-    pub slices: Arc<ExpertSliceMap>,
-    pub rows: EngramRowReader,
+    /// 2026-10-19: Streamed (GGUF) or resident (safetensors) routed experts.
+    pub experts: V41Experts,
+    pub rows: V41EngramRows,
     pub tables: Arc<EngramHashTables>,
     pub hasher: Mutex<EngramHasher>,
     pub shared: Mutex<SharedV41>,

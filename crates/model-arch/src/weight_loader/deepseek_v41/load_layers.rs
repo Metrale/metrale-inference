@@ -26,9 +26,10 @@ use crate::attn_v41::{
     AttnV41, AttnV41Cfg, AttnV41LayerWeights, CompressorWeightsGpu, IndexerWeightsGpu, LayerRole,
     SharedV41,
 };
-use crate::deepseek_v41_layer::SegState;
 use crate::deepseek_v41_layer::levers::Ds41LoadLevers;
-use crate::deepseek_v41_layer::{DeepSeekV41Layer, V41Runtime};
+use crate::deepseek_v41_layer::{
+    DeepSeekV41Layer, SegState, StreamedExperts, V41EngramRows, V41Experts, V41Runtime,
+};
 use crate::engram_v41::{EngramHashTables, EngramHasher, EngramLayerWeights, EngramV41};
 use crate::fp8_block_v41::Fp8StageSize;
 use crate::moe_v41::{MoeV41, MoeV41Cfg, MoeV41LayerWeights, RouterWeights};
@@ -262,6 +263,7 @@ pub fn load_layers(
                 raw: DevicePtr(0),
                 rows: DevicePtr(0),
                 wkv_q2k: super::engram_q2k::engram_wkv_q2k(gpu, &files, l, levers.engram_q2k)?,
+                qdq_rows: false,
             },
         )?;
     }
@@ -271,10 +273,12 @@ pub fn load_layers(
         attn: Mutex::new(attn),
         moe: Mutex::new(moe),
         engram: Mutex::new(engram),
-        lru: Mutex::new(lru),
-        arena,
-        slices,
-        rows,
+        experts: V41Experts::Streamed(StreamedExperts {
+            lru: Mutex::new(lru),
+            arena,
+            slices,
+        }),
+        rows: V41EngramRows::Q2k(rows),
         hasher: Mutex::new(EngramHasher::new(tables.clone(), max_seq)),
         tables,
         shared: Mutex::new(SharedV41::default()),

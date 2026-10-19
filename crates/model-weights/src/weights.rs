@@ -215,6 +215,8 @@ pub struct WeightStore {
 
 mod deferred;
 pub use deferred::{DeferCharge, DeferHook, DeferredTensor};
+mod engram_rows_fp8;
+pub use engram_rows_fp8::{Fp8EngramRows, Fp8EngramTable};
 mod kv_scale_keys;
 pub use kv_scale_keys::{
     KvScaleCensus, KvScaleKeys, KvScaleSpelling, kv_scale_census, resolve_kv_scale_keys,

@@ -249,6 +249,9 @@ pub struct EngramLayerWeights {
     /// `gpu_engram_wkv_q2k_gemv_is_bitwise_the_bf16_gemv_over_the_expansion`).
     /// Null: bf16 only.
     pub wkv_q2k: DevicePtr,
+    /// 2026-10-19: Round the rows to E4M3 in blocks of 32 before the projection, as the
+    /// safetensors checkpoint's FP8 `wkv` quantizes its input (`attn_v41_act_quant_fp8`).
+    pub qdq_rows: bool,
 }
 
 /// 2026-09-25: The GPU side: kernels, per-layer weights, and workspaces for up
@@ -267,6 +270,7 @@ pub struct EngramV41 {
     gemv_q2k_k: KernelHandle,
     gate_k: KernelHandle,
     dequant_k: KernelHandle,
+    act_quant_k: KernelHandle,
     layers: Vec<EngramLayerWeights>,
     /// 2026-09-25: `[max_tokens * cols * head_dim]` bf16.
     rows: DevicePtr,
@@ -303,6 +307,7 @@ impl EngramV41 {
             gemv_q2k_k: gpu.kernel(GATE_MODULE, "engram_v41_wkv_q2k_gemv")?,
             gate_k: gpu.kernel(GATE_MODULE, "engram_v41_gate")?,
             dequant_k: gpu.kernel(DEQUANT_MODULE, "dequant_q2_k_to_bf16")?,
+            act_quant_k: gpu.kernel("attn_v41", "attn_v41_act_quant_fp8")?,
             layers: Vec::new(),
             rows: gpu.alloc(n_rows * head_dim * 2)?,
             raw: gpu.alloc(n_rows * ENGRAM_ROW_BYTES)?,
@@ -384,14 +389,15 @@ impl EngramV41 {
             .launch(stream)
     }
 
-    /// 2026-09-25: Fill the row input from bf16 rows (as bits); the GPU oracle
-    /// test uses it.
+    /// 2026-09-25: Fill the row input from bf16 rows (as bits), enqueued on `stream`
+    /// (2026-10-19: the safetensors checkpoint's decoded FP8 rows; the GPU oracle test).
     pub fn rows_from_bf16(
         &self,
         gpu: &dyn GpuBackend,
         layer: Option<usize>,
         rows_bf16: &[u16],
         n_rows: usize,
+        stream: u64,
     ) -> Result<()> {
         ensure!(
             n_rows <= self.max_tokens * self.cols,
@@ -403,7 +409,7 @@ impl EngramV41 {
             rows_bf16.len()
         );
         let bytes: Vec<u8> = rows_bf16.iter().flat_map(|v| v.to_le_bytes()).collect();
-        gpu.copy_h2d(&bytes, self.row_bufs(layer)?.1)
+        gpu.copy_h2d_async(&bytes, self.row_bufs(layer)?.1, stream)
     }
 
     /// 2026-09-25: The shared workspace's dequantised rows (`[n_rows, head_dim]`

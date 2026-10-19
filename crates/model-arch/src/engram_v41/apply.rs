@@ -16,6 +16,7 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 use super::EngramV41;
+use crate::fp8_block_v41::act_quant_fp8;
 use metrale_model_layers::layers::ops;
 use metrale_model_layers::weight_map::DenseWeight;
 
@@ -40,6 +41,15 @@ impl EngramV41 {
             .layer(layer)
             .with_context(|| format!("engram: layer {layer} has no weights"))?;
         let wkv = DenseWeight { weight: w.wkv };
+        if w.qdq_rows {
+            act_quant_fp8(
+                gpu,
+                self.act_quant_k,
+                self.rows_of(w),
+                tokens * self.in_features(),
+                stream,
+            )?;
+        }
         if tokens == 1 && !w.wkv_q2k.is_null() {
             let (n, k) = (self.out_features() as u32, self.in_features() as u32);
             ensure!(

@@ -299,12 +299,13 @@ impl DeepSeekV41Layer {
         drop(attn);
 
         let stage = {
-            let mut lru = rt.lru.lock().unwrap();
+            let st = rt.streamed()?;
+            let mut lru = st.lru.lock().unwrap();
             moe.stage_m1(
                 gpu,
                 &self.moe_w,
                 &mut lru,
-                &*rt.slices,
+                &*st.slices,
                 rt.reader_threads,
                 self.next_router.as_ref(),
                 normed,
@@ -421,9 +422,12 @@ impl DeepSeekV41Layer {
         // 2026-09-25: One guard at a time: two `lru.lock()` temporaries in a
         // single statement deadlock on the std Mutex (the first guard lives to
         // the end of the statement).
-        let (resident, n_slots) = {
-            let lru = rt.lru.lock().unwrap();
-            (lru.resident(), lru.n_slots())
+        let (resident, n_slots) = match rt.streamed() {
+            Ok(st) => {
+                let lru = st.lru.lock().unwrap();
+                (lru.resident(), lru.n_slots())
+            }
+            Err(_) => (0, 0),
         };
         let attn_ms = *rt.step_attn_ms.lock().unwrap();
         let engram_ms = *rt.step_engram_ms.lock().unwrap();

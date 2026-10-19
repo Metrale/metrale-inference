@@ -187,6 +187,7 @@ fn gpu_engram_matches_the_golden_within_bf16() {
                 raw: DevicePtr(0),
                 rows: DevicePtr(0),
                 wkv_q2k: DevicePtr(0),
+                qdq_rows: false,
             },
         )
         .unwrap();
@@ -204,7 +205,8 @@ fn gpu_engram_matches_the_golden_within_bf16() {
                 .collect();
             let emb = gather_rows(&table, hd, &ids);
             let rows: Vec<u16> = emb.iter().map(|&v| bf16_bits(v)).collect();
-            eng.rows_from_bf16(g, Some(lid), &rows, len * cols).unwrap();
+            eng.rows_from_bf16(g, Some(lid), &rows, len * cols, stream)
+                .unwrap();
             let xin = f.g.tensor(&r, &format!("L{lid}.engram_in"));
             assert_eq!(xin.stride, 1, "engram_in must be stored at full resolution");
             let x: Vec<f32> = xin.data.iter().map(|&v| v as f32).collect();

@@ -13,7 +13,6 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
 use super::{DeepSeekV41Layer, GraphMode, V41LayerState};
 use crate::attn_v41::SharedV41;
-use crate::engram_v41::ENGRAM_ROW_BYTES;
 use metrale_model_layers::layer::{ForwardContext, LayerState};
 use metrale_model_layers::layers::ops;
 
@@ -105,10 +104,8 @@ impl DeepSeekV41Layer {
         let hasher = rt.hasher.lock().unwrap();
         let row_ids = hasher.layer_row_ids(&hashes, m, hi);
         drop(hasher);
-        let mut raw = vec![0u8; row_ids.len() * ENGRAM_ROW_BYTES];
-        rt.rows.read_rows(self.idx, &row_ids, &mut raw)?;
+        rt.fill_engram_rows(gpu, self.idx, &row_ids, stream)?;
         let engram = rt.engram.lock().unwrap();
-        engram.rows_from_q2k(gpu, Some(self.idx), &raw, row_ids.len(), stream)?;
         engram.apply(gpu, self.idx, streams, m, stream)
     }
 
@@ -248,7 +245,7 @@ impl DeepSeekV41Layer {
             }
         }
         gpu.copy_d2d_async(normed, slot(self.idx), h * 2, stream)?;
-        let lru = rt.lru.lock().unwrap();
+        let lru = rt.streamed()?.lru.lock().unwrap();
         let resident: Vec<bool> = (0..rt.moe_cfg.n_routed)
             .map(|e| lru.contains(self.idx as u32, e as u32))
             .collect();

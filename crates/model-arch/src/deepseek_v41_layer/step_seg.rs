@@ -244,7 +244,7 @@ impl DeepSeekV41Layer {
                 })();
                 self.close_or_disable(gpu, &mut seg, cap, self.idx, cs, r);
             } else {
-                let arena = MoeV41::arena_of(&rt.lru.lock().unwrap());
+                let arena = MoeV41::arena_of(&rt.streamed()?.lru.lock().unwrap());
                 let save = seg.save[self.idx];
                 let fork = (seg.cap_side, seg.ev_fork, seg.ev_join);
                 let r = (|| -> Result<()> {
@@ -330,7 +330,7 @@ impl DeepSeekV41Layer {
         }
         // 2026-09-25: No graph yet: record from here on the recording stream
         // while this token runs eagerly on the compute stream.
-        let arena = MoeV41::arena_of(&rt.lru.lock().unwrap());
+        let arena = MoeV41::arena_of(&rt.streamed()?.lru.lock().unwrap());
         let save = seg.save[self.idx];
         let fork = (seg.cap_side, seg.ev_fork, seg.ev_join);
         let r = gpu
