@@ -2,8 +2,8 @@
 // provenance-id: 526f6e616c6420522e205374657369616b
 
 //! 2026-10-19: The safetensors source reads exactly a rank's rows or columns of a tensor written
-//! to a real file, with the matching scale tiles, in the stored precision; and the engram tile
-//! decode equals the E4M3 x E8M0 product element by element.
+//! to a real file, with the matching scale tiles, in the stored precision; the engram projection
+//! stays E4M3 and whole; and a NaN scale is refused.
 //!
 //! The GPU is `MockGpuBackend`, which holds the uploaded bytes in host memory: the source's only
 //! device work is uploads, and the test reads back exactly what was uploaded.
@@ -13,7 +13,6 @@ use std::io::Write;
 use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
 
 use super::*;
-use crate::deepseek_v41_ref::mat::e4m3;
 
 /// 2026-10-19: Heads 2..4 of 6 (32 values each), output group 1 of 3 (32 wide).
 fn local() -> Local {
@@ -184,30 +183,57 @@ fn a_sink_widens_its_rank_rows_and_a_router_uploads_once() {
     );
 }
 
+/// 2026-10-19: The engram projection is replicated: every rank uploads the whole E4M3 weight and
+/// its whole scale plane as stored (the kernel decodes them), and rounds its rows first.
 #[test]
-fn the_tile_decode_is_the_e4m3_times_e8m0_product_of_each_tile() {
+fn the_engram_projection_uploads_its_whole_e4m3_weight_and_scales() {
     let (rows, cols) = (64, 96);
-    let codes: Vec<u8> = (0..rows * cols)
-        .map(|i| ((i * 37) % 256) as u8)
-        .map(|c| if c & 0x7F == 0x7F { 0x3C } else { c })
-        .collect();
-    let scales: Vec<u8> = (0..6).map(|i| 120 + 3 * i as u8).collect();
-    let got = decode_fp8_tiles(&codes, &scales, rows, cols).unwrap();
-    for r in 0..rows {
-        for c in 0..cols {
-            let s = scales[(r / 32) * 3 + c / 32];
-            let want = e4m3(codes[r * cols + c]) * 2f32.powi(i32::from(s) - 127);
-            let bits = u16::from_le_bytes([got[(r * cols + c) * 2], got[(r * cols + c) * 2 + 1]]);
-            let v = f32::from_bits(u32::from(bits) << 16);
-            assert_eq!(v.to_bits(), want.to_bits(), "({r}, {c}): exact in bf16");
-        }
-    }
+    let n = name(Format::Safetensors, 1, T::EngramWkv);
+    let (w, s) = (pattern(rows * cols, 6), pattern(2 * 3, 7));
+    let f = shard(vec![
+        (n.clone(), WeightDtype::FP8E4M3, vec![rows, cols], w.clone()),
+        (
+            scale_of(&n).unwrap(),
+            WeightDtype::FP8E8M0,
+            vec![2, 3],
+            s.clone(),
+        ),
+    ]);
+    let g = MockGpuBackend::new();
+    let e = HfSource::new(&f.store, local()).engram_wkv(&g, 1).unwrap();
+    let ResidentMat::Fp8Block { w: dw, scale, qdq } = e.wkv else {
+        panic!("{:?}", e.wkv)
+    };
+    assert!(qdq && e.wkv_q2k.is_null());
+    assert_eq!(back(&g, dw, rows * cols), w);
+    assert_eq!(back(&g, scale, 6), s);
 }
 
+/// 2026-10-19: 0xFF is E8M0's NaN; a weight carrying it is refused at load, whichever
+/// projection reads it.
 #[test]
-fn the_tile_decode_refuses_the_nan_scale() {
-    let e = decode_fp8_tiles(&[0; 32 * 32], &[0xFF], 32, 32)
-        .unwrap_err()
-        .to_string();
-    assert!(e.contains("NaN"), "{e}");
+fn an_fp8_scale_holding_the_nan_code_is_refused() {
+    for t in [T::WqB, T::EngramWkv] {
+        let n = name(Format::Safetensors, 1, t);
+        let f = shard(vec![
+            (
+                n.clone(),
+                WeightDtype::FP8E4M3,
+                vec![6 * 32, 32],
+                pattern(6 * 32 * 32, 1),
+            ),
+            (
+                scale_of(&n).unwrap(),
+                WeightDtype::FP8E8M0,
+                vec![6, 1],
+                vec![127, 127, 127, 0xFF, 127, 127],
+            ),
+        ]);
+        let g = MockGpuBackend::new();
+        let e = HfSource::new(&f.store, local())
+            .mat(&g, 1, t)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("NaN"), "{t:?}: {e}");
+    }
 }

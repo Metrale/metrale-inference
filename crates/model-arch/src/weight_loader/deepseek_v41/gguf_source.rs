@@ -50,9 +50,8 @@ impl V41Source for GgufSource<'_> {
 
     fn engram_wkv(&self, gpu: &dyn GpuBackend, l: usize) -> Result<EngramWkv> {
         Ok(EngramWkv {
-            wkv: self.bf16(gpu, l, T::EngramWkv)?,
+            wkv: ResidentMat::Bf16(self.bf16(gpu, l, T::EngramWkv)?),
             wkv_q2k: super::engram_q2k::engram_wkv_q2k(gpu, &self.files, l, self.engram_q2k)?,
-            qdq_rows: false,
         })
     }
 }

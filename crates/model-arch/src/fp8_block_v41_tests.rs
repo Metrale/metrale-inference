@@ -279,4 +279,109 @@ mod gpu {
     fn prefill_rows_match_the_reference_linear() {
         run(5, 128, 256);
     }
+
+    /// 2026-10-19: `Fp8BlockDirect` against the bf16 kernel it twins, run over the reference's
+    /// decode of the same weight (`Mat::decode_row`, the E8M0 code 0 as 2^-127, rounded to bf16
+    /// nearest-even): the outputs must agree bit for bit. Every E4M3 code but the NaNs, a
+    /// different scale per tile (so a wrong tile index moves values), and the E8M0 code 0 on the
+    /// first 32 rows (their outputs are subnormal-scale, so a kernel that read code 0 as zero is
+    /// caught). The decode is exact in bf16 for a scale code of 3 or more; below that the
+    /// smallest E4M3 steps fall under the bf16 subnormal step and round, in the kernel as here.
+    fn direct(m: usize, n: usize, k: usize) {
+        let gpu = backend();
+        let g: &dyn GpuBackend = &gpu;
+        let stream = g.default_stream();
+        let mut seed = 0xd1ec7 ^ (m * 7919 + n * 31 + k) as u64;
+        let w: Vec<u8> = (0..n * k)
+            .map(|_| match (lcg(&mut seed) % 254) as u8 {
+                c if c >= 0x7F => c + 1,
+                c => c,
+            })
+            .collect();
+        let tiles = (n / 32) * (k / 32);
+        let scale: Vec<u8> = (0..tiles)
+            .map(|i| if i < k / 32 { 0 } else { 115 + (i % 17) as u8 })
+            .collect();
+        let x: Vec<u8> = (0..m * k)
+            .flat_map(|_| bf16((lcg(&mut seed) % 2001) as f32 / 1000.0 - 1.0).to_le_bytes())
+            .collect();
+        let mat = Mat::new(
+            Store::E4m3 {
+                w: &w,
+                scale: &scale,
+                block_rows: 32,
+            },
+            n,
+            k,
+            InputQuant::Exact,
+        )
+        .unwrap();
+        let mut decoded = Vec::with_capacity(n * k * 2);
+        let mut row = vec![0f32; k];
+        for r in 0..n {
+            mat.decode_row(r, k, &mut row);
+            let tiles_row = &scale[(r / 32) * (k / 32)..][..k / 32];
+            let exact = tiles_row.iter().all(|&s| s >= 3);
+            for &v in &row {
+                if exact {
+                    assert_eq!(
+                        f32::from_bits((bf16(v) as u32) << 16).to_bits(),
+                        v.to_bits()
+                    );
+                }
+                decoded.extend_from_slice(&bf16(v).to_le_bytes());
+            }
+        }
+        let up = |b: &[u8]| {
+            let p = g.alloc(b.len()).unwrap();
+            g.copy_h2d(b, p).unwrap();
+            p
+        };
+        let (wd, sd, xd, bd) = (up(&w), up(&scale), up(&x), up(&decoded));
+        let (y_direct, y_twin) = (g.alloc(m * n * 2).unwrap(), g.alloc(m * n * 2).unwrap());
+        Fp8BlockDirect::new(g)
+            .unwrap()
+            .project(g, xd, wd, sd, y_direct, m, n, k, stream)
+            .unwrap();
+        let twin = DenseWeight { weight: bd };
+        if m == 1 {
+            let kern = g.kernel("gemv", "dense_gemv_bf16").unwrap();
+            ops::dense_gemv(g, kern, xd, &twin, y_twin, n as u32, k as u32, stream).unwrap();
+        } else {
+            let kern = g.kernel("gemm", "dense_gemm_bf16").unwrap();
+            ops::dense_gemm(
+                g, kern, xd, &twin, y_twin, m as u32, n as u32, k as u32, stream,
+            )
+            .unwrap();
+        }
+        g.synchronize(stream).unwrap();
+        let down = |p: DevicePtr| {
+            let mut b = vec![0u8; m * n * 2];
+            g.copy_d2h(p, &mut b).unwrap();
+            b
+        };
+        let (got, want) = (down(y_direct), down(y_twin));
+        assert!(
+            of_bf16(&want).iter().filter(|v| **v != 0.0).count() > m * n / 2,
+            "the twin's output is not degenerate"
+        );
+        assert_eq!(got, want, "[{m}, {n}, {k}]");
+        for p in [wd, sd, xd, bd, y_direct, y_twin] {
+            g.free(p).unwrap();
+        }
+    }
+
+    #[test]
+    #[ignore = "requires a CUDA GB10 + the deepseek-v4-flash kernel target"]
+    fn the_direct_gemv_is_bitwise_the_bf16_gemv_over_the_decode() {
+        direct(1, 96, 160);
+        direct(1, 160, 6144);
+    }
+
+    #[test]
+    #[ignore = "requires a CUDA GB10 + the deepseek-v4-flash kernel target"]
+    fn the_direct_gemm_is_bitwise_the_bf16_gemm_over_the_decode() {
+        direct(19, 96, 160);
+        direct(2, 64, 6144);
+    }
 }

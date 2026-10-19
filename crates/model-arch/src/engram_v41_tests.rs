@@ -182,12 +182,11 @@ fn gpu_engram_matches_the_golden_within_bf16() {
             g,
             EngramLayerWeights {
                 layer: lid,
-                wkv,
+                wkv: ResidentMat::Bf16(wkv),
                 qk,
                 raw: DevicePtr(0),
                 rows: DevicePtr(0),
                 wkv_q2k: DevicePtr(0),
-                qdq_rows: false,
             },
         )
         .unwrap();

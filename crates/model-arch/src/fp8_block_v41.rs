@@ -8,6 +8,8 @@
 //! scratch. Both steps are exact in bf16 (an E4M3 value times a power of two has three
 //! mantissa bits), so the product is the checkpoint's FP8 x FP8 linear up to the GEMM's
 //! accumulation order. The resident weight stays in its stored precision.
+//! [`Fp8BlockDirect`] instead decodes the weight inside the GEMV/GEMM, for a projection whose
+//! bf16 copy would cost more than its launch-time decode (the engram's `wkv`).
 //!
 //! Owner: model-arch, DeepSeek-V4.1.
 //! Invariants:
@@ -26,6 +28,8 @@ use metrale_model_layers::layers::ops::{FP8_BLOCK_TILE, ResidentMat};
 pub const ACT_QUANT_BLOCKS_PER_LAUNCH: u32 = 8;
 /// 2026-10-19: `dequant_fp8_blockscaled_bf16`'s scale encoding for one E8M0 byte per tile.
 const SCALE_KIND_E8M0: u32 = 2;
+/// 2026-10-19: The module of the GEMV and GEMM that decode an `Fp8Block` weight in place.
+const DIRECT_MODULE: &str = "fp8_block_gemm";
 
 /// 2026-10-19: Scratch capacities in bf16 elements: the largest FP8 weight (`n * k`) and the
 /// largest rounded input (`m * k`) a stage serves.
@@ -176,6 +180,62 @@ impl Fp8BlockStage {
             }
         }
         Ok(())
+    }
+}
+
+/// 2026-10-19: `[m, k] x [n, k]^T` against an `Fp8Block` weight decoded inside the GEMM
+/// (`fp8_block_gemm.cu`): no scratch, so the resident weight stays at one byte a value. One row
+/// runs the GEMV, more the GEMM; each is bit-identical to the bf16 kernel it twins
+/// (`dense_gemv_bf16`, `dense_gemm_bf16`) over the decoded weight.
+pub struct Fp8BlockDirect {
+    gemv: KernelHandle,
+    gemm: KernelHandle,
+}
+
+impl Fp8BlockDirect {
+    pub fn new(gpu: &dyn GpuBackend) -> Result<Self> {
+        Ok(Self {
+            gemv: gpu.kernel(DIRECT_MODULE, "fp8_block_gemv_bf16")?,
+            gemm: gpu.kernel(DIRECT_MODULE, "fp8_block_gemm_bf16")?,
+        })
+    }
+
+    /// 2026-10-19: `out[m, n]` = `a[m, k]` times the E4M3 weight `w` (`[n, k]`, tile scales
+    /// `scale`), on `stream`. `n` and `k` are whole tiles.
+    #[allow(clippy::too_many_arguments)]
+    pub fn project(
+        &self,
+        gpu: &dyn GpuBackend,
+        a: DevicePtr,
+        w: DevicePtr,
+        scale: DevicePtr,
+        out: DevicePtr,
+        m: usize,
+        n: usize,
+        k: usize,
+        stream: u64,
+    ) -> Result<()> {
+        let t = FP8_BLOCK_TILE;
+        ensure!(
+            n.is_multiple_of(t) && k.is_multiple_of(t),
+            "FP8 block weight [{n}, {k}] is not whole {t} x {t} tiles"
+        );
+        let (m32, n32, k32) = (u32::try_from(m)?, u32::try_from(n)?, u32::try_from(k)?);
+        let launch = if m == 1 {
+            KernelLaunch::new(gpu, self.gemv)
+                .grid([n32.div_ceil(4), 1, 1])
+                .block([256, 1, 1])
+        } else {
+            KernelLaunch::new(gpu, self.gemm)
+                .grid([n32.div_ceil(16), m32.div_ceil(16), 1])
+                .block([16, 16, 1])
+        }
+        .arg_ptr(a)
+        .arg_ptr(w)
+        .arg_ptr(scale)
+        .arg_ptr(out);
+        let launch = if m == 1 { launch } else { launch.arg_u32(m32) };
+        launch.arg_u32(n32).arg_u32(k32).launch(stream)
     }
 }
 

@@ -187,12 +187,10 @@ pub fn scale_of(weight: &str) -> Result<String> {
 
 /// 2026-10-19: An engram layer's projection as the engine holds it.
 pub struct EngramWkv {
-    /// 2026-10-19: bf16 `[dim * (hc + 1), cols * head_dim]`.
-    pub wkv: DevicePtr,
+    /// 2026-10-19: `[dim * (hc + 1), cols * head_dim]` in the checkpoint's precision.
+    pub wkv: ResidentMat,
     /// 2026-10-19: The raw Q2_K blocks for the single-token projection, or null.
     pub wkv_q2k: DevicePtr,
-    /// 2026-10-19: Round the rows to E4M3 blocks before the projection.
-    pub qdq_rows: bool,
 }
 
 /// 2026-10-19: Where the layer builder reads a checkpoint's per-layer tensors. Every method reads

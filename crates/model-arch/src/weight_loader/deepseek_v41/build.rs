@@ -226,7 +226,6 @@ pub fn engram(
                 raw: DevicePtr(0),
                 rows: DevicePtr(0),
                 wkv_q2k: w.wkv_q2k,
-                qdq_rows: w.qdq_rows,
             },
         )?;
     }

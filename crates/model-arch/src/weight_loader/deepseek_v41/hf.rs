@@ -4,13 +4,13 @@
 //! 2026-10-19: [`V41Source`] over the safetensors checkpoint. Every tensor was deferred by the
 //! checkpoint loader; each read takes only this rank's part ([`cut_of`], [`read_plan`]) by
 //! positional read past the page cache, and uploads it in its stored precision: bf16 as bf16,
-//! E4M3 with its E8M0 tile scales as [`ResidentMat::Fp8Block`], f32 widened on the host. The
-//! engram projection is the one exception: no GEMM reads it in E4M3, so it is decoded to bf16
-//! on the host, exactly (an E4M3 value times a power of two is a bf16 value).
+//! E4M3 with its E8M0 tile scales as [`ResidentMat::Fp8Block`], f32 widened on the host.
+//! 2026-10-19: The engram projection too stays E4M3; its GEMV/GEMM decode it in the kernel.
 //!
 //! Owner: model-arch weight loader.
 //! Invariants:
-//! - An FP8 weight is admitted only with an E8M0 scale of one code per 32 x 32 tile.
+//! - An FP8 weight is admitted only with an E8M0 scale of one code per 32 x 32 tile, none of
+//!   them the NaN code 0xFF.
 //! - A bf16 tensor is uploaded once however often it is asked for (a router is read by its own
 //!   layer and by the one before it).
 
@@ -21,11 +21,9 @@ use anyhow::{Context, Result, bail, ensure};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_model_layers::layers::ops::{FP8_BLOCK_TILE, ResidentMat};
 use metrale_model_weights::weights::{DeferredTensor, WeightDtype, WeightStore};
-use rayon::prelude::*;
 
 use super::source::{EngramWkv, Format, T, V41Source, name, scale_of};
 use super::tp_cut::{Cut, Local, cut_of, finish, read_plan};
-use crate::deepseek_v41_ref::mat::{InputQuant, Mat, Store, Weight};
 
 pub struct HfSource<'a> {
     store: &'a WeightStore,
@@ -68,35 +66,6 @@ pub fn whole_bf16(gpu: &dyn GpuBackend, store: &WeightStore, name: &str) -> Resu
         d.dtype
     );
     upload(gpu, &read_cut(d, &Cut::Whole)?, name, "bf16", "bf16")
-}
-
-/// 2026-10-19: The E4M3 `codes` of a `[rows, cols]` weight times its E8M0 `scales` (one per
-/// 32 x 32 tile, row-major over tiles) as little-endian bf16. Refuses the E8M0 NaN code.
-pub fn decode_fp8_tiles(codes: &[u8], scales: &[u8], rows: usize, cols: usize) -> Result<Vec<u8>> {
-    ensure!(
-        !scales.contains(&0xFF),
-        "an E8M0 scale holds the NaN code 0xFF"
-    );
-    let m = Mat::new(
-        Store::E4m3 {
-            w: codes,
-            scale: scales,
-            block_rows: FP8_BLOCK_TILE,
-        },
-        rows,
-        cols,
-        InputQuant::Exact,
-    )
-    .map_err(|e| anyhow::anyhow!("{e}"))?;
-    let mut out = vec![0u8; rows * cols * 2];
-    out.par_chunks_mut(cols * 2).enumerate().for_each(|(r, o)| {
-        let mut v = vec![0f32; cols];
-        m.decode_row(r, cols, &mut v);
-        for (b, x) in o.chunks_exact_mut(2).zip(&v) {
-            b.copy_from_slice(&half::bf16::from_f32(*x).to_le_bytes());
-        }
-    });
-    Ok(out)
 }
 
 fn widen(dtype: WeightDtype, bytes: &[u8], what: &str) -> Result<Vec<f32>> {
@@ -154,7 +123,12 @@ impl<'a> HfSource<'a> {
             Cut::Rows(r) => (r.len(), cols),
             Cut::Cols(c) => (rows, c.len()),
         };
-        Ok((read_cut(w, cut)?, read_cut(s, &cut.div(tile)?)?, kr, kc))
+        let scales = read_cut(s, &cut.div(tile)?)?;
+        ensure!(
+            !scales.contains(&0xFF),
+            "{sn}: an E8M0 scale holds the NaN code 0xFF"
+        );
+        Ok((read_cut(w, cut)?, scales, kr, kc))
     }
 }
 
@@ -220,13 +194,9 @@ impl V41Source for HfSource<'_> {
     }
 
     fn engram_wkv(&self, gpu: &dyn GpuBackend, l: usize) -> Result<EngramWkv> {
-        let n = name(Format::Safetensors, l, T::EngramWkv);
-        let (codes, scales, rows, cols) = self.fp8(&n, &Cut::Whole)?;
-        let bits = decode_fp8_tiles(&codes, &scales, rows, cols).with_context(|| n.clone())?;
         Ok(EngramWkv {
-            wkv: upload(gpu, &bits, &n, "bf16", "e4m3")?,
+            wkv: self.mat(gpu, l, T::EngramWkv)?,
             wkv_q2k: DevicePtr(0),
-            qdq_rows: true,
         })
     }
 }
