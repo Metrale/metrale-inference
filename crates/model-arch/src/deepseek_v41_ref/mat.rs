@@ -125,6 +125,8 @@ pub fn e4m3(code: u8) -> f32 {
 pub enum Store<'a> {
     /// Little-endian bf16, two bytes per value.
     Bf16(&'a [u8]),
+    /// Little-endian f32, four bytes per value.
+    F32(&'a [u8]),
     /// One fp8 e4m3fn code per value; one E8M0 scale per `block_rows x 32` tile, row-major
     /// over tiles.
     E4m3 {
@@ -170,6 +172,7 @@ impl<'a> Mat<'a> {
         };
         match store {
             Store::Bf16(w) => check(w.len(), n * 2, "bf16 data")?,
+            Store::F32(w) => check(w.len(), n * 4, "f32 data")?,
             Store::E4m3 {
                 w,
                 scale,
@@ -229,6 +232,14 @@ impl Weight for Mat<'_> {
                     .zip(w[r * cols * 2..(r + 1) * cols * 2].chunks_exact(2))
                 {
                     *o = f32::from_bits(u32::from(u16::from_le_bytes([b[0], b[1]])) << 16);
+                }
+            }
+            Store::F32(w) => {
+                for (o, b) in out
+                    .iter_mut()
+                    .zip(w[r * cols * 4..(r + 1) * cols * 4].chunks_exact(4))
+                {
+                    *o = f32::from_le_bytes([b[0], b[1], b[2], b[3]]);
                 }
             }
             Store::E4m3 {

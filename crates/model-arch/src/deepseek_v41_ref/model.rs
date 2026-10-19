@@ -21,8 +21,10 @@ use super::moe::MoeCfg;
 use super::{Golden, regen_param};
 
 mod forward;
+mod from_config;
 
 pub use forward::forward;
+pub use from_config::REFERENCE_GATE_TEMP;
 
 pub struct ModelCfg {
     pub dim: usize,

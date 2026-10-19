@@ -25,8 +25,9 @@
 //! Owner: model-arch, DeepSeek-V4.1 reference.
 //! Invariants: none beyond the types.
 
-use super::mat::e4m3;
+use super::mat::{MX_BLOCK, e4m3};
 use super::{Golden, fixed_value, to_bf16_rne};
+use crate::engram_v41::EngramHashTables;
 
 /// 2026-09-25: The engram hash tables, geometry and table scales, from the
 /// golden's `fixture.engram`.
@@ -53,6 +54,31 @@ pub struct EngramTables {
 impl EngramTables {
     pub fn n_hash_cols(&self) -> usize {
         (self.max_ngram - 1) * self.n_heads
+    }
+
+    /// 2026-10-19: The tables of a real checkpoint: the hash tables as the engine reads them,
+    /// and each Engram layer's table geometry. The table scales are stored with the table
+    /// (one per row and 32 values), so `scales`, which only the golden regenerator reads, is
+    /// empty.
+    pub fn from_hash_tables(
+        h: EngramHashTables,
+        head_dim: usize,
+        num_embeddings: Vec<usize>,
+    ) -> Self {
+        EngramTables {
+            layer_ids: h.layer_ids,
+            max_ngram: h.max_ngram,
+            n_heads: h.n_heads,
+            head_dim,
+            num_embeddings,
+            pad_id: h.pad_id,
+            token_map: h.token_map,
+            multipliers: h.multipliers,
+            primes: h.primes,
+            offsets: h.offsets,
+            scale_block: MX_BLOCK,
+            scales: Vec::new(),
+        }
     }
 
     pub fn from_golden(g: &Golden) -> Self {

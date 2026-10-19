@@ -291,6 +291,7 @@ pub fn assert_close(what: &str, got: &[f64], want: &[f64], tol: f64) {
 }
 
 pub mod attn;
+pub mod checkpoint;
 pub mod compress;
 pub mod engram;
 pub mod hc;
