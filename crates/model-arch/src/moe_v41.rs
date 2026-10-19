@@ -37,6 +37,8 @@ mod forward;
 /// `device_route_ok` refuses the device selection for a layer at or past it.
 pub(crate) const SLOT_TABLE_LAYERS: usize = 64;
 mod init;
+pub mod resident;
+pub mod resident_plan;
 mod route;
 mod shared;
 mod single;
@@ -272,3 +274,9 @@ mod route_tests;
 #[cfg(test)]
 #[path = "moe_v41_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "moe_v41_resident_tests.rs"]
+mod resident_tests;
+#[cfg(all(test, feature = "cuda"))]
+#[path = "moe_v41_resident_gpu_tests.rs"]
+mod resident_gpu_tests;
