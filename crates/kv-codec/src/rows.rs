@@ -12,7 +12,7 @@
 use crate::KvCodecId;
 use crate::spec::{
     AbiId, AutoBoundary, CodecRole, HostLutId, KvCodecSpec, Rotation, SideElem, SideKind,
-    SideTensor,
+    SideTensor, TrellisSpec,
 };
 
 /// 2026-10-18: Values per group of every block-scaled codec registered today.
@@ -210,3 +210,117 @@ pub(crate) const FP8_ROW_F32SCALE: KvCodecSpec = KvCodecSpec {
     auto_boundary: AutoBoundary::None,
     citation: None,
 };
+
+/// 2026-10-18: Values per group of the 128-group rotated codecs (`metrale-kv-tq128`).
+const GROUP128: u32 = 128;
+
+/// 2026-10-18: Head dims the 128-group kernels serve (`paged_decode_attn_tq128.cu`).
+const TQ128_HEAD_DIMS: &[u32] = &[128, 256, 512];
+
+/// 2026-10-18: The CITATIONS.md heading of the trellis-coded KV-cache prior art.
+const TCQ: Option<&str> = Some("Trellis-coded KV cache (TCQ)");
+
+/// 2026-10-18: One FP16 norm per 128 values.
+const F16_NORM: SideTensor = SideTensor {
+    kind: SideKind::Norm,
+    elem: SideElem::F16,
+    per_values: GROUP128,
+};
+
+/// 2026-10-18: The trellis codecs' per-group side: the norm, then the start-state slot.
+const TCQ_SIDE: &[SideTensor] = &[
+    F16_NORM,
+    SideTensor {
+        kind: SideKind::TrellisState,
+        elem: SideElem::U16,
+        per_values: GROUP128,
+    },
+];
+
+/// 2026-10-18: A 128-group rotated codec row; only the id, name, label, bits, side, trellis
+/// and auto boundary differ between the four.
+const fn tq128(
+    id: KvCodecId,
+    name: &'static str,
+    label: &'static str,
+    value_bits: u8,
+    side: &'static [SideTensor],
+    trellis: Option<TrellisSpec>,
+    auto_boundary: AutoBoundary,
+) -> KvCodecSpec {
+    KvCodecSpec {
+        id,
+        name,
+        role: CodecRole::Attention,
+        label,
+        value_bits,
+        group: GROUP128,
+        side,
+        rotation: Rotation::InKernel { block: GROUP128 },
+        trellis,
+        abi: AbiId::Trellis,
+        host_dequant: None,
+        lossless: false,
+        head_dims: TQ128_HEAD_DIMS,
+        online_calibration: false,
+        auto_boundary,
+        citation: TCQ,
+    }
+}
+
+/// 2026-10-18: 512-state bitshift trellis, 3 bits per value: 52 bytes per 128 values
+/// (3.25 bits per value).
+pub(crate) const TURBO3_TCQ: KvCodecSpec = tq128(
+    KvCodecId::Turbo3Tcq,
+    "turbo3_tcq",
+    "Turbo3Tcq",
+    3,
+    TCQ_SIDE,
+    Some(TrellisSpec {
+        states: 512,
+        bits: 3,
+    }),
+    AutoBoundary::OneThird,
+);
+
+/// 2026-10-18: 256-state bitshift trellis, 2 bits per value: 36 bytes per 128 values
+/// (2.25 bits per value). Below turbo2's 2.5 bits, so it takes turbo2's wide boundary.
+pub(crate) const TURBO2_TCQ: KvCodecSpec = tq128(
+    KvCodecId::Turbo2Tcq,
+    "turbo2_tcq",
+    "Turbo2Tcq",
+    2,
+    TCQ_SIDE,
+    Some(TrellisSpec {
+        states: 256,
+        bits: 2,
+    }),
+    AutoBoundary::FourFifths,
+);
+
+/// 2026-10-18: 256-state bitshift trellis, 1 bit per value: 20 bytes per 128 values
+/// (1.25 bits per value). The lossiest row, so it takes the wide boundary turbo2 takes.
+pub(crate) const TURBO1_TCQ: KvCodecSpec = tq128(
+    KvCodecId::Turbo1Tcq,
+    "turbo1_tcq",
+    "Turbo1Tcq",
+    1,
+    TCQ_SIDE,
+    Some(TrellisSpec {
+        states: 256,
+        bits: 1,
+    }),
+    AutoBoundary::FourFifths,
+);
+
+/// 2026-10-18: The turbo4 16-level codebook over one rotated 128-value group with one FP16 norm:
+/// 66 bytes per 128 values (4.125 bits per value).
+pub(crate) const TURBO4_N128: KvCodecSpec = tq128(
+    KvCodecId::Turbo4N128,
+    "turbo4_n128",
+    "Turbo4N128",
+    4,
+    &[F16_NORM],
+    None,
+    AutoBoundary::OneThird,
+);

@@ -90,8 +90,7 @@ fn enter_on_an_enumerated_field_opens_the_picker_not_the_editor() {
         panic!("no picker opened: {:?}", s.modal);
     };
     assert_eq!(k, "kv_cache_dtype");
-    let expected: Vec<String> = metrale_cache::kv_cache::KvCacheDtype::ALL
-        .iter()
+    let expected: Vec<String> = metrale_cache::kv_cache::KvCacheDtype::all()
         .map(|d| d.name().to_string())
         .collect();
     assert_eq!(options, &expected);
@@ -106,7 +105,7 @@ fn picking_a_value_lands_in_the_form_and_the_command() {
     let mut s = open_form();
     s.row = row_of(&s, "kv_cache_dtype");
     s.on_key(key(KeyCode::Enter));
-    // 2026-09-26: `g` goes to the first entry (`bf16`, `KvCacheDtype::ALL[0]`), `j` to `fp8`.
+    // 2026-09-26: `g` goes to the first entry (`bf16`, `KvCacheDtype::all().next()`), `j` to `fp8`.
     s.on_key(key(KeyCode::Char('g')));
     s.on_key(key(KeyCode::Char('j')));
     s.on_key(key(KeyCode::Enter));

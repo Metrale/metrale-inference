@@ -30,11 +30,12 @@
 mod fixture;
 mod reference;
 
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use fixture::{SENTINEL, backends, bytes as bytes_bf16, download, upload};
 use half::bf16;
-use metrale_gpu_runtime::gpu::GpuBackend;
+use metrale_gpu_runtime::gpu::{GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
+use metrale_kv_codec::{HeadDimClass, KvKernelKey, KvOp, KvPair, by_name};
 use metrale_kv_tq128::codebooks::TURBO4_MID;
 use metrale_kv_tq128::{GROUP, KvSide, Tq128Codec};
 use reference::{
@@ -43,13 +44,14 @@ use reference::{
     slots, worst_row_error,
 };
 
-fn suffix(c: Tq128Codec) -> &'static str {
-    match c {
-        Tq128Codec::Tcq3 => "tcq3",
-        Tq128Codec::Tcq2 => "tcq2",
-        Tq128Codec::Tcq1 => "tcq1",
-        Tq128Codec::Turbo4N128 => "turbo4_n128",
-    }
+/// 2026-10-18: The registry kernel of `op` for this codec, so the example names no kernel itself.
+fn kernel(g: &dyn GpuBackend, codec: Tq128Codec, op: KvOp) -> Result<KernelHandle> {
+    let id =
+        by_name(codec.name()).with_context(|| format!("{} is not registered", codec.name()))?;
+    let name = KvKernelKey::new(op, KvPair::symmetric(id), HeadDimClass::Model)
+        .kernel_name()
+        .with_context(|| format!("{} has no {op:?} kernel", codec.name()))?;
+    g.kernel(name.module, name.func)
 }
 
 fn bytes_f32(v: &[f32]) -> Vec<u8> {
@@ -75,13 +77,7 @@ fn gpu_encode(
     )?;
     let book = upload(g, &bytes_f32(geo.codec.codebook(side)))?;
     let items = slots.len() * KV_HEADS * geo.head_dim / GROUP;
-    let name = format!("reshape_and_cache_{}", suffix(geo.codec));
-    let module = if geo.codec.trellis().is_some() {
-        "reshape_and_cache_tcq"
-    } else {
-        name.as_str()
-    };
-    let mut l = KernelLaunch::new(g, g.kernel(module, &name)?)
+    let mut l = KernelLaunch::new(g, kernel(g, geo.codec, KvOp::Write)?)
         .grid([items.div_ceil(4) as u32, 1, 1])
         .block([128, 1, 1])
         .arg_ptr(src_p)
@@ -121,8 +117,7 @@ fn gpu_dequant(
     )?;
     let book = upload(g, &bytes_f32(geo.codec.codebook(side)))?;
     let items = slots.len() * KV_HEADS * geo.head_dim / GROUP;
-    let name = format!("tq128_dequant_bf16_{}", suffix(geo.codec));
-    KernelLaunch::new(g, g.kernel("tq128_dequant_bf16", &name)?)
+    KernelLaunch::new(g, kernel(g, geo.codec, KvOp::DequantBf16)?)
         .grid([items.div_ceil(4) as u32, 1, 1])
         .block([128, 1, 1])
         .arg_ptr(cache_p)
@@ -158,8 +153,7 @@ fn gpu_decode(
         .iter()
         .flat_map(|b| b.to_le_bytes())
         .collect();
-    let name = format!("paged_decode_attn_{}", suffix(geo.codec));
-    KernelLaunch::new(g, g.kernel("paged_decode_attn_tq128", &name)?)
+    KernelLaunch::new(g, kernel(g, geo.codec, KvOp::DecodeAttn)?)
         .grid([Q_HEADS as u32, SEQ_LENS.len() as u32, 1])
         .block([256, 1, 1])
         .arg_ptr(upload(g, &bytes_bf16(q))?)

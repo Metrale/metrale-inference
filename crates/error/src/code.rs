@@ -157,5 +157,9 @@ error_registry! {
         /// 2026-10-18: An indexer codec plan or block the codec's layout cannot hold: (codec,
         /// reason).
         KvIndexerGeometry = 0x0508 => "indexer cache {}: {}",
+        /// 2026-10-18: A codec with no host dequant (its registry row's `host_dequant` is `None`) asked
+        /// for by a host path: (codec, path).
+        KvHostDequantMissing = 0x0509 => "KV-cache codec {} has no host dequant, so {} cannot \
+            run",
     }
 }

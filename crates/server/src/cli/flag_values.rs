@@ -9,7 +9,7 @@
 //! manifest, so what is offered and what is accepted come from one list.
 //!
 //! `--kv-cache-dtype` has no const here: its list is
-//! `metrale_cache::kv_cache::KvCacheDtype::ALL`.
+//! `metrale_cache::kv_cache::KvCacheDtype::all`.
 //!
 //! The sets are not wired into clap as `PossibleValuesParser`s:
 //! `validate_serve_args` reports every violation at once, where clap exits on
@@ -408,8 +408,7 @@ pub(crate) fn options_for_flag(flag: &str) -> Option<Vec<String>> {
                 .collect(),
         ),
         "kv-cache-dtype" => Some(
-            metrale_cache::kv_cache::KvCacheDtype::ALL
-                .iter()
+            metrale_cache::kv_cache::KvCacheDtype::all()
                 .map(|d| d.name().to_string())
                 .collect(),
         ),

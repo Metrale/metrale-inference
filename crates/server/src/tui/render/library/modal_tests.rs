@@ -50,7 +50,7 @@ fn the_options_picker_names_the_flag_and_marks_the_current_value() {
 }
 
 #[test]
-fn a_sixteen_row_option_list_scrolls_rather_than_clips() {
+fn a_twenty_row_option_list_scrolls_rather_than_clips() {
     let mut a = form();
     select_row(&mut a, "kv_cache_dtype");
     press(&mut a, KeyCode::Enter);
@@ -66,7 +66,7 @@ fn a_sixteen_row_option_list_scrolls_rather_than_clips() {
         "the top of the list scrolled out:\n{rows:#?}"
     );
     assert!(
-        has(&rows, "16/16"),
+        has(&rows, "20/20"),
         "the clipped list says where you are:\n{rows:#?}"
     );
 }

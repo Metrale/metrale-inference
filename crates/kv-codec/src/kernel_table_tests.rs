@@ -24,6 +24,16 @@ fn all_pairs() -> Vec<KvPair> {
         .collect()
 }
 
+/// 2026-10-18: Every accepted pair that existed before the registry: the 128-group codecs
+/// (`AbiId::Trellis`) have their own golden test in `kernel_table_tq128_tests.rs`.
+fn legacy_pairs() -> Vec<KvPair> {
+    let legacy = |id| spec(id).abi != crate::AbiId::Trellis;
+    all_pairs()
+        .into_iter()
+        .filter(|p| legacy(p.k()) && legacy(p.v()))
+        .collect()
+}
+
 /// 2026-10-18: (dtype, reshape module, reshape fn, decode module at head_dim 256, decode fn),
 /// as `kernel_modules_for_dtype` returned them.
 const LEGACY_WRITE_DECODE: &[(&str, &str, &str, &str, &str)] = &[
@@ -223,7 +233,7 @@ const LEGACY_PREFILL: &[(&str, &str, &str)] = &[
 /// included) while a plain codec keeps its one module.
 #[test]
 fn write_and_decode_names_match_the_legacy_dispatch() {
-    assert_eq!(LEGACY_WRITE_DECODE.len(), all_pairs().len());
+    assert_eq!(LEGACY_WRITE_DECODE.len(), legacy_pairs().len());
     for &(d, rm, rf, dm, df) in LEGACY_WRITE_DECODE {
         let p = pair(d);
         let at256 = kv_kernel_names(p, 256).expect(d);
@@ -253,7 +263,7 @@ fn write_and_decode_names_match_the_legacy_dispatch() {
 /// 2026-10-18: Every pair resolves the legacy chunked-prefill kernel.
 #[test]
 fn prefill_names_match_the_legacy_requirements() {
-    assert_eq!(LEGACY_PREFILL.len(), all_pairs().len());
+    assert_eq!(LEGACY_PREFILL.len(), legacy_pairs().len());
     for &(d, m, f) in LEGACY_PREFILL {
         for hd in [128, 256] {
             assert_eq!(
@@ -337,6 +347,12 @@ fn wht_bookends_follow_rotation_and_head_dim() {
     for p in all_pairs() {
         let rotated = spec(p.k()).rotates() || spec(p.v()).rotates();
         for hd in [64, 128, 192, 256, 512, 513] {
+            if !(spec(p.k()).fits_head_dim(hd) && spec(p.v()).fits_head_dim(hd)) {
+                // 2026-10-18: A side that cannot hold the row is refused, not resolved.
+                let err = kv_kernel_names(p, hd).expect_err("head dim the side cannot hold");
+                assert_eq!(err.code(), ErrorCode::KvPairUnsupported, "{p} {hd}");
+                continue;
+            }
             let want = if rotated && matches!(hd, 128 | 256 | 512) {
                 bookends
             } else {

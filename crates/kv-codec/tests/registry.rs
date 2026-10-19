@@ -66,9 +66,9 @@ fn an_indexer_codec_is_never_a_kv_pair() {
 #[test]
 fn the_legacy_spellings_parse_to_the_same_pairs() {
     // 2026-10-18: Every `--kv-cache-dtype` value the pre-registry `KvCacheDtype::from_str`
-    // accepted, with the (K, V) pair it meant.
+    // accepted, with the (K, V) pair it meant, then the 128-group codecs added after it.
     use KvCodecId::*;
-    let legacy: [(&str, KvCodecId, KvCodecId); 25] = [
+    let legacy: [(&str, KvCodecId, KvCodecId); 29] = [
         ("bf16", Bf16, Bf16),
         ("fp8", Fp8, Fp8),
         ("nvfp4", Nvfp4, Nvfp4),
@@ -94,6 +94,10 @@ fn the_legacy_spellings_parse_to_the_same_pairs() {
         ("bf16k2v", Bf16, Turbo2),
         ("fp8k_turbo2v", Fp8, Turbo2),
         ("fp8k2v", Fp8, Turbo2),
+        ("turbo3_tcq", Turbo3Tcq, Turbo3Tcq),
+        ("turbo2_tcq", Turbo2Tcq, Turbo2Tcq),
+        ("turbo1_tcq", Turbo1Tcq, Turbo1Tcq),
+        ("turbo4_n128", Turbo4N128, Turbo4N128),
     ];
     for (s, k, v) in legacy {
         let p: KvPair = s.parse().unwrap_or_else(|e| panic!("{s}: {e}"));

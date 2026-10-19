@@ -92,8 +92,9 @@ fn a_plan_has_one_entry_per_layer_and_none_for_no_layers() {
 
 /// 2026-10-18: The server's auto boundary policy per spelling before the registry moved it into
 /// the table: `None` for bf16/fp8/nvfp4, `FourFifths` for turbo2 and bf16k_turbo3v, `OneThird`
-/// for every other turbo spelling.
-const GOLDEN_AUTO: [(&str, AutoBoundary); 16] = [
+/// for every other turbo spelling. Then the 128-group codecs: `OneThird` above 3 bits per value,
+/// `FourFifths` at or below turbo2's 2.5.
+const GOLDEN_AUTO: [(&str, AutoBoundary); 20] = [
     ("bf16", AutoBoundary::None),
     ("fp8", AutoBoundary::None),
     ("nvfp4", AutoBoundary::None),
@@ -110,6 +111,10 @@ const GOLDEN_AUTO: [(&str, AutoBoundary); 16] = [
     ("fp8k_turbo3v", AutoBoundary::OneThird),
     ("bf16k_turbo2v", AutoBoundary::OneThird),
     ("fp8k_turbo2v", AutoBoundary::OneThird),
+    ("turbo3_tcq", AutoBoundary::OneThird),
+    ("turbo2_tcq", AutoBoundary::FourFifths),
+    ("turbo1_tcq", AutoBoundary::FourFifths),
+    ("turbo4_n128", AutoBoundary::OneThird),
 ];
 
 #[test]

@@ -17,7 +17,7 @@ use core::str::FromStr;
 
 use metrale_error::{Error, ErrorCode, error};
 
-use crate::registry::{PAIR_ALIASES, PairAlias, by_name, const_str_eq};
+use crate::registry::{PAIR_ALIASES, PairAlias, by_name, by_pair_name};
 use crate::spec::{AutoBoundary, CodecRole};
 use crate::{KvCodecId, spec};
 
@@ -58,6 +58,25 @@ impl KvPair {
                 "any"
             ))
         }
+    }
+
+    /// 2026-10-18: The pair a `--kv-cache-dtype` spelling names (a codec name or either spelling
+    /// of a pair alias), or `None`. A `const fn`: a legacy name bound at compile time is checked
+    /// by the compiler against the registry.
+    pub const fn named(name: &str) -> Option<Self> {
+        match by_pair_name(name) {
+            Some((k, v)) => Some(KvPair { k, v }),
+            None => None,
+        }
+    }
+
+    /// 2026-10-18: Every accepted pair: each attention codec on both sides, in discriminant
+    /// order, then each pair alias in table order.
+    pub fn all() -> impl Iterator<Item = KvPair> {
+        KvCodecId::ATTENTION
+            .iter()
+            .map(|&c| KvPair::symmetric(c))
+            .chain(PAIR_ALIASES.iter().map(|a| KvPair { k: a.k, v: a.v }))
     }
 
     /// 2026-10-18: A pair already known to be accepted (it came out of a resolved plan).
@@ -102,19 +121,7 @@ impl KvPair {
 impl FromStr for KvPair {
     type Err = Error;
     fn from_str(s: &str) -> Result<Self, Error> {
-        if let Some(alias) = PAIR_ALIASES
-            .iter()
-            .find(|a| const_str_eq(a.long, s) || const_str_eq(a.short, s))
-        {
-            return Ok(KvPair {
-                k: alias.k,
-                v: alias.v,
-            });
-        }
-        KvCodecId::ATTENTION
-            .into_iter()
-            .find(|id| id.name() == s)
-            .map(KvPair::symmetric)
+        KvPair::named(s)
             .ok_or_else(|| error!(ErrorCode::KvCodecUnknown, String::from(s), accepted()))
     }
 }

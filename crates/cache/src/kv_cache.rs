@@ -19,103 +19,107 @@ use metrale_kv_codec::{
     BlockGeometry, KvCodecId, KvPair, KvSide, KvSidePlan, LayerIx, RungIx, SpillSalt, spec,
 };
 
-/// 2026-09-25: KV cache storage format. A symmetric variant uses one format
-/// for K and V; a `*K*V` variant names the K format, then the V format
-/// (`kv_pair`).
+/// 2026-09-25: KV cache storage format. A symmetric format uses one codec for K and V; a
+/// `*K*V` format names the K codec, then the V codec (`kv_pair`). 2026-10-18: A view of one
+/// registry [`KvPair`], so every registered codec and pair alias is a format without a variant
+/// of its own here; the named constants below are the legacy spellings, bound to the registry
+/// at compile time.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum KvCacheDtype {
+pub struct KvCacheDtype(KvPair);
+
+/// 2026-10-18: The legacy formats by their pre-registry names. Each is resolved from its
+/// `--kv-cache-dtype` spelling by the registry in a `const`, so a spelling the registry does not
+/// accept fails to compile.
+#[allow(non_upper_case_globals)]
+impl KvCacheDtype {
     /// 2026-09-25: BF16, 2 bytes per element.
-    Bf16,
+    pub const Bf16: Self = Self::named("bf16");
     /// 2026-09-25: FP8 E4M3, 1 byte per element, with one scale per tensor
     /// (the `k_scale`/`v_scale` arguments of `reshape_and_cache_flash_fp8`).
-    Fp8,
+    pub const Fp8: Self = Self::named("fp8");
     /// 2026-09-25: E2M1 values, two per byte, plus one FP8 E4M3 scale byte per
     /// 16-element group: 4.5 bits per element.
-    Nvfp4,
+    pub const Nvfp4: Self = Self::named("nvfp4");
     /// 2026-09-25: WHT-rotated 16-level Lloyd-Max codebook (`TURBO4_LUT`) in
     /// the `Nvfp4` byte layout.
-    Turbo4,
+    pub const Turbo4: Self = Self::named("turbo4");
     /// 2026-09-25: WHT-rotated 8-level Lloyd-Max codebook (`TURBO3_LUT`), 8
     /// values in 3 bytes plus one FP8 scale byte per group: 3.5 bits per
     /// element, 22% smaller than `Turbo4`.
-    Turbo3,
+    pub const Turbo3: Self = Self::named("turbo3");
     /// 2026-09-25: WHT-rotated 4-level codebook, 4 values per byte plus one FP8
     /// scale byte per group: 2.5 bits per element, 6.4x smaller than `Bf16`.
     /// Its registry row (`AutoBoundary::FourFifths`) gives this dtype a larger
     /// high-precision boundary than the other symmetric turbo dtypes.
-    Turbo2,
+    pub const Turbo2: Self = Self::named("turbo2");
     /// 2026-09-25: WHT-rotated FP8 E4M3 data plus one BF16 scale per group: 9
     /// bits per element, 12.5% more than `Fp8`.
-    Turbo8,
+    pub const Turbo8: Self = Self::named("turbo8");
     /// 2026-09-25: K `Turbo4`, V `Turbo3`: 8 bits per K+V element pair, against
     /// 9 for `Turbo4`.
-    Turbo4KTurbo3V,
+    pub const Turbo4KTurbo3V: Self = Self::named("turbo4k_turbo3v");
     /// 2026-09-25: K `Turbo4`, V `Turbo8`: 13.5 bits per K+V element pair,
     /// against 18 for `Turbo8`.
-    Turbo4KTurbo8V,
+    pub const Turbo4KTurbo8V: Self = Self::named("turbo4k_turbo8v");
     /// 2026-09-25: K `Turbo3`, V `Turbo8`.
-    Turbo3KTurbo8V,
+    pub const Turbo3KTurbo8V: Self = Self::named("turbo3k_turbo8v");
     /// 2026-09-25: K `Bf16`, V `Turbo4`.
-    Bf16KTurbo4V,
+    pub const Bf16KTurbo4V: Self = Self::named("bf16k_turbo4v");
     /// 2026-09-25: K `Bf16`, V `Turbo3`.
-    Bf16KTurbo3V,
+    pub const Bf16KTurbo3V: Self = Self::named("bf16k_turbo3v");
     /// 2026-09-25: K `Fp8`, V `Turbo4`.
-    Fp8KTurbo4V,
+    pub const Fp8KTurbo4V: Self = Self::named("fp8k_turbo4v");
     /// 2026-09-25: K `Fp8`, V `Turbo3`.
-    Fp8KTurbo3V,
+    pub const Fp8KTurbo3V: Self = Self::named("fp8k_turbo3v");
     /// 2026-09-25: K `Bf16`, V `Turbo2`.
-    Bf16KTurbo2V,
+    pub const Bf16KTurbo2V: Self = Self::named("bf16k_turbo2v");
     /// 2026-09-25: K `Fp8`, V `Turbo2`.
-    Fp8KTurbo2V,
+    pub const Fp8KTurbo2V: Self = Self::named("fp8k_turbo2v");
+
+    /// 2026-10-18: The format a registry spelling names, in a `const`: an unaccepted spelling
+    /// stops compilation (PCND: no fallback format).
+    const fn named(name: &str) -> Self {
+        match KvPair::named(name) {
+            Some(pair) => KvCacheDtype(pair),
+            None => panic!("a legacy KvCacheDtype spelling is not accepted by the registry"),
+        }
+    }
 }
 
 impl std::fmt::Display for KvCacheDtype {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // 2026-09-25: The spelling lives only in `name` (catalog.rs), whose
-        // match has no wildcard arm.
+        // 2026-09-25: The spelling lives only in `name` (catalog.rs).
         f.write_str(self.name())
     }
 }
 
+impl From<KvPair> for KvCacheDtype {
+    /// 2026-10-18: Every accepted registry pair is a format.
+    fn from(pair: KvPair) -> Self {
+        KvCacheDtype(pair)
+    }
+}
+
 impl KvCacheDtype {
-    /// 2026-10-18: The registry codec of each side. This is the only place a legacy variant
-    /// meets the registry; every property below is read from the codecs' specs.
+    /// 2026-10-18: The registry codec of each side; every property below is read from the
+    /// codecs' specs.
     pub const fn pair(self) -> (KvCodecId, KvCodecId) {
-        match self {
-            KvCacheDtype::Bf16 => (KvCodecId::Bf16, KvCodecId::Bf16),
-            KvCacheDtype::Fp8 => (KvCodecId::Fp8, KvCodecId::Fp8),
-            KvCacheDtype::Nvfp4 => (KvCodecId::Nvfp4, KvCodecId::Nvfp4),
-            KvCacheDtype::Turbo4 => (KvCodecId::Turbo4, KvCodecId::Turbo4),
-            KvCacheDtype::Turbo3 => (KvCodecId::Turbo3, KvCodecId::Turbo3),
-            KvCacheDtype::Turbo2 => (KvCodecId::Turbo2, KvCodecId::Turbo2),
-            KvCacheDtype::Turbo8 => (KvCodecId::Turbo8, KvCodecId::Turbo8),
-            KvCacheDtype::Turbo4KTurbo3V => (KvCodecId::Turbo4, KvCodecId::Turbo3),
-            KvCacheDtype::Turbo4KTurbo8V => (KvCodecId::Turbo4, KvCodecId::Turbo8),
-            KvCacheDtype::Turbo3KTurbo8V => (KvCodecId::Turbo3, KvCodecId::Turbo8),
-            KvCacheDtype::Bf16KTurbo4V => (KvCodecId::Bf16, KvCodecId::Turbo4),
-            KvCacheDtype::Bf16KTurbo3V => (KvCodecId::Bf16, KvCodecId::Turbo3),
-            KvCacheDtype::Fp8KTurbo4V => (KvCodecId::Fp8, KvCodecId::Turbo4),
-            KvCacheDtype::Fp8KTurbo3V => (KvCodecId::Fp8, KvCodecId::Turbo3),
-            KvCacheDtype::Bf16KTurbo2V => (KvCodecId::Bf16, KvCodecId::Turbo2),
-            KvCacheDtype::Fp8KTurbo2V => (KvCodecId::Fp8, KvCodecId::Turbo2),
-        }
+        (self.0.k(), self.0.v())
     }
 
-    /// 2026-10-18: The legacy variant whose `pair()` is `(k, v)`, or `None` when the pair has
-    /// no legacy variant.
+    /// 2026-10-18: The format whose `pair()` is `(k, v)`, or `None` when the registry does not
+    /// accept the pair (`KvPair::new`).
     pub fn from_pair(k: KvCodecId, v: KvCodecId) -> Option<Self> {
-        Self::ALL.into_iter().find(|d| d.pair() == (k, v))
+        KvPair::new(k, v).ok().map(KvCacheDtype)
     }
 
-    /// 2026-09-25: The (K, V) formats. A symmetric variant returns
-    /// `(self, self)`. 2026-10-18: Derived from `pair()`.
+    /// 2026-09-25: The (K, V) formats. A symmetric format returns
+    /// `(self, self)`. 2026-10-18: Each side is that side's codec on both sides.
     pub fn kv_pair(self) -> (KvCacheDtype, KvCacheDtype) {
-        let (k, v) = self.pair();
-        // 2026-10-18: Each side of a legacy variant is a legacy codec, which has a symmetric
-        // variant (`catalog.rs` `registry_tests` checks every one).
-        let side =
-            |c| Self::from_pair(c, c).expect("a legacy side codec has a symmetric legacy variant");
-        (side(k), side(v))
+        (
+            KvCacheDtype(KvPair::symmetric(self.0.k())),
+            KvCacheDtype(KvPair::symmetric(self.0.v())),
+        )
     }
 
     /// 2026-09-25: True for the symmetric turbo formats, whose cache contents
@@ -142,14 +146,7 @@ impl std::str::FromStr for KvCacheDtype {
     /// 2026-10-18: Parsed by the registry (`KvPair`), whose error lists every accepted
     /// spelling.
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        let pair: KvPair = s.parse()?;
-        Self::from_pair(pair.k(), pair.v()).ok_or_else(|| {
-            metrale_error::error!(
-                metrale_error::ErrorCode::KvCodecUnknown,
-                s.to_owned(),
-                metrale_kv_codec::accepted()
-            )
-        })
+        s.parse::<KvPair>().map(KvCacheDtype)
     }
 }
 

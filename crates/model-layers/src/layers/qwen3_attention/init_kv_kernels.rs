@@ -22,26 +22,31 @@ pub(super) fn kv_kernel_names_for(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use metrale_kv_codec::{KvCodecId, PAIR_ALIASES};
+    use metrale_error::ErrorCode;
+    use metrale_kv_codec::{KvCodecId, spec};
 
-    /// 2026-10-18: Every accepted pair (each codec symmetric, then each alias) resolves a write
-    /// and a decode kernel at the head dims the shipped attention models use, so none is refused
-    /// at layer construction.
+    /// 2026-10-18: Every accepted pair (`KvPair::all`) resolves a write and a decode kernel at
+    /// each head dim the shipped attention models use that both its codecs can hold
+    /// (`fits_head_dim`), and is refused with `KvPairUnsupported` at the others, so a layer is
+    /// either built with real kernels or refused at construction. Every codec holds head_dim 128
+    /// and 256.
     #[test]
-    fn every_pair_resolves_at_the_shipped_head_dims() {
-        let pairs = KvCodecId::ATTENTION
-            .iter()
-            .map(|&c| KvPair::symmetric(c))
-            .chain(
-                PAIR_ALIASES
-                    .iter()
-                    .map(|a| KvPair::new(a.k, a.v).expect("an alias is an accepted pair")),
-            );
-        for pair in pairs {
-            for hd in [64, 128, 256] {
-                let names =
-                    kv_kernel_names_for(pair, hd).unwrap_or_else(|e| panic!("{pair} hd={hd}: {e}"));
-                assert!(!names.write.func.is_empty() && !names.decode.func.is_empty());
+    fn every_pair_resolves_at_the_shipped_head_dims_it_fits() {
+        for pair in KvPair::all() {
+            for hd in [64u32, 128, 256] {
+                let fits = spec(pair.k()).fits_head_dim(hd) && spec(pair.v()).fits_head_dim(hd);
+                assert!(fits || hd == 64, "{pair} must hold hd={hd}");
+                match kv_kernel_names_for(pair, hd as usize) {
+                    Ok(names) => {
+                        assert!(fits, "{pair} hd={hd} resolved a head dim it cannot hold");
+                        assert!(!names.write.func.is_empty() && !names.decode.func.is_empty());
+                    }
+                    Err(e) => {
+                        assert!(!fits, "{pair} hd={hd}: {e}");
+                        let code = e.downcast_ref::<metrale_error::Error>().map(|e| e.code());
+                        assert_eq!(code, Some(ErrorCode::KvPairUnsupported), "{pair} hd={hd}");
+                    }
+                }
             }
         }
     }

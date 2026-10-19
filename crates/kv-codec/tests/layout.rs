@@ -26,10 +26,16 @@ const GOLDEN: [((u32, u32, u32), [u64; 7]); 10] = [
 
 #[test]
 fn every_codec_reproduces_the_pre_registry_block_bytes() {
+    // 2026-10-18: The columns are the seven pre-registry codecs, the first seven attention rows;
+    // the 128-group codecs have their own golden below.
     assert_eq!(
-        KvCodecId::ATTENTION.len(),
-        7,
-        "a new attention codec needs its golden column"
+        &KvCodecId::ATTENTION[..7]
+            .iter()
+            .map(|c| c.name())
+            .collect::<Vec<_>>(),
+        &[
+            "bf16", "fp8", "nvfp4", "turbo4", "turbo3", "turbo2", "turbo8"
+        ],
     );
     for ((block_size, num_kv_heads, head_dim), want) in GOLDEN {
         let g = BlockGeometry {
@@ -39,6 +45,35 @@ fn every_codec_reproduces_the_pre_registry_block_bytes() {
         };
         for (id, want) in KvCodecId::ATTENTION.into_iter().zip(want) {
             assert_eq!(spec(id).block_bytes(&g), want, "{} at {g:?}", id.name());
+        }
+    }
+}
+
+/// 2026-10-18: Bytes per 128 values of each 128-group codec, as the kernels lay a group out
+/// (`docs/kv-cache-codecs.md`): fp16 norm, codes, then the trellis start-state slot.
+const TQ128_GOLDEN: [(&str, u64); 4] = [
+    ("turbo3_tcq", 52),
+    ("turbo2_tcq", 36),
+    ("turbo1_tcq", 20),
+    ("turbo4_n128", 66),
+];
+
+#[test]
+fn tq128_codecs_take_their_group_record_per_128_values() {
+    for (name, per_group) in TQ128_GOLDEN {
+        let id: KvCodecId = name.parse().expect(name);
+        for (block_size, num_kv_heads, head_dim) in [(16, 1, 128), (16, 4, 256), (32, 8, 512)] {
+            let g = BlockGeometry {
+                block_size,
+                num_kv_heads,
+                head_dim,
+            };
+            let groups = g.values() / 128;
+            assert_eq!(
+                spec(id).block_bytes(&g),
+                groups * per_group,
+                "{name} at {g:?}"
+            );
         }
     }
 }
@@ -65,7 +100,7 @@ fn data_plus_side_is_the_block() {
 
 /// 2026-10-18: The layout digest of every codec, frozen: a change means stored bytes changed
 /// meaning, which must be a deliberate, declared edit (spill headers carry it).
-const DIGESTS: [u64; 8] = [
+const DIGESTS: [u64; 12] = [
     0xa89f_eadf_c9f3_efa5,
     0xfe83_ccdc_f382_286a,
     0xd478_1dfb_6338_f053,
@@ -73,7 +108,11 @@ const DIGESTS: [u64; 8] = [
     0x3f74_d3f0_d400_9f6e,
     0x4df8_5baf_dc74_0077,
     0xbd91_2453_1ff2_35d8,
+    0xf522_4f7d_cd01_4cdd,
+    0x637f_c43e_d4f3_50d6,
+    0x8751_b8a9_4153_7af0,
     0xd4fa_f6dc_fba8_60db,
+    0x7539_e32f_bbb8_45fb,
 ];
 
 #[test]

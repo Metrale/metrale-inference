@@ -265,6 +265,16 @@ impl Qwen3AttentionLayer {
                     dequant_turbo8_block_to_bf16(&k_raw, bs_us, nkv_us, hd_us, &mut k_host);
                     dequant_turbo8_block_to_bf16(&v_raw, bs_us, nkv_us, hd_us, &mut v_host);
                 }
+                // 2026-10-18: A codec with no host dequant (the trellis codecs) is never engaged
+                // (`high_speed_swap_engaged`); refused here rather than read under another layout.
+                other => {
+                    return Err(metrale_error::error!(
+                        metrale_error::ErrorCode::KvHostDequantMissing,
+                        other.name(),
+                        "high-speed swap"
+                    )
+                    .into());
+                }
             }
             metrale_storage::with_local(|hss| {
                 match layer_dtype {

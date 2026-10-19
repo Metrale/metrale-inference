@@ -15,6 +15,7 @@
 use metrale_error::{Error, ErrorCode, error};
 
 use crate::kernel_key::{HeadDimClass, KvKernelKey, KvOp, ResolvedKvKernels};
+use crate::kernel_table_tq128::TQ128_FAMILIES;
 use crate::spec::Rotation;
 use crate::{KvCodecId, KvPair, spec};
 
@@ -336,7 +337,10 @@ static FAMILIES: &[&[KernelRow]] = &[
 ];
 
 fn rows() -> impl Iterator<Item = &'static KernelRow> {
-    FAMILIES.iter().flat_map(|family| family.iter())
+    FAMILIES
+        .iter()
+        .chain(TQ128_FAMILIES)
+        .flat_map(|family| family.iter())
 }
 
 impl KvKernelKey {
@@ -361,7 +365,8 @@ impl KvKernelKey {
 /// head_dim-128 build when `head_dim <= 128` and one exists. The head_dim-512 decode, split-K
 /// and prefill are `None` when the pair has none; the WHT bookends are `Some` exactly when a
 /// side is WHT-rotated at a head dim its rotation covers. A pair without a write or decode
-/// kernel is refused with `KvPairUnsupported`.
+/// kernel, or a side whose kernels cannot hold a `head_dim` row, is refused with
+/// `KvPairUnsupported`.
 pub fn kv_kernel_names(
     pair: KvPair,
     head_dim: u32,
@@ -375,6 +380,9 @@ pub fn kv_kernel_names(
             head_dim
         )
     };
+    if !(spec(pair.k()).fits_head_dim(head_dim) && spec(pair.v()).fits_head_dim(head_dim)) {
+        return Err(unsupported());
+    }
     let write = at(KvOp::Write, Model).ok_or_else(unsupported)?;
     let decode_128 = if head_dim <= 128 {
         at(KvOp::DecodeAttn, Hd128)
@@ -402,7 +410,7 @@ fn wht_bookends(pair: KvPair, head_dim: u32) -> Result<Option<(KernelName, Kerne
         .into_iter()
         .find(|&id| match spec(id).rotation {
             Rotation::Wht { sizes } => sizes.contains(&head_dim),
-            Rotation::None | Rotation::Fwht { .. } => false,
+            Rotation::None | Rotation::Fwht { .. } | Rotation::InKernel { .. } => false,
         })
     else {
         return Ok(None);

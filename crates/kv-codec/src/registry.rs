@@ -64,7 +64,10 @@ macro_rules! kv_codec_registry {
 
         /// 2026-10-18: The fused (K, V) pairs the CLI accepts by name. Each has a long and a
         /// short spelling; both parse to the same `(k, v)`.
-        pub static PAIR_ALIASES: &[PairAlias] = &[
+        pub static PAIR_ALIASES: &[PairAlias] = &ALIAS_ROWS;
+
+        /// 2026-10-18: [`PAIR_ALIASES`] as a constant, for [`by_pair_name`].
+        const ALIAS_ROWS: [PairAlias; [$( $long ),*].len()] = [
             $( PairAlias {
                 long: $long,
                 short: $short,
@@ -109,10 +112,22 @@ kv_codec_registry! {
         Turbo2 = 5 : "turbo2" => rows::TURBO2,
         /// 2026-10-18: WHT-rotated FP8 E4M3 values plus a BF16 norm per 16: 9 bits per value.
         Turbo8 = 6 : "turbo8" => rows::TURBO8,
+        /// 2026-10-18: 512-state trellis-coded 3-bit codes per rotated 128-value group: 3.25 bits
+        /// per value.
+        Turbo3Tcq = 7 : "turbo3_tcq" => rows::TURBO3_TCQ,
+        /// 2026-10-18: 256-state trellis-coded 2-bit codes per rotated 128-value group: 2.25 bits
+        /// per value.
+        Turbo2Tcq = 8 : "turbo2_tcq" => rows::TURBO2_TCQ,
+        /// 2026-10-18: 256-state trellis-coded 1-bit codes per rotated 128-value group: 1.25 bits
+        /// per value.
+        Turbo1Tcq = 9 : "turbo1_tcq" => rows::TURBO1_TCQ,
         /// 2026-10-18: GLM-5.3 DSA indexer rows: WHT-rotated FP8 E4M3, one F32 scale per
-        /// 128-value row. An indexer codec, never a `--kv-cache-dtype` side. Wire value 12: 7 to
-        /// 11 are reserved for the turbo1, TCQ and DeepSeek-V4.1 rows.
+        /// 128-value row. An indexer codec, never a `--kv-cache-dtype` side. Wire values 10 and
+        /// 11 are reserved for the DeepSeek-V4.1 rows.
         Fp8RowF32 = 12 : "fp8_row" => rows::FP8_ROW_F32SCALE,
+        /// 2026-10-18: The turbo4 16-level codebook per rotated 128-value group with one FP16
+        /// norm: 4.125 bits per value.
+        Turbo4N128 = 13 : "turbo4_n128" => rows::TURBO4_N128,
     }
     pairs {
         "turbo4k_turbo3v" | "turbo4k3v" => (Turbo4, Turbo3) @ OneThird,
@@ -144,6 +159,27 @@ pub const fn by_name(name: &str) -> Option<KvCodecId> {
         i += 1;
     }
     None
+}
+
+/// 2026-10-18: The (K, V) codecs a `--kv-cache-dtype` spelling names: a pair alias's long or
+/// short spelling, or an attention codec's name (both sides). `None` for any other text,
+/// including an indexer codec's name. A `const fn`, so a caller can bind a pair at compile time
+/// without naming a variant.
+pub(crate) const fn by_pair_name(name: &str) -> Option<(KvCodecId, KvCodecId)> {
+    let mut i = 0;
+    while i < ALIAS_ROWS.len() {
+        let a = &ALIAS_ROWS[i];
+        if const_str_eq(a.long, name) || const_str_eq(a.short, name) {
+            return Some((a.k, a.v));
+        }
+        i += 1;
+    }
+    match by_name(name) {
+        Some(id) if ROWS[SLOT[id as usize] as usize].role as u8 == CodecRole::Attention as u8 => {
+            Some((id, id))
+        }
+        Some(_) | None => None,
+    }
 }
 
 /// 2026-10-18: The table row of each discriminant (`u8::MAX` where none is registered).

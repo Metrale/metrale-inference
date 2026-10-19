@@ -27,7 +27,10 @@ pub enum AbiId {
     DenseScaled = 1,
     /// 2026-10-18: Values plus an in-block side tensor per group (nvfp4, turbo4/3/2/8).
     BlockScaled = 2,
-    /// 2026-10-18: Trellis-coded values plus start states. Declared; no row uses it yet.
+    /// 2026-10-18: Self-contained 128-value groups rotated and decoded inside the codec's own
+    /// kernels against a device codebook (turbo1/2/3_tcq, turbo4_n128). Each group is one record
+    /// (norm, codes, trellis start state), so the side tensors give byte counts, not plane
+    /// offsets, and no host LUT reads it.
     Trellis = 3,
     /// 2026-10-18: A compressed latent ring (MLA-style). Declared; no row uses it yet.
     Latent = 4,
@@ -61,6 +64,10 @@ pub enum SideElem {
     F32 = 3,
     /// 2026-10-18: One bit.
     Bit = 4,
+    /// 2026-10-18: IEEE FP16, 16 bits (the 128-group codecs' norm).
+    F16 = 5,
+    /// 2026-10-18: A 16-bit unsigned slot (a trellis start state and its padding).
+    U16 = 6,
 }
 
 impl SideElem {
@@ -68,7 +75,7 @@ impl SideElem {
     pub const fn bits(self) -> u64 {
         match self {
             SideElem::E4m3 | SideElem::E8m0 => 8,
-            SideElem::Bf16 => 16,
+            SideElem::Bf16 | SideElem::F16 | SideElem::U16 => 16,
             SideElem::F32 => 32,
             SideElem::Bit => 1,
         }
@@ -99,6 +106,12 @@ pub enum Rotation {
     },
     /// 2026-10-18: Fast WHT over fixed blocks of `block` values.
     Fwht {
+        /// 2026-10-18: Values per rotated block.
+        block: u32,
+    },
+    /// 2026-10-18: Rotated per `block` values inside the codec's own write and attention
+    /// kernels, so attention needs no bookends; the head dim must be a whole number of blocks.
+    InKernel {
         /// 2026-10-18: Values per rotated block.
         block: u32,
     },
@@ -160,6 +173,17 @@ impl AutoBoundary {
 
 const fn max(a: u32, b: u32) -> u32 {
     if a > b { a } else { b }
+}
+
+const fn contains(set: &[u32], x: u32) -> bool {
+    let mut i = 0;
+    while i < set.len() {
+        if set[i] == x {
+            return true;
+        }
+        i += 1;
+    }
+    false
 }
 
 /// 2026-10-18: The geometry of one side of one paged block.
@@ -233,11 +257,11 @@ pub struct KvCodecSpec {
 }
 
 impl KvCodecSpec {
-    /// 2026-10-18: True when the stored values are in a rotated basis, so attention wraps the
-    /// rotation bookends around this side.
+    /// 2026-10-18: True when the stored values are in a rotated basis that attention wraps in
+    /// the rotation bookends. An in-kernel rotation is false: its own kernels undo it.
     pub const fn rotates(&self) -> bool {
         match self.rotation {
-            Rotation::None => false,
+            Rotation::None | Rotation::InKernel { .. } => false,
             Rotation::Wht { .. } | Rotation::Fwht { .. } => true,
         }
     }
@@ -246,18 +270,21 @@ impl KvCodecSpec {
     /// dims its kernel supports, and a block FWHT needs whole blocks.
     pub const fn rotates_at(&self, head_dim: u32) -> bool {
         match self.rotation {
-            Rotation::None => false,
-            Rotation::Wht { sizes } => {
-                let mut i = 0;
-                while i < sizes.len() {
-                    if sizes[i] == head_dim {
-                        return true;
-                    }
-                    i += 1;
-                }
-                false
-            }
+            Rotation::None | Rotation::InKernel { .. } => false,
+            Rotation::Wht { sizes } => contains(sizes, head_dim),
             Rotation::Fwht { block } => block != 0 && head_dim.is_multiple_of(block),
+        }
+    }
+
+    /// 2026-10-18: True when this codec's kernels can hold a `head_dim` row. An in-kernel
+    /// rotation needs whole blocks at a head dim its kernels are built for (`head_dims` lists
+    /// them all); every other codec stores any head dim.
+    pub const fn fits_head_dim(&self, head_dim: u32) -> bool {
+        match self.rotation {
+            Rotation::InKernel { block } => {
+                block != 0 && head_dim.is_multiple_of(block) && contains(self.head_dims, head_dim)
+            }
+            Rotation::None | Rotation::Wht { .. } | Rotation::Fwht { .. } => true,
         }
     }
 
@@ -321,6 +348,7 @@ impl KvCodecSpec {
                 h
             }
             Rotation::Fwht { block } => h.byte(2).word(block as u64),
+            Rotation::InKernel { block } => h.byte(3).word(block as u64),
         };
         h = match self.trellis {
             None => h.byte(0),

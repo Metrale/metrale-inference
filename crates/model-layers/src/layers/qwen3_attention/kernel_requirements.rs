@@ -93,10 +93,7 @@ mod tests {
     /// WHT bookends exactly at head dims 128, 256 and 512.
     #[test]
     fn rotated_dtypes_require_prefill_and_the_bookends_at_wht_sizes() {
-        let rotated: Vec<KvCacheDtype> = KvCacheDtype::ALL
-            .into_iter()
-            .filter(|&d| rotates(d))
-            .collect();
+        let rotated: Vec<KvCacheDtype> = KvCacheDtype::all().filter(|&d| rotates(d)).collect();
         assert_eq!(rotated.len(), 13, "four turbo codecs and nine pairs");
         for d in rotated {
             for hd in [128, 256, 512] {

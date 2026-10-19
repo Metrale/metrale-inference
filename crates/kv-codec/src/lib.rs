@@ -31,6 +31,7 @@ mod contiguous_table;
 mod indexer;
 mod kernel_key;
 mod kernel_table;
+mod kernel_table_tq128;
 mod label;
 mod pair;
 mod plan;
