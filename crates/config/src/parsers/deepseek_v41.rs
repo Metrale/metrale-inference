@@ -9,14 +9,21 @@
 //! Invariants:
 //! - `rope_theta` is the uncompressed-layer base and `compress_rope_theta` the compressed one;
 //!   neither overwrites the other (unlike `deepseek_v4`).
-//! - The Engram hash multipliers, primes and offsets, and the compressed-vocab token map, are
-//!   not in `config.json`; they stay empty here and the loader supplies them as data.
+//! - The Engram hash multipliers, primes and offsets are not in `config.json`; they are derived
+//!   here (`engram`) as the publisher derives them, and each layer's prime sum must equal its
+//!   `engram_num_embeddings` entry. The compressed-vocab token map needs the tokenizer and is
+//!   not built here.
+//! - `layer_types`: compress ratio 0 is `SlidingAttention` (window only), any other ratio
+//!   `SparseAttention` (window plus indexed compressed KV).
 
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::Value;
 
 use super::super::{LayerType, ModelConfig, finalize_config};
 use super::deepseek_v4::validate_dspark_contract;
+
+mod engram;
+mod numpy_rng;
 
 const FAMILY: &str = "DeepSeek-V4.1";
 
@@ -156,6 +163,23 @@ pub fn parse_deepseek_v41(json: &str) -> Result<ModelConfig> {
             config.engram_num_embeddings.len(),
             config.engram_layer_ids.len()
         );
+        let layout = engram::engram_layout(&engram::EngramSpec {
+            layer_ids: &config.engram_layer_ids,
+            max_ngram: config.engram_max_ngram_size,
+            n_heads: config.engram_n_heads,
+            vocab_size: config.engram_vocab_size as u64,
+            compressed_vocab_size: config.engram_compressed_vocab_size as u64,
+        })
+        .with_context(|| format!("{FAMILY}: Engram layout"))?;
+        ensure!(
+            layout.rows_per_layer == config.engram_num_embeddings,
+            "{FAMILY}: Engram prime sums {:?} differ from engram_num_embeddings {:?}",
+            layout.rows_per_layer,
+            config.engram_num_embeddings
+        );
+        config.engram_multipliers = layout.multipliers;
+        config.engram_primes = layout.primes;
+        config.engram_offsets = layout.offsets;
     }
 
     config.num_experts = config.n_routed_experts;
@@ -166,7 +190,13 @@ pub fn parse_deepseek_v41(json: &str) -> Result<ModelConfig> {
     config.qk_nope_head_dim = config.head_dim - config.qk_rope_head_dim;
     config.rotary_dim = config.qk_rope_head_dim;
     config.partial_rotary_factor = config.qk_rope_head_dim as f64 / config.head_dim as f64;
-    config.layer_types = vec![LayerType::FullAttention; layers];
+    config.layer_types = config.compress_ratios[..layers]
+        .iter()
+        .map(|&r| match r {
+            0 => LayerType::SlidingAttention,
+            _ => LayerType::SparseAttention,
+        })
+        .collect();
 
     let mtp = u64_key(text, "num_nextn_predict_layers")? as usize;
     config.num_mtp_modules = mtp;

@@ -181,6 +181,10 @@ pub(crate) struct LayerSource {
     /// 2026-09-30: Pattern letters to layer kinds.
     #[serde(default)]
     pub chars: BTreeMap<String, String>,
+    /// 2026-10-18: The key whose integer value counts trailing list entries that are draft
+    /// layers, not text layers (DeepSeek-V4.1 `compress_ratios` lists the MTP layers after the
+    /// text stack). The list must hold exactly `count` + that many entries; the tail is dropped.
+    pub draft_tail: Option<String>,
 }
 
 /// 2026-09-30: How one dim is read.
@@ -215,6 +219,21 @@ pub(crate) struct DimFull {
     pub default: Option<u64>,
     /// 2026-09-30: The values the circuit models; any other is refused.
     pub allowed: Option<Vec<u64>>,
+    /// 2026-10-18: The index of the first entry equal to `value` in the integer list `key`
+    /// (the first ratio-1 layer of DeepSeek-V4.1 `compress_ratios`); no such entry is refused.
+    pub first_index: Option<FirstIndex>,
+}
+
+/// 2026-10-18: See [`DimFull::first_index`].
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FirstIndex {
+    pub key: String,
+    pub value: u64,
+    /// 2026-10-18: The key whose integer ends (exclusive) the run of `value` that starts at
+    /// the first index: every entry in between must equal `value` (the circuit takes one
+    /// template for the whole run).
+    pub run_to: Option<String>,
 }
 
 /// 2026-09-30: How one config key is classified.

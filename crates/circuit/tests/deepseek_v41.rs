@@ -378,3 +378,121 @@ fn the_three_box_rank_plan_boots_at_the_ceiling_and_holds_16_sequences_to_64k() 
         Err(BoxPlanError::Over { .. })
     ));
 }
+
+fn edited_config(edit: impl Fn(&mut Value)) -> String {
+    let mut v: Value = serde_json::from_str(&common::read(CONFIG)).expect("config parses");
+    edit(&mut v);
+    v.to_string()
+}
+
+/// 2026-10-18: The checkpoint alone picks this circuit: the config map gives the instance's
+/// shape, carries the math parameters, and the declared plan instantiates the same circuit.
+#[test]
+fn the_config_map_reproduces_the_instance_shape() {
+    let config = common::read(CONFIG);
+    let m = metrale_circuit::map_checkpoint(&config).expect("the config maps");
+    assert_eq!(m.arch, "deepseek_v41");
+    assert_eq!(m.shape, instance().shape);
+    for (k, v) in [
+        ("swiglu_limit", "10.0"),
+        ("routed_scaling_factor", "1.5"),
+        ("compress_rope_theta", "160000"),
+        ("rope_scaling.rope_type", "\"yarn\""),
+        ("engram_compressed_vocab_size", "99092"),
+    ] {
+        assert_eq!(m.params.get(k).map(String::as_str), Some(v), "{k}");
+    }
+    let r = metrale_circuit::resolve_checkpoint(
+        &config,
+        metrale_circuit::QuantMetadata::default(),
+        &metrale_circuit::ServePrecision::Declared,
+    )
+    .expect("the checkpoint resolves");
+    // 2026-10-18: Every weight the checkpoint stores with a scale takes the instance's format
+    // from `quantization_config` alone. The block cannot say which linears the publisher kept
+    // 16-bit (the reference code fixes the router, head, compressor and indexer projections at
+    // bf16), so the unscaled ones are not compared here.
+    let t = tensors();
+    let scaled = |n: &metrale_circuit::ir::Node| {
+        n.binding
+            .first()
+            .is_some_and(|b| t.contains_key(&format!("{b}.scale")))
+    };
+    let formats = |c: &Circuit| {
+        c.nodes
+            .iter()
+            .filter(|n| n.weight.is_some() && scaled(n))
+            .map(|n| (n.id.clone(), n.weight))
+            .collect::<BTreeMap<_, _>>()
+    };
+    let (got, want) = (formats(&r.circuit), formats(&circuit()));
+    assert!(
+        want.get("l3.moe.experts_down") == Some(&Some(Format::Mxfp4 { group: 32 })),
+        "{want:?}"
+    );
+    assert_eq!(got, want);
+}
+
+#[test]
+fn the_config_map_refuses_what_the_circuit_does_not_model() {
+    let refused = |edit: &dyn Fn(&mut Value), want: &str| {
+        let e = metrale_circuit::map_checkpoint(&edited_config(edit))
+            .map(|_| ())
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains(want), "{want}: {e}");
+    };
+    // 2026-10-18: The draft tail must be exactly `num_nextn_predict_layers` entries.
+    refused(
+        &|v| {
+            v["text_config"]["compress_ratios"]
+                .as_array_mut()
+                .expect("a list")
+                .pop();
+        },
+        "40 text layers + 3 draft layers",
+    );
+    refused(
+        &|v| v["text_config"]["num_nextn_predict_layers"] = 2.into(),
+        "40 text layers + 2 draft layers",
+    );
+    // 2026-10-18: A ratio-2 layer after the first ratio-1 layer would take the HCA template.
+    refused(
+        &|v| v["text_config"]["compress_ratios"][25] = 2.into(),
+        "must all be 1",
+    );
+    refused(
+        &|v| {
+            for r in v["text_config"]["compress_ratios"]
+                .as_array_mut()
+                .expect("a list")
+            {
+                if r == 1 {
+                    *r = 2.into();
+                }
+            }
+        },
+        "the first entry equal to 1",
+    );
+    refused(
+        &|v| v["text_config"]["compress_ratios"][3] = 4.into(),
+        "a layer kind this arch maps",
+    );
+    refused(
+        &|v| v["text_config"]["kv_source_layer_ids"][1] = 9.into(),
+        "kv_source_layer_ids",
+    );
+    refused(
+        &|v| v["text_config"]["engram_n_heads"] = 16.into(),
+        "engram_n_heads",
+    );
+    refused(
+        &|v| v["text_config"]["scoring_func"] = "sigmoid".into(),
+        "scoring_func",
+    );
+    refused(
+        &|v| v["text_config"]["mla_rope_scaling"] = 1.into(),
+        "mla_rope_scaling",
+    );
+    refused(&|v| v["mtp_layout"] = 1.into(), "mtp_layout");
+}

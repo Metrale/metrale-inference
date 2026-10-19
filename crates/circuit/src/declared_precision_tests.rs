@@ -110,3 +110,28 @@ fn routed_expert_projections_inherit_the_fused_experts_module() {
         "only a routed expert's projection inherits"
     );
 }
+
+/// 2026-10-18: The HF `fp8` dialect's `expert_dtype: "fp4"` declares MXFP4 routed experts
+/// (E8M0 per 32), which is not NVFP4 at group 32; the other linears stay FP8 block-scaled.
+#[test]
+fn fp4_routed_experts_of_the_fp8_dialect_are_mxfp4() {
+    let p = plan(serde_json::json!({
+        "quant_method": "fp8",
+        "activation_scheme": "dynamic",
+        "weight_block_size": [32, 32],
+        "scale_fmt": "ue8m0",
+        "expert_dtype": "fp4",
+    }));
+    let d = DeclaredPrecision::new(&p);
+    assert_eq!(
+        d.linear("layers.3.ffn.experts.0.w1").weight,
+        Format::Mxfp4 { group: 32 }
+    );
+    assert_eq!(
+        d.linear("layers.3.attn.wq_b").weight,
+        Format::Fp8E4m3 {
+            scale: Scale::Block(32, 32)
+        }
+    );
+    assert!(d.refusals().is_empty());
+}

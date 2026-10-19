@@ -68,7 +68,11 @@ fn publisher_config_maps_every_field_the_model_reads() {
     assert_eq!(c.sliding_window, 128);
     assert_eq!(c.rms_norm_eps, 1e-20);
     assert_eq!(c.compress_ratios.len(), 43);
-    assert_eq!(c.layer_types, vec![LayerType::FullAttention; 40]);
+    // 2026-10-18: Ratio 0 (layers 0-1) is window-only; every other layer also reads the
+    // indexed compressed KV.
+    let mut kinds = vec![LayerType::SparseAttention; 40];
+    kinds[..2].fill(LayerType::SlidingAttention);
+    assert_eq!(c.layer_types, kinds);
     // 2026-10-18: Both rope bases are kept; the compressed one does not replace the other.
     assert_eq!((c.rope_theta, c.compress_rope_theta), (10000.0, 160000.0));
     assert_eq!(
@@ -101,7 +105,16 @@ fn publisher_config_maps_every_field_the_model_reads() {
         (c.engram_vocab_size, c.engram_compressed_vocab_size),
         (16_000_000, 99092)
     );
-    assert!(c.engram_multipliers.is_empty() && c.engram_primes.is_empty());
+    // 2026-10-18: Derived at parse time (`parsers/deepseek_v41/engram.rs` holds the golden).
+    assert_eq!(
+        (
+            c.engram_multipliers.len(),
+            c.engram_primes.len(),
+            c.engram_offsets.len()
+        ),
+        (8, 48, 48)
+    );
+    assert_eq!(c.engram_primes[0], 16_000_057);
     assert_eq!((c.num_mtp_modules, c.mtp_num_hidden_layers), (3, 3));
     assert_eq!(c.dspark_target_layer_ids, vec![37, 38, 39]);
     assert_eq!((c.bos_token_id, c.eos_token_id), (0, 1));
@@ -193,6 +206,17 @@ fn unimplemented_or_inconsistent_values_are_refused() {
         (
             with(&["text_config", "engram_layer_ids"], serde_json::json!([1])),
             "engram_num_embeddings has 2 entries for 1",
+        ),
+        (
+            with(
+                &["text_config", "engram_num_embeddings"],
+                serde_json::json!([384006168, 384016681]),
+            ),
+            "differ from engram_num_embeddings",
+        ),
+        (
+            with(&["text_config", "engram_compressed_vocab_size"], 0.into()),
+            "compressed_vocab_size must be > 0",
         ),
         (
             with(

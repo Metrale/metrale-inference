@@ -49,9 +49,14 @@ impl<'a> DeclaredPrecision<'a> {
 }
 
 /// 2026-09-30: The weight format `o` declares, if the circuit has one.
+/// 2026-10-18: MXFP4 (`Operand::MXFP4`: E2M1, one E8M0 scale per 32, no tensor scale) is its
+/// own format; any other 4-bit float group is NVFP4 at that group.
 fn weight_format(o: Operand) -> Option<Format> {
     if o.kind != NumKind::Float {
         return None;
+    }
+    if o == Operand::MXFP4 {
+        return Some(Format::Mxfp4 { group: 32 });
     }
     match (o.bits, o.granularity) {
         (4, Granularity::TensorGroup(g) | Granularity::Group(g)) => {
