@@ -341,3 +341,18 @@ fn a_mismatched_layer_or_an_oversized_call_is_refused() {
         .unwrap_err();
     assert!(e.to_string().contains("exceed"), "{e}");
 }
+
+#[test]
+fn the_resident_moe_builds_on_a_width_off_the_kquant_block() {
+    // 2026-10-19: A rank's expert slice need not be a multiple of the 256-value K-quant block;
+    // only the K-quant expert path refuses it, naming both widths.
+    let g = MockGpuBackend::new();
+    let wide = MoeV41Cfg {
+        inter: 1152,
+        ..cfg()
+    };
+    MoeV41::new(&g, wide.clone(), at_defaults()).unwrap();
+    let e = wide.require_kquant_experts().unwrap_err().to_string();
+    assert!(e.contains("256 / 1152"), "{e}");
+    cfg().require_kquant_experts().unwrap();
+}

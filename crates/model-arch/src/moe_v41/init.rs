@@ -6,7 +6,8 @@
 //!
 //! Owner: model-arch (DeepSeek-V4.1 MoE).
 //! Invariants:
-//! - `new` refuses a config whose `dim` or `inter` is not a multiple of 256.
+//! - `new` takes any `dim` and `inter`; the K-quant expert path checks its own shape first
+//!   ([`MoeV41Cfg::require_kquant_experts`]).
 //! - The per-expert buffers (`gate_out`, `up_out`, `h`, `h_q8`, `down_out`)
 //!   hold at least `topk` rows whatever `max_tokens` is.
 
@@ -21,14 +22,23 @@ use metrale_model_layers::layers::ops::{
     KQUANT_MODULE, kquant_mmq_act_bytes, kquant_q8_1_rows_bytes,
 };
 
+impl MoeV41Cfg {
+    /// 2026-10-19: Refuses a shape the K-quant expert kernels cannot run: `dim` and `inter` must
+    /// be multiples of the 256-value K-quant block. The resident block-scaled experts have no
+    /// such bound.
+    pub fn require_kquant_experts(&self) -> Result<()> {
+        ensure!(
+            self.dim.is_multiple_of(256) && self.inter.is_multiple_of(256),
+            "K-quant experts need dim and inter to be multiples of 256 (got {} / {})",
+            self.dim,
+            self.inter
+        );
+        Ok(())
+    }
+}
+
 impl MoeV41 {
     pub fn new(gpu: &dyn GpuBackend, cfg: MoeV41Cfg, levers: Ds41Levers) -> Result<Self> {
-        ensure!(
-            cfg.dim.is_multiple_of(256) && cfg.inter.is_multiple_of(256),
-            "K-quant experts need dim and inter to be multiples of 256 (got {} / {})",
-            cfg.dim,
-            cfg.inter
-        );
         let m = cfg.max_tokens;
         // 2026-09-25: The single-token arm (`routed_m1`) runs every selected
         // expert as a row of the per-expert buffers, so they hold at least

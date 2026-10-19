@@ -9,7 +9,7 @@
 //! The charge of a tensor is the device bytes the bind allocates for it ([`charge`]): a rank's
 //! kept part of a per-layer projection, routed expert table or scale plane in its stored
 //! precision; twice the stored bytes for the engram projection, decoded to bf16; the whole
-//! embedding, head and final norm. Tensors read on the host per step (the engram row tables) or
+//! embedding, head and final norm. Tensors of layers past the config's layer count, tensors read on the host per step (the engram row tables) or
 //! never read (the MTP head, the vision tower, the aligner, the image markers, the vision-language
 //! router bias) charge nothing. The f32 widening of the norms, a few MiB, is not charged.
 //!
@@ -41,8 +41,8 @@ pub enum Placement {
     Host,
 }
 
-/// 2026-10-19: Where `n` goes.
-pub fn placement(n: &str) -> Placement {
+/// 2026-10-19: Where `n` goes in a model of `layers` layers; a layer past them is never read.
+pub fn placement(n: &str, layers: usize) -> Placement {
     if WHOLE.contains(&n) {
         return Placement::Whole;
     }
@@ -53,6 +53,9 @@ pub fn placement(n: &str) -> Placement {
     else {
         return Placement::Host;
     };
+    if l >= layers {
+        return Placement::Host;
+    }
     if let Some((e, table)) = rest
         .strip_prefix("ffn.experts.")
         .and_then(|r| r.split_once('.'))
@@ -89,15 +92,16 @@ fn kept(shape: &[usize], bytes: usize, cut: &Cut) -> usize {
     }
 }
 
-/// 2026-10-19: The device bytes `local`'s rank allocates for the tensor `n`.
-pub fn charge(local: &Local, n: &str, dtype: WeightDtype, shape: &[usize]) -> usize {
+/// 2026-10-19: The device bytes `local`'s rank of a `layers`-layer model allocates for the
+/// tensor `n`.
+pub fn charge(local: &Local, layers: usize, n: &str, dtype: WeightDtype, shape: &[usize]) -> usize {
     let Some(bytes) = shape
         .iter()
         .try_fold(dtype.byte_size(), |a, &d| a.checked_mul(d))
     else {
         return usize::MAX;
     };
-    match placement(n) {
+    match placement(n, layers) {
         Placement::Whole => bytes,
         Placement::Host => 0,
         Placement::Expert(table) => match expert_cut(table, local) {
@@ -131,7 +135,10 @@ pub fn defer_charge(config: &ModelConfig) -> DeferCharge {
         tracing::warn!("deepseek-v4.1: pre-flight charges every tensor whole: {e:#}");
         Local::whole(config)
     });
-    Arc::new(move |n: &str, dtype: WeightDtype, shape: &[usize]| charge(&local, n, dtype, shape))
+    let layers = config.num_hidden_layers;
+    Arc::new(move |n: &str, dtype: WeightDtype, shape: &[usize]| {
+        charge(&local, layers, n, dtype, shape)
+    })
 }
 
 #[cfg(test)]

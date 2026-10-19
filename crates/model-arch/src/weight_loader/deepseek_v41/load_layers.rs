@@ -66,6 +66,7 @@ pub fn load_layers(
         engram_q2k: levers.engram_q2k,
     };
     let plan = build::plan(config, &levers, &src, &Local::whole(config), false)?;
+    plan.moe_cfg.require_kquant_experts()?;
     let cache_gib = levers.expert_cache_gib;
     let cache_bytes = (cache_gib * (1u64 << 30) as f64) as usize;
     let reader_threads = levers.reader_threads;
