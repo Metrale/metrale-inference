@@ -147,7 +147,7 @@ jobs:
       - name: Build corpus (incremental against the published one)
         id: rag
         continue-on-error: true
-        uses: Avarok-Cybersecurity/AutoRepoRAG@dff770896c2c0f9fe0cfaf26ef7f70a75251ab20 # v2.0.0
+        uses: Avarok-Cybersecurity/AutoRepoRAG@711dbe0c9e6d0597af6051cd1e28a95b92afc865 # v2.2.1
         with:
           source-dir: ${{ inputs.source_repo != '' && '.sources/external' || '' }}
           collection: ${{ inputs.base }}
@@ -202,7 +202,7 @@ jobs:
       # inspected; the publish job ignores it unless the status is `built`.
       - name: Upload CI copy (30-day artifact)
         if: steps.rag.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ${{ inputs.base }}
           path: coderag-stage/
