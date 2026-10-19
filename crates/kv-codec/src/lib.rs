@@ -27,10 +27,10 @@
 
 extern crate alloc;
 
+mod contiguous_table;
 mod kernel_key;
 mod kernel_table;
 mod label;
-mod metal_table;
 mod pair;
 mod plan;
 mod registry;
@@ -38,10 +38,10 @@ mod resolve;
 mod rows;
 mod spec;
 
+pub use contiguous_table::{contiguous_kv_kernel_names, contiguous_kv_pairs};
 pub use kernel_key::{HeadDimClass, KvKernelKey, KvKernelSet, KvOp, ResolvedKvKernels};
 pub use kernel_table::{KernelName, kv_kernel_names};
 pub use label::KvPlanLabel;
-pub use metal_table::{metal_kv_kernel_names, metal_kv_pairs};
 pub use pair::{KvPair, accepted};
 pub use plan::{
     KvCachePlan, KvLayoutEpoch, KvSide, KvSidePlan, KvTransition, LayerIx, LayerKvPlan,

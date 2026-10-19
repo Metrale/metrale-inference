@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-10-18: The Metal backend's KV kernel table, keyed by [`KvKernelKey`] like the CUDA one.
-//! The Metal cache is contiguous per sequence and its kernels are a different set (a quantizing
-//! append and a dequantizing single-token decode per codec pair), so it is its own table, read
-//! by its own resolver. It replaces the Metal forward's private dtype enum.
+//! 2026-10-18: The KV kernel table of a cache that is contiguous per sequence, keyed by
+//! [`KvKernelKey`] like the paged table. Its kernels are a different set (a quantizing append and
+//! a dequantizing single-token decode per codec pair), so it is its own table, read by its own
+//! resolver. The Metal backend serves it today; it replaces the Metal forward's private dtype
+//! enum. The core names the cache layout, never the vendor (VBOP).
 //!
 //! Owner: kv-codec.
 //! Invariants:
@@ -24,7 +25,7 @@ use KvCodecId::{Bf16, Turbo2, Turbo3, Turbo4, Turbo8};
 
 /// 2026-10-18: The append, decode and WHT rows of one rotated symmetric codec. `$s` is the
 /// codec's name, which the Metal kernels carry as their suffix.
-macro_rules! metal_turbo {
+macro_rules! contiguous_turbo {
     ($k:expr, $s:literal) => {
         [
             r(
@@ -65,7 +66,7 @@ macro_rules! metal_turbo {
 
 /// 2026-10-18: The append and decode rows of a bf16-K, rotated-V pair. `$s` is the pair's
 /// canonical name.
-macro_rules! metal_bf16k {
+macro_rules! contiguous_bf16k {
     ($v:expr, $s:literal) => {
         [
             r(
@@ -89,7 +90,7 @@ macro_rules! metal_bf16k {
 }
 
 /// 2026-10-18: The table, one slice per codec or pair.
-static METAL: &[&[KernelRow]] = &[
+static CONTIGUOUS: &[&[KernelRow]] = &[
     &[
         r(
             KvOp::Write,
@@ -108,49 +109,49 @@ static METAL: &[&[KernelRow]] = &[
             "attention_decode",
         ),
     ],
-    &metal_turbo!(Turbo8, "turbo8"),
-    &metal_turbo!(Turbo4, "turbo4"),
-    &metal_turbo!(Turbo3, "turbo3"),
-    &metal_turbo!(Turbo2, "turbo2"),
-    &metal_bf16k!(Turbo4, "bf16k_turbo4v"),
-    &metal_bf16k!(Turbo3, "bf16k_turbo3v"),
-    &metal_bf16k!(Turbo2, "bf16k_turbo2v"),
+    &contiguous_turbo!(Turbo8, "turbo8"),
+    &contiguous_turbo!(Turbo4, "turbo4"),
+    &contiguous_turbo!(Turbo3, "turbo3"),
+    &contiguous_turbo!(Turbo2, "turbo2"),
+    &contiguous_bf16k!(Turbo4, "bf16k_turbo4v"),
+    &contiguous_bf16k!(Turbo3, "bf16k_turbo3v"),
+    &contiguous_bf16k!(Turbo2, "bf16k_turbo2v"),
 ];
 
 fn rows() -> impl Iterator<Item = &'static KernelRow> {
-    METAL.iter().flat_map(|family| family.iter())
+    CONTIGUOUS.iter().flat_map(|family| family.iter())
 }
 
-/// 2026-10-18: The Metal entry point `key` names, or `None` when Metal has no kernel for it.
-fn metal_name(key: KvKernelKey) -> Option<KernelName> {
+/// 2026-10-18: The entry point `key` names, or `None` when the table has no kernel for it.
+fn contiguous_name(key: KvKernelKey) -> Option<KernelName> {
     rows().find(|row| row.key == key).map(|row| row.name)
 }
 
-/// 2026-10-18: Every pair the Metal table has an append for, in table order.
-pub fn metal_kv_pairs() -> impl Iterator<Item = KvPair> {
+/// 2026-10-18: Every pair the contiguous table has an append for, in table order.
+pub fn contiguous_kv_pairs() -> impl Iterator<Item = KvPair> {
     rows()
         .filter(|row| row.key.op == KvOp::Write)
         .map(|row| KvPair::from_parts(row.key.k, row.key.v.unwrap_or(row.key.k)))
 }
 
-/// 2026-10-18: The Metal kernels of a cache holding `pair`: the append (`write`), the decode,
-/// and the WHT bookends when a side is rotated. Metal has no head_dim-512, split-K or prefill
-/// KV kernels, so those are `None`. A pair without an append or decode is refused with
+/// 2026-10-18: The contiguous-cache kernels of a cache holding `pair`: the append (`write`), the
+/// decode, and the WHT bookends when a side is rotated. The table has no head_dim-512, split-K or
+/// prefill KV kernels, so those are `None`. A pair without an append or decode is refused with
 /// `KvCapabilityMissing`.
-pub fn metal_kv_kernel_names(pair: KvPair) -> Result<ResolvedKvKernels<KernelName>, Error> {
-    let at = |op| metal_name(KvKernelKey::new(op, pair, Model));
+pub fn contiguous_kv_kernel_names(pair: KvPair) -> Result<ResolvedKvKernels<KernelName>, Error> {
+    let at = |op| contiguous_name(KvKernelKey::new(op, pair, Model));
     let missing = |what| error!(ErrorCode::KvCapabilityMissing, pair.name(), what);
-    let write = at(KvOp::Write).ok_or_else(|| missing("a Metal append kernel"))?;
-    let decode = at(KvOp::DecodeAttn).ok_or_else(|| missing("a Metal decode kernel"))?;
+    let write = at(KvOp::Write).ok_or_else(|| missing("a contiguous-cache append kernel"))?;
+    let decode = at(KvOp::DecodeAttn).ok_or_else(|| missing("a contiguous-cache decode kernel"))?;
     let wht = match [pair.k(), pair.v()]
         .into_iter()
         .find(|&id| spec(id).rotates())
     {
         None => None,
         Some(side) => {
-            let key = |op| metal_name(KvKernelKey::new(op, KvPair::symmetric(side), Model));
+            let key = |op| contiguous_name(KvKernelKey::new(op, KvPair::symmetric(side), Model));
             let both = key(KvOp::WhtFwd).zip(key(KvOp::WhtInv));
-            Some(both.ok_or_else(|| missing("the Metal WHT bookends"))?)
+            Some(both.ok_or_else(|| missing("the contiguous-cache WHT bookends"))?)
         }
     };
     Ok(ResolvedKvKernels {
@@ -164,5 +165,5 @@ pub fn metal_kv_kernel_names(pair: KvPair) -> Result<ResolvedKvKernels<KernelNam
 }
 
 #[cfg(test)]
-#[path = "metal_table_tests.rs"]
+#[path = "contiguous_table_tests.rs"]
 mod tests;

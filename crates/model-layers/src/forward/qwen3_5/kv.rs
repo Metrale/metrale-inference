@@ -15,7 +15,9 @@
 use anyhow::Result;
 use metrale_error::{ErrorCode, error};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelArg, KernelHandle};
-use metrale_kv_codec::{KvPair, ResolvedKvKernels, metal_kv_kernel_names, metal_kv_pairs, spec};
+use metrale_kv_codec::{
+    KvPair, ResolvedKvKernels, contiguous_kv_kernel_names, contiguous_kv_pairs, spec,
+};
 
 /// 2026-10-18: The Metal KV kernels of every pair the Metal table serves, resolved once at
 /// startup so a missing kernel fails there, whichever pair the run uses.
@@ -26,9 +28,9 @@ pub struct MetalKvKernels {
 impl MetalKvKernels {
     /// 2026-10-18: Looks up the append, decode and WHT kernels of every served pair.
     pub fn resolve(gpu: &dyn GpuBackend) -> Result<Self> {
-        let pairs = metal_kv_pairs()
+        let pairs = contiguous_kv_pairs()
             .map(|pair| {
-                let names = metal_kv_kernel_names(pair)?;
+                let names = contiguous_kv_kernel_names(pair)?;
                 Ok((pair, names.try_map(|n| gpu.kernel(n.module, n.func))?))
             })
             .collect::<Result<_>>()?;
@@ -84,7 +86,7 @@ impl LayerKvCache {
     /// Refuses a pair the Metal table does not serve, and a quantized side whose group does not
     /// divide `kv_dim`.
     pub fn alloc(gpu: &dyn GpuBackend, pair: KvPair, max_seq: u32, kv_dim: u32) -> Result<Self> {
-        metal_kv_kernel_names(pair)?;
+        contiguous_kv_kernel_names(pair)?;
         for side in [pair.k(), pair.v()] {
             let s = spec(side);
             anyhow::ensure!(

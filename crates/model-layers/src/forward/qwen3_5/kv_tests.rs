@@ -9,7 +9,7 @@ use metrale_error::{Error, ErrorCode};
 use metrale_gpu_runtime::gpu::mock::{MockArg, MockGpuBackend};
 use metrale_gpu_runtime::gpu::{DevicePtr, KernelHandle};
 use metrale_kv_codec::{
-    KernelName, KvPair, ResolvedKvKernels, metal_kv_kernel_names, metal_kv_pairs,
+    KernelName, KvPair, ResolvedKvKernels, contiguous_kv_kernel_names, contiguous_kv_pairs,
 };
 
 use super::{KvStepDims, KvStepIo, LayerKvCache, MetalKvKernels, append_and_attend};
@@ -112,7 +112,7 @@ fn alloc_refuses_a_kv_dim_the_group_does_not_divide() {
 
 /// 2026-10-18: The legacy `Qwen35Kernels::resolve` lookups that are not KV kernels, verbatim.
 /// Its KV lookups are golden-tested against the legacy names in the codec crate's
-/// `metal_table_tests`, so here they come from the Metal table.
+/// `contiguous_table_tests`, so here they come from the Metal table.
 const LEGACY_NON_KV_LOOKUPS: &[(&str, &str)] = &[
     ("rms_norm", "rms_norm"),
     ("rope_apply", "rope_apply"),
@@ -140,8 +140,8 @@ fn resolve_looks_up_the_legacy_kernel_set() {
         .iter()
         .map(|&(m, f)| (m.to_owned(), f.to_owned()))
         .collect();
-    for p in metal_kv_pairs() {
-        let k = metal_kv_kernel_names(p).unwrap();
+    for p in contiguous_kv_pairs() {
+        let k = contiguous_kv_kernel_names(p).unwrap();
         want.extend([name(k.write), name(k.decode)]);
         want.extend(k.wht.into_iter().flat_map(|(a, b)| [name(a), name(b)]));
     }
@@ -159,7 +159,7 @@ fn resolve_looks_up_the_legacy_kernel_set() {
 #[test]
 fn a_missing_metal_kv_kernel_fails_resolve() {
     let gpu = MockGpuBackend::new();
-    let k = metal_kv_kernel_names(pair("bf16k_turbo3v")).unwrap();
+    let k = contiguous_kv_kernel_names(pair("bf16k_turbo3v")).unwrap();
     gpu.deny_kernel(k.decode.module, k.decode.func);
     assert!(Qwen35Kernels::resolve(&gpu).is_err());
 }

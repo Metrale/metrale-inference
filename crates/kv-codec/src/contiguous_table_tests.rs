@@ -95,10 +95,10 @@ const LEGACY: &[(&str, &str, &str, &str, &str, bool, bool)] = &[
 /// 2026-10-18: Each formerly supported Metal dtype resolves the same append and decode kernels,
 /// its sides rotate exactly as the enum said, and a rotated cache gets the one WHT pair.
 #[test]
-fn metal_names_and_rotation_match_the_legacy_enum() {
+fn names_and_rotation_match_the_legacy_enum() {
     for &(s, am, af, dm, df, k_rot, v_rot) in LEGACY {
         let p = pair(s);
-        let names = metal_kv_kernel_names(p).unwrap_or_else(|e| panic!("{s}: {e}"));
+        let names = contiguous_kv_kernel_names(p).unwrap_or_else(|e| panic!("{s}: {e}"));
         assert_eq!(names.write, n(am, af), "{s}");
         assert_eq!(names.decode, n(dm, df), "{s}");
         assert_eq!(spec(p.k()).rotates(), k_rot, "{s} K");
@@ -119,8 +119,8 @@ fn metal_names_and_rotation_match_the_legacy_enum() {
 /// 2026-10-18: The pairs Metal serves are exactly the legacy enum's, in its order, so the
 /// startup resolution loads the same kernel set.
 #[test]
-fn metal_pairs_are_the_legacy_set() {
-    let got: Vec<&str> = metal_kv_pairs().map(KvPair::name).collect();
+fn pairs_are_the_legacy_set() {
+    let got: Vec<&str> = contiguous_kv_pairs().map(KvPair::name).collect();
     let want: Vec<&str> = LEGACY.iter().map(|row| row.0).collect();
     assert_eq!(got, want);
 }
@@ -128,7 +128,7 @@ fn metal_pairs_are_the_legacy_set() {
 /// 2026-10-18: Every accepted pair the legacy enum did not parse is refused with
 /// `KvCapabilityMissing`, never served with another pair's kernels.
 #[test]
-fn other_pairs_are_refused_on_metal() {
+fn other_pairs_are_refused() {
     let accepted = KvCodecId::ALL
         .into_iter()
         .map(KvPair::symmetric)
@@ -138,7 +138,7 @@ fn other_pairs_are_refused_on_metal() {
         if LEGACY.iter().any(|row| row.0 == p.name()) {
             continue;
         }
-        let err = metal_kv_kernel_names(p).expect_err(p.name());
+        let err = contiguous_kv_kernel_names(p).expect_err(p.name());
         assert_eq!(err.code(), ErrorCode::KvCapabilityMissing, "{p}");
         refused += 1;
     }
@@ -147,7 +147,7 @@ fn other_pairs_are_refused_on_metal() {
 
 /// 2026-10-18: No key appears twice.
 #[test]
-fn metal_keys_are_unique() {
+fn keys_are_unique() {
     let all: Vec<&KernelRow> = rows().collect();
     for (i, a) in all.iter().enumerate() {
         for b in &all[i + 1..] {

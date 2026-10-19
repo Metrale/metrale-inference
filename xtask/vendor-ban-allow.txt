@@ -144,7 +144,7 @@ crates/gpu-examples/examples/lora_apply_microtest.rs 3
 crates/gpu-examples/examples/metal_qwen35_inference/alloc.rs 5
 crates/gpu-examples/examples/metal_qwen35_inference/full_attention.rs 3
 crates/gpu-examples/examples/metal_qwen35_inference/linear_attention.rs 3
-crates/gpu-examples/examples/metal_qwen35_inference/main.rs 5
+crates/gpu-examples/examples/metal_qwen35_inference/main.rs 4
 crates/gpu-examples/examples/moe_blend_microtest.rs 3
 crates/gpu-examples/examples/moe_gateup_silu_e4m3_microtest.rs 3
 crates/gpu-examples/examples/moe_l2_reuse_microtest.rs 3
