@@ -7,7 +7,7 @@
 //! Invariants: a block is the group's fp16 norm (little-endian) followed by its index payload,
 //! zero-padded to an even length; `block_bytes() * 8 / 128` is the codec's bits per value.
 
-use crate::codebooks::{TCQ1_K, TCQ1_V, TCQ2_K, TCQ2_V, TCQ3_K, TCQ3_V, TURBO4_LEVELS};
+use crate::codebooks::{TCQ1_K, TCQ1_V, TCQ2_K, TCQ2_V, TCQ3_K, TCQ3_V, TURBO4_LEVELS, TURBO4_MID};
 use crate::trellis::Trellis;
 
 /// 2026-10-18: Elements per group: one norm, one rotation, one block.
@@ -46,6 +46,12 @@ impl Tq128Codec {
             Self::Tcq1 => "turbo1_tcq",
             Self::Turbo4N128 => "turbo4_n128",
         }
+    }
+
+    /// 2026-10-18: The codec whose cache dtype name is `name`, the name the KV-codec registry
+    /// row carries; `None` for any other name.
+    pub fn named(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|c| c.name() == name)
     }
 
     /// 2026-10-18: The trellis a TCQ codec quantizes along; `None` for the scalar codec.
@@ -90,6 +96,15 @@ impl Tq128Codec {
             (Self::Tcq1, KvSide::Key) => &TCQ1_K,
             (Self::Tcq1, KvSide::Value) => &TCQ1_V,
             (Self::Turbo4N128, _) => &TURBO4_LEVELS,
+        }
+    }
+
+    /// 2026-10-18: The decision midpoints a scalar write compares against (turbo4_n128's 15,
+    /// between its 16 levels); `None` for a TCQ codec, whose write searches the trellis.
+    pub const fn midpoints(self) -> Option<&'static [f32]> {
+        match self {
+            Self::Turbo4N128 => Some(&TURBO4_MID),
+            Self::Tcq3 | Self::Tcq2 | Self::Tcq1 => None,
         }
     }
 

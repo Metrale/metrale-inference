@@ -11,12 +11,13 @@
 use metrale_cache::kv_cache::KvCacheDtype;
 use metrale_kv_codec::{KernelName, spec};
 
-/// 2026-10-18: True when either side of `kv_dtype` stores rotated values. Such a pair has no
-/// dense prefill to fall back to, so its chunked-prefill kernel is required, and it is the
-/// experimental set the error note names.
+/// 2026-10-18: True when either side of `kv_dtype` stores rotated values, by the bookends or in
+/// its own kernels (`KvCodecSpec::stores_rotated`). Such a pair has no dense prefill to fall
+/// back to, so its chunked-prefill kernel is required, and it is the experimental set the error
+/// note names.
 fn rotates(kv_dtype: KvCacheDtype) -> bool {
     let pair = kv_dtype.codec_pair();
-    spec(pair.k()).rotates() || spec(pair.v()).rotates()
+    spec(pair.k()).stores_rotated() || spec(pair.v()).stores_rotated()
 }
 
 /// 2026-10-18: Every kernel `kv_dtype` at `head_dim` cannot run without: the write and decode
@@ -89,26 +90,68 @@ mod tests {
         }
     }
 
-    /// 2026-10-18: Every dtype with a rotated side requires its chunked-prefill kernel, and the
-    /// WHT bookends exactly at head dims 128, 256 and 512.
+    /// 2026-10-18: Every dtype with a WHT-rotated side requires its chunked-prefill kernel, and
+    /// the bookends exactly at head dims 128, 256 and 512.
+    fn check_bookended(
+        d: impl core::fmt::Display + Copy,
+        funcs: impl Fn(usize) -> Vec<&'static str>,
+    ) {
+        for hd in [128, 256, 512] {
+            let f = funcs(hd);
+            assert_eq!(f.len(), 5, "{d} hd={hd}: {f:?}");
+            assert!(
+                f[2].starts_with("attn_prefill_paged_"),
+                "{d} hd={hd}: {f:?}"
+            );
+            assert_eq!(&f[3..], ["wht_bf16_inplace", "wht_bf16_inplace_inv"]);
+        }
+        for hd in [64, 513] {
+            assert_eq!(funcs(hd).len(), 3, "{d} hd={hd}: no bookends");
+        }
+    }
+
+    /// 2026-10-18: A codec that rotates inside its own kernels requires its chunked-prefill
+    /// kernel at every head dim it fits, and no bookends: no dense prefill could read its
+    /// records, so a target without that kernel must refuse it at boot. Returns the head dims
+    /// checked.
+    fn check_in_kernel(
+        d: impl core::fmt::Display + Copy,
+        fits: impl Fn(u32) -> bool,
+        funcs: impl Fn(usize) -> Vec<&'static str>,
+    ) -> usize {
+        let dims: Vec<u32> = [128u32, 256].into_iter().filter(|&hd| fits(hd)).collect();
+        for &hd in &dims {
+            let f = funcs(hd as usize);
+            assert_eq!(f.len(), 3, "{d} hd={hd}: {f:?}");
+            assert!(
+                f[2].starts_with("paged_prefill_attn_"),
+                "{d} hd={hd}: {f:?}"
+            );
+        }
+        dims.len()
+    }
+
+    /// 2026-10-18: Each rotated dtype requires the kernels its rotation needs: the four turbo
+    /// codecs and nine pairs (WHT bookends) per `check_bookended`, the codecs that rotate in
+    /// their own kernels per `check_in_kernel`.
     #[test]
-    fn rotated_dtypes_require_prefill_and_the_bookends_at_wht_sizes() {
-        let rotated: Vec<KvCacheDtype> = KvCacheDtype::all().filter(|&d| rotates(d)).collect();
-        assert_eq!(rotated.len(), 13, "four turbo codecs and nine pairs");
-        for d in rotated {
-            for hd in [128, 256, 512] {
-                let f = funcs(d, hd);
-                assert_eq!(f.len(), 5, "{d} hd={hd}: {f:?}");
-                assert!(
-                    f[2].starts_with("attn_prefill_paged_"),
-                    "{d} hd={hd}: {f:?}"
-                );
-                assert_eq!(&f[3..], ["wht_bf16_inplace", "wht_bf16_inplace_inv"]);
-            }
-            for hd in [64, 513] {
-                assert_eq!(funcs(d, hd).len(), 3, "{d} hd={hd}: no bookends");
+    fn rotated_dtypes_require_their_prefill_and_rotation_kernels() {
+        let (mut bookended, mut in_kernel) = (0, 0);
+        for d in KvCacheDtype::all().filter(|&d| rotates(d)) {
+            let pair = d.codec_pair();
+            let (k, v) = (spec(pair.k()), spec(pair.v()));
+            if k.rotates() || v.rotates() {
+                bookended += 1;
+                check_bookended(d, |hd| funcs(d, hd));
+            } else {
+                in_kernel += check_in_kernel(d, |hd| k.fits_head_dim(hd), |hd| funcs(d, hd));
             }
         }
+        assert_eq!(bookended, 13, "four turbo codecs and nine pairs");
+        assert!(
+            in_kernel >= 4,
+            "no in-kernel rotated codec was checked ({in_kernel})"
+        );
     }
 
     /// 2026-10-18: Turbo2's prefill is its one non-`_64` build, at every head dim.

@@ -161,5 +161,7 @@ error_registry! {
         /// for by a host path: (codec, path).
         KvHostDequantMissing = 0x0509 => "KV-cache codec {} has no host dequant, so {} cannot \
             run",
+        /// 2026-10-18: A codec asked for a mode its kernels do not implement: (codec, mode).
+        KvCodecFeatureUnsupported = 0x050A => "KV-cache codec {} does not support {}",
     }
 }

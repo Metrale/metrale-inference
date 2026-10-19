@@ -49,3 +49,4 @@
 0x0507 KvAbiUnimplemented
 0x0508 KvIndexerGeometry
 0x0509 KvHostDequantMissing
+0x050a KvCodecFeatureUnsupported

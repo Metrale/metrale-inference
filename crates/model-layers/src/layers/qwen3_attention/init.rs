@@ -140,6 +140,12 @@ impl Qwen3AttentionLayer {
             position_encoding,
             kv_dtype,
             kv_pair,
+            trellis: super::trellis_kv::TrellisKv::for_pair(
+                gpu,
+                kv_pair,
+                config.head_dim,
+                &kv_names,
+            )?,
             cutlass_nvfp4_gemm: lc.settings.kernels.cutlass_nvfp4_gemm,
             levers: lc.levers.attn,
             head_dim_override: None,

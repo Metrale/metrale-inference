@@ -184,3 +184,25 @@ fn malformed_inputs_are_refused() {
         }
     );
 }
+
+#[test]
+fn named_finds_each_codec_by_its_registry_name_and_nothing_else() {
+    for codec in Tq128Codec::ALL {
+        assert_eq!(Tq128Codec::named(codec.name()), Some(codec));
+    }
+    for other in ["turbo4", "turbo3", "turbo3-tcq", "TURBO3_TCQ", "", "bf16"] {
+        assert_eq!(Tq128Codec::named(other), None, "{other:?}");
+    }
+}
+
+#[test]
+fn only_the_scalar_codec_carries_write_midpoints() {
+    assert_eq!(
+        Tq128Codec::Turbo4N128.midpoints(),
+        Some(&TURBO4_MID[..]),
+        "turbo4_n128's write compares against the turbo4 midpoints"
+    );
+    for codec in [Tq128Codec::Tcq3, Tq128Codec::Tcq2, Tq128Codec::Tcq1] {
+        assert_eq!(codec.midpoints(), None, "{}", codec.name());
+    }
+}

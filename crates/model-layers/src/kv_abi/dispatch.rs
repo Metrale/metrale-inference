@@ -113,6 +113,9 @@ mod tests {
         fn decode_block_scaled(&self, _: &()) -> anyhow::Result<()> {
             self.ran("decode_block_scaled")
         }
+        fn decode_trellis(&self, _: &()) -> anyhow::Result<()> {
+            self.ran("decode_trellis")
+        }
         fn write_dense(&self, _: &()) -> anyhow::Result<()> {
             self.ran("write_dense")
         }
@@ -121,6 +124,9 @@ mod tests {
         }
         fn write_block_scaled(&self, _: &()) -> anyhow::Result<()> {
             self.ran("write_block_scaled")
+        }
+        fn write_trellis(&self, _: &()) -> anyhow::Result<()> {
+            self.ran("write_trellis")
         }
     }
 
@@ -137,6 +143,7 @@ mod tests {
                 AbiId::BlockScaled,
                 ["decode_block_scaled", "write_block_scaled"],
             ),
+            (AbiId::Trellis, ["decode_trellis", "write_trellis"]),
         ] {
             let rec = Rec::default();
             decode(abi, &rec, &()).unwrap();
@@ -158,15 +165,41 @@ mod tests {
             scale: 1.0,
         };
         let any_spec = metrale_kv_codec::spec(metrale_kv_codec::KvCodecId::ALL[0]);
-        for abi in [AbiId::Trellis, AbiId::Latent] {
-            let rec = Rec::default();
-            let want = Some(ErrorCode::KvAbiUnimplemented);
-            assert_eq!(code(decode(abi, &rec, &()).unwrap_err()), want, "{abi:?}");
-            assert_eq!(code(write(abi, &rec, &()).unwrap_err()), want, "{abi:?}");
-            assert!(rec.0.into_inner().is_empty(), "{abi:?}");
-            let side = with_abi(abi, SideArgsOf(any_spec, src)).unwrap_err();
-            assert_eq!(side.code(), ErrorCode::KvAbiUnimplemented, "{abi:?}");
+        let abi = AbiId::Latent;
+        let rec = Rec::default();
+        let want = Some(ErrorCode::KvAbiUnimplemented);
+        assert_eq!(code(decode(abi, &rec, &()).unwrap_err()), want);
+        assert_eq!(code(write(abi, &rec, &()).unwrap_err()), want);
+        assert!(rec.0.into_inner().is_empty());
+        let side = with_abi(abi, SideArgsOf(any_spec, src)).unwrap_err();
+        assert_eq!(side.code(), ErrorCode::KvAbiUnimplemented);
+    }
+
+    /// 2026-10-18: Every registry codec of the `Trellis` family builds `Trellis` side arguments
+    /// that keep the pool and block stride (its kernels take nothing else per side), and no
+    /// other family's codec does.
+    #[test]
+    fn trellis_codecs_and_only_they_build_trellis_side_arguments() {
+        let src = SideSource {
+            pool: metrale_gpu_runtime::gpu::DevicePtr(0x40),
+            block_stride: 6656,
+            data_bytes: 77,
+            scale: 0.5,
+        };
+        let mut trellis = 0;
+        for id in metrale_kv_codec::KvCodecId::ATTENTION {
+            let s = metrale_kv_codec::spec(id);
+            let built = side_args(s, src);
+            if s.abi == AbiId::Trellis {
+                trellis += 1;
+                let args = built.unwrap_or_else(|e| panic!("{}: {e}", s.name));
+                assert_eq!(args.trellis(), Some((src.pool, 6656)), "{}", s.name);
+                assert_eq!(args.pool(), src.pool, "{}", s.name);
+            } else if let Ok(args) = built {
+                assert_eq!(args.trellis(), None, "{}", s.name);
+            }
         }
+        assert!(trellis >= 1, "the registry has no Trellis codec to check");
     }
 
     /// 2026-10-18: `side_args` for a family chosen by the caller, not by the spec.

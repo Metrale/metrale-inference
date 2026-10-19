@@ -14,6 +14,8 @@
 //!   V factor) a V decode scale of 1.0, must both miss `TOL`. The error against attention over
 //!   the bf16 dequant is printed but not gated: bf16-rounding a large-norm K row moves a
 //!   cancelling score by O(1), so that reference is not accurate enough to gate on.
+//! - prefill: `paged_prefill_attn_*` over a chunk at the end of the longest sequence, against
+//!   causal f64 attention, with its own negative controls (`prefill.rs`).
 //!
 //! The rows include a zero row and a row of 1e-20 values (both code an all-zero group, which
 //! makes every Viterbi step a tie), an outlier, a large-norm row and a constant row.
@@ -28,6 +30,7 @@
 
 #[path = "../common/norm_fusion_fixture.rs"]
 mod fixture;
+mod prefill;
 mod reference;
 
 use anyhow::{Context, Result, ensure};
@@ -268,6 +271,7 @@ fn check(g: &dyn GpuBackend, geo: &Geometry, seed: u64) -> Result<bool> {
         println!("  FAIL decode: error exceeds the tolerance");
         ok = false;
     }
+    ok &= prefill::check(g, geo, &mut rng, &caches, &deq, &tag)?;
     if ctrl_gqa <= TOL || ctrl_scale.is_some_and(|c| c <= TOL) {
         println!(
             "  FAIL control: a known-wrong reference passed, so the tolerance does not discriminate"

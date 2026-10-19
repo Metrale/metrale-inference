@@ -112,6 +112,9 @@ pub struct Qwen3AttentionLayer {
     /// 2026-10-18: `kv_dtype`'s codec pair, resolved once at construction; the KV executors read
     /// its codecs' specs.
     pub(super) kv_pair: metrale_kv_codec::KvPair,
+    /// 2026-10-18: The device codebooks and prefill kernel of a `Trellis`-family cache, built
+    /// once at construction; `None` for every other family.
+    pub(super) trellis: Option<super::trellis_kv::TrellisKv>,
     /// 2026-10-17: `kernels.cutlass_nvfp4_gemm` at construction: the load-time FP8 prefill
     /// passes (`transpose_fp8_for_prefill_selected`, `predequant_for_prefill`) are skipped under it.
     pub(super) cutlass_nvfp4_gemm: bool,

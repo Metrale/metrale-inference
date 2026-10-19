@@ -40,6 +40,7 @@ mod prefill_weights;
 #[cfg(test)]
 mod rope_site_fixture;
 mod trait_impl;
+mod trellis_kv;
 pub mod types;
 mod types_weights;
 mod w8a8_decode_arm;

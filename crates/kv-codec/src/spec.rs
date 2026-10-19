@@ -266,6 +266,16 @@ impl KvCodecSpec {
         }
     }
 
+    /// 2026-10-18: True when the stored values are in any rotated basis, undone by the rotation
+    /// bookends or by the codec's own kernels. Such a side has no dense attention to fall back
+    /// to, so every kernel that reads it must be its own.
+    pub const fn stores_rotated(&self) -> bool {
+        match self.rotation {
+            Rotation::None => false,
+            Rotation::InKernel { .. } | Rotation::Wht { .. } | Rotation::Fwht { .. } => true,
+        }
+    }
+
     /// 2026-10-18: True when this side is rotated at `head_dim`: a WHT rotation lists the head
     /// dims its kernel supports, and a block FWHT needs whole blocks.
     pub const fn rotates_at(&self, head_dim: u32) -> bool {

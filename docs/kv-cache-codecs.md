@@ -62,8 +62,9 @@ Attention never needs to un-rotate K. Rotation is orthogonal, so `q Â· k = R q Â
 decode kernel rotates the query once per group, takes the scores against the rotated keys,
 and accumulates the rotated values. It un-rotates only the final output row.
 
-Dequantization to bf16 (prefill over a cached prefix, prefix reuse) runs the inverse
-rotation, which is the same three steps with the sign tables swapped.
+Chunked prefill over a cached prefix works the same way: its kernel rotates each query
+group, reads the rotated cache, and un-rotates the output row. Dequantization to bf16 runs
+the inverse rotation, which is the same three steps with the sign tables swapped.
 
 ## The trellis
 
@@ -170,15 +171,26 @@ tolerance, because its softmax runs in a different order. To keep the two in ste
   The GPU gate caught it as a one-byte mismatch in every block.
 - The GPU gate is `crates/gpu-examples/examples/tq128_microtest/`. It compares encode and
   dequant bytes for all four codecs at head_dim 128, 256 and 512. It checks decode attention
-  against f64 attention over the reference's f32 dequant, to a stated tolerance, with negative
-  controls that must miss it.
+  and causal chunked-prefill attention against f64 attention over the reference's f32
+  dequant, to a stated tolerance, with negative controls that must miss it.
 
 ## Status
 
 - **Present:** the CPU reference, together with:
   - CUDA encode kernels (`reshape_and_cache_tcq{1,2,3}`, `reshape_and_cache_turbo4_n128`),
   - decode attention kernels (`paged_decode_attn_tcq{1,2,3}`, `paged_decode_attn_turbo4_n128`),
+  - causal chunked-prefill attention kernels in the same module
+    (`paged_prefill_attn_tcq{1,2,3}`, `paged_prefill_attn_turbo4_n128`),
   - a bf16 dequant kernel (`tq128_dequant_bf16_*`).
-- **Pending:** registering the codecs as `--kv-cache-dtype` values, with their memory
-  planning, lands with the KV codec registry. Until then these formats cannot be selected at
-  serve time.
+- **Selectable:** each codec is a `kv_codec_registry!` row of the `Trellis` launch family, so
+  `--kv-cache-dtype turbo3_tcq` (and `turbo2_tcq`, `turbo1_tcq`, `turbo4_n128`) is accepted
+  and planned like any other codec. The attention layer builds its trellis state (device
+  codebooks, write midpoints, the prefill kernel) once at construction; the chunked-prefill
+  kernel is required at boot, since no dense prefill can read these records.
+- **Refused, with a coded error:** a sliding attention window and a split K/V pair. A single
+  stream's first prefill chunk attends its own bf16 K/V directly (as for every codec); later
+  chunks and decode read the cache.
+- **Not implemented:** kernel-batched multi-sequence prefill (two or more streams' later
+  chunks in one forward). As for every codec other than bf16, fp8 and nvfp4, the batched
+  attention match has no arm for these caches and fails that forward with an uncoded error;
+  the batch eligibility check does not yet route them per-stream.

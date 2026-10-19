@@ -58,6 +58,9 @@ impl Qwen3AttentionLayer {
         ctx: &ForwardContext,
         args: &mut PagedAttnArgs,
     ) -> Result<PagedAttnOutcome> {
+        if let Some(t) = &self.trellis {
+            return self.prefill_attention_paged_trellis(t, kv_cache, ctx, args);
+        }
         let PagedAttnArgs {
             q_contiguous,
             k_contiguous: _,

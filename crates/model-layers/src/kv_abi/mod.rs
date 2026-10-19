@@ -53,6 +53,14 @@ pub enum KvSideArgs {
         /// 2026-10-18: Bytes of packed values per block, where the side tensors start.
         data_bytes: u64,
     },
+    /// 2026-10-18: Self-contained 128-value records the codec's own kernels rotate and decode
+    /// against device codebooks; the layer's trellis state holds the books.
+    Trellis {
+        /// 2026-10-18: The side's pool.
+        pool: DevicePtr,
+        /// 2026-10-18: Bytes per block of this side.
+        block_stride: u64,
+    },
 }
 
 impl KvSideArgs {
@@ -61,7 +69,18 @@ impl KvSideArgs {
         match *self {
             KvSideArgs::Dense { pool, .. }
             | KvSideArgs::DenseScaled { pool, .. }
-            | KvSideArgs::BlockScaled { pool, .. } => pool,
+            | KvSideArgs::BlockScaled { pool, .. }
+            | KvSideArgs::Trellis { pool, .. } => pool,
+        }
+    }
+
+    /// 2026-10-18: The pool and block stride of a `Trellis` side; `None` for any other family.
+    pub fn trellis(&self) -> Option<(DevicePtr, u64)> {
+        match *self {
+            KvSideArgs::Trellis { pool, block_stride } => Some((pool, block_stride)),
+            KvSideArgs::Dense { .. }
+            | KvSideArgs::DenseScaled { .. }
+            | KvSideArgs::BlockScaled { .. } => None,
         }
     }
 }
@@ -93,12 +112,16 @@ pub trait KvExecutor {
     fn decode_dense_scaled(&self, a: &Self::Decode<'_>) -> anyhow::Result<()>;
     /// 2026-10-18: Decode attention over a `BlockScaled` cache.
     fn decode_block_scaled(&self, a: &Self::Decode<'_>) -> anyhow::Result<()>;
+    /// 2026-10-18: Decode attention over a `Trellis` cache.
+    fn decode_trellis(&self, a: &Self::Decode<'_>) -> anyhow::Result<()>;
     /// 2026-10-18: Write into a `Dense` cache.
     fn write_dense(&self, a: &Self::Write<'_>) -> anyhow::Result<()>;
     /// 2026-10-18: Write into a `DenseScaled` cache.
     fn write_dense_scaled(&self, a: &Self::Write<'_>) -> anyhow::Result<()>;
     /// 2026-10-18: Write into a `BlockScaled` cache.
     fn write_block_scaled(&self, a: &Self::Write<'_>) -> anyhow::Result<()>;
+    /// 2026-10-18: Write into a `Trellis` cache.
+    fn write_trellis(&self, a: &Self::Write<'_>) -> anyhow::Result<()>;
 }
 
 /// 2026-10-18: A launch-argument family. Implemented by one zero-sized type per `AbiId`.
@@ -119,7 +142,7 @@ pub struct Dense;
 pub struct DenseScaled;
 /// 2026-10-18: `AbiId::BlockScaled`.
 pub struct BlockScaled;
-/// 2026-10-18: `AbiId::Trellis`; declared, no codec row uses it yet.
+/// 2026-10-18: `AbiId::Trellis`: self-contained rotated 128-value records.
 pub struct Trellis;
 /// 2026-10-18: `AbiId::Latent`; declared, no codec row uses it yet.
 pub struct Latent;
@@ -181,14 +204,17 @@ fn unimplemented(abi: &'static str, op: &'static str) -> Error {
 
 impl KvAbi for Trellis {
     const ID: AbiId = AbiId::Trellis;
-    fn side_args(_spec: &'static KvCodecSpec, _src: SideSource) -> Result<KvSideArgs, Error> {
-        Err(unimplemented("Trellis", "side-argument"))
+    fn side_args(_spec: &'static KvCodecSpec, src: SideSource) -> Result<KvSideArgs, Error> {
+        Ok(KvSideArgs::Trellis {
+            pool: src.pool,
+            block_stride: src.block_stride,
+        })
     }
-    fn decode<E: KvExecutor + ?Sized>(_e: &E, _a: &E::Decode<'_>) -> anyhow::Result<()> {
-        Err(unimplemented("Trellis", "decode").into())
+    fn decode<E: KvExecutor + ?Sized>(e: &E, a: &E::Decode<'_>) -> anyhow::Result<()> {
+        e.decode_trellis(a)
     }
-    fn write<E: KvExecutor + ?Sized>(_e: &E, _a: &E::Write<'_>) -> anyhow::Result<()> {
-        Err(unimplemented("Trellis", "write").into())
+    fn write<E: KvExecutor + ?Sized>(e: &E, a: &E::Write<'_>) -> anyhow::Result<()> {
+        e.write_trellis(a)
     }
 }
 

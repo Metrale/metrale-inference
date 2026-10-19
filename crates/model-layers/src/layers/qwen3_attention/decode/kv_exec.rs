@@ -17,6 +17,7 @@ use metrale_gpu_runtime::kernel_args::KernelLaunch;
 use metrale_kv_codec::{KvCodecId, spec};
 
 use super::super::Qwen3AttentionLayer;
+use super::super::trellis_kv::TrellisKv;
 use crate::kv_abi::{self, DecodeCommon, KvExecutor, KvSideArgs, SideSource, Tails, WriteCommon};
 use crate::layer::ForwardContext;
 use crate::layers::ops;
@@ -51,7 +52,10 @@ impl Qwen3AttentionLayer {
 
     /// 2026-10-18: The side arguments of the K and V sides of this layer's cache, each from its
     /// codec's family.
-    fn kv_sides(&self, kv_cache: &PagedKvCache) -> Result<(KvSideArgs, KvSideArgs)> {
+    pub(in super::super) fn kv_sides(
+        &self,
+        kv_cache: &PagedKvCache,
+    ) -> Result<(KvSideArgs, KvSideArgs)> {
         let layer = self.attn_layer_idx;
         let (k_scale, v_scale) = self.effective_fp8_scales();
         let side = |codec: KvCodecId, pool, block_stride: usize, scale| {
@@ -142,6 +146,19 @@ impl Qwen3AttentionLayer {
         )
     }
 
+    /// 2026-10-18: The layer's `Trellis` cache state, which construction builds for a codec of
+    /// that family; refused with a coded error otherwise.
+    pub(in super::super) fn trellis_kv(&self) -> Result<&TrellisKv> {
+        self.trellis.as_ref().ok_or_else(|| {
+            metrale_error::error!(
+                metrale_error::ErrorCode::KvCodecFeatureUnsupported,
+                spec(self.kv_pair.k()).name,
+                "the trellis launches (the layer built no trellis state)"
+            )
+            .into()
+        })
+    }
+
     /// 2026-10-18: The non-split launch of a symmetric block-scaled cache through `kernel`.
     pub(super) fn decode_block_scaled_with(
         &self,
@@ -180,6 +197,12 @@ impl KvExecutor for Qwen3AttentionLayer {
                 self.decode_block_scaled_with(a, kernel)
             }
         }
+    }
+
+    fn decode_trellis(&self, a: &Self::Decode<'_>) -> Result<()> {
+        let (k, v) = self.kv_sides(a.kv_cache)?;
+        self.trellis_kv()?
+            .decode(a.gpu, self.paged_decode_k, &a.common, k, v, a.stream)
     }
 
     fn write_dense(&self, a: &Self::Write<'_>) -> Result<()> {
@@ -234,5 +257,11 @@ impl KvExecutor for Qwen3AttentionLayer {
             Tails::Shared,
             a.stream,
         )
+    }
+
+    fn write_trellis(&self, a: &Self::Write<'_>) -> Result<()> {
+        let (k, v) = self.kv_sides(a.kv_cache)?;
+        self.trellis_kv()?
+            .write(a.gpu, self.reshape_cache_k, &a.common, k, v, a.stream)
     }
 }

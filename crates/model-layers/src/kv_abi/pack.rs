@@ -65,7 +65,9 @@ pub struct DecodeCommon {
 fn k_scale(launch: KernelLaunch<'_>, k: KvSideArgs) -> KernelLaunch<'_> {
     match k {
         KvSideArgs::DenseScaled { scale, .. } => launch.arg_f32(scale),
-        KvSideArgs::Dense { .. } | KvSideArgs::BlockScaled { .. } => launch,
+        KvSideArgs::Dense { .. } | KvSideArgs::BlockScaled { .. } | KvSideArgs::Trellis { .. } => {
+            launch
+        }
     }
 }
 
@@ -105,7 +107,8 @@ pub fn launch_fused_write(
     tailed(k, v, tails)
         .fold(k_scale(launch, k), |launch, side| match side {
             KvSideArgs::Dense { block_stride, .. }
-            | KvSideArgs::DenseScaled { block_stride, .. } => launch.arg_u64(block_stride),
+            | KvSideArgs::DenseScaled { block_stride, .. }
+            | KvSideArgs::Trellis { block_stride, .. } => launch.arg_u64(block_stride),
             KvSideArgs::BlockScaled {
                 block_stride,
                 data_bytes,
@@ -143,7 +146,9 @@ pub fn launch_fused_decode(
         .arg_f32(c.inv_sqrt_d);
     let launch = k_scale(launch, k).arg_u32(c.q_stride);
     let launch = tailed(k, v, tails).fold(launch, |launch, side| match side {
-        KvSideArgs::Dense { .. } | KvSideArgs::DenseScaled { .. } => launch,
+        KvSideArgs::Dense { .. } | KvSideArgs::DenseScaled { .. } | KvSideArgs::Trellis { .. } => {
+            launch
+        }
         KvSideArgs::BlockScaled {
             block_stride,
             data_bytes,

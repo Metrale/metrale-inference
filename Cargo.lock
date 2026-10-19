@@ -1905,6 +1905,7 @@ dependencies = [
  "metrale-kernel-root",
  "metrale-kernels",
  "metrale-kv-codec",
+ "metrale-kv-tq128",
  "metrale-model-weights",
  "metrale-settings",
  "metrale-storage",
