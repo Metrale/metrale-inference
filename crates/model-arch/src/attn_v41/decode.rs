@@ -23,7 +23,7 @@ use metrale_model_layers::layers::ops::{kquant_mmvq_pair_w, kquant_q8_1_rows};
 
 impl AttnV41 {
     /// 2026-09-25: q (low-rank, normed, up-projected, rotated) and kv (one
-    /// latent row per token, normed, rotated, fp8-rounded) from the normed
+    /// latent row per token, normed, rotated, packed as a window row into `kv_pack`) from the normed
     /// input `x`. Device work only: the positions are read from `pos` /
     /// `head_pos`.
     pub(super) fn q_kv_projections(
@@ -77,7 +77,7 @@ impl AttnV41 {
         self.rope(gpu, self.q, self.head_pos, m * nh, hd, yarn, false, stream)?;
         self.rmsnorm(gpu, false, self.kv_raw, w.kv_norm, self.kv, m, hd, stream)?;
         self.rope(gpu, self.kv, self.pos, m, hd, yarn, false, stream)?;
-        self.act_quant(gpu, self.kv, m * hd, stream)
+        self.pack_rows(gpu, &self.rows.window, self.kv, m, hd, self.kv_pack, stream)
     }
 
     /// 2026-09-25: Sparse attention over the selection in `idx` (`topk` entries
@@ -100,7 +100,7 @@ impl AttnV41 {
         let c = &self.cfg;
         let (nh, hd, dim) = (c.n_heads, c.head_dim, c.dim);
         let scale = (hd as f32).powf(-0.5);
-        KernelLaunch::new(gpu, self.k.sparse_attn)
+        KernelLaunch::new(gpu, self.k.sparse_attn_packed)
             .grid([m as u32, nh as u32, self.sparse_split])
             .block([256, 1, 1])
             .arg_ptr(self.q)
@@ -343,14 +343,14 @@ impl AttnV41 {
         );
         let yarn = w.role.ratio > 0;
         self.q_kv_projections(gpu, w, x, 1, yarn, stream)?;
-        KernelLaunch::new(gpu, self.k.ring_put)
+        KernelLaunch::new(gpu, self.k.ring_put_row)
             .grid([1, 1, 1])
             .block([256, 1, 1])
-            .arg_ptr(self.kv)
+            .arg_ptr(self.kv_pack)
             .arg_ptr(st.window)
             .arg_ptr(self.pos)
             .arg_u32(c.window as u32)
-            .arg_u32(c.head_dim as u32)
+            .arg_u32(self.rows.window.bytes as u32)
             .launch(stream)?;
         self.attend_and_project(
             gpu,

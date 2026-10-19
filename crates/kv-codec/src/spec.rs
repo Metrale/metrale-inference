@@ -143,6 +143,10 @@ pub enum HostLutId {
     Turbo3Lut = 4,
     /// 2026-10-18: FP8 E4M3 values times a BF16 group norm.
     E4m3Bf16Norm = 5,
+    /// 2026-10-19: FP8 E4M3 values times an E8M0 group scale.
+    E4m3E8m0 = 6,
+    /// 2026-10-19: E2M1 values times an E8M0 group scale.
+    E2m1E8m0 = 7,
 }
 
 /// 2026-10-18: How many leading and trailing attention layers a plan keeps at the boundary
@@ -214,6 +218,9 @@ pub enum CodecRole {
     Attention = 0,
     /// 2026-10-18: A sparse-attention indexer's compressed key rows.
     Indexer = 1,
+    /// 2026-10-19: A compressed-latent attention layer.s window or latent rows that only that
+    /// layer.s own kernels read (`LatentKvPlan`); never a `--kv-cache-dtype` side.
+    Latent = 2,
 }
 
 /// 2026-10-18: Everything the engine knows about one codec. Every row lives in the registry

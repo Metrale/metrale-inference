@@ -5,7 +5,9 @@
 //! accepted one.
 
 use metrale_error::ErrorCode;
-use metrale_kv_codec::{CodecRole, KvCodecId, KvPair, PAIR_ALIASES, SPEC, accepted, by_name, spec};
+use metrale_kv_codec::{
+    CodecRole, IndexerPlan, KvCodecId, KvPair, PAIR_ALIASES, SPEC, accepted, by_name, spec,
+};
 
 #[test]
 fn name_parse_and_discriminant_are_bijective() {
@@ -149,4 +151,25 @@ fn an_unaliased_pair_is_refused() {
     assert!(KvPair::new(Turbo4, Turbo3).is_ok());
     assert!(KvPair::new(Nvfp4, Nvfp4).is_ok());
     assert!(!KvPair::symmetric(Turbo8).is_asymmetric());
+}
+
+/// 2026-10-19: A latent-cache codec is read only by its layer's own kernels: it is never a
+/// `--kv-cache-dtype` spelling, side or accepted value, and never an indexer codec.
+#[test]
+fn a_latent_codec_is_never_a_kv_pair_or_an_indexer() {
+    let latents: Vec<KvCodecId> = KvCodecId::ALL
+        .into_iter()
+        .filter(|&id| spec(id).role == CodecRole::Latent)
+        .collect();
+    assert!(!latents.is_empty());
+    let listed = accepted();
+    for id in latents {
+        let e = id.name().parse::<KvPair>().unwrap_err();
+        assert_eq!(e.code(), ErrorCode::KvCodecUnknown, "{}", id.name());
+        let e = KvPair::new(id, id).unwrap_err();
+        assert_eq!(e.code(), ErrorCode::KvPairUnsupported, "{}", id.name());
+        assert!(KvPair::new(KvCodecId::ATTENTION[0], id).is_err());
+        assert!(!listed.split(", ").any(|s| s == id.name()), "{listed}");
+        assert!(IndexerPlan::new(id, 128, 2, 1).is_err(), "{}", id.name());
+    }
 }

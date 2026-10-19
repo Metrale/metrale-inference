@@ -15,7 +15,7 @@ use crate::spec::{
     SideTensor, TrellisSpec,
 };
 
-/// 2026-10-18: Values per group of every block-scaled codec registered today.
+/// 2026-10-18: Values per group of the nvfp4 and turbo4/3/2/8 codecs.
 const GROUP16: u32 = 16;
 
 /// 2026-10-18: One E4M3 scale per 16 values (nvfp4, turbo4/3/2).
@@ -31,6 +31,58 @@ const BF16_NORM_PER_16: &[SideTensor] = &[SideTensor {
     elem: SideElem::Bf16,
     per_values: GROUP16,
 }];
+
+/// 2026-10-19: Values per group of the OCP microscaling (MX) codecs.
+const GROUP32: u32 = 32;
+
+/// 2026-10-19: One E8M0 (power-of-two) scale per 32 values (mxfp8, mxfp4).
+const E8M0_SCALE_PER_32: &[SideTensor] = &[SideTensor {
+    kind: SideKind::Scale,
+    elem: SideElem::E8m0,
+    per_values: GROUP32,
+}];
+
+/// 2026-10-19: MXFP8 window rows of a compressed-latent attention layer: FP8 E4M3 values and an
+/// E8M0 scale per 32, the format the DeepSeek-V4.1 reference stores its sliding-window keys in.
+pub(crate) const MXFP8_E8M0X32: KvCodecSpec = KvCodecSpec {
+    id: KvCodecId::Mxfp8,
+    name: "mxfp8",
+    role: CodecRole::Latent,
+    label: "MXFP8",
+    value_bits: 8,
+    group: GROUP32,
+    side: E8M0_SCALE_PER_32,
+    rotation: Rotation::None,
+    trellis: None,
+    abi: AbiId::BlockScaled,
+    host_dequant: Some(HostLutId::E4m3E8m0),
+    lossless: false,
+    head_dims: &[512],
+    online_calibration: false,
+    auto_boundary: AutoBoundary::None,
+    citation: None,
+};
+
+/// 2026-10-19: MXFP4 indexer key rows: E2M1 values and an E8M0 scale per 32, the format the
+/// DeepSeek-V4.1 reference stores its compressed index keys in.
+pub(crate) const MXFP4_E8M0X32: KvCodecSpec = KvCodecSpec {
+    id: KvCodecId::Mxfp4,
+    name: "mxfp4",
+    role: CodecRole::Indexer,
+    label: "MXFP4",
+    value_bits: 4,
+    group: GROUP32,
+    side: E8M0_SCALE_PER_32,
+    rotation: Rotation::None,
+    trellis: None,
+    abi: AbiId::BlockScaled,
+    host_dequant: Some(HostLutId::E2m1E8m0),
+    lossless: false,
+    head_dims: &[128],
+    online_calibration: false,
+    auto_boundary: AutoBoundary::None,
+    citation: None,
+};
 
 /// 2026-10-18: Head dims the `wht_bf16` bookend kernel rotates.
 const WHT_SIZES: &[u32] = &[128, 256, 512];

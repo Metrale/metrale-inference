@@ -50,3 +50,4 @@
 0x0508 KvIndexerGeometry
 0x0509 KvHostDequantMissing
 0x050a KvCodecFeatureUnsupported
+0x050b KvLatentGeometry

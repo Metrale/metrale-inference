@@ -19,7 +19,7 @@ use std::sync::Mutex;
 const DIM: usize = 256;
 const WO_B: DevicePtr = DevicePtr(0x7_0000);
 
-fn cfg(tp_world: usize) -> AttnV41Cfg {
+pub(super) fn cfg(tp_world: usize) -> AttnV41Cfg {
     AttnV41Cfg {
         dim: DIM,
         n_heads: 4,
@@ -45,6 +45,7 @@ fn cfg(tp_world: usize) -> AttnV41Cfg {
         beta_slow: 1.0,
         fp8_stage: Fp8StageSize::NONE,
         tp_world,
+        kv: kv_codec::declared().unwrap(),
     }
 }
 

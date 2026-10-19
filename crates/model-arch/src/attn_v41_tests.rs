@@ -30,7 +30,7 @@ fn f32_of_bf16(b: u16) -> f32 {
 }
 
 #[cfg(feature = "cuda")]
-fn backend() -> metrale_gpu_runtime::cuda_backend::MetraleCudaBackend {
+pub(super) fn backend() -> metrale_gpu_runtime::cuda_backend::MetraleCudaBackend {
     let set = metrale_kernels::ptx_for_exact_target("deepseek-v4-flash", "nvfp4")
         .expect("deepseek-v4-flash/nvfp4 not in this build");
     metrale_gpu_runtime::cuda_backend::MetraleCudaBackend::new(0, &set.modules)
@@ -99,6 +99,7 @@ fn cfg_of(c: &ModelCfg) -> AttnV41Cfg {
         beta_slow: c.beta_slow,
         fp8_stage: Fp8StageSize::NONE,
         tp_world: 1,
+        kv: kv_codec::declared().unwrap(),
     }
 }
 
@@ -132,6 +133,20 @@ fn down_bf16(g: &dyn metrale_gpu_runtime::gpu::GpuBackend, p: DevicePtr, n: usiz
     b.chunks_exact(2)
         .map(|c| f32_of_bf16(u16::from_le_bytes([c[0], c[1]])))
         .collect()
+}
+
+/// 2026-10-19: `rows` packed cache rows of `values` values each, decoded on the host.
+#[cfg(feature = "cuda")]
+fn down_rows(
+    g: &dyn metrale_gpu_runtime::gpu::GpuBackend,
+    p: DevicePtr,
+    row: &V41Row,
+    rows: usize,
+    values: usize,
+) -> Vec<f32> {
+    let mut b = vec![0u8; rows * row.bytes];
+    g.copy_d2h(p, &mut b).unwrap();
+    kv_codec::decode_rows(row.codec, &b, rows, values).unwrap()
 }
 
 /// 2026-10-19: The heads and `wo_a` groups one rank holds (all of them on one device).
@@ -346,9 +361,9 @@ fn gpu_attention_matches_the_reference_on_every_layer_and_regime() {
             );
             let q = down_bf16(g, run.q, m * nh * hd);
             assert_within_bf16(&format!("{what}.sa_q"), &q, &lt.attn.q);
-            let mut rows = down_bf16(g, run.rows_a, run.rows_a_len * hd);
+            let mut rows = down_rows(g, run.rows_a, &attn.rows.window, run.rows_a_len, hd);
             if let Some(b) = run.rows_b {
-                rows.extend(down_bf16(g, b, run.rows_b_len * hd));
+                rows.extend(down_rows(g, b, &attn.rows.latent, run.rows_b_len, hd));
             }
             assert_within_bf16(&format!("{what}.sa_kv"), &rows, &lt.attn.kv_rows);
             let o = down_bf16(g, run.o, m * nh * hd);
@@ -360,13 +375,25 @@ fn gpu_attention_matches_the_reference_on_every_layer_and_regime() {
             }
             if weights[l].role.is_kv_source {
                 let groups = lt.shared_compress_kv.len() / hd;
-                let ck = down_bf16(g, shared.compress_kv.unwrap(), groups * hd);
+                let ck = down_rows(
+                    g,
+                    shared.compress_kv.unwrap(),
+                    &attn.rows.latent,
+                    groups,
+                    hd,
+                );
                 assert_within_bf16(
                     &format!("{what}.shared.compress_kv"),
                     &ck,
                     &lt.shared_compress_kv,
                 );
-                let ik = down_bf16(g, shared.index_k.unwrap(), lt.shared_index_k.len());
+                let ik = down_rows(
+                    g,
+                    shared.index_k.unwrap(),
+                    &attn.rows.index_key,
+                    lt.shared_index_k.len() / c.index_hd,
+                    c.index_hd,
+                );
                 assert_within_bf16(&format!("{what}.shared.index_k"), &ik, &lt.shared_index_k);
             }
             println!(

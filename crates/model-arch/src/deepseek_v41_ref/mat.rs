@@ -115,6 +115,11 @@ pub fn e8m0(b: u8) -> f32 {
     }
 }
 
+/// 2026-10-19: The fp4 e2m1 value of the low nibble of `code`.
+pub fn e2m1(code: u8) -> f32 {
+    E2M1[usize::from(code & 0xF)]
+}
+
 /// 2026-10-19: The fp8 e4m3fn value of `code`.
 pub fn e4m3(code: u8) -> f32 {
     E4M3[usize::from(code)]

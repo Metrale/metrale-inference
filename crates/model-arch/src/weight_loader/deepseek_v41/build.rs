@@ -20,7 +20,7 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
 use crate::attn_v41::{
     AttnV41, AttnV41Cfg, AttnV41LayerWeights, CompressorWeightsGpu, IndexerWeightsGpu, LayerRole,
-    SharedV41,
+    SharedV41, kv_codec,
 };
 use crate::deepseek_v41_layer::levers::Ds41LoadLevers;
 use crate::deepseek_v41_layer::{
@@ -141,6 +141,7 @@ pub fn plan(
         beta_slow: orf(config.yarn_beta_slow, 1.0),
         fp8_stage: Fp8StageSize::NONE,
         tp_world: local.world,
+        kv: kv_codec::declared()?,
     };
     let mut moe_cfg = MoeV41Cfg {
         dim,

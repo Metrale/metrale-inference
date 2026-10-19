@@ -121,9 +121,14 @@ kv_codec_registry! {
         /// 2026-10-18: 256-state trellis-coded 1-bit codes per rotated 128-value group: 1.25 bits
         /// per value.
         Turbo1Tcq = 9 : "turbo1_tcq" => rows::TURBO1_TCQ,
+        /// 2026-10-19: OCP MXFP8: FP8 E4M3 values plus an E8M0 scale per 32: 8.25 bits per value.
+        /// A latent-cache codec (window rows), never a `--kv-cache-dtype` side.
+        Mxfp8 = 10 : "mxfp8" => rows::MXFP8_E8M0X32,
+        /// 2026-10-19: OCP MXFP4: E2M1 values plus an E8M0 scale per 32: 4.25 bits per value. An
+        /// indexer codec (compressed key rows).
+        Mxfp4 = 11 : "mxfp4" => rows::MXFP4_E8M0X32,
         /// 2026-10-18: GLM-5.3 DSA indexer rows: WHT-rotated FP8 E4M3, one F32 scale per
-        /// 128-value row. An indexer codec, never a `--kv-cache-dtype` side. Wire values 10 and
-        /// 11 are reserved for the DeepSeek-V4.1 rows.
+        /// 128-value row. An indexer codec, never a `--kv-cache-dtype` side.
         Fp8RowF32 = 12 : "fp8_row" => rows::FP8_ROW_F32SCALE,
         /// 2026-10-18: The turbo4 16-level codebook per rotated 128-value group with one FP16
         /// norm: 4.125 bits per value.

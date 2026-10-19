@@ -276,6 +276,7 @@ fn layer0_matches_the_cpu_reference_on_the_real_weights() {
         beta_slow: 1.0,
         fp8_stage: crate::fp8_block_v41::Fp8StageSize::NONE,
         tp_world: 1,
+        kv: crate::attn_v41::kv_codec::declared().unwrap(),
     };
     let attn = AttnV41::new(g, acfg.clone(), at_defaults()).unwrap();
     let role = LayerRole {
@@ -311,7 +312,14 @@ fn layer0_matches_the_cpu_reference_on_the_real_weights() {
     report("attn q", &dl_bf16(g, run.q, m * nh * hd), &run_r.q);
     report(
         "attn kv rows",
-        &dl_bf16(g, run.rows_a, m * hd),
+        &{
+            let w = crate::attn_v41::V41Rows::resolve(&acfg.kv, hd, acfg.index_hd)
+                .unwrap()
+                .window;
+            let mut b = vec![0u8; m * w.bytes];
+            g.copy_d2h(run.rows_a, &mut b).unwrap();
+            crate::attn_v41::kv_codec::decode_rows(w.codec, &b, m, hd).unwrap()
+        },
         &run_r.kv_rows,
     );
     report("attn o", &dl_bf16(g, run.o, m * nh * hd), &run_r.o);

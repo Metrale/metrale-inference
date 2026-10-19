@@ -163,5 +163,8 @@ error_registry! {
             run",
         /// 2026-10-18: A codec asked for a mode its kernels do not implement: (codec, mode).
         KvCodecFeatureUnsupported = 0x050A => "KV-cache codec {} does not support {}",
+        /// 2026-10-19: A compressed-latent attention cache plan or row its codec cannot hold:
+        /// (cache, reason).
+        KvLatentGeometry = 0x050B => "latent cache {}: {}",
     }
 }

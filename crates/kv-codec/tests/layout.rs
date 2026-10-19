@@ -100,7 +100,7 @@ fn data_plus_side_is_the_block() {
 
 /// 2026-10-18: The layout digest of every codec, frozen: a change means stored bytes changed
 /// meaning, which must be a deliberate, declared edit (spill headers carry it).
-const DIGESTS: [u64; 12] = [
+const DIGESTS: [u64; 14] = [
     0xa89f_eadf_c9f3_efa5,
     0xfe83_ccdc_f382_286a,
     0xd478_1dfb_6338_f053,
@@ -111,6 +111,8 @@ const DIGESTS: [u64; 12] = [
     0xf522_4f7d_cd01_4cdd,
     0x637f_c43e_d4f3_50d6,
     0x8751_b8a9_4153_7af0,
+    0xeba0_7002_bbf6_83fa,
+    0xc93a_6ad1_6cc5_370e,
     0xd4fa_f6dc_fba8_60db,
     0x7539_e32f_bbb8_45fb,
 ];

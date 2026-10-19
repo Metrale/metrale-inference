@@ -2309,7 +2309,7 @@ source = "kernels/gb10/deepseek-v4-flash/nvfp4/attn_prefill_512.cu:2"
 match = "kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41.cu"
 text = "Numerics follow the CPU reference: f32 math, bf16 storage and the reference quantisers' rounding (e4m3 RNE saturating at +-448, e2m1 ties to even); a reordered reduction or fused rounding changes results against that reference."
 prs = []
-source = "kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41.cu:7; kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41.cu:74"
+source = "kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41.cu:7; kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41_common.cuh:59"
 
 [[t]]
 match = "kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41.cu::attn_v41_gemv_f32_staged"
@@ -2321,25 +2321,25 @@ source = "docs/perf/DS41_DECODE_RETUNE_2026-09.md (phase 3 L3, L6)"
 match = "kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41.cu::attn_v41_gemv_f32_staged"
 text = "Same products and k order as attn_v41_gemm_f32 (bit-equal under --fmad=false) but one output per block with thread 0 summing staged products. Measured 2026-09-19 with nsys on GB10: 144 us a launch for a 10 MB weight in attn_v41_gemm_f32, 67 us in this form."
 prs = []
-source = "kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41.cu:227"
+source = "kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41.cu:163"
 
 [[t]]
-match = "kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41.cu::attn_v41_index_score"
+match = "kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41_kv.cu::attn_v41_index_score_packed"
 text = "At ihd 128 a thread keeps its key row in registers (16 uint4) with the same products, order and roundings as the generic loop and no load on the add chain; the generic loop measured 122 us a launch (nsys, GB10, 2026-09-19)."
 prs = []
-source = "kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41.cu:318"
+source = "kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41_kv.cu:136"
 
 [[t]]
-match = "kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41.cu::attn_v41_sparse_attn"
+match = "kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41_kv.cu::attn_v41_sparse_attn_packed"
 text = "64 blocks on 48 SMs. Splitting each (token, head) across gridDim.z blocks that each recompute scores and softmax and write their own hd slice keeps the bytes identical: split 2 gave +5.4%/+5.0% tok/s, split 4 was worse (2026-09, phase 6)."
 prs = []
 source = "docs/perf/DS41_DECODE_RETUNE_2026-09.md (phase 6 M4a)"
 
 [[t]]
-match = "kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41.cu::attn_v41_sparse_attn"
+match = "kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41_kv.cu::attn_v41_sparse_attn_packed"
 text = "METRALE_DS41_SPARSE_SPLIT (1 to 8, default 2) splits hd across blocks that each recompute the scores and softmax, so bytes are identical for any split; split 2 measured +5.4% / +5.0% decode tok/s, split 4 was lower. Scores live in shared memory, topk <= 2048."
 prs = []
-source = "kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41.cu:384; docs/perf/DS41_DECODE_RETUNE_2026-09.md:475"
+source = "kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41_kv.cu:175; docs/perf/DS41_DECODE_RETUNE_2026-09.md:475"
 
 [[t]]
 match = "kernels/gb10/deepseek-v4-flash/nvfp4/csa_compress.cu"

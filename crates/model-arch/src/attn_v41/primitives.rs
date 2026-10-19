@@ -3,7 +3,7 @@
 
 //! 2026-09-25: The per-stage launch wrappers every [`AttnV41`] path is built
 //! from: the projection GEMM/GEMV (bf16 or `Q2_K`), RMSNorm, RoPE and the
-//! fp8/fp4 quantisers.
+//! fp4 query rounding and the cache-row packing.
 //!
 //! Owner: model-arch, DeepSeek-V4.1.
 //! Invariants: none beyond the types.
@@ -12,8 +12,9 @@ use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
+use super::kv_codec::{RowPack, V41Row};
 use super::{AttnMat, AttnTp, AttnV41, QUANT_BLOCKS_PER_LAUNCH};
-use crate::fp8_block_v41::act_quant_fp8;
+use crate::deepseek_v41_ref::attn::FP8_BLOCK;
 use metrale_model_layers::layers::ops;
 use metrale_model_layers::layers::ops::{
     Q2K_MMQ_SMEM, kquant_mmq_gemm, kquant_mmvq_groups_w, kquant_mmvq_w, kquant_q8_1_rows,
@@ -220,14 +221,43 @@ impl AttnV41 {
             .launch(stream)
     }
 
-    pub(super) fn act_quant(
+    /// 2026-10-19: `rows` bf16 rows of `values` at `x`, quantised as the reference does, into
+    /// `row`'s packed rows at `out`, with the packing kernel resolved for its codec at init.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn pack_rows(
         &self,
         gpu: &dyn GpuBackend,
+        row: &V41Row,
         x: DevicePtr,
-        n_values: usize,
+        rows: usize,
+        values: usize,
+        out: DevicePtr,
         stream: u64,
     ) -> Result<()> {
-        act_quant_fp8(gpu, self.k.act_quant, x, n_values, stream)
+        let group = match row.pack {
+            RowPack::Fp8E8m0 => FP8_BLOCK,
+            RowPack::Fp4 { group, .. } => usize::try_from(group)?,
+        };
+        let n_blocks = rows * values / group;
+        if n_blocks == 0 {
+            return Ok(());
+        }
+        let grid = [(n_blocks as u32).div_ceil(QUANT_BLOCKS_PER_LAUNCH), 1, 1];
+        let launch = match row.pack {
+            RowPack::Fp8E8m0 => KernelLaunch::new(gpu, self.k.kv_pack_fp8)
+                .grid(grid)
+                .block([256, 1, 1])
+                .arg_ptr(x)
+                .arg_u32(n_blocks as u32),
+            RowPack::Fp4 { e4m3_scale, .. } => KernelLaunch::new(gpu, self.k.kv_pack_fp4)
+                .grid(grid)
+                .block([256, 1, 1])
+                .arg_ptr(x)
+                .arg_u32(n_blocks as u32)
+                .arg_u32(group as u32)
+                .arg_u32(u32::from(e4m3_scale)),
+        };
+        launch.arg_ptr(out).arg_u32(values as u32).launch(stream)
     }
 
     pub(super) fn fp4_quant(

@@ -33,6 +33,7 @@ mod kernel_key;
 mod kernel_table;
 mod kernel_table_tq128;
 mod label;
+mod latent;
 mod pair;
 mod plan;
 mod registry;
@@ -46,6 +47,7 @@ pub use indexer::IndexerPlan;
 pub use kernel_key::{HeadDimClass, KvKernelKey, KvKernelSet, KvOp, ResolvedKvKernels};
 pub use kernel_table::{KernelName, kv_kernel_names};
 pub use label::KvPlanLabel;
+pub use latent::{LatentCache, LatentKvPlan, LatentRowBytes};
 pub use pair::{KvPair, accepted};
 pub use plan::{
     KvCachePlan, KvLayoutEpoch, KvSide, KvSidePlan, KvTransition, LayerIx, LayerKvPlan,

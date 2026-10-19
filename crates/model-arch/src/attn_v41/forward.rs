@@ -16,7 +16,6 @@ use super::{
     AttnV41, AttnV41LayerState, AttnV41LayerWeights, AttnV41Run, SharedV41, at, upload_i32,
 };
 use crate::deepseek_v41_ref::attn::window_topk_idxs;
-use crate::deepseek_v41_ref::compress::LATENT_BLOCK;
 use crate::tp_reduce_v41::CombineRows;
 
 impl AttnV41 {
@@ -62,15 +61,15 @@ impl AttnV41 {
 
         self.q_kv_projections(gpu, w, x, m, yarn, stream)?;
 
-        // 2026-09-25: The window ring, written with stream-ordered copies.
+        // 2026-09-25: The window ring, written with stream-ordered copies of packed rows.
         let win = c.window;
-        let row = hd * 2;
+        let row = self.rows.window.bytes;
         let (rows_a, rows_a_len) = if start_pos == 0 {
             if m <= win {
-                gpu.copy_d2d_async(self.kv, st.window, m * row, stream)?;
+                gpu.copy_d2d_async(self.kv_pack, st.window, m * row, stream)?;
             } else {
                 let cutoff = m % win;
-                let tail = at(self.kv, (m - win) * row);
+                let tail = at(self.kv_pack, (m - win) * row);
                 gpu.copy_d2d_async(
                     tail,
                     at(st.window, cutoff * row),
@@ -84,10 +83,10 @@ impl AttnV41 {
                     stream,
                 )?;
             }
-            (self.kv, m)
+            (self.kv_pack, m)
         } else {
             let slot = start_pos % win;
-            gpu.copy_d2d_async(self.kv, at(st.window, slot * row), row, stream)?;
+            gpu.copy_d2d_async(self.kv_pack, at(st.window, slot * row), row, stream)?;
             (st.window, win)
         };
         let (mut idx, mut topk) = window_topk_idxs(win, m, start_pos);
@@ -142,11 +141,13 @@ impl AttnV41 {
                     false,
                     stream,
                 )?;
-                self.fp4_quant(gpu, self.latent, groups * hd, LATENT_BLOCK, true, stream)?;
-                gpu.copy_d2d_async(
+                self.pack_rows(
+                    gpu,
+                    &self.rows.latent,
                     self.latent,
-                    at(cache, (start_pos / ratio) * row),
-                    groups * row,
+                    groups,
+                    hd,
+                    at(cache, (start_pos / ratio) * self.rows.latent.bytes),
                     stream,
                 )?;
                 shared.compress_kv = Some(cache);
