@@ -350,6 +350,13 @@ fn fp8(qc: &Value) -> Result<DeclaredPrecisionPlan> {
             ignore.push(Target::hf_module(&entry)?);
         }
     }
+    // 2026-10-19: The fp8 method never quantizes the output head: Hugging Face skips the
+    // output embeddings when no exclusion list is given (`get_keys_to_not_convert`), and
+    // vLLM's vocab-parallel head is not a quantized linear. A checkpoint that ships its head
+    // in BF16 without listing it therefore declares a BF16 head, not a W8A8 one.
+    if !ignore.iter().any(|t| t.matches_name("lm_head")) {
+        ignore.push(Target::hf_module("lm_head")?);
+    }
     let mut rules = vec![Rule {
         targets: vec![Target::Class("Linear".into())],
         precision: LayerPrecision {

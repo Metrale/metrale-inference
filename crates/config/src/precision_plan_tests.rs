@@ -407,3 +407,33 @@ fn glm53_declares_static_w4a4_experts_and_dense_mlp_bf16_elsewhere() {
 
 #[path = "precision_plan_mixed_tests.rs"]
 mod mixed;
+
+/// 2026-10-19: deepseek-ai/DeepSeek-V4.1-Flash: an fp8 block that lists no exclusions ships
+/// its head in BF16 (`head.weight` has no scale). The fp8 method leaves the head unquantized
+/// while every other linear stays W8A8 and the routed experts MXFP4; an explicit list that
+/// already names the head is kept as given.
+#[test]
+fn an_fp8_block_without_exclusions_declares_an_unquantized_head() {
+    let p = DeclaredPrecisionPlan::from_quantization_config(&serde_json::json!({
+        "quant_method": "fp8", "activation_scheme": "dynamic", "weight_block_size": [32, 32],
+        "scale_fmt": "ue8m0", "expert_dtype": "fp4"
+    }))
+    .expect("plan");
+    assert_eq!(p.resolve("lm_head"), LayerPrecision::UNQUANTIZED);
+    assert_eq!(
+        p.resolve("model.mtp.0.lm_head"),
+        LayerPrecision::UNQUANTIZED
+    );
+    assert_eq!(p.resolve("layers.3.attn.wq_b").label(), "W8A8");
+    assert_eq!(p.resolve("model.lm_head_proj").label(), "W8A8");
+    let expert = p.resolve("layers.3.ffn.experts.7.w1");
+    assert!(expert.weight.expect("w").is_fp4());
+    assert_eq!(p.ignore.len(), 1);
+    assert_eq!(
+        plan("fp8").ignore.len(),
+        fixture("fp8")["modules_to_not_convert"]
+            .as_array()
+            .expect("list")
+            .len()
+    );
+}
