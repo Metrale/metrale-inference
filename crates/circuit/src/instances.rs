@@ -233,9 +233,10 @@ pub fn parse_instances(text: &str) -> Result<Vec<Instance>, InstanceError> {
                 'M' => LayerKind::Mamba,
                 'E' => LayerKind::Moe,
                 'S' => LayerKind::SparseAttention,
+                'W' => LayerKind::SlidingAttention,
                 other => {
                     return Err(field(format!(
-                        "layer kind `{other}` is not G, A, M, E or S"
+                        "layer kind `{other}` is not G, A, M, E, S or W"
                     )));
                 }
             });

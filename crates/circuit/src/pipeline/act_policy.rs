@@ -34,6 +34,7 @@ fn family_of(op: &OpKind) -> Option<ProjFamily> {
             | LinearRole::MoeLatentOut => Some(ProjFamily::Moe),
             LinearRole::MtpFc | LinearRole::MambaIn | LinearRole::MambaOut => None,
             // 2026-10-08: The GLM-5 projections: the engine's GLM path does not read the flag.
+            // 2026-10-18: Nor does any DeepSeek-V4.1 path read it (compressor, wo_a, Engram).
             LinearRole::KdaB
             | LinearRole::KdaFA
             | LinearRole::KdaFB
@@ -46,7 +47,11 @@ fn family_of(op: &OpKind) -> Option<ProjFamily> {
             | LinearRole::IndexK
             | LinearRole::IndexWeights
             | LinearRole::IndexGate
-            | LinearRole::HcMix => None,
+            | LinearRole::HcMix
+            | LinearRole::CompressKv
+            | LinearRole::CompressGate
+            | LinearRole::OA
+            | LinearRole::EngramKv => None,
         },
         OpKind::Router | OpKind::ExpertGateUp | OpKind::ExpertDown => Some(ProjFamily::Moe),
         OpKind::LmHead => Some(ProjFamily::LmHead),

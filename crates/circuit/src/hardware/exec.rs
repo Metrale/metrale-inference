@@ -69,7 +69,9 @@ impl Exec {
             Exec::ExactFp8Emulation | Exec::NoFp4Kernel { fp8: true } => {
                 (r.fp8_tflops, "the FP8 peak (exact E2M1->E4M3)")
             }
-            Exec::Native(MmaKind::Fp8 | MmaKind::Fp4Fp8Nvfp4) => (r.fp8_tflops, "the FP8 peak"),
+            Exec::Native(MmaKind::Fp8 | MmaKind::Fp4Fp8Nvfp4 | MmaKind::Mxf8f6f4) => {
+                (r.fp8_tflops, "the FP8 peak")
+            }
             Exec::Native(_) | Exec::NoPath(_) | Exec::NoFp4Kernel { fp8: false } => {
                 (r.bf16_tflops, "the BF16 peak")
             }
@@ -108,6 +110,7 @@ pub fn kind_of(activation: Format) -> MmaKind {
     match activation {
         Format::Fp8E4m3 { .. } => MmaKind::Fp8,
         Format::Nvfp4 { .. } => MmaKind::Fp4BlockScale,
+        Format::Mxfp4 { .. } => MmaKind::Mxf8f6f4,
         Format::Bf16 | Format::F32 | Format::I32 => MmaKind::Bf16,
     }
 }
@@ -117,6 +120,18 @@ pub fn kind_of(activation: Format) -> MmaKind {
 /// device unless `native_mma` says so (`fp4_fp8_nvfp4_scaled`); they take the exact E4M3 path.
 pub fn exec_of(device: &Device, weight: Format, activation: Format) -> Exec {
     let kind = kind_of(activation);
+    // 2026-10-18: An MXFP4 weight under FP8 activations is one `mxf8f6f4` MMA (E2M1 x E4M3,
+    // UE8M0 block-32 scales); without it, the exact E2M1 -> E4M3 path with the power-of-two
+    // scale folded into the FP32 block scale.
+    if matches!(weight, Format::Mxfp4 { .. }) && kind == MmaKind::Fp8 {
+        return if device.runs(MmaKind::Mxf8f6f4) {
+            Exec::Native(MmaKind::Mxf8f6f4)
+        } else if device.runs(MmaKind::Fp8) {
+            Exec::ExactFp8Emulation
+        } else {
+            Exec::NoPath(MmaKind::Mxf8f6f4)
+        };
+    }
     let w4a8 = matches!(weight, Format::Nvfp4 { .. }) && kind == MmaKind::Fp8;
     if w4a8 {
         return if device.runs(MmaKind::Fp4Fp8Nvfp4) {
@@ -139,7 +154,7 @@ pub fn exec_of(device: &Device, weight: Format, activation: Format) -> Exec {
 /// 2026-09-30: The declared pair as `W4A16`-style text.
 pub fn pair_name(weight: Format, activation: Format) -> String {
     let bits = |f: Format| match f {
-        Format::Nvfp4 { .. } => "4",
+        Format::Nvfp4 { .. } | Format::Mxfp4 { .. } => "4",
         Format::Fp8E4m3 { .. } => "8",
         Format::Bf16 | Format::F32 | Format::I32 => "16",
     };

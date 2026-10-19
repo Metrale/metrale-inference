@@ -184,7 +184,7 @@ op = "index_select"
 state = { index = "read" }
 in = ["iq", "iw"]
 out = [{ edge = "sel", format = "i32", shape = "n x index_topk/index_kpool" }]
-params = { tail = "always" }
+params = { tail = "always", pool = "index_kpool" }
 
 [[block.dsa.node]]
 id = "attend"
@@ -347,7 +347,7 @@ op = "index_select"
 state = { index = "read" }
 in = ["iq", "iw"]
 out = [{ edge = "sel", format = "i32", shape = "n x index_topk/index_kpool" }]
-params = { tail = "always" }
+params = { tail = "always", pool = "index_kpool" }
 
 [[block.mtp_dsa.node]]
 id = "attend"

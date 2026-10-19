@@ -197,3 +197,36 @@ plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], 
 [instance.policy]
 opt_in_levers = []
 settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive" }
+
+# 2026-10-18: deepseek-ai/DeepSeek-V4.1-Flash-1017 (`deepseek_v41`), the three-node campaign's
+# model. The recipe id is the planned one: no recipe serves this checkpoint yet, and the circuit
+# is not an executor target (`golden = false`: FUSIONS.toml covers none of the V4.1 kernels;
+# `met circuit venn` reads it).
+# - Shape: config.json `text_config` (verified 2026-10-18 against the snapshot's config.json;
+#   crates/circuit/tests/deepseek_v41.rs re-checks every dim against the config crate's fixture):
+#   `compress_ratios` (W = 0, the sliding-window layers; S = 2 or 1, the sparse layers; the
+#   three trailing entries are the draft layers, not modelled), hidden_size, vocab_size,
+#   hc_mult, num_attention_heads, q_lora_rank, head_dim, qk_rope_head_dim, o_groups,
+#   o_lora_rank, sliding_window, the `index_*` dims, the MoE dims, the `engram_*` dims
+#   (`engram_cols` = (engram_max_ngram_size - 1) * engram_n_heads). `late_first` is the first
+#   ratio-1 layer; `hca_ratio` is 1.
+# - kv_cache_dtype: fp8, kernels/gb10/deepseek-v4.1-flash/MODEL.toml `default_kv_dtype`. The
+#   circuit's compressed caches and window ring are states at the checkpoint's packed formats;
+#   nothing in it is held at `kv_cache_dtype`. lm_head_dtype: bf16, declared.
+# - row_tiers: by_rows, the default for a checkpoint that is not an FP8 MoE (ml/row_tiers.rs:64-78);
+#   the routed experts are MXFP4. The other settings are the flag defaults cited for the entries
+#   above; the V4.1 layer code reads none of them.
+[[instance]]
+recipe = "deepseek-v4.1/deepseek-v4.1-flash-mxfp4"
+checkpoint = "deepseek-ai/DeepSeek-V4.1-Flash-1017"
+arch = "deepseek_v41"
+precision = "deepseek-v4.1-flash-mxfp4"
+target = "gb10/deepseek-v4.1-flash/nvfp4"
+golden = false
+layer_kinds = "WWSS SSSS SSSS SSSS SSSS SSSS SSSS SSSS SSSS SSSS"
+dims = { hidden = 5120, vocab = 129280, hc = 4, q_heads = 64, q_lora = 1280, head_dim = 512, rope_dim = 64, o_groups = 8, o_lora = 1024, window = 128, csa_ratio = 2, hca_ratio = 1, late_first = 20, index_heads = 32, index_head_dim = 128, index_topk = 512, experts = 384, top_k = 6, moe_inter = 2304, shared_inter = 2304, engram_cols = 24, engram_head_dim = 256 }
+plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], verify = [2, 3, 4] }
+
+[instance.policy]
+opt_in_levers = []
+settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive" }

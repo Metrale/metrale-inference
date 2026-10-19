@@ -39,6 +39,12 @@ fn every_recurrent_and_attention_layer_names_the_state_it_touches() {
     for inst in common::instances() {
         let c = common::load(&inst).circuit;
         for (layer, kind) in c.layer_kinds.iter().enumerate() {
+            // 2026-10-18: DeepSeek-V4.1's sparse-attention layers differ by template (a source
+            // layer compresses and indexes, a reuse layer reads an earlier layer's cache);
+            // tests/deepseek_v41.rs checks each.
+            if inst.arch == "deepseek_v41" && *kind == LayerKind::SparseAttention {
+                continue;
+            }
             let r = refs(&c, layer, Section::Main);
             let want: Vec<(OpKind, &str, StateAccess)> = match kind {
                 LayerKind::LinearAttention => vec![
@@ -59,6 +65,10 @@ fn every_recurrent_and_attention_layer_names_the_state_it_touches() {
                     (OpKind::PagedAttention, "v", StateAccess::Read),
                 ],
                 LayerKind::Moe => vec![],
+                // 2026-10-18: DeepSeek-V4.1 sliding-window layers: the window ring updated.
+                LayerKind::SlidingAttention => {
+                    vec![(OpKind::LatentSparseAttention, "window", StateAccess::Update)]
+                }
                 // 2026-10-08: GLM-5 DSA: the latent cache written and read, the pooled index
                 // keys written by the pooling and read by the selection, the pool tail updated.
                 LayerKind::SparseAttention => vec![

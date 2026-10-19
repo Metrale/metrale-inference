@@ -28,16 +28,18 @@ macro_rules! kernel_file {
 pub const INSTANCES: &str = kernel_file!("circuits/INSTANCES.toml");
 
 /// 2026-09-28: Every circuit an instance can name, by arch.
-pub const CIRCUITS: [(&str, &str); 4] = [
+pub const CIRCUITS: [(&str, &str); 5] = [
     ("qwen3_5", kernel_file!("circuits/qwen3_5.toml")),
     ("qwen3_6_moe", kernel_file!("circuits/qwen3_6_moe.toml")),
     ("nemotron_h", kernel_file!("circuits/nemotron_h.toml")),
     // 2026-10-08: GLM-5 (not an executor target; `met circuit` plans and the Venn read it).
     ("glm5_next", kernel_file!("circuits/glm5_next.toml")),
+    // 2026-10-18: DeepSeek-V4.1 (not an executor target; `met circuit` plans and the Venn read it).
+    ("deepseek_v41", kernel_file!("circuits/deepseek_v41.toml")),
 ];
 
 /// 2026-09-28: Every precision table an instance can name.
-pub const PRECISION: [(&str, &str); 4] = [
+pub const PRECISION: [(&str, &str); 5] = [
     (
         "qwen3.6-35b-a3b-fp8-bf16head",
         kernel_file!("circuits/precision/qwen3.6-35b-a3b-fp8-bf16head.toml"),
@@ -54,6 +56,10 @@ pub const PRECISION: [(&str, &str); 4] = [
         "glm-5.3-flash-nvfp4",
         kernel_file!("circuits/precision/glm-5.3-flash-nvfp4.toml"),
     ),
+    (
+        "deepseek-v4.1-flash-mxfp4",
+        kernel_file!("circuits/precision/deepseek-v4.1-flash-mxfp4.toml"),
+    ),
 ];
 
 /// 2026-09-28: Every checkpoint plan fixture an instance can name.
@@ -63,7 +69,7 @@ pub const CHECKPOINTS: [(&str, &str); 1] = [(
 )];
 
 /// 2026-09-28: Every block library a circuit can include.
-pub const BLOCKS: [(&str, &str); 4] = [
+pub const BLOCKS: [(&str, &str); 8] = [
     (
         "qwen3_hybrid",
         kernel_file!("circuits/blocks/qwen3_hybrid.toml"),
@@ -80,6 +86,23 @@ pub const BLOCKS: [(&str, &str); 4] = [
     (
         "glm5_next_ffn",
         kernel_file!("circuits/blocks/glm5_next_ffn.toml"),
+    ),
+    // 2026-10-18: The DeepSeek-V4.1 block libraries (kernels/circuits/deepseek_v41.toml includes them).
+    (
+        "deepseek_v41_attn",
+        kernel_file!("circuits/blocks/deepseek_v41_attn.toml"),
+    ),
+    (
+        "deepseek_v41_csa",
+        kernel_file!("circuits/blocks/deepseek_v41_csa.toml"),
+    ),
+    (
+        "deepseek_v41_hca",
+        kernel_file!("circuits/blocks/deepseek_v41_hca.toml"),
+    ),
+    (
+        "deepseek_v41_ffn",
+        kernel_file!("circuits/blocks/deepseek_v41_ffn.toml"),
     ),
 ];
 

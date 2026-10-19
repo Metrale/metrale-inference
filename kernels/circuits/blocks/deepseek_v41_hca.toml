@@ -1,0 +1,418 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-18: The DeepSeek-V4.1 (`deepseek_v41`) HCA sites with their own indexer:
+# `hca_src` (the HCA source layer, one compressed row per token) and `hca_reindex` (layers that
+# run their own indexer query over the HCA source's index keys). Split out of
+# kernels/circuits/deepseek_v41.toml to keep each file short; only that circuit includes it.
+#
+# Owner: metrale-circuit (schema: crates/circuit/src/circuit_toml.rs).
+# Invariants:
+# - The window path is blocks/deepseek_v41_attn.toml's; these sites add the compressed side.
+# - Compressor at ratio 1 (`hca_ratio`): `wkv` projects the hidden row and the result is
+#   RMS-normed, one latent per token, no gate and no tail; the cache holds it rotated.
+# - Indexer: key = rope(rmsnorm(wk(latent))); query = rope(wq_b(the normed query latent));
+#   per row the scores sum over heads of weights_proj(x) times relu(query . key); the top
+#   `index_topk` compressed rows (at most one per compressed position so far) are attended.
+# - Declared precision: the indexer's `wq_b` is FP8 (block 32x32); the compressor, the
+#   indexer's `wk` and `weights_proj` are BF16.
+
+schema = 1
+description = "DeepSeek-V4.1 HCA source and re-index sites"
+
+[block.hca_src]
+stream_in = "x"
+stream_out = "y"
+
+# 2026-10-18: The sliding-window ring: the last `window` latent rows, each FP8 with one E8M0
+# scale per 32 channels; a window, so a verify rolls it back like a conv state.
+[[block.hca_src.state]]
+id = "window"
+kind = "recurrent"
+lifetime = "sequence"
+format = "u8"
+shape = "window x head_dim+head_dim/32"
+verify = "conv_steps"
+
+# 2026-10-18: The compressed caches this layer writes and later layers read, per token at the
+# checkpoint's packed formats: the latent row as E2M1 with one E4M3 scale per 16 channels, the
+# index key as E2M1 with one E8M0 scale per 32, each one row per `hca_ratio` tokens.
+[[block.hca_src.state]]
+id = "ckv"
+kind = "paged_kv"
+lifetime = "model"
+format = "u8"
+shape = "head_dim/2/hca_ratio+head_dim/16/hca_ratio"
+
+[[block.hca_src.state]]
+id = "index"
+kind = "paged_kv"
+lifetime = "model"
+format = "u8"
+shape = "index_head_dim/2/hca_ratio+index_head_dim/32/hca_ratio"
+
+[[block.hca_src.node]]
+id = "mix"
+op = "linear"
+role = "hc_mix"
+in = ["x"]
+out = [{ edge = "mix", format = "f32", shape = "n x hc*hc+hc*2" }]
+binding = ["{L}.hc_attn_fn"]
+unquantized = true
+
+[[block.hca_src.node]]
+id = "pre"
+op = "hc_pre"
+in = ["x", "mix"]
+out = [
+  { edge = "u", format = "bf16", shape = "n x hidden" },
+  { edge = "post", format = "f32", shape = "n x hc" },
+  { edge = "comb", format = "f32", shape = "n x hc*hc" },
+]
+binding = ["{L}.hc_attn_scale", "{L}.hc_attn_base"]
+
+[[block.hca_src.node]]
+id = "attn_norm"
+op = "rms_norm"
+in = ["u"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.attn_norm"]
+params = { weight_form = "plain" }
+
+[[block.hca_src.node]]
+id = "q_a"
+op = "linear"
+role = "mla_q_a"
+in = ["xn"]
+out = [{ edge = "qa", format = "bf16", shape = "n x q_lora" }]
+binding = ["{L}.attn.wq_a"]
+
+[[block.hca_src.node]]
+id = "q_norm"
+op = "rms_norm"
+in = ["qa"]
+out = [{ edge = "qan", format = "bf16", shape = "n x q_lora" }]
+binding = ["{L}.attn.q_norm"]
+params = { weight_form = "plain" }
+
+[[block.hca_src.node]]
+id = "q_b"
+op = "linear"
+role = "mla_q_b"
+in = ["qan"]
+out = [{ edge = "q", format = "bf16", shape = "n x q_heads*head_dim" }]
+binding = ["{L}.attn.wq_b"]
+
+[[block.hca_src.node]]
+id = "kv"
+op = "linear"
+role = "mla_kv_a"
+in = ["xn"]
+out = [{ edge = "kva", format = "bf16", shape = "n x head_dim" }]
+binding = ["{L}.attn.wkv"]
+
+[[block.hca_src.node]]
+id = "kv_norm"
+op = "rms_norm"
+in = ["kva"]
+out = [{ edge = "kvn", format = "bf16", shape = "n x head_dim" }]
+binding = ["{L}.attn.kv_norm"]
+params = { weight_form = "plain" }
+
+[[block.hca_src.node]]
+id = "rope"
+op = "rope"
+in = ["q", "kvn"]
+out = [
+  { edge = "qr", format = "bf16", shape = "n x q_heads*head_dim" },
+  { edge = "kvr", format = "bf16", shape = "n x head_dim" },
+]
+
+[[block.hca_src.node]]
+id = "compress_kv"
+op = "linear"
+role = "compress_kv"
+in = ["xn"]
+out = [{ edge = "ck", format = "bf16", shape = "n x head_dim" }]
+binding = ["{L}.attn.compressor.wkv"]
+
+[[block.hca_src.node]]
+id = "compress_norm"
+op = "rms_norm"
+in = ["ck"]
+out = [{ edge = "latent", format = "bf16", shape = "n x head_dim" }]
+binding = ["{L}.attn.compressor.norm"]
+params = { weight_form = "plain" }
+
+[[block.hca_src.node]]
+id = "idx_k"
+op = "linear"
+role = "index_k"
+in = ["latent"]
+out = [{ edge = "ik", format = "bf16", shape = "n x index_head_dim" }]
+binding = ["{L}.attn.indexer.wk"]
+
+[[block.hca_src.node]]
+id = "idx_k_norm"
+op = "rms_norm"
+in = ["ik"]
+out = [{ edge = "ikn", format = "bf16", shape = "n x index_head_dim" }]
+binding = ["{L}.attn.indexer.k_norm"]
+params = { weight_form = "plain" }
+
+[[block.hca_src.node]]
+id = "idx_k_rope"
+op = "rope"
+in = ["ikn"]
+out = [{ edge = "ikr", format = "bf16", shape = "n x index_head_dim" }]
+
+[[block.hca_src.node]]
+id = "idx_write"
+op = "kv_write"
+state = { index = "write" }
+in = ["ikr"]
+out = []
+params = { layout = "index" }
+
+[[block.hca_src.node]]
+id = "latent_rope"
+op = "rope"
+in = ["latent"]
+out = [{ edge = "latr", format = "bf16", shape = "n x head_dim" }]
+
+[[block.hca_src.node]]
+id = "ckv_write"
+op = "kv_write"
+state = { ckv = "write" }
+in = ["latr"]
+out = []
+params = { layout = "latent" }
+
+[[block.hca_src.node]]
+id = "idx_q"
+op = "linear"
+role = "index_q"
+in = ["qan"]
+out = [{ edge = "iq", format = "bf16", shape = "n x index_heads*index_head_dim" }]
+binding = ["{L}.attn.indexer.wq_b"]
+
+[[block.hca_src.node]]
+id = "idx_q_rope"
+op = "rope"
+in = ["iq"]
+out = [{ edge = "iqr", format = "bf16", shape = "n x index_heads*index_head_dim" }]
+
+[[block.hca_src.node]]
+id = "idx_w"
+op = "linear"
+role = "index_weights"
+in = ["xn"]
+out = [{ edge = "iw", format = "bf16", shape = "n x index_heads" }]
+binding = ["{L}.attn.indexer.weights_proj"]
+
+[[block.hca_src.node]]
+id = "select"
+op = "index_select"
+state = { index = "read" }
+in = ["iqr", "iw"]
+out = [{ edge = "sel", format = "i32", shape = "n x index_topk" }]
+params = { pool = "hca_ratio" }
+
+[[block.hca_src.node]]
+id = "attend"
+op = "latent_sparse_attention"
+state = { window = "update", ckv = "read" }
+in = ["qr", "kvr", "sel"]
+out = [{ edge = "a", format = "bf16", shape = "n x q_heads*head_dim" }]
+binding = ["{L}.attn.attn_sink"]
+params = { compressed = "ckv", ratio = "hca_ratio" }
+
+[[block.hca_src.node]]
+id = "unrope"
+op = "rope"
+in = ["a"]
+out = [{ edge = "au", format = "bf16", shape = "n x q_heads*head_dim" }]
+params = { inverse = "true" }
+
+[[block.hca_src.node]]
+id = "o_a"
+op = "linear"
+role = "o_a"
+in = ["au"]
+out = [{ edge = "oa", format = "bf16", shape = "n x o_groups*o_lora" }]
+binding = ["{L}.attn.wo_a"]
+params = { groups = "{o_groups}" }
+
+[[block.hca_src.node]]
+id = "o"
+op = "linear"
+role = "o"
+in = ["oa"]
+out = [{ edge = "o", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.attn.wo_b"]
+
+[[block.hca_src.node]]
+id = "post"
+op = "hc_post"
+in = ["o", "x", "post", "comb"]
+out = [{ edge = "y", format = "bf16", shape = "n x hc*hidden" }]
+
+# 2026-10-18: Its own indexer query and weights over the nearest earlier layer's `index` keys
+# (param `keys`), and that layer's `ckv` rows; no cache of its own.
+[block.hca_reindex]
+stream_in = "x"
+stream_out = "y"
+
+# 2026-10-18: The sliding-window ring: the last `window` latent rows, each FP8 with one E8M0
+# scale per 32 channels; a window, so a verify rolls it back like a conv state.
+[[block.hca_reindex.state]]
+id = "window"
+kind = "recurrent"
+lifetime = "sequence"
+format = "u8"
+shape = "window x head_dim+head_dim/32"
+verify = "conv_steps"
+
+[[block.hca_reindex.node]]
+id = "mix"
+op = "linear"
+role = "hc_mix"
+in = ["x"]
+out = [{ edge = "mix", format = "f32", shape = "n x hc*hc+hc*2" }]
+binding = ["{L}.hc_attn_fn"]
+unquantized = true
+
+[[block.hca_reindex.node]]
+id = "pre"
+op = "hc_pre"
+in = ["x", "mix"]
+out = [
+  { edge = "u", format = "bf16", shape = "n x hidden" },
+  { edge = "post", format = "f32", shape = "n x hc" },
+  { edge = "comb", format = "f32", shape = "n x hc*hc" },
+]
+binding = ["{L}.hc_attn_scale", "{L}.hc_attn_base"]
+
+[[block.hca_reindex.node]]
+id = "attn_norm"
+op = "rms_norm"
+in = ["u"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.attn_norm"]
+params = { weight_form = "plain" }
+
+[[block.hca_reindex.node]]
+id = "q_a"
+op = "linear"
+role = "mla_q_a"
+in = ["xn"]
+out = [{ edge = "qa", format = "bf16", shape = "n x q_lora" }]
+binding = ["{L}.attn.wq_a"]
+
+[[block.hca_reindex.node]]
+id = "q_norm"
+op = "rms_norm"
+in = ["qa"]
+out = [{ edge = "qan", format = "bf16", shape = "n x q_lora" }]
+binding = ["{L}.attn.q_norm"]
+params = { weight_form = "plain" }
+
+[[block.hca_reindex.node]]
+id = "q_b"
+op = "linear"
+role = "mla_q_b"
+in = ["qan"]
+out = [{ edge = "q", format = "bf16", shape = "n x q_heads*head_dim" }]
+binding = ["{L}.attn.wq_b"]
+
+[[block.hca_reindex.node]]
+id = "kv"
+op = "linear"
+role = "mla_kv_a"
+in = ["xn"]
+out = [{ edge = "kva", format = "bf16", shape = "n x head_dim" }]
+binding = ["{L}.attn.wkv"]
+
+[[block.hca_reindex.node]]
+id = "kv_norm"
+op = "rms_norm"
+in = ["kva"]
+out = [{ edge = "kvn", format = "bf16", shape = "n x head_dim" }]
+binding = ["{L}.attn.kv_norm"]
+params = { weight_form = "plain" }
+
+[[block.hca_reindex.node]]
+id = "rope"
+op = "rope"
+in = ["q", "kvn"]
+out = [
+  { edge = "qr", format = "bf16", shape = "n x q_heads*head_dim" },
+  { edge = "kvr", format = "bf16", shape = "n x head_dim" },
+]
+
+[[block.hca_reindex.node]]
+id = "idx_q"
+op = "linear"
+role = "index_q"
+in = ["qan"]
+out = [{ edge = "iq", format = "bf16", shape = "n x index_heads*index_head_dim" }]
+binding = ["{L}.attn.indexer.wq_b"]
+
+[[block.hca_reindex.node]]
+id = "idx_q_rope"
+op = "rope"
+in = ["iq"]
+out = [{ edge = "iqr", format = "bf16", shape = "n x index_heads*index_head_dim" }]
+
+[[block.hca_reindex.node]]
+id = "idx_w"
+op = "linear"
+role = "index_weights"
+in = ["xn"]
+out = [{ edge = "iw", format = "bf16", shape = "n x index_heads" }]
+binding = ["{L}.attn.indexer.weights_proj"]
+
+[[block.hca_reindex.node]]
+id = "select"
+op = "index_select"
+in = ["iqr", "iw"]
+out = [{ edge = "sel", format = "i32", shape = "n x index_topk" }]
+params = { keys = "index", pool = "hca_ratio" }
+
+[[block.hca_reindex.node]]
+id = "attend"
+op = "latent_sparse_attention"
+state = { window = "update" }
+in = ["qr", "kvr", "sel"]
+out = [{ edge = "a", format = "bf16", shape = "n x q_heads*head_dim" }]
+binding = ["{L}.attn.attn_sink"]
+params = { compressed = "ckv", ratio = "hca_ratio" }
+
+[[block.hca_reindex.node]]
+id = "unrope"
+op = "rope"
+in = ["a"]
+out = [{ edge = "au", format = "bf16", shape = "n x q_heads*head_dim" }]
+params = { inverse = "true" }
+
+[[block.hca_reindex.node]]
+id = "o_a"
+op = "linear"
+role = "o_a"
+in = ["au"]
+out = [{ edge = "oa", format = "bf16", shape = "n x o_groups*o_lora" }]
+binding = ["{L}.attn.wo_a"]
+params = { groups = "{o_groups}" }
+
+[[block.hca_reindex.node]]
+id = "o"
+op = "linear"
+role = "o"
+in = ["oa"]
+out = [{ edge = "o", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.attn.wo_b"]
+
+[[block.hca_reindex.node]]
+id = "post"
+op = "hc_post"
+in = ["o", "x", "post", "comb"]
+out = [{ edge = "y", format = "bf16", shape = "n x hc*hidden" }]

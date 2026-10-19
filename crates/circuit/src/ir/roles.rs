@@ -78,9 +78,19 @@ pub enum LinearRole {
     /// 2026-10-08: Hyper-connection `hc_*_fn`: the flattened residual streams into the
     /// `(2 + hc) * hc` pre, post and combination mixes.
     HcMix,
+    /// 2026-10-18: DeepSeek-V4.1 compressor `wkv`: the hidden row into the latent to pool.
+    CompressKv,
+    /// 2026-10-18: Compressor `wgate`: the per-channel pool scores of that latent.
+    CompressGate,
+    /// 2026-10-18: Grouped low-rank output `wo_a`: each of the `groups` (param) slices of the
+    /// attention output into its own `o_lora` latent.
+    OA,
+    /// 2026-10-18: Engram `wkv`: the looked-up n-gram embeddings into the per-stream keys and
+    /// the shared value.
+    EngramKv,
 }
 
-const ROLES: [(LinearRole, &str); 31] = [
+const ROLES: [(LinearRole, &str); 35] = [
     (LinearRole::Q, "q"),
     (LinearRole::K, "k"),
     (LinearRole::V, "v"),
@@ -112,6 +122,10 @@ const ROLES: [(LinearRole, &str); 31] = [
     (LinearRole::IndexWeights, "index_weights"),
     (LinearRole::IndexGate, "index_gate"),
     (LinearRole::HcMix, "hc_mix"),
+    (LinearRole::CompressKv, "compress_kv"),
+    (LinearRole::CompressGate, "compress_gate"),
+    (LinearRole::OA, "o_a"),
+    (LinearRole::EngramKv, "engram_kv"),
 ];
 
 impl LinearRole {

@@ -4,6 +4,8 @@
 //! e.g. `q_heads*head_dim*2` or `lin_qk*2+lin_v`. 2026-10-02: A factor may be a dim divided by a
 //! literal, rounded up (`moe_inter/128`: the scale count of a 128-wide group). 2026-10-08: Or by
 //! another dim, rounded up (`index_head_dim/index_kpool`: a pooled key's share of one token).
+//! 2026-10-18: Divisions chain left to right, each step rounded up (`head_dim/2/csa_ratio`: the
+//! FP4 bytes of a latent row pooled over `csa_ratio` tokens, per token).
 //!
 //! Owner: metrale-circuit.
 //! Invariants:
@@ -23,10 +25,17 @@ pub struct DimExpr {
 enum Factor {
     Name(String),
     Lit(u64),
-    /// 2026-10-02: `name/lit`, rounded up.
-    CeilDiv(String, u64),
-    /// 2026-10-08: `name/name`, rounded up.
-    CeilDivDim(String, String),
+    /// 2026-10-02: `name/by/by…`, each step rounded up (2026-10-18: chained).
+    CeilDiv(String, Vec<Divisor>),
+}
+
+/// 2026-10-08: One divisor of a [`Factor::CeilDiv`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Divisor {
+    /// 2026-10-02: An integer literal, never zero.
+    Lit(u64),
+    /// 2026-10-08: A dim; zero at evaluation is an error.
+    Dim(String),
 }
 
 /// 2026-09-28: Why a dimension expression did not parse or evaluate.
@@ -79,8 +88,13 @@ impl DimExpr {
     /// 2026-09-28: Every name the expression reads.
     pub fn names(&self) -> impl Iterator<Item = &str> {
         self.terms.iter().flatten().flat_map(|f| match f {
-            Factor::Name(n) | Factor::CeilDiv(n, _) => vec![n.as_str()],
-            Factor::CeilDivDim(n, d) => vec![n.as_str(), d.as_str()],
+            Factor::Name(n) => vec![n.as_str()],
+            Factor::CeilDiv(n, by) => std::iter::once(n.as_str())
+                .chain(by.iter().filter_map(|d| match d {
+                    Divisor::Dim(d) => Some(d.as_str()),
+                    Divisor::Lit(_) => None,
+                }))
+                .collect(),
             Factor::Lit(_) => Vec::new(),
         })
     }
@@ -101,11 +115,19 @@ impl DimExpr {
                 let v = match f {
                     Factor::Lit(v) => *v,
                     Factor::Name(n) => dim(n)?,
-                    Factor::CeilDiv(n, d) => dim(n)?.div_ceil(*d),
-                    Factor::CeilDivDim(n, d) => match dim(d)? {
-                        0 => return Err(DimError::Syntax(self.text.clone())),
-                        by => dim(n)?.div_ceil(by),
-                    },
+                    Factor::CeilDiv(n, by) => {
+                        let mut v = dim(n)?;
+                        for d in by {
+                            v = match d {
+                                Divisor::Lit(l) => v.div_ceil(*l),
+                                Divisor::Dim(d) => match dim(d)? {
+                                    0 => return Err(DimError::Syntax(self.text.clone())),
+                                    l => v.div_ceil(l),
+                                },
+                            };
+                        }
+                        v
+                    }
                 };
                 prod = prod.checked_mul(v).ok_or_else(overflow)?;
             }
@@ -116,15 +138,19 @@ impl DimExpr {
 }
 
 fn parse_factor(f: &str) -> Option<Factor> {
-    if let Some((name, by)) = f.split_once('/') {
+    if let Some((name, rest)) = f.split_once('/') {
         let Factor::Name(n) = parse_factor(name)? else {
             return None;
         };
-        return match parse_factor(by)? {
-            Factor::Lit(d) => Some(Factor::CeilDiv(n, d)),
-            Factor::Name(d) => Some(Factor::CeilDivDim(n, d)),
-            Factor::CeilDiv(..) | Factor::CeilDivDim(..) => None,
-        };
+        let by = rest
+            .split('/')
+            .map(|d| match parse_factor(d)? {
+                Factor::Lit(l) => Some(Divisor::Lit(l)),
+                Factor::Name(d) => Some(Divisor::Dim(d)),
+                Factor::CeilDiv(..) => None,
+            })
+            .collect::<Option<Vec<_>>>()?;
+        return Some(Factor::CeilDiv(n, by));
     }
     let first = f.chars().next()?;
     if first.is_ascii_digit() {

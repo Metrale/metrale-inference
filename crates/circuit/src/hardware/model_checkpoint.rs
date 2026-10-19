@@ -161,6 +161,7 @@ fn dtype_name(f: Format) -> Result<&'static str, HwError> {
         Format::Bf16 => Ok("bf16"),
         Format::Fp8E4m3 { .. } => Ok("fp8"),
         Format::Nvfp4 { .. } => Ok("nvfp4"),
+        Format::Mxfp4 { .. } => Ok("mxfp4"),
         other => Err(HwError::Model(format!(
             "{} is no serving dtype",
             other.name()

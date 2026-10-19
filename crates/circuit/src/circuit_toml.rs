@@ -197,6 +197,11 @@ pub(crate) struct LayoutFile {
     /// 2026-10-08: The first layers take other blocks per kind (`first_k_dense_replace`: dense
     /// FFN layers before the MoE ones).
     pub prefix: Option<PrefixFile>,
+    /// 2026-10-18: `[layout.at]`: single layers (key = the layer index, written canonically)
+    /// that take their own blocks whatever their kind, ahead of `prefix` and `blocks`
+    /// (DeepSeek-V4.1: the compressor and indexer owners and the Engram layers).
+    #[serde(default)]
+    pub at: BTreeMap<String, Vec<String>>,
 }
 
 /// 2026-10-08: `[layout.prefix]`: layers `0..count` (`count` a dim of the circuit) map their

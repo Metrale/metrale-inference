@@ -6,6 +6,7 @@
 //! Owner: metrale-circuit.
 //! Invariants: none beyond the types.
 
+use super::ops::PLAIN_OPS;
 use super::*;
 
 #[test]
@@ -47,6 +48,10 @@ fn every_spelling_parses_back_to_its_op_and_role() {
         "index_weights",
         "index_gate",
         "hc_mix",
+        "compress_kv",
+        "compress_gate",
+        "o_a",
+        "engram_kv",
     ] {
         let r = LinearRole::parse(name).unwrap_or_else(|| panic!("{name}"));
         assert_eq!(r.name(), name);
@@ -80,6 +85,11 @@ fn the_glm_ops_are_opaque_where_they_scan_or_read_weights() {
         (OpKind::HcPost, false, false),
         (OpKind::SwigluClamp, false, false),
         (OpKind::LayerNorm, false, false),
+        // 2026-10-18: DeepSeek-V4.1: only the attention is opaque, and none reads a weight.
+        (OpKind::LatentSparseAttention, true, false),
+        (OpKind::KvCompress, false, false),
+        (OpKind::EngramLookup, false, false),
+        (OpKind::EngramGate, false, false),
     ] {
         assert_eq!(op.is_heavy(), heavy, "{op:?}");
         assert_eq!(op.reads_linear_weight(), weight, "{op:?}");

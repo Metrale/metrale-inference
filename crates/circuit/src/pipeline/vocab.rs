@@ -50,6 +50,16 @@ const LATENT_ATTENTION: &[StepKind] = &[
     StepKind::Accumulate,
 ];
 
+/// 2026-10-18: Latent sparse attention: the window ring it updates (a state at its declared
+/// format), then attention over the ring and the compressed rows, no weight. No `cache` step:
+/// neither side is held at `kv_cache_dtype`; both are states with fixed formats.
+const SPARSE_LATENT_ATTENTION: &[StepKind] = &[
+    StepKind::State,
+    StepKind::Scores,
+    StepKind::Softmax,
+    StepKind::Accumulate,
+];
+
 /// 2026-10-02: The steps of `op`'s pipeline, in order.
 pub fn steps_of(op: &OpKind) -> &'static [StepKind] {
     match op {
@@ -82,6 +92,12 @@ pub fn steps_of(op: &OpKind) -> &'static [StepKind] {
         OpKind::KpoolCompress => RECURRENT,
         OpKind::IndexSelect => &[StepKind::Scores, StepKind::Score],
         OpKind::Conv1dUpdate | OpKind::GdnRecurrence | OpKind::SsmUpdate => RECURRENT,
+        // 2026-10-18: The latent compression updates its run tail like the pool above; the
+        // latent sparse attention updates its window ring and reads the compressed cache.
+        OpKind::KvCompress => RECURRENT,
+        OpKind::LatentSparseAttention => SPARSE_LATENT_ATTENTION,
+        OpKind::EngramLookup => &[StepKind::Gather],
+        OpKind::EngramGate => COMPUTE,
         OpKind::StateSnapshot => &[StepKind::State],
         OpKind::TopK => &[StepKind::Score],
         OpKind::Blend => &[StepKind::Scatter, StepKind::Combine],

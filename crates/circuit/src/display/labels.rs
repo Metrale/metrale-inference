@@ -60,6 +60,7 @@ pub(super) fn format_label(f: Format, g: &Set) -> String {
             Scale::Block(r, c) => format!("fp8 e4m3/{r}{}{c} blk", g.times),
         },
         Format::Nvfp4 { group } => format!("nvfp4 g{group}"),
+        Format::Mxfp4 { group } => format!("mxfp4 g{group}"),
         other => other.name(),
     }
 }

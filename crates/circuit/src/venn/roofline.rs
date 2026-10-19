@@ -12,6 +12,9 @@
 //!   2026-10-08: Latent attention reads `kv_b_proj` and the latent rows it attends (the selected
 //!   ones under an indexer), the indexer's selection every pool key; both at the declared state
 //!   format.
+//!   2026-10-18: Latent sparse attention reads its window ring and the compressed rows it
+//!   attends (its own state or the nearest earlier layer's); the latent compression reads and
+//!   writes its run tail.
 //! - Routed experts read `E * (1 - (1 - k/E)^T)` distinct experts' weights for `T` tokens
 //!   (uniform routing).
 //! - The peak is the MMA class of the node's input activation: FP8 or NVFP4 activations run the
@@ -25,7 +28,7 @@ use super::families::Roofline;
 use crate::format::Format;
 use crate::ir::{Circuit, Node, OpKind};
 use crate::rules::Mode;
-use crate::state::{StateAccess, StateDtype, StateFormat};
+use crate::state::{StateAccess, StateDecl, StateDtype, StateFormat};
 
 /// 2026-09-29: One node's estimate.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -151,14 +154,39 @@ pub fn node_cost(
         }
         OpKind::IndexSelect => {
             // 2026-10-08: Every pool key of the context once per sequence (the cache holds one
-            // pooled key per `index_kpool` tokens, declared per token), scored by every head.
+            // pooled key per `pool` tokens, declared per token), scored by every head.
+            // 2026-10-18: The pool width is the dim the node's `pool` param names; the keys are
+            // its own state or, under a `keys` param, the nearest earlier layer's.
             let ctx = r.context_tokens as f64;
-            bytes += seqs * ctx * read_unit_bytes(c, n, settings)?;
-            flops = 2.0
-                * t
-                * (ctx / dim("index_kpool")?)
-                * dim("index_heads")?
-                * dim("index_head_dim")?;
+            let pool = dim(param(n, "pool")?)?;
+            let unit = match n.params.get("keys") {
+                Some(local) => named_unit_bytes(c, n, local, settings)?,
+                None => read_unit_bytes(c, n, settings)?,
+            };
+            bytes += seqs * ctx * unit;
+            flops = 2.0 * t * (ctx / pool) * dim("index_heads")? * dim("index_head_dim")?;
+        }
+        OpKind::LatentSparseAttention => {
+            // 2026-10-18: The window ring once per sequence, then the selected compressed
+            // positions (at most `index_topk` of the `ctx / ratio`), each `ratio` per-token
+            // units of the compressed state; one shared latent row is both key and value.
+            let ctx = r.context_tokens as f64;
+            bytes += seqs * update_state_bytes(c, n, settings)?;
+            let compressed = match param(n, "compressed")? {
+                "none" => 0.0,
+                local => {
+                    let ratio = dim(param(n, "ratio")?)?;
+                    let pos = (ctx / ratio).min(dim("index_topk")?);
+                    bytes += seqs * pos * ratio * named_unit_bytes(c, n, local, settings)?;
+                    pos
+                }
+            };
+            let attended = dim("window")?.min(ctx) + compressed;
+            flops = 4.0 * t * attended * dim("q_heads")? * dim("head_dim")?;
+        }
+        OpKind::KvCompress => {
+            // 2026-10-18: The run tail read and written once per sequence.
+            bytes += 2.0 * seqs * update_state_bytes(c, n, settings)?;
         }
         OpKind::GdnRecurrence | OpKind::SsmUpdate => {
             let elems = if n.op == OpKind::GdnRecurrence {
@@ -193,26 +221,97 @@ pub(crate) fn read_unit_bytes(
     n: &Node,
     settings: &BTreeMap<String, String>,
 ) -> Result<f64, CostError> {
-    let fail = |detail: String| CostError::Node {
-        node: n.id.clone(),
-        detail,
-    };
     let (idx, _) = n
         .state
         .iter()
         .find(|(_, a)| *a == StateAccess::Read)
-        .ok_or_else(|| fail("the estimate needs the state it reads".into()))?;
-    let decl = &c.states[*idx];
+        .ok_or_else(|| node_error(n, "the estimate needs the state it reads".into()))?;
+    unit_bytes(n, &c.states[*idx], settings)
+}
+
+/// 2026-10-18: Bytes of one unit (one slot) of the first state `n` updates.
+pub(crate) fn update_state_bytes(
+    c: &Circuit,
+    n: &Node,
+    settings: &BTreeMap<String, String>,
+) -> Result<f64, CostError> {
+    let (idx, _) = n
+        .state
+        .iter()
+        .find(|(_, a)| *a == StateAccess::Update)
+        .ok_or_else(|| node_error(n, "the estimate needs the state it updates".into()))?;
+    unit_bytes(n, &c.states[*idx], settings)
+}
+
+/// 2026-10-18: Bytes of one unit of the state named `local` that `n` reads: its own read state of
+/// that name, else the state of that name of the nearest earlier layer in its section (a layer
+/// that attends a cache an earlier layer writes).
+pub(crate) fn named_unit_bytes(
+    c: &Circuit,
+    n: &Node,
+    local: &str,
+    settings: &BTreeMap<String, String>,
+) -> Result<f64, CostError> {
+    let own = n
+        .state
+        .iter()
+        .map(|&(i, _)| &c.states[i])
+        .find(|s| s.local == local);
+    let earlier = || {
+        let section = own_section(c, n)?;
+        c.states
+            .iter()
+            .filter(|s| s.local == local && s.section == section)
+            .filter(|s| matches!((s.layer, n.layer), (Some(a), Some(b)) if a < b))
+            .max_by_key(|s| s.layer)
+    };
+    let decl = own.or_else(earlier).ok_or_else(|| {
+        node_error(
+            n,
+            format!("no state `{local}` in this layer or an earlier one"),
+        )
+    })?;
+    unit_bytes(n, decl, settings)
+}
+
+fn own_section(c: &Circuit, n: &Node) -> Option<crate::ir::Section> {
+    let i = c.node(&n.id)?;
+    c.blocks
+        .iter()
+        .find(|b| (b.first..b.end).contains(&i))
+        .map(|b| b.section)
+}
+
+fn unit_bytes(
+    n: &Node,
+    decl: &StateDecl,
+    settings: &BTreeMap<String, String>,
+) -> Result<f64, CostError> {
     let dtype = match &decl.format {
         StateFormat::Fixed(d) => *d,
         StateFormat::Keyed(key) => {
             let v = settings
                 .get(key)
-                .ok_or_else(|| fail(format!("the policy states no `{key}`")))?;
+                .ok_or_else(|| node_error(n, format!("the policy states no `{key}`")))?;
             StateDtype::parse(v).ok_or_else(|| CostError::KvDtype(v.clone()))?
         }
     };
     Ok((decl.elements * dtype.size()) as f64)
+}
+
+/// 2026-10-18: The param `key` of `n`, which its estimate needs.
+fn param<'n>(n: &'n Node, key: &str) -> Result<&'n str, CostError> {
+    n.params
+        .get(key)
+        .map(String::as_str)
+        .ok_or_else(|| node_error(n, format!("the estimate needs param `{key}`")))
+}
+
+fn node_error(n: &Node, detail: String) -> CostError {
+    CostError::Node {
+        node: n.id.clone(),
+        detail,
+    }
 }
 
 /// 2026-10-01: `n` multiplies an NVFP4 activation by a linear weight: the node the NVFP4 peak

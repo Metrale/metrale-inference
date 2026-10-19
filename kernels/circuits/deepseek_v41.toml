@@ -1,0 +1,122 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-18: The DeepSeek-V4.1 circuit (`deepseek_v41`, DeepSeek-V4.1-Flash): 40 layers, each
+# an attention site and a routed-MoE site under manifold-constrained hyper-connections (`hc`
+# residual streams). Every layer attends a sliding window of one shared latent row per token;
+# from layer 2 on, a layer also attends compressed rows its indexer (or an earlier layer's)
+# selected. Two layers add an Engram residual before their attention site. Then the streams'
+# contraction, the final norm and the vocabulary head.
+#
+# Owner: metrale-circuit (crates/circuit/src/circuit_toml.rs is the schema).
+# Invariants:
+# - Follows the checkpoint's reference inference code (`inference/model.py`): every RMSNorm
+#   scales by its stored weight (`weight_form = "plain"`); the embedding is broadcast into the
+#   streams before layer 0; each site is hc_mix -> hc_pre -> norm -> sublayer -> hc_post, so no
+#   layer has a residual add.
+# - Layer roles are the checkpoint's: `sliding_attention` layers (0-1) keep only the window; of
+#   the `deepseek_sparse_attention` layers, the CSA sources (2, 8, 14) pool every `csa_ratio`
+#   tokens into one cached row and run an indexer, the HCA source (20) caches one row per token,
+#   the re-index layers (24, 28, 32, 36) run their own indexer query over layer 20's keys, and
+#   every other layer reuses the nearest earlier source's rows and selection. Engram runs before
+#   layers 1 and 14. `[layout.at]` names each special layer; the prefix covers layers below
+#   `late_first` (the first HCA layer), whose reuse sites read a CSA source.
+# - Not modelled: the reference delays each site's pre-mix by one site (each site's `hc_pre`
+#   weights come from the previous site's mix, and the head contracts with the last one; here
+#   each site mixes its own, and the head takes the streams' mean, which reads the same bytes);
+#   the MTP/DSpark draft layers; the vision tower; the image-span routing bias (`bias_vl`).
+# - It is not an executor target: the engine runs DeepSeek-V4.1 through its own layer code, and
+#   FUSIONS.toml covers none of it (`golden = false` in INSTANCES.toml). `met circuit venn` and
+#   `met circuit plan` read it.
+# - arXiv:2512.24880 — the manifold-constrained hyper-connection streams (`hc_*` sites);
+#   arXiv:2512.02556 — the lightning indexer and top-k row selection; arXiv:2601.07372 — the
+#   Engram n-gram lookup and gate.
+
+schema = 1
+arch = "deepseek_v41"
+description = "DeepSeek-V4.1: sliding-window plus compressed sparse latent attention under 4-stream hyper-connections, Engram, 384-expert MXFP4 MoE"
+layer_module = "layers.{i}"
+include = ["deepseek_v41_attn", "deepseek_v41_csa", "deepseek_v41_hca", "deepseek_v41_ffn"]
+dims = [
+  "hidden", "vocab", "hc",
+  "q_heads", "q_lora", "head_dim", "rope_dim", "o_groups", "o_lora", "window",
+  "csa_ratio", "hca_ratio", "late_first",
+  "index_heads", "index_head_dim", "index_topk",
+  "experts", "top_k", "moe_inter", "shared_inter",
+  "engram_cols", "engram_head_dim",
+]
+prologue = ["embed"]
+epilogue = ["head"]
+draft = []
+
+[layout]
+kind = "list"
+
+[layout.blocks]
+sliding_attention = ["swa", "moe"]
+deepseek_sparse_attention = ["hca_reuse", "moe"]
+
+# 2026-10-18: Below the HCA source, a sparse layer reuses a CSA source's rows.
+[layout.prefix]
+count = "late_first"
+blocks = { sliding_attention = ["swa", "moe"], deepseek_sparse_attention = ["csa_reuse", "moe"] }
+
+# 2026-10-18: The sources, the re-index layers and the Engram layers (`compress_ratios`,
+# `kv_source_layer_ids`, `index_source_layer_ids`, `engram_layer_ids` in config.json).
+[layout.at]
+"1" = ["engram", "swa", "moe"]
+"2" = ["csa_src", "moe"]
+"8" = ["csa_src", "moe"]
+"14" = ["engram", "csa_src", "moe"]
+"20" = ["hca_src", "moe"]
+"24" = ["hca_reindex", "moe"]
+"28" = ["hca_reindex", "moe"]
+"32" = ["hca_reindex", "moe"]
+"36" = ["hca_reindex", "moe"]
+
+[block.embed]
+stream_out = "streams"
+
+[[block.embed.node]]
+id = "embed"
+op = "embed"
+out = [{ edge = "h", format = "bf16", shape = "n x hidden" }]
+binding = ["embed"]
+
+[[block.embed.node]]
+id = "expand"
+op = "hc_expand"
+in = ["h"]
+out = [{ edge = "streams", format = "bf16", shape = "n x hc*hidden" }]
+
+[block.head]
+stream_in = "x"
+stream_out = "xn"
+outputs = [{ edge = "logits", buffer = "logits" }, { edge = "token", buffer = "tokens" }]
+
+[[block.head.node]]
+id = "contract"
+op = "hc_contract"
+in = ["x"]
+out = [{ edge = "h", format = "bf16", shape = "n x hidden" }]
+
+[[block.head.node]]
+id = "final_norm"
+op = "final_norm"
+in = ["h"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["norm"]
+params = { weight_form = "plain" }
+
+# 2026-10-18: The head weight is BF16; the reference multiplies it in FP32 for FP32 logits.
+[[block.head.node]]
+id = "lm_head"
+op = "lm_head"
+in = ["xn"]
+out = [{ edge = "logits", format = "f32", shape = "n x vocab" }]
+binding = ["head"]
+
+[[block.head.node]]
+id = "argmax"
+op = "argmax"
+in = ["logits"]
+out = [{ edge = "token", format = "i32", shape = "n x 1" }]

@@ -40,7 +40,8 @@ fn an_unknown_name_is_reported_not_zeroed() {
 #[test]
 fn syntax_errors_are_refused() {
     for s in [
-        "", "a+", "*a", "0", "a*0", "Hidden", "a-b", "a**b", "2x", "a/0", "4/2", "a/2/2",
+        "", "a+", "*a", "0", "a*0", "Hidden", "a-b", "a**b", "2x", "a/0", "4/2", "a//2", "a/2/",
+        "a/2/0", "a/2/B",
     ] {
         assert!(
             matches!(DimExpr::parse(s), Err(DimError::Syntax(_))),
@@ -73,7 +74,7 @@ fn a_ceil_division_rounds_up_and_names_its_dim() {
 }
 
 /// 2026-10-08: `name/name` divides by the other dim, rounding up, and names both; a divisor dim
-/// of zero, an unknown divisor and a nested division are refused.
+/// of zero and an unknown divisor are refused.
 #[test]
 fn a_division_by_a_dim_rounds_up_and_names_both() {
     let e = DimExpr::parse("head_dim/top_k").unwrap();
@@ -92,5 +93,30 @@ fn a_division_by_a_dim_rounds_up_and_names_both() {
         Err(DimError::Unknown { name, .. }) if name == "kpool"
     ));
     assert!(DimExpr::parse("4/head_dim").is_err());
-    assert!(DimExpr::parse("head_dim/top_k/2").is_err());
+}
+
+/// 2026-10-18: Divisions chain left to right, each step rounded up (`x/a/b` is
+/// `ceil(ceil(x/a)/b)`); every dim divisor is named and a zero one is refused.
+#[test]
+fn chained_divisions_round_up_at_every_step() {
+    let mut d = dims();
+    d.insert("x".into(), 513);
+    let e = DimExpr::parse("x/2/top_k").unwrap();
+    assert_eq!(e.eval(&d), Ok(257u64.div_ceil(8)));
+    assert_eq!(e.names().collect::<Vec<_>>(), ["x", "top_k"]);
+    assert_eq!(
+        DimExpr::parse("head_dim/2/n + head_dim/16/n")
+            .unwrap()
+            .eval(&dims()),
+        Ok(128u64.div_ceil(3) + 16u64.div_ceil(3))
+    );
+    assert_eq!(
+        DimExpr::parse("head_dim/top_k/2").unwrap().eval(&dims()),
+        Ok(16)
+    );
+    d.insert("z".into(), 0);
+    assert_eq!(
+        DimExpr::parse("x/2/z").unwrap().eval(&d),
+        Err(DimError::Syntax("x/2/z".into()))
+    );
 }

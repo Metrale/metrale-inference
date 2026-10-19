@@ -19,256 +19,10 @@ use std::collections::BTreeMap;
 use crate::dims::DimExpr;
 use crate::format::Format;
 
+mod ops;
 mod roles;
+pub use ops::{OpKind, OpParseError};
 pub use roles::LinearRole;
-
-/// 2026-09-28: The closed op vocabulary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum OpKind {
-    /// 2026-09-28: Token embedding lookup; a source node.
-    Embed,
-    /// 2026-09-28: RMSNorm with a learned weight.
-    RmsNorm,
-    /// 2026-09-28: RMSNorm of one input gated by SiLU of another (GDN output norm).
-    GatedRmsNorm,
-    /// 2026-09-28: Elementwise sum of two streams.
-    ResidualAdd,
-    /// 2026-09-28: A copy between buffers.
-    Copy,
-    /// 2026-09-28: Concatenate inputs along the feature dim.
-    Concat,
-    /// 2026-09-28: Split or deinterleave a packed projection output.
-    Split,
-    /// 2026-09-28: A weight-bearing projection.
-    Linear(LinearRole),
-    /// 2026-09-28: `silu(gate) * up` over a packed gate|up input.
-    SiluMul,
-    /// 2026-09-29: `relu(x)^2` of an ungated up projection.
-    Relu2,
-    /// 2026-09-28: Quantize activations to the given format.
-    ActQuant(Format),
-    /// 2026-09-28: Per-head RMSNorm of Q or K.
-    QkNorm,
-    /// 2026-09-28: Rotary position embedding.
-    Rope,
-    /// 2026-09-28: Append K and V to the paged cache.
-    KvWrite,
-    /// 2026-09-28: Paged softmax attention over the cache.
-    PagedAttention,
-    /// 2026-09-28: `x * sigmoid(gate)` (attention output gate).
-    SigmoidGateMul,
-    /// 2026-09-28: GDN beta and decay from the `ba` projection.
-    GdnGates,
-    /// 2026-09-28: Causal depthwise conv1d step with its rolling state.
-    Conv1dUpdate,
-    /// 2026-09-28: L2 normalisation of Q and K heads.
-    L2Norm,
-    /// 2026-09-28: The gated delta rule recurrence over the recurrent state.
-    GdnRecurrence,
-    /// 2026-09-29: The Mamba2 selective state-space update: one step of the SSM state per row
-    /// (`dt` softplus, `A`, the grouped `B`/`C` projections and the `D` skip).
-    SsmUpdate,
-    /// 2026-09-28: MoE router logits.
-    Router,
-    /// 2026-09-28: Top-k expert selection and weights.
-    TopK,
-    /// 2026-09-28: Routed experts' gate and up projections.
-    ExpertGateUp,
-    /// 2026-09-28: Routed experts' down projections.
-    ExpertDown,
-    /// 2026-09-28: Weighted sum of the routed experts and the gated shared expert.
-    Blend,
-    /// 2026-09-28: Cross-rank reduction of an expert-parallel FFN output.
-    EpReduce,
-    /// 2026-09-28: The model's final RMSNorm.
-    FinalNorm,
-    /// 2026-09-28: Vocabulary projection.
-    LmHead,
-    /// 2026-09-28: Greedy token selection over the logits.
-    Argmax,
-    /// 2026-09-29: A snapshot of the recurrent state its input's producer updates, taken after
-    /// each row but the last into the step's checkpoint slots (the verify's rollback points).
-    /// It has no output.
-    StateSnapshot,
-    /// 2026-10-08: Clamp a packed gate|up row before `silu_mul`: the gate to at most the limit,
-    /// the up half to [-limit, limit] (GLM-5 `swiglu_limit`; the limit is a runtime argument).
-    SwigluClamp,
-    /// 2026-10-08: LayerNorm with a learned weight and bias (mean-centred, unlike RMSNorm).
-    LayerNorm,
-    /// 2026-10-08: The sparse-attention indexer's key pooling: each completed run of
-    /// `index_kpool` tokens becomes one pool key, a per-channel softmax over the run's gate
-    /// scores plus the learned position embedding weighting its keys. The incomplete run
-    /// waits in a per-sequence tail. It has no output.
-    KpoolCompress,
-    /// 2026-10-08: The sparse-attention indexer's selection: per row, the head-weighted ReLU
-    /// scores of the indexer query against every pool key, and the top `index_topk /
-    /// index_kpool` pools. The pool ids are its output; the incomplete tail is always attended.
-    IndexSelect,
-    /// 2026-10-08: Multi-head latent attention: per-head queries absorbed into the shared KV
-    /// latent through `kv_b_proj`'s key half, softmax over the latent cache rows the selection
-    /// names, and the result taken back to `v_head_dim` per head through its value half.
-    MlaAttention,
-    /// 2026-10-08: Broadcast a hidden row into `hc` hyper-connection residual streams.
-    HcExpand,
-    /// 2026-10-08: The hyper-connection pre-mix: from the streams and their `hc_mix`
-    /// projection, the pre weights (sigmoid), the post weights and the Sinkhorn-normalised
-    /// combination matrix; the sublayer input is the pre-weighted sum of the streams.
-    HcPre,
-    /// 2026-10-08: The hyper-connection post-mix: every new stream is its post weight times the
-    /// sublayer output plus the combination of the old streams.
-    HcPost,
-    /// 2026-10-08: The streams' mean: one hidden row per token again (before the final norm).
-    HcContract,
-}
-
-const PLAIN_OPS: [(OpKind, &str); 38] = [
-    (OpKind::Embed, "embed"),
-    (OpKind::RmsNorm, "rms_norm"),
-    (OpKind::GatedRmsNorm, "gated_rms_norm"),
-    (OpKind::ResidualAdd, "residual_add"),
-    (OpKind::Copy, "copy"),
-    (OpKind::Concat, "concat"),
-    (OpKind::Split, "split"),
-    (OpKind::SiluMul, "silu_mul"),
-    (OpKind::Relu2, "relu2"),
-    (OpKind::QkNorm, "qk_norm"),
-    (OpKind::Rope, "rope"),
-    (OpKind::KvWrite, "kv_write"),
-    (OpKind::PagedAttention, "paged_attention"),
-    (OpKind::SigmoidGateMul, "sigmoid_gate_mul"),
-    (OpKind::GdnGates, "gdn_gates"),
-    (OpKind::Conv1dUpdate, "conv1d_update"),
-    (OpKind::L2Norm, "l2_norm"),
-    (OpKind::GdnRecurrence, "gdn_recurrence"),
-    (OpKind::SsmUpdate, "ssm_update"),
-    (OpKind::Router, "router"),
-    (OpKind::TopK, "top_k"),
-    (OpKind::ExpertGateUp, "expert_gate_up"),
-    (OpKind::ExpertDown, "expert_down"),
-    (OpKind::Blend, "blend"),
-    (OpKind::EpReduce, "ep_reduce"),
-    (OpKind::FinalNorm, "final_norm"),
-    (OpKind::LmHead, "lm_head"),
-    (OpKind::Argmax, "argmax"),
-    (OpKind::StateSnapshot, "state_snapshot"),
-    (OpKind::SwigluClamp, "swiglu_clamp"),
-    (OpKind::LayerNorm, "layer_norm"),
-    (OpKind::KpoolCompress, "kpool_compress"),
-    (OpKind::IndexSelect, "index_select"),
-    (OpKind::MlaAttention, "mla_attention"),
-    (OpKind::HcExpand, "hc_expand"),
-    (OpKind::HcPre, "hc_pre"),
-    (OpKind::HcPost, "hc_post"),
-    (OpKind::HcContract, "hc_contract"),
-];
-
-impl OpKind {
-    /// 2026-09-28: Resolve an op name. `linear` needs `role`, `act_quant` needs `format`;
-    /// every other op refuses both.
-    pub fn parse(
-        name: &str,
-        role: Option<&str>,
-        format: Option<Format>,
-    ) -> Result<Self, OpParseError> {
-        match (name, role, format) {
-            ("linear", Some(r), None) => LinearRole::parse(r)
-                .map(OpKind::Linear)
-                .ok_or_else(|| OpParseError::UnknownRole(r.to_string())),
-            ("linear", None, _) => Err(OpParseError::MissingRole),
-            ("act_quant", None, Some(f)) => Ok(OpKind::ActQuant(f)),
-            ("act_quant", _, None) => Err(OpParseError::MissingFormat),
-            _ => {
-                let op = PLAIN_OPS
-                    .iter()
-                    .find(|(_, n)| *n == name)
-                    .map(|(k, _)| *k)
-                    .ok_or_else(|| OpParseError::UnknownOp(name.to_string()))?;
-                if role.is_some() || format.is_some() {
-                    return Err(OpParseError::StrayQualifier(name.to_string()));
-                }
-                Ok(op)
-            }
-        }
-    }
-
-    /// 2026-09-28: The op's base name (`linear`, `act_quant`, `rms_norm`, ...).
-    pub fn base_name(&self) -> &'static str {
-        match self {
-            OpKind::Linear(_) => "linear",
-            OpKind::ActQuant(_) => "act_quant",
-            other => PLAIN_OPS
-                .iter()
-                .find(|(k, _)| k == other)
-                .map(|(_, n)| *n)
-                .unwrap_or("?"),
-        }
-    }
-
-    /// 2026-09-28: The canonical spelling with its qualifier, e.g. `linear:down`,
-    /// `act_quant:fp8/token`.
-    pub fn name(&self) -> String {
-        match self {
-            OpKind::Linear(r) => format!("linear:{}", r.name()),
-            OpKind::ActQuant(f) => format!("act_quant:{}", f.name()),
-            _ => self.base_name().to_string(),
-        }
-    }
-
-    /// 2026-09-28: An op that is never generated: projections, attention, the recurrence,
-    /// the experts and the vocabulary projection. Fusion happens at its edges. 2026-10-08: Also
-    /// the indexer's selection, latent attention and the hyper-connection pre-mix (an iterative
-    /// Sinkhorn normalisation).
-    pub fn is_heavy(&self) -> bool {
-        matches!(
-            self,
-            OpKind::Linear(_)
-                | OpKind::PagedAttention
-                | OpKind::GdnRecurrence
-                | OpKind::SsmUpdate
-                | OpKind::Router
-                | OpKind::ExpertGateUp
-                | OpKind::ExpertDown
-                | OpKind::LmHead
-                | OpKind::IndexSelect
-                | OpKind::MlaAttention
-                | OpKind::HcPre
-        )
-    }
-
-    /// 2026-09-28: Ops that read a weight whose format the precision resolver answers.
-    /// 2026-10-08: Latent attention reads `kv_b_proj` ([`Circuit::weight_shape`]).
-    pub fn reads_linear_weight(&self) -> bool {
-        matches!(
-            self,
-            OpKind::Linear(_)
-                | OpKind::ExpertGateUp
-                | OpKind::ExpertDown
-                | OpKind::LmHead
-                | OpKind::Router
-                | OpKind::MlaAttention
-        )
-    }
-}
-
-/// 2026-09-28: Why an op spelling was refused.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum OpParseError {
-    /// 2026-09-28: Not in the vocabulary.
-    #[error("unknown op `{0}`")]
-    UnknownOp(String),
-    /// 2026-09-28: `linear` with a role outside [`LinearRole`].
-    #[error("unknown linear role `{0}`")]
-    UnknownRole(String),
-    /// 2026-09-28: `linear` without `role`.
-    #[error("`linear` needs a `role`")]
-    MissingRole,
-    /// 2026-09-28: `act_quant` without `format`.
-    #[error("`act_quant` needs a `format`")]
-    MissingFormat,
-    /// 2026-09-28: `role` or `format` on an op that takes neither.
-    #[error("op `{0}` takes no `role` or `format`")]
-    StrayQualifier(String),
-}
 
 /// 2026-09-28: Index of an edge in [`Circuit::edges`].
 pub type EdgeIdx = usize;
@@ -342,6 +96,9 @@ pub enum LayerKind {
     /// 2026-10-08: A sparse-attention layer: latent attention over the tokens an indexer
     /// selects (`deepseek_sparse_attention`, GLM-5).
     SparseAttention,
+    /// 2026-10-18: A sliding-window attention layer: softmax over the last `window` tokens only
+    /// (`sliding_attention`; DeepSeek-V4.1 layers whose `compress_ratios` entry is 0).
+    SlidingAttention,
 }
 
 impl LayerKind {
@@ -353,6 +110,7 @@ impl LayerKind {
             LayerKind::Mamba => "mamba",
             LayerKind::Moe => "moe",
             LayerKind::SparseAttention => "deepseek_sparse_attention",
+            LayerKind::SlidingAttention => "sliding_attention",
         }
     }
 
@@ -364,6 +122,7 @@ impl LayerKind {
             "mamba" => Some(LayerKind::Mamba),
             "moe" => Some(LayerKind::Moe),
             "deepseek_sparse_attention" => Some(LayerKind::SparseAttention),
+            "sliding_attention" => Some(LayerKind::SlidingAttention),
             _ => None,
         }
     }
@@ -445,6 +204,9 @@ impl Circuit {
     /// `kv_b_proj`, `[q_heads * (mla_qk + mla_v), kv_lora]`. One definition for the roofline,
     /// the footprint and the memory model. `None` when a dim latent attention needs is
     /// missing or the product overflows.
+    /// 2026-10-18: A grouped linear (param `groups`, DeepSeek-V4 `wo_a`) multiplies each of its
+    /// `groups` input slices by its own `out / groups` rows, so `k` is the input width over
+    /// `groups`; `None` when `groups` is not a positive divisor of it.
     pub fn weight_shape(&self, n: &Node) -> Option<(u64, u64)> {
         if n.op == OpKind::MlaAttention {
             let d = |k: &str| self.dims.get(k).copied();
@@ -452,6 +214,16 @@ impl Circuit {
             return Some((d("q_heads")?.checked_mul(per_head)?, d("kv_lora")?));
         }
         let k = n.inputs.first().map_or(0, |&e| self.edges[e].dim_value);
+        let k = match (n.op, n.params.get("groups")) {
+            (OpKind::Linear(_), Some(g)) => {
+                let g = g
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|g| *g > 0 && k.is_multiple_of(*g))?;
+                k / g
+            }
+            _ => k,
+        };
         let out = n.outputs.iter().map(|&e| self.edges[e].dim_value).sum();
         Some((out, k))
     }

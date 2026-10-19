@@ -2,7 +2,8 @@
 
 //! 2026-10-08: The layout half of the instantiation: the arch shape's dims against the
 //! circuit's, and the block sequence a model's layer kinds map to (prologue, layers, epilogue,
-//! draft), split out of `instantiate.rs` unchanged apart from the `[layout.prefix]` rule.
+//! draft), split out of `instantiate.rs` unchanged apart from the `[layout.prefix]` rule and
+//! (2026-10-18) the `[layout.at]` single-layer overrides.
 //!
 //! Owner: metrale-circuit.
 //! Invariants: see [`crate::circuit_toml`]; every layout block named anywhere must exist, every
@@ -72,6 +73,7 @@ pub(super) fn block_sequence(
         }
         None => None,
     };
+    let at = at_layers(file, kinds.len(), &mut used)?;
     for (i, kind) in kinds.iter().enumerate() {
         if let LayoutRule::Interval { period } = rule {
             let want = if (i + 1) % period == 0 {
@@ -88,6 +90,7 @@ pub(super) fn block_sequence(
             }
         }
         let blocks = match prefix {
+            _ if at.contains_key(&i) => at[&i],
             Some((len, p)) if i < len => p.blocks.get(kind.name()).ok_or_else(|| {
                 CircuitError::Layout(format!(
                     "layer {i} is {}, which the `{}` prefix maps to no blocks",
@@ -145,6 +148,44 @@ pub(super) fn block_sequence(
         return Err(CircuitError::Layout(format!(
             "block template `{unused}` is never used"
         )));
+    }
+    Ok(out)
+}
+
+/// 2026-10-18: The `[layout.at]` overrides by layer index. A key must be a layer index written
+/// canonically (`7`, never `07` or `+7`) and below the model's layer count; every block it
+/// names must exist.
+fn at_layers<'f>(
+    file: &'f CircuitFile,
+    layers: usize,
+    used: &mut BTreeSet<String>,
+) -> Result<BTreeMap<usize, &'f Vec<String>>, CircuitError> {
+    let mut out = BTreeMap::new();
+    for (key, blocks) in &file.layout.at {
+        let i = key
+            .parse::<usize>()
+            .ok()
+            .filter(|i| i.to_string() == *key)
+            .ok_or_else(|| {
+                CircuitError::Layout(format!("`[layout.at]` key `{key}` is not a layer index"))
+            })?;
+        if i >= layers {
+            return Err(CircuitError::Layout(format!(
+                "`[layout.at]` names layer {i}, but the model has {layers} layers"
+            )));
+        }
+        if blocks.is_empty() {
+            return Err(CircuitError::Layout(format!(
+                "`[layout.at]` gives layer {i} no blocks"
+            )));
+        }
+        for n in blocks {
+            if !file.block.contains_key(n) {
+                return Err(CircuitError::Layout(format!("no block template `{n}`")));
+            }
+            used.insert(n.clone());
+        }
+        out.insert(i, blocks);
     }
     Ok(out)
 }

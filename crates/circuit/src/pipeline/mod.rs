@@ -72,14 +72,14 @@ impl Num {
         NUMS.iter().find(|(_, n)| *n == s).map(|(v, _)| *v)
     }
 
-    /// 2026-10-02: The precision of a tensor format's values: an FP8 tensor is E4M3, an NVFP4 one
-    /// E2M1; `None` for `i32`, which no multiply or compute step reads as a number.
+    /// 2026-10-02: The precision of a tensor format's values: an FP8 tensor is E4M3, an NVFP4 or MXFP4
+    /// one E2M1; `None` for `i32`, which no multiply or compute step reads as a number.
     pub fn of_format(f: Format) -> Option<Self> {
         match f {
             Format::Bf16 => Some(Num::Bf16),
             Format::F32 => Some(Num::F32),
             Format::Fp8E4m3 { .. } => Some(Num::E4m3),
-            Format::Nvfp4 { .. } => Some(Num::E2m1),
+            Format::Nvfp4 { .. } | Format::Mxfp4 { .. } => Some(Num::E2m1),
             Format::I32 => None,
         }
     }

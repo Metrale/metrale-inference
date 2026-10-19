@@ -56,6 +56,7 @@ Evaluated and **lossy**, so adoptable only behind an explicit flag that is off b
 | Paper | arXiv | What we take | Where |
 |---|---|---|---|
 | Conditional Memory via Scalable Lookup: A New Axis of Sparsity for Large Language Models — Cheng, Tian, Zeng et al. | [2601.07372](https://arxiv.org/abs/2601.07372) | Engram conditional-memory lookup (hashed n-gram embedding rows). | Engram row gather (*planned*) |
+| mHC: Manifold-Constrained Hyper-Connections — Xie, Wei, Cao et al. | [2512.24880](https://arxiv.org/abs/2512.24880) | Manifold-constrained hyper-connection residual streams: per-site mix, pre-reduce and post-expand around each sublayer. | `deepseek_v41` circuit (`kernels/circuits/deepseek_v41.toml`) |
 
 ### Already cited in code
 
