@@ -36,15 +36,17 @@
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 
-/// 2026-09-25: An attention projection on the device: bf16, or raw `Q2_K`
-/// blocks. `Q3_K` is refused by `AttnV41::gemm`.
+use crate::fp8_block_v41::{Fp8BlockStage, Fp8StageSize};
+
+/// 2026-09-25: An attention projection on the device: bf16, raw `Q2_K` blocks, or FP8 blocks
+/// (dequantized per launch through `fp8_block_v41`). `Q3_K` is refused by `AttnV41::gemm`.
 pub use metrale_model_layers::layers::ops::ResidentMat as AttnMat;
 
 const MODULE: &str = "attn_v41";
 const GEMM_MODULE: &str = "gemm";
 /// 2026-09-25: Quantiser blocks per launch block: one warp per block, 8 warps
 /// in the 256-thread launch block (`attn_v41_act_quant_fp8`, `attn_v41_fp4_quant`).
-const QUANT_BLOCKS_PER_LAUNCH: u32 = 8;
+const QUANT_BLOCKS_PER_LAUNCH: u32 = crate::fp8_block_v41::ACT_QUANT_BLOCKS_PER_LAUNCH;
 
 /// 2026-09-25: Model-wide attention geometry, built from `ModelConfig` and the
 /// `METRALE_DS41_*` limits by the DeepSeek-V4.1 weight loader.
@@ -72,6 +74,9 @@ pub struct AttnV41Cfg {
     pub orig_seq: usize,
     pub beta_fast: f32,
     pub beta_slow: f32,
+    /// 2026-10-19: The FP8 block projections' scratch (`Fp8StageSize::NONE` when every
+    /// projection is bf16 or K-quant).
+    pub fp8_stage: Fp8StageSize,
 }
 
 impl AttnV41Cfg {
@@ -99,12 +104,12 @@ pub struct CompressorWeightsGpu {
     pub norm: DevicePtr,
 }
 
-/// 2026-09-25: Indexer weights (index sources only): bf16 `wq_b`
+/// 2026-09-25: Indexer weights (index sources only): `wq_b` (bf16, or FP8 blocks)
 /// `[index_heads * index_hd, q_rank]` and `weights_proj` `[index_heads, dim]`;
 /// on a layer that is also a kv source, bf16 `wk` `[index_hd, hd]` and f32
 /// `k_norm` `[index_hd]`.
 pub struct IndexerWeightsGpu {
-    pub wq_b: DevicePtr,
+    pub wq_b: AttnMat,
     pub weights_proj: DevicePtr,
     pub wk: Option<DevicePtr>,
     pub k_norm: Option<DevicePtr>,
@@ -278,6 +283,7 @@ pub struct AttnV41 {
     /// scores and sums its outputs in the same order, so the bytes do not depend on the value.
     sparse_split: u32,
     k: Kernels,
+    fp8: Fp8BlockStage,
     fc_plain: DevicePtr,
     fc_yarn: DevicePtr,
     // 2026-09-25: q8_1 activations for the Q2_K projections, sized for the

@@ -30,6 +30,7 @@ use crate::deepseek_v41_layer::SegState;
 use crate::deepseek_v41_layer::levers::Ds41LoadLevers;
 use crate::deepseek_v41_layer::{DeepSeekV41Layer, V41Runtime};
 use crate::engram_v41::{EngramHashTables, EngramHasher, EngramLayerWeights, EngramV41};
+use crate::fp8_block_v41::Fp8StageSize;
 use crate::moe_v41::{MoeV41, MoeV41Cfg, MoeV41LayerWeights, RouterWeights};
 use metrale_model_layers::layer::TransformerLayer;
 use metrale_model_layers::weight_map::DenseWeight;
@@ -153,6 +154,7 @@ pub fn load_layers(
         } else {
             1.0
         },
+        fp8_stage: Fp8StageSize::NONE,
     };
     let moe_cfg = MoeV41Cfg {
         dim,
@@ -164,6 +166,7 @@ pub fn load_layers(
         route_scale: config.routed_scaling_factor as f32,
         swiglu_limit: config.swiglu_limit,
         max_tokens,
+        fp8_stage: Fp8StageSize::NONE,
     };
     tracing::info!(
         "DeepSeek-V4.1: {n_layers} layers, kv sources {kv_sources:?}, index sources {index_sources:?}, candidate source {cand_src} ({cand_topk_blocks} x {cand_block}), window {}, max_seq {max_seq}, max_tokens {max_tokens}, expert cache {cache_gib} GiB, {reader_threads} readers",
@@ -369,7 +372,7 @@ pub fn load_layers(
         };
         let idx = if role.is_index_source {
             Some(IndexerWeightsGpu {
-                wq_b: bf16_ptr(store, &format!("{lp}.indexer.wq_b.weight"))?,
+                wq_b: resident_mat(store, &format!("{lp}.indexer.wq_b.weight"))?,
                 weights_proj: bf16_ptr(store, &format!("{lp}.indexer.proj.weight"))?,
                 wk: if role.is_kv_source {
                     Some(bf16_ptr(store, &format!("{lp}.indexer.wk.weight"))?)

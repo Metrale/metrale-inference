@@ -9,7 +9,7 @@
 //! slices into its device-visible slots (misses are read from the
 //! `ExpertSource`), and the kernels read the blocks directly with the
 //! activation quantised to q8_1: GEMVs for groups of up to eight rows, and by
-//! default MMQ above. The shared expert is resident, bf16 or K-quant (`ResidentMat`).
+//! default MMQ above. The shared expert is resident, bf16, K-quant or FP8 blocks (`ResidentMat`).
 //!
 //! Routing matches `deepseek_v41_ref::moe::gate`: f32-accumulated router
 //! logits, scores `sqrt(softplus(logit / gate_temp))`, the top-k chosen by
@@ -27,6 +27,8 @@
 use metrale_gpu_runtime::gpu::{DevicePtr, KernelHandle};
 
 use metrale_model_layers::layers::ops::ResidentMat;
+
+use crate::fp8_block_v41::{Fp8BlockStage, Fp8StageSize};
 
 mod device_route;
 mod forward;
@@ -53,6 +55,9 @@ pub struct MoeV41Cfg {
     pub route_scale: f32,
     pub swiglu_limit: f32,
     pub max_tokens: usize,
+    /// 2026-10-19: The FP8 block shared-expert projections' scratch (`Fp8StageSize::NONE`
+    /// when they are bf16 or K-quant).
+    pub fp8_stage: Fp8StageSize,
 }
 
 /// 2026-09-25: One layer's resident MoE weights: the router and the shared expert.
@@ -159,6 +164,7 @@ pub struct MoeV41 {
     pub(crate) levers: crate::deepseek_v41_layer::levers::Ds41Levers,
     pub cfg: MoeV41Cfg,
     k: Kernels,
+    fp8: Fp8BlockStage,
     logits: DevicePtr,
     /// 2026-09-25: The next layer's router on this layer's input
     /// (`[n_routed]` f32).

@@ -97,6 +97,7 @@ fn cfg_of(c: &ModelCfg) -> AttnV41Cfg {
         orig_seq: c.orig_seq,
         beta_fast: c.beta_fast,
         beta_slow: c.beta_slow,
+        fp8_stage: Fp8StageSize::NONE,
     }
 }
 
@@ -192,7 +193,7 @@ fn gpu_attention_matches_the_reference_on_every_layer_and_regime() {
             norm: up_f32(g, lw.comp_norm.as_ref().unwrap()),
         });
         let idx = lw.idx_wq_b.as_ref().map(|wq_b| IndexerWeightsGpu {
-            wq_b: up_bf16(g, wq_b),
+            wq_b: AttnMat::Bf16(up_bf16(g, wq_b)),
             weights_proj: up_bf16(g, lw.idx_weights_proj.as_ref().unwrap()),
             wk: lw.idx_wk.as_ref().map(|w| up_bf16(g, w)),
             k_norm: lw.idx_k_norm.as_ref().map(|w| up_f32(g, w)),

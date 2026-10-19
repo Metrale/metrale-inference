@@ -53,8 +53,12 @@ impl MoeV41 {
                   n: usize,
                   kdim: usize|
          -> Result<()> {
+            let (a, wt) = self.fp8.lower(gpu, a, wt, m, n, kdim, stream)?;
             let (mu, nu, ku) = (m as u32, n as u32, kdim as u32);
             match wt {
+                ResidentMat::Fp8Block { .. } => {
+                    anyhow::bail!("an FP8 block shared-expert projection was not lowered")
+                }
                 ResidentMat::Bf16(p) if m == 1 => ops::dense_gemv(
                     gpu,
                     self.k.gemv,

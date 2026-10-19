@@ -227,7 +227,7 @@ impl AttnV41 {
         self.gemm(
             gpu,
             self.qr,
-            AttnMat::Bf16(iw.wq_b),
+            iw.wq_b,
             self.iq,
             m,
             nhi * ihd,

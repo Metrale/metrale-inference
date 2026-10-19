@@ -288,7 +288,7 @@ fn layer0_matches_the_cpu_reference_on_the_real_weights() {
     let run_r = attention_any(
         &x_r, m, 0, &aw, None, None, &icfg, &cc, &fc, &mut st, &mut sh,
     );
-    let mut acfg = AttnV41Cfg {
+    let acfg = AttnV41Cfg {
         dim,
         n_heads: nh,
         head_dim: hd,
@@ -311,8 +311,8 @@ fn layer0_matches_the_cpu_reference_on_the_real_weights() {
         orig_seq: 65536,
         beta_fast: 32.0,
         beta_slow: 1.0,
+        fp8_stage: crate::fp8_block_v41::Fp8StageSize::NONE,
     };
-    acfg.max_tokens = 16;
     let attn = AttnV41::new(g, acfg.clone(), at_defaults()).unwrap();
     let role = LayerRole {
         ratio: 0,
@@ -471,6 +471,7 @@ fn layer0_matches_the_cpu_reference_on_the_real_weights() {
         route_scale: mc.route_scale,
         swiglu_limit: mc.swiglu_limit,
         max_tokens: 16,
+        fp8_stage: crate::fp8_block_v41::Fp8StageSize::NONE,
     };
     let moe = MoeV41::new(g, mcfg, at_defaults()).unwrap();
     let mw_d = MoeV41LayerWeights {

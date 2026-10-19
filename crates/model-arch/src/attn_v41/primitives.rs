@@ -13,6 +13,7 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 use super::{AttnMat, AttnV41, QUANT_BLOCKS_PER_LAUNCH};
+use crate::fp8_block_v41::act_quant_fp8;
 use metrale_model_layers::layers::ops;
 use metrale_model_layers::layers::ops::{
     Q2K_MMQ_SMEM, kquant_mmq_gemm, kquant_mmvq_groups_w, kquant_mmvq_w, kquant_q8_1_rows,
@@ -31,9 +32,11 @@ impl AttnV41 {
         kk: usize,
         stream: u64,
     ) -> Result<()> {
+        let (a, w) = self.fp8.lower(gpu, a, w, m, n, kk, stream)?;
         let w = match w {
             AttnMat::Bf16(p) => p,
             AttnMat::Q3K(_) => anyhow::bail!("attention projections are never Q3_K"),
+            AttnMat::Fp8Block { .. } => anyhow::bail!("an FP8 block projection was not lowered"),
             AttnMat::Q2K(blocks) => {
                 let (m, n, kk) = (m as u32, n as u32, kk as u32);
                 if m <= 8 {
@@ -193,16 +196,7 @@ impl AttnV41 {
         n_values: usize,
         stream: u64,
     ) -> Result<()> {
-        let n_blocks = n_values / 32;
-        if n_blocks == 0 {
-            return Ok(());
-        }
-        KernelLaunch::new(gpu, self.k.act_quant)
-            .grid([(n_blocks as u32).div_ceil(QUANT_BLOCKS_PER_LAUNCH), 1, 1])
-            .block([256, 1, 1])
-            .arg_ptr(x)
-            .arg_u32(n_blocks as u32)
-            .launch(stream)
+        act_quant_fp8(gpu, self.k.act_quant, x, n_values, stream)
     }
 
     pub(super) fn fp4_quant(

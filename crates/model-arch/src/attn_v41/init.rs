@@ -10,7 +10,7 @@
 use anyhow::{Result, ensure};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
-use super::{AttnV41, AttnV41Cfg, GEMM_MODULE, Kernels, MODULE, upload_f32};
+use super::{AttnV41, AttnV41Cfg, Fp8BlockStage, GEMM_MODULE, Kernels, MODULE, upload_f32};
 use crate::deepseek_v41_layer::levers::Ds41Levers;
 use crate::deepseek_v41_ref::attn::freqs_cis;
 use crate::deepseek_v41_ref::compress::yarn_freqs_cis;
@@ -85,6 +85,7 @@ impl AttnV41 {
             .max(cfg.groups * cfg.o_rank)
             .max(nh * hd);
         Ok(AttnV41 {
+            fp8: Fp8BlockStage::new(gpu, cfg.fp8_stage)?,
             sparse_split: levers.sparse_split,
             a_q8: alloc(
                 kquant_q8_1_rows_bytes(8, kmax as u32)
@@ -135,6 +136,7 @@ impl AttnV41 {
     }
 
     pub fn free(self, gpu: &dyn GpuBackend) -> Result<()> {
+        self.fp8.free(gpu)?;
         for p in [
             self.fc_plain,
             self.fc_yarn,

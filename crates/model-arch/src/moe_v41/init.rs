@@ -13,7 +13,9 @@
 use anyhow::{Result, ensure};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
-use super::{GEMM_MODULE, Kernels, MODULE, MoeV41, MoeV41Cfg, MoeV41Timing, SLOT_TABLE_LAYERS};
+use super::{
+    Fp8BlockStage, GEMM_MODULE, Kernels, MODULE, MoeV41, MoeV41Cfg, MoeV41Timing, SLOT_TABLE_LAYERS,
+};
 use crate::deepseek_v41_layer::levers::Ds41Levers;
 use metrale_model_layers::layers::ops::{
     KQUANT_MODULE, kquant_mmq_act_bytes, kquant_q8_1_rows_bytes,
@@ -46,6 +48,7 @@ impl MoeV41 {
             _ => "",
         };
         Ok(MoeV41 {
+            fp8: Fp8BlockStage::new(gpu, cfg.fp8_stage)?,
             last: std::cell::Cell::new(MoeV41Timing::default()),
             levers,
             k: Kernels {
@@ -124,6 +127,7 @@ impl MoeV41 {
     }
 
     pub fn free(self, gpu: &dyn GpuBackend) -> Result<()> {
+        self.fp8.free(gpu)?;
         for p in [
             self.logits,
             self.pred_logits,

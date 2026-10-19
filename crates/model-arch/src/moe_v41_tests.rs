@@ -173,6 +173,7 @@ fn run_case(tokens: usize) {
         route_scale: 1.5,
         swiglu_limit: 10.0,
         max_tokens: tokens,
+        fp8_stage: Fp8StageSize::NONE,
     };
     // 2026-09-25: Experts: gate/up Q2_K [INTER, DIM], down Q3_K [DIM, INTER].
     let ex = Experts {
@@ -399,6 +400,7 @@ fn single_token_expert_sum_is_bit_identical_across_runs() {
         route_scale: 1.5,
         swiglu_limit: 10.0,
         max_tokens: 1,
+        fp8_stage: Fp8StageSize::NONE,
     };
     let ex = Experts {
         gate: (0..N_ROUTED)
