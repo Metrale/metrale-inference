@@ -278,6 +278,11 @@ pub struct ModelConfig {
     pub engram_pad_token_id: u32,
     #[serde(default)]
     pub engram_compressed_vocab_size: usize,
+    /// 2026-10-19: The compressed engram id of every tokenizer id (`[vocab]`). Serve fills it from
+    /// the tokenizer when `engram_compressed_vocab_size` is set and the checkpoint ships no map of
+    /// its own (`fill_engram_token_map`); empty otherwise.
+    #[serde(skip)]
+    pub engram_token_map: Vec<u32>,
     #[serde(default)]
     pub engram_multipliers: Vec<u64>,
     #[serde(default)]

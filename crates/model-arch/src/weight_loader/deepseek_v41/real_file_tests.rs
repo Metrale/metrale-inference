@@ -32,51 +32,9 @@ use std::sync::Arc;
 
 const MODEL_DIR: &str = "/home/rstesiak/models/dsv41-q2k";
 
-fn rms(v: &[f32]) -> f32 {
-    (v.iter().map(|x| x * x).sum::<f32>() / v.len().max(1) as f32).sqrt()
-}
-
-fn report(what: &str, got: &[f32], want: &[f32]) -> f32 {
-    assert_eq!(got.len(), want.len(), "{what}: length");
-    let max = want.iter().fold(0f32, |a, v| a.max(v.abs()));
-    let worst = got
-        .iter()
-        .zip(want)
-        .map(|(a, b)| (a - b).abs())
-        .fold(0f32, f32::max);
-    println!(
-        "  {what:<28} rms got {:.5} want {:.5}  max|want| {:.4}  worst {:.5}  rel {:.2e}",
-        rms(got),
-        rms(want),
-        max,
-        worst,
-        worst / max.max(1e-12)
-    );
-    worst / max.max(1e-12)
-}
-
-fn dl_bf16(gpu: &dyn GpuBackend, p: DevicePtr, n: usize) -> Vec<f32> {
-    let mut b = vec![0u8; n * 2];
-    gpu.copy_d2h(p, &mut b).unwrap();
-    b.chunks_exact(2)
-        .map(|c| f32::from_bits((u16::from_le_bytes([c[0], c[1]]) as u32) << 16))
-        .collect()
-}
-
-fn dl_f32(gpu: &dyn GpuBackend, p: DevicePtr, n: usize) -> Vec<f32> {
-    let mut b = vec![0u8; n * 4];
-    gpu.copy_d2h(p, &mut b).unwrap();
-    b.chunks_exact(4)
-        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-        .collect()
-}
-
-fn up_bf16(gpu: &dyn GpuBackend, v: &[f32]) -> DevicePtr {
-    let b = crate::moe_v41::bf16_bytes(v);
-    let p = gpu.alloc(b.len()).unwrap();
-    gpu.copy_h2d(&b, p).unwrap();
-    p
-}
+#[path = "real_file_support.rs"]
+mod support;
+use support::{dl_bf16, dl_f32, report, up_bf16};
 
 #[test]
 #[ignore = "requires a CUDA GB10 + the on-disk DeepSeek-V4.1-Flash Q2_K shards"]
@@ -149,7 +107,12 @@ fn layer0_matches_the_cpu_reference_on_the_real_weights() {
     let streams = g.alloc(m * hc * dim * 4).unwrap();
     let hb: Vec<u8> = h.iter().flat_map(|v| v.to_le_bytes()).collect();
     g.copy_h2d(&hb, streams).unwrap();
-    let site = hc_site(g, &store, lp, "attn", &config).unwrap();
+    let src = gguf_source::GgufSource {
+        store: &store,
+        files: Arc::new(ShardFiles::open_dir(dir).unwrap()),
+        engram_q2k: false,
+    };
+    let site = build::hc_site(g, &src, 0, source::HcSite::Attn, &config).unwrap();
     let (pre_d, post_d, comb_d) = (
         g.alloc(m * hc * 4).unwrap(),
         g.alloc(m * hc * 4).unwrap(),

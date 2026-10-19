@@ -27,9 +27,9 @@ pub(super) use build::{
     resolve_swap_space_gb, validate_head_high_speed_swap,
 };
 pub(super) use config::{
-    apply_model_default_num_drafts, cap_vocab_size_to_tokenizer, load_model_config,
-    merge_sidecar_quant_config, publish_copy_tier, publish_draft_confidence_stop,
-    publish_mtp_k_ladder, publish_mtp_max_seqs, resolve_model_dir,
+    apply_model_default_num_drafts, cap_vocab_size_to_tokenizer, fill_engram_token_map,
+    load_model_config, merge_sidecar_quant_config, publish_copy_tier,
+    publish_draft_confidence_stop, publish_mtp_k_ladder, publish_mtp_max_seqs, resolve_model_dir,
 };
 pub(crate) use dflash_gamma::{apply_dflash_gamma, model_default_drafter};
 pub(crate) use forward::{circuit_target, forward_select};

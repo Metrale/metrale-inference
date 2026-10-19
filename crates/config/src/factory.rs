@@ -167,6 +167,7 @@ impl ModelConfig {
             engram_head_dim: 0,
             engram_pad_token_id: 0,
             engram_compressed_vocab_size: 0,
+            engram_token_map: Vec::new(),
             engram_multipliers: Vec::new(),
             engram_primes: Vec::new(),
             engram_offsets: Vec::new(),

@@ -150,6 +150,7 @@ pub(crate) fn load_engine(
     // (`#[serde(skip)]`), and `validate_serve_args` has checked the flag is at
     // least 1.0.
     config.fp8_kv_headroom = args.fp8_kv_headroom;
+    serve_phases::fill_engram_token_map(&model_dir, &mut config)?;
 
     let store = load_phases::load_weights(
         &args,

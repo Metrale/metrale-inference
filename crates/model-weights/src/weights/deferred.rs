@@ -182,8 +182,43 @@ impl DeferredTensor {
     /// the range runs past the tensor, and on a short read, as [`Self::read_host_bytes`].
     pub fn read_host_range(&self, start: usize, len: usize) -> Result<Vec<u8>> {
         use std::io::{Read, Seek, SeekFrom};
+        let at = self.file_offset(start, len)?;
+        let mut f = std::fs::File::open(&self.path)
+            .with_context(|| format!("deferred tensor: opening {}", self.path.display()))?;
+        f.seek(SeekFrom::Start(at))?;
+        let mut buf = vec![0u8; len];
+        f.read_exact(&mut buf).with_context(|| {
+            format!(
+                "deferred tensor: reading {len} B at offset {at} of {}",
+                self.path.display()
+            )
+        })?;
+        Ok(buf)
+    }
+
+    /// 2026-10-19: [`Self::read_host_range`] by positional read, dropping the range from the
+    /// page cache after it (`expert_stream::pread_uncached`), for a loader that reads most of a
+    /// checkpoint once: on a unified-memory device the cached copy competes with the weights
+    /// for the same memory. Positional reads need a unix host.
+    pub fn read_host_range_uncached(&self, start: usize, len: usize) -> Result<Vec<u8>> {
+        let at = self.file_offset(start, len)?;
+        let f = std::fs::File::open(&self.path)
+            .with_context(|| format!("deferred tensor: opening {}", self.path.display()))?;
+        let mut buf = vec![0u8; len];
+        super::expert_stream::pread_uncached(&f, at, &mut buf, false).with_context(|| {
+            format!(
+                "deferred tensor: reading {len} B at offset {at} of {}",
+                self.path.display()
+            )
+        })?;
+        Ok(buf)
+    }
+
+    /// 2026-10-19: The file offset of bytes `start..start + len` of the tensor. Errors when the
+    /// range runs past the tensor or the offset overflows.
+    fn file_offset(&self, start: usize, len: usize) -> Result<u64> {
         let total = self.byte_size();
-        let end = start
+        start
             .checked_add(len)
             .filter(|&e| e <= total)
             .with_context(|| {
@@ -192,23 +227,12 @@ impl DeferredTensor {
                     self.path.display()
                 )
             })?;
-        let at = self.offset.checked_add(start as u64).with_context(|| {
+        self.offset.checked_add(start as u64).with_context(|| {
             format!(
                 "deferred tensor: offset {} + {start} overflows",
                 self.offset
             )
-        })?;
-        let mut f = std::fs::File::open(&self.path)
-            .with_context(|| format!("deferred tensor: opening {}", self.path.display()))?;
-        f.seek(SeekFrom::Start(at))?;
-        let mut buf = vec![0u8; end - start];
-        f.read_exact(&mut buf).with_context(|| {
-            format!(
-                "deferred tensor: reading {len} B at offset {at} of {}",
-                self.path.display()
-            )
-        })?;
-        Ok(buf)
+        })
     }
 }
 
@@ -246,17 +270,25 @@ mod tests {
 
     /// 2026-10-09: A range read returns exactly those bytes of the tensor (not of the file),
     /// and a range past the tensor's end is refused even when the file has more bytes after it.
+    /// 2026-10-19: The uncached reader answers the same, refusals included.
     #[test]
     fn range_read_is_relative_to_the_tensor_and_bounded_by_it() {
         let payload: Vec<u8> = (10u8..26).collect();
         let (_d, path) = write_shard(&[vec![0xFFu8; 8], payload.clone(), vec![0xEE; 8]].concat());
         let d = DeferredTensor::from_shape(path, 8, vec![4, 4], WeightDtype::UInt8).unwrap();
-        assert_eq!(d.read_host_range(4, 8).unwrap(), payload[4..12]);
-        assert_eq!(d.read_host_range(0, 16).unwrap(), payload);
-        assert_eq!(d.read_host_range(16, 0).unwrap(), Vec::<u8>::new());
-        let e = d.read_host_range(12, 5).unwrap_err().to_string();
-        assert!(e.contains("run past"), "{e}");
-        assert!(d.read_host_range(usize::MAX, 2).is_err());
+        type Reader = fn(&DeferredTensor, usize, usize) -> Result<Vec<u8>>;
+        let readers: [Reader; 2] = [
+            DeferredTensor::read_host_range,
+            DeferredTensor::read_host_range_uncached,
+        ];
+        for read in readers {
+            assert_eq!(read(&d, 4, 8).unwrap(), payload[4..12]);
+            assert_eq!(read(&d, 0, 16).unwrap(), payload);
+            assert_eq!(read(&d, 16, 0).unwrap(), Vec::<u8>::new());
+            let e = read(&d, 12, 5).unwrap_err().to_string();
+            assert!(e.contains("run past"), "{e}");
+            assert!(read(&d, usize::MAX, 2).is_err());
+        }
     }
 
     /// 2026-10-17: The pre-flight charge of a loader that sets no [`DeferCharge`].

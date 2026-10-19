@@ -115,6 +115,32 @@ pub(crate) fn cap_vocab_size_to_tokenizer(model_dir: &Path, config: &mut ModelCo
     }
 }
 
+/// 2026-10-19: Fill `engram_token_map` from `tokenizer.json` when the config declares an engram
+/// compressed vocabulary and the directory holds no GGUF (which ships its own map). A missing or
+/// unreadable tokenizer, or a map of another size than declared, fails the boot.
+pub(crate) fn fill_engram_token_map(model_dir: &Path, config: &mut ModelConfig) -> Result<()> {
+    if config.engram_compressed_vocab_size == 0
+        || metrale_model_weights::weights::find_gguf(model_dir).is_some()
+    {
+        return Ok(());
+    }
+    let tok_path = model_dir.join("tokenizer.json");
+    let tok = tokenizers::Tokenizer::from_file(&tok_path)
+        .map_err(|e| anyhow::anyhow!("{}: {e}", tok_path.display()))?;
+    let map = crate::tokenizer::engram_vocab::CompressedTokenMap::build(
+        &tok,
+        config.engram_compressed_vocab_size as u64,
+    )
+    .context("engram compressed token map")?;
+    config.engram_token_map = map.lookup().to_vec();
+    tracing::info!(
+        "Engram token map: {} tokenizer ids onto {} compressed ids",
+        config.engram_token_map.len(),
+        map.size()
+    );
+    Ok(())
+}
+
 /// 2026-09-26: Where the effective `num_drafts` came from: `--num-drafts`,
 /// MODEL.toml `[behavior].default_num_drafts`, or `cli::DEFAULT_NUM_DRAFTS`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
