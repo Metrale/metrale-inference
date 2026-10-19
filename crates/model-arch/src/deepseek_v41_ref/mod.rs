@@ -299,6 +299,7 @@ pub mod hc;
 pub mod mat;
 pub mod model;
 pub mod moe;
+pub mod parity;
 
 /// 2026-09-25: Shared comparison bars for the component tests.
 #[cfg(test)]

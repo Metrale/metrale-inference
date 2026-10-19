@@ -6,8 +6,9 @@
 //! teacher-forced prefill logits and a short greedy continuation, the reference the GPU path
 //! is scored against.
 //!
-//! Inputs: `METRALE_DSV41_CKPT` (the snapshot directory) and `METRALE_DSV41_REF_OUT` (an
-//! existing directory for the outputs). Outputs there:
+//! Inputs: `METRALE_DSV41_CKPT` (the snapshot directory), `METRALE_DSV41_PROMPT` (a UTF-8 file
+//! holding the prompt text, encoded after the BOS id) and `METRALE_DSV41_REF_OUT` (an existing
+//! directory for the outputs). Outputs there:
 //! - `ids.txt`: the prompt ids, then the greedy ids, one per line;
 //! - `prefill_logits.f32`: `[prompt_len, vocab]` little-endian f32;
 //! - `decode_logits.f32`: `[NEW_TOKENS, vocab]`, the logits that chose each greedy id;
@@ -25,10 +26,6 @@ use metrale_model_weights::fast_weights::MappedSafetensors;
 use metrale_server::tokenizer::engram_vocab::CompressedTokenMap;
 use tokenizers::Tokenizer;
 
-/// 2026-10-19: A short plain-text prompt: long enough to cross the compressed-attention
-/// group boundaries of the ratio-4 layers, short enough for a CPU run.
-const PROMPT: &str = "The three primary colors of light are red, green and blue. Mixing all three \
-                      at full intensity produces";
 /// 2026-10-19: Greedy steps after the prefill; each is one single-token decode step.
 const NEW_TOKENS: usize = 8;
 
@@ -43,16 +40,17 @@ fn le_bytes(v: &[f32]) -> Vec<u8> {
 }
 
 #[test]
-#[ignore = "needs METRALE_DSV41_CKPT (snapshot) and METRALE_DSV41_REF_OUT (output dir); a long CPU run"]
+#[ignore = "needs METRALE_DSV41_CKPT, METRALE_DSV41_PROMPT and METRALE_DSV41_REF_OUT; a long CPU run"]
 fn reference_prefill_and_greedy_on_the_real_checkpoint() {
     let env = |k: &str| PathBuf::from(std::env::var(k).unwrap_or_else(|_| panic!("{k} unset")));
     let (dir, out) = (env("METRALE_DSV41_CKPT"), env("METRALE_DSV41_REF_OUT"));
+    let prompt = std::fs::read_to_string(env("METRALE_DSV41_PROMPT")).expect("prompt file");
     let read = |p: &str| std::fs::read_to_string(dir.join(p)).expect("snapshot file");
     let mc = metrale_config::parse_config(&read("config.json")).expect("engine config");
     let tok = Tokenizer::from_file(dir.join("tokenizer.json")).expect("tokenizer");
 
     let mut ids: Vec<i64> = vec![i64::from(mc.bos_token_id)];
-    let enc = tok.encode(PROMPT, false).expect("encode");
+    let enc = tok.encode(prompt.as_str(), false).expect("encode");
     ids.extend(enc.get_ids().iter().map(|&i| i64::from(i)));
     let prompt_len = ids.len();
 
