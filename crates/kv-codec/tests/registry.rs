@@ -5,23 +5,61 @@
 //! accepted one.
 
 use metrale_error::ErrorCode;
-use metrale_kv_codec::{KvCodecId, KvPair, PAIR_ALIASES, SPEC, accepted, spec};
+use metrale_kv_codec::{CodecRole, KvCodecId, KvPair, PAIR_ALIASES, SPEC, accepted, by_name, spec};
 
 #[test]
 fn name_parse_and_discriminant_are_bijective() {
-    for (i, id) in KvCodecId::ALL.into_iter().enumerate() {
-        assert_eq!(id as usize, i);
+    for id in KvCodecId::ALL {
         assert_eq!(KvCodecId::from_u8(id as u8), Some(id));
         assert_eq!(id.name().parse::<KvCodecId>().ok(), Some(id));
+        assert_eq!(by_name(id.name()), Some(id));
         assert_eq!(spec(id).id, id);
         assert_eq!(spec(id).name, id.name());
     }
     assert_eq!(SPEC.len(), KvCodecId::ALL.len());
-    assert_eq!(KvCodecId::from_u8(u8::try_from(SPEC.len()).unwrap()), None);
+    // 2026-10-18: `from_u8` is `Some` exactly for the registered wire values, gaps included.
+    for raw in 0..=u8::MAX {
+        let registered = KvCodecId::ALL.iter().any(|&id| id as u8 == raw);
+        assert_eq!(
+            KvCodecId::from_u8(raw).is_some(),
+            registered,
+            "wire value {raw}"
+        );
+    }
     for (i, a) in KvCodecId::ALL.iter().enumerate() {
         for b in &KvCodecId::ALL[i + 1..] {
             assert_ne!(a.name(), b.name());
+            assert!((*a as u8) < (*b as u8), "ALL is not in wire order");
         }
+    }
+}
+
+#[test]
+fn attention_is_every_attention_role_codec_in_table_order() {
+    let want: Vec<KvCodecId> = KvCodecId::ALL
+        .into_iter()
+        .filter(|&id| spec(id).role == CodecRole::Attention)
+        .collect();
+    assert_eq!(KvCodecId::ATTENTION.to_vec(), want);
+}
+
+/// 2026-10-18: An indexer codec is a codec (it parses, it has a spec) but never a cache side:
+/// neither as a spelling, nor through `KvPair::new`, nor in the accepted list.
+#[test]
+fn an_indexer_codec_is_never_a_kv_pair() {
+    let indexers: Vec<KvCodecId> = KvCodecId::ALL
+        .into_iter()
+        .filter(|&id| spec(id).role == CodecRole::Indexer)
+        .collect();
+    assert!(!indexers.is_empty());
+    let listed = accepted();
+    for id in indexers {
+        let e = id.name().parse::<KvPair>().unwrap_err();
+        assert_eq!(e.code(), ErrorCode::KvCodecUnknown, "{}", id.name());
+        let e = KvPair::new(id, id).unwrap_err();
+        assert_eq!(e.code(), ErrorCode::KvPairUnsupported, "{}", id.name());
+        assert!(KvPair::new(KvCodecId::ATTENTION[0], id).is_err());
+        assert!(!listed.split(", ").any(|s| s == id.name()), "{listed}");
     }
 }
 
@@ -62,7 +100,10 @@ fn the_legacy_spellings_parse_to_the_same_pairs() {
         assert_eq!((p.k(), p.v()), (k, v), "{s}");
         assert_eq!(p.name().parse::<KvPair>().ok(), Some(p), "{s}");
     }
-    assert_eq!(PAIR_ALIASES.len() * 2 + KvCodecId::ALL.len(), legacy.len());
+    assert_eq!(
+        PAIR_ALIASES.len() * 2 + KvCodecId::ATTENTION.len(),
+        legacy.len()
+    );
 }
 
 #[test]
@@ -84,7 +125,7 @@ fn an_unknown_spelling_is_a_coded_error_listing_every_accepted_one() {
     let e = "turbo5".parse::<KvPair>().unwrap_err();
     assert_eq!(e.code(), ErrorCode::KvCodecUnknown);
     let text = e.to_string();
-    for id in KvCodecId::ALL {
+    for id in KvCodecId::ATTENTION {
         assert!(text.contains(id.name()), "{text} omits {}", id.name());
     }
     for a in PAIR_ALIASES {

@@ -129,7 +129,7 @@ fn pairs_are_the_legacy_set() {
 /// `KvCapabilityMissing`, never served with another pair's kernels.
 #[test]
 fn other_pairs_are_refused() {
-    let accepted = KvCodecId::ALL
+    let accepted = KvCodecId::ATTENTION
         .into_iter()
         .map(KvPair::symmetric)
         .chain(crate::PAIR_ALIASES.iter().map(|a| pair(a.long)));

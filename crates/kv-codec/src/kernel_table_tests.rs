@@ -17,7 +17,7 @@ fn n(m: &'static str, f: &'static str) -> KernelName {
 
 /// 2026-10-18: Every pair `--kv-cache-dtype` accepts.
 fn all_pairs() -> Vec<KvPair> {
-    KvCodecId::ALL
+    KvCodecId::ATTENTION
         .into_iter()
         .map(KvPair::symmetric)
         .chain(PAIR_ALIASES.iter().map(|a| pair(a.long)))

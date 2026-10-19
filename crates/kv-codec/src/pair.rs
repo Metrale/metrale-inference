@@ -9,25 +9,24 @@
 //! Invariants:
 //! - `KvPair::name` parses back to the same pair, for every pair `KvPair::new` accepts.
 //! - An asymmetric pair exists only when a pair alias names it.
+//! - Only an attention codec (`CodecRole::Attention`) is a side: an indexer codec parses as a
+//!   [`KvCodecId`] but never as a [`KvPair`].
 
 use alloc::string::String;
 use core::str::FromStr;
 
 use metrale_error::{Error, ErrorCode, error};
 
-use crate::registry::{PAIR_ALIASES, PairAlias, const_str_eq};
-use crate::spec::AutoBoundary;
+use crate::registry::{PAIR_ALIASES, PairAlias, by_name, const_str_eq};
+use crate::spec::{AutoBoundary, CodecRole};
 use crate::{KvCodecId, spec};
 
 impl FromStr for KvCodecId {
     type Err = Error;
-    /// 2026-10-18: The codec whose canonical name is `s`. A pair spelling is not a codec: parse
-    /// it as a [`KvPair`].
+    /// 2026-10-18: The codec, attention or indexer, whose canonical name is `s`. A pair spelling
+    /// is not a codec: parse it as a [`KvPair`].
     fn from_str(s: &str) -> Result<Self, Error> {
-        KvCodecId::ALL
-            .into_iter()
-            .find(|id| id.name() == s)
-            .ok_or_else(|| error!(ErrorCode::KvCodecUnknown, String::from(s), accepted()))
+        by_name(s).ok_or_else(|| error!(ErrorCode::KvCodecUnknown, String::from(s), accepted()))
     }
 }
 
@@ -44,10 +43,12 @@ impl KvPair {
         KvPair { k: id, v: id }
     }
 
-    /// 2026-10-18: `(k, v)`, refused with `KvPairUnsupported` when the sides differ and no pair
-    /// alias (hence no fused kernel) exists for them.
+    /// 2026-10-18: `(k, v)`, refused with `KvPairUnsupported` when either side is not an
+    /// attention codec, or the sides differ and no pair alias (hence no fused kernel) exists for
+    /// them.
     pub fn new(k: KvCodecId, v: KvCodecId) -> Result<Self, Error> {
-        if k == v || alias_of(k, v).is_some() {
+        let sides = is_attention(k) && is_attention(v);
+        if sides && (k == v || alias_of(k, v).is_some()) {
             Ok(KvPair { k, v })
         } else {
             Err(error!(
@@ -110,7 +111,11 @@ impl FromStr for KvPair {
                 v: alias.v,
             });
         }
-        s.parse::<KvCodecId>().map(KvPair::symmetric)
+        KvCodecId::ATTENTION
+            .into_iter()
+            .find(|id| id.name() == s)
+            .map(KvPair::symmetric)
+            .ok_or_else(|| error!(ErrorCode::KvCodecUnknown, String::from(s), accepted()))
     }
 }
 
@@ -120,13 +125,18 @@ impl core::fmt::Display for KvPair {
     }
 }
 
+/// 2026-10-18: True when `id` can be a `--kv-cache-dtype` side.
+fn is_attention(id: KvCodecId) -> bool {
+    spec(id).role == CodecRole::Attention
+}
+
 /// 2026-10-18: The alias naming `(k, v)`, when one exists.
 fn alias_of(k: KvCodecId, v: KvCodecId) -> Option<&'static PairAlias> {
     PAIR_ALIASES.iter().find(|a| a.k == k && a.v == v)
 }
 
-/// 2026-10-18: Every accepted spelling, comma separated: the codecs, then each pair's long and
-/// short form.
+/// 2026-10-18: Every accepted `--kv-cache-dtype` spelling, comma separated: the attention
+/// codecs, then each pair's long and short form.
 pub fn accepted() -> String {
     let mut out = String::new();
     let mut push = |name: &str| {
@@ -135,7 +145,7 @@ pub fn accepted() -> String {
         }
         out.push_str(name);
     };
-    for id in KvCodecId::ALL {
+    for id in KvCodecId::ATTENTION {
         push(id.name());
     }
     for alias in PAIR_ALIASES {

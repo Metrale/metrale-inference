@@ -28,6 +28,7 @@
 extern crate alloc;
 
 mod contiguous_table;
+mod indexer;
 mod kernel_key;
 mod kernel_table;
 mod label;
@@ -39,6 +40,7 @@ mod rows;
 mod spec;
 
 pub use contiguous_table::{contiguous_kv_kernel_names, contiguous_kv_pairs};
+pub use indexer::IndexerPlan;
 pub use kernel_key::{HeadDimClass, KvKernelKey, KvKernelSet, KvOp, ResolvedKvKernels};
 pub use kernel_table::{KernelName, kv_kernel_names};
 pub use label::KvPlanLabel;
@@ -47,9 +49,9 @@ pub use plan::{
     KvCachePlan, KvLayoutEpoch, KvSide, KvSidePlan, KvTransition, LayerIx, LayerKvPlan,
     PressureTrigger, RungIx, VbrLadder,
 };
-pub use registry::{KvCodecId, PAIR_ALIASES, PairAlias, SPEC, spec};
+pub use registry::{KvCodecId, PAIR_ALIASES, PairAlias, SPEC, by_name, spec};
 pub use resolve::{KvPlanInputs, layer_entry};
 pub use spec::{
-    AbiId, AutoBoundary, BlockGeometry, HostLutId, KvCodecSpec, Rotation, SideElem, SideKind,
-    SideTensor, TrellisSpec,
+    AbiId, AutoBoundary, BlockGeometry, CodecRole, HostLutId, KvCodecSpec, Rotation, SideElem,
+    SideKind, SideTensor, TrellisSpec,
 };

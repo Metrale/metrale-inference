@@ -14,7 +14,7 @@
 use anyhow::Context;
 use anyhow::Result;
 
-use metrale_config::ModelConfig;
+use metrale_config::{IndexerCacheDtype, ModelConfig};
 
 use crate::cli;
 
@@ -165,15 +165,22 @@ pub(crate) fn resolve_topology(
 
 /// 2026-10-16: `--indexer-cache-dtype` and the rewind depth its FP8 tail ring is sized for: the
 /// widest verify pass (`verify_pool_drafts`) when any drafter runs, else 0. `fp8` is refused off
-/// its scope (`IndexerCacheDtype::check_serve`).
+/// its scope (`IndexerCacheDtype::check_serve`), which 2026-10-18 reads from the model's loader.
 fn set_indexer_cache_dtype(
     args: &cli::ServeArgs,
     levers: &super::LoadLevers,
     config: &mut ModelConfig,
 ) -> Result<()> {
     let dtype = args.indexer_cache_dtype.0;
+    let served = match dtype {
+        IndexerCacheDtype::Bf16 => &[][..],
+        IndexerCacheDtype::Fp8 => {
+            metrale_model_engine::factory::loader_for_config(config)?.indexer_cache_dtypes()
+        }
+    };
     dtype.check_serve(
         &config.model_type,
+        served,
         levers.prefix_cache_gate.glm_indexer_paged,
         levers.kv_paging,
     )?;

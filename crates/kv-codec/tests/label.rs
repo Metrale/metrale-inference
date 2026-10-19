@@ -8,9 +8,10 @@ use metrale_kv_codec::{
 };
 
 /// 2026-10-18: The label text each codec printed before the registry, except turbo2, which the
-/// old summary match folded into "Turbo3" (the one declared label change).
-const GOLDEN: [&str; 7] = [
-    "BF16", "FP8", "NVFP4", "Turbo4", "Turbo3", "Turbo2", "Turbo8",
+/// old summary match folded into "Turbo3" (the one declared label change), then the indexer
+/// codec, which had no label before the registry.
+const GOLDEN: [&str; 8] = [
+    "BF16", "FP8", "NVFP4", "Turbo4", "Turbo3", "Turbo2", "Turbo8", "FP8Row",
 ];
 
 #[test]

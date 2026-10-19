@@ -154,5 +154,8 @@ error_registry! {
         /// 2026-10-18: An ABI family the registry declares but this build has no launcher for:
         /// (ABI, operation).
         KvAbiUnimplemented = 0x0507 => "the {} KV ABI has no {} launcher in this build",
+        /// 2026-10-18: An indexer codec plan or block the codec's layout cannot hold: (codec,
+        /// reason).
+        KvIndexerGeometry = 0x0508 => "indexer cache {}: {}",
     }
 }

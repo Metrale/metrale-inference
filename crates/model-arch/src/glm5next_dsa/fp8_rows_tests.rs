@@ -102,8 +102,13 @@ fn block_bytes_formula() {
 fn unsupported_geometry_is_refused() {
     let e = Fp8IndexerLayout::block_bytes(16, 64, 4, 1).unwrap_err();
     assert!(e.to_string().contains("compiled for 128"), "{e}");
+    // 2026-10-18: The pool and ring rules are the registry IndexerPlan's, under its code.
     let e = Fp8IndexerLayout::block_bytes(18, 128, 4, 1).unwrap_err();
-    assert!(e.to_string().contains("multiple of index_kpool"), "{e}");
+    assert!(format!("{e:#}").contains("multiple of pool 4"), "{e:#}");
+    for (kp, sets) in [(1, 1), (4, 0)] {
+        let e = Fp8IndexerLayout::block_bytes(16, 128, kp, sets).unwrap_err();
+        assert!(e.to_string().contains("must be at least 2 and 1"), "{e}");
+    }
     let e = Fp8IndexerLayout::new(16, 2060, 128, 4, 1).unwrap_err();
     assert!(e.to_string().contains("need 2064 B"), "{e}");
     let e = Fp8IndexerLayout::new(16, 2066, 128, 4, 1).unwrap_err();

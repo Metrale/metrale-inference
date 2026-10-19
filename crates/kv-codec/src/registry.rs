@@ -7,12 +7,12 @@
 //!
 //! Owner: kv-codec.
 //! Invariants:
-//! - `SPEC[id as usize].id == id` and `SPEC[id as usize].name == id.name()` for every id
-//!   (checked at compile time below).
+//! - `spec(id).id == id` and `spec(id).name == id.name()` for every id, and discriminants are
+//!   unique and ascending (checked at compile time below). Discriminants may leave gaps.
 //! - A pair alias names two registered codecs; no alias spells a codec name.
 
 use crate::rows;
-use crate::spec::{AutoBoundary, KvCodecSpec};
+use crate::spec::{AutoBoundary, CodecRole, KvCodecSpec};
 
 /// 2026-10-18: Generate the codec id enum, its tables and the pair alias table from one list.
 macro_rules! kv_codec_registry {
@@ -37,14 +37,18 @@ macro_rules! kv_codec_registry {
         /// 2026-10-18: Registered codecs.
         const COUNT: usize = [$( $disc ),+].len();
 
-        /// 2026-10-18: The spec of every codec, indexed by discriminant.
-        pub static SPEC: [KvCodecSpec; COUNT] = [ $( $spec ),+ ];
+        /// 2026-10-18: The spec of every codec, in table order (`KvCodecId::ALL`); [`spec`]
+        /// finds a codec's row by its discriminant, so wire values may leave gaps.
+        pub static SPEC: [KvCodecSpec; COUNT] = ROWS;
+
+        /// 2026-10-18: [`SPEC`] as a constant, for the compile-time derivations below.
+        const ROWS: [KvCodecSpec; COUNT] = [ $( $spec ),+ ];
 
         impl KvCodecId {
-            /// 2026-10-18: Every codec, in discriminant order.
+            /// 2026-10-18: Every codec, in table order (ascending discriminant).
             pub const ALL: [KvCodecId; COUNT] = [ $( KvCodecId::$variant ),+ ];
 
-            /// 2026-10-18: The canonical `--kv-cache-dtype` spelling.
+            /// 2026-10-18: The canonical spelling (`--kv-cache-dtype` for an attention codec).
             pub const fn name(self) -> &'static str {
                 match self { $( KvCodecId::$variant => $name ),+ }
             }
@@ -105,6 +109,10 @@ kv_codec_registry! {
         Turbo2 = 5 : "turbo2" => rows::TURBO2,
         /// 2026-10-18: WHT-rotated FP8 E4M3 values plus a BF16 norm per 16: 9 bits per value.
         Turbo8 = 6 : "turbo8" => rows::TURBO8,
+        /// 2026-10-18: GLM-5.3 DSA indexer rows: WHT-rotated FP8 E4M3, one F32 scale per
+        /// 128-value row. An indexer codec, never a `--kv-cache-dtype` side. Wire value 12: 7 to
+        /// 11 are reserved for the turbo1, TCQ and DeepSeek-V4.1 rows.
+        Fp8RowF32 = 12 : "fp8_row" => rows::FP8_ROW_F32SCALE,
     }
     pairs {
         "turbo4k_turbo3v" | "turbo4k3v" => (Turbo4, Turbo3) @ OneThird,
@@ -121,25 +129,86 @@ kv_codec_registry! {
 
 /// 2026-10-18: The spec of `id`.
 pub const fn spec(id: KvCodecId) -> &'static KvCodecSpec {
-    &SPEC[id as usize]
+    &SPEC[SLOT[id as usize] as usize]
 }
 
-/// 2026-10-18: Compile-time proof that the table is in discriminant order and that each row
-/// carries its own id and name.
+/// 2026-10-18: The codec whose canonical spelling is `name`, attention or indexer; `None` for
+/// any other text. A `const fn`, so a caller can bind a codec at compile time without naming a
+/// variant.
+pub const fn by_name(name: &str) -> Option<KvCodecId> {
+    let mut i = 0;
+    while i < COUNT {
+        if const_str_eq(ROWS[i].name, name) {
+            return Some(ROWS[i].id);
+        }
+        i += 1;
+    }
+    None
+}
+
+/// 2026-10-18: The table row of each discriminant (`u8::MAX` where none is registered).
+const SLOT: [u8; 256] = {
+    let mut slot = [u8::MAX; 256];
+    let mut i = 0;
+    while i < COUNT {
+        assert!(i < u8::MAX as usize, "more codecs than a u8 slot holds");
+        assert!(
+            slot[KvCodecId::ALL[i] as usize] == u8::MAX,
+            "two codecs share a discriminant"
+        );
+        #[allow(clippy::cast_possible_truncation)]
+        let row = i as u8;
+        slot[KvCodecId::ALL[i] as usize] = row;
+        i += 1;
+    }
+    slot
+};
+
+/// 2026-10-18: Codecs whose role is `role`.
+const fn role_count(role: CodecRole) -> usize {
+    let mut n = 0;
+    let mut i = 0;
+    while i < COUNT {
+        if ROWS[i].role as u8 == role as u8 {
+            n += 1;
+        }
+        i += 1;
+    }
+    n
+}
+
+impl KvCodecId {
+    /// 2026-10-18: Every attention codec (a `--kv-cache-dtype` side), in table order.
+    pub const ATTENTION: [KvCodecId; role_count(CodecRole::Attention)] = {
+        let mut out = [KvCodecId::ALL[0]; role_count(CodecRole::Attention)];
+        let (mut i, mut n) = (0, 0);
+        while i < COUNT {
+            if ROWS[i].role as u8 == CodecRole::Attention as u8 {
+                out[n] = ROWS[i].id;
+                n += 1;
+            }
+            i += 1;
+        }
+        out
+    };
+}
+
+/// 2026-10-18: Compile-time proof that the table is in ascending discriminant order and that
+/// each row carries its own id and name.
 const _: () = {
     let mut i = 0;
     while i < COUNT {
         let id = KvCodecId::ALL[i];
         assert!(
-            id as usize == i,
-            "KvCodecId::ALL is not in discriminant order"
+            i == 0 || (KvCodecId::ALL[i - 1] as u8) < id as u8,
+            "KvCodecId::ALL is not in ascending discriminant order"
         );
         assert!(
-            SPEC[i].id as usize == i,
+            ROWS[i].id as u8 == id as u8,
             "SPEC row carries another codec's id"
         );
         assert!(
-            const_str_eq(SPEC[i].name, id.name()),
+            const_str_eq(ROWS[i].name, id.name()),
             "SPEC row name differs from the registry name"
         );
         i += 1;

@@ -459,6 +459,12 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
         Ok(None)
     }
 
+    /// 2026-10-18: The DSA indexer keeps its rows in the KV blocks, so it takes the pooled FP8
+    /// rows (`IndexerRowFormat::Fp8`).
+    fn indexer_cache_dtypes(&self) -> &'static [metrale_config::IndexerCacheDtype] {
+        &[metrale_config::IndexerCacheDtype::Fp8]
+    }
+
     /// 2026-10-16: The FP8 indexer cache resizes the V block; see `IndexerRowFormat`.
     fn kv_v_block_bytes(
         &self,

@@ -1646,6 +1646,7 @@ dependencies = [
  "anyhow",
  "metrale-core",
  "metrale-io-host-mem",
+ "metrale-kv-codec",
  "metrale-settings",
  "regex",
  "serde",

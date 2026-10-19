@@ -277,6 +277,13 @@ pub trait ModelWeightLoader {
         Vec::new()
     }
 
+    /// 2026-10-18: The `--indexer-cache-dtype` values this model serves beyond `bf16` (which
+    /// every model takes: it is the per-token layout of any indexer, and a no-op without one).
+    /// The default is none; `IndexerCacheDtype::check_serve` refuses a value not listed.
+    fn indexer_cache_dtypes(&self) -> &'static [metrale_config::IndexerCacheDtype] {
+        &[]
+    }
+
     /// 2026-10-16: Bytes of one attention layer's V block when the model keeps something other
     /// than V there (the GLM-5.3 FP8 indexer cache), for KV blocks of `block_size` tokens. The
     /// default is `None`: the V block the KV geometry implies.

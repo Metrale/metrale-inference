@@ -7,7 +7,7 @@
 use metrale_kv_codec::{BlockGeometry, KvCodecId, spec};
 
 /// 2026-10-18: Pre-registry bytes per block side, captured from `KvCacheConfig` at the base
-/// commit, columns in `KvCodecId::ALL` order: bf16, fp8, nvfp4, turbo4, turbo3, turbo2, turbo8.
+/// commit, columns in `KvCodecId::ATTENTION` order: bf16, fp8, nvfp4, turbo4, turbo3, turbo2, turbo8.
 const GOLDEN: [((u32, u32, u32), [u64; 7]); 10] = [
     ((16, 1, 64), [2048, 1024, 576, 576, 448, 320, 1152]),
     ((16, 2, 128), [8192, 4096, 2304, 2304, 1792, 1280, 4608]),
@@ -27,9 +27,9 @@ const GOLDEN: [((u32, u32, u32), [u64; 7]); 10] = [
 #[test]
 fn every_codec_reproduces_the_pre_registry_block_bytes() {
     assert_eq!(
-        KvCodecId::ALL.len(),
+        KvCodecId::ATTENTION.len(),
         7,
-        "a new codec needs its golden column"
+        "a new attention codec needs its golden column"
     );
     for ((block_size, num_kv_heads, head_dim), want) in GOLDEN {
         let g = BlockGeometry {
@@ -37,7 +37,7 @@ fn every_codec_reproduces_the_pre_registry_block_bytes() {
             num_kv_heads,
             head_dim,
         };
-        for (id, want) in KvCodecId::ALL.into_iter().zip(want) {
+        for (id, want) in KvCodecId::ATTENTION.into_iter().zip(want) {
             assert_eq!(spec(id).block_bytes(&g), want, "{} at {g:?}", id.name());
         }
     }
@@ -65,7 +65,7 @@ fn data_plus_side_is_the_block() {
 
 /// 2026-10-18: The layout digest of every codec, frozen: a change means stored bytes changed
 /// meaning, which must be a deliberate, declared edit (spill headers carry it).
-const DIGESTS: [u64; 7] = [
+const DIGESTS: [u64; 8] = [
     0xa89f_eadf_c9f3_efa5,
     0xfe83_ccdc_f382_286a,
     0xd478_1dfb_6338_f053,
@@ -73,6 +73,7 @@ const DIGESTS: [u64; 7] = [
     0x3f74_d3f0_d400_9f6e,
     0x4df8_5baf_dc74_0077,
     0xbd91_2453_1ff2_35d8,
+    0xd4fa_f6dc_fba8_60db,
 ];
 
 #[test]

@@ -180,14 +180,28 @@ impl BlockGeometry {
     }
 }
 
+/// 2026-10-18: What a codec's rows hold. An attention codec is a `--kv-cache-dtype` side; an
+/// indexer codec stores a sparse-attention indexer's key rows (`--indexer-cache-dtype`) and is
+/// never accepted as an attention side.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum CodecRole {
+    /// 2026-10-18: The keys or values of an attention layer.
+    Attention = 0,
+    /// 2026-10-18: A sparse-attention indexer's compressed key rows.
+    Indexer = 1,
+}
+
 /// 2026-10-18: Everything the engine knows about one codec. Every row lives in the registry
 /// table (`registry.rs`).
 #[derive(Debug)]
 pub struct KvCodecSpec {
-    /// 2026-10-18: The id; `SPEC[id as usize].id == id` is checked at compile time.
+    /// 2026-10-18: The id; `spec(id).id == id` is checked at compile time.
     pub id: KvCodecId,
-    /// 2026-10-18: The canonical `--kv-cache-dtype` spelling.
+    /// 2026-10-18: The canonical spelling (`--kv-cache-dtype` for an attention codec).
     pub name: &'static str,
+    /// 2026-10-18: What the rows hold; only an attention codec parses as a `--kv-cache-dtype`.
+    pub role: CodecRole,
     /// 2026-10-18: The display label telemetry prints (e.g. `Turbo4`); distinct per codec.
     pub label: &'static str,
     /// 2026-10-18: Bits per stored value.

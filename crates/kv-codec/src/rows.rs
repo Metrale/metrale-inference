@@ -11,7 +11,8 @@
 
 use crate::KvCodecId;
 use crate::spec::{
-    AbiId, AutoBoundary, HostLutId, KvCodecSpec, Rotation, SideElem, SideKind, SideTensor,
+    AbiId, AutoBoundary, CodecRole, HostLutId, KvCodecSpec, Rotation, SideElem, SideKind,
+    SideTensor,
 };
 
 /// 2026-10-18: Values per group of every block-scaled codec registered today.
@@ -41,6 +42,7 @@ const TURBOQUANT: Option<&str> = Some("TurboQuant+ KV cache");
 pub(crate) const BF16: KvCodecSpec = KvCodecSpec {
     id: KvCodecId::Bf16,
     name: "bf16",
+    role: CodecRole::Attention,
     label: "BF16",
     value_bits: 16,
     group: 0,
@@ -60,6 +62,7 @@ pub(crate) const BF16: KvCodecSpec = KvCodecSpec {
 pub(crate) const FP8_E4M3_TENSOR: KvCodecSpec = KvCodecSpec {
     id: KvCodecId::Fp8,
     name: "fp8",
+    role: CodecRole::Attention,
     label: "FP8",
     value_bits: 8,
     group: 0,
@@ -79,6 +82,7 @@ pub(crate) const FP8_E4M3_TENSOR: KvCodecSpec = KvCodecSpec {
 pub(crate) const NVFP4_E4M3X16: KvCodecSpec = KvCodecSpec {
     id: KvCodecId::Nvfp4,
     name: "nvfp4",
+    role: CodecRole::Attention,
     label: "NVFP4",
     value_bits: 4,
     group: GROUP16,
@@ -98,6 +102,7 @@ pub(crate) const NVFP4_E4M3X16: KvCodecSpec = KvCodecSpec {
 pub(crate) const TURBO4: KvCodecSpec = KvCodecSpec {
     id: KvCodecId::Turbo4,
     name: "turbo4",
+    role: CodecRole::Attention,
     label: "Turbo4",
     value_bits: 4,
     group: GROUP16,
@@ -117,6 +122,7 @@ pub(crate) const TURBO4: KvCodecSpec = KvCodecSpec {
 pub(crate) const TURBO3: KvCodecSpec = KvCodecSpec {
     id: KvCodecId::Turbo3,
     name: "turbo3",
+    role: CodecRole::Attention,
     label: "Turbo3",
     value_bits: 3,
     group: GROUP16,
@@ -137,6 +143,7 @@ pub(crate) const TURBO3: KvCodecSpec = KvCodecSpec {
 pub(crate) const TURBO2: KvCodecSpec = KvCodecSpec {
     id: KvCodecId::Turbo2,
     name: "turbo2",
+    role: CodecRole::Attention,
     label: "Turbo2",
     value_bits: 2,
     group: GROUP16,
@@ -156,6 +163,7 @@ pub(crate) const TURBO2: KvCodecSpec = KvCodecSpec {
 pub(crate) const TURBO8: KvCodecSpec = KvCodecSpec {
     id: KvCodecId::Turbo8,
     name: "turbo8",
+    role: CodecRole::Attention,
     label: "Turbo8",
     value_bits: 8,
     group: GROUP16,
@@ -169,4 +177,36 @@ pub(crate) const TURBO8: KvCodecSpec = KvCodecSpec {
     online_calibration: false,
     auto_boundary: AutoBoundary::OneThird,
     citation: TURBOQUANT,
+};
+
+/// 2026-10-18: Channels of the FP8 indexer kernels (`DSA_FP8_D` in `dsa_indexer_fp8.cu`): one
+/// pool entry is one row of this many values under one scale, rotated by a WHT of this size.
+const FP8_ROW_CHANNELS: u32 = 128;
+
+/// 2026-10-18: FP8 E4M3 indexer rows, each rotated by a 128-point WHT and scaled by one F32
+/// power of two: the GLM-5.3 DSA indexer cache (`--indexer-cache-dtype fp8`). A pool's entry is
+/// `128 + 4` bytes, the term `IndexerRowFormat` computed by hand before the registry.
+pub(crate) const FP8_ROW_F32SCALE: KvCodecSpec = KvCodecSpec {
+    id: KvCodecId::Fp8RowF32,
+    name: "fp8_row",
+    role: CodecRole::Indexer,
+    label: "FP8Row",
+    value_bits: 8,
+    group: FP8_ROW_CHANNELS,
+    side: &[SideTensor {
+        kind: SideKind::Scale,
+        elem: SideElem::F32,
+        per_values: FP8_ROW_CHANNELS,
+    }],
+    rotation: Rotation::Wht {
+        sizes: &[FP8_ROW_CHANNELS],
+    },
+    trellis: None,
+    abi: AbiId::BlockScaled,
+    host_dequant: None,
+    lossless: false,
+    head_dims: &[FP8_ROW_CHANNELS],
+    online_calibration: false,
+    auto_boundary: AutoBoundary::None,
+    citation: None,
 };

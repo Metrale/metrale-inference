@@ -29,11 +29,14 @@ mod tests {
     /// at layer construction.
     #[test]
     fn every_pair_resolves_at_the_shipped_head_dims() {
-        let pairs = KvCodecId::ALL.iter().map(|&c| KvPair::symmetric(c)).chain(
-            PAIR_ALIASES
-                .iter()
-                .map(|a| KvPair::new(a.k, a.v).expect("an alias is an accepted pair")),
-        );
+        let pairs = KvCodecId::ATTENTION
+            .iter()
+            .map(|&c| KvPair::symmetric(c))
+            .chain(
+                PAIR_ALIASES
+                    .iter()
+                    .map(|a| KvPair::new(a.k, a.v).expect("an alias is an accepted pair")),
+            );
         for pair in pairs {
             for hd in [64, 128, 256] {
                 let names =

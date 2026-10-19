@@ -11,8 +11,8 @@
 //! Invariants:
 //! - `name` is read from the kv-codec registry through `pair()`, whose match has no
 //!   wildcard arm, so a new variant does not compile until it names its codecs.
-//! - `ALL` lists the registry codecs in discriminant order, then the pair aliases in table
-//!   order (tested below).
+//! - `ALL` lists the registry attention codecs in discriminant order, then the pair aliases in
+//!   table order (tested below).
 //! - Every `ALL` entry's `name` parses back to that entry (tested below).
 
 use super::KvCacheDtype;
@@ -103,8 +103,8 @@ mod registry_tests {
     #[test]
     fn the_legacy_catalogue_is_the_registry_in_order() {
         // 2026-10-18: The legacy view adds no codec and no pair of its own: its variants are
-        // exactly the registry's codecs, then its pair aliases, in table order.
-        let want: Vec<(KvCodecId, KvCodecId)> = KvCodecId::ALL
+        // exactly the registry's attention codecs, then its pair aliases, in table order.
+        let want: Vec<(KvCodecId, KvCodecId)> = KvCodecId::ATTENTION
             .iter()
             .map(|&c| (c, c))
             .chain(PAIR_ALIASES.iter().map(|a| (a.k, a.v)))

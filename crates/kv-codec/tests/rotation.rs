@@ -3,14 +3,15 @@
 //! 2026-10-18: `KvCodecSpec::rotates_at`, the predicate the cache write reads to decide which
 //! sides it WHT-rotates: true exactly at the head dims a rotation covers.
 
-use metrale_kv_codec::{KvCodecId, KvCodecSpec, Rotation, spec};
+use metrale_kv_codec::{KvCodecId, KvCodecSpec, Rotation, by_name, spec};
 
 /// 2026-10-18: A rotated codec's WHT covers head dims 128, 256 and 512 and nothing between, which
-/// is where the pre-registry write rotated the turbo codecs; an unrotated codec rotates nowhere.
+/// is where the pre-registry write rotated the turbo codecs; an unrotated attention codec rotates
+/// nowhere.
 #[test]
 fn rotated_codecs_rotate_at_128_256_512_and_others_never() {
     let mut rotated = 0;
-    for id in KvCodecId::ALL {
+    for id in KvCodecId::ATTENTION {
         let at: Vec<u32> = (0..=1024).filter(|&hd| spec(id).rotates_at(hd)).collect();
         if spec(id).rotates() {
             rotated += 1;
@@ -20,6 +21,14 @@ fn rotated_codecs_rotate_at_128_256_512_and_others_never() {
         }
     }
     assert!(rotated > 0, "no rotated codec registered");
+}
+
+/// 2026-10-18: The indexer row codec rotates at the one head dim its kernels are built for.
+#[test]
+fn the_indexer_row_codec_rotates_at_128_only() {
+    let id = by_name("fp8_row").expect("registered");
+    let at: Vec<u32> = (0..=1024).filter(|&hd| spec(id).rotates_at(hd)).collect();
+    assert_eq!(at, [128]);
 }
 
 /// 2026-10-18: A block FWHT rotates only whole blocks, and a zero block rotates nothing.

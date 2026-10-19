@@ -116,7 +116,7 @@ const GOLDEN_AUTO: [(&str, AutoBoundary); 16] = [
 fn every_accepted_spelling_has_its_golden_auto_policy() {
     assert_eq!(
         GOLDEN_AUTO.len(),
-        KvCodecId::ALL.len() + PAIR_ALIASES.len(),
+        KvCodecId::ATTENTION.len() + PAIR_ALIASES.len(),
         "a new codec or pair needs its golden auto policy"
     );
     for (s, want) in GOLDEN_AUTO {

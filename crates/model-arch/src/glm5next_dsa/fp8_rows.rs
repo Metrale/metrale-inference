@@ -15,18 +15,25 @@
 //! - [`IndexerRowFormat::Bf16`] is the layout every serve has always used; nothing in this
 //!   module runs for it.
 
-use anyhow::{Result, bail, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use metrale_config::{IndexerCacheDtype, ModelConfig};
 use metrale_gpu_runtime::gpu::{GpuBackend, KernelHandle};
+use metrale_kv_codec::{IndexerPlan, KvCodecId, spec};
 
 use super::paged::IndexerCache;
 
 /// 2026-10-16: Module of the FP8 cache's kernels: `dsa_indexer_fp8.cu`, named by its file stem.
 pub const DSA_FP8_MODULE: &str = "dsa_indexer_fp8";
 
+/// 2026-10-18: The registry codec of the FP8 indexer rows.
+const FP8_ROW: KvCodecId = match IndexerCacheDtype::Fp8.codec() {
+    Some(id) => id,
+    None => panic!("--indexer-cache-dtype fp8 names no registry codec"),
+};
+
 /// 2026-10-16: The channel count the FP8 kernels are compiled for (`DSA_FP8_D`): one thread per
-/// channel, a 128-point rotation.
-pub const FP8_INDEX_HEAD_DIM: usize = 128;
+/// channel, a 128-point rotation. 2026-10-18: The one head dim the `fp8_row` spec serves.
+pub const FP8_INDEX_HEAD_DIM: usize = spec(FP8_ROW).head_dims[0] as usize;
 
 /// 2026-10-16: How a DSA layer stores its indexer rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -180,6 +187,8 @@ pub struct Fp8IndexerLayout {
 impl Fp8IndexerLayout {
     /// 2026-10-16: `E * (D + 4) + 2 * S * (KP - 1) * D * 2` bytes; refuses a geometry the
     /// kernels do not take (D other than 128, a block that is not whole pools).
+    /// 2026-10-18: The bytes and the pool and ring rules are the registry's `fp8_row`
+    /// [`IndexerPlan`], so the indexer is sized from the codec spec like the attention cache.
     pub fn block_bytes(block_size: usize, d: usize, kp: usize, sets: usize) -> Result<usize> {
         if d != FP8_INDEX_HEAD_DIM {
             bail!(
@@ -187,17 +196,16 @@ impl Fp8IndexerLayout {
                  compiled for {FP8_INDEX_HEAD_DIM} channels; use --indexer-cache-dtype bf16"
             );
         }
-        ensure!(
-            kp >= 2 && sets >= 1,
-            "FP8 indexer cache: index_kpool {kp} and ring sets {sets} must be at least 2 and 1"
-        );
-        if block_size == 0 || !block_size.is_multiple_of(kp) {
-            bail!(
-                "--indexer-cache-dtype fp8: KV block size {block_size} must be a nonzero \
-                 multiple of index_kpool {kp} (a block holds whole pools)"
-            );
-        }
-        Ok((block_size / kp) * (d + 4) + 2 * sets * (kp - 1) * d * 2)
+        let plan = IndexerPlan::new(
+            FP8_ROW,
+            u32::try_from(d)?,
+            u32::try_from(kp)?,
+            u32::try_from(sets)?,
+        )?;
+        let bytes = plan
+            .block_bytes(u32::try_from(block_size)?)
+            .context("--indexer-cache-dtype fp8: a KV block holds whole pools")?;
+        Ok(usize::try_from(bytes)?)
     }
 
     /// 2026-10-16: Refuses a V block smaller than [`Self::block_bytes`] or a stride the f32
