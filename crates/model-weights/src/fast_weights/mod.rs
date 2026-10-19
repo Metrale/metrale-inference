@@ -29,6 +29,9 @@ use std::sync::mpsc::sync_channel;
 
 mod direct_io;
 mod header;
+mod mapped;
+
+pub use mapped::{MappedSafetensors, MappedTensor};
 
 use header::{parse_header, resolve_shards};
 

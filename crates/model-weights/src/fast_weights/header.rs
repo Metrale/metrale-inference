@@ -25,6 +25,9 @@ pub(super) struct TensorMeta {
     /// staged as BF16 (`dtype` above) and the copy loop converts the bytes —
     /// same 2-byte element size, different bit layout.
     pub(super) from_f16: bool,
+    /// 2026-10-19: The header's own dtype string, for readers that need the stored type
+    /// (`I8` and `U8` both stage as raw bytes above).
+    pub(super) stored_dtype: String,
     pub(super) shape: Vec<usize>,
     /// Absolute byte offset in the file where the tensor bytes start.
     pub(super) abs_offset: u64,
@@ -167,6 +170,7 @@ pub(super) fn parse_header(file: &mut File) -> Result<Vec<TensorMeta>> {
             name: name.clone(),
             dtype,
             from_f16,
+            stored_dtype: dtype_str.to_string(),
             shape,
             abs_offset: span.abs_offset,
             len: span.len as usize,

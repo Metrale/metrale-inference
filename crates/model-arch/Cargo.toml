@@ -36,6 +36,7 @@ tracing = { workspace = true, features = ["std", "attributes"] }
 metrale-model-layers = { workspace = true, features = ["test-utils"] }
 metrale-gpu-runtime = { workspace = true, features = ["test-utils"] }
 metrale-kernels = { workspace = true }
+tempfile = { workspace = true, features = ["getrandom"] }
 
 [lints]
 workspace = true

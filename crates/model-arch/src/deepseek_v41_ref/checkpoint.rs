@@ -42,7 +42,7 @@ pub trait TensorSource {
     fn tensor(&self, name: &str) -> Result<RawTensor<'_>, Error>;
 }
 
-fn refuse(name: &str, why: String) -> Error {
+pub(super) fn refuse(name: &str, why: String) -> Error {
     error!(
         ErrorCode::InvalidArgument,
         "checkpoint tensor",
