@@ -12,6 +12,7 @@
 //! - `ids.txt`: the prompt ids, then the greedy ids, one per line;
 //! - `prefill_logits.f32`: `[prompt_len, vocab]` little-endian f32;
 //! - `decode_logits.f32`: `[NEW_TOKENS, vocab]`, the logits that chose each greedy id;
+//! - `routes.u16`: `[layers, prompt_len, topk]` little-endian u16, the prefill's routed expert ids;
 //! - `summary.txt`: per-position top-5 and the decoded continuation.
 
 use std::fmt::Write as _;
@@ -101,6 +102,13 @@ fn reference_prefill_and_greedy_on_the_real_checkpoint() {
         "non-finite prefill logits"
     );
     std::fs::write(out.join("prefill_logits.f32"), le_bytes(&pre.logits)).unwrap();
+    let routes: Vec<u8> = pre
+        .layers
+        .iter()
+        .flat_map(|l| l.moe_indices.iter())
+        .flat_map(|&e| u16::try_from(e).expect("expert id fits u16").to_le_bytes())
+        .collect();
+    std::fs::write(out.join("routes.u16"), routes).unwrap();
     for (p, row) in pre.logits.chunks(c.vocab).enumerate() {
         writeln!(
             summary,

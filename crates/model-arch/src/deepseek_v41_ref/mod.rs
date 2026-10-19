@@ -300,6 +300,7 @@ pub mod mat;
 pub mod model;
 pub mod moe;
 pub mod parity;
+pub mod routes;
 
 /// 2026-09-25: Shared comparison bars for the component tests.
 #[cfg(test)]
