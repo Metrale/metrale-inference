@@ -16,7 +16,8 @@
 //! - `summary.txt`: per-position top-5 and the decoded continuation.
 
 use std::fmt::Write as _;
-use std::path::PathBuf;
+mod dsv41_env;
+
 use std::time::Instant;
 
 use metrale_model_arch::deepseek_v41_ref::checkpoint::model_weights;
@@ -43,7 +44,7 @@ fn le_bytes(v: &[f32]) -> Vec<u8> {
 #[test]
 #[ignore = "needs METRALE_DSV41_CKPT, METRALE_DSV41_PROMPT and METRALE_DSV41_REF_OUT; a long CPU run"]
 fn reference_prefill_and_greedy_on_the_real_checkpoint() {
-    let env = |k: &str| PathBuf::from(std::env::var(k).unwrap_or_else(|_| panic!("{k} unset")));
+    let env = dsv41_env::path;
     let (dir, out) = (env("METRALE_DSV41_CKPT"), env("METRALE_DSV41_REF_OUT"));
     let prompt = std::fs::read_to_string(env("METRALE_DSV41_PROMPT")).expect("prompt file");
     let read = |p: &str| std::fs::read_to_string(dir.join(p)).expect("snapshot file");

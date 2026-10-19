@@ -71,8 +71,11 @@ fn a_size_mismatch_and_an_out_of_vocab_id_are_refused() {
 #[test]
 #[ignore = "needs METRALE_DSV41_CKPT: a DeepSeek-V4.1-Flash snapshot directory"]
 fn the_checkpoint_tokenizer_gives_the_declared_compressed_size() {
+    use metrale_abstract_io::Env as _;
     let snap = std::path::PathBuf::from(
-        std::env::var("METRALE_DSV41_CKPT")
+        metrale_io_host_std::ProcessEnv
+            .var("METRALE_DSV41_CKPT")
+            .expect("unicode")
             .expect("METRALE_DSV41_CKPT names the snapshot directory"),
     );
     let config: serde_json::Value =

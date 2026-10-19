@@ -11,7 +11,7 @@
 //! The reference's positions: every prefill row, then the decode rows after the first, which
 //! repeats the last prefill row.
 
-use std::path::PathBuf;
+mod dsv41_env;
 
 use metrale_model_arch::deepseek_v41_ref::parity::score;
 
@@ -26,7 +26,7 @@ fn f32s(p: &std::path::Path) -> Vec<f32> {
 #[test]
 #[ignore = "needs METRALE_DSV41_CKPT, METRALE_DSV41_REF_OUT and METRALE_DSV41_CANDIDATE"]
 fn engine_logits_against_the_cpu_reference() {
-    let env = |k: &str| PathBuf::from(std::env::var(k).unwrap_or_else(|_| panic!("{k} unset")));
+    let env = dsv41_env::path;
     let (dir, out) = (env("METRALE_DSV41_CKPT"), env("METRALE_DSV41_REF_OUT"));
     let cfg = std::fs::read_to_string(dir.join("config.json")).expect("config.json");
     let vocab = metrale_config::parse_config(&cfg)

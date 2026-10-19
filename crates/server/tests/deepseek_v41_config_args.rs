@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // provenance-id: 526f6e616c6420522e205374657369616b
 
-use serde_json::Value;
+//! 2026-10-19: The DeepSeek-V4.1 reference model's config against the snapshot's own
+//! `ModelArgs`. Input: `METRALE_DSV41_CKPT` (the snapshot directory).
 
-use super::super::{ModelCfg, Semantics};
-use super::REFERENCE_GATE_TEMP;
+mod dsv41_env;
+
+use metrale_model_arch::deepseek_v41_ref::model::{ModelCfg, REFERENCE_GATE_TEMP, Semantics};
+use serde_json::Value;
 
 /// 2026-10-19: The snapshot ships two configs: the Hugging Face `config.json` (what the engine
 /// parses) and `inference/config.json` (the reference's `ModelArgs` keys). Every `ModelCfg`
@@ -13,9 +16,7 @@ use super::REFERENCE_GATE_TEMP;
 #[test]
 #[ignore = "needs METRALE_DSV41_CKPT: a DeepSeek-V4.1-Flash snapshot directory"]
 fn the_engine_config_agrees_with_the_reference_model_args() {
-    let dir = std::path::PathBuf::from(
-        std::env::var("METRALE_DSV41_CKPT").expect("METRALE_DSV41_CKPT names the snapshot"),
-    );
+    let dir = dsv41_env::path("METRALE_DSV41_CKPT");
     let read = |p: &str| std::fs::read_to_string(dir.join(p)).expect("snapshot file");
     let parsed = metrale_config::parse_config(&read("config.json")).expect("engine parse");
     let c = ModelCfg::from_model_config(&parsed, 4096, Semantics::REVISION_1017);

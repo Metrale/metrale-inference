@@ -7,7 +7,7 @@
 //! Inputs: `METRALE_DSV41_CKPT` (the snapshot directory, for the layer, expert and top-k
 //! counts) and `METRALE_DSV41_REF_OUT` (the reference's output directory).
 
-use std::path::PathBuf;
+mod dsv41_env;
 
 use metrale_model_arch::deepseek_v41_ref::routes::{Routes, uniform_union};
 
@@ -18,7 +18,7 @@ const DRAFTS: [usize; 4] = [0, 1, 3, 7];
 #[test]
 #[ignore = "needs METRALE_DSV41_CKPT and METRALE_DSV41_REF_OUT"]
 fn expert_union_curve_of_the_reference_routes() {
-    let env = |k: &str| PathBuf::from(std::env::var(k).unwrap_or_else(|_| panic!("{k} unset")));
+    let env = dsv41_env::path;
     let (dir, out) = (env("METRALE_DSV41_CKPT"), env("METRALE_DSV41_REF_OUT"));
     let cfg = std::fs::read_to_string(dir.join("config.json")).expect("config.json");
     let mc = metrale_config::parse_config(&cfg).expect("engine config");

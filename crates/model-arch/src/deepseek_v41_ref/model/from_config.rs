@@ -66,7 +66,3 @@ impl ModelCfg {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "from_config_tests.rs"]
-mod tests;

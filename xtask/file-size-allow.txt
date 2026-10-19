@@ -62,7 +62,7 @@ kernels/gb10/common/rope.cu 590
 kernels/gb10/common/ssm_preprocess.cu 617
 kernels/gb10/common/w4a16_gemv.cu 2444
 kernels/gb10/common/w8a16_gemm_t.cu 637
-kernels/gb10/deepseek-v4-flash/nvfp4/moe_w4a16_grouped_gemm.cu 1521
+kernels/gb10/deepseek-v4-flash/nvfp4/moe_w4a16_grouped_gemm.cu 1340
 kernels/gb10/deepseek-v4-flash/nvfp4/paged_decode_attn_512.cu 527
 kernels/gb10/deepseek-v4-flash/nvfp4/paged_decode_attn_fp8_mla.cu 567
 kernels/gb10/deepseek-v4-flash/nvfp4/paged_decode_attn_mla.cu 538

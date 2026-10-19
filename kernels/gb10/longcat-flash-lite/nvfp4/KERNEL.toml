@@ -129,6 +129,7 @@ use = [
   "deepseek-v4-flash/nvfp4/mla_prefill_attn.cu",
   "deepseek-v4-flash/nvfp4/moe_silu_mul.cu",
   "deepseek-v4-flash/nvfp4/moe_w4a16_grouped_gemm.cu",
+  "deepseek-v4-flash/nvfp4/moe_w4a16_ptrtable_sm.cuh",
   "deepseek-v4-flash/nvfp4/paged_decode_attn_fp8_mla.cu",
   "deepseek-v4-flash/nvfp4/paged_decode_attn_mla.cu",
   "deepseek-v4-flash/nvfp4/w4a16_gemm.cu",
