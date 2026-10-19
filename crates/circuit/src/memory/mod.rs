@@ -24,6 +24,7 @@
 //! - A state is attributed to the node that owns it (updates or writes it); caches, which no
 //!   node touches, appear only in the state table.
 
+pub mod box_plan;
 pub mod budget;
 pub mod caches;
 pub mod copies;

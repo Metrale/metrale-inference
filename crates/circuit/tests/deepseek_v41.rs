@@ -5,7 +5,8 @@
 //! template its config lists (sliding window, compressed source, reuse, re-index, Engram), every
 //! binding names a stored tensor of the bound shape and stored format, every stored text-model
 //! tensor is bound by a node, and the KV footprint is the packed compressed rows of the source
-//! layers.
+//! layers; rank 0 of the three-box split, from the stored tensors, boots at the class's util
+//! ceiling and holds the sequences its plan promises.
 //!
 //! Fixtures: the config is the G1 parser's (crates/config/src/tests/fixtures/deepseek_v41_flash);
 //! the tensor list is every shard header's text-model entries (`name dtype shape`), routed
@@ -18,8 +19,11 @@ mod common;
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use metrale_circuit::hardware::device::parse_devices;
 use metrale_circuit::hardware::estimate::footprint;
 use metrale_circuit::ir::Circuit;
+use metrale_circuit::memory::box_plan::{BoxInputs, BoxPlan, BoxPlanError, BoxTerm, Util};
+use metrale_circuit::memory::budget::DriverTerms;
 use metrale_circuit::{Format, Instance, Scale};
 use serde_json::Value;
 
@@ -263,4 +267,114 @@ fn the_grouped_output_projection_reads_one_group_of_heads() {
             s["q_heads"] * s["head_dim"] / s["o_groups"]
         ))
     );
+}
+
+/// 2026-10-18: The bytes of a stored tensor.
+fn stored_bytes(dtype: &str, shape: &[u64]) -> u64 {
+    let size = match dtype {
+        "BF16" => 2,
+        "F32" => 4,
+        "F8_E4M3" | "F8_E8M0" | "I8" => 1,
+        other => panic!("no element size for {other}"),
+    };
+    shape.iter().product::<u64>() * size
+}
+
+/// 2026-10-18: Rank `rank`'s resident main weights at TP `tp`, everything on the device: the
+/// routed and shared experts split their intermediate columns evenly, the grouped attention
+/// projections (`wq_b`, `wo_a`, `wo_b`) split in whole output groups, the embedding and head
+/// split their vocabulary rows, and every other tensor (the latent `wkv`, which one KV head
+/// cannot split, and the hyper-connection, router, compressor, indexer and norm tensors) is
+/// replicated. The Engram tables stay off the device. A scale rides its weight.
+fn rank_weights(tp: usize, rank: usize) -> u64 {
+    let t = text_config();
+    let groups = u(&t, "o_groups") as usize;
+    let owned = metrale_config::tp_split(groups, tp, rank, 1)
+        .expect("the output groups split")
+        .len as u64;
+    let experts = u(&t, "n_routed_experts");
+    assert!(u(&t, "moe_intermediate_size").is_multiple_of(tp as u64));
+    let attn = |k: &str| {
+        [".attn.wq_b.", ".attn.wo_a.", ".attn.wo_b."]
+            .iter()
+            .any(|p| k.contains(p))
+    };
+    tensors()
+        .iter()
+        .filter(|(k, _)| !k.contains(".engram.embed."))
+        .map(|(k, (d, shape))| {
+            let b = stored_bytes(d, shape);
+            if k.contains(".experts.*.") {
+                b * experts / tp as u64
+            } else if k.contains(".shared_experts.")
+                || k.starts_with("embed.")
+                || k.starts_with("head.")
+            {
+                b / tp as u64
+            } else if attn(k) {
+                b * owned / groups as u64
+            } else {
+                b
+            }
+        })
+        .sum()
+}
+
+const GIB: f64 = (1u64 << 30) as f64;
+
+/// 2026-10-18: The gb10 box: its visible memory (kernels/DEVICES.toml) and its class's driver
+/// terms and util ceiling (kernels/gb10/HARDWARE.toml).
+fn gb10() -> (u64, DriverTerms) {
+    let reg = parse_devices(&common::read("kernels/DEVICES.toml")).expect("devices");
+    let d = reg.devices.iter().find(|d| d.id == "gb10").expect("gb10");
+    let terms = DriverTerms::parse(&d.class, &common::read("kernels/gb10/HARDWARE.toml"))
+        .expect("driver terms");
+    (d.memory_bytes as u64, terms)
+}
+
+/// 2026-10-18: Rank 0 of the three-box split, everything resident at the declared formats:
+/// the plan boots at the class's util ceiling, refuses any util above it, and holds 16
+/// sequences at a 64k context but not at 128k (where a lever must free room first).
+#[test]
+fn the_three_box_rank_plan_boots_at_the_ceiling_and_holds_16_sequences_to_64k() {
+    let (device, driver) = gb10();
+    let above = driver.util_ceiling + 0.05;
+    assert_eq!(
+        Util::new(above, &driver),
+        Err(BoxPlanError::Util {
+            util: above,
+            ceiling: driver.util_ceiling
+        })
+    );
+    let gib = |g: f64| (g * GIB) as u64;
+    let inputs = BoxInputs {
+        device_bytes: device,
+        util: Util::new(driver.util_ceiling, &driver).expect("the ceiling is allowed"),
+        driver,
+        weights: rank_weights(3, 0),
+        // 2026-10-18: The plan's caps for the terms no checkpoint here sizes: the drafter's
+        // rank share (its weights are not in this fixture), capped collective buffers, an
+        // unmeasured workspace cap and the Engram staging rows.
+        drafter: gib(2.63),
+        comm: gib(0.30),
+        workspace: gib(2.00),
+        staging: gib(0.10),
+    };
+    let plan = BoxPlan::new(&inputs).expect("rank 0 fits");
+    // 2026-10-18: Rank 0 owns three of the eight output groups; rank 2 owns two and is lighter.
+    assert!(rank_weights(3, 2) < plan.term(BoxTerm::Weights));
+    assert_eq!(rank_weights(3, 1), plan.term(BoxTerm::Weights));
+    let f = footprint(&circuit(), &instance().policy.settings).expect("footprint");
+    let per_seq = |ctx: u64| (f.kv_per_token * ctx as f64 + f.state_per_seq) as u64;
+    assert!(plan.sequences(per_seq(64 * 1024)).expect("non-zero") >= 16);
+    assert!(plan.sequences(per_seq(128 * 1024)).expect("non-zero") < 16);
+    // 2026-10-18: A workspace that eats the room is refused at build, not at the first request.
+    let over = BoxInputs {
+        workspace: plan.kv_room + inputs.workspace + 1,
+        ..inputs
+    };
+    assert!(matches!(
+        BoxPlan::new(&over),
+        Err(BoxPlanError::Over { .. })
+    ));
 }
