@@ -49,10 +49,16 @@ impl TpReduce {
         ensure!(world >= 1, "tensor-parallel world of 0 ranks");
         let bytes = cap_rows * dim * 4;
         let p = gpu.alloc(bytes.max(16))?;
+        gpu.label_alloc(p, &format!("tp_reduce partial f32 [{cap_rows}, {dim}]"));
         let g = if world == 1 {
             p
         } else {
-            gpu.alloc(world * bytes)?
+            let g = gpu.alloc(world * bytes)?;
+            gpu.label_alloc(
+                g,
+                &format!("tp_reduce gather f32 {world}x[{cap_rows}, {dim}]"),
+            );
+            g
         };
         Ok(Self {
             world,

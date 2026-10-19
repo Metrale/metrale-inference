@@ -39,10 +39,21 @@ pub fn read_cut(d: &DeferredTensor, cut: &Cut) -> Result<Vec<u8>> {
     finish(&plan, d.read_host_range_uncached(plan.start, plan.len)?)
 }
 
-/// 2026-10-19: A new device copy of `bytes`.
-pub fn upload(gpu: &dyn GpuBackend, bytes: &[u8]) -> Result<DevicePtr> {
+/// 2026-10-19: A new device copy of `bytes`, named on the allocation ledger as the tensor `what`
+/// held as `resident`, declared by the checkpoint as `declared`.
+pub fn upload(
+    gpu: &dyn GpuBackend,
+    bytes: &[u8],
+    what: &str,
+    resident: &str,
+    declared: &str,
+) -> Result<DevicePtr> {
     let p = gpu.alloc(bytes.len().max(16))?;
     gpu.copy_h2d(bytes, p)?;
+    gpu.label_alloc(
+        p,
+        &format!("{what} resident={resident} declared={declared}"),
+    );
     Ok(p)
 }
 
@@ -56,7 +67,7 @@ pub fn whole_bf16(gpu: &dyn GpuBackend, store: &WeightStore, name: &str) -> Resu
         "{name}: expected bf16, got {:?}",
         d.dtype
     );
-    upload(gpu, &read_cut(d, &Cut::Whole)?)
+    upload(gpu, &read_cut(d, &Cut::Whole)?, name, "bf16", "bf16")
 }
 
 /// 2026-10-19: The E4M3 `codes` of a `[rows, cols]` weight times its E8M0 `scales` (one per
@@ -161,12 +172,15 @@ impl V41Source for HfSource<'_> {
             WeightDtype::BF16 => Ok(ResidentMat::Bf16(upload(
                 gpu,
                 &read_cut(self.tensor(&n)?, &cut)?,
+                &n,
+                "bf16",
+                "bf16",
             )?)),
             WeightDtype::FP8E4M3 => {
                 let (w, s, _, _) = self.fp8(&n, &cut)?;
                 Ok(ResidentMat::Fp8Block {
-                    w: upload(gpu, &w)?,
-                    scale: upload(gpu, &s)?,
+                    w: upload(gpu, &w, &n, "e4m3", "e4m3")?,
+                    scale: upload(gpu, &s, &scale_of(&n)?, "e8m0", "e8m0")?,
                     // 2026-10-19: The reference rounds every FP8 projection's input to E4M3
                     // blocks except `wo_a`'s, which it reads widened.
                     qdq: t != T::WoA,
@@ -188,7 +202,13 @@ impl V41Source for HfSource<'_> {
             "{n}: expected bf16, got {:?}",
             d.dtype
         );
-        let p = upload(gpu, &read_cut(d, &cut_of(t, &self.local))?)?;
+        let p = upload(
+            gpu,
+            &read_cut(d, &cut_of(t, &self.local))?,
+            &n,
+            "bf16",
+            "bf16",
+        )?;
         held.insert(n, p);
         Ok(p)
     }
@@ -204,7 +224,7 @@ impl V41Source for HfSource<'_> {
         let (codes, scales, rows, cols) = self.fp8(&n, &Cut::Whole)?;
         let bits = decode_fp8_tiles(&codes, &scales, rows, cols).with_context(|| n.clone())?;
         Ok(EngramWkv {
-            wkv: upload(gpu, &bits)?,
+            wkv: upload(gpu, &bits, &n, "bf16", "e4m3")?,
             wkv_q2k: DevicePtr(0),
             qdq_rows: true,
         })

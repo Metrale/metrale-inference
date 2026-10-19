@@ -145,6 +145,14 @@ impl GpuBackend for MetraleCudaBackend {
         Some(MetraleCudaBackend::live_allocations(self))
     }
 
+    fn label_alloc(&self, ptr: DevicePtr, label: &str) {
+        MetraleCudaBackend::label_alloc(self, ptr, label);
+    }
+
+    fn alloc_label(&self, ptr: DevicePtr) -> Option<String> {
+        MetraleCudaBackend::alloc_label(self, ptr)
+    }
+
     fn sweep_unreleased(&self) -> usize {
         MetraleCudaBackend::sweep_unreleased(self)
     }

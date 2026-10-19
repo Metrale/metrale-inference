@@ -88,6 +88,10 @@ pub(super) fn setup_lm_heads(
                 quantize_fp8_k,
                 stream,
             )?;
+            gpu.label_alloc(
+                q.weight,
+                "lm_head runtime mirror resident=e4m3 declared=bf16",
+            );
             tracing::info!(
                 "LM head quantized to FP8 (w8a16, vocab={}) — checkpoint is not \
                  natively FP8, so this is a runtime mirror",

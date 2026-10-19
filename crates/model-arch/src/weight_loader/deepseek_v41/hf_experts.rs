@@ -47,6 +47,7 @@ fn alloc_layer(
     gpu: &dyn GpuBackend,
     config: &ModelConfig,
     local: &Local,
+    l: usize,
 ) -> Result<ResidentExperts> {
     let (n, inter, dim) = (config.num_experts, local.inter.len(), config.hidden_size);
     let sizes = ResidentExperts {
@@ -61,13 +62,19 @@ fn alloc_layer(
         w2_s: DevicePtr(0),
     };
     let (packed, scale) = (n * sizes.packed_bytes(), n * sizes.scale_bytes());
+    let table = |w: &str, bytes: usize, dtype: &str| -> Result<DevicePtr> {
+        let p = gpu.alloc(bytes)?;
+        let what = format!("layers.{l}.ffn.experts.*.{w} x{n}");
+        gpu.label_alloc(p, &format!("{what} resident={dtype} declared={dtype}"));
+        Ok(p)
+    };
     Ok(ResidentExperts {
-        w1: gpu.alloc(packed)?,
-        w1_s: gpu.alloc(scale)?,
-        w3: gpu.alloc(packed)?,
-        w3_s: gpu.alloc(scale)?,
-        w2: gpu.alloc(packed)?,
-        w2_s: gpu.alloc(scale)?,
+        w1: table("w1.weight", packed, "e2m1")?,
+        w1_s: table("w1.scale", scale, "e8m0")?,
+        w3: table("w3.weight", packed, "e2m1")?,
+        w3_s: table("w3.scale", scale, "e8m0")?,
+        w2: table("w2.weight", packed, "e2m1")?,
+        w2_s: table("w2.scale", scale, "e8m0")?,
         ..sizes
     })
 }
@@ -116,7 +123,7 @@ pub fn upload_experts(
 ) -> Result<Vec<ResidentExperts>> {
     let n_layers = config.num_hidden_layers;
     let layers: Vec<ResidentExperts> = (0..n_layers)
-        .map(|_| alloc_layer(gpu, config, local))
+        .map(|l| alloc_layer(gpu, config, local, l))
         .collect::<Result<_>>()?;
     let per_layer = config.num_experts * EXPERT_TABLES.len();
     let total = n_layers * per_layer;

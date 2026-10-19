@@ -67,6 +67,16 @@ pub trait GpuBackend: Send + Sync {
         None
     }
 
+    /// 2026-10-19: Name what the live allocation at base pointer `ptr` holds, for the ledger's
+    /// readers (the allocation digest). A no-op (the default) on a backend without a ledger.
+    fn label_alloc(&self, _ptr: DevicePtr, _label: &str) {}
+
+    /// 2026-10-19: The label [`GpuBackend::label_alloc`] gave the allocation at `ptr`; `None`
+    /// (the default) on a backend without a ledger.
+    fn alloc_label(&self, _ptr: DevicePtr) -> Option<String> {
+        None
+    }
+
     /// 2026-09-25: Copy from host to device; returns when the copy is done.
     fn copy_h2d(&self, src: &[u8], dst: DevicePtr) -> Result<()>;
 

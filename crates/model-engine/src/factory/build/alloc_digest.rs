@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-02: `METRALE_DEBUG_ALLOC_DIGEST=<path>`: after the build, write one line per live
-//! allocation on the ledger, `site<TAB>bytes<TAB>sha256`, sorted. Two boots' digests compare the
-//! device bytes of every allocation a load made (weights, copies, scales), independent of their
-//! addresses: the load-parity instrument of a loader change (LIFECYCLE-DESIGN.md section 5.4).
+//! allocation on the ledger, `site<TAB>bytes<TAB>sha256<TAB>label`, sorted. Two boots' digests
+//! compare the device bytes of every allocation a load made (weights, copies, scales),
+//! independent of their addresses: the load-parity instrument of a loader change
+//! (LIFECYCLE-DESIGN.md section 5.4).
+//! 2026-10-19: The label column is what [`GpuBackend::label_alloc`] named the allocation (tensor,
+//! resident and declared dtype), empty when its owner named nothing: the per-rank inventory.
 //!
 //! Owner: metrale-model-engine.
 //! Invariants:
@@ -43,7 +46,8 @@ pub(super) fn write_if_requested(gpu: &dyn GpuBackend, path: Option<&str>) -> Re
             off += n;
         }
         let hex: String = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
-        lines.push(format!("{site}\t{bytes}\t{hex}"));
+        let label = gpu.alloc_label(ptr).unwrap_or_default();
+        lines.push(format!("{site}\t{bytes}\t{hex}\t{label}"));
     }
     lines.sort();
     let mut f = std::fs::File::create(path)

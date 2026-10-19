@@ -38,3 +38,22 @@ fn allocations_of_a_chunk_or_more_count_nothing() {
 fn no_allocations_no_slack() {
     assert_eq!(chunk_slack(std::iter::empty(), C), 0);
 }
+
+/// 2026-10-19: A label names exactly one live base pointer and leaves the ledger with it: an
+/// interior or unknown pointer takes none, and once freed the address answers `None` (a later
+/// allocation at a reused address must not inherit a stale name).
+#[test]
+#[ignore = "requires a free CUDA device"]
+fn a_label_lives_and_dies_with_its_allocation() {
+    use crate::gpu::{DevicePtr, GpuBackend};
+    let gpu = MetraleCudaBackend::new(0, &[]).expect("CUDA device 0");
+    let p = GpuBackend::alloc(&gpu, 4 * MIB).unwrap();
+    assert!(gpu.label_alloc(p, "first"));
+    assert!(gpu.label_alloc(p, "second"));
+    assert_eq!(gpu.alloc_label(p).as_deref(), Some("second"));
+    assert!(!gpu.label_alloc(DevicePtr(p.0 + 256), "interior"));
+    assert_eq!(gpu.alloc_label(DevicePtr(p.0 + 256)), None);
+    GpuBackend::free(&gpu, p).unwrap();
+    assert_eq!(gpu.alloc_label(p), None);
+    assert!(!gpu.label_alloc(p, "freed"));
+}
