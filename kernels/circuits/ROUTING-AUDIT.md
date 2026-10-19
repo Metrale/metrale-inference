@@ -88,8 +88,8 @@ class and exact citation.
 | `rope_mrope_interleaved` | reference | ml/qwen3_attention/decode/attention_forward/rope.rs:70-88 |
 | `rope_strided` | reference | ml/qwen3_attention/trait_impl/multi_seq/attn.rs:48-87 (plain RoPE; bit-identical to MRoPE while pos_t == pos_h == pos_w, k/rope_mrope_interleaved.cu:15-17); ml/mtp_head/forward_batch/position.rs:209-224 |
 | `rope_plain_draft` | reference | ml/mtp_head/forward.rs:258-271 |
-| `kv_write_bf16` | reference | ml/qwen3_attention/decode/write_kv_cache.rs:428-444; ml/qwen3_attention/trait_impl/multi_seq/attn.rs:159-176; ml/mtp_head/forward/attend.rs:36-73 (the draft KV is BF16 under mtp_quantization bf16, ml/mtp_head/new.rs:228-236) |
-| `paged_attention_bf16` | reference | ml/qwen3_attention/decode/run_paged_decode/bf16_fp8.rs:182-201; ml/qwen3_attention/decode/splitk_dispatch.rs:241-251 (no BF16 split-K pair on GB10); ml/qwen3_attention/trait_impl/multi_seq/attn.rs:231-306 |
+| `kv_write_bf16` | reference | ml/qwen3_attention/decode/kv_exec.rs:185-204; ml/qwen3_attention/trait_impl/multi_seq/attn.rs:159-176; ml/mtp_head/forward/attend.rs:36-73 (the draft KV is BF16 under mtp_quantization bf16, ml/mtp_head/new.rs:228-236) |
+| `paged_attention_bf16` | reference | ml/qwen3_attention/decode/run_paged_decode/bf16_fp8.rs:177-203; ml/qwen3_attention/decode/splitk_dispatch.rs:241-251 (no BF16 split-K pair on GB10); ml/qwen3_attention/trait_impl/multi_seq/attn.rs:231-306 |
 | `sigmoid_gate_mul` | reference | ml/qwen3_attention/decode/attention_forward.rs:421-432; ml/mtp_head/forward.rs:292-300 |
 | `sigmoid_gate_mul_batched` | reference | ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:59-81; ml/mtp_head/forward_batch/position.rs:262-272 |
 | `w4a16_gemv_sw_1row` | reference | ml/qwen3_ssm/ssm_forward.rs:90-105,389-422; ml/qwen3_attention/decode/attention_forward_oproj.rs:82-93; ml/dense_ffn_decode.rs:386-397 (gemv_sw on unless METRALE_NO_GEMV_SW=1, ml/ops/model_levers_resolve.rs:53; bit-identical to w4a16_gemv, k/w4a16_gemv_fused.cu:305-307) |

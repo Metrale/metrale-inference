@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-09-25: Launchers for paged KV-cache writes (BF16 and FP8, and the fused K norm + RoPE writes), plus the BF16-K/Turbo-V and MLA submodules.
+//! 2026-09-25: Launchers for paged KV-cache writes (BF16 and FP8, and the fused K norm + RoPE writes), plus the MLA submodule.
 //!
 //! Owner: model-layers ops.
 //! Invariants:
@@ -20,13 +20,6 @@ use crate::layers::moe;
 use crate::weight_map::{DenseWeight, Fp8DenseWeight, Fp8Weight, QuantizedWeight};
 
 use super::*;
-#[path = "kv_cache_bf16k_turbov.rs"]
-mod bf16k_turbov;
-pub use bf16k_turbov::{
-    paged_decode_attn_bf16k_turbo2v, paged_decode_attn_bf16k_turbo3v,
-    paged_decode_attn_bf16k_turbo4v, reshape_and_cache_bf16k_turbo2v,
-    reshape_and_cache_bf16k_turbo3v, reshape_and_cache_bf16k_turbo4v,
-};
 #[path = "kv_cache_mla.rs"]
 mod mla;
 pub use mla::{

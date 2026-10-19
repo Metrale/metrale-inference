@@ -46,3 +46,4 @@
 0x0504 KvSpillCodecMismatch
 0x0505 KvPlanMissing
 0x0506 KvLadderInvalid
+0x0507 KvAbiUnimplemented

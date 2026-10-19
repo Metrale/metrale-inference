@@ -19,6 +19,7 @@
 pub mod circuit_exec;
 pub mod ep_wire;
 pub mod forward;
+pub mod kv_abi;
 pub mod layer;
 pub mod layers;
 /// 2026-10-17: Settings-migration test support (`MapEnv` resolve + old-reader equivalence).

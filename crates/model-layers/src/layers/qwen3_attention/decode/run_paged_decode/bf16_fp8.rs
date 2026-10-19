@@ -7,11 +7,11 @@
 //! - A GQA-packed kernel is launched only on a non-split path.
 
 use anyhow::Result;
-use metrale_cache::kv_cache::PagedKvCache;
-use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
 use super::super::super::Qwen3AttentionLayer;
+use super::super::kv_exec::DecodeArgs;
 use super::super::splitk_dispatch::{self, SplitkPlan};
+use crate::kv_abi::DecodeCommon;
 use crate::layers::ops;
 
 /// 2026-09-28: The BF16 paged-decode kernel a shape takes, with its logged split count.
@@ -25,27 +25,31 @@ pub(super) enum Bf16DecodeRoute {
 }
 
 impl Qwen3AttentionLayer {
-    /// 2026-09-26: The `KvCacheDtype::Bf16` arm.
-    pub(super) fn run_paged_decode_bf16(
-        &self,
-        gpu: &dyn GpuBackend,
-        q: DevicePtr,
-        kv_cache: &PagedKvCache,
-        output: DevicePtr,
-        block_table: DevicePtr,
-        seq_lens: DevicePtr,
-        max_blocks_per_seq: u32,
-        num_seqs: u32,
-        num_q_heads: u32,
-        num_kv_heads: u32,
-        head_dim: u32,
-        block_size: u32,
-        inv_sqrt_d: f32,
-        q_stride: u32,
-        workspace: DevicePtr,
-        max_decode_seqs: u32,
-        stream: u64,
-    ) -> Result<()> {
+    /// 2026-09-26: The `Dense` family's decode (`KvExecutor::decode_dense`).
+    pub(in super::super) fn run_paged_decode_bf16(&self, a: &DecodeArgs<'_>) -> Result<()> {
+        let DecodeArgs {
+            gpu,
+            kv_cache,
+            workspace,
+            max_decode_seqs,
+            stream,
+            ..
+        } = *a;
+        let DecodeCommon {
+            q,
+            output,
+            block_tables: block_table,
+            seq_lens,
+            max_blocks_per_seq,
+            num_seqs,
+            num_q_heads,
+            num_kv_heads,
+            head_dim,
+            block_size,
+            inv_sqrt_d,
+            q_stride,
+            ..
+        } = a.common;
         // 2026-09-25: A layer the loader gave a sliding window (`set_sliding_window`)
         // attends only to the last `sliding_window` positions; every other layer passes 0.
         let sliding = self.sliding_window.unwrap_or(0);
@@ -199,27 +203,31 @@ impl Qwen3AttentionLayer {
         )
     }
 
-    /// 2026-09-26: The fallback arm: FP8 and every dtype no other arm names.
-    pub(super) fn run_paged_decode_fp8(
-        &self,
-        gpu: &dyn GpuBackend,
-        q: DevicePtr,
-        kv_cache: &PagedKvCache,
-        output: DevicePtr,
-        block_table: DevicePtr,
-        seq_lens: DevicePtr,
-        max_blocks_per_seq: u32,
-        num_seqs: u32,
-        num_q_heads: u32,
-        num_kv_heads: u32,
-        head_dim: u32,
-        block_size: u32,
-        inv_sqrt_d: f32,
-        q_stride: u32,
-        workspace: DevicePtr,
-        max_decode_seqs: u32,
-        stream: u64,
-    ) -> Result<()> {
+    /// 2026-09-26: The `DenseScaled` family's decode outside V4-Flash (`KvExecutor::decode_dense_scaled`).
+    pub(in super::super) fn run_paged_decode_fp8(&self, a: &DecodeArgs<'_>) -> Result<()> {
+        let DecodeArgs {
+            gpu,
+            kv_cache,
+            workspace,
+            max_decode_seqs,
+            stream,
+            ..
+        } = *a;
+        let DecodeCommon {
+            q,
+            output,
+            block_tables: block_table,
+            seq_lens,
+            max_blocks_per_seq,
+            num_seqs,
+            num_q_heads,
+            num_kv_heads,
+            head_dim,
+            block_size,
+            inv_sqrt_d,
+            q_stride,
+            ..
+        } = a.common;
         // 2026-09-25: FP8 paged decode, with the split count from
         // `splitk_dispatch::num_splits`.
         let num_splits =

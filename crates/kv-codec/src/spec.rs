@@ -228,6 +228,25 @@ impl KvCodecSpec {
         }
     }
 
+    /// 2026-10-18: True when this side is rotated at `head_dim`: a WHT rotation lists the head
+    /// dims its kernel supports, and a block FWHT needs whole blocks.
+    pub const fn rotates_at(&self, head_dim: u32) -> bool {
+        match self.rotation {
+            Rotation::None => false,
+            Rotation::Wht { sizes } => {
+                let mut i = 0;
+                while i < sizes.len() {
+                    if sizes[i] == head_dim {
+                        return true;
+                    }
+                    i += 1;
+                }
+                false
+            }
+            Rotation::Fwht { block } => block != 0 && head_dim.is_multiple_of(block),
+        }
+    }
+
     /// 2026-10-18: True when the stored values are plain bf16, so a host probe can read them
     /// without dequantizing (the host LUT is a copy).
     pub const fn stores_bf16(&self) -> bool {

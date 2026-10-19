@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-09-25: Launchers for the NVFP4 KV cache write, the BF16 absmax used by
-//! FP8 KV calibration, and the paged decode attention kernels for NVFP4, FP8
-//! and BF16 caches, with their split-K partial and reduce passes.
+//! 2026-09-25: Launchers for the BF16 absmax used by FP8 KV calibration and the
+//! split-K paged decode attention kernels for NVFP4, FP8 and BF16 caches, with
+//! their reduce passes. 2026-10-18: The non-split NVFP4 write and decode are the
+//! fused launchers of `kv_abi::pack`.
 //!
 //! Owner: model-layers ops.
 //! Invariants: none beyond the types.
@@ -17,45 +18,6 @@ use crate::layers::moe;
 use crate::weight_map::{DenseWeight, Fp8DenseWeight, Fp8Weight, QuantizedWeight};
 
 use super::*;
-
-/// 2026-09-25: Write each token's K and V into the paged NVFP4 cache at its
-/// `slot_mapping` slot: E2M1 values with one E4M3 scale per 16. One block per
-/// token.
-pub fn reshape_and_cache_nvfp4(
-    gpu: &dyn GpuBackend,
-    kernel: KernelHandle,
-    key: DevicePtr,
-    value: DevicePtr,
-    k_cache: DevicePtr,
-    v_cache: DevicePtr,
-    slot_mapping: DevicePtr,
-    num_tokens: u32,
-    num_kv_heads: u32,
-    head_dim: u32,
-    block_size: u32,
-    key_stride: u32,
-    value_stride: u32,
-    block_stride_bytes: u64,
-    data_section_bytes: u64,
-    stream: u64,
-) -> Result<()> {
-    KernelLaunch::new(gpu, kernel)
-        .grid([num_tokens, 1, 1])
-        .block([256, 1, 1])
-        .arg_ptr(key)
-        .arg_ptr(value)
-        .arg_ptr(k_cache)
-        .arg_ptr(v_cache)
-        .arg_ptr(slot_mapping)
-        .arg_u32(num_kv_heads)
-        .arg_u32(head_dim)
-        .arg_u32(block_size)
-        .arg_u32(key_stride)
-        .arg_u32(value_stride)
-        .arg_u64(block_stride_bytes)
-        .arg_u64(data_section_bytes)
-        .launch(stream)
-}
 
 /// 2026-09-25: Max absolute value of `n_elems` BF16 values, folded into the f32
 /// at `out_max` with an atomic max. The caller zeroes `out_max` first; the FP8
@@ -76,50 +38,6 @@ pub fn bf16_absmax(
         .arg_ptr(data)
         .arg_ptr(out_max)
         .arg_u32(n_elems)
-        .launch(stream)
-}
-
-/// 2026-09-25: Paged decode attention over an NVFP4 KV cache, one block per
-/// `(q_head, seq)`.
-pub fn paged_decode_attn_nvfp4(
-    gpu: &dyn GpuBackend,
-    kernel: KernelHandle,
-    q: DevicePtr,
-    k_cache: DevicePtr,
-    v_cache: DevicePtr,
-    output: DevicePtr,
-    block_tables: DevicePtr,
-    seq_lens: DevicePtr,
-    max_blocks_per_seq: u32,
-    num_seqs: u32,
-    num_q_heads: u32,
-    num_kv_heads: u32,
-    head_dim: u32,
-    block_size: u32,
-    inv_sqrt_d: f32,
-    q_stride: u32,
-    block_stride_bytes: u64,
-    data_section_bytes: u64,
-    stream: u64,
-) -> Result<()> {
-    KernelLaunch::new(gpu, kernel)
-        .grid([num_q_heads, num_seqs, 1])
-        .block([256, 1, 1])
-        .arg_ptr(q)
-        .arg_ptr(k_cache)
-        .arg_ptr(v_cache)
-        .arg_ptr(output)
-        .arg_ptr(block_tables)
-        .arg_ptr(seq_lens)
-        .arg_u32(max_blocks_per_seq)
-        .arg_u32(num_q_heads)
-        .arg_u32(num_kv_heads)
-        .arg_u32(head_dim)
-        .arg_u32(block_size)
-        .arg_f32(inv_sqrt_d)
-        .arg_u32(q_stride)
-        .arg_u64(block_stride_bytes)
-        .arg_u64(data_section_bytes)
         .launch(stream)
 }
 

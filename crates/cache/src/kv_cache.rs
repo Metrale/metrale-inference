@@ -291,8 +291,9 @@ impl KvCacheConfig {
         geometry(self.block_size, self.num_kv_heads, self.head_dim).values()
     }
 
-    /// 2026-10-18: Packed-value bytes per block of `codec`, from the global dims.
-    fn data_bytes_of(&self, codec: KvCodecId) -> usize {
+    /// 2026-10-18: Packed-value bytes per block of `codec`, from the global dims: where a
+    /// block-scaled side's side tensors start.
+    pub fn data_bytes_of(&self, codec: KvCodecId) -> usize {
         to_usize(spec(codec).data_bytes(self.values()))
     }
 

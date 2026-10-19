@@ -387,6 +387,11 @@ impl PagedKvCache {
         self.layers[layer_idx].v_block_stride
     }
 
+    /// 2026-10-18: `KvCacheConfig::data_bytes_of`.
+    pub fn data_bytes_of(&self, codec: metrale_kv_codec::KvCodecId) -> usize {
+        self.config.data_bytes_of(codec)
+    }
+
     /// 2026-09-25: `KvCacheConfig::nvfp4_data_bytes`.
     pub fn nvfp4_data_bytes(&self) -> usize {
         self.config.nvfp4_data_bytes()

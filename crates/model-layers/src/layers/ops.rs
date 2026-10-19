@@ -113,10 +113,6 @@ mod hyper_connection_lowrank;
 mod hyper_connection_lowrank_tests;
 #[path = "ops/kv_cache.rs"]
 mod kv_cache;
-#[path = "ops/kv_cache_fp8k.rs"]
-mod kv_cache_fp8k;
-#[path = "ops/kv_cache_turbok.rs"]
-mod kv_cache_turbok;
 #[path = "ops/lora_delta.rs"]
 pub mod lora_delta;
 #[path = "ops/model_levers.rs"]
@@ -277,8 +273,6 @@ pub use hyper_connection_dispatch::*;
 pub use hyper_connection_lowrank::*;
 pub use kquant_mmq::*;
 pub use kv_cache::*;
-pub use kv_cache_fp8k::*;
-pub use kv_cache_turbok::*;
 pub use model_levers::ModelLevers;
 pub use moe_atomic_c4::*;
 pub use moe_expert::*;

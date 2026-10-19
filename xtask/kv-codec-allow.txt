@@ -80,13 +80,10 @@ crates/model-layers/src/layers/mtp_head/new.rs 11
 crates/model-layers/src/layers/qwen3_attention/decode/attention_forward.rs 3
 crates/model-layers/src/layers/qwen3_attention/decode/gqa_pack_gpu_tests.rs 16
 crates/model-layers/src/layers/qwen3_attention/decode/high_speed_swap.rs 28
-crates/model-layers/src/layers/qwen3_attention/decode/run_paged_decode/nvfp4_turbo.rs 7
-crates/model-layers/src/layers/qwen3_attention/decode/run_paged_decode.rs 20
 crates/model-layers/src/layers/qwen3_attention/decode/splitk_dispatch.rs 9
 crates/model-layers/src/layers/qwen3_attention/decode/splitk_route_tests.rs 5
 crates/model-layers/src/layers/qwen3_attention/decode/write_kv_cache_fp8_gpu_tests.rs 6
 crates/model-layers/src/layers/qwen3_attention/decode/write_kv_cache_fp8.rs 2
-crates/model-layers/src/layers/qwen3_attention/decode/write_kv_cache.rs 26
 crates/model-layers/src/layers/qwen3_attention/init_decode_kernels.rs 25
 crates/model-layers/src/layers/qwen3_attention/init_prefill_kernels.rs 54
 crates/model-layers/src/layers/qwen3_attention/init.rs 4

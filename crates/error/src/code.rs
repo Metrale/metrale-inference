@@ -151,5 +151,8 @@ error_registry! {
         KvPlanMissing = 0x0505 => "the KV-cache plan has no entry for {}",
         /// 2026-10-18: A VBR ladder that breaks one of its construction rules: (rule).
         KvLadderInvalid = 0x0506 => "the VBR ladder is invalid: {}",
+        /// 2026-10-18: An ABI family the registry declares but this build has no launcher for:
+        /// (ABI, operation).
+        KvAbiUnimplemented = 0x0507 => "the {} KV ABI has no {} launcher in this build",
     }
 }

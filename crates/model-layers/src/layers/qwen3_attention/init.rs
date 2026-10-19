@@ -105,8 +105,8 @@ impl Qwen3AttentionLayer {
         config: &metrale_config::ModelConfig,
         lc: crate::load_context::LoadContext<'_>,
     ) -> Result<Self> {
-        let kv_names =
-            super::init_kv_kernels::kv_kernel_names_for(kv_dtype.codec_pair(), config.head_dim)?;
+        let kv_pair = kv_dtype.codec_pair();
+        let kv_names = super::init_kv_kernels::kv_kernel_names_for(kv_pair, config.head_dim)?;
         // 2026-09-25: Which cross-architecture kernel families the config says
         // the model has. `gate` issues no lookup for a family the model lacks,
         // so it leaves no failed row in the boot audit. See `init_arch_gates`.
@@ -139,6 +139,7 @@ impl Qwen3AttentionLayer {
             mrope_interleaved,
             position_encoding,
             kv_dtype,
+            kv_pair,
             cutlass_nvfp4_gemm: lc.settings.kernels.cutlass_nvfp4_gemm,
             levers: lc.levers.attn,
             head_dim_override: None,

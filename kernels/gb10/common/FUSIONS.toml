@@ -681,7 +681,7 @@ modes = ["decode", "multi_seq", "verify", "draft", "verify_batch"]
 when = { kv_cache_dtype = "bf16" }
 numerics = "reference"
 priority = 10
-cite = "ml/qwen3_attention/decode/write_kv_cache.rs:428-444; ml/qwen3_attention/trait_impl/multi_seq/attn.rs:159-176; ml/mtp_head/forward/attend.rs:36-73 (the draft KV is BF16 under mtp_quantization bf16, ml/mtp_head/new.rs:228-236)"
+cite = "ml/qwen3_attention/decode/kv_exec.rs:185-204; ml/qwen3_attention/trait_impl/multi_seq/attn.rs:159-176; ml/mtp_head/forward/attend.rs:36-73 (the draft KV is BF16 under mtp_quantization bf16, ml/mtp_head/new.rs:228-236)"
 
 [[rule]]
 id = "paged_attention_bf16"
@@ -694,7 +694,7 @@ modes = ["decode", "multi_seq", "verify", "draft", "verify_batch"]
 when = { kv_cache_dtype = "bf16" }
 numerics = "reference"
 priority = 10
-cite = "ml/qwen3_attention/decode/run_paged_decode/bf16_fp8.rs:182-201; ml/qwen3_attention/decode/splitk_dispatch.rs:241-251 (no BF16 split-K pair on GB10); ml/qwen3_attention/trait_impl/multi_seq/attn.rs:231-306"
+cite = "ml/qwen3_attention/decode/run_paged_decode/bf16_fp8.rs:177-203; ml/qwen3_attention/decode/splitk_dispatch.rs:241-251 (no BF16 split-K pair on GB10); ml/qwen3_attention/trait_impl/multi_seq/attn.rs:231-306"
 
 [[rule]]
 id = "sigmoid_gate_mul"
