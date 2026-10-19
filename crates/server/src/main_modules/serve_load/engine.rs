@@ -174,6 +174,8 @@ pub(crate) fn load_engine(
         max_batch_tokens,
         spec_tokens: _spec_tokens,
     } = serve_phases::resolve_prefill_budget(&args, ssm_prefill_chunk, levers.max_batch_tokens);
+    // 2026-10-19: Loaders that size per-step workspaces read the bound here.
+    config.serve_max_batch_tokens = max_batch_tokens;
     // 2026-10-14: `METRALE_GLM_PREFILL_PIECE_ROWS`: refuse a prefill sizing the piece grid does
     // not divide before the KV cache is sized (`glm5next_prefill_piece::check_piece_budget`).
     let lever_settings = serve_phases::lever_settings()?;

@@ -91,8 +91,12 @@ pub fn plan(
         (1..=4).contains(&hc),
         "deepseek-v4.1: hc_mult {hc} outside 1..=4"
     );
-    let max_seq = levers.max_seq.min(config.max_position_embeddings.max(1));
-    let max_tokens = levers.max_tokens.min(max_seq);
+    // 2026-10-19: The serve's own bounds, when set, cap the levers: no step carries more rows
+    // than `serve_max_batch_tokens` and no position reaches `serve_max_seq_len`.
+    let cap = |lever: usize, serve: usize| if serve > 0 { lever.min(serve) } else { lever };
+    let max_seq =
+        cap(levers.max_seq, config.serve_max_seq_len).min(config.max_position_embeddings.max(1));
+    let max_tokens = cap(levers.max_tokens, config.serve_max_batch_tokens).min(max_seq);
     let ratios: Vec<usize> = config
         .compress_ratios
         .iter()

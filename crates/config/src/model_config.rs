@@ -374,6 +374,11 @@ pub struct ModelConfig {
     #[serde(skip)]
     pub serve_max_seq_len: usize,
 
+    /// 2026-10-19: The serve's resolved `max_batch_tokens` (the most rows one forward step
+    /// carries), set at startup. 0 when nothing set it, which readers treat as unknown.
+    #[serde(skip)]
+    pub serve_max_batch_tokens: usize,
+
     #[serde(skip)]
     pub fp8_kv_calibration_tokens: usize,
     #[serde(skip)]

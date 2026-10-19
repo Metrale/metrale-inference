@@ -117,3 +117,28 @@ fn a_checkpoint_without_a_compressor_is_refused() {
         .to_string();
     assert!(e.contains("no compressor"), "{e}");
 }
+
+/// 2026-10-19: The serve's bounds cap the per-step workspace and the position tables; a bound of
+/// 0 (unset) leaves the levers, and a bound above a lever leaves the lever. A plan that ignored
+/// either bound would size every reduce, score and activation buffer for rows no step carries.
+#[test]
+fn the_serve_bounds_cap_the_plan_and_never_raise_it() {
+    let lv = levers();
+    let at = |rows: usize, seq: usize| {
+        let mut c = v41_rank(3, 0);
+        c.serve_max_batch_tokens = rows;
+        c.serve_max_seq_len = seq;
+        let p = plan(&c, &lv, &Carries, &Local::of(&c).unwrap(), true).unwrap();
+        let (a, m) = (&p.attn_cfg, &p.moe_cfg);
+        assert_eq!((a.max_tokens, m.max_tokens), (p.max_tokens, p.max_tokens));
+        assert_eq!(a.max_seq, p.max_seq);
+        (p.max_tokens, p.max_seq)
+    };
+    assert_eq!(at(0, 0), (lv.max_tokens, lv.max_seq));
+    assert_eq!(at(513, 4096), (513, 4096));
+    assert_eq!(
+        at(lv.max_tokens + 1, lv.max_seq + 1),
+        (lv.max_tokens, lv.max_seq)
+    );
+    assert_eq!(at(0, 300), (300, 300));
+}

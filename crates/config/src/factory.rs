@@ -75,6 +75,7 @@ impl ModelConfig {
             indexer_rewind_rows: 0,
             tp_pre_shard_heads: None,
             serve_max_seq_len: 0,
+            serve_max_batch_tokens: 0,
             hybrid_override_pattern: String::new(),
             mamba_num_heads: 0,
             mamba_head_dim: 0,
