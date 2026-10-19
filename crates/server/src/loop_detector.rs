@@ -139,6 +139,17 @@ impl Signature {
     pub fn is_empty(&self) -> bool {
         self.text.is_empty() && self.tools.is_empty() && self.combined.is_empty()
     }
+
+    /// 2026-10-19: Text similarity between two turns at or above
+    /// `MODERATE_SIMILARITY` on raw unigram sets, with no
+    /// `MIN_CHANNEL_TOKENS` floor: the channels' shingles need
+    /// `SHINGLE_ORDER` tokens, so identical short acks ("Done.") compare as
+    /// empty and never suppress, which broke `api/chat/loop_detect.rs`'s
+    /// spinning gate's positive case. The floor still protects the full
+    /// verdict in `detect`; spinning already gates on turns under 500 bytes.
+    pub fn raw_texts_similar(a: &str, b: &str) -> bool {
+        jaccard(&token_set(a), &token_set(b)) >= MODERATE_SIMILARITY
+    }
 }
 
 /// 2026-09-26: The verdict for assistant-message signatures given newest
@@ -308,6 +319,24 @@ pub fn recent_calls_all_failing(newest_first: &[CallOutcome], n: usize) -> bool 
 /// `api/chat/msg_entry.rs` uses it with [`jaccard`].
 pub(crate) fn shingle_set(text: &str) -> HashSet<u64> {
     shingles(&tokenise(text), SHINGLE_ORDER)
+}
+
+/// 2026-10-19: Lowercased unigram hashes over `tokenise`, no floor. Spinning's
+/// short-turn comparison needs this because shingles need `SHINGLE_ORDER`
+/// tokens, which "Done." never reaches.
+fn token_set(text: &str) -> HashSet<u64> {
+    tokenise(text)
+        .iter()
+        .map(|tok| {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            for ch in tok.chars() {
+                for lc in ch.to_lowercase() {
+                    lc.hash(&mut h);
+                }
+            }
+            h.finish()
+        })
+        .collect()
 }
 
 fn tokenise(s: &str) -> Vec<&str> {
