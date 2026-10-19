@@ -98,7 +98,10 @@ impl TpReduce {
         let slot_elems = rows.rows * self.dim;
         if self.world > 1 {
             let comm = comm.ok_or_else(|| {
-                anyhow::anyhow!("tensor-parallel reduce over {} ranks without a communicator", self.world)
+                anyhow::anyhow!(
+                    "tensor-parallel reduce over {} ranks without a communicator",
+                    self.world
+                )
             })?;
             ensure!(
                 comm.world_size() == self.world,
@@ -142,4 +145,4 @@ impl TpReduce {
 
 #[cfg(test)]
 #[path = "tp_reduce_v41_tests.rs"]
-mod tests;
+pub(crate) mod tests;

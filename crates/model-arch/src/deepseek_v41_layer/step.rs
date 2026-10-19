@@ -341,6 +341,7 @@ impl DeepSeekV41Layer {
                 normed,
                 m,
                 start_pos,
+                ctx.comm,
                 stream,
             )?;
             run.out

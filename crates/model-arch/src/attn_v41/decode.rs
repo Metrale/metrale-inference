@@ -127,17 +127,11 @@ impl AttnV41 {
         } else {
             self.wo_a_per_group(gpu, w, o_copy, m, stream)?;
         }
-        self.gemm(
-            gpu,
-            self.og,
-            w.wo_b,
-            self.out,
-            m,
-            dim,
-            c.groups * c.o_rank,
-            stream,
-        )?;
-        Ok(())
+        let k_ob = c.groups * c.o_rank;
+        match &self.tp {
+            None => self.gemm(gpu, self.og, w.wo_b, self.out, m, dim, k_ob, stream),
+            Some(tp) => self.gemm_f32_partial(gpu, tp, self.og, w.wo_b, m, dim, k_ob, stream),
+        }
     }
 
     /// 2026-09-25: The per-group `wo_a` path (bf16 `wo_a`, or m > 8): slice the
@@ -191,8 +185,12 @@ impl AttnV41 {
     /// a CUDA graph: false on kv and index sources, whose forward decides the
     /// compressor group and the index top-k on the host mid-forward (position
     /// parity, a score download). Every other layer is kernels and copies once
-    /// its per-token inputs are read from the device.
+    /// its per-token inputs are read from the device. False on every layer under tensor
+    /// parallelism, whose output needs the cross-rank reduce of `forward`.
     pub fn decode_capturable(&self, w: &AttnV41LayerWeights) -> bool {
+        if self.tp.is_some() {
+            return false;
+        }
         !w.role.is_kv_source && !w.role.is_index_source
     }
 
@@ -250,7 +248,7 @@ impl AttnV41 {
     ) -> Result<Option<DevicePtr>> {
         ensure!(
             self.decode_capturable(w),
-            "attn_v41: decode_prep on a kv/index source layer"
+            "attn_v41: decode_prep on a layer that cannot be captured (kv/index source, or tensor-parallel)"
         );
         self.decode_prep_role(w.role.ratio > 0, shared, gpu, start_pos, stream)
     }
@@ -335,7 +333,7 @@ impl AttnV41 {
         let c = &self.cfg;
         ensure!(
             self.decode_capturable(w),
-            "attn_v41: decode_body on a kv/index source layer"
+            "attn_v41: decode_body on a layer that cannot be captured (kv/index source, or tensor-parallel)"
         );
         ensure!(
             (w.role.ratio > 0) == rows_b.is_some(),

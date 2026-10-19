@@ -37,6 +37,7 @@ use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 
 use crate::fp8_block_v41::{Fp8BlockStage, Fp8StageSize};
+use crate::tp_reduce_v41::TpReduce;
 
 /// 2026-09-25: An attention projection on the device: bf16, raw `Q2_K` blocks, or FP8 blocks
 /// (dequantized per launch through `fp8_block_v41`). `Q3_K` is refused by `AttnV41::gemm`.
@@ -77,6 +78,10 @@ pub struct AttnV41Cfg {
     /// 2026-10-19: The FP8 block projections' scratch (`Fp8StageSize::NONE` when every
     /// projection is bf16 or K-quant).
     pub fp8_stage: Fp8StageSize,
+    /// 2026-10-19: Ranks the heads are split across. 1 keeps the whole attention on one device;
+    /// above 1, `n_heads` and `groups` are this rank's own (whole `wo_a` groups), `wq_b`, `sink`,
+    /// `wo_a` and `wo_b` hold its slices, and `forward` sums the ranks' `wo_b` partials.
+    pub tp_world: usize,
 }
 
 impl AttnV41Cfg {
@@ -274,6 +279,13 @@ struct Kernels {
     ring_put: KernelHandle,
 }
 
+/// 2026-10-19: The tensor-parallel output projection: `wo_b` into f32 partials, summed across
+/// ranks and rounded to bf16 once by [`TpReduce`].
+struct AttnTp {
+    reduce: TpReduce,
+    gemm_f32out: KernelHandle,
+}
+
 /// 2026-09-25: The attention runtime: kernels, RoPE tables, and workspaces for
 /// up to `max_tokens` positions per call.
 pub struct AttnV41 {
@@ -283,6 +295,8 @@ pub struct AttnV41 {
     /// scores and sums its outputs in the same order, so the bytes do not depend on the value.
     sparse_split: u32,
     k: Kernels,
+    /// 2026-10-19: `Some` exactly when `cfg.tp_world > 1`.
+    tp: Option<AttnTp>,
     fp8: Fp8BlockStage,
     fc_plain: DevicePtr,
     fc_yarn: DevicePtr,
@@ -360,3 +374,7 @@ mod sources;
 #[cfg(test)]
 #[path = "attn_v41_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "attn_v41_tp_tests.rs"]
+mod tp_tests;

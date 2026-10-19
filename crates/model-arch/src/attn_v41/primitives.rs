@@ -12,7 +12,7 @@ use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
-use super::{AttnMat, AttnV41, QUANT_BLOCKS_PER_LAUNCH};
+use super::{AttnMat, AttnTp, AttnV41, QUANT_BLOCKS_PER_LAUNCH};
 use crate::fp8_block_v41::act_quant_fp8;
 use metrale_model_layers::layers::ops;
 use metrale_model_layers::layers::ops::{
@@ -21,6 +21,37 @@ use metrale_model_layers::layers::ops::{
 use metrale_model_layers::weight_map::DenseWeight;
 
 impl AttnV41 {
+    /// 2026-10-19: `tp.partial = a . w^T` in f32 (`[m, n]`), for the cross-rank sum. Only bf16
+    /// and FP8 block weights: the K-quant products have no f32-output form.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn gemm_f32_partial(
+        &self,
+        gpu: &dyn GpuBackend,
+        tp: &AttnTp,
+        a: DevicePtr,
+        w: AttnMat,
+        m: usize,
+        n: usize,
+        kk: usize,
+        stream: u64,
+    ) -> Result<()> {
+        let (a, w) = self.fp8.lower(gpu, a, w, m, n, kk, stream)?;
+        let AttnMat::Bf16(w) = w else {
+            anyhow::bail!("a tensor-parallel output projection must be bf16 or FP8 blocks");
+        };
+        ops::dense_gemm(
+            gpu,
+            tp.gemm_f32out,
+            a,
+            &DenseWeight { weight: w },
+            tp.reduce.partial(),
+            m as u32,
+            n as u32,
+            kk as u32,
+            stream,
+        )
+    }
+
     pub(super) fn gemm(
         &self,
         gpu: &dyn GpuBackend,

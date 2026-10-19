@@ -312,6 +312,7 @@ fn layer0_matches_the_cpu_reference_on_the_real_weights() {
         beta_fast: 32.0,
         beta_slow: 1.0,
         fp8_stage: crate::fp8_block_v41::Fp8StageSize::NONE,
+        tp_world: 1,
     };
     let attn = AttnV41::new(g, acfg.clone(), at_defaults()).unwrap();
     let role = LayerRole {
@@ -341,7 +342,7 @@ fn layer0_matches_the_cpu_reference_on_the_real_weights() {
     let mut shared = SharedV41::default();
     let x_in = up_bf16(g, &x_r);
     let run = attn
-        .forward(g, &attn_w, &mut ast, &mut shared, x_in, m, 0, stream)
+        .forward(g, &attn_w, &mut ast, &mut shared, x_in, m, 0, None, stream)
         .unwrap();
     assert_eq!(run.idx, run_r.idx, "window idx");
     report("attn q", &dl_bf16(g, run.q, m * nh * hd), &run_r.q);

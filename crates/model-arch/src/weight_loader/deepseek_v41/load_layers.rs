@@ -155,6 +155,7 @@ pub fn load_layers(
             1.0
         },
         fp8_stage: Fp8StageSize::NONE,
+        tp_world: 1,
     };
     let moe_cfg = MoeV41Cfg {
         dim,

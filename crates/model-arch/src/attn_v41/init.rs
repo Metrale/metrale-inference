@@ -10,7 +10,9 @@
 use anyhow::{Result, ensure};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
-use super::{AttnV41, AttnV41Cfg, Fp8BlockStage, GEMM_MODULE, Kernels, MODULE, upload_f32};
+use super::{
+    AttnTp, AttnV41, AttnV41Cfg, Fp8BlockStage, GEMM_MODULE, Kernels, MODULE, TpReduce, upload_f32,
+};
 use crate::deepseek_v41_layer::levers::Ds41Levers;
 use crate::deepseek_v41_ref::attn::freqs_cis;
 use crate::deepseek_v41_ref::compress::yarn_freqs_cis;
@@ -33,6 +35,18 @@ impl AttnV41 {
             cfg.head_dim.is_multiple_of(32) && cfg.index_hd.is_multiple_of(32),
             "head dims must be multiples of the 32-block"
         );
+        ensure!(
+            cfg.tp_world >= 1,
+            "attention over a tensor-parallel world of 0 ranks"
+        );
+        let tp = if cfg.tp_world > 1 {
+            Some(AttnTp {
+                reduce: TpReduce::new(gpu, cfg.tp_world, cfg.max_tokens, cfg.dim)?,
+                gemm_f32out: gpu.kernel(GEMM_MODULE, "dense_gemm_bf16_f32out")?,
+            })
+        } else {
+            None
+        };
         let k = Kernels {
             gemm: gpu.kernel(GEMM_MODULE, "dense_gemm_bf16")?,
             gemv: gpu.kernel("gemv", "dense_gemv_bf16")?,
@@ -85,6 +99,7 @@ impl AttnV41 {
             .max(cfg.groups * cfg.o_rank)
             .max(nh * hd);
         Ok(AttnV41 {
+            tp,
             fp8: Fp8BlockStage::new(gpu, cfg.fp8_stage)?,
             sparse_split: levers.sparse_split,
             a_q8: alloc(
@@ -137,6 +152,9 @@ impl AttnV41 {
 
     pub fn free(self, gpu: &dyn GpuBackend) -> Result<()> {
         self.fp8.free(gpu)?;
+        if let Some(tp) = self.tp {
+            tp.reduce.free(gpu)?;
+        }
         for p in [
             self.fc_plain,
             self.fc_yarn,

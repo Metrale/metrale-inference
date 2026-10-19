@@ -268,15 +268,15 @@ pub fn bf16_bytes(v: &[f32]) -> Vec<u8> {
         .collect()
 }
 
+#[cfg(all(test, feature = "cuda"))]
+#[path = "moe_v41_resident_gpu_tests.rs"]
+mod resident_gpu_tests;
+#[cfg(test)]
+#[path = "moe_v41_resident_tests.rs"]
+mod resident_tests;
 #[cfg(test)]
 #[path = "moe_v41_route_tests.rs"]
 mod route_tests;
 #[cfg(test)]
 #[path = "moe_v41_tests.rs"]
 mod tests;
-#[cfg(test)]
-#[path = "moe_v41_resident_tests.rs"]
-mod resident_tests;
-#[cfg(all(test, feature = "cuda"))]
-#[path = "moe_v41_resident_gpu_tests.rs"]
-mod resident_gpu_tests;

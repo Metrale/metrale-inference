@@ -16,9 +16,9 @@ use std::sync::Mutex;
 
 /// 2026-10-19: A communicator that records each all-gather and moves no bytes; the mock's
 /// combine is not executed, so only the call's geometry is under test.
-struct RecordingComm {
-    world: usize,
-    gathers: Mutex<Vec<(u64, u64, usize)>>,
+pub(crate) struct RecordingComm {
+    pub(crate) world: usize,
+    pub(crate) gathers: Mutex<Vec<(u64, u64, usize)>>,
 }
 
 impl CommBackend for RecordingComm {
@@ -26,7 +26,10 @@ impl CommBackend for RecordingComm {
         anyhow::bail!("the reduce must not all-reduce")
     }
     fn all_gather(&self, send_ptr: u64, recv_ptr: u64, bytes: usize) -> Result<()> {
-        self.gathers.lock().unwrap().push((send_ptr, recv_ptr, bytes));
+        self.gathers
+            .lock()
+            .unwrap()
+            .push((send_ptr, recv_ptr, bytes));
         Ok(())
     }
     fn reduce_scatter(&self, _s: u64, _r: u64, _bytes: usize) -> Result<()> {
@@ -87,7 +90,11 @@ fn one_rank_combines_its_own_partials_without_a_gather() {
     let l = g.launches_snapshot();
     assert_eq!(l.len(), 1);
     assert_eq!(l[0].grid, [2, 3, 1]);
-    assert_eq!(l[0].args[0], MockArg::Buffer(r.partial()), "G is the partial buffer");
+    assert_eq!(
+        l[0].args[0],
+        MockArg::Buffer(r.partial()),
+        "G is the partial buffer"
+    );
     assert_eq!(u64_arg(&l[0].args[1]), (3 * DIM) as u64);
     assert_eq!(u32_arg(&l[0].args[2]), 1);
     assert_eq!(
@@ -117,7 +124,11 @@ fn three_ranks_gather_exactly_the_calls_rows_into_their_own_slots() {
     assert_eq!(bytes, 6 * DIM * 4);
     let l = g.launches_snapshot();
     assert_eq!(l[0].args[0], MockArg::Buffer(DevicePtr(recv)));
-    assert_eq!(u64_arg(&l[0].args[1]), (6 * DIM) as u64, "slot stride = gathered bytes");
+    assert_eq!(
+        u64_arg(&l[0].args[1]),
+        (6 * DIM) as u64,
+        "slot stride = gathered bytes"
+    );
     assert_eq!(u32_arg(&l[0].args[2]), 3);
     assert_eq!(l[0].args[3], MockArg::Buffer(DevicePtr(0x77)));
     assert_eq!((u32_arg(&l[0].args[4]), u32_arg(&l[0].args[5])), (2, 4));
@@ -133,7 +144,11 @@ fn a_foreign_stream_is_drained_around_the_gather() {
     };
     r.reduce(&g, Some(&comm), rows(2, 0, 0, 2), DevicePtr(0x99), 0)
         .unwrap();
-    assert_eq!(g.sync_count(), 0, "the default stream orders the gather itself");
+    assert_eq!(
+        g.sync_count(),
+        0,
+        "the default stream orders the gather itself"
+    );
     r.reduce(&g, Some(&comm), rows(2, 0, 0, 2), DevicePtr(0x99), 5)
         .unwrap();
     assert_eq!(g.sync_count(), 2);
@@ -208,7 +223,10 @@ mod gpu {
             g.copy_h2d(b, p).unwrap();
             p
         };
-        let gd = up(&gath.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<_>>());
+        let gd = up(&gath
+            .iter()
+            .flat_map(|v| v.to_le_bytes())
+            .collect::<Vec<_>>());
         let pd = up(&pos.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<_>>());
         let od = g.alloc(m * dim * 2).unwrap();
         let k = g.kernel("moe_v41", "moe_v41_rank_combine").unwrap();

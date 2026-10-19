@@ -269,6 +269,7 @@ impl DeepSeekV41Layer {
                 normed,
                 1,
                 start_pos,
+                ctx.comm,
                 stream,
             )?;
             // 2026-09-25: It wrote pos / head_pos / idx_dev for itself.

@@ -56,6 +56,6 @@ pub mod ple_tests;
 pub mod precision_schedule;
 pub mod seq_state_reserve;
 pub mod tp_reduce_v41;
-pub mod tp_slice_v41;
 pub mod tp_shard;
+pub mod tp_slice_v41;
 pub mod weight_loader;

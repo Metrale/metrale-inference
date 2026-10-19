@@ -288,6 +288,7 @@ impl DeepSeekV41Layer {
                 normed,
                 1,
                 start_pos,
+                ctx.comm,
                 stream,
             )?;
             attn.invalidate_decode_uploads();

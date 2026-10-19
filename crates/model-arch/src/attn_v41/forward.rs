@@ -9,6 +9,7 @@
 //! Invariants: none beyond the types.
 
 use anyhow::{Context, Result, ensure};
+use metrale_comm::CommBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
 use super::{
@@ -16,12 +17,15 @@ use super::{
 };
 use crate::deepseek_v41_ref::attn::window_topk_idxs;
 use crate::deepseek_v41_ref::compress::LATENT_BLOCK;
+use crate::tp_reduce_v41::CombineRows;
 
 impl AttnV41 {
     /// 2026-09-25: One layer's attention for `m` tokens at `start_pos`: `x` is
     /// the normed input `[m, dim]` bf16; the output is `[m, dim]` bf16 in
     /// `run.out`. Fails for `m` outside `1..=max_tokens` or a position past
-    /// `max_seq`.
+    /// `max_seq`. Under tensor parallelism `comm` spans the ranks and every rank's `run.out`
+    /// is the whole layer output; it is unused (`None`) on one device.
+    #[allow(clippy::too_many_arguments)]
     pub fn forward(
         &self,
         gpu: &dyn GpuBackend,
@@ -31,6 +35,7 @@ impl AttnV41 {
         x: DevicePtr,
         m: usize,
         start_pos: usize,
+        comm: Option<&dyn CommBackend>,
         stream: u64,
     ) -> Result<AttnV41Run> {
         let c = &self.cfg;
@@ -184,6 +189,16 @@ impl AttnV41 {
             yarn,
             stream,
         )?;
+        if let Some(tp) = &self.tp {
+            let rows = CombineRows {
+                rows: m,
+                pos: DevicePtr::NULL,
+                topk: 0,
+                shared_base: 0,
+                m,
+            };
+            tp.reduce.reduce(gpu, comm, rows, self.out, stream)?;
+        }
         Ok(AttnV41Run {
             q: self.q,
             rows_a,
