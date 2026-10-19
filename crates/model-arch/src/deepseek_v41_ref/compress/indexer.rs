@@ -13,15 +13,15 @@
 
 use super::super::attn::apply_rotary;
 use super::super::hc::rms_norm;
-use super::super::moe::linear_bf16;
+use super::super::mat::{OutPrec, Weight, linear};
 use super::super::to_bf16_rne;
 use super::{FP4_BLOCK, fp4_quant_e8m0_inplace};
 
-pub struct IndexerWeights<'a> {
-    pub wq_b: &'a [f32],
-    pub weights_proj: &'a [f32],
+pub struct IndexerWeights<'a, W: Weight + ?Sized = [f32]> {
+    pub wq_b: &'a W,
+    pub weights_proj: &'a W,
     // 2026-09-25: `wk` and `k_norm` are needed on kv sources only.
-    pub wk: Option<&'a [f32]>,
+    pub wk: Option<&'a W>,
     pub k_norm: Option<&'a [f32]>,
 }
 
@@ -51,6 +51,9 @@ pub struct IndexerCfg {
     pub cand_topk_blocks: usize,
     pub cand_block: usize,
     pub eps: f32,
+    /// 2026-10-19: A kv source republishes its index-key cache every step, not only when a
+    /// group completes (the 1017 revision; off for the golden).
+    pub index_k_every_step: bool,
 }
 
 /// 2026-09-25: The index set torch's CPU `topk(k, largest=True)` returns for
@@ -187,9 +190,10 @@ pub fn select_candidate_blocks(
 
 /// 2026-09-25: The indexer forward. Returns `([queries][topk], topk)`
 /// compressed-position indices, offset by `offset`, -1 where unreachable;
-/// also publishes index keys when `latent` and `k_cache` are given (a kv source).
+/// also publishes index keys when `latent` and `k_cache` are given (a kv source),
+/// and with `index_k_every_step` republishes `k_cache` on steps without a latent.
 #[allow(clippy::too_many_arguments)]
-pub fn indexer(
+pub fn indexer<W: Weight + ?Sized>(
     x: &[f32],
     qr: &[f32],
     latent: Option<&[f32]>,
@@ -198,7 +202,7 @@ pub fn indexer(
     offset: usize,
     ratio: usize,
     c: &IndexerCfg,
-    w: &IndexerWeights,
+    w: &IndexerWeights<'_, W>,
     fc: &[(f32, f32)],
     k_cache: Option<&mut Vec<f32>>,
     shared: &mut SharedRuntime,
@@ -208,28 +212,32 @@ pub fn indexer(
     let (nh, ihd, rd) = (c.n_heads, c.index_hd, c.rope_dim);
     let end_pos = start_pos + seqlen;
 
-    if let (Some(lat), Some(cache)) = (latent, k_cache) {
-        let groups = lat.len() / c.hd;
-        let mut k = rms_norm(
-            &linear_bf16(lat, w.wk.expect("wk"), groups, c.hd, ihd),
-            w.k_norm.expect("k_norm"),
-            groups,
-            ihd,
-            c.eps,
-        );
-        let pos: Vec<usize> = if start_pos == 0 {
-            (0..groups).map(|g| g * ratio).collect()
-        } else {
-            vec![start_pos + 1 - ratio]
-        };
-        apply_rotary(&mut k, ihd, rd, &pos, fc, false);
-        fp4_quant_e8m0_inplace(&mut k, FP4_BLOCK);
-        let at = start_pos / ratio;
-        cache[at * ihd..(at + groups) * ihd].copy_from_slice(&k);
-        shared.index_k = cache.clone();
+    match (latent, k_cache) {
+        (Some(lat), Some(cache)) => {
+            let groups = lat.len() / c.hd;
+            let mut k = rms_norm(
+                &linear(w.wk.expect("wk"), lat, groups, c.hd, ihd, OutPrec::Bf16),
+                w.k_norm.expect("k_norm"),
+                groups,
+                ihd,
+                c.eps,
+            );
+            let pos: Vec<usize> = if start_pos == 0 {
+                (0..groups).map(|g| g * ratio).collect()
+            } else {
+                vec![start_pos + 1 - ratio]
+            };
+            apply_rotary(&mut k, ihd, rd, &pos, fc, false);
+            fp4_quant_e8m0_inplace(&mut k, FP4_BLOCK);
+            let at = start_pos / ratio;
+            cache[at * ihd..(at + groups) * ihd].copy_from_slice(&k);
+            shared.index_k = cache.clone();
+        }
+        (None, Some(cache)) if c.index_k_every_step => shared.index_k = cache.clone(),
+        _ => {}
     }
 
-    let mut q = linear_bf16(qr, w.wq_b, seqlen, c.q_rank, nh * ihd);
+    let mut q = linear(w.wq_b, qr, seqlen, c.q_rank, nh * ihd, OutPrec::Bf16);
     let head_pos: Vec<usize> = (0..seqlen)
         .flat_map(|t| std::iter::repeat_n(start_pos + t, nh))
         .collect();
@@ -239,7 +247,7 @@ pub fn indexer(
     let width = end_pos / ratio;
     let index_k = &shared.index_k[..width * ihd];
     let wscale = (ihd as f32).powf(-0.5) * (nh as f32).powf(-0.5);
-    let weights: Vec<f32> = linear_bf16(x, w.weights_proj, seqlen, c.dim, nh)
+    let weights: Vec<f32> = linear(w.weights_proj, x, seqlen, c.dim, nh, OutPrec::Bf16)
         .into_iter()
         .map(|v| to_bf16_rne(v * wscale))
         .collect();

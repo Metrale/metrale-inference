@@ -219,3 +219,25 @@ fn fp8_round_trip_is_bf16_exact_and_pow2_ceil_matches_the_kernel() {
         assert_eq!(*x, to_bf16_rne(*x), "dequantised fp8 must already be bf16");
     }
 }
+
+/// 2026-10-19: The 1017 revision's `o_act_quant` is the act-quant of `o` and nothing else:
+/// switched on it equals the old projection of a QDQ'd `o`, and (the control) it changes the
+/// result on an `o` that is not already fp8-representable.
+#[test]
+fn o_act_quant_is_the_fp8_qdq_of_o_before_wo_a() {
+    let f = fx();
+    let p = params(&f);
+    let w = weights(&p);
+    let c = &f.cfg;
+    let (s, width) = (3, c.n_heads * c.head_dim);
+    let o: Vec<f32> = (0..s * width)
+        .map(|i| to_bf16_rne(((i * 7919 % 1013) as f32 / 1013.0 - 0.5) * 3.0))
+        .collect();
+    let on = o_projection(&w, &o, s, width, c.groups, c.o_rank, c.dim, true);
+    let mut oq = o.clone();
+    act_quant_inplace(&mut oq);
+    let off_q = o_projection(&w, &oq, s, width, c.groups, c.o_rank, c.dim, false);
+    assert_eq!(on, off_q);
+    let off = o_projection(&w, &o, s, width, c.groups, c.o_rank, c.dim, false);
+    assert_ne!(on, off, "control: the QDQ must be live on this o");
+}

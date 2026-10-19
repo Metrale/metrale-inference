@@ -7,6 +7,7 @@
 //! Owner: model-arch, DeepSeek-V4.1 reference.
 //! Invariants: none beyond the types.
 
+use super::super::mat::{OutPrec, e4m3, gather_rows, linear};
 use super::super::testutil::*;
 use super::super::{Golden, checksum, fixed_int};
 use super::*;
@@ -128,7 +129,7 @@ fn e4m3_encoder_round_trips_the_fixture_tables() {
     assert_eq!(f32_to_e4m3_rne(1.1875), 0x3A, "tie rounds to even (up)");
     assert_eq!(f32_to_e4m3_rne(-1.5), 0xBC);
     for b in 0u8..=0xFF {
-        let v = e4m3_to_f32(b);
+        let v = e4m3(b);
         if v.is_nan() {
             continue;
         }
@@ -141,9 +142,10 @@ fn e4m3_encoder_round_trips_the_fixture_tables() {
         if w.kind != "fp8" {
             continue;
         }
-        let ck = checksum((0..w.n as u64).map(|i| {
-            e4m3_to_f32(f32_to_e4m3_rne(fixed_value(&w.name, i, w.scale, w.offset))) as f64
-        }));
+        let ck = checksum(
+            (0..w.n as u64)
+                .map(|i| e4m3(f32_to_e4m3_rne(fixed_value(&w.name, i, w.scale, w.offset))) as f64),
+        );
         assert!(
             (ck - w.ck).abs() <= 1e-9 * w.ck.abs().max(1.0),
             "{}: {ck} vs {}",
@@ -189,7 +191,7 @@ fn table_gather_is_exact() {
             let ids: Vec<i64> = (0..l_tokens)
                 .flat_map(|s| (0..cols).map(move |c| h[(s * nl + li) * cols + c]))
                 .collect();
-            let got: Vec<f64> = embed_rows(&table, f.t.head_dim, &ids)
+            let got: Vec<f64> = gather_rows(&table, f.t.head_dim, &ids)
                 .iter()
                 .map(|&v| v as f64)
                 .collect();
@@ -220,8 +222,8 @@ fn projection_matches_within_bf16() {
             let ids: Vec<i64> = (0..l_tokens)
                 .flat_map(|s| (0..cols).map(move |c| h[(s * nl + li) * cols + c]))
                 .collect();
-            let emb = embed_rows(&table, f.t.head_dim, &ids);
-            let kv = linear_bf16(&emb, l_tokens, in_f, &w, out_f);
+            let emb = gather_rows(&table, f.t.head_dim, &ids);
+            let kv = linear(&w, &emb, l_tokens, in_f, out_f, OutPrec::Bf16);
             let gt = f.g.tensor(r, &format!("L{lid}.engram_kv"));
             let got: Vec<f64> = kv.iter().map(|&v| v as f64).collect();
             check_capture(
@@ -253,8 +255,8 @@ fn full_engram_matches_within_bf16() {
             let ids: Vec<i64> = (0..l_tokens)
                 .flat_map(|s| (0..cols).map(move |c| h[(s * nl + li) * cols + c]))
                 .collect();
-            let emb = embed_rows(&table, f.t.head_dim, &ids);
-            let kv = linear_bf16(&emb, l_tokens, in_f, &w, out_f);
+            let emb = gather_rows(&table, f.t.head_dim, &ids);
+            let kv = linear(&w, &emb, l_tokens, in_f, out_f, OutPrec::Bf16);
             let xin = f.g.tensor(r, &format!("L{lid}.engram_in"));
             assert_eq!(xin.stride, 1, "engram_in must be stored at full resolution");
             let x: Vec<f32> = xin.data.iter().map(|&v| v as f32).collect();

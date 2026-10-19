@@ -240,3 +240,70 @@ fn e2m1_rounding_ties_to_even_code() {
     assert_eq!(to_e2m1_rne(-1.2), -1.0);
     assert_eq!(to_e2m1_rne(7.0), 6.0);
 }
+
+/// 2026-10-19: A kv source's decode step that completes no group has no latent. The golden's
+/// revision leaves the shared index keys as the last publisher left them; the 1017 revision
+/// republishes this layer's own cache (its `owns_k` branch), so a later layer that reads the
+/// shared slot sees this layer's keys.
+#[test]
+fn index_k_every_step_republishes_the_cache_without_a_latent() {
+    let (ihd, q_rank, dim, ratio) = (32, 32, 32, 4);
+    let wq_b: Vec<f32> = (0..ihd * q_rank)
+        .map(|i| ((i % 5) as f32 - 2.0) * 0.125)
+        .collect();
+    let weights_proj = vec![0.25f32; dim];
+    let w = IndexerWeights {
+        wq_b: wq_b.as_slice(),
+        weights_proj: weights_proj.as_slice(),
+        wk: None,
+        k_norm: None,
+    };
+    let fc = vec![(1.0f32, 0.0f32); 8];
+    let x = vec![0.5f32; dim];
+    let qr = vec![0.25f32; q_rank];
+    let run = |every_step: bool| {
+        let c = IndexerCfg {
+            n_heads: 1,
+            index_hd: ihd,
+            rope_dim: 2,
+            q_rank,
+            dim,
+            hd: 32,
+            index_topk: 1,
+            cand_topk_blocks: 1,
+            cand_block: 1,
+            eps: 1e-6,
+            index_k_every_step: every_step,
+        };
+        let mut own = vec![3.0f32; 2 * ihd];
+        let mut shared = SharedRuntime {
+            index_k: vec![7.0f32; 2 * ihd],
+            ..SharedRuntime::default()
+        };
+        indexer(
+            &x,
+            &qr,
+            None,
+            1,
+            5,
+            0,
+            ratio,
+            &c,
+            &w,
+            &fc,
+            Some(&mut own),
+            &mut shared,
+            false,
+            false,
+        );
+        (shared.index_k, own)
+    };
+    let (published, own) = run(true);
+    assert_eq!(published, own);
+    let (stale, _) = run(false);
+    assert_eq!(
+        stale,
+        vec![7.0f32; 2 * ihd],
+        "control: the old revision does not publish"
+    );
+}

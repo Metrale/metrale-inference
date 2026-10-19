@@ -312,10 +312,7 @@ fn run_case(tokens: usize) {
     let rw = MoeWeights {
         gate_w: &gate_w,
         gate_bias: &gate_bias,
-        experts: experts
-            .iter()
-            .map(|(a, b, c)| (a.as_slice(), b.as_slice(), c.as_slice()))
-            .collect(),
+        experts: experts.iter().map(|(a, b, c)| (a, b, c)).collect(),
         shared: (&s1, &s2, &s3),
     };
     let rc = MoeCfg {

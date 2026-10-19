@@ -17,8 +17,9 @@ use std::sync::Arc;
 
 use super::*;
 use crate::deepseek_v41_ref::engram::{
-    EngramTables, NgramHashState, embed_rows, regen_bf16_matrix, regen_bf16_qk, regen_table,
+    EngramTables, NgramHashState, regen_bf16_matrix, regen_bf16_qk, regen_table,
 };
+use crate::deepseek_v41_ref::mat::gather_rows;
 use crate::deepseek_v41_ref::testutil::*;
 use crate::deepseek_v41_ref::{Golden, fixed_int};
 
@@ -201,7 +202,7 @@ fn gpu_engram_matches_the_golden_within_bf16() {
                 .iter()
                 .map(|&v| v as i64)
                 .collect();
-            let emb = embed_rows(&table, hd, &ids);
+            let emb = gather_rows(&table, hd, &ids);
             let rows: Vec<u16> = emb.iter().map(|&v| bf16_bits(v)).collect();
             eng.rows_from_bf16(g, Some(lid), &rows, len * cols).unwrap();
             let xin = f.g.tensor(&r, &format!("L{lid}.engram_in"));

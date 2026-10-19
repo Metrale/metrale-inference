@@ -8,7 +8,7 @@
 //! through.
 //!
 //! Precision: the gate runs in f32 from a bf16 `x`. Each expert projection is
-//! `linear_bf16` (f32 accumulate, bf16 result), the SwiGLU is f32, the
+//! a bf16-result `linear` (f32 accumulate), the SwiGLU is f32, the
 //! routing weight multiplies in f32, the product is rounded to bf16 before
 //! `w2`, and the per-expert outputs accumulate into an f32 `y` rounded to
 //! bf16 once at the end.
@@ -16,6 +16,7 @@
 //! Owner: model-arch, DeepSeek-V4.1 reference.
 //! Invariants: none beyond the types.
 
+use super::mat::{OutPrec, Weight, linear};
 use super::to_bf16_rne;
 
 /// 2026-09-25: softplus with `beta = 1` and linear above `threshold = 20`.
@@ -27,28 +28,13 @@ fn silu(x: f32) -> f32 {
     x / (1.0 + (-x).exp())
 }
 
-/// 2026-09-25: Linear on bf16 operands: `y[i][o] = bf16(sum_d x[i][d] * w[o][d])`,
-/// f32 accumulate. `w` is `[out, in]` row-major.
-pub fn linear_bf16(x: &[f32], w: &[f32], rows: usize, in_dim: usize, out_dim: usize) -> Vec<f32> {
-    let mut y = vec![0f32; rows * out_dim];
-    for i in 0..rows {
-        let xi = &x[i * in_dim..(i + 1) * in_dim];
-        for o in 0..out_dim {
-            let wo = &w[o * in_dim..(o + 1) * in_dim];
-            let acc: f32 = xi.iter().zip(wo).map(|(a, b)| a * b).sum();
-            y[i * out_dim + o] = to_bf16_rne(acc);
-        }
-    }
-    y
-}
-
 /// 2026-09-25: The gate for `score_func = "sqrtsoftplus"`. `x`: `[tokens, dim]`
 /// bf16 values; `w`: `[n_routed, dim]` bf16 values; `bias`: `[n_routed]`
 /// f32. Returns (`weights[tokens, topk]` f32, `indices[tokens, topk]`),
 /// indices descending by `score + bias` (a stable sort).
-pub fn gate(
+pub fn gate<W: Weight + ?Sized>(
     x: &[f32],
-    w: &[f32],
+    w: &W,
     bias: &[f32],
     tokens: usize,
     dim: usize,
@@ -60,17 +46,11 @@ pub fn gate(
 ) -> (Vec<f32>, Vec<usize>) {
     let mut weights = Vec::with_capacity(tokens * topk);
     let mut indices = Vec::with_capacity(tokens * topk);
+    let logits = linear(w, x, tokens, dim, n_routed, OutPrec::F32);
     for t in 0..tokens {
-        let xt = &x[t * dim..(t + 1) * dim];
-        let scores: Vec<f32> = (0..n_routed)
-            .map(|e| {
-                let s: f32 = xt
-                    .iter()
-                    .zip(&w[e * dim..(e + 1) * dim])
-                    .map(|(a, b)| a * b)
-                    .sum();
-                softplus(s / gate_temp).sqrt()
-            })
+        let scores: Vec<f32> = logits[t * n_routed..(t + 1) * n_routed]
+            .iter()
+            .map(|&s| softplus(s / gate_temp).sqrt())
             .collect();
         // 2026-09-25: The bias picks experts but does not scale them.
         let mut order: Vec<usize> = (0..n_routed).collect();
@@ -100,19 +80,19 @@ pub fn gate(
 /// inter]`; all bf16 values. `x`: `[rows, dim]` bf16 values; `weights`:
 /// per-row routing weight (f32) or `None` for the shared expert. Returns
 /// `[rows, dim]` bf16 values.
-pub fn expert(
+pub fn expert<W: Weight + ?Sized>(
     x: &[f32],
-    w1: &[f32],
-    w2: &[f32],
-    w3: &[f32],
+    w1: &W,
+    w2: &W,
+    w3: &W,
     rows: usize,
     dim: usize,
     inter: usize,
     swiglu_limit: f32,
     weights: Option<&[f32]>,
 ) -> Vec<f32> {
-    let gate_b = linear_bf16(x, w1, rows, dim, inter);
-    let up_b = linear_bf16(x, w3, rows, dim, inter);
+    let gate_b = linear(w1, x, rows, dim, inter, OutPrec::Bf16);
+    let up_b = linear(w3, x, rows, dim, inter, OutPrec::Bf16);
     let mut h = vec![0f32; rows * inter];
     for r in 0..rows {
         for j in 0..inter {
@@ -129,15 +109,15 @@ pub fn expert(
             h[r * inter + j] = to_bf16_rne(v);
         }
     }
-    linear_bf16(&h, w2, rows, inter, dim)
+    linear(w2, &h, rows, inter, dim, OutPrec::Bf16)
 }
 
 /// 2026-09-25: The MoE parameters; `experts[i]` and `shared` are `(w1, w2, w3)`.
-pub struct MoeWeights<'a> {
-    pub gate_w: &'a [f32],
+pub struct MoeWeights<'a, W: Weight + ?Sized = [f32]> {
+    pub gate_w: &'a W,
     pub gate_bias: &'a [f32],
-    pub experts: Vec<(&'a [f32], &'a [f32], &'a [f32])>,
-    pub shared: (&'a [f32], &'a [f32], &'a [f32]),
+    pub experts: Vec<(&'a W, &'a W, &'a W)>,
+    pub shared: (&'a W, &'a W, &'a W),
 }
 
 pub struct MoeCfg {
@@ -153,10 +133,10 @@ pub struct MoeCfg {
 
 /// 2026-09-25: The MoE forward on one rank. Returns (`y[tokens, dim]` bf16
 /// values, routing `weights`, routing `indices`).
-pub fn moe(
+pub fn moe<W: Weight + ?Sized>(
     x: &[f32],
     tokens: usize,
-    w: &MoeWeights,
+    w: &MoeWeights<'_, W>,
     c: &MoeCfg,
 ) -> (Vec<f32>, Vec<f32>, Vec<usize>) {
     let (weights, indices) = gate(
@@ -172,7 +152,7 @@ pub fn moe(
         c.route_scale,
     );
     let mut y = vec![0f32; tokens * c.dim];
-    for (e, (w1, w2, w3)) in w.experts.iter().enumerate() {
+    for (e, &(w1, w2, w3)) in w.experts.iter().enumerate() {
         // 2026-09-25: Rows routed to expert e, in token order, with the matching
         // routing weight.
         let mut rows = Vec::new();

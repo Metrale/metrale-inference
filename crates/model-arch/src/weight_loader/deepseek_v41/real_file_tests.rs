@@ -267,6 +267,7 @@ fn layer0_matches_the_cpu_reference_on_the_real_weights() {
         is_index_source: false,
         is_candidate_source: false,
         uses_candidates: false,
+        o_act_quant: false,
     };
     let icfg = IndexerCfg {
         n_heads: config.index_n_heads,
@@ -279,6 +280,7 @@ fn layer0_matches_the_cpu_reference_on_the_real_weights() {
         cand_topk_blocks: 1,
         cand_block: 1,
         eps,
+        index_k_every_step: false,
     };
     let fc = freqs_cis(config.rotary_dim, max_seq, config.rope_theta as f32);
     let mut st = LayerAttnState::new(&cc, max_seq, config.index_head_dim);
@@ -455,10 +457,7 @@ fn layer0_matches_the_cpu_reference_on_the_real_weights() {
     let mw = MoeWeights {
         gate_w: &gate_w,
         gate_bias: &gate_bias,
-        experts: experts
-            .iter()
-            .map(|(a, b, c)| (a.as_slice(), b.as_slice(), c.as_slice()))
-            .collect(),
+        experts: experts.iter().map(|(a, b, c)| (a, b, c)).collect(),
         shared: (&s1, &s2, &s3),
     };
     let (moe_r, _, _) = ref_moe(&f_in_r, m, &mw, &mc);

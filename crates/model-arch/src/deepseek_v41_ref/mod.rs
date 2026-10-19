@@ -294,6 +294,7 @@ pub mod attn;
 pub mod compress;
 pub mod engram;
 pub mod hc;
+pub mod mat;
 pub mod model;
 pub mod moe;
 

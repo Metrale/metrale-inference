@@ -56,6 +56,30 @@ pub struct ModelCfg {
     pub beta_fast: f32,
     pub beta_slow: f32,
     pub moe: MoeCfg,
+    pub semantics: Semantics,
+}
+
+/// 2026-10-19: The reference behaviours that changed between the golden's revision and the
+/// 1017 checkpoint's `model.py`. Each is its own switch so a parity gap can be bisected.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Semantics {
+    /// fp8 QDQ of the attention output before `wo_a`.
+    pub o_act_quant: bool,
+    /// Every kv source republishes its index-key cache on every step.
+    pub index_k_every_step: bool,
+}
+
+impl Semantics {
+    /// 2026-10-19: The revision the golden fixture was captured from.
+    pub const GOLDEN: Semantics = Semantics {
+        o_act_quant: false,
+        index_k_every_step: false,
+    };
+    /// 2026-10-19: The 1017 checkpoint's `model.py`.
+    pub const REVISION_1017: Semantics = Semantics {
+        o_act_quant: true,
+        index_k_every_step: true,
+    };
 }
 
 impl ModelCfg {
@@ -105,6 +129,7 @@ impl ModelCfg {
                 route_scale: f("route_scale"),
                 swiglu_limit: f("swiglu_limit"),
             },
+            semantics: Semantics::GOLDEN,
         }
     }
 
@@ -125,6 +150,7 @@ impl ModelCfg {
             is_index_source: self.index_sources.contains(&layer),
             is_candidate_source: self.cand_src == layer as i64,
             uses_candidates: self.cand_src >= 0 && (self.cand_src as usize) < layer,
+            o_act_quant: self.semantics.o_act_quant,
         }
     }
 
@@ -140,19 +166,20 @@ impl ModelCfg {
             cand_topk_blocks: self.cand_topk_blocks,
             cand_block: self.cand_block,
             eps: self.eps,
+            index_k_every_step: self.semantics.index_k_every_step,
         }
     }
 }
 
-pub struct EngramWeights {
-    pub table: Vec<f32>,
-    pub wkv: Vec<f32>,
+pub struct EngramWeights<M = Vec<f32>> {
+    pub table: M,
+    pub wkv: M,
     pub q: Vec<f32>,
     pub k: Vec<f32>,
     pub hash_index: usize,
 }
 
-pub struct LayerWeights {
+pub struct LayerWeights<M = Vec<f32>> {
     pub hc_attn_fn: Vec<f32>,
     pub hc_attn_scale: Vec<f32>,
     pub hc_attn_base: Vec<f32>,
@@ -162,32 +189,32 @@ pub struct LayerWeights {
     pub attn_norm: Vec<f32>,
     pub ffn_norm: Vec<f32>,
     pub sink: Vec<f32>,
-    pub wq_a: Vec<f32>,
+    pub wq_a: M,
     pub q_norm: Vec<f32>,
-    pub wq_b: Vec<f32>,
-    pub wkv: Vec<f32>,
+    pub wq_b: M,
+    pub wkv: M,
     pub kv_norm: Vec<f32>,
-    pub wo_a: Vec<f32>,
-    pub wo_b: Vec<f32>,
-    pub comp_wkv: Option<Vec<f32>>,
-    pub comp_wgate: Option<Vec<f32>>,
+    pub wo_a: M,
+    pub wo_b: M,
+    pub comp_wkv: Option<M>,
+    pub comp_wgate: Option<M>,
     pub comp_norm: Option<Vec<f32>>,
-    pub idx_wq_b: Option<Vec<f32>>,
-    pub idx_weights_proj: Option<Vec<f32>>,
-    pub idx_wk: Option<Vec<f32>>,
+    pub idx_wq_b: Option<M>,
+    pub idx_weights_proj: Option<M>,
+    pub idx_wk: Option<M>,
     pub idx_k_norm: Option<Vec<f32>>,
-    pub gate_w: Vec<f32>,
+    pub gate_w: M,
     pub gate_bias: Vec<f32>,
-    pub experts: Vec<(Vec<f32>, Vec<f32>, Vec<f32>)>,
-    pub shared: (Vec<f32>, Vec<f32>, Vec<f32>),
-    pub engram: Option<EngramWeights>,
+    pub experts: Vec<(M, M, M)>,
+    pub shared: (M, M, M),
+    pub engram: Option<EngramWeights<M>>,
 }
 
-pub struct ModelWeights {
-    pub embed: Vec<f32>,
+pub struct ModelWeights<M = Vec<f32>> {
+    pub embed: M,
     pub norm: Vec<f32>,
-    pub head: Vec<f32>,
-    pub layers: Vec<LayerWeights>,
+    pub head: M,
+    pub layers: Vec<LayerWeights<M>>,
 }
 
 impl ModelWeights {

@@ -3,7 +3,7 @@
 
 //! 2026-09-25: DeepSeek-V4.1 compressed attention (`compress_ratio > 0`), CPU
 //! reference against the golden: YaRN RoPE with `compress_rope_theta`, the
-//! two fp4 quantisers, `linear_f32`, and `attention_any`, the attention
+//! two fp4 quantisers, and `attention_any`, the attention
 //! forward for any ratio. The compressor and the indexer are in the
 //! `compressor` and `indexer` submodules; the ratio-0 pieces are shared with
 //! `attn.rs`.
@@ -17,10 +17,13 @@
 //! Owner: model-arch, DeepSeek-V4.1 reference.
 //! Invariants: none beyond the types.
 
-use super::attn::{act_quant_inplace, apply_rotary, pow2_ceil, sparse_attn, window_topk_idxs};
-use super::engram::{e4m3_to_f32, f32_to_e4m3_rne};
+use super::attn::{
+    AttnWeights, act_quant_inplace, apply_rotary, o_projection, pow2_ceil, sparse_attn,
+    window_topk_idxs,
+};
+use super::engram::f32_to_e4m3_rne;
 use super::hc::rms_norm;
-use super::moe::linear_bf16;
+use super::mat::{OutPrec, Weight, e4m3, linear};
 use super::to_bf16_rne;
 
 mod compressor;
@@ -80,7 +83,7 @@ pub fn fp4_quant_e4m3_inplace(x: &mut [f32], block: usize) {
             .iter()
             .fold(0f32, |a, v| a.max(v.abs()))
             .max(6.0 * 2f32.powi(-9));
-        let s = e4m3_to_f32(f32_to_e4m3_rne(amax / FP4_MAX));
+        let s = e4m3(f32_to_e4m3_rne(amax / FP4_MAX));
         for v in blk.iter_mut() {
             *v = to_bf16_rne(to_e2m1_rne((*v / s).clamp(-FP4_MAX, FP4_MAX)) * s);
         }
@@ -123,22 +126,6 @@ pub fn yarn_freqs_cis(
     out
 }
 
-/// 2026-09-25: f32 `x · w^T` (the ratio > 1 compressor's `wkv` / `wgate` are
-/// f32 weights). `w` is `[out_dim, in_dim]`.
-pub fn linear_f32(x: &[f32], w: &[f32], rows: usize, in_dim: usize, out_dim: usize) -> Vec<f32> {
-    let mut y = vec![0f32; rows * out_dim];
-    for i in 0..rows {
-        for o in 0..out_dim {
-            y[i * out_dim + o] = x[i * in_dim..(i + 1) * in_dim]
-                .iter()
-                .zip(&w[o * in_dim..(o + 1) * in_dim])
-                .map(|(a, b)| a * b)
-                .sum();
-        }
-    }
-    y
-}
-
 pub struct CompAttnCfg {
     pub dim: usize,
     pub n_heads: usize,
@@ -154,6 +141,8 @@ pub struct CompAttnCfg {
     pub is_index_source: bool,
     pub is_candidate_source: bool,
     pub uses_candidates: bool,
+    /// 2026-10-19: fp8 QDQ `o` before `wo_a` (the 1017 revision; off for the golden).
+    pub o_act_quant: bool,
 }
 
 pub struct LayerAttnState {
@@ -199,13 +188,13 @@ pub struct CompAttnRun {
 /// 2026-09-25: The attention forward for any `compress_ratio`, updating the
 /// layer state and the shared slots.
 #[allow(clippy::too_many_arguments)]
-pub fn attention_any(
+pub fn attention_any<W: Weight + ?Sized>(
     x: &[f32],
     seqlen: usize,
     start_pos: usize,
-    w: &super::attn::AttnWeights,
-    comp: Option<&CompressorWeights>,
-    idxw: Option<&IndexerWeights>,
+    w: &AttnWeights<'_, W>,
+    comp: Option<&CompressorWeights<'_, W>>,
+    idxw: Option<&IndexerWeights<'_, W>>,
     icfg: &IndexerCfg,
     c: &CompAttnCfg,
     fc: &[(f32, f32)],
@@ -220,17 +209,17 @@ pub fn attention_any(
         .collect();
 
     let qr = rms_norm(
-        &linear_bf16(x, w.wq_a, seqlen, c.dim, c.q_rank),
+        &linear(w.wq_a, x, seqlen, c.dim, c.q_rank, OutPrec::Bf16),
         w.q_norm,
         seqlen,
         c.q_rank,
         c.eps,
     );
-    let mut q = linear_bf16(&qr, w.wq_b, seqlen, c.q_rank, nh * hd);
+    let mut q = linear(w.wq_b, &qr, seqlen, c.q_rank, nh * hd, OutPrec::Bf16);
     apply_rotary(&mut q, hd, rd, &head_pos, fc, false);
 
     let mut kv = rms_norm(
-        &linear_bf16(x, w.wkv, seqlen, c.dim, hd),
+        &linear(w.wkv, x, seqlen, c.dim, hd, OutPrec::Bf16),
         w.kv_norm,
         seqlen,
         hd,
@@ -333,19 +322,16 @@ pub fn attention_any(
     let o_sa = sparse_attn(&q, &kv_rows, w.sink, &idx, seqlen, nh, hd, topk, scale);
     let mut o = o_sa.clone();
     apply_rotary(&mut o, hd, rd, &head_pos, fc, true);
-    let gw = nh * hd / c.groups;
-    let mut og = vec![0f32; seqlen * c.groups * c.o_rank];
-    for t in 0..seqlen {
-        for g in 0..c.groups {
-            let ov = &o[t * nh * hd + g * gw..t * nh * hd + (g + 1) * gw];
-            for r in 0..c.o_rank {
-                let wr = &w.wo_a[(g * c.o_rank + r) * gw..(g * c.o_rank + r + 1) * gw];
-                og[(t * c.groups + g) * c.o_rank + r] =
-                    to_bf16_rne(ov.iter().zip(wr).map(|(a, b)| a * b).sum());
-            }
-        }
-    }
-    let out = linear_bf16(&og, w.wo_b, seqlen, c.groups * c.o_rank, c.dim);
+    let out = o_projection(
+        w,
+        &o,
+        seqlen,
+        nh * hd,
+        c.groups,
+        c.o_rank,
+        c.dim,
+        c.o_act_quant,
+    );
     CompAttnRun {
         q,
         kv_rows,

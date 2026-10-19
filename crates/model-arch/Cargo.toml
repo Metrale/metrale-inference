@@ -18,6 +18,7 @@ metrale-comm = { workspace = true }
 metrale-config = { workspace = true }
 metrale-settings = { workspace = true }
 metrale-core = { workspace = true }
+metrale-error = { workspace = true }
 metrale-gpu-runtime = { workspace = true }
 metrale-model-layers = { workspace = true }
 metrale-model-weights = { workspace = true }
@@ -26,6 +27,7 @@ metrale-telemetry = { workspace = true }
 anyhow = { workspace = true, features = ["std"] }
 half = { workspace = true, features = ["std"] }
 parking_lot = { workspace = true }
+rayon = { workspace = true }
 serde = { workspace = true, features = ["std", "derive"] }
 serde_json = { workspace = true, features = ["std", "preserve_order"] }
 tracing = { workspace = true, features = ["std", "attributes"] }
