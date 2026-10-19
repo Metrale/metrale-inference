@@ -396,3 +396,32 @@ extern "C" __global__ void moe_v41_slot_table_set(int* __restrict__ table, unsig
   if (i >= n) return;
   table[(unsigned int)triples[3 * i] * n_routed + (unsigned int)triples[3 * i + 1]] = triples[3 * i + 2];
 }
+
+// 2026-10-19: The tensor-parallel reduction of the f32 partial sums every rank wrote and an all-gather collected:
+// G holds world slots of slot_elems floats, rank r's slot at G + r * slot_elems, each [rows, dim]. Token t's
+// output is
+//   out[t, d] = bf16( sum_j bf16(sum_r G[r][pos[t * topk + j], d]) + bf16(sum_r G[r][shared_base + t, d]) )
+// with the j terms in the order pos lists them (ascending expert id) and every sum starting from 0 in FP32: the
+// reference's rounding sequence (deepseek_v41_ref::moe::moe), where each expert's output and the shared expert's
+// output is rounded to bf16 once, whole. topk = 0 reduces one projection (rows [shared_base, shared_base + m)).
+// Grid (ceil(dim / 256), m), block 256.
+extern "C" __global__ void moe_v41_rank_combine(
+    const float* __restrict__ G, const unsigned long long slot_elems, const unsigned int world,
+    const int* __restrict__ pos, const unsigned int topk, const unsigned int shared_base,
+    __nv_bfloat16* __restrict__ out, const unsigned int dim) {
+    const unsigned int d = blockIdx.x * blockDim.x + threadIdx.x;
+    const unsigned int t = blockIdx.y;
+    if (d >= dim) return;
+    float y = 0.0f;
+    for (unsigned int j = 0; j < topk; ++j) {
+        const size_t row = (size_t)pos[(size_t)t * topk + j];
+        float s = 0.0f;
+        for (unsigned int r = 0; r < world; ++r) s += G[(size_t)r * slot_elems + row * dim + d];
+        y += __bfloat162float(__float2bfloat16(s));
+    }
+    float s = 0.0f;
+    const size_t row = (size_t)shared_base + t;
+    for (unsigned int r = 0; r < world; ++r) s += G[(size_t)r * slot_elems + row * dim + d];
+    y += __bfloat162float(__float2bfloat16(s));
+    out[(size_t)t * dim + d] = __float2bfloat16(y);
+}

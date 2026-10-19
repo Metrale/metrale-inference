@@ -32,19 +32,25 @@ __device__ __constant__ float E2M1_LUT_MOE[16] = {
     -0.0f, -0.5f, -1.0f, -1.5f, -2.0f, -3.0f, -4.0f, -6.0f
 };
 
+// 2026-10-19: The ptrtable output store: bf16 (rounded) or f32 (the accumulator as is, for a caller that
+// reduces partial sums before it rounds).
+template<typename OutT> __device__ __forceinline__ OutT moe_out_cast(float v);
+template<> __device__ __forceinline__ __nv_bfloat16 moe_out_cast<__nv_bfloat16>(float v) { return __float2bfloat16(v); }
+template<> __device__ __forceinline__ float moe_out_cast<float>(float v) { return v; }
+
 // 2026-09-25: moe_w4a16_grouped_gemm_ptrtable(_e8m0): 64 x 64 tiles, 128 threads, BF16 m16n8k16 MMAs on
 // weights dequantized to BF16 in shared memory, K steps of 16. Expert e's weight is B_packed [N, K/2] (row n,
 // the low nibble holds the even k) and B_scale [N, K / GS]. Grid (ceil(N / 64), max_m_tiles, num_experts)
 // (ops::moe_w4a16_grouped_gemm_ptrtable).
 
 
-template<int GS, bool E8M0>
+template<int GS, bool E8M0, typename OutT>
 __device__ __forceinline__ void moe_w4a16_grouped_gemm_ptrtable_impl(
     const __nv_bfloat16* __restrict__ A,
     const unsigned long long* __restrict__ B_packed_ptrs,
     const unsigned long long* __restrict__ B_scale_ptrs,
     const float* __restrict__ scale2_vals,
-    __nv_bfloat16* __restrict__ C,
+    OutT* __restrict__ C,
     const int* __restrict__ expert_offsets,
     const int* __restrict__ sorted_token_ids,
     unsigned int num_experts,
@@ -177,10 +183,10 @@ __device__ __forceinline__ void moe_w4a16_grouped_gemm_ptrtable_impl(
         unsigned int r1 = r0 + 8;
         bool r0v = (int)(warp_m_offset + group_id + cta_m_local) < M_expert;
         bool r1v = (int)(warp_m_offset + group_id + 8 + cta_m_local) < M_expert;
-        if (r0v && c0 < N) C[r0*N+c0] = __float2bfloat16(acc[nt][0]);
-        if (r0v && c1 < N) C[r0*N+c1] = __float2bfloat16(acc[nt][1]);
-        if (r1v && c0 < N) C[r1*N+c0] = __float2bfloat16(acc[nt][2]);
-        if (r1v && c1 < N) C[r1*N+c1] = __float2bfloat16(acc[nt][3]);
+        if (r0v && c0 < N) C[r0*N+c0] = moe_out_cast<OutT>(acc[nt][0]);
+        if (r0v && c1 < N) C[r0*N+c1] = moe_out_cast<OutT>(acc[nt][1]);
+        if (r1v && c0 < N) C[r1*N+c0] = moe_out_cast<OutT>(acc[nt][2]);
+        if (r1v && c1 < N) C[r1*N+c1] = moe_out_cast<OutT>(acc[nt][3]);
     }
 }
 
@@ -195,7 +201,7 @@ extern "C" __global__ void moe_w4a16_grouped_gemm_ptrtable(
     const int* __restrict__ sorted_token_ids,
     unsigned int num_experts, unsigned int N, unsigned int K
 ) {
-    moe_w4a16_grouped_gemm_ptrtable_impl<GROUP_SIZE, false>(
+    moe_w4a16_grouped_gemm_ptrtable_impl<GROUP_SIZE, false, __nv_bfloat16>(
         A, B_packed_ptrs, B_scale_ptrs, scale2_vals, C,
         expert_offsets, sorted_token_ids, num_experts, N, K);
 }
@@ -211,7 +217,24 @@ extern "C" __global__ void moe_w4a16_grouped_gemm_ptrtable_e8m0(
     const int* __restrict__ sorted_token_ids,
     unsigned int num_experts, unsigned int N, unsigned int K
 ) {
-    moe_w4a16_grouped_gemm_ptrtable_impl<32, true>(
+    moe_w4a16_grouped_gemm_ptrtable_impl<32, true, __nv_bfloat16>(
+        A, B_packed_ptrs, B_scale_ptrs, scale2_vals, C,
+        expert_offsets, sorted_token_ids, num_experts, N, K);
+}
+
+// 2026-10-19: The _e8m0 entry with f32 outputs: C is [rows, N] f32, the unrounded accumulators (a tensor-parallel
+// rank's partial down-projection, summed across ranks before the one bf16 rounding).
+extern "C" __global__ void moe_w4a16_grouped_gemm_ptrtable_e8m0_f32out(
+    const __nv_bfloat16* __restrict__ A,
+    const unsigned long long* __restrict__ B_packed_ptrs,
+    const unsigned long long* __restrict__ B_scale_ptrs,
+    const float* __restrict__ scale2_vals,
+    float* __restrict__ C,
+    const int* __restrict__ expert_offsets,
+    const int* __restrict__ sorted_token_ids,
+    unsigned int num_experts, unsigned int N, unsigned int K
+) {
+    moe_w4a16_grouped_gemm_ptrtable_impl<32, true, float>(
         A, B_packed_ptrs, B_scale_ptrs, scale2_vals, C,
         expert_offsets, sorted_token_ids, num_experts, N, K);
 }
@@ -1498,6 +1521,7 @@ extern "C" __global__ void moe_fp8_grouped_gemm_ptrtable_t(
 // that entry multiplies `blockIdx.x` by.
 extern "C" __device__ unsigned int moe_w4a16_grouped_gemm_ptrtable_n_tile = N_TILE_SM;
 extern "C" __device__ unsigned int moe_w4a16_grouped_gemm_ptrtable_e8m0_n_tile = N_TILE_SM;
+extern "C" __device__ unsigned int moe_w4a16_grouped_gemm_ptrtable_e8m0_f32out_n_tile = N_TILE_SM;
 extern "C" __device__ unsigned int moe_w4a16_grouped_gemm_ptrtable_t_n_tile = N_TILE_LG;
 extern "C" __device__ unsigned int moe_w4a16_grouped_gemm_ptrtable_t_e8m0_n_tile = N_TILE_LG;
 extern "C" __device__ unsigned int moe_w4a16_grouped_gemm_ptrtable_t_k64_n_tile = N_TILE_LG;
