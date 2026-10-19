@@ -79,13 +79,16 @@ pub fn connect_kv_peer_backend(
                 model.block_size as u32,
                 model.head_dim as u32,
                 salt,
+                model.kv_codec_salt,
             );
             tracing::info!(
-                "kv-paging: derived namespace {:#018x} (fp {:#018x}, client salt {salt:#018x} — \
+                "kv-paging: derived namespace {:#018x} (fp {:#018x}, codec salt {:#018x}, \
+                 client salt {salt:#018x} — \
                  pin via METRALE_KV_PAGING_SALT to reproduce; the salt makes keys CLIENT-PRIVATE: \
                  capacity pooling yes, cross-client warm hits no)",
                 derived.get(),
                 fp.get(),
+                model.kv_codec_salt,
             );
             derived
         }

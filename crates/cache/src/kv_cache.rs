@@ -15,7 +15,9 @@
 //!   a debug build.
 
 use metrale_gpu_runtime::gpu::DevicePtr;
-use metrale_kv_codec::{BlockGeometry, KvCodecId, KvPair, spec};
+use metrale_kv_codec::{
+    BlockGeometry, KvCodecId, KvPair, KvSide, KvSidePlan, LayerIx, RungIx, SpillSalt, spec,
+};
 
 /// 2026-09-25: KV cache storage format. A symmetric variant uses one format
 /// for K and V; a `*K*V` variant names the K format, then the V format
@@ -280,6 +282,30 @@ impl KvCacheConfig {
             .sum()
     }
 
+    /// 2026-10-18: What this cache's formats contribute to the KV peer-paging namespace
+    /// (`ModelDims::kv_codec_salt` in metrale-storage): every layer's K and V codec at rung 0 and
+    /// its shape, then the sparse-attention indexer rows the V block carries (`indexer` is their
+    /// codec when they live in the blocks). Caches whose blocks mean different things get
+    /// different salts, so a spilled block is never read back under another format.
+    pub fn spill_salt(&self, indexer: Option<KvCodecId>) -> u64 {
+        let side = |codec| KvSidePlan {
+            codec,
+            rung: RungIx(0),
+        };
+        let mut salt = SpillSalt::new();
+        for i in 0..self.num_layers {
+            let layer = LayerIx(u32::try_from(i).expect("an attention layer index fits u32"));
+            let (k, v) = self.dtype_for_layer(i).pair();
+            let (nkv, hd) = self.dims_for_layer(i);
+            salt = salt
+                .side(layer, KvSide::K, side(k))
+                .side(layer, KvSide::V, side(v))
+                .layer_shape(layer, nkv as u64, hd as u64);
+        }
+        salt.indexer(indexer, self.v_block_bytes.map(|b| b as u64))
+            .finish()
+    }
+
     /// 2026-09-25: Elements per block and side, from the global dims:
     /// `block_size * num_kv_heads * head_dim`.
     pub fn cache_stride_elements(&self) -> usize {
@@ -445,3 +471,6 @@ mod tests;
 
 #[cfg(test)]
 mod tests_tq_plus;
+
+#[cfg(test)]
+mod spill_salt_tests;

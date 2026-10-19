@@ -182,7 +182,6 @@ fn set_indexer_cache_dtype(
         &config.model_type,
         served,
         levers.prefix_cache_gate.glm_indexer_paged,
-        levers.kv_paging,
     )?;
     let drafting = args.speculative || args.prompt_lookup_config().is_some();
     config.indexer_cache_dtype = dtype;

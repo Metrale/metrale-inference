@@ -65,14 +65,22 @@ impl TransformerModel {
                 None
             }
         };
+        // 2026-10-18: The cache's formats are folded into the paging namespace too, so a block
+        // spilled under one codec is a miss under another (`KvCacheConfig::spill_salt`).
+        let (block_size, kv_codec_salt) = {
+            let kv = self.kv_cache.lock();
+            let indexer = self.config.indexer_cache_dtype.codec();
+            (kv.block_size(), kv.config().spill_salt(indexer))
+        };
         Some(metrale_storage::ModelDims {
             num_layers: self.config.num_hidden_layers as u32,
             max_blocks_per_layer: self.max_blocks_per_seq,
             num_q_heads: self.config.num_attention_heads as u16,
             num_kv_heads: self.config.num_key_value_heads as u16,
             head_dim: self.config.head_dim as u16,
-            block_size: self.kv_cache.lock().block_size() as u16,
+            block_size: block_size as u16,
             model_fp,
+            kv_codec_salt,
         })
     }
 

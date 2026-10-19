@@ -38,6 +38,7 @@ mod registry;
 mod resolve;
 mod rows;
 mod spec;
+mod spill;
 
 pub use contiguous_table::{contiguous_kv_kernel_names, contiguous_kv_pairs};
 pub use indexer::IndexerPlan;
@@ -55,3 +56,4 @@ pub use spec::{
     AbiId, AutoBoundary, BlockGeometry, CodecRole, HostLutId, KvCodecSpec, Rotation, SideElem,
     SideKind, SideTensor, TrellisSpec,
 };
+pub use spill::{SPILL_SALT_VERSION, SpillSalt};

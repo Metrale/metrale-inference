@@ -332,16 +332,16 @@ impl KvCodecSpec {
 
 /// 2026-10-18: FNV-1a 64, usable in `const fn`.
 #[derive(Clone, Copy)]
-struct Fnv(u64);
+pub(crate) struct Fnv(u64);
 
 impl Fnv {
-    const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Fnv(0xcbf2_9ce4_8422_2325)
     }
-    const fn byte(self, b: u8) -> Self {
+    pub(crate) const fn byte(self, b: u8) -> Self {
         Fnv((self.0 ^ b as u64).wrapping_mul(0x0000_0100_0000_01b3))
     }
-    const fn word(self, w: u64) -> Self {
+    pub(crate) const fn word(self, w: u64) -> Self {
         let bytes = w.to_le_bytes();
         let mut h = self;
         let mut i = 0;
@@ -351,7 +351,7 @@ impl Fnv {
         }
         h
     }
-    const fn finish(self) -> u64 {
+    pub(crate) const fn finish(self) -> u64 {
         self.0
     }
 }

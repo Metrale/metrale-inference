@@ -23,4 +23,8 @@ pub struct ModelDims {
     /// `METRALE_KV_PAGING=1` connect then fails unless `METRALE_KV_PAGING_NS` is set.
     /// Only `connect_kv_peer_backend` reads it.
     pub model_fp: Option<std::num::NonZeroU64>,
+    /// 2026-10-18: What the KV cache's formats contribute to the paging namespace
+    /// (`KvCacheConfig::spill_salt` in metrale-cache), folded by `derive_kv_ns` so a block
+    /// spilled under one codec is a miss under another. Only `connect_kv_peer_backend` reads it.
+    pub kv_codec_salt: u64,
 }

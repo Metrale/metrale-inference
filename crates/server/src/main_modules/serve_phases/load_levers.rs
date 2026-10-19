@@ -44,10 +44,6 @@ pub(crate) struct LoadLevers {
     pub(crate) fast_load: bool,
     /// 2026-10-17: `--fast-load-prefetch-shards` / `METRALE_FAST_LOAD_PREFETCH_SHARDS`.
     pub(crate) fast_load_prefetch_shards: bool,
-    /// 2026-10-17: `METRALE_KV_PAGING` selects the peer-paging KV backend
-    /// (`metrale_storage::kv_paging::ns::kv_paging_selected`), which `--indexer-cache-dtype`
-    /// is checked against.
-    pub(crate) kv_paging: bool,
     /// 2026-10-17: `METRALE_GLM53_PREFIX_CACHE_UNPROVEN` and `METRALE_GLM_DSA_INDEXER_FLAT`:
     /// the prefix-cache gate's validation override and the GLM DSA indexer layout.
     pub(crate) prefix_cache_gate: metrale_config::PrefixCacheGate,
@@ -65,6 +61,10 @@ impl LoadLevers {
             "METRALE_VISION_MAX_PIXELS",
             settings.model.vision_max_pixels,
         )?;
+        // 2026-10-18: `METRALE_KV_PAGING` selects the peer-paging KV backend, which the storage
+        // crate connects. Its value is checked here so a junk value fails at startup. Since the
+        // paging namespace folds the codec salt, no load decision reads it any more.
+        metrale_storage::kv_paging::ns::kv_paging_selected(settings.runtime.kv_paging.as_deref())?;
         Ok(Self {
             allow_spec_mismatch: text_switch(
                 "METRALE_ALLOW_SPEC_MISMATCH",
@@ -84,9 +84,6 @@ impl LoadLevers {
             vision_max_pixels: (vision > 0).then_some(vision),
             fast_load: settings.storage.fast_load,
             fast_load_prefetch_shards: settings.storage.fast_load_prefetch_shards,
-            kv_paging: metrale_storage::kv_paging::ns::kv_paging_selected(
-                settings.runtime.kv_paging.as_deref(),
-            )?,
             prefix_cache_gate: metrale_config::PrefixCacheGate::from_settings(&settings.cache),
         })
     }

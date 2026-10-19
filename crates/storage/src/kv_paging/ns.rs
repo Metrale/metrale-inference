@@ -7,7 +7,7 @@
 //! Invariants:
 //! - Every namespace returned is non-zero: `derive_kv_ns` falls back to `FNV_OFFSET`
 //!   and an override of 0 is an error.
-//! - The namespace is a pure function of its six arguments, encoded as the tagged
+//! - The namespace is a pure function of its seven arguments, encoded as the tagged
 //!   records listed on [`derive_kv_ns`].
 //! - The parsers never default: junk input is an error.
 //!
@@ -22,8 +22,10 @@
 //!
 //! The model fingerprint does not encode the KV cache dtype or block layout, and
 //! `GroupLayout::group_id` depends on `num_blocks`, so the namespace folds the full
-//! layout next to the fingerprint. The fingerprint arrives as a plain u64
-//! (`ModelDims::model_fp`); this crate does not depend on the model config.
+//! layout next to the fingerprint, and (2026-10-18) the codec salt of the cache's
+//! formats. The fingerprint and the salt arrive as plain u64s (`ModelDims::model_fp`,
+//! `ModelDims::kv_codec_salt`); this crate depends on neither the model config nor the
+//! codec registry.
 
 use std::num::NonZeroU64;
 
@@ -32,8 +34,9 @@ use anyhow::{Result, anyhow};
 use crate::group::GroupLayout;
 
 /// 2026-09-25: Encoding version, hashed as the tag-0x00 record. Changing it changes
-/// every KV namespace.
-pub const KV_NS_VERSION: u64 = 1;
+/// every KV namespace. 2026-10-18: 2 adds the tag-0x0c codec salt; every block spilled under
+/// version 1 becomes a miss.
+pub const KV_NS_VERSION: u64 = 2;
 
 /// 2026-09-25: Domain separator hashed into every KV namespace as the tag-0x02
 /// record, so KV keys differ from SSM keys in the key material as well as by the
@@ -59,10 +62,16 @@ fn put_u64(buf: &mut Vec<u8>, tag: u8, v: u64) {
 /// | 0x01 | model_fp        | 0x05 | head_dim       | 0x09 | fs_block_size |
 /// | 0x02 | KV_DOMAIN       | 0x06 | num_layers     | 0x0a | group_stride  |
 /// | 0x03 | elem_bytes      | 0x07 | num_blocks     | 0x0b | client_salt   |
+/// |      |                 |      |                | 0x0c | kv_codec_salt |
 ///
 /// `model_fp` is `ModelFingerprint::derive_kv` in metrale-model-engine: model type,
 /// quantization identity, `METRALE_MODEL_ID` and geometry. A hash of 0 is replaced by
 /// `FNV_OFFSET`.
+///
+/// 2026-10-18: `kv_codec_salt` is `KvCacheConfig::spill_salt` in metrale-cache (`ModelDims::
+/// kv_codec_salt`): each layer-side's codec id, layout digest and rung, and the indexer rows
+/// the blocks carry. Two codecs can share a byte layout (nvfp4 and turbo4), so without it a
+/// block spilled under one would be read back under the other.
 pub fn derive_kv_ns(
     model_fp: u64,
     layout: &GroupLayout,
@@ -70,8 +79,9 @@ pub fn derive_kv_ns(
     block_size: u32,
     head_dim: u32,
     client_salt: u64,
+    kv_codec_salt: u64,
 ) -> NonZeroU64 {
-    let mut buf = Vec::with_capacity(12 * 9);
+    let mut buf = Vec::with_capacity(13 * 9);
     for (tag, v) in [
         (0x00u8, KV_NS_VERSION),
         (0x01, model_fp),
@@ -85,6 +95,7 @@ pub fn derive_kv_ns(
         (0x09, layout.fs_block_size),
         (0x0a, layout.group_stride),
         (0x0b, client_salt),
+        (0x0c, kv_codec_salt),
     ] {
         put_u64(&mut buf, tag, v);
     }

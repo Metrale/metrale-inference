@@ -21,11 +21,15 @@ fn layout() -> GroupLayout {
 // its hybrid config.
 const FP: u64 = 0x5629_922c_51a1_6a10;
 const SALT: u64 = 0xD00D_F00D_0000_0001;
+// 2026-10-18: Stands for `KvCacheConfig::spill_salt`; the derivation treats it as opaque.
+const CODEC_SALT: u64 = 0xC0DE_C5A1_0000_0001;
 
-fn ns_with(f: impl FnOnce(&mut (u64, GroupLayout, u32, u32, u32, u64))) -> NonZeroU64 {
-    let mut a = (FP, layout(), 2u32, 16u32, 128u32, SALT);
+type NsArgs = (u64, GroupLayout, u32, u32, u32, u64, u64);
+
+fn ns_with(f: impl FnOnce(&mut NsArgs)) -> NonZeroU64 {
+    let mut a = (FP, layout(), 2u32, 16u32, 128u32, SALT, CODEC_SALT);
     f(&mut a);
-    derive_kv_ns(a.0, &a.1, a.2, a.3, a.4, a.5)
+    derive_kv_ns(a.0, &a.1, a.2, a.3, a.4, a.5, a.6)
 }
 
 #[test]
@@ -33,7 +37,7 @@ fn ns_with(f: impl FnOnce(&mut (u64, GroupLayout, u32, u32, u32, u64))) -> NonZe
 // stores.
 #[allow(clippy::assertions_on_constants)]
 fn version_and_domain_frozen() {
-    assert_eq!(KV_NS_VERSION, 1);
+    assert_eq!(KV_NS_VERSION, 2);
     assert_eq!(KV_DOMAIN, 0x4B56_5041_4745_0001, "\"KV\" + \"PAGE\" + 1");
     assert_ne!(KV_DOMAIN, 0, "the domain must be a usable ns fallback");
 }
@@ -60,14 +64,14 @@ fn mix64_frozen_literals() {
 
 #[test]
 fn derive_kv_ns_golden() {
-    assert_eq!(ns_with(|_| {}).get(), 0x74b4_02b0_f421_5375);
+    assert_eq!(ns_with(|_| {}).get(), 0x6fe6_d41e_337a_9cb9);
 }
 
 #[test]
 fn wire_key_golden_and_mechanism() {
     let ns = ns_with(|_| {});
     assert_eq!(wire_key(ns, 42), mix64(42, ns.get()));
-    assert_eq!(wire_key(ns, 42), 0x6d2d_470e_f594_7d4b);
+    assert_eq!(wire_key(ns, 42), 0x68b2_3dfc_038c_820e);
     assert_eq!(wire_key(ns, 42), wire_key(ns, 42));
     let other = ns_with(|a| a.5 ^= 1);
     assert_ne!(wire_key(ns, 42), wire_key(other, 42));
@@ -80,7 +84,7 @@ fn wire_key_golden_and_mechanism() {
 #[test]
 fn every_field_flips_the_namespace() {
     let base = ns_with(|_| {});
-    let variants: [(&str, NonZeroU64); 9] = [
+    let variants: [(&str, NonZeroU64); 10] = [
         ("model_fp", ns_with(|a| a.0 ^= 1)),
         ("elem_bytes", ns_with(|a| a.2 = 1)),
         ("block_size", ns_with(|a| a.3 = 32)),
@@ -102,6 +106,7 @@ fn every_field_flips_the_namespace() {
             ns_with(|a| a.1 = GroupLayout::new(80, 4096, 8, 16, 128, 2, 512)),
         ),
         ("client_salt", ns_with(|a| a.5 = SALT ^ 0xFFFF)),
+        ("kv_codec_salt", ns_with(|a| a.6 = CODEC_SALT ^ 1)),
     ];
     for (name, v) in variants {
         assert_ne!(v, base, "changing {name} must flip the KV namespace");

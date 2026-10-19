@@ -30,7 +30,6 @@ fn an_empty_environment_gives_the_shipped_load() {
             vision_max_pixels: None,
             fast_load: true,
             fast_load_prefetch_shards: false,
-            kv_paging: false,
             prefix_cache_gate: metrale_config::PrefixCacheGate::DECLARED,
         }
     );
@@ -38,9 +37,9 @@ fn an_empty_environment_gives_the_shipped_load() {
 
 #[test]
 fn kv_paging_keeps_the_storage_grammar() {
-    let paging = |v: &str| resolved(&[("METRALE_KV_PAGING", v)]).map(|l| l.kv_paging);
-    assert!(paging(" 1 ").expect("on"));
-    assert!(!paging("0").expect("off"));
+    let paging = |v: &str| resolved(&[("METRALE_KV_PAGING", v)]);
+    assert!(paging(" 1 ").is_ok(), "on");
+    assert!(paging("0").is_ok(), "off");
     for junk in ["true", "", "2"] {
         assert!(paging(junk).is_err(), "{junk:?}");
     }

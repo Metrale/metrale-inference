@@ -17,8 +17,8 @@
 //!   this module adds unless the value is `fp8`.
 //! - [`IndexerCacheDtype::check_serve`] passes `bf16` always and `fp8` only when the model's
 //!   loader serves it (2026-10-18: a capability the loader declares, not a model-type list),
-//!   with the indexer cache paged and peer KV paging off (its namespace does not encode the
-//!   indexer layout).
+//!   with the indexer cache paged. 2026-10-18: peer KV paging is no longer refused: its
+//!   namespace folds the cache's codec salt, which includes the indexer codec.
 
 use anyhow::{Result, bail};
 use metrale_kv_codec::{KvCodecId, by_name};
@@ -62,7 +62,7 @@ impl IndexerCacheDtype {
     }
 
     /// 2026-10-16: Refuse `fp8` off its scope (see the module invariants). `indexer_paged` is
-    /// `glm_dsa_indexer_paged()`, `kv_paging` whether `METRALE_KV_PAGING=1`.
+    /// `glm_dsa_indexer_paged()`.
     /// 2026-10-18: `served` is what the model's loader declares beyond `bf16`
     /// (`ModelWeightLoader::indexer_cache_dtypes`); `model_type` only names the model in the
     /// refusal.
@@ -71,7 +71,6 @@ impl IndexerCacheDtype {
         model_type: &str,
         served: &[IndexerCacheDtype],
         indexer_paged: bool,
-        kv_paging: bool,
     ) -> Result<()> {
         if self == Self::Bf16 {
             return Ok(());
@@ -91,13 +90,6 @@ impl IndexerCacheDtype {
                  use --indexer-cache-dtype bf16"
             );
         }
-        if kv_paging {
-            bail!(
-                "--indexer-cache-dtype fp8 changes the KV block layout, which the \
-                 METRALE_KV_PAGING=1 peer namespace does not encode; unset it or use \
-                 --indexer-cache-dtype bf16"
-            );
-        }
         Ok(())
     }
 }
@@ -108,27 +100,25 @@ mod tests {
     use metrale_kv_codec::{CodecRole, spec};
 
     /// 2026-10-16: `bf16` passes every serve; `fp8` passes only a model that serves it, paged,
-    /// without peer paging, and each refusal names its cause.
+    /// and each refusal names its cause. 2026-10-18: peer paging is no longer an input.
     /// 2026-10-18: what a model serves is the loader's declared list, not its type string.
     #[test]
     fn fp8_needs_a_paged_serve_of_a_model_that_serves_it() {
         let fp8 = IndexerCacheDtype::Fp8;
         for served in [&[][..], &[fp8][..]] {
-            for (paged, paging) in [(true, false), (false, false), (true, true), (false, true)] {
-                let ok = IndexerCacheDtype::Bf16.check_serve("m", served, paged, paging);
+            for paged in [true, false] {
+                let ok = IndexerCacheDtype::Bf16.check_serve("m", served, paged);
                 assert!(ok.is_ok());
             }
         }
-        assert!(fp8.check_serve("glm5_next", &[fp8], true, false).is_ok());
+        assert!(fp8.check_serve("glm5_next", &[fp8], true).is_ok());
         for m in ["qwen3", "deepseek_v4", "glm5_next"] {
-            let e = fp8.check_serve(m, &[], true, false).unwrap_err();
+            let e = fp8.check_serve(m, &[], true).unwrap_err();
             assert!(e.to_string().contains("is not served by model_type"), "{e}");
             assert!(e.to_string().contains(m), "{e}");
         }
-        let e = fp8.check_serve("m", &[fp8], false, false).unwrap_err();
+        let e = fp8.check_serve("m", &[fp8], false).unwrap_err();
         assert!(e.to_string().contains("INDEXER_FLAT"), "{e}");
-        let e = fp8.check_serve("m", &[fp8], true, true).unwrap_err();
-        assert!(e.to_string().contains("METRALE_KV_PAGING"), "{e}");
     }
 
     /// 2026-10-16: The names are the flag values, and the default is `bf16`.
