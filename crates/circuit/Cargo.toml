@@ -18,6 +18,9 @@ metrale-kernel-root = { workspace = true }
 # 2026-09-28: `DeclaredPrecisionPlan` and `WeightQuantPolicy`, the engine's precision answers the
 # circuit's `PolicyPrecision` adapter asks. Pure: no environment, no I/O.
 metrale-config = { workspace = true }
+# 2026-10-18: The KV codec registry: a KV state's bytes and the `kv_cache_dtype` spellings come from
+# each codec's spec. Pure, no_std.
+metrale-kv-codec = { workspace = true }
 serde_json = { workspace = true, features = ["std", "preserve_order"] }
 sha2 = { workspace = true, features = ["alloc", "oid"] }
 thiserror = { workspace = true, features = ["std"] }

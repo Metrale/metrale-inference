@@ -21,6 +21,8 @@
 
 use std::fmt;
 
+use metrale_kv_codec::KvPair;
+
 use crate::format::Format;
 use crate::state::StateDtype;
 
@@ -149,7 +151,9 @@ pub enum Value {
     /// expert).
     OptNum(Option<Num>),
     /// 2026-10-02: A KV-cache dtype, spelled as `--kv-cache-dtype` spells it.
-    Kv(String),
+    ///
+    /// 2026-10-18: The codec pair the spelling names, so an alias and its long form are one value.
+    Kv(KvPair),
     /// 2026-10-02: A recurrent state's storage element.
     State(StateDtype),
 }
@@ -169,7 +173,7 @@ impl Value {
             Value::Num(n) => n.name().to_string(),
             Value::OptNum(None) => "none".to_string(),
             Value::OptNum(Some(n)) => n.name().to_string(),
-            Value::Kv(k) => k.clone(),
+            Value::Kv(k) => k.name().to_string(),
             Value::State(d) => state_name(*d).to_string(),
         }
     }

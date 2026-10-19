@@ -1611,6 +1611,7 @@ dependencies = [
  "metrale-closure",
  "metrale-config",
  "metrale-kernel-root",
+ "metrale-kv-codec",
  "serde",
  "serde_json",
  "sha2",

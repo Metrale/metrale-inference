@@ -274,7 +274,9 @@ impl PoolPlan {
             draft_kv: None,
         };
         let layer = StatePlan::new(decls, &inputs)?;
-        let unit = |d: &StateDecl, dtype: StateDtype| (d.elements * dtype.size()) as usize;
+        let unit = |d: &StateDecl, dtype: StateDtype| -> Result<usize> {
+            Ok(usize::try_from(d.unit_bytes(dtype)?)?)
+        };
         let conv_dtype = match conv.format {
             StateFormat::Fixed(d) => d,
             StateFormat::Keyed(_) => bail!("the conv state's format is not fixed"),
@@ -282,9 +284,9 @@ impl PoolPlan {
         Ok(Self {
             source,
             layers,
-            h_f32_unit: unit(h, StateDtype::F32),
-            h_stored_unit: unit(h, storage),
-            conv_unit: unit(conv, conv_dtype),
+            h_f32_unit: unit(h, StateDtype::F32)?,
+            h_stored_unit: unit(h, storage)?,
+            conv_unit: unit(conv, conv_dtype)?,
             counts: counts.clone(),
             layer,
             h_id: h.id.clone(),

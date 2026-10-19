@@ -130,7 +130,8 @@ pub enum Shape {
     Num,
     /// 2026-10-02: [`Value::OptNum`].
     OptNum,
-    /// 2026-10-02: [`Value::Kv`].
+    /// 2026-10-02: [`Value::Kv`]. 2026-10-19: Or, for a spelling no codec pair has, the fixed
+    /// state dtype a cache write holds ([`cache_value`]).
     Kv,
     /// 2026-10-02: [`Value::State`].
     State,
@@ -181,6 +182,16 @@ fn num(s: &str) -> Result<Num, String> {
     Num::parse(s).ok_or_else(|| format!("`{s}` is no precision (bf16, f16, f32, e4m3, e2m1)"))
 }
 
+/// 2026-10-19: A cache step's value from its spelling: the codec pair a registered spelling names,
+/// else the fixed state dtype a write into a fixed-format state holds (DeepSeek-V4.1's packed `u8`
+/// latent and index rows), which no codec names.
+pub fn cache_value(text: &str) -> Result<Value, String> {
+    match crate::kv::parse_kv(text) {
+        Ok(pair) => Ok(Value::Kv(pair)),
+        Err(e) => StateDtype::parse(text).map(Value::State).ok_or(e),
+    }
+}
+
 /// 2026-10-02: Parse `text` as the value of step `k`.
 pub fn parse_value(k: StepKind, text: &str) -> Result<Value, String> {
     let fmt = |s: &str| Format::parse(s).map_err(|e| e.to_string());
@@ -209,12 +220,7 @@ pub fn parse_value(k: StepKind, text: &str) -> Result<Value, String> {
             "none" => Value::OptNum(None),
             other => Value::OptNum(Some(num(other)?)),
         },
-        Shape::Kv => {
-            if text.is_empty() || !text.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-                return Err(format!("`{text}` is no KV-cache dtype spelling"));
-            }
-            Value::Kv(text.to_string())
-        }
+        Shape::Kv => cache_value(text)?,
         Shape::State => Value::State(
             StateDtype::parse(text)
                 .ok_or_else(|| format!("`{text}` is no state dtype (f32, f16, bf16, fp8)"))?,

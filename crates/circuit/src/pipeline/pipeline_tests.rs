@@ -42,7 +42,13 @@ fn every_value_spelling_parses_back_to_itself() {
         (StepKind::Accumulate, Value::Num(Num::F32)),
         (StepKind::Scale, Value::OptNum(None)),
         (StepKind::Combine, Value::OptNum(Some(Num::F16))),
-        (StepKind::Cache, Value::Kv("fp8k_turbo3v".into())),
+        (
+            StepKind::Cache,
+            Value::Kv("fp8k_turbo3v".parse().expect("a pair")),
+        ),
+        // 2026-10-19: A write into a fixed-format state (DeepSeek-V4.1's packed rows) caches at
+        // a dtype no codec pair names.
+        (StepKind::Cache, Value::State(StateDtype::U8)),
         (StepKind::State, Value::State(StateDtype::F16)),
     ];
     for (k, v) in cases {
@@ -55,6 +61,7 @@ fn every_value_spelling_parses_back_to_itself() {
         (StepKind::Accumulate, "fp32"),
         (StepKind::Act, "e4m3"),
         (StepKind::Cache, "fp8 kv"),
+        (StepKind::Cache, "fp7"),
         (StepKind::State, "e4m3"),
         (StepKind::Scale, "None"),
     ] {
@@ -152,4 +159,14 @@ fn differences_name_each_differing_field_and_the_rendering_marks_stated_parts() 
         "bf16,i32 (rule) -> [accumulate f32 (rule)] -> bf16 (rule)"
     );
     assert_eq!(a.to_string(), "bf16,i32 -> [accumulate f32] -> bf16");
+}
+
+/// 2026-10-18: A cache step names a codec pair, so a pair's short alias and its long spelling
+/// are one value (a rule written either way matches the other), and the value renders long.
+#[test]
+fn a_cache_alias_is_the_same_value_as_its_long_spelling() {
+    let short = parse_value(StepKind::Cache, "fp8k3v").expect("an alias");
+    let long = parse_value(StepKind::Cache, "fp8k_turbo3v").expect("a pair");
+    assert_eq!(short, long);
+    assert_eq!(short.name(), "fp8k_turbo3v");
 }

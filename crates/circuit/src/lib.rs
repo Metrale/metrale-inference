@@ -23,6 +23,7 @@ pub mod hardware;
 pub mod instances;
 pub mod instantiate;
 pub mod ir;
+pub mod kv;
 pub mod memory;
 pub mod model_buffer;
 pub mod pipeline;

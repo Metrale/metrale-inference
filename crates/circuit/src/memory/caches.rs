@@ -126,7 +126,7 @@ pub fn cache_terms(
             })?,
         };
         let over = || StateError::Overflow(s.id.clone());
-        let unit = s.elements.checked_mul(dtype.size()).ok_or_else(over)?;
+        let unit = s.unit_bytes(dtype)?;
         let (units, bytes) = match s.kind {
             StateKind::PromptLookupIndex => match inputs.lookup {
                 Some(l) => {

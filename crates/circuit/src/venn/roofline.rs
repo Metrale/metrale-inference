@@ -27,8 +27,10 @@ use std::collections::BTreeMap;
 use super::families::Roofline;
 use crate::format::Format;
 use crate::ir::{Circuit, Node, OpKind};
+use crate::kv;
+use crate::pipeline::require::keyed_state;
 use crate::rules::Mode;
-use crate::state::{StateAccess, StateDecl, StateDtype, StateFormat};
+use crate::state::{StateAccess, StateDecl, StateFormat};
 
 /// 2026-09-29: One node's estimate.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -62,8 +64,11 @@ pub enum CostError {
         /// 2026-09-29: Rows.
         rows: u64,
     },
-    /// 2026-09-29: A KV-cache dtype the estimate has no element size for.
-    #[error("kv_cache_dtype `{0}` has no element size (bf16 | fp8)")]
+    /// 2026-09-29: A KV cache the estimate cannot size.
+    ///
+    /// 2026-10-18: Carries why: the policy states no `kv_cache_dtype`, it names no codec pair,
+    /// or a side's byte count overflows.
+    #[error("{0}")]
     KvDtype(String),
     /// 2026-10-08: A state or parameter an op's estimate reads that the node does not give.
     #[error("node `{node}`: {detail}")]
@@ -122,14 +127,15 @@ pub fn node_cost(
             flops = 2.0 * t * top * k * out;
         }
         OpKind::PagedAttention => {
-            let kv = match settings.get("kv_cache_dtype").map(String::as_str) {
-                Some("bf16") => 2.0,
-                Some("fp8") => 1.0,
-                other => return Err(CostError::KvDtype(other.unwrap_or("<unset>").to_string())),
-            };
+            // 2026-10-18: One token of both sides, from each side's codec spec.
+            let pair = kv::kv_pair(settings).map_err(CostError::KvDtype)?;
             let ctx = r.context_tokens as f64;
             let (kvh, hd, qh) = (dim("kv_heads")?, dim("head_dim")?, dim("q_heads")?);
-            bytes += seqs * ctx * kvh * hd * 2.0 * kv;
+            let per_side = (kvh * hd) as u64;
+            let token = kv::token_bytes(pair, per_side).ok_or_else(|| {
+                CostError::KvDtype(format!("{pair} KV of {per_side} values per side overflows"))
+            })?;
+            bytes += seqs * ctx * token as f64;
             flops = 4.0 * t * ctx * qh * hd;
         }
         OpKind::MlaAttention => {
@@ -289,14 +295,12 @@ fn unit_bytes(
 ) -> Result<f64, CostError> {
     let dtype = match &decl.format {
         StateFormat::Fixed(d) => *d,
-        StateFormat::Keyed(key) => {
-            let v = settings
-                .get(key)
-                .ok_or_else(|| node_error(n, format!("the policy states no `{key}`")))?;
-            StateDtype::parse(v).ok_or_else(|| CostError::KvDtype(v.clone()))?
-        }
+        StateFormat::Keyed(key) => keyed_state(key, settings).map_err(|e| node_error(n, e))?,
     };
-    Ok((decl.elements * dtype.size()) as f64)
+    let unit = decl
+        .unit_bytes(dtype)
+        .map_err(|e| node_error(n, e.to_string()))?;
+    Ok(unit as f64)
 }
 
 /// 2026-10-18: The param `key` of `n`, which its estimate needs.

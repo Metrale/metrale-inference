@@ -32,7 +32,7 @@ impl FromStr for KvCodecId {
 }
 
 /// 2026-10-18: The codec of each side of an attention layer's cache.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct KvPair {
     k: KvCodecId,
     v: KvCodecId,

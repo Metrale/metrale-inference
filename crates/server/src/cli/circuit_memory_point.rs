@@ -17,6 +17,7 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use metrale_circuit::hardware::{self, CheckpointSource, CircuitSource, ModelSpec, Registry};
 use metrale_circuit::ir::Circuit;
+use metrale_circuit::kv;
 use metrale_circuit::memory::{
     self, ActivationRun, CacheInputs, CopyRule, DriverTerms, LookupInputs, MemoryInputs,
     MemoryReport, budget,
@@ -98,7 +99,7 @@ pub(crate) struct Point<'a> {
 }
 
 fn dtype(s: &str) -> Result<StateDtype> {
-    StateDtype::parse(s).with_context(|| format!("KV dtype `{s}` has no element size"))
+    StateDtype::parse(s).with_context(|| format!("state dtype `{s}` has no element size"))
 }
 
 /// 2026-10-02: The formats the serve's flags choose for the projections the engine itself
@@ -213,7 +214,10 @@ impl Point<'_> {
         let h = if f.h_f16_pool { "f16" } else { "f32" };
         let states = StateInputs {
             formats: BTreeMap::from([
-                ("kv_cache_dtype".to_string(), dtype(&f.kv_dtype)?),
+                (
+                    kv::KV_SETTING.to_string(),
+                    StateDtype::Kv(kv::parse_kv(&f.kv_dtype).map_err(anyhow::Error::msg)?),
+                ),
                 ("ssm_h_storage".to_string(), dtype(h)?),
             ]),
             slots: f.pool.slots as u64,

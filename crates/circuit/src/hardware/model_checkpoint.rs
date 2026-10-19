@@ -188,9 +188,12 @@ pub fn derive_policy(c: &Circuit, kv_cache: Option<Format>) -> Result<Policy, Hw
         .find(|n| n.op == OpKind::LmHead)
         .and_then(|n| n.weight)
         .ok_or_else(|| HwError::Model("the circuit has no lm_head weight".into()))?;
+    // 2026-10-18: A declared KV format must name a codec pair the registry has.
     let kv = match kv_cache {
         None => "bf16",
-        Some(f) => dtype_name(f)?,
+        Some(f) => crate::kv::parse_kv(dtype_name(f)?)
+            .map_err(HwError::Model)?
+            .name(),
     };
     // 2026-09-30: The two class settings are re-read from the device's class before any plan;
     // "class" never reaches a rule (policy_on_class refuses a class that does not state them).

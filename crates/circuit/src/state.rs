@@ -17,8 +17,12 @@
 //!   every term, so the reserve and the allocation cannot size a state two ways.
 //! - A format named by a key (`{kv_cache_dtype}`) must be given in [`StateInputs::formats`]; a
 //!   missing key is an error, never a default.
+//! - 2026-10-18: A KV state in a codec pair is sized from that codec's spec, its side picked by the
+//!   state's local id (`k`, `v`) ([`StateDecl::unit_bytes`]).
 
 use std::collections::BTreeMap;
+
+use metrale_kv_codec::KvPair;
 
 #[cfg(doc)]
 use crate::ir::Circuit;
@@ -90,6 +94,9 @@ pub enum StateDtype {
     I32,
     U32,
     U64,
+    /// 2026-10-18: A KV cache in a codec pair (what `{kv_cache_dtype}` names): a side's bytes come
+    /// from its codec's spec ([`StateDecl::unit_bytes`]), not from a per-element size.
+    Kv(KvPair),
 }
 
 impl StateDtype {
@@ -119,16 +126,19 @@ impl StateDtype {
             Self::I32 => "i32",
             Self::U32 => "u32",
             Self::U64 => "u64",
+            Self::Kv(pair) => pair.name(),
         }
     }
 
-    /// 2026-09-30: Bytes per element.
-    pub fn size(self) -> u64 {
+    /// 2026-09-30: Bytes per element. 2026-10-18: `None` for a KV codec, whose elements need
+    /// not be whole bytes ([`StateDecl::unit_bytes`] sizes it).
+    pub fn size(self) -> Option<u64> {
         match self {
-            Self::F32 | Self::I32 | Self::U32 => 4,
-            Self::F16 | Self::Bf16 => 2,
-            Self::Fp8 | Self::U8 => 1,
-            Self::U64 => 8,
+            Self::F32 | Self::I32 | Self::U32 => Some(4),
+            Self::F16 | Self::Bf16 => Some(2),
+            Self::Fp8 | Self::U8 => Some(1),
+            Self::U64 => Some(8),
+            Self::Kv(_) => None,
         }
     }
 }
@@ -175,6 +185,31 @@ pub struct StateDecl {
     pub verify: Option<VerifySteps>,
     /// 2026-09-30: How long a live unit lives ([`Lifetime::of_kind`]).
     pub lifetime: Lifetime,
+}
+
+impl StateDecl {
+    /// 2026-10-18: Bytes of one unit of this state stored as `dtype`. A KV codec pair sizes the
+    /// side this state is: `k` its K codec, `v` its V codec; any other KV state (an MLA latent,
+    /// pooled index keys) has one codec, so it refuses an asymmetric pair.
+    pub fn unit_bytes(&self, dtype: StateDtype) -> Result<u64, StateError> {
+        let over = || StateError::Overflow(self.id.clone());
+        if let StateDtype::Kv(pair) = dtype {
+            let codec = match self.local.as_str() {
+                "k" => pair.k(),
+                "v" => pair.v(),
+                _ if !pair.is_asymmetric() => pair.k(),
+                _ => {
+                    return Err(StateError::Inputs(format!(
+                        "state `{}` is neither a K nor a V side, so it cannot hold the pair {pair}",
+                        self.id
+                    )));
+                }
+            };
+            return crate::kv::side_bytes(codec, self.elements).ok_or_else(over);
+        }
+        let size = dtype.size().ok_or_else(over)?;
+        self.elements.checked_mul(size).ok_or_else(over)
+    }
 }
 
 /// 2026-09-30: Why a state plan could not be made.
@@ -289,10 +324,7 @@ impl StatePlan {
                         })?
                 }
             };
-            let unit = s
-                .elements
-                .checked_mul(dtype.size())
-                .ok_or_else(|| StateError::Overflow(s.id.clone()))?;
+            let unit = s.unit_bytes(dtype)?;
             let mut push = |holding, units: u64| -> Result<(), StateError> {
                 let bytes = unit
                     .checked_mul(units)

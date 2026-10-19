@@ -159,7 +159,12 @@ pub fn footprint(c: &Circuit, settings: &BTreeMap<String, String>) -> Result<Foo
         }
         match n.op {
             OpKind::PagedAttention => {
-                kv_per_token += 2.0 * dim("kv_heads")? * dim("head_dim")? * kv_size(settings)?
+                // 2026-10-18: One token of both sides, from each side's codec spec.
+                let kv = crate::kv::kv_pair(settings)?;
+                let per_side = (dim("kv_heads")? * dim("head_dim")?) as u64;
+                let token = crate::kv::token_bytes(kv, per_side)
+                    .ok_or_else(|| format!("{kv} KV of {per_side} values per side overflows"))?;
+                kv_per_token += token as f64;
             }
             OpKind::GdnRecurrence => {
                 state +=
@@ -223,15 +228,6 @@ pub fn weight_floor_bytes(c: &Circuit) -> Result<f64, String> {
 /// 2026-09-30: `Format` of a node's first input.
 pub fn activation_of(c: &Circuit, n: &crate::ir::Node) -> Option<Format> {
     n.inputs.first().map(|&e| c.edges[e].format)
-}
-
-/// 2026-10-18: The KV element size `kv_cache_dtype` names, asked only by a node that reads it.
-fn kv_size(settings: &BTreeMap<String, String>) -> Result<f64, String> {
-    match settings.get("kv_cache_dtype").map(String::as_str) {
-        Some("bf16") => Ok(2.0),
-        Some("fp8") => Ok(1.0),
-        other => Err(format!("kv_cache_dtype {other:?} has no element size")),
-    }
 }
 
 /// 2026-10-18: The h-state element size `ssm_h_dtype` names, asked only by a node that keeps it.

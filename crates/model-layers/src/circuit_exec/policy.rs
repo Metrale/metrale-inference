@@ -16,8 +16,6 @@
 
 use std::collections::BTreeMap;
 
-use anyhow::{Result, bail};
-use metrale_cache::kv_cache::KvCacheDtype;
 use metrale_circuit::Policy;
 
 use crate::layers::ops::ModelLevers;
@@ -25,16 +23,6 @@ use crate::layers::{RowTiers, row_tiers};
 
 fn on_off(b: bool) -> String {
     if b { "on" } else { "off" }.to_string()
-}
-
-/// 2026-09-28: The spelling the rules use for a KV-cache dtype; an error for one the circuit
-/// has no rule for.
-pub fn kv_dtype_name(d: KvCacheDtype) -> Result<&'static str> {
-    Ok(match d {
-        KvCacheDtype::Bf16 => "bf16",
-        KvCacheDtype::Fp8 => "fp8",
-        other => bail!("KV-cache dtype {other:?} has no circuit spelling"),
-    })
 }
 
 /// 2026-09-28: The policy of this process: `kv_cache_dtype` and `lm_head_dtype` come from the
