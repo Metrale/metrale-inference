@@ -187,6 +187,10 @@ tolerance, because its softmax runs in a different order. To keep the two in ste
   and planned like any other codec. The attention layer builds its trellis state (device
   codebooks, write midpoints, the prefill kernel) once at construction; the chunked-prefill
   kernel is required at boot, since no dense prefill can read these records.
+- **Boundary layers:** each row declares its auto boundary: `turbo3_tcq` and `turbo4_n128`
+  keep `max(2, ⌈L/3⌉)` attention layers at each end in bf16, `turbo2_tcq` and `turbo1_tcq`
+  `max(4, ⌈4·L/5⌉)`, which on a model with few attention layers covers all of them. Pass
+  `--kv-high-precision-layers none` to store every layer in the codec.
 - **Refused, with a coded error:** a sliding attention window and a split K/V pair. A single
   stream's first prefill chunk attends its own bf16 K/V directly (as for every codec); later
   chunks and decode read the cache.

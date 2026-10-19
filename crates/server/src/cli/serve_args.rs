@@ -132,10 +132,9 @@ pub struct ServeArgs {
     /// `[behavior].default_kv_dtype` → fp8 (`DEFAULT_KV_CACHE_DTYPE`). An
     /// explicitly passed value always wins, including `fp8` itself.
     ///
-    /// The `turbo2`/`turbo3`/`turbo4`/`turbo8` variants (and the asymmetric
-    /// `*k_*v` pairs built from them) are experimental: they are not built for
-    /// every kernel target, and a target that lacks them fails the kv-cache kernel
-    /// preflight at startup.
+    /// The `turbo*` variants (turbo2/3/4/8, turbo1/2/3_tcq, turbo4_n128, and the
+    /// `*k_*v` pairs) are experimental: not built for every kernel target, a target
+    /// that lacks them fails the kv-cache kernel preflight at startup.
     #[arg(long, value_parser = super::flag_values::canonical_kv_cache_dtype)]
     pub kv_cache_dtype: Option<String>,
 
@@ -405,9 +404,9 @@ pub struct ServeArgs {
 
     /// Boundary attention layers to keep at BF16 KV cache precision (first N + last N);
     /// the other layers use --kv-cache-dtype.
-    /// Accepts: number, "auto" (=2, recommended), "max"/"all" (all BF16).
+    /// Accepts: number, "auto" (=2, recommended), "max"/"all" (all BF16), "none".
     /// Default: 0, no BF16 boundary layers, except that a turbo KV dtype gets an
-    /// automatic count.
+    /// automatic count; "none" declares zero and also skips that automatic count.
     #[arg(long, default_value = "0")]
     pub kv_high_precision_layers: String,
 

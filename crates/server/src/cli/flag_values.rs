@@ -36,6 +36,9 @@ pub(crate) enum KvHighPrecisionLayers {
     All,
     /// 2026-09-26: `auto`: [`AUTO_KV_HIGH_PRECISION_LAYERS`].
     Auto,
+    /// 2026-10-19: `none`: no boundary layer, declared, so the codec table's auto boundary is
+    /// not applied either; every attention layer holds the requested KV dtype.
+    None,
     /// 2026-09-26: An explicit first-N-and-last-N count. `0`, the flag's
     /// default, defers to the codec table's auto boundary (`KvPair::auto_boundary`).
     Count(usize),
@@ -48,8 +51,9 @@ impl std::str::FromStr for KvHighPrecisionLayers {
         match raw.trim().to_lowercase().as_str() {
             "max" | "all" => Ok(Self::All),
             "auto" => Ok(Self::Auto),
+            "none" => Ok(Self::None),
             s => s.parse::<usize>().map(Self::Count).map_err(|_| {
-                "expected a whole number of layers, or one of: auto, max, all".to_string()
+                "expected a whole number of layers, or one of: auto, max, all, none".to_string()
             }),
         }
     }
@@ -60,8 +64,15 @@ impl KvHighPrecisionLayers {
         match self {
             Self::All => num_attn_layers,
             Self::Auto => AUTO_KV_HIGH_PRECISION_LAYERS,
+            Self::None => 0,
             Self::Count(n) => n,
         }
+    }
+
+    /// 2026-10-19: True only for the default `0`, the one form that leaves the count to the
+    /// codec table's auto boundary; `none` declares zero and does not defer.
+    pub(crate) fn defers_to_codec(self) -> bool {
+        self == Self::Count(0)
     }
 }
 

@@ -103,7 +103,6 @@ crates/model-layers/src/layers/qwen3_ssm/tests.rs 1
 crates/model-weights/src/kimi_k3_host/mla_cuda_parity.rs 1
 crates/server/src/cli/flag_values.rs 1
 crates/server/src/cli/flag_values_tests.rs 2
-crates/server/src/cli/validate.rs 1
 crates/server/src/main_modules/kv_dtypes.rs 1
 crates/server/src/main_modules/serve_load/load_phases.rs 3
 crates/server/src/main_modules/serve_phases/build.rs 2

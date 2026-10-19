@@ -224,7 +224,7 @@ pub(crate) fn resolve_kv_cache_config(
     let num_attn_layers = config.num_attention_layers();
     // 2026-09-26: Parsed with `cli::flag_values::KvHighPrecisionLayers`, the
     // parser `validate_serve_args` also uses; a parse error fails the boot.
-    let kv_hp_layers: usize = args
+    let hp_form = args
         .kv_high_precision_layers
         .parse::<crate::cli::flag_values::KvHighPrecisionLayers>()
         .map_err(|why| {
@@ -232,14 +232,15 @@ pub(crate) fn resolve_kv_cache_config(
                 "--kv-high-precision-layers '{}': {why}",
                 args.kv_high_precision_layers
             )
-        })?
-        .resolve(num_attn_layers);
-    // 2026-10-18: The auto boundary count is the codec table's policy for the pair.
+        })?;
+    let kv_hp_layers: usize = hp_form.resolve(num_attn_layers);
+    // 2026-10-18: The auto boundary count is the codec table's policy for the pair; only the
+    // default `0` defers to it (2026-10-19: `none` declares zero).
     let auto = requested
         .auto_boundary()
         .layers(u32::try_from(num_attn_layers)?);
-    let kv_hp_layers = match (kv_hp_layers, auto) {
-        (0, Some(auto_hp)) => {
+    let kv_hp_layers = match (hp_form.defers_to_codec(), auto) {
+        (true, Some(auto_hp)) => {
             let auto_hp = usize::try_from(auto_hp)?;
             tracing::info!(
                 "Auto-enabling --kv-high-precision-layers {} for {} ({}/{} attn layers BF16; \

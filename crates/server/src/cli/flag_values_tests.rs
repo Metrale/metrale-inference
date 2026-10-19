@@ -116,6 +116,7 @@ fn kv_high_precision_layers_accepts_exactly_the_documented_forms() {
     assert_eq!(p("all"), Ok(K::All));
     assert_eq!(p("0"), Ok(K::Count(0)));
     assert_eq!(p("6"), Ok(K::Count(6)));
+    assert_eq!(p("None"), Ok(K::None));
     assert_eq!(p("  AuTo "), Ok(K::Auto));
     assert!(p("atuo").is_err());
     assert!(p("-1").is_err());
@@ -132,6 +133,13 @@ fn kv_high_precision_layers_resolves_against_the_attention_layer_count() {
     // 2026-09-26: `0` stays 0, so `serve_phases::kv_cache` can defer to
     // the codec table's auto boundary (`KvPair::auto_boundary`).
     assert_eq!(K::Count(0).resolve(48), 0);
+    // 2026-10-19: `none` is zero too, but declared: only the default `0` defers.
+    assert_eq!(K::None.resolve(48), 0);
+    let deferring: Vec<K> = [K::All, K::Auto, K::None, K::Count(0), K::Count(1)]
+        .into_iter()
+        .filter(|k| k.defers_to_codec())
+        .collect();
+    assert_eq!(deferring, [K::Count(0)]);
 }
 
 /// 2026-09-26: The error text names the accepted forms.

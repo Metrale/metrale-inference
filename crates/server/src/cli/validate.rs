@@ -209,21 +209,20 @@ pub fn validate_serve_args(args: &ServeArgs) -> Result<(), String> {
     if let Some(parser) = args.tool_call_parser.as_deref() {
         check_enum(&mut v, "--tool-call-parser", parser, TOOL_CALL_PARSERS);
     }
-    // 2026-09-26: Parsed with `KvCacheDtype`'s own `FromStr`. Only an explicit
-    // value can be checked here: an omitted flag resolves later against
-    // MODEL.toml (`resolve_kv_dtype_str`). The build embeds MODEL.toml's
-    // `default_kv_dtype` unchecked (`build_parse_behavior.rs`), so a bad value
-    // there fails only at the same parse in `serve_phases/kv_cache.rs`, during
-    // the model load.
+    // 2026-09-26: Only an explicit value can be checked here: an omitted flag
+    // resolves later against MODEL.toml (`resolve_kv_dtype_str`). The build
+    // embeds MODEL.toml's `default_kv_dtype` unchecked
+    // (`build_parse_behavior.rs`), so a bad value there fails only at the same
+    // parse in `serve_phases/kv_cache.rs`, during the model load. 2026-10-19:
+    // Parsed by the codec registry (`KvPair`), the parse that resolve site uses,
+    // and the fix lists the registry's accepted spellings.
     if let Some(kv_dtype) = args.kv_cache_dtype.as_deref()
-        && kv_dtype
-            .parse::<metrale_cache::kv_cache::KvCacheDtype>()
-            .is_err()
+        && kv_dtype.parse::<metrale_kv_codec::KvPair>().is_err()
     {
         v.push(Violation::new(
             format!("--kv-cache-dtype '{kv_dtype}' is not a known KV cache dtype."),
             "the value does not parse to any supported KV cache format.",
-            "use one of: fp8, bf16, nvfp4 (or a turbo* TurboQuant-Plus variant).",
+            format!("use one of: {}.", metrale_kv_codec::accepted()),
         ));
     }
 
@@ -448,7 +447,7 @@ pub fn validate_serve_args(args: &ServeArgs) -> Result<(), String> {
             ),
             why,
             "use a layer count (0 = let the KV dtype decide), auto (2, recommended), \
-             or max/all (every attention layer).",
+             max/all (every attention layer), or none (zero, overriding the KV dtype).",
         ));
     }
 

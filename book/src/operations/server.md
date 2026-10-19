@@ -41,24 +41,24 @@ Production rule of thumb for tight single-GPU deployments of 100B+ models: drop 
 
 | Flag | Default | Notes |
 |---|---|---|
-| `--kv-cache-dtype` | `fp8` | `bf16`, `fp8`, `nvfp4`, `turbo2`, `turbo3`, `turbo4`, `turbo8`, plus nine asymmetric K/V pairings — `KvCacheDtype`'s `FromStr` (`crates/cache/src/kv_cache.rs`) is the authority on the accepted set |
+| `--kv-cache-dtype` | `fp8` | `bf16`, `fp8`, `nvfp4`, `turbo2`, `turbo3`, `turbo4`, `turbo8`, `turbo1_tcq`, `turbo2_tcq`, `turbo3_tcq`, `turbo4_n128`, plus the asymmetric K/V pairings — the codec registry (`crates/kv-codec`, `KvPair`'s `FromStr`) is the authority on the accepted set, and a refused value lists it |
 | `--kv-high-precision-layers` | `0` | Keep first/last N attention layers at BF16 (coherence protection). **`0` does not mean "none" for every dtype** — see below |
 | `--fp8-kv-calibration-tokens` | `0` | Online max-‖K‖/‖V‖ calibration for first N tokens (FP8 only) |
 
-The flag takes a number or one of three words: `auto` (a fixed alias for **2**,
-not a heuristic) and `max`/`all` (every attention layer). Anything else that
-fails to parse warns and falls back to `0`.
+The flag takes a number or one of four words: `auto` (a fixed alias for **2**,
+not a heuristic), `max`/`all` (every attention layer) and `none`. Anything else
+is refused before the weights load.
 
 **`--kv-high-precision-layers 0` is not "no promotion" for the turbo\* family.**
-`0` means *defer to the per-dtype automatic value*
-(`main_modules/kv_dtypes.rs::auto_high_precision_layers`, applied at
-`serve_phases/kv_cache.rs`). For `bf16` / `fp8` / `nvfp4` the automatic value is
-`None`, so `0` really is zero. For every `turbo*` and asymmetric variant it is
-not: `turbo2` and `bf16k_turbo3v` promote `max(4, ⌈4·L/5⌉)` layers, and all the
-others promote `max(2, ⌈L/3⌉)` — roughly a third of attention layers forced to
-BF16, which also shrinks the KV pool. Pass an explicit non-zero value if you want
-to control it; there is no spelling of this flag that promotes nothing under a
-turbo dtype.
+`0` means *defer to the codec's automatic boundary* (the `auto_boundary` column
+of the codec registry, `crates/kv-codec/src/rows.rs`, applied at
+`serve_phases/kv_cache.rs`). For `bf16` / `fp8` / `nvfp4` it is `None`, so `0`
+really is zero. For the `turbo*` codecs and asymmetric pairs it is not:
+`turbo2`, `turbo2_tcq`, `turbo1_tcq` and `bf16k_turbo3v` keep `max(4, ⌈4·L/5⌉)`
+layers at each end in BF16, and the others `max(2, ⌈L/3⌉)` (L = attention
+layers), which also shrinks the KV pool; on a 16-attention-layer model the
+first rule covers every layer. Pass `none` to promote nothing under any dtype,
+or an explicit count to choose it.
 
 See [FP8](../deep-dives/fp8.md) and [NVFP4](../deep-dives/nvfp4.md) for the trade-offs. Metrale Engine's recommendation per model family:
 
