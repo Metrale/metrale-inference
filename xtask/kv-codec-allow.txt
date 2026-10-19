@@ -72,7 +72,6 @@ crates/model-layers/src/circuit_exec/exec_multi_tests.rs 1
 crates/model-layers/src/circuit_exec/exec_tests.rs 1
 crates/model-layers/src/circuit_exec/kernels.rs 12
 crates/model-layers/src/circuit_exec/policy.rs 4
-crates/model-layers/src/forward/qwen3_5/mod.rs 4
 crates/model-layers/src/layers/fp8_calibration.rs 4
 crates/model-layers/src/layers/fp8_calibration/tests.rs 3
 crates/model-layers/src/layers/mtp_head/circuit.rs 3

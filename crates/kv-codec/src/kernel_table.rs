@@ -36,12 +36,12 @@ impl core::fmt::Display for KernelName {
 
 /// 2026-10-18: One table row.
 #[derive(Clone, Copy, Debug)]
-struct KernelRow {
-    key: KvKernelKey,
-    name: KernelName,
+pub(crate) struct KernelRow {
+    pub(crate) key: KvKernelKey,
+    pub(crate) name: KernelName,
 }
 
-const fn r(
+pub(crate) const fn r(
     op: KvOp,
     k: KvCodecId,
     v: Option<KvCodecId>,

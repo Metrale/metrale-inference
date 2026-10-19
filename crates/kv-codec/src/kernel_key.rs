@@ -101,3 +101,91 @@ pub struct KvKernelSet<H: Copy> {
     /// 2026-10-18: The resolved kernels.
     pub handles: alloc::boxed::Box<[ResolvedKvKernels<H>]>,
 }
+
+impl<H: Copy> ResolvedKvKernels<H> {
+    /// 2026-10-18: The same kernels with each handle turned into another by `f`, in field order;
+    /// the first failure is returned and `f` is not called again.
+    pub fn try_map<G: Copy, E>(
+        self,
+        mut f: impl FnMut(H) -> Result<G, E>,
+    ) -> Result<ResolvedKvKernels<G>, E> {
+        let write = f(self.write)?;
+        let decode = f(self.decode)?;
+        let decode_512 = match self.decode_512 {
+            Some(h) => Some(f(h)?),
+            None => None,
+        };
+        let splitk = match self.splitk {
+            Some((a, b)) => Some((f(a)?, f(b)?)),
+            None => None,
+        };
+        let prefill = match self.prefill {
+            Some(h) => Some(f(h)?),
+            None => None,
+        };
+        let wht = match self.wht {
+            Some((a, b)) => Some((f(a)?, f(b)?)),
+            None => None,
+        };
+        Ok(ResolvedKvKernels {
+            write,
+            decode,
+            decode_512,
+            splitk,
+            prefill,
+            wht,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ResolvedKvKernels;
+
+    fn all(base: u32) -> ResolvedKvKernels<u32> {
+        ResolvedKvKernels {
+            write: base + 1,
+            decode: base + 2,
+            decode_512: Some(base + 3),
+            splitk: Some((base + 4, base + 5)),
+            prefill: Some(base + 6),
+            wht: Some((base + 7, base + 8)),
+        }
+    }
+
+    /// 2026-10-18: Every field maps to its own image, in field order, and `None` stays `None`.
+    #[test]
+    fn try_map_maps_each_field_to_its_own_image_in_order() {
+        let mut seen = alloc::vec::Vec::new();
+        let got = all(0).try_map(|h| -> Result<u32, ()> {
+            seen.push(h);
+            Ok(h + 100)
+        });
+        assert_eq!(got, Ok(all(100)));
+        assert_eq!(seen, [1, 2, 3, 4, 5, 6, 7, 8]);
+        let bare = ResolvedKvKernels {
+            decode_512: None,
+            splitk: None,
+            prefill: None,
+            wht: None,
+            ..all(0)
+        };
+        let mapped = bare.try_map(|h| Ok::<u32, ()>(h + 100)).unwrap();
+        assert_eq!(
+            (mapped.decode_512, mapped.splitk, mapped.prefill, mapped.wht),
+            (None, None, None, None)
+        );
+    }
+
+    /// 2026-10-18: The first failure is returned and nothing after it is mapped.
+    #[test]
+    fn try_map_stops_at_the_first_failure() {
+        let mut seen = alloc::vec::Vec::new();
+        let got = all(0).try_map(|h| {
+            seen.push(h);
+            if h == 5 { Err(h) } else { Ok(h) }
+        });
+        assert_eq!(got, Err(5));
+        assert_eq!(seen, [1, 2, 3, 4, 5]);
+    }
+}

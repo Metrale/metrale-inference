@@ -1696,6 +1696,7 @@ dependencies = [
  "metrale-gpu-runtime",
  "metrale-io-host-std",
  "metrale-kernels",
+ "metrale-kv-codec",
  "metrale-model-arch",
  "metrale-model-layers",
  "metrale-settings",

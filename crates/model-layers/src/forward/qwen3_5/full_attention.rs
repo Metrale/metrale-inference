@@ -10,6 +10,7 @@ use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelArg};
 
 use super::super::quant_weights::QuantWeights;
+use super::kv::{KvStepDims, KvStepIo};
 use super::{
     FullAttentionLayer, FullAttentionScratch, LayerKvCache, Qwen35ForwardConfig, Qwen35Kernels,
 };
@@ -144,210 +145,34 @@ pub fn forward_full_attention<Q: QuantWeights>(
     )?;
 
     // 2026-09-25: The KV append takes the post-RoPE k_norm_out.
-    let scale: f32 = 1.0 / (cfg.head_dim as f32).sqrt();
-    if kv.dtype != super::MetalKvDtype::Bf16 {
-        // 2026-09-25: Turbo formats. A quantized side is stored in the
-        // WHT-rotated basis: K is rotated before the append and Q before
-        // attention only when K is rotated; V is rotated before the append and
-        // the attention output gets the inverse WHT only when V is rotated. In
-        // the `Bf16KTurbo*V` formats K stays raw BF16, so Q stays raw too.
-        let dt = kv.dtype;
-        let hd_bytes = cfg.head_dim.to_le_bytes();
-        if dt.k_is_rotated() {
-            gpu.launch_typed(
-                k.wht,
-                [cfg.num_kv_heads, 1, 1],
-                [32, 1, 1],
-                0,
-                stream,
-                &[
-                    KernelArg::Bytes(&hd_bytes),
-                    KernelArg::Buffer(scratch.k_norm_out),
-                ],
-            )?;
-        }
-        if dt.v_is_rotated() {
-            gpu.launch_typed(
-                k.wht,
-                [cfg.num_kv_heads, 1, 1],
-                [32, 1, 1],
-                0,
-                stream,
-                &[KernelArg::Bytes(&hd_bytes), KernelArg::Buffer(scratch.v)],
-            )?;
-        }
-        let num_groups = cfg.kv_dim() / 16;
-        let append_grid = [num_groups.div_ceil(64), 1, 1];
-        // 2026-09-25: Sparse-V threshold: the turbo attention kernels skip V rows
-        // whose unnormalized weight exp(score - max) is at or below it, so 0.0 skips
-        // only zero-weight rows. METRALE_SPARSE_V_THRESHOLD sets it; unset or
-        // unparsable gives 1e-3.
-        let sparse_v: f32 = std::env::var("METRALE_SPARSE_V_THRESHOLD")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(1e-3);
-        use super::MetalKvDtype as D;
-        match dt {
-            D::Turbo8 | D::Turbo4 | D::Turbo3 | D::Turbo2 => {
-                let (kvap_turbo, attn_turbo) = match dt {
-                    D::Turbo8 => (k.kvap_turbo8, k.attn_turbo8),
-                    D::Turbo4 => (k.kvap_turbo4, k.attn_turbo4),
-                    D::Turbo3 => (k.kvap_turbo3, k.attn_turbo3),
-                    _ => (k.kvap_turbo2, k.attn_turbo2),
-                };
-                let (k_scales, v_scales) = (
-                    kv.k_scales.expect("sym turbo cache has k_scales"),
-                    kv.v_scales.expect("sym turbo cache has v_scales"),
-                );
-                gpu.launch_typed(
-                    kvap_turbo,
-                    append_grid,
-                    [64, 1, 1],
-                    0,
-                    stream,
-                    &[
-                        KernelArg::Bytes(&cfg.num_kv_heads.to_le_bytes()),
-                        KernelArg::Bytes(&cfg.head_dim.to_le_bytes()),
-                        KernelArg::Bytes(&cache_pos.to_le_bytes()),
-                        KernelArg::Buffer(scratch.k_norm_out),
-                        KernelArg::Buffer(scratch.v),
-                        KernelArg::Buffer(kv.k),
-                        KernelArg::Buffer(kv.v),
-                        KernelArg::Buffer(k_scales),
-                        KernelArg::Buffer(v_scales),
-                    ],
-                )?;
-                gpu.launch_typed(
-                    k.wht,
-                    [cfg.num_heads, 1, 1],
-                    [32, 1, 1],
-                    0,
-                    stream,
-                    &[
-                        KernelArg::Bytes(&hd_bytes),
-                        KernelArg::Buffer(scratch.q_norm_out),
-                    ],
-                )?;
-                gpu.launch_typed(
-                    attn_turbo,
-                    [cfg.num_heads, 1, 1],
-                    [32, 1, 1],
-                    0,
-                    stream,
-                    &[
-                        KernelArg::Bytes(&seq_len_attn.to_le_bytes()),
-                        KernelArg::Bytes(&cfg.num_heads.to_le_bytes()),
-                        KernelArg::Bytes(&cfg.num_kv_heads.to_le_bytes()),
-                        KernelArg::Bytes(&cfg.head_dim.to_le_bytes()),
-                        KernelArg::Bytes(&scale.to_le_bytes()),
-                        KernelArg::Bytes(&sparse_v.to_le_bytes()),
-                        KernelArg::Buffer(scratch.q_norm_out),
-                        KernelArg::Buffer(kv.k),
-                        KernelArg::Buffer(kv.v),
-                        KernelArg::Buffer(k_scales),
-                        KernelArg::Buffer(v_scales),
-                        KernelArg::Buffer(scratch.attn_out),
-                    ],
-                )?;
-            }
-            D::Bf16KTurbo4V | D::Bf16KTurbo3V | D::Bf16KTurbo2V => {
-                let (kvap_asym, attn_asym) = match dt {
-                    D::Bf16KTurbo4V => (k.kvap_bf16k_turbo4v, k.attn_bf16k_turbo4v),
-                    D::Bf16KTurbo3V => (k.kvap_bf16k_turbo3v, k.attn_bf16k_turbo3v),
-                    _ => (k.kvap_bf16k_turbo2v, k.attn_bf16k_turbo2v),
-                };
-                let v_scales = kv.v_scales.expect("asym cache has v_scales");
-                gpu.launch_typed(
-                    kvap_asym,
-                    append_grid,
-                    [64, 1, 1],
-                    0,
-                    stream,
-                    &[
-                        KernelArg::Bytes(&cfg.num_kv_heads.to_le_bytes()),
-                        KernelArg::Bytes(&cfg.head_dim.to_le_bytes()),
-                        KernelArg::Bytes(&cache_pos.to_le_bytes()),
-                        KernelArg::Buffer(scratch.k_norm_out),
-                        KernelArg::Buffer(scratch.v),
-                        KernelArg::Buffer(kv.k),
-                        KernelArg::Buffer(kv.v),
-                        KernelArg::Buffer(v_scales),
-                    ],
-                )?;
-                // 2026-09-25: K is not rotated, so Q is not rotated either.
-                gpu.launch_typed(
-                    attn_asym,
-                    [cfg.num_heads, 1, 1],
-                    [32, 1, 1],
-                    0,
-                    stream,
-                    &[
-                        KernelArg::Bytes(&seq_len_attn.to_le_bytes()),
-                        KernelArg::Bytes(&cfg.num_heads.to_le_bytes()),
-                        KernelArg::Bytes(&cfg.num_kv_heads.to_le_bytes()),
-                        KernelArg::Bytes(&cfg.head_dim.to_le_bytes()),
-                        KernelArg::Bytes(&scale.to_le_bytes()),
-                        KernelArg::Bytes(&sparse_v.to_le_bytes()),
-                        KernelArg::Buffer(scratch.q_norm_out),
-                        KernelArg::Buffer(kv.k),
-                        KernelArg::Buffer(kv.v),
-                        KernelArg::Buffer(v_scales),
-                        KernelArg::Buffer(scratch.attn_out),
-                    ],
-                )?;
-            }
-            D::Bf16 => unreachable!("outer branch excludes Bf16"),
-        }
-        if dt.v_is_rotated() {
-            gpu.launch_typed(
-                k.wht_inv,
-                [cfg.num_heads, 1, 1],
-                [32, 1, 1],
-                0,
-                stream,
-                &[
-                    KernelArg::Bytes(&hd_bytes),
-                    KernelArg::Buffer(scratch.attn_out),
-                ],
-            )?;
-        }
-    } else {
-        gpu.launch_typed(
-            k.kvap,
-            [cfg.head_dim, cfg.num_kv_heads, 1],
-            [1, 1, 1],
-            0,
-            stream,
-            &[
-                KernelArg::Bytes(&cfg.num_kv_heads.to_le_bytes()),
-                KernelArg::Bytes(&cfg.head_dim.to_le_bytes()),
-                KernelArg::Bytes(&cache_pos.to_le_bytes()),
-                KernelArg::Buffer(scratch.k_norm_out),
-                KernelArg::Buffer(scratch.v),
-                KernelArg::Buffer(kv.k),
-                KernelArg::Buffer(kv.v),
-            ],
-        )?;
-
-        gpu.launch_typed(
-            k.attn,
-            [cfg.num_heads, 1, 1],
-            [32, 1, 1],
-            0,
-            stream,
-            &[
-                KernelArg::Bytes(&seq_len_attn.to_le_bytes()),
-                KernelArg::Bytes(&cfg.num_heads.to_le_bytes()),
-                KernelArg::Bytes(&cfg.num_kv_heads.to_le_bytes()),
-                KernelArg::Bytes(&cfg.head_dim.to_le_bytes()),
-                KernelArg::Bytes(&scale.to_le_bytes()),
-                KernelArg::Buffer(scratch.q_norm_out),
-                KernelArg::Buffer(kv.k),
-                KernelArg::Buffer(kv.v),
-                KernelArg::Buffer(scratch.attn_out),
-            ],
-        )?;
-    }
+    // 2026-09-25: Sparse-V threshold: the quantized attention kernels skip V rows whose
+    // unnormalized weight exp(score - max) is at or below it, so 0.0 skips only zero-weight
+    // rows. METRALE_SPARSE_V_THRESHOLD sets it; unset or unparsable gives 1e-3.
+    let sparse_v: f32 = std::env::var("METRALE_SPARSE_V_THRESHOLD")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1e-3);
+    super::kv::append_and_attend(
+        gpu,
+        k.kv.get(kv.pair)?,
+        kv,
+        &KvStepIo {
+            q: scratch.q_norm_out,
+            k: scratch.k_norm_out,
+            v: scratch.v,
+            out: scratch.attn_out,
+        },
+        &KvStepDims {
+            num_heads: cfg.num_heads,
+            num_kv_heads: cfg.num_kv_heads,
+            head_dim: cfg.head_dim,
+            cache_pos,
+            seq_len_attn,
+            scale: 1.0 / (cfg.head_dim as f32).sqrt(),
+            sparse_v,
+        },
+        stream,
+    )?;
 
     let q_only = cfg.q_only();
     gpu.launch_typed(

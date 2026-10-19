@@ -163,13 +163,14 @@ fn main() -> Result<()> {
     let max_seq_len = prompt_len + n_decode_budget + 4;
     let scratch = alloc_full_attention_scratch(&backend)?;
     let lin_scratch = alloc_linear_attention_scratch(&backend)?;
-    // 2026-09-25: `METRALE_KV_DTYPE` picks the full-attention KV cache format, one of the
-    // `MetalKvDtype` names; unset means bf16.
-    let kv_dtype: qwen3_5::MetalKvDtype = std::env::var("METRALE_KV_DTYPE")
+    // 2026-09-25: `METRALE_KV_DTYPE` picks the full-attention KV cache format; unset means bf16.
+    // 2026-10-18: It is a KV codec pair spelling; `LayerKvCache::alloc` refuses a pair the Metal
+    // kernel table does not serve.
+    let kv_pair: metrale_kv_codec::KvPair = std::env::var("METRALE_KV_DTYPE")
         .unwrap_or_else(|_| "bf16".into())
         .parse()?;
     let kv_caches: Vec<LayerKvCache> = (0..full_attn_count)
-        .map(|_| LayerKvCache::alloc(&backend, kv_dtype, max_seq_len, CFG.kv_dim()))
+        .map(|_| LayerKvCache::alloc(&backend, kv_pair, max_seq_len, CFG.kv_dim()))
         .collect::<Result<_>>()?;
     let lin_states: Vec<LinearAttentionState> = (0..lin_attn_count)
         .map(|_| alloc_linear_attention_state(&backend))
