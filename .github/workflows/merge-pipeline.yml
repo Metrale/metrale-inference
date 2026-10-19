@@ -110,7 +110,7 @@ jobs:
       # holds checks, actions, merge_queues and pull_requests write.
       - name: Mint the certification App token
         id: apptoken
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
         with:
           client-id: ${{ vars.CERTIFICATION_APP_CLIENT_ID }}
           private-key: ${{ secrets.CERTIFICATION_APP_PRIVATE_KEY }}
@@ -157,7 +157,7 @@ jobs:
 
       - name: Mint the certification App token
         id: apptoken
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
         with:
           client-id: ${{ vars.CERTIFICATION_APP_CLIENT_ID }}
           private-key: ${{ secrets.CERTIFICATION_APP_PRIVATE_KEY }}
