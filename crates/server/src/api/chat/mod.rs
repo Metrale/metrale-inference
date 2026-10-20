@@ -189,6 +189,11 @@ pub async fn chat_completions(
             state.model_name.clone(),
             echo.include_usage,
             state.reasoning_wire(),
+            // 2026-10-20: `store: true` stores the streamed response too —
+            // the blocking path stores in `encode_chat_response`; dropping
+            // the flag here made `GET /v1/chat/completions/{id}` 404 for
+            // every streamed request that asked to be stored.
+            echo.store.then(|| state.response_store.clone()),
         ),
         ChatOutcome::Http(r) => r,
     }

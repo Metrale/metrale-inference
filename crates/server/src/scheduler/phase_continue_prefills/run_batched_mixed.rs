@@ -132,6 +132,14 @@ pub(super) fn run_batched_mixed_step(
                 );
                 completed_indices.push((i, None));
             }
+            // 2026-10-20: The decode rows are in the failed step too: their
+            // KV/SSM state may have consumed this step's position with no
+            // token sampled, so decoding on would corrupt them silently.
+            // Fail them the way a failed pure-decode readback is failed:
+            // every row gets an error frame and the batch is dropped.
+            for mut a in active.drain(..) {
+                super::super::lifecycle::send_error(&sched.io, &mut a, &format!("mixed-batch decode failed: {e:#}"));
+            }
             return;
         }
     };

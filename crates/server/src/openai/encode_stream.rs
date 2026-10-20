@@ -136,6 +136,7 @@ pub(crate) fn encode_sse_response(
     model: String,
     include_usage: bool,
     reasoning_wire: ReasoningWire,
+    store: Option<std::sync::Arc<crate::response_store::ResponseStore>>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
     use axum::response::sse::{Event, KeepAlive, Sse};
@@ -153,9 +154,21 @@ pub(crate) fn encode_sse_response(
     // 2026-09-26: Logged once, when the first delta reaches this encoder;
     // compare with `handle_token`'s first-delta log line.
     let first_event_logged = std::cell::Cell::new(false);
+    // 2026-10-20: `store: true` on a streaming request stores the assembled
+    // response, matching the blocking path: accumulate content, tool calls,
+    // finish reason and usage as the deltas go by, and insert on stream end.
+    let acc = store
+        .as_ref()
+        .map(|_| std::sync::Arc::new(std::sync::Mutex::new(StoredAccum::default())));
+    let acc_for_stream = acc.clone();
+    let stored_id = chunk_id.clone();
+    let stored_model = model.clone();
     let token_stream = deltas.flat_map(move |d| {
         if !first_event_logged.replace(true) {
             tracing::debug!("stream: first delta reaches the SSE encoder");
+        }
+        if let Some(acc) = acc_for_stream.as_ref() {
+            acc.lock().unwrap().observe(&d);
         }
         let events: Vec<Result<Event, std::convert::Infallible>> =
             delta_to_chunk_events(&d, &model, &chunk_id, include_usage, reasoning_wire)
@@ -164,10 +177,112 @@ pub(crate) fn encode_sse_response(
                 .collect();
         futures::stream::iter(events)
     });
+    let stored = acc.as_ref().map(|acc| {
+        let acc = acc.clone();
+        let id = stored_id;
+        let model = stored_model;
+        let store = store.clone().expect("store set iff accumulator set");
+        futures::stream::once(async move {
+            let body = acc.lock().unwrap().to_json(&id, &model);
+            store.insert(crate::response_store::StoredEntry {
+                id,
+                kind: crate::response_store::StoredKind::ChatCompletion,
+                model,
+                created_at: crate::ids::unix_timestamp(),
+                messages: Vec::new(),
+                body,
+                last_access: std::time::Instant::now(),
+            });
+        })
+        .map(|()| unreachable!("the store stream yields no events"))
+    });
+    let token_stream: std::pin::Pin<
+        Box<dyn futures::Stream<Item = Result<Event, std::convert::Infallible>> + Send>,
+    > = match stored {
+        Some(stored) => Box::pin(token_stream.chain(stored)),
+        None => Box::pin(token_stream),
+    };
     let full_stream = role_event.chain(token_stream).chain(done_event);
     Sse::new(full_stream)
         .keep_alive(KeepAlive::default())
         .into_response()
+}
+
+/// 2026-10-20: Accumulates a streamed response into the same
+/// `chat.completion` JSON the blocking path stores, so `GET
+/// /v1/chat/completions/{id}` answers for a streamed `store: true` request
+/// too.
+#[derive(Default)]
+struct StoredAccum {
+    content: String,
+    tool_calls: Vec<(usize, String, String, String)>, // (index, id, name, args)
+    finish: Option<String>,
+    usage: Option<crate::ir::Usage>,
+}
+
+impl StoredAccum {
+    fn observe(&mut self, d: &StreamDelta) {
+        match d {
+            StreamDelta::Content { text, .. } => self.content.push_str(text),
+            StreamDelta::ToolCallStart {
+                index,
+                id: call_id,
+                name,
+            } => self.tool_calls.push((*index, call_id.clone(), name.clone(), String::new())),
+            StreamDelta::ToolCallArgs { index, fragment, .. } => {
+                if let Some(entry) = self
+                    .tool_calls
+                    .iter_mut()
+                    .find(|(i, ..)| i == index)
+                {
+                    entry.3.push_str(fragment);
+                }
+            }
+            StreamDelta::Finish { reason, usage, .. } => {
+                self.finish = Some(reason.as_wire().to_string());
+                self.usage = Some(*usage);
+            }
+            _ => {}
+        }
+    }
+
+    fn to_json(&self, id: &str, model: &str) -> serde_json::Value {
+        let tool_calls: Vec<serde_json::Value> = self
+            .tool_calls
+            .iter()
+            .map(|(index, id, name, args)| {
+                serde_json::json!({
+                    "index": index,
+                    "id": id,
+                    "type": "function",
+                    "function": {"name": name, "arguments": args},
+                })
+            })
+            .collect();
+        let mut message = serde_json::json!({"role": "assistant"});
+        if !self.content.is_empty() {
+            message["content"] = serde_json::Value::String(self.content.clone());
+        }
+        if !self.tool_calls.is_empty() {
+            message["tool_calls"] = serde_json::Value::Array(tool_calls);
+        }
+        let mut body = serde_json::json!({
+            "id": id,
+            "object": "chat.completion",
+            "created": crate::ids::unix_timestamp(),
+            "model": model,
+            "choices": [{
+                "index": 0,
+                "message": message,
+                "finish_reason": self.finish.clone().unwrap_or_else(|| "stop".into()),
+                "logprobs": null,
+            }],
+        });
+        if let Some(u) = &self.usage {
+            body["usage"] = serde_json::to_value(Usage::from(u)).unwrap_or_default();
+        }
+        body
+    }
 }
 
 #[cfg(test)]
@@ -181,6 +296,67 @@ mod tests {
         let mut v: serde_json::Value = serde_json::from_str(payload).expect("valid chunk JSON");
         v["created"] = serde_json::json!(0);
         v
+    }
+
+    #[test]
+    fn stored_accum_builds_the_blocking_body_shape() {
+        let mut a = StoredAccum::default();
+        a.observe(&StreamDelta::Content {
+            text: "he".into(),
+            token_ids: Vec::new(),
+        });
+        a.observe(&StreamDelta::Content {
+            text: "llo".into(),
+            token_ids: Vec::new(),
+        });
+        a.observe(&StreamDelta::ToolCallStart {
+            index: 0,
+            id: "call_1".into(),
+            name: "get_weather".into(),
+        });
+        a.observe(&StreamDelta::ToolCallArgs {
+            index: 0,
+            fragment: "{\"city\":".into(),
+            token_ids: Vec::new(),
+        });
+        a.observe(&StreamDelta::Finish {
+            reason: FinishReason::ToolCalls,
+            usage: crate::ir::Usage {
+                prompt_tokens: 7,
+                completion_tokens: 4,
+                cached_prompt_tokens: 0,
+                reasoning_tokens: 0,
+                accepted_prediction_tokens: 0,
+                time_to_first_token_ms: 1.0,
+                decode_time_ms: 2.0,
+                response_tokens_per_second: 3.0,
+            },
+            token_ids: Vec::new(),
+        });
+        let v = a.to_json("chatcmpl-x", "m");
+        assert_eq!(v["object"], "chat.completion");
+        assert_eq!(v["choices"][0]["message"]["content"], "hello");
+        assert_eq!(
+            v["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"],
+            "{\"city\":"
+        );
+        assert_eq!(v["choices"][0]["finish_reason"], "tool_calls");
+        assert_eq!(v["usage"]["prompt_tokens"], 7);
+
+        // Content-only finish: no tool_calls key.
+        let mut a = StoredAccum::default();
+        a.observe(&StreamDelta::Content {
+            text: "hi".into(),
+            token_ids: Vec::new(),
+        });
+        a.observe(&StreamDelta::Finish {
+            reason: FinishReason::Stop,
+            usage: crate::ir::Usage::default(),
+            token_ids: Vec::new(),
+        });
+        let v = a.to_json("chatcmpl-x", "m");
+        assert!(v["choices"][0]["message"].get("tool_calls").is_none());
+        assert_eq!(v["choices"][0]["finish_reason"], "stop");
     }
 
     #[test]
