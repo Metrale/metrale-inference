@@ -14,6 +14,16 @@ impl SchedulerCore {
         // 2026-09-25: Deadline sweep before retirement, so a timed-out sequence retires
         // in this same tick.
         enforce_request_deadlines(&self.ctx.io, &mut self.active);
+        // 2026-10-20: Parked requests carry `timeout_at` too; nothing else
+        // checked it, so a request parked past its deadline hung forever.
+        enforce_parked_deadlines(
+            self.ctx.io.dev.model(),
+            &self.ctx.io,
+            self.ctx.io.spill.as_deref(),
+            &mut self.prefilling,
+            &mut self.swapped,
+            &mut self.preempted,
+        );
         // 2026-09-25: A finishing row releases its slot and blocks at retirement; a step
         // still running ahead may be writing them, so it settles first (its
         // row for the finished sequence is the over-run it discards).

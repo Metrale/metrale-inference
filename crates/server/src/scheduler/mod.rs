@@ -206,3 +206,4 @@ pub fn run(
 ) {
     metrale_scheduler::run(core::SchedulerCore::new(dev, request_rx, rotation_rx, cfg));
 }
+mod parked_deadline_tests;

@@ -309,5 +309,11 @@ pub(crate) async fn run_chat_stream(
         futures::stream::iter(deltas).boxed()
     });
 
-    Ok(Box::pin(token_stream))
+    // 2026-10-20: The prompt count is known before the first token, so lead
+    // the stream with it: a streaming encoder's opening event (the Anthropic
+    // `message_start`) can carry the real `input_tokens` instead of 0.
+    let prompt_head = futures::stream::iter(vec![crate::ir::StreamDelta::Prompt {
+        tokens: prompt_len,
+    }]);
+    Ok(Box::pin(prompt_head.chain(token_stream)))
 }

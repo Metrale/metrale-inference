@@ -195,7 +195,9 @@ pub(super) fn finish_first_token(
         session_hash: req_session_hash,
         last_token: first,
         output_tokens,
-        remaining: max_tokens - 1,
+        // 2026-10-20: Saturating: `max_tokens == 0` with a spontaneous think
+        // start reaches here and must not underflow into an unbounded budget.
+        remaining: max_tokens.saturating_sub(1),
         min_tokens: req_min_tokens,
         eos_tokens: eos_tokens.to_vec(),
         finished: false,

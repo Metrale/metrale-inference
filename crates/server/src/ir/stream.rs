@@ -10,6 +10,10 @@
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum StreamDelta {
+    /// 2026-10-20: Emitted first, before any content: the prompt's token
+    /// count, so a streaming encoder can report it in its opening event
+    /// (Anthropic `message_start.usage.input_tokens`) instead of 0.
+    Prompt { tokens: usize },
     /// 2026-09-26: Assistant text. `token_ids` stays empty unless the
     /// request set `return_token_ids`.
     Content { text: String, token_ids: Vec<u32> },

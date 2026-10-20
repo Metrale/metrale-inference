@@ -120,6 +120,7 @@ impl VllmDeltaShape {
                     token_ids,
                 });
             }
+            StreamDelta::Prompt { .. } => out.push(delta),
             StreamDelta::Refusal { .. } | StreamDelta::Error { .. } => out.push(delta),
         }
     }

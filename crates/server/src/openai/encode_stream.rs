@@ -43,6 +43,9 @@ fn delta_to_payloads(
     reasoning_wire: ReasoningWire,
 ) -> Vec<String> {
     match d {
+        // 2026-10-20: The OpenAI stream has no prompt-count event; the final
+        // chunk's usage carries it.
+        StreamDelta::Prompt { .. } => vec![],
         StreamDelta::Content { text, token_ids } => vec![chunk_json(
             ChatCompletionChunk::content_chunk(model, id, text.clone())
                 .with_token_ids(token_ids.clone()),
