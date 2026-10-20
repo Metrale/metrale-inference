@@ -38,6 +38,7 @@ mod spec_mixing;
 use metrale_model_engine::traits::Model;
 
 use super::phase_promote_prefills::promote_completed_prefills;
+use super::lifecycle::send_error_to_sink;
 use super::types::{ActiveSeq, PrefillInProgress};
 use super::{FirstTokenPolicy, sample_first_token};
 use crate::scheduling_policy::{ActiveSeqTiming, SchedulingPolicy};
@@ -281,9 +282,20 @@ pub(super) fn continue_in_progress_prefills(
         // longer than one chunk that has not started chunking. It runs the
         // whole prompt in one call with no decode fused, so under
         // `always_mixed` it runs only when no decode is active.
-        let use_twophase = (!always_mixed || active.is_empty())
+        // 2026-10-19: Off on a multi-rank serve: `prefill_twophase` falls back
+        // to a chunked loop that calls `prefill_chunk` without the
+        // `0xFFFFFFF0` head/worker handshake the worker's command loop is
+        // parked on, desynchronizing the wire (a 62k-token prompt alongside a
+        // concurrent one left the workers waiting and every later request
+        // unserved). The chunked path below performs the handshake per chunk.
+        let use_twophase = !model.is_ep()
+            && (!always_mixed || active.is_empty())
             && p.chunk_offset == 0
             && p.prompt_tokens.len() > max_prefill_tokens;
+        // 2026-10-19: A failed two-phase prefill consumed this tick's
+        // single-stream slot: the request got its error frame and is
+        // dropped below, so the chunked loop must not run it again.
+        let mut twophase_failed = false;
         if use_twophase {
             tracing::info!(
                 "Two-phase prefill: {} tokens, chunk_size={}",
@@ -334,14 +346,39 @@ pub(super) fn continue_in_progress_prefills(
                     }
                 }
                 Err(e) => {
-                    tracing::warn!("Two-phase prefill failed, falling back to chunked: {e:#}");
+                    // 2026-10-19: A failed two-phase prefill fails the request,
+                    // not "fallback to chunked": the failure is usually a
+                    // poisoned multi-rank communicator, and continuing would
+                    // accept requests the engine can never answer (clients
+                    // hung for hours after one 62k prompt poisoned the NCCL
+                    // communicator). Send the error frame and drop the
+                    // prefill (`completed_indices` makes
+                    // `promote_completed_prefills` free the sequence), then
+                    // request shutdown when the communicator reports
+                    // unhealthy — the same drain the CUDA fault latch uses.
+                    tracing::error!("Two-phase prefill failed: {e:#}");
+                    let msg = format!("two-phase prefill failed: {e:#}");
+                    send_error_to_sink(&sched.io, &mut p.sink, &msg);
+                    completed_indices.push((idx, None));
+                    twophase_failed = true;
+                    if !model.is_healthy() {
+                        // 2026-10-19: `request` takes a `&'static str`; the
+                        // formatted error is in the log line above.
+                        tracing::error!(
+                            "Communicator unhealthy after two-phase prefill failure — \
+                             requesting shutdown"
+                        );
+                        crate::tui::shutdown::request(
+                            "communicator unhealthy after a two-phase prefill failure",
+                        );
+                    }
                 }
             }
         }
 
         // 2026-09-25: Standard chunked prefill (also used as fallback if
         // two-phase fails).
-        if p.chunk_offset < p.prompt_tokens.len() {
+        if !twophase_failed && p.chunk_offset < p.prompt_tokens.len() {
             run_standard_chunk_loop(
                 model,
                 p,

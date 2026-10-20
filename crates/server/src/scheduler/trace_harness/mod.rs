@@ -39,4 +39,5 @@ mod scenarios;
 mod scripted_tests;
 mod shared_lookup_tests;
 mod telemetry_tests;
+mod twophase_fail_tests;
 mod tests;

@@ -21,6 +21,13 @@ impl ModelEp for TransformerModel {
         self.is_ep_dispatch()
     }
 
+    fn is_healthy(&self) -> bool {
+        match self.comm.as_ref() {
+            Some(comm) => comm.is_healthy(),
+            None => true,
+        }
+    }
+
     fn ep_prefill_batch_rows(&self) -> Option<usize> {
         self.prefill_spans_rows_dispatch()
     }

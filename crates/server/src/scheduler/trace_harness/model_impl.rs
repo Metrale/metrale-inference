@@ -442,6 +442,7 @@ impl ModelVision for RecordingModel {
 impl ModelEp for RecordingModel {
     facts! {
         fn is_ep(&self) -> bool = self.cfg.ep;
+        fn is_healthy(&self) -> bool = self.cfg.healthy;
         fn ep_prefill_batch_rows(&self) -> Option<usize> = self.cfg.ep_prefill_batch;
         fn ep_protocol_v2(&self) -> bool = false;
         fn k2_fused_wire(&self) -> bool = self.cfg.k2_fused_wire;

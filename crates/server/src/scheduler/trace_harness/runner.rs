@@ -291,6 +291,9 @@ fn run_scenario_inner(sc: &Scenario, build: DeviceBuilder) -> Vec<String> {
     levers.mtp_gate_force = opts.mtp_gate_force;
     levers.prefill_codispatch = opts.prefill_codispatch;
     levers.ep_prefill_batch = opts.ep_prefill_batch;
+    levers.holo_always_mixed = opts.holo_always_mixed;
+    levers.prefill_varlen = opts.prefill_varlen;
+    levers.bisect_q12_disable = opts.bisect_q12_disable;
     levers.dflash_seam_serial = opts.dflash_seam_serial;
     let levers = Arc::new(levers);
     levers.set_loop_watchdog(opts.loop_watchdog);

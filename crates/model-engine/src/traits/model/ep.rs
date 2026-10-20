@@ -36,6 +36,14 @@ pub trait ModelEp {
         false
     }
 
+    /// 2026-10-19: Whether the rank's communicator is still usable. `false` after a transport
+    /// error or a completion timeout, until a reconnect: the scheduler then fails the request
+    /// instead of falling back, and stops serving (every later request would fail the same
+    /// way). Default `true` (a single-GPU model has no communicator to lose).
+    fn is_healthy(&self) -> bool {
+        true
+    }
+
     /// 2026-10-09: `Some(rows)` when `prefill_batch_chunk` can run on this multi-rank serve,
     /// `rows` being the prompt rows one batched prefill step should carry; the scheduler batches
     /// prefills under the multi-rank protocol only then (and with its lever on). Default `None`.

@@ -60,6 +60,8 @@ pub(super) struct ModelCfg {
     pub can_batch_verify: bool,
     /// 2026-10-09: The `is_ep` fact: a multi-rank serve, whose steps announce their work.
     pub ep: bool,
+    /// 2026-10-19: The `is_healthy` fact: a poisoned communicator on a multi-rank serve.
+    pub healthy: bool,
     /// 2026-10-11: The `k2_fused_wire` fact: K=2 steps announce in one block and fold the
     /// propose into the verdict.
     pub k2_fused_wire: bool,
@@ -109,6 +111,7 @@ impl Default for ModelCfg {
             twophase_ok: false,
             can_batch_verify: true,
             ep: false,
+            healthy: true,
             k2_fused_wire: false,
             ep_prefill_batch: None,
             slot_draft_capacity: 8,

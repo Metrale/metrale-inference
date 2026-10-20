@@ -25,6 +25,11 @@ pub(super) struct RunOptions {
     /// 2026-10-09: The `--prefill-codispatch` and `METRALE_EP_PREFILL_BATCH` levers.
     pub prefill_codispatch: bool,
     pub ep_prefill_batch: bool,
+    /// 2026-10-19: The `METRALE_HOLO_ALWAYS_MIXED` lever.
+    pub holo_always_mixed: bool,
+    /// 2026-10-19: The `METRALE_PREFILL_VARLEN` and `METRALE_BISECT_Q12_DISABLE` levers.
+    pub prefill_varlen: bool,
+    pub bisect_q12_disable: bool,
     pub loop_watchdog: bool,
     /// 2026-09-25: Token ids the watchdog rollback treats as boundaries.
     pub boundary_tokens: Vec<u32>,
@@ -69,6 +74,9 @@ impl Default for RunOptions {
             mtp_gate_force: true,
             prefill_codispatch: false,
             ep_prefill_batch: false,
+            holo_always_mixed: false,
+            prefill_varlen: false,
+            bisect_q12_disable: false,
             loop_watchdog: false,
             boundary_tokens: Vec::new(),
             think_end_token: None,
