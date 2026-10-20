@@ -259,13 +259,13 @@ pub fn prefill_request(
             model.prepare_vision_embed(&image_pixels)?;
         }
 
-        model.ep_broadcast_cmd_for_seq(seq.slot_idx as u32, 0xFFFFFFF0)?;
+        model.ep_broadcast_cmd_for_seq(seq.slot_idx as u32, metrale_model_layers::ep_wire::EP_CMD_PREFILL_CHUNK)?;
         model.ep_broadcast_cmd(prompt_tokens.len() as u32)?;
         model.ep_broadcast_cmd(0)?;
         model.ep_broadcast_cmd(prompt_tokens.len() as u32)?;
         model.ep_broadcast_tokens(&prompt_tokens)?;
         // 2026-09-25: The worker makes the matching call in its
-        // `0xFFFFFFF0` handler.
+        // `EP_CMD_PREFILL_CHUNK` handler.
         model.ep_sync_vision_embeds(&prompt_tokens)?;
 
         let logits = model.prefill(&prompt_tokens, &mut seq, 0)?;
@@ -300,7 +300,7 @@ pub fn prefill_request(
                     "prefill_b_step: free_sequence (after prefill error): {free_err:#}"
                 );
             }
-            if let Err(bcast_err) = model.ep_broadcast_cmd_for_seq(seq.slot_idx as u32, 0xFFFFFFF1)
+            if let Err(bcast_err) = model.ep_broadcast_cmd_for_seq(seq.slot_idx as u32, metrale_model_layers::ep_wire::EP_CMD_ALLOC_SLOT)
             {
                 tracing::error!(
                     "prefill_b_step: ep_broadcast (after prefill error): {bcast_err:#}"

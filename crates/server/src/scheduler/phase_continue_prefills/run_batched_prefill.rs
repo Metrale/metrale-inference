@@ -13,6 +13,7 @@ use metrale_gpu_runtime::gpu::DevicePtr;
 use metrale_model_engine::traits::{Model, PrefillSlice};
 
 use super::super::types::PrefillInProgress;
+use super::super::lifecycle::send_error_to_sink;
 use super::super::{FirstTokenPolicy, sample_first_token};
 use super::prefill_waves::{WaveGeom, plan_prefill_waves};
 
@@ -167,8 +168,17 @@ pub(super) fn run_batched_prefill_step(
                 );
                 // 2026-09-25: Fail only this wave's streams (freed in
                 // `promote_completed_prefills`). Later waves have not
-                // advanced and retry next tick.
+                // advanced and retry next tick. 2026-10-20: the client gets
+                // an error frame before the `(i, None)` frees the sequence
+                // (`promote_completed_prefills` drops the sink without a
+                // frame).
+                drop(slices);
                 for &i in &wave {
+                    send_error_to_sink(
+                        &sched.io,
+                        &mut prefilling[i].sink,
+                        &format!("batched prefill failed: {e:#}"),
+                    );
                     completed_indices.push((i, None));
                 }
                 return;
@@ -201,7 +211,12 @@ pub(super) fn run_batched_prefill_step(
             let logits = logits_per_stream[k];
             if logits == DevicePtr::NULL {
                 tracing::error!(
-                    "Batched prefill: stream {i} marked is_last but model returned NULL logits",
+                    "Batched prefill: stream {i} marked is_last but model returned NULL logits"
+                );
+                send_error_to_sink(
+                    &sched.io,
+                    &mut p.sink,
+                    "batched prefill: model returned no logits",
                 );
                 completed_indices.push((i, None));
                 continue;
@@ -238,6 +253,11 @@ pub(super) fn run_batched_prefill_step(
                 }
                 Err(e) => {
                     tracing::error!("Batched prefill[{i}] sampling: {e:#}");
+                    send_error_to_sink(
+                        &sched.io,
+                        &mut p.sink,
+                        &format!("prefill sampling failed: {e:#}"),
+                    );
                     completed_indices.push((i, None));
                 }
             }

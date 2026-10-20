@@ -94,7 +94,7 @@ pub(super) fn finish_first_chunk(
                     );
                 }
                 if let Err(bcast_err) =
-                    model.ep_broadcast_cmd_for_seq(seq.slot_idx as u32, 0xFFFFFFF1)
+                    model.ep_broadcast_cmd_for_seq(seq.slot_idx as u32, metrale_model_layers::ep_wire::EP_CMD_ALLOC_SLOT)
                 {
                     tracing::error!(target: "met::scheduler::prefill_a_step", "prefill_a_step: ep_broadcast (after sample error): {bcast_err:#}"
                     );

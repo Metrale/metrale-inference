@@ -341,6 +341,11 @@ pub(super) fn continue_in_progress_prefills(
                         }
                         Err(e) => {
                             tracing::error!("Two-phase prefill sampling: {e:#}");
+                            send_error_to_sink(
+                                &sched.io,
+                                &mut p.sink,
+                                &format!("prefill sampling failed: {e:#}"),
+                            );
                             completed_indices.push((idx, None));
                         }
                     }

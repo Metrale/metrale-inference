@@ -6,14 +6,15 @@
 //!
 //! Owner: scheduler.
 //! Invariants:
-//! - A failed EP broadcast, forward or first-token sample pushes
-//!   `(idx, None)` to `completed_indices`.
+//! - A failed EP broadcast, forward or first-token sample sends the client
+//!   an error frame and pushes `(idx, None)` to `completed_indices`
+//!   (`promote_completed_prefills` frees the sequence without a frame).
 
 use anyhow::Result;
 use metrale_model_engine::traits::{Model, SequenceState};
 
 use super::super::decode_logits_step::process_decode_logits;
-use super::super::lifecycle::send_error;
+use super::super::lifecycle::{send_error, send_error_to_sink};
 use super::super::types::{ActiveSeq, PrefillInProgress};
 use super::super::{FirstTokenPolicy, sample_first_token};
 
@@ -181,6 +182,11 @@ pub(super) fn run_standard_chunk_loop(
                         }
                         Err(e) => {
                             tracing::error!("Mixed prefill sampling: {e:#}");
+                            send_error_to_sink(
+                                &sched.io,
+                                &mut p.sink,
+                                &format!("prefill sampling failed: {e:#}"),
+                            );
                             completed_indices.push((idx, None));
                         }
                     }
@@ -214,6 +220,11 @@ pub(super) fn run_standard_chunk_loop(
             }
             Err(e) => {
                 tracing::error!("Mixed forward error: {e:#}");
+                send_error_to_sink(
+                    &sched.io,
+                    &mut p.sink,
+                    &format!("prefill failed: {e:#}"),
+                );
                 completed_indices.push((idx, None));
             }
         }
@@ -223,19 +234,20 @@ pub(super) fn run_standard_chunk_loop(
     // 2026-09-25: Plain prefill chunk; decode runs separately. Under EP the
     // chunk is first broadcast to the worker.
     let ep_ok = (|| -> Result<()> {
-        model.ep_broadcast_cmd_for_seq(p.seq.slot_idx as u32, 0xFFFFFFF0)?;
+        model.ep_broadcast_cmd_for_seq(p.seq.slot_idx as u32, metrale_model_layers::ep_wire::EP_CMD_PREFILL_CHUNK)?;
         model.ep_broadcast_cmd(chunk_len as u32)?;
         model.ep_broadcast_cmd(p.chunk_offset as u32)?;
         model.ep_broadcast_cmd(p.prompt_tokens.len() as u32)?;
         model.ep_broadcast_tokens(&p.prompt_tokens)?;
-        // 2026-09-25: Every `0xFFFFFFF0` broadcast must be followed by this
-        // call: the worker runs the matching collective in its `0xFFFFFFF0`
+        // 2026-09-25: Every `EP_CMD_PREFILL_CHUNK` broadcast must be followed by this
+        // call: the worker runs the matching collective in its `EP_CMD_PREFILL_CHUNK`
         // handler (`Model::ep_sync_vision_embeds`).
         model.ep_sync_vision_embeds(&p.prompt_tokens)?;
         Ok(())
     })();
     if let Err(e) = ep_ok {
         tracing::error!("EP broadcast chunk: {e:#}");
+        send_error_to_sink(&sched.io, &mut p.sink, &format!("prefill failed: {e:#}"));
         completed_indices.push((idx, None));
         return;
     }
@@ -333,6 +345,11 @@ pub(super) fn run_standard_chunk_loop(
                     }
                     Err(e) => {
                         tracing::error!("Chunked prefill argmax: {e:#}");
+                        send_error_to_sink(
+                            &sched.io,
+                            &mut p.sink,
+                            &format!("prefill sampling failed: {e:#}"),
+                        );
                         completed_indices.push((idx, None));
                     }
                 }
@@ -340,6 +357,7 @@ pub(super) fn run_standard_chunk_loop(
         }
         Err(e) => {
             tracing::error!("Prefill chunk error: {e:#}");
+            send_error_to_sink(&sched.io, &mut p.sink, &format!("prefill failed: {e:#}"));
             completed_indices.push((idx, None));
         }
     }

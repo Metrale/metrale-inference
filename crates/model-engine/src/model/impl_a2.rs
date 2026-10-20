@@ -143,10 +143,10 @@ impl TransformerModel {
     ///
     /// Command codes:
     /// - 0xFFFFFFE0: batched decode → `N`, `seq_ids[N]`, `tokens[N]`
-    /// - 0xFFFFFFF0: prefill chunk → chunk_len, chunk_start, full_len, then
+    /// - `EP_CMD_PREFILL_CHUNK`: prefill chunk → chunk_len, chunk_start, full_len, then
     ///   full_len tokens, then, only when the model has a vision tower, the
     ///   merged vision-row count and that many rows when it is non-zero
-    /// - 0xFFFFFFF1: alloc slot (frees any prior occupant, then allocates)
+    /// - `EP_CMD_ALLOC_SLOT`: alloc slot (frees any prior occupant, then allocates)
     /// - 0xFFFFFFF2/3/4: verify K=2/3/4 → K tokens, then the accept count
     /// - 0xFFFFFFFC (`EP_CMD_VERIFY_K2_FUSED`): fused K=2 verify, the tokens in the v3 block,
     ///   then a verdict that may start a propose (`speculative/k2_wire.rs`)
@@ -185,7 +185,7 @@ impl TransformerModel {
         // 2026-10-10: Each command starts unarmed; only its own block arms the device argmax.
         self.device_argmax.disarm();
         // 2026-09-25: Shutdown applies to the whole worker; seq_id is ignored.
-        if cmd == 0xFFFFFFFF {
+        if cmd == metrale_model_layers::ep_wire::EP_CMD_SHUTDOWN {
             return Ok(false);
         }
 
@@ -236,7 +236,7 @@ impl TransformerModel {
         // fresh sequence. Under v2 its SSM-pool slot must equal `slot_idx`:
         // both ranks pop the same free list in the same order, and a mismatch
         // is an error rather than a silent KV mix-up.
-        if cmd == 0xFFFFFFF1 {
+        if cmd == metrale_model_layers::ep_wire::EP_CMD_ALLOC_SLOT {
             if let Some(mut old) = slots[slot_idx].take() {
                 self.free_sequence(&mut old)?;
             }
@@ -282,7 +282,7 @@ impl TransformerModel {
         let stream = self.gpu.default_stream();
 
         match cmd {
-            0xFFFFFFF0 => {
+            metrale_model_layers::ep_wire::EP_CMD_PREFILL_CHUNK => {
                 // 2026-09-25: Prefill chunk: chunk_len, chunk_start, the full prompt
                 // length, then every prompt token in one bulk broadcast.
                 let chunk_len = self.ep_broadcast_u32(0)? as usize;

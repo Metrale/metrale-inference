@@ -38,6 +38,16 @@ pub const FLAG_DEVICE_ARGMAX: u32 = 1;
 /// 2026-10-10: "No id" in a row mask.
 pub const NO_MASK: u32 = u32::MAX;
 
+/// 2026-10-20: Prefill chunk → chunk_len, chunk_start, full_len, then the
+/// full prompt tokens and (with a vision tower) the merged vision rows.
+pub const EP_CMD_PREFILL_CHUNK: u32 = 0xFFFF_FFF0;
+
+/// 2026-10-20: Alloc slot: free the slot's prior occupant, then allocate.
+pub const EP_CMD_ALLOC_SLOT: u32 = 0xFFFF_FFF1;
+
+/// 2026-10-20: Shutdown (the `seq_id` is ignored).
+pub const EP_CMD_SHUTDOWN: u32 = 0xFFFF_FFFF;
+
 /// 2026-10-10: The fields of a received block.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CmdBlock {

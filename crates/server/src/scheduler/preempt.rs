@@ -210,24 +210,41 @@ pub(super) fn resume_preempted_seq(
     // 2026-09-25: The same EP prefill preamble as `prefill_b_step`, so an
     // EP worker runs the re-prefill too.
     let prefill_result = (|| -> Result<()> {
-        model.ep_broadcast_cmd_for_seq(seq.slot_idx as u32, 0xFFFFFFF0)?;
+        model.ep_broadcast_cmd_for_seq(seq.slot_idx as u32, metrale_model_layers::ep_wire::EP_CMD_PREFILL_CHUNK)?;
         model.ep_broadcast_cmd(tokens.len() as u32)?;
         model.ep_broadcast_cmd(0)?;
         model.ep_broadcast_cmd(tokens.len() as u32)?;
         model.ep_broadcast_tokens(&tokens)?;
         // 2026-09-25: The worker makes the matching call in its
-        // `0xFFFFFFF0` handler, so it must run here too.
+        // `EP_CMD_PREFILL_CHUNK` handler, so it must run here too.
         model.ep_sync_vision_embeds(&tokens)?;
         model.prefill(&tokens, &mut seq, 0)?;
         Ok(())
     })();
     if let Err(e) = prefill_result {
+        let slot_idx = seq.slot_idx;
         a.seq = seq;
         send_error(
             io,
             &mut a,
             &format!("preempt-resume re-prefill failed: {e:#}"),
         );
+        // 2026-10-20: Mirror `prefill_b_step`: free the device sequence and
+        // tell the worker to free+realloc its slot, so a failed re-prefill
+        // does not strand the worker's slot on a sequence the master freed.
+        if let Err(free_err) = model.free_sequence(&mut a.seq) {
+            tracing::error!(
+                "resume_preempted_seq: free_sequence (after re-prefill error): {free_err:#}"
+            );
+        }
+        if let Err(bcast_err) = model.ep_broadcast_cmd_for_seq(
+            slot_idx as u32,
+            metrale_model_layers::ep_wire::EP_CMD_ALLOC_SLOT,
+        ) {
+            tracing::error!(
+                "resume_preempted_seq: ep_broadcast (after re-prefill error): {bcast_err:#}"
+            );
+        }
         return Err(e);
     }
     // 2026-09-25: `seq.prompt_len` stays as prefill set it: the whole

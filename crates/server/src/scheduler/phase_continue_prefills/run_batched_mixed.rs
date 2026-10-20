@@ -14,6 +14,7 @@ use metrale_model_engine::traits::{Model, PrefillSlice, SequenceState};
 use std::time::Instant;
 
 use super::super::decode_logits_step::process_decode_logits;
+use super::super::lifecycle::send_error_to_sink;
 use super::super::types::{ActiveSeq, PrefillInProgress};
 use super::super::{FirstTokenPolicy, sample_first_token};
 
@@ -121,6 +122,14 @@ pub(super) fn run_batched_mixed_step(
                 "Mixed-batch forward error (n_decode={n_decode}, n_prefill={n_prefill}): {e:#}",
             );
             for i in 0..n_prefill {
+                // 2026-10-20: The client gets an error frame before the
+                // `(i, None)` frees the sequence (`promote_completed_prefills`
+                // drops the sink without a frame).
+                send_error_to_sink(
+                    &sched.io,
+                    &mut prefilling[i].sink,
+                    &format!("mixed-batch prefill failed: {e:#}"),
+                );
                 completed_indices.push((i, None));
             }
             return;
@@ -178,6 +187,11 @@ pub(super) fn run_batched_mixed_step(
             }
             Err(e) => {
                 tracing::error!("Mixed-batch prefill[{i}] sampling: {e:#}");
+                send_error_to_sink(
+                    &sched.io,
+                    &mut p.sink,
+                    &format!("prefill sampling failed: {e:#}"),
+                );
                 completed_indices.push((i, None));
             }
         }
