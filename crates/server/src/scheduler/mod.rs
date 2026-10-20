@@ -30,6 +30,8 @@ pub(crate) mod io;
 mod lifecycle;
 #[cfg(test)]
 mod lifecycle_tests;
+#[cfg(test)]
+mod parked_deadline_tests;
 mod logit_dump;
 mod logit_processors;
 mod logprobs;
@@ -206,4 +208,3 @@ pub fn run(
 ) {
     metrale_scheduler::run(core::SchedulerCore::new(dev, request_rx, rotation_rx, cfg));
 }
-mod parked_deadline_tests;

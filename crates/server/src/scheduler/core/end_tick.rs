@@ -30,6 +30,18 @@ impl SchedulerCore {
         if self.pipeline.has_inflight() && self.active.iter().any(|a| a.finished) {
             self.drain_pipeline();
         }
+        // 2026-10-20: Swap-in and preempt-resume below append rows to
+        // `active`; a step held in flight was launched against the
+        // pre-append batch, and its settle asserts the batch it was launched
+        // with. When an append is actually pending, settle the held step
+        // now, so the append lands on an empty pipeline. When nothing is
+        // parked the pipeline stays held: launch-ahead needs the in-flight
+        // step to feed from.
+        if self.pipeline.has_inflight()
+            && (!self.swapped.is_empty() || !self.preempted.is_empty())
+        {
+            self.drain_pipeline();
+        }
         let Self {
             ctx: sched,
             active,
