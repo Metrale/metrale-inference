@@ -91,6 +91,9 @@ example = [
     { name = "glm5next_hc_pre_c1_gate", required-features = ["cuda", "gpu-examples"] },
     { name = "glm5next_kda_gates_rows_gate", required-features = ["cuda", "gpu-examples"] },
     { name = "glm5next_batchm_few_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "pdl_capture_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "pdl_chain_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "pdl_chain_bench", required-features = ["cuda", "gpu-examples"] },
     { name = "glm5next_hc_post_sum_gate", required-features = ["cuda", "gpu-examples"] },
     { name = "bf16_world2_sum_gate", required-features = ["cuda", "gpu-examples"] },
     { name = "glm5next_hc_post_vec_gate", required-features = ["cuda", "gpu-examples"] },
@@ -211,7 +214,7 @@ autobenches = false
 
 [features]
 default = ["cuda"]
-cuda = ["metrale-model-arch/cuda"]
+cuda = ["metrale-model-arch/cuda", "dep:cudarc"]
 metal = ["metrale-model-arch/metal"]
 metal-example = ["metal", "dep:tokenizers", "dep:memmap2", "dep:safetensors"]
 gpu-examples = []
@@ -229,6 +232,8 @@ metrale-model-layers = { workspace = true }
 metrale-settings = { workspace = true }
 metrale-io-host-std = { workspace = true }
 metrale-kv-codec = { workspace = true }
+# 2026-10-21: The driver graph queries of `pdl_capture_gate` (edge types of a captured graph).
+cudarc = { workspace = true, features = ["std", "driver", "fallback-dynamic-loading", "cuda-version-from-build-system"], optional = true }
 anyhow = { workspace = true, features = ["std"] }
 half = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std", "preserve_order"] }

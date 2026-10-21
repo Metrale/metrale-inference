@@ -38,14 +38,17 @@
 //   K % 128 == 0 (whole k128 chunks; a tail is not read), K <= 32768. Activations as
 //   w4a4_quant_rows writes them (fragment order), row stride K / 2 bytes, K / 16 scales.
 //   2026-10-10: The `_k64` twins: K % 64 == 0, activation rows at round_up(K, 128).
+// - 2026-10-21: PDL: the static quantizers and the sweeps call pdl_enter() before any global access.
 #ifndef METRALE_NO_WARP_BLOCKSCALE_MMA
 
 #include "w4a4_mx_core.cuh"
+#include "pdl.cuh"
 
 extern "C" __global__ __launch_bounds__(256) void w4a4_quant_rows_static(
     const __nv_bfloat16* __restrict__ A, unsigned char* __restrict__ Aq,
     unsigned char* __restrict__ As, float* __restrict__ Ag, unsigned int K, float gs)
 {
+    pdl_enter();
     w4a4_quant_rows_impl<true>(A, Aq, As, Ag, K, gs);
 }
 
@@ -53,6 +56,7 @@ extern "C" __global__ __launch_bounds__(256) void w4a4_quant_rows_static_k64(
     const __nv_bfloat16* __restrict__ A, unsigned char* __restrict__ Aq,
     unsigned char* __restrict__ As, float* __restrict__ Ag, unsigned int K, float gs)
 {
+    pdl_enter();
     w4a4_quant_rows_impl<true, true>(A, Aq, As, Ag, K, gs);
 }
 
@@ -227,6 +231,9 @@ __device__ __forceinline__ void w4a4_moe_union_sweep(
     if (T > W4A4_WARPS * 32u || rows > 8u * MB || nproj == 0u || nproj > 2u ||
         num_experts > 0x10000u || (OWN && (rows != 1u || (N & 7u) != 0u)))
         return;
+    // 2026-10-21: PDL (pdl.cuh): every load below follows the routing (u_eid, the predecessor's
+    // output), so the whole body waits.
+    pdl_enter();
     __shared__ int s_live[W4A4_WARPS * 32];
     // 2026-10-10: Per live entry e and projection p: packed and scale bases, weight_scale_2.
     __shared__ unsigned long long s_q[2][W4A4_WARPS * 32], s_s[2][W4A4_WARPS * 32];

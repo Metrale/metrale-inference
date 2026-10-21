@@ -23,6 +23,7 @@
 
 #include <cuda_bf16.h>
 #include <cuda_fp8.h>
+#include "pdl.cuh"
 
 // 2026-09-25: Software E4M3 decode for the SCALE and HIP builds: exponent 0 is subnormal
 // (m * 2^-9), and the NaN code (exponent 15, mantissa 7) decodes to 0. CUDA builds use the
@@ -2212,6 +2213,8 @@ extern "C" __global__ void glm5next_moe_row_union(
     unsigned int rows,
     unsigned int top_k
 ) {
+    // 2026-10-21: PDL (pdl.cuh): every input is another kernel's output.
+    pdl_enter();
     // 2026-10-09: T <= blockDim.x <= MOE_ROW_UNION_MAX_THREADS (the launch contract above).
     __shared__ int s_ids[MOE_ROW_UNION_MAX_THREADS];
     __shared__ int s_first[MOE_ROW_UNION_MAX_THREADS];

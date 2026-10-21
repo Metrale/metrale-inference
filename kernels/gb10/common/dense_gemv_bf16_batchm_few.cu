@@ -26,6 +26,7 @@
 //   (the host sends only those).
 
 #include <cuda_bf16.h>
+#include "pdl.cuh"
 
 namespace bmfew {
 
@@ -77,14 +78,24 @@ __device__ __forceinline__ void few_body(
     for (int t = 0; t < MM; t++) acc[t] = 0.0f;
 
     const unsigned int K_VEC = K / VEC;
-    if (active) {
-        const uint4* B_vec = (const uint4*)(B + (unsigned long long)n * K);
-        for (unsigned int s0 = 0; s0 * TPO < K_VEC; s0 += FEW_PF) {
-            uint4 b[FEW_PF];
+    // 2026-10-21: PDL (pdl.cuh): the first FEW_PF slabs of B (the weight) are loaded before the
+    // wait; A and every store after it. Same loads, same values.
+    const uint4* B_vec = (const uint4*)(B + (unsigned long long)(active ? n : 0u) * K);
+    uint4 b[FEW_PF];
 #pragma unroll
-            for (int p = 0; p < FEW_PF; p++) {
-                const unsigned int kv = (s0 + p) * TPO + lane;
-                b[p] = kv < K_VEC ? B_vec[kv] : make_uint4(0u, 0u, 0u, 0u);
+    for (int p = 0; p < FEW_PF; p++) {
+        const unsigned int kv = (unsigned int)p * TPO + lane;
+        b[p] = active && kv < K_VEC ? B_vec[kv] : make_uint4(0u, 0u, 0u, 0u);
+    }
+    pdl_enter();
+    if (active) {
+        for (unsigned int s0 = 0; s0 * TPO < K_VEC; s0 += FEW_PF) {
+            if (s0 != 0) {
+#pragma unroll
+                for (int p = 0; p < FEW_PF; p++) {
+                    const unsigned int kv = (s0 + p) * TPO + lane;
+                    b[p] = kv < K_VEC ? B_vec[kv] : make_uint4(0u, 0u, 0u, 0u);
+                }
             }
 #pragma unroll
             for (int p = 0; p < FEW_PF; p++) {

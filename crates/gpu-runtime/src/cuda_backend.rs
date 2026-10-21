@@ -26,6 +26,7 @@ mod gpu_impl_graph;
 #[cfg(not(metrale_scale))]
 mod graph_hoist_cu;
 mod n_tile;
+mod pdl;
 mod redzone;
 pub mod tensormap;
 pub(crate) use redzone::{ALLOC_SEQ, RedZone};
@@ -118,6 +119,8 @@ pub struct MetraleCudaBackend {
     /// 2026-09-25: This model's kernel handles and op scratch, dropped with
     /// the backend.
     op_cache: crate::op_cache::OpCache,
+    /// 2026-10-21: Which launches are programmatic (`pdl.rs`).
+    pdl: pdl::ProgrammaticLaunches,
     /// 2026-09-25: Every device allocation `alloc` and `alloc_managed` made
     /// and nobody freed, keyed by pointer, with its size and allocating call
     /// site (`AllocRecord`).
@@ -204,6 +207,7 @@ impl MetraleCudaBackend {
             registry,
             device: device.clone(),
             op_cache: crate::op_cache::OpCache::new(),
+            pdl: pdl::ProgrammaticLaunches::default(),
             default_stream,
             cuda_ctx,
         })

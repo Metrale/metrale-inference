@@ -275,6 +275,7 @@ extern "C" __global__ void kda_recurrent_decode_bf16_smem(
 // the row. The launcher must pass exactly KDA_ROWS_MAX state arguments.
 #define KDA_ROWS_MAX 16
 #include "rows_pick.cuh"
+#include "pdl.cuh"
 extern "C" __global__ void kda_recurrent_decode_bf16_smem_rows(
     const __nv_bfloat16* __restrict__ q,
     const __nv_bfloat16* __restrict__ k,
@@ -528,6 +529,8 @@ extern "C" __global__ void kda_recurrent_decode_bf16_seq_reg_snap(
     float* __restrict__ snap2,
     unsigned int n_snap
 ) {
+    // 2026-10-21: PDL (pdl.cuh): every input is another kernel's output.
+    pdl_enter();
     constexpr unsigned int D = KDA_REG_D;
     const unsigned int h = blockIdx.x;
     if (h >= H) return;

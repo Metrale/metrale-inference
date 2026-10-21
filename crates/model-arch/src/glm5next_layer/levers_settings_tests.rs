@@ -22,6 +22,8 @@ fn from_values(mut value: impl FnMut(&str) -> Option<String>) -> GlmLevers {
     let dsa_ws_shared = value("METRALE_GLM_DSA_WS_SHARED").as_deref() != Some("0");
     let mlp_ws_shared = value("METRALE_GLM_MLP_WS_SHARED").as_deref() != Some("0");
     let dsa_select_rows = value("METRALE_DSA_SELECT_ROWS").as_deref() != Some("0");
+    // 2026-10-21: No reader preceded it; written as the opt-out readers above are.
+    let pdl = value("METRALE_GLM_PDL").as_deref() != Some("0");
     let dsa_verify_select_once =
         value("METRALE_GLM_DSA_VERIFY_SELECT_ONCE").as_deref() != Some("0");
     let prefill_rows = value("METRALE_GLM_PREFILL_ROWS")
@@ -67,6 +69,7 @@ fn from_values(mut value: impl FnMut(&str) -> Option<String>) -> GlmLevers {
         profile: crate::glm5next_layer::profile::Profile::from_settings(&defaults()),
         piece_rows: None,
         l2_warm_budget: None,
+        pdl,
     }
 }
 
@@ -96,7 +99,8 @@ const OPT_IN: [&str; 14] = [
     "METRALE_GLM_ARENA_LEAN",
 ];
 
-const OPT_OUT: [&str; 5] = [
+const OPT_OUT: [&str; 6] = [
+    "METRALE_GLM_PDL",
     "METRALE_GLM_CUBLAS_PROJ",
     "METRALE_GLM_DSA_WS_SHARED",
     "METRALE_GLM_MLP_WS_SHARED",

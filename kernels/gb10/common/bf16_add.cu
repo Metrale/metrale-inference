@@ -4,6 +4,7 @@
 // Owner: gb10 kernels. Callers: `NcclBackend::all_reduce_2rank` and the GLM-5-Next MTP layer's residual add.
 // Invariants: none beyond the types.
 #include <cuda_bf16.h>
+#include "pdl.cuh"
 
 extern "C" __global__ void bf16_add_inplace(
     __nv_bfloat16* __restrict__ dst,
@@ -30,6 +31,8 @@ extern "C" __global__ void bf16_add_rank_sum(
     int my_rank,
     int n
 ) {
+    // 2026-10-21: PDL (pdl.cuh): every input is another kernel's output.
+    pdl_enter();
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) {
         return;

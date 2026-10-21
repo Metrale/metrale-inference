@@ -19,6 +19,7 @@
 
 #include <cuda_bf16.h>
 #include "kda_gate_scalar.cuh"
+#include "pdl.cuh"
 
 
 
@@ -56,6 +57,8 @@ extern "C" __global__ void kda_o_norm_gated_bf16(
     unsigned int head_dim,
     float eps
 ) {
+    // 2026-10-21: PDL (pdl.cuh): every input is another kernel's output.
+    pdl_enter();
 #define KDA_ONORM_OUT_BF16(val) output[(size_t)row * head_dim + i] = __float2bfloat16(val)
     KDA_ONORM_BODY(__bfloat162float(gate[(size_t)row * head_dim + i]),
                    __bfloat162float(weight[i]),
@@ -138,6 +141,8 @@ extern "C" __global__ void kda_pack_qkv_bf16(
     unsigned int T,
     unsigned int qkv
 ) {
+    // 2026-10-21: PDL (pdl.cuh): every input is another kernel's output.
+    pdl_enter();
     const unsigned int ch = blockIdx.x * blockDim.x + threadIdx.x;
     const unsigned int t = blockIdx.y;
     if (ch >= qkv || t >= T) return;

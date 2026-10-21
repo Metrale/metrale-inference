@@ -22,10 +22,13 @@
 // Invariants:
 // - K % 128 == 0. Grid (ceil(N / F::ROWS), 1, 1), block (256, 1, 1), no dynamic shared memory.
 // - Static shared memory: 8 * min(MB, 8) * 4 * 32 * 4 bytes (at most 32 KiB).
+// - 2026-10-21: PDL: mma_gemv loads only weights (F::load_w) before pdl_wait(); a policy's
+//   load_w must read nothing another kernel writes.
 
 #pragma once
 #include <cuda_bf16.h>
 #include <stdint.h>
+#include "pdl.cuh"
 
 namespace wxay {
 
@@ -74,14 +77,22 @@ __device__ __forceinline__ void mma_gemv(const typename F::Args& a, __nv_bfloat1
 #pragma unroll
         for (int c = 0; c < 4; c++) acc[j][c] = 0.0f;
 
+    // 2026-10-21: PDL (pdl.cuh): the first KU chunks' weights are loaded before the wait; the
+    // activations (the predecessor's output) only after it. Same loads, same values.
+    typename F::WReg w[KU];
+#pragma unroll
+    for (int u = 0; u < KU; u++) {
+        const unsigned c = L.warp + (unsigned)u * WARPS;
+        w[u] = F::load_w(tile, c, c < num_c);
+    }
+    pdl_enter();
     for (unsigned c0 = L.warp; c0 < num_c; c0 += WARPS * KU) {
-        typename F::WReg w[KU];
         typename F::AReg b[F::LAZY_A ? 1 : KU][MB];
 #pragma unroll
         for (int u = 0; u < KU; u++) {
             const unsigned c = c0 + (unsigned)u * WARPS;
             const bool live = c < num_c;
-            w[u] = F::load_w(tile, c, live);
+            if (c0 != L.warp) w[u] = F::load_w(tile, c, live);
             if constexpr (!F::LAZY_A) {
 #pragma unroll
                 for (int j = 0; j < MB; j++) b[u][j] = F::load_a(tok[j], c, live);

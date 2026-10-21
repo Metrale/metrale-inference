@@ -1695,6 +1695,7 @@ dependencies = [
  "metrale-cache",
  "metrale-comm",
  "metrale-config",
+ "metrale-cudarc",
  "metrale-gpu-runtime",
  "metrale-io-host-std",
  "metrale-kernels",

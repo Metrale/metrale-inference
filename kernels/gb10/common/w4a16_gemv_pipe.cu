@@ -29,9 +29,12 @@
 // - Contract: as w4a16_gemv_seg (ops::w4a16_gemv_seg_rows_ok): K a positive multiple of 32 up
 //   to 24576, A 16-byte aligned, dynamic shared memory M ceil(K / 2048) 4096 + 64 bytes.
 // - CUDA only (E4M3 through __nv_fp8_e4m3, as w4a16_gemv_seg.cu).
+// - 2026-10-21: PDL: the weight and scale loads of the first D steps are issued before
+//   pdl_wait(); A, the only input another kernel writes, is read after it.
 
 #include <cuda_bf16.h>
 #include <cuda_fp8.h>
+#include "pdl.cuh"
 
 #define PIPE_THREADS 256
 #define PIPE_WARPS 8
@@ -199,6 +202,10 @@ __device__ __forceinline__ void w4a16_gemv_pipe_body(const __nv_bfloat16* __rest
             pipe_advance(ld, J, seg, warp_g, nw, half_K, num_groups);
         }
     }
+
+    // 2026-10-21: PDL (pdl.cuh): the loads above read weights only; A is the predecessor's
+    // output, so it is staged after the wait.
+    pdl_enter();
 
     // 2026-10-21: A staged as w4a16_gemv_seg.cu stages it: uint4 u = 2 kk + h of row m at
     // s_a[256 J m + 256 j + 64 (2 c + h) + lp] for kk = 128 j + 2 lp + c.
