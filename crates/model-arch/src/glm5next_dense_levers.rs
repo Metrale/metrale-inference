@@ -43,6 +43,9 @@ pub struct DenseLevers {
     /// 2026-10-09: `METRALE_GLM_BATCHM_WIDE` (on unless switched off): wide BF16 projections may
     /// take the batched GEMV (`glm5next_layer::wide_gemv`).
     pub batchm_wide: bool,
+    /// 2026-10-21: `METRALE_GLM_BATCHM_FEW` (on unless switched off): BF16 projections at 2..=8
+    /// rows may take `dense_gemv_bf16_batchm_few` (`glm5next_layer::wide_gemv`).
+    pub batchm_few: bool,
     /// 2026-10-11: `METRALE_GLM_MTP_DRAFTER_TIERS`: the MTP drafter's dense weights register on
     /// the dense tiers (`glm5_next_load::register_mtp_dense_tiers`).
     pub mtp_drafter_tiers: bool,
@@ -114,6 +117,7 @@ impl DenseLevers {
             persist,
             batch_invariant: k.glm_batch_invariant,
             batchm_wide: k.glm_batchm_wide,
+            batchm_few: k.glm_batchm_few,
             mtp_drafter_tiers: s.speculative.glm_mtp_drafter_tiers,
         })
     }

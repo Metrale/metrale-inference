@@ -478,6 +478,7 @@ fn the_declared_defaults_are_the_old_unset_values() {
             persist: Persist::Off,
             batch_invariant: false,
             batchm_wide: true,
+            batchm_few: true,
             mtp_drafter_tiers: false,
         }
     );

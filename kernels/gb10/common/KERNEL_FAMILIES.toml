@@ -930,6 +930,8 @@ kernels = [
   "gemv::dense_gemv_bf16", "dense_gemv_bf16_batchm::dense_gemv_bf16_batchm",
   "gemm::dense_gemm_bf16", "gemm::dense_gemm_bf16_router",
   "gemv::dense_gemv_bf16_fp32out", "gemm::dense_gemm_bf16_f32out",
+  "dense_gemv_bf16_batchm_few::dense_gemv_bf16_batchm_few",
+  "dense_gemv_bf16_batchm_few::dense_gemv_bf16_batchm_few_fp32out",
 ]
 rows = [1, 65536]
 # 2026-10-02: Every kernel widens BF16 exactly and sums in FP32 (no 16-bit partials), one BF16
@@ -944,6 +946,11 @@ kernel_pipeline."gemv::dense_gemv_bf16_fp32out".linear = { in = ["bf16"], act = 
 kernel_pipeline."gemv::dense_gemv_bf16_fp32out".router = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["f32"] }
 kernel_pipeline."gemm::dense_gemm_bf16_f32out".linear = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["f32"] }
 kernel_pipeline."gemm::dense_gemm_bf16_f32out".router = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["f32"] }
+# 2026-10-21: dense_gemv_bf16_batchm at 2..8 rows with the B loads in flight together and the
+# accumulators in registers (default-on METRALE_GLM_BATCHM_FEW); the same operations in the same
+# order, so the same bits.
+kernel_pipeline."dense_gemv_bf16_batchm_few::dense_gemv_bf16_batchm_few_fp32out".linear = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["f32"] }
+kernel_pipeline."dense_gemv_bf16_batchm_few::dense_gemv_bf16_batchm_few_fp32out".router = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["f32"] }
 op = [
   { op = "linear", weight = ["bf16"], activation = ["bf16"] },
   { op = "lm_head", weight = ["bf16"], activation = ["bf16"] },
@@ -954,7 +961,7 @@ values = {}
 how = "instantiation"
 files = [
   "kernels/gb10/common/dense_gemv_bf16.cu", "kernels/gb10/common/dense_gemv_bf16_batchm.cu",
-  "kernels/gb10/common/dense_gemm_bf16.cu",
+  "kernels/gb10/common/dense_gemm_bf16.cu", "kernels/gb10/common/dense_gemv_bf16_batchm_few.cu",
 ]
 [[family.evidence]]
 point = {}

@@ -9,7 +9,7 @@
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::{GpuBackend, KernelHandle};
 
-use crate::glm5next_layer::wide_gemv::Batchm;
+use crate::glm5next_layer::wide_gemv::{Batchm, FewGemv};
 
 /// 2026-09-25: The projection, norm and latent-write kernels of a DSA block. The selection
 /// kernels are in `Glm5NextDsaKernels`, the decode kernel in `attend`.
@@ -36,6 +36,8 @@ pub struct Glm5NextDsaLayerKernels {
     /// (`glm5next_layer::wide_gemv`).
     pub gemv_batchm_wide: KernelHandle,
     pub gemv_batchm_wide_f32: KernelHandle,
+    /// 2026-10-21: The 2..=8-row batched GEMVs, BF16 and FP32 out (`glm5next_layer::wide_gemv`).
+    pub gemv_batchm_few: FewGemv,
     /// 2026-09-25: `rms_norm_vanilla`; see the module header.
     pub rms_norm: KernelHandle,
     /// 2026-09-25: `glm5next_mla_latent_write_fp8`: RMSNorm, FP8 quantisation and the paged
@@ -77,6 +79,7 @@ impl Glm5NextDsaLayerKernels {
                 "dense_gemv_bf16_batchm",
                 "dense_gemv_bf16_batchm_wide_fp32out",
             ),
+            gemv_batchm_few: FewGemv::resolve(gpu),
             rms_norm: gpu.kernel("rms_norm_vanilla", "rms_norm_vanilla")?,
             latent_write: gpu
                 .kernel("glm5next_mla_latent_write", "glm5next_mla_latent_write_fp8")?,
@@ -87,19 +90,17 @@ impl Glm5NextDsaLayerKernels {
 impl Glm5NextDsaLayerKernels {
     /// 2026-10-09: The BF16-out batched GEMV pair `glm_mm` takes.
     pub(crate) fn batchm_bf16(&self) -> Batchm {
-        Batchm {
-            narrow: self.gemv_batchm,
-            wide: self.gemv_batchm_wide,
-            out_bytes: 2,
-        }
+        Batchm::of(
+            self.gemv_batchm,
+            self.gemv_batchm_wide,
+            self.gemv_batchm_few,
+            2,
+        )
     }
 
     /// 2026-10-09: The FP32-out batched GEMV pair.
     pub(crate) fn batchm_f32(&self) -> Batchm {
-        Batchm {
-            narrow: self.gemv_batchm_f32,
-            wide: self.gemv_batchm_wide_f32,
-            out_bytes: 4,
-        }
+        let (narrow, wide) = (self.gemv_batchm_f32, self.gemv_batchm_wide_f32);
+        Batchm::of(narrow, wide, self.gemv_batchm_few, 4)
     }
 }

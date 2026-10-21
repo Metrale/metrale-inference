@@ -17,6 +17,7 @@ use crate::glm5next_mlp::{Glm5NextMlpConfig, Glm5NextMlpKernels};
 const GEMV_F32: u64 = 0x71;
 const NARROW_F32: u64 = 0x72;
 const WIDE_F32: u64 = 0x73;
+const FEW_F32: u64 = 0x74;
 const ROUTER: DevicePtr = DevicePtr(0x1000);
 const X: DevicePtr = DevicePtr(0x9000_0000);
 const LOGITS: DevicePtr = DevicePtr(0xA000_0000);
@@ -51,6 +52,7 @@ fn kernels(gpu: &MockGpuBackend) -> Glm5NextMlpKernels {
     k.gemv_f32 = KernelHandle(GEMV_F32);
     k.gemv_batchm_f32 = KernelHandle(NARROW_F32);
     k.gemv_batchm_wide_f32 = KernelHandle(WIDE_F32);
+    k.gemv_batchm_few.f32 = KernelHandle(FEW_F32);
     k
 }
 
@@ -76,18 +78,28 @@ fn run(k: &Glm5NextMlpKernels, rows: usize, batched: bool) -> Vec<MockLaunch> {
 }
 
 /// 2026-10-09: Batched, 16 rows are one wide FP32-out launch over all rows (M = 16, N = 288,
-/// K = 4096, contiguous output); 4 rows one narrow launch.
+/// K = 4096, contiguous output); 4 rows one narrow launch. 2026-10-21: 2..=8 rows one few
+/// launch; with `METRALE_GLM_BATCHM_FEW` off or without the few entry, one narrow launch.
 #[test]
 fn batched_rows_are_one_launch_on_the_entry_for_their_width() {
     let gpu = MockGpuBackend::new();
     let k = kernels(&gpu);
-    for (rows, func) in [
-        (16usize, WIDE_F32),
-        (9, WIDE_F32),
-        (8, NARROW_F32),
-        (4, NARROW_F32),
+    let mut few_off = k;
+    few_off.levers.dense.batchm_few = false;
+    let mut no_few = k;
+    no_few.gemv_batchm_few.f32 = KernelHandle(0);
+    for (kk, rows, func) in [
+        (&k, 16usize, WIDE_F32),
+        (&k, 9, WIDE_F32),
+        (&k, 8, FEW_F32),
+        (&k, 4, FEW_F32),
+        (&k, 2, FEW_F32),
+        (&few_off, 8, NARROW_F32),
+        (&few_off, 2, NARROW_F32),
+        (&no_few, 2, NARROW_F32),
+        (&few_off, 9, WIDE_F32),
     ] {
-        let l = run(&k, rows, true);
+        let l = run(kk, rows, true);
         assert_eq!(l.len(), 1, "{rows} rows");
         assert_eq!(l[0].func, func, "{rows} rows");
         assert_eq!(

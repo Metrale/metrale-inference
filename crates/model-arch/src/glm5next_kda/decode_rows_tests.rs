@@ -76,6 +76,10 @@ pub(super) fn layer(gpu: &MockGpuBackend) -> Glm5NextKdaLayer {
         gemv: k(0x302),
         gemv_batchm: k(BATCHM),
         gemv_batchm_wide: k(0x314),
+        gemv_batchm_few: crate::glm5next_layer::wide_gemv::FewGemv {
+            bf16: k(0),
+            f32: k(0),
+        },
         conv_decode: k(CONV),
         conv_decode_rows: k(CONV_ROWS),
         conv_prefill: k(0x307),

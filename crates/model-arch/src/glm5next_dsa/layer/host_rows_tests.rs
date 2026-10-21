@@ -120,7 +120,7 @@ fn a_paged_prefill_chunk_stages_its_indexer_rows_once() {
                 store[0].args[7],
                 MockArg::Bytes(0u32.to_le_bytes().to_vec())
             );
-            let f32s = of(&l, BATCHM_F32);
+            let f32s = of(&l, BATCHM_FEW_F32);
             assert_eq!(f32s.len(), 2, "head weights and selector query");
             assert!(f32s.iter().all(|p| p.args[3] == six));
             assert!(of(&l, GEMV_F32).is_empty() && of(&l, STORE).is_empty());
