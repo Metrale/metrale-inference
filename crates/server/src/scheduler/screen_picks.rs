@@ -98,6 +98,10 @@ pub(super) fn screen_rule(i: ScreenInputs) -> bool {
 }
 
 #[cfg(test)]
+#[path = "screen_picks_tests.rs"]
+mod thinking_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

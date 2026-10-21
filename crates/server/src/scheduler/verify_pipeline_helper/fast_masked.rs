@@ -122,24 +122,25 @@ pub(super) fn try_chat_fast_path(
 /// and sometimes when it would not. The window's thinking picks count toward
 /// `thinking_budget` (`pick_positions.rs`), so a budget they reach arms the
 /// forced `</think>` for the positions after it.
+///
+/// 2026-10-21: The injector acts (injects, or counts a deferral) only with
+/// `force_end_thinking` armed (`confidence::should_inject_think_end` returns
+/// false without it); its hard-override ceiling alone never moves a logit, so it
+/// no longer counts here. Each stage's own steering gates come from
+/// `WatchdogParams` (`from_behavior`: with MODEL.toml `thinking_steering` off,
+/// `confidence_early_stop` is off), so a thinking step of such a model passes
+/// unless a budget or an armed close is in play.
 pub(in crate::scheduler) fn stages_may_act(
     a: &ActiveSeq,
     ctx: &LogitsContext,
     window: usize,
 ) -> bool {
-    use crate::scheduler::confidence::{
-        MAX_SENTENCE_DEFER_TOKENS, THINK_DEFER_ABS_CEILING, THINK_DEFER_BUDGET_FACTOR,
-    };
     let f2_active = !ctx.sampling.disable_watchdogs
         && a.inside_thinking
         && !a.force_end_thinking
         && a.thinking_tokens >= 400
         && ctx.watchdog.confidence_early_stop;
-    let defer_hard_override = match a.thinking_budget {
-        Some(b) => a.thinking_tokens >= b.saturating_mul(THINK_DEFER_BUDGET_FACTOR),
-        None => a.thinking_tokens >= THINK_DEFER_ABS_CEILING,
-    } || a.sentence_defer_count >= MAX_SENTENCE_DEFER_TOKENS;
-    let think_end_inject_armed = a.inside_thinking && (a.force_end_thinking || defer_hard_override);
+    let think_end_inject_armed = a.inside_thinking && a.force_end_thinking;
     let window_thinking_picks = window.saturating_sub(1) as u32;
     let budget_reached_in_window = a.inside_thinking
         && a
