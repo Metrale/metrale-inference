@@ -27,6 +27,18 @@ pub struct Nvfp4Proj {
     /// path quantizes the input under it and scales the output by `input_scale * scale_2`; the
     /// W4A16 path does not read it.
     pub input_scale: Option<f32>,
+    /// 2026-10-21: How `scale` holds the block scales (`METRALE_GLM_MOE_SCALE_DICT`).
+    pub scale_layout: ScaleLayout,
+}
+
+/// 2026-10-21: The layout of an [`Nvfp4Proj`]'s block scales.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScaleLayout {
+    /// 2026-10-21: `[out, in/16]` E4M3 codes, as the checkpoint stores them.
+    Plain,
+    /// 2026-10-21: 5-bit offsets from the code `base` (`scale_dict`), which only the routed
+    /// W4A4 `_cs` entries read.
+    Compact { base: u8 },
 }
 
 /// 2026-09-25: A BF16 SwiGLU MLP: the dense layers `0..first_k_dense_replace`, and the shared
@@ -95,6 +107,10 @@ pub struct Glm5NextExpertPtrTable {
     pub scale_ptrs: DevicePtr,
     /// 2026-09-25: `[num_experts]` F32 per-expert global scale.
     pub scale2_vals: DevicePtr,
+    /// 2026-10-21: `[num_experts]` U32 per-expert compact-scale base code in every byte, or
+    /// `scale_dict::PLAIN_BASE4` for an expert with plain scales; null when no expert of the site
+    /// is compact (the plain entries run). The `_cs` entries read it (`scale_dict_kernels`).
+    pub scale_bases: DevicePtr,
 }
 
 /// 2026-09-25: The three projections' pointer tables for one routed site.

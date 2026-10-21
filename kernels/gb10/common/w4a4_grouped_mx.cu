@@ -170,4 +170,49 @@ extern "C" __global__ void __launch_bounds__(W4G_THREADS, 2) w4a4_grouped_gu_m12
     w4g_body<128, 64, 3, false, true>(W4G_GU_PASS, raster);
 }
 
+// 2026-10-21: The `_cs` twins (METRALE_GLM_MOE_SCALE_DICT) of the entries a routed site reaches
+// (tile m32 or m128, plain or `_k64`, raster, nc, fused gate/up): the same bodies with CS on, one
+// more argument per projection, the per-expert base-code table (w4a4_grouped_cs.cuh). Every
+// expert's outputs are the plain twin's bytes, compact or plain scales alike.
+#define W4G_CS_ENTRY(NAME, MT, NT, KH)                                                         \
+    extern "C" __global__ void __launch_bounds__(W4G_THREADS, 2) NAME(                        \
+        W4G_ARGS, const unsigned int* __restrict__ cs) {                                       \
+        w4g_body<MT, NT, 3, KH, false, W4G_THREADS, true>(W4G_PASS, W4gGu{}, 0u, cs);         \
+    }
+W4G_CS_ENTRY(w4a4_grouped_mx_m32_cs, 32, W4G_NT, false)
+W4G_CS_ENTRY(w4a4_grouped_mx_m32_k64_cs, 32, W4G_NT, true)
+W4G_CS_ENTRY(w4a4_grouped_mx_m128_cs, 128, 64, false)
+W4G_CS_ENTRY(w4a4_grouped_mx_m128_k64_cs, 128, 64, true)
+#define W4G_CS_R_ENTRY(NAME, KH)                                                               \
+    extern "C" __global__ void __launch_bounds__(W4G_THREADS, 2) NAME(                        \
+        W4G_ARGS, unsigned int raster, const unsigned int* __restrict__ cs) {                  \
+        w4g_body<128, 64, 3, KH, false, W4G_THREADS, true>(W4G_PASS, W4gGu{}, raster, cs);    \
+    }
+W4G_CS_R_ENTRY(w4a4_grouped_mx_m128_r_cs, false)
+W4G_CS_R_ENTRY(w4a4_grouped_mx_m128_k64_r_cs, true)
+#define W4G_CS_N_ENTRY(NAME, KH)                                                               \
+    extern "C" __global__ void __launch_bounds__(W4G_THREADS, 2) NAME(                        \
+        W4G_ARGS, unsigned int raster, unsigned int nc, const unsigned int* __restrict__ cs) { \
+        w4n_body<128, 64, 3, KH, W4G_THREADS, true>(W4G_PASS, raster, nc, cs);                \
+    }
+W4G_CS_N_ENTRY(w4a4_grouped_mx_m128_n_cs, false)
+W4G_CS_N_ENTRY(w4a4_grouped_mx_m128_k64_n_cs, true)
+#define W4G_GU_CS_PASS                                                                         \
+    Aq, As, Ag, gate_packed, gate_scales, gate_scale2, nullptr, expert_offsets, tile_off,      \
+        sorted_token_ids, num_experts, N, K,                                                   \
+        W4gGu{up_packed, up_scales, up_scale2, Dq, Ds, Dg, Kp, gs, limit, up_cs}
+#define W4G_GU_CS_ENTRY(NAME, MT, NT)                                                          \
+    extern "C" __global__ void __launch_bounds__(W4G_THREADS, 2) NAME(                        \
+        W4G_GU_ARGS, const unsigned int* __restrict__ gate_cs,                                 \
+        const unsigned int* __restrict__ up_cs) {                                              \
+        w4g_body<MT, NT, 3, false, true, W4G_THREADS, true>(W4G_GU_CS_PASS, 0u, gate_cs);     \
+    }
+W4G_GU_CS_ENTRY(w4a4_grouped_gu_m32_cs, 32, W4G_NT)
+W4G_GU_CS_ENTRY(w4a4_grouped_gu_m128_cs, 128, 64)
+extern "C" __global__ void __launch_bounds__(W4G_THREADS, 2) w4a4_grouped_gu_m128_r_cs(
+    W4G_GU_ARGS, unsigned int raster, const unsigned int* __restrict__ gate_cs,
+    const unsigned int* __restrict__ up_cs) {
+    w4g_body<128, 64, 3, false, true, W4G_THREADS, true>(W4G_GU_CS_PASS, raster, gate_cs);
+}
+
 #endif // METRALE_NO_WARP_BLOCKSCALE_MMA

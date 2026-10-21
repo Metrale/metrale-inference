@@ -96,6 +96,8 @@ example = [
     { name = "glm5next_kda_gates_rows_gate", required-features = ["cuda", "gpu-examples"] },
     { name = "glm5next_dsa_proj_in_gate", required-features = ["cuda", "gpu-examples"] },
     { name = "glm5next_dsa_proj_in_layer_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_moe_scale_dict_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_moe_scale_dict_prefill_gate", required-features = ["cuda", "gpu-examples"] },
     { name = "glm5next_batchm_few_gate", required-features = ["cuda", "gpu-examples"] },
     { name = "pdl_capture_gate", required-features = ["cuda", "gpu-examples"] },
     { name = "pdl_chain_gate", required-features = ["cuda", "gpu-examples"] },

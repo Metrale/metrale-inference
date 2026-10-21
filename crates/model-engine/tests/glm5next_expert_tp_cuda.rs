@@ -36,7 +36,9 @@ use metrale_model_arch::glm5next_mlp::expert_tp::{
 };
 use metrale_model_arch::glm5next_mlp::forward::{Glm5NextMlpWorkspace, forward_moe};
 use metrale_model_arch::glm5next_mlp::precision::{GroupPrecision, MlpGroup};
-use metrale_model_arch::glm5next_mlp::weights::{Glm5NextExpertWeights, Nvfp4Proj, W4a4ActScales};
+use metrale_model_arch::glm5next_mlp::weights::{
+    Glm5NextExpertWeights, Nvfp4Proj, ScaleLayout, W4a4ActScales,
+};
 use metrale_model_arch::glm5next_mlp::{ExpertShard, Glm5NextMlpConfig, Glm5NextMlpKernels};
 
 /// 2026-10-09: The tp sum against the whole expert at the SAME tier: the same dequantized
@@ -171,6 +173,7 @@ fn proj(gpu: &dyn GpuBackend, w: (Vec<u8>, Vec<u8>), act: f32) -> Result<Nvfp4Pr
         scale: upload(gpu, &w.1)?,
         scale_2: 0.01,
         input_scale: Some(act),
+        scale_layout: ScaleLayout::Plain,
     })
 }
 

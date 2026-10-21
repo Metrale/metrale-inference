@@ -33,7 +33,7 @@ use metrale_model_arch::glm5next_fp8_dense;
 use metrale_model_arch::glm5next_mlp::build::build_moe;
 use metrale_model_arch::glm5next_mlp::forward::{Glm5NextMlpWorkspace, forward_moe};
 use metrale_model_arch::glm5next_mlp::precision::{GroupPrecision, MlpGroup};
-use metrale_model_arch::glm5next_mlp::weights::{Glm5NextExpertWeights, Nvfp4Proj};
+use metrale_model_arch::glm5next_mlp::weights::{Glm5NextExpertWeights, Nvfp4Proj, ScaleLayout};
 use metrale_model_arch::glm5next_mlp::{Glm5NextMlpConfig, Glm5NextMlpKernels};
 use metrale_model_layers::layers::ops::{DenseMmKernels, dense_mm_bf16};
 use metrale_model_layers::layers::{DenseQuantization, set_dense_quantization_from_cli};
@@ -122,6 +122,7 @@ fn expert_proj(
         scale: up(gpu, &scales)?,
         scale_2: 0.01,
         input_scale: Some(gs),
+        scale_layout: ScaleLayout::Plain,
     })
 }
 

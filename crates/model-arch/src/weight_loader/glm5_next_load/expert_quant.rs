@@ -83,6 +83,7 @@ fn quantize_and_upload(
         // 2026-10-08: Quantized here from 16-bit weights: the checkpoint declares no FP4
         // activations for it, so it has no activation scale.
         input_scale: None,
+        scale_layout: ScaleLayout::Plain,
     })
 }
 

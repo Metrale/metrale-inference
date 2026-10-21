@@ -53,6 +53,7 @@ pub(super) fn bind_expert(
                     scale: DevicePtr::NULL,
                     scale_2: s2,
                     input_scale: input_scale(gpu, store, layer, &base)?,
+                    scale_layout: ScaleLayout::Plain,
                 };
                 Ok((p, scale))
             }

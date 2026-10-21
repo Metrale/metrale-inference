@@ -114,6 +114,7 @@ fn proj(input_scale: Option<f32>) -> Nvfp4Proj {
         scale: DevicePtr::NULL,
         scale_2: 1.0,
         input_scale,
+        scale_layout: ScaleLayout::Plain,
     }
 }
 

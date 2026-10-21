@@ -30,6 +30,7 @@ use super::moe_experts::MoeSite;
 use super::w4a4_slots::{W4a4SlotsCall, launch_w4a4_slots};
 use crate::glm5next_layer::profile;
 use crate::glm5next_mlp::build_w4a4::{check_w4a4_k, check_w4a4_k64};
+use crate::glm5next_mlp::scale_dict_kernels::ScaleDictTwins;
 use crate::glm5next_mlp::weights::{Glm5NextExpertPtrTable, W4a4ActScales};
 use crate::glm5next_mlp::{Glm5NextMlpConfig, Glm5NextMlpKernels};
 
@@ -73,10 +74,12 @@ pub(super) fn quant_static(
 
 /// 2026-10-08: `out[s, n]` for every slot `s < slots` over the quantized scratch, the weights of
 /// expert `ids[s]` from `table`; slot `s` reads activation row `s / act_div`. 2026-10-14: Through
-/// [`launch_w4a4_slots`], which splits past CUDA's grid-Y limit.
+/// [`launch_w4a4_slots`], which splits past CUDA's grid-Y limit. 2026-10-21: The `_cs` twin of
+/// `kern` over a table with a base table (`ScaleDictTwins::pick`).
 #[allow(clippy::too_many_arguments)]
 fn moe_slots(
     gpu: &dyn GpuBackend,
+    twins: &ScaleDictTwins,
     kern: KernelHandle,
     ws: &Glm5NextMlpWorkspace,
     table: &Glm5NextExpertPtrTable,
@@ -88,6 +91,7 @@ fn moe_slots(
     num_experts: usize,
     stream: u64,
 ) -> Result<()> {
+    let (kern, bases) = twins.pick(kern, table.scale_bases)?;
     let call = W4a4SlotsCall {
         aq: ws.w4a4_aq,
         as_: ws.w4a4_as,
@@ -102,6 +106,7 @@ fn moe_slots(
         slots,
         act_div,
         num_experts,
+        scale_bases: bases.unwrap_or(DevicePtr::NULL),
     };
     launch_w4a4_slots(gpu, kern, &call, stream)
 }
@@ -207,7 +212,11 @@ pub(super) fn writes_every_expert_row(
 /// projection that does not write every row itself ([`writes_every_expert_row`]) and whole
 /// 16-byte words. `forward_moe` then skips its memset; nothing reads `expert_out` between the
 /// two.
-pub(super) fn zeroes_in_swiglu(k: &Glm5NextMlpKernels, cfg: &Glm5NextMlpConfig, rows: usize) -> bool {
+pub(super) fn zeroes_in_swiglu(
+    k: &Glm5NextMlpKernels,
+    cfg: &Glm5NextMlpConfig,
+    rows: usize,
+) -> bool {
     k.levers.mlp.zero_in_swiglu
         && k.swiglu_zero.0 != 0
         && !super::w4a4_grouped::takes_grouped(rows)
@@ -238,6 +247,14 @@ fn moe_sweep(
         projs.len()
     );
     let (ws, cfg) = (site.ws, site.cfg);
+    // 2026-10-21: The `_cs` twin over tables with base tables; both projections' tables carry one
+    // or neither (`build::any_compact`).
+    let last = *projs.last().expect("checked non-empty");
+    ensure!(
+        projs[0].0.scale_bases.is_null() == last.0.scale_bases.is_null(),
+        "GLM W4A4 union sweep: one projection's table has a base table and the other's not"
+    );
+    let (kern, bases) = site.k.scale_dict.pick(kern, projs[0].0.scale_bases)?;
     // 2026-10-09: The own-slots entry reads the ids row as its entry list and not u_slot.
     let u_eid = match entries {
         SweepEntries::OwnSlots => ws.ids,
@@ -253,22 +270,26 @@ fn moe_sweep(
         .arg_ptr(ws.u_slot);
     // 2026-10-09: The kernel reads the second table only when nproj is 2; a single projection
     // passes its own table twice.
-    for (table, out) in [projs[0], *projs.last().expect("checked non-empty")] {
+    for (table, out) in [projs[0], last] {
         launch = launch
             .arg_ptr(table.packed_ptrs)
             .arg_ptr(table.scale_ptrs)
             .arg_ptr(table.scale2_vals)
             .arg_ptr(out);
     }
-    launch
+    launch = launch
         .arg_u32(projs.len() as u32)
         .arg_u32(n as u32)
         .arg_u32(k as u32)
         .arg_u32(site.rows as u32)
         .arg_u32(cfg.top_k as u32)
         .arg_u32(act_div as u32)
-        .arg_u32(cfg.num_experts as u32)
-        .launch(site.stream)
+        .arg_u32(cfg.num_experts as u32);
+    match bases {
+        Some(b) => launch.arg_ptr(b).arg_ptr(last.0.scale_bases),
+        None => launch,
+    }
+    .launch(site.stream)
 }
 
 /// 2026-10-08: The routed experts of `forward_moe` at W4A4, every (row, slot) in one launch per
@@ -333,6 +354,7 @@ pub(super) fn w4a4_experts(site: &MoeSite<'_>, scales: W4a4ActScales) -> Result<
     let slots_gemv = |kern, table: &Glm5NextExpertPtrTable, out, n, kk, act_div| {
         moe_slots(
             gpu,
+            &k.scale_dict,
             kern,
             ws,
             table,
@@ -362,7 +384,15 @@ pub(super) fn w4a4_experts(site: &MoeSite<'_>, scales: W4a4ActScales) -> Result<
     }
     if zeroes_in_swiglu(k, cfg, rows) {
         let words = expert_out_bytes(cfg, rows) / 16;
-        swiglu_zero(gpu, k.swiglu_zero, ws, slots * mi, cfg.swiglu_limit, words, stream)?;
+        swiglu_zero(
+            gpu,
+            k.swiglu_zero,
+            ws,
+            slots * mi,
+            cfg.swiglu_limit,
+            words,
+            stream,
+        )?;
     } else {
         swiglu(
             gpu,

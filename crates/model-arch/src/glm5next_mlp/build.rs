@@ -19,9 +19,10 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
 use super::Glm5NextMlpConfig;
 use super::precision::{GroupPrecision, MlpKernel};
+use super::scale_dict::PLAIN_BASE4;
 use super::weights::{
     Glm5NextDenseMlpWeights, Glm5NextExpertPtrTable, Glm5NextExpertWeights, Glm5NextMoePtrTables,
-    Glm5NextMoeWeights, Nvfp4Proj,
+    Glm5NextMoeWeights, Nvfp4Proj, ScaleLayout,
 };
 
 /// 2026-09-25: A BF16 or F32 tensor as host `f32`, by layer-relative name.
@@ -124,17 +125,21 @@ pub fn build_dense_mlp(
 }
 
 /// 2026-09-25: One projection's pointer table over all `num_experts` GLOBAL ids. An id another
-/// rank owns keeps a null `packed` pointer, which the expert kernels skip.
+/// rank owns keeps a null `packed` pointer, which the expert kernels skip. 2026-10-21: `bases`:
+/// also the per-expert base table of the `_cs` entries (`scale_dict`), [`PLAIN_BASE4`] for an
+/// expert with plain scales and for an id another rank owns.
 fn build_expert_ptr_table(
     gpu: &dyn GpuBackend,
     cfg: &Glm5NextMlpConfig,
     experts: &[Glm5NextExpertWeights],
+    bases: bool,
     proj: impl Fn(&Glm5NextExpertWeights) -> Nvfp4Proj,
 ) -> Result<Glm5NextExpertPtrTable> {
     let n = cfg.num_experts;
     let mut packed = vec![0u8; n * 8];
     let mut scale = vec![0u8; n * 8];
     let mut scale2 = vec![0u8; n * 4];
+    let mut base4 = vec![PLAIN_BASE4; n];
     for id in 0..n {
         let Some(local) = cfg.local_slot(id) else {
             continue;
@@ -143,7 +148,18 @@ fn build_expert_ptr_table(
         packed[id * 8..id * 8 + 8].copy_from_slice(&p.packed.0.to_le_bytes());
         scale[id * 8..id * 8 + 8].copy_from_slice(&p.scale.0.to_le_bytes());
         scale2[id * 4..id * 4 + 4].copy_from_slice(&p.scale_2.to_le_bytes());
+        if let ScaleLayout::Compact { base } = p.scale_layout {
+            base4[id] = u32::from(base) * 0x0101_0101;
+        }
     }
+    let scale_bases = if bases {
+        let b: Vec<u8> = base4.iter().flat_map(|x| x.to_le_bytes()).collect();
+        let p = gpu.alloc(b.len())?;
+        gpu.copy_h2d(&b, p)?;
+        p
+    } else {
+        DevicePtr::NULL
+    };
     let packed_ptrs = gpu.alloc(packed.len())?;
     gpu.copy_h2d(&packed, packed_ptrs)?;
     let scale_ptrs = gpu.alloc(scale.len())?;
@@ -154,6 +170,17 @@ fn build_expert_ptr_table(
         packed_ptrs,
         scale_ptrs,
         scale2_vals,
+        scale_bases,
+    })
+}
+
+/// 2026-10-21: Whether any bound projection holds compact scales: then every table of the site
+/// carries a base table and the site launches the `_cs` entries (`scale_dict_kernels`).
+pub fn any_compact(experts: &[Glm5NextExpertWeights]) -> bool {
+    experts.iter().any(|e| {
+        [e.gate_proj, e.up_proj, e.down_proj]
+            .iter()
+            .any(|p| p.scale_layout != ScaleLayout::Plain)
     })
 }
 
@@ -218,10 +245,19 @@ pub fn build_moe(
         None
     };
 
+    // 2026-10-21: A packed site must run W4A4 at every row count (`scale_dict::plan`); a binder
+    // that packed scales for any other plan is refused here, before a launch could read them.
+    let bases = any_compact(&experts);
+    if bases && !precision.w4a4_at_every_row() {
+        bail!(
+            "GLM MoE: experts were bound with compact scales, but this layer's plan runs the \
+             W4A16 path at some row count, which reads plain scales"
+        );
+    }
     let ptrs = Glm5NextMoePtrTables {
-        gate: build_expert_ptr_table(gpu, cfg, &experts, |e| e.gate_proj)?,
-        up: build_expert_ptr_table(gpu, cfg, &experts, |e| e.up_proj)?,
-        down: build_expert_ptr_table(gpu, cfg, &experts, |e| e.down_proj)?,
+        gate: build_expert_ptr_table(gpu, cfg, &experts, bases, |e| e.gate_proj)?,
+        up: build_expert_ptr_table(gpu, cfg, &experts, bases, |e| e.up_proj)?,
+        down: build_expert_ptr_table(gpu, cfg, &experts, bases, |e| e.down_proj)?,
     };
 
     Ok(Glm5NextMoeWeights {
@@ -312,6 +348,71 @@ mod tests {
         // 688: the gate-up output and the down input meet on the same columns.
         assert_eq!(ranks[1][0][0], (688 * hidden) as f32);
         assert_eq!(ranks[1][2][0], -688.0);
+    }
+
+    /// 2026-10-21: The base table holds each local id's compact base in every byte and
+    /// `PLAIN_BASE4` for a plain expert or another rank's id; without `bases` the table has none.
+    #[test]
+    fn ptr_tables_carry_each_experts_base_code() {
+        use crate::glm5next_mlp::weights::ScaleLayout;
+        use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
+        let gpu = MockGpuBackend::new();
+        let cfg = Glm5NextMlpConfig {
+            hidden: 4096,
+            local_dense_intermediate: 4096,
+            dense_start: 0,
+            moe_intermediate: 704,
+            local_shared_intermediate: 688,
+            shared_start: 0,
+            num_experts: 6,
+            local_experts: 3,
+            ep_rank: 1,
+            top_k: 2,
+            routed_scale: 2.5,
+            renormalize: true,
+            swiglu_limit: 10.0,
+            router_bf16_ladder: false,
+            tp_world_size: 2,
+            ep_world_size: 2,
+            expert_shard: crate::glm5next_mlp::ExpertShard::Whole,
+        };
+        let proj = |tag: u64, scale_layout| Nvfp4Proj {
+            packed: DevicePtr(tag),
+            scale: DevicePtr(tag + 1),
+            scale_2: 1.0,
+            input_scale: None,
+            scale_layout,
+        };
+        let layouts = [
+            ScaleLayout::Compact { base: 0x31 },
+            ScaleLayout::Plain,
+            ScaleLayout::Compact { base: 0x2A },
+        ];
+        let experts: Vec<Glm5NextExpertWeights> = layouts
+            .iter()
+            .enumerate()
+            .map(|(i, &l)| {
+                let p = proj(0x100 * (i as u64 + 1), l);
+                Glm5NextExpertWeights {
+                    gate_proj: p,
+                    up_proj: p,
+                    down_proj: p,
+                }
+            })
+            .collect();
+        assert!(any_compact(&experts));
+        assert!(!any_compact(&experts[1..2]));
+        let t = build_expert_ptr_table(&gpu, &cfg, &experts, true, |e| e.gate_proj).unwrap();
+        let b = gpu.read_alloc(t.scale_bases).expect("a base table");
+        let words: Vec<u32> = b
+            .chunks_exact(4)
+            .map(|w| u32::from_le_bytes(w.try_into().unwrap()))
+            .collect();
+        // 2026-10-21: Rank 1 of EP=2 owns ids 3..6.
+        let p = PLAIN_BASE4;
+        assert_eq!(words, vec![p, p, p, 0x3131_3131, p, 0x2A2A_2A2A]);
+        let t = build_expert_ptr_table(&gpu, &cfg, &experts, false, |e| e.gate_proj).unwrap();
+        assert!(t.scale_bases.is_null());
     }
 
     /// 2026-10-08: A column range past the width, an empty one, or a tensor of the wrong size is

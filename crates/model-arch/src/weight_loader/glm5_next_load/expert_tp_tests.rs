@@ -139,8 +139,16 @@ fn deferred_packed_expert_binds_each_ranks_slice() {
             let gpu = MockGpuBackend::new();
             let before = sh.store.derived().bytes();
             let slab = one(7);
-            let e = bind_routed_expert(&gpu, &sh.store, LAYER, 7, ExpertShard::Sliced(s), &slab)
-                .unwrap();
+            let e = bind_routed_expert(
+                &gpu,
+                &sh.store,
+                LAYER,
+                7,
+                ExpertShard::Sliced(s),
+                &slab,
+                None,
+            )
+            .unwrap();
             // 2026-10-09: Only the slices reached the device: three projections of `s.len`
             // rows or columns, codes plus scales. 2026-10-14: In one slot of the slab.
             let (codes, scales) = (s.len * HIDDEN / 2, s.len * HIDDEN / 16);
@@ -205,7 +213,7 @@ fn whole_shard_binds_the_store_pointers_zero_copy() {
         }
     }
     let store = WeightStore::from_map(map);
-    let e = bind_routed_expert(&gpu, &store, LAYER, 0, ExpertShard::Whole, &one(0)).unwrap();
+    let e = bind_routed_expert(&gpu, &store, LAYER, 0, ExpertShard::Whole, &one(0), None).unwrap();
     let want = store
         .get(&qualified("mlp.experts.0.down_proj.weight"))
         .unwrap()
@@ -249,8 +257,16 @@ fn bf16_expert_slices_its_whole_quantization() {
         let s: ExpertSlice = expert_slice(full, 2, r).unwrap();
         let gpu = MockGpuBackend::new();
         let slab = one(2);
-        let e =
-            bind_routed_expert(&gpu, &sh.store, LAYER, 2, ExpertShard::Sliced(s), &slab).unwrap();
+        let e = bind_routed_expert(
+            &gpu,
+            &sh.store,
+            LAYER,
+            2,
+            ExpertShard::Sliced(s),
+            &slab,
+            None,
+        )
+        .unwrap();
         for (w, got, rows) in [
             (&whole.gate_proj, &e.gate_proj, true),
             (&whole.down_proj, &e.down_proj, false),
@@ -284,7 +300,7 @@ fn a_packed_expert_of_another_width_is_refused() {
     let s = expert_slice(640, 3, 0).unwrap();
     let gpu = MockGpuBackend::new();
     let shard = ExpertShard::Sliced(s);
-    let e = bind_routed_expert(&gpu, &sh.store, LAYER, 7, shard, &one(7)).unwrap_err();
+    let e = bind_routed_expert(&gpu, &sh.store, LAYER, 7, shard, &one(7), None).unwrap_err();
     assert!(e.to_string().contains("does not fit"), "{e}");
 }
 
@@ -303,7 +319,15 @@ fn a_layers_sliced_experts_share_one_slab() {
     let slab = ExpertSlab::new(7..9, TP_SLAB_LABEL);
     let bound: Vec<_> = [8, 7]
         .map(|id| {
-            let e = bind_routed_expert(&gpu, &sh.store, LAYER, id, ExpertShard::Sliced(s), &slab);
+            let e = bind_routed_expert(
+                &gpu,
+                &sh.store,
+                LAYER,
+                id,
+                ExpertShard::Sliced(s),
+                &slab,
+                None,
+            );
             (id, e.unwrap())
         })
         .into();
@@ -390,3 +414,6 @@ fn the_hook_defers_routed_experts_only_under_tp() {
     let shared = "model.language_model.layers.5.mlp.shared_experts.gate_proj.weight";
     assert!(!tp(shared, WeightDtype::BF16));
 }
+
+#[path = "scale_pack_tests.rs"]
+mod scale_pack;

@@ -41,6 +41,9 @@ pub struct W4a4SlotsCall {
     pub slots: usize,
     pub act_div: usize,
     pub num_experts: usize,
+    /// 2026-10-21: The per-expert base table of a `_cs` entry (`scale_dict_kernels`), the last
+    /// argument; null for the plain entries.
+    pub scale_bases: DevicePtr,
 }
 
 /// 2026-10-14: The slot ranges of the launches covering `slots` slots read with row divisor
@@ -66,7 +69,8 @@ pub fn slot_pieces(slots: usize, act_div: usize) -> Result<Vec<Range<usize>>> {
 /// 2026-10-14: Launch `kern` over every slot of `c`, one launch per [`slot_pieces`] range. A later
 /// piece's activation pointers advance by whole rows of the width both entries store, `K` rounded
 /// up to 128 (`ka` in the kernel: `K` itself for the plain entry, whose K is a multiple of 128).
-/// K must be a positive multiple of 64, the wider of the two entries' contracts.
+/// K must be a positive multiple of 64, the wider of the two entries' contracts. 2026-10-21: A
+/// `_cs` twin's base table (`scale_bases`, not null) goes last.
 pub fn launch_w4a4_slots(
     gpu: &dyn GpuBackend,
     kern: KernelHandle,
@@ -81,7 +85,7 @@ pub fn launch_w4a4_slots(
     let ka = c.k.next_multiple_of(128);
     for p in slot_pieces(c.slots, c.act_div)? {
         let row0 = p.start / c.act_div;
-        KernelLaunch::new(gpu, kern)
+        let l = KernelLaunch::new(gpu, kern)
             .grid([div_ceil(c.n as u32, W4A4_ROWS_PER_CTA), p.len() as u32, 1])
             .block([W4A4_BLOCK, 1, 1])
             .arg_ptr(c.aq.offset(row0 * (ka / 2)))
@@ -95,8 +99,13 @@ pub fn launch_w4a4_slots(
             .arg_u32(c.n as u32)
             .arg_u32(c.k as u32)
             .arg_u32(c.act_div as u32)
-            .arg_u32(c.num_experts as u32)
-            .launch(stream)?;
+            .arg_u32(c.num_experts as u32);
+        if c.scale_bases.is_null() {
+            l
+        } else {
+            l.arg_ptr(c.scale_bases)
+        }
+        .launch(stream)?;
     }
     Ok(())
 }

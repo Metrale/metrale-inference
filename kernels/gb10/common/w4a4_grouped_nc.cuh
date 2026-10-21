@@ -45,7 +45,8 @@ __device__ __forceinline__ unsigned int w4n_expert(const int* __restrict__ tile_
     return (unsigned int)(x - 1);
 }
 
-template <int MT, int NT, int S, bool KH, int TH = W4G_THREADS>
+// 2026-10-21: CS: `cs` is the per-expert compact-scale base table (w4g_body's CS); same bytes.
+template <int MT, int NT, int S, bool KH, int TH = W4G_THREADS, bool CS = false>
 __device__ __forceinline__ void w4n_body(
     const unsigned char* __restrict__ Aq, const unsigned char* __restrict__ As,
     const float* __restrict__ Ag, const unsigned long long* __restrict__ packed_ptrs,
@@ -53,7 +54,7 @@ __device__ __forceinline__ void w4n_body(
     __nv_bfloat16* __restrict__ C, const int* __restrict__ expert_offsets,
     const int* __restrict__ tile_off, const int* __restrict__ sorted_token_ids,
     unsigned int num_experts, unsigned int N, unsigned int K, const unsigned int raster,
-    const unsigned int nc)
+    const unsigned int nc, const unsigned int* __restrict__ cs = nullptr)
 {
     constexpr int WM = MT / 32;
     constexpr int WN = TH / 32 / WM;
@@ -85,6 +86,7 @@ __device__ __forceinline__ void w4n_body(
     const unsigned char* Bq = (const unsigned char*)bq_ptr;
     const unsigned char* Bs = (const unsigned char*)scale_ptrs[e];
     const float scale2 = scale2_vals[e];
+    const unsigned int csb = CS ? cs[e] : 0xFFFFFFFFu;
     const int m_start = expert_offsets[e] + (tile - tile_off[e]) * MT;
     const int m_valid = min(MT, expert_offsets[e + 1] - m_start);
     const unsigned int nk = min(nc, nx - k0);
@@ -134,6 +136,11 @@ __device__ __forceinline__ void w4n_body(
         for (unsigned int i = tid; i < NT * 2u; i += TH) {
             const unsigned int r = i >> 1, h = i & 1u;
             const unsigned int n = n0 + r;
+            if (CS && csb != 0xFFFFFFFFu) {
+                const bool ok = n < N;
+                w4g_cp4(&st.ws[r][h * 4u], ok ? w4g_cs_at(w4g_cs_row(Bs, n, h, num_c, N), c, h) : Bs, ok);
+                continue;
+            }
             const bool ok = n < N && !(tail && h == 1u);
             const unsigned char* src = ok ? Bs + (unsigned long long)n * groups + c * 8u + h * 4u : Bs;
             w4g_cp4(&st.ws[r][h * 4u], src, ok);
@@ -216,8 +223,14 @@ __device__ __forceinline__ void w4n_body(
             const uint32_t a01 = odd ? x0h : wh.x, a03 = odd ? wh.y : x0h;
             const uint32_t a10 = odd ? x1l : wl.z, a12 = odd ? wl.w : x1l;
             const uint32_t a11 = odd ? x1h : wh.z, a13 = odd ? wh.w : x1h;
-            const uint32_t s0 = __byte_perm(sw.x, sw.y, 0x6240);
-            const uint32_t s1 = __byte_perm(sw.x, sw.y, 0x7351);
+            uint32_t s0, s1;
+            if (CS && csb != 0xFFFFFFFFu) {
+                const unsigned int n = (k0 + pk) * NT + rb + g + (odd ? 8u : 0u);
+                w4g_cs_words(sw, n, c, num_c, n < N, c == tail_c, csb, s0, s1);
+            } else {
+                s0 = __byte_perm(sw.x, sw.y, 0x6240);
+                s1 = __byte_perm(sw.x, sw.y, 0x7351);
+            }
 #pragma unroll
             for (int j = 0; j < FM; ++j) {
                 w4a4_mma(acc[f][j], a00, a01, a02, a03, bx[j][0], bx[j][1], s0, sb[j].x);

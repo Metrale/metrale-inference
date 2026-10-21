@@ -149,6 +149,18 @@ impl GroupPrecision {
         }
     }
 
+    /// 2026-10-21: Whether every row count from 1 runs [`MlpKernel::W4a4Static`]: an unbounded
+    /// W4A4 row cap and a W4A4 format on every rung. The routed experts' scale packing
+    /// (`scale_dict::plan`) needs it: the 16-bit-activation paths read plain scales.
+    pub fn w4a4_at_every_row(&self) -> bool {
+        self.w4a4_max_rows == usize::MAX
+            && self.ladder.rungs().iter().all(|r| match r.format {
+                ActQuantFormat::Declared => self.stamp == Nvfp4Act::A4,
+                ActQuantFormat::Nvfp4 => true,
+                ActQuantFormat::Bf16 | ActQuantFormat::Adaptive | ActQuantFormat::Fp8 => false,
+            })
+    }
+
     /// 2026-10-08: Whether some row count in `1..=max_rows` runs `kernel`; the loader keeps the
     /// weight forms only the reachable kernels need.
     pub fn reaches(&self, kernel: MlpKernel, max_rows: usize) -> bool {

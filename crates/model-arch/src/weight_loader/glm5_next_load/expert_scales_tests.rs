@@ -205,7 +205,7 @@ fn bind(
     shard: ExpertShard,
 ) -> Vec<(Vec<u8>, Vec<u8>, f32)> {
     let slab = ExpertSlab::new(ID..ID + 1, slab_label(shard));
-    let e = bind_routed_expert(gpu, store, LAYER, ID, shard, &slab).unwrap();
+    let e = bind_routed_expert(gpu, store, LAYER, ID, shard, &slab, None).unwrap();
     let (rows, cols) = match shard {
         ExpertShard::Sliced(s) => (s.len, s.len),
         ExpertShard::Whole => (store_width(store), store_width(store)),
@@ -253,7 +253,7 @@ fn a_sliced_csf_expert_is_refused_and_its_native_twin_binds() {
             let kind = ExpertShard::Sliced(s);
             assert_eq!(bind(&native.store, &gpu, kind).len(), 3, "rank {r}/{tp}");
             let slab = ExpertSlab::new(ID..ID + 1, slab_label(kind));
-            let err = bind_routed_expert(&gpu, &csf.store, LAYER, ID, kind, &slab)
+            let err = bind_routed_expert(&gpu, &csf.store, LAYER, ID, kind, &slab, None)
                 .err()
                 .unwrap_or_else(|| panic!("full {full} rank {r}/{tp} bound"));
             assert!(
@@ -278,7 +278,8 @@ fn a_whole_csf_expert_uploads_the_native_scales() {
         bind(&native.store, &gpu, ExpertShard::Whole)
     );
     let slab = ExpertSlab::new(ID..ID + 1, CSF_SCALE_SLAB_LABEL);
-    let e = bind_routed_expert(&gpu, &csf.store, LAYER, ID, ExpertShard::Whole, &slab).unwrap();
+    let e =
+        bind_routed_expert(&gpu, &csf.store, LAYER, ID, ExpertShard::Whole, &slab, None).unwrap();
     let codes = qualified(&format!("mlp.experts.{ID}.down_proj.weight"));
     assert_eq!(e.down_proj.packed, csf.store.get(&codes).unwrap().ptr);
 }
@@ -348,7 +349,7 @@ fn malformed_planes_are_refused() {
         let resident = |name: &str| !is_csf_component(name);
         let sh = shard(&format!("{tag}-whole"), &t, &gpu, resident);
         let slab = ExpertSlab::new(ID..ID + 1, CSF_SCALE_SLAB_LABEL);
-        let err = bind_routed_expert(&gpu, &sh.store, LAYER, ID, ExpertShard::Whole, &slab)
+        let err = bind_routed_expert(&gpu, &sh.store, LAYER, ID, ExpertShard::Whole, &slab, None)
             .err()
             .unwrap_or_else(|| panic!("{tag} bound"));
         assert!(format!("{err:#}").contains(why), "{tag}: {err:#}");

@@ -44,16 +44,18 @@ use metrale_gpu_runtime::gpu::{GpuBackend, KernelHandle};
 pub mod build;
 pub mod build_w4a4;
 mod config;
-mod kernel_sets;
 pub mod expert_tp;
 pub mod forward;
 pub mod forward_prefill_gemm;
+mod kernel_sets;
 pub mod precision;
+pub mod scale_dict;
+pub mod scale_dict_kernels;
 pub mod weights;
 
 pub use config::{Glm5NextMlpConfig, Glm5NextMlpKind};
-pub use kernel_sets::{W4a4GroupedKernels, W4a4MoeK64Kernels};
 pub use expert_tp::{EXPERT_TP_UNIT, ExpertShard, ExpertSlice};
+pub use kernel_sets::{W4a4GroupedKernels, W4a4MoeK64Kernels};
 pub use weights::{
     Glm5NextDenseMlpWeights, Glm5NextDenseSite, Glm5NextExpertWeights, Glm5NextMoeWeights,
 };
@@ -202,6 +204,8 @@ pub struct Glm5NextMlpKernels {
     /// 2026-10-10: The grouped W4A4 expert GEMM for routed launches wider than
     /// [`MOE_W4A4_MAX_ROWS`] (`forward::w4a4_grouped`).
     pub w4a4_grouped: W4a4GroupedKernels,
+    /// 2026-10-21: The `_cs` twins of the routed W4A4 entries (`METRALE_GLM_MOE_SCALE_DICT`).
+    pub scale_dict: scale_dict_kernels::ScaleDictTwins,
     /// 2026-10-17: The GLM layer levers the MLP forward reads, resolved at load.
     pub levers: GlmLevers,
 }
@@ -420,6 +424,7 @@ impl Glm5NextMlpKernels {
                 nc: ["w4a4_grouped_mx_m128_n", "w4a4_grouped_mx_m128_k64_n"]
                     .map(|e| metrale_model_layers::layers::try_kernel(gpu, W4A4_GROUPED_MODULE, e)),
             },
+            scale_dict: scale_dict_kernels::ScaleDictTwins::resolve(gpu),
             levers,
         })
     }
