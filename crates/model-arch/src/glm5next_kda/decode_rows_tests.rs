@@ -30,6 +30,7 @@ pub(super) const CHUNK16_SCAN: u64 = 0x31B;
 pub(super) const CHUNK64_PREP: u64 = 0x31E;
 pub(super) const CHUNK64_SCAN: u64 = 0x320;
 pub(super) const GATES_FUSED: u64 = 0x31C;
+pub(super) const GATES_ROWS: u64 = 0x31D;
 pub(super) const CONV_TOKENS_PARTS: u64 = 0x321;
 pub(super) const CHUNK64_PREP_CONV: u64 = 0x322;
 pub(super) const CONV_WINDOW_PARTS: u64 = 0x323;
@@ -109,6 +110,7 @@ pub(super) fn layer(gpu: &MockGpuBackend) -> Glm5NextKdaLayer {
         fill: k(0x311),
         pack: k(0x312),
         gates_fused: k(GATES_FUSED),
+        gates_rows: k(GATES_ROWS),
     };
     Glm5NextKdaLayer::new(
         3,

@@ -57,6 +57,9 @@ pub struct Glm5NextKdaKernels {
     /// activation quantization, the gate and the beta sigmoid in one launch
     /// (`METRALE_GLM_KDA_GATES_FUSED=1`, `gates_fused.rs`). `0` when absent.
     pub gates_fused: KernelHandle,
+    /// 2026-10-21: `kda_gates_w8a8_k128_rows`: the same chain for 1..=8 tokens
+    /// (`METRALE_GLM_KDA_GATES_ROWS`, `gates_fused.rs`). `0` when absent.
+    pub gates_rows: KernelHandle,
 }
 
 impl Glm5NextKdaKernels {
@@ -113,6 +116,11 @@ impl Glm5NextKdaKernels {
                 gpu,
                 "kda_gates_w8a8",
                 "kda_gates_w8a8_k128",
+            ),
+            gates_rows: metrale_model_layers::layers::try_kernel(
+                gpu,
+                "kda_gates_w8a8",
+                "kda_gates_w8a8_k128_rows",
             ),
         })
     }
