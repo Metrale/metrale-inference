@@ -18,6 +18,7 @@ const OFF: SegPlan = SegPlan {
     sms: 0,
     gemv_rows: 0,
     one_row: false,
+    pipe: false,
     tc_min_rows: None,
     dequant_min_rows: None,
     batch_invariant: false,
@@ -27,6 +28,7 @@ const FUSE: SegPlan = SegPlan {
     sms: 48,
     gemv_rows: 0,
     one_row: false,
+    pipe: false,
     tc_min_rows: None,
     dequant_min_rows: None,
     batch_invariant: false,
@@ -36,6 +38,7 @@ const SPLIT: SegPlan = SegPlan {
     sms: 48,
     gemv_rows: 0,
     one_row: false,
+    pipe: false,
     tc_min_rows: None,
     dequant_min_rows: None,
     batch_invariant: false,
@@ -434,3 +437,5 @@ fn gemv_rows_take_the_gemv_tiers_up_to_their_edge() {
 
 #[path = "glm5next_w4a16_dense_one_row_tests.rs"]
 mod one_row;
+#[path = "glm5next_w4a16_dense_pipe_tests.rs"]
+mod pipe;

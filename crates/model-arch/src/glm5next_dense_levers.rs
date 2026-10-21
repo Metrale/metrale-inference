@@ -30,6 +30,9 @@ pub struct DenseLevers {
     pub gemv_rows: u32,
     /// 2026-10-10: `METRALE_GLM_W4A16_GEMV_SEG`: one-row launches on `w4a16_gemv_seg`.
     pub gemv_seg: bool,
+    /// 2026-10-21: `METRALE_GLM_W4A16_GEMV_PIPE` (on unless switched off): under `gemv_seg`, the
+    /// 1- and 2-row launches on `w4a16_gemv_pipe` (`glm5next_w4a16_seg::SegPlan::pipe_rows`).
+    pub gemv_pipe: bool,
     /// 2026-10-12: `METRALE_GLM_W4A16_TC_GEMM_MIN_ROWS` (`glm5next_w4a16_tc`): `None` off.
     pub tc_min_rows: Option<usize>,
     /// 2026-10-10: `METRALE_GLM_W4A16_DEQUANT_GEMM_MIN_ROWS` (`glm5next_w4a16_wide`): `None` off.
@@ -108,6 +111,7 @@ impl DenseLevers {
             seg: seg(k.glm_w4a16_seg.as_deref())?,
             gemv_rows: gemv_rows.map_or(0, |r| r as u32),
             gemv_seg: k.glm_w4a16_gemv_seg,
+            gemv_pipe: k.glm_w4a16_gemv_pipe,
             tc_min_rows,
             dequant_min_rows,
             fp8_dequant_min_rows,

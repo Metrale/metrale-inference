@@ -335,7 +335,7 @@ fn proj_registered(
             output: c,
             n: n32,
         }];
-        seg::launch_one_row(gpu, a, &segs, k32, plan.sms, stream)?;
+        seg::launch_seg_gemv(gpu, a, &segs, 1, k32, plan, stream)?;
         return Ok(true);
     }
     // 2026-10-12: `METRALE_GLM_W4A16_TC_GEMM_MIN_ROWS`: one launch of the row tiles' bits.
@@ -364,15 +364,15 @@ fn proj_registered(
     if plan.gemv_tier(m) {
         // 2026-10-11: Under `METRALE_GLM_W4A16_GEMV_SEG`, 2..=4 rows of a lone projection below
         // K 2048 take the M-row segmented GEMV, whose rows are these tiers' bytes (each the
-        // one-row GEMV's); from K 2048 up the tier is as fast or faster (KDA o, DSA q_a and
-        // o_absorb; `ops::w4a16_gemv_seg_lone`).
-        if plan.seg_gemv(m) && w4a16_gemv_seg_lone(k32) {
+        // one-row GEMV's); from K 2048 up the tier, unless `w4a16_gemv_pipe` takes the rows
+        // (2026-10-21: `SegPlan::pipe_rows`; KDA o 31.2 -> 30.6 us at 2 rows).
+        if plan.seg_gemv(m) && (w4a16_gemv_seg_lone(k32) || plan.pipe_rows(m)) {
             let segs = [W4a16Seg {
                 weight: e.w,
                 output: c,
                 n: n32,
             }];
-            seg::launch_seg_gemv(gpu, a, &segs, m, k32, plan.sms, stream)?;
+            seg::launch_seg_gemv(gpu, a, &segs, m, k32, plan, stream)?;
         } else {
             seg::launch_gemv_rows(gpu, a, &e.w, c, m, n32, k32, stream)?;
         }
@@ -486,7 +486,7 @@ fn proj_group_registered(
     }
     let k32 = k as u32;
     if seg_gemv {
-        seg::launch_seg_gemv(gpu, a, &segs, m, k32, plan.sms, stream)?;
+        seg::launch_seg_gemv(gpu, a, &segs, m, k32, plan, stream)?;
         return Ok(true);
     }
     let ns: Vec<u32> = segs.iter().map(|g| g.n).collect();
