@@ -19,27 +19,35 @@ use super::Glm5NextDsaLayer;
 impl Glm5NextDsaLayer {
     /// 2026-10-08: `q_a_proj`, its RMSNorm into `q_resid`, `q_absorb` into `q_abs`, and
     /// `kv_a_proj` into `kv_a`, each once for all `k` rows of `hidden`.
+    /// 2026-10-21: Under `METRALE_GLM_DSA_PROJ_IN_MERGED` q_a and kv_a (and, with `idx`, the
+    /// indexer's wk and compress gate into its staging rows) run first as one launch
+    /// (`proj_in_merged`). Returns whether the indexer's projections ran; the caller then passes
+    /// that to `indexer_project_rows`.
     pub(super) fn project_in(
         &self,
         gpu: &dyn GpuBackend,
         hidden: DevicePtr,
         k: usize,
+        idx: bool,
         stream: u64,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let w = &self.workspace;
-        self.gemm(
-            gpu,
-            self.kernels.gemm,
-            self.kernels.gemv,
-            self.kernels.batchm_bf16(),
-            hidden,
-            self.weights.q_a_proj,
-            w.q_a,
-            k,
-            self.cfg.q_lora_rank,
-            self.cfg.hidden,
-            stream,
-        )?;
+        let merged = self.project_in_merged(gpu, hidden, k, idx, stream)?;
+        if !merged {
+            self.gemm(
+                gpu,
+                self.kernels.gemm,
+                self.kernels.gemv,
+                self.kernels.batchm_bf16(),
+                hidden,
+                self.weights.q_a_proj,
+                w.q_a,
+                k,
+                self.cfg.q_lora_rank,
+                self.cfg.hidden,
+                stream,
+            )?;
+        }
         KernelLaunch::new(gpu, self.kernels.rms_norm)
             // 2026-09-25: `rms_norm_vanilla` runs one block per row, so one launch covers all
             // k rows.
@@ -64,19 +72,22 @@ impl Glm5NextDsaLayer {
             self.cfg.q_lora_rank,
             stream,
         )?;
-        self.gemm(
-            gpu,
-            self.kernels.gemm,
-            self.kernels.gemv,
-            self.kernels.batchm_bf16(),
-            hidden,
-            self.weights.kv_a_proj,
-            w.kv_a,
-            k,
-            self.cfg.kv_lora_rank,
-            self.cfg.hidden,
-            stream,
-        )
+        if !merged {
+            self.gemm(
+                gpu,
+                self.kernels.gemm,
+                self.kernels.gemv,
+                self.kernels.batchm_bf16(),
+                hidden,
+                self.weights.kv_a_proj,
+                w.kv_a,
+                k,
+                self.cfg.kv_lora_rank,
+                self.cfg.hidden,
+                stream,
+            )?;
+        }
+        Ok(merged && idx)
     }
 
     /// 2026-10-08: RMSNorm, FP8 quantisation and the paged write of `rows` consecutive `kv_a`
@@ -167,6 +178,9 @@ impl Glm5NextDsaLayer {
         wide: bool,
         stream: u64,
     ) -> Result<()> {
+        if !wide && self.selector_pair(gpu, hidden, n, stream)? {
+            return Ok(());
+        }
         let w = &self.workspace;
         let (heads, idx_row) = (
             self.cfg.index_heads,
@@ -238,11 +252,14 @@ impl Glm5NextDsaLayer {
     /// BF16 GEMV under `declared`, the row-invariant W8A8 family under `fp8` and `w4a16`, whose
     /// one activation quantization both projections share under a `stable_input` guard), and
     /// `nllb_layernorm_bf16` runs one block per row. Refuses more rows than the workspace.
+    /// 2026-10-21: `projected`: `project_in` already wrote the staging rows (its merged launch);
+    /// only the key norm runs.
     pub(super) fn indexer_project_rows(
         &self,
         gpu: &dyn GpuBackend,
         hidden: DevicePtr,
         n: usize,
+        projected: bool,
         stream: u64,
     ) -> Result<()> {
         let w = &self.workspace;
@@ -256,10 +273,15 @@ impl Glm5NextDsaLayer {
         let group = metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M as usize;
         let _stable = crate::glm5next_fp8_dense::stable_input(hidden);
         let whole = self.levers.dsa_idx_proj_whole;
-        for (weight, out) in [
-            (self.weights.wk, w.stage_k),
-            (self.weights.compress_gate, w.stage_gate),
-        ] {
+        let projections = if projected {
+            vec![]
+        } else {
+            vec![
+                (self.weights.wk, w.stage_k),
+                (self.weights.compress_gate, w.stage_gate),
+            ]
+        };
+        for (weight, out) in projections {
             // 2026-10-12: Under `METRALE_GLM_DSA_IDX_PROJ_WHOLE=1` a projection the FP8 registry
             // serves (and the W4A16 one does not) runs all `n` rows in one call: the W8A8 family
             // is row-invariant, so each row keeps its bits, and the two projections of `hidden`

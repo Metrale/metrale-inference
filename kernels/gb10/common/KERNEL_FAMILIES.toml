@@ -932,6 +932,7 @@ kernels = [
   "gemv::dense_gemv_bf16_fp32out", "gemm::dense_gemm_bf16_f32out",
   "dense_gemv_bf16_batchm_few::dense_gemv_bf16_batchm_few",
   "dense_gemv_bf16_batchm_few::dense_gemv_bf16_batchm_few_fp32out",
+  "dense_gemv_bf16_batchm_few::dense_gemv_bf16_batchm_few_fp32out_pair",
 ]
 rows = [1, 65536]
 # 2026-10-02: Every kernel widens BF16 exactly and sums in FP32 (no 16-bit partials), one BF16
@@ -951,6 +952,9 @@ kernel_pipeline."gemm::dense_gemm_bf16_f32out".router = { in = ["bf16"], act = "
 # order, so the same bits.
 kernel_pipeline."dense_gemv_bf16_batchm_few::dense_gemv_bf16_batchm_few_fp32out".linear = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["f32"] }
 kernel_pipeline."dense_gemv_bf16_batchm_few::dense_gemv_bf16_batchm_few_fp32out".router = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["f32"] }
+# 2026-10-21: Two dense_gemv_bf16_batchm_few_fp32out operand sets in one launch (default-on
+# METRALE_GLM_DSA_SELECTOR_PAIR); each block runs that entry's body on its set, so the same bits.
+kernel_pipeline."dense_gemv_bf16_batchm_few::dense_gemv_bf16_batchm_few_fp32out_pair".linear = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["f32"] }
 op = [
   { op = "linear", weight = ["bf16"], activation = ["bf16"] },
   { op = "lm_head", weight = ["bf16"], activation = ["bf16"] },
@@ -1351,6 +1355,9 @@ kernels = [
   "w8a8_gemv::w8a8_gemv_rowscale_mb16", "w8a8_gemv::w8a8_gemv_blk128_mb1_ku8",
   "w8a8_gemv::w8a8_gemv_blk128_mb2", "w8a8_gemv::w8a8_gemv_blk128_mb4",
   "w8a8_gemv::w8a8_gemv_blk128_mb8", "w8a8_gemv::w8a8_gemv_blk128_mb16",
+  # 2026-10-21: The rowscale mb1 entry over up to four weights, each into its own output
+  # (default-on METRALE_GLM_DSA_PROJ_IN_MERGED); the same tiles, so the same bits per output.
+  "w8a8_gemv::w8a8_gemv_rowscale_mb1_ku8_split4",
 ]
 rows = [1, 128]
 pipeline.linear = { in = ["{activation}"], act = "{activation}", weight = "{weight}->e4m3", mma = "e4m3*e4m3", accumulate = "f32", scale = "f32", out = ["bf16"] }
@@ -2547,6 +2554,6 @@ layer_kind = "deepseek_sparse_attention"
 per_sequence = ["verify"]
 sites = ["dsa.kv_norm", "dsa.kv_write", "dsa.idx_k", "dsa.idx_k_norm", "dsa.idx_gate", "dsa.pool", "dsa.idx_w", "dsa.idx_q", "dsa.select"]
 rows_above = 1
-cite = "crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:200"
+cite = "crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:203"
 holds = "for row in 0..k {"
 note = "DSA verify: latent write, indexer projections, store and selection one row per launch; 2026-10-21: the selection in one pass after the row loop under METRALE_GLM_DSA_VERIFY_SELECT_ONCE (layer/verify_select.rs)"

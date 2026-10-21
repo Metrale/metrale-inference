@@ -38,6 +38,9 @@ pub struct Glm5NextDsaLayerKernels {
     pub gemv_batchm_wide_f32: KernelHandle,
     /// 2026-10-21: The 2..=8-row batched GEMVs, BF16 and FP32 out (`glm5next_layer::wide_gemv`).
     pub gemv_batchm_few: FewGemv,
+    /// 2026-10-21: `dense_gemv_bf16_batchm_few_fp32out_pair`: the selector query and head
+    /// weights in one launch (`selector_pair`); `KernelHandle(0)` when the target lacks it.
+    pub selector_pair: KernelHandle,
     /// 2026-09-25: `rms_norm_vanilla`; see the module header.
     pub rms_norm: KernelHandle,
     /// 2026-09-25: `glm5next_mla_latent_write_fp8`: RMSNorm, FP8 quantisation and the paged
@@ -80,6 +83,11 @@ impl Glm5NextDsaLayerKernels {
                 "dense_gemv_bf16_batchm_wide_fp32out",
             ),
             gemv_batchm_few: FewGemv::resolve(gpu),
+            selector_pair: metrale_model_layers::layers::try_kernel(
+                gpu,
+                "dense_gemv_bf16_batchm_few",
+                "dense_gemv_bf16_batchm_few_fp32out_pair",
+            ),
             rms_norm: gpu.kernel("rms_norm_vanilla", "rms_norm_vanilla")?,
             latent_write: gpu
                 .kernel("glm5next_mla_latent_write", "glm5next_mla_latent_write_fp8")?,

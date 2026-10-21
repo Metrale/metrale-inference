@@ -174,6 +174,9 @@ impl Rig {
                     bf16: k(BATCHM_FEW),
                     f32: k(BATCHM_FEW_F32),
                 },
+                // 2026-10-21: Absent, so the fixture's launch sequences keep the two launches;
+                // `selector_pair_tests` sets it.
+                selector_pair: k(0),
                 rms_norm: k(0x106),
                 latent_write: k(LATENT),
             },

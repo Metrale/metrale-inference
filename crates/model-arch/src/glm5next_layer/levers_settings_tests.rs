@@ -26,6 +26,8 @@ fn from_values(mut value: impl FnMut(&str) -> Option<String>) -> GlmLevers {
     let pdl = value("METRALE_GLM_PDL").as_deref() != Some("0");
     let dsa_verify_select_once =
         value("METRALE_GLM_DSA_VERIFY_SELECT_ONCE").as_deref() != Some("0");
+    let dsa_proj_in_merged = value("METRALE_GLM_DSA_PROJ_IN_MERGED").as_deref() != Some("0");
+    let dsa_selector_pair = value("METRALE_GLM_DSA_SELECTOR_PAIR").as_deref() != Some("0");
     let prefill_rows = value("METRALE_GLM_PREFILL_ROWS")
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|r| *r >= 1)
@@ -46,6 +48,8 @@ fn from_values(mut value: impl FnMut(&str) -> Option<String>) -> GlmLevers {
         dsa_idx_proj_whole: opt_in("METRALE_GLM_DSA_IDX_PROJ_WHOLE"),
         dsa_verify_rows: opt_in("METRALE_GLM_DSA_VERIFY_ROWS"),
         dsa_verify_select_once,
+        dsa_proj_in_merged,
+        dsa_selector_pair,
         ar_fused_post: opt_in("METRALE_GLM_AR_FUSED_POST"),
         mhc_post_fold: opt_in("METRALE_GLM_MHC_POST_FOLD"),
         mhc_fused: opt_in("METRALE_GLM_MHC_FUSED"),
@@ -99,13 +103,15 @@ const OPT_IN: [&str; 14] = [
     "METRALE_GLM_ARENA_LEAN",
 ];
 
-const OPT_OUT: [&str; 6] = [
+const OPT_OUT: [&str; 8] = [
     "METRALE_GLM_PDL",
     "METRALE_GLM_CUBLAS_PROJ",
     "METRALE_GLM_DSA_WS_SHARED",
     "METRALE_GLM_MLP_WS_SHARED",
     "METRALE_DSA_SELECT_ROWS",
     "METRALE_GLM_DSA_VERIFY_SELECT_ONCE",
+    "METRALE_GLM_DSA_PROJ_IN_MERGED",
+    "METRALE_GLM_DSA_SELECTOR_PAIR",
 ];
 
 const WIDTHS: [&str; 2] = ["METRALE_GLM_PREFILL_ROWS", "METRALE_GLM_ROW_GROUP"];

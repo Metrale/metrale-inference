@@ -10,7 +10,7 @@
 //! Owner: gpu-examples.
 //! Invariants: every arm is timed in every round, in the same order, after the same warm-up.
 //!
-//! `PDL_BENCH_BASE_PTX=<dir>` adds an arm on the kernels before the change (see `with_base`).
+//! `PDL_BENCH_BASE_PTX=<dir>` adds an arm on the kernels before the change (see `metrale_gpu_examples::base_ptx`).
 //! 2026-10-21: The "PDL on new" arm runs the new side of the bit-identical launch levers
 //! (`Variant`; `PDL_CHAIN_OLD=serial_sweep,conv_to,zero_swiglu` keeps the named ones old).
 //!
@@ -68,29 +68,6 @@ fn median(v: &mut [f64]) -> f64 {
     v[v.len() / 2]
 }
 
-/// 2026-10-21: The GLM module set with each module whose `<name>.ptx` is in `dir` replaced by
-/// that file (leaked: a backend's modules are `'static`), for the base arm.
-fn with_base(
-    modules: &[(&'static str, &'static [u8])],
-    dir: &str,
-) -> Result<Vec<(&'static str, &'static [u8])>> {
-    let mut n = 0;
-    let out = modules
-        .iter()
-        .map(
-            |&(name, blob)| match std::fs::read(format!("{dir}/{name}.ptx")) {
-                Ok(b) => {
-                    n += 1;
-                    (name, &*Box::leak(b.into_boxed_slice()))
-                }
-                Err(_) => (name, blob),
-            },
-        )
-        .collect();
-    anyhow::ensure!(n > 0, "{dir}: no module PTX found");
-    Ok(out)
-}
-
 fn main() -> Result<()> {
     let sets = metrale_kernels::all_ptx_sets();
     let glm = sets
@@ -106,7 +83,7 @@ fn main() -> Result<()> {
     // 2026-10-21: `PDL_BENCH_BASE_PTX=<dir>`: a third arm on the kernels before this change
     // (their PTX, one `<module>.ptx` per module), launched serialised, in the same process.
     let base = match std::env::var("PDL_BENCH_BASE_PTX") {
-        Ok(dir) => Some(MetraleCudaBackend::new(0, &with_base(&glm.modules, &dir)?)?),
+        Ok(dir) => Some(MetraleCudaBackend::new(0, &metrale_gpu_examples::base_ptx::with_base(&glm.modules, &dir)?)?),
         Err(_) => None,
     };
     // 2026-10-21: A third arm: PDL on with the new side of the levers `Variant` names.

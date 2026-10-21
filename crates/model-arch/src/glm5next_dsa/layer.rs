@@ -56,6 +56,8 @@ mod indexer_place;
 mod kernels;
 mod prefill_rows;
 mod proj_gemm;
+mod proj_in_merged;
+mod selector_pair;
 mod row_ops;
 mod rows;
 mod select_rows;

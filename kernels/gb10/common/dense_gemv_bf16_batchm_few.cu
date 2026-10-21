@@ -22,7 +22,7 @@
 //   glm5next_batchm_few_gate (gpu examples) checks it byte for byte.
 // - A is [M, K] contiguous, B is [N, K] row-major, row t of C starts at C + t * out_stride. K % 8 == 0
 //   (16-byte rows, as dense_gemv_bf16_batchm).
-// - Launch: grid (ceil(N / 4), 1, 1), block (256, 1, 1). M outside 2..FEW_MAX_M writes nothing
+// - Launch: grid (ceil(N / 4), 1, 1), block (256, 1, 1) (the _pair entry: the sum of both). M outside 2..FEW_MAX_M writes nothing
 //   (the host sends only those).
 
 #include <cuda_bf16.h>
@@ -66,11 +66,12 @@ __device__ __forceinline__ void few_body(
     unsigned int N,
     unsigned int K,
     unsigned int out_stride,
-    float (*smem)[N_PER_BLOCK * 2]
+    float (*smem)[N_PER_BLOCK * 2],
+    unsigned int blk
 ) {
     const unsigned int local_out = threadIdx.x / TPO;
     const unsigned int lane = threadIdx.x % TPO;
-    const unsigned int n = blockIdx.x * N_PER_BLOCK + local_out;
+    const unsigned int n = blk * N_PER_BLOCK + local_out;
     const bool active = (n < N);
 
     float acc[MM];
@@ -161,17 +162,18 @@ __device__ __forceinline__ void few_dispatch(
     unsigned int M,
     unsigned int N,
     unsigned int K,
-    unsigned int out_stride
+    unsigned int out_stride,
+    unsigned int blk
 ) {
     __shared__ float smem[FEW_MAX_M][N_PER_BLOCK * 2];
     switch (M) {
-        case 2: few_body<2, OutT>(A, B, C, N, K, out_stride, smem); break;
-        case 3: few_body<3, OutT>(A, B, C, N, K, out_stride, smem); break;
-        case 4: few_body<4, OutT>(A, B, C, N, K, out_stride, smem); break;
-        case 5: few_body<5, OutT>(A, B, C, N, K, out_stride, smem); break;
-        case 6: few_body<6, OutT>(A, B, C, N, K, out_stride, smem); break;
-        case 7: few_body<7, OutT>(A, B, C, N, K, out_stride, smem); break;
-        case 8: few_body<8, OutT>(A, B, C, N, K, out_stride, smem); break;
+        case 2: few_body<2, OutT>(A, B, C, N, K, out_stride, smem, blk); break;
+        case 3: few_body<3, OutT>(A, B, C, N, K, out_stride, smem, blk); break;
+        case 4: few_body<4, OutT>(A, B, C, N, K, out_stride, smem, blk); break;
+        case 5: few_body<5, OutT>(A, B, C, N, K, out_stride, smem, blk); break;
+        case 6: few_body<6, OutT>(A, B, C, N, K, out_stride, smem, blk); break;
+        case 7: few_body<7, OutT>(A, B, C, N, K, out_stride, smem, blk); break;
+        case 8: few_body<8, OutT>(A, B, C, N, K, out_stride, smem, blk); break;
         default: break;
     }
 }
@@ -187,7 +189,7 @@ extern "C" __global__ void __launch_bounds__(bmfew::BLOCK) dense_gemv_bf16_batch
     unsigned int K,
     unsigned int out_stride
 ) {
-    bmfew::few_dispatch<__nv_bfloat16>(A, B, C, M, N, K, out_stride);
+    bmfew::few_dispatch<__nv_bfloat16>(A, B, C, M, N, K, out_stride, blockIdx.x);
 }
 
 extern "C" __global__ void __launch_bounds__(bmfew::BLOCK) dense_gemv_bf16_batchm_few_fp32out(
@@ -199,5 +201,34 @@ extern "C" __global__ void __launch_bounds__(bmfew::BLOCK) dense_gemv_bf16_batch
     unsigned int K,
     unsigned int out_stride
 ) {
-    bmfew::few_dispatch<float>(A, B, C, M, N, K, out_stride);
+    bmfew::few_dispatch<float>(A, B, C, M, N, K, out_stride, blockIdx.x);
+}
+
+// 2026-10-21: Two FP32-out projections of M rows in one launch (default-on
+// METRALE_GLM_DSA_SELECTOR_PAIR: a DSA verify's selector query wq_b over q_resid and head weights
+// weights_proj over the layer input). Blocks [0, ceil(N0 / 4)) are dense_gemv_bf16_batchm_few_fp32out
+// on (A0, B0, C0, N0, K0, out_stride0) at block blockIdx.x, the rest the same on the second operand
+// set at block blockIdx.x - ceil(N0 / 4); each output has that entry's bytes. Grid
+// (ceil(N0 / 4) + ceil(N1 / 4), 1, 1).
+extern "C" __global__ void __launch_bounds__(bmfew::BLOCK) dense_gemv_bf16_batchm_few_fp32out_pair(
+    const __nv_bfloat16* __restrict__ A0,
+    const __nv_bfloat16* __restrict__ B0,
+    float* __restrict__ C0,
+    unsigned int N0,
+    unsigned int K0,
+    unsigned int out_stride0,
+    const __nv_bfloat16* __restrict__ A1,
+    const __nv_bfloat16* __restrict__ B1,
+    float* __restrict__ C1,
+    unsigned int N1,
+    unsigned int K1,
+    unsigned int out_stride1,
+    unsigned int M
+) {
+    const unsigned int g0 = (N0 + bmfew::N_PER_BLOCK - 1) / bmfew::N_PER_BLOCK;
+    if (blockIdx.x < g0) {
+        bmfew::few_dispatch<float>(A0, B0, C0, M, N0, K0, out_stride0, blockIdx.x);
+    } else {
+        bmfew::few_dispatch<float>(A1, B1, C1, M, N1, K1, out_stride1, blockIdx.x - g0);
+    }
 }

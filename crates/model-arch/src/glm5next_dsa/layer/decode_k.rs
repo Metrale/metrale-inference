@@ -121,7 +121,6 @@ impl Glm5NextDsaLayer {
         // quantization `kv_a_proj` made of it instead of quantizing it twice more (same bytes:
         // the same kernel on the same input).
         let stable = crate::glm5next_fp8_dense::stable_input(hidden);
-        self.project_in(gpu, hidden, k, stream)?;
         let mut attend_bt = DevicePtr::NULL;
         let mut attend_sl = DevicePtr::NULL;
         // 2026-09-25: On the host path without `persist_bt`, row 0 allocates the shared bt/sl
@@ -184,9 +183,13 @@ impl Glm5NextDsaLayer {
             }
             _ => false,
         };
+        // 2026-10-21: After `verify_rows` is known, so the indexer's projections can join
+        // `project_in`'s merged launch (`METRALE_GLM_DSA_PROJ_IN_MERGED`); nothing before reads
+        // its outputs.
+        let projected = self.project_in(gpu, hidden, k, verify_rows, stream)?;
         if verify_rows {
             self.selector_query_rows(gpu, hidden, k, false, stream)?;
-            self.indexer_project_rows(gpu, hidden, k, stream)?;
+            self.indexer_project_rows(gpu, hidden, k, projected, stream)?;
         }
         if staged {
             let (slot0, pos0, bt0, bt_rows) = match (meta, &host) {
