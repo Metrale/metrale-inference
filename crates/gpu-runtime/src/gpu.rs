@@ -427,6 +427,17 @@ pub trait GpuBackend: Send + Sync {
         Ok(())
     }
 
+    /// 2026-10-21: As `stream_wait_event`, but under capture an external wait node (CUDA
+    /// `CU_EVENT_WAIT_EXTERNAL`) on the event's record at launch time (`early_launch.rs`).
+    fn stream_wait_event_external(&self, stream: u64, event: u64) -> Result<()> {
+        self.stream_wait_event(stream, event)
+    }
+
+    /// 2026-10-21: A stream at `like`'s priority. The default is `create_stream`.
+    fn create_stream_like(&self, _like: u64) -> Result<u64> {
+        self.create_stream()
+    }
+
     /// 2026-09-25: Block the host until the work recorded before `event` has
     /// completed. Unlike `synchronize(stream)`, it does not wait for work
     /// enqueued after the event.

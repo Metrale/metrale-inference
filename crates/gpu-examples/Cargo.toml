@@ -7,6 +7,7 @@ example = [
     { name = "argmax_key_gate", required-features = ["cuda", "gpu-examples"] },
     { name = "tq128_microtest", path = "examples/tq128_microtest/main.rs", required-features = ["cuda", "gpu-examples"] },
     { name = "mtp_k2_verdict_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "early_launch_gate", required-features = ["cuda", "gpu-examples"] },
     { name = "residual_add_rms_norm_exact_microtest", required-features = ["cuda", "gpu-examples"] },
     { name = "rms_norm_act_quant_microtest", required-features = ["cuda", "gpu-examples"] },
     { name = "bf16_batch_bitparity_microtest", required-features = ["cuda", "gpu-examples"] },

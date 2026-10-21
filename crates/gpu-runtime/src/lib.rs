@@ -27,6 +27,7 @@ pub mod cutlass;
 #[cfg(not(feature = "cuda"))]
 #[path = "cutlass_metal_stub.rs"]
 pub mod cutlass;
+pub mod early_launch;
 #[cfg(feature = "cuda")]
 pub mod flashinfer;
 #[cfg(not(feature = "cuda"))]

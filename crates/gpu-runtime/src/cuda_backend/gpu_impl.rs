@@ -436,6 +436,9 @@ impl GpuBackend for MetraleCudaBackend {
     fn create_stream_greatest_priority(&self) -> Result<u64> {
         self.create_stream_greatest_priority_cu()
     }
+    fn create_stream_like(&self, like: u64) -> Result<u64> {
+        self.create_stream_like_cu(like)
+    }
     fn bind_to_thread(&self) -> Result<()> {
         self.bind_to_thread_cu()
     }
@@ -446,7 +449,11 @@ impl GpuBackend for MetraleCudaBackend {
         self.record_event_cu(event, stream)
     }
     fn stream_wait_event(&self, stream: u64, event: u64) -> Result<()> {
-        self.stream_wait_event_cu(stream, event)
+        self.stream_wait_event_cu(stream, event, 0)
+    }
+    fn stream_wait_event_external(&self, stream: u64, event: u64) -> Result<()> {
+        // 2026-10-21: Flag 1 is CU_EVENT_WAIT_EXTERNAL.
+        self.stream_wait_event_cu(stream, event, 1)
     }
     fn event_synchronize(&self, event: u64) -> Result<()> {
         self.event_synchronize_cu(event)
