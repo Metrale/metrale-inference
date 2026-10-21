@@ -394,7 +394,7 @@ fn gate(
     );
     if name == "exact" {
         println!(
-            "recomputed logits: {probes} probes, {byte_diffs} differing bytes against the full head"
+            "recomputed logits: {probes} probes, {byte_diffs} differ from the full head's bytes"
         );
     }
     if diffs != 0 || byte_diffs != 0 {
