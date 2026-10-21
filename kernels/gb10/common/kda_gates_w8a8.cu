@@ -29,6 +29,7 @@
 #include "kda_gate_scalar.cuh"
 #include "w8a8_policy.cuh"
 #include "w8a8_quant.cuh"
+#include "pdl.cuh"
 
 namespace kdag {
 
@@ -114,29 +115,35 @@ __device__ __forceinline__ void gates_body(
     __nv_bfloat16* __restrict__ g_raw, __nv_bfloat16* __restrict__ out_gate, const float* __restrict__ dt_bias,
     const float* __restrict__ A_log, float* __restrict__ gate, const __nv_bfloat16* __restrict__ beta_bf16,
     float* __restrict__ beta, unsigned M, unsigned N, unsigned D, unsigned heads, float lower_bound) {
+    // 2026-10-21: PDL (pdl.cuh): the weight tile and its row scales are loaded before the wait; the rows, beta and
+    // every store after it.
+    const wxay::Lane L = wxay::lane_ids();
+    const unsigned tiles = N / 16u;
+    const unsigned wt = blockIdx.x * wxay::WARPS + L.warp;
+    const bool live = wt < 2u * tiles;
+    const bool g_seg = wt >= tiles;
+    const unsigned n0 = (g_seg ? wt - tiles : wt) * 16u;
+    const float* S = g_seg ? Sg : Sf;
+    F::WReg w = {};
+    float ws[4] = {0.f, 0.f, 0.f, 0.f};
+    if (live) {
+        const w8a8::Args a = {nullptr, nullptr, {g_seg ? Wg : Wf, nullptr, nullptr}, {S, nullptr, nullptr}, N, N, 128u, 0u};
+        const F::Tile tile = F::tile(a, n0, L, N, 128u);
+        w = F::load_w(tile, 0u, true);
+#pragma unroll
+        for (int c = 0; c < 4; ++c) {
+            const unsigned n = n0 + L.g + (c < 2 ? 0u : 8u);
+            ws[c] = n < N ? __ldg(S + n) : 0.f;
+        }
+    }
+    pdl_enter();
     if (blockIdx.x == 0u) {
         for (unsigned i = threadIdx.x; i < M * heads; i += blockDim.x)
             beta[i] = kda_beta_scalar(__bfloat162float(beta_bf16[i]));
     }
-    const wxay::Lane L = wxay::lane_ids();
-    const unsigned tiles = N / 16u;
-    const unsigned wt = blockIdx.x * wxay::WARPS + L.warp;
-    if (wt >= 2u * tiles) return;
-    const bool g_seg = wt >= tiles;
-    const unsigned n0 = (g_seg ? wt - tiles : wt) * 16u;
+    if (!live) return;
     const __nv_bfloat16* x = g_seg ? g_low : f_low;
-
-    const float* S = g_seg ? Sg : Sf;
-    const w8a8::Args a = {nullptr, nullptr, {g_seg ? Wg : Wf, nullptr, nullptr}, {S, nullptr, nullptr}, N, N, 128u, 0u};
-    const F::Tile tile = F::tile(a, n0, L, N, 128u);
-    const F::WReg w = F::load_w(tile, 0u, true);
     const RowLoads v = load_rows(x, M, L);
-    float ws[4];
-#pragma unroll
-    for (int c = 0; c < 4; ++c) {
-        const unsigned n = n0 + L.g + (c < 2 ? 0u : 8u);
-        ws[c] = n < N ? __ldg(S + n) : 0.f;
-    }
     float s[MAX_ROWS];
     row_scales(v, M, s);
     const F::AReg b = quant_a(v, M, s, L);

@@ -152,6 +152,9 @@ pub struct GlmLevers {
     pub piece_rows: Option<usize>,
     /// 2026-10-10: `METRALE_GLM_AR_L2_PREFETCH` in bytes (`l2_warm`); `None` is off.
     pub l2_warm_budget: Option<usize>,
+    /// 2026-10-21: `METRALE_GLM_PDL` (on unless switched off): programmatic dependent launch for
+    /// the kernels that wait on their grid dependencies (`crate::glm5next_pdl`).
+    pub pdl: bool,
 }
 
 impl GlmLevers {
@@ -193,6 +196,7 @@ impl GlmLevers {
             profile: super::profile::Profile::from_settings(s),
             piece_rows: crate::glm5next_prefill_piece::piece_rows(s)?,
             l2_warm_budget: super::l2_warm::budget(s)?,
+            pdl: k.glm_pdl,
         })
     }
 

@@ -35,6 +35,7 @@
 
 
 #include <cuda_bf16.h>
+#include "pdl.cuh"
 
 #define GLM_HC_BLOCK 256
 #define GLM_HC_MAX_MULT 4
@@ -617,6 +618,8 @@ extern "C" __global__ void glm5next_hc_post(
     const unsigned int hidden_size,
     const unsigned int hc_mult
 ) {
+    // 2026-10-21: PDL (pdl.cuh): every input is another kernel's output.
+    pdl_enter();
     const unsigned int t = blockIdx.x;
     const unsigned int tid = threadIdx.x;
     const unsigned int H = hidden_size;

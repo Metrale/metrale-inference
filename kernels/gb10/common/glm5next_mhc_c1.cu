@@ -29,6 +29,7 @@
 //   it there). Grid (T, 24, 1), block (GLM_HCF_BLOCK, 1, 1); `done` as glm5next_hc_pre_norm's.
 
 #include "glm5next_mhc_fused_parts.cuh"
+#include "pdl.cuh"
 
 namespace glmc1 {
 
@@ -96,10 +97,10 @@ glm5next_hc_pre_norm_c1(GLM_HCF_ARGS) {
     const float* x = streams + (size_t)t * hc_dim;
     const __nv_bfloat16* __restrict__ wrow = hc_fn + (size_t)m0 * hc_dim;
 
+    // 2026-10-21: PDL (pdl.cuh): the hc_fn row and the tail's weights (scales, biases, norm_w) are
+    // loaded before the wait; the streams (the predecessor's output) and every store after it.
     float xv[PF];
     __nv_bfloat16 wv[PF];
-#pragma unroll
-    for (int j = 0; j < (int)PF; ++j) xv[j] = x[tid + (unsigned int)j * GLM_HCF_BLOCK];
 #pragma unroll
     for (int j = 0; j < (int)PF; ++j) wv[j] = wrow[tid + (unsigned int)j * GLM_HCF_BLOCK];
 
@@ -128,6 +129,9 @@ glm5next_hc_pre_norm_c1(GLM_HCF_ARGS) {
             nw[n] = q < NQ ? w4[q] : make_uint2(0u, 0u);
         }
     }
+    pdl_enter();
+#pragma unroll
+    for (int j = 0; j < (int)PF; ++j) xv[j] = x[tid + (unsigned int)j * GLM_HCF_BLOCK];
 
     float ss = 0.f, acc = 0.f;
 #pragma unroll

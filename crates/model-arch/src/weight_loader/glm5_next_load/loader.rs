@@ -99,6 +99,7 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
         // 2026-10-17: The GLM levers, resolved once and stored on every layer built here.
         let levers = crate::glm5next_layer::GlmLevers::from_settings(lc.settings)?;
         levers.announce();
+        crate::glm5next_pdl::apply(gpu, levers.pdl)?;
         levers.dense.check_tiers(
             crate::glm5next_w4a16_dense::enabled(),
             crate::glm5next_fp8_dense::enabled(),

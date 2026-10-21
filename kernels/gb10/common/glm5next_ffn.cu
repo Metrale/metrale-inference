@@ -28,6 +28,7 @@
 
 // 2026-10-14: The element expression, shared with the fused routed gate/up epilogue.
 #include "glm5next_swiglu.cuh"
+#include "pdl.cuh"
 
 // 2026-09-26: One thread per element; the host launches ceil(n / 256) blocks of 256
 // (swiglu in model-arch glm5next_mlp/forward/launch.rs).
@@ -38,6 +39,8 @@ extern "C" __global__ void glm5next_swiglu_clamp(
     const unsigned int n,
     const float limit
 ) {
+    // 2026-10-21: PDL (pdl.cuh): every input is another kernel's output.
+    pdl_enter();
     unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
     out[i] = __float2bfloat16(glm5next_swiglu_clamp_f32((float)gate[i], (float)up[i], limit));
@@ -213,6 +216,8 @@ extern "C" __global__ void glm5next_moe_combine(
     const unsigned int hidden,
     const unsigned int top_k
 ) {
+    // 2026-10-21: PDL (pdl.cuh): every input is another kernel's output.
+    pdl_enter();
     const unsigned int t = blockIdx.x;
     const __nv_bfloat16* eo = expert_out + (size_t)t * top_k * hidden;
     const float* w = weights + (size_t)t * top_k;
@@ -293,6 +298,8 @@ extern "C" __global__ void glm5next_router_topk_rank(
     const unsigned int renormalize,
     const unsigned int bf16_ladder
 ) {
+    // 2026-10-21: PDL (pdl.cuh): every input is another kernel's output.
+    pdl_enter();
     const unsigned int t = blockIdx.x;
     const unsigned int tid = threadIdx.x;
     const unsigned int lane = tid & 31u;

@@ -30,11 +30,13 @@
 // - A row's bytes and scale depend on that row alone.
 
 #include "w8a8_quant.cuh"
+#include "pdl.cuh"
 
 #define W8A8Q_PLAIN(NAME, BODY)                                                                                   \
     extern "C" __global__ void __launch_bounds__(w8a8q::QT)                                                       \
         NAME(const __nv_bfloat16* __restrict__ X, unsigned char* __restrict__ Q, float* __restrict__ scale,       \
              uint32_t K, uint32_t ldx, uint32_t ldq) {                                                            \
+        pdl_enter(); /* 2026-10-21: PDL (pdl.cuh): X is another kernel's output. */                              \
         const w8a8q::Plain in{reinterpret_cast<const uint4*>(X + (size_t)blockIdx.x * ldx)};                      \
         w8a8q::BODY(in, reinterpret_cast<uint2*>(Q + (size_t)blockIdx.x * ldq), scale, K);                        \
     }
@@ -42,6 +44,7 @@
     extern "C" __global__ void __launch_bounds__(w8a8q::QT)                                                       \
         NAME(const __nv_bfloat16* __restrict__ G, const __nv_bfloat16* __restrict__ U, unsigned char* __restrict__ Q, \
              float* __restrict__ scale, uint32_t K, uint32_t ldg, uint32_t ldu, uint32_t ldq) {                  \
+        pdl_enter();                                                                                              \
         const w8a8q::SiluMul in{reinterpret_cast<const uint4*>(G + (size_t)blockIdx.x * ldg),                     \
                                 reinterpret_cast<const uint4*>(U + (size_t)blockIdx.x * ldu)};                    \
         w8a8q::BODY(in, reinterpret_cast<uint2*>(Q + (size_t)blockIdx.x * ldq), scale, K);                        \

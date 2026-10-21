@@ -10,6 +10,7 @@
 //   after causal_conv1d_window_advance the window equals the per-token path's after T tokens.
 
 #include "causal_conv1d_l2norm_body.cuh"
+#include "pdl.cuh"
 
 // 2026-10-09: causal_conv1d_update_l2norm over T consecutive tokens of ONE sequence in one
 // launch: grid (ceil(dim / 256), T), block 256; block (x, t) is the block (x, 0) the per-token
@@ -31,6 +32,8 @@ extern "C" __global__ void causal_conv1d_update_l2norm_tokens(
     unsigned int head_dim,
     float l2_eps
 ) {
+    // 2026-10-21: PDL (pdl.cuh): every input is another kernel's output.
+    pdl_enter();
     const unsigned int t = blockIdx.y;
     const unsigned int ch = blockIdx.x * blockDim.x + threadIdx.x;
     float win[4] = {0.0f, 0.0f, 0.0f, 0.0f};
@@ -55,6 +58,8 @@ extern "C" __global__ void causal_conv1d_window_advance(
     unsigned int d_conv,
     unsigned int T
 ) {
+    // 2026-10-21: PDL (pdl.cuh): every input is another kernel's output.
+    pdl_enter();
     const unsigned int ch = blockIdx.x * blockDim.x + threadIdx.x;
     if (ch >= dim) return;
     float* st = conv_state + (size_t)ch * d_conv;
