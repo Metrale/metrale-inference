@@ -109,6 +109,21 @@ pub fn topk_radix_for(
     lever && kernel.0 != 0 && select_k <= TOPK_RADIX_MAX
 }
 
+/// 2026-10-21: Pools per block of `dsa_index_scores_warp` per pass (`DSA_SW_WARPS`), and the
+/// widest grid x it is launched with: four 8-warp blocks per GB10 SM, each staging its query
+/// row once, then striding over the pools.
+pub(crate) const SCORES_WARP_POOLS: usize = 8;
+pub(crate) const SCORES_WARP_GRID_MAX: usize = 192;
+
+/// 2026-10-21: Grid x of `dsa_index_scores_warp` over `pools` pools (the launch's: the live
+/// count, or a ceiling's `max_pools`): one 8-pool pass per block up to
+/// [`SCORES_WARP_GRID_MAX`] blocks, at least one.
+pub(crate) fn scores_warp_grid_x(pools: usize) -> u32 {
+    pools
+        .div_ceil(SCORES_WARP_POOLS)
+        .clamp(1, SCORES_WARP_GRID_MAX) as u32
+}
+
 /// 2026-09-25: Threads per block for `dsa_index_scores`, and the least shared memory it is
 /// given, in bytes (`select_tokens` requests `max(SCORES_BLOCK, 4 * index_heads)`).
 pub(crate) const SCORES_BLOCK: u32 = 128;

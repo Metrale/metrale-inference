@@ -131,6 +131,9 @@ pub struct DsaRowsKernels {
     /// 2026-10-12: `dsa_topk_pools_radix`: `dsa_topk_pools`'s selection, the same pools in the
     /// same order, by radix select (`select::topk_radix`). Not part of [`Self::ready`].
     pub topk_radix: KernelHandle,
+    /// 2026-10-21: `dsa_index_scores_warp`: `dsa_index_scores`'s bytes, one warp per (pool,
+    /// row) (`select::scores_warp_grid_x`). Not part of [`Self::ready`].
+    pub scores_warp: KernelHandle,
     /// 2026-10-14: `dsa_index_scores_pipe.cu`'s `dsa_pool_prep_bf16` and
     /// `dsa_index_scores_mma_pipe`: [`Self::scores_mma`]'s bytes from per-pool BF16 keys and
     /// visibility, the key tiles streamed (`select::scores_pipe`). Not part of [`Self::ready`].
@@ -170,6 +173,7 @@ impl DsaRowsKernels {
             scores_tiled: k("dsa_index_scores_tiled"),
             scores_mma: k("dsa_index_scores_mma"),
             topk_radix: k("dsa_topk_pools_radix"),
+            scores_warp: k("dsa_index_scores_warp"),
             pool_prep: pipe("dsa_pool_prep_bf16"),
             scores_pipe: pipe("dsa_index_scores_mma_pipe"),
             sel_fold: fold("dsa_sel_fold"),

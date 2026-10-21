@@ -133,6 +133,44 @@ fn launch(gpu: &dyn GpuBackend, k: KernelHandle, kind: Kind, io: &Io, q: DeviceP
     }
 }
 
+/// 2026-10-21: `dsa_index_scores_warp` over `io` (the launcher's grid: one 8-pool pass per
+/// block, at most 192 blocks), with `P = p_arg` and the device geometry `geom` (null: exact).
+fn warp_scores(
+    gpu: &dyn GpuBackend,
+    k: KernelHandle,
+    io: &Io,
+    q: DevicePtr,
+    p_arg: usize,
+    geom: DevicePtr,
+) -> Result<()> {
+    KernelLaunch::new(gpu, k)
+        .grid([p_arg.div_ceil(8).clamp(1, 192) as u32, io.q_rows as u32, 1])
+        .block([256, 1, 1])
+        .arg_ptr(q)
+        .arg_ptr(io.keys)
+        .arg_ptr(io.w)
+        .arg_ptr(io.idx)
+        .arg_ptr(io.pvalid)
+        .arg_ptr(DevicePtr::NULL)
+        .arg_ptr(io.qpos)
+        .arg_ptr(io.out)
+        .arg_ptr(io.cand)
+        .arg_u32(io.q_rows as u32)
+        .arg_u32(p_arg as u32)
+        .arg_u32(H as u32)
+        .arg_u32(D as u32)
+        .arg_u32(KP as u32)
+        .arg_u32(io.s as u32)
+        .arg_f32((D as f32).powf(-0.5))
+        .arg_ptr(geom)
+        .launch(0)
+}
+
+/// 2026-10-21: Whether two f32 arrays are the same bits.
+fn same_bits(a: &[f32], b: &[f32]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.to_bits() == y.to_bits())
+}
+
 /// 2026-10-12: `dsa_topk_pools` over `scores` into `selected` (`select::select_tokens`'s launch).
 fn topk(
     gpu: &dyn GpuBackend,
@@ -340,6 +378,7 @@ fn main() -> Result<()> {
     let mma = gpu.kernel("dsa_indexer_rows", "dsa_index_scores_mma")?;
     let topk_k = gpu.kernel("dsa_indexer", "dsa_topk_pools")?;
     let topk_rx = gpu.kernel("dsa_indexer_rows", "dsa_topk_pools_radix")?;
+    let warp_k = gpu.kernel("dsa_indexer_rows", "dsa_index_scores_warp")?;
     edge_cases(&gpu, topk_k, topk_rx)?;
     ceiling_cases(&gpu, topk_k, topk_rx)?;
     let shapes: Vec<(usize, usize)> = std::env::var("GLM_BENCH_SHAPES")
@@ -383,6 +422,40 @@ fn main() -> Result<()> {
         let (o_ref, c_ref) = (
             f32s(&read(&gpu, io.out, q_rows * pools * 4)?),
             read(&gpu, io.cand, q_rows * pools)?,
+        );
+        // 2026-10-21: The warp scores must be dsa_index_scores's bytes: exact, then (one row) a
+        // ceiling launch at a 1M-token ceiling with the live pools in a device geometry.
+        gpu.memset(io.out, 0, q_rows * pools * 4)?;
+        gpu.memset(io.cand, 0x55, q_rows * pools)?;
+        warp_scores(&gpu, warp_k, &io, qd, pools, DevicePtr::NULL)?;
+        ensure!(
+            same_bits(&f32s(&read(&gpu, io.out, q_rows * pools * 4)?), &o_ref),
+            "Q={q_rows} S={s}: warp scores differ from dsa_index_scores (exact)"
+        );
+        ensure!(
+            read(&gpu, io.cand, q_rows * pools)? == c_ref,
+            "Q={q_rows} S={s}: warp candidacy differs (exact)"
+        );
+        let geom = gpu.alloc(5 * 4)?;
+        if q_rows == 1 {
+            let g = [s as i32, pools as i32 + 1, pools as i32, select_k as i32, 2048];
+            let b: Vec<u8> = g.iter().flat_map(|v| v.to_le_bytes()).collect();
+            gpu.copy_h2d(&b, geom)?;
+            gpu.memset(io.out, 0, pools * 4)?;
+            gpu.memset(io.cand, 0x55, pools)?;
+            warp_scores(&gpu, warp_k, &io, qd, 262_144, geom)?;
+            ensure!(
+                same_bits(&f32s(&read(&gpu, io.out, pools * 4)?), &o_ref),
+                "S={s}: warp scores differ from dsa_index_scores (ceiling)"
+            );
+            ensure!(
+                read(&gpu, io.cand, pools)? == c_ref,
+                "S={s}: warp candidacy differs (ceiling)"
+            );
+        }
+        println!(
+            "Q={q_rows:5} S={s:6}: warp scores identical to dsa_index_scores (exact{})",
+            if q_rows == 1 { " and ceiling" } else { "" }
         );
         gpu.memset(io.out, 0, q_rows * pools * 4)?;
         gpu.memset(io.cand, 0x55, q_rows * pools)?;
@@ -457,6 +530,18 @@ fn main() -> Result<()> {
         let tb = median_us(&gpu, || launch(&gpu, base, Kind::Base, &io, qd))?;
         let tt = median_us(&gpu, || launch(&gpu, tiled, Kind::Tiled, &io, qd))?;
         let tm = median_us(&gpu, || launch(&gpu, mma, Kind::Mma, &io, qd))?;
+        let tw = median_us(&gpu, || {
+            warp_scores(&gpu, warp_k, &io, qd, pools, DevicePtr::NULL)
+        })?;
+        let twc = if q_rows == 1 {
+            median_us(&gpu, || warp_scores(&gpu, warp_k, &io, qd, 262_144, geom))?
+        } else {
+            f64::NAN
+        };
+        println!(
+            "  dsa_index_scores {tb:10.1} us | warp {tw:8.1} us ({:.1}x) | warp ceiling {twc:8.1} us",
+            tb / tw
+        );
         let tk = median_us(&gpu, || {
             topk(&gpu, topk_k, io.out, sel_mma, q_rows, pools, select_k)
         })?;
@@ -480,6 +565,7 @@ fn main() -> Result<()> {
         );
         for p in [
             qd, q2d, io.keys, io.w, io.idx, io.pvalid, io.qpos, io.out, io.cand, sel_ref, sel_mma,
+            geom,
         ] {
             gpu.free(p)?;
         }

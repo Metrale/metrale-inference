@@ -19,6 +19,15 @@ use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
 /// 2026-10-14: (kernel, grid, block, shared memory) of every launch of one replay-safe
 /// selection of a decode row at `live` tokens under a context ceiling of `msl` tokens.
 fn ceiling_dims(msl: usize, live: usize) -> Vec<(u64, [u32; 3], [u32; 3], u32)> {
+    ceiling_dims_with(&kernels(), msl, live)
+}
+
+/// 2026-10-21: [`ceiling_dims`] with the given kernels resolved.
+fn ceiling_dims_with(
+    k: &Glm5NextDsaKernels,
+    msl: usize,
+    live: usize,
+) -> Vec<(u64, [u32; 3], [u32; 3], u32)> {
     let c = Glm5NextDsaConfig {
         max_context: msl,
         ..cfg()
@@ -33,7 +42,7 @@ fn ceiling_dims(msl: usize, live: usize) -> Vec<(u64, [u32; 3], [u32; 3], u32)> 
     let launch = DsaSelectLaunch::Ceiling {
         max_pools: contiguous_pool_count(c.index_kpool, msl),
     };
-    select_tokens(&gpu, &kernels(), &c, &geom, &inp, &scratch, launch, 7).unwrap();
+    select_tokens(&gpu, k, &c, &geom, &inp, &scratch, launch, 7).unwrap();
     gpu.launches_snapshot()
         .iter()
         .map(|l| (l.func, l.grid, l.block, l.shared_mem))
@@ -53,6 +62,32 @@ fn the_ceiling_launch_does_not_grow_with_max_seq_len() {
     let grid_x = |f: u64| base.iter().find(|l| l.0 == f).unwrap().1[0] as usize;
     assert_eq!(grid_x(KPOOL_COMPRESS), POOL_GRID_MAX);
     assert_eq!(grid_x(INDEX_SCORES), POOL_GRID_MAX);
+}
+
+/// 2026-10-21: With the warp scores and the radix top-k resolved (the default-on decode
+/// levers), a ceiling launch scores with `dsa_index_scores_warp` on at most
+/// `SCORES_WARP_GRID_MAX` blocks and selects with `dsa_topk_pools_radix`, and its launches
+/// still do not grow with --max-seq-len.
+#[test]
+fn the_decode_levers_take_the_ceiling_launch_at_a_fixed_size() {
+    const WARP: u64 = 31;
+    const RADIX: u64 = 32;
+    let mut k = kernels();
+    k.rows.scores_warp = metrale_gpu_runtime::gpu::KernelHandle(WARP);
+    k.rows.topk_radix = metrale_gpu_runtime::gpu::KernelHandle(RADIX);
+    let base = ceiling_dims_with(&k, 65_536, 4_096);
+    let funcs: Vec<u64> = base.iter().map(|l| l.0).collect();
+    assert_eq!(funcs, vec![KPOOL_COMPRESS, WARP, RADIX, funcs[3]], "compress, warp, radix, expand");
+    assert!(!funcs.contains(&INDEX_SCORES), "the per-block scores never launch");
+    let warp = base.iter().find(|l| l.0 == WARP).unwrap();
+    assert_eq!(warp.1, [SCORES_WARP_GRID_MAX as u32, 1, 1]);
+    assert_eq!((warp.2, warp.3), ([256, 1, 1], 0));
+    for msl in [262_144, 524_288, 1_048_576] {
+        assert_eq!(ceiling_dims_with(&k, msl, 4_096), base, "msl {msl}");
+    }
+    assert_eq!(scores_warp_grid_x(0), 1);
+    assert_eq!(scores_warp_grid_x(9), 2);
+    assert_eq!(scores_warp_grid_x(8 * SCORES_WARP_GRID_MAX + 1), SCORES_WARP_GRID_MAX as u32);
 }
 
 /// 2026-10-14: Under the cap a ceiling launch keeps the one-block-per-pool grids

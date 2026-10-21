@@ -397,7 +397,38 @@ pub(super) fn run(
             .launch(stream)?;
     }
     if has_pools {
-        if !tiled && !mma {
+        // 2026-10-21: `METRALE_GLM_DSA_SCORES_WARP` (default on): the same scores, one warp per
+        // pool, when the shape fits the kernel (H <= 32, D <= 128, D a multiple of 32).
+        let warp_scores = !tiled
+            && !mma
+            && scratch.levers.scores_warp
+            && kernels.rows.scores_warp.0 != 0
+            && geom.index_heads <= 32
+            && d <= 128
+            && d.is_multiple_of(32);
+        if warp_scores {
+            KernelLaunch::new(gpu, kernels.rows.scores_warp)
+                .grid([scores_warp_grid_x(npools_a), geom.q_rows as u32, 1])
+                .block([256, 1, 1])
+                .arg_ptr(inputs.q)
+                .arg_ptr(scratch.pool_keys)
+                .arg_ptr(inputs.weights)
+                .arg_ptr(scratch.pool_indices)
+                .arg_ptr(scratch.pool_valid)
+                .arg_ptr(inputs.rows.valid)
+                .arg_ptr(inputs.q_pos)
+                .arg_ptr(scratch.scores)
+                .arg_ptr(scratch.valid_cand)
+                .arg_u32(geom.q_rows as u32)
+                .arg_u32(npools_a as u32)
+                .arg_u32(geom.index_heads as u32)
+                .arg_u32(d as u32)
+                .arg_u32(kp as u32)
+                .arg_u32(seq_a as u32)
+                .arg_f32((d as f32).powf(-0.5))
+                .arg_ptr(gd)
+                .launch(stream)?;
+        } else if !tiled && !mma {
             KernelLaunch::new(gpu, kernels.index_scores)
                 .grid([index_scores_grid_x(geom, ceiling), geom.q_rows as u32, 1])
                 .block([SCORES_BLOCK, 1, 1])

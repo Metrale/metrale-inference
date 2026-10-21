@@ -300,16 +300,26 @@ fn the_check_dir_text_reads_as_before() {
     );
 }
 
-/// 2026-10-21: The ceiling launch's radix top-k is on by default and `0`/`off` turn it off.
+/// 2026-10-21: The default-on decode levers (the ceiling launch's radix top-k, the warp
+/// scores) are on unset and `0`/`off` turn each off without touching the other.
 #[test]
-fn the_decode_radix_topk_is_on_by_default_and_turns_off() {
-    let env = "METRALE_GLM_DSA_DECODE_TOPK_RADIX";
-    let f = |l: &DsaLevers| l.select.decode_topk_radix;
-    assert_eq!(new_at(env, None, f), Some(true));
-    assert_eq!(new_at(env, Some("0"), f), Some(false));
-    assert_eq!(new_at(env, Some("off"), f), Some(false));
-    assert_eq!(new_at(env, Some("1"), f), Some(true));
-    assert_eq!(new_at(env, Some("garbage"), f), None);
+fn the_default_on_decode_levers_turn_off_one_at_a_time() {
+    let cases: [Field<bool>; 2] = [
+        ("METRALE_GLM_DSA_DECODE_TOPK_RADIX", |l| l.select.decode_topk_radix),
+        ("METRALE_GLM_DSA_SCORES_WARP", |l| l.select.scores_warp),
+    ];
+    for (env, f) in cases {
+        assert_eq!(new_at(env, None, f), Some(true), "{env}");
+        assert_eq!(new_at(env, Some("0"), f), Some(false), "{env}");
+        assert_eq!(new_at(env, Some("off"), f), Some(false), "{env}");
+        assert_eq!(new_at(env, Some("1"), f), Some(true), "{env}");
+        assert_eq!(new_at(env, Some("garbage"), f), None, "{env}");
+        for (other, g) in cases {
+            if other != env {
+                assert_eq!(new_at(env, Some("0"), g), Some(true), "{env}=0 leaves {other}");
+            }
+        }
+    }
 }
 
 /// 2026-10-17: Every lever off at the declared defaults, as each old reader read unset.
@@ -335,6 +345,7 @@ fn the_declared_defaults_are_the_old_unset_values() {
                 select_fused: false,
                 topk_radix: false,
                 decode_topk_radix: true,
+                scores_warp: true,
             },
             serve_ref: false,
             sp_agreement: 0,

@@ -2224,6 +2224,9 @@ kernels = [
   "dsa_indexer_rows::dsa_index_scores_mma",
   # 2026-10-12: dsa_topk_pools's selection by radix select (METRALE_GLM_DSA_TOPK_RADIX).
   "dsa_indexer_rows::dsa_topk_pools_radix",
+  # 2026-10-21: dsa_index_scores's bytes, one warp per (pool, row), q staged once per block
+  # (METRALE_GLM_DSA_SCORES_WARP, default on; the captured decode's scores).
+  "dsa_indexer_rows::dsa_index_scores_warp",
   # 2026-10-14: dsa_index_scores_mma's bytes from per-pool BF16 keys + visibility, the key tiles
   # streamed through a cp.async ring (METRALE_GLM_DSA_SCORES_PIPE).
   "dsa_index_scores_pipe::dsa_pool_prep_bf16",
