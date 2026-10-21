@@ -377,9 +377,12 @@ pub fn forward_moe_pieces(
     // GEMM when this rank holds every expert: its down launch writes every sorted row.
     // 2026-10-10: Nor before the one-row own-slots sweep, which zeroes the rows it computes
     // nothing for (`w4a4::writes_every_expert_row`).
-    let own_rows = w4a4.is_some() && w4a4::writes_every_expert_row(k, cfg, rows);
+    // 2026-10-21: Nor when the routed SwiGLU zeroes it (`w4a4::zeroes_in_swiglu`).
+    let own_rows = w4a4.is_some()
+        && (w4a4::writes_every_expert_row(k, cfg, rows) || w4a4::zeroes_in_swiglu(k, cfg, rows));
     if w4a4_grouped::zeroes_expert_out(grouped_w4a4, cfg) && !own_rows {
-        gpu.memset_async(ws.expert_out, 0, rows * cfg.top_k * cfg.hidden * 2, stream)?;
+        let bytes = w4a4::expert_out_bytes(cfg, rows);
+        gpu.memset_async(ws.expert_out, 0, bytes, stream)?;
     }
 
     let site = moe_experts::MoeSite {

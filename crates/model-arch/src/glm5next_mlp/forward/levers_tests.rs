@@ -357,6 +357,7 @@ fn the_declared_defaults_are_the_old_unset_values() {
             gu_fused: false,
             nc: None,
             sweep_serial: true,
+            zero_in_swiglu: true,
         }
     );
 }

@@ -28,6 +28,7 @@ const MX8: u64 = 0x58;
 const MX16: u64 = 0x5A;
 pub(crate) const MX32: u64 = 0x5C;
 pub(crate) const SWIGLU: u64 = 0x5E;
+pub(crate) const SWIGLU_ZERO: u64 = 0x5F;
 const SWEEP8: u64 = 0x60;
 const SWEEP16: u64 = 0x62;
 const ROW_UNION: u64 = 0x64;
@@ -68,6 +69,7 @@ pub(crate) fn kernels(gpu: &MockGpuBackend) -> Glm5NextMlpKernels {
     k.w4a4_moe_slots = KernelHandle(SLOTS);
     k.w4a4_mx = [KernelHandle(MX8), KernelHandle(MX16), KernelHandle(MX32)];
     k.swiglu = KernelHandle(SWIGLU);
+    k.swiglu_zero = KernelHandle(SWIGLU_ZERO);
     k.w4a4_moe_sweep = [KernelHandle(SWEEP8), KernelHandle(SWEEP16)];
     k.moe_row_union = KernelHandle(ROW_UNION);
     k.w4a4_moe_slots_sweep = KernelHandle(OWN_SWEEP);
@@ -81,7 +83,7 @@ pub(crate) fn kernels(gpu: &MockGpuBackend) -> Glm5NextMlpKernels {
 }
 
 /// 2026-10-10: Rank 0 of GLM-5.3's tp expert layout at TP=3: every expert, 704 columns of each.
-fn cfg_tp() -> Glm5NextMlpConfig {
+pub(super) fn cfg_tp() -> Glm5NextMlpConfig {
     Glm5NextMlpConfig {
         moe_intermediate: 704,
         local_experts: 288,
@@ -222,7 +224,7 @@ fn run_experts(rows: usize) -> (MockGpuBackend, Vec<MockLaunch>, Glm5NextMlpWork
     run_experts_on(cfg(), rows, |_| {})
 }
 
-fn run_experts_on(
+pub(super) fn run_experts_on(
     c: Glm5NextMlpConfig,
     rows: usize,
     edit: impl FnOnce(&mut Glm5NextMlpKernels),
@@ -330,7 +332,7 @@ fn one_routed_row_sweeps_its_own_slots() {
 fn one_routed_row_without_the_own_sweep_runs_the_slot_gemv() {
     let (_gpu, l, ws) = run_experts_on(cfg(), 1, |k| k.w4a4_moe_slots_sweep = KernelHandle(0));
     let funcs: Vec<u64> = l.iter().map(|l| l.func).collect();
-    assert_eq!(funcs, vec![QUANT, SLOTS, SLOTS, SWIGLU, QUANT, SLOTS]);
+    assert_eq!(funcs, vec![QUANT, SLOTS, SLOTS, SWIGLU_ZERO, QUANT, SLOTS]);
     assert_eq!((l[0].grid[0], u32_arg(&l[0], 4)), (1, 4096));
     assert_eq!(f32_arg(&l[0], 5), SCALES.gate_up);
     assert_eq!(ptr_arg(&l[0], 0), X);
@@ -364,7 +366,7 @@ fn several_routed_rows_sweep_each_union_expert_once() {
         let funcs: Vec<u64> = l.iter().map(|l| l.func).collect();
         assert_eq!(
             funcs,
-            vec![QUANT, ROW_UNION, sweep, SWIGLU, QUANT, sweep],
+            vec![QUANT, ROW_UNION, sweep, SWIGLU_ZERO, QUANT, sweep],
             "{rows} rows"
         );
         let slots = (rows * 8) as u32;
@@ -417,7 +419,7 @@ fn a_k64_expert_slice_runs_the_k64_down_twins() {
         let want = if rows == 1 {
             vec![QUANT, gate_up, SWIGLU, QUANT_K64, down]
         } else {
-            vec![QUANT, ROW_UNION, gate_up, SWIGLU, QUANT_K64, down]
+            vec![QUANT, ROW_UNION, gate_up, SWIGLU_ZERO, QUANT_K64, down]
         };
         assert_eq!(funcs, want, "{rows} rows");
         // 2026-10-10: One row builds no union, so its launches sit one earlier.
@@ -441,7 +443,7 @@ fn a_k64_expert_slice_runs_the_k64_down_twins() {
 fn a_k64_row_without_the_k64_own_sweep_runs_the_k64_slot_gemv() {
     let (_gpu, l, _ws) = run_experts_on(cfg_tp(), 1, |k| k.w4a4_moe_k64.own = KernelHandle(0));
     let funcs: Vec<u64> = l.iter().map(|l| l.func).collect();
-    assert_eq!(funcs, vec![QUANT, OWN_SWEEP, SWIGLU, QUANT_K64, SLOTS_K64]);
+    assert_eq!(funcs, vec![QUANT, OWN_SWEEP, SWIGLU_ZERO, QUANT_K64, SLOTS_K64]);
     assert_eq!((u32_arg(&l[4], 8), u32_arg(&l[4], 9)), (4096, 704));
 }
 

@@ -144,6 +144,32 @@ pub(super) fn swiglu(
     Ok(())
 }
 
+/// 2026-10-21: [`swiglu`] of the routed gate/up (`a_gate`, `a_up` into `a_act`) on
+/// `glm5next_swiglu_clamp_zero`, which also writes +0.0 over the first `zero_words` 16-byte words
+/// of `expert_out`; same grid.
+pub(super) fn swiglu_zero(
+    gpu: &dyn GpuBackend,
+    k: KernelHandle,
+    ws: &super::Glm5NextMlpWorkspace,
+    n: usize,
+    limit: f32,
+    zero_words: usize,
+    stream: u64,
+) -> Result<()> {
+    KernelLaunch::new(gpu, k)
+        .grid([(n as u32).div_ceil(ACT_BLOCK), 1, 1])
+        .block([ACT_BLOCK, 1, 1])
+        .arg_ptr(ws.a_gate)
+        .arg_ptr(ws.a_up)
+        .arg_ptr(ws.a_act)
+        .arg_u32(n as u32)
+        .arg_f32(limit)
+        .arg_ptr(ws.expert_out)
+        .arg_u32(u32::try_from(zero_words)?)
+        .launch(stream)?;
+    Ok(())
+}
+
 /// 2026-09-25: `C[slot] = A[slot] @ dequant(expert[ids[slot]])^T` for every routed slot in one
 /// launch; grid.y is the slot. A slot whose expert another rank owns is skipped, so `c` must
 /// already hold that slot's contribution (zero).

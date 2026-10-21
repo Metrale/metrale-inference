@@ -12,7 +12,7 @@
 //!
 //! `PDL_BENCH_BASE_PTX=<dir>` adds an arm on the kernels before the change (see `with_base`).
 //! 2026-10-21: The "PDL on new" arm runs the new side of the bit-identical launch levers
-//! (`Variant`; `PDL_CHAIN_OLD=serial_sweep` keeps the named ones old).
+//! (`Variant`; `PDL_CHAIN_OLD=serial_sweep,conv_to,zero_swiglu` keeps the named ones old).
 //!
 //!   cargo run -p metrale-gpu-examples --release --example pdl_chain_bench --features cuda,gpu-examples
 

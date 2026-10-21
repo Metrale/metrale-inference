@@ -96,12 +96,21 @@ impl Glm5NextKdaLayer {
         let c = &self.cfg;
         let (qkv, cd, d) = (c.qkv_dim(), c.conv_dim(), c.head_dim);
         let io = RowIo::workspace(c, ws, 0);
+        // 2026-10-21: `METRALE_GLM_KDA_CONV_SNAP_TO`: each conv intermediate as one
+        // `causal_conv1d_window_advance_to` from the live window (the same bytes as the copy then
+        // the advance), so no copy node breaks the graph's PDL chain.
+        let to = self.levers.kda.conv_snap_to && s.conv_window_to.0 != 0;
         for (t, &(_, conv_dst)) in snapshots.iter().enumerate() {
-            gpu.copy_d2d_async(state.conv, conv_dst, c.conv_state_elems() * 4, stream)?;
-            KernelLaunch::new(gpu, s.conv_window)
+            let mut launch = if to {
+                KernelLaunch::new(gpu, s.conv_window_to).arg_ptr(state.conv)
+            } else {
+                gpu.copy_d2d_async(state.conv, conv_dst, c.conv_state_elems() * 4, stream)?;
+                KernelLaunch::new(gpu, s.conv_window)
+            };
+            launch = launch.arg_ptr(conv_dst);
+            launch
                 .grid([div_ceil(cd as u32, 256), 1, 1])
                 .block([256, 1, 1])
-                .arg_ptr(conv_dst)
                 .arg_ptr(io.qkv_in)
                 .arg_u32(cd as u32)
                 .arg_u32(c.conv_kernel as u32)
@@ -250,6 +259,10 @@ impl Glm5NextKdaLayer {
             .launch(stream)
     }
 }
+
+#[cfg(test)]
+#[path = "seq_tokens_snap_tests.rs"]
+mod snap_to_tests;
 
 #[cfg(test)]
 mod snap_tokens_tests {

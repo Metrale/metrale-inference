@@ -37,6 +37,7 @@ pub(super) const CONV_WINDOW_PARTS: u64 = 0x323;
 pub(super) const CHUNK64_PREP_GRAW: u64 = 0x324;
 pub(super) const CHUNK64_PREP_CONV_GRAW: u64 = 0x325;
 pub(super) const GATE: u64 = 0x309;
+pub(super) const CONV_WINDOW_TO: u64 = 0x326;
 
 pub(super) fn cfg() -> Glm5NextKdaConfig {
     Glm5NextKdaConfig {
@@ -95,6 +96,7 @@ pub(super) fn layer(gpu: &MockGpuBackend) -> Glm5NextKdaLayer {
             conv_tokens: k(CONV_TOKENS),
             conv_tokens_parts: k(CONV_TOKENS_PARTS),
             conv_window: k(CONV_WINDOW),
+            conv_window_to: k(CONV_WINDOW_TO),
             recurrent: k(RECUR_SEQ),
             // 2026-10-11: The verify's snapshotting kernel, which these batched-decode paths
             // never launch: absent.

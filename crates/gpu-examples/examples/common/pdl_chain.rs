@@ -6,12 +6,13 @@
 //! `pdl_chain_bench`.
 //!
 //! KDA layer: hc_pre_norm_c1 -> w4a16_gemv_pipe_m2 (q|k|v|f_a|b|g_a) -> kda_pack_qkv_bf16 ->
-//! kda_gates_w8a8_k128_rows -> [conv snapshot copy] -> causal_conv1d_window_advance ->
+//! kda_gates_w8a8_k128_rows -> [conv snapshot copy] -> causal_conv1d_window_advance (or the two
+//! as causal_conv1d_window_advance_to) ->
 //! causal_conv1d_update_l2norm_tokens -> causal_conv1d_window_advance ->
 //! kda_recurrent_decode_bf16_seq_reg_snap -> kda_o_norm_gated_bf16 -> w4a16_gemv_pipe_m2 (o) ->
 //! [all-reduce] -> bf16_add_rank_sum -> glm5next_hc_post.
 //! MoE layer: hc_pre_norm_c1 -> dense_gemv_bf16_batchm_few_fp32out (router) ->
-//! glm5next_router_topk_rank -> [zero expert_out] -> w4a4_quant_rows_static ->
+//! glm5next_router_topk_rank -> [zero expert_out, or in the first SwiGLU] -> w4a4_quant_rows_static ->
 //! glm5next_moe_row_union -> w4a4_gemv_mx8_moe_union_sweep (gate|up) -> glm5next_swiglu_clamp ->
 //! w4a4_quant_rows_static_k64 -> w4a4_gemv_mx8_moe_union_sweep_k64 (down) -> w4a16_gemv_pipe_m2
 //! (shared gate|up) -> glm5next_swiglu_clamp -> w4a16_gemv_pipe_m2 (shared down) ->
@@ -158,7 +159,6 @@ pub fn kda_layer(g: &dyn GpuBackend, k: &Kern, b: &Bufs, l: &Layer, s: u64) -> R
         .arg_u32(HEADS)
         .arg_f32(-5.0)
         .launch(s)?;
-    g.copy_d2d_async(l.conv, l.conv_int, CONV_BYTES, s)?;
     let adv = |state: DevicePtr, t: u32| {
         KernelLaunch::new(g, k.adv)
             .grid([div_ceil(CD, 256), 1, 1])
@@ -170,7 +170,21 @@ pub fn kda_layer(g: &dyn GpuBackend, k: &Kern, b: &Bufs, l: &Layer, s: u64) -> R
             .arg_u32(t)
             .launch(s)
     };
-    adv(l.conv_int, 1)?;
+    if k.v.conv_to {
+        KernelLaunch::new(g, k.adv_to)
+            .grid([div_ceil(CD, 256), 1, 1])
+            .block([256, 1, 1])
+            .arg_ptr(l.conv)
+            .arg_ptr(l.conv_int)
+            .arg_ptr(x.qkv_proj)
+            .arg_u32(CD)
+            .arg_u32(4)
+            .arg_u32(1)
+            .launch(s)?;
+    } else {
+        g.copy_d2d_async(l.conv, l.conv_int, CONV_BYTES, s)?;
+        adv(l.conv_int, 1)?;
+    }
     KernelLaunch::new(g, k.upd)
         .grid([div_ceil(CD, 256), T, 1])
         .block([256, 1, 1])
@@ -336,7 +350,10 @@ pub fn moe_layer(g: &dyn GpuBackend, k: &Kern, b: &Bufs, l: &Layer, s: u64) -> R
         .arg_u32(1)
         .arg_u32(0)
         .launch(s)?;
-    g.memset_async(x.expert_out, 0, (SLOTS * H * 2) as usize, s)?;
+    let zero_bytes = (SLOTS * H * 2) as usize;
+    if !k.v.zero_swiglu {
+        g.memset_async(x.expert_out, 0, zero_bytes, s)?;
+    }
     let a1 = [x.aq, x.as_, x.ag];
     quant(g, k.quant, T, x.normed, a1, H, 3.0 / 2688.0, s)?;
     KernelLaunch::new(g, k.union)
@@ -361,7 +378,22 @@ pub fn moe_layer(g: &dyn GpuBackend, k: &Kern, b: &Bufs, l: &Layer, s: u64) -> R
         TOP_K,
         s,
     )?;
-    swiglu(g, k, x.a_gate, x.a_up, x.a_act, SLOTS * MI, s)?;
+    if k.v.zero_swiglu {
+        let n = SLOTS * MI;
+        KernelLaunch::new(g, k.swiglu_zero)
+            .grid([div_ceil(n, 256), 1, 1])
+            .block([256, 1, 1])
+            .arg_ptr(x.a_gate)
+            .arg_ptr(x.a_up)
+            .arg_ptr(x.a_act)
+            .arg_u32(n)
+            .arg_f32(10.0)
+            .arg_ptr(x.expert_out)
+            .arg_u32((zero_bytes / 16) as u32)
+            .launch(s)?;
+    } else {
+        swiglu(g, k, x.a_gate, x.a_up, x.a_act, SLOTS * MI, s)?;
+    }
     let a2 = [x.aq2, x.as2, x.ag2];
     quant(g, k.quant64, SLOTS, x.a_act, a2, MI, 100.0 / 2688.0, s)?;
     sweep(

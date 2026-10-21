@@ -25,7 +25,7 @@ use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 use super::Glm5NextMlpWorkspace;
 use super::MOE_ROW_UNION_MAX_IDS;
-use super::launch::swiglu;
+use super::launch::{swiglu, swiglu_zero};
 use super::moe_experts::MoeSite;
 use super::w4a4_slots::{W4a4SlotsCall, launch_w4a4_slots};
 use crate::glm5next_layer::profile;
@@ -201,6 +201,25 @@ pub(super) fn writes_every_expert_row(
         })
 }
 
+/// 2026-10-21: Whether `w4a4_experts` at `rows` rows zeroes `expert_out` inside its routed
+/// SwiGLU (`glm5next_swiglu_clamp_zero`, `METRALE_GLM_MOE_ZERO_IN_SWIGLU`): the lever on, the
+/// kernel present, a launch the slot GEMV or the sweep serves (not the grouped GEMM), a down
+/// projection that does not write every row itself ([`writes_every_expert_row`]) and whole
+/// 16-byte words. `forward_moe` then skips its memset; nothing reads `expert_out` between the
+/// two.
+pub(super) fn zeroes_in_swiglu(k: &Glm5NextMlpKernels, cfg: &Glm5NextMlpConfig, rows: usize) -> bool {
+    k.levers.mlp.zero_in_swiglu
+        && k.swiglu_zero.0 != 0
+        && !super::w4a4_grouped::takes_grouped(rows)
+        && !writes_every_expert_row(k, cfg, rows)
+        && expert_out_bytes(cfg, rows).is_multiple_of(16)
+}
+
+/// 2026-10-21: The bytes of `expert_out` a launch of `rows` rows writes.
+pub(super) fn expert_out_bytes(cfg: &Glm5NextMlpConfig, rows: usize) -> usize {
+    rows * cfg.top_k * cfg.hidden * 2
+}
+
 /// 2026-10-09: `out[r * top_k + s, n]` of every projection in `projs` (one or two, which read the
 /// same activations) for every (row, slot) through the union tables (`glm5next_moe_row_union`),
 /// each live union expert's weights read once, or at one row through the ids row itself, in one
@@ -255,7 +274,7 @@ fn moe_sweep(
 /// 2026-10-08: The routed experts of `forward_moe` at W4A4, every (row, slot) in one launch per
 /// projection: quantize the rows once, gate and up over all slots, the clamped SwiGLU, quantize
 /// every slot's product, down into `expert_out`. A slot of another rank's expert writes nothing
-/// (`forward_moe` zeroed `expert_out`).
+/// (`forward_moe` zeroed `expert_out`, or the SwiGLU does: [`zeroes_in_swiglu`]).
 pub(super) fn w4a4_experts(site: &MoeSite<'_>, scales: W4a4ActScales) -> Result<()> {
     let MoeSite {
         gpu,
@@ -341,16 +360,21 @@ pub(super) fn w4a4_experts(site: &MoeSite<'_>, scales: W4a4ActScales) -> Result<
             slots_gemv(kern, &w.ptrs.up, ws.a_up, mi, h, cfg.top_k)?;
         }
     }
-    swiglu(
-        gpu,
-        k.swiglu,
-        ws.a_gate,
-        ws.a_up,
-        ws.a_act,
-        slots * mi,
-        cfg.swiglu_limit,
-        stream,
-    )?;
+    if zeroes_in_swiglu(k, cfg, rows) {
+        let words = expert_out_bytes(cfg, rows) / 16;
+        swiglu_zero(gpu, k.swiglu_zero, ws, slots * mi, cfg.swiglu_limit, words, stream)?;
+    } else {
+        swiglu(
+            gpu,
+            k.swiglu,
+            ws.a_gate,
+            ws.a_up,
+            ws.a_act,
+            slots * mi,
+            cfg.swiglu_limit,
+            stream,
+        )?;
+    }
     quant_static(
         gpu,
         down.quant,
@@ -373,3 +397,7 @@ pub(super) fn w4a4_experts(site: &MoeSite<'_>, scales: W4a4ActScales) -> Result<
 #[cfg(test)]
 #[path = "w4a4_tests.rs"]
 pub(super) mod tests;
+
+#[cfg(test)]
+#[path = "w4a4_zero_tests.rs"]
+mod zero_tests;

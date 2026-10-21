@@ -180,6 +180,7 @@ fn the_declared_defaults_are_the_old_unset_values() {
             chunk64: None,
             chunk64_conv: false,
             conv_pack: false,
+            conv_snap_to: true,
             gate_in_prepare: false,
             gates_fused: false,
             gates_rows: true,

@@ -71,6 +71,30 @@ extern "C" __global__ void causal_conv1d_window_advance(
     for (unsigned int s = 0; s < d_conv && s < 4u; ++s) st[s] = nw[s];
 }
 
+// 2026-10-21: A copy of `src` into `dst` then causal_conv1d_window_advance on `dst`, in one
+// launch: slot s of dst gets x_{T-K+s}, or src slot T + s when T - K + s < 0. With d_conv <= 4
+// (Glm5NextKdaConfig::validate) every slot of dst is written, so dst's bytes equal the copy then
+// the advance; src is only read. Same grid and block as causal_conv1d_window_advance.
+extern "C" __global__ void causal_conv1d_window_advance_to(
+    const float* __restrict__ src,
+    float* __restrict__ dst,
+    const __nv_bfloat16* __restrict__ new_input,
+    unsigned int dim,
+    unsigned int d_conv,
+    unsigned int T
+) {
+    // 2026-10-21: PDL (pdl.cuh): every input is another kernel's output.
+    pdl_enter();
+    const unsigned int ch = blockIdx.x * blockDim.x + threadIdx.x;
+    if (ch >= dim) return;
+    const float* st = src + (size_t)ch * d_conv;
+    float* out = dst + (size_t)ch * d_conv;
+    for (unsigned int s = 0; s < d_conv && s < 4u; ++s) {
+        const int j = (int)T - (int)d_conv + (int)s;
+        out[s] = j >= 0 ? (float)new_input[(size_t)j * dim + ch] : st[j + (int)d_conv];
+    }
+}
+
 
 // 2026-10-13: Tokens per pass of causal_conv1d_update_l2norm_tokens_parts: each thread issues
 // this many input loads before it convolves them, and one pair of barriers serves them all.

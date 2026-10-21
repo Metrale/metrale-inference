@@ -69,10 +69,27 @@ fn inputs(g: &dyn GpuBackend, b: &Bufs) -> Result<Inputs> {
 
 fn reset(g: &dyn GpuBackend, b: &Bufs, i: &Inputs, set: usize) -> Result<()> {
     g.copy_h2d(&i.streams[set], b.s.streams)?;
+    // 2026-10-21: Poison what a run must write in full (the conv snapshots, and `expert_out`,
+    // whose remote slots only the zeroing writes), so a byte left unwritten shows.
+    g.memset(b.s.expert_out, 0x5A, (SLOTS * H * 2) as usize)?;
     for (n, l) in b.layers.iter().enumerate() {
         g.copy_d2d(i.conv[n], l.conv, CONV_BYTES)?;
         g.copy_d2d(i.rec[n], l.rec, REC_BYTES)?;
+        g.memset(l.conv_int, 0x5A, CONV_BYTES)?;
     }
+    Ok(())
+}
+
+/// 2026-10-21: Make every third expert's down projection another rank's (a null packed pointer,
+/// as an EP rank's table holds): the down sweep writes nothing for its slots, so they read only
+/// the zeroing of `expert_out`.
+fn remote_down_experts(g: &dyn GpuBackend, b: &Bufs) -> Result<()> {
+    let mut p = vec![0u8; EXPERTS as usize * 8];
+    g.copy_d2h(b.down_t.packed, &mut p)?;
+    for id in (0..EXPERTS as usize).step_by(3) {
+        p[id * 8..id * 8 + 8].fill(0);
+    }
+    g.copy_h2d(&p, b.down_t.packed)?;
     Ok(())
 }
 
@@ -214,6 +231,8 @@ fn main() -> Result<()> {
         "GATE: PDL race detector, {LAYERS} KDA + MoE layer pairs at M = {T}, {SETS} inputs; new arms: {v:?}"
     );
     let b = Bufs::new(&off, 0x5eed_0001, LAYERS, 0.05)?;
+    remote_down_experts(&off, &b)?;
+    println!("  every third expert's down projection is remote (its slots read the zeroing)");
     let inp = inputs(&off, &b)?;
 
     let g_off = capture(&off, &ko, &b, s)?;

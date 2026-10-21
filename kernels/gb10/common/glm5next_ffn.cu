@@ -14,16 +14,6 @@
 // resolves them with kernel(), not try_kernel, and Glm5NextMlpConfig::validate refuses a
 // swiglu_limit <= 0 (model-arch glm5next_mlp/mod.rs).
 
-
-
-
-
-
-
-
-
-
-
 #include <cuda_bf16.h>
 
 // 2026-10-14: The element expression, shared with the fused routed gate/up epilogue.
@@ -46,6 +36,29 @@ extern "C" __global__ void glm5next_swiglu_clamp(
     out[i] = __float2bfloat16(glm5next_swiglu_clamp_f32((float)gate[i], (float)up[i], limit));
 }
 
+
+// 2026-10-21: glm5next_swiglu_clamp that also writes +0.0 over `zero_words` 16-byte words at
+// `zero` (the routed down projection's output, which the next kernels accumulate into), in place
+// of a memset node before the gate/up sweep: out's bytes are glm5next_swiglu_clamp's. Same grid;
+// the threads stride the zeroed words. Nothing between the memset and this kernel reads `zero`.
+extern "C" __global__ void glm5next_swiglu_clamp_zero(
+    const __nv_bfloat16* __restrict__ gate,
+    const __nv_bfloat16* __restrict__ up,
+    __nv_bfloat16* __restrict__ out,
+    const unsigned int n,
+    const float limit,
+    uint4* __restrict__ zero,
+    const unsigned int zero_words
+) {
+    // 2026-10-21: PDL (pdl.cuh): every input is another kernel's output, and `zero` may still be
+    // read by an earlier kernel until the wait.
+    pdl_enter();
+    const unsigned int threads = gridDim.x * blockDim.x;
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    for (unsigned int w = i; w < zero_words; w += threads) zero[w] = make_uint4(0u, 0u, 0u, 0u);
+    if (i >= n) return;
+    out[i] = __float2bfloat16(glm5next_swiglu_clamp_f32((float)gate[i], (float)up[i], limit));
+}
 
 // 2026-09-25: glm5next_swiglu_clamp with an FP32 output. No host code launches it.
 extern "C" __global__ void glm5next_swiglu_clamp_f32out(

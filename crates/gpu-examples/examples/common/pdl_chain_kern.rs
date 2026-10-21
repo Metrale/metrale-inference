@@ -9,21 +9,29 @@ use metrale_gpu_runtime::gpu::{GpuBackend, KernelHandle};
 
 /// 2026-10-21: Which side of each bit-identical launch lever the chain runs: `PDL_CHAIN_OLD`
 /// (comma list, `all`) names the levers kept on their old kernels; the rest run the new ones.
-/// `serial_sweep`: the routed gate/up sweep launched stream-ordered (`_sl`).
+/// `serial_sweep`: the routed gate/up sweep launched stream-ordered (`_sl`); `conv_to`: the conv
+/// snapshot as one `causal_conv1d_window_advance_to` instead of a copy node and the advance;
+/// `zero_swiglu`: `expert_out` zeroed by `glm5next_swiglu_clamp_zero` instead of a memset node.
 #[derive(Clone, Copy, Debug)]
 pub struct Variant {
     pub serial_sweep: bool,
+    pub conv_to: bool,
+    pub zero_swiglu: bool,
 }
 
 impl Variant {
     pub const OLD: Self = Self {
         serial_sweep: false,
+        conv_to: false,
+        zero_swiglu: false,
     };
     pub fn from_env() -> Self {
         let old = std::env::var("PDL_CHAIN_OLD").unwrap_or_default();
         let on = |name: &str| !old.split(',').any(|o| o == name || o == "all");
         Self {
             serial_sweep: on("serial_sweep"),
+            conv_to: on("conv_to"),
+            zero_swiglu: on("zero_swiglu"),
         }
     }
 }
@@ -48,6 +56,9 @@ pub struct Kern {
     pub swiglu: KernelHandle,
     pub combine: KernelHandle,
     pub rank_sum: KernelHandle,
+    pub adv_to: KernelHandle,
+    pub swiglu_zero: KernelHandle,
+    pub v: Variant,
     pub sms: u32,
 }
 
@@ -80,6 +91,9 @@ impl Kern {
             swiglu: g.kernel("glm5next_ffn", "glm5next_swiglu_clamp")?,
             combine: g.kernel("glm5next_ffn", "glm5next_moe_combine")?,
             rank_sum: g.kernel("bf16_add", "bf16_add_rank_sum")?,
+            adv_to: g.kernel("kda_conv_tokens", "causal_conv1d_window_advance_to")?,
+            swiglu_zero: g.kernel("glm5next_ffn", "glm5next_swiglu_clamp_zero")?,
+            v,
             sms: g.sm_count()?,
         })
     }

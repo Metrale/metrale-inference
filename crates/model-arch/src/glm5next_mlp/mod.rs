@@ -44,6 +44,7 @@ use metrale_gpu_runtime::gpu::{GpuBackend, KernelHandle};
 pub mod build;
 pub mod build_w4a4;
 mod config;
+mod kernel_sets;
 pub mod expert_tp;
 pub mod forward;
 pub mod forward_prefill_gemm;
@@ -51,6 +52,7 @@ pub mod precision;
 pub mod weights;
 
 pub use config::{Glm5NextMlpConfig, Glm5NextMlpKind};
+pub use kernel_sets::{W4a4GroupedKernels, W4a4MoeK64Kernels};
 pub use expert_tp::{EXPERT_TP_UNIT, ExpertShard, ExpertSlice};
 pub use weights::{
     Glm5NextDenseMlpWeights, Glm5NextDenseSite, Glm5NextExpertWeights, Glm5NextMoeWeights,
@@ -150,6 +152,9 @@ pub struct Glm5NextMlpKernels {
     /// 2026-09-25: `glm5next_swiglu_clamp`, the asymmetric clamped SwiGLU. `moe_silu_mul`
     /// does not clamp.
     pub swiglu: KernelHandle,
+    /// 2026-10-21: `glm5next_swiglu_clamp_zero`: [`Self::swiglu`] that also zeroes `expert_out`
+    /// (`METRALE_GLM_MOE_ZERO_IN_SWIGLU`, `forward::w4a4`). `0` when absent: the memset runs.
+    pub swiglu_zero: KernelHandle,
     pub router: KernelHandle,
     /// 2026-10-10: `glm5next_router_topk_rank`, [`Self::router`]'s ids and weights byte for byte
     /// without its per-slot block-wide argmax; launched under `METRALE_GLM_ROUTER_TOPK_RANK=1`
@@ -199,44 +204,6 @@ pub struct Glm5NextMlpKernels {
     pub w4a4_grouped: W4a4GroupedKernels,
     /// 2026-10-17: The GLM layer levers the MLP forward reads, resolved at load.
     pub levers: GlmLevers,
-}
-
-/// 2026-10-10: `w4a4_grouped_tiles` and `w4a4_grouped_mx_m{32,64,128}[_k64]`
-/// (`w4a4_grouped_mx.cu`), indexed by `forward::w4a4_grouped::W4A4_GROUPED_MT`; the `_k64` entries
-/// read a routed down projection whose K is a multiple of 64 but not of 128. Each is
-/// `KernelHandle(0)` when absent from the target's PTX.
-#[derive(Clone, Copy)]
-pub struct W4a4GroupedKernels {
-    pub tiles: KernelHandle,
-    /// 2026-10-13: `w4a4_grouped_one_group`, the offsets and tiles of one group of m rows (the
-    /// dense MLP's one-group launch, `forward::w4a4_dense_grouped`).
-    pub one_group: KernelHandle,
-    pub mx: [KernelHandle; 3],
-    pub mx_k64: [KernelHandle; 3],
-    /// 2026-10-14: `w4a4_grouped_gu_m{32,64,128}`, gate, up, the clamped SwiGLU and the down
-    /// input's static quantization in one launch (`forward::w4a4_grouped_gu`,
-    /// `METRALE_GLM_MOE_W4A4_GU_FUSED=1`).
-    pub gu: [KernelHandle; 3],
-    /// 2026-10-14: `w4a4_grouped_mx_m128_r`, `w4a4_grouped_mx_m128_k64_r` and
-    /// `w4a4_grouped_gu_m128_r`: the m128 down (plain and `_k64`) and fused gate/up entries with
-    /// a raster-group argument (`forward::w4a4_grouped_raster`, `METRALE_GLM_MOE_W4A4_RASTER`).
-    pub raster: [KernelHandle; 3],
-    /// 2026-10-15: `w4a4_grouped_mx_m128_n` and `w4a4_grouped_mx_m128_k64_n`: the m128 down with
-    /// `nc` column tiles per CTA (`forward::w4a4_grouped_nc`, `METRALE_GLM_MOE_W4A4_NC`).
-    pub nc: [KernelHandle; 2],
-}
-
-/// 2026-10-10: `w4a4_quant_rows_static_k64`, `w4a4_gemv_mx8_moe_slots_k64` and
-/// `w4a4_gemv_mx{8,16}_moe_union_sweep_k64` (`w4a4_gemv_mx_moe.cu`): the quantizer writes rows at
-/// `K.next_multiple_of(128)` with zero padding groups, and the GEMVs read the weights at their
-/// natural `K % 64 == 0` width. Each is `KernelHandle(0)` when absent from the target's PTX.
-#[derive(Clone, Copy)]
-pub struct W4a4MoeK64Kernels {
-    pub quant: KernelHandle,
-    pub slots: KernelHandle,
-    /// 2026-10-10: `w4a4_gemv_mx8_moe_slots_sweep_k64`, the one-row own-slots sweep's twin.
-    pub own: KernelHandle,
-    pub sweep: [KernelHandle; 2],
 }
 
 /// 2026-10-08: Widest launch on the W4A4 slot GEMV (each slot re-reads its expert); wider runs
@@ -324,6 +291,11 @@ impl Glm5NextMlpKernels {
                 "glm5next_moe_row_union",
             ),
             swiglu: gpu.kernel(FFN_MODULE, "glm5next_swiglu_clamp")?,
+            swiglu_zero: metrale_model_layers::layers::try_kernel(
+                gpu,
+                FFN_MODULE,
+                "glm5next_swiglu_clamp_zero",
+            ),
             router: gpu.kernel(FFN_MODULE, "glm5next_router_topk")?,
             router_rank: metrale_model_layers::layers::try_kernel(
                 gpu,

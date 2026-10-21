@@ -2404,7 +2404,11 @@ files = ["kernels/gb10/glm-5.3-flash/nvfp4/glm5next_mla_latent_write.cu"]
 id = "glm_swiglu_clamp"
 description = "Clamped SwiGLU (swiglu_limit): clamp, SiLU and multiply in one pass"
 compute = "memory"
-kernels = ["glm5next_ffn::glm5next_swiglu_clamp", "glm5next_ffn::glm5next_swiglu_clamp_f32out"]
+# 2026-10-21: `_zero` also zeroes the routed down projection's output (a memset folded in).
+kernels = [
+  "glm5next_ffn::glm5next_swiglu_clamp", "glm5next_ffn::glm5next_swiglu_clamp_f32out",
+  "glm5next_ffn::glm5next_swiglu_clamp_zero",
+]
 rows = [1, 65536]
 pipeline.swiglu_clamp = { in = ["bf16"], compute = "f32", out = ["f32"] }
 pipeline.silu_mul = { in = ["f32"], compute = "f32", out = ["bf16"] }
