@@ -1,0 +1,294 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! 2026-10-21: Byte gate and microbench of `dsa_index_scores_heads_paged` (one lane per index
+//! head, `METRALE_GLM_DSA_SCORES_HEADS`) against `dsa_index_scores_warp_paged`, the captured
+//! decode's ceiling scores over the persisted pool keys: GLM-5.3's indexer (32 heads of 128,
+//! pools of 4 tokens), 1 or 2 query rows (a decode row, a verify's rows), a 1M-token ceiling
+//! (262,144 pools as the row stride), the live pools in each row's device geometry.
+//!
+//! 1. Identity: for each context and row count, scores and candidacy bytes over the whole
+//!    ceiling rows (untouched slots included, both prefilled with the same sentinel) must be
+//!    identical, on random keys and on adversarial pools (zero, signed-zero, huge, tiny, and
+//!    sign-cancelling keys; negative and zero head weights; rows whose position leaves
+//!    pools out).
+//! 2. Timing: each kernel's launch captured 20 times in a CUDA graph over rotating copies of
+//!    the keys (128 MB, so they stream from DRAM as in the serve), replayed; us per launch and
+//!    the persisted keys' GB/s.
+//!
+//! Owner: model-arch examples.
+//! Invariants: returns an error unless every compared byte matches.
+//!
+//! Run (GB10, < 1 GB of device memory):
+//!   cargo run --release -p metrale-gpu-examples --features cuda,gpu-examples \
+//!     --example glm5next_dsa_ceiling_scores_gate
+
+use anyhow::{Result, ensure};
+use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
+use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
+use metrale_gpu_runtime::kernel_args::KernelLaunch;
+
+const H: usize = 32;
+const D: usize = 128;
+const KP: usize = 4;
+const SEL: usize = 2048 / KP;
+const MAX_POOLS: usize = 262_144;
+/// 2026-10-21: Tokens per KV block and the persisted keys' f32 stride between blocks (padded
+/// past the block's 16 keys, so a dense-layout assumption would read the wrong bytes).
+const BS: usize = 64;
+const PK_BLK: usize = (BS / KP) * D + 64;
+const REPS: usize = 20;
+/// 2026-10-21: Bytes of key copies a timed graph cycles through (several times GB10's L2).
+const L2_DEFEAT_BYTES: usize = 128 << 20;
+
+struct Rng(u64);
+impl Rng {
+    fn unit(&mut self) -> f32 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        (self.0 >> 40) as f32 / (1u64 << 23) as f32 - 1.0
+    }
+    fn below(&mut self, n: usize) -> usize {
+        ((self.unit() + 1.0) * 0.5 * n as f32) as usize % n.max(1)
+    }
+}
+
+fn up<T: Copy>(gpu: &dyn GpuBackend, v: &[T]) -> Result<DevicePtr> {
+    let n = std::mem::size_of_val(v);
+    // 2026-10-21: SAFETY: `v` is a live slice of `Copy` plain data; the byte view covers exactly
+    // its `n` bytes and is only read.
+    let b = unsafe { std::slice::from_raw_parts(v.as_ptr() as *const u8, n) };
+    let p = gpu.alloc(n.max(16))?;
+    gpu.copy_h2d(b, p)?;
+    Ok(p)
+}
+
+fn read(gpu: &dyn GpuBackend, p: DevicePtr, n: usize) -> Result<Vec<u8>> {
+    gpu.synchronize(0)?;
+    let mut b = vec![0u8; n];
+    gpu.copy_d2h(p, &mut b)?;
+    Ok(b)
+}
+
+/// 2026-10-21: One sequence's persisted keys, block table, queries and per-row geometry.
+struct Case {
+    q: DevicePtr,
+    pk: DevicePtr,
+    /// 2026-10-21: Copies of `pk` the timed launches rotate over, so the keys come from DRAM as
+    /// in the serve (11 layers' keys do not stay in L2), not from L2.
+    pk_copies: Vec<DevicePtr>,
+    w: DevicePtr,
+    bt: DevicePtr,
+    qpos: DevicePtr,
+    geom: DevicePtr,
+    out: DevicePtr,
+    cand: DevicePtr,
+    rows: usize,
+    pools: usize,
+}
+
+/// 2026-10-21: Pool `p`'s key under the adversarial mix (every 9th pool special), else random.
+fn key(rng: &mut Rng, p: usize, d: usize) -> f32 {
+    match (p % 97, p % 9) {
+        (0, _) => 0.0,
+        (1, _) => -0.0,
+        (2, _) => 3.0e19 * if d % 2 == 0 { 1.0 } else { -1.0 },
+        (4, _) => 3.0e38 * if d % 3 == 0 { 1.0 } else { -1.0 },
+        (3, _) => 1.0e-39 * (d as f32 + 1.0),
+        (_, 4) => if d < 64 { 0.5 } else { -0.5 },
+        (_, 5) => rng.unit() * 1.0e-20,
+        _ => rng.unit(),
+    }
+}
+
+fn build(gpu: &dyn GpuBackend, rng: &mut Rng, s: usize, rows: usize, short: bool) -> Result<Case> {
+    let pools = s / KP;
+    let nblk = s.div_ceil(BS);
+    let mut perm: Vec<i32> = (0..nblk as i32).collect();
+    for i in (1..nblk).rev() {
+        perm.swap(i, rng.below(i + 1));
+    }
+    let mut pk = vec![f32::NAN; nblk * PK_BLK];
+    for p in 0..pools {
+        let t = p * KP;
+        let base = perm[t / BS] as usize * PK_BLK + ((t % BS) / KP) * D;
+        for d in 0..D {
+            pk[base + d] = key(rng, p, d);
+        }
+    }
+    // 2026-10-21: Head 3 of every row all positive and head 5 all negative, so a zero key makes
+    // every product of the head the same signed zero.
+    let q: Vec<f32> = (0..rows * H * D)
+        .map(|i| match (i / D) % H {
+            3 => rng.unit().abs(),
+            5 => -rng.unit().abs(),
+            _ if i % 251 == 0 => -0.0,
+            _ => rng.unit(),
+        })
+        .collect();
+    let w: Vec<f32> = (0..rows * H)
+        .map(|i| match i % 13 {
+            0 => 0.0,
+            1 => -0.0,
+            _ => rng.unit() * 0.2,
+        })
+        .collect();
+    // 2026-10-21: Row r of a verify of `rows` rows: its own length S - rows + r + 1; `short`
+    // places the query a few tokens before its length, so the last pools are not candidates.
+    let mut geom = Vec::new();
+    let mut qpos = Vec::new();
+    for r in 0..rows {
+        let sr = s - (rows - 1 - r);
+        let np = sr / KP;
+        geom.extend_from_slice(&[sr as i32, sr.div_ceil(KP) as i32, np as i32, np.min(SEL) as i32, 2048]);
+        qpos.push(sr as i32 - 1 - if short { 6 + r as i32 } else { 0 });
+    }
+    let pk_dev = up(gpu, &pk)?;
+    let copies = (L2_DEFEAT_BYTES / (pk.len() * 4)).clamp(1, 16);
+    let mut pk_copies = Vec::new();
+    for _ in 0..copies {
+        pk_copies.push(up(gpu, &pk)?);
+    }
+    Ok(Case {
+        q: up(gpu, &q)?,
+        pk: pk_dev,
+        pk_copies,
+        w: up(gpu, &w)?,
+        bt: up(gpu, &perm)?,
+        qpos: up(gpu, &qpos)?,
+        geom: up(gpu, &geom)?,
+        out: gpu.alloc(rows * MAX_POOLS * 4)?,
+        cand: gpu.alloc(rows * MAX_POOLS)?,
+        rows,
+        pools,
+    })
+}
+
+fn launch(
+    gpu: &dyn GpuBackend,
+    k: KernelHandle,
+    c: &Case,
+    pk: DevicePtr,
+    grid: [u32; 3],
+    stream: u64,
+) -> Result<()> {
+    KernelLaunch::new(gpu, k)
+        .grid(grid)
+        .block([256, 1, 1])
+        .arg_ptr(c.q)
+        .arg_ptr(pk)
+        .arg_ptr(c.w)
+        .arg_ptr(c.bt)
+        .arg_ptr(c.qpos)
+        .arg_ptr(c.out)
+        .arg_ptr(c.cand)
+        .arg_u32(c.rows as u32)
+        .arg_u32(MAX_POOLS as u32)
+        .arg_u32(H as u32)
+        .arg_u32(D as u32)
+        .arg_u32(KP as u32)
+        .arg_u32(0)
+        .arg_u32(BS as u32)
+        .arg_u32(PK_BLK as u32)
+        .arg_f32((D as f32).powf(-0.5))
+        .arg_ptr(c.geom)
+        .launch(stream)
+}
+
+/// 2026-10-21: Scores and candidacy of a launch over the whole ceiling rows, from the same
+/// sentinel fill.
+fn run(gpu: &dyn GpuBackend, k: KernelHandle, c: &Case, grid: [u32; 3]) -> Result<Vec<u8>> {
+    gpu.memset(c.out, 0x5a, c.rows * MAX_POOLS * 4)?;
+    gpu.memset(c.cand, 0xa5, c.rows * MAX_POOLS)?;
+    launch(gpu, k, c, c.pk, grid, 0)?;
+    let mut v = read(gpu, c.out, c.rows * MAX_POOLS * 4)?;
+    v.extend(read(gpu, c.cand, c.rows * MAX_POOLS)?);
+    Ok(v)
+}
+
+/// 2026-10-21: us per launch: REPS launches (`f(i, stream)`) captured in one graph, the median
+/// of 5 replays.
+fn graph_us(gpu: &dyn GpuBackend, f: &dyn Fn(usize, u64) -> Result<()>) -> Result<f64> {
+    let s = gpu.create_stream()?;
+    f(0, s)?;
+    gpu.synchronize(s)?;
+    gpu.begin_capture(s)?;
+    for i in 0..REPS {
+        f(i, s)?;
+    }
+    let g = gpu.end_capture(s)?;
+    let mut v = Vec::new();
+    for _ in 0..5 {
+        gpu.synchronize(s)?;
+        let t0 = std::time::Instant::now();
+        gpu.launch_graph(g, s)?;
+        gpu.synchronize(s)?;
+        v.push(t0.elapsed().as_secs_f64() * 1e6 / REPS as f64);
+    }
+    gpu.destroy_graph(g)?;
+    v.sort_by(f64::total_cmp);
+    Ok(v[2])
+}
+
+fn first_diff(a: &[u8], b: &[u8], rows: usize) -> String {
+    let i = a.iter().zip(b).position(|(x, y)| x != y).unwrap_or(0);
+    let sb = rows * MAX_POOLS * 4;
+    if i < sb {
+        format!("score row {} pool {}", i / 4 / MAX_POOLS, (i / 4) % MAX_POOLS)
+    } else {
+        format!("candidacy row {} pool {}", (i - sb) / MAX_POOLS, (i - sb) % MAX_POOLS)
+    }
+}
+
+fn main() -> Result<()> {
+    let gpu = MetraleCudaBackend::new(0, &metrale_kernels::ptx_modules())?;
+    let old = gpu.kernel("dsa_scores_warp", "dsa_index_scores_warp_paged")?;
+    let new = gpu.kernel("dsa_scores_warp", "dsa_index_scores_heads_paged")?;
+    let sms = gpu.sm_count()?;
+    let grid_new = |_c: &Case| [sms, 1, 1];
+    let grid_old = |c: &Case| [c.pools.div_ceil(8).clamp(1, 192) as u32, c.rows as u32, 1];
+    let mut rng = Rng(0x6a09_e667_f3bc_c908);
+    println!("{sms} SMs");
+    let ctxs: Vec<usize> = std::env::var("GLM_CTX")
+        .ok()
+        .map(|v| v.split(',').filter_map(|x| x.trim().parse().ok()).collect())
+        .unwrap_or_else(|| vec![1_024, 16_384, 65_536, 131_072, 524_288]);
+    // 2026-10-21: Identity at odd lengths and short rows too, then the timed contexts.
+    for (s, short) in [(9usize, false), (37, true), (1_027, true), (4_099, false)]
+        .into_iter()
+        .chain(ctxs.iter().map(|&s| (s, false)))
+        .chain([(65_539usize, true)])
+    {
+        for rows in [1usize, 2, 3] {
+            let c = build(&gpu, &mut rng, s, rows, short)?;
+            let a = run(&gpu, old, &c, grid_old(&c))?;
+            for g in [grid_new(&c), [1, 1, 1], [3 * sms, 1, 1]] {
+                let b = run(&gpu, new, &c, g)?;
+                ensure!(
+                    a == b,
+                    "S={s} rows={rows} short={short} grid {g:?}: heads scores differ from \
+                     dsa_index_scores_warp_paged at {}",
+                    first_diff(&a, &b, rows)
+                );
+            }
+            println!("S={s:7} rows={rows} short={short:5}: identical (grids {sms}, 1, {})", 3 * sms);
+            if ctxs.contains(&s) && rows <= 2 && !short {
+                let pk = |i: usize| c.pk_copies[i % c.pk_copies.len()];
+                let to = graph_us(&gpu, &|i, st| launch(&gpu, old, &c, pk(i), grid_old(&c), st))?;
+                let tn = graph_us(&gpu, &|i, st| launch(&gpu, new, &c, pk(i), grid_new(&c), st))?;
+                let gb = (c.pools * D * 4) as f64 / 1e3;
+                println!(
+                    "  TIME S={s:7} rows={rows}: warp_paged {to:8.1} us ({:5.1} GB/s) | heads {tn:8.1} us ({:5.1} GB/s) | {:.2}x",
+                    gb / to,
+                    gb / tn,
+                    to / tn
+                );
+            }
+            for p in [c.q, c.pk, c.w, c.bt, c.qpos, c.geom, c.out, c.cand].into_iter().chain(c.pk_copies.iter().copied()) {
+                gpu.free(p)?;
+            }
+        }
+    }
+    println!("PASS: dsa_index_scores_heads_paged is dsa_index_scores_warp_paged's bytes");
+    Ok(())
+}

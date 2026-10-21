@@ -2231,6 +2231,9 @@ kernels = [
   # scores read through the block table with candidacy from the geometry (no compression).
   "dsa_scores_warp::dsa_index_scores_warp_paged",
   "dsa_scores_warp::dsa_pool_keys_store_rows",
+  # 2026-10-21: dsa_index_scores_warp_paged's bytes, one lane per index head, the query in registers
+  # (METRALE_GLM_DSA_SCORES_HEADS, default on; the captured decode's ceiling scores).
+  "dsa_scores_warp::dsa_index_scores_heads_paged",
   # 2026-10-14: dsa_index_scores_mma's bytes from per-pool BF16 keys + visibility, the key tiles
   # streamed through a cp.async ring (METRALE_GLM_DSA_SCORES_PIPE).
   "dsa_index_scores_pipe::dsa_pool_prep_bf16",

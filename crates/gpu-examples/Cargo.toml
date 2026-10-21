@@ -100,6 +100,7 @@ example = [
     { name = "glm5next_kda_prefill_gate", required-features = ["cuda", "gpu-examples"] },
     { name = "glm5next_dsa_paged_parity", required-features = ["cuda", "gpu-examples"] },
     { name = "glm5next_dsa_verify_once_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_dsa_ceiling_scores_gate", required-features = ["cuda", "gpu-examples"] },
     { name = "glm5next_verify_spans_gate", required-features = ["cuda", "gpu-examples"] },
     { name = "attn_prefill_fa128_microtest", required-features = ["cuda", "gpu-examples"] },
     { name = "attn_prefill_fp8_microtest", required-features = ["cuda", "gpu-examples"] },
