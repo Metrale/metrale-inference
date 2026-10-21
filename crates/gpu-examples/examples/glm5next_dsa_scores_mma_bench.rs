@@ -378,7 +378,7 @@ fn main() -> Result<()> {
     let mma = gpu.kernel("dsa_indexer_rows", "dsa_index_scores_mma")?;
     let topk_k = gpu.kernel("dsa_indexer", "dsa_topk_pools")?;
     let topk_rx = gpu.kernel("dsa_indexer_rows", "dsa_topk_pools_radix")?;
-    let warp_k = gpu.kernel("dsa_indexer_rows", "dsa_index_scores_warp")?;
+    let warp_k = gpu.kernel("dsa_scores_warp", "dsa_index_scores_warp")?;
     edge_cases(&gpu, topk_k, topk_rx)?;
     ceiling_cases(&gpu, topk_k, topk_rx)?;
     let shapes: Vec<(usize, usize)> = std::env::var("GLM_BENCH_SHAPES")

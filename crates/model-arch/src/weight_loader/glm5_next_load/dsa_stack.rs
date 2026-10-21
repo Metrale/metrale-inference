@@ -50,7 +50,14 @@ impl DsaStack {
         let cfg = Glm5NextDsaConfig::from_config(config)?;
         let kernels = Glm5NextDsaKernels::resolve(gpu)?;
         let indexer_cache = crate::glm5next_dsa::paged::text_stack_indexer_cache(settings);
-        let indexer_format = IndexerRowFormat::text_stack(config, &kernels.fp8, indexer_cache)?;
+        let indexer_format = IndexerRowFormat::text_stack(
+            config,
+            &kernels.fp8,
+            indexer_cache,
+            settings.kernels.glm_dsa_pool_keys,
+            kernels.rows.pool_keys_ready(),
+        )?;
+        tracing::info!("GLM DSA indexer rows: {indexer_format:?}");
         let owned = Arc::new(DsaOwnedLevers::from_settings(settings)?);
         owned.announce();
         // 2026-10-12: One DSA workspace for the stack unless `METRALE_GLM_DSA_WS_SHARED=0`

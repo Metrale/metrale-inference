@@ -117,6 +117,17 @@ impl Glm5NextDsaLayer {
                 .arg_u32(rows0.block_size)
                 .arg_u32(rows0.blk_elems)
                 .launch(stream)?;
+            self.store_pool_keys(
+                gpu,
+                super::rows::PoolKeyRows::Device {
+                    rows: &rows0,
+                    pos,
+                    bt,
+                    bt_stride,
+                    n: m,
+                },
+                stream,
+            )?;
         }
         KernelLaunch::new(gpu, k.write_geom)
             .grid([m32, 1, 1])

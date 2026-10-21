@@ -165,7 +165,7 @@ fn flag_v_bytes(dtype: IndexerCacheDtype, rewind: usize, block_size: usize) -> O
     config.index_kpool = 4;
     config.indexer_cache_dtype = dtype;
     config.indexer_rewind_rows = rewind;
-    IndexerRowFormat::for_text_stack(&config, IndexerCache::Paged)
+    IndexerRowFormat::for_text_stack(&config, IndexerCache::Paged, false)
         .unwrap()
         .v_block_bytes(block_size, 128, 4)
         .unwrap()
@@ -223,14 +223,62 @@ fn fp8_needs_the_paged_cache() {
     let mut config = ModelConfig::qwen3_next_80b_nvfp4();
     config.index_kpool = 4;
     config.indexer_cache_dtype = IndexerCacheDtype::Fp8;
-    let e = IndexerRowFormat::for_text_stack(&config, IndexerCache::Flat).unwrap_err();
+    let e = IndexerRowFormat::for_text_stack(&config, IndexerCache::Flat, false).unwrap_err();
     assert!(
         e.to_string().contains("needs the paged indexer cache"),
         "{e}"
     );
     config.indexer_cache_dtype = IndexerCacheDtype::Bf16;
     assert_eq!(
-        IndexerRowFormat::for_text_stack(&config, IndexerCache::Flat).unwrap(),
+        IndexerRowFormat::for_text_stack(&config, IndexerCache::Flat, false).unwrap(),
         IndexerRowFormat::Bf16
     );
+}
+
+/// 2026-10-21: `METRALE_GLM_DSA_POOL_KEYS` turns a paged BF16 cache into `Bf16Pooled`, and only
+/// that: a flat cache stays `Bf16`, FP8 stays FP8, and off leaves every format as before.
+#[test]
+fn pool_keys_pick_the_pooled_format_for_paged_bf16_only() {
+    let mut config = ModelConfig::qwen3_next_80b_nvfp4();
+    config.index_kpool = 4;
+    config.indexer_cache_dtype = IndexerCacheDtype::Bf16;
+    let f = |c: &ModelConfig, cache, on| IndexerRowFormat::for_text_stack(c, cache, on).unwrap();
+    assert_eq!(f(&config, IndexerCache::Paged, true), IndexerRowFormat::Bf16Pooled);
+    assert_eq!(f(&config, IndexerCache::Paged, false), IndexerRowFormat::Bf16);
+    assert_eq!(f(&config, IndexerCache::Flat, true), IndexerRowFormat::Bf16);
+    config.indexer_cache_dtype = IndexerCacheDtype::Fp8;
+    for on in [false, true] {
+        assert!(f(&config, IndexerCache::Paged, on).is_fp8(), "pool_keys {on}");
+    }
+    assert_eq!(IndexerRowFormat::Bf16Pooled.ring(4), None);
+    assert!(!IndexerRowFormat::Bf16Pooled.is_fp8());
+}
+
+/// 2026-10-21: The pooled V block is the rows' 512 B per token plus a 512 B f32 key per pool
+/// of 4 (128 B per token), so at a fixed budget, with an FP8 latent on the K side, it holds
+/// 1024 / 1152 of the BF16 rows' tokens (the cost of the persisted keys).
+#[test]
+fn pooled_rows_cost_an_eighth_of_a_token_more() {
+    use metrale_cache::kv_cache::{KvCacheConfig, KvCacheDtype, PagedKvCache};
+    let fmt = IndexerRowFormat::Bf16Pooled;
+    assert_eq!(fmt.v_block_bytes(64, 128, 4).unwrap(), Some(64 * 640));
+    assert!(fmt.v_block_bytes(66, 128, 4).is_err(), "a block not a whole number of pools");
+    let kv = |v_block_bytes: Option<usize>| KvCacheConfig {
+        block_size: 64,
+        num_kv_heads: 1,
+        head_dim: 512,
+        num_layers: 11,
+        dtype: KvCacheDtype::Fp8,
+        layer_dtypes: vec![],
+        layer_dims: vec![],
+        cache_blocks_per_seq: None,
+        v_block_bytes,
+    };
+    let (rows, pooled) = (kv(None), kv(fmt.v_block_bytes(64, 128, 4).unwrap()));
+    assert_eq!(rows.block_bytes_kv_all_layers() / 64, 11 * 1024);
+    assert_eq!(pooled.block_bytes_kv_all_layers() / 64, 11 * 1152);
+    let budget = 64usize << 30;
+    let tokens = |c: &KvCacheConfig| PagedKvCache::compute_num_blocks(c, budget).unwrap() * 64;
+    assert_eq!(tokens(&pooled), budget / (11 * 1152 * 64) * 64);
+    assert_eq!(tokens(&pooled) * 1000 / tokens(&rows), 888);
 }

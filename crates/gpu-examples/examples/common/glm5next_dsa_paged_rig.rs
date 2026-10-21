@@ -183,12 +183,34 @@ pub(crate) fn layer_rows(
         levers,
         // 2026-10-09: Only `alloc_dsa_state` reads it; every state here is built explicitly.
         indexer_cache: IndexerCache::Paged,
-        indexer_format: metrale_model_arch::glm5next_dsa::fp8_rows::IndexerRowFormat::Bf16,
+        indexer_format: indexer_format(),
     })
 }
 
+/// 2026-10-21: `METRALE_PAGED_PARITY_POOLED=1`: the paged arms keep persisted pool keys
+/// (`IndexerRowFormat::Bf16Pooled`, V blocks sized by `paged::pooled_block_bytes`), so every
+/// gate that compares a paged arm against a flat one gates the pooled path.
+pub(crate) fn pooled() -> bool {
+    std::env::var("METRALE_PAGED_PARITY_POOLED").as_deref() == Ok("1")
+}
+
+/// 2026-10-21: The paged arms' indexer row format ([`pooled`]).
+pub(crate) fn indexer_format() -> metrale_model_arch::glm5next_dsa::fp8_rows::IndexerRowFormat {
+    use metrale_model_arch::glm5next_dsa::fp8_rows::IndexerRowFormat;
+    if pooled() {
+        IndexerRowFormat::Bf16Pooled
+    } else {
+        IndexerRowFormat::Bf16
+    }
+}
+
 pub(crate) fn kv(gpu: &dyn GpuBackend, blocks: usize) -> Result<PagedKvCache> {
-    kv_with_v(gpu, blocks, None)
+    let c = cfg();
+    kv_with_v(
+        gpu,
+        blocks,
+        indexer_format().v_block_bytes(BLOCK, c.index_head_dim, c.index_kpool)?,
+    )
 }
 
 /// 2026-10-16: [`kv`] with an explicit V block size (the FP8 indexer cache's), `None` for the

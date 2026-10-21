@@ -2226,7 +2226,11 @@ kernels = [
   "dsa_indexer_rows::dsa_topk_pools_radix",
   # 2026-10-21: dsa_index_scores's bytes, one warp per (pool, row), q staged once per block
   # (METRALE_GLM_DSA_SCORES_WARP, default on; the captured decode's scores).
-  "dsa_indexer_rows::dsa_index_scores_warp",
+  "dsa_scores_warp::dsa_index_scores_warp",
+  # 2026-10-21: persisted pool keys of a paged BF16 cache: the store after the rows, and the warp
+  # scores read through the block table with candidacy from the geometry (no compression).
+  "dsa_scores_warp::dsa_index_scores_warp_paged",
+  "dsa_scores_warp::dsa_pool_keys_store_rows",
   # 2026-10-14: dsa_index_scores_mma's bytes from per-pool BF16 keys + visibility, the key tiles
   # streamed through a cp.async ring (METRALE_GLM_DSA_SCORES_PIPE).
   "dsa_index_scores_pipe::dsa_pool_prep_bf16",
@@ -2262,7 +2266,7 @@ values = {}
 how = "instantiation"
 # 2026-10-09: The bodies live in dsa_indexer_body.cuh; dsa_indexer_rows.cu runs them for one
 # sequence per grid row (the batched decode's paged rows, METRALE_GLM_DSA_INDEXER_ROWS).
-files = ["kernels/gb10/common/dsa_indexer.cu", "kernels/gb10/common/dsa_indexer_body.cuh", "kernels/gb10/common/dsa_indexer_pools.cuh", "kernels/gb10/common/dsa_indexer_rows.cu", "kernels/gb10/common/dsa_indexer_fp8.cu", "kernels/gb10/common/dsa_scores_mma.cuh", "kernels/gb10/common/dsa_index_scores_pipe.cu", "kernels/gb10/common/dsa_sel_fold.cu", "kernels/gb10/common/dsa_topk_stream.cuh"]
+files = ["kernels/gb10/common/dsa_indexer.cu", "kernels/gb10/common/dsa_indexer_body.cuh", "kernels/gb10/common/dsa_indexer_pools.cuh", "kernels/gb10/common/dsa_indexer_rows.cu", "kernels/gb10/common/dsa_scores_warp.cu", "kernels/gb10/common/dsa_indexer_fp8.cu", "kernels/gb10/common/dsa_scores_mma.cuh", "kernels/gb10/common/dsa_index_scores_pipe.cu", "kernels/gb10/common/dsa_sel_fold.cu", "kernels/gb10/common/dsa_topk_stream.cuh"]
 
 # 2026-10-08: NoPE latent decode attention over the selected tokens of an FP8 latent cache, one
 # CTA per (head, row). Its query is already in latent space and its output stays there: the

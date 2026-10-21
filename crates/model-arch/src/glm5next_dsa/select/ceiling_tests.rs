@@ -90,6 +90,63 @@ fn the_decode_levers_take_the_ceiling_launch_at_a_fixed_size() {
     assert_eq!(scores_warp_grid_x(8 * SCORES_WARP_GRID_MAX + 1), SCORES_WARP_GRID_MAX as u32);
 }
 
+/// 2026-10-21: A ceiling launch over rows that keep persisted pool keys launches no
+/// compression: the paged warp scores (through the block table, at most
+/// `SCORES_WARP_GRID_MAX` blocks), the radix top-k and the geometry expansion. The same launch
+/// over rows without keys still compresses. An exact launch never takes the persisted path.
+#[test]
+fn persisted_pool_keys_skip_the_compression_on_a_ceiling_launch() {
+    use metrale_gpu_runtime::gpu::KernelHandle;
+    const WARP: u64 = 31;
+    const RADIX: u64 = 32;
+    const PAGED: u64 = 33;
+    const EXPAND_ROWS: u64 = 34;
+    let mut k = kernels();
+    k.rows.scores_warp = KernelHandle(WARP);
+    k.rows.topk_radix = KernelHandle(RADIX);
+    k.rows.scores_warp_paged = KernelHandle(PAGED);
+    k.rows.expand_selection = KernelHandle(EXPAND_ROWS);
+    let c = Glm5NextDsaConfig {
+        max_context: 524_288,
+        ..cfg()
+    };
+    let run = |keys: bool, launch: Option<DsaSelectLaunch>| {
+        let live = if launch.is_some() { 4_096 } else { 4_093 };
+        let geom = DsaSelectGeometry::plan(&c, live, 1).unwrap();
+        let gpu = MockGpuBackend::new();
+        let mut inp = DsaSelectInputs {
+            geom_dev: gpu.alloc(5 * 4).unwrap(),
+            ..inputs(&gpu, &c, live, 1)
+        };
+        if keys {
+            inp.rows.pool_keys = gpu.alloc(64).unwrap();
+            inp.rows.pk_blk = 160;
+        }
+        let scratch =
+            DsaSelectScratch::alloc(&gpu, &c, &geom, DsaLevers::declared().select).unwrap();
+        let launch = launch.unwrap_or(DsaSelectLaunch::Exact);
+        select_tokens(&gpu, &k, &c, &geom, &inp, &scratch, launch, 7).unwrap();
+        gpu.launches_snapshot()
+            .iter()
+            .map(|l| (l.func, l.grid))
+            .collect::<Vec<_>>()
+    };
+    let ceiling = Some(DsaSelectLaunch::Ceiling {
+        max_pools: contiguous_pool_count(c.index_kpool, c.max_context),
+    });
+    let persisted = run(true, ceiling);
+    let funcs: Vec<u64> = persisted.iter().map(|l| l.0).collect();
+    assert_eq!(funcs, vec![PAGED, RADIX, EXPAND_ROWS]);
+    assert_eq!(persisted[0].1, [SCORES_WARP_GRID_MAX as u32, 1, 1]);
+    assert_eq!(persisted[2].1, [1, 1, 1]);
+    let compressed: Vec<u64> = run(false, ceiling).iter().map(|l| l.0).collect();
+    assert_eq!(compressed[..3], [KPOOL_COMPRESS, WARP, RADIX]);
+    assert!(!compressed.contains(&PAGED));
+    let exact: Vec<u64> = run(true, None).iter().map(|l| l.0).collect();
+    assert_eq!(exact[0], KPOOL_COMPRESS, "an exact launch compresses");
+    assert!(!exact.contains(&PAGED));
+}
+
 /// 2026-10-14: Under the cap a ceiling launch keeps the one-block-per-pool grids
 /// (`max_pools + 1` compressions, `max_pools` scores), so a ceiling of up to 8k tokens launches
 /// exactly as before; an exact launch is the live geometry's grid at any length.

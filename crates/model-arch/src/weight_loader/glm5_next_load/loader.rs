@@ -476,6 +476,7 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
             config,
             block_size,
             crate::glm5next_dsa::paged::text_stack_indexer_cache(settings),
+            settings.kernels.glm_dsa_pool_keys,
         )
     }
 

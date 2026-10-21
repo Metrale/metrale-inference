@@ -163,3 +163,28 @@ fn both_kernel_sources_carry_the_same_address_formula() {
         );
     }
 }
+
+/// 2026-10-21: The pooled layout keeps the rows where they were and puts pool p's f32 key
+/// after them, at entry (p * 4 % BS) / 4 of the block; it refuses a V side too small or not a
+/// whole number of f32, and the plain layout keeps no keys. The device rows carry the region
+/// and its f32 block stride only when the layout has one.
+#[test]
+fn the_pooled_layout_appends_the_keys_after_the_rows() {
+    let need = pooled_block_bytes(BS, D, 4).unwrap();
+    assert_eq!(need, BS * D * 4 + (BS / 4) * D * 4);
+    assert!(pooled_block_bytes(BS + 2, D, 4).is_err());
+    let l = PagedIndexerLayout::with_pool_keys(BS, need, D, 4).unwrap();
+    assert_eq!(l.pool_keys_kp, Some(4));
+    assert_eq!(l.pool_keys_offset_bytes(), BS * D * 4);
+    assert_eq!(l.gate_offset_bytes(), glm().gate_offset_bytes());
+    assert!(PagedIndexerLayout::with_pool_keys(BS, need - 4, D, 4).is_err());
+    assert!(PagedIndexerLayout::with_pool_keys(BS, need + 2, D, 4).is_err());
+    assert_eq!(PagedIndexerLayout::new(BS, need, D).unwrap().pool_keys_kp, None);
+    let (pool, bt) = (DevicePtr(0x10_0000), DevicePtr(0x40));
+    let r = IndexerRowsDev::paged(&l, pool, bt).unwrap();
+    assert_eq!(r.pool_keys, pool.offset(BS * D * 4));
+    assert_eq!(r.pk_blk as usize * 4, need);
+    let plain = IndexerRowsDev::paged(&PagedIndexerLayout::new(BS, need, D).unwrap(), pool, bt);
+    assert_eq!(plain.unwrap().pool_keys, DevicePtr::NULL);
+    assert_eq!(IndexerRowsDev::flat(pool, pool, pool).pool_keys, DevicePtr::NULL);
+}

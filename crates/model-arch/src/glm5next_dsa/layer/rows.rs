@@ -19,7 +19,126 @@ use super::super::select::DsaSelectInputs;
 use super::super::state::Glm5NextDsaState;
 use super::{Glm5NextDsaLayer, IndexerPlace};
 
+/// 2026-10-21: Which rows `store_pool_keys` finishes: `n` rows at the device positions `pos`
+/// through the device block tables `bt` (`bt_stride` i32 apart per row, 0 for one sequence) of
+/// `rows`, or one host-placed row at absolute position `pos` of the host block table.
+pub(crate) enum PoolKeyRows<'a> {
+    Device {
+        rows: &'a IndexerRowsDev,
+        pos: DevicePtr,
+        bt: DevicePtr,
+        bt_stride: u32,
+        n: usize,
+    },
+    Host {
+        pos: usize,
+        block_table: &'a [u32],
+        kv_cache: &'a PagedKvCache,
+    },
+}
+
 impl Glm5NextDsaLayer {
+    /// 2026-10-21: Persists the key of every pool these rows complete
+    /// (`dsa_pool_keys_store_rows`), after the rows are in the cache; nothing for rows that
+    /// keep no pool keys (flat, FP8, or `METRALE_GLM_DSA_POOL_KEYS=0`).
+    pub(crate) fn store_pool_keys(
+        &self,
+        gpu: &dyn GpuBackend,
+        which: PoolKeyRows<'_>,
+        stream: u64,
+    ) -> Result<()> {
+        let layout = match &which {
+            PoolKeyRows::Device { rows, .. } if rows.pool_keys.0 == 0 => return Ok(()),
+            PoolKeyRows::Device { .. } => None,
+            PoolKeyRows::Host { pos, kv_cache, .. } => {
+                let layout = self.paged_layout(kv_cache)?;
+                let Some(kp) = layout.pool_keys_kp else {
+                    return Ok(());
+                };
+                // 2026-10-21: Only a row that completes a pool launches.
+                if (pos + 1) % kp != 0 {
+                    return Ok(());
+                }
+                Some(layout)
+            }
+        };
+        let k = self.select_kernels.rows.pool_keys_store;
+        if k.0 == 0 {
+            bail!(
+                "DSA layer {}: the pooled indexer rows need dsa_pool_keys_store_rows",
+                self.layer_idx
+            );
+        }
+        let (d, kp) = (self.cfg.index_head_dim, self.cfg.index_kpool);
+        #[allow(clippy::too_many_arguments)]
+        let launch = |pos: DevicePtr,
+                      pos0: i32,
+                      kb: DevicePtr,
+                      gb: DevicePtr,
+                      pkb: DevicePtr,
+                      bt: DevicePtr,
+                      bt_stride: u32,
+                      n: usize,
+                      (bs, blk_elems, pk_blk): (u32, u32, u32)| {
+            KernelLaunch::new(gpu, k)
+                .grid([1, n as u32, 1])
+                .block([d.min(1024) as u32, 1, 1])
+                .arg_ptr(pos)
+                .arg_i32(pos0)
+                .arg_ptr(kb)
+                .arg_ptr(gb)
+                .arg_ptr(pkb)
+                .arg_ptr(self.weights.ape)
+                .arg_u32(d as u32)
+                .arg_u32(kp as u32)
+                .arg_ptr(bt)
+                .arg_u32(bt_stride)
+                .arg_u32(bs)
+                .arg_u32(blk_elems)
+                .arg_u32(pk_blk)
+                .launch(stream)
+        };
+        match (which, layout) {
+            (PoolKeyRows::Device { rows, pos, bt, bt_stride, n }, _) => launch(
+                pos,
+                0,
+                rows.k,
+                rows.gate,
+                rows.pool_keys,
+                bt,
+                bt_stride,
+                n,
+                (rows.block_size, rows.blk_elems, rows.pk_blk),
+            ),
+            // 2026-10-21: The kernel addresses the row's own block (bt NULL, the slot in it).
+            (PoolKeyRows::Host { pos, block_table, kv_cache }, Some(layout)) => {
+                let bs = layout.block_size;
+                let blk = *block_table.get(pos / bs).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "DSA layer {}: pool keys of row {pos}: block table has no logical block {}",
+                        self.layer_idx,
+                        pos / bs
+                    )
+                })? as usize;
+                let base = kv_cache
+                    .v_pool_ptr(self.attn_layer_idx)
+                    .offset(blk * layout.block_stride_bytes);
+                launch(
+                    DevicePtr::NULL,
+                    i32::try_from(pos % bs)?,
+                    base,
+                    base.offset(layout.gate_offset_bytes()),
+                    base.offset(layout.pool_keys_offset_bytes()),
+                    DevicePtr::NULL,
+                    0,
+                    1,
+                    (u32::try_from(bs)?, u32::try_from(layout.blk_elems())?, 0),
+                )
+            }
+            (PoolKeyRows::Host { .. }, None) => Ok(()),
+        }
+    }
+
     /// 2026-09-26: `indexer_forward`'s last step: places the projected `k_normed` and `gate`
     /// at row `pos` (through `dsa_indexer_store` for [`IndexerPlace::Device`]), marks the row
     /// valid in a flat cache, and advances `state` by one row.
@@ -70,6 +189,17 @@ impl Glm5NextDsaLayer {
                     .arg_u32(rows.block_size)
                     .arg_u32(rows.blk_elems)
                     .launch(stream)?;
+                self.store_pool_keys(
+                    gpu,
+                    PoolKeyRows::Device {
+                        rows: &rows,
+                        pos: pd,
+                        bt: rows.bt,
+                        bt_stride: 0,
+                        n: 1,
+                    },
+                    stream,
+                )?;
             }
             // 2026-10-09: A paged cache has no validity bytes: every row below the length is
             // valid.
@@ -77,7 +207,17 @@ impl Glm5NextDsaLayer {
                 "DSA layer {}: an FP8 indexer row needs a device placement",
                 self.layer_idx
             ),
-            IndexerPlace::Host { .. } if state.cache() == IndexerCache::Paged => {}
+            // 2026-10-21: The GEMMs wrote the row; its pool's key follows when it completes one.
+            IndexerPlace::Host { block_table } if state.cache() == IndexerCache::Paged => self
+                .store_pool_keys(
+                    gpu,
+                    PoolKeyRows::Host {
+                        pos,
+                        block_table,
+                        kv_cache,
+                    },
+                    stream,
+                )?,
             IndexerPlace::Host { .. } => gpu.memset_async(state.valid.offset(pos), 1, 1, stream)?,
         }
         state.advance(1)

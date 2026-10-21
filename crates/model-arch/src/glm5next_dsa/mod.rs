@@ -134,6 +134,11 @@ pub struct DsaRowsKernels {
     /// 2026-10-21: `dsa_index_scores_warp`: `dsa_index_scores`'s bytes, one warp per (pool,
     /// row) (`select::scores_warp_grid_x`). Not part of [`Self::ready`].
     pub scores_warp: KernelHandle,
+    /// 2026-10-21: `dsa_index_scores_warp_paged` and `dsa_pool_keys_store_rows`: the persisted
+    /// pool keys of `IndexerRowFormat::Bf16Pooled` (`paged::pooled_block_bytes`). Not part of
+    /// [`Self::ready`]; [`Self::pool_keys_ready`].
+    pub scores_warp_paged: KernelHandle,
+    pub pool_keys_store: KernelHandle,
     /// 2026-10-14: `dsa_index_scores_pipe.cu`'s `dsa_pool_prep_bf16` and
     /// `dsa_index_scores_mma_pipe`: [`Self::scores_mma`]'s bytes from per-pool BF16 keys and
     /// visibility, the key tiles streamed (`select::scores_pipe`). Not part of [`Self::ready`].
@@ -150,6 +155,10 @@ pub struct DsaRowsKernels {
     pub select_fused: KernelHandle,
 }
 
+/// 2026-10-21: Module of the warp-per-pool scores and the persisted pool keys:
+/// `dsa_scores_warp.cu`.
+pub const DSA_SCORES_WARP_MODULE: &str = "dsa_scores_warp";
+
 /// 2026-10-14: Module of the streamed tensor-core scores: `dsa_index_scores_pipe.cu`.
 pub const DSA_SCORES_PIPE_MODULE: &str = "dsa_index_scores_pipe";
 
@@ -164,6 +173,9 @@ impl DsaRowsKernels {
         };
         let fold =
             |name: &str| metrale_model_layers::layers::try_kernel(gpu, DSA_SEL_FOLD_MODULE, name);
+        let warp = |name: &str| {
+            metrale_model_layers::layers::try_kernel(gpu, DSA_SCORES_WARP_MODULE, name)
+        };
         Self {
             store: k("dsa_indexer_store_rows"),
             write_geom: k("dsa_write_geom_rows"),
@@ -173,13 +185,28 @@ impl DsaRowsKernels {
             scores_tiled: k("dsa_index_scores_tiled"),
             scores_mma: k("dsa_index_scores_mma"),
             topk_radix: k("dsa_topk_pools_radix"),
-            scores_warp: k("dsa_index_scores_warp"),
+            scores_warp: warp("dsa_index_scores_warp"),
+            scores_warp_paged: warp("dsa_index_scores_warp_paged"),
+            pool_keys_store: warp("dsa_pool_keys_store_rows"),
             pool_prep: pipe("dsa_pool_prep_bf16"),
             scores_pipe: pipe("dsa_index_scores_mma_pipe"),
             sel_fold: fold("dsa_sel_fold"),
             expand_folded: fold("dsa_expand_selection_folded"),
             select_fused: pipe("dsa_select_fused_pipe"),
         }
+    }
+
+    /// 2026-10-21: Whether the persisted pool keys' store, scores and the geometry expansion
+    /// they select through resolved.
+    pub fn pool_keys_ready(&self) -> bool {
+        [
+            self.scores_warp_paged,
+            self.pool_keys_store,
+            self.expand_selection,
+            self.topk_radix,
+        ]
+        .iter()
+        .all(|k| k.0 != 0)
     }
 
     /// 2026-10-09: Whether every entry resolved.

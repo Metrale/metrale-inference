@@ -67,6 +67,8 @@ pub(crate) fn kernels() -> Glm5NextDsaKernels {
             scores_mma: h(0),
             topk_radix: h(0),
             scores_warp: h(0),
+            scores_warp_paged: h(0),
+            pool_keys_store: h(0),
             pool_prep: h(0),
             scores_pipe: h(0),
             sel_fold: h(SEL_FOLD),

@@ -183,6 +183,8 @@ impl Rig {
                     scores_mma: KernelHandle(0),
                     topk_radix: KernelHandle(0),
                     scores_warp: KernelHandle(0),
+                    scores_warp_paged: KernelHandle(0),
+                    pool_keys_store: KernelHandle(0),
                     pool_prep: KernelHandle(0),
                     scores_pipe: KernelHandle(0),
                     sel_fold: KernelHandle(0),

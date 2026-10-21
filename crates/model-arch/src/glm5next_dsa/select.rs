@@ -472,6 +472,7 @@ mod fused;
 pub use fused::{SELECT_FUSED_MAXK, SELECT_FUSED_SMEM, fused_shape};
 mod pipe;
 pub use pipe::{DsaPipeRegions, SCORES_PIPE_SMEM, scores_pipe_for};
+mod scores;
 
 #[cfg(test)]
 mod ceiling_tests;

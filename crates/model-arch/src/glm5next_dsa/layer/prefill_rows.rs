@@ -139,6 +139,17 @@ impl Glm5NextDsaLayer {
             .arg_u32(rows.block_size)
             .arg_u32(rows.blk_elems)
             .launch(stream)?;
+        self.store_pool_keys(
+            gpu,
+            super::rows::PoolKeyRows::Device {
+                rows: &rows,
+                pos: pos0,
+                bt: bt0,
+                bt_stride: bt_rows,
+                n: k,
+            },
+            stream,
+        )?;
         st.advance(k)
     }
 }

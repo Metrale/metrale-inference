@@ -42,12 +42,23 @@ impl Glm5NextDsaLayer {
 
     /// 2026-10-09: The paged geometry of this layer's indexer rows in `kv_cache`'s V pool;
     /// errors when a block's V side cannot hold them.
+    /// 2026-10-21: With the persisted pool keys under `IndexerRowFormat::Bf16Pooled`.
     pub fn paged_layout(&self, kv_cache: &PagedKvCache) -> Result<PagedIndexerLayout> {
-        PagedIndexerLayout::new(
+        let (bs, stride) = (
             kv_cache.block_size(),
             kv_cache.v_block_stride_bytes_for_layer(self.attn_layer_idx),
-            self.cfg.index_head_dim,
-        )
+        );
+        match self.indexer_format {
+            super::super::fp8_rows::IndexerRowFormat::Bf16Pooled => {
+                PagedIndexerLayout::with_pool_keys(
+                    bs,
+                    stride,
+                    self.cfg.index_head_dim,
+                    self.cfg.index_kpool,
+                )
+            }
+            _ => PagedIndexerLayout::new(bs, stride, self.cfg.index_head_dim),
+        }
     }
 
     /// 2026-10-16: The FP8 geometry of `st`'s rows in this layer's V pool; errors when the

@@ -21,6 +21,9 @@
 //! snapshot (the serve-level check is in the campaign report).
 //!
 //! `METRALE_PAGED_PARITY_VERBOSE=1` prints every differing row of a failed comparison.
+//! 2026-10-21: `METRALE_PAGED_PARITY_POOLED=1` runs every gate with the paged arms keeping
+//! persisted pool keys (`IndexerRowFormat::Bf16Pooled`): the decode's captured selection then
+//! scores those keys instead of recompressing, and each gate must still be byte-identical.
 //!
 //!   METRALE_TARGET_HW=gb10 METRALE_TARGET_MODEL=glm-5.3-flash METRALE_TARGET_QUANT=nvfp4 \
 //!   cargo run -p metrale-gpu-examples --release --example glm5next_dsa_paged_parity \
@@ -188,6 +191,68 @@ fn decode_gate(
         "  decode capture={capture}: prefill chunk + {} steps byte-identical",
         LEN - chunk
     );
+    Ok(())
+}
+
+/// 2026-10-21: Pooled mode's engagement control: two paged arms run the same prefill chunk
+/// and captured decode; before the last step one arm's persisted pool keys are overwritten
+/// with a constant. Its output must then differ from its twin's, or the captured selection
+/// did not read the persisted keys and the byte-identity gates proved nothing about them.
+fn pooled_engagement_gate(
+    gpu: &dyn GpuBackend,
+    fwd: &Fwd,
+    l: &Glm5NextDsaLayer,
+    rng: &mut Lcg,
+) -> Result<()> {
+    let (mut a, mut b) = (Arm::paged(gpu, 3)?, Arm::paged(gpu, 3)?);
+    let chunk = 12;
+    let x = rng.bf16_bytes(chunk * HIDDEN, 1.0);
+    for arm in [&mut a, &mut b] {
+        let h = up(gpu, &x)?;
+        let ctx = fwd.ctx(gpu, false, false, None);
+        l.decode_k(
+            h,
+            chunk,
+            arm.st.as_mut(),
+            &mut arm.kv,
+            0,
+            &mut arm.bt,
+            &ctx,
+            stream(gpu),
+            true,
+        )?;
+    }
+    for pos in chunk..LEN - 1 {
+        let x = rng.bf16_bytes(HIDDEN, 1.0);
+        same(
+            &format!("engagement twins pos {pos}"),
+            &a.step(l, fwd, gpu, &x, pos, true)?,
+            &b.step(l, fwd, gpu, &x, pos, true)?,
+        )?;
+    }
+    let lay = l.paged_layout(&a.kv)?;
+    let kp = lay
+        .pool_keys_kp
+        .context("pooled mode built a layout without pool keys")?;
+    let pool = a.kv.v_pool_ptr(0);
+    for &blk in &a.bt {
+        gpu.memset(
+            pool.offset(blk as usize * lay.block_stride_bytes + lay.pool_keys_offset_bytes()),
+            0x3f,
+            (BLOCK / kp) * lay.index_head_dim * 4,
+        )?;
+    }
+    let x = rng.bf16_bytes(HIDDEN, 1.0);
+    let (ra, rb) = (
+        a.step(l, fwd, gpu, &x, LEN - 1, true)?,
+        b.step(l, fwd, gpu, &x, LEN - 1, true)?,
+    );
+    anyhow::ensure!(
+        ra != rb,
+        "pooled engagement: overwriting the persisted pool keys left the captured decode's \
+         output unchanged, so the selection did not read them"
+    );
+    println!("  pooled engagement: overwritten pool keys change the captured decode output");
     Ok(())
 }
 
@@ -375,6 +440,9 @@ fn main() -> Result<()> {
         rows_gate(&gpu, &fwd, &l, &mut rng, capture)?;
     }
     prefix_gate(&gpu, &fwd, &l, &mut rng)?;
+    if rig::pooled() {
+        pooled_engagement_gate(&gpu, &fwd, &l, &mut rng)?;
+    }
     println!("PASS");
     Ok(())
 }

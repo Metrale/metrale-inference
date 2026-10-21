@@ -40,6 +40,10 @@ pub const FP8_INDEX_HEAD_DIM: usize = spec(FP8_ROW).head_dims[0] as usize;
 pub enum IndexerRowFormat {
     /// 2026-10-16: Per-token BF16 key and gate rows (`PagedIndexerLayout`, or a flat buffer).
     Bf16,
+    /// 2026-10-21: [`Self::Bf16`]'s paged rows plus each complete pool's f32 key, persisted in
+    /// the block when its last row is stored (`paged::pooled_block_bytes`), so the decode's
+    /// selection reads them instead of recompressing every pool (`METRALE_GLM_DSA_POOL_KEYS`).
+    Bf16Pooled,
     /// 2026-10-16: Pooled E4M3 keys with a ring of `tail_sets` open pools.
     Fp8 { tail_sets: usize },
 }
@@ -47,8 +51,17 @@ pub enum IndexerRowFormat {
 impl IndexerRowFormat {
     /// 2026-10-16: The text stack's format from `--indexer-cache-dtype`, its ring sized for
     /// `config.indexer_rewind_rows`. FP8 lives in the KV blocks, so a flat cache refuses it.
-    pub fn for_text_stack(config: &ModelConfig, cache: IndexerCache) -> Result<Self> {
+    /// 2026-10-21: BF16 rows of a paged cache keep their pool keys when `pool_keys`
+    /// (`METRALE_GLM_DSA_POOL_KEYS`); a flat cache never does.
+    pub fn for_text_stack(
+        config: &ModelConfig,
+        cache: IndexerCache,
+        pool_keys: bool,
+    ) -> Result<Self> {
         match config.indexer_cache_dtype {
+            IndexerCacheDtype::Bf16 if pool_keys && cache == IndexerCache::Paged => {
+                Ok(Self::Bf16Pooled)
+            }
             IndexerCacheDtype::Bf16 => Ok(Self::Bf16),
             IndexerCacheDtype::Fp8 => {
                 ensure!(
@@ -68,6 +81,7 @@ impl IndexerRowFormat {
     pub fn v_block_bytes(&self, block_size: usize, d: usize, kp: usize) -> Result<Option<usize>> {
         match *self {
             Self::Bf16 => Ok(None),
+            Self::Bf16Pooled => Ok(Some(super::paged::pooled_block_bytes(block_size, d, kp)?)),
             Self::Fp8 { tail_sets } => Ok(Some(Fp8IndexerLayout::block_bytes(
                 block_size, d, kp, tail_sets,
             )?)),
@@ -76,15 +90,24 @@ impl IndexerRowFormat {
 
     /// 2026-10-16: The text stack's format, refusing FP8 on a target built without its kernels.
     /// 2026-10-17: `cache` is `paged::text_stack_indexer_cache` of the load's settings.
+    /// 2026-10-21: `pool_keys_ready`: whether the pool-key kernels resolved; the pooled format
+    /// refuses without them (the loader sized the V blocks for it already).
     pub fn text_stack(
         config: &ModelConfig,
         kernels: &DsaFp8Kernels,
         cache: super::paged::IndexerCache,
+        pool_keys: bool,
+        pool_keys_ready: bool,
     ) -> Result<Self> {
-        let format = Self::for_text_stack(config, cache)?;
+        let format = Self::for_text_stack(config, cache, pool_keys)?;
         ensure!(
             !format.is_fp8() || kernels.ready(),
             "--indexer-cache-dtype fp8: this build has no {DSA_FP8_MODULE} kernels"
+        );
+        ensure!(
+            format != Self::Bf16Pooled || pool_keys_ready,
+            "METRALE_GLM_DSA_POOL_KEYS: this build has no dsa_pool_keys_store_rows / \
+             dsa_index_scores_warp_paged kernels; set METRALE_GLM_DSA_POOL_KEYS=0"
         );
         Ok(format)
     }
@@ -95,8 +118,9 @@ impl IndexerRowFormat {
         config: &ModelConfig,
         block_size: usize,
         cache: super::paged::IndexerCache,
+        pool_keys: bool,
     ) -> Result<Option<usize>> {
-        Self::for_text_stack(config, cache)?.v_block_bytes(
+        Self::for_text_stack(config, cache, pool_keys)?.v_block_bytes(
             block_size,
             config.index_head_dim,
             config.index_kpool,
@@ -110,7 +134,7 @@ impl IndexerRowFormat {
     /// 2026-10-16: The ring a state in this format guards, for pools of `kp` tokens.
     pub fn ring(&self, kp: usize) -> Option<Fp8Ring> {
         match *self {
-            Self::Bf16 => None,
+            Self::Bf16 | Self::Bf16Pooled => None,
             Self::Fp8 { tail_sets } => Some(Fp8Ring { kp, tail_sets }),
         }
     }

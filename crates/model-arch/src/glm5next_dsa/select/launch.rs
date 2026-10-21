@@ -233,6 +233,9 @@ pub(super) fn run(
         }
     };
     let gd = inputs.geom_dev;
+    // 2026-10-21: A captured decode row over persisted pool keys skips the compression and
+    // expands through the geometry (`scores::persisted_for`).
+    let persisted = !fused && scores::persisted_for(kernels, geom, inputs, ceiling.is_some());
 
     // 2026-09-25: Under a ceiling launch the kernels read S, the pool counts, the tile and
     // select_k from `geom_dev`, so the scalar arguments are unused. They are set from the
@@ -279,7 +282,7 @@ pub(super) fn run(
             .arg_u32(inputs.rows.block_size)
             .arg_u32(f.blk_bytes)
             .launch(stream)?;
-    } else if compress {
+    } else if compress && !persisted {
         KernelLaunch::new(gpu, kernels.kpool_compress)
             .grid([kpool_compress_grid_x(geom, ceiling), 1, 1])
             .block([d.min(1024) as u32, 1, 1])
@@ -397,62 +400,18 @@ pub(super) fn run(
             .launch(stream)?;
     }
     if has_pools {
-        // 2026-10-21: `METRALE_GLM_DSA_SCORES_WARP` (default on): the same scores, one warp per
-        // pool, when the shape fits the kernel (H <= 32, D <= 128, D a multiple of 32).
-        let warp_scores = !tiled
-            && !mma
-            && scratch.levers.scores_warp
-            && kernels.rows.scores_warp.0 != 0
-            && geom.index_heads <= 32
-            && d <= 128
-            && d.is_multiple_of(32);
-        if warp_scores {
-            KernelLaunch::new(gpu, kernels.rows.scores_warp)
-                .grid([scores_warp_grid_x(npools_a), geom.q_rows as u32, 1])
-                .block([256, 1, 1])
-                .arg_ptr(inputs.q)
-                .arg_ptr(scratch.pool_keys)
-                .arg_ptr(inputs.weights)
-                .arg_ptr(scratch.pool_indices)
-                .arg_ptr(scratch.pool_valid)
-                .arg_ptr(inputs.rows.valid)
-                .arg_ptr(inputs.q_pos)
-                .arg_ptr(scratch.scores)
-                .arg_ptr(scratch.valid_cand)
-                .arg_u32(geom.q_rows as u32)
-                .arg_u32(npools_a as u32)
-                .arg_u32(geom.index_heads as u32)
-                .arg_u32(d as u32)
-                .arg_u32(kp as u32)
-                .arg_u32(seq_a as u32)
-                .arg_f32((d as f32).powf(-0.5))
-                .arg_ptr(gd)
-                .launch(stream)?;
-        } else if !tiled && !mma {
-            KernelLaunch::new(gpu, kernels.index_scores)
-                .grid([index_scores_grid_x(geom, ceiling), geom.q_rows as u32, 1])
-                .block([SCORES_BLOCK, 1, 1])
-                // 2026-09-25: `dsa_index_scores` keeps one f32 per index head in shared memory and
-                // sums them in head order.
-                .shared_mem(SCORES_BLOCK.max((geom.index_heads * 4) as u32))
-                .arg_ptr(inputs.q)
-                .arg_ptr(scratch.pool_keys)
-                .arg_ptr(inputs.weights)
-                .arg_ptr(scratch.pool_indices)
-                .arg_ptr(scratch.pool_valid)
-                .arg_ptr(inputs.rows.valid)
-                .arg_ptr(inputs.q_pos)
-                .arg_ptr(scratch.scores)
-                .arg_ptr(scratch.valid_cand)
-                .arg_u32(geom.q_rows as u32)
-                .arg_u32(npools_a as u32)
-                .arg_u32(geom.index_heads as u32)
-                .arg_u32(d as u32)
-                .arg_u32(kp as u32)
-                .arg_u32(seq_a as u32)
-                .arg_f32((d as f32).powf(-0.5))
-                .arg_ptr(gd)
-                .launch(stream)?;
+        if !tiled && !mma {
+            scores::launch_scores(
+                gpu,
+                kernels,
+                geom,
+                inputs,
+                scratch,
+                ceiling,
+                persisted,
+                (npools_a, seq_a),
+                stream,
+            )?;
         }
 
         // 2026-10-12: `METRALE_GLM_DSA_TOPK_RADIX=1`: the same selection by radix select.
@@ -495,6 +454,9 @@ pub(super) fn run(
 
     if fold {
         return folded::launch_fold(gpu, kernels, geom, inputs, scratch, stream);
+    }
+    if persisted {
+        return scores::launch_expand_geom(gpu, kernels, cfg, geom, inputs, scratch, stream);
     }
 
     KernelLaunch::new(gpu, kernels.expand_selection)
