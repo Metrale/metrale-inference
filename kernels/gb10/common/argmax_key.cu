@@ -16,58 +16,7 @@
 //   -1e30 and NaN give 0. The q key: the value with the mask ids at -inf, then the larger i;
 //   NaN gives 0. -0.0 keys as +0.0.
 
-#include <cuda_bf16.h>
-#include <math_constants.h>
-
-#define KEY_TID_BITS 10u
-#define KEY_STRIDE_BITS 22u
-#define KEY_BLOCK 1024u
-
-// 2026-10-10: Bit tests rather than float compares for -0.0 and NaN, so no math-flag choice
-// can fold them away.
-__device__ __forceinline__ bool key_is_nan(float v) {
-    return (__float_as_uint(v) & 0x7FFFFFFFu) > 0x7F800000u;
-}
-
-__device__ __forceinline__ unsigned int key_order_bits(float v) {
-    unsigned int b = __float_as_uint(v);
-    if ((b & 0x7FFFFFFFu) == 0u) {
-        b = 0u;
-    }
-    return (b & 0x80000000u) ? ~b : (b | 0x80000000u);
-}
-
-__device__ __forceinline__ unsigned int key_bitrev_tid(unsigned int t) {
-    return __brev(t) >> (32u - KEY_TID_BITS);
-}
-
-__device__ __forceinline__ unsigned long long plain_key(float v, unsigned int i) {
-    if (key_is_nan(v) || v <= -1e30f) {
-        return 0ull;
-    }
-    const unsigned int t = i % KEY_BLOCK;
-    const unsigned int k = i / KEY_BLOCK;
-    const unsigned int tie = ((~key_bitrev_tid(t) & ((1u << KEY_TID_BITS) - 1u)) << KEY_STRIDE_BITS)
-        | (~k & ((1u << KEY_STRIDE_BITS) - 1u));
-    return ((unsigned long long)key_order_bits(v) << 32) | tie;
-}
-
-__device__ __forceinline__ unsigned long long masked_key(
-    float v, unsigned int i, unsigned int m0, unsigned int m1) {
-    const float w = (i == m0 || i == m1) ? -CUDART_INF_F : v;
-    if (key_is_nan(w)) {
-        return 0ull;
-    }
-    return ((unsigned long long)key_order_bits(w) << 32) | i;
-}
-
-__device__ __forceinline__ unsigned long long warp_max_u64(unsigned long long x) {
-    for (int o = 16; o > 0; o >>= 1) {
-        const unsigned long long y = __shfl_xor_sync(0xFFFFFFFFu, x, o);
-        x = y > x ? y : x;
-    }
-    return x;
-}
+#include "argmax_key.cuh"
 
 // 2026-10-10: Keys of `shard[0..n_local]`, whose entry j is global index `base + j`. Any grid;
 // blockDim.x a multiple of 32, at most 1024.
@@ -142,13 +91,6 @@ extern "C" __global__ void argmax_key_resolve(
         kp = pk[0] > kp ? pk[0] : kp;
         kq = pk[1] > kq ? pk[1] : kq;
     }
-    unsigned int p = 0u;
-    if (kp != 0ull) {
-        const unsigned int tie = (unsigned int)kp;
-        const unsigned int t =
-            key_bitrev_tid(~(tie >> KEY_STRIDE_BITS) & ((1u << KEY_TID_BITS) - 1u));
-        const unsigned int k = ~tie & ((1u << KEY_STRIDE_BITS) - 1u);
-        p = k * KEY_BLOCK + t;
-    }
+    const unsigned int p = plain_key_index(kp);
     cell[0] = (p == masks[0] || p == masks[1]) ? (unsigned int)kq : p;
 }
