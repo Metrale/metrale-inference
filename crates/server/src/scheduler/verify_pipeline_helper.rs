@@ -17,6 +17,7 @@
 //!   add `verify_pos` to compensate.
 
 mod argmax;
+mod bootstrap;
 mod fast_masked;
 mod pick_all;
 mod pick_positions;
@@ -175,4 +176,5 @@ pub fn verify_pick_with_pipeline(
     best_id
 }
 
+pub use bootstrap::bootstrap_pick;
 pub use pick_all::verify_pick_all_with_pipeline;

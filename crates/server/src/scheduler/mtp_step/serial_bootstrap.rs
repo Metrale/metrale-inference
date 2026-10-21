@@ -104,42 +104,12 @@ pub(super) fn bootstrap_seq(
             return;
         }
     };
-    // 2026-09-25: The sequence's penalties from `penalty_params_for`, the
-    // builder the non-MTP decode path also uses. Built before
-    // `grammar_state` is borrowed mutably below.
-    let penalties = crate::scheduler::sample_step::penalty_params_for(
-        a,
-        crate::scheduler::sample_step::PositionKind::Verify,
-        0.0,
-        None,
-        Vec::new(),
-        sched.watchdog.min_reasoning_floor,
-    );
-    // 2026-09-25: Penalty history scoped to the current tool-call
-    // segment (`penalty_history_scope`), as in the logits pipeline.
-    let history = crate::scheduler::sample_step::penalty_history_scope(
-        &a.output_tokens,
-        a.tool_call_end_token,
-    )
-    .to_vec();
-    // 2026-09-25: The sampler's min_p is `penalties.min_p`, copied from
-    // `a.min_p` (the request's min_p raised to MODEL.toml `min_p_floor`
-    // in `sampling_setup`). `METRALE_NO_MTP_MINP=1` passes 0.0 instead
-    // (`effective_min_p`).
-    // 2026-10-14: The EOS ids `eos_hold::presample_hold` holds, masked before
-    // the pick as on every other path.
-    let eos_mask = crate::scheduler::eos_hold::eos_mask_ids(a, a.output_tokens.len()).to_vec();
-    let tok = match sample_token_with_grammar(
-        model,
-        logits,
-        a.temperature,
-        a.top_k,
-        a.top_p,
-        &eos_mask,
-        a.grammar_state.as_mut(),
-        &penalties,
-        &history,
-        &sched.levers.sampling(),
+    // 2026-10-21: The pick a verify position 0 would make, through the logits
+    // pipeline (`bootstrap_pick`): no grammar inside thinking, the forced
+    // `</think>`, the think and tool-call masks, the EOS hold, the penalties
+    // and the request's `logit_bias`, as on the decode path.
+    let tok = match crate::scheduler::verify_pipeline_helper::bootstrap_pick(
+        model, logits, 0, a, verify_ctx, None,
     ) {
         Ok(t) => t,
         Err(e) => {

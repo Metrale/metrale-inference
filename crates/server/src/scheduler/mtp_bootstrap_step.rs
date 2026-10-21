@@ -66,8 +66,7 @@ pub(super) fn can_batch_bootstrap(
 /// 2026-09-25: Batched bootstrap for the `idxs` (ascending) draftless sequences.
 ///
 /// Per sequence it uses what the per-sequence loop in `mtp_step.rs` uses:
-/// `penalty_params_for` penalties, `penalty_history_scope` history,
-/// `sample_token_with_grammar`, `emit_token`, the `adaptive_spec` calls and the
+/// `bootstrap_pick`, `emit_token`, the `adaptive_spec` calls and the
 /// `effective_drafts_under_grammar` clamp. One difference: when saving the
 /// hidden state fails, the per-sequence loop's `continue` also skips
 /// `start_checkpoint_async`; here the checkpoint still runs.
@@ -116,11 +115,12 @@ pub(super) fn step_mtp_bootstrap_batched(
     let elem = if model.decode_logits_fp32() { 4 } else { 2 };
 
     // 2026-09-25: One `argmax_batch` call for the greedy rows, in place of one
-    // `argmax_on_device` per row inside `sample_token_with_grammar`. A row is
-    // eligible when `mtp_boot_argmax` is on (unless `METRALE_NO_MTP_BOOT_ARGMAX`
-    // is set) and the row would take that function's fast-greedy branch with
-    // no grammar and `PenaltyGate::Neutral` penalties. The batch call runs
-    // only with at least two eligible rows; every other row samples per row.
+    // `argmax_on_device` per row inside `bootstrap_pick`. A row is eligible
+    // when `mtp_boot_argmax` is on (unless `METRALE_NO_MTP_BOOT_ARGMAX` is set)
+    // and the row is greedy with no grammar and `PenaltyGate::Neutral`
+    // penalties and bias. The batch call runs only with at least two eligible
+    // rows; every other row samples per row. 2026-10-21: `bootstrap_pick` still
+    // checks a batched argmax against the logits pipeline before taking it.
     let pen: Vec<_> = refs
         .iter()
         .map(|a| {
@@ -129,7 +129,7 @@ pub(super) fn step_mtp_bootstrap_batched(
                 crate::scheduler::sample_step::PositionKind::Verify,
                 0.0,
                 None,
-                Vec::new(),
+                a.logit_bias.clone(),
                 sched.watchdog.min_reasoning_floor,
             )
         })
@@ -180,36 +180,16 @@ pub(super) fn step_mtp_bootstrap_batched(
     for (j, a) in refs.iter_mut().enumerate() {
         let row_logits = logits.offset(j * vocab * elem);
         let batched = batch_toks.as_ref().filter(|_| greedy[j]).map(|t| t[j]);
-        let tok = match batched {
-            Some(t) => t,
-            None => {
-                let history = crate::scheduler::sample_step::penalty_history_scope(
-                    &a.output_tokens,
-                    a.tool_call_end_token,
-                )
-                .to_vec();
-                // 2026-10-14: the EOS ids `eos_hold::presample_hold` holds.
-                let eos_mask =
-                    crate::scheduler::eos_hold::eos_mask_ids(a, a.output_tokens.len()).to_vec();
-                match sample_token_with_grammar(
-                    model,
-                    row_logits,
-                    a.temperature,
-                    a.top_k,
-                    a.top_p,
-                    &eos_mask,
-                    a.grammar_state.as_mut(),
-                    &pen[j],
-                    &history,
-                    &verify_ctx.sampling,
-                ) {
-                    Ok(t) => t,
-                    Err(e) => {
-                        tracing::error!("batched bootstrap sample error: {e:#}");
-                        a.finished = true;
-                        continue;
-                    }
-                }
+        // 2026-10-21: `bootstrap_pick` takes the batched argmax only where the
+        // logits pipeline would pick it, and picks the row on the host otherwise.
+        let tok = match crate::scheduler::verify_pipeline_helper::bootstrap_pick(
+            model, logits, j, a, verify_ctx, batched,
+        ) {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::error!("batched bootstrap sample error: {e:#}");
+                a.finished = true;
+                continue;
             }
         };
         let lp = if let Some(k) = a.top_logprobs {
