@@ -23,6 +23,8 @@ pub struct Glm5NextKdaKernels {
     /// 2026-10-09: `dense_gemv_bf16_batchm_wide` (9..=16 rows, accumulators in registers);
     /// `0` when absent (`glm5next_layer::wide_gemv`).
     pub gemv_batchm_wide: KernelHandle,
+    /// 2026-10-21: The 2..=8-row batched GEMVs (`glm5next_layer::wide_gemv`); KDA takes BF16 out.
+    pub gemv_batchm_few: crate::glm5next_layer::wide_gemv::FewGemv,
     pub conv_decode: KernelHandle,
     /// 2026-10-09: `causal_conv1d_update_l2norm_rows`: `conv_decode` for up to
     /// [`KDA_ROWS_MAX`] rows of different sequences, each row's window and workspace row a kernel
@@ -57,6 +59,9 @@ pub struct Glm5NextKdaKernels {
     /// activation quantization, the gate and the beta sigmoid in one launch
     /// (`METRALE_GLM_KDA_GATES_FUSED=1`, `gates_fused.rs`). `0` when absent.
     pub gates_fused: KernelHandle,
+    /// 2026-10-21: `kda_gates_w8a8_k128_rows`: the same chain for 1..=8 tokens
+    /// (`METRALE_GLM_KDA_GATES_ROWS`, `gates_fused.rs`). `0` when absent.
+    pub gates_rows: KernelHandle,
 }
 
 impl Glm5NextKdaKernels {
@@ -76,6 +81,7 @@ impl Glm5NextKdaKernels {
                 "dense_gemv_bf16_batchm",
                 "dense_gemv_bf16_batchm_wide",
             ),
+            gemv_batchm_few: crate::glm5next_layer::wide_gemv::FewGemv::resolve(gpu),
             conv_decode: gpu.kernel("causal_conv1d", "causal_conv1d_update_l2norm")?,
             conv_decode_rows: metrale_model_layers::layers::try_kernel(
                 gpu,
@@ -113,6 +119,11 @@ impl Glm5NextKdaKernels {
                 gpu,
                 "kda_gates_w8a8",
                 "kda_gates_w8a8_k128",
+            ),
+            gates_rows: metrale_model_layers::layers::try_kernel(
+                gpu,
+                "kda_gates_w8a8",
+                "kda_gates_w8a8_k128_rows",
             ),
         })
     }

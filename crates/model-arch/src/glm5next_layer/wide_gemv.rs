@@ -2,14 +2,16 @@
 
 //! 2026-10-09: The BF16 projection dispatch every GLM-5.3 block shares (`glm_mm`), with the
 //! register-resident batched GEMV for 9..=16 rows (`dense_gemv_bf16_batchm_wide`).
+//! 2026-10-21: and for 2..=8 rows (`dense_gemv_bf16_batchm_few`, B loads in flight together).
 //!
 //! Owner: model-arch (GLM-5.3).
 //! Invariants:
 //! - Only `glm_mm` launches the wide entries, only at `BATCHM_WIDE_MIN..=DENSE_GEMV_BATCHM_MAX_M`
-//!   rows, and only when the caller passes a wide handle; every other M takes the dispatch the
+//!   rows, and only when the caller passes a wide handle (the few entries: 2..=`BATCHM_FEW_MAX`
+//!   rows and a few handle); every other M takes the dispatch the
 //!   DSA and MLP `gemm` helpers took before (cuBLASLt above 16 rows, else
 //!   `ops::dense_mm_bf16`), which other models share and which is unchanged.
-//! - A wide entry's row has the bits of the runtime-M batched GEMV's row
+//! - A wide or few entry's row has the bits of the runtime-M batched GEMV's row
 //!   (`kernels/gb10/common/dense_gemv_bf16_batchm.cu`), which has `dense_gemv_bf16`'s.
 
 use anyhow::Result;
@@ -22,16 +24,60 @@ use super::GlmLevers;
 /// 2026-10-09: `#define BATCHM_WIDE_MIN` in `dense_gemv_bf16_batchm.cu`: the narrowest M the
 /// wide entries take.
 pub(crate) const BATCHM_WIDE_MIN: usize = 9;
+/// 2026-10-21: `bmfew::FEW_MAX_M` in `dense_gemv_bf16_batchm_few.cu`: the widest M the few
+/// entries take.
+pub(crate) const BATCHM_FEW_MAX: usize = 8;
 
 /// 2026-10-09: A batched-GEMV pair: `narrow` is the runtime-M entry `ops::dense_mm_bf16`
 /// launches at 2..=16 rows; `wide` the register-resident entry for 9..=16 rows, or
-/// `KernelHandle(0)` to keep `narrow` there. 2026-10-11: `out_bytes`, the pair's output element
+/// `KernelHandle(0)` to keep `narrow` there; 2026-10-21: `few` the same for 2..=8 rows
+/// (`dense_gemv_bf16_batchm_few`). 2026-10-11: `out_bytes`, the pair's output element
 /// size (2 for the BF16-out entries, 4 for the FP32-out ones), sizes a row of `C`.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Batchm {
     pub(crate) narrow: KernelHandle,
     pub(crate) wide: KernelHandle,
+    pub(crate) few: KernelHandle,
     pub(crate) out_bytes: usize,
+}
+
+/// 2026-10-21: The `dense_gemv_bf16_batchm_few` entries, BF16 and FP32 out, resolved once per
+/// block's kernel set; `KernelHandle(0)` each where the target lacks it (the runtime-M entry runs).
+#[derive(Clone, Copy, Debug)]
+pub struct FewGemv {
+    pub bf16: KernelHandle,
+    pub f32: KernelHandle,
+}
+
+impl FewGemv {
+    pub fn resolve(gpu: &dyn GpuBackend) -> Self {
+        let entry = |name| {
+            metrale_model_layers::layers::try_kernel(gpu, "dense_gemv_bf16_batchm_few", name)
+        };
+        Self {
+            bf16: entry("dense_gemv_bf16_batchm_few"),
+            f32: entry("dense_gemv_bf16_batchm_few_fp32out"),
+        }
+    }
+}
+
+impl Batchm {
+    /// 2026-10-21: A block's batched entries for one output type: `out_bytes` 2 takes `few.bf16`,
+    /// 4 takes `few.f32`.
+    pub(crate) fn of(
+        narrow: KernelHandle,
+        wide: KernelHandle,
+        few: FewGemv,
+        out_bytes: usize,
+    ) -> Self {
+        let few = if out_bytes == 4 { few.f32 } else { few.bf16 };
+        Self {
+            narrow,
+            wide,
+            few,
+            out_bytes,
+        }
+    }
 }
 
 impl From<KernelHandle> for Batchm {
@@ -40,6 +86,7 @@ impl From<KernelHandle> for Batchm {
         Self {
             narrow,
             wide: KernelHandle(0),
+            few: KernelHandle(0),
             out_bytes: 2,
         }
     }
@@ -50,6 +97,21 @@ impl From<KernelHandle> for Batchm {
 /// 9..=16 rows (an A/B of the speed; the bits are the same).
 pub(crate) fn takes_wide(wide: KernelHandle, m: usize, on: bool) -> bool {
     wide.0 != 0 && (BATCHM_WIDE_MIN..=ops::DENSE_GEMV_BATCHM_MAX_M as usize).contains(&m) && on
+}
+
+/// 2026-10-21: The register-resident entry `glm_mm` launches for `m` rows, if any: `wide` at
+/// 9..=16 rows under `METRALE_GLM_BATCHM_WIDE`, `few` at 2..=8 under `METRALE_GLM_BATCHM_FEW`
+/// (`DenseLevers::batchm_few`; off keeps the runtime-M entry, the A/B control).
+pub(crate) fn fixed_entry(
+    batchm: &Batchm,
+    m: usize,
+    dense: &crate::glm5next_dense_levers::DenseLevers,
+) -> Option<KernelHandle> {
+    if takes_wide(batchm.wide, m, dense.batchm_wide) {
+        return Some(batchm.wide);
+    }
+    (batchm.few.0 != 0 && (2..=BATCHM_FEW_MAX).contains(&m) && dense.batchm_few)
+        .then_some(batchm.few)
 }
 
 /// 2026-10-11: [`glm_mm`] in launches of at most `DENSE_GEMV_BATCHM_MAX_M` rows, each on the
@@ -126,8 +188,8 @@ pub(crate) fn glm_mm(
     if wide_rows && levers.cublas_wide_proj {
         return ops::cublas_bf16_proj_dense(a, b, c, m as u32, n as u32, kk as u32, stream);
     }
-    if takes_wide(batchm.wide, m, levers.dense.batchm_wide) {
-        return KernelLaunch::new(gpu, batchm.wide)
+    if let Some(entry) = fixed_entry(&batchm, m, &levers.dense) {
+        return KernelLaunch::new(gpu, entry)
             .grid([div_ceil(n as u32, 4), 1, 1])
             .block([256, 1, 1])
             .arg_ptr(a)
@@ -176,6 +238,69 @@ mod tests {
         }
     }
 
+    /// 2026-10-21: The fixed-count entry per width: few at 2..=8, wide at 9..=16, neither at 1
+    /// or above 16, and each lever and each missing handle falls back to the runtime-M entry
+    /// (`None`) at its own widths only.
+    #[test]
+    fn fixed_entry_is_few_at_2_to_8_and_wide_at_9_to_16() {
+        let (wide, few) = (21u64, 22u64);
+        let b = Batchm {
+            narrow: KernelHandle(20),
+            wide: KernelHandle(wide),
+            few: KernelHandle(few),
+            out_bytes: 4,
+        };
+        let on = crate::glm5next_dense_levers::DenseLevers::declared();
+        assert!(on.batchm_few && on.batchm_wide, "both default on");
+        let pick = |b: &Batchm, d, m| fixed_entry(b, m, d).map(|h| h.0);
+        for m in [0, 1, 17, 32] {
+            assert_eq!(pick(&b, &on, m), None, "m={m}");
+        }
+        for m in 2..=8 {
+            assert_eq!(pick(&b, &on, m), Some(few), "m={m}");
+        }
+        for m in 9..=16 {
+            assert_eq!(pick(&b, &on, m), Some(wide), "m={m}");
+        }
+        let few_off = crate::glm5next_dense_levers::DenseLevers {
+            batchm_few: false,
+            ..on
+        };
+        let wide_off = crate::glm5next_dense_levers::DenseLevers {
+            batchm_wide: false,
+            ..on
+        };
+        let no_few = Batchm {
+            few: KernelHandle(0),
+            ..b
+        };
+        assert_eq!(
+            (pick(&b, &few_off, 2), pick(&b, &few_off, 9)),
+            (None, Some(wide))
+        );
+        assert_eq!(
+            (pick(&b, &wide_off, 8), pick(&b, &wide_off, 9)),
+            (Some(few), None)
+        );
+        assert_eq!(
+            (pick(&no_few, &on, 8), pick(&no_few, &on, 9)),
+            (None, Some(wide))
+        );
+        let off = crate::glm5next_dense_levers::DenseLevers {
+            batchm_few: false,
+            ..on
+        };
+        let read = crate::glm5next_dense_levers::DenseLevers::from_settings(
+            &metrale_model_layers::lever_equivalence::settings_from(&[(
+                "METRALE_GLM_BATCHM_FEW",
+                "0",
+            )])
+            .expect("0 resolves"),
+        )
+        .expect("levers resolve");
+        assert_eq!(read, off, "`0` switches only the few entry off");
+    }
+
     /// 2026-10-11: 40 FP32-out rows run as 16 + 16 + 8 rows on the narrow batched GEMV (no
     /// wide entry given), each launch's A and C advanced by whole rows (C at 4 bytes per
     /// element); a missing batched entry is refused rather than left to the tile GEMM.
@@ -186,6 +311,7 @@ mod tests {
         let b = Batchm {
             narrow,
             wide: KernelHandle(0),
+            few: KernelHandle(0),
             out_bytes: 4,
         };
         let (a, w, c) = (

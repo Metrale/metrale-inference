@@ -12,7 +12,8 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_model_layers::weight_map::{Fp8Weight, WeightQuantFormat};
 
 use super::super::Glm5NextKdaWorkspace;
-use super::super::decode_rows_tests::{GATES_FUSED, cfg, layer};
+use super::super::decode_rows_tests::{GATES_FUSED, GATES_ROWS, cfg, layer};
+use super::GATES_MAX_ROWS;
 
 fn fp8(gpu: &MockGpuBackend, n: u32, k: u32) -> Fp8Weight {
     Fp8Weight {
@@ -119,4 +120,75 @@ fn refusals_come_before_any_launch() {
         .to_string();
     assert!(e.contains("not in this target"), "{e}");
     assert_eq!(gpu.launches_snapshot().len(), from);
+}
+
+/// 2026-10-21: The rows kernel at 2 rows: one launch over the one-token kernel's grid, the same
+/// buffers in the same order, then M = 2 ahead of N, D, heads and the lower bound.
+#[test]
+fn the_rows_kernel_takes_m_ahead_of_the_shape_arguments() {
+    let gpu = MockGpuBackend::new();
+    let l = layer(&gpu);
+    let c = cfg();
+    let ws = Glm5NextKdaWorkspace::new(&gpu, &c, 2).unwrap();
+    let (fb, gb) = (fp8(&gpu, 256, 128), fp8(&gpu, 256, 128));
+    let from = gpu.launches_snapshot().len();
+    assert!(
+        l.try_gates_rows(&gpu, 2, true, (Some(fb), Some(gb)), &ws, 7)
+            .unwrap()
+    );
+    let launches = gpu.launches_snapshot()[from..].to_vec();
+    assert_eq!(launches.len(), 1);
+    let k = &launches[0];
+    assert_eq!(k.func, GATES_ROWS);
+    assert_eq!((k.grid, k.block, k.stream), ([4, 1, 1], [256, 1, 1], 7));
+    assert_eq!(ptr(k, 0), ws.lowrank);
+    assert_eq!(ptr(k, 1), ws.lowrank_g);
+    assert_eq!(ptr(k, 12), ws.beta);
+    assert_eq!(word(k, 13), 2u32.to_le_bytes());
+    assert_eq!(word(k, 14), 256u32.to_le_bytes());
+    assert_eq!(word(k, 15), 128u32.to_le_bytes());
+    assert_eq!(word(k, 16), 2u32.to_le_bytes());
+    assert_eq!(word(k, 17), c.gate_lower_bound.to_le_bytes());
+}
+
+/// 2026-10-21: The rows kernel declines (nothing launched, the unfused chain runs) at 0 or more
+/// than `GATES_MAX_ROWS` rows, with its lever off, and wherever the one-row lever is refused.
+#[test]
+fn the_rows_kernel_declines_out_of_range_off_or_refused() {
+    let gpu = MockGpuBackend::new();
+    let l = layer(&gpu);
+    let ws = Glm5NextKdaWorkspace::new(&gpu, &cfg(), GATES_MAX_ROWS + 1).unwrap();
+    let ok = fp8(&gpu, 256, 128);
+    let from = gpu.launches_snapshot().len();
+    let both = (Some(ok), Some(ok));
+    for t in [0, GATES_MAX_ROWS + 1] {
+        assert!(
+            !l.try_gates_rows(&gpu, t, true, both, &ws, 0).unwrap(),
+            "t={t}"
+        );
+    }
+    for (low, w) in [
+        (false, both),
+        (true, (Some(ok), None)),
+        (true, (None, Some(ok))),
+        (true, (Some(fp8(&gpu, 256, 256)), Some(ok))),
+    ] {
+        assert!(!l.try_gates_rows(&gpu, 2, low, w, &ws, 0).unwrap());
+    }
+    let mut off = layer(&gpu);
+    off.levers.kda.gates_rows = false;
+    assert!(!off.try_gates_rows(&gpu, 2, true, both, &ws, 0).unwrap());
+    let mut no_kernel = layer(&gpu);
+    no_kernel.kernels.gates_rows = KernelHandle(0);
+    assert!(
+        !no_kernel
+            .try_gates_rows(&gpu, 2, true, both, &ws, 0)
+            .unwrap()
+    );
+    assert_eq!(gpu.launches_snapshot().len(), from);
+    assert!(
+        l.try_gates_rows(&gpu, GATES_MAX_ROWS, true, both, &ws, 0)
+            .unwrap()
+    );
+    assert!(l.try_gates_rows(&gpu, 1, true, both, &ws, 0).unwrap());
 }

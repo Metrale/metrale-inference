@@ -136,11 +136,12 @@ __device__ __forceinline__ void mma_gemv(const typename F::Args& a, __nv_bfloat1
 // partials are +0.0, added in warp order. This reproduces that sum per tile without the CTA-wide reduction: the same
 // load_w / prep_w / mma_frag on the same operands, then seven +0.0 additions (which turn a -0.0 partial into +0.0, as
 // the 8-warp sum does). So a tile computed here has mma_gemv's bits at M = 1, K = 128, whichever warp runs it.
+// 2026-10-21: k128_tile_w is the same on a chunk the caller loaded (F::load_w(tile, 0, true)), so the weight load
+// can be issued ahead of the operand's preparation.
 template <class F>
-__device__ __forceinline__ void k128_tile(const typename F::Tile& tile, const typename F::AReg& b, const Lane& L,
-                                          float (&r)[4]) {
+__device__ __forceinline__ void k128_tile_w(const typename F::WReg& w, const typename F::AReg& b, const Lane& L,
+                                            float (&r)[4]) {
     float acc[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-    const typename F::WReg w = F::load_w(tile, 0u, true);
     const typename F::WFrag wf = F::prep_w(w, L);
     F::mma_frag(acc, wf, b, L);
 #pragma unroll
@@ -150,6 +151,12 @@ __device__ __forceinline__ void k128_tile(const typename F::Tile& tile, const ty
         for (unsigned ww = 1; ww < WARPS; ww++) v += 0.0f;
         r[c] = v;
     }
+}
+
+template <class F>
+__device__ __forceinline__ void k128_tile(const typename F::Tile& tile, const typename F::AReg& b, const Lane& L,
+                                          float (&r)[4]) {
+    k128_tile_w<F>(F::load_w(tile, 0u, true), b, L, r);
 }
 
 }

@@ -46,6 +46,8 @@ pub struct KdaLevers {
     pub gate_in_prepare: bool,
     /// 2026-10-10: `METRALE_GLM_KDA_GATES_FUSED` (`gates_fused.rs`).
     pub gates_fused: bool,
+    /// 2026-10-21: `METRALE_GLM_KDA_GATES_ROWS` (on unless `0`; `gates_fused.rs`).
+    pub gates_rows: bool,
     /// 2026-09-25: `METRALE_GLM_KDA_NO_SMEM`: the 2R+2W recurrent kernel instead of the 1R+1W one.
     pub no_smem: bool,
     /// 2026-10-10: `METRALE_GLM_KDA_ROW_REG`: each single-row recurrent step (`stateful_row`)
@@ -94,6 +96,7 @@ impl KdaLevers {
             conv_pack: k.glm_kda_conv_pack,
             gate_in_prepare: k.glm_kda_gate_in_prepare,
             gates_fused: k.glm_kda_gates_fused,
+            gates_rows: k.glm_kda_gates_rows,
             no_smem: k.glm_kda_no_smem,
             row_reg: k.glm_kda_row_reg,
             rows_reg: k.glm_kda_rows_reg,

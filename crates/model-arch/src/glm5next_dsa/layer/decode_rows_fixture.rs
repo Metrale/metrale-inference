@@ -28,6 +28,17 @@ pub(super) const BATCHM: u64 = 0x105;
 pub(super) const BATCHM_F32: u64 = 0x108;
 pub(super) const BATCHM_WIDE: u64 = 0x109;
 pub(super) const BATCHM_WIDE_F32: u64 = 0x10A;
+pub(super) const BATCHM_FEW: u64 = 0x10B;
+pub(super) const BATCHM_FEW_F32: u64 = 0x10C;
+/// 2026-10-21: Every batched tier: wide, few, runtime-M (BF16 then FP32 out).
+pub(super) const BATCHM_TIERS: [u64; 6] = [
+    BATCHM_WIDE,
+    BATCHM_WIDE_F32,
+    BATCHM_FEW,
+    BATCHM_FEW_F32,
+    BATCHM,
+    BATCHM_F32,
+];
 pub(super) const GEMV_F32: u64 = 0x104;
 pub(super) const SCORES: u64 = 0x203;
 pub(super) const LATENT: u64 = 0x107;
@@ -159,6 +170,10 @@ impl Rig {
                 gemv_batchm_f32: k(BATCHM_F32),
                 gemv_batchm_wide: k(BATCHM_WIDE),
                 gemv_batchm_wide_f32: k(BATCHM_WIDE_F32),
+                gemv_batchm_few: crate::glm5next_layer::wide_gemv::FewGemv {
+                    bf16: k(BATCHM_FEW),
+                    f32: k(BATCHM_FEW_F32),
+                },
                 rms_norm: k(0x106),
                 latent_write: k(LATENT),
             },

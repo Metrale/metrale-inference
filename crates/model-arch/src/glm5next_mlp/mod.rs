@@ -118,6 +118,8 @@ pub struct Glm5NextMlpKernels {
     /// `gemv_f32`'s bits (`forward::router_logits`). `0` when absent: one GEMV per row.
     pub gemv_batchm_f32: KernelHandle,
     pub gemv_batchm_wide_f32: KernelHandle,
+    /// 2026-10-21: The 2..=8-row batched GEMVs (`glm5next_layer::wide_gemv`).
+    pub gemv_batchm_few: crate::glm5next_layer::wide_gemv::FewGemv,
     /// 2026-09-25: NVFP4 `w4a16_gemm` tile GEMM. Resolved, but not launched by this module.
     pub w4a16: KernelHandle,
     /// 2026-09-25: NVFP4 `C[1, N] = A[1, K] @ B[N, K]^T`, the per-expert decode GEMV.
@@ -253,20 +255,14 @@ pub const DENSE_W4A4_CHUNK_ROWS: usize = 32;
 impl Glm5NextMlpKernels {
     /// 2026-10-09: The BF16-out batched GEMV pair `glm_mm` takes.
     pub(crate) fn batchm(&self) -> crate::glm5next_layer::wide_gemv::Batchm {
-        crate::glm5next_layer::wide_gemv::Batchm {
-            narrow: self.gemv_batchm,
-            wide: self.gemv_batchm_wide,
-            out_bytes: 2,
-        }
+        let (narrow, wide) = (self.gemv_batchm, self.gemv_batchm_wide);
+        crate::glm5next_layer::wide_gemv::Batchm::of(narrow, wide, self.gemv_batchm_few, 2)
     }
 
     /// 2026-10-09: The FP32-out batched GEMV pair, for the router logits.
     pub(crate) fn batchm_f32(&self) -> crate::glm5next_layer::wide_gemv::Batchm {
-        crate::glm5next_layer::wide_gemv::Batchm {
-            narrow: self.gemv_batchm_f32,
-            wide: self.gemv_batchm_wide_f32,
-            out_bytes: 4,
-        }
+        let (narrow, wide) = (self.gemv_batchm_f32, self.gemv_batchm_wide_f32);
+        crate::glm5next_layer::wide_gemv::Batchm::of(narrow, wide, self.gemv_batchm_few, 4)
     }
 }
 
@@ -301,6 +297,7 @@ impl Glm5NextMlpKernels {
                 "dense_gemv_bf16_batchm",
                 "dense_gemv_bf16_batchm_wide_fp32out",
             ),
+            gemv_batchm_few: crate::glm5next_layer::wide_gemv::FewGemv::resolve(gpu),
             w4a16: gpu.kernel(W4A16_MODULE, "w4a16_gemm")?,
             w4a16_gemv: gpu.kernel(W4A16_GEMV_MODULE, "w4a16_gemv")?,
             w4a16_gemv_sw: metrale_model_layers::layers::try_kernel(

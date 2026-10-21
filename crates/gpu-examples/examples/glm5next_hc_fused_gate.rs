@@ -29,7 +29,7 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 use metrale_model_arch::glm5next_mhc::{Glm5NextMhcKernels, Glm5NextMhcSiteWeights, glm_hc_pre};
 use metrale_model_arch::glm5next_mhc_fused::{
-    glm_hc_pre_norm_with, pre_norm_kernel, splitk_kernel,
+    PreNormChoice, glm_hc_pre_norm_with, pre_norm_kernel, splitk_kernel,
 };
 
 /// 2026-10-09: `(hidden, hc_mult, tokens)`. Rows 1, 4 and 16 are the decode widths; at 32 the
@@ -48,7 +48,7 @@ const CASES: [(usize, usize, usize); 11] = [
     (256, 4, 1),
     (512, 1, 2),
 ];
-const TIMED_TOKENS: [usize; 5] = [1, 4, 16, 32, 64];
+const TIMED_TOKENS: [usize; 6] = [1, 2, 4, 16, 32, 64];
 const SINKHORN_ITERS: u32 = 20;
 /// 2026-10-09: The Sinkhorn has converged to its fixed point in FP32 by iteration 19 on these
 /// inputs, so 19 iterations give the same bytes as 20; the control stops far earlier.
@@ -61,11 +61,14 @@ const RMS_EPS: f32 = 1e-5;
 const REPS: usize = 90;
 const TRIALS: usize = 9;
 
+/// 2026-10-21: Uniform in [-1, 1). It spanned [-1, 0) until 2026-10-21: the streams and `hc_fn`
+/// then shared a sign, every mix landed near +142 and every sigmoid saturated (post 2.0, pre 1.0),
+/// so a wrong `pre` operand in the collapse passed.
 fn lcg(seed: &mut u64) -> f32 {
     *seed = seed
         .wrapping_mul(6364136223846793005)
         .wrapping_add(1442695040888963407);
-    ((*seed >> 33) as f32 / (1u64 << 31) as f32) - 1.0
+    ((*seed >> 40) as f32 / (1u64 << 23) as f32) - 1.0
 }
 
 fn up(g: &dyn GpuBackend, b: &[u8]) -> Result<DevicePtr> {
@@ -231,8 +234,29 @@ fn fused_arm(
     stream: u64,
 ) -> Result<()> {
     glm_hc_pre_norm_with(
-        g, k, s.streams, &s.w, s.norm_w, o.p[0], o.p[3], o.p[1], o.p[2], t as u32, hid as u32,
-        hc as u32, iters, NORM_EPS, HC_EPS, rms_eps, prefetch, splitk, false, stream,
+        g,
+        k,
+        s.streams,
+        &s.w,
+        s.norm_w,
+        o.p[0],
+        o.p[3],
+        o.p[1],
+        o.p[2],
+        t as u32,
+        hid as u32,
+        hc as u32,
+        iters,
+        NORM_EPS,
+        HC_EPS,
+        rms_eps,
+        PreNormChoice {
+            prefetch,
+            splitk,
+            tok: false,
+            c1: false,
+        },
+        stream,
     )
 }
 

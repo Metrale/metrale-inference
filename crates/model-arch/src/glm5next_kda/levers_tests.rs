@@ -182,6 +182,7 @@ fn the_declared_defaults_are_the_old_unset_values() {
             conv_pack: false,
             gate_in_prepare: false,
             gates_fused: false,
+            gates_rows: true,
             no_smem: false,
             row_reg: false,
             rows_reg: false,

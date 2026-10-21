@@ -89,14 +89,14 @@ fn each_row_reads_and_writes_only_its_own_sequence() {
         MockArg::Bytes((MB as u32).to_le_bytes().to_vec()),
         "the block-table row stride is the metadata's"
     );
-    let proj = of(&l, BATCHM);
+    let proj = of(&l, BATCHM_FEW);
     assert_eq!(proj.len(), 4, "q_a, q_absorb, kv_a and o_absorb, each once");
     for p in &proj {
         assert_eq!(p.args[3], MockArg::Bytes(3u32.to_le_bytes().to_vec()));
     }
     // 2026-10-09: The selector query and head weights run once for the three rows (FP32
     // batched GEMV), never as per-row FP32 GEMVs, and row `r`'s scores read row `r` of each.
-    let f32_rows = of(&l, BATCHM_F32);
+    let f32_rows = of(&l, BATCHM_FEW_F32);
     assert_eq!(f32_rows.len(), 2, "wq_b and weights_proj, each once");
     for p in &f32_rows {
         assert_eq!(p.args[3], MockArg::Bytes(3u32.to_le_bytes().to_vec()));
@@ -299,24 +299,27 @@ fn padding_rows_write_the_workspace_padding_buffers() {
     }
 }
 
-/// 2026-10-09: At 9..=16 rows the projections run the register-resident batched GEMV (BF16
-/// and FP32 out) and the runtime-M one not at all; at 8 rows the runtime-M one runs.
+/// 2026-10-09: 9..=16 rows run the wide batched GEMVs (BF16 and FP32 out); 2026-10-21: 2..=8 the
+/// few ones, and the runtime-M ones only with `METRALE_GLM_BATCHM_FEW` off.
 #[test]
-fn nine_rows_or_more_take_the_wide_batched_gemv() {
-    for (n, wide) in [(8usize, false), (9, true), (16, true)] {
+fn every_batched_width_takes_its_register_resident_gemv() {
+    for (n, few_on) in [(2usize, true), (8, true), (8, false), (9, true), (16, true)] {
         let rig = Rig::new();
-        let layer = rig.layer();
+        let mut layer = rig.layer();
+        layer.levers.dense.batchm_few = few_on;
         let meta = rig.meta(n);
         let lens: Vec<usize> = (0..n).map(|r| 4 + r).collect();
         let mut boxes = rig.states(&lens);
         let from = rig.gpu.launch_count();
         run_rows(&rig, &layer, &mut boxes, &lens, &meta, 0, false).unwrap();
         let l = rig.since(from);
-        let (bf, f32_) = if wide { (4, 2) } else { (0, 0) };
-        assert_eq!(of(&l, BATCHM_WIDE).len(), bf, "n={n}");
-        assert_eq!(of(&l, BATCHM_WIDE_F32).len(), f32_, "n={n}");
-        assert_eq!(of(&l, BATCHM).len(), 4 - bf, "n={n}");
-        assert_eq!(of(&l, BATCHM_F32).len(), 2 - f32_, "n={n}");
+        let counts = BATCHM_TIERS.map(|h| of(&l, h).len());
+        let want = match (n, few_on) {
+            (9.., _) => [4, 2, 0, 0, 0, 0],
+            (_, true) => [0, 0, 4, 2, 0, 0],
+            (_, false) => [0, 0, 0, 0, 4, 2],
+        };
+        assert_eq!(counts, want, "n={n} few={few_on}");
     }
 }
 
@@ -374,7 +377,7 @@ fn batched_indexer_rows_stage_every_row_and_store_each_from_its_own() {
     let w = &layer.workspace;
     let d = cfg().index_head_dim;
     let three = MockArg::Bytes(3u32.to_le_bytes().to_vec());
-    let staged: Vec<_> = of(&l, BATCHM)
+    let staged: Vec<_> = of(&l, BATCHM_FEW)
         .into_iter()
         .filter(|p| p.args[2] == ptr(w.stage_k) || p.args[2] == ptr(w.stage_gate))
         .collect();

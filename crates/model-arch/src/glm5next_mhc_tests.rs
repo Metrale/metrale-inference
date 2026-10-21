@@ -52,28 +52,7 @@ fn wide_token_counts_take_the_grouped_mix_kernel() {
     use metrale_gpu_runtime::gpu::DevicePtr;
     use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
     let gpu = MockGpuBackend::new();
-    let k = |h| KernelHandle(h);
-    let kernels = Glm5NextMhcKernels {
-        hc_expand: k(1),
-        hc_pre: k(2),
-        hc_mix: k(3),
-        hc_mix_bf16: k(4),
-        hc_mix_bf16_rows: k(5),
-        hc_finish: k(6),
-        hc_pre_norm: k(9),
-        hc_pre_norm_rows: k(10),
-        hc_pre_norm_pf: k(13),
-        hc_pre_norm_sk: k(14),
-        hc_pre_norm_tok: k(15),
-        hc_pre_norm_tile: k(17),
-        hc_post: k(7),
-        hc_post_rank_sum: k(11),
-        hc_post_rank_sum_vec8: k(18),
-        hc_post_pre_norm: k(12),
-        hc_post_pre_norm_tok: k(16),
-        hc_head: k(8),
-        levers: crate::glm5next_mhc_levers::MhcLevers::declared(),
-    };
+    let kernels = test_kernels();
     let site = |bf16| Glm5NextMhcSiteWeights {
         hc_fn: DevicePtr(0x100),
         hc_fn_bf16: bf16,
@@ -112,4 +91,32 @@ fn wide_token_counts_take_the_grouped_mix_kernel() {
     assert_eq!(first_mix(min - 1, true), (4, 24));
     assert_eq!(first_mix(1, true), (4, 24));
     assert_eq!(first_mix(128, false), (3, 24));
+}
+
+/// 2026-10-21: Every kernel present under a distinct mock handle, at the declared levers (moved
+/// here from `wide_token_counts_take_the_grouped_mix_kernel`).
+pub(crate) fn test_kernels() -> Glm5NextMhcKernels {
+    let k = |h| KernelHandle(h);
+    Glm5NextMhcKernels {
+        hc_expand: k(1),
+        hc_pre: k(2),
+        hc_mix: k(3),
+        hc_mix_bf16: k(4),
+        hc_mix_bf16_rows: k(5),
+        hc_finish: k(6),
+        hc_pre_norm: k(9),
+        hc_pre_norm_rows: k(10),
+        hc_pre_norm_pf: k(13),
+        hc_pre_norm_sk: k(14),
+        hc_pre_norm_tok: k(15),
+        hc_pre_norm_tile: k(17),
+        hc_pre_norm_c1: k(19),
+        hc_post: k(7),
+        hc_post_rank_sum: k(11),
+        hc_post_rank_sum_vec8: k(18),
+        hc_post_pre_norm: k(12),
+        hc_post_pre_norm_tok: k(16),
+        hc_head: k(8),
+        levers: crate::glm5next_mhc_levers::MhcLevers::declared(),
+    }
 }
