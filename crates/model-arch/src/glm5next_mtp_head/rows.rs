@@ -114,6 +114,9 @@ impl Glm5NextMtpHead {
                     &mut kv,
                     *seq_len,
                     block_table,
+                    crate::glm5next_dsa::layer::SlotUpload::from_lever(
+                        self.levers.row_nosync,
+                    ),
                     ctx,
                     stream,
                 )?;

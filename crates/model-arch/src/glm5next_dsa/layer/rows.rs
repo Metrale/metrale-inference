@@ -7,6 +7,8 @@
 //! Owner: model-arch (GLM-5.3 DSA).
 //! Invariants:
 //! - `write_kv_row` writes no KV latent when the indexer cache is behind `seq_len`.
+//! - 2026-10-21: A `SlotUpload::StreamOrdered` row is refused under capture: its slot is a host
+//!   value the copy reads at enqueue, which a graph would freeze.
 
 use anyhow::{Result, bail};
 use metrale_cache::kv_cache::PagedKvCache;
@@ -17,7 +19,7 @@ use metrale_model_layers::layer::{ForwardContext, LayerState};
 use super::super::paged::{IndexerCache, IndexerRowsDev};
 use super::super::select::DsaSelectInputs;
 use super::super::state::Glm5NextDsaState;
-use super::{Glm5NextDsaLayer, IndexerPlace};
+use super::{Glm5NextDsaLayer, IndexerPlace, SlotUpload};
 
 /// 2026-10-21: Which rows `store_pool_keys` finishes: `n` rows at the device positions `pos`
 /// through the device block tables `bt` (`bt_stride` i32 apart per row, 0 for one sequence) of
@@ -393,6 +395,7 @@ impl Glm5NextDsaLayer {
         kv_cache: &mut PagedKvCache,
         seq_len: usize,
         block_table: &mut Vec<u32>,
+        slot_upload: SlotUpload,
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<()> {
@@ -442,7 +445,19 @@ impl Glm5NextDsaLayer {
             )
         })? as usize;
         let slot = (physical * block_size + seq_len % block_size) as i64;
-        gpu.copy_h2d(&slot.to_le_bytes(), w.slot)?;
+        match slot_upload {
+            SlotUpload::Blocking => gpu.copy_h2d(&slot.to_le_bytes(), w.slot)?,
+            SlotUpload::StreamOrdered => {
+                if gpu.stream_is_capturing(stream) {
+                    bail!(
+                        "DSA layer {}: a stream-ordered drafter row under capture would freeze \
+                         its KV slot",
+                        self.layer_idx
+                    );
+                }
+                gpu.copy_h2d_async(&slot.to_le_bytes(), w.slot, stream)?
+            }
+        }
         KernelLaunch::new(gpu, self.kernels.latent_write)
             .grid([1, 1, 1])
             .block([self.cfg.kv_lora_rank as u32, 1, 1])

@@ -59,12 +59,14 @@ mod proj_gemm;
 mod row_ops;
 mod rows;
 mod select_rows;
+mod slot_upload;
 mod verify_select;
 mod workspace;
 
 pub use decode_rows::DsaRowSpan;
 pub use indexer_place::IndexerPlace;
 pub use kernels::Glm5NextDsaLayerKernels;
+pub use slot_upload::SlotUpload;
 pub use workspace::Glm5NextDsaWorkspace;
 pub(crate) use workspace::batch_select_enabled;
 pub use workspace::{select_scratch_geometry, select_scratch_rows};

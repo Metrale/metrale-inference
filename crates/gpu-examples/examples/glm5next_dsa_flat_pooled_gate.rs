@@ -90,7 +90,9 @@ impl Arm {
     ) -> Result<()> {
         let h = up(gpu, x)?;
         let ctx = fwd.ctx(gpu, false, false, None);
-        l.write_kv_row(h, self.st.as_mut(), &mut self.kv, pos, &mut self.bt, &ctx, stream(gpu))
+        let blocking = metrale_model_arch::glm5next_dsa::layer::SlotUpload::Blocking;
+        let (st, kv) = (self.st.as_mut(), &mut self.kv);
+        l.write_kv_row(h, st, kv, pos, &mut self.bt, blocking, &ctx, stream(gpu))
     }
 
     /// 2026-10-21: One decode step at `pos` (`decode_k`, k = 1), replay-safe when `capture`.

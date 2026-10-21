@@ -263,6 +263,21 @@ fn the_prefill_wait_composes_as_before() {
     }
 }
 
+/// 2026-10-21: The A2 levers (no old reader): off unset, on at `1`, a non-switch refused.
+#[test]
+fn the_a2_levers_are_opt_in_switches() {
+    let cases: [Switch; 2] = [
+        ("METRALE_GLM_GRAPH_EARLY_LAUNCH", |l| l.graph_early_launch),
+        ("METRALE_GLM_MTP_ROW_NOSYNC", |l| l.row_nosync),
+    ];
+    for (env, field) in cases {
+        assert_eq!(new_with(&[], field), Some(false), "{env} unset");
+        assert_eq!(new_at(env, Some("1"), field), Some(true), "{env}=1");
+        assert_eq!(new_at(env, Some("0"), field), Some(false), "{env}=0");
+        assert_eq!(new_at(env, Some("garbage"), field), None, "{env}=garbage");
+    }
+}
+
 /// 2026-10-17: Every lever at the value its reader read unset as.
 #[test]
 fn the_declared_defaults_are_the_old_unset_values() {
@@ -279,6 +294,8 @@ fn the_declared_defaults_are_the_old_unset_values() {
             eh_tp: false,
             xchg_device: false,
             head_fp8: true,
+            graph_early_launch: false,
+            row_nosync: false,
         }
     );
     assert_eq!(MtpLevers::declared().context_cap, old_cap(None).unwrap());
