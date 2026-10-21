@@ -83,6 +83,14 @@ pub struct GlmLevers {
     /// above apply over persisted pool keys, one selection pass for all the rows after their
     /// indexer rows are stored (`Glm5NextDsaLayer::select_verify_rows`); each row keeps its bits.
     pub dsa_verify_select_once: bool,
+    /// 2026-10-21: `METRALE_GLM_DSA_PROJ_IN_MERGED` (default on): a DSA decode or verify's q_a,
+    /// kv_a, indexer wk and compress gate as one W8A8 launch (`glm5next_dsa::layer::proj_in_merged`);
+    /// every output keeps its bytes.
+    pub dsa_proj_in_merged: bool,
+    /// 2026-10-21: `METRALE_GLM_DSA_SELECTOR_PAIR` (default on): a batched DSA step's selector
+    /// query and head weights as one FP32-out launch (`glm5next_dsa::layer::selector_pair`);
+    /// every output keeps its bytes.
+    pub dsa_selector_pair: bool,
     /// 2026-10-10: `METRALE_GLM_AR_FUSED_POST`: where an mHC site's all-reduce takes the
     /// one-shot path in one piece, the exchange runs alone (`CommBackend::exchange_partials`) and
     /// `glm5next_hc_post_rank_sum` sums the partials and post-mixes in one launch instead of
@@ -178,6 +186,8 @@ impl GlmLevers {
             dsa_idx_proj_whole: k.glm_dsa_idx_proj_whole,
             dsa_verify_rows: k.glm_dsa_verify_rows,
             dsa_verify_select_once: k.glm_dsa_verify_select_once,
+            dsa_proj_in_merged: k.glm_dsa_proj_in_merged,
+            dsa_selector_pair: k.glm_dsa_selector_pair,
             ar_fused_post: k.glm_ar_fused_post,
             mhc_post_fold: k.glm_mhc_post_fold,
             mhc_fused: k.glm_mhc_fused,

@@ -50,4 +50,5 @@ pub fn ops_levers() -> anyhow::Result<metrale_model_layers::layers::ops::OpsLeve
     metrale_model_layers::layers::ops::OpsLevers::from_settings(&process_settings()?)
 }
 
+pub mod base_ptx;
 pub mod graph_arms;

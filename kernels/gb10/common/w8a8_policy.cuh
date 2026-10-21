@@ -60,13 +60,17 @@ struct W8A8 {
     __device__ static Tile tile(const Args& a, unsigned n0, const Lane& L, unsigned N, unsigned K) {
         unsigned base;
         const unsigned s = seg_of(a, n0, base);
-        const unsigned lr = n0 - base;
+        return tile_in(a.W[s], a.S[s], n0, n0 - base, L, N, K);
+    }
+    // 2026-10-21: The tile at output row n0, row lr of the segment (W, S) holding it.
+    __device__ static Tile tile_in(const u8* W, const float* S, unsigned n0, unsigned lr, const Lane& L, unsigned N,
+                                   unsigned K) {
         Tile t;
         t.l0 = n0 + L.g < N;
         t.l1 = n0 + L.g + 8u < N;
-        t.w0 = a.W[s] + (unsigned long long)(lr + L.g) * K + L.t * 16u;
-        t.w1 = a.W[s] + (unsigned long long)(lr + L.g + 8u) * K + L.t * 16u;
-        t.ws = a.S[s] + (unsigned long long)(lr >> 7) * (K >> 7);
+        t.w0 = W + (unsigned long long)(lr + L.g) * K + L.t * 16u;
+        t.w1 = W + (unsigned long long)(lr + L.g + 8u) * K + L.t * 16u;
+        t.ws = S + (unsigned long long)(lr >> 7) * (K >> 7);
         return t;
     }
     __device__ static Tok tok(const Args& a, unsigned j, const Lane& L, unsigned M, unsigned K) {
@@ -129,14 +133,54 @@ struct W8A8 {
                                  const Lane& L, unsigned M, unsigned N) {
         unsigned base;
         const unsigned s = seg_of(a, n0, base);
+        store_in(a.S[s], a.As, base, C, a.ldc, 0u, r, j, n0, L, M, N);
+    }
+    // 2026-10-21: Store token tile j of the tile at output row n0 of the segment starting at output row `base`
+    // (scales S), output row n to column n - col0 of C (row pitch ldc).
+    __device__ static void store_in(const float* S, const float* As, unsigned base, __nv_bfloat16* C, unsigned ldc,
+                                    unsigned col0, const float (&r)[4], unsigned j, unsigned n0, const Lane& L,
+                                    unsigned M, unsigned N) {
 #pragma unroll
         for (int c = 0; c < 4; c++) {
             const unsigned n = n0 + L.g + (c < 2 ? 0u : 8u);
             const unsigned tk = j * 8u + L.t * 2u + (unsigned)(c & 1);
             if (n >= N || tk >= M) continue;
-            const float v = BLK ? r[c] : r[c] * (__ldg(a.S[s] + (n - base)) * __ldg(a.As + tk));
-            C[(unsigned long long)tk * a.ldc + n] = __float2bfloat16_rn(v);
+            const float v = BLK ? r[c] : r[c] * (__ldg(S + (n - base)) * __ldg(As + tk));
+            C[(unsigned long long)tk * ldc + (n - col0)] = __float2bfloat16_rn(v);
         }
+    }
+};
+
+// 2026-10-21: Up to four per-row-scaled weights of one K over one quantized activation, each into its own output
+// (`Split4`): output rows [nb[s-1], nb[s]) are segment s (nb[-1] = 0, nb[3] = N), read from (W[s], S[s]) and
+// written to column n - nb[s-1] of Cs[s] (row pitch ldcs[s]). Every tile is W8A8<false, false>'s tile on the same
+// operands, so each output holds the bytes the segment's own launch writes; only the destination differs.
+struct SplitArgs : Args {
+    const u8* W4[4];
+    const float* S4[4];
+    __nv_bfloat16* Cs[4];
+    unsigned ldcs[4];
+    unsigned nb[3];
+};
+
+struct Split4 : W8A8<false, false> {
+    using Args = SplitArgs;
+    using Base = W8A8<false, false>;
+    __device__ static unsigned seg4(const SplitArgs& a, unsigned n, unsigned& base) {
+        const unsigned s = n >= a.nb[2] ? 3u : (n >= a.nb[1] ? 2u : (n >= a.nb[0] ? 1u : 0u));
+        base = s == 0u ? 0u : a.nb[s - 1u];
+        return s;
+    }
+    __device__ static Tile tile(const SplitArgs& a, unsigned n0, const Lane& L, unsigned N, unsigned K) {
+        unsigned base;
+        const unsigned s = seg4(a, n0, base);
+        return Base::tile_in(a.W4[s], a.S4[s], n0, n0 - base, L, N, K);
+    }
+    __device__ static void store(const SplitArgs& a, __nv_bfloat16*, const float (&r)[4], unsigned j, unsigned n0,
+                                 const Lane& L, unsigned M, unsigned N) {
+        unsigned base;
+        const unsigned s = seg4(a, n0, base);
+        Base::store_in(a.S4[s], a.As, base, a.Cs[s], a.ldcs[s], base, r, j, n0, L, M, N);
     }
 };
 

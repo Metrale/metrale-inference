@@ -36,7 +36,8 @@ use std::sync::{Mutex, OnceLock};
 use anyhow::{Result, bail, ensure};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_model_layers::layers::ops::{
-    W8A8_MAX_ROWS, W8a8Kernels, W8a8Scratch, W8a8Weight, w8a8_gemv, w8a8_proj,
+    W8A8_MAX_ROWS, W8A8_SPLIT4_ENTRY, W8A8_SPLIT4_MODULE, W8a8Kernels, W8a8Scratch, W8a8Weight,
+    w8a8_gemv, w8a8_proj,
 };
 use metrale_model_layers::weight_map::{DenseWeight, Fp8Weight, WeightQuantFormat};
 
@@ -44,6 +45,8 @@ use metrale_model_layers::weight_map::{DenseWeight, Fp8Weight, WeightQuantFormat
 /// BF16 address.
 struct Fp8Dense {
     kernels: W8a8Kernels,
+    /// 2026-10-21: `w8a8_gemv_rowscale_mb1_ku8_split4` ([`proj_split`]); 0 when not built.
+    split4: KernelHandle,
     scratch: W8a8Scratch,
     max_k: u32,
     weights: HashMap<u64, W8a8Weight>,
@@ -167,6 +170,11 @@ pub fn prepare(gpu: &dyn GpuBackend, max_k: usize, wide_min_rows: Option<usize>)
     let weights = g.take().map(|s| s.weights).unwrap_or_default();
     *g = Some(Fp8Dense {
         kernels,
+        split4: metrale_model_layers::layers::try_kernel(
+            gpu,
+            W8A8_SPLIT4_MODULE,
+            W8A8_SPLIT4_ENTRY,
+        ),
         scratch: W8a8Scratch::alloc(gpu, max_k)?,
         max_k,
         weights,
@@ -357,6 +365,10 @@ fn proj_registered(
     s.quantized = (m <= W8A8_MAX_ROWS).then_some(key);
     Ok(true)
 }
+
+#[path = "glm5next_fp8_dense_split.rs"]
+mod split;
+pub use split::{SplitProj, proj_split, split_ready};
 
 #[cfg(test)]
 #[path = "glm5next_fp8_dense_tests.rs"]

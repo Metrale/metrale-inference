@@ -46,3 +46,26 @@ W8A8_TPL(w8a8_gemv_blk128_mb2, true, false, 2, 4)
 W8A8_TPL(w8a8_gemv_blk128_mb4, true, true, 4, 4)
 W8A8_TPL(w8a8_gemv_blk128_mb8, true, true, 8, 2)
 W8A8_TPL(w8a8_gemv_blk128_mb16, true, true, 16, 1)
+
+// 2026-10-21: The rowscale mb1 entry over up to four weights, each into its own output (w8a8::Split4; default-on
+// METRALE_GLM_DSA_PROJ_IN_MERGED runs a DSA layer's q_a, kv_a, indexer wk and compress gate as one launch). nb0..nb2
+// are the first output rows of segments 1..3 (N for an absent one), each a multiple of 16; 1 <= M <= 8. Same tiles,
+// chunk order and warp sum as w8a8_gemv_rowscale_mb1_ku8, so each output has that entry's bytes.
+extern "C" __global__ __launch_bounds__(256) void w8a8_gemv_rowscale_mb1_ku8_split4(
+    const unsigned char* __restrict__ Aq, const float* __restrict__ As, const unsigned char* __restrict__ W0,
+    const float* __restrict__ S0, __nv_bfloat16* __restrict__ C0, unsigned ldc0, const unsigned char* __restrict__ W1,
+    const float* __restrict__ S1, __nv_bfloat16* __restrict__ C1, unsigned ldc1, const unsigned char* __restrict__ W2,
+    const float* __restrict__ S2, __nv_bfloat16* __restrict__ C2, unsigned ldc2, const unsigned char* __restrict__ W3,
+    const float* __restrict__ S3, __nv_bfloat16* __restrict__ C3, unsigned ldc3, unsigned M, unsigned N, unsigned K,
+    unsigned lda, unsigned nb0, unsigned nb1, unsigned nb2) {
+    w8a8::SplitArgs a;
+    a.Aq = Aq;
+    a.As = As;
+    a.lda = lda;
+    a.W4[0] = W0, a.W4[1] = W1, a.W4[2] = W2, a.W4[3] = W3;
+    a.S4[0] = S0, a.S4[1] = S1, a.S4[2] = S2, a.S4[3] = S3;
+    a.Cs[0] = C0, a.Cs[1] = C1, a.Cs[2] = C2, a.Cs[3] = C3;
+    a.ldcs[0] = ldc0, a.ldcs[1] = ldc1, a.ldcs[2] = ldc2, a.ldcs[3] = ldc3;
+    a.nb[0] = nb0, a.nb[1] = nb1, a.nb[2] = nb2;
+    wxay::mma_gemv<w8a8::Split4, 1, 8>(a, C0, M, N, K);
+}

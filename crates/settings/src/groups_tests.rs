@@ -18,7 +18,7 @@ const EXPECTED: [(&str, Class, usize); 14] = [
     ("cache", Class::Runtime, 44),
     ("dev", Class::Dev, 33),
     ("harness", Class::Harness, 9),
-    ("kernels", Class::Runtime, 271),
+    ("kernels", Class::Runtime, 273),
     ("model", Class::Runtime, 27),
     ("runtime", Class::Runtime, 46),
     ("sampling", Class::Runtime, 25),

@@ -86,7 +86,7 @@ impl Glm5NextDsaLayer {
         }
         st.ensure_room(k)?;
         let c = &self.cfg;
-        self.indexer_project_rows(gpu, hidden, k, stream)?;
+        self.indexer_project_rows(gpu, hidden, k, false, stream)?;
         // 2026-10-10: Under `METRALE_GLM_DSA_BATCH_QIDX=1` the head weights of the sub-chunk take
         // one cuBLASLt FP32-out GEMM too, as the selector query does (`select_rows_batched`);
         // another summation order than the per-row GEMV, so it rides on that opt-in lever.
