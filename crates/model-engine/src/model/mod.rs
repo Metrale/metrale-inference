@@ -49,6 +49,7 @@ pub(crate) mod seq_memtrace;
 pub(crate) mod ssm_batched_copy;
 pub(crate) mod ssm_pool;
 mod ssm_pool_slots;
+mod ssm_pool_swap;
 pub(crate) mod ssm_snapshot;
 mod ssm_snapshot_decode;
 pub(crate) mod ssm_snapshot_faultin;

@@ -119,6 +119,10 @@ pub(crate) struct SsmStatePool {
     /// `(K-1)` rows; 0 in snapshot mode.
     pub(super) replay_slot_bytes: usize,
     pub(super) free_slots: Mutex<Vec<usize>>,
+    /// 2026-10-21: Per-slot commit-swap roles (`ssm_reserve::commit_swap`), one entry per
+    /// claimable slot (the dummy is never swapped). Every live and intermediate-0 address the
+    /// accessors return is resolved through it.
+    pub(super) swaps: metrale_model_layers::ssm_reserve::SlotSwaps,
 }
 
 /// 2026-09-25: Prefix-sum layout for per-slot H intermediates: returns
@@ -394,6 +398,7 @@ impl SsmStatePool {
             replay_input_rings,
             replay_slot_bytes,
             free_slots: Mutex::new(free_slots),
+            swaps: metrale_model_layers::ssm_reserve::SlotSwaps::new(max_slots),
         })
     }
 }
@@ -444,3 +449,7 @@ mod slot_guard_tests;
 #[cfg(test)]
 #[path = "ssm_pool_state_plan_tests.rs"]
 mod state_plan_tests;
+
+#[cfg(test)]
+#[path = "ssm_pool_swap_tests.rs"]
+mod swap_tests;

@@ -44,7 +44,7 @@ impl SsmStatePool {
     /// the MTP dummy at index `mtp_slots`. The scheduler's speculative branches in
     /// `lane_decode.rs` require every active slot to be covered (`spec_slots_covered`).
     #[inline]
-    fn mtp_slot(&self, slot: usize) -> usize {
+    pub(super) fn mtp_slot(&self, slot: usize) -> usize {
         if slot < self.mtp_slots {
             slot
         } else {
@@ -70,6 +70,9 @@ impl SsmStatePool {
     }
 
     pub(super) fn release_slot(&self, idx: usize) {
+        // 2026-10-21: A free slot's bytes are its next owner's to overwrite, so it returns to
+        // the home layout without a copy, and graphs keyed by slot see only claimed slots swapped.
+        self.swaps.clear(idx);
         let mut free = self.free_slots.lock();
         debug_assert!(
             !free.contains(&idx),
@@ -116,8 +119,11 @@ impl SsmStatePool {
         Ok(())
     }
 
+    /// 2026-10-21: The slot's live h buffer: its home buffer, or its intermediate 0 while the
+    /// slot is swapped (`ssm_pool_swap.rs`).
     pub(super) fn h_state(&self, ssm_layer_idx: usize, slot: usize) -> DevicePtr {
-        self.h_state_pools[ssm_layer_idx].offset(slot * self.h_stored_bytes)
+        self.h_swapped_pair(ssm_layer_idx, slot)
+            .map_or_else(|| self.h_home(ssm_layer_idx, slot), |p| p.0)
     }
 
     /// 2026-09-25: This slot's FP32 prefill staging blob. `Some` only for an
@@ -128,8 +134,10 @@ impl SsmStatePool {
             .map(|p| p.offset(slot * self.h_bytes))
     }
 
+    /// 2026-10-21: The slot's live conv buffer, resolved like [`Self::h_state`].
     pub(super) fn conv_state(&self, ssm_layer_idx: usize, slot: usize) -> DevicePtr {
-        self.conv_state_pools[ssm_layer_idx].offset(slot * self.conv_bytes)
+        self.conv_swapped_pair(ssm_layer_idx, slot)
+            .map_or_else(|| self.conv_home(ssm_layer_idx, slot), |p| p.0)
     }
 
     /// 2026-09-25: Diagnostic: synchronise `stream`, then log at WARN the signed sum,
@@ -196,23 +204,19 @@ impl SsmStatePool {
         );
     }
 
-    /// 2026-09-25: Fixed address of H intermediate `token_idx` of `slot` (after the
-    /// MTP slot mapping). `token_idx` must be below that slot's `h_inter_counts`
-    /// entry; debug builds assert it.
+    /// 2026-09-25: Address of H intermediate `token_idx` of `slot` (after the MTP slot
+    /// mapping). `token_idx` must be below that slot's `h_inter_counts` entry; debug builds
+    /// assert it. 2026-10-21: intermediate 0 of a swapped slot is its home live buffer.
     pub(super) fn h_intermediate(
         &self,
         ssm_layer_idx: usize,
         slot: usize,
         token_idx: usize,
     ) -> DevicePtr {
-        let slot = self.mtp_slot(slot);
-        debug_assert!(
-            token_idx < self.h_inter_counts[slot],
-            "h_intermediate: token_idx {token_idx} >= slot {slot}'s tiered capacity {}",
-            self.h_inter_counts[slot],
-        );
-        self.h_intermediate_pools[ssm_layer_idx]
-            .offset((self.h_inter_offsets[slot] + token_idx) * self.h_stored_bytes)
+        match self.h_swapped_pair(ssm_layer_idx, slot) {
+            Some((_, inter0)) if token_idx == 0 => inter0,
+            _ => self.h_inter_home(ssm_layer_idx, slot, token_idx),
+        }
     }
 
     /// 2026-09-25: Number of H intermediates allocated for `slot` after the MTP
@@ -282,16 +286,18 @@ impl SsmStatePool {
         }
     }
 
+    /// 2026-10-21: Address of conv intermediate `token_idx` of `slot`, resolved like
+    /// [`Self::h_intermediate`].
     pub(super) fn conv_intermediate(
         &self,
         ssm_layer_idx: usize,
         slot: usize,
         token_idx: usize,
     ) -> DevicePtr {
-        let ni = self.num_intermediates;
-        let slot = self.mtp_slot(slot);
-        self.conv_intermediate_pools[ssm_layer_idx]
-            .offset((slot * ni + token_idx) * self.conv_bytes)
+        match self.conv_swapped_pair(ssm_layer_idx, slot) {
+            Some((_, inter0)) if token_idx == 0 => inter0,
+            _ => self.conv_inter_home(ssm_layer_idx, slot, token_idx),
+        }
     }
 
     /// 2026-10-08: Slot `slot`'s replay record region in SSM layer `ssm_layer_idx`; `None`
