@@ -67,6 +67,7 @@ mod rollback;
 pub mod run_io;
 mod sample_step;
 pub mod sched_ctx;
+mod screen_picks;
 pub(crate) mod shared_lookup_step;
 mod shutdown_drain;
 #[cfg(test)]

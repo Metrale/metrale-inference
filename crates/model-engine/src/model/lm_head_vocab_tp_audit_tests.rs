@@ -14,7 +14,8 @@
 //! the layers):
 //! - decode (`decode_a3.rs`, `impl_b1_decode.rs` profiled and draft decode) and batched
 //!   decode (`decode_a2.rs`): every rank runs the same decode command;
-//! - verify K=2/3/4/γ, batched and fused (`verify_*.rs`): workers run the same verify;
+//! - verify K=2/3/4/γ, batched and fused (`verify_*.rs`; the K=2 verify's head is
+//!   `screen_head.rs::verify_head_k2` since 2026-10-21): workers run the same verify;
 //! - prefill (`prefill_a.rs`, `prefill_c.rs`, `prefill_b/finalize_last.rs`): workers run the
 //!   same chunks and `is_last` from the same bounds;
 //! - mixed decode + prefill (`decode_b2.rs`): runs only without a communicator
@@ -47,6 +48,7 @@ const ENTRIES: [&str; 4] = [
 /// 2026-10-10: Per file under `src/`, the ranks argument of each head call in source order.
 const AUDIT: &[(&str, &[&str])] = &[
     ("model/impl_a3_lm_head.rs", &["ranks", "ranks", "ranks"]),
+    ("model/screen_head.rs", &["Every"]),
     ("model/impl_b1_decode.rs", &["Every", "Every"]),
     ("model/trait_impl/decode_a2.rs", &["Every"]),
     ("model/trait_impl/decode_a3.rs", &["Every"]),
@@ -61,7 +63,6 @@ const AUDIT: &[(&str, &[&str])] = &[
     ("model/trait_impl/prefill_c.rs", &["Every"]),
     ("model/trait_impl/prefill_d.rs", &["Local"]),
     ("model/trait_impl/verify_a.rs", &["Every"]),
-    ("model/trait_impl/verify_b.rs", &["Every"]),
     ("model/trait_impl/verify_c.rs", &["Every"]),
     ("model/trait_impl/verify_c2.rs", &["Every"]),
     ("model/trait_impl/verify_d.rs", &["Every"]),

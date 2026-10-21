@@ -5,6 +5,7 @@
 # `autoexamples = false` below makes this list the only source of example targets.
 example = [
     { name = "argmax_key_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "screen_head_gate", path = "examples/screen_head_gate/main.rs", required-features = ["cuda", "gpu-examples"] },
     { name = "tq128_microtest", path = "examples/tq128_microtest/main.rs", required-features = ["cuda", "gpu-examples"] },
     { name = "mtp_k2_verdict_gate", required-features = ["cuda", "gpu-examples"] },
     { name = "early_launch_gate", required-features = ["cuda", "gpu-examples"] },

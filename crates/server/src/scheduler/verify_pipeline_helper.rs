@@ -18,7 +18,7 @@
 
 mod argmax;
 mod bootstrap;
-mod fast_masked;
+pub(super) mod fast_masked;
 mod pick_all;
 mod pick_positions;
 #[cfg(test)]

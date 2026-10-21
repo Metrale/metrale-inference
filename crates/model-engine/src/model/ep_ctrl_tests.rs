@@ -158,8 +158,8 @@ fn the_route_is_the_control_channel_only_with_lever_and_channel() {
 }
 
 /// 2026-10-21: A worker copies a block into the command buffer exactly when a kernel reads it
-/// there: the fed decode's token and the device argmax's mask. The fused K=2 block's own flag
-/// (`FLAG_K2_DEVICE_VERDICT`) and every host command need no copy.
+/// there: the fed decode's token and the device argmax's mask. The fused K=2 block's own flags
+/// (`FLAG_K2_DEVICE_VERDICT`, `FLAG_K2_SCREEN_HEAD`) and every host command need no copy.
 #[test]
 fn only_fed_and_device_argmax_blocks_are_mirrored_to_the_device() {
     use crate::model::trait_impl::decode_fed_ep::EP_CMD_DECODE_FED;
@@ -177,9 +177,18 @@ fn only_fed_and_device_argmax_blocks_are_mirrored_to_the_device() {
     for block in [
         ep_wire::host_block(1, 151_329),
         ep_wire::host_block(1, ep_wire::EP_CMD_ALLOC_SLOT),
-        metrale_model_layers::speculative::k2_announce_block(1, [5, 6], true),
-        metrale_model_layers::speculative::k2_announce_block(1, [5, 6], false),
-    ] {
+    ]
+    .into_iter()
+    .chain((0..4u32).map(|bits| {
+        metrale_model_layers::speculative::k2_announce_block(
+            1,
+            [5, 6],
+            metrale_model_layers::speculative::K2Flags {
+                device_verdict: bits & 1 != 0,
+                screen_head: bits & 2 != 0,
+            },
+        )
+    })) {
         assert!(!needs_device_mirror(&parse(block)), "{:?}", parse(block));
     }
 }

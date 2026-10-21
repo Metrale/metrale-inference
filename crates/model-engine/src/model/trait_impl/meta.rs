@@ -392,6 +392,10 @@ impl TransformerModel {
         logits_ptr: DevicePtr,
         dst: &mut [u8],
     ) -> Result<()> {
+        // 2026-10-21: The lazy logits of a screened verify (`screen_head_lazy.rs`).
+        if self.screen_lazy_copy(logits_ptr, dst)? {
+            return Ok(());
+        }
         self.gpu.copy_d2h(logits_ptr, dst)
     }
 

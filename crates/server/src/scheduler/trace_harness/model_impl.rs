@@ -452,7 +452,7 @@ impl ModelEp for RecordingModel {
         fn ep_broadcast_cmd(&self, cmd: u32) -> Result<()> = Ok(()) => "ep_broadcast_cmd({cmd:#x})";
         fn ep_broadcast_cmd_for_seq(&self, seq_id: u32, cmd: u32) -> Result<()> = Ok(()) => "ep_broadcast_cmd_for_seq(seq={seq_id}, cmd={cmd:#x})";
         fn ep_broadcast_tokens(&self, tokens: &[u32]) -> Result<Vec<u32>> = Ok(tokens.to_vec()) => "ep_broadcast_tokens(n={})", tokens.len();
-        fn ep_announce_k2_fused(&self, seq_id: u32, tokens: [u32; 2], device_verdict: bool) -> Result<()> = Ok(()) => "ep_announce_k2_fused(seq={seq_id}, tokens={tokens:?}, device_verdict={device_verdict})";
+        fn ep_announce_k2_fused(&self, seq_id: u32, tokens: [u32; 2], flags: metrale_model_layers::speculative::K2Flags) -> Result<()> = Ok(()) => "ep_announce_k2_fused(seq={seq_id}, tokens={tokens:?}, flags={flags:?})";
         fn ep_send_k2_verdict_after_propose(&self, v: metrale_model_layers::speculative::K2Verdict) -> Result<()> = Ok(()) => "ep_send_k2_verdict_after_propose(accepted={}, next={}, drafts={}, pos={})", v.accepted, v.next_token, v.num_drafts, v.position;
         fn ep_send_k2_verdict(&self, v: metrale_model_layers::speculative::K2Verdict) -> Result<()> = Ok(()) => "ep_send_k2_verdict(accepted={}, next={}, drafts={}, pos={})", v.accepted, v.next_token, v.num_drafts, v.position;
     }
