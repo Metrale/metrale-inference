@@ -246,6 +246,7 @@ fn reference_pass(gpu: &dyn GpuBackend, k: &Kernels, io: &Io, r0: usize, n: usiz
         .arg_u32(n as u32)
         .arg_u32(io.pools as u32)
         .arg_u32(io.k as u32)
+        .arg_ptr(DevicePtr::NULL)
         .launch(0)?;
     KernelLaunch::new(gpu, k.fold)
         .grid([n as u32, 1, 1])

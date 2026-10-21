@@ -425,11 +425,14 @@ pub(super) fn run(
         }
 
         // 2026-10-12: `METRALE_GLM_DSA_TOPK_RADIX=1`: the same selection by radix select.
+        // 2026-10-21: a ceiling launch by `METRALE_GLM_DSA_DECODE_TOPK_RADIX` (default on), over
+        // the live pools in `gd`.
         if topk_radix_for(
             ceiling.is_some(),
-            geom,
+            selk_a,
             kernels.rows.topk_radix,
             scratch.levers.topk_radix,
+            scratch.levers.decode_topk_radix,
         ) {
             KernelLaunch::new(gpu, kernels.rows.topk_radix)
                 .grid([geom.q_rows as u32, 1, 1])
@@ -439,6 +442,7 @@ pub(super) fn run(
                 .arg_u32(geom.q_rows as u32)
                 .arg_u32(npools_a as u32)
                 .arg_u32(selk_a as u32)
+                .arg_ptr(gd)
                 .launch(stream)?;
         } else {
             // 2026-09-25: `np2_a` is at most `topk_tile()`, so the request is at most

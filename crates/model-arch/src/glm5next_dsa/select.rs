@@ -92,15 +92,21 @@ pub fn scores_mma_for(
 /// 2026-10-12: The widest selection `dsa_topk_pools_radix` takes (`DSA_TR_MAX`).
 pub const TOPK_RADIX_MAX: usize = 512;
 
-/// 2026-10-12: Whether a selection pass takes the radix top-k: the lever on, the kernel
-/// resolved, an exact launch, and a selection of at most [`TOPK_RADIX_MAX`] pools.
+/// 2026-10-12: Whether a selection pass takes the radix top-k: the kernel resolved, a
+/// selection of at most [`TOPK_RADIX_MAX`] pools (`select_k`, the launch's), and the launch
+/// kind's lever on. 2026-10-21: an exact launch is `exact_lever`
+/// (`METRALE_GLM_DSA_TOPK_RADIX`), a ceiling launch `ceiling_lever`
+/// (`METRALE_GLM_DSA_DECODE_TOPK_RADIX`); the kernel then reads the live pools from the
+/// device geometry.
 pub fn topk_radix_for(
     ceiling: bool,
-    geom: &DsaSelectGeometry,
+    select_k: usize,
     kernel: metrale_gpu_runtime::gpu::KernelHandle,
-    lever: bool,
+    exact_lever: bool,
+    ceiling_lever: bool,
 ) -> bool {
-    lever && kernel.0 != 0 && !ceiling && geom.select_k <= TOPK_RADIX_MAX
+    let lever = if ceiling { ceiling_lever } else { exact_lever };
+    lever && kernel.0 != 0 && select_k <= TOPK_RADIX_MAX
 }
 
 /// 2026-09-25: Threads per block for `dsa_index_scores`, and the least shared memory it is

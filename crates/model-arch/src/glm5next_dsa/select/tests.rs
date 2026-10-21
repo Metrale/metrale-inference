@@ -415,20 +415,27 @@ fn the_mma_scores_take_only_exact_multi_row_launches_of_the_built_shape() {
 }
 
 /// 2026-10-12: The radix top-k takes any exact launch whose selection fits it, under the lever
-/// and with the kernel; a ceiling launch keeps the tiled walk.
+/// and with the kernel. 2026-10-21: a ceiling launch takes it under its own lever, and each
+/// launch kind ignores the other's.
 #[test]
-fn the_radix_topk_takes_exact_launches_that_fit() {
+fn the_radix_topk_takes_launches_that_fit_under_their_lever() {
     use metrale_gpu_runtime::gpu::KernelHandle;
     let k = KernelHandle(9);
     for rows in [1usize, 2048] {
         let g = DsaSelectGeometry::plan(&cfg(), 16_384, rows).unwrap();
-        assert!(g.select_k <= TOPK_RADIX_MAX);
-        assert!(topk_radix_for(false, &g, k, true), "{rows} rows");
-        assert!(!topk_radix_for(true, &g, k, true), "ceiling");
-        assert!(!topk_radix_for(false, &g, k, false), "lever off");
+        let sk = g.select_k;
+        assert!(sk <= TOPK_RADIX_MAX);
+        assert!(topk_radix_for(false, sk, k, true, false), "{rows} rows exact");
+        assert!(!topk_radix_for(false, sk, k, false, true), "exact ignores the ceiling lever");
+        assert!(topk_radix_for(true, sk, k, false, true), "ceiling");
+        assert!(!topk_radix_for(true, sk, k, true, false), "ceiling ignores the exact lever");
         assert!(
-            !topk_radix_for(false, &g, KernelHandle(0), true),
+            !topk_radix_for(false, sk, KernelHandle(0), true, true),
             "no kernel"
+        );
+        assert!(
+            !topk_radix_for(true, sk, KernelHandle(0), true, true),
+            "no kernel, ceiling"
         );
     }
     let wide = Glm5NextDsaConfig {
@@ -437,8 +444,10 @@ fn the_radix_topk_takes_exact_launches_that_fit() {
     };
     let g = DsaSelectGeometry::plan(&wide, 16_384, 4).unwrap();
     assert!(g.select_k > TOPK_RADIX_MAX);
-    assert!(
-        !topk_radix_for(false, &g, k, true),
-        "select_k past the kernel"
-    );
+    for ceiling in [false, true] {
+        assert!(
+            !topk_radix_for(ceiling, g.select_k, k, true, true),
+            "select_k past the kernel"
+        );
+    }
 }

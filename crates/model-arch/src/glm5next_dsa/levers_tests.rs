@@ -300,7 +300,20 @@ fn the_check_dir_text_reads_as_before() {
     );
 }
 
+/// 2026-10-21: The ceiling launch's radix top-k is on by default and `0`/`off` turn it off.
+#[test]
+fn the_decode_radix_topk_is_on_by_default_and_turns_off() {
+    let env = "METRALE_GLM_DSA_DECODE_TOPK_RADIX";
+    let f = |l: &DsaLevers| l.select.decode_topk_radix;
+    assert_eq!(new_at(env, None, f), Some(true));
+    assert_eq!(new_at(env, Some("0"), f), Some(false));
+    assert_eq!(new_at(env, Some("off"), f), Some(false));
+    assert_eq!(new_at(env, Some("1"), f), Some(true));
+    assert_eq!(new_at(env, Some("garbage"), f), None);
+}
+
 /// 2026-10-17: Every lever off at the declared defaults, as each old reader read unset.
+/// 2026-10-21: except `decode_topk_radix`, a new default-on lever with no old reader.
 #[test]
 fn the_declared_defaults_are_the_old_unset_values() {
     let s = defaults();
@@ -321,6 +334,7 @@ fn the_declared_defaults_are_the_old_unset_values() {
                 scores_pipe: false,
                 select_fused: false,
                 topk_radix: false,
+                decode_topk_radix: true,
             },
             serve_ref: false,
             sp_agreement: 0,

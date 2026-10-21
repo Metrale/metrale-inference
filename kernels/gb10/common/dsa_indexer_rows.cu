@@ -401,6 +401,9 @@ extern "C" __global__ void __launch_bounds__(256) dsa_index_scores_mma(
 // 3. A bitonic sort of those select_k (score, pool) pairs in the total order, as the reference
 //    leaves its best list; slot i of the row is the i-th, -1 past the pools of a short row.
 // Launch: grid (Q, 1, 1), block 256; select_k <= DSA_TR_MAX.
+// 2026-10-21: With `geom` (a ceiling launch: a captured decode row, Q == 1) P and select_k are
+// the live ones in the device geometry, as dsa_topk_pools_body reads them, so a replayed graph
+// selects over this step's pools; the static shared memory does not depend on them.
 #define DSA_TR_MAX 512u
 #define DSA_TR_WARPS 8u
 
@@ -409,8 +412,13 @@ extern "C" __global__ void __launch_bounds__(256) dsa_topk_pools_radix(
     int* __restrict__ selected,
     unsigned int Q,
     unsigned int P,
-    unsigned int select_k
+    unsigned int select_k,
+    const int* __restrict__ geom
 ) {
+    if (geom) {
+        P = (unsigned int)geom[DSA_GEOM_NPOOLS];
+        select_k = (unsigned int)geom[DSA_GEOM_SELECT_K];
+    }
     __shared__ unsigned int hist[DSA_TR_WARPS][256];
     __shared__ float cv[DSA_TR_MAX];
     __shared__ int ci[DSA_TR_MAX];
