@@ -158,6 +158,7 @@ impl Glm5NextLayer {
         kv_cache: &mut PagedKvCache,
         seq_len: usize,
         block_table: &mut Vec<u32>,
+        slot_upload: crate::glm5next_dsa::layer::SlotUpload,
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<()> {
@@ -170,6 +171,15 @@ impl Glm5NextLayer {
             ),
         };
         self.norm(ctx.gpu, x, self.input_norm, normed, 1, stream)?;
-        layer.write_kv_row(normed, state, kv_cache, seq_len, block_table, ctx, stream)
+        layer.write_kv_row(
+            normed,
+            state,
+            kv_cache,
+            seq_len,
+            block_table,
+            slot_upload,
+            ctx,
+            stream,
+        )
     }
 }

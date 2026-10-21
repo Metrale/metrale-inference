@@ -51,6 +51,14 @@ pub struct MtpLevers {
     pub xchg_device: bool,
     /// 2026-09-25: `METRALE_GLM_MTP_HEAD_FP8` (on unless switched off): the FP8 draft head copy.
     pub head_fp8: bool,
+    /// 2026-10-21: `METRALE_GLM_GRAPH_EARLY_LAUNCH`: the drafter and K=2 verify graphs launched
+    /// early (`graph`, `verify_b`). Refused (off) with `METRALE_NCCL_HOST_HOIST`, which roots each
+    /// graph's first NCCL host task without its `serialEvent` wait, so an early-launched graph
+    /// could post proxy ops ahead of a graph launched before it (`early_launch_nccl_gate`).
+    pub graph_early_launch: bool,
+    /// 2026-10-21: `METRALE_GLM_MTP_ROW_NOSYNC` (`rows`): the one-row context write uploads its
+    /// KV slot without a host wait.
+    pub row_nosync: bool,
 }
 
 impl MtpLevers {
@@ -78,6 +86,8 @@ impl MtpLevers {
             eh_tp: sp.glm_mtp_eh_tp,
             xchg_device: sp.glm_mtp_xchg_device,
             head_fp8: sp.glm_mtp_head_fp8,
+            graph_early_launch: sp.glm_graph_early_launch && !s.runtime.nccl_host_hoist,
+            row_nosync: sp.glm_mtp_row_nosync,
         })
     }
 

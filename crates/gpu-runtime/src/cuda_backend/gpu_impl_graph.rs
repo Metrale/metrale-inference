@@ -244,6 +244,24 @@ impl MetraleCudaBackend {
         Ok(stream as u64)
     }
 
+    /// 2026-10-21: [`Self::create_stream_cu`] at `like`'s priority (cudarc's driver table, as
+    /// above), so a graph moved off the process stream keeps its scheduling priority.
+    pub(super) fn create_stream_like_cu(&self, like: u64) -> Result<u64> {
+        use cudarc::driver::sys;
+        let mut prio = 0i32;
+        let status = unsafe { sys::cuStreamGetPriority(like as sys::CUstream, &mut prio) };
+        if status != sys::CUresult::CUDA_SUCCESS {
+            bail!("cuStreamGetPriority failed: {status:?}");
+        }
+        let mut stream = std::ptr::null_mut();
+        // 2026-10-21: Flag 1 is CU_STREAM_NON_BLOCKING, as in `create_stream_cu`.
+        let status = unsafe { sys::cuStreamCreateWithPriority(&mut stream, 1, prio) };
+        if status != sys::CUresult::CUDA_SUCCESS {
+            bail!("cuStreamCreateWithPriority({prio}) failed: {status:?}");
+        }
+        Ok(stream as u64)
+    }
+
     pub(super) fn bind_to_thread_cu(&self) -> Result<()> {
         let status = unsafe { cuCtxSetCurrent(self.cuda_ctx) };
         if status != 0 {
@@ -270,8 +288,8 @@ impl MetraleCudaBackend {
         Ok(())
     }
 
-    pub(super) fn stream_wait_event_cu(&self, stream: u64, event: u64) -> Result<()> {
-        let status = unsafe { cuStreamWaitEvent(stream, event, 0) };
+    pub(super) fn stream_wait_event_cu(&self, stream: u64, event: u64, flags: u32) -> Result<()> {
+        let status = unsafe { cuStreamWaitEvent(stream, event, flags) };
         if status != 0 {
             bail!("cuStreamWaitEvent failed: status {status}");
         }

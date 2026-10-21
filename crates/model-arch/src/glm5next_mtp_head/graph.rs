@@ -18,8 +18,13 @@
 //! selection and attend, the MoE, the head) and stages the DSA row metadata from the host.
 
 use super::*;
+use metrale_gpu_runtime::early_launch::EarlyLaunch;
 use metrale_gpu_runtime::gpu::GraphHandle;
 use metrale_model_layers::layer::AttnMetadataDev;
+
+/// 2026-10-21: The drafter graphs' early launch (`MtpLevers::graph_early_launch`), its own side
+/// stream apart from the verify graphs'.
+static EARLY: std::sync::OnceLock<Option<EarlyLaunch>> = std::sync::OnceLock::new();
 
 /// 2026-10-11: Device bytes `DrafterGraph::alloc` takes per proposer state (0 with the lever,
 /// `graph`, off), for the per-sequence reserve: the row metadata, the block table of a drafter
@@ -178,6 +183,8 @@ impl Glm5NextMtpHead {
     ) -> Result<()> {
         let gpu = ctx.gpu;
         let layer = &self.module.layer;
+        let early =
+            EarlyLaunch::shared(&EARLY, || Ok(self.levers.graph_early_launch), gpu, stream)?;
         let (meta, embed_in, cached) = {
             let g = st
                 .graph
@@ -205,13 +212,13 @@ impl Glm5NextMtpHead {
         if let Some(graph) = cached {
             use metrale_model_layers::layer::LayerGraphHooks;
             layer.check_replay_room(&st.dsa, st.seq_len, 1)?;
-            gpu.launch_graph(graph, stream)?;
+            EarlyLaunch::launch_with(early, gpu, graph, stream)?;
             layer.sync_replayed_step(&mut st.dsa, st.seq_len, 1)?;
             st.seq_len += 1;
             return Ok(());
         }
         let gctx = super::batch::drafter_ctx(ctx, meta, true);
-        gpu.begin_capture(stream)?;
+        EarlyLaunch::begin_capture_with(early, gpu, stream)?;
         // 2026-10-11: Only a propose's first draft is graphed (`eligible`): a target row.
         let body = self.forward_body(Some(embed_in), hidden_in, true, st, &gctx, stream);
         let graph = gpu.end_capture(stream);
@@ -225,7 +232,7 @@ impl Glm5NextMtpHead {
         if graph.0 == 0 {
             anyhow::bail!("GLM MTP graph: the capture returned no graph");
         }
-        gpu.launch_graph(graph, stream)?;
+        EarlyLaunch::launch_with(early, gpu, graph, stream)?;
         if let Some(g) = st.graph.as_mut() {
             g.graph = Some((graph, hidden_in));
         }
