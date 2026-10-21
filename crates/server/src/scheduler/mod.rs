@@ -77,6 +77,8 @@ mod ssm_decode_ring;
 mod swap_out_tests;
 mod teardown;
 #[cfg(test)]
+mod spec_pipeline_fixture;
+#[cfg(test)]
 mod test_support;
 mod think_close;
 #[cfg(test)]

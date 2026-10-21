@@ -95,8 +95,12 @@ impl ModelForward for PreemptStubModel {
         s.prompt_len = t.len();
         Ok(DevicePtr::NULL)
     }
-    fn decode(&self, _t: u32, _s: &mut SequenceState, _st: u64) -> Result<DevicePtr> {
-        anyhow::bail!("unused in preempt tests")
+    fn decode(&self, _t: u32, s: &mut SequenceState, _st: u64) -> Result<DevicePtr> {
+        let Some(h) = self.host_logits.as_ref() else {
+            anyhow::bail!("unused in preempt tests")
+        };
+        s.seq_len += 1;
+        Ok(h.base())
     }
     fn prefill_chunk(
         &self,
@@ -126,25 +130,42 @@ impl ModelForward for PreemptStubModel {
         {
             anyhow::bail!("KV cache exhausted: no free blocks");
         }
-        Ok(DevicePtr::NULL)
+        Ok(self
+            .host_logits
+            .as_ref()
+            .map_or(DevicePtr::NULL, |h| h.base()))
     }
 }
 
 impl ModelLogits for PreemptStubModel {
     fn vocab_size(&self) -> usize {
-        0
+        self.host_logits.as_ref().map_or(0, |h| h.vocab())
     }
-    fn copy_logits_to_host(&self, _p: DevicePtr, _d: &mut [u8]) -> Result<()> {
-        Ok(())
+    fn copy_logits_to_host(&self, p: DevicePtr, d: &mut [u8]) -> Result<()> {
+        match self.host_logits.as_ref() {
+            Some(h) => h.copy(p, d),
+            None => Ok(()),
+        }
     }
     fn logits_buffer_ptr(&self) -> DevicePtr {
-        DevicePtr::NULL
+        self.host_logits
+            .as_ref()
+            .map_or(DevicePtr::NULL, |h| h.base())
     }
-    fn argmax_on_device(&self, _p: DevicePtr, _st: u64) -> Result<u32> {
-        anyhow::bail!("unused in preempt tests")
+    fn argmax_on_device(&self, p: DevicePtr, _st: u64) -> Result<u32> {
+        match self.host_logits.as_ref() {
+            Some(h) => Ok(h.argmax(p)),
+            None => anyhow::bail!("unused in preempt tests"),
+        }
     }
-    fn argmax_batch(&self, _p: DevicePtr, n: usize, _st: u64) -> Result<Vec<u32>> {
-        Ok(vec![0; n])
+    fn argmax_batch(&self, p: DevicePtr, n: usize, _st: u64) -> Result<Vec<u32>> {
+        match self.host_logits.as_ref() {
+            Some(h) => {
+                let row = h.vocab() * 2;
+                Ok((0..n).map(|i| h.argmax(p.offset(i * row))).collect())
+            }
+            None => Ok(vec![0; n]),
+        }
     }
     fn hidden_after_norm(&self) -> DevicePtr {
         DevicePtr::NULL
