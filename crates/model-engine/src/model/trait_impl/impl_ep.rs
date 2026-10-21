@@ -62,9 +62,9 @@ impl ModelEp for TransformerModel {
         &self,
         seq_id: u32,
         tokens: [u32; 2],
-        device_verdict: bool,
+        flags: metrale_model_layers::speculative::K2Flags,
     ) -> Result<()> {
-        self.ep_announce_k2_fused_impl(seq_id, tokens, device_verdict)
+        self.ep_announce_k2_fused_impl(seq_id, tokens, flags)
     }
 
     fn ep_send_k2_verdict_after_propose(

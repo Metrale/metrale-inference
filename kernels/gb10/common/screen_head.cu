@@ -372,9 +372,14 @@ extern "C" __global__ void screen_head_resolve(
     out[m] = plain_key_index(kp);
 }
 
-// 2026-10-21: logits[row * vocab + id] = the BF16 logit the full head writes there, from head row
-// `id` of the whole head `W` and activation row `row` of `X`: the lazy logits of a screened verify
-// (one host read of a few ids). One warp.
+// 2026-10-21: Bytes of the stamp a screened verify leaves at the head of the logits buffer
+// (SCREEN_STAMP_BYTES on the host): 0xFF bytes, BF16 NaNs no head writes.
+#define SCREEN_STAMP_WORDS 4u
+
+// 2026-10-21: out[0] = the BF16 logit the full head writes at row `row`, id `id`, for the lazy
+// logits of a screened verify: recomputed from head row `id` of the whole head `W` and activation
+// row `row` of `X` while `stamp` still holds the verify's stamp (or `stamp` is NULL), else copied
+// from `logits` (a later head call has written the row). One warp.
 extern "C" __global__ void screen_head_exact_id(
     const __nv_bfloat16* __restrict__ W,
     const __nv_bfloat16* __restrict__ X,
@@ -382,12 +387,25 @@ extern "C" __global__ void screen_head_exact_id(
     unsigned int row,
     unsigned int id,
     unsigned int vocab,
-    __nv_bfloat16* __restrict__ logits
+    const __nv_bfloat16* __restrict__ logits,
+    const unsigned int* __restrict__ stamp,
+    __nv_bfloat16* __restrict__ out
 ) {
     const unsigned int lane = threadIdx.x & 31u;
+    bool lazy = true;
+    if (stamp != nullptr) {
+        const unsigned int v = lane < SCREEN_STAMP_WORDS ? stamp[lane] : 0xFFFFFFFFu;
+        lazy = __all_sync(0xFFFFFFFFu, v == 0xFFFFFFFFu);
+    }
+    if (!lazy) {
+        if (lane == 0) {
+            out[0] = logits[(unsigned long long)row * vocab + id];
+        }
+        return;
+    }
     const float v = screen_exact_dot(
         W + (unsigned long long)id * K, X + (unsigned long long)row * K, K, lane);
     if (lane == 0) {
-        logits[(unsigned long long)row * vocab + id] = __float2bfloat16(v);
+        out[0] = __float2bfloat16(v);
     }
 }

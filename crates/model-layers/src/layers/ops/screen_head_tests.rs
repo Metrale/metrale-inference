@@ -52,7 +52,11 @@ fn quantize(w: &[f32]) -> (Vec<i8>, Vec<f32>) {
         let amax = blk.iter().fold(0f32, |m, v| m.max(v.abs()));
         s[b] = amax / 127.0;
         for (j, v) in blk.iter().enumerate() {
-            let r = if s[b] > 0.0 { (f64::from(*v) / f64::from(s[b])).round_ties_even() as f32 } else { 0.0 };
+            let r = if s[b] > 0.0 {
+                (f64::from(*v) / f64::from(s[b])).round_ties_even() as f32
+            } else {
+                0.0
+            };
             q[b * 128 + j] = r.clamp(-127.0, 127.0) as i8;
         }
     }
@@ -91,7 +95,10 @@ fn argmax_kept(rows: &[Vec<f32>], x: &[f32], kappa: f64) -> bool {
 struct Lcg(u64);
 impl Lcg {
     fn f(&mut self) -> f32 {
-        self.0 = self.0.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+        self.0 = self
+            .0
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1);
         ((self.0 >> 40) as f32 / (1u64 << 24) as f32) * 2.0 - 1.0
     }
 }
@@ -102,7 +109,10 @@ fn shapes_the_kernels_take() {
     assert!(!screen_shape_ok(0, 4096), "no rows");
     assert!(!screen_shape_ok(5, 512), "past SCREEN_MAX_M");
     assert!(!screen_shape_ok(1, 4000), "k not a multiple of 512");
-    assert!(!screen_shape_ok(4, 8192), "m * k past the shared-memory stage");
+    assert!(
+        !screen_shape_ok(4, 8192),
+        "m * k past the shared-memory stage"
+    );
     assert_eq!(scan_grid(51_648), 807);
     assert_eq!(rescore_grid(51_648), 202);
     assert_eq!((scan_grid(1), rescore_grid(1)), (1, 1));
@@ -112,7 +122,10 @@ fn shapes_the_kernels_take() {
 fn kappa_is_the_quantization_term_plus_small_rounding_terms() {
     let (q, r) = screen_kappa_parts(4096);
     assert!(q > 0.5 && q < 0.5 + 1e-6);
-    assert!(r > 127.5 * 70.0 * 2f64.powi(-24), "reference term too small: {r}");
+    assert!(
+        r > 127.5 * 70.0 * 2f64.powi(-24),
+        "reference term too small: {r}"
+    );
     assert!(r < 1e-3);
     let k = screen_kappa(4096);
     assert!(f64::from(k) >= q + r, "kappa must round up");
@@ -152,12 +165,24 @@ fn a_bound_without_the_quantization_term_loses_the_argmax() {
     let s = 2f32.powi(-10);
     let mut g = Lcg(11);
     let x: Vec<f32> = (0..k)
-        .map(|j| if j % 128 == 0 || g.f() >= 0.0 { 1.0 } else { -1.0 })
+        .map(|j| {
+            if j % 128 == 0 || g.f() >= 0.0 {
+                1.0
+            } else {
+                -1.0
+            }
+        })
         .collect();
     let grid: Vec<f32> = (0..k).map(|_| (g.f() * 15.0).round()).collect();
     let row = |shift: &dyn Fn(usize) -> f32| -> Vec<f32> {
         (0..k)
-            .map(|j| if j % 128 == 0 { 127.0 * s } else { (grid[j] + shift(j) * x[j]) * s })
+            .map(|j| {
+                if j % 128 == 0 {
+                    127.0 * s
+                } else {
+                    (grid[j] + shift(j) * x[j]) * s
+                }
+            })
             .collect()
     };
     let leader = row(&|_| 0.375);

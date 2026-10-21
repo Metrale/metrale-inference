@@ -41,6 +41,8 @@ impl TransformerModel {
         logits_ptr: DevicePtr,
         _stream: u64,
     ) -> Result<u32> {
+        // 2026-10-21: A screened verify's lazy rows are recomputed first (`screen_head_lazy.rs`).
+        self.screen_materialize()?;
         let stream = self.gpu.default_stream();
         let out_ptr = self.buffers.scratch();
         // 2026-09-25: `argmax_fp32` runs only when `use_fp32_logits` is set and the
@@ -74,6 +76,7 @@ impl TransformerModel {
         n: usize,
         _stream: u64,
     ) -> Result<Vec<u32>> {
+        self.screen_materialize()?;
         let stream = self.gpu.default_stream();
         let v = self.config.vocab_size;
         let bf16 = 2usize;

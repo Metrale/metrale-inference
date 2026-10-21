@@ -129,6 +129,8 @@ impl TransformerModel {
         // 2026-09-25: The caller picks the destination, so co-dispatched
         // prefill streams can each write their own logits rows.
         let logits = logits_dst;
+        // 2026-10-21: This call writes logits: a screened verify's are no longer lazy.
+        self.screen_clear_lazy();
         if self.lm_head_q6k_run(hidden, num_tokens, logits, stream)?
             || self.lm_head_nvfp4_rows_run(hidden, num_tokens as usize, logits, stream)?
         {
@@ -344,6 +346,7 @@ impl TransformerModel {
     ) -> Result<DevicePtr> {
         let h = self.config.hidden_size as u32;
         let v = self.config.vocab_size as u32;
+        self.screen_clear_lazy();
         // 2026-09-25: The FP32 scratch when `use_fp32_logits`, else the shared
         // BF16 buffer; readers take the dtype from `decode_logits_fp32`.
         let (logits, fp32) = if self.use_fp32_logits {

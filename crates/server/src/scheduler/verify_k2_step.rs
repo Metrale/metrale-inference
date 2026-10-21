@@ -107,12 +107,11 @@ pub fn step_verify_k2(
     let fused = !dflash_verify_raw_argmax && model.k2_fused_wire();
     // 2026-10-11: `METRALE_GLM_MTP_DEVICE_STEP`: a draft on the device of an identity-pick
     // request lets every worker act on its own device verdict (`verify_k2_device_step`).
-    let device_verdict = fused
-        && drafts[0] == metrale_model_layers::speculative::DEVICE_DRAFT
-        && super::verify_k2_device_step::identity_picks(a, verify_ctx);
+    // 2026-10-21: And the screened head where the picks need only argmaxes (`screen_picks`).
+    let flags = super::screen_picks::k2_flags(fused, drafts[0], a, verify_ctx);
+    let device_verdict = flags.device_verdict;
     if fused {
-        if let Err(e) = model.ep_announce_k2_fused(a.seq.slot_idx as u32, tokens_k2, device_verdict)
-        {
+        if let Err(e) = model.ep_announce_k2_fused(a.seq.slot_idx as u32, tokens_k2, flags) {
             tracing::error!("EP announce fused verify_k2: {e:#}");
             super::lifecycle::fail_sequence(a, format!("EP announce fused verify_k2: {e:#}"));
             return;

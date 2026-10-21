@@ -50,7 +50,7 @@ impl TransformerModel {
 
 /// 2026-10-10: The decision `lmhead_vocab_shard` makes, from the call's ranks, the kill switch
 /// and the communicator's `(world, rank)`.
-fn head_vocab_shard(
+pub(super) fn head_vocab_shard(
     v: usize,
     ranks: HeadRanks,
     off: bool,

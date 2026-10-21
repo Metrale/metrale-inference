@@ -51,7 +51,6 @@ impl TransformerModel {
     ) -> Result<[u32; 2]> {
         let stream = self.gpu.default_stream();
         let h = self.config.hidden_size;
-        let bf16 = 2usize;
         let fp32 = 2usize;
         let k = 2usize;
 
@@ -61,6 +60,8 @@ impl TransformerModel {
 
         let hidden = self.buffers.hidden_states();
         let residual = self.buffers.residual();
+        // 2026-10-21: The fused announcement armed (or not) the screened head (`screen_head.rs`).
+        let screened = self.screen_head().is_some_and(|s| s.take_armed());
 
         let mut kv_cache = self.kv_cache.lock();
 
@@ -291,7 +292,9 @@ impl TransformerModel {
 
         // 2026-09-25: Replay only when this sequence's SSM slot has a captured graph.
         // 2026-10-03: The graph key: the pool slot and the LoRA routes a capture bakes.
-        let graph_key = super::SlotGraphKey::new(seq.slot_idx, seq_slot, ctx.moe_lora_route);
+        // 2026-10-21: A screened verify ends in the device argmax instead of the logits.
+        let graph_key = super::SlotGraphKey::new(seq.slot_idx, seq_slot, ctx.moe_lora_route)
+            .with_device_argmax(screened);
         let cached_for_slot = graph_cache
             .as_ref()
             .and_then(|c| c.get(&graph_key).copied());
@@ -418,29 +421,9 @@ impl TransformerModel {
                     stream,
                 )?;
 
-                self.lm_head_batched(
-                    normed,
-                    k as u32,
-                    self.buffers.logits(),
-                    HeadRanks::Every,
-                    stream,
-                )?;
-
                 // 2026-09-25: The argmax is part of the graph; it writes fixed scratch addresses.
-                let vocab = self.config.vocab_size;
-                let argmax_out = self.buffers.scratch();
-                for t in 0..k {
-                    let logits_t = self.buffers.logits().offset(t * vocab * bf16);
-                    let out_t = argmax_out.offset(t * 4);
-                    ops::argmax_bf16(
-                        self.gpu.as_ref(),
-                        self.argmax_kernel,
-                        logits_t,
-                        out_t,
-                        vocab as u32,
-                        stream,
-                    )?;
-                }
+                // 2026-10-21: Through the screened head when this verify was armed for it.
+                self.verify_head_k2(normed, k, screened, use_graphs, stream)?;
             }
             drop(circuit);
 
@@ -464,6 +447,7 @@ impl TransformerModel {
             }
         }
 
+        self.screen_after_verify(screened);
         let out_ptr = self.buffers.scratch();
         let mut buf = [0u8; 8];
         // 2026-10-11: A device-step verify reads its device verdict instead (`k2_device_readback`):

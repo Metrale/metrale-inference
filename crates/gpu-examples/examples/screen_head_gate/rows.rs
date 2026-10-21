@@ -11,7 +11,10 @@ pub struct Rng(pub u64);
 
 impl Rng {
     pub fn u(&mut self) -> f64 {
-        self.0 = self.0.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+        self.0 = self
+            .0
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
         ((self.0 >> 11) as f64 + 0.5) / (1u64 << 53) as f64
     }
     pub fn n(&mut self) -> f64 {
@@ -51,7 +54,9 @@ pub const REALISTIC: [Family; 5] = [
 
 /// 2026-10-21: `gamma * z / rms(z)` rounded to BF16, as the final RMSNorm writes it.
 fn normed(z: &[f64], gamma: &[f32]) -> Vec<f32> {
-    let rms = (z.iter().map(|v| v * v).sum::<f64>() / z.len() as f64).sqrt().max(1e-30);
+    let rms = (z.iter().map(|v| v * v).sum::<f64>() / z.len() as f64)
+        .sqrt()
+        .max(1e-30);
     z.iter()
         .zip(gamma)
         .map(|(v, g)| bf16::from_f64(v / rms * f64::from(*g)).to_f32())
@@ -67,7 +72,9 @@ pub fn realistic(fam: Family, g: &mut Rng, w: &[bf16], k: usize, gamma: &[f32]) 
             .collect()
     };
     let unit = |r: Vec<f64>| -> Vec<f64> {
-        let n = (r.iter().map(|x| x * x).sum::<f64>() / r.len() as f64).sqrt().max(1e-30);
+        let n = (r.iter().map(|x| x * x).sum::<f64>() / r.len() as f64)
+            .sqrt()
+            .max(1e-30);
         r.into_iter().map(|x| x / n).collect()
     };
     let noise: Vec<f64> = (0..k).map(|_| g.n()).collect();
@@ -79,7 +86,9 @@ pub fn realistic(fam: Family, g: &mut Rng, w: &[bf16], k: usize, gamma: &[f32]) 
             let z: Vec<f64> = noise.iter().zip(&d).map(|(n, d)| n + beta * d).collect();
             let x = normed(&z, gamma);
             if fam == Family::BigNorm {
-                x.iter().map(|v| bf16::from_f32(v * 64.0).to_f32()).collect()
+                x.iter()
+                    .map(|v| bf16::from_f32(v * 64.0).to_f32())
+                    .collect()
             } else {
                 x
             }
@@ -112,7 +121,9 @@ pub fn quantize_row(w: &[bf16]) -> (Vec<f32>, Vec<f32>) {
         s[b] = amax / 127.0;
         for (j, v) in blk.iter().enumerate() {
             q[b * 128 + j] = if s[b] > 0.0 {
-                (f64::from(v.to_f32()) / f64::from(s[b])).round_ties_even().clamp(-127.0, 127.0) as f32
+                (f64::from(v.to_f32()) / f64::from(s[b]))
+                    .round_ties_even()
+                    .clamp(-127.0, 127.0) as f32
             } else {
                 0.0
             };
@@ -154,23 +165,44 @@ pub fn adversarial(g: &mut Rng, w: &[bf16], k: usize, v: usize) -> Vec<f32> {
         // lambda sets T_a - T_b to a small positive margin.
         let c = 1.0;
         let wf = |w: &[bf16], j: usize| f64::from(w[j].to_f32());
-        let mean_w = support.iter().map(|&j| wf(wa, j).abs() + wf(wb, j).abs()).sum::<f64>()
+        let mean_w = support
+            .iter()
+            .map(|&j| wf(wa, j).abs() + wf(wb, j).abs())
+            .sum::<f64>()
             / (2 * support.len()) as f64;
         let mu = 0.35 * c / mean_w.max(1e-12);
         for &j in &support {
             let d = res(wa, &qa, &sa, j).signum();
             x[j] = c * d + mu * (wf(wa, j) + wf(wb, j));
         }
-        let diff = |x: &[f64]| support.iter().map(|&j| x[j] * (wf(wa, j) - wf(wb, j))).sum::<f64>();
-        let dd: f64 = support.iter().map(|&j| (wf(wa, j) - wf(wb, j)).powi(2)).sum();
-        let e: f64 = support.iter().map(|&j| f64::from(sa[j / 128]) * x[j].abs()).sum();
+        let diff = |x: &[f64]| {
+            support
+                .iter()
+                .map(|&j| x[j] * (wf(wa, j) - wf(wb, j)))
+                .sum::<f64>()
+        };
+        let dd: f64 = support
+            .iter()
+            .map(|&j| (wf(wa, j) - wf(wb, j)).powi(2))
+            .sum();
+        let e: f64 = support
+            .iter()
+            .map(|&j| f64::from(sa[j / 128]) * x[j].abs())
+            .sum();
         let lambda = (0.02 * e - diff(&x)) / dd.max(1e-30);
         for &j in &support {
             x[j] += lambda * (wf(wa, j) - wf(wb, j));
         }
         // 2026-10-21: Scale so the leader's logit is order 20, as a real top logit is.
         let ta: f64 = support.iter().map(|&j| x[j] * wf(wa, j)).sum();
-        let scale = if ta.abs() > 1e-30 { 20.0 / ta.abs() } else { 1.0 };
-        return x.iter().map(|v| bf16::from_f64(v * scale).to_f32()).collect();
+        let scale = if ta.abs() > 1e-30 {
+            20.0 / ta.abs()
+        } else {
+            1.0
+        };
+        return x
+            .iter()
+            .map(|v| bf16::from_f64(v * scale).to_f32())
+            .collect();
     }
 }

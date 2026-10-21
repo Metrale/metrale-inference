@@ -232,7 +232,10 @@ pub fn screen_head_resolve(
     out: DevicePtr,
     stream: u64,
 ) -> Result<()> {
-    ensure!((1..=SCREEN_MAX_M).contains(&m), "screen_head_resolve: m={m}");
+    ensure!(
+        (1..=SCREEN_MAX_M).contains(&m),
+        "screen_head_resolve: m={m}"
+    );
     KernelLaunch::new(gpu, kernel)
         .grid([1, 1, 1])
         .block([32, 1, 1])
@@ -245,8 +248,13 @@ pub fn screen_head_resolve(
         .launch(stream)
 }
 
-/// 2026-10-21: `logits[row * vocab + id]` = the full head's BF16 logit there, from the whole
-/// head `w` (`[vocab, k]`) and activation row `row` of `x`.
+/// 2026-10-21: Bytes of the stamp a screened verify writes (0xFF) at the head of the logits
+/// buffer, where every head call writes logits (`SCREEN_STAMP_WORDS` in the kernel).
+pub const SCREEN_STAMP_BYTES: usize = 16;
+
+/// 2026-10-21: `out` (one BF16) = the full head's logit at row `row`, id `id`: recomputed from the
+/// whole head `w` (`[vocab, k]`) and activation row `row` of `x` while `stamp` holds the stamp (or
+/// is NULL), else copied from `logits`.
 #[allow(clippy::too_many_arguments)]
 pub fn screen_head_exact_id(
     gpu: &dyn GpuBackend,
@@ -254,10 +262,10 @@ pub fn screen_head_exact_id(
     w: DevicePtr,
     x: DevicePtr,
     k: u32,
-    row: u32,
-    id: u32,
-    vocab: u32,
+    (row, id, vocab): (u32, u32, u32),
     logits: DevicePtr,
+    stamp: DevicePtr,
+    out: DevicePtr,
     stream: u64,
 ) -> Result<()> {
     ensure!(
@@ -274,6 +282,8 @@ pub fn screen_head_exact_id(
         .arg_u32(id)
         .arg_u32(vocab)
         .arg_ptr(logits)
+        .arg_ptr(stamp)
+        .arg_ptr(out)
         .launch(stream)
 }
 

@@ -46,6 +46,9 @@ pub(crate) struct DeviceArgmax {
     armed: Mutex<Option<RowMask>>,
     /// 2026-10-10: The decode step in flight ends in the device argmax.
     current: AtomicBool,
+    /// 2026-10-21: The screened head of the K=2 verify (`screen_head.rs`), installed once by the
+    /// factory.
+    pub(crate) screen: std::sync::OnceLock<super::screen_head::ScreenHead>,
 }
 
 impl DeviceArgmax {
@@ -64,6 +67,7 @@ impl DeviceArgmax {
             keys,
             armed: Mutex::new(None),
             current: AtomicBool::new(false),
+            screen: std::sync::OnceLock::new(),
         })
     }
 
@@ -178,6 +182,7 @@ impl TransformerModel {
         let h = self.config.hidden_size as u32;
         let logits = self.buffers.logits();
         let da = &self.device_argmax;
+        self.screen_clear_lazy();
         ops::dense_gemv(
             self.gpu.as_ref(),
             self.dense_gemv_kernel,

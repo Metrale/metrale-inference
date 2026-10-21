@@ -15,7 +15,7 @@
 use anyhow::Result;
 use metrale_model_layers::ep_wire::EpWire;
 use metrale_model_layers::speculative::{
-    K2Verdict, k2_announce_block, k2_announced_tokens, k2_fused_requested,
+    K2Flags, K2Verdict, k2_announce_block, k2_announced_tokens, k2_fused_requested,
 };
 
 use super::super::types::TransformerModel;
@@ -40,9 +40,15 @@ impl TransformerModel {
         &self,
         seq_id: u32,
         tokens: [u32; 2],
-        device_verdict: bool,
+        flags: K2Flags,
     ) -> Result<()> {
-        let block = k2_announce_block(seq_id, tokens, device_verdict);
+        // 2026-10-21: The screened head only where this rank built it (`screen_head.rs`); the
+        // block tells the workers.
+        let flags = K2Flags {
+            screen_head: self.screen_arm(flags.screen_head),
+            ..flags
+        };
+        let block = k2_announce_block(seq_id, tokens, flags);
         // 2026-10-21: The control channel never waits behind the propose in flight.
         if self.ctrl_send_block(&block, None)? {
             return Ok(());
@@ -70,7 +76,9 @@ impl TransformerModel {
         seq: &mut SequenceState,
         stream: u64,
     ) -> Result<()> {
-        let (tokens, device_verdict) = k2_announced_tokens(block)?;
+        let (tokens, flags) = k2_announced_tokens(block)?;
+        let device_verdict = flags.device_verdict;
+        self.screen_arm_from_block(flags.screen_head)?;
         self.sync_secondary()?;
         let verified = self.decode_verify_graphed(&tokens, seq, stream);
         // 2026-10-11: `METRALE_GLM_MTP_DEVICE_STEP`: commit and propose on this rank's own verdict

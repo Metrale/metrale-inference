@@ -122,7 +122,11 @@ pub(super) fn try_chat_fast_path(
 /// and sometimes when it would not. The window's thinking picks count toward
 /// `thinking_budget` (`pick_positions.rs`), so a budget they reach arms the
 /// forced `</think>` for the positions after it.
-pub(super) fn stages_may_act(a: &ActiveSeq, ctx: &LogitsContext, window: usize) -> bool {
+pub(in crate::scheduler) fn stages_may_act(
+    a: &ActiveSeq,
+    ctx: &LogitsContext,
+    window: usize,
+) -> bool {
     use crate::scheduler::confidence::{
         MAX_SENTENCE_DEFER_TOKENS, THINK_DEFER_ABS_CEILING, THINK_DEFER_BUDGET_FACTOR,
     };

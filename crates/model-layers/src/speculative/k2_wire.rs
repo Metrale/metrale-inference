@@ -104,39 +104,59 @@ pub fn check_k2_fused_wire(requested: bool, wire: ep_wire::EpWire) -> Result<()>
 /// from `ep_wire::FLAG_DEVICE_ARGMAX`, which decode blocks carry.
 pub const FLAG_K2_DEVICE_VERDICT: u32 = 2;
 
-/// 2026-10-11: Rank 0's announcement of a fused K=2 verify of `tokens` in slot `seq_id`;
-/// `device_verdict` sets [`FLAG_K2_DEVICE_VERDICT`].
-pub fn announce_block(
-    seq_id: u32,
-    tokens: [u32; 2],
-    device_verdict: bool,
-) -> [u8; CMD_BLOCK_BYTES] {
+/// 2026-10-21: `flags` bit of a fused K=2 announcement (`METRALE_SCREEN_HEAD`): every rank ends
+/// this verify in the screened head (`model-engine screen_head.rs`) instead of the full head and
+/// its logits all-reduce. Rank 0 sets it only for a request whose picks need nothing but the
+/// argmaxes and single logits; the collectives then differ from a full-head verify, so every
+/// rank must follow the bit.
+pub const FLAG_K2_SCREEN_HEAD: u32 = 4;
+
+/// 2026-10-21: The flags a fused K=2 announcement carries.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct K2Flags {
+    /// 2026-10-11: [`FLAG_K2_DEVICE_VERDICT`].
+    pub device_verdict: bool,
+    /// 2026-10-21: [`FLAG_K2_SCREEN_HEAD`].
+    pub screen_head: bool,
+}
+
+/// 2026-10-11: Rank 0's announcement of a fused K=2 verify of `tokens` in slot `seq_id` under
+/// `flags`.
+pub fn announce_block(seq_id: u32, tokens: [u32; 2], flags: K2Flags) -> [u8; CMD_BLOCK_BYTES] {
+    let bits = if flags.device_verdict {
+        FLAG_K2_DEVICE_VERDICT
+    } else {
+        0
+    } | if flags.screen_head {
+        FLAG_K2_SCREEN_HEAD
+    } else {
+        0
+    };
     ep_wire::block(
         seq_id,
         EP_CMD_VERIFY_K2_FUSED,
         tokens[0],
-        if device_verdict {
-            FLAG_K2_DEVICE_VERDICT
-        } else {
-            0
-        },
+        bits,
         [tokens[1], NO_MASK],
     )
 }
 
-/// 2026-10-11: The two verify tokens of a received announcement, and whether it set
-/// [`FLAG_K2_DEVICE_VERDICT`]. Errors on another opcode, another flag, or a second mask word, so
-/// a block of another shape is never read as one.
-pub fn announced_tokens(block: &CmdBlock) -> Result<([u32; 2], bool)> {
+/// 2026-10-11: The two verify tokens of a received announcement, and its flags. Errors on
+/// another opcode, an unknown flag, or a second mask word, so a block of another shape is never
+/// read as one.
+pub fn announced_tokens(block: &CmdBlock) -> Result<([u32; 2], K2Flags)> {
     if block.cmd != EP_CMD_VERIFY_K2_FUSED
-        || block.flags & !FLAG_K2_DEVICE_VERDICT != 0
+        || block.flags & !(FLAG_K2_DEVICE_VERDICT | FLAG_K2_SCREEN_HEAD) != 0
         || block.mask[1] != NO_MASK
     {
         bail!("not a fused K=2 verify block: {block:?}");
     }
     Ok((
         [block.arg, block.mask[0]],
-        block.flags & FLAG_K2_DEVICE_VERDICT != 0,
+        K2Flags {
+            device_verdict: block.flags & FLAG_K2_DEVICE_VERDICT != 0,
+            screen_head: block.flags & FLAG_K2_SCREEN_HEAD != 0,
+        },
     ))
 }
 
@@ -221,10 +241,14 @@ mod tests {
             [3, 0],
             [9, DEVICE_DRAFT],
         ] {
-            for device_verdict in [false, true] {
-                let b = ep_wire::parse_block(&announce_block(5, tokens, device_verdict));
+            for bits in 0..4u32 {
+                let flags = K2Flags {
+                    device_verdict: bits & 1 != 0,
+                    screen_head: bits & 2 != 0,
+                };
+                let b = ep_wire::parse_block(&announce_block(5, tokens, flags));
                 assert_eq!(b.seq_id, 5);
-                assert_eq!(announced_tokens(&b).unwrap(), (tokens, device_verdict));
+                assert_eq!(announced_tokens(&b).unwrap(), (tokens, flags));
             }
         }
     }
@@ -242,12 +266,13 @@ mod tests {
             [1, NO_MASK],
         ));
         assert!(announced_tokens(&decode).is_err());
-        // 2026-10-11: The device-verdict bit is the only flag an announcement may carry.
+        // 2026-10-21: The device-verdict and screened-head bits are the only flags an
+        // announcement may carry.
         let other_flag = ep_wire::parse_block(&ep_wire::block(
             0,
             EP_CMD_VERIFY_K2_FUSED,
             1,
-            FLAG_K2_DEVICE_VERDICT | 4,
+            FLAG_K2_DEVICE_VERDICT | FLAG_K2_SCREEN_HEAD | 8,
             [2, NO_MASK],
         ));
         assert!(announced_tokens(&other_flag).is_err());

@@ -260,6 +260,7 @@ impl TransformerModel {
         ranks: HeadRanks,
         stream: u64,
     ) -> Result<DevicePtr> {
+        self.screen_clear_lazy();
         let logits = self.buffers.logits();
         let v = self.config.vocab_size;
         if self.lm_head_fp8_run(normed, padded_n, logits, ranks, stream)? {

@@ -94,15 +94,17 @@ pub trait ModelEp {
     }
 
     /// 2026-10-11: Rank 0, fused wire: announce the 2-row verify of `tokens` in slot `seq_id`.
-    /// `device_verdict` (`METRALE_GLM_MTP_DEVICE_STEP`, an identity-pick request): every rank
+    /// `flags.device_verdict` (`METRALE_GLM_MTP_DEVICE_STEP`, an identity-pick request): every rank
     /// takes the verdict from its own device verdict and proposes at once, and rank 0's verdict
-    /// follows the propose ([`Self::ep_send_k2_verdict_after_propose`]). Default: an error, since
-    /// only a model whose [`Self::k2_fused_wire`] is true is asked.
+    /// follows the propose ([`Self::ep_send_k2_verdict_after_propose`]). 2026-10-21:
+    /// `flags.screen_head`: the request allows the screened head; the model announces it only
+    /// when it has one. Default: an error, since only a model whose [`Self::k2_fused_wire`] is
+    /// true is asked.
     fn ep_announce_k2_fused(
         &self,
         _seq_id: u32,
         _tokens: [u32; 2],
-        _device_verdict: bool,
+        _flags: metrale_model_layers::speculative::K2Flags,
     ) -> Result<()> {
         anyhow::bail!("this model has no fused K=2 wire")
     }

@@ -24,10 +24,10 @@ mod knobs;
 mod propose_batch_wire;
 mod verify_batch_wire;
 pub use k2_wire::{
-    DEVICE_DRAFT, EP_CMD_VERIFY_K2_FUSED, FLAG_K2_DEVICE_VERDICT, K2_DEVICE_VERDICT_WORDS,
-    K2_FUSED_ENV, K2_VERDICT_WORDS, K2Verdict, announce_block as k2_announce_block,
-    announced_tokens as k2_announced_tokens, check_k2_fused_wire, device_verdict_agrees,
-    k2_device_verdict, k2_fused_requested,
+    DEVICE_DRAFT, EP_CMD_VERIFY_K2_FUSED, FLAG_K2_DEVICE_VERDICT, FLAG_K2_SCREEN_HEAD,
+    K2_DEVICE_VERDICT_WORDS, K2_FUSED_ENV, K2_VERDICT_WORDS, K2Flags, K2Verdict,
+    announce_block as k2_announce_block, announced_tokens as k2_announced_tokens,
+    check_k2_fused_wire, device_verdict_agrees, k2_device_verdict, k2_fused_requested,
 };
 pub use kgamma_wire::{EP_CMD_VERIFY_KGAMMA, KGAMMA_MAX_ROWS, kgamma_committed_len, kgamma_width};
 pub use knobs::{
