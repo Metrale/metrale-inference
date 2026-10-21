@@ -117,6 +117,16 @@ pub(super) fn rank_lever_table(
         // 2026-10-21: Host timing only (the slot upload is stream-ordered either way); checked
         // because the check is free.
         ("METRALE_GLM_MTP_ROW_NOSYNC", u64::from(mtp.row_nosync)),
+        // 2026-10-21: Host timing only; agreed so an A/B arm cannot run on one rank alone
+        // (the cores differ per host, so only the mode is compared).
+        (
+            "METRALE_HOST_WAKE_KEEPER",
+            metrale_gpu_runtime::host_wake::KeeperMode::agreement_value(
+                metrale_gpu_runtime::host_wake::KeeperMode::parse(
+                    &settings.runtime.host_wake_keeper,
+                )?,
+            ),
+        ),
     ])
 }
 

@@ -25,6 +25,8 @@ mod gpu_impl;
 mod gpu_impl_graph;
 #[cfg(not(metrale_scale))]
 mod graph_hoist_cu;
+#[cfg(target_os = "linux")]
+pub mod host_task_probe;
 mod n_tile;
 mod pdl;
 mod redzone;

@@ -19,6 +19,7 @@ pub(crate) mod preflight;
 mod runtime;
 mod tokenizer_runtime;
 mod topology;
+pub(crate) mod wake_keeper;
 mod weights;
 
 pub(crate) use build::lever_settings;

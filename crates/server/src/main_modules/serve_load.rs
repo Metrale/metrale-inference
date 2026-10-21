@@ -67,6 +67,7 @@ pub(crate) fn load_model(
         auto_max_batch_size,
         device_budget,
         drafter_weights_sha256,
+        wake_keeper,
     }) = engine::load_engine(args, &settings)?
     else {
         // 2026-09-26: An EP worker rank ran its command loop and the head has
@@ -236,6 +237,8 @@ pub(crate) fn load_model(
         std::sync::Arc::from(scheduler_model);
     let scheduler_dev = scheduler_setup::scheduler_device(&args, scheduler_model, max_batch_size);
     let scheduler_handle = std::thread::spawn(move || {
+        // 2026-10-21: The wake keeper stops when the scheduler (the model's user) ends.
+        let _wake_keeper = wake_keeper;
         scheduler::run(
             scheduler_dev,
             request_rx,
